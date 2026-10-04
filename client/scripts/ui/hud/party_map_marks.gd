@@ -1,0 +1,107 @@
+class_name PartyMapMarks
+extends RefCounted
+
+## Party members on the minimap and the world map (round 717). The rules are
+## the original client's (`sro_client.exe`, md5 2a5794b72c90908d945be8b3f3f2edd4);
+## docs/protocol/party_gui.md section 8 has the reading. Pure functions, so the
+## placement is tested without a scene.
+##
+## **The minimap** (CIFMinimap::vslot_013, the party loop at 0x6643a0..0x664ad1):
+## - For each member of the party manager's list (0x986f50, list +0x20) other
+##   than the player (`member +0x44 != manager +0x18`, 0x6643bb) whose world id
+##   equals the player's (`record +0x68` against `player +0x20e4`, 0x6643ca),
+##   and whose region the player can see (0x9d5520: a field region while the
+##   player is in the field, or the player's own dungeon), READ.
+## - The position is the member's spawned object's (+0x90..+0x98) when one
+##   exists (0x9c35e0, 0x66441f), else the record's (x, 0, z) in its region
+##   (0x9ecfd0, 0x66444c), READ.
+## - The map offset is (dx, -dz) / 1920 x the drawn tile size (+0x3fc), and its
+##   length (0xb42de0 is sqrt) decides (0x6644e5..0x664503): under 47.0
+##   (`[0xda0ef0]`, a float) the 8x8 `mm_sign_party.ddj` (+0x39c) at the offset;
+##   47 or more the 16x16 `mm_sign_partyarrow.ddj` (+0x36c) at the offset scaled
+##   to length 47 (`47.0 / dist`, the double at 0xda0ee8), turned by
+##   -(theta + pi) where theta = acos(dx_px / dist) (0xb47c50 is acos), negated
+##   when dz < 0, through 0x8b5c50 (cos 0xb44a10, sin 0xb44b40: a rotation).
+##   In screen space (y down) that is atan2(oy, ox) - pi. READ.
+## - One mark per member, every frame (vslot_013 is the draw), after the other
+##   signs and the academy marks and before the player's own arrow (+0x374,
+##   drawn last). READ.
+##
+## **The world map** (CNIFWorldMap::FUN_0061eec0, 0x61f8c0..0x61ffce): every
+## member but the player (no world-id test there), at the same position
+## source, as the 16x16 `wmap_sign_party.ddj` (+0x7ec) centred on its map
+## pixel (corners +-8.0, 0xd89240, each through 0xb42d10), drawn before the
+## player's marker. While the mouse is inside the first member's quad inset
+## by 2.0 (0xe1b898), the manager's text for that member (map +0x28, 0x61b2f0)
+## is drawn centred above the quad (0x8b2f20 size, 0x8b48b0 draw at
+## (x - w / 2, top - h)). READ; that the text is the member's name is INFERRED.
+
+const REGION_SPAN := 1920.0
+## The minimap's dot/arrow switch and the arrow's rim radius, in map pixels.
+const ARROW_RADIUS := 47.0
+const DOT_SIZE := Vector2(8, 8)
+const ARROW_SIZE := Vector2(16, 16)
+const WORLD_DOT_SIZE := Vector2(16, 16)
+const HOVER_INSET := 2.0
+const DOT_DDJ := "interface\\minimap\\mm_sign_party.ddj"
+const ARROW_DDJ := "interface\\minimap\\mm_sign_partyarrow.ddj"
+const WORLD_DOT_DDJ := "interface\\worldmap\\wmap_sign_party.ddj"
+## A region word with this bit is a dungeon (the record's +0x5a, as 0x9d5520
+## tests it).
+const DUNGEON_BIT := 0x8000
+
+## The minimap offset, in map pixels from the aperture's centre (x east, y
+## down), of a member at `member_local` seen from `player_local`; both are
+## region-local ground positions (x east, z north) in the player's region.
+static func minimap_offset(player_local: Vector2, member_local: Vector2, tile_px: float) -> Vector2:
+	var d := member_local - player_local
+	return Vector2(d.x, -d.y) / REGION_SPAN * tile_px
+
+## True when the mark at `offset` is the rim arrow rather than the dot.
+static func is_arrow(offset: Vector2) -> bool:
+	return offset.length() >= ARROW_RADIUS
+
+## Where the arrow's centre goes: the offset scaled to the rim radius.
+static func arrow_centre(offset: Vector2) -> Vector2:
+	var d := offset.length()
+	if d <= 0.0:
+		return Vector2.ZERO
+	return offset * (ARROW_RADIUS / d)
+
+## The arrow's turn (a Control's rotation, clockwise on screen):
+## -(theta + pi) with theta the original's signed acos, which is
+## atan2(oy, ox) - pi for an offset with y down.
+static func arrow_rotation(offset: Vector2) -> float:
+	return atan2(offset.y, offset.x) - PI
+
+## A record's position in the player's region-local frame: region y steps
+## world X and region x world Z (AGENTS.md), the record's y unused (0x9ecfd0
+## is given y = 0).
+static func record_local(player_region: Vector2i, region: int, x: float, z: float) -> Vector2:
+	var rx := (region >> 8) & 0xFF
+	var ry := region & 0xFF
+	return Vector2(float(ry - player_region.y) * REGION_SPAN + x, float(rx - player_region.x) * REGION_SPAN + z)
+
+## Whether the minimap draws `m`: not the player, the same world id, and a
+## field region (the player's own dungeon is the other case 0x9d5520 allows;
+## OpenSRO sends no dungeon positions, so a dungeon record is not drawn: OURS).
+static func minimap_draws(m: PartyNet.Member, own_jid: int, own_world_id: int) -> bool:
+	if m == null or m.jid == own_jid:
+		return false
+	if m.world_id != own_world_id:
+		return false
+	return (m.region & DUNGEON_BIT) == 0
+
+## Whether the world map draws `m`: every member but the player (no world-id
+## test, 0x61f8d3..0x61f8e0); a dungeon record is left out here too (OURS, as
+## above).
+static func worldmap_draws(m: PartyNet.Member, own_jid: int) -> bool:
+	if m == null or m.jid == own_jid:
+		return false
+	return (m.region & DUNGEON_BIT) == 0
+
+## The hover rectangle of a world-map dot whose quad is `quad`: the quad inset
+## by HOVER_INSET on every side, inclusive (0x61ff00..0x61ff4c).
+static func hover_hit(quad: Rect2, mouse: Vector2) -> bool:
+	var r := quad.grow(-HOVER_INSET)
+	return mouse.x >= r.position.x and mouse.y >= r.position.y and mouse.x <= r.end.x and mouse.y <= r.end.y

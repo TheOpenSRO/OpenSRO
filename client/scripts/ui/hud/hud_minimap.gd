@@ -84,9 +84,10 @@ var _tile_px: float = TILE_PX_START
 var _tile_px_target: float = TILE_PX_START
 
 ## The client's own sign artwork for what stands around the player, from
-## `interface\minimap\`. Quest-NPC and party signs also exist there
-## (mm_sign_questnpc, mm_sign_party) but nothing the client receives yet says
-## which NPC carries a quest or who is in the party, so they are not drawn.
+## `interface\minimap\`. The quest-NPC sign also exists there
+## (mm_sign_questnpc) but nothing the client receives yet says which NPC
+## carries a quest, so it is not drawn. The party's signs are update_party's
+## (round 717).
 const SIGN_TEXTURES := {
 	"npc": "interface\\minimap\\mm_sign_npc.ddj",
 	"monster": "interface\\minimap\\mm_sign_monster.ddj",
@@ -102,6 +103,13 @@ var _signs_root: Control
 var _sign_textures := {}   # kind -> Texture2D
 var _sign_pools := {}      # kind -> Array[TextureRect]
 var _last_sign_report := Vector2i(-1, -1)  # (drawn, total), so the log speaks only on change
+
+## The party's marks (round 717): one TextureRect per member, pooled; each is
+## the dot or the rim arrow by PartyMapMarks.is_arrow.
+var _party_root: Control
+var _party_dot_tex: Texture2D
+var _party_arrow_tex: Texture2D
+var _party_marks: Array[TextureRect] = []
 
 func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_ui_builder = builder
@@ -182,6 +190,16 @@ func setup(layout_data: Variant = null) -> void:
 			if tex != null:
 				_sign_textures[kind] = tex
 			_sign_pools[kind] = []
+
+	# The party's marks (round 717, PartyMapMarks): after the other signs,
+	# before the player's own arrow, as vslot_013 draws them.
+	_party_root = Control.new()
+	_party_root.name = "PartyMarks"
+	_party_root.mouse_filter = MOUSE_FILTER_IGNORE
+	_map_clip.add_child(_party_root)
+	if _ui_builder != null:
+		_party_dot_tex = _ui_builder.load_texture(PartyMapMarks.DOT_DDJ)
+		_party_arrow_tex = _ui_builder.load_texture(PartyMapMarks.ARROW_DDJ)
 
 	# The player's arrow (mm_sign_character.ddj, CIFMinimap +0x374): a 16x16
 	# quad about the aperture's centre, turned by arrow_rotation.
@@ -467,6 +485,61 @@ func _place_signs(kind: String, player_world: Vector3, positions: Array) -> int:
 	for i in range(used, pool.size()):
 		(pool[i] as TextureRect).visible = false
 	return used
+
+## Marks each party member (round 717): `members_local` holds each drawn
+## member's region-local ground position (x east, y north) in the player's
+## region, `player_local` the player's. Under PartyMapMarks.ARROW_RADIUS map
+## pixels from the centre a member is the 8x8 dot at its offset; at or past it,
+## the 16x16 arrow on that radius, turned toward it. Pooled: a frame with a
+## settled party allocates nothing.
+func update_party(player_local: Vector2, members_local: PackedVector2Array) -> void:
+	if _party_root == null:
+		return
+	var centre := APERTURE_RECT.size / 2.0
+	var n := members_local.size()
+	while _party_marks.size() < n:
+		var mark := TextureRect.new()
+		mark.name = "party_%d" % _party_marks.size()
+		mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		mark.stretch_mode = TextureRect.STRETCH_SCALE
+		mark.mouse_filter = MOUSE_FILTER_IGNORE
+		_party_root.add_child(mark)
+		_party_marks.append(mark)
+	for i in n:
+		var mark := _party_marks[i]
+		var off := PartyMapMarks.minimap_offset(player_local, members_local[i], _tile_px)
+		if PartyMapMarks.is_arrow(off):
+			if mark.texture != _party_arrow_tex:
+				mark.texture = _party_arrow_tex
+			mark.size = PartyMapMarks.ARROW_SIZE
+			mark.pivot_offset = PartyMapMarks.ARROW_SIZE / 2.0
+			mark.rotation = PartyMapMarks.arrow_rotation(off)
+			mark.position = centre + PartyMapMarks.arrow_centre(off) - PartyMapMarks.ARROW_SIZE / 2.0
+		else:
+			if mark.texture != _party_dot_tex:
+				mark.texture = _party_dot_tex
+			mark.size = PartyMapMarks.DOT_SIZE
+			mark.pivot_offset = PartyMapMarks.DOT_SIZE / 2.0
+			mark.rotation = 0.0
+			mark.position = centre + off - PartyMapMarks.DOT_SIZE / 2.0
+		mark.visible = mark.texture != null
+	for i in range(n, _party_marks.size()):
+		_party_marks[i].visible = false
+
+## Each shown party mark as "dot@(x,y)" or "arrow@(x,y)r<deg>", its centre
+## in aperture pixels from the aperture's centre (the QA log and the tests).
+func party_marks_report() -> String:
+	var out: PackedStringArray = []
+	var centre := APERTURE_RECT.size / 2.0
+	for mark in _party_marks:
+		if not mark.visible:
+			continue
+		var c := mark.position + mark.size / 2.0 - centre
+		if mark.texture == _party_arrow_tex and mark.size == PartyMapMarks.ARROW_SIZE:
+			out.append("arrow@(%.1f,%.1f)r%.0f" % [c.x, c.y, rad_to_deg(mark.rotation)])
+		else:
+			out.append("dot@(%.1f,%.1f)" % [c.x, c.y])
+	return " ".join(out)
 
 ## Loads the 3x3 tiles around the player's region.
 ##

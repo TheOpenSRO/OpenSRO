@@ -169,6 +169,12 @@ var _current: WorldmapInfoReader.MapInfo
 var _viewport: Control
 var _canvas: Control
 var _marker: TextureRect
+## The party's marks (round 717, PartyMapMarks): pooled 16x16 dots, and the
+## hovered member's name over its dot.
+var _party_layer: Control
+var _party_tex: Texture2D
+var _party_dots: Array[TextureRect] = []
+var _party_label: Label
 var _edges: Array[TextureRect] = []
 ## Archive path -> the TextureRect showing it, for the tiles built so far.
 var _tiles := {}
@@ -264,6 +270,18 @@ func _build_map_area() -> void:
 		_marker.size = _marker.texture.get_size()
 		_marker.pivot_offset = _marker.size / 2.0
 	_marker.visible = false
+	# The party's marks (round 717) go under the player's marker, as
+	# FUN_0061eec0 draws them first.
+	_party_layer = Control.new()
+	_party_layer.name = "PartyMarks"
+	_party_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.add_child(_party_layer)
+	_party_tex = _builder.load_texture(PartyMapMarks.WORLD_DOT_DDJ)
+	_party_label = Label.new()
+	_party_label.name = "PartyHover"
+	_party_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_party_label.visible = false
+	_party_layer.add_child(_party_label)
 	_canvas.add_child(_marker)
 
 	# After the frame's own pieces, before the first record's node.
@@ -609,7 +627,10 @@ func _build_place_labels(info: WorldmapInfoReader.MapInfo) -> void:
 		plate.position = at - plate.size / 2.0
 		plate.gui_input.connect(_on_plate_input.bind(other))
 		layer.add_child(plate)
-	# The player's own marker belongs over the labels, not under them.
+	# The party's marks and the player's own marker belong over the labels,
+	# not under them; the marker over the party's marks.
+	if _party_layer != null:
+		_canvas.move_child(_party_layer, -1)
 	if _marker != null:
 		_canvas.move_child(_marker, -1)
 
@@ -798,6 +819,75 @@ func update_player(region_x: int, region_y: int, local_pos: Vector3,
 		_follow_player()
 	else:
 		_place_marker()
+
+## Marks each party member (round 717): `members_local` holds each drawn
+## member's region-local ground position (x east, y north) in the player's
+## region (`region_x`, `region_y`), `names` their names in the same order.
+## Each is the 16x16 wmap_sign_party centred on its map pixel, rounded as
+## 0xb42d10 rounds; the first member whose dot, inset by 2, holds the mouse
+## has its name drawn centred above the dot. A mark off this map lands off
+## the canvas and is clipped by the map area (OURS: the original's own
+## clipping was not traced).
+func update_party(region_x: int, region_y: int, members_local: PackedVector2Array,
+		names: PackedStringArray) -> void:
+	if _party_layer == null:
+		return
+	var n := members_local.size()
+	while _party_dots.size() < n:
+		var dot := TextureRect.new()
+		dot.name = "party_%d" % _party_dots.size()
+		dot.texture = _party_tex
+		dot.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		dot.stretch_mode = TextureRect.STRETCH_SCALE
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dot.size = PartyMapMarks.WORLD_DOT_SIZE
+		_party_layer.add_child(dot)
+		_party_layer.move_child(dot, _party_layer.get_child_count() - 2)
+		_party_dots.append(dot)
+	var hovered := -1
+	var mouse := _canvas.get_local_mouse_position() if _canvas != null and _canvas.is_inside_tree() else Vector2(-1e9, -1e9)
+	for i in n:
+		var dot := _party_dots[i]
+		if _current == null:
+			dot.visible = false
+			continue
+		var at := _current.pixel_for_world(party_world(region_x, region_y, members_local[i]))
+		dot.position = (at - PartyMapMarks.WORLD_DOT_SIZE / 2.0).round()
+		dot.visible = dot.texture != null
+		if hovered < 0 and dot.visible and PartyMapMarks.hover_hit(Rect2(dot.position, dot.size), mouse):
+			hovered = i
+	for i in range(n, _party_dots.size()):
+		_party_dots[i].visible = false
+	if hovered >= 0 and hovered < names.size():
+		var dot := _party_dots[hovered]
+		_party_label.text = names[hovered]
+		_party_label.size = _party_label.get_minimum_size()
+		_party_label.position = Vector2(dot.position.x + dot.size.x / 2.0 - _party_label.size.x / 2.0,
+			dot.position.y - _party_label.size.y).round()
+		_party_label.visible = true
+	else:
+		_party_label.visible = false
+
+## A member's world-map world position from its region-local position in the
+## player's region: the player's own rule (update_player).
+static func party_world(region_x: int, region_y: int, local: Vector2) -> Vector2:
+	return Vector2(
+		(region_y - WorldmapInfoReader.REGION_Y_ORIGIN) * WorldmapInfoReader.REGION_SPAN + local.x / 10.0,
+		(region_x - WorldmapInfoReader.REGION_X_ORIGIN) * WorldmapInfoReader.REGION_SPAN + local.y / 10.0)
+
+## Each shown party dot's centre on the canvas, "(x,y)", for the QA log and
+## the tests.
+func party_dots_report() -> String:
+	var out: PackedStringArray = []
+	for dot in _party_dots:
+		if dot.visible:
+			var c := dot.position + dot.size / 2.0
+			out.append("(%.0f,%.0f)" % [c.x, c.y])
+	return " ".join(out)
+
+## The hovered member's name, or "" when no name is shown.
+func party_hover_text() -> String:
+	return _party_label.text if _party_label != null and _party_label.visible else ""
 
 func _place_marker() -> void:
 	if _marker == null or _current == null:

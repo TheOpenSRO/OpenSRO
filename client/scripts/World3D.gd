@@ -2897,6 +2897,63 @@ var _minimap_others: Array = []
 ## The rendered frame the minimap was last refreshed in (round 664).
 var _minimap_frame := -1
 
+## The party members the maps mark this frame (round 717, PartyMapMarks),
+## each a region-local ground position (x east, y north) in the player's
+## region: the minimap's (same world id) and the world map's (every member
+## but the player), with the world map's names. Reused, so a settled party
+## allocates nothing a frame.
+var _party_marks_mini := PackedVector2Array()
+var _party_marks_world := PackedVector2Array()
+var _party_marks_names := PackedStringArray()
+
+## Fills the three lists. A member's position is its spawned body's when this
+## client has one (0x9c35e0), else its record's (x, 0, z) in its region
+## (0x9ecfd0) -- the minimap's and the world map's own rule.
+func _fill_party_marks(here_region: Vector2i) -> void:
+	var party := NetClient.party
+	var ready: bool = party.in_party and here_region.x >= 0 and _minimap_group != null \
+		and is_instance_valid(_minimap_group)
+	var own: PartyNet.Member = party.member(party.own_jid) if ready else null
+	var own_world: int = own.world_id if own != null else -1
+	# First the counts, so the lists change size only when the party does.
+	var nm := 0
+	var nw := 0
+	if ready:
+		for m in party.members:
+			if PartyMapMarks.worldmap_draws(m, party.own_jid):
+				nw += 1
+				# The minimap's own world test (record +0x68 against the
+				# player's +0x20e4); without the player's own record nothing
+				# is compared (OURS).
+				if own_world < 0 or PartyMapMarks.minimap_draws(m, party.own_jid, own_world):
+					nm += 1
+	if _party_marks_mini.size() != nm:
+		_party_marks_mini.resize(nm)
+	if _party_marks_world.size() != nw:
+		_party_marks_world.resize(nw)
+		_party_marks_names.resize(nw)
+	if nw == 0:
+		return
+	var im := 0
+	var iw := 0
+	for m in party.members:
+		if not PartyMapMarks.worldmap_draws(m, party.own_jid):
+			continue
+		var at: Vector2
+		var body := _party_body_for_board(m.jid) as Node3D
+		if body != null and is_instance_valid(body) and body.is_inside_tree():
+			var l := _minimap_group.to_local(body.global_position)
+			at = Vector2(l.x, l.z)
+		else:
+			at = PartyMapMarks.record_local(here_region, m.region, float(m.x), float(m.z))
+		_party_marks_world[iw] = at
+		if _party_marks_names[iw] != m.member_name:
+			_party_marks_names[iw] = m.member_name
+		iw += 1
+		if own_world < 0 or PartyMapMarks.minimap_draws(m, party.own_jid, own_world):
+			_party_marks_mini[im] = at
+			im += 1
+
 func _refresh_minimap() -> void:
 	if player == null or _hud_minimap == null or not is_instance_valid(_hud_minimap):
 		return
@@ -2932,11 +2989,14 @@ func _refresh_minimap() -> void:
 	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
 	_minimap_fill_positions(_other_bodies, _minimap_others, pos, reach)
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
+	_fill_party_marks(_minimap_region)
+	_hud_minimap.update_party(Vector2(local.x, local.z), _party_marks_mini)
 	# The world map every frame only while it is open; hidden, on the old
 	# tenth-frame beat, so it is current when it opens.
 	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
 			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
 		_hud_worldmap.update_player(rx, ry, local, facing)
+		_hud_worldmap.update_party(rx, ry, _party_marks_world, _party_marks_names)
 	# OPENSRO_QA_WALK runs log what the minimap was told, twice a second,
 	# so a facing test is read from the log, not a frame (round 630).
 	if _qa_walk != "" and _zone_label_tick % 30 == 0:
@@ -11374,7 +11434,9 @@ func _update_blob_shadow() -> void:
 ##                          <race>, req:confirm|cancel|wait, dump); and
 ##                          round 715: qpclick:<name> (that member's party
 ##                          box clicked), selfselect, qplock, qplog (every
-##                          box's screen rect, faraway level and glow)
+##                          box's screen rect, faraway level and glow);
+##                          round 717: maplog (the party's minimap marks and
+##                          world-map dots), wmap (the world map opened)
 ##   OPENSRO_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
@@ -21654,6 +21716,14 @@ func _qa_party_do(step: String) -> void:
 		"qplock":
 			if _hud_quick_party != null:
 				_hud_quick_party.toggle_lock()
+		"maplog":
+			print("QA PARTY: map marks minimap [%s] world map [%s] hover '%s'" % [
+				_hud_minimap.party_marks_report() if _hud_minimap != null else "",
+				_hud_worldmap.party_dots_report() if _hud_worldmap != null else "",
+				_hud_worldmap.party_hover_text() if _hud_worldmap != null else ""])
+		"wmap":
+			if _hud_worldmap != null and not _hud_worldmap.visible:
+				_hud_worldmap.open()
 		"qplog":
 			if _hud_quick_party != null:
 				print("QA PARTY: quick party %s; player block glow %s, leader flag %s" % [_hud_quick_party.describe(),
