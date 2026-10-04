@@ -24,14 +24,16 @@ Read from the client first (`docs/protocol/party_gui.md` section 9 has every add
     - In screen terms that turn is `atan2(oy, ox) - pi` (`0xb47c50` acos, `0xb44a10` cos, `0xb44b40`
       sin, all read in the x87 fallbacks).
   - **Per member and order:** each member has its own mark, redrawn every frame, after the other
-    signs and before the player's own arrow.
+    signs and the academy marks, then the quest marks (none in OpenSRO), then the player's own
+    arrow. All of them draw over the frame and under the buttons (review finding 1).
 - **World map** (`CNIFWorldMap::FUN_0061eec0`, the party loop `0x61f8c0..0x61ffce`):
   - **Who and position:** every member but the player (**no** world-id test), at the same position
     source.
   - **The dot:** the 16x16 `wmap_sign_party.ddj` centred on its map pixel, drawn before the
     player's marker.
-  - **Hover:** while the mouse is inside the first member's dot inset by 2 px, the party manager's
-    text for that member is drawn centred above it (that the text is the **name** is INFERRED).
+  - **Hover:** the first member whose dot holds the mouse has its name drawn centred above the dot,
+    right after it. The hit area is L + 2 ..= L + 13. In a job party the name reads `*Name`. All
+    READ, review findings 2, 3, 5, 6, 10.
 - **Measured** (the DDS headers in Media.pk2): `mm_sign_party` 8x8, `mm_sign_partyarrow` 16x16,
   `wmap_sign_party` 16x16, each the size of its quad.
 
@@ -41,11 +43,9 @@ Read from the client first (`docs/protocol/party_gui.md` section 9 has every add
   They cover the offset, dot or arrow, the rim centre, the turn, a record's region-local position,
   who each map draws, and the hover rectangle.
 - **`hud_minimap.gd`**: `update_party(player_local, members_local)` places one pooled TextureRect
-  per member, from two pools:
-  - the dots in a `PartyMarks` root inside the map clip, between the other signs and the player's
-    arrow;
-  - the rim arrows in a `PartyArrows` root over the window's frame, unclipped and under its
-    buttons.
+  per member, from two pools. Both sit in one unclipped `MapMarks` root over the window's frame,
+  under its buttons, in vslot_013's order: `PartyMarks` (the dots), then `PartyArrows`, then the
+  player's arrow (review finding 1).
   
   Every mark is mirrored (`flip_h`) and turned a further -90 degrees, which is the quad's
   transposed texture (see below). `party_marks_report()` serves the QA log and the tests. The old
@@ -84,12 +84,13 @@ Read from the client first (`docs/protocol/party_gui.md` section 9 has every add
 ## OURS
 
 - A dungeon record (`region & 0x8000`) is not marked: OpenSRO sends no dungeon positions.
-- Without the player's own record in the party list, the minimap compares no world id.
+- The minimap's world test compares against the player's **own party record's** world id, which
+  stands in for the player's `+0x20e4`. Without that record nothing is compared.
 - A world-map dot off the current map is clipped by the map area (the original's clipping was not
   traced).
 - The hover name is a plain Label in the builder's font.
-- The rim arrows draw over the window's frame, unclipped (INFERRED from the user's screenshot; where
-  the original draws the frame was not traced).
+- The NPC, monster and other-player signs still draw in the map's clip, under the frame. The
+  follow-up is in docs/TODO.md (section 4, the minimap).
 
 ## Tests
 
@@ -165,10 +166,8 @@ pooled marks. Nothing is allocated once the party is settled.
 
 - **Dungeons.** A dungeon member (the original draws one in the player's own dungeon, and on the
   dungeon-floor world map) is not marked: OpenSRO sends no dungeon positions.
-- **The hover text's writer** (the party manager's map `+0x28`) was not read, so "name" is
-  INFERRED.
-- **Where the original draws the minimap frame** relative to vslot_013 was not traced. That frame
-  is what decides the arrows-over-the-ring layering, INFERRED here from the user's screenshot.
+- **The frame under vslot_013** is INFERRED, but well supported (`party_gui.md` section 9). The
+  buttons over the marks are READ.
 - **Academy marks** (`mm_sign_apprenticeship[arrow]`) follow the same rule from the academy list:
   not built, since there is no academy.
 
