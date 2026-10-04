@@ -364,16 +364,19 @@ func countryOfStore(ctx context.Context, chars character.Store) func(int64) int 
 // OpAttackResult; every other receiver whose share crossed a level is sent
 // OpLevelUp here.
 //
-// GAP, not OURS: a receiver other than the killer is told nothing of the EXP
-// and SP it gained. Retail tells every receiver with 0x3056
-// (Client_ApplyExpAndLevelUp, docs/protocol/payload_layouts.tsv), which
-// neither side of OpenSRO speaks yet; the row is updated and the next
-// character load shows it.
+// Every receiver, the killer included, is sent retail's 0x3056 with what it
+// gained (round 716; GObjPC_GainExpAndLevel writes it at the end of every
+// award, and the kill path calls it once per receiver). OpAttackResult's own
+// EXP tail (round 639) stays on the wire for older clients; the client now
+// prints the gain from 0x3056.
 func distributeKill(ctx context.Context, d combatDeps, killer int64, m combat.Monster, hits []combat.Hit) (killPayout, error) {
 	plan := planKill(d.hub, d.parties, m, presentHits(d.hub, hits), countryOfStore(ctx, d.chars))
 	paid, err := payKill(ctx, d, m, plan)
 	if err != nil {
 		return killPayout{}, err
+	}
+	for id, p := range paid {
+		sendExpGain(d.hub, id, expGainFor(m, p))
 	}
 	for id, p := range paid {
 		if id == killer || p.levelUp == nil {
