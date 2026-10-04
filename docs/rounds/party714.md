@@ -21,9 +21,10 @@ party-match rows and round 713's notes. Labels: **READ** (sro_client.exe), **MEA
   - a page (`c:0x8841f0`, READ): row 0 whose name is the key (the leader's name in a party, the
     player's own otherwise) becomes the player's registration (`0x97c960`); later rows with that
     name are skipped; every other row is a record. A `[2][code]` page is a coded line;
-  - `0xb069`/`0xb06a` OK: the registration from the echo (`0x97c530`), the dialog closes
-    (`0x73f300`), RECORD_COMPLETE / MODIFY_COMPLETE on the warning banner (`0x77b580` ->
-    `0x7b3eb0`, GDR_WARNING_WND);
+  - `0xb069`/`0xb06a` OK: the registration from the echo (`0x97c530`: race from the player's
+    model, members 1 or the party's count), RECORD_COMPLETE / MODIFY_COMPLETE on the warning
+    banner (`0x77b580` -> `0x7b3eb0`, GDR_WARNING_WND). The dialog closes on OK (`0x73f370`'s
+    vslot `0xac`), not here: `0x73f300` is the `CPartyRegData` constructor (review D1, W4);
   - `0xb06b`: the own number clears the registration (`0x97c960(0)`); the line is DELETE_COMPLETE,
     or DELETE_COMPLETE2 when the client deleted it because the party filled (`DAT_00eeb8c8`);
   - `0xb06d` (`c:0x8847d0`): joined -> JOIN_COMPLETE_MASTER on the banner, the auto run ends;
@@ -38,9 +39,9 @@ party-match rows and round 713's notes. Labels: **READ** (sro_client.exe), **MEA
   (`com_bar01select_`) on the selected row; the enable rules (`0x7384a0`); Join (`0x739500`),
   Whisper, Auto match, Form party with its client refusals (`0x7397b0`), Change entry, Delete
   entry; Search (`0x73b780`); Refresh with its 2 s lock; the page spin; page 0 on opening; while
-  the joining window is up, IDs 15, 17-20, 55 and 56 are disabled (`0x738890`: READ, the asm
-  list, which adds Change and Delete to the spec's five); the full party's own registration
-  deleted by the client (`0x7387c0`).
+  the joining window is up, the spec's five are disabled (`0x7390b0`); `0x738890`'s seven are
+  the auto-run disable (review D8, W3); the full party's own registration deleted by the client
+  (`0x7387c0`).
 - **The boxes** (`party_match_box.gd` the shared shell; caption at (10, 11), w - 21 x 12, READ
   `0x7400c0`):
   - `party_match_register.gd`: 314x373, caption RECORD / MODIFY, the objective radio READ in
@@ -155,3 +156,44 @@ Sonila (1~100, "LVL 100 PT"), Levi (quest, 20~40), Eone (flags 0, a 1/4 party), 
   window test, except Whisper and Auto match's dialog, whose candidate rule and queue are in the
   state test).
 - The column sorting, the row tooltip and the drawn scroll bar (OURS table above).
+
+## Review fixes (round 714 review, `docs/rounds/party714_review.md`)
+
+| # | fix |
+|---|---|
+| B1 | An auto-match run disables Join, Auto, Form, Change, Delete, Search and Refresh (`0x738890(1)`) until it ends; the end (`0xb06d`'s join_finished with no joining window) re-applies the rules. Tested |
+| B2 | `<font color>` is A,R,G,B: the names draw (239,218,164) (MEASURED: the textuisystem census, screenshot 08). party_gui.md §4 corrected |
+| B3 | The echo's registration takes the player's race (`_skill_race`) and members 1 or the party's count, time 0, the name rewritten (`0x97c530`). Tested |
+| B4 | An empty page clears the registration (`0x97ddf0` -> `0x97c3b0`). Tested with `b06c_empty` |
+| B5 | `server/partybot` (an 8 MB build of the bot) removed from the history by rebuilding the branch on `85e6c063`; `/server/partybot` added to `.gitignore` |
+| B6 | `PartyMatchWindow.dispose()` disconnects `NetClient.party.changed` and every connection on the state, and closes the boxes; HudPanels calls it in `_exit_tree` |
+| D1 | The register dialog closes on OK; the echo only redraws |
+| D2 | The selection is the slot (`+0x7ec`): a click on an empty slot deselects; a fill that empties the slot drops it. Tested |
+| D3 | Party matching locks the party window's Set (`HudPartyPane.set_match_lock`, `0x6d5ab0` on control 0x15) at the four READ points: the `0xb069` OK, the window's open (lock); the own `0xb06b` out of a party with the window closed, the window's close with no registration (unlock) |
+| D4 | The auto dialog starts race 2, exp 1, item 1 (READ, `0x73eb83..0x73eba8`); the objective keeps the radio's initial item 0 (INFERRED: CIFRadioButton's constructor not read), disabled or not |
+| D5 | The title fits 302 px with "..." (`0x8b47c0(.., 0x12e, 1)`, `OVERRUN_TRIM_ELLIPSIS`) |
+| D6 | Search's levels: min below 2 is 1, max 0 is 110, min above max does nothing. Tested |
+| D7 | Register OK tests `max < min` and an empty title only; the edits clamp to 1..110 as typed (INFERRED) |
+| D8 | The joining window disables the five of `0x7390b0` and its close enables them outright (or keeps an auto run's disable) |
+| D9 | A running Refresh lock restarts with every rules pass (`0x7384a0`'s tail, `0x7386a4`) |
+| D10 | Whisper refuses the registration's own number |
+| D11 | Confirm needs a job id and a requester (`0x73fc40`) |
+| D12 | The window cannot close while the joining window is up (`0x732ae0`); its close takes the register and auto boxes with it |
+| D13 | A `0xb06b` for another number also leaves the filtered list (`removed` signal, `0x73a700`) |
+| W1 | Whisper is READ (`0x7386e0` -> `0x777d10` -> `0x7ab470`: `$` + name + space, focused), identical |
+| W2 | The leader's popup is centred by `0x79ac50(0x83)` (READ) |
+| W3, W4 | Notes corrected above |
+| W5 | A new page clearing the filter is READ (`0x73b5b0`) |
+| W6 | The combo art is READ (`CIFComboBox::vslot_010` `0x6327f0`) |
+| W7 | The joining window's close argument 0 is READ (`push ebx` at `0x884a01`) |
+| W8 | The delete question's style 1 is READ (`push 1` at `0x738986`, stored at +0x908 by `0x643e50`) |
+| W9 | The full-party delete's only caller is `0x886c79` (`UI_PARTY 0x886b10`'s member-joined branch); testing on every party change is equivalent |
+| W10 | The auto dialog's starting choices: D4 |
+| W11 | The PML colour: B2 |
+| L1 | "~" between the level edits (`0x73af56` / `0x73af69`, `0xd884b0`) |
+| L2 | The purpose combo's text right-aligned (alignment 2, `0x73b062..0x73b073`) |
+| L3 | **Open.** Whether the radio label's static (class `0xee9720`, margins zeroed by `0x6527d0(0,0,0,0)` at `0x657edc`) clips its text was not settled; "Trade Union" still runs past its 50 px |
+| L4 | The Title header ("UIIT_STT_LETTER_TITLE") and the blank DUMY cell are set by the window itself (OURS, local to it; UiBuilder's CIFBarWnd 3-slice path is left alone). The low digits in the edits and the page spin are UiBuilder's and other windows', left for a builder round |
+| M1 | A reply with a result byte other than 1 or 2 is ignored (the decoders return null). Tested |
+| M2 | HudPanels accumulates the frame time as a float for the 2 s lock |
+| M3 | The scroll bar is built: HudChat.ChatScroll with ifverticalscroll.txt's parts, the range records - 12 (READ), the length the record's 232 (INFERRED) |
