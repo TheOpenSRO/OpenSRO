@@ -59,7 +59,6 @@ var knownOrphans = map[string]string{
 	"ClearListing":      "round 710: lane S3 clears a party-match entry (party_test.go).",
 	"JobFitsPurpose":    "round 710: the person-to-purpose job rule (GS 0x5bf240, SM 0x44f7f0), for lane S3's register and join ladders; party_test.go holds the table.",
 	"PartyByID":         "round 710: lane S3 finds the party behind a match entry; party_test.go.",
-	"ItemShare":         "round 710: flag bit 1 (Item Auto Share), for lane S2's round robin and gold split.",
 	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
 		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
