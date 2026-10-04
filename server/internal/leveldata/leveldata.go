@@ -419,7 +419,9 @@ func MasteryExpScale(charLevel, maxMasteryLevel int) float64 {
 // group with the flag clear reaches this 1 + (n-1)*0.03 (0x4c4820; the flag
 // test is cmp BYTE [eax+0x10],0 at 0x4c475f). So the 3% is the EXP
 // FREE-FOR-ALL party's bonus only, paid to each contributor by its own damage.
-// OpenSRO still applies it to every party; party lane S2 fixes the code.
+// Round 712 (party lane S2) moved the kill path to the distributor: this
+// constant now reaches it through FreeForAllMultiplier, only for a
+// contributor outside an exp-share group (killreward.go, session/killshare.go).
 // docs/protocol/party_rules.md, "Kill EXP and SP".
 //
 // SCOPE, because this is only part of what the engine does with a party. The
@@ -582,7 +584,13 @@ func ExpDiffScale(killerLevel, victimLevel int, expSharingParty, europe bool) fl
 	return scale
 }
 
-// KillExp is the experience a kill is worth, applying the game's own
+// KillExp is Formula_MonsterExpReward's reading of a kill (round 712: the
+// kill path no longer calls it -- it pays through KillBase and
+// ContributorExp, killreward.go, which apply the same two scalers at the
+// engine's float32 precision with the damage share and the monster's factor;
+// this stays as the PvP-death formula's model and its tests' anchor).
+//
+// It is the experience a kill is worth, applying the game's own
 // **minimum-level rule**: the reward is taken at the LOWER of the two levels,
 // so out-levelling a monster -- or being power-levelled by someone who has --
 // pays at the weaker party's rate. The rule is symmetric, so it does not matter

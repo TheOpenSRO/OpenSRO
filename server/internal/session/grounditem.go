@@ -388,9 +388,9 @@ func rollDrops(monsterName string) []LootDrop {
 
 // samePartyFunc is the party rule CheckCanPickUp applies to someone else's
 // drop: allowed when picker and owner are in the same party and the party
-// shares items (its flag bit with value 2, `FUN_004ea200() & 2`). OpenSRO's
-// parties share unconditionally, the same choice already made for
-// experience (internal/party), so being in the same party is enough here.
+// shares items (its flag bit with value 2, `FUN_004ea200() & 2`) -- round
+// 712: the party's own Item Auto Share flag since round 710 gave parties
+// their types.
 // The engine never reaches this rule for an owned TypeID 3/3/9 item whose
 // codename does not begin ITEM_QNO_RM_ARCHEMY (CheckCanPickUp refuses it
 // 0x1812 at 0x4a934d first), and neither does grounditem.PickCheck, which
@@ -403,7 +403,7 @@ func samePartyFunc(parties *party.Hub) func(a, b int64) bool {
 	return func(a, b int64) bool {
 		pa, inA := parties.Get(a)
 		pb, inB := parties.Get(b)
-		return inA && inB && pa != nil && pb != nil && pa.ID == pb.ID
+		return inA && inB && pa != nil && pb != nil && pa.ID == pb.ID && pa.Flags.ItemShare()
 	}
 }
 
@@ -470,30 +470,78 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 				return reply(&PickUpResult{Code: int32(code), GroundItemID: req.GroundItemID})
 			}
 			// The item is ours to take now (busy for everyone else). Move it.
+			// An Item Auto Share party hands it on (round 712, itemshare.go):
+			// gold is split among the members near the picker
+			// (GObjPC::FUN_005bc7f0), an item goes to the next member of the
+			// party's rotation (FUN_00525dc0) unless it is owner-only.
+			sharing := itemSharePartyOf(parties, characterID)
+			recipient := characterID
+			pickedQty := it.Quantity
 			if it.Gold {
-				if err := chars.AddGold(ctx, characterID, int64(it.Quantity)); err != nil {
+				shares := []goldShare{{characterID, int64(it.Quantity)}}
+				if sharing != nil {
+					shares = splitGold(hub, sharing, entity, int64(it.Quantity))
+				}
+				credited := 0
+				var gerr error
+				for _, g := range shares {
+					if gerr = chars.AddGold(ctx, g.characterID, g.amount); gerr != nil {
+						break
+					}
+					credited++
+				}
+				if gerr != nil && credited == 0 {
 					ground.Release(it.ID)
 					return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
 				}
+				// The picker's own line reports the picker's part (its
+				// client reads the balance back from the server). The other
+				// members' clients are told nothing yet: retail credits each
+				// with reason 0x17 (0x5bc9b8) and the client prints
+				// UIIT_MSG_PARTYGET_GOLD, a message OpenSRO does not speak
+				// (GAP, docs/rounds/party712.md).
+				pickedQty = int32(shares[0].amount)
 			} else {
+				if sharing != nil && !it.OwnerOnly() {
+					recipient = roundRobinRecipient(hub, parties, sharing, entity)
+				}
 				// A stack that already had an instance keeps it; a fresh drop
 				// gets one the way any new item does (rolled by the bag).
 				var addErr error
 				if it.Instance != nil {
-					addErr = inv.AddItemInstance(ctx, characterID, it.ItemID, int(it.Quantity), *it.Instance)
+					addErr = inv.AddItemInstance(ctx, recipient, it.ItemID, int(it.Quantity), *it.Instance)
 				} else {
-					addErr = inv.AddItem(ctx, characterID, it.ItemID, int(it.Quantity))
+					addErr = inv.AddItem(ctx, recipient, it.ItemID, int(it.Quantity))
 				}
 				if addErr != nil {
 					ground.Release(it.ID)
+					if recipient != characterID && errors.Is(addErr, inventory.ErrNoRoom) {
+						// The chosen member's bag is full: the picker is
+						// refused 0x18da UIIT_MSG_STRGERR_PARTY_INVENTORY_FULL
+						// and the item stays on the ground (READ, GS
+						// FUN_00526090 0x52633d-0x5263a8). The member is told
+						// 0x1807 in retail (op result 0xb034), which OpenSRO
+						// has no message for (GAP).
+						return reply(&PickUpResult{Code: ErrPartyInventoryFull, GroundItemID: it.ID})
+					}
 					return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
 				}
 			}
 			ground.Remove(it.ID)
 			// The picker hears the result before the zone hears the removal,
 			// so its own reply is never preceded by the broadcast.
-			if err := reply(&PickUpResult{GroundItemID: it.ID, ItemID: it.ItemID, Quantity: it.Quantity, Gold: it.Gold}); err != nil {
+			if err := reply(&PickUpResult{GroundItemID: it.ID, ItemID: it.ItemID, Quantity: pickedQty, Gold: it.Gold}); err != nil {
 				return err
+			}
+			// The distribution notice (0x3068, READ GS FUN_005bdc80 from
+			// 0x5263dd): only for an item the round robin handed out.
+			if sharing != nil && !it.Gold && !it.OwnerOnly() {
+				class, amount := party.ItemNoticeOther, uint64(1)
+				if it.Expendable {
+					class, amount = party.ItemNoticeExpendable, uint64(it.Quantity)
+				}
+				sendItemNotice(hub, sharing, party.ItemNotice{RecipientJID: party.JIDOf(recipient),
+					RefItemID: uint32(it.ItemID), Class: class, Amount: amount})
 			}
 			removed := &GroundItemRemoved{ID: it.ID, Reason: GroundItemRemovedPicked, PickerID: characterID}
 			pkt := &proto.Packet{Opcode: OpGroundItemRemoved, Data: removed.Encode()}

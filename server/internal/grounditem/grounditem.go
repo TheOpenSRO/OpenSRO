@@ -147,12 +147,19 @@ type Item struct {
 	// column 21, flags bit 5): CheckCanPickUp refuses it 0x1839 to everyone,
 	// owner included. Set at Drop from the hub's rules lookup.
 	noPick bool
+	// Expendable is DropRules.Expendable, set at Drop (round 712).
+	Expendable bool
 	// ownerOnly is a TypeID 3/3/9 item not named ITEM_QNO_RM_ARCHEMY*
 	// (OwnerOnlyPick): while it is owned, CheckCanPickUp refuses every
 	// non-owner 0x1812 before the party test, so the party allowance never
 	// applies to it. Set at Drop from the hub's rules lookup.
 	ownerOnly bool
 }
+
+// OwnerOnly reports the item's OwnerOnlyPick answer: the party allowance and
+// the party's item round robin never apply to it (round 712: FUN_00525dc0
+// keeps a TypeID 3/3/9 item that is not ITEM_QNO_RM_ARCHEMY* for the picker).
+func (it Item) OwnerOnly() bool { return it.ownerOnly }
 
 // OwnerAt returns who owns the item at t: its owner inside the window, 0
 // after it -- the same answer the real item gives once CGItem::Update has
@@ -206,6 +213,11 @@ type DropRules struct {
 	// OwnerOnly is OwnerOnlyPick's answer for the row: no party allowance
 	// while the item is owned (Item.ownerOnly).
 	OwnerOnly bool
+	// Expendable is TypeID1 3 and TypeID2 3 (an "ETC" item: potions, scrolls,
+	// stones), the class the party's item notice 0x3068 sends a u16 count
+	// for (READ, GS 0x42fe80 at 0x5bdd28; client c:0x873ac9..0x873aed).
+	// Round 712, party lane S2.
+	Expendable bool
 }
 
 // SetRulesLookup gives the hub the reference data a drop needs (DropRules).
@@ -301,7 +313,7 @@ func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z
 	now := h.now()
 	it := &Item{ID: h.nextID, Zone: zone, ItemID: itemID, Quantity: quantity, Gold: gold,
 		X: x, Y: y, Z: z, OwnerID: ownerID, Bound: r.Bound, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(r.DecayTimeMs)),
-		noPick: r.NoPick, ownerOnly: r.OwnerOnly}
+		noPick: r.NoPick, ownerOnly: r.OwnerOnly, Expendable: r.Expendable}
 	h.items[it.ID] = it
 	return *it
 }

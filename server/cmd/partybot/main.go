@@ -20,6 +20,15 @@
 //	    Prints every party message each character receives and exits 1 on the
 //	    first expectation that fails.
 //
+//	partybot -mode share -addr HOST:PORT [-prefix ps] [-monster NAME] [-level N]
+//	    The round-712 sharing run: a solo kill as the baseline, then a kill by
+//	    one member of an Exp Auto Share party of two (both must gain the
+//	    baseline x 0.55), then one by a member of an Exp Free-For-All party
+//	    of two (the killer gains the baseline x 1.03, the other nothing). The
+//	    kills are real blows: a GM /damage (credited to the killer on the
+//	    monster's damage list, paying nothing itself) leaves the monster at 1
+//	    HP and a swing kills it. Needs -leveldata-csv and -monsters-csv.
+//
 //	partybot -mode bot -addr HOST:PORT -name Bram [-accept=true] [-invite NAME]
 //	    One character that stays online: answers every invitation (yes with
 //	    -accept, no without), optionally invites NAME once it sees it, and
@@ -49,8 +58,10 @@ type bot struct {
 	wmu  sync.Mutex
 	id   int64
 	in   chan *proto.Packet
-	mu   sync.Mutex
-	seen map[string]int64 // character name -> id, from the world messages
+	// other carries the replies the share mode waits on (attack, GM, stats).
+	other chan *proto.Packet
+	mu    sync.Mutex
+	seen  map[string]int64 // character name -> id, from the world messages
 	// zone and x, y, z are where the character entered the world.
 	zone    string
 	x, y, z float32
@@ -185,9 +196,16 @@ func (b *bot) run() {
 			return
 		}
 		b.note(p)
-		if isParty(p.Opcode) || p.Opcode == session.OpChatUpdate {
+		if isParty(p.Opcode) || p.Opcode == session.OpChatUpdate || p.Opcode == party.OpItemNotice {
 			fmt.Printf("[%s] <- %s\n", b.name, describe(p))
 			b.in <- p
+		}
+		switch p.Opcode {
+		case session.OpAttackResult, session.OpGMCommandResult, session.OpCharacterStatsResult:
+			select {
+			case b.other <- p:
+			default:
+			}
 		}
 	}
 }
@@ -226,7 +244,7 @@ func connect(addr, user, name string, level int) (*bot, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &bot{name: name, conn: conn, r: bufio.NewReader(conn), in: make(chan *proto.Packet, 256), seen: map[string]int64{}}
+	b := &bot{name: name, conn: conn, r: bufio.NewReader(conn), in: make(chan *proto.Packet, 256), other: make(chan *proto.Packet, 64), seen: map[string]int64{}}
 	const pw = "partybot-pw"
 	b.send(session.OpRegister, (&session.RegisterRequest{Username: user, Password: pw}).Encode())
 	if _, err := b.readSync(session.OpRegisterResult); err != nil {
@@ -558,6 +576,7 @@ func main() {
 	level := flag.Int("level", 10, "the level the bot raises itself to with /level (needs -gm-accounts on the server)")
 	accept := flag.Bool("accept", true, "bot: answer invitations yes (false: no)")
 	invite := flag.String("invite", "", "bot: invite this character to a new party once it is seen")
+	monster := flag.String("monster", "chakji", "share: the species to kill")
 	flag.Parse()
 	var err error
 	switch *mode {
@@ -565,6 +584,8 @@ func main() {
 		err = scenario(*addr, *prefix)
 	case "bot":
 		err = botMode(*addr, *name, *level, *accept, *invite)
+	case "share":
+		err = shareScenario(*addr, *prefix, *monster, *level)
 	default:
 		err = fmt.Errorf("unknown -mode %q", *mode)
 	}

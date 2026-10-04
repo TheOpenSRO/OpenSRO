@@ -1415,12 +1415,13 @@ func TestLevelUpMovesTheEntityLevel(t *testing.T) {
 	if err != nil || ar.Error != "" || !ar.MonsterDied {
 		t.Fatalf("kill: err=%v result=%+v", err, ar)
 	}
-	// Round 639: the result says what the kill earned -- the table's exp_unit
-	// (5000) after the mastery scale (applyMasteryExpScale), and the same
-	// amount of skill experience (the disclosed M = 1) -- for the client's
-	// system window.
-	if ar.ExpGained <= 0 || ar.ExpGained > 5000 || ar.SkillExpGained != ar.ExpGained {
-		t.Fatalf("the kill's result carries exp %d / skill exp %d, want 0 < exp <= 5000 and equal skill exp", ar.ExpGained, ar.SkillExpGained)
+	// Round 639: the result says what the kill earned, for the client's
+	// system window. Round 712: the experience is the contributor formula's
+	// (exp_unit 5000 x the scales) and the skill experience its own
+	// (FUN_004106b0, about 100 x the scales at an even level), no longer the
+	// experience again (the old M = 1).
+	if ar.ExpGained <= 0 || ar.ExpGained > 5000*2 || ar.SkillExpGained <= 0 {
+		t.Fatalf("the kill's result carries exp %d / skill exp %d, want both positive", ar.ExpGained, ar.SkillExpGained)
 	}
 	after, err := chars.GetByID(ctx, c.ID)
 	if err != nil {

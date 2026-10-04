@@ -653,6 +653,7 @@ func groundDropRules(ctx context.Context, items interface {
 			Bound:       !it.CanTrade,
 			NoPick:      !it.CanPick,
 			OwnerOnly:   grounditem.OwnerOnlyPick(it.TypeID1, it.TypeID2, it.TypeID3, it.CodeName),
+			Expendable:  it.TypeID1 == 3 && it.TypeID2 == 3,
 		}
 	}
 }
