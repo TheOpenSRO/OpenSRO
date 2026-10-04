@@ -120,12 +120,30 @@ World3D: 0x3056 from 25: EXP 9, skill EXP 24
   nothing is sent), and a level-1 creator is refused by the level-5 rule. Server log: no errors.
   The frames were deleted; the logs stay on the box.
 
+## Review fixes (independent review `83c7e77e`, `docs/rounds/party716_review.md`)
+
+No BUG and no REGRESSION; six DEPARTURE/MINOR findings, all fixed as close to the original as read.
+
+| # | finding | fix | test |
+|---|---|---|---|
+| F1 | 0x3056 went out before the level-up announcements; the original sends it last (`GObjPC_SetLevel` 0x4e4d90 sends 0x3054 and the HP/MP update first) | `distributeKill` sends a non-killer its OpLevelUp, then 0x3056; the killer's 0x3056 rides on its AttackResult (an unencoded field) and the attack path sends it after OpAttackResult and OpLevelUp (`combat.go`, and the status-tick kill in `status.go`). OpLevelUp is OpenSRO's own 0x0067 rather than 0x3054 | `TestKillShareSendsExpGainToEveryReceiver` reads Bram's packets in wire order: OpLevelUp before 0x3056; the killer gets none from `distributeKill` |
+| F2 | the 110 clamp is keyed on the STARTING level (`0x4e52c7`); `expAdded` also clamped an award crossing into 110 | `killPayout.startLevel`; `expGainFor` sends the award, and `expAdded` only when the receiver started at `MaxCharacterLevel` | `TestExpGainClampsOnlyAtTheCap` |
+| F3 | the gold line's base was overwritten by every stats reply, including unprompted regen pushes that can land between the split's credit and its 0x304E | `NetClient` counts its own stats requests (`last_stats_reply_requested`); the base is seeded by the first reply, then moved only by 0x304E and by replies this client asked for, never by a push. **OURS** beyond the original's purse (gold messages only): OpenSRO's shop, trade and storage still change gold without a 0x304E, and their requested refresh keeps the base true | box suite; reasoning recorded in `World3D._on_world_stats` |
+| F4 | the killer sent two or three stats requests per kill | `_request_world_stats` is coalesced to one deferred request a frame (as `_refresh_stat_panel`) | box suite |
+| F5 | the original also sends 0x304E kind 1 on a solo gold pick-up, unshown, and the split credits the picker too | READ and sent: a solo pick-up's credit `gs:0x4eaca0` calls `OffsetGold(amount, 0, 0x19, 1, 0)` (unshown); the split calls `OffsetGold(share, 0, 0x17, 1, 1)` for **every** share, the picker's included (shown). Both are sent now; the spec carries the table. The picker's own item-move reply (`0xB034`, `FUN_004e9480`) prints GAIN_GOLD from its own u32 (`c:0x87bedc..0x87bf20`); whether that is the pile or the share was not traced (**OPEN**), so OpenSRO's pick-up reply keeps printing the share | `TestGoldPickUpTellsEveryShare` |
+| F6 | no handler-level test of the gold split | `TestGoldPickUpTellsEveryShare` drives `GroundItemHandler` (added to the party test world): an Item Auto Share pick-up of 1001 gives the picker 501 and both members one shown 0x304E with their rows' totals; a character outside the party hears nothing; a solo pick-up sends the picker an unshown one. A share that failed to credit is not driven (the memory store cannot be made to fail one credit) | itself |
+
+After the fixes: `go test -count=1 -p 1 ./...` all packages pass; on the box (shared lock) `check`
+ALL LOAD (602 scripts) and the full suite 230 suites, 0 failing; `partybot -mode share -level 18`
+passes again (the mate's 0x3056 29/133 equals its row's rise, the idle member gets none). No
+orphaned processes.
+
 ## Left open
 
 - The gain floated from the source object (`+0x759`/`+0x75a`, a log-scale bucket): not built.
 - The death penalty still refreshes from stats instead of sending its negative 0x3056.
 - 0x304E's other kinds (2 skill points, 3 stat points, 4 the berserk count, 0x10) are not spoken;
   the client still learns those from OpenSRO's stats reply.
-- The picker of a split pick-up is told by OpenSRO's pick-up reply, not 0x304E (OURS, above).
+- What u32 the original's `0xB034` gold pick-up reply carries for a split picker (pile or share).
 
 No perf gate: a message handler and system lines, no per-frame code.
