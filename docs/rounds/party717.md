@@ -107,3 +107,68 @@ Read from the client first (`docs/protocol/party_gui.md` section 9 has every add
   a member leaving, and no party.
 
 On the box: 0 failures.
+
+On the box (`RENDER_DIR=/opt/opensro-client-r717`): `check` loads 602 scripts and 9 scenes, and the
+full suite is 230 suites with 0 failing.
+
+## Live
+
+Run with the stock `qa_shot.sh --server` on the shared lock (`/var/tmp/r717/live.sh`), against a
+server and partybot built from this branch:
+- **Aria** is rendered and leads. She invites the partybots:
+  - **Cara**, standing 2 east and 4 south of Aria;
+  - **Dex**, who moves 1200 east;
+  - **Eve**, who moves 1000 north.
+- **Then:** `maplog` twice, `wmap`, and `maplog` twice more.
+
+The log, identical at all four `maplog` steps:
+
+```
+QA PARTY: map inputs here r(96, 171) local (1636,1626) tile_px 160.0: ... Cara(r96/171 x1638 z1622 ...
+  body(1638,1622)) Dex(r96/172 x916 z1626 ... body(2836,1626)) Eve(r97/171 x1636 z706 ... body(1636,2626))
+QA PARTY: map marks minimap [dot@(0.2,0.3) arrow@(47.0,0.0)r-180 arrow@(0.0,-47.0)r-270]
+  world map [(4027,549) (4047,549) (4027,532)] hover ''
+```
+
+- **Records and bodies agree.** Dex's record is in the next region y, at x 916, which is
+  1920 + 916 - 1636 = 1200 east, the same as his body. Eve's record is one region x up at z 706:
+  1920 + 706 - 1626 = 1000 north.
+- **Frames:** `/var/tmp/r717/live/f00000470.png` shows the minimap; its crop is `mini_crop.png`.
+  `f00000580.png` shows the world map; its crop is `wmap_crop.png`.
+  - **Minimap:** Cara's dot is under the player's arrow. Dex's arrow sits on the east rim, over the
+    ring and left of the E button, pointing east, as in the user's `map_JXHQtcH.png`. Eve's arrow
+    sits on the north rim, pointing north.
+  - **MEASURED on frame 470:** the east arrow's green gem centroid lies 46.5 px right of the
+    aperture centre, and the north arrow's 45.5 px above it. The gem sits about 1 px toward each
+    arrow's tail, so both arrow centres are at 47 px.
+  - **World map:** three green dots. Cara's is under the player's marker, Dex's 20 px east and
+    Eve's 17 px north, the "greenish big dot" of the user's `map_vxAS9rr.png`.
+- **The hover name** was not exercised live, since the QA run has no mouse over a dot. The unit
+  test covers the inset rule.
+
+## Perf gate
+
+`client/tools/perf_gate.sh --sites jangan --frames 12000`, the working tree against `dca31493`:
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 1.59 | 1.56 | SAME |
+| entry ms | 10020 | 10020 | SAME |
+| freeze ms | 3480 | 3470 | SAME |
+| hitches | 4 | 5 | SAME |
+
+The gate's view has no party, so it measures the no-party path: one `in_party` test a frame. In a
+party the frame adds one counting pass and one filling pass over at most 7 members, and places
+pooled marks. Nothing is allocated once the party is settled.
+
+## Open
+
+- **Dungeons.** A dungeon member (the original draws one in the player's own dungeon, and on the
+  dungeon-floor world map) is not marked: OpenSRO sends no dungeon positions.
+- **The hover text's writer** (the party manager's map `+0x28`) was not read, so "name" is
+  INFERRED.
+- **Where the original draws the minimap frame** relative to vslot_013 was not traced. That frame
+  is what decides the arrows-over-the-ring layering, INFERRED here from the user's screenshot.
+- **Academy marks** (`mm_sign_apprenticeship[arrow]`) follow the same rule from the academy list:
+  not built, since there is no academy.
+
