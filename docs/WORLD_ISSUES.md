@@ -7094,6 +7094,396 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-seventeenth round: party members on the minimap and the world map
+
+The user (2026-10-04, after v0.1.490): "showing party members on the minimap and map ... Basically
+you can see a greenish big dot on the map. The minimap will show an arrow on the edge of the minimap
+in the general direction of where each party member is to you. They get their own arrow. Then when
+you're close enough you'll see that big green circle again but on the minimap." Their three
+screenshots of the original are `/root/opensro-handoff/party_refs/map_*.png`.
+
+Read from the client first (`docs/protocol/party_gui.md` section 9 has every address), then built.
+
+### What the original does (READ unless marked)
+
+- **Minimap** (`CIFMinimap::vslot_013` `0x662bd0`, the party loop `0x6643a0..0x664ad1`):
+  - **Who:** every member but the player, **with the player's world id** (record `+0x68`
+    against `player +0x20e4`), in a region the player can see (a field region from the field, or
+    the player's own dungeon: `0x9d5520`).
+  - **Position:** the spawned object's position when this client has one, else the record's
+    `(x, 0, z)` in its region.
+  - **Offset** in map pixels: `(dx, -dz) / 1920 x zoom`.
+  - **Dot or arrow:**
+    - under **47.0** px (`0xda0ef0`): the 8x8 `mm_sign_party.ddj` at the offset;
+    - 47 or more: the 16x16 `mm_sign_partyarrow.ddj`, centred on a fixed 47 px rim along the
+      offset, turned by `-(theta + pi)`.
+    - In screen terms that turn is `atan2(oy, ox) - pi` (`0xb47c50` acos, `0xb44a10` cos, `0xb44b40`
+      sin, all read in the x87 fallbacks).
+  - **Per member and order:** each member has its own mark, redrawn every frame, after the other
+    signs and the academy marks, then the quest marks (none in OpenSRO), then the player's own
+    arrow. All of them draw over the frame and under the buttons (review finding 1).
+- **World map** (`CNIFWorldMap::FUN_0061eec0`, the party loop `0x61f8c0..0x61ffce`):
+  - **Who and position:** every member but the player (**no** world-id test), at the same position
+    source.
+  - **The dot:** the 16x16 `wmap_sign_party.ddj` centred on its map pixel, drawn before the
+    player's marker.
+  - **Hover:** the first member whose dot holds the mouse has its name drawn centred above the dot,
+    right after it. The hit area is L + 2 ..= L + 13. In a job party the name reads `*Name`. All
+    READ, review findings 2, 3, 5, 6, 10.
+- **Measured** (the DDS headers in Media.pk2): `mm_sign_party` 8x8, `mm_sign_partyarrow` 16x16,
+  `wmap_sign_party` 16x16, each the size of its quad.
+
+### What was built
+
+- **`client/scripts/ui/hud/party_map_marks.gd`** (`PartyMapMarks`): the rules as pure functions.
+  They cover the offset, dot or arrow, the rim centre, the turn, a record's region-local position,
+  who each map draws, and the hover rectangle.
+- **`hud_minimap.gd`**: `update_party(player_local, members_local)` places one pooled TextureRect
+  per member, from two pools. Both sit in one unclipped `MapMarks` root over the window's frame,
+  under its buttons, in vslot_013's order: `PartyMarks` (the dots), then `PartyArrows`, then the
+  player's arrow (review finding 1).
+  
+  Every mark is mirrored (`flip_h`) and turned a further -90 degrees, which is the quad's
+  transposed texture (see below). `party_marks_report()` serves the QA log and the tests. The old
+  comment saying party signs were not drawn is corrected.
+- **`hud_worldmap.gd`**:
+  - a `PartyMarks` layer under the player's marker (kept there when the place labels are rebuilt);
+  - `update_party(region_x, region_y, members_local, names)`, with pooled 16x16 dots placed by the
+    player's own world-map rule (`party_world`);
+  - the hover name, as a Label;
+  - `party_dots_report()` and `party_hover_text()`.
+- **`World3D.gd`**:
+  - `_fill_party_marks` builds the three per-frame lists (minimap positions, world-map positions,
+    names). It counts first, so the packed arrays change size only when the party does. Positions
+    come from the spawned body (`_party_body_for_board`) or the record (`PartyMapMarks.record_local`).
+  - `_refresh_minimap` passes the lists on.
+  - Two QA party steps: `maplog` (both maps' marks in the log) and `wmap` (opens the world map).
+
+### Two things the first live runs caught
+
+- **The quads draw their texture transposed.** The first frame had the north-rim arrow pointing
+  east. Each party quad's corners go top-left, top-right, bottom-right, bottom-left with texture
+  coordinates (0,0), (0,1), (1,1), (1,0), so screen (x, y) samples texture (y, x) (READ: `fldz` /
+  `fld1` at `0x664544` and `0x664720`, the world map's at `0x61f9ee`). The arrow's art points up
+  (MEASURED), so it draws pointing west unturned, and the client's turn then sends every arrow
+  outward, as in the user's `map_JXHQtcH.png`. A Control does the same with `flip_h` and a further
+  -90 degrees (`PartyMapMarks.TRANSPOSE_TURN`); the test checks that an east member's tip points
+  east.
+- **The rim arrow was hidden.** Centred 47 px out in a 105 px aperture, it was cut by the map's
+  rectangular clip and covered by the frame's ring. The user's screenshot shows the original's
+  arrow over the ring, so the arrows now draw over the frame (INFERRED, see OURS).
+- **Test placement, not a code bug:** the first run placed the bots with `/tp` offsets of 120 and
+  100, taking them for the minimap's display units. `/tp` takes the server's world units (z
+  mirrored), so the marks showed 10 px and 8.3 px south. The logged inputs matched them exactly.
+  The bots were then placed 1200 east and 1000 north.
+
+### OURS
+
+- A dungeon record (`region & 0x8000`) is not marked: OpenSRO sends no dungeon positions.
+- The minimap's world test compares against the player's **own party record's** world id, which
+  stands in for the player's `+0x20e4`. Without that record nothing is compared.
+- A world-map dot off the current map is clipped by the map area (the original's clipping was not
+  traced).
+- The hover name is a plain Label in the builder's font.
+- The NPC, monster and other-player signs still draw in the map's clip, under the frame. The
+  follow-up is in docs/TODO.md (section 4, the minimap).
+
+### Tests
+
+`client/scripts/ui/hud/party_map_marks_test.gd`:
+- the offset and its axes;
+- dot vs arrow at the 47 px edge (`>=`) and across zooms (600 units is an arrow at 256 px a region
+  and a dot at 64);
+- the rim centre and turn for east, north, west, south and north-east;
+- that `atan2(oy, ox) - pi` equals the client's `-(theta + pi)` in every quadrant;
+- record positions across regions;
+- who is drawn (self, another world, a dungeon), and the world map having no world test;
+- the hover inset;
+- the world-map position;
+- `HudMinimap.update_party`: one mark per member, the pooling, the marks under the player's arrow,
+  a member leaving, and no party.
+
+On the box: 0 failures.
+
+On the box (`RENDER_DIR=/opt/opensro-client-r717`): `check` loads 602 scripts and 9 scenes, and the
+full suite is 230 suites with 0 failing.
+
+### Live
+
+Run with the stock `qa_shot.sh --server` on the shared lock (`/var/tmp/r717/live.sh`), against a
+server and partybot built from this branch:
+- **Aria** is rendered and leads. She invites the partybots:
+  - **Cara**, standing 2 east and 4 south of Aria;
+  - **Dex**, who moves 1200 east;
+  - **Eve**, who moves 1000 north.
+- **Then:** `maplog` twice, `wmap`, and `maplog` twice more.
+
+The log, identical at all four `maplog` steps:
+
+```
+QA PARTY: map inputs here r(96, 171) local (1636,1626) tile_px 160.0: ... Cara(r96/171 x1638 z1622 ...
+  body(1638,1622)) Dex(r96/172 x916 z1626 ... body(2836,1626)) Eve(r97/171 x1636 z706 ... body(1636,2626))
+QA PARTY: map marks minimap [dot@(0.2,0.3) arrow@(47.0,0.0)r-180 arrow@(0.0,-47.0)r-270]
+  world map [(4027,549) (4047,549) (4027,532)] hover ''
+```
+
+- **Records and bodies agree.** Dex's record is in the next region y, at x 916, which is
+  1920 + 916 - 1636 = 1200 east, the same as his body. Eve's record is one region x up at z 706:
+  1920 + 706 - 1626 = 1000 north.
+- **Frames:** `/var/tmp/r717/live/f00000470.png` shows the minimap; its crop is `mini_crop.png`.
+  `f00000580.png` shows the world map; its crop is `wmap_crop.png`.
+  - **Minimap:** Cara's dot is under the player's arrow. Dex's arrow sits on the east rim, over the
+    ring and left of the E button, pointing east, as in the user's `map_JXHQtcH.png`. Eve's arrow
+    sits on the north rim, pointing north.
+  - **MEASURED on frame 470:** the east arrow's green gem centroid lies 46.5 px right of the
+    aperture centre, and the north arrow's 45.5 px above it. The gem sits about 1 px toward each
+    arrow's tail, so both arrow centres are at 47 px.
+  - **World map:** three green dots. Cara's is under the player's marker, Dex's 20 px east and
+    Eve's 17 px north, the "greenish big dot" of the user's `map_vxAS9rr.png`.
+- **The hover name** was not exercised live, since the QA run has no mouse over a dot. The unit
+  test covers the inset rule.
+
+### Perf gate
+
+`client/tools/perf_gate.sh --sites jangan --frames 12000`, the working tree against `dca31493`:
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 1.59 | 1.56 | SAME |
+| entry ms | 10020 | 10020 | SAME |
+| freeze ms | 3480 | 3470 | SAME |
+| hitches | 4 | 5 | SAME |
+
+The gate's view has no party, so it measures the no-party path: one `in_party` test a frame. In a
+party the frame adds one counting pass and one filling pass over at most 7 members, and places
+pooled marks. Nothing is allocated once the party is settled.
+
+### Open
+
+- **Dungeons.** A dungeon member (the original draws one in the player's own dungeon, and on the
+  dungeon-floor world map) is not marked: OpenSRO sends no dungeon positions.
+- **The frame under vslot_013** is INFERRED, but well supported (`party_gui.md` section 9). The
+  buttons over the marks are READ.
+- **Academy marks** (`mm_sign_apprenticeship[arrow]`) follow the same rule from the academy list:
+  not built, since there is no academy.
+
+
+### Review fixes (independent review `c3c20623`, `docs/rounds/party717_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | LAYOUT: minimap dots under the frame | One unclipped `MapMarks` root over `MinimapFrame`, under the buttons, holding the party's dots, then its arrows, then the player's arrow (vslot_013's order). The buttons over the marks are READ (`0xb8f210`); the frame under them is INFERRED, with the review's evidence cited. The NPC/monster/player signs are left in the clip, with a follow-up in `docs/TODO.md` section 4. |
+| 2 | DEPARTURE: no `*` in a job party's hover name | `HudWorldmap.update_party(..., job_party)` from `NetClient.party.job_party`; the label reads `*Name`, rebuilt only when the hovered member, name or flag changes (`0x99a4c5`). Tested. |
+| 3 | The hover text is the name: READ, not INFERRED | Relabelled in `party_map_marks.gd`, `party_gui.md` section 9 and these notes (`0x99a2e0`, `0x99a4c9`, `0x99a5ce..0x99a673`). |
+| 4 | `0xb42d10` truncates | The dot's corners `floor()`; the label at `floor(x - floor(w / 2))`, `floor(top - h)` from the unrounded top. The comments say `_ftol2`. Tested with fractional pixels. |
+| 5 | The hover box was 1 px too wide | `hover_hit` takes the corners less the half pixel, inset by 2, with the mouse in whole pixels: L + 2 ..= L + 13. The test now asserts the original's edges (13 in, 14 out). |
+| 6 | "the first member only" | Reworded: the first member whose quad holds the mouse (`0x61fec0`). |
+| 7 | How the world map places a field member | `party_gui.md` section 9: the marker's own transform from `+0x97ac`/`+0x97b0` (`0x61f94d..0x61f9b7`); `0x60fbd0`/`0x60fa90` only for dungeons. |
+| 8 | The world-id stand-in not labelled OURS | Labelled OURS in World3D and in section 9's OURS list. |
+| 9 | Draw order omitted the quest marks | Added (`+0x3c0`/`+0x3c4`, `0x664ae6..`) to the code comment, section 9 and the TODO entry. OpenSRO draws no quest marks yet. |
+| 10 | The hover label sat over every dot | The label moves to right after the hovered dot, so later dots and the marker cover it (`0x61ffc1`). Tested. |
+| 11 | "under its buttons" is READ | Relabelled (`0xb8f210`: slot 13, then the child list through slot 14). |
+| 12 | Wrong section reference | `party_map_marks.gd` now names section 9. |
+| 13 | Tests that could not fail | The transpose is checked with an off-axis probe in every quadrant: dropping `flip_h` or the -90 degrees fails it. `HudWorldmap.place_party_dots` is tested for truncated centres, under the marker, the hover name and its place, the `*`, one pixel past the box, and a member leaving. |
+
+**After the fixes:**
+- `party_map_marks_test.gd`: 57 checks, 0 failures; `hud_minimap_test.gd` passes.
+- `check` ALL LOAD.
+- Full suite: 230 suites, 0 failing.
+
+**Live**, the same scene with Cara moved 540 south (`dot@(0.0,45.0)`):
+- The dot's green pixels span y 152..157 of the window crop, with a centroid 45.5 px south of the
+  aperture centre.
+- Its farthest green pixel is 48 px out, past where the ring starts due south (43.5 px). So it is
+  drawn over the frame (MEASURED, `/var/tmp/r717/live/f00000470.png`).
+- The S button draws over it.
+
+**Perf gate** (`--sites jangan --frames 12000`, against `dca31493`):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 1.56 | 1.49 | SAME |
+| entry ms | 9883.5 | 9430 | SAME |
+| freeze ms | 3464 | 3290 | SAME |
+| hitches | 4 | 4 | SAME |
+
+**Review** (kept beside the notes): `docs/rounds/party717_review.md` (no BUG, REGRESSION or PERF; the marks drawn over the minimap frame as vslot_013 does, the job party's star, truncation, the hover box, labels; all fixed).
+
+Perf gate (`--sites jangan --frames 12000`, against `dca31493`), after the review fixes:
+
+| jangan | base | head | verdict |
+|---|---|---|---|
+| frame ms | 1.56 | 1.49 | SAME |
+| entry ms | 9883.5 | 9430 | SAME |
+| freeze ms | 3464 | 3290 | SAME |
+| hitches | 4 | 4 | SAME |
+
+## Seven-hundred-and-sixteenth round: every receiver of a share is told what it gained -- retail 0x3056, 0x304E's gold total, and the client's 0x3068 line
+
+The party epic's follow-up to round 712, which left two gaps on the wire: a party member who never
+hit a monster gained its share of EXP and skill EXP in silence (its client's gauge did not move
+until the next character load), and the client could not read the Item Auto Share notice `0x3068`
+the server already sent. The user's standing instruction: as close to the original as possible.
+Labels: READ, INFERRED, OPEN, OURS.
+
+### What the original does (READ, both binaries)
+
+Full tables in `docs/protocol/party_protocol.md`, "Rewards: 0x3056 and 0x304E".
+
+- **0x3056** is written at the end of `GObjPC_GainExpAndLevel` (CGObjPC slot 92, `gs:0x4e5250`,
+  appends `0x4e583c..0x4e58fa`) and read by `Client_ApplyExpAndLevelUp` (`c:0x8a97c0`) with the
+  same widths: u32 source object id, u64 EXP (signed), u64 skill EXP, u8 flags, then two optional
+  training-camp blocks keyed on the flags, then a **u16 RemainStatPoint only when the call raised
+  the level** (`0x4e58df`). The kill reward calls slot 92 once per receiver with the victim's unique
+  id as the source (`0x4eabd2..0x4eabd5`), so **every member a kill pays gets its own 0x3056**.
+  Nothing is sent when both amounts are zero (`0x4e5393..0x4e53a1`). At level 110 the EXP in the
+  message is clamped to what fits (`0x4e5365..0x4e5390`).
+- The client prints, type 1: `UIIT_MSG_STATE_GAIN_EXP` / `_LOSE_EXP` / `_GET_SKILL_EXP`; it floats
+  the gain from the source object if it can find it (`+0x759`/`+0x75a` counters).
+- **A party gold share** is told with **0x304E kind 1**, not 0x3068: the split `gs:0x5bc7f0` calls
+  `CGObjPC::OffsetGold` (slot 91, `0x4e4b60`) with `(amount, 0, 0x17, 1, 1)` for every share,
+  which sends `FUN_004e3fb0` kind 1: u8 1, u64 the new total, u8 show. The client (`c:0x8a70d0`)
+  prints `UIIT_MSG_STATE_GAIN_GOLD` "[%d]gold gained." with the rise when shown.
+- **0x3068 on the client** (`c:0x873990`): the recipient's name from the party list, the item's
+  from its name key; `UIIT_MSG_PARTYGET_ITEM_EXPENDABLE` "Item [%s %d pieces]is distributed to
+  [%s]." type 4 for another member (every non-gold class), `UIIT_MSG_STATE_GET_ITEM_EXPENDABLE`
+  type 1 for the player's own JID, `UIIT_MSG_PARTYGET_GOLD` type 4 for gold.
+
+### What changed
+
+**Server**
+- New `server/internal/charmsg`: the 0x3056 and 0x304E kind-1 codecs (flags always 0: OpenSRO has
+  no training camp).
+- `session/rewardnotice.go` + `killshare.go`: `distributeKill` sends 0x3056 to **every receiver,
+  the killer included**, with the EXP its row actually rose by (`expAdded`, the level-cap clamp),
+  its skill EXP, and its stat points after a level-up. OpAttackResult's own EXP tail (round 639)
+  stays on the wire, so an older client still prints its line; this client no longer reads it for
+  that.
+- `session/grounditem.go`: gold-share members other than the picker are sent 0x304E kind 1, shown.
+  **OURS:** the picker is told by OpenSRO's own pick-up reply, which already prints its line; the
+  original sends the picker 0x304E too. The old comment there ("the client prints
+  UIIT_MSG_PARTYGET_GOLD") was wrong: that line belongs to 0x3068's gold form, which this server
+  never sends.
+- `cmd/partybot`: `-mode share` now checks the 0x3056 each bot receives; bot mode gains `-kill
+  SPECIES -kill-after D` (once in a party, kill one monster with a real blow).
+
+**Client**
+- New `net/reward_notice.gd` (`RewardNoticeNet`): decoders for 0x3056 and 0x304E kind 1, and the
+  original's lines as static functions. `PartyNet.decode_item_notice` + `PartyState.item_notice`
+  for 0x3068. `NetClient` signals `exp_gained` and `gold_total`.
+- `World3D`: prints the gain lines from 0x3056 (not from the attack result any more, so the killer
+  is not told twice), the gold line from 0x304E, the 0x3068 line, and refreshes the EXP gauge and
+  purse from the server's stats.
+- **OURS:** 0x3056's stat-point u16 and 0x3068's item class are taken from the bytes left, where
+  the original runs its level arithmetic and item table (equal for every message this server
+  writes); the gauge and purse are refreshed from the server rather than advanced locally.
+
+**Fixtures** (`gen_fixtures.py`, the other 60 byte-identical): `3056_kill`, `3056_levelup`,
+`3056_lose`, `304e_gold`.
+
+### Tests
+
+- **Go:** `charmsg` round trips; `party` wire test encodes the four new fixtures byte for byte;
+  `session`: every share receiver (killer and the member who never hit) gets 0x3056 with its
+  payout, a level-up carries the row's stat points, an outsider gets none, a zero award sends
+  nothing, a gold-share member gets its total. `go test -count=1 -p 1 ./...`: all packages pass
+  (after `DecodeGold` was explained in the orphans gate).
+- **GD** (`net/reward_notice_test.gd`, 24 checks): every fixture decoded and re-encoded, the lines,
+  the gold clamp, the short-packet drops, PartyState naming the 0x3068 recipient. On the box:
+  `check` ALL LOAD (602 scripts), full suite 230 suites, 0 failing.
+- **Live, server** (the real binary on the box, in memory, retail leveldata, the round-712
+  monsters.csv with ExpToGive, `partybot -mode share -level 18`):
+
+```
+--- 2: an Exp Auto Share party of two; one member kills
+[psMate] <- 0x3056 source 26 EXP 29 skill EXP 133 level-up false
+[psKill] <- 0x3056 source 26 EXP 29 skill EXP 133 level-up false
+    killer +29 EXP, mate +29 EXP; want both trunc(54 x 0.55) = 29
+--- 3: an Exp Free-For-All party of two; one member kills
+[psFfa] <- 0x3056 source 27 EXP 55 skill EXP 249 level-up false
+    killer +55 EXP, idle member +0 EXP; want trunc(54 x 1.03) = 55 and 0
+--- all share steps passed
+```
+
+  (The idle free-for-all member received no 0x3056, which the scenario now checks.) The scenario's
+  ×0.55 check holds only for a monster fewer than 5 levels above the bots (round 712's note); at
+  the default `-level 10` against level-20 chakji the party gap bonus applies and the check fails
+  by design, so the run uses `-level 18`.
+
+- **Live, client** (`/var/tmp/r716/live.sh` on the box; the stock `qa_shot.sh --server` on the shared
+  lock, CLIENT_DIR `/opt/opensro-client-r716`): Bram is the rendered client, levelled to 5 so it may
+  create a party, and teleported beside the partybot Killa (level 1). Bram invites Killa (the
+  settings' READ defaults give type 0x05, EXP share), Killa accepts and, 8 s later, kills a
+  mangnyang with a real blow. Bram never hits. Killa's log:
+
+```
+[Killa] <- 0x3080 kind=2 inviter=1 flags=0x05
+[Killa] <- 0xb067 [1] jid=2
+[Killa] <- 0x3056 source 25 EXP 4 skill EXP 21 level-up false
+[Killa] killed MOB_CH_MANGNYANG #25 (HP 54): EXP +4, SP +21
+```
+
+  Bram's client log (`/var/tmp/r716/live/godot.log`):
+
+```
+SYSLOG [1] [9]Experience Points gained.
+SYSLOG [1] [24]skill experience point gained.
+World3D: 0x3056 from 25: EXP 9, skill EXP 24
+```
+
+  The member who never hit got its own share and its client printed the original's two type-1
+  lines. (Bram, level 5, out-levels the level-1 killer by 4 against the same monster, so its share
+  is larger.) Getting there took five attempts, each a set-up fault, none the code: the bot
+  invited before Bram's `/tp` landed (refused 4, too far), the bot's `/spawn` read its own stale
+  `/tp` reply (fixed: queued GM replies are drained before `-kill`), chakji is not in the hand
+  roster without a monster table, a level-18 kill of a mangnyang pays 0 (so, as the original does,
+  nothing is sent), and a level-1 creator is refused by the level-5 rule. Server log: no errors.
+  The frames were deleted; the logs stay on the box.
+
+### Review fixes (independent review `83c7e77e`, `docs/rounds/party716_review.md`)
+
+No BUG and no REGRESSION; six DEPARTURE/MINOR findings, all fixed as close to the original as read.
+
+| # | finding | fix | test |
+|---|---|---|---|
+| F1 | 0x3056 went out before the level-up announcements; the original sends it last (`GObjPC_SetLevel` 0x4e4d90 sends 0x3054 and the HP/MP update first) | `distributeKill` sends a non-killer its OpLevelUp, then 0x3056; the killer's 0x3056 rides on its AttackResult (an unencoded field) and the attack path sends it after OpAttackResult and OpLevelUp (`combat.go`, and the status-tick kill in `status.go`). OpLevelUp is OpenSRO's own 0x0067 rather than 0x3054 | `TestKillShareSendsExpGainToEveryReceiver` reads Bram's packets in wire order: OpLevelUp before 0x3056; the killer gets none from `distributeKill` |
+| F2 | the 110 clamp is keyed on the STARTING level (`0x4e52c7`); `expAdded` also clamped an award crossing into 110 | `killPayout.startLevel`; `expGainFor` sends the award, and `expAdded` only when the receiver started at `MaxCharacterLevel` | `TestExpGainClampsOnlyAtTheCap` |
+| F3 | the gold line's base was overwritten by every stats reply, including unprompted regen pushes that can land between the split's credit and its 0x304E | `NetClient` counts its own stats requests (`last_stats_reply_requested`); the base is seeded by the first reply, then moved only by 0x304E and by replies this client asked for, never by a push. **OURS** beyond the original's purse (gold messages only): OpenSRO's shop, trade and storage still change gold without a 0x304E, and their requested refresh keeps the base true | box suite; reasoning recorded in `World3D._on_world_stats` |
+| F4 | the killer sent two or three stats requests per kill | `_request_world_stats` is coalesced to one deferred request a frame (as `_refresh_stat_panel`) | box suite |
+| F5 | the original also sends 0x304E kind 1 on a solo gold pick-up, unshown, and the split credits the picker too | READ and sent: a solo pick-up's credit `gs:0x4eaca0` calls `OffsetGold(amount, 0, 0x19, 1, 0)` (unshown); the split calls `OffsetGold(share, 0, 0x17, 1, 1)` for **every** share, the picker's included (shown). Both are sent now; the spec carries the table. The picker's own item-move reply (`0xB034`, `FUN_004e9480`) prints GAIN_GOLD from its own u32 (`c:0x87bedc..0x87bf20`); whether that is the pile or the share was not traced (**OPEN**), so OpenSRO's pick-up reply keeps printing the share | `TestGoldPickUpTellsEveryShare` |
+| F6 | no handler-level test of the gold split | `TestGoldPickUpTellsEveryShare` drives `GroundItemHandler` (added to the party test world): an Item Auto Share pick-up of 1001 gives the picker 501 and both members one shown 0x304E with their rows' totals; a character outside the party hears nothing; a solo pick-up sends the picker an unshown one. A share that failed to credit is not driven (the memory store cannot be made to fail one credit) | itself |
+
+After the fixes: the first full Go run caught two things, both fixed. `TestGroundDropAndPickUpFlow`
+read the solo gold pick-up's new 0x304E as its pick-up result (the credit's 0x304E comes first),
+so it now checks the unshown 0x304E and then the result. And the orphans gate flagged
+`sendExpGain`, unused once F1 moved every send onto a session in hand, so it was removed. Then
+`go test -count=1 -p 1 ./...` all packages pass; on the box (shared lock) `check`
+ALL LOAD (602 scripts) and the full suite 230 suites, 0 failing; `partybot -mode share -level 18`
+passes again (the mate's 0x3056 29/133 equals its row's rise, the idle member gets none). No
+orphaned processes.
+
+### Left open
+
+- The gain floated from the source object (`+0x759`/`+0x75a`, a log-scale bucket): not built.
+- The death penalty still refreshes from stats instead of sending its negative 0x3056.
+- 0x304E's other kinds (2 skill points, 3 stat points, 4 the berserk count, 0x10) are not spoken;
+  the client still learns those from OpenSRO's stats reply.
+- What u32 the original's `0xB034` gold pick-up reply carries for a split picker (pile or share).
+
+No perf gate: a message handler and system lines, no per-frame code.
+
+**Review** (kept beside the notes): `docs/rounds/party716_review.md` (no BUG or REGRESSION; six departures and minors -- the level-up/0x3056 order, the 110 clamp, the gold line's base, coalesced stats requests, the solo 0x304E, a handler test -- all fixed).
+
+No perf gate: no per-frame code changed (message handlers and system lines).
+
+## Round 715 follow-up (2026-10-04): the player block's stat drop-down draws over the party member boxes
+
+The user's report with a screenshot of the original: the stat panel covers the first member's box.
+The board was added after the player block, so it drew on top; `World3D._build_quick_party` now
+moves it directly below the player block (`9a98165a`). Neither widget sets `z_index`/`top_level`,
+so tree order decides. Rendered against a live two-character party
+(`/var/tmp/rel/pmiorder/f00000478.png`): the open panel covers Bram's box.
+
 ## Seven-hundred-and-fifteenth round: the party member boxes on the HUD
 
 The HUD half of the party epic's last client lane. Built on `int/party` (`85e6c063`: S1 round
