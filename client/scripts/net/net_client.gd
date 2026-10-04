@@ -174,12 +174,14 @@ signal skill_moved(moved: SkillNet.SkillMove)
 ## cast a skill -- its start, then its act.
 signal skill_cast(cast: SkillNet.SkillCast)
 
-signal party_create_result(result: PartyNet.Result)
-signal party_join_result(result: PartyNet.Result)
-signal party_leave_result(ok: bool, reason: String)
-signal party_member_joined(member: PartyNet.MemberJoined)
-signal party_member_left(character_id: int)
-signal party_info_result(result: PartyNet.Result)
+## The party (round 711): the client's party manager, fed by the retail party
+## messages (PartyNet, PartyState). Windows read it and listen to its signals;
+## it lives here so a message that arrives before World3D listens is kept.
+var party := PartyState.new()
+## Opcodes another module answers (round 711's hook for the party-match
+## lane): opcode -> Callable(data: PackedByteArray). Checked before the
+## "unhandled" warning, after every opcode this file routes itself.
+var _extra_handlers := {}
 
 signal guild_create_result(result: GuildNet.Result)
 signal guild_join_result(result: GuildNet.Result)
@@ -364,6 +366,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	buff_roster.clear()
 	npc_roster.clear()
 	body_modes.clear()
+	party.reset_connection()
 	_unhandled_warned.clear()
 	_use_tls = use_tls
 	_tls_host = host
@@ -442,6 +445,7 @@ func disconnect_from_server() -> void:
 	buff_roster.clear()
 	npc_roster.clear()
 	body_modes.clear()
+	party.reset_connection()
 	_forget_session_lists()
 	_list_watch.answered()
 	disconnected.emit()
@@ -725,17 +729,41 @@ func skill_state(char_name: String) -> void:
 func raise_mastery(char_name: String, mastery_id: int) -> void:
 	_send(SkillNet.OP_RAISE, SkillNet.encode_raise_mastery(char_name, mastery_id))
 
-func create_party(char_name: String) -> void:
-	_send(PartyNet.OP_CREATE, PartyNet.encode_name_request(char_name))
+## Registers `handler` (Callable(data: PackedByteArray)) for `opcode`, for a
+## module this file does not route itself (round 711; the party-match lane
+## registers its messages through it). A later registration replaces one.
+func _init() -> void:
+	# The invitation's auto-decline (PartyState._on_request) answers without
+	# the player.
+	party.send_answer.connect(func(payload: PackedByteArray) -> void: _send(PartyNet.OP_REQUEST, payload))
 
-func join_party(char_name: String, party_id: int) -> void:
-	_send(PartyNet.OP_JOIN, PartyNet.encode_join(char_name, party_id))
+func register_handler(opcode: int, handler: Callable) -> void:
+	_extra_handlers[opcode] = handler
 
-func leave_party(char_name: String) -> void:
-	_send(PartyNet.OP_LEAVE, PartyNet.encode_name_request(char_name))
+## 0x7060: create a party with the selected player, with the settings
+## block's type byte (party_gui.md §1, c:0x81c6d0).
+func party_create(target_world_id: int) -> void:
+	_send(PartyNet.OP_CREATE, PartyNet.encode_create(target_world_id, party.flags_byte()))
 
-func party_info(char_name: String) -> void:
-	_send(PartyNet.OP_INFO, PartyNet.encode_name_request(char_name))
+## 0x7062: invite the selected player into this party (c:0x81c8f0).
+func party_invite(target_world_id: int) -> void:
+	_send(PartyNet.OP_INVITE, PartyNet.encode_invite(target_world_id))
+
+## 0x7061: leave the party -- also what the leader's Dismiss sends
+## (c:0x6d5a00 -> jmp 0x81cad0).
+func party_leave() -> void:
+	_send(PartyNet.OP_LEAVE, PartyNet.encode_leave())
+
+## 0x7063: banish a member (the leader's row button, c:0x81cb70).
+func party_kick(member_jid: int) -> void:
+	_send(PartyNet.OP_KICK, PartyNet.encode_kick(member_jid))
+
+## 0x3080: the invitation box's answer (c:0x81cc30 / 0x81cd20 / 0x81ce00 /
+## 0x81cef0). Nothing is sent when no invitation is showing.
+func party_answer(accept: bool) -> void:
+	var payload := party.answer(accept)
+	if not payload.is_empty():
+		_send(PartyNet.OP_REQUEST, payload)
 
 func create_guild(char_name: String, guild_name: String) -> void:
 	_send(GuildNet.OP_CREATE, GuildNet.encode_create(char_name, guild_name))
@@ -1170,19 +1198,9 @@ func _dispatch(p: Packet) -> void:
 				print("SKILL move: character %d skill %d to (%.1f, %.1f, %.1f)" % [
 					sm.character_id, sm.skill_id, sm.x, sm.y, sm.z])
 				skill_moved.emit(sm)
-		PartyNet.OP_CREATE_RESULT:
-			party_create_result.emit(PartyNet.decode_result(p.data))
-		PartyNet.OP_JOIN_RESULT:
-			party_join_result.emit(PartyNet.decode_result(p.data))
-		PartyNet.OP_LEAVE_RESULT:
-			var r := PartyNet.decode_leave_result(p.data)
-			party_leave_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		PartyNet.OP_MEMBER_JOINED:
-			party_member_joined.emit(PartyNet.decode_member_joined(p.data))
-		PartyNet.OP_MEMBER_LEFT:
-			party_member_left.emit(PartyNet.decode_member_left(p.data))
-		PartyNet.OP_INFO_RESULT:
-			party_info_result.emit(PartyNet.decode_result(p.data))
+		PartyNet.OP_CREATE_ACK, PartyNet.OP_INVITE_ACK, PartyNet.OP_JOIN_ACK, \
+				PartyNet.OP_PARTY_INFO, PartyNet.OP_REQUEST, PartyNet.OP_EVENT:
+			party.handle(p.opcode, p.data)
 		GuildNet.OP_CREATE_RESULT:
 			var r := GuildNet.decode_result(p.data)
 			_keep_guild(r)
@@ -1309,5 +1327,7 @@ func _dispatch(p: Packet) -> void:
 			if r != null:
 				recall_designate_result.emit(r)
 		_:
-			if _should_warn_unhandled(p.opcode):
+			if _extra_handlers.has(p.opcode):
+				(_extra_handlers[p.opcode] as Callable).call(p.data)
+			elif _should_warn_unhandled(p.opcode):
 				push_warning("NetClient: unhandled opcode 0x%04x (warned once per connection)" % p.opcode)

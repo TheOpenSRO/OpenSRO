@@ -381,43 +381,6 @@ layout_mode = 2
 text = ""
 autowrap_mode = 2
 
-[node name="Party" type="VBoxContainer" parent="UI/Control/ActionTabs"]
-visible = false
-layout_mode = 2
-
-[node name="PartyList" type="ItemList" parent="UI/Control/ActionTabs/Party"]
-custom_minimum_size = Vector2(0, 100)
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="PartyButtonRow" type="HBoxContainer" parent="UI/Control/ActionTabs/Party"]
-layout_mode = 2
-
-[node name="CreateButton" type="Button" parent="UI/Control/ActionTabs/Party/PartyButtonRow"]
-layout_mode = 2
-text = "Create Party"
-
-[node name="LeaveButton" type="Button" parent="UI/Control/ActionTabs/Party/PartyButtonRow"]
-layout_mode = 2
-text = "Leave Party"
-
-[node name="PartyJoinRow" type="HBoxContainer" parent="UI/Control/ActionTabs/Party"]
-layout_mode = 2
-
-[node name="JoinIdInput" type="LineEdit" parent="UI/Control/ActionTabs/Party/PartyJoinRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-placeholder_text = "Party ID"
-
-[node name="JoinButton" type="Button" parent="UI/Control/ActionTabs/Party/PartyJoinRow"]
-layout_mode = 2
-text = "Join by ID"
-
-[node name="PartyStatusLabel" type="Label" parent="UI/Control/ActionTabs/Party"]
-layout_mode = 2
-text = ""
-autowrap_mode = 2
-
 [node name="Guild" type="VBoxContainer" parent="UI/Control/ActionTabs"]
 visible = false
 layout_mode = 2
