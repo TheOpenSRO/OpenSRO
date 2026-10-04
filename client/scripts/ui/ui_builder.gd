@@ -872,10 +872,34 @@ func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(tr)
 
+## A CIFEdit: text over the art behind it, in the layout's face, size and
+## colour.
+##
+## **No box of Godot's own** (round 718). The client's edit draws no frame:
+## every one in the archive sits on art of its own (party matching's three
+## on `com_bg_tile_e` inside a `com_blacksquare_`). Godot's default LineEdit
+## style is a padded box whose minimum height (content margins plus the
+## line) is taller than the layouts' 11-15 px edit rects, so the control
+## grew and drew its text 4-5 px low in the black boxes (the user's report:
+## party matching's "1 ~ 110" and the page number "too low"). With the style
+## empty the minimum height is the font's own line, the text starts at the
+## edit rect's top -- the layouts' VAlign 0 -- and lands in the box where
+## the original draws it (MEASURED against the user's screenshot of the
+## original, docs/rounds/party718.md). `TwoDtBuilder._edit` already built
+## its edits this way. HAlign is left as it was: how CIFEdit applies it is
+## not read.
 func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 	var edit := LineEdit.new()
 	if def.text != "":
 		edit.placeholder_text = _resolve_text(def.text)
+	for style in ["normal", "focus", "read_only"]:
+		edit.add_theme_stylebox_override(style, StyleBoxEmpty.new())
+	var font := font_at(def.font_index)
+	if font != null:
+		edit.add_theme_font_override("font", font)
+	var size: int = FONT_SIZES[def.font_index] if def.font_index >= 0 and def.font_index < FONT_SIZES.size() else FONT_SIZE_FALLBACK
+	edit.add_theme_font_size_override("font_size", size)
+	edit.add_theme_color_override("font_color", def.font_color)
 	return edit
 
 ## The artwork a list row draws itself with, and the one it uses when it is
@@ -1122,12 +1146,18 @@ func _build_spin(def: UiLayoutParser.ControlDef) -> Control:
 
 	var label := Label.new()
 	label.name = "Value"
-	label.position = SPIN_LABEL_RECT.position
-	label.size = SPIN_LABEL_RECT.size
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_font(label, def)
+	# Laid on its 18x12 rect by place_label, the client's rule (round 718): a
+	# Godot Label is never shorter than its line (15 px for FontIndex 0), so
+	# set straight to 12 it grew downward and drew the page number low -- the
+	# user's "numbers ... too low" under party matching. Centred, the line
+	# now overruns the rect evenly, as the client's centred text does.
+	label.set_meta(AUTHORED_RECT_META, SPIN_LABEL_RECT)
+	place_label(label, SPIN_LABEL_RECT)
+	_relay(label)
 	ctrl.add_child(label)
 
 	for side in [["Left", SPIN_LEFT_DDJ, 0.0, -1], ["Right", SPIN_RIGHT_DDJ, float(SPIN_RIGHT_X), 1]]:

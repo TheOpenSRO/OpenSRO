@@ -274,6 +274,64 @@ func _test_search(builder: UiBuilder) -> void:
 		"the run's end brings them back")
 	(made[3] as Control).queue_free()
 
+## Round 718, the user's report (2026-10-04).
+func _test_round718(builder: UiBuilder) -> void:
+	var party := PartyState.new()
+	var made := _make(builder, "Aria", 30, party)
+	var w: PartyMatchWindow = made[0]
+	var st: PartyMatchState = made[1]
+	# The stale listing: the leader's own entry stays pinned beside a new one.
+	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	_check(w.shown_rows().size() >= 1 and (w.shown_rows()[0] as PartyMatchNet.Row).number == 12, "the registration is pinned first")
+	var ev := PartyNet.Event.new()
+	ev.kind = PartyNet.EVENT_DISSOLVED
+	party._on_event(ev)
+	st.handle(_page_of_one(13, "Bram"), PartyMatchNet.OP_PAGE_ACK)
+	var numbers: Array = []
+	for r in w.shown_rows():
+		numbers.append((r as PartyMatchNet.Row).number)
+	_check(numbers == [13], "after the party dissolves only the new entry is listed (got %s)" % str(numbers))
+	# The edits: no box of Godot's own, so no taller than their line.
+	var lo := w.node("GDR_PARTYMATCH_SEARCH_MIN_LEVEL_EDIT") as LineEdit
+	if lo != null:
+		# The size itself settles a frame later (settle_authored_rects: the
+		# theme cache refreshes in the tree), so what is checked here is what
+		# makes it settle small: every state's style pads nothing.
+		var pads := Vector2.ZERO
+		for st_name in ["normal", "focus", "read_only"]:
+			var sb := lo.get_theme_stylebox(st_name)
+			_check(sb is StyleBoxEmpty, "a CIFEdit's %s style is empty: no box of its own" % st_name)
+			if sb != null:
+				pads += sb.get_minimum_size()
+		_check(pads == Vector2.ZERO, "no style padding, so the edit settles at its font's line (got %s)" % str(pads))
+	else:
+		_check(false, "the min level edit is built")
+	# The Purpose value: right-aligned, an overflow cut on the left.
+	_check(w._combo_label != null and is_equal_approx(w._combo_label.position.x + w._combo_label.size.x, w._combo_clip.size.x),
+		"the Purpose value's right edge is the text rect's right edge")
+	_check(w._combo_clip != null and w._combo_clip.size.x == 74 - 30, "the text rect is {5, 0, W-30, H} wide (44)")
+	w._combo.set_item_text(0, "A purpose name far too long for the box")
+	w._combo.select(0)
+	w._update_combo_text()
+	_check(w.combo_text_overflow() > 0.0 and w._combo_clip.clip_contents
+		and is_equal_approx(w._combo_label.position.x + w._combo_label.size.x, w._combo_clip.size.x),
+		"a too-long value keeps its right edge and overflows (clipped) on the left")
+	(made[3] as Control).queue_free()
+
+func _page_of_one(number: int, leader: String) -> PackedByteArray:
+	var p := PartyMatchNet.Page.new()
+	p.ok = true
+	p.page_count = 1
+	p.page_index = 0
+	var r := PartyMatchNet.Row.new()
+	r.number = number
+	r.leader_name = leader
+	r.min_level = 1
+	r.max_level = 110
+	r.title = "t"
+	p.rows.append(r)
+	return PartyMatchNet.encode_page_ack(p)
+
 func _test_register(builder: UiBuilder) -> void:
 	# The fixture's type byte is 0x03 (exp and item share, no "anyone").
 	var party := PartyState.new()
@@ -365,6 +423,7 @@ func _initialize() -> void:
 	_test_register(builder)
 	_test_req_join(builder)
 	_test_full_party_delete(builder)
+	_test_round718(builder)
 	if _failures == 0:
 		print("party_match_window_test: all checks passed")
 		quit(0)
