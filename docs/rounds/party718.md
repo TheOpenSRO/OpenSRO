@@ -157,3 +157,45 @@ original `02_BQfjkpc.png` is a 2x screenshot, halved below):
 The level digits now sit 1 px higher than the original's. That is the font's own metrics
 (Godot's line vs the client's GDI cell); how CIFEdit offsets its text was not read, so no
 constant was added to close it.
+
+**Two other windows, before and after, MEASURED** (`/var/tmp/r718/r718_third.sh`; the matching
+window's search row filled with "Bram", then Form party left up; and the inventory):
+
+| what | before | after |
+|---|---|---|
+| register dialog, Min box (`ifpartymatchregister`): bottom rows | grey on 3 of 40 pixels a row: ticks | row 341 is 37 grey: one line |
+| register dialog, the "1" in the Min box (black rows 322-340) | under Godot's grey box | rows 327-335: 5 px above, 5 below |
+| matching window, typed "Bram" in Name (black 195-213, line 214) | under Godot's box (its pale default text) | rows 201-209: 6 above, 4 below (the Name rect is y 79, the level edits' 78) |
+| inventory's item-grid frame (`com_lattice_outline_`), its bottom strip | rows 516-518: `#6A696A` on every 4th pixel (35-36 a row, longest run 1) | row 516: one 138-px run, x 478..615 |
+
+So the six-piece fix also straightens the inventory's grid border (and storage's, exchange's,
+the store's and the rest of the 14 lattice outlines), which had the same ticks, finer.
+
+**Not rendered:** the login and character-create screens build their own LineEdits with empty
+styles already (`CharacterCreate.gd`'s `_name_edit`), so the builder change does not reach them;
+a 90-frame Login run only reached the title fly-through. The message boxes' and whole chat's
+edits share `_build_edit` and were not rendered.
+
+**Frames kept on the box:** `/var/tmp/r718/{before,after}/f00000330.png` (the matching window),
+`/var/tmp/r718/{tb,ta}-form/f00000310.png` (the register dialog), `/var/tmp/r718/{tb,ta}-inv2/
+f00000410.png` (the inventory); the user's original `orig02.png` beside them. `before`/`tb` are
+`dev`'s client (`f6989ea9`), `after`/`ta` this branch's; the server is this branch's in both.
+
+## Runs
+
+- Box, this branch's head (`RENDER_DIR=/opt/opensro-client-r718`, `GODOT_LOCK=/var/tmp/r718/lock`):
+  `check` ALL LOAD (604 scripts, 9 scenes); full suite 231 suites, 0 failing.
+- Live renders on the shared lock with the stock tools; no renamed binaries; each run's partybots
+  killed by PID; nothing left running.
+- No perf gate: no per-frame world code changed (UI builder construction, message handling).
+
+## OURS / not read
+
+- The Purpose value's right alignment and left clip follow the user's description; the combo's
+  drawing code was not read.
+- How CIFEdit applies HAlign, and how it offsets its text vertically, were not read; the level
+  digits sit 1 px higher than the original's (MEASURED), left as it is rather than closed with an
+  unread constant.
+- How CNIFStretchWnd's inner rect maps onto a control's rect (`0x499e10` places its quads around
+  one) is not read; the placement is the builder's as before, only the UVs and the reused edges'
+  thickness are READ.
