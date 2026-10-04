@@ -404,24 +404,103 @@ func TestPartyLogoutRemovesWithReasonOne(t *testing.T) {
 }
 
 // TestPartyAnswerAfterTheInviterLeft is refused 0x2c0e, as the engine does.
+// Whatever the answer: the GameServer tests the inviter before the answer
+// (READ, GS 0x5be350).
 func TestPartyAnswerAfterTheInviterLeft(t *testing.T) {
-	w := newPartyWorld(t)
-	w.c["Aria"].send(party.OpCreate, party.EncodeCreate(w.jid("Bram"), 0))
-	w.c["Bram"].next(party.OpInvitation)
-	w.c["Aria"].conn.Close()
+	for _, answer := range [][]byte{party.EncodeAnswerYes(), party.EncodeAnswerNo(party.CodeCreateRefused)} {
+		w := newPartyWorld(t)
+		w.c["Aria"].send(party.OpCreate, party.EncodeCreate(w.jid("Bram"), 0))
+		w.c["Bram"].next(party.OpInvitation)
+		w.c["Aria"].conn.Close()
+		waitGone(t, w, "Aria")
+		w.c["Bram"].send(party.OpInvitation, answer)
+		if a := expectAck(t, w.c["Bram"], party.OpJoinAck); a.OK || a.Code != party.CodeCantFindCreator {
+			t.Fatalf("answer % x: invitee %+v, want 0x2c0e", answer, a)
+		}
+	}
+}
+
+func waitGone(t *testing.T, w *partyWorld, name string) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, on := w.hub.FindByName("Aria"); !on {
-			break
+		if _, on := w.hub.FindByName(name); !on {
+			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("Aria never left the world")
+			t.Fatalf("%s never left the world", name)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	w.c["Bram"].send(party.OpInvitation, party.EncodeAnswerYes())
-	if a := expectAck(t, w.c["Bram"], party.OpJoinAck); a.OK || a.Code != party.CodeCantFindCreator {
-		t.Fatalf("invitee %+v, want 0x2c0e", a)
+}
+
+// TestPartyInviteeDisconnectFreesIt: an invitee who leaves the world no longer
+// holds the invitation, and the inviter still hears the timeout (OURS,
+// party.Hub.DetachSession).
+func TestPartyInviteeDisconnectFreesIt(t *testing.T) {
+	w := newPartyWorld(t)
+	w.parties.Timeout = 400 * time.Millisecond
+	w.c["Aria"].send(party.OpCreate, party.EncodeCreate(w.jid("Eli"), 0))
+	w.c["Eli"].next(party.OpInvitation)
+	w.c["Eli"].conn.Close()
+	waitGone(t, w, "Eli")
+	if st := w.parties.State(w.ids["Eli"]); st != party.StateFree {
+		t.Fatalf("a departed invitee's state %d, want 0", st)
+	}
+	if st := w.parties.State(w.ids["Aria"]); st != party.StatePending {
+		t.Fatalf("the inviter's state %d, want 1 until the timeout", st)
+	}
+	if a := expectAck(t, w.c["Aria"], party.OpCreateAck); a.OK || a.Code != party.CodeTimeout {
+		t.Fatalf("inviter %+v, want the timeout", a)
+	}
+}
+
+// TestPartyJoinKeepsOthersPendingUpdates: a join builds only the joiner's
+// record (GS 0x5bc210); a member's change the sampler has not sent yet is
+// still sent after it.
+func TestPartyJoinKeepsOthersPendingUpdates(t *testing.T) {
+	w := newPartyWorld(t)
+	w.form(t, "Aria", "Bram", party.FlagExpShare)
+	w.move(t, "Bram", 150, 10)
+	w.join(t, "Aria", "Cato", "Aria", "Bram")
+	w.deps.sendPartyUpdates(context.Background())
+	for _, n := range []string{"Aria", "Cato"} {
+		if e := expectEvent(t, w.c[n]); e.Kind != party.EventUpdate || e.JID != w.jid("Bram") || e.Record.Mask != party.MaskPosition {
+			t.Fatalf("%s heard %+v, want Bram's position", n, e)
+		}
+	}
+}
+
+// TestPartyFlagGates: pickup rights need the item-share bit; the gap bonus and
+// the nest arming need the exp-share bit (round 710's second review).
+func TestPartyFlagGates(t *testing.T) {
+	m := func(id int64) party.Member {
+		return party.Member{Session: gateway.NewTestSession(uint64(7700 + id)), CharacterID: id, Name: "m", Level: 10}
+	}
+	h := party.NewHub()
+	h.Form(m(1), m(2), party.FlagExpShare)
+	h.Form(m(3), m(4), party.FlagItemShare)
+	same := samePartyFunc(h)
+	if same(1, 2) {
+		t.Fatal("an item free-for-all party shared pickup rights")
+	}
+	if !same(3, 4) || same(1, 3) {
+		t.Fatal("item-share pickup rights")
+	}
+	// Round 712: the exp-share gate is the distributor's grouping
+	// (partyGroupOf, planKill); killshare_test covers the gap bonus and the
+	// arming through it.
+	if group := partyGroupOf(h); group(1) == 0 || group(3) != 0 {
+		t.Fatal("the exp-share gate")
+	}
+}
+
+func TestPartyPositionWithoutAFrame(t *testing.T) {
+	if _, _, _, _, ok := partyPosition(world.Entity{Zone: "nowhere"}); ok {
+		t.Fatal("a zone with no frame gave a position")
+	}
+	if _, _, _, _, ok := partyPosition(world.Entity{Zone: "jangan"}); !ok {
+		t.Fatal("jangan has a frame")
 	}
 }
 

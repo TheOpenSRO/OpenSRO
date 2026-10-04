@@ -167,6 +167,11 @@ func TestDecodersReadTheFixtures(t *testing.T) {
 	if yes, _ := DecodeAnswer(fixture(t, "3080_answer_no_join")); yes {
 		t.Fatal("no read as yes")
 	}
+	// The stock client's "no" to a formation, [2][0x2c0c], declines (OURS:
+	// this GameServer's kind-2 test, `test bl,bl` at 0x5be41c, would accept it).
+	if yes, _ := DecodeAnswer(fixture(t, "3080_answer_no_form")); yes {
+		t.Fatal("a formation's no read as yes")
+	}
 	a, err := DecodeIDAck(fixture(t, "b060_err_post_failed"))
 	if err != nil || a.OK || a.Code != CodePostFailed {
 		t.Fatalf("ack: %+v %v", a, err)
