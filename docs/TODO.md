@@ -876,9 +876,15 @@ Round 630 rebuilt it on `CIFMinimap`'s own draw ([protocol/minimap.md](protocol/
 the world map's marker, which never turned), 8x8 signs culled at 44.5 px, the 140x184 window flush
 with the screen's top-right corner, and the dungeon-floor ring hidden. Still open:
 
-- [ ] Unique, animal, party and quest-NPC signs, and the party/quest arrows at 47.0 -- `HudMinimap`
-      draws only monster, NPC and other-player signs (no data for the rest yet). A unique's sign is
-      `+0x3b0` when the monster's `+0x7ac` is 3 or 8.
+- [ ] Unique, animal and quest-NPC signs, and the quest arrows at 47.0 -- `HudMinimap` draws only
+      monster, NPC and other-player signs (no data for the rest yet). A unique's sign is `+0x3b0`
+      when the monster's `+0x7ac` is 3 or 8. **The party's dots and arrows are drawn (round 717,
+      `party_gui.md` section 9)**; the quest marks go between the party's arrows and the player's
+      arrow in `MapMarks`.
+- [ ] **Move the NPC / monster / other-player signs over the frame** (round 717 review, finding 1):
+      vslot_013 draws every mark over `mm_window` (INFERRED, `party_gui.md` section 9), but these
+      signs still sit in the map's clip under the frame, and they reach 44.5 + 4 = 48.5 px where the
+      ring starts at 43.5-53.75 px. Draw them first in `MapMarks` (before the party's dots).
 - [ ] The tiles' colour modulation (a colour from `0x9edd60`'s object, times 400, capped at 255).
 - [ ] Dungeon regions (`minimap_d\`, and showing the floor ring there).
 - [x] `UiBuilder` hides a Style-`0x40` control at creation (`0x8b5710`), every window (round 630

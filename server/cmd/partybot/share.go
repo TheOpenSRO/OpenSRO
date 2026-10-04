@@ -174,6 +174,14 @@ func shareScenario(addr, prefix, species string, level int) error {
 	if ar.ExpGained != share || after-before != share {
 		return fmt.Errorf("party share: killer %d, mate %d, want %d each", ar.ExpGained, after-before, share)
 	}
+	// Round 716: both receivers are told with retail 0x3056 -- the mate, who
+	// never hit, included -- each with what its row rose by.
+	kg, _ := killer.lastGain()
+	mg, mn := mate.lastGain()
+	fmt.Printf("    0x3056: killer %d EXP / %d skill EXP, mate %d EXP / %d skill EXP (source %d)\n", kg.Exp, kg.SkillExp, mg.Exp, mg.SkillExp, mg.Source)
+	if mn == 0 || mg.Exp != after-before || kg.Exp != ar.ExpGained || mg.SkillExp <= 0 || mg.Source == 0 || mg.Source != kg.Source {
+		return fmt.Errorf("0x3056: killer %+v, mate %+v (%d sent); want each the EXP its row rose by, one source", kg, mg, mn)
+	}
 
 	fmt.Println("--- 3: an Exp Free-For-All party of two; one member kills")
 	if err := form(ffa, idle, party.FlagItemShare); err != nil {
@@ -194,6 +202,12 @@ func shareScenario(addr, prefix, species string, level int) error {
 	fmt.Printf("    killer +%d EXP, idle member +%d EXP; want trunc(%d x 1.03) = %d and 0\n", ar.ExpGained, after-before, base.ExpGained, ffaWant)
 	if ar.ExpGained != ffaWant || after != before {
 		return fmt.Errorf("free-for-all: killer %d (want %d), idle member %d (want 0)", ar.ExpGained, ffaWant, after-before)
+	}
+	if _, n := idle.lastGain(); n != 0 {
+		return fmt.Errorf("free-for-all: the idle member, paid nothing, was sent %d 0x3056", n)
+	}
+	if fg, _ := ffa.lastGain(); fg.Exp != ar.ExpGained {
+		return fmt.Errorf("free-for-all: the killer's 0x3056 says %d EXP, its result %d", fg.Exp, ar.ExpGained)
 	}
 	fmt.Println("--- all share steps passed")
 	return nil

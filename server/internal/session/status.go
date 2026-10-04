@@ -756,6 +756,9 @@ func (s *statusRuntime) settleKill(ctx context.Context, d combatDeps, k statusKi
 	if levelUp != nil {
 		sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: levelUp.Encode()})
 	}
+	if result.expGain != nil {
+		sendExpGainTo(sess, *result.expGain) // round 716: last, as in combat.go
+	}
 	return announceKill(ctx, d, sess, zone, k.killer, k.monster, gold, k.updated, k.hits)
 }
 

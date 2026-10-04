@@ -495,11 +495,20 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 					return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
 				}
 				// The picker's own line reports the picker's part (its
-				// client reads the balance back from the server). The other
-				// members' clients are told nothing yet: retail credits each
-				// with reason 0x17 (0x5bc9b8) and the client prints
-				// UIIT_MSG_PARTYGET_GOLD, a message OpenSRO does not speak
-				// (GAP, docs/rounds/party712.md).
+				// client reads the balance back from the server). Every
+				// credit also sends 0x304E kind 1, the new total (round 716):
+				// the gold pick-up's credit GObjPC::FUN_004eaca0 calls
+				// CGObjPC::OffsetGold (0x4e4b60) with (amount, 0, 0x19, 1, 0)
+				// for a solo pick-up -- unshown, the purse only -- and, in an
+				// Item Auto Share party, the split (0x5bc7f0) calls it with
+				// (amount, 0, 0x17, 1, 1) for EVERY share, the picker's
+				// included -- shown, so each client prints
+				// UIIT_MSG_STATE_GAIN_GOLD with its rise (c:0x8a70d0). A share
+				// that failed to credit is not told.
+				show := sharing != nil
+				for _, g := range shares[:credited] {
+					tellGold(ctx, chars, hub, g.characterID, show)
+				}
 				pickedQty = int32(shares[0].amount)
 			} else {
 				if sharing != nil && !it.OwnerOnly() {

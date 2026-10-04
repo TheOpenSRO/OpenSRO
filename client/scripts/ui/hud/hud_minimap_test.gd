@@ -190,7 +190,7 @@ Section = Create,"0,0,150,180","0"
 	# The arrow: north up, east right, south down, west left -- the angle of
 	# the facing's (x, -z) on the y-down screen, the arrow's art pointing
 	# right (+x) unturned.
-	var arrow := minimap.get_node_or_null("MapClip/PlayerArrow") as Control
+	var arrow := minimap.get_node_or_null("MapMarks/PlayerArrow") as Control
 	var facings := {"north": [Vector2(0, 1), Vector2(0, -1)], "east": [Vector2(1, 0), Vector2(1, 0)],
 		"south": [Vector2(0, -1), Vector2(0, 1)], "west": [Vector2(-1, 0), Vector2(-1, 0)]}
 	for name in facings:

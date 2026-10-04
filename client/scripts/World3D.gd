@@ -1552,6 +1552,9 @@ var _hud_player_info: HudPlayerInfo
 ## login, and on every QA run that signs in before building the world.
 var _last_enter_world_hp := 0
 var _last_enter_world_max_hp := 0
+## The gold total the last stats reply carried (round 716): a 0x304E gold
+## update prints its rise over it, as c:0x8a70d0 does over the client's own.
+var _last_known_gold := -1
 
 func _seed_vitals_from_last_enter_world() -> void:
 	var entered = NetClient.last_enter_world_result
@@ -1782,6 +1785,8 @@ func _ready() -> void:
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.object_status.connect(_on_object_status)
 	NetClient.level_up.connect(_on_level_up)
+	NetClient.exp_gained.connect(_on_exp_gained)
+	NetClient.gold_total.connect(_on_gold_total)
 	NetClient.loot_dropped.connect(_on_loot_dropped)
 	NetClient.ground_item_list_result.connect(_on_ground_item_list_result)
 	NetClient.ground_item_spawned.connect(_on_ground_item_spawned)
@@ -2145,13 +2150,10 @@ func _try_initialize_pk2_ui() -> void:
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "":
 			_audio_set_hwan(result.berserk_active)
-			# Round 639: what the kill earned, in the system window, as
-			# retail's EXP handler writes it (exp_gain_lines).
-			if result.exp_gained > 0 or result.skill_exp_gained > 0:
-				var exp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_EXP", "") if _ui_text_table != null else ""
-				var sexp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GET_SKILL_EXP", "") if _ui_text_table != null else ""
-				for line in exp_gain_lines(result.exp_gained, result.skill_exp_gained, exp_t, sexp_t):
-					_log_system(line, HudSystemMessage.TYPE_GAIN)
+			# What the kill earned is printed from retail's 0x3056 now
+			# (round 716, _on_exp_gained), which every receiver of a share
+			# gets; the result's own EXP tail (round 639) is no longer read
+			# for it, so the killer's line is not printed twice.
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
@@ -2897,6 +2899,66 @@ var _minimap_others: Array = []
 ## The rendered frame the minimap was last refreshed in (round 664).
 var _minimap_frame := -1
 
+## The party members the maps mark this frame (round 717, PartyMapMarks),
+## each a region-local ground position (x east, y north) in the player's
+## region: the minimap's (same world id) and the world map's (every member
+## but the player), with the world map's names. Reused, so a settled party
+## allocates nothing a frame.
+var _party_marks_mini := PackedVector2Array()
+var _party_marks_world := PackedVector2Array()
+var _party_marks_names := PackedStringArray()
+
+## Fills the three lists. A member's position is its spawned body's when this
+## client has one (0x9c35e0), else its record's (x, 0, z) in its region
+## (0x9ecfd0) -- the minimap's and the world map's own rule.
+func _fill_party_marks(here_region: Vector2i) -> void:
+	var party := NetClient.party
+	var ready: bool = party.in_party and here_region.x >= 0 and _minimap_group != null \
+		and is_instance_valid(_minimap_group)
+	var own: PartyNet.Member = party.member(party.own_jid) if ready else null
+	var own_world: int = own.world_id if own != null else -1
+	# First the counts, so the lists change size only when the party does.
+	var nm := 0
+	var nw := 0
+	if ready:
+		for m in party.members:
+			if PartyMapMarks.worldmap_draws(m, party.own_jid):
+				nw += 1
+				# The minimap's world test (record +0x68 against the player's
+				# own world id, +0x20e4 through 0x9d4d90). OURS: OpenSRO's
+				# client keeps the player's world id only in the player's own
+				# party record, so that record stands in for +0x20e4 (right
+				# while the server keeps it current); without it nothing is
+				# compared.
+				if own_world < 0 or PartyMapMarks.minimap_draws(m, party.own_jid, own_world):
+					nm += 1
+	if _party_marks_mini.size() != nm:
+		_party_marks_mini.resize(nm)
+	if _party_marks_world.size() != nw:
+		_party_marks_world.resize(nw)
+		_party_marks_names.resize(nw)
+	if nw == 0:
+		return
+	var im := 0
+	var iw := 0
+	for m in party.members:
+		if not PartyMapMarks.worldmap_draws(m, party.own_jid):
+			continue
+		var at: Vector2
+		var body := _party_body_for_board(m.jid) as Node3D
+		if body != null and is_instance_valid(body) and body.is_inside_tree():
+			var l := _minimap_group.to_local(body.global_position)
+			at = Vector2(l.x, l.z)
+		else:
+			at = PartyMapMarks.record_local(here_region, m.region, float(m.x), float(m.z))
+		_party_marks_world[iw] = at
+		if _party_marks_names[iw] != m.member_name:
+			_party_marks_names[iw] = m.member_name
+		iw += 1
+		if own_world < 0 or PartyMapMarks.minimap_draws(m, party.own_jid, own_world):
+			_party_marks_mini[im] = at
+			im += 1
+
 func _refresh_minimap() -> void:
 	if player == null or _hud_minimap == null or not is_instance_valid(_hud_minimap):
 		return
@@ -2932,11 +2994,14 @@ func _refresh_minimap() -> void:
 	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
 	_minimap_fill_positions(_other_bodies, _minimap_others, pos, reach)
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
+	_fill_party_marks(_minimap_region)
+	_hud_minimap.update_party(Vector2(local.x, local.z), _party_marks_mini)
 	# The world map every frame only while it is open; hidden, on the old
 	# tenth-frame beat, so it is current when it opens.
 	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
 			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
 		_hud_worldmap.update_player(rx, ry, local, facing)
+		_hud_worldmap.update_party(rx, ry, _party_marks_world, _party_marks_names, NetClient.party.job_party)
 	# OPENSRO_QA_WALK runs log what the minimap was told, twice a second,
 	# so a facing test is read from the log, not a frame (round 630).
 	if _qa_walk != "" and _zone_label_tick % 30 == 0:
@@ -11374,7 +11439,9 @@ func _update_blob_shadow() -> void:
 ##                          <race>, req:confirm|cancel|wait, dump); and
 ##                          round 715: qpclick:<name> (that member's party
 ##                          box clicked), selfselect, qplock, qplog (every
-##                          box's screen rect, faraway level and glow)
+##                          box's screen rect, faraway level and glow);
+##                          round 717: maplog (the party's minimap marks and
+##                          world-map dots), wmap (the world map opened)
 ##   OPENSRO_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
@@ -20809,10 +20876,24 @@ func _apply_player_race() -> void:
 	print("World3D: race emblem %s (%s Country %d)" % [_hud_player_info.race_mark_path(), code, int(_country_by_code[code])])
 
 ## Requests the character's full stats (level, exp, SP, HP max) so the HUD
-## gauges stay live. Cheap; called on enter-world, each kill, and level-up.
+## gauges stay live. Called on enter-world, each kill, a level-up, 0x3056 and
+## 0x304E; coalesced (round 716's review) so the two or three causes one kill
+## brings make one request, sent from a deferred call at the frame's end.
 func _request_world_stats() -> void:
+	if _world_stats_queued:
+		return
+	_world_stats_queued = true
+	call_deferred("_flush_world_stats")
+
+var _world_stats_queued := false
+## How many stats requests _flush_world_stats has sent (tests read it).
+var _world_stats_sent := 0
+
+func _flush_world_stats() -> void:
+	_world_stats_queued = false
 	var who := NetClient.current_character_name
 	if who != "" and NetClient.is_connected_to_server():
+		_world_stats_sent += 1
 		NetClient.character_stats(who)
 
 ## Applies the stats packet to the always-on HUD: the level label, the HP bar
@@ -20820,6 +20901,14 @@ func _request_world_stats() -> void:
 func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if stats == null or stats.error != "":
 		return
+	# The 0x304E gold line's base (round 716's review): seeded by the first
+	# reply, then moved by gold messages and by replies this client asked for
+	# (OpenSRO's shop, trade and storage still change gold without a 0x304E,
+	# and the refresh they request keeps the base true). An unprompted push
+	# never moves it: a regen push can read a member's row between the gold
+	# split's credit and its 0x304E, and would swallow the line.
+	if _last_known_gold < 0 or NetClient.last_stats_reply_requested:
+		_last_known_gold = stats.gold
 	if OS.get_environment("OPENSRO_QA_STATS_LOG") != "":
 		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
 			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])
@@ -20906,6 +20995,47 @@ static func _printf_one(template: String, specs: Array, value: int) -> String:
 		if template.contains(String(spec)):
 			return template.replace(String(spec), str(value))
 	return template
+
+## Round 716: retail 0x3056 (Client_ApplyExpAndLevelUp 0x8a97c0). Every
+## receiver of a kill share gets it, so a party member who never hit sees its
+## gain too. The lines are the client's (RewardNoticeNet.exp_lines); the EXP
+## gauge and SP readout are refreshed from the server's stats rather than
+## advanced locally (OURS: one source of truth for the level arithmetic). The
+## level-up itself is still announced by OpLevelUp.
+func _on_exp_gained(g: RewardNoticeNet.ExpGain) -> void:
+	if g == null:
+		return
+	var gain_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_EXP", "") if _ui_text_table != null else ""
+	var lose_t := _ui_text_table.get_text("UIIT_MSG_STATE_LOSE_EXP", "") if _ui_text_table != null else ""
+	var skill_t := _ui_text_table.get_text("UIIT_MSG_STATE_GET_SKILL_EXP", "") if _ui_text_table != null else ""
+	for line in RewardNoticeNet.exp_lines(g, gain_t, lose_t, skill_t):
+		_log_system(line, HudSystemMessage.TYPE_GAIN)
+	print("World3D: 0x3056 from %d: EXP %d, skill EXP %d%s" % [g.source, g.exp, g.skill_exp,
+		(", level up, %d stat points" % g.stat_points) if g.level_up else ""])
+	_request_world_stats()
+
+## Round 716: retail 0x304E kind 1, the new gold total (c:0x8a70d0): a shown
+## update prints UIIT_MSG_STATE_GAIN_GOLD with the rise over the last total
+## this client knew, then the purse is refreshed from the server's stats.
+func _on_gold_total(total: int, show: bool) -> void:
+	var t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_GOLD", "") if _ui_text_table != null else ""
+	if _last_known_gold >= 0:
+		var line := RewardNoticeNet.gold_line(_last_known_gold, total, show, t)
+		if line != "":
+			_log_system(line, HudSystemMessage.TYPE_GAIN)
+	_last_known_gold = total
+	_request_world_stats()
+
+## Round 716: 0x3068, an Item Auto Share item given to a member (c:0x873990).
+func _on_party_item_notice(recipient_jid: int, recipient_name: String, item_id: int, amount: int, is_gold: bool) -> void:
+	var item_name := _hud_panels.item_name(item_id) if _hud_panels != null else ""
+	var tt := func(key: String) -> String:
+		return _ui_text_table.get_text(key, "") if _ui_text_table != null else ""
+	var line := RewardNoticeNet.item_notice_line(recipient_jid == NetClient.party.own_jid, is_gold,
+		item_name, amount, recipient_name, tt.call("UIIT_MSG_STATE_GET_ITEM_EXPENDABLE"),
+		tt.call("UIIT_MSG_PARTYGET_ITEM_EXPENDABLE"), tt.call("UIIT_MSG_PARTYGET_GOLD"))
+	_log_system(String(line[0]), HudSystemMessage.TYPE_GAIN if int(line[1]) == 1 else HudSystemMessage.TYPE_PARTY)
+	print("World3D: 0x3068 item %d x%d to %s" % [item_id, amount, recipient_name])
 
 ## Spawns the real level-up burst on the player, sized to the player's own
 ## rendered height. Does nothing (beyond the message already logged) when the
@@ -21276,6 +21406,7 @@ func _wire_party_state() -> void:
 	if party.own_jid == 0:
 		party.own_jid = _party_own_jid()
 	party.notice.connect(_on_party_notice)
+	party.item_notice.connect(_on_party_item_notice)
 	party.invitation.connect(_on_party_invitation)
 	party.invitation_closed.connect(_on_party_invitation_closed)
 	NetClient.self_id_received.connect(_on_party_self_id)
@@ -21660,6 +21791,24 @@ func _qa_party_do(step: String) -> void:
 		"qplock":
 			if _hud_quick_party != null:
 				_hud_quick_party.toggle_lock()
+		"maplog":
+			var here_l := _party_here_local
+			var inputs: PackedStringArray = []
+			for m in NetClient.party.members:
+				var b := _party_body_for_board(m.jid) as Node3D
+				var bl := _minimap_group.to_local(b.global_position) if b != null and _minimap_group != null else Vector3.INF
+				inputs.append("%s(r%d/%d x%d z%d w%d body%s)" % [m.member_name, (m.region >> 8) & 0xFF, m.region & 0xFF,
+					m.x, m.z, m.world_id, "(%.0f,%.0f)" % [bl.x, bl.z] if b != null else "-"])
+			print("QA PARTY: map inputs here r%s local (%.0f,%.0f) tile_px %.1f: %s mini %s world %s" % [
+				str(_minimap_region), here_l.x, here_l.z, _hud_minimap.tile_px() if _hud_minimap != null else -1.0,
+				" ".join(inputs), str(_party_marks_mini), str(_party_marks_world)])
+			print("QA PARTY: map marks minimap [%s] world map [%s] hover '%s'" % [
+				_hud_minimap.party_marks_report() if _hud_minimap != null else "",
+				_hud_worldmap.party_dots_report() if _hud_worldmap != null else "",
+				_hud_worldmap.party_hover_text() if _hud_worldmap != null else ""])
+		"wmap":
+			if _hud_worldmap != null and not _hud_worldmap.visible:
+				_hud_worldmap.open()
 		"qplog":
 			if _hud_quick_party != null:
 				print("QA PARTY: quick party %s; player block glow %s, leader flag %s" % [_hud_quick_party.describe(),

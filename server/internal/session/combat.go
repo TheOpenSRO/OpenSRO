@@ -13,6 +13,7 @@ import (
 
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
@@ -380,6 +381,11 @@ func DecodeAttackRequest(data []byte) (*AttackRequest, error) {
 // On failure, only Error is meaningful.
 type AttackResult struct {
 	Error string
+
+	// expGain is the killer's retail 0x3056 (round 716), not encoded here:
+	// the attack path sends it after this result and the OpLevelUp, the
+	// original's order (0x3056 is the last thing GainExpAndLevel sends).
+	expGain *charmsg.ExpGain
 
 	MonsterDamage      int32
 	MonsterRemainingHP int32
@@ -1479,6 +1485,10 @@ func performAttack(
 			return err
 		}
 	}
+	// Then the killer's 0x3056, last (round 716; see distributeKill).
+	if result.expGain != nil {
+		sendExpGainTo(sess, *result.expGain)
+	}
 
 	// The attacker already got the richer OpAttackResult above; only
 	// broadcast to everyone *else* in the zone, not back to them too -- and
@@ -2058,6 +2068,8 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 		}
 		result.ExpGained = paid.expAdded
 		result.SkillExpGained = paid.sp
+		g := expGainFor(monster, paid)
+		result.expGain = &g
 		if paid.levelUp != nil {
 			result.PlayerHP = int32(paid.hp)
 			levelUp = paid.levelUp

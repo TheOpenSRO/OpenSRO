@@ -28,10 +28,11 @@ const OP_JOIN_ACK := 0xb067        ## S->C u8 result; 1: u32 own JID; 2: u16 cod
 const OP_PARTY_INFO := 0x3065      ## S->C the whole party (c:0x883cc0)
 const OP_REQUEST := 0x3080         ## S->C invitation; C->S its answer (c:0x88aa60 / c:0x81cc30)
 const OP_EVENT := 0x3864           ## S->C u8 kind, then per kind (c:0x886b10)
+const OP_ITEM_NOTICE := 0x3068     ## S->C the Item Auto Share notice (c:0x873990; round 716)
 
 ## The opcodes this module's dispatcher answers (NetClient routes them here).
 const SERVER_OPCODES := [OP_CREATE_ACK, OP_INVITE_ACK, OP_JOIN_ACK, OP_PARTY_INFO,
-	OP_REQUEST, OP_EVENT]
+	OP_REQUEST, OP_EVENT, OP_ITEM_NOTICE]
 
 # --- Party flags, the "party type" byte (party_protocol.md, "Party flags") --
 
@@ -554,3 +555,32 @@ static func encode_event(e: Event) -> PackedByteArray:
 ## The UIIT key the client shows for `code`, or "" when it has none.
 static func error_key(code: int) -> String:
 	return String(ERROR_KEYS.get(code, ""))
+
+# --- 0x3068, the Item Auto Share notice (round 716) ---------------------------
+
+## c:0x873990 reads u32 recipient JID, u32 RefItemID, then by the item's class
+## (its TypeID word, GlobalDataManager 0x93f5f0): gold -- u64 amount; an
+## expendable -- u16 count; anything else -- u8 count. This reader takes the
+## class from the bytes left (8, 2 or 1; OURS, equal for every message the
+## server writes) rather than from the item table.
+class ItemNotice:
+	var recipient_jid: int = 0
+	var item_id: int = 0
+	var amount: int = 0
+	var is_gold: bool = false
+
+static func decode_item_notice(data: PackedByteArray) -> ItemNotice:
+	var n := ItemNotice.new()
+	match data.size():
+		9:
+			n.amount = data.decode_u8(8)
+		10:
+			n.amount = data.decode_u16(8)
+		16:
+			n.amount = data.decode_s64(8)
+			n.is_gold = true
+		_:
+			return null
+	n.recipient_jid = data.decode_u32(0)
+	n.item_id = data.decode_u32(4)
+	return n

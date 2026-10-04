@@ -9,6 +9,7 @@ import (
 
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
@@ -228,7 +229,14 @@ func TestGroundDropAndPickUpFlow(t *testing.T) {
 	// The gold pile picks up as gold.
 	write(OpMove, (&MoveRequest{X: goldItem.X, Y: goldItem.Y, Z: goldItem.Z}).Encode())
 	time.Sleep(50 * time.Millisecond)
-	pr, err = DecodePickUpResult(send(OpPickUp, (&PickUpRequest{CharacterName: "Aria", GroundItemID: goldItem.ID}).Encode()).Data)
+	// Round 716: the credit sends 0x304E kind 1 first -- a solo pick-up's
+	// total, unshown (OffsetGold(amount, 0, 0x19, 1, 0), GS 0x4ead0a) --
+	// then the pick-up result.
+	write(OpPickUp, (&PickUpRequest{CharacterName: "Aria", GroundItemID: goldItem.ID}).Encode())
+	if total, show, gerr := charmsg.DecodeGold(readUntil(charmsg.OpCharInfo).Data); gerr != nil || show || total != startGold+10 {
+		t.Fatalf("solo gold 0x304E: total %d show %v (%v), want %d unshown", total, show, gerr, startGold+10)
+	}
+	pr, err = DecodePickUpResult(readUntil(OpPickUpResult).Data)
 	if err != nil || pr.Code != 0 || !pr.Gold || pr.Quantity != 10 {
 		t.Fatalf("pick gold: %+v (err %v)", pr, err)
 	}
