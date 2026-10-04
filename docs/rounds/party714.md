@@ -197,3 +197,16 @@ Sonila (1~100, "LVL 100 PT"), Levi (quest, 20~40), Eone (flags 0, a 1/4 party), 
 | M1 | A reply with a result byte other than 1 or 2 is ignored (the decoders return null). Tested |
 | M2 | HudPanels accumulates the frame time as a float for the 2 s lock |
 | M3 | The scroll bar is built: HudChat.ChatScroll with ifverticalscroll.txt's parts, the range records - 12 (READ), the length the record's 232 (INFERRED) |
+
+### After the fixes
+
+- Box: `remote_godot.sh check` ALL LOAD; `party_match_test.gd`, `party_match_window_test.gd` and
+  `hud_party_pane_test.gd` pass; the full suite ran 228 suites, 0 failing.
+- Live (run A3, `/var/tmp/c2/runA3.sh`, Aria rendered with the same bots): the list now has the
+  Title header, the "~" between the level edits, "All" right-aligned in the combo and the scroll
+  bar (MEASURED: the up arrow ends at y 278, the thumb starts at 280, the down arrow spans
+  527..543, i.e. the bar's top at 279 = the window's 120 + 159 and its length 232). The pinned
+  registration pushed Sonila's row down while the gold bar stayed on its slot, as `+0x7ec` does.
+  Dasha's name in the leader's popup measures (239,218,164), 120 pixels of it. The party formed
+  on Confirm (Dasha's log: `0x3065 ... members=[Aria(1) Dasha(4)]`).
+  Frames kept: `/var/tmp/c2/keep/A3_list.png`, `A3_leader_popup.png`.
