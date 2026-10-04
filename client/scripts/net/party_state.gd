@@ -25,6 +25,10 @@ signal changed
 ## redraw that member only (round 715's review -- the server samples every
 ## member once a second, so a full rebuild per update was the costly path).
 signal member_updated(jid: int)
+## A 0x3864 event has been applied (kind 1 dissolved, 2 joined, 3 left, 9 new
+## leader; `jid` the member it names, 0 for kind 1). Party matching keeps its
+## registration in step with these (UI_PARTY::FUN_00886b10, round 718).
+signal party_event(kind: int, jid: int)
 ## A line for the system message window, type 4 (the PARTY filter): the
 ## UIIT key, the "%s" argument (or ""), and the error code it came from (0
 ## when none). party_gui.md §6.
@@ -234,6 +238,12 @@ func _keep_leader_first() -> void:
 func _on_event(e: PartyNet.Event) -> void:
 	if e == null:
 		return
+	_apply_event(e)
+	if e.kind != PartyNet.EVENT_UPDATE:
+		var who := e.member.jid if e.kind == PartyNet.EVENT_JOINED and e.member != null else e.jid
+		party_event.emit(e.kind, who)
+
+func _apply_event(e: PartyNet.Event) -> void:
 	match e.kind:
 		PartyNet.EVENT_DISSOLVED:
 			clear_party()

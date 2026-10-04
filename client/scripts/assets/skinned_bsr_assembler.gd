@@ -1,6 +1,9 @@
 extends RefCounted
 class_name SkinnedBsrAssembler
 
+## Meta on a body material whose object carries an env-map mod (round 719).
+const ENV_MAPPED_META := "opensro_env_mapped"
+
 ## Assembles any character model -- NPC, monster or the player's own body
 ## -- from an open pk2 archive: skeleton, mesh pieces and materials, ready
 ## to place in the world. And dresses it: `attach_item_from_archive` hangs
@@ -164,6 +167,13 @@ static func assemble_from_archive(
 				archive, parsed.material_path, material.layers[layer_idx], {},
 				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
 			)
+			# Round 719: whether the object has an env-map mod. The original's
+			# translucent draw takes the fade alone as alpha for such a layer
+			# (CRTModEnvMap::vslot_004 ORs 0x60000000 into every material's flag
+			# word; CObjRendererVS::FUN_00c428c0 then SELECTARG2 TFACTOR) and
+			# texture alpha x fade for any other; the select screen reads it.
+			if godot_material != null and parsed.env_map_flags >= 0:
+				godot_material.set_meta(ENV_MAPPED_META, true)
 
 		# Real skinning when the mesh carries weights, rigid attachment when
 		# it does not.
@@ -388,6 +398,13 @@ static func attach_item_from_archive(
 				archive, parsed.material_path, material.layers[layer_idx], {},
 				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
 			)
+			# Round 719: whether the object has an env-map mod. The original's
+			# translucent draw takes the fade alone as alpha for such a layer
+			# (CRTModEnvMap::vslot_004 ORs 0x60000000 into every material's flag
+			# word; CObjRendererVS::FUN_00c428c0 then SELECTARG2 TFACTOR) and
+			# texture alpha x fade for any other; the select screen reads it.
+			if godot_material != null and parsed.env_map_flags >= 0:
+				godot_material.set_meta(ENV_MAPPED_META, true)
 		meshes.append([mesh, godot_material])
 	if meshes.is_empty():
 		push_error("SkinnedBsrAssembler: %s: none of its %d mesh piece(s) loaded" % [bsr_path, mesh_paths.size()])

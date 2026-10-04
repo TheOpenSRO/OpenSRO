@@ -663,6 +663,12 @@ func _qa_sample_characters() -> Array:
 		s.stat_points = 3 * i
 		s.deleting = spec[4] > 0
 		s.minutes_left = spec[4]
+		# OPENSRO_QA_PENDING_NAME=<name> (round 719, QA): that one is the
+		# character pending deletion instead.
+		var pend := OS.get_environment("OPENSRO_QA_PENDING_NAME")
+		if pend != "":
+			s.deleting = s.char_name == pend
+			s.minutes_left = 4321 if s.deleting else 0
 		for id in spec[5]:
 			s.items.append({"id": id, "plus": 0})
 		out.append(s)
@@ -737,9 +743,32 @@ func _qa_report(text: String) -> void:
 
 # --- Each frame ------------------------------------------------------------------------------
 
+## OPENSRO_QA_SELECT_FADEIN_FRAMES=1 (round 719, OURS, QA): the longest real frame
+## (wall clock, not the movie's fixed step) over the first 3.0 s of each
+## list's fade-in, where the pending pairs' shaders compile.
+var _qa_frame_prev_us := 0
+var _qa_frame_max_us := 0
+var _qa_frame_s := -1.0
+func _qa_frame_time_tick(delta: float) -> void:
+	if OS.get_environment("OPENSRO_QA_SELECT_FADEIN_FRAMES") == "" or not _scene_ready:
+		return
+	var now := Time.get_ticks_usec()
+	if _qa_frame_s < 0.0:
+		_qa_frame_s = 0.0
+		_qa_frame_prev_us = now
+		return
+	if _qa_frame_s > 3.0:
+		return
+	_qa_frame_max_us = maxi(_qa_frame_max_us, now - _qa_frame_prev_us)
+	_qa_frame_prev_us = now
+	_qa_frame_s += delta
+	if _qa_frame_s > 3.0:
+		print("QA SELECT FADE-IN longest frame %.1f ms" % (_qa_frame_max_us / 1000.0))
+
 func _process(delta: float) -> void:
+	_qa_frame_time_tick(delta)
 	_tick_countdown(delta)
-	if _scene_ready and _path != null:
+	if _scene_ready and _path != null and not _qa_camera_frozen:
 		var pose := _path.advance(delta)
 		_last_pose = pose
 		if stage != null:
@@ -748,6 +777,7 @@ func _process(delta: float) -> void:
 	if not _scene_ready:
 		return
 	var done := _path == null or _path.finished()
+	_qa_pending_probe_tick(delta)
 	match state:
 		S.INTRO:
 			if done:
@@ -1515,6 +1545,74 @@ func _qa_frame_tick() -> void:
 			_qa_frame_sum / 1000.0 / _qa_frame_n, _qa_frame_max / 1000.0, _qa_render_cpu / _qa_frame_n, _qa_render_gpu / _qa_frame_n,
 			"Godot" if OS.get_environment("OPENSRO_QA_SELECT_GODOT_LIGHT") != "" else "character"])
 		get_tree().quit()
+
+## OPENSRO_QA_PENDING_PROBE=1 (round 719, OURS, QA): the pending character's
+## translucency measured. 2.5 s into the list it selects the first character
+## pending deletion (the camera flies to it, as the user's screenshot); 1.0 s
+## after the fly ends it freezes every pose and switches the bodies' shadows off, then saves
+## the same frame with that character hidden, at 255, at its own 0xcc and
+## hidden again to OPENSRO_QA_SELECT_SHOT_DIR (bg1, opaque, pending, bg2 .png)
+## and quits; the camera's path is held too. The effective alpha of a pixel is
+## (P - B) / (O - B); one translucent sheet gives the same value everywhere.
+var _qa_pending_stage := 0
+var _qa_pending_s := 0.0
+func _qa_pending_probe_tick(delta: float) -> void:
+	if OS.get_environment("OPENSRO_QA_PENDING_PROBE") == "" or stage == null:
+		return
+	var k := -1
+	for i in range(_slots.size()):
+		if _slots[i].deleting:
+			k = i
+			break
+	if k < 0 or k >= stage.drawn.size():
+		return
+	if _qa_pending_stage == 0:
+		if state == S.LIST:
+			_qa_pending_s += delta
+			if _qa_pending_s >= 2.5:
+				_qa_pending_stage = 1
+				_qa_pending_s = 0.0
+				_select(k, false)
+	elif _qa_pending_stage == 1:
+		if state == S.SELECTED:
+			_qa_pending_s += delta
+			if _qa_pending_s >= 1.0:
+				_qa_pending_stage = 2
+				_qa_pending_probe(stage.drawn[k])
+
+## QA (round 719): while set the camera path does not advance.
+var _qa_camera_frozen := false
+
+func _qa_pending_probe(d: CharSelectStage.Drawn) -> void:
+	stage.qa_frozen = true
+	_qa_camera_frozen = true
+	for line in stage.qa_texture_alpha_report(d):
+		print("QA PENDING TEXTURE %s" % line)
+	# OPENSRO_QA_PENDING_SHADOWS=1 keeps the bodies' shadows (round 719's
+	# review, finding 2: the shadow at 0xcc is what is measured then).
+	if OS.get_environment("OPENSRO_QA_PENDING_SHADOWS") == "":
+		for dd in stage.drawn:
+			if (dd as CharSelectStage.Drawn).body == null:
+				continue
+			for n in (dd as CharSelectStage.Drawn).body.find_children("*", "GeometryInstance3D", true, false):
+				(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var dir := OS.get_environment("OPENSRO_QA_SELECT_SHOT_DIR")
+	# The background twice, first and last: a pixel where the two differ is
+	# animated (water, sails) and is left out of the measurement.
+	# "one" is alpha 1/255 (the review's check, finding 1): the body adds at
+	# most 1/255 of its own colour, so inside its silhouette the frame must
+	# equal the background -- a depth pass hiding what lies behind fails it.
+	var shots := [["bg1", 0], ["opaque", 255], ["pending", CharSelectMath.PENDING_ALPHA], ["one", 1], ["bg2", 0]]
+	for sh in shots:
+		var a: int = sh[1]
+		stage.qa_set_alpha(d, a)
+		await _qa_frames(4)
+		var img := get_viewport().get_texture().get_image()
+		if dir != "" and img != null:
+			img.save_png("%s/%s.png" % [dir, sh[0]])
+		print("QA PENDING PROBE alpha %d frame %d %s" % [a, Engine.get_frames_drawn(), stage.qa_fade_report(d)])
+	print("QA PENDING PROBE done")
+	get_tree().quit()
 
 func _qa_frames(n: int) -> void:
 	for i in range(n):

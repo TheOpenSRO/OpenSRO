@@ -89,6 +89,8 @@ Section = Create,"0,0,200,100","0"
 	_check_slice_base_beats_the_type_name()
 	_check_font_table()
 	_check_frame_pieces_at_own_size()
+	_check_six_piece_edges_rotated()
+	_check_edit_halign_and_client_rect()
 	_check_section_size_measures_what_is_drawn()
 	_check_text_overrun_follows_alignment()
 	_check_client_rect_style_and_captions()
@@ -330,6 +332,88 @@ func _check_frame_pieces_at_own_size() -> void:
 	_check(md.position.x == ld.end.x and md.end.x == rd.position.x, "bottom edge spans left_down..right_down (%s)" % str(md))
 	_check(ls.position.y == lu.end.y and ls.end.y == ld.position.y, "left edge spans left_up..left_down (%s)" % str(ls))
 	_check(rs.position.y == ru.end.y and rs.end.y == rd.position.y, "right edge spans right_up..right_down (%s)" % str(rs))
+
+## **A six-piece set's top and bottom are its sides laid on their side**
+## (round 718). com_blacksquare_'s right_side is a 4x4 tile with a grey
+## column 3; tiled upright along the bottom it drew the vertical ticks the
+## user reported under party matching's boxes. CNIFStretchWnd's edge mode 3
+## (0x49a410 -> 0x49a6b0) maps the top and bottom quads TL (0,1), TR (0,0),
+## BR (1,0), BL (1,1): the texture turned 90 degrees clockwise, a column
+## becoming a row.
+func _check_six_piece_edges_rotated() -> void:
+	var builder := UiBuilder.new(null, null)
+	var grey := Color8(0x7B, 0x79, 0x7B)
+	var red := Color(1, 0, 0)
+	for suffix in ["left_up", "right_up", "left_down", "right_down", "left_side", "right_side"]:
+		var img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0, 0, 0))
+		for y in 4:
+			if suffix == "right_side":
+				img.set_pixel(3, y, grey)
+			elif suffix == "left_side":
+				img.set_pixel(0, y, red)
+		builder._texture_cache[("test\\bs_%s.ddj" % suffix).to_lower()] = ImageTexture.create_from_image(img)
+	var layout := UiLayoutParser.parse("""
+Interface Text
+
+Section = Create,"0,0,0,0","0"
+{
+	GDR_BOX:CIFStretchWnd
+	{
+		Rect=RECT,"0,0,40,20"
+		DDJ=STRING,"test\\bs_"
+	}
+}
+""")
+	var root := builder.build_section(layout, "Create")
+	var box := root.get_node_or_null("GDR_BOX")
+	var top: TextureRect = null
+	var bottom: TextureRect = null
+	if box != null:
+		for child in box.get_children():
+			if child is TextureRect and child.size.x > 4:
+				if child.position.y == 0:
+					top = child
+				elif child.position.y == 16:
+					bottom = child
+	_check(bottom != null and bottom.size == Vector2(32, 4), "the bottom strip spans 4..36 at y 16, 4 tall (got %s)" % (str(Rect2(bottom.position, bottom.size)) if bottom != null else "none"))
+	if bottom != null:
+		var bi := bottom.texture.get_image()
+		var row3 := true
+		var col3 := true
+		for i in 4:
+			row3 = row3 and bi.get_pixel(i, 3).is_equal_approx(grey)
+			col3 = col3 and bi.get_pixel(3, i).is_equal_approx(grey)
+		_check(row3 and not col3, "the bottom draws right_side's grey column as its last ROW, not a column of ticks")
+	if top != null:
+		var ti := top.texture.get_image()
+		var row0 := true
+		for i in 4:
+			row0 = row0 and ti.get_pixel(i, 0).is_equal_approx(red)
+		_check(row0 and not ti.get_pixel(0, 3).is_equal_approx(red), "the top draws left_side's column 0 as its first row")
+	else:
+		_check(false, "the top strip is built")
+	# Its edges are stretched with point sampling, not tiled (review F4: mode
+	# 3's 0/1 UVs, the draw's SetSamplerState).
+	if bottom != null:
+		_check(bottom.stretch_mode == TextureRect.STRETCH_SCALE and bottom.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST,
+			"a six-piece edge is stretched and point-sampled")
+	root.free()
+
+## **A CIFEdit** (round 718 review F2/F6): HAlign 2 is right-aligned 2 px in
+## (0x637cad, 2.0 at 0xe1b898); ClientRect's insets are the text margins.
+func _check_edit_halign_and_client_rect() -> void:
+	var builder := UiBuilder.new(null, null)
+	var text := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_E:CIFEdit\n\t{\n\t\tRect=RECT,\"0,0,81,11\"\n\t\tClientRect=RECT,\"7,5,7,5\"\n\t\tHAlign=INTEGER,\"2\"\n\t}\n}\n"
+	var root := builder.build_section(UiLayoutParser.parse(text), "Create")
+	var e := root.get_node_or_null("GDR_E") as LineEdit
+	_check(e != null and e.alignment == HORIZONTAL_ALIGNMENT_RIGHT, "HAlign 2 right-aligns the edit")
+	if e != null:
+		var sb := e.get_theme_stylebox("normal")
+		_check(sb is StyleBoxEmpty and sb.content_margin_left == 7 and sb.content_margin_top == 5
+			and sb.content_margin_right == 9 and sb.content_margin_bottom == 5,
+			"ClientRect 7,5,7,5 plus the 2 px right inset (got %s)" % str([sb.content_margin_left, sb.content_margin_top, sb.content_margin_right, sb.content_margin_bottom]))
+	root.free()
 
 ## **A window is sized from what it draws.** A zero-size rect draws its art at
 ## the art's own size, so it counts at that size (ifparty's buttons at
