@@ -7522,7 +7522,8 @@ const META_GATE_EFFECTS := "gate_effects"
 var _ambient := AmbientParticles.new()
 
 func _attach_gate_effects(region_x: int, region_y: int) -> void:
-	if _teleport_reader == null:
+	# OPENSRO_QA_AMBIENT=off (round 720): none, for a comparison frame.
+	if _teleport_reader == null or OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
 		return
 	var container := _object_containers.get("_%d_%d" % [region_x, region_y]) as Node3D
 	if container == null or not is_instance_valid(container):
@@ -7556,7 +7557,7 @@ func _ambient_step(delta: float) -> void:
 	if _qa_ambient_log and Engine.get_physics_frames() % 60 == 0:
 		print("QA AMBIENT tick %d: %s" % [Engine.get_physics_frames(), _ambient.describe()])
 
-var _qa_ambient_log := OS.get_environment("OPENSRO_QA_AMBIENT") != ""
+var _qa_ambient_log := OS.get_environment("OPENSRO_QA_AMBIENT") not in ["", "off"]
 
 ## A town gate's pick box layer (round 690): its own bit (10), which only the
 ## talk ray masks -- nothing walks into it, no camera or ground ray meets it.
@@ -11348,6 +11349,8 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_YAW=deg    camera yaw (0 looks along +Z)
 ##   OPENSRO_QA_PITCH=deg  camera pitch (-90 is straight down)
 ##   OPENSRO_QA_DIST=n     camera distance from the player
+##   OPENSRO_QA_AMBIENT=1|off  log the teleport gates' glows every 60 ticks
+##                         (round 720), or attach no gate effects at all
 ##   OPENSRO_QA_WALK=deg   walk continuously on that heading
 ##   OPENSRO_QA_FREE=1     let the camera pass through geometry
 ##   OPENSRO_QA_NOFOG=1    disable fog (for high overview shots)
