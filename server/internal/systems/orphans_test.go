@@ -48,6 +48,7 @@ var knownOrphans = map[string]string{
 	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.
 	"PartyByID":        "round 710: lane S3 finds the party behind a match entry; party_test.go.",
 	"DecodeItemNotice": "round 712: the 0x3068 reader as c:0x873990 reads it (the class from the item's TypeIDs), for the client lane's tests; golden-tested.",
+	"DecodeGold":       "round 716: the 0x304E kind-1 reader, the Go mirror of c:0x8a70d0 for the codec tests; the Godot client consumes the message over the socket.",
 	"KillExp":          "round 712: Formula_MonsterExpReward (0x4105d0), whose only callers are the PC death dispatch; the kill path pays through KillBase and ContributorExp instead. Kept as the recovered formula and its tests' anchor.",
 	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
 		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",

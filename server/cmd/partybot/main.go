@@ -55,6 +55,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
 	"net"
 	"os"
 	"strings"
@@ -80,6 +81,18 @@ type bot struct {
 	// zone and x, y, z are where the character entered the world.
 	zone    string
 	x, y, z float32
+	// gains are the 0x3056 EXP gains this character was sent (round 716).
+	gains []charmsg.ExpGain
+}
+
+// lastGain is the newest 0x3056 b was sent, and how many it has had.
+func (b *bot) lastGain() (charmsg.ExpGain, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.gains) == 0 {
+		return charmsg.ExpGain{}, 0
+	}
+	return b.gains[len(b.gains)-1], len(b.gains)
 }
 
 // moveTo puts the character at (x, y, z), as a relocation (OpMove with the
@@ -252,6 +265,14 @@ func (b *bot) run() {
 			return
 		}
 		b.note(p)
+		if p.Opcode == charmsg.OpExpGain {
+			if g, err := charmsg.DecodeExpGain(p.Data); err == nil {
+				fmt.Printf("[%s] <- 0x3056 source %d EXP %d skill EXP %d level-up %v\n", b.name, g.Source, g.Exp, g.SkillExp, g.LevelUp)
+				b.mu.Lock()
+				b.gains = append(b.gains, g)
+				b.mu.Unlock()
+			}
+		}
 		if isParty(p.Opcode) || p.Opcode == session.OpChatUpdate || p.Opcode == party.OpItemNotice {
 			fmt.Printf("[%s] <- %s\n", b.name, describe(p))
 			b.in <- p
@@ -598,6 +619,14 @@ var botEntry struct {
 // joining window stays up until the backstop).
 var botSilent bool
 
+// botKill makes a bot, once it is in a party, wait and then kill one monster
+// of a species with a real blow (round 716: a live 0x3056 run, where the
+// rendered client is the party member who never hits).
+var botKill struct {
+	species string
+	after   time.Duration
+}
+
 func botMode(addr, name string, level int, accept bool, inviteName string, registerEntry bool, requestName string,
 	tp, tp2 string, tp2After time.Duration) error {
 	b, err := connect(addr, strings.ToLower(name), name, level)
@@ -623,6 +652,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
 	// can invite it beside the leader first and then move it away.
 	var tp2C <-chan time.Time
+	var killC <-chan time.Time
 	if registerEntry {
 		b.send(party.OpMatchRegister, party.AppendEntry(nil, &party.Entry{Flags: party.Flags(botEntry.flags),
 			Purpose: uint8(botEntry.purpose), MinLevel: uint8(botEntry.minLevel), MaxLevel: uint8(botEntry.maxLevel), Title: botEntry.title}))
@@ -637,6 +667,10 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		case p, open := <-b.in:
 			if !open {
 				return errors.New("connection closed")
+			}
+			if p.Opcode == party.OpInfo && botKill.species != "" && killC == nil {
+				killC = time.After(botKill.after)
+				fmt.Printf("[%s] in a party: killing a %s in %s\n", name, botKill.species, botKill.after)
 			}
 			if p.Opcode == party.OpInfo && tp2 != "" && tp2C == nil {
 				tp2C = time.After(tp2After)
@@ -676,6 +710,15 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 			}
 		case <-tp2C:
 			gmTP(tp2)
+		case <-killC:
+			go func() {
+				ar, err := b.kill(botKill.species)
+				if err != nil {
+					fmt.Printf("[%s] kill failed: %v\n", name, err)
+					return
+				}
+				fmt.Printf("[%s] killed it: EXP +%d, SP +%d\n", name, ar.ExpGained, ar.SkillExpGained)
+			}()
 		case <-tick.C:
 			if requestName != "" && !requested {
 				b.send(party.OpMatchList, []byte{0})
@@ -706,6 +749,8 @@ func main() {
 	flag.IntVar(&botEntry.minLevel, "min", 1, "bot -register: the entry's lowest level")
 	flag.IntVar(&botEntry.maxLevel, "max", 110, "bot -register: the entry's highest level")
 	flag.IntVar(&botEntry.flags, "flags", int(party.FlagExpShare|party.FlagItemShare), "bot -register: the entry's type byte")
+	flag.StringVar(&botKill.species, "kill", "", "bot: once in a party, kill one monster of this species with a real blow (needs -gm-accounts)")
+	flag.DurationVar(&botKill.after, "kill-after", 10*time.Second, "bot -kill: how long after joining the party")
 	flag.BoolVar(&botSilent, "silent", false, "bot: leave party-match join requests unanswered (the server's 15 s backstop answers)")
 	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
