@@ -379,12 +379,9 @@ func TestUniqueKillerPartyEndToEnd(t *testing.T) {
 	w := newUniqueWorldGMs(t, "alice,bob,carol")
 	ea, _ := w.hub.EntityByCharacterID(1)
 	eb, _ := w.hub.EntityByCharacterID(2)
-	pt, err := w.parties.Create(party.Member{Session: ea.Session, CharacterID: 1, Name: "Aria", Level: 99})
-	if err != nil {
+	if _, err := w.parties.Form(party.Member{Session: ea.Session, CharacterID: 1, Name: "Aria", Level: 99},
+		party.Member{Session: eb.Session, CharacterID: 2, Name: "Bram", Level: 99}, party.FlagExpShare); err != nil {
 		t.Fatalf("party: %v", err)
-	}
-	if _, err := w.parties.Join(pt.ID, party.Member{Session: eb.Session, CharacterID: 2, Name: "Bram", Level: 99}); err != nil {
-		t.Fatalf("join: %v", err)
 	}
 	id := strconv.FormatInt(w.uniqueOn(t), 10)
 	w.c.gmAs("Cato", "/damage 2400 #"+id, 0)

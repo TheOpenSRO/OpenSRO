@@ -259,14 +259,16 @@ func TestChatPartyAndGuild(t *testing.T) {
 
 	ea, _ := w.hub.FindByName("Aria")
 	eb, _ := w.hub.FindByName("Bram")
-	pt, err := w.parties.Create(party.Member{Session: ea.Session, CharacterID: ea.CharacterID, Name: "Aria", Level: 10})
-	if err != nil {
-		t.Fatalf("party create: %v", err)
-	}
-	if _, err := w.parties.Join(pt.ID, party.Member{Session: eb.Session, CharacterID: eb.CharacterID, Name: "Bram"}); err != nil {
-		t.Fatalf("party join: %v", err)
+	if _, err := w.parties.Form(party.Member{Session: ea.Session, CharacterID: ea.CharacterID, Name: "Aria", Level: 10},
+		party.Member{Session: eb.Session, CharacterID: eb.CharacterID, Name: "Bram"}, party.FlagExpShare); err != nil {
+		t.Fatalf("party form: %v", err)
 	}
 	w.a.say(ChatParty, 6, "", "pull the boss")
+	// The sender hears its own line too (round 710; GS 0x5bef50 excludes no
+	// one), before its result.
+	if u := w.a.update(); *u != (ChatUpdate{Type: ChatParty, Sender: "Aria", Message: "pull the boss"}) {
+		t.Fatalf("party echo %+v", u)
+	}
 	if r := w.a.result(); !r.OK || r.Type != ChatParty {
 		t.Fatalf("party result %+v", r)
 	}

@@ -291,8 +291,14 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		if !ok {
 			return fail(ChatErrNotPartyMember, "")
 		}
+		// Every member hears it, the sender included, and nobody outside the
+		// party (READ, round 709: GS CMainProcess::FUN_005bef50 sends the 0x3026
+		// type 4 with CParty::BroadcastToLocalMember(msg, 0), an exclusion of 0
+		// that excludes no one). The sender's client drops the copy carrying its
+		// own name (c:Chat_OnChatUpdate 0x877810, case 4) and shows its line from
+		// the result instead (round 710).
 		for _, m := range pt.Members {
-			if m.CharacterID == sender.CharacterID || m.Session == nil {
+			if m.Session == nil {
 				continue
 			}
 			sendChatUpdate(m.Session, line)

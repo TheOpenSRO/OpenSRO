@@ -1196,13 +1196,15 @@ func killExpFor(tbl *leveldata.Table, parties *party.Hub, characterID int64, kil
 }
 
 // inPartyWithOthers reports whether characterID is in a party that has at
-// least one other member -- the only kind the engine creates. See killExpFor.
+// least one other member -- the only kind the engine creates -- and shares
+// EXP: both callers (the gap bonus, 0x410018; the nest arming, 0x529e0a) need
+// bit 0 (round 710, now that a party can be EXP free-for-all). See killExpFor.
 func inPartyWithOthers(parties *party.Hub, characterID int64) bool {
 	if parties == nil {
 		return false
 	}
 	pt, in := parties.Get(characterID)
-	return in && pt != nil && len(pt.Members) >= 2
+	return in && pt != nil && len(pt.Members) >= 2 && pt.Flags.ExpShare()
 }
 
 // applyMasteryExpScale scales a kill's experience by the gap between the
