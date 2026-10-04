@@ -7094,6 +7094,444 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-fifteenth round: the party member boxes on the HUD
+
+The HUD half of the party epic's last client lane. Built on `int/party` (`85e6c063`: S1 round
+710, C1 round 711, S3 round 713, each with its review fixes) against `party_gui.md` §7, with
+every rule re-read in `sro_client.exe` (the box's `/var/tmp/decomp_client`, objdump on the exe,
+floats read from `.rdata`). Labels: READ (the binary), MEASURED (the archives / frames),
+INFERRED, OURS, OPEN.
+
+### What was built
+
+- **`ui/hud/hud_quick_party.gd` (HudQuickParty)**, CIFQuickPartyWnd, built in code
+  (`ifquickpartywnd.txt` is not loaded), each slot `resinfo\ifquickpartyslot.txt`:
+  - **The board** (READ `0x6dae90`): at `GDR_QUICKPARTYBOARD`'s 4,137; one 122x40 slot
+    (`0x6da110`) per member other than the player, in the party manager's order, skipping the
+    player by name; slot n at (13 + column, row), the row stepping 73 with the buff option on and
+    56 with it off; a new column 133 to the right when (screen height - board y - row - 73) <
+    230. Out of a party: no slots, hidden.
+  - **The slot's art**: `window_all.ddj`, u 0.723633..0.842773 x v 0.138672..0.216797 (READ
+    from the four floats `0xda5438`/`0xda973c`/`0xda9740`/`0xda9738`) = the 122x40 round-faced
+    box at 741..863 x 71..111 of the atlas (MEASURED, decoded). Round 709's spec had the pairs
+    swapped (a 641x300 region of other panels): corrected in `party_gui.md`.
+  - **Name, HP and MP gauges, the leader's red flag** (`0x6d9250`, `0x6d7db0`: the flag iff
+    the party's leader id is the member's); the race mark stays hidden (never taken).
+  - **Two mastery icons** (17x17 at -3,39 and 15,39) from the record's two mastery ids through
+    `skillmasterydata.txt` (icon column 11, the name code resolved as the tooltip). Since the
+    review: retail's rule exactly -- the second icon is hidden by the per-slot reset and shown iff
+    its record exists; the first is never hidden once shown (a reused slot keeps it), a retail
+    defect reproduced (READ, `0x6d8630`, `0x6d9495`, `0x6d951b`).
+  - **The 3D portrait**: a PlayerPortrait at the slot's 64x64 buffer (`0x9edae0(0x40,0x40)`),
+    the PMI camera (`0x6d8bf0`: Bip01 Head +1.0, yaw 0.2, distance 6.5, 30 deg), through the
+    `qpt_face.ddj` disc. The body is the slot's own model built from the record's model id with
+    ANI_POSE (`0x6d80d0`), so a member has a face spawned or not -- bare, since the model id
+    carries no equipment. Re-rendered only when the model id changes (the dirty byte `+0x3dc`).
+    The party window's member rows borrow it (`HudPartyPane.member_portrait`, `0x6dab10` ->
+    `0x6d7f30`).
+  - **The "far away" overlay** (READ `0x6db380`, `0x6d86e0`): each frame the squared 3D
+    distance to the member's spawned body, else to the record's region/x/z **at y = 0**
+    (`local_8` stays 0: the record's y is not used), stepped only in an exp-share party: level 5
+    from 1e6 (double), 4 from 810000, 3 from 640000, 2 from 490000 (double), 1 from 360000, each
+    `>=`; `qpt_face_faraway_60..100.ddj` on GDR_QPS_STATUS (MEASURED 28x28 discs, alpha
+    130..241: five steps, no fade).
+  - **The caution effects** (READ `0x6d90e0`): HP/MP below 0.3 (`0xd82f00`) with the record's
+    byte `+0x58` = 0, then by the game option bytes +0x12 / +0x13; hidden at level 5. The 8
+    frames (4x2 of 64x32) at one per 100 ms: "Speed 100" read as ms a frame is INFERRED.
+  - **Buffs** (READ `0x6d9250`'s tail, `0x6d9010`): only for a member spawned in this client and
+    with option +0x08 on; the member's skill buffs and abnormal states (the target window's own
+    source), re-read every 1000 ms (`0xb93320(1, 0x3e8)`); otherwise cleared. The grid: 6 a row
+    (`0x7fabb0(6)`), 15-px pitch (`0x7fabc0(0xf,0xf)`), 12x12 icons (`0x7fabe0(0xc,0xc)`) --
+    the meanings the target window's own calls were read with in round 638 (`HudTargetBuffs`
+    gains `set_grid`; its own grid is unchanged). Since the review: `0x7fab90(1,1)` caps each
+    list at one row (`set_row_caps`; the target window has no cap).
+  - **Selection** (READ `0x6d9610`, `0x6db1a0`, `0x6dac10`): the slot whose member is the
+    selected object shows GDR_QPS_SELECT (`qpt_grope_select.ddj`, MEASURED teal), the rest hide
+    it, every frame; a click (`0x6d8500`) names the slot's member, World3D selects them by name
+    when spawned (`0x9c3640` -> `0x78f5f0`), and `prim\snd\ui\uiwinopen.wav` plays either way.
+  - **The lock** (READ `0x6db290`, `0x6da210`, `0x6da9d0`, `0x6db5e0`): 20x20 at screen x 0,
+    7 above the board; `quickparty_move_lock/_unlock.ddj` and the MOVE/STATE/LOCK/UNLOCK tooltip;
+    a click toggles drag; a drop swaps the two members in the party manager's list
+    (`0x992490`) and rebuilds; shown only above 2 members (`0x6db3f9`).
+- **`hud_player_info.gd`**: GDR_PMI_SELECT (the yellow `pmi_select.ddj`) shown exactly while the
+  player is the selected object, and GDR_PMI_PARTY_LEADER while the player leads
+  (party_gui.md §7, `0x7b7cbe`, `0x7b81ba`).
+- **World3D** (its own functions only): the board's hooks (`_build_quick_party`: where the
+  player and each member are, the selection, buffs, a bare body per model id), the slot click,
+  **Ctrl+1** (select self, `0x77f230` -> `0x78f5f0`) and **Ctrl+2..8** (slot n-2's member by
+  name, `0x6da850`), both no-ops before; the PMI glow per rendered frame. QA steps on
+  `OPENSRO_QA_PARTY`: `qpclick:<name>`, `selfselect`, `qplock`, `qplog`.
+- **`server/cmd/partybot`**: `-tp "x z"` and `-tp2 "x z" -tp2-after D` (a GM `/tp` on entry and
+  again D after joining a party), so a live run can stand bot members at chosen distances (OURS,
+  a QA tool; no game code).
+
+### OURS / INFERRED / OPEN
+
+| what | label | note |
+|---|---|---|
+| ~~game option bytes default on~~ | **READ (review fix 1)** | `0x7776c0` builds the block before `SROptionSet.dat` is read: +0x08 = 1 (buff row on, 73-px rows), +0x12 = +0x13 = 0 (both cautions off) |
+| the lock button's hover/press/disable art from the `_focus/_press/_disable` files | INFERRED | the builder's convention for every CIFButton; retail sets the normal art by the button's SetTexture |
+| caution sprite: one frame per 100 ms | INFERRED | `0x654730(t)` frames by a timer period `+0x34c` (READ); that the period is the layout's `Speed=100` is the inference; retail phases it on the player block's counter (window 0xb `+0x460`), here on the clock |
+| ~~`0x7fab90(1,1)`~~ | **READ (review fix 2)** | one row a list: at most 6 buffs and 6 states |
+| the record's byte `+0x58` | OPEN | OpenSRO never sets it, so the caution test treats it as 0 |
+| the HP gauge's 0.2 at HP 0 (`0x6d9303`) | OPEN | `0x6d9250` writes 0.2 into the gauge's `+900` and `+0x380`, then `0x6d7db0` (same rebuild) writes the raw ratio into `+900`; which of the two the gauge draws is not read. Drawn: the raw ratio |
+| dungeon positions (`region & 0x8000`) in the record distance | OPEN | OpenSRO sends none (S1 omits the position bit); taken as plain region math |
+
+### Corrections to existing records (applied in `party_gui.md` §7)
+
+- The slot's atlas slice (see above).
+- "With the member not spawned in the client, nothing is drawn and the disc stays black": the
+  portrait is the slot's own model from the record's model id (`0x6d80d0`), drawn spawned or
+  not. Screenshots 03/04/11/12 show every disc black **including the player's own mini-info
+  portrait**, so those frames come from a client whose BufRender draws nothing (the user tests on
+  macOS CrossOver); they are not evidence about the rule.
+- The far-away distance uses the record's position at y = 0.
+- The buff grid: 6 a row, 15-px pitch, 12x12 icons (the spec had "icons 15x15, 12 per row").
+- HudPartyPane's comment that member squares stay black until C3: they borrow the slot render now.
+
+### Tests
+
+- `ui/hud/hud_quick_party_test.gd` (new, 48 checks): the slot positions and the column wrap, the
+  faraway steps at every boundary and the free-for-all rule, the record distance across regions
+  and at y 0, the rebuild (count, order, the player skipped, the leader flag, the hidden race
+  mark, the mastery icons), the lock (count > 2, position, toggle), the glow following the
+  selection, overlay and caution levels end to end, the click (member + sound), Ctrl+n's lookup,
+  the swap, the buff row (spawned only, the option), and the viewer grid (and the target
+  window's unchanged).
+- Box (`RENDER_DIR=/opt/opensro-client-c3`), at the final code: `check` 588 scripts and 9
+  scenes ALL LOAD; full suite 227 suites, 0 failing.
+
+### Live
+
+Against a server built from this branch (`-in-memory`, the box's retail exports; the skills table
+from `/var/tmp/euroskill691/skills.csv`, 91 columns -- the box's default `skills.csv` is the
+37-column export of 2026-09-19 and carries no buff columns, so no buff starts with it). Four
+characters: **Aria** rendered (the leader), **Bram** a headless second client beside her who
+learns and casts Grass Walk (skill 113) from his hotbar, and partybots **Cara** and **Dex**
+(`-tp` beside Aria to be invited, `-tp2` 25 s after joining: Cara 650 east, Dex 1500 east).
+
+**Another lane's qa_shot kills every client on the box** (its reap: `pkill -f
+godot-bin/Godot_v4.2.2`, `pkill -x Xvfb`). Two of this round's qa_shot runs died that way at frame
+~230 when lane C2 started a render. The runs below then used renamed copies of Godot and Xvfb
+(`/var/tmp/c3/bin/GodotC3`, `XvfbC3`) under a private lock. **That was wrong, and is not a method
+to repeat** (the review, finding 3): the copies were invisible to every other lane's reap and to
+the perf gate's idle test, two of their headless second clients outlived the runs (`kill -9` on
+the `runuser` wrapper missed the child) and were still running during this round's first gate
+run, until the coordinator killed them; `/var/tmp/c3/bin` is deleted. The fix for a run another
+lane kills is to queue on the shared box lock and rerun, not to hide from the reap.
+
+**Run A3** (`/var/tmp/c3/liveA/`, RADV NAVI33 on Vulkan; 680 frames):
+- the party forms by Aria's invites; the board's log at tick 520:
+  `Bram far=0 buffs=1; Cara far=1; Dex far=5`, lock shown (4 members), leader flag on the player
+  block;
+- `f00000525.png` (screenshots 03 / 04): Bram's box with his portrait, his lightning mastery icon
+  and the Grass Walk icon at slot +32,+39; Cara's disc under the light faraway_60 blue, Dex's
+  fully blue. **Dex's box also glows teal in this frame**: the QA invite step selects each
+  invitee, and Dex, invited last, was still the selection -- so it is not a clean screenshot 03/04
+  view in that one respect. MEASURED on the frame: Dex's overlay is exactly the 28x28 disc (632 matching
+  pixels, x 23..50, y 289..316 = slot 17,283 + 6,6; mean (16,93,243) over the
+  α241 (14,96,255) art), Cara's disc centre mean (74,101,169) (α130 over a face), Bram's
+  (137,107,80) (the face, no overlay); the party window's rows carry the same three portraits;
+- `f00000590.png` (screenshot 11): Bram's box selected by `qpclick:Bram`: the teal frame.
+  MEASURED in run A2's frame 525 (Dex selected, his box at 17,283): teal pixels x 16..139,
+  y 281..322, mean (72,218,206), inside the art's 132x48 at slot -3,-4 = 14..145 x 279..326
+  (its outer texels transparent);
+- `f00000650.png` (screenshot 10): `selfselect`: the player block's yellow glow (648 yellowish
+  pixels over x 3..217, y 7..77 against 167 in the frame before -- the "Lv" digits), Bram's
+  glow off.
+
+**Run B2: real X input** (`/var/tmp/c3/liveB/main.log`; Compatibility on Xvfb :715, xdotool,
+the client as ghidra), Aria and Bram in a party, Bram selected by the invite:
+- Ctrl+1 (xdotool keydown ctrl, key 1): `KEYMAP Ctrl+1 -> select_self`, `player block's select
+  glow on`, `Bram's box deselected`;
+- a click at (78, 157), Bram's box: `HudQuickParty: Bram's box clicked`, `selected player 1
+  (Bram)`, `player block's select glow off`, `Bram's box selected (glow on)`;
+- a click on the ground (900, 500): **nothing deselects** -- and that is the original's rule:
+  the ground click `UI_SILKMALL::FUN_0078f8d0` (from the left press `0x793570`) never calls the
+  deselect `0x778650(0)` or the selector `0x780ee0`; it moves the ring (round 698's table). The
+  user's request says a ground click ends the selection; the binary says it does not (READ),
+  and the client follows the binary. A monster, NPC or another player clicked does replace it
+  (World3D's existing selection paths, `0x778650` from the object click `0x792f00`);
+- Ctrl+2: `KEYMAP Ctrl+2 -> select_party 1: selected party member Bram`.
+
+### Perf gate
+
+**The table that stands is the head's, in the review-fixes table below (jangan SAME on all four).**
+The first run, kept for the record (reeds and cross included), was of `0ccd00a1` and overlapped
+the two orphaned second clients (review finding 3):
+
+`client/tools/perf_gate.sh --base 85e6c063 --sites jangan,reeds,cross --frames 12000 --env
+'OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1'` (the working tree at `0ccd00a1`'s client code
+against `int/party`; 1280x720, Forward+ on the RX 7600, median of 3):
+
+```
+jangan  frame ms   base 1.50  head 1.50  (+0.0)  SAME
+jangan  entry ms   base 9694  head 9670  (-24.0)  SAME
+jangan  freeze ms  base 3337  head 3337  (+0.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+reeds   frame ms   base 1.40  head 1.40  (+0.0)  SAME
+reeds   entry ms   base 7180  head 7114  (-66.0)  SAME
+reeds   freeze ms  base 1980  head 1961  (-19.0)  SAME
+reeds   hitches    base 2  head 2  (+0.0)  SAME
+cross   frame ms   base 1.66  head 1.66  (+0.0)  SAME
+cross   entry ms   base 10395  head 10400  (+5.0)  SAME
+cross   freeze ms  base 3375  head 3356  (-19.0)  SAME
+cross   hitches    base 4  head 5  (+1.0)  SAME
+```
+
+The gate's views carry no party, so the board is hidden there and its own frame cost is not in
+these numbers. MEASURED separately (`hud_quick_party_test.gd`'s `TIMING` line, the box,
+headless): **26 us a frame** for a full party's board (7 slots, every member placed by record,
+the 1 s buff refresh included; the world's lookups stubbed), after two changes made for it: the overlay picture is re-set only
+when the level changes, and World3D remembers each member's body by JID and, for a member not
+spawned here, scans the bodies at most every 250 ms (OURS) instead of every frame. Those two came
+after the gate run and touch only in-party frames.
+
+### Review fixes (`docs/rounds/party715_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | option defaults are READ: caution off | `hp_caution` / `mp_caution` start false, `show_buffs` true, all three labelled READ (`0x7776c0`, before `SROptionSet.dat` is read); the test now checks no caution by default and the effect with option +0x12 set; `party_gui.md` item 5 |
+| 2 | `0x7fab90(1,1)` is a row cap | `HudTargetBuffs.set_row_caps(main, second)` (0 = none, so the target window is unchanged); an add past columns x rows is dropped, in `_add`, so `sync`'s new entries respect it after its diff; the board sets (1, 1). Tested: 8 buffs + 8 states give 6 + 6, the first six kept; the target window's viewer keeps all 16 |
+| 3 | renamed binaries, orphans | the coordinator killed the two orphans; `/var/tmp/c3/bin` deleted; every box run after this used the stock `remote_godot.sh` / `perf_gate.sh` on the shared lock; the notes above strike the method |
+| 4 | mastery icon 1 | retail's rule reproduced and labelled READ: icon 2 hidden by the reset and shown iff its record exists; icon 1 shown when its record exists and never hidden after (`0x6d8630`, `0x6d9495`, `0x6d951b`). Tested, including the stale first icon on a reused slot |
+| 5 | per-frame cost, claim scope | the tick allocates nothing: the player's region/local come from two value callables backed by World3D fields updated once a frame (`_update_party_here`, from the minimap's own lookup), each slot is paired with its member by `state.member(s.jid)` (no `shown_members()` array), the caution's nested array is two plain calls. A kind-6 member update now emits `PartyState.member_updated(jid)` instead of `changed`: the board refills that one slot (no rebuild) and the party window redraws only while shown (a hidden one redraws when it next shows; OURS). The timing claim reworded ("the world's lookups stubbed"): 18.7 us a frame now |
+| 6 | gate table was not of the head | rerun on the head `23aa94e1` (the review-fix client), jangan, with no other lane's Godot running and the orphans gone (`--frames 12000 --env 'OPENSRO_QA_VIDEO_STEPS=quality=0\|quality=1'`, median of 3): frame 1.47 -> 1.47 ms SAME, entry 9505 -> 9515 ms SAME, freeze 3289 -> 3303 ms SAME, hitches 4 -> 4 SAME. (A first attempt without `--frames` collected too few fps samples and printed "missing numbers"; not a result.) |
+| 7 | slots paired by position | `tick` looks each slot's member up by its own JID (`0x6d7f40` -> `0x992260`) |
+| 8 | the miss cache changed `_party_body`'s answers | `_party_body` is exact again; the board has its own `_party_body_for_board` with the id and miss tables, cleared when the party is left |
+| 9 | lock label | READ (`0x6db2ab`, `0x6db325..0x6db33c`) |
+| 10 | caution period evidence | the addresses added to the INFERRED note (code header and the table above) |
+| 11 | Ctrl+n on an unspawned member | noted in `party_gui.md` §7: retail sends `0x7045` with id 0 there; OpenSRO's selection is local, so nothing is sent |
+| frames | Dex's leftover selection in frame 525 | said in the run's notes above |
+
+**Review** (kept beside the notes): `docs/rounds/party715_review.md` (the independent review: the HP/MP warning defaults READ off, the one-row buff cap 0x7fab90(1,1), the first mastery icon never hidden, per-frame allocations, orphaned box clients; all fixed. It confirms in the asm that a ground click does NOT deselect, contrary to the user's description).
+
+Perf gate, the lane's head (`--sites jangan`): frame 1.47 -> 1.47 ms, entry 9505 -> 9515 ms, freeze 3289 -> 3303 ms, hitches 4 -> 4, all SAME. **Batch gate on the merged party branch** (`149c482a` vs v0.1.489's `bc4ab068`, jangan, 3 runs, 12000 frames, Forward+ on the RX 7600):
+
+| jangan | base | head | verdict |
+|---|---|---|---|
+| frame ms | 1.49 | 1.49 | SAME |
+| entry ms | 9546 | 9446 | SAME |
+| freeze ms | 3319 | 3288 | SAME |
+| hitches | 4 | 4 | SAME |
+
+## Seven-hundred-and-fourteenth round: the party-matching client
+
+The client side of party matching on the retail messages: the Party Matching window, the Form
+party / Change entry dialog, the auto-match dialog, the delete question, the leader's join popup
+and the requester's joining window. It sits on round 710 (S1, the party core), round 711 (C1, the
+client party net and window) and round 713 (S3, the party-match server), with their review fixes
+(`int/party` at `85e6c063`). Spec: `docs/protocol/party_gui.md` §3-§5, `party_protocol.md`'s
+party-match rows and round 713's notes. Labels: **READ** (sro_client.exe), **MEASURED**,
+**INFERRED**, **OURS**, **USER DECISION**.
+
+### What is built
+
+- **`net/party_match.gd` (`PartyMatchNet`)**: the codecs, one encoder and decoder per message:
+  `0x7069`/`0x706a` entry, `0xb069`/`0xb06a` echo, `0x706b`/`0xb06b`, `0x706c`/`0xb06c` (page
+  count, then index, then the rows: `c:0x8841f0` reads them in that order), S->C `0x706d` (job id,
+  requester JID, entry, two masteries, job state, member record), `0x306e` and `0xb06d`. The
+  window rules as pure functions: the `*name` alias, the Search filter, the job's allowed
+  purposes, the auto-match candidate test, the default-title and label keys.
+- **`net/party_match_state.gd` (`PartyMatchState`)**: registered on NetClient through round 711's
+  `register_handler` hook (net_client.gd is untouched). It applies the replies:
+  - a page (`c:0x8841f0`, READ): row 0 whose name is the key (the leader's name in a party, the
+    player's own otherwise) becomes the player's registration (`0x97c960`); later rows with that
+    name are skipped; every other row is a record. A `[2][code]` page is a coded line;
+  - `0xb069`/`0xb06a` OK: the registration from the echo (`0x97c530`: race from the player's
+    model, members 1 or the party's count), RECORD_COMPLETE / MODIFY_COMPLETE on the warning
+    banner (`0x77b580` -> `0x7b3eb0`, GDR_WARNING_WND). The dialog closes on OK (`0x73f370`'s
+    vslot `0xac`), not here: `0x73f300` is the `CPartyRegData` constructor (review D1, W4);
+  - `0xb06b`: the own number clears the registration (`0x97c960(0)`); the line is DELETE_COMPLETE,
+    or DELETE_COMPLETE2 when the client deleted it because the party filled (`DAT_00eeb8c8`);
+  - `0xb06d` (`c:0x8847d0`): joined -> JOIN_COMPLETE_MASTER on the banner, the auto run ends;
+    refused -> CREATE_PARTY_REFUSED, no reply -> JOIN_NOREPLY (type 4); `[2][code]` -> the coded
+    line (`0x778190`); a running auto match then tries its next candidate (`0x786e70`) with
+    AUTO_PROGRESS, or ends with AUTO_FAILURE; and the joining window closes (`0x884a0c` ->
+    `0x7390b0`; the argument is INFERRED 0).
+- **`ui/hud/party_match_window.gd` (`PartyMatchWindow`)**: the controller over HudPanels'
+  GDR_PARTY_MATCH (built from ifpartymatch.txt as before) and the owner of the boxes. Each
+  CIFPartyMatchSlot gets ifpartymatchslot.txt built into it; the columns as party_gui.md §3's row
+  table; the own registration pinned in row 0 in (135,233,255); the gold bar
+  (`com_bar01select_`) on the selected row; the enable rules (`0x7384a0`); Join (`0x739500`),
+  Whisper, Auto match, Form party with its client refusals (`0x7397b0`), Change entry, Delete
+  entry; Search (`0x73b780`); Refresh with its 2 s lock; the page spin; page 0 on opening; while
+  the joining window is up, the spec's five are disabled (`0x7390b0`); `0x738890`'s seven are
+  the auto-run disable (review D8, W3); the full party's own registration deleted by the client
+  (`0x7387c0`).
+- **The boxes** (`party_match_box.gd` the shared shell; caption at (10, 11), w - 21 x 12, READ
+  `0x7400c0`):
+  - `party_match_register.gd`: 314x373, caption RECORD / MODIFY, the objective radio READ in
+    `0x73f820` (origin 0,0; pitch 0x42; label x 0x16, width 0x32; 4 across: 0xdb3ad0 Hunting,
+    0xd9670c Quest, 0xdb3a70 Trade Union, 0xdb3a10 Thief Union), the job restriction, the level
+    edits (3 digits, 1..0x6e, "1"/"110"), the type line, the title (max 50, the default by
+    objective while a default), OK's two refusals;
+  - `party_match_auto.gd`: 314x337, the four radios READ in `0x73e790` (objective as above; race
+    origin 0,0, pitch 0x5b, x 0x16, width 0x64, CHN / EUR / Open; exp and item origin 2,2, pitch
+    0x14, x 0x14, centred, width 0x64, SHARE / SELF), OK -> up to 10 candidates;
+  - `party_match_confirm.gd`: the delete question, GInterface `0x788270`'s MsgBoxSimple (360x151,
+    Yes at centre - 81, No at centre + 5, the text box at (30, 65));
+  - `party_match_req_join.gd`: the leader's popup (screenshot 08), 360x315, every field from the
+    `0x706d` as party_gui.md §4, the 10 s timer answering 2;
+  - `party_join_progress.gd`: the joining window (screenshot 09), 365x149, the text with the two
+    names, 200 ms ticks over 10 000 ms, closing itself at 10 s.
+  The register, auto-match and joining boxes are centred on the screen (`0x798b70`, READ: screen
+  w / 2 - w / 2, h / 2 - h / 2).
+- **`ui/hud/party_match_qa.gd`**: OPENSRO_QA_PARTY's matching steps (World3D's `_qa_party_do`
+  hands unknown verbs to it; the QA block's doc lists them).
+- **`server/cmd/partybot`**: `-purpose`, `-min`, `-max`, `-flags`, `-title` for a `-register`
+  bot, and `-silent` (leave join requests unanswered), for the renders.
+
+### Strings (MEASURED, textuisystem)
+
+The PML strings carry `<sml2>` markup: `<font color="255,239,218,164">[%s]</font>` and `<br>`.
+They are drawn as BBCode in a RichTextLabel, the colour's fourth number dropped (INFERRED from
+screenshots 08 and 09, which draw the names opaque).
+
+### Choices of ours (OURS) and what is INFERRED
+
+| what | choice |
+|---|---|
+| the scroll bar (GDR_PARTYMATCH_SCROLL, CIFVerticalScroll) | not drawn; the wheel over the list scrolls a row |
+| the column headers' sorting (0x73e050) | not built |
+| the row tooltip (0x740750) | not built |
+| a new page and the Search filter | the page clears the filter (whether 0x73b5b0 re-applies it was not read) |
+| the leader's popup's position | centred on the screen (0x79c330 does not move it; the record's rect is 0,0) |
+| the purpose combo (CIFComboBox) | drawn with the Option window's combo art and list (ComboList); CIFComboBox's own art was not read |
+| the radio labels' alignment where Create does not set it | left (the radio's default was not read) |
+| the auto-match dialog's starting choices | the first allowed objective, race Open, exp / item as the settings block |
+| Whisper | opens the chat line with `$<leader> `, as R does (the original opens its whisper window) |
+| the delete question's style | 1, Yes / No (INFERRED from its wording; the style argument was not traced) |
+| the full-party delete | on every party change, window open or not (0x7387c0's caller was not read) |
+
+### Tests
+
+- `net/party_match_test.gd`: every matching message the client sends, byte for byte against the
+  fixtures; every reply decoded field by field (page, echo, delete, join request, all four
+  `0xb06d` forms) and the page and join request re-encoded to the same bytes; the rules; the
+  state through paging (registration, the second copy skipped, another key), registration,
+  delete, the join outcomes, the leader's request and answer, and auto match. All pass.
+- `ui/hud/party_match_window_test.gd` (synthetic layouts with the archive's names and rects): the
+  list fill from the fixture page (own row pinned in (135,233,255), `*Bram`, race and purpose as
+  text, 2/8 and 1/4), selection, the enable rules, Refresh's 2 s lock, Join -> `0x706d` and the
+  joining window (text, centring, half bar at 5 s, closed at 10 s), Search, the register dialog
+  (caption, job restriction, default titles, the level refusal, OK = fixture `7069_register`,
+  `0xb069` closes it and pins entry 12), the leader's popup (fields, PML, 10 s answer 2 =
+  fixture `306e_closed`, Confirm = `306e_confirm`). All pass.
+- Render box (`RENDER_DIR=/opt/opensro-client-c2`, `GODOT_LOCK=/var/tmp/c2/lock`):
+  `remote_godot.sh check` ALL LOAD (598 scripts).
+- Full suite on the box (`RENDER_DIR=/opt/opensro-client-c2t`): 228 suites; the only failure was
+  this round's own check message containing the word the runner greps for ("AUTO_FAILURE"),
+  reworded since; `party_match_test.gd` alone passes.
+
+### Live, against a server built from this branch (S1 + S3, in memory)
+
+`qa_shot.sh --server` with partybots on the same server (`/var/tmp/c2/runA2.sh`, `runB.sh`):
+Sonila (1~100, "LVL 100 PT"), Levi (quest, 20~40), Eone (flags 0, a 1/4 party), Tobi
+(`-silent`, leaves join requests unanswered) and Dasha (level 1, `-request Aria`).
+
+- **Run A2, Aria rendered (the leader side).** `match` -> page 0 listed Sonila, Levi, Eone (the
+  `QA MATCH ROW` lines; Eone's Type icon is the one-person art, 1/4). `select:Sonila` -> the gold
+  bar. `form` -> the Forming party dialog (Trade / Thief greyed, the default title DEFAULT1, the
+  type line "EXP Auto Share / Item Free-For-All" from the settings block, flags 0x05).
+  `register` -> `0xb069`, the RECORD_COMPLETE banner, Aria's entry 4 pinned in row 0 in light
+  blue. Dasha's bot then saw entry 4 and sent `0x706d`; Aria's popup showed "[Dasha]has requested
+  to join this party. Confirm?", Level 1, Race CHN, Position Jangan, no guild; `req:confirm` sent
+  `0x306e` answer 1 and the server formed the party (Dasha's log: `0x3065 party=1 leader=1
+  flags=0x05 members=[Aria(1) Dasha(4)]`).
+- **Run B, Bram rendered (the requester side).** `join:Levi` (Bram is level 10, Levi's entry
+  20~40) -> `0xb06d [2][0x2c1e]` drawn in the bottom-right system message window: "Not the
+  required level for the party." `join:Tobi` -> the Joining window, "[Bram]You [Tobi] has
+  requested to join this party." with the gold gauge; Tobi's bot logged the relayed `0x706d`
+  (requester Bram, job state 4, level 10).
+- **Measured** (ImageMagick on the frames, edges of the msgbox2 frame): the Joining window spans
+  x 457..821, y 285..433 = 365x149 at (457, 285), the READ size centred on 1280x720 exactly; the
+  leader's popup x 460..819, y 202..516 = 360x315 at (460, 202). The rows sit on the READ 23 px
+  pitch (row tops 264, 287, 310 in the `QA MATCH` select-bar lines: 144 + 23 i + the window's
+  origin).
+- **Found and fixed by the runs.** The first run drew no gold bar: the slot layout's own
+  GDR_PARTYMATCH_SLOT_SELECT (ID 5, `com_bar01_`) covered the select bar laid under it. The
+  client swaps that control's art (`0x740ca0`); the select bar now sits right above it and
+  replaces it while selected (run A2's frame shows the gold rows at the selected row's top and
+  bottom). A `form` QA step (the dialog left up) was added.
+- **Timing caveat.** A rendered client draws about 3 frames a real second, while the server's
+  15 s backstop and the bots run in real time; so a frame shows only the first few percent of the
+  Joining gauge, and the first run's late `req:confirm` (160 frames after the request, past the
+  real 15 s) reached a request the server had already closed as "no reply". The gauge itself is
+  measured in the unit test (half at 5 s, closed at 10 s).
+- **Frames kept** on the box, `/var/tmp/c2/keep/`: `A2_selected.png` (screenshot 06's gold
+  bar), `A2_register_dialog.png`, `A2_own_row.png` (screenshot 02's own row in blue, as text
+  columns), `A2_leader_popup.png` (screenshot 08), `B_list.png`, `B_refusal_2c1e.png`,
+  `B_joining.png` (screenshot 09). The other frames were deleted.
+
+### Left open
+
+- The register dialog's objective labels are READ 50 wide (0x657960(0x32)); "Trade Union" runs
+  past that and under the next item's dot, as drawn here. Whether CIFRadioButton's label clips
+  was not read.
+- Not exercised live: Change entry, Delete entry, Auto match, Search, Whisper (each is in the
+  window test, except Whisper and Auto match's dialog, whose candidate rule and queue are in the
+  state test).
+- The column sorting, the row tooltip and the drawn scroll bar (OURS table above).
+
+### Review fixes (round 714 review, `docs/rounds/party714_review.md`)
+
+| # | fix |
+|---|---|
+| B1 | An auto-match run disables Join, Auto, Form, Change, Delete, Search and Refresh (`0x738890(1)`) until it ends; the end (`0xb06d`'s join_finished with no joining window) re-applies the rules. Tested |
+| B2 | `<font color>` is A,R,G,B: the names draw (239,218,164) (MEASURED: the textuisystem census, screenshot 08). party_gui.md §4 corrected |
+| B3 | The echo's registration takes the player's race (`_skill_race`) and members 1 or the party's count, time 0, the name rewritten (`0x97c530`). Tested |
+| B4 | An empty page clears the registration (`0x97ddf0` -> `0x97c3b0`). Tested with `b06c_empty` |
+| B5 | `server/partybot` (an 8 MB build of the bot) removed from the history by rebuilding the branch on `85e6c063`; `/server/partybot` added to `.gitignore` |
+| B6 | `PartyMatchWindow.dispose()` disconnects `NetClient.party.changed` and every connection on the state, and closes the boxes; HudPanels calls it in `_exit_tree` |
+| D1 | The register dialog closes on OK; the echo only redraws |
+| D2 | The selection is the slot (`+0x7ec`): a click on an empty slot deselects; a fill that empties the slot drops it. Tested |
+| D3 | Party matching locks the party window's Set (`HudPartyPane.set_match_lock`, `0x6d5ab0` on control 0x15) at the four READ points: the `0xb069` OK, the window's open (lock); the own `0xb06b` out of a party with the window closed, the window's close with no registration (unlock) |
+| D4 | The auto dialog starts race 2, exp 1, item 1 (READ, `0x73eb83..0x73eba8`); the objective keeps the radio's initial item 0 (INFERRED: CIFRadioButton's constructor not read), disabled or not |
+| D5 | The title fits 302 px with "..." (`0x8b47c0(.., 0x12e, 1)`, `OVERRUN_TRIM_ELLIPSIS`) |
+| D6 | Search's levels: min below 2 is 1, max 0 is 110, min above max does nothing. Tested |
+| D7 | Register OK tests `max < min` and an empty title only; the edits clamp to 1..110 as typed (INFERRED) |
+| D8 | The joining window disables the five of `0x7390b0` and its close enables them outright (or keeps an auto run's disable) |
+| D9 | A running Refresh lock restarts with every rules pass (`0x7384a0`'s tail, `0x7386a4`) |
+| D10 | Whisper refuses the registration's own number |
+| D11 | Confirm needs a job id and a requester (`0x73fc40`) |
+| D12 | The window cannot close while the joining window is up (`0x732ae0`); its close takes the register and auto boxes with it |
+| D13 | A `0xb06b` for another number also leaves the filtered list (`removed` signal, `0x73a700`) |
+| W1 | Whisper is READ (`0x7386e0` -> `0x777d10` -> `0x7ab470`: `$` + name + space, focused), identical |
+| W2 | The leader's popup is centred by `0x79ac50(0x83)` (READ) |
+| W3, W4 | Notes corrected above |
+| W5 | A new page clearing the filter is READ (`0x73b5b0`) |
+| W6 | The combo art is READ (`CIFComboBox::vslot_010` `0x6327f0`) |
+| W7 | The joining window's close argument 0 is READ (`push ebx` at `0x884a01`) |
+| W8 | The delete question's style 1 is READ (`push 1` at `0x738986`, stored at +0x908 by `0x643e50`) |
+| W9 | The full-party delete's only caller is `0x886c79` (`UI_PARTY 0x886b10`'s member-joined branch); testing on every party change is equivalent |
+| W10 | The auto dialog's starting choices: D4 |
+| W11 | The PML colour: B2 |
+| L1 | "~" between the level edits (`0x73af56` / `0x73af69`, `0xd884b0`) |
+| L2 | The purpose combo's text right-aligned (alignment 2, `0x73b062..0x73b073`) |
+| L3 | **Open.** Whether the radio label's static (class `0xee9720`, margins zeroed by `0x6527d0(0,0,0,0)` at `0x657edc`) clips its text was not settled; "Trade Union" still runs past its 50 px |
+| L4 | The Title header ("UIIT_STT_LETTER_TITLE") and the blank DUMY cell are set by the window itself (OURS, local to it; UiBuilder's CIFBarWnd 3-slice path is left alone). The low digits in the edits and the page spin are UiBuilder's and other windows', left for a builder round |
+| M1 | A reply with a result byte other than 1 or 2 is ignored (the decoders return null). Tested |
+| M2 | HudPanels accumulates the frame time as a float for the 2 s lock |
+| M3 | The scroll bar is built: HudChat.ChatScroll with ifverticalscroll.txt's parts, the range records - 12 (READ), the length the record's 232 (INFERRED) |
+
+#### After the fixes
+
+- Box: `remote_godot.sh check` ALL LOAD; `party_match_test.gd`, `party_match_window_test.gd` and
+  `hud_party_pane_test.gd` pass; the full suite ran 228 suites, 0 failing.
+- Live (run A3, `/var/tmp/c2/runA3.sh`, Aria rendered with the same bots): the list now has the
+  Title header, the "~" between the level edits, "All" right-aligned in the combo and the scroll
+  bar (MEASURED: the up arrow ends at y 278, the thumb starts at 280, the down arrow spans
+  527..543, i.e. the bar's top at 279 = the window's 120 + 159 and its length 232). The pinned
+  registration pushed Sonila's row down while the gold bar stayed on its slot, as `+0x7ec` does.
+  Dasha's name in the leader's popup measures (239,218,164), 120 pixels of it. The party formed
+  on Confirm (Dasha's log: `0x3065 ... members=[Aria(1) Dasha(4)]`).
+  Frames kept: `/var/tmp/c2/keep/A3_list.png`, `A3_leader_popup.png`.
+
+**Review** (kept beside the notes): `docs/rounds/party714_review.md` (the independent review: 6 bugs, 13 departures, 11 wrong labels, 4 layout, 3 minor; all fixed but L3, whether the original clips a radio label, and the shared builder's low edit digits).
+
+Perf gate: covered by the batch gate below (round 715's entry).
+
 ## Seven-hundred-and-thirteenth round: party matching on the original's opcodes
 
 The party-match server, built on lane S1's party core (round 710, branch `int/party`) against
@@ -7405,6 +7843,370 @@ passes all nine steps and S1's `-mode scenario` all of its steps.
 
 **Reviews** (kept beside the notes):
 - `docs/rounds/party713_review.md` (the independent review: 3 departures from the original, 2 wrong labels, a race, 5 minor; all fixed)
+
+No perf gate: server-only round.
+
+## Seven-hundred-and-twelfth round: the kill pays the party, the party shares its loot, and party monsters hit and pay as the original's
+
+Built on `int/party` (dev + round 710, the party server core), from `docs/protocol/party_rules.md`
+and its round-709 review. Server only; no client change, no perf gate.
+
+### What changed
+
+**The kill reward is the monster's death distributor** (`session/killshare.go`,
+`leveldata/killreward.go`), replacing the killing blow's private award. READ, GS
+`CGObjMob::vslot_399` `0x4c44a0`:
+
+1. **Grouping.** The damage list is grouped. A player in an Exp Auto Share party groups by
+   party; anyone else (no party, or an Exp Free-For-All party) is his own group.
+2. **Kill credit.** The group with the most damage has the kill credit: its biggest hitter.
+3. **Exp Auto Share group, the party share** (`FUN_005bca60`):
+   - Who shares: members alive, in the reference's zone, and within 1000 (horizontal, inclusive)
+     of the kill credit, damage or not. The kill credit may sit outside the party.
+   - The split is `s_i = level_i / Σlevel`, as a float32.
+   - The bonus is `1 + (others−1)·0.2 + chinese·0.1`, or `1 + (chinese−1)·0.1`.
+   - Damping: a member with `s_i > 0.7`, in a party of 3 or more eligible whose top level is 21
+     or more, keeps half the bonus.
+   - Penalty: ×0.5 for a party monster below the eligible members' average level (integer
+     division).
+   - Each award is for the whole group's damage.
+4. **Any other group, the individual award** (`FUN_004c4820`): the player's own damage,
+   ×(1 + (n−1)·0.03) in a party (n = every member). It is halved for a party monster below the
+   receiver's level.
+5. **Per receiver**, `Formula_ExpRewardForContributor` `0x410110` and `Formulae::FUN_004106b0`
+   `0x4106b0`, re-read in the asm this round:
+
+   ```
+   EXP = ftol(float32(base·slot359) · share · Window · lag1cd8 · Diff), floor 1
+   SP  = base·slot359·100/expUnit(rcv) · share · Window · lag1cdc · Diff, floor 1, ftol (int32)
+   ```
+
+   - `base` is the victim's **ExpToGive**, characterdata col 79, for every receiver (slot 332;
+     see "The base EXP" below). Without the column it falls back to the old `KillBase`.
+   - `share` is damage/MaxHP clamped to [1e-6, 1] (`0xb45c84`).
+   - `Window` and `Diff` are evaluated at the engine's float32 steps (`ExpWindowScale32`,
+     `ExpDiffScale32`).
+   - `slot359` is `leveldata.MonsterExpFactor`: 7.5 for a party monster, × the rank's factor
+     (champion 2, giant 15, rank 5 60, elite 4, rank 7 30). A rank outside the table drops even
+     the party factor.
+   - `lag1cdc` is `MasterySPScale`, the mirror of the EXP lag scale, **clamped to [0.1, 1.9]**
+     like its twin (`0x4e31af`-`0x4e31e9`). A lagging mastery earns more SP, up to x1.9.
+6. **vslot_420** (`0x4ea6a0`):
+   - EXP and SP are stored to a float32, × the multiplier (itself a float32 argument,
+     `fld DWORD [ebp+0x10]`), and truncated. The SP formula's product is stored to a float32
+     before its floor and ftol (`0x41083e`).
+   - The rate bonus applies only at a rate of 1.01 or more (`0xb46178`). It adds `EXP·(r−1)` and
+     `SP·(r−1)`. The rate is ExpRatioParty for a receiver in any party, otherwise ExpRatio.
+   - Then GainExpAndLevel: SP through `skills.AddSkillExp` (the guild-points wrapper still sees
+     it), EXP through the level table, with a level-up for any receiver.
+7. **Every kill pays SP**, by the formula above. The old "a kill pays its own EXP as SP" (M = 1)
+   is gone; round 709 had already corrected the census that justified it.
+
+**Party monsters.**
+- **Arming:** the nest is armed only from the share path's count: the last exp-share group's
+  eligible members, against `nest.PartyArmCount` 2 (`session/nestkill.go`). A free-for-all kill
+  writes 0. The measurement is from the kill credit, not the dead monster.
+- **Attack:** a party monster's attack value is ×1.2 before defence, and an **elite's (rank 6)
+  ×1.5, party or not** (`combat.MonsterAttackFactor`, READ `FUN_0040da20`), applied in
+  `monsterBlow` to the range, or to the flat attack.
+- **HP and rolls:** HP ×10, the 50/101 roll, the level clamps and the species-rarity coverage were
+  already right (`combat.ScaleHPForMonster`, `nest.RollClass`, `nest.ClampClassByLevel`, checked
+  against the review's corrections).
+
+**Items and gold** (`session/itemshare.go`, `session/grounditem.go`, `grounditem`, `party`).
+- **Pick-up rights:** someone else's drop needs the party's **Item Auto Share** flag, not just the
+  same party (`samePartyFunc`).
+- **Item Auto Share item, the round robin** (`FUN_00525dc0`):
+  - The next member of the party's rotation (`party.Hub.NextInRotation`, `FUN_004d4840`: the front
+    goes to the back, a joiner is appended, a leaver removed) who is found, alive, in the zone and
+    within 1000 of the picker in 3D.
+  - With the EBX fallback quirk: the last member tried keeps the item when he failed on alive or
+    zone; a distance failure clears him and the picker gets it.
+  - Owner-only items (3/3/9 but not `ITEM_QNO_RM_ARCHEMY*`) stay the picker's.
+  - A full bag on the chosen member refuses the picker **`0x18da`** and leaves the item on the
+    ground.
+- **The notice `0x3068`** goes to the party's members (`party.ItemNotice`):
+  - u32 recipient JID, u32 RefItemID, then a u16 count for an expendable (TypeID 3/3) or the
+    constant u8 1 for anything else. READ, GS `FUN_005bdc80`, client `c:0x873990`.
+  - The gold branch is 8 bytes (OURS, the client's width). It is encoded and fixtured but not
+    sent, see the OPEN list.
+- **Gold under Item Auto Share** (`FUN_005bc7f0`): the picker and the members in the zone within
+  1000 in 3D (alive or not) take `amount / n` each. The picker takes the remainder, or everything
+  when `amount / n` is 0.
+- **The aggro link** now needs the party's Exp Auto Share flag, the real bit
+  (`monsterai.linkAggro`).
+- **The unique-kill notice** groups by the exp-share flag (`partyGroupOf`).
+- **A kill by a state's tick whose killer has left the world** still pays everyone else its damage
+  list earns a share (`status.go settleKill`). The distributor does not depend on who landed the
+  last tick.
+
+### Files of round 710 touched (S1's lane)
+
+- `server/internal/party/party.go`: the rotation list. The hub field `rotation`, kept in step by
+  Form/Add/Remove, and `NextInRotation`. Nothing else.
+- `server/internal/party/wire_test.go`: three `0x3068` rows in the fixture-coverage map.
+- `client/scripts/net/fixtures/party/gen_fixtures.py` and `README.md`: three `0x3068` cases
+  (`3068_expendable`, `3068_other`, `3068_gold`), built from the spec table. Rerunning the
+  generator left the other 57 files byte-identical.
+
+Tests outside the lane changed with the behaviour:
+- `cmd/server/main_test.go`: DropRules carries `Expendable`.
+- `session/combat_test.go`: the kill's SP is no longer equal to its EXP.
+- `session/guildpoints_test.go`: the fixture kills a rank-5 monster wounded to 1 HP, because a
+  level-1 kill's own SP, 119, converts to no points at 400:1.
+- `systems/orphans_test.go`: `ItemShare` is now called. `KillExp`, which the kill path no longer
+  calls (it is Formula_MonsterExpReward, the PC-death formula), and `DecodeItemNotice` are listed
+  with reasons, and the detector's "is called" control moved from `KillExp` to `KillBase`.
+- `session/partyexp_test.go` is removed with the helpers it tested (`applyPartyExpBonus`,
+  `killExpFor`, `applyMasteryExpScale`). Their replacements are covered in
+  `killreward_test.go` and `killshare_test.go`.
+
+### OURS and INFERRED
+
+| what | label |
+|---|---|
+| The base EXP falls back to the level table's EXP unit at the lower level (`Table.KillBase`) only for a monsters CSV without col 79 | OURS (fallback; the base itself is READ) |
+| Group order: first-hit order. Ties keep the first group; the last exp-share group in that order sets the arming count | OURS (the engine's order is READ: heap-address order of the group objects, a std::map keyed by pointer; not reproducible) |
+| "Same world" is the same zone bucket, for the party share, the round robin and the gold split | OURS (one world; the existing approximation) |
+| The round robin's not-found member clears the kept candidate (the lookup's null) | READ (`0x525f90`-`0x525f9a`; review) |
+| The formation's two members enter the rotation in member order | INFERRED (`FUN_005bc210` appends joiners; the formation's order was not read) |
+| The attack factor's integer truncation | OURS (the engine keeps a float32 through the roll, `0x40dcf4`) |
+| The attack factor applies to a drawn monster skill's range | INFERRED (the engine scales the attacker's own stat) |
+| `0x3068`'s gold amount is 8 bytes | OURS (the spec's choice) |
+
+### What was tested
+
+**Go**, `go test -count=1 -p 1 ./...`: green, 65 packages ok (again after the review fixes). `go test -race` on the new tests
+is clean. New tests:
+- `leveldata/killreward_test.go`:
+  - the spec's worked examples: 2/4/8 × level 50 → 0.55/0.325/0.2125; 80, 10, 10 →
+    0.88/0.12/0.12; free-for-all 4/4 → 1.09;
+  - the three damping conditions;
+  - the Country bonus;
+  - the party-monster penalty;
+  - every vslot_359 rank;
+  - the share clamp;
+  - both contributor formulas, with their floors;
+  - float32 rounding before the multiplier;
+  - the rate floor, additive bonus and SP;
+  - `MasterySPScale`.
+- `session/killshare_test.go`:
+  - an exp-share party of two (599/59 each from 1090/109);
+  - eligibility: 1000 in, 1001 out;
+  - the kill credit outside the party (the party 5000 away gets nothing and counts 0);
+  - free-for-all (577/57 each to the two hitters at ×1.06, nothing to the idle member);
+  - solo (1090/109);
+  - a party monster ×7.5.
+- `session/itemshare_test.go`:
+  - the round robin in turn;
+  - the fallback with a dead, other-zone or distant last candidate;
+  - the gold split (the remainder, a dead member sharing, one coin);
+  - the attack factors.
+- `session/nest660_wire_test.go`: the count measured from the kill credit, and a free-for-all
+  party arming nothing.
+- `party/itemnotice_test.go`: `0x3068` against the fixtures; the rotation.
+
+**Live, the real server binary** (in memory, `-leveldata-csv`, `-monsters-csv`, `-chargen-csv`
+generated on the box into the session scratchpad and deleted after; five bots in
+`-gm-accounts`), with the new `partybot -mode share`:
+
+```
+--- 1: the baseline, a solo kill (multiplier 1)
+[psSolo] killed chakji #25 (HP 1031): EXP +51, SP +327
+--- 2: an Exp Auto Share party of two; one member kills
+[psKill] killed chakji #26 (HP 1031): EXP +28, SP +179
+    killer +28 EXP, mate +28 EXP; want both trunc(51 x 0.55) = 28
+--- 3: an Exp Free-For-All party of two; one member kills
+[psFfa] killed chakji #27 (HP 1031): EXP +52, SP +336
+    killer +52 EXP, idle member +0 EXP; want trunc(51 x 1.03) = 52 and 0
+--- all share steps passed
+```
+
+Each kill is real. A GM `/damage` books MaxHP−1 to the killer on the monster's damage list and
+pays nothing itself, then a swing lands the killing blow. The mate's EXP was read back through
+`OpCharacterStats`. SP: 327 → 179 (= trunc(327 × 0.55)) → 336 (= trunc(327 × 1.03)) also follows
+the multiplier. (That was the first build, whose SP lag scale was unclamped at 1 + 20 × 0.1 = 3.0; the
+engine clamps it at 1.9, and the rerun after the review's fixes, below, pays 207.)
+
+**Not tested live; unit tests only:**
+- nest arming (the observer is installed only with `-full-map`);
+- the item round robin, the gold split and `0x3068` (live drops need a ground hub with drop
+  tables);
+- the party-monster factors.
+
+### Gaps, for other lanes
+
+- **The berserk party share** (`Party_ShareHwanCount` `0x5bcf30`: orbs to every member alive in
+  the killer's world, for exp-share parties) is still not wired; `grantKill` credits the killer
+  alone. Not in S2's plan; for a later lane.
+
+- **A receiver other than the killer is told nothing of the EXP and SP he gained.** Retail tells
+  every receiver with `0x3056` (Client_ApplyExpAndLevelUp, `payload_layouts.tsv`), which neither
+  side speaks yet. The row is right; the client's gauge catches up on the next stats read.
+  OpLevelUp is sent to any receiver who levels.
+- **The other members of a gold split, and the round robin's recipient, are told nothing.**
+  - Gold: retail credits each member with reason 0x17 (`0x5bc9b8`), shown as
+    UIIT_MSG_PARTYGET_GOLD; OpenSRO has no gold-change message.
+  - Item: `0x3068` is sent, but the client does not decode it until lane C1/C2. The picker's own
+    pick-up result still says "acquired" for an item that went to someone else. Its inventory
+    refresh is right.
+- **The full-bag member** is told `0x1807` in retail (op result `0xb034`); OpenSRO has no message
+  for it. The picker's `0x18da` is sent; the client needs its line (`_pick_up_refusal_line`).
+
+### OPEN
+
+- ~~Slot 332~~ READ: ExpToGive, col 79 (below).
+- ~~Whether the gold split sends `0x3068`~~ READ: it does not. `FUN_005bc7f0` calls only
+  `0x485dc0`, the picker's slots 2 and 5, `0x5bdb30`, `0x4745d0` and slot 91; never `0x5bdc80`
+  (review). The members are credited through the gold-gain slot only.
+- **The field world's party-monster gate.** OpenSRO spawns only the field world
+  (`nest/join.go`), so the instance worlds' `PARTYMONSTER_SPAWN` gate has nothing to act on; no
+  gate is applied.
+- ~~The group map's order~~ READ (heap-address order); first-hit order stays OURS.
+- **The gold event above 1000** (vtable `0x274`, `0x4ead1f`): what it does is unread; not
+  modelled.
+- **Specialty goods** are excluded from the round robin in retail. OpenSRO drops none, so the
+  test is not modelled.
+- **The pet pick-up** (`GObjPC::FUN_004d5510`): OpenSRO has no picking pet; not modelled.
+
+
+### Review fixes (`docs/rounds/party712_review.md`)
+
+#### The base EXP: col 79, ExpToGive. The review is right, and the record is overturned
+
+Re-read with objdump on `/var/tmp/SR_GameServer.exe` and the raw PE. Every step of the chain from
+a monster's death to the field:
+
+1. **The death distributor calls the PC award.** `CGObjMob::vslot_399` `0x4c44a0` calls `0x5bca60`
+   (party share, `0x4c4777`) or `0x4c4820` (individual award, `0x4c4786`). Both call `[vt+0x690]`
+   on the receiver (`0x4c48b4`, `0x5bceb4`). Slot 420 of CGObjPC's vtable (`0xaf59fc`, RTTI
+   `.?AVCGObjPC@@`; the only place `0x4ea6a0` appears in the image) is `0x4ea6a0` = vslot_420.
+2. **vslot_420 calls the two contributor formulas**: `0x410110` at `0x4ea7a8` and `0x4106b0` at
+   `0x4ea7d4`. The other callers are a twin at `0x4fcbcc`/`0x4fcbf5`.
+3. **Both formulas call `[victim vt+0x530]`**, slot 332 (`0x4101e8`, `0x4107f8`). CGObjMob's vtable
+   `0xaeddac` (RTTI `.?AVCGObjMob@@`; slot 359 `0x4c15c0` confirms the table) has slot 332 at
+   `0xaee2dc` = **`0x4a68b0`**:
+
+   ```
+   4a68b0: mov ecx,[ecx+0x34]   ; the object's instance
+   4a68b3: mov eax,[ecx]
+   4a68b5: mov edx,[eax+0x34]   ; instance slot 13
+   4a68b8: jmp edx
+   ```
+
+4. **Slot 13** is **`0x449340`** in every CInstanceChar-family vtable. Its five references in the
+   image are exactly these vtables' `+0x34`:
+   - `CInstanceChar` `0xae3724`, `CInstanceCOS` `0xae3494`, `CInstancePC` `0xb0d12c`;
+   - `CInstanceSiegeFortressStruct` `0xb0d1e4`, `CInstanceSiegeFortressObject` `0xb0d86c`.
+
+   It reads:
+
+   ```
+   449340: mov eax,[ecx+0x18]   ; the reference row
+   449343: mov eax,[eax+0x250]
+   449349: ret
+   ```
+
+5. **`CRefObjChar+0x250` is col 79.** This is the project's anchored map (col 78 `+0x24c`, col 82
+   `+0x25c` = KO_RecoverTime 3000).
+   - The package's DB `_RefObjChar.csv` names the column **`ExpToGive`**, between `CHR` (78) and
+     `CreepType`, `Knockdown`, `KO_RecoverTime` (80-82).
+   - The fresh export agrees: MOB_WC_GUNPOWDERGHOST L28 carries 749 = exp_unit(28);
+     MOB_EU_KERBEROS 40000.
+
+**And the other formula is PvP.** `0x4105d0` (`Formula_MonsterExpReward`, the min-level rule) opens
+with `call [eax+0x1c]` on both ESI and EDI and returns unless both are PCs (`0x4105d9`-`0x4105f3`).
+Its only callers are `0x4e6a09` and `0x4e6d88`, in the PC death code.
+
+**Why the 2026-09-14 probe missed it.** It looked for integer readers of `+0x250` by
+**intersecting** the readers of `0x250` with the readers of the proven MaxHP field `0x19c`, as a
+proxy for "is this CRefObjChar". `0x449340` is a ten-byte accessor that reads `0x250` and nothing
+else, so the intersection could not keep it. It is also reached only through the slot-332 vcall
+thunk (no direct caller), and the decompile files it as `CInstanceCOS::FUN_00449340`, which reads
+like a pet-only helper. **Lesson: an intersection with a "type marker" field filters on function
+size, not on type. An accessor reads one field.**
+
+**What changed:**
+- `species.ColExpToGive` = 79 is exported as the monsters CSV's appended `ExpToGive` column. It is
+  optional on read, so an older CSV still loads, with `HasExpToGive` false.
+- It is carried on `monsterSpec`, `combat.Species` and `combat.Monster`.
+- It is used as the base for every receiver.
+- `Table.KillBase` remains only as the fallback.
+- `party_rules.md`'s OPEN row is closed; WORLD_ISSUES' round-175 col-79 note and its kill-EXP note
+  carry "(Round 712)" corrections; `combat.ExpFor` and `leveldata.go` have the same correction.
+
+**For the memory note `reference_characterdata_columns.md`** (the coordinator updates the file).
+Two claims are wrong:
+- "No function reads CRefObjChar+0x250 as an integer ... col 79 is dead data" is false: `0x449340`
+  reads it, through slot 332.
+- "MOB EXP SOLVED: a kill is worth leveldata col 5 at min(killerLevel, victimLevel)" is false for
+  monster kills. That is the PvP formula. A monster kill's base is the victim's col 79, ExpToGive,
+  which for an ordinary monster equals leveldata col 5 at the **monster's own** level, and is
+  larger for uniques.
+
+What the note still has right: the column map itself, the 95.3 % match and the death penalty's use
+of col 5.
+
+#### Fixes table
+
+| # | finding | fix | test |
+|---|---|---|---|
+| 1 | SP lag `0x1cdc` clamped [0.1, 1.9] | `MasterySPScale` clamps; comments in `leveldata.go` and this page corrected | `TestMasterySPScale` (level 20, ref 0: 1.9); live solo SP 327 -> **207** |
+| 2 | base = ExpToGive (col 79) | verdict and evidence above; export, carry, use, fallback | `TestKillShareReviewThreeMembers` (36/35/39 EXP, 83 SP, the review's hand numbers); `TestKillShareExpToGiveFallback`; `species.TestExpToGiveColumn`; the sentinel-line test reads col 79 |
+| 3 | lost updates on the row | `character.LockLeveling` around every GetByID -> SetLeveling: the kill award, the stat spend (`stats.go`), the death penalty (`monsterstrike.go`, the EXP re-read under the lock) and `/level` (`gm.go`) | `TestKillShareNoLostUpdate` (50 concurrent awards, none lost) |
+| 4 | float32 steps | `ExpWindowScale32`/`ExpDiffScale32` (the asm's stores) used by both formulas. The party bonus, the damped bonus, the penalty and the multiplier are float32 (`0x5bcd62`/`0x5bcd6a`/`0x5bcea3`/`0x5bcec8`). The free-for-all multiplier is a float32 | `TestLevelScalersFloat32` (14 vs 7: 0.39999998); the worked examples at float32 |
+| 5 | `0x3068` recipients and gate | sent to every member but the recipient (`0x5bb770` skips him); sent for owner-only items too; never for gold | `TestItemNoticeSkipsTheRecipient` |
+| 6 | attack-factor labels | the truncation is OURS (the engine keeps a float32); applying to a skill's range is INFERRED | -- |
+| 7 | three rows upgraded | the not-found candidate is READ; the group order is READ as address order (OURS kept); the gold split sends no `0x3068` (READ) | -- |
+| 8 | `party_protocol.md:191` | "recipient JID", with the addresses; and "to every member but the recipient" | -- |
+| 9 | berserk party share | listed in the gaps above | -- |
+
+**Live again** (`partybot -mode share`, the real server binary, the monsters CSV re-exported with
+col 79 on the box and deleted after):
+
+```
+[psSolo] killed chakji #25 (HP 1031): EXP +51, SP +207
+    killer +28 EXP, mate +28 EXP; want both trunc(51 x 0.55) = 28        (SP +113)
+    killer +52 EXP, idle member +0 EXP; want trunc(51 x 1.03) = 52 and 0  (SP +213)
+--- all share steps passed
+```
+
+The same run against MOB_WC_GUNPOWDERGHOST (L28, ExpToGive 749) with level-20 bots:
+- **Solo: EXP +99.** That is 749 x 0.1 x 1.33, where the old base paid 62. **SP +402.**
+- **Exp-share party: +67 each.** That is 749 x 0.1 x 1.63 x 0.55. From 5 levels up an exp-share
+  member also earns the party gap bonus +0.30, so the share mode's x0.55-of-solo check (which
+  failed as designed there) holds only below a 5-level gap. The mode's help now says so.
+
+#### What players will notice
+
+**Skill points from kills drop sharply; EXP rises for anyone fighting above his level.**
+- **Before round 712**, a kill paid its own EXP again as skill EXP (OpenSRO's disclosed M = 1).
+- **Now** it pays the engine's own skill formula: `ExpToGive x 100 / your level's EXP unit`. That
+  is about **109 skill EXP for an even-level kill at any level** (0.27 skill points at 400:1),
+  rising to 207 for a character whose masteries lag his level by 9 or more.
+- **EXP is unchanged at or above the monster's level.** It rises against a monster above you,
+  because the base is now the monster's own value. Uniques pay their own, larger values.
+
+Solo kills of an ordinary monster, real leveldata, computed with the round's functions (EXP / SP;
+"before" SP was the EXP):
+
+| player | monster | masteries | before EXP / SP | after EXP / SP |
+|---|---|---|---|---|
+| L10 | L10 | at level | 256 / 256 | 256 / 109 |
+| L10 | L15 | at level | 291 / 291 | 437 / 186 |
+| L10 | L10 | none | 26 / 26 | 25 / 207 |
+| L50 | L50 | at level | 2212 / 2212 | 2211 / 109 |
+| L50 | L55 | at level | 2516 / 2516 | 2988 / 147 |
+| L50 | L50 | none | 221 / 221 | 221 / 207 |
+| L100 | L100 | at level | 10178 / 10178 | 10178 / 109 |
+| L100 | L105 | at level | 11579 / 11579 | 13424 / 143 |
+| L100 | L100 | none | 1018 / 1018 | 1017 / 207 |
+
+So a level-100 player who kept his masteries up earned about 25 skill points a kill and now earns
+about 0.27, roughly 90x less. This is what the original's formula pays (READ, `0x4107f0`-
+`0x41082c`). Before release the user should hear it, since it changes everyone's SP income.
+
+**Review** (kept beside the notes): `docs/rounds/party712_review.md` (the independent review: SP mastery-lag clamp, the kill base EXP is characterdata col 79 ExpToGive via slot 332 -- overturning the 2026-09-14/15 record and v0.1.155's min-level base, now the PvP formula -- an EXP write race, float32 rounding, 0x3068 recipients; all fixed).
 
 No perf gate: server-only round.
 
