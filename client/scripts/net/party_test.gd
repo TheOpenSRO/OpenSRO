@@ -237,7 +237,7 @@ func _test_state_leave() -> void:
 	bram.handle(PartyNet.OP_PARTY_INFO, _fx("3065_two_members"))
 	bram.handle(PartyNet.OP_EVENT, _fx("3864_k3_left"))
 	_check(not bram.in_party, "kind 3 naming the player clears the player's party")
-	_check(bram.exp_share == 1 and bram.item_share == 1, "the block keeps the last party's values (INFERRED)")
+	_check(bram.exp_share == 1 and bram.item_share == 1, "the block keeps the last party's values (READ: the clear 0x998be0 leaves them)")
 
 func _test_state_refusals() -> void:
 	var st := PartyState.new()
@@ -247,7 +247,39 @@ func _test_state_refusals() -> void:
 	_check(notices[-1][0] == "UIIT_MSG_PARTYERR_MEMBER_FULL_EXP_SHARED_PARTY" and notices[-1][2] == 0x2c13,
 		"0xb062 0x2c13: the exp-shared full message, as an error")
 	st.handle(PartyNet.OP_CREATE_ACK, _fx("b060_err_too_far"))
-	_check(notices[-1][0] == "" and notices[-1][2] == 4, "bare code 4: no client message")
+	_check(notices[-1][0] == "UIIT_STT_ERR_COMMON_TOO_FAR" and notices[-1][2] == 4,
+		"code 4: the client's 'too far' (category 2, c:0x7bb7cc)")
+	st.handle(PartyNet.OP_CREATE_ACK, _fx("b060_err_post_failed"))
+	_check(notices[-1][0] == "UIIT_MSG_PARTYERR_UNKNOWN_ERROR", "code 2: UNKNOWN_ERROR")
+	var before := notices.size()
+	st.handle(PartyNet.OP_JOIN_ACK, _fx("b067_err_timeout"))
+	_check(notices.size() == before, "the invitee's 0xb067 0x2c10 shows no line (c:0x880120 returns first)")
+	st.handle(PartyNet.OP_CREATE_ACK, _fx("b060_err_timeout"))
+	_check(notices.size() == before + 1 and notices[-1][0] == "UIIT_MSG_PARTYERR_TIMEOUT", "the inviter's 0xb060 0x2c10 does")
+	var fresh := PartyState.new()
+	_check(fresh.exp_share == 1 and fresh.item_share == 0 and fresh.anyone_invite == 1,
+		"the block starts exp 1, item 0, anyone 1 (c:0x99ba00)")
+	# The client's HP decode (c:0x991f60 for kind 6; n over 10 for a full record).
+	var hp := PartyState.new()
+	hp.own_jid = 201
+	hp.handle(PartyNet.OP_PARTY_INFO, _fx("3065_two_members"))
+	var aria := hp.member(101)
+	_check(aria.hp_cur == 10 and aria.hp_max == 10 and aria.mp_cur == 5 and aria.mp_max == 10, "a full record: HP 10/10, MP 5/10")
+	hp.handle(PartyNet.OP_EVENT, _fx("3864_k6_hpmp"))
+	_check(aria.hp_cur == 10 and aria.hp_max == 9 and not aria.dead and aria.hp_ratio() == 1.0,
+		"kind 6 nibble 11: HP 10 over 9 (n - 1 over 9), drawn full")
+	var ev := PartyNet.Event.new()
+	ev.kind = PartyNet.EVENT_UPDATE
+	ev.jid = 101
+	ev.member = PartyNet.Member.new()
+	ev.member.mask = PartyNet.MASK_HPMP
+	ev.member.hp_tenths = 0
+	ev.member.mp_tenths = 3
+	hp.handle(PartyNet.OP_EVENT, PartyNet.encode_event(ev))
+	_check(aria.dead and aria.hp_cur == 0 and aria.hp_ratio() == 0.0 and aria.mp_cur == 3, "kind 6 nibble 0: dead, HP 0")
+	ev.member.hp_tenths = 6
+	hp.handle(PartyNet.OP_EVENT, PartyNet.encode_event(ev))
+	_check(not aria.dead and aria.hp_cur == 5 and aria.hp_max == 9, "kind 6 nibble 6: HP 5 over 9")
 
 func _test_state_invitations() -> void:
 	var st := PartyState.new()

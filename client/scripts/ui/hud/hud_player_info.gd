@@ -236,6 +236,10 @@ func bar_values() -> Array:
 		out[3] = _mp_gauge.max_value - _mp_gauge.min_value
 	return out
 
+## A bar changed (round 711): the party window draws the player's own rows
+## from these values.
+signal bars_changed
+
 func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: int) -> void:
 	if maximum <= 0:
 		return
@@ -243,6 +247,7 @@ func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: in
 		gauge.value = clampf(float(current) / float(maximum) * 100.0, 0.0, 100.0)
 	if label != null:
 		label.text = "%d / %d" % [current, maximum]
+	bars_changed.emit()
 
 # ---------------------------------------------------------------------------
 # The berserk (Hwan) gauge, round 629.

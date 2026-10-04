@@ -74,10 +74,23 @@ const ERR_CREATE_REFUSED := 0x2c0c
 const ERR_TIMEOUT := 0x2c10
 const ERR_JOIN_REFUSED := 0x2c17
 
-## code -> the client's UIIT_* message (docs/protocol/error_codes.md, via
-## party_protocol.md "Error codes the party system sends"). A code with no
-## client message is absent: the caller says so rather than inventing words.
+## code -> the client's UIIT_* message: the party category (2) of the
+## client's error dispatcher UI_SILKMALL::FUN_007b8b40, which every party ack
+## calls as 0x778190(2, code, ...) -- its tables c:0x7bb7cc (codes 2..5) and
+## c:0x7bb7dc (0x2c07..0x2c29), and a direct compare for 0x2c06 (c:0x7b96ae;
+## round 711's review). Codes the dispatcher sends to 0x7b913a (0x2c09,
+## 0x2c0b, 0x2c15, 0x2c16, 0x2c19, 0x2c1a, 0x2c20..0x2c22, 0x2c27) show
+## nothing, and are absent here. 0x2c07 also calls 0x77b580
+## (c:0x7b9719..0x7b9742), which is not reproduced.
 const ERROR_KEYS := {
+	2: "UIIT_MSG_PARTYERR_UNKNOWN_ERROR",
+	3: "UIIT_MSG_PARTYERR_INVALID_TARGET",
+	4: "UIIT_STT_ERR_COMMON_TOO_FAR",
+	5: "UIIT_MSG_PARTYERR_UNKNOWN_OPERATION",
+	0x2c06: "UIIT_MSG_PARTYMATCH_ERROR_BUSY",
+	0x2c07: "UIIT_MSG_PARTYERR_OUT_OF_LEVEL",
+	0x2c11: "UIIT_MSG_PARTYERR_CREATER_LEFT_PARTY",
+	0x2c29: "UIIT_MGS_ARENA_ERR_FREGIST_PARTY_IN_BATTLE_ARENA",
 	0x2c08: "UIIT_MSG_PARTYERR_ALREADY_FULL",
 	0x2c0a: "UIIT_MSG_PARTYERR_TOO_LOW_CREATOR_LEVEL",
 	0x2c0c: "UIIT_MSG_PARTYERR_CREATE_PARTY_REFUSED",
@@ -128,12 +141,29 @@ class Member:
 	var member_name: String = ""
 	var ref_obj_id: int = 0
 	var level: int = 0
-	## Tenths of full: a full record's are trunc(cur/max*10), 0..10
-	## (gs:0x5bafab); an update's HP nibble is 1 + trunc(10 r), 11 at full HP
-	## (gs:FUN_005bb0c0, read in round 710). The windows clamp the ratio to
-	## full; how the client draws an 11 was not read (INFERRED).
+	## The record's raw HP and MP nibbles, as on the wire.
 	var hp_tenths: int = 0
 	var mp_tenths: int = 0
+	## What the client keeps of them (round 711's review, client asm): a full
+	## record (kind 2 c:0x886b88, 0x3065 c:0x883e87) stores both nibbles over a
+	## max of 10 (`push 0xa; push 0xa` before 0x99a2e0). A kind-6 update goes
+	## through c:0x991f60(jid, hp, 10, mp, 10): an HP nibble of 0 sets the dead
+	## flag (+0x60 = 1) and HP 0 over 10; any other n is HP n - 1 over 9
+	## (c:0x991fd1 `lea ecx,[ebx-1]`, `lea edx,[ebp-1]`); MP stays n over 10.
+	## So the server's 1 + trunc(10 r) is a 0-means-dead code and a full bar
+	## (11) reads 10/9. Whether the gauge clamps above 1 was not traced: the
+	## windows clamp (OURS).
+	var hp_cur: int = 0
+	var hp_max: int = 10
+	var mp_cur: int = 0
+	var mp_max: int = 10
+	var dead: bool = false
+
+	func hp_ratio() -> float:
+		return clampf(float(hp_cur) / float(hp_max), 0.0, 1.0) if hp_max > 0 else 0.0
+
+	func mp_ratio() -> float:
+		return clampf(float(mp_cur) / float(mp_max), 0.0, 1.0) if mp_max > 0 else 0.0
 	var region: int = 0
 	## Integer positions (ftol on the server). u32 when region & 0x8000 (a
 	## dungeon), u16 otherwise.
@@ -159,6 +189,17 @@ class Member:
 		if m & MASK_HPMP:
 			hp_tenths = update.hp_tenths
 			mp_tenths = update.mp_tenths
+			# c:0x991f60, the kind-6 decode.
+			if hp_tenths == 0:
+				dead = true
+				hp_cur = 0
+				hp_max = 10
+			else:
+				dead = false
+				hp_cur = hp_tenths - 1
+				hp_max = 9
+			mp_cur = mp_tenths
+			mp_max = 10
 		if m & MASK_POSITION:
 			region = update.region
 			x = update.x
@@ -260,6 +301,12 @@ static func read_member(r: Reader) -> Member:
 		var hm := r.u8()
 		m.hp_tenths = hm & 0x0f
 		m.mp_tenths = (hm >> 4) & 0x0f
+		# A full record's decode (n over 10); PartyState applies an update's
+		# through Member.apply instead.
+		m.hp_cur = m.hp_tenths
+		m.hp_max = 10
+		m.mp_cur = m.mp_tenths
+		m.mp_max = 10
 	if m.mask & MASK_POSITION:
 		m.region = r.u16()
 		# ftol results, so signed (a dungeon's y can be below zero).

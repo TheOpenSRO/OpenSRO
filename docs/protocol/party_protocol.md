@@ -516,7 +516,10 @@ From `docs/protocol/error_codes.md` (client names); where the code is sent is RE
 
 | code | client name |
 |---|---|
-| `0x2c06` | (no name; character locked) |
+| `0x2c06` | `UIIT_MSG_PARTYMATCH_ERROR_BUSY` (the party category's direct compare, `c:0x7b96ae`; round 711's review) |
+| `0x2c07` | `UIIT_MSG_PARTYERR_OUT_OF_LEVEL` (plus a call to `0x77b580`, `c:0x7b9719..0x7b9742`) |
+| `0x2c11` | `UIIT_MSG_PARTYERR_CREATER_LEFT_PARTY` |
+| `0x2c29` | `UIIT_MGS_ARENA_ERR_FREGIST_PARTY_IN_BATTLE_ARENA` |
 | `0x2c08` | `UIIT_MSG_PARTYERR_ALREADY_FULL` |
 | `0x2c09` | (no name; locked or not alive) |
 | `0x2c0a` | `UIIT_MSG_PARTYERR_TOO_LOW_CREATOR_LEVEL` |
@@ -543,7 +546,7 @@ From `docs/protocol/error_codes.md` (client names); where the code is sent is RE
 | `0x2c25` | `UIIT_MSG_PARTYMATCH_RECORD_ERROR_INVITE` |
 | `0x2c26` | `UIIT_MSG_JOBITEM_WEAR_ERR_PARTYMATCH` |
 | `0x2c28` | `UIIT_MGS_ARENA_ERR_CANT_PARTY_WITH_OPPONENT_IN_BATTLE_ARENA` |
-| 2, 3, 5 | bare codes; no client message |
+| 2, 3, 4, 5 | `UIIT_MSG_PARTYERR_UNKNOWN_ERROR`, `_INVALID_TARGET`, `UIIT_STT_ERR_COMMON_TOO_FAR`, `UIIT_MSG_PARTYERR_UNKNOWN_OPERATION` (corrected in round 711's review: every party ack calls `0x778190(2, code, ...)`, the error dispatcher `0x7b8b40`'s party category, whose table `c:0x7bb7cc` names codes 2..5; `0x7bb7dc` covers `0x2c07..0x2c29`). Codes `0x2c09, 0x2c0b, 0x2c15, 0x2c16, 0x2c19, 0x2c1a, 0x2c20..0x2c22, 0x2c27` go to `0x7b913a` and show nothing |
 
 ## Timers
 

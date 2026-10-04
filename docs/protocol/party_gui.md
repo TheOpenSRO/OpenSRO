@@ -88,9 +88,9 @@ block at `+0x20`:
 
 | offset | type | meaning | evidence |
 |---|---|---|---|
-| +0x00 | u32 | exp mode: 1 share, 0 free-for-all | type line; the 4/8 cap test `0x987050` (`exp==0 && count==4` or `exp==1 && count==8` → full) |
+| +0x00 | u32 | exp mode: 1 share, 0 free-for-all; **starts at 1** | type line; the 4/8 cap test `0x987050` (`exp==0 && count==4` or `exp==1 && count==8` → full) |
 | +0x04 | u32 | item mode: 1 share, 0 free-for-all | type line |
-| +0x08 | u32 | "anyone may invite" (party flag bit 2) | caption; Invite enable |
+| +0x08 | u32 | "anyone may invite" (party flag bit 2); **starts at 1** | caption; Invite enable |
 | +0x0c | u8 | names drawn `*%s` and guild hidden | `0x6d6859..0x6d6899`, `0x6d793b`; set by `0x986f60` to `(player vslot 43 != 4)` |
 | +0x0d | u8 | the player is the leader | `0x987080`; the PMI leader flag (`0x7b81c5`) |
 | +0x0e | u8 | the player is in a party | `0x987070` |
@@ -588,18 +588,24 @@ are party709a's to map to codes.
 
 ## Gap list: OpenSRO's client today
 
-1. **Protocol.** `client/scripts/net/party.gd` speaks OpenSRO's own 0x0080–0x0089
+**Round 711 built items 1-4 and 9** (`docs/rounds/party711.md`); the rest stand.
+
+The starting values of the block (READ, round 711's review): the static initializer `0xd75d80`
+constructs the manager (`0x99c1c0`), which calls `0x99ba00` on `+0x20`: exp 1, item 0 (`+0x04`),
+anyone 1; the party clear `0x998be0` never rewrites them.
+
+1. ~~**Protocol.**~~ (done, round 711) `client/scripts/net/party.gd` speaks OpenSRO's own 0x0080–0x0089
    (create/join-by-id/leave/info by name). The retail messages are party709a's.
-2. **The debug party panel** (`World3D` ActionTabs/Party: Create, Leave, Join-by-id) is still the
+2. ~~**The debug party panel**~~ (removed, round 711) (`World3D` ActionTabs/Party: Create, Leave, Join-by-id) is still the
    only way to form a party, plus `OPENSRO_QA_PARTY`. Retire it once Invite works.
-3. **Party window:** the layout is built (`HudPanels`, the popup pane), but only the leader marks
+3. ~~**Party window:**~~ (built, round 711; the members' 3D portraits wait for item 5) the layout is built (`HudPanels`, the popup pane), but only the leader marks
    are wired (`set_party_marks`). Not built:
    - the caption suffix (a CIFSubFrame Text, not drawn at all yet);
    - the type line and its colours;
    - the leader row (name/level/guild/HP/MP/race from the model id);
    - the seven rows and the Banish/Leave rule;
    - the button enable rules, the Invite pre-checks, and the portrait borrowing.
-4. **Settings dialog:** not built. Missing are the client-side preference block (exp/item/anyone)
+4. ~~**Settings dialog:**~~ (built, round 711) not built. Missing are the client-side preference block (exp/item/anyone)
    that the create request reads, and a `CIFCheckBox` builder.
 5. **Quick party board:** not built at all. That covers:
    - slot layout and column wrap;
@@ -624,7 +630,7 @@ are party709a's to map to codes.
    - Race and Purpose columns as **text** (USER DECISION 2026-10-03), level defaults 1 / 110.
 8. **System messages:** the type-4 filter exists (`hud_system_message.gd`). None of the
    party-match lines are routed to it.
-9. **The invitation popup** (§1b): not built; today an invite joins directly by party id.
+9. ~~**The invitation popup** (§1b):~~ (built, round 711) not built; today an invite joins directly by party id.
 10. Out of this lane, noted only: minimap and worldmap party signs (`mm_sign_party`,
    `wmap_sign_party`), and the target window's party re-centring (UI_TODO).
 

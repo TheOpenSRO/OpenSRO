@@ -240,7 +240,9 @@ func _test_in_party_leader(builder: UiBuilder) -> void:
 	_check(_label_text(p.node("GDR_PTY_OPTION_ITEM")) == "<UIIT_STT_PARTY_ITEM_SHARE>", "type line from the party's flags (3)")
 	_check((p.row(0).get_node("PartySlot") as Control).visible and _label_text(p.row_node(0, "GDR_PTYSLOT_STATIC_NAME")) == "Bram",
 		"row 0: Bram")
-	_check(_label_text(p.row_node(0, "GDR_PTYSLOT_STATIC_GUILD")) == "Wolves", "Bram's guild")
+	_check(_label_text(p.row_node(0, "GDR_PTYSLOT_STATIC_GUILD")) == "Wolves"
+		and _label_color(p.row_node(0, "GDR_PTYSLOT_STATIC_GUILD")) == Color8(255, 255, 255),
+		"Bram's guild, white on a member row (0x6d7a5b)")
 	_check(_label_text(p.row_node(0, "GDR_PTYSLOT_STATIC_LEVEL_DATA")) == "7", "Bram's level")
 	_check(absf((p.row_node(0, "GDR_PTYSLOT_GAUGE_HPGAUGE") as TextureProgressBar).value - 100.0) < 0.01,
 		"Bram's HP from his tenths (10/10)")
@@ -302,6 +304,38 @@ func _test_in_party_member(builder: UiBuilder) -> void:
 	_check(got2 == [301], "... and sends 0x7062")
 	(made2[0] as Node).queue_free()
 
+func _test_review_fixes(builder: UiBuilder) -> void:
+	# The leader's guild is gold, a member row's own Leave is (255,245,218),
+	# and the player's bars follow refresh_vitals.
+	var party := PartyState.new()
+	party.own_jid = 201
+	var info := PartyNet.decode_party_info(_fx("3065_two_members"))
+	info.members[0].guild = "Lions"
+	party.handle(PartyNet.OP_PARTY_INFO, PartyNet.encode_party_info(info))
+	var made := _make_pane(builder, party)
+	var p: HudPartyPane = made[1]
+	_check(_label_color(p.node("GDR_PTY_STATIC_GUILD")) == Color8(255, 225, 148), "the leader row's guild in (255,225,148)")
+	_check(_label_color(p.row_node(0, "GDR_PTYSLOT_BTN_EXITFROMPARTY")) == Color8(255, 245, 218), "Leave in 0xfffff5da (0x6d78a7)")
+	var vit := [100.0, 100.0, 100.0, 100.0]
+	p.own_vitals = func() -> Array: return vit
+	p.refresh()
+	vit[0] = 25.0
+	p.refresh_vitals()
+	_check(absf((p.row_node(0, "GDR_PTYSLOT_GAUGE_HPGAUGE") as TextureProgressBar).value - 25.0) < 0.01,
+		"the player's own row follows the player's HP live (0x6d72f0)")
+	(made[0] as Node).queue_free()
+	var lead := PartyState.new()
+	lead.own_jid = 101
+	lead.handle(PartyNet.OP_PARTY_INFO, _fx("3065_two_members"))
+	var made2 := _make_pane(builder, lead)
+	var p2: HudPartyPane = made2[1]
+	var v2 := [100.0, 100.0, 40.0, 100.0]
+	p2.own_vitals = func() -> Array: return v2
+	p2.refresh_vitals()
+	_check(absf((p2.node("GDR_PTY_GAUGE_MPGAUGE") as TextureProgressBar).value - 40.0) < 0.01,
+		"the leader row follows the player's MP when the player leads (0x6d5ca0)")
+	(made2[0] as Node).queue_free()
+
 func _test_job_party(builder: UiBuilder) -> void:
 	var party := PartyState.new()
 	party.own_jid = 101
@@ -346,8 +380,9 @@ func _test_settings(builder: UiBuilder) -> void:
 	var lab1 := exp_group.get_node_or_null("Label1") as Label
 	_check(dot0 != null and dot0.position == Vector2(3, 4) and dot0.size == Vector2(16, 16), "radio item 0's dot at 3,4, 16x16")
 	_check(dot1 != null and dot1.position == Vector2(3, 24), "item 1 a pitch of 20 below")
-	_check(lab1 != null and lab1.position == Vector2(23, 27) and lab1.text == "<UIIT_STT_PARTY_EXP_SELF>",
-		"item 1's label at the dot + (20, 3): EXP_SELF")
+	_check(lab1 != null and lab1.get_meta(UiBuilder.AUTHORED_RECT_META, Rect2()) == Rect2(23, 27, 100, 12)
+		and lab1.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER and lab1.text == "<UIIT_STT_PARTY_EXP_SELF>",
+		"item 1's label: a centred static at the dot + (20, 3), 100x12: EXP_SELF")
 	_check(dlg.exp_choice == 0 and dlg.item_choice == 1, "opens on the block: exp share, item free-for-all")
 	_check(dlg.anyone_box != null and dlg.anyone_box.button_pressed, "... and the anyone box checked")
 	var got: Array = []
@@ -404,6 +439,7 @@ func _initialize() -> void:
 	_test_in_party_leader(builder)
 	_test_in_party_member(builder)
 	_test_job_party(builder)
+	_test_review_fixes(builder)
 	_test_updates_refresh(builder)
 	_test_settings(builder)
 	_test_invitation(builder)

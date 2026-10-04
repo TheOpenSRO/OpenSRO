@@ -729,14 +729,14 @@ func skill_state(char_name: String) -> void:
 func raise_mastery(char_name: String, mastery_id: int) -> void:
 	_send(SkillNet.OP_RAISE, SkillNet.encode_raise_mastery(char_name, mastery_id))
 
-## Registers `handler` (Callable(data: PackedByteArray)) for `opcode`, for a
-## module this file does not route itself (round 711; the party-match lane
-## registers its messages through it). A later registration replaces one.
 func _init() -> void:
 	# The invitation's auto-decline (PartyState._on_request) answers without
 	# the player.
 	party.send_answer.connect(func(payload: PackedByteArray) -> void: _send(PartyNet.OP_REQUEST, payload))
 
+## Registers `handler` (Callable(data: PackedByteArray)) for `opcode`, for a
+## module this file does not route itself (round 711; the party-match lane
+## registers its messages through it). A later registration replaces one.
 func register_handler(opcode: int, handler: Callable) -> void:
 	_extra_handlers[opcode] = handler
 

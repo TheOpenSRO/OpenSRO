@@ -36,13 +36,14 @@ signal send_answer(payload: PackedByteArray)
 # --- The settings block (+0x00..+0x08) --------------------------------------
 ## Exp Auto Share (1) or Free-For-All (0). Out of a party these are the
 ## player's own preferences; the next 0x7060 sends them (c:0x81c7f0).
-## Their starting values are OPEN: the block (0xeeebd8 + 0x20) lies past
-## .data's raw bytes (the image's .bss, zero at load), and no writer before
-## the first Set or 0x3065 was found. OURS: exp 1, item 0, anyone 0 -- the
-## type line screenshot 01 shows out of a party.
+## Their starting values are READ (round 711's review): the static
+## initializer c:0xd75d80 constructs the manager (0x99c1c0), which calls
+## c:0x99ba00 on the block (0x99c1fe, ecx = 0xeeebd8 + 0x20): exp 1, item 0,
+## anyone 1. The party clear (0x998be0) never rewrites them, so they last
+## the process's life. Screenshots 01 and 05 show the same three.
 var exp_share := 1
 var item_share := 0
-var anyone_invite := 0
+var anyone_invite := 1
 
 # --- The party ---------------------------------------------------------------
 var in_party := false
@@ -175,9 +176,12 @@ func _on_ack(a: PartyNet.Ack, is_join_ack: bool) -> void:
 			_close_invitation()
 		return
 	if is_join_ack:
-		# c:0x880120 closes the box on the timeout code; any refusal ends the
-		# invitation the box was showing.
+		# c:0x880120: the timeout code closes the box (request kind 6) and
+		# returns before the message call -- the invitee sees no line. Any
+		# other code shows its message; the box is gone by then anyway.
 		_close_invitation()
+		if a.code == PartyNet.ERR_TIMEOUT:
+			return
 	notice.emit(PartyNet.error_key(a.code), "", a.code)
 
 func _close_invitation() -> void:
@@ -276,6 +280,13 @@ func _on_request(inv: PartyNet.Invitation) -> void:
 	pending_inviter = inv.inviter_id
 	var who: String = String(player_name.call(inv.inviter_id)) if player_name.is_valid() else ""
 	invitation.emit(inv.inviter_id, who, inv.kind, inv.flags)
+
+## The box closed by its own timer (c:0x644650's timer 10): forget the
+## invitation without answering, so the state and the box agree. The
+## server's own wait answers both sides (0x2c10).
+func forget_invitation() -> void:
+	pending_kind = 0
+	pending_inviter = 0
 
 ## The player's answer from the invitation box. Returns the 0x3080 payload
 ## to send, or an empty array when no invitation is showing.

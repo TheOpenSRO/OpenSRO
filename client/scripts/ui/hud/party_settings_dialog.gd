@@ -119,14 +119,21 @@ func _build_radio(group: Control, key: String, text_keys: Array, fallbacks: Arra
 		dot.pressed.connect(choose.bind(key, i))
 		group.add_child(dot)
 		dots.append(dot)
-		var label := Label.new()
-		label.name = "Label%d" % i
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		label.text = _text(text_keys[i], fallbacks[i])
-		label.position = at + Vector2(LABEL_DX, LABEL_DY)
-		label.size = LABEL_SIZE
+		# The item's label is a CIFStatic (0x657c40), font 0, centred
+		# (0x657950(1) sets its HAlign): built through the builder's static
+		# path so it is laid out by the static's rule (place_label).
+		var def := UiLayoutParser.ControlDef.new()
+		def.name = "Label%d" % i
+		def.type = "CIFStatic"
+		def.halign = 1
+		def.valign = 0
+		def.font_index = 0
+		def.rect = Rect2i(Vector2i(at + Vector2(LABEL_DX, LABEL_DY)), Vector2i(LABEL_SIZE))
+		def.text = text_keys[i]
+		var label := _builder.build_control(def) if _builder != null else Label.new()
+		if label is Label:
+			(label as Label).text = _text(text_keys[i], fallbacks[i])
+			UiBuilder.place_label(label as Label, Rect2(def.rect))
 		group.add_child(label)
 	_dots[key] = dots
 	_paint(key)

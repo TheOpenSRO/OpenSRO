@@ -40,6 +40,8 @@ const TIMEOUT_SEC := 30.0
 
 ## The player answered: accept or refuse.
 signal answered(accept: bool)
+## The box's own timer closed it without an answer (finding 9d).
+signal expired
 
 var _builder: UiBuilder
 var _timer: SceneTreeTimer
@@ -66,13 +68,13 @@ func build(builder: UiBuilder, who: String, party_flags: int) -> bool:
 	var frame := builder.build_control(frame_def)
 	if frame != null:
 		add_child(frame)
+	# The title static: CIFMessageBox's resize (vslot 21 0x63b5e0 ->
+	# 0x63b420) puts +0x7c8 at (10, 11), the width less 21 wide, 12 high.
 	var caption := Label.new()
 	caption.name = "Caption"
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	caption.text = _text("UIIT_STT_CONFIRM_BOX", "Confirmation window")
-	# The title's placement on this frame is INFERRED: as CIFSetPartyMode's
-	# caption static on the same msgbox2 frame (10, 11, width - 21, 12).
 	caption.position = Vector2(10, 11)
 	caption.size = Vector2(BOX_SIZE.x - 21, 12)
 	add_child(caption)
@@ -80,14 +82,20 @@ func build(builder: UiBuilder, who: String, party_flags: int) -> bool:
 	if layout == null:
 		return false
 	# CIFMessageBox::Create builds the file's "Create" (the background tile,
-	# GDR_MSGBOX_BG 16,40,284,122) before the mode's section
-	# (docs/protocol/message_box.md). Kind 6 resizes only the box; that the
-	# tile keeps its authored size is INFERRED.
-	# (get_section falls back to the first section: build "Create" only when
-	# the file has one.)
+	# GDR_MSGBOX_BG, ID 0, at 16,40) before the mode's section
+	# (docs/protocol/message_box.md). Its resize (0x63b420) sizes child 0 to
+	# (width - 32, height - 56): 268x120 for kind 6's 300x176 (READ, round
+	# 711's review finding 7). get_section falls back to the first section,
+	# so "Create" is built only when the file has one.
 	var base: Control = builder.build_section(layout, "Create") if layout.sections.has("Create") else null
 	if base != null:
 		add_child(base)
+		var tile := base.get_node_or_null("GDR_MSGBOX_BG") as Control
+		if tile != null:
+			var r := Rect2(tile.position, Vector2(BOX_SIZE.x - 32, BOX_SIZE.y - 56))
+			tile.set_meta(UiBuilder.AUTHORED_RECT_META, r)
+			tile.custom_minimum_size = Vector2.ZERO
+			tile.size = r.size
 		UiBuilder.settle_authored_rects(base)
 	var root := builder.build_section(layout, SECTION)
 	if root == null:
@@ -134,7 +142,7 @@ func build(builder: UiBuilder, who: String, party_flags: int) -> bool:
 func _ready() -> void:
 	if is_inside_tree():
 		_timer = get_tree().create_timer(TIMEOUT_SEC)
-		_timer.timeout.connect(close)
+		_timer.timeout.connect(_expire)
 
 func _place(root: Control, control_name: String, at: Vector2, text: String) -> void:
 	var n := root.get_node_or_null(control_name) as Control
@@ -145,36 +153,44 @@ func _place(root: Control, control_name: String, at: Vector2, text: String) -> v
 	n.position = at
 	_builder.set_static_text(n, text)
 
+## A mode box: the static given the black art at its own size and the inset
+## (3, 7, 3, 6) (0x645e01..0x645ed3), built as a CIFStatic so its text is laid
+## out by the static's own rule (UiBuilder.place_label): centred on the box,
+## overrunning both edges evenly when the text is wider than the box. How the
+## client draws a text wider than its static was not read (INFERRED).
 func _black_box(root: Control, control_name: String, at: Vector2, text: String) -> void:
 	var n := root.get_node_or_null(control_name) as Control
 	if n == null:
 		return
 	n.visible = false
-	var box := TextureRect.new()
-	box.name = control_name + "_Box"
+	var tex := _builder.load_texture(BLACKBOX)
+	var def := UiLayoutParser.ControlDef.new()
+	def.name = control_name + "_Box"
+	def.type = "CIFStatic"
+	def.ddj = BLACKBOX
+	def.halign = 1
+	def.valign = 0
+	def.client_rect = Rect2i(3, 7, 3, 6)
+	var sz := Vector2i(tex.get_size()) if tex != null else Vector2i(100, 24)
+	def.rect = Rect2i(Vector2i(at), sz)
+	def.text = text
+	var box := _builder.build_control(def)
+	if box == null:
+		return
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.texture = _builder.load_texture(BLACKBOX)
-	box.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	box.position = at
-	box.size = box.texture.get_size() if box.texture != null else Vector2(100, 24)
-	var label := Label.new()
-	label.name = "Text"
-	# The static's own alignment (MsgBoxINIF's MESSAGE3/4: HAlign 1, no VAlign
-	# so 0, top) in the inset 0x6527d0 is given: left 3, top 7, right 3,
-	# bottom 6.
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.text = text
-	label.position = Vector2(3, 7)
-	label.size = Vector2(maxf(0.0, box.size.x - 6.0), maxf(0.0, box.size.y - 13.0))
-	box.add_child(label)
 	root.add_child(box)
+	_builder.set_static_text(box, text)
 
 func _button_text(btn: Control, text: String) -> void:
 	var l := btn.get_node_or_null("ButtonLabel") as Label
 	if l != null:
 		l.text = text
+
+func _expire() -> void:
+	if is_queued_for_deletion():
+		return
+	expired.emit()
+	close()
 
 func _answer(accept: bool) -> void:
 	answered.emit(accept)

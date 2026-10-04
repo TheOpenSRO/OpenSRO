@@ -127,6 +127,9 @@ func _initialize() -> void:
 	var panels_script := load(PANELS_PATH) as GDScript
 	var builder := _builder()
 	var panels: Control = panels_script.new(builder)
+	# The panels' own party state, so the party checks leave the NetClient
+	# autoload's alone for later suites (round 711's review, 9i).
+	panels.set("party_state", PartyState.new())
 	root.add_child(panels)
 	await process_frame
 	await _registry_checks(panels)

@@ -361,11 +361,18 @@ func show_party_invitation(who: String, flags: int) -> PartyInvitePopup:
 		box.queue_free()
 		return null
 	box.answered.connect(func(accept: bool) -> void: party_answer_requested.emit(accept))
+	box.expired.connect(func() -> void: _party().forget_invitation())
 	var view := get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768)
 	box.position = Vector2(floorf(view.x / 2.0) - 0x9a, floorf(view.y / 2.0) - 0x4a)
 	add_child(box)
 	_party_invitation = box
 	return box
+
+## The player's own bars changed: the party window's own rows follow
+## (HudPartyPane.refresh_vitals).
+func party_vitals_changed() -> void:
+	if party_pane != null:
+		party_pane.refresh_vitals()
 
 func close_party_invitation() -> void:
 	if is_instance_valid(_party_invitation):

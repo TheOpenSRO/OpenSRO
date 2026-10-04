@@ -34,7 +34,8 @@ const COLOR_TYPE_OUT := Color8(167, 155, 122)      ## 0xffa79b7a
 const COLOR_NAME_IN := Color8(255, 225, 148)       ## 0xffffe194 (leader name, guild)
 const COLOR_GREY := Color8(153, 153, 153)          ## 0xff999999 (<No guild>, disabled button text)
 const COLOR_BUTTON := Color8(255, 245, 218)        ## 0xfffff5da (enabled Dismiss / Banish)
-const COLOR_ROW_NAME := Color8(255, 255, 255)      ## the row's name, white
+const COLOR_ROW_NAME := Color8(255, 255, 255)      ## the row's name, white (0x6d782e)
+const COLOR_ROW_GUILD := Color8(255, 255, 255)     ## a row's guild, white (0x6d7a0c / 0x6d7a5b)
 
 const HP_ART := "interface\\party\\pt_hp.ddj"
 const MP_ART := "interface\\party\\pt_mp.ddj"
@@ -265,14 +266,14 @@ func _refresh_in_party() -> void:
 	_shown(node("GDR_PTY_PICTURE"), true)
 	_shown(node("GDR_PTY_STATIC_LEVEL"), true)
 	_shown(node("GDR_PTY_STATIC_LEVEL_DATA"), true)
-	_guild(node("GDR_PTY_STATIC_GUILD"), lead)
+	_guild(node("GDR_PTY_STATIC_GUILD"), lead, COLOR_NAME_IN)
 	if lead.jid == state.own_jid:
 		var v := _own_vitals()
 		_gauge(node("GDR_PTY_GAUGE_HPGAUGE"), v[0], HP_ART)
 		_gauge(node("GDR_PTY_GAUGE_MPGAUGE"), v[1], MP_ART)
 	else:
-		_gauge(node("GDR_PTY_GAUGE_HPGAUGE"), lead.hp_tenths / 10.0, HP_ART)
-		_gauge(node("GDR_PTY_GAUGE_MPGAUGE"), lead.mp_tenths / 10.0, MP_ART)
+		_gauge(node("GDR_PTY_GAUGE_HPGAUGE"), lead.hp_ratio(), HP_ART)
+		_gauge(node("GDR_PTY_GAUGE_MPGAUGE"), lead.mp_ratio(), MP_ART)
 	_face("leader", lead.jid == state.own_jid)
 	var others := state.row_members()
 	for i in ROWS:
@@ -296,7 +297,7 @@ func _fill_row(i: int, m: PartyNet.Member) -> void:
 	_set_text(row_node(i, "GDR_PTYSLOT_STATIC_LEVEL_DATA"), "%d" % m.level)
 	_shown(row_node(i, "GDR_PTYSLOT_STATIC_LEVEL_DATA"), true)
 	_race_mark(row_node(i, "GDR_PTYSLOT_RACE"), m.ref_obj_id)
-	_guild(row_node(i, "GDR_PTYSLOT_STATIC_GUILD"), m)
+	_guild(row_node(i, "GDR_PTYSLOT_STATIC_GUILD"), m, COLOR_ROW_GUILD)
 	_shown(row_node(i, "GDR_PTYSLOT_STATIC_GUILD_STATIC"), true)
 	var own := m.jid == state.own_jid
 	if own:
@@ -304,8 +305,8 @@ func _fill_row(i: int, m: PartyNet.Member) -> void:
 		_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_HPGAUGE"), v[0], HP_ART)
 		_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_MPGAUGE"), v[1], MP_ART)
 	else:
-		_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_HPGAUGE"), m.hp_tenths / 10.0, HP_ART)
-		_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_MPGAUGE"), m.mp_tenths / 10.0, MP_ART)
+		_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_HPGAUGE"), m.hp_ratio(), HP_ART)
+		_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_MPGAUGE"), m.mp_ratio(), MP_ART)
 	# The button: Banish on every row for the leader, Leave on the player's
 	# own row otherwise, hidden elsewhere.
 	var btn := row_node(i, "GDR_PTYSLOT_BTN_EXITFROMPARTY")
@@ -314,8 +315,10 @@ func _fill_row(i: int, m: PartyNet.Member) -> void:
 		_set_button_text(btn, _text("UIIT_CTL_BAN_PARTY", "Banish"))
 		_button_color(btn, COLOR_BUTTON)
 	elif own:
+		# 0x6d78a7 jumps into Banish's path (0x6d7881): the same colour.
 		_shown(btn, true)
 		_set_button_text(btn, _text("UIIT_CTL_LEAVE_PARTY", "Leave"))
+		_button_color(btn, COLOR_BUTTON)
 	else:
 		_shown(btn, false)
 	_shown(row_node(i, "GDR_PTYSLOT_PICTURE"), true)
@@ -332,8 +335,9 @@ func _clear_row(i: int) -> void:
 
 ## A member's guild (0x6d6640 / 0x6d7680): a job-mode party hides every guild
 ## (grey <No guild>); the player's own row shows the player's own guild;
-## otherwise the member's guild string, or a grey <No guild> when empty.
-func _guild(n: Control, m: PartyNet.Member) -> void:
+## otherwise the member's guild string, or a grey <No guild> when empty. A
+## guild is (255,225,148) on the leader row and white on a member row.
+func _guild(n: Control, m: PartyNet.Member, color: Color) -> void:
 	var guild := m.guild
 	if m.jid == state.own_jid and own_guild.is_valid():
 		guild = String(own_guild.call())
@@ -342,7 +346,7 @@ func _guild(n: Control, m: PartyNet.Member) -> void:
 		_color(n, COLOR_GREY)
 	else:
 		_set_text(n, guild)
-		_color(n, COLOR_NAME_IN)
+		_color(n, color)
 
 func _race_mark(n: Control, ref_obj_id: int) -> void:
 	var mark := n as TextureRect
@@ -365,6 +369,24 @@ func _race_mark(n: Control, ref_obj_id: int) -> void:
 			pic.size = Vector2(16, 16)
 			n.add_child(pic)
 		pic.texture = _builder.load_texture(RACE_ART[race])
+
+## The player's own bars, live: CIFPartySlot's per-frame 0x6d72f0 redraws the
+## player's own row from the player's HP/MP (0x6d7302..0x6d73c7), and
+## CIFParty's 0x6d5ca0 the leader row when the player leads (0x6d5cdf ->
+## 0x987080). Called on every change of the player block's bars (round 711's
+## review) -- the same values, without a per-frame walk. Only the gauges.
+func refresh_vitals() -> void:
+	if _pane == null or not state.in_party or state.own_jid == 0:
+		return
+	var v := _own_vitals()
+	if state.leader_jid == state.own_jid:
+		_gauge(node("GDR_PTY_GAUGE_HPGAUGE"), v[0], HP_ART)
+		_gauge(node("GDR_PTY_GAUGE_MPGAUGE"), v[1], MP_ART)
+	var others := state.row_members()
+	for i in mini(ROWS, others.size()):
+		if others[i].jid == state.own_jid:
+			_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_HPGAUGE"), v[0], HP_ART)
+			_gauge(row_node(i, "GDR_PTYSLOT_GAUGE_MPGAUGE"), v[1], MP_ART)
 
 ## [hp ratio, mp ratio] of the player's own live values.
 func _own_vitals() -> Array:

@@ -21284,6 +21284,8 @@ func _wire_party_panels() -> void:
 	# Party match toggles the matching window, as its key does (0x6d59f0 ->
 	# 0x79c170(1)); the window itself is lane C2's.
 	_hud_panels.party_match_requested.connect(_on_party_match_requested)
+	if _hud_player_info != null:
+		_hud_player_info.bars_changed.connect(_hud_panels.party_vitals_changed)
 
 func _on_party_match_requested() -> void:
 	if _hud_panels != null:
