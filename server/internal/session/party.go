@@ -596,6 +596,16 @@ func (b *partyRecordBook) get(id int64) (memberSample, bool) {
 	return s, ok
 }
 
+// replace stores s for id only while id is still filed: a sample taken just
+// before the member left must not file it again.
+func (b *partyRecordBook) replace(id int64, s memberSample) {
+	b.mu.Lock()
+	if _, ok := b.m[id]; ok {
+		b.m[id] = s
+	}
+	b.mu.Unlock()
+}
+
 func (b *partyRecordBook) forget(id int64) {
 	b.mu.Lock()
 	delete(b.m, id)
@@ -675,7 +685,7 @@ func (d PartyDeps) sendPartyUpdates(ctx context.Context) {
 			// What the members now hold: the new fields, with the HP/MP byte
 			// the update formula left (unchanged unless it was sent).
 			now.rec.HPMP = u.HPMP
-			partyRecords.set(m.CharacterID, now)
+			partyRecords.replace(m.CharacterID, now)
 			if u.Mask == 0 {
 				continue
 			}
