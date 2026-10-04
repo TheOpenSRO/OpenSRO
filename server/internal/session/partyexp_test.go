@@ -11,14 +11,10 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/skill"
 )
 
-// member builds a party member with a distinct session, which Hub.Create and
-// Hub.Join both dereference.
+// member builds a party member with a distinct session.
 func member(sessionID uint64, characterID int64, name string) party.Member {
-	// Level clears party.MinLevelToCreate: Hub.Create enforces the engine's
-	// level-5 rule for starting a party, and these tests are about the exp
-	// bonus rather than that gate.
 	return party.Member{Session: gateway.NewTestSession(sessionID), CharacterID: characterID,
-		Name: name, Level: party.MinLevelToCreate}
+		Name: name, Level: party.MinCreatorLevel}
 }
 
 // TestApplyPartyExpBonus covers the wiring between a live party and the
@@ -39,19 +35,11 @@ func TestApplyPartyExpBonus(t *testing.T) {
 		t.Errorf("character in no party: got %d, want 1000", got)
 	}
 
-	// A party of one is still 1.0 -- the engine only adds for members PAST
-	// the first, so a solo leader earns exactly what a partyless one does.
-	pt, err := hub.Create(member(1, 42, "Leader"))
+	// Two members: 1000 * 1.03. (There is no party of one: round 710 forms a
+	// party from an accepted invitation, two members at once.)
+	pt, err := hub.Form(member(1, 42, "Leader"), member(2, 43, "Second"), party.FlagExpShare)
 	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if got := applyPartyExpBonus(hub, 42, 1000); got != 1000 {
-		t.Errorf("party of one: got %d, want 1000", got)
-	}
-
-	// Two members: 1000 * 1.03.
-	if _, err := hub.Join(pt.ID, member(2, 43, "Second")); err != nil {
-		t.Fatalf("Join: %v", err)
+		t.Fatalf("Form: %v", err)
 	}
 	if got := applyPartyExpBonus(hub, 42, 1000); got != 1030 {
 		t.Errorf("party of two: got %d, want 1030", got)
@@ -62,8 +50,8 @@ func TestApplyPartyExpBonus(t *testing.T) {
 	}
 
 	// Three members: 1000 * 1.06.
-	if _, err := hub.Join(pt.ID, member(3, 44, "Third")); err != nil {
-		t.Fatalf("Join: %v", err)
+	if _, err := hub.Add(pt.ID, member(3, 44, "Third")); err != nil {
+		t.Fatalf("Add: %v", err)
 	}
 	if got := applyPartyExpBonus(hub, 42, 1000); got != 1060 {
 		t.Errorf("party of three: got %d, want 1060", got)
@@ -110,21 +98,10 @@ func TestKillExpPartyGapBonus(t *testing.T) {
 		t.Errorf("character in no party: got %d, want 327", got)
 	}
 
-	// A party of one does NOT earn it (round 485). The engine's gate tests the
-	// party pointer, but the engine only ever creates a party with two members
-	// (an accepted invite); OpenSRO's create-alone path is its own, and must
-	// not turn "create party" into a solo exp bonus.
-	pt, err := hub.Create(member(1, 42, "Leader"))
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if got, _ := killExpFor(tbl, hub, 42, 10, 20); got != 327 {
-		t.Errorf("party of one: got %d, want 327 (no gap bonus alone)", got)
-	}
-
-	// Both members of a party of two earn it.
-	if _, err := hub.Join(pt.ID, member(2, 43, "Second")); err != nil {
-		t.Fatalf("Join: %v", err)
+	// Both members of a party of two earn it (the engine only ever creates a
+	// party with two members, an accepted invite; round 710's Form).
+	if _, err := hub.Form(member(1, 42, "Leader"), member(2, 43, "Second"), party.FlagExpShare); err != nil {
+		t.Fatalf("Form: %v", err)
 	}
 	for _, id := range []int64{42, 43} {
 		if got, _ := killExpFor(tbl, hub, id, 10, 20); got != 432 {
@@ -137,13 +114,13 @@ func TestKillExpPartyGapBonus(t *testing.T) {
 		t.Errorf("outsider beside a live party: got %d, want 327", got)
 	}
 
-	// When the second member leaves, the leader is alone again and loses it.
-	// What the engine does here is unread; this follows the two-member reading.
-	if _, _, err := hub.Leave(43); err != nil {
-		t.Fatalf("Leave: %v", err)
+	// When the second member leaves, a party of two is dissolved (READ, SM
+	// 0x44f580; round 709) and the leader is in no party: the solo scale.
+	if _, err := hub.Remove(43, party.ReasonLeave); err != nil {
+		t.Fatalf("Remove: %v", err)
 	}
 	if got, _ := killExpFor(tbl, hub, 42, 10, 20); got != 327 {
-		t.Errorf("party dropped to one: got %d, want 327", got)
+		t.Errorf("after the dissolution: got %d, want 327", got)
 	}
 }
 

@@ -123,6 +123,7 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | `mapobjcensus` | the objects the retail loader builds from every region's `.o2` (lists 1 and 2, one per key, owner's frame) and `force_addobject.txt` (`-media`) against the client's placement rule; `-dumpmodels` feeds `client/tools/map_object_census.gd` |
 | `auditcharacters` | walk the real character/equipment asset chain and report what resolves |
 | `audittextures` | walk the whole object catalog and report texture resolution |
+| `partybot` | characters on the party's real wire against a running server (round 710): `-mode scenario` runs the party acceptance (invite, cap, kick, leave, succession, dissolution, party chat, logout) with five characters and prints every party message; `-mode bot -name X [-accept] [-invite NAME]` keeps one character online as the other side of a live client test. The server needs `-chargen-csv`, `-leveldata-csv` and the bots' accounts in `-gm-accounts` (they raise themselves with `/level`) |
 | `retailgw` | the original gateway protocol as far as the server list (round 681): `serve` runs a FAKE retail gateway with the shards given (`-shards "Name:cur/max:state,..."`, `-fault` to misbehave); `probe` asks a gateway for its shard list as the client does and hangs up (`-content-id` / `-version` are the player's archive's DIVISIONINFO and SV.T values; it never logs in) |
 
 ## Layout

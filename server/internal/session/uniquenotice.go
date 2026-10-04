@@ -214,7 +214,7 @@ func partyGroupOf(parties *party.Hub) func(int64) int64 {
 		if !in || pt == nil || len(pt.Members) < 2 {
 			return 0
 		}
-		return pt.ID
+		return int64(pt.ID)
 	}
 }
 

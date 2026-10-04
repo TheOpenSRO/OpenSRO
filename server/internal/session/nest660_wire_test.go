@@ -67,12 +67,13 @@ func TestPartyMembersNearTheKill(t *testing.T) {
 	if n := partyMembersNear(hub, parties, 1, m); n != 0 {
 		t.Fatalf("a killer in no party counted %d", n)
 	}
-	p, err := parties.Create(party.Member{Session: sessions[1], CharacterID: 1, Name: "a", Level: 50})
+	p, err := parties.Form(party.Member{Session: sessions[1], CharacterID: 1, Name: "a", Level: 50},
+		party.Member{Session: sessions[2], CharacterID: 2, Name: "m", Level: 50}, party.FlagExpShare)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []int64{2, 3, 4} {
-		if _, err := parties.Join(p.ID, party.Member{Session: sessions[id], CharacterID: id, Name: "m", Level: 50}); err != nil {
+	for _, id := range []int64{3, 4} {
+		if _, err := parties.Add(p.ID, party.Member{Session: sessions[id], CharacterID: id, Name: "m", Level: 50}); err != nil {
 			t.Fatal(err)
 		}
 	}

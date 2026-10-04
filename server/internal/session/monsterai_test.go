@@ -2450,7 +2450,8 @@ type linkStage struct {
 	f       *battleFixture
 	seed    int64
 	parties *party.Hub
-	partyID int64
+	partyID uint32
+	leader  party.Member
 	mates   []int64
 	ids     []int64 // the monsters, A first
 }
@@ -2465,11 +2466,7 @@ func startLinkStage(t *testing.T, seed int64, members int, mateX, mateZ float64,
 	if members >= 2 {
 		s.parties = party.NewHub()
 		f.a.parties = s.parties
-		pt, err := s.parties.Create(party.Member{Session: f.ariaSession(t), CharacterID: f.aria, Name: "Aria", Level: party.MinLevelToCreate})
-		if err != nil {
-			t.Fatalf("creating the party: %v", err)
-		}
-		s.partyID = pt.ID
+		s.leader = party.Member{Session: f.ariaSession(t), CharacterID: f.aria, Name: "Aria", Level: party.MinCreatorLevel}
 		for i := 1; i < members; i++ {
 			s.addMate(t, []string{"", "Bram", "Cass", "Dara"}[i], mateX, mateZ)
 		}
@@ -2490,7 +2487,16 @@ func (s *linkStage) addMate(t *testing.T, name string, x, z float64) {
 	}
 	sess := gateway.NewTestSession(uint64(91300 + 10*s.seed + int64(len(s.mates)+1)))
 	s.f.hub.Enter(sess, mate.ID, name, 1, "jangan", world.Position{X: x, Z: z})
-	if _, err := s.parties.Join(s.partyID, party.Member{Session: sess, CharacterID: mate.ID, Name: name, Level: 1}); err != nil {
+	m := party.Member{Session: sess, CharacterID: mate.ID, Name: name, Level: 1}
+	if s.partyID == 0 {
+		// The first mate forms the party with Aria (round 710: there is no
+		// party of one), exp-shared as the aggro link needs.
+		pt, err := s.parties.Form(s.leader, m, party.FlagExpShare)
+		if err != nil {
+			t.Fatalf("%s forming the party: %v", name, err)
+		}
+		s.partyID = pt.ID
+	} else if _, err := s.parties.Add(s.partyID, m); err != nil {
 		t.Fatalf("%s joining: %v", name, err)
 	}
 	s.mates = append(s.mates, mate.ID)
