@@ -379,6 +379,103 @@ func close_party_invitation() -> void:
 		_party_invitation.close()
 	_party_invitation = null
 
+# --- Party matching (round 714, lane C2) ------------------------------------
+
+## The matching state (registered on NetClient's dispatcher) and the window's
+## controller, which also owns the matching boxes (PartyMatchWindow).
+var party_match_state: PartyMatchState = null
+var party_match: PartyMatchWindow = null
+var _zone_names: Dictionary = {}
+var _zone_names_loaded := false
+
+func _ensure_party_match() -> PartyMatchWindow:
+	if party_match != null:
+		return party_match
+	party_match_state = PartyMatchState.new()
+	party_match_state.send = func(op: int, payload: PackedByteArray) -> void:
+		if NetClient.is_connected_to_server():
+			NetClient._send(op, payload)
+	party_match_state.registration_key = _party_match_key
+	if not Engine.is_editor_hint():
+		party_match_state.register_with(NetClient)
+	party_match = PartyMatchWindow.new(_builder, party_match_state, _party(), self)
+	party_match.own_level = _party_match_level
+	party_match.own_name = func() -> String: return NetClient.current_character_name
+	party_match.own_job = func() -> int:
+		var p := _party()
+		return int(p.own_job_state.call()) if p.own_job_state.is_valid() else PartyNet.JOB_NONE
+	party_match.race_of_model = func(ref_id: int) -> int:
+		var c: Callable = party_hooks.get("race_of_model", Callable())
+		return int(c.call(ref_id)) if c.is_valid() else -1
+	party_match.zone_name = _party_match_zone
+	party_match.mastery_icon = _party_match_mastery_icon
+	party_match.view_size = func() -> Vector2: return get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768)
+	party_match.notice.connect(func(k: String, code: int, type: int) -> void:
+		# Through the party state's notice: World3D draws it in the system
+		# message window, type 0 (ALWAYS) for a server code, 4 otherwise.
+		_party().notice.emit(k, "", code if type == 0 else 0))
+	party_match.banner.connect(_party_match_banner)
+	party_match.whisper_requested.connect(_party_match_whisper)
+	return party_match
+
+## c:0x8841f0's compare: the leader's name in a party, the player's otherwise.
+func _party_match_key() -> String:
+	var p := _party()
+	if p.in_party:
+		var l := p.leader()
+		if l != null:
+			return l.member_name
+	return NetClient.current_character_name
+
+func _party_match_level() -> int:
+	if _stats != null:
+		return _stats.level
+	var scene := get_tree().current_scene if is_inside_tree() else null
+	var lv = scene.get("_player_level") if scene != null else null
+	return int(lv) if lv != null else 0
+
+## 0x740030: the region id as text, looked up in textzonename (keyed by
+## region id, TextZoneNameReader).
+func _party_match_zone(region: int) -> String:
+	if not _zone_names_loaded:
+		_zone_names_loaded = true
+		var archive := _builder.media_archive() if _builder != null else null
+		var entry = ObjectLoader.find_file(archive, "server_dep\\silkroad\\textdata\\textzonename.txt") if archive != null else null
+		if entry != null:
+			_zone_names = TextZoneNameReader.parse(archive.read_file(entry))
+	return String(_zone_names.get(region & 0xffff, ""))
+
+## 0x73fed0 -> 0x937010: the mastery's record, its icon (skillmasterydata
+## column 11, MasteryReader).
+func _party_match_mastery_icon(id: int) -> Texture2D:
+	_load_masteries()
+	for m in _mastery_table:
+		if (m as MasteryReader.Mastery).id == id and _builder != null:
+			return _builder.load_texture((m as MasteryReader.Mastery).icon_path)
+	return null
+
+## 0x77b580: the warning banner (GDR_WARNING_WND, World3D's HudWarning).
+func _party_match_banner(key: String) -> void:
+	var text := _builder.resolve_text(key) if _builder != null else key
+	var w := get_parent().get_node_or_null("HudWarning") if get_parent() != null else null
+	if w != null and w.has_method("show_notice") and text != "" and text != key:
+		w.show_notice(text)
+	else:
+		print("HudPanels: party match banner %s" % key)
+
+## Whisper (0x7386e0): the chat line opened with a whisper to the leader
+## (the same "$name " KeyMap.reply_line builds for R; OURS: the original
+## opens its whisper window).
+func _party_match_whisper(leader_name: String) -> void:
+	var chat := get_parent().get_node_or_null("HudChat") if get_parent() != null else null
+	if chat != null and chat.has_method("open_with"):
+		chat.open_with("$%s " % leader_name)
+
+func _party_match_opened(window: HudWindow, was_shown: bool) -> void:
+	_ensure_party_match().attach(window)
+	if not was_shown:
+		party_match.on_shown()
+
 ## Whether the equipment window is showing its avatar slots.
 func is_equipment_avatar_mode() -> bool:
 	return _equipment_avatar_mode
@@ -494,6 +591,7 @@ func _ready() -> void:
 	_qa_slots = OS.get_environment("OPENSRO_QA_SLOTS") != ""
 	if _qa_slots:
 		add_to_group(QA_SLOTS_GROUP)
+	_ensure_party_match()
 
 ## OPENSRO_QA_SLOTS is set (read once): F11 prints the slots, Shift+F11
 ## opens the warehouse. QA only.
@@ -609,6 +707,8 @@ func open(panel_id: String) -> HudWindow:
 	window.show()
 	window.move_to_front()
 	_populate(panel_id)
+	if panel_id == "partymatch":
+		_party_match_opened(window, was_shown)
 	return window
 
 ## The alchemy window (AlchemyWindow), while it exists. The client builds it
@@ -2857,6 +2957,8 @@ func _doll_turn_tick(now_ms: int) -> void:
 
 func _process(_delta: float) -> void:
 	_doll_turn_tick(Time.get_ticks_msec())
+	if party_match != null:
+		party_match.advance(int(_delta * 1000.0))
 
 ## The System window as CIFSystemWnd::Create (0x6f6610) leaves it, which is
 ## not ifsystemwnd.txt's geometry. After building the layout it:

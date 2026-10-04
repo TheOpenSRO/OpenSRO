@@ -11364,7 +11364,12 @@ func _update_blob_shadow() -> void:
 ##                          <anyone> (the Set dialog's Yes), invite:<name>
 ##                          (select that spawned player and press Invite),
 ##                          accept / refuse (answer the next invitation box
-##                          through its buttons), leave, kick:<name>
+##                          through its buttons), leave, kick:<name>; and
+##                          the party-matching steps (round 714, PartyMatchQa:
+##                          match, page:<n>, register:/change:<purpose>,<min>,
+##                          <max>[,<title>], delete, select:/join:<leader>,
+##                          search:<name>|<purpose>|<lo>|<hi>, auto:<purpose>,
+##                          <race>, req:confirm|cancel|wait, dump)
 ##   OPENSRO_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
@@ -21410,6 +21415,7 @@ func _on_party_answer_requested(accept: bool) -> void:
 var _qa_party_answer := ""
 
 func _qa_party_step(spec: String) -> void:
+	PartyMatchQa.tick(_hud_panels)
 	for part in spec.split(";", false):
 		var colon := part.find(":")
 		if colon < 0 or not part.substr(0, colon).is_valid_int():
@@ -21476,7 +21482,9 @@ func _qa_party_do(step: String) -> void:
 					if btn != null:
 						btn.pressed.emit()
 		_:
-			printerr("QA PARTY: unknown step '%s'" % step)
+			# The party-matching steps (round 714): PartyMatchQa.
+			if not PartyMatchQa.do(_hud_panels, verb, arg):
+				printerr("QA PARTY: unknown step '%s'" % step)
 
 ## Presses the invitation box's Accept or Refuse when the QA run asked for
 ## one and a box is up.
