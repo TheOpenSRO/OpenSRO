@@ -509,6 +509,8 @@ func _portrait_material(src: Material) -> ShaderMaterial:
 	mat.set_shader_parameter("light_diffuse", _light["diffuse"])
 	mat.set_shader_parameter("modulate_scale", MODULATE_SCALE)
 	mat.set_shader_parameter("alpha_ref", alpha_ref)
+	if src.has_meta(SkinnedBsrAssembler.ENV_MAPPED_META):
+		mat.set_meta(SkinnedBsrAssembler.ENV_MAPPED_META, true)
 	_materials.append(mat)
 	return mat
 
@@ -543,6 +545,8 @@ func _mod_material(src: ShaderMaterial) -> ShaderMaterial:
 	mat.set_shader_parameter("portrait_object_color", Vector3(OBJECT_COLOR, OBJECT_COLOR, OBJECT_COLOR))
 	mat.set_shader_parameter("portrait_light_ambient", _light["ambient"])
 	mat.set_shader_parameter("portrait_light_diffuse", _light["diffuse"])
+	if src.has_meta(SkinnedBsrAssembler.ENV_MAPPED_META):
+		mat.set_meta(SkinnedBsrAssembler.ENV_MAPPED_META, true)
 	_materials.append(mat)
 	return mat
 
