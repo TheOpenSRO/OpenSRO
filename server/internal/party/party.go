@@ -369,6 +369,11 @@ type Hub struct {
 	invites  map[int64]*Invite
 	seq      uint64
 	listings map[int64]listing
+	// requests holds the characters with a party-match join request pending
+	// (lane S3, match.go): the GameServer writes their state byte to 1 when it
+	// forwards the request (READ, GS 0x5bf570) and back to 0 when it fails
+	// (GS 0x5bfac0, MsgHandler_3c01 0x4169d0).
+	requests map[int64]struct{}
 
 	// Timeout is the invitation timeout (InviteTimeout unless a test sets
 	// it before use).
@@ -385,6 +390,7 @@ func NewHub() *Hub {
 		bySession: make(map[uint64]int64),
 		invites:   make(map[int64]*Invite),
 		listings:  make(map[int64]listing),
+		requests:  make(map[int64]struct{}),
 		Timeout:   InviteTimeout,
 		afterFunc: func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) },
 	}
@@ -600,6 +606,9 @@ func (h *Hub) stateLocked(characterID int64) byte {
 		return StateInParty
 	}
 	if _, pending := h.invites[characterID]; pending {
+		return StatePending
+	}
+	if _, requesting := h.requests[characterID]; requesting {
 		return StatePending
 	}
 	_, listed := h.listings[characterID]

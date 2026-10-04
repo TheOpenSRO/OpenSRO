@@ -20,10 +20,22 @@
 //	    Prints every party message each character receives and exits 1 on the
 //	    first expectation that fails.
 //
+//	partybot -mode match -addr HOST:PORT [-prefix pm]
+//	    The round-713 party-match acceptance run with four characters: a
+//	    party-less entry registered, paged and requested; a request outside
+//	    the level range refused 0x2c1e; a second request while one is pending
+//	    refused 0x2c1f; the leader's confirm forming the party with the
+//	    entry's flags; a request left unanswered until the 15 s backstop
+//	    answers 2; the entry deleted. Takes about 20 s (the backstop).
+//
 //	partybot -mode bot -addr HOST:PORT -name Bram [-accept=true] [-invite NAME]
-//	    One character that stays online: answers every invitation (yes with
-//	    -accept, no without), optionally invites NAME once it sees it, and
-//	    prints the party traffic -- the other side of a live client test.
+//	         [-register] [-request NAME]
+//	    One character that stays online: answers every invitation and every
+//	    party-match join request (yes with -accept, no without), optionally
+//	    invites NAME once it sees it, registers a party-match entry
+//	    (-register: Exp+Item Auto Share, Hunting, levels 1..110), or asks to
+//	    join NAME's entry once it is on page 0 (-request NAME), and prints the
+//	    party traffic -- the other side of a live client test.
 package main
 
 import (
@@ -118,7 +130,8 @@ func (b *bot) idOf(name string) (int64, bool) {
 
 func isParty(op uint16) bool {
 	switch op {
-	case party.OpCreateAck, party.OpInviteAck, party.OpJoinAck, party.OpInfo, party.OpInvitation, party.OpEvent:
+	case party.OpCreateAck, party.OpInviteAck, party.OpJoinAck, party.OpInfo, party.OpInvitation, party.OpEvent,
+		party.OpMatchRegAck, party.OpMatchChgAck, party.OpMatchDelAck, party.OpMatchListAck, party.OpMatchJoin, party.OpMatchJoinAck:
 		return true
 	}
 	return false
@@ -165,6 +178,46 @@ func describe(p *proto.Packet) string {
 			return fmt.Sprintf("0x3864 k6 update jid=%d mask=0x%02x", e.JID, e.Record.Mask)
 		case party.EventLeader:
 			return fmt.Sprintf("0x3864 k9 leader jid=%d", e.JID)
+		}
+	case party.OpMatchRegAck, party.OpMatchChgAck:
+		if len(p.Data) > 0 && p.Data[0] == party.ResultOK {
+			e, _, err := party.ReadEntry(p.Data[1:])
+			if err == nil {
+				return fmt.Sprintf("0x%04x [1] entry=%d party=%d flags=0x%02x purpose=%d levels=%d..%d %q", p.Opcode, e.Number, e.PartyID, e.Flags, e.Purpose, e.MinLevel, e.MaxLevel, e.Title)
+			}
+		}
+		if a, err := party.DecodeIDAck(p.Data); err == nil && !a.OK {
+			return fmt.Sprintf("0x%04x [2] code=0x%x", p.Opcode, a.Code)
+		}
+	case party.OpMatchDelAck:
+		if a, err := party.DecodeIDAck(p.Data); err == nil {
+			if a.OK {
+				return fmt.Sprintf("0xb06b [1] entry=%d", a.ID)
+			}
+			return fmt.Sprintf("0xb06b [2] code=0x%x", a.Code)
+		}
+	case party.OpMatchListAck:
+		pg, err := decodePage(p.Data)
+		if err != nil {
+			return fmt.Sprintf("0xb06c % x", p.Data)
+		}
+		var rows []string
+		for _, r := range pg.rows {
+			rows = append(rows, fmt.Sprintf("%d:%s(race %d, %d members, flags 0x%02x, purpose %d, %d..%d)", r.Number, r.Name, r.Race, r.Count, r.Flags, r.Purpose, r.MinLevel, r.MaxLevel))
+		}
+		return fmt.Sprintf("0xb06c [1] pages=%d index=%d rows=[%s]", pg.pages, pg.at, strings.Join(rows, " "))
+	case party.OpMatchJoin:
+		j, err := party.DecodeJoinRequest(p.Data)
+		if err == nil {
+			return fmt.Sprintf("0x706d job=%d requester=%s(%d) entry=%d masteries=%d/%d job state=%d level=%d", j.JobID, j.Record.Name, j.Requester, j.Entry, j.Mastery1, j.Mastery2, j.Job, j.Record.Level)
+		}
+	case party.OpMatchJoinAck:
+		if len(p.Data) == 3 {
+			v := uint16(p.Data[1]) | uint16(p.Data[2])<<8
+			if p.Data[0] == party.ResultOK {
+				return fmt.Sprintf("0xb06d [1] outcome=%d", v)
+			}
+			return fmt.Sprintf("0xb06d [2] code=0x%x", v)
 		}
 	case session.OpChatUpdate:
 		u, err := session.DecodeChatUpdate(p.Data)
@@ -513,12 +566,18 @@ func scenario(addr, prefix string) error {
 	return nil
 }
 
-func botMode(addr, name string, level int, accept bool, inviteName string) error {
+func botMode(addr, name string, level int, accept bool, inviteName string, registerEntry bool, requestName string) error {
 	b, err := connect(addr, strings.ToLower(name), name, level)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("[%s] in the world, character %d, JID %d\n", name, b.id, b.jid())
+	if registerEntry {
+		b.send(party.OpMatchRegister, party.AppendEntry(nil, &party.Entry{Flags: party.FlagExpShare | party.FlagItemShare,
+			Purpose: party.PurposeHunting, MinLevel: 1, MaxLevel: 110, Title: "For open hunting"}))
+		fmt.Printf("[%s] -> 0x7069 register\n", name)
+	}
+	requested := false
 	invited := false
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
@@ -527,6 +586,28 @@ func botMode(addr, name string, level int, accept bool, inviteName string) error
 		case p, open := <-b.in:
 			if !open {
 				return errors.New("connection closed")
+			}
+			if p.Opcode == party.OpMatchJoin {
+				if j, err := party.DecodeJoinRequest(p.Data); err == nil {
+					answer := party.AnswerCancel
+					if accept {
+						answer = party.AnswerConfirm
+					}
+					b.send(party.OpMatchAnswer, party.EncodeJoinAnswer(j.JobID, j.Requester, answer))
+					fmt.Printf("[%s] -> 0x306e job=%d answer=%d\n", name, j.JobID, answer)
+				}
+			}
+			if p.Opcode == party.OpMatchListAck && requestName != "" && !requested {
+				if pg, err := decodePage(p.Data); err == nil {
+					for _, r := range pg.rows {
+						if r.Name == requestName {
+							b.send(party.OpMatchJoin, party.EncodeTarget(r.Number))
+							fmt.Printf("[%s] -> 0x706d entry=%d (%s)\n", name, r.Number, requestName)
+							requested = true
+							break
+						}
+					}
+				}
 			}
 			if p.Opcode == party.OpInvitation {
 				k, _, _, _ := party.DecodeInvitation(p.Data)
@@ -539,6 +620,9 @@ func botMode(addr, name string, level int, accept bool, inviteName string) error
 				}
 			}
 		case <-tick.C:
+			if requestName != "" && !requested {
+				b.send(party.OpMatchList, []byte{0})
+			}
 			if inviteName != "" && !invited {
 				if id, ok := b.idOf(inviteName); ok {
 					b.send(party.OpCreate, party.EncodeCreate(party.JIDOf(id), party.FlagExpShare|party.FlagItemShare))
@@ -552,19 +636,26 @@ func botMode(addr, name string, level int, accept bool, inviteName string) error
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:15779", "the server's gateway address")
-	mode := flag.String("mode", "scenario", "scenario (the acceptance run) or bot (one character that stays online)")
+	mode := flag.String("mode", "scenario", "scenario (the round-710 acceptance run), match (the round-713 party-match run) or bot (one character that stays online)")
 	prefix := flag.String("prefix", "pb", "scenario: a prefix for the five characters' names and accounts")
 	name := flag.String("name", "PartyBot", "bot: the character's name (and lower-cased, the account)")
 	level := flag.Int("level", 10, "the level the bot raises itself to with /level (needs -gm-accounts on the server)")
 	accept := flag.Bool("accept", true, "bot: answer invitations yes (false: no)")
 	invite := flag.String("invite", "", "bot: invite this character to a new party once it is seen")
+	register := flag.Bool("register", false, "bot: register a party-match entry once in the world")
+	requestEntry := flag.String("request", "", "bot: ask to join this character's party-match entry once it is on page 0")
 	flag.Parse()
 	var err error
 	switch *mode {
 	case "scenario":
 		err = scenario(*addr, *prefix)
+	case "match":
+		if *prefix == "pb" {
+			*prefix = "pm"
+		}
+		err = matchScenario(*addr, *prefix)
 	case "bot":
-		err = botMode(*addr, *name, *level, *accept, *invite)
+		err = botMode(*addr, *name, *level, *accept, *invite, *register, *requestEntry)
 	default:
 		err = fmt.Errorf("unknown -mode %q", *mode)
 	}
