@@ -677,7 +677,10 @@ func tick(now_ms: int) -> void:
 		var s := _slots[i]
 		var m := members[i]
 		if s.select_glow != null:
-			s.select_glow.visible = sel != 0 and sel == s.jid
+			var glow := sel != 0 and sel == s.jid
+			if glow != s.select_glow.visible:
+				s.select_glow.visible = glow
+				print("HudQuickParty: %s's box %s" % [s.member_name, "selected (glow on)" if glow else "deselected"])
 		set_faraway(s, faraway_level(member_distance_sq(m), state.exp_share == 1))
 		_caution(s, now_ms)
 	if now_ms - _last_buff_ms >= BUFF_REFRESH_MS:

@@ -419,8 +419,13 @@ request (`party_protocol.md`, Timers).
 - The rebuild (`0x6dae90`):
   - with no party, it destroys every slot and hides;
   - otherwise it makes one slot per member, **skipping the player** (by name);
-  - each slot is a 122x40 child (`0x6da110`) on `interface\ifcommon\window_all.ddj`, UV
-    (0.216797, 0.138672)–(0.842773, 0.723633);
+  - each slot is a 122x40 child (`0x6da110`) on `interface\ifcommon\window_all.ddj`, the
+    atlas slice **u 0.723633–0.842773, v 0.138672–0.216797** (741..863 x 71..111 of the
+    1024x512 atlas: the round-faced box). **Corrected in round 715**: this line first read
+    "UV (0.216797, 0.138672)–(0.842773, 0.723633)", the same four floats (`0xda5438`
+    0.723633, `0xda973c` 0.842773, `0xda9740` 0.138672, `0xda9738` 0.216797, READ from the
+    exe) paired the wrong way -- a 641x300 region of unrelated panels; the 122x40 the pairing
+    above gives is the slot's own size;
   - slots sit at x = board x + 13 + column × 133;
   - **y steps 73 px when the game option byte `+0x08` (`0x4f9d00`) is set, else 56** (INFERRED:
     that option is "Quick Party View Buff Status", `UIIT_MSG_QUICK_PARTY_CHARACTER_BUFF`, since
@@ -456,15 +461,26 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 - `0x6d8bf0` renders the member's model from its "Bip01 Head" bone.
 - Offsets 0.2 and 6.5, field 30, light terms 0.58 / 0.3, far 1000. These are the player mini
   info portrait's constants (`docs/protocol/player_mini_info.md`).
-- It needs the member's model (`+0x3e4`). With the member not spawned in the client, nothing is
-  drawn and the disc stays black (screenshot 04).
-- The model is rebuilt when the member record's model id `+0x38` changes (`0x6d80d0`).
+- It needs the member's model (`+0x3e4`). ~~With the member not spawned in the client, nothing
+  is drawn and the disc stays black (screenshot 04).~~ **Corrected in round 715:** the model is
+  the slot's OWN, not the spawned body's: `0x6d80d0` loads the record's model id into the
+  animation object embedded at `+0x3e0` (whose `+4`, i.e. `+0x3e4`, is the model `0x6d8bf0`
+  draws), plays ANI_POSE (`0x3c`) on it and turns it to 0.1 rad (`0xe1b7fc`). Nothing in the
+  chain looks the member up in the world, so a member has a face whether spawned or not (bare:
+  the id carries no equipment). Screenshots 03, 04, 11 and 12 show every disc black -- the
+  player's own mini-info portrait included, whose render is certain -- so they were taken where
+  that client's BufRender draws nothing; they are not evidence about the rule.
+- The model is rebuilt when the member record's model id `+0x38` changes (`0x6d80d0`), and the
+  render runs only while the dirty byte `+0x3dc` is set (set by `0x6d7f20` after a model change,
+  checked by the slot's vslot_012 `0x6d90e0`; cleared at `0x6d8bf0`'s start, re-set while the
+  model is not ready).
 
 **The "far away" overlay (READ, `CIFQuickPartyWnd::vslot_012`, `0x6db380`, and `0x6d86e0`).**
 - Each frame, for each member, it takes the squared 3D distance between the player and the
   member (`0x9ed1e0`: region-aware dx² + dy² + dz²).
 - It uses the member's live object position when spawned, else the record's last position
-  (`+0x5a` region, `+0x5c` x, `+0x64` z).
+  (`+0x5a` region, `+0x5c` x, `+0x64` z) **at y = 0** -- the record's y is not read (round 715:
+  `local_8` stays 0 in `0x6db380`).
 - **Only in an exp-sharing party (exp mode = 1)** it maps the distance to a level. In a
   free-for-all party the level is always 0.
 
@@ -490,9 +506,11 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 **Buffs (READ, `0x6d9250`, `0x6d8b20`).**
 - A slot shows buffs only when the buff option above is on **and** the member's object exists in
   the client (`0x9c35e0` on the member id, a CICPlayer). The buffs are then read from that object
-  (`0x9d25e0`) into the viewer (`0x6d9010`: icons 15x15, 12 per row, by the calls
-  `0x7fabc0(15,15)`, `0x7fabe0(12,12)`, `0x7fab90(1,1)`, `0x7fabb0(6)`; the exact meaning of
-  each argument is INFERRED).
+  (`0x9d25e0`) into the viewer (`0x6d9010`: `0x7fab90(1,1)`, `0x7fabb0(6)`, `0x7fabc0(15,15)`,
+  `0x7fabe0(12,12)`). **Round 715:** the target window's viewer makes the same calls
+  (`0x7fabb0(8)`, `0x7fabc0(0x17,0x17)`, `0x7fabe0(0x14,0x14)`), read in round 638 as per-row
+  count, pitch and icon size, so here **6 a row at a 15-px pitch, 12x12 icons** (the earlier
+  "icons 15x15, 12 per row" swapped them); `0x7fab90(1,1)` stays OPEN.
 - Otherwise the viewer is cleared.
 - So **"can't see buffs when far" means the member is not spawned in the player's client**. That
   is the spawn range, not the 1000-unit fade.

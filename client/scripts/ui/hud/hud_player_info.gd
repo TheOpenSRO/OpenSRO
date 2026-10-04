@@ -965,6 +965,10 @@ func set_selected(on: bool) -> void:
 func is_selected_shown() -> bool:
 	return _select_glow != null and _select_glow.visible
 
+## Whether the player is the selected object (set_selected's last value).
+func is_selected() -> bool:
+	return _selected
+
 ## The player leads (does not lead) a party.
 func set_party_leader(on: bool) -> void:
 	_party_leader = on

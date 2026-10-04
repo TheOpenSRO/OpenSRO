@@ -21402,8 +21402,9 @@ func _tick_party_hud() -> void:
 		return
 	var own := _own_id()
 	var on := own >= 0 and _selected_character == own
-	if on != _hud_player_info.is_selected_shown():
+	if on != _hud_player_info.is_selected():
 		_hud_player_info.set_selected(on)
+		print("World3D: player block's select glow %s" % ("on" if on else "off"))
 
 ## The player block's leader flag (0x7b81ba: shown while the player leads).
 func _refresh_own_leader_flag() -> void:
