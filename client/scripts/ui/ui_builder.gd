@@ -739,12 +739,28 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		# `com_lattice_outline_` is the set in play here -- the border the
 		# inventory draws around its item grid -- four corners and two
 		# sides, all 4x4.
+		#
+		# **And the reused piece is laid on its side** (round 718, READ). The
+		# user saw `com_blacksquare_`'s bottom drawn as a row of vertical
+		# ticks: `right_side` is a 4x4 tile whose column 3 is a grey line
+		# (#7B797B, the rest black), and tiled upright along the bottom it
+		# puts a grey dot every 4 px. CNIFStretchWnd's two UV slots
+		# (`0x49b1e0`, `0x49b200`) both call the corner UVs with mode 2 (each
+		# corner its own texture, upright: `0x49a140`) and the edge UVs with
+		# mode 3 (`0x49a410`, jump table `0x49a7b8` -> `0x49a6b0`). Mode 3
+		# writes the left and right quads upright and the top and bottom
+		# quads as TL (0,1), TR (0,0), BR (1,0), BL (1,1) -- the texture
+		# turned 90 degrees clockwise, so a texture column becomes a screen
+		# row -- and copies the sizes across swapped: the top's height is
+		# `left_side`'s width (`[0x78c] = [0x780]`), the bottom's
+		# `right_side`'s (`[0x79c] = [0x790]`). So `right_side`'s grey
+		# column 3 is the bottom strip's last row: a horizontal line.
 		var top_reused := mu == null
 		var bottom_reused := md == null
 		if mu == null and ls != null:
-			mu = ls
+			mu = rotated_cw(ls)
 		if md == null and rs != null:
-			md = rs
+			md = rotated_cw(rs)
 
 		# **Each piece at its own size**, as the client lays them out -- read
 		# from CNIFFrame's own code, not inferred. The loader
@@ -794,8 +810,10 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		var ru_s := _piece_size(ru)
 		var ld_s := _piece_size(ld)
 		var rd_s := _piece_size(rd)
-		var top_h := lu_s.y if top_reused else _piece_size(mu).y
-		var bottom_h := ld_s.y if bottom_reused else _piece_size(md).y
+		# A reused top or bottom is the side piece turned on its side, so its
+		# thickness is that side's width (mode 3's swapped sizes, above).
+		var top_h := _piece_size(mu).y
+		var bottom_h := _piece_size(md).y
 		var left_w := lu_s.x if top_reused else _piece_size(ls).x
 		var right_w := ru_s.x if bottom_reused else _piece_size(rs).x
 
@@ -811,6 +829,27 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		_add_slice(container, rd, Rect2(Vector2(w - rd_s.x, h - rd_s.y), rd_s))
 
 	return container
+
+## A copy of `tex` turned 90 degrees clockwise (a texture column becomes a
+## screen row), cached per texture: how CNIFStretchWnd's edge mode 3 draws a
+## six-piece set's top and bottom from its side pieces (round 718).
+var _rotated_cache: Dictionary = {}
+
+func rotated_cw(tex: Texture2D) -> Texture2D:
+	if tex == null:
+		return null
+	if _rotated_cache.has(tex):
+		return _rotated_cache[tex]
+	var img := tex.get_image()
+	if img == null:
+		return tex
+	img = img.duplicate()
+	if img.is_compressed():
+		img.decompress()
+	img.rotate_90(CLOCKWISE)
+	var out := ImageTexture.create_from_image(img)
+	_rotated_cache[tex] = out
+	return out
 
 ## A frame piece's own size, or zero when the archive has no such piece.
 static func _piece_size(tex: Texture2D) -> Vector2:
