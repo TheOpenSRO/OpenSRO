@@ -6,7 +6,7 @@ class_name UseItemNet
 ## each Param value beside its own label ("HP..." / "MP..."), so a small potion
 ## gives 120 and a large one 370.
 
-## MOVED from 0x0080/0x0081 on 2026-09-20: those are PartyNet.OP_CREATE and its
+## MOVED from 0x0080/0x0081 on 2026-09-20: those were OpenSRO's own party create and its
 ## result, held since a month earlier, and this pair collided with them. The
 ## server offers a packet to every handler, so a use-item request was handled
 ## twice -- the item was consumed and a success sent, then the party handler

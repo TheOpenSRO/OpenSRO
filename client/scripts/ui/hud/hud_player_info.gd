@@ -223,6 +223,23 @@ func set_mp_unknown() -> void:
 func set_mp(current: int, maximum: int) -> void:
 	_set_bar(_mp_gauge, _mp_text, current, maximum)
 
+## The two bars as drawn, [hp, hp_max, mp, mp_max] in the gauges' own units
+## (round 711): the party window's own row draws the player's live values,
+## which are these (CIFParty reads the player's +0x458/+0x454/+0x45c).
+func bar_values() -> Array:
+	var out := [0.0, 0.0, 0.0, 0.0]
+	if _hp_gauge != null:
+		out[0] = _hp_gauge.value - _hp_gauge.min_value
+		out[1] = _hp_gauge.max_value - _hp_gauge.min_value
+	if _mp_gauge != null:
+		out[2] = _mp_gauge.value - _mp_gauge.min_value
+		out[3] = _mp_gauge.max_value - _mp_gauge.min_value
+	return out
+
+## A bar changed (round 711): the party window draws the player's own rows
+## from these values.
+signal bars_changed
+
 func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: int) -> void:
 	if maximum <= 0:
 		return
@@ -230,6 +247,7 @@ func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: in
 		gauge.value = clampf(float(current) / float(maximum) * 100.0, 0.0, 100.0)
 	if label != null:
 		label.text = "%d / %d" % [current, maximum]
+	bars_changed.emit()
 
 # ---------------------------------------------------------------------------
 # The berserk (Hwan) gauge, round 629.
