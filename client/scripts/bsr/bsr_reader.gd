@@ -323,6 +323,11 @@ class ParsedObject:
 	## mtrl_mod_for() for which of them are live, READ from the client.
 	var material_mods: Array = []
 
+	## The particle mods of the mod section (round 720): each a
+	## ParticleMod -- the mod set it sits in and its entries, READ from
+	## ModDataParticle::vslot_004 (0x00c643b0). See particle_mods().
+	var particle_mods: Array = []
+
 	## The flag word of the environment-map mod that governs this object's
 	## alpha test, or -1 for none (round 626's name and shape; this round's
 	## review read the same). READ, `CRTModEnvMap::vslot_004` (0x00c83690):
@@ -467,6 +472,7 @@ static func _pp_parse(data: PackedByteArray) -> ParsedObject:
 		# water's blend -- was lost with the table).
 		obj.header_flags = _le_u32(data, OFF_FLAGS)
 		obj.material_mods = material_mods(data)
+		obj.particle_mods = particle_mods(data)
 		obj.env_map_materials = env_map_materials(data)
 		obj.env_map_flags = env_map_flags(data)
 	return obj
@@ -537,6 +543,7 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 				_attach_sound_sets(built, data)
 			built.header_flags = _le_u32(data, OFF_FLAGS)
 			built.material_mods = material_mods(data)
+			built.particle_mods = particle_mods(data)
 			built.env_map_materials = env_map_materials(data)
 			built.env_map_flags = env_map_flags(data)
 			if obj_type == TYPE_PLAYER_CHARACTER or obj_type == TYPE_ITEM:
@@ -885,6 +892,8 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 	mods[_MODS_KEY] = captured
 	var env_maps: Array = []
 	mods[_ENV_MAPS_KEY] = env_maps
+	var particles: Array = []
+	mods[_PARTICLES_KEY] = particles
 	var lists: Array = []
 	for list_index in range(2):
 		var count = _take_i32(data, cursor)
@@ -899,8 +908,9 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 		lists.append(sets)
 	mods.erase(_MODS_KEY)
 	mods.erase(_ENV_MAPS_KEY)
+	mods.erase(_PARTICLES_KEY)
 	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods,
-		"material_mods": captured, "env_maps": env_maps}
+		"material_mods": captured, "env_maps": env_maps, "particle_mods": particles}
 
 ## Where _read_mod_set leaves the ENVMAP and MTRL mods it passes, inside
 ## the `mods` dictionary it already threads (a key no u32 kind can equal).
@@ -910,6 +920,104 @@ const _MODS_KEY := "material_mods"
 ## not parse.
 ## Where _read_mod_set leaves the ENVMAP / BUMPENV headers (round 625).
 const _ENV_MAPS_KEY := "env_maps"
+
+## Where _read_mod_set leaves the particle mods (round 720).
+const _PARTICLES_KEY := "particle_mods"
+
+## One particle mod (round 720): the mod set it sits in and its entries.
+## READ: the body is ModDataParticle::vslot_004 (0x00c643b0); the runtime
+## that plays it is CRTModParticle::vslot_001 (0x00c77a20). See
+## docs/protocol/teleport_effects.md.
+class ParticleMod:
+	## SET_BY_CLIP or SET_BY_TYPE, the set's action type (-1 for a set
+	## keyed by name) and its clip or animation-group name.
+	var set_kind: int = 0
+	var action_type: int = -1
+	var set_name: String = ""
+	## IModData header word 1 (+0x0c), the dispatch word.
+	var w1: int = 0
+	var entries: Array[ParticleEntry] = []
+
+## One effect of a particle mod: a 0x60-byte record in the mod
+## (ModDataParticle::vslot_004, offsets into that record):
+class ParticleEntry:
+	## +0x00: 0 attaches the effect to the bone or dummy named `bone`
+	## (CRTModParticle::FUN_00c818c0 -> FUN_00c2c820 by name); any other
+	## value places it at `offset` in the object's frame
+	## (CRTModParticle::FUN_00c81820). READ.
+	var mode: int = 0
+	## +0x04: the effect file (the string the effect is created from).
+	var efp: String = ""
+	## +0x20: the bone or dummy name (mode 0).
+	var bone: String = ""
+	## +0x3c: the offset (mode != 0), in the object's units.
+	var offset: Vector3 = Vector3.ZERO
+	## +0x4c: a word the runtime keeps at the effect's +0xcc; its use is
+	## OPEN.
+	var w4c: int = 0
+	## +0x50, +0x51, +0x52: three bytes; +0x50 and +0x51 go with the
+	## descriptor (their use is OPEN).
+	var b50: int = 0
+	var b51: int = 0
+	var b52: int = 0
+	## +0x53 != 0: the effect carries a rotation built from `angles` (+0x54,
+	## three floats) by FUN_00c67500, and the effect's +8 flag is set. READ.
+	var rotated: bool = false
+	var angles: Vector3 = Vector3.ZERO
+
+## Every particle mod of a file, in file order, or [] when its mod section
+## does not parse.
+static func particle_mods(data: PackedByteArray) -> Array:
+	if data.size() < PREAMBLE_END:
+		return []
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return []
+	return section["particle_mods"]
+
+## A particle mod's body at `header_at` (its IModData header), READ from
+## ModDataParticle::vslot_004 (0x00c643b0): the header, an i32 count, and
+## per entry a u32 mode, the lp-string effect file, the lp-string bone, a
+## float3 offset, a u32, four bytes, and when the fourth byte is not 0 three
+## floats of rotation. Null when it does not parse (the skip already checked
+## the bounds, so this only re-reads them).
+static func _read_particle_mod(data: PackedByteArray, header_at: int, set_kind: int,
+		action_type: int, set_name: String) -> ParticleMod:
+	var pm := ParticleMod.new()
+	pm.set_kind = SET_BY_TYPE if set_kind == 1 else SET_BY_CLIP
+	pm.action_type = action_type if set_kind == 1 else -1
+	pm.set_name = set_name
+	pm.w1 = data.decode_u32(header_at + 4)
+	var cursor := [header_at + MOD_HEADER_BYTES]
+	var n = _take_i32(data, cursor)
+	if n == null or n < 0 or n > 10000:
+		return null
+	for _i in range(n):
+		var e := ParticleEntry.new()
+		var mode = _take_i32(data, cursor)
+		var efp = _take_string(data, cursor)
+		var bone = _take_string(data, cursor)
+		if mode == null or efp == null or bone == null or cursor[0] + 20 > data.size():
+			return null
+		e.mode = mode
+		e.efp = efp
+		e.bone = bone
+		var at: int = cursor[0]
+		e.offset = Vector3(data.decode_float(at), data.decode_float(at + 4), data.decode_float(at + 8))
+		e.w4c = data.decode_u32(at + 12)
+		e.b50 = data[at + 16]
+		e.b51 = data[at + 17]
+		e.b52 = data[at + 18]
+		e.rotated = data[at + 19] != 0
+		cursor[0] = at + 20
+		if e.rotated:
+			if cursor[0] + 12 > data.size():
+				return null
+			at = cursor[0]
+			e.angles = Vector3(data.decode_float(at), data.decode_float(at + 4), data.decode_float(at + 8))
+			cursor[0] = at + 12
+		pm.entries.append(e)
+	return pm
 
 ## Material index -> flag word of each ENVMAP / BUMPENV mod
 ## (ParsedObject.env_map_materials).
@@ -1065,6 +1173,10 @@ static func _read_mod_set(data: PackedByteArray, cursor: Array, mods: Dictionary
 			if mod_kind == MOD_MTRL:
 				m["state"] = _read_mtrl_state(data, cursor[0] - 36)
 			(mods[_MODS_KEY] as Array).append(m)
+		if mod_kind == MOD_PARTICLE and mods.has(_PARTICLES_KEY):
+			var pm := _read_particle_mod(data, header_at, kind, action_type, name)
+			if pm != null:
+				(mods[_PARTICLES_KEY] as Array).append(pm)
 		if (mod_kind == MOD_ENVMAP or mod_kind == MOD_BUMPENV) and mods.has(_ENV_MAPS_KEY):
 			(mods[_ENV_MAPS_KEY] as Array).append({"kind": mod_kind,
 				"material": data.decode_u32(header_at + 12), "flags": data.decode_u32(header_at + 20)})

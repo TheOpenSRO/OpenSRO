@@ -1,0 +1,148 @@
+extends SceneTree
+
+## Round 720: the particle mod reader, the ambient set, the entry rotation,
+## the glow's alpha steps and test point, and the glow shader. Synthetic
+## bytes only -- no game data. Run headless:
+## `godot4 --headless --path client --script res://scripts/world/ambient_particles_test.gd`
+
+var _failures := 0
+
+func _check(cond: bool, msg: String) -> void:
+	if cond:
+		print("ok  " + msg)
+	else:
+		print("FAIL " + msg)
+		_failures += 1
+
+func _near(a: Vector3, b: Vector3, eps: float = 1e-4) -> bool:
+	return a.distance_to(b) <= eps
+
+func _u32(b: PackedByteArray, v: int) -> void:
+	var at := b.size()
+	b.resize(at + 4)
+	b.encode_u32(at, v)
+
+func _f32(b: PackedByteArray, v: float) -> void:
+	var at := b.size()
+	b.resize(at + 4)
+	b.encode_float(at, v)
+
+func _str(b: PackedByteArray, s: String) -> void:
+	_u32(b, s.length())
+	b.append_array(s.to_ascii_buffer())
+
+## A particle mod's header and body as ModDataParticle::vslot_004 reads them.
+func _particle_mod(entries: Array) -> PackedByteArray:
+	var b := PackedByteArray()
+	_u32(b, 0)      # header word 0 (+0x08)
+	_u32(b, 1)      # word 1 (+0x0c), the dispatch
+	for _i in range(4):
+		_u32(b, 0)
+	_u32(b, 0)      # the four header bytes
+	_u32(b, entries.size())
+	for e in entries:
+		_u32(b, e["mode"])
+		_str(b, e["efp"])
+		_str(b, e["bone"])
+		_f32(b, e["offset"].x)
+		_f32(b, e["offset"].y)
+		_f32(b, e["offset"].z)
+		_u32(b, 7)  # +0x4c
+		b.append(e["b50"])
+		b.append(0)
+		b.append(0)
+		b.append(1 if e.has("rot") else 0)
+		if e.has("rot"):
+			_f32(b, e["rot"].x)
+			_f32(b, e["rot"].y)
+			_f32(b, e["rot"].z)
+	return b
+
+func _init() -> void:
+	_test_reader()
+	_test_ambient_set()
+	_test_rotation()
+	_test_alpha()
+	_test_query_point()
+	_test_glow_shader()
+	print("ambient_particles_test: %d failure(s)" % _failures)
+	quit(1 if _failures > 0 else 0)
+
+func _test_reader() -> void:
+	var body := _particle_mod([
+		{"mode": 1, "efp": "map\\a.efp", "bone": "", "offset": Vector3(1, 2, 3), "b50": 25},
+		{"mode": 0, "efp": "map\\b.efp", "bone": "Bone02", "offset": Vector3.ZERO, "b50": 0,
+			"rot": Vector3(0, PI / 2, 0)},
+	])
+	# The skip and the read agree on the body's length.
+	var cursor := [0]
+	_check(BsrReader._skip_mod_body(body, cursor, BsrReader.MOD_PARTICLE) and cursor[0] == body.size(),
+		"the particle body's skip ends where the body does (%d of %d)" % [cursor[0], body.size()])
+	var pm := BsrReader._read_particle_mod(body, 0, 0, -1, "ambient")
+	_check(pm != null and pm.entries.size() == 2, "two entries read")
+	if pm == null or pm.entries.size() != 2:
+		return
+	var a: BsrReader.ParticleEntry = pm.entries[0]
+	var b: BsrReader.ParticleEntry = pm.entries[1]
+	_check(pm.set_name == "ambient" and pm.set_kind == BsrReader.SET_BY_CLIP and pm.w1 == 1, "the set and header word 1")
+	_check(a.mode == 1 and a.efp == "map\\a.efp" and _near(a.offset, Vector3(1, 2, 3)) and a.b50 == 25 and a.w4c == 7
+		and not a.rotated, "entry 0: mode, effect, offset, the glow byte, +0x4c")
+	_check(b.mode == 0 and b.bone == "Bone02" and b.rotated and _near(b.angles, Vector3(0, PI / 2, 0)),
+		"entry 1: a bone and a rotation")
+
+func _test_ambient_set() -> void:
+	var amb := BsrReader.ParticleMod.new()
+	amb.set_name = "ambient"
+	amb.entries.append(BsrReader.ParticleEntry.new())
+	var other := BsrReader.ParticleMod.new()
+	other.set_name = "status_bad_burn"
+	other.entries.append(BsrReader.ParticleEntry.new())
+	var typed := BsrReader.ParticleMod.new()
+	typed.set_kind = BsrReader.SET_BY_TYPE
+	typed.set_name = "ambient"
+	typed.entries.append(BsrReader.ParticleEntry.new())
+	_check(AmbientParticles.ambient_entries([other, amb, typed]).size() == 1,
+		"only the clip set named ambient is the always-on set")
+
+func _test_rotation() -> void:
+	# A y-only entry turns like Godot's Basis(UP, y).
+	var b := AmbientParticles.rotation_basis(Vector3(0, PI / 2, 0))
+	var g := Basis(Vector3.UP, PI / 2)
+	_check(_near(b.x, g.x) and _near(b.y, g.y) and _near(b.z, g.z), "rotation (0, 90deg, 0) == Basis(UP, 90deg)")
+	# The general form: a row vector v placed as v x M equals Basis * v.
+	var ang := Vector3(0.3, -0.7, 1.1)
+	var cx := cos(ang.x)
+	var sx := sin(ang.x)
+	var cy := cos(ang.y)
+	var sy := sin(ang.y)
+	var cz := cos(ang.z)
+	var sz := sin(ang.z)
+	var m := [[cy * cz, -sz * cy, -sy], [sz * cx - sx * sy * cz, cz * cx + sx * sy * sz, -sx * cy],
+		[sz * sx + cx * sy * cz, cz * sx - cx * sy * sz, cx * cy]]
+	var v := Vector3(0.2, 1.5, -0.9)
+	var row := Vector3(v.x * m[0][0] + v.y * m[1][0] + v.z * m[2][0], v.x * m[0][1] + v.y * m[1][1] + v.z * m[2][1],
+		v.x * m[0][2] + v.y * m[1][2] + v.z * m[2][2])
+	_check(_near(AmbientParticles.rotation_basis(ang) * v, row), "Basis * v == v x M (FUN_00c67500's matrix)")
+
+func _test_alpha() -> void:
+	_check(AmbientParticles.step_alpha(0, true, 16.7, true) == 25, "visible: +trunc(16.7 x 1.5) = 25")
+	_check(AmbientParticles.step_alpha(250, true, 16.7, true) == 255, "visible: capped at 255")
+	_check(AmbientParticles.step_alpha(100, false, 16.7, true) == 75, "hidden: -25")
+	_check(AmbientParticles.step_alpha(20, false, 16.7, true) == 0, "hidden: below 1 is 0")
+	_check(AmbientParticles.step_alpha(200, false, 16.7, false) == 0, "hidden, not seen the frame before: 0")
+	_check(AmbientParticles.step_alpha(200, true, 16.7, false) == 225, "visible, not seen before: still fades in")
+
+func _test_query_point() -> void:
+	var p := AmbientParticles.query_point(Vector3(0, 10, 0), Vector3(0, 10, 100), 25)
+	_check(_near(p, Vector3(0, 10, 24)), "the test point moves 24 (25 - 1) toward the camera")
+	_check(_near(AmbientParticles.query_point(Vector3(1, 1, 1), Vector3(1, 1, 1), 25), Vector3(1, 1, 1)),
+		"camera at the point: the point itself")
+
+func _test_glow_shader() -> void:
+	var m := EfpEffect.material_for(PlaceholderTexture2D.new(), null)
+	var g := EfpEffect.glow_shader(m.shader)
+	_check(g.code.contains("depth_test_disabled") and g.code.contains("uniform int glow_alpha"),
+		"the glow shader draws without the depth test and has the alpha")
+	_check(g.code.contains("if (glow_alpha < 255) d.a ="), "the alpha scales the particle colour's alpha")
+	_check(EfpEffect.glow_shader(m.shader) == g, "cached per shader")
+	_check(not m.shader.code.contains("glow_alpha"), "the shared shader is untouched")

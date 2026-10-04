@@ -265,6 +265,54 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 			fx._has_billboard = true
 	return fx
 
+## The glow pass's draw (round 720, AmbientParticles; READ there): every
+## node of this effect is drawn with the depth test off, and its particle
+## colours' alpha is scaled by the glow alpha. Each node gets its own copy of
+## its material, so the alpha is this effect's alone.
+func make_glow() -> void:
+	var nodes: Array = []
+	for d in _draws:
+		nodes.append(d[1])
+	for l in _links:
+		nodes.append(l[1])
+	for n in nodes:
+		var gi := n as GeometryInstance3D
+		var m := gi.material_override as ShaderMaterial
+		if m == null:
+			continue
+		var g := m.duplicate() as ShaderMaterial
+		g.shader = glow_shader(m.shader)
+		g.set_shader_parameter("glow_alpha", 0)
+		gi.material_override = g
+		_glow_materials.append(g)
+	set_glow_alpha(0)
+
+var _glow_materials: Array[ShaderMaterial] = []
+
+## The glow alpha, 0..255 (CEFEffect +0x4a): 0 draws nothing
+## (CRTModParticle::FUN_00c81130), 255 leaves the colours as they are.
+func set_glow_alpha(a: int) -> void:
+	visible = a > 0
+	for m in _glow_materials:
+		m.set_shader_parameter("glow_alpha", a)
+
+## `sh` with the depth test off and the glow alpha applied to the particle
+## colour (EFEffect::FUN_00c893f0 at 0x00c8affd: when the effect's alpha is
+## not 255, the colour's alpha byte becomes (a x alpha) >> 8). Cached per
+## shader.
+static func glow_shader(sh: Shader) -> Shader:
+	var key := "glow|%d" % sh.get_instance_id()
+	if _shaders.has(key):
+		return _shaders[key]
+	var code := sh.code.replace("render_mode unshaded,", "render_mode unshaded, depth_test_disabled,")
+	code = code.replace("uniform int c_op = 4;", "uniform int glow_alpha = 255;\nuniform int c_op = 4;")
+	code = code.replace("\tvec4 d = COLOR;",
+		"\tvec4 d = COLOR;\n\tif (glow_alpha < 255) d.a = floor(floor(d.a * 255.0 + 0.5) * float(glow_alpha) / 256.0) / 255.0;")
+	var g := Shader.new()
+	g.code = code
+	_shaders[key] = g
+	return g
+
 ## How many nodes draw.
 func draw_count() -> int:
 	return _draws.size() + _links.size()
@@ -442,6 +490,11 @@ func _end() -> void:
 func placed_at() -> Vector3:
 	return _placed.origin if _anchored else global_position
 
+## A turn applied at the attach point in the host's frame (round 720: an
+## object's particle mod entry with a rotation, AmbientParticles), identity
+## for every other effect.
+var follow_basis := Basis.IDENTITY
+
 func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
 	_follow_host = host
 	_follow_bone_name = bone
@@ -488,11 +541,11 @@ func _place() -> bool:
 		var at := _follow_offset
 		if _follow_bone >= 0:
 			at += skel.get_bone_global_pose(_follow_bone).origin
-		placed = skel.global_transform * Transform3D(Basis.IDENTITY, at)
+		placed = skel.global_transform * Transform3D(follow_basis, at)
 	elif _follow_host.is_inside_tree():
 		# No skeleton yet: the host's own frame, never a bare world position
 		# (review: this node is top_level once anchored).
-		placed = _follow_host.global_transform * Transform3D(Basis.IDENTITY, _follow_offset)
+		placed = _follow_host.global_transform * Transform3D(follow_basis, _follow_offset)
 	else:
 		return false
 	_placed = placed

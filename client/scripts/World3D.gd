@@ -7215,6 +7215,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	# placed portal is in the tree, and a region streamed out and back in is
 	# bound again with its fresh copies.
 	_bind_region_gates(region_x, region_y, group)
+	_attach_gate_effects(region_x, region_y)
 	var key := "%d_%d" % [region_x, region_y]
 	var uids: Dictionary = _npc_uids_by_region.get(key, {})
 	if uids.is_empty():
@@ -7504,6 +7505,58 @@ func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
 		print("World3D: teleport gate %s clickable at %d/%d local (%.0f, %.0f, %.0f): its BCRadius %.0f / BCHeight %.0f box, world %s (point %d)" % [
 			building.code, region_x, region_y, building.x, building.y, building.z, building.bc_radius, building.bc_height,
 			str(pick.global_position.round() if pick.is_inside_tree() else (_chain_transform(group) * Vector3(building.x, building.y, building.z)).round()), point.id])
+
+## The teleport structures' own effects (round 720; AmbientParticles has
+## what is READ and what is OURS): every teleportbuilding row standing in
+## the region -- the town gates, the guild and fortress gates, every other
+## -- plays the `ambient` particle effects of the placed objects that make
+## it up: those of the region's placed objects within GATE_EFFECT_RADIUS of
+## the row's position (horizontally, region-local) that carry any. Jangan's
+## gate draws its glow from `cj_portal_stone` beside `cj_portal`, Alexandria
+## North's portal stands 15.1 from its row, Hotan's fortress gates up to
+## 26.0 (MEASURED, docs/protocol/teleport_effects.md). An object takes its
+## effects once (META_GATE_EFFECTS); a region streamed out takes them with
+## its objects.
+const GATE_EFFECT_RADIUS := 30.0
+const META_GATE_EFFECTS := "gate_effects"
+var _ambient := AmbientParticles.new()
+
+func _attach_gate_effects(region_x: int, region_y: int) -> void:
+	if _teleport_reader == null:
+		return
+	var container := _object_containers.get("_%d_%d" % [region_x, region_y]) as Node3D
+	if container == null or not is_instance_valid(container):
+		return
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return
+	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
+		var building: TeleportReader.Building = building_v
+		var at := Vector2(building.x, building.z)
+		for child in container.get_children():
+			var obj := child as Node3D
+			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES) or obj.has_meta(META_GATE_EFFECTS):
+				continue
+			var d := Vector2(obj.position.x, obj.position.z).distance_to(at)
+			if d > GATE_EFFECT_RADIUS:
+				continue
+			obj.set_meta(META_GATE_EFFECTS, true)
+			var entries: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
+			var made := _ambient.attach(obj, entries, particles)
+			print("World3D: gate %s -- %s at %.1f from its row plays %d of its %d ambient effect(s)" % [
+				building.code, obj.name, d, made.size(), entries.size()])
+
+## The glow pass (AmbientParticles.update), once a physics tick.
+func _ambient_step(delta: float) -> void:
+	if _ambient.glow_count() == 0:
+		return
+	_ambient.update(delta * 1000.0, camera_3d, get_world_3d().direct_space_state)
+	# OPENSRO_QA_AMBIENT=1 (round 720): each glow's alpha and visibility,
+	# every 60 ticks.
+	if _qa_ambient_log and Engine.get_physics_frames() % 60 == 0:
+		print("QA AMBIENT tick %d: %s" % [Engine.get_physics_frames(), _ambient.describe()])
+
+var _qa_ambient_log := OS.get_environment("OPENSRO_QA_AMBIENT") != ""
 
 ## A town gate's pick box layer (round 690): its own bit (10), which only the
 ## talk ray masks -- nothing walks into it, no camera or ground ray meets it.
@@ -14562,6 +14615,8 @@ func _physics_process(delta: float) -> void:
 	BerserkLook.tick(delta)
 	# Monsters and other players fading into existence (round 676).
 	_appear_fades.step(delta)
+	# The teleport gates' glows (round 720).
+	_ambient_step(delta)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
 	var cells_before := _load_timings.cell_work_usec
