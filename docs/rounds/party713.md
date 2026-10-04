@@ -19,8 +19,9 @@ golden fixtures.
     `0x2c1b` already listed; then in a party `0x2c20` flags not the party's, `0x2c1d` not the
     leader, `0x2c08` full (the listing takes the party's flags); otherwise the listing carries the
     entry's flags.
-  - **Change** (SM `0x450990` -> `0x4513c0`): `0x2c1c` no entry, `0x2c1d` not the owner, bare 5
-    when the flags differ. It replaces the purpose, levels and title and renews the time.
+  - **Change** (SM `0x450990` -> `0x4513c0`): `0x2c1c` the caller holds no entry; then the entry
+    the request names is looked up: `0x2c1c` not found, `0x2c1d` not the caller's, bare 5 when the
+    flags differ (fixed in review, finding 3). It replaces the purpose, levels and title and renews the time.
   - **Delete** (SM `0x450ba0` -> `0x451490`): `0x2c1c`, then `0x2c1d`.
   - **Withdraw**: a party-less owner's entry goes when it leaves the world (SM `0x4296f0` ->
     `0x451590`).
@@ -85,8 +86,12 @@ golden fixtures.
       `announceJoined`.
     - **an accept that fails**: `[2][code]` to the requester and to the leader (SM tail
       `0x44fe3b`).
-  - **Disconnect**: `PartyMatchDisconnectHandler` withdraws a party-less owner's entry. It runs
-    before `WorldDisconnectHandler`, which removes the session's character.
+  - **Disconnect**: `PartyMatchDisconnectHandler` withdraws a party-less owner's entry and clears
+    a pending requester's state. It runs after `PartyDisconnectHandler` (whose removal moves a
+    leader's entry, as SM `0x4296f0` does) and before `WorldDisconnectHandler`, which removes the
+    session's character (fixed in review, findings 6 and 7).
+  - **Expiry**: `RunPartyMatchSweep` deletes, every 60 s, each entry with no pending request that
+    is more than 60 whole minutes old, telling nobody (SM `0x4504c0`; added in review, finding 1).
 - **Wiring**: `cmd/server/main.go` builds a `party.Matcher` over the party Hub, adds the handler
   after `PartyHandler` and the disconnect hook before `worldDisconnect`.
 - **`cmd/partybot`**:
@@ -117,10 +122,12 @@ golden fixtures.
 
 | what | choice | why |
 |---|---|---|
-| the list row's second u32 | seconds since the Unix epoch at register/change | SM writes `_time32` into `+0x30` (READ); that it is a time is INFERRED, and its client use is OPEN (spec OPEN 2) |
 | the job id the popup echoes | a counter that skips 0 | the ShardManager's transaction id; its numbering is its own |
 | who may answer a job | only the entry's leader at request time | the engine finds the job by id and does not compare the sender; without this, anyone could accept for a party |
-| the pending mark | cleared on every outcome | SM `0x44fbe0` clears it on every answer that finds the requester, but not when an accept's requester has left, or on an answer value outside 0..2. Left set, the entry would refuse every later request with `0x2c1f` |
+| the pending mark | cleared on every outcome | SM `0x44fbe0` stores 0 to `+0x34` at only three places: a party formed (`0x44ffa8`), a requester joined (`0x45029e`), and answer 0 or 2 with the requester present (`0x4504a4`). It stays set when an accept's requester is gone (`0x44fc64`), its leader is gone (`0x44fcfc`), the formation fails (`0x44ff05`), the leader's party is missing (`0x4500e6`), the join fails (`0x4501a7`), answer 0 or 2 comes with the requester gone (`0x450413`), or the answer is outside 0..2 (`0x44fc0e`). Outside `0x44fbe0` it stays set when SM `0x420e50` drops a gone leader's answer and when authorization fails (`0x421ec0`). Left set, the entry refuses every later request `0x2c1f` and is exempt from expiry |
+| an answer whose requester JID is not the job's | dropped silently; the job stays pending | the check itself is READ (SM `0x421ec0`, `cmp [ebx+0x8],esi` at `0x421f3f`). The engine then releases the job and leaves the mark set; ours waits for the real answer or the backstop |
+| an expired entry's owner | its state returns to 0 at once (the Hub derives it) | the engine leaves the GameServer's byte at 4 and `pc+0x1cd0` set until a relog, refusing that character `0x2c25`/`0x2c24`. A bug not replicated; on the coordinator's deviation list for the user |
+| pages | built at each request from the live state | the engine serves snapshots rebuilt after each change (SM `0x451630`), so its counts can lag. Its builder can also leave an empty trailing page when the last entries are dropped as owner-gone (`[1][1][0][0]` when all were). Neither shows in normal play |
 | an answer outside 0..2 | ends the job, no reply | SM `0x44fbe0` asserts and returns |
 | an entry moved to a new leader before the answer | the accept is refused `0x2c1c` | the engine keeps the job's original leader (`+0x10`) and would act on that character's party state |
 | the requester's two masteries | `topMasteries` (S1's choice) | the engine's pick, GS `0x5a1890`, is OPEN |
@@ -133,7 +140,31 @@ golden fixtures.
 | `party_protocol.md`, "Party matching", the accept result | "Both requester and leader get `0xb06d [1][1]` (the leader's copy INFERRED from the second send in `0x44fbe0`)" | READ, two cases. **Party-less entry** (SM `0x44ffb3..0x4500a1`): both copies carry the **requester's** JID (`[ebx+0x78]` at `0x44ffc6` and `0x45003d`, `ebx` the requester from `0x44fc3e`). The second goes to the leader's GameServer (`[esp+0x10]+0x1c4` at `0x450081`). That server finds the requester by JID, so with one game server the requester gets it twice and the leader gets none. **Entry with a party** (`0x450333 mov ebx,[esp+0x10]`): the second copy is the leader's. **A failed accept** (`0x44fe3b`): `[2][code]` to the requester, then to the leader |
 | `party_protocol.md`, "Party matching", register | the success reply carries the entry | READ: GS `trs_sm_partyjob::vslot_002 0x46d3a0` (kind 10) reads the ShardManager's u32 number into the request's `+0x54`, which `0x5bf7d0` echoes in `0xb069` and stores at `pc+0x1cd0` |
 | `party_protocol.md`, "Party matching", join request | the requester's state goes to 1, the error comes back on the relay path | READ in full: a ShardManager refusal reaches the requester through `MsgHandler_3c01 0x4169d0`, which also writes the state byte back to 0 when the inner opcode is `0x706d`. A GameServer refusal never set it |
-| `party_protocol.md`, Implementation lanes, S3 row | the register ladder "`0x2c1b`, `0x2c20`, `0x2c1d`, `0x2c08`, level 5" | That list is the ShardManager's half only. The GameServer's `CheckCanCreateForMatch` (level 5, `0x2c24`, `0x2c1d`) and the purpose rule `0x2c23` run first (`OnRegisterPartyReq` -> `0x5bf4d0`). The ShardManager's in-party order is `0x2c20`, then `0x2c1d`, then `0x2c08` |
+| `party_protocol.md`, Implementation lanes, S3 row | the register ladder "`0x2c1b`, `0x2c20`, `0x2c1d`, `0x2c08`, level 5" | That list is the ShardManager's half only. The GameServer's `CheckCanCreateForMatch` runs first, in its order: `0x2c09`, `0x2c26`, 5, **`0x2c24`**, then `0x2c0a` (no party) or `0x2c1d` (in a party), then `0x2c28` (GS `0x514170`); then the purpose rule `0x2c23` (GS `0x5bf2a0` kind `0xa`). The code has this order. The ShardManager's in-party order is `0x2c20`, then `0x2c1d`, then `0x2c08` |
+| `party_protocol.md:231` (list entry, second u32) and OPEN 2 | "INFERRED a timestamp ... its use is OPEN" | READ: `_time32` seconds since the epoch. The expiry sweep (SM `0x4504c0`) subtracts it from `_time32` (`0x6e3cbc`; difference `0x6c1d40`) and divides by 60 (`0x6c1c40`). Only the client's use (`c:+4`) is OPEN |
+| `party_protocol.md`, "Party matching" | nothing on expiry | an entry with no pending request expires after more than 60 whole minutes since its register or change (SM `0x40c703` 60 000 ms timer -> `0x40dd10` -> `0x4504c0`, `cmp eax,0x3c; jle` at `0x45055c`). The engine sends `0x386f [owner JID]` to the owner's GameServer, which has no case for it, so the client is never told |
+| `party_protocol.md`, the `0x306e` row | the GameServer reads u32, u32, u8 | and the ShardManager authorizes the answer by the echoed requester JID (SM `0x421ec0`): a mismatch is dropped with no reply |
+| `party_protocol.md`, "Party matching", change | change edits the caller's entry | SM `0x4513c0` looks up the number the request names: not found is `0x2c1c`, another owner's is `0x2c1d` |
+
+## Review fixes (independent review `d73f314a`, `docs/rounds/party713_review.md`)
+
+Applied after `git merge int/party`, which brought in S1's review fixes (`991bb1c2`). The one
+conflict, in `orphans_test.go`, was resolved to the merged list. S1's `sample` now takes a
+previous sample and a time; the `0x706d` record uses its `fullMask`.
+
+| # | finding | fix | test |
+|---|---|---|---|
+| 1 | entries never expire | `Matcher.Sweep` and `session.RunPartyMatchSweep`: every 60 s, entries with no pending request older than 60 whole minutes are deleted silently (READ, SM `0x4504c0`). The owner's state returns to 0 through the Hub (OURS; the original leaves it stale until relog) | `TestSweepExpiresAfterSixtyWholeMinutes`, `TestMatchSweepExpiresSilently` |
+| 2 | the `0x306e` requester JID is unchecked | an answer whose echoed JID is not the job's requester is dropped silently (READ, SM `0x421ec0`); the leader-only check stays (OURS); the job stays pending (OURS) | `TestMatchAnswerWithTheWrongRequesterIsDropped` |
+| 3 | change ignores the number sent | `Change` looks up `e.Number`: `0x2c1c` when it is missing, `0x2c1d` when it is another owner's; the caller-has-no-entry `0x2c1c` stays first | `TestChangeLooksUpTheNumberSent`, `TestMatchChangeNamesTheEntry` |
+| 4 | the pending-mark label under-counts | `TakeJob`'s comment and the OURS table list the engine's three clears and every path that leaves the mark set | (labels) |
+| 5 | the second u32 is READ seconds | `Listing.Time` is relabelled READ; the spec row and OPEN 2 are in the corrections table | (labels) |
+| 6 | a page could delete a logging-out leader's entry | `cmd/server` runs `partyDisconnect`, then `partyMatchDisconnect`, then `worldDisconnect`, the original's order. `rowLocked` also skips, without deleting, an owner out of the world who is still in a party | `TestPageSkipsAPartyLeaderOutOfTheWorld`, `TestMatchLeaderLogoutMovesTheEntry` |
+| 7 | a requester's mark survived its logout | `Matcher.Disconnect` clears it; the job stays, so an accept answers the leader `[2][0x2c0f]` | `TestDisconnectClearsTheRequestMark`, `TestMatchRequesterLogoutClearsTheMark` |
+| 8 | the leader gone answered `0x2c1c` | `[2][0x2c0f]` to the requester, before the entry lookup (SM `0x44fcf4..0x44fd5e`) | covered by the order in `resolveJoin`; reachable only by a logout racing the answer |
+| 9 | the register correction's order | the corrections table now gives `gs:0x514170`'s order, which the code already had | (notes) |
+| 10 | per-request pages | labelled OURS in `Page` and in the OURS table | (labels) |
+| 11 | a store read per listing under the lock | `Page` takes a cheap `Online` (world hub) under the lock, and reads the race (`RaceOf`, a store read) outside it, for the sent rows only | the existing page tests |
 
 ## Self-review against the binaries
 
@@ -236,6 +267,10 @@ is a fork and cannot spawn one.
 
 ## For lane C2 (the client matching window)
 
+- **Expiry.** An entry expires silently after 60 minutes without a register or change (review
+  finding 1). The client still holds its number (`this+0x7c0`); a later change or delete of it
+  gets `0x2c1c`.
+
 - **The page.**
   - The requester's own entry (or its party leader's) is row 0 **and** appears again in its
     numbered place; skip the second copy, as `c:0x73a770` does.
@@ -266,3 +301,8 @@ is a fork and cannot spawn one.
 ## Full suite
 
 `go test -count=1 -p 1 ./...` in `server/`: all 65 packages with tests pass (exit 0).
+
+After the review fixes (merged with `int/party`): `go test -count=1 -p 1 ./...` passes all 65
+packages again; `go test -race` on `internal/party` and on the session party tests
+(`TestMatch|TestParty`) is clean; and on a fresh build of the server, `partybot -mode match`
+passes all nine steps and S1's `-mode scenario` all of its steps.

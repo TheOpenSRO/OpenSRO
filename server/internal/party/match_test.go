@@ -26,9 +26,10 @@ func entry(purpose, lo, hi uint8, flags Flags) Entry {
 }
 
 // everyone is online and named after their id; race 0.
-func allOnline(owner int64) (string, uint8, bool) { return fmt.Sprintf("c%d", owner), 0, true }
-func online(int64) bool                           { return true }
-func noJob(int64) uint8                           { return JobNone }
+func allOnline(owner int64) (string, bool) { return fmt.Sprintf("c%d", owner), true }
+func race0(int64) uint8                    { return 0 }
+func online(int64) bool                    { return true }
+func noJob(int64) uint8                    { return JobNone }
 
 // TestRegisterNumbersOnlyGrow: entry numbers come from a counter that skips 0
 // and is never reused (SM 0x451290); the listing takes the entry's flags when
@@ -116,11 +117,11 @@ func TestChangeAndDelete(t *testing.T) {
 	}
 	l, _ := m.Register(1, entry(0, 1, 110, FlagItemShare))
 	m.Register(2, entry(0, 1, 110, 0))
-	if _, err := m.Change(1, entry(1, 5, 50, 0)); code(t, err) != CodeFlagsChanged {
+	if _, err := m.Change(1, Entry{Number: l.Number, Purpose: 1, MinLevel: 5, MaxLevel: 50}); code(t, err) != CodeFlagsChanged {
 		t.Fatalf("flags change: %v", err)
 	}
 	m.Now = func() time.Time { return time.Unix(1_700_000_100, 0) }
-	n, err := m.Change(1, Entry{Flags: FlagItemShare, Purpose: PurposeQuest, MinLevel: 5, MaxLevel: 50, Title: "new"})
+	n, err := m.Change(1, Entry{Number: l.Number, Flags: FlagItemShare, Purpose: PurposeQuest, MinLevel: 5, MaxLevel: 50, Title: "new"})
 	if err != nil || n != l.Number {
 		t.Fatalf("change: %d %v", n, err)
 	}
@@ -149,30 +150,30 @@ func TestChangeAndDelete(t *testing.T) {
 func TestPagesOf23WithTheRequesterFirst(t *testing.T) {
 	h := NewHub()
 	m, _ := fakeMatcher(h)
-	if pages, at, rows, err := m.Page(1, 0, allOnline); err != nil || pages != 0 || at != 0 || len(rows) != 0 {
+	if pages, at, rows, err := m.Page(1, 0, allOnline, race0); err != nil || pages != 0 || at != 0 || len(rows) != 0 {
 		t.Fatalf("empty: %d %d %d %v", pages, at, len(rows), err)
 	}
 	for c := int64(100); c < 150; c++ {
 		m.Register(c, entry(0, 1, 110, 0))
 	}
-	pages, at, rows, err := m.Page(1, 0, allOnline)
+	pages, at, rows, err := m.Page(1, 0, allOnline, race0)
 	if err != nil || pages != 3 || at != 0 || len(rows) != 23 || rows[0].Number != 1 || rows[22].Number != 23 {
 		t.Fatalf("page 0: %d %d %d %v", pages, at, len(rows), err)
 	}
-	if _, at, rows, _ = m.Page(1, 2, allOnline); at != 2 || len(rows) != 4 || rows[0].Number != 47 {
+	if _, at, rows, _ = m.Page(1, 2, allOnline, race0); at != 2 || len(rows) != 4 || rows[0].Number != 47 {
 		t.Fatalf("page 2: at %d rows %d", at, len(rows))
 	}
-	if _, at, rows, _ = m.Page(1, 3, allOnline); at != 0 || rows[0].Number != 1 {
+	if _, at, rows, _ = m.Page(1, 3, allOnline, race0); at != 0 || rows[0].Number != 1 {
 		t.Fatalf("past the end: at %d first %d", at, rows[0].Number)
 	}
 	// Character 140 (entry 41) sees its own entry first on page 0 (24 rows).
-	if _, _, rows, _ = m.Page(140, 0, allOnline); len(rows) != 24 || rows[0].Number != 41 || rows[1].Number != 1 {
+	if _, _, rows, _ = m.Page(140, 0, allOnline, race0); len(rows) != 24 || rows[0].Number != 41 || rows[1].Number != 1 {
 		t.Fatalf("own entry first: %d rows, first %d", len(rows), rows[0].Number)
 	}
 	// A member of 140's party sees the leader's entry first; the count shows
 	// the party size, the name and race the owner's.
 	h.Form(member(140), member(7), 0)
-	_, _, rows, _ = m.Page(7, 0, allOnline)
+	_, _, rows, _ = m.Page(7, 0, allOnline, race0)
 	if rows[0].Number != 41 || rows[0].Count != 2 || rows[0].Name != "c140" || rows[1].Count != 1 {
 		t.Fatalf("party member: %+v / %+v", rows[0], rows[1])
 	}
@@ -185,8 +186,8 @@ func TestPageDropsAnOwnerGone(t *testing.T) {
 	m, _ := fakeMatcher(h)
 	m.Register(1, entry(0, 1, 110, 0))
 	m.Register(2, entry(0, 1, 110, 0))
-	gone := func(owner int64) (string, uint8, bool) { return "x", 0, owner != 1 }
-	_, _, rows, _ := m.Page(3, 0, gone)
+	gone := func(owner int64) (string, bool) { return "x", owner != 1 }
+	_, _, rows, _ := m.Page(3, 0, gone, race0)
 	if len(rows) != 1 || rows[0].Number != 2 {
 		t.Fatalf("rows %+v", rows)
 	}
@@ -214,14 +215,14 @@ func TestListingFollowsTheLeaderAndVanishesWithItsParty(t *testing.T) {
 	if _, owner, ok := m.Get(l.Number); !ok || owner != 2 {
 		t.Fatalf("owner after the leader left: %d %v", owner, ok)
 	}
-	if _, _, rows, _ := m.Page(3, 0, allOnline); len(rows) != 2 || rows[0].Name != "c2" {
+	if _, _, rows, _ := m.Page(3, 0, allOnline, race0); len(rows) != 2 || rows[0].Name != "c2" {
 		t.Fatalf("rows %+v", rows)
 	}
 	h.Remove(3, ReasonLeave) // two left: dissolved
 	if _, _, ok := m.Get(l.Number); ok {
 		t.Fatal("listing survived its party's dissolution")
 	}
-	if pages, _, _, _ := m.Page(2, 0, allOnline); pages != 0 {
+	if pages, _, _, _ := m.Page(2, 0, allOnline, race0); pages != 0 {
 		t.Fatalf("%d pages after the dissolution", pages)
 	}
 }
@@ -319,8 +320,8 @@ func TestTakeJobStopsTheBackstop(t *testing.T) {
 	m, timers := fakeMatcher(h)
 	l, _ := m.Register(1, entry(PurposeQuest, 1, 110, 0))
 	job, _ := m.Request(Joiner{CharacterID: 2, Level: 5, Job: JobNone}, l.Number, noJob, online, nil)
-	if !m.IsLeaderOf(job.ID, 1) || m.IsLeaderOf(job.ID, 2) {
-		t.Fatal("IsLeaderOf")
+	if got, ok := m.JobOf(job.ID); !ok || got.Leader != 1 || got.Requester != 2 {
+		t.Fatalf("JobOf %+v %v", got, ok)
 	}
 	if _, ok := m.TakeJob(job.ID); !ok || !(*timers)[0].stopped {
 		t.Fatal("take")
@@ -345,5 +346,102 @@ func TestWithdrawDropsOnlyAPartylessOwnersEntry(t *testing.T) {
 	}
 	if _, _, ok := m.Get(l2.Number); !ok {
 		t.Fatal("party leader's entry dropped by Withdraw")
+	}
+}
+
+// TestChangeLooksUpTheNumberSent (SM 0x4513c0 keys its find on the request's
+// number): a number that does not exist is 0x2c1c, someone else's 0x2c1d,
+// and neither touches the caller's own entry.
+func TestChangeLooksUpTheNumberSent(t *testing.T) {
+	h := NewHub()
+	m, _ := fakeMatcher(h)
+	mine, _ := m.Register(1, entry(PurposeHunting, 1, 110, 0))
+	theirs, _ := m.Register(2, entry(PurposeHunting, 1, 110, 0))
+	if _, err := m.Change(1, Entry{Number: 9999, Purpose: PurposeQuest, Title: "x"}); code(t, err) != CodeNoEntry {
+		t.Fatalf("unknown number: %v", err)
+	}
+	if _, err := m.Change(1, Entry{Number: theirs.Number, Purpose: PurposeQuest, Title: "x"}); code(t, err) != CodeNotLeader {
+		t.Fatalf("someone else's: %v", err)
+	}
+	if got, _, _ := m.Get(mine.Number); got.Purpose != PurposeHunting || got.Title != "t" {
+		t.Fatalf("own entry changed: %+v", got)
+	}
+	if got, _, _ := m.Get(theirs.Number); got.Purpose != PurposeHunting {
+		t.Fatalf("their entry changed: %+v", got)
+	}
+}
+
+// TestSweepExpiresAfterSixtyWholeMinutes (SM 0x4504c0): an entry goes when
+// (now - Time) / 60 > 60, never while a request is pending; its owner's Hub
+// listing goes with it (OURS: the state returns to 0).
+func TestSweepExpiresAfterSixtyWholeMinutes(t *testing.T) {
+	h := NewHub()
+	m, _ := fakeMatcher(h)
+	t0 := m.Now()
+	a, _ := m.Register(1, entry(PurposeHunting, 1, 110, 0))
+	b, _ := m.Register(2, entry(PurposeHunting, 1, 110, 0))
+	if _, err := m.Request(Joiner{CharacterID: 3, Level: 5, Job: JobNone}, b.Number, noJob, online, nil); err != nil {
+		t.Fatal(err)
+	}
+	// 60 min 59 s: 60 whole minutes, not more than 60.
+	if gone := m.Sweep(t0.Add(61*time.Minute - time.Second)); len(gone) != 0 {
+		t.Fatalf("expired at 60 whole minutes: %v", gone)
+	}
+	gone := m.Sweep(t0.Add(61 * time.Minute))
+	if len(gone) != 1 || gone[0] != a.Number {
+		t.Fatalf("at 61 minutes: %v, want only %d (the other is pending)", gone, a.Number)
+	}
+	if _, _, ok := h.Listing(1); ok || h.State(1) != StateFree {
+		t.Fatalf("owner still listed, state %d", h.State(1))
+	}
+	if _, _, ok := m.Get(b.Number); !ok {
+		t.Fatal("a pending entry expired")
+	}
+	// A change renews the time.
+	m.Now = func() time.Time { return t0.Add(30 * time.Minute) }
+	c, _ := m.Register(4, entry(PurposeHunting, 1, 110, 0))
+	m.Now = func() time.Time { return t0.Add(80 * time.Minute) }
+	m.Change(4, Entry{Number: c.Number, Purpose: PurposeQuest, Title: "renewed"})
+	if gone := m.Sweep(t0.Add(100 * time.Minute)); len(gone) != 0 {
+		t.Fatalf("a renewed entry expired: %v", gone)
+	}
+}
+
+// TestPageSkipsAPartyLeaderOutOfTheWorld: an owner out of the world but
+// still in a party is mid-logout; its entry is skipped, not deleted, so the
+// party's removal can move it to the next leader.
+func TestPageSkipsAPartyLeaderOutOfTheWorld(t *testing.T) {
+	h := NewHub()
+	m, _ := fakeMatcher(h)
+	h.Form(member(1), member(2), FlagExpShare)
+	pid := mustParty(t, h, 1)
+	h.Add(pid, member(3))
+	l, _ := m.Register(1, entry(PurposeHunting, 1, 110, FlagExpShare))
+	gone := func(owner int64) (string, bool) { return "x", owner != 1 }
+	if _, _, rows, _ := m.Page(9, 0, gone, race0); len(rows) != 0 {
+		t.Fatalf("rows %+v", rows)
+	}
+	if _, _, ok := m.Get(l.Number); !ok {
+		t.Fatal("a party leader's entry was deleted mid-logout")
+	}
+	h.Remove(1, ReasonLogout)
+	if _, owner, ok := m.Get(l.Number); !ok || owner != 2 {
+		t.Fatalf("entry did not follow the leader: %d %v", owner, ok)
+	}
+}
+
+// TestDisconnectClearsTheRequestMark: a requester who leaves no longer holds
+// state 1; the job stays for its answer or the backstop.
+func TestDisconnectClearsTheRequestMark(t *testing.T) {
+	h := NewHub()
+	m, _ := fakeMatcher(h)
+	l, _ := m.Register(1, entry(PurposeHunting, 1, 110, 0))
+	job, _ := m.Request(Joiner{CharacterID: 2, Level: 5, Job: JobNone}, l.Number, noJob, online, nil)
+	m.Disconnect(2)
+	if h.State(2) != StateFree {
+		t.Fatalf("state %d after disconnect", h.State(2))
+	}
+	if _, ok := m.JobOf(job.ID); !ok {
+		t.Fatal("job dropped on the requester's disconnect")
 	}
 }

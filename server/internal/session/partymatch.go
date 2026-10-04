@@ -18,10 +18,15 @@ package session
 //   - the requester's two masteries (session/party.go's topMasteries);
 //   - an entry's pending mark is cleared on every outcome (party.TakeJob);
 //   - an accept for an entry that has since moved to a new leader is
-//     refused 0x2c1c (resolveJoin).
+//     refused 0x2c1c (resolveJoin);
+//   - an answer whose requester JID is not the job's is dropped and the job
+//     left pending (handleMatchAnswer; the engine releases it);
+//   - an expired entry's owner returns to state 0 at once (party.Sweep; the
+//     engine leaves the byte at 4 until a relog).
 
 import (
 	"context"
+	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
@@ -222,7 +227,7 @@ func handleMatchList(ctx context.Context, sess *gateway.Session, data []byte, d 
 	if !ok {
 		return
 	}
-	pages, at, rows, err := d.Match.Page(me.CharacterID, data[0], d.rowInfo(ctx))
+	pages, at, rows, err := d.Match.Page(me.CharacterID, data[0], d.ownerOnline, d.raceOf(ctx))
 	if err != nil {
 		code, _ := party.Refusal(err)
 		matchRefuse(sess, party.OpMatchListAck, code)
@@ -231,25 +236,30 @@ func handleMatchList(ctx context.Context, sess *gateway.Session, data []byte, d 
 	sendParty(sess, party.OpMatchListAck, party.EncodeListPage(pages, at, rows))
 }
 
-// rowInfo is what a list row reads about an entry's owner (READ, SM
+// ownerOnline is what the page builder asks of an entry's owner (READ, SM
 // 0x44f640): the character name (char+0x1a8; for a trade or thief entry the
 // job alias, which OpenSRO never lists -- no job mode, and a character not in
-// job mode cannot list under purposes 2 and 3) and the race byte (char+0x250,
-// the model's Country: 0 China, 1 Europe). An owner not in the world drops
-// its entry, as the page builder does.
-func (d PartyMatchDeps) rowInfo(ctx context.Context) party.RowInfo {
-	return func(owner int64) (string, uint8, bool) {
-		e, ok := d.Hub.EntityByCharacterID(owner)
-		if !ok {
-			return "", 0, false
-		}
-		race := uint8(character.RaceChina)
+// job mode cannot list under purposes 2 and 3). An owner not in the world
+// drops its entry, as the page builder does.
+func (d PartyMatchDeps) ownerOnline(owner int64) (string, bool) {
+	e, ok := d.Hub.EntityByCharacterID(owner)
+	if !ok {
+		return "", false
+	}
+	return e.Name, true
+}
+
+// raceOf is an owner's race byte (READ, SM 0x44f640: char+0x250, the model's
+// Country: 0 China, 1 Europe). A store read, so Page calls it outside its
+// lock and only for the rows it sends.
+func (d PartyMatchDeps) raceOf(ctx context.Context) party.RaceOf {
+	return func(owner int64) uint8 {
 		if d.Chars != nil {
 			if c, err := d.Chars.GetByID(ctx, owner); err == nil && c != nil {
-				race = uint8(character.RaceOf(c.Gender))
+				return uint8(character.RaceOf(c.Gender))
 			}
 		}
-		return e.Name, race, true
+		return uint8(character.RaceChina)
 	}
 }
 
@@ -297,9 +307,9 @@ func handleMatchJoin(ctx context.Context, sess *gateway.Session, data []byte, d 
 		refuse(c)
 		return
 	}
-	s := d.sample(ctx, d.memberOf(me))
+	s := d.sample(ctx, d.memberOf(me), nil, time.Now())
 	rec := s.rec
-	rec.Mask = party.MaskFull
+	rec.Mask = s.fullMask
 	joiner := party.Joiner{CharacterID: me.CharacterID, Level: uint8(me.Level), Job: party.JobNone}
 	leaderJob := func(int64) uint8 { return party.JobNone }
 	online := func(c int64) bool { _, ok := d.Hub.EntityByCharacterID(c); return ok }
@@ -320,13 +330,20 @@ func handleMatchJoin(ctx context.Context, sess *gateway.Session, data []byte, d 
 	sendParty(leader.Session, party.OpMatchJoin, party.EncodeJoinRequest(&req))
 }
 
-// handleMatchAnswer is the leader's 0x306e (READ, GS FUN_00514900 forwards it;
-// SM 0x420e50 -> 0x44fbe0 resolves the job by its id). OURS: only the entry's
-// leader may answer its job -- the engine finds the job by id and does not
-// compare the sender. An answer other than 0, 1 or 2 ends the job with no
-// reply (SM 0x44fbe0 asserts and returns).
+// handleMatchAnswer is the leader's 0x306e (READ, GS FUN_00514900 forwards it
+// as 0xbc00 [job][requester JID][0xb06d][answer], GS 0x4168f0; SM 0x4107e0 ->
+// 0x421f70 finds the job by its id and authorizes the answer in 0x421ec0: the
+// echoed JID must be the job's requester (`cmp [ebx+0x8],esi` at 0x421f3f; a
+// join job's target list is empty, only the 0x7d1b branch of 0x44f850 adds
+// one), else the answer is dropped with no reply). An answer other than 0, 1
+// or 2 ends the job with no reply (SM 0x44fbe0 asserts and returns).
+//
+// OURS: only the entry's leader may answer its job -- the engine does not
+// compare the sender. And an answer that fails the requester check leaves the
+// job pending for the real answer or the backstop, where the engine releases
+// it (with the entry's mark left set).
 func handleMatchAnswer(ctx context.Context, sess *gateway.Session, data []byte, d PartyMatchDeps) {
-	jobID, _, answer, err := party.DecodeJoinAnswer(data)
+	jobID, requester, answer, err := party.DecodeJoinAnswer(data)
 	if err != nil {
 		return
 	}
@@ -334,7 +351,8 @@ func handleMatchAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 	if !ok {
 		return
 	}
-	if !d.Match.IsLeaderOf(jobID, me.CharacterID) {
+	pending, ok := d.Match.JobOf(jobID)
+	if !ok || pending.Leader != me.CharacterID || requester != party.JIDOf(pending.Requester) {
 		return
 	}
 	job, ok := d.Match.TakeJob(jobID)
@@ -353,7 +371,10 @@ func handleMatchAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 // has already been taken.
 //
 //   - 0 cancel, 2 no reply: the requester gets 0xb06d [1][answer].
-//   - 1, the requester gone: the leader gets 0xb06d [2][0x2c0f].
+//   - 1, the requester gone: the leader gets 0xb06d [2][0x2c0f] (SM
+//     0x44fc64..0x44fcdb).
+//   - 1, the leader gone: the requester gets 0xb06d [2][0x2c0f], before the
+//     entry is looked up (SM 0x44fcf4..0x44fd5e).
 //   - 1, the entry gone: 0xb06d [2][0x2c1c] to the requester and the leader.
 //   - 1, a leader in no party: a party of the leader and the requester, with
 //     the entry's flags (SM 0x44e9c0 -> 0x44e100 adds the leader first); the
@@ -395,12 +416,16 @@ func (d PartyMatchDeps) resolveJoin(ctx context.Context, job party.JoinJob, answ
 		toLeader(party.EncodeRefusal(party.CodeInvalidUser))
 		return
 	}
+	if !lok {
+		toRequester(party.EncodeRefusal(party.CodeInvalidUser))
+		return
+	}
 	fail := func(code uint16) {
 		toRequester(party.EncodeRefusal(code))
 		toLeader(party.EncodeRefusal(code))
 	}
 	l, owner, ok := d.Match.Get(job.Entry)
-	if !ok || !lok || owner != job.Leader {
+	if !ok || owner != job.Leader {
 		fail(party.CodeNoEntry)
 		return
 	}
@@ -436,10 +461,13 @@ func (d PartyMatchDeps) resolveJoin(ctx context.Context, job party.JoinJob, answ
 
 // PartyMatchDisconnectHandler is the gateway's OnDisconnect hook for party
 // matching: a party-less owner's entry goes with it (READ, SM 0x4296f0 ->
-// 0x451590). An owner in a party is the party's (PartyDisconnectHandler
-// removes it, which moves or drops the entry). A pending join request is left
-// to its answer or the 15 s backstop. It must run while the world hub still
-// knows the session (before WorldDisconnectHandler).
+// 0x451590), and a pending join request no longer holds the requester's state
+// byte (party.Matcher.Disconnect). An owner in a party is the party's: run
+// PartyDisconnectHandler first, whose removal moves the entry to the next
+// leader or drops it with a dissolved party, as SM 0x4296f0 runs the party
+// removal 0x44f580 before the entry delete. This reads the session's
+// character from the world hub, so it must run before WorldDisconnectHandler.
+// A pending job is left to its answer or the 15 s backstop.
 func PartyMatchDisconnectHandler(d PartyMatchDeps) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
 		if d.Match == nil || d.Hub == nil {
@@ -449,6 +477,27 @@ func PartyMatchDisconnectHandler(d PartyMatchDeps) func(sess *gateway.Session) {
 		if !ok {
 			return
 		}
-		d.Match.Withdraw(e.CharacterID)
+		d.Match.Disconnect(e.CharacterID)
+	}
+}
+
+// RunPartyMatchSweep expires old entries every party.SweepInterval, as the
+// ShardManager's minute timer does (READ, SM 0x40c703 -> 0x40dd10 ->
+// 0x4504c0; party.Matcher.Sweep). Nothing is sent. Returns when ctx ends.
+func RunPartyMatchSweep(ctx context.Context, d PartyMatchDeps) {
+	if d.Match == nil {
+		return
+	}
+	t := time.NewTicker(party.SweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if gone := d.Match.Sweep(now); len(gone) > 0 {
+				d.log().Info("party match: entries expired", "entries", gone)
+			}
+		}
 	}
 }

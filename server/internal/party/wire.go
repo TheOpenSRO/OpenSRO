@@ -311,8 +311,15 @@ func EncodeAnswerYes() []byte { return []byte{1, 1} }
 // 0x2c17 for a join (READ, c:0x81cd20/0x81cef0).
 func EncodeAnswerNo(code uint16) []byte { return appendU16([]byte{2}, code) }
 
-// DecodeAnswer reads the C->S 0x3080. The GameServer reads only the first
-// byte (GS trs_wait_response::vslot_002 0x46cb30); 1 accepts.
+// DecodeAnswer reads the C->S 0x3080: only the first byte decides (READ, GS
+// trs_wait_response::vslot_002 reads one u8 at 0x46cbef and hands it to
+// 0x5be350 in AL). Accepting on 1 alone is OURS for a formation: this
+// GameServer accepts a join on `cmp bl,1; jne` (0x5be39f, READ) but a
+// formation on `test bl,bl; jne` (0x5be41c), so any non-zero byte -- the stock
+// client's "no", [2][0x2c0c] (c:0x81cd9b) -- would form the party. That is the
+// private-server build's bug or a 0 the client never sends; copying it would
+// turn every "No" into a "Yes", so OpenSRO declines everything but 1 for both
+// kinds.
 func DecodeAnswer(b []byte) (accept bool, err error) {
 	if len(b) < 1 {
 		return false, ErrShort

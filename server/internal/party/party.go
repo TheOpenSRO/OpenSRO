@@ -366,7 +366,10 @@ type Hub struct {
 	bySession map[uint64]int64
 	nextID    uint32
 	// invites holds the pending invitations, keyed by the target character.
-	invites  map[int64]*Invite
+	invites map[int64]*Invite
+	// detached holds invitations whose invitee left the world (Detach), keyed
+	// by sequence: they no longer hold the invitee, but still time out.
+	detached map[uint64]*Invite
 	seq      uint64
 	listings map[int64]listing
 	// requests holds the characters with a party-match join request pending
@@ -389,6 +392,7 @@ func NewHub() *Hub {
 		byChar:    make(map[int64]uint32),
 		bySession: make(map[uint64]int64),
 		invites:   make(map[int64]*Invite),
+		detached:  make(map[uint64]*Invite),
 		listings:  make(map[int64]listing),
 		requests:  make(map[int64]struct{}),
 		Timeout:   InviteTimeout,
@@ -616,7 +620,11 @@ func (h *Hub) stateLocked(characterID int64) byte {
 	for _, inv := range h.invites {
 		if inv.Kind == InviteForm && inv.Inviter.CharacterID == characterID {
 			inviting = true
-			break
+		}
+	}
+	for _, inv := range h.detached {
+		if inv.Kind == InviteForm && inv.Inviter.CharacterID == characterID {
+			inviting = true
 		}
 	}
 	switch {
@@ -653,11 +661,14 @@ func (h *Hub) Invite(inv Invite, onTimeout func(Invite)) error {
 	stored.timer = h.afterFunc(h.Timeout, func() {
 		h.mu.Lock()
 		cur, ok := h.invites[target]
-		if !ok || cur.seq != seq {
+		if ok && cur.seq == seq {
+			delete(h.invites, target)
+		} else if cur, ok = h.detached[seq]; ok {
+			delete(h.detached, seq)
+		} else {
 			h.mu.Unlock()
 			return
 		}
-		delete(h.invites, target)
 		got := *cur
 		h.mu.Unlock()
 		if onTimeout != nil {
@@ -682,4 +693,24 @@ func (h *Hub) TakeInvite(target int64) (Invite, bool) {
 		inv.timer.Stop()
 	}
 	return *inv, true
+}
+
+// DetachSession releases the invitee of an invitation pending for the
+// character playing on sessionID, which left the world: the invitee is free
+// again (a fresh invitation to it is no longer refused 0x2c1f), while the
+// invitation still times out and its onTimeout still runs. OURS (round 710):
+// whether the original's logout cancels the transaction was not read. What is
+// READ is that the transaction finds both characters by id when it is
+// answered or times out (GS 0x5be350, OnTimeout 0x46ce44 -> 0x46cec0), and that
+// the state byte lives in the character object a relog replaces; so a relogged
+// invitee starts free, and the inviter hears the timeout.
+func (h *Hub) DetachSession(sessionID uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for target, inv := range h.invites {
+		if inv.Target.Session != nil && inv.Target.Session.ID() == sessionID {
+			delete(h.invites, target)
+			h.detached[inv.seq] = inv
+		}
+	}
 }

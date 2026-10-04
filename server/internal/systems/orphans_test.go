@@ -47,7 +47,6 @@ var knownOrphans = map[string]string{
 	// plan in docs/protocol/party_protocol.md, "Implementation lanes"). Each is
 	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.
 	"PartyByID": "round 710: lane S3 finds the party behind a match entry; party_test.go.",
-	"ItemShare": "round 710: flag bit 1 (Item Auto Share), for lane S2's round robin and gold split.",
 	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
 		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +

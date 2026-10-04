@@ -1992,6 +1992,7 @@ func main() {
 	// pages and the join request with its 15 s backstop
 	// (session/partymatch.go, party/match.go).
 	partyMatchDeps := session.PartyMatchDeps{PartyDeps: partyDeps, Match: party.NewMatcher(parties)}
+	go session.RunPartyMatchSweep(ctx, partyMatchDeps)
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
@@ -2128,11 +2129,16 @@ func main() {
 			tradeDisconnect(sess)
 			guildPointsDisconnect(sess)
 			berserkDisconnect(sess)
-			// A party-less owner's match entry goes with it; this reads the
-			// session's character from world.Hub, so before worldDisconnect.
+			// The party removal first, then the match entry, as the
+			// ShardManager's logout does (SM 0x4296f0: 0x44f580 moves a
+			// leader's entry to the next leader before 0x451590 deletes a
+			// party-less owner's). Both before worldDisconnect: the match hook
+			// reads the session's character from world.Hub, and a page built
+			// while a leader is out of the world but still in its party would
+			// otherwise skip its entry (round 713's review).
+			partyDisconnect(sess)
 			partyMatchDisconnect(sess)
 			worldDisconnect(sess)
-			partyDisconnect(sess)
 		},
 	}
 

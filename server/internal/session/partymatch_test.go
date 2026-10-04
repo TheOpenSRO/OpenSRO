@@ -48,7 +48,8 @@ func newMatchWorld(t *testing.T) (*partyWorld, *party.Matcher) {
 	worldGone := WorldDisconnectHandler(w.hub, nil)
 	partyGone := PartyDisconnectHandler(w.deps)
 	matchGone := PartyMatchDisconnectHandler(md)
-	srv := &gateway.Server{Addr: freeAddr(t), Handle: handle, OnDisconnect: func(s *gateway.Session) { matchGone(s); worldGone(s); partyGone(s) }}
+	// cmd/server's order: the party removal, the match entry, then the world.
+	srv := &gateway.Server{Addr: freeAddr(t), Handle: handle, OnDisconnect: func(s *gateway.Session) { partyGone(s); matchGone(s); worldGone(s) }}
 	sctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go srv.ListenAndServe(sctx)
@@ -303,8 +304,10 @@ func TestMatchJoinRefusals(t *testing.T) {
 	}
 	// A pending request: the next requester gets 0x2c1f from the
 	// ShardManager, the same requester again from the GameServer (state 1).
-	w.c["Aria"].send(party.OpMatchChange, matchEntry(party.PurposeHunting, 1, 110, 0, "x"))
-	w.c["Aria"].next(party.OpMatchChgAck)
+	w.c["Aria"].send(party.OpMatchChange, party.AppendEntry(nil, &party.Entry{Number: e.Number, Purpose: party.PurposeHunting, MinLevel: 1, MaxLevel: 110, Title: "x"}))
+	if b := w.c["Aria"].next(party.OpMatchChgAck).Data; b[0] != party.ResultOK {
+		t.Fatalf("change refused % x", b)
+	}
 	request(t, w, "Bram", "Aria", e.Number)
 	w.c["Cato"].send(party.OpMatchJoin, party.EncodeTarget(e.Number))
 	if c := refusal(t, w.c["Cato"], party.OpMatchJoinAck); c != party.CodeDuplicate {
@@ -421,4 +424,114 @@ func TestMatchRaceIsTheOwnersCountry(t *testing.T) {
 	if p := listPage(t, w.c["Aria"], 0); p.rows[0].Race != 1 || p.rows[0].Name != "Eli" {
 		t.Fatalf("row %+v", p.rows[0])
 	}
+}
+
+// TestMatchAnswerWithTheWrongRequesterIsDropped: the echoed requester JID
+// must be the job's (SM 0x421ec0); a wrong one is dropped with no reply and
+// the real answer still resolves the job.
+func TestMatchAnswerWithTheWrongRequesterIsDropped(t *testing.T) {
+	w, _ := newMatchWorld(t)
+	e := register(t, w, "Aria", party.PurposeHunting, 1, 110, 0)
+	j := request(t, w, "Bram", "Aria", e.Number)
+	w.c["Aria"].send(party.OpMatchAnswer, party.EncodeJoinAnswer(j.JobID, 12345, party.AnswerCancel))
+	w.c["Bram"].none(party.OpMatchJoinAck)
+	if st := w.parties.State(w.ids["Bram"]); st != party.StatePending {
+		t.Fatalf("Bram's state %d after a dropped answer, want 1", st)
+	}
+	w.c["Aria"].send(party.OpMatchAnswer, party.EncodeJoinAnswer(j.JobID, j.Requester, party.AnswerCancel))
+	if o := joinResult(t, w.c["Bram"]); o != party.JoinRefused {
+		t.Fatalf("Bram %d", o)
+	}
+}
+
+// TestMatchChangeNamesTheEntry: change looks up the number the client sent
+// (SM 0x4513c0): someone else's is 0x2c1d, an unknown one 0x2c1c.
+func TestMatchChangeNamesTheEntry(t *testing.T) {
+	w, _ := newMatchWorld(t)
+	mine := register(t, w, "Aria", party.PurposeHunting, 1, 110, 0)
+	theirs := register(t, w, "Bram", party.PurposeHunting, 1, 110, 0)
+	w.c["Aria"].send(party.OpMatchChange, party.AppendEntry(nil, &party.Entry{Number: theirs.Number, Purpose: party.PurposeQuest, MinLevel: 1, MaxLevel: 110, Title: "x"}))
+	if c := refusal(t, w.c["Aria"], party.OpMatchChgAck); c != party.CodeNotLeader {
+		t.Fatalf("someone else's: %#x", c)
+	}
+	w.c["Aria"].send(party.OpMatchChange, party.AppendEntry(nil, &party.Entry{Number: 9999, Purpose: party.PurposeQuest, MinLevel: 1, MaxLevel: 110, Title: "x"}))
+	if c := refusal(t, w.c["Aria"], party.OpMatchChgAck); c != party.CodeNoEntry {
+		t.Fatalf("unknown: %#x", c)
+	}
+	for _, r := range listPage(t, w.c["Cato"], 0).rows {
+		if r.Purpose != party.PurposeHunting {
+			t.Fatalf("an entry changed: %+v (mine %d)", r, mine.Number)
+		}
+	}
+}
+
+// TestMatchSweepExpiresSilently: an entry past 60 minutes drops off the
+// pages with nothing sent, and its owner may register again at once (OURS:
+// the state returns to 0).
+func TestMatchSweepExpiresSilently(t *testing.T) {
+	w, m := newMatchWorld(t)
+	e := register(t, w, "Aria", party.PurposeHunting, 1, 110, 0)
+	if gone := m.Sweep(time.Now().Add(62 * time.Minute)); len(gone) != 1 || gone[0] != e.Number {
+		t.Fatalf("swept %v", gone)
+	}
+	w.c["Aria"].none(party.OpMatchDelAck)
+	if p := listPage(t, w.c["Bram"], 0); p.pages != 0 {
+		t.Fatalf("page after expiry %+v", p)
+	}
+	if st := w.parties.State(w.ids["Aria"]); st != party.StateFree {
+		t.Fatalf("owner state %d", st)
+	}
+	if e2 := register(t, w, "Aria", party.PurposeHunting, 1, 110, 0); e2.Number <= e.Number {
+		t.Fatalf("re-register %+v", e2)
+	}
+}
+
+// TestMatchLeaderLogoutMovesTheEntry: a listed party leader who leaves the
+// world hands the entry to the next leader (SM 0x4296f0 runs the party
+// removal before the entry delete).
+func TestMatchLeaderLogoutMovesTheEntry(t *testing.T) {
+	w, _ := newMatchWorld(t)
+	w.form(t, "Aria", "Cato", party.FlagExpShare)
+	w.join(t, "Aria", "Dara", "Aria", "Cato")
+	e := register(t, w, "Aria", party.PurposeHunting, 1, 110, party.FlagExpShare)
+	w.c["Aria"].conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		p := listPage(t, w.c["Bram"], 0)
+		if len(p.rows) == 1 && p.rows[0].Name == "Cato" && p.rows[0].Number == e.Number && p.rows[0].Count == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("entry did not follow the leader: %+v", p)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestMatchRequesterLogoutClearsTheMark: the requester's state byte goes with
+// its character; the leader's later accept is answered [2][0x2c0f] (SM
+// 0x44fc64), and the entry takes a new request.
+func TestMatchRequesterLogoutClearsTheMark(t *testing.T) {
+	w, _ := newMatchWorld(t)
+	e := register(t, w, "Aria", party.PurposeHunting, 1, 110, 0)
+	j := request(t, w, "Bram", "Aria", e.Number)
+	w.c["Bram"].conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for w.parties.State(w.ids["Bram"]) != party.StateFree {
+		if time.Now().After(deadline) {
+			t.Fatal("requester still pending after its logout")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for {
+		if _, ok := w.hub.EntityByCharacterID(w.ids["Bram"]); !ok {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	w.c["Aria"].send(party.OpMatchAnswer, party.EncodeJoinAnswer(j.JobID, j.Requester, party.AnswerConfirm))
+	if c := refusal(t, w.c["Aria"], party.OpMatchJoinAck); c != party.CodeInvalidUser {
+		t.Fatalf("leader: %#x", c)
+	}
+	request(t, w, "Cato", "Aria", e.Number)
 }

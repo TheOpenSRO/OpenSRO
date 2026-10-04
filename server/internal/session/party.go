@@ -217,7 +217,10 @@ func handlePartyCreate(ctx context.Context, sess *gateway.Session, data []byte, 
 	}
 	inv := party.Invite{Kind: party.InviteForm, Inviter: d.memberOf(caller), Target: d.memberOf(t), Flags: flags}
 	if err := d.Parties.Invite(inv, d.inviteTimedOut); err != nil {
-		refuse(party.CodePostFailed)
+		// Only ErrInvitePending: a second inviter that passed the ladder in
+		// the same instant. The engine, single-threaded, would have refused
+		// it at CheckTargetAvailable with 0x2c1f, so that is the answer.
+		refuse(party.CodeDuplicate)
 		return
 	}
 	sendParty(t.Session, party.OpInvitation, party.EncodeInvitation(party.InviteForm, party.JIDOf(caller.CharacterID), flags))
@@ -258,7 +261,11 @@ func handlePartyInvite(ctx context.Context, sess *gateway.Session, data []byte, 
 	}
 	inv := party.Invite{Kind: party.InviteJoin, Inviter: d.memberOf(caller), Target: d.memberOf(t), Flags: p.Flags, PartyID: p.ID}
 	if err := d.Parties.Invite(inv, d.inviteTimedOut); err != nil {
-		sendParty(sess, party.OpCreateAck, party.EncodeRefusal(party.CodePostFailed))
+		// ErrInvitePending, a race past the ladder: answered as the ladder
+		// would have (0x2c1f on 0xb062), as for 0x7060. OpenSRO's post never
+		// fails otherwise, so the 0xb060 [2][2] quirk of a failed post
+		// (GS 0x5146bb) has no trigger here.
+		refuse(party.CodeDuplicate)
 		return
 	}
 	sendParty(t.Session, party.OpInvitation, party.EncodeInvitation(party.InviteJoin, party.JIDOf(caller.CharacterID), p.Flags))
@@ -273,26 +280,34 @@ func inviterAck(kind party.InviteKind) uint16 {
 	return party.OpCreateAck
 }
 
-// failInvite sends an invitation's refusal to both sides: the inviter on
-// 0xb060/0xb062, the invitee on 0xb067 (READ, GS 0x5be9b0 / 0x5bea20, and the
-// timeout trs_wait_response::OnTimeout 0x46ce44).
-func failInvite(inv party.Invite, code uint16) {
-	sendParty(inv.Inviter.Session, inviterAck(inv.Kind), party.EncodeRefusal(code))
-	sendParty(inv.Target.Session, party.OpJoinAck, party.EncodeRefusal(code))
+// failInvite sends an invitation's refusal to both sides, each found by id
+// as the engine finds them (FUN_00485d90) and skipped when not online: the
+// inviter on 0xb060/0xb062, the invitee on 0xb067 (READ, GS 0x5be9b0 /
+// 0x5bea20, and the timeout trs_wait_response::OnTimeout 0x46ce44).
+func (d PartyDeps) failInvite(inv party.Invite, code uint16) {
+	if e, ok := d.Hub.EntityByCharacterID(inv.Inviter.CharacterID); ok {
+		sendParty(e.Session, inviterAck(inv.Kind), party.EncodeRefusal(code))
+	}
+	if e, ok := d.Hub.EntityByCharacterID(inv.Target.CharacterID); ok {
+		sendParty(e.Session, party.OpJoinAck, party.EncodeRefusal(code))
+	}
 }
 
 // inviteTimedOut runs when an invitation has had no answer for 30 s: 0x2c10
 // to both.
 func (d PartyDeps) inviteTimedOut(inv party.Invite) {
-	failInvite(inv, party.CodeTimeout)
+	d.failInvite(inv, party.CodeTimeout)
 }
 
-// handlePartyAnswer is the invitee's 0x3080 answer (READ, GS 0x46cb30 ->
-// 0x5be350). A decline refuses 0x2c0c for a formation and 0x2c17 for a join;
-// an inviter no longer online refuses 0x2c0e. A yes forms the party or adds to
-// it. An answer with no invitation pending (it timed out) is dropped: the
-// engine's "no longer pending" refusal 3 needs the inviter, whom nothing names
-// any more (OURS).
+// handlePartyAnswer is the invitee's 0x3080 answer, in the GameServer's order
+// (READ, GS 0x46cb30 -> trs_wait_response::FUN_005be350, the codes register
+// arguments read in asm): the inviter not online 0x2c0e (0x5be3e3 / 0x5be45b);
+// the invitee not found 3 (0x5be3f7; the invitee is the sender here, always
+// found); the invitee's state byte not 1, 2 (0x5be370 -> 0x5be3fc / 0x5be474);
+// only then the answer -- a decline 0x2c0c for a formation (0x5be420), 0x2c17
+// for a join (0x5be3cf); then the formation or the join. An answer with no
+// invitation pending (it timed out) is dropped: nothing names its inviter any
+// more (OURS).
 func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, d PartyDeps) {
 	accept, err := party.DecodeAnswer(data)
 	if err != nil || d.Hub == nil {
@@ -307,17 +322,24 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 		return
 	}
 	inv.Target.Session = sess
+	inviter, online := d.Hub.EntityByCharacterID(inv.Inviter.CharacterID)
+	if !online {
+		d.failInvite(inv, party.CodeCantFindCreator)
+		return
+	}
+	// The state byte is 1 while the invitation is pending; the derived state
+	// says otherwise only when the invitee got into a party meanwhile (OURS:
+	// the one way OpenSRO's derived byte can leave 1 with an invitation out).
+	if _, in := d.Parties.Get(me.CharacterID); in {
+		d.failInvite(inv, party.CodePostFailed)
+		return
+	}
 	if !accept {
 		code := party.CodeCreateRefused
 		if inv.Kind == party.InviteJoin {
 			code = party.CodeJoinRefused
 		}
-		failInvite(inv, code)
-		return
-	}
-	inviter, online := d.Hub.EntityByCharacterID(inv.Inviter.CharacterID)
-	if !online {
-		failInvite(inv, party.CodeCantFindCreator)
+		d.failInvite(inv, code)
 		return
 	}
 	inv.Inviter.Session = inviter.Session
@@ -327,7 +349,7 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 		p, err := d.Parties.Form(inv.Inviter, inv.Target, inv.Flags)
 		if err != nil {
 			code, _ := party.Refusal(err)
-			failInvite(inv, code)
+			d.failInvite(inv, code)
 			return
 		}
 		d.announceFormed(ctx, p)
@@ -336,7 +358,7 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 	p, err := d.Parties.Add(inv.PartyID, inv.Target)
 	if err != nil {
 		code, _ := party.Refusal(err)
-		failInvite(inv, code)
+		d.failInvite(inv, code)
 		return
 	}
 	d.announceJoined(ctx, p, inv.Target)
@@ -366,16 +388,27 @@ func (d PartyDeps) announceFormed(ctx context.Context, p *party.Party) {
 // joiner the 0x3065 of the whole party. The inviter gets no 0xb062 on success
 // (READ, the 0x062 handler replies only on a refusal). Lane S3 calls it for a
 // party-match accept into an existing party.
+//
+// Only the joiner's record is built from the character (GS FUN_005bc210 ->
+// 0x5bae80). The others in the 0x3065 are what the members last heard, as
+// the GameServer writes them from its mirror list (GS 0x5bc650 walks
+// party+0x14): rebuilding them here would file a change the sampler has not
+// sent yet as already heard.
 func (d PartyDeps) announceJoined(ctx context.Context, p *party.Party, joiner party.Member) {
 	sendParty(joiner.Session, party.OpJoinAck, party.EncodeOKID(joiner.JID()))
 	recs := make([]party.Record, len(p.Members))
-	for i, m := range p.Members {
-		recs[i] = d.fullRecord(ctx, m)
-	}
 	var jrec party.Record
 	for i, m := range p.Members {
 		if m.CharacterID == joiner.CharacterID {
-			jrec = recs[i]
+			jrec = d.fullRecord(ctx, m)
+			recs[i] = jrec
+			continue
+		}
+		if heard, ok := partyRecords.get(m.CharacterID); ok {
+			recs[i] = heard.rec
+			recs[i].Mask = heard.fullMask
+		} else {
+			recs[i] = d.fullRecord(ctx, m)
 		}
 	}
 	msg := party.EncodeJoined(&jrec)
@@ -459,13 +492,16 @@ func (d PartyDeps) removeMember(characterID int64, reason uint8) {
 // member who leaves the world is removed with reason 1, LOGOUT (READ as a
 // value, the client's table; the trigger is OURS -- retail's ShardManager
 // removes on its own user cleanup, SM 0x4296f0, which this stands in for).
-// Its pending invitations are left to answer or time out: an invitee who
-// answers after its inviter left is refused 0x2c0e, as the engine does.
+// An invitation it sent is left to answer or time out: an invitee who answers
+// after its inviter left is refused 0x2c0e, as the engine does. An invitation
+// it was sent no longer holds it (party.Hub.DetachSession, OURS) and still times out
+// to the inviter.
 func PartyDisconnectHandler(d PartyDeps) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
 		if d.Parties == nil {
 			return
 		}
+		d.Parties.DetachSession(sess.ID())
 		characterID, ok := d.Parties.CharacterOfSession(sess.ID())
 		if !ok {
 			return
@@ -476,25 +512,40 @@ func PartyDisconnectHandler(d PartyDeps) func(sess *gateway.Session) {
 
 // fullRecord is a member's record with every field (mask 0xff), as the
 // GameServer builds it from the character (READ, GS 0x5bae80), and remembers
-// it as what the members last heard.
+// it as what the members last heard. A member whose zone has no region frame
+// gets no position (mask 0xdf; see partyPosition).
 func (d PartyDeps) fullRecord(ctx context.Context, m party.Member) party.Record {
-	s := d.sample(ctx, m)
-	s.rec.Mask = party.MaskFull
+	s := d.sample(ctx, m, nil, time.Now())
 	partyRecords.set(m.CharacterID, s)
-	return s.rec
+	r := s.rec
+	r.Mask = s.fullMask
+	return r
 }
 
 // memberSample is a member's fields now: the record, its HP/MP as a full
-// record's tenths, and the raw values the update path computes its own tenths
-// from (party.HPMPUpdate).
+// record's tenths, the raw values the update path computes its own tenths
+// from (party.HPMPUpdate), the mask a full record of it carries, and when its
+// guild and masteries were last read.
 type memberSample struct {
 	rec                  party.Record
 	hp, maxHP, mp, maxMP int
+	hasPos               bool
+	fullMask             byte
+	slowAt               time.Time
 }
 
-// sample reads a member's fields now.
-func (d PartyDeps) sample(ctx context.Context, m party.Member) memberSample {
-	var s memberSample
+// partySlowRefresh is how often a member's guild and masteries are read
+// again for the update sampler. OURS: both change on rare events (a guild
+// joined or left, a mastery raised) which the engine announces at once
+// (events 0x10 and 0x20 of vslot_323); OpenSRO samples them every 10 s
+// instead of reading two stores for every member every second. A join's
+// record is always read fresh.
+const partySlowRefresh = 10 * time.Second
+
+// sample reads a member's fields now. With prev, the guild and masteries are
+// taken from it unless partySlowRefresh has passed since they were read.
+func (d PartyDeps) sample(ctx context.Context, m party.Member, prev *memberSample, now time.Time) memberSample {
+	s := memberSample{fullMask: party.MaskFull}
 	r := party.Record{JID: m.JID(), Name: m.Name, Level: uint8(m.Level), Job: party.JobNone, WorldID: partyWorldID}
 	if m.Job != 0 {
 		r.Job = m.Job
@@ -502,8 +553,11 @@ func (d PartyDeps) sample(ctx context.Context, m party.Member) memberSample {
 	if d.Hub != nil {
 		if e, ok := d.Hub.EntityByCharacterID(m.CharacterID); ok {
 			r.Name, r.Level = e.Name, uint8(e.Level)
-			r.Region, r.X, r.Y, r.Z = partyPosition(e)
+			r.Region, r.X, r.Y, r.Z, s.hasPos = partyPosition(e)
 		}
+	}
+	if !s.hasPos {
+		s.fullMask &^= party.MaskPosition
 	}
 	if d.Chars != nil {
 		if c, err := d.Chars.GetByID(ctx, m.CharacterID); err == nil && c != nil {
@@ -517,16 +571,22 @@ func (d PartyDeps) sample(ctx context.Context, m party.Member) memberSample {
 			r.HPMP = party.HPMPFull(s.hp, s.maxHP, s.mp, s.maxMP)
 		}
 	}
-	if d.Guilds != nil {
-		if g, err := d.Guilds.GetByCharacter(ctx, m.CharacterID); err == nil && g != nil {
-			r.Guild = g.Name
-		} else if err != nil && !errors.Is(err, guild.ErrNotInGuild) {
-			d.log().Debug("party record: guild lookup", "character", m.CharacterID, "error", err)
+	if prev != nil && now.Sub(prev.slowAt) < partySlowRefresh {
+		r.Guild, r.Mastery1, r.Mastery2 = prev.rec.Guild, prev.rec.Mastery1, prev.rec.Mastery2
+		s.slowAt = prev.slowAt
+	} else {
+		s.slowAt = now
+		if d.Guilds != nil {
+			if g, err := d.Guilds.GetByCharacter(ctx, m.CharacterID); err == nil && g != nil {
+				r.Guild = g.Name
+			} else if err != nil && !errors.Is(err, guild.ErrNotInGuild) {
+				d.log().Debug("party record: guild lookup", "character", m.CharacterID, "error", err)
+			}
 		}
-	}
-	if d.Skills != nil {
-		if lv, err := d.Skills.MasteryLevels(ctx, m.CharacterID); err == nil {
-			r.Mastery1, r.Mastery2 = topMasteries(lv)
+		if d.Skills != nil {
+			if lv, err := d.Skills.MasteryLevels(ctx, m.CharacterID); err == nil {
+				r.Mastery1, r.Mastery2 = topMasteries(lv)
+			}
 		}
 	}
 	s.rec = r
@@ -535,14 +595,17 @@ func (d PartyDeps) sample(ctx context.Context, m party.Member) memberSample {
 
 // partyPosition is a record's position: the region and the region-local x,
 // y (height), z, each truncated to an integer as ftol does (READ, GS
-// 0x5bb030..0x5bb05d, from pc+0x84..+0x90).
-func partyPosition(e world.Entity) (region uint16, x, y, z int32) {
+// 0x5bb030..0x5bb05d, from pc+0x84..+0x90). ok is false for a zone with no
+// region frame: OpenSRO then sends no position at all (OURS: the bit is left
+// out of the mask, rather than a region 0 with world coordinates cut to u16).
+// No zone OpenSRO serves lacks a frame today.
+func partyPosition(e world.Entity) (region uint16, x, y, z int32, ok bool) {
 	fx, fy, ok := entityFrame(e.Zone)
 	if !ok {
-		return 0, int32(e.Pos.X), int32(e.Pos.Y), int32(e.Pos.Z)
+		return 0, 0, 0, 0, false
 	}
 	rx, ry, lx, lz := worldmap.FromWorld(e.Pos.X, e.Pos.Z, fx, fy)
-	return uint16(worldmap.RegionID(rx, ry)), int32(lx), int32(e.Pos.Y), int32(lz)
+	return uint16(worldmap.RegionID(rx, ry)), int32(lx), int32(e.Pos.Y), int32(lz), true
 }
 
 // topMasteries is the two masteries a record shows. OURS: the engine's pick
@@ -638,7 +701,7 @@ func partyUpdate(prev, now memberSample) party.Record {
 		}
 	}
 	p, n := prev.rec, now.rec
-	if n.Region != p.Region || n.X != p.X || n.Y != p.Y || n.Z != p.Z || n.WorldID != p.WorldID {
+	if now.hasPos && (!prev.hasPos || n.Region != p.Region || n.X != p.X || n.Y != p.Y || n.Z != p.Z || n.WorldID != p.WorldID) {
 		u.Mask |= party.MaskPosition
 	}
 	if n.Guild != p.Guild {
@@ -674,23 +737,32 @@ func RunPartyUpdates(ctx context.Context, d PartyDeps) {
 }
 
 func (d PartyDeps) sendPartyUpdates(ctx context.Context) {
+	now := time.Now()
 	for _, p := range d.Parties.All() {
 		for _, m := range p.Members {
 			prev, ok := partyRecords.get(m.CharacterID)
 			if !ok {
 				continue
 			}
-			now := d.sample(ctx, m)
-			u := partyUpdate(prev, now)
+			cur := d.sample(ctx, m, &prev, now)
+			u := partyUpdate(prev, cur)
 			// What the members now hold: the new fields, with the HP/MP byte
 			// the update formula left (unchanged unless it was sent).
-			now.rec.HPMP = u.HPMP
-			partyRecords.replace(m.CharacterID, now)
+			cur.rec.HPMP = u.HPMP
+			partyRecords.replace(m.CharacterID, cur)
 			if u.Mask == 0 {
 				continue
 			}
+			// The sample read stores; a kick, leave or dissolution may have
+			// happened meanwhile. Send only while the member is still in this
+			// party, and only to who is in it now, so no kind 6 follows a kind
+			// 3 or kind 1 (round 710's second review).
+			live, in := d.Parties.Get(m.CharacterID)
+			if !in || live.ID != p.ID {
+				continue
+			}
 			msg := party.EncodeUpdate(m.JID(), &u)
-			for _, o := range p.Members {
+			for _, o := range live.Members {
 				if o.CharacterID != m.CharacterID {
 					sendParty(o.Session, party.OpEvent, msg)
 				}

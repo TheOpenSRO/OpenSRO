@@ -38,6 +38,16 @@ const MaxPages = 0xfe
 // after 10 s first (READ, c:0x7406de, c:0x73fb70); this is the backstop.
 const JoinTimeout = 15 * time.Second
 
+// SweepInterval is how often the ShardManager expires old entries: a 60 000
+// ms timer registered at SM 0x40c703..0x40c729 for 0x40dd10 -> 0x4504c0
+// (READ).
+const SweepInterval = 60 * time.Second
+
+// ExpireAfterMinutes: an entry with no pending request expires when (now -
+// Time) in whole minutes is more than 60 (READ, SM 0x4504c0: skips +0x34 set
+// at 0x450536; seconds / 60 by 0x6c1c40; `cmp eax,0x3c; jle` at 0x45055c).
+const ExpireAfterMinutes = 60
+
 // More party-match codes (names from docs/protocol/error_codes.md).
 const (
 	CodeMatchFull      uint16 = 0x2c08 // UIIT_MSG_PARTYERR_ALREADY_FULL
@@ -61,10 +71,12 @@ type Listing struct {
 	MinLevel uint8
 	MaxLevel uint8
 	Title    string
-	// Time is the second u32 of a list row: SM writes _time32 into +0x30 at
-	// register and change (READ that it is written there; INFERRED a time,
-	// its client use OPEN). OURS: seconds since the Unix epoch, as _time32
-	// counts.
+	// Time is the second u32 of a list row: _time32 seconds since the Unix
+	// epoch, written into +0x30 at register and change (SM 0x451290,
+	// 0x451110, 0x4513c0). READ as seconds: the expiry sweep (SM 0x4504c0)
+	// subtracts it from _time32 (0x6e3cbc, GetSystemTimeAsFileTime less the
+	// 1601-1970 offset over 10 000 000; the difference 0x6c1d40) and divides
+	// by 60 (0x6c1c40) for minutes. Its client use (c: +4) is OPEN.
 	Time uint32
 	// Pending is +0x34: a join request to this entry waits on the leader
 	// (READ, SM 0x44f850 sets it, refuses a second request 0x2c1f).
@@ -202,22 +214,30 @@ func (m *Matcher) Register(characterID int64, e Entry) (Listing, error) {
 }
 
 // Change is the ShardManager's change entry (READ, SM 0x450990 ->
-// 0x4513c0): 0x2c1c the character holds no entry; 0x2c1d it is not the
-// entry's owner; 5 the flags differ from the entry's (they cannot be changed
-// this way either). The purpose, level range and title are replaced and the
-// time renewed. Returns the entry number.
+// 0x4513c0): 0x2c1c the character holds no entry (char+0x24c); then the
+// entry the request NAMES is looked up (0x4513c7 mov ebx,eax; the map find
+// 0x49e1a0 keys on [ebx], the request's number): 0x2c1c when there is none,
+// 0x2c1d when its owner (+0x2c) is not the character; 5 the flags differ
+// from the entry's (they cannot be changed this way either). The purpose,
+// level range and title are replaced and the time renewed. Returns the
+// entry number.
 func (m *Matcher) Change(characterID int64, e Entry) (uint32, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	num, _, listed := m.hub.Listing(characterID)
-	if !listed {
+	if _, _, listed := m.hub.Listing(characterID); !listed {
 		return 0, refuse(CodeNoEntry)
 	}
+	num := e.Number
 	l, ok := m.listings[num]
 	if !ok {
 		return 0, refuse(CodeNoEntry)
 	}
-	if owner, ok := m.hub.ListingOwner(num); !ok || owner != characterID {
+	owner, ok := m.hub.ListingOwner(num)
+	if !ok {
+		delete(m.listings, num)
+		return 0, refuse(CodeNoEntry)
+	}
+	if owner != characterID {
 		return 0, refuse(CodeNotLeader)
 	}
 	if l.Flags != e.Flags {
@@ -268,6 +288,51 @@ func (m *Matcher) Withdraw(characterID int64) {
 	m.hub.ClearListing(characterID)
 }
 
+// Disconnect is a character leaving the world: its party-less entry goes
+// (Withdraw), and its join request no longer holds its state byte at 1 --
+// the GameServer's byte lives on the character object, rebuilt at the next
+// login. The job itself is left to its answer or the backstop, so an accept
+// resolves as "requester gone" ([2][0x2c0f] to the leader, SM 0x44fc64).
+func (m *Matcher) Disconnect(characterID int64) {
+	m.Withdraw(characterID)
+	m.hub.clearRequest(characterID)
+}
+
+// Sweep is the ShardManager's minute timer (READ, SM 0x4504c0): every entry
+// with no pending request whose (now - Time) in whole minutes is more than
+// ExpireAfterMinutes is deleted, through the same delete as 0x706b
+// (0x451490), and the pages rebuilt. The client is not told: the engine
+// sends 0x386f [owner JID] to the owner's GameServer, which has no case for
+// it (its ShardManager dispatch, GS 0x414402.., covers 0x3809..0x3864 and
+// 0x38e9), so nothing reaches the client.
+//
+// OURS: the owner's state is derived from the Hub, so a party-less owner
+// returns to state 0 at once. The original leaves the GameServer's byte at 4
+// (and pc+0x1cd0 set) until a relog -- refusing that character 0x2c25 on a
+// request and 0x2c24 on a register -- a bug not replicated. Returns the
+// numbers it deleted.
+func (m *Matcher) Sweep(now time.Time) []uint32 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t := uint32(now.Unix())
+	var gone []uint32
+	for n, l := range m.listings {
+		if l.Pending {
+			continue
+		}
+		if int64(t-l.Time)/60 <= ExpireAfterMinutes {
+			continue
+		}
+		delete(m.listings, n)
+		if owner, ok := m.hub.ListingOwner(n); ok {
+			m.hub.ClearListing(owner)
+		}
+		gone = append(gone, n)
+	}
+	sort.Slice(gone, func(i, j int) bool { return gone[i] < gone[j] })
+	return gone
+}
+
 // Get returns listing number, its current owner, and whether both exist. An
 // entry whose owner is gone from the Hub is dropped.
 func (m *Matcher) Get(number uint32) (Listing, int64, bool) {
@@ -285,18 +350,16 @@ func (m *Matcher) Get(number uint32) (Listing, int64, bool) {
 	return *l, owner, true
 }
 
-// Row is a listing with what its list row needs from the owner.
-type Row struct {
-	Listing
-	Owner int64
-}
-
-// RowInfo is what a list row reads about an entry's owner: its name and race
-// (SM 0x44f640: char+0x1a8, char+0x250), and the member count (the owner's
-// party size, 1 without one). ok is false for an owner no longer in the world:
-// the page builder then deletes the entry (READ, SM 0x451630 on 0x44f640
+// Online is what the page builder asks of an entry's owner, cheaply: its
+// name (SM 0x44f640: char+0x1a8), and ok false for an owner no longer in the
+// world -- the builder then deletes the entry (SM 0x451630 on 0x44f640
 // returning 0).
-type RowInfo func(owner int64) (name string, race uint8, ok bool)
+type Online func(owner int64) (name string, ok bool)
+
+// RaceOf is an owner's race byte for its row (SM 0x44f640: char+0x250, the
+// model's Country). It may be costly (a store read): Page calls it outside
+// its lock, for the rows it sends only.
+type RaceOf func(owner int64) uint8
 
 // Page is a list page as the ShardManager answers it (READ, SM 0x450d20 and
 // the page builder 0x451630):
@@ -311,25 +374,37 @@ type RowInfo func(owner int64) (name string, race uint8, ok bool)
 //
 // err is 0x2c0d when the requester's own entry is recorded in the Hub but
 // missing here (SM 0x450d20's not-found branch).
-func (m *Matcher) Page(requester int64, index uint8, info RowInfo) (pages, at uint8, rows []ListEntry, err error) {
+//
+// OURS: the pages are built at each request from the live state. The engine
+// serves snapshots that 0x451630 rebuilds after each change (register,
+// change, delete, answer, withdraw, sweep), so between changes its member
+// counts and owners can lag; and its builder also closes a page when its
+// remaining-entry counter reaches 0, so entries dropped as owner-gone at the
+// end can leave an empty trailing page ([1][1][0][0] when all were dropped)
+// where this answers ceil(valid / 23) pages. Neither shows in normal play.
+//
+// An owner out of the world who is still in a party is skipped, not
+// deleted: it is mid-logout, and the party's removal moves the entry to the
+// next leader (SM 0x4296f0 runs 0x44f580 before 0x451590).
+func (m *Matcher) Page(requester int64, index uint8, online Online, raceOf RaceOf) (pages, at uint8, rows []ListEntry, err error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	nums := make([]uint32, 0, len(m.listings))
 	for n := range m.listings {
 		nums = append(nums, n)
 	}
 	sort.Slice(nums, func(i, j int) bool { return nums[i] < nums[j] })
-	var valid []ListEntry
-	for _, n := range nums {
-		r, ok := m.rowLocked(n, info)
-		if !ok {
-			continue
-		}
-		valid = append(valid, r)
+	type row struct {
+		ListEntry
+		owner int64
 	}
-
-	var own *ListEntry
+	var valid []row
+	for _, n := range nums {
+		r, owner, ok := m.rowLocked(n, online)
+		if ok {
+			valid = append(valid, row{r, owner})
+		}
+	}
+	var own *row
 	ownNum, _, listed := m.hub.Listing(requester)
 	if !listed {
 		if p, in := m.hub.Get(requester); in {
@@ -337,12 +412,14 @@ func (m *Matcher) Page(requester int64, index uint8, info RowInfo) (pages, at ui
 		}
 	}
 	if listed {
-		r, ok := m.rowLocked(ownNum, info)
+		r, owner, ok := m.rowLocked(ownNum, online)
 		if !ok {
+			m.mu.Unlock()
 			return 0, 0, nil, refuse(CodeCantFindParty)
 		}
-		own = &r
+		own = &row{r, owner}
 	}
+	m.mu.Unlock()
 
 	n := (len(valid) + PageSize - 1) / PageSize
 	if n > MaxPages {
@@ -359,37 +436,45 @@ func (m *Matcher) Page(requester int64, index uint8, info RowInfo) (pages, at ui
 	if hi > len(valid) {
 		hi = len(valid)
 	}
+	var out []row
 	if own != nil {
-		rows = append(rows, *own)
+		out = append(out, *own)
 	}
-	rows = append(rows, valid[lo:hi]...)
+	out = append(out, valid[lo:hi]...)
+	for _, r := range out {
+		r.Race = raceOf(r.owner)
+		rows = append(rows, r.ListEntry)
+	}
 	return uint8(n), index, rows, nil
 }
 
-// rowLocked builds entry n's list row, dropping the entry when its owner is
-// gone.
-func (m *Matcher) rowLocked(n uint32, info RowInfo) (ListEntry, bool) {
+// rowLocked builds entry n's list row (all but the race), dropping the entry
+// when its owner is gone.
+func (m *Matcher) rowLocked(n uint32, online Online) (ListEntry, int64, bool) {
 	l, ok := m.listings[n]
 	if !ok {
-		return ListEntry{}, false
+		return ListEntry{}, 0, false
 	}
 	owner, ok := m.hub.ListingOwner(n)
 	if !ok {
 		delete(m.listings, n)
-		return ListEntry{}, false
+		return ListEntry{}, 0, false
 	}
-	name, race, ok := info(owner)
+	p, inParty := m.hub.Get(owner)
+	name, ok := online(owner)
 	if !ok {
-		delete(m.listings, n)
-		m.hub.ClearListing(owner)
-		return ListEntry{}, false
+		if !inParty {
+			delete(m.listings, n)
+			m.hub.ClearListing(owner)
+		}
+		return ListEntry{}, 0, false
 	}
 	count := uint8(1)
-	if p, in := m.hub.Get(owner); in {
+	if inParty {
 		count = uint8(len(p.Members))
 	}
-	return ListEntry{Number: l.Number, Time: l.Time, Name: name, Race: race, Count: count, Flags: l.Flags,
-		Purpose: l.Purpose, MinLevel: l.MinLevel, MaxLevel: l.MaxLevel, Title: l.Title}, true
+	return ListEntry{Number: l.Number, Time: l.Time, Name: name, Count: count, Flags: l.Flags,
+		Purpose: l.Purpose, MinLevel: l.MinLevel, MaxLevel: l.MaxLevel, Title: l.Title}, owner, true
 }
 
 // Request is the ShardManager's half of a join request (READ, SM 0x44f850),
@@ -473,13 +558,15 @@ func (m *Matcher) Request(j Joiner, number uint32, leaderJob func(owner int64) u
 	return *jj, nil
 }
 
-// IsLeaderOf reports whether job id is pending and waits on characterID's
-// answer.
-func (m *Matcher) IsLeaderOf(id uint32, characterID int64) bool {
+// JobOf returns pending job id without taking it.
+func (m *Matcher) JobOf(id uint32) (JoinJob, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	jj, ok := m.jobs[id]
-	return ok && jj.Leader == characterID
+	if !ok {
+		return JoinJob{}, false
+	}
+	return *jj, true
 }
 
 func normJob(j uint8) uint8 {
@@ -493,12 +580,21 @@ func normJob(j uint8) uint8 {
 // mark cleared and the requester's state byte released. ok is false when the
 // job is not pending (it was answered or timed out).
 //
-// The ShardManager clears the pending mark on every answer that finds the
-// requester (SM 0x44fbe0) and the GameServer drops the requester's state byte
-// to 0 on any outcome but a join (GS 0x5bfac0); a join moves it to 2 through
-// the party. OURS: the mark is cleared even on the paths where SM 0x44fbe0
-// does not reach the clear (an accept whose requester has left), so an entry
-// is never left refusing every request with 0x2c1f.
+// The ShardManager clears the pending mark at exactly three places, all in
+// SM 0x44fbe0 (READ, the asm's only stores to +0x34): a party formed
+// (0x44ffa8), a requester joined (0x45029e), and an answer of 0 or 2 with the
+// requester present (0x4504a4). It leaves it set when an accept's requester is
+// gone (0x44fc64), when its leader is gone (0x44fcfc), when the formation
+// fails (0x44ff05), when the leader's party is missing (0x2c0d, 0x4500e6),
+// when the join fails (0x4501a7), on an answer of 0 or 2 with the requester
+// gone (0x450413), and on an answer outside 0..2 (0x44fc0e); and, outside
+// 0x44fbe0, when SM 0x420e50 drops the answer of a leader gone offline and
+// when the answer fails authorization (0x421ec0). A mark left set refuses
+// every later request 0x2c1f and exempts the entry from the expiry sweep. The
+// GameServer drops the requester's state byte to 0 on any outcome but a join
+// (GS 0x5bfac0); a join moves it to 2 through the party.
+//
+// OURS: the mark is cleared on every outcome.
 func (m *Matcher) TakeJob(id uint32) (JoinJob, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
