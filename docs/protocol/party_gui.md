@@ -656,6 +656,14 @@ drawn by the same rule from the academy list; not built, no academy.)
   `(x, y)` to `(x cos - y sin, x sin + y cos)` (`0xb44a10` is `fcos`, `0xb44b40` `fsin`). In screen
   space, y down, that is `atan2(oy, ox) - pi`: the art (unturned) points west, so a member due
   east turns it by -180 degrees.
+- **The texture is drawn transposed.** Each party quad's corners go top-left, top-right,
+  bottom-right, bottom-left with texture coordinates (0,0), (0,1), (1,1), (1,0) (`fldz`/`fld1`
+  at `0x664544` and `0x664720`; the world map's at `0x61f9ee`), a triangle fan (`push 0x6`): screen
+  (x, y) samples texture (y, x). `mm_sign_partyarrow`'s art points **up** (MEASURED), so unturned
+  it draws pointing west, and the turn sends every arrow outward -- a member due east gets an arrow
+  on the east rim pointing east, as in the user's `map_JXHQtcH.png`. (A Control reproduces the
+  transpose with `flip_h` and a further -90 degrees.) MEASURED live: before this was built in, the
+  north-rim arrow drew pointing east.
 - **One mark per member**, every frame (vslot_013 is the draw; no throttle), after the other signs
   and the academy marks and before the player's own arrow (`+0x374`, the loop's last draw). No
   colour or texture varies by member.
@@ -684,6 +692,11 @@ drawn by the same rule from the academy list; not built, no academy.)
 - A world-map dot off the current map lands off the canvas and is clipped by the map area (the
   original's clipping was not traced).
 - The hover name is a plain Label with the builder's font.
+- The rim arrows are drawn over the window's frame, unclipped, under its buttons; the dots inside
+  the map, under the player's arrow. INFERRED from the user's `map_JXHQtcH.png`, where the
+  east-rim arrow covers the frame's ring: OpenSRO draws the frame over the map's clip, which would
+  hide most of an arrow centred 47 px out in a 105 px aperture. Where the original draws
+  `mm_window.ddj` relative to vslot_013 was not traced.
 
 ## Gap list: OpenSRO's client today
 

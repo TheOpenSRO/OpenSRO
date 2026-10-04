@@ -36,6 +36,18 @@ extends RefCounted
 ## is drawn centred above the quad (0x8b2f20 size, 0x8b48b0 draw at
 ## (x - w / 2, top - h)). READ; that the text is the member's name is INFERRED.
 
+## **The quads draw their texture transposed** (READ): each party quad's
+## corners go top-left, top-right, bottom-right, bottom-left (the dot,
+## 0x664578..; the world map's, 0x61fd4e..) with the texture coordinates
+## (0,0), (0,1), (1,1), (1,0) (`fldz` / `fld1` at 0x664544 and 0x664720;
+## the world map's 0x61f9ee..0x61fa1d), a fan (D3DPT_TRIANGLEFAN, 6). So screen
+## (x, y) samples texture (y, x): the art is mirrored about its diagonal before
+## the turn. mm_sign_partyarrow's art points up (MEASURED), so it draws
+## pointing west unturned, and the turn above sends it outward. A Control
+## does the same with flip_h and a further -90 degrees (the transpose is
+## R(-90) after a horizontal mirror): TRANSPOSE_TURN.
+const TRANSPOSE_TURN := -PI / 2.0
+
 const REGION_SPAN := 1920.0
 ## The minimap's dot/arrow switch and the arrow's rim radius, in map pixels.
 const ARROW_RADIUS := 47.0

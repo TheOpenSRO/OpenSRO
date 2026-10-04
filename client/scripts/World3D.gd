@@ -21717,6 +21717,16 @@ func _qa_party_do(step: String) -> void:
 			if _hud_quick_party != null:
 				_hud_quick_party.toggle_lock()
 		"maplog":
+			var here_l := _party_here_local
+			var inputs: PackedStringArray = []
+			for m in NetClient.party.members:
+				var b := _party_body_for_board(m.jid) as Node3D
+				var bl := _minimap_group.to_local(b.global_position) if b != null and _minimap_group != null else Vector3.INF
+				inputs.append("%s(r%d/%d x%d z%d w%d body%s)" % [m.member_name, (m.region >> 8) & 0xFF, m.region & 0xFF,
+					m.x, m.z, m.world_id, "(%.0f,%.0f)" % [bl.x, bl.z] if b != null else "-"])
+			print("QA PARTY: map inputs here r%s local (%.0f,%.0f) tile_px %.1f: %s mini %s world %s" % [
+				str(_minimap_region), here_l.x, here_l.z, _hud_minimap.tile_px() if _hud_minimap != null else -1.0,
+				" ".join(inputs), str(_party_marks_mini), str(_party_marks_world)])
 			print("QA PARTY: map marks minimap [%s] world map [%s] hover '%s'" % [
 				_hud_minimap.party_marks_report() if _hud_minimap != null else "",
 				_hud_worldmap.party_dots_report() if _hud_worldmap != null else "",

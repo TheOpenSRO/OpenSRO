@@ -121,13 +121,31 @@ func _init() -> void:
 	var report := minimap.party_marks_report()
 	_check(report == "dot@(8.0,0.0) arrow@(47.0,0.0)r-180 arrow@(0.0,47.0)r-90",
 		"each member has its own mark: the near one a dot, the far ones rim arrows (got '%s')" % report)
+	var east := minimap.get_node_or_null("PartyArrows/arrow_0") as TextureRect
+	_check(east != null and east.flip_h and _angle_near(east.rotation, -PI - PI / 2.0),
+		"the east arrow is mirrored and turned a further -90 degrees: the quad's transposed texture")
+	var near := minimap.get_node_or_null("MapClip/PartyMarks/dot_0") as TextureRect
+	_check(near != null and near.flip_h and _angle_near(near.rotation, -PI / 2.0),
+		"the dot is transposed too (the same quad)")
+	# The art points up (MEASURED); transposed it points west, so the turn for
+	# a member due east (-pi) sends it east: the tip's direction after the
+	# node's mirror and turn.
+	var tip := Vector2(0, -1)                   # up in the texture
+	tip = Vector2(-tip.x, tip.y)                # flip_h
+	tip = tip.rotated(east.rotation if east != null else 0.0)
+	_check(_near(tip, Vector2(1, 0), 0.001), "the east arrow's tip points east, outward (got %s)" % str(tip))
 	var root := minimap.get_node_or_null("MapClip/PartyMarks")
 	var arrow := minimap.get_node_or_null("MapClip/PlayerArrow")
 	_check(root != null and arrow != null and root.get_index() < arrow.get_index(),
-		"the party's marks are drawn under the player's own arrow")
+		"the party's dots are drawn under the player's own arrow")
+	var arrows_root := minimap.get_node_or_null("PartyArrows")
+	var frame := minimap.get_node_or_null("MinimapFrame")
+	_check(arrows_root != null and frame != null and arrows_root.get_index() > frame.get_index(),
+		"the rim arrows are drawn over the window's frame, unclipped (the user's screenshot)")
 	minimap.update_party(here, PackedVector2Array([here + Vector2(96, 0)]))
 	_check(minimap.party_marks_report() == "dot@(8.0,0.0)", "a member who leaves loses the mark")
-	_check(root != null and root.get_child_count() == 3, "the marks are pooled, not rebuilt")
+	_check(root != null and root.get_child_count() == 1 and arrows_root != null and arrows_root.get_child_count() == 2,
+		"the marks are pooled, not rebuilt")
 	minimap.update_party(here, PackedVector2Array())
 	_check(minimap.party_marks_report() == "", "no party, no marks")
 	minimap.free()

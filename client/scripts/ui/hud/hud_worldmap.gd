@@ -841,6 +841,10 @@ func update_party(region_x: int, region_y: int, members_local: PackedVector2Arra
 		dot.stretch_mode = TextureRect.STRETCH_SCALE
 		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		dot.size = PartyMapMarks.WORLD_DOT_SIZE
+		# The quad's texture is transposed, as the minimap's (PartyMapMarks).
+		dot.flip_h = true
+		dot.pivot_offset = PartyMapMarks.WORLD_DOT_SIZE / 2.0
+		dot.rotation = PartyMapMarks.TRANSPOSE_TURN
 		_party_layer.add_child(dot)
 		_party_layer.move_child(dot, _party_layer.get_child_count() - 2)
 		_party_dots.append(dot)

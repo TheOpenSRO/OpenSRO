@@ -104,12 +104,19 @@ var _sign_textures := {}   # kind -> Texture2D
 var _sign_pools := {}      # kind -> Array[TextureRect]
 var _last_sign_report := Vector2i(-1, -1)  # (drawn, total), so the log speaks only on change
 
-## The party's marks (round 717): one TextureRect per member, pooled; each is
-## the dot or the rim arrow by PartyMapMarks.is_arrow.
+## The party's marks (round 717): each member is the dot or the rim arrow by
+## PartyMapMarks.is_arrow, from two pools. The dots sit in the map, under the
+## player's arrow (vslot_013's order). The arrows sit over the window's own
+## frame, unclipped, under its buttons: on the user's screenshot of the
+## original (map_JXHQtcH.png) the east-rim arrow covers the frame's ring, which
+## the map's clip and the frame would otherwise hide (INFERRED from the
+## screenshot; where the original draws the frame was not traced).
 var _party_root: Control
+var _party_arrow_root: Control
 var _party_dot_tex: Texture2D
 var _party_arrow_tex: Texture2D
-var _party_marks: Array[TextureRect] = []
+var _party_dots: Array[TextureRect] = []
+var _party_arrows: Array[TextureRect] = []
 
 func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_ui_builder = builder
@@ -226,6 +233,12 @@ func setup(layout_data: Variant = null) -> void:
 	if _ui_builder != null:
 		_frame_rect.texture = _ui_builder.load_texture("interface\\minimap\\mm_window.ddj")
 	add_child(_frame_rect)
+	_party_arrow_root = Control.new()
+	_party_arrow_root.name = "PartyArrows"
+	_party_arrow_root.position = APERTURE_RECT.position
+	_party_arrow_root.size = APERTURE_RECT.size
+	_party_arrow_root.mouse_filter = MOUSE_FILTER_IGNORE
+	add_child(_party_arrow_root)
 
 	# 3. Layout root (buttons and text labels authored in resinfo\ifminimap.txt)
 	var layout: UiLayoutParser.LayoutDef = null
@@ -493,52 +506,66 @@ func _place_signs(kind: String, player_world: Vector3, positions: Array) -> int:
 ## the 16x16 arrow on that radius, turned toward it. Pooled: a frame with a
 ## settled party allocates nothing.
 func update_party(player_local: Vector2, members_local: PackedVector2Array) -> void:
-	if _party_root == null:
+	if _party_root == null or _party_arrow_root == null:
 		return
 	var centre := APERTURE_RECT.size / 2.0
-	var n := members_local.size()
-	while _party_marks.size() < n:
-		var mark := TextureRect.new()
-		mark.name = "party_%d" % _party_marks.size()
-		mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		mark.stretch_mode = TextureRect.STRETCH_SCALE
-		mark.mouse_filter = MOUSE_FILTER_IGNORE
-		_party_root.add_child(mark)
-		_party_marks.append(mark)
-	for i in n:
-		var mark := _party_marks[i]
+	var dots := 0
+	var arrows := 0
+	for i in members_local.size():
 		var off := PartyMapMarks.minimap_offset(player_local, members_local[i], _tile_px)
 		if PartyMapMarks.is_arrow(off):
-			if mark.texture != _party_arrow_tex:
-				mark.texture = _party_arrow_tex
-			mark.size = PartyMapMarks.ARROW_SIZE
-			mark.pivot_offset = PartyMapMarks.ARROW_SIZE / 2.0
-			mark.rotation = PartyMapMarks.arrow_rotation(off)
+			var mark := _party_mark(_party_arrows, _party_arrow_root, arrows, "arrow", _party_arrow_tex,
+				PartyMapMarks.ARROW_SIZE)
+			arrows += 1
+			mark.rotation = PartyMapMarks.arrow_rotation(off) + PartyMapMarks.TRANSPOSE_TURN
 			mark.position = centre + PartyMapMarks.arrow_centre(off) - PartyMapMarks.ARROW_SIZE / 2.0
 		else:
-			if mark.texture != _party_dot_tex:
-				mark.texture = _party_dot_tex
-			mark.size = PartyMapMarks.DOT_SIZE
-			mark.pivot_offset = PartyMapMarks.DOT_SIZE / 2.0
-			mark.rotation = 0.0
+			var mark := _party_mark(_party_dots, _party_root, dots, "dot", _party_dot_tex, PartyMapMarks.DOT_SIZE)
+			dots += 1
+			mark.rotation = PartyMapMarks.TRANSPOSE_TURN
 			mark.position = centre + off - PartyMapMarks.DOT_SIZE / 2.0
-		mark.visible = mark.texture != null
-	for i in range(n, _party_marks.size()):
-		_party_marks[i].visible = false
+	for i in range(dots, _party_dots.size()):
+		_party_dots[i].visible = false
+	for i in range(arrows, _party_arrows.size()):
+		_party_arrows[i].visible = false
 
-## Each shown party mark as "dot@(x,y)" or "arrow@(x,y)r<deg>", its centre
-## in aperture pixels from the aperture's centre (the QA log and the tests).
+## The `index`th mark of `pool`, made on first use (a frame with a settled
+## party allocates nothing), shown when it has art.
+func _party_mark(pool: Array[TextureRect], parent: Control, index: int, kind: String, tex: Texture2D,
+		mark_size: Vector2) -> TextureRect:
+	if index >= pool.size():
+		var made := TextureRect.new()
+		made.name = "%s_%d" % [kind, index]
+		made.texture = tex
+		made.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		made.stretch_mode = TextureRect.STRETCH_SCALE
+		made.mouse_filter = MOUSE_FILTER_IGNORE
+		made.size = mark_size
+		made.pivot_offset = mark_size / 2.0
+		made.flip_h = true  # with TRANSPOSE_TURN, the quad's transposed texture
+		parent.add_child(made)
+		pool.append(made)
+	var mark := pool[index]
+	if mark.texture != tex:
+		mark.texture = tex
+	mark.visible = tex != null
+	return mark
+
+## Each shown party mark as "dot@(x,y)" or "arrow@(x,y)r<deg>" (the turn the
+## original gives, without the transpose's), its centre in aperture pixels
+## from the aperture's centre, dots first (the QA log and the tests).
 func party_marks_report() -> String:
 	var out: PackedStringArray = []
 	var centre := APERTURE_RECT.size / 2.0
-	for mark in _party_marks:
-		if not mark.visible:
-			continue
-		var c := mark.position + mark.size / 2.0 - centre
-		if mark.texture == _party_arrow_tex and mark.size == PartyMapMarks.ARROW_SIZE:
-			out.append("arrow@(%.1f,%.1f)r%.0f" % [c.x, c.y, rad_to_deg(mark.rotation)])
-		else:
+	for mark in _party_dots:
+		if mark.visible:
+			var c := mark.position + mark.size / 2.0 - centre
 			out.append("dot@(%.1f,%.1f)" % [c.x, c.y])
+	for mark in _party_arrows:
+		if mark.visible:
+			var c := mark.position + mark.size / 2.0 - centre
+			out.append("arrow@(%.1f,%.1f)r%.0f" % [c.x, c.y,
+				rad_to_deg(mark.rotation - PartyMapMarks.TRANSPOSE_TURN)])
 	return " ".join(out)
 
 ## Loads the 3x3 tiles around the player's region.
