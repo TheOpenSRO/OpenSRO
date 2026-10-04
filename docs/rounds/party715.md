@@ -104,7 +104,50 @@ INFERRED, OURS, OPEN.
 
 ## Live
 
-(below)
+Against a server built from this branch (`-in-memory`, the box's retail exports; the skills table
+from `/var/tmp/euroskill691/skills.csv`, 91 columns -- the box's default `skills.csv` is the
+37-column export of 2026-09-19 and carries no buff columns, so no buff starts with it). Four
+characters: **Aria** rendered (the leader), **Bram** a headless second client beside her who
+learns and casts Grass Walk (skill 113) from his hotbar, and partybots **Cara** and **Dex**
+(`-tp` beside Aria to be invited, `-tp2` 25 s after joining: Cara 650 east, Dex 1500 east).
+
+**Another lane's qa_shot kills every client on the box** (its reap: `pkill -f
+godot-bin/Godot_v4.2.2`, `pkill -x Xvfb`). Two of this round's qa_shot runs died that way at frame
+~230 when lane C2 started a render. The runs below use a renamed copy of Godot and Xvfb
+(`/var/tmp/c3/bin/GodotC3`, `XvfbC3`), Forward+ on the GPU with Xvfb presenting in software
+(qa_shot's `QA_VK_PRESENT=sw` path), and kill nobody: `/var/tmp/c3/run_c3a2.sh`, `run_c3b.sh`.
+
+**Run A3** (`/var/tmp/c3/liveA/`, RADV NAVI33 on Vulkan; 680 frames):
+- the party forms by Aria's invites; the board's log at tick 520:
+  `Bram far=0 buffs=1; Cara far=1; Dex far=5`, lock shown (4 members), leader flag on the player
+  block;
+- `f00000525.png` (screenshots 03 / 04): Bram's box with his portrait, his lightning mastery icon
+  and the Grass Walk icon at slot +32,+39; Cara's disc under the light faraway_60 blue, Dex's
+  fully blue. MEASURED on the frame: Dex's overlay is exactly the 28x28 disc (632 matching
+  pixels, x 23..50, y 289..316 = slot 17,283 + 6,6; mean (16,93,243) over the
+  α241 (14,96,255) art), Cara's disc centre mean (74,101,169) (α130 over a face), Bram's
+  (137,107,80) (the face, no overlay); the party window's rows carry the same three portraits;
+- `f00000590.png` (screenshot 11): Bram's box selected by `qpclick:Bram`: the teal frame.
+  MEASURED in run A2's frame 525 (Dex selected, his box at 17,283): teal pixels x 16..139,
+  y 281..322, mean (72,218,206), inside the art's 132x48 at slot -3,-4 = 14..145 x 279..326
+  (its outer texels transparent);
+- `f00000650.png` (screenshot 10): `selfselect`: the player block's yellow glow (648 yellowish
+  pixels over x 3..217, y 7..77 against 167 in the frame before -- the "Lv" digits), Bram's
+  glow off.
+
+**Run B2: real X input** (`/var/tmp/c3/liveB/main.log`; Compatibility on Xvfb :715, xdotool,
+the client as ghidra), Aria and Bram in a party, Bram selected by the invite:
+- Ctrl+1 (xdotool keydown ctrl, key 1): `KEYMAP Ctrl+1 -> select_self`, `player block's select
+  glow on`, `Bram's box deselected`;
+- a click at (78, 157), Bram's box: `HudQuickParty: Bram's box clicked`, `selected player 1
+  (Bram)`, `player block's select glow off`, `Bram's box selected (glow on)`;
+- a click on the ground (900, 500): **nothing deselects** -- and that is the original's rule:
+  the ground click `UI_SILKMALL::FUN_0078f8d0` (from the left press `0x793570`) never calls the
+  deselect `0x778650(0)` or the selector `0x780ee0`; it moves the ring (round 698's table). The
+  user's request says a ground click ends the selection; the binary says it does not (READ),
+  and the client follows the binary. A monster, NPC or another player clicked does replace it
+  (World3D's existing selection paths, `0x778650` from the object click `0x792f00`);
+- Ctrl+2: `KEYMAP Ctrl+2 -> select_party 1: selected party member Bram`.
 
 ## Perf gate
 

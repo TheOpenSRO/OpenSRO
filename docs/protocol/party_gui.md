@@ -533,7 +533,11 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 - The world's SetTarget (`0x780ee0`) hands every selected id to the board (`0x6d9610`).
 - Each frame (`0x6db1a0`) a slot whose member's object is the selected object shows
   GDR_QPS_SELECT, and every other slot hides it.
-- Selecting anything else (ground, monster, NPC, another player, nothing) clears it.
+- Selecting anything else (a monster, an NPC, another player, the player, a deselect) clears it.
+  **A ground click is not a selection (round 715, READ):** the left press `0x793570` sends a
+  ground click to `UI_SILKMALL::FUN_0078f8d0`, which never calls the deselect `0x778650(0)` or
+  `0x780ee0`; it moves the ring (`ground_markers.md`). So the glow stays through a walk. (This
+  line first listed "ground" among the things that clear it, as the user's request says.)
 - MEASURED: `qpt_grope_select.ddj` is a 132x48 frame in teal/cyan ((63,164,149), (0,255,229),
   (81,255,243)). This is the glow in screenshot 11, and what the user calls "blue".
 - **A left click on a slot** (vslot_030 `0x6d8500`) looks the member up by name (`0x9c3640`).
@@ -625,7 +629,8 @@ anyone 1; the party clear `0x998be0` never rewrites them.
    - the button enable rules, the Invite pre-checks, and the portrait borrowing.
 4. ~~**Settings dialog:**~~ (built, round 711) not built. Missing are the client-side preference block (exp/item/anyone)
    that the create request reads, and a `CIFCheckBox` builder.
-5. **Quick party board:** not built at all. That covers:
+5. ~~**Quick party board:**~~ (built, round 715: `ui/hud/hud_quick_party.gd`; the game option
+   bytes +0x08/+0x12/+0x13 default on, OURS) not built at all. That covers:
    - slot layout and column wrap;
    - 3D portraits (TODO "party and academy slots' portraits");
    - the stepped faraway overlay, exp-share only;
@@ -635,7 +640,8 @@ anyone 1; the party clear `0x998be0` never rewrites them.
    - click-to-select by name;
    - the lock and drag reorder;
    - Ctrl+2..8 (keymap no-ops).
-6. **PMI:** GDR_PMI_SELECT (yellow) and GDR_PMI_PARTY_LEADER are hidden by `HudPlayerInfo`'s
+6. ~~**PMI:**~~ (built, round 715: `HudPlayerInfo.set_selected` / `set_party_leader`)
+   GDR_PMI_SELECT (yellow) and GDR_PMI_PARTY_LEADER are hidden by `HudPlayerInfo`'s
    allow-list. Both need their show rules above.
 7. **Party matching:** layout only. Not built:
    - list fill, the own row pinned in blue, the gold selection, the type tooltip;
@@ -676,7 +682,10 @@ Still open:
    tenths. Which wire field fills each remaining slot (the conversion at `0x99a34b`'s function), and
    where the "max" slots come from, is not traced.
 5. **The meaning of member byte `+0x58`**, which suppresses the caution effect and the 0.2 HP floor.
-6. The quick-party buff viewer's argument meanings (icon size vs pitch). The calls are READ; their
-   roles are INFERRED.
+   (Round 715: and whether the 0.2 is drawn at all -- `0x6d9250` writes it into the gauge's
+   `+900` and `+0x380`, then `0x6d7db0` in the same rebuild writes the raw ratio into `+900`.)
+6. ~~The quick-party buff viewer's argument meanings.~~ **Round 715:** the target window's
+   viewer was read with the same calls (round 638: per row, pitch, icon size), so 6 a row, 15-px
+   pitch, 12x12 icons (§7); `0x7fab90(1,1)` alone stays OPEN.
 7. **The invitation popup's text keys and timer** (§1b, HUD request kind 6 at `0x6ec5d0`).
 8. **How the server picks the two masteries** (`gs:FUN_005a1890`).

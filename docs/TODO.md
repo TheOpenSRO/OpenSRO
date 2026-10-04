@@ -2446,8 +2446,8 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       - whether anything changes the avatar's object colour from 0.6;
       - the time of day (World3D's fixed reference time);
       - the game camera's near/far;
-      - the party and academy slots' portraits (same constants, not drawn; the party's are party
-        lane C3's, `docs/protocol/party_gui.md` §7);
+      - the academy slots' portraits (same constants, not drawn); the party's are drawn since
+        round 715 (`HudQuickParty`, the member's bare model by its id, `party_gui.md` §7);
       - the device-reset re-render (Godot keeps the buffer).
 - [ ] **The world's directional light has a READ direction** (round 635's review): World3D.gd's
       comment at `_apply_real_environment_lighting` says its angle "has no confirmed real
