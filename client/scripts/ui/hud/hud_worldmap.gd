@@ -272,16 +272,7 @@ func _build_map_area() -> void:
 	_marker.visible = false
 	# The party's marks (round 717) go under the player's marker, as
 	# FUN_0061eec0 draws them first.
-	_party_layer = Control.new()
-	_party_layer.name = "PartyMarks"
-	_party_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_canvas.add_child(_party_layer)
-	_party_tex = _builder.load_texture(PartyMapMarks.WORLD_DOT_DDJ)
-	_party_label = Label.new()
-	_party_label.name = "PartyHover"
-	_party_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_party_label.visible = false
-	_party_layer.add_child(_party_label)
+	make_party_layer(_canvas, _builder.load_texture(PartyMapMarks.WORLD_DOT_DDJ))
 	_canvas.add_child(_marker)
 
 	# After the frame's own pieces, before the first record's node.
@@ -820,19 +811,57 @@ func update_player(region_x: int, region_y: int, local_pos: Vector3,
 	else:
 		_place_marker()
 
+## The party's layer, its dots' art and the hover label, under `parent`
+## (the map canvas; a test passes its own).
+func make_party_layer(parent: Control, tex: Texture2D) -> void:
+	_party_layer = Control.new()
+	_party_layer.name = "PartyMarks"
+	_party_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(_party_layer)
+	_party_tex = tex
+	_party_label = Label.new()
+	_party_label.name = "PartyHover"
+	_party_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_party_label.visible = false
+	_party_layer.add_child(_party_label)
+
 ## Marks each party member (round 717): `members_local` holds each drawn
 ## member's region-local ground position (x east, y north) in the player's
-## region (`region_x`, `region_y`), `names` their names in the same order.
-## Each is the 16x16 wmap_sign_party centred on its map pixel, rounded as
-## 0xb42d10 rounds; the first member whose dot, inset by 2, holds the mouse
-## has its name drawn centred above the dot. A mark off this map lands off
-## the canvas and is clipped by the map area (OURS: the original's own
-## clipping was not traced).
+## region (`region_x`, `region_y`), `names` their names in the same order,
+## `job_party` whether the party is a job party (its names show with a `*`).
+## A mark off this map lands off the canvas and is clipped by the map area
+## (OURS: the original's own clipping was not traced).
 func update_party(region_x: int, region_y: int, members_local: PackedVector2Array,
-		names: PackedStringArray) -> void:
+		names: PackedStringArray, job_party := false) -> void:
 	if _party_layer == null:
 		return
-	var n := members_local.size()
+	_party_pixels.resize(members_local.size())
+	for i in members_local.size():
+		_party_pixels[i] = _current.pixel_for_world(party_world(region_x, region_y, members_local[i])) \
+			if _current != null else Vector2(-1e9, -1e9)
+	var mouse := _canvas.get_local_mouse_position() if _canvas != null and _canvas.is_inside_tree() \
+		else Vector2(-1e9, -1e9)
+	place_party_dots(_party_pixels, names, job_party, mouse)
+
+var _party_pixels := PackedVector2Array()
+## The hovered member's index and the name the label was given for it, so the
+## label's text is only rebuilt when either changes.
+var _party_hover_index := -1
+var _party_hover_name := ""
+var _party_hover_job := false
+
+## Places the dots on their map pixels (centres) and the hover name
+## (FUN_0061eec0): each the 16x16 wmap_sign_party with its corners through
+## 0xb42d10, MSVC's _ftol2, which truncates (`cvttsd2si`, 0xb42d25; a floor
+## for these positive coordinates). The first member whose quad holds the
+## mouse (PartyMapMarks.hover_hit; every member's quad is tested until one
+## hits, 0x61fec0) has its name drawn centred above the quad, right after its
+## dot (0x61ffc1), at trunc(x - trunc(w / 2)), trunc(top - h) with the top
+## unrounded (0x61fd8e, 0x61ff95..0x61ffb9); in a job party the name is
+## `*Name` (CharacterDependentData 0x99a4c5: the manager's job-party flag).
+func place_party_dots(pixels: PackedVector2Array, names: PackedStringArray, job_party: bool,
+		mouse: Vector2) -> void:
+	var n := pixels.size()
 	while _party_dots.size() < n:
 		var dot := TextureRect.new()
 		dot.name = "party_%d" % _party_dots.size()
@@ -846,31 +875,33 @@ func update_party(region_x: int, region_y: int, members_local: PackedVector2Arra
 		dot.pivot_offset = PartyMapMarks.WORLD_DOT_SIZE / 2.0
 		dot.rotation = PartyMapMarks.TRANSPOSE_TURN
 		_party_layer.add_child(dot)
-		_party_layer.move_child(dot, _party_layer.get_child_count() - 2)
 		_party_dots.append(dot)
 	var hovered := -1
-	var mouse := _canvas.get_local_mouse_position() if _canvas != null and _canvas.is_inside_tree() else Vector2(-1e9, -1e9)
 	for i in n:
 		var dot := _party_dots[i]
-		if _current == null:
-			dot.visible = false
-			continue
-		var at := _current.pixel_for_world(party_world(region_x, region_y, members_local[i]))
-		dot.position = (at - PartyMapMarks.WORLD_DOT_SIZE / 2.0).round()
-		dot.visible = dot.texture != null
+		dot.position = (pixels[i] - PartyMapMarks.WORLD_DOT_SIZE / 2.0).floor()
+		dot.visible = dot.texture != null and pixels[i].x > -1e8
 		if hovered < 0 and dot.visible and PartyMapMarks.hover_hit(Rect2(dot.position, dot.size), mouse):
 			hovered = i
 	for i in range(n, _party_dots.size()):
 		_party_dots[i].visible = false
-	if hovered >= 0 and hovered < names.size():
-		var dot := _party_dots[hovered]
-		_party_label.text = names[hovered]
-		_party_label.size = _party_label.get_minimum_size()
-		_party_label.position = Vector2(dot.position.x + dot.size.x / 2.0 - _party_label.size.x / 2.0,
-			dot.position.y - _party_label.size.y).round()
-		_party_label.visible = true
-	else:
+	if hovered < 0 or hovered >= names.size():
 		_party_label.visible = false
+		_party_hover_index = -1
+		return
+	if hovered != _party_hover_index or names[hovered] != _party_hover_name or job_party != _party_hover_job:
+		_party_hover_index = hovered
+		_party_hover_name = names[hovered]
+		_party_hover_job = job_party
+		_party_label.text = ("*" + _party_hover_name) if job_party else _party_hover_name
+		_party_label.size = _party_label.get_minimum_size()
+		# Right after its dot: later dots draw over it, as in the loop.
+		var di := _party_dots[hovered].get_index()
+		_party_layer.move_child(_party_label, di if _party_label.get_index() < di else di + 1)
+	var c := pixels[hovered]
+	_party_label.position = Vector2(floorf(c.x - floorf(_party_label.size.x / 2.0)),
+		floorf(c.y - PartyMapMarks.WORLD_DOT_SIZE.y / 2.0 - _party_label.size.y))
+	_party_label.visible = true
 
 ## A member's world-map world position from its region-local position in the
 ## player's region: the player's own rule (update_player).

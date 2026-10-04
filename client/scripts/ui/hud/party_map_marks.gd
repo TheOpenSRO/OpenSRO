@@ -3,7 +3,7 @@ extends RefCounted
 
 ## Party members on the minimap and the world map (round 717). The rules are
 ## the original client's (`sro_client.exe`, md5 2a5794b72c90908d945be8b3f3f2edd4);
-## docs/protocol/party_gui.md section 8 has the reading. Pure functions, so the
+## docs/protocol/party_gui.md section 9 has the reading. Pure functions, so the
 ## placement is tested without a scene.
 ##
 ## **The minimap** (CIFMinimap::vslot_013, the party loop at 0x6643a0..0x664ad1):
@@ -24,17 +24,21 @@ extends RefCounted
 ##   when dz < 0, through 0x8b5c50 (cos 0xb44a10, sin 0xb44b40: a rotation).
 ##   In screen space (y down) that is atan2(oy, ox) - pi. READ.
 ## - One mark per member, every frame (vslot_013 is the draw), after the other
-##   signs and the academy marks and before the player's own arrow (+0x374,
-##   drawn last). READ.
+##   signs and the academy marks, then the quest marks (+0x3c0 questarrow,
+##   +0x3c4 questnpc, 0x664ae6..; OpenSRO draws none), and the player's own
+##   arrow (+0x374) last. READ.
 ##
 ## **The world map** (CNIFWorldMap::FUN_0061eec0, 0x61f8c0..0x61ffce): every
 ## member but the player (no world-id test there), at the same position
 ## source, as the 16x16 `wmap_sign_party.ddj` (+0x7ec) centred on its map
-## pixel (corners +-8.0, 0xd89240, each through 0xb42d10), drawn before the
-## player's marker. While the mouse is inside the first member's quad inset
-## by 2.0 (0xe1b898), the manager's text for that member (map +0x28, 0x61b2f0)
-## is drawn centred above the quad (0x8b2f20 size, 0x8b48b0 draw at
-## (x - w / 2, top - h)). READ; that the text is the member's name is INFERRED.
+## pixel (corners +-8.0, 0xd89240, each truncated through 0xb42d10, _ftol2),
+## drawn before the player's marker. The first member whose quad holds the
+## mouse (each is tested until one hits, 0x61fec0; the quad less its half pixel
+## and inset by 2.0, 0xe1b898) has the manager's text for it (map +0x28,
+## 0x61b2f0) drawn centred above the quad, right after it (0x8b2f20 size,
+## 0x8b48b0 draw at trunc(x - trunc(w / 2)), trunc(top - h)). READ, and so is
+## the text: the member's name, `*Name` in a job party, set when the member is
+## added (CharacterDependentData 0x99a2e0: 0x99a4c5..0x99a4c9, 0x99a5ce..0x99a673).
 
 ## **The quads draw their texture transposed** (READ): each party quad's
 ## corners go top-left, top-right, bottom-right, bottom-left (the dot,
@@ -112,8 +116,13 @@ static func worldmap_draws(m: PartyNet.Member, own_jid: int) -> bool:
 		return false
 	return (m.region & DUNGEON_BIT) == 0
 
-## The hover rectangle of a world-map dot whose quad is `quad`: the quad inset
-## by HOVER_INSET on every side, inclusive (0x61ff00..0x61ff4c).
+## Whether the mouse is on a world-map dot whose (truncated) quad is `quad`:
+## the corners less the half pixel (0x61fe11..0x61fe88), then
+## `mx >= v0.x + 2` and `v2.x - 2 >= mx` (0x61fecb..0x61ff2d), the same for y,
+## with the mouse in whole pixels (`fild` of +0x7a4 / +0x7a8). On a quad at L
+## that is L + 2 ..= L + 13.
 static func hover_hit(quad: Rect2, mouse: Vector2) -> bool:
-	var r := quad.grow(-HOVER_INSET)
-	return mouse.x >= r.position.x and mouse.y >= r.position.y and mouse.x <= r.end.x and mouse.y <= r.end.y
+	var m := mouse.floor()
+	var lo := quad.position - Vector2(0.5, 0.5) + Vector2(HOVER_INSET, HOVER_INSET)
+	var hi := quad.end - Vector2(0.5, 0.5) - Vector2(HOVER_INSET, HOVER_INSET)
+	return m.x >= lo.x and m.y >= lo.y and m.x <= hi.x and m.y <= hi.y

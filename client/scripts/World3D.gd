@@ -2922,9 +2922,12 @@ func _fill_party_marks(here_region: Vector2i) -> void:
 		for m in party.members:
 			if PartyMapMarks.worldmap_draws(m, party.own_jid):
 				nw += 1
-				# The minimap's own world test (record +0x68 against the
-				# player's +0x20e4); without the player's own record nothing
-				# is compared (OURS).
+				# The minimap's world test (record +0x68 against the player's
+				# own world id, +0x20e4 through 0x9d4d90). OURS: OpenSRO's
+				# client keeps the player's world id only in the player's own
+				# party record, so that record stands in for +0x20e4 (right
+				# while the server keeps it current); without it nothing is
+				# compared.
 				if own_world < 0 or PartyMapMarks.minimap_draws(m, party.own_jid, own_world):
 					nm += 1
 	if _party_marks_mini.size() != nm:
@@ -2996,7 +2999,7 @@ func _refresh_minimap() -> void:
 	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
 			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
 		_hud_worldmap.update_player(rx, ry, local, facing)
-		_hud_worldmap.update_party(rx, ry, _party_marks_world, _party_marks_names)
+		_hud_worldmap.update_party(rx, ry, _party_marks_world, _party_marks_names, NetClient.party.job_party)
 	# OPENSRO_QA_WALK runs log what the minimap was told, twice a second,
 	# so a facing test is read from the log, not a frame (round 630).
 	if _qa_walk != "" and _zone_label_tick % 30 == 0:

@@ -105,12 +105,9 @@ var _sign_pools := {}      # kind -> Array[TextureRect]
 var _last_sign_report := Vector2i(-1, -1)  # (drawn, total), so the log speaks only on change
 
 ## The party's marks (round 717): each member is the dot or the rim arrow by
-## PartyMapMarks.is_arrow, from two pools. The dots sit in the map, under the
-## player's arrow (vslot_013's order). The arrows sit over the window's own
-## frame, unclipped, under its buttons: on the user's screenshot of the
-## original (map_JXHQtcH.png) the east-rim arrow covers the frame's ring, which
-## the map's clip and the frame would otherwise hide (INFERRED from the
-## screenshot; where the original draws the frame was not traced).
+## PartyMapMarks.is_arrow, from two pools, both in MapMarks over the frame
+## (setup, 2b): the dots, then the arrows, then the player's arrow.
+var _marks_root: Control
 var _party_root: Control
 var _party_arrow_root: Control
 var _party_dot_tex: Texture2D
@@ -198,18 +195,13 @@ func setup(layout_data: Variant = null) -> void:
 				_sign_textures[kind] = tex
 			_sign_pools[kind] = []
 
-	# The party's marks (round 717, PartyMapMarks): after the other signs,
-	# before the player's own arrow, as vslot_013 draws them.
-	_party_root = Control.new()
-	_party_root.name = "PartyMarks"
-	_party_root.mouse_filter = MOUSE_FILTER_IGNORE
-	_map_clip.add_child(_party_root)
 	if _ui_builder != null:
 		_party_dot_tex = _ui_builder.load_texture(PartyMapMarks.DOT_DDJ)
 		_party_arrow_tex = _ui_builder.load_texture(PartyMapMarks.ARROW_DDJ)
 
 	# The player's arrow (mm_sign_character.ddj, CIFMinimap +0x374): a 16x16
-	# quad about the aperture's centre, turned by arrow_rotation.
+	# quad about the aperture's centre, turned by arrow_rotation. It sits in
+	# MapMarks (below), over the frame, last of the marks.
 	_player_arrow = TextureRect.new()
 	_player_arrow.name = "PlayerArrow"
 	_player_arrow.size = ARROW_SIZE
@@ -220,7 +212,6 @@ func setup(layout_data: Variant = null) -> void:
 	_player_arrow.mouse_filter = MOUSE_FILTER_IGNORE
 	if _ui_builder != null:
 		_player_arrow.texture = _ui_builder.load_texture("interface\\minimap\\mm_sign_character.ddj")
-	_map_clip.add_child(_player_arrow)
 
 	# 2. The window's own artwork (mm_window.ddj), 1:1 at its 140x184.
 	_frame_rect = TextureRect.new()
@@ -233,12 +224,32 @@ func setup(layout_data: Variant = null) -> void:
 	if _ui_builder != null:
 		_frame_rect.texture = _ui_builder.load_texture("interface\\minimap\\mm_window.ddj")
 	add_child(_frame_rect)
+
+	# 2b. The marks vslot_013 draws after the map (round 717 review): over the
+	# frame, unclipped, in its order -- the party's dots, the party's arrows
+	# (the quest marks would come here), then the player's arrow -- and under
+	# the layout's buttons, which the window's render (0xb8f210: slot 13, then
+	# the child list through slot 14) draws after them (READ). That the frame
+	# is under vslot_013 is INFERRED: vslot_013 never binds mm_window, the
+	# tiles are rounded by the mm_alpha mask (needless under a frame), and the
+	# user's screenshot (map_JXHQtcH.png) shows the rim arrow whole over the
+	# ring. The NPC/monster/player signs stay in the map's clip, under the
+	# frame, for now (docs/TODO.md).
+	_marks_root = Control.new()
+	_marks_root.name = "MapMarks"
+	_marks_root.position = APERTURE_RECT.position
+	_marks_root.size = APERTURE_RECT.size
+	_marks_root.mouse_filter = MOUSE_FILTER_IGNORE
+	add_child(_marks_root)
+	_party_root = Control.new()
+	_party_root.name = "PartyMarks"
+	_party_root.mouse_filter = MOUSE_FILTER_IGNORE
+	_marks_root.add_child(_party_root)
 	_party_arrow_root = Control.new()
 	_party_arrow_root.name = "PartyArrows"
-	_party_arrow_root.position = APERTURE_RECT.position
-	_party_arrow_root.size = APERTURE_RECT.size
 	_party_arrow_root.mouse_filter = MOUSE_FILTER_IGNORE
-	add_child(_party_arrow_root)
+	_marks_root.add_child(_party_arrow_root)
+	_marks_root.add_child(_player_arrow)
 
 	# 3. Layout root (buttons and text labels authored in resinfo\ifminimap.txt)
 	var layout: UiLayoutParser.LayoutDef = null

@@ -98,10 +98,12 @@ func _init() -> void:
 
 	# --- the world map's hover: the 16x16 quad inset by 2, inclusive ------
 	var quad := Rect2(100, 100, 16, 16)
-	_check(PartyMapMarks.hover_hit(quad, Vector2(102, 102)) and PartyMapMarks.hover_hit(quad, Vector2(114, 114)),
-		"the hover rectangle's inset edges are inside")
-	_check(not PartyMapMarks.hover_hit(quad, Vector2(101.9, 108)) and not PartyMapMarks.hover_hit(quad, Vector2(108, 114.1)),
-		"the outer 2 px of the dot do not count")
+	_check(PartyMapMarks.hover_hit(quad, Vector2(102, 102)) and PartyMapMarks.hover_hit(quad, Vector2(113, 113)),
+		"the hover rectangle is L + 2 ..= L + 13 (the corners less the half pixel, inset by 2)")
+	_check(not PartyMapMarks.hover_hit(quad, Vector2(101, 108)) and not PartyMapMarks.hover_hit(quad, Vector2(114, 114))
+		and not PartyMapMarks.hover_hit(quad, Vector2(108, 114)),
+		"L + 1 and L + 14 are outside (0x61fecb..0x61ff2d)")
+	_check(PartyMapMarks.hover_hit(quad, Vector2(113.9, 102.5)), "the mouse counts in whole pixels")
 
 	# --- the world map's position: the player's own rule -------------------
 	var w := HudWorldmap.party_world(97, 168, Vector2(1010, 690))
@@ -121,27 +123,42 @@ func _init() -> void:
 	var report := minimap.party_marks_report()
 	_check(report == "dot@(8.0,0.0) arrow@(47.0,0.0)r-180 arrow@(0.0,47.0)r-90",
 		"each member has its own mark: the near one a dot, the far ones rim arrows (got '%s')" % report)
-	var east := minimap.get_node_or_null("PartyArrows/arrow_0") as TextureRect
+	var east := minimap.get_node_or_null("MapMarks/PartyArrows/arrow_0") as TextureRect
 	_check(east != null and east.flip_h and _angle_near(east.rotation, -PI - PI / 2.0),
 		"the east arrow is mirrored and turned a further -90 degrees: the quad's transposed texture")
-	var near := minimap.get_node_or_null("MapClip/PartyMarks/dot_0") as TextureRect
+	var near := minimap.get_node_or_null("MapMarks/PartyMarks/dot_0") as TextureRect
 	_check(near != null and near.flip_h and _angle_near(near.rotation, -PI / 2.0),
 		"the dot is transposed too (the same quad)")
-	# The art points up (MEASURED); transposed it points west, so the turn for
-	# a member due east (-pi) sends it east: the tip's direction after the
-	# node's mirror and turn.
-	var tip := Vector2(0, -1)                   # up in the texture
-	tip = Vector2(-tip.x, tip.y)                # flip_h
-	tip = tip.rotated(east.rotation if east != null else 0.0)
-	_check(_near(tip, Vector2(1, 0), 0.001), "the east arrow's tip points east, outward (got %s)" % str(tip))
-	var root := minimap.get_node_or_null("MapClip/PartyMarks")
-	var arrow := minimap.get_node_or_null("MapClip/PlayerArrow")
+	# What the node draws must be the client's quad: the texture transposed
+	# (screen (x, y) samples texture (y, x)), then turned. An off-axis probe
+	# (up and a little right in the art, which a mirror moves) follows both
+	# for every quadrant; dropping flip_h or the extra -90 degrees fails it.
+	var probe := Vector2(0.3, -1.0)
+	for c in cases:
+		var off := PartyMapMarks.minimap_offset(here, here + (c[1] as Vector2), S)
+		var want := Vector2(probe.y, probe.x).rotated(PartyMapMarks.arrow_rotation(off))
+		var node_rot := PartyMapMarks.arrow_rotation(off) + PartyMapMarks.TRANSPOSE_TURN
+		var got := Vector2(-probe.x, probe.y).rotated(node_rot)   # flip_h, then the node's turn
+		_check(_near(got, want, 0.001), "%s: the node's mirror and turn draw the transposed, turned art (got %s, want %s)"
+			% [c[0], str(got), str(want)])
+	_check(east != null and _angle_near(east.rotation, PartyMapMarks.arrow_rotation(Vector2(1, 0)) + PartyMapMarks.TRANSPOSE_TURN),
+		"the east arrow node carries that turn")
+	# The art points up (MEASURED): after the transpose and the east turn the
+	# tip points east, outward.
+	var tip := Vector2(0, -1)
+	_check(_near(Vector2(tip.y, tip.x).rotated(-PI), Vector2(1, 0), 0.001), "the east arrow's tip points east, outward")
+	var root := minimap.get_node_or_null("MapMarks/PartyMarks")
+	var arrow := minimap.get_node_or_null("MapMarks/PlayerArrow")
 	_check(root != null and arrow != null and root.get_index() < arrow.get_index(),
 		"the party's dots are drawn under the player's own arrow")
-	var arrows_root := minimap.get_node_or_null("PartyArrows")
+	var arrows_root := minimap.get_node_or_null("MapMarks/PartyArrows")
+	var marks := minimap.get_node_or_null("MapMarks")
 	var frame := minimap.get_node_or_null("MinimapFrame")
-	_check(arrows_root != null and frame != null and arrows_root.get_index() > frame.get_index(),
-		"the rim arrows are drawn over the window's frame, unclipped (the user's screenshot)")
+	_check(marks != null and frame != null and marks.get_index() > frame.get_index() and not (marks as Control).clip_contents,
+		"the marks are drawn over the window's frame, unclipped")
+	_check(root != null and arrows_root != null and arrow != null
+		and root.get_index() < arrows_root.get_index() and arrows_root.get_index() < arrow.get_index(),
+		"vslot_013's order: the party's dots, then its arrows, then the player's arrow")
 	minimap.update_party(here, PackedVector2Array([here + Vector2(96, 0)]))
 	_check(minimap.party_marks_report() == "dot@(8.0,0.0)", "a member who leaves loses the mark")
 	_check(root != null and root.get_child_count() == 1 and arrows_root != null and arrows_root.get_child_count() == 2,
@@ -149,6 +166,40 @@ func _init() -> void:
 	minimap.update_party(here, PackedVector2Array())
 	_check(minimap.party_marks_report() == "", "no party, no marks")
 	minimap.free()
+
+	# --- HudWorldmap.place_party_dots --------------------------------------
+	var wm := HudWorldmap.new(null)
+	var canvas := Control.new()
+	var marker := Control.new()
+	var img3 := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	wm.make_party_layer(canvas, ImageTexture.create_from_image(img3))
+	canvas.add_child(marker)
+	var px := PackedVector2Array([Vector2(100.7, 50.2), Vector2(130.5, 60.9), Vector2(400, 400)])
+	var nm := PackedStringArray(["Cara", "Dex", "Eve"])
+	wm.place_party_dots(px, nm, false, Vector2(-1000, -1000))
+	_check(wm.party_dots_report() == "(100,50) (130,60) (400,400)",
+		"the dots' corners are truncated (_ftol2): centres (100,50) (130,60) (got '%s')" % wm.party_dots_report())
+	_check(wm.party_hover_text() == "", "no mouse, no name")
+	var layer := canvas.get_node_or_null("PartyMarks")
+	_check(layer != null and layer.get_index() < marker.get_index(), "the party's dots are under the player's marker")
+	# Over Dex's dot (quad at 122, 52; the hover box is 124..135 x 54..65).
+	wm.place_party_dots(px, nm, false, Vector2(124, 54))
+	_check(wm.party_hover_text() == "Dex", "the hovered member's name shows (got '%s')" % wm.party_hover_text())
+	var label := layer.get_node_or_null("PartyHover") as Label if layer != null else null
+	var dex_dot := layer.get_node_or_null("party_1") if layer != null else null
+	_check(label != null and dex_dot != null and label.get_index() == dex_dot.get_index() + 1,
+		"the name is drawn right after its dot, under later dots")
+	_check(label != null and is_equal_approx(label.position.x, floorf(130.5 - floorf(label.size.x / 2.0)))
+		and is_equal_approx(label.position.y, floorf(60.9 - 8.0 - label.size.y)),
+		"the name sits centred above the quad, truncated (got %s)" % (str(label.position) if label != null else "null"))
+	wm.place_party_dots(px, nm, true, Vector2(124, 54))
+	_check(wm.party_hover_text() == "*Dex", "in a job party the name has its `*` (0x99a4c5)")
+	wm.place_party_dots(px, nm, true, Vector2(136, 54))
+	_check(wm.party_hover_text() == "", "one pixel past the hover box, no name")
+	wm.place_party_dots(PackedVector2Array([px[0]]), PackedStringArray(["Cara"]), false, Vector2(-1000, -1000))
+	_check(wm.party_dots_report() == "(100,50)", "a member who leaves loses the dot")
+	canvas.free()
+	wm.free()
 
 	print("party_map_marks_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)
