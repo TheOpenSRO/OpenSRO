@@ -20,6 +20,11 @@ class_name PartyState
 
 ## The party, its members or the settings changed: redraw.
 signal changed
+## One member's record changed in place (0x3864 kind 6: HP/MP, level,
+## position, guild, masteries, name/model) and nothing else did: the views
+## redraw that member only (round 715's review -- the server samples every
+## member once a second, so a full rebuild per update was the costly path).
+signal member_updated(jid: int)
 ## A line for the system message window, type 4 (the PARTY filter): the
 ## UIIT key, the "%s" argument (or ""), and the error code it came from (0
 ## when none). party_gui.md §6.
@@ -255,7 +260,7 @@ func _on_event(e: PartyNet.Event) -> void:
 			var m := member(e.jid)
 			if m != null and e.member != null:
 				m.apply(e.member)
-				changed.emit()
+				member_updated.emit(e.jid)
 		PartyNet.EVENT_LEADER:
 			leader_jid = e.jid
 			_keep_leader_first()

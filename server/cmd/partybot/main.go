@@ -598,12 +598,31 @@ var botEntry struct {
 // joining window stays up until the backstop).
 var botSilent bool
 
-func botMode(addr, name string, level int, accept bool, inviteName string, registerEntry bool, requestName string) error {
+func botMode(addr, name string, level int, accept bool, inviteName string, registerEntry bool, requestName string,
+	tp, tp2 string, tp2After time.Duration) error {
 	b, err := connect(addr, strings.ToLower(name), name, level)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("[%s] in the world, character %d, JID %d\n", name, b.id, b.jid())
+	// -tp / -tp2 (round 715, OURS, a QA aid): the GM teleport, so a live run
+	// can stand bots at chosen distances from the rendered client.
+	// The GM /tp only tells a client where to stand; the client then sends
+	// the move (session/gm.go), so the bot sends it too, as a relocation.
+	gmTP := func(at string) {
+		b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: "/tp " + at}).Encode())
+		var x, z float32
+		if _, err := fmt.Sscanf(at, "%f %f", &x, &z); err == nil {
+			b.moveTo(x, b.y, z)
+		}
+		fmt.Printf("[%s] -> /tp %s and a relocated move there\n", name, at)
+	}
+	if tp != "" {
+		gmTP(tp)
+	}
+	// -tp2 runs -tp2-after once the bot is in a party (its 0x3065), so a run
+	// can invite it beside the leader first and then move it away.
+	var tp2C <-chan time.Time
 	if registerEntry {
 		b.send(party.OpMatchRegister, party.AppendEntry(nil, &party.Entry{Flags: party.Flags(botEntry.flags),
 			Purpose: uint8(botEntry.purpose), MinLevel: uint8(botEntry.minLevel), MaxLevel: uint8(botEntry.maxLevel), Title: botEntry.title}))
@@ -618,6 +637,10 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		case p, open := <-b.in:
 			if !open {
 				return errors.New("connection closed")
+			}
+			if p.Opcode == party.OpInfo && tp2 != "" && tp2C == nil {
+				tp2C = time.After(tp2After)
+				fmt.Printf("[%s] in a party: /tp %s in %s\n", name, tp2, tp2After)
 			}
 			if p.Opcode == party.OpMatchJoin && !botSilent {
 				if j, err := party.DecodeJoinRequest(p.Data); err == nil {
@@ -651,6 +674,8 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 					b.send(party.OpInvitation, party.EncodeAnswerNo(party.CodeCreateRefused))
 				}
 			}
+		case <-tp2C:
+			gmTP(tp2)
 		case <-tick.C:
 			if requestName != "" && !requested {
 				b.send(party.OpMatchList, []byte{0})
@@ -683,6 +708,9 @@ func main() {
 	flag.IntVar(&botEntry.flags, "flags", int(party.FlagExpShare|party.FlagItemShare), "bot -register: the entry's type byte")
 	flag.BoolVar(&botSilent, "silent", false, "bot: leave party-match join requests unanswered (the server's 15 s backstop answers)")
 	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
+	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
+	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
+	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")
 	flag.Parse()
 	var err error
 	switch *mode {
@@ -694,7 +722,7 @@ func main() {
 		}
 		err = matchScenario(*addr, *prefix)
 	case "bot":
-		err = botMode(*addr, *name, *level, *accept, *invite, *register, *requestEntry)
+		err = botMode(*addr, *name, *level, *accept, *invite, *register, *requestEntry, *tp, *tp2, *tp2After)
 	case "share":
 		err = shareScenario(*addr, *prefix, *monster, *level)
 	default:

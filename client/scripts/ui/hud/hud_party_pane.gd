@@ -73,6 +73,9 @@ var own_vitals: Callable
 var own_guild: Callable
 ## the player's portrait texture (the PMI's render, 0x7b5410), or null.
 var own_portrait: Callable
+## a member's portrait texture by JID -- the member's quick party slot render
+## (0x6dab10 -> 0x6d7f30; HudQuickParty.portrait_of, round 715) -- or null.
+var member_portrait: Callable
 
 func _init(builder: UiBuilder, pane: Control, party: PartyState) -> void:
 	_builder = builder
@@ -81,7 +84,26 @@ func _init(builder: UiBuilder, pane: Control, party: PartyState) -> void:
 	_build_rows()
 	_wire_buttons()
 	state.changed.connect(refresh)
+	state.member_updated.connect(_on_member_updated)
+	if _pane != null:
+		_pane.visibility_changed.connect(_on_pane_visibility)
 	refresh()
+
+## A member's record changed in place (PartyState.member_updated): redrawn
+## now while the window shows; a hidden window redraws when it next shows
+## (OURS: the client redraws its rows each frame while shown, 0x6d72f0).
+var _stale := false
+
+func _on_member_updated(_jid: int) -> void:
+	if _pane != null and not _pane.is_visible_in_tree():
+		_stale = true
+		return
+	refresh()
+
+func _on_pane_visibility() -> void:
+	if _stale and _pane != null and _pane.is_visible_in_tree():
+		_stale = false
+		refresh()
 
 ## The node `control_name` directly in the pane's own layout (not inside a
 ## row: ifparty's Dismiss and ifpartyslot's row button share the name
@@ -193,6 +215,7 @@ func _on_row_button(i: int) -> void:
 func refresh() -> void:
 	if _pane == null:
 		return
+	_stale = false
 	_refresh_caption()
 	if state.in_party:
 		_refresh_in_party()
@@ -286,7 +309,7 @@ func _refresh_in_party() -> void:
 	else:
 		_gauge(node("GDR_PTY_GAUGE_HPGAUGE"), lead.hp_ratio(), HP_ART)
 		_gauge(node("GDR_PTY_GAUGE_MPGAUGE"), lead.mp_ratio(), MP_ART)
-	_face("leader", lead.jid == state.own_jid)
+	_face("leader", lead.jid == state.own_jid, lead.jid)
 	var others := state.row_members()
 	for i in ROWS:
 		if i < others.size():
@@ -334,7 +357,7 @@ func _fill_row(i: int, m: PartyNet.Member) -> void:
 	else:
 		_shown(btn, false)
 	_shown(row_node(i, "GDR_PTYSLOT_PICTURE"), true)
-	_face("row%d" % i, own)
+	_face("row%d" % i, own, m.jid)
 
 ## FUN_006d7520: an empty row.
 func _clear_row(i: int) -> void:
@@ -415,9 +438,12 @@ func _own_vitals() -> Array:
 #
 # The player's own row (and the leader row when the player leads) borrows the
 # player block's render (0x7b5410); a member's row borrows that member's
-# quick-party slot render (0x6dab10 -> 0x6d7f30), which round 711 does not
-# build (the quick party board is lane C3's): those squares stay black, as
-# retail's do for a member who is not spawned (screenshot 12).
+# quick-party slot render (0x6dab10 -> 0x6d7f30) -- HudQuickParty's, through
+# member_portrait (round 715). That render is made from the member's model id,
+# spawned or not (0x6d80d0); a member with no model id has none and the
+# square stays black. (The user's screenshot 12 shows every square black, the
+# player's own included, so the picture is not evidence either way: see
+# HudQuickParty's header.)
 
 const FACE_SHADER := """
 shader_type canvas_item;
@@ -453,11 +479,15 @@ func _add_face(pic: Control, key: String) -> void:
 	pic.add_child(view)
 	_views[key] = view
 
-func _face(key: String, own: bool) -> void:
+func _face(key: String, own: bool, jid: int = 0) -> void:
 	var view := _views.get(key) as TextureRect
 	if view == null:
 		return
-	var tex: Texture2D = own_portrait.call() if own and own_portrait.is_valid() else null
+	var tex: Texture2D = null
+	if own:
+		tex = own_portrait.call() if own_portrait.is_valid() else null
+	elif member_portrait.is_valid():
+		tex = member_portrait.call(jid)
 	view.texture = tex
 	view.visible = tex != null
 

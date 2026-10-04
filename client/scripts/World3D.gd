@@ -2077,6 +2077,8 @@ func _try_initialize_pk2_ui() -> void:
 	# The active-buff icons right of the player block (round 618): retail's
 	# CIFMagicStateBoard, placed by its own GDR_MAGICSTATEBOARD rect.
 	_build_buff_board()
+	# The party member boxes under the player block (round 715).
+	_build_quick_party()
 
 	# Real vitals. The server reports them twice: once on entering the world
 	# (EnterWorldResult carries HP and MaxHP) and again on every attack
@@ -11364,12 +11366,15 @@ func _update_blob_shadow() -> void:
 ##                          <anyone> (the Set dialog's Yes), invite:<name>
 ##                          (select that spawned player and press Invite),
 ##                          accept / refuse (answer the next invitation box
-##                          through its buttons), leave, kick:<name>; and
+##                          through its buttons), leave, kick:<name>;
 ##                          the party-matching steps (round 714, PartyMatchQa:
 ##                          match, page:<n>, register:/change:<purpose>,<min>,
 ##                          <max>[,<title>], delete, select:/join:<leader>,
 ##                          search:<name>|<purpose>|<lo>|<hi>, auto:<purpose>,
-##                          <race>, req:confirm|cancel|wait, dump)
+##                          <race>, req:confirm|cancel|wait, dump); and
+##                          round 715: qpclick:<name> (that member's party
+##                          box clicked), selfselect, qplock, qplog (every
+##                          box's screen rect, faraway level and glow)
 ##   OPENSRO_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
@@ -14660,6 +14665,7 @@ func _physics_step(delta: float) -> void:
 		_refresh_minimap()
 		if _qa_split != null:
 			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
+		_tick_party_hud()
 	_update_blob_shadow()
 	# Characters' object colour by the tile under them (round 706).
 	if _character_light != null:
@@ -19821,13 +19827,15 @@ func _run_key_action(action: String, arg: int) -> String:
 			_debug_panel.toggle()
 			return "debug panel %s" % ("shown" if _debug_panel.visible else "hidden")
 		"select_self":
-			# 0x77f230 -> 0x78f5f0(player+0xf8) (read). This client's target
-			# window shows monsters only.
-			return "no-op: selecting yourself is not built (the target window shows monsters only)"
+			# 0x77f230 -> 0x78f5f0(player+0xf8) (read): the player selected,
+			# as a press on the player block does (round 715).
+			_select_self()
+			return "selected this player"
 		"select_party":
-			# 0x77f230 -> the quick party window's member n-2 (read). No player
-			# can be targeted in this client.
-			return "no-op: selecting party member %d is not built (no player targets)" % arg
+			# 0x77f230 -> 0x6da850(n - 2), the quick party window's slot n-2 (arg is n - 1),
+			# then its member found by name (0x9c3640) and selected (read;
+			# round 715). Not spawned: nothing to select.
+			return _select_quick_party_member(int(arg) - 1)
 		"pet_info", "pet_ride", "pet_unsummon", "pet_follow", "pet_attack", "pet_ai", "pet_switch":
 			return "no-op: no pet or COS in this client"
 	return "no-op: %s is not built" % action
@@ -21280,6 +21288,9 @@ func _wire_party_panels() -> void:
 		"own_vitals": _party_own_vitals,
 		"own_guild": _party_own_guild,
 		"own_portrait": _party_own_portrait,
+		# A member's row borrows their quick party slot render (round 715).
+		"member_portrait": func(jid: int) -> Texture2D:
+			return _hud_quick_party.portrait_of(jid) if _hud_quick_party != null else null,
 	})
 	_hud_panels.party_create_requested.connect(_on_party_create_requested)
 	_hud_panels.party_invite_requested.connect(_on_party_invite_requested)
@@ -21291,6 +21302,120 @@ func _wire_party_panels() -> void:
 	_hud_panels.party_match_requested.connect(_on_party_match_requested)
 	if _hud_player_info != null:
 		_hud_player_info.bars_changed.connect(_hud_panels.party_vitals_changed)
+
+# --- The party member boxes (round 715, HudQuickParty) ------------------------
+#
+# The board draws NetClient.party's members; the world tells it where the
+# player and each member are, what is selected, each member's buffs and a bare
+# body for each model id, and selects a member when a box is clicked
+# (CIFQuickPartySlot::vslot_030, 0x6d8500 -> 0x9c3640 by name -> 0x78f5f0).
+
+var _hud_quick_party: HudQuickParty = null
+
+func _build_quick_party() -> void:
+	_hud_quick_party = HudQuickParty.new(_ui_builder, NetClient.party)
+	ui_control.add_child(_hud_quick_party)
+	if _hud_buff_board != null:
+		_hud_quick_party.buff_catalog = _hud_buff_board.catalog
+	_hud_quick_party.own_name = func() -> String: return NetClient.current_character_name
+	_hud_quick_party.player_position = func() -> Vector3:
+		return player.global_position if player != null else Vector3.ZERO
+	_hud_quick_party.player_region = func() -> Vector2i: return _party_here_region
+	_hud_quick_party.player_local = func() -> Vector3: return _party_here_local
+	_hud_quick_party.member_body = func(jid: int) -> Node3D:
+		return _party_body_for_board(jid) as Node3D
+	_hud_quick_party.selected_jid = _party_selected_jid
+	_hud_quick_party.portrait_body = _party_portrait_body
+	_hud_quick_party.buffs_of = _party_member_buffs
+	NetClient.party.changed.connect(_forget_party_bodies)
+	_hud_quick_party.member_clicked.connect(_on_quick_party_member_clicked)
+	_hud_quick_party.rebuilt.connect(func() -> void:
+		if _hud_panels != null and _hud_panels.party_pane != null:
+			_hud_panels.party_pane.refresh())
+	_hud_quick_party.setup()
+	if not NetClient.party.changed.is_connected(_refresh_own_leader_flag):
+		NetClient.party.changed.connect(_refresh_own_leader_flag)
+
+## The player's region and region-local position this frame (the minimap's
+## own lookup, _refresh_minimap, which runs just before _tick_party_hud), for
+## the board's record distances; region x < 0 when unknown. Kept in fields so
+## the board's per-frame reads allocate nothing.
+var _party_here_region := Vector2i(-1, -1)
+var _party_here_local := Vector3.ZERO
+
+func _update_party_here() -> void:
+	_party_here_region = Vector2i(-1, -1)
+	if player == null or _minimap_group == null or not is_instance_valid(_minimap_group) \
+			or not _minimap_group.is_inside_tree() or _minimap_group.name != _minimap_group_name:
+		return
+	_party_here_region = _minimap_region
+	_party_here_local = _minimap_group.to_local(player.global_position)
+
+## The selected object's JID when it is a spawned player other than this one
+## (the id the board compares, +0x37c), else 0.
+func _party_selected_jid() -> int:
+	if _selected_character < 0 or _selected_character == _own_id():
+		return 0
+	if not _other_bodies.has(_selected_character):
+		return 0
+	return _selected_character & 0xffffffff
+
+## A bare body for a member's model id (0x6d80d0 loads the id alone: no
+## equipment), posed with ANI_POSE: [Skeleton3D, pose] or [].
+func _party_portrait_body(ref_obj_id: int) -> Array:
+	var body := _body_key_for(ref_obj_id, "")
+	if body == "":
+		return []
+	var skel := _build_assembled_character({}, body, CharacterAppearance.DEFAULT_SCALE)
+	if skel == null:
+		return []
+	return [skel, _body_animation_for(body, PlayerPortrait.ANI_POSE, "default")]
+
+## A spawned member's buffs and abnormal states (the target window's source).
+func _party_member_buffs(jid: int) -> Array:
+	var b := _party_body_for_board(jid)
+	if b == null or not b.has_meta("character_id"):
+		return []
+	return _owner_buffs_and_states(_fx_owner_key(int(b.get_meta("character_id")), SkillNet.OWNER_CHARACTER))
+
+func _on_quick_party_member_clicked(jid: int, member_name: String) -> void:
+	var b := _party_body(jid)
+	if b == null:
+		print("World3D: quick party %s (%d) is not spawned here -- nothing selected" % [member_name, jid])
+		return
+	_select_character(int(b.get_meta("character_id", -1)), member_name)
+
+## Ctrl+2..8: slot `n`'s member, selected by name when spawned.
+func _select_quick_party_member(n: int) -> String:
+	if _hud_quick_party == null:
+		return "no quick party board"
+	var jid := _hud_quick_party.member_at(n)
+	if jid == 0:
+		return "no party member in slot %d" % n
+	var b := _party_body(jid)
+	if b == null:
+		return "party member %s is not spawned" % _hud_quick_party.member_name_at(n)
+	_select_character(int(b.get_meta("character_id", -1)), _hud_quick_party.member_name_at(n))
+	return "selected party member %s" % _hud_quick_party.member_name_at(n)
+
+## Once a rendered frame: the player block's yellow glow follows the
+## selection (0x7b7cbe: shown exactly when the selected id is the player's).
+func _tick_party_hud() -> void:
+	if _hud_quick_party != null and _hud_quick_party.visible:
+		_update_party_here()
+	if _hud_player_info == null:
+		return
+	var own := _own_id()
+	var on := own >= 0 and _selected_character == own
+	if on != _hud_player_info.is_selected():
+		_hud_player_info.set_selected(on)
+		print("World3D: player block's select glow %s" % ("on" if on else "off"))
+
+## The player block's leader flag (0x7b81ba: shown while the player leads).
+func _refresh_own_leader_flag() -> void:
+	if _hud_player_info != null:
+		var party := NetClient.party
+		_hud_player_info.set_party_leader(party.in_party and party.is_leader())
 
 func _on_party_match_requested() -> void:
 	if _hud_panels != null:
@@ -21304,7 +21429,8 @@ func _party_own_jid() -> int:
 	var own := _own_id()
 	return own & 0xffffffff if own >= 0 else 0
 
-## The spawned player a party JID or inviter id names, or null.
+## The spawned player a party JID or inviter id names, or null. Exact: a
+## scan of the bodies each call.
 func _party_body(jid: int) -> Node:
 	for id in _other_bodies:
 		if (int(id) & 0xffffffff) == jid:
@@ -21312,6 +21438,38 @@ func _party_body(jid: int) -> Node:
 			if b != null and is_instance_valid(b):
 				return b as Node
 	return null
+
+## The party boxes' own lookup (round 715): they ask for every member every
+## frame, so a found character id is remembered per JID (checked against
+## _other_bodies before use), and a member not spawned here is looked for
+## again only 250 ms after a miss (OURS: a member who spawns gets their box's
+## buffs and live position within a quarter second). Only the board uses it;
+## both tables are dropped when the party is left.
+var _party_body_ids: Dictionary = {}
+var _party_body_misses: Dictionary = {}
+const PARTY_BODY_MISS_MS := 250
+
+func _party_body_for_board(jid: int) -> Node:
+	var known = _party_body_ids.get(jid)
+	if known != null and _other_bodies.has(known):
+		var kb = _other_bodies[known]
+		if kb != null and is_instance_valid(kb):
+			return kb as Node
+	var now := Time.get_ticks_msec()
+	if now - int(_party_body_misses.get(jid, -PARTY_BODY_MISS_MS)) < PARTY_BODY_MISS_MS:
+		return null
+	var b := _party_body(jid)
+	if b != null:
+		_party_body_ids[jid] = int(b.get_meta("character_id", -1))
+		_party_body_misses.erase(jid)
+	else:
+		_party_body_misses[jid] = now
+	return b
+
+func _forget_party_bodies() -> void:
+	if not NetClient.party.in_party:
+		_party_body_ids.clear()
+		_party_body_misses.clear()
 
 func _party_is_spawned(world_id: int) -> bool:
 	return _party_body(world_id) != null
@@ -21481,6 +21639,26 @@ func _qa_party_do(step: String) -> void:
 					var btn := pane.row_node(i, "GDR_PTYSLOT_BTN_EXITFROMPARTY") as BaseButton
 					if btn != null:
 						btn.pressed.emit()
+		# Round 715, the party member boxes: a box clicked through its own
+		# handler, the player selected, the lock pressed, and a log line with
+		# every box's screen rect (for a real click aimed at one).
+		"qpclick":
+			if _hud_quick_party == null:
+				return
+			for i in _hud_quick_party.slot_count():
+				var s := _hud_quick_party.slot(i)
+				if s.member_name == arg:
+					_hud_quick_party.click_slot(s)
+		"selfselect":
+			_select_self()
+		"qplock":
+			if _hud_quick_party != null:
+				_hud_quick_party.toggle_lock()
+		"qplog":
+			if _hud_quick_party != null:
+				print("QA PARTY: quick party %s; player block glow %s, leader flag %s" % [_hud_quick_party.describe(),
+					_hud_player_info.is_selected_shown() if _hud_player_info != null else false,
+					_hud_player_info.is_leader_flag_shown() if _hud_player_info != null else false])
 		_:
 			# The party-matching steps (round 714): PartyMatchQa.
 			if not PartyMatchQa.do(_hud_panels, verb, arg):
