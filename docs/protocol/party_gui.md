@@ -252,10 +252,11 @@ are child windows created on demand (ids 100 / 105 / 110, `0x7390b0` / `0x7392c0
   (`UIIT_CTL_PARTYMATCH_PSEARCH_FIND_OBJECTTHIEF`), All
   (`UIIT_CTL_PARTYMATCH_PSEARCH_OBJECTALL`). The default is index 4, All. **The purpose byte
   0..3 uses the same order** (`0x740910`'s jump table at `0x740a2c`).
-  **The value is right-aligned in the text rect `{5, 0, W-30, H}`, and a value too wide for it is
-  cut on its LEFT** (round 718). This is the user's description of the original (2026-10-04,
-  "the text aligned to the right and then hides the left of the text that would overflow"); the
-  combo's drawing code was not read. OpenSRO draws the value as a Label right-aligned inside a
+  **The value is right-aligned in the text rect `{5, 0, W-30, H}`** (READ, round 718's review:
+  the window's create sets alignment 2 at `0x73b062`..`0x73b073`, forwarded by `0x6321e0` to the
+  text static `CIFComboBox::vslot_010` makes at `{5, 0, W-30, H}`, laid by `0x64d9b0` case 2;
+  VAlign 1 from the CTextBoard ctor `0x655c28`), **and a value too wide for it is cut on its
+  LEFT** -- the user's description (2026-10-04); CIFStatic's draw clipping was not read. OpenSRO draws the value as a Label right-aligned inside a
   clipping box over the text rect.
 - Search 55, Refresh 56.
 - **The edit boxes and the black frames around them** (round 718): the three edits sit on
@@ -263,8 +264,11 @@ are child windows created on demand (ids 100 / 105 / 110, `0x7390b0` / `0x7392c0
   443,75,36,20), and the list inside another (25,119,735,305). A CIFStretchWnd draws a six-piece
   set's top and bottom from its side pieces **turned 90 degrees clockwise** (edge UV mode 3,
   `0x49a410` -> `0x49a6b0`, from both of CNIFStretchWnd's UV slots `0x49b1e0`/`0x49b200`; READ),
-  so `right_side`'s grey column is the bottom's last row. The edits draw no box of their own:
-  their text starts at the edit rect's top (VAlign 0), in the black box's middle.
+  so `right_side`'s grey column is the bottom's last row (the resinfo path is CIFStretchWnd's
+  slot 47 with StretchType 0, vtable `0xdd2174`; round 718's review), and each edge is stretched
+  with point sampling. The edits draw no box of their own; CIFEdit lays its text at the rect's top
+  for VAlign 0 and right-aligned 2 px in for HAlign 2 (`0x637b70`; the Name edit and the register
+  dialog's level edits are HAlign 2).
 
 **The list.**
 - 12 `CIFPartyMatchSlot` rows (ids 70..81, 715x24, pitch 23 from y=144).
@@ -329,7 +333,9 @@ record (`CPartyRegData`) fields it shows:
   someone else clears it when the player is no longer in a party (`0x886f76`), and otherwise sets
   its member count to the party's (`+9` <- `0x986f50()+0x10`, the source the echo `0x97c530`
   fills the count from); kind 2 sets the count too. The list steps run when the window exists
-  (`0x799680`: child `0x82`), which the original builds with the interface. None of these paths
+  (`0x799680`: child `0x82`), which the original builds with the interface. Kind 9 copies the
+  new leader's name into the registration and redraws its row (`0x8871d0`..`0x8872a2`). The
+  self-leave clear does not drop the number (the `*piVar5 == 0` test). None of these paths
   calls the Set lock `0x6d5ab0`. OpenSRO had none of this: a leader whose party dissolved kept
   the old entry pinned beside a new one, undeletable (`0x2c1c`) and immune to Refresh (the user's
   report, 2026-10-04).

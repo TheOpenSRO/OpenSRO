@@ -34,11 +34,11 @@ unchanged at `0x886ea4` and `0x88719f` (and `push 0` at `0x886f6f`):
 | `0x3864` | the registration |
 |---|---|
 | kind 1, dissolved | cleared (`0x8871a7`); its number leaves the window's list and the window redraws (`0x73a700`, `0x73a770`) |
-| kind 3, the player left | cleared (`0x886eaa`) |
+| kind 3, the player left | cleared (`0x886eaa`); the number is NOT dropped from the list (the `*piVar5 == 0` test skips `0x73a700`; review F7) |
 | kind 3, someone else left, the player out of a party | cleared and dropped from the list (`0x886f76`, `0x73a700`, `0x73a770`) |
 | kind 3, someone else left, still in a party | its member count becomes the party's (`+9` <- `0x986f50()+0x10`, the source the echo `0x97c530` fills the count from), and its row redraws (`0x73a980`) |
 | kind 2, joined | the same count update |
-| kind 9, new leader | untouched |
+| kind 9, new leader | renamed: the new leader's name into the registration's `+0x10` Name, then its row redraws (`0x8871d0`..`0x8872a2`; the review's F1) |
 
 The list steps are gated on `0x799680` (= `0x8b51f0(0x82, 1)`, the matching window as a child of
 the interface), which the original builds once with the interface, so they always run there.
@@ -199,3 +199,23 @@ f00000410.png` (the inventory); the user's original `orig02.png` beside them. `b
 - How CNIFStretchWnd's inner rect maps onto a control's rect (`0x499e10` places its quads around
   one) is not read; the placement is the builder's as before, only the UVs and the reused edges'
   thickness are READ.
+
+## Review fixes (independent review `2e2d7555`, `docs/rounds/party718_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| F1 | kind 9 renames the registration (READ `0x8871d0`..`0x8872a2`) | `on_party_event` takes the new leader's name (the window looks it up by JID) and writes it into the registration, then redraws. Test: "kind 9 keeps it and takes the new leader's name" |
+| F2 | CIFEdit applies HAlign (READ `0x637b70`, `0x637c7f`; HAlign 2 = right - w - 2.0, `0xe1b898`) | `_build_edit` sets the LineEdit's alignment from HAlign, and for HAlign 2 a 2 px right margin. Test, and MEASURED: "Bram" typed in Name now ends at x 428 inside the rect 351..432 (4 px in: the 2 px inset plus the glyph's side bearing); before the fix it drew from x 352. The HAlign-0 level edit stays left ("25" from x 645, rect from 644) |
+| F3 | the turn is CIFStretchWnd's (vtable `0xdd2174`, slot 47 with StretchType 0 -> corner mode 2, edge mode 3; every six-piece CIFStretchWnd has StretchType 0) | the builder's comments cite the CIF path for resinfo and the CNIF path (`0x489b80` -> slot 49 with 0 at `0x48a408`) for .2dt; slot 41's placement (`0x8186a0`) recorded as READ |
+| F4 | the original stretches its edges (0/1 UVs, point sampling `0x819e3c`/`0x819e5f`) | a six-piece set's four edges are now STRETCH_SCALE with NEAREST filtering; an eight-piece frame's stay tiled (CNIFFrame, READ earlier). Test |
+| F5 | "text starts at the rect's top" holds only while the rect is no taller than the line | the comment says so: CIFEdit's VAlign 0 is the rect's top (READ `0x637d58`); Godot's LineEdit centres; whole chat's 36 px edit centred before this round too |
+| F6 | `_build_edit` ignored ClientRect (latent) | ClientRect's insets are the empty styles' content margins. Test (7,5,7,5 -> margins 7,5,9,5 with HAlign 2's inset) |
+| F7 | a self-leave also dropped the number | `_clear_registration(false)` on that branch. Test |
+| combo | the Purpose alignment is READ (`0x73b062`..`0x73b073`, `0x6321e0`, `0x64d9b0` case 2; VAlign 1 from the CTextBoard ctor) | relabelled READ in the window's comment and party_gui.md; the LEFT clip stays the user's description (CIFStatic's draw clipping not read) |
+| 2dt | does a .2dt frame use a six-piece set the turn now changes? | yes: ten .2dt files name `com_blacksquare_` (arena_game_result, arena_guilduser_select, arena_rule_select, corfim, cumunity_cut, cumunity_friend, cumunity_note, guild, guild_gp, guild_intro; MEASURED with `strings` over the archive's 42 .2dt files). The review READ the .2dt loader setting the same modes 2/3 (`0x48a408`), so the turn is right there too. **Not rendered** this round (no QA hook opens those windows) |
+
+Runs after the fixes: `ui_builder_test`, `party_match_test`, `party_match_window_test` all pass; `check`
+ALL LOAD; full suite (below). The render: `/var/tmp/r718/al-form/f00000270.png` (shared lock, stock
+`qa_shot.sh --server`, nothing left running).
+
+Full suite after the review fixes: 231 suites, 0 failing (box, `RENDER_DIR=/opt/opensro-client-r718`).
