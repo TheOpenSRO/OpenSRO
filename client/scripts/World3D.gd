@@ -20811,10 +20811,24 @@ func _apply_player_race() -> void:
 	print("World3D: race emblem %s (%s Country %d)" % [_hud_player_info.race_mark_path(), code, int(_country_by_code[code])])
 
 ## Requests the character's full stats (level, exp, SP, HP max) so the HUD
-## gauges stay live. Cheap; called on enter-world, each kill, and level-up.
+## gauges stay live. Called on enter-world, each kill, a level-up, 0x3056 and
+## 0x304E; coalesced (round 716's review) so the two or three causes one kill
+## brings make one request, sent from a deferred call at the frame's end.
 func _request_world_stats() -> void:
+	if _world_stats_queued:
+		return
+	_world_stats_queued = true
+	call_deferred("_flush_world_stats")
+
+var _world_stats_queued := false
+## How many stats requests _flush_world_stats has sent (tests read it).
+var _world_stats_sent := 0
+
+func _flush_world_stats() -> void:
+	_world_stats_queued = false
 	var who := NetClient.current_character_name
 	if who != "" and NetClient.is_connected_to_server():
+		_world_stats_sent += 1
 		NetClient.character_stats(who)
 
 ## Applies the stats packet to the always-on HUD: the level label, the HP bar
@@ -20822,7 +20836,14 @@ func _request_world_stats() -> void:
 func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if stats == null or stats.error != "":
 		return
-	_last_known_gold = stats.gold
+	# The 0x304E gold line's base (round 716's review): seeded by the first
+	# reply, then moved by gold messages and by replies this client asked for
+	# (OpenSRO's shop, trade and storage still change gold without a 0x304E,
+	# and the refresh they request keeps the base true). An unprompted push
+	# never moves it: a regen push can read a member's row between the gold
+	# split's credit and its 0x304E, and would swallow the line.
+	if _last_known_gold < 0 or NetClient.last_stats_reply_requested:
+		_last_known_gold = stats.gold
 	if OS.get_environment("OPENSRO_QA_STATS_LOG") != "":
 		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
 			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])

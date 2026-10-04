@@ -653,13 +653,16 @@ Written at the end of `GObjPC::GObjPC_GainExpAndLevel` (CGObjPC slot 92, `gs:0x4
 | field | size | what |
 |---|---|---|
 | source | u32 | the object the EXP came from. The kill reward (`CGObjPC::vslot_420` `0x4ea6a0`) passes the victim's unique id (`0x4eabd2..0x4eabd5`, `[[ebp+8]+8]`). The client floats the gain from that object when it finds it (in `c:0x8a97c0`, through `IGIDObject::FindObjectByID`; it bumps the object's `+0x759`/`+0x75a` counters, `c:0x9c7510`/`0x9c7540`, by a log-scale bucket from `0x8a65b0`) |
-| EXP | u64 (signed) | after the slot's own multiplier (`pc+0x2280`, `0x4e525d..0x4e52a7`), and at level 110 clamped to what fits: requirement - current - 1 (`0x4e5365..0x4e5390`). A death's loss is negative |
+| EXP | u64 (signed) | after the slot's own multiplier (`pc+0x2280`, `0x4e525d..0x4e52a7`). Clamped only when the receiver **starts** at level 110 (`0x4e52c1..0x4e52d7`, `cmp cl,0x6e` on the level byte before the award): then requirement - current - 1 (`0x4e5365..0x4e5390`); above 110 zeroed (`0x4e52cc`); below 110 written as awarded, even when it overflows into 110 (round 716's review). A death's loss is negative |
 | skill EXP | u64 | the same multiplier |
 | flags | u8 | training-camp state (`FUN_004e43e0`/`43a0`/`4360`, all keyed by `pc[0x733]`, the camp membership): low nibble 1 adds a u32 (`param_7+4`); high nibble 1 adds two u32s (`param_7`, `param_7+8`) |
 | stat points | u16 | **only when the call raised the level** (`0x4e58df`: new level > old): `chardata+0x84`, `RemainStatPoint`. The client decides the u16 is there by running the same level arithmetic on its own EXP (in `c:0x8a97c0`: it reads the u16 only on the branch where its EXP reached the requirement) |
 
 Nothing is sent when both amounts are zero (`0x4e5393..0x4e53a1` jump to the end). The kill path
-calls slot 92 once per receiver, so **every member a kill pays is sent its own 0x3056**.
+calls slot 92 once per receiver, so **every member a kill pays is sent its own 0x3056**. It is the
+**last** thing the call sends: a level-up is applied first, and `GObjPC_SetLevel` (`0x4e4d90`, called
+at `0x4e555e`) sends `0x3054` and the HP/MP update before `0x3056` is written (`0x4e582d`, sent at
+`0x4e5907`).
 
 What the client does with it (`c:0x8a97c0`): adds the EXP to its own (levelling up on its own level
 table, holding level 110 at requirement - 1), adds the skill EXP to its running skill-EXP counter
@@ -672,11 +675,21 @@ gained." for a gain, `UIIT_MSG_STATE_LOSE_EXP` "[%I64d]Experience Points lost." 
 
 `GObjPC::FUN_004e3fb0` (`push 0x304e`): u8 kind, then per kind. Kind 1 is u64 the new gold total
 (`chardata+0x78`) and u8 show. `CGObjPC::OffsetGold` (slot 91, `gs:0x4e4b60`) sends it when its
-fifth argument is 1, with the sixth as show. The party gold split (`gs:0x5bc7f0`) credits **every
-share**, the picker's included, with `OffsetGold(amount, 0, 0x17, 1, 1)`, so each member gets a shown
-kind 1. The client (`c:0x8a70d0`) prints `UIIT_MSG_STATE_GAIN_GOLD` "[%d]gold gained." with the rise
-over its own total (clamped to `0x7fffffff`) when show is set and the total rose, then sets its gold.
-The other kinds (2 skill points, 3 stat points, 4 the berserk count, 0x10) are not built here.
+fifth argument is 1, with the sixth as show. The gold pick-up's credit (`gs:0x4eaca0`, from CGItem
+slot 310 `0x48fc70`) uses it both ways:
+
+| pick-up | call | 0x304E kind 1 |
+|---|---|---|
+| solo, or a party without item share | `OffsetGold(amount, 0, 0x19, 1, 0)` (`0x4ead0a..0x4ead1d`) | the picker, **unshown**: the purse moves, no line |
+| an Item Auto Share party | the split `0x5bc7f0` calls `OffsetGold(share, 0, 0x17, 1, 1)` for **every share**, the picker's included | each member, **shown** |
+
+The client (`c:0x8a70d0`) prints `UIIT_MSG_STATE_GAIN_GOLD` "[%d]gold gained." with the rise over its
+own total (clamped to `0x7fffffff`) when show is set and the total rose, then sets its gold. The
+picker's own item-move reply (`0xB034`, written through `GObjPC::FUN_004e9480`) also prints
+`UIIT_MSG_STATE_GAIN_GOLD` for the gold kind `0xfe` from a u32 of its own (`c:0x87bedc..0x87bf20`);
+**OPEN:** whether that u32 is the pile or the picker's share in a split (the op record
+`FUN_004f76e0` writes was not traced). The other kinds (2 skill points, 3 stat points, 4 the berserk
+count, 0x10) are not built here.
 
 ### 0x3068 on the client (completing round 712's row)
 
@@ -693,17 +706,24 @@ only the member form is reached.
 
 - `server/internal/charmsg`: the 0x3056 and 0x304E kind 1 codecs. Flags are always 0: OpenSRO has
   no training camp (READ rule, OURS state).
-- Every receiver of a kill share, the killer included, is sent 0x3056 with its added EXP, its skill
-  EXP and, after a level-up, its stat points (`session/rewardnotice.go`, `distributeKill`).
+- Every receiver of a kill share, the killer included, is sent 0x3056 with its award (clamped only
+  from a starting level of 110), its skill EXP and, after a level-up, its stat points
+  (`session/rewardnotice.go`). Last, as the original: a non-killer gets its OpLevelUp first
+  (`distributeKill`); the killer gets OpAttackResult, then OpLevelUp, then 0x3056 (the attack
+  path). OpenSRO's level-up announcement is its own OpLevelUp (0x0067), not 0x3054.
   OpAttackResult's own EXP tail (round 639) stays on the wire for older clients; the client prints
   from 0x3056 now.
-- Gold-share members other than the picker are sent 0x304E kind 1, shown. **OURS:** the picker is
-  told by OpenSRO's own pick-up reply, which already prints its line, where the original sends the
-  picker 0x304E too.
+- Every gold pick-up sends 0x304E kind 1 as the table above: every credited share of a split,
+  the picker's included, shown; a solo picker unshown. A share that failed to credit is not told.
+  The picker's own line still comes from OpenSRO's pick-up reply, with the share (the original's
+  `0xB034` u32 is OPEN, above).
 - The client decodes all three (`net/reward_notice.gd`, `PartyNet.decode_item_notice`) and prints
   the lines above. **OURS:** it takes 0x3056's stat-point u16 and 0x3068's class from the bytes
   left rather than from its level and item tables (equal for every message this server writes),
-  and it refreshes the EXP gauge and purse from the server's stats rather than advancing them itself.
+  and it refreshes the EXP gauge and purse from the server's stats rather than advancing them itself
+  (one coalesced request a frame). The gold line's base is seeded by the first stats reply and then
+  moved by 0x304E and by stats replies this client asked for, never by an unprompted push (OURS:
+  OpenSRO's shop, trade and storage still change gold without a 0x304E).
 - **Not built:** the gain floated from the source object (`+0x759`/`+0x75a`), the death penalty's
   negative 0x3056 (the death path still uses its own refresh), and 0x304E's other kinds.
 

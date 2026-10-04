@@ -214,8 +214,11 @@ func partyShare(hub *world.Hub, m combat.Monster, p *party.Party, damage int, re
 type killPayout struct {
 	exp, sp  int64
 	expAdded int64 // what the character's EXP actually rose by (the level cap)
-	levelUp  *LevelUp
-	hp       int // the refilled HP after a level-up
+	// startLevel is the receiver's level before the award: the original
+	// clamps 0x3056's EXP only when it is 110 (0x4e52c7, round 716's review).
+	startLevel int
+	levelUp    *LevelUp
+	hp         int // the refilled HP after a level-up
 }
 
 // payKill executes a plan: each award is computed by the two contributor
@@ -228,7 +231,10 @@ func payKill(ctx context.Context, d combatDeps, m combat.Monster, plan killPlan)
 		if err != nil {
 			return out, err
 		}
-		prev := out[a.characterID]
+		prev, had := out[a.characterID]
+		if had {
+			p.startLevel = prev.startLevel
+		}
 		p.exp += prev.exp
 		p.sp += prev.sp
 		p.expAdded += prev.expAdded
@@ -262,6 +268,7 @@ func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) 
 	}
 	newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, exp)
 	out.expAdded = expAdded(levelTable, char.Level, char.Exp, newLevel, newExp)
+	out.startLevel = char.Level
 	newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
 	newStr := char.Str + gained*character.StatGrowthPerLevel
 	newInt := char.Int + gained*character.StatGrowthPerLevel
@@ -364,11 +371,16 @@ func countryOfStore(ctx context.Context, chars character.Store) func(int64) int 
 // OpAttackResult; every other receiver whose share crossed a level is sent
 // OpLevelUp here.
 //
-// Every receiver, the killer included, is sent retail's 0x3056 with what it
-// gained (round 716; GObjPC_GainExpAndLevel writes it at the end of every
-// award, and the kill path calls it once per receiver). OpAttackResult's own
-// EXP tail (round 639) stays on the wire for older clients; the client now
-// prints the gain from 0x3056.
+// Every receiver is sent retail's 0x3056 with what it gained (round 716;
+// GObjPC_GainExpAndLevel writes it at the end of every award, and the kill
+// path calls it once per receiver), LAST: the level-up is announced first,
+// as GObjPC_SetLevel (0x4e4d90, called at 0x4e555e) sends 0x3054 and the
+// HP/MP update before 0x3056 is written (0x4e582d). OpenSRO's announcement is
+// its own OpLevelUp (0x0067), not 0x3054. The killer's 0x3056 is not sent
+// here: grantKill puts it on the attack result, and the attack path sends it
+// after the killer's OpAttackResult and OpLevelUp. OpAttackResult's own EXP
+// tail (round 639) stays on the wire for older clients; the client prints
+// from 0x3056.
 func distributeKill(ctx context.Context, d combatDeps, killer int64, m combat.Monster, hits []combat.Hit) (killPayout, error) {
 	plan := planKill(d.hub, d.parties, m, presentHits(d.hub, hits), countryOfStore(ctx, d.chars))
 	paid, err := payKill(ctx, d, m, plan)
@@ -376,15 +388,17 @@ func distributeKill(ctx context.Context, d combatDeps, killer int64, m combat.Mo
 		return killPayout{}, err
 	}
 	for id, p := range paid {
-		sendExpGain(d.hub, id, expGainFor(m, p))
-	}
-	for id, p := range paid {
-		if id == killer || p.levelUp == nil {
+		if id == killer {
 			continue
 		}
-		if e, ok := entityOf(d.hub, id); ok && e.Session != nil {
+		e, ok := entityOf(d.hub, id)
+		if !ok || e.Session == nil {
+			continue
+		}
+		if p.levelUp != nil {
 			e.Session.Send(&proto.Packet{Opcode: OpLevelUp, Data: p.levelUp.Encode()})
 		}
+		sendExpGainTo(e.Session, expGainFor(m, p))
 	}
 	return paid[killer], nil
 }
