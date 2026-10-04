@@ -87,6 +87,8 @@ func _initialize() -> void:
 	_test_overlay_and_caution()
 	_test_click_and_swap()
 	_test_buffs()
+	_test_member_update()
+	_test_buff_cap()
 	_test_buff_grid()
 	_time_tick()
 	print("hud_quick_party_test: %d failure(s)" % _failures)
@@ -147,7 +149,20 @@ func _test_rebuild() -> void:
 	party.members[0].mastery2 = 999
 	b.rebuild()
 	_check(b.slot(0).masteries[0].visible and not b.slot(0).masteries[1].visible,
-		"a mastery with a record shows; an id with none hides its icon")
+		"a first mastery with a record shows; a second id with none hides the second icon")
+	party.members[0].mastery1 = 0
+	party.members[0].mastery2 = 257
+	b.rebuild()
+	_check(b.slot(0).masteries[0].visible and b.slot(0).masteries[1].visible,
+		"retail never hides the first icon once shown (0x6d8630, 0x6d9495): it keeps its last art")
+	var fresh := _board(_party(3))
+	fresh.set_mastery_table([rec])
+	fresh.state.members[0].mastery1 = 0
+	fresh.state.members[0].mastery2 = 0
+	fresh.rebuild()
+	_check(not fresh.slot(0).masteries[0].visible and not fresh.slot(0).masteries[1].visible,
+		"a new slot starts with both hidden (0x6d8a64)")
+	fresh.queue_free()
 	party.members[2].hp_cur = 5
 	b.rebuild()
 	_check(absf(b.slot(1).hp_gauge.value / b.slot(1).hp_gauge.max_value - 0.5) < 0.001, "HP gauge from the record's ratio")
@@ -197,7 +212,8 @@ func _test_overlay_and_caution() -> void:
 	party.members[2].x = 100 + 650
 	party.members[2].z = 100
 	var b := _board(party)
-	b.player_region_local = func() -> Dictionary: return {"region": Vector2i(97, 168), "local": Vector3(100, 0, 100)}
+	b.player_region = func() -> Vector2i: return Vector2i(97, 168)
+	b.player_local = func() -> Vector3: return Vector3(100, 0, 100)
 	b.tick(0)
 	_check(b.slot(0).faraway == 0 and b.slot(1).faraway == 1, "a member 650 away: level 1; one beside the player: 0")
 	_check(b.slot(1).status != null and b.slot(1).status.visible and not b.slot(0).status.visible,
@@ -212,12 +228,13 @@ func _test_overlay_and_caution() -> void:
 	party.members[0].hp_cur = 2
 	b.rebuild()
 	b.tick(48)
-	_check(b.slot(0).hp_effect.visible, "HP below 30 %: the caution effect")
-	_check(not b.slot(0).mp_effect.visible, "MP full: no MP caution")
-	b.hp_caution = false
-	b.tick(64)
-	_check(not b.slot(0).hp_effect.visible, "the game option off hides it")
+	_check(not b.hp_caution and not b.mp_caution and b.show_buffs,
+		"the game options start as 0x7776c0 writes them: buff row on, both cautions off")
+	_check(not b.slot(0).hp_effect.visible, "so HP below 30 % shows no caution by default")
 	b.hp_caution = true
+	b.tick(64)
+	_check(b.slot(0).hp_effect.visible, "with option +0x12 set: the HP caution effect")
+	_check(not b.slot(0).mp_effect.visible, "MP full: no MP caution")
 	party.members[0].x = 100 + 2000
 	b.tick(80)
 	_check(b.slot(0).faraway == 5 and not b.slot(0).hp_effect.visible, "at level 5 the caution is hidden")
@@ -238,6 +255,40 @@ func _test_click_and_swap() -> void:
 	_check(b.slot(0).member_name == "M4" and b.slot(2).member_name == "Lead", "a drop swaps two members and rebuilds")
 	b.queue_free()
 
+func _test_member_update() -> void:
+	var party := _party(3)
+	var b := _board(party)
+	var rebuilds := [0]
+	b.rebuilt.connect(func() -> void: rebuilds[0] += 1)
+	party.members[0].hp_cur = 3
+	party.member_updated.emit(2)
+	_check(rebuilds[0] == 0 and absf(b.slot(0).hp_gauge.value / b.slot(0).hp_gauge.max_value - 0.3) < 0.001,
+		"a member update refills that slot alone, no rebuild (PartyState.member_updated)")
+	b.queue_free()
+
+func _test_buff_cap() -> void:
+	var party := _party(3)
+	var b := _board(party)
+	var body := Node3D.new()
+	root.add_child(body)
+	b.member_body = func(jid: int) -> Node3D: return body if jid == 2 else null
+	var list := []
+	for i in 8:
+		list.append({"skill_id": 300 + i, "token": i + 1})
+	for bit in 8:
+		list.append({"skill_id": HudTargetBuffs.abnormal_id(bit), "token": 0})
+	b.buffs_of = func(_jid: int) -> Array: return list
+	b.rebuild()
+	_check(b.slot(0).buffs.count(true) == 6 and b.slot(0).buffs.count(false) == 6,
+		"8 buffs and 8 states: one row of 6 each (0x7fab90(1,1))")
+	_check(b.slot(0).buffs.skill_ids(true) == [300, 301, 302, 303, 304, 305], "the first six in add order are kept")
+	var t := HudTargetBuffs.new(null, null)
+	t.rebuild(list)
+	_check(t.count(true) == 8 and t.count(false) == 8, "the target window's viewer has no cap")
+	t.free()
+	body.queue_free()
+	b.queue_free()
+
 func _test_buffs() -> void:
 	var party := _party(3)
 	var b := _board(party)
@@ -254,9 +305,9 @@ func _test_buffs() -> void:
 	body.queue_free()
 	b.queue_free()
 
-## Not a check: what one frame of the board costs with a full party (7 slots,
-## every member placed by record against a known player position), printed
-## for the round's notes. The perf gate's views carry no party.
+## Not a check: what one frame of the board's own logic costs with a full
+## party (7 slots, every member placed by record against a known player
+## position, the world's lookups stubbed), printed for the round's notes.
 func _time_tick() -> void:
 	var party := _party(8)
 	for i in party.members.size():
@@ -264,7 +315,8 @@ func _time_tick() -> void:
 		party.members[i].x = 100 + 150 * i
 		party.members[i].z = 100
 	var b := _board(party)
-	b.player_region_local = func() -> Dictionary: return {"region": Vector2i(97, 168), "local": Vector3(100, 0, 100)}
+	b.player_region = func() -> Vector2i: return Vector2i(97, 168)
+	b.player_local = func() -> Vector3: return Vector3(100, 0, 100)
 	b.selected_jid = func() -> int: return 3
 	var n := 2000
 	var t0 := Time.get_ticks_usec()

@@ -84,7 +84,26 @@ func _init(builder: UiBuilder, pane: Control, party: PartyState) -> void:
 	_build_rows()
 	_wire_buttons()
 	state.changed.connect(refresh)
+	state.member_updated.connect(_on_member_updated)
+	if _pane != null:
+		_pane.visibility_changed.connect(_on_pane_visibility)
 	refresh()
+
+## A member's record changed in place (PartyState.member_updated): redrawn
+## now while the window shows; a hidden window redraws when it next shows
+## (OURS: the client redraws its rows each frame while shown, 0x6d72f0).
+var _stale := false
+
+func _on_member_updated(_jid: int) -> void:
+	if _pane != null and not _pane.is_visible_in_tree():
+		_stale = true
+		return
+	refresh()
+
+func _on_pane_visibility() -> void:
+	if _stale and _pane != null and _pane.is_visible_in_tree():
+		_stale = false
+		refresh()
 
 ## The node `control_name` directly in the pane's own layout (not inside a
 ## row: ifparty's Dismiss and ifpartyslot's row button share the name
@@ -184,6 +203,7 @@ func _on_row_button(i: int) -> void:
 func refresh() -> void:
 	if _pane == null:
 		return
+	_stale = false
 	_refresh_caption()
 	if state.in_party:
 		_refresh_in_party()

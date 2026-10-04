@@ -31,10 +31,10 @@ class_name HudQuickParty
 ## reordering is on -- and the tooltip UIIT_STT_QUICKPARTY_MOVE + "\n" +
 ## UIIT_STT_QUICKPARTY_MOVE_STATE + _LOCK / _UNLOCK. A click flips the state
 ## and makes every slot draggable; a drop swaps the two members' places in the
-## party manager's list (0x992490(jid, jid)) and rebuilds. Shown only while
-## the party has more than 2 members (0x6db3f9: `2 < count`). The 20x20 size
-## and the screen position (0, 130) are the round-709 spec's (party_gui.md
-## §7); the button's move is to (0, -7) of the board's 137.
+## party manager's list (0x992490) and rebuilds. Shown only while
+## the party has more than 2 members (0x6db3f9: `2 < count`). The 20x20 rect
+## is built at 0x6db2ab (`{0,0,0x14,0x14}`) and moved to (0, board y - 7) at
+## 0x6db325..0x6db33c (READ, round 715's review).
 ##
 ## A SLOT (READ, CIFQuickPartySlot::Create 0x6d8890 and the fill
 ## IFQuickPartyWnd::FUN_006d9250):
@@ -43,8 +43,14 @@ class_name HudQuickParty
 ## - the leader's red flag (GDR_QPS_PARTY_LEADER) iff the party's leader id
 ##   is this member's (0x6d7db0);
 ## - the two mastery icons, new 17x17 children at (-3, 39) and (15, 39), from
-##   the record's two mastery ids (0x937010 each; an id with no record hides
-##   its icon), with the mastery's name as the tooltip;
+##   the record's two mastery ids (0x937010 each), with the mastery's name as
+##   the tooltip. Retail never hides the FIRST icon once it has shown: the
+##   per-slot reset 0x6d8630 hides the second icon twice and never the first
+##   (0x6d8696..0x6d86bc), and a first id with no record hides the SECOND
+##   (0x6d9420 je 0x6d9495: `push 0; call [vtbl+0x5c]` on +0x3c4) before the
+##   second gets Show(its record exists) at 0x6d951b. So a reused slot whose
+##   new member has no first mastery keeps the previous member's first icon --
+##   a retail defect, reproduced as the standing instruction asks (READ);
 ## - the 3D portrait (GDR_QPS_PICTURE through the qpt_face.ddj disc): a 64x64
 ##   BufRender (0x9edae0(0x40, 0x40)) of a model built from the record's
 ##   model id (+0x38) -- not the spawned body: 0x6d80d0 loads the id into the
@@ -81,8 +87,12 @@ class_name HudQuickParty
 ## at 0xd82f00) and the record's byte +0x58 is 0, then only when the game
 ## option byte +0x12 is set; EFFECT_MP likewise with +0x13; at faraway level 5
 ## both are hidden. The effect is an 8-frame sprite (4 x 2 frames of 64x32 in
-## a 256x64 sheet, Speed 100, loop -- the layout's own fields); one frame per
-## 100 ms is INFERRED from "Speed".
+## a 256x64 sheet, Speed 100, loop -- the layout's own fields). The sprite
+## start 0x654730(t) takes t % (frames x period), sets the frame to t / period
+## and arms a timer at the period (0xb93320(1, +0x34c)); the slot passes the
+## player block's counter (window 0xb's +0x460, 0x6d90f2..0x6d9144), so both
+## blink in phase. That the period +0x34c is the layout's "Speed" 100 (ms) is
+## INFERRED; the phase here is the clock's, not the player block's.
 ##
 ## BUFFS (READ, 0x6d9250's tail and 0x6d9010): with game option +0x08 set and
 ## the member spawned in this client (0x9c35e0), the member's skill objects
@@ -91,7 +101,9 @@ class_name HudQuickParty
 ## (0x7fabe0(0xc,0xc)), the target window's viewer calls read in round 638 --
 ## and a 1000 ms timer (0xb93320(1, 0x3e8)) keeps it live; otherwise the
 ## viewer is cleared (0x7fbcf0) and the timer killed (0xb93170(1)).
-## 0x7fab90(1, 1) is also called; what it sets is OPEN.
+## 0x7fab90(1, 1) caps each list at ONE row (+0x36c / +0x370, tested by the
+## adds 0x7fd020 and 0x7fd2e0; READ in round 715's review): at most 6 buffs
+## and 6 states, the rest dropped in add order.
 ##
 ## SELECTION (READ): the world's SetTarget hands the selected id to the board
 ## (0x6d9610 -> +0x37c); every frame (0x6db1a0) the slot whose member's
@@ -102,11 +114,14 @@ class_name HudQuickParty
 ## 0x6d8500) finds the member's object by the slot's name (0x9c3640), selects
 ## it when found (0x78f5f0) and plays `prim\snd\ui\uiwinopen.wav` either way.
 ##
-## GAME OPTIONS (OPEN): bytes +0x08 (INFERRED: "Quick Party View Buff Status",
-## UIIT_MSG_QUICK_PARTY_CHARACTER_BUFF), +0x12 and +0x13 live in
-## Setting\SROptionSet.dat; their defaults with no file are not read and
-## OpenSRO has no Game options page for them. OURS: all three on -- the buff
-## row and the 73-px step are what the user's screenshots 03 and 04 show.
+## GAME OPTIONS (READ, round 715's review): the block at CGame+0x543 is
+## built by 0x7776c0 -- in CGame's constructor (0x848ca0), on the stack copy
+## before SROptionSet.dat is loaded (0x8484f9, then 0x501720 / 0x835250), and
+## before CGInterface reads the file (0x77c190) -- which writes +0x08 = 1 and
+## +0x12 = +0x13 = 0. So with no saved options the buff row is on (and the
+## rows step 73) and both caution effects are off. +0x08's meaning ("Quick
+## Party View Buff Status", UIIT_MSG_QUICK_PARTY_CHARACTER_BUFF) stays
+## INFERRED; OpenSRO has no Game options page to change them yet.
 
 const REGISTRY_NAME := "GDR_QUICKPARTYBOARD"
 ## OURS: where the board goes with no ginterface entry (the entry's own 4,137).
@@ -150,6 +165,8 @@ const MASTERY_POSITIONS := [Vector2(-3, 39), Vector2(15, 39)]
 const BUFF_COLUMNS := 6
 const BUFF_PITCH := Vector2(15, 15)
 const BUFF_ICON := Vector2(12, 12)
+## 0x7fab90(1, 1): one row a list (READ, round 715's review).
+const BUFF_ROWS := 1
 const BUFF_REFRESH_MS := 1000
 const SELECT_SOUND := "prim\\snd\\ui\\uiwinopen.wav"
 
@@ -170,19 +187,21 @@ var _mastery_table: Dictionary = {}
 var _mastery_loaded := false
 var _last_buff_ms := -BUFF_REFRESH_MS
 
-## The game option bytes (OPEN defaults, OURS on; see the header).
+## The game option bytes, at 0x7776c0's defaults (READ; see the header).
 var show_buffs := true
-var hp_caution := true
-var mp_caution := true
+var hp_caution := false
+var mp_caution := false
 
 ## Injected by the world (each optional):
 ## the player's name (the rebuild skips the member who has it);
 var own_name: Callable
 ## the player's world position (Vector3);
 var player_position: Callable
-## the player's region and region-local position: {region: Vector2i(x, y),
-## local: Vector3}, or {} when unknown;
-var player_region_local: Callable
+## the player's region (Vector2i(x, y); x < 0 when unknown) and region-local
+## position (Vector3), for the record distances -- two value returns, so a
+## frame allocates nothing;
+var player_region: Callable
+var player_local: Callable
 ## a member's spawned body (Node3D) by JID, or null;
 var member_body: Callable
 ## the JID of the selected object when it is a spawned player, else 0;
@@ -263,6 +282,7 @@ func setup() -> void:
 	_build_lock()
 	if state != null and not state.changed.is_connected(rebuild):
 		state.changed.connect(rebuild)
+		state.member_updated.connect(_on_member_updated)
 	rebuild()
 
 func _build_lock() -> void:
@@ -384,6 +404,14 @@ func rebuild() -> void:
 	_last_buff_ms = -BUFF_REFRESH_MS
 	_refresh_buffs()
 	rebuilt.emit()
+
+## One member's record changed in place (0x3864 kind 6): that slot alone is
+## refilled (its gauges, flag, icons and, on a new model id, its portrait).
+func _on_member_updated(jid: int) -> void:
+	var s := slot_for(jid)
+	var m := state.member(jid) if state != null else null
+	if s != null and m != null:
+		_fill(s, m)
 
 func _make_slot() -> QuickSlot:
 	var s := QuickSlot.new()
@@ -512,6 +540,7 @@ func _add_buffs(s: QuickSlot) -> void:
 	s.buffs = HudTargetBuffs.new(_builder, buff_catalog)
 	s.buffs.name = "QuickPartyBuffs"
 	s.buffs.set_grid(BUFF_COLUMNS, BUFF_PITCH, BUFF_ICON)
+	s.buffs.set_row_caps(BUFF_ROWS, BUFF_ROWS)
 	var holder := s.built.get_node_or_null("GDR_QPS_PARTY_BUFF") as Control
 	s.buffs.position = holder.position if holder != null else Vector2(32, 39)
 	s.buffs.visible = false
@@ -539,19 +568,29 @@ func _fill(s: QuickSlot, m: PartyNet.Member) -> void:
 		s.model_id = m.ref_obj_id
 		_build_portrait(s)
 
+## 0x6d8630 + 0x6d93fc..0x6d951b, see the header: the second icon is hidden
+## by the reset and shown iff its record exists; the first is shown when its
+## record exists and otherwise left as it was (hiding the second instead).
 func _fill_masteries(s: QuickSlot, ids: Array) -> void:
 	_load_masteries()
-	for i in 2:
-		var icon := s.masteries[i] if i < s.masteries.size() else null
-		if icon == null:
-			continue
-		var rec: MasteryReader.Mastery = _mastery_table.get(int(ids[i]))
-		icon.visible = rec != null
-		if rec == null:
-			continue
-		if _builder != null and rec.icon_path != "":
-			icon.texture = _builder.load_texture(rec.icon_path)
-		icon.tooltip_text = _text(rec.name_code, rec.name_code)
+	if s.masteries.size() < 2:
+		return
+	var first := s.masteries[0]
+	var second := s.masteries[1]
+	second.visible = false
+	var rec1: MasteryReader.Mastery = _mastery_table.get(int(ids[0]))
+	var rec2: MasteryReader.Mastery = _mastery_table.get(int(ids[1]))
+	if rec1 != null:
+		_mastery_art(first, rec1)
+		first.visible = true
+	if rec2 != null:
+		_mastery_art(second, rec2)
+	second.visible = rec2 != null
+
+func _mastery_art(icon: TextureRect, rec: MasteryReader.Mastery) -> void:
+	if _builder != null and rec.icon_path != "":
+		icon.texture = _builder.load_texture(rec.icon_path)
+	icon.tooltip_text = _text(rec.name_code, rec.name_code)
 
 func _load_masteries() -> void:
 	if _mastery_loaded:
@@ -644,12 +683,9 @@ func member_distance_sq(m: PartyNet.Member) -> float:
 	if body != null and is_instance_valid(body) and body.is_inside_tree() and player_position.is_valid():
 		var p: Vector3 = player_position.call()
 		return p.distance_squared_to(body.global_position)
-	if not player_region_local.is_valid():
+	if _here_region.x < 0:
 		return INF
-	var pl: Dictionary = player_region_local.call()
-	if pl.is_empty():
-		return INF
-	return record_distance_sq(pl["region"], pl["local"], m.region, float(m.x), float(m.z))
+	return record_distance_sq(_here_region, _here_local, m.region, float(m.x), float(m.z))
 
 func set_faraway(s: QuickSlot, level: int) -> void:
 	# 0x6d86e0 sets the art on every call; here only a change re-arts the
@@ -672,14 +708,22 @@ func _process(_delta: float) -> void:
 		return
 	tick(Time.get_ticks_msec())
 
+## The player's region / local position for this frame's record distances.
+var _here_region := Vector2i(-1, -1)
+var _here_local := Vector3.ZERO
+
 ## One frame of vslot_012 (the board's and each slot's): selection, the
-## faraway overlay, the caution effects, and the buffs' second timer.
+## faraway overlay, the caution effects, and the buffs' second timer. Each
+## slot is paired with its member by its own JID (0x6d7f40 -> 0x992260), and
+## the frame allocates nothing.
 func tick(now_ms: int) -> void:
 	var sel: int = int(selected_jid.call()) if selected_jid.is_valid() else 0
-	var members := shown_members()
-	for i in mini(members.size(), _slots.size()):
-		var s := _slots[i]
-		var m := members[i]
+	_here_region = player_region.call() if player_region.is_valid() else Vector2i(-1, -1)
+	_here_local = player_local.call() if player_local.is_valid() else Vector3.ZERO
+	for s in _slots:
+		var m := state.member(s.jid)
+		if m == null:
+			continue
 		if s.select_glow != null:
 			var glow := sel != 0 and sel == s.jid
 			if glow != s.select_glow.visible:
@@ -698,13 +742,15 @@ func _caution(s: QuickSlot, now_ms: int) -> void:
 		hp_on = false
 		mp_on = false
 	var frame := (now_ms / CAUTION_FRAME_MS) % CAUTION_FRAMES
-	for pair in [[s.hp_effect, hp_on and hp_caution], [s.mp_effect, mp_on and mp_caution]]:
-		var fx := pair[0] as TextureRect
-		if fx == null:
-			continue
-		fx.visible = bool(pair[1])
-		if fx.visible:
-			_caution_frame(fx, frame)
+	_caution_show(s.hp_effect, hp_on and hp_caution, frame)
+	_caution_show(s.mp_effect, mp_on and mp_caution, frame)
+
+static func _caution_show(fx: TextureRect, on: bool, frame: int) -> void:
+	if fx == null:
+		return
+	fx.visible = on
+	if on:
+		_caution_frame(fx, frame)
 
 static func _caution_frame(fx: TextureRect, frame: int) -> void:
 	var atlas := fx.texture as AtlasTexture

@@ -193,6 +193,12 @@ var catalog: SkillBuffCatalog = null
 var grid_columns := COLUMNS
 var grid_pitch := PITCH
 var grid_icon := ICON_SIZE
+## Each list's row cap (0x7fab90(main, second) -> +0x36c / +0x370): an add
+## past columns x rows is dropped (0x7fd020's tests at 0x7fd0a0..0x7fd0eb,
+## 0x7fd2e0's at 0x7fd31b). 0 is no cap -- the target window never calls
+## 0x7fab90, so its viewer has none (round 715's review).
+var main_row_cap := 0
+var second_row_cap := 0
 var _main: Array = []
 var _second: Array = []
 ## Where an icon's full-size Image comes from (tests replace it).
@@ -215,6 +221,11 @@ func set_grid(columns: int, pitch: Vector2, icon: Vector2) -> void:
 	grid_pitch = pitch
 	grid_icon = icon
 	_layout()
+
+## 0x7fab90: the two lists' row caps (0 = none).
+func set_row_caps(main_rows_cap: int, second_rows_cap: int) -> void:
+	main_row_cap = maxi(main_rows_cap, 0)
+	second_row_cap = maxi(second_rows_cap, 0)
 
 ## Whether the catalog can say which list a skill goes to. Until it can, the
 ## viewer is left as it is (OURS: retail's reference data is always loaded).
@@ -280,11 +291,16 @@ func _add(skill_id: int, token: int, level: int = 0) -> void:
 		info = {"icon": StatusNet.icon_path(bit), "bbuf": true}
 	elif catalog != null:
 		info = catalog.info(skill_id)
+	var main_list := not bool(info.get("bbuf", false))
+	var cap := main_row_cap if main_list else second_row_cap
+	if cap > 0 and (_main if main_list else _second).size() >= grid_columns * cap:
+		# The list is full: the entry is dropped (0x7fb070 and skip).
+		return
 	var e := Entry.new()
 	e.skill_id = skill_id
 	e.token = token
 	e.level = level
-	e.main_list = not bool(info.get("bbuf", false))
+	e.main_list = main_list
 	e.slot = _make_slot(skill_id, info)
 	add_child(e.slot)
 	(_main if e.main_list else _second).append(e)

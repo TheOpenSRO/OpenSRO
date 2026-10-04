@@ -21315,12 +21315,14 @@ func _build_quick_party() -> void:
 	_hud_quick_party.own_name = func() -> String: return NetClient.current_character_name
 	_hud_quick_party.player_position = func() -> Vector3:
 		return player.global_position if player != null else Vector3.ZERO
-	_hud_quick_party.player_region_local = _party_player_region_local
+	_hud_quick_party.player_region = func() -> Vector2i: return _party_here_region
+	_hud_quick_party.player_local = func() -> Vector3: return _party_here_local
 	_hud_quick_party.member_body = func(jid: int) -> Node3D:
-		return _party_body(jid) as Node3D
+		return _party_body_for_board(jid) as Node3D
 	_hud_quick_party.selected_jid = _party_selected_jid
 	_hud_quick_party.portrait_body = _party_portrait_body
 	_hud_quick_party.buffs_of = _party_member_buffs
+	NetClient.party.changed.connect(_forget_party_bodies)
 	_hud_quick_party.member_clicked.connect(_on_quick_party_member_clicked)
 	_hud_quick_party.rebuilt.connect(func() -> void:
 		if _hud_panels != null and _hud_panels.party_pane != null:
@@ -21329,24 +21331,20 @@ func _build_quick_party() -> void:
 	if not NetClient.party.changed.is_connected(_refresh_own_leader_flag):
 		NetClient.party.changed.connect(_refresh_own_leader_flag)
 
-## The player's region and region-local position (the minimap's own lookup,
-## _refresh_minimap), for the board's record distances: {} when unknown.
-func _party_player_region_local() -> Dictionary:
-	if player == null:
-		return {}
-	var pos := player.global_position
-	var group := _minimap_group
-	var region := _minimap_region
-	if group == null or not is_instance_valid(group) or not group.is_inside_tree():
-		var pair := _nav_graph_for(pos)
-		if pair.is_empty():
-			return {}
-		group = pair[1]
-		var parts := String(group.name).trim_prefix("RealTerrain_").split("_")
-		if parts.size() < 2:
-			return {}
-		region = Vector2i(parts[0].to_int(), parts[1].to_int())
-	return {"region": region, "local": group.to_local(pos)}
+## The player's region and region-local position this frame (the minimap's
+## own lookup, _refresh_minimap, which runs just before _tick_party_hud), for
+## the board's record distances; region x < 0 when unknown. Kept in fields so
+## the board's per-frame reads allocate nothing.
+var _party_here_region := Vector2i(-1, -1)
+var _party_here_local := Vector3.ZERO
+
+func _update_party_here() -> void:
+	_party_here_region = Vector2i(-1, -1)
+	if player == null or _minimap_group == null or not is_instance_valid(_minimap_group) \
+			or not _minimap_group.is_inside_tree() or _minimap_group.name != _minimap_group_name:
+		return
+	_party_here_region = _minimap_region
+	_party_here_local = _minimap_group.to_local(player.global_position)
 
 ## The selected object's JID when it is a spawned player other than this one
 ## (the id the board compares, +0x37c), else 0.
@@ -21370,7 +21368,7 @@ func _party_portrait_body(ref_obj_id: int) -> Array:
 
 ## A spawned member's buffs and abnormal states (the target window's source).
 func _party_member_buffs(jid: int) -> Array:
-	var b := _party_body(jid)
+	var b := _party_body_for_board(jid)
 	if b == null or not b.has_meta("character_id"):
 		return []
 	return _owner_buffs_and_states(_fx_owner_key(int(b.get_meta("character_id")), SkillNet.OWNER_CHARACTER))
@@ -21398,6 +21396,8 @@ func _select_quick_party_member(n: int) -> String:
 ## Once a rendered frame: the player block's yellow glow follows the
 ## selection (0x7b7cbe: shown exactly when the selected id is the player's).
 func _tick_party_hud() -> void:
+	if _hud_quick_party != null and _hud_quick_party.visible:
+		_update_party_here()
 	if _hud_player_info == null:
 		return
 	var own := _own_id()
@@ -21424,18 +21424,27 @@ func _party_own_jid() -> int:
 	var own := _own_id()
 	return own & 0xffffffff if own >= 0 else 0
 
-## The spawned player a party JID or inviter id names, or null. The party
-## boxes ask for every member every frame (round 715), so a found character
-## id is remembered per JID and checked against _other_bodies before use;
-## a miss scans again.
+## The spawned player a party JID or inviter id names, or null. Exact: a
+## scan of the bodies each call.
+func _party_body(jid: int) -> Node:
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) == jid:
+			var b = _other_bodies[id]
+			if b != null and is_instance_valid(b):
+				return b as Node
+	return null
+
+## The party boxes' own lookup (round 715): they ask for every member every
+## frame, so a found character id is remembered per JID (checked against
+## _other_bodies before use), and a member not spawned here is looked for
+## again only 250 ms after a miss (OURS: a member who spawns gets their box's
+## buffs and live position within a quarter second). Only the board uses it;
+## both tables are dropped when the party is left.
 var _party_body_ids: Dictionary = {}
-## JID -> the msec of a scan that found nothing: a member not spawned here is
-## looked for again 250 ms later, not every frame (OURS: a member who spawns
-## gets their box's buffs and live position within a quarter second).
 var _party_body_misses: Dictionary = {}
 const PARTY_BODY_MISS_MS := 250
 
-func _party_body(jid: int) -> Node:
+func _party_body_for_board(jid: int) -> Node:
 	var known = _party_body_ids.get(jid)
 	if known != null and _other_bodies.has(known):
 		var kb = _other_bodies[known]
@@ -21444,15 +21453,18 @@ func _party_body(jid: int) -> Node:
 	var now := Time.get_ticks_msec()
 	if now - int(_party_body_misses.get(jid, -PARTY_BODY_MISS_MS)) < PARTY_BODY_MISS_MS:
 		return null
-	for id in _other_bodies:
-		if (int(id) & 0xffffffff) == jid:
-			var b = _other_bodies[id]
-			if b != null and is_instance_valid(b):
-				_party_body_ids[jid] = id
-				_party_body_misses.erase(jid)
-				return b as Node
-	_party_body_misses[jid] = now
-	return null
+	var b := _party_body(jid)
+	if b != null:
+		_party_body_ids[jid] = int(b.get_meta("character_id", -1))
+		_party_body_misses.erase(jid)
+	else:
+		_party_body_misses[jid] = now
+	return b
+
+func _forget_party_bodies() -> void:
+	if not NetClient.party.in_party:
+		_party_body_ids.clear()
+		_party_body_misses.clear()
 
 func _party_is_spawned(world_id: int) -> bool:
 	return _party_body(world_id) != null
