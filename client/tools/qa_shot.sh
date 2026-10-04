@@ -72,7 +72,7 @@
 #                     World3D -> Login -> CharacterSelect -> World3D, the
 #                     front-end screens signing back in with the QA account
 #                     (needs --server)
-#   --second-client "K=V;K=V"  (round 711; needs --server) start a second,
+#   --second-client "K=V|K=V"  (round 711; needs --server) start a second,
 #                     headless client against the same server before this
 #                     one, with these OPENSRO_QA_* settings on top (its own
 #                     OPENSRO_QA_ACCOUNT / _CHARACTER, an OPENSRO_QA_PARTY
@@ -337,7 +337,9 @@ if [ -n "$SECOND" ]; then
     exit 2
   fi
   SECOND_ENV=()
-  IFS=';' read -ra SECOND_KV <<< "$SECOND"
+  # Split on '|': the settings themselves may hold ';' (OPENSRO_QA_PARTY's
+  # step list, OPENSRO_QA_COMMANDS).
+  IFS='|' read -ra SECOND_KV <<< "$SECOND"
   for kv in "${SECOND_KV[@]}"; do
     [ -n "$kv" ] && SECOND_ENV+=("$kv")
   done

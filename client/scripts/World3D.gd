@@ -21434,6 +21434,7 @@ func _qa_party_do(step: String) -> void:
 				_hud_panels.party_pane.press_set()
 		"set":
 			var v := arg.split(",")
+			_hud_panels.open("party")
 			var dlg := _hud_panels.open_party_settings()
 			if dlg != null and v.size() == 3:
 				dlg.choose("exp", 0 if v[0] == "1" else 1)

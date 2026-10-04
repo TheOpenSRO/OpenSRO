@@ -79,6 +79,16 @@ func build(builder: UiBuilder, who: String, party_flags: int) -> bool:
 	var layout: UiLayoutParser.LayoutDef = builder.load_layout(LAYOUT)
 	if layout == null:
 		return false
+	# CIFMessageBox::Create builds the file's "Create" (the background tile,
+	# GDR_MSGBOX_BG 16,40,284,122) before the mode's section
+	# (docs/protocol/message_box.md). Kind 6 resizes only the box; that the
+	# tile keeps its authored size is INFERRED.
+	# (get_section falls back to the first section: build "Create" only when
+	# the file has one.)
+	var base: Control = builder.build_section(layout, "Create") if layout.sections.has("Create") else null
+	if base != null:
+		add_child(base)
+		UiBuilder.settle_authored_rects(base)
 	var root := builder.build_section(layout, SECTION)
 	if root == null:
 		return false
@@ -149,13 +159,15 @@ func _black_box(root: Control, control_name: String, at: Vector2, text: String) 
 	box.size = box.texture.get_size() if box.texture != null else Vector2(100, 24)
 	var label := Label.new()
 	label.name = "Text"
+	# The static's own alignment (MsgBoxINIF's MESSAGE3/4: HAlign 1, no VAlign
+	# so 0, top) in the inset 0x6527d0 is given: left 3, top 7, right 3,
+	# bottom 6.
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.text = text
-	# The inset 0x6527d0 is given: left 3, top 7, right 3, bottom 6.
 	label.position = Vector2(3, 7)
-	label.size = box.size - Vector2(6, 13)
+	label.size = Vector2(maxf(0.0, box.size.x - 6.0), maxf(0.0, box.size.y - 13.0))
 	box.add_child(label)
 	root.add_child(box)
 
