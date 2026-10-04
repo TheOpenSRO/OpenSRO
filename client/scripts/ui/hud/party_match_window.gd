@@ -142,6 +142,7 @@ func _init(builder: UiBuilder, match_state: PartyMatchState, party_state: PartyS
 	state.settings_lock.connect(_on_settings_lock)
 	if party != null:
 		party.changed.connect(_on_party_changed)
+		party.party_event.connect(_on_party_event)
 
 ## Lets go of everything this controller hooked (HudPanels' exit): the party
 ## state is NetClient's and lives for the process, so a controller left
@@ -149,6 +150,8 @@ func _init(builder: UiBuilder, match_state: PartyMatchState, party_state: PartyS
 func dispose() -> void:
 	if party != null and party.changed.is_connected(_on_party_changed):
 		party.changed.disconnect(_on_party_changed)
+	if party != null and party.party_event.is_connected(_on_party_event):
+		party.party_event.disconnect(_on_party_event)
 	for sig in state.get_signal_list():
 		for c in state.get_signal_connection_list(sig["name"]):
 			state.disconnect(sig["name"], c["callable"])
@@ -267,6 +270,7 @@ func _build_search() -> void:
 			for i in 5:
 				_combo.add_item(_text(PartyMatchNet.PURPOSE_KEYS[i], PartyMatchNet.PURPOSE_FALLBACKS[i]), i)
 			_combo.select(PartyMatchNet.PURPOSE_ALL)
+			_build_combo_text(host_combo)
 	var div := node("GDR_PARTYMATCH_SEARCH_LEVEL_DIV_STA")
 	if div != null and _builder != null:
 		_builder.set_static_text(div, "~")
@@ -286,6 +290,66 @@ func _build_search() -> void:
 	var dumy := node("GDR_PARTYMATCH_SLOTLIST_DUMY")
 	if dumy != null and _builder != null:
 		_builder.set_static_text(dumy, "")
+
+## **The Purpose value, right-aligned and clipped on its LEFT** (round 718).
+## The user, 2026-10-04: "in the purpose tab the original game has the text
+## aligned to the right and then hides the left of the text that would
+## overflow ... let's replicate it for now". The right alignment is READ
+## (round 718 review): the window's create sets the combo's text-board
+## alignment to 2 (0x73b062..0x73b073), which CIFComboBox's 0x6321e0
+## forwards to its text static, made at {5, 0, W-30, H}
+## (CIFComboBox::vslot_010 0x632937..0x63294f) and laid by 0x64d9b0 case 2
+## (x = right - w); a code-made static's VAlign is 1 (CTextBoard ctor
+## 0x655c28..0x655c3b), so the vertical centring is READ too. The LEFT clip
+## of an overflowing value is the user's description; CIFStatic's draw
+## clipping was not read. A Godot Button clips a too-long text on its right (TextLine "Clip
+## right"), so the OptionButton keeps the clicks and the list and draws no
+## text; the value is a Label inside a clipping box over the combo's READ
+## text rect ({5, 0, W-30, H}, OptionVideoPage.combo_text_rect), placed with
+## its right edge on the box's: a wider text starts left of the box and its
+## left part is cut. Vertically centred, as the combo's value was.
+var _combo_clip: Control = null
+var _combo_label: Label = null
+
+func _build_combo_text(host: Control) -> void:
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color", "font_disabled_color"]:
+		_combo.add_theme_color_override(c, Color(0, 0, 0, 0))
+	_combo_clip = Control.new()
+	_combo_clip.name = "PurposeText"
+	_combo_clip.clip_contents = true
+	_combo_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var r := OptionVideoPage.combo_text_rect(host.size)
+	_combo_clip.position = r.position
+	_combo_clip.size = r.size
+	_combo_label = Label.new()
+	_combo_label.name = "Value"
+	_combo_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_combo_label.clip_text = false
+	var font := _builder.font_at(0) if _builder != null else null
+	if font != null:
+		_combo_label.add_theme_font_override("font", font)
+	_combo_label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	_combo_label.add_theme_color_override("font_color", Color.WHITE)
+	UiBuilder.crisp_text(_combo_label)
+	_combo_clip.add_child(_combo_label)
+	host.add_child(_combo_clip)
+	_combo.item_selected.connect(func(_i: int) -> void: _update_combo_text())
+	_update_combo_text()
+
+func _update_combo_text() -> void:
+	if _combo == null or _combo_label == null:
+		return
+	_combo_label.text = _combo.get_item_text(_combo.selected) if _combo.selected >= 0 else ""
+	var need := _combo_label.get_combined_minimum_size()
+	_combo_label.size = need
+	_combo_label.position = Vector2(_combo_clip.size.x - need.x, floorf((_combo_clip.size.y - need.y) * 0.5))
+
+## The Purpose value's text as drawn, and how many pixels of it the clipping
+## box hides on its left (tests).
+func combo_text_overflow() -> float:
+	if _combo_label == null or _combo_clip == null:
+		return 0.0
+	return maxf(0.0, -_combo_label.position.x)
 
 func _build_scroll() -> void:
 	var host_scroll := node("GDR_PARTYMATCH_SCROLL")
@@ -692,6 +756,15 @@ func advance(ms: int) -> void:
 func on_page() -> void:
 	_filtered = null
 	_scroll = 0
+
+## A 0x3864 event (round 718): the registration follows the party as
+## UI_PARTY::FUN_00886b10 moves it (PartyMatchState.on_party_event).
+func _on_party_event(kind: int, jid: int) -> void:
+	var who := ""
+	if kind == PartyNet.EVENT_LEADER:
+		var m := party.member(jid)
+		who = m.member_name if m != null else ""
+	state.on_party_event(kind, jid != 0 and jid == party.own_jid, party.in_party, party.members.size(), who)
 
 ## 0xb06b for another number: the record leaves the displayed list too
 ## (0x73a700).

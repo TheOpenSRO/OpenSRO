@@ -88,6 +88,7 @@ static func do(panels: HudPanels, verb: String, arg: String) -> bool:
 				if i == 1:
 					if w._combo != null:
 						w._combo.select(int(f[1]))
+						w._update_combo_text()
 					continue
 				var e := w.node(names[i]) as LineEdit
 				if e != null:
