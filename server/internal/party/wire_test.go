@@ -112,6 +112,10 @@ func TestEncodersMatchTheFixtures(t *testing.T) {
 		"b06d_refused":             EncodeJoinResult(JoinRefused),
 		"b06d_noreply":             EncodeJoinResult(JoinNoReply),
 		"b06d_err_level":           EncodeRefusal(0x2c1e),
+		// Round 712 (S2): the Item Auto Share notice (itemnotice.go).
+		"3068_expendable": ItemNotice{RecipientJID: 201, RefItemID: 62, Class: ItemNoticeExpendable, Amount: 5}.Encode(),
+		"3068_other":      ItemNotice{RecipientJID: 101, RefItemID: 3617, Class: ItemNoticeOther}.Encode(),
+		"3068_gold":       ItemNotice{RecipientJID: 201, RefItemID: 1, Class: ItemNoticeGold, Amount: 1234}.Encode(),
 	}
 	files, _ := filepath.Glob(filepath.Join(fixtureDir, "*.hex"))
 	if len(files) != len(cases) {

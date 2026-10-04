@@ -350,7 +350,7 @@ party").**
 
 | control | shows |
 |---|---|
-| 21 DESC_PML | `UIIT_STT_PARTYMATCH_JOIN_REQUEST` with the requester's name: "[%s]has requested to join this party. Confirm?", the name in (255,239,218) by the string's own `<font>` |
+| 21 DESC_PML | `UIIT_STT_PARTYMATCH_JOIN_REQUEST` with the requester's name: "[%s]has requested to join this party. Confirm?", the name in (239,218,164): the string's own `<font color="255,239,218,164">`, whose four numbers are A,R,G,B (MEASURED, round 714 review B2: the textuisystem census, screenshot 08) |
 | 34 / 35 (88,121 / 130,121, 32x32, on `pt_icon_frame02.ddj`) | the requester's two masteries' icons, from the two mastery ids of the `0x706d` message (`+0x7c4`/`+0x7c8`, not the member record's) (`0x73fed0` → `0x937010` → the mastery's icon), with the mastery name as the tooltip; an id with no record leaves the frame empty |
 | 30 LEVEL | `%d` |
 | 31 RACE | CHN / EUR from the requester's model id (`+0x9c`) |
@@ -419,8 +419,13 @@ request (`party_protocol.md`, Timers).
 - The rebuild (`0x6dae90`):
   - with no party, it destroys every slot and hides;
   - otherwise it makes one slot per member, **skipping the player** (by name);
-  - each slot is a 122x40 child (`0x6da110`) on `interface\ifcommon\window_all.ddj`, UV
-    (0.216797, 0.138672)–(0.842773, 0.723633);
+  - each slot is a 122x40 child (`0x6da110`) on `interface\ifcommon\window_all.ddj`, the
+    atlas slice **u 0.723633–0.842773, v 0.138672–0.216797** (741..863 x 71..111 of the
+    1024x512 atlas: the round-faced box). **Corrected in round 715**: this line first read
+    "UV (0.216797, 0.138672)–(0.842773, 0.723633)", the same four floats (`0xda5438`
+    0.723633, `0xda973c` 0.842773, `0xda9740` 0.138672, `0xda9738` 0.216797, READ from the
+    exe) paired the wrong way -- a 641x300 region of unrelated panels; the 122x40 the pairing
+    above gives is the slot's own size;
   - slots sit at x = board x + 13 + column × 133;
   - **y steps 73 px when the game option byte `+0x08` (`0x4f9d00`) is set, else 56** (INFERRED:
     that option is "Quick Party View Buff Status", `UIIT_MSG_QUICK_PARTY_CHARACTER_BUFF`, since
@@ -456,15 +461,26 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 - `0x6d8bf0` renders the member's model from its "Bip01 Head" bone.
 - Offsets 0.2 and 6.5, field 30, light terms 0.58 / 0.3, far 1000. These are the player mini
   info portrait's constants (`docs/protocol/player_mini_info.md`).
-- It needs the member's model (`+0x3e4`). With the member not spawned in the client, nothing is
-  drawn and the disc stays black (screenshot 04).
-- The model is rebuilt when the member record's model id `+0x38` changes (`0x6d80d0`).
+- It needs the member's model (`+0x3e4`). ~~With the member not spawned in the client, nothing
+  is drawn and the disc stays black (screenshot 04).~~ **Corrected in round 715:** the model is
+  the slot's OWN, not the spawned body's: `0x6d80d0` loads the record's model id into the
+  animation object embedded at `+0x3e0` (whose `+4`, i.e. `+0x3e4`, is the model `0x6d8bf0`
+  draws), plays ANI_POSE (`0x3c`) on it and turns it to 0.1 rad (`0xe1b7fc`). Nothing in the
+  chain looks the member up in the world, so a member has a face whether spawned or not (bare:
+  the id carries no equipment). Screenshots 03, 04, 11 and 12 show every disc black -- the
+  player's own mini-info portrait included, whose render is certain -- so they were taken where
+  that client's BufRender draws nothing; they are not evidence about the rule.
+- The model is rebuilt when the member record's model id `+0x38` changes (`0x6d80d0`), and the
+  render runs only while the dirty byte `+0x3dc` is set (set by `0x6d7f20` after a model change,
+  checked by the slot's vslot_012 `0x6d90e0`; cleared at `0x6d8bf0`'s start, re-set while the
+  model is not ready).
 
 **The "far away" overlay (READ, `CIFQuickPartyWnd::vslot_012`, `0x6db380`, and `0x6d86e0`).**
 - Each frame, for each member, it takes the squared 3D distance between the player and the
   member (`0x9ed1e0`: region-aware dx² + dy² + dz²).
 - It uses the member's live object position when spawned, else the record's last position
-  (`+0x5a` region, `+0x5c` x, `+0x64` z).
+  (`+0x5a` region, `+0x5c` x, `+0x64` z) **at y = 0** -- the record's y is not read (round 715:
+  `local_8` stays 0 in `0x6db380`).
 - **Only in an exp-sharing party (exp mode = 1)** it maps the distance to a level. In a
   free-for-all party the level is always 0.
 
@@ -490,9 +506,11 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 **Buffs (READ, `0x6d9250`, `0x6d8b20`).**
 - A slot shows buffs only when the buff option above is on **and** the member's object exists in
   the client (`0x9c35e0` on the member id, a CICPlayer). The buffs are then read from that object
-  (`0x9d25e0`) into the viewer (`0x6d9010`: icons 15x15, 12 per row, by the calls
-  `0x7fabc0(15,15)`, `0x7fabe0(12,12)`, `0x7fab90(1,1)`, `0x7fabb0(6)`; the exact meaning of
-  each argument is INFERRED).
+  (`0x9d25e0`) into the viewer (`0x6d9010`: `0x7fab90(1,1)`, `0x7fabb0(6)`, `0x7fabc0(15,15)`,
+  `0x7fabe0(12,12)`). **Round 715:** the target window's viewer makes the same calls
+  (`0x7fabb0(8)`, `0x7fabc0(0x17,0x17)`, `0x7fabe0(0x14,0x14)`), read in round 638 as per-row
+  count, pitch and icon size, so here **6 a row at a 15-px pitch, 12x12 icons** (the earlier
+  "icons 15x15, 12 per row" swapped them); `0x7fab90(1,1)` caps each list at one row -- at most 6 buffs and 6 states (READ, round 715's review: the adds `0x7fd020` / `0x7fd2e0` test `+0x36c` / `+0x370`).
 - Otherwise the viewer is cleared.
 - So **"can't see buffs when far" means the member is not spawned in the player's client**. That
   is the spawn range, not the 1000-unit fade.
@@ -515,14 +533,21 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 - The world's SetTarget (`0x780ee0`) hands every selected id to the board (`0x6d9610`).
 - Each frame (`0x6db1a0`) a slot whose member's object is the selected object shows
   GDR_QPS_SELECT, and every other slot hides it.
-- Selecting anything else (ground, monster, NPC, another player, nothing) clears it.
+- Selecting anything else (a monster, an NPC, another player, the player, a deselect) clears it.
+  **A ground click is not a selection (round 715, READ):** the left press `0x793570` sends a
+  ground click to `UI_SILKMALL::FUN_0078f8d0`, which never calls the deselect `0x778650(0)` or
+  `0x780ee0`; it moves the ring (`ground_markers.md`). So the glow stays through a walk. (This
+  line first listed "ground" among the things that clear it, as the user's request says.)
 - MEASURED: `qpt_grope_select.ddj` is a 132x48 frame in teal/cyan ((63,164,149), (0,255,229),
   (81,255,243)). This is the glow in screenshot 11, and what the user calls "blue".
 - **A left click on a slot** (vslot_030 `0x6d8500`) looks the member up by name (`0x9c3640`).
   When the member is spawned it selects them (`0x78f5f0`) and plays `prim\snd\ui\uiwinopen.wav`.
   A member who is not spawned cannot be selected from the slot.
 - **Ctrl+2..8** select slot N−2's member the same way, and Ctrl+1 selects the player
-  (`0x77f230`).
+  (`0x77f230`). For a member not spawned, `0x77f230` still calls `0x78f5f0` with id 0 (it does not
+  test `0x9c3640`'s result, `0x77f2fa..0x77f30e`), so retail sends `0x7045` with 0 and the server
+  refuses it; the slot click sends only when found. OpenSRO's selection is local (round 622), so
+  nothing is sent either way (round 715's review).
 
 **The player's own yellow glow (READ).**
 - The player mini info shows GDR_PMI_SELECT (id 200, `interface\playerminiinfo\pmi_select.ddj`,
@@ -607,7 +632,8 @@ anyone 1; the party clear `0x998be0` never rewrites them.
    - the button enable rules, the Invite pre-checks, and the portrait borrowing.
 4. ~~**Settings dialog:**~~ (built, round 711) not built. Missing are the client-side preference block (exp/item/anyone)
    that the create request reads, and a `CIFCheckBox` builder.
-5. **Quick party board:** not built at all. That covers:
+5. ~~**Quick party board:**~~ (built, round 715: `ui/hud/hud_quick_party.gd`; the game option
+   bytes at `0x7776c0`'s defaults, READ: +0x08 on, +0x12 / +0x13 off) not built at all. That covers:
    - slot layout and column wrap;
    - 3D portraits (TODO "party and academy slots' portraits");
    - the stepped faraway overlay, exp-share only;
@@ -617,19 +643,17 @@ anyone 1; the party clear `0x998be0` never rewrites them.
    - click-to-select by name;
    - the lock and drag reorder;
    - Ctrl+2..8 (keymap no-ops).
-6. **PMI:** GDR_PMI_SELECT (yellow) and GDR_PMI_PARTY_LEADER are hidden by `HudPlayerInfo`'s
+6. ~~**PMI:**~~ (built, round 715: `HudPlayerInfo.set_selected` / `set_party_leader`)
+   GDR_PMI_SELECT (yellow) and GDR_PMI_PARTY_LEADER are hidden by `HudPlayerInfo`'s
    allow-list. Both need their show rules above.
-7. **Party matching:** layout only. Not built:
-   - list fill, the own row pinned in blue, the gold selection, the type tooltip;
-   - sorting, the page spin and the Refresh cooldown;
-   - the client-side Search filter;
-   - the enable rules;
-   - the register/modify, auto-match and delete-confirm dialogs;
-   - Whisper;
-   - the join progress (10 s) and the leader's popup (10 s, codes 1/0/2).
-   - Race and Purpose columns as **text** (USER DECISION 2026-10-03), level defaults 1 / 110.
-8. **System messages:** the type-4 filter exists (`hud_system_message.gd`). None of the
-   party-match lines are routed to it.
+7. ~~**Party matching:** layout only.~~ **Built, round 714** (`docs/rounds/party714.md`): the
+   list fill, the own row pinned in (135,233,255), the gold selection, the page spin and the
+   Refresh cooldown, the client-side Search, the enable rules, the register/modify, auto-match
+   and delete dialogs, Whisper (as the chat line, OURS), the joining window and the leader's
+   popup (10 s, codes 1/0/2), Race and Purpose as **text** (USER DECISION 2026-10-03), level
+   defaults 1 / 110. Still not built: the column sorting, the row tooltip and the drawn scroll bar.
+8. **System messages:** the type-4 filter exists (`hud_system_message.gd`). The party-match lines
+   go there since round 714 (through PartyState's notice; server codes as type 0).
 9. ~~**The invitation popup** (§1b):~~ (built, round 711) not built; today an invite joins directly by party id.
 10. Out of this lane, noted only: minimap and worldmap party signs (`mm_sign_party`,
    `wmap_sign_party`), and the target window's party re-centring (UI_TODO).
@@ -658,7 +682,10 @@ Still open:
    tenths. Which wire field fills each remaining slot (the conversion at `0x99a34b`'s function), and
    where the "max" slots come from, is not traced.
 5. **The meaning of member byte `+0x58`**, which suppresses the caution effect and the 0.2 HP floor.
-6. The quick-party buff viewer's argument meanings (icon size vs pitch). The calls are READ; their
-   roles are INFERRED.
+   (Round 715: and whether the 0.2 is drawn at all -- `0x6d9250` writes it into the gauge's
+   `+900` and `+0x380`, then `0x6d7db0` in the same rebuild writes the raw ratio into `+900`.)
+6. ~~The quick-party buff viewer's argument meanings.~~ **Round 715:** the target window's
+   viewer was read with the same calls (round 638: per row, pitch, icon size), so 6 a row, 15-px
+   pitch, 12x12 icons (§7); `0x7fab90(1,1)` is a one-row cap per list (READ, round 715's review).
 7. **The invitation popup's text keys and timer** (§1b, HUD request kind 6 at `0x6ec5d0`).
 8. **How the server picks the two masteries** (`gs:FUN_005a1890`).

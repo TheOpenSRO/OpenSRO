@@ -132,6 +132,14 @@ type Table struct {
 // "proven by its use-site" -- which was true of the function's identity and not
 // of the application.
 //
+// ROUND 712 CORRECTION: the "only option" argument below is wrong. The
+// monster kill does have its own formula, reached through the vtable: the
+// death distributor CGObjMob::vslot_399 calls CGObjPC::vslot_420 (0x4ea6a0),
+// which calls Formula_ExpRewardForContributor (0x410110), whose base is the
+// victim's ExpToGive (characterdata col 79, slot 332 -> 0x449340 -> ref
+// +0x250). This formula needs both sides to be PCs: it is the PvP one. The
+// kill path now pays through killreward.go; see docs/rounds/party712.md.
+//
 // It is, however, the ONLY option rather than a choice among several. Both
 // character experience fields -- ExpOffset (charData+0x68) and SExpOffset
 // (+0x70) -- have exactly one writer in the binary, GObjPC_GainExpAndLevel, and
@@ -154,7 +162,7 @@ type Table struct {
 //	ref = FUN_0059e870(pc + 0xa30)          // a byte, from a list walk
 //	if (ref > 0x78) { pc[0x1cd8] = pc[0x1cdc] = 1.0f; return; }
 //	pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9)
-//	pc[0x1cdc] =       1 - (ref - charLevel) * 0.1
+//	pc[0x1cdc] =       clamp(1 - (ref - charLevel) * 0.1, 0.1, 1.9)   // round 712: clamped too
 //
 // so the term is a LEVEL-DIFFERENCE modifier bounded to [0.1, 1.9], recomputed
 // on exactly three events: PC load (CGObjPC::vslot_212), GObjPC_SetLevel, and
@@ -314,7 +322,7 @@ const (
 //	ref = Mastery_MaxLevel(pc + 0xa30)
 //	if (ref > 0x78) { pc[0x1cd8] = pc[0x1cdc] = 1.0f; return; }   // 0x78 = 120
 //	pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9)
-//	pc[0x1cdc] =        1 - (ref - charLevel) * 0.1               // the mirror
+//	pc[0x1cdc] =  clamp(1 - (ref - charLevel) * 0.1, 0.1, 1.9)        // the mirror, clamped (round 712: 0x4e31af-0x4e31e9)
 //
 // K is `fmul QWORD ds:0xb45ec0` = 0.1, a double; the clamp bounds are the float
 // at 0xb45eb8 (0.1) and 0xb45f18 (1.9). It is recomputed on exactly three
@@ -419,7 +427,9 @@ func MasteryExpScale(charLevel, maxMasteryLevel int) float64 {
 // group with the flag clear reaches this 1 + (n-1)*0.03 (0x4c4820; the flag
 // test is cmp BYTE [eax+0x10],0 at 0x4c475f). So the 3% is the EXP
 // FREE-FOR-ALL party's bonus only, paid to each contributor by its own damage.
-// OpenSRO still applies it to every party; party lane S2 fixes the code.
+// Round 712 (party lane S2) moved the kill path to the distributor: this
+// constant now reaches it through FreeForAllMultiplier, only for a
+// contributor outside an exp-share group (killreward.go, session/killshare.go).
 // docs/protocol/party_rules.md, "Kill EXP and SP".
 //
 // SCOPE, because this is only part of what the engine does with a party. The
@@ -582,7 +592,13 @@ func ExpDiffScale(killerLevel, victimLevel int, expSharingParty, europe bool) fl
 	return scale
 }
 
-// KillExp is the experience a kill is worth, applying the game's own
+// KillExp is Formula_MonsterExpReward's reading of a kill (round 712: the
+// kill path no longer calls it -- it pays through KillBase and
+// ContributorExp, killreward.go, which apply the same two scalers at the
+// engine's float32 precision with the damage share and the monster's factor;
+// this stays as the PvP-death formula's model and its tests' anchor).
+//
+// It is the experience a kill is worth, applying the game's own
 // **minimum-level rule**: the reward is taken at the LOWER of the two levels,
 // so out-levelling a monster -- or being power-levelled by someone who has --
 // pays at the weaker party's rate. The rule is symmetric, so it does not matter

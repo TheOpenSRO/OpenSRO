@@ -136,6 +136,11 @@ type Monster struct {
 	// per-level range. See RollGold.
 	GoldReward       int64
 	GoldMin, GoldMax int64
+	// ExpToGive is the species' characterdata col 79, the kill's base EXP
+	// (slot 332, round 712); HasExpToGive is false when the reference data
+	// predates the column, and the kill path falls back (leveldata.KillBase).
+	ExpToGive    int64
+	HasExpToGive bool
 	// Critical is this monster's critical-hit chance, rolled by RollChance
 	// against 0..100. REAL: characterdata _RefObjChar col 78.
 	//
@@ -701,14 +706,17 @@ func RollGold(min, max int64, flat int64, r *rand.Rand) int64 {
 
 // ExpFor is the placeholder experience a monster of the given toughness
 // grants on death: its max HP. A disclosed design choice, and a FALLBACK ONLY:
-// the kill path uses leveldata.KillExp, the real formula, whenever a level
-// table is loaded. This is what remains for an export with no exp_unit column.
+// the kill path uses the monster's ExpToGive (or leveldata.KillBase without
+// it) whenever a level table is loaded. This is what remains for an export with no exp_unit column.
 //
-// An earlier note here sent the reader looking for "RefObjChar's ExpToGive".
-// There is no such field in the formula: Formula_MonsterExpReward (004105d0)
-// reads the LEVEL TABLE's per-level unit at the minimum of the two levels and
-// scales it, and the monster contributes only its level. Nothing per-species is
-// read, so there is no mob column to load.
+// ROUND 712 CORRECTION: an earlier note here said there is no per-species
+// "ExpToGive" to load because Formula_MonsterExpReward (004105d0) reads only
+// the level table. That formula is the PvP one (it requires both sides to be
+// PCs, 0x4105d9/0x4105e8). A monster kill pays through
+// Formula_ExpRewardForContributor (0x410110), whose base is the victim's slot
+// 332 -- the reference row's +0x250, characterdata col 79, ExpToGive
+// (Monster.ExpToGive, species.ColExpToGive). The kill path uses it; this
+// toughness fallback remains only for a level table with no exp_unit.
 func ExpFor(maxHP int) int64 {
 	if maxHP < 1 {
 		return 1
@@ -874,6 +882,11 @@ type Species struct {
 	AttackMin, AttackMax int
 	// GoldMin/GoldMax are the real per-level gold range (levelgold.txt).
 	GoldMin, GoldMax int64
+	// ExpToGive is the species' characterdata col 79, the kill's base EXP
+	// (slot 332, round 712); HasExpToGive is false when the reference data
+	// predates the column, and the kill path falls back (leveldata.KillBase).
+	ExpToGive    int64
+	HasExpToGive bool
 	// BCRadius is the species' collision radius, characterdata _RefObjChar
 	// col 50 (the common record's word at +0xee, IGObj slot 344) -- one of the
 	// two radii the attack-distance rule adds to a range (see ApproachBand).
@@ -1092,7 +1105,7 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 
 	id := h.nextID.Add(1)
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
-		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP),
+		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP), ExpToGive: species.ExpToGive, HasExpToGive: species.HasExpToGive,
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: hatch.HomeX, HomeZ: hatch.HomeZ, DestX: x, DestZ: z,
 		Party: hatch.Party, Tactics: hatch.Tactics, Summon: species.Summon, Triggers: species.Triggers, Leader: hatch.Leader}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for

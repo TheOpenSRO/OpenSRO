@@ -400,6 +400,14 @@ level, HP, walk/run speed, collision radius, the eight combat columns 71-78, the
 ids 83-92, the model (or the Org row's, flagged) and the levelgold range at its level. See
 `server/internal/species` for what each column is and how it is known.
 
+**Round 712 added a 36th column, `ExpToGive`** (characterdata column 79, the kill's base EXP,
+READ through the monster's vtable slot 332 -> `0x449340`). A CSV exported before round 712 still
+loads, and the kill then falls back to the level table's EXP unit (the old base, which pays
+anyone below the monster too little). So after deploying round 712, re-run the
+`export-refdata -mode monsters` line from step 2 with the new binary, copy `monsters.csv` to
+`~/opensro-data`, and restart the server. A retail archive gives 7,604 rows; Gunpowder Ghost
+(1965) carries 749.
+
 What it changes, and what it does not:
 
 - **Without `-full-map`, who spawns where does not change.** The roster in `cmd/server` (eleven

@@ -377,6 +377,9 @@ type Hub struct {
 	// forwards the request (READ, GS 0x5bf570) and back to 0 when it fails
 	// (GS 0x5bfac0, MsgHandler_3c01 0x4169d0).
 	requests map[int64]struct{}
+	// rotation is each party's item round-robin list, party+0x20 in the
+	// GameServer (round 712, NextInRotation).
+	rotation map[uint32][]int64
 
 	// Timeout is the invitation timeout (InviteTimeout unless a test sets
 	// it before use).
@@ -395,6 +398,7 @@ func NewHub() *Hub {
 		detached:  make(map[uint64]*Invite),
 		listings:  make(map[int64]listing),
 		requests:  make(map[int64]struct{}),
+		rotation:  make(map[uint32][]int64),
 		Timeout:   InviteTimeout,
 		afterFunc: func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) },
 	}
@@ -435,6 +439,10 @@ func (h *Hub) Form(inviter, invitee Member, flags Flags) (*Party, error) {
 	id := h.newIDLocked()
 	p := &Party{ID: id, LeaderID: inviter.CharacterID, Flags: flags, Members: []Member{inviter, invitee}}
 	h.parties[id] = p
+	// INFERRED: the formation's two members enter the rotation in member
+	// order (FUN_005bc210 appends each joiner; the formation path was not
+	// read for its order).
+	h.rotation[id] = []int64{inviter.CharacterID, invitee.CharacterID}
 	for _, m := range p.Members {
 		h.byChar[m.CharacterID] = id
 		if m.Session != nil {
@@ -471,6 +479,7 @@ func (h *Hub) Add(partyID uint32, m Member) (*Party, error) {
 	}
 	p.Members = append(p.Members, m)
 	h.byChar[m.CharacterID] = partyID
+	h.rotation[partyID] = append(h.rotation[partyID], m.CharacterID)
 	if m.Session != nil {
 		h.bySession[m.Session.ID()] = m.CharacterID
 	}
@@ -502,10 +511,12 @@ func (h *Hub) removeLocked(characterID int64) (Removal, error) {
 		}
 		delete(h.listings, p.LeaderID)
 		delete(h.parties, pid)
+		delete(h.rotation, pid)
 		r.Dissolved = true
 		return r, nil
 	}
 	i := p.index(characterID)
+	h.dropFromRotationLocked(pid, characterID)
 	h.forgetLocked(p.Members[i])
 	p.Members = append(p.Members[:i], p.Members[i+1:]...)
 	if p.LeaderID == characterID {
@@ -518,6 +529,34 @@ func (h *Hub) removeLocked(characterID int64) (Removal, error) {
 	}
 	r.After = p.clone()
 	return r, nil
+}
+
+// NextInRotation is GObjPC::FUN_004d4840 (round 712, party lane S2): it takes
+// the member at the front of partyID's item rotation, moves it to the back and
+// returns it (READ, GS: the list at party+0x20, front popped and re-appended).
+// A joiner is appended at the back (FUN_005bc210) and a leaver removed
+// (FUN_005bc390). false for a party that does not exist.
+func (h *Hub) NextInRotation(partyID uint32) (int64, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.rotation[partyID]
+	if len(r) == 0 {
+		return 0, false
+	}
+	front := r[0]
+	r = append(r[1:], front)
+	h.rotation[partyID] = r
+	return front, true
+}
+
+func (h *Hub) dropFromRotationLocked(partyID uint32, characterID int64) {
+	r := h.rotation[partyID]
+	for i, id := range r {
+		if id == characterID {
+			h.rotation[partyID] = append(r[:i:i], r[i+1:]...)
+			return
+		}
+	}
 }
 
 func (h *Hub) forgetLocked(m Member) {

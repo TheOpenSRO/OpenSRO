@@ -174,6 +174,19 @@ case("b06d_noreply", 0xB06D, "S->C", "[1][2] no reply", u8(1) + u16(2))
 case("b06d_err_level", 0xB06D, "S->C", "[2][0x2c1e] level outside the entry's range", u8(2) + u16(0x2C1E))
 
 
+# --- S2 (round 712): the Item Auto Share notice --------------------------------
+# party_protocol.md 0x3068: u32 recipient JID, u32 RefItemID, then by the item's
+# class -- gold: the amount (8 bytes, OURS: the client's width); an expendable
+# (TypeID 3/3): u16 count; anything else: u8 1.
+def u64(v):
+    return struct.pack("<Q", v)
+
+
+case("3068_expendable", 0x3068, "S->C", "Bram got 5 of item 62 (an expendable)", u32(201) + u32(62) + u16(5))
+case("3068_other", 0x3068, "S->C", "Aria got item 3617 (equipment): u8 1", u32(101) + u32(3617) + u8(1))
+case("3068_gold", 0x3068, "S->C", "Bram got 1234 gold (item 1, 8-byte amount, OURS)", u32(201) + u32(1) + u64(1234))
+
+
 def main():
     for name in os.listdir(HERE):
         if name.endswith(".hex"):

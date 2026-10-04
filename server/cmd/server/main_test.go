@@ -819,14 +819,15 @@ func TestGroundDropRulesAdapter(t *testing.T) {
 		id   int64
 		want grounditem.DropRules
 	}{
-		{500, grounditem.DropRules{DecayTimeMs: 180000, Bound: true, OwnerOnly: true}}, // bound quest item
-		{501, grounditem.DropRules{DecayTimeMs: 180000}},                               // ARCHEMY: exempt, tradeable
-		{502, grounditem.DropRules{DecayTimeMs: 180000, OwnerOnly: true}},              // tradeable, not exempt
-		{99, grounditem.DropRules{NoPick: true}},                                       // CanPick clear
-		{4, grounditem.DropRules{DecayTimeMs: 10000}},                                  // HP potion
-		{503, grounditem.DropRules{DecayTimeMs: 180000, Bound: true}},                  // no codename: cannot tell
-		{999, grounditem.DropRules{}},                                                  // not in the store
-		{-1, grounditem.DropRules{}},                                                   // the store failed
+		// Expendable is TypeID 3/3 (round 712, the 0x3068 count class).
+		{500, grounditem.DropRules{DecayTimeMs: 180000, Bound: true, OwnerOnly: true, Expendable: true}}, // bound quest item
+		{501, grounditem.DropRules{DecayTimeMs: 180000, Expendable: true}},                               // ARCHEMY: exempt, tradeable
+		{502, grounditem.DropRules{DecayTimeMs: 180000, OwnerOnly: true, Expendable: true}},              // tradeable, not exempt
+		{99, grounditem.DropRules{NoPick: true}},                                                         // CanPick clear
+		{4, grounditem.DropRules{DecayTimeMs: 10000, Expendable: true}},                                  // HP potion
+		{503, grounditem.DropRules{DecayTimeMs: 180000, Bound: true, Expendable: true}},                  // no codename: cannot tell
+		{999, grounditem.DropRules{}},                                                                    // not in the store
+		{-1, grounditem.DropRules{}},                                                                     // the store failed
 	} {
 		if got := lookup(c.id); got != c.want {
 			t.Errorf("groundDropRules(%d) = %+v, want %+v", c.id, got, c.want)

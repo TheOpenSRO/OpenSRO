@@ -224,11 +224,21 @@ the receiver's level row `+0x1c`, leveldata column 5, through `RefLevel_GetEntry
 (`leveldata`), evaluated **for the receiver**, so in a shared kill every member's level gap to the
 monster is its own. `rcv[0x1cd8]`/`[0x1cdc]` are the receiver's mastery-lag scales (`leveldata`).
 
-What `slot332` returns for a monster is **OPEN** here: `CGObjMob` slot 332 is `0x4a68b0`, a jump to
-the reference object's vtable `+0x34`, not read this round. It is the monster's base EXP. OpenSRO's
-`leveldata.KillExp` models a different function (`Formula_MonsterExpReward`, `0x4105d0`); which of
-the two the live kill path's base agrees with is for the implementation round to settle by
-reading `+0x34`. This does not change any party rule.
+~~What `slot332` returns for a monster is **OPEN** here.~~ **READ (round 712):** `slot332` is the
+victim's **ExpToGive**, characterdata column 79, the same for every receiver.
+- `CGObjMob` slot 332 (vtable `0xaeddac` + `0x530` = `0xaee2dc`) is `0x4a68b0`:
+  `mov ecx,[ecx+0x34]; mov eax,[ecx]; mov edx,[eax+0x34]; jmp edx`. That is slot 13 of the
+  object's instance.
+- Slot 13 is `0x449340` in every CInstanceChar-family vtable (CInstanceChar `0xae3724`,
+  CInstanceCOS, CInstancePC, the siege pair): `mov eax,[ecx+0x18]; mov eax,[eax+0x250]; ret`,
+  the reference row's `+0x250`.
+- `RefObjChar::ExtractData` writes col 79 there, and the package's DB names it `ExpToGive`
+  (between `CHR` and `CreepType`).
+- `Formula_MonsterExpReward` (`0x4105d0`, the min-level rule) needs both sides to be PCs
+  (`0x4105d9`/`0x4105e8`): it is the PvP formula. Its only callers are `0x4e6a09`/`0x4e6d88`, in
+  the PC death code.
+- OpenSRO exports col 79 into `monsters.csv` (`species.ColExpToGive`) and pays from it, falling
+  back to the old base only for a CSV without the column.
 
 `slot359` is `CGObjMob::vslot_359` (`0x4c15c0`), the monster's EXP/SP multiplier (READ, asm):
 
@@ -815,7 +825,7 @@ client-side join durations (10 s), and the client search and auto match (READ in
 
 | Item | Blocks | Next probe |
 |---|---|---|
-| What `CGObjMob` slot 332 (`0x4a68b0` → ref object vtable `+0x34`) returns | the absolute size of kill EXP/SP on the live path (gap 5); not the sharing rules | read the ref-char vtable slot 13 in the GS dump |
+| ~~What `CGObjMob` slot 332 returns~~ **READ (round 712): ExpToGive, characterdata col 79** (`0x4a68b0` → instance slot 13 `0x449340` → ref `+0x250`) | closed | closed |
 | Position update cadence (`FUN_004a9410` callers) | how often to send member positions | caller census of `0x4a9410` and `0x4df6b0` |
 | Whether the main field world has a `PARTYMONSTER_SPAWN` equivalent | whether field nests are ever gated | the base `CGameWorld` slot at the vtable index of `0x609900` |
 | The order of the kill distributor's group map | which exp-share group's count arms the nest when two groups shared a kill | the map type behind `vslot_399`'s groups |

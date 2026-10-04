@@ -187,6 +187,18 @@ class Book:
 
 var _builder: UiBuilder = null
 var catalog: SkillBuffCatalog = null
+## The grid this viewer lays out with: the target window's by default
+## (COLUMNS, PITCH, ICON_SIZE); a quick party slot's viewer sets its own
+## (set_grid, round 715).
+var grid_columns := COLUMNS
+var grid_pitch := PITCH
+var grid_icon := ICON_SIZE
+## Each list's row cap (0x7fab90(main, second) -> +0x36c / +0x370): an add
+## past columns x rows is dropped (0x7fd020's tests at 0x7fd0a0..0x7fd0eb,
+## 0x7fd2e0's at 0x7fd31b). 0 is no cap -- the target window never calls
+## 0x7fab90, so its viewer has none (round 715's review).
+var main_row_cap := 0
+var second_row_cap := 0
 var _main: Array = []
 var _second: Array = []
 ## Where an icon's full-size Image comes from (tests replace it).
@@ -201,6 +213,19 @@ func _init(builder: UiBuilder = null, skill_catalog: SkillBuffCatalog = null) ->
 	# cells; each slot takes the mouse for its tooltip.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_layout()
+
+## The grid's three calls (0x7fabb0 per row, 0x7fabc0 pitch, 0x7fabe0 icon
+## size), as another owner of a CIFBuffViewer makes them.
+func set_grid(columns: int, pitch: Vector2, icon: Vector2) -> void:
+	grid_columns = maxi(columns, 1)
+	grid_pitch = pitch
+	grid_icon = icon
+	_layout()
+
+## 0x7fab90: the two lists' row caps (0 = none).
+func set_row_caps(main_rows_cap: int, second_rows_cap: int) -> void:
+	main_row_cap = maxi(main_rows_cap, 0)
+	second_row_cap = maxi(second_rows_cap, 0)
 
 ## Whether the catalog can say which list a skill goes to. Until it can, the
 ## viewer is left as it is (OURS: retail's reference data is always loaded).
@@ -266,11 +291,16 @@ func _add(skill_id: int, token: int, level: int = 0) -> void:
 		info = {"icon": StatusNet.icon_path(bit), "bbuf": true}
 	elif catalog != null:
 		info = catalog.info(skill_id)
+	var main_list := not bool(info.get("bbuf", false))
+	var cap := main_row_cap if main_list else second_row_cap
+	if cap > 0 and (_main if main_list else _second).size() >= grid_columns * cap:
+		# The list is full: the entry is dropped (0x7fb070 and skip).
+		return
 	var e := Entry.new()
 	e.skill_id = skill_id
 	e.token = token
 	e.level = level
-	e.main_list = not bool(info.get("bbuf", false))
+	e.main_list = main_list
 	e.slot = _make_slot(skill_id, info)
 	add_child(e.slot)
 	(_main if e.main_list else _second).append(e)
@@ -291,13 +321,14 @@ static func slot_position(i: int, second: bool, rows1: int) -> Vector2:
 	return Vector2((i % COLUMNS) * PITCH.x, (i / COLUMNS + rows1) * PITCH.y + SECOND_LIST_GAP)
 
 func _layout() -> void:
-	var rows1 := main_rows(_main.size())
+	var c := grid_columns
+	var rows1 := 0 if _main.is_empty() else (_main.size() - 1) / c + 1
 	for i in _main.size():
-		(_main[i] as Entry).slot.position = slot_position(i, false, rows1)
+		(_main[i] as Entry).slot.position = Vector2((i % c) * grid_pitch.x, (i / c) * grid_pitch.y)
 	for i in _second.size():
-		(_second[i] as Entry).slot.position = slot_position(i, true, rows1)
+		(_second[i] as Entry).slot.position = Vector2((i % c) * grid_pitch.x, (i / c + rows1) * grid_pitch.y + SECOND_LIST_GAP)
 	# The viewer's own size (0x7fc176: vslot 0x54(stepx * per, rows * stepy)).
-	size = Vector2(PITCH.x * COLUMNS, (rows1 + second_rows(_second.size())) * PITCH.y)
+	size = Vector2(grid_pitch.x * c, (rows1 + maxi(_second.size() - 1, 0) / c + 1) * grid_pitch.y)
 
 ## The tooltip text (0x7fc260, kind 1), see the header.
 func tooltip_for(skill_id: int) -> String:
@@ -346,7 +377,7 @@ func _icon_texture(path: String) -> Texture2D:
 			src = icon_image_source.call(full)
 		elif _builder != null:
 			src = _builder.load_image(full)
-		var img := HudBuffBoard.retail_icon_image(src)
+		var img := HudBuffBoard.retail_icon_image(src, int(grid_icon.x), int(grid_icon.y))
 		_icon_cache[full] = ImageTexture.create_from_image(img) if img != null else null
 	return _icon_cache[full]
 
@@ -355,15 +386,15 @@ func _make_slot(skill_id: int, info: Dictionary) -> Slot:
 	slot.name = "Buff%d" % skill_id
 	slot.viewer = self
 	slot.skill_id = skill_id
-	slot.size = ICON_SIZE
-	slot.custom_minimum_size = ICON_SIZE
+	slot.size = grid_icon
+	slot.custom_minimum_size = grid_icon
 	slot.mouse_filter = Control.MOUSE_FILTER_STOP
 	var icon := TextureRect.new()
 	icon.name = "Icon"
 	icon.texture = _icon_texture(String(info.get("icon", "")))
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_SCALE
-	icon.size = ICON_SIZE
+	icon.size = grid_icon
 	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	slot.add_child(icon)

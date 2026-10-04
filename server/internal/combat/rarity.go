@@ -89,3 +89,38 @@ func ScaleHPForRarity(maxHP, rarity int) int {
 func ScaleHPForMonster(maxHP, rarity int, partySupport bool) int {
 	return maxHP * MonsterHPPercent(rarity, partySupport) / 100
 }
+
+// MonsterAttackFactor is FUN_0040da20 (round 712, party lane S2), the factor a
+// monster's attack value takes before defence (READ, GS asm
+// 0x40da20-0x40da6b): 1.0; 1.2 when the monster is a party monster
+// (GetMonsterType, slot 192, answers 1: `fld DWORD 0xb45d90` = 1.2); then x1.5
+// when its rank is 6, the elite (`and al,0xf; cmp al,6`, `fmul QWORD
+// 0xb45d78` = 1.5). Combat_ComputeWeaponDamage (0x40db50) and FUN_0040dc10
+// scale the attacker's min/max attack stat by it. The result is a float32
+// (`fstp DWORD [esp]`).
+func MonsterAttackFactor(partyMonster bool, rank int) float32 {
+	f := float32(1)
+	if partyMonster {
+		f = 1.2
+	}
+	if rank == 6 {
+		f = float32(float64(f) * 1.5)
+	}
+	return f
+}
+
+// ScaleMonsterAttack applies MonsterAttackFactor to one end of an attack
+// range, truncating. OURS: the engine keeps the scaled value a float32
+// through the roll (Combat_ComputeWeaponDamage 0x40db50 returns a float,
+// clamped to [0, 999999]; its caller stores min and max as float32 at
+// 0x40dcf4 and 0x40dd2a), and OpenSRO's ranges are integers. The engine
+// scales the attacker's own attack stat (vt+0x104, param 0xd/0xe, plus an
+// item bonus); OpenSRO applies the factor to whatever range the swing uses,
+// a drawn monster skill's 'att' block included -- that this is the same
+// quantity is INFERRED.
+func ScaleMonsterAttack(v int, f float32) int {
+	if f == 1 {
+		return v
+	}
+	return int(float64(v) * float64(f))
+}

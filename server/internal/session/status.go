@@ -603,7 +603,7 @@ func (s *statusRuntime) dealMonsterTick(ctx context.Context, d combatDeps, mt mo
 	// nest for a party monster. The killer is the applier the tick is booked
 	// to (statuseffect.SourceRule, READ), 0 when it names nobody -- which
 	// counts no party. Round 666: until then a DoT kill never armed a nest.
-	noteMonsterKilled(d.hub, d.parties, killer, updated)
+	noteMonsterKilled(d.hub, d.parties, hits, updated)
 	s.forgetMonster(mt.id)
 	return s.settleKill(ctx, d, statusKill{monster: m, killer: killer, damage: dmg, updated: updated, hits: hits}, watchers)
 }
@@ -737,10 +737,18 @@ func (s *statusRuntime) settleKill(ctx context.Context, d combatDeps, k statusKi
 			sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
 		}
 		AnnounceUniqueKill(d.hub, d.parties, k.updated, k.hits)
+		// The death still pays everyone else its damage list earns a share
+		// (round 712): the distributor does not depend on who dealt the last
+		// tick, and the absent killer drops out with presentHits.
+		if levelTable.Loaded() {
+			if _, err := distributeKill(ctx, d, 0, k.monster, k.hits); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	result := &AttackResult{MonsterID: k.monster.ID, MonsterDamage: int32(k.damage), MonsterDied: true}
-	levelUp, gold, err := grantKill(ctx, d, k.killer, k.monster, result)
+	levelUp, gold, err := grantKill(ctx, d, k.killer, k.monster, result, k.hits)
 	if err != nil {
 		return err
 	}

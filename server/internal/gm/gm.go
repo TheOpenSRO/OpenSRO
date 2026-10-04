@@ -578,18 +578,25 @@ func (d *Deps) level(ctx context.Context, actor Actor, args []string) Result {
 	if want > d.Levels.MaxLevel() {
 		return refuse(fmt.Sprintf("the level table ends at %d", d.Levels.MaxLevel()))
 	}
+	// The row's read and write under the leveling lock (round 712: a party
+	// member's kill can pay this character from another goroutine).
+	unlock := character.LockLeveling(actor.CharacterID)
 	c, err := d.Chars.GetByID(ctx, actor.CharacterID)
 	if err != nil {
+		unlock()
 		return refuse("reading the character failed: " + err.Error())
 	}
 	if want <= c.Level {
+		unlock()
 		return refuse(fmt.Sprintf("already level %d; /level only goes up (levelling down would have to unwind stats)", c.Level))
 	}
 	gained := want - c.Level
 	newStatPoints := c.StatPoints + gained*leveldata.StatPointsPerLevel
 	newStr := c.Str + gained*character.StatGrowthPerLevel
 	newInt := c.Int + gained*character.StatGrowthPerLevel
-	if err := d.Chars.SetLeveling(ctx, actor.CharacterID, want, 0, newStatPoints, newStr, newInt); err != nil {
+	err = d.Chars.SetLeveling(ctx, actor.CharacterID, want, 0, newStatPoints, newStr, newInt)
+	unlock()
+	if err != nil {
 		return refuse("setting the level failed: " + err.Error())
 	}
 	if d.World != nil {

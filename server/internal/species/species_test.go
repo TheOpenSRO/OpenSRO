@@ -69,9 +69,10 @@ func TestColumnIndicesAgainstASyntheticLine(t *testing.T) {
 	}
 	// Neighbours of every read column carry a different sentinel, so a
 	// reader shifted by one picks it up.
-	for _, c := range []int{14, 16, 45, 48, 49, 51, 56, 58, 60, 70, 79, 82, 93} {
+	for _, c := range []int{14, 16, 45, 48, 49, 51, 56, 58, 60, 70, 80, 82, 93} {
 		cols[c] = "-999"
 	}
+	cols[ColExpToGive] = "79" // round 712: col 79 is read now; 78 and 80 are its neighbours
 	ex := NewExporter()
 	if !ex.Add(cols) {
 		t.Fatal("the row was refused")
@@ -83,7 +84,7 @@ func TestColumnIndicesAgainstASyntheticLine(t *testing.T) {
 	}
 	want := Row{ID: 90001, CodeName: "MOB_TEST_SENTINEL", NameKey: "SN_MOB_TEST_SENTINEL", Name: "Sentinel",
 		TypeID4: 7, Rarity: 15, Level: 57, MaxHP: 59, WalkSpeed: 46, RunSpeed: 47, BCRadius: 50,
-		Model: "mob\\test\\sentinel.bsr", GoldMin: 1057, GoldMax: 2057}
+		Model: "mob\\test\\sentinel.bsr", GoldMin: 1057, GoldMax: 2057, ExpToGive: 79, HasExpToGive: true}
 	for i := 0; i < NumParams; i++ {
 		want.Params[i] = 71 + i
 	}
@@ -291,7 +292,7 @@ func TestReadTakesALongerCSV(t *testing.T) {
 func TestReadRejectsAnotherCSV(t *testing.T) {
 	for _, in := range []string{
 		"ObjectID,RegionID,LocalX,LocalY,LocalZ\n1,2,3,4,5\n",
-		strings.Join(CSVColumns[:len(CSVColumns)-1], ",") + "\n",
+		strings.Join(CSVColumns[:RequiredCSVColumns-1], ",") + "\n",
 		strings.Join(CSVColumns, ",") + "\n" + strings.Repeat("1,", len(CSVColumns)-2) + "1\n",
 		strings.Join(CSVColumns, ",") + "\nx" + strings.Repeat(",1", len(CSVColumns)-1) + "\n",
 	} {

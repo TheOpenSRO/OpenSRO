@@ -175,8 +175,7 @@ func TestKillCreditsGuildPoints(t *testing.T) {
 		t.Fatalf("creating character: %v", err)
 	}
 
-	// One level, worth 5000 exp a kill: at the 400:1 conversion that is well
-	// past the batch of ten even after the mastery-lag scale.
+	// One level, worth 5000 exp a kill.
 	tbl, err := leveldata.ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n1,1000000,1,5000\n"))
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
@@ -204,7 +203,15 @@ func TestKillCreditsGuildPoints(t *testing.T) {
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
-	target := monsters.SpawnSpecies("jangan", combat.Species{Name: "Mangyang", Level: 1}, 0, 0, 0, 1, 0, 0, 0)
+	// Round 712: a kill's skill experience is its own formula (FUN_004106b0),
+	// about 100 x the scales at an even level -- 119 for this level-1 pair,
+	// no points at 400:1. A rank-5 monster (x60, leveldata.MonsterExpFactor)
+	// pays 7194, 17 points; its 100 HP are wounded to 1 first, booked to Aria
+	// (share 1), so one blow kills it.
+	target := monsters.SpawnSpecies("jangan", combat.Species{Name: "Mangyang", Level: 1, Rarity: 5}, 0, 0, 0, 1, 0, 0, 0)
+	if _, _, ok, _ := monsters.ApplyDamageFrom(target.ID, c.ID, target.MaxHP-1); !ok {
+		t.Fatal("wounding the target")
+	}
 
 	handle := gateway.Chain(
 		LoginHandler(accounts),

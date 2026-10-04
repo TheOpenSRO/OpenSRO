@@ -118,6 +118,18 @@ const (
 	NumSkills = 10
 	// NumParams is how many combat columns there are (71..78).
 	NumParams = 8
+	// ColExpToGive is col 79, the kill's base EXP (round 712). READ:
+	// RefObjChar::ExtractData writes it to CRefObjChar+0x250 (the anchored
+	// offset map, col 78 at +0x24c, col 82 at +0x25c); the kill formulas
+	// Formula_ExpRewardForContributor 0x410110 and FUN_004106b0 read it
+	// through the victim's slot 332 (CGObjMob vtable 0xaeddac +0x530 =
+	// 0x4a68b0, `mov ecx,[ecx+0x34]; mov eax,[ecx]; jmp [eax+0x34]`) -> the
+	// instance's slot 13, 0x449340 `mov eax,[ecx+0x18]; mov eax,[eax+0x250]`.
+	// The package's DB export names the column ExpToGive (between CHR and
+	// CreepType). For an ordinary monster it equals leveldata col 5 at its
+	// own level (95.3 % of MOB rows, MEASURED 2026-09-14); uniques carry
+	// their own, larger value.
+	ColExpToGive = 79
 )
 
 // minFields is the shortest characterdata row the exporter maps: every column
@@ -139,6 +151,8 @@ var CSVColumns = []string{
 	"Col71", "Col72", "Col73", "Col74", "Col75", "Col76", "Col77", "Col78",
 	"Skill1", "Skill2", "Skill3", "Skill4", "Skill5", "Skill6", "Skill7", "Skill8", "Skill9", "Skill10",
 	"Model", "ModelFromOrg", "GoldMin", "GoldMax",
+	// Round 712, appended (optional on read): col 79.
+	"ExpToGive",
 }
 
 // RequiredCSVColumns is the prefix every monsters CSV must carry: the 35
@@ -169,7 +183,8 @@ const (
 	cModelFromOrg = cModel + 1
 	cGoldMin      = cModel + 2
 	cGoldMax      = cModel + 3
-	numCSVColumns = cModel + 4
+	cExpToGive    = cModel + 4
+	numCSVColumns = cModel + 5
 )
 
 // IsMonster reports whether a tab-split characterdata row is a monster:
@@ -356,6 +371,7 @@ func (e *Exporter) Records(gold LevelGold, names ObjectNames) ([][]string, Expor
 		} else {
 			st.NoModel++
 		}
+		rec[cExpToGive] = num(cols, ColExpToGive)
 		rec[cGoldMin], rec[cGoldMax] = "0", "0"
 		if lvl, err := strconv.Atoi(rec[cLevel]); err == nil {
 			if g, ok := gold[lvl]; ok {
@@ -511,6 +527,10 @@ type Row struct {
 	ModelFromOrg bool
 	// GoldMin/GoldMax are levelgold.txt at Level (0 when the export had none).
 	GoldMin, GoldMax int64
+	// ExpToGive is col 79, the kill's base EXP (ColExpToGive);
+	// HasExpToGive is false for a CSV exported before round 712.
+	ExpToGive    int64
+	HasExpToGive bool
 }
 
 // Defense is col 71, the flat physical absorption (param 5, READ).
@@ -674,6 +694,9 @@ func parseRecord(rec []string) (Row, error) {
 	}
 	for k := 0; k < NumSkills; k++ {
 		r.Skills[k] = i64(cSkills + k)
+	}
+	if len(rec) > cExpToGive {
+		r.ExpToGive, r.HasExpToGive = i64(cExpToGive), true
 	}
 	if firstErr != nil {
 		return Row{}, firstErr

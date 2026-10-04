@@ -204,14 +204,16 @@ func presentHits(hub *world.Hub, hits []combat.Hit) []combat.Hit {
 }
 
 // partyGroupOf is UniqueKiller's grouping over the party hub: the party's id
-// for a character in a party of two or more, else 0.
+// for a character in an Exp Auto Share party (flag bit 0), else 0 -- the
+// grouping CGObjMob vslot 399 uses (round 712: the party's own flag since
+// round 710; planKill groups the same way).
 func partyGroupOf(parties *party.Hub) func(int64) int64 {
 	return func(characterID int64) int64 {
 		if parties == nil {
 			return 0
 		}
 		pt, in := parties.Get(characterID)
-		if !in || pt == nil || len(pt.Members) < 2 {
+		if !in || pt == nil || !pt.Flags.ExpShare() {
 			return 0
 		}
 		return int64(pt.ID)
