@@ -171,3 +171,42 @@ pooled marks. Nothing is allocated once the party is settled.
 - **Academy marks** (`mm_sign_apprenticeship[arrow]`) follow the same rule from the academy list:
   not built, since there is no academy.
 
+
+## Review fixes (independent review `c3c20623`, `docs/rounds/party717_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | LAYOUT: minimap dots under the frame | One unclipped `MapMarks` root over `MinimapFrame`, under the buttons, holding the party's dots, then its arrows, then the player's arrow (vslot_013's order). The buttons over the marks are READ (`0xb8f210`); the frame under them is INFERRED, with the review's evidence cited. The NPC/monster/player signs are left in the clip, with a follow-up in `docs/TODO.md` section 4. |
+| 2 | DEPARTURE: no `*` in a job party's hover name | `HudWorldmap.update_party(..., job_party)` from `NetClient.party.job_party`; the label reads `*Name`, rebuilt only when the hovered member, name or flag changes (`0x99a4c5`). Tested. |
+| 3 | The hover text is the name: READ, not INFERRED | Relabelled in `party_map_marks.gd`, `party_gui.md` section 9 and these notes (`0x99a2e0`, `0x99a4c9`, `0x99a5ce..0x99a673`). |
+| 4 | `0xb42d10` truncates | The dot's corners `floor()`; the label at `floor(x - floor(w / 2))`, `floor(top - h)` from the unrounded top. The comments say `_ftol2`. Tested with fractional pixels. |
+| 5 | The hover box was 1 px too wide | `hover_hit` takes the corners less the half pixel, inset by 2, with the mouse in whole pixels: L + 2 ..= L + 13. The test now asserts the original's edges (13 in, 14 out). |
+| 6 | "the first member only" | Reworded: the first member whose quad holds the mouse (`0x61fec0`). |
+| 7 | How the world map places a field member | `party_gui.md` section 9: the marker's own transform from `+0x97ac`/`+0x97b0` (`0x61f94d..0x61f9b7`); `0x60fbd0`/`0x60fa90` only for dungeons. |
+| 8 | The world-id stand-in not labelled OURS | Labelled OURS in World3D and in section 9's OURS list. |
+| 9 | Draw order omitted the quest marks | Added (`+0x3c0`/`+0x3c4`, `0x664ae6..`) to the code comment, section 9 and the TODO entry. OpenSRO draws no quest marks yet. |
+| 10 | The hover label sat over every dot | The label moves to right after the hovered dot, so later dots and the marker cover it (`0x61ffc1`). Tested. |
+| 11 | "under its buttons" is READ | Relabelled (`0xb8f210`: slot 13, then the child list through slot 14). |
+| 12 | Wrong section reference | `party_map_marks.gd` now names section 9. |
+| 13 | Tests that could not fail | The transpose is checked with an off-axis probe in every quadrant: dropping `flip_h` or the -90 degrees fails it. `HudWorldmap.place_party_dots` is tested for truncated centres, under the marker, the hover name and its place, the `*`, one pixel past the box, and a member leaving. |
+
+**After the fixes:**
+- `party_map_marks_test.gd`: 57 checks, 0 failures; `hud_minimap_test.gd` passes.
+- `check` ALL LOAD.
+- Full suite: 230 suites, 0 failing.
+
+**Live**, the same scene with Cara moved 540 south (`dot@(0.0,45.0)`):
+- The dot's green pixels span y 152..157 of the window crop, with a centroid 45.5 px south of the
+  aperture centre.
+- Its farthest green pixel is 48 px out, past where the ring starts due south (43.5 px). So it is
+  drawn over the frame (MEASURED, `/var/tmp/r717/live/f00000470.png`).
+- The S button draws over it.
+
+**Perf gate** (`--sites jangan --frames 12000`, against `dca31493`):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 1.56 | 1.49 | SAME |
+| entry ms | 9883.5 | 9430 | SAME |
+| freeze ms | 3464 | 3290 | SAME |
+| hitches | 4 | 4 | SAME |
