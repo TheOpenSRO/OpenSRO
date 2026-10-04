@@ -29,6 +29,10 @@ signal scene_ready
 ## never moves.
 const RADIUS := 1
 
+## Meta on a mesh drawn through its translucent pair (_apply_alpha, round
+## 719): the material it gets back at full alpha.
+const FADE_ORIGINAL_META := "opensro_select_fade_original"
+
 var backdrop: FrontEndBackdrop = null
 var appearance: CharacterAppearance = null
 var _data: Pk2Reader = null
@@ -525,7 +529,37 @@ func _qa_lizard_probe() -> void:
 		print("QA LIZARD done")
 		get_tree().quit()
 
+## QA (round 719, OURS): while set, no fade or pose advances, so several
+## frames of one pose can be compared (CharacterSelect's pending probe).
+var qa_frozen := false
+
+## QA: puts `d` at alpha `a` at once, its fade finished.
+func qa_set_alpha(d: Drawn, a: int) -> void:
+	d.alpha = float(a)
+	d.alpha_from = float(a)
+	d.alpha_target = float(a)
+	d.alpha_t = CharSelectMath.MODEL_FADE_S
+	_apply_alpha(d)
+
+## QA: how `d`'s meshes draw now -- the counts of meshes on their own
+## material, on a fade pass and on instance transparency.
+func qa_fade_report(d: Drawn) -> String:
+	var own := 0
+	var faded := 0
+	var instance := 0
+	if d.body != null:
+		for mi in AppearFade.instances_of(d.body):
+			if mi.transparency > 0.0:
+				instance += 1
+			elif mi.has_meta(FADE_ORIGINAL_META):
+				faded += 1
+			else:
+				own += 1
+	return "meshes own=%d fade_pass=%d instance_transparency=%d" % [own, faded, instance]
+
 func _tick(d: Drawn, delta: float) -> void:
+	if qa_frozen:
+		return
 	if d.alpha_t < CharSelectMath.MODEL_FADE_S and not fades_paused:
 		d.alpha_t = minf(d.alpha_t + delta, CharSelectMath.MODEL_FADE_S)
 		d.alpha = lerpf(d.alpha_from, d.alpha_target, d.alpha_t / CharSelectMath.MODEL_FADE_S)

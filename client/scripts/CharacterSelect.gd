@@ -1355,6 +1355,7 @@ func _qa_list_tick(delta: float) -> void:
 		_qa_luma_done = true
 		_qa_luma()
 	_qa_frame_tick()
+	_qa_pending_probe_tick()
 	if OS.get_environment("OPENSRO_QA_SELECT_RACE") != "" and _qa_list_s >= 2.0 and _slots.size() < LobbyNet.MAX_CHARACTERS:
 		print("QA SELECT: pressing Create")
 		_on_create_pressed()
@@ -1515,6 +1516,50 @@ func _qa_frame_tick() -> void:
 			_qa_frame_sum / 1000.0 / _qa_frame_n, _qa_frame_max / 1000.0, _qa_render_cpu / _qa_frame_n, _qa_render_gpu / _qa_frame_n,
 			"Godot" if OS.get_environment("OPENSRO_QA_SELECT_GODOT_LIGHT") != "" else "character"])
 		get_tree().quit()
+
+## OPENSRO_QA_PENDING_PROBE=1 (round 719, OURS, QA): the pending character's
+## translucency measured. 2.5 s into the list it selects the first character
+## pending deletion (the camera flies to it, as the user's screenshot), 3.0 s
+## later it freezes every pose and switches the bodies' shadows off, then saves
+## the same frame with that character at alpha 255, 0 and its own 0xcc to
+## OPENSRO_QA_SELECT_SHOT_DIR (pending_255.png, pending_0.png,
+## pending_204.png) and quits. The effective alpha of a pixel is
+## (P - B) / (O - B); one translucent sheet gives the same value everywhere.
+var _qa_pending_stage := 0
+func _qa_pending_probe_tick() -> void:
+	if OS.get_environment("OPENSRO_QA_PENDING_PROBE") == "" or stage == null:
+		return
+	var k := -1
+	for i in range(_slots.size()):
+		if _slots[i].deleting:
+			k = i
+			break
+	if k < 0 or k >= stage.drawn.size():
+		return
+	if _qa_pending_stage == 0 and _qa_list_s >= 2.5:
+		_qa_pending_stage = 1
+		_select(k, false)
+	elif _qa_pending_stage == 1 and _qa_list_s >= 5.5:
+		_qa_pending_stage = 2
+		_qa_pending_probe(stage.drawn[k])
+
+func _qa_pending_probe(d: CharSelectStage.Drawn) -> void:
+	stage.qa_frozen = true
+	for dd in stage.drawn:
+		if (dd as CharSelectStage.Drawn).body == null:
+			continue
+		for n in (dd as CharSelectStage.Drawn).body.find_children("*", "GeometryInstance3D", true, false):
+			(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var dir := OS.get_environment("OPENSRO_QA_SELECT_SHOT_DIR")
+	for a in [255, 0, CharSelectMath.PENDING_ALPHA]:
+		stage.qa_set_alpha(d, a)
+		await _qa_frames(4)
+		var img := get_viewport().get_texture().get_image()
+		if dir != "" and img != null:
+			img.save_png("%s/pending_%d.png" % [dir, a])
+		print("QA PENDING PROBE alpha %d frame %d %s" % [a, Engine.get_frames_drawn(), stage.qa_fade_report(d)])
+	print("QA PENDING PROBE done")
+	get_tree().quit()
 
 func _qa_frames(n: int) -> void:
 	for i in range(n):
