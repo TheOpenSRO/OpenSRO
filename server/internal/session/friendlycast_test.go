@@ -302,11 +302,8 @@ func TestPartyBuffNeedsTheSameParty(t *testing.T) {
 	if ar := w.cast(t, req); ar.Error != "Invalid target" {
 		t.Fatalf("a Party-only buff on a stranger answered %q, want \"Invalid target\"", ar.Error)
 	}
-	p, err := w.parties.Create(party.Member{Session: gateway.NewTestSession(9001), CharacterID: w.aria.id, Name: "Aria", Level: party.MinLevelToCreate})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.parties.Join(p.ID, party.Member{Session: gateway.NewTestSession(9002), CharacterID: w.bram.id, Name: "Bram"}); err != nil {
+	if _, err := w.parties.Form(party.Member{Session: gateway.NewTestSession(9001), CharacterID: w.aria.id, Name: "Aria", Level: party.MinCreatorLevel},
+		party.Member{Session: gateway.NewTestSession(9002), CharacterID: w.bram.id, Name: "Bram"}, party.FlagExpShare); err != nil {
 		t.Fatal(err)
 	}
 	req = &UseSkillRequest{SkillID: skPartyBuff, TargetMonsterID: w.bram.id, TargetType: TargetCharacter, HasTargetType: true}

@@ -43,6 +43,23 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 710: the party API published for the next party lanes (the round-709
+	// plan in docs/protocol/party_protocol.md, "Implementation lanes"). Each is
+	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.
+	"AppendEntry":       "round 710: the party-match entry codec (0x7069/0x706a, 0xb069/0xb06a), published for lane S3; golden-tested.",
+	"ReadEntry":         "round 710: the party-match entry decoder, for lane S3; golden-tested.",
+	"ReadListEntry":     "round 710: the 0xb06c list-row decoder, for lane S3 and the client's tests; golden-tested.",
+	"EncodeListPage":    "round 710: the 0xb06c list page, for lane S3; golden-tested.",
+	"EncodeJoinRequest": "round 710: the S->C 0x706d the entry's leader receives, for lane S3; golden-tested.",
+	"DecodeJoinRequest": "round 710: the S->C 0x706d read back as c:0x884660 reads it, for lane S3; golden-tested.",
+	"EncodeJoinAnswer":  "round 710: the leader's 0x306e, for lane S3's tests and partybot; golden-tested.",
+	"DecodeJoinAnswer":  "round 710: the 0x306e reader (GS FUN_00514900 reads u32, u32, u8), for lane S3; golden-tested.",
+	"EncodeJoinResult":  "round 710: the 0xb06d success, for lane S3; golden-tested.",
+	"SetListing":        "round 710: lane S3 records a character's party-match entry; the invite ladder (0x2c25) and the formation refusal 0x2c20 already read it (party_test.go).",
+	"ClearListing":      "round 710: lane S3 clears a party-match entry (party_test.go).",
+	"JobFitsPurpose":    "round 710: the person-to-purpose job rule (GS 0x5bf240, SM 0x44f7f0), for lane S3's register and join ladders; party_test.go holds the table.",
+	"PartyByID":         "round 710: lane S3 finds the party behind a match entry; party_test.go.",
+	"ItemShare":         "round 710: flag bit 1 (Item Auto Share), for lane S2's round robin and gold split.",
 	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
 		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
@@ -141,7 +158,6 @@ var baseline = map[string]string{
 	"ArmorClassOf":        "internal/equipment/defaultwear.go",
 	"ArmourLossSlot":      "internal/durability/durability.go",
 	"BonusTier":           "internal/equipment/itemset.go",
-	"CanCreate":           "internal/party/party.go",
 	"CanDeclareWar":       "internal/guild/war.go",
 	"CanRequestAlliance":  "internal/guild/alliance.go",
 	"CapDamage":           "internal/combat/combat.go",

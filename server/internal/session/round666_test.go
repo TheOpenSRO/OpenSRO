@@ -348,11 +348,8 @@ func TestStatusTickKillArmsThePartyNest(t *testing.T) {
 	ctx := context.Background()
 	z := startStrikeZone(t)
 	parties := party.NewHub()
-	p, err := parties.Create(party.Member{Session: gateway.NewTestSession(66701), CharacterID: z.ariaChar, Name: "Aria", Level: 50})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parties.Join(p.ID, party.Member{Session: gateway.NewTestSession(66702), CharacterID: z.bramChar, Name: "Bram", Level: 50}); err != nil {
+	if _, err := parties.Form(party.Member{Session: gateway.NewTestSession(66701), CharacterID: z.ariaChar, Name: "Aria", Level: 50},
+		party.Member{Session: gateway.NewTestSession(66702), CharacterID: z.bramChar, Name: "Bram", Level: 50}, party.FlagExpShare); err != nil {
 		t.Fatal(err)
 	}
 	k := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x, 0, z.aria.z, 100, 0, 0, 1)
