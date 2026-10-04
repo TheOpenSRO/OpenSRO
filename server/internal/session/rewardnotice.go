@@ -36,17 +36,8 @@ func expGainFor(m combat.Monster, p killPayout) charmsg.ExpGain {
 	return g
 }
 
-// sendExpGain tells one receiver its share. GainExpAndLevel sends nothing
+// sendExpGainTo tells one receiver its share. GainExpAndLevel sends nothing
 // when both amounts are zero (0x4e5393..0x4e53a1 jump to the end).
-func sendExpGain(hub *world.Hub, characterID int64, g charmsg.ExpGain) {
-	e, ok := entityOf(hub, characterID)
-	if !ok {
-		return
-	}
-	sendExpGainTo(e.Session, g)
-}
-
-// sendExpGainTo is sendExpGain on a session already in hand (the killer's).
 func sendExpGainTo(s *gateway.Session, g charmsg.ExpGain) {
 	if s == nil || (g.Exp == 0 && g.SkillExp == 0) {
 		return

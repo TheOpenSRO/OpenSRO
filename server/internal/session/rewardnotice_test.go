@@ -150,7 +150,8 @@ func TestGoldPickUpTellsEveryShare(t *testing.T) {
 // An award of nothing sends nothing (GS 0x4e5393..0x4e53a1).
 func TestExpGainNotSentForNothing(t *testing.T) {
 	w := newPartyWorld(t)
-	sendExpGain(w.hub, w.ids["Aria"], charmsg.ExpGain{Source: 1})
+	aria, _ := w.hub.FindByName("Aria")
+	sendExpGainTo(aria.Session, charmsg.ExpGain{Source: 1})
 	w.c["Aria"].none(charmsg.OpExpGain)
 }
 

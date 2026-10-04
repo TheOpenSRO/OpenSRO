@@ -133,7 +133,11 @@ No BUG and no REGRESSION; six DEPARTURE/MINOR findings, all fixed as close to th
 | F5 | the original also sends 0x304E kind 1 on a solo gold pick-up, unshown, and the split credits the picker too | READ and sent: a solo pick-up's credit `gs:0x4eaca0` calls `OffsetGold(amount, 0, 0x19, 1, 0)` (unshown); the split calls `OffsetGold(share, 0, 0x17, 1, 1)` for **every** share, the picker's included (shown). Both are sent now; the spec carries the table. The picker's own item-move reply (`0xB034`, `FUN_004e9480`) prints GAIN_GOLD from its own u32 (`c:0x87bedc..0x87bf20`); whether that is the pile or the share was not traced (**OPEN**), so OpenSRO's pick-up reply keeps printing the share | `TestGoldPickUpTellsEveryShare` |
 | F6 | no handler-level test of the gold split | `TestGoldPickUpTellsEveryShare` drives `GroundItemHandler` (added to the party test world): an Item Auto Share pick-up of 1001 gives the picker 501 and both members one shown 0x304E with their rows' totals; a character outside the party hears nothing; a solo pick-up sends the picker an unshown one. A share that failed to credit is not driven (the memory store cannot be made to fail one credit) | itself |
 
-After the fixes: `go test -count=1 -p 1 ./...` all packages pass; on the box (shared lock) `check`
+After the fixes: the first full Go run caught two things, both fixed. `TestGroundDropAndPickUpFlow`
+read the solo gold pick-up's new 0x304E as its pick-up result (the credit's 0x304E comes first),
+so it now checks the unshown 0x304E and then the result. And the orphans gate flagged
+`sendExpGain`, unused once F1 moved every send onto a session in hand, so it was removed. Then
+`go test -count=1 -p 1 ./...` all packages pass; on the box (shared lock) `check`
 ALL LOAD (602 scripts) and the full suite 230 suites, 0 failing; `partybot -mode share -level 18`
 passes again (the mate's 0x3056 29/133 equals its row's rise, the idle member gets none). No
 orphaned processes.
