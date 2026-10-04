@@ -44,6 +44,7 @@ func specFromRow(base monsterSpec, row species.Row, lookup species.SkillLookup) 
 	spec.Defense, spec.Block, spec.Critical = row.Defense(), row.Block(), row.Critical()
 	spec.BCRadius = row.BCRadius
 	spec.WalkSpeed, spec.RunSpeed = row.WalkSpeed, row.RunSpeed
+	spec.ExpToGive, spec.HasExpToGive = row.ExpToGive, row.HasExpToGive
 	if row.GoldMax > 0 {
 		spec.GoldMin, spec.GoldMax = row.GoldMin, row.GoldMax
 	} else if base.GoldMax > 0 {

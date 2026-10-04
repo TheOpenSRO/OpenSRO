@@ -426,19 +426,27 @@ func SpendStatPointsHandler(chars character.Store, eq equipment.Store, items com
 		if characterID < 0 {
 			return refuse(reason)
 		}
+		// The row's read and write under the leveling lock (round 712: a
+		// party member's kill can pay this character from another goroutine).
+		unlock := character.LockLeveling(characterID)
 		owned, err := chars.GetByID(ctx, characterID)
 		if err != nil {
+			unlock()
 			return refuse("lookup failed")
 		}
 		want := int(req.Str) + int(req.Int)
 		if want <= 0 {
+			unlock()
 			return refuse("nothing to spend")
 		}
 		if want > owned.StatPoints {
+			unlock()
 			return refuse("not enough stat points")
 		}
-		if err := chars.SetLeveling(ctx, characterID, owned.Level, owned.Exp,
-			owned.StatPoints-want, owned.Str+int(req.Str), owned.Int+int(req.Int)); err != nil {
+		err = chars.SetLeveling(ctx, characterID, owned.Level, owned.Exp,
+			owned.StatPoints-want, owned.Str+int(req.Str), owned.Int+int(req.Int))
+		unlock()
+		if err != nil {
 			return refuse("saving stats failed")
 		}
 		owned, err = chars.GetByID(ctx, characterID)

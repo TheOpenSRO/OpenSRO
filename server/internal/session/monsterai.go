@@ -997,9 +997,9 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 //     not even engage its victim, which round 546's BATTLE entry on every
 //     blow already assumes it does; the magnitudes are mob-threat-retarget's;
 //  2. the attacker's party must exist (pc+0x1cb8) and share EXP (party+0x10
-//     bit 0). Every OpenSRO party shares EXP (party.go), and, as killExpFor's
-//     gate reads it (round 485), a party is one of two or more: the engine
-//     never creates a party of one, OpenSRO's create path does;
+//     bit 0) -- round 712: the party's own flag (party.Flags.ExpShare) since
+//     round 710 gave parties their real types; a party is always two or more
+//     (the ShardManager dissolves a party of two when one leaves);
 //  3. the gather (AITactics_CollectNearbyMonsters 0x540580 -> ai.GatherWithin):
 //     the ten nearest OTHER monsters within ai.LevelScaledRadius(the victim's
 //     detection radius, victim level - attacker level) of the VICTIM. The
@@ -1041,7 +1041,7 @@ func (a *monsterAI) linkAggro(b *brain, attacker int64) {
 		return
 	}
 	p, ok := a.parties.Get(attacker)
-	if !ok || p == nil || len(p.Members) < 2 {
+	if !ok || p == nil || !p.Flags.ExpShare() {
 		return
 	}
 	self, ok := a.world.EntityByCharacterID(attacker)

@@ -125,4 +125,7 @@ Strings are a u16 length and the bytes. All integers are little-endian.
 | `b06d_refused.hex` | 0xb06d | S->C | 3 | [1][0] refused by the leader |
 | `b06d_noreply.hex` | 0xb06d | S->C | 3 | [1][2] no reply |
 | `b06d_err_level.hex` | 0xb06d | S->C | 3 | [2][0x2c1e] level outside the entry's range |
+| `3068_expendable.hex` | 0x3068 | S->C | 10 | Bram got 5 of item 62 (an expendable) |
+| `3068_other.hex` | 0x3068 | S->C | 9 | Aria got item 3617 (equipment): u8 1 |
+| `3068_gold.hex` | 0x3068 | S->C | 16 | Bram got 1234 gold (item 1, 8-byte amount, OURS) |
 <!-- /cases -->

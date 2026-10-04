@@ -1161,106 +1161,6 @@ func combatHandler(
 // counterattack, sends OpAttackResult to sess, grants gold on a kill, and
 // broadcasts to everyone else in the zone. Shared by CombatHandler and
 // skill.UseHandler so both attack paths behave identically.
-// inParty reports whether a character is in a party, the condition the engine
-// uses to choose between ExpRatio and ExpRatioParty (`pc[0x72e] != 0`).
-func inParty(parties *party.Hub, characterID int64) bool {
-	if parties == nil {
-		return false
-	}
-	pt, in := parties.Get(characterID)
-	return in && pt != nil && len(pt.Members) > 0
-}
-
-// killExpFor is what a kill is worth to characterID before the mastery, party
-// and rate multipliers, and whether the level table knows it. Being in a party
-// is Formula_ExpScaleByLevelDiff's gate for its gap bonus (0x410018-0x410027:
-// `pc[0x72e]` non-null and bit 0 -- exp-sharing -- of the party's flags), and
-// every OpenSRO party shares experience (party.MaxSize). See
-// leveldata.ExpDiffScale.
-//
-// The gate here asks for a SECOND member, which the engine's does not: it
-// tests the party pointer. But the engine never creates a party of one. A
-// party is born when an invite is accepted, with two member records at once
-// (trs_wait_response::FUN_005be4f0, docs/protocol/party.md round 271), while
-// OpenSRO's own create path makes a party of just the leader -- so a pointer
-// test here would pay the bonus to a lone player for clicking "create party",
-// a state the engine has no way into (round 485). What the engine does when a
-// party of two drops to one is UNREAD (the party lives in another server
-// process), so that case follows the same two-member reading, disclosed.
-// (Round 709: READ -- SR_ShardManager.exe dismisses a party of exactly two
-// when one leaves, sm:0x44f580 -> 0x44eb30, so a party of one never exists.
-// The gap bonus also needs the party's EXP-SHARE bit, not just a party;
-// docs/protocol/party_rules.md.)
-func killExpFor(tbl *leveldata.Table, parties *party.Hub, characterID int64, killerLevel, victimLevel int) (int64, bool) {
-	return tbl.KillExp(killerLevel, victimLevel, inPartyWithOthers(parties, characterID))
-}
-
-// inPartyWithOthers reports whether characterID is in a party that has at
-// least one other member -- the only kind the engine creates -- and shares
-// EXP: both callers (the gap bonus, 0x410018; the nest arming, 0x529e0a) need
-// bit 0 (round 710, now that a party can be EXP free-for-all). See killExpFor.
-func inPartyWithOthers(parties *party.Hub, characterID int64) bool {
-	if parties == nil {
-		return false
-	}
-	pt, in := parties.Get(characterID)
-	return in && pt != nil && len(pt.Members) >= 2 && pt.Flags.ExpShare()
-}
-
-// applyMasteryExpScale scales a kill's experience by the gap between the
-// character's level and its highest mastery level -- the engine's
-// "keep your mastery up" rule, recovered in
-// leveldata.MasteryExpScale (0.1 lost per level of lag, clamped to [0.1, 1.9]).
-//
-// Returns exp unchanged when there is no skill store, when the lookup fails, or
-// when the scale works out to 1.0. A lookup FAILURE deliberately does not
-// penalise the player: the engine always has the number to hand, so a missing
-// one here is OpenSRO's problem and should not cost someone 90% of a kill.
-func applyMasteryExpScale(ctx context.Context, skills skill.Store, characterID int64, charLevel int, exp int64) int64 {
-	if skills == nil || exp == 0 {
-		return exp
-	}
-	levels, err := skills.MasteryLevels(ctx, characterID)
-	if err != nil {
-		return exp
-	}
-	best := 0
-	for _, lvl := range levels {
-		if lvl > best {
-			best = lvl
-		}
-	}
-	scale := leveldata.MasteryExpScale(charLevel, best)
-	if scale == 1.0 {
-		return exp
-	}
-	out := int64(math.Round(float64(exp) * scale))
-	if out < 1 {
-		out = 1
-	}
-	return out
-}
-
-// applyPartyExpBonus scales a kill's experience by the engine's party
-// multiplier -- 1.0 plus 3% for every member past the first, recovered from the
-// FMUL 0.03 / FADD 1.0 pair in CGObjCOS_GoldPet::vslot_399. See
-// leveldata.PartyExpBonusPerMember, which also records what OpenSRO still does
-// NOT do: distribute a share to the other members.
-//
-// Returns exp unchanged when there is no party hub (the handler is constructed
-// without one in several tests), when the character is in no party, or when the
-// party has a single member -- all three are the engine's FLD1 default.
-func applyPartyExpBonus(parties *party.Hub, characterID int64, exp int64) int64 {
-	if parties == nil || exp == 0 {
-		return exp
-	}
-	pt, in := parties.Get(characterID)
-	if !in || pt == nil || len(pt.Members) < 2 {
-		return exp
-	}
-	return int64(math.Round(float64(exp) * leveldata.PartyExpBonus(len(pt.Members))))
-}
-
 func performAttack(
 	ctx context.Context,
 	sess *gateway.Session,
@@ -1469,7 +1369,7 @@ func performAttack(
 	// The kill's word to the nests (round 660, nestkill.go): the killer's
 	// party near the monster may arm its nest for a party monster.
 	if monsterDied {
-		noteMonsterKilled(hub, parties, characterID, updated)
+		noteMonsterKilled(hub, parties, killHits, updated)
 	}
 	// The monster AI's struck event (round 537, monsterai.go): a surviving
 	// monster is attacked (CAIState::OnAttacked 0x558ea0) and stopped at the
@@ -1514,7 +1414,7 @@ func performAttack(
 	if monsterDied {
 		// The kill reward (round 659: one function, grantKill, that the
 		// damage-over-time kill in status.go pays through too).
-		lu, kg, kerr := grantKill(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, monster, result)
+		lu, kg, kerr := grantKill(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, monster, result, killHits)
 		if kerr != nil {
 			return kerr
 		}
@@ -1755,9 +1655,15 @@ func weaponInstance(e equipment.Equipped) combat.Instance {
 // exactly the deployments that have imported least. The player's attack guards
 // its own half the same way (round 378).
 func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
+	// A party monster's attack value is x1.2 and an elite's x1.5 before
+	// defence (round 712, combat.MonsterAttackFactor, READ FUN_0040da20). The
+	// engine scales the attacker's own stat; applying it to a drawn skill's
+	// range is INFERRED, and the truncation is OURS (ScaleMonsterAttack).
+	f := combat.MonsterAttackFactor(m.Party, m.Rarity)
 	if m.AttackMax <= 0 {
-		return m.Attack // no range at all: the flat disclosed Attack
+		return combat.ScaleMonsterAttack(m.Attack, f) // no range at all: the flat disclosed Attack
 	}
+	m.AttackMin, m.AttackMax = combat.ScaleMonsterAttack(m.AttackMin, f), combat.ScaleMonsterAttack(m.AttackMax, f)
 	if parry > 0 {
 		centre := combat.DamageCentrePercent(
 			combat.MonsterRate(m.Level),
@@ -2057,8 +1963,8 @@ type blowReport struct {
 // what the attacker's OpAttackResult reports into result. It is performAttack's
 // kill branch moved here unchanged in round 659, so that a kill by a state's
 // damage tick (status.go) pays exactly what a kill by a blow does.
-func grantKill(ctx context.Context, d combatDeps, characterID int64, monster combat.Monster, result *AttackResult) (levelUp *LevelUp, killGold int64, err error) {
-	chars, zerk, ground, parties, skills, mp, hub := d.chars, d.zerk, d.ground, d.parties, d.skills, d.mp, d.hub
+func grantKill(ctx context.Context, d combatDeps, characterID int64, monster combat.Monster, result *AttackResult, hits []combat.Hit) (levelUp *LevelUp, killGold int64, err error) {
+	chars, zerk, ground, skills := d.chars, d.zerk, d.ground, d.skills
 
 	// The monster's object is gone, so its blocking streak goes with it.
 	// The engine's accumulator lives on the object; nothing survives it.
@@ -2129,11 +2035,10 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 		}
 	}
 
-	// Skill points from the kill are granted BELOW, out of the kill's own
-	// experience, because the game grants skill EXPERIENCE and converts it
-	// at leveldata.SkillExpPerPoint. Without a level table there is no
-	// experience to convert, so that path falls back to the disclosed
-	// per-kill default -- see the else branch.
+	// Skill experience is granted BELOW with the experience (the kill's own
+	// formula, FUN_004106b0) and converted at leveldata.SkillExpPerPoint.
+	// Without a level table neither can be computed, so that path falls back
+	// to the disclosed per-kill default -- see the else branch.
 
 	// Experience, and a level-up if it crosses the curve -- only when the
 	// server has a leveldata curve loaded (SetLevelTable). Without one, no
@@ -2141,114 +2046,21 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 	// A level-up refills HP and is announced with OpLevelUp after the
 	// attack result below.
 	if levelTable.Loaded() {
-		char, err := chars.GetByID(ctx, characterID)
+		// Round 712 (party lane S2): the kill pays everyone its damage list
+		// earns a share, as the monster's death distributor does --
+		// CGObjMob::vslot_399, killshare.go -- not the killing blow alone.
+		// The killer's own payout is what its OpAttackResult reports; the
+		// skill experience every kill pays is the engine's FUN_004106b0
+		// (round 709 corrected the census that said kills pay none).
+		paid, err := distributeKill(ctx, d, characterID, monster, hits)
 		if err != nil {
-			return nil, 0, fmt.Errorf("combat: reading character for exp: %w", err)
+			return nil, 0, err
 		}
-		// What the kill is worth. The level table's own EXP unit when it
-		// has one, taken at the MINIMUM of the two levels -- the game's
-		// anti-powerlevelling rule, recovered from
-		// Formula_MonsterExpReward. Falls back to the disclosed
-		// toughness-derived ExpReward only for a table with no exp_unit
-		// column (an export that predates it). A killer in a party also
-		// earns the diff scaler's gap bonus -- see killExpFor.
-		gainedExp := monster.ExpReward
-		if unit, ok := killExpFor(levelTable, parties, characterID, char.Level, monster.Level); ok {
-			gainedExp = unit
-		}
-		gainedExp = applyMasteryExpScale(ctx, skills, characterID, char.Level, gainedExp)
-		gainedExp = applyPartyExpBonus(parties, characterID, gainedExp)
-		// The server's ExpRatio / ExpRatioParty knob. The engine picks
-		// ONE of the two by party membership rather than multiplying
-		// both -- see rates.Rates.ExpFor.
-		if m := rates.Current().ExpFor(inParty(parties, characterID)); m != 1 {
-			gainedExp = int64(math.Round(float64(gainedExp) * m))
-		}
-		// The skill economy's income. The game grants skill EXPERIENCE,
-		// carries it on the character and converts whole points out of the
-		// running total at 400:1 -- see leveldata.SkillExpPerPoint, which
-		// is the recovered part.
-		//
-		// How much skill experience a KILL is worth is NOT recovered, and
-		// the search for it is now exhaustive rather than partial. Every
-		// route into the skill-point currency has been enumerated:
-		//
-		//   - _CHAR.SExpOffset (charData+0x70), the carried total, has
-		//     exactly ONE writer in the binary -- the 400:1 conversion
-		//     inside GObjPC_GainExpAndLevel. The only other function that
-		//     touches it, FUN_0049efc0, reads it into a packet.
-		//   - Of the 42 call sites of GainExpAndLevel, only four pass a
-		//     non-zero skill-exp argument (it is the FOURTH argument, and
-		//     every ordinary exp grant passes zero there). None is a kill:
-		//     they are a quest reward, its party distribution, and two
-		//     others off the same quest path.
-		//   - Every positive caller of AddSkillPoints is either that
-		//     conversion or a skill/mastery WITHDRAWAL refund.
-		//
-		// So no kill path in this binary feeds the currency at all, and
-		// there is no M to read for a kill. OpenSRO takes M = 1 -- a kill
-		// is worth its own experience in skill experience -- which is a
-		// DISCLOSED choice and the single knob to turn if a kill-side
-		// source is ever found.
-		//
-		// (Round 709: WRONG, the census counted DIRECT calls only. The kill
-		// reward CGObjPC::vslot_420 (0x4ea6a0) calls GainExpAndLevel through
-		// the vtable (call [vt+0x170], slot 92) with the kill's skill
-		// experience from Formulae::FUN_004106b0 as the second pair, scaled
-		// by the same party multiplier as the EXP. Every kill pays SP. The
-		// formula and its open base (slot 332) are in
-		// docs/protocol/party_rules.md; party lane S2 replaces M = 1.)
-		//
-		// Guild points inherit that M = 1 (round 525): cmd/server hands
-		// this path NewGuildPointSkills' wrapper, which credits a member's
-		// guild 1:1 with the points this call converts, so the disclosed
-		// M also sets how fast GatheredSP grows from kills.
-		if skills != nil && gainedExp > 0 {
-			if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
-				return nil, 0, fmt.Errorf("combat: granting skill experience: %w", err)
-			}
-			result.SkillExpGained = gainedExp
-		}
-		newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
-		// What the character actually gained (round 639's review): at the
-		// level cap Advance holds the EXP below the requirement, so the
-		// line reports what was added, not what the kill was worth.
-		result.ExpGained = expAdded(levelTable, char.Level, char.Exp, newLevel, newExp)
-		newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
-		// Str and Int rise by one each per level, automatically and without
-		// the player choosing -- on top of the three spendable points.
-		// GObjPC_SetLevel grants five points and immediately calls
-		// SpendStatPoints(levels, levels), which is `Str += levels` and
-		// `Int += levels`; the asm is `movzx ecx,[eax+0x74]; add cx,si;
-		// call SetStr`, and it publishes ParamKeeper param 1 (Str)
-		// afterwards. See leveldata.StatPointsPerLevel for the full
-		// arithmetic and docs/GROUNDING_AUDIT.md for why this took a tick
-		// of its own: it moves every derived HP and MP number.
-		newStr := char.Str + gained*character.StatGrowthPerLevel
-		newInt := char.Int + gained*character.StatGrowthPerLevel
-		if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
-			return nil, 0, fmt.Errorf("combat: applying experience: %w", err)
-		}
-		if gained > 0 {
-			// The world entity's cached level follows the row (round 555):
-			// the monster AI's aggro link and swings read it there, never
-			// the store, and this is one of the two places a level moves
-			// (gm's /level is the other).
-			hub.SetLevel(characterID, newLevel)
-			if err := chars.ResetHP(ctx, characterID); err != nil {
-				return nil, 0, fmt.Errorf("combat: refilling hp on level up: %w", err)
-			}
-			// Healed to the NEW level's higher maximum -- and mana with
-			// it. Both derive from the character's own Str/Int, so read
-			// the level off the advance rather than the stale record.
-			// The new Str/Int, not the stale record's: the level-up
-			// raised them, and the engine's refill goes to the maximum
-			// those give (GObjPC_SetLevel heals by GetMaxHP - GetCurHP).
-			result.PlayerHP = int32(character.MaxHPFor(newStr, newLevel))
-			if mp != nil {
-				mp.Refill(characterID, character.MaxMPFor(newInt, newLevel))
-			}
-			levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
+		result.ExpGained = paid.expAdded
+		result.SkillExpGained = paid.sp
+		if paid.levelUp != nil {
+			result.PlayerHP = int32(paid.hp)
+			levelUp = paid.levelUp
 		}
 	} else if skills != nil && monster.SPReward > 0 {
 		// No level table, so no experience to convert: fall back to the

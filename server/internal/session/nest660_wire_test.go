@@ -42,8 +42,9 @@ func TestPartyFlagOnTheWire(t *testing.T) {
 	}
 }
 
-// The kill's party count: the killer's party members alive, in the monster's
-// zone and within 1000 units of the dead monster; none for a lone killer.
+// The kill's party count (round 712): the eligible members of an exp-share
+// group's party share -- alive, in the zone and within 1000 units of the KILL
+// CREDIT, damage or not; none for a lone killer or a free-for-all party.
 func TestPartyMembersNearTheKill(t *testing.T) {
 	hub := world.NewHub()
 	parties := party.NewHub()
@@ -60,11 +61,12 @@ func TestPartyMembersNearTheKill(t *testing.T) {
 	enter(2, 900, world.LifeAlive)
 	enter(3, 1200, world.LifeAlive)
 	enter(4, 10, world.LifeDead)
-	m := combat.Monster{ID: 9, Zone: "jangan", X: 100}
+	m := combat.Monster{ID: 9, Zone: "jangan", X: 5000, MaxHP: 100}
 	if partyArmRange != nest.PartyArmRange {
 		t.Fatalf("session's range %v is not nest.PartyArmRange %v", partyArmRange, nest.PartyArmRange)
 	}
-	if n := partyMembersNear(hub, parties, 1, m); n != 0 {
+	hits := []combat.Hit{{AttackerID: 1, Damage: 100}}
+	if n := partyMembersNear(hub, parties, hits, m); n != 0 {
 		t.Fatalf("a killer in no party counted %d", n)
 	}
 	p, err := parties.Form(party.Member{Session: sessions[1], CharacterID: 1, Name: "a", Level: 50},
@@ -77,15 +79,34 @@ func TestPartyMembersNearTheKill(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 1 (100 off) and 2 (800 off) count; 3 is 1100 off; 4 is dead.
-	if n := partyMembersNear(hub, parties, 1, m); n != 2 {
-		t.Fatalf("counted %d members near the kill, want 2", n)
+	// Measured from the kill credit (1, at 0), not the monster (5000 off):
+	// 1 and 2 (900 off) count; 3 is 1200 off; 4 is dead.
+	if n := partyMembersNear(hub, parties, hits, m); n != 2 {
+		t.Fatalf("counted %d members near the kill credit, want 2", n)
 	}
 	var got int
 	SetMonsterKillObserver(func(_ combat.Monster, members int) { got = members })
 	t.Cleanup(func() { SetMonsterKillObserver(nil) })
-	noteMonsterKilled(hub, parties, 1, m)
+	noteMonsterKilled(hub, parties, hits, m)
 	if got != 2 {
 		t.Fatalf("the observer was told %d", got)
+	}
+}
+
+// A free-for-all party's kill never arms: only the share path writes the count.
+func TestFreeForAllKillDoesNotArm(t *testing.T) {
+	hub := world.NewHub()
+	parties := party.NewHub()
+	s1, s2 := gateway.NewTestSession(66201), gateway.NewTestSession(66202)
+	hub.Enter(s1, 1, "a", 50, "jangan", world.Position{X: 0})
+	hub.Enter(s2, 2, "b", 50, "jangan", world.Position{X: 10})
+	if _, err := parties.Form(party.Member{Session: s1, CharacterID: 1, Level: 50},
+		party.Member{Session: s2, CharacterID: 2, Level: 50}, party.FlagItemShare); err != nil {
+		t.Fatal(err)
+	}
+	m := combat.Monster{ID: 9, Zone: "jangan", MaxHP: 100}
+	hits := []combat.Hit{{AttackerID: 1, Damage: 60}, {AttackerID: 2, Damage: 40}}
+	if n := partyMembersNear(hub, parties, hits, m); n != 0 {
+		t.Fatalf("a free-for-all party's kill counted %d, want 0", n)
 	}
 }

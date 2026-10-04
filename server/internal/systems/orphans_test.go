@@ -46,7 +46,9 @@ var knownOrphans = map[string]string{
 	// Round 710: the party API published for the next party lanes (the round-709
 	// plan in docs/protocol/party_protocol.md, "Implementation lanes"). Each is
 	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.
-	"PartyByID": "round 710: lane S3 finds the party behind a match entry; party_test.go.",
+	"PartyByID":        "round 710: lane S3 finds the party behind a match entry; party_test.go.",
+	"DecodeItemNotice": "round 712: the 0x3068 reader as c:0x873990 reads it (the class from the item's TypeIDs), for the client lane's tests; golden-tested.",
+	"KillExp":          "round 712: Formula_MonsterExpReward (0x4105d0), whose only callers are the PC death dispatch; the kill path pays through KillBase and ContributorExp instead. Kept as the recovered formula and its tests' anchor.",
 	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
 		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
@@ -317,7 +319,7 @@ func TestOrphanDetectorIgnoresComments(t *testing.T) {
 
 	// And the opposite direction: something plainly called must not be reported.
 	for _, d := range orphans {
-		if d.name == "KillExp" || d.name == "MitigateDamage" {
+		if d.name == "KillBase" || d.name == "MitigateDamage" {
 			t.Errorf("%s reported as an orphan, but it is called; the detector is broken", d.name)
 		}
 	}

@@ -487,7 +487,10 @@ func TestPartyFlagGates(t *testing.T) {
 	if !same(3, 4) || same(1, 3) {
 		t.Fatal("item-share pickup rights")
 	}
-	if !inPartyWithOthers(h, 1) || inPartyWithOthers(h, 3) {
+	// Round 712: the exp-share gate is the distributor's grouping
+	// (partyGroupOf, planKill); killshare_test covers the gap bonus and the
+	// arming through it.
+	if group := partyGroupOf(h); group(1) == 0 || group(3) != 0 {
 		t.Fatal("the exp-share gate")
 	}
 }

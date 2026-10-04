@@ -40558,6 +40558,16 @@ minimum-level rule (`CMP EBX,EAX / JLE / MOV EBX,EAX` across two
 `Char_GetLevel` calls) that `leveldata.KillExp` already implements. One
 function confirmed both the field and a rule recovered separately.
 
+**(Round 712: the kill half of this is WRONG.)** `Formula_MonsterExpReward` (`0x4105d0`) needs both
+sides to be PCs (`0x4105d9`/`0x4105e8`, vtable slot 7 tests) and is called only from the PC death
+code (`0x4e6a09`, `0x4e6d88`): it is the PvP formula. A monster kill pays through
+`CGObjMob::vslot_399` → `CGObjPC::vslot_420` (`0x4ea6a0`, slot 420 of CGObjPC's vtable `0xaf59fc`)
+→ `Formula_ExpRewardForContributor` (`0x410110`), whose base is the victim's slot 332. That is
+`0x4a68b0`, a jump to the instance's slot 13, `0x449340` = `return ref[+0x250]`, which holds
+characterdata **col 79, ExpToGive**. The kill's base is the monster's own column, not the level
+table at min(killer, victim); `docs/protocol/party_rules.md` and `docs/rounds/party712.md` have
+the evidence. The EXP unit IS what a death costs; that half stands.
+
 It also resolves half of the long-standing `pc[0x72d]` item: that byte (victim
 +0x1CB4) is compared against **5**, and gates the harsh branches *together
 with* `charData+0xb4` = `PKPenaltyPoint` from the recovered `_CHAR` schema.
@@ -40857,6 +40867,13 @@ The 174th round flagged col 79 as the likely monster MaxHP and deliberately did
 not ship it. Good thing: **it was wrong.** Col 79 is 23.5*level -- the same
 value `leveldata` col 5 carries -- and a clean-looking curve turns out to be no
 evidence at all of what a column *means*.
+
+**(Round 712: col 79 is ExpToGive, the kill's base EXP.)** It is read as an integer by
+`0x449340` (`mov eax,[ecx+0x18]; mov eax,[eax+0x250]`), reached only through the CGObjMob slot-332
+thunk `0x4a68b0`. The 2026-09-14 probe that found "no integer reader of +0x250" intersected the
+readers of `0x250` with the readers of MaxHP `0x19c`, so a ten-byte accessor reading `0x250` alone
+could never pass it. The decompile also files it as `CInstanceCOS::FUN_00449340`, which reads like
+a pet-only helper.
 
 The real answer came out of the binary. The pserver's own `SR_GameServer.exe`
 (8.9 MB PE32, now a second Ghidra project `re_server`) is a much better RE

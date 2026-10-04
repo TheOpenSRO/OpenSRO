@@ -120,6 +120,10 @@ type monsterSpec struct {
 	Skills []combat.MonsterSkill
 	// GoldMin/GoldMax are the real per-level gold range (levelgold.txt).
 	GoldMin, GoldMax int64
+	// ExpToGive is characterdata col 79, the kill's base EXP (round 712,
+	// species.ColExpToGive); HasExpToGive is false without the column.
+	ExpToGive    int64
+	HasExpToGive bool
 	// Critical is the species' real critical-hit chance, characterdata col 78.
 	// The game reads 2 on 7,493 of its 7,495 monster rows, so it is effectively
 	// a constant -- but it is carried per-species rather than hardcoded,
@@ -610,7 +614,8 @@ func combatSpeciesOf(spec monsterSpec) combat.Species {
 	return combat.Species{Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
 		AttackMin: spec.AttackMin, AttackMax: spec.AttackMax, Skills: spec.Skills,
 		GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
-		WalkSpeed: spec.WalkSpeed, RunSpeed: spec.RunSpeed}
+		WalkSpeed: spec.WalkSpeed, RunSpeed: spec.RunSpeed,
+		ExpToGive: spec.ExpToGive, HasExpToGive: spec.HasExpToGive}
 }
 
 // refItemStore is the slice of reference data the running server needs:
@@ -653,6 +658,7 @@ func groundDropRules(ctx context.Context, items interface {
 			Bound:       !it.CanTrade,
 			NoPick:      !it.CanPick,
 			OwnerOnly:   grounditem.OwnerOnlyPick(it.TypeID1, it.TypeID2, it.TypeID3, it.CodeName),
+			Expendable:  it.TypeID1 == 3 && it.TypeID2 == 3,
 		}
 	}
 }
