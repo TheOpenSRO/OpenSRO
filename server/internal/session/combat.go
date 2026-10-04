@@ -1187,6 +1187,10 @@ func inParty(parties *party.Hub, characterID int64) bool {
 // a state the engine has no way into (round 485). What the engine does when a
 // party of two drops to one is UNREAD (the party lives in another server
 // process), so that case follows the same two-member reading, disclosed.
+// (Round 709: READ -- SR_ShardManager.exe dismisses a party of exactly two
+// when one leaves, sm:0x44f580 -> 0x44eb30, so a party of one never exists.
+// The gap bonus also needs the party's EXP-SHARE bit, not just a party;
+// docs/protocol/party_rules.md.)
 func killExpFor(tbl *leveldata.Table, parties *party.Hub, characterID int64, killerLevel, victimLevel int) (int64, bool) {
 	return tbl.KillExp(killerLevel, victimLevel, inPartyWithOthers(parties, characterID))
 }
@@ -2184,6 +2188,14 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 		// is worth its own experience in skill experience -- which is a
 		// DISCLOSED choice and the single knob to turn if a kill-side
 		// source is ever found.
+		//
+		// (Round 709: WRONG, the census counted DIRECT calls only. The kill
+		// reward CGObjPC::vslot_420 (0x4ea6a0) calls GainExpAndLevel through
+		// the vtable (call [vt+0x170], slot 92) with the kill's skill
+		// experience from Formulae::FUN_004106b0 as the second pair, scaled
+		// by the same party multiplier as the EXP. Every kill pays SP. The
+		// formula and its open base (slot 332) are in
+		// docs/protocol/party_rules.md; party lane S2 replaces M = 1.)
 		//
 		// Guild points inherit that M = 1 (round 525): cmd/server hands
 		// this path NewGuildPointSkills' wrapper, which credits a member's

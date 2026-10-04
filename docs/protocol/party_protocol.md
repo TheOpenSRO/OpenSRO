@@ -78,7 +78,17 @@ under each flow below.
   every party message.
 - **An invite target is a world object id**, the id of the selected object. `0x7060`/`0x7062` send
   it, and the server resolves it through `GObjPC::IsWithinInteractionRange(pc, &id, 0x26)` (READ
-  `gs:0x5143b0`, `gs:0x514560`).
+  `gs:0x5143b0`, `gs:0x514560`). **The `0x26` is not a distance** (review of round 709): it is a
+  TypeID filter, compared field by field with the target's type word by `gs:0x4a8d90`
+  (`(x>>2)&7`, `(x>>5)&3`, `(x>>7)&0xf`, `x>>11`); a mismatch returns **3** (`gs:0x4a8eb2`). The
+  distance is a float picked inside `gs:0x4a8e10`: **600.0** (`gs:0xb46198`) when the found
+  target's vtable slot 7 (`+0x1c`, IsPC) returns 1, 320.0 (`gs:0xb460dc`) by default
+  (`gs:0x4a8ec0..0x4a8f00`: `ebx` is the found target, reloaded from the out-parameter). The
+  distance is **3D** (positions `+0x88/+0x8c/+0x90` through the region-aware delta `gs:0x430ba0`,
+  then `sqrt`). Out of range returns the bare code **4** (`gs:0x4a902f..0x4a903b`); not found, or
+  another world, returns 0 (`gs:0x4a8e2b`); in range returns 1. Any result other than 1 goes out as
+  `0xb060 [2][code]` (or `0xb062` for `0x7062`). READ (GS, both round-709 reviews; which object
+  is tested for IsPC re-read by the fix-up pass).
 - **The party id** is `party+0x8` (READ `gs:0x5bc650`). The ShardManager assigns it
   (`sm:0x44e9c0`: a counter at `manager+4` that skips 0).
 - **A party-match entry number** is assigned by the ShardManager (`sm:0x451290`/`0x451110`: a
@@ -102,7 +112,7 @@ asm both sides):**
 | 6 | `0x20` | region | u16 | `pc+0x84` |
 | 7 | `0x20` | x, y, z | 3 x u32 if `region & 0x8000` (a dungeon), else 3 x u16 | `ftol(pc+0x88/+0x8c/+0x90)`, written in that order |
 | 8 | `0x20` | world id | u32 | slot 5 `GetWorldID` |
-| 9 | `0x40` | guild name | str | slot 94 `GetGuildName` |
+| 9 | `0x40` | guild name | str | slot 94 `GetGuildName` (CGObjPC vtable `0xaf59fc` + 94×4 holds `0x4ea640`, recovered name `CGObjPC::GetGuildName`; READ by the fix-up pass). The client stores it at its wire struct's `+0x20` (`c:0x883730`) |
 | 10 | `0x80` | job state | u8 | slot 71 `GetJobState` (`chardata+0xf`) |
 | 11 | `0x08` | mastery 1, mastery 2 | 2 x u32 | `GObjPC::FUN_005a1890(&m1, &m2)` |
 
@@ -117,7 +127,12 @@ asm both sides):**
   `GObjPC_SetLevel` (8), `Skill_HandleMasteryLevelUp` and the skill handler `0x203` (0x20),
   `UpdateCharRefObjIDAndScale` (0x40), `gs:0x4ea290` (0x10), `gs:0x4a8510` (2), `gs:0x4df6b0` and
   `gs:0x4a9410` (1). How often a position update fires is OPEN.
-- The race and gender the windows show come from the RefObjID (INFERRED; lane party709c).
+- **HP and MP reach the client only as the tenths byte** (READ both sides: `gs:0x470c16`,
+  `c:0x883684`, size 1). The client splits it into the member object's HP and MP slots at
+  `c:0x99a34b..0x99a36a` (`and ecx,0xf` / `shr eax,4`). So the ratios the party window and HUD
+  draw are tenths. Where the client's "max" slots come from was not traced (OPEN, minor).
+- The race the windows show comes from the RefObjID: the reference's `+0x9c` byte (READ client,
+  `party_gui.md` §1).
 - The record has no buff list. The buffs on the HUD member boxes come from the normal buff traffic
   of characters in sight (INFERRED; lane party709c).
 
@@ -136,7 +151,9 @@ One byte, chosen when the party is created, stored at `party+0x10`.
   `c:SendPartyMsg_060` 0x81c7f0..0x81c833, `c:UI_PARTYMATCH::FUN_0073f370`). The "Set" button edits
   that singleton (screenshot 05). That is client-side: no message carries it (READ: no sender).
 - **There is no "change party type" message and no "change leader" message** (READ by absence, in
-  four places): the client sends only `0x7060..0x7063`, `0x7069..0x706d` and `0x306e` (asm sweep
+  four places; `0x7067` sits in the GameServer's `RegisterValueListFilters` list next to
+  `0x7060..0x7063` at `gs:0x427f0d`, but it has no dispatch handler and no client sender, so it
+  changes nothing here): the client sends only `0x7060..0x7063`, `0x7069..0x706d` and `0x306e` (asm sweep
   for `push 0x70xx`/`0x30xx`); the GameServer dispatch has party handlers only at 0x060-0x063 and
   0x069-0x06f (`server_handlers.tsv`); the ShardManager's `0x7866` kinds are 0, 2, 0xa-0xd and its
   `0x3864` kinds are 3, 6, 7. The flags last for the party's lifetime. Leadership moves only when the
@@ -151,8 +168,8 @@ One byte, chosen when the party is created, stored at `party+0x10`.
 | C->S | `0x7060` | create party + invite | u32 target world id, u8 flags | READ both: `c:0x81c6d0` writes 4, 1; `gs:0x5143b0` reads u32, u8 |
 | S->C | `0xb060` | create ack (to the inviter) | u8 result; 1: u32 own JID; 2: u16 code | READ both: `c:0x880010`; `gs:0x5bb53f`, `0x5be7cd`, `Msg_SendTwoFieldReply 0x4e7250` = `[u8 2][u16]` |
 | C->S | `0x7062` | invite into my party | u32 target world id | READ both: `c:0x81c8f0`; `gs:0x514560` |
-| S->C | `0xb062` | invite result (to the inviter, errors only) | u8 result; 2: u16 code | READ both: `c:Party_OnJoinResult 0x8800b0`; `gs:0x5145f1`, `0x5bea65` |
-| S->C | `0x3080` | invitation (to the invitee) | u8 kind (2 = new party, 3 = existing party), u32 inviter world id, u8 flags | READ client `c:0x88aa60` (reads 1, 4, then 1 for kinds 2/3); server `gs:trs_wait_response::vslot_004 0x46c8e0` (kind, `+0x2c`, one byte for kinds 2/3). Which server field holds the flags is INFERRED (register arguments lost) |
+| S->C | `0xb062` | invite result (to the inviter, errors only) | u8 result; 2: u16 code | READ both: `c:Party_OnJoinResult 0x8800b0`; `gs:0x5145f1`, `0x5bea65`. **One `0x7062` refusal goes out on `0xb060` instead**: when posting the invitation fails (`Party_SendInvitation` code 2, `gs:0x5be33c`), the 0x062 handler replies `0xb060 [2][2]` (`gs:0x5146bb mov ecx,0xb060`). Range, type and availability failures use `0xb062` (`gs:0x51465e`). `server_handlers.tsv` already lists both. Retail behaviour, copied as is (review of round 709) |
+| S->C | `0x3080` | invitation (to the invitee) | u8 kind (2 = new party, 3 = existing party), u32 inviter world id, u8 flags | READ client `c:0x88aa60` (reads 1, 4, then 1 for kinds 2/3); server `gs:trs_wait_response::vslot_004 0x46c8e0` (kind `+0x28`, inviter `+0x2c`, then for kinds 2/3 the byte `+0x34`, `gs:0x46c986`/`0x46c9a3`). The flags reach `+0x34` READ: `gs:0x5be2a5`/`0x5be311` load them into `EDI`, and `gs:0x4ea0d0` stores `EDI` at `trs+0x34` for kinds 2, 3 and 7 (`gs:0x4ea150`). The kind-3 transaction also holds the party id at `+0x24`, not sent (review of round 709) |
 | C->S | `0x3080` | invitation answer | u8 answer; 1: u8 1; 2: u16 code (0x2c0c for kind 2, 0x2c17 for kind 3) | READ client `c:0x81cc30`/`0x81ce00` (yes), `c:0x81cd20`/`0x81cef0` (no), and the auto-decline in `c:0x88aa60`. `gs:trs_wait_response::vslot_002 0x46cb30` reads one u8. The bytes after it are unread by this GameServer (READ) |
 | S->C | `0xb067` | join ack (to the invitee / joiner) | u8 result; 1: u32 own JID; 2: u16 code (`0x2c10` = timeout is special-cased) | READ both: `c:0x880120` ("OnJoinPartyAck"); `gs:0x5be848`, `0x5be95f`, `0x5bea6f`, `0x5bfd01` |
 | S->C | `0x3065` | full party info (to a member who just joined) | u8 mask (`0xff`), u32 party id, [mask&1: u32 leader JID, u8 flags], [mask&2: u8 count, count x member record] | READ both: `gs:0x5bc650`; `c:0x883cc0`. The client reads the party id **before** testing the mask. The server writes it inside `mask&1`. They agree because the mask is always `0xff` |
@@ -168,10 +185,10 @@ One byte, chosen when the party is created, stored at `party+0x10`.
 | C->S | `0x706c` | party match: list page | u8 page | READ both: `c:SendPartyMsg_06c 0x81d090`; `gs:Party_PostRequest` kind 0xd reads u8; `sm:0x450d20` reads u8 |
 | S->C | `0xb06c` | list page | u8 result; 1: u8 page count, u8 page index, u8 n, n x list entry; 2: u16 code | READ both: `c:0x8841f0`; `sm:0x450d20` + `0x44f640`, relayed verbatim by `gs:0x5bf980` |
 | C->S | `0x706d` | party match: join request | u32 entry number | READ both: `c:SendPartyMsg_06d 0x81d150`; `gs:FUN_005bf570` |
-| S->C | `0x706d` | join request (to the entry's leader) | u32 job id, u32 requester JID, u32 entry number, u32 mastery 1, u32 mastery 2, u8 job state, member record (mask `0xff`) | READ: `c:0x884660` reads 4, 4, 4, 4, 4, 1, record; `gs:0x5c2db0` writes the last six; `sm:0x422230` prepends job `+4` and job `+8`; `gs:0x416876` relays the rest verbatim |
+| S->C | `0x706d` | join request (to the entry's leader) | u32 job id, u32 requester JID, u32 entry number, u32 mastery 1, u32 mastery 2, u8 job state, member record (mask `0xff`) | READ: `c:0x884660` reads 4, 4, 4, 4, 4, 1, record; `gs:0x5c2db0` writes the last **five** (entry, mastery 1, mastery 2, u8 job state, record with mask `0xff`; `gs:0x5c2db4..0x5c2dfb`); `sm:0x422230` prepends job `+4` and job `+8` (u16 opcode, u32 target, u32, u32; call site `sm:0x421307..0x421318`); `gs:0x416876` relays the rest verbatim |
 | C->S | `0x306e` | join request answer (leader) | u32 job id, u32 requester JID, u8 answer (1 confirm, 0 cancel, 2 closed) | READ both: `c:CIFPartyMatchReqJoin::FUN_0081d210` (callers `0x73fc68` push 1, `0x73fca6` push 0, `0x73fb8d` push 2); `gs:FUN_00514900` (index 0x06e) reads u32, u32, u8 |
 | S->C | `0xb06d` | join request result (to the requester; on success also to the leader) | u8 result; 1: u16 outcome (1 joined, 0 refused, 2 no reply); 2: u16 code | READ: `c:0x8847d0` (strings JOIN_COMPLETE_MASTER / CREATE_PARTY_REFUSED / JOIN_NOREPLY); `gs:0x5bfac0`; `sm:0x44fbe0` |
-| S->C | `0x3068` | item-share pickup notice | u32 picker JID, u32 RefItemID, then a gold-class item: amount; a stackable: u16 count; anything else: u8 1 | READ both, **disagreeing on the gold branch**: the client reads 8 bytes (`c:0x873990`, `Read(&x, 8)`), this GameServer writes 4 (`gs:0x5bdd1c`). See OPEN |
+| S->C | `0x3068` | item-share pickup notice | u32 picker JID, u32 RefItemID, then a gold-class item: amount; a stackable: u16 count; anything else: u8 1 | READ both, **disagreeing on the gold branch**: the client reads 8 bytes (`c:0x873a75 mov ebp,8`), this GameServer writes 4 (`gs:0x5bdd1c`). Both sides use the same item-class test (`gs:0x42fe10` = `c:0x873a2b..0x873a73`). **OURS: send 8 bytes, as the client reads** (see OPEN 1) |
 | C->S | `0x7025` | party chat | u8 type = 4, u8 index, str text | READ, `chat.md` |
 | S->C | `0x3026` | party chat line | u8 type = 4, str sender name, str text | READ, `chat.md`; delivery below |
 
@@ -199,7 +216,7 @@ Writer `c:UI_PARTYMATCH::FUN_00823c20` = `gs:FUN_00470e70`. Readers `gs:FUN_005c
 | entry number | u32 | the current entry's number (`this+0x7c0`; 0 for a new one, INFERRED) | the ShardManager assigns it on register |
 | party id | u32 | 0 | the GameServer overwrites it with the requester's party id (`gs:0x5bf3ed`) |
 | flags | u8 | the party-settings byte (1/2/4 as above) | must equal the existing party's flags, else `0x2c20` (`sm:0x450680`) |
-| purpose | u8 | the purpose combo's index (`FUN_00657a10` on control 0x28) | 2 = trader, 3 = thief (READ, the job tables below); 0 and 1 OPEN |
+| purpose | u8 | the objective radio's index, stored unmapped (`c:0x73f370`: `push 0x28; call 0x8b51f0; call 0x657a10; mov [esp+0x49],al`) | **0 combat ("Hunting"), 1 quest, 2 trade, 3 thief** (READ: the radio's items in that order at `c:0x73f820`, the label table `c:0x740910`/`0x740a2c`, and the job tables below). "All" exists only as index 4 of the search combo (`c:0x73b12e push 4`) and is never sent |
 | min level | u8 | edit 0x2a | client refuses min < 1 or min > max (`UIIT_MSG_PARTYMATCH_RECORD_ERROR_LEVEL`) |
 | max level | u8 | edit 0x2b | |
 | title | str | edit 0x31; empty is refused (`..._RECORD_ERROR_TITLE`) | |
@@ -240,10 +257,14 @@ Writer `sm:FUN_0044f640`. Reader `c:FUN_008841f0`. Sizes READ on both sides, in 
 
 1. The inviter's client checks that it is in no party and has a target, then sends `0x7060` and
    shows `UIIT_STT_PARTY_PROPOSAL_PENDING` (READ `c:GInterfaceSend::FUN_006d5970`,
-   `c:0x81c6d0`). If the target is not a player character, the sender substitutes the id at `+0xf8`
-   of `FUN_009ce910`'s result (READ shape, INFERRED to be a COS's owner).
-2. `gs:0x5143b0`: `CParty::CheckCanCreate` (refuses `0x2c19`, `0x2c0a` level < 5, `0x2c09`), then:
-   - range 38 (`IsWithinInteractionRange`; its own refusal code);
+   `c:0x81c6d0`). If the target is not a `CICPlayer`, the sender substitutes the id at `+0xf8`
+   of `FUN_009ce910`'s result (READ: `c:0x81c782 mov edi,[eax+0xf8]`, taken only for a non-player
+   target, `c:0x81c741..0x81c74f`; INFERRED to be a COS's owner).
+2. `gs:0x5143b0`: a `0x7060` aimed at oneself is dropped with **no reply** (`gs:0x514438 cmp
+   eax,[edi+0x8]; je 0x5144cb`). Then `CParty::CheckCanCreate` (refuses `0x2c19`, `0x2c0a`
+   level < 5, `0x2c09`), then:
+   - `IsWithinInteractionRange` (Identifiers above): type filter mismatch 3, more than **600.0**
+     (3D) away the bare code 4, not found 0;
    - the target must be a PC (else 3);
    - `CParty::CheckTargetAvailable` refuses `0x2c06` locked, 3 not alive/dead, `0x2c12` or
      `0x2c18` already in a party, `0x2c1f` invite pending, `0x2c25` listed in party matching,
@@ -251,9 +272,16 @@ Writer `sm:FUN_0044f640`. Reader `c:FUN_008841f0`. Sizes READ on both sides, in 
 
    A refusal is `0xb060 [2][code]`. Otherwise `Party_SendFormationInvitation` opens a
    `trs_wait_response` of kind 2 and sends `0x3080 [2][inviter id][flags]` to the target.
-3. The invitee's client auto-declines when its "accept party invitations" option is off
-   (`c:0x88aa60`, option byte `+1` of `FUN_004f9d00`): `0x3080 [2][0x2c0c]`. Otherwise it shows the
-   confirm box with the three flags.
+3. The invitee's client (`c:0x88aa60`, kinds 2 and 3 at `c:0x88ad8a`, jump table `c:0x88b1d4`):
+   - auto-declines when its "accept party invitations" option is off (option byte `+1` of
+     `FUN_004f9d00`): `0x3080 [2][0x2c0c]` for kind 2 (`c:0x81cd20`), `[2][0x2c17]` for kind 3
+     (`c:0x81cef0`);
+   - **silently drops the invitation unless the inviter is spawned in the invitee's client as a
+     player** (`c:0x88ae1c cmp edi,ebx; je`, `c:0x88ae2b call 0xb94b90` with class `0xef1bc0`,
+     `je`). Nothing is answered, so the server times out after 30 s and both sides get `0x2c10`;
+   - otherwise queues HUD request kind 6 (`c:0x6ec5d0`, a 308x160 popup) carrying the inviter's
+     name and the flags repacked as `anyone<<2 | exp<<1 | item`. The popup is `party_gui.md` §1b.
+   READ (review of round 709).
 4. The answer `0x3080 [1][1]` or `[2][code]` reaches `gs:0x46cb30` -> `gs:0x5be350`:
    - a decline gives `0x2c0c`;
    - a vanished inviter gives `0x2c0e`;
@@ -286,10 +314,12 @@ Writer `sm:FUN_0044f640`. Reader `c:FUN_008841f0`. Sizes READ on both sides, in 
 2. `gs:CParty::CheckCanJoin 0x514560`: caller in a party; caller is the leader or bit 2 is set;
    target is not self. These three fail **silently**. Then:
    - full is `0xb062 [2][0x2c13]` with exp share, `[0x2c14]` without;
-   - range 38;
+   - `IsWithinInteractionRange`: 3 / 4 (600.0, 3D) / 0, as above;
    - PC check;
    - `CheckTargetAvailable`;
-   - `Party_SendInvitation` (`trs_wait_response` kind 3): `0x3080 [3][inviter id][flags]`.
+   - `Party_SendInvitation` (`trs_wait_response` kind 3): `0x3080 [3][inviter id][flags]`. If it
+     cannot post the wait transaction it returns 2, and that refusal goes out as **`0xb060
+     [2][2]`**, not `0xb062` (`gs:0x5146bb`).
 3. Answer: a decline gives `0x2c17`, plus `0x2c0e`/3/2 as above. These go out as `0xb062 [2][code]`
    to the inviter and `0xb067 [2][code]` to the invitee (`gs:0x5bea20`). A timeout gives `0x2c10`.
 4. On yes, `0x7866` kind 2. The ShardManager (`sm:0x44f130`) refuses:
@@ -320,14 +350,24 @@ Writer `sm:FUN_0044f640`. Reader `c:FUN_008841f0`. Sizes READ on both sides, in 
     0x12).
 - The client's party window: `c:0x6d5a00` and `c:0x6d5a20` send leave when in a party.
   `c:0x6d5a40` maps a click on one of the seven member-row buttons (`this+0x36c`) to that row's
-  member: kick if I am the leader, leave otherwise (READ). Which visible button ("Dismiss",
-  "Leave") is bound to which handler is lane party709c's.
+  member: kick if I am the leader, leave otherwise (READ).
+- **"Dismiss" is leave.** The leader-row button (`c:0x6d5a00 -> jmp 0x81cad0`) sends `0x7061`.
+  A party of 3 or more is therefore **not** disbanded by its leader's Dismiss: leadership passes
+  on. Only a party of two dissolves (`sm:0x44f5c1 cmp eax,2 -> 0x44eb30`). There is no disband
+  message; an implementation must not invent one (READ, review of round 709).
+- **The kick target is member-list index row + 1** (`c:0x6d5a6b add esi,1; push esi; call
+  0x992380`, then `[eax+0x3c]`, the JID). It assumes the leader is member 0 of the list that the
+  quick-party drag reorder (`c:0x992490`) changes. READ; an implementation keeps the leader at
+  index 0 of that list.
 
 ### Party matching
 
 - **Register** `0x7069`. GameServer checks, `gs:CParty::CheckCanCreateForMatch 0x514170`:
   - `0x2c09`: locked or not alive;
-  - `0x2c26`: wearing a job item (`chardata+0x13`);
+  - `0x2c26` (`JOBITEM_WEAR_ERR_PARTYMATCH`) when `chardata+0x13` is non-zero (`gs:0x514196`).
+    What `+0x13` holds is OPEN. It is **not** the worn job suit: the job state the purpose table
+    needs (`+0xf`) is derived from that suit (`gs:0x4e124e..0x4e12cc`), so if `0x2c26` meant "a suit
+    is worn" no trade or thief listing could ever be registered (review of round 709);
   - 5: in job mode with an empty alias;
   - `0x2c24`: the state byte is not 0 or 2;
   - not in a party: level < 5 gives `0x2c0a`;
@@ -374,14 +414,25 @@ Writer `sm:FUN_0044f640`. Reader `c:FUN_008841f0`. Sizes READ on both sides, in 
   - **`0x2c1f`**: another request to this entry is pending;
   - `0x2c0e`: the leader is offline.
 
-  An error reaches the requester as `0xb06d [2][code]` through the relay error path. The client
-  shows it with the generic error display, `FUN_00778190`. That is the "refused, and it says why"
-  the user described (INFERRED; where it is drawn is lane party709c's).
+  An error reaches the requester as `0xb06d [2][code]` through the relay error path. The client's
+  error branch calls `c:0x778190`, which takes child `0x44` (`GDR_SYSTEM_MESSAGE_VIEW`,
+  `c:0x778192 push 0x44`) and jumps to the code-to-text table at `0x7b8b40`: the refusal is drawn
+  in the **bottom-right system message window**, the "refused, and it says why" the user
+  described. READ (review of round 709).
 - Otherwise the ShardManager marks the entry busy and relays `0x706d` to the leader with a
-  **15.0** timeout (the float at `sm:0x79b018`, passed as the job's timeout argument; INFERRED
-  seconds). The requester's client shows the joining progress window (lane party709c).
-- The leader answers `0x306e [job][requester][answer]` (`sm:0x420e50`). A timeout behaves as
-  answer 2 (`sm:0x420e10`, `0x44fbe0(.., 2)`).
+  **15.0 s** timeout (the float at `sm:0x79b018`, stored at the transaction's `+0x2c` by
+  `sm:0x4206f0`; the tick `sm:0x421de0` adds GetTickCount ms / 1000.0 to `+0x30` and fires past
+  `+0x2c`: seconds, READ). The requester's client shows the joining progress window, a **10 s
+  bar that is display only** and closes itself (`c:0x7322e0`; `party_gui.md` §5).
+- **Two timers, and the client's decides** (review of round 709):
+  - the leader's popup arms timer 1 at **10 s** (`c:0x7406de push 0x2710`). When it fires,
+    `c:0x73fb70` sends `0x306e [job][requester][2]`, so with a stock client the leader's own
+    client answers "no reply" after 10 s;
+  - the ShardManager's 15.0 s is the **backstop** for a leader client that never answers. Its
+    timeout gives the same answer 2 (`sm:0x420e10`, job opcode `0x706d`, `0x44fbe0(.., 2)`).
+
+  So "no reply" (`0xb06d [1][2]`) normally reaches the requester about 10 s after the request.
+- The leader answers `0x306e [job][requester][answer]` (`sm:0x420e50`).
 - Results (`sm:0x44fbe0` -> GameServer kind 0x11 -> `0xb06d`):
   - answer 0: the requester gets `[1][0]`, "refused";
   - answer 2: `[1][2]`, "no reply";
@@ -399,8 +450,18 @@ Writer `sm:FUN_0044f640`. Reader `c:FUN_008841f0`. Sizes READ on both sides, in 
 ### Job rules (the "user mismatch" refusals)
 
 `GetJobState` (`chardata+0xf`): 1 trader, 2 thief, 3 hunter (the labels `jobs.md` reads for the
-same slot), **4 = not in job mode**. 4 is READ as the normal state: the party name selection
-(`gs:0x5bae80`), guild creation (`guild.md`) and teleports (`teleport_network.md`) all test `!= 4`.
+same slot), **4 = not in job mode, and 0 is not a valid value**. READ in all three binaries
+(review of round 709):
+- GameServer: `Party_UserMatches 0x5bf240` handles 1..4 only (`add eax,-1; cmp eax,3; ja` → the
+  assert `0x964b60`, then refused); the character initializer writes 4 (`gs:0x4de3eb`); the worn
+  job suit in equipment slot 8 sets 1/2/3 (`gs:0x4e124e..0x4e12cc`). The party name selection
+  (`gs:0x5bae80`), guild creation (`guild.md`) and teleports (`teleport_network.md`) all test
+  `!= 4`.
+- ShardManager: `sm:0x44ed20` and `sm:0x44f7f0` use the same 1..4 tables.
+- Client: the player's job byte (`+0x50d`) is worked out from the item in equip slot 8
+  (`c:0x9dbcc0` → `c:0x9db8b0`): empty → 4, TID mask `0xf800 == 0x1800` → 3, TID4 = 1 → 1, TID4 =
+  2 → 2, anything else 4. The reset writes 4 (`c:0x9d2d97`); the setter is `c:0x9c7a50`.
+  `c:0x986f60` sets the party's `*name`/no-guild flag to `job != 4` (`c:0x986f96`).
 
 | table | where | rule |
 |---|---|---|
@@ -479,8 +540,10 @@ From `docs/protocol/error_codes.md` (client names); where the code is sent is RE
 
 | what | value | evidence |
 |---|---|---|
-| invitation wait (`0x3080` box) | 30.0 | the float `gs:0xb45b48` stored at `trs_wait_response+0x1c` by `gs:0x46c7e0`. INFERRED to be the timeout in seconds (its reader was not traced) |
-| party-match join request | 15.0 | `sm:0x79b018`, loaded at `sm:0x44fb15` and passed as the job's timeout argument. INFERRED seconds |
+| invitation wait (`0x3080` box) | 30 s | the float `gs:0xb45b48` stored at `trs_wait_response+0x1c` by `gs:0x46c7e0` (`gs:0x46c817`); the GameServer's transaction tick `CMainProcess::FUN_0046f1e0` adds GetTickCount ms / 1000.0 to `+0x20` and fires OnTimeout past `+0x1c`. Seconds, READ (`party_rules.md`, verified by the rules review) |
+| party-match join request, the leader's client | **10 s**, then answer 2 | `c:0x7406de push 0x2710`; `c:0x73fb70` sends `0x306e [..][2]`. READ. This is what decides with a stock client |
+| party-match join request, the ShardManager | 15 s, backstop | `sm:0x79b018` = 15.0, stored at `+0x2c` by `sm:0x4206f0`, ticked by `sm:0x421de0` (ms / 1000.0). Seconds, READ. Fires only when the leader's client sends nothing |
+| the requester's join progress bar | 10 s, display only | `c:0x7322e0`: 200 ms ticks, `elapsed / 10000.0` (`c:0xdb3720`); fills and closes itself. The result arrives separately as `0xb06d` |
 
 ## Gap list: OpenSRO today
 
@@ -492,7 +555,7 @@ From `docs/protocol/error_codes.md` (client names); where the code is sent is RE
 | party types | none: EXP is shared unconditionally, cap 8 (`party.go` MaxSize; `MaxSizeNotShared` unused) | flags byte: exp share (cap 8/4), item share, anyone may invite |
 | leader rules | creator level 5 (`CanCreate`) | the same, plus: leader-only kick; leadership passes to the oldest member; a party of 2 dissolves when one leaves |
 | member updates | none | `0x3864` kind 6 with the masked record (HP/MP tenths, level, position, guild, masteries) |
-| party matching | none | `0x7069`..`0x706d`, `0x306e`, the `0xb069`..`0xb06d` replies, paging, job and level gates, the 15 s join request |
+| party matching | none | `0x7069`..`0x706d`, `0x306e`, the `0xb069`..`0xb06d` replies, paging, job and level gates, the join request (leader client 10 s, server backstop 15 s) |
 | job gates | none | the two tables above |
 | item-share notice | none | `0x3068` |
 | party chat | `chat.go` `ChatParty`: delivered to party members only, sender excluded, over OURS chat opcodes `0x00A5`/`0x00A6`/`0x00A7` | the same visible result. Retail echoes the sender, whose client drops its own line, and uses `0x7025`/`0x3026`/`0xB025` (all chat) |
@@ -513,28 +576,108 @@ From `docs/protocol/error_codes.md` (client names); where the code is sent is RE
 | `recovered_names.tsv` | `FUN_00514530` (index 0x061), `GObjPC_HandlePartyMsg_06b`/`_06c`/`_06d`, `FUN_00514900`, `FUN_0081cad0` | Proposed: `Party_HandleLeave_061`, `PartyMatch_HandleDeleteEntry_06b`, `PartyMatch_HandleListPage_06c`, `PartyMatch_HandleJoinRequest_06d`, `PartyMatch_HandleJoinAnswer_06e`, `SendPartyLeave_061`; client `FUN_00880010` -> `Party_OnCreateResult` (its own log string "OnCreatePartyAck"), `FUN_00880120` -> `Party_OnJoinPartyAck` ("OnJoinPartyAck"), `FUN_00883cc0` -> `Party_OnPartyInfo_3065`, `FUN_00883620` -> `Party_ReadMemberRecord`, `gs:FUN_00470ba0` -> `Party_WriteMemberRecord`, `FUN_008841f0` -> `PartyMatch_OnListPage`, `FUN_008847d0` -> `PartyMatch_OnJoinResult`, `FUN_00884660` -> `PartyMatch_OnJoinRequest_706d` |
 | `client_senders.tsv` | lacks `0x306e` and the party `0x3080` answers | add `0x306e CIFPartyMatchReqJoin::FUN_0081d210`; `0x3080` `FUN_0081cc30`/`0081cd20`/`0081ce00`/`0081cef0` |
 | `handler_payloads.tsv` | `0x069`/`0x06a` "expansion NOT confirmed -- dropped"; `0x06b`/`0x06c` client-only | `0x069`/`0x06a`: u32, u32, u8, u8, u8, u8, str (exact, `gs:0x5c2e10` vs `c:0x823c20`). `0x06b`: u32. `0x06c`: u8. `0x06e`: u32, u32, u8 (exact). `0x061`: empty (exact) |
-| `jobs.md` | slot 71 is `GetJobType` with "0 no job" | Party, guild and teleport code treat **4** as "not in job mode" for the same slot (`GetJobState`, `chardata+0xf`). The two readings disagree about the no-job value. Not resolved here; flagged |
+| `jobs.md` | slot 71 is `GetJobType` with "0 no job" | **Wrong for this slot** (resolved by the round-709 review): the job state runs 1..4 with **4 = not in job mode**, and 0 is not a valid value (GS `0x5bf240` asserts on it; SM `0x44ed20`/`0x44f7f0`; client `0x9db8b0` returns 4 with no job item). See "Job rules" |
+| `party.md`, "The invite ladder" step 5 | "the target is within **`0x26` = 38** of the caller" | `0x26` is a TypeID filter (mismatch 3). The range is **600.0** for a PC target, 320.0 by default, 3D; out of range is the bare code 4 (Identifiers, above) |
+| `party.md`, "Party matching", and this page's first draft | "`0x2c26`: a job item is worn" | `0x2c26` is refused when `chardata+0x13` is non-zero; what that byte holds is OPEN, and it is not the worn job suit (Party matching, Register) |
 
 ## OPEN, and what each one blocks
 
-1. **The `0x3068` gold branch**: the client reads 8 bytes, this GameServer writes 4. Blocks an exact
-   gold pickup notice. Recommendation: follow the client (8 bytes), because the client is the
-   retail consumer and a short message would make its read run past the end.
-2. **Purpose values 0 and 1** (which is "combat", whether "all" is a search-only value). Blocks the
-   register combo. Lane party709c, from the window's combo order
-   (`UIIT_CTL_PARTYMATCH_PSEARCH_OBJECTALL`/`_OBJECTCOMBAT`/`_FIND_OBJECTTRADER`/`_FIND_OBJECTTHIEF`).
-3. **Client-side search** (name, purpose, level): the request carries only the page. How the client
-   filters is lane party709c's.
-4. **The list entry's second u32** (a timestamp, INFERRED) and **the race byte** (INFERRED): what the
-   client draws from each. Lane party709c.
-5. **The second byte of the `0x3080` "yes"** (`[1][1]`). This GameServer does not read it. Send it as
+Closed by the round-709 review: purpose values 0/1 (READ, 0 combat, 1 quest), the two timeouts
+(seconds, READ; the leader client's 10 s decides), the join bar's duration (10 s), and where the
+client draws a server refusal (the system message window). The client-side search and auto match
+are READ in `party_gui.md` §3. What is left:
+
+1. **The `0x3068` gold branch**: the client reads 8 bytes, this GameServer writes 4. **OURS: send
+   8**, because the client is the retail consumer and a short message would make its read run past
+   the end. Not a recovery; a decision recorded as such.
+2. **The list entry's second u32** (`entry+0x30`, written by `_time32`; INFERRED a timestamp): the
+   client stores it at `+4` and no use was found. Send the registration time.
+3. **The second byte of the `0x3080` "yes"** (`[1][1]`). This GameServer does not read it. Send it as
    the client does.
-6. **The two timeouts** are floats whose consumers were not traced: 30.0 and 15.0, INFERRED seconds.
-   The join progress bar's own duration is in the client (lane party709c).
-7. **How often a position update (`0x3864` kind 6, bit `0x20`) is sent**: the callers are known, the
+4. **How often a position update (`0x3864` kind 6, bit `0x20`) is sent**: the callers are known, the
    cadence is not.
-8. **How the client links a party member (JID) to a world object** for selection, distance and the
-   portrait. Lane party709c.
-9. **Handler 0x06f's sender.**
-10. **Logout and server migration**: the client shows reasons 1 and 3; the GameServer paths that
-    send them were not read.
+5. **How the client links a party member (JID) to a world object** for selection, distance and the
+   portrait. The client looks members up **by name** for click-to-select (`party_gui.md` §7,
+   `c:0x9c3640`) and by id for buffs (`c:0x9c35e0`); which id space that second lookup uses
+   against OpenSRO's spawns is for lane C3 to settle.
+6. **Handler 0x06f's sender** (no client sender exists; harmless to leave unimplemented).
+7. **Logout and server migration**: the client shows reasons 1 and 3; the GameServer paths that
+   send them were not read (`party_rules.md` reads the call sites as world exits, INFERRED).
+8. **Where the client's member "max" HP/MP slots come from** (only tenths are on the wire).
+
+## Implementation lanes
+
+Written by the round-709 fix-up pass against the code at `dev` `cae9bf45`. The lanes build against
+the three round-709 docs. A lane that needs a value still OPEN leaves it out and says so, as the
+hard rules require. **OURS** marks this plan's own choices.
+
+### Ground rules for every lane (OURS)
+
+- **Retail opcodes and layouts, on OpenSRO's game connection.**
+  - Round 708 put the first retail opcodes (`0x3017`/`0x3019`/`0x3018`) on that connection beside
+    OpenSRO's own; the party moves the same way.
+  - OpenSRO's `0x0080`..`0x0089` party messages and the debug party panel are retired, not kept
+    beside the retail ones (`feedback_match_retail_opcodes`).
+  - Party chat moves when chat does. It stays on `ChatParty` over OpenSRO's current chat messages,
+    with the original's delivery rule: members only; the sender gets the line back and its client
+    drops it.
+- **Ids.**
+  - The member id on the wire is a u32 JID: one stable value per online character, the same in
+    every party message.
+  - The invite target is the u32 world id of the player the client selected.
+  - OpenSRO's players are still spawned with OpenSRO's own messages and carry 64-bit character
+    ids. So lane S1 fixes one u32 per online character, used both as the JID and as the id the
+    client selects a player by (OURS, recorded in S1's round).
+  - NPCs keep their own range from `npcspawn.UIDBase`.
+- **One codec per side, shared by every lane.**
+  - Covered: the member record (mask byte; used by `0x3065`, `0x3864` kinds 2/6 and the `0x706d`
+    popup), the party-match entry, and the list entry. Each gets one encoder and one decoder.
+  - Go goes in `server/internal/party/wire.go`; GDScript goes in `client/scripts/net/party.gd`.
+  - Both are tested against the **same golden byte fixtures**, built from this page's tables, so
+    the two sides cannot drift.
+- **Live tests: several characters against one `--server`.**
+  - `qa_shot.sh` stops every client on the box before it starts, so a second Godot client cannot
+    run beside it today.
+  - The other side is driven by a **Go bot client** (OURS, `server/cmd/partybot`, built in S1). It
+    logs in, invites, answers, leaves and kicks on the real wire.
+  - Lane C1 also extends the QA runner to start two clients in one run, for the pictures the user
+    sees (OURS).
+- **Perf gate and review.** Every round that changes the world or its drawing runs
+  `perf_gate.sh`: C3 certainly, C1 and C2 if they touch World3D's frame. Every round gets an
+  adversarial review.
+
+### The lanes
+
+| lane | owns (files) | messages and rules | acceptance | depends on |
+|---|---|---|---|---|
+| **S1 server core** | `server/internal/party/` (rewritten: flags byte, cap 8/4 by bit 0, leader at index 0, join order, dissolve at two, leader passing, job table, state byte), `party/wire.go` (codecs), `session/party.go` (rewritten), `session/chat.go` (party delivery), `cmd/server/main.go` wiring, new `server/cmd/partybot` | `0x7060`/`0xb060`; `0x7062`/`0xb062`, including the `0xb060 [2][2]` quirk; `0x3080` both ways, with the 30 s timeout and `0x2c10`; `0xb067`; `0x3065`; `0x3864` kinds 1/2/3/6/9. Kind 6 member updates carry level, HP/MP tenths (sent only when a tenth changes), position, guild, masteries and name/model. `0x7061`; `0x7063`. The create ladder (level 5, 600 range, PC target, `CheckTargetAvailable`), the invite ladder and the job rule `0x2c23`. Party chat to members with the sender echoed | Go: golden bytes for every message; the ladder refusal codes in the engine's order; dissolve at two; leader succession; cap 4 vs 8; the job table. Live (QA client + partybot): two characters form a party by invite; a third is refused for the cap or the job; kick and leave send the right reasons; party chat reaches members only | none (first) |
+| **S2 sharing and party monsters** | `session/combat.go` (the kill distribution only), `leveldata` (the formulas), `rates` (the additive bonus), `session/grounditem.go` and `grounditem` (round robin, gold split, `0x3068`), `session/nestkill.go`, `cmd/server/nest.go` (arming), `combat` (party-monster factors) | The kill distributor: groups, kill credit, damage share. The exp-share split by level with the 10 %/20 % bonus and the 70 % damping; the free-for-all 3 %; the party-monster halving. SP alongside EXP; the rate bonus (≥ 1.01, additive, SP too); float32 rounding. Item round robin with the `EBX` fallback; the full-inventory refusal `0x18da`; the gold split; `0x3068` with 8-byte gold (OURS). Arming from the share count, and the `PARTYMONSTER_SPAWN` gate for instance worlds. Party monsters: HP ×10 (already done), EXP/SP ×7.5 and the rank factors, attack value ×1.2 | Go: `party_rules.md`'s worked examples as table tests; the round robin with a dead, other-world or distant last candidate; the gold remainder; arming only from exp-share kills. Live: two characters in an exp-share party kill a nest monster and both gain their split; a free-for-all party does not arm | S1 (party flags and members). The slot-332 EXP base stays OPEN: keep today's base and say so |
+| **S3 party matching** | new `server/internal/party/match.go` (listings, counter numbers that skip 0, 23-entry pages, the requester's own entry first), new `session/partymatch.go` | `0x7069`/`0xb069`, `0x706a`/`0xb06a`, `0x706b`/`0xb06b`, `0x706c`/`0xb06c`, `0x706d` both ways, `0x306e`, `0xb06d`. The register ladder: `0x2c1b`, `0x2c20`, `0x2c1d`, `0x2c08`, level 5; `0x2c26` is left out while `+0x13` is OPEN. The join ladder, in order: `0x2c18`, `0x2c25`, `0x2c1c`, `0x2c13`/`0x2c14`, `0x2c23` twice, `0x2c1e`, `0x2c1f`, `0x2c0e`. The 15 s backstop; the leader's answer; forming a party from a party-less listing with its flags; the listing following a new leader and vanishing with its party | Go: golden bytes; paging at 23 with the requester's entry first; every refusal; the 15 s backstop gives answer 2. Live: one character lists, the other pages, requests and is accepted; a request outside the level range is refused `0x2c1e` | S1 (party hub API, codecs) |
+| **C1 client net and party window** | `client/scripts/net/party.gd` (retail codecs and handlers); `net/net_client.gd` (handler registration, signals); the party pane in `ui/hud/hud_main_popup.gd`; a new settings dialog script; the invitation popup; the `CIFCheckBox` and CIFSubFrame-text builders it needs in `ui/ui_builder.gd`. Retires World3D's debug party panel and `OPENSRO_QA_PARTY`, replaced by a retail-path QA hook | `party_gui.md` §1, §1b, §2, §6. The caption with the anyone-invite suffix; the type line and its colours. The leader row and seven rows: race from the model id, guild, HP/MP tenths, the Banish/Leave rule. The Invite/Set/Party match enable rules and the pet-to-owner invite; Dismiss = leave; the kick by row + 1. The settings block that the next create sends. The invitation popup, with the spawned-inviter rule and the auto-decline option. Refusals go to the system message window, type 4 | GD tests on the same golden fixtures as S1; window state tests. Live, with S1: the user's screenshots 01, 05 and 12 reproduced at the same layout | S1's codecs and fixtures (can start in parallel from this page; merges after S1) |
+| **C2 party matching windows** | a new matching-window script (`GDR_PARTY_MATCH`); the register/modify, auto-match and delete-confirm dialogs; the leader's join popup; the join progress window; `net/party_match.gd` (OURS file split, registered from `net_client.gd`) | `party_gui.md` §3, §4, §5. 12 rows; the own entry pinned in light blue; the gold selection bar; Race and Purpose **as text** (user decision); level boxes 1..110. Client-side Search; the 2 s Refresh cooldown; the page spin; the enable rules; the job restriction on the objective radio; default titles. Auto match (client-side, up to 10). The popup's 10 s auto-answer 2 and the 10 s bar | GD tests: list fill, the search filter, the enable rules, the popup's timeout answer. Live, with S3: screenshots 02/06/07 (as text), 08 and 09 reproduced | S3 for live tests; C1 for the shared net registration |
+| **C3 HUD member boxes** | a new `ui/hud/hud_quick_party.gd` (`CIFQuickPartyWnd`); `hud_player_info.gd` (the yellow self-select glow and the leader flag); `ui/keymap.gd` (Ctrl+2..8); the target hand-off in World3D | `party_gui.md` §7. Slots at 4,137 with the column wrap. The 3D portraits (the PMI's constants). The five-step faraway overlay (exp-share only). HP/MP tenths and the caution effects. The leader flag and two mastery icons. Buffs only for spawned members. The teal select glow following the world target; click-to-select by name. The lock and drag reorder, shown above two members | GD tests: the overlay step by distance; the glow follows the target. Live: screenshots 03, 04, 10 and 11 reproduced. Perf gate | C1 (party state in the client) |
+
+### Shared hot files
+
+- **`server/internal/session/party.go`** belongs to S1. S3 adds `session/partymatch.go` and reaches
+  the party only through `party.Hub` methods that S1 publishes first. S2 does not touch
+  `party.go`; it reads the party through the hub.
+- **`server/internal/session/combat.go`** is S2's alone (the kill-reward block). S1 changes no line
+  there except what removing `inPartyWithOthers`'s callers forces, and coordinates that with S2.
+- **`server/cmd/server/main.go`**: wiring lines only, one block per lane. Merge conflicts there are
+  resolved by keeping both blocks.
+- **`client/scripts/net/net_client.gd`**: C1 adds the party handlers and a one-line hook through
+  which C2's `party_match.gd` registers its own. C2 touches nothing else there.
+- **`client/scripts/ui/hud/hud_main_popup.gd`** is C1's alone (the party pane). The matching
+  window is a separate top-level window (C2).
+- **`client/scripts/World3D.gd`**: C1 removes the debug party panel and the old QA hook; C3 adds the
+  target hand-off. Keep each to its own functions; the QA-hook doc block merges.
+- **`docs/WORLD_ISSUES.md`**: lanes write `docs/rounds/<lane>.md`; the coordinator numbers and
+  inserts them.
+
+### Order
+
+1. **S1** and **C1** start together. C1 builds against the golden fixtures and merges after S1.
+2. **S2** and **S3** start once S1 has merged. **C2** and **C3** start once both S1 and C1 have
+   merged.
+3. Release after each pair the user can see working: S1+C1, then S3+C2, then S2+C3.

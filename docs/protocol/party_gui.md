@@ -4,8 +4,9 @@ Recovered in round 709 (lane party709c) to drive the party epic's client rounds.
 request (2026-10-04) is in `/root/opensro-handoff/party_system_prompt.txt`; the twelve
 screenshots of the original it refers to are `party_refs/01..12` beside it. This page covers
 what the player sees. The wire messages are named by purpose here; their opcodes and byte
-layouts are party709a's (`docs/protocol/party.md` and its successor), and the rules and
-formulas are party709b's.
+layouts are party709a's (`docs/protocol/party_protocol.md`), and the rules and formulas are
+party709b's (`docs/protocol/party_rules.md`). The round-709 review's findings
+(`docs/rounds/party709_review_pg.md`) are applied below.
 
 **Sources.**
 - The client: `sro_client.exe` (`/opt/sro-files/client` on the render box), the decompile
@@ -34,8 +35,8 @@ abridged.
 | `docs/UI_TODO.md` "Party / Community / Guild" | the party rows "need one row per member with name, level and HP" | Each row has a portrait (the member's 3D render, the same buffer the HUD box uses), race mark, name, `Lv`, level, HP and MP bars, guild name, and a Banish/Leave button. The leader has its own row above the seven member rows (READ, `0x6d6640`, `0x6d7680`). |
 | `docs/TODO.md` "The party race mark always shows China's art" | the server does not send the leader's race | The client sends no race field. It takes the race from the member's model id: the member record's `+0x38` refobj id, then that reference's `+0x9c` byte (`0x93f630`), with the 16-px art from `0x98caa0` (READ, `0x6d67ea..0x6d682c`). So the race comes from the model id the member update carries. |
 | `docs/UI_TODO.md` rule 21 list of dead layouts | does not list them | `ifquickpartywnd.txt` and `ifpartymemberviewer.txt` are not named in the exe (neither encoding; MEASURED). `CIFQuickPartyWnd` builds its slots in code (`0x6da110`). |
-| the user's screenshots 02/06/07 (party matching) | the Race and Purpose columns are icons (shields, a red flag) | In this exe both columns are **text**. Race is "CHN"/"EUR" (`0x740870`). Purpose is "Hunting"/"Quest"/"Trade"/"Thief" (`0x740910`). The icons belong to the user's server's client. Which of the two to build is a decision for the user (OPEN). |
-| the user's screenshots (level box defaults `1 ~ 100`) | max level 100 | This exe's literal default is **110** (`0x6e`, `0x73b030`, `0x73facc`). The 100 is the user's server's cap. |
+| the user's screenshots 02/06/07 (party matching) | the Race and Purpose columns are icons (shields, a red flag) | In this exe both columns are **text**. Race is "CHN"/"EUR" (`0x740870`). Purpose is "Hunting"/"Quest"/"Trade"/"Thief" (`0x740910`). The icons belong to the user's server's client. **USER DECISION (2026-10-03): build them as text, as this exe draws them.** |
+| the user's screenshots (level box defaults `1 ~ 100`) | max level 100 | This exe's literal default is **110** (`0x6e`, `0x73b030`, `0x73facc`). The 100 is the user's server's cap. OpenSRO uses **110**, following the binary (not a user decision; the user was not asked). |
 
 ## 1. The party window (`CIFParty`, `resinfo\ifparty.txt`)
 
@@ -99,10 +100,16 @@ block at `+0x20`:
 
 `0x986f60(exp, item, anyone)` is the in-party setter. It is called from the party-info handler at
 `0x883de7`. It stores the three values, sets in-party, zeroes the count, and sets `+0x0c`. The
-player's vslot 43 is CICPlayer `0x9c7a60`, which returns byte `+0x50d`. A reset writes 4 there
-(`0x9d2d97`) and the spawn parse writes it from the wire (`0x9cd235`). **What value 4 is on the
-wire is OPEN** (party709a). The INFERRED reading is that `+0x0c` marks a job-mode party, whose
-members show as `*alias` with no guild.
+player's vslot 43 is CICPlayer `0x9c7a60`, which returns byte `+0x50d`, **the player's job state**.
+The client works it out itself from the job suit it wears (READ, review of round 709): the setter is
+`0x9c7a50`, the reset writes 4 (`0x9d2d97`), and for the player `0x9dbcc0` sets `+0x50d =
+0x9db8b0(item in equip slot 8)`: an empty slot gives 4 (`0x9db92d`), TID mask `0xf800 == 0x1800`
+gives 3, TID4 = 1 (`0x9c8440`) gives 1, TID4 = 2 (`0x9c8480`) gives 2, anything else 4. (This page's
+first draft cited `0x9cd235` as "the spawn parse writing it from the wire"; that is a save-and-restore
+inside the equip-change routine `0x9cd090`.) The values are the server's: 1 trader, 2 thief,
+3 hunter, **4 not in job mode** (`party_protocol.md`, "Job rules"). So `+0x0c = (job != 4)`
+(`0x986f96 cmp al,4; setne al`) marks a **job-mode party**, whose members show as `*alias` with no
+guild. READ.
 
 **Out of a party (`0x6d6d00`, READ).**
 - Leader flag and race mark hidden.
@@ -164,8 +171,8 @@ members show as `*alias` with no guild.
 | 20 Invite | `0x6d5970` | needs a selected target (`0x778120` ≠ 0). Out of a party it sends the **create-and-invite** request (`0x81c6d0`, 0x7060). In a party, if the player is the leader or "anyone may invite" is set, it sends the **invite** request (`0x81c8f0`, 0x7062). |
 | 21 Set | `0x6d6620` | opens the settings dialog **only when not in a party** |
 | 22 Party match | `0x6d59f0` | toggles the matching window (`0x79c170(1)`) |
-| 48 Dismiss | `0x6d5a00` | in a party, sends the **leave** request (`0x81cad0`, 0x7061) |
-| 30 row buttons | `0x6d5a40` | a leader **banishes** that row's member (`0x81cb70`, 0x7063, the member's JID). Anyone else **leaves** (0x7061). |
+| 48 Dismiss | `0x6d5a00` | in a party, sends the **leave** request (`0x81cad0`, 0x7061; `0x6d5a00 -> jmp 0x81cad0`). There is no disband message: a leader's Dismiss in a party of 3 or more **passes leadership on**; only a party of two dissolves (`sm:0x44f5c1`). READ, review of round 709 |
+| 30 row buttons | `0x6d5a40` | a leader **banishes** that row's member (`0x81cb70`, 0x7063, the member's JID). Anyone else **leaves** (0x7061). The member is looked up as **list index row + 1** (`0x6d5a6b add esi,1; push esi; call 0x992380`, then `[eax+0x3c]`), which assumes the leader is member 0 of the list the quick-party drag (`0x992490`) reorders. READ |
 | msg 200 from child 10 | `0x6d6470` | the settings dialog's answer (below) |
 
 Both invite senders check the target on the client before sending (READ, `0x81c6d0`,
@@ -178,6 +185,24 @@ They then write `UIIT_STT_PARTY_PROPOSAL_PENDING` ("[%s]is requesting to party."
 target's name to the system messages, type 4 (`0x778210`). The create request's type byte is
 `exp | item<<1 | anyone<<2`, taken from the settings block (`0x81c7f0..0x81c82e`). This is
 GUI-relevant because **the Set dialog's values are what a new party is created with**.
+
+## 1b. The invitation the invitee sees (`0x3080` kinds 2 and 3)
+
+READ (review of round 709). The `0x3080` handler `0x88aa60` serves request kinds 1..10 (jump table
+`0x88b1d4`); the party kinds 2 (form) and 3 (join) go to `0x88ad8a`:
+1. It reads the flags byte. When option byte `+1` of `0x4f9d00` (the "accept party invitations"
+   game option) is 0 it **auto-declines**: kind 2 through `0x81cd20` (`[2][0x2c0c]`), kind 3
+   through `0x81cef0` (`[2][0x2c17]`).
+2. **It silently drops the invitation unless the inviter is spawned in the invitee's client as a
+   player** (`0x88ae1c cmp edi,ebx; je`; `0x88ae2b call 0xb94b90` with class `0xef1bc0`; `je`).
+   Nothing is answered, so the server times out after 30 s and both sides get `0x2c10`.
+3. Otherwise it queues **HUD request kind 6** (`0x6ec5d0`, a 308x160 popup for kind 6) with the
+   inviter's name and the flags repacked as `anyone<<2 | exp<<1 | item`.
+4. Yes sends `0x81cc30` (kind 2) / `0x81ce00` (kind 3), `[1][1]`; No sends `0x81cd20` / `0x81cef0`.
+
+The popup's text keys and any timer of its own are **OPEN** (OPEN item 7). The request queue is
+shared: Join, Refresh and the page-0 request on opening the matching window run only when it is
+empty (§3).
 
 ## 2. The party settings dialog (`CIFSetPartyMode`, `resinfo\ifsetpartymode.txt`)
 
@@ -270,17 +295,18 @@ record (`CPartyRegData`) fields it shows:
 
 | id | button | enabled when | does |
 |---|---|---|---|
-| 15 | Join party | no own registration, not in a party, level ≥ 1, and the list has records | `0x739500`: the selected row's record → the **join request** (`0x81d150`, 0x706D, the record id); then the join-progress window opens with (own name, the leader's name), each `*`-prefixed for a Trade/Thief party. **No client-side level or job check**: the refusal comes back from the server. |
+| 15 | Join party | no own registration, not in a party, level ≥ 1, and the list has records | `0x739500` (only when the HUD request queue is empty, `0x6ec4b0(..) == 0`): the selected row's record → the **join request** (`0x81d150`, 0x706D, the record id); then the join-progress window opens with (own name, the leader's name), each `*`-prefixed for a Trade/Thief party. **No client-side level or job check**: the refusal comes back from the server. |
 | 16 | Whisper | the list has records | `0x7386e0`: opens a whisper to the selected party's name (not the player's own) |
 | 17 | Auto match | as Join | `0x7396e0`: opens the Auto match dialog |
 | 18 | Form party | no own registration, and either (not in a party and level ≥ 5) or (leader and the party not full) | `0x7397b0`: client refusals to the system messages, type 4: an existing registration → `UIIT_MSG_PARTYMATCH_RECORD_ERROR_AGAIN`; not in a party and level < 5 → `_JOIN_ERROR_LEVEL`; in a party but not the leader → `_JOIN_ERROR_PARTY`; full → `UIIT_MSG_PARTYERR_ALREADY_FULL`. Otherwise opens the register dialog (new). |
 | 19 | Change entry | own registration whose name is the player's | `0x739900`: the register dialog in modify mode, filled from the record |
 | 20 | Delete entry | as Change | `0x738a30` → `0x738940`: a confirm box (`UIIT_STT_CONFIRM_BOX`, `UIIT_STT_PARTYMATCH_DELETE_CONFIRM`); Yes sends the **delete** request (0x706B, the reg id; `0x732680`) |
-| 55 | Search | always | `0x73bb80` → `0x73b780`: **a client-side filter over the records already held**: an exact, case-sensitive whole-name match when the name box is not empty (OPEN item 7), the purpose unless All, and the level ranges overlapping. Nothing left → `UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT`, type 4. |
-| 56 | Refresh | — | `0x732a80`: requests the spin's page (0x706C) and **disables itself for 2 s** (timer 10, 2000 ms; `0x73ab60` re-enables) |
+| 55 | Search | always | `0x73bb80` → `0x73b780`: **a client-side filter over the records already held**: an exact, case-sensitive whole-name match when the name box is not empty (READ, `0x47ec20`; see the closed OPEN items), the purpose unless All, and the level ranges overlapping. Nothing left → `UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT`, type 4. |
+| 56 | Refresh | — | `0x732a80` (only when the HUD request queue is empty): requests the spin's page (0x706C) and **disables itself for 2 s** (timer 10, 2000 ms; `0x73ab60` re-enables) |
 | 25 | page spin | — | `0x732630`: requests that page (0x706C) |
 
-- Opening the window requests page 0 (`0x73b1ff`).
+- Opening the window requests page 0 (`0x73b1ff`), only when the HUD request queue is empty
+  (`0x73ae90`).
 - A 1 s timer (id 20) redraws the list (`0x73ab96`).
 - While the player's party is full and they hold the registration, the client deletes it itself
   (`0x7387c0`).
@@ -325,15 +351,20 @@ party").**
 | control | shows |
 |---|---|
 | 21 DESC_PML | `UIIT_STT_PARTYMATCH_JOIN_REQUEST` with the requester's name: "[%s]has requested to join this party. Confirm?", the name in (255,239,218) by the string's own `<font>` |
-| 34 / 35 (88,121 / 130,121, 32x32, on `pt_icon_frame02.ddj`) | the requester's two masteries' icons, from two mastery ids (`0x73fed0` → `0x937010` → the mastery's icon), with the mastery name as the tooltip; an id with no record leaves the frame empty |
+| 34 / 35 (88,121 / 130,121, 32x32, on `pt_icon_frame02.ddj`) | the requester's two masteries' icons, from the two mastery ids of the `0x706d` message (`+0x7c4`/`+0x7c8`, not the member record's) (`0x73fed0` → `0x937010` → the mastery's icon), with the mastery name as the tooltip; an id with no record leaves the frame empty |
 | 30 LEVEL | `%d` |
 | 31 RACE | CHN / EUR from the requester's model id (`+0x9c`) |
 | 32 POS | the requester's region, named through `0x740030` (region id → zone-name text) |
-| 33 GUILD | the guild name when the request's kind byte (`+0x7cc`) is 4, else empty |
+| 33 GUILD | the guild name when the request's **job state** byte (`+0x7cc`) is 4, i.e. the requester is not in job mode, else empty (`0x74064d`) |
 | 45 Confirm (`UIIT_CTL_PARTYMATCH_JOINREQUEST_CONSENT`) / 46 Cancel (`_REFUSE`) | — |
 
-**Answers (READ).** Each answer sends the reply (`0x81d210`) with (request id, a second id,
-code):
+**What the fill stores (READ, review of round 709).** `0x884660` passes (job id, requester JID,
+struct) to `0x7403f0`, which stores `+0x7b8` job id, `+0x7bc` requester JID, `+0x7c0` entry,
+`+0x7c4`/`+0x7c8` masteries, `+0x7cc` the u8 job state and `+0x7d0` the member record
+(`0x740425..0x740462`).
+
+**Answers (READ).** Each answer sends the reply (`0x81d210`) with (`+0x7b8` job id, `+0x7bc`
+requester JID, code):
 - Confirm sends code 1 (`0x73fc40`).
 - Cancel sends code 0 (`0x73fc90`).
 - **10 s with no answer** (timer 1, `0x2710` ms, set at `0x7406de`) sends code 2 and closes
@@ -362,7 +393,9 @@ is the academy's reuse (`UIIT_MSG_TC_JOIN_ERROR_DUPLE`, 15 s).
 **While open (READ).** It disables Join, Auto match, Form party, Search and Refresh. They come
 back on close, unless an auto-match run is still going (`0x110f80c+0x64c`).
 
-The server's own timeout is party709b's. Both client windows count 10 s.
+Both client windows count 10 s. The ShardManager's own 15 s is a backstop: with a stock client the
+leader's popup answers code 2 at 10 s first, so the requester gets "no reply" about 10 s after the
+request (`party_protocol.md`, Timers).
 
 ## 6. Where refusals and party notices appear
 
@@ -373,8 +406,9 @@ The server's own timeout is party709b's. Both client windows count 10 s.
   through `0x7781b0(4, text)`: the PARTY filter checkbox.
 - The invite's "[%s]is requesting to party." uses `0x778210(4, …)`.
 - Joins and leaves are type 4 from `UI_PARTY 0x886b10` (already recorded).
-- The server's coded refusals reach the client's error-code tables. Their route and text keys are
-  party709a's.
+- **The server's coded refusals are drawn there too** (READ, review of round 709): the `0xb06d`
+  error branch calls `0x778190`, which takes child `0x44` (`0x778192 push 0x44`) and jumps to the
+  code-to-text table at `0x7b8b40`. The code → `UIIT_*` names are in `party_protocol.md`.
 
 ## 7. The HUD party member boxes (`CIFQuickPartyWnd` / `CIFQuickPartySlot`)
 
@@ -444,7 +478,9 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 | ≥ 1000 | 5 | `_100` |
 
 - The thresholds are the squared constants 360000 / 490000 / 640000 / 810000 / 1e6 (`0xda98fc`,
-  `0xda9900`, `0xda9908`, `0xda990c`, `0xda9910`; the comparisons are `>=`).
+  `0xda9900`, `0xda9908`, `0xda990c`, `0xda9910`; the comparisons are `>=`). They mix floats and
+  doubles: `0xda98fc`, `0xda9908` and `0xda990c` are floats, `0xda9900` (490000) and `0xda9910` (1e6)
+  are doubles, which is why `0xda9904` is skipped (review of round 709).
 - MEASURED: every faraway texture is a 28x28 disc (632 texels) of (14,96,255) with alpha
   130 / 158 / 181 / 211 / 241 for _60.._100. So the fade is **stepped, five steps**, not
   continuous. `qpt_face_faraway.ddj`, `_50` and `qpt_face_warning.ddj` (red (255,17,0) α128) are
@@ -471,8 +507,9 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 - The two icons are the member record's mastery ids `+0x6c` and `+0x70`, each resolved through
   `0x937010` (icon path `+0x64`, name `+0x4` as the tooltip).
 - An id with no record hides its icon. Screenshot 04 has OverTalanted with one icon.
-- **Which two masteries the server puts there is party709a/b's.** The client draws what it is
-  sent.
+- **Which two masteries the server puts there** is `GObjPC::FUN_005a1890(&m1, &m2)` on the
+  server (`party_protocol.md`, the member record's bit `0x08`); how that function picks the two was
+  not read (OPEN item 8). The client draws what it is sent.
 
 **Selection.**
 - The world's SetTarget (`0x780ee0`) hands every selected id to the board (`0x6d9610`).
@@ -584,30 +621,38 @@ are party709a's to map to codes.
    - the register/modify, auto-match and delete-confirm dialogs;
    - Whisper;
    - the join progress (10 s) and the leader's popup (10 s, codes 1/0/2).
+   - Race and Purpose columns as **text** (USER DECISION 2026-10-03), level defaults 1 / 110.
 8. **System messages:** the type-4 filter exists (`hud_system_message.gd`). None of the
    party-match lines are routed to it.
-9. Out of this lane, noted only: minimap and worldmap party signs (`mm_sign_party`,
+9. **The invitation popup** (§1b): not built; today an invite joins directly by party id.
+10. Out of this lane, noted only: minimap and worldmap party signs (`mm_sign_party`,
    `wmap_sign_party`), and the target window's party re-centring (UI_TODO).
 
 ## OPEN items that block implementation
 
-1. **Icons or text in the matching list** (Race, Purpose). This exe draws text; the user's
-   screenshots show icons from another client. The user decides. The archive has no purpose-icon
-   texture named by the exe. `pt_flag.ddj` (12x12, red) is in `interface\party\` but unnamed in
-   the exe, MEASURED.
-2. **The job byte's wire value 4** that `0x986f60` tests (the `*name`/no-guild mode), and the
-   client job byte's mapping to the server's 0/1/2/3 (party709a).
-3. **The member record** the board and window read: `+0x04` name, `+0x20` guild, `+0x38` model,
+Closed in round 709:
+- ~~1. Icons or text in the matching list.~~ **USER DECISION (2026-10-03): text**, as this exe draws
+  it ("CHN"/"EUR", "Hunting"/"Quest"/"Trade"/"Thief"). `pt_flag.ddj` (12x12, red) stays unused, as in
+  the exe.
+- ~~2. The job byte's wire value 4.~~ **READ**: 4 is "not in job mode"; the client works the byte
+  out from its own job suit, and the values are the server's 1 trader / 2 thief / 3 hunter / 4 none
+  (§1).
+- ~~4. The leader popup's second id and kind byte.~~ **READ**: the requester JID and the job state
+  (§4).
+- ~~7 (first draft). The Search name compare.~~ **READ:** `0x47ec20` is `wstring::compare(pos, n,
+  ptr, len)`, called as `search.compare(0, search.size(), name, name.size())` and tested against 0
+  (`0x73b97a..0x73b99b`). So the match is **exact on the whole name**, compared as raw wide
+  characters (so case-sensitive). An empty name box skips the test (`0x73b974`).
+
+Still open:
+3. **The member object the board and window read**: `+0x04` name, `+0x20` guild, `+0x38` model,
    `+0x3c` JID, `+0x40` level, `+0x44/+0x48` HP/max, `+0x4c/+0x50` MP/max, `+0x58` a byte,
-   `+0x5a/+0x5c/+0x64` region and position, `+0x6c/+0x70` masteries. Which wire fields fill them,
-   and whether HP/MP arrive as values or as ratios, is party709a's.
-4. **The leader popup's second id and its kind byte** `+0x7cc` (4 shows the guild). These are
-   party709a's.
-5. **The meaning of member byte `+0x58`**, which suppresses the caution effect and the 0.2 HP
-   floor.
-6. The quick-party buff viewer's argument meanings (icon size vs pitch). The calls are READ;
-   their roles are INFERRED.
-7. ~~The Search name compare.~~ **READ:** `0x47ec20` is `wstring::compare(pos, n, ptr, len)`,
-   called as `search.compare(0, search.size(), name, name.size())` and tested against 0
-   (`0x73b97a..0x73b99b`). So the match is **exact on the whole name**, compared as raw wide
-   characters (so case-sensitive). An empty name box skips the test (`0x73b974`).
+   `+0x5a/+0x5c/+0x64` region and position, `+0x6c/+0x70` masteries. HP and MP arrive only as the
+   tenths byte, split into nibbles at `0x99a34b` (READ, review of round 709), so the ratios drawn are
+   tenths. Which wire field fills each remaining slot (the conversion at `0x99a34b`'s function), and
+   where the "max" slots come from, is not traced.
+5. **The meaning of member byte `+0x58`**, which suppresses the caution effect and the 0.2 HP floor.
+6. The quick-party buff viewer's argument meanings (icon size vs pitch). The calls are READ; their
+   roles are INFERRED.
+7. **The invitation popup's text keys and timer** (§1b, HUD request kind 6 at `0x6ec5d0`).
+8. **How the server picks the two masteries** (`gs:FUN_005a1890`).

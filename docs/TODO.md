@@ -10,6 +10,18 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## The party epic (round 709+, requested 2026-10-04)
+
+The user asked for the whole party system "fully working", matching the original down to the
+opcodes. **Round 709 specified it from all three binaries** (client, GameServer, and
+SR_ShardManager.exe, which owns the party): `docs/protocol/party_protocol.md` (every message and
+byte layout, and the **implementation lanes** at its end), `party_rules.md` (types and caps, EXP/SP
+and item sharing, jobs, party monsters, party matching) and `party_gui.md` (party window, settings,
+matching, join popup and progress bar, HUD member boxes). Next: the lanes S1 server core, S2
+sharing and party monsters, S3 party matching, C1 client net and party window, C2 matching
+windows, C3 HUD member boxes, each with a live multi-client test. The OPEN items that still block
+a lane are tabled in round 709's WORLD_ISSUES entry.
+
 ## The playtest list (2026-09-11, from the first two evenings on the public server)
 
 In order. Each is checked off here when it ships in a release, with its round in
@@ -1991,12 +2003,20 @@ Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, r
       `btAggressTypeOnHoming` (no reader found), column 34 `btTraceType` (2 on 66 rows, no reader),
       and the flag word's bits 2/7 give-up gate (`ai.GiveUpCode`; no placed row sets them).
 - [ ] **Champion, giant and party rewards**: a champion or giant pays the level table's EXP and
-      the species' gold like a normal one. Retail's reward scaling by rank is unread. Where to
+      the species' gold like a normal one. ~~Retail's reward scaling by rank is unread.~~ **READ
+      (round 709, `docs/protocol/party_rules.md`):** `CGObjMob::vslot_359` (`0x4c15c0`) multiplies
+      EXP **and SP** by 7.5 for a party monster, then by rank ×2 champion, ×15 giant, ×60 (5),
+      ×4 elite, ×30 (7); the live kill path is `CGObjMob::vslot_399` → `CGObjPC::vslot_420`. What
+      its base (`slot 332`) returns is still OPEN; party lane S2 builds it. Where to
       start (round 660's review): `Formula_MonsterExpReward` 0x4105d0 has no rank factor, but its
       only callers are `GObjPC_OnDeath` 0x4e6980 and `FUN_004e6d60`, which may be the PvP path --
       so the real monster-kill EXP path is not located yet.
-- [ ] **The party arming's reference point is INFERRED** (the dead monster, 1000 units): the object
-      GObjPC::FUN_005bca60 measures from was read as the victim, not proved.
+- [ ] ~~**The party arming's reference point is INFERRED** (the dead monster, 1000 units): the object
+      GObjPC::FUN_005bca60 measures from was read as the victim, not proved.~~ **READ (round 709):
+      it is the kill credit** (the biggest hitter of the most-damaging group; `0x5bcacb`-`0x5bcb29`),
+      same world, horizontal with 1920-unit region steps; only exp-share kills arm, and instance
+      worlds gate on `PARTYMONSTER_SPAWN`. The code still measures from the dead monster and arms
+      for any party: party lane S2 fixes it (`docs/protocol/party_rules.md`, gap 12).
 - [ ] **The client**: the species' own scale percent (ref+0x110, column unread) is not applied on
       top of the class scale; the party mark's size is ours (the plate is ours); the target
       window's party re-centring (0x69b890..0x69b98d) is not done; class 7's "Elite" name prefix
@@ -2426,7 +2446,8 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       - whether anything changes the avatar's object colour from 0.6;
       - the time of day (World3D's fixed reference time);
       - the game camera's near/far;
-      - the party and academy slots' portraits (same constants, not drawn);
+      - the party and academy slots' portraits (same constants, not drawn; the party's are party
+        lane C3's, `docs/protocol/party_gui.md` §7);
       - the device-reset re-render (Godot keeps the buffer).
 - [ ] **The world's directional light has a READ direction** (round 635's review): World3D.gd's
       comment at `_apply_real_environment_lighting` says its angle "has no confirmed real
@@ -2596,7 +2617,9 @@ What round 633 read and built is in `docs/protocol/inventory_window.md`.
 - **The academy's rank and leader marks.** Their show code is read (`0x6e9de3..0x6e9e6f`, the rank
   byte's art) but not built: this client keeps no academy data. The party's are built.
 - **The party race mark always shows China's art**, because the server does not send the leader's
-  race.
+  race. **(round 709)** The original sends no race field either: the client takes the race from the
+  member record's model id (the reference's `+0x9c` byte, `0x93f630`; `docs/protocol/party_gui.md`).
+  Party lane C1 draws it from the retail member record.
 - **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500) needs avatar items with its type
   bit. This server has none.
 - **The retail starting inventory size** is a `_CHAR.InventorySize` database default that neither

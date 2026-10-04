@@ -1,8 +1,9 @@
 # Party rules: types, sharing, items, jobs, party monsters, party matching
 
 Round 709 (party epic, spec round), lane party709b. This page holds the **rules and formulas**
-of the party system; the wire layouts are party709a's (`docs/protocol/party.md` and its round-709
-companion), the windows party709c's. Messages are named here by purpose, with an opcode only where
+of the party system; the wire layouts are party709a's (`docs/protocol/party_protocol.md`), the windows party709c's
+(`docs/protocol/party_gui.md`). The round-709 review's findings
+(`docs/rounds/party709_review_rules.md`) are applied below. Messages are named here by purpose, with an opcode only where
 the binary itself put one next to the rule.
 
 The user (2026-10-04) asked for the party system "fully working ... match the client/server opcodes
@@ -42,6 +43,7 @@ of `.rdata`, never from the decompiler's rendering, which mistypes them in this 
 | `recovered_names.tsv` `Party_ShareHwanCount` (`0x5bcf30`) | "in the killer's region" | in the killer's **world** (vtable `0x14`, `IGObj::GetWorldID`), alive (`GetLifeState()==1`); no region or distance test. READ (GS). |
 | `docs/protocol/party.md` "`0x061` ... A party-side *teleport* action" (and `Party_RemoveMember`'s note) | `0x061` is a party-side teleport; reason 2 is a teleport removal | `0x061` (`FUN_00514530`) requires a party and calls `FUN_005144e0(2)` → `Party_RemoveMember(reason 2)`, which posts the removal to the party server (`trs_wait_response::FUN_005be490`, relay kind 3). Reason 2 is **leaving the party** (the user's own Leave); the `SaveCurPosAsLastTelPosition` name on the helper it calls first is unproven (INFERRED: the name came from another caller). Reasons: 1 = leaving the world on a forced disconnect (`FUN_004def90`, BL==4), 2 = leave, 3 = leaving the world otherwise, 4 = expelled (`0x063`). READ (GS) for the call sites; the reading of 1/3 as kinds of world exit is INFERRED from `FUN_004df050`'s callers (fifty pass 4 from error paths). |
 | `party.go` `MaxSize` comment, `party.md` "OpenSRO's parties share experience unconditionally" | eight applies because every OpenSRO party shares EXP | must change: the cap is 8 or 4 by the party's own exp-share bit, chosen at formation (below). |
+| `docs/protocol/monster_ai.md` "The kill's party count", `session/nestkill.go` `partyMembersNear` comment | the range is measured from the dead monster (INFERRED) | from the **kill credit** (READ `0x5bcacb`-`0x5bcb29`, ECX = the kill credit), in the same world, horizontally with 1920-unit region steps. Review of round 709. |
 | `docs/protocol/party.md` "Whether the exp-sharing flag can change after creation. Nothing read so far writes it." | open | READ: the flags cannot change. The SM's request switch (`FUN_0044ec50`) has kinds 0 form, 2 join, 10 register listing, 11 modify listing, 12 delete listing, 13 list page; the relay switch (`FUN_0044f3f0`) has 3 leave, 6 member update, 7 chat. None writes a party's flags. Modifying a listing with a different flags byte is refused (`FUN_004513c0` returns 5), and registering a listing for an existing party copies **the party's** flags over the client's (`FUN_00451110`). The client has no sender in `0x7064`-`0x7068` (`client_senders.tsv`). |
 
 ---
@@ -105,8 +107,10 @@ it from inviter and invitee; GS `party.md` round 271). There is no party of one.
   READ earlier).
 - Inviting into an existing party: the leader, or any member when bit 2 is set; the party must not
   be full (`0x2c13`/`0x2c14`). READ (GS `0x514560`).
-- The target must be within **600.0** units, 3D (Corrections). Failing the range sends the result
-  `IsWithinInteractionRange` returned. READ (GS `0x4a8e10`).
+- The target must be within **600.0** units, 3D (Corrections). `IsWithinInteractionRange` returns
+  3 for a type mismatch (the `0x26` filter), the bare code **4** when out of range, 0 when the
+  target is not found or in another world, and 1 in range; any result but 1 is sent back as the
+  refusal code. READ (GS `0x4a8e10`, `0x4a8eb2`, `0x4a902f..0x4a903b`).
 - `CParty::CheckTargetAvailable` (`0x514010`) on the target, in order: character lock → `0x2c06`;
   not alive and not dead (life state not 1/2) → 3; already in a party → `0x2c12` (the same party,
   `PARTYERR_EXISTING_MEMBER`) or `0x2c18` (another, `MEMBER_OF_ANOTHER_PARTY`); with a party-match
@@ -147,8 +151,10 @@ and `+0x45` is written from vtable slot 71 `GetJobState` (`FUN_005bae80`); in SM
 (`CGObjPC::GetJobState`, `0x4ddc80`); the character record's initializer writes **4** there
 (`0x4de3eb`, `mov BYTE [edi+0xf],4`), and SetCharacterState kind 10 changes it (`FUN_004e0b20`).
 1/2/3 are Trader/Robber/Hunter (`jobs.md`). So 4 is "not in job mode": a player who has a job but
-is not wearing the suit is a 4. INFERRED for that last sentence (the writer of 1-3 is the job-suit
-path, not read this round).
+is not wearing the suit is a 4. READ (review of round 709): `0x4e124e` writes 4, then the item in
+equipment slot 8 (`push 0x8; call 0x4b8000`) sets 1, 2 or 3 through item slots
+`0x418`/`0x41c`/`0x420` (`0x4e128a`/`0x4e12a9`/`0x4e12c8`, each `call 0x4e0b20`). A state of 0
+matches nobody, not even another 0 (`0x5bc1c0`'s table; `0x5bf240` asserts on it).
 
 The client's two refusal texts name the same rule: `UIIT_MSG_PARTYMATCH_JOIN_ERROR_JOBTYPE`
 "Parties cannot be formed between normal and job users." and `_JOIN_ERROR_HOSTILEJOB` "Parties
@@ -182,12 +188,23 @@ Both end in `CGObjPC::vslot_420(victim, damage, multiplier, flags)`, which compu
 
     EXP = Formula_ExpRewardForContributor(damage)    ; 0x410110, int64, floor 1
     SP  = Formulae::FUN_004106b0(damage)             ; int, floor 1
-    EXP = ftol(EXP × multiplier);  SP = ftol(SP × multiplier)      ; 0x4ea863-0x4ea88b
-    plus the ExpRatio / ExpRatioParty bonus (by "in any party", pc[0x72e]), and premium params
+    EXP = ftol(float32(EXP) × multiplier);  SP = ftol(float32(SP) × multiplier)   ; 0x4ea7e8, 0x4ea82a, 0x4ea863-0x4ea88b
+    r = ExpRatioParty if in any party (pc[0x72e]) else ExpRatio
+    if r >= 1.01:  EXP += ftol(EXP × (r − 1));  SP += ftol(SP × (r − 1))         ; 0x4ea8a5-0x4ea8e3
+    plus premium params
     then GainExpAndLevel(EXP, SP)                    ; vtable slot 92
 
 READ (GS asm `0x4ea7a8`-`0x4ea8e7`). **Both EXP and SP take the same multiplier**, so every
 sharing rule below applies to skill experience exactly as to experience.
+
+Two details the round-709 review read (GS):
+- **float32 rounding.** EXP and SP are stored to a single-precision float before the multiplier
+  (`0x4ea7d9 fild QWORD`, `0x4ea7e8 fstp DWORD`; SP `0x4ea81d`-`0x4ea82e`): an EXP above 2^24 is
+  rounded first. It matters for an exact match at high levels.
+- **The rate bonus is additive, has a 1.01 floor, and pays SP too.** `fld DWORD 0xb46178` = 1.01
+  (float), compared with the rate (`0xc8251c` ExpRatioParty, `0xc82518` ExpRatio); below 1.01 there
+  is no bonus at all (`jne 0x4ea8fd`). Otherwise `EXP×(r−1)` and `SP×(r−1)` are added on top of the
+  shared amounts. The rates themselves are this package's config (modded).
 
 ### The two formulas `vslot_420` calls
 
@@ -257,8 +274,19 @@ reading `+0x34`. This does not change any party rule.
   (`0xb45c44`, float) across the field/dungeon boundary.
 
 The reference point is the kill credit (the biggest hitter of the most-damaging group) when there
-is one, else the victim (ECX at the call, `0x4c4775`; INFERRED that it is always non-null in
-practice). Members who did no damage share; dead or distant members do not.
+is one, else the victim (ECX at the call, `0x4c4775`). It is always non-null when a share call is
+made: groups are built only from entries with damage > 0 (`0x4c455b`), so a top group, and with it
+a kill credit, exists (READ, review of round 709). Members who did no damage share; dead or
+distant members do not.
+
+**The kill credit can sit outside the sharing party** (READ, review of round 709). `vslot_399`
+computes it once (`0x4c4708`-`0x4c4711`, `ebx = [topGroup+0x20]`) and passes the same `ecx,ebx` to
+`0x5bca60` for **every** exp-share group (`0x4c4775`). When two parties, or a party and a solo
+player, damage one monster, the second party's 1000-unit radius is measured from the **other**
+group's top hitter; if that point is more than 1000 from all of its members, that party gets no EXP
+or SP at all. The count pointer is also the same for every group (`[ebp+0x8]`, `0x4c4768`); each
+share call overwrites it (`mov WORD PTR [esi],ax`, `0x5bcd3a`), so the count that reaches the nest
+is the **last exp-share group iterated** in the group map's order (that order is OPEN).
 
 **The bonus** (`[esp+0x20]`, `0x5bcd38`-`0x5bcd9c`), with c = eligible members of Country 0
 (China) and e = of any other Country (ref object `+0x88`):
@@ -302,12 +330,15 @@ same gap to the monster, so base EXP B and base SP are equal for all):
 | 4 free-for-all members, each kills alone | 1.09 | each killer 1.09 B; the others 0 |
 
 `count` (the 4th argument) receives the number of eligible members (`mov WORD [esi],ax`,
-`0x5bcd3a`). It arms the nest for a party monster (below). READ.
+`0x5bcd3a`). It arms the nest for a party monster (below). READ. With several exp-share groups the
+last one written wins (above).
 
 ### What applies to everyone in a party, either type
 
 - `ExpRatioParty` replaces `ExpRatio` for anyone in a party (`pc[0x72e]`). READ (GS `0x4ea892`), as
-  `internal/rates` already has.
+  `internal/rates` already has. The bonus is additive, applies to SP as well, and only at a rate of
+  1.01 or more (the pipeline above). OpenSRO's `rates.ExpFor` multiplies EXP alone by any rate
+  `≠ 1` (`session/combat.go`), so it diverges on both points (gap 19).
 - The level-gap party bonus in `Formula_ExpScaleByLevelDiff` (`+0.15/0.30/0.45`, Europe
   `+0.30/0.60/0.90`) needs **bit 0**, an exp-share party (`leveldata.ExpDiffScale`, round 480). So
   it applies only on the party-share path. READ earlier; consistent with the branch here.
@@ -332,14 +363,20 @@ the picker's party has `flags & 2`, the recipient is chosen as follows (READ):
    (`GObjPC::FUN_004d4840`: front of the list at `party+0x20`, moved to the back, its id returned).
 2. Accept the first who is found, alive (life state 1), in the picker's world, and within
    **1000.0** of the picker in **3D** (`FUN_00430ba0` keeps y; `fcomp QWORD 0xb45c68`).
-3. If none qualifies, the picker gets it.
+3. If none qualifies, the recipient depends on **why the last member tried failed** (READ, review
+   of round 709). The loop keeps the last candidate's pointer in `EBX` when he fails the alive test
+   (`0x525fae`) or the world test (`0x525fd7`); only a distance failure clears it (`0x526055 xor
+   ebx,ebx`). The picker gets the item only when `EBX` is 0 (`0x526069`). So if the last member
+   tried failed on distance, the picker gets it; if he was dead or in another world, **he** gets it.
+   To match the original exactly, keep the "last candidate" variable this way.
 
 The picker is in the rotation like everyone else. Each skipped member also moves to the back. A new
 member is appended to the back of the rotation when he joins (GS `FUN_005bc210`). A leaver is
 removed (`FUN_005bc390`).
 
 **Pet pickup** (GS `GObjPC::FUN_004d5510`, from `FUN_004d4f60`, a pet picking for its owner): the
-same rotation and tests, measured from the pet. It applies only to an item that `CanTrade`
+same rotation and tests, measured from the pet, with the same fallback shape (alive `0x4d560e` and
+world `0x4d563a` failures keep the candidate; only the distance failure clears it, `0x4d56b6`). It applies only to an item that `CanTrade`
 (slot 49) and `CanDrop` (slot 52). When the chosen member's inventory has no free slot, the item
 goes to that member's own pet if he has one, else the pickup fails with `0x1807`. READ (GS).
 
@@ -367,7 +404,8 @@ EXPENDABLE` "Item [%s %d pieces]is distributed to [%s]." READ (GS); the layout i
   members), the picker takes the whole amount. READ.
 - The client text is `UIIT_MSG_PARTYGET_GOLD` "[%d]gold is distributed to [%s]." (the notice
   message is party709a's).
-- A pickup of **1000 gold or more** also fires the picker's own vtable `0x274(0x80, 0)` (`0x4ead1f`).
+- A pickup of **more than 1000 gold** (1001 or more: `cmp edi,0x3e8; jbe`, `0x4ead1f`) also fires
+  the picker's own vtable `0x274(0x80, 0)`.
   What that does is OPEN, likely a client effect.
 
 ---
@@ -378,19 +416,45 @@ EXPENDABLE` "Item [%s %d pieces]is distributed to [%s]." READ (GS); the layout i
 
 1. The trigger is a kill of a monster from a nest **by an exp-share party** whose party share
    counted **2 or more eligible members**. These are the members alive, in the world, and within
-   1000 of the kill credit; they do not need to have dealt damage. The count comes from
-   `FUN_005bca60` (above). CAIState slot 7 (`FUN_00558f20`) arms the nest (`nest+0x30 = 1`) when
-   the count is `> 1`.
-   - An exp free-for-all party never arms, because the count is produced only on the share path.
-     INFERRED that the out-count stays 0 otherwise (its initializer is the caller's, not read).
-2. The armed nest's next hatch of a **rarity-0** species rolls `rand() % 101 < 50` (50 in 101) for
-   the party flag. The species must not be of the TID shape `(w & 0xf800) == 0x2000`. A party hatch
-   disarms the nest. `nest.RollClass`, `Nest_Hatch` `0x5607b0`.
-3. Level clamp: **no party monster below level 10**; at levels 10-39 the party flag is dropped
-   unless the rank is a low one. `nest.ClampClassByLevel`, `0x5eb9a0`.
+   1000 (horizontal, 1920-unit region steps, inclusive) of the **kill credit**; they do not need to
+   have dealt damage. The count comes from `FUN_005bca60` (above); with several exp-share groups
+   the last one written wins. CAIState slot 7 (`FUN_00558f20`) arms the nest (`nest+0x30 = 1`) when
+   the count is `> 1` (`cmp DWORD [esp+8],2 ; jb`).
+   - **An exp free-for-all kill never arms.** READ (review of round 709): the mob death function
+     `0x529de0` zeroes the count (`0x529e0a mov DWORD PTR [esp+0xc],0x0`) before the distributor
+     runs (slot 311 → `0x4c42f0` → `vslot_399`), then passes `movzx edx,WORD PTR [esp+0x8]` to the
+     AI's slot 7 (`0x529e2a`-`0x529e3f`); `0x52d010` does the same. Only the share path writes it.
+2. The armed nest's next hatch rolls `rand() % 101 < 50` (50 in 101) for the party flag, for a
+   species of rarity **0, 2 or 9 and above** (rarities 5, 3, 8, 6, 7, 4 and 1 copy straight to the
+   class, `0x56086e`-`0x5608c6`; review of round 709). The species must not be of the TID shape
+   `(w & 0xf800) == 0x2000`. A party hatch disarms the nest. `nest.RollClass`, `Nest_Hatch`
+   `0x5607b0`.
+3. Level clamp (`nest.ClampClassByLevel`, `0x5eb9a0`, switch on `level/10`, jump table `0x5ebf14`;
+   READ exactly by the review). Before the switch, a giant of level 10 or below becomes a champion
+   (`0x5eb9f9`-`0x5eba14`). Then the party flag is kept for:
+
+   | level | party flag kept for |
+   |---|---|
+   | 0-9 | never |
+   | 10-19 | rank 0 only |
+   | 20-29 | ranks 0 and 1 |
+   | 30-39 | ranks 0, 1, 4 (giant) and 6 |
+   | 40 and up | always |
+4. **The per-world `PARTYMONSTER_SPAWN` gate** (READ GS, review of round 709).
+   `CDataDrivenGameWorld::vslot_055` reads the world's `PARTYMONSTER_SPAWN` config value (`0x6086eb
+   mov ecx,0xb014bc`) and sets `world+0x58 = 1` only when it compares equal to "ON" (`0xb012f4`,
+   `CompareStringA` at `0x60872e`, `0x608739`). A world virtual at `0x609900` (in the vtables at
+   `0xb01cf4`/`0xb01de4`/`0xb78fd8`) strips the party nibble from a spawn's class byte when
+   `world+0x58` is 0 (`and al,0xf0; cmp al,0x10` → party nibble 0, rank kept). This package's
+   `world_config_keys.csv` (EXTERNAL, possibly modded) has 30 `PARTYMONSTER_SPAWN` rows: `ON` only
+   for `GROUP_JUPITER_A3`, `_B3` and `_FIELD`; `OFF` for the Pharaoh tombs, Togui, God Flame, Wreck
+   and Arabia groups. So in a data-driven (instance) world a party monster survives only when that
+   world's key is `ON`. **Whether the main field world has an equivalent gate is OPEN** (next probe:
+   the base `CGameWorld` slot at the same vtable index).
 
 So it is not "after 4 or 5 members": two members alive and in range in an exp-share party are
-enough, and then it is a coin toss per hatch from that nest.
+enough, and then it is a coin toss per hatch from that nest (in an instance world, only where the
+world allows party monsters).
 
 **What it is.** The class byte's high nibble is 1 (`IsPartySupportMonster` = `(byte & 0xf0) ==
 0x10`); the client draws the blue emblem from the same bit (round 660, `CICMonster::vslot_025`,
@@ -400,17 +464,34 @@ enough, and then it is a coin toss per hatch from that nest.
 |---|---|---|
 | HP | ×10 (base 1000% instead of 100%, before the rank multiplier) | `CGObjMob::PublishStats` (`0x4c19f0`), round "x10 HP mode" |
 | EXP and SP | ×7.5, before the rank multiplier | `CGObjMob::vslot_359` above |
-| damage it deals | ×1.2 (elite rank 6 ×1.5 on top) | `FUN_0040da20`: `fld DWORD 0xb45d90` = 1.2; `fmul QWORD 0xb45d78` = 1.5; called from `Combat_ComputeWeaponDamage` (`0x40db50`) and `FUN_0040dc10` |
+| its attack value | ×1.2 (elite rank 6 ×1.5 on top), on the attacker's min/max attack stat **before defence** | `FUN_0040da20`: `fld DWORD 0xb45d90` = 1.2; `fmul QWORD 0xb45d78` = 1.5; it scales the value `Combat_ComputeWeaponDamage` (`0x40db50`) and `FUN_0040dc10` build from the attacker's own stat (vtable `0x104`, param `0xd`/`0xf` + (edi≠0)) plus an item bonus, and the result is clamped against `0xb45f20` afterwards (`0x40dbe2`). Final damage is ×1.2 only if the rest of the pipeline is linear in that value, which was not shown (review of round 709) |
 | kill reward when the killers out-level it | ×0.5 | party share: victim level < the eligible members' average level; individual award: victim level < the receiver's level (`FUN_00410fd0`) |
 | berserk orbs | the kill's orb amount goes to **every** member alive in the killer's world | `Party_ShareHwanCount` (`0x5bcf30`), only when the killer's party shares EXP (round 202's hwan entry) |
 
 Drops: no party-monster factor was found on the drop path this round. That search was not
 exhaustive; drops for party monsters are OPEN.
 
-**Why OpenSRO's nest scheduler logs `party=0`.** `nest.Scheduler.ArmParty` exists, but nothing in
-`server/internal/session` calls it (MEASURED: `grep ArmParty server/internal/session` finds no
-caller). OpenSRO has no party share to produce the count, so no nest is ever armed. The nest rows
-themselves need no party column: the roll keys on the nest's armed state, not on a table value.
+**Why OpenSRO's nest scheduler logs `party=0`.** ~~`ArmParty` has no caller.~~ **Wrong, corrected
+by the review of round 709**: this page's first draft grepped only `internal/session`. Arming is
+wired through an observer `cmd/server` installs (round 660): `cmd/server/main.go`
+`session.SetMonsterKillObserver(respawns.armParty)` (only with `-full-map`), `cmd/server/nest.go`
+`armParty` → `s.sched.ArmParty`, called from `session/combat.go` and `status.go` through
+`noteMonsterKilled`, which counts with `nestkill.go` `partyMembersNear`. The `party=0` in the log is
+the scheduler summary's count of party monsters **hatched so far** (`nest.go`), 0 because no
+qualifying party kill has happened. The nest rows need no party column: the roll keys on the nest's
+armed state (and, in instance worlds, the `PARTYMONSTER_SPAWN` gate), not on a table value.
+
+What OpenSRO's arming does differently from the original (READ against the code):
+- **Party type:** it arms for any party of two or more (`inPartyWithOthers`); the original arms
+  only from the exp-share path.
+- **Reference point:** it measures from the dead monster, on the ground plane, in the same zone;
+  the original measures from the kill credit, in the same world, horizontally with 1920-unit region
+  steps, inclusive at 1000.
+- **Whose count:** it counts the killer's party; the original takes the count the exp-share groups
+  that damaged the monster wrote, the last one iterated winning.
+- **World gate:** it has no `PARTYMONSTER_SPAWN` gate.
+- Its comments (`nestkill.go`, `monster_ai.md`) recorded "measured from the dead monster" as
+  INFERRED; the reference is READ as the kill credit (`0x5bcacb`-`0x5bcb29`, ECX = the kill credit).
 
 ---
 
@@ -440,7 +521,7 @@ own line too**, and nobody outside the party receives it. READ (GS, SM).
 | `0x8` (`GObjPC_SetLevel`, `0x4e5238`; `FUN_004d6210`) | `0x02` | level | always on the call |
 | `0x2` (`GObjPC::FUN_004a8510`) | `0x04` | HP and MP, each quantised to a nibble | **only when a quantised value changes**: HP step = `0` when HP is 0, else `1 − ftol(HP/MaxHP × −10.0)` (`0xb45f78` = −10.0), i.e. 1..11; MP step = `ftol(MP/MaxMP × 10.0)` (`0xb45c60`), 0..10 |
 | `0x1` (`GObjPC::FUN_004a9410`, `GObjPC::FUN_004df6b0`) | `0x20` | region, x, y, z (rounded to integers), world id | always on the call |
-| `0x10` (`FUN_004ea290`) | `0x40` | the record's `+0x24` string (vtable `0x178`) | always on the call |
+| `0x10` (`FUN_004ea290`) | `0x40` | the guild name (vtable `0x178`, slot 94 = `0x4ea640` `CGObjPC::GetGuildName`) | always on the call |
 | `0x20` (`Skill_HandleMasteryLevelUp`, `GObjPC_HandleSkillMsg_203`) | `0x08` | the two masteries shown (`GObjPC::FUN_005a1890` → `+0x5c`, `+0x60`) | always on the call |
 | `0x40` (`GObjPC::UpdateCharRefObjIDAndScale`) | `0x01` | name and ref object id | always on the call |
 
@@ -450,8 +531,9 @@ own line too**, and nobody outside the party receives it. READ (GS, SM).
   describes is client-side; that is party709c's.
 - **Position cadence is OPEN.** How often the position hook fires
   (`FUN_004a9410` writes `pc+0x12c` and calls bit 1) was not established this round.
-- What the `+0x24` string is (vtable slot 94 `0x178`) is OPEN. By its place in the record it is the
-  guild name or the position name; it needs the slot's name.
+- The `+0x24` string is the **guild name**: CGObjPC's vtable (`0xaf59fc`) slot 94 holds `0x4ea640`,
+  whose recovered name is `CGObjPC::GetGuildName` (read from the exe by the round-709 fix-up pass),
+  and the client stores the field where its party window draws the guild (`party_protocol.md`).
 
 ### Leaving, expulsion, logout, leader succession, dismissal
 
@@ -474,8 +556,8 @@ READ (SM `0x44f580`, `0x44e1a0`, `0x44eb30`, `0x4296f0`; GS `0x5144e0`, `0x5be1a
 - The client texts for the reasons are `UIIT_MSG_PARTY_LOGOUT` "[%s] has been disconnected.",
   `UIIT_MSG_PARTY_SECEDE` "[%s] has left the party.", `UIIT_MSG_PARTY_BOOTED` "[%s] is banned
   from the party." and `UIIT_MSG_PARTY_BROKEN` "The party is dismissed.". The mapping 1→LOGOUT,
-  2→SECEDE, 4→BOOTED is INFERRED from the reasons' call sites; the client handler that picks the
-  text is party709a's/party709c's.
+  2→SECEDE, 3→server migration (silent, debug line only), 4→BOOTED is READ in the client's notice-3
+  jump table (`c:0x8872e8`, indexed by reason − 1; `party_protocol.md`).
 - **Teleport and zone change** do not touch the party: the party removal is called only from
   leave, expel and world exit (the three callers of `0x5144e0`/`0x5be1a0`, census of `srgs.asm`).
   READ. A member on another game server is simply not found locally, so he does not share kills or
@@ -516,12 +598,13 @@ titles):
 
 | value | label key | default title key (English) |
 |---|---|---|
-| 0 | `UIIT_CTL_PARTYMATCH_PSEARCH_OBJECTCOMBAT` (hunting; the red flag) | `UIIT_MSG_PARTYMATCH_RECORD_DEFAULT1` "For open hunting on SRO!" |
+| 0 | `UIIT_CTL_PARTYMATCH_PSEARCH_OBJECTCOMBAT` (shown as "Hunting") | `UIIT_MSG_PARTYMATCH_RECORD_DEFAULT1` "For open hunting on SRO!" |
 | 1 | `UIIT_STT_QUEST` | `..._DEFAULT3` "When will the quests end on the Silkroad?" |
 | 2 | `UIIT_CTL_PARTYMATCH_PSEARCH_FIND_OBJECTTRADER` (trade) | `..._DEFAULT2` "Until the day SRO is all covered with money!" |
 | 3 | `UIIT_CTL_PARTYMATCH_PSEARCH_FIND_OBJECTTHIEF` (thief) | `..._DEFAULT4` "No need for blood or tears for thieves! Robbery is the only way to go!" |
 
-The search box adds `UIIT_CTL_PARTYMATCH_PSEARCH_OBJECTALL` ("All"). READ (client strings).
+The search box adds `UIIT_CTL_PARTYMATCH_PSEARCH_OBJECTALL` ("All") as combo index 4; it is a
+search-only value and is never sent (`c:0x73b12e push 4`). READ (client).
 
 **The purpose is tied to the job** (GS `Party_UserMatches` `0x5bf240` and SM `FUN_0044f7f0`,
 identical). The registrant's job state must fit the purpose, else **`0x2c23`**:
@@ -539,8 +622,11 @@ listing's purpose).
 **There is no hunter purpose and no hunter icon in matching.** A hunter lists, and is listed, under
 purpose 2 together with traders. The listing's "Type" column is the party type, the "Race" column
 the leader's race byte (`user+0x250`), and the "Purpose" column the purpose (`FUN_0044f640` writes
-them). READ (SM). The user's screenshot matches: the 1/4 rows (3929, 3959) carry a different Type
-icon from the x/8 rows. Which icon each value draws is party709c's.
+them). READ (SM). The user's screenshot (from another client, "Esro Online") shows the 1/4 rows
+(3929, 3959) with a different Type icon from the x/8 rows; this exe draws `pt_eachone.ddj` /
+`pt_association.ddj` for Type and **text** for Race and Purpose (`party_gui.md` §3). The red flag
+and race shields in the screenshots are that other client's, not this exe's. **USER DECISION
+(2026-10-03): Race and Purpose are drawn as text, as this exe does.**
 
 ### Registering, modifying, deleting
 
@@ -556,8 +642,10 @@ All READ (SM).
   - not in a party: the listing carries the record's flags and becomes the party's type when
     someone joins (`FUN_00451290`; accepted join `0x44fbe0` → `FUN_0044e9c0(..., listing flags,
     ...)`);
-  - the game server also requires creator level 5 when not in a party, refuses while a job item is
-    worn (`0x2c26`), and refuses a non-leader re-listing (`0x2c1d`) (`party.md`).
+  - the game server also requires creator level 5 when not in a party, refuses `0x2c26`
+    (`JOBITEM_WEAR_ERR_PARTYMATCH`) when `chardata+0x13` is non-zero (`0x514196`; what that byte
+    holds is OPEN, and it is **not** the worn job suit, which sets `+0xf`: if it were, no trade or
+    thief listing could be registered), and refuses a non-leader re-listing (`0x2c1d`).
 - **Listing number** (the "No." column): a manager counter, `++counter`, skipping 0
   (`FUN_0044def0` / `FUN_00451290`: `+0x8c`). Numbers only grow for the life of the server and are
   not reused. The listings live in a map keyed by number, so lists come out **in ascending
@@ -596,9 +684,9 @@ All READ (SM).
 - **A row** carries the listing number, the leader's (or job alias's) name, the member count (1
   without a party), the leader's race, the flags, the purpose, the level range and the title.
 - **Name, purpose and level search** are not in the server's list request: the server sends whole
-  pages, and only a page number. INFERRED: the search filters client-side. The client's
-  `UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT` "No parties found matching your search." points the same
-  way. The client filter is party709c's.
+  pages, and only a page number. The search is a client-side filter over the records held, READ
+  (`party_gui.md` §3, `c:0x73bb80` → `0x73b780`): an exact whole-name match, the purpose unless
+  All, and the level ranges overlapping; nothing left gives `UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT`.
 
 ### The join request
 
@@ -625,12 +713,17 @@ On passing all nine, the listing is marked pending and the request goes to the l
   which stores it at `+0x2c`;
 - the SM's transaction tick `FUN_00421de0` adds GetTickCount ms / 1000.0 (`0x79ada8` = 1000.0) to
   `+0x30` and fires OnTimeout past `+0x2c`. READ (SM).
-- So the requester's progress bar and the leader's accept/deny box both run 15 seconds. INFERRED
-  for the client-side durations (party709c to read the client's own constant).
+- **But the client decides first** (review of round 709; READ client, `party_gui.md` §4-5). The
+  leader's popup sends answer code **2** after **10 s** (timer `0x2710` ms set at `c:0x7406de`;
+  handler `c:0x73fb70`), and the requester's progress bar fills and closes at 10 s (`c:0x7322e0`,
+  the double 10000.0 at `c:0xdb3720`; display only). So the visible behaviour is **10 s, ended by
+  the leader's client sending reply 2**; the ShardManager's 15 s is the fallback when the leader's
+  client sends nothing.
 
 **The automatic refusals** the user describes at the bottom right are these codes, coming back as
-the request's failure. The client shows a refusal with `FUN_007781b0(4, text)`, the same call it
-uses for the local checks (party709c to confirm the screen position).
+the request's failure. A server refusal reaches the client as `0xb06d [2][code]` and is drawn in the
+bottom-right system message window (`c:0x778190` takes child `0x44`, `GDR_SYSTEM_MESSAGE_VIEW`;
+READ, review of round 709); the client's local checks use `0x7781b0(4, text)`, the same window.
 
 **The answer** (SM `FUN_0044fbe0`, a u8):
 - **accept**:
@@ -655,8 +748,9 @@ So **2 is the timeout**. The exact SM-to-client path is party709a's.
 **Auto match is client-driven** (READ client `FUN_008847d0`). After a refusal (0) or a timeout (2),
 while auto matching is on (`DAT_0110f80c+0x64c`), the client tries the next candidate
 (`FUN_00786e70`). It says `UIIT_MSG_PARTYMATCH_AUTO_PROGRESS` while candidates remain and
-`_AUTO_FAILURE` when none is left. The auto-match dialog has race choices
-(`UIIT_CTL_PARTYMATCH_AUTOMATCH_RACE_CH`/`_EU`). How candidates are chosen is OPEN (party709c).
+`_AUTO_FAILURE` when none is left. Candidates are chosen client-side from the held records, READ
+(`party_gui.md` §3, `c:0x73ebc0`): the purpose, the race unless Open, the type flags, the player's
+level inside the range; up to 10 queued.
 
 ---
 
@@ -666,10 +760,10 @@ while auto matching is on (`DAT_0110f80c+0x64c`), the client tries the next cand
 |---|---|
 | Invite works on the selected player model | the server half: a PC target within **600** units (Corrections), not in a party, alive or dead, not mid-transaction. READ. The selection is party709c's. |
 | "You set the party type you want by clicking Set" | the type is chosen before forming and sent with the form-party invite (or with a listing); it **cannot change** once the party exists. READ. |
-| Party match: select purpose, level and name, or cycle pages | pages of 23 in listing-number order; the server sends whole pages, so purpose/level/name filtering is INFERRED client-side. |
-| A gold border on the selected listing | client (party709c). |
+| Party match: select purpose, level and name, or cycle pages | pages of 23 in listing-number order; the server sends whole pages, and the purpose/level/name search is a client-side filter over the page held (READ, `party_gui.md` §3). |
+| A gold border on the selected listing | confirmed: `com_bar01select_` (a (255,178,82) line), READ/MEASURED in `party_gui.md` §3. |
 | Refused automatically for level or job, the reason at the bottom right | **confirmed**: `0x2c1e` (outside the listing's level range, inclusive) and `0x2c23` (job against leader or purpose), plus the other ladder codes. READ. |
-| A progress bar for "the duration it tries" | the request times out after **15 seconds** on the server (READ); the bar's own constant is party709c's. |
+| A progress bar for "the duration it tries" | **10 seconds**: the bar fills over 10 s (display only), and the leader's client answers "no reply" (code 2) at 10 s if the leader does nothing. The server's 15 s is a backstop. READ (client and SM). |
 | The leader gets a box with the requester's info and accepts or denies | confirmed (SM `0x44fbe0` answers accept/deny; timeout = deny with reply 2). The box's fields are party709c's. |
 | Two or three job types: thieves, and traders (with hunters) | **confirmed, and stricter.** Traders and hunters may party together; thieves only with thieves; and a **non-job player cannot party with any job player** in job mode (`0x2c23`, "Parties cannot be formed between normal and job users."). READ. |
 | "I don't think there's a blue icon for hunter in the party matching" | **confirmed**: there is no hunter purpose. Hunters use the trade purpose (2). READ. |
@@ -678,8 +772,8 @@ while auto matching is on (`DAT_0110f80c+0x64c`), the client tries the next cand
 | "If you have all sharing turned off it turns into a 1/4 player party" | **corrected**: the 4-cap follows the **EXP** setting alone. EXP Free-For-All (with or without item sharing) holds 4; EXP Auto Share holds 8. READ, three binaries. |
 | 1-4: a small bonus per additional player, 4/4 the max (EXP and skill EXP) | **confirmed**: each contributor's own kill × (1 + 0.03 per member past the first); a full 4 gives ×1.09; both EXP and SP. READ. Members who did not hit get nothing. |
 | 1-8: you split the experience (and skill) but get a big bonus per additional player | **confirmed and specified**: split **by level** among members alive and within 1000 units, × (1 + 0.1 per extra Chinese member, 0.2 per extra European); a member taking more than 70% keeps half the bonus. READ. |
-| "After 4 or 5 you start getting party mobs" | **corrected**: two eligible members of an exp-share party arm the monster's nest; the next normal hatch there is a party monster 50 times in 101; none below level 10. READ. |
-| Party mobs have a blue emblem, are harder to kill and give more experience | **confirmed**: HP ×10, damage ×1.2, EXP and SP ×7.5 (×0.5 if the party out-levels it on average). READ. |
+| "After 4 or 5 you start getting party mobs" | **corrected**: two eligible members of an exp-share party arm the monster's nest; the next normal hatch there is a party monster 50 times in 101; none below level 10 (and the level clamp above); in an instance world only where `PARTYMONSTER_SPAWN` is ON. READ. |
+| Party mobs have a blue emblem, are harder to kill and give more experience | **confirmed**: HP ×10, attack value ×1.2 before defence, EXP and SP ×7.5 (×0.5 if the party out-levels it on average). READ. |
 | Sharing is within a certain radius | **1000 units**: EXP/SP horizontal from the kill credit; items and gold 3D from the picker. Berserk orbs go to the whole party in the same world. READ. |
 | The leader's red flag; far members show blue and their buffs are hidden; select glow; mastery icons; HP/MP | client (party709c). The server side: members get updates whatever the distance; HP/MP in tenths; the two masteries are in the member record. READ. |
 | Party chat only to the party | confirmed; the original also echoes the line to the sender. READ. |
@@ -701,27 +795,32 @@ while auto matching is on (`DAT_0110f80c+0x64c`), the client tries the next cand
 | 9 | No invite flow, no 30 s timeout, no range or state checks | invite ladder; 600 units; 30 s → `0x2c10` | new |
 | 10 | No job rule | the job tables on form/join/match (`0x2c23`); purpose ↔ job | `party`, `jobs` |
 | 11 | Item pickup: party members may pick each other's drops only with item share (modelled); no distribution | round robin by the rotation list within 1000 (3D); full inventory `0x18da`; gold split among members within 1000; the `0x3068` notice | `grounditem`, `session/grounditem.go` |
-| 12 | `nest.Scheduler.ArmParty` has no caller | arm on an exp-share kill whose eligible count is > 1 | `session/combat.go` → `nest` |
+| 12 | Arming is wired (round 660, `nestkill.go` → `cmd/server/nest.go`, `-full-map` only) but arms for any party of two or more, counts the killer's party from the dead monster in its zone, and has no world gate. (This row's first draft said "no caller"; wrong, review of round 709) | arm only from the exp-share path, with the count the share wrote (members within 1000 of the kill credit, same world, horizontal; last exp-share group wins); `PARTYMONSTER_SPAWN` gate in instance worlds | `session/nestkill.go`, `session/combat.go` |
 | 13 | No party-monster damage factor | ×1.2 on its damage | `combat` |
 | 14 | No monster EXP multiplier at all (`ScaleHPForMonster` has the HP ×10 and the rank HP percentages; MEASURED: nothing in `combat`/`leveldata` scales EXP by rank) | `CGObjMob::vslot_359`: party ×7.5, then rank ×2/15/60/4/30 (ranks 1/4/5/6/7), on EXP and SP | `combat`, `leveldata` |
 | 15 | Berserk party share not wired | orbs to every member alive in the killer's world, exp-share parties, party-monster kills | `berserk`, `session/combat.go` |
 | 16 | No member updates | event-driven updates: level, HP/MP in tenths, position, masteries, name/model | new |
 | 17 | No party matching | listings, counter numbers, 23-entry pages, own listing on every page, join request ladder, 15 s timeout, accept/deny, the purpose/job rule, the leader's client deletes a full listing | new |
 | 18 | Logout removes the member (`LeaveBySession`) | correct, with the party-of-two dismissal, and the leaver's listing moving to the new leader / being deleted | `party/party.go` |
+| 19 | `rates.ExpFor` multiplies EXP alone by any rate `≠ 1` | an additive `EXP×(r−1)` **and** `SP×(r−1)`, only when `r ≥ 1.01`; EXP and SP through float32 before the multiplier | `session/combat.go`, `rates` |
+| 20 | Item round robin not built | when no member qualifies, the last candidate keeps the item unless he failed on distance (the loop's `EBX` rule) | `session/grounditem.go` |
 
 ---
 
 ## OPEN, and what blocks implementation
 
+Closed by the round-709 review and fix-up: the free-for-all out-count (READ 0, never arms), the
+reason → text mapping (READ, client), the member record's `+0x24` string (the guild name), the
+client-side join durations (10 s), and the client search and auto match (READ in `party_gui.md`).
+
 | Item | Blocks | Next probe |
 |---|---|---|
 | What `CGObjMob` slot 332 (`0x4a68b0` → ref object vtable `+0x34`) returns | the absolute size of kill EXP/SP on the live path (gap 5); not the sharing rules | read the ref-char vtable slot 13 in the GS dump |
 | Position update cadence (`FUN_004a9410` callers) | how often to send member positions | caller census of `0x4a9410` and `0x4df6b0` |
-| The member record's `+0x24` string (vtable slot 94 `0x178`) | the update bit `0x40` field | name slot 94 |
+| Whether the main field world has a `PARTYMONSTER_SPAWN` equivalent | whether field nests are ever gated | the base `CGameWorld` slot at the vtable index of `0x609900` |
+| The order of the kill distributor's group map | which exp-share group's count arms the nest when two groups shared a kill | the map type behind `vslot_399`'s groups |
+| What `chardata+0x13` holds (the `0x2c26` gate) | refusing a party-match registration exactly | writers of `+0x13` |
 | Drops from party monsters | whether drop counts or rates change | caller census of slot 192/193 in `RefItemDrop` |
-| Whether the out-count in an exp free-for-all kill is 0 | that free-for-all parties never arm a nest | read the out-count's initializer in CAIState slot 7's caller |
-| `pc[0x274](0x80,0)` on a ≥1000 gold pickup | a client effect, probably | name GS vtable slot 157 |
-| The reason → text mapping (1 LOGOUT, 2 SECEDE, 4 BOOTED) | the right message | the client's notice-3 handler (party709a/c) |
+| `pc[0x274](0x80,0)` on a gold pickup over 1000 | a client effect, probably | name GS vtable slot 157 |
 | `0x2c20` | the flags-mismatch refusal has no client text in `error_codes.md` | error-code table lookup |
-| Client-side durations of the join progress bar and the leader's box | matching the 15 s exactly on screen | party709c |
 | `FUN_005bbae0` (needs both bits; walks a member's list on join) | probably quest sharing in an exp+item party | read its vtable `0x69c` call |

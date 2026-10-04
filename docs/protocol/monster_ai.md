@@ -3751,6 +3751,11 @@ the killer's exp-sharing party members that are alive and within 1000.0 units (G
 FUN_005bca60; the double at 0xb45c68), and `FUN_00558f20` arms the nest when it is above 1. The
 range is measured from the dead monster (INFERRED: the object FUN_005bca60 shares experience out
 of). OpenSRO counts the members in the world, alive, in the monster's zone, on the ground plane.
+**(round 709)** ~~INFERRED: the dead monster~~ READ: the range is measured from the **kill credit**
+(the biggest hitter of the most-damaging group, `0x5bcacb`-`0x5bcb29`), same world, horizontal with
+1920-unit region steps; only an exp-share kill arms (a free-for-all kill leaves the count at 0,
+`0x529e0a`); instance worlds gate on `PARTYMONSTER_SPAWN`. OpenSRO's count still differs on all of
+these (`docs/protocol/party_rules.md`, "Party monsters", gap 12).
 
 **The wire: the party flag.** Retail sends one class byte, `rank | party << 4` (CICMonster::
 vslot_025 0x9d3850: `and cl,0xf` to +0x7ac at 0x9d38e1, `shr al,4` to +0x7ad at 0x9d38e7).

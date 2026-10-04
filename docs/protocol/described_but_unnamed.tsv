@@ -149,7 +149,6 @@
 3	0051a7b0	FUN_0051a7b0	43	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
 3	005df1b0	FUN_005df1b0	43	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 3	00514af0	FUN_00514af0	42	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
-3	00514530	FUN_00514530	41	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
 3	005157f0	FUN_005157f0	41	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
 3	00483f40	GObjPC::FUN_00483f40	36	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/item_capability_flags.md
 3	00518080	FUN_00518080	35	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
@@ -356,7 +355,6 @@
 0	005c49a0	FUN_005c49a0	500	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 0	0051a5b0	FUN_0051a5b0	499	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/server_handlers.tsv
 0	00867660	ShopApp::FUN_00867660	492	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
-0	00514900	FUN_00514900	491	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/server_handlers.tsv
 0	009aa330	MapLoader::FUN_009aa330	487	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	004f0c90	AJStateChanger::FUN_004f0c90	483	docs/protocol/described_but_unnamed.tsv,docs/protocol/message_handlers.tsv
 0	00630ac0	FUN_00630ac0	483	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md

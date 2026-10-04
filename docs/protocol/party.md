@@ -5,6 +5,13 @@ What the engine enforces about parties. Implemented in `server/internal/party`.
 Small system, and most of it was already recovered — this page collects it and
 adds the one rule OpenSRO was missing entirely.
 
+> **Round 709 (the party epic) supersedes much of this page.** The full specification is in
+> `docs/protocol/party_protocol.md` (every opcode and byte layout, read from the client, the
+> GameServer and SR_ShardManager.exe, which owns the party), `party_rules.md` (types, EXP/SP and
+> item sharing, jobs, party monsters, party matching) and `party_gui.md` (the windows and HUD).
+> Readings below that round 709 corrected are struck through and marked "(round 709)"; the rest
+> still stands.
+
 ## Size: two caps, selected by a flag
 
 `FUN_00514560` is the join-time check, and there are **two** limits:
@@ -28,6 +35,9 @@ exp-sharing party holds eight while a non-sharing one holds four.
 OpenSRO's parties share experience unconditionally — every member counts toward
 `leveldata.PartyExpBonus` and no flag turns it off — so eight is the cap that
 applies, and `MaxSizeNotShared` is recorded for completeness rather than use.
+**(round 709)** Still true of the code, but the user wants the real party types, so the 4/8 split
+becomes live; and `PartyExpBonus`'s 3 % applies only in an **exp free-for-all** party, while an
+exp-share party splits by level with a 10 %/20 % per-member bonus (`party_rules.md`).
 
 **A refusal that was correct is worth keeping.** An earlier pass found two loops
 bounded at 8 near the party module and declined them, on the grounds that they
@@ -66,7 +76,7 @@ A separate subsystem with its own nine codes (`PARTYMATCH_*`), entered through
 
 | check | refusal |
 |---|---|
-| a job item is worn | `0x2c26` `JOBITEM_WEAR_ERR_PARTYMATCH` |
+| ~~a job item is worn~~ `chardata+0x13` is non-zero; what that byte holds is OPEN, and it is not the worn job suit (round 709, `party_rules.md`) | `0x2c26` `JOBITEM_WEAR_ERR_PARTYMATCH` |
 | already listed | `0x2c24` `PARTYMATCH_JOIN_ERROR_DUPLE` |
 | not the leader | `0x2c1d` `PARTYMATCH_RECORD_ERROR_PARTYLEADER` |
 
@@ -102,7 +112,8 @@ it): a kind byte at `+0x28`, the requester's and the invitee's ids at
 `+0x2c/+0x30`, the invite record's `+0x34` word at `+0x34`, and for a fresh
 party two 0x68-byte member records (`0x5bad30`/`0x5bae80`: name, level,
 HP ratio, position...) at `+0x38/+0x3c`; it is dispatched through the request's
-slot 3 to another server (the party lives in the global/agent process), and the
+slot 3 to another server (the party lives in ~~the global/agent process~~ **`SR_ShardManager.exe`**,
+`CPartyManager`, whose `0x7866`/`0x3864` handlers are `sm:0x44ec50`/`0x44f3f0`; round 709), and the
 flag byte lands in the party object when the response comes back -- a path the
 local store patterns cannot see. OpenSRO's parties are its own design, so
 nothing shipped depends on it.
@@ -165,8 +176,11 @@ nothing shipped depends on it.
 
   `0x2c23` is `UIIT_MSG_PARTY_USER_MISSMATCH` (the engine's spelling), which is
   what names **`Party_UserMatches`** (`0x005bf240`) -- a pairwise compatibility
-  table over two small enum values whose failure is that refusal. What those
-  values are is not claimed.
+  table over two small enum values whose failure is that refusal. ~~What those
+  values are is not claimed.~~ **(round 709)** `AL` is the job state (1 trader, 2 thief,
+  3 hunter, 4 not in job mode) and `CL` the party-match entry's purpose byte (0 combat, 1 quest,
+  2 trade, 3 thief): the person-to-purpose job rule. And the kinds downstream: 0xa register,
+  0xb change entry, 0xc delete entry, 0xd list page (`party_protocol.md`).
 
   **AND THE SEARCH WAS LOOKING IN THE WRONG PLACE.** `0x06b`'s reply is handled
   by `UI_PARTYMATCH::FUN_008801e0`, and that class handles **exactly one** reply
@@ -179,14 +193,16 @@ nothing shipped depends on it.
 
   | opcode | reads as |
   |---|---|
-  | `0x061` (`0x00514530`) | requires `[0x72e]` (a party), saves the position through the already-named `CGObjCOS_Summoned::SaveCurPosAsLastTelPosition`, then calls `0x005144e0(2)`. A party-side *teleport* action, not an invite. |
-  | `0x06e` (`0x00514900`) | branches on `GObjPC::PartyID` being **zero** -- the "I am in no party" path -- and only then reads a u32 target from the wire. The shape of answering an invitation. |
+  | `0x061` (`0x00514530`) | requires `[0x72e]` (a party), saves the position through the already-named `CGObjCOS_Summoned::SaveCurPosAsLastTelPosition`, then calls `0x005144e0(2)`. ~~A party-side *teleport* action, not an invite.~~ **(round 709) It is LEAVE PARTY**: the client's sender `0x81cad0` writes no payload and is reached from the party-exit chat command and the party window; reason 2 shows as `UIIT_MSG_PARTY_SECEDE`. The helper's teleport name came from another caller. |
+  | `0x06e` (`0x00514900`) | branches on `GObjPC::PartyID` being **zero** -- the "I am in no party" path -- and only then reads a u32 target from the wire. ~~The shape of answering an invitation.~~ **(round 709) It is `0x306e`, the party-match leader's answer** to a relayed join request (`[u32 job][u32 requester JID][u8 answer]`); invitations are answered on `0x3080`. |
   | `0x06f` (`0x00514af0`) | also gated on `PartyID` being zero: when the character's `chardata+7` byte is **4** it clears that byte and `+0x1cd0`. A pending-state cleanup -- a decline or a cancel. |
 
   So this is not invite-and-expel as two symmetric opcodes: `0x06e` and `0x06f`
   are both things a character with **no party** does, which is the *answering*
   side. **Which is accept and which is decline is not claimed** -- `chardata+7
-  == 4` is an unnamed state byte.
+  == 4` is an unnamed state byte. **(round 709)** Neither is an invitation answer: `0x06e` is the
+  party-match leader's answer, `0x06f` has no client sender, and `chardata+7 == 4` is "listed in
+  party matching without a party" (`party_protocol.md`, "Server-side state byte").
 
   **EXPULSION IS `0x063` (round 357).** It reads a u32 target, then requires all
   three of: the caller is in a party; the caller's id equals `party + 0xc`, the
@@ -194,14 +210,17 @@ nothing shipped depends on it.
   **`Party_RemoveMember`** (`0x005be1a0`), which resolves the member through the
   already-named `GetMemberByJID` and branches on a REASON byte -- 4 here.
 
-  The same function is reached with reason **2** from the party-teleport path
-  (`0x061` -> `0x005144e0`), which settles what that argument `2` was: not an
-  unread selector but a removal reason. **Reason 1, and the reason enum's own
-  names, are still unrecovered**, and the expulsion reading rests on the three
+  The same function is reached with reason **2** from ~~the party-teleport path~~ the leave
+  handler (`0x061` -> `0x005144e0`; round 709), which settles what that argument `2` was: not an
+  unread selector but a removal reason. ~~**Reason 1, and the reason enum's own
+  names, are still unrecovered**~~ **(round 709)** the client names all four (`c:0x8872e8`): 1
+  LOGOUT, 2 SECEDE, 3 server migration, 4 BOOTED; the expulsion reading also rests on the three
   gates rather than on the constant 4. `0x06d` remains the odd one:
   `0x005bf570`, 382 bytes, posts no kind and does its own work.
-- **Whether the exp-sharing flag can change after creation.** Nothing read so
-  far writes it.
+- ~~**Whether the exp-sharing flag can change after creation.** Nothing read so
+  far writes it.~~ **READ (round 709):** no message changes the party flags, in any of the three
+  binaries; a party-match edit with different flags is refused (`party_protocol.md`, "Party
+  flags").
 
 
 ## The invite ladder, in the order the engine checks it (round 358)
@@ -215,7 +234,7 @@ ends by asking the party manager to send the invitation. Reading it through:
 | 2 | caller is the leader (`myId == party+0xc`) **or** party flag **bit 2** is set | falls through silently |
 | 3 | the target is not the caller | falls through silently |
 | 4 | the party is not full — `party+0x1c` against **8** when flag bit 0 is set, **4** when clear | `0x2c13` when sharing, `0x2c14` when not |
-| 5 | the target is within **`0x26` = 38** of the caller (`GObjPC::IsWithinInteractionRange`) | the pending code is sent |
+| 5 | ~~the target is within **`0x26` = 38** of the caller~~ **(round 709)** `GObjPC::IsWithinInteractionRange(pc, &id, 0x26)`: `0x26` is a TypeID filter (mismatch → 3); the range is **600.0** for a PC target (320.0 default), 3D | the result is sent: out of range is the bare code **4**, not found 0 (`party_protocol.md`, Identifiers) |
 | 6 | the target is a **PC** — vtable slot 7, `IsPC` | code **3** |
 | 7 | `0x00514010` returns 1 | its own code |
 | 8 | `Party_SendInvitation(target, partyFlags)` returns 1 | its code, 2 on failure |
@@ -245,8 +264,10 @@ than inferred: `Party_SendFormationInvitation` asserts that *neither* side has a
 party and passes **0** as the party id, while `Party_SendInvitation` asserts only
 the target is party-less and passes the inviter's real one. One forms, one joins.
 
-**What 3 and 4 MEAN is not claimed** — only that they are a pair the repeat path
-moves through, and that `0x06f` is the exit from 4.
+**(round 709)** 4 = listed in party matching without a party; 3 = such a character has an
+invitation out (`party_protocol.md`, "Server-side state byte"). ~~**What 3 and 4 MEAN is not
+claimed** — only that they are a pair the repeat path moves through~~, and `0x06f` is the exit
+from 4.
 
 **Corroborated from outside the party code (round 361).** `chardata + 7` is
 not a party-private byte: it is field **kind 3** of the character-state

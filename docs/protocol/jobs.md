@@ -34,6 +34,15 @@ prints "UNKNOWN" otherwise). `server/internal/jobs` now names them
 `KindTrader`, `KindThief`, `KindHunter` (the old A/B/C remain as aliases) and
 `Kind.Name()` returns the engine's words.
 
+**(round 709) "0 no job" does not hold for slot 71.** Slot 71 (`GetJobState`, `chardata+0xf`,
+`0x4ddc80`) runs **1..4, with 4 = not in job mode**, and 0 is not a valid value. The character
+initializer writes 4 (`0x4de3eb`), the worn job suit in equipment slot 8 sets 1/2/3
+(`0x4e124e`-`0x4e12cc`), `Party_UserMatches` (`0x5bf240`) asserts on anything outside 1..4, and
+the ShardManager's tables (`sm:0x44ed20`, `0x44f7f0`) and the client (`0x9db8b0` returns 4 with no
+job item) agree. The party, guild and teleport code all test `!= 4`. The job record's own byte
+(`+0x1c`) is a different field and may still use 0. See `docs/protocol/party_protocol.md`,
+"Job rules".
+
 **A coincidence worth naming before it causes a bug:** kind 1 maps to `0x14`,
 which is 20, and the minimum level is also 20. They are different things — an
 identifier and a level — and they are equal by accident. The package has a test

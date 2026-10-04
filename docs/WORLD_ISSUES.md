@@ -7094,6 +7094,132 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-ninth round: the party system specified from all three binaries -- every party and party-match message with its byte layout, the ShardManager that owns the party, the EXP/SP and item sharing formulas, the job rule, party monsters, and every window and HUD box -- checked by two adversarial reviews, and the plan for six implementation lanes
+
+The user started the party epic (2026-10-04): "Let's get the party system fully working ... make
+sure all the party features match the client/server opcodes exactly. Make no mistakes." They sent
+12 screenshots of the original's party windows (from their server's client, "Esro Online"). This
+round is **docs only**: a specification to build against, made by three parallel lanes (party709a
+protocol, party709b rules, party709c GUI). Two adversarial reviews followed, one on protocol + GUI
+and one on rules, and a fix-up pass applied their findings. No code behaviour changed (code
+**comments** were corrected) and there is no perf gate. Labels: READ, MEASURED, INFERRED, OPEN,
+OURS, EXTERNAL.
+
+**The specification** is in three new pages:
+- `docs/protocol/party_protocol.md`: 26 messages both ways with exact layouts, nearly all read
+  identically from the client and the server, plus the implementation lanes;
+- `docs/protocol/party_rules.md`: types and caps, EXP/SP and item sharing, jobs, party monsters,
+  party matching;
+- `docs/protocol/party_gui.md`: the party window, the settings dialog, the invitation, party
+  matching, the leader's join popup, the join progress bar, and the HUD member boxes.
+
+The reviews are `docs/rounds/party709_review_pg.md` (12 findings, ~90 READ claims re-checked) and
+`docs/rounds/party709_review_rules.md` (15 findings, 48 claims re-checked).
+
+**What is settled (READ unless marked):**
+- **Who owns the party.** `SR_ShardManager.exe` owns parties and the party-match list
+  (`CPartyManager`, `0x7866`/`0x3864`); the GameServer mirrors it and talks to the clients. This
+  round decompiled the ShardManager in full (16,634 functions, `/var/tmp/decomp_shardmgr`).
+  OpenSRO keeps it all in one process (OURS).
+- **None of OpenSRO's party messages is retail** (`0x0080`..`0x0089`, by name, 64-bit ids). The
+  retail set:
+  - create+invite `0x7060`, invite `0x7062`;
+  - the invitation `0x3080` and its answer;
+  - acks `0xb060`/`0xb062`/`0xb067`;
+  - the party info `0x3065` and events `0x3864` (kinds 1 dissolved, 2 joined, 3 left with reason
+    1 logout / 2 leave / 3 server move / 4 kicked, 6 member update, 9 new leader);
+  - leave `0x7061`, kick `0x7063`;
+  - party matching `0x7069`..`0x706d`, `0x306e`, `0xb069`..`0xb06d`;
+  - the item-share notice `0x3068`.
+
+  One masked member record serves `0x3065`, `0x3864` and the join popup, cross-binary exact. There
+  is no change-type, change-leader or disband message.
+- **Party types.**
+  - Flags byte: bit 0 EXP share, bit 1 item share, bit 2 anyone may invite. Set at formation, never
+    changed.
+  - **The cap is 8 or 4 by the EXP bit alone** (three binaries). That corrects the user's "all
+    sharing off makes a 1/4 party": only the EXP setting matters.
+  - "Set" is client-side and only outside a party; its values ride the next create request.
+- **EXP and SP.**
+  - EXP free-for-all: each contributor gets his own damage share × (1 + 0.03 per member past the
+    first).
+  - EXP share: the members alive, in the world and within **1000** (horizontal) of the kill credit
+    split **by level**, × (1 + 0.1 per extra Chinese member, 0.2 per extra European). A member
+    taking over 70 % keeps half the bonus.
+  - SP follows EXP under every rule. The kill pays SP; an old census had missed the virtual call.
+  - The ExpRatio bonus is additive and pays SP too, only at a rate of 1.01 or more; EXP and SP pass
+    through float32 first (review).
+- **Items.** Round robin by a rotation list within 1000 (3D); when no member qualifies, the last
+  candidate keeps the item unless he failed on distance (review). Gold is split equally among
+  members within 1000, the remainder to the picker.
+- **Jobs.**
+  - The job state is 1 trader, 2 thief, 3 hunter, **4 not in job mode**; 0 is invalid, three
+    binaries (review; corrects `jobs.md` for this slot).
+  - Trader and hunter party together; a thief only with thieves; no-job only with no-job (`0x2c23`).
+  - Purposes: 0 Hunting, 1 Quest, 2 Trade, 3 Thief ("All" is search-only). There is no hunter
+    purpose and no hunter icon, as the user guessed.
+- **Party monsters.**
+  - Not "after 4 or 5": an exp-share kill with **2 or more** eligible members arms the nest. The
+    next hatch is a party monster 50 times in 101, by the level clamp table, and in an instance
+    world only where `PARTYMONSTER_SPAWN` is ON (review).
+  - HP ×10, EXP/SP ×7.5, attack value ×1.2.
+- **Ranges and timers.**
+  - The invite range is **600** for a player, 3D. The `0x26` that `party.md` read as "38" is a
+    TypeID filter (both reviews).
+  - The invitation waits 30 s (`0x2c10`).
+  - A party-match join request is **ended by the leader's client at 10 s** (answer 2). The
+    ShardManager's 15 s is a backstop, and the requester's 10 s bar is display only (review).
+- **The GUI.**
+  - Built from `ifparty.txt`, `ifsetpartymode.txt`, `ifpartymatch*.txt` and the decompiled CIF*
+    classes, against the screenshots.
+  - The HUD boxes' "far away" blue is **five steps** at 600/700/800/900/1000, exp-share parties
+    only. Buffs show only for members spawned in your client.
+  - The select glow is teal and follows the target; selecting yourself lights the player box
+    yellow. The two mastery icons are whatever the server sends.
+  - **User decision (2026-10-03): the matching list draws Race and Purpose as text**, as this exe
+    does, not as the screenshots' icons. The level boxes default to the exe's 110, following the
+    binary (not asked).
+
+**Corrected records** (each marked "(round 709)"):
+- `party.md`: range 38 → 600; `0x061` is leave, not a teleport; `0x06e` is the party-match
+  leader's answer; state bytes 3/4; the ShardManager; the flags never change; `0x2c26`.
+- `jobs.md` (no job = 4).
+- `recovered_names.tsv`: four rows corrected, three placeholders renamed, 11 names added. The
+  derived tables follow, and two rows leave `described_but_unnamed.tsv`.
+- `client_senders.tsv`, `handler_payloads.tsv` (six layouts now exact), `TODO.md`, `UI_TODO.md`,
+  `monster_ai.md`, `RE_COMPLETION.md`, `SYSTEMS.md`.
+- The comments in `leveldata.go` (the 3 % is free-for-all only), `session/combat.go` (kills do pay
+  SP; a party of two dissolves) and `session/nestkill.go` (measured from the kill credit).
+- One spec claim was wrong in a way worth naming: the rules draft said `ArmParty` had no caller,
+  from a grep of `internal/session` alone. It is wired through `cmd/server` (round 660). The
+  `party=0` in the nest log counts party monsters hatched so far.
+
+**OPEN items that still block an implementation lane:**
+
+| OPEN | blocks | lane |
+|---|---|---|
+| What `CGObjMob` slot 332 returns (the monster's base EXP on the live kill path) | the absolute EXP/SP of a kill; the sharing rules do not need it | S2 (keep today's base, say so) |
+| How often a position member update is sent | the member-update cadence | S1 |
+| How the server picks the two masteries (`gs:0x5a1890`) | the mastery icons' content | S1 |
+| The list entry's second u32 (a timestamp, INFERRED) | nothing visible; send the registration time | S3 |
+| What `chardata+0x13` holds (the `0x2c26` gate) | one register refusal; left out until read | S3 |
+| Whether the main field world has a `PARTYMONSTER_SPAWN` gate | field party monsters in gated worlds | S2 |
+| The group-map order when two exp-share groups share a kill | which count arms the nest | S2 |
+| Party-monster drops | drop counts or rates | S2 |
+| The `0x3068` gold width (client 8, server 4) | decided **OURS: 8**, as the client reads | S2 |
+| The invitation popup's text keys and timer | the invitee's box text | C1 |
+| The member object's remaining slot mapping and its "max" HP/MP; member byte `+0x58` | the caution effect's floor | C1, C3 |
+| JID → world object for the buff lookup, against OpenSRO's spawns | buffs in the HUD boxes | C3 |
+| Logout / server-migration removal paths in the GameServer | reasons 1 and 3 (the client texts are READ) | S1 |
+
+**Next:** six lanes, written up at the end of `party_protocol.md`, with their files, messages,
+tests and order:
+- S1 server core and C1 client net + party window start first;
+- then S2 sharing + party monsters, S3 party matching, C2 matching windows and C3 HUD boxes.
+
+Each lane has golden-byte tests shared by both sides and a live multi-character test against one
+`--server` (a Go bot client drives the second character).
+
 ## Seven-hundred-and-eighth round: the server spawns the NPCs as the original does -- the retail group spawn 0x3017/0x3019/0x3018 per message block, each NPC at its nest and facing its nest's wInitialDir -- and the client builds none of its own
 
 The user asked whether the NPCs could now be placed, cardinal direction included, without guessing,
