@@ -7277,6 +7277,75 @@ degrees there). The base at this camera, for the record: wall 58 / 47, dragon 54
   Exit 0 both. Unshaded objects skip Godot's per-pixel light loop (the lighting is per vertex now),
   which is where the 4K frame time goes.
 
+### Review (round 706)
+
+The review confirmed the READ chain (the shader sources in the archive, the c9/c10/c11 uploads, the
+0.8 / 0.6 bloom factor, the fixed light direction, the object colour 0.6, ShadowMap / 384, the
+plaza deck) and found:
+
+- **H1, fixed: the instance uniform overflowed Godot's instance buffer under Forward+** (the
+  review MEASURED about 1,093 "Too many instances using shader instance variables" a boot at the
+  Jangan spawn; the meshes that missed out drew with no ambient term, the far horizon band at luma
+  30-41 against 65-81 with the buffer raised). `object_color` is now a plain material uniform
+  (0.6) in `object.gdshaderinc` and `ObjectLight.SHADER_FN`: placed objects are always 0.6 (READ),
+  so none of them carries a per-instance value. A character's tile is drawn with **per-level
+  copies of its materials** (`ObjectLight.with_object_color`: one copy per material and level,
+  shared by every body at that level, held by the meshes that draw it; the material itself at
+  0.6), which `CharacterLight.set_on` swaps in -- leaving a mesh that draws an AppearFade twin or a
+  BerserkLook copy to those (they put the copy back when they end). World3D visits a body when it
+  is placed (`_light_character`: NPCs, other players, monsters before their fade starts, the
+  player on every dress), so no body draws a frame at 0.6 first; a body whose region is not
+  loaded yet is left for the next visit, not drawn at the original's "no region" 1.0.
+  `object_light_test.gd` fails if the include, `SHADER_FN`, any object shader kind (fade twins
+  included) or any MTRL mod shader declares an instance uniform. MEASURED after the fix: **0**
+  "Too many instances" lines in every boot of the round on the box (Forward+ at the user's spot and
+  at the spawn, both at radius 2; Compatibility; the perf gate's runs), 0 shader errors.
+- **Found while fixing it: `Resource.duplicate()` of an object material draws its diffuse term
+  brighter.** MEASURED (Forward+, the user's spot, bloom off, `OPENSRO_QA_CHARLIGHT_VALUE`
+  forcing every character's value): the soldier's red cloth 57.6 with its own material at 0.6 and
+  71.2 with a duplicated copy at 0.598; with the diffuse term alone (`objdiag=1`) 25.4 against
+  39.0, with the ambient term alone 47.9 against 47.8 -- the copy's `object_color` was right, its
+  diffuse was not. Copies are now built by setting each of the source's parameters by name
+  (`ObjectLight.copy_material`): the same frame then reads 25.4 / 57.5, and a placed object forced
+  through a copy at 0.601 reads the same as its own material (dragon 94.8 / 94.8, wall 82.0 /
+  82.0). AppearFade's twins of an object material are made the same way (a fade drew its diffuse
+  brighter for its 2 s); BerserkLook's copies replace the colour with the pulse and are left as
+  they were. Why `duplicate()` does this was not read in Godot's source.
+- **M3, fixed by the above:** the copies work in both renderers, so Compatibility draws characters
+  by their tile too. The soldier at 0.398: luma 50.7 Forward+, 48.6 Compatibility (bloom off).
+- **M1, filed:** the dragon is still about 1.3x (gold pixels (127, 97, 30) Forward+ / (132, 101,
+  25) Compatibility against (91, 79, 33); R 1.40, G 1.24, B 0.91), and the user confirmed Bloom was
+  OFF in their original. Checked this round: the dragon's `.bsr` carries **no mod** --
+  `tools/probe_bsr_mods.gd` (new): `cj_jang_gate_dragon.bsr` env_map_flags -1, 0 material mods,
+  materials `cj_jang_gate01.bmt`, mesh `cj_jang_dragon.bms` -- so `CRTModEnvMap::vslot_004`
+  (0xc83690) and its 0x10000000 that would keep the previous c11 never run for it; and its layer's
+  flag word is 0x140, without bit 3, so `FUN_00c42a60`'s MODULATE 1x / lighting-off branch (flag 8
+  with FUN_00bc0fd0) does not apply either. TODO.md has what is left.
+- **LOW, fixed:** `player_portrait_test` and `inventory_pages_test` put `ObjectLight.current_bloom`
+  back; new bodies take their value when placed (above).
+- **Recorded (no change):** M2 -- the terrain still goes through Filmic while objects undo it;
+  switching the world to Linear needs a terrain round first, and the seam is not measured. The
+  sky (220 against 190) is filed as its own sky / fog item (TODO.md).
+
+Re-measured at the user's spot after the fix (bloom off; luma): Forward+ wall 81.6, dragon box
+92.9, gold (127, 97, 30), dirt 87.8, paving 63.2, soldier 50.7, the far building bands left / right
+111.4 / 104.5; Compatibility wall 81.4, dragon 95.2, gold (132, 101, 25), soldier 48.6, bands 104.6
+/ 101.1. Middle (bloom on), Forward+: wall 71.2, dragon 85.8, bands 113.4 / 105.4. At this spot
+(radius 1 and 2) the far bands were already the same before the fix -- the overflow hit other
+meshes of the larger windows; the review's own spawn view was not reproduced exactly here (a
+different camera), so its band is not re-quoted.
+
+Checks: `remote_godot.sh check` ALL LOAD; `tests` 224 suites, 0 failing. Perf gate (`perf_gate.sh --base
+65e5d8a8 --sites jangan --frames 12000 --env 'OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1'`,
+Forward+, median of 3):
+
+| | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.70 -> 1.49 SAME | 9566 -> 9541 SAME | 3304 -> 3330 SAME | 4 -> 4 SAME |
+
+Exit 0; 0 "Too many instances" and 0 shader errors in the three head runs' logs. The round's 4K
+figure (4.80 -> 3.75 ms) was taken with the instance uniform in place and was not re-run.
+
 ## Seven-hundred-and-fifth round: the user's smoggy Jangan measured at their own spot -- our fog applies nothing to the dragon or the gate at the default settings, Background Sight Range 1 reproduces their picture, and Forward+ now mixes a half-fogged pixel in display values as the original does; the darker, flatter base image is the object lighting, read and measured, not the fog or the tone map
 
 The user (v0.1.485/486, macOS under CrossOver, a 2548-wide window): "the fog is better and worse

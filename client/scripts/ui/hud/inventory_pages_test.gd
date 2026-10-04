@@ -391,7 +391,9 @@ func _doll_checks() -> void:
 	var fwd := (mirror.global_transform.basis * pivot.transform.basis * forward_d3d)
 	var right := cam.global_transform.basis.x
 	_check(fwd.dot(right) > 0.4, "a growing yaw (the right arrow) turns the face toward screen-right (dot %.3f)" % fwd.dot(right))
-	# The Bloom row off: channel 2 x 0.6 (round 706, ObjectLight).
+	# The Bloom row off: channel 2 x 0.6 (round 706, ObjectLight); the static
+	# is put back after the doll's checks.
+	var bloom_was := ObjectLight.current_bloom
 	ObjectLight.current_bloom = false
 	doll.call("set_zone_light", Color(0.5, 0.25, 1.4), Color(0.4, 0.4, 0.4))
 	var light: Dictionary = doll.call("zone_light")
@@ -409,6 +411,7 @@ func _doll_checks() -> void:
 	var mat := mi.material_override as ShaderMaterial
 	_check(mat != null and (mat.get_shader_parameter("light_diffuse") as Vector3).is_equal_approx(Vector3(0.3, 0.15, 0.6)),
 		"a body material becomes the zone-lit one, with the zone's diffuse")
+	ObjectLight.current_bloom = bloom_was
 	_check(doll.render_target_update_mode == SubViewport.UPDATE_DISABLED, "the doll does not render until it is shown")
 	doll.call("set_active", true)
 	_check(doll.render_target_update_mode == SubViewport.UPDATE_ALWAYS, "shown, it renders every frame")

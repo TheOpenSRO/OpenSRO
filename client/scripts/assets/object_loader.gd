@@ -538,8 +538,7 @@ const ENV_MAP_ALPHA_REF := 1
 
 ## The object shaders (round 706): the original's object lighting
 ## (ObjectLight; the body is object.gdshaderinc), built at run time by
-## object_shader so the renderer can be named in the code -- GL Compatibility
-## in Godot 4.2 has no instance uniforms and no renderer define. One per cull
+## object_shader (one per kind and fade, cached). One per cull
 ## mode (a compile-time render_mode): FOLIAGE_SHADER a two-sided layer (flag
 ## 0x1, READ round 625), FOLIAGE_SHADER_ONE_SIDED an alpha-tested one-sided
 ## layer (the .bms winding is reversed on load, BmsReader.to_arrays, so
@@ -556,10 +555,6 @@ const MOD_SHADER_KEY_META := "opensro_mod_shader_key"
 ## The kind an object shader was built for (object_shader).
 const OBJECT_SHADER_KIND_META := "opensro_object_shader_kind"
 
-## The renderer's line for the generated object shaders: GL Compatibility
-## (Godot 4.2) cannot compile an instance uniform (MEASURED, round 706).
-static func renderer_defines() -> String:
-	return "#define OBJECT_NO_INSTANCE_UNIFORMS\n" if RendererChoice.running() == RendererChoice.COMPATIBILITY else ""
 
 ## An object shader: `kind` "solid" (no alpha test, back faces culled), "one"
 ## (alpha-tested, back faces culled) or "two" (no cull); `fade` gives the twin
@@ -576,7 +571,7 @@ static func object_shader(kind: String, fade: bool = false) -> Shader:
 	var modes := "unshaded, " + ("cull_disabled" if kind == "two" else "cull_back")
 	if fade:
 		modes += ", blend_mix, depth_draw_always"
-	var defs := renderer_defines()
+	var defs := ""
 	if kind == "solid" and not fade:
 		defs += "#define OBJECT_SOLID\n"
 	if fade:
@@ -987,7 +982,7 @@ void fragment() {
 		alpha_line, ShaderColour.DECODE_ALBEDO, WorldFog.SHADER_FOG_LINE if blended else ""]
 	# The helpers go before the first function (the stage arithmetic and the
 	# vertex colour call them).
-	shader.code = code.replace("shader_type spatial;\n", "shader_type spatial;\n" + renderer_defines()).replace("\nstruct Split {", ShaderColour.DECODE_FN + ObjectLight.SHADER_FN + (WorldFog.SHADER_FN if blended else "")
+	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + ObjectLight.SHADER_FN + (WorldFog.SHADER_FN if blended else "")
 		+ "\nvoid vertex() {\n\t" + ObjectLight.OD0_LINE + "\n}\n" + "\nstruct Split {")
 	shader.set_meta(MOD_SHADER_KEY_META, [cull, godot_blend, zwrite])
 	_static_lock.lock()

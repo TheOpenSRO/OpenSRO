@@ -767,11 +767,18 @@ are not drawn.
   - **The Jangan dragon is about 1.3x brighter than the original's** (gold pixels (127, 98, 30)
     against (91, 79, 33), bloom off), while the gate wall beside it matches (82 / 81) and the
     diffuse term adds only 18 luma on it (`objdiag=1`): the ambient term alone draws it at
-    (119, 94, 29). Candidates, none read: Metallic Sheen's environment-map pass on Middle
-    (below), a different stage op for that layer, the texture.
-  - **GL Compatibility has no instance uniforms** in Godot 4.2 (MEASURED: "Uniform instances are
-    not supported in gl_compatibility shaders"), so there every character keeps 0.6 instead of
-    its shadow tile (`ObjectLoader.renderer_defines`, `OBJECT_NO_INSTANCE_UNIFORMS`).
+    (119, 94, 29). The user confirmed their original ran with Bloom OFF, so the bloom-off rows are
+    the comparison. The ratio is not uniform (R 1.40, G 1.24, B 0.91). Ruled out (review): the
+    clamp order; alpha as a colour mask; Metallic Sheen's env-map mod -- the dragon's `.bsr`
+    (`res\bldg\china\jangan01\cj_jang_gate_dragon.bsr`) carries no mod at all
+    (`tools/probe_bsr_mods.gd`: env_map_flags -1, 0 material mods), so `CRTModEnvMap::vslot_004`
+    (0xc83690) never runs for it; the MODULATE-1x / lighting-off path of `FUN_00c42a60` (flag 8
+    with FUN_00bc0fd0) -- the layer's flag word is 0x140, no bit 3. Left unread: whatever else
+    makes that layer differ (its Power 1.48 and near-white specular are its only distinct
+    fields, and the vertex shaders use neither), the texture as the original samples it.
+  - ~~GL Compatibility has no instance uniforms~~ -- the review moved characters to per-level
+    material copies (`ObjectLight.with_object_color`), so both renderers agree (the soldier at
+    0.398: luma 50.7 Forward+, 48.6 Compatibility).
   - A character's colour follows its tile on a visit every few frames (CharacterLight, OURS
     cadence), not with every position as the original's setter; the dungeon branch (1.0 in a
     region with id bit 0x8000) is not reached.
@@ -780,10 +787,17 @@ are not drawn.
     +20 for 4 pixels inside the edge, without it none). Ask; every comparison above is bloom off.
   - Detail's shadow map no longer lands on objects (the plaza deck): unshaded objects receive no
     light, and the original projects character shadows on ground cells only (READ, round 702).
+  - **Two pipelines** (round 706 review, M2, recorded): objects show the formula's display values
+    (Filmic undone), the terrain still goes through Filmic. Moving the world to Linear needs a
+    terrain round first; the seam between the two is not measured.
+- [ ] **The sky at the user's spot** (round 706 review): ours 220 (bloom off) against the
+  original's 190 and bluer (179, 229, 252) against (170, 195, 200); the original's sky there is
+  mostly cloud. A sky / fog item of its own: the sky dome's colours, the cloud layer's cover and
+  RetailBloom's +20 on it, none measured against the original yet.
 - **Metallic Sheen and the dragon** (round 705, INFERRED): the Jangan dragon's layer is the only
   one in `cj_jang_gate01.bmt` with a Power (1.48) and a near-white specular; the Middle preset's
   Metallic Sheen (case 0xc -> object renderer +0x194) is drawn as nothing here.
-  Round 706: the candidate for the dragon's remaining 1.3x (above).
+  Round 706 review: not the dragon's -- its `.bsr` has no env-map mod (above).
 - **MTRL blend pairs drawn OURS** (BMT_FORMAT.md): 7 pairs drop a term. BLENDFACTOR's live
   value for objects is OPEN. TFACTOR is drawn white, although the mod's own colour is available.
 - **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right

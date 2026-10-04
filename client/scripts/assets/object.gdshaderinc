@@ -63,17 +63,14 @@ global uniform vec4 srr_obj_light;
 global uniform vec4 srr_obj_ambient;
 global uniform vec4 srr_obj_diffuse;
 global uniform vec4 srr_obj_tonemap;
-// The drawn object's colour (+0x14..+0x1c): 0.6 (CCompoundObj), or a
-// character's shadow tile (CharacterLight). An instance uniform where the
-// renderer has them; GL Compatibility in Godot 4.2 has none ("Uniform
-// instances are not supported in gl_compatibility shaders", MEASURED) and
-// no renderer define either, so the shader's builder defines
-// OBJECT_NO_INSTANCE_UNIFORMS there and every object keeps 0.6.
-#ifdef OBJECT_NO_INSTANCE_UNIFORMS
+// The drawn object's colour (+0x14..+0x1c): 0.6 for every placed object
+// (CCompoundObj). A character's shadow tile is set on per-level copies of
+// its materials (ObjectLight.with_object_color, CharacterLight). Not a
+// per-instance uniform: one per placed mesh overflowed Godot's instance buffer
+// at the Jangan spawn (round 706 review, MEASURED: 1,093 "Too many
+// instances using shader instance variables"), and GL Compatibility has
+// none at all.
 uniform vec3 object_color = vec3(0.6);
-#else
-instance uniform vec3 object_color = vec3(0.6);
-#endif
 // BerserkLook's pulse (READ: CObjRendererVS::FUN_00c27180 puts the colour in
 // place of both the material's and the object's): w 1 while it runs.
 uniform vec4 object_tint = vec4(0.0);

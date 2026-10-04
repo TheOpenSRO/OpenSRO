@@ -1618,10 +1618,9 @@ func _ready() -> void:
 	# The objects' light before any zone is known, then the zone's (round 706).
 	_apply_object_light()
 	ObjectLight.set_tonemap(world_environment.environment)
-	# Forward+ only: GL Compatibility in Godot 4.2 has no instance uniforms,
-	# so its object shaders keep 0.6 for every object (ObjectLight).
-	if RendererChoice.running() == RendererChoice.FORWARD_PLUS:
-		_character_light = CharacterLight.new(_nav_graph_for)
+	# Characters' object colour by their tile (round 706 and its review: both
+	# renderers, through per-level material copies).
+	_character_light = CharacterLight.new(_nav_graph_for)
 	# The original's bloom (round 702 review); the Bloom row shows it.
 	_retail_bloom = RetailBloom.new()
 	_retail_bloom.visible = false
@@ -2761,6 +2760,12 @@ var _portrait_zone_light: Array = []
 var _object_light_channels: Array = []
 ## Keeps characters' object colour by their tile (round 706).
 var _character_light: CharacterLight = null
+
+## A character body's object colour now (round 706 review): when it is
+## placed, so it never draws a frame at 0.6 first (CharacterLight).
+func _light_character(body: Node3D) -> void:
+	if _character_light != null and body != null:
+		_character_light.visit(body)
 
 ## The objects' light from the zone's channels and the Bloom row (round 706,
 ## ObjectLight: READ); 1.0 channels before any zone (OURS fallback).
@@ -7253,6 +7258,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 			holder.add_child(_name_plate(npc_name, bounds.y))
 			named += 1
 		group.add_child(holder)
+		_light_character(holder)
 		_animate_skeleton(skeleton, idle_anim)
 		placed += 1
 	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named, %d monster rows left to the server; %d faced toward open space in %.1f ms)" % [
@@ -8638,6 +8644,10 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	player.add_child(skeleton)
 	player_mesh.visible = false
 	_player_skeleton = skeleton
+	# A new body: its object colour now, not at the next visit (round 706
+	# review). The meta drops the visit's "unchanged" shortcut.
+	player.remove_meta(CharacterLight.META_VALUE)
+	_light_character(player)
 	# Every other character in view carries a name plate and the local player
 	# did not, so the one character you always look at was the one with no
 	# name over it (playtest 2026-09-20, item 18).
@@ -14966,6 +14976,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_other_bodies[character_id] = node
 	# Its round shadow in Circle (round 702, CharacterBlobs).
 	CharacterBlobs.register(node, float(_bc_radius_by_code.get(String(node.get_meta("body", "")), 0.0)))
+	_light_character(node)
 	_other_body_targets[character_id] = pos
 	# The auras of the buffs this client holds for them go on the new body
 	# (round 646): a zone change's arrival list and the world entry build the
@@ -17459,6 +17470,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	_monster_bodies[monster.monster_id] = body
 	# Its round shadow in Circle (round 702, CharacterBlobs).
 	CharacterBlobs.register(body, float(_bc_radius_by_code.get(monster.code_name, 0.0)))
+	# Its object colour before its fade starts, so the fade's twins are made
+	# from the right copies (round 706 review).
+	_light_character(body)
 	_monster_builds += 1
 	# It fades into existence over 2.0 s, as retail's spawn does (round 676,
 	# AppearFade: READ, CICharactor vslot 0x6c FUN_009d17e0 -> CIDecoAppear).

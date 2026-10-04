@@ -128,6 +128,7 @@ func _pose() -> BanReader.ParsedAnimation:
 
 func _init() -> void:
 	await process_frame
+	var bloom_was := ObjectLight.current_bloom
 	var script = load(PORTRAIT_PATH) if ResourceLoader.exists(PORTRAIT_PATH) else null
 	_check(script != null, "player_portrait.gd exists")
 	if script != null:
@@ -136,6 +137,8 @@ func _init() -> void:
 		_shading(script)
 		await _render_setup(script)
 	await _hud_integration()
+	# The static the bloom checks set (round 706 review): put back.
+	ObjectLight.current_bloom = bloom_was
 	print("player_portrait_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)
 

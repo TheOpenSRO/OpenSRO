@@ -245,7 +245,10 @@ static func _make_twin(src: Material) -> Material:
 		var shader := ObjectLoader.appear_fade_shader((src as ShaderMaterial).shader)
 		if shader == null:
 			return null
-		var sm := (src as ShaderMaterial).duplicate() as ShaderMaterial
+		# Copied by parameter, not Resource.duplicate(): a duplicated object
+		# material drew its diffuse term brighter (round 706 review, MEASURED;
+		# ObjectLight.copy_material).
+		var sm := ObjectLight.copy_material(src as ShaderMaterial)
 		sm.shader = shader
 		set_twin_alpha(sm, 0.0)
 		return sm

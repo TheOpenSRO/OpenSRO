@@ -15,11 +15,18 @@ class_name CharacterLight
 ## group; a few of them a frame are visited, the tile and footing under each
 ## read (World3D's `_nav_graph_for`, NavGraph.surface_at -- on the terrain or
 ## on an object -- and the ShadowMap the terrain commit leaves on the region's
-## group), and the value set as the `object_color` instance uniform of every
-## mesh under it. The original updates it with every position; here a
-## character is revisited every couple of frames, and skipped while it has
-## not moved (MOVE_EPSILON). A mesh added to a body (a new piece of
-## equipment) takes the value at the body's next full rescan (RESCAN_VISITS).
+## group), and every mesh under it switched to its material's copy at that
+## level (ObjectLight.with_object_color: one copy per material and level,
+## shared by every body there; the material itself at 0.6). World3D also
+## visits a body when it is placed, before its fade starts, so the fade's
+## twins are made from the right copy. The original updates it with every
+## position; here a character is revisited every couple of frames, and
+## skipped while it has not moved (MOVE_EPSILON). A mesh added to a body (a
+## new piece of equipment) takes the value at the body's next full rescan
+## (RESCAN_VISITS). Meshes drawing a fade twin (AppearFade) or a berserk copy
+## (BerserkLook) are left to those; they put the copy back when they end.
+## Both renderers (round 706 review: a per-instance uniform overflowed
+## Godot's instance buffer, and Compatibility has none).
 
 ## The ShadowMap a terrain group carries (World3D._terrain_commit).
 const SHADOW_META := &"opensro_shadow_map"
@@ -28,6 +35,10 @@ const META_VALUE := &"opensro_obj_color"
 const META_POS := &"opensro_obj_color_at"
 const META_MESHES := &"opensro_obj_color_meshes"
 const META_VISITS := &"opensro_obj_color_visits"
+
+## BerserkLook.ORIGINAL_META: a mesh berserk has given its own tinted copy
+## (that script has no class_name; object_light_test holds the two equal).
+const BERSERK_META := "berserk_original_material"
 
 ## OURS: bodies visited a frame, the distance a body must move before its
 ## tile is read again, and how many visits between rescans of its meshes.
@@ -43,6 +54,9 @@ var _i := 0
 var applied := 0
 ## QA only: OPENSRO_QA_CHARLIGHT=1 prints every change (`QA CHARLIGHT`).
 var _qa := OS.get_environment("OPENSRO_QA_CHARLIGHT") != ""
+## QA only: OPENSRO_QA_CHARLIGHT_VALUE=<f> draws every character at <f>
+## (the round 706 review's A/B of copies against their base).
+var _qa_value := OS.get_environment("OPENSRO_QA_CHARLIGHT_VALUE").to_float() if OS.get_environment("OPENSRO_QA_CHARLIGHT_VALUE").is_valid_float() else -1.0
 
 func _init(region_lookup: Callable = Callable()) -> void:
 	lookup = region_lookup
@@ -68,6 +82,8 @@ func step(tree: SceneTree) -> int:
 ## One body: its colour read and, if it changed or the meshes are due a
 ## rescan, set on its meshes.
 func visit(body: Node3D) -> void:
+	if body == null or not is_instance_valid(body) or not body.is_inside_tree():
+		return
 	var visits := int(body.get_meta(META_VISITS, 0)) + 1
 	body.set_meta(META_VISITS, visits)
 	var rescan := visits % RESCAN_VISITS == 1
@@ -75,15 +91,27 @@ func visit(body: Node3D) -> void:
 	var had := body.has_meta(META_VALUE)
 	if had and not rescan and (body.get_meta(META_POS, Vector3.INF) as Vector3).distance_to(pos) < MOVE_EPSILON:
 		return
+	# No loaded region under it yet (a body placed while its region builds):
+	# left as it is and visited again, not drawn at the original's "no region"
+	# 1.0 -- the original always has the region a character stands in.
+	if lookup.is_valid() and (lookup.call(pos) as Array).is_empty():
+		return
 	body.set_meta(META_POS, pos)
 	var value := color_at(pos)
+	if _qa_value >= 0.0:
+		value = _qa_value
 	if had and not rescan and is_equal_approx(float(body.get_meta(META_VALUE)), value):
 		return
 	body.set_meta(META_VALUE, value)
 	set_on(body, value, rescan or not had)
 	applied += 1
 	if _qa:
-		print("QA CHARLIGHT %s at %s: %s" % [body.name, str(pos), describe(pos)])
+		var meshes: Array = body.get_meta(META_MESHES, [])
+		var copies := 0
+		for m in meshes:
+			if is_instance_valid(m) and (m as MeshInstance3D).material_override != null and (m as MeshInstance3D).material_override.has_meta(ObjectLight.VARIANT_BASE_META):
+				copies += 1
+		print("QA CHARLIGHT %s at %s: %s; %d of %d meshes on a copy" % [body.name, str(pos), describe(pos), copies, meshes.size()])
 
 ## The object colour at a world position (ObjectLight.character_color).
 func color_at(pos: Vector3) -> float:
@@ -113,7 +141,9 @@ func describe(pos: Vector3) -> String:
 	return "%s local %.0f,%.0f %s byte %d -> %.3f" % [group.name, local.x, local.z,
 		"terrain" if surf == null or surf.is_terrain else "object %d" % surf.object_index, b, color_at(pos)]
 
-## Sets `value` on every mesh under `body` (rescanning them when `rescan`).
+## Draws every mesh under `body` at object colour `value` (rescanning them
+## when `rescan`): each object material, override or surface override, swapped
+## for its copy at that level.
 static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
 	var meshes: Array = body.get_meta(META_MESHES, [])
 	if rescan or meshes.is_empty():
@@ -121,7 +151,21 @@ static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
 		if body is MeshInstance3D:
 			meshes.append(body)
 		body.set_meta(META_MESHES, meshes)
-	var v := Vector3(value, value, value)
 	for m in meshes:
-		if is_instance_valid(m):
-			(m as MeshInstance3D).set_instance_shader_parameter(ObjectLight.INSTANCE_OBJECT_COLOR, v)
+		if not is_instance_valid(m):
+			continue
+		var mi := m as MeshInstance3D
+		if mi.has_meta(BERSERK_META):
+			continue
+		if ObjectLight.is_object_material(mi.material_override):
+			var want := ObjectLight.with_object_color(mi.material_override, value)
+			if want != mi.material_override:
+				mi.material_override = want
+		if mi.mesh == null:
+			continue
+		for i in mi.get_surface_override_material_count():
+			var sm := mi.get_surface_override_material(i)
+			if ObjectLight.is_object_material(sm):
+				var want_s := ObjectLight.with_object_color(sm, value)
+				if want_s != sm:
+					mi.set_surface_override_material(i, want_s)

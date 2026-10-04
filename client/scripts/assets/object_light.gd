@@ -82,8 +82,12 @@ class_name ObjectLight
 ## 706). OPENSRO_QA_OBJ_TONEMAP=0 leaves the tone map on objects, for an A/B.
 ##
 ## The light reaches the shaders as global uniforms (project.godot
-## [shader_globals]); the object's colour is an instance uniform
-## (`object_color`, default 0.6) that CharacterLight sets on characters.
+## [shader_globals]); the object's colour is the material uniform
+## `object_color` (0.6), and a character standing on a tile of another level
+## draws with a copy of each material at that level (with_object_color;
+## CharacterLight) -- a per-instance uniform overflowed Godot's instance
+## buffer once every placed mesh carried one (round 706 review, MEASURED),
+## and GL Compatibility has none.
 
 ## READ: 0xd86fc0 -- CCompoundObj's own colour, and the diffuse scale with
 ## no bloom target.
@@ -113,8 +117,16 @@ const GLOBAL_AMBIENT := &"srr_obj_ambient"
 const GLOBAL_DIFFUSE := &"srr_obj_diffuse"
 const GLOBAL_TONEMAP := &"srr_obj_tonemap"
 
-## The instance uniform a character's meshes carry (CharacterLight).
-const INSTANCE_OBJECT_COLOR := &"object_color"
+## The material uniform (CharacterLight sets it on per-level copies).
+const OBJECT_COLOR_PARAM := &"object_color"
+## On a per-level copy: the material it copies (with_object_color).
+const VARIANT_BASE_META := &"opensro_obj_color_base"
+## base material instance id -> {level: WeakRef(copy)}; a copy lives as long
+## as a mesh draws with it, and holds its base.
+static var _variants := {}
+static var _variant_inserts := 0
+## The levels a copy is keyed by: 1/1024 (the shadow map has five bytes).
+const VARIANT_STEPS := 1024.0
 
 ## The light the shaders were last given (for the portrait and the tests).
 static var current_ambient := Vector3.ONE
@@ -207,6 +219,74 @@ static func character_color(shadow_byte: int, on_terrain: bool, dungeon: bool = 
 		return 1.0
 	return float(shadow_byte) / SHADOW_DIVISOR
 
+## Whether `m` is an object material whose object colour can be set: one of
+## ObjectLoader's object or MTRL-mod shaders, not a fade twin (AppearFade
+## owns those while it runs).
+static func is_object_material(m: Material) -> bool:
+	if not (m is ShaderMaterial):
+		return false
+	var sh := (m as ShaderMaterial).shader
+	if sh == null:
+		return false
+	if not (sh.has_meta(ObjectLoader.OBJECT_SHADER_KIND_META) or sh.has_meta(ObjectLoader.MOD_SHADER_KEY_META)):
+		return false
+	return not sh.code.contains("APPEAR_FADE") and not sh.code.contains("appear_alpha")
+
+## The material it copies, for a per-level copy; `m` itself otherwise.
+static func base_of(m: Material) -> Material:
+	return m.get_meta(VARIANT_BASE_META, m) if m != null else null
+
+## `m` (or the material it copies) drawn at object colour `value`: the base
+## itself at 0.6, else one shared copy per base and level with
+## `object_color` set (OURS method for the READ value).
+static func with_object_color(m: Material, value: float) -> Material:
+	var base := base_of(m)
+	if base == null or absf(value - OBJECT_COLOR) < 0.5 / VARIANT_STEPS:
+		return base
+	var level := int(roundf(value * VARIANT_STEPS))
+	var key := base.get_instance_id()
+	var per: Dictionary = _variants.get(key, {})
+	var ref: WeakRef = per.get(level)
+	var copy: Material = ref.get_ref() as Material if ref != null else null
+	if copy == null:
+		copy = copy_material(base as ShaderMaterial)
+		(copy as ShaderMaterial).set_shader_parameter(OBJECT_COLOR_PARAM, Vector3.ONE * (float(level) / VARIANT_STEPS))
+		copy.set_meta(VARIANT_BASE_META, base)
+		per[level] = weakref(copy)
+		_variants[key] = per
+		_variant_inserts += 1
+		if _variant_inserts % 512 == 0:
+			_prune_variants()
+	return copy
+
+## A new material on `src`'s shader with each of its parameters set again
+## by name, its priority and its metadata. Not Resource.duplicate(): MEASURED
+## (round 706 review), a duplicated character material drew its diffuse term
+## up to 1.5x brighter than the material it copied at the same values.
+static func copy_material(src: ShaderMaterial) -> ShaderMaterial:
+	var out := ShaderMaterial.new()
+	out.resource_name = src.resource_name
+	out.shader = src.shader
+	out.render_priority = src.render_priority
+	for u in src.shader.get_shader_uniform_list():
+		var n: String = u["name"]
+		var v = src.get_shader_parameter(n)
+		if v != null:
+			out.set_shader_parameter(n, v)
+	for m in src.get_meta_list():
+		out.set_meta(m, src.get_meta(m))
+	return out
+
+## Drops the cache's dead entries.
+static func _prune_variants() -> void:
+	for key in _variants.keys():
+		var per: Dictionary = _variants[key]
+		for level in per.keys():
+			if (per[level] as WeakRef).get_ref() == null:
+				per.erase(level)
+		if per.is_empty():
+			_variants.erase(key)
+
 ## One channel as the original draws it, in display values (the CPU
 ## reference the tests hold the shaders to).
 static func shade(texel: float, material_diffuse: float, object: float, ambient: float, diffuse: float, n_dot_l: float) -> float:
@@ -225,17 +305,14 @@ global uniform vec4 srr_obj_light;
 global uniform vec4 srr_obj_ambient;
 global uniform vec4 srr_obj_diffuse;
 global uniform vec4 srr_obj_tonemap;
-// The drawn object's colour (+0x14..+0x1c): 0.6 (CCompoundObj), or a
-// character's shadow tile (CharacterLight). An instance uniform where the
-// renderer has them; GL Compatibility in Godot 4.2 has none ("Uniform
-// instances are not supported in gl_compatibility shaders", MEASURED) and
-// no renderer define either, so the shader's builder defines
-// OBJECT_NO_INSTANCE_UNIFORMS there and every object keeps 0.6.
-#ifdef OBJECT_NO_INSTANCE_UNIFORMS
+// The drawn object's colour (+0x14..+0x1c): 0.6 for every placed object
+// (CCompoundObj). A character's shadow tile is set on per-level copies of
+// its materials (ObjectLight.with_object_color, CharacterLight). Not a
+// per-instance uniform: one per placed mesh overflowed Godot's instance buffer
+// at the Jangan spawn (round 706 review, MEASURED: 1,093 "Too many
+// instances using shader instance variables"), and GL Compatibility has
+// none at all.
 uniform vec3 object_color = vec3(0.6);
-#else
-instance uniform vec3 object_color = vec3(0.6);
-#endif
 // BerserkLook's pulse (READ: CObjRendererVS::FUN_00c27180 puts the colour in
 // place of both the material's and the object's): w 1 while it runs.
 uniform vec4 object_tint = vec4(0.0);

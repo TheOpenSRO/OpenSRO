@@ -119,10 +119,23 @@ func _shader_text() -> void:
 			if not fade:
 				_check(ObjectLoader.appear_fade_shader(s) == ObjectLoader.object_shader(kind, true), "%s: its fade twin" % what)
 	_check(ObjectLoader.OBJECT_SHADER == ObjectLoader.object_shader("solid") and ObjectLoader.FOLIAGE_SHADER == ObjectLoader.object_shader("two"), "one shader per kind")
-	# GL Compatibility (Godot 4.2) has no instance uniforms: the builder's
-	# define turns object_color into a plain uniform there.
-	_check(inc.contains("#ifdef OBJECT_NO_INSTANCE_UNIFORMS\nuniform vec3 object_color = vec3(0.6);\n#else\ninstance uniform vec3 object_color"), "Compatibility's object_color is a plain uniform (OBJECT_NO_INSTANCE_UNIFORMS)")
-	_check(ObjectLoader.renderer_defines() == "", "headless (not Compatibility): no define")
+	# Round 706 review (H1, MEASURED): an instance uniform on every placed
+	# mesh overflowed Godot's instance buffer at the Jangan spawn ("Too many
+	# instances using shader instance variables", 1,093 times a boot) and
+	# drew the losers with no ambient term. No object shader may declare one.
+	_check(inc.contains("\nuniform vec3 object_color = vec3(0.6);"), "object_color is a plain material uniform (0.6)")
+	var codes := [inc, ObjectLight.SHADER_FN]
+	for kind in ["solid", "one", "two"]:
+		for fade in [false, true]:
+			codes.append(ObjectLoader.object_shader(kind, fade).code)
+	for blend in ["opaque", "mix", "add", "mul"]:
+		for fade in [false, true]:
+			codes.append(ObjectLoader._mod_shader("back", blend, blend != "opaque", fade).code)
+	var with_instance := 0
+	for c in codes:
+		if RegEx.create_from_string("(^|\\n)\\s*instance\\s+uniform").search(c) != null:
+			with_instance += 1
+	_check(with_instance == 0, "no object or mod shader declares an instance uniform (%d do)" % with_instance)
 
 func _layer(flags: int) -> BmtReader.Layer:
 	var l := BmtReader.Layer.new()
@@ -185,10 +198,44 @@ func _character_light() -> void:
 	_check(_near(cl.color_at(Vector3(5, 0, 5)), 255.0 / 384.0), "on a lit tile: 255 / 384")
 	var none := CharacterLight.new(func(_p: Vector3) -> Array: return [])
 	_check(_near(none.color_at(Vector3.ZERO), 1.0), "off every region: 1.0")
+	# Per-level copies (round 706 review): the material itself at 0.6, one
+	# shared copy per material and level otherwise, which remembers its base.
+	var base := ObjectLoader._build_object_material(_layer(0x140), null)
+	_check(ObjectLight.is_object_material(base), "an object material can take a colour")
+	_check(ObjectLight.with_object_color(base, 0.6) == base, "0.6: the material itself")
+	var c1 := ObjectLight.with_object_color(base, 153.0 / 384.0)
+	var c2 := ObjectLight.with_object_color(base, 153.0 / 384.0)
+	_check(c1 != base and c1 == c2, "one shared copy per material and level")
+	_check(c1 is ShaderMaterial and absf(((c1 as ShaderMaterial).get_shader_parameter("object_color") as Vector3).x - 153.0 / 384.0) < 1e-3, "  ... with object_color set")
+	_check(ObjectLight.base_of(c1) == base and ObjectLight.with_object_color(c1, 0.6) == base, "  ... which goes back to its base")
+	# Built by parameter, not Resource.duplicate() (round 706 review,
+	# MEASURED on the box: a duplicate drew its diffuse term brighter).
+	var tex_m := ObjectLoader._build_object_material(_layer(0x140), ImageTexture.create_from_image(Image.create(1, 1, false, Image.FORMAT_RGBA8)))
+	var cp := ObjectLight.copy_material(tex_m)
+	_check(cp != tex_m and cp.shader == tex_m.shader and typeof(cp.get_shader_parameter("albedo")) == TYPE_COLOR
+		and cp.get_shader_parameter("albedo") == tex_m.get_shader_parameter("albedo")
+		and cp.get_shader_parameter("albedo_texture") == tex_m.get_shader_parameter("albedo_texture"), "copy_material: same shader, every parameter by name, the colour still a Color")
+	var fade := ShaderMaterial.new()
+	fade.shader = ObjectLoader.object_shader("solid", true)
+	_check(not ObjectLight.is_object_material(fade), "a fade twin is AppearFade's, not touched")
+	var mod_mat := ShaderMaterial.new()
+	mod_mat.shader = ObjectLoader._mod_shader("back", "mix", false)
+	_check(ObjectLight.is_object_material(mod_mat), "an MTRL mod's material takes one too")
 	var body := Node3D.new()
 	var mi := MeshInstance3D.new()
+	mi.material_override = base
 	body.add_child(mi)
+	var mb := MeshInstance3D.new()
+	mb.material_override = base
+	mb.set_meta(CharacterLight.BERSERK_META, base)
+	body.add_child(mb)
 	CharacterLight.set_on(body, 0.5)
-	_check(mi.get_instance_shader_parameter(ObjectLight.INSTANCE_OBJECT_COLOR) == Vector3(0.5, 0.5, 0.5), "the value goes to every mesh's object_color")
+	_check(mi.material_override != base and ObjectLight.base_of(mi.material_override) == base
+		and absf(((mi.material_override as ShaderMaterial).get_shader_parameter("object_color") as Vector3).x - 0.5) < 1e-3, "set_on draws a mesh with its copy at the level")
+	_check(mb.material_override == base, "a mesh berserk owns is left alone")
+	CharacterLight.set_on(body, 0.6)
+	_check(mi.material_override == base, "back to 0.6: the material itself")
+	var berserk_script := load("res://scripts/effects/berserk_look.gd") as GDScript
+	_check(berserk_script.get_script_constant_map().get("ORIGINAL_META") == CharacterLight.BERSERK_META, "CharacterLight.BERSERK_META is BerserkLook.ORIGINAL_META")
 	body.free()
 	group.free()
