@@ -98,9 +98,12 @@ freeze, and frames over 100 ms**. It exits 1 when the branch is clearly slower.
   review, about 3.5 of that batch's 8.5 hours. The gate reports it as `SLOWER (+3.0)` in about
   6 minutes (`--base 8658370 --head c306c51 --sites jangan`).
 - **The CPU is what lanes share, not the GPU or RAM** (measured with `amdgpu_top` and `vmstat`,
-  2026-09-30). One render uses about 3.3 of the box's 10 cores and 17 % of the GPU; six at once
-  put the CPU at 89 % busy with a run queue of 12, and ran 2.8x slower a frame, while the GPU
-  averaged 37 % and never reached 90 %, and 11 GB of RAM stayed free. So a speed number taken
+  2026-09-30, on the **old** box: 10 cores, 20 GB, RX 5700 XT). One render used about 3.3 of its
+  10 cores and 17 % of the GPU; six at once put the CPU at 89 % busy with a run queue of 12, and
+  ran 2.8x slower a frame, while the GPU averaged 37 % and never reached 90 %, and 11 GB of RAM
+  stayed free. **The current box** (CT 103 at 192.168.10.78) has 28 threads of a 5950X with no CPU
+  quota and 64 GB (MEASURED 2026-10-04: `nproc` 28, `cpu.max` "max"); the per-render cost has not
+  been re-measured there, so the saturation point above is the old box's. So a speed number taken
   while another lane runs Godot is noise: the gate waits until no other lane's Godot is running,
   repeats a run one overlapped, and gates in all lanes queue on one lock. Parallel lanes still
   finish more work than serial ones (six renders: 148 s at once against ~372 s one by one).
