@@ -795,15 +795,16 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		# the last tile, which is the client's own tiling.
 		#
 		# A six-piece set (no mid_up / mid_down, the sides reused for the top
-		# and bottom) belongs to a different class whose layout
-		# (`FUN_00499e10`) places its quads around an inner rect and is not
-		# this one; how it maps onto a control's rect is not read. Its
-		# geometry is left as it was: a reused top or bottom takes the
-		# adjoining corner's thickness (no longer clamped up to its texture,
-		# which changes com_square_'s 4x64 reuse; no panel builds it). `com_lattice_outline_` and
-		# `com_blacksquare_` are 4x4 in every piece, so for them the question
-		# does not arise; `com_square_`'s sides are 4x64 (one control in the
-		# archive), and for it the answer is open.
+		# and bottom) belongs to CNIFStretchWnd (every six-piece base in the
+		# archive's layouts is a CIFStretchWnd, round 718), whose layout
+		# (`0x499e10`, mislabelled `UI_ALCHEMYBOX` in the dump) places its
+		# quads around an inner rect; how that inner rect maps onto a
+		# control's rect is not read, so the placement stays this function's.
+		# Its UVs are READ (above): the reused top and bottom are the side
+		# pieces turned 90 degrees clockwise, as thick as that side is wide.
+		# `com_lattice_outline_` and `com_blacksquare_` are 4x4 in every
+		# piece; `com_square_`'s sides are 4x64 (one control in the archive),
+		# so its top and bottom are now 4 thick and 64-pixel tiles long.
 		var w := def.rect.size.x
 		var h := def.rect.size.y
 		var lu_s := _piece_size(lu)
