@@ -7094,6 +7094,747 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-thirteenth round: party matching on the original's opcodes
+
+The party-match server, built on lane S1's party core (round 710, branch `int/party`) against
+round 709's specs (`docs/protocol/party_protocol.md` "Party matching", `party_rules.md` "Party
+matching", `party_gui.md` §3-§5). Server only. Lane C2 builds the client windows against the same
+golden fixtures.
+
+### What was done
+
+- **`server/internal/party/match.go`**, the ShardManager's half, `party.Matcher`:
+  - **Entry numbers** come from a counter that only grows and skips 0. Numbers are never reused
+    (SM `0x451290`, `0x44def0`, `manager+0x8c`).
+  - **Who holds what.** The Hub records who holds which number with which flags
+    (`SetListing`/`ClearListing`). It already moves a departing leader's entry to the new leader
+    and drops a dissolved party's (SM `0x44e1a0`, `0x44eb30`). The Matcher keeps the rest of each
+    listing (purpose, levels, title, time, the pending mark) by number. It finds the owner through
+    the Hub, so the owner is always the current leader.
+  - **Register** (SM `0x450680` -> `0x451290`/`0x451110`), in its order:
+    `0x2c1b` already listed; then in a party `0x2c20` flags not the party's, `0x2c1d` not the
+    leader, `0x2c08` full (the listing takes the party's flags); otherwise the listing carries the
+    entry's flags.
+  - **Change** (SM `0x450990` -> `0x4513c0`): `0x2c1c` the caller holds no entry; then the entry
+    the request names is looked up: `0x2c1c` not found, `0x2c1d` not the caller's, bare 5 when the
+    flags differ (fixed in review, finding 3). It replaces the purpose, levels and title and renews the time.
+  - **Delete** (SM `0x450ba0` -> `0x451490`): `0x2c1c`, then `0x2c1d`.
+  - **Withdraw**: a party-less owner's entry goes when it leaves the world (SM `0x4296f0` ->
+    `0x451590`).
+  - **Pages** (SM `0x451630`, `0x450d20`):
+    - 23 to a page in number order, at most `0xfe` pages; a page past the end becomes page 0;
+    - no listings at all gives `[1][0][0][0]`;
+    - the requester's own entry, or its party leader's, heads every page and counts one more;
+    - an entry whose owner is gone is deleted on the way.
+  - **Join request ladder** (SM `0x44f850`), in its order:
+    1. `0x2c18` the requester is in a party;
+    2. `0x2c25` it holds its own entry;
+    3. `0x2c1c` no such entry;
+    4. when the entry has a party: `0x2c13`/`0x2c14` full, `0x2c1c` its leader is gone, `0x2c23`
+       the leader's job does not match;
+    5. `0x2c23` the job does not fit the purpose;
+    6. `0x2c1e` level outside [min, max], inclusive;
+    7. `0x2c1f` another request is pending;
+    8. `0x2c0e` the leader is offline.
+    
+    On success the entry is marked pending, the requester's state byte becomes 1, and a job waits
+    **15 s** (SM `0x79b018`; backstop answer 2, SM `0x420e10`).
+- **`server/internal/session/partymatch.go`**, the GameServer's half:
+  - **`0x7069`/`0xb069` register.** It runs `CParty::CheckCanCreateForMatch` (GS `0x514170`):
+    - `0x2c09` not alive;
+    - `0x2c24` a state byte other than 0 or 2;
+    - `0x2c0a` level < 5 when in no party, `0x2c1d` not the leader when in one.
+    
+    Then the purpose rule `0x2c23` (GS `Party_PostRequest` kind 0xa -> `Party_UserMatches`), then
+    the Matcher. The success echo carries the entry with the assigned number (GS
+    `trs_sm_partyjob::vslot_002 0x46d3a0` reads it into the request's `+0x54`, which
+    `0x5bf7d0` writes back) and the requester's party id (GS `0x5bf3ed`).
+  - **`0x706a`/`0xb06a` change** (GS `0x514260`): `0x2c09`; `0x2c1d` in a party but not its
+    leader; `0x2c1c` no own entry. Then the purpose rule, then the Matcher. The echo is the
+    client's entry with the party id overwritten (GS `0x5bf870`).
+  - **`0x706b`/`0xb06b` delete** (GS `0x5142c0`): `0x2c09`; `0x2c1c` no own entry. The echo is the
+    number the client sent (GS `0x5bf900`, the request's `+0x24`).
+  - **`0x706c`/`0xb06c` list**: no GameServer check; the reply is the Matcher's page.
+    - Each row carries the owner's name and race, where race is the model's Country (SM
+      `0x44f640`, `char+0x250`), via `character.RaceOf(Gender)`.
+    - The member count is the owner's party size, or 1 without a party.
+  - **`0x706d` join request.**
+    - The GameServer's ladder runs first (GS `0x514300`), in this order:
+      - `0x2c12` the requester is in a party;
+      - success when the state byte is 0 and there is no exclusive interaction;
+      - `0x2c1f` with state 1 or 3;
+      - `0x2c25` with state 4;
+      - `0x2c06` otherwise.
+      
+      A dead character may ask: the life test accepts 1 or 2.
+    - Then the Matcher. A refusal from either half is `0xb06d [2][code]`.
+    - On success the leader gets the relayed `0x706d`: job id, requester JID, entry, the two
+      masteries, job state 4 and the requester's full record.
+  - **`0x306e`**, the leader's answer, resolved as SM `0x44fbe0` and the GameServer's kinds
+    0x11, 0xf and 0x10 do:
+    - **0 cancel, 2 no reply**: the requester gets `0xb06d [1][answer]`.
+    - **1, the requester gone**: the leader gets `[2][0x2c0f]`.
+    - **1, the entry gone**: `[2][0x2c1c]` to both.
+    - **1, a party-less entry**: a party of the leader and the requester with the entry's flags,
+      the leader first (SM `0x44e9c0` -> `0x44e100`). The requester gets `0xb06d [1][1]`
+      **twice** (see the correction below), then `announceFormed`.
+    - **1, an entry with a party**: the requester and then the leader get `0xb06d [1][1]`, then
+      `announceJoined`.
+    - **an accept that fails**: `[2][code]` to the requester and to the leader (SM tail
+      `0x44fe3b`).
+  - **Disconnect**: `PartyMatchDisconnectHandler` withdraws a party-less owner's entry and clears
+    a pending requester's state. It runs after `PartyDisconnectHandler` (whose removal moves a
+    leader's entry, as SM `0x4296f0` does) and before `WorldDisconnectHandler`, which removes the
+    session's character (fixed in review, findings 6 and 7).
+  - **Expiry**: `RunPartyMatchSweep` deletes, every 60 s, each entry with no pending request that
+    is more than 60 whole minutes old, telling nobody (SM `0x4504c0`; added in review, finding 1).
+- **Wiring**: `cmd/server/main.go` builds a `party.Matcher` over the party Hub, adds the handler
+  after `PartyHandler` and the disconnect hook before `worldDisconnect`.
+- **`cmd/partybot`**:
+  - `-mode match`, this round's acceptance run;
+  - `-mode bot -register` (list an entry) and `-request NAME` (ask to join NAME's entry once it
+    is on page 0). In bot mode, party-match join requests are answered by `-accept`.
+
+### S1 files touched
+
+- `server/internal/party/party.go` (9 lines):
+  - a `requests` field on `Hub` and its init;
+  - one test in `stateLocked`: a pending join requester is state 1. The GameServer writes 1 when
+    it forwards the request (GS `0x5bf570`) and 0 when it fails (GS `0x5bfac0`,
+    `MsgHandler_3c01`).
+  
+  The new `Hub` methods (`ListingOwner`, `setRequest`, `clearRequest`) live in `match.go`.
+- `server/internal/systems/orphans_test.go`: twelve round-710 orphan entries removed, because
+  they now have callers. `PartyByID` and `ItemShare` stay.
+- `server/cmd/partybot/main.go`: the match opcodes added to `isParty`/`describe`, the bot-mode
+  options, `-mode match`. The scenario itself is in a new file, `match.go`.
+- `session/party.go`, `wire.go` and the fixtures are unchanged. Every encoder S3 uses already
+  has a golden fixture: `b069_ok`, `b06b_ok`, `b06c_page`, `b06c_empty`, `706d_to_leader`,
+  `b06d_*`, plus the generic `[2][code]` refusal. `0xb06a`'s success has the same layout as
+  `0xb069`'s, so no fixture was added. Adding one would change the fixture count that both
+  sides' tests check.
+
+### Choices of ours (OURS), each labelled in the code
+
+| what | choice | why |
+|---|---|---|
+| the job id the popup echoes | a counter that skips 0 | the ShardManager's transaction id; its numbering is its own |
+| who may answer a job | only the entry's leader at request time | the engine finds the job by id and does not compare the sender; without this, anyone could accept for a party |
+| the pending mark | cleared on every outcome | SM `0x44fbe0` stores 0 to `+0x34` at only three places: a party formed (`0x44ffa8`), a requester joined (`0x45029e`), and answer 0 or 2 with the requester present (`0x4504a4`). It stays set when an accept's requester is gone (`0x44fc64`), its leader is gone (`0x44fcfc`), the formation fails (`0x44ff05`), the leader's party is missing (`0x4500e6`), the join fails (`0x4501a7`), answer 0 or 2 comes with the requester gone (`0x450413`), or the answer is outside 0..2 (`0x44fc0e`). Outside `0x44fbe0` it stays set when SM `0x420e50` drops a gone leader's answer and when authorization fails (`0x421ec0`). Left set, the entry refuses every later request `0x2c1f` and is exempt from expiry |
+| an answer whose requester JID is not the job's | dropped silently; the job stays pending | the check itself is READ (SM `0x421ec0`, `cmp [ebx+0x8],esi` at `0x421f3f`). The engine then releases the job and leaves the mark set; ours waits for the real answer or the backstop |
+| an expired entry's owner | its state returns to 0 at once (the Hub derives it) | the engine leaves the GameServer's byte at 4 and `pc+0x1cd0` set until a relog, refusing that character `0x2c25`/`0x2c24`. A bug not replicated; on the coordinator's deviation list for the user |
+| pages | built at each request from the live state | the engine serves snapshots rebuilt after each change (SM `0x451630`), so its counts can lag. Its builder can also leave an empty trailing page when the last entries are dropped as owner-gone (`[1][1][0][0]` when all were). Neither shows in normal play |
+| an answer outside 0..2 | ends the job, no reply | SM `0x44fbe0` asserts and returns |
+| an entry moved to a new leader before the answer | the accept is refused `0x2c1c` | the engine keeps the job's original leader (`+0x10`) and would act on that character's party state |
+| the requester's two masteries | `topMasteries` (S1's choice) | the engine's pick, GS `0x5a1890`, is OPEN |
+| refusals that cannot happen here | the lock (`0x2c06`/`0x2c09`), job mode with an empty alias (5), instances (`0x2c28`), `0x2c26` | OpenSRO has none of those states. `0x2c26` reads `chardata+0x13`, which is OPEN (spec) |
+
+### Corrections to existing records
+
+| record | says | what is true |
+|---|---|---|
+| `party_protocol.md`, "Party matching", the accept result | "Both requester and leader get `0xb06d [1][1]` (the leader's copy INFERRED from the second send in `0x44fbe0`)" | READ, two cases. **Party-less entry** (SM `0x44ffb3..0x4500a1`): both copies carry the **requester's** JID (`[ebx+0x78]` at `0x44ffc6` and `0x45003d`, `ebx` the requester from `0x44fc3e`). The second goes to the leader's GameServer (`[esp+0x10]+0x1c4` at `0x450081`). That server finds the requester by JID, so with one game server the requester gets it twice and the leader gets none. **Entry with a party** (`0x450333 mov ebx,[esp+0x10]`): the second copy is the leader's. **A failed accept** (`0x44fe3b`): `[2][code]` to the requester, then to the leader |
+| `party_protocol.md`, "Party matching", register | the success reply carries the entry | READ: GS `trs_sm_partyjob::vslot_002 0x46d3a0` (kind 10) reads the ShardManager's u32 number into the request's `+0x54`, which `0x5bf7d0` echoes in `0xb069` and stores at `pc+0x1cd0` |
+| `party_protocol.md`, "Party matching", join request | the requester's state goes to 1, the error comes back on the relay path | READ in full: a ShardManager refusal reaches the requester through `MsgHandler_3c01 0x4169d0`, which also writes the state byte back to 0 when the inner opcode is `0x706d`. A GameServer refusal never set it |
+| `party_protocol.md`, Implementation lanes, S3 row | the register ladder "`0x2c1b`, `0x2c20`, `0x2c1d`, `0x2c08`, level 5" | That list is the ShardManager's half only. The GameServer's `CheckCanCreateForMatch` runs first, in its order: `0x2c09`, `0x2c26`, 5, **`0x2c24`**, then `0x2c0a` (no party) or `0x2c1d` (in a party), then `0x2c28` (GS `0x514170`); then the purpose rule `0x2c23` (GS `0x5bf2a0` kind `0xa`). The code has this order. The ShardManager's in-party order is `0x2c20`, then `0x2c1d`, then `0x2c08` |
+| `party_protocol.md:231` (list entry, second u32) and OPEN 2 | "INFERRED a timestamp ... its use is OPEN" | READ: `_time32` seconds since the epoch. The expiry sweep (SM `0x4504c0`) subtracts it from `_time32` (`0x6e3cbc`; difference `0x6c1d40`) and divides by 60 (`0x6c1c40`). Only the client's use (`c:+4`) is OPEN |
+| `party_protocol.md`, "Party matching" | nothing on expiry | an entry with no pending request expires after more than 60 whole minutes since its register or change (SM `0x40c703` 60 000 ms timer -> `0x40dd10` -> `0x4504c0`, `cmp eax,0x3c; jle` at `0x45055c`). The engine sends `0x386f [owner JID]` to the owner's GameServer, which has no case for it, so the client is never told |
+| `party_protocol.md`, the `0x306e` row | the GameServer reads u32, u32, u8 | and the ShardManager authorizes the answer by the echoed requester JID (SM `0x421ec0`): a mismatch is dropped with no reply |
+| `party_protocol.md`, "Party matching", change | change edits the caller's entry | SM `0x4513c0` looks up the number the request names: not found is `0x2c1c`, another owner's is `0x2c1d` |
+
+### Review fixes (independent review `d73f314a`, `docs/rounds/party713_review.md`)
+
+Applied after `git merge int/party`, which brought in S1's review fixes (`991bb1c2`). The one
+conflict, in `orphans_test.go`, was resolved to the merged list. S1's `sample` now takes a
+previous sample and a time; the `0x706d` record uses its `fullMask`.
+
+| # | finding | fix | test |
+|---|---|---|---|
+| 1 | entries never expire | `Matcher.Sweep` and `session.RunPartyMatchSweep`: every 60 s, entries with no pending request older than 60 whole minutes are deleted silently (READ, SM `0x4504c0`). The owner's state returns to 0 through the Hub (OURS; the original leaves it stale until relog) | `TestSweepExpiresAfterSixtyWholeMinutes`, `TestMatchSweepExpiresSilently` |
+| 2 | the `0x306e` requester JID is unchecked | an answer whose echoed JID is not the job's requester is dropped silently (READ, SM `0x421ec0`); the leader-only check stays (OURS); the job stays pending (OURS) | `TestMatchAnswerWithTheWrongRequesterIsDropped` |
+| 3 | change ignores the number sent | `Change` looks up `e.Number`: `0x2c1c` when it is missing, `0x2c1d` when it is another owner's; the caller-has-no-entry `0x2c1c` stays first | `TestChangeLooksUpTheNumberSent`, `TestMatchChangeNamesTheEntry` |
+| 4 | the pending-mark label under-counts | `TakeJob`'s comment and the OURS table list the engine's three clears and every path that leaves the mark set | (labels) |
+| 5 | the second u32 is READ seconds | `Listing.Time` is relabelled READ; the spec row and OPEN 2 are in the corrections table | (labels) |
+| 6 | a page could delete a logging-out leader's entry | `cmd/server` runs `partyDisconnect`, then `partyMatchDisconnect`, then `worldDisconnect`, the original's order. `rowLocked` also skips, without deleting, an owner out of the world who is still in a party | `TestPageSkipsAPartyLeaderOutOfTheWorld`, `TestMatchLeaderLogoutMovesTheEntry` |
+| 7 | a requester's mark survived its logout | `Matcher.Disconnect` clears it; the job stays, so an accept answers the leader `[2][0x2c0f]` | `TestDisconnectClearsTheRequestMark`, `TestMatchRequesterLogoutClearsTheMark` |
+| 8 | the leader gone answered `0x2c1c` | `[2][0x2c0f]` to the requester, before the entry lookup (SM `0x44fcf4..0x44fd5e`) | covered by the order in `resolveJoin`; reachable only by a logout racing the answer |
+| 9 | the register correction's order | the corrections table now gives `gs:0x514170`'s order, which the code already had | (notes) |
+| 10 | per-request pages | labelled OURS in `Page` and in the OURS table | (labels) |
+| 11 | a store read per listing under the lock | `Page` takes a cheap `Online` (world hub) under the lock, and reads the race (`RaceOf`, a store read) outside it, for the sent rows only | the existing page tests |
+
+### Self-review against the binaries
+
+Re-read for this round, each against the decompile and, where marked, the asm:
+- **GameServer**:
+  - `0x514170`, `0x514260`, `0x5142c0`, `0x514300` (the four checks, orders and codes);
+  - `0x514750`..`0x5148b0` (each handler replies `[2][code]` on its own `0xb06x`);
+  - `0x514900` (the answer forwarder: it appends the leader's record only for answer 1 when
+    party-less);
+  - `Party_PostRequest 0x5bf2a0`;
+  - `0x5bf570`/`0x5bf1f0` (state 1 is set only after the post succeeds);
+  - `0x5bf7d0`/`0x5bf870`/`0x5bf900`/`0x5bf980`/`0x5bfac0` (the replies);
+  - `0x46d3a0` (the kind-10 number);
+  - `0x5beb80` and kinds 0xf `0x5bfbe0` -> `0x5bb460` and 0x10 `0x5bfc50`. The formation order
+    is identical to S1's `announceFormed`, and the join order to `announceJoined`;
+  - `MsgHandler_3c01 0x4169d0`.
+- **ShardManager**:
+  - `0x450680`, `0x451290`, `0x451110`, `0x450990`, `0x4513c0`, `0x450ba0`, `0x451490`;
+  - `0x44f640` (the row);
+  - `0x451630` (the pages, 23);
+  - `0x450d20` (own entry first, index clamp, `[1][0][0][0]`);
+  - `0x44f850` (the join ladder);
+  - `0x44fbe0` (the answer: decompile and asm `0x44fc10..0x4504ab`);
+  - `0x420e10`/`0x420e50` (the timeout and answer entry points);
+  - `0x44e9c0`/`0x44e100` (the leader is added first: `EAX` is the first argument, the leader,
+    at the call `0x44ea69`);
+  - `0x44ed70`: forming a party by invitation repoints the inviter's listing, which the Matcher
+    gets for free by reading the owner's party from the Hub.
+
+No disagreement was found with the round-709 tables beyond the corrections above.
+
+### Acceptance
+
+**Go** (`go test -count=1 -p 1 ./...` against the local `opensro_test`; the result is at the end of
+this file):
+- **`internal/party/match_test.go`**, 11 tests:
+  - numbering, and no reuse;
+  - the register order, including flags-before-leadership;
+  - change and delete;
+  - pages of 23/23/4, past-the-end, own entry first, a party member seeing its leader's entry;
+  - an owner gone is dropped;
+  - the entry follows the leader and vanishes on dissolve;
+  - the whole join ladder in order;
+  - the 15 s backstop answers through its callback and clears the mark and the state;
+  - an answer stops the timer;
+  - Withdraw.
+- **`internal/session/partymatch_test.go`**, 8 tests on the real handlers over sockets:
+  - the full flow with a party-less entry: the echo, the page, the leader's `0x706d`, the double
+    `0xb06d`, the formation order with the entry's flags;
+  - the accept into an existing party;
+  - deny, and a non-leader's answer ignored;
+  - the backstop (150 ms in the test) and a late confirm ignored;
+  - the join refusals (`0x2c1e`, `0x2c1c`, `0x2c25`, `0x2c1f` from both halves, `0x2c12`);
+  - the register ladder (`0x2c0a`, `0x2c23`, `0x2c24`, `0x2c1d`, `0x2c20`, `0x2c08`, `0x2c1b`);
+  - change, delete and the logout withdraw;
+  - the race byte (Europe 1).
+- `go test -race` on `internal/party` and on the session party tests (`TestMatch|TestParty`):
+  clean.
+
+**Live**, the real server binary (in memory, `-chargen-csv`, `-leveldata-csv`, the bots in
+`-gm-accounts`), `partybot -mode match`: all nine steps passed. S1's `-mode scenario` still passes
+all of its steps on the same server. The trace, with the login lines cut (the lines of different
+bots interleave as their goroutines print):
+
+```
+--- step 1: Lia registers a party-less entry: Exp+Item Auto Share, Hunting, levels 5..20
+[pmLia] <- 0xb069 [1] entry=1 party=0 flags=0x03 purpose=0 levels=5..20 "For open hunting"
+--- step 2: Rex pages: Lia's entry, 1 member
+[pmRex] <- 0xb06c [1] pages=1 index=0 rows=[1:pmLia(race 0, 1 members, flags 0x03, purpose 0, 5..20)]
+--- step 3: Tia (level 1) asks: refused 0x2c1e, the leader hears nothing
+[pmTia] <- 0xb06d [2] code=0x2c1e
+--- step 4: Rex asks: Lia gets the 0x706d
+[pmLia] <- 0x706d job=1 requester=pmRex(2) entry=1 masteries=0/0 job state=4 level=10
+--- step 5: Sam asks while Rex's request is pending: refused 0x2c1f
+[pmSam] <- 0xb06d [2] code=0x2c1f
+--- step 6: Lia confirms: Rex gets 0xb06d [1][1] twice, then the formation with the entry's flags
+[pmRex] <- 0xb06d [1] outcome=1
+[pmRex] <- 0xb06d [1] outcome=1
+[pmRex] <- 0xb067 [1] jid=2
+[pmLia] <- 0xb060 [1] jid=1
+[pmLia] <- 0x3065 party=1 leader=1 flags=0x03 members=[pmLia(1)]
+[pmRex] <- 0x3065 party=1 leader=1 flags=0x03 members=[pmLia(1) pmRex(2)]
+[pmLia] <- 0x3864 k2 joined pmRex(2)
+--- step 7: Sam pages: Lia's entry now shows 2 members
+[pmSam] <- 0xb06c [1] pages=1 index=0 rows=[1:pmLia(race 0, 2 members, flags 0x03, purpose 0, 5..20)]
+--- step 8: Sam asks and Lia never answers: the 15 s backstop gives Sam 0xb06d [1][2]
+[pmLia] <- 0x706d job=2 requester=pmSam(3) entry=1 masteries=0/0 job state=4 level=10
+[pmSam] <- 0xb06d [1] outcome=2
+--- step 9: Lia deletes the entry: 0xb06b [1][entry]; Rex's page no longer has it
+[pmLia] <- 0xb06b [1] entry=1
+[pmRex] <- 0xb06c [1] pages=0 index=0 rows=[]
+--- all steps passed
+```
+
+`-mode bot -register -accept` against `-mode bot -request` was also run: the request, the
+confirm, and the party formed.
+
+No perf gate: this is a server-only round. An independent review is the coordinator's: this lane
+is a fork and cannot spawn one.
+
+### For lane C2 (the client matching window)
+
+- **Expiry.** An entry expires silently after 60 minutes without a register or change (review
+  finding 1). The client still holds its number (`this+0x7c0`); a later change or delete of it
+  gets `0x2c1c`.
+
+- **The page.**
+  - The requester's own entry (or its party leader's) is row 0 **and** appears again in its
+    numbered place; skip the second copy, as `c:0x73a770` does.
+  - Rows come in entry-number order, 23 to a server page against the window's 12 rows; the
+    scroll covers the rest (`party_gui.md` §3).
+- **Race** is 0 China / 1 Europe, drawn as text "CHN"/"EUR" (the user's decision). **Count** is
+  the party size, 1 without a party; draw `%d/8` or `%d/4` by flag bit 0.
+- **A party-less entry's accept** gives the requester `0xb06d [1][1]` twice, and the leader no
+  `0xb06d` at all. The leader learns of the join from the formation (`0xb060`, `0x3065`, kind 2).
+  An accept into an existing party gives the leader `0xb06d [1][1]` too. The client shows
+  `UIIT_MSG_PARTYMATCH_JOIN_COMPLETE_MASTER` for each `[1][1]`, as `c:0x8847d0` does.
+- **The popup's answer** must echo the `0x706d`'s job id and requester JID. The server takes an
+  answer only from the entry's leader, and only while the job is pending: a late answer after
+  the 15 s backstop is dropped.
+- **Timers.** The leader's popup answers 2 at 10 s and the requester's bar fills at 10 s; both
+  are client-side. With a stock client, "no reply" arrives at about 10 s. The server's 15 s only
+  covers a leader client that sends nothing.
+- **Register echo.** `0xb069 [1]` carries the assigned entry number: keep it as the player's
+  registration (`this+0x7c0`). Change and delete send it back.
+- **No server-side search.** Name, purpose and level filtering is the client's, over the held
+  rows.
+- **Entries that drop.** An entry whose party fills is not removed by the server; the leader's
+  client deletes it (`UI_PARTY::FUN_007387c0`). An entry also goes when its party dissolves or its
+  party-less owner logs out.
+- **Live tests.** Use `partybot -mode bot -name X -register [-accept=false]` as an entry owner,
+  or `-request NAME` as a requester.
+
+### Full suite
+
+`go test -count=1 -p 1 ./...` in `server/`: all 65 packages with tests pass (exit 0).
+
+After the review fixes (merged with `int/party`): `go test -count=1 -p 1 ./...` passes all 65
+packages again; `go test -race` on `internal/party` and on the session party tests
+(`TestMatch|TestParty`) is clean; and on a fresh build of the server, `partybot -mode match`
+passes all nine steps and S1's `-mode scenario` all of its steps.
+
+**Reviews** (kept beside the notes):
+- `docs/rounds/party713_review.md` (the independent review: 3 departures from the original, 2 wrong labels, a race, 5 minor; all fixed)
+
+No perf gate: server-only round.
+
+## Seven-hundred-and-eleventh round: the client's party messages on the original's opcodes, and the party window
+
+The client half of the party epic's first implementation pair (S1 = round 710 is the server).
+Built against round 709's specs (`docs/protocol/party_protocol.md`, `party_gui.md` §1, §1b,
+§2, §6) and round 710's golden fixtures, which are copied unchanged into
+`client/scripts/net/fixtures/party/` (no disagreement found: every S1 message decodes and
+re-encodes byte for byte).
+
+### What was built
+
+- **`net/party.gd` (PartyNet)**, every party message both ways, on the retail opcodes:
+  `0x7060`/`0xb060`, `0x7062`/`0xb062`, `0x3080` (invitation and answer), `0xb067`, `0x3065`,
+  `0x3864` kinds 1/2/3/6/9, `0x7061`, `0x7063`, with the masked member record (field and dungeon
+  positions, signed). OpenSRO's `0x0080`-`0x0089` are gone from the client.
+- **`net/party_state.gd` (PartyState)**: the client's party manager (`0xeeebd8`): the settings
+  block (exp/item/anyone) the next `0x7060` sends, in-party, leader, own JID (from the
+  `0xb060`/`0xb067` OK and from OpSelfId per round 710's id decision), the member list with the
+  leader kept at index 0, the job-party flag `+0x0c`. It applies every message and emits
+  `changed`, `notice` (system-window lines), `invitation`, `invitation_closed`.
+  - invitation rules (`c:0x88aa60`): the "accept invitations" option off auto-declines with the
+    kind's code; an inviter not spawned in this client is dropped unanswered;
+  - `0xb067` with an error (the `0x2c10` timeout among them) closes the box (`c:0x880120` closes
+    request kind 6 on its error branch, asm);
+  - refusals with a code go to the system window as type 0, the client's error path
+    `0x778190` (READ in all three ack handlers, `c:0x880010`/`0x8800b0`/`0x880120`); joins and
+    leaves are type 4 (`UI_PARTY 0x886b10`); a code with no client message shows nothing.
+- **`net/net_client.gd`**: `NetClient.party`, the senders `party_create/invite/leave/kick/answer`,
+  and `register_handler(opcode, Callable)` -- the hook through which C2's `party_match.gd`
+  registers its own opcodes (checked in the dispatcher's default branch).
+- **The party window, `ui/hud/hud_party_pane.gd` (HudPartyPane)**, filling ifparty.txt as
+  `IFParty 0x6d6640` (in a party) and `UI_NO 0x6d6d00` (out of one) do:
+  caption with the anyone-invite suffix; type line and its colours; leader row (name, Lv,
+  level, race mark from the model, guild rule, live HP/MP for the player, tenths for others,
+  red flag); seven `CIFPartySlot` rows built from ifpartyslot.txt; Banish on every row for the
+  leader, Leave on the player's own row otherwise; Dismiss = leave; the kick target is list index
+  row + 1; Invite / Set / Party match enable rules; the player's own portrait borrowed from the
+  player block's render. Party match toggles the matching window, as its key does.
+- **The settings dialog, `ui/hud/party_settings_dialog.gd`** (CIFSetPartyMode, child 70 at
+  32,85, 300x200): the two radio groups built as `CIFRadioButton` builds them (dots 16x16 at
+  3, 4 + 20 i, labels at +20/+3, 100x12, centred; READ `0x657c40` and the setters
+  `0x657910..0x657960` as Create calls them, `0x6db980`), the "anyone may invite" check box,
+  Yes writes the block (no request), No closes.
+- **The invitation box, `ui/hud/party_invite_popup.gd`** (HUD request kind 6). New READs this
+  round (party_gui.md OPEN 7 closed in part):
+  - the box is a CIFMessageBox in mode 1, `MsgBoxINIF` of ifmessagebox.txt
+    (`c:0x6ec5d0 -> 0x643c20(1)`), and kind 6 is set up by `UI_SILKMALL::FUN_00644c90` case 6/8:
+    title `UIIT_STT_CONFIRM_BOX`, 300x176, `UIIT_STT_PARTY_SOMEUSER` (name) at 16,48,
+    `UIIT_STT_PARTY_PROPOSAL_ASK` at 16,64, two `msgbox_blackbox.ddj` boxes at 44,93 / 156,93
+    with the exp and item modes, `UIIT_STT_PARTY_JOIN_ANYONE` at 6,121, `UIIT_STT_ACCEPT` at
+    72,139, `UIIT_STT_REFUSE` at 152,139, the third button hidden;
+  - both party kinds (2 and 3) queue kind 6 (`c:0x88b1d4`: both entries 0x88ad8a);
+  - the yes/no payloads re-read in asm: yes `[1][1]` for both kinds, no `[2][0x2c0c]` /
+    `[2][0x2c17]`;
+  - the box arms timer 10 (`0x644650`): 10 s for type 4, 15 s for type 8, else 30 s
+    (INFERRED that "simple_msgbox_type" is the request kind; what the timer does was not read,
+    so the box only closes).
+  - INFERRED: which MsgBoxINIF control each `+0x840..+0x850` is (taken as MESSAGE1..5).
+- **`ui/ui_builder.gd`**:
+  - CIFSubFrame draws its caption (READ `0x81a530`: a static at 10,7, width - 20, 12 high,
+    centred, font 0; vslot 45 sets it). Nine resinfo subframes carry one (MEASURED: ifparty,
+    ifaction's four headers, academy, quest, storage, item mall), so those headers now appear.
+  - `make_checkbox` (CIFCheckBox: `resinfo\ifcheckbox.txt`, the `com_checkbutton_on.ddj` mark
+    shown when checked, checked by default; READ `0x656f90`, `0x656ce0`, `0x656c70`). Not wired
+    into the generic build, so other layouts' check boxes are unchanged.
+  - `set_button_text` for a button authored with no text.
+- **World3D**: the debug party panel (ActionTabs/Party, its scene nodes and handlers) is gone;
+  party chat's `#` gate reads `NetClient.party.in_party`; a type-4 chat line carrying the
+  player's own name is dropped (`c:0x877810` case 4), since the server now echoes party chat;
+  `OPENSRO_QA_PARTY` is now a retail-path step list:
+  `"<tick>:<step>;..."` with `window`, `settings`, `set:e,i,a`, `invite:<name>`,
+  `accept`/`refuse`, `leave`, `kick:<name>`, each through the window's own buttons.
+- **`tools/qa_shot.sh --second-client "K=V|..."`**: a second, headless client on the same
+  `--server`, logging to `<out>/second.log`, killed with the run.
+
+### Choices of ours (OURS)
+
+| what | choice |
+|---|---|
+| ~~settings block's starting values~~ | **READ in the review: exp 1, item 0, anyone 1** (`c:0x99ba00`); see the fixes table |
+| "accept party invitations" option | on (the option window has no such row yet) |
+| strings on the wire | UTF-8 bytes with the u16 length |
+| the gauge clamp above 1 | a kind-6 HP nibble of 11 decodes to 10/9 as the client does (`c:0x991f60`); the windows clamp the ratio to full (whether the client's gauge clamps was not traced) |
+| pet/horse owner substitution | nothing to substitute: OpenSRO selects neither |
+
+### Tests
+
+- `net/party_test.gd`: every S1 fixture encoded or decoded and re-encoded byte for byte, records
+  field by field, and PartyState through form, join, update, leader change, kick, logout,
+  dissolve, own-leave, refusals, and the invitation rules. All pass.
+- `ui/hud/hud_party_pane_test.gd`: window geometry against ifparty/ifpartyslot rects, the
+  subframe caption, out-of-party, leader, member, anyone-may-invite and job-party states, every
+  button's request, live refresh on kinds 2/3/1, the settings dialog's geometry and Yes/No, the
+  invitation box's geometry and Accept. All pass.
+- `inventory_pages_test.gd`'s leader-mark check now drives the party state.
+- Render box (`RENDER_DIR=/opt/opensro-client-c1`, `GODOT_LOCK=/var/tmp/c1/lock`):
+  `remote_godot.sh check` ALL LOAD (586 scripts); `remote_godot.sh tests`: 226 suites, 0 failing (the last full run's only failure was the invitation-box fix in progress; the pane test passes after it).
+
+### Live, against S1's server binary (7a4f8772, in memory)
+
+Run 1 (`/var/tmp/c1/run_party.sh`): Aria rendered, Bram headless (`--second-client`), both
+`/level 10` by GM command. (That run used `;` between the `--second-client` settings, before the
+separator became `|`; with today's `qa_shot.sh` the same command is
+`--second-client "OPENSRO_QA_ACCOUNT=qa2:qa-password|OPENSRO_QA_CHARACTER=Bram|OPENSRO_QA_COMMANDS=/level 10|OPENSRO_QA_PARTY=1:accept|OPENSRO_QA_AT=1004,1022"`.)
+Log (Aria):
+
+```
+QA PARTY: tick 120 window
+QA PARTY: tick 170 settings
+QA PARTY: tick 220 set:1,1,1
+QA PARTY: tick 260 invite:Bram
+World3D: selected player 1 (Bram), race 0
+SYSLOG [4] [Bram]is requesting to party.
+SYSLOG [4] [Bram]joined the party.
+```
+
+Bram: `QA PARTY: pressing accept on the invitation`, then at Aria's exit `The party is dismissed.`
+(the party of two dissolving on her logout). Frames on the box:
+- `/var/tmp/c1/live1/f00000150.png`: the empty window (screenshot 01's layout; the archive's
+  own `<You are not in a party!>`);
+- `/var/tmp/c1/live1/f00000200.png`: the settings dialog (screenshot 05);
+- `/var/tmp/c1/live1/f00000410.png`: the party (screenshot 12's layout): Aria's row with her
+  portrait, red flag, race mark, Lv 10, bars, `<No guild>`, Dismiss; Bram's row with Banish; Set
+  greyed; the caption's suffix; the type line bright.
+
+The layout numbers are checked by the pane test, not by eye.
+
+Run 2 (`/var/tmp/c1/run_party2.sh`): the roles swapped. Bram is rendered and answers nothing;
+Aria is headless, sets `1,0,1` in the dialog and invites at her ticks 1500, 1900 and 2300. Aria's
+log: `[Bram]is requesting to party.`, then `In the process of joining a party.` (`0x2c1f`) for
+the two invites sent while Bram's was pending, then `The party invite automatically cancelled
+due to no response from the other player.` (`0x2c10`, type 0). Bram's: the box shows, and the
+same timeout line closes it.
+
+MEASURED, the box's 300x176 area's mean luma over Bram's frames: 0.33 before, 0.187 from frame
+110 to 220 (the box up), 0.34 after (closed by `0xb067 [2][0x2c10]`). Frames on the box:
+- `/var/tmp/c1/live2/f00000150.png`: the invitation box ("[Aria] sent you party invite.",
+  "Accept party invitation?", the EXP Auto Share / Item Free-For-All boxes, the anyone-invite
+  line, Accept / Refuse, on the `GDR_MSGBOX_BG` tile);
+- `/var/tmp/c1/live2/f00000240.png`: after the timeout, the box gone.
+
+Two fixes came out of these runs: `--second-client` now splits on `|` (a `;` in its settings
+broke the env line); the box builds ifmessagebox.txt's "Create" (the background tile) before
+MsgBoxINIF, as CIFMessageBox::Create does; and the black boxes' text is top-aligned, as the
+statics are authored.
+
+### Not done here
+
+- The 3D portraits of members other than the player: they come from the quick-party slot renders,
+  lane C3's.
+- Real input (xdotool) was not used: the QA steps press the window's own buttons through their
+  signals. A real-click pass belongs with C3's HUD round.
+- No perf gate: no per-frame world code changed (the QA step list replaces the old QA hook's
+  per-frame check one for one).
+
+### For C2 and C3
+
+- C2: register opcodes with `NetClient.register_handler(op, callable)`; the party-match records
+  are in the fixtures (`7069`..`b06d`); `PartyState.flags_byte()` is the type byte the register
+  sends; the Party match button already toggles `"partymatch"`.
+- C3: `NetClient.party` (members in list order, leader at index 0, `own_jid`, `job_party`,
+  `exp_share` for the faraway overlay) and its `changed` signal; `PartyNet.Member` carries
+  region/x/y/z/world, masteries and HP/MP tenths. The window's rows show black squares for
+  members until C3 provides their renders (`HudPartyPane._face`).
+
+### Review fixes (round 711's review, `docs/rounds/party711_review.md`)
+
+Merged `int/party` first (S1's review fixes, `991bb1c2`), then:
+
+| # | finding | fix |
+|---|---|---|
+| 1 | settings defaults are READ (`c:0x99ba00`): anyone starts at 1 | `PartyState` starts exp 1, item 0, anyone 1, labelled READ (`0xd75d80 -> 0x99c1c0 -> 0x99ba00`, the clear `0x998be0` leaves them); `party_gui.md` §1 records the starting values; tests check them. Run 6's frames now show the caption suffix and the ticked box out of a party, as screenshots 01 and 05 do |
+| 2 | eight refusal codes have client messages | `ERROR_KEYS` gains 2, 3, 4, 5, `0x2c06`, `0x2c07`, `0x2c11`, `0x2c29` (`c:0x7b96ae`, `0x7bb7cc`, `0x7bb7dc`); `0x2c07`'s extra call `0x77b580` is not reproduced (noted). `party_protocol.md`'s error table corrected. Live: run 3/5's out-of-range invite shows "The object is too far." |
+| 3 | the invitee's `0xb067 [2][0x2c10]` is silent | `_on_ack` closes the box and returns before the notice (`c:0x880120`). Live, run 4: Bram's log has no line on the timeout; Aria's `0xb060` timeout still shows hers |
+| 4 | own HP/MP not live | `HudPartyPane.refresh_vitals()` redraws the player's own row and, when the player leads, the leader row's gauges; HudPlayerInfo emits `bars_changed` on every bar change and World3D wires it through `HudPanels.party_vitals_changed` (on change rather than per frame; same values as `0x6d72f0` / `0x6d5ca0`). Tested |
+| 5 | row guilds white | `_guild` takes the colour: (255,225,148) on the leader row, white on member rows (`0x6d7a0c`/`0x6d7a5b`). Tested |
+| 6 | box texts overflow / not centred | the mode boxes are built as CIFStatics with the black art, the inset (3,7,3,6), HAlign 1, laid out by `place_label`. MEASURED (run 4, `live4/f00000150.png`): exp text 537..622 in box 531..626, item text 647..735 in box 643..738 |
+| 7 | the tile covers the right border | READ `CIFMessageBox::vslot_021` `0x63b5e0 -> 0x63b420`: the resize sizes child 0 (`GDR_MSGBOX_BG`, ID 0) to (w - 32, h - 56) = 268x120, and places the title static at (10, 11, w - 21, 12) (also READ now). MEASURED: the frame's right-border ridge at x 780-781 is present over the tile's rows |
+| 8 | radio labels offset | built through the builder's static path (font 0, centred, `place_label` in 100x12). MEASURED (run 6, `live6/f00000200.png`): label centres 953.5 and 1084 against the READ 955 and 1086; "Item Free-For-All" ends at 1128, inside its box |
+| 9a | Leave colour | Leave gets 0xfffff5da too (`0x6d78a7`). Tested |
+| 9b | Party match tooltip | not built (listed under "Not done here") |
+| 9c | Enter/Esc on the boxes | not read, not built (listed) |
+| 9d | box timer vs state | the box's timer emits `expired`; HudPanels calls `PartyState.forget_invitation()` |
+| 9e | misplaced doc comment | moved onto `register_handler` |
+| 9f | OURS vs INFERRED on the clamp | superseded: the client's own decode (`c:0x991f60`) is followed; the clamp above 1 is OURS, the client's gauge behaviour above 1 untraced |
+| 9g | stale gap list | `party_gui.md` items 1-4 and 9 marked built in round 711 |
+| 9h | `useitem.gd` comment | "were OpenSRO's own party create and its result" |
+| 9i | test leaks state into the autoload | `inventory_pages_test` gives the panels their own `PartyState` |
+| 9j | run-1 command | re-recorded above with `|` |
+| 9k | CIFParty `+0x3b0` recolouring the dialog | not read, not built (listed) |
+| S1 note | the HP decode | `Member` keeps `hp_cur/hp_max/mp_cur/mp_max/dead`: a full record n/10 and n/10; a kind-6 update HP 0 = dead, else (n - 1)/9, MP n/10 (`c:0x991f60`); the windows draw `hp_ratio()`/`mp_ratio()`. Tested (nibbles 11, 0, 6) |
+
+#### Tests after the fixes
+
+- Render box, `RENDER_DIR=/opt/opensro-client-c1`, `GODOT_LOCK=/var/tmp/c1/lock`:
+  `remote_godot.sh tests` ran 226 suites, 0 failing (party_test and hud_party_pane_test included).
+
+#### Live after the fixes (the merged server, `int/party` at this branch's merge)
+
+- Run 3 (`/var/tmp/c1/run_party3.sh`) and run 5 (`run_party5.sh`, Bram's client also at
+  `QA_AT` 1004,1022): the invite was refused **"The object is too far."** (code 4, finding 2 live).
+  The headless client's `QA_AT` moves it only in its own client; the server keeps each character
+  where it spawned it, and in these runs that was more than 600 apart (run 1's success had both
+  spawned together). Frame: `/var/tmp/c1/live3/f00000250.png`.
+- Run 6 (`run_party6.sh`): both characters `/tp` to the same spot by GM command first; Aria opens
+  the window, the settings dialog, sets 1,1,1 and invites; Bram accepts; `[Bram]joined the party.`
+  Frames: `/var/tmp/c1/live6/f00000150.png` (empty window: the caption's anyone suffix by default),
+  `/var/tmp/c1/live6/f00000200.png` (the settings dialog: the box ticked by default, labels
+  centred), `/var/tmp/c1/live6/f00000450.png` (the party: Aria and Bram).
+- Run 4 (`run_party4.sh`): Bram rendered; the box shows from frame 120 to 230 (the box area's mean
+  luma 0.188 against 0.33 before and 0.34 after) and closes on the server's timeout with no line
+  in Bram's log. Frames: `/var/tmp/c1/live4/f00000150.png` (the box), `f00000250.png` (after).
+
+#### Still not done
+
+- The Party match button's tooltip with the bound key (9b).
+- Enter / Esc on the invitation box and the settings dialog (9c; `0x6449d0` not read).
+- CIFParty `+0x3b0`'s recolouring of an open settings dialog (9k).
+
+**Reviews** (kept beside the notes):
+- `docs/rounds/party711_review.md` (the independent review: 5 bugs, 3 layout, 11 minor; all fixed but three minor items, listed)
+
+No perf gate: no per-frame world code changed (the debug panel was removed, nothing added to the frame).
+
+## Seven-hundred-and-tenth round: the party server core on the original's opcodes
+
+The first implementation round of the party epic, built against round 709's three specs
+(`docs/protocol/party_protocol.md`, `party_rules.md`, `party_gui.md`). Server only: lane C1
+rewrites the client side at the same time, against the same golden fixtures.
+
+### What was done
+
+- **Golden byte fixtures** (milestone 1, commit `fd9da906`):
+  - 57 payloads in `client/scripts/net/fixtures/party/`: every S1 message in both directions, the
+    member record with each mask (field and dungeon positions), and the S3/C2 party-match records
+    (`0x7069`, `0xb069`, `0x706a`-`0x706d`, `0xb06c`, `0x306e`, `0xb06d`);
+  - `gen_fixtures.py` builds them straight from the spec tables, independently of either codec.
+    The README lists every field value and the id decision below.
+- **`internal/party` rebuilt** on the original's rules:
+  - the flags byte, with the cap of 8 or 4 by bit 0 alone and `0x2c13`/`0x2c14` for full;
+  - leader at index 0, then join order;
+  - a party is formed from an accepted invitation with two members at once; there is no party
+    of one any more;
+  - a party of two dissolves when one leaves, and leadership passes to the longest-standing member
+    with the leader's listing;
+  - the person-to-person job table `0x2c23` (no job = 4, 0 matches nobody) and the
+    person-to-purpose table for S3;
+  - the state byte, derived;
+  - invitations with the 30 s timeout (`0x2c10`);
+  - party ids from a counter that skips 0;
+  - formation and join refusals in the ShardManager's order.
+- **`party/wire.go`**: every codec. The two HP/MP formulas are both READ and differ:
+  - a full record's tenths are `trunc(cur/max x 10)` (GS `0x5baf96`);
+  - an update's (GS `FUN_005bb0c0`) are `0` for 0 HP, else `1 - ftol(float32(r) x -10.0)`, i.e.
+    `1 + trunc(10 r)`, which is **11 at full HP**. MP is `ftol(float32(r) x 10)`. Re-read in asm
+    this round (`fmul QWORD 0xb45f78` = -10.0, `_ftol2` `0x9fbb40` = `cvttsd2si`).
+- **`session/party.go` rewritten** on retail opcodes:
+  - `0x7060`/`0xb060`: CheckCanCreate (alive, busy plus state, level 5), a self-target dropped
+    silently, the 600-unit 3D range, the PC test, CheckTargetAvailable, then `0x3080` kind 2;
+  - `0x7062`/`0xb062`: CheckCanJoin, whose first three tests fail silently; the full cap;
+    range/PC/availability; and the `0xb060 [2][2]` quirk when posting fails;
+  - the `0x3080` answer: a decline gives `0x2c0c`/`0x2c17`, a gone inviter `0x2c0e`, a timeout
+    `0x2c10`. Each goes out to both sides, the inviter on `0xb060`/`0xb062` and the invitee on
+    `0xb067`;
+  - formation and join announced in the GameServer's order. The inviter gets `0xb060 [1][own JID]`,
+    then a `0x3065` of itself, then the invitee's kind 2. The invitee gets `0xb067 [1][own JID]`,
+    then the `0x3065` of both. A joiner's existing members get kind 2 before the joiner's
+    `0x3065`;
+  - `0x7061` leave (reason 2) and `0x7063` kick (reason 4, leader only, silent otherwise). Kind 3
+    goes to every member, the leaver too; kind 9 goes out when the leader left; kind 1 `0x2c0b`
+    when a party of two dissolves;
+  - logout: reason 1 to the rest;
+  - **kind 6 member updates**: level, HP/MP, position, guild, masteries, name and model, sent to
+    every member but the one updated, each only when it changed.
+  - OpenSRO's `0x0080`-`0x0089` party messages are retired.
+- **Party chat**: delivered to every member, the sender included, and nobody else (GS `0x5bef50`
+  excludes no one).
+- **`cmd/partybot`**: characters on the real wire against a running server. `-mode scenario` is
+  this round's acceptance. `-mode bot` keeps one character online as the other side of a live
+  client test.
+- **Callers converted** from the removed `Create`/`Join` to `Form`/`Add`: chat, friendlycast,
+  round666, nest660, uniquenotice, monsterai and partyexp tests; `uniquenotice.go` (the party id
+  is now u32). Test behaviour is unchanged: every converted party is exp-shared, as OpenSRO's
+  parties were.
+
+### Choices of ours (OURS), each labelled in the code
+
+| what | choice | why |
+|---|---|---|
+| **JID and world id** | `uint32(characterID)` for both | It is already the u32 object id OpenSRO sends for a player (`motion.go`'s `0x30BF`). A client maps a party JID to the spawned player whose 64-bit `CharacterID` has those low 32 bits, and learns its own from `OpSelfID` (0x00F9). Monster ids overlap character ids, so a party target is resolved among players only; an NPC uid (>= `0x7f000000`) answers 3; anything else that names no player answers 0. **Consequence:** a monster id sent as a target names the player with that character id, and if that player is in the same zone within 600 units, that player is invited; retail answers 3 there (the `0x26` TypeID filter, `gs:0x4a8eb2`). The client must send player ids only |
+| world id in the record | 1 | `_RefGame_World` `INS_DEFAULT` (EXTERNAL); one field world |
+| masteries shown | the two highest-levelled above level 0, lower id first on a tie, 0 when empty | The engine's pick `GS 0x5a1890` is OPEN. A new character shows none, as screenshot 08 does |
+| member-update cadence | a 1 s sampler (`partyUpdateInterval`) | Retail raises an event at each change (`vslot_323`), and how often position fires is OPEN. Each field still goes out only when it changed. HP/MP is evaluated only when a raw HP/MP/max moved since the last sample, standing in for the HP event. Without that, a full record's HP 10 would turn into the update formula's 11 with nothing having happened |
+| logout trigger | the gateway's disconnect, reason 1 | Reason 1 is READ; retail's trigger is the ShardManager's user cleanup (`SM 0x4296f0`) |
+| a stale answer | an answer with no invitation pending is dropped | Nothing names its inviter any more |
+| accepting a formation | only an answer byte of 1 accepts, for both kinds | This GameServer accepts a formation on any non-zero byte (`test bl,bl`, `gs:0x5be41c`; a join on `cmp bl,1`, `0x5be39f`), which would make the stock client's "no" (`[2][0x2c0c]`) form the party (`party.DecodeAnswer`) |
+| "state not 1" on an answer | refused 2 when the invitee got into a party meanwhile | the only way the derived byte leaves 1 with an invitation pending |
+| an invitee who leaves the world | its invitation no longer holds it; the timeout still runs and reaches the inviter (`Hub.DetachSession`) | Whether the original's logout cancels the transaction was not read. READ: the transaction finds both sides by id at its answer and its timeout (`gs:0x5be350`, `0x46ce44 -> 0x46cec0`), and the state byte lives in the character object a relog replaces |
+| a race past the ladder | a second invitation slipping past `CheckTargetAvailable` is refused `0x2c1f` | what the single-threaded engine's ladder would have said |
+| guild and masteries in the sampler | re-read every 10 s (`partySlowRefresh`); a join reads them fresh | the engine announces them on their events (0x10, 0x20); two store reads per member per second saved |
+| a zone with no region frame | the record carries no position (mask without `0x20`) | rather than region 0 with world coordinates cut to u16; no zone hits it today |
+| refusals that cannot happen here | the slot-0x244 test (`0x2c19`), the character lock (`0x2c06`/`0x2c09`), arena opponents (`0x2c28`) | OpenSRO has none of those states. The exclusive interaction (INTERACTMODE) is `trade.Hub.Busy` |
+| state byte | derived, not stored | It agrees with the writers' table for every single invitation |
+
+### Acceptance
+
+**Go:**
+- `internal/party`:
+  - every encoder against the 57 fixtures, and the decoders reading them back;
+  - truncated payloads refused;
+  - both HP/MP formulas;
+  - the cap per flag combination;
+  - formation and join refusals in order;
+  - the full job and purpose tables;
+  - dissolution at two, succession and the listing following it;
+  - the invitation timeout, an answer racing it, and a stale timer not dropping a newer
+    invitation;
+  - the listed states;
+  - party ids skipping 0;
+  - concurrency under `-race`.
+- `internal/session` (real TCP through the gateway, five characters):
+  - formation in the GameServer's order;
+  - the create ladder: level 4 `0x2c0a`, self silent, nobody 0, an NPC uid 3, 601 units 4,
+    exactly 600 in range, an invited target `0x2c1f`, an inviter with an invitation out `0x2c1f`,
+    another party's member `0x2c18`;
+  - decline for both kinds;
+  - timeout, with a late yes forming nothing;
+  - the cap of 4 refusing `0x2c14`, a member's invite dropped without bit 2 and accepted with it;
+  - kick, leave, succession and dissolution;
+  - logout with reason 1;
+  - the answer after the inviter left, `0x2c0e`;
+  - kind-6 updates (position only; nothing to the member itself; nothing when unchanged);
+  - party chat to members including the sender, not to others.
+- `go test -count=1 -p 1 ./...` against local `opensro_test`: green (every package `ok`).
+
+**Live, the real server binary** (in memory, `-chargen-csv`, `-leveldata-csv`, the bots in
+`-gm-accounts`), `partybot -mode scenario`: all ten steps passed. The trace, with the login lines
+cut:
+
+```
+--- step 1: Aria invites Bram to a non-shared party (flags 0x02)
+[pbBram] <- 0x3080 kind=2 inviter=1 flags=0x02
+--- step 2: Bram accepts: the GameServer's order on both sides
+[pbAria] <- 0xb060 [1] jid=1
+[pbBram] <- 0xb067 [1] jid=2
+[pbAria] <- 0x3065 party=1 leader=1 flags=0x02 members=[pbAria(1)]
+[pbAria] <- 0x3864 k2 joined pbBram(2)
+[pbBram] <- 0x3065 party=1 leader=1 flags=0x02 members=[pbAria(1) pbBram(2)]
+--- step 3: Cato and Dara join (the party fills to 4)
+[pbCato] <- 0x3080 kind=3 inviter=1 flags=0x02
+[pbBram] <- 0x3864 k2 joined pbCato(3)
+[pbAria] <- 0x3864 k2 joined pbCato(3)
+[pbCato] <- 0xb067 [1] jid=3
+[pbCato] <- 0x3065 party=1 leader=1 flags=0x02 members=[pbAria(1) pbBram(2) pbCato(3)]
+[pbDara] <- 0x3080 kind=3 inviter=1 flags=0x02
+[pbDara] <- 0xb067 [1] jid=4
+[pbDara] <- 0x3065 party=1 leader=1 flags=0x02 members=[pbAria(1) pbBram(2) pbCato(3) pbDara(4)]
+(and kind 2 Dara to Aria, Bram, Cato)
+--- step 4: Eli is refused by the cap: 0xb062 [2] 0x2c14
+[pbAria] <- 0xb062 [2] code=0x2c14
+--- step 5: Party chat reaches the four members, the sender included, and not Eli
+[pbDara] <- chat type=4 from=pbBram "pull"   (and Bram, Aria, Cato; Eli nothing)
+--- step 6: Aria kicks Dara: kind 3 reason 4 to all four
+[pbDara] <- 0x3864 k3 left jid=4 reason=4    (and Aria, Cato, Bram)
+--- step 7: Aria leaves: kind 3 reason 2, then kind 9 Bram (the longest-standing)
+[pbCato] <- 0x3864 k3 left jid=1 reason=2    (and Bram, Aria)
+[pbCato] <- 0x3864 k9 leader jid=2           (and Bram)
+--- step 8: Cato leaves the party of two: kind 1 dissolved to both
+[pbCato] <- 0x3864 k1 dissolved code=0x2c0b  (and Bram)
+--- step 9: Dara forms an exp-shared party with Eli and Aria joins; Aria moves; Eli logs out
+[pbEli] <- 0x3080 kind=2 inviter=4 flags=0x01
+[pbDara] <- 0xb060 [1] jid=4
+[pbDara] <- 0x3065 party=4 leader=4 flags=0x01 members=[pbDara(4)]
+[pbDara] <- 0x3864 k2 joined pbEli(5)
+[pbEli] <- 0x3065 party=4 leader=4 flags=0x01 members=[pbDara(4) pbEli(5)]
+[pbAria] <- 0x3065 party=4 leader=4 flags=0x01 members=[pbDara(4) pbEli(5) pbAria(1)]
+[pbEli] <- 0x3864 k6 update jid=1 mask=0x20  (and Dara; Aria nothing)
+[pbDara] <- 0x3864 k3 left jid=5 reason=1    (and Aria)
+--- all steps passed
+```
+
+- **Job mismatch** could not be run live: OpenSRO has no job mode, so every character is a 4. The
+  unit tests cover the whole table and both refusal paths (Form, Add).
+- **No perf gate**: this round is server-only.
+
+### What C1 must know
+
+- **The client's party messages are dead from this round on.** `client/scripts/net/party.gd`'s
+  `0x0080`-`0x0089` get no answer, so World3D's debug party panel and `OPENSRO_QA_PARTY` do
+  nothing until C1 lands. Merge S1 and C1 together (the plan releases them as a pair).
+- **Party chat now echoes to the sender.** The client must drop a type-4 line carrying its own
+  name, as retail's `c:Chat_OnChatUpdate 0x877810` case 4 does. Today `World3D._on_chat_update`
+  would show it twice.
+- **Ids.** The client's own JID is the low 32 bits of `OpSelfID`'s character id. A member or
+  inviter is the spawned player whose `CharacterID & 0xffffffff` equals the JID. Send a player's
+  id as the `0x7060`/`0x7062` target, not a monster's.
+- **HP/MP tenths: two decodes** (READ in the client, round 710's second review).
+  - A full record (`0x3065`, kind 2) carries `trunc(10 r)` per nibble. Draw HP n/10 and MP n/10
+    (`push 0xa; push 0xa` before `c:0x99a2e0`).
+  - A kind-6 update calls `c:0x991f60(jid, hp, 10, mp, 10)`. An HP nibble of 0 means dead (the
+    flag at `+0x60`, HP 0). Any other HP nibble n draws as (n-1)/9 (`c:0x991fd1 lea ecx,[ebx-1]`,
+    `lea edx,[ebp-1]`), so the server's full-bar 11 is 10/9; whether the gauge clamps that was not
+    traced. MP is n/10.
+- **Fixtures** are in `client/scripts/net/fixtures/party/`. `README.md` lists every value.
+
+### Second review (independent, `party710_review2.md`) and its fixes
+
+| # | finding | fix |
+|---|---|---|
+| 1 | the answer tested the decline before the inviter | `handlePartyAnswer` follows `gs:0x5be350`: inviter gone `0x2c0e`, state not 1 → 2, then the decline (`TestPartyAnswerAfterTheInviterLeft` covers yes and no) |
+| 2 | "1 accepts" was READ only for kind 3 | labelled OURS with the `test bl,bl` evidence in `wire.go` and `party_protocol.md`; test that `[2][0x2c0c]` declines |
+| 3 | a join re-filed every member's record | only the joiner's record is built; the others come from the book (`TestPartyJoinKeepsOthersPendingUpdates`) |
+| 4 | pickup rights ignored the item-share bit | `samePartyFunc` requires `Flags.ItemShare()` (`TestPartyFlagGates`) |
+| 5 | the gap bonus and nest arming reached free-for-all parties | `inPartyWithOthers` (their only gate) requires `Flags.ExpShare()`; one line, lane S2's rewrite supersedes it |
+| 6 | the C1 note on HP/MP was incomplete | the two client decodes above; OPEN 8 closed in `party_protocol.md` |
+| 7 | a kind 6 could follow a kind 3/1 | the sampler re-checks membership before each send and sends to the live member list |
+| 8 | a race answered 2 | answered `0x2c1f` |
+| 9 | no-frame zones sent region 0 | the position bit is left out (`TestPartyPositionWithoutAFrame`) |
+| 10 | three store reads per member per second | guild and masteries cached 10 s (OURS) |
+| 11 | an invitation outlived its invitee | `Hub.DetachSession` (OURS, `TestPartyInviteeDisconnectFreesIt`) |
+| 12 | the monster-id consequence was unwritten | written into the ids row above |
+
+**Reviews** (kept beside the notes):
+- `docs/rounds/party710_review.md` (the lane's self-review)
+- `docs/rounds/party710_review2.md` (the independent review: 3 bugs, 1 wrong label, 2 regressions, 6 minor; all fixed)
+
+No perf gate: server-only round.
+
 ## Seven-hundred-and-ninth round: the party system specified from all three binaries -- every party and party-match message with its byte layout, the ShardManager that owns the party, the EXP/SP and item sharing formulas, the job rule, party monsters, and every window and HUD box -- checked by two adversarial reviews, and the plan for six implementation lanes
 
 The user started the party epic (2026-10-04): "Let's get the party system fully working ... make
