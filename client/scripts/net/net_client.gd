@@ -118,6 +118,10 @@ signal pick_up_result(result: GroundItemsNet.PickUpResult)
 ## The player's character just advanced a level: its new level and its total
 ## unspent stat points. Sent only to the character that levelled.
 signal level_up(new_level: int, stat_points: int)
+## Round 716: retail 0x3056, what a kill (or any award) gained this character.
+signal exp_gained(gain: RewardNoticeNet.ExpGain)
+## Round 716: retail 0x304E kind 1, the character's new gold total.
+signal gold_total(total: int, show: bool)
 signal learn_skill_result(ok: bool, reason: String)
 ## The same answer with the skill it was for (round 639): the result names no
 ## skill, so the ids are queued as the requests go out and matched in order
@@ -1199,8 +1203,19 @@ func _dispatch(p: Packet) -> void:
 					sm.character_id, sm.skill_id, sm.x, sm.y, sm.z])
 				skill_moved.emit(sm)
 		PartyNet.OP_CREATE_ACK, PartyNet.OP_INVITE_ACK, PartyNet.OP_JOIN_ACK, \
-				PartyNet.OP_PARTY_INFO, PartyNet.OP_REQUEST, PartyNet.OP_EVENT:
+				PartyNet.OP_PARTY_INFO, PartyNet.OP_REQUEST, PartyNet.OP_EVENT, \
+				PartyNet.OP_ITEM_NOTICE:
 			party.handle(p.opcode, p.data)
+		RewardNoticeNet.OP_EXP_GAIN:
+			var g := RewardNoticeNet.decode_exp_gain(p.data)
+			if g == null:
+				push_warning("NetClient: short 0x3056 (%d bytes) dropped" % p.data.size())
+			else:
+				exp_gained.emit(g)
+		RewardNoticeNet.OP_CHAR_INFO:
+			var gold := RewardNoticeNet.decode_gold(p.data)
+			if not gold.is_empty():
+				gold_total.emit(gold[0], gold[1])
 		GuildNet.OP_CREATE_RESULT:
 			var r := GuildNet.decode_result(p.data)
 			_keep_guild(r)

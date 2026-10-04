@@ -35,6 +35,9 @@ signal invitation(inviter_id: int, inviter_name: String, kind: int, flags: int)
 ## The invitation box closes without an answer from the player (the server
 ## timed it out: 0xb067 [2][0x2c10], c:0x880120).
 signal invitation_closed
+## 0x3068 (round 716): an Item Auto Share item, or gold, went to a member.
+## `recipient_name` is that member's name in this party ("" when unknown).
+signal item_notice(recipient_jid: int, recipient_name: String, item_id: int, amount: int, is_gold: bool)
 ## An answer to send: 0x3080 with this payload (the auto-decline path).
 signal send_answer(payload: PackedByteArray)
 
@@ -167,6 +170,10 @@ func handle(opcode: int, data: PackedByteArray) -> bool:
 			_on_request(PartyNet.decode_invitation(data))
 		PartyNet.OP_EVENT:
 			_on_event(PartyNet.decode_event(data))
+		PartyNet.OP_ITEM_NOTICE:
+			var n := PartyNet.decode_item_notice(data)
+			if n != null:
+				item_notice.emit(n.recipient_jid, _name_of(n.recipient_jid), n.item_id, n.amount, n.is_gold)
 		_:
 			return false
 	return true
