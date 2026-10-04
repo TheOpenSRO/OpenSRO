@@ -48,17 +48,24 @@ func _init() -> void:
 	_check(cm.has("blend_mix") and cm.has("depth_draw_never") and not cm.has("depth_draw_opaque"),
 		"the colour pass blends and writes no depth (got %s)" % ", ".join(cm))
 	_check(colour.contains("uniform float select_fade = 1.0;"), "the colour pass has the fade uniform")
-	_check(_fragment_tail(colour).contains("ALPHA = select_fade;"),
-		"an opaque layer's colour alpha is the fade's alone, not its texture's")
-	_check(not opaque.contains("ALPHA"), "the opaque source writes no ALPHA (so its texture alpha never counted)")
+	_check(colour.contains("uniform float select_use_tex = 1.0;"), "the colour pass has the texture-alpha switch")
+	_check(_fragment_tail(colour).contains("ALPHA = mix(1.0, t.a, select_use_tex) * select_fade;"),
+		"the colour alpha is the texture's alpha x the fade (MODULATE), or the fade alone (SELECTARG2) when switched off")
+	_check(not opaque.contains("ALPHA"), "the opaque source writes no ALPHA (its alpha only enters under the fade)")
 
-	# The blended layer: colour only, its own alpha times the fade.
-	_check(CharSelectStage.fade_code(blended, true) == "", "a blended layer has no depth pass")
+	# The blended layer: no depth pass; under the fade its own blend gives way
+	# to blend_mix (FUN_00bf0e20 sets the mods' states before the fade's).
+	_check(CharSelectStage.fade_code(blended, true) == "", "a blended layer that writes no depth has no depth pass")
 	var bc := CharSelectStage.fade_code(blended, false)
 	var bm := _modes(bc)
 	_check(bm.has("blend_mix") and bm.count("blend_mix") == 1 and bm.has("depth_draw_never"),
-		"a blended layer's colour pass keeps its one blend and writes no depth (got %s)" % ", ".join(bm))
-	_check(_fragment_tail(bc).contains("ALPHA *= select_fade;"), "a blended layer multiplies its own alpha by the fade")
+		"a blended layer's colour pass blends once, as a mix, and writes no depth (got %s)" % ", ".join(bm))
+	_check(_fragment_tail(bc).contains("ALPHA = mix(1.0, t.a, select_use_tex) * select_fade;"),
+		"a blended layer's alpha under the fade is the original's stage-0 rule too")
+	var add_mod := "shader_type spatial;\nrender_mode unshaded, blend_add, depth_draw_always;\nvoid fragment() {\n\tALBEDO = vec3(1.0);\n\tALPHA = 0.5;\n}\n"
+	var am := _modes(CharSelectStage.fade_code(add_mod, false))
+	_check(am.has("blend_mix") and not am.has("blend_add"), "an additive mod is mixed under the fade (got %s)" % ", ".join(am))
+	_check(CharSelectStage.fade_code(add_mod, true) != "", "a blending mod that writes depth keeps a depth pass")
 
 	# Shaders the pairs cannot rewrite.
 	_check(CharSelectStage.fade_code("shader_type canvas_item;\nvoid fragment() { COLOR = vec4(1.0); }", false) == "",

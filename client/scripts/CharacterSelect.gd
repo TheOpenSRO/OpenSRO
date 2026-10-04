@@ -743,7 +743,30 @@ func _qa_report(text: String) -> void:
 
 # --- Each frame ------------------------------------------------------------------------------
 
+## OPENSRO_QA_SELECT_FADEIN_FRAMES=1 (round 719, OURS, QA): the longest real frame
+## (wall clock, not the movie's fixed step) over the first 3.0 s of each
+## list's fade-in, where the pending pairs' shaders compile.
+var _qa_frame_prev_us := 0
+var _qa_frame_max_us := 0
+var _qa_frame_s := -1.0
+func _qa_frame_time_tick(delta: float) -> void:
+	if OS.get_environment("OPENSRO_QA_SELECT_FADEIN_FRAMES") == "" or not _scene_ready:
+		return
+	var now := Time.get_ticks_usec()
+	if _qa_frame_s < 0.0:
+		_qa_frame_s = 0.0
+		_qa_frame_prev_us = now
+		return
+	if _qa_frame_s > 3.0:
+		return
+	_qa_frame_max_us = maxi(_qa_frame_max_us, now - _qa_frame_prev_us)
+	_qa_frame_prev_us = now
+	_qa_frame_s += delta
+	if _qa_frame_s > 3.0:
+		print("QA SELECT FADE-IN longest frame %.1f ms" % (_qa_frame_max_us / 1000.0))
+
 func _process(delta: float) -> void:
+	_qa_frame_time_tick(delta)
 	_tick_countdown(delta)
 	if _scene_ready and _path != null and not _qa_camera_frozen:
 		var pose := _path.advance(delta)
@@ -1565,15 +1588,21 @@ func _qa_pending_probe(d: CharSelectStage.Drawn) -> void:
 	_qa_camera_frozen = true
 	for line in stage.qa_texture_alpha_report(d):
 		print("QA PENDING TEXTURE %s" % line)
-	for dd in stage.drawn:
-		if (dd as CharSelectStage.Drawn).body == null:
-			continue
-		for n in (dd as CharSelectStage.Drawn).body.find_children("*", "GeometryInstance3D", true, false):
-			(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# OPENSRO_QA_PENDING_SHADOWS=1 keeps the bodies' shadows (round 719's
+	# review, finding 2: the shadow at 0xcc is what is measured then).
+	if OS.get_environment("OPENSRO_QA_PENDING_SHADOWS") == "":
+		for dd in stage.drawn:
+			if (dd as CharSelectStage.Drawn).body == null:
+				continue
+			for n in (dd as CharSelectStage.Drawn).body.find_children("*", "GeometryInstance3D", true, false):
+				(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var dir := OS.get_environment("OPENSRO_QA_SELECT_SHOT_DIR")
 	# The background twice, first and last: a pixel where the two differ is
 	# animated (water, sails) and is left out of the measurement.
-	var shots := [["bg1", 0], ["opaque", 255], ["pending", CharSelectMath.PENDING_ALPHA], ["bg2", 0]]
+	# "one" is alpha 1/255 (the review's check, finding 1): the body adds at
+	# most 1/255 of its own colour, so inside its silhouette the frame must
+	# equal the background -- a depth pass hiding what lies behind fails it.
+	var shots := [["bg1", 0], ["opaque", 255], ["pending", CharSelectMath.PENDING_ALPHA], ["one", 1], ["bg2", 0]]
 	for sh in shots:
 		var a: int = sh[1]
 		stage.qa_set_alpha(d, a)

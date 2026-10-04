@@ -16,9 +16,10 @@ class_name CharSelectStage
 ##   one setter (FUN_00a5a8c0, called by FUN_0085def0 for a slot's yaw and by
 ##   OnCreate for the props), so all of them get the world's object rule,
 ##   `rotation.y = -yaw` (NavGraph.godot_yaw, measured round 506).
-## - The models' opacity is GeometryInstance3D.transparency on each mesh
-##   instance, never the materials, which CharacterAppearance shares between
-##   characters (round 683's note).
+## - A model below full alpha draws through translucent pairs made from copies
+##   of its materials (_apply_alpha, round 719); the materials themselves,
+##   which CharacterAppearance shares between characters (round 683's note),
+##   are never modified.
 
 signal first_view_ready
 signal scene_ready
@@ -592,15 +593,19 @@ func qa_fade_report(d: Drawn) -> String:
 	var own := 0
 	var faded := 0
 	var instance := 0
+	var twins := 0
 	if d.body != null:
 		for mi in AppearFade.instances_of(d.body):
-			if mi.transparency > 0.0:
+			if mi.has_meta(FADE_TWIN_META):
+				if not mi.is_queued_for_deletion():
+					twins += 1
+			elif mi.transparency > 0.0:
 				instance += 1
 			elif mi.has_meta(FADE_ORIGINAL_META):
 				faded += 1
 			else:
 				own += 1
-	return "meshes own=%d fade_pass=%d instance_transparency=%d" % [own, faded, instance]
+	return "meshes own=%d fade_pass=%d instance_transparency=%d shadow_twins=%d" % [own, faded, instance, twins]
 
 func _tick(d: Drawn, delta: float) -> void:
 	if qa_frozen:
@@ -620,19 +625,20 @@ func _tick(d: Drawn, delta: float) -> void:
 	d.body.pose(d.anim, t, d.anim_loop)
 
 ## Draws `d` at its alpha (round 719). Below 255 each mesh draws through a
-## translucent pair of its own material (_fade_pair): a depth-only pass first
-## -- every depth pass of the body before any colour (FADE_DEPTH_PRIORITY) --
-## then its own look blended at the alpha where it is the nearest surface. So
-## the model is one even sheet over what lies behind it, as a character at
-## alpha 0xcc is in the original (MEASURED against the user's report; the
-## original's per-mesh state at 0xcc is not read: see party719.md).
-## GeometryInstance3D.transparency, used before, sent each mesh to Godot's
-## transparent pass with no depth written, sorted mesh by mesh: the far
-## pieces of the body blended over the near ones (a kneeling body's arms,
-## dress, face; MEASURED, party719.md). It stays only for a material with no
-## pair (not a ShaderMaterial, or a shader this cannot rewrite), and Godot
-## 4.2's Compatibility renderer ignores it (round 676). At 255 every mesh has
-## its own material back.
+## pair made from its own material (_fade_pair): a depth-only pass at render
+## priority 0, then its own look blended at the alpha at the source's priority
+## + 1, so the body's depth is in before its colour and everything Godot draws
+## below priority 0 (the terrain's overlays and water, the shadow catcher) is
+## already behind it. So only the body's nearest surface is drawn over what is
+## behind it -- the original's translucent draw (CObjRendererVS::FUN_00c428c0,
+## READ: SRCALPHA/INVSRCALPHA with ZWRITE left on, the body drawn in its own
+## order). A shadows-only twin on the own materials keeps the body's shadow
+## (_fade_mesh). GeometryInstance3D.transparency, used before, sent each mesh
+## to Godot's transparent pass with no depth written, sorted mesh by mesh, so
+## far pieces blended over near ones (MEASURED, party719.md); it stays only for
+## a material with no pair. At full alpha every mesh has its own material back.
+## The blend is in Godot's linear buffer, not in display values as the
+## original's: a DEPARTURE, measured in party719.md.
 func _apply_alpha(d: Drawn) -> void:
 	if d.body == null:
 		return
@@ -645,8 +651,13 @@ func _apply_alpha(d: Drawn) -> void:
 		for n in d.body.find_children("*", "GeometryInstance3D", true, false):
 			(n as GeometryInstance3D).transparency = 1.0 - a
 		return
+	# Full alpha within half a step of the byte: the lerp may end an ulp short
+	# of 255 from a fractional start (the review, finding 9).
+	var full := d.alpha >= 254.5
 	for mi in AppearFade.instances_of(d.body):
-		if a >= 1.0:
+		if mi.has_meta(FADE_TWIN_META):
+			continue
+		if full:
 			_unfade_mesh(mi)
 			mi.transparency = 0.0
 		elif not mi.has_meta(FADE_ORIGINAL_META) and not _fade_mesh(d, mi):
@@ -656,12 +667,16 @@ func _apply_alpha(d: Drawn) -> void:
 
 var _qa_instance_fade := OS.get_environment("OPENSRO_QA_SELECT_INSTANCE_FADE") != ""
 
-## The render priority of the depth passes: below every colour pass, so the
-## whole body's depth is in before any of it is blended.
-const FADE_DEPTH_PRIORITY := -100
+## The depth passes' render priority: above the terrain's under-passes and
+## water (-3) and the shadow catcher (-2), so those are drawn first and stay
+## behind the body; the colour passes go at their source's priority + 1.
+const FADE_DEPTH_PRIORITY := 0
+## Meta on the shadows-only twin of a faded mesh, and on the mesh the node.
+const FADE_TWIN_META := "opensro_select_fade_twin"
+const FADE_TWIN_NODE_META := "opensro_select_fade_twin_node"
 
-## Puts `mi` on its materials' translucent pairs. False when one of them has
-## none (nothing is changed then).
+## Puts `mi` on its materials' translucent pairs, with a shadows-only twin on
+## its own materials. False when one of them has no pair (nothing changes).
 func _fade_mesh(d: Drawn, mi: MeshInstance3D) -> bool:
 	var swaps: Array = []
 	if mi.material_override != null:
@@ -679,6 +694,26 @@ func _fade_mesh(d: Drawn, mi: MeshInstance3D) -> bool:
 		if pair == null:
 			return false
 		pairs.append(pair)
+	# The shadow, OURS: the original's shadow of a character at 0xcc is not
+	# read (appear_fade.md, OPEN), and before this round the body kept its full
+	# shadow. The pairs are alpha materials, which Godot casts no shadow from,
+	# so a twin on the own materials casts it, at full strength as before.
+	if mi.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF and mi.get_parent() != null:
+		var twin := MeshInstance3D.new()
+		twin.name = "%s_fade_shadow" % mi.name
+		twin.mesh = mi.mesh
+		twin.skin = mi.skin
+		twin.transform = mi.transform
+		twin.material_override = mi.material_override
+		if mi.mesh != null:
+			for s in range(mi.mesh.get_surface_count()):
+				twin.set_surface_override_material(s, mi.get_surface_override_material(s))
+		twin.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+		twin.set_meta(FADE_TWIN_META, true)
+		mi.get_parent().add_child(twin)
+		if not mi.skeleton.is_empty() and mi.has_node(mi.skeleton):
+			twin.skeleton = twin.get_path_to(mi.get_node(mi.skeleton))
+		mi.set_meta(FADE_TWIN_NODE_META, twin)
 	var originals: Array = []
 	for i in range(swaps.size()):
 		var s: int = swaps[i][0]
@@ -690,7 +725,7 @@ func _fade_mesh(d: Drawn, mi: MeshInstance3D) -> bool:
 	mi.set_meta(FADE_ORIGINAL_META, originals)
 	return true
 
-## Gives `mi` its own materials back.
+## Gives `mi` its own materials back and frees its shadow twin.
 func _unfade_mesh(mi: MeshInstance3D) -> void:
 	if not mi.has_meta(FADE_ORIGINAL_META):
 		return
@@ -701,12 +736,16 @@ func _unfade_mesh(mi: MeshInstance3D) -> void:
 		else:
 			mi.set_surface_override_material(s, o[1])
 	mi.remove_meta(FADE_ORIGINAL_META)
+	if mi.has_meta(FADE_TWIN_NODE_META):
+		var twin = mi.get_meta(FADE_TWIN_NODE_META)
+		if is_instance_valid(twin):
+			(twin as Node).queue_free()
+		mi.remove_meta(FADE_TWIN_NODE_META)
 
 ## The material a mesh of `d` draws with while translucent instead of `src`,
-## made once per source material: for an opaque layer its depth pass with the
-## colour pass as next_pass, for a blended layer its colour pass alone (a
-## blended layer's clear texels must not hide what is behind them). Null when
-## `src` is not a ShaderMaterial this can rewrite.
+## made once per source material: its depth pass with the colour pass as
+## next_pass, or -- for a layer that blends without writing depth -- its colour
+## pass alone. Null when `src` is not a ShaderMaterial this can rewrite.
 func _fade_pair(d: Drawn, src: Material) -> Material:
 	var id := src.get_instance_id()
 	if d.fade_pairs.has(id):
@@ -717,6 +756,13 @@ func _fade_pair(d: Drawn, src: Material) -> Material:
 		var colour_shader := fade_shader(sm.shader, false)
 		if colour_shader != null:
 			var colour := _copy_with(sm, colour_shader)
+			colour.render_priority = sm.render_priority + 1
+			# READ (FUN_00c428c0's stage-0 ALPHAOP): texture alpha x fade, but the
+			# fade alone for an object with an env-map mod, whose flag word gets
+			# 0x40000000 (CRTModEnvMap::vslot_004). ProgEquipPow (enhanced gear,
+			# 0xe21f0000) is not drawn by this client: OPEN.
+			colour.set_shader_parameter("select_use_tex",
+				0.0 if sm.has_meta(SkinnedBsrAssembler.ENV_MAPPED_META) else 1.0)
 			d.fade_colours.append(colour)
 			if sm.next_pass != null:
 				colour.next_pass = _fade_pair(d, sm.next_pass)
@@ -739,20 +785,12 @@ static func _copy_with(src: ShaderMaterial, shader: Shader) -> ShaderMaterial:
 	for u in src.shader.get_shader_uniform_list():
 		var n: String = u["name"]
 		m.set_shader_parameter(n, src.get_shader_parameter(n))
-	m.render_priority = src.render_priority
 	return m
 
 static var _fade_shaders := {}
 
 ## The translucent rewrite of a spatial shader (round 719), made once per
-## shader and pass: null for a shader that is not spatial, has no fragment()
-## or render_mode, or -- for the depth pass -- already blends.
-## - depth pass: blend_mix and depth_draw_always, its fragment ending in
-##   ALPHA = 0.0, so it writes depth (alpha test included) and no colour;
-## - colour pass: blend_mix (or its own blend) and depth_draw_never, its
-##   fragment ending in ALPHA = select_fade -- or ALPHA *= select_fade for a
-##   shader that sets ALPHA itself. An opaque layer's texture alpha does not
-##   enter: the opaque material never used it (round 676's lesson).
+## shader and pass: null when fade_code makes none.
 static func fade_shader(src: Shader, depth_only: bool) -> Shader:
 	var key := "%d/%s" % [src.get_instance_id(), depth_only]
 	if _fade_shaders.has(key):
@@ -765,6 +803,21 @@ static func fade_shader(src: Shader, depth_only: bool) -> Shader:
 	_fade_shaders[key] = sh
 	return sh
 
+## The rewrite itself; "" for a shader that is not spatial or has no
+## render_mode or fragment(), and for the depth pass of a layer that blends
+## without writing depth.
+## - depth pass: blend_mix and depth_draw_always, its fragment ending in
+##   ALPHA = 0.0, so it writes depth (alpha test included) and no colour. A
+##   blending MTRL mod that writes depth (depth_draw_always) keeps it, as the
+##   original keeps a z-writing mod's depth.
+## - colour pass: blend_mix whatever the layer's own blend -- READ: in
+##   CObjRendererVS::FUN_00bf0e20 the mods (FUN_00c451e0) set their states
+##   first and the fade (FUN_00c428c0) then sets SRCBLEND 5 / DESTBLEND 6 and
+##   the stage-0 alpha over them -- and depth_draw_never, its fragment ending
+##   in the original's stage-0 alpha: texture alpha x fade (MODULATE) when
+##   select_use_tex is 1, the fade alone (SELECTARG2) when 0. The texture
+##   alpha is the shader's sample `t` (PlayerPortrait's); a shader with no
+##   `vec4 t` gets the fade alone (OURS).
 static func fade_code(code: String, depth_only: bool) -> String:
 	if not code.contains("shader_type spatial;"):
 		return ""
@@ -774,17 +827,21 @@ static func fade_code(code: String, depth_only: bool) -> String:
 		return ""
 	var modes: Array[String] = []
 	var blends := false
+	var depth_always := false
 	for part in m.get_string(1).split(","):
 		var p := part.strip_edges()
-		if p == "" or p.begins_with("depth_draw_"):
+		if p == "":
+			continue
+		if p.begins_with("depth_draw_"):
+			depth_always = p == "depth_draw_always"
 			continue
 		if p.begins_with("blend_"):
 			blends = true
+			continue
 		modes.append(p)
-	if depth_only and blends:
+	if depth_only and blends and not depth_always:
 		return ""
-	if not blends:
-		modes.append("blend_mix")
+	modes.append("blend_mix")
 	modes.append("depth_draw_always" if depth_only else "depth_draw_never")
 	var frag := code.find("void fragment()")
 	if frag < 0:
@@ -792,15 +849,15 @@ static func fade_code(code: String, depth_only: bool) -> String:
 	var open := code.find("{", frag)
 	if open < 0:
 		return ""
-	var depth := 0
+	var level := 0
 	var close := -1
 	for i in range(open, code.length()):
 		var ch := code[i]
 		if ch == "{":
-			depth += 1
+			level += 1
 		elif ch == "}":
-			depth -= 1
-			if depth == 0:
+			level -= 1
+			if level == 0:
 				close = i
 				break
 	if close < 0:
@@ -809,14 +866,14 @@ static func fade_code(code: String, depth_only: bool) -> String:
 	var tail: String
 	if depth_only:
 		tail = "\tALPHA = 0.0;\n"
-	elif RegEx.create_from_string("\\bALPHA\\s*=").search(body) != null:
-		tail = "\tALPHA *= select_fade;\n"
+	elif RegEx.create_from_string("\\bvec4\\s+t\\s*=").search(body) != null:
+		tail = "\tALPHA = mix(1.0, t.a, select_use_tex) * select_fade;\n"
 	else:
 		tail = "\tALPHA = select_fade;\n"
 	var out := code.substr(0, close) + tail + code.substr(close)
 	out = out.substr(0, m.get_start()) + "render_mode " + ", ".join(modes) + ";" + out.substr(m.get_end())
 	if not depth_only:
-		out = out.replace("shader_type spatial;", "shader_type spatial;\nuniform float select_fade = 1.0;")
+		out = out.replace("shader_type spatial;", "shader_type spatial;\nuniform float select_fade = 1.0;\nuniform float select_use_tex = 1.0;")
 	return out
 
 # --- Helpers ------------------------------------------------------------------------------
