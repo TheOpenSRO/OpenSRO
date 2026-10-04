@@ -51,8 +51,8 @@ func dist3(a, b world.Position) float64 {
 //     (0x525fd7), and only a distance failure clears it (0x526055 xor
 //     ebx,ebx), so the picker gets it only when the last member tried was too
 //     far (0x526069), or could not be found -- the lookup's null result is
-//     what the pointer then holds (INFERRED: the not-found branch was not
-//     traced separately).
+//     what the pointer then holds (READ: `0x525f90 call 0x485dc0; mov
+//     ebx,eax; test ebx,ebx; je 0x526057`).
 //
 // "The same world" is the same zone bucket (OURS, as for the party share).
 func roundRobinRecipient(hub *world.Hub, parties *party.Hub, p *party.Party, picker world.Entity) int64 {
@@ -119,11 +119,17 @@ func splitGold(hub *world.Hub, p *party.Party, picker world.Entity, amount int64
 	return out
 }
 
-// sendItemNotice sends 0x3068 to every member of p in the world (READ: the GS
-// broadcasts to the party's members on its server, 0x5bb770).
-func sendItemNotice(hub *world.Hub, p *party.Party, n party.ItemNotice) {
+// sendItemNotice sends 0x3068 to every member of p in the world EXCEPT the
+// recipient (READ: FUN_005bdc80 passes the recipient's id, the notice's first
+// u32, as the second argument of CParty::BroadcastToLocalMember 0x5bb770 --
+// `0x5bdd59 push edx` -- which skips the member with that id when it is
+// non-zero, 0x5bb811-0x5bb81d; chat passes 0, which is why chat echoes).
+func sendItemNotice(hub *world.Hub, p *party.Party, recipient int64, n party.ItemNotice) {
 	pkt := &proto.Packet{Opcode: party.OpItemNotice, Data: n.Encode()}
 	for _, m := range p.Members {
+		if m.CharacterID == recipient {
+			continue
+		}
 		if e, ok := hub.EntityByCharacterID(m.CharacterID); ok && e.Session != nil {
 			e.Session.Send(pkt)
 		}

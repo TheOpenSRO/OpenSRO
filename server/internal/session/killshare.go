@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
@@ -36,9 +35,14 @@ import (
 //     free-for-all kill leaves it at 0 (0x529e0a). With several exp-share
 //     groups the last one written wins.
 //
-// Group order: the engine walks its own map, whose order is OPEN. OURS: groups
-// in first-hit order (the same order UniqueKiller uses), so ties keep the
-// first group met and the last exp-share group in that order sets the count.
+// Group order: the engine's groups are a std::map keyed by the group's object
+// POINTER (the party or the PC; key [esp+0x4c] at 0x4c45ca, compared unsigned
+// in 0x9a25c0), so it walks them in heap-address order: the top group is the
+// first strict maximum in that order (0x4c46ed) and the last exp-share group
+// in it writes the arming count (READ, round 712's review). Heap addresses
+// cannot be reproduced, so OURS: first-hit order (the order UniqueKiller
+// uses). Individuals are NOT ordered before parties: the flag is not part of
+// the key.
 
 // killAward is one receiver's award: the damage it is for (the receiver's own
 // in an individual award, the whole group's in a party share) and the
@@ -46,7 +50,7 @@ import (
 type killAward struct {
 	characterID int64
 	damage      int
-	multiplier  float64
+	multiplier  float32
 	// expShareParty is the receiver's party bit 0, the level-gap bonus's gate
 	// (leveldata.ExpDiffScale); inParty picks ExpRatioParty (pc[0x72e]).
 	expShareParty bool
@@ -214,18 +218,6 @@ type killPayout struct {
 	hp       int // the refilled HP after a level-up
 }
 
-// expLocks serialises one character's experience read-modify-write: a party
-// share pays a member from whichever goroutine killed the monster, so two
-// members' kills can pay a third at once.
-var expLocks sync.Map // int64 -> *sync.Mutex
-
-func lockExp(characterID int64) func() {
-	v, _ := expLocks.LoadOrStore(characterID, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
-}
-
 // payKill executes a plan: each award is computed by the two contributor
 // formulas, multiplied (vslot_420), given the rate bonus and applied as
 // GainExpAndLevel does. It returns each receiver's payout.
@@ -251,7 +243,7 @@ func payKill(ctx context.Context, d combatDeps, m combat.Monster, plan killPlan)
 // payAward pays one award.
 func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) (killPayout, error) {
 	var out killPayout
-	unlock := lockExp(a.characterID)
+	unlock := character.LockLeveling(a.characterID)
 	defer unlock()
 	char, err := d.chars.GetByID(ctx, a.characterID)
 	if err != nil {
@@ -295,11 +287,20 @@ func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) 
 // killReward is the two contributor formulas for one award, before the
 // multiplier (Formula_ExpRewardForContributor 0x410110, FUN_004106b0).
 func killReward(ctx context.Context, d combatDeps, m combat.Monster, a killAward, char *character.Character) (exp, sp int64) {
-	base, ok := levelTable.KillBase(char.Level, m.Level)
-	if !ok {
-		// A level table without this level's unit: the disclosed
-		// toughness-derived ExpReward, as before round 712.
-		base = m.ExpReward
+	// The base is the victim's ExpToGive, characterdata col 79, for every
+	// receiver (slot 332, READ: 0x4a68b0 -> 0x449340, ref +0x250). A monster
+	// whose reference data predates the column falls back to KillBase, the
+	// level table's unit at the lower level, and a table without that to the
+	// toughness-derived ExpReward (both OURS fallbacks).
+	var base int64
+	switch {
+	case m.HasExpToGive:
+		base = m.ExpToGive
+	default:
+		var ok bool
+		if base, ok = levelTable.KillBase(char.Level, m.Level); !ok {
+			base = m.ExpReward
+		}
 	}
 	best := bestMastery(ctx, d, a.characterID)
 	unit, _ := levelTable.ExpUnit(char.Level)

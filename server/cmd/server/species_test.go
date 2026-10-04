@@ -111,6 +111,7 @@ func TestSpeciesTableRederivesTheRoster(t *testing.T) {
 	if ov.Overlaid != len(monsterSpecs) || len(ov.Missing) != 0 || len(ov.Changed) != 0 || len(ov.Kept) != 0 {
 		t.Fatalf("overlay %d, missing %v, changed %v, kept %v", ov.Overlaid, ov.Missing, ov.Changed, ov.Kept)
 	}
+	specs = expless(specs)
 	for i := range specs {
 		if !reflect.DeepEqual(specs[i], monsterSpecs[i]) {
 			t.Errorf("%s re-derived as\n  %+v\nwant\n  %+v", monsterSpecs[i].Name, specs[i], monsterSpecs[i])
@@ -163,7 +164,7 @@ func TestSpeciesTableKeepsWhatItCannotSupply(t *testing.T) {
 	if !strings.HasSuffix(ov.Kept[0], ": name,gold,attacks") {
 		t.Errorf("kept %q", ov.Kept[0])
 	}
-	if !reflect.DeepEqual(specs, monsterSpecs) {
+	if !reflect.DeepEqual(expless(specs), monsterSpecs) {
 		t.Error("a kept field changed")
 	}
 }
@@ -272,4 +273,15 @@ func TestSpeciesTableMatchesTheRealExport(t *testing.T) {
 	if len(ov.Missing) != 0 {
 		t.Errorf("missing: %v", ov.Missing)
 	}
+}
+
+// expless drops the col-79 fields (round 712) a table-derived spec carries and
+// the hand-typed roster does not: the roster tables write col 79 as 0, which
+// the CSV then carries as a known 0, and the roster has no column to compare.
+func expless(specs []monsterSpec) []monsterSpec {
+	out := append([]monsterSpec(nil), specs...)
+	for i := range out {
+		out[i].ExpToGive, out[i].HasExpToGive = 0, false
+	}
+	return out
 }

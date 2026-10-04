@@ -132,6 +132,14 @@ type Table struct {
 // "proven by its use-site" -- which was true of the function's identity and not
 // of the application.
 //
+// ROUND 712 CORRECTION: the "only option" argument below is wrong. The
+// monster kill does have its own formula, reached through the vtable: the
+// death distributor CGObjMob::vslot_399 calls CGObjPC::vslot_420 (0x4ea6a0),
+// which calls Formula_ExpRewardForContributor (0x410110), whose base is the
+// victim's ExpToGive (characterdata col 79, slot 332 -> 0x449340 -> ref
+// +0x250). This formula needs both sides to be PCs: it is the PvP one. The
+// kill path now pays through killreward.go; see docs/rounds/party712.md.
+//
 // It is, however, the ONLY option rather than a choice among several. Both
 // character experience fields -- ExpOffset (charData+0x68) and SExpOffset
 // (+0x70) -- have exactly one writer in the binary, GObjPC_GainExpAndLevel, and
@@ -154,7 +162,7 @@ type Table struct {
 //	ref = FUN_0059e870(pc + 0xa30)          // a byte, from a list walk
 //	if (ref > 0x78) { pc[0x1cd8] = pc[0x1cdc] = 1.0f; return; }
 //	pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9)
-//	pc[0x1cdc] =       1 - (ref - charLevel) * 0.1
+//	pc[0x1cdc] =       clamp(1 - (ref - charLevel) * 0.1, 0.1, 1.9)   // round 712: clamped too
 //
 // so the term is a LEVEL-DIFFERENCE modifier bounded to [0.1, 1.9], recomputed
 // on exactly three events: PC load (CGObjPC::vslot_212), GObjPC_SetLevel, and
@@ -314,7 +322,7 @@ const (
 //	ref = Mastery_MaxLevel(pc + 0xa30)
 //	if (ref > 0x78) { pc[0x1cd8] = pc[0x1cdc] = 1.0f; return; }   // 0x78 = 120
 //	pc[0x1cd8] = clamp(1 - (charLevel - ref) * 0.1, 0.1, 1.9)
-//	pc[0x1cdc] =        1 - (ref - charLevel) * 0.1               // the mirror
+//	pc[0x1cdc] =  clamp(1 - (ref - charLevel) * 0.1, 0.1, 1.9)        // the mirror, clamped (round 712: 0x4e31af-0x4e31e9)
 //
 // K is `fmul QWORD ds:0xb45ec0` = 0.1, a double; the clamp bounds are the float
 // at 0xb45eb8 (0.1) and 0xb45f18 (1.9). It is recomputed on exactly three

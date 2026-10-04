@@ -534,13 +534,18 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 				return err
 			}
 			// The distribution notice (0x3068, READ GS FUN_005bdc80 from
-			// 0x5263dd): only for an item the round robin handed out.
-			if sharing != nil && !it.Gold && !it.OwnerOnly() {
+			// 0x5263dd): for every item an Item Auto Share party's member
+			// picks up -- an owner-only item too, which the round robin left
+			// with the picker (FUN_00526090 calls it on any successful add
+			// when the item is not gold, slot 31 CGObj::IsGold at
+			// 0x5262a1-0x5262aa, 0x5263c8-0x5263dd). The gold split sends
+			// none (FUN_005bc7f0 never calls 0x5bdc80, round 712's review).
+			if sharing != nil && !it.Gold {
 				class, amount := party.ItemNoticeOther, uint64(1)
 				if it.Expendable {
 					class, amount = party.ItemNoticeExpendable, uint64(it.Quantity)
 				}
-				sendItemNotice(hub, sharing, party.ItemNotice{RecipientJID: party.JIDOf(recipient),
+				sendItemNotice(hub, sharing, recipient, party.ItemNotice{RecipientJID: party.JIDOf(recipient),
 					RefItemID: uint32(it.ItemID), Class: class, Amount: amount})
 			}
 			removed := &GroundItemRemoved{ID: it.ID, Reason: GroundItemRemovedPicked, PickerID: characterID}

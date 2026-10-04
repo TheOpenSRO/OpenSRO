@@ -110,9 +110,14 @@ func MonsterAttackFactor(partyMonster bool, rank int) float32 {
 }
 
 // ScaleMonsterAttack applies MonsterAttackFactor to one end of an attack
-// range, truncating (INFERRED: the conversion back to an integer stat in
-// Combat_ComputeWeaponDamage was not read; the scaled value is clamped
-// against 0xb45f20 afterwards, 0x40dbe2, which OpenSRO's ranges never reach).
+// range, truncating. OURS: the engine keeps the scaled value a float32
+// through the roll (Combat_ComputeWeaponDamage 0x40db50 returns a float,
+// clamped to [0, 999999]; its caller stores min and max as float32 at
+// 0x40dcf4 and 0x40dd2a), and OpenSRO's ranges are integers. The engine
+// scales the attacker's own attack stat (vt+0x104, param 0xd/0xe, plus an
+// item bonus); OpenSRO applies the factor to whatever range the swing uses,
+// a drawn monster skill's 'att' block included -- that this is the same
+// quantity is INFERRED.
 func ScaleMonsterAttack(v int, f float32) int {
 	if f == 1 {
 		return v

@@ -1656,7 +1656,9 @@ func weaponInstance(e equipment.Equipped) combat.Instance {
 // its own half the same way (round 378).
 func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
 	// A party monster's attack value is x1.2 and an elite's x1.5 before
-	// defence (round 712, combat.MonsterAttackFactor, READ FUN_0040da20).
+	// defence (round 712, combat.MonsterAttackFactor, READ FUN_0040da20). The
+	// engine scales the attacker's own stat; applying it to a drawn skill's
+	// range is INFERRED, and the truncation is OURS (ScaleMonsterAttack).
 	f := combat.MonsterAttackFactor(m.Party, m.Rarity)
 	if m.AttackMax <= 0 {
 		return combat.ScaleMonsterAttack(m.Attack, f) // no range at all: the flat disclosed Attack

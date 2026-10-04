@@ -27,7 +27,10 @@
 //	    of two (the killer gains the baseline x 1.03, the other nothing). The
 //	    kills are real blows: a GM /damage (credited to the killer on the
 //	    monster's damage list, paying nothing itself) leaves the monster at 1
-//	    HP and a swing kills it. Needs -leveldata-csv and -monsters-csv.
+//	    HP and a swing kills it. Needs -leveldata-csv and -monsters-csv. The
+//	    x0.55 relation holds for a species less than 5 levels above the bots:
+//	    from 5 up an exp-share member also earns the party gap bonus
+//	    (leveldata.ExpDiffPartyBonus), which the solo baseline does not.
 //
 //	partybot -mode bot -addr HOST:PORT -name Bram [-accept=true] [-invite NAME]
 //	    One character that stays online: answers every invitation (yes with

@@ -79,26 +79,94 @@ func MonsterExpFactor(partyMonster bool, rank int) float64 {
 }
 
 // MasterySPScale is the mirror of MasteryExpScale the engine writes beside it,
-// pc+0x1cdc, which the kill's SKILL experience is multiplied by (READ:
-// GObjPC_RecalcLevelDiffExpScale 0x4e30d0 writes `1 - (ref - charLevel) *
-// 0.1` with no clamp, and 1.0 when the reference exceeds 120; FUN_004106b0
-// loads it at 0x41076f). The reference is the highest mastery level, which is
-// capped at the character's level, so this is 1.0 or more: a lagging mastery
-// earns MORE skill experience while it earns less experience.
+// pc+0x1cdc, which the kill's SKILL experience is multiplied by: `1 - (ref -
+// charLevel) * 0.1`, CLAMPED to [0.1f, 1.9f] like its twin, and 1.0 when the
+// reference exceeds 120 (READ, GObjPC_RecalcLevelDiffExpScale 0x4e30d0: the
+// unclamped value is stored at 0x4e3151 and then overwritten by the clamp at
+// 0x4e31af-0x4e31e9 -- floor 0x1cdc = 0.1f when it is 0.1 or less, cap 1.9f
+// when it reaches the double 1.8999999761 at 0xb45f10; FUN_004106b0 loads it
+// at 0x41076f). The reference is the highest mastery level, capped at the
+// character's level, so a lagging mastery earns MORE skill experience, up to
+// x1.9. (Round 712's first build left it unclamped; its review read the clamp.)
 func MasterySPScale(charLevel, maxMasteryLevel int) float64 {
 	if maxMasteryLevel > MasteryExpRefCap {
 		return 1.0
 	}
-	return 1.0 - float64(maxMasteryLevel-charLevel)*MasteryExpPenaltyPerLevel
+	scale := 1.0 - float64(maxMasteryLevel-charLevel)*MasteryExpPenaltyPerLevel
+	if scale < MasteryExpScaleMin {
+		return MasteryExpScaleMin
+	}
+	if scale > MasteryExpScaleMax {
+		return MasteryExpScaleMax
+	}
+	return scale
+}
+
+// ExpWindowScale32 is ExpWindowScale at the engine's precision
+// (Formula_ExpScaleByLevelWindow 0x40fed0, READ): the step is stored to a
+// float32 before the `1 -` (0x40ff4b, 0x40ff80) and the difference stored
+// again (0x40ff8c); 0.9f flat four to six levels down (0xb45ddc); floor 0.1f
+// below the double 0.1 (0x40ff94-0x40ffad), 1.0 at 1.0 or above. The kill
+// formulas use it; ExpWindowScale keeps its float64 callers.
+func ExpWindowScale32(receiverLevel, victimLevel int) float32 {
+	gap := victimLevel - receiverLevel
+	v := float32(1)
+	switch {
+	case gap >= 11:
+		t := float32(float64(gap-10) * ExpWindowFarAbovePerLevel)
+		v = float32(1 - float64(t))
+	case gap <= -4:
+		if gap > -7 {
+			v = float32(ExpWindowNearBelow)
+		} else {
+			t := float32(float64(-gap-3) * ExpWindowFarBelowPerLevel)
+			v = float32(1 - float64(t))
+		}
+	}
+	if float64(v) < ExpWindowScaleFloor {
+		return float32(ExpWindowScaleFloor)
+	}
+	if v >= 1 {
+		return 1
+	}
+	return v
+}
+
+// ExpDiffScale32 is ExpDiffScale at the engine's precision
+// (Formula_ExpScaleByLevelDiff 0x40ffe0, READ): the party gap bonus is a
+// float32 constant, `bonus + 1.0` is stored to a float32 (0x41009a) before
+// `steps * 0.03` is added and the sum stored again (0x4100cc); clamped to
+// [1, 4] (0x4100d0-0x410100).
+func ExpDiffScale32(receiverLevel, victimLevel int, expSharingParty, europe bool) float32 {
+	var bonus float32
+	if expSharingParty {
+		bonus = float32(ExpDiffPartyBonus(receiverLevel, victimLevel, europe))
+	}
+	b := float32(float64(bonus) + 1.0)
+	if victimLevel+3 <= receiverLevel {
+		return 1
+	}
+	steps := victimLevel - receiverLevel + 3
+	if steps > ExpDiffScaleMaxSteps {
+		steps = ExpDiffScaleMaxSteps
+	}
+	v := float32(float64(steps)*ExpDiffScalePerStep + float64(b))
+	if v < 1 {
+		return 1
+	}
+	if v >= float32(ExpDiffScaleCap) {
+		return float32(ExpDiffScaleCap)
+	}
+	return v
 }
 
 // RewardInput is what the two contributor formulas read for one receiver.
 type RewardInput struct {
-	// Base is slot 332 of the victim, the monster's base EXP. OPEN: CGObjMob
-	// slot 332 (0x4a68b0) jumps to the reference object's vtable +0x34, which
-	// is not read. OpenSRO keeps the base it has always used,
-	// Table.KillBase -- the level table's EXP unit at the lower of the two
-	// levels -- and says so (OURS, see KillBase).
+	// Base is slot 332 of the victim, the monster's base EXP: its
+	// characterdata col 79, ExpToGive, the same for every receiver (READ,
+	// round 712's review: CGObjMob slot 332 0x4a68b0 jumps to the instance's
+	// slot 13, 0x449340, which returns the reference row's +0x250). Without
+	// the column the caller passes Table.KillBase (OURS fallback).
 	Base int64
 	// MonsterFactor is vslot_359 (MonsterExpFactor).
 	MonsterFactor float64
@@ -137,9 +205,9 @@ func ContributorExp(in RewardInput) int64 {
 		return 0
 	}
 	base := float32(u32AsFloat(in.Base) * in.MonsterFactor)
-	window := float32(ExpWindowScale(in.ReceiverLevel, in.VictimLevel))
+	window := ExpWindowScale32(in.ReceiverLevel, in.VictimLevel)
 	lag := float32(in.ExpLag)
-	diff := float32(ExpDiffScale(in.ReceiverLevel, in.VictimLevel, in.ExpShareParty, in.Europe))
+	diff := ExpDiffScale32(in.ReceiverLevel, in.VictimLevel, in.ExpShareParty, in.Europe)
 	v := float64(base) * float64(in.Share) * float64(window) * float64(lag) * float64(diff)
 	out := int64(v)
 	if out <= 0 {
@@ -164,9 +232,9 @@ func ContributorSP(in RewardInput) int64 {
 		return 0
 	}
 	base := u32AsFloat(in.Base) * in.MonsterFactor * SPPerExpUnit / u32AsFloat(in.ExpUnitReceiver)
-	window := float32(ExpWindowScale(in.ReceiverLevel, in.VictimLevel))
+	window := ExpWindowScale32(in.ReceiverLevel, in.VictimLevel)
 	lag := float32(in.SPLag)
-	diff := float32(ExpDiffScale(in.ReceiverLevel, in.VictimLevel, in.ExpShareParty, in.Europe))
+	diff := ExpDiffScale32(in.ReceiverLevel, in.VictimLevel, in.ExpShareParty, in.Europe)
 	// The product is stored to a float32 (`fstp DWORD [esp+0x24]`,
 	// 0x41083e) before the floor and the ftol.
 	v := float32(base * float64(in.Share) * float64(window) * float64(lag) * float64(diff))
@@ -176,12 +244,16 @@ func ContributorSP(in RewardInput) int64 {
 	return int64(int32(v))
 }
 
-// KillBase is OpenSRO's stand-in for slot 332, the monster's base EXP (OPEN,
-// see RewardInput.Base): the level table's EXP unit at the lower of the
-// receiver's and the victim's levels, the unit Formula_MonsterExpReward
-// (0x4105d0) reads. It is what KillExp has always paid, now without the two
-// level scalers, which ContributorExp applies itself. OURS: the engine's slot
-// 332 is the victim's alone and does not depend on the receiver.
+// KillBase is the FALLBACK base for a monster whose reference data has no
+// col 79 (a monsters CSV exported before round 712): the level table's EXP
+// unit at the lower of the receiver's and the victim's levels, what KillExp
+// always paid. OURS: the engine's base is the victim's ExpToGive
+// (RewardInput.Base), which for an ordinary monster equals this unit at its
+// OWN level (MEASURED, 95.3 % of MOB rows) -- so the fallback agrees with the
+// engine for a receiver at or above the monster's level and underpays one
+// below it. The min-level rule itself is Formula_MonsterExpReward's
+// (0x4105d0), which needs both sides to be PCs (0x4105d9/0x4105e8): the PvP
+// formula.
 func (t *Table) KillBase(receiverLevel, victimLevel int) (int64, bool) {
 	lvl := receiverLevel
 	if victimLevel < lvl {
@@ -194,8 +266,8 @@ func (t *Table) KillBase(receiverLevel, victimLevel int) (int64, bool) {
 // EXP and SP are each stored to a float32, multiplied by the award's
 // multiplier -- itself a float32 argument (`fld DWORD [ebp+0x10]`, 0x4ea863)
 // -- and truncated (ftol).
-func ApplyRewardMultiplier(exp, sp int64, multiplier float64) (int64, int64) {
-	m := float64(float32(multiplier))
+func ApplyRewardMultiplier(exp, sp int64, multiplier float32) (int64, int64) {
+	m := float64(multiplier)
 	e := int64(float64(float32(exp)) * m)
 	s := int64(float64(float32(sp)) * m)
 	return e, s
@@ -222,11 +294,11 @@ func ApplyRateBonus(exp, sp int64, r float64) (int64, int64) {
 // an exp-share group (READ, 0x4c4820-0x4c48c8): 1.0, or 1 + (members-1)*0.03
 // in a party (members = party+0x1c, every member wherever he is), halved when
 // the victim is a party monster below the receiver's level (FUN_00410fd0,
-// 0.5 at 0xb45b68).
-func FreeForAllMultiplier(partyMembers int, partyMonsterBelowReceiver bool) float64 {
-	m := 1.0
+// 0.5 at 0xb45b68). The multiplier is a float32 (vslot_420's argument).
+func FreeForAllMultiplier(partyMembers int, partyMonsterBelowReceiver bool) float32 {
+	m := float32(1)
 	if partyMembers > 0 {
-		m = PartyExpBonus(partyMembers)
+		m = float32(PartyExpBonus(partyMembers))
 	}
 	if partyMonsterBelowReceiver {
 		m *= PartyMonsterHalf
@@ -253,15 +325,16 @@ const (
 // PartyShareBonus is FUN_005bca60's bonus (READ, 0x5bcd38-0x5bcd9c), from the
 // eligible members' Countries: chinese with Country 0, others with any other.
 //
-//	others > 0:   1 + (others-1)*0.2 + chinese*0.1
-//	chinese > 0:  1 + (chinese-1)*0.1
+//	others > 0:   f32((1 + (others-1)*0.2) + f32(chinese*0.1))   ; 0x5bcd62, 0x5bcd6a
+//	chinese > 0:  f32(1 + (chinese-1)*0.1)                       ; 0x5bcd98
 //	else:         1
-func PartyShareBonus(chinese, others int) float64 {
+func PartyShareBonus(chinese, others int) float32 {
 	switch {
 	case others > 0:
-		return 1 + float64(others-1)*PartyShareEuropePerMember + float64(chinese)*PartyShareChinaPerMember
+		c := float32(float64(chinese) * PartyShareChinaPerMember)
+		return float32(1 + float64(others-1)*PartyShareEuropePerMember + float64(c))
 	case chinese > 0:
-		return 1 + float64(chinese-1)*PartyShareChinaPerMember
+		return float32(1 + float64(chinese-1)*PartyShareChinaPerMember)
 	}
 	return 1
 }
@@ -269,8 +342,8 @@ func PartyShareBonus(chinese, others int) float64 {
 // PartySharePenalty is FUN_005bca60's party-monster penalty (READ,
 // 0x5bcda0-0x5bce06): 0.5 when the victim is a party monster whose level is
 // below the eligible members' average (Σlevel / count, integer division),
-// else 1.
-func PartySharePenalty(partyMonster bool, victimLevel int, levels []int) float64 {
+// else 1 -- a float32 (0x5bce06).
+func PartySharePenalty(partyMonster bool, victimLevel int, levels []int) float32 {
 	if !partyMonster || len(levels) == 0 {
 		return 1
 	}
@@ -285,13 +358,13 @@ func PartySharePenalty(partyMonster bool, victimLevel int, levels []int) float64
 }
 
 // PartyShareMultipliers is FUN_005bca60's split (READ, 0x5bce20-0x5bcee4): for
-// eligible member i, s_i = level_i / Σlevel (a float32), and the bonus is
-// damped to (bonus-1)*0.5+1 for a member whose s_i exceeds 0.7 in a party of
-// three or more eligible whose top level is 21 or more. The award's multiplier
-// is s_i * b_i * penalty, and every member's award is for the WHOLE group's
-// damage.
-func PartyShareMultipliers(levels []int, bonus, penalty float64) []float64 {
-	out := make([]float64, len(levels))
+// eligible member i, s_i = f32(level_i / Σlevel) (0x5bce5f), and the bonus --
+// a float32 -- is damped to f32((bonus-1)*0.5+1) (0x5bcea3) for a member whose
+// s_i exceeds 0.7 in a party of three or more eligible whose top level is 21
+// or more. The award's multiplier is f32(s_i * b_i * penalty) (0x5bcec8), and
+// every member's award is for the WHOLE group's damage.
+func PartyShareMultipliers(levels []int, bonus, penalty float32) []float32 {
+	out := make([]float32, len(levels))
 	sum, top := 0, 0
 	for _, l := range levels {
 		sum += l
@@ -303,12 +376,12 @@ func PartyShareMultipliers(levels []int, bonus, penalty float64) []float64 {
 		return out
 	}
 	for i, l := range levels {
-		s := float32(l) / float32(sum)
+		s := float32(float64(l) / float64(sum))
 		b := bonus
 		if float64(s) > PartyShareDampThreshold && len(levels) >= PartyShareDampMinMembers && top >= PartyShareDampMinTopLevel {
-			b = (bonus-1)*PartyShareDampFactor + 1
+			b = float32((float64(bonus)-1)*PartyShareDampFactor + 1)
 		}
-		out[i] = float64(s) * b * penalty
+		out[i] = float32(float64(s) * float64(b) * float64(penalty))
 	}
 	return out
 }

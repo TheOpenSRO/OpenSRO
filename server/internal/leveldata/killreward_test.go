@@ -24,24 +24,24 @@ func TestPartyShareWorkedExamples(t *testing.T) {
 		{"80, 10, 10", []int{80, 10, 10}, 1.2, []float64{0.88, 0.12, 0.12}},
 	} {
 		bonus := PartyShareBonus(len(c.levels), 0)
-		if !near(bonus, c.bonus) {
+		if !near(float64(bonus), c.bonus) {
 			t.Fatalf("%s: bonus %v, want %v", c.name, bonus, c.bonus)
 		}
 		got := PartyShareMultipliers(c.levels, bonus, 1)
 		for i := range got {
-			if math.Abs(got[i]-c.want[i]) > 1e-6 {
+			if math.Abs(float64(got[i])-c.want[i]) > 1e-6 {
 				t.Errorf("%s: member %d multiplier %v, want %v", c.name, i, got[i], c.want[i])
 			}
 		}
 	}
 	// "4 free-for-all members, each kills alone": 1.09 to each killer.
-	if m := FreeForAllMultiplier(4, false); !near(m, 1.09) {
+	if m := FreeForAllMultiplier(4, false); !near(float64(m), float64(float32(1.09))) {
 		t.Fatalf("free-for-all 4/4: %v, want 1.09", m)
 	}
 	if m := FreeForAllMultiplier(0, false); m != 1 {
 		t.Fatalf("no party: %v, want 1", m)
 	}
-	if m := FreeForAllMultiplier(4, true); !near(m, 0.545) {
+	if m := FreeForAllMultiplier(4, true); !near(float64(m), float64(float32(1.09))*0.5) {
 		t.Fatalf("free-for-all 4/4 on a party monster below the receiver: %v, want 0.545", m)
 	}
 }
@@ -49,26 +49,22 @@ func TestPartyShareWorkedExamples(t *testing.T) {
 // The damping needs all three conditions: s > 0.7, three or more eligible,
 // top level 21 or more.
 func TestPartyShareDampingConditions(t *testing.T) {
+	f := func(x float64) float64 { return float64(float32(x)) }
 	// Two members: no damping even at s = 0.8.
-	got := PartyShareMultipliers([]int{80, 20}, 1.1, 1)
-	if !near(got[0], 0.8*1.1) {
-		t.Fatalf("party of two: %v, want undamped 0.88", got[0])
+	got := PartyShareMultipliers([]int{80, 20}, float32(1.1), 1)
+	if !near(float64(got[0]), f(f(0.8)*f(1.1))) {
+		t.Fatalf("party of two: %v, want undamped", got[0])
 	}
 	// Top level 20: no damping.
-	got = PartyShareMultipliers([]int{20, 2, 2}, 1.2, 1)
-	s := float64(float32(20) / float32(24))
-	if !near(got[0], s*1.2) {
-		t.Fatalf("top level 20: %v, want undamped %v", got[0], s*1.2)
+	got = PartyShareMultipliers([]int{20, 2, 2}, float32(1.2), 1)
+	s := f(20.0 / 24.0)
+	if !near(float64(got[0]), f(s*f(1.2))) {
+		t.Fatalf("top level 20: %v, want undamped", got[0])
 	}
-	// Exactly 0.7 is not above it: 70, 15, 15.
-	got = PartyShareMultipliers([]int{70, 15, 15}, 1.2, 1)
-	s = float64(float32(70) / float32(100))
-	want := s * 1.2
-	if s > PartyShareDampThreshold {
-		want = s * 1.1
-	}
-	if !near(got[0], want) {
-		t.Fatalf("s = 0.7: %v, want %v", got[0], want)
+	// Exactly 0.7 (as a float32, 0.69999999) is not above it: 70, 15, 15.
+	got = PartyShareMultipliers([]int{70, 15, 15}, float32(1.2), 1)
+	if !near(float64(got[0]), f(f(0.7)*f(1.2))) {
+		t.Fatalf("s = 0.7: %v, want undamped", got[0])
 	}
 }
 
@@ -79,7 +75,7 @@ func TestPartyShareBonusCountries(t *testing.T) {
 	}{
 		{0, 0, 1}, {1, 0, 1}, {8, 0, 1.7}, {0, 8, 2.4}, {0, 1, 1}, {3, 1, 1.3}, {2, 2, 1.4},
 	} {
-		if got := PartyShareBonus(c.chinese, c.others); !near(got, c.want) {
+		if got := PartyShareBonus(c.chinese, c.others); math.Abs(float64(got)-c.want) > 1e-6 {
 			t.Errorf("bonus(%d china, %d other) = %v, want %v", c.chinese, c.others, got, c.want)
 		}
 	}
@@ -158,7 +154,7 @@ func TestContributorFormulas(t *testing.T) {
 // vslot_420: float32 then multiply then truncate; the rate bonus only from
 // 1.01, additive, SP too.
 func TestRewardMultiplierAndRate(t *testing.T) {
-	if e, s := ApplyRewardMultiplier(1000, 100, 0.55); e != 550 || s != 55 {
+	if e, s := ApplyRewardMultiplier(1000, 100, float32(0.55)); e != 550 || s != 55 {
 		t.Fatalf("x0.55: %d %d", e, s)
 	}
 	// float32 rounding first: 16777217 is not a float32, it becomes 16777216.
@@ -183,8 +179,12 @@ func TestMasterySPScale(t *testing.T) {
 	if s := MasterySPScale(40, 40); s != 1 {
 		t.Fatalf("level with mastery: %v", s)
 	}
-	if s := MasterySPScale(40, 30); !near(s, 2) {
-		t.Fatalf("ten levels of lag: %v, want 2 (unclamped)", s)
+	if s := MasterySPScale(40, 32); !near(s, 1.8) {
+		t.Fatalf("eight levels of lag: %v, want 1.8", s)
+	}
+	// Clamped like its twin (0x4e31af-0x4e31e9): level 20, no mastery, 1.9.
+	if s := MasterySPScale(20, 0); s != MasteryExpScaleMax {
+		t.Fatalf("level 20 with no mastery: %v, want 1.9", s)
 	}
 	if s := MasterySPScale(130, 121); s != 1 {
 		t.Fatalf("reference above 120: %v", s)

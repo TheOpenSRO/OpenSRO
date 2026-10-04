@@ -23,7 +23,7 @@ import (
 func synthSpecies(t *testing.T, rows ...[6]string) *species.Table {
 	t.Helper()
 	var b strings.Builder
-	b.WriteString(strings.Join(species.CSVColumns, ",") + "\n")
+	b.WriteString(strings.Join(species.CSVColumns[:species.RequiredCSVColumns], ",") + "\n") // a pre-712 CSV: no ExpToGive
 	for _, r := range rows {
 		rec := []string{r[0], r[1], "", "0", "SN_" + r[1], "Synthetic " + r[1], r[5], r[2], r[3], r[4], "10", "40", "5"}
 		for i := 0; i < species.NumParams+species.NumSkills; i++ {

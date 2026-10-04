@@ -472,6 +472,13 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 	// leveldata.DeathPenaltyExp for the other three and for why the
 	// reduction stat is left out.
 	if levelTable != nil {
+		// The EXP is re-read under the leveling lock (round 712: a party
+		// member's kill can pay this character from another goroutine
+		// between fallen's read and this write).
+		unlock := character.LockLeveling(characterID)
+		if fresh, err := chars.GetByID(ctx, characterID); err == nil {
+			c = fresh
+		}
 		loss, ok := levelTable.DeathPenaltyExp(c.Level, leveldata.DeathPenaltyKilledByMonster)
 		if ok && loss > 0 {
 			exp := c.Exp - loss
@@ -486,10 +493,12 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 			// A death penalty takes experience only: level, stat
 			// points, Str and Int are carried through unchanged.
 			if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints, c.Str, c.Int); err != nil {
+				unlock()
 				return monsterStrikeOutcome{}, fmt.Errorf("combat: applying death penalty: %w", err)
 			}
 			out.deathExpLost = loss
 		}
+		unlock()
 	}
 	if playerDeadState.Load() && deps.hub != nil {
 		// -player-dead-state (round 549, deadstate.go): the character
