@@ -76,10 +76,10 @@ re-encodes byte for byte).
 
 | what | choice |
 |---|---|
-| settings block's starting values | exp 1, item 0, anyone 0. READ only that the block is in .bss (zero) and no early writer was found; OPEN |
+| ~~settings block's starting values~~ | **READ in the review: exp 1, item 0, anyone 1** (`c:0x99ba00`); see the fixes table |
 | "accept party invitations" option | on (the option window has no such row yet) |
 | strings on the wire | UTF-8 bytes with the u16 length |
-| an update's HP nibble of 11 | drawn as full (the ratio is clamped) |
+| the gauge clamp above 1 | a kind-6 HP nibble of 11 decodes to 10/9 as the client does (`c:0x991f60`); the windows clamp the ratio to full (whether the client's gauge clamps was not traced) |
 | pet/horse owner substitution | nothing to substitute: OpenSRO selects neither |
 
 ## Tests
@@ -98,7 +98,10 @@ re-encodes byte for byte).
 ## Live, against S1's server binary (7a4f8772, in memory)
 
 Run 1 (`/var/tmp/c1/run_party.sh`): Aria rendered, Bram headless (`--second-client`), both
-`/level 10` by GM command. Log (Aria):
+`/level 10` by GM command. (That run used `;` between the `--second-client` settings, before the
+separator became `|`; with today's `qa_shot.sh` the same command is
+`--second-client "OPENSRO_QA_ACCOUNT=qa2:qa-password|OPENSRO_QA_CHARACTER=Bram|OPENSRO_QA_COMMANDS=/level 10|OPENSRO_QA_PARTY=1:accept|OPENSRO_QA_AT=1004,1022"`.)
+Log (Aria):
 
 ```
 QA PARTY: tick 120 window
@@ -158,3 +161,57 @@ statics are authored.
   `exp_share` for the faraway overlay) and its `changed` signal; `PartyNet.Member` carries
   region/x/y/z/world, masteries and HP/MP tenths. The window's rows show black squares for
   members until C3 provides their renders (`HudPartyPane._face`).
+
+## Review fixes (round 711's review, `docs/rounds/party711_review.md`)
+
+Merged `int/party` first (S1's review fixes, `991bb1c2`), then:
+
+| # | finding | fix |
+|---|---|---|
+| 1 | settings defaults are READ (`c:0x99ba00`): anyone starts at 1 | `PartyState` starts exp 1, item 0, anyone 1, labelled READ (`0xd75d80 -> 0x99c1c0 -> 0x99ba00`, the clear `0x998be0` leaves them); `party_gui.md` §1 records the starting values; tests check them. Run 6's frames now show the caption suffix and the ticked box out of a party, as screenshots 01 and 05 do |
+| 2 | eight refusal codes have client messages | `ERROR_KEYS` gains 2, 3, 4, 5, `0x2c06`, `0x2c07`, `0x2c11`, `0x2c29` (`c:0x7b96ae`, `0x7bb7cc`, `0x7bb7dc`); `0x2c07`'s extra call `0x77b580` is not reproduced (noted). `party_protocol.md`'s error table corrected. Live: run 3/5's out-of-range invite shows "The object is too far." |
+| 3 | the invitee's `0xb067 [2][0x2c10]` is silent | `_on_ack` closes the box and returns before the notice (`c:0x880120`). Live, run 4: Bram's log has no line on the timeout; Aria's `0xb060` timeout still shows hers |
+| 4 | own HP/MP not live | `HudPartyPane.refresh_vitals()` redraws the player's own row and, when the player leads, the leader row's gauges; HudPlayerInfo emits `bars_changed` on every bar change and World3D wires it through `HudPanels.party_vitals_changed` (on change rather than per frame; same values as `0x6d72f0` / `0x6d5ca0`). Tested |
+| 5 | row guilds white | `_guild` takes the colour: (255,225,148) on the leader row, white on member rows (`0x6d7a0c`/`0x6d7a5b`). Tested |
+| 6 | box texts overflow / not centred | the mode boxes are built as CIFStatics with the black art, the inset (3,7,3,6), HAlign 1, laid out by `place_label`. MEASURED (run 4, `live4/f00000150.png`): exp text 537..622 in box 531..626, item text 647..735 in box 643..738 |
+| 7 | the tile covers the right border | READ `CIFMessageBox::vslot_021` `0x63b5e0 -> 0x63b420`: the resize sizes child 0 (`GDR_MSGBOX_BG`, ID 0) to (w - 32, h - 56) = 268x120, and places the title static at (10, 11, w - 21, 12) (also READ now). MEASURED: the frame's right-border ridge at x 780-781 is present over the tile's rows |
+| 8 | radio labels offset | built through the builder's static path (font 0, centred, `place_label` in 100x12). MEASURED (run 6, `live6/f00000200.png`): label centres 953.5 and 1084 against the READ 955 and 1086; "Item Free-For-All" ends at 1128, inside its box |
+| 9a | Leave colour | Leave gets 0xfffff5da too (`0x6d78a7`). Tested |
+| 9b | Party match tooltip | not built (listed under "Not done here") |
+| 9c | Enter/Esc on the boxes | not read, not built (listed) |
+| 9d | box timer vs state | the box's timer emits `expired`; HudPanels calls `PartyState.forget_invitation()` |
+| 9e | misplaced doc comment | moved onto `register_handler` |
+| 9f | OURS vs INFERRED on the clamp | superseded: the client's own decode (`c:0x991f60`) is followed; the clamp above 1 is OURS, the client's gauge behaviour above 1 untraced |
+| 9g | stale gap list | `party_gui.md` items 1-4 and 9 marked built in round 711 |
+| 9h | `useitem.gd` comment | "were OpenSRO's own party create and its result" |
+| 9i | test leaks state into the autoload | `inventory_pages_test` gives the panels their own `PartyState` |
+| 9j | run-1 command | re-recorded above with `|` |
+| 9k | CIFParty `+0x3b0` recolouring the dialog | not read, not built (listed) |
+| S1 note | the HP decode | `Member` keeps `hp_cur/hp_max/mp_cur/mp_max/dead`: a full record n/10 and n/10; a kind-6 update HP 0 = dead, else (n - 1)/9, MP n/10 (`c:0x991f60`); the windows draw `hp_ratio()`/`mp_ratio()`. Tested (nibbles 11, 0, 6) |
+
+### Tests after the fixes
+
+- Render box, `RENDER_DIR=/opt/opensro-client-c1`, `GODOT_LOCK=/var/tmp/c1/lock`:
+  `remote_godot.sh tests` ran 226 suites, 0 failing (party_test and hud_party_pane_test included).
+
+### Live after the fixes (the merged server, `int/party` at this branch's merge)
+
+- Run 3 (`/var/tmp/c1/run_party3.sh`) and run 5 (`run_party5.sh`, Bram's client also at
+  `QA_AT` 1004,1022): the invite was refused **"The object is too far."** (code 4, finding 2 live).
+  The headless client's `QA_AT` moves it only in its own client; the server keeps each character
+  where it spawned it, and in these runs that was more than 600 apart (run 1's success had both
+  spawned together). Frame: `/var/tmp/c1/live3/f00000250.png`.
+- Run 6 (`run_party6.sh`): both characters `/tp` to the same spot by GM command first; Aria opens
+  the window, the settings dialog, sets 1,1,1 and invites; Bram accepts; `[Bram]joined the party.`
+  Frames: `/var/tmp/c1/live6/f00000150.png` (empty window: the caption's anyone suffix by default),
+  `/var/tmp/c1/live6/f00000200.png` (the settings dialog: the box ticked by default, labels
+  centred), `/var/tmp/c1/live6/f00000450.png` (the party: Aria and Bram).
+- Run 4 (`run_party4.sh`): Bram rendered; the box shows from frame 120 to 230 (the box area's mean
+  luma 0.188 against 0.33 before and 0.34 after) and closes on the server's timeout with no line
+  in Bram's log. Frames: `/var/tmp/c1/live4/f00000150.png` (the box), `f00000250.png` (after).
+
+### Still not done
+
+- The Party match button's tooltip with the bound key (9b).
+- Enter / Esc on the invitation box and the settings dialog (9c; `0x6449d0` not read).
+- CIFParty `+0x3b0`'s recolouring of an open settings dialog (9k).
