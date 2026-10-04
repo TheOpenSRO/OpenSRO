@@ -41,11 +41,40 @@ class_name RetailBloom
 ## (retail's addressing there not read). It replaces round 693's Godot glow,
 ## whose parameters were a guess (intensity 0.8, bloom 0.2, threshold 0.85).
 ##
-## **Under Compatibility** the vertex stage reads nothing from the screen
-## texture (MEASURED: the grid added no light at all under GL 4.6), so there
-## the pass is a full-screen rect whose 25 taps read the screen's mip level
-## log2(width / 512) instead (MIP_SHADER: Godot's Gaussian mips, smoother
-## than retail's one bilinear downsample, one level for both axes -- OURS).
+## **Under Compatibility** (round 707) the pass is a full-screen rect whose
+## fragments compute the same pipeline at their own point of the 512 target:
+## the 25 taps (+-2.6 / +-5.2 texels, the weights, the threshold per tap
+## before the horizontal sum, the clamps at 1), each tap one bilinear sample
+## of the screen itself at that point of the 512 target (COMPAT_SHADER). Two
+## things differ from the grid, both OURS: a tap between two 512 texels reads
+## the screen there instead of mixing the two texels' samples, and the blur is
+## evaluated at every pixel instead of magnified from the 512 texels. GLES3's
+## canvas reads the screen only in a fragment stage (READ, Godot 4.2.2
+## canvas.glsl: `color_buffer`, the screen texture, is declared in the
+## fragment section alone), so the grid cannot run there.
+##
+## **And it must keep a screen to read (round 707).** Under Compatibility a 3D
+## pass that reads the depth texture -- WorldFog's -- makes Godot 4.2.2 create
+## the render target's back buffer itself (READ, gles3 texture_storage.cpp
+## `copy_scene_to_backbuffer`): a framebuffer with the depth copy and, unless
+## some 3D material reads the screen too, NO colour texture. The canvas then
+## finds the back buffer made (`render_target_copy_to_back_buffer` creates its
+## own only while there is none), copies the screen into nothing, and every
+## canvas screen read samples texture 0: black. The pass's opaque output made
+## the whole frame (0, 0, 0) (MEASURED, round 705 and 707). So under
+## Compatibility the bloom keeps a 3D anchor in the view (ANCHOR_SHADER): a
+## material that reads the screen texture and covers no pixel, which makes
+## the 3D pass give the back buffer its colour texture every time it creates
+## it. That texture has one level and nearest filtering when the 3D pass made
+## it, and a mip chain with linear filtering when the canvas did, so the taps
+## read it with texelFetch and filter bilinearly themselves -- the same in
+## either case (READ, the same file). They ask for no mipmaps: a canvas made
+## back buffer sets the render target's mip count, which survives the target's
+## re-creation, and a mip request over the one-level texture the 3D pass then
+## makes would leave it incomplete -- black again (READ: `mipmap_count` is set
+## only in `_create_render_target_backbuffer`, never reset; `gaussian_blur`
+## sets MAX_LEVEL from it). The brightness pass (VideoOptions, layer 120)
+## reads the screen the same way and keeps the anchor shown as well.
 
 ## Below the default canvas (0), the world's UI (1) and every later layer;
 ## above the 3D view, which every canvas layer is.
@@ -118,17 +147,21 @@ void fragment() {
 }
 """
 
-## Compatibility's pass (see the header): the taps on the 512-wide mip.
-const MIP_SHADER := """
+## Compatibility's pass (see the header): the 25 taps per pixel, each a
+## bilinear sample of the screen at that point of the 512 target, filtered
+## here from texelFetch; the composite is the blend, as the grid's.
+const COMPAT_SHADER := """
 shader_type canvas_item;
-// The original's bloom (RetailBloom) under Compatibility: the 25 taps read the
-// screen's mip level log2(width / 512).
-uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap, repeat_disable;
+// The original's bloom (RetailBloom) under Compatibility (round 707):
+// Map::FUN_00a1d790's pipeline evaluated at each pixel's point of the 512 x
+// 512 target. out = Blur x 192/255 + S x 198/255 (premultiplied alpha).
+render_mode blend_premul_alpha;
+uniform sampler2D screen_tex : hint_screen_texture, filter_nearest, repeat_disable;
 const float DOWNSAMPLE = 128.0 / 255.0;
 const float THRESHOLD = 40.0 / 255.0;
 const float SCREEN_KEEP = 198.0 / 255.0;
 const float BLUR_ADD = 192.0 / 255.0;
-const float TARGET = 512.0;
+const float T = 512.0;
 float w(int i) {
 	int a = abs(i);
 	return a == 0 ? 80.0 / 255.0 : (a == 1 ? 70.0 / 255.0 : 50.0 / 255.0);
@@ -136,25 +169,61 @@ float w(int i) {
 float o(int i) {
 	return float(sign(i)) * (abs(i) == 1 ? 2.6 : (abs(i) == 2 ? 5.2 : 0.0));
 }
+// One bilinear sample of the screen at pixel position p (texel centres at
+// +0.5), clamped at the edges; texelFetch, so the back buffer's own filter
+// (nearest or linear, by who made it) does not matter.
+vec3 screen_at(vec2 p, ivec2 hi) {
+	vec2 q = p - 0.5;
+	vec2 f = fract(q);
+	ivec2 i0 = clamp(ivec2(floor(q)), ivec2(0), hi);
+	ivec2 i1 = clamp(ivec2(floor(q)) + 1, ivec2(0), hi);
+	vec3 a = mix(texelFetch(screen_tex, i0, 0).rgb, texelFetch(screen_tex, ivec2(i1.x, i0.y), 0).rgb, f.x);
+	vec3 b = mix(texelFetch(screen_tex, ivec2(i0.x, i1.y), 0).rgb, texelFetch(screen_tex, i1, 0).rgb, f.x);
+	return mix(a, b, f.y);
+}
 void fragment() {
-	vec3 s = textureLod(screen_tex, SCREEN_UV, 0.0).rgb;
-	float lod = max(log2(1.0 / (SCREEN_PIXEL_SIZE.x * TARGET)), 0.0);
+	ivec2 size = textureSize(screen_tex, 0);
+	ivec2 hi = size - 1;
+	vec2 scale = vec2(size) / T;
+	// This pixel in texels of the 512 target (texel centres at integers).
+	vec2 t = SCREEN_UV * T - 0.5;
 	vec3 blur = vec3(0.0);
 	for (int j = -2; j <= 2; j++) {
 		vec3 row = vec3(0.0);
 		for (int i = -2; i <= 2; i++) {
-			vec3 t = textureLod(screen_tex, SCREEN_UV + vec2(o(i), o(j)) / TARGET, lod).rgb;
-			row += w(i) * max(t * DOWNSAMPLE - vec3(THRESHOLD), vec3(0.0));
+			// The downsampled target there (x 128/255), read clamped at its edge.
+			vec2 tap = clamp(t + vec2(o(i), o(j)), vec2(0.0), vec2(T - 1.0));
+			vec3 d = screen_at((tap + 0.5) * scale, hi) * DOWNSAMPLE;
+			row += w(i) * max(d - vec3(THRESHOLD), vec3(0.0));
 		}
-		blur += w(j) * row;
+		// The horizontal pass's 8-bit target clamps at 1.
+		blur += w(j) * min(row, vec3(1.0));
 	}
-	COLOR = vec4(clamp(s * SCREEN_KEEP + blur * BLUR_ADD, 0.0, 1.0), 1.0);
+	COLOR = vec4(min(blur, vec3(1.0)) * BLUR_ADD, 1.0 - SCREEN_KEEP);
+}
+"""
+
+## Compatibility's 3D anchor (see the header): reads the screen texture, so
+## Godot's 3D pass gives the back buffer a colour texture, and draws nothing
+## (every vertex outside the clip volume).
+const ANCHOR_SHADER := """
+shader_type spatial;
+// RetailBloom's anchor (round 707): keeps the GL back buffer's colour texture.
+render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_disabled, fog_disabled, shadows_disabled, skip_vertex_transform;
+uniform sampler2D screen_tex : hint_screen_texture, filter_nearest, repeat_disable;
+void vertex() {
+	POSITION = vec4(2.0, 2.0, 2.0, 1.0);
+}
+void fragment() {
+	ALBEDO = textureLod(screen_tex, SCREEN_UV, 0.0).rgb;
+	ALPHA = 0.0;
 }
 """
 
 var _pass: CanvasItem
 var _material: ShaderMaterial
 var _grid_used := false
+var _anchor: MeshInstance3D = null
 static var _mesh: ArrayMesh = null
 
 func _init(use_grid: bool = RenderingServer.get_rendering_device() != null) -> void:
@@ -162,7 +231,7 @@ func _init(use_grid: bool = RenderingServer.get_rendering_device() != null) -> v
 	layer = LAYER_INDEX
 	_grid_used = use_grid
 	var sh := Shader.new()
-	sh.code = SHADER if use_grid else MIP_SHADER
+	sh.code = SHADER if use_grid else COMPAT_SHADER
 	_material = ShaderMaterial.new()
 	_material.shader = sh
 	if use_grid:
@@ -174,17 +243,93 @@ func _init(use_grid: bool = RenderingServer.get_rendering_device() != null) -> v
 		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		_pass = rect
+		_anchor = anchor_node()
+		add_child(_anchor)
+		# A 3D node does not follow a CanvasLayer's visibility on its own.
+		visibility_changed.connect(_sync_anchor)
 	_pass.name = "Pass"
 	_pass.material = _material
 	add_child(_pass)
+	_sync_anchor()
 
-## Whether the 512 grid (Forward+) draws the pass, or the mip rect.
+## Whether the 512 grid (Forward+) draws the pass, or the per-pixel rect.
 func uses_grid() -> bool:
 	return _grid_used
+
+## Compatibility's 3D anchor (null under Forward+).
+func anchor() -> MeshInstance3D:
+	return _anchor
+
+## The anchor shows while any canvas pass of the world reads the screen: the
+## bloom, or VideoOptions' brightness pass (round 707: with Bloom off from the
+## start and Brightness off Normal, Compatibility drew that pass black too --
+## MEASURED, the frame's mean 0). Off otherwise: no 3D copy of the screen.
+## Synced when either changes (this layer's visibility_changed; the root's
+## child_entered_tree and the brightness layer's own visibility_changed --
+## round 707 review: a sync only in _process left the frame the brightness
+## pass appears in to read a colourless back buffer), and each frame as well.
+func _sync_anchor() -> void:
+	if _anchor != null:
+		_anchor.visible = not NO_ANCHOR and (visible or _brightness_shown())
+
+## QA only (round 707 review, OURS): OPENSRO_QA_BLOOM_NO_ANCHOR=1 never shows
+## the anchor -- the self-test that tools/retail_bloom_box_test.sh fails
+## without it.
+static var NO_ANCHOR := OS.get_environment("OPENSRO_QA_BLOOM_NO_ANCHOR") == "1"
+
+func _brightness_shown() -> bool:
+	if not is_inside_tree():
+		return false
+	var b := get_tree().root.get_node_or_null(VideoOptions.BRIGHTNESS_LAYER) as CanvasLayer
+	return b != null and b.visible
+
+func _enter_tree() -> void:
+	if _anchor == null:
+		return
+	var r := get_tree().root
+	if not r.child_entered_tree.is_connected(_on_root_child):
+		r.child_entered_tree.connect(_on_root_child)
+	var b := r.get_node_or_null(VideoOptions.BRIGHTNESS_LAYER)
+	if b != null:
+		_on_root_child(b)
+	_sync_anchor()
+
+func _exit_tree() -> void:
+	if _anchor != null and get_tree().root.child_entered_tree.is_connected(_on_root_child):
+		get_tree().root.child_entered_tree.disconnect(_on_root_child)
+
+func _on_root_child(node: Node) -> void:
+	if node is CanvasLayer and node.name == VideoOptions.BRIGHTNESS_LAYER:
+		var layer := node as CanvasLayer
+		if not layer.visibility_changed.is_connected(_sync_anchor):
+			layer.visibility_changed.connect(_sync_anchor)
+		_sync_anchor()
+
+## The anchor (see the header): one triangle with ANCHOR_SHADER, never culled
+## and casting nothing.
+static func anchor_node() -> MeshInstance3D:
+	var sh := Shader.new()
+	sh.code = ANCHOR_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)])
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, mat)
+	mesh.custom_aabb = AABB(Vector3(-1.0e6, -1.0e6, -1.0e6), Vector3(2.0e6, 2.0e6, 2.0e6))
+	var mi := MeshInstance3D.new()
+	mi.name = "ScreenAnchor"
+	mi.mesh = mesh
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
 
 func _process(_delta: float) -> void:
 	if _grid_used and visible and is_inside_tree():
 		_material.set_shader_parameter("canvas_size", get_viewport().get_visible_rect().size)
+	# A fallback to the signals above (a brightness layer freed, say).
+	_sync_anchor()
 
 ## The 514 x 514-vertex grid (UV = texel index, -1 .. 512), built once.
 static func grid_mesh() -> ArrayMesh:

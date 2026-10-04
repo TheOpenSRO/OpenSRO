@@ -7243,6 +7243,209 @@ green; `remote_godot.sh check` ALL LOAD (577 scripts, 9 scenes), `tests` 224 sui
 fixes touch no drawing path (an early return in `_on_npc_spawned`, the server's entry order), so the
 perf gate was not re-run.
 
+## Seven-hundred-and-seventh round: Compatibility's black frames with the Bloom row on were Godot 4.2.2's GLES3 back buffer, made by WorldFog's depth read without a colour texture -- a 3D anchor gives it one, the Compatibility bloom is computed per pixel from texelFetch, and a box check fails if the frame goes black again
+
+Round 705 found every Compatibility frame with Bloom on (0, 0, 0) on the box, on base 1bcbd825
+too, with nothing in the log. Middle, the default, has Bloom on, and Compatibility is the fall back
+for machines without Vulkan and `opensro-compatibility.bat`.
+
+### 1. Reproduced (MEASURED, the box, Compatibility on the RX 7600 through VirtualGL)
+
+- **The game, not the movie writer.** The Jangan spawn (97/168 at 1002, 1020), `OPENSRO_QA_VIDEO_
+  STEPS` frames saved from the viewport's own texture (no `--write-movie`): Bloom on mean RGB
+  (5.8, 5.5, 5.2) with the HUD drawn over it, Bloom off (78, 86, 88); Texture Filtering (MSAA)
+  on or off changes nothing.
+- **Round 702's measurement could not see it.** `tools/measure_retail_bloom.gd` draws a canvas
+  picture with no 3D view. Run as it was, Compatibility passed (mean 1.6/255). With a camera and a
+  transparent 3D quad that reads the depth texture, as WorldFog's pass does, the same shader drew
+  luma 0.0 against 123.2 (MEASURED). That is the whole difference.
+
+### 2. The cause (READ, Godot 4.2.2's gles3 sources; tag 4.2.2-stable)
+
+- `RasterizerSceneGLES3::render_scene`: a frame whose 3D materials read the screen or the depth
+  texture calls `TextureStorage::copy_scene_to_backbuffer(rt, used_screen, used_depth)` after the
+  opaque pass. It creates `rt->backbuffer_fbo`; it creates the colour texture `rt->backbuffer`
+  only if a material reads the SCREEN. WorldFog reads only the depth, so the back buffer framebuffer
+  gets a depth attachment and no colour.
+- `render_target_copy_to_back_buffer` (the canvas, for any `hint_screen_texture`) creates its own
+  back buffer (`_create_render_target_backbuffer`, colour with a mip chain) only `if
+  (rt->backbuffer_fbo == 0)`. It is not 0, so the canvas copies the screen into a framebuffer with
+  no colour, and `canvas_begin` binds `rt->backbuffer` -- 0 -- as the screen texture. Texture 0
+  samples black. RetailBloom's Compatibility pass wrote an opaque colour, so the frame was black.
+- Order matters: if a canvas reads the screen before any 3D depth read after the target is made,
+  the canvas makes the back buffer with colour and all is well (the measurement's case). In the
+  world, the 3D pass always runs first in the frame, and the target is re-made on every resize or
+  MSAA change.
+- Found on the way, same cause: **the brightness pass** (VideoOptions, layer 120, a screen read
+  over the whole window) with Bloom off from the start and Brightness 3: the frame's mean 0 --
+  wholly black, the interface too (MEASURED, `OPENSRO_QA_VIDEO=bloom=0,brightness=3`). Once the
+  bloom had been on, the colour texture existed and the pass worked until the target was re-made.
+
+The suspects named for the round, checked: `hint_screen_texture` with mipmaps and `textureLod` are
+not it (the same shader passes with no 3D depth read); the layer -1 placement and the premultiplied
+blend are not it (the pass is a plain opaque rect under Compatibility); no shader error -- there is
+no screen to read.
+
+### 3. The fix (`RetailBloom`, under Compatibility only)
+
+- **The anchor** (`ANCHOR_SHADER`, `anchor_node()`): one triangle whose spatial material reads
+  `hint_screen_texture`, every vertex outside the clip volume (covers no pixel), never culled
+  (a 2e6 box), no shadow. It makes Godot's 3D pass create the colour texture whenever it creates
+  the back buffer. It shows while the bloom or the brightness pass shows (`_sync_anchor`, each
+  frame), so with both off nothing is copied.
+- **The pass reads level 0 by texelFetch** and filters bilinearly itself: the back buffer the 3D
+  pass makes has one level and NEAREST filtering, the one the canvas makes a mip chain and LINEAR,
+  and the pass must read both alike (READ: `copy_scene_to_backbuffer`, `_create_render_target_
+  backbuffer`). It asks for no mipmaps: `rt->mipmap_count` is set only when the canvas makes the
+  back buffer and is never reset, so a mip request over a later one-level texture would leave it
+  incomplete (`gaussian_blur` sets MAX_LEVEL from it) -- black again (READ).
+- **The pipeline per pixel** (`COMPAT_SHADER`, the same READ constants as the grid): each pixel's
+  point of the 512 x 512 target, the 25 taps at 0 / +-2.6 / +-5.2 texels with weights 80/70/50 of
+  255, each tap one bilinear sample of the screen at that point x 128/255, thresholded at 40/255
+  before the horizontal sum, each row clamped at 1, the vertical sum clamped at 1, composited by
+  the blend (premultiplied alpha: Blur x 192/255 + S x 198/255), as the Forward+ grid. Why not
+  the grid: GLES3's canvas declares the screen texture (`color_buffer`) in the fragment section of
+  canvas.glsl alone (READ), so a vertex stage cannot read it (round 702's MEASURED "no light").
+  OURS method: retail mixes two 512 texels' samples between texels and magnifies its target
+  bilinearly; this samples the screen at each tap and evaluates every pixel.
+
+Why not round 702's mip path with the anchor: the mips need the canvas-made back buffer, which the
+world never gets first, and the mip-count trap above. Why not BackBufferCopy: it is the same copy
+into the same colourless framebuffer. A multi-pass 512 chain inside the canvas has nowhere to keep
+the target: GLES3's canvas writes only the window and copies only window -> back buffer, and both
+must hold the screen at the composite.
+
+### 4. Measured
+
+**Against retail's 512 pipeline** (`measure_retail_bloom.gd`, now with a depth-reading 3D pass in
+the scene, 4000 pixels x 3 channels; BAND = smooth ramps vs 41- and 7-pixel random blocks):
+
+| | mean | p99 | max | ramps mean / p99 |
+|---|---|---|---|---|
+| Compatibility 1280 x 720 | 0.95/255 | 6.57/255 | 13.66/255 | 0.28 / 1.08 |
+| Compatibility 1920 x 1080 | 1.54/255 | 9.54/255 | 15.52/255 | |
+| Compatibility 3840 x 2160 | 2.13/255 | 13.18/255 | 24.46/255 | 0.32 / 2.87 |
+| Compatibility, round 702's mip path, 1280 x 720 (no 3D) | 1.6/255 | 7.7/255 | 11.9/255 | |
+| Forward+ 1280 x 720 (unchanged) | 0.24/255 | 0.56/255 | 1.52/255 | 0.23 / 0.50 |
+
+Within round 702's documented Compatibility figures at 1280 x 720 on mean and p99; the single worst
+channel is 1.8/255 over its max, in the 7-pixel blocks. At larger sizes fine detail (blocks 41: mean
+2.4 at 4K, blocks 7: 4.8) is where per-pixel taps part from retail's sparse samples (7.5 pixels
+apart at 3840); smooth content stays close. No echo peak at any size (a white bar's added light falls
+39/255 -> 0). With the depth reader and without it the figures are identical (texelFetch: the
+back buffer's filter does not matter).
+
+**The game**: the box check below, Bloom on keeps the spawn's picture: mean grey 81.3 against 87.9
+off (base 65e5d8a8: 0). The brightness pass, started with Bloom off and Brightness 3, then stepped
+Bloom on and off: before the anchor followed it, mean grey 0 -> 104.5 -> 115.3; with it, 115.0 -> 104.5 -> 115.3 (Bloom and Brightness both off then: 84.6).
+
+**Cost** (`time_retail_bloom.gd`, the root viewport's GPU time over a synthetic picture, with a
+camera and the depth reader, RX 7600, ms a frame):
+
+| | bloom off | bloom on | the bloom | the canvas's screen copy alone | the anchor alone |
+|---|---|---|---|---|---|
+| 1280 x 720 | 0.069 | 0.392 | **+0.32** | +0.04 | +0.015 |
+| 1920 x 1080 | 0.128 | 0.839 | **+0.71** | +0.08 | +0.03 |
+| 3840 x 2160 | 0.481 | 3.377 | **+2.90** | +0.60 | +0.10 |
+
+(Repeat runs within 0.01 ms.) The anchor's own cost is the 3D pass's copy of the screen. Most of
+the rest is the 25 taps x 4 texel fetches per pixel; a one-fetch (nearest) variant measured 0.18
+and 1.40 ms at 720 / 2160 but read worse at 720 (max 20.7/255, p99 9.6) and was not kept. Against
+Forward+'s grid (+0.69 ms at 4K, round 702) the Compatibility pass is dearer at 4K, where few
+Compatibility players run (the renderer of machines without Vulkan); recorded for the user, not
+fixed.
+
+**Perf gate** (`perf_gate.sh --base 65e5d8a8 --sites jangan --frames 12000 --renderer
+gl_compatibility --env 'OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1'`, both sides Compatibility on
+Middle, median of 3). Note the base's bloom draws black, so the base side pays a broken pass, not
+none:
+
+| | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan 1280 x 720 | 2.43 -> 2.63 SAME (+0.2) | 9429 -> 9485 SAME | 3189 -> 3211 SAME | 5 -> 5 SAME |
+| jangan 3840 x 2160 (`--size`) | 13.40 / 13.62 -> 15.83 / 15.89 (**+2.3**) | 9502 / 9528 -> 9424 / 9454 | | |
+
+Exit 0 at 1280 x 720. At 3840 x 2160 the gate twice stopped on a head run with "the run's renderer
+is ''": the run's log is complete and carries the Compatibility / RX 7600 banner, so the ssh that
+returns the run's line came back empty (other lanes were rendering and runs kept repeating; the gate
+did not get as far as a verdict). The 4K row is the two complete runs a side, read from the gate's
+own logs with its own formula: about +2.3 ms a frame, which the gate's threshold (5 %) calls
+SLOWER. It matches the GPU timing above (+2.9 ms; the 4K frame is mostly VirtualGL's read-back).
+**Recorded for the user, not fixed**: under Compatibility at 4K the Bloom row costs about 2.3-2.9 ms
+on this GPU (Bloom off restores it); at 1280 x 720 it is inside the noise.
+
+### 5. The guard
+
+- `client/tools/retail_bloom_box_test.sh <client dir> [out dir]` (new; on the box, under the
+  caller's lock): `measure_retail_bloom.gd` under Compatibility at 1280 x 720 with the
+  depth-reading 3D pass, past the tolerance (mean 1.6 / p99 7.7 of 255 up to 1280 wide, OURS from
+  round 702's figures; Forward+ 0.5 / 2.0) or on a black frame; then the game at the Jangan spawn.
+  As first committed it FAILED on base 65e5d8a8 (frame luma 0.0, the world's mean grey 0 against
+  87.9) -- but its frame tests were too loose to catch a broken anchor: see the review below,
+  which tightened them and added the brightness pass.
+- `retail_bloom_test.gd` (headless, in `tests`): Compatibility's pass reads by texelFetch with no
+  mip hint; the anchor exists under Compatibility only, reads the screen, draws nothing, is never
+  culled and casts nothing; it follows the Bloom row and the brightness pass.
+
+### 6. Checks
+
+- `remote_godot.sh check`: ALL LOAD (575 scripts, 9 scenes). `remote_godot.sh tests`: 223 suites,
+  0 failing (`retail_bloom_test.gd` with the new checks: ALL PASS).
+- `tools/retail_bloom_box_test.sh`: ALL PASS on this tree, FAILURES on base 65e5d8a8 (section 5).
+- Forward+ unchanged: `measure_retail_bloom.gd` under Forward+ with the depth reader, mean 0.24,
+  p99 0.56, max 1.52 of 255, no echo (round 702's figures).
+- Every run on the RX 7600 (banners checked); nothing left running; the box copies and frame dirs
+  under /var/tmp removed.
+
+### Review (round 707 review)
+
+**M1 -- the in-game check passed with the anchor broken (the reviewer's MEASURED finding).** The new
+pass blends instead of writing opaque, so a pass that reads a black screen leaves the frame x
+198/255 (0.776 of the plain one), not black; `a >= 0.5 b` in the box test and `lum_b < 0.25 lum_s`
+in the measurement passed that (anchor forced off: game 68.2 against 87.9, FRAME 95.6 against
+123.2). A ratio cut such as 0.88 would also fail a legitimately dark view, where retail's bloom
+itself keeps 198/255. **Now both test the light the bloom ADDS over S x 198/255** -- zero for a pass
+that read nothing, whatever the scene:
+- `measure_retail_bloom.gd`: FAIL if the added mean luma is under 5/255 (OURS). MEASURED: 32.4 with
+  the anchor, -0.1 without.
+- the box test's game check: FAIL if mean grey on minus off x 198/255 is under 5 (OURS). MEASURED:
+  81.3 on / 87.9 off = **+13.1** with the anchor, 68.2 / 87.9 = **-0.1** without.
+
+**M2 -- the brightness pass was not in the box test.** A second boot, Bloom off from the start (so
+nothing has made the colour texture), stepped to Brightness 3: FAIL under half the plain frame's
+mean grey. A boot of its own because the colour texture, once made, lasts until the target is
+re-made. MEASURED (interface hidden): 119.3 against 87.9 with the anchor, **0** without.
+
+**Self-test** (new): `OPENSRO_QA_BLOOM_NO_ANCHOR=1` (a QA hook in `RetailBloom`, OURS) never shows
+the anchor. With it, every check FAILS (the three above); without it, ALL PASS (MEASURED, this
+tree, the box).
+
+**L -- a possible black frame when the brightness pass appears.** The anchor followed the
+brightness layer only from `_process`, so the frame the layer first drew in (it is added deferred,
+after the nodes' `_process`) could read a colourless back buffer. Now `RetailBloom` connects the
+root's `child_entered_tree` and the brightness layer's `visibility_changed` and syncs the anchor at
+that moment (its own `visibility_changed` already did for the Bloom row); `_process` stays as a
+fallback (a layer freed). `retail_bloom_test.gd` checks the anchor follows the layer's entry, hide
+and show with no `_process` call between.
+
+**Recorded, no code change:**
+- The anchor makes Godot's 3D pass copy the opaque screen into the back buffer every frame the
+  anchor shows, which the canvas's own copy then overwrites: +0.015 / +0.03 / +0.10 ms at 1280 x
+  720 / 1920 x 1080 / 3840 x 2160 (MEASURED, section 4). Godot 4.2.2 offers no way to make the
+  colour texture once and skip the copy (`copy_scene_to_backbuffer` blits whenever a screen reader
+  is in the list, READ).
+- Cheaper Compatibility paths for the 4K cost (+2.3-2.9 ms), none built: (a) one texelFetch a tap
+  (nearest) -- MEASURED 1.40 ms at 4K against 2.90 (with a uniform branch), its 4K error about the
+  same (mean 2.25 against 2.13) but worse at 720 (max 20.7, p99 9.6); (b) choosing (a) only above a
+  width, by swapping the shader on the CPU when the viewport is resized (OURS, unmeasured); (c) a
+  real 512 chain, which needs somewhere to keep the 512 target -- GLES3's canvas has none (section
+  3) -- so it would mean rendering the world into a SubViewport under Compatibility (a World3D
+  change, not this lane's); (d) Godot's mip path, ruled out by the colourless-buffer order and the
+  stale mip count. The user decides whether 4K Compatibility merits (a)/(b).
+
+Checks after the review: `remote_godot.sh check` ALL LOAD; `tests` 223 suites, 0 failing; the box test ALL
+PASS, and FAILURES with `OPENSRO_QA_BLOOM_NO_ANCHOR=1` (above).
+
 ## Seven-hundred-and-sixth round: objects and characters lit as the original lights them -- its own vertex-shader formula with the zone's READ light, the layer's second colour, 0.6 per object and a character's shadow tile, in display values with the tone map undone -- and the camera's 60-degree field of view; the gate wall now reads 82 against the original's 81
 
 The user (after round 705): "A lot more fog and less vibrant. Let's try to match the original game

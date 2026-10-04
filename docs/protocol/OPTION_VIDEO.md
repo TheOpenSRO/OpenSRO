@@ -221,12 +221,25 @@ vertex per texel of the 512 x 512 target: each vertex computes retail's three pa
 (81 screen samples: the downsample at the texel centres, the horizontal taps between texels with the
 threshold, the vertical taps), the fragments interpolate across the grid (linear within each
 half-cell where retail magnifies bilinearly -- OURS), and the composite is the blend itself
-(premultiplied alpha), as retail's is. Under Compatibility the vertex stage reads nothing from the
-screen texture (MEASURED), so there the 25 taps read the screen's mip level log2(width / 512)
-(Godot's Gaussian mips -- OURS). MEASURED (`tools/measure_retail_bloom.gd`, the CPU running retail's
-whole 512 pipeline on the same frame, 4000 pixels x 3 channels): Forward+ mean 0.24 / 0.30 of 255,
-p99 0.56 / 1.43, max 1.5 / 5.8 at 1280 x 720 / 3840 x 2160; Compatibility (mips) mean 1.6, p99 7.7,
-max 11.9 at 1280 x 720; a white bar's added light falls off with no echo peak in either. **Overlays
+(premultiplied alpha), as retail's is. Under Compatibility GLES3's canvas reads the screen only in a
+fragment stage (READ, Godot 4.2.2 canvas.glsl), so there (round 707) a full-screen rect evaluates the
+same pipeline at each pixel's point of the 512 target: the 25 taps, each a bilinear sample of the
+screen there (filtered in the shader from texelFetch), thresholded per tap, the rows clamped, the same
+blend (OURS method: retail mixes two 512 texels' samples between texels and magnifies its target,
+this samples the screen at the tap and evaluates every pixel). **And Compatibility needs a 3D anchor
+(round 707):** a 3D pass reading the depth texture (WorldFog's) makes Godot 4.2.2 create the back
+buffer with no colour texture, and every canvas screen read was black -- the whole frame (0, 0, 0),
+from round 702 to 706 (MEASURED; READ, gles3 `copy_scene_to_backbuffer`). A 3D material that reads
+the screen and covers no pixel makes the 3D pass create the colour texture (RetailBloom's header).
+MEASURED (`tools/measure_retail_bloom.gd`, the CPU running retail's whole 512 pipeline on the same
+frame, 4000 pixels x 3 channels; the scene now has a depth-reading 3D pass, as the world): Forward+
+mean 0.24 / 0.30 of 255, p99 0.56 / 1.43, max 1.5 / 5.8 at 1280 x 720 / 3840 x 2160 (round 702);
+Compatibility (round 707) mean 0.95 / 1.54 / 2.13, p99 6.6 / 9.5 / 13.2, max 13.7 / 15.5 / 24.5 at
+1280 x 720 / 1920 x 1080 / 3840 x 2160, on smooth ramps mean 0.28 / 0.32 and p99 1.1 / 2.9 at 720 /
+2160 -- the rest is fine detail, where per-pixel taps part from retail's sparse 512 samples (round
+702's mip path: mean 1.6, p99 7.7, max 11.9 at 1280 x 720, and black in the game); a white bar's
+added light falls off with no echo peak in either. `tools/retail_bloom_box_test.sh` checks
+Compatibility on the box. **Overlays
 come after it** (`OverlayView`): name plates, damage numbers, party marks and name boxes render in
 their own transparent viewport over the bloom, as retail draws its 2D text over the finished frame;
 the lens-flare sun sprite and the character-select characters are still bloomed (OURS,

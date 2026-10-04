@@ -50,6 +50,19 @@ keep DXT1 the old way, for a before picture; `OPENSRO_QA_UI_SCALE=<f>` runs the 
 scale (a QA run starts past Boot, so at 1.0 otherwise), and `ViewportPixels:` lines in the log say
 what each 3D preview renders at.
 
+**The bloom under Compatibility** (round 707). `retail_bloom_box_test.sh <client dir> [out dir]`
+runs on the box, under your lock, and fails if the Bloom row draws a black frame under
+Compatibility: `measure_retail_bloom.gd` at 1280 x 720 with a depth-reading 3D pass (the world's
+WorldFog is one, and it is what blacked the screen: RetailBloom's header), then the Jangan spawn
+with Bloom off at start, stepped to on and off (the bloom must ADD light over the plain frame x
+198/255: a pass that read a black screen keeps exactly that), and a second boot with Bloom off
+stepped to Brightness 3 (the brightness pass reads the screen too). About 4 minutes.
+`OPENSRO_QA_BLOOM_NO_ANCHOR=1` is its self-test: RetailBloom's anchor never shows, and every
+check must FAIL. Run it after a change to
+RetailBloom, WorldFog, the brightness pass or any 3D screen or depth read. A Compatibility frame
+must be checked with a 3D view in the scene: round 702's canvas-only measurement passed while the
+game drew black.
+
 **Startup dominates, so batch the pictures.** Loading the region grid costs roughly 65 seconds
 against 0.33 seconds a frame, so six pictures taken as six runs pays that cost six times. Use
 `--shots` to visit several viewpoints in one boot, and `--radius` to load fewer regions when the

@@ -613,23 +613,35 @@ In order. Each is checked off here when it ships in a release, with its round in
       method itself.
 - [x] **The Bloom row's look** -- round 702 review and rework: `RetailBloom` draws the original's
       bloom, READ in full (`Map::FUN_00a1d790`; OPTION_VIDEO.md), computed per 512 texel on a vertex
-      grid under Forward+ (the screen's 512-wide mip under Compatibility); Godot's glow is off for
+      grid under Forward+ (per pixel under Compatibility since round 707); Godot's glow is off for
       good. Overlays (name plates, damage numbers, party marks,
       name boxes) are drawn after it (`OverlayView`). Left (OURS, each noted by the rework review):
-      under Compatibility the mip is a Gaussian, not retail's one bilinear downsample (mean
-      1.6/255 from retail's pipeline); the 4K cost, most of it Godot's full-screen back-buffer copy
+      under Compatibility the per-pixel taps sample the screen between 512 texels where retail
+      mixes two texels' samples (mean 0.95/255 from retail's pipeline at 1280 x 720, 2.1 at
+      3840 x 2160; round 707); the 4K cost, most of it Godot's full-screen back-buffer copy
       (round 702's rework entry); **the lens-flare sun sprite and the character-select
       characters are bloomed** (retail draws the flare after the bloom, and the select screen's
       characters and names after its slot 5); BerserkFlash may belong after the bloom too
       (PLAUSIBLE, not read); the character-create preview is not bloomed (PLAUSIBLE that retail's
       is); the screen texture is sampled CLAMP at the edges where retail's target may WRAP (not
       read).
-- [ ] **Compatibility + the Bloom row renders black frames on the box** (round 705, MEASURED on
-      base 1bcbd825 and on round 705's tree alike: every `qa_shot.sh RENDERER=gl_compatibility`
-      frame with bloom=1 is (0, 0, 0) everywhere, bloom=0 draws normally; nothing in the log). Round
-      702's review measured RetailBloom under Compatibility, so something after it broke it -- or
-      the movie writer path alone. Middle (the default) has Bloom on: find out whether a
-      Compatibility player sees black.
+- [x] **Compatibility + the Bloom row rendered black frames** (round 705 found, round 707 fixed).
+      Cause (READ, Godot 4.2.2 gles3 `copy_scene_to_backbuffer`; MEASURED): WorldFog's 3D pass reads
+      the depth texture, which makes Godot create the render target's back buffer with a depth copy
+      and no colour texture; the canvas then never makes its own, and every canvas screen read
+      (RetailBloom's, and the brightness pass's) samples texture 0 -- black. A Compatibility
+      player on Middle saw a black world under the interface from round 702 on (MEASURED on the
+      box: mean 5/255 with the HUD, 0 without); one with Bloom off from the start and Brightness
+      off Normal saw a wholly black screen (the pass is over the interface; MEASURED: mean 0). Fixed in `RetailBloom`: a 3D anchor
+      that reads the screen and draws nothing gives the back buffer its colour texture, and the
+      Compatibility pass evaluates retail's pipeline per pixel from texelFetch (no mip path; the
+      vertex grid cannot read the screen in GLES3). Guard: `tools/retail_bloom_box_test.sh`
+      (FAILS on base 65e5d8a8: frame mean 0) and `retail_bloom_test.gd`. Left: the Compatibility
+      pass costs 0.32 ms at 1280 x 720 and 2.9 ms at 3840 x 2160 on the RX 7600 (perf gate: +0.2 SAME
+      at 720, about +2.3 at 4K -- for the user; round 707's
+      entry), against Forward+'s grid; an upstream report of the Godot 4.2 back-buffer bug (not
+      filed); any other canvas screen reader added later in the world needs the anchor shown
+      (`RetailBloom._sync_anchor`).
 - [x] **The camera's field of view** -- round 706: 60 degrees VERTICAL at any aspect (READ: the
       camera constructor `FUN_00bae0a0` stores 60.0 at +0x50; `CGFXVideo3d::FUN_00bae810` hands it
       x pi/180 and width / height to `FUN_00aa4ef0`, a PerspectiveFovLH with m11 = cot(fov / 2) and
