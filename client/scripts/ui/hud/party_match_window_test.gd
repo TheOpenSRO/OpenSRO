@@ -66,6 +66,7 @@ func _ifpartymatchslot() -> String:
 			["GDR_PARTYMATCH_SLOT_NAME", "150,7,78,11", 13], ["GDR_PARTYMATCH_SLOT_RACE", "101,7,31,11", 12],
 			["GDR_PARTYMATCH_SLOT_MARK", "60,5,16,16", 11], ["GDR_PARTYMATCH_SLOT_ID", "10,7,36,11", 10]]:
 		b += _c(spec[0], "CIFStatic", spec[1], spec[2])
+	b += _c("GDR_PARTYMATCH_SLOT_SELECT", "CIFBarWnd", "0,0,715,24", 5)
 	return "Interface Text\n\n" + _sec("Create", b)
 
 func _ifpartymatchregister() -> String:
@@ -184,7 +185,6 @@ func _test_list(builder: UiBuilder) -> void:
 	_check(_slot_text(w, 2, "GDR_PARTYMATCH_SLOT_ID") == "", "empty rows are blank")
 	# Selection: a row with data takes the gold bar; an empty row does not.
 	w.select_slot(1)
-	var sel1 := w.node("GDR_PARTYMATCH_SLOTLIST_SLOT_01").get_node_or_null("SelectBar") as CanvasItem
 	_check(w.selected_number == 15, "a click selects entry 15")
 	w.select_slot(5)
 	_check(w.selected_number == 15, "a click on an empty row changes nothing")

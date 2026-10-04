@@ -7,6 +7,7 @@ class_name PartyMatchQa
 ##
 ##   match                     open the Party Matching window (page 0)
 ##   page:<n>                  ask for page n (the spin)
+##   form                      press Form party (the dialog stays up)
 ##   register:<purpose>,<min>,<max>[,<title>]   Form party, fill, OK
 ##   change:<purpose>,<min>,<max>[,<title>]     Change entry, fill, OK
 ##   delete                    Delete entry, then Yes
@@ -30,6 +31,10 @@ static func do(panels: HudPanels, verb: String, arg: String) -> bool:
 			panels.open("partymatch")
 		"page":
 			w.state.request_page(int(arg))
+		"form":
+			panels.open("partymatch")
+			w.press_form()
+			print("QA MATCH: form -> dialog %s" % (w.register_box != null and is_instance_valid(w.register_box)))
 		"register", "change":
 			panels.open("partymatch")
 			if verb == "register":
@@ -64,6 +69,14 @@ static func do(panels: HudPanels, verb: String, arg: String) -> bool:
 					w.select_slot(i)
 					found = true
 			print("QA MATCH: %s %s -> %s (selected %d)" % [verb, arg, "found" if found else "not listed", w.selected_number])
+			for i in PartyMatchWindow.ROWS:
+				var slot := w.node("GDR_PARTYMATCH_SLOTLIST_SLOT_%02d" % i)
+				var bar := slot.get_node_or_null("MatchSlot/SelectBar") as Control if slot != null else null
+				if bar != null and bar.visible:
+					print("QA MATCH: row %d's select bar at %s size %s, %d piece(s), index %d of %d" % [i, bar.global_position, bar.size,
+						bar.get_child_count(), bar.get_index(), slot.get_child_count()])
+				elif slot != null and i == 0:
+					print("QA MATCH: row 0 has %s select bar; children %s" % ["a hidden" if bar != null else "no", slot.get_node("MatchSlot").get_children().map(func(c: Node) -> String: return c.name)])
 			if found and verb == "join":
 				print("QA MATCH: Join party enabled %s" % w.enabled(PartyMatchWindow.BTN_JOIN))
 				w.press_join()

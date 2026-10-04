@@ -102,3 +102,56 @@ screenshots 08 and 09, which draw the names opaque).
   fixture `306e_closed`, Confirm = `306e_confirm`). All pass.
 - Render box (`RENDER_DIR=/opt/opensro-client-c2`, `GODOT_LOCK=/var/tmp/c2/lock`):
   `remote_godot.sh check` ALL LOAD (598 scripts).
+- Full suite on the box (`RENDER_DIR=/opt/opensro-client-c2t`): 228 suites; the only failure was
+  this round's own check message containing the word the runner greps for ("AUTO_FAILURE"),
+  reworded since; `party_match_test.gd` alone passes.
+
+## Live, against a server built from this branch (S1 + S3, in memory)
+
+`qa_shot.sh --server` with partybots on the same server (`/var/tmp/c2/runA2.sh`, `runB.sh`):
+Sonila (1~100, "LVL 100 PT"), Levi (quest, 20~40), Eone (flags 0, a 1/4 party), Tobi
+(`-silent`, leaves join requests unanswered) and Dasha (level 1, `-request Aria`).
+
+- **Run A2, Aria rendered (the leader side).** `match` -> page 0 listed Sonila, Levi, Eone (the
+  `QA MATCH ROW` lines; Eone's Type icon is the one-person art, 1/4). `select:Sonila` -> the gold
+  bar. `form` -> the Forming party dialog (Trade / Thief greyed, the default title DEFAULT1, the
+  type line "EXP Auto Share / Item Free-For-All" from the settings block, flags 0x05).
+  `register` -> `0xb069`, the RECORD_COMPLETE banner, Aria's entry 4 pinned in row 0 in light
+  blue. Dasha's bot then saw entry 4 and sent `0x706d`; Aria's popup showed "[Dasha]has requested
+  to join this party. Confirm?", Level 1, Race CHN, Position Jangan, no guild; `req:confirm` sent
+  `0x306e` answer 1 and the server formed the party (Dasha's log: `0x3065 party=1 leader=1
+  flags=0x05 members=[Aria(1) Dasha(4)]`).
+- **Run B, Bram rendered (the requester side).** `join:Levi` (Bram is level 10, Levi's entry
+  20~40) -> `0xb06d [2][0x2c1e]` drawn in the bottom-right system message window: "Not the
+  required level for the party." `join:Tobi` -> the Joining window, "[Bram]You [Tobi] has
+  requested to join this party." with the gold gauge; Tobi's bot logged the relayed `0x706d`
+  (requester Bram, job state 4, level 10).
+- **Measured** (ImageMagick on the frames, edges of the msgbox2 frame): the Joining window spans
+  x 457..821, y 285..433 = 365x149 at (457, 285), the READ size centred on 1280x720 exactly; the
+  leader's popup x 460..819, y 202..516 = 360x315 at (460, 202). The rows sit on the READ 23 px
+  pitch (row tops 264, 287, 310 in the `QA MATCH` select-bar lines: 144 + 23 i + the window's
+  origin).
+- **Found and fixed by the runs.** The first run drew no gold bar: the slot layout's own
+  GDR_PARTYMATCH_SLOT_SELECT (ID 5, `com_bar01_`) covered the select bar laid under it. The
+  client swaps that control's art (`0x740ca0`); the select bar now sits right above it and
+  replaces it while selected (run A2's frame shows the gold rows at the selected row's top and
+  bottom). A `form` QA step (the dialog left up) was added.
+- **Timing caveat.** A rendered client draws about 3 frames a real second, while the server's
+  15 s backstop and the bots run in real time; so a frame shows only the first few percent of the
+  Joining gauge, and the first run's late `req:confirm` (160 frames after the request, past the
+  real 15 s) reached a request the server had already closed as "no reply". The gauge itself is
+  measured in the unit test (half at 5 s, closed at 10 s).
+- **Frames kept** on the box, `/var/tmp/c2/keep/`: `A2_selected.png` (screenshot 06's gold
+  bar), `A2_register_dialog.png`, `A2_own_row.png` (screenshot 02's own row in blue, as text
+  columns), `A2_leader_popup.png` (screenshot 08), `B_list.png`, `B_refusal_2c1e.png`,
+  `B_joining.png` (screenshot 09). The other frames were deleted.
+
+## Left open
+
+- The register dialog's objective labels are READ 50 wide (0x657960(0x32)); "Trade Union" runs
+  past that and under the next item's dot, as drawn here. Whether CIFRadioButton's label clips
+  was not read.
+- Not exercised live: Change entry, Delete entry, Auto match, Search, Whisper (each is in the
+  window test, except Whisper and Auto match's dialog, whose candidate rule and queue are in the
+  state test).
+- The column sorting, the row tooltip and the drawn scroll bar (OURS table above).

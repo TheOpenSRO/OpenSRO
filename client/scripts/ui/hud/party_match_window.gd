@@ -154,18 +154,21 @@ func _build_slots() -> void:
 				for n in built.get_children():
 					if n is Control:
 						(n as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
-		# The selected bar over the plain one (com_bar01select_, 3-slice),
-		# drawn under the columns.
-		if _builder != null and slot.get_node_or_null("SelectBar") == null:
-			var before := slot.get_child_count()
-			_builder._add_row_bar_from(slot, UiBuilder.ROW_BAR_SELECTED_DDJ, slot.size if slot.size != Vector2.ZERO else Vector2(715, 24))
-			if slot.get_child_count() > before:
-				var sel := slot.get_child(slot.get_child_count() - 1) as Control
+		# The row's own bar is the layout's GDR_PARTYMATCH_SLOT_SELECT (ID 5,
+		# com_bar01_); the fill swaps its art to com_bar01select_ for the
+		# selected row (0x740ca0). Here the select art is a second 3-slice
+		# bar right above it, shown in its place.
+		var holder: Control = slot.get_node_or_null("MatchSlot") as Control
+		var plain := holder.get_node_or_null("GDR_PARTYMATCH_SLOT_SELECT") as Control if holder != null else null
+		if _builder != null and holder != null and holder.get_node_or_null("SelectBar") == null:
+			var before := holder.get_child_count()
+			_builder._add_row_bar_from(holder, UiBuilder.ROW_BAR_SELECTED_DDJ, Vector2(715, 24))
+			if holder.get_child_count() > before:
+				var sel := holder.get_child(holder.get_child_count() - 1) as Control
 				sel.name = "SelectBar"
 				sel.visible = false
-				var match_slot := slot.get_node_or_null("MatchSlot")
-				if match_slot != null:
-					slot.move_child(sel, match_slot.get_index())
+				sel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				holder.move_child(sel, plain.get_index() + 1 if plain != null else 0)
 		slot.mouse_filter = Control.MOUSE_FILTER_STOP
 		slot.gui_input.connect(_on_slot_input.bind(i))
 
@@ -252,9 +255,13 @@ func refresh() -> void:
 
 func _fill_slot(slot: Control, row: PartyMatchNet.Row, own: bool) -> void:
 	var s := slot.get_node_or_null("MatchSlot")
-	var sel := slot.get_node_or_null("SelectBar") as CanvasItem
+	var sel := s.get_node_or_null("SelectBar") as CanvasItem if s != null else null
+	var selected := row != null and row.number == selected_number and selected_number != 0
 	if sel != null:
-		sel.visible = row != null and row.number == selected_number and selected_number != 0
+		sel.visible = selected
+		var plain := s.get_node_or_null("GDR_PARTYMATCH_SLOT_SELECT") as CanvasItem
+		if plain != null:
+			plain.visible = not selected
 	if s == null:
 		return
 	var cols := {

@@ -244,7 +244,7 @@ func _test_state_auto() -> void:
 	var one: Array[int] = [7]
 	st.start_auto(one)
 	st.handle(_fx("b06d_noreply"), PartyMatchNet.OP_JOIN_ACK)
-	_check(not st.auto_running and lines.back() == "UIIT_MSG_PARTYMATCH_AUTO_FAILURE", "a run that runs out says AUTO_FAILURE")
+	_check(not st.auto_running and lines.back() == "UIIT_MSG_PARTYMATCH_AUTO_FAILURE", "a run that runs out says the auto-match failure line")
 
 func _initialize() -> void:
 	_test_senders()
