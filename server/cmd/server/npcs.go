@@ -62,12 +62,15 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 		session.InstallNPCs(nil, logger)
 		return
 	}
-	teleportFlags := map[int64][2]bool{}
+	// The teleport row's ids on its associated object: 7 and 9 from its two
+	// flags, 8 (round 727) when links leave the point (Teleport8's stand-in).
+	teleportFlags := map[int64][3]bool{}
 	if tp != nil {
 		for _, p := range tp.Points {
 			if p.ObjectID != 0 {
 				f := teleportFlags[int64(p.ObjectID)]
-				teleportFlags[int64(p.ObjectID)] = [2]bool{f[0] || p.Interaction7, f[1] || p.Interaction9}
+				teleportFlags[int64(p.ObjectID)] = [3]bool{f[0] || p.Interaction7, f[1] || p.Interaction9,
+					f[2] || len(tp.LinksFrom(p.ID)) > 0}
 			}
 		}
 	}
@@ -83,7 +86,8 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 			return 0, nil
 		}
 		f := teleportFlags[id]
-		return npcspawn.Interactions(code, npcspawn.InteractionInputs{Teleport7: f[0], Teleport9: f[1], HasShop: table[id].Shop})
+		return npcspawn.Interactions(code, npcspawn.InteractionInputs{Teleport7: f[0], Teleport9: f[1], Teleport8: f[2],
+			OwnsShop: table[id].Shop})
 	}
 	npcs, rep := npcspawn.Place(npcRows(placements, monsters, table), db, info, interactions)
 	filed := session.InstallNPCs(npcs, logger)
