@@ -177,9 +177,17 @@ mod sections do not parse.
 - `BsrReader` reads the particle mods; `ObjectLoader` keeps a placed object's `ambient` entries on
   its committed node (`AmbientParticles.META_ENTRIES`).
 - `World3D._attach_gate_effects`: for every teleportbuilding row in a region as it loads, the
-  region's placed objects within **30 units** (OURS: the farthest gate object measured is 26.0)
-  that carry ambient entries play them, each effect looped and following its object
+  placed objects within **30 units** (OURS: the farthest gate object measured is 26.0) that carry
+  ambient entries play them, each effect looped and following its object
   (`AmbientParticles.attach`), offset and rotation as READ.
+  - **Round 723 correction:** until then only the row's OWN region's container was searched, so a
+    gate whose model sat in a neighbour's container played nothing. That is what the user saw at
+    Samarkand: on their teleport in, a neighbour region loaded first and placed the shared
+    `samarkand_center_01` (MEASURED, their client log). The match now covers the rows of the
+    committed region and its eight neighbours against the objects of all nine containers, in the
+    committed region's frame, on every region's commit (`GateEffectMatch`), so either load order
+    finds the pair. The rounds 720-722 renders loaded the gate's region at boot, an order that hid
+    this, so "every gate attaches" held only for that order.
 - The glow pass is `AmbientParticles.update`, once a physics tick: the 500 ms test, the 1.5/ms
   fade, the restart at 0, and the draw without the depth test with the particle alpha scaled
   (`EfpEffect.make_glow` / `glow_shader`), as READ.
