@@ -187,6 +187,8 @@ class Glow:
 	var blocker := ""
 
 var _glows: Array[Glow] = []
+## Every effect attach() built (the QA log's screen positions, round 722).
+var _effects: Array = []
 var _gathered_ms := 0.0
 var _frame := 0
 ## Mods whose remaining entries a missing mode-0 bone stopped (tests, log).
@@ -261,6 +263,7 @@ func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader) -> Array:
 				g.box = box
 				_glows.append(g)
 			made.append(fx)
+			_effects.append([fx, e.b50])
 	return made
 
 ## Whether `host` carries a skeleton with a bone named `bone` (mode 0's
@@ -315,7 +318,8 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 				continue
 			var hit := occluder(space, eye, p)
 			g.visible = hit.is_empty()
-			g.blocker = "" if g.visible else _blocker_name(hit)
+			g.blocker = "" if g.visible else "%s n.d %.2f" % [_blocker_name(hit),
+				(hit.get("normal", Vector3.ZERO) as Vector3).dot((p - eye).normalized())]
 	for g in shown:
 		g.alpha = step_alpha(g.alpha, g.visible, frame_ms, g.seen_frame == _frame - 1)
 		g.seen_frame = _frame
@@ -368,6 +372,28 @@ static func _blocker_name(hit: Dictionary) -> String:
 			top = top.get_parent()
 		return "%s/%s at %s" % [String(top.name), owner_name, str((hit["position"] as Vector3).round())]
 	return "?"
+
+## For the QA log (round 722): each effect's world position, its distance
+## from the camera and where it lands on the screen (off when behind the eye
+## or outside the frustum), and the camera's own position.
+func describe_screen(camera: Camera3D) -> String:
+	if camera == null:
+		return ""
+	var parts: Array[String] = ["camera %s" % str(camera.global_position.round())]
+	var keep: Array = []
+	for pair in _effects:
+		var fx = pair[0]
+		if not is_instance_valid(fx) or not (fx as Node).is_inside_tree():
+			continue
+		keep.append(pair)
+		var at: Vector3 = (fx as EfpEffect).placed_at()
+		var where := "off"
+		if not camera.is_position_behind(at) and camera.is_position_in_frustum(at):
+			where = str(camera.unproject_position(at).round())
+		parts.append("%s[%d] at %s d%.0f screen %s" % [(fx as EfpEffect).path.get_file(), int(pair[1]),
+			str(at.round()), camera.global_position.distance_to(at), where])
+	_effects = keep
+	return ", ".join(parts)
 
 func glow_count() -> int:
 	return _glows.size()

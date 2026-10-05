@@ -328,6 +328,11 @@ class ParsedObject:
 	## ModDataParticle::vslot_004 (0x00c643b0). See particle_mods().
 	var particle_mods: Array = []
 
+	## The TEXANI mods of the mod section (round 722): each the Dictionary
+	## _read_texani builds (ModDataTexAni::vslot_004, 0x00c5c5a0, READ).
+	## See texani_for() for which one animates a material.
+	var texani_mods: Array = []
+
 	## The flag word of the environment-map mod that governs this object's
 	## alpha test, or -1 for none (round 626's name and shape; this round's
 	## review read the same). READ, `CRTModEnvMap::vslot_004` (0x00c83690):
@@ -371,6 +376,24 @@ class ParsedObject:
 				continue
 			if (m["w1"] == 2 and int(m["material"]) == index) or (m["w1"] == 1 and int(m["material"]) == 0xFFFFFFFF):
 				out = m["state"]
+		return out
+
+	## The TEXANI mod that animates material `index`'s texture coordinates,
+	## or {} for none (round 722). READ, `CRTModTexAni::vslot_004`
+	## (0x00c82970): it uploads its matrix only when the mod's material word
+	## (+0x14) equals the index being drawn. Ambient set only, as
+	## mtrl_mod_for (the sets that play with a clip are not played here);
+	## the dispatch word is taken as for MTRL (word 1 of 2 per material, 1
+	## with material 0xFFFFFFFF for every one: INFERRED, the same
+	## FUN_00c7b540 / FUN_00c7b4e0 pair calls every mod's slot 4). The last
+	## one wins.
+	func texani_for(index: int) -> Dictionary:
+		var out := {}
+		for m in texani_mods:
+			if m["set_kind"] != 2:
+				continue
+			if (m["w1"] == 2 and int(m["material"]) == index) or (m["w1"] == 1 and int(m["material"]) == 0xFFFFFFFF):
+				out = m
 		return out
 
 	## Header flag bit 1: `CObjRendererVS::vslot_038` draws the object with
@@ -473,6 +496,7 @@ static func _pp_parse(data: PackedByteArray) -> ParsedObject:
 		obj.header_flags = _le_u32(data, OFF_FLAGS)
 		obj.material_mods = material_mods(data)
 		obj.particle_mods = particle_mods(data)
+		obj.texani_mods = texani_mods(data)
 		obj.env_map_materials = env_map_materials(data)
 		obj.env_map_flags = env_map_flags(data)
 	return obj
@@ -544,6 +568,7 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 			built.header_flags = _le_u32(data, OFF_FLAGS)
 			built.material_mods = material_mods(data)
 			built.particle_mods = particle_mods(data)
+			built.texani_mods = texani_mods(data)
 			built.env_map_materials = env_map_materials(data)
 			built.env_map_flags = env_map_flags(data)
 			if obj_type == TYPE_PLAYER_CHARACTER or obj_type == TYPE_ITEM:
@@ -894,6 +919,8 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 	mods[_ENV_MAPS_KEY] = env_maps
 	var particles: Array = []
 	mods[_PARTICLES_KEY] = particles
+	var texanis: Array = []
+	mods[_TEXANI_KEY] = texanis
 	var lists: Array = []
 	for list_index in range(2):
 		var count = _take_i32(data, cursor)
@@ -909,8 +936,10 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 	mods.erase(_MODS_KEY)
 	mods.erase(_ENV_MAPS_KEY)
 	mods.erase(_PARTICLES_KEY)
+	mods.erase(_TEXANI_KEY)
 	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods,
-		"material_mods": captured, "env_maps": env_maps, "particle_mods": particles}
+		"material_mods": captured, "env_maps": env_maps, "particle_mods": particles,
+		"texani_mods": texanis}
 
 ## Where _read_mod_set leaves the ENVMAP and MTRL mods it passes, inside
 ## the `mods` dictionary it already threads (a key no u32 kind can equal).
@@ -923,6 +952,45 @@ const _ENV_MAPS_KEY := "env_maps"
 
 ## Where _read_mod_set leaves the particle mods (round 720).
 const _PARTICLES_KEY := "particle_mods"
+## Where _read_mod_set leaves the TEXANI mods (round 722).
+const _TEXANI_KEY := "texani_mods"
+
+## Every TEXANI mod of a file (ParsedObject.texani_mods), [] when its mod
+## section does not parse.
+static func texani_mods(data: PackedByteArray) -> Array:
+	if data.size() < PREAMBLE_END:
+		return []
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return []
+	return section["texani_mods"]
+
+## A TEXANI mod's body at `header_at` (its IModData header), READ from
+## ModDataTexAni::vslot_004 (0x00c5c5a0) and the header reader FUN_00c5c2a0
+## (six words into the data object's +0x08..+0x1c, then four bytes into
+## +0x20..+0x23), with what CRTModTexAni reads from each:
+##   +0x0c  w1        the dispatch word (as MTRL)
+##   +0x14  material  the material index vslot_004 compares
+##   +0x20  start     the first frame (byte; the step's `[edx+0x20]`)
+##   +0x21  end       the last frame (byte)
+##   +0x22  flags     bit 0 loops, bit 1 ping-pongs (asm 0xc82721..0xc827aa)
+##   +0x24  mode      1 -> the draw flag 0x400000, else 0x8000000 (0xc8299f)
+##   +0x28  method    the step: the runtime's table at +0x90 -- 0 the frame
+##                    grid (0xc82640), 1 the matrix rates (0xc82830); set by
+##                    the constructor 0xc82a00
+##   +0x2c  fps, +0x30 rows, +0x34 columns
+##   +0x38  16 floats, the rates the matrix step multiplies by the seconds
+## Nothing here is computed; TexAni runs it.
+static func _read_texani(data: PackedByteArray, header_at: int, set_kind: int) -> Dictionary:
+	var rates := PackedFloat32Array()
+	for i in range(16):
+		rates.append(data.decode_float(header_at + 48 + 4 * i))
+	return {"set_kind": set_kind, "w1": data.decode_u32(header_at + 4),
+		"material": data.decode_u32(header_at + 12),
+		"start": data[header_at + 24], "end": data[header_at + 25], "flags": data[header_at + 26],
+		"mode": data.decode_s32(header_at + 28), "method": data.decode_s32(header_at + 32),
+		"fps": data.decode_s32(header_at + 36), "rows": data.decode_s32(header_at + 40),
+		"cols": data.decode_s32(header_at + 44), "rates": rates}
 
 ## One particle mod (round 720): the mod set it sits in and its entries.
 ## READ: the body is ModDataParticle::vslot_004 (0x00c643b0); the runtime
@@ -1173,6 +1241,8 @@ static func _read_mod_set(data: PackedByteArray, cursor: Array, mods: Dictionary
 			if mod_kind == MOD_MTRL:
 				m["state"] = _read_mtrl_state(data, cursor[0] - 36)
 			(mods[_MODS_KEY] as Array).append(m)
+		if mod_kind == MOD_TEXANI and mods.has(_TEXANI_KEY):
+			(mods[_TEXANI_KEY] as Array).append(_read_texani(data, header_at, kind))
 		if mod_kind == MOD_PARTICLE and mods.has(_PARTICLES_KEY):
 			var pm := _read_particle_mod(data, header_at, kind, action_type, name)
 			if pm != null:

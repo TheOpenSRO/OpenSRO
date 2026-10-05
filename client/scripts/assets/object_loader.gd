@@ -287,6 +287,11 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 			# material's MTRL mod, and the two-pass flag.
 			piece["material"] = _prepare_material(archive, obj.material_path, material.layers[layer_idx], known, prepared,
 				obj.env_map_flags, obj.mtrl_mod_for(layer_idx), obj.two_pass())
+			# Its TEXANI mod (round 722, TexAni): the commit starts the material's
+			# texture-coordinate animation.
+			var texani := obj.texani_for(layer_idx)
+			if not texani.is_empty():
+				(piece["material"] as Dictionary)["texani"] = texani
 
 		(node["pieces"] as Array).append(piece)
 		loaded_count += 1
@@ -361,6 +366,8 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 			var godot_material := _commit_material(piece["material"], texture_cache)
 			if godot_material != null:
 				mesh_instance.material_override = godot_material
+				if (piece["material"] as Dictionary).has("texani"):
+					TexAni.bind(godot_material, piece["material"]["texani"])
 		root.add_child(mesh_instance)
 		if animated:
 			bound.append([mesh_instance, piece])
@@ -877,6 +884,9 @@ uniform int alpha_arg2 = 0;
 // The blend emulation (ObjectLoader.BLEND_EMULATION).
 uniform int blend_color = 0;
 uniform int blend_alpha = 0;
+// A TEXANI mod's texture-coordinate matrix (TexAni, round 722).
+uniform vec3 texani_u = vec3(1.0, 0.0, 0.0);
+uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
 %s
 // A stage value split into the part that multiplies DIFFUSE (lit) and the
 // part that does not (unlit): value = lit * DIFFUSE + unlit.
@@ -991,7 +1001,7 @@ void fragment() {
 	# The helpers go before the first function (the stage arithmetic and the
 	# vertex colour call them).
 	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + ObjectLight.SHADER_FN + (WorldFog.SHADER_FN if blended else "")
-		+ "\nvoid vertex() {\n\t" + ObjectLight.OD0_LINE + "\n}\n" + "\nstruct Split {")
+		+ "\nvoid vertex() {\n\t" + ObjectLight.OD0_LINE + "\n\t" + TexAni.SHADER_LINE + "\n}\n" + "\nstruct Split {")
 	shader.set_meta(MOD_SHADER_KEY_META, [cull, godot_blend, zwrite])
 	_static_lock.lock()
 	if _mod_shaders.has(key):

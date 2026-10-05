@@ -7668,6 +7668,10 @@ func _gate_effects_decoded(container: Node3D, region_x: int, region_y: int) -> b
 
 ## The glow pass (AmbientParticles.update), once a physics tick.
 func _ambient_step(delta: float) -> void:
+	# Round 722: where each effect lands on the screen, every 20 ticks.
+	if _qa_ambient_log and Engine.get_physics_frames() % 20 == 0:
+		print("QA AMBIENT screen tick %d frame %d: %s" % [Engine.get_physics_frames(), Engine.get_frames_drawn(),
+			_ambient.describe_screen(camera_3d)])
 	if _ambient.glow_count() == 0:
 		return
 	_ambient.update(delta * 1000.0, camera_3d, get_world_3d().direct_space_state)
@@ -14744,6 +14748,8 @@ func _physics_process(delta: float) -> void:
 	_appear_fades.step(delta)
 	# The teleport gates' glows (round 720).
 	_ambient_step(delta)
+	# Animated texture coordinates, a TEXANI mod per material (round 722).
+	TexAni.tick(delta * 1000.0)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
 	var cells_before := _load_timings.cell_work_usec
