@@ -2080,6 +2080,11 @@ func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dic
 		return null
 	box.confirmed.connect(on_ok)
 	window.add_child(box)
+	# The box is the host window's child; the original's is a window of its
+	# own over the rest. Raise the host so no other window (the bag beside
+	# the warehouse) draws over the box or takes its clicks (round 726 live
+	# run: the gold box sat under the inventory).
+	window.move_to_front()
 	_track_confirm_boxes(window)
 	_message_box_sounds(box)
 	_place_box_on_screen(box)
@@ -2559,12 +2564,11 @@ func _open_gold_withdraw() -> void:
 
 func _open_gold_box(deposit: bool) -> void:
 	var balance := _storage_carried if deposit else _storage_stored
-	var box := _open_store_box("storage", "GoldDialog",
+	# The amount opens at 1 (OURS: what the original prefills is not read).
+	_open_store_box("storage", "GoldDialog",
 		StoreMessageBox.Kind.GOLD_DEPOSIT if deposit else StoreMessageBox.Kind.GOLD_WITHDRAW,
-		{"count": balance if balance > 0 else 1, "max": maxi(1, balance)},
+		{"count": 1, "max": maxi(1, balance)},
 		func(q: int) -> void: _do_gold(StorageNet.GOLD_DEPOSIT if deposit else StorageNet.GOLD_WITHDRAW, q))
-	if box != null:
-		box.set_count(1)
 
 ## Kept for the QA hook and the tests: the deposit box.
 func _open_gold_dialog() -> void:
