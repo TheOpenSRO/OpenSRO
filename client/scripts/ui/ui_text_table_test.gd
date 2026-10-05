@@ -107,9 +107,65 @@ func _init() -> void:
 	_check(hat_table.has("SN_ITEM_BLANK") and hat_table.get_text("SN_ITEM_BLANK", "x") == "",
 		"a no-Latin first row with a blank language column holds \"\" (got %s)" % hat_table.get_text("SN_ITEM_BLANK", "x"))
 
+	_joined_checks()
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
 	else:
 		push_error("%d failure(s)" % _failures)
 		quit(1)
+
+# USER DECISION (2026-10-05, round 725): in a table that is two whole tables
+# joined -- a private server's reworded block, then the stock one -- the
+# stock row wins; a single table keeps every first row as before.
+func _row16(key: String, english: String) -> String:
+	return "1\t%s\t\u1355\t0\t0\t0\t0\t0\t%s\t%s\t0\t0\t0\t0\t0\t0" % [key, english, english]
+
+func _row19(key: String, english: String) -> String:
+	return "1\t%s\t\u1355\t0\t0\t0\t0\t0\t0\t%s\t0\t0\t0\t0\t0\t0\t0\t0\t0" % [key, english]
+
+func _joined_checks() -> void:
+	var first := PackedStringArray(["//Private block"])
+	var second := PackedStringArray(["//Stock block"])
+	for i in 10:
+		first.append(_row16("UIIT_K%d" % i, "Reworded %d" % i))
+	first.append(_row16("UIIT_PRIVATE_ONLY", "Private only"))
+	for i in 10:
+		if i == 5:
+			# A stock row with no English (Korean only, as UIO_MSG_AUTOLOGIN).
+			second.append("1\tUIIT_K5\t\u1355\u1356")
+		else:
+			second.append(_row19("UIIT_K%d" % i, "Stock %d" % i))
+	second.append(_row19("UIIT_STOCK_ONLY", "Stock only"))
+	var joined := UiTextTable.parse(("\n".join(first + second)).to_utf16_buffer())
+	_check(joined.get_text("UIIT_K1") == "Stock 1" and joined.get_text("UIIT_K0") == "Stock 0",
+		"a joined table: the stock (later) table's row wins (got %s, %s)" % [joined.get_text("UIIT_K0"), joined.get_text("UIIT_K1")])
+	_check(joined.get_text("UIIT_K5") == "Reworded 5",
+		"OURS: a stock row with no English does not replace an English one (got %s)" % joined.get_text("UIIT_K5"))
+	_check(joined.get_text("UIIT_PRIVATE_ONLY") == "Private only" and joined.get_text("UIIT_STOCK_ONLY") == "Stock only",
+		"keys in only one of the two tables keep their row")
+	var toks := PackedStringArray()
+	for i in 10:
+		toks.append("K%d" % i)
+	toks.append("P")
+	for i in 10:
+		toks.append("K%d" % i)
+	_check(UiTextTable.joined_table_start(toks) == 11, "the second table starts where the opening keys restart in order (got %d)" % UiTextTable.joined_table_start(toks))
+	var last := UiTextTable.parse(("\n".join(first + second)).to_utf16_buffer(), 8, false)
+	_check(last.get_text("UIIT_K5") == "", "keep_first false still keeps the last row, whatever it holds (got %s)" % last.get_text("UIIT_K5"))
+
+	# A single table is unchanged: a stray repeated key, even of the stock
+	# 19-column shape, does not make it joined -- the first row wins.
+	var single := first.duplicate()
+	single.append(_row19("UIIT_K3", "Stock 3"))
+	var one := UiTextTable.parse(("\n".join(single)).to_utf16_buffer())
+	_check(one.get_text("UIIT_K3") == "Reworded 3", "NEGATIVE: a single table keeps the first row (got %s)" % one.get_text("UIIT_K3"))
+	# Nor does a restart of the first key that does not repeat the opening
+	# keys in order for JOINED_MIN_RUN rows.
+	var short := first.duplicate()
+	for i in 3:
+		short.append(_row19("UIIT_K%d" % i, "Stock %d" % i))
+	var short_t := UiTextTable.parse(("\n".join(short)).to_utf16_buffer())
+	_check(short_t.get_text("UIIT_K0") == "Reworded 0", "NEGATIVE: a 3-key restart is not a second table (got %s)" % short_t.get_text("UIIT_K0"))
+
