@@ -16,11 +16,11 @@ package npcspawn
 //     CQTUTORIAL2_CH_1::vslot_055: *(+4) = 2, *(+8) = "NPC_CH_GENARAL",
 //     *(+0xc) = "NPC_CH_SOLDIER_SO1", and sets bit 0.
 //   - Three hand-written classes push it directly:
-//       * CQSP_ALL_POTION_3::vslot_017 (0x88ea5b; NPC_CH/WC/KT/EU/CA_POTION);
-//       * CQNO_WC_PRIEST3_1::vslot_017 (0x898557; NPC_WC_PRIEST3);
-//       * CQNO_WC_SOLDIER_SO_1 (0x89a36b). Its function names NPC_WC_SOLDIER_SO,
-//         NPC_CH_ISLAM and NPC_KT_HORSE; that the push covers all three is
-//         INFERRED from the loop it sits in.
+//   - CQSP_ALL_POTION_3::vslot_017 (0x88ea5b; NPC_CH/WC/KT/EU/CA_POTION);
+//   - CQNO_WC_PRIEST3_1::vslot_017 (0x898557; NPC_WC_PRIEST3);
+//   - CQNO_WC_SOLDIER_SO_1 (0x89a36b). Its function names NPC_WC_SOLDIER_SO,
+//     NPC_CH_ISLAM and NPC_KT_HORSE; that the push covers all three is
+//     INFERRED from the loop it sits in.
 //   - The event classes (CEventAType, GObjPC::FUN_0092f740) and FUN_00931f30
 //     push it too, on NPCs looked up from data this project has not read.
 //     They are not listed.

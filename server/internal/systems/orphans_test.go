@@ -119,10 +119,17 @@ var knownOrphans = map[string]string{
 	// teleport_network.md "The client's list, read"), so no server message
 	// carries it yet. PointByBuildingCode left the list in round 686: the
 	// return point resolves a race's gate by its code (session.returnPointFor).
-	"LinksFrom": "a gate's outgoing links in file order, the destination list the talk box shows. The " +
-		"client builds that list from its own teleportlink rows, as the retail dialog does " +
-		"(UI_TELEPORT::FUN_006fd3e0); the server answers only the MOVE (session.TeleportHandler, " +
-		"round 576). Knowledge until a server-side list message exists.",
+	// Round 727: LinksFrom left the list -- the server gives a teleport NPC
+	// id 8 when links leave its point (cmd/server/npcs.go).
+	"EncodeEntity": "the client's half of 0x7045 / 0x704B {u32 entity}; the Godot client writes it " +
+		"(NpcTalkNet.encode_entity) and the golden-bytes and socket tests use this one (round 727).",
+	"EncodeOpen": "the client's half of 0x7046 {u32 entity, u8 id}; the Godot client writes it " +
+		"(NpcTalkNet.encode_open) and the tests use this one (round 727).",
+	"DecodeSelectNPC": "reads 0xB045 as the client does (NpcTalkNet.decode_select); the socket test " +
+		"checks the server's reply with it (round 727).",
+	"NPCInteractionMode": "the session's INTERACTMODE (5 or 6) after a 0x7046; the store's and " +
+		"warehouse's item handlers are to test it as the engine's do (lane 728's messages), and the " +
+		"socket test reads it (round 727).",
 }
 
 // baseline is the set of orphans that existed when this detector was written.
