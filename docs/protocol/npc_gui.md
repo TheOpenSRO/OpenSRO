@@ -46,8 +46,22 @@ TRIJOB_SYSTEM_IMPROVEMENT, CHATTING_BLOCKING_SYSTEM, SIEGE_FORTRESS_SYSTEM_IMPRO
 RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
 ```
 
-- **INFERRED, strongly:** this is the defined-name table the layout parser's `#ifdef` consults. It is
-  the only define list in the archive, and every symbol the layouts test is in it.
+- **READ (round 725's review): this is the table the layout parser's `#ifdef` consults.**
+  - The parser's directive switch (`IFTVariable::FUN_00b37a30`, case 1 = `#ifdef`, from `0xb350f0`)
+    asks `IFTVariable::FUN_005004a0`. That function looks the name up in the `std::map` at
+    `0xeed4e0` (`mov ecx,0xeed4e0` at `0x500502`) and answers 0 for an absent name.
+  - The `define.txt` loader writes that same map: `0x6441b0` with `ecx = [CGame]+0x660`, and
+    `0xeece80 + 0x660 = 0xeed4e0` (`0x848355..0x8483ba`). The other callers of `0x6441b0` write
+    other maps.
+  - The parser knows only `#ifdef`, `#else` and `#endif`.
+- **How the loader reads the file (READ):**
+  - It splits each line on `=`, `"`, `,`, space and tab (`0x401070` with `0x3d`, `0x22`, `0x2c`,
+    `0x20`, `0x09` at `0x8482e4..0x848341`).
+  - The first token is a name.
+  - It forces a value of 0, or no value, to 1. So every listed name is defined, including
+    `NAME = 0`.
+  - There is no comment handling: `// Define String` defines `//`.
+  - `UiBuilder.parse_define_txt` does the same.
 - **Correction:** `message_box.md` and `UI_TODO.md` said the `RENEWAL_SHOP_SYSTEM` and
   `RESTORE_SOLDITEM_INSHOP` branches are unreadable, and that the parser's define source was not
   found. It is this file. So:
@@ -111,21 +125,37 @@ RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
    - colour triple `0xffefdaa4`, `0xffff8a00`, `0xffff8a00`: beige (239,218,164) normally, and
      orange (255,138,0) for the other two states (INFERRED: hover and press);
    - **no underline** (none is set; MEASURED: the original screenshots show none);
-   - a store line can instead use `0xffff4a4a` (red) as its first colour, in a branch of
-     `FUN_006fb630` (INFERRED: unusable).
-   - **The wording of three lines differs from the original (OPEN 9, round 725).**
+   - a store line can instead use `0xffff4a4a` (red) as its first colour, with the hover still
+     `0xffff8a00`, in two branches of `FUN_006fb630` (round 725's review):
+     - the NPC offers id 0x0f and `FUN_009870d0()+5 <= 2`, apparently a guild level of 2 or less;
+     - the NPC offers id 0x19 and both `0x997ea0` and `0x997f00` fail.
+
+     **OPEN, not modelled:** OpenSRO derives neither id client-side. Nothing has read what
+     `0x997ea0` and `0x997f00` test, or what that guild-level field is (lane C). No Jangan NPC
+     rendered offers either id.
+   - **The wording of three lines differs between the box's archive and the user's client (OPEN
+     9, round 725, relabelled by its review).**
      `textuisystem.txt` holds two rows for `UIIT_CTL_RECALL_POSITION`, `UIIT_CTL_TELEPORT_TARGET`
      and `UIIT_CTL_TELEPORT_RESULT`: rows 649-651, 16 columns, read "Designate this region as your
      return & recall point!", "Select a teleport area:" and "Teleport to [%s] for [%d] Gold.". Rows
      7577-7579, 19 columns, read "Designate as return/recall point", "Select teleport area" and
      "Teleport to [%s]area. [%d]gold". The user's original (`1llywhJ.png`, `hWWsCP0.png`) shows the
-     later rows. `UiTextTable` keeps the first row of a key. Round 634 read that rule from the
-     loader: the insert at `0x8cb266` into `0x8ca120` ignores its result. It is not changed here,
-     for these reasons:
-     - it governs every text in the UI, 243 keys in this table;
-     - the user's client may ship its own `textuisystem.txt`;
-     - `docs/protocol/teleport_network.md` says the later rows are kept, which contradicts round 686's
-       render ("this archive resolves the older row").
+     later rows. `UiTextTable` keeps the first row of a key, which is the client's rule.
+     - **The rule is READ** (round 634; confirmed by round 725's review).
+       - `0x8cb266` is the only call to the `stdext::hash_map` insert `0x8ca120`.
+       - On an equal key, the insert returns the existing entry and does not write.
+       - Neither the service column nor the language column selects the later row.
+     - **The box's `textuisystem.txt` is two whole tables, one after the other.**
+       - Lines 1–6955 are a private server's reworded 16-column rows.
+       - Lines 6956–13915 are the stock 19-column rows.
+       - 5,181 keys appear twice, 404 of them with different English.
+       
+       The user's original shows the stock wording on all six duplicated keys checked (three here,
+       three in the party window). So the user's install differs from the box's: either their
+       `Media.pk2` lacks the prepended block, or `vsroplus_lib.dll` patches the loader.
+     - **Do not change `keep_first`.** That is the user's decision. One fact from them settles it:
+       their `textuisystem.txt`'s line count or first line, or whether their stat panel reads
+       "Phy. atk" or "Phy. Atk:".
 4. **The end line,** always last: kind 0, `UIIT_STT_NPC_CHATTING_WND_TALKEND` "End conversation.". It
    is `…_TALKEND2` when interaction 0x1f is offered.
 
@@ -240,8 +270,11 @@ Ids → line kinds → text keys, in the builder's order:
     **Their whole rect (READ, round 725)** is `{16 + 56 i, 0x26, 0x38, 0x18}` = (16 + 56 i, 38,
     56x24). `CIFStoreForPackage::vslot_010` writes it at `0x6d2d69..0x6d2d7d` and passes it to
     gwnd `0xba20b0`.
-    - MEASURED on `3Gw7Ene.png`: the tab's top is 38 below the window's, and its caption is white.
-      The create path sets no colour.
+    - The caption is white, READ. The create path (`0x6d2da4..0x6d2dfa`) sets only the font and
+      the alignment, so the caption keeps the `CTextBoard` default `0xffffffff` (`0x655b50` →
+      `0x8b4f30` → `0x8b46d0`).
+    - MEASURED on `3Gw7Ene.png`, agreeing: the tab's top is 38 below the window's, and its caption
+      is 255,255,255.
     - Round 724's build had the tab 2 px higher and its caption beige. Both values were ours, and
       both are now corrected.
   - **INFERRED from `3Gw7Ene.png`:** Repair is hidden for a non-smith store (the herbalist shows no
@@ -351,12 +384,27 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 5. The Repair buttons' visibility rule.
 6. The Escape order past its first entries (`FUN_0079d620`).
 7. Server side: which NPCs offer which interaction ids. Round 454 found the registration for ids 7, 8
-   and 9 only. Shops (1) follow `refshopgroup`, the warehouse (3/4) the `_WAREHOUSE` NPCs, talk (2)
-   and withdraw skill (10) are OPEN.
-8. Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills (INFERRED strongly,
-   §0).
-9. Which of two duplicate `textuisystem.txt` rows the client shows (§1, the menu). The user's
-   original shows the later 19-column rows, and `UiTextTable` keeps the first.
+   and 9 only. Shops (1) follow `refshopgroup`, and the warehouse (3/4) the `_WAREHOUSE` NPCs.
+   - **Id 2 (talk) comes from the quest classes.** This is round 725's review, in `srgs.asm`.
+     - The quest classes push id 2 through the NPC's `[vtable+0x164]`:
+       - `CQSP_ALL_POTION_3::vslot_017` at `0x88ea5b` (the herbalist's potion quest);
+       - `CQNO_WC_PRIEST3_1::vslot_017` at `0x898557`;
+       - `CQNO_WC_SOLDIER_SO_1` at `0x89a36b`.
+     - So do `0x926ed0`, `0x927040`, `GObjPC::FUN_0092f740` and `0x931f30`.
+     - The receiving NPC being the quest's talk NPC is INFERRED from the shape of the call.
+     - So the server lists id 2 in `0xb045` while the NPC is the talk target of a quest the player
+       can take or continue. That is lane C's to send from the quest state.
+   - **Id 10's registrar is still OPEN** (withdrawing skill). No push of it was found next to a
+     `+0x164` load.
+8. ~~Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills.~~ **Closed, READ**
+   (round 725's review, §0: both use the map at `0xeed4e0`).
+9. **The box's archive is not the user's** (§1, the menu).
+   - The client keeps the first row of a key (READ).
+   - The box's `textuisystem.txt` has a private server's block before the stock rows. The user's
+     original shows the stock wording.
+   - The user settles it: their file's line count or first line, or their stat panel's "Phy. atk" or
+     "Phy. Atk:".
+   - Until then, box renders and tests show the private server's wording on 404 keys.
 10. The title icon. The original draws one left of the Storage and Inventory titles (`MKtR5Kd.png`)
     but none on the store's (`3Gw7Ene.png`). `ginterface.txt` has no field for it, so its source in
     the code is unread and OpenSRO draws none.

@@ -45,18 +45,20 @@ func _initialize() -> void:
 # --- config\define.txt -------------------------------------------------------
 
 func _define_checks() -> void:
-	# ANSI: a comment line, a blank, names with tab- and space-separated
-	# comments in a non-ASCII codepage, an indented name, a repeat.
+	# ANSI, as the client tokenises it: split on = " , space and tab, the
+	# first token a name -- so a comment line defines "//", `NAME = 0` is
+	# defined, an indented name counts, a repeat is one name.
 	var raw := PackedByteArray()
 	raw.append_array("// Define String\r\n\r\nWHISPER_BLOCKING_SYSTEM\t\t//".to_ascii_buffer())
 	raw.append_array(PackedByteArray([0xc0, 0xcc, 0xb8, 0xa7]))
-	raw.append_array("\r\nRENEWAL_SHOP_SYSTEM\t//x\r\n  RESTORE_SOLDITEM_INSHOP // y\r\nRENEWAL_SHOP_SYSTEM\r\n".to_ascii_buffer())
+	raw.append_array("\r\nRENEWAL_SHOP_SYSTEM\t//x\r\n  RESTORE_SOLDITEM_INSHOP // y\r\nRENEWAL_SHOP_SYSTEM\r\nZERO_NAME = 0\r\n\"QUOTED\",1".to_ascii_buffer())
 	var names := UiBuilder.parse_define_txt(raw)
-	_check(names == PackedStringArray(["WHISPER_BLOCKING_SYSTEM", "RENEWAL_SHOP_SYSTEM", "RESTORE_SOLDITEM_INSHOP"]),
-		"define.txt: one name per line, comments and blanks skipped, no repeats (got %s)" % [names])
+	_check(names == PackedStringArray(["//", "WHISPER_BLOCKING_SYSTEM", "RENEWAL_SHOP_SYSTEM", "RESTORE_SOLDITEM_INSHOP", "ZERO_NAME", "QUOTED"]),
+		"define.txt: the first token of each line, NAME = 0 defined, no comment handling, no repeats (got %s)" % [names])
 	_check(UiBuilder.parse_define_txt(PackedByteArray()).is_empty(), "NEGATIVE: an empty file defines nothing")
 	var b := UiBuilder.new(null, null)
 	_check(b.archive_defines().is_empty(), "NEGATIVE: with no archive there is no define table")
+	_check(b.get("_archive_defines") == null, "NEGATIVE: and the empty answer is not cached before the archive opens")
 
 # --- the store lines -----------------------------------------------------------
 
@@ -247,7 +249,7 @@ func _store_checks(panels_script: GDScript) -> void:
 	var storage: HudWindow = panels.call("open", "storage")
 	var title := storage.get_node_or_null("TitleBar") as Label if storage != null else null
 	_check(title != null and title.text == "Fixture Storage", "the storage is titled UIIT_STT_STORAGEROOM (got %s)" % [title.text if title != null else null])
-	_check(title != null and title.get_theme_color("font_color") == Color(1, 1, 1), "a registry window's caption is white (MEASURED on the original)")
+	_check(title != null and title.get_theme_color("font_color") == Color(1, 1, 1), "a registry window's caption is white (the CTextBoard default, READ)")
 	panels.call("open_storage", "Keeper Fixture")
 	_check(title != null and title.text == "Fixture Storage", "NEGATIVE: opening it at a keeper does not retitle it with the keeper's name")
 	panels.queue_free()

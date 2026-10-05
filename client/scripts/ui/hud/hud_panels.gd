@@ -1802,9 +1802,12 @@ func qa_press_teleport_line(dest_id: int) -> bool:
 # each tab a `com_short_tab`, so up to four. Round 725 read the rest of the
 # rect from CIFStoreForPackage::vslot_010: {16 + 56 i, 0x26, 0x38, 0x18} at
 # 0x6d2d69..0x6d2d7d, the rect gwnd 0xba20b0 creates each tab with -- y 38,
-# 56x24. The user's original (3Gw7Ene.png) MEASURES the tab's top 38 below the
-# window's and its caption white; round 724's build had it 2 px higher (the
-# texture's height up from the grid frame's top, ours) and beige (ours).
+# 56x24. The caption is white, READ: the same create path (0x6d2da4..0x6d2dfa)
+# sets only its font and alignment, so it keeps the CTextBoard default
+# 0xffffffff (0x655b50 -> 0x8b4f30 -> 0x8b46d0; HudWindow's caption note).
+# The user's original (3Gw7Ene.png) measures both: the tab's top 38 below the
+# window's, the caption 255,255,255. Round 724's build had it 2 px higher
+# (the texture's height up from the grid frame's top, ours) and beige (ours).
 const SHOP_TAB_ON := "interface\\ifcommon\\com_short_tab_on.ddj"
 const SHOP_TAB_OFF := "interface\\ifcommon\\com_short_tab_off.ddj"
 const SHOP_MAX_TABS := 4
@@ -1813,8 +1816,7 @@ const SHOP_TAB_STEP := 56.0
 ## The tab's y and size (READ, 0x6d2d6d..0x6d2d7d; see above).
 const SHOP_TAB_Y := 38.0
 const SHOP_TAB_SIZE := Vector2(56, 24)
-## The caption colour: white, MEASURED on the original (3Gw7Ene.png); the
-## create path sets none, so it is the button's default.
+## The caption colour: the CTextBoard default white (READ, see above).
 const SHOP_TAB_CAPTION := Color(1, 1, 1)
 
 var _shop_tabs: Array = []      # of ShopReader.Tab

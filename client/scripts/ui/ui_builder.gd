@@ -30,12 +30,14 @@ var _layout_cache: Dictionary = {} # String -> UiLayoutParser.LayoutDef
 
 ## The client's `#ifdef` symbol table (round 725; docs/protocol/npc_gui.md
 ## §0). READ: at start-up CGame opens `config\define.txt` through the archive
-## reader (`push 0xdd3d60` at 0x848210) and sets each name it lists to 1
-## (0x6441b0, logging "%s Value 0 => 1"). The file is ANSI text, one name per
-## line, `//` comments (the archive's copy defines 22 names, RENEWAL_SHOP_SYSTEM
-## and RESTORE_SOLDITEM_INSHOP among them). INFERRED, strongly: this is the
-## table the layout parser's `#ifdef` consults -- the only define list in the
-## archive, holding every symbol the layouts test.
+## reader (`push 0xdd3d60` at 0x848210) and writes each name it lists into the
+## std::map at [CGame]+0x660 = 0xeed4e0 (0x6441b0, 0x848355..0x8483ba), with
+## the value 0 or absent forced to 1 ("%s Value 0 => 1"). READ (round 725's
+## review): the layout parser's `#ifdef` (IFTVariable::FUN_00b37a30, case 1)
+## asks IFTVariable::FUN_005004a0, which looks the name up in that same map
+## (`mov ecx,0xeed4e0` at 0x500502) and answers 0 for an absent name. The
+## archive's copy defines 22 names, RENEWAL_SHOP_SYSTEM and
+## RESTORE_SOLDITEM_INSHOP among them.
 const DEFINE_TXT_PATH := "config\\define.txt"
 ## null until read; a test may set it.
 var _archive_defines: Variant = null
@@ -44,33 +46,41 @@ var _archive_defines: Variant = null
 ## with no archive or no file.
 func archive_defines() -> PackedStringArray:
 	if _archive_defines == null:
+		# Cached only once the archive is open, so an early call does not
+		# leave the table empty for good.
+		if _media_pk2 == null:
+			return PackedStringArray()
 		_archive_defines = PackedStringArray()
-		if _media_pk2 != null:
-			var entry := ObjectLoader.find_file(_media_pk2, DEFINE_TXT_PATH)
-			if entry != null:
-				_archive_defines = parse_define_txt(_media_pk2.read_file(entry))
+		var entry := ObjectLoader.find_file(_media_pk2, DEFINE_TXT_PATH)
+		if entry != null:
+			_archive_defines = parse_define_txt(_media_pk2.read_file(entry))
 	return _archive_defines
 
-## The names a define.txt lists: per line, the leading identifier (letters,
-## digits, underscore) after any blanks; a line that is blank or starts with
-## `//` names nothing. Bytes are read one per character (the file is ANSI; the
-## names are ASCII and the comments after them are skipped).
+## The names a define.txt lists, as the client's loader reads it (READ,
+## round 725's review): each line is split on `=`, `"`, `,`, space and tab
+## (0x401070 with 0x3d, 0x22, 0x2c, 0x20, 0x09 at 0x8482e4..0x848341) and its
+## first token is a name. Every listed name is defined, `NAME = 0` included
+## (the loader forces a 0 value to 1). There is no comment handling: a
+## `// Define String` line defines the token `//`, which no layout tests.
+## Bytes are read one per character (the file is ANSI; the names are ASCII).
+## A line's trailing CR is dropped (OURS: the review measured the archive's
+## CRLF file giving the same 22 names in the client).
 static func parse_define_txt(data: PackedByteArray) -> PackedStringArray:
 	var out := PackedStringArray()
-	var text := data.get_string_from_ascii() if not data.is_empty() else ""
-	for raw in text.replace("\r", "").split("\n"):
-		var line := raw.strip_edges()
-		if line == "" or line.begins_with("//"):
+	var token := ""
+	var first := true
+	for i in data.size() + 1:
+		var b: int = data[i] if i < data.size() else 0x0a
+		if b == 0x0a or b == 0x0d or b == 0x3d or b == 0x22 or b == 0x2c or b == 0x20 or b == 0x09:
+			if token != "" and first:
+				if not out.has(token):
+					out.append(token)
+				first = false
+			token = ""
+			if b == 0x0a:
+				first = true
 			continue
-		var name := ""
-		for c in line:
-			var u := c.unicode_at(0)
-			var ident := (u >= 0x30 and u <= 0x39) or (u >= 0x41 and u <= 0x5a) or (u >= 0x61 and u <= 0x7a) or u == 0x5f
-			if not ident:
-				break
-			name += c
-		if name != "" and not out.has(name):
-			out.append(name)
+		token += String.chr(b)
 	return out
 
 ## Loads and caches a layout file from Media.pk2 by its archive path

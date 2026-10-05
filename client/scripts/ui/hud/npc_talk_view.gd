@@ -262,7 +262,10 @@ static func scroll_to(window: HudWindow, pos: int) -> void:
 ## builder adds it when the NPC object's +0x18c is set and the talk window's
 ## +0x800 (the fortress id the server fills) is non-zero, with the rate the s16
 ## at +0x804 (docs/protocol/npc_gui.md §1, OPEN 1). Which NPCs the server marks
-## is not read; this mapping is ours.
+## is not read; this mapping is ours, and wider than the original's can be: it
+## gives the line to every `_CH_`/`_KT_` code (keepers, guild and job NPCs
+## too), where the original needs the NPC's own +0x18c. When lane C reads
+## +0x18c, restrict the line to it (round 725's review, F7).
 static func fortress_strid_for(code: String) -> String:
 	var up := code.to_upper()
 	if up.contains("_CH_"):

@@ -92,18 +92,20 @@ const CLOSE_BUTTON_INSET := 26.0
 ## control's Text (0x8b5706). The resize slot 21 (0x817210) re-lays the three
 ## the same way (0x817170).
 ##
-## The caption's colour is not read: nothing in OnCreate sets it, and the
-## entry's FontColor goes to the frame's own text board (0x8b56d4), not the
-## caption's. Round 725 MEASURED it white on five registry windows of the
-## user's original (the NPC window in tcHCl0v.png, the store and Inventory in
-## 3Gw7Ene.png, Storage in MKtR5Kd.png: every caption's brightest pixel is
-## 255,255,255), so a registry window's caption is white
-## (MAINFRAME_CAPTION_COLOUR). A self-framed window keeps the beige every
-## window here used before (ours).
+## The caption's colour is READ (round 725's review): CIFMainFrame::vslot_010
+## (0x816f80) creates the caption CIFStatic at +0x7b0 and sets its font and
+## alignment, never a colour, and every window is a CTextBoard whose
+## constructor 0x655b50 runs 0x8b4f30 -> 0x8b46d0, which writes 0xffffffff to
+## the five colour slots +0x10..+0x20 (the ones the setter 0x8b2b70 writes;
+## nothing in the CIFStatic..CIFMainFrame chain calls it). The entry's
+## FontColor goes to the frame's own text board (0x8b56d4), not the
+## caption's. So a registry window's caption is white
+## (MAINFRAME_CAPTION_COLOUR), as the user's original shows on five windows. A
+## self-framed window keeps the beige every window here used before (OURS).
 const MAINFRAME_CAPTION_X := 10.0
 const MAINFRAME_CAPTION_Y := 12.0
 const MAINFRAME_CAPTION_HEIGHT := 12.0
-## A registry window's caption colour (MEASURED, see above).
+## A registry window's caption colour: the CTextBoard default (READ, see above).
 const MAINFRAME_CAPTION_COLOUR := Color(1, 1, 1)
 ## The caption and drag strip are the window's width less 0x15.
 const MAINFRAME_STRIP_WIDTH_LESS := 21.0
