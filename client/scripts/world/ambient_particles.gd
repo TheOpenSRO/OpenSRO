@@ -123,6 +123,8 @@ class Glow:
 	var alpha: int = 0
 	var visible := false
 	var seen_frame := -1
+	## What the last query's ray met first (the QA log), "" when visible.
+	var blocker := ""
 
 var _glows: Array[Glow] = []
 var _gathered_ms := 0.0
@@ -173,13 +175,61 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 		var eye := camera.global_position
 		for g in _glows:
 			var p := query_point(g.fx.placed_at(), eye, g.byte)
-			var q := PhysicsRayQueryParameters3D.create(eye, p)
-			q.collision_mask = OCCLUDER_MASK
-			g.visible = space.intersect_ray(q).is_empty()
+			var hit := occluder(space, eye, p)
+			g.visible = hit.is_empty()
+			g.blocker = "" if g.visible else _blocker_name(hit)
 	for g in _glows:
 		g.alpha = step_alpha(g.alpha, g.visible, frame_ms, g.seen_frame == _frame - 1)
 		g.seen_frame = _frame
 		g.fx.set_glow_alpha(g.alpha)
+
+## The first static-world surface between `from` and `to` that hides a
+## point, or {} when none does. An alpha-tested piece (an object material
+## with an alpha test: leaves, fences) is passed through: the original's
+## depth buffer has holes where its texels fail the test, which a collision
+## trimesh does not (OURS, the closest the ray comes to the depth test --
+## its opaque texels then do not hide a glow either). Round 720 found
+## Jangan's glow hidden from 150 units by a bare tree's leaf cards.
+static func occluder(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3) -> Dictionary:
+	var exclude: Array[RID] = []
+	for _i in range(MAX_PASS_THROUGH + 1):
+		var q := PhysicsRayQueryParameters3D.create(from, to, OCCLUDER_MASK, exclude)
+		var hit := space.intersect_ray(q)
+		if hit.is_empty() or not _alpha_tested(hit.get("collider")):
+			return hit
+		exclude.append(hit["rid"])
+	return {}
+
+## How many alpha-tested pieces one ray passes through before giving up
+## (OURS; a glow behind more foliage than this is taken as visible).
+const MAX_PASS_THROUGH := 8
+
+## Whether a collider is a piece drawn with an alpha test: ObjectLoader puts a
+## piece's StaticBody3D under its MeshInstance3D, and an alpha-tested
+## material carries `alpha_scissor` above 0 (_build_foliage_material,
+## _build_mod_material).
+static func _alpha_tested(collider) -> bool:
+	if not (collider is Node):
+		return false
+	var mi := (collider as Node).get_parent() as MeshInstance3D
+	if mi == null:
+		return false
+	var m := mi.material_override as ShaderMaterial
+	if m == null:
+		return false
+	var ref = m.get_shader_parameter("alpha_scissor")
+	return ref != null and float(ref) > 0.0
+
+static func _blocker_name(hit: Dictionary) -> String:
+	var c = hit.get("collider")
+	if c is Node:
+		var n := c as Node
+		var owner_name := String(n.get_parent().name) if n.get_parent() != null else ""
+		var top := n
+		while top.get_parent() != null and not String(top.name).begins_with("Obj_") and not String(top.name).begins_with("RealTerrain"):
+			top = top.get_parent()
+		return "%s/%s at %s" % [String(top.name), owner_name, str((hit["position"] as Vector3).round())]
+	return "?"
 
 func glow_count() -> int:
 	return _glows.size()
@@ -189,5 +239,5 @@ func describe() -> String:
 	var parts: Array[String] = []
 	for g in _glows:
 		if is_instance_valid(g.fx):
-			parts.append("%s a%d %s" % [g.fx.path.get_file(), g.alpha, "vis" if g.visible else "hid"])
+			parts.append("%s a%d %s" % [g.fx.path.get_file(), g.alpha, "vis" if g.visible else "hid by " + g.blocker])
 	return ", ".join(parts)
