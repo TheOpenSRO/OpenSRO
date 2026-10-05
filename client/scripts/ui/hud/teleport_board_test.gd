@@ -138,7 +138,8 @@ func _builder() -> UiBuilder:
 
 func _talk_body(panels: Node) -> RichTextLabel:
 	var window: Node = (panels.get("_windows") as Dictionary).get("npctalk")
-	return window.get_node_or_null("TalkText") as RichTextLabel if window != null else null
+	# In its clipping box since round 725 (NpcTalkView).
+	return window.find_child("TalkText", true, false) as RichTextLabel if window != null else null
 
 func _talk_lines(panels: Node) -> PackedStringArray:
 	var body := _talk_body(panels)

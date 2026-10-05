@@ -28,6 +28,51 @@ var _window_registry_data: Variant = null
 var _window_registry_by_defines: Dictionary = {}
 var _layout_cache: Dictionary = {} # String -> UiLayoutParser.LayoutDef
 
+## The client's `#ifdef` symbol table (round 725; docs/protocol/npc_gui.md
+## §0). READ: at start-up CGame opens `config\define.txt` through the archive
+## reader (`push 0xdd3d60` at 0x848210) and sets each name it lists to 1
+## (0x6441b0, logging "%s Value 0 => 1"). The file is ANSI text, one name per
+## line, `//` comments (the archive's copy defines 22 names, RENEWAL_SHOP_SYSTEM
+## and RESTORE_SOLDITEM_INSHOP among them). INFERRED, strongly: this is the
+## table the layout parser's `#ifdef` consults -- the only define list in the
+## archive, holding every symbol the layouts test.
+const DEFINE_TXT_PATH := "config\\define.txt"
+## null until read; a test may set it.
+var _archive_defines: Variant = null
+
+## The names `config\define.txt` defines, read once from the archive. Empty
+## with no archive or no file.
+func archive_defines() -> PackedStringArray:
+	if _archive_defines == null:
+		_archive_defines = PackedStringArray()
+		if _media_pk2 != null:
+			var entry := ObjectLoader.find_file(_media_pk2, DEFINE_TXT_PATH)
+			if entry != null:
+				_archive_defines = parse_define_txt(_media_pk2.read_file(entry))
+	return _archive_defines
+
+## The names a define.txt lists: per line, the leading identifier (letters,
+## digits, underscore) after any blanks; a line that is blank or starts with
+## `//` names nothing. Bytes are read one per character (the file is ANSI; the
+## names are ASCII and the comments after them are skipped).
+static func parse_define_txt(data: PackedByteArray) -> PackedStringArray:
+	var out := PackedStringArray()
+	var text := data.get_string_from_ascii() if not data.is_empty() else ""
+	for raw in text.replace("\r", "").split("\n"):
+		var line := raw.strip_edges()
+		if line == "" or line.begins_with("//"):
+			continue
+		var name := ""
+		for c in line:
+			var u := c.unicode_at(0)
+			var ident := (u >= 0x30 and u <= 0x39) or (u >= 0x41 and u <= 0x5a) or (u >= 0x61 and u <= 0x7a) or u == 0x5f
+			if not ident:
+				break
+			name += c
+		if name != "" and not out.has(name):
+			out.append(name)
+	return out
+
 ## Loads and caches a layout file from Media.pk2 by its archive path
 ## (e.g. "resinfo\\ifinventory.txt"). Returns null if it isn't there.
 ## Loads and parses a layout. `defines` selects `#ifdef` branches (see

@@ -12430,7 +12430,18 @@ func _qa_step() -> void:
 		var code := OS.get_environment("OPENSRO_QA_TALK")
 		_talk_npc_name = code
 		_talk_npc_code = code
-		_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_services(code))
+		_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
+
+	# OPENSRO_QA_TALK_PICK="<n>@<tick>[;<n>@<tick>...]" (round 725) presses the
+	# talk box's numbered line n at that tick, through the label's own
+	# meta_clicked -- the store and warehouse lines' chaining, the gate's
+	# destination list -- for a render. QA only.
+	var qa_pick := OS.get_environment("OPENSRO_QA_TALK_PICK")
+	if qa_pick != "" and _hud_panels != null:
+		for step in qa_pick.split(";", false):
+			var parts := step.split("@")
+			if parts.size() == 2 and int(parts[1]) == _qa_tick:
+				print("QA TALK_PICK line %s at tick %d: %s" % [parts[0], _qa_tick, str(_hud_panels.qa_press_talk_line(int(parts[0])))])
 
 	# OPENSRO_QA_SHOP="<NPC_CODE>" opens that NPC's store window for a render,
 	# standing in for talk -> Buy. Shows the real goods grid + tabs.
@@ -16894,7 +16905,7 @@ func _open_talk(node: Node) -> void:
 	# Talking supersedes an attack still walking into reach: the attack would
 	# otherwise go out behind the talk window.
 	_drop_pending_attack()
-	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code))
+	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
 
 ## The talk approach (round 701). READ from sro_client.exe:
 ## - The object click 0x793570 measures the object's +0x24c, the 3-D distance
@@ -17028,6 +17039,34 @@ func _step_talk_approach(locked: bool = false) -> void:
 	print("CLICK: arrived %.1f from '%s' -- talking" % [player.global_position.distance_to(node.global_position), str(node.get_meta("npc_name", node.name))])
 	_open_talk(node)
 
+## A text key resolved through the UI table, then the object table; `fallback`
+## when neither has it (round 725: the store lines' SN_STORE_* and the tax
+## line's SN_FORTRESS_* keys).
+func _resolve_any_text(key: String, fallback: String) -> String:
+	if key == "" or key == "xxx":
+		return fallback
+	for table in [_ui_text_table, _npc_text_table]:
+		if table == null:
+			continue
+		var t: String = (table as UiTextTable).get_text(key)
+		if t != "" and t != key:
+			return t
+	return fallback
+
+## The talk box's tax line for the NPC or gate `code`, or "" (round 725;
+## NpcTalkView.fortress_strid_for has what is READ and what is ours): the
+## client's SN_FORTRESS_SHOP_TAX with the fortress's name and the rate, 0 --
+## OpenSRO's server sends no fortress tax yet (lane C).
+func _npc_tax_text(code: String) -> String:
+	var fortress := NpcTalkView.fortress_strid_for(code)
+	if fortress == "":
+		return ""
+	var fmt := _resolve_any_text(NpcTalkView.TAX_STRID, NpcTalkView.TAX_FALLBACK)
+	var fortress_name := _resolve_any_text(fortress, fortress)
+	if fmt.count("%") < 2:
+		return ""
+	return fmt.replace("%%", "\u0001").replace("%s", fortress_name).replace("%d", "0").replace("\u0001", "%")
+
 ## The NPC's real greeting, resolved from npcchat.txt's SN_ id through the
 ## text table; "" when the NPC has none (the talk window then shows "...").
 func _npc_greeting_text(code: String) -> String:
@@ -17048,7 +17087,16 @@ func _npc_greeting_text(code: String) -> String:
 func _npc_services(code: String) -> Array:
 	if code == "":
 		return []
-	var out := NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master)
+	# Round 725: the store lines, one per tab group, each worded by its group's
+	# own name (ShopReader.store_lines_for; FUN_006fb630, READ). The name is
+	# resolved here through both text tables, so the talk box shows it even
+	# where its own UI table has no SN_STORE_* row.
+	var store_lines: Array = _shop_reader.store_lines_for(code) if _shop_reader != null else []
+	var out := NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master, 0, store_lines)
+	for svc_v in out:
+		var svc: NpcServiceReader.Service = svc_v
+		if svc.key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):
+			svc.label = _resolve_any_text(svc.strid, svc.label)
 	# A teleport gate (round 577, _bind_region_gates): its lines come from its
 	# teleportdata point -- the two registration columns and whether any link
 	# leaves it (NpcServiceReader.gate_services). "teleport" lists the
@@ -17101,7 +17149,8 @@ var _npc_ids_built_from := -1
 func _refresh_open_talk_menu() -> void:
 	if _hud_panels == null or _talk_npc_code == "":
 		return
-	_hud_panels.refresh_npc_talk(_talk_npc_name, _npc_greeting_text(_talk_npc_code), _npc_services(_talk_npc_code))
+	_hud_panels.refresh_npc_talk(_talk_npc_name, _npc_greeting_text(_talk_npc_code), _npc_services(_talk_npc_code),
+		_npc_tax_text(_talk_npc_code))
 
 ## Acts on a service chosen in the talk box. Buy opens the NPC's real shop and
 ## Storage the warehouse. At a guild NPC (round 521), "guild_create" asks for
@@ -17112,6 +17161,12 @@ func _refresh_open_talk_menu() -> void:
 ## 512, NpcServiceReader.services_for): repair is the store window's own
 ## buttons.
 func _on_npc_service_selected(key: String) -> void:
+	# A tab group's store line (round 725): that group's tabs.
+	if key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):
+		if _shop_reader != null and _talk_npc_code != "":
+			_hud_panels.open_shop(_talk_npc_name,
+				_shop_reader.tabs_for(_talk_npc_code, NpcServiceReader.tabgroup_of(key)), _talk_npc_code)
+		return
 	match key:
 		"shop":
 			if _shop_reader != null and _talk_npc_code != "":

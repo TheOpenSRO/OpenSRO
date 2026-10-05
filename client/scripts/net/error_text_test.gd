@@ -196,7 +196,8 @@ func _initialize() -> void:
 		chat.free()
 
 	# HudPanels._on_repair_result writes the store's status line. The store is
-	# a bare HudWindow holding the ShopStatus label _build_shop_purse makes;
+	# a bare HudWindow holding a ShopStatus label (the store builds none since
+	# round 725, which sends the line to system_notice as well);
 	# with no character name set, a result sends no request.
 	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
 	var panels_ok := panels_script != null and panels_script.can_instantiate()

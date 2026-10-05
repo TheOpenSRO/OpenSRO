@@ -79,13 +79,16 @@ const PANELS := {
 	# menu the original raises over everything: Option, Help, Restart, Exit.
 	"system": ["resinfo\\ifsystemwnd.txt", "System"],
 	# Opened by clicking an NPC (World3D._try_talk_to_npc), titled with the
-	# NPC's name. The authored paper dialogue the original raises. A
-	# Dimensional Gate's destinations are this box's own lines
-	# (open_teleport_list, round 603): the client has no teleport window.
-	"npctalk": ["resinfo\\if_npctalk.txt", ""],
-	# Opened from the talk box's Buy option (open_shop), titled with the NPC's
-	# name. The authored store window: a 6x5 goods grid, a page spinner, and
-	# repair. Built with #ifdef selection (see PANEL_DEFINES).
+	# NPC's name. GDR_NPCWINDOW (registry-framed, REGISTRY_FRAMES) built from
+	# if_npcwindow.txt, its CIF_NPCTalk box filled from if_npctalk.txt
+	# (NpcTalkView, round 725). A Dimensional Gate's destinations are this
+	# box's own lines (open_teleport_list, round 603): the client has no
+	# teleport window. PANEL_FALLBACKS builds the talk box alone where the
+	# archive (or a test's) has no if_npcwindow.txt.
+	"npctalk": ["resinfo\\if_npcwindow.txt", ""],
+	# Opened from the talk box's store lines (open_shop), titled with the
+	# NPC's name. GDR_STORE (registry-framed, 254x370) with ifstore.txt's
+	# renewal + buy-back branch, by config\define.txt (ARCHIVE_DEFINE_PANELS).
 	"store": ["resinfo\\ifstore.txt", "Store"],
 	# Opened from the talk box's Storage option (open_storage). The authored
 	# warehouse window: a 6x5 grid of the character's stored items.
@@ -121,15 +124,27 @@ var _quests: Array = []
 var last_populated := ""
 
 ## Panels whose layout is read with #ifdef branch selection, mapped to the
-## symbols defined for them. ifstore's two slot sets are alternates behind
-## RENEWAL_SHOP_SYSTEM; with nothing defined we take the base 30-slot grid and
-## drop the RESTORE_SOLDITEM_INSHOP buyback row this project does not implement.
-## Both store classes (CIFStore, CIFStoreForPackage) build the same visible
-## window -- confirmed by decompiling each: four `com_short_tab` tabs and a 6x5
-## grid -- so the branch changes only invisible page capacity. Every other
-## window keeps the default (read both branches), which is what they rely on.
-const PANEL_DEFINES := {
-	"store": [],
+## symbols defined for them. Every other window keeps the default (read both
+## branches), which is what they rely on.
+const PANEL_DEFINES := {}
+
+## Panels whose layout and registry entry take their #ifdef branches from the
+## client's own symbol table, `config\define.txt` (UiBuilder.archive_defines;
+## round 725, docs/protocol/npc_gui.md §0). Round 724 read that the file is
+## the define source; it defines RENEWAL_SHOP_SYSTEM and
+## RESTORE_SOLDITEM_INSHOP, so the store is CIFStoreForPackage's 254x370 with
+## the buy-back row (READ) -- before this the store took neither branch by a
+## guess (`PANEL_DEFINES "store": []`). if_npcwindow, if_npctalk and
+## ifstorageroom have no #ifdef; their registry entries are read the same way.
+## The other #ifdef windows keep their hand-picked defines (HudChat,
+## "exchange" below), which the archive's table also defines (round 725's
+## census, docs/rounds/r725.md).
+const ARCHIVE_DEFINE_PANELS := ["store", "npctalk", "storage"]
+
+## A panel to build instead when its own layout does not build (round 725):
+## the NPC talk box alone, self-framed, as before GDR_NPCWINDOW.
+const PANEL_FALLBACKS := {
+	"npctalk": ["resinfo\\if_npctalk.txt", ""],
 }
 
 ## Panels the client frames from its window registry, resinfo\ginterface.txt,
@@ -158,19 +173,29 @@ const PANEL_DEFINES := {
 ##   section), 394x520, UIIT_PAG_MACROPOTION_TITLE. CIFAutoPotion::Create
 ##   0x741980 builds Create, AbnormalSlot and PotionDelaySlot.
 ##
+## - **store** (round 725): GDR_STORE (CIFStoreForPackage), 254x370 under
+##   RENEWAL_SHOP_SYSTEM + RESTORE_SOLDITEM_INSHOP, which config\define.txt
+##   defines (§0 of docs/protocol/npc_gui.md). Its Text is empty: the store
+##   is titled with the NPC's name (0x704050 -> 0x6d2a90, READ). Until round
+##   725 it was left out because the two #ifdefs looked unsettled.
+## - **npctalk** (round 725): GDR_NPCWINDOW (CIF_NPCWindow), 386x451, empty
+##   Text; CIF_NPCWindow::Create 0x704b40 loads if_npcwindow.txt
+##   (NpcTalkView). Titled with the NPC's name.
+##
 ## Not here, each for a stated reason:
 ## - **community / guild**: the retail windows are CNIFGuildWnd and its child
 ##   CNIFCommunityWnd, built from `res_ui\*.2dt` (GuildWindow), with
 ##   CNIFMainFrame's chrome; GDR_COMMUNITY's layout is never loaded.
-## - **store**: GDR_STORE's height depends on two #ifdefs this build's data
-##   cannot settle -- 317 (neither, or RENEWAL_SHOP_SYSTEM alone), 360
-##   (RESTORE_SOLDITEM_INSHOP) or 370 (both) -- and the layout read with
-##   nothing defined puts its Repair buttons at y 332-356, below a 317 frame.
 ## - **alchemy**: the retail window is CNIFEnchantWnd, built from
 ##   `res_ui\nifenchantwnd.2dt` with CNIFMainFrame's chrome (AlchemyWindow).
 ##   GDR_ALCHEMYBOX (CIFAlchemyBox) is created hidden and never shown.
+##
+## `"archive_defines": true` reads the entry's #ifdef branches with
+## config\define.txt (ARCHIVE_DEFINE_PANELS).
 const REGISTRY_FRAMES := {
-	"storage": {"name": "GDR_STORAGEROOM"},
+	"store": {"name": "GDR_STORE", "archive_defines": true},
+	"npctalk": {"name": "GDR_NPCWINDOW", "archive_defines": true},
+	"storage": {"name": "GDR_STORAGEROOM", "archive_defines": true},
 	"exchange": {"name": "GDR_EXCHANGE",
 		"defines": ["APPLY_EXCHANGE_UPDATE_1TH", "UI_UPDATE_2009_FIRST"]},
 	"system": {"name": "GDR_SYSTEM"},
@@ -697,12 +722,35 @@ func open(panel_id: String) -> HudWindow:
 		var extra := PackedStringArray(EXTRA_SECTIONS.get(panel_id, []))
 		var honor_ifdef: bool = PANEL_DEFINES.has(panel_id)
 		var defines := PackedStringArray(PANEL_DEFINES.get(panel_id, []))
+		var archive_defined: bool = panel_id in ARCHIVE_DEFINE_PANELS and _builder != null
+		if archive_defined:
+			honor_ifdef = true
+			defines = _builder.archive_defines()
 		var registry: Dictionary = REGISTRY_FRAMES.get(panel_id, {})
-		if not window.build(_builder, spec[0], spec[1], extra, defines, honor_ifdef, registry):
+		if registry.get("archive_defines", false):
+			registry = registry.duplicate()
+			registry.erase("archive_defines")
+			if _builder != null:
+				registry["defines"] = Array(_builder.archive_defines())
+		var built := window.build(_builder, spec[0], spec[1], extra, defines, honor_ifdef, registry)
+		if not built and PANEL_FALLBACKS.has(panel_id):
+			# The fallback is self-framed (no registry): a fresh window, since a
+			# failed build may have sized this one.
+			remove_child(window)
+			window.queue_free()
+			window = HudWindow.new()
+			window.name = "Window_" + panel_id
+			add_child(window)
+			var fallback: Array = PANEL_FALLBACKS[panel_id]
+			print("HudPanels: %s built from %s (%s did not build)" % [panel_id, fallback[0], spec[0]])
+			built = window.build(_builder, fallback[0], fallback[1], extra, defines, honor_ifdef)
+		if not built:
 			print("HudPanels: %s unavailable (layout %s did not build)" % [panel_id, spec[0]])
 			window.queue_free()
 			_unavailable[panel_id] = true
 			return null
+		if panel_id == "npctalk":
+			NpcTalkView.compose(window, _builder)
 		_hide_at_create(panel_id, window)
 		if panel_id == "system":
 			_layout_system_window(window)
@@ -1079,65 +1127,62 @@ func _on_quest_list_result(entries: Array, error: String) -> void:
 ## the name prompt is up must not leave a create line that still founds a
 ## guild over that NPC's talk box. A guild reply rebuilds the lines with
 ## refresh_npc_talk instead, which keeps the prompt.
-func open_npc_talk(npc_name: String, greeting: String = "", services: Array = []) -> void:
+##
+## `tax` (round 725) is the fortress tax line's text, already formatted
+## (SN_FORTRESS_SHOP_TAX), or "" for none; it goes after the greeting, in
+## green, with a blank line (NpcTalkView).
+func open_npc_talk(npc_name: String, greeting: String = "", services: Array = [], tax: String = "") -> void:
 	var window := open("npctalk")
 	if window == null:
 		return
 	_drop_talk_prompts(window)
-	_fill_npc_talk(window, npc_name, greeting, services)
+	_fill_npc_talk(window, npc_name, greeting, services, tax)
 
 ## Rebuilds the lines of a talk box that is already open, for World3D after a
 ## guild reply changed the player's guild state (round 521). Unlike
 ## open_npc_talk it does not go through open(), so it neither raises the talk
 ## box above a window opened from it (the store after Buy) nor drops a guild
 ## prompt the player may be typing into. A closed talk box stays closed.
-func refresh_npc_talk(npc_name: String, greeting: String, services: Array) -> void:
+func refresh_npc_talk(npc_name: String, greeting: String, services: Array, tax: String = "") -> void:
 	if not is_open("npctalk"):
 		return
 	# A gate's destination list (round 603) holds no guild line, and a guild
 	# reply must not turn it back into the gate's menu.
 	if teleport_list_shown():
 		return
-	_fill_npc_talk(_windows["npctalk"], npc_name, greeting, services)
+	_fill_npc_talk(_windows["npctalk"], npc_name, greeting, services, tax)
 
-func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, services: Array) -> void:
-	window.set_title(npc_name)
-	# The layout carries two backgrounds one over the other: a quest
-	# parchment (GDR_NPCTALK_QUESTBG, `gd_paper_02`) in front of a plain
-	# dark tile (GDR_NPCTALK_BGTILE, `com_bg_tile_d`). The parchment is for
-	# quest text; a plain talk shows the dark tile, as the user's own client
-	# does -- so the quest paper and its title strip are hidden here.
-	for hidden in ["GDR_NPCTALK_QUESTBG", "GDR_NPCTALK_QUESTBG_TITLE"]:
-		var q := window.node(hidden) as CanvasItem
-		if q != null:
-			q.visible = false
-	var body := window.get_node_or_null("TalkText") as RichTextLabel
-	if body == null:
-		body = RichTextLabel.new()
-		body.name = "TalkText"
-		body.bbcode_enabled = true
-		body.scroll_active = false
-		body.position = Vector2(28, HudWindow.TITLE_BAR_HEIGHT + 8.0)
-		body.size = window.size - Vector2(52, HudWindow.TITLE_BAR_HEIGHT + 20.0)
-		body.add_theme_color_override("default_color", ROW_TEXT_COLOUR)
-		if _builder != null:
-			var font := _builder.font_at(0)
-			if font != null:
-				body.add_theme_font_override("normal_font", font)
-			body.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
+## The talk box's label (NpcTalkView.compose made it; the window composes it
+## on its first open).
+func _talk_body(window: HudWindow) -> RichTextLabel:
+	var body := NpcTalkView.body_of(window)
+	if body == null and window != null:
+		body = NpcTalkView.compose(window, _builder)
+	if body != null and not body.meta_clicked.is_connected(_on_npc_talk_choice):
 		body.meta_clicked.connect(_on_npc_talk_choice)
-		window.add_child(body)
-	# The real greeting (from npcchat.txt), then the NPC's real services as
-	# numbered options, then the end line. The numbered lines are built by
+	return body
+
+func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, services: Array, tax: String = "") -> void:
+	window.set_title(npc_name)
+	var body := _talk_body(window)
+	if body == null:
+		return
+	# The real greeting (from npcchat.txt), the fortress tax line when there is
+	# one, then the NPC's real services as numbered options, then the end
+	# line (FUN_00700440's order, READ). The numbered lines are built by
 	# NpcServiceReader.talk_menu_lines (round 513), which resolves each line's
-	# UIIT token through _resolve_ui (the player's own textuisystem.txt) and
-	# prints one NPCTALK log line per menu line. World3D acts on the services
-	# with a system behind them (Buy opens the shop, storage the warehouse).
+	# token through _resolve_ui (the player's own textuisystem.txt) and prints
+	# one NPCTALK log line per menu line. World3D acts on the services with a
+	# system behind them (a store line opens the store, storage the warehouse).
 	var lines := PackedStringArray()
-	lines.append(greeting if greeting != "" else "...")
+	lines.append(TeleportBoard.escape(greeting if greeting != "" else "..."))
 	lines.append("")
+	if tax != "":
+		# READ: the tax line and then a blank line (DAT_00e19330).
+		lines.append(NpcTalkView.tax_line(tax))
+		lines.append("")
 	lines.append_array(NpcServiceReader.talk_menu_lines(npc_name, services, _resolve_ui))
-	body.text = "\n".join(lines)
+	NpcTalkView.show_lines(window, lines)
 	# The text on top is kept for a gate's destination list (open_teleport_list).
 	window.set_meta(TALK_TEXT_META, lines[0])
 	window.set_meta(TELEPORT_LIST_META, false)
@@ -1159,8 +1204,27 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	if dest_id >= 0:
 		teleport_requested.emit(dest_id)
 		return
-	# A real service was chosen. The talk box stays open behind the service
-	# window (the client keeps it up), so World3D decides what to raise.
+	# Round 725, the chaining READ in CIF_NPCTalk::FUN_007020c0's switch on
+	# the line's kind (docs/protocol/npc_gui.md §1, §5):
+	# - a store line (kind 1): the parent CIF_NPCWindow runs its close slot
+	#   (vtable +0xac, vslot_043 0x7040b0 -- 0x704b while the talk box is up,
+	#   then the hide), and only then the store's request goes out
+	#   (0x702316..0x702323). The close sounds as the close button's does
+	#   (vslot_043, _wire_close_sound's reading).
+	# - the warehouse line (kind 3): the parent is hidden by ShowWindow(0)
+	#   (`+0x5c`, 0x702438), not vslot_043 -- no close sound -- then the
+	#   request goes out.
+	# - every other line: the talk box stays (talk, recall point's box, the
+	#   destination list in place). Six more kinds close it first through
+	#   +0xac (0x7029aa .. 0x703aa7); which kinds is OPEN, so the guild and job
+	#   lines keep the box up (ours).
+	# The store and the storage are not closed by the NPC window's hide (READ,
+	# 0x704100), so they stay up from here on.
+	if NpcServiceReader.is_shop_key(key):
+		close("npctalk")
+		UiSounds.window_toggled(false, _interface_shown(), "npctalk store line (vslot_043)")
+	elif key == "storage":
+		close("npctalk")
 	npc_service_selected.emit(key)
 
 ## Whether a text line has the keyboard: the focus owner of this viewport is
@@ -1634,15 +1698,17 @@ func open_teleport_list(gate_name: String, entries: Array) -> bool:
 	if not is_open("npctalk"):
 		return false
 	var window: HudWindow = _windows["npctalk"]
-	var body := window.get_node_or_null("TalkText") as RichTextLabel
+	var body := _talk_body(window)
 	if body == null:
 		return false
 	var lines := PackedStringArray()
-	# The same text, drawn as _fill_npc_talk drew it.
+	# The same text, drawn as _fill_npc_talk drew it. No tax line: the list's
+	# rebuild re-adds only the box's own text (FUN_006fb530 re-adds +0x7d4,
+	# READ, round 603), as hWWsCP0.png shows.
 	lines.append(str(window.get_meta(TALK_TEXT_META, "...")))
 	lines.append("")
 	lines.append_array(TeleportBoard.list_lines(gate_name, entries, _resolve_ui))
-	body.text = "\n".join(lines)
+	NpcTalkView.show_lines(window, lines)
 	window.set_meta(TELEPORT_LIST_META, true)
 	print("HudPanels: teleport list for %s -- %d destination(s) in the talk box" % [gate_name, entries.size()])
 	_qa_print_talk_lines.call_deferred(body)
@@ -1685,13 +1751,33 @@ func _qa_print_talk_lines(body: RichTextLabel) -> void:
 func teleport_list_shown() -> bool:
 	return is_open("npctalk") and bool((_windows["npctalk"] as HudWindow).get_meta(TELEPORT_LIST_META, false))
 
+## OPENSRO_QA_TALK_PICK (World3D, round 725): presses the talk box's numbered
+## line `n` (1 = the first menu line) through the label's meta_clicked, the
+## signal a click raises. Returns the line's key, or "" when there is none.
+func qa_press_talk_line(n: int) -> String:
+	if not is_open("npctalk"):
+		return ""
+	var body := NpcTalkView.body_of(_windows["npctalk"])
+	if body == null:
+		return ""
+	var lines: PackedStringArray = body.get_meta(NpcTalkView.META_LINES, PackedStringArray())
+	var seen := 0
+	for line in lines:
+		if line.begins_with("[url="):
+			seen += 1
+			if seen == n:
+				var key := line.substr(5, line.find("]") - 5)
+				body.meta_clicked.emit(key)
+				return key
+	return ""
+
 ## OPENSRO_QA_TELEPORT (World3D): prints the talk box's lines as drawn and
 ## clicks dest_id's line through the label's own meta_clicked, the signal a
 ## click raises. False when the list is not shown or does not hold dest_id.
 func qa_press_teleport_line(dest_id: int) -> bool:
 	if not teleport_list_shown():
 		return false
-	var body := (_windows["npctalk"] as HudWindow).get_node_or_null("TalkText") as RichTextLabel
+	var body := NpcTalkView.body_of(_windows["npctalk"])
 	if body == null:
 		return false
 	var key := "%s%d" % [TeleportBoard.DEST_KEY_PREFIX, dest_id]
@@ -1745,7 +1831,6 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	_shop_tabs = tabs
 	_shop_selected = 0
 	_build_shop_tab_strip(window)
-	_build_shop_purse(window)
 	_wire_repair_buttons(window)
 	_show_repair_buttons(window, npc_code)
 	_lattice_takes_clicks(window, "GDR_STORE_SLOT_")
@@ -1778,7 +1863,6 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 		if who != "":
 			NetClient.character_stats(who)
 			NetClient.list_inventory(who)
-	_update_shop_purse()
 
 ## The item ids of every good this NPC sells, across all its tabs -- what to
 ## ask the server to price.
@@ -1996,44 +2080,20 @@ func _on_shop_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		pick_up_icon({"kind": "shop", "item_id": int(icon.get_meta("shop_item_id")), "icon": icon.texture},
 			icon.texture, icon, (event as InputEventMouseButton).global_position)
 
-# --- Purse, buy confirmation, results ---------------------------------------
-## Where the gold line sits in the store window: the empty band below the grid
-## (the buyback row we don't build). Ours, disclosed.
-const SHOP_PURSE_POS := Vector2(20, 300)
-const SHOP_STATUS_POS := Vector2(20, 316)
-
-func _build_shop_purse(window: HudWindow) -> void:
-	if window.get_node_or_null("ShopPurse") != null:
-		return
-	var purse := Label.new()
-	purse.name = "ShopPurse"
-	purse.position = SHOP_PURSE_POS
-	purse.add_theme_color_override("font_color", Color(0.95, 0.85, 0.45))
-	var status := Label.new()
-	status.name = "ShopStatus"
-	status.position = SHOP_STATUS_POS
-	status.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
-	for lbl in [purse, status]:
-		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if _builder != null:
-			var font := _builder.font_at(0)
-			if font != null:
-				lbl.add_theme_font_override("font", font)
-			lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-		window.add_child(lbl)
-
-func _update_shop_purse() -> void:
-	var window: HudWindow = _windows.get("store")
-	if window == null:
-		return
-	var purse := window.get_node_or_null("ShopPurse") as Label
-	if purse != null:
-		purse.text = "Gold: %s" % (_grouped(_stats.gold) if _stats != null else "-")
-
+# --- Buy confirmation, results ---------------------------------------------
+## Round 725: the store carried two labels of ours under its grid -- "Gold:
+## <purse>" and a status line -- on the band where the original draws its
+## buy-back row (GDR_STORE_STRETCH_REDEEM, the five GDR_STORE_ICON_SLOT_0n
+## and "Buy back", RESTORE_SOLDITEM_INSHOP). Both are gone (npc_gui.md gap
+## 7); the purse is the bag's own GDR_INVENTORY_STA_MONEY beside the store.
+## A store outcome (a repair, a refusal) is a line for the chat's system
+## channel instead (system_notice, ours: the original's per-code lines are
+## lane C's, docs/protocol/npc_gui.md).
 func _set_shop_status(text: String) -> void:
 	var window: HudWindow = _windows.get("store")
 	if window == null:
 		return
+	system_notice.emit(text)
 	var status := window.get_node_or_null("ShopStatus") as Label
 	if status != null:
 		status.text = text
@@ -2390,7 +2450,10 @@ func open_storage(npc_name: String) -> void:
 	var window := open("storage")
 	if window == null:
 		return
-	window.set_title(npc_name)
+	# Round 725: the registry entry's own caption, UIIT_STT_STORAGEROOM
+	# "Storage" (READ, ginterface.txt; MEASURED "Storage" in the original's
+	# MKtR5Kd.png) -- not the keeper's name, which this used to set.
+	print("HudPanels: storage opened at %s" % npc_name)
 	_close_window_boxes(window)
 	_wire_storage_money_button(window)
 	_wire_storage_page_spinner(window)
@@ -5616,8 +5679,6 @@ func _apply_stats(stats: StatsNet.Stats) -> void:
 			# The number on the authored gold row, so a render's log can be
 			# held against the frame (and against the server's own value).
 			print("HudPanels: inventory gold readout %s (server gold %d)" % [gold.text, stats.gold])
-	# The shop's own purse line, if the store is open.
-	_update_shop_purse()
 
 	var character: HudWindow = _windows.get("character")
 	if character != null:

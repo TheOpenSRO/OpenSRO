@@ -42,6 +42,17 @@ const STOREHOUSE_STRID := "UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"
 ## FUN_007001a0(n), which emits item 0 as the last numbered line when the
 ## talk object's +0x7f1 flag is set (0x7001a3-0x7001b5).
 const TALKEND_STRID := "UIIT_STT_NPC_CHATTING_WND_TALKEND"
+## A store line's key (round 725): this prefix and its tab group's code.
+const SHOP_KEY_PREFIX := "shop:"
+
+## Whether a talk-line key opens a store: one tab group's line, or the "Buy"
+## stand-in.
+static func is_shop_key(key: String) -> bool:
+	return key == "shop" or key.begins_with(SHOP_KEY_PREFIX)
+
+## The tab group a store line's key names; "" for the "Buy" stand-in.
+static func tabgroup_of(key: String) -> String:
+	return key.substr(SHOP_KEY_PREFIX.length()) if key.begins_with(SHOP_KEY_PREFIX) else ""
 ## The guild NPC's two lines OpenSRO offers (round 521). FUN_00700440's id
 ## 0x0f block (lookup `mov byte [esp+0x1c],0xf` at 0x70105e) emits item 0x12
 ## when FUN_009870e0 answers 0 (0x701096 `call 0x9870e0`, 0x70109d
@@ -201,8 +212,14 @@ static func _pp_parse_greetings(data: PackedByteArray) -> Dictionary:
 ## line (see the job block in the body). World3D does not pass it: the client
 ## has no record of the player's job yet, so every player is treated as
 ## jobless, which is the case the join line is shown for.
+##
+## `store_lines` (round 725) is ShopReader.store_lines_for(code): with any,
+## the shop is offered as one line per tab group, keyed `shop:<tab group>`
+## and worded by the group's own name (SN_STORE_*), as the client's
+## FUN_006fb630 writes them (docs/protocol/npc_gui.md §1). Without, the one
+## "Buy" line stands in (OURS) for an NPC whose tab groups do not resolve.
 static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1,
-		guild_master: bool = false, player_job_kind: int = 0) -> Array:
+		guild_master: bool = false, player_job_kind: int = 0, store_lines: Array = []) -> Array:
 	var out: Array = []
 	var up := code.to_upper()
 	var guild_npc := false
@@ -226,7 +243,12 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 	# GROUP_STORE_*_GUILD store, so without this they would show "Buy".
 	# guild_id -1 (not known yet) keeps "Buy", as before.
 	if shop_npcs.has(up) and not (guild_npc and guild_id == 0):
-		out.append(Service.new("shop", "Buy"))
+		if store_lines.is_empty():
+			out.append(Service.new("shop", "Buy"))
+		for line_v in store_lines:
+			var line: Dictionary = line_v
+			out.append(Service.new("%s%s" % [SHOP_KEY_PREFIX, str(line.get("tabgroup", ""))], "Buy",
+				str(line.get("name_strid", ""))))
 	# The rest match the NPC's codename the way the SERVER does -- see
 	# GUILD_PATTERNS below for where these patterns come from.
 	if up.contains("WAREHOUSE"):
