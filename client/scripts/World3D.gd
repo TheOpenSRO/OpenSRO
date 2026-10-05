@@ -1261,6 +1261,11 @@ var _other_gaits := {}
 ## character_id -> {slot: item id}, as last reported: what the debug panel
 ## lists for another player.
 var _other_equipped := {}
+## character_id -> {slot: effective plus} (round 735): each other player's
+## worn pluses, from their snapshot's pluses tail and every 0x3038 since. A
+## slot not listed is +0. Lane A's glow reads it (with
+## NetClient.other_player_equipment_changed for the moment it changes).
+var _other_pluses := {}
 ## How far a body may still be from its target before it counts as moving:
 ## a tenth of the body's height (REAL_CHARACTER_NATIVE_HEIGHT), so the tail
 ## of the interpolation reads as standing.
@@ -1753,6 +1758,7 @@ func _ready() -> void:
 	NetClient.entity_entered.connect(_on_entity_entered)
 	NetClient.entity_moved.connect(_on_entity_moved)
 	NetClient.entity_left.connect(_on_entity_left)
+	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
 	NetClient.recall_designate_result.connect(_on_recall_designate_result)
@@ -15493,9 +15499,102 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 		_arrival_entries[snapshot.character_id] = snapshot
 		_log_system("%s entered the zone." % snapshot.char_name)
 		return
+	_note_other_pluses(snapshot)
 	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped,
 		_snapshot_body(snapshot), snapshot.heading, snapshot.scale if snapshot.has_model else CharacterAppearance.DEFAULT_SCALE)
 	_log_system("%s entered the zone." % snapshot.char_name)
+
+## Keeps another player's worn pluses from their snapshot (round 735), and
+## logs the ones they have -- the two-client check reads it.
+func _note_other_pluses(snapshot: WorldNet.EntitySnapshot) -> void:
+	_other_pluses[snapshot.character_id] = snapshot.pluses.duplicate()
+	for slot in snapshot.pluses:
+		print("World3D: player %d spawns with slot %d item %d at +%d" % [snapshot.character_id, int(slot),
+			snapshot.item_in(int(slot)), int(snapshot.pluses[slot])])
+
+## The character id retail's u32 uid names (round 735): the other player whose
+## id's low 32 bits it is, drawn or waiting in a zone change's arrival list.
+## -1 when there is none.
+func _other_by_uid(uid: int) -> int:
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) == uid:
+			return int(id)
+	for id in _arrival_entries:
+		if (int(id) & 0xffffffff) == uid:
+			return int(id)
+	return -1
+
+## Retail 0x3038 / 0x3039 (round 735, NetClient.other_player_equipment_changed):
+## another player put an item on (or its plus changed) or took one off. The
+## retail client redresses the character by the item's visual slot
+## (FUN_008a9260 / FUN_008a9560 -> ResolveVisualSlotForItem); OpenSRO keys its
+## worn map by equip slot, which is the message's slot byte. plus -1 is a
+## removal.
+func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) -> void:
+	var id := _other_by_uid(uid)
+	if id < 0:
+		print("World3D: 0x%x for uid %d, who is not drawn -- ignored" % [0x3038 if plus >= 0 else 0x3039, uid])
+		return
+	var worn: Dictionary = (_other_equipped.get(id, {}) as Dictionary).duplicate()
+	var pluses: Dictionary = (_other_pluses.get(id, {}) as Dictionary).duplicate()
+	if plus >= 0:
+		worn[slot] = ref_id
+		if plus > 0:
+			pluses[slot] = plus
+		else:
+			pluses.erase(slot)
+	else:
+		worn.erase(slot)
+		pluses.erase(slot)
+	_other_equipped[id] = worn
+	_other_pluses[id] = pluses
+	print("World3D: player %d now wears slot %d item %d at +%d" % [id, slot, int(worn.get(slot, 0)), int(pluses.get(slot, 0))])
+	if _arrival_entries.has(id):
+		var kept: WorldNet.EntitySnapshot = _arrival_entries[id]
+		kept.equipped = worn
+		kept.pluses = pluses
+		return
+	_redress_other(id)
+
+## Rebuilds another player's dressed body inside their node from
+## _other_equipped (round 735), as _apply_player_equipment_visual redresses the
+## player's: the new skeleton replaces the old, keeping the node, its plate,
+## its click body, its place and its facing; the gait, sounds and idle or run
+## follow the new weapon's group.
+func _redress_other(character_id: int) -> void:
+	var node: Node3D = _other_bodies.get(character_id)
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if node == null or not is_instance_valid(node) or gait.is_empty():
+		return
+	var equipped: Dictionary = _other_equipped.get(character_id, {})
+	var body := String(gait.get("body", node.get_meta("body", "")))
+	var scale := int(gait.get("scale", CharacterAppearance.DEFAULT_SCALE))
+	var skeleton := _build_assembled_character(equipped, body, scale)
+	if skeleton == null:
+		return
+	var old = gait.get("skeleton")
+	if old != null and is_instance_valid(old):
+		_anim_sounds.unregister(old)
+		old.queue_free()
+	skeleton.rotation.y = PI
+	node.add_child(skeleton)
+	body = String(skeleton.get_meta("body", body))
+	var group := _weapon_group_for(equipped, body)
+	var moving := bool(gait.get("moving", false))
+	var sitting := bool(gait.get("sitting", false))
+	_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false, "sitting": sitting}
+	var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
+	owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
+	_anim_sounds.register(skeleton, owner)
+	var action := BsrReader.AnimationEntry.TYPE_SITTING if sitting else BsrReader.AnimationEntry.TYPE_STAND
+	var loop := _body_animation_for(body, action, group)
+	var frames := _frame_count(loop)
+	if frames > 1:
+		_animated.append([skeleton, loop, frames, 0.0, true, _idle_anim_time, null])
+	if moving:
+		_set_other_gait(character_id, true)
+	node.remove_meta(CharacterLight.META_VALUE)
+	_light_character(node)
 
 ## Another player's position (OpEntityMoved): their body's new walk target,
 ## and (round 637) the heading toward it, which the body turns to at the
@@ -15555,6 +15654,7 @@ func _on_entity_left(character_id: int) -> void:
 	_abnormal_states.erase(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_fx_owner_buffs.erase(_fx_owner_key(character_id, 0))
 	_other_seated.erase(character_id)
+	_other_pluses.erase(character_id)
 	# A monster's blow on this player may cross the notice (round 546,
 	# MonsterStrikes.is_own_unpaired); remembered for the grace window.
 	var now_ms := Time.get_ticks_msec()
@@ -20922,6 +21022,7 @@ func _leave_sit_by_moving() -> void:
 ## drawn seated takes the sitting loop without the sit-down clip.
 func _spawn_result_others(others: Array, seated: Array) -> void:
 	for other in others:
+		_note_other_pluses(other)
 		# Each faces its heading from the list's tail (round 637's review
 		# follow-up; NAN from an older server).
 		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped,

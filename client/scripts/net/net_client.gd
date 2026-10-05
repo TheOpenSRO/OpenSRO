@@ -74,6 +74,14 @@ signal equipment_result(items: Array, error: String)
 ## A repair's outcome: 0 = repaired, otherwise a refusal code; the gold spent
 ## and the worn slots' durability afterwards (EquipmentNet.RepairResult).
 signal repair_result(code: int, gold_spent: int, durabilities: Array)
+## Round 735 (lane A's hook for the glow): another player's worn item changed
+## -- retail 0x3038 (put on, or its plus changed: `ref_id` and `plus` set) or
+## 0x3039 (taken off: `plus` -1). `uid` is retail's u32 unique id, the low 32
+## bits of the character id (WorldNet.EntitySnapshot.character_id & 0xffffffff);
+## `slot` the equip slot (EquipmentNet.SLOT_*); `plus` the effective plus
+## (OptLevel + advanced elixir). World3D redresses the body from it
+## (_on_other_equipment_changed) and keeps the plus in _other_pluses.
+signal other_player_equipment_changed(uid: int, slot: int, ref_id: int, plus: int)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
 signal shop_sell_result(ok: bool, reason: String, gold_received: int)
@@ -1051,6 +1059,12 @@ func _dispatch(p: Packet) -> void:
 		EquipmentNet.OP_REPAIR_RESULT:
 			var rr := EquipmentNet.decode_repair_result(p.data)
 			repair_result.emit(rr.code, rr.gold_spent, rr.durabilities)
+		EquipmentNet.OP_EQUIP_BROADCAST, EquipmentNet.OP_UNEQUIP_BROADCAST:
+			var eb := EquipmentNet.decode_broadcast(p.data)
+			if eb != null:
+				var on := p.opcode == EquipmentNet.OP_EQUIP_BROADCAST
+				print("NetClient: %s uid %d slot %d item %d plus %d" % ["0x3038" if on else "0x3039", eb.uid, eb.slot, eb.ref_item_id, eb.plus])
+				other_player_equipment_changed.emit(eb.uid, eb.slot, eb.ref_item_id, eb.plus if on else -1)
 		ShopNet.OP_BUY_RESULT:
 			var r := ShopNet.decode_buy_result(p.data)
 			shop_buy_result.emit(r.ok, r.reason if r.error == "" else r.error)
