@@ -81,8 +81,8 @@ func _test_record() -> void:
 		if ItemInstance.read_record(PackedByteArray(RECORD).slice(0, n), 0)[0] != null:
 			cut_ok = false
 	_check(cut_ok, "every truncation of the record is refused")
-	# The rent block's branches (c:0x8bb130): bit 1 adds u16 and u32.
-	var rented := PackedByteArray([2, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	# The rent block's branches (c:0x8bb130): a set bit adds a u16; bit 1 then u16 and u32.
+	var rented := PackedByteArray([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])  # rent word, then u16 + (u16, u32)
 	rented.append_array(PackedByteArray(RECORD).slice(4))
 	var rr := ItemInstance.read_record(rented, 0)
 	_check(rr[0] != null and (rr[0] as ItemInstance).ref_item_id == 3645 and rr[1] == rented.size(), "a record behind a rent block reads")
