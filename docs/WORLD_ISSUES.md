@@ -7094,6 +7094,239 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-twenty-second round: the gates' animated water (TEXANI), and their glows blended in display values as Direct3D 9 blends
+
+The user (2026-10-04), after v0.1.493: "Samarkand and Donwhang don't have glow effects and they
+should. Also Hotan's teleporter is like a fountain with its own water or water-like texture that is
+supposed to be animated but it's not." Then two screenshots of the original
+(`/root/opensro-handoff/teleport_refs/orig_donwhang_7iPG5Cm.png`, `orig_samarkand_ZlvBrQo.png`).
+
+Labels: READ (sro_client.exe, address given; the archive's own shader sources), MEASURED, INFERRED,
+OPEN, OURS.
+
+### 1. Hotan: TEXANI, read and built
+
+**READ.**
+- **The data**: `ModDataTexAni::vslot_004` (0xc5c5a0) reads the IModData header and then data
+  +0x24..+0x34 = mode, method, fps, rows, columns, plus 16 floats at +0x38 (BsrReader._read_texani).
+- **The runtime** (`CRTModTexAni`):
+  - Its constructor 0xc82a00 sets the 4x4 matrix at +0x48 to the identity and fills a two-entry
+    table: +0x90 = 0xc82640 (the frame-grid step), +0x94 = 0xc82830 (the rate step).
+  - `vslot_002` calls the entry that data +0x28 picks, with the frame's milliseconds.
+  - **The rate step** turns ms into seconds (/1000.0, the double at 0xd83268) and grows m00, m01,
+    m10, m11, m20 and m21 by data +0x38, +0x3c, +0x48, +0x4c, +0x58 and +0x5c times the seconds.
+    Nothing wraps.
+  - **The grid step**: period trunc(1000/fps) ms; trunc(acc/period) frames; loop, ping-pong or
+    clamp by header bytes +0x20..+0x22; then FUN_00c825f0 sets the translation to
+    (frame % cols / cols, frame / cols / rows).
+- **The draw**: `vslot_004` (0xc82970) uploads the matrix to vertex constants 23..25 for the
+  material the mod names (+0x14).
+- **The shader** (corrected by the review): the object shader the client assembles is
+  `shader\vss0.c` / `vss2.c` (pushed at 0xbf6a5a / 0xbf6a8a), with a define list built at
+  0xbf6c3f..0xbf6d34: TEXTURE0, SPEC, MULTITEX, TEXANI0, TEXANI1, TEXANI1R.
+  - The renderer picks the UV variant from the draw flags (0xbf0f70..0xbf0f93), and
+    `CRTModTexAni::vslot_004` sets 0x400000 for mode 1 (data +0x24) and 0x8000000 otherwise
+    (0xc8299f..0xc829ad).
+  - **TEXANI0** (mode 0): `m3x3 oT0.xyz, r1.xyz, c23` with r1 = (u, v, 1), so u' = dot((u,v,1), c23)
+    and v' = dot((u,v,1), c24) on texture stage 0.
+  - **TEXANI1** (mode 1): oT0 passes through as authored and **oT1**, the second stage's
+    coordinates, is animated.
+  - The matrix is transposed on upload: 0xaa3afe is D3DXMatrixTranspose (READ, the review), so
+    c23 = (m00, m10, m20).
+  - The archive's `vertexshader0texani.c`, which round 722 first cited, equals TEXANI0 but is not
+    a file the client loads.
+
+**MEASURED, the census** (`client/tools/dump_bsr_particles.gd --census`, now with a TEXANI section):
+- 359 `.bsr` carry a TEXANI mod, 358 of them in the `ambient` set.
+- All but one use the rate step (method 1); the frame grid appears once (`flame_adjutant`).
+- The gates: Hotan's `oas_hot_portal` material 3 (`Oas_hot_potal_water`), v +0.48/s.
+  Constantinople's `euro_esteuro_fountain01` material 6, with the 2x2 part growing
+  (+0.02, +0.03, -0.02, +0.03 /s). The guild `charge_gate` material 3, v -0.7/s.
+
+**Built.**
+- `BsrReader` reads the mods: `texani_mods` and `texani_for(index)`, with the ambient set and
+  MTRL's dispatch rule.
+- `TexAni` (`client/scripts/world/tex_ani.gd`) runs both steps as read.
+- `ObjectLoader` binds a placed object's material to its mod.
+- The object shader (`object.gdshaderinc`) and the MTRL mod shader apply the two rows in vertex().
+  The identity is the default, so every other material is unchanged.
+- World3D ticks it every physics step.
+
+**Live** (`/var/tmp/r722/a7hotan`, the QA TEXANI line):
+- Hotan's water reads v +0.16 at tick 20 and +0.48 at tick 60, i.e. 0.48 a second.
+- 11 materials animate in Hotan's 3x3 regions, the town's `bigwaterfall` objects among them: every
+  placed object's TEXANI now plays, not only the gates'.
+
+**Mode 1 (the review's finding 1).**
+- 186 of the 370 mods are mode 1, which animates stage 1 only.
+- Round 722 first slid the base texture for them, for example `alex_library_01`'s fountain water
+  (91/49) at -0.88/s. A mode-1 mod is now not bound (`TexAni.animates_base`), so the base texture
+  stays as authored, as the original draws it.
+- What these materials' second stage holds (a second texture, its stage ops) is not read, so
+  whatever the original moves on stage 1 does not move here: OPEN.
+- Live (`/var/tmp/r722/a8lib`): see "Review fixes" below.
+
+**Notes (the review's finding 7):**
+- The frame grid (method 0) is unexercised by placed data. Its one user, `flame_adjutant`, is set 1,
+  frames 0..0, 1x1; only the tests play it.
+- The matrix grows with no wrap (READ: `vslot_007` resets the frame and direction, never the
+  matrix). The Constantinople fountain's water tiles about 100 times denser after an hour.
+- Float32 precision degrades after about 10 hours on the fastest scroll (`cj_wf_dr_01`, -2.78/s:
+  |v| ~ 10^5, a step of ~0.008 of a texture).
+- All of this is as the original's accumulator does; its only difference is its LOD gate, which
+  pauses the step for undrawn objects.
+
+**OURS:**
+- One runtime per material, stepped every physics tick whether drawn or not (the original's update
+  sits behind the LOD gate 0xc43780).
+- The skinned character and item path (SkinnedBsrAssembler) is not bound: OPEN.
+
+**Not built:** Hotan's ambient MTRL mod. It is the existing MTRL path (round 625:
+`mtrl_mod_for`, the ambient set, w1 2, material 3), so the water was already blended. Round 720's
+"not drawn" note on it was wrong (corrected in teleport_effects.md).
+
+### 2. Samarkand: the glow is there; Forward+ blended it away
+
+**MEASURED.**
+- Samarkand's `samarkand_center_01` carries two `map\cj_pal_potal_blue.efp`, glow byte 0, drawn
+  with the scene.
+- Their plates (`efpcensus -dumpone`) are two single big billboards, 70x90 and 50..70x60..90 units:
+  `00illusion_basic.ddj` (ARGB 200, 62,130,254) and `01blurred2.ddj` (150, 101,144,253). Both are
+  SRCALPHA/ONE additive and centred in the arch at y 55.9 and 81.8.
+- They draw (the QA screen log: on screen, particle extents in the arch). Over the bright sky behind
+  the open arch, though, Forward+'s additive blend in its **linear** buffer adds almost nothing.
+  Direct3D 9 adds in the **display values** the screen shows (no D3DRS_SRGBWRITEENABLE, round 705),
+  where blue on sky saturates toward white: the white glow in the user's picture.
+- Compatibility blends in display values (WORLD_ISSUES "Blending space", MEASURED), so it is the
+  reference for the original's arithmetic. Same view, mean of the arch's open area
+  (110x80 px, `/var/tmp/r722/a4`, `a5`):
+
+| render | R G B |
+|---|---|
+| effects off (both renderers) | 164 210 205 |
+| Forward+ before (linear blend) | 175 220 238 |
+| **Forward+ after (display blend, this round)** | **208 229 240** |
+| Compatibility (display values, the D3D9 arithmetic) | 214 233 243 |
+
+  The original's arch, behind the crystal: 173 183 233 and 177 199 238 (different sky and hour;
+  the shape is the point).
+
+**Built: `EfpEffect.display_shader`** (OURS method, the READ blend).
+- Under Forward+ a node's shader reads the colour underneath (`hint_screen_texture`: the opaque
+  scene, before the transparent pass).
+- It turns that into the displayed value through Godot's tone map forward (ObjectLight's tonemap
+  vector and filmic curve), makes the D3D blend of the class on display values (SRCALPHA/ONE adds
+  s*a; SRCALPHA/INVSRCALPHA mixes), and writes what Godot's blend and tone map turn into that: the
+  difference with ALPHA 1 for an additive class, the colour whose linear mix lands on it for a
+  mixing one.
+- Under Compatibility nothing changes.
+- **Scope (OURS):** only the objects' ambient effects (`AmbientParticles.attach` calls
+  `use_display_blend` before `make_glow`). Every other EFP (skills, auras) still blends linearly; the
+  same switch would serve them (a decision for the user: the look of every skill changes).
+- The display twins (and their glow twins) are added to `EfpEffect.warm`.
+- **Limits (OURS):**
+  - Overlapping particles each blend against the opaque scene and their differences add, which
+    undercounts where they overlap and saturate.
+  - A transparent surface underneath is not in the screen texture.
+
+### 3. Donwhang: the low glow is hidden by its own platform, by the original's rule too
+
+**MEASURED** (the QA lines; the camera on the bridge at 135 and 188 units):
+- `w_cd_portal`'s three effects sit at local y 28.2 / 28.1 / 91.0. The pavilion's floor
+  (`W_CD_portal_04`) is at world y ~32: the camera's ray to the low effects' centres hits it at
+  d 73 of 135.
+- The low glow (byte 41) puts its test point 40 units toward the camera, and that point lies inside
+  the platform under the floor. The ray meets `W_CD_portal_04`, an opaque (0x140), front-facing
+  surface (normal.dir -0.23).
+- The original's test is a depth test of that same point against the drawn scene (FUN_00c43100,
+  re-read: camera from the inverse view, `FUN_00410cd0` normalises in place). So it is hidden there
+  too, from these views.
+- The high glow (byte 49, under the roof) tests visible: nothing between, and the ray passed through
+  no alpha-tested piece.
+- **Change:** an alpha-tested piece on the glow ray no longer always lets it through. The ray reads
+  the texel the depth test would read (`AmbientParticles.texel_kept`: the hit's face, its UV by
+  barycentrics, the texture's mip-0 alpha against the material's threshold) and stops on a kept
+  texel. This is closer to the depth buffer than round 720's pass-through (OURS).
+- **What the user sees as Donwhang's glow** is the scene-drawn `w_cd_potal_blue` (two big additive
+  plates, x -7.7, both sides of the bell) plus the high glow. Both are now blended in display
+  values. Mean of two 40x120 strips beside the bell:
+
+| render | right strip | left strip |
+|---|---|---|
+| off | 102 53 29 | 85 62 42 |
+| Forward+ before | 114 114 214 | 88 83 137 |
+| **Forward+ after** | **134 122 164** | **96 93 111** |
+| Compatibility | 143 156 203 | 95 101 127 |
+
+  Closer to Compatibility in red and on the left strip, further in blue on the right strip, where the
+  plates overlap (the OURS limit above).
+- **The bell in the user's picture (SETTLED by the user's answer, 2026-10-05, not READ):** the
+  user's original client runs with **Light Effect off**. With Light Effect off, the original draws a
+  glow entry as an ordinary depth-tested particle (READ, round 720's review: `FUN_00c81450`'s branch
+  at 0xc814fe). So the bell hides the high glow, as their screenshot shows. Our Light Effect off does
+  the same (`AmbientParticles.set_light_effect`, tested). With it on, the glow pass draws over the
+  bell in both clients, as READ. Nothing to change.
+
+### Tests and checks
+
+- `tex_ani_test.gd` (new, 28 checks): the reader, the dispatch, both steps (rates, grid, loop,
+  ping-pong, stop, backwards, fractional ms), the shaders' line, the binding.
+- `ambient_particles_test.gd`: plus the display shader (5 checks).
+- `object_light_test.gd` holds `object.gdshaderinc` to `ObjectLight.SHADER_FN` verbatim; the TEXANI
+  uniforms moved out of that block.
+- Box, at the final head: `check` ALL LOAD; the full suite 234 suites, 0 failing (a first run had
+  object_light_test failing until the TEXANI uniforms left the shared block).
+- **Perf gate** (`--sites jangan,cross --frames 12000`, base `bfd6fb5e`, 1280x720, median of 3),
+  all SAME:
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.51 -> 1.52 | 9463 -> 9611 | 3340 -> 3369 | 4 -> 5 |
+| cross | 1.66 -> 1.68 | 10323 -> 10228 | 3333 -> 3337 | 4 -> 4 |
+
+  **Corrected by the review:** at the gate's Jangan view both gate effects are off screen
+  (`screen off`, d 469), so this table measures no display-blended draw at all.
+
+**PERF SLOWER (the review, MEASURED), pending the user's decision.** The same gate aimed at
+Samarkand's arch, with the plate on screen:
+
+| size | frame ms base -> head | entry | freeze | hitches |
+|---|---|---|---|---|
+| 3840 x 2160 | **4.70 -> 6.15 (+1.5) SLOWER** (all six runs within 0.01) | 7938 -> 8011 SAME | 2508 -> 2538 SAME | 4 -> 4 SAME |
+| 1280 x 720 | 1.81 -> 1.80 SAME (CPU-bound there) | 7927 -> 7977 SAME | 2522 -> 2547 SAME | 4 -> 4 SAME |
+
+The cost is Godot's screen copy, the same +1.4 ms at 4K that round 705 dropped the fog's exact blend
+for.
+
+**USER DECISION (2026-10-05): keep the exact display-value blend for the gate effects.** The cost
+is accepted: Samarkand at 3840 x 2160 goes from 4.70 to 6.15 ms a frame (+1.5), only while a gate
+effect is on screen; at 1280 x 720 it is SAME. Round 705's no-screen-read method was the
+alternative offered and was not chosen.
+
+### Renders (render box, Forward+ on the RX 7600 unless named; stock qa_shot on the shared lock)
+
+- `/var/tmp/r722/a4/{sm,dw}_{fp,gl}_{on,off}`: the blend-space comparison.
+- `/var/tmp/r722/a5/{sm,dw}_fp_on`: this round's Forward+.
+- `/var/tmp/r722/a3`: the gates framed.
+- `/var/tmp/r722/b6`, `a7hotan`: Hotan base and after.
+- Crops: `cmp_sm5.png` and `cmp_dw5.png` (before | after | Compatibility).
+
+### Review fixes (independent review `eb18bc79`, `docs/rounds/r722_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | TEXANI mode 1 drives texture stage 1 (`vss0.c` TEXANI1) | live (`/var/tmp/r722/a8lib`, 91/49): the QA TEXANI line lists 3 live materials (`alex_library_fountain12` v +0.07/s, mode 0; two `dun_waterfall`s), and `alex_library_fountain_water` appears nowhere. Mode 1 is not bound: the base UV stays as authored (`TexAni.animates_base`); stage 1 is OPEN. The docs cite `vss0.c`/`vss2.c` and the define list; the transpose is READ (D3DXMatrixTranspose). Tested (tex_ani_test: a mode-1 mod leaves the rows at the identity) |
+| 2 | the screen read's +1.5 ms at 4K | recorded above; USER DECISION 2026-10-05: keep the exact blend |
+| 3 | Donwhang's roof glow | settled by the user: their client runs Light Effect off, under which the original depth-tests glows (READ) and so do we |
+| 4 | Samarkand's fill | the arch matches Compatibility's display arithmetic; the review's note that it does not fill the arch as in the picture stands (their hour and camera differ) |
+| 5 | Compatibility would copy the screen it never reads | `use_display_blend` returns at once unless Forward+ runs (`VideoOptions.forward_plus_running`), and `EfpEffect.warm` builds the display twins only there |
+| 6 | `texel_kept` untested; the QA line | ambient_particles_test builds a quad cut on one half: 0 on the cut half, 1 on the kept half, -1 for a mesh without UVs. The QA line says `cut texel` or `unreadable`. The first-use readback stays (meta hooks `opensro_texel_arrays` / `opensro_texel_image` are read first, and the test uses them); keeping the loader's arrays for every alpha-tested piece is not done (memory) |
+| 7 | notes | in "Mode 1" and "Notes" above |
+
+**Review** (kept beside the notes): `docs/rounds/r722_review.md` (TEXANI mode 1 drives texture coordinate 1 per `vss0.c`, now left on the base UV; the display-blend twin only under Forward+; `texel_kept` tested; the screen read's +1.5 ms at 4K (Samarkand, 4.70 -> 6.15 ms) put to the user, who kept the exact blend on 2026-10-05; Donwhang's clean bell settled by the user's answer that Light Effect is off in their original client).
+
+Perf gate (review, 720p, jangan and cross): SAME on all numbers; Samarkand at 4K +1.5 ms (USER DECISION, accepted).
+
 ## Seven-hundred-and-twenty-first round: the Alexandria gate portals' rings spin about one centre -- map objects bind to the `.bsk`'s stored inverse binds where those are only a root shift
 
 The user (2026-10-04): "Alexandria North and South gate teleporters are slightly broken. The rings
