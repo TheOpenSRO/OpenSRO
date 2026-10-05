@@ -1164,8 +1164,8 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	npc_service_selected.emit(key)
 
 ## Whether a text line has the keyboard: the focus owner of this viewport is
-## a LineEdit or TextEdit -- the guild name prompt (round 521), the warehouse
-## gold dialog's amount, the chat's own line, or any other. Until round 608
+## a LineEdit or TextEdit -- the guild name prompt (round 521), a confirm
+## box's count or gold amount (round 726), the chat's own line, or any other. Until round 608
 ## World3D read movement from the raw key state (Input.get_axis), which a
 ## focused line does not consume, so without this every "w" typed into the
 ## guild name prompt walked the character, as it once did in chat
@@ -1309,8 +1309,8 @@ func _drop_talk_prompts(window: HudWindow) -> void:
 			old.free()
 
 ## A prompt panel for the talk window (round 521), replacing any prompt
-## already up: the dark, gold-edged box of the warehouse gold dialog
-## (_open_gold_dialog), headed with the talk line's own text. The panel's
+## already up: a dark, gold-edged box of this project's own design, headed
+## with the talk line's own text. The panel's
 ## first child is the VBoxContainer "VB" to fill; _show_talk_prompt adds it.
 func _talk_prompt(window: HudWindow, prompt_name: String, heading: String) -> PanelContainer:
 	_drop_talk_prompts(window)
@@ -1364,8 +1364,8 @@ func _show_talk_prompt(window: HudWindow, panel: PanelContainer, focus: Control)
 ## the name, then Create and Cancel. Create (or Enter) emits
 ## guild_create_requested with the trimmed name and closes the prompt; the
 ## server's reply goes to chat (World3D._on_guild_create_result). The prompt
-## is this project's own design, laid out like the warehouse gold dialog
-## (_open_gold_dialog), not the real client's guild-creation window, which
+## is this project's own design (a dark, gold-edged panel), not the real
+## client's guild-creation window, which
 ## was not read. The name line takes the keyboard, so World3D's movement
 ## gate (is_typing) keeps the typed letters from walking the character.
 func open_guild_name_prompt(npc_name: String) -> void:
@@ -2072,6 +2072,19 @@ func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dic
 	var old := window.get_node_or_null(box_name) as Control
 	if old != null:
 		_close_confirm_box(old)
+	# Every box but the buy box is the one CIFInventory +0x390, destroyed
+	# before each new one (0x6af530 -> 0x6aef20 -> 0xba0e40): one at a time,
+	# across the store and the warehouse (READ, round 726 review).
+	# ConfirmBuy is a separate object (ID 400) and stays separate.
+	if box_kind != StoreMessageBox.Kind.BUY:
+		for host in ["store", "storage"]:
+			var w: HudWindow = _windows.get(host)
+			if w == null:
+				continue
+			for other in INVENTORY_BOXES:
+				var o := w.get_node_or_null(other) as Control
+				if o != null:
+					_close_confirm_box(o)
 	var box := StoreMessageBox.new()
 	box.name = box_name
 	if not box.build(_builder, box_kind, opts):
@@ -2167,7 +2180,10 @@ func _on_shop_buy_result(ok: bool, reason: String) -> void:
 ## 0x6d1400 -> 0x6b07d0). A stack is prefilled with its size and capped
 ## there (0x6b0a52..0x6b0a87, READ); the price is the item's sell price
 ## (itemdata's SellPrice; the original reads its reference +0xb8, INFERRED to
-## be the same column) times the count, the server's result the truth.
+## be the same column) times the count, less the store's tax
+## (StoreMessageBox.price_text, READ 0x63bd60), the server's result the
+## truth. On Sell the slot must still hold the item (OURS: the box is not
+## modal, so the slot can change under it -- round 726 review).
 func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
@@ -2177,7 +2193,10 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 	_open_store_box("store", "SellConfirm", StoreMessageBox.Kind.SELL, {
 		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
 		"count": held, "max": held, "unit_price": item.sell_price,
-	}, func(q: int) -> void: _do_sell(slot, q))
+		"tax_rate": shop_tax_rate,
+	}, func(q: int) -> void:
+		if _bag_slot_still_holds(slot, item_id, q, "sell"):
+			_do_sell(slot, q))
 
 ## Ctrl+click on a bag item while the store is open sells it with no box
 ## (round 726; READ CIFSlotWithHelp::vslot_029 0x680fa0: VK_CONTROL, the store
@@ -2187,8 +2206,54 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 ## not buy back; which items those are is not read, and OpenSRO has no buy
 ## back at all, so no such question is asked (OPEN).
 func _ctrl_sell(slot: int, qty: int) -> void:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(_bag_item_id_at_slot(slot))
+	if item != null and is_cash_item(item):
+		var line := _builder.resolve_text(CANT_QUICKSELL_CASHITEM) if _builder != null else ""
+		print("HudPanels: ctrl+click quick-sell refused, a cash item (bag slot %d)" % slot)
+		system_notice.emit(line if line != "" and line != CANT_QUICKSELL_CASHITEM else "Item mall items cannot be quick-sold.")
+		return
 	print("HudPanels: ctrl+click sells bag slot %d x%d with no box" % [slot, maxi(1, qty)])
 	_do_sell(slot, maxi(1, qty))
+
+## The refusal CIFSlotWithHelp::vslot_029's bag branch shows (0xda4060, through
+## 0x7781b0) before a Ctrl+click quick-sell of a cash item (READ, round 726
+## review).
+const CANT_QUICKSELL_CASHITEM := "UIIT_MSG_STRGERR_CANT_QUICKSELL_CASHITEM"
+
+## The store's tax rate for the sell box (the tax line's short / 100.0, 0x6b0871
+## -- READ); 0 until lane C brings the store's tax data (OPEN, npc_gui.md OPEN 1).
+var shop_tax_rate := 0.0
+
+## Whether Ctrl+click may not quick-sell `item`: 0x5dd660 on its type word --
+## not bionic, TypeID1 3 (an item), the CashItem bit (itemdata columns 7, 8
+## and 9; characterdata.md packs them into the u16 at +0x00). The original
+## also refuses when its reference +0xa0 is 2 or 6 (0x8ba600), a field not
+## mapped to an itemdata column (OPEN).
+static func is_cash_item(item: ItemTableReader.Item) -> bool:
+	return item.bionic == 0 and item.type_ids.size() >= 1 and item.type_ids[0] == 3 and item.cash_item != 0
+
+## Whether an item stacks by the fills' type test, (b&2)==0 && (b&0x1c)==0xc
+## && (b&0x60)==0x60: not bionic, TypeID1 3, TypeID2 3 (READ 0x6b0e90,
+## 0x6b15b0, 0x6b07d0).
+static func is_stack_item(item: ItemTableReader.Item) -> bool:
+	return item != null and item.bionic == 0 and item.type_ids.size() >= 2 and item.type_ids[0] == 3 and item.type_ids[1] == 3
+
+## Whether bag `slot` still holds `item_id`, at least `q` of it, when a box's
+## OK is pressed (OURS, round 726 review: the boxes are not modal). Logs and
+## refuses otherwise.
+func _bag_slot_still_holds(slot: int, item_id: int, q: int, what: String) -> bool:
+	for entry in _bag_slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		if index == null or int(index) != slot:
+			continue
+		var id = _first_field(entry, ["item_id", "id"])
+		var n = _first_field(entry, COUNT_FIELDS)
+		if id != null and int(id) == item_id and (n == null or int(n) >= q):
+			return true
+		break
+	print("HudPanels: %s not sent -- bag slot %d no longer holds item %d x%d" % [what, slot, item_id, q])
+	return false
 
 func _do_sell(slot: int, quantity: int) -> void:
 	var who := NetClient.current_character_name
@@ -2412,32 +2477,50 @@ func _on_storage_cell_input(event: InputEvent, icon: TextureRect) -> void:
 
 ## The deposit box: CIFMessageBox mode 6, purpose 5 (round 726), opened when
 ## a bag item is put down on the warehouse (CIFStorageRoom::vslot_028
-## 0x6cd350 -> 0x6b0e90). Its spin buttons are hidden by the purpose (READ),
-## so the count is typed; a stack starts at its size (INFERRED, as the sell
-## box's). The price field shows 0: OpenSRO's warehouse charges no fee (OURS;
-## the original's fee is the item reference's +0xcc times the count,
-## 0x6b0fe8..0x6b101c, a field not mapped to an itemdata column).
+## 0x6cd350 -> 0x6b0e90). Its spin buttons are hidden by the purpose and its
+## count edit restyled 0x81 and left unfocused (READ; whether the count can be
+## changed is not settled); a stack starts at its size (INFERRED, as the sell
+## box's); an item that does not stack hides the whole quantity group (READ).
+## The price field shows the original's floor, 1 (0x63d676): OpenSRO's
+## warehouse charges no fee (OURS; the original's fee is the item reference's
+## +0xcc times the count, 0x6b0fe8..0x6b101c, a field not mapped to an
+## itemdata column).
 func _confirm_deposit(bag_slot: int, item_id: int, held: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	var n := maxi(1, held)
 	_open_store_box("storage", "DepositConfirm", StoreMessageBox.Kind.DEPOSIT, {
 		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
-		"count": n, "max": n, "fixed_price": 0,
-	}, func(q: int) -> void: _do_deposit(bag_slot, q))
+		"count": n, "max": n, "fixed_price": 0, "stackable": is_stack_item(item),
+	}, func(q: int) -> void:
+		if _bag_slot_still_holds(bag_slot, item_id, q, "deposit"):
+			_do_deposit(bag_slot, q))
 
 ## The withdraw box: mode 6, purpose 6 (round 726), opened when a warehouse
 ## item is put down on the bag (0x6b15b0). The purpose hides the spin
-## buttons, the "Price" label and the item's name (READ, 0x63ee85..0x63ee9f);
-## the price field is "%d" of 0 (0x6b1636..0x6b1641).
+## buttons, the "Price" label and the item's name (READ, 0x63ee85..0x63ee9f)
+## and restyles the count 0x81; an item that does not stack hides the whole
+## quantity group (READ); the price field is "%d" of 0 (0x6b1636..0x6b1641).
 func _confirm_withdraw(warehouse_slot: int, item_id: int, held: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	var n := maxi(1, held)
 	_open_store_box("storage", "WithdrawConfirm", StoreMessageBox.Kind.WITHDRAW, {
 		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
-		"count": n, "max": n, "fixed_price": 0,
-	}, func(q: int) -> void: _do_withdraw(warehouse_slot, q))
+		"count": n, "max": n, "fixed_price": 0, "stackable": is_stack_item(item),
+	}, func(q: int) -> void:
+		if _storage_slot_still_holds(warehouse_slot, item_id, q):
+			_do_withdraw(warehouse_slot, q))
+
+## As _bag_slot_still_holds, for a warehouse slot (the last storage list).
+func _storage_slot_still_holds(slot: int, item_id: int, q: int) -> bool:
+	for entry in _storage_slots_cache:
+		if int(entry.slot_index) == slot:
+			if int(entry.item_id) == item_id and int(entry.quantity) >= q:
+				return true
+			break
+	print("HudPanels: withdraw not sent -- warehouse slot %d no longer holds item %d x%d" % [slot, item_id, q])
+	return false
 
 func _do_deposit(bag_slot: int, quantity: int) -> void:
 	var who := NetClient.current_character_name
@@ -2564,10 +2647,13 @@ func _open_gold_withdraw() -> void:
 
 func _open_gold_box(deposit: bool) -> void:
 	var balance := _storage_carried if deposit else _storage_stored
-	# The amount opens at 1 (OURS: what the original prefills is not read).
+	# READ (0x6b2800 / 0x6b29f0): the amount opens at "0" (0x6b28c8), with no
+	# minimum (0x634ff0(0)) and a maximum of min(the carried or stored gold,
+	# 1,000,000,000) (0x6b295b..0x6b298a, 0x6b2bb6..0x6b2bf5, 0x634f20). The
+	# send refuses 0 (_do_gold).
 	_open_store_box("storage", "GoldDialog",
 		StoreMessageBox.Kind.GOLD_DEPOSIT if deposit else StoreMessageBox.Kind.GOLD_WITHDRAW,
-		{"count": 1, "max": maxi(1, balance)},
+		{"count": 0, "min": 0, "max": mini(maxi(0, balance), StoreMessageBox.GOLD_CAP)},
 		func(q: int) -> void: _do_gold(StorageNet.GOLD_DEPOSIT if deposit else StorageNet.GOLD_WITHDRAW, q))
 
 ## Kept for the QA hook and the tests: the deposit box.
@@ -3198,7 +3284,7 @@ func _load_items() -> void:
 	print("HudPanels: %d item(s) resolvable by id" % _items.size())
 
 ## Closes one of this client's own confirm boxes from its own buttons (Buy,
-## Sell, Deposit/Withdraw, Cancel, the gold dialog's Close). The box is an
+## Sell, Deposit/Take, Cancel). The box is an
 ## ANCESTOR of the pressed button, so freeing it there deletes the Button
 ## while BaseButton is still emitting `pressed` and the Viewport is still
 ## routing the click: round 631 reproduced that with a real X click on Sell as
@@ -3217,6 +3303,8 @@ func _close_confirm_box(box: Control) -> void:
 
 ## The confirm boxes a store or warehouse window can carry, by node name.
 const CONFIRM_BOXES := ["BuyConfirm", "SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog"]
+## The boxes that are the inventory's one message box (+0x390) in the original.
+const INVENTORY_BOXES := ["SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog"]
 
 ## Closes every confirm box on `window`. A box holds what it was opened on --
 ## the sell box a bag SLOT, not the item -- so one left behind a closed

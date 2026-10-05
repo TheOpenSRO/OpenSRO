@@ -59,6 +59,10 @@ const COL_SELL_PRICE := 31
 ## (a potion 5000, arrows 2500) -- so the shop can offer buying a stack.
 const COL_MAX_STACK := 57
 const COL_TYPE_ID1 := 9
+## CashItem and Bionic: bits 0 and 1 of the type word the TypeIDs pack into
+## (docs/protocol/characterdata.md, cols 7-12 -> +0x00).
+const COL_CASH_ITEM := 7
+const COL_BIONIC := 8
 const COL_TYPE_ID4 := 12
 ## `Country`: 0 for the China race's items, 1 for Europe's.
 const COL_COUNTRY := 14
@@ -165,6 +169,9 @@ class Item:
 	var drop_model_path: String
 	## TypeID1..4 -- the game's own classification, four levels deep.
 	var type_ids: PackedInt32Array = PackedInt32Array()
+	## CashItem (column 7) and Bionic (column 8), the type word's bits 0 and 1.
+	var cash_item: int = 0
+	var bionic: int = 0
 	var country: int = 0
 	var req_gender: int = 0
 	## Requirement (type, level) pairs, in table order. A pair whose type
@@ -340,6 +347,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.drop_model_path = _model_at(cols, COL_DROP_MODEL)
 		for col in range(COL_TYPE_ID1, COL_TYPE_ID4 + 1):
 			item.type_ids.append(_int_at(cols, col))
+		item.cash_item = _int_at(cols, COL_CASH_ITEM)
+		item.bionic = _int_at(cols, COL_BIONIC)
 		item.country = _int_at(cols, COL_COUNTRY)
 		item.req_gender = _int_at(cols, COL_REQ_GENDER)
 		for pair in range(REQ_LEVEL_PAIRS):
@@ -391,6 +400,10 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var ranges: PackedInt64Array = rows["ranges"]
 	var param1s: PackedInt64Array = rows["param1s"]
 	var type_ids: PackedInt64Array = rows["type_ids"]
+	# Round 726: a library from before these two columns has neither; such a
+	# library's rows read as 0 (no cash item, not bionic).
+	var cash_items: PackedInt64Array = rows.get("cash_items", PackedInt64Array())
+	var bionics: PackedInt64Array = rows.get("bionics", PackedInt64Array())
 	var req_types: PackedInt64Array = rows["req_types"]
 	var req_levels: PackedInt64Array = rows["req_levels"]
 	var attacks: PackedInt64Array = rows["attacks"]
@@ -412,6 +425,10 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.drop_model_path = drop_models[i]
 		for k in range(4):
 			item.type_ids.append(type_ids[i * 4 + k])
+		if i < cash_items.size():
+			item.cash_item = cash_items[i]
+		if i < bionics.size():
+			item.bionic = bionics[i]
 		item.country = countries[i]
 		item.req_gender = req_genders[i]
 		for pair in range(REQ_LEVEL_PAIRS):

@@ -104,8 +104,23 @@ func _check_store_confirm() -> void:
 	_check(not _visible(dep, "GDR_MBS_CONFIRM_SPINBTN_UP") and not _visible(dep, "GDR_MBS_CONFIRM_SPINBTN_DOWN"),
 		"deposit: the purpose hides the spins (READ, and the user's MKtR5Kd.png)")
 	_check(_visible(dep, "GDR_MBS_CONFIRM_STA_PRICE") and _visible(dep, "GDR_MBS_CONFIRM_EDIT_ITEM_NAME"), "deposit: price label and name shown")
-	_check(_text_of(dep, "GDR_MBS_CONFIRM_EDIT_PRICE") == "0", "deposit: OpenSRO's fee, 0 (OURS)")
+	_check(_text_of(dep, "GDR_MBS_CONFIRM_EDIT_PRICE") == "1", "deposit: a zero fee shows the original's floor, 1 (READ 0x63d676)")
+	_check(_visible(dep, "GDR_MBS_CONFIRM_EDIT_COUNT") and _visible(dep, "GDR_MBS_CONFIRM_STA_COUNT"), "deposit: a stack keeps the quantity group")
 	dep.queue_free()
+	var single := _box(StoreMessageBox.Kind.DEPOSIT, {"name": "Blade", "count": 1, "max": 1, "fixed_price": 0, "stackable": false})
+	_check(not _visible(single, "GDR_MBS_CONFIRM_EDIT_COUNT") and not _visible(single, "GDR_MBS_CONFIRM_STA_COUNT"),
+		"deposit: an item that does not stack hides the count and Quantity (READ 0x63bc80(3))")
+	single.queue_free()
+	var wd1 := _box(StoreMessageBox.Kind.WITHDRAW, {"name": "Blade", "count": 1, "max": 1, "fixed_price": 0, "stackable": false})
+	_check(not _visible(wd1, "GDR_MBS_CONFIRM_EDIT_COUNT") and not _visible(wd1, "GDR_MBS_CONFIRM_STA_COUNT"),
+		"withdraw: an item that does not stack hides the quantity group")
+	wd1.queue_free()
+	var sell1 := _box(StoreMessageBox.Kind.SELL, {"name": "Blade", "count": 1, "max": 1, "unit_price": 10, "stackable": false})
+	_check(_visible(sell1, "GDR_MBS_CONFIRM_EDIT_COUNT"), "sell: the group stays for an item that does not stack (the sell fill has no 0x63bc80(3))")
+	sell1.queue_free()
+	var taxed := _box(StoreMessageBox.Kind.SELL, {"name": "x", "count": 15, "max": 15, "unit_price": 148, "tax_rate": 0.1})
+	_check(taxed.price_text() == "1998", "sell: P - ftol(P x rate): 2220 - 222 = 1998 (got %s)" % taxed.price_text())
+	taxed.queue_free()
 
 	var wd := _box(StoreMessageBox.Kind.WITHDRAW, {"name": "Premium Silver Time (4 weeks)", "count": 3, "max": 3, "fixed_price": 0})
 	_check(_text_of(wd, "GDR_MBS_CONFIRM_BTN_SELL") == "Take", "withdraw: OK reads Take (UIIT_STT_WITHDRAW)")
@@ -120,7 +135,13 @@ func _check_store_confirm() -> void:
 	bb.queue_free()
 
 func _check_money() -> void:
-	var g := _box(StoreMessageBox.Kind.GOLD_DEPOSIT, {"count": 1, "max": 5000})
+	var g := _box(StoreMessageBox.Kind.GOLD_DEPOSIT, {"count": 0, "min": 0, "max": 5000})
+	_check(_text_of(g, "GDR_MBS_EDIT_AMOUNT") == "0", "gold: the amount opens at 0 (READ 0x6b28c8)")
+	_check(not _visible(g, "GDR_MBS_STATIC_AMOUNT"), "gold: Unit (ID 4) hidden (READ 0x6b28a8)")
+	g.set_count(-3)
+	_check(g.count == 0, "gold: no minimum but 0 (got %d)" % g.count)
+	g.set_count(9000)
+	_check(g.count == 5000, "gold: held to the maximum")
 	_check(g.size == Vector2(308, 148), "gold: the box is 308x148 (READ 0x6af55f)")
 	_check(_text_of(g, "GDR_MBS_STATIC_NAME1") == "Deposit" and _text_of(g, "GDR_MBS_BTN_OK") == "Deposit", "gold deposit: NAME1 and OK read Deposit")
 	_check(not _visible(g, "GDR_MBS_STATIC_PRICET1") and not _visible(g, "GDR_MBS_STATIC_NAME2") and not _visible(g, "GDR_MBS_STATIC_PRICE"),
@@ -216,7 +237,63 @@ func _check_gestures() -> void:
 	panels.call("_confirm_sell", 3, 7, 15)
 	var sell := store.get_node_or_null("SellConfirm") as StoreMessageBox
 	_check(sell != null and sell.count == 15 and sell.price_text() == "2220", "a bag item on the store opens the sell box, stack 15 for 2220")
+	# The slot no longer holds the item: Sell sends nothing.
+	(panels.get("sold") as Array).clear()
+	if sell != null:
+		(sell.find_child("GDR_MBS_CONFIRM_BTN_SELL", true, false) as BaseButton).pressed.emit()
+	_check((panels.get("sold") as Array).is_empty(), "Sell on a slot that no longer holds the item sends nothing")
+	# It does: Sell sends.
+	var entry := BagEntry.new()
+	entry.slot = 3
+	entry.item_id = 7
+	entry.count = 15
+	panels.set("_bag_slots", [entry])
+	panels.call("_confirm_sell", 3, 7, 15)
+	sell = store.get_node_or_null("SellConfirm") as StoreMessageBox
+	if sell != null:
+		(sell.find_child("GDR_MBS_CONFIRM_BTN_SELL", true, false) as BaseButton).pressed.emit()
+	_check((panels.get("sold") as Array) == [[3, 15]], "Sell on a slot still holding the item sends it (got %s)" % str(panels.get("sold")))
+	# One inventory box at a time, across the store and the warehouse.
+	var storage := HudWindow.new()
+	storage.name = "storage"
+	storage.size = Vector2(254, 370)
+	panels.add_child(storage)
+	(panels.get("_windows") as Dictionary)["storage"] = storage
+	panels.call("_confirm_sell", 3, 7, 15)
+	panels.call("_confirm_deposit", 3, 7, 15)
+	_check(store.get_node_or_null("SellConfirm") == null and storage.get_node_or_null("DepositConfirm") != null,
+		"a deposit box closes the store's sell box (one CIFInventory +0x390)")
+	panels.call("_open_gold_box", true)
+	_check(storage.get_node_or_null("DepositConfirm") == null and storage.get_node_or_null("GoldDialog") != null,
+		"the gold box closes the deposit box")
+	panels.call("_confirm_buy", 7)
+	_check(store.get_node_or_null("BuyConfirm") != null and storage.get_node_or_null("GoldDialog") != null,
+		"the buy box is a separate object and closes nothing")
+	# A cash item is refused a Ctrl+click quick-sell.
+	var cash := ItemTableReader.Item.new()
+	cash.id = 9
+	cash.cash_item = 1
+	cash.type_ids = PackedInt32Array([3, 3, 1, 1])
+	(panels.get("_items") as Dictionary)[9] = cash
+	var e9 := BagEntry.new()
+	e9.slot = 4
+	e9.item_id = 9
+	e9.count = 1
+	panels.set("_bag_slots", [e9])
+	(panels.get("sold") as Array).clear()
+	var notices := []
+	panels.system_notice.connect(func(t: String) -> void: notices.append(t))
+	panels.call("_ctrl_sell", 4, 1)
+	_check((panels.get("sold") as Array).is_empty() and notices.size() == 1, "ctrl+click does not quick-sell a cash item, and says so (READ 0x6813f3)")
+	_check(panels.call("is_stack_item", cash) and not panels.call("is_stack_item", ItemTableReader.Item.new()), "the stack test: TypeID1 3, TypeID2 3, not bionic")
 	panels.queue_free()
+
+## A bag list entry as the server's list hands it over (the fields
+## HudPanels._first_field looks for).
+class BagEntry:
+	var slot := 0
+	var item_id := 0
+	var count := 0
 
 func _process(_delta: float) -> bool:
 	_frame += 1

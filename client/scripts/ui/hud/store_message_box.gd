@@ -47,7 +47,11 @@ class_name StoreMessageBox
 ## puts `interface\icon\moneyicon.ddj` on the icon, captions NAME1
 ## `UIIT_STT_DEPOSITMONEY` / `UIIT_STT_WITHDRAWMONEY`, strips the amount
 ## edit's art, moves it to (0x79, 0x42) in the box and sizes it 121x24, and
-## hides IDs 8, 9 and 2 (0x63ef90..0x63f00a; message_box.md).
+## hides IDs 8, 9 and 2 (0x63ef90..0x63f00a; message_box.md). The openers
+## (deposit 0x6b2800, withdraw 0x6b29f0) then put `icon\mini_gold_icon.ddj`
+## on the icon over the purpose's (which is not in Media.pk2), hide "Unit"
+## (ID 4), prefill the amount "0", enforce no minimum, cap it at min(the
+## balance, 1,000,000,000) and focus it (round 726 review).
 ##
 ## A CIFMessageBox also builds its file's "Create" first (GDR_MSGBOX_BG at
 ## 16,40), which its resize (0x63b420) sizes to (width - 32, height - 56);
@@ -65,11 +69,11 @@ class_name StoreMessageBox
 ## (0x7c3f70) and then centres itself (0x798b70 at 0x7c5d3c, after 0x7c3f70 at 0x7c5c63) at its own
 ## final size. `screen_position` computes both.
 ##
-## OURS (not read): that a box is not modal; the price a deposit or withdraw shows (OpenSRO's warehouse
-## charges nothing, so 0 -- the original computes a fee from the item's
-## reference +0xcc times the count, 0x6b1002, a field not mapped to an
-## itemdata column); the bounds a typed count is held to (1 to the box's
-## maximum).
+## OURS (not read): that a box is not modal; the deposit fee itself
+## (OpenSRO's warehouse charges nothing, so the box shows the original's
+## floor of 1 -- the original's fee is the item reference's +0xcc times the
+## count, 0x6b1002, a field not mapped to an itemdata column); an item
+## count typed below 1 is held to 1.
 
 enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW }
 
@@ -77,7 +81,14 @@ const MSGBOX_LAYOUT := "resinfo\\ifmessagebox.txt"
 const CONFIRM_BUY_LAYOUT := "resinfo\\ifitemmallconfirmbuy.txt"
 const CONFIRM_SLOT_LAYOUT := "resinfo\\ifitemmallconfirmslot.txt"
 const FRAME := "interface\\messagebox\\msgbox2_window_"
+## The icon the gold purposes set (0x63eedd), which both gold openers then
+## replace with the gold coin (0x6b299c..0x6b29d5 / 0x6b2b68, `push 0xda76f8`,
+## the icon's vslot 0x34): only the second is ever seen (round 726 review).
 const MONEY_ICON := "interface\\icon\\moneyicon.ddj"
+const GOLD_ICON := "icon\\mini_gold_icon.ddj"
+## The gold boxes' cap (0x3b9aca00): an amount is at most min(the balance,
+## this), deposit 0x6b295b..0x6b298a, withdraw 0x6b2bb6..0x6b2bf5 (READ).
+const GOLD_CAP := 1000000000
 ## The names `config\define.txt` defines that these layouts test (READ, the
 ## file in Media.pk2; npc_gui.md §0).
 const DEFINES := ["RENEWAL_SHOP_SYSTEM", "RESTORE_SOLDITEM_INSHOP", "EUROPE_SYSTEM", "UI_UPDATE_2009_FIRST"]
@@ -104,7 +115,15 @@ signal cancelled
 
 var kind: int = Kind.BUY
 var count := 1
+## The least the count may be: 1, except the gold boxes', whose edit enforces
+## no minimum (`0x634ff0(0)`, 0x6b2b31) and opens at "0" (READ).
+var min_count := 1
 var max_count := 1
+## The store's tax rate the sell box's price takes off (0x63bd60:
+## P - ftol(P * rate), rate = the tax line's short / 100.0, set by the sell
+## fill at 0x6b0871..0x6b0896 when 0x703fc0() holds). 0 until the store's
+## tax data reaches the client (OPEN, lane C: npc_gui.md OPEN 1).
+var tax_rate := 0.0
 ## The unit price the price field multiplies (buy, sell); -1 shows no price.
 var unit_price := -1
 ## A fixed price shown whatever the count (deposit, withdraw).
@@ -116,13 +135,16 @@ var _price_edit: LineEdit
 var _root: Control
 
 ## Builds the box. `opts`: "icon" (Texture2D), "name" (String), "count",
-## "max" (ints), "unit_price", "fixed_price" (ints). False if a layout is
+## "min", "max" (ints), "unit_price", "fixed_price" (ints), "stackable"
+## (bool, deposit/withdraw), "tax_rate" (float, sell). False if a layout is
 ## missing.
 func build(builder: UiBuilder, box_kind: int, opts: Dictionary = {}) -> bool:
 	_builder = builder
 	kind = box_kind
-	max_count = maxi(1, int(opts.get("max", 1)))
-	count = clampi(int(opts.get("count", 1)), 1, max_count)
+	min_count = int(opts.get("min", 1))
+	max_count = maxi(min_count, int(opts.get("max", 1)))
+	count = clampi(int(opts.get("count", 1)), min_count, max_count)
+	tax_rate = float(opts.get("tax_rate", 0.0))
 	unit_price = int(opts.get("unit_price", -1))
 	fixed_price = int(opts.get("fixed_price", -1))
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -203,6 +225,26 @@ func _build_store_confirm(opts: Dictionary) -> bool:
 	var spins := kind == Kind.SELL
 	_wire_spin(_root.get_node_or_null("GDR_MBS_CONFIRM_SPINBTN_UP"), 1, spins)
 	_wire_spin(_root.get_node_or_null("GDR_MBS_CONFIRM_SPINBTN_DOWN"), -1, spins)
+	# An item that does not stack: the deposit and withdraw fills (0x6b0e90,
+	# 0x6b15b0) call 0x63bc80(3), which hides the count (80, +0x888), its
+	# "Quantity" (78, +0x88c), its black square (75, +0x890) and tile (77,
+	# +0x894) -- map 0x640300. The sell fill does not (READ, round 726 review).
+	if (kind == Kind.DEPOSIT or kind == Kind.WITHDRAW) and not bool(opts.get("stackable", true)):
+		for hidden in ["GDR_MBS_CONFIRM_EDIT_COUNT", "GDR_MBS_CONFIRM_STA_COUNT",
+				"GDR_MBS_CONFIRM_BUY_BLACKSQUARE_6", "GDR_MBS_CONFIRM_EDIT_BG6"]:
+			var g := _root.get_node_or_null(hidden) as CanvasItem
+			if g != null:
+				g.visible = false
+	# Buy back, deposit and withdraw OR style 0x81 into the count edit
+	# (0x635150(0x81): 0x63ed10, 0x63ed90, 0x63ee1b): 0x01 lets only the
+	# digits through, 0x80 drops Backspace (CIFEdit WM_CHAR 0x637290,
+	# 0x63748c). Sell and withdraw focus it (0x635030(1)); deposit leaves it
+	# unfocused (0x635030(0)). READ; whether the deposit count can be changed
+	# at all is not settled.
+	if kind == Kind.BUY_BACK or kind == Kind.DEPOSIT or kind == Kind.WITHDRAW:
+		_drop_backspace(_count_edit)
+	if kind == Kind.SELL or kind == Kind.WITHDRAW:
+		_focus_later(_count_edit)
 	if kind == Kind.WITHDRAW:
 		for hidden in ["GDR_MBS_CONFIRM_STA_PRICE", "GDR_MBS_CONFIRM_EDIT_ITEM_NAME"]:
 			var n := _root.get_node_or_null(hidden) as CanvasItem
@@ -238,11 +280,13 @@ func _build_store_money(opts: Dictionary) -> bool:
 		return false
 	add_child(_root)
 	var deposit := kind == Kind.GOLD_DEPOSIT
-	var icon_tex: Texture2D = _builder.load_texture(MONEY_ICON) if _builder != null else null
+	var icon_tex: Texture2D = _builder.load_texture(GOLD_ICON) if _builder != null else null
 	_icon(_root.get_node_or_null("GDR_MBS_STATIC_ICON"), icon_tex)
 	_static_text(_root.get_node_or_null("GDR_MBS_STATIC_NAME1"),
 		_text("UIIT_STT_DEPOSITMONEY", "Deposit") if deposit else _text("UIIT_STT_WITHDRAWMONEY", "Taken"))
-	for hidden in ["GDR_MBS_STATIC_PRICET1", "GDR_MBS_STATIC_NAME2", "GDR_MBS_STATIC_PRICE"]:
+	# 8, 9 and 2 by the purpose; 4, "Unit" (+0x88c), by both openers right
+	# after 0x63bc80(2) (0x6b28a8..0x6b28b3, READ round 726 review).
+	for hidden in ["GDR_MBS_STATIC_PRICET1", "GDR_MBS_STATIC_NAME2", "GDR_MBS_STATIC_PRICE", "GDR_MBS_STATIC_AMOUNT"]:
 		var n := _root.get_node_or_null(hidden) as CanvasItem
 		if n != null:
 			n.visible = false
@@ -263,6 +307,8 @@ func _build_store_money(opts: Dictionary) -> bool:
 			_count_edit.add_theme_stylebox_override(style, sb)
 		_place(_count_edit, MONEY_EDIT_RECT)
 	_wire_count(_count_edit)
+	# Both openers focus the amount (0x635030(1), 0x6b2afa).
+	_focus_later(_count_edit)
 	_wire_ok(_root.get_node_or_null("GDR_MBS_BTN_OK"), Vector2(-1, -1),
 		_text("UIIT_STT_DEPOSIT", "Deposit") if deposit else _text("UIIT_STT_WITHDRAW", "Take"))
 	_wire_cancel(_root.get_node_or_null("GDR_MBS_BTN_CANCEL"), Vector2(-1, -1), _text("UIIT_CTL_CANCEL", "Cancel"))
@@ -364,6 +410,27 @@ func _wire_count(edit: LineEdit) -> void:
 	edit.text = str(count)
 	edit.text_changed.connect(_on_count_typed)
 
+## CIFEdit style 0x80: Backspace does nothing in this edit.
+func _drop_backspace(edit: LineEdit) -> void:
+	if edit == null:
+		return
+	edit.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventKey and (ev as InputEventKey).keycode == KEY_BACKSPACE:
+			edit.accept_event())
+
+## Focus on the edit once the box is in the tree and shown (0x635030(1)),
+## the caret after the text (OURS: where CIFEdit puts it is not read; Godot's
+## would put typed digits in front of the "0" prefill -- live run 4 typed
+## 1000 and got 10000).
+func _focus_later(edit: LineEdit) -> void:
+	if edit == null:
+		return
+	var grab := func() -> void:
+		if is_instance_valid(edit) and edit.is_visible_in_tree() and edit.editable:
+			edit.grab_focus()
+			edit.caret_column = edit.text.length()
+	edit.ready.connect(func() -> void: grab.call_deferred(), CONNECT_ONE_SHOT)
+
 func _wire_spin(n: Node, step: int, shown: bool) -> void:
 	var b := n as BaseButton
 	if b == null:
@@ -391,9 +458,9 @@ func _wire_cancel(n: Node, at: Vector2, caption: String) -> void:
 		_builder.set_button_text(b, caption)
 	b.pressed.connect(_on_cancel)
 
-## Sets the count, held to 1..max, and redraws the count and the price.
+## Sets the count, held to min..max, and redraws the count and the price.
 func set_count(n: int) -> void:
-	count = clampi(n, 1, max_count)
+	count = clampi(n, min_count, max_count)
 	if _count_edit != null and _count_edit.text != str(count):
 		_count_edit.text = str(count)
 		_count_edit.caret_column = _count_edit.text.length()
@@ -411,13 +478,21 @@ func _on_count_typed(text: String) -> void:
 		return
 	set_count(int(digits))
 
-## The price the box shows: the unit times the count, or a fixed amount, as a
-## plain number ("%I64d", 0x7c1ecd for buy and 0x6b096f for sell).
+## The price the box shows, as plain digits (no grouping: 0x64db50 groups
+## only on a non-zero fourth argument, and every store caller pushes 0):
+## - buy: count x unit ("%I64d", CIFItemMallConfirmSlot 0x7c1a80);
+## - sell: P = count x unit, less ftol(P x the tax rate) (CIFMessageBox
+##   vslot_012 0x63d340 -> 0x63bd60 for purposes 1 and 2);
+## - deposit: max(1, the fee) (vslot_012 for purpose 5, 0x63d676..0x63d698);
+## - withdraw: the fill's "%d" 0.
 func price_text() -> String:
 	if fixed_price >= 0:
-		return str(fixed_price)
+		return str(maxi(1, fixed_price)) if kind == Kind.DEPOSIT else str(fixed_price)
 	if unit_price >= 0:
-		return str(unit_price * count)
+		var p := unit_price * count
+		if kind == Kind.SELL:
+			p -= int(p * tax_rate)
+		return str(p)
 	return ""
 
 func _refresh_price() -> void:
@@ -427,7 +502,7 @@ func _refresh_price() -> void:
 func _on_ok() -> void:
 	# The count as typed when it is still being edited.
 	if _count_edit != null and _count_edit.text.is_valid_int():
-		count = clampi(int(_count_edit.text), 1, max_count)
+		count = clampi(int(_count_edit.text), min_count, max_count)
 	confirmed.emit(count)
 	close()
 

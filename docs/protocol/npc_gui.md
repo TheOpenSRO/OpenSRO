@@ -228,11 +228,11 @@ Ids → line kinds → text keys, in the builder's order:
 | action (retail trigger) | box | section / class | title | OK caption | price field |
 |---|---|---|---|---|---|
 | buy (drag a good onto the bag; Ctrl+click buys with no box) | `CItemMallConfirmBuy`, `ifinventory.txt` "ConfirmBuy", ID 400, 327x155 grown to **327x177** by its gold row (`ifitemmallconfirmslot.txt`), `msgbox2_window_` | | "Confirmation window" | Buy | count x unit, "%I64d", "Gold" |
-| sell (drag onto the store) | `CIFMessageBox` mode 6, purpose 2, 327x175 | MsgBoxStoreConfirm | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` "Sell" | the unit price, "%I64d"; spins shown, a stack prefilled with its size |
+| sell (drag onto the store) | `CIFMessageBox` mode 6, purpose 2, 327x175 | MsgBoxStoreConfirm | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` "Sell" | P = count x unit, less ftol(P x the store's tax rate) (0x63bd60), plain digits; spins shown, a stack prefilled with its size |
 | buy back | mode 6, purpose 0x14 | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_RE_BUY_OBJECT` | spins hidden |
-| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | a fee: ref +0xcc x max(1, count), grouped (READ round 726; the column is unmapped); spins hidden |
+| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | max(1, fee), the fee ref +0xcc x max(1, count), plain digits (READ round 726 review; the column is unmapped); spins hidden; a non-stacking item hides the quantity group |
 | withdraw an item | mode 6, purpose 6 (0x11) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_WITHDRAW` "Take" | "0"; spins, the price label and the name hidden |
-| deposit / withdraw gold | mode 3, purpose 3 / 4 (0x12 / 0x13) | MsgBoxStoreMoney | "Confirmation window" | "Deposit" / "Take" | the amount; icon `moneyicon.ddj` |
+| deposit / withdraw gold | mode 3, purpose 3 / 4 (0x12 / 0x13) | MsgBoxStoreMoney | "Confirmation window" | "Deposit" / "Take" | the amount, opening at 0, at most min(balance, 1,000,000,000); icon `icon\mini_gold_icon.ddj` (the openers'); "Unit" hidden |
 | split a stack (Shift+click) | mode 5 | MsgBoxDivideCount | | `UIIT_CTL_CONFIRM` | |
 
 **MsgBoxStoreConfirm** (READ, `ifmessagebox.txt`; rects in the box):
@@ -289,7 +289,7 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 
 ## 7. OPEN
 
-1. Which message carries a fortress NPC's tax data (talk window `+0x800` fortress id, `+0x804` rate).
+1. Which message carries a fortress NPC's tax data (talk window `+0x800` fortress id, `+0x804` rate). The sell box takes the same rate off its price (0x63bd60, round 726 review): OpenSRO uses 0 until it arrives (`HudPanels.shop_tax_rate`).
 2. Which kinds the other six NPC-window closes in the click handler belong to (jump table of
    `FUN_007020c0`).
 3. What `0x7046 {e,2}` ("Talk to this person") shows.

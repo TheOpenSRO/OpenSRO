@@ -128,10 +128,10 @@ box as a child. This client closes a window's boxes when the window closes. That
 | Action | Retail path | Box |
 |---|---|---|
 | Buy, by dragging a good onto the bag | `CIFInventory::vslot_028` 0x6b5b80 → 0x6b2570 → 0x6b24c0(1) | `ifinventory.txt` "ConfirmBuy" = `CItemMallConfirmBuy`, ID 400, 95,111,327,155, frame msgbox2_window_. Its OK (0x7c4880) sends 0x0f→0x46. |
-| Buy, by Ctrl+click on a store slot | `CIFSlotWithHelpForPackage::vslot_029` 0x68a6c0: `GetKeyState(VK_CONTROL)`, the store open, target the bag (0x46) | No box. The count is the item's max stack (item +0x1c0), or 1. (Round 726 corrects round 631, which gave the sell slot's address here.) |
+| Buy, by Ctrl+click on a store slot | `CIFSlotWithHelp::vslot_029` 0x680fa0 (store source 0xf → the bag, 0x6816a0..0x6816d6, with the specialty refusal `UIIT_MSG_COS_CANNOT_BUY_SPECIALTY_TO_INVENTORY`); ForPackage: 0x68a6c0 (`GetKeyState(VK_CONTROL)`, the store open, target the bag 0x46) | No box. The count is the item's max stack (ref +0x1c0), or 1. Both slot classes buy on Ctrl+click: round 631's row was right (round 726 review). |
 | Sell, by dragging a bag item onto the store | `CIFStore::vslot_028` 0x6d1400 → 0x6b07d0 | Mode 6, purpose 2. A stack is prefilled with its size. |
-| Sell, by Ctrl+click on a bag slot | `CIFSlotWithHelp::vslot_029` 0x680fa0: Ctrl, the store open, source the bag (0x46) | No box; the whole stack. An item which cannot be bought back first gets `GInterface::0x788270` with `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL`. |
-| Deposit an item | `CIFStorageRoom::vslot_028` 0x6cd350 → 0x6b0e90 | Mode 6, purpose 5 (0x10 for the guild). The price field shows a fee: the item's reference +0xcc times max(1, count), formatted by 0x64db50 (`_i64tow`, then 0x8c1350's thousands grouping) -- READ round 726; which itemdata column +0xcc is, is not mapped. |
+| Sell, by Ctrl+click on a bag slot | `CIFSlotWithHelp::vslot_029` 0x680fa0, its bag branch: Ctrl, the store open, source the bag (0x46) | No box; the stack when `0x538410(ref)` holds, else 1 (0x6815e0..0x681608). **Refused** with `UIIT_MSG_STRGERR_CANT_QUICKSELL_CASHITEM` (0xda4060, through 0x7781b0) when `0x5dd660(ref)` holds -- not bionic, TypeID1 3, the CashItem bit (0x6813f3..0x681417) -- or ref +0xa0 is 2 or 6 (0x8ba600; that column is not mapped, OPEN). An item that passes both and cannot be bought back first gets `GInterface::0x788270` with `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL`. |
+| Deposit an item | `CIFStorageRoom::vslot_028` 0x6cd350 → 0x6b0e90 | Mode 6, purpose 5 (0x10 for the guild). The fill writes the item's reference +0xcc times max(1, count) through 0x64db50 with its grouping argument 0 (0x6b100c), so plain digits; `CIFMessageBox::vslot_012` (0x63d340) then rewrites it for purpose 5 as **max(1, fee)** (0x63d676..0x63d698). Which itemdata column +0xcc is, is not mapped. A non-stacking item hides the quantity group (`0x63bc80(3)`). |
 | Withdraw an item, the fill | 0x6b15b0 | The price edit is "%d" of 0. |
 | Withdraw an item | `CIFInventory::vslot_028` → 0x6b15b0 | Mode 6, purpose 6 (0x11 for the guild). |
 | Deposit gold | 0x6b2800 | Mode 3, purpose 3 |
@@ -156,7 +156,20 @@ purpose - 1: 2 → 0x63eb8f, 5 / 0x10 → 0x63ed1f, 6 / 0x11 → 0x63edaa, 0x14 
 - the spins (81 / 82) stay for sell and are hidden for buy back, deposit and withdraw;
 - withdraw also hides the price label (86, +0x898) and the name edit (79, +0x818)
   (0x63ee85..0x63ee9f);
-- 0x63bc80(2) shows the count edit and its label; (3) hides the group.
+- 0x63bc80(2) shows the count edit and its label; (3) hides the group: 80 (+0x888), 78 (+0x88c),
+  75 (+0x890) and 77 (+0x894). The deposit and withdraw fills call (3) for an item that does not
+  stack; the sell fill does not (round 726 review);
+- buy back, deposit and withdraw OR style **0x81** into the count edit (`0x635150(0x81)`: 0x63ed10,
+  0x63ed90, 0x63ee1b). In CIFEdit's WM_CHAR (0x637290), 0x01 lets only the digits through and 0x80
+  drops Backspace (0x63748c). Deposit's fill also leaves the edit unfocused (`0x635030(0)`); sell
+  and withdraw focus it (`0x635030(1)`). Whether a deposit count can be changed is not settled.
+
+**The price edit is rewritten by `CIFMessageBox::vslot_012` (0x63d340)** by purpose: for 1 and 2
+through 0x63bd60, `P = ftol(count(+0x8b8) x unit(+0x870)); P - ftol(P x rate(+0xc98))`, the rate set
+by the sell fill to the tax line's short / 100.0 when `0x703fc0()` holds (0x6b0871..0x6b0896; the
+double at 0xe1b7d8 is 100.0); for 5, max(1, the fee); others keep the fill's text. None is grouped:
+0x64db50 groups (0x8c1350) only on a non-zero fourth argument, and these push 0 (0x63d39e, 0x63d6e5).
+That vslot 12 runs every frame is INFERRED; the formula is READ (round 726 review).
 
 The sell fill (0x6b07d0) writes the unit price "%I64d" with no grouping into the price edit and,
 for a stack (type test `(b&2)==0 && (b&0x1c)==0xc && (b&0x60)==0x60`), shows the count prefilled
@@ -242,10 +255,19 @@ Unconditional (no `#ifdef`).
 | 216 | Cancel | 203,101 | |
 
 For the gold purposes, 0x63ef90..0x63f00a changes the box:
-- the icon becomes `moneyicon.ddj`;
+- the icon becomes `moneyicon.ddj` (not in Media.pk2), which both openers then replace with
+  `icon\mini_gold_icon.ddj` (deposit 0x6b299c..0x6b29d5, withdraw 0x6b2b68; `push 0xda76f8`);
 - NAME1 gets the caption;
 - the amount edit loses its texture, moves by (+0x79, +0x42) and is resized to 121x24;
 - ids 8, 9 and 2 are hidden.
+
+Both openers (deposit 0x6b2800, withdraw 0x6b29f0) then (READ, round 726 review):
+- hide "Unit" (4, +0x88c) right after `0x63bc80(2)` (0x6b28a8..0x6b28b3);
+- prefill the amount "0" (`push 0; push "%d"`, 0x6b28c8), enforce no minimum (`0x634ff0(0)`) and a
+  maximum (`0x635000(1)`) of min(the carried gold (inventory +0x378/+0x37c) or the stored gold
+  (the storage +0x7c0/+0x7c4), 1,000,000,000) (0x6b295b..0x6b298a, 0x6b2bb6..0x6b2bf5,
+  `0x634f20`);
+- focus the amount (`0x635030(1)`).
 
 ### MsgBoxSimple: the generic question
 
