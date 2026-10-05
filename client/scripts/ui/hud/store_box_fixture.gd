@@ -163,6 +163,71 @@ Section = MsgBoxStoreMoney,"0,0,0,0","0"
 }
 """
 
+## Round 728: MsgBoxDivideCount, as STORE_CONFIRM (MEASURED, rects and keys).
+const DIVIDE_COUNT := """
+Section = MsgBoxDivideCount,"0,0,0,0","0"
+{
+	GDR_MBDC_BTN_CANCEL:CIFButton
+	{
+		ID=INTEGER,"221"
+		Rect=RECT,"151,143,76,24"
+		Text=STRING,"UIIT_CTL_CANCEL"
+	}
+	GDR_MBDC_BTN_OK:CIFButton
+	{
+		ID=INTEGER,"220"
+		Rect=RECT,"71,143,76,24"
+		Text=STRING,"UIIT_CTL_CONFIRM"
+	}
+	GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT:CIFEdit
+	{
+		ClientRect=RECT,"7,5,7,5"
+		HAlign=INTEGER,"1"
+		ID=INTEGER,"17"
+		Rect=RECT,"223,102,42,24"
+	}
+	GDR_MBDC_STATIC_DIVIDE:CIFStatic
+	{
+		ID=INTEGER,"16"
+		Rect=RECT,"153,106,64,19"
+		Text=STRING,"UIIT_MSG_MSGBOX_DIVIDE_COUNT"
+	}
+	GDR_MBDC_STATIC_CURRENT_AMOUNT:CIFStatic
+	{
+		ID=INTEGER,"15"
+		Rect=RECT,"105,106,41,19"
+	}
+	GDR_MBDC_STATIC_CURRENT:CIFStatic
+	{
+		ID=INTEGER,"14"
+		Rect=RECT,"34,106,64,19"
+		Text=STRING,"UIIT_MSG_MSGBOX_CURRENT_COUNT"
+	}
+	GDR_MBDC_STATIC_BOXDESC:CIFStatic
+	{
+		ID=INTEGER,"13"
+		Rect=RECT,"77,68,202,19"
+		Text=STRING,"UIIT_MSG_MSGBOX_DIVIDE_CURRENT_ITEM"
+	}
+	GDR_MBDC_STATIC_NAMEBOARD:CIFStatic
+	{
+		ClientRect=RECT,"4,3,6,26"
+		ID=INTEGER,"12"
+		Rect=RECT,"73,44,212,48"
+	}
+	GDR_MBDC_STATIC_ICON:CIFStatic
+	{
+		ID=INTEGER,"11"
+		Rect=RECT,"25,51,32,32"
+	}
+	GDR_MBDC_STATIC_ICONWND:CIFStatic
+	{
+		ID=INTEGER,"10"
+		Rect=RECT,"18,44,48,48"
+	}
+}
+"""
+
 const CONFIRM_BUY := """
 Section = Create,"0,0,0,0","0"
 {
@@ -257,7 +322,7 @@ static func builder() -> UiBuilder:
 	# UiBuilder.load_layout's own key: the path, \x01, the defines joined by \x02.
 	var key := String.chr(1) + String.chr(2).join(defines)
 	# Straight into the builder's own cache (Object.get hands back a copy).
-	b._layout_cache[StoreMessageBox.MSGBOX_LAYOUT + key] = UiLayoutParser.parse(CREATE + STORE_CONFIRM + STORE_MONEY, true, defines)
+	b._layout_cache[StoreMessageBox.MSGBOX_LAYOUT + key] = UiLayoutParser.parse(CREATE + STORE_CONFIRM + STORE_MONEY + DIVIDE_COUNT, true, defines)
 	b._layout_cache[StoreMessageBox.CONFIRM_BUY_LAYOUT + key] = UiLayoutParser.parse(CONFIRM_BUY, true, defines)
 	b._layout_cache[StoreMessageBox.CONFIRM_SLOT_LAYOUT + key] = UiLayoutParser.parse(CONFIRM_SLOT, true, defines)
 	return b

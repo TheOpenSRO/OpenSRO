@@ -145,6 +145,48 @@ func _check_store_confirm() -> void:
 	_check(free_fee.price_text() == "1", "deposit: a zero fee still shows 1 (got %s)" % free_fee.price_text())
 	free_fee.queue_free()
 
+## Round 728: the split box, MsgBoxDivideCount (0x640020, 0x6b3fa0).
+func _check_divide() -> void:
+	var d := _box(StoreMessageBox.Kind.DIVIDE, {"name": "Vigor Recovery Grain (Small)", "stack": 5000, "count": 1, "min": 0, "max": 4999})
+	_check(d.size == Vector2(300, 183), "divide: 300x183 (READ 0x6400c8), got %s" % d.size)
+	_check(_text_of(d, "Title") == "Input window" or _text_of(d, "Title") == "UIIT_STT_INPUT_BOX", "divide: titled Input window (got %s)" % _text_of(d, "Title"))
+	_check(_text_of(d, "GDR_MBDC_STATIC_CURRENT_AMOUNT") == "5000", "divide: retained 5000")
+	_check(_text_of(d, "GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT") == "1", "divide: the edit opens at 1 (0xd87bdc)")
+	_check(_text_of(d, "GDR_MBDC_STATIC_NAMEBOARD") == "Vigor Recovery Grain (Small)", "divide: the name on the board")
+	var got := [-1]
+	d.confirmed.connect(func(q: int) -> void: got[0] = q)
+	var edit := d.find_child("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT", true, false) as LineEdit
+	edit.text = "9000"
+	edit.text_changed.emit("9000")
+	_check(d.count == 4999, "divide: held to stack - 1 (0x634f20), got %d" % d.count)
+	edit.text = "250"
+	(d.find_child("GDR_MBDC_BTN_OK", true, false) as BaseButton).pressed.emit()
+	_check(got[0] == 250, "divide: OK hands back 250, got %d" % got[0])
+	var e := _box(StoreMessageBox.Kind.DIVIDE, {"stack": 3, "count": 1, "min": 0, "max": 2})
+	var got0 := [-1]
+	e.confirmed.connect(func(q: int) -> void: got0[0] = q)
+	(e.find_child("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT", true, false) as LineEdit).text = ""
+	(e.find_child("GDR_MBDC_BTN_OK", true, false) as BaseButton).pressed.emit()
+	_check(got0[0] == 0, "divide: an empty edit gives 0 (the 0x8076 flag), got %d" % got0[0])
+
+	# The digit label (ItemCountLabel, FUN_0067bd70).
+	_check(ItemCountLabel.digit_xs(1) == [2], "count: one digit at x0+2, got %s" % [ItemCountLabel.digit_xs(1)])
+	_check(ItemCountLabel.digit_xs(4) == [-1, 4, 9, 14], "count: 4 digits from x0-1, pitch 5, got %s" % [ItemCountLabel.digit_xs(4)])
+	_check(ItemCountLabel.shows_count([3, 3, 1, 1], false, 1), "count: an expendable shows even 1")
+	_check(not ItemCountLabel.shows_count([1, 6, 1, 1], false, 1) and not ItemCountLabel.shows_count([3, 3, 1, 1], true, 5),
+		"count: equipment and bionic show none")
+
+	# The buy-back codecs (shop.gd), against the Go encoding's bytes.
+	var bytes := PackedByteArray([0, 0, 1])
+	var ent := PackedByteArray(); ent.resize(20)
+	ent.encode_s64(0, 7); ent.encode_u32(8, 3); ent.encode_s64(12, 210)
+	bytes.append_array(ent)
+	var list := ShopNet.decode_buyback_list(bytes)
+	_check(list.error == "" and list.entries.size() == 1 and list.entries[0].item_id == 7 and list.entries[0].quantity == 3 \
+		and list.entries[0].unit == 210, "buy back: the list decodes")
+	var req := ShopNet.encode_buyback("Aria", 4)
+	_check(req.size() == 2 + 4 + 4 and req.decode_u16(0) == 4 and req.decode_u32(6) == 4, "buy back: the request encodes")
+
 func _check_money() -> void:
 	var g := _box(StoreMessageBox.Kind.GOLD_DEPOSIT, {"count": 0, "min": 0, "max": 5000})
 	_check(_text_of(g, "GDR_MBS_EDIT_AMOUNT") == "0", "gold: the amount opens at 0 (READ 0x6b28c8)")
@@ -312,6 +354,7 @@ func _process(_delta: float) -> bool:
 		_check_buy()
 		_check_store_confirm()
 		_check_money()
+		_check_divide()
 		_check_placement()
 		_check_gestures()
 	elif _frame == 3:

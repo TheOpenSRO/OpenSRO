@@ -2146,7 +2146,7 @@ func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dic
 	# across the store and the warehouse (READ, round 726 review).
 	# ConfirmBuy is a separate object (ID 400) and stays separate.
 	if box_kind != StoreMessageBox.Kind.BUY:
-		for host in ["store", "storage"]:
+		for host in ["store", "storage", "inventory"]:
 			var w: HudWindow = _windows.get(host)
 			if w == null:
 				continue
@@ -3515,7 +3515,7 @@ func _close_confirm_box(box: Control) -> void:
 	box.queue_free()
 
 ## The confirm boxes a store or warehouse window can carry, by node name.
-const CONFIRM_BOXES := ["BuyConfirm", "SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog"]
+const CONFIRM_BOXES := ["BuyConfirm", "SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog", "BuybackConfirm", "SplitConfirm"]
 ## The boxes that are the inventory's one message box (+0x390) in the original.
 const INVENTORY_BOXES := ["SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog", "BuybackConfirm", "SplitConfirm"]
 
@@ -3982,9 +3982,62 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			and (held_icon == null or not held_icon.is_holding()):
 		_ctrl_sell(slot, qty)
 		return
+	# Round 728: Shift+click splits a stack (_open_split).
+	if _is_shift_click_on(event, icon) and (held_icon == null or not held_icon.is_holding()):
+		_open_split(slot, item_id, qty)
+		return
 	if _is_pick_click_on(event, icon):
 		pick_up_icon({"kind": "bag", "slot": slot, "item_id": item_id, "qty": qty, "icon": icon.texture},
 			icon.texture, icon, mb.global_position)
+
+## Whether an event is a left click released with Shift held (no Ctrl or
+## Alt) over `control`: the original's Shift+click on a slot (0x681903).
+func _is_shift_click_on(event: InputEvent, control: Control) -> bool:
+	if not (event is InputEventMouseButton):
+		return false
+	var mb := event as InputEventMouseButton
+	return mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed and mb.shift_pressed \
+		and not mb.ctrl_pressed and not mb.alt_pressed and control != null \
+		and (not control.is_inside_tree() or control.get_global_rect().has_point(mb.global_position))
+
+## The split box (round 728): CIFMessageBox mode 5, MsgBoxDivideCount, the
+## inventory's one box (+0x390), for a stackable item of more than one
+## (0x6b3fa0, READ; StoreMessageBox._build_divide). OK moves the typed count
+## into the bag's first empty slot (the 0x8076 owner, READ); none free, or a
+## count of 0, sends nothing. OpenSRO's move message carries the count
+## (OURS: retail sends 0x7034).
+func _open_split(slot: int, item_id: int, qty: int) -> void:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null or not is_stack_item(item) or qty <= 1:
+		return
+	_open_store_box("inventory", "SplitConfirm", StoreMessageBox.Kind.DIVIDE, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
+		"stack": qty, "count": 1, "min": 0, "max": qty - 1,
+	}, func(q: int) -> void:
+		if q < 1 or not _bag_slot_still_holds(slot, item_id, q + 1, "split"):
+			return
+		var to := first_empty_bag_slot()
+		if to < 0:
+			print("HudPanels: split not sent -- no empty bag slot")
+			return
+		var who := NetClient.current_character_name
+		if who != "" and NetClient.is_connected_to_server():
+			print("HudPanels: split %d off bag slot %d into slot %d" % [q, slot, to])
+			NetClient.move_item(who, slot, to, q)
+			NetClient.list_inventory(who))
+
+## The bag's first empty slot (the open pages' order), or -1.
+func first_empty_bag_slot() -> int:
+	var taken := {}
+	for entry in _bag_slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		if index != null:
+			taken[int(index)] = true
+	for s in range(_bag_size_shown()):
+		if not taken.has(s):
+			return s
+	return -1
 
 ## Whether `event` is the click that picks `control`'s icon up: a plain left
 ## release (HeldIcon.is_pick_click, READ) that is still over the control --

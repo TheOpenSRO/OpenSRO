@@ -76,7 +76,7 @@ class_name StoreMessageBox
 ## OURS (not read): that a box is not modal; an item count typed below 1 is
 ## held to 1.
 
-enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW }
+enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW, DIVIDE }
 
 const MSGBOX_LAYOUT := "resinfo\\ifmessagebox.txt"
 const CONFIRM_BUY_LAYOUT := "resinfo\\ifitemmallconfirmbuy.txt"
@@ -99,6 +99,8 @@ const DEFINES := ["RENEWAL_SHOP_SYSTEM", "RESTORE_SOLDITEM_INSHOP", "EUROPE_SYST
 const INVENTORY_BOX_CREATE_SIZE := Vector2i(308, 148)
 const STORE_CONFIRM_SIZE := Vector2(327, 175)
 const STORE_MONEY_SIZE := Vector2(308, 148)
+## Mode 5's own size (0x6400c8: push 0xb7, push 0x12c, slot 0x54; READ).
+const DIVIDE_SIZE := Vector2(300, 183)
 const CONFIRM_BUY_BASE := Vector2(327, 155)
 ## The price row: {0, 80, 327, 22} moved +20 for the gold kind; the window
 ## and its background grow by 22.
@@ -157,6 +159,8 @@ func build(builder: UiBuilder, box_kind: int, opts: Dictionary = {}) -> bool:
 			ok = _build_store_confirm(opts)
 		Kind.GOLD_DEPOSIT, Kind.GOLD_WITHDRAW:
 			ok = _build_store_money(opts)
+		Kind.DIVIDE:
+			ok = _build_divide(opts)
 	_refresh_price()
 	return ok
 
@@ -316,6 +320,40 @@ func _build_store_money(opts: Dictionary) -> bool:
 	UiBuilder.settle_authored_rects(_root)
 	return true
 
+# --- CIFMessageBox mode 5, MsgBoxDivideCount (round 728) ---------------------
+## Splitting a stack, opened by Shift+click on a bag stack (0x681903 ->
+## 0x6b3fa0, READ). Mode 5 (0x640020) builds the section at 300x183, titles
+## the box `UIIT_STT_INPUT_BOX` ("Input window") and maps 11 +0x814 the icon,
+## 12 +0x818 the name board, 15 +0x904 the retained count, 17 +0x900 the
+## edit, 220 +0x800 OK, 221 +0x804 Cancel. The fill (0x6b3fa0), only for a
+## stackable item (0x538410) of more than one: the icon, the retained count
+## (+0x904, the slot's whole stack), the edit's style 3 (0x635150), its text
+## "1" (0xd87bdc), focus (0x635030(1)), no minimum (0x634ff0(0)), its maximum
+## the stack - 1 (0x634f20), the name on the board. OK (0x63d920) reads the
+## edit as a 64-bit number and posts 0x8076 flagged 0 when it is empty or 0
+## (READ); the owner then sends nothing (INFERRED from the flag).
+## `opts`: "icon", "name", "stack" (the slot's count).
+func _build_divide(opts: Dictionary) -> bool:
+	_set_box_size(DIVIDE_SIZE)
+	_add_frame(DIVIDE_SIZE)
+	var layout := _message_box_base(DIVIDE_SIZE, "UIIT_STT_INPUT_BOX", "Input window")
+	if layout == null:
+		return false
+	_root = _builder.build_section(layout, "MsgBoxDivideCount")
+	if _root == null:
+		return false
+	add_child(_root)
+	_icon(_root.get_node_or_null("GDR_MBDC_STATIC_ICON"), opts.get("icon"))
+	_static_text(_root.get_node_or_null("GDR_MBDC_STATIC_NAMEBOARD"), String(opts.get("name", "")))
+	_static_text(_root.get_node_or_null("GDR_MBDC_STATIC_CURRENT_AMOUNT"), str(int(opts.get("stack", 0))))
+	_count_edit = _root.get_node_or_null("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT") as LineEdit
+	_wire_count(_count_edit)
+	_focus_later(_count_edit)
+	_wire_ok(_root.get_node_or_null("GDR_MBDC_BTN_OK"), Vector2(-1, -1), "")
+	_wire_cancel(_root.get_node_or_null("GDR_MBDC_BTN_CANCEL"), Vector2(-1, -1), "")
+	UiBuilder.settle_authored_rects(_root)
+	return true
+
 # --- Shared parts -------------------------------------------------------------
 
 func _set_box_size(s: Vector2) -> void:
@@ -337,7 +375,8 @@ func _add_frame(s: Vector2) -> void:
 
 ## ifmessagebox's "Create" (the background tile, sized by the resize) and the
 ## title static; the parsed layout, or null.
-func _message_box_base(s: Vector2) -> UiLayoutParser.LayoutDef:
+func _message_box_base(s: Vector2, title_key: String = "UIIT_STT_CONFIRM_BOX",
+		title_fallback: String = "Confirmation window") -> UiLayoutParser.LayoutDef:
 	if _builder == null:
 		return null
 	var layout := _builder.load_layout(MSGBOX_LAYOUT, PackedStringArray(DEFINES), true)
@@ -357,12 +396,12 @@ func _message_box_base(s: Vector2) -> UiLayoutParser.LayoutDef:
 	def.type = "CIFStatic"
 	def.halign = 1
 	def.rect = Rect2i(10, 11, int(s.x) - 21, 12)
-	def.text = "UIIT_STT_CONFIRM_BOX"
+	def.text = title_key
 	var title := _builder.build_control(def)
 	if title != null:
 		title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(title)
-		_builder.set_static_text(title, _text("UIIT_STT_CONFIRM_BOX", "Confirmation window"))
+		_builder.set_static_text(title, _text(title_key, title_fallback))
 	return layout
 
 func _authored(n: Control) -> Rect2:
@@ -508,6 +547,8 @@ func _on_ok() -> void:
 	# The count as typed when it is still being edited.
 	if _count_edit != null and _count_edit.text.is_valid_int():
 		count = clampi(int(_count_edit.text), min_count, max_count)
+	elif kind == Kind.DIVIDE and _count_edit != null:
+		count = 0  # an empty edit posts the 0 flag (0x63d920, READ)
 	confirmed.emit(count)
 	close()
 
