@@ -2062,8 +2062,8 @@ func _confirm_buy(item_id: int) -> void:
 
 ## Opens one of the store's or the warehouse's confirm boxes on `host_id`'s
 ## window (round 726): built by StoreMessageBox from the client's layouts,
-## centred on the screen (OURS: where the original places it is not read),
-## closed with its window (round 631). `on_ok` gets the box's count. Null
+## placed where the original places it (StoreMessageBox.screen_position,
+## READ), closed with its window (round 631). `on_ok` gets the box's count. Null
 ## when the window is not open or a layout is missing.
 func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dictionary, on_ok: Callable) -> StoreMessageBox:
 	var window: HudWindow = _windows.get(host_id)
@@ -2082,16 +2082,17 @@ func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dic
 	window.add_child(box)
 	_track_confirm_boxes(window)
 	_message_box_sounds(box)
-	_centre_box_on_screen(box)
+	_place_box_on_screen(box)
 	print("HudPanels: %s opened (%s), count %d of %d, price '%s'" % [box_name,
 		StoreMessageBox.Kind.keys()[box_kind], box.count, box.max_count, box.price_text()])
 	return box
 
-## Puts a confirm box in the middle of the screen once it has its size.
-func _centre_box_on_screen(box: Control) -> void:
+## Puts a confirm box where the original does (READ: 0x798b70 on the box's
+## creation size; StoreMessageBox.screen_position).
+func _place_box_on_screen(box: StoreMessageBox) -> void:
 	if not box.is_inside_tree():
 		return
-	box.global_position = ((box.get_viewport_rect().size - box.size) * 0.5).round()
+	box.global_position = box.screen_position(box.get_viewport_rect().size)
 
 ## Ctrl+click on a good buys it with no box (round 726; READ
 ## CIFSlotWithHelpForPackage::vslot_029 0x68a6c0: VK_CONTROL held, the store
@@ -3939,6 +3940,31 @@ func qa_print_slots() -> void:
 						and (btn.get_node("ButtonLabel") as Label).text != "":
 					# The client's own buttons (round 726: the confirm boxes).
 					print("QA SLOT button:%s at %s" % [(btn.get_node("ButtonLabel") as Label).text, _qa_xy(btn)])
+			for money in ["GDR_INVENTORY_BTN_MONEY", "GDR_STORAGE_BTN_MONEY"]:
+				var mb := win.find_child(money, true, false) as Control
+				if mb != null and mb.is_visible_in_tree():
+					print("QA SLOT money:%s at %s" % [id, _qa_xy(mb)])
+			# Round 726: every open confirm box's controls, relative to the box,
+			# so a live run measures the built geometry.
+			for box in win.find_children("*", "StoreMessageBox", true, false):
+				var bc := box as Control
+				if not bc.is_visible_in_tree():
+					continue
+				print("QA BOX %s rect %s" % [bc.name, str(bc.get_global_rect())])
+				for c in bc.find_children("*", "Control", true, false):
+					var cc := c as Control
+					if cc.is_visible_in_tree() and (String(cc.name).begins_with("GDR_") or String(cc.name) in ["Title", "PriceRow"]):
+						var r := cc.get_global_rect()
+						var text := ""
+						if cc is Label:
+							text = (cc as Label).text
+						elif cc is LineEdit:
+							text = (cc as LineEdit).text
+						elif cc.get_node_or_null("ButtonLabel") is Label:
+							text = (cc.get_node("ButtonLabel") as Label).text
+						print("QA BOX %s %s at %d,%d size %dx%d text '%s'" % [bc.name, cc.name,
+							int(r.position.x - bc.global_position.x), int(r.position.y - bc.global_position.y),
+							int(r.size.x), int(r.size.y), text])
 	var skill: HudWindow = _windows.get("skill")
 	if skill != null and skill.is_visible_in_tree():
 		for c in skill.find_children("*", "TextureRect", true, false):

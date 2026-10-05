@@ -54,8 +54,18 @@ class_name StoreMessageBox
 ## its title static sits at (10, 11), the width less 21 wide, 12 high
 ## (round 711's review, PartyInvitePopup).
 ##
-## OURS (not read): where a box appears -- centred on the screen; that a box
-## is not modal; the price a deposit or withdraw shows (OpenSRO's warehouse
+## **Where a box appears** (READ). Every inventory box is a new one: each
+## open destroys the last (`FUN_006aef20` -> 0xba0e40) and creates it again
+## at 308x148 (`FUN_006af530`), which `FUN_00798b70` (0x6af59a) moves to (screen width
+## / 2 - 308 / 2, screen height / 2 - 148 / 2) -- integer halves of the
+## rect's (x, y, w, h) at +0x40, the size SetSize 0xb91a40 writes to
+## +0x48/+0x4c. The purpose's resize to 327x175 (vslot 21 -> 0x652970)
+## keeps that corner, so a store/warehouse box sits off-centre by the
+## difference. CItemMallConfirmBuy's Create (0x7c5650) adds its rows
+## (0x7c3f70) and then centres itself (0x798b70 at 0x7c5d3c, after 0x7c3f70 at 0x7c5c63) at its own
+## final size. `screen_position` computes both.
+##
+## OURS (not read): that a box is not modal; the price a deposit or withdraw shows (OpenSRO's warehouse
 ## charges nothing, so 0 -- the original computes a fee from the item's
 ## reference +0xcc times the count, 0x6b1002, a field not mapped to an
 ## itemdata column); the bounds a typed count is held to (1 to the box's
@@ -72,6 +82,9 @@ const MONEY_ICON := "interface\\icon\\moneyicon.ddj"
 ## file in Media.pk2; npc_gui.md §0).
 const DEFINES := ["RENEWAL_SHOP_SYSTEM", "RESTORE_SOLDITEM_INSHOP", "EUROPE_SYSTEM", "UI_UPDATE_2009_FIRST"]
 
+## The size the inventory creates its message box at (0x134 x 0x94), which
+## places it (see above).
+const INVENTORY_BOX_CREATE_SIZE := Vector2i(308, 148)
 const STORE_CONFIRM_SIZE := Vector2(327, 175)
 const STORE_MONEY_SIZE := Vector2(308, 148)
 const CONFIRM_BUY_BASE := Vector2(327, 155)
@@ -421,6 +434,16 @@ func _on_ok() -> void:
 func _on_cancel() -> void:
 	cancelled.emit()
 	close()
+
+## Where the original puts this box on a `screen`-sized display (READ, see
+## the top): ConfirmBuy centred at its own size, every other box at the
+## corner the inventory's 308x148 creation was centred to. C's integer
+## halves, as 0x798b70 computes them.
+func screen_position(screen: Vector2) -> Vector2:
+	var sw := int(screen.x)
+	var sh := int(screen.y)
+	var placed := Vector2i(int(size.x), int(size.y)) if kind == Kind.BUY else INVENTORY_BOX_CREATE_SIZE
+	return Vector2(sw / 2 - placed.x / 2, sh / 2 - placed.y / 2)
 
 ## Hidden now, freed at the end of the frame: the box is an ancestor of the
 ## pressed button (round 631).

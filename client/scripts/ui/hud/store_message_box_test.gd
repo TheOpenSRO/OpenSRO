@@ -140,6 +140,20 @@ func _check_money() -> void:
 	_check(_text_of(w, "GDR_MBS_STATIC_NAME1") == "Taken" and _text_of(w, "GDR_MBS_BTN_OK") == "Take", "gold withdraw: NAME1 Taken, OK Take")
 	w.queue_free()
 
+## Where each box appears (READ 0x798b70): ConfirmBuy centred at its own
+## 327x177; the inventory's boxes at the corner their 308x148 creation was
+## centred to, whatever size the purpose then gives them.
+func _check_placement() -> void:
+	var screen := Vector2(1280, 720)
+	var b := _box(StoreMessageBox.Kind.BUY, {"count": 1, "max": 50, "unit_price": 60})
+	_check(b.screen_position(screen) == Vector2(640 - 163, 360 - 88), "placement: the buy box centred at 327x177 -> (477,272) (got %s)" % b.screen_position(screen))
+	var s := _box(StoreMessageBox.Kind.SELL, {"count": 1, "max": 1, "unit_price": 10})
+	_check(s.screen_position(screen) == Vector2(640 - 154, 360 - 74), "placement: the sell box at the 308x148 creation's corner (486,286) (got %s)" % s.screen_position(screen))
+	var g := _box(StoreMessageBox.Kind.GOLD_WITHDRAW, {"count": 1, "max": 10})
+	_check(g.screen_position(Vector2(1353, 823)) == Vector2(676 - 154, 411 - 74), "placement: integer halves on an odd screen (got %s)" % g.screen_position(Vector2(1353, 823)))
+	for box in [b, s, g]:
+		box.queue_free()
+
 ## The gestures, through HudPanels with its network calls recorded.
 const RECORDER := """
 extends "res://scripts/ui/hud/hud_panels.gd"
@@ -210,6 +224,7 @@ func _process(_delta: float) -> bool:
 		_check_buy()
 		_check_store_confirm()
 		_check_money()
+		_check_placement()
 		_check_gestures()
 	elif _frame == 3:
 		if _failures == 0:
