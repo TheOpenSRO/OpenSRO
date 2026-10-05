@@ -285,16 +285,89 @@ func make_glow() -> void:
 		g.set_shader_parameter("glow_alpha", 0)
 		gi.material_override = g
 		_glow_materials.append(g)
+		_glow_swaps.append([gi, m, g])
+	_glow_on = true
 	set_glow_alpha(0)
 
 var _glow_materials: Array[ShaderMaterial] = []
+var _glow_swaps: Array = [] # of [GeometryInstance3D, its own material, its glow copy]
+var _glow_on := false
+var _glow_alpha := -1
+
+## Light Effect off (round 720's review, READ: with the effect manager's
+## +0x1a4 at 0, CRTModParticle::FUN_00c81450 draws the effect with the scene,
+## depth-tested and at full alpha): the nodes take their own materials back
+## and the effect shows. On: the glow copies, at the last glow alpha.
+func use_glow(on: bool) -> void:
+	if on == _glow_on or _glow_swaps.is_empty():
+		return
+	_glow_on = on
+	for sw in _glow_swaps:
+		(sw[0] as GeometryInstance3D).material_override = sw[2] if on else sw[1]
+	visible = (not on) or _glow_alpha > 0
 
 ## The glow alpha, 0..255 (CEFEffect +0x4a): 0 draws nothing
-## (CRTModParticle::FUN_00c81130), 255 leaves the colours as they are.
+## (CRTModParticle::FUN_00c81130), 255 leaves the colours as they are. Set
+## only when it changes (round 720's review).
 func set_glow_alpha(a: int) -> void:
+	if a == _glow_alpha:
+		return
+	_glow_alpha = a
+	if not _glow_on:
+		return
 	visible = a > 0
 	for m in _glow_materials:
 		m.set_shader_parameter("glow_alpha", a)
+
+## Builds every plate, mesh and link shader with its glow twin (round 720's
+## review: the glow shader's first compile cost 75 ms on the main thread as
+## a gate's region bound). Returns the shaders made.
+static func warm_glow_shaders() -> Array[Shader]:
+	var out: Array[Shader] = []
+	for cls in ["mix", "add", "add_one", "darken", "other"]:
+		for no_cull in [false, true]:
+			for link in [false, true]:
+				var sh := _shader(cls, no_cull, link)
+				out.append(sh)
+				out.append(glow_shader(sh))
+	return out
+
+## Draws every EFP shader and its glow twin once, as tiny instanced quads in
+## front of `camera`, so their pipelines compile behind the loading screen
+## (round 720's review; AppearFade.warm's way: they free themselves after a
+## few frames). Returns how many it warms.
+static func warm(camera: Camera3D) -> int:
+	if camera == null:
+		return 0
+	var node := AppearFade.Warm.new()
+	node.name = "EfpWarm"
+	var white := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	white.fill(Color.WHITE)
+	var tex := ImageTexture.create_from_image(white)
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.01, 0.01)
+	var shaders := warm_glow_shaders()
+	for i in range(shaders.size()):
+		var m := ShaderMaterial.new()
+		m.shader = shaders[i]
+		m.set_shader_parameter("tex", tex)
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_colors = true
+		mm.use_custom_data = true
+		mm.mesh = quad
+		mm.instance_count = 1
+		mm.set_instance_transform(0, Transform3D.IDENTITY)
+		mm.set_instance_color(0, Color(1, 1, 1, 0.0))
+		mm.set_instance_custom_data(0, Color(0, 0, 1, 1))
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = m
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.position = Vector3(0.002 * i, 0.0, -1.0)
+		node.add_child(mmi)
+	camera.add_child(node)
+	return shaders.size()
 
 ## `sh` with the depth test off and the glow alpha applied to the particle
 ## colour (EFEffect::FUN_00c893f0 at 0x00c8affd: when the effect's alpha is
@@ -494,6 +567,10 @@ func placed_at() -> Vector3:
 ## object's particle mod entry with a rotation, AmbientParticles), identity
 ## for every other effect.
 var follow_basis := Basis.IDENTITY
+## Placed at the bone's full transform rather than its origin (round 720's
+## review: an object's mode-0 particle entry, CRTModParticle::FUN_00c81190
+## 0xc811c5..0xc811e0 multiplies the bone's matrix by the world's).
+var follow_bone_full := false
 
 func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
 	_follow_host = host
@@ -539,9 +616,12 @@ func _place() -> bool:
 	var placed: Transform3D
 	if skel != null and skel.is_inside_tree():
 		var at := _follow_offset
-		if _follow_bone >= 0:
-			at += skel.get_bone_global_pose(_follow_bone).origin
-		placed = skel.global_transform * Transform3D(follow_basis, at)
+		if follow_bone_full and _follow_bone >= 0:
+			placed = skel.global_transform * skel.get_bone_global_pose(_follow_bone) * Transform3D(follow_basis, at)
+		else:
+			if _follow_bone >= 0:
+				at += skel.get_bone_global_pose(_follow_bone).origin
+			placed = skel.global_transform * Transform3D(follow_basis, at)
 	elif _follow_host.is_inside_tree():
 		# No skeleton yet: the host's own frame, never a bare world position
 		# (review: this node is top_level once anchored).

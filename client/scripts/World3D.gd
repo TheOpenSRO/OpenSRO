@@ -511,6 +511,9 @@ func apply_video_options(o: VideoOptions) -> void:
 	# flare's nearest piece.
 	if _sun_glow != null:
 		_sun_glow.visible = o.value(VideoOptions.LENS_FLARE) == 1
+	# Light Effect (round 720's review, READ: case 0xb -> the thunk 0xbbdad0
+	# -> the effect manager's +0x1a4): the teleport gates' glow pass, live.
+	_ambient.set_light_effect(o.value(VideoOptions.LIGHT) == 1)
 	# SSAO (OURS) through the environment; Bloom Effect is the original's
 	# bloom (RetailBloom, round 702 review), in both renderers.
 	if world_environment != null and (changed.call(VideoOptions.SSAO) or changed.call(VideoOptions.BLOOM)):
@@ -536,8 +539,9 @@ func apply_video_options(o: VideoOptions) -> void:
 	# the animated objects) and Display Friendly/Enemy (the large-battle
 	# outfit swap, GlobalDataManager::FUN_009dae90) are kept and saved, and
 	# change nothing here: this client draws no environment-map sheen, no
-	# torch or sun light effect, no cloth or hair motion, and no battle
-	# outfits (docs/protocol/OPTION_VIDEO.md).
+	# torch or sun light effect (Light Effect drives only the teleport gates'
+	# glow pass, above), no cloth or hair motion, and no battle outfits
+	# (docs/protocol/OPTION_VIDEO.md).
 	print("World3D: video options applied in %d us -- %s" % [Time.get_ticks_usec() - t0, describe_video(o)])
 
 ## OPENSRO_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
@@ -1675,6 +1679,10 @@ func _ready() -> void:
 	# table, drawn from the same Particles.pk2.
 	BerserkLook.set_archive(_open_particles_pk2_if_set())
 	BerserkLook.warm()
+	# The effects' plate/mesh/link shaders and their glow twins (round 720's
+	# review): compiled behind the loading screen, not as a gate's region
+	# binds.
+	print("World3D: warming %d effect shader(s)" % EfpEffect.warm(camera_3d))
 	# The fade-in's shaders (round 676's review): compiled behind the loading
 	# screen, not on the first monster's frame.
 	print("World3D: warming %d appear-fade shader(s)" % AppearFade.warm(camera_3d))
@@ -7531,6 +7539,7 @@ func _attach_gate_effects(region_x: int, region_y: int) -> void:
 	var particles := _open_particles_pk2_if_set()
 	if particles == null:
 		return
+	_ambient.set_light_effect(video_options().value(VideoOptions.LIGHT) == 1)
 	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
 		var building: TeleportReader.Building = building_v
 		var at := Vector2(building.x, building.z)
@@ -7542,10 +7551,13 @@ func _attach_gate_effects(region_x: int, region_y: int) -> void:
 			if d > GATE_EFFECT_RADIUS:
 				continue
 			obj.set_meta(META_GATE_EFFECTS, true)
-			var entries: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
-			var made := _ambient.attach(obj, entries, particles)
+			var mods: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
+			var made := _ambient.attach(obj, mods, particles)
+			var total := 0
+			for entries in mods:
+				total += (entries as Array).size()
 			print("World3D: gate %s -- %s at %.1f from its row plays %d of its %d ambient effect(s)" % [
-				building.code, obj.name, d, made.size(), entries.size()])
+				building.code, obj.name, d, made.size(), total])
 			# The placement, measured: each effect's position in its object's
 			# frame, which should be the entry's offset (AmbientParticles).
 			if _qa_ambient_log:
@@ -7553,6 +7565,61 @@ func _attach_gate_effects(region_x: int, region_y: int) -> void:
 					var fx := fx_v as EfpEffect
 					print("QA AMBIENT placed %s: %s in the object's frame" % [fx.path.get_file(),
 						str(obj.global_transform.affine_inverse() * fx.placed_at())])
+
+## The region-local x/z of the teleport rows of the region `node_suffix`
+## (`_<x>_<y>`) names, for its objects job (round 720's review).
+func _gate_points_for(node_suffix: String) -> Array:
+	var out: Array = []
+	if _teleport_reader == null or OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+		return out
+	var parts := node_suffix.split("_", false)
+	if parts.size() != 2:
+		return out
+	for building_v in _teleport_reader.buildings_in_region(int(parts[0]), int(parts[1])):
+		var building: TeleportReader.Building = building_v
+		out.append(Vector2(building.x, building.z))
+	return out
+
+## On the objects job's worker (round 720's review): decodes the ambient
+## effects of the models placed within GATE_EFFECT_RADIUS of a teleport row
+## -- their .efp, textures and meshes (EfpEffect's preload) -- so the commit's
+## attach finds them warm.
+static func _preload_gate_effects(job: Dictionary, placements: Array, models: Dictionary,
+		table: ObjidxReader.Table) -> void:
+	var gates: Array = job.get("gate_points", [])
+	var particles: Pk2Reader = job.get("particles_pk2")
+	if gates.is_empty() or particles == null:
+		return
+	var paths := PackedStringArray()
+	for placement in placements:
+		var at: Vector3 = placement["position"]
+		var near := false
+		for g in gates:
+			if Vector2(at.x, at.z).distance_to(g) <= GATE_EFFECT_RADIUS:
+				near = true
+				break
+		if not near:
+			continue
+		var prepared: Dictionary = models.get(placement_model_path(placement, table).to_lower(), {})
+		if prepared.is_empty():
+			continue
+		for p in _ambient_efps(prepared.get("root")):
+			if not paths.has(p):
+				paths.append(p)
+	if not paths.is_empty():
+		EfpEffect._preload_task(paths, particles)
+		job["gate_effects_preloaded"] = paths.size()
+
+## The ambient effect files of a prepared node and its compound children.
+static func _ambient_efps(node) -> PackedStringArray:
+	var out := PackedStringArray()
+	if not (node is Dictionary):
+		return out
+	if node.has("ambient"):
+		out.append_array(AmbientParticles.efp_paths(node["ambient"]))
+	for child in node.get("children", []):
+		out.append_array(_ambient_efps(child))
+	return out
 
 ## The glow pass (AmbientParticles.update), once a physics tick.
 func _ambient_step(delta: float) -> void:
@@ -10635,6 +10702,7 @@ static func _objects_prepare(job: Dictionary) -> void:
 	job["models"] = models
 	job["textures"] = textures
 	_job_lap(job, "models", sw)
+	_preload_gate_effects(job, placements, models, table)
 	job["prepared"] = true
 
 ## The objects a region's `.o2` gives the world, the way the retail loader
@@ -10743,6 +10811,10 @@ func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String)
 		"here": null,
 		"templates_held": _object_templates.held_keys(),
 		"known_textures": ObjectLoader.snapshot_textures(_object_textures),
+		# The teleport rows standing here and the effects archive (round 720's
+		# review): the prepare preloads the gate objects' ambient effects.
+		"particles_pk2": _open_particles_pk2_if_set(),
+		"gate_points": _gate_points_for(node_suffix),
 		"threaded": false,
 		"dispatched_frame": -1,
 		"laps": [],

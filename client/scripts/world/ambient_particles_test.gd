@@ -65,6 +65,13 @@ func _init() -> void:
 	_test_alpha()
 	_test_query_point()
 	_test_glow_shader()
+	_test_light_effect()
+	_test_night_and_bones()
+	# The camera tests need the tree: after the first frame.
+	process_frame.connect(_in_tree, CONNECT_ONE_SHOT)
+
+func _in_tree() -> void:
+	_test_point_on_screen()
 	print("ambient_particles_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)
 
@@ -101,8 +108,15 @@ func _test_ambient_set() -> void:
 	typed.set_kind = BsrReader.SET_BY_TYPE
 	typed.set_name = "ambient"
 	typed.entries.append(BsrReader.ParticleEntry.new())
-	_check(AmbientParticles.ambient_entries([other, amb, typed]).size() == 1,
-		"only the clip set named ambient is the always-on set")
+	var cap := BsrReader.ParticleMod.new()
+	cap.set_name = "Ambient"
+	cap.entries.append(BsrReader.ParticleEntry.new())
+	var two := BsrReader.ParticleMod.new()
+	two.set_name = "ambient2"
+	two.entries.append(BsrReader.ParticleEntry.new())
+	var got := AmbientParticles.ambient_entries([other, amb, typed, cap, two])
+	_check(got.size() == 1 and (got[0] as Array).size() == 1,
+		"only the clip set named exactly 'ambient' (case-sensitive, FUN_004722d0) is kept, one Array per mod")
 
 func _test_rotation() -> void:
 	# A y-only entry turns like Godot's Basis(UP, y).
@@ -137,6 +151,86 @@ func _test_query_point() -> void:
 	_check(_near(p, Vector3(0, 10, 24)), "the test point moves 24 (25 - 1) toward the camera")
 	_check(_near(AmbientParticles.query_point(Vector3(1, 1, 1), Vector3(1, 1, 1), 25), Vector3(1, 1, 1)),
 		"camera at the point: the point itself")
+
+## An effect with one draw node and its own material, for the glow tests.
+func _fx_with_one_draw() -> Array:
+	var fx := EfpEffect.new()
+	var mmi := MultiMeshInstance3D.new()
+	var m := EfpEffect.material_for(PlaceholderTexture2D.new(), null)
+	mmi.material_override = m
+	fx.add_child(mmi)
+	fx._draws.append([0, mmi, "ViewNone"])
+	return [fx, mmi, m]
+
+func _test_light_effect() -> void:
+	var made := _fx_with_one_draw()
+	var fx: EfpEffect = made[0]
+	var mmi: MultiMeshInstance3D = made[1]
+	var own: ShaderMaterial = made[2]
+	fx.make_glow()
+	var glow := mmi.material_override as ShaderMaterial
+	_check(glow != own and glow.shader.code.contains("depth_test_disabled") and not fx.visible,
+		"make_glow: the glow copy, drawn only once its alpha is above 0")
+	fx.set_glow_alpha(255)
+	_check(fx.visible, "glow alpha 255: shown")
+	var ap := AmbientParticles.new()
+	var g := AmbientParticles.Glow.new()
+	g.fx = fx
+	ap._glows.append(g)
+	ap.set_light_effect(false)
+	_check(mmi.material_override == own and fx.visible,
+		"Light Effect off: the effect's own (depth-tested) material back, shown at full alpha")
+	ap.set_light_effect(true)
+	_check(mmi.material_override == glow, "Light Effect on: the glow copy again")
+	fx.set_glow_alpha(0)
+	_check(not fx.visible, "glow alpha 0: not drawn")
+	ap.light_effect = false
+	ap.update(16.7, null, null)
+	_check(g.alpha == 0 and g.seen_frame == -1, "Light Effect off: the pass steps nothing")
+	fx.free()
+
+func _test_point_on_screen() -> void:
+	var cam := Camera3D.new()
+	get_root().add_child(cam)
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3.ZERO)
+	var at := Vector3(0, 0, -50)
+	var near := AmbientParticles.query_point(at, cam.global_position, 95)
+	_check(not AmbientParticles.point_on_screen(near, cam),
+		"byte 95, camera 50 away: the test point is behind the eye -- hidden (a camera nearer than byte - 1)")
+	var far := AmbientParticles.query_point(at, cam.global_position, 25)
+	_check(AmbientParticles.point_on_screen(far, cam), "byte 25, camera 50 away: on screen")
+	_check(not AmbientParticles.point_on_screen(Vector3(500, 0, -10), cam), "far to the side: off screen")
+	var host := Node3D.new()
+	get_root().add_child(host)
+	host.visible = false
+	_check(not AmbientParticles.drawn(host, AABB(at, Vector3.ONE), cam), "a hidden host is not drawn")
+	host.visible = true
+	_check(AmbientParticles.drawn(host, AABB(at, Vector3.ONE), cam), "a shown host in front is drawn")
+	_check(not AmbientParticles.drawn(host, AABB(Vector3(0, 0, 50), Vector3.ONE), cam), "a host behind is not drawn")
+	host.free()
+	cam.free()
+
+func _test_night_and_bones() -> void:
+	var night := BsrReader.ParticleEntry.new()
+	night.b51 = 1
+	_check(not AmbientParticles.shows(night), "+0x51 bit 0: a night-only entry is not built at the fixed day phase")
+	var day := BsrReader.ParticleEntry.new()
+	_check(AmbientParticles.shows(day), "an ordinary entry is")
+	var bone := BsrReader.ParticleEntry.new()
+	bone.mode = 0
+	bone.bone = "Bone02"
+	bone.efp = "map\\x.efp"
+	var after := BsrReader.ParticleEntry.new()
+	after.mode = 1
+	after.efp = "map\\y.efp"
+	var host := Node3D.new()
+	get_root().add_child(host)
+	var ap := AmbientParticles.new()
+	var made := ap.attach(host, [[bone, after]], null)
+	_check(made.is_empty() and ap.aborted_mods == 1,
+		"mode 0 without the bone: vslot_001 returns at once -- the mod's later entries are not built")
+	_check(not AmbientParticles.has_bone(host, "Bone02"), "no skeleton, no bone")
+	host.free()
 
 func _test_glow_shader() -> void:
 	var m := EfpEffect.material_for(PlaceholderTexture2D.new(), null)

@@ -13,9 +13,22 @@ The glows are not a teleport feature. A `.bsr`'s mod section (BSR_FORMAT.md, "th
 section") carries **particle mods**, kind `0x30000`, and a placed map object plays those of its
 **`ambient`** mod set for as long as it stands. Every teleport structure's model has such a set.
 
-- **The set.** `ModPalette::FUN_00c0b060` (`0xc0b060`) gives the mod set whose name compares equal
-  to `"ambient"` over 7 characters (`FUN_004722d0(0, name, "ambient", 7)`) set kind **2**, any other
-  name kind 0. Kind 2 is the set every draw applies (round 625, `FUN_00c7b540`).
+- **The set.** `ModPalette::FUN_00c0b060` (`0xc0b060`, `0xc0b0ca..0xc0b0e1`) gives the mod set
+  named exactly `ambient` set kind **2**, any other name kind 0: `FUN_004722d0` is
+  `compare(0, size(), "ambient", 7)` (`0x4722d0..0x47233b`), equal only for exactly `ambient`, and
+  case-sensitive. Kind 2 routes the runtime set into the palette's own slot: `FxModManager::
+  FUN_00c7fa40` at `0xc7fcea` (`cmp [edi+0x18],2` -> `mov [ecx+0x5c],esi`), which `0xc7c060` returns
+  and `CCompChar::FUN_00c46ab0` (`0xc46b26`) collects -- the set an object plays with no clip running.
+  (Round 720 first cited `FUN_00c7b540` for it: that tests a mod's own dispatch word, and the slot it
+  calls on a particle mod is a bare `ret` -- corrected by the review.)
+- **Two gates in front of the draw.** Every `CRTModParticle` slot first runs `0xc43780`, which passes
+  only when the mod's `+0x3c` (0.9, the float at `0xde3148`, stored by the constructor `0xc77a00`) is
+  at least the host's LOD `+0x7c`. `+0x7c` is written by `0xc25620` (clamped 0..1, x4.0 into `+0x80`),
+  slot 2 of `CCompChar` / `CCompBldg` / `CCompSimple` / `CCompoundObj`, whose one caller found is the
+  game-object LOD change (`GlobalDataManager::FUN_009c4aa0`). A placed building most likely keeps its
+  default LOD and passes: **INFERRED**. And the effect draws only while its `+0xb0` or `+0xb4` is set
+  (`0xc81472`); `+0xb4` is `vslot_001`'s fifth argument, whose value on the ambient path was not
+  traced (**OPEN**).
 - **The body**, `ModDataParticle::vslot_004` (`0xc643b0`): the IModData header (28 bytes), an i32
   count, then per entry a 0x60-byte record:
 
@@ -25,10 +38,10 @@ section") carries **particle mods**, kind `0x30000`, and a placed map object pla
   | `+0x04` | lp-string | the effect file (`.efp`, under `Particles.pk2`) |
   | `+0x20` | lp-string | the bone or dummy name (mode 0) |
   | `+0x3c` | 3 x f32 | the offset in the object's frame (mode != 0) |
-  | `+0x4c` | u32 | kept at the effect's `+0xcc`; use OPEN |
+  | `+0x4c` | u32 | the key `CRTModParticle::vslot_009` files the effect under in a lookup map (`0xc778ee..0xc77914`); also the effect's `+0x8c` / `+0xcc` (READ) |
   | `+0x50` | u8 | **the glow bias** (below); 0 = drawn normally |
-  | `+0x51` | u8 | bit 0: hidden while the effect manager's `+0x1a8` is 0 (FUN_00c81450, FUN_00c43100); no gate sets it |
-  | `+0x52` | u8 | read, use OPEN |
+  | `+0x51` | u8 | bit 0: **night only** -- hidden while the effect manager's `+0x1a8` is 0 (`FUN_00c81450`, `FUN_00c43100`); `SWorld::vslot_004` sets it through the thunk `0xbbdbf0` at `0xa2d1c6` to 1 when the shifted day phase `+0x26a7` is above 0.5 (game_clock.md's night flag). At this client's fixed phase it is 0, so such an entry is not built (READ; no gate sets it) |
+  | `+0x52` | u8 | never copied: `vslot_001`'s descriptor takes `+0x3c..+0x51` only (`0xc77b40..0xc77b72`) (READ) |
   | `+0x53` | u8 | non-zero: a rotation follows |
   | `+0x54` | 3 x f32 | the rotation's angles, x / y / z radians (only when `+0x53`) |
 
@@ -36,9 +49,16 @@ section") carries **particle mods**, kind `0x30000`, and a placed map object pla
 - **Placing it.** `CRTModParticle::vslot_001` (`0xc77a20`) builds one effect per entry: mode 0 through
   `FUN_00c818c0` (the bone found by name, `FUN_00c2c820`; no bone, no effect), otherwise
   `FUN_00c81820` (the offset copied to the effect's `+0x94`). The descriptor lands at the effect's
-  `+0x5c` (`0xc818db lea ebx,[esi+0x5c]`). `FUN_00c81190` builds its world matrix: translate(scale x
-  offset) x the object's world matrix, the scale being the object's own (`vt+0x20`; 1 for a placed
-  map object); with a rotation, `FUN_00c67500`'s matrix is applied in the object's frame first.
+  `+0x5c` (`0xc818db lea ebx,[esi+0x5c]`). `FUN_00c81190` builds its world matrix: translate(s·ox,
+  s²·oy, s·oz) x the object's world matrix, s being the object's own scale (`vt+0x20`;
+  `FUN_00c81820` already multiplied oy by s at `0xc81872..0xc8187e`; 1 for a placed map object, the
+  premise not re-verified); with a rotation, R x (that matrix with its translation zeroed), the
+  translation put back (`0xc812be..0xc81310`). The descriptor's `+0x48` lands at the effect's
+  `+0x88` (`0xc8169e`), which no `CRTModParticle` code reads (READ).
+- **Mode 0** (`FUN_00c818c0`): the host's `+0xf4` (its skeleton) is tested (`0xc818e8`) and the bone
+  found by name (`0xc2c820`, `0xc81908`); when either fails the call returns 0 and `vslot_001` frees
+  that effect and **returns at once** (`0xc77b9f..0xc77bc4`): no later entry of the same mod is
+  built. A mode-0 effect sits at the bone's full matrix x the world (`0xc811c5..0xc811e0`).
 - **The rotation**, `FUN_00c67500` (cos `0xb44a10`, sin `0xb44b40`), a D3D row-vector matrix:
 
       m00 = cy cz             m01 = -sz cy             m02 = -sy
@@ -54,10 +74,16 @@ An entry whose `+0x50` byte is not 0 is not drawn with the scene. `CRTModParticl
 hands it to the glow pass `FUN_00c43100` when the effect's `+0x90` (that byte) is set and the
 effect manager (`0x1112fb0`) has `+0x1a4` and `+0x1ac` set:
 
-- `+0x1a4` is set to 1 by the manager's constructor (`0xbc1a26`) and its setter (`0xbc1230`) has no
-  caller: always on.
+- `+0x1a4` is the **Light Effect** video option: the constructor sets it to 1 (`0xbc1a26`), and its
+  setter `0xbc1230` is reached through the thunk `0xbbdad0` (`mov ecx,0x1112fb0 ; jmp 0xbc1230`) from
+  `SWorld::vslot_043` case 0xb (`0xa19810`), OPTION_VIDEO.md's Light Effect row. Round 720 first read
+  it as always on (it found no direct caller -- the thunk trap); the review corrected it. Off (the Low
+  and War presets), `FUN_00c81450` takes the ordinary branch (`0xc814fe`): drawn with the scene,
+  depth-tested, at full alpha, and nothing reaches the glow list.
 - `+0x1ac` is 1 when the device creates an occlusion query (`0xc41c6f`, from `FUN_00c807f0`:
   `CreateQuery(9 = D3DQUERYTYPE_OCCLUSION)`, `D3DERR_NOTAVAILABLE` -> 0).
+- The pass takes only the effects whose object was drawn this frame: `FUN_00c81450` queues them as it
+  draws them, and `FUN_00c43100` clears the list every frame.
 
 The pass:
 
@@ -65,7 +91,10 @@ The pass:
    the occlusion query: `CVisibleChecker::vslot_002` (`0xc80d20`) draws **one point** with ZENABLE
    on and colour writes off (FVF `0x42`, XYZ|DIFFUSE) inside the query, at the effect's position
    moved toward the camera by `(byte - 1.0)` units (the double 1.0 at `0x00e1b7f0`). The glow is
-   visible when the point passes the depth test.
+   visible when the point passes the depth test. A point behind the eye or outside the view is
+   clipped by D3D and counts 0 pixels (INFERRED: no `D3DRS_CLIPPING` write found), so a camera nearer
+   than `(byte - 1)` hides the glow: Constantinople's `euro_constan_center` (byte 95) shows only from
+   more than 94 units away.
 2. **Each frame** its alpha (the effect's `+0x4c`, a byte) moves toward 255 when visible and toward
    0 when not, by `trunc(frame ms x 1.5)` (`CRTModParticle::FUN_00c81080`, the double 1.5 at
    `0x00e1b7e8`, `_ftol2` `0xb42d10`): 0 to 255 in about 170 ms. An effect the pass did not see the
@@ -108,6 +137,12 @@ elsewhere, spawned by the server, or in a dungeon the map files do not place).
 
 **Every entry above is mode 1** (an offset; MEASURED). Glow bytes not listed are 0.
 
+**Not drawn yet (OPEN, round 720's review, MEASURED):** the `ambient` sets of `oas_hot_portal`
+(Hotan), `euro_esteuro_fountain01` (Constantinople) and the guild `charge_gate` also carry a TEXANI
+mod (`0x10000`, an animated texture: likely the portal's surface and the fountain's water) and an
+MTRL mod (`0x0`); `pha_gate` carries an MTRL. `CRTModTexAni` is read in outline (BSR_FORMAT.md: the
+frame step and the UV offset) but not drawn -- docs/TODO.md. No gate model carries a sound mod.
+
 Across the whole archive (MEASURED, `dump_bsr_particles.gd --census` over 8,539 `.bsr`): 1,526
 files carry particle mods (11,600 entries), **1,300 of them an `ambient` set**; the rest are
 characters' status sets (`status_bad_burn`, ...), action-type sets and `system_appear`. 19 files'
@@ -129,6 +164,8 @@ mod sections do not parse.
 - **Only the teleport structures** play their ambient effects. The original plays every placed
   object's `ambient` set; the other 1,300-odd sets (torches, fountains, banners) are a follow-up
   with its own perf measurement.
+- **"Drawn"** is the object's mesh box against the camera's frustum (the original queues an effect
+  as its object draws), and the test point must be on screen and in front of the eye before the ray.
 - **The occlusion query is a physics ray** from the camera to the moved point against the terrain,
   the placed objects and the characters' pick bodies (monsters, other players, the player; not the
   NPCs, whose layer is the invisible navmesh walls'). It **passes through alpha-tested pieces**:
@@ -139,5 +176,5 @@ mod sections do not parse.
 - An ambient effect is **kept** (looping) while its object stands (INFERRED from the gates' steady
   glows in the user's screenshots; the effect's own restart rule in `CRTModParticle` was not read).
 
-**OPEN:** `+0x4c`, `+0x52` and `+0x48` (the descriptor word the reader never writes); whether a
-mode-0 entry on a placed object without a skeleton draws at all (no gate has one).
+**OPEN:** the LOD gate's value for a placed building (INFERRED open), `+0xb4` on the ambient path,
+and the TEXANI / MTRL mods above. Mode 0 and the night bit are done as READ (no gate uses either).
