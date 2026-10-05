@@ -7094,6 +7094,414 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-thirty-second round: # Round 732 — item instance data (tooltip epic, lane B)
+
+Each item's own data — plus, white-stat variance, durability, blue options, advanced elixir — is
+stored on the server and sent to the client in the original's item record. The "(+x%)" maths and
+the blue-option formats are read from the client and exposed for lane A (round 731), which owns the
+tooltip window and its line composition. Marks: **READ** (from the binary), **INFERRED**, **OURS**,
+**OPEN**.
+
+### The item record (READ, client `SOItem::FUN_008be4f0`, equipment branch TypeID 3/1; server writer `gs:CInstanceItem::vslot_010` 0x42e230)
+
+| Field | Wire | Item field | Source |
+|---|---|---|---|
+| Rent block | u32; bit 0 adds u16, u32, u32 (period), bit 1 adds u16, u32 | | c:0x8bb130 at 0x8be52c; gs:0x845b30 writes 0 when there is no rent object (gs:0x862960). **Added after the review (F1).** |
+| RefItemID | u32 | +0x34 | 0x8be549; gs:0x4958c0 |
+| OptLevel (the plus) | u8 | +0x8c | 0x8be647; setter 0x8ba4e0 |
+| Variance | u64, twelve 5-bit groups | +0x90 | 0x8be657; setter 0x8ba4f0 |
+| Durability | u32 | +0x98 | 0x8be667; getter 0x8ba4a0. For TypeID3 14 (time-limited gear) this word is the period `active<<31 \| seconds` (c:0x8be600, gs:0x42fd30) |
+| MagParamNum | u8, ≤ 12 | | 0x8bcdf0 assert `m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM`; server gs:0x459d30 |
+| MagParam × N | u64: low u16 magicoption id, high u32 value | | 0x8bcdf0; gs Item_DecodeMagicOption 0x4904f2 |
+| Binding block × 2 | u8 type, u8 count, count × entry; type 1 then type 2 | | gs:0x846280 writes the order; c:0x8bb070 reads exactly two |
+| — entry | u8 nSlot, u64: low u32 `nOptID \| nOptLvl<<16`, high u32 nOptValue (type 2) or nParam1 (type 1) | | gs:CInstanceBindingOptionWithItem::vslot_009 0x825a40; columns from gs:0x85e4e0 |
+| — type 1 (socket) | | slot id/value at +0x74/+0x78 | 0x8bb070 |
+| — type 2 (advanced elixir) | the high u32's low byte | u8-added onto +0x8c, kept at +0x71 | 0x8bb070 |
+
+The layout is READ; these values are OURS:
+- The rent word is 0, because OpenSRO has no rentals.
+- A time-limited item's period word is 0, the original's "not active" form, because OpenSRO has no
+  expiry.
+- The advanced-elixir entry's nSlot, nOptID and nOptLvl are 0, because the elixir's option row is
+  not modelled yet.
+- There are no sockets.
+- An untracked durability goes out as the variance's max.
+
+Only equipment is listed. The COS and stackable records are not sent (OPEN).
+
+### Where it travels (OURS container, retail record)
+
+The bag list, the bag move reply, the warehouse list and the equipment list are OpenSRO's own
+messages. Each gains a trailing block, **u16 count, then per entry a u32 container slot and the
+record**:
+- The bag and warehouse lists (`StorageListResult`) carry it after the capacity u16.
+- The equipment list (`EquipmentResult`) carries it after the durability block.
+
+An older client stops reading before the block.
+
+**Frame limit (review F8).** A full warehouse is 210 slots of equipment, each with 12 options and an
+advanced elixir. That does not fit one frame (`proto.MaxPayload` 32,767): the list carries 199
+entries in 32,755 bytes. The other 11 follow in **`OpItemInfoMore` 0x00FB** (OURS; 0x00FB was free on
+both sides). Its payload is a u8 container (0 bag, 1 worn, 2 warehouse), then the same block, in as
+many frames as needed (`TestWorstCaseStorageListSplits`). The bag (at most 100 slots) and the worn
+slots always fit. `fitItemInfos` guards every list, so the list itself is never lost.
+
+### Storage (OURS schema)
+
+- Columns `opt_level SMALLINT`, `mag_params BYTEA` (8 bytes LE each) and `adv_elixir SMALLINT` were
+  added to `inventory_slots`, `account_storage_slots` and `equipment_slots`.
+- They are added by `ADD COLUMN IF NOT EXISTS` with defaults, so existing rows read +0 with no
+  options.
+- `inventory.Instance` carries the new fields, and every move path copies them: split, swap, equip
+  and unequip, deposit and withdraw, buy back, trade and ground.
+- Steps are in `deploy/README.md`.
+
+### GM hooks (OURS)
+
+- `/give <id> [qty] [plus]` names the bag slots it filled.
+- `/item <slot> plus <n> | var <u64> | quality <0-31> | opt <id> <value> | adv <n> | clear`.
+- Magic-option rolling on drops is not built.
+
+### The (+x%) (READ, `0x66c5b0` + its x87, `0x8bd980`)
+
+The effective plus is +0x8c (with the advanced elixir) plus the byte at +0x70. The writer of +0x70
+is OPEN, and the stat builder adds it only when ref+0x1d4 ≠ 0.
+
+- **Whole-number stats** (attack, hit, parry, block, critical): `trunc((U−L)·q/31.0 + L +
+  trunc(inc·plus))` (0x8bdb75). Durability uses the same formula with no plus term (0x8bdfdc).
+- **Fractional stats:** `plus·inc + q/31·(U−L) + L`, stored as a float. The reinforce stats carry
+  no plus term.
+- **Range line (attack):** each end is `f = (v − TRUNC(inc·plus) − L)/(U−L)` as a float, or 1 if
+  U = L. The percent is `trunc((f_lo + f_hi) × 0.5 × 100)`:
+  - 0.5 and 100.0 are at 0xe1b7d0/d8.
+  - The truncation is `cvttsd2si` (FUN_00b42d10).
+  - The spec's "ROUND" is a fistp under a control word or'd with 0xc00, which **truncates**.
+  - This settles spec OPEN 8: **both** ends are averaged.
+- **Reinforce range:** the same average, with no plus off.
+- **Single line:** `trunc((v − inc·plus − L)/(U−L)·100)`, or 100 if U = L.
+  - The plus comes off only for phys/mag defence and absorption (inc ref +0x1e8/+0x214/+0x200/+0x220).
+  - Hit, parry, critical, block and reinforce pass plus 0, although hit's stat includes a plus term.
+- **Durability:** `trunc(q / 0.31)`, where q is the byte at item +0x137 (0x8bd980 case 0). The
+  divisor is the double at 0xda1aa0, 0.3100000023841858. **A perfect 31 shows 99%.**
+- **Variance groups per kind** (0x8bd980):
+
+  | Kind | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+  |---|---|---|---|---|---|---|---|
+  | Weapon | durability | phys reinforce | mag reinforce | hit | phys attack | mag attack | critical |
+  | Armour | durability | phys reinforce | mag reinforce | phys def | mag def | parry | |
+  | Shield | durability | phys reinforce | mag reinforce | block | phys def | mag def | |
+  | Accessory | phys absorption | mag absorption | | | | | |
+
+### Blue options (READ `0x670dd0`)
+
+- **Percent:** `max(0, trunc((value − min)/(max − min)·100))`.
+  - min is the high u16 of the row's first range word.
+  - max is the last non-zero u16, walking hi, lo, hi, lo… through 3 words.
+  - Those words are magicoption.txt columns 8..10, READ from the row parser
+    `RefParse_magicoption` (c:0x97b0b0) per review F6. Example: ER degree 10 reads 5, 10, 20, 30,
+    40, 60.
+  - An empty range shows (+0%): the division is unguarded and the clamp turns the inf or NaN into 0
+    (review F5).
+- **Row selection (READ, review F6):** the row's degree is compared with `(ItemClass−1)/3+1`,
+  where ItemClass is ref +0x1d0. When they differ, the client takes min and max from the same
+  MATTR code at that degree (`0x926b30`, c:0x670ebd). This is `MagicOptionTable.range_row` and
+  `option_pct`.
+- **Formats:** per MATTR code, in `MagicOptionTable.FORMATS`.
+  - The sprintf string arguments are the keys in **reverse fetch order**. That rule is checked on
+    "HP/MP recovery … Increase" and "Steady(1Time/times)".
+  - The reinforce timer, 3rd-job, avatar and Nasrun formats are OPEN.
+
+### Client API for lane A
+
+| Call | Gives |
+|---|---|
+| `net_client.last_inventory_instances` / `last_equipment_instances` / `last_storage_instances` | `{slot: ItemInstance}` |
+| `ItemInstance` | `opt_level`, `adv_elixir`, `effective_plus()`, `variance`, `variance_group(k)`, `durability`, `option_count()`, `option_id(i)`, `option_value(i)` |
+| `ItemQuality.int_stat(L,U,q,inc,plus)` / `float_stat(...)` | the instance stat |
+| `ItemQuality.range_int_pct(vLo,vHi,Llo,Ulo,Lhi,Uhi,inc,plus)` / `range_float_pct(...)` / `single_pct(v,L,U,inc,plus)` / `durability_pct(q)` | the (+x%) |
+| `ItemQuality.group_for(kind, stat)` | the variance group a stat reads |
+| `MagicOptionTable.shared.row(id)`; `.option_pct(id, value, item_class)` | the magicoption row; the blue (+x%), from the row at the item's degree (ItemClass = ref +0x1d0) |
+| `MagicOptionTable.format_line(row.code, value, pct, MagicOptionTable.shared_text)` | the blue line |
+
+Lane A's reader still needs the U ends and per-plus increments: itemdata 96/98/99 and so on, as
+`server/cmd/export-refdata` documents.
+
+### Tests
+
+- **Go:**
+  - golden record bytes (with options and the advanced elixir, and plain), truncation and the cap;
+  - the block on the storage and equipment lists, with an older decoder;
+  - `slotItemInfos` (equipment only, untracked durability);
+  - MagParam packing and the BYTEA codec;
+  - the instance surviving SetInstance, move, swap and AddItemInstance (mem + SQL);
+  - equip, swap and unequip (mem + SQL);
+  - **the migration on a pre-732 table** (rows read +0);
+  - the percent formula table;
+  - `/give` plus and `/item`.
+- **GD:** `scripts/items/item_instance_test.gd` covers the same golden bytes, the bag and equipment
+  decodes, the same percent table, the group maps, and synthetic magicoption rows and lines.
+- **Runs:**
+  - `go test -count=1 -p 1 ./...`: 67 packages ok (66 on the first run, then `internal/systems` re-run green) after `internal/systems` knownOrphans gained the six quality functions and MagParamValue (its first run named them); `go vet` clean.
+  - Box `check`: 629 scripts, 9 scenes, ALL LOAD.
+  - Full suite: 240 suites, 0 failing (`RENDER_DIR=/opt/opensro-client-r732`, shared lock).
+
+### Review fixes (`docs/rounds/r732_review.md`)
+
+| # | Finding | Fix |
+|---|---|---|
+| F1 | The record lacked the leading u32 rent block | The server writes 0 (no rent) before RefItemID. Both readers take the c:0x8bb130 branches (bit 0: u16 u32 u32; bit 1: u16 u32). The golden bytes (Go and GD) gained the 4 bytes. Tests: `TestItemRecordReadsTheRentBranches` and the GD rent case. |
+| F2 | The binding order and entry were labelled OURS/OPEN | Relabelled READ (gs:0x846280, gs:0x825a40). The entry is u8 nSlot, then a u64 (low nOptID \| nOptLvl<<16, high nOptValue). OpenSRO's nSlot, nOptID and nOptLvl are 0 (OURS). Test: `TestAdvancedElixirEntryLayout`. |
+| F3 | Time-limited gear (TypeID3 14) was sent durability | It now sends the period word `active<<31 \| seconds` as 0, the original's "not active" form (gs:0x42fd30; OURS value, since OpenSRO has no expiry). Test: `TestTimeLimitedGearSendsThePeriodWord`. |
+| F4 | GD summed the advanced elixir's whole u32 | Now `& 0xff` with a u8 wrap, as c:0x8bb070 does (GD test: 200 + 100 gives 44). The Go reader already matched. |
+| F5 | An empty blue range returned -1, "not shown" | `blue_pct` returns 0, the client's clamp of `_ftol2`'s 0x80000000. GD test added. |
+| F6 | The blue row was the option's own row, and cols 8–10 were labelled INFERRED | `MagicOptionTable.range_row(id, item_class)` and `option_pct(...)` take the same MATTR code at degree `(ItemClass−1)/3+1` when the own row's degree differs. Columns relabelled READ (c:0x97b0b0). GD tests cover ItemClass 28 (degree 10) and 19 (degree 7, own row). |
+| F7 | The float builders rounded early | `FloatStat`/`float_stat` keep `(U−L)·q/31 + L + inc·plus` unrounded until one f32 store. `QualitySingle`/`single_pct` subtract the unrounded product and round once. The tables are unchanged. |
+| F8 | The warehouse list was near or over the frame limit | Measured: the worst case does not fit (the list holds 199 of 210 entries in 32,755 bytes). The overflow goes in the new `OpItemInfoMore` 0x00FB (OURS), and `fitItemInfos` guards every list. The client merges it (`net_client.gd`). Test: `TestWorstCaseStorageListSplits`. |
+| F9 | `/item` accepted stackables | Refused unless the item is TypeID 3/1 (gm_test). |
+| F10 | No perf gate for the World3D loading change | Run below. |
+
+**Perf gate** (`perf_gate.sh --base 8201d8fe --sites jangan --frames 12000`, 1280x720, Forward+ on
+the RX 7600, median of 3 runs). One head run was repeated twice for overlap with another lane's
+Godot.
+
+| jangan | base | head | Δ | verdict |
+|---|---|---|---|---|
+| frame ms | 1.54 | 1.54 | +0.0 | SAME |
+| entry ms | 9713 | 9697 | −16 | SAME |
+| freeze ms | 3352 | 3396 | +44 | SAME |
+| hitches | 4 | 5 | +1 | SAME |
+
+**Runs after the fixes:**
+- `go test -count=1 -p 1 ./...`: 67 packages ok; `go vet` and `gofmt` clean.
+- Box `check`: 629 scripts and 9 scenes, ALL LOAD.
+- Full suite: 240 suites, 1 failing on the first run. That failure was in the new GD rent case, whose test bytes were 2 short (bit 1 adds the common u16 plus a u16 and a u32 = 8; the Go case had it right). After that test fix the suite passes and `item_instance_test.gd` reads ALL PASS; the other 239 suites were green.
+
+### Live run (before the review fixes; the record then lacked the rent word, which both ends now carry)
+
+Script `live732.sh` on the box: a server built from this worktree (`-in-memory`, `/var/tmp/rel/items.csv`) and two client boots at Jangan, with the GM commands fed through `OPENSRO_QA_COMMANDS`.
+
+1. `/give 71 1 5` gave ITEM_CH_SWORD_01_A at +5, and the reply named bag slot 0.
+2. `/item 0 quality 20`, `/item 0 opt 80 40` (MATTR_DUR, degree 1), `/item 0 opt 92 15` (MATTR_HR, degree 1) and `/item 0 adv 2` set the rest.
+
+The client log, verbatim:
+
+```
+World3D: 402 magic option rows
+[item] bag slot 0 item 71 +7 (opt 5, adv 2) variance a5294a5294a5294 durability 62 options [80=40, 92=15] groups [20 20 20 20 20 20 20 20 20 20 20 20] durability (+64%) | option 80 MATTR_DUR degree 1 value 40 range 10..60 (+60%) "Durability 40% Increase (+60%)" | option 92 MATTR_HR degree 1 value 15 range 5..20 (+66%) "Attack rate 15% Increase (+66%)"
+```
+
+- 20/0.31 = 64.5, giving 64. (40−10)/50 = 60%. (15−5)/15 = 66%.
+- The starter gear's worn items decode too, e.g. `worn slot 1 item 3643 … groups [22 …] durability (+70%)`.
+- The white attack/defence percentages are not in the log: the client's item table reader (lane A's) does not read the U ends or the per-plus increments yet. They are covered by the Go and GD formula tests.
+
+### OPEN
+
+- The meaning of bits 16..31 of a param's low dword. The server splits them out (gs:0x4903f0) and
+  the client's equipment branch ignores them, so sending 0 is safe.
+- The table behind item +0x70: when ref +0x1d4 ≠ 0, c:0x8beae0 fills it from a reference lookup
+  (review). Lane A's effective plus should add that term once the table is read.
+- The COS and stackable record branches.
+- The reinforce timer, 3rd-job, avatar and Nasrun formats.
+- Server combat does not apply OptLevel or the blue options yet; it still uses WhiteStat with no
+  plus.
+- Rolling magic options on drops.
+
+**Review** (kept beside the notes): `docs/rounds/r732_review.md` -- the record's leading u32 rent word (READ in the server's writer `gs:0x42e230`), the binding entry layout, time-limited gear's period word, the advanced elixir as a u8, blue rows by degree; all fixed. A full warehouse list is split across `OpItemInfoMore` 0x00FB (OURS) to stay under the frame limit.
+
+Perf gate (jangan): SAME on all four numbers (the notes have the table). The schema columns are added at boot (`ADD COLUMN IF NOT EXISTS`): production needs no manual step.
+
+## Seven-hundred-and-thirty-first round: the item tooltip, lane A (the window and its lines)
+
+Builds `docs/protocol/item_tooltip.md` lane A. Every item tooltip is now the original's
+CNIFHelperBubbleWindow drawn in the HUD's own canvas, replacing Godot's `tooltip_text` popup (which
+was blurry at DPI 2.0). Its lines are composed in the binary's order. Labels: **READ**,
+**MEASURED**, **INFERRED**, **OURS**, **OPEN**.
+
+### What was built
+
+- **`ItemTooltipBubble`** (`client/scripts/ui/hud/item_tooltip_bubble.gd`), the window:
+  - **Frame:** `com_tooltip_corner.ddj` is the top-left corner, mirrored for the other three. `com_tooltip_edge.ddj` is the left edge, mirrored for the right and turned for the top and bottom (orientation MEASURED from the texels).
+  - **Lines:** 18 px apart, or 14 for a one-line box (READ, `0x496c90`). The width is the widest line plus the 8-px frame.
+  - **Text:** in the client's face at 12 px through round 672's crisp path (NEAREST), with a black drop shadow at (+1, +1) (MEASURED: 3,336 of 3,336 shadow neighbours in `XjjJyA5.png` are black).
+  - **Name icon:** `com_itemsign.ddj`. The name is padded past it by ceil(12 / space) + 1 spaces (READ, `0x776d20`).
+  - **Font 3** (name, seal, set, adv. elixir) is the same face with 2-px stems (MEASURED: same 9-row cap height). It is drawn with FontVariation embolden 1.4 (OURS).
+  - **Alpha:** frame and fill at 200/255 (MEASURED 0.77–0.78 from three texels over known ground; the byte at `+0x131` is not read). The text is opaque.
+  - **Placement:** right of the slot, top aligned (MEASURED, one screenshot). The clamp to the screen is OURS. The frame is NEAREST-filtered (OURS).
+- **`ItemTooltipLines`**, the composition: the four equipment builders' skeleton, keys and colours of the spec, plus:
+  - **Order (USER DECISION, binary order):** re-checked. `0x776d20` → `FUN_0064f8a0` appends each line at the list's end. The font argument (record `+0x24`) goes to `FUN_008b4400(5, font)`, which sets the line's font in all four style slots; it is not a section key. Nothing re-orders, so seal and set sit directly under the name.
+  - **Advanced elixir:** "Able to use Advanced elixir." is **grey `0xffc8c8c8`**, bold (READ, `0x66fd60`). The spec said white.
+  - **The Int line prints the Str requirement** (READ: `0x67eec0`'s `"%s %d"` with PARAM_INT reads ref `+0x1c8`). This is reproduced; the line's colour compares the player's Int.
+  - **"(+x%)":**
+    - A store's goods are reference items (variance 0): 0 %, or 100 % on an empty range. A min ~ max line averages its two ends, round 732's reading.
+    - An owned item shows the instance's values and percentages when the server sent its record (round 732).
+    - Without that record it shows no percentage (OURS: it would be invented).
+  - **Other items** (consumables…): name, sort of item, requirements, price, in the same bubble. Their builders are not read (OURS, OPEN).
+- **`ItemTypeNames`:**
+  - **"Sort of item":** a group join, INFERRED (the review: the client's own lookup maps are unread, OPEN 8). `fmntidgroupmapdata.txt` (service, group, TypeID1–4; parser READ `0x6d5570`) is joined on its group to `fmncategorytreedata.txt`'s key column. The join is 1:1 over the archive's 138/72 rows (MEASURED).
+  - **Set names:** `refsetitemgroup.txt` col 4 gives the key, which resolves in **`textdata_equip&skill.txt`**, not `textdata_object.txt`. `textdataname.txt` lists both files for the client (MEASURED): SN_ITEM_11_SET_A_WEAPON = "Power", the user's green line.
+- **`ItemTooltipInstance`:** lane B's ItemInstance / ItemQuality / MagicOptionTable turned into the instance fields: plus = effective plus, stats, percentages, blue lines and adv. elixir.
+  - It reaches those classes **by path**, because this branch could not merge lane B (the merge was refused by the session's permission check). The coordinator merges.
+  - It was probed against lane B's real files in a scratch box copy. A +5 D11 spear at q = 31 read: "Phy. atk. pwr. 2113 ~ 2462 (+100%)", "Durability 90/103 (+99%)", "Critical 17 (+100%)".
+  - Blue options whose format lane B lists as OPEN show "code value" (OURS stand-in).
+- **Sites:** every item `tooltip_text` in `hud_panels.gd` goes through `_set_item_tip`: store (with price), buy back, storage, bag (with durability) and equipment. The equipment clear now clears the tooltip too.
+  - There is no stall window in the client.
+  - The hotbar never had an item tooltip; adding one needs World3D to pass the slot's item id (OPEN).
+- **Columns** (both readers and `table_parity`): rarity 15, item class 61, set id 62, durability upper 64, ReqStr 59, ReqInt 60, max magic options 158, parry 68/69, absorption 71/72 and 79/80, per-plus increments 67/70/73/78/81/99/104/115, and the upper ends 96/98, 101/103, 106/108, 110/112, 114, 117. The old hard-coded English `Item.tooltip_lines` and `WEAPON_SORT` are removed.
+- **QA hook:** `OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..."` shows the bubbles side by side at tick 45 and logs `QA ITEM_TIP`.
+
+### Tests
+
+- `item_tooltip_lines_test.gd`: ALL PASS. It covers:
+  - the weapon's 21 lines in order;
+  - the seal, set and armour lines;
+  - the necklace's absorptions;
+  - a potion;
+  - every colour;
+  - the four group breaks;
+  - the seal tiers and degree;
+  - the empty-range 100 %;
+  - the two-end average;
+  - requirements red and white;
+  - the Int slip;
+  - the bubble's geometry (18/14 px, frame, label positions, crisp, shadow, alpha, placement).
+- Box: `check` ALL LOAD (630 scripts). The full suite: 240 suites, 0 failing. `table_parity`: TABLE PARITY PASS.
+- `cargo test`: 45 passed.
+
+### Live (render box, Forward+ on the RX 7600, stock `qa_shot.sh`, lane lock)
+
+- **The run:** `OPENSRO_QA_ITEM_TIP='4116:bag:92/93,1889:bag,5832:store,25425:store,4:store::40'` at UI scale 1.0 (1280x720) and 2.0 (2560x1440). Items:
+  - 4116, the user's Reaper Soul Spear;
+  - 1889, the user's Coast Pearl Necklace, which is not a seal item (white name);
+  - 5832, the Pearl Necklace seal item, "Seal of Star";
+  - 25425, the set spear "Breakers" with "Power";
+  - 4, a potion.
+- **Sharpness** (`measure.py`: bright pixels that are an exact text colour). The original reads 4,013 / 4,013.
+
+  | Scale | Spear | Necklace | Set spear | Shadow | Line pitch |
+  |---|---|---|---|---|---|
+  | 1.0 | 5,639 / 5,639 | 3,430 / 3,430 | 5,606 / 5,607 | all black at (+1,+1) | 18 |
+  | 2.0 | 19,610 / 19,610 | 11,622 / 11,622 | 20,021 / 20,021 | all black at (+2,+2) | 36 |
+
+- **Stems:** at 1.0 the name's are mostly 2 px and the body's 1 px, as in the original (2:123, 1:129). At 2.0 the name's are 3–4 px.
+- **Frame, outside in:** at 1.0 we read black, light blue, navy, 000820, 081031, then fill, the same profile as the original. At 2.0 each texel is 2 whole pixels.
+- **Differences:**
+  - The box has no Tahoma, so it draws the disclosed Arial fallback. **Corrected premise (review):** the user plays the Linux build and gets the same fallback. The first renders had glyphs 1–2 px high (cap top +1 against +3); labels are now placed by baseline, 12 px below the line's top whatever the face (fix 6).
+  - These frames were taken at `37f32bb0`. Later changes only touch the bag spear's durability text (no percent without an instance).
+
+### OPEN
+
+1. The pink seal colour's condition (`0x8bd660`).
+2. ~~`0x66f850`'s line~~: closed by the review, the description (fix 9).
+3. The non-equipment builders.
+4. The hotbar's item tooltip.
+5. The window alpha byte's own value.
+6. Lane B's OPEN blue-option formats.
+7. The bold face at 2.0 (3–4 px stems against an ideal 4).
+8. "Sort of item"'s real source: the writers of `FUN_00941240`'s maps (`+0x6b8` code name, `+0x6a8` TypeID & 0xfffe -> string). The fmn join is INFERRED. `XjjJyA5.png` reads "Twohand staff" where the join gives "Staff", so the European names may be the WNETWORK set ("Onehand sword", "Light staff", "Twohand staff", "Heavy armor").
+9. The job-grade requirement types 2/3/4, and `PARAM_STORE_PURCHASE_PRICE` for a bag item while a shop is open.
+10. ~~`ITEM_EU_W_LIGHT_01_HA_A` shows its code name~~: fixed, see "Item names" below.
+
+### Review fixes (`r731_review.md`)
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | Armour and shields lacked Phy./Mag. reinforce | Columns 82-85 are read in both readers and `table_parity`. When the weapon pair is zero, `"%s %.1f %% (+%d%%)"` is printed from col / 10, rated on [L, U]. The adapter gets the pair through lane B's groups 1/2 (`float_stat`, `single_pct`, no plus) |
+| 2 | Store goods printed "Store purchasing price N" | They now print `"%s : %d%s"` with `UIIT_STT_PRICE` / `UIIT_STT_GOLD` and no blank before (READ `0x678cf2`). `PARAM_STORE_PURCHASE_PRICE` is OPEN 9 |
+| 3 | European gear showed no requirements | All four pairs are walked: level, and the masteries 0x101-0x103 / 0x111-0x114 / 0x201-0x206 as `"%s: %s %s %d"` (PARAM_MASTERY_LEVEL, the name, PARAM_MASTERY, level). The keys and order are READ from `0x67eec0`. The lines share one colour: white if any pair is met, red if none. The player's masteries come from `_skill_mastery_levels`. The mastery names (`UIIT_STT_WARRIOR`…) resolve from `textdata_equip&skill.txt` (MEASURED). Job grades are OPEN 9 |
+| 4 | Emptied storage cell kept its tooltip | The clear loop now calls `_set_item_tip(icon0, -1)` and sets `MOUSE_FILTER_IGNORE` |
+| 5 | "Sort of item" mislabelled | Relabelled INFERRED in the code, the spec (OPEN 10) and here (OPEN 8). The map writers were not chased |
+| 6 | Text height tied to the face | Labels are placed by baseline: `y = line_top + 12 - round(ascent)`. The Tahoma premise is corrected |
+| 7 | Max. no. of magic options hidden at 0 | Now always printed |
+| 8 | Reinforce form chosen by equal ends | Now chosen by the weapon pair: the range form whenever 105-112 is non-zero |
+| 9 | Stale labels; `0x66f850`; `roundi` | The rule comment is fixed and the spec's §5 and OPEN are updated. The description (column 6 through the object table, white, then a blank) is read in both readers and printed. The reference path's plus bonus now truncates |
+| — | Lane B's review API (`10970e81`) | The adapter calls `MagicOptionTable.shared.option_pct(id, value, ItemClass)` when it exists, and falls back to `row` + `blue_pct` otherwise |
+
+**Tests after the fixes:**
+- `item_tooltip_lines_test.gd` ALL PASS. It asserts the corrected output: armour reinforce, "Price : 1000Gold", mastery lines and their shared colour, "0Unit", the range form with equal ends, the description and the baseline.
+- Box: `check` ALL LOAD (630 scripts); the full suite 240 suites, 0 failing.
+- `table_parity` TABLE PARITY PASS. No itemdata part hit the "tooltip float" fallback (grep empty), which closes the review's unfinished check.
+- `cargo test` 45 passed.
+
+**Render after the fixes,** kept on the box at `/var/tmp/r731/r731_s10/f00000058.png` (UI 1.0, 1280x720) and `/var/tmp/r731/r731_s20/f00000058.png` (UI 2.0, 2560x1440). Command: `OPENSRO_QA_ITEM_TIP='ITEM_CH_M_HEAVY_08_HA_A:store::5000,ITEM_EU_W_LIGHT_01_HA_A:store::300,ITEM_CH_SHIELD_08_A:bag,4116:bag:92/93'`.
+
+- **The CH heavy casque:** "Phy. reinforce 15.9 % (+0%)", "Mag. reinforce 20.8 % (+0%)", "Mounting part: Head", "Price : 5000Gold".
+- **The EU light hood:** "Mastery level: Warrior Mastery 1", "… Rogue …", "… Cleric …", "European".
+- **The shield:** reinforce 8.0 % / 13.4 %.
+
+| Scale | Casque, exact text pixels | Hood, exact text pixels | Shadow pixels black |
+|---|---|---|---|
+| 1.0 | 5,519 / 5,519 | 6,674 / 6,674 | all, at (+1,+1) |
+| 2.0 | 19,340 / 19,340 | 23,651 / 23,651 | all, at (+2,+2) |
+
+The body text's cap top is now line top + 3, as in the original. The bold name's is + 2, 1 px high, from the emboldened face's rounding.
+
+### Item names (after the review)
+
+**The miss:** the hood's column-5 key is `SN_ITEM_EU_LIGHT_01_HA_A` (no `_W_`). It lives only in `textdata_equip&skill.txt`, as "Sagittarius Savage Sallet".
+
+**How the client resolves names (READ):** an object's name (`FUN_008c9bb0`) and a UI key (`FUN_008c9c30`) both look up TextStringManager's one map (`FUN_008c9b20`). That map is filled from the files `textdataname.txt` lists: TextData_Equip&Skill.txt and TextData_Object.txt (MEASURED). The two files share no key (10,893 and 7,814 keys, 0 in both), so their order does not matter.
+
+**The fix:** `ItemTableReader.load_object_names` parses both files and merges them (`UiTextTable.merge_missing`). Every item name now uses it: HudPanels' tooltips, store, bag, equipment and storage, and World3D's `_object_names()` and NPC table load (drops and chat names).
+
+**Measured over the 7 itemdata parts' 11,772 rows:**
+
+| Name tables | Rows showing the raw code name |
+|---|---|
+| Object table only (before) | 4,811 |
+| Both tables (after) | 271 |
+
+Test: `item_tooltip_lines_test.gd` ALL PASS, including the merged-table case. Box `check`: ALL LOAD. `table_parity`: PASS. The suite's other 239 suites pass; the one failure in that run was this test's own first draft.
+
+**Review** (kept beside the notes): `docs/rounds/r731_review.md` -- armour/shield reinforce (cols 82-85) missing, store goods' "Price : NGold", every requirement pair (European masteries), the storage tooltip clear, a font-agnostic baseline (the user is on Linux: Arial); all fixed. After the review, item names resolve through both of the client's name tables (`textdata_equip&skill` + `textdata_object`, per `textdataname.txt`): raw-code names fell from 4,811 to 271 of 11,772 rows.
+
+No perf gate: UI only.
+
+## Seven-hundred-and-thirtieth round: item tooltips specified from the client (spec only)
+
+The user asked (2026-10-05) for item descriptions like the original's: gold names for seal items, blue
+for items with blue stats, legible text at DPI 2.0, and full descriptions; their necklace showed only
+its name. This round is documentation only. The spec is `docs/protocol/item_tooltip.md`.
+
+### Findings
+
+- **The window** is `CNIFHelperBubbleWindow` (`0x496910`), built from `ifhelpbubblewindow.txt`.
+  - It holds a text box, three 12x12 sign icons and an 8-px frame from `com_tooltip_corner.ddj` / `com_tooltip_edge.ddj`.
+  - The frame's texels decode, from the outside in, to black, light blue (107,132,206) and a navy fill (25,33,66).
+  - Line height is 18 (14 for a single line), and the width is the widest line.
+- **Dispatch:** the equipment tooltip dispatches on TypeID3 (`0x685f20`). Armour, shields, accessories and weapons share one builder skeleton:
+  1. the name;
+  2. seal and set;
+  3. Sort of item, armour position and degree;
+  4. the stat block;
+  5. requirements;
+  6. max magic options;
+  7. magic options;
+  8. advanced elixir;
+  9. prices.
+  
+  Every format and key is in the spec.
+- **Colours:**
+  - the name is gold `0xffffd953` for Rarity 2/6 seal items (pink `0xffff75f2` in a case not yet read), cyan `0xff00eaff` with magic options, white otherwise. The user's rule, now READ;
+  - the labels are beige `0xffefdaa4`;
+  - unmet requirements are red `0xffff4a4a`;
+  - the set line is green `0xff6ce675`;
+  - the magic options are cyan.
+- **"(+x%)"** is (base − ref lower) / (ref upper − lower) × 100, with base being the instance stat minus the plus bonus.
+- **Why ours is blurry at DPI 2.0 (INFERRED):** Godot's built-in `tooltip_text` popup is a separate viewport that root font oversampling doesn't reach, and it uses the default theme font.
+- **Why the necklace is empty:** our `tooltip_lines` has no absorption, parry or blocking lines, no requirement block, and no max magic options. The item reader doesn't read those columns.
+- **Server:** it stores variance and durability but no opt level, magic params or advanced-elixir count, and sends only durability.
+
+### Open
+
+- The seal and set order differs between this binary and the user's Esro screenshot; it needs reading, then possibly a user decision.
+- The window alpha and placement, the rule drawing, the magic-option formats (`0x670dd0`), the non-equipment builders, the pink-seal test, and the retail instance layout. See the spec's OPEN list.
+
+### Lanes
+
+Lane A (client bubble and text) and lane B (instance data on the server and the wire); see the spec.
+
+No separate review: the spec was checked area by area by the two implementation rounds' independent reviews, which corrected it in place. **USER DECISION 2026-10-05:** the line order follows the binary (seal and set lines under the name), not the Esro screenshot's.
+
 ## Seven-hundred-and-twenty-ninth round: building textures flickering as the camera moves -- the world camera's near plane is retail's 1.0
 
 The user (2026-10-05): "certain textures in the game seem to flicker when I move or move the camera
