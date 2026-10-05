@@ -53,13 +53,21 @@ static func encode_list_request(character_name: String) -> PackedByteArray:
 ## Encodes an OpInventoryMove request: the character name, then the source
 ## and destination slot indices as signed 64-bit, the same shape as
 ## UseItemNet.encode_use with a second index.
-static func encode_move_request(character_name: String, from_slot: int, to_slot: int) -> PackedByteArray:
+## A count above 0 (round 728) moves that many out of the stack: below the
+## stack it SPLITS into to_slot, which must be empty; 0 moves the whole stack
+## and is not sent, as before.
+static func encode_move_request(character_name: String, from_slot: int, to_slot: int, count: int = 0) -> PackedByteArray:
 	var out := encode_list_request(character_name)
 	var tail := PackedByteArray()
 	tail.resize(16)
 	tail.encode_s64(0, from_slot)
 	tail.encode_s64(8, to_slot)
 	out.append_array(tail)
+	if count > 0:
+		var c := PackedByteArray()
+		c.resize(8)
+		c.encode_s64(0, count)
+		out.append_array(c)
 	return out
 
 ## Parses one Slot from data starting at offset, returning it along with

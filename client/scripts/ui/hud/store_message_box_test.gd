@@ -132,7 +132,18 @@ func _check_store_confirm() -> void:
 	var bb := _box(StoreMessageBox.Kind.BUY_BACK, {"name": "x", "count": 1, "max": 1, "unit_price": 10})
 	_check(_text_of(bb, "GDR_MBS_CONFIRM_BTN_SELL") == "Buy back" and not _visible(bb, "GDR_MBS_CONFIRM_SPINBTN_UP"),
 		"buy back: OK reads Buy back, spins hidden")
+	_check(bb.price_text() == "10", "buy back: count x the sell price (got %s)" % bb.price_text())
 	bb.queue_free()
+	var bb3 := _box(StoreMessageBox.Kind.BUY_BACK, {"name": "x", "count": 3, "max": 3, "unit_price": 210})
+	_check(bb3.price_text() == "630", "buy back: 3 x 210 = 630 (got %s)" % bb3.price_text())
+	bb3.queue_free()
+	# Round 728: the fee a unit (+0xcc, KeepingFee) times the count, floored at 1.
+	var fee := _box(StoreMessageBox.Kind.DEPOSIT, {"name": "x", "count": 5, "max": 5, "unit_price": 11})
+	_check(fee.price_text() == "55", "deposit: 5 x a fee of 11 = 55 (got %s)" % fee.price_text())
+	fee.queue_free()
+	var free_fee := _box(StoreMessageBox.Kind.DEPOSIT, {"name": "x", "count": 5, "max": 5, "unit_price": 0})
+	_check(free_fee.price_text() == "1", "deposit: a zero fee still shows 1 (got %s)" % free_fee.price_text())
+	free_fee.queue_free()
 
 func _check_money() -> void:
 	var g := _box(StoreMessageBox.Kind.GOLD_DEPOSIT, {"count": 0, "min": 0, "max": 5000})

@@ -55,6 +55,10 @@ const COL_NAME_STRID := 5
 ## under the buy price on every row (Copper Sword 890 buy / 427 sell). Shown as
 ## the estimate in the sell confirm; the server's result carries the true gold.
 const COL_SELL_PRICE := 31
+## KeepingFee (round 728): the warehouse fee a unit. The column is INFERRED
+## from the schema's name; the original's deposit box reads the reference's
+## +0xcc (0x6b1002, READ), not tied to a column.
+const COL_KEEPING_FEE := 30
 ## MaxStack (column 57): 1 for equipment, the real per-item cap for stackables
 ## (a potion 5000, arrows 2500) -- so the shop can offer buying a stack.
 const COL_MAX_STACK := 57
@@ -150,6 +154,8 @@ class Item:
 	var max_stack: int = 1
 	## SellPrice (column 31): the NPC buy-back price, for the sell estimate.
 	var sell_price: int = 0
+	## KeepingFee (column 30, INFERRED): the warehouse deposit fee a unit.
+	var keeping_fee: int = 0
 	## Archive path of the inventory icon, ICON_PREFIX already applied.
 	var icon_path: String
 	## The `.bsr` the item is worn as, as the table writes it (no `res\`
@@ -339,6 +345,7 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		if stack > 0:
 			item.max_stack = stack
 		item.sell_price = _int_at(cols, COL_SELL_PRICE)
+		item.keeping_fee = _int_at(cols, COL_KEEPING_FEE)
 		var icon := _find_icon_path(cols)
 		if icon != "":
 			item.icon_path = ICON_PREFIX + icon
@@ -392,6 +399,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var model_counts: PackedInt64Array = rows["model_counts"]
 	var max_stacks: PackedInt64Array = rows["max_stacks"]
 	var sell_prices: PackedInt64Array = rows["sell_prices"]
+	# Round 728: a library from before this column has none (fee 0).
+	var keeping_fees: PackedInt64Array = rows.get("keeping_fees", PackedInt64Array())
 	var countries: PackedInt64Array = rows["countries"]
 	var req_genders: PackedInt64Array = rows["req_genders"]
 	var durabilities: PackedInt64Array = rows["durabilities"]
@@ -417,6 +426,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.name_strid = name_strids[i]
 		item.max_stack = max_stacks[i]
 		item.sell_price = sell_prices[i]
+		if i < keeping_fees.size():
+			item.keeping_fee = keeping_fees[i]
 		item.icon_path = icon_paths[i]
 		var count: int = model_counts[i]
 		item.model_paths = models.slice(m, m + count)

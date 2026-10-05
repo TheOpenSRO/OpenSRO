@@ -69,11 +69,12 @@ class_name StoreMessageBox
 ## (0x7c3f70) and then centres itself (0x798b70 at 0x7c5d3c, after 0x7c3f70 at 0x7c5c63) at its own
 ## final size. `screen_position` computes both.
 ##
-## OURS (not read): that a box is not modal; the deposit fee itself
-## (OpenSRO's warehouse charges nothing, so the box shows the original's
-## floor of 1 -- the original's fee is the item reference's +0xcc times the
-## count, 0x6b1002, a field not mapped to an itemdata column); an item
-## count typed below 1 is held to 1.
+## The deposit fee is the item reference's +0xcc times the count (0x6b1002,
+## READ), which round 728 takes from itemdata's KeepingFee, column 30
+## (INFERRED from the schema's name).
+##
+## OURS (not read): that a box is not modal; an item count typed below 1 is
+## held to 1.
 
 enum Kind { BUY, SELL, BUY_BACK, DEPOSIT, WITHDRAW, GOLD_DEPOSIT, GOLD_WITHDRAW }
 
@@ -483,7 +484,9 @@ func _on_count_typed(text: String) -> void:
 ## - buy: count x unit ("%I64d", CIFItemMallConfirmSlot 0x7c1a80);
 ## - sell: P = count x unit, less ftol(P x the tax rate) (CIFMessageBox
 ##   vslot_012 0x63d340 -> 0x63bd60 for purposes 1 and 2);
-## - deposit: max(1, the fee) (vslot_012 for purpose 5, 0x63d676..0x63d698);
+## - deposit: max(1, the fee x the count) (vslot_012 for purpose 5,
+##   0x63d676..0x63d698; the fee a unit is +0xcc, 0x6b1002);
+## - buy back: count x unit, the sell price (the fill's +0xb8, READ);
 ## - withdraw: the fill's "%d" 0.
 func price_text() -> String:
 	if fixed_price >= 0:
@@ -492,6 +495,8 @@ func price_text() -> String:
 		var p := unit_price * count
 		if kind == Kind.SELL:
 			p -= int(p * tax_rate)
+		elif kind == Kind.DEPOSIT:
+			p = maxi(1, p)
 		return str(p)
 	return ""
 

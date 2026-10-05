@@ -177,3 +177,94 @@ static func decode_list_result(data: PackedByteArray) -> ListResult:
 		offset = decoded[1]
 
 	return result
+
+# --- Buy back (round 728), mirroring server/internal/session/buyback.go ------
+
+const OP_BUYBACK_LIST := 0x0118         # client -> server: my buy-back row
+const OP_BUYBACK_LIST_RESULT := 0x0119  # server -> client
+const OP_BUYBACK := 0x011A              # client -> server: buy entry N back
+const OP_BUYBACK_RESULT := 0x011B       # server -> client
+
+## One buy-back entry: what was sold, how many, and the gold one unit costs.
+class BuybackEntry:
+	var item_id: int
+	var quantity: int
+	var unit: int
+
+class BuybackList:
+	var error: String
+	var entries: Array = []
+
+class BuybackResult:
+	var ok: bool
+	var reason: String
+	var gold_paid: int
+	var error: String
+
+static func _name_prefix(character_name: String) -> PackedByteArray:
+	var name_bytes := character_name.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, name_bytes.size())
+	out.append_array(name_bytes)
+	return out
+
+## The list request is a character name.
+static func encode_buyback_list(character_name: String) -> PackedByteArray:
+	return _name_prefix(character_name)
+
+## The buy request: a character name, then the entry's index as u32.
+static func encode_buyback(character_name: String, index: int) -> PackedByteArray:
+	var out := _name_prefix(character_name)
+	var b := PackedByteArray()
+	b.resize(4)
+	b.encode_u32(0, index)
+	out.append_array(b)
+	return out
+
+## The list: an error string; when empty, a u8 count and per entry
+## i64 item, u32 quantity, i64 unit price.
+static func decode_buyback_list(data: PackedByteArray) -> BuybackList:
+	var r := BuybackList.new()
+	if data.size() < 2:
+		r.error = "truncated"
+		return r
+	var elen := data.decode_u16(0)
+	if 2 + elen > data.size():
+		r.error = "truncated error"
+		return r
+	r.error = data.slice(2, 2 + elen).get_string_from_utf8()
+	if r.error != "":
+		return r
+	var off := 2 + elen
+	if off + 1 > data.size():
+		r.error = "truncated count"
+		return r
+	var n := data[off]
+	off += 1
+	for i in range(n):
+		if off + 20 > data.size():
+			r.error = "entry %d truncated" % i
+			return r
+		var e := BuybackEntry.new()
+		e.item_id = data.decode_s64(off)
+		e.quantity = data.decode_u32(off + 8)
+		e.unit = data.decode_s64(off + 12)
+		off += 20
+		r.entries.append(e)
+	return r
+
+static func decode_buyback_result(data: PackedByteArray) -> BuybackResult:
+	var r := BuybackResult.new()
+	if data.size() < 3:
+		r.error = "truncated"
+		return r
+	r.ok = data[0] != 0
+	var rlen := data.decode_u16(1)
+	if 3 + rlen > data.size():
+		r.error = "truncated reason"
+		return r
+	r.reason = data.slice(3, 3 + rlen).get_string_from_utf8()
+	if 3 + rlen + 8 <= data.size():
+		r.gold_paid = data.decode_s64(3 + rlen)
+	return r
