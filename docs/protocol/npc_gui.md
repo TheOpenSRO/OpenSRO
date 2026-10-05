@@ -353,7 +353,7 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 |---|---|---|
 | 1 | The talk window is self-framed from `if_npctalk.txt` alone. It lacks the `GDR_NPCWINDOW` registry frame (386x451, `mframe_wnd_`, caption, close), the `CIF_NPCTalk` 8-slice `npc_conversation_window_` frame at 11,48 and the scroll bar; the title floats | A |
 | 2 | The text is a RichTextLabel with menu links: underlined, all white, no green tax line, no beige or orange states | A |
-| 3 | The menu lines come from our own heuristics (`NpcServiceReader.talk_menu_lines`: "1. Buy / 2. End conversation."), not the interaction-id set. The store line is "Buy", not the shop group's own `SN_STORE_*` name. "Talk to this person" and "Withdrawing Skill" are missing | A (ids derived client-side for now, OURS), C (from `0xb045`) |
+| 3 | (Round 727: the menu now comes from the server's `0xb045` set, §8; id 10 OPEN.) The menu lines come from our own heuristics (`NpcServiceReader.talk_menu_lines`: "1. Buy / 2. End conversation."), not the interaction-id set. The store line is "Buy", not the shop group's own `SN_STORE_*` name. "Talk to this person" and "Withdrawing Skill" are missing | A (ids derived client-side for now, OURS), C (from `0xb045`) |
 | 4 | No tax line (needs the fortress name and rate from the server) | C (OPEN which message) |
 | 5 | The talk window stays open when the store or storage opens | A |
 | 6 | The store builds the non-renewal branch (`PANEL_DEFINES "store": []`): no buy-back row, the wrong height. The store is not in its `GDR_STORE` registry frame (254x370), so it has no frame and the title floats | A |
@@ -362,7 +362,7 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 | 9 | ~~Our confirm boxes are our own panels~~ Round 726: `StoreMessageBox` builds them from `ifmessagebox.txt`, `ifitemmallconfirmbuy.txt` and `ifitemmallconfirmslot.txt` | B (done) |
 | 10 | ~~Buy opens a box on click~~ Round 726: pick a good up and put it on the bag (ConfirmBuy), Ctrl+click buys with no box; sell by putting a bag item on the store, Ctrl+click sells with no box. The split box (Shift+click, MsgBoxDivideCount) is not built: OpenSRO's move has no count | B (split: C) |
 | 11 | Repair buttons: shown for smiths only in ours (`_show_repair_buttons`); retail's rule is OPEN | A (keep, labelled) |
-| 12 | Protocol: ours uses its own opcodes (`OpShopList 0x0052`/`0x0053`, OpShopBuy/Sell, OpStorage* `0x0056`-`0x005d`, our NPC talk is client-only). The original uses select `0x7045`/`0xb045` (with the interaction ids), open `0x7046`/`0xb046`, end `0x704b`/`0xb04b`, and moves items with the item-move request (`FUN_007950b0`, store window `0x0f` → inventory `0x46`) | C |
+| 12 | (Round 727: the select, open and end are now retail, §8; the item messages are lane 728's.) Protocol: ours uses its own opcodes (`OpShopList 0x0052`/`0x0053`, OpShopBuy/Sell, OpStorage* `0x0056`-`0x005d`, our NPC talk is client-only). The original uses select `0x7045`/`0xb045` (with the interaction ids), open `0x7046`/`0xb046`, end `0x704b`/`0xb04b`, and moves items with the item-move request (`FUN_007950b0`, store window `0x0f` → inventory `0x46`) | C |
 | 13 | Other windows built from layouts with `#ifdef`s use hand-picked defines (`HudChat.LAYOUT_DEFINES`, `PANEL_DEFINES`) instead of `config\define.txt` | A (store/NPC/message box now; global as a follow-up) |
 
 **After round 725** (`docs/rounds/r725.md`):
@@ -384,8 +384,10 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 1. Which message carries a fortress NPC's tax data (talk window `+0x800` fortress id, `+0x804` rate). The sell box takes the same rate off its price (0x63bd60, round 726 review): OpenSRO uses 0 until it arrives (`HudPanels.shop_tax_rate`).
 2. Which kinds the other six NPC-window closes in the click handler belong to (jump table of
    `FUN_007020c0`).
-3. What `0x7046 {e,2}` ("Talk to this person") shows.
-4. Whether closing the store or storage sends `0x704b`.
+3. What `0x7046 {e,2}` ("Talk to this person") shows: `ShowFirstTalkMenu`'s message is not read
+   (§8, round 727).
+4. ~~Whether closing the store or storage sends `0x704b`.~~ **Closed, READ** (round 727, §8:
+   `FUN_0079dbd0` with show = 0 reaches `0x78fc20`).
 5. The Repair buttons' visibility rule.
 6. The Escape order past its first entries (`FUN_0079d620`).
 7. Server side: which NPCs offer which interaction ids. Round 454 found the registration for ids 7, 8
@@ -399,8 +401,9 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
      - The receiving NPC being the quest's talk NPC is INFERRED from the shape of the call.
      - So the server lists id 2 in `0xb045` while the NPC is the talk target of a quest the player
        can take or continue. That is lane C's to send from the quest state.
-   - **Id 10's registrar is still OPEN** (withdrawing skill). No push of it was found next to a
-     `+0x164` load.
+   - **Round 727:** the server sends the set (§8). Id 2 comes from the quest census, and id 1 from
+     the NPC's own shop.
+   - **Id 10's registrar is still OPEN** (withdrawing skill). §8 lists what was ruled out.
 8. ~~Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills.~~ **Closed, READ**
    (round 725's review, §0: both use the map at `0xeed4e0`).
 9. ~~Which wording of the duplicated `textuisystem.txt` rows to show.~~ **Closed by a USER
@@ -409,6 +412,92 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 10. The title icon. The original draws one left of the Storage and Inventory titles (`MKtR5Kd.png`)
     but none on the store's (`3Gw7Ene.png`). `ginterface.txt` has no field for it, so its source in
     the code is unread and OpenSRO draws none.
+
+## 8. The retail NPC protocol (round 727)
+
+OpenSRO now runs the NPC select, open and end on the retail opcodes. The server's codecs are
+`server/internal/npctalk`, its handler `session/npctalk.go`, the client's `NpcTalkNet`
+(`client/scripts/net/npc_talk_net.gd`). Every byte below is READ, in both binaries.
+
+| opcode | direction | payload | read at |
+|---|---|---|---|
+| `0x7045` select | C→S | `u32 entity` | c:`0x78f5f0` (`0x78f6a3`) |
+| `0xb045` | S→C | `u8 1, u32 entity, u8 n, n × u8 id, [u16 if 0x1f], u8 npc, [u16 if 0x21]`; refusal `u8 2, u16 code` | s:`0x50faf0` → `PublishAvailableInteractions 0x4a95a0`; c:`0x88b200` (`0x88b400..0x88b6dc`) |
+| `0x7046` open | C→S | `u32 entity, u8 id` | c:`0x702316..0x702323`; s:`0x510250` |
+| `0xb046` | S→C | `u8 1, u8 id` (10 echoed as 2, `0x5104a8`; one more `u8` for 0xc, `0x5104fb`); refusal `u8 2, u16 code` | s:`0x510250` |
+| `0x704b` end | C→S | `u32 entity` | c:`0x78fc20`; s:`GObjPC::EndInteraction 0x5107c0` |
+| `0xb04b` | S→C | `u8 1`; refusal `u8 2, u16 0x1c0d` | s:`0x510763` |
+
+- **Refusal codes:**
+  - the select's: 3 (no target, or the requester busy; `0x50fd41`) and 4 (out of reach,
+    `IsWithinInteractionRange 0x4a8e10`, 300 for an NPC, 3-D);
+  - the open's: `0x1c0b` (`UIIT_MSG_INTERACTION_FAIL_IM_BUSY`, INTERACTMODE ≠ 0) and 5 (an id
+    the NPC does not offer);
+  - the end's: `0x1c0d` (nothing open).
+- **State:** the select sets the requester flag `+0x728`. The open sets INTERACTMODE (chardata+6):
+  5 for ids 2 and 10, none for 0x23, 6 otherwise. The end clears both.
+- **The NPC `u8`** is `FUN_00645790` with the siege manager. What the client uses it for is not
+  read (the fortress side the user deferred); OpenSRO sends 0 (OURS). The two `u16`s are 0 too:
+  OpenSRO has no siege structures (0x1f) or arena (0x21).
+- **The client's sends:** the click in reach (or a talk approach's arrival) sends `0x7045`, and
+  the talk window opens on the reply.
+  - A store line closes the talk window, sending `0x704b`, then sends `0x7046 {1}`.
+  - The warehouse line sends `0x7046 {3}`. The window's hide sends nothing while the open is in
+    flight (`0x841780`).
+  - The talk line sends `0x7046 {2}` and the window stays.
+  - The end line and the close button send `0x704b`.
+  - **The store's and storage's close send `0x704b` too (OPEN 4, closed):**
+    - `FUN_0079dbd0` with show = 0 reaches `0x78fc20`.
+- **OpenSRO's own opcodes `0x0050`–`0x005d`:**
+  - None is retired. Each one is a store or warehouse item message (list, buy, sell, deposit,
+    withdraw), lane 728's.
+  - The retail `0x7046` replaces only the "open", for which OpenSRO had no message.
+- **The gates** are placed by the client and have no server uid, so their set is built from their
+  teleportdata point (`NpcServiceReader.gate_ids`: 7 and 9 READ, 8 from the links, disclosed).
+  That is OURS: in the original the set comes in `0xb045`. With no server, an NPC's window
+  shows its greeting and the end line only.
+
+**Where each id comes from (the server's `npcspawn.Interactions`):**
+
+| id | source | status |
+|---|---|---|
+| 3, 4, 0x20, 0x0b, 0x0f, 0x1e, 0xc, 0xd, 0xe, 0x14-0x19, 0x1a, 0x1b, 0x1f, 0x23, 0x27, 0x29, 1 (keepers, guilds, fortress) | `CGObjNPCNPC::Create`'s strstr rules | READ (rounds 454-526) |
+| 0x21, 0x22, 0x28, 0x12 | the arena, siege-teleport and gacha codename tests | READ |
+| 1 (any shop) | the NPC init `0x4c7920` builds its store from the reference manager's shop map and adds 1 (`0x4c7996`) | READ; the map being refshopgroup's owner → group INFERRED |
+| 7, 9, 8 | the teleport point's columns and links (ref list `+0x90`) | 7/9 READ, 8 stands in from the links (disclosed, round 454) |
+| 2 | the quest classes: `FUN_00926ed0`/`FUN_00927040` walk each quest's mission-NPC block (`quest+0x310`) and push 2 on each named NPC; `CQSP_ALL_POTION_3`, `CQNO_WC_PRIEST3_1`, `CQNO_WC_SOLDIER_SO_1` push it directly. 89 codenames (`npcspawn/questtalk.go`) | the pushes READ; that every listed quest is in service INFERRED (OpenSRO loads no quest table) |
+| 10 | not found | OPEN, not offered |
+| 0x11 | registered from another map (`FUN_004ccb70`, refmgr `+0x110`), not from shops | round 727 corrected: shops no longer get 0x11 |
+
+- **What id 2 opens:** `0x7046 {2}` sets INTERACTMODE 5 and runs `CGObjPC::ShowFirstTalkMenu`
+  (vtable `+0x28c`), which walks the player's quests for the NPC.
+  - The message it sends is not read: the decompile is lost there. OpenSRO's quests are its own.
+  - So OpenSRO answers `{1, 2}`, the talk window stays, and nothing more comes (OPEN 3).
+  - The client's `0xb046` handler shows nothing for id 2 (READ).
+- **Id 10 (OPEN 7):** no registrar was found. These were ruled out:
+  - every `[vtable+0x164]` call in the server, with the pushes on both sides of the vtable load
+    (the census found no push of 10);
+  - `CGObjNPCNPC::Create`;
+  - the shop init `0x4c7920` (1, 0xc);
+  - the ref list `+0x90` (7, 9, 8);
+  - the three quest classes that push directly (2 only).
+
+  The open handler sends id 10 to the NPC's slot `0x144` with `0x12` (the withdrawal). OpenSRO has
+  no skill withdrawal, so no NPC offers it. The herbalist therefore shows three of the original's
+  four lines: Talk, Purchase/Sell, End.
+
+**The menu from the set** (`NpcServiceReader.services_from_ids`) follows `FUN_00700440`'s order
+exactly, each line with `FUN_006fcd60`'s token (§1's table). It adds three findings, each READ:
+
+- the academy lines after the storehouse line: `UIIT_STT_TC_OPEN` from level `0x3c` (`0x700b96`),
+  and `UIIT_STT_TC_HONOR_RANKING` always;
+- an NPC with no tab group writes no store line;
+- the last rows (0x11, 0x12, 0x23, 0xc, 0x27, 0x29).
+
+Two gates are not modelled, and both are labelled in the code:
+
+- the keeper's store gate `FUN_00989d20`, a string compare whose strings are not read;
+- the academy membership byte, taken as 0.
 
 ## Implementation lanes
 
