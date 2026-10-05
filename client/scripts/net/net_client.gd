@@ -51,6 +51,14 @@ var last_equipment_durabilities: Array = []
 ## The bag's size in slots from the most recent bag list or move reply (their
 ## trailing capacity, round 633); 0 until a server that sends it answers.
 var last_inventory_capacity: int = 0
+## Each equipment item's own data -- plus, variance, blue options, advanced
+## elixir -- from the most recent bag, equipment and warehouse lists (round
+## 732): slot -> ItemInstance, for the item tooltip. Empty against an older
+## server.
+var last_inventory_instances: Dictionary = {}
+var last_equipment_instances: Dictionary = {}
+var last_storage_instances: Dictionary = {}
+var _logged_instances: Dictionary = {}
 ## The bag after a move_item (the server's own list, not an assumption), or
 ## why the move was refused.
 signal inventory_move_result(slots: Array, error: String)
@@ -1019,12 +1027,14 @@ func _dispatch(p: Packet) -> void:
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities
+			last_inventory_instances = _note_instances("bag", r.instances)
 			if r.capacity > 0:
 				last_inventory_capacity = r.capacity
 			inventory_list_result.emit(r.slots, r.error)
 		InventoryNet.OP_MOVE_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities
+			last_inventory_instances = _note_instances("bag", r.instances)
 			if r.capacity > 0:
 				last_inventory_capacity = r.capacity
 			inventory_move_result.emit(r.slots, r.error)
@@ -1036,6 +1046,7 @@ func _dispatch(p: Packet) -> void:
 		EquipmentNet.OP_RESULT:
 			var r := EquipmentNet.decode_result(p.data)
 			last_equipment_durabilities = r.durabilities
+			last_equipment_instances = _note_instances("worn", r.instances)
 			equipment_result.emit(r.items, r.error)
 		EquipmentNet.OP_REPAIR_RESULT:
 			var rr := EquipmentNet.decode_repair_result(p.data)
@@ -1066,6 +1077,7 @@ func _dispatch(p: Packet) -> void:
 				composite_ended.emit(int(ended[0]), int(ended[1]))
 		StorageNet.OP_LIST_RESULT:
 			var r := StorageNet.decode_list_result(p.data)
+			last_storage_instances = _note_instances("warehouse", r.instances)
 			storage_list_result.emit(r.slots, r.error, r.capacity)
 		StorageNet.OP_DEPOSIT_RESULT:
 			var r := StorageNet.decode_move_result(p.data)
@@ -1382,8 +1394,32 @@ func _dispatch(p: Packet) -> void:
 			var r := RecallNet.decode_result(p.data)
 			if r != null:
 				recall_designate_result.emit(r)
+		ItemInstance.OP_MORE:
+			# The rest of a list's item instances (round 732 review F8).
+			if p.data.size() >= 1:
+				var more := ItemInstance.decode_block(p.data, 1)
+				match int(p.data[0]):
+					ItemInstance.CONTAINER_BAG:
+						last_inventory_instances.merge(_note_instances("bag", more), true)
+					ItemInstance.CONTAINER_WORN:
+						last_equipment_instances.merge(_note_instances("worn", more), true)
+					ItemInstance.CONTAINER_WAREHOUSE:
+						last_storage_instances.merge(_note_instances("warehouse", more), true)
 		_:
 			if _extra_handlers.has(p.opcode):
 				(_extra_handlers[p.opcode] as Callable).call(p.data)
 			elif _should_warn_unhandled(p.opcode):
 				push_warning("NetClient: unhandled opcode 0x%04x (warned once per connection)" % p.opcode)
+
+## Keeps a list's item instances and logs each one whose data changed since
+## it was last logged (round 732): the record, the variance groups and the
+## percentages, so a tester's log carries what the tooltip will show.
+func _note_instances(container: String, instances: Dictionary) -> Dictionary:
+	for at in instances:
+		var it: ItemInstance = instances[at]
+		var line := it.log_line(container)
+		var key := "%s/%d" % [container, at]
+		if _logged_instances.get(key, "") != line:
+			_logged_instances[key] = line
+			print(line)
+	return instances

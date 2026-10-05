@@ -80,7 +80,9 @@ func (m *MemStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 		m.worn[characterID] = make(map[Slot]Equipped)
 	}
 	// The instance moves with the item: same variance, same durability.
-	m.worn[characterID][slot] = Equipped{Slot: slot, ItemID: incoming.ItemID, Variance: incoming.Variance, Durability: incoming.Durability}
+	worn := Equipped{Slot: slot, ItemID: incoming.ItemID}
+	worn.SetInstance(incoming.Instance())
+	m.worn[characterID][slot] = worn
 	m.mu.Unlock()
 
 	if displaced >= 0 {

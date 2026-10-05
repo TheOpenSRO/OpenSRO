@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS equipment_slots (
 );
 ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS variance BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -1;
+ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS opt_level SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS mag_params BYTEA NOT NULL DEFAULT ''::bytea;
+ALTER TABLE equipment_slots ADD COLUMN IF NOT EXISTS adv_elixir SMALLINT NOT NULL DEFAULT 0;
 `
 
 // SQLStore is a Store backed by PostgreSQL. Depends on an inventory.Store
@@ -75,7 +78,7 @@ func validSlot(slot Slot) bool {
 // Get implements Store.
 func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT slot, item_id, variance, durability FROM equipment_slots WHERE character_id = $1`, characterID)
+		`SELECT slot, item_id, variance, durability, opt_level, mag_params, adv_elixir FROM equipment_slots WHERE character_id = $1`, characterID)
 	if err != nil {
 		return nil, fmt.Errorf("equipment: listing equipped items: %w", err)
 	}
@@ -86,11 +89,14 @@ func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, erro
 		var e Equipped
 		var slot int
 		var variance int64
-		if err := rows.Scan(&slot, &e.ItemID, &variance, &e.Durability); err != nil {
+		var opt, adv int
+		var params []byte
+		if err := rows.Scan(&slot, &e.ItemID, &variance, &e.Durability, &opt, &params, &adv); err != nil {
 			return nil, fmt.Errorf("equipment: scanning row: %w", err)
 		}
 		e.Slot = Slot(slot)
 		e.Variance = uint64(variance)
+		e.OptLevel, e.MagParams, e.AdvElixir = uint8(opt), inventory.DecodeMagParams(params), uint8(adv)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -160,9 +166,11 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	}
 
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO equipment_slots (character_id, slot, item_id, variance, durability) VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (character_id, slot) DO UPDATE SET item_id = excluded.item_id, variance = excluded.variance, durability = excluded.durability`,
-		characterID, int(slot), incoming.ItemID, int64(incoming.Variance), incoming.Durability); err != nil {
+		`INSERT INTO equipment_slots (character_id, slot, item_id, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (character_id, slot) DO UPDATE SET item_id = excluded.item_id, variance = excluded.variance, durability = excluded.durability,
+		   opt_level = excluded.opt_level, mag_params = excluded.mag_params, adv_elixir = excluded.adv_elixir`,
+		characterID, int(slot), incoming.ItemID, int64(incoming.Variance), incoming.Durability,
+		int(incoming.OptLevel), inventory.EncodeMagParams(incoming.MagParams), int(incoming.AdvElixir)); err != nil {
 		return fmt.Errorf("equipment: equipping item: %w", err)
 	}
 	return nil
@@ -175,10 +183,11 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 	}
 
 	var itemID, variance int64
-	var dura int
+	var dura, opt, adv int
+	var params []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT item_id, variance, durability FROM equipment_slots WHERE character_id = $1 AND slot = $2`,
-		characterID, int(slot)).Scan(&itemID, &variance, &dura)
+		`SELECT item_id, variance, durability, opt_level, mag_params, adv_elixir FROM equipment_slots WHERE character_id = $1 AND slot = $2`,
+		characterID, int(slot)).Scan(&itemID, &variance, &dura, &opt, &params, &adv)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
 	}
@@ -186,7 +195,8 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 		return fmt.Errorf("equipment: reading slot: %w", err)
 	}
 
-	if err := s.inv.AddItemInstance(ctx, characterID, itemID, 1, inventory.Instance{Variance: uint64(variance), Durability: dura}); err != nil {
+	if err := s.inv.AddItemInstance(ctx, characterID, itemID, 1, inventory.Instance{Variance: uint64(variance), Durability: dura,
+		OptLevel: uint8(opt), MagParams: inventory.DecodeMagParams(params), AdvElixir: uint8(adv)}); err != nil {
 		return fmt.Errorf("equipment: returning item to inventory: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx,

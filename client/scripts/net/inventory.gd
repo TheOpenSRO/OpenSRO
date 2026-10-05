@@ -39,6 +39,10 @@ class ListResult:
 	## The container's slot count, when the sender appended it (the
 	## warehouse list, and the bag's list and move reply); 0 means "not sent".
 	var capacity: int = 0
+	## Slot -> ItemInstance (round 732): each equipment item's own data, in
+	## the retail item record, from the block after the capacity. Empty
+	## against an older server.
+	var instances: Dictionary = {}
 
 ## Encodes an OpInventoryList request: just a character name (same shape
 ## as CharacterNet's create/delete name requests).
@@ -121,6 +125,7 @@ static func decode_list_result(data: PackedByteArray) -> ListResult:
 	# server, when it stays 0, and never read from an error reply.
 	if result.error == "" and result.bytes_read + 2 <= data.size():
 		result.capacity = data.decode_u16(result.bytes_read)
+		result.instances = ItemInstance.decode_block(data, result.bytes_read + 2)
 	return result
 
 ## Decodes the trailing durability block (u16 count, then per entry u32 slot,

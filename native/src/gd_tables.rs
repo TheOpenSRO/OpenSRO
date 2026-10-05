@@ -169,6 +169,7 @@ impl SrNativeTables {
                 d.set("code_names", &strings(&o.code_names));
                 d.set("item_names", &strings(&o.item_names));
                 d.set("name_strids", &strings(&o.name_strids));
+                d.set("desc_strids", &strings(&o.desc_strids));
                 d.set("icon_paths", &strings(&o.icon_paths));
                 d.set("drop_models", &strings(&o.drop_models));
                 d.set("models", &strings(&o.models));
@@ -190,6 +191,8 @@ impl SrNativeTables {
                 d.set("req_levels", &ints(o.req_levels));
                 d.set("attacks", &ints(o.attacks));
                 d.set("defences", &floats(o.defences));
+                d.set("ext_ints", &ints(o.ext_ints));
+                d.set("ext_floats", &floats(o.ext_floats));
                 d
             }
             Err(f) => fallback(f),

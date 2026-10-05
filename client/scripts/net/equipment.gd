@@ -43,6 +43,8 @@ class Result:
 	var durabilities: Array = []  # InventoryNet.Durability, from the trailing block
 	var error: String
 	var items: Array[Equipped] = []
+	## Worn slot -> ItemInstance (round 732), from the trailing block.
+	var instances: Dictionary = {}
 
 ## Encodes an OpEquipmentList request: just a character name.
 static func encode_list_request(character_name: String) -> PackedByteArray:
@@ -132,6 +134,11 @@ static func decode_result(data: PackedByteArray) -> Result:
 	# The same trailing per-slot durability block the inventory list carries
 	# (session/durability.go); empty against an older server.
 	result.durabilities = InventoryNet.decode_durability_block(data, offset)
+	# Then each worn equipment's own data in the retail item record (round
+	# 732, ItemInstance): after the durability block; absent from an older
+	# server.
+	if offset + 2 <= data.size():
+		result.instances = ItemInstance.decode_block(data, offset + 2 + 12 * result.durabilities.size())
 	return result
 
 ## Repair opcodes (session/repair.go). An NPC's repair buttons: restore a

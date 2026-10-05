@@ -94,7 +94,7 @@ func wornItemID(ctx context.Context, store Store, characterID int64, slot Slot) 
 // (first free, then moved), for a step that has to be undone.
 func putBack(ctx context.Context, inv inventory.Store, characterID int64, s inventory.Slot) {
 	before, _ := inv.List(ctx, characterID)
-	if err := inv.AddItemInstance(ctx, characterID, s.ItemID, 1, inventory.Instance{Variance: s.Variance, Durability: s.Durability}); err != nil {
+	if err := inv.AddItemInstance(ctx, characterID, s.ItemID, 1, s.Instance()); err != nil {
 		return
 	}
 	after, _ := inv.List(ctx, characterID)

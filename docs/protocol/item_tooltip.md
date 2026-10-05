@@ -19,12 +19,12 @@ counted), **INFERRED**, **OPEN**, **OURS**. Text keys are the stock English rows
 | Layout | `resinfo\ifhelpbubblewindow.txt`: `GDR_HELP:CIFTextBox` (ID 10, Color 255,74,16,238), `GDR_ITEMNAME_L` / `_R` (IDs 11/12, `interface\ifcommon\com_itemsign.ddj`, 12x12, tints 255,117,111,3 and 255,47,158,106), `GDR_ITEMNAME_DIA` (ID 13, `com_diamond.ddj`, 12x12) | MEASURED (layout) and READ (`0x496955..0x4969df` creates IDs 10-13) |
 | Frame | `interface\ifcommon\com_tooltip_corner.ddj` (8x8) and `com_tooltip_edge.ddj` (8x4), all eight border widths set to 8 (`+0x760..+0x79c = 8`) | READ (`0x496b0f..0x496bc4`) |
 | Frame colours | A1R5G5B5 texels, outside in: transparent, black `0x8000`, light blue (107,132,206), navy fill (25,33,66), two dark inner lines (0,8,33) and (8,16,49) | MEASURED (decoded texels) |
-| Window alpha | drawn with the byte at `+0x131` (`vslot_013` `0x496c00` → `0x49a7d0`); its value | OPEN |
+| Window alpha | drawn with the byte at `+0x131` (`vslot_013` `0x496c00` → `0x49a7d0`); 0.77–0.78 measured on three texels of `XjjJyA5.png`, drawn as 200/255 (round 731); the byte itself | MEASURED / OPEN |
 | Line height | 18 px when the box holds more than one line, 14 for one (`+0x374 = (lines != 1) * 4 + 14`) | READ (`0x496c90`) |
 | Size | width = the widest line (each line's `+0x50`); height = lines x line height; the 8-px frame outside | READ (`0x496c90`) |
 | Width hint | the item builders end with the textbox's slot `0x54(200, 1)` | READ (`0x685f20`); meaning (max width 200?) INFERRED |
 | Name icon | the name line is written with the indent flag, which shows the sign statics (`+0x7e0` / `+0x7e8` slot `0x5c`) and pads the line with spaces to the icon's width | READ (`0x776d20`) |
-| Placement on screen | | OPEN (not read this round) |
+| Placement on screen | right of the hovered slot, top aligned (one screenshot); text pen 8 px in, every glyph pixel with a black (+1,+1) shadow | MEASURED (round 731) |
 
 **Why ours is blurry at DPI 2.0 (INFERRED, not measured):** every OpenSRO item tooltip is Godot's
 built-in `Control.tooltip_text` (`hud_panels.gd` `_item_tooltip` / `_shop_tooltip`). Godot shows that
@@ -69,12 +69,12 @@ A blank entry has colour 0.
 | 4a | Armour position (armour only) | `"%s: %s"` `UIIT_STT_ARMOR_POSITION` + `_HEAD/_SHOULDER/_BREAST/_LEG/_HAND/_FOOT` by TypeID4 | beige | 1 | `0x6827c0` |
 | 5 | Degree | `UIIT_TOOLTIP_EQUIPMENT_CLASS` "Degree: %d degrees", degree = (ItemClass − 1) / 3 + 1, only when ItemClass ≠ 0 | beige | 1 | `0x66f0c0` (`0x66f13b..0x66f15b`) |
 | — | blank | | 0 | 1 | |
-| 6 | (optional) | `0x66f850`: a `"%s_%d"`-keyed line, then a blank | white | 1 | OPEN what it names |
+| 6 | Description (when it resolves) | `0x66f850`: the ref's column 6 key (`DescStrID128`, `+0x7c`) through the object text table, then a blank (round 731's review) | white | 1 | READ |
 | 7 | Stats | see the stat table below | white (durability: its own colour) | 1 | `0x66c5b0` |
 | 8 | Requirements | blank, then: `PARAM_REQ_LV` "Required level %d"; job grade (`UIIT_STT_CHAR_JOBGRADE` + `UIIT_STT_CLASS_*_%d`); guild level (`UIIT_STT_GUILD_REQUIRE_LEVEL`); mastery (`PARAM_MASTERY`: name `PARAM_MASTERY_LEVEL` %d); `PARAM_STR` / `PARAM_INT` %d; race `UIO_NEWCHAR_CTL_CHINESE` "Chinese" / `_EUROPEAN` "European" / `_ARABIAN`; gender `UIO_NEWCHAR_CTL_MALE` / `_FEMALE`; fortress use rules | white when met, **red `0xffff4a4a` when not** | 1 | `IFSlotWithHelp::0x67eec0` |
 | 9 | Max. no. of magic options | `"%s: %d%s"` `UIIT_STT_AVATAR_MAGICOPTION_MAXCOUNT` + count + `UIIT_STT_UNIT` "Unit" | beige | 1 | `0x66e030` |
 | 10 | Magic options (blue stats) | blank (except job suits), then one line per magic param through `0x670dd0` | cyan `0xff00eaff` | ? | `0x6780c0`; the per-option formats ("Steady(1Time/times)", "%s %d%% Increase"…) are in `0x670dd0`, OPEN |
-| 11 | Advanced elixir | `UIIT_STT_SOCKET_TIP_UPPER_REINFOREC_UNUSE` "Able to use Advanced elixir." when the count is 0, else `_USED` with the count | white | 3 for "used" | `UI_SOCKET::0x66fd60` |
+| 11 | Advanced elixir | `UIIT_STT_SOCKET_TIP_UPPER_REINFOREC_UNUSE` "Able to use Advanced elixir." when the count is 0, else `_USED` with the count | grey `0xffc8c8c8` unused, white used (round 731) | 3 | `UI_SOCKET::0x66fd60` |
 | 12 | Prices | store buy/sell, make price, GP, period, repair charge, market condition (`PARAM_STORE_PURCHASE_PRICE`, `UIIT_STT_PRICE`…) | white | 1 | `0x6784a0` |
 
 **The stat block, in order (READ, `0x66c5b0`).** Each line shows only when its value is non-zero.
@@ -102,7 +102,7 @@ A blank entry has colour 0.
 3. Normalise against the ref's [lower, upper] range: f = (base − lower) / (upper − lower), or 1.0 when the range is empty.
 4. The percentage is f × 100, truncated (`_ftol2`).
 
-Which of the two range ends feeds the shown value is OPEN (the decompile loses the argument).
+**Settled in round 732 (READ, the x87 code):** both ends are used — the percent is trunc((f_lo + f_hi) × 0.5 × 100) — and the plus bonus in step 2 is TRUNCATED, not rounded (the fistp runs with the rounding control set to chop). Single-value lines, the durability line (`trunc(q / 0.31)`, so 31 shows 99%), the stat builder and the blue-option percent are in `docs/rounds/r732.md`; the code is `client/scripts/items/item_quality.gd` and `server/internal/durability/quality.go`.
 
 The accessory lines our necklace lacks are Phy./Mag. absorption (`PARAM_PR` / `PARAM_MR`), plus
 anything else in the stat block that is non-zero, the requirements and race lines, and Max. no. of
@@ -122,9 +122,9 @@ magic options.
 - **Green `0xff6ce675`:** the set line. "Power" in the user's screenshot is that line (INFERRED: the item is a Nova seal item and Nova sets carry a set id).
 - **Cyan `0xff00eaff`:** the magic options ("Steady(1Time/times)", "Lucky(1Time/times)").
 - **Font:** the last argument is 3 for the name, the seal, the set and "Advanced elixir used", 1 for body lines and 2 for rent headings. That 3 is the bold face is INFERRED from the screenshot, where exactly those lines are bold.
-- **Blank lines:** entries with colour 0 are the group breaks. The original draws a horizontal rule at each (MEASURED in `XjjJyA5.png`); the drawing code is OPEN.
+- **Blank lines:** entries with colour 0 are the group breaks. **Corrected in round 731: there is no rule.** The full-width dark rows in `XjjJyA5.png` continue outside the bubble on both sides: they are the stall window behind it.
 
-**Order mismatch to settle (OPEN, user decision):** in this binary the seal and set lines come right
+**Order (settled: USER DECISION 2026-10-05, the binary's order; round 731 re-read `0x776d20` → `0x64f8a0`: lines append at the end, the font argument only selects the face — nothing re-orders):** was: in this binary the seal and set lines come right
 after the name (`0x66fa60` is called before "Sort of item"). In the user's screenshot, from the Esro
 client, they come after the requirements and "Max. no. of magic options". Either the font-3 lines go
 to a later section through a path not yet read, or the user's client differs from this vSRO build.
@@ -144,7 +144,7 @@ the user which to follow, as was done for party matching.
 
 ## 5. Gap list (OpenSRO today)
 
-1. **The window:** Godot's `tooltip_text`. It is blurry at DPI 2.0, uses the wrong font, a grey box, and has no frame, icon or rules.
+1. **The window:** Godot's `tooltip_text`. It is blurry at DPI 2.0, uses the wrong font, a grey box, and has no frame or icon. (Fixed in round 731.)
 2. **The text:** hard-coded English ("Phy. atk. pwr.", "China", "Man only") instead of the text table's keys ("Chinese", the gender keys). There is no degree line, no "(+x%)", no armour position, no requirement colours and no "Max. no. of magic options".
 3. **Missing stat lines:** absorption, parry, blocking and range-format lines are missing, so accessories show almost nothing (the user's necklace).
 4. **Colours:** the name is always white (no gold, pink or blue), and there are no seal, set or magic-option lines.
@@ -152,15 +152,17 @@ the user which to follow, as was done for party matching.
 
 ## OPEN
 
-1. The window alpha (`+0x131`) and the screen placement and clamping.
-2. The rule drawing for blank entries.
+1. The window alpha byte (`+0x131`) itself; the clamping (OURS).
+2. ~~The rule drawing~~: there is none (round 731).
 3. The seal and set order (see §3).
-4. `0x670dd0`'s per-option formats.
+4. `0x670dd0`'s per-option formats — the main ones read in round 732 (`MagicOptionTable.FORMATS`); the reinforce-timer, 3rd-job, avatar and Nasrun ones remain.
 5. The non-equipment builders.
-6. `0x66f850`'s line.
+6. ~~`0x66f850`'s line~~: the description, column 6 (round 731's review).
+10. **"Sort of item"'s source** (round 731's review): `FUN_00941240` tries a code-name map (`+0x6b8`, `FUN_009411d0`) then a TypeID & 0xfffe -> string map (`+0x6a8`, `FUN_0093acb0`); their writers are not read. OpenSRO's fmn join is INFERRED, and `XjjJyA5.png` reads "Twohand staff" (`UIIT_CTL_WNETWORK_EU_TSTAFF`) where the join gives "Staff".
+11. The job-grade requirement types 2/3/4, and `PARAM_STORE_PURCHASE_PRICE` (the store's offer for a bag item while a shop is open).
 7. What `0x8bd660` tests (the pink seal colour).
-8. Which range end the "(+x%)" uses.
-9. The retail item-instance wire layout for opt level, variance and magic params. Read it in lane B, from `docs/protocol/` records and the client's inventory parser.
+8. ~~Which range end the "(+x%)" uses.~~ Both, averaged (round 732).
+9. ~~The retail item-instance wire layout.~~ Read in round 732 and its review: u32 rent block (0, or bit 0/bit 1 branches, c:0x8bb130), u32 RefItemID, u8 OptLevel, u64 Variance, u32 Durability (the period word active<<31|seconds for TypeID3 14), u8 MagParamNum ≤ 12, N × u64 (low u16 id, high u32 value), two binding blocks, type 1 then type 2, each entry u8 nSlot and a u64 (low nOptID|nOptLvl<<16, high the value; gs:0x825a40). See `docs/rounds/r732.md` and `server/internal/session/iteminfo.go`.
 
 ## Implementation lanes
 
@@ -188,3 +190,11 @@ Acceptance:
 Acceptance: Go tests; a live check of an item with variance showing the "(+x%)" values.
 
 Lane A first. Lane B can run in parallel; A consumes B's fields when they land.
+
+## Round 731 (lane A) additions
+
+- "Sort of item" is taken from `fmntidgroupmapdata.txt` (TypeID1-4 -> group) joined to `fmncategorytreedata.txt`'s key by group (the join MEASURED 1:1; that the client uses it INFERRED, OPEN 10); the set name's key resolves in `textdata_equip&skill.txt` (listed by `textdataname.txt` with `textdata_object.txt`), SN_ITEM_11_SET_A_WEAPON = "Power".
+- The Int requirement line prints the Str requirement's value (READ, `0x67eec0`, PARAM_INT with ref `+0x1c8`); OpenSRO reproduces it.
+- Font arg 3 is the same face bold (same 9-row cap height, 2-px stems, MEASURED), not FontIndex 3.
+- Implementation and measurements: `docs/rounds/r731.md`.
+- Round 731's review fixes: armour/shield reinforce from columns 82-85 (single-value line when the weapon pair is zero); a store's goods print `"%s : %I64d%s"` (`UIIT_STT_PRICE`, `UIIT_STT_GOLD`, no blank before, `0x678cf2`); all four requirement pairs (level, masteries 0x101-0x114 / 0x201-0x206 as `"%s: %s %s %d"`) in one colour, white if any is met; the mastery names resolve in `textdata_equip&skill.txt`; "Max. no. of magic options" always.

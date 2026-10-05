@@ -25,6 +25,30 @@ What it refuses to do, and says so in the journal:
 
 Old image layers are pruned after each successful update so the disk does not fill over months.
 
+## Item instance columns (round 732)
+
+Round 732 stores each item's own plus, blue options and advanced elixir. The server adds the
+columns itself the first time it opens each table, so **the update needs no manual step**:
+
+```
+-- run by the server at boot, for inventory_slots, account_storage_slots and equipment_slots:
+ALTER TABLE <t> ADD COLUMN IF NOT EXISTS opt_level  SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE <t> ADD COLUMN IF NOT EXISTS mag_params BYTEA    NOT NULL DEFAULT ''::bytea;
+ALTER TABLE <t> ADD COLUMN IF NOT EXISTS adv_elixir SMALLINT NOT NULL DEFAULT 0;
+```
+
+Every existing item reads **+0, no options, no advanced elixir**; variance and durability are
+untouched. Re-running is a no-op. To check it took on opensro-01, after the update:
+
+```
+docker compose exec postgres psql -U postgres -d opensro -c '\d inventory_slots' | grep -E 'opt_level|mag_params|adv_elixir'
+docker compose exec postgres psql -U postgres -d opensro -c 'SELECT count(*) FROM inventory_slots WHERE opt_level <> 0'   # 0 right after
+```
+
+A backup first (`pg_dump`) is the usual precaution; rolling back to an older server leaves the
+columns in place, unread and harmless. GMs can set the values with `/give <id> [qty] [plus]` and
+`/item <bag slot> plus|var|quality|opt|adv|clear ...` (OpenSRO's own test hooks).
+
 ## Moving an install from srrevamp to OpenSRO (round 704)
 
 The project was called srrevamp until 2026-10-03. The rename changed every name a deployed

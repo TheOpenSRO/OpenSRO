@@ -181,11 +181,15 @@ func StorageHandler(chars character.Store, svc *storage.Service, trades *trade.H
 type StorageListResult struct {
 	InventoryListResult
 	Capacity int
+	// Infos is the trailing item-instance block (round 732, ItemInfo):
+	// after the capacity, so every older client stops before it.
+	Infos []ItemInfo
 }
 
 func (r *StorageListResult) Encode() []byte {
 	out := r.InventoryListResult.Encode()
-	return append(out, byte(r.Capacity), byte(r.Capacity>>8))
+	out = append(out, byte(r.Capacity), byte(r.Capacity>>8))
+	return encodeItemInfoBlock(out, fitItemInfos(len(out), r.Infos))
 }
 
 // DecodeStorageListResult reads the list and, when the sender was new enough
@@ -205,8 +209,22 @@ func DecodeStorageListResult(data []byte) (*StorageListResult, error) {
 	}
 	if off+2 <= len(data) {
 		res.Capacity = int(binary.LittleEndian.Uint16(data[off:]))
+		infos, err := decodeItemInfoBlock(data[off+2:])
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding StorageListResult: %w", err)
+		}
+		res.Infos = infos
 	}
 	return res, nil
+}
+
+// storageItems is the warehouse's item table for the instance block (the
+// service's fee lookup answers the same rows), nil when it has none.
+func storageItems(svc *storage.Service) ItemLookup {
+	if svc == nil || svc.Items == nil {
+		return nil
+	}
+	return svc.Items
 }
 
 func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, trades *trade.Hub) error {
@@ -236,8 +254,18 @@ func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	for i, sl := range slots {
 		snaps[i] = InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity}
 	}
-	result := &StorageListResult{InventoryListResult: InventoryListResult{Slots: snaps}, Capacity: capacity}
-	return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: result.Encode()})
+	result := &StorageListResult{InventoryListResult: InventoryListResult{Slots: snaps}, Capacity: capacity,
+		Infos: slotItemInfos(ctx, slots, storageItems(svc))}
+	rest := result.splitInfos()
+	if err := sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: result.Encode()}); err != nil {
+		return err
+	}
+	for _, data := range EncodeItemInfoMore(ItemInfoWarehouse, rest) {
+		if err := sess.Send(&proto.Packet{Opcode: OpItemInfoMore, Data: data}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, trades *trade.Hub, deposit bool) error {

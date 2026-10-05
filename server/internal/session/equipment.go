@@ -57,6 +57,9 @@ type EquipmentResult struct {
 	// Durabilities is the trailing per-slot durability block (see
 	// DurabilitySnapshot): additive, so an older client ignores it.
 	Durabilities []DurabilitySnapshot
+	// Infos is the trailing item-instance block (round 732, ItemInfo),
+	// after the durability block.
+	Infos []ItemInfo
 }
 
 func (r *EquipmentResult) Encode() []byte {
@@ -67,7 +70,11 @@ func (r *EquipmentResult) Encode() []byte {
 	for _, it := range r.Items {
 		out = append(out, it.Encode()...)
 	}
-	return encodeDurabilityBlock(out, r.Durabilities)
+	out = encodeDurabilityBlock(out, r.Durabilities)
+	if len(r.Infos) == 0 {
+		return out
+	}
+	return encodeItemInfoBlock(out, fitItemInfos(len(out), r.Infos))
 }
 
 func DecodeEquipmentResult(data []byte) (*EquipmentResult, error) {
@@ -91,6 +98,14 @@ func DecodeEquipmentResult(data []byte) (*EquipmentResult, error) {
 		result.Items = append(result.Items, *snap)
 	}
 	result.Durabilities = decodeDurabilityBlock(rest)
+	if skip := 2 + 12*len(result.Durabilities); len(rest) >= skip {
+		rest = rest[skip:]
+		infos, err := decodeItemInfoBlock(rest)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding EquipmentResult: %w", err)
+		}
+		result.Infos = infos
+	}
 	return result, nil
 }
 
@@ -341,7 +356,8 @@ func sendWornList(ctx context.Context, sess *gateway.Session, store equipment.St
 	for i, it := range worn {
 		snaps[i] = EquippedSnapshot{Slot: int(it.Slot), ItemID: it.ItemID}
 	}
-	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Items: snaps, Durabilities: equipmentDurabilities(ctx, worn, lookup)}).Encode()})
+	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Items: snaps, Durabilities: equipmentDurabilities(ctx, worn, lookup),
+		Infos: wornItemInfos(ctx, worn, lookup)}).Encode()})
 }
 
 func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {

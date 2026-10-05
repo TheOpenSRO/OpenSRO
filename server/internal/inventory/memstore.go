@@ -89,7 +89,9 @@ func (m *MemStore) List(ctx context.Context, characterID int64) ([]Slot, error) 
 		if _, err := initLegacy(ctx, m.durabilities, m.Rand, sl); err != nil {
 			return nil, err
 		}
-		out = append(out, *sl)
+		cp := *sl
+		cp.MagParams = cloneParams(sl.MagParams)
+		out = append(out, cp)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Index < out[j].Index })
 	return out, nil
@@ -127,6 +129,21 @@ func (m *MemStore) SetDurability(ctx context.Context, characterID int64, slot in
 		return ErrSlotEmpty
 	}
 	sl.Durability = durabilityLeft
+	return nil
+}
+
+// SetInstance implements Store.
+func (m *MemStore) SetInstance(ctx context.Context, characterID int64, slot int, inst Instance) error {
+	if slot < 0 || slot >= m.capacityFor(ctx, characterID) {
+		return ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sl := m.slots[characterID][slot]
+	if sl == nil {
+		return ErrSlotEmpty
+	}
+	sl.SetInstance(inst)
 	return nil
 }
 
@@ -174,7 +191,9 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 			continue
 		}
 		add := min(maxStack, remaining)
-		fresh = append(fresh, Slot{Index: index, ItemID: itemID, Quantity: add, Variance: inst.Variance, Durability: inst.Durability})
+		sl := Slot{Index: index, ItemID: itemID, Quantity: add}
+		sl.SetInstance(inst)
+		fresh = append(fresh, sl)
 		remaining -= add
 	}
 	if remaining > 0 {

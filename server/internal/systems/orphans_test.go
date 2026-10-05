@@ -43,6 +43,17 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 732: the tooltip's (+x%) and the instance stats, READ from the
+	// client (0x66c5b0, 0x8bd980); the Go mirror of
+	// client/scripts/items/item_quality.gd, which the tooltip calls. Server
+	// combat applying the plus is an OPEN follow-up (docs/rounds/r732.md).
+	"FloatStat":         "round 732: the client's fractional instance stat (c:0x8bd980), the GD mirror's test anchor; quality_test.go.",
+	"IntStat":           "round 732: the client's whole-number instance stat (c:0x8bdb75), the GD mirror's test anchor; quality_test.go.",
+	"QualityDurability": "round 732: the durability line's (+x%) (c:0x66d316), the GD mirror's test anchor; quality_test.go.",
+	"QualityRangeFloat": "round 732: a reinforce range line's (+x%) (c:0x66dc12), the GD mirror's test anchor; quality_test.go.",
+	"QualityRangeInt":   "round 732: an attack range line's (+x%) (c:0x66c5b0), the GD mirror's test anchor; quality_test.go.",
+	"QualitySingle":     "round 732: a one-value line's (+x%) (c:0x66cd4a), the GD mirror's test anchor; quality_test.go.",
+	"MagParamValue":     "round 732: a blue option's value half (c:0x8bcdf0); combat does not apply blue options yet (OPEN, docs/rounds/r732.md); tested.",
 	// Round 710: the party API published for the next party lanes (the round-709
 	// plan in docs/protocol/party_protocol.md, "Implementation lanes"). Each is
 	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.

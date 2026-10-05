@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
@@ -137,7 +138,7 @@ func TestMigrateToAccountsIsLosslessAndRunsOnce(t *testing.T) {
 		t.Fatalf("account warehouse has %d rows %+v, want %d", len(got), got, len(want))
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if !reflect.DeepEqual(got[i], want[i]) {
 			t.Errorf("row %d: got %+v, want %+v", i, got[i], want[i])
 		}
 	}
