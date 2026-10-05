@@ -289,7 +289,7 @@ keeps retail's per-object pause and per-frame dt and saves work three exact ways
   of range whose objects are already off is not even view-tested.
 - **A camera held still** re-tests nothing: every decision would come out as the last tick's.
 
-**TEXANI (READ; drawn since round 722 -- `TexAni`, docs/rounds/r722.md has the rate step, the step table at +0x90, the matrix's use in `vertexshader0texani.c` and the census).** `ModDataTexAni::vslot_004` (0xc5c5a0) reads the IModData
+**TEXANI (READ; drawn since round 722 -- `TexAni`, docs/rounds/r722.md has the rate step, the step table at +0x90, the matrix's use in `vss0.c`/`vss2.c` (TEXANI0 animates stage 0, TEXANI1 stage 1) and the census).** `ModDataTexAni::vslot_004` (0xc5c5a0) reads the IModData
 header (its four bytes are the start frame, the end frame and flags), then five words to
 +0x24..+0x34 (fps at +0x2c, rows at +0x30, columns at +0x34) and a 64-byte matrix. `CRTModTexAni`'s
 step (asm 0xc82640) accumulates dt and advances one frame per `1000.0 / fps` ms. Flag bit 0 loops

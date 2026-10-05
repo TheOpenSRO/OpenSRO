@@ -143,7 +143,7 @@ and an MTRL mod (`0x0`); `pha_gate` an MTRL.
 - **TEXANI is now drawn.** Hotan's water (material 3, `Oas_hot_potal_water`) scrolls v at 0.48/s;
   the fountain's water (material 6) grows its 2x2 matrix at (+0.02, +0.03, -0.02, +0.03)/s; the
   charge gate's (material 3) scrolls v at -0.7/s. The reading (CRTModTexAni's steps, the archive's
-  `vertexshader0texani.c`), the census (359 files) and the build are in docs/rounds/r722.md and
+  `vss0.c`/`vss2.c`; a mode-1 mod animates stage 1 and is not bound), the census (359 files) and the build are in docs/rounds/r722.md and
   BSR_FORMAT.md.
 - **The MTRL mods were already drawn.** Round 625's ambient-set path (`mtrl_mod_for`) blends them.
   Round 720's "not drawn" said otherwise and was wrong.
@@ -157,6 +157,15 @@ display values under Forward+ (`EfpEffect.display_shader`, a screen read; OURS m
 Donwhang's low glow (byte 41) tests hidden by its own platform floor (`W_CD_portal_04`) from the
 bridge, as the original's depth test would. Its visible light is the scene-drawn `w_cd_potal_blue`
 and the high glow (49). docs/rounds/r722.md has the measurements.
+
+**USER DECISION (2026-10-05):** keep the exact display-value blend for the gate effects, accepting
++1.5 ms a frame at 4K while a gate effect is on screen (Samarkand 4.70 -> 6.15 ms at 3840 x 2160;
+SAME at 1280 x 720).
+
+**Light Effect in the user's screenshots (settled by the user's answer, 2026-10-05, not READ):** the
+user's original client runs Light Effect off. With it off, glow entries draw as ordinary
+depth-tested particles (READ), which is why the bell hides Donwhang's high glow in their picture.
+This client does the same with Light Effect off.
 
 Across the whole archive (MEASURED, `dump_bsr_particles.gd --census` over 8,539 `.bsr`): 1,526
 files carry particle mods (11,600 entries), **1,300 of them an `ambient` set**; the rest are
