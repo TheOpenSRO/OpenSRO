@@ -69,6 +69,10 @@ signal repair_result(code: int, gold_spent: int, durabilities: Array)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
 signal shop_sell_result(ok: bool, reason: String, gold_received: int)
+## Round 728: the retail item operation's result (0xB034), ItemOpNet.decode_result.
+signal item_op_result(result: Dictionary)
+## Round 728: a buy back's failure (0xB168), the code.
+signal buyback_failed(code: int)
 ## capacity is the warehouse's slot count (0 from a server that did not send it).
 signal storage_list_result(slots: Array, error: String, capacity: int)
 signal storage_deposit_result(ok: bool, reason: String)
@@ -632,6 +636,23 @@ func list_shop(item_ids: Array = []) -> void:
 func sell_item(char_name: String, slot: int, quantity: int) -> void:
 	_send(ShopNet.OP_SELL, ShopNet.encode_sell(char_name, slot, quantity))
 
+## Round 728, the retail item operation (ItemOpNet): split count of bag slot
+## src into empty bag slot dst (0x7034 type 0).
+func split_item(src: int, dst: int, count: int) -> void:
+	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_split(src, dst, count))
+
+## Sells count of bag slot src to NPC npc (0x7034 type 9).
+func sell_item_retail(src: int, count: int, npc: int) -> void:
+	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_sell(src, count, npc))
+
+## Deposits bag slot src's whole stack into warehouse slot dst (0x7034 type 2).
+func deposit_retail(src: int, dst: int, npc: int) -> void:
+	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_deposit(src, dst, npc))
+
+## Buys entry index (0 = the oldest) of the buy-back list back (0x7168).
+func buyback_retail(npc: int, index: int) -> void:
+	_send(ItemOpNet.OP_BUYBACK, ItemOpNet.encode_buyback(npc, index))
+
 ## Uses one item from a bag slot (a potion). The reply carries the new HP/MP.
 func use_item(char_name: String, inventory_slot: int) -> void:
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot))
@@ -1028,6 +1049,11 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_SELL_RESULT:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
+		ItemOpNet.OP_MOVE_RESULT:
+			item_op_result.emit(ItemOpNet.decode_result(p.data))
+		ItemOpNet.OP_BUYBACK_FAIL:
+			var f := ItemOpNet.decode_result(p.data)
+			buyback_failed.emit(int(f.get("code", 0)))
 		UseItemNet.OP_RESULT:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
 		CompositeNet.OP_STATE:

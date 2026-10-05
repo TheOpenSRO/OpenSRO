@@ -364,7 +364,7 @@ func _canon_items(items: Dictionary) -> Dictionary:
 	var out := {}
 	for id in items:
 		var it: ItemTableReader.Item = items[id]
-		out[id] = [it.id, it.code_name, it.item_name, it.name_strid, it.max_stack, it.sell_price,
+		out[id] = [it.id, it.code_name, it.item_name, it.name_strid, it.max_stack, it.sell_price, it.keeping_fee,
 			it.icon_path, it.model_path, it.model_paths, it.drop_model_path, it.type_ids, it.country,
 			it.req_gender, it.req_level_types, it.req_levels, it.durability, it.phys_atk, it.mag_atk,
 			it.phys_reinforce, it.mag_reinforce, it.attack_rate, it.critical, it.attack_range,

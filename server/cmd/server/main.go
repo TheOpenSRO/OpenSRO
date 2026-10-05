@@ -1447,7 +1447,7 @@ func main() {
 		"perCharacter", bagSizes != nil)
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
-	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold, ChestSizes: chestSizes}
+	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold, ChestSizes: chestSizes, Items: refItems}
 	zerkTracker := berserk.NewTracker()
 	// The Energy of life scroll's grants (round 632 review, session/composite.go).
 	compositeKeeper := session.NewCompositeKeeper()
@@ -2056,6 +2056,9 @@ func main() {
 		session.ShopHandler(chars, shopSvc, trades),
 		session.RepairHandler(chars, eq, refItems, trades),
 		session.StorageHandler(chars, storageSvc, trades),
+		// Round 728: split, sell, deposit and the buy back on the retail
+		// 0x7034/0xB034 and 0x7168/0xB168 (session/itemop.go).
+		session.ItemOpHandler(session.ItemOpDeps{Hub: hub, Inv: inv, Shop: shopSvc, Storage: storageSvc, Trades: trades}),
 		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper),
 		session.CompositeHandler(chars, refItems, compositeKeeper, zerkTracker, gmGate, hub),
 		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, gpSkills, zerkTracker, manaTracker, parties, ground, dropSrc, potions),

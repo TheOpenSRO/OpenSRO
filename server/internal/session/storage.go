@@ -129,6 +129,11 @@ func DecodeStorageMoveRequest(data []byte) (*StorageMoveRequest, error) {
 	}, nil
 }
 
+// StorageNotEnoughGold is the deposit refusal when the fee (round 728) is more
+// than the character carries; the client shows UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD
+// (0x180f) for it.
+const StorageNotEnoughGold = "not enough gold"
+
 // StorageMoveResult is the deposit/withdraw result payload.
 type StorageMoveResult struct {
 	OK     bool
@@ -265,6 +270,11 @@ func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Pack
 			result.Reason = "nothing there"
 		case errors.Is(err, storage.ErrNothingToMove):
 			result.Reason = "quantity must be positive"
+		case errors.Is(err, character.ErrInsufficientGold):
+			// The deposit fee (round 728) is more than the purse holds: the
+			// engine's 0x180f UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD, which the
+			// client shows for this reason.
+			result.Reason = StorageNotEnoughGold
 		default:
 			result.Reason = "move failed"
 		}
