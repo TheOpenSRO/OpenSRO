@@ -158,11 +158,11 @@ func _init() -> void:
 		_check(sword.durability == 62 and sword.attack_rate == 24 and sword.critical == 3, "durability, rate, critical")
 		_check(sword.phys_reinforce == Vector2i(306, 342), "phys reinforce tenths (got %s)" % str(sword.phys_reinforce))
 		_check(sword.attack_range == 6, "column 94 is the sword's range 6 (got %d)" % sword.attack_range)
-		var lines := sword.tooltip_lines()
-		var joined := "\n".join(PackedStringArray(lines))
-		_check(joined.contains("Phy. atk. pwr. 15 ~ 16"), "tooltip shows physical attack (got: %s)" % joined)
-		_check(joined.contains("Mag. reinforce 51.9 % ~ 59.1 %"), "tooltip shows mag reinforce as a percent (got: %s)" % joined)
-		_check(joined.contains("Sort of item: Sword") and joined.contains("Required level 1"), "tooltip shows sort and required level")
+		# The tooltip's own lines are ItemTooltipLines' (round 731,
+		# item_tooltip_lines_test); here only the columns it reads.
+		_check(sword.critical_upper == 0 and sword.phys_atk_upper == Vector2i.ZERO and sword.plus_incs.size() == 8,
+			"round 731's columns parse on a short row (crit upper %d, atk upper %s, %d increments)" % [
+				sword.critical_upper, str(sword.phys_atk_upper), sword.plus_incs.size()])
 
 	# A bow's range is 180 (retail ITEM_CH_BOW_01_A_DEF, column 94); a row cut
 	# short before column 94 has no range at all, 0, not a neighbour's value.

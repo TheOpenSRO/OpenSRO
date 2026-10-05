@@ -743,8 +743,11 @@ const ITEM_COL_CRITICAL: usize = 116;
 const ITEM_DEFENCE_COLS: [usize; 6] = [65, 66, 76, 77, 74, 75];
 /// Round 731 (the item tooltip): the extra int columns, in the order `items` stores them --
 /// Rarity 15, ItemClass 61, SetID 62, durability upper 64, ReqStr 59, ReqInt 60,
-/// MaxMagicOptCount 158 (MEASURED against real rows, docs/protocol/item_tooltip.md).
-pub const ITEM_EXT_INT_COLS: [usize; 7] = [15, 61, 62, 64, 59, 60, 158];
+/// MaxMagicOptCount 158 (MEASURED against real rows, docs/protocol/item_tooltip.md); then the
+/// upper ends of the int ranges the "(+x%)" normalises against: phy. atk 96/98, mag. atk
+/// 101/103, phy. reinforce 106/108, mag. reinforce 110/112, attack rate 114, critical 117.
+pub const ITEM_EXT_INT_COLS: [usize; 17] =
+    [15, 61, 62, 64, 59, 60, 158, 96, 98, 101, 103, 106, 108, 110, 112, 114, 117];
 /// The extra float columns: parry (ER) 68/69, phy. absorption (PAR) 71/72, mag. absorption
 /// (MAR) 79/80, then the per-plus increments PD 67, ER 70, PAR 73, MD 78, MAR 81, phy. atk 99,
 /// mag. atk 104, attack rate 115.
@@ -784,7 +787,7 @@ pub struct Items {
     pub attacks: Vec<i64>,
     /// 6 a row: ITEM_DEFENCE_COLS' values.
     pub defences: Vec<f64>,
-    /// 7 a row: ITEM_EXT_INT_COLS' values (round 731).
+    /// 17 a row: ITEM_EXT_INT_COLS' values (round 731).
     pub ext_ints: Vec<i64>,
     /// 14 a row: ITEM_EXT_FLOAT_COLS' values (round 731).
     pub ext_floats: Vec<f64>,
@@ -1263,7 +1266,8 @@ mod tests {
         cols[71] = "17.4".into();
         cols[72] = "18".into();
         cols[158] = "9".into();
-        cols[2] = "ITEM_CH_CLOTHES_01".into();
+        cols[117] = "17".into();
+        cols[2] ="ITEM_CH_CLOTHES_01".into();
         cols[3] = " Cotton Suit ".into();
         cols[5] = "SN_ITEM_X".into();
         cols[9] = "1".into();
@@ -1307,7 +1311,8 @@ mod tests {
         // Round 731: rarity, item class, set id, durability upper, str, int, max magic options;
         // then parry, phy./mag. absorption and the eight per-plus increments.
         assert_eq!(&it.ext_ints[..7], &[2, 31, 0, 0, 0, 0, 9]);
-        assert_eq!(it.ext_ints.len(), 14);
+        assert_eq!(it.ext_ints[16], 17);
+        assert_eq!(it.ext_ints.len(), 34);
         assert_eq!(&it.ext_floats[..4], &[0.0, 0.0, 17.4, 18.0]);
         assert_eq!(it.ext_floats.len(), 28);
     }

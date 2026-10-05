@@ -149,20 +149,25 @@ const COL_MAX_MAGIC_OPTIONS := 158
 ## group; ITEM_FORMAT.md). Lane B's "(+x%)" subtracts them (item_tooltip.md §2).
 const PLUS_INC_COLS := [67, 70, 73, 78, 81, 99, 104, 115]
 enum { PLUS_INC_PD, PLUS_INC_ER, PLUS_INC_PAR, PLUS_INC_MD, PLUS_INC_MAR, PLUS_INC_PA, PLUS_INC_MA, PLUS_INC_HR }
+## The upper ends of the int ranges whose lower ends the reader already has
+## (phys_atk is (95, 97), each of its two ends a [lower, upper] pair whose
+## upper is 96 / 98): the "(+x%)" is 100 on an empty range (item_tooltip.md
+## §2), so a reference item's percentage needs them.
+const COL_PHYS_ATK_MIN_UPPER := 96
+const COL_PHYS_ATK_MAX_UPPER := 98
+const COL_MAG_ATK_MIN_UPPER := 101
+const COL_MAG_ATK_MAX_UPPER := 103
+const COL_PHYS_REINFORCE_MIN_UPPER := 106
+const COL_PHYS_REINFORCE_MAX_UPPER := 108
+const COL_MAG_REINFORCE_MIN_UPPER := 110
+const COL_MAG_REINFORCE_MAX_UPPER := 112
+const COL_ATTACK_RATE_UPPER := 114
+const COL_CRITICAL_UPPER := 117
 
 ## TypeID3 (the item family) values, index 2 of type_ids.
 const FAMILY_WEAPON := 6
 const CHINA_ARMOUR_FAMILIES := [1, 2, 3]
 const EUROPE_ARMOUR_FAMILIES := [9, 10, 11]
-## Weapon TypeID4 -> the "Sort of item" name the original prints, for the
-## China kinds (the only bodies this project draws). ITEM_FORMAT.md's
-## switch has the rest.
-const WEAPON_SORT := {
-	2: "Sword", 3: "Blade", 4: "Spear", 5: "Glaive", 6: "Bow",
-	7: "Sword", 8: "Two-handed Sword", 9: "Axe", 10: "Dark Staff",
-	11: "Two-handed Staff", 12: "Crossbow", 13: "Dagger", 14: "Harp", 15: "Staff",
-}
-
 const REQ_LEVEL_PAIRS := 4
 
 class Item:
@@ -243,6 +248,13 @@ class Item:
 	var mag_absorb := Vector2.ZERO
 	## PLUS_INC_COLS' values, PLUS_INC_* order.
 	var plus_incs: PackedFloat32Array = PackedFloat32Array()
+	## The upper ends (COL_*_UPPER): each Vector2i is (min's upper, max's upper).
+	var phys_atk_upper := Vector2i.ZERO
+	var mag_atk_upper := Vector2i.ZERO
+	var phys_reinforce_upper := Vector2i.ZERO
+	var mag_reinforce_upper := Vector2i.ZERO
+	var attack_rate_upper: int = 0
+	var critical_upper: int = 0
 
 	func is_equipment() -> bool:
 		return model_path != ""
@@ -260,10 +272,6 @@ class Item:
 	## decides whether the tooltip shows a defence block.
 	func has_defence() -> bool:
 		return phys_def != Vector2.ZERO or mag_def != Vector2.ZERO
-
-	## Formats a defence float without a trailing ".0" (2.0 -> "2", 2.5 -> "2.5").
-	static func _fmt(value: float) -> String:
-		return ("%.1f" % value).trim_suffix(".0")
 
 	## The real English display name: the name string id (column 5) resolved
 	## through textdata_object.txt -- and ONLY that table: the 9,315 `SN_ITEM_`
@@ -304,44 +312,6 @@ class Item:
 			if (code >= 0x41 and code <= 0x5a) or (code >= 0x61 and code <= 0x7a):
 				has_letter = true
 		return has_letter
-
-	## The lines a hover tooltip shows, top to bottom -- the item's own real
-	## figures, none invented. A weapon shows its attack block; every
-	## equippable shows durability, requirement, race and gender. The attack
-	## distance is parsed (attack_range, which the approach walk uses) but no
-	## line here prints it yet.
-	func tooltip_lines(names: UiTextTable = null) -> Array:
-		var lines: Array = [display_name(names)]
-		var type_id4: int = type_ids[3] if type_ids.size() > 3 else 0
-		var sort: String = str(WEAPON_SORT.get(type_id4, "")) if is_weapon() else ""
-		if sort != "":
-			lines.append("Sort of item: %s" % sort)
-		lines.append("")
-		if is_weapon():
-			lines.append("Phy. atk. pwr. %d ~ %d" % [phys_atk.x, phys_atk.y])
-			lines.append("Mag. atk. pwr. %d ~ %d" % [mag_atk.x, mag_atk.y])
-		elif has_defence():
-			lines.append("Phy. def. pwr. %s ~ %s" % [_fmt(phys_def.x), _fmt(phys_def.y)])
-			lines.append("Mag. def. pwr. %s ~ %s" % [_fmt(mag_def.x), _fmt(mag_def.y)])
-			if block != Vector2.ZERO:
-				lines.append("Block ratio %s ~ %s" % [_fmt(block.x), _fmt(block.y)])
-		if durability > 0:
-			lines.append("Durability %d / %d" % [durability, durability])
-		if is_weapon():
-			lines.append("Attack rate %d" % attack_rate)
-			lines.append("Critical %d" % critical)
-			lines.append("Phy. reinforce %.1f %% ~ %.1f %%" % [phys_reinforce.x / 10.0, phys_reinforce.y / 10.0])
-			lines.append("Mag. reinforce %.1f %% ~ %.1f %%" % [mag_reinforce.x / 10.0, mag_reinforce.y / 10.0])
-		lines.append("")
-		var level := required_character_level()
-		if level > 0:
-			lines.append("Required level %d" % level)
-		lines.append("China" if country == 0 else "Europe")
-		if req_gender == REQ_GENDER_MAN:
-			lines.append("Man only")
-		elif req_gender == REQ_GENDER_WOMAN:
-			lines.append("Woman only")
-		return lines
 
 	## The character level the item asks for, or 0 when it asks by
 	## something other than character level (or nothing at all).
@@ -423,6 +393,12 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.mag_absorb = Vector2(_float_at(cols, COL_MAG_ABSORB_MIN), _float_at(cols, COL_MAG_ABSORB_MAX))
 		for col in PLUS_INC_COLS:
 			item.plus_incs.append(_float_at(cols, col))
+		item.phys_atk_upper = Vector2i(_int_at(cols, COL_PHYS_ATK_MIN_UPPER), _int_at(cols, COL_PHYS_ATK_MAX_UPPER))
+		item.mag_atk_upper = Vector2i(_int_at(cols, COL_MAG_ATK_MIN_UPPER), _int_at(cols, COL_MAG_ATK_MAX_UPPER))
+		item.phys_reinforce_upper = Vector2i(_int_at(cols, COL_PHYS_REINFORCE_MIN_UPPER), _int_at(cols, COL_PHYS_REINFORCE_MAX_UPPER))
+		item.mag_reinforce_upper = Vector2i(_int_at(cols, COL_MAG_REINFORCE_MIN_UPPER), _int_at(cols, COL_MAG_REINFORCE_MAX_UPPER))
+		item.attack_rate_upper = _int_at(cols, COL_ATTACK_RATE_UPPER)
+		item.critical_upper = _int_at(cols, COL_CRITICAL_UPPER)
 		# A row with neither a name nor an icon tells the player nothing.
 		if item.item_name == "" and item.icon_path == "":
 			continue
@@ -512,8 +488,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.phys_def = Vector2(defences[d], defences[d + 1])
 		item.mag_def = Vector2(defences[d + 2], defences[d + 3])
 		item.block = Vector2(defences[d + 4], defences[d + 5])
-		var e := i * 7
-		if e + 6 < ext_ints.size():
+		var e := i * 17
+		if e + 16 < ext_ints.size():
 			item.rarity = ext_ints[e]
 			item.item_class = ext_ints[e + 1]
 			item.set_id = ext_ints[e + 2]
@@ -521,6 +497,12 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 			item.req_str = ext_ints[e + 4]
 			item.req_int = ext_ints[e + 5]
 			item.max_magic_options = ext_ints[e + 6]
+			item.phys_atk_upper = Vector2i(ext_ints[e + 7], ext_ints[e + 8])
+			item.mag_atk_upper = Vector2i(ext_ints[e + 9], ext_ints[e + 10])
+			item.phys_reinforce_upper = Vector2i(ext_ints[e + 11], ext_ints[e + 12])
+			item.mag_reinforce_upper = Vector2i(ext_ints[e + 13], ext_ints[e + 14])
+			item.attack_rate_upper = ext_ints[e + 15]
+			item.critical_upper = ext_ints[e + 16]
 		var f := i * 14
 		if f + 13 < ext_floats.size():
 			item.parry = Vector2(ext_floats[f], ext_floats[f + 1])

@@ -11755,6 +11755,10 @@ func _update_blob_shadow() -> void:
 ##                          QA run starts past Boot, which applies the saved
 ##                          one); `ViewportPixels:` lines say what the 3D
 ##                          previews then render at
+##   OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..." (round 731)
+##                          those items' tooltips side by side at tick 45,
+##                          each logged as `QA ITEM_TIP`
+##                          (HudPanels.qa_show_item_tips)
 ##   OPENSRO_QA_DXT1_KEEP=1 keep every DXT1 as DXT1 under Forward+ (round
 ##                          695's before: transparent texels drawn opaque)
 ##   OPENSRO_QA_BODY="<ref_obj_id>[:<scale>]"  the player's model and scale
@@ -12479,6 +12483,12 @@ func _qa_step() -> void:
 				print("QA TALK_PICK closed the NPC windows at tick %d" % _qa_tick)
 				continue
 			print("QA TALK_PICK line %s at tick %d: %s" % [parts[0], _qa_tick, str(_hud_panels.qa_press_talk_line(int(parts[0])))])
+
+	# OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..." (round 731) shows
+	# those items' tooltips side by side for a render, each line logged
+	# ("QA ITEM_TIP"); `where` is a HudPanels site ("bag", "store", ...).
+	if OS.get_environment("OPENSRO_QA_ITEM_TIP") != "" and _qa_tick == 45 and _hud_panels != null:
+		_hud_panels.qa_show_item_tips(OS.get_environment("OPENSRO_QA_ITEM_TIP"))
 
 	# OPENSRO_QA_SHOP="<NPC_CODE>" opens that NPC's store window for a render,
 	# standing in for talk -> Buy. Shows the real goods grid + tabs.
