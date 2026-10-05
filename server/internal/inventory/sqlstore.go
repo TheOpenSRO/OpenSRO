@@ -40,13 +40,19 @@ CREATE TABLE IF NOT EXISTS %[1]s (
 );
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS variance BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -1;
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS opt_level SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS mag_params BYTEA NOT NULL DEFAULT ''::bytea;
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS adv_elixir SMALLINT NOT NULL DEFAULT 0;
 `, table, owner)
 }
 
 // The per-instance columns. `variance` is the 64-bit white-stat field
 // (twelve 5-bit groups; it never uses the sign bit); `durability` is the
 // current points, -1 (durability.Untracked) for a row written before this
-// existed -- initialised on first read, never read as broken.
+// existed -- initialised on first read, never read as broken. Round 732
+// added `opt_level` (the plus), `mag_params` (the blue options, 8
+// little-endian bytes each, EncodeMagParams) and `adv_elixir` (the
+// advanced-elixir plus); a row from before them reads +0 with none.
 
 // SQLStore is a Store backed by PostgreSQL, consistent with
 // account/character/refdata's approach. Needs a MaxStackLookup (in
@@ -182,7 +188,7 @@ func (s *SQLStore) Close() error {
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
 	rows, err := s.db.QueryContext(ctx,
-		s.q(`SELECT slot, item_id, quantity, variance, durability FROM %s WHERE character_id = $1 ORDER BY slot`),
+		s.q(`SELECT slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: listing slots: %w", err)
@@ -193,10 +199,13 @@ func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) 
 	for rows.Next() {
 		var sl Slot
 		var variance int64
-		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &variance, &sl.Durability); err != nil {
+		var opt, adv int
+		var params []byte
+		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &variance, &sl.Durability, &opt, &params, &adv); err != nil {
 			return nil, fmt.Errorf("inventory: scanning slot: %w", err)
 		}
 		sl.Variance = uint64(variance)
+		sl.OptLevel, sl.MagParams, sl.AdvElixir = uint8(opt), DecodeMagParams(params), uint8(adv)
 		changed, err := initLegacy(ctx, s.durabilities, s.Rand, &sl)
 		if err != nil {
 			return nil, err
@@ -258,6 +267,23 @@ func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot in
 	return nil
 }
 
+// SetInstance implements Store.
+func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot int, inst Instance) error {
+	if slot < 0 || slot >= s.capacityFor(ctx, characterID) {
+		return ErrInvalidSlot
+	}
+	res, err := s.db.ExecContext(ctx,
+		s.q(`UPDATE %s SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5 WHERE character_id = $6 AND slot = $7`),
+		int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), characterID, slot)
+	if err != nil {
+		return fmt.Errorf("inventory: setting the instance of slot %d: %w", slot, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrSlotEmpty
+	}
+	return nil
+}
+
 func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quantity int, inst Instance) error {
 	maxStack, err := s.maxStacks.GetMaxStack(ctx, itemID)
 	if err != nil {
@@ -312,8 +338,8 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 
 		add := min(maxStack, remaining)
 		if _, err := tx.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`),
-			characterID, slotIdx, itemID, add, int64(inst.Variance), inst.Durability); err != nil {
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
+			characterID, slotIdx, itemID, add, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir)); err != nil {
 			return fmt.Errorf("inventory: inserting into slot %d: %w", slotIdx, err)
 		}
 		remaining -= add
@@ -395,11 +421,14 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		qty        int
 		variance   int64
 		durability int
+		optLevel   int
+		magParams  []byte
+		advElixir  int
 	}
 	readSlot := func(slot int) (r row, found bool, err error) {
 		err = tx.QueryRowContext(ctx,
-			s.q(`SELECT item_id, quantity, variance, durability FROM %s WHERE character_id = $1 AND slot = $2`),
-			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability)
+			s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 AND slot = $2`),
+			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability, &r.optLevel, &r.magParams, &r.advElixir)
 		if err == sql.ErrNoRows {
 			return row{}, false, nil
 		}
@@ -464,8 +493,9 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6), ($1, $7, $8, $9, $10, $11)`),
-			characterID, to, srcItem, srcQty, src.variance, src.durability, from, dstItem, dstQty, dst.variance, dst.durability); err != nil {
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9), ($1, $10, $11, $12, $13, $14, $15, $16, $17)`),
+			characterID, to, srcItem, srcQty, src.variance, src.durability, src.optLevel, src.magParams, src.advElixir,
+			from, dstItem, dstQty, dst.variance, dst.durability, dst.optLevel, dst.magParams, dst.advElixir); err != nil {
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 	}

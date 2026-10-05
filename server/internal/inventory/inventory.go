@@ -209,17 +209,110 @@ type Slot struct {
 	// (-1) for an item that has none or was created before this existed,
 	// 0 when broken, otherwise the points left of its max.
 	Durability int
+	// OptLevel, MagParams and AdvElixir are the rest of the instance (round
+	// 732; see Instance).
+	OptLevel  uint8
+	MagParams []uint64
+	AdvElixir uint8
 }
 
 // Instance is what makes one item different from another of the same id:
 // the fields a transfer between containers must carry along unchanged.
+//
+// Round 732 added the rest of the retail item instance (docs/protocol/
+// item_tooltip.md "The item instance on the wire"), each READ from the
+// client's item parser SOItem::FUN_008be4f0 and the server's item record:
+//   - OptLevel: the plus (+N), the record's OptLevel, the u8 the parser reads
+//     into the item at +0x8c;
+//   - MagParams: the blue options, at most 12 (MAX_MAGPARAM_PER_ITEM,
+//     c:0x8bcdf0; "Item's MagParamNum(%d) is out of range", gs:0x459d30),
+//     each a packed u64 -- low u16 the magicoption.txt id, high u32 the
+//     value (c:0x8bcdf0; gs Item_DecodeMagicOption 0x4904f2);
+//   - AdvElixir: the advanced-elixir plus, the binding-option block of type
+//     2 the parser adds onto the plus (c:0x8bb070).
 type Instance struct {
 	Variance   uint64
 	Durability int
+	OptLevel   uint8
+	MagParams  []uint64
+	AdvElixir  uint8
 }
 
+// MaxMagParams is the cap on an item's blue options (READ: c:0x8bcdf0's
+// "m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM" against 0xc).
+const MaxMagParams = 12
+
 // Instance returns the slot's per-instance fields.
-func (s Slot) Instance() Instance { return Instance{Variance: s.Variance, Durability: s.Durability} }
+func (s Slot) Instance() Instance {
+	return Instance{Variance: s.Variance, Durability: s.Durability, OptLevel: s.OptLevel,
+		MagParams: cloneParams(s.MagParams), AdvElixir: s.AdvElixir}
+}
+
+// Equal reports whether two instances are the same in every field.
+func (i Instance) Equal(o Instance) bool {
+	if i.Variance != o.Variance || i.Durability != o.Durability || i.OptLevel != o.OptLevel ||
+		i.AdvElixir != o.AdvElixir || len(i.MagParams) != len(o.MagParams) {
+		return false
+	}
+	for k := range i.MagParams {
+		if i.MagParams[k] != o.MagParams[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// SetInstance writes inst's fields onto the slot.
+func (s *Slot) SetInstance(inst Instance) {
+	s.Variance, s.Durability = inst.Variance, inst.Durability
+	s.OptLevel, s.MagParams, s.AdvElixir = inst.OptLevel, cloneParams(inst.MagParams), inst.AdvElixir
+}
+
+func cloneParams(p []uint64) []uint64 {
+	if len(p) == 0 {
+		return nil
+	}
+	return append([]uint64(nil), p...)
+}
+
+// MagParam packs one blue option as the wire and the record carry it: the
+// low u16 the magicoption.txt id, the high u32 the value (READ, c:0x8bcdf0:
+// `uVar2 & 0xffff` names the option, the high dword is its value). Bits
+// 16..31 of the low dword are not used by OpenSRO (OPEN, gs 0x4904f2 hands
+// them back separately).
+func MagParam(optionID uint16, value uint32) uint64 {
+	return uint64(value)<<32 | uint64(optionID)
+}
+
+// MagParamOption and MagParamValue split a packed option.
+func MagParamOption(p uint64) uint16 { return uint16(p) }
+func MagParamValue(p uint64) uint32  { return uint32(p >> 32) }
+
+// EncodeMagParams packs the options for a BYTEA column: 8 little-endian
+// bytes each. DecodeMagParams reverses it, dropping a trailing partial entry
+// and anything past MaxMagParams.
+func EncodeMagParams(p []uint64) []byte {
+	out := make([]byte, 0, 8*len(p))
+	for _, v := range p {
+		for i := 0; i < 8; i++ {
+			out = append(out, byte(v>>(8*i)))
+		}
+	}
+	return out
+}
+
+func DecodeMagParams(b []byte) []uint64 {
+	var out []uint64
+	for len(b) >= 8 && len(out) < MaxMagParams {
+		var v uint64
+		for i := 0; i < 8; i++ {
+			v |= uint64(b[i]) << (8 * i)
+		}
+		out = append(out, v)
+		b = b[8:]
+	}
+	return out
+}
 
 // DurabilityLookup answers, for an item id, the reference row's durability
 // range (itemdata columns 63/64, Dur_L/Dur_U). ok is false for an item that
@@ -286,6 +379,12 @@ type Store interface {
 	// a break). It does not clamp or refuse -- durability.Apply decides the
 	// value, this stores it. ErrSlotEmpty when nothing is there.
 	SetDurability(ctx context.Context, characterID int64, slot int, durability int) error
+
+	// SetInstance writes one slot's whole instance: variance, durability,
+	// plus, blue options and advanced elixir (round 732; the GM tools set
+	// a test item's plus and options through it). ErrSlotEmpty when nothing
+	// is there.
+	SetInstance(ctx context.Context, characterID int64, slot int, inst Instance) error
 
 	// Capacity is this container's slot count: how many indices AddItem may
 	// use and List may report. The bag's is SlotsPerCharacter; the warehouse
