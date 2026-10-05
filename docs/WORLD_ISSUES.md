@@ -7094,6 +7094,390 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-twenty-first round: the Alexandria gate portals' rings spin about one centre -- map objects bind to the `.bsk`'s stored inverse binds where those are only a root shift
+
+The user (2026-10-04): "Alexandria North and South gate teleporters are slightly broken. The rings
+don't spin around the same axis it seems." Their screenshot of our client
+(`/root/opensro-handoff/teleport_refs/alex_OyBVAZa.png`, native Linux build) shows the two inner
+rings' centre offset from the outer ring's.
+
+Labels: READ (the client decompile and asm on the render box), MEASURED, INFERRED, OURS, OPEN.
+
+### The object
+
+Both gates draw `res\bldg\north africa\alexandria\alex_portal.bsr` (Data.pk2):
+- **Skeleton:** `alex_portal.bsk`, 9 bones.
+- **Clip:** `alex_portal.ban`, the `default` type-0 entry.
+- **Ring pieces:** six skinned pieces, each on one bone. `Alex_Portal_ani01_01/02` → Bone03,
+  `ani02_01/02` → Bone01, `ani03` → Bone05, `ani04` → Bone07.
+- **Base:** eight still pieces, centred at x ≈ 0.
+
+It animates through `MapAnimation` (round 645).
+
+### Cause (MEASURED, `client/tools/probe_map_anim_pose.gd`, extended this round)
+
+**Root rest against the clip's root key.**
+- The `.bsk` root stores a local translation of **(19.754, 0, 0)**.
+- The clip keys the root at **(0, 0, 0)**.
+- Every child's stored bind puts the root at the origin (`census_bsk_bind.gd`: "stored root local
+  (19.75354, …), children imply (-0, 0, 0)").
+
+**The bind.** `Skeleton3DBuilder.build_skin` bound each piece to the inverse of the rest composed
+from the locals, which includes the 19.75. At the clip's first key the root sits at 0, so:
+
+| piece | still centre | posed centre, t = 0 (before) |
+|---|---|---|
+| `ani01_01` (outer ring, Bone03) | (0.00, 169.14, -0.01) | (-19.76, 169.14, -0.01) |
+| `ani02_01` (Bone01) | (0.14, 169.02, 0.22) | (-19.62, 169.02, 0.22) |
+| `ani03` (Bone05) | (-0.04, 169.03, 0.05) | (-19.79, 169.03, 0.05) |
+| `ani04` (Bone07) | (0.00, 169.07, 0.04) | (-19.75, 169.07, 0.04) |
+
+**The spin.** Every ring was drawn 19.75 off its mesh and off the base, and each spun about its
+bone, whose pose is at x ≈ 0:
+- The outer ring spins about an axis along x, so its centre stayed at -19.76.
+- The inner rings orbited the bone at radius 19.75. `ani02_01`'s centre went (-19.62, 0.22) at
+  0 s, (-11.60, -15.69) at 1 s, (5.99, -18.55) at 2 s and (15.92, 11.59) at 4 s.
+
+That is the screenshot.
+
+### What the client does (READ)
+
+`BSK_FORMAT.md`, "How the client skins with those three matrices" (round 648), and re-read this
+round:
+- **The bone update** is `RTSkeleton::FUN_00c49f20` (and `FUN_00c4bcb0` for the first bone).
+- **A bone's local** comes from the blended keys when a track touched it (`+0x98` ≠ 0), otherwise
+  from the prim's stored local.
+- **The world matrix** is `W = L x W_parent`.
+- **The palette** is `P = InvBind_file x W`, where the inverse bind is the prim's third matrix, read
+  from the record's **third** (quaternion, vector) pair. It is never recomputed.
+- **The skeleton scale.** For the first bone, `FUN_00c4bcb0` multiplies the 3x3 by a scale when it
+  is not 1.0 (`param_3`, from skeleton `+0xa4`). On map objects it is **1.0** (READ, the review:
+  the RTSkeleton constructor `FUN_00c513c0` stores `fld1` there, and the map's object build never
+  calls `CCompChar` slot 9 `FUN_00c25460`, its only other writer).
+
+### The fix
+
+`Skeleton3DBuilder.consistent_stored_binds` (new):
+- **What it reads.** Each bone's stored inverse bind (`stored_inverse_bind`: the third pair, at
+  0x38/0x48, +4 on the root's 92-byte record; finite, unit rotation, inside
+  `ROOT_TRANSLATION_LIMIT`).
+- **When it uses them.** Only when every non-root bone's stored bind equals its composed rest moved
+  by the one rigid shift that re-seats the root where its children put it
+  (`root_rest_from_children`), within 0.05 units and 1°. Otherwise it returns `{}`.
+- **The root** keeps its own stored bind (a vertex on the root binds as the client binds it).
+
+`build_skin(..., world_binds)` binds a bone to the inverse of its stored world bind when the
+dictionary has it. `MapAnimation.commit` passes the consistent binds; characters, monsters and items
+(`SkinnedBsrAssembler`) do not, so they are unchanged.
+
+Where the condition holds, the skin is exactly the client's (`P = InvBind_file x W`, with `W` from
+the same keys and locals). Where it does not, the composed bind stays (OURS, below).
+
+**After (MEASURED, the same probe).** Every ring's posed centre stays within 0.4 of (0, 169, 0) at
+t = 0, 1, 2, 4 and 7 s; at t = 0 the posed centres equal the still ones.
+
+### Renders, before and after (Forward+, RX 7600, stock `qa_shot.sh` on the shared lock)
+
+**Setup.**
+- `/var/tmp/r721/run_rings.sh` and `run_north.sh` run dev's client (`/opt/opensro-client-r721base`)
+  and this branch's (`/opt/opensro-client-r721`).
+- `OPENSRO_QA_FREE=1` and `NOUI`/`NOFOG` are set.
+- Each gate gets one run per build, standing at the gate's teleport point.
+
+**South gate** (`90\48.m`, point 612/1089; shots s1-s3 at yaw 0, pitch -3, distance 600; frames
+13/41/69).
+- **Metric:** the rings' silhouette against the sky, a 240x95 window above the rooftops
+  (`-crop 240x95+520+95`, gray, threshold 50 %, trim), and its horizontal centre.
+- **Frames 41 and 69:** dev 623.0 / 621.5, this branch 643.0 / 643.5, a shift of 21 px.
+- **Expected shift:** at 600 units with the 60° vertical field of view at 720 px, one unit is
+  ≈ 1.04 px, so 19.75 units ≈ 20.5 px. That is the measured cause. Frame 13 is cut by the window's
+  edge in both builds.
+- **Frames:** `/var/tmp/r721/{base,head}_south/f00000041.png` and the crop `hs41c.png`. The rings
+  are centred over the pedestal on this branch and sit left of it on dev.
+
+**North gate** (`92\50.m`, point 1719/760; yaws 0/90/180/270, distance 500).
+- Only yaw 0 (frame 13) frames the portal, small, behind an arcade. The pair
+  `/var/tmp/r721/north_pair.png` (dev left, this branch right) shows the horizontal ring band
+  running left of the arch on dev and centred on it here.
+- That is a picture, not a measurement. The measurement for the north gate is the probe's above:
+  it is the same `.bsr`.
+
+### Why the third pair, and why only a root shift (MEASURED)
+
+`client/tools/probe_map_bind.gd` (new) builds all 144 animated map models as the world does. At the
+clip's first key it prints the largest vertex move between the old bind and the new, and each
+bind's mean distance from the authored mesh. Three passes:
+
+1. **Inverting the second pair (the stored world bind):** 41 of 144 move. It fixes the portal, but
+   moves `rock_mt_ship` (0.002 → 6.90), the horses, the sheep and 9 map NPCs off their meshes; in
+   those files the second pair is stale.
+2. **The third pair (the client's):** the ship, the horses, the sheep and the NPCs are back to 0.
+   `tre_willow03` (0 → 58.4), `tre_tree01_big` (0 → 32.6), `demon_wall_deco*` (→ 0.54),
+   `oas_hot_tree_stone` (→ 0.48) and `tre_bamboo04` (→ 0.57) still move.
+   - The willow's stored chain is its composed chain **scaled by 1.793 below its first bone**.
+     Bone01→Bone02 is (6.11, 80.14, 7.12) composed against (10.95, 143.71, 12.77) stored, and
+     Bone02→Bone03 has the same ratio.
+   - Its mesh agrees with the scaled one: the leaves sit at height ~404, Bone03 is stored at 426
+     and composed at 238.
+   - The skeleton scale is 1.0 on the map path (above), so by our readers the client's rule draws
+     the willow 58 off its mesh. Either retail does, or one of our readers is wrong: unexplained,
+     OPEN.
+3. **The third pair, only where it is a root shift (shipped):** 9 models move, each onto its own
+   mesh. The other 135 do not move (≤ 0.001).
+
+| model | mean off the mesh, before | after |
+|---|---|---|
+| `alex_portal` | 19.754 | 0.000 |
+| `quest\teleport01` | 31.714 | 0.000 |
+| `dun\demon\demon_altar_deco` (and `_fire`, `_death`, `_poison`) | 54.758 | 0.001 |
+| `fortress_ct_fort_in_door01` | 89.483 | 0.000 |
+| `fortress_ct_fort_out_door01` | 44.606 | 0.000 |
+| `arabianf_bujok03` | 481.339 | 8.699 |
+
+### OURS / OPEN
+
+- **OURS:** the condition itself. The client takes the stored binds always; this takes them only
+  where they are a root shift of the locals and every non-root bone's third pair is usable. Where
+  it does, the skin is exactly the client's (the review's probe: 0.000 against the client's rule).
+- **OPEN, unexplained:** 8 models -- `tre_willow03`, `tre_tree01_big`, `tre_bamboo04`,
+  `oas_hot_tree_stone` and the four `demon_wall_deco*` -- whose stored binds are not a root shift.
+  By our readers, the client's rule would draw them off their meshes (58.4, 32.6, 0.57, 0.48, 0.54),
+  with nothing to undo it (scale 1.0). Either retail draws them off, or one of our readers is
+  wrong; to settle against retail. They keep the composed bind meanwhile.
+- **OPEN:** `arabianf_bujok03`'s remaining 8.7.
+- **Character path (pre-existing):** 35 monster skeletons are the portal's own case and are drawn
+  offset today (`mustafa` 50.17, `event_winter_whiteknight` 48.16, …); 313 item, 3 COS and 3
+  artifact skeletons have the mismatch too. Its own `docs/TODO.md` item.
+
+### Review fixes (independent review `0b2809ba`, `docs/rounds/r721_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | the skeleton-scale explanation is refuted: the map's scale is 1.0 (READ) | recorded READ; the explanation removed from these notes, BSK_FORMAT.md, `skeleton3d_builder.gd`, its test and TODO.md; the 8 models are now unexplained (OPEN, settle against retail) |
+| 2 | the root-shift condition is OURS | labelled OURS in `map_animation.gd` (commit's doc) and BSK_FORMAT.md |
+| 3 | the TODO undercounted the mismatch | its own TODO item: 35 monsters drawn offset (largest shifts listed), 313 item, 3 COS, 3 artifact |
+| 4 | a bone without a usable third pair mixed two bind spaces | `consistent_stored_binds` returns `{}` when any non-root bone lacks a usable stored bind |
+| 5 | the probe's column said "stored bind" | renamed "new bind" (the bind as built); the header says passes 1 and 2 used temporary edits |
+
+### Tests and performance
+
+- `skeleton3d_builder_test.gd`, new checks:
+  - `stored_world_binds` reads a bone's stored inverse bind;
+  - a root-shift skeleton takes its stored binds, and a ring's centre on the spinning bone stays
+    put at 0/90/180/270°, where the composed bind swings it;
+  - a rim vertex turns about the bone;
+  - a scaled chain and a skeleton without usable inverse binds keep the composed bind;
+  - a 3.7e24 root is refused.
+  
+  ALL PASS.
+- **Box** (`RENDER_DIR=/opt/opensro-client-r721`): `check` 606 scripts and 9 scenes, ALL LOAD;
+  the full suite 232 suites, 0 failing.
+- **Perf gate** (`--sites jangan --frames 12000`, base `9996ff3c`, Forward+ on the RX 7600, median
+  of 3):
+
+| jangan | base | head | verdict |
+|---|---|---|---|
+| frame ms | 1.48 | 1.49 | SAME |
+| entry ms | 9538 | 9477 | SAME |
+| freeze ms | 3319 | 3302 | SAME |
+| hitches | 4 | 4 | SAME |
+
+### Tools
+
+- `client/tools/probe_map_anim_pose.gd` (extended): each bone's global rest, global pose, stored
+  bind and whether the clip keys it; each piece's still centre and bound bones.
+- `client/tools/probe_map_bind.gd` (new): every animated map model, old bind against the bind
+  built now, at a chosen clip time, with each bind's mean distance from the authored mesh.
+
+**Review** (kept beside the notes): `docs/rounds/r721_review.md` (no BUG or REGRESSION; the original always skins with the stored inverse binds at skeleton scale 1.0 on the map path, so the root-shift condition is OURS and 8 tree/decoration models stay OPEN; 35 monster skeletons drawn offset today recorded as a follow-up).
+
+Perf gate (`--sites jangan --frames 12000`): SAME on all four numbers (the notes have the table).
+
+## Seven-hundred-and-twentieth round: the teleport structures' glows and effects, played as the original plays an object's `ambient` particle mods
+
+The user (2026-10-04): "Most, if not all, of the town teleports have special glows or effects to
+them. Find them all in the original code and implement that."
+
+Labels: READ (sro_client.exe), MEASURED (the user's archives, renders), INFERRED, OPEN, OURS.
+The full reading and the census are `docs/protocol/teleport_effects.md`.
+
+### What the original does (READ)
+
+- The effects are not a teleport feature: a `.bsr`'s mod section carries **particle mods**
+  (`0x30000`, `ModDataParticle::vslot_004` `0xc643b0`), and a placed object plays those of its
+  **`ambient`** set: `ModPalette::FUN_00c0b060` gives the set named exactly `ambient`
+  (case-sensitive) kind 2, which routes it into the palette's own slot (`FxModManager` `0xc7fcea`),
+  the set an object plays with no clip running; a LOD gate (`0xc43780`, 0.9 against the host's
+  `+0x7c`) is INFERRED open for buildings (corrected by the review: round 720 first cited
+  `FUN_00c7b540`). Every teleport structure's model carries one.
+- Each entry: a mode (0 = at a bone, else at an offset in the object's frame), the `.efp`, the
+  bone, the offset, a rotation from three angles (`FUN_00c67500`), and a **glow byte** at `+0x50`
+  (`CRTModParticle::vslot_001` `0xc77a20`, `FUN_00c81820`, `FUN_00c818c0`, `FUN_00c81190`).
+- **The glow pass** (`FUN_00c43100`): an entry with a glow byte is tested every 500 ms with a D3D
+  occlusion query (`CVisibleChecker::vslot_002`: one depth-tested point, colour writes off) at its
+  position moved toward the camera by (byte - 1); its alpha moves by trunc(ms x 1.5) a frame
+  toward 255 or 0 (`FUN_00c81080`); it is drawn with ZENABLE off while the alpha is above 0, and
+  the alpha scales each particle colour's alpha byte (`EFEffect::FUN_00c893f0` `0xc8affd`). The
+  pass is the **Light Effect** video option (the manager's `+0x1a4`, set through the thunk
+  `0xbbdad0` from `SWorld::vslot_043` case 0xb -- round 720 first read it as always on); off, the
+  effect draws as an ordinary particle. A test point behind the eye or off screen is clipped and
+  counts hidden. Only effects whose object is drawn this frame are stepped.
+
+### Census (MEASURED)
+
+Every town gate carries ambient effects; Jangan's are on `cj_portal_stone` beside `cj_portal`.
+Glow bytes: Jangan 25/13, Donwhang 41/49, the thief village 15, Constantinople's
+`euro_constan_center` 95; Hotan, Samarkand and Alexandria's are 0 (drawn normally). The guild
+gates (fort, charge, glory, revival) carry their own (`guild\gate_potal`, `light_gate_blue` turned
+four ways, ...). Table in teleport_effects.md. Across the archive 1,300 `.bsr` carry an `ambient`
+set (lamps, torches, fountains...).
+
+### What was built
+
+- `BsrReader.ParticleMod` / `ParticleEntry` / `particle_mods()`: the reader (the skip it replaces
+  measured the same length).
+- `ObjectLoader`: a committed object keeps its `ambient` entries as meta.
+- `AmbientParticles` (`client/scripts/world/ambient_particles.gd`): the ambient set, the entry
+  rotation (`rotation_basis`, FUN_00c67500's matrix in Godot's column form), the attach, and the
+  glow pass (500 ms test, the 1.5/ms fade, the restart at 0).
+- `EfpEffect`: `follow_basis` (an entry's rotation at the attach point) and the glow draw
+  (`make_glow`, `glow_shader`: depth test off, the particle colour's alpha scaled as `0xc8affd`
+  does, each glow effect its own material copies).
+- `World3D._attach_gate_effects`: every teleportbuilding row in a loading region plays the
+  ambient effects of the region's placed objects within 30 units of it; `_ambient_step` runs the
+  glow pass each physics tick. QA: `OPENSRO_QA_AMBIENT=1` logs each glow's alpha, visibility and
+  what hid it; `=off` attaches none.
+- `client/tools/dump_bsr_particles.gd`: dumps the particle mods of files (`--files` / `--list`) or
+  the whole archive (`--census`).
+
+### OURS
+
+- **Only the teleport structures** play their ambient effects; the other ambient sets in the world
+  are a follow-up with its own perf measurement.
+- **The occlusion query is a physics ray** against the terrain, the placed objects and the
+  characters' pick bodies (not NPCs), **passing through alpha-tested pieces** (a bare tree's leaf
+  cards hid Jangan's glow from 150 units until it did: the QA log's blocker
+  `Obj_tre_dry02_small_228`).
+- The glow pass steps per physics tick; an ambient effect is kept (looped) while its object stands;
+  the 30-unit radius (the farthest gate object measured is 26.0).
+
+### OPEN
+
+- Entry words `+0x4c`, `+0x52` and the descriptor's `+0x48`; whether a mode-0 entry on an object
+  without a skeleton draws (no gate has one).
+- The tombs', desert gates', arenas' and instance rows' structures (no placement within 40 of the
+  row).
+
+### Tests
+
+- `client/scripts/world/ambient_particles_test.gd`: the reader against synthetic bytes (its skip
+  and its read agree), the ambient set filter, the rotation (y-only = `Basis(UP, y)`; the general
+  matrix = v x M), the alpha steps (+25 at 16.7 ms, the cap, the floor, the restart), the test
+  point's bias, the glow shader (depth test off, alpha scaled, cached, the shared shader
+  untouched). 20 checks, 0 failures.
+
+### Live (render box, Forward+ on the RX 7600, stock `qa_shot.sh` on the shared lock)
+
+- **Attached** (the log): Jangan `Obj_cj_portal_stone` 2 of 2 (7.5 from its row), Donwhang
+  `Obj_w_cd_portal` 3 of 3, Hotan `Obj_oas_hot_portal` 3 of 3 and `Obj_oas_hot_c1_castle` 8 of 8
+  (the castle centrepiece at 9.5, which the original plays too), Constantinople
+  `Obj_euro_esteuro_fountain01` 3 of 3, Alexandria North `Obj_alex_portal` 1 of 1, Samarkand
+  `Obj_samarkand_center_01` 2 of 2.
+- **Placement, a consistency check** (not a match to the original: `_place` builds exactly that
+  transform): each effect's position in its object's frame equals the entry's offset -- Donwhang
+  (-7.707, 28.214, 1.013), (0, 28.125, 0.987), (-6.968, 90.951, 0); Jangan (0, 26.870, -1.143),
+  (0, 21.853, -1.101). The evidence that it matches the original is the READ formula
+  (`FUN_00c81190`: translate(s·ox, s²·oy, s·oz) x world, s = 1 for a placed object).
+- **The glow pass:** `QA AMBIENT` shows each glow at alpha 0 on entry, 255 after the first query
+  where visible, and hidden by named blockers: Jangan's from the north by its own pavilion
+  (`CJ_por_gidung`), Donwhang's low glow from the north by the portal's own `W_CD_portal_04`; the
+  first runs found a bare tree's leaf cards (`tre_dry02_small`) hiding Jangan's from 150 units,
+  which led to the pass-through for alpha-tested pieces.
+- **Frames** (`/var/tmp/r720/live5/<town>{,_off}/f00000065.png`, `f00000150.png`; effects on and
+  `OPENSRO_QA_AMBIENT=off`): Jangan's crystal glows blue with the effects on and is plain with them
+  off; Donwhang's pavilion glows; Constantinople's globe gains its halo and beam; Alexandria's rings
+  their haze; Samarkand's doorway its blue column. Whole-frame pixels changed (fuzz 4 %, the idle
+  animation included, so a ceiling not a measure): Jangan 46,415, Donwhang 40,127, Constantinople
+  42,130, Alexandria 35,245, Samarkand 12,227 (frame 150).
+- Viewpoints are region-local, so the first pass's south views of Donwhang and Samarkand (gates near
+  a region edge) hopped regions and unloaded the gate; those were redone from the north.
+
+### Perf gate (`--sites jangan,reeds,cross --frames 12000`, base `9996ff3c`)
+
+| site | number | base | head | |
+|---|---|---|---|---|
+| jangan | frame ms | 1.48 | 1.52 | SAME |
+| jangan | entry ms | 9559 | 9688 | SAME (+129) |
+| jangan | freeze ms | 3309 | 3471 | SAME (+162) |
+| jangan | hitches | 4 | 4 | SAME |
+| reeds | frame ms | 1.38 | 1.38 | SAME |
+| reeds | entry ms | 7070 | 7067 | SAME |
+| reeds | freeze ms | 1949 | 1944 | SAME |
+| reeds | hitches | 2 | 2 | SAME |
+| cross | frame ms | 1.63 | 1.66 | SAME |
+| cross | entry ms | 10279 | 10436 | SAME (+157) |
+| cross | freeze ms | 3299 | 3491 | SAME (+192) |
+| cross | hitches | 4 | 4 | SAME |
+
+All SAME, but the two sites with Jangan's gate in a loaded region pay a consistent +130..190 ms of
+entry and of the longest freeze, every run (3 of 3), and the reeds (no gate) nothing: the gate's
+two effects built on the main thread as its region binds (`EfpEffect.create`: the `.efp` decode,
+its textures, the glow shader's compile). Recorded, not fixed: a preload on the region job would
+take it off the main thread (follow-up).
+
+### Box
+
+`check` 608 scripts ALL LOAD; full suite 233 suites, 0 failing (`RENDER_DIR=/opt/opensro-client-r720`).
+The extracted text tables are deleted; frames kept in `/var/tmp/r720/live5`.
+
+### Review fixes (independent review `34a08fa2`, `docs/rounds/r720_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | the glow pass is the Light Effect option | `AmbientParticles.set_light_effect`, live from `apply_video_options` (and at each attach): off, every glow effect takes its own depth-tested material back at full alpha (`EfpEffect.use_glow`) and the pass steps nothing. Labels fixed here, in `ambient_particles.gd`, teleport_effects.md and OPTION_VIDEO.md's Light Effect row. Tested; live: `OPENSRO_QA_VIDEO_STEPS="light_effect=1\|light_effect=0\|light_effect=1"` at Jangan switches the glows each step (frame 190 glow vs 260 ordinary: 180,865 px differ, against ~35,000 between consecutive frames of one mode) |
+| 2 | a test point behind the eye / off screen counted visible | `point_on_screen` (not behind the camera, in the frustum) before the ray. Tested with byte 95 and the camera 50 away (hidden), byte 25 (shown), a point far to the side (hidden) |
+| 3 | the ambient proof | rewritten with the review's addresses (set kind 2 -> palette `+0x5c`, `0xc7fcea`; the LOD gate `0xc43780`, INFERRED open; `+0xb4` OPEN); the name match is exact (`set_name == "ambient"`), tested with `Ambient` and `ambient2` |
+| 4 | the entry cost | the objects job preloads its gate objects' effects (`_preload_gate_effects`: on the job's worker, or a preload task when the job runs on the main thread, the entry's first regions -- the attach then waits for it, `_gate_effects_decoded`, rather than decoding twice); `EfpEffect.warm` draws every plate/mesh/link shader and its glow twin once behind the loading screen (40 shaders, ~45 ms, at entry); `set_glow_alpha` only on change. The teleport tables now load before the first job (`_gate_points_for`). Measured: Jangan's gate built in 0.68-0.77 ms (was 165 ms). Perf below |
+| 5 | the pass stepped every glow | `drawn`: only glows whose object is shown and whose box is in the frustum are tested, stepped and counted as seen, so the restart at 0 means what it does in the original |
+| 6 | mode 0, the night bit | a missing bone (no skeleton, or no bone by that name) ends its mod's remaining entries (`aborted_mods`), a mode-0 effect sits at the bone's full transform (`EfpEffect.follow_bone_full`); `+0x51` bit 0 entries are not built at the fixed day phase (`shows`). Tested |
+| 7 | TEXANI / MTRL on three gates | in the census as not drawn, and in docs/TODO.md |
+| 8 | the placement check | relabelled a consistency check, with the READ formula cited |
+| 9 | the entry words | `+0x4c` the vslot_009 lookup key, `+0x52` never copied, `+0x48` -> the effect's unread `+0x88`, all READ in teleport_effects.md |
+
+Play-everywhere stays OURS (only the teleport structures), with the review's measurement in
+docs/TODO.md for the user.
+
+### Perf gate after the fixes (`--sites jangan,cross --frames 12000`, base `9996ff3c`)
+
+| site | number | base | head | |
+|---|---|---|---|---|
+| jangan | frame ms | 1.49 | 1.51 | SAME |
+| jangan | entry ms | 9545 | 9529 | SAME (-16) |
+| jangan | freeze ms | 3319 | 3326 | SAME (+7) |
+| jangan | hitches | 4 | 4 | SAME |
+| cross | frame ms | 1.63 | 1.67 | SAME |
+| cross | entry ms | 10265.5 | 10310 | SAME (+44.5) |
+| cross | freeze ms | 3297 | 3347 | SAME (+50) |
+| cross | hitches | 4 | 4 | SAME |
+
+Jangan's +130..190 ms is gone. The crossing keeps about +45..50 ms of entry and freeze: the size
+of the shader warm-up (`EfpEffect.warm`, 44-47 ms on the main thread, measured in the log), which
+moved the glow shaders' compile into the entry rather than off it -- recorded, with the numbers.
+
+Box after the fixes: `check` ALL LOAD; full suite 233 suites, 0 failing; `ambient_particles_test.gd`
+36 checks, 0 failures.
+
+**Review** (kept beside the notes): `docs/rounds/r720_review.md` (the glow pass is the Light Effect video option, a test point behind the camera is hidden, the 'ambient always plays' proof corrected, the cold first-effect build moved off entry, drawn-only stepping, mode-0 and night-only entries; all fixed. Play-every-ambient-set measured at +1.44 ms a frame at Jangan and left for the user).
+
+Perf gate after the review fixes (`--sites jangan,cross --frames 12000`, base `9996ff3c`), all SAME:
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.49 -> 1.51 | 9545 -> 9529 | 3319 -> 3326 | 4 -> 4 |
+| cross | 1.63 -> 1.67 | 10265.5 -> 10310 | 3297 -> 3347 | 4 -> 4 |
+
+The crossing's remaining +45-50 ms entry/freeze is the EFP shader warm-up behind the loading screen (44-47 ms), recorded with its numbers.
+
 ## Seven-hundred-and-nineteenth round: a character pending deletion is one translucent sheet on the select screen (blended in Godot's linear buffer, not in the original's display values)
 
 The user (2026-10-04), on the native Linux build: "There also seems to be some rendering issues
