@@ -111,6 +111,39 @@ vec3 srr_obj_present(vec3 srr_v) {
 uniform vec3 texani_u = vec3(1.0, 0.0, 0.0);
 uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
 
+#ifdef EQUIP_GLOW
+// A weapon or shield's glow (round 734, EquipGlow; weapon_glow.md §2.2): the
+// item's own draw under CRTModProgEquipPow's stages, READ --
+//     stage 0  op0(optionTex(uv + scroll), TFACTOR)   MODULATE / MODULATE2X
+//     stage 1  op1(itemTex, CURRENT)                   ADD / ADDSIGNED2X
+// each clamped to 0..1, with no lighting (TFACTOR stands where DIFFUSE was).
+// TFACTOR is round(lerp(c1, c2, t) x 255) / 255 with t a triangle wave of
+// period 2 x glow_period starting at colour 1; the scroll is uv x 50 a
+// second. Both run on TIME (OURS: retail's clock is per mod, from when the
+// item was put on, and stops while the character fades; every glow here
+// pulses in step). That stage 1's texture is the item's own is INFERRED
+// (OPEN 9).
+uniform sampler2D glow_texture : hint_default_black, filter_linear_mipmap, repeat_enable;
+uniform vec2 glow_uv_speed = vec2(0.0);
+uniform vec3 glow_c1 = vec3(1.0);
+uniform vec3 glow_c2 = vec3(1.0);
+uniform float glow_period = 1.0;
+uniform float glow_mul0 = 1.0;
+uniform float glow_signed2x = 0.0;
+
+vec3 srr_glow(vec3 srr_item, vec2 srr_uv, float srr_time) {
+	float srr_ph = mod(srr_time, 2.0 * glow_period) / glow_period;
+	float srr_t = srr_ph <= 1.0 ? srr_ph : 2.0 - srr_ph;
+	vec3 srr_tf = round(mix(glow_c1, glow_c2, srr_t) * 255.0) / 255.0;
+	// fract keeps the offset's precision; the texture repeats, as the
+	// client's never-wrapped offset does through the sampler's wrap.
+	vec3 srr_opt = texture(glow_texture, srr_uv + fract(glow_uv_speed * srr_time)).rgb;
+	vec3 srr_s0 = clamp(srr_opt * srr_tf * glow_mul0, vec3(0.0), vec3(1.0));
+	vec3 srr_s1 = glow_signed2x > 0.5 ? (srr_item + srr_s0 - vec3(0.5)) * 2.0 : srr_item + srr_s0;
+	return clamp(srr_s1, vec3(0.0), vec3(1.0));
+}
+#endif
+
 void vertex() {
 	srr_od0 = srr_obj_od0(MODEL_NORMAL_MATRIX * NORMAL, srr_color(albedo, OUTPUT_IS_SRGB).rgb, object_color, object_tint);
 	UV = vec2(dot(vec3(UV, 1.0), texani_u), dot(vec3(UV, 1.0), texani_v));
@@ -118,7 +151,11 @@ void vertex() {
 
 void fragment() {
 	vec4 tex = texture(albedo_texture, UV);
+#ifdef EQUIP_GLOW
+	ALBEDO = srr_obj_present(srr_glow(tex.rgb, UV, TIME));
+#else
 	ALBEDO = srr_obj_present(clamp(2.0 * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)));
+#endif
 #ifdef APPEAR_FADE
 	// The keep-or-discard test made by hand, so the drawn alpha can be the
 	// fade's: a blended draw cannot also take Godot's scissor (OURS).

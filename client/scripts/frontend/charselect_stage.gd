@@ -747,6 +747,9 @@ func _unfade_mesh(mi: MeshInstance3D) -> void:
 ## next_pass, or -- for a layer that blends without writing depth -- its colour
 ## pass alone. Null when `src` is not a ShaderMaterial this can rewrite.
 func _fade_pair(d: Drawn, src: Material) -> Material:
+	# A glowing weapon is translucent on its plain material: the glow is drawn
+	# only at full alpha (READ, CRTModProgEquipPow; EquipGlow, round 734).
+	src = EquipGlow.plain_of(src)
 	var id := src.get_instance_id()
 	if d.fade_pairs.has(id):
 		return d.fade_pairs[id]
@@ -760,7 +763,7 @@ func _fade_pair(d: Drawn, src: Material) -> Material:
 			# READ (FUN_00c428c0's stage-0 ALPHAOP): texture alpha x fade, but the
 			# fade alone for an object with an env-map mod, whose flag word gets
 			# 0x40000000 (CRTModEnvMap::vslot_004). ProgEquipPow (enhanced gear,
-			# 0xe21f0000) is not drawn by this client: OPEN.
+			# 0xe21f0000) is off while translucent (its gate, above).
 			colour.set_shader_parameter("select_use_tex",
 				0.0 if sm.has_meta(SkinnedBsrAssembler.ENV_MAPPED_META) else 1.0)
 			d.fade_colours.append(colour)

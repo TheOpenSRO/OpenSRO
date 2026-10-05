@@ -1261,6 +1261,8 @@ var _other_gaits := {}
 ## character_id -> {slot: item id}, as last reported: what the debug panel
 ## lists for another player.
 var _other_equipped := {}
+## character_id -> {slot: plus} their glow was drawn with (round 734).
+var _other_pluses := {}
 ## How far a body may still be from its target before it counts as moving:
 ## a tenth of the body's height (REAL_CHARACTER_NATIVE_HEIGHT), so the tail
 ## of the interpolation reads as standing.
@@ -1534,6 +1536,11 @@ var _player_weapon_group := "default"
 ## _real_player_equipped_items() is a coroutine that asks the server, and
 ## a panel refreshing twice a second must not.
 var _player_equipped_last: Dictionary = {}
+## slot -> the glow's plus the body was last dressed with (round 734,
+## _player_pluses), so a plus change alone redresses it.
+var _player_pluses_last: Dictionary = {}
+## slot -> plus from OPENSRO_QA_EQUIP's "slot=item_id+plus" pairs (round 734).
+var _qa_equip_pluses: Dictionary = {}
 
 var _media_pk2: Pk2Reader
 ## textuisystem.txt -- the UI string catalog (button captions, system
@@ -8687,6 +8694,8 @@ func _load_character_assets() -> void:
 	var t_cat := Time.get_ticks_usec()
 	var bodies := CharCatalog.from_tables(char_parts, [])
 	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
+	# The weapon glow's particles (round 734) come from the world's own reader.
+	_appearance.particles = _open_particles_pk2_if_set()
 	_body_anims = BodyAnimations.new(_data_pk2)
 	for id in bodies.entries:
 		var e: CharCatalog.Entry = bodies.entries[id]
@@ -8942,7 +8951,11 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 ## 0xc25460 -> RTSkeleton 0xc4bcb0), with meta "body" and "weapon_group".
 ## Falls back to the default gender's body if `body` cannot be built; null
 ## only if even that fails.
-func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE) -> Skeleton3D:
+##
+## `pluses` (round 734) is slot -> the plus byte the glow is chosen by
+## (EquipGlow): your own gear's OptLevel + advanced elixir (_player_pluses),
+## another player's from their spawn or equip change; a slot it lacks is +0.
+func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE, pluses: Dictionary = {}) -> Skeleton3D:
 	if _appearance == null:
 		return null
 	var assets := _body_assets(body)
@@ -8959,7 +8972,7 @@ func _build_assembled_character(equipped: Dictionary = {}, body: String = "", sc
 		if not _item_models.has(item_id):
 			print("World3D: item %d in slot %d has no worn model in the item table -- not drawn" % [item_id, slot])
 			continue
-		items.append({"id": item_id, "plus": 0})
+		items.append({"id": item_id, "plus": int(pluses.get(slot, 0)) & 0xFF})
 	var built := _appearance.build(int(assets["ref"]), scale, items)
 	if built == null:
 		return null
@@ -8969,12 +8982,16 @@ func _build_assembled_character(equipped: Dictionary = {}, body: String = "", sc
 	skeleton.set_meta("body", body)
 	skeleton.set_meta("weapon_group", built.weapon_group)
 	var drawn := 0
+	var glows := PackedStringArray()
 	for w in built.worn:
 		if not w.get("default", false) and not (w["nodes"] as Array).is_empty():
 			drawn += 1
+		if int(w.get("glow", 0)) > 0 or int(w.get("glow_fx", 0)) > 0:
+			glows.append("%s +%d (row +%d, %d effect(s))" % [w.get("code", ""), int(w["plus"]), int(w["glow"]), int(w["glow_fx"])])
 	if not equipped.is_empty():
-		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them" % [
-			body, scale, built.height_factor, drawn, equipped.size(), built.hidden_body_meshes])
+		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them%s" % [
+			body, scale, built.height_factor, drawn, equipped.size(), built.hidden_body_meshes,
+			("; glow: " + ", ".join(glows)) if not glows.is_empty() else ""])
 	built.free()
 	return skeleton
 
@@ -9003,6 +9020,8 @@ func _try_apply_real_player_character() -> void:
 ## character" (playtest 2026-09-20).
 func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_equipped_last = equipped
+	var pluses := _player_pluses()
+	_player_pluses_last = pluses
 	var gender := DEFAULT_GENDER
 	var ref_obj_id := 0
 	var scale := CharacterAppearance.DEFAULT_SCALE
@@ -9027,7 +9046,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# asking -- and this says which side to look at.
 	print("World3D: player equipment %s" % str(equipped))
 
-	var skeleton := _build_assembled_character(equipped, body, scale)
+	var skeleton := _build_assembled_character(equipped, body, scale, pluses)
 	if skeleton == null:
 		return
 	body = String(skeleton.get_meta("body", body))
@@ -9102,7 +9121,11 @@ func _refresh_paper_doll(equipped: Dictionary, body: String) -> void:
 		_paper_doll.set_active(_hud_panels.paper_doll_shown())
 		_hud_panels.paper_doll_shown_changed.connect(_paper_doll.set_active)
 		_hud_panels.paper_doll_measure_requested.connect(_log_paper_doll_pose)
-	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale)
+	# With the glow (round 734, INFERRED, weapon_glow.md OPEN 10): the
+	# window's avatar is a character object, and the client's copy of one
+	# character's dress onto another (UI_SILKMALL::FUN_00a617d0) carries
+	# each slot's plus into InstallEquipVisual.
+	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale, _player_pluses_last)
 	if doll_skeleton == null:
 		return
 	_paper_doll.set_character(doll_skeleton)
@@ -9128,6 +9151,11 @@ func _refresh_player_portrait(skel: Skeleton3D, equipped: Dictionary, body: Stri
 	var copy := skel.duplicate() as Skeleton3D
 	if copy == null:
 		return
+	# The glow's material comes along with the copy (the portrait borrows the
+	# equipment window's avatar: INFERRED, as _refresh_paper_doll); its
+	# particle effects do not -- a duplicated EfpEffect has no simulation,
+	# and a picture rendered once would hold one still frame of them (OURS).
+	EquipGlow.strip_particles(copy)
 	var pose := _body_animation_for(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body))
 	_hud_player_info.set_portrait(copy, pose)
 	var p := _hud_player_info.portrait()
@@ -10624,16 +10652,35 @@ func _real_player_equipped_items() -> Dictionary:
 ## EquipmentNet.SLOT_* numbers; item ids are real ones from the item table. A
 ## malformed pair is skipped with a log line rather than guessed at. Only the
 ## QA screenshot harness sets OPENSRO_QA_EQUIP -- see _real_player_equipped_items.
+## Round 734: "slot=item_id+plus" gives the item that plus for the glow
+## (into _qa_equip_pluses, which _player_pluses reads with no server).
 func _parse_qa_equip(spec: String) -> Dictionary:
-	var equipped := {}
-	for pair in spec.split(",", false):
-		var kv: PackedStringArray = String(pair).split("=")
-		if kv.size() != 2 or not kv[0].strip_edges().is_valid_int() or not kv[1].strip_edges().is_valid_int():
-			printerr("World3D: OPENSRO_QA_EQUIP: bad pair '%s' (want slot=item_id)" % pair)
-			continue
-		equipped[int(kv[0].strip_edges())] = int(kv[1].strip_edges())
-	print("World3D: QA equipment loadout %s" % str(equipped))
+	var bad: Array = []
+	var parsed := EquipGlow.parse_loadout(spec, bad)
+	for pair in bad:
+		printerr("World3D: OPENSRO_QA_EQUIP: bad pair '%s' (want slot=item_id[+plus])" % pair)
+	var equipped: Dictionary = parsed[0]
+	_qa_equip_pluses = parsed[1]
+	print("World3D: QA equipment loadout %s, pluses %s" % [str(equipped), str(_qa_equip_pluses)])
 	return equipped
+
+## The plus each worn slot's glow is chosen by (round 734): the item's
+## OptLevel plus its advanced elixir, as a u8 -- READ, the client's item
+## +0x8c byte (OptLevel + elixir, c:0x8bb070) is what CICPlayer::vslot_025
+## (0x9d9a80) -> FUN_008ba570 hands InstallEquipVisual for your own gear --
+## from the equipment list's instance block (round 732, ItemInstance). With
+## no server, OPENSRO_QA_EQUIP's pluses.
+func _player_pluses() -> Dictionary:
+	if not NetClient.is_connected_to_server():
+		return _qa_equip_pluses
+	var out := {}
+	for slot in NetClient.last_equipment_instances:
+		var it: ItemInstance = NetClient.last_equipment_instances[slot]
+		if it != null:
+			var p := it.effective_plus() & 0xFF
+			if p != 0:
+				out[int(slot)] = p
+	return out
 
 ## Loads a real Map.pk2 region's real object placements (OPENSRO_MAPO_PATH,
 ## e.g. "0\\0.o", via OPENSRO_MAP_PK2_PATH -- same archive as
@@ -15388,9 +15435,22 @@ func _step_remote_turns(delta: float) -> void:
 ## `body` and `scale` (round 689) are the character's own model -- a Figure's
 ## code name (_body_key_for of the snapshot's RefObjID, or of its gender from
 ## an older server) and its scale byte -- drawn as the local player's is.
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, body: String = "", heading: float = NAN, scale: int = CharacterAppearance.DEFAULT_SCALE) -> void:
+##
+## `pluses` (round 734, the hook for the plus of others' gear) is slot -> the
+## plus byte retail carries per item (0x3038's OptLevel; the spawn's, OPEN
+## 3): their weapon and shield glow at it (EquipGlow). null leaves what the
+## body has; given for a body already drawn, the glow is redrawn on it
+## (CharacterAppearance.reglow) without rebuilding the body.
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, body: String = "", heading: float = NAN, scale: int = CharacterAppearance.DEFAULT_SCALE, pluses = null) -> void:
 	if not equipped.is_empty():
 		_other_equipped[character_id] = equipped
+	if pluses is Dictionary and _other_bodies.has(character_id) and pluses != _other_pluses.get(character_id, {}):
+		var gait: Dictionary = _other_gaits.get(character_id, {})
+		var skel: Skeleton3D = gait.get("skeleton") as Skeleton3D
+		if _appearance != null and skel != null and is_instance_valid(skel):
+			_appearance.reglow(skel, pluses)
+	if pluses is Dictionary:
+		_other_pluses[character_id] = pluses
 	if _other_bodies.has(character_id):
 		# Sets the real interpolation *target* only -- see
 		# _other_body_targets' own doc comment for why this replaced a
@@ -15412,7 +15472,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# bodyOf and equippedItems in server/internal/session/world.go, both
 	# queried live), and each item is drawn from its own model. Falls back to
 	# the labeled placeholder capsule if the bodies never loaded.
-	var skeleton := _build_assembled_character(equipped, body, scale)
+	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}))
 	if skeleton != null:
 		# Same 180deg front correction as the local player (see
 		# _try_apply_real_player_character) -- the body's own front is -Z, and
@@ -15550,6 +15610,7 @@ func _on_entity_left(character_id: int) -> void:
 	# 1.5 s was not read).
 	_set_other_gait(character_id, false)
 	_other_gaits.erase(character_id)
+	_other_pluses.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_abnormal_states.erase(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
@@ -21766,7 +21827,7 @@ func _on_equipment_result(items: Array, error: String) -> void:
 	# REDRESS THE CHARACTER. This list is the server's word on what is worn, and
 	# until now only a text widget listened to it -- the 3D body kept whatever
 	# it was built with at login, so taking a sword off left it in the hand.
-	if _player_skeleton != null and equipped != _player_equipped_last:
+	if _player_skeleton != null and (equipped != _player_equipped_last or _player_pluses() != _player_pluses_last):
 		_apply_player_equipment_visual(equipped)
 
 func _on_unequip_pressed(slot: int) -> void:

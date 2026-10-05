@@ -225,6 +225,10 @@ static func fade_twin(src: Material) -> Material:
 	return twin
 
 static func _make_twin(src: Material) -> Material:
+	# A glowing weapon fades on its plain material: the glow is drawn only
+	# while the owner's colour word is at full alpha (READ,
+	# CRTModProgEquipPow::vslot_002/004; EquipGlow, round 734).
+	src = EquipGlow.plain_of(src)
 	if is_plain_standard(src):
 		var std := src as StandardMaterial3D
 		var plain := ShaderMaterial.new()

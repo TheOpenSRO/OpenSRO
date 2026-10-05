@@ -69,8 +69,13 @@ class_name CharacterAppearance
 ## avatars carry blocks too and hide as their flag says; a light gauntlet's
 ## flag is 2, so it hides nothing (MEASURED).
 ##
-## **Plus** is kept on the body (Body.worn) for the weapon glow; the glow
-## itself is not drawn (INFERRED in charselect.md that plus drives it; OPEN).
+## **Plus** drives the weapon and shield glow (round 734, EquipGlow): the
+## select screen installs each item with its plus (READ, PSCharacterSelect
+## 0x85a580 -> InstallEquipVisual(slot, id, plus, 0)), and the weapon and
+## shield (`FUN_00a60a90`'s kind-1 attachments) get the glow row and the
+## particle rows of their code name at that plus (ItemGlowTables). The
+## tables come from Media.pk2 and the effects from Particles.pk2; with
+## either missing that part is not drawn.
 ##
 ## **Caching (OURS):** each body is assembled once into a detached template
 ## and each item once per skeleton layout; a build duplicates them, so meshes,
@@ -183,6 +188,13 @@ var _item_attachables: Dictionary = {}
 ## OURS: false, the flag the customize screen's Protector minimum assumes.
 var default_wear: DefaultWear = null
 var default_wear_flag := false
+## Round 734: the glow tables (null: no glow drawn) and the Particles.pk2 the
+## glow's effects come from -- opened from Pk2Config on the first item that
+## needs one when nobody handed one over. `glow_enabled` false draws neither.
+var glow_tables: ItemGlowTables = null
+var particles: Pk2Reader = null
+var glow_enabled := true
+var _particles_tried := false
 ## Timings, microseconds: the last build, and the running totals.
 var last_build_usec: int = 0
 var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_usec": 0, "item_table_usec": 0, "item_table_rows": 0}
@@ -216,9 +228,10 @@ static func from_archives(data_pk2: Pk2Reader, media_pk2: Pk2Reader, items: Dict
 	for id in a._catalog.entries:
 		var e: CharCatalog.Entry = a._catalog.entries[id]
 		if not e.is_body:
-			a._items[id] = {"models": PackedStringArray([e.model_path]) if e.model_path != "" else PackedStringArray(), "type_ids": e.type_ids}
+			a._items[id] = {"models": PackedStringArray([e.model_path]) if e.model_path != "" else PackedStringArray(), "type_ids": e.type_ids, "code": e.code}
 	if not items.is_empty():
 		a.add_item_rows(items)
+	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
 	return a
 
 ## An appearance over a catalogue already built (round 689: the world builds
@@ -232,6 +245,7 @@ static func from_catalog(data_pk2: Pk2Reader, media_pk2: Pk2Reader, catalog: Cha
 	a.default_wear = DefaultWear.from_archive(media_pk2) if media_pk2 != null else null
 	if not items.is_empty():
 		a.add_item_rows(items)
+	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
 	return a
 
 ## The catalogue this appearance resolves bodies through.
@@ -263,7 +277,7 @@ func race_of(ref_obj_id: int) -> int:
 func add_item_rows(rows: Dictionary) -> void:
 	for id in rows:
 		var item: ItemTableReader.Item = rows[id]
-		_items[int(id)] = {"models": item.model_paths, "type_ids": item.type_ids}
+		_items[int(id)] = {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name}
 	_full_items_loaded = true
 
 ## A body for an id the catalogue does not hold (an NPC body, a test).
@@ -447,7 +461,7 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 		if slot < 0 or (slot > SLOT_SUIT and slot != SLOT_AVATAR):
 			continue
 		var models: PackedStringArray = info["models"]
-		var wear := {"id": id, "plus": plus, "slot": slot, "type_ids": info["type_ids"],
+		var wear := {"id": id, "plus": plus & 0xFF, "slot": slot, "type_ids": info["type_ids"], "code": String(info.get("code", "")),
 			"models": item_models(models[0] if not models.is_empty() else "", info["type_ids"], body.is_woman),
 			"nodes": []}
 		if slot == SLOT_AVATAR:
@@ -477,7 +491,9 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 				blocks.append(_item_attachables.get(path.to_lower()))
 		wear["drawn"] = drawn
 		wear["attachables"] = blocks
+		_apply_glow(wear)
 		body.worn.append(wear)
+	_note_glow_wears(body)
 
 	_refresh_default_wear(body)
 	apply_hides(body)
@@ -649,6 +665,72 @@ func _item_instance(body_bsr: String, tmpl: SkinnedBsrAssembler.AssembledCharact
 	skel.add_child(node)
 	return node
 
+## Round 734: the weapon or shield's glow and particles at its plus
+## (EquipGlow), on the nodes just hung. Sets wear["glow"] to the row's plus
+## (0: none) and wear["glow_fx"] to the effects attached.
+func _apply_glow(wear: Dictionary) -> void:
+	wear["glow"] = 0
+	wear["glow_fx"] = 0
+	var slot := int(wear["slot"])
+	if not glow_enabled or glow_tables == null or (slot != SLOT_WEAPON and slot != SLOT_SHIELD):
+		return
+	var code := String(wear.get("code", ""))
+	if code == "" or (wear["nodes"] as Array).is_empty():
+		return
+	var plus := int(wear["plus"])
+	var row := glow_tables.glow_row(code, plus)
+	var rows := glow_tables.particle_rows(code, plus)
+	if row == null and rows.is_empty():
+		return
+	var made := EquipGlow.apply(wear["nodes"], row, rows, _data, _particles_archive() if not rows.is_empty() else null, code)
+	wear["glow"] = row.plus if row != null else 0
+	wear["glow_fx"] = int(made["particles"])
+
+## On the body's skeleton (meta): the weapon and shield it wears, {slot, code,
+## plus, nodes}, so reglow can redraw their glow once the skeleton has left
+## its Body (World3D keeps only the skeleton).
+const GLOW_WEARS_META := "opensro_glow_wears"
+
+func _note_glow_wears(body: Body) -> void:
+	var list: Array = []
+	for wear in body.worn:
+		var slot := int(wear["slot"])
+		if slot == SLOT_WEAPON or slot == SLOT_SHIELD:
+			list.append({"slot": slot, "code": wear.get("code", ""), "plus": int(wear["plus"]), "nodes": wear["nodes"]})
+	body.skeleton.set_meta(GLOW_WEARS_META, list)
+
+## Redraws the weapon and shield glow of a built body at new pluses (slot ->
+## plus; a slot it lacks is +0): the old glow and its effects off
+## (EquipGlow.clear), the new ones on -- what an equip-change broadcast that
+## changes only a plus needs (round 734, the hook for 0x3038's OptLevel).
+## Returns the wears redrawn.
+func reglow(skel: Skeleton3D, pluses: Dictionary) -> int:
+	if skel == null or not skel.has_meta(GLOW_WEARS_META):
+		return 0
+	var n := 0
+	for w in skel.get_meta(GLOW_WEARS_META):
+		var wear: Dictionary = w
+		var nodes: Array = []
+		for node in wear["nodes"]:
+			if is_instance_valid(node):
+				nodes.append(node)
+				EquipGlow.clear(node)
+		var plus := int(pluses.get(int(wear["slot"]), 0)) & 0xFF
+		var redo := {"slot": wear["slot"], "code": wear["code"], "plus": plus, "nodes": nodes}
+		_apply_glow(redo)
+		wear["plus"] = plus
+		wear["nodes"] = nodes
+		n += 1
+	return n
+
+func _particles_archive() -> Pk2Reader:
+	if particles == null and not _particles_tried:
+		_particles_tried = true
+		var path := Pk2Config.particles_path()
+		if path != "":
+			particles = Pk2Reader.open(path)
+	return particles
+
 func _make_item_template(tmpl: SkinnedBsrAssembler.AssembledCharacter, item_path: String) -> Node3D:
 	var scratch := tmpl.skeleton.duplicate() as Skeleton3D
 	# The client's rule for a palette bone the body lacks (READ, see
@@ -695,7 +777,7 @@ func _item_info(id: int) -> Dictionary:
 			ItemTableReader.parse(part, rows)
 		for rid in rows:
 			var item: ItemTableReader.Item = rows[rid]
-			_items[int(rid)] = {"models": item.model_paths, "type_ids": item.type_ids}
+			_items[int(rid)] = {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name}
 		stats["item_table_usec"] = Time.get_ticks_usec() - t0
 		stats["item_table_rows"] = rows.size()
 	return _items.get(id, {})

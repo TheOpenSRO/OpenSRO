@@ -690,6 +690,11 @@ var follow_basis := Basis.IDENTITY
 ## review: an object's mode-0 particle entry, CRTModParticle::FUN_00c81190
 ## 0xc811c5..0xc811e0 multiplies the bone's matrix by the world's).
 var follow_bone_full := false
+## The effect's own uniform scale on top of its host's (round 734): an
+## equipment glow's particle row asks for col 3 / 100 (READ: CRTModParticle
+## +0xc0, handed each placement to CEFEffect::vslot_010, which sets the
+## effect's scale). 1 for every other effect.
+var effect_scale := 1.0
 
 func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
 	_follow_host = host
@@ -751,7 +756,7 @@ func _place() -> bool:
 	var redraw := false
 	if not _anchored:
 		_anchored = true
-		_anchor = Transform3D(scale_basis(placed.basis), placed.origin)
+		_anchor = Transform3D(scale_basis(placed.basis) * effect_scale, placed.origin)
 		top_level = true
 	var e := _anchor.affine_inverse() * placed
 	if e.origin.length() > ANCHOR_JUMP and sim != null:
