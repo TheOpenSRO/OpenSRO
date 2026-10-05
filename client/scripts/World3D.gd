@@ -1682,7 +1682,9 @@ func _ready() -> void:
 	# The effects' plate/mesh/link shaders and their glow twins (round 720's
 	# review): compiled behind the loading screen, not as a gate's region
 	# binds.
-	print("World3D: warming %d effect shader(s)" % EfpEffect.warm(camera_3d))
+	var sw_efp := Time.get_ticks_usec()
+	var warmed := EfpEffect.warm(camera_3d)
+	print("World3D: warming %d effect shader(s) in %d us" % [warmed, Time.get_ticks_usec() - sw_efp])
 	# The fade-in's shaders (round 676's review): compiled behind the loading
 	# screen, not on the first monster's frame.
 	print("World3D: warming %d appear-fade shader(s)" % AppearFade.warm(camera_3d))
@@ -7529,7 +7531,10 @@ const GATE_EFFECT_RADIUS := 30.0
 const META_GATE_EFFECTS := "gate_effects"
 var _ambient := AmbientParticles.new()
 
-func _attach_gate_effects(region_x: int, region_y: int) -> void:
+## Retries left for a region whose gate effects are still decoding.
+const GATE_EFFECT_RETRIES := 50
+
+func _attach_gate_effects(region_x: int, region_y: int, retries: int = GATE_EFFECT_RETRIES) -> void:
 	# OPENSRO_QA_AMBIENT=off (round 720): none, for a comparison frame.
 	if _teleport_reader == null or OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
 		return
@@ -7540,6 +7545,11 @@ func _attach_gate_effects(region_x: int, region_y: int) -> void:
 	if particles == null:
 		return
 	_ambient.set_light_effect(video_options().value(VideoOptions.LIGHT) == 1)
+	# Effects still decoding on a preload task: come back shortly rather than
+	# decode them on this thread (round 720's review).
+	if retries > 0 and not _gate_effects_decoded(container, region_x, region_y):
+		_after(0.1, func() -> void: _attach_gate_effects(region_x, region_y, retries - 1))
+		return
 	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
 		var building: TeleportReader.Building = building_v
 		var at := Vector2(building.x, building.z)
@@ -7552,12 +7562,14 @@ func _attach_gate_effects(region_x: int, region_y: int) -> void:
 				continue
 			obj.set_meta(META_GATE_EFFECTS, true)
 			var mods: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
+			var sw_attach := Time.get_ticks_usec()
 			var made := _ambient.attach(obj, mods, particles)
+			sw_attach = Time.get_ticks_usec() - sw_attach
 			var total := 0
 			for entries in mods:
 				total += (entries as Array).size()
-			print("World3D: gate %s -- %s at %.1f from its row plays %d of its %d ambient effect(s)" % [
-				building.code, obj.name, d, made.size(), total])
+			print("World3D: gate %s -- %s at %.1f from its row plays %d of its %d ambient effect(s), built in %d us" % [
+				building.code, obj.name, d, made.size(), total, sw_attach])
 			# The placement, measured: each effect's position in its object's
 			# frame, which should be the entry's offset (AmbientParticles).
 			if _qa_ambient_log:
@@ -7570,7 +7582,13 @@ func _attach_gate_effects(region_x: int, region_y: int) -> void:
 ## (`_<x>_<y>`) names, for its objects job (round 720's review).
 func _gate_points_for(node_suffix: String) -> Array:
 	var out: Array = []
-	if _teleport_reader == null or OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+	if OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+		return out
+	# The teleport tables load with the NPC tables (_load_npc_tables), which
+	# the first regions' jobs are built before: loaded here first (once).
+	if _teleport_reader == null:
+		_load_npc_tables()
+	if _teleport_reader == null:
 		return out
 	var parts := node_suffix.split("_", false)
 	if parts.size() != 2:
@@ -7606,9 +7624,19 @@ static func _preload_gate_effects(job: Dictionary, placements: Array, models: Di
 		for p in _ambient_efps(prepared.get("root")):
 			if not paths.has(p):
 				paths.append(p)
-	if not paths.is_empty():
+	if paths.is_empty():
+		return
+	# On a worker the decode runs here; a job prepared on the main thread (the
+	# entry's first regions) hands it to a task, and the attach waits for it
+	# (_attach_gate_effects) rather than decoding it a second time.
+	if OS.get_thread_caller_id() == OS.get_main_thread_id():
+		EfpEffect.preload_paths(paths, particles)
+		print("World3D: %s -- %d gate effect(s) preloading on a task" % [job.get("mapo_path", "?"), paths.size()])
+	else:
+		var sw := Time.get_ticks_usec()
 		EfpEffect._preload_task(paths, particles)
-		job["gate_effects_preloaded"] = paths.size()
+		print("World3D: %s -- %d gate effect(s) preloaded in %d us on the job's worker" % [job.get("mapo_path", "?"),
+			paths.size(), Time.get_ticks_usec() - sw])
 
 ## The ambient effect files of a prepared node and its compound children.
 static func _ambient_efps(node) -> PackedStringArray:
@@ -7620,6 +7648,23 @@ static func _ambient_efps(node) -> PackedStringArray:
 	for child in node.get("children", []):
 		out.append_array(_ambient_efps(child))
 	return out
+
+## Whether every ambient effect of the gate objects in `container` is
+## decoded.
+func _gate_effects_decoded(container: Node3D, region_x: int, region_y: int) -> bool:
+	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
+		var building: TeleportReader.Building = building_v
+		var at := Vector2(building.x, building.z)
+		for child in container.get_children():
+			var obj := child as Node3D
+			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES) or obj.has_meta(META_GATE_EFFECTS):
+				continue
+			if Vector2(obj.position.x, obj.position.z).distance_to(at) > GATE_EFFECT_RADIUS:
+				continue
+			for p in AmbientParticles.efp_paths(obj.get_meta(AmbientParticles.META_ENTRIES)):
+				if not EfpEffect.has_template(p):
+					return false
+	return true
 
 ## The glow pass (AmbientParticles.update), once a physics tick.
 func _ambient_step(delta: float) -> void:

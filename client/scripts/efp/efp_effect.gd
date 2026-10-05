@@ -1070,6 +1070,13 @@ static func _preload_task(paths: PackedStringArray, particles: Pk2Reader) -> voi
 					_mesh_arrays[mk] = arr
 					_mutex.unlock()
 
+## Whether `efp_path`'s template is decoded (or known not to decode).
+static func has_template(efp_path: String) -> bool:
+	_mutex.lock()
+	var have := _templates.has(efp_path.to_lower())
+	_mutex.unlock()
+	return have
+
 ## Waits for every preload task (tests; a world teardown).
 static func wait_preloads() -> void:
 	for id in _preloads:
