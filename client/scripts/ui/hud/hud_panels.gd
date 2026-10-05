@@ -3711,11 +3711,9 @@ const ITEM_TIP_META := &"item_tip"
 const ITEM_TIP_WIRED_META := &"item_tip_wired"
 var _tip_bubble: ItemTooltipBubble = null
 var _type_names: ItemTypeNames = null
-## Lane B's hook (round 732): Callable(where: String, slot: int, item_id: int)
-## -> Dictionary of instance fields for ItemTooltipLines.compose's "instance"
-## ("plus", "stats", "magic_options", "adv_elixir", "durability"). `where` is
-## "bag", "equipment", "storage" or "buyback" (never "store": a store's goods
-## are reference items). Unset: reference values only.
+## A test or tool's override (round 731): Callable(where: String, slot: int,
+## item_id: int) -> Dictionary of extra "instance" fields, merged over what
+## ItemTooltipInstance builds from NetClient's round-732 instance lists.
 var item_instance_lookup := Callable()
 
 ## Marks `icon` as showing `item_id`'s tooltip; item_id < 0 clears it.
@@ -3812,9 +3810,14 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		instance["unknown_variance"] = true
 	if cur >= 0 and maximum > 0:
 		instance["durability"] = [cur, maximum]
-	if item_instance_lookup.is_valid() and where != "store":
-		var extra = item_instance_lookup.call(where, slot, item_id)
-		if extra is Dictionary:
+	if where != "store":
+		var extra := ItemTooltipInstance.fields(item, _item_instance(where, slot))
+		if item_instance_lookup.is_valid():
+			var given = item_instance_lookup.call(where, slot, item_id)
+			if given is Dictionary:
+				extra.merge(given, true)
+		if not extra.is_empty():
+			instance.erase("unknown_variance")
 			instance.merge(extra, true)
 	return ItemTooltipLines.compose(item, {
 		"text": Callable(self, "_resolve_ui"),
@@ -3825,6 +3828,19 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		"instance": instance,
 		"price": price,
 	})
+
+## The ItemInstance (round 732) the server sent for this site's slot, or null:
+## NetClient's last bag, equipment and warehouse lists, keyed by slot.
+const _INSTANCE_LISTS := {"bag": "last_inventory_instances", "equipment": "last_equipment_instances",
+	"storage": "last_storage_instances"}
+
+func _item_instance(where: String, slot: int) -> Object:
+	if slot < 0 or not _INSTANCE_LISTS.has(where):
+		return null
+	var list = NetClient.get(_INSTANCE_LISTS[where])
+	if list is Dictionary and (list as Dictionary).has(slot):
+		return list[slot] as Object
+	return null
 
 ## The player's level, Str, Int, gender (0 woman, 1 man) and country (0
 ## Chinese, 1 European) for the requirement lines' colours; -1 where unknown

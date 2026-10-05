@@ -102,6 +102,12 @@ static func quality(value: float, lower: float, upper: float) -> int:
 		return 100
 	return int(clampf((value - lower) / (upper - lower), 0.0, 1.0) * 100.0)
 
+## A min ~ max line's "(+x%)" for a reference item: each end rated on its own
+## range and the two averaged, truncated (round 732's reading of 0x66c66f..
+## 0x66c841) -- so 0 %, 100 % with both ranges empty, 50 % with one.
+static func range_quality(lo_l: float, lo_u: float, hi_l: float, hi_u: float) -> int:
+	return int((quality(lo_l, lo_l, lo_u) + quality(hi_l, hi_l, hi_u)) * 0.5)
+
 ## Composes the lines.
 ##
 ## ctx:
@@ -207,15 +213,13 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 	return lines
 
 ## The stat block, in the binary's order, each line only when its value is
-## non-zero. Values: an instance's computed stats when given (lane B);
-## otherwise the reference's lower ends plus the plus increments -- what a
-## variance-0 instance computes (READ, the shape; the variance maths is lane
-## B's). The "(+x%)" is printed for a reference item (variance 0: its value
-## is the lower end, so 0 %, or 100 % on an empty range) and for the
-## durability of an owned item (its max against the range); an owned item
-## whose variance the client lacks shows no percentage (OURS, until lane B).
-## A two-ended stat (attack, reinforce) is normalised on its first range,
-## min's [lower, upper] (INFERRED: which end the binary uses is OPEN).
+## non-zero. Values: an instance's computed stats when given (lane B,
+## ItemTooltipInstance); otherwise the reference's lower ends plus the plus
+## increments -- what a variance-0 instance computes. The "(+x%)" is printed
+## for a reference item (variance 0: 0 %, or 100 % on an empty range; a
+## min ~ max line averages its two ends) and for an instance whose variance
+## is known; an owned item whose instance the client has not got shows none
+## (OURS: the percent would be invented).
 static func _stats(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t: Callable, plus: int) -> void:
 	var instance: Dictionary = ctx.get("instance", {})
 	var given: Dictionary = instance.get("stats", {})
@@ -227,12 +231,12 @@ static func _stats(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t:
 	if item.phys_atk != Vector2i.ZERO:
 		var pa: Array = given.get("pa", [item.phys_atk.x + roundi(inc_at.call(ItemTableReader.PLUS_INC_PA)),
 			item.phys_atk.y + roundi(inc_at.call(ItemTableReader.PLUS_INC_PA))])
-		var q: int = int(given.get("pa_q", quality(item.phys_atk.x, item.phys_atk.x, item.phys_atk_upper.x)))
+		var q: int = int(given.get("pa_q", range_quality(item.phys_atk.x, item.phys_atk_upper.x, item.phys_atk.y, item.phys_atk_upper.y)))
 		_stat(lines, "%s %d ~ %d" % [t.call("PARAM_PA", "Phy. atk. pwr."), pa[0], pa[1]], q, unknown)
 	if item.mag_atk != Vector2i.ZERO:
 		var ma: Array = given.get("ma", [item.mag_atk.x + roundi(inc_at.call(ItemTableReader.PLUS_INC_MA)),
 			item.mag_atk.y + roundi(inc_at.call(ItemTableReader.PLUS_INC_MA))])
-		var q: int = int(given.get("ma_q", quality(item.mag_atk.x, item.mag_atk.x, item.mag_atk_upper.x)))
+		var q: int = int(given.get("ma_q", range_quality(item.mag_atk.x, item.mag_atk_upper.x, item.mag_atk.y, item.mag_atk_upper.y)))
 		_stat(lines, "%s %d ~ %d" % [t.call("PARAM_MA", "Mag. atk. pwr."), ma[0], ma[1]], q, unknown)
 	# Defences and absorptions: "%s %.1f (+%d%%)", one value.
 	for spec in [["pd", "PARAM_PD", "Phy. def. pwr.", item.phys_def, ItemTableReader.PLUS_INC_PD],
@@ -245,15 +249,20 @@ static func _stats(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t:
 		var v: float = float(given.get(spec[0], range_v.x + inc_at.call(spec[4])))
 		var q: int = int(given.get(spec[0] + "_q", quality(range_v.x, range_v.x, range_v.y)))
 		_stat(lines, "%s %.1f" % [t.call(spec[1], spec[2]), v], q, unknown)
-	# Durability: "%s %d/%d (+%d%%)", red when broken (0x66c5b0).
+	# Durability: "%s %d/%d (+%d%%)", red when broken (0x66c5b0). The max is
+	# the instance's (lane B's dur_max, or the server's durability block),
+	# else the reference's lower end; the percent is the instance's
+	# trunc(q / 0.31) (round 732), 0 for a reference item.
 	var dur: Array = instance.get("durability", [])
 	var dur_l := item.durability
-	var dur_u := maxi(item.durability_max, dur_l)
 	if dur_l > 0 or dur.size() == 2:
-		var cur: int = int(dur[0]) if dur.size() == 2 else dur_l
-		var mx: int = int(dur[1]) if dur.size() == 2 else dur_l
-		var q := quality(mx, dur_l, dur_u)
-		_add(lines, "%s %d/%d (+%d%%)" % [t.call("PARAM_DUR", "Durability"), cur, mx, q], RED if cur == 0 and dur.size() == 2 else WHITE)
+		var mx: int = int(given.get("dur_max", int(dur[1]) if dur.size() == 2 else dur_l))
+		var cur: int = int(dur[0]) if dur.size() == 2 else int(instance.get("durability_cur", mx))
+		var body := "%s %d/%d" % [t.call("PARAM_DUR", "Durability"), cur, mx]
+		var known := given.has("dur_q") or not bool(instance.get("unknown_variance", false))
+		if known:
+			body = "%s (+%d%%)" % [body, int(given.get("dur_q", 0))]
+		_add(lines, body, RED if cur == 0 and (dur.size() == 2 or instance.has("durability_cur")) else WHITE)
 	# Attack distance: "%s %.1f m", the range in tenths (ref +0x254).
 	if item.attack_range != 0:
 		_add(lines, "%s %.1f m" % [t.call("PARAM_RANGE", "Attack distance"), item.attack_range / 10.0], WHITE)
@@ -284,11 +293,11 @@ static func _stats(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t:
 		var vals: Array = given.get(spec[0], [r.x, r.y])
 		var label: String = t.call(spec[1], spec[2])
 		var body: String
-		if int(vals[0]) == int(vals[1]):
-			body = "%s %.1f %%" % [label, int(vals[0]) / 10.0]
+		if is_equal_approx(float(vals[0]), float(vals[1])):
+			body = "%s %.1f %%" % [label, float(vals[0]) / 10.0]
 		else:
-			body = "%s %.1f %% ~ %.1f %%" % [label, int(vals[0]) / 10.0, int(vals[1]) / 10.0]
-		_stat(lines, body, int(given.get(spec[0] + "_q", quality(r.x, r.x, ru.x))), unknown)
+			body = "%s %.1f %% ~ %.1f %%" % [label, float(vals[0]) / 10.0, float(vals[1]) / 10.0]
+		_stat(lines, body, int(given.get(spec[0] + "_q", range_quality(r.x, ru.x, r.y, ru.y))), unknown)
 
 static func _stat(lines: Array, body: String, q: int, unknown: bool) -> void:
 	_add(lines, body if unknown else "%s (+%d%%)" % [body, q], WHITE)
