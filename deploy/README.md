@@ -292,6 +292,15 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #   654's count on a retail archive).
 # Since round 666 the server also WARNs at every boot while no skill carries status params:
 # `skills store has NO status params (N skills, 0 with status_params) ... RE-EXPORT skills.csv`.
+# ROUND 728 (the warehouse deposit fee) NEEDS THE ITEMS RE-EXPORT ON opensro-01: re-run
+# `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 73 columns, the new
+# column 72 KeepingFee, itemdata column 30), then the NEW `import-refdata` (step 3) -- its store adds
+# items.keeping_fee BIGINT NOT NULL DEFAULT 0 before it writes the rows -- then restart the server.
+# Until then keeping_fee is 0 on every row and EVERY DEPOSIT COSTS 1 GOLD (before round 728 deposits
+# were free, so players see a change either way). Check:
+# `SELECT keeping_fee FROM items WHERE id = 8;` answers 11 (ITEM_ETC_HP_POTION_05) on a retail
+# archive. The client needs no step: the release build compiles the native library with the new
+# column; an older library shows a fee of 1 in the deposit box while the server charges the real one.
 
 # ROUND 691 (Europe's masteries and skills) NEEDS NO RE-EXPORT AND NO RE-IMPORT: the race filter
 # reads two columns every skills table already has -- skills.mastery1 and skills.req_learn_race

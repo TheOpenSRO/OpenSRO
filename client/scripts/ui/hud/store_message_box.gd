@@ -347,6 +347,13 @@ func _build_divide(opts: Dictionary) -> bool:
 	_static_text(_root.get_node_or_null("GDR_MBDC_STATIC_NAMEBOARD"), String(opts.get("name", "")))
 	_static_text(_root.get_node_or_null("GDR_MBDC_STATIC_CURRENT_AMOUNT"), str(int(opts.get("stack", 0))))
 	_count_edit = _root.get_node_or_null("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT") as LineEdit
+	if _count_edit != null:
+		# Held to its authored 42 px (223,102,42,24): Godot's LineEdit grows to
+		# its theme's minimum_character_width, which drew it ~53 wide against
+		# split_z4uFWIL.png's 38 between borders (round 728 review F8).
+		_count_edit.add_theme_constant_override("minimum_character_width", 0)
+		_place(_count_edit, _authored(_count_edit))
+		_count_edit.custom_minimum_size = _authored(_count_edit).size
 	_wire_count(_count_edit)
 	_focus_later(_count_edit)
 	_wire_ok(_root.get_node_or_null("GDR_MBDC_BTN_OK"), Vector2(-1, -1), "")

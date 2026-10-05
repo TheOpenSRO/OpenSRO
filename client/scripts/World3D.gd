@@ -12474,6 +12474,7 @@ func _qa_step() -> void:
 		var scode := OS.get_environment("OPENSRO_QA_SHOP")
 		_talk_npc_name = scode
 		_talk_npc_code = scode
+		_hud_panels.npc_uid = _npc_uid_for_code(scode)
 		if _shop_reader != null:
 			_hud_panels.open_shop(scode, _shop_reader.tabs_for(scode), scode)
 
@@ -17157,6 +17158,25 @@ func _teleport_point_for_code(code: String) -> TeleportReader.Point:
 		return point
 	return _teleport_reader.point_for_object(_npc_id_for_code(code))
 
+## The unique id of the NPC being talked to (its spawn's uid, round 708), or
+## 0 (round 728: the retail item operations carry it).
+func _talk_npc_uid() -> int:
+	if _talk_node != null and is_instance_valid(_talk_node) and _talk_node.has_meta("npc_uid"):
+		return int(_talk_node.get_meta("npc_uid"))
+	return _npc_uid_for_code(_talk_npc_code)
+
+## The uid of a spawned NPC with this codename (QA hooks that open a store
+## without a click), or 0.
+func _npc_uid_for_code(code: String) -> int:
+	var roster: NpcSpawnNet.Roster = NetClient.get("npc_roster") as NpcSpawnNet.Roster
+	var ref_id := _npc_id_for_code(code)
+	if roster == null or ref_id <= 0:
+		return 0
+	for uid in roster.npcs:
+		if int(roster.npcs[uid].ref_id) == ref_id:
+			return int(uid)
+	return 0
+
 ## The characterdata id of NPC codename `code` (0 when the NPC tables do not
 ## name it), through the reverse of _npc_codes.
 func _npc_id_for_code(code: String) -> int:
@@ -17192,6 +17212,8 @@ func _refresh_open_talk_menu() -> void:
 ## 512, NpcServiceReader.services_for): repair is the store window's own
 ## buttons.
 func _on_npc_service_selected(key: String) -> void:
+	# Round 728: the retail sell, deposit and buy back carry the NPC's uid.
+	_hud_panels.npc_uid = _talk_npc_uid()
 	# A tab group's store line (round 725): that group's tabs.
 	if key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):
 		if _shop_reader != null and _talk_npc_code != "":

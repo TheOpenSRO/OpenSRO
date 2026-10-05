@@ -69,9 +69,10 @@ signal repair_result(code: int, gold_spent: int, durabilities: Array)
 signal shop_buy_result(ok: bool, reason: String)
 signal shop_list_result(entries: Array, error: String)
 signal shop_sell_result(ok: bool, reason: String, gold_received: int)
-## The buy-back row (round 728): ShopNet.BuybackEntry list, newest first.
-signal shop_buyback_list(entries: Array, error: String)
-signal shop_buyback_result(ok: bool, reason: String, gold_paid: int)
+## Round 728: the retail item operation's result (0xB034), ItemOpNet.decode_result.
+signal item_op_result(result: Dictionary)
+## Round 728: a buy back's failure (0xB168), the code.
+signal buyback_failed(code: int)
 ## capacity is the warehouse's slot count (0 from a server that did not send it).
 signal storage_list_result(slots: Array, error: String, capacity: int)
 signal storage_deposit_result(ok: bool, reason: String)
@@ -586,8 +587,8 @@ func list_inventory(char_name: String) -> void:
 ## Moves the stack in one bag slot onto another (a drag in the inventory
 ## window). The server decides whether that is a move, a merge or a swap and
 ## answers with the whole bag -- see inventory_move_result.
-func move_item(char_name: String, from_slot: int, to_slot: int, count: int = 0) -> void:
-	_send(InventoryNet.OP_MOVE, InventoryNet.encode_move_request(char_name, from_slot, to_slot, count))
+func move_item(char_name: String, from_slot: int, to_slot: int) -> void:
+	_send(InventoryNet.OP_MOVE, InventoryNet.encode_move_request(char_name, from_slot, to_slot))
 
 ## Asks for the character's own gold, vitals and combat numbers.
 func character_stats(char_name: String) -> void:
@@ -635,14 +636,22 @@ func list_shop(item_ids: Array = []) -> void:
 func sell_item(char_name: String, slot: int, quantity: int) -> void:
 	_send(ShopNet.OP_SELL, ShopNet.encode_sell(char_name, slot, quantity))
 
-## Asks for this character's buy-back row (round 728); answered by
-## shop_buyback_list.
-func list_buyback(char_name: String) -> void:
-	_send(ShopNet.OP_BUYBACK_LIST, ShopNet.encode_buyback_list(char_name))
+## Round 728, the retail item operation (ItemOpNet): split count of bag slot
+## src into empty bag slot dst (0x7034 type 0).
+func split_item(src: int, dst: int, count: int) -> void:
+	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_split(src, dst, count))
 
-## Buys entry `index` of the buy-back row back; answered by shop_buyback_result.
-func buyback(char_name: String, index: int) -> void:
-	_send(ShopNet.OP_BUYBACK, ShopNet.encode_buyback(char_name, index))
+## Sells count of bag slot src to NPC npc (0x7034 type 9).
+func sell_item_retail(src: int, count: int, npc: int) -> void:
+	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_sell(src, count, npc))
+
+## Deposits bag slot src's whole stack into warehouse slot dst (0x7034 type 2).
+func deposit_retail(src: int, dst: int, npc: int) -> void:
+	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_deposit(src, dst, npc))
+
+## Buys entry index (0 = the oldest) of the buy-back list back (0x7168).
+func buyback_retail(npc: int, index: int) -> void:
+	_send(ItemOpNet.OP_BUYBACK, ItemOpNet.encode_buyback(npc, index))
 
 ## Uses one item from a bag slot (a potion). The reply carries the new HP/MP.
 func use_item(char_name: String, inventory_slot: int) -> void:
@@ -1040,12 +1049,11 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_SELL_RESULT:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
-		ShopNet.OP_BUYBACK_LIST_RESULT:
-			var r := ShopNet.decode_buyback_list(p.data)
-			shop_buyback_list.emit(r.entries, r.error)
-		ShopNet.OP_BUYBACK_RESULT:
-			var r := ShopNet.decode_buyback_result(p.data)
-			shop_buyback_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_paid)
+		ItemOpNet.OP_MOVE_RESULT:
+			item_op_result.emit(ItemOpNet.decode_result(p.data))
+		ItemOpNet.OP_BUYBACK_FAIL:
+			var f := ItemOpNet.decode_result(p.data)
+			buyback_failed.emit(int(f.get("code", 0)))
 		UseItemNet.OP_RESULT:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
 		CompositeNet.OP_STATE:

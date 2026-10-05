@@ -152,6 +152,9 @@ func _check_divide() -> void:
 	_check(_text_of(d, "Title") == "Input window" or _text_of(d, "Title") == "UIIT_STT_INPUT_BOX", "divide: titled Input window (got %s)" % _text_of(d, "Title"))
 	_check(_text_of(d, "GDR_MBDC_STATIC_CURRENT_AMOUNT") == "5000", "divide: retained 5000")
 	_check(_text_of(d, "GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT") == "1", "divide: the edit opens at 1 (0xd87bdc)")
+	var de := d.find_child("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT", true, false) as Control
+	_check(de != null and de.size == Vector2(42, 24) and de.position == Vector2(223, 102),
+		"divide: the edit at its authored 223,102,42,24 (review F8), got %s" % (Rect2(de.position, de.size) if de != null else Rect2()))
 	_check(_text_of(d, "GDR_MBDC_STATIC_NAMEBOARD") == "Vigor Recovery Grain (Small)", "divide: the name on the board")
 	var got := [-1]
 	d.confirmed.connect(func(q: int) -> void: got[0] = q)
@@ -176,16 +179,26 @@ func _check_divide() -> void:
 	_check(not ItemCountLabel.shows_count([1, 6, 1, 1], false, 1) and not ItemCountLabel.shows_count([3, 3, 1, 1], true, 5),
 		"count: equipment and bionic show none")
 
-	# The buy-back codecs (shop.gd), against the Go encoding's bytes.
-	var bytes := PackedByteArray([0, 0, 1])
-	var ent := PackedByteArray(); ent.resize(20)
-	ent.encode_s64(0, 7); ent.encode_u32(8, 3); ent.encode_s64(12, 210)
-	bytes.append_array(ent)
-	var list := ShopNet.decode_buyback_list(bytes)
-	_check(list.error == "" and list.entries.size() == 1 and list.entries[0].item_id == 7 and list.entries[0].quantity == 3 \
-		and list.entries[0].unit == 210, "buy back: the list decodes")
-	var req := ShopNet.encode_buyback("Aria", 4)
-	_check(req.size() == 2 + 4 + 4 and req.decode_u16(0) == 4 and req.decode_u32(6) == 4, "buy back: the request encodes")
+	# The retail item operation (ItemOpNet), against session/itemop_test.go's bytes.
+	_check(ItemOpNet.encode_split(0, 2, 250) == PackedByteArray([0, 13, 15, 0xfa, 0]), "0x7034 type 0 encodes")
+	_check(ItemOpNet.encode_sell(1, 20, 0x01020304) == PackedByteArray([9, 14, 20, 0, 4, 3, 2, 1]), "0x7034 type 9 encodes")
+	_check(ItemOpNet.encode_deposit(0, 5, 7) == PackedByteArray([2, 13, 5, 7, 0, 0, 0]), "0x7034 type 2 encodes")
+	_check(ItemOpNet.encode_buyback(7, 3) == PackedByteArray([7, 0, 0, 0, 3]), "0x7168 encodes")
+	var sold := ItemOpNet.decode_result(PackedByteArray([1, 9, 14, 20, 0, 7, 0, 0, 0, 1]))
+	_check(sold.ok and sold.type == 9 and sold.src == 1 and sold.count == 20 and sold.npc == 7 and sold.book == 1, "0xB034 type 9 decodes")
+	var back := ItemOpNet.decode_result(PackedByteArray([1, 0x22, 14, 0, 20, 0]))
+	_check(back.ok and back.type == 0x22 and back.dst == 1 and back.index == 0 and back.count == 20, "0xB034 type 0x22 decodes")
+	var bad := ItemOpNet.decode_result(PackedByteArray([2, 0x0f, 0x18]))
+	_check(not bad.ok and bad.code == 0x180f, "a failure decodes its code")
+	# The client's list (c:0x78d900): 0xFF books nothing, the sixth drops the oldest.
+	var book: Array = []
+	for n in range(6):
+		book = ItemOpNet.book_sale(book, 100 + n, 1, n + 1)
+	book = ItemOpNet.book_sale(book, 999, 1, ItemOpNet.NOT_BOOKED)
+	_check(book.size() == 5 and int(book[0].item_id) == 101 and int(book[4].item_id) == 105, "the list keeps the newest five, oldest first")
+	_check(ItemOpNet.never_booked([3, 2, 1, 1], false, "") and ItemOpNet.never_booked([3, 3, 8, 1], false, "")
+		and not ItemOpNet.never_booked([3, 3, 1, 1], false, "ITEM_ETC_HP_POTION_05") and ItemOpNet.never_booked([3, 3, 1, 1], false, "ITEM_QSP_X"),
+		"the never-booked set (gs:0x6b2950)")
 
 func _check_money() -> void:
 	var g := _box(StoreMessageBox.Kind.GOLD_DEPOSIT, {"count": 0, "min": 0, "max": 5000})
