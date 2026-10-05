@@ -41,7 +41,7 @@ var _panels: Node
 var _store: HudWindow
 var _frame := 0
 var _live_box: Control
-var _live_button: Button
+var _live_button: BaseButton
 
 const ITEM_ID := 7
 
@@ -52,9 +52,13 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
-func _find_button(node: Node, text: String) -> Button:
-	if node is Button and (node as Button).text == text:
-		return node as Button
+## Round 726: the boxes are the client's own (StoreMessageBox), their
+## buttons TextureButtons captioned by a ButtonLabel.
+func _find_button(node: Node, text: String) -> BaseButton:
+	if node is BaseButton:
+		var l := node.get_node_or_null("ButtonLabel") as Label
+		if (node is Button and (node as Button).text == text) or (l != null and l.text == text):
+			return node as BaseButton
 	for child in node.get_children():
 		var found := _find_button(child, text)
 		if found != null:
@@ -72,7 +76,7 @@ func _find_label_prefix(node: Node, prefix: String) -> Label:
 
 ## Runs a button's connected handlers the way its `pressed` emission would,
 ## without emitting (an emission from a freed Button is the crash itself).
-func _press_handlers(button: Button) -> void:
+func _press_handlers(button: BaseButton) -> void:
 	for c in button.pressed.get_connections():
 		(c["callable"] as Callable).call()
 
@@ -124,24 +128,23 @@ func _build_and_press() -> void:
 		return
 	_panels = panels_script.new()
 	_panels.set("_items_loaded", true)
+	_panels.set("_builder", StoreBoxFixture.builder())
 	(_panels.get("_items") as Dictionary)[ITEM_ID] = _item()
 	(_panels.get("_shop_prices") as Dictionary)[ITEM_ID] = 600
 	root.add_child(_panels)
 	_store = _window("store")
 	var storage := _window("storage")
 
-	# (b) the totals lines, read before any box is closed.
+	# (b) the price fields, read before any box is closed (round 726: the
+	# client's own Price field, unit x count).
 	_panels.call("_confirm_buy", ITEM_ID)
-	var buy_box := _store.get_node_or_null("BuyConfirm")
-	var buy_total := _find_label_prefix(buy_box, "Total:") if buy_box != null else null
-	# NEGATIVE (fails on dev cfddf39: the line stayed empty).
-	_check(buy_total != null and buy_total.text == "Total: 600 gold",
-		"the buy box shows its total (%s)" % (buy_total.text if buy_total != null else "no Total line"))
+	var buy_box := _store.get_node_or_null("BuyConfirm") as StoreMessageBox
+	_check(buy_box != null and buy_box.price_text() == "600",
+		"the buy box shows its price (%s)" % (buy_box.price_text() if buy_box != null else "no box"))
 	_panels.call("_confirm_sell", 3, ITEM_ID, 15)
-	var sell_box := _store.get_node_or_null("SellConfirm")
-	var sell_get := _find_label_prefix(sell_box, "Get:") if sell_box != null else null
-	_check(sell_get != null and sell_get.text == "Get: 148 gold",
-		"the sell box shows what it pays (%s)" % (sell_get.text if sell_get != null else "no Get line"))
+	var sell_box := _store.get_node_or_null("SellConfirm") as StoreMessageBox
+	_check(sell_box != null and sell_box.price_text() == "2220",
+		"the sell box shows what it pays for the stack (%s)" % (sell_box.price_text() if sell_box != null else "no box"))
 
 	# (a) every close path of the four boxes.
 	var buy := func() -> void: _panels.call("_confirm_buy", ITEM_ID)
@@ -155,13 +158,16 @@ func _build_and_press() -> void:
 	_check_press("sell", "SellConfirm", _store, sell, "Cancel")
 	_check_press("deposit", "DepositConfirm", storage, deposit, "Deposit")
 	_check_press("deposit", "DepositConfirm", storage, deposit, "Cancel")
-	_check_press("withdraw", "WithdrawConfirm", storage, withdraw, "Withdraw")
+	_check_press("withdraw", "WithdrawConfirm", storage, withdraw, "Take")
 	_check_press("withdraw", "WithdrawConfirm", storage, withdraw, "Cancel")
-	_check_press("gold", "GoldDialog", storage, gold, "Close")
+	_check_press("gold", "GoldDialog", storage, gold, "Cancel")
 	# (f) NEGATIVE (fails on dev cfddf39: the dialog stayed up on Deposit
-	# and Withdraw, and a second click sent the amount again).
+	# and Withdraw, and a second click sent the amount again). Round 726:
+	# one box per direction, Deposit from the bag's button, Take from the
+	# warehouse's.
 	_check_press("gold", "GoldDialog", storage, gold, "Deposit")
-	_check_press("gold", "GoldDialog", storage, gold, "Withdraw")
+	var gold_out := func() -> void: _panels.call("_open_gold_withdraw")
+	_check_press("gold", "GoldDialog", storage, gold_out, "Take")
 
 	# (e) the window closing takes its boxes with it.
 	for pair in [[_store, "SellConfirm", sell], [_store, "BuyConfirm", buy],

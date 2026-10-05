@@ -1992,6 +1992,11 @@ func _shop_tooltip(item: ItemTableReader.Item) -> String:
 ## the bag opens the buy dialog (HeldIcon, round 652; CIFInventory::vslot_028
 ## 0x6b5b80 takes kind 0x0f, the store, into the buy path).
 func _on_shop_cell_input(event: InputEvent, icon: TextureRect) -> void:
+	# Round 726: Ctrl+click buys with no box (_ctrl_buy).
+	if _is_ctrl_click_on(event, icon) and icon.has_meta("shop_item_id") \
+			and (held_icon == null or not held_icon.is_holding()):
+		_ctrl_buy(int(icon.get_meta("shop_item_id")))
+		return
 	if _is_pick_click_on(event, icon) and icon.has_meta("shop_item_id"):
 		pick_up_icon({"kind": "shop", "item_id": int(icon.get_meta("shop_item_id")), "icon": icon.texture},
 			icon.texture, icon, (event as InputEventMouseButton).global_position)
@@ -2038,109 +2043,75 @@ func _set_shop_status(text: String) -> void:
 	if status != null:
 		status.text = text
 
-## A small confirmation before spending gold, so a click does not buy by
-## accident. Built over the store window; Buy sends the purchase, Cancel closes.
+## The buy box: the original's CItemMallConfirmBuy (round 726, StoreMessageBox),
+## opened when a good is put down on the bag (CIFInventory::vslot_028
+## 0x6b5b80 -> 0x6b2570 -> 0x6b24c0(1), message_box.md). The count starts
+## at 1 (MEASURED, the user's 3Gw7Ene.png) and runs to the item's stack;
+## the price is the server's quote times the count. Buy sends the purchase;
+## the server refuses what the purse cannot pay (OURS: the box does not grey
+## Buy out, the original's box has no such state that was read).
 func _confirm_buy(item_id: int) -> void:
-	var window: HudWindow = _windows.get("store")
-	if window == null:
-		return
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	if item == null:
 		return
-	var old := window.get_node_or_null("BuyConfirm")
+	_open_store_box("store", "BuyConfirm", StoreMessageBox.Kind.BUY, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
+		"count": 1, "max": maxi(1, item.max_stack), "unit_price": _shop_prices.get(item_id, -1),
+	}, func(q: int) -> void: _do_buy(item_id, q))
+
+## Opens one of the store's or the warehouse's confirm boxes on `host_id`'s
+## window (round 726): built by StoreMessageBox from the client's layouts,
+## centred on the screen (OURS: where the original places it is not read),
+## closed with its window (round 631). `on_ok` gets the box's count. Null
+## when the window is not open or a layout is missing.
+func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dictionary, on_ok: Callable) -> StoreMessageBox:
+	var window: HudWindow = _windows.get(host_id)
+	if window == null:
+		return null
+	var old := window.get_node_or_null(box_name) as Control
 	if old != null:
-		old.free()
-	var price: int = _shop_prices.get(item_id, -1)
-	var gold: int = _stats.gold if _stats != null else -1
-	var stackable: bool = item.max_stack > 1
-	# The most the player may buy: the item's stack, and (when price and purse
-	# are both known) what the gold affords.
-	var max_qty: int = maxi(1, item.max_stack)
-	if price > 0 and gold >= 0:
-		max_qty = clampi(gold / price, 1, maxi(1, item.max_stack))
-
-	var panel := PanelContainer.new()
-	panel.name = "BuyConfirm"
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	box.add_child(_shop_label("Buy %s?" % item.display_name(_object_names), Color(0.95, 0.9, 0.72)))
-	if price >= 0 and stackable:
-		box.add_child(_shop_label("%s gold each" % _grouped(price), Color(0.86, 0.82, 0.7)))
-
-	# Quantity + running total. The total label doubles as the affordability
-	# signal (it turns red and disables Buy when the purse can't cover it).
-	var qty_box := [1]
-	var total_label := _shop_label("", Color(0.95, 0.85, 0.45))
-	var buy := Button.new()
-	buy.text = "Buy"
-	var refresh := func() -> void:
-		var q: int = qty_box[0]
-		if price >= 0:
-			total_label.text = "Total: %s gold" % HudPanels._grouped(price * q)
-			var afford: bool = gold < 0 or price * q <= gold
-			total_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.45) if afford else Color(0.95, 0.5, 0.45))
-			buy.disabled = not afford
-		else:
-			total_label.text = ""
-
-	if stackable and max_qty > 1:
-		var qrow := HBoxContainer.new()
-		qrow.add_theme_constant_override("separation", 8)
-		qrow.alignment = BoxContainer.ALIGNMENT_CENTER
-		box.add_child(qrow)
-		var minus := Button.new()
-		minus.text = "-"
-		minus.custom_minimum_size = Vector2(30, 0)
-		var qty_label := _shop_label("1", Color(0.96, 0.96, 0.96))
-		qty_label.custom_minimum_size = Vector2(52, 0)
-		var plus := Button.new()
-		plus.text = "+"
-		plus.custom_minimum_size = Vector2(30, 0)
-		minus.pressed.connect(func() -> void:
-			qty_box[0] = maxi(1, qty_box[0] - 1)
-			qty_label.text = str(qty_box[0])
-			refresh.call())
-		plus.pressed.connect(func() -> void:
-			qty_box[0] = mini(max_qty, qty_box[0] + 1)
-			qty_label.text = str(qty_box[0])
-			refresh.call())
-		qrow.add_child(minus)
-		qrow.add_child(qty_label)
-		qrow.add_child(plus)
-	box.add_child(total_label)
-	refresh.call()
-
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(row)
-	buy.pressed.connect(func() -> void:
-		var q: int = qty_box[0]
-		_close_confirm_box(panel)
-		_do_buy(item_id, q))
-	row.add_child(buy)
-	var cancel := Button.new()
-	cancel.text = "Cancel"
-	cancel.pressed.connect(func() -> void: _close_confirm_box(panel))
-	row.add_child(cancel)
-
-	window.add_child(panel)
+		_close_confirm_box(old)
+	var box := StoreMessageBox.new()
+	box.name = box_name
+	if not box.build(_builder, box_kind, opts):
+		push_warning("HudPanels: the %s box could not be built (a layout is missing)" % box_name)
+		box.free()
+		return null
+	box.confirmed.connect(on_ok)
+	window.add_child(box)
 	_track_confirm_boxes(window)
-	_message_box_sounds(panel)
-	# Centre it over the window once it has a size.
-	panel.reset_size()
-	await panel.get_tree().process_frame
-	if is_instance_valid(panel) and is_instance_valid(window):
-		panel.position = ((window.size - panel.size) * 0.5).round()
+	_message_box_sounds(box)
+	_centre_box_on_screen(box)
+	print("HudPanels: %s opened (%s), count %d of %d, price '%s'" % [box_name,
+		StoreMessageBox.Kind.keys()[box_kind], box.count, box.max_count, box.price_text()])
+	return box
+
+## Puts a confirm box in the middle of the screen once it has its size.
+func _centre_box_on_screen(box: Control) -> void:
+	if not box.is_inside_tree():
+		return
+	box.global_position = ((box.get_viewport_rect().size - box.size) * 0.5).round()
+
+## Ctrl+click on a good buys it with no box (round 726; READ
+## CIFSlotWithHelpForPackage::vslot_029 0x68a6c0: VK_CONTROL held, the store
+## open, the target the bag 0x46, the count the item's stack (+0x1c0) or 1).
+func _ctrl_buy(item_id: int) -> void:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	var n: int = maxi(1, item.max_stack) if item != null else 1
+	print("HudPanels: ctrl+click buys item %d x%d with no box" % [item_id, n])
+	_do_buy(item_id, n)
+
+## Whether an event is a left click released with Ctrl held (no Shift or
+## Alt) over `control`: the original's Ctrl+click on a slot.
+func _is_ctrl_click_on(event: InputEvent, control: Control) -> bool:
+	if not (event is InputEventMouseButton):
+		return false
+	var mb := event as InputEventMouseButton
+	return mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed and mb.ctrl_pressed \
+		and not mb.shift_pressed and not mb.alt_pressed and control != null \
+		and (not control.is_inside_tree() or control.get_global_rect().has_point(mb.global_position))
 
 func _shop_label(text: String, colour: Color) -> Label:
 	var lbl := Label.new()
@@ -2185,94 +2156,33 @@ func _on_shop_buy_result(ok: bool, reason: String) -> void:
 	else:
 		_set_shop_status("Could not buy: %s" % reason)
 
-## A confirmation before selling from the bag: the item, its buy-back price
-## and (for a stack) a quantity, then Sell sends it. The gold shown is the
-## client's estimate from itemdata; the server's result carries the truth.
+## The sell box: CIFMessageBox mode 6, purpose 2 (round 726, StoreMessageBox),
+## opened when a bag item is put down on the store (CIFStore::vslot_028
+## 0x6d1400 -> 0x6b07d0). A stack is prefilled with its size and capped
+## there (0x6b0a52..0x6b0a87, READ); the price is the item's sell price
+## (itemdata's SellPrice; the original reads its reference +0xb8, INFERRED to
+## be the same column) times the count, the server's result the truth.
 func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
-	var window: HudWindow = _windows.get("store")
-	if window == null:
-		return
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	if item == null:
 		return
-	var old := window.get_node_or_null("SellConfirm")
-	if old != null:
-		old.free()
-	var unit: int = item.sell_price
-	var max_qty: int = maxi(1, slot_qty)
+	var held := maxi(1, slot_qty)
+	_open_store_box("store", "SellConfirm", StoreMessageBox.Kind.SELL, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
+		"count": held, "max": held, "unit_price": item.sell_price,
+	}, func(q: int) -> void: _do_sell(slot, q))
 
-	var panel := PanelContainer.new()
-	panel.name = "SellConfirm"
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	box.add_child(_shop_label("Sell %s?" % item.display_name(_object_names), Color(0.95, 0.9, 0.72)))
-	if unit > 0 and max_qty > 1:
-		box.add_child(_shop_label("%s gold each" % _grouped(unit), Color(0.86, 0.82, 0.7)))
-
-	var qty_box := [1]
-	var total_label := _shop_label("", Color(0.95, 0.85, 0.45))
-	var refresh := func() -> void:
-		total_label.text = "Get: %s gold" % HudPanels._grouped(unit * qty_box[0]) if unit > 0 else ""
-
-	if max_qty > 1:
-		var qrow := HBoxContainer.new()
-		qrow.add_theme_constant_override("separation", 8)
-		qrow.alignment = BoxContainer.ALIGNMENT_CENTER
-		box.add_child(qrow)
-		var minus := Button.new()
-		minus.text = "-"
-		minus.custom_minimum_size = Vector2(30, 0)
-		var qty_label := _shop_label("1", Color(0.96, 0.96, 0.96))
-		qty_label.custom_minimum_size = Vector2(52, 0)
-		var plus := Button.new()
-		plus.text = "+"
-		plus.custom_minimum_size = Vector2(30, 0)
-		minus.pressed.connect(func() -> void:
-			qty_box[0] = maxi(1, qty_box[0] - 1)
-			qty_label.text = str(qty_box[0])
-			refresh.call())
-		plus.pressed.connect(func() -> void:
-			qty_box[0] = mini(max_qty, qty_box[0] + 1)
-			qty_label.text = str(qty_box[0])
-			refresh.call())
-		qrow.add_child(minus)
-		qrow.add_child(qty_label)
-		qrow.add_child(plus)
-	box.add_child(total_label)
-	refresh.call()
-
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(row)
-	var sell := Button.new()
-	sell.text = "Sell"
-	sell.pressed.connect(func() -> void:
-		var q: int = qty_box[0]
-		_close_confirm_box(panel)
-		_do_sell(slot, q))
-	row.add_child(sell)
-	var cancel := Button.new()
-	cancel.text = "Cancel"
-	cancel.pressed.connect(func() -> void: _close_confirm_box(panel))
-	row.add_child(cancel)
-
-	window.add_child(panel)
-	_track_confirm_boxes(window)
-	_message_box_sounds(panel)
-	panel.reset_size()
-	await panel.get_tree().process_frame
-	if is_instance_valid(panel) and is_instance_valid(window):
-		panel.position = ((window.size - panel.size) * 0.5).round()
+## Ctrl+click on a bag item while the store is open sells it with no box
+## (round 726; READ CIFSlotWithHelp::vslot_029 0x680fa0: VK_CONTROL, the store
+## open, the source the bag 0x46), the whole stack (0x6815ff..0x68160f,
+## FUN_008ba460, the slot's count). The original first asks, with
+## UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL, before selling an item the store will
+## not buy back; which items those are is not read, and OpenSRO has no buy
+## back at all, so no such question is asked (OPEN).
+func _ctrl_sell(slot: int, qty: int) -> void:
+	print("HudPanels: ctrl+click sells bag slot %d x%d with no box" % [slot, maxi(1, qty)])
+	_do_sell(slot, maxi(1, qty))
 
 func _do_sell(slot: int, quantity: int) -> void:
 	var who := NetClient.current_character_name
@@ -2413,12 +2323,25 @@ func open_storage(npc_name: String) -> void:
 			NetClient.list_inventory(who)
 			NetClient.storage_gold(who, StorageNet.GOLD_QUERY, 0)
 
-## Wires the warehouse's gold button (GDR_STORAGE_BTN_MONEY) to the gold
-## dialog, once.
+## Wires the warehouse's gold buttons, once (round 726, message_box.md):
+## the warehouse's own (GDR_STORAGE_BTN_MONEY) takes gold out -- withdraw,
+## MsgBoxStoreMoney purpose 4 (0x6b29f0); the bag's (GDR_INVENTORY_BTN_MONEY)
+## puts gold in while the warehouse is open -- deposit, purpose 3
+## (0x6b2800, from the bag's 0x6b2e74). The bag's button with no warehouse
+## open is the original's drop-gold box (purpose 9), not built here.
 func _wire_storage_money_button(window: HudWindow) -> void:
 	var btn := window.node("GDR_STORAGE_BTN_MONEY") as BaseButton
-	if btn != null and not btn.pressed.is_connected(_open_gold_dialog):
-		btn.pressed.connect(_open_gold_dialog)
+	if btn != null and not btn.pressed.is_connected(_open_gold_withdraw):
+		btn.pressed.connect(_open_gold_withdraw)
+	var inventory: HudWindow = _windows.get("inventory")
+	if inventory != null:
+		var bag_btn := inventory.node("GDR_INVENTORY_BTN_MONEY") as BaseButton
+		if bag_btn != null and not bag_btn.pressed.is_connected(_on_bag_money_button):
+			bag_btn.pressed.connect(_on_bag_money_button)
+
+func _on_bag_money_button() -> void:
+	if _window_shown("storage"):
+		_open_gold_deposit()
 
 ## Fills the warehouse grid (GDR_STORAGE_LAT) with the stored items; each is
 ## clickable to withdraw.
@@ -2481,91 +2404,34 @@ func _on_storage_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			"qty": int(icon.get_meta("wh_qty")), "icon": icon.texture},
 			icon.texture, icon, (event as InputEventMouseButton).global_position)
 
+## The deposit box: CIFMessageBox mode 6, purpose 5 (round 726), opened when
+## a bag item is put down on the warehouse (CIFStorageRoom::vslot_028
+## 0x6cd350 -> 0x6b0e90). Its spin buttons are hidden by the purpose (READ),
+## so the count is typed; a stack starts at its size (INFERRED, as the sell
+## box's). The price field shows 0: OpenSRO's warehouse charges no fee (OURS;
+## the original's fee is the item reference's +0xcc times the count,
+## 0x6b0fe8..0x6b101c, a field not mapped to an itemdata column).
 func _confirm_deposit(bag_slot: int, item_id: int, held: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
-	var name: String = item.display_name(_object_names) if item != null else "item"
-	_quantity_move_confirm("DepositConfirm", "Deposit %s?" % name, held, "Deposit",
-		func(q: int) -> void: _do_deposit(bag_slot, q))
+	var n := maxi(1, held)
+	_open_store_box("storage", "DepositConfirm", StoreMessageBox.Kind.DEPOSIT, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
+		"count": n, "max": n, "fixed_price": 0,
+	}, func(q: int) -> void: _do_deposit(bag_slot, q))
 
+## The withdraw box: mode 6, purpose 6 (round 726), opened when a warehouse
+## item is put down on the bag (0x6b15b0). The purpose hides the spin
+## buttons, the "Price" label and the item's name (READ, 0x63ee85..0x63ee9f);
+## the price field is "%d" of 0 (0x6b1636..0x6b1641).
 func _confirm_withdraw(warehouse_slot: int, item_id: int, held: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
-	var name: String = item.display_name(_object_names) if item != null else "item"
-	_quantity_move_confirm("WithdrawConfirm", "Withdraw %s?" % name, held, "Withdraw",
-		func(q: int) -> void: _do_withdraw(warehouse_slot, q))
-
-## A quantity confirmation for a move (deposit/withdraw), built over whichever
-## of the storage/bag windows is topmost. on_action gets the chosen quantity.
-func _quantity_move_confirm(dialog_name: String, title: String, max_qty: int, action_label: String, on_action: Callable) -> void:
-	var window: HudWindow = _windows.get("storage")
-	if window == null:
-		return
-	var old := window.get_node_or_null(dialog_name)
-	if old != null:
-		old.free()
-	var panel := PanelContainer.new()
-	panel.name = dialog_name
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	box.add_child(_shop_label(title, Color(0.95, 0.9, 0.72)))
-
-	var qty_box := [1]
-	var cap: int = maxi(1, max_qty)
-	if cap > 1:
-		var qrow := HBoxContainer.new()
-		qrow.add_theme_constant_override("separation", 8)
-		qrow.alignment = BoxContainer.ALIGNMENT_CENTER
-		box.add_child(qrow)
-		var minus := Button.new()
-		minus.text = "-"
-		minus.custom_minimum_size = Vector2(30, 0)
-		var qty_label := _shop_label("1", Color(0.96, 0.96, 0.96))
-		qty_label.custom_minimum_size = Vector2(52, 0)
-		var plus := Button.new()
-		plus.text = "+"
-		plus.custom_minimum_size = Vector2(30, 0)
-		minus.pressed.connect(func() -> void:
-			qty_box[0] = maxi(1, qty_box[0] - 1)
-			qty_label.text = str(qty_box[0]))
-		plus.pressed.connect(func() -> void:
-			qty_box[0] = mini(cap, qty_box[0] + 1)
-			qty_label.text = str(qty_box[0]))
-		qrow.add_child(minus)
-		qrow.add_child(qty_label)
-		qrow.add_child(plus)
-
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(row)
-	var act := Button.new()
-	act.text = action_label
-	act.pressed.connect(func() -> void:
-		var q: int = qty_box[0]
-		_close_confirm_box(panel)
-		on_action.call(q))
-	row.add_child(act)
-	var cancel := Button.new()
-	cancel.text = "Cancel"
-	cancel.pressed.connect(func() -> void: _close_confirm_box(panel))
-	row.add_child(cancel)
-
-	window.add_child(panel)
-	_track_confirm_boxes(window)
-	_message_box_sounds(panel)
-	panel.reset_size()
-	await panel.get_tree().process_frame
-	if is_instance_valid(panel) and is_instance_valid(window):
-		panel.position = ((window.size - panel.size) * 0.5).round()
+	var n := maxi(1, held)
+	_open_store_box("storage", "WithdrawConfirm", StoreMessageBox.Kind.WITHDRAW, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
+		"count": n, "max": n, "fixed_price": 0,
+	}, func(q: int) -> void: _do_withdraw(warehouse_slot, q))
 
 func _do_deposit(bag_slot: int, quantity: int) -> void:
 	var who := NetClient.current_character_name
@@ -2624,7 +2490,7 @@ func _on_storage_gold_result(ok: bool, reason: String, carried: int, stored: int
 	_update_storage_gold_labels()
 
 ## Reflects the two balances in the warehouse window (its stored-gold line),
-## the bag window (carried gold), and the open gold dialog if any.
+## and the bag window (carried gold).
 func _update_storage_gold_labels() -> void:
 	var window: HudWindow = _windows.get("storage")
 	if window != null:
@@ -2633,9 +2499,6 @@ func _update_storage_gold_labels() -> void:
 		# keeps its authored "Gold" (UIIT_STT_GOLD) after it. It used to be
 		# written over the "Gold" (round 630 review).
 		_set_money_text(window, "GDR_STORAGE_STA_MONEY", _storage_stored)
-		var dialog_bal := window.get_node_or_null("GoldDialog/VB/GoldBal") as Label
-		if dialog_bal != null:
-			dialog_bal.text = "Carried: %s     Stored: %s" % [_grouped(_storage_carried), _grouped(_storage_stored)]
 	# Keep the bag's gold line and cached stats in step with the purse.
 	if _stats != null:
 		_stats.gold = _storage_carried
@@ -2681,74 +2544,30 @@ func set_exchange_money(mine: int, other: int) -> void:
 	if other >= 0:
 		_set_money_text(window, "GDR_EXCHANGE_STATIC_OTHERMONEY", other)
 
-## The gold dialog: an amount to deposit into or withdraw from the warehouse.
-## Stays open so several moves can be made; the balances line refreshes from
-## each result.
-func _open_gold_dialog() -> void:
-	var window: HudWindow = _windows.get("storage")
-	if window == null:
-		return
-	var old := window.get_node_or_null("GoldDialog")
-	if old != null:
-		old.free()
-	var panel := PanelContainer.new()
-	panel.name = "GoldDialog"
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
-	style.border_color = Color(0.55, 0.45, 0.22)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	panel.add_theme_stylebox_override("panel", style)
-	var box := VBoxContainer.new()
-	box.name = "VB"
-	box.add_theme_constant_override("separation", 8)
-	panel.add_child(box)
-	box.add_child(_shop_label("Warehouse gold", Color(0.95, 0.9, 0.72)))
-	var bal := _shop_label("Carried: %s     Stored: %s" % [_grouped(_storage_carried), _grouped(_storage_stored)], Color(0.95, 0.85, 0.45))
-	bal.name = "GoldBal"
-	box.add_child(bal)
-	var amount := LineEdit.new()
-	amount.name = "Amount"
-	amount.placeholder_text = "amount"
-	amount.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	amount.custom_minimum_size = Vector2(150, 0)
-	if _builder != null:
-		var font := _builder.font_at(0)
-		if font != null:
-			amount.add_theme_font_override("font", font)
-		amount.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-	box.add_child(amount)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(row)
-	var deposit := Button.new()
-	deposit.text = "Deposit"
-	# Retail's gold box is one move per box: OK sends it and the box closes
-	# (round 631 review), so a second click cannot send the amount again.
-	deposit.pressed.connect(func() -> void:
-		_close_confirm_box(panel)
-		_do_gold(StorageNet.GOLD_DEPOSIT, int(amount.text)))
-	row.add_child(deposit)
-	var withdraw := Button.new()
-	withdraw.text = "Withdraw"
-	withdraw.pressed.connect(func() -> void:
-		_close_confirm_box(panel)
-		_do_gold(StorageNet.GOLD_WITHDRAW, int(amount.text)))
-	row.add_child(withdraw)
-	var close := Button.new()
-	close.text = "Close"
-	close.pressed.connect(func() -> void: _close_confirm_box(panel))
-	row.add_child(close)
+## The warehouse gold boxes: CIFMessageBox mode 3, MsgBoxStoreMoney (round
+## 726), one move per box -- OK sends it and the box closes (round 631).
+## Deposit (purpose 3) from the bag's gold button while the warehouse is
+## open, withdraw (purpose 4) from the warehouse's. The amount is typed and
+## held to what can move -- the carried gold, or the stored -- (OURS: the
+## original's bound is not read).
+func _open_gold_deposit() -> void:
+	_open_gold_box(true)
 
-	window.add_child(panel)
-	_track_confirm_boxes(window)
-	_message_box_sounds(panel)
-	panel.reset_size()
-	await panel.get_tree().process_frame
-	if is_instance_valid(panel) and is_instance_valid(window):
-		panel.position = ((window.size - panel.size) * 0.5).round()
+func _open_gold_withdraw() -> void:
+	_open_gold_box(false)
+
+func _open_gold_box(deposit: bool) -> void:
+	var balance := _storage_carried if deposit else _storage_stored
+	var box := _open_store_box("storage", "GoldDialog",
+		StoreMessageBox.Kind.GOLD_DEPOSIT if deposit else StoreMessageBox.Kind.GOLD_WITHDRAW,
+		{"count": balance if balance > 0 else 1, "max": maxi(1, balance)},
+		func(q: int) -> void: _do_gold(StorageNet.GOLD_DEPOSIT if deposit else StorageNet.GOLD_WITHDRAW, q))
+	if box != null:
+		box.set_count(1)
+
+## Kept for the QA hook and the tests: the deposit box.
+func _open_gold_dialog() -> void:
+	_open_gold_deposit()
 
 func _do_gold(op: int, amount: int) -> void:
 	if amount <= 0:
@@ -3840,6 +3659,12 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			UiSounds.expect_use(item_types(item_id))
 			NetClient.use_item(NetClient.current_character_name, slot)
 		return
+	# Round 726: Ctrl+click sells with no box while the store is open
+	# (_ctrl_sell).
+	if _is_ctrl_click_on(event, icon) and _window_shown("store") \
+			and (held_icon == null or not held_icon.is_holding()):
+		_ctrl_sell(slot, qty)
+		return
 	if _is_pick_click_on(event, icon):
 		pick_up_icon({"kind": "bag", "slot": slot, "item_id": item_id, "qty": qty, "icon": icon.texture},
 			icon.texture, icon, mb.global_position)
@@ -4110,6 +3935,10 @@ func qa_print_slots() -> void:
 				var btn := b as BaseButton
 				if btn.is_visible_in_tree() and btn is Button and (btn as Button).text != "":
 					print("QA SLOT button:%s at %s" % [(btn as Button).text, _qa_xy(btn)])
+				elif btn.is_visible_in_tree() and btn.get_node_or_null("ButtonLabel") is Label \
+						and (btn.get_node("ButtonLabel") as Label).text != "":
+					# The client's own buttons (round 726: the confirm boxes).
+					print("QA SLOT button:%s at %s" % [(btn.get_node("ButtonLabel") as Label).text, _qa_xy(btn)])
 	var skill: HudWindow = _windows.get("skill")
 	if skill != null and skill.is_visible_in_tree():
 		for c in skill.find_children("*", "TextureRect", true, false):
