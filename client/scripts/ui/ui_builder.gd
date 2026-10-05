@@ -913,8 +913,24 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 	if def.text != "":
 		edit.placeholder_text = _resolve_text(def.text)
 	var cr := def.client_rect
+	# An edit that names its own art draws it behind its text (the chat's
+	# CIFEInputChatBox carries a window_all.ddj slice): a texture stylebox,
+	# not a child, so the art stays under the line. Without art, no box
+	# of Godot's own (above). Before round 718 the chat line's dark look
+	# came from Godot's default LineEdit box, not from its layout art; the
+	# empty box then left it see-through (the user's report, 2026-10-05).
+	var art: Texture2D = load_texture_region(def.ddj, def.uv_lt, def.uv_rb) if def.ddj != "" else null
 	for style in ["normal", "focus", "read_only"]:
-		var sb := StyleBoxEmpty.new()
+		var sb: StyleBox
+		if art != null:
+			var tsb := StyleBoxTexture.new()
+			tsb.texture = art
+			if def.ddj.contains(TILE_DIR):
+				tsb.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+				tsb.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+			sb = tsb
+		else:
+			sb = StyleBoxEmpty.new()
 		sb.content_margin_left = cr.position.x
 		sb.content_margin_top = cr.position.y
 		sb.content_margin_right = cr.size.x + (EDIT_RIGHT_INSET if def.halign == 2 else 0.0)

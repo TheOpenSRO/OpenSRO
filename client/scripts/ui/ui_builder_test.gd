@@ -91,6 +91,7 @@ Section = Create,"0,0,200,100","0"
 	_check_frame_pieces_at_own_size()
 	_check_six_piece_edges_rotated()
 	_check_edit_halign_and_client_rect()
+	_check_edit_draws_its_own_art()
 	_check_section_size_measures_what_is_drawn()
 	_check_text_overrun_follows_alignment()
 	_check_client_rect_style_and_captions()
@@ -413,6 +414,25 @@ func _check_edit_halign_and_client_rect() -> void:
 		_check(sb is StyleBoxEmpty and sb.content_margin_left == 7 and sb.content_margin_top == 5
 			and sb.content_margin_right == 9 and sb.content_margin_bottom == 5,
 			"ClientRect 7,5,7,5 plus the 2 px right inset (got %s)" % str([sb.content_margin_left, sb.content_margin_top, sb.content_margin_right, sb.content_margin_bottom]))
+	root.free()
+
+## **An edit with its own art** (the user's report, 2026-10-05): the chat's
+## CIFEInputChatBox names a window_all.ddj slice, which must draw behind the
+## line as a texture stylebox; an edit without art keeps the empty box.
+func _check_edit_draws_its_own_art() -> void:
+	var builder := UiBuilder.new(null, null)
+	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.1, 0.1, 0.1, 0.8))
+	builder._texture_cache["test\\chatbox.ddj"] = ImageTexture.create_from_image(img)
+	var text := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_CHAT_INPUTBOX:CIFEInputChatBox\n\t{\n\t\tRect=RECT,\"0,0,298,18\"\n\t\tDDJ=STRING,\"test\\chatbox.ddj\"\n\t}\n\tGDR_PLAIN:CIFEdit\n\t{\n\t\tRect=RECT,\"0,20,81,11\"\n\t}\n}\n"
+	var root := builder.build_section(UiLayoutParser.parse(text), "Create")
+	var chat := root.get_node_or_null("GDR_CHAT_INPUTBOX") as LineEdit
+	var plain := root.get_node_or_null("GDR_PLAIN") as LineEdit
+	_check(chat != null and chat.get_theme_stylebox("normal") is StyleBoxTexture
+		and (chat.get_theme_stylebox("normal") as StyleBoxTexture).texture != null,
+		"an edit naming its own art draws it as a texture stylebox (the chat input box)")
+	_check(plain != null and plain.get_theme_stylebox("normal") is StyleBoxEmpty,
+		"an edit without art keeps the empty box (round 718)")
 	root.free()
 
 ## **A window is sized from what it draws.** A zero-size rect draws its art at
