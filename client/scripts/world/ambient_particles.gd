@@ -43,8 +43,8 @@ class_name AmbientParticles
 ##
 ## OURS:
 ## - The occlusion query is a physics ray from the camera to the moved point
-##   against the static world (collision layer 1: terrain and placed
-##   objects); characters do not hide a glow.
+##   (OCCLUDER_MASK: terrain, placed objects and the characters' pick
+##   bodies, not the NPCs), passing through alpha-tested pieces (occluder).
 ## - Which objects play them: the placed objects that stand at a teleport
 ##   structure (World3D._attach_gate_effects). The original plays every
 ##   placed object's ambient set (1,300 sets across 8,539 `.bsr`, MEASURED);
@@ -61,8 +61,13 @@ const QUERY_MS := 500
 const FADE_PER_MS := 1.5
 ## The bias's own offset (the double at 0x00e1b7f0).
 const BIAS_OFFSET := 1.0
-## The static world the occlusion ray meets (OURS): collision layer 1.
-const OCCLUDER_MASK := 0b1
+## What the occlusion ray meets (OURS, the closest set to what the
+## original's depth buffer holds): layer 1, the terrain and the placed
+## objects; and the characters' pick bodies -- monsters (layer 6), other
+## players (8) and the player (9), World3D's MONSTER_ / OTHER_PLAYER_ /
+## SELF_CLICK_COLLISION_LAYER. Not the NPCs: their layer is the navmesh
+## walls' (5), which draw nothing.
+const OCCLUDER_MASK := 0b1 | 0b100000 | 0b10000000 | 0b100000000
 
 ## The entries of `mods`' `ambient` sets, in file order.
 static func ambient_entries(mods: Array) -> Array:

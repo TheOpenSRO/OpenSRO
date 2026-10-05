@@ -129,9 +129,12 @@ mod sections do not parse.
 - **Only the teleport structures** play their ambient effects. The original plays every placed
   object's `ambient` set; the other 1,300-odd sets (torches, fountains, banners) are a follow-up
   with its own perf measurement.
-- **The occlusion query is a physics ray** from the camera to the moved point against collision
-  layer 1 (terrain and placed objects). Characters, which the original's depth buffer holds, do
-  not hide a glow.
+- **The occlusion query is a physics ray** from the camera to the moved point against the terrain,
+  the placed objects and the characters' pick bodies (monsters, other players, the player; not the
+  NPCs, whose layer is the invisible navmesh walls'). It **passes through alpha-tested pieces**:
+  the original's depth buffer has holes where a leaf card's texels fail the test, a collision
+  trimesh does not -- a bare tree's leaf cards hid Jangan's glow from 150 units until the ray
+  passed them (MEASURED, the QA log's blocker). Their opaque texels then hide nothing either.
 - **The fade runs per physics tick** (the original's per rendered frame).
 - An ambient effect is **kept** (looping) while its object stands (INFERRED from the gates' steady
   glows in the user's screenshots; the effect's own restart rule in `CRTModParticle` was not read).
