@@ -23,14 +23,31 @@ extends RefCounted
 ##   +0x58 (m10) by +0x48, +0x5c (m11) by +0x4c, +0x68 (m20) by +0x58,
 ##   +0x6c (m21) by +0x5c. Nothing wraps or resets them.
 ## - The draw (vslot_004, 0x00c82970): for the material whose index the mod
-##   names, the matrix goes to vertex-shader constants 23..25, and every
-##   shader that reads them -- vertexshader0texani.c and its kin in the
-##   archive's Shader folder -- does
+##   names, the matrix goes to vertex-shader constants 23..25, transposed
+##   (0xaa3afe is D3DXMatrixTranspose -- round 722's review), so c23 =
+##   (m00, m10, m20) and c24 = (m01, m11, m21). The draw flag it sets picks the
+##   object shader's UV variant (the renderer, 0xbf0f70..0xbf0f93): data +0x24
+##   (`mode`) 1 sets 0x400000 -> TEXANI1, anything else 0x8000000 -> TEXANI0
+##   (0xc8299f..0xc829ad). The object shader the client assembles is
+##   `shader\vss0.c` / `vss2.c` (pushed at 0xbf6a5a / 0xbf6a8a, the define list
+##   built at 0xbf6c3f..0xbf6d34): TEXANI0 does
 ##       mov r1, v4 ; mov r1.z, 1.0 ; m3x3 oT0.xyz, r1.xyz, c23
-##   so u' = dot((u, v, 1), c23) and v' = dot((u, v, 1), c24). The matrix
-##   passes through 0xaa3afe on its way (a protected import stub, not read);
-##   the step writing the translation into m20 / m21 makes it the transpose,
-##   rows c23 = (m00, m10, m20), c24 = (m01, m11, m21): INFERRED from that.
+##   -- u' = dot((u, v, 1), c23), v' = dot((u, v, 1), c24) on texture stage 0
+##   -- while TEXANI1 passes oT0 through as authored and animates oT1, the
+##   second stage's coordinates. (The archive's `vertexshader0texani.c` equals
+##   TEXANI0 but is not a file the client loads.) So a mode-1 mod never moves
+##   the base texture; what its second stage holds is not read here, so a
+##   mode-1 mod is not bound (bind) and draws still: OPEN.
+##
+## Not exercised by placed data: the frame grid (method 0). Its one user in
+## the archive, `flame_adjutant`, is a set-1 mod with frames 0..0 and a 1 x 1
+## grid; only tex_ani_test plays the grid step. The matrix grows with no wrap
+## (READ: vslot_007 resets the frame and direction, never the matrix): the
+## Constantinople fountain's water tiles about 100 times denser after an hour,
+## and the fastest scroll (cj_wf_dr_01, -2.78/s) loses float32 precision
+## after about ten hours (|v| ~ 10^5, a step of ~0.008 of a texture). Both as
+## the original's accumulator does; its only difference is its LOD gate,
+## which pauses the step for undrawn objects.
 ##
 ## OURS:
 ## - One runtime per material, and a placement's materials are its own, so
@@ -177,6 +194,12 @@ func apply_to(mat: ShaderMaterial) -> void:
 	mat.set_shader_parameter("texani_u", r[0])
 	mat.set_shader_parameter("texani_v", r[1])
 
+## Whether a mod animates texture stage 0, the base texture: mode 0
+## (TEXANI0). Mode 1 (TEXANI1) animates stage 1 and leaves stage 0 as
+## authored (READ, above).
+static func animates_base(data: Dictionary) -> bool:
+	return int(data.get("mode", 0)) != 1
+
 ## The live materials: one runtime each (weakly held, so a freed region's
 ## materials leave on the next tick).
 static var _live: Array = []
@@ -184,7 +207,7 @@ static var _live: Array = []
 ## Starts animating `mat` with `data` (a TEXANI mod for its layer).
 static func bind(mat: Material, data: Dictionary) -> void:
 	var sm := mat as ShaderMaterial
-	if sm == null or data.is_empty():
+	if sm == null or data.is_empty() or not animates_base(data):
 		return
 	var t := TexAni.create(data)
 	t.apply_to(sm)

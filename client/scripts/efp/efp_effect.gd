@@ -273,6 +273,11 @@ const BLEND_CLASS_META := "opensro_efp_blend_class"
 ## make_glow, so the glow copies are made from these. Used for the objects'
 ## ambient effects (AmbientParticles.attach).
 func use_display_blend() -> void:
+	# Compatibility blends in display values already, and a shader that names
+	# the screen texture would make it copy the back buffer every frame
+	# (round 722's review): no twin there.
+	if not VideoOptions.forward_plus_running():
+		return
 	var nodes: Array = []
 	for d in _draws:
 		nodes.append(d[1])
@@ -438,7 +443,7 @@ static func warm_glow_shaders() -> Array[Shader]:
 				out.append(glow_shader(sh))
 				# The display-blended twins the objects' ambient effects draw
 				# with (round 722), for the classes plates and meshes use.
-				if not link and cls in ["mix", "add", "add_one"]:
+				if not link and cls in ["mix", "add", "add_one"] and VideoOptions.forward_plus_running():
 					var dsh := display_shader(sh)
 					out.append(dsh)
 					out.append(glow_shader(dsh))

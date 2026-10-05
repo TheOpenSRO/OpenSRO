@@ -350,9 +350,10 @@ static func occluder(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector
 		# opaque texel hides the point as any surface does; a cut one lets
 		# the ray on. Unreadable (no face, UV or image) passes, as round 720
 		# passed every alpha-tested piece.
-		if texel_kept(hit) == 1:
+		var kept := texel_kept(hit)
+		if kept == 1:
 			return hit
-		last_passed.append(_blocker_name(hit))
+		last_passed.append("%s %s" % [_blocker_name(hit), "cut texel" if kept == 0 else "unreadable"])
 		exclude.append(hit["rid"])
 	return {}
 
@@ -403,7 +404,11 @@ static func texel_kept(hit: Dictionary) -> int:
 
 ## A mesh's first surface's arrays, kept (the glow test asks every 500 ms).
 static var _arrays_cache := {}
+## Meta a mesh may carry with its arrays, read before any readback.
+const META_ARRAYS := "opensro_texel_arrays"
 static func _surface_arrays(mesh: Mesh) -> Array:
+	if mesh.has_meta(META_ARRAYS):
+		return mesh.get_meta(META_ARRAYS)
 	var key := mesh.get_rid()
 	if _arrays_cache.has(key):
 		return _arrays_cache[key]
@@ -415,7 +420,11 @@ static func _surface_arrays(mesh: Mesh) -> Array:
 
 ## A texture's mip-0 image, decompressed, kept.
 static var _image_cache := {}
+## Meta a texture may carry with its decoded image, read before a readback.
+const META_IMAGE := "opensro_texel_image"
 static func _alpha_image(tex: Texture2D) -> Image:
+	if tex.has_meta(META_IMAGE):
+		return tex.get_meta(META_IMAGE)
 	var key := tex.get_rid()
 	if _image_cache.has(key):
 		return _image_cache[key]

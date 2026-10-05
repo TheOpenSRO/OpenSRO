@@ -176,3 +176,13 @@ func _test_bind() -> void:
 	mat = null
 	TexAni.tick(16.0)
 	_check(TexAni.live_count() == before, "a freed material leaves on the next tick")
+	# Mode 1 (TEXANI1) animates texture stage 1 and leaves the base texture's
+	# coordinates as authored (vss0.c): not bound, the rows stay the identity.
+	var still := ShaderMaterial.new()
+	still.shader = ObjectLoader.object_shader("solid")
+	TexAni.bind(still, {"method": TexAni.METHOD_RATES, "mode": 1, "rates": r})
+	TexAni.tick(2000.0)
+	var su = still.get_shader_parameter("texani_u")
+	_check(TexAni.live_count() == before and (su == null or su == Vector3(1, 0, 0)),
+		"a mode-1 mod leaves the base UV alone (not bound)")
+	_check(TexAni.animates_base({"mode": 0}) and not TexAni.animates_base({"mode": 1}), "mode 0 animates stage 0, mode 1 does not")
