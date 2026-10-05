@@ -232,9 +232,9 @@ func _check_stored_world_binds() -> void:
 	skeleton.force_update_all_bone_transforms()
 	var rim_posed := skeleton.get_bone_global_pose(spin_idx) * new_skin.get_bind_pose(0) * rim
 	_check(rim_posed.is_equal_approx(Vector3(0, 10, -5)), "a rim vertex turns 90 degrees about the bone (got %s)" % rim_posed)
-	# A chain whose stored binds are its locals scaled (the willow
-	# tre_willow03, 1.793 below its first bone) is not a root shift: it keeps
-	# the composed bind (the skeleton scale that undoes it is OPEN).
+	# A chain whose stored binds are its locals scaled (as the willow
+	# tre_willow03's measure, 1.793 below its first bone) is not a root shift:
+	# it keeps the composed bind (OURS; why the willow's binds differ is OPEN).
 	var scaled := BskReader.ParsedSkeleton.new()
 	scaled.root_name = "Root"
 	scaled.root_transform = _bone_bytes(BskReader.ROOT_TRANSFORM_LEN, 4, Vector3.ZERO, Vector3.ZERO)

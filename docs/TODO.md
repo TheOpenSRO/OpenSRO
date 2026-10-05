@@ -3018,19 +3018,33 @@ Still open, by the files each would add:
   off (round 648's review), among them `Spine_Base` in thief_boss, flame_spirit, elemental,
   penon_die and uruchidragon (8-41 units, 130-180 degrees). Whether those draw visibly off, and whether
   moving to the stored binds is safe for characters (the "two spaces" history in BSK_FORMAT.md), is
-  OPEN. Also not read: the skeleton scale at skeleton+0xa4 (`FUN_00c4bcb0`), and who sets a
-  bone's `+0x84` bit 2, whose palette `RTSkeleton::FUN_00c4a180` scales by `+0x88`.
+  OPEN. The skeleton scale at skeleton+0xa4 (`FUN_00c4bcb0`) is 1.0 on map objects (READ, round
+  721's review: constructor `FUN_00c513c0` `fld1`; the map never calls `CCompChar` slot 9). Not
+  read: who sets a bone's `+0x84` bit 2, whose palette `RTSkeleton::FUN_00c4a180` scales by `+0x88`.
   - **Round 721 took the stored binds for MAP objects where they are only a root shift**
     (`Skeleton3DBuilder.consistent_stored_binds`). That fixed the Alexandria gate portal's rings,
     the quest teleporter, the demon altars and the fortress doors, and moved `arabianf_bujok03`
     from 481 to 8.7 off its mesh (BSK_FORMAT.md, round 721; `client/tools/probe_map_bind.gd`).
-  - **Left:**
-    - the skeleton scale's source: `CCompChar` slot 9 `FUN_00c25460` writes skeleton `+0xa4` and
-      compound `+0x1b0`, but its map caller is unread. It decides `tre_willow03` (a 1.793-scaled
-      bind), `tre_tree01_big`, `demon_wall_deco*`, `oas_hot_tree_stone` and `tre_bamboo04`;
-    - `arabianf_bujok03`'s remaining 8.7;
-    - the character/monster path: 35 monster skeletons have a root that disagrees with its
-      children, and it still binds to the composed rest.
+  - **Left (map objects):**
+    - **8 unexplained models** -- `tre_willow03`, `tre_tree01_big`, `tre_bamboo04`,
+      `oas_hot_tree_stone` and the four `demon_wall_deco*`. Their stored binds are not a root shift
+      of their locals (the willow's chain is scaled by 1.793), and by our readers the client's rule
+      would draw them off their meshes (the willow 58.4 units; table in BSK_FORMAT.md, round 721).
+      The map's skeleton scale is 1.0, so nothing undoes it. Either retail draws them off, or one of
+      our readers is wrong: settle against retail. They keep the composed bind (OURS) meanwhile;
+    - `arabianf_bujok03`'s remaining 8.7.
+- **Character path: the root mismatch, the portal's own case (round 721's review, MEASURED).**
+  `census_bsk_bind.gd` finds sane roots that disagree with where their children's stored binds put
+  them in **35 `mob`** skeletons, plus **313 `Item`**, **3 `COS`** and **3 `Artifact`** (and 14
+  Bldg, 2 Dun, 2 Nature, 2 etc, 1 quest on the map path). On every monster `.bsr` with a finite
+  root except `reflection_shield` and `ivy`, every clip keys the root where the binds put it, so the
+  composed bind the character path still uses draws these monsters off where the original draws
+  them, by the root shift (measured on the skeleton, not rendered; pre-existing):
+  `mustafa` 50.17, `event_winter_whiteknight` 48.16, `baal_weapon` 32.62, `haroeris_t2` 14.76,
+  `ghost_undine` 11.36, `jupiter` 6.71 (the rest in `docs/rounds/r721_review.md`, finding 3).
+  Round 721's condition would take 52 of the 61 affected monster `.bsr`, but not `mustafa` /
+  `mustafa_dark`, `reflection_shield`, or the NaN-rooted `venefica` / `flame_spirit` family; `ivy`
+  keys at its stored local. Taking the stored binds on the character path is the next step.
 - **`cj_ferry_boat_old`.** Its `.bsk` is a root with no other bone, which `BskReader` refuses
   (1 placement).
 - **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the

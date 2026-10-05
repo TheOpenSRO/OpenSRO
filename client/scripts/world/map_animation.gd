@@ -142,9 +142,11 @@ static func prepare(archive: Pk2Reader, obj: BsrReader.ParsedObject, node: Dicti
 ## Skeleton3D, binds each skinned piece in `pieces` (MeshInstance3D ->
 ## the prepared piece dictionary) to it, and adds the AnimationPlayer.
 ## Unskinned pieces stay where they are (whether retail hangs them on a
-## bone is OPEN). Each skin binds to the `.bsk`'s stored world binds (round
-## 721, READ: the client's palette is the file's inverse bind times the
-## bone's world). Returns false, leaving the object still, when nothing
+## bone is OPEN). Each skin binds to the `.bsk`'s stored inverse binds when
+## they are the composed chain with only the root re-seated (round 721; the
+## client's palette is the file's inverse bind times the bone's world, READ,
+## but the client takes them ALWAYS -- the condition is OURS, see
+## Skeleton3DBuilder.consistent_stored_binds). Returns false, leaving the object still, when nothing
 ## could be bound.
 static func commit(root: Node3D, anim: Dictionary, pieces: Array) -> bool:
 	var skeleton := Skeleton3DBuilder.build_skeleton3d(anim["skeleton"])

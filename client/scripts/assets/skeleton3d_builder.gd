@@ -325,13 +325,19 @@ static func stored_world_binds(skel: BskReader.ParsedSkeleton) -> Dictionary:
 ## Round 721. The client binds to the stored inverse binds (READ), so where
 ## the two agree this is exactly the client's skin; the Alexandria gate
 ## portal (root stored at (19.75, 0, 0), its children's binds at the origin,
-## its clip keying the root at the origin) is that case. A skeleton whose
-## stored binds differ from its locals by more than a root shift -- the
-## willow `tre_willow03`'s are its chain scaled by 1.793 below the first
-## bone, which the client undoes with the compound's skeleton scale
-## (`FUN_00c4bcb0`'s param_3, skeleton +0xa4, set by CCompChar slot 9
-## `FUN_00c25460`; what value the map passes is not read, OPEN) -- keeps the
-## composed bind, which draws it on its mesh at the clip's first key.
+## its clip keying the root at the origin) is that case. The CONDITION is
+## OURS: the client takes the stored binds always. A skeleton whose stored
+## binds differ from its locals by more than a root shift keeps the composed
+## bind, which draws it on its mesh at the clip's first key. Eight map models
+## are such (tre_willow03, tre_tree01_big, tre_bamboo04, oas_hot_tree_stone,
+## the four demon_wall_deco*); by our readers the client's rule would draw
+## them off their meshes (the willow 58 units), and the map path's skeleton
+## scale is 1.0 (READ, round 721's review: RTSkeleton::FUN_00c513c0 `fld1`
+## -> +0xa4; the map never calls CCompChar slot 9), so nothing undoes it.
+## Either retail draws them off, or one of our readers is wrong -- OPEN,
+## to settle against retail. A skeleton with a non-root bone whose stored
+## inverse bind is unusable also keeps the composed bind (no mixing of the
+## two bind spaces in one skin).
 static func consistent_stored_binds(skeleton: Skeleton3D, skel: BskReader.ParsedSkeleton) -> Dictionary:
 	var binds := stored_world_binds(skel)
 	if binds.is_empty() or skeleton == null:
@@ -339,6 +345,11 @@ static func consistent_stored_binds(skeleton: Skeleton3D, skel: BskReader.Parsed
 	var root_idx := skeleton.find_bone(skel.root_name)
 	if root_idx == -1:
 		return {}
+	# Every non-root bone needs a usable stored bind; otherwise the skin would
+	# mix shifted stored binds and unshifted composed ones.
+	for b in skel.bones:
+		if not binds.has(b.bone_name):
+			return {}
 	var shift := root_rest_from_children(skel) * skeleton.get_bone_global_rest(root_idx).affine_inverse()
 	var differs := false
 	for name in binds:

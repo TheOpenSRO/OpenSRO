@@ -154,7 +154,10 @@ READ from the decompile on the RE box:
   and then: **a bone some track touched takes its local from the keys alone**; a bone no track
   touched takes the stored local. So a keyed root never uses its stored local.
 - `W = L x W_parent`; the first bone has no parent (`W = L`, times the skeleton scale at
-  skeleton+0xa4 when that is not 1; its default is not read). There is no forced identity root.
+  skeleton+0xa4 when that is not 1). That scale defaults to **1.0** (READ, round 721's review: the
+  RTSkeleton constructor `FUN_00c513c0`, `fld1` at `0xc5144d` → `fstp [esi+0xa4]`), and the map's
+  object build never calls `CCompChar` slot 9 (`FUN_00c25460`), its only other writer, so on map
+  objects it stays 1.0. There is no forced identity root.
 
 **Unset roots (MEASURED, `client/tools/census_bsk_bind.gd` over Data.pk2's 1,208 `.bsk`).** 11
 skeletons store a root whose local translation was never set: a component of 2.7e20 to 7.7e31, or NaN. They are the
@@ -179,8 +182,9 @@ open: 855 of the 1,208 skeletons had some bone whose composed rest is more than 
   user's "rings don't spin around the same axis".
 - **The fix.** `Skeleton3DBuilder.consistent_stored_binds` takes the **third** pair, the file's
   inverse bind, which is what the client skins with. It uses it only when every non-root bone's
-  stored bind equals its composed rest moved by the one rigid shift that re-seats the root where
-  its children put it. Then the result is exactly the client's (`P = InvBind_file x W`). Any other
+  stored bind is usable and equals its composed rest moved by the one rigid shift that re-seats the
+  root where its children put it. **That condition is OURS**: the client takes the stored binds
+  always. Where it holds, the result is exactly the client's (`P = InvBind_file x W`). Any other
   disagreement keeps the composed bind. `MapAnimation.commit` passes them to
   `build_skin(..., world_binds)`; characters, monsters and items are unchanged.
 - **The second pair is not the one to use.** Inverting the second pair, the world bind, also moved
@@ -196,13 +200,21 @@ open: 855 of the 1,208 skeletons had some bone whose composed rest is more than 
   - `arabianf_bujok03`: 481.3 → 8.7.
   
   The other 135 do not move.
-- **OPEN: the skeleton scale.** `tre_willow03`'s stored binds are its chain scaled by 1.793 below
-  its first bone. Four more, `tre_tree01_big`, `demon_wall_deco*`, `oas_hot_tree_stone` and
-  `tre_bamboo04`, differ in ways that are not a root shift. The client multiplies the first bone's
-  3x3 by a skeleton scale (`FUN_00c4bcb0`'s `param_3`, READ; from skeleton `+0xa4`, written by
-  `CCompChar` slot 9 `FUN_00c25460` together with compound `+0x1b0`). What value the map path
-  passes is not read, so these keep the composed bind, which draws them on their meshes at the
-  first key.
+- **OPEN: 8 models the condition departs on.** `tre_willow03`, `tre_tree01_big`, `tre_bamboo04`, `oas_hot_tree_stone` and the four `demon_wall_deco*` have stored binds that are not a
+  root shift of their locals: the willow's are its chain scaled by 1.793 below its first bone
+  (MEASURED). By our readers, the client's rule (every bone's third pair, skeleton scale 1.0 on the
+  map path, READ above) draws them off their meshes at the clip's first key:
+
+| model | mean off the mesh, composed bind (shipped) | client's rule, by our readers |
+|---|---|---|
+| `tre_willow03` | 0.000 | 58.431 |
+| `tre_tree01_big` | 0.001 | 32.587 |
+| `tre_bamboo04` | 0.000 | 0.569 |
+| `demon_wall_deco` (and `_fire`, `_death`, `_poison`) | 0.002 | 0.543 |
+| `oas_hot_tree_stone` | 0.000 | 0.477 |
+
+  So either retail draws them off, or one of our readers is wrong. Unexplained; to settle against
+  retail. They keep the composed bind (OURS).
 
 ## Implementation notes
 

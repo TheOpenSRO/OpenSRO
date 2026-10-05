@@ -9,10 +9,15 @@ extends SceneTree
 ## clip at --seconds (default 0) and prints the largest distance any vertex
 ## moves between the two binds, and the bone it hangs on. A model whose
 ## stored binds chain from its locals moves 0.
+## Round 721's notes' passes 1 and 2 (the second pair, and the third pair
+## everywhere) were taken with temporary edits of Skeleton3DBuilder's
+## stored_world_binds / consistent_stored_binds, not with this file alone.
 ##
 ## Lines: `BIND <path> max <d> bone <name> verts <n> | mean off the mesh:
-## old bind <a>, stored bind <b>` (the mean vertex distance from the
-## authored mesh at the posed time under each bind) for every animated
+## old bind <a>, new bind <b>` (the mean vertex distance from the authored
+## mesh at the posed time; "new" is the bind as BUILT now, i.e. round 721's
+## consistent_stored_binds where it applies and the composed bind elsewhere)
+## for every animated
 ## model (sorted, largest first), then `TALLY`.
 ##
 ## Usage (headless, on the render box):
@@ -62,7 +67,7 @@ func _process(_delta: float) -> bool:
 	for r in _results:
 		if float(r[1]) > 0.01:
 			moved += 1
-		print("BIND %s max %.3f bone %s verts %d | mean off the mesh: old bind %.3f, stored bind %.3f" % r)
+		print("BIND %s max %.3f bone %s verts %d | mean off the mesh: old bind %.3f, new bind %.3f" % r)
 	print("TALLY %d animated model(s); %d move more than 0.01 between the binds" % [_results.size(), moved])
 	quit(0)
 	return true
