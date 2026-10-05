@@ -204,7 +204,7 @@ func TestGiveChecksTheItemTableAndAddsToTheBag(t *testing.T) {
 // round 732).
 func TestGivePlusAndItemEditTheInstance(t *testing.T) {
 	f := newFixture(t)
-	if res := f.run(t, "/give 3645 2 5"); res.Refused || !res.RefreshInventory || !strings.Contains(res.Text, "+5") {
+	if res := f.run(t, "/give 3645 2 5"); res.Refused || !res.RefreshInventory || !strings.Contains(res.Text, "+5 (bag slot 0, 1)") {
 		t.Fatalf("/give 3645 2 5: %+v", res)
 	}
 	bag, _ := f.inv.List(f.ctx, f.actor.CharacterID)

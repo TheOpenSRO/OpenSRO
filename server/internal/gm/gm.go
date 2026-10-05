@@ -556,6 +556,7 @@ func (d *Deps) give(ctx context.Context, actor Actor, args []string) Result {
 	if err != nil {
 		return refuse("reading the bag failed: " + err.Error())
 	}
+	var at []string
 	for _, sl := range slots {
 		if before[sl.Index] || sl.ItemID != itemID {
 			continue
@@ -565,8 +566,10 @@ func (d *Deps) give(ctx context.Context, actor Actor, args []string) Result {
 		if err := d.Inv.SetInstance(ctx, actor.CharacterID, sl.Index, inst); err != nil {
 			return refuse("setting the plus failed: " + err.Error())
 		}
+		at = append(at, strconv.Itoa(sl.Index))
 	}
-	return Result{Text: fmt.Sprintf("gave %d x item %d +%d", qty, itemID, plus), RefreshInventory: true}
+	// The slots are named so /item can follow up on them.
+	return Result{Text: fmt.Sprintf("gave %d x item %d +%d (bag slot %s)", qty, itemID, plus, strings.Join(at, ", ")), RefreshInventory: true}
 }
 
 // itemUsage is /item's: a GM test hook (OURS, round 732) for an item's own
