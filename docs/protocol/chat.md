@@ -264,6 +264,26 @@ UIIT_CTL_CHATMENU_TRAININGCAMP "&Team"; login and install messages worded "SRO" 
 Helm (M)"); about 40 rows whose first copy is Korean mangled to "?", and 24 whose first copy keeps
 CSV quote marks (`"""<sml2>...`).
 
+**USER DECISION (2026-10-05, round 725): the stock wording wins in a joined table.**
+- **The archive.** Its `textuisystem.txt` is two whole tables, one after the other:
+  - lines 1–6955: a private server's reworded English, 16 columns;
+  - lines 6956–13915: the stock English, 19 columns.
+- **What the user chose.** The user's screenshots of the original show the stock wording, and
+  they chose it.
+- **The rule.** `UiTextTable.select_rows` lets a key's first row in the later table replace the
+  earlier one, but only when the file is detected as joined.
+  - **Detection.** The file's opening keys restart in order for 8 rows (here 89 do), and at least
+    half of the keys before the restart come back after it.
+  - **Departure.** This departs from the READ rule above, which stays documented. A single table
+    is unchanged.
+  - **Exception (OURS).** A stock row without English (109 of 433 differing keys, all Korean only)
+    does not replace an English one.
+- **What changes on this archive.** The examples above go back: "Phy. atk", "&Academy",
+  "Silkroad-Online", and `UIC_STT_FONTNAME` "Tahoma".
+- **Census of the text tables.** Only `textuisystem.txt` is joined. The rest are not:
+  `textdata_object.txt`, both `textdata_equip*skill.txt` (a 4-row preamble), the `textquest*`
+  files, `textzonename.txt`, `texthelp.txt` and `textevent.txt` (`docs/rounds/r725.md`).
+
 The rest of the loader (READ, rounds 633-635 integration review), which UiTextTable follows:
 
 - **The service column.** A row is loaded only when column 0 reads 1 (`0xb9cc80(0, 1)`, then

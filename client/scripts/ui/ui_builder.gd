@@ -1477,10 +1477,15 @@ func load_texture_region(ddj_path: String, uv_lt: Vector2, uv_rb: Vector2) -> Te
 ##
 ## The box's Media.pk2 has two `UIC_STT_FONTNAME` rows: the file's FIRST
 ## line says **Arial** in the English columns, and a later row says Tahoma
-## ("굴림체" in its Korean one). The client keeps a key's first row
-## (TextStringManager 0x8cac30, UiTextTable.parse -- round 634's review), so
-## it asks GDI for Arial there; an archive whose first row says Tahoma gets
-## Tahoma. The bundled files are TaeUtum, SeUtum, Arial Rounded MT Bold
+## ("굴림체" in its Korean one). The binary keeps a key's first row
+## (TextStringManager 0x8cac30 -- round 634's review), so it would ask GDI
+## for Arial there. The later row opens the stock table that follows the
+## private server's one, and by the USER DECISION of 2026-10-05 the stock row
+## wins in such a joined table (UiTextTable.select_rows), so OpenSRO asks for
+## **Tahoma**. MEASURED, round 725: the user's original draws the herbalist's
+## first greeting line 286 px wide and the tax line 253 px, where OpenSRO's
+## Arial draws 279 and 244 -- the original's face is wider than Arial, as
+## Tahoma is (a hint, not a proof of the face). The bundled files are TaeUtum, SeUtum, Arial Rounded MT Bold
 ## (`fonts\\`) and Arial (`vplus\\vfont.ttf`); Tahoma, if named, is a
 ## Windows system font, which the real client takes from the system.
 ##
@@ -1534,8 +1539,17 @@ func _scan_face_name_row() -> String:
 	var entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textuisystem.txt")
 	if entry == null:
 		return ""
-	var text := _media_pk2.read_file(entry).get_string_from_utf16()
+	var data := _media_pk2.read_file(entry)
+	var text := data.get_string_from_utf16()
 	var at := text.find("\t" + FONT_NAME_KEY + "\t")
+	# A key written more than once goes through the table's own row rule
+	# (UiTextTable.select_rows: in a joined table the stock row wins, USER
+	# DECISION 2026-10-05), so the login screen asks for the same face as the
+	# world. Only then is the whole table parsed.
+	if at != -1 and text.find("\t" + FONT_NAME_KEY + "\t", at + 1) != -1:
+		var table := UiTextTable.parse(data)
+		var name := table.get_text(FONT_NAME_KEY, "")
+		return "" if name == FONT_NAME_KEY else name
 	while at != -1:
 		var line_start := text.rfind("\n", at) + 1
 		var line_end := text.find("\n", at)

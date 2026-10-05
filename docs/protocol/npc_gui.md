@@ -153,9 +153,10 @@ RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
        The user's original shows the stock wording on all six duplicated keys checked (three here,
        three in the party window). So the user's install differs from the box's: either their
        `Media.pk2` lacks the prepended block, or `vsroplus_lib.dll` patches the loader.
-     - **Do not change `keep_first`.** That is the user's decision. One fact from them settles it:
-       their `textuisystem.txt`'s line count or first line, or whether their stat panel reads
-       "Phy. atk" or "Phy. Atk:".
+     - **USER DECISION (2026-10-05): use the stock wording.** In a table joined this way the
+       stock row wins (`UiTextTable.select_rows`, round 725). It is a departure from the binary's
+       keep-first rule, which stays documented as READ. OpenSRO now shows "Designate as
+       return/recall point", "Select teleport area" and "Teleport to [%s]area. [%d]gold".
 4. **The end line,** always last: kind 0, `UIIT_STT_NPC_CHATTING_WND_TALKEND` "End conversation.". It
    is `…_TALKEND2` when interaction 0x1f is offered.
 
@@ -398,13 +399,9 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
      `+0x164` load.
 8. ~~Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills.~~ **Closed, READ**
    (round 725's review, §0: both use the map at `0xeed4e0`).
-9. **The box's archive is not the user's** (§1, the menu).
-   - The client keeps the first row of a key (READ).
-   - The box's `textuisystem.txt` has a private server's block before the stock rows. The user's
-     original shows the stock wording.
-   - The user settles it: their file's line count or first line, or their stat panel's "Phy. atk" or
-     "Phy. Atk:".
-   - Until then, box renders and tests show the private server's wording on 404 keys.
+9. ~~Which wording of the duplicated `textuisystem.txt` rows to show.~~ **Closed by a USER
+   DECISION (2026-10-05): the stock wording.** The client keeps the first row (READ). OpenSRO lets
+   the stock table's row win when the file is two joined tables (§1, the menu; round 725).
 10. The title icon. The original draws one left of the Storage and Inventory titles (`MKtR5Kd.png`)
     but none on the store's (`3Gw7Ene.png`). `ginterface.txt` has no field for it, so its source in
     the code is unread and OpenSRO draws none.
