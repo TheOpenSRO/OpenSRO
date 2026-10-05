@@ -289,7 +289,7 @@ Unconditional.
 - **ConfirmBuy** centres itself at its final size: `0x7c5650` adds the rows (0x7c3f70 at 0x7c5c63)
   and then calls 0x798b70 (0x7c5d3c). At 1280x720 a one-row box is at (477, 272).
 - 3Gw7Ene.png's and MKtR5Kd.png's boxes are elsewhere (a 1353x823 capture puts them at about
-  (344, 150) and (389, 427), not (513-163, 411-88) or (522, 337)); the boxes are frames the
+  (343, 148) and (388, 426), not the (513, 323) and (522, 337) 0x798b70 gives on that size); the boxes are frames the
   player can move, and a box moved by the player is the likely reason. INFERRED: not measured.
 - **Modality: OPEN.** `0x63b5b0` stores the owner at +0x7c0 and registers the box in the global
   window list at 0x110f618 (0xba03a0, undone at destruction by 0xb912c0); what that list does to
