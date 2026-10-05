@@ -25,6 +25,11 @@ here is **READ** unless it is marked otherwise.
   found fills that map, and the string "RENEWAL_SHOP_SYSTEM" is not in the exe. So the parser has
   not been shown to take the RENEWAL branch; only the code says it must. The live build being
   RENEWAL is therefore **INFERRED**.
+  **Round 724:** the define list is data. `CGame` reads `config\define.txt` from Media.pk2 at
+  start-up (`push 0xdd3d60` at `0x848210`), logs "`%s Value 0 => 1`" for each name and sets it
+  through `0x6441b0`. That file defines `RENEWAL_SHOP_SYSTEM` and `RESTORE_SOLDITEM_INSHOP`, so the
+  renewal branch, buy-back row included, is live (READ). That the parser consults this table is
+  INFERRED strongly. See `docs/protocol/npc_gui.md` §0.
 
 ## The class
 
