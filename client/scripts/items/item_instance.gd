@@ -8,12 +8,15 @@ class_name ItemInstance
 ## wire"; the server side is server/internal/session/iteminfo.go.
 ##
 ## The RECORD is retail's (the client's SOItem::FUN_008be4f0, equipment
-## branch):
-##   u32 RefItemID, u8 OptLevel, u64 Variance, u32 Durability,
-##   u8 MagParamNum (<= 12), MagParamNum x u64 (low u16 the magicoption.txt
-##   id, high u32 the value), then two binding blocks
-##   [u8 type, u8 count, count x (u8 slot, u64)] -- type 1 sockets, type 2
-##   the advanced elixir, whose u64's high u32 adds to the plus.
+## branch; the GameServer's writer gs:0x42e230):
+##   u32 rent block (c:0x8bb130: 0, or bit 0 adds u16 u32 u32, bit 1 adds
+##   u16 u32), u32 RefItemID, u8 OptLevel, u64 Variance, u32 Durability (the
+##   period word active<<31|seconds for TypeID3 14 gear), u8 MagParamNum
+##   (<= 12), MagParamNum x u64 (low u16 the magicoption.txt id, high u32
+##   the value), then two binding blocks [u8 type, u8 count, count x (u8
+##   nSlot, u64: low u32 nOptID | nOptLvl<<16, high u32 the value)] -- type 1
+##   sockets, type 2 the advanced elixir, whose value's low byte adds to the
+##   plus (a u8 add, c:0x8bb070).
 ## The CONTAINER is OpenSRO's own (OURS): a trailing block, u16 count, then
 ## per entry a u32 container slot and the record. Only equipment is listed.
 ##
@@ -23,6 +26,13 @@ class_name ItemInstance
 ## the stats and percentages and MagicOptionTable for the blue lines.
 
 const MAX_MAG_PARAMS := 12
+## The entries a list could not fit in its own frame (OURS, round 732
+## review F8; session/iteminfomore.go): u8 container, then the same block.
+## Only a full warehouse needs it.
+const OP_MORE := 0x00FB
+const CONTAINER_BAG := 0
+const CONTAINER_WORN := 1
+const CONTAINER_WAREHOUSE := 2
 const BINDING_SOCKET := 1
 const BINDING_ADV_ELIXIR := 2
 
@@ -95,6 +105,12 @@ func log_line(container: String) -> String:
 ## Reads one record at offset. Returns [ItemInstance, offset after], or
 ## [null, -1] on a truncated or out-of-range record.
 static func read_record(data: PackedByteArray, offset: int) -> Array:
+	if offset + 4 > data.size():
+		return [null, -1]
+	var rent := data.decode_u32(offset)
+	offset += 4
+	if rent & 3 != 0:
+		offset += 2 + (8 if rent & 1 != 0 else 0) + (6 if rent & 2 != 0 else 0)
 	if offset + 18 > data.size():
 		return [null, -1]
 	var it := ItemInstance.new()
@@ -120,7 +136,7 @@ static func read_record(data: PackedByteArray, offset: int) -> Array:
 		for i in count:
 			var v: int = data.decode_u64(offset + 9 * i + 1)
 			if kind == BINDING_ADV_ELIXIR:
-				it.adv_elixir += (v >> 32) & 0xffffffff
+				it.adv_elixir = (it.adv_elixir + ((v >> 32) & 0xff)) & 0xff
 		offset += 9 * count
 	return [it, offset]
 

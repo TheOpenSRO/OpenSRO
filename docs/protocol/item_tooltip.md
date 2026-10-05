@@ -160,7 +160,7 @@ the user which to follow, as was done for party matching.
 6. `0x66f850`'s line.
 7. What `0x8bd660` tests (the pink seal colour).
 8. ~~Which range end the "(+x%)" uses.~~ Both, averaged (round 732).
-9. ~~The retail item-instance wire layout.~~ Read in round 732: u32 RefItemID, u8 OptLevel, u64 Variance, u32 Durability, u8 MagParamNum ≤ 12, N × u64 (low u16 id, high u32 value), two binding blocks (type 2 = advanced elixir). See `docs/rounds/r732.md` and `server/internal/session/iteminfo.go`.
+9. ~~The retail item-instance wire layout.~~ Read in round 732 and its review: u32 rent block (0, or bit 0/bit 1 branches, c:0x8bb130), u32 RefItemID, u8 OptLevel, u64 Variance, u32 Durability (the period word active<<31|seconds for TypeID3 14), u8 MagParamNum ≤ 12, N × u64 (low u16 id, high u32 value), two binding blocks, type 1 then type 2, each entry u8 nSlot and a u64 (low nOptID|nOptLvl<<16, high the value; gs:0x825a40). See `docs/rounds/r732.md` and `server/internal/session/iteminfo.go`.
 
 ## Implementation lanes
 

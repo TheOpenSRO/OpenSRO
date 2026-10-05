@@ -1394,6 +1394,17 @@ func _dispatch(p: Packet) -> void:
 			var r := RecallNet.decode_result(p.data)
 			if r != null:
 				recall_designate_result.emit(r)
+		ItemInstance.OP_MORE:
+			# The rest of a list's item instances (round 732 review F8).
+			if p.data.size() >= 1:
+				var more := ItemInstance.decode_block(p.data, 1)
+				match int(p.data[0]):
+					ItemInstance.CONTAINER_BAG:
+						last_inventory_instances.merge(_note_instances("bag", more), true)
+					ItemInstance.CONTAINER_WORN:
+						last_equipment_instances.merge(_note_instances("worn", more), true)
+					ItemInstance.CONTAINER_WAREHOUSE:
+						last_storage_instances.merge(_note_instances("warehouse", more), true)
 		_:
 			if _extra_handlers.has(p.opcode):
 				(_extra_handlers[p.opcode] as Callable).call(p.data)

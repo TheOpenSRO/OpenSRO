@@ -74,7 +74,7 @@ func (r *EquipmentResult) Encode() []byte {
 	if len(r.Infos) == 0 {
 		return out
 	}
-	return encodeItemInfoBlock(out, r.Infos)
+	return encodeItemInfoBlock(out, fitItemInfos(len(out), r.Infos))
 }
 
 func DecodeEquipmentResult(data []byte) (*EquipmentResult, error) {

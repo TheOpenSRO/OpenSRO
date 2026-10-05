@@ -10,7 +10,8 @@ class_name MagicOptionTable
 ## API:
 ##   var t := MagicOptionTable.new().load(bytes)   # the raw textdata file
 ##   t.row(id) -> Row or null                       # ItemInstance.option_id(i)
-##   MagicOptionTable.blue_pct(row, value)           # the blue line's (+x%)
+##   t.option_pct(id, value, item_class)             # the blue line's (+x%)
+##   t.range_row(id, item_class)                     # the row that range comes from
 ##   MagicOptionTable.line_format(code) -> {format, keys, pct} or {}
 ##   MagicOptionTable.format_line(code, value, pct, text) -> String
 ## `text` is a Callable(key: String) -> String over textuisystem.txt.
@@ -20,9 +21,10 @@ const PATH := "server_dep\\silkroad\\textdata\\magicoption.txt"
 ## Columns, from the file's own rows (each option has one row per item
 ## degree, 1..12): 1 the id an item's param names, 2 the MATTR_ code, 4 the
 ## degree, 8..10 the option's allowed values as u16 pairs (high, low) --
-## ER degree 10 reads 5,10 / 20,30 / 40,60. That 8..10 are the words the
-## client reads at row +0x4c is INFERRED from their shape and from what
-## FUN_00670dd0 does with them (below), not from the row parser.
+## ER degree 10 reads 5,10 / 20,30 / 40,60. READ (round 732 review F6): the
+## row parser GlobalDataManager::RefParse_magicoption (c:0x97b0b0) stores
+## the degree at row +0x40 and 16 ints from +0x4c (cols 7-22); FUN_00670dd0
+## holds row+4, so its [ptr+0x4c] is row+0x50 = col 8.
 const COL_ID := 1
 const COL_CODE := 2
 const COL_DEGREE := 4
@@ -62,6 +64,7 @@ static var shared: MagicOptionTable = null
 static var shared_text: Callable = Callable()
 
 var _rows := {}
+var _by_code_degree := {}
 
 func load(data: PackedByteArray) -> MagicOptionTable:
 	if data.is_empty():
@@ -86,6 +89,7 @@ func load(data: PackedByteArray) -> MagicOptionTable:
 			var s := cols[COL_RANGE0 + k].strip_edges()
 			r.ranges.append(int(s) if s.is_valid_int() else 0)
 		_rows[r.id] = r
+		_by_code_degree["%s/%d" % [r.code, r.degree]] = r
 	return self
 
 func size() -> int:
@@ -94,16 +98,35 @@ func size() -> int:
 func row(id: int) -> Row:
 	return _rows.get(id, null)
 
+## The row whose range the blue "(+x%)" uses (READ, c:0x670e98-0x670ebd):
+## the option's own row when its degree is (ItemClass - 1) / 3 + 1, ItemClass
+## the item's ref +0x1d0 byte; otherwise the same MATTR code at that degree
+## (0x926b30(code, degree)). item_class <= 0 (unknown) keeps the own row.
+func range_row(id: int, item_class: int) -> Row:
+	var own := row(id)
+	if own == null or item_class <= 0:
+		return own
+	var degree: int = floori((item_class - 1) / 3.0) + 1
+	if own.degree == degree:
+		return own
+	return _by_code_degree.get("%s/%d" % [own.code, degree], own)
+
+## The blue line's "(+x%)" for option `id` on an item of `item_class`.
+func option_pct(id: int, value: int, item_class: int) -> int:
+	return blue_pct(range_row(id, item_class), value)
+
 ## The blue line's "(+x%)": trunc((value - min) / (max - min) * 100), never
-## below 0 (0x670f3b-0x670f89; the value is read unsigned). -1 for an empty
-## range (the client would divide by zero; it is not shown).
+## below 0 (0x670f3b-0x670f89; the value is read unsigned). An empty range
+## shows (+0%): the client divides by zero unguarded, _ftol2 turns the
+## inf/NaN into 0x80000000, and 0x670f87 clamps that to 0 (review F5).
+## -1 only when there is no row at all.
 static func blue_pct(r: Row, value: int) -> int:
 	if r == null:
 		return -1
 	var lo := r.min_value()
 	var hi := r.max_value()
 	if hi == lo:
-		return -1
+		return 0
 	return maxi(0, int((float(value) - float(lo)) / (float(hi) - float(lo)) * 100.0))
 
 ## Each option's line, READ from FUN_00670dd0: the format string and the

@@ -63,7 +63,9 @@ static func int_stat(l: int, u: int, q: int, inc: float, plus: int) -> int:
 ## (q / 31) * (U - L) + L, stored as a float (c:0x8bd980 armour case 3; the
 ## reinforce stats are built with no plus term -- pass 0).
 static func float_stat(l: float, u: float, q: int, inc: float, plus: int) -> float:
-	return f32(float(plus) * f32(inc) + f32(q / GROUP_MAX) * (f32(u) - f32(l)) + f32(l))
+	# (U-L)*(q/31.0) unrounded, + L, + inc*plus, rounded to a float once at
+	# the store (c:0x8bde5e-0x8bde99; round 732 review F7).
+	return f32((f32(u) - f32(l)) * (q / GROUP_MAX) + f32(l) + f32(inc) * float(plus))
 
 ## A min~max line of whole-number stats (phys/mag attack, 0x66c66f-0x66c841):
 ## each end f = (v - TRUNC(inc*plus) - L) / (U - L) as a float, 1 when U == L;
@@ -105,7 +107,8 @@ static func single_pct(v: float, l: float, u: float, inc: float, plus: int) -> i
 		return 100
 	var fv := f32(v)
 	if plus != 0:
-		fv = f32(fv - f32(f32(inc) * float(plus)))
+		# The unrounded product comes off, rounded once (c:0x66cd25-0x66cd33).
+		fv = f32(fv - f32(inc) * float(plus))
 	return int((fv - f32(l)) / (f32(u) - f32(l)) * 100.0)
 
 ## The durability line's percent: q / 0.31 truncated (0x66d316; the double at

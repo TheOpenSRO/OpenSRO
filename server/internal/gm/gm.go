@@ -602,6 +602,14 @@ func (d *Deps) item(ctx context.Context, actor Actor, args []string) Result {
 	if found == nil {
 		return refuse(fmt.Sprintf("bag slot %d is empty", slot))
 	}
+	// Only equipment (TypeID 3/1) carries an instance the lists send; a
+	// stack would drop it again when stacks merge (round 732 review F9).
+	if d.Items == nil {
+		return refuse("no item table loaded on this server (-items-csv), so the item cannot be checked")
+	}
+	if it, err := d.Items.GetItem(ctx, found.ItemID); err != nil || it.TypeID1 != 3 || it.TypeID2 != 1 {
+		return refuse(fmt.Sprintf("bag slot %d holds item %d, not equipment: /item sets equipment only", slot, found.ItemID))
+	}
 	inst := found.Instance()
 	num := func(i int, max uint64) (uint64, bool) {
 		if i >= len(args) {

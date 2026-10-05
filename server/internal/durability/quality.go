@@ -33,7 +33,9 @@ func IntStat(l, u int32, q int, inc float32, plus int) int32 {
 // reinforce %): plus * inc + (q / 31) * (U - L) + L, stored as a float (the
 // armour case 3 at c:0x8bd980; the reinforce ranges carry no plus term).
 func FloatStat(l, u float32, q int, inc float32, plus int) float32 {
-	return float32(float64(plus)*float64(inc) + float64(float32(q)/float32(GroupMax))*(float64(u)-float64(l)) + float64(l))
+	// (U-L)*(q/31.0) in extended precision, + L, + inc*plus, rounded to a
+	// float once at the store (c:0x8bde5e-0x8bde99; round 732 review F7).
+	return float32((float64(u)-float64(l))*(float64(q)/GroupMax) + float64(l) + float64(inc)*float64(plus))
 }
 
 // QualityRangeInt is a min~max line of whole-number stats (phys/mag
@@ -91,7 +93,8 @@ func QualitySingle(v, l, u, inc float32, plus int) int {
 		return 100
 	}
 	if plus != 0 {
-		v -= inc * float32(plus)
+		// The unrounded product comes off, rounded once (c:0x66cd25-0x66cd33).
+		v = float32(float64(v) - float64(inc)*float64(plus))
 	}
 	return int(math.Trunc((float64(v) - float64(l)) / (float64(u) - float64(l)) * 100.0))
 }

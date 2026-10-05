@@ -18,6 +18,7 @@ func _check(cond: bool, msg: String) -> void:
 ## +5, options (1, 7) and (16, 100), advanced elixir +3, variance 0x7c1f,
 ## durability 62, item 3645 -- byte for byte the Go golden record.
 const RECORD := [
+	0x00, 0x00, 0x00, 0x00,
 	0x3d, 0x0e, 0x00, 0x00,
 	0x05,
 	0x1f, 0x7c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -73,13 +74,23 @@ func _test_record() -> void:
 	_check(it.adv_elixir == 3 and it.effective_plus() == 8, "the advanced elixir adds onto the plus: +5 +3 = +8")
 	_check(it.variance_group(0) == 31 and it.variance_group(1) == 0 and it.variance_group(2) == 31, "variance groups 0..2 are 31, 0, 31")
 	var bad := PackedByteArray(RECORD)
-	bad[17] = 13
+	bad[21] = 13
 	_check(ItemInstance.read_record(bad, 0)[0] == null, "MagParamNum 13 is refused, as the client asserts")
 	var cut_ok := true
 	for n in RECORD.size():
 		if ItemInstance.read_record(PackedByteArray(RECORD).slice(0, n), 0)[0] != null:
 			cut_ok = false
 	_check(cut_ok, "every truncation of the record is refused")
+	# The rent block's branches (c:0x8bb130): bit 1 adds u16 and u32.
+	var rented := PackedByteArray([2, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	rented.append_array(PackedByteArray(RECORD).slice(4))
+	var rr := ItemInstance.read_record(rented, 0)
+	_check(rr[0] != null and (rr[0] as ItemInstance).ref_item_id == 3645 and rr[1] == rented.size(), "a record behind a rent block reads")
+	# Two elixir entries add as a u8 (c:0x8bb070): 200 + 100 = 44.
+	var two := PackedByteArray(RECORD).slice(0, RECORD.size() - 11)
+	two.append_array(PackedByteArray([2, 2, 0, 0, 0, 0, 0, 200, 0, 0, 0, 1, 0, 0, 0, 0, 100, 0, 0, 0]))
+	var tw := ItemInstance.read_record(two, 0)
+	_check(tw[0] != null and (tw[0] as ItemInstance).adv_elixir == 44, "the advanced elixir sums as a u8")
 
 ## A bag list as session/inventory.go sends it: records, durability block,
 ## capacity, then the instance block.
@@ -150,17 +161,25 @@ func _test_quality() -> void:
 func _test_magic_options() -> void:
 	var rows := [
 		"1\t134\tMATTR_ER\t+\t7\t1\t0\t25970\t%d\t%d\t%d\t0" % [(5 << 16) | 10, (20 << 16) | 30, (40 << 16) | 0],
+		"1\t137\tMATTR_ER\t+\t10\t1\t0\t25970\t%d\t%d\t%d\t0" % [(5 << 16) | 10, (20 << 16) | 30, (40 << 16) | 60],
 		"1\t200\tMATTR_SOLID\t+\t7\t0.3\t0\t1\t%d\t%d\t%d\t0" % [(1 << 16) | 2, (3 << 16) | 4, (5 << 16) | 6],
 		"// a comment",
 	]
 	var t := MagicOptionTable.new().load(("\n".join(PackedStringArray(rows))).to_utf16_buffer())
-	_check(t.size() == 2, "two rows read (got %d)" % t.size())
+	_check(t.size() == 3, "three rows read (got %d)" % t.size())
 	var er := t.row(134)
 	_check(er != null and er.code == "MATTR_ER" and er.degree == 7 and er.min_value() == 5 and er.max_value() == 40,
 		"ER's range runs 5..40 (the last non-zero half-word)")
 	_check(MagicOptionTable.blue_pct(er, 40) == 100 and MagicOptionTable.blue_pct(er, 5) == 0 and MagicOptionTable.blue_pct(er, 20) == 42,
 		"the blue (+x%): trunc((v - min) / (max - min) * 100)")
 	_check(MagicOptionTable.blue_pct(er, 1) == 0, "never below 0")
+	var empty := MagicOptionTable.Row.new()
+	empty.ranges = PackedInt64Array([(7 << 16), 0, 0])
+	_check(MagicOptionTable.blue_pct(empty, 7) == 0, "an empty range shows (+0%), as the client's clamp gives")
+	# Row selection by degree (c:0x670e98): ItemClass 28 -> degree 10.
+	_check(t.range_row(134, 28) != null and t.range_row(134, 28).id == 137, "ItemClass 28 takes ER's degree-10 row")
+	_check(t.range_row(134, 19).id == 134, "ItemClass 19 is degree 7, the option's own row")
+	_check(t.option_pct(134, 60, 28) == 100 and t.option_pct(134, 60, 19) == 157, "60 is the top of degree 10's range and past degree 7's (157)")
 	var text := func(k: String) -> String:
 		return {"PARAM_ER": "Parry rate", "PARAM_INCREASE": "Increase", "PARAM_SOLID": "Steady", "UIIT_STT_COUNT": "Time/times"}.get(k, k)
 	_check(MagicOptionTable.format_line("MATTR_ER", 20, 42, text) == "Parry rate 20% Increase (+42%)", "the ER line")

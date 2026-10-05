@@ -25,6 +25,7 @@ func TestItemRecordGoldenBytes(t *testing.T) {
 			ItemInfo{RefItemID: 3645, OptLevel: 5, Variance: 0x7c1f, Durability: 62,
 				MagParams: []uint64{inventory.MagParam(1, 7), inventory.MagParam(16, 100)}, AdvElixir: 3},
 			[]byte{
+				0x00, 0x00, 0x00, 0x00, // rent block: none (c:0x8bb130)
 				0x3d, 0x0e, 0x00, 0x00, // RefItemID
 				0x05,                                           // OptLevel
 				0x1f, 0x7c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Variance
@@ -42,6 +43,7 @@ func TestItemRecordGoldenBytes(t *testing.T) {
 			"plain",
 			ItemInfo{RefItemID: 3645, Durability: 62},
 			[]byte{
+				0, 0, 0, 0,
 				0x3d, 0x0e, 0x00, 0x00, 0x00,
 				0, 0, 0, 0, 0, 0, 0, 0,
 				0x3e, 0x00, 0x00, 0x00,
@@ -73,11 +75,11 @@ func TestItemRecordCapsAndRefusals(t *testing.T) {
 		many[i] = inventory.MagParam(uint16(i+1), 1)
 	}
 	rec := AppendItemRecord(nil, ItemInfo{RefItemID: 1, MagParams: many})
-	if rec[17] != inventory.MaxMagParams {
-		t.Fatalf("MagParamNum %d, want the cap %d", rec[17], inventory.MaxMagParams)
+	if rec[21] != inventory.MaxMagParams {
+		t.Fatalf("MagParamNum %d, want the cap %d", rec[21], inventory.MaxMagParams)
 	}
 	bad := append([]byte(nil), rec...)
-	bad[17] = 13
+	bad[21] = 13
 	if _, _, err := ReadItemRecord(bad); err == nil {
 		t.Error("MagParamNum 13 should be refused, as the client's assert does")
 	}

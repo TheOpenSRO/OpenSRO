@@ -189,7 +189,7 @@ type StorageListResult struct {
 func (r *StorageListResult) Encode() []byte {
 	out := r.InventoryListResult.Encode()
 	out = append(out, byte(r.Capacity), byte(r.Capacity>>8))
-	return encodeItemInfoBlock(out, r.Infos)
+	return encodeItemInfoBlock(out, fitItemInfos(len(out), r.Infos))
 }
 
 // DecodeStorageListResult reads the list and, when the sender was new enough
@@ -256,7 +256,16 @@ func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	}
 	result := &StorageListResult{InventoryListResult: InventoryListResult{Slots: snaps}, Capacity: capacity,
 		Infos: slotItemInfos(ctx, slots, storageItems(svc))}
-	return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: result.Encode()})
+	rest := result.splitInfos()
+	if err := sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: result.Encode()}); err != nil {
+		return err
+	}
+	for _, data := range EncodeItemInfoMore(ItemInfoWarehouse, rest) {
+		if err := sess.Send(&proto.Packet{Opcode: OpItemInfoMore, Data: data}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, trades *trade.Hub, deposit bool) error {

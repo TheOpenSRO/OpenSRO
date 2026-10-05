@@ -242,6 +242,14 @@ func TestGivePlusAndItemEditTheInstance(t *testing.T) {
 			t.Errorf("%q should be refused: %+v", bad, res)
 		}
 	}
+	// A stackable (item 3) is refused: the lists carry no instance for it,
+	// and a merge would drop it (review F9).
+	if res := f.run(t, "/give 3 5"); res.Refused {
+		t.Fatalf("/give 3 5: %+v", res)
+	}
+	if res := f.run(t, "/item 2 plus 3"); !res.Refused || !strings.Contains(res.Text, "not equipment") {
+		t.Errorf("/item on a stack: %+v", res)
+	}
 }
 
 func TestGold(t *testing.T) {
