@@ -28,6 +28,13 @@ class_name NpcTalkView
 ## same setter the chat's 308 goes through), drawn with ifverticalscroll.txt's
 ## parts (HudChat.ChatScroll: the up arrow 16 above the control, the down
 ## arrow below the length). One step is one line (0x6592a0, as the chat's).
+##
+## **Line pitch (READ).** Create sets the text box's pitch to 18 (`push 0x12`
+## at 0x6fa1e1 into 0x638c20, the setter the chat's 14 goes through at
+## 0x7abeb8), wrapped lines included -- the 18 px rows of the user's original
+## screenshot (tcHCl0v: 295, 313, 331, 349). Create also stores 100 at +0x3a0
+## (the chat's line cap) and 19 at +0x3a4; 343 / 18 rounds down to 19 shown
+## lines, so +0x3a4 is INFERRED to be the visible-line count.
 
 const NPC_WINDOW_LAYOUT := "resinfo\\if_npcwindow.txt"
 const NPC_TALK_LAYOUT := "resinfo\\if_npctalk.txt"
@@ -43,6 +50,8 @@ const COLOUR_MENU := Color8(239, 218, 164)
 const COLOUR_MENU_ACTIVE := Color8(255, 138, 0)
 
 const SCROLL_LENGTH := 320.0
+## The text box's line pitch, READ (see the header).
+const LINE_PITCH := 18
 
 ## The label and its clipping box, by node name (QA hooks find the label).
 const BODY_NAME := "TalkText"
@@ -115,6 +124,11 @@ static func compose(window: HudWindow, builder: UiBuilder) -> RichTextLabel:
 		if font != null:
 			body.add_theme_font_override("normal_font", font)
 		body.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
+	# The pitch is the font's own height plus the separation.
+	var pitch_font := body.get_theme_font("normal_font")
+	if pitch_font != null:
+		var font_h := pitch_font.get_height(body.get_theme_font_size("normal_font_size"))
+		body.add_theme_constant_override("line_separation", LINE_PITCH - roundi(font_h))
 	clip.add_child(body)
 	body.meta_hover_started.connect(func(meta: Variant) -> void:
 		body.set_meta(META_HOVER, str(meta))
@@ -194,11 +208,14 @@ static func _render(body: RichTextLabel) -> void:
 	var lines: PackedStringArray = body.get_meta(META_LINES, PackedStringArray())
 	body.text = coloured(lines, str(body.get_meta(META_HOVER, "")))
 
-## The height of one line of the label, from what it laid out (0 before).
+## The height of one line of the label: the READ pitch once compose() set
+## it, else what the label laid out (0 before).
 static func line_height(body: RichTextLabel) -> float:
 	var n := body.get_line_count()
 	if n <= 0:
 		return 0.0
+	if body.has_theme_constant_override("line_separation"):
+		return float(LINE_PITCH)
 	return float(body.get_content_height()) / float(n)
 
 ## How many lines fit in the box and how many there are.

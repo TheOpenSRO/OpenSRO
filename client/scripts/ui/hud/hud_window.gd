@@ -94,10 +94,17 @@ const CLOSE_BUTTON_INSET := 26.0
 ##
 ## The caption's colour is not read: nothing in OnCreate sets it, and the
 ## entry's FontColor goes to the frame's own text board (0x8b56d4), not the
-## caption's. It keeps the colour every window here uses (`_add_title_bar`).
+## caption's. Round 725 MEASURED it white on five registry windows of the
+## user's original (the NPC window in tcHCl0v.png, the store and Inventory in
+## 3Gw7Ene.png, Storage in MKtR5Kd.png: every caption's brightest pixel is
+## 255,255,255), so a registry window's caption is white
+## (MAINFRAME_CAPTION_COLOUR). A self-framed window keeps the beige every
+## window here used before (ours).
 const MAINFRAME_CAPTION_X := 10.0
 const MAINFRAME_CAPTION_Y := 12.0
 const MAINFRAME_CAPTION_HEIGHT := 12.0
+## A registry window's caption colour (MEASURED, see above).
+const MAINFRAME_CAPTION_COLOUR := Color(1, 1, 1)
 ## The caption and drag strip are the window's width less 0x15.
 const MAINFRAME_STRIP_WIDTH_LESS := 21.0
 const MAINFRAME_DRAG_HEIGHT := 34.0
@@ -378,7 +385,8 @@ func _add_title_bar(title: String) -> void:
 		else VERTICAL_ALIGNMENT_CENTER
 	_place_title_bar(bar)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
+	bar.add_theme_color_override("font_color", MAINFRAME_CAPTION_COLOUR if registry_def != null \
+		else Color(0.93, 0.87, 0.70))
 	# The client's own UI font, so a window title doesn't sit in Godot's
 	# default face over authored artwork.
 	if _builder != null:

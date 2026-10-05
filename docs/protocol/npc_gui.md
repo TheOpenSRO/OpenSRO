@@ -80,8 +80,22 @@ RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
 
 - **Title:** the NPC's name. INFERRED from the screenshots; the store takes the same string
   (`0x704050` → the NPC's ref name, `+0x60`, READ).
-- **MEASURED** on `tcHCl0v.png`: the window is 382 px wide, against the registry's 386. That matches
-  at a screenshot scale of about 1.
+- **The scroll bar's length (READ, round 725):** `CIF_NPCTalk::Create` sets it to **320**
+  (`push 0x140` at `0x6fa1c9` into `0x65a390` at `0x6fa1d6`, the setter the chat's 308 goes
+  through), stored at `+0x7b4`. Its parts are `ifverticalscroll.txt`'s: thumb
+  `com_scroll_button.ddj`, arrows `chattingwnd\chat_arrow_up/_down.ddj`, the up arrow at
+  `(0,-16)` (READ, the layout).
+- **The line pitch (READ, round 725):** 18. `CIF_NPCTalk::Create` calls `0x638c20(0x12)` on the
+  text box (`push 0x12` at `0x6fa1e1`), the setter the chat's 14 goes through (`0x7abeb8`). Wrapped
+  lines take the same pitch: `tcHCl0v.png`'s rows are 18 px apart, the greeting's wrapped lines
+  (187, 205, 223) and the menu's (295, 313, 331, 349) alike (MEASURED). The same Create stores 100
+  at `+0x3a0` (the chat's line cap) and 19 at `+0x3a4`. 343 / 18 rounds down to 19, so `+0x3a4` is
+  INFERRED to be the number of lines shown.
+- **MEASURED** on `tcHCl0v.png` (corrected in round 725): the window's frame runs from x 54 to 439
+  and from y 109 to 559, which is **386x451, the registry's size exactly**. Round 724's "382" was
+  read off the picture by eye. The talk box's frame is 11 px inside the window, and the first text
+  row is 34 px right of the window's left edge and 73 px below its top. OpenSRO's round 725 render
+  measures the same four numbers (`docs/rounds/r725.md`).
 
 ### The text, in order (READ: the builder `FUN_00700440`, line adder `FUN_006fcd60`)
 1. **The greeting.** From the NPC's chat record (`FUN_00938000` → `+0x20`, `+0x3c`), drawn in
@@ -99,6 +113,19 @@ RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
    - **no underline** (none is set; MEASURED: the original screenshots show none);
    - a store line can instead use `0xffff4a4a` (red) as its first colour, in a branch of
      `FUN_006fb630` (INFERRED: unusable).
+   - **The wording of three lines differs from the original (OPEN 9, round 725).**
+     `textuisystem.txt` holds two rows for `UIIT_CTL_RECALL_POSITION`, `UIIT_CTL_TELEPORT_TARGET`
+     and `UIIT_CTL_TELEPORT_RESULT`: rows 649-651, 16 columns, read "Designate this region as your
+     return & recall point!", "Select a teleport area:" and "Teleport to [%s] for [%d] Gold.". Rows
+     7577-7579, 19 columns, read "Designate as return/recall point", "Select teleport area" and
+     "Teleport to [%s]area. [%d]gold". The user's original (`1llywhJ.png`, `hWWsCP0.png`) shows the
+     later rows. `UiTextTable` keeps the first row of a key. Round 634 read that rule from the
+     loader: the insert at `0x8cb266` into `0x8ca120` ignores its result. It is not changed here,
+     for these reasons:
+     - it governs every text in the UI, 243 keys in this table;
+     - the user's client may ship its own `textuisystem.txt`;
+     - `docs/protocol/teleport_network.md` says the later rows are kept, which contradicts round 686's
+       render ("this archive resolves the older row").
 4. **The end line,** always last: kind 0, `UIIT_STT_NPC_CHATTING_WND_TALKEND` "End conversation.". It
    is `…_TALKEND2` when interaction 0x1f is offered.
 
@@ -128,6 +155,16 @@ Ids → line kinds → text keys, in the builder's order:
 | 0x11, 0x12, 0x23, 0xc, 0x1c, 0x27, 0x29 | 0x27, 0x28, 0x3f, 0x39, 0x2a, 0x3d, 0x3e | gacha, open market, special price, …, dungeon exit | |
 | always | 0 | `UIIT_STT_NPC_CHATTING_WND_TALKEND` | "End conversation." |
 
+- **The store line's text (READ, round 725):** `FUN_006fb630` walks the NPC's shops
+  (`GlobalDataManager::FUN_00983cb0`) and inside each its tab groups (`FUN_00982760`), and for each
+  writes "`%d. `" and the group's own name (`FUN_0093fa50(group)` → `+0x24` → `FUN_008c9bb0`). The
+  name is `refshoptabgroup.txt` column 4 (`STORE_CH_POTION_GROUP1` → `SN_STORE_POTION_GROUP1`,
+  MEASURED in the archive). A shop can have two tab groups (`STORE_WC_ARMOR`), so two lines.
+- **Ids 2 and 10 have no registration in `CGObjNPCNPC::Create` (READ, round 725):** every
+  `[vtable+0x164]` (AddAvailableInteraction) call in `0x4c6350..0x4c7900` pushes one of 3, 1, 4,
+  0x20, 0xb, 0xf, 0x1e, 0xc, 0xd, 0xe, 0x18, 0x17, 0x19, 0x1b, 0x1f, 0x22, 0x23, 0x27, 0x29, 0x28,
+  0x11, 0x12 -- never 2 or 10. So "Talk to this person." and "Withdrawing Skill" come from another
+  registrar (OPEN 7); OpenSRO does not offer them until it is read (round 725).
 - The herbalist's lines in `tcHCl0v.png` (Talk / Purchase-Sell / Withdrawing Skill / End) are ids
   {2, 1, 10}.
 - The gate's lines in `1llywhJ.png` are ids {5|7, 8}.
@@ -200,6 +237,13 @@ Ids → line kinds → text keys, in the builder's order:
   | `GDR_STORE_BTN_REPAIR` / `_REPAIRALL` | 86,332 / 166,332, 76x24 | `UIIT_CTL_REPAIR` / `UIIT_CTL_REPAIR_ALL` |
 
   - The tabs are built in code (`com_short_tab_*`, x from 16 step 56; `reference_shop_system`).
+    **Their whole rect (READ, round 725)** is `{16 + 56 i, 0x26, 0x38, 0x18}` = (16 + 56 i, 38,
+    56x24). `CIFStoreForPackage::vslot_010` writes it at `0x6d2d69..0x6d2d7d` and passes it to
+    gwnd `0xba20b0`.
+    - MEASURED on `3Gw7Ene.png`: the tab's top is 38 below the window's, and its caption is white.
+      The create path sets no colour.
+    - Round 724's build had the tab 2 px higher and its caption beige. Both values were ours, and
+      both are now corrected.
   - **INFERRED from `3Gw7Ene.png`:** Repair is hidden for a non-smith store (the herbalist shows no
     Repair). **OPEN:** the code that hides it.
 - **Not part of the store:** the small two-column box at the left of `3Gw7Ene.png`. No window is
@@ -283,6 +327,20 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 | 12 | Protocol: ours uses its own opcodes (`OpShopList 0x0052`/`0x0053`, OpShopBuy/Sell, OpStorage* `0x0056`-`0x005d`, our NPC talk is client-only). The original uses select `0x7045`/`0xb045` (with the interaction ids), open `0x7046`/`0xb046`, end `0x704b`/`0xb04b`, and moves items with the item-move request (`FUN_007950b0`, store window `0x0f` → inventory `0x46`) | C |
 | 13 | Other windows built from layouts with `#ifdef`s use hand-picked defines (`HudChat.LAYOUT_DEFINES`, `PANEL_DEFINES`) instead of `config\define.txt` | A (store/NPC/message box now; global as a follow-up) |
 
+**After round 725** (`docs/rounds/r725.md`):
+
+- **Done:** rows 1, 2, 5, 6, 7 and 8.
+- **Row 3, lane A's part:**
+  - The menu comes from the id set, which is derived client-side (OURS).
+  - Store lines are worded by their tab groups' `SN_STORE_*` names.
+  - Talk (2) and Withdrawing Skill (10) are not offered (OPEN 7).
+- **Row 4:** the tax line shows for Jangan and Hotan NPCs and gates at 0%. Which NPCs get it comes
+  from their codenames (OURS), until lane C reads the message.
+- **Row 13:** only the store and the NPC window take `config\define.txt`.
+- **Gate greetings:** a gate's talk box now greets with its `npcchat.txt` row (`STORE_CH_GATE` →
+  `STORE_CH_GATE_BS`), as `1llywhJ.png` does. `NpcServiceReader.parse_greetings` had dropped every
+  owner that is not an `NPC_` code.
+
 ## 7. OPEN
 
 1. Which message carries a fortress NPC's tax data (talk window `+0x800` fortress id, `+0x804` rate).
@@ -297,6 +355,11 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
    and withdraw skill (10) are OPEN.
 8. Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills (INFERRED strongly,
    §0).
+9. Which of two duplicate `textuisystem.txt` rows the client shows (§1, the menu). The user's
+   original shows the later 19-column rows, and `UiTextTable` keeps the first.
+10. The title icon. The original draws one left of the Storage and Inventory titles (`MKtR5Kd.png`)
+    but none on the store's (`3Gw7Ene.png`). `ginterface.txt` has no field for it, so its source in
+    the code is unread and OpenSRO draws none.
 
 ## Implementation lanes
 

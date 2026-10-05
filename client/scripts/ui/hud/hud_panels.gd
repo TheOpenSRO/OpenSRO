@@ -1799,17 +1799,23 @@ func qa_press_teleport_line(dest_id: int) -> bool:
 # The tab strip is built here rather than read from the layout because the
 # store window builds its own tabs in code -- confirmed by decompiling both
 # CIFStore and CIFStoreForPackage: a loop from x=16 stepping 56 while x<240,
-# each tab a `com_short_tab`, so up to four. Their y is not in any data (the
-# layout has no tab controls), so it is placed on the grid frame's top edge --
-# ours, disclosed.
+# each tab a `com_short_tab`, so up to four. Round 725 read the rest of the
+# rect from CIFStoreForPackage::vslot_010: {16 + 56 i, 0x26, 0x38, 0x18} at
+# 0x6d2d69..0x6d2d7d, the rect gwnd 0xba20b0 creates each tab with -- y 38,
+# 56x24. The user's original (3Gw7Ene.png) MEASURES the tab's top 38 below the
+# window's and its caption white; round 724's build had it 2 px higher (the
+# texture's height up from the grid frame's top, ours) and beige (ours).
 const SHOP_TAB_ON := "interface\\ifcommon\\com_short_tab_on.ddj"
 const SHOP_TAB_OFF := "interface\\ifcommon\\com_short_tab_off.ddj"
 const SHOP_MAX_TABS := 4
 const SHOP_TAB_X0 := 16.0
 const SHOP_TAB_STEP := 56.0
-## The grid frame's authored top edge (GDR_STORE_FRAME y). Tabs sit on it.
-const SHOP_TAB_Y_BOTTOM := 60.0
-const SHOP_TAB_FALLBACK_SIZE := Vector2(54, 20)
+## The tab's y and size (READ, 0x6d2d6d..0x6d2d7d; see above).
+const SHOP_TAB_Y := 38.0
+const SHOP_TAB_SIZE := Vector2(56, 24)
+## The caption colour: white, MEASURED on the original (3Gw7Ene.png); the
+## create path sets none, so it is the button's default.
+const SHOP_TAB_CAPTION := Color(1, 1, 1)
 
 var _shop_tabs: Array = []      # of ShopReader.Tab
 var _shop_selected := 0
@@ -1885,9 +1891,8 @@ func _build_shop_tab_strip(window: HudWindow) -> void:
 	strip.name = "ShopTabs"
 	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	window.add_child(strip)
-	var on: Texture2D = _builder.load_texture(SHOP_TAB_ON) if _builder != null else null
 	var off: Texture2D = _builder.load_texture(SHOP_TAB_OFF) if _builder != null else null
-	var tab_size: Vector2 = Vector2(on.get_size()) if on != null else SHOP_TAB_FALLBACK_SIZE
+	var tab_size: Vector2 = SHOP_TAB_SIZE
 	for i in range(mini(_shop_tabs.size(), SHOP_MAX_TABS)):
 		var tab: ShopReader.Tab = _shop_tabs[i]
 		var btn := TextureButton.new()
@@ -1896,7 +1901,7 @@ func _build_shop_tab_strip(window: HudWindow) -> void:
 		btn.stretch_mode = TextureButton.STRETCH_SCALE
 		btn.texture_normal = off
 		btn.focus_mode = Control.FOCUS_NONE
-		btn.position = Vector2(SHOP_TAB_X0 + i * SHOP_TAB_STEP, SHOP_TAB_Y_BOTTOM - tab_size.y)
+		btn.position = Vector2(SHOP_TAB_X0 + i * SHOP_TAB_STEP, SHOP_TAB_Y)
 		btn.size = tab_size
 		btn.custom_minimum_size = tab_size
 		var idx := i
@@ -1908,7 +1913,7 @@ func _build_shop_tab_strip(window: HudWindow) -> void:
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		lbl.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
+		lbl.add_theme_color_override("font_color", SHOP_TAB_CAPTION)
 		if _builder != null:
 			var font := _builder.font_at(0)
 			if font != null:

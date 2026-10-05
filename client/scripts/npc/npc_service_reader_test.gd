@@ -66,9 +66,11 @@ func _init() -> void:
 	var chat_rows := PackedStringArray([
 		"//Service\tOwnerCodeName\tmsg1\tmsg2",
 		"1\tNPC_CH_SMITH\tSN_NPC_CH_SMITH_BS\tSN_NPC_CH_SMITH_PS",
+		"1\tSTORE_CH_GATE\tSTORE_CH_GATE_BS\tSTORE_CH_GATE_PS",
 	])
 	var greet := NpcServiceReader.parse_greetings(("\n".join(chat_rows) + "\n").to_utf16_buffer())
 	_check(greet.get("NPC_CH_SMITH", [])[0] == "SN_NPC_CH_SMITH_BS", "greeting msg1 id parsed")
+	_check(greet.get("STORE_CH_GATE", [""])[0] == "STORE_CH_GATE_BS", "a gate's greeting row is kept (round 725)")
 
 	# services_for: shop from the set; storage from a WAREHOUSE codename.
 	# A town smith lists the shop and nothing else (round 512): the client's
@@ -269,7 +271,7 @@ func _init() -> void:
 			has_guild_services = true
 	var stateful := sf_args >= 4
 	_check(stateful, "services_for takes the guild state (got %d argument(s))" % sf_args)
-	_check(sf_args == 5, "services_for's signature is (code, shops, guild_id, guild_master, player_job_kind) (got %d)" % sf_args)
+	_check(sf_args == 6, "services_for's signature is (code, shops, guild_id, guild_master, player_job_kind, store_lines) (got %d)" % sf_args)
 	_check(has_guild_services, "NpcServiceReader has guild_services")
 	# Unknown state: the 2-argument calls above already showed "guild" for all
 	# seven patterns. Passing -1 explicitly is the same.

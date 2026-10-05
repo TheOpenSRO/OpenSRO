@@ -211,8 +211,14 @@ func _window_checks(panels_script: GDScript) -> void:
 	await process_frame
 	var scroll := bar as HudChat.ChatScroll
 	_check(scroll != null and scroll.maximum > 0, "60 lines give the scroll bar a range (got %s)" % [scroll.maximum if scroll != null else null])
+	# The READ pitch (18, 0x6fa1e1): the font's height plus the separation, and
+	# 343 / 18 = 19 lines shown, so 60 lines leave 41 steps.
+	var font_h := body.get_theme_font("normal_font").get_height(body.get_theme_font_size("normal_font_size"))
+	_check(roundi(font_h) + body.get_theme_constant("line_separation") == NpcTalkView.LINE_PITCH and NpcTalkView.LINE_PITCH == 18,
+		"the line pitch is 18 (font %.1f + separation %d)" % [font_h, body.get_theme_constant("line_separation")])
+	_check(scroll != null and is_equal_approx(scroll.maximum, 41.0), "19 of 60 lines fit, 41 steps (got %s)" % [scroll.maximum if scroll != null else null])
 	NpcTalkView.scroll_to(window, 3)
-	_check(body.position.y < 0.0 and int(body.get_meta(NpcTalkView.META_SCROLL)) == 3, "scrolling 3 lines moves the text up")
+	_check(is_equal_approx(body.position.y, -54.0) and int(body.get_meta(NpcTalkView.META_SCROLL)) == 3, "scrolling 3 lines moves the text up 3 x 18 (got %.1f)" % body.position.y)
 	panels.queue_free()
 
 # --- the store's branch ----------------------------------------------------------------
@@ -225,9 +231,23 @@ func _store_checks(panels_script: GDScript) -> void:
 	_check(store != null and store.size == Vector2(254, 370), "with define.txt's two names the store is GDR_STORE's 254x370 (got %s)" % [store.size if store != null else null])
 	_check(store != null and store.node("GDR_STORE_ICON_SLOT_01") != null, "and builds the buy-back row (RESTORE_SOLDITEM_INSHOP)")
 	_check(store != null and store.find_child("ShopPurse", true, false) == null, "NEGATIVE: no 'Gold:' label of ours under the grid")
+	# The tabs' rect, READ from CIFStoreForPackage::vslot_010: {16 + 56 i, 38, 56, 24}.
+	var t1 := ShopReader.Tab.new()
+	t1.name_strid = "Tab A"
+	var t2 := ShopReader.Tab.new()
+	t2.name_strid = "Tab B"
+	panels.call("open_shop", "Fixture", [t1, t2], "NPC_FIXTURE")
+	store = panels.call("open", "store")
+	var tab0 := store.find_child("ShopTab0", true, false) as Control if store != null else null
+	var tab1 := store.find_child("ShopTab1", true, false) as Control if store != null else null
+	_check(tab0 != null and tab1 != null and tab0.position == Vector2(16, 38) and tab1.position == Vector2(72, 38) and tab0.size == Vector2(56, 24),
+		"the store's tabs sit at {16 + 56 i, 38}, 56x24 (got %s, %s)" % [tab0.position if tab0 != null else null, tab1.position if tab1 != null else null])
+	var tab_label := tab0.get_node_or_null("Label") as Label if tab0 != null else null
+	_check(tab_label != null and tab_label.get_theme_color("font_color") == Color(1, 1, 1), "and their captions are white")
 	var storage: HudWindow = panels.call("open", "storage")
 	var title := storage.get_node_or_null("TitleBar") as Label if storage != null else null
 	_check(title != null and title.text == "Fixture Storage", "the storage is titled UIIT_STT_STORAGEROOM (got %s)" % [title.text if title != null else null])
+	_check(title != null and title.get_theme_color("font_color") == Color(1, 1, 1), "a registry window's caption is white (MEASURED on the original)")
 	panels.call("open_storage", "Keeper Fixture")
 	_check(title != null and title.text == "Fixture Storage", "NEGATIVE: opening it at a keeper does not retitle it with the keeper's name")
 	panels.queue_free()

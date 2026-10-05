@@ -12436,9 +12436,17 @@ func _qa_step() -> void:
 			# display name.
 			_load_npc_tables()
 			var code: String = at[0]
-			_talk_npc_name = code
+			# The NPC's own name (characterdata + textdata_object), as a click
+			# would title the window; the code when the tables lack it.
+			var qa_name: String = str(_npc_names.get(_npc_id_for_code(code), ""))
+			if qa_name == "" and _teleport_reader != null:
+				# A gate: its structure's name, as _bind_region_gates labels it.
+				var qa_gate := _teleport_reader.building_by_code(code)
+				if qa_gate != null:
+					qa_name = _gate_display_name(qa_gate)
+			_talk_npc_name = qa_name if qa_name != "" else code
 			_talk_npc_code = code
-			_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
+			_hud_panels.open_npc_talk(_talk_npc_name, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
 
 	# OPENSRO_QA_TALK_PICK="<n>@<tick>[;<n>@<tick>...]" (round 725) presses the
 	# talk box's numbered line n at that tick, through the label's own
@@ -12448,8 +12456,16 @@ func _qa_step() -> void:
 	if qa_pick != "" and _hud_panels != null:
 		for step in qa_pick.split(";", false):
 			var parts := step.split("@")
-			if parts.size() == 2 and int(parts[1]) == _qa_tick:
-				print("QA TALK_PICK line %s at tick %d: %s" % [parts[0], _qa_tick, str(_hud_panels.qa_press_talk_line(int(parts[0])))])
+			if parts.size() != 2 or int(parts[1]) != _qa_tick:
+				continue
+			if parts[0] == "close":
+				# "close@<tick>": every NPC window and the bag shut, for the next
+				# step of the same render.
+				for panel_id in ["npctalk", "store", "storage", "inventory"]:
+					_hud_panels.close(panel_id)
+				print("QA TALK_PICK closed the NPC windows at tick %d" % _qa_tick)
+				continue
+			print("QA TALK_PICK line %s at tick %d: %s" % [parts[0], _qa_tick, str(_hud_panels.qa_press_talk_line(int(parts[0])))])
 
 	# OPENSRO_QA_SHOP="<NPC_CODE>" opens that NPC's store window for a render,
 	# standing in for talk -> Buy. Shows the real goods grid + tabs.
@@ -17047,13 +17063,16 @@ func _step_talk_approach(locked: bool = false) -> void:
 	print("CLICK: arrived %.1f from '%s' -- talking" % [player.global_position.distance_to(node.global_position), str(node.get_meta("npc_name", node.name))])
 	_open_talk(node)
 
-## A text key resolved through the UI table, then the object table; `fallback`
-## when neither has it (round 725: the store lines' SN_STORE_* and the tax
-## line's SN_FORTRESS_* keys).
+## A text key resolved through the UI table (textuisystem), the speech table,
+## then the object-name table (textdata_object); `fallback` when none has it
+## (round 725: the store lines' SN_STORE_* keys, the tax line's format and
+## its SN_FORTRESS_* fortress name, which only textdata_object carries).
 func _resolve_any_text(key: String, fallback: String) -> String:
 	if key == "" or key == "xxx":
 		return fallback
-	for table in [_ui_text_table, _npc_text_table]:
+	# textdata_object holds the fortress names (SN_FORTRESS_JANGAN), the
+	# other two the menu lines and the tax format.
+	for table in [_ui_text_table, _npc_text_table, _object_names()]:
 		if table == null:
 			continue
 		var t: String = (table as UiTextTable).get_text(key)
@@ -17136,13 +17155,17 @@ func _teleport_point_for_code(code: String) -> TeleportReader.Point:
 	var point := _teleport_reader.point_for_building(code)
 	if point != null:
 		return point
-	var up := code.strip_edges().to_upper()
+	return _teleport_reader.point_for_object(_npc_id_for_code(code))
+
+## The characterdata id of NPC codename `code` (0 when the NPC tables do not
+## name it), through the reverse of _npc_codes.
+func _npc_id_for_code(code: String) -> int:
 	if _npc_ids_built_from != _npc_codes.size():
 		_npc_ids_by_code.clear()
 		for npc_id in _npc_codes:
 			_npc_ids_by_code[str(_npc_codes[npc_id]).to_upper()] = int(npc_id)
 		_npc_ids_built_from = _npc_codes.size()
-	return _teleport_reader.point_for_object(int(_npc_ids_by_code.get(up, 0)))
+	return int(_npc_ids_by_code.get(code.strip_edges().to_upper(), 0))
 
 ## codename (upper) -> characterdata id, the reverse of _npc_codes, rebuilt
 ## when that grows (_teleport_point_for_code).

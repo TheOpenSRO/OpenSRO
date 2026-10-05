@@ -154,7 +154,10 @@ static func _pp_parse_greetings(data: PackedByteArray) -> Dictionary:
 		if cols.size() <= CHAT_MSG1_COL:
 			continue
 		var code := cols[CHAT_CODE_COL].strip_edges()
-		if not code.begins_with("NPC_"):
+		# Every owner, not only NPC_ codes (round 725): the gates' rows
+		# (STORE_CH_GATE -> STORE_CH_GATE_BS) carry the greeting the original
+		# talk box shows for a Dimensional Gate (the user's 1llywhJ/hWWsCP0).
+		if code == "":
 			continue
 		var m1 := cols[CHAT_MSG1_COL].strip_edges()
 		var m2 := cols[CHAT_MSG2_COL].strip_edges() if cols.size() > CHAT_MSG2_COL else ""
