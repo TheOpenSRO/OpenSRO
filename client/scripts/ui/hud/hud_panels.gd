@@ -2080,7 +2080,7 @@ func _fill_shop_grid(codes: PackedStringArray) -> void:
 		var item: ItemTableReader.Item = _items_by_code.get(codes[ci]) if ci < codes.size() else null
 		if item != null and item.icon_path != "" and _builder != null:
 			icon.texture = _builder.load_texture(item.icon_path)
-			icon.tooltip_text = _shop_tooltip(item)
+			_set_item_tip(icon, item.id, "store", ci, -1, -1, int(_shop_prices.get(item.id, -1)))
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 			icon.set_meta("shop_item_id", item.id)
 			# Click to buy. Wired once per cell (the cells persist across tab
@@ -2090,19 +2090,10 @@ func _fill_shop_grid(codes: PackedStringArray) -> void:
 				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_shop_cell_input(ev, icon))
 		else:
 			icon.texture = null
-			icon.tooltip_text = ""
+			_set_item_tip(icon, -1)
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			if icon.has_meta("shop_item_id"):
 				icon.remove_meta("shop_item_id")
-
-## The hover tooltip for a shop item: its real stats, plus the price the server
-## quotes (when the catalogue has arrived).
-func _shop_tooltip(item: ItemTableReader.Item) -> String:
-	var lines := PackedStringArray(item.tooltip_lines(_object_names))
-	if _shop_prices.has(item.id):
-		lines.append("")
-		lines.append("Price: %s gold" % _grouped(_shop_prices[item.id]))
-	return "\n".join(lines)
 
 ## A click on a store item picks it up onto the cursor; putting it down on
 ## the bag opens the buy dialog (HeldIcon, round 652; CIFInventory::vslot_028
@@ -2510,7 +2501,7 @@ func _fill_buyback_row() -> void:
 		var index := _buyback_book.size() - 1 - i
 		if index < 0:
 			icon.texture = null
-			icon.tooltip_text = ""
+			_set_item_tip(icon, -1)
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			if icon.has_meta("buyback_index"):
 				icon.remove_meta("buyback_index")
@@ -2520,7 +2511,7 @@ func _fill_buyback_row() -> void:
 			continue
 		var e: Dictionary = _buyback_book[index]
 		icon.texture = _item_icon(int(e.item_id))
-		icon.tooltip_text = _item_tooltip(int(e.item_id))
+		_set_item_tip(icon, int(e.item_id), "buyback", index)
 		icon.mouse_filter = Control.MOUSE_FILTER_STOP
 		icon.set_meta("buyback_index", index)
 		if count != null:
@@ -2719,6 +2710,8 @@ func _fill_storage_grid(slots: Array) -> void:
 		var icon0 := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon0 != null:
 			icon0.texture = null
+			_set_item_tip(icon0, -1)
+			icon0.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			for m in ["wh_slot", "wh_item_id", "wh_qty"]:
 				if icon0.has_meta(m):
 					icon0.remove_meta(m)
@@ -2746,7 +2739,7 @@ func _fill_storage_grid(slots: Array) -> void:
 			continue
 		var item: ItemTableReader.Item = _items.get(entry.item_id)
 		icon.texture = _item_icon(entry.item_id)
-		icon.tooltip_text = _item_tooltip(entry.item_id)
+		_set_item_tip(icon, entry.item_id, "storage", index)
 		icon.mouse_filter = Control.MOUSE_FILTER_STOP
 		icon.set_meta("wh_slot", index)
 		icon.set_meta("wh_item_id", entry.item_id)
@@ -3596,9 +3589,9 @@ func _load_items() -> void:
 			_items = ItemTableReader.parse(archive.read_file(entry), _items)
 	for item in _items.values():
 		_items_by_code[(item as ItemTableReader.Item).code_name] = item
-	var names_entry := ObjectLoader.find_file(archive, OBJECT_NAME_TABLE_PATH)
-	if names_entry != null:
-		_object_names = UiTextTable.parse(archive.read_file(names_entry))
+	# Round 731: both files the client's text map holds (ItemTableReader.
+	# load_object_names); the equip one names 4,540 of the items.
+	_object_names = ItemTableReader.load_object_names(archive)
 	print("HudPanels: %d item(s) resolvable by id" % _items.size())
 
 ## Closes one of this client's own confirm boxes from its own buttons (Buy,
@@ -3711,24 +3704,194 @@ func _item_icon(item_id: int) -> Texture2D:
 		return null
 	return _builder.load_texture(item.icon_path)
 
-## The multi-line hover tooltip for an item id -- its real stats -- or just
-## the id when the item table does not know it.
-## The item's tooltip. When cur >= 0 the item is a specific instance whose
-## durability the server reported (session/durability.go's trailing block),
-## so the placeholder "Durability L / L" line off the reference row is
-## replaced with the instance's real current / max -- and marked broken at 0.
-func _item_tooltip(item_id: int, cur: int = -1, maximum: int = -1) -> String:
+## **Item tooltips** (round 731, docs/protocol/item_tooltip.md): every item
+## icon's hover shows the original's CNIFHelperBubbleWindow (ItemTooltipBubble)
+## with the lines ItemTooltipLines composes, instead of Godot's tooltip_text
+## popup (blurry at DPI 2.0, wrong face, no frame). Each site calls
+## _set_item_tip with what it knows of the item; the hover reads it back.
+const ITEM_TIP_META := &"item_tip"
+const ITEM_TIP_WIRED_META := &"item_tip_wired"
+var _tip_bubble: ItemTooltipBubble = null
+var _type_names: ItemTypeNames = null
+## A test or tool's override (round 731): Callable(where: String, slot: int,
+## item_id: int) -> Dictionary of extra "instance" fields, merged over what
+## ItemTooltipInstance builds from NetClient's round-732 instance lists.
+var item_instance_lookup := Callable()
+
+## Marks `icon` as showing `item_id`'s tooltip; item_id < 0 clears it.
+## where/slot name the instance for item_instance_lookup; cur/maximum are the
+## instance's durability when the server reported it; price is a store's.
+func _set_item_tip(icon: Control, item_id: int, where: String = "", slot: int = -1,
+		cur: int = -1, maximum: int = -1, price: int = -1) -> void:
+	if icon == null:
+		return
+	icon.tooltip_text = ""
+	if item_id < 0:
+		if icon.has_meta(ITEM_TIP_META):
+			icon.remove_meta(ITEM_TIP_META)
+		if _tip_bubble != null and _tip_bubble.source == icon:
+			_tip_bubble.hide_bubble()
+		return
+	icon.set_meta(ITEM_TIP_META, {"id": item_id, "where": where, "slot": slot,
+		"cur": cur, "max": maximum, "price": price})
+	if not icon.has_meta(ITEM_TIP_WIRED_META):
+		icon.set_meta(ITEM_TIP_WIRED_META, true)
+		icon.mouse_entered.connect(func() -> void: _show_item_tip(icon))
+		icon.mouse_exited.connect(func() -> void: _hide_item_tip(icon))
+	if _tip_bubble != null and _tip_bubble.source == icon and _tip_bubble.visible:
+		_show_item_tip(icon)
+
+func _show_item_tip(icon: Control) -> void:
+	if not is_instance_valid(icon) or not icon.has_meta(ITEM_TIP_META):
+		return
+	var m: Dictionary = icon.get_meta(ITEM_TIP_META)
+	var lines := item_tip_lines(int(m["id"]), String(m["where"]), int(m["slot"]),
+		int(m["cur"]), int(m["max"]), int(m["price"]))
+	if _tip_bubble == null:
+		_tip_bubble = ItemTooltipBubble.new(_builder)
+		add_child(_tip_bubble)
+	_tip_bubble.show_lines(lines, icon.get_global_rect(), icon)
+
+func _hide_item_tip(icon: Control) -> void:
+	if _tip_bubble != null and _tip_bubble.source == icon:
+		_tip_bubble.hide_bubble()
+
+## The tooltip on show, for tests and QA (empty when hidden).
+func item_tip_shown() -> Array:
+	return _tip_bubble.shown_lines() if _tip_bubble != null else []
+
+func item_tip_bubble() -> ItemTooltipBubble:
+	return _tip_bubble
+
+## OPENSRO_QA_ITEM_TIP (round 731): the tooltips of `spec`'s items --
+## "<id or code name>[:where[:cur/max[:price]]]", comma separated -- in bubbles of their
+## own, side by side from the top-left, for a render; each one's lines and
+## rect logged as `QA ITEM_TIP`.
+func qa_show_item_tips(spec: String) -> void:
+	var view := get_viewport_rect().size
+	var at := Vector2(8, 8)
+	var row_h := 0.0
+	for part in spec.split(",", false):
+		var f := part.split(":")
+		var cur := -1
+		var mx := -1
+		if f.size() > 2 and f[2].contains("/"):
+			cur = int(f[2].get_slice("/", 0))
+			mx = int(f[2].get_slice("/", 1))
+		_load_items()
+		var id: int = int(f[0]) if f[0].is_valid_int() else (_items_by_code[f[0]].id if _items_by_code.has(f[0]) else -1)
+		var lines := item_tip_lines(id, f[1] if f.size() > 1 else "bag", -1, cur, mx,
+			int(f[3]) if f.size() > 3 else -1)
+		var b := ItemTooltipBubble.new(_builder)
+		add_child(b)
+		b.show_lines(lines, Rect2())
+		if at.x + b.size.x > view.x and at.x > 8:
+			at = Vector2(8, at.y + row_h + 8)
+			row_h = 0.0
+		b.position = at
+		at.x += b.size.x + 8
+		row_h = maxf(row_h, b.size.y)
+		print("QA ITEM_TIP %s at %s size %s: %s" % [part, str(b.position), str(b.size),
+			ItemTooltipLines.as_text(lines).replace("\n", " | ")])
+
+## The lines of an item's tooltip (ItemTooltipLines.compose) with this
+## client's text tables, type names, player and instance.
+func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
+		cur: int = -1, maximum: int = -1, price: int = -1) -> Array:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	if item == null:
-		return "Item %d" % item_id
-	var lines := PackedStringArray(item.tooltip_lines(_object_names))
+		return [{"text": "Item %d" % item_id, "color": ItemTooltipLines.WHITE, "bold": true, "icon": true}]
+	if _type_names == null:
+		_type_names = ItemTypeNames.load_from(_builder.media_archive() if _builder != null else null)
+	var type_key := _type_names.type_key(item.type_ids)
+	var set_name: String = _type_names.set_names.get(item.set_id, "")
+	# An owned item (any site but the store) whose instance the client has
+	# not got shows its reference values without a "(+x%)" (OURS, until lane
+	# B); the store's goods are reference items, variance 0.
+	var instance := {}
+	if where != "store":
+		instance["unknown_variance"] = true
 	if cur >= 0 and maximum > 0:
-		for i in range(lines.size()):
-			if lines[i].begins_with("Durability "):
-				lines[i] = "Durability %d / %d%s" % [cur, maximum, "  (broken)" if cur == 0 else ""]
-				break
-	return "\n".join(lines)
+		instance["durability"] = [cur, maximum]
+	if where != "store":
+		var extra := ItemTooltipInstance.fields(item, _item_instance(where, slot))
+		if item_instance_lookup.is_valid():
+			var given = item_instance_lookup.call(where, slot, item_id)
+			if given is Dictionary:
+				extra.merge(given, true)
+		if not extra.is_empty():
+			instance.erase("unknown_variance")
+			instance.merge(extra, true)
+	return ItemTooltipLines.compose(item, {
+		"text": Callable(self, "_tip_text"),
+		"names": _object_names,
+		"type_name": _resolve_ui(type_key, "") if type_key != "" else "",
+		"set_name": set_name,
+		"player": _tip_player(),
+		"instance": instance,
+		"price": price,
+		"description": _item_description(item),
+	})
+
+## The ItemInstance (round 732) the server sent for this site's slot, or null:
+## NetClient's last bag, equipment and warehouse lists, keyed by slot.
+const _INSTANCE_LISTS := {"bag": "last_inventory_instances", "equipment": "last_equipment_instances",
+	"storage": "last_storage_instances"}
+
+func _item_instance(where: String, slot: int) -> Object:
+	if slot < 0 or not _INSTANCE_LISTS.has(where):
+		return null
+	var list = NetClient.get(_INSTANCE_LISTS[where])
+	if list is Dictionary and (list as Dictionary).has(slot):
+		return list[slot] as Object
+	return null
+
+## A tooltip key's text: the UI table, else the equip text table's rows the
+## tooltip asked for (the client looks keys up across every text file).
+func _tip_text(key: String, fallback: String) -> String:
+	var text := _resolve_ui(key, "")
+	if text == "" and _type_names != null:
+		text = String(_type_names.equip_texts.get(key, ""))
+	return text if text != "" else fallback
+
+## Column 6's description through the object text table (0x66f850 prints
+## it when it resolves), or "".
+func _item_description(item: ItemTableReader.Item) -> String:
+	if _object_names == null or item.desc_strid == "" or item.desc_strid == "xxx":
+		return ""
+	var text := _object_names.get_text(item.desc_strid)
+	return "" if text == item.desc_strid else text
+
+## The player's level, Str, Int, gender (0 woman, 1 man) and country (0
+## Chinese, 1 European) for the requirement lines' colours; -1 where unknown
+## (the line is then white).
+func _tip_player() -> Dictionary:
+	var p := {"level": -1, "str": -1, "int": -1, "gender": -1, "country": -1}
+	if _stats != null:
+		p["level"] = _stats.level
+		p["str"] = _stats.str
+		p["int"] = _stats.intel
+	if not _skill_mastery_levels.is_empty():
+		p["masteries"] = _skill_mastery_levels
+	var scene := get_tree().current_scene if is_inside_tree() else null
+	if scene == null:
+		return p
+	if int(p["level"]) < 0:
+		var lv = scene.get("_player_level")
+		if lv != null and int(lv) > 0:
+			p["level"] = int(lv)
+	var g = scene.get("_player_gender")
+	if g is String:
+		if (g as String).ends_with("_woman"):
+			p["gender"] = ItemTableReader.REQ_GENDER_WOMAN
+		elif (g as String).ends_with("_man"):
+			p["gender"] = ItemTableReader.REQ_GENDER_MAN
+	var body = scene.get("_player_body")
+	var countries = scene.get("_country_by_code")
+	if body is String and countries is Dictionary and (countries as Dictionary).has(body):
+		p["country"] = int(countries[body])
+	return p
 
 ## Builds slot index -> [current, max] from the durability block a list
 ## result stashed on NetClient, for the tooltip and the broken-icon tint.
@@ -3971,7 +4134,7 @@ func _draw_bag_page() -> void:
 		if icon != null:
 			_place_bag_icon(icon)
 			icon.texture = null
-			icon.tooltip_text = ""
+			_set_item_tip(icon, -1)
 			icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			for m in ["inv_slot", "inv_item_id", "inv_qty"]:
@@ -4003,18 +4166,16 @@ func _draw_bag_page() -> void:
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
-			# A hover tooltip with the item's real stats -- name, attack,
-			# durability, reinforce, requirement -- read straight off the
-			# item table (ItemTableReader.Item.tooltip_lines). STOP so the
+			# The hover tooltip (round 731, _set_item_tip). STOP so the
 			# hover registers; the cell behind it still takes clicks.
 			var dur: Array = durability.get(index, [])
 			if dur.size() == 2:
-				icon.tooltip_text = _item_tooltip(int(item_id), dur[0], dur[1])
+				_set_item_tip(icon, int(item_id), "bag", index, dur[0], dur[1])
 				# A broken item (0 durability) is dimmed. The exact treatment
 				# the original uses is not recovered; this grey is ours.
 				icon.modulate = Color(0.45, 0.45, 0.45) if dur[0] == 0 else Color.WHITE
 			else:
-				icon.tooltip_text = _item_tooltip(int(item_id))
+				_set_item_tip(icon, int(item_id), "bag", index)
 				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 			# The slot's identity, so a click can sell it while a shop is open.
@@ -5718,6 +5879,7 @@ func _fill_equipment_slots(items: Array) -> void:
 			var icon := slot.get_node_or_null("ItemIcon") as TextureRect
 			if icon != null:
 				icon.texture = null
+				_set_item_tip(icon, -1)
 	var durability := _durability_map(NetClient.last_equipment_durabilities)
 	for entry in items:
 		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
@@ -5732,10 +5894,10 @@ func _fill_equipment_slots(items: Array) -> void:
 			icon.texture = _item_icon(int(item_id))
 			var dur: Array = durability.get(int(slot_index), [])
 			if dur.size() == 2:
-				icon.tooltip_text = _item_tooltip(int(item_id), dur[0], dur[1])
+				_set_item_tip(icon, int(item_id), "equipment", int(slot_index), dur[0], dur[1])
 				icon.modulate = Color(0.45, 0.45, 0.45) if dur[0] == 0 else Color.WHITE
 			else:
-				icon.tooltip_text = _item_tooltip(int(item_id))
+				_set_item_tip(icon, int(item_id), "equipment", int(slot_index))
 				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 			# A left click picks the worn item up onto the cursor; the next

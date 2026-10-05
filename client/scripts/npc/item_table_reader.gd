@@ -126,18 +126,88 @@ const COL_BLOCK_MAX := 75
 const COL_MAG_DEF_MIN := 76
 const COL_MAG_DEF_MAX := 77
 
+## Round 731 (the item tooltip, docs/protocol/item_tooltip.md): the columns the
+## original's tooltip reads that this reader did not, MEASURED against real
+## rows (a Pearl Necklace reads 17.4 ~ 18.0, 0.3 in 71-73 and 79-81; a D11
+## spear 31 in 61, 9 in 158; a heavy armour 21 ~ 63 in 68-69). Rarity is
+## _RefObjCommon's column 15 (2 the seal items, 3 the set items, 6 seal).
+const COL_RARITY := 15
+const COL_REQ_STR := 59
+const COL_REQ_INT := 60
+const COL_ITEM_CLASS := 61
+const COL_SET_ID := 62
+const COL_DURABILITY_MAX := 64
+const COL_PARRY_MIN := 68
+const COL_PARRY_MAX := 69
+const COL_PHYS_ABSORB_MIN := 71
+const COL_PHYS_ABSORB_MAX := 72
+const COL_MAG_ABSORB_MIN := 79
+const COL_MAG_ABSORB_MAX := 80
+const COL_MAX_MAGIC_OPTIONS := 158
+## The per-plus increments, in PLUS_INC_* order: PD 67, ER 70, PAR 73, MD 78,
+## MAR 81, phy. atk 99, mag. atk 104, attack rate 115 (the fifth float of each
+## group; ITEM_FORMAT.md). Lane B's "(+x%)" subtracts them (item_tooltip.md §2).
+const PLUS_INC_COLS := [67, 70, 73, 78, 81, 99, 104, 115]
+enum { PLUS_INC_PD, PLUS_INC_ER, PLUS_INC_PAR, PLUS_INC_MD, PLUS_INC_MAR, PLUS_INC_PA, PLUS_INC_MA, PLUS_INC_HR }
+## The upper ends of the int ranges whose lower ends the reader already has
+## (phys_atk is (95, 97), each of its two ends a [lower, upper] pair whose
+## upper is 96 / 98): the "(+x%)" is 100 on an empty range (item_tooltip.md
+## §2), so a reference item's percentage needs them.
+const COL_PHYS_ATK_MIN_UPPER := 96
+const COL_PHYS_ATK_MAX_UPPER := 98
+const COL_MAG_ATK_MIN_UPPER := 101
+const COL_MAG_ATK_MAX_UPPER := 103
+const COL_PHYS_REINFORCE_MIN_UPPER := 106
+const COL_PHYS_REINFORCE_MAX_UPPER := 108
+const COL_MAG_REINFORCE_MIN_UPPER := 110
+const COL_MAG_REINFORCE_MAX_UPPER := 112
+const COL_ATTACK_RATE_UPPER := 114
+const COL_CRITICAL_UPPER := 117
+## Armour and shield reinforce, PDStr 82/83 and MDInt 84/85: the client's row
+## parser (GlobalDataManager::FUN_00975a10) stores them / 1000 at ref
+## +0x224..+0x230, and 0x66c5b0 prints them x 100 as the single-value
+## reinforce line when the weapon pair is zero (round 731's review, READ).
+const COL_ARMOUR_PHYS_REINFORCE_MIN := 82
+const COL_ARMOUR_PHYS_REINFORCE_MAX := 83
+const COL_ARMOUR_MAG_REINFORCE_MIN := 84
+const COL_ARMOUR_MAG_REINFORCE_MAX := 85
+## The description key, column 6 (DescStrID128, ref +0x7c): 0x66f850 prints
+## its text when the object table resolves it (round 731's review, READ).
+const COL_DESC_STRID := 6
+
 ## TypeID3 (the item family) values, index 2 of type_ids.
 const FAMILY_WEAPON := 6
 const CHINA_ARMOUR_FAMILIES := [1, 2, 3]
 const EUROPE_ARMOUR_FAMILIES := [9, 10, 11]
-## Weapon TypeID4 -> the "Sort of item" name the original prints, for the
-## China kinds (the only bodies this project draws). ITEM_FORMAT.md's
-## switch has the rest.
-const WEAPON_SORT := {
-	2: "Sword", 3: "Blade", 4: "Spear", 5: "Glaive", 6: "Bow",
-	7: "Sword", 8: "Two-handed Sword", 9: "Axe", 10: "Dark Staff",
-	11: "Two-handed Staff", 12: "Crossbow", 13: "Dagger", 14: "Harp", 15: "Staff",
-}
+## The object-name tables, as the client has them (round 731): its text
+## lookups (FUN_008c9bb0 for an object's name, FUN_008c9c30 for a UI key)
+## both read TextStringManager's one map (FUN_008c9b20, READ), filled from
+## the files textdataname.txt lists -- TextData_Equip&Skill.txt and
+## TextData_Object.txt (MEASURED). With the object file alone 4,811 of the
+## 11,772 item rows had no name (the raw code showed); with both, 271 -- the
+## equip file holds e.g. SN_ITEM_EU_LIGHT_01_HA_A "Sagittarius Savage
+## Sallet" (MEASURED, round 731); the two files share no key (MEASURED: 10,893 and 7,814
+## keys, 0 in both), so their order does not matter.
+const OBJECT_NAME_PATHS := [
+	"server_dep\\silkroad\\textdata\\textdata_object.txt",
+	"server_dep\\silkroad\\textdata\\textdata_equip&skill.txt",
+]
+
+## Both tables parsed and merged, or null when the archive has neither.
+static func load_object_names(archive) -> UiTextTable:
+	var out: UiTextTable = null
+	if archive == null:
+		return null
+	for path in OBJECT_NAME_PATHS:
+		var entry = ObjectLoader.find_file(archive, path)
+		if entry == null:
+			continue
+		var t := UiTextTable.parse(archive.read_file(entry))
+		if out == null:
+			out = t
+		else:
+			out.merge_missing(t)
+	return out
 
 const REQ_LEVEL_PAIRS := 4
 
@@ -206,6 +276,32 @@ class Item:
 	var phys_def := Vector2.ZERO
 	var mag_def := Vector2.ZERO
 	var block := Vector2.ZERO
+	## Round 731 (the tooltip's columns, COL_RARITY.. above).
+	var rarity: int = 0
+	var item_class: int = 0
+	var set_id: int = 0
+	var durability_max: int = 0
+	var req_str: int = 0
+	var req_int: int = 0
+	var max_magic_options: int = 0
+	var parry := Vector2.ZERO
+	var phys_absorb := Vector2.ZERO
+	var mag_absorb := Vector2.ZERO
+	## PLUS_INC_COLS' values, PLUS_INC_* order.
+	var plus_incs: PackedFloat32Array = PackedFloat32Array()
+	## The upper ends (COL_*_UPPER): each Vector2i is (min's upper, max's upper).
+	var phys_atk_upper := Vector2i.ZERO
+	var mag_atk_upper := Vector2i.ZERO
+	var phys_reinforce_upper := Vector2i.ZERO
+	var mag_reinforce_upper := Vector2i.ZERO
+	var attack_rate_upper: int = 0
+	var critical_upper: int = 0
+	## Armour/shield reinforce in the column's own unit (thousandths: 222 is
+	## 22.2 %), (lower, upper).
+	var armour_phys_reinforce := Vector2.ZERO
+	var armour_mag_reinforce := Vector2.ZERO
+	## Column 6, the description's key ("xxx" where none).
+	var desc_strid: String = ""
 
 	func is_equipment() -> bool:
 		return model_path != ""
@@ -224,15 +320,11 @@ class Item:
 	func has_defence() -> bool:
 		return phys_def != Vector2.ZERO or mag_def != Vector2.ZERO
 
-	## Formats a defence float without a trailing ".0" (2.0 -> "2", 2.5 -> "2.5").
-	static func _fmt(value: float) -> String:
-		return ("%.1f" % value).trim_suffix(".0")
-
 	## The real English display name: the name string id (column 5) resolved
-	## through textdata_object.txt -- and ONLY that table: the 9,315 `SN_ITEM_`
-	## keys live there and nowhere else (textuisystem.txt holds none, measured
-	## 2026-09-19), so a caller handing in the UI-string table gets nothing
-	## resolved. When no table is given or the id does not resolve, the
+	## through the object-name tables (load_object_names: textdata_object.txt
+	## and textdata_equip&skill.txt, round 731) -- textuisystem.txt holds no
+	## `SN_ITEM_` key (measured 2026-09-19), so a caller handing in the
+	## UI-string table gets nothing resolved. When no table is given or the id does not resolve, the
 	## column-3 object name is used only if it reads as English: it is English
 	## for weapons and armour but Korean for many consumables, and in this
 	## archive the Korean is already mangled to question marks in the file
@@ -267,44 +359,6 @@ class Item:
 			if (code >= 0x41 and code <= 0x5a) or (code >= 0x61 and code <= 0x7a):
 				has_letter = true
 		return has_letter
-
-	## The lines a hover tooltip shows, top to bottom -- the item's own real
-	## figures, none invented. A weapon shows its attack block; every
-	## equippable shows durability, requirement, race and gender. The attack
-	## distance is parsed (attack_range, which the approach walk uses) but no
-	## line here prints it yet.
-	func tooltip_lines(names: UiTextTable = null) -> Array:
-		var lines: Array = [display_name(names)]
-		var type_id4: int = type_ids[3] if type_ids.size() > 3 else 0
-		var sort: String = str(WEAPON_SORT.get(type_id4, "")) if is_weapon() else ""
-		if sort != "":
-			lines.append("Sort of item: %s" % sort)
-		lines.append("")
-		if is_weapon():
-			lines.append("Phy. atk. pwr. %d ~ %d" % [phys_atk.x, phys_atk.y])
-			lines.append("Mag. atk. pwr. %d ~ %d" % [mag_atk.x, mag_atk.y])
-		elif has_defence():
-			lines.append("Phy. def. pwr. %s ~ %s" % [_fmt(phys_def.x), _fmt(phys_def.y)])
-			lines.append("Mag. def. pwr. %s ~ %s" % [_fmt(mag_def.x), _fmt(mag_def.y)])
-			if block != Vector2.ZERO:
-				lines.append("Block ratio %s ~ %s" % [_fmt(block.x), _fmt(block.y)])
-		if durability > 0:
-			lines.append("Durability %d / %d" % [durability, durability])
-		if is_weapon():
-			lines.append("Attack rate %d" % attack_rate)
-			lines.append("Critical %d" % critical)
-			lines.append("Phy. reinforce %.1f %% ~ %.1f %%" % [phys_reinforce.x / 10.0, phys_reinforce.y / 10.0])
-			lines.append("Mag. reinforce %.1f %% ~ %.1f %%" % [mag_reinforce.x / 10.0, mag_reinforce.y / 10.0])
-		lines.append("")
-		var level := required_character_level()
-		if level > 0:
-			lines.append("Required level %d" % level)
-		lines.append("China" if country == 0 else "Europe")
-		if req_gender == REQ_GENDER_MAN:
-			lines.append("Man only")
-		elif req_gender == REQ_GENDER_WOMAN:
-			lines.append("Woman only")
-		return lines
 
 	## The character level the item asks for, or 0 when it asks by
 	## something other than character level (or nothing at all).
@@ -342,6 +396,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.item_name = cols[COL_NAME].strip_edges()
 		if cols.size() > COL_NAME_STRID:
 			item.name_strid = cols[COL_NAME_STRID].strip_edges()
+		if cols.size() > COL_DESC_STRID:
+			item.desc_strid = cols[COL_DESC_STRID].strip_edges()
 		var stack := _int_at(cols, COL_MAX_STACK)
 		if stack > 0:
 			item.max_stack = stack
@@ -374,6 +430,26 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.phys_def = Vector2(_float_at(cols, COL_PHYS_DEF_MIN), _float_at(cols, COL_PHYS_DEF_MAX))
 		item.mag_def = Vector2(_float_at(cols, COL_MAG_DEF_MIN), _float_at(cols, COL_MAG_DEF_MAX))
 		item.block = Vector2(_float_at(cols, COL_BLOCK_MIN), _float_at(cols, COL_BLOCK_MAX))
+		item.rarity = _int_at(cols, COL_RARITY)
+		item.item_class = _int_at(cols, COL_ITEM_CLASS)
+		item.set_id = _int_at(cols, COL_SET_ID)
+		item.durability_max = _int_at(cols, COL_DURABILITY_MAX)
+		item.req_str = _int_at(cols, COL_REQ_STR)
+		item.req_int = _int_at(cols, COL_REQ_INT)
+		item.max_magic_options = _int_at(cols, COL_MAX_MAGIC_OPTIONS)
+		item.parry = Vector2(_float_at(cols, COL_PARRY_MIN), _float_at(cols, COL_PARRY_MAX))
+		item.phys_absorb = Vector2(_float_at(cols, COL_PHYS_ABSORB_MIN), _float_at(cols, COL_PHYS_ABSORB_MAX))
+		item.mag_absorb = Vector2(_float_at(cols, COL_MAG_ABSORB_MIN), _float_at(cols, COL_MAG_ABSORB_MAX))
+		for col in PLUS_INC_COLS:
+			item.plus_incs.append(_float_at(cols, col))
+		item.phys_atk_upper = Vector2i(_int_at(cols, COL_PHYS_ATK_MIN_UPPER), _int_at(cols, COL_PHYS_ATK_MAX_UPPER))
+		item.mag_atk_upper = Vector2i(_int_at(cols, COL_MAG_ATK_MIN_UPPER), _int_at(cols, COL_MAG_ATK_MAX_UPPER))
+		item.phys_reinforce_upper = Vector2i(_int_at(cols, COL_PHYS_REINFORCE_MIN_UPPER), _int_at(cols, COL_PHYS_REINFORCE_MAX_UPPER))
+		item.mag_reinforce_upper = Vector2i(_int_at(cols, COL_MAG_REINFORCE_MIN_UPPER), _int_at(cols, COL_MAG_REINFORCE_MAX_UPPER))
+		item.attack_rate_upper = _int_at(cols, COL_ATTACK_RATE_UPPER)
+		item.critical_upper = _int_at(cols, COL_CRITICAL_UPPER)
+		item.armour_phys_reinforce = Vector2(_float_at(cols, COL_ARMOUR_PHYS_REINFORCE_MIN), _float_at(cols, COL_ARMOUR_PHYS_REINFORCE_MAX))
+		item.armour_mag_reinforce = Vector2(_float_at(cols, COL_ARMOUR_MAG_REINFORCE_MIN), _float_at(cols, COL_ARMOUR_MAG_REINFORCE_MAX))
 		# A row with neither a name nor an icon tells the player nothing.
 		if item.item_name == "" and item.icon_path == "":
 			continue
@@ -394,6 +470,7 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var code_names: PackedStringArray = rows["code_names"]
 	var item_names: PackedStringArray = rows["item_names"]
 	var name_strids: PackedStringArray = rows["name_strids"]
+	var desc_strids: PackedStringArray = rows.get("desc_strids", PackedStringArray())
 	var icon_paths: PackedStringArray = rows["icon_paths"]
 	var drop_models: PackedStringArray = rows["drop_models"]
 	var models: PackedStringArray = rows["models"]
@@ -418,6 +495,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var req_levels: PackedInt64Array = rows["req_levels"]
 	var attacks: PackedInt64Array = rows["attacks"]
 	var defences: PackedFloat64Array = rows["defences"]
+	# Round 731: a library from before these columns has none (all 0).
+	var ext_ints: PackedInt64Array = rows.get("ext_ints", PackedInt64Array())
+	var ext_floats: PackedFloat64Array = rows.get("ext_floats", PackedFloat64Array())
 	var m := 0
 	for i in ids.size():
 		var item := Item.new()
@@ -425,6 +505,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.code_name = code_names[i]
 		item.item_name = item_names[i]
 		item.name_strid = name_strids[i]
+		if desc_strids.size() > i:
+			item.desc_strid = desc_strids[i]
 		item.max_stack = max_stacks[i]
 		item.sell_price = sell_prices[i]
 		if i < keeping_fees.size():
@@ -460,6 +542,33 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.phys_def = Vector2(defences[d], defences[d + 1])
 		item.mag_def = Vector2(defences[d + 2], defences[d + 3])
 		item.block = Vector2(defences[d + 4], defences[d + 5])
+		var e := i * 17
+		if e + 16 < ext_ints.size():
+			item.rarity = ext_ints[e]
+			item.item_class = ext_ints[e + 1]
+			item.set_id = ext_ints[e + 2]
+			item.durability_max = ext_ints[e + 3]
+			item.req_str = ext_ints[e + 4]
+			item.req_int = ext_ints[e + 5]
+			item.max_magic_options = ext_ints[e + 6]
+			item.phys_atk_upper = Vector2i(ext_ints[e + 7], ext_ints[e + 8])
+			item.mag_atk_upper = Vector2i(ext_ints[e + 9], ext_ints[e + 10])
+			item.phys_reinforce_upper = Vector2i(ext_ints[e + 11], ext_ints[e + 12])
+			item.mag_reinforce_upper = Vector2i(ext_ints[e + 13], ext_ints[e + 14])
+			item.attack_rate_upper = ext_ints[e + 15]
+			item.critical_upper = ext_ints[e + 16]
+		var f := i * 18
+		if f + 17 < ext_floats.size():
+			item.parry = Vector2(ext_floats[f], ext_floats[f + 1])
+			item.phys_absorb = Vector2(ext_floats[f + 2], ext_floats[f + 3])
+			item.mag_absorb = Vector2(ext_floats[f + 4], ext_floats[f + 5])
+			for k in range(8):
+				item.plus_incs.append(ext_floats[f + 6 + k])
+			item.armour_phys_reinforce = Vector2(ext_floats[f + 14], ext_floats[f + 15])
+			item.armour_mag_reinforce = Vector2(ext_floats[f + 16], ext_floats[f + 17])
+		else:
+			for k in range(8):
+				item.plus_incs.append(0.0)
 		into[item.id] = item
 	return true
 

@@ -81,8 +81,8 @@ const RACE_MASTERIES := {
 }
 
 ## The weapon TypeID4 -> a short name, so a mastery with no resolvable name
-## in the archive still labels by what it trains. Same numbers as
-## ItemTableReader.WEAPON_SORT; kept here so this reader stands alone.
+## in the archive still labels by what it trains. (Items name their sort from
+## the archive since round 731, ItemTypeNames.)
 ## The Europe codes (7-15) are labelled after itemdata's own families
 ## (EU_SWORD, EU_TSWORD, EU_AXE, EU_DARKSTAFF, EU_TSTAFF, EU_CROSSBOW, EU_DAGGER,
 ## EU_HARP, EU_STAFF -- the skilldata-columns note); the English words are OURS.

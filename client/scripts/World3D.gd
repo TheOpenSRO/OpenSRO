@@ -6570,10 +6570,8 @@ func _load_npc_tables() -> void:
 	# The same characterdata parts give the model and the name: a row
 	# carries an id, an `SN_` key and a `.bsr`, and textdata_object turns
 	# the key into what the game calls the NPC. Read once, joined twice.
-	var names_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
-	var names: UiTextTable = null
-	if names_entry != null:
-		names = UiTextTable.parse(_media_pk2.read_file(names_entry))
+	# Both object-name files (round 731, ItemTableReader.load_object_names).
+	var names: UiTextTable = ItemTableReader.load_object_names(_media_pk2)
 	# NPC greetings resolve through a different table than names: npcchat's SN_
 	# ids live in textquest_speechname.txt (with the English in a later column,
 	# which UiTextTable picks by content).
@@ -11764,6 +11762,10 @@ func _update_blob_shadow() -> void:
 ##                          QA run starts past Boot, which applies the saved
 ##                          one); `ViewportPixels:` lines say what the 3D
 ##                          previews then render at
+##   OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..." (round 731)
+##                          those items' tooltips side by side at tick 45,
+##                          each logged as `QA ITEM_TIP`
+##                          (HudPanels.qa_show_item_tips)
 ##   OPENSRO_QA_DXT1_KEEP=1 keep every DXT1 as DXT1 under Forward+ (round
 ##                          695's before: transparent texels drawn opaque)
 ##   OPENSRO_QA_BODY="<ref_obj_id>[:<scale>]"  the player's model and scale
@@ -12488,6 +12490,12 @@ func _qa_step() -> void:
 				print("QA TALK_PICK closed the NPC windows at tick %d" % _qa_tick)
 				continue
 			print("QA TALK_PICK line %s at tick %d: %s" % [parts[0], _qa_tick, str(_hud_panels.qa_press_talk_line(int(parts[0])))])
+
+	# OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..." (round 731) shows
+	# those items' tooltips side by side for a render, each line logged
+	# ("QA ITEM_TIP"); `where` is a HudPanels site ("bag", "store", ...).
+	if OS.get_environment("OPENSRO_QA_ITEM_TIP") != "" and _qa_tick == 45 and _hud_panels != null:
+		_hud_panels.qa_show_item_tips(OS.get_environment("OPENSRO_QA_ITEM_TIP"))
 
 	# OPENSRO_QA_SHOP="<NPC_CODE>" opens that NPC's store window for a render,
 	# standing in for talk -> Buy. Shows the real goods grid + tabs.
@@ -18493,9 +18501,9 @@ func _try_setup_ground_items() -> void:
 ## HUD through this table, read "HP Recovery Herb".
 func _object_names() -> UiTextTable:
 	if _object_name_table == null and _media_pk2 != null:
-		var entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
-		if entry != null:
-			_object_name_table = UiTextTable.parse(_media_pk2.read_file(entry))
+		# Round 731: with textdata_equip&skill.txt, the other half of the
+		# client's object names (ItemTableReader.load_object_names).
+		_object_name_table = ItemTableReader.load_object_names(_media_pk2)
 	return _object_name_table
 
 ## The client's own English name for an item id, resolved the way the

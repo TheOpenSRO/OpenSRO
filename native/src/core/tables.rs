@@ -741,6 +741,21 @@ const ITEM_COL_ATTACK_RATE: usize = 113;
 const ITEM_COL_CRITICAL: usize = 116;
 /// The defence float pairs, in the order `items` stores them: phys def, mag def, block.
 const ITEM_DEFENCE_COLS: [usize; 6] = [65, 66, 76, 77, 74, 75];
+/// Round 731 (the item tooltip): the extra int columns, in the order `items` stores them --
+/// Rarity 15, ItemClass 61, SetID 62, durability upper 64, ReqStr 59, ReqInt 60,
+/// MaxMagicOptCount 158 (MEASURED against real rows, docs/protocol/item_tooltip.md); then the
+/// upper ends of the int ranges the "(+x%)" normalises against: phy. atk 96/98, mag. atk
+/// 101/103, phy. reinforce 106/108, mag. reinforce 110/112, attack rate 114, critical 117.
+pub const ITEM_EXT_INT_COLS: [usize; 17] =
+    [15, 61, 62, 64, 59, 60, 158, 96, 98, 101, 103, 106, 108, 110, 112, 114, 117];
+/// The extra float columns: parry (ER) 68/69, phy. absorption (PAR) 71/72, mag. absorption
+/// (MAR) 79/80, then the per-plus increments PD 67, ER 70, PAR 73, MD 78, MAR 81, phy. atk 99,
+/// mag. atk 104, attack rate 115; then the armour/shield reinforce pairs PDStr 82/83 and MDInt
+/// 84/85 (round 731's review: the client's parser stores them / 1000 at ref +0x224..+0x230).
+pub const ITEM_EXT_FLOAT_COLS: [usize; 18] =
+    [68, 69, 71, 72, 79, 80, 67, 70, 73, 78, 81, 99, 104, 115, 82, 83, 84, 85];
+/// The item's description key, column 6 (`DescStrID128`, ref +0x7c; round 731's review).
+const ITEM_COL_DESC_STRID: usize = 6;
 pub const ICON_PREFIX: &str = "icon\\";
 
 /// itemdata's kept rows as columns, one entry (or a fixed group) per row in file order.
@@ -750,6 +765,8 @@ pub struct Items {
     pub code_names: Vec<String>,
     pub item_names: Vec<String>,
     pub name_strids: Vec<String>,
+    /// Column 6, the description key (round 731).
+    pub desc_strids: Vec<String>,
     pub icon_paths: Vec<String>,
     pub drop_models: Vec<String>,
     /// Every row's `_models_at` list, flattened; `model_counts[row]` entries each.
@@ -776,6 +793,10 @@ pub struct Items {
     pub attacks: Vec<i64>,
     /// 6 a row: ITEM_DEFENCE_COLS' values.
     pub defences: Vec<f64>,
+    /// 17 a row: ITEM_EXT_INT_COLS' values (round 731).
+    pub ext_ints: Vec<i64>,
+    /// 18 a row: ITEM_EXT_FLOAT_COLS' values (round 731).
+    pub ext_floats: Vec<f64>,
 }
 
 /// `_int_at`: 0 past the row's end or for a field that does not strip to an integer.
@@ -829,10 +850,21 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
                 }
             }
         }
+        let mut ext_floats = [0.0f64; 18];
+        for (slot, &col) in ext_floats.iter_mut().zip(ITEM_EXT_FLOAT_COLS.iter()) {
+            match float_at(cols, col) {
+                Some(v) => *slot = v,
+                None => {
+                    bad = Some(Fallback("a tooltip float the C++ parse overflows on"));
+                    return;
+                }
+            }
+        }
         o.ids.push(to_int(id_text));
         o.code_names.push(strip(cols[ITEM_COL_CODE_NAME]).to_owned());
         o.item_names.push(item_name.to_owned());
         o.name_strids.push(cols.get(ITEM_COL_NAME_STRID).map_or("", |c| strip(c)).to_owned());
+        o.desc_strids.push(cols.get(ITEM_COL_DESC_STRID).map_or("", |c| strip(c)).to_owned());
         o.icon_paths.push(if icon.is_empty() { String::new() } else { format!("{ICON_PREFIX}{icon}") });
         // _models_at: the column split on ',' without empty pieces, each kept when it is a model.
         let before = o.models.len();
@@ -861,6 +893,8 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.ranges.push(int_at(cols, ITEM_COL_RANGE));
         o.param1s.push(int_at(cols, ITEM_COL_PARAM1));
         o.defences.extend_from_slice(&defences);
+        o.ext_ints.extend(ITEM_EXT_INT_COLS.iter().map(|&c| int_at(cols, c)));
+        o.ext_floats.extend_from_slice(&ext_floats);
     })?;
     bad.map_or(Ok(o), Err)
 }
@@ -1232,9 +1266,17 @@ mod tests {
 
     #[test]
     fn item_rows() {
-        let mut cols = vec![String::new(); 120];
+        let mut cols = vec![String::new(); 160];
         cols[1] = "4842".into();
-        cols[2] = "ITEM_CH_CLOTHES_01".into();
+        cols[15] = "2".into();
+        cols[61] = "31".into();
+        cols[71] = "17.4".into();
+        cols[72] = "18".into();
+        cols[158] = "9".into();
+        cols[117] = "17".into();
+        cols[82] = "222".into();
+        cols[6] = "SN_ITEM_X_TT_DESC".into();
+        cols[2] ="ITEM_CH_CLOTHES_01".into();
         cols[3] = " Cotton Suit ".into();
         cols[5] = "SN_ITEM_X".into();
         cols[9] = "1".into();
@@ -1275,6 +1317,15 @@ mod tests {
         assert_eq!(&it.defences[..2], &[2.5, 3.0]);
         assert_eq!(it.defences.len(), 12);
         assert_eq!(it.name_strids, vec!["SN_ITEM_X", ""]);
+        // Round 731: rarity, item class, set id, durability upper, str, int, max magic options;
+        // then parry, phy./mag. absorption and the eight per-plus increments.
+        assert_eq!(&it.ext_ints[..7], &[2, 31, 0, 0, 0, 0, 9]);
+        assert_eq!(it.ext_ints[16], 17);
+        assert_eq!(it.ext_ints.len(), 34);
+        assert_eq!(&it.ext_floats[..4], &[0.0, 0.0, 17.4, 18.0]);
+        assert_eq!(it.ext_floats[14], 222.0);
+        assert_eq!(it.ext_floats.len(), 36);
+        assert_eq!(it.desc_strids, vec!["SN_ITEM_X_TT_DESC", ""]);
     }
 
     #[test]
