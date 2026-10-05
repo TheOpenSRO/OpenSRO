@@ -566,6 +566,10 @@ signal skill_use_requested(skill_id: int, basic_code: String)
 ## the service's stable key (NpcServiceReader.Service.key -- "shop", "storage",
 ## ...). World3D acts on it (opens the shop, ...).
 signal npc_service_selected(key: String)
+## The talk window, the store or the storage was hidden (round 727): World3D
+## sends the end request 0x704B for a server NPC (NpcTalkNet.end, which holds
+## it while an open is in flight, as the original's close slot does).
+signal npc_window_hidden(panel_id: String)
 ## The guild name prompt (open_guild_name_prompt, round 521) was submitted
 ## with this name. World3D sends it to the server (NetClient.create_guild).
 signal guild_create_requested(guild_name: String)
@@ -691,6 +695,9 @@ func cancel_held_icon(why: String = "") -> void:
 ## one of these windows (World3D registers HudUnderbar.button_at).
 var click_pass_through: Array[Callable] = []
 
+## The windows of an NPC interaction, whose hiding ends it (round 727).
+const NPC_INTERACTION_WINDOWS := ["npctalk", "store", "storage"]
+
 ## Shows a panel, building it the first time it is asked for. Does nothing
 ## if its authored layout isn't in the archive -- a missing panel is a real
 ## possibility (layout names are our own mapping) and should not be an
@@ -763,6 +770,10 @@ func open(panel_id: String) -> HudWindow:
 			# CIFExchange::Create sets both offers to 0 (0x7b2941 / 0x7b294c).
 			set_exchange_money(0, 0)
 		_wire_close_sound(panel_id, window)
+		if panel_id in NPC_INTERACTION_WINDOWS:
+			window.visibility_changed.connect(func() -> void:
+				if not window.visible:
+					npc_window_hidden.emit(panel_id))
 		_populate(panel_id)
 	if panel_id == "exchange" and not was_shown:
 		# CIFExchange::vslot_023, showing: the alchemy window is destroyed if
@@ -1221,11 +1232,22 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	#   lines keep the box up (ours).
 	# The store and the storage are not closed by the NPC window's hide (READ,
 	# 0x704100), so they stay up from here on.
+	#
+	# Round 727: the store line's close ends the selection (0x704B, through
+	# npc_window_hidden) before the store's request goes. The original's
+	# warehouse line hides the window FIRST (+0x5c(0), 0x70242f..0x70243c),
+	# and that hide sends nothing (ShowWindow, not the close slot), then sends
+	# 0x7046 {3} (0x702466..). OURS: here the request goes first and the hide
+	# after it, because this window's hide reaches npc_window_hidden; the end
+	# is held while the request is in flight (NpcTalkNet.end), so the bytes
+	# are the original's.
 	if NpcServiceReader.is_shop_key(key):
 		close("npctalk")
 		UiSounds.window_toggled(false, _interface_shown(), "npctalk store line (vslot_043)")
 	elif key == "storage":
+		npc_service_selected.emit(key)
 		close("npctalk")
+		return
 	npc_service_selected.emit(key)
 
 ## Whether a text line has the keyboard: the focus owner of this viewport is

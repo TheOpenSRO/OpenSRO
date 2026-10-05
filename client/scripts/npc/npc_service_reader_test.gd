@@ -72,59 +72,53 @@ func _init() -> void:
 	_check(greet.get("NPC_CH_SMITH", [])[0] == "SN_NPC_CH_SMITH_BS", "greeting msg1 id parsed")
 	_check(greet.get("STORE_CH_GATE", [""])[0] == "STORE_CH_GATE_BS", "a gate's greeting row is kept (round 725)")
 
-	# services_for: shop from the set; storage from a WAREHOUSE codename.
-	# A town smith lists the shop and nothing else (round 512): the client's
-	# talk-menu builder FUN_00700440 adds no item for the smith's interaction 4
-	# (LAB_00700b10 has no membership branch), and FUN_006fcd60 has no repair
-	# label. Repair is the store window's GDR_STORE_BTN_REPAIR/REPAIRALL.
-	var smith := NpcServiceReader.services_for("NPC_CH_SMITH", shops)
-	var keys := smith.map(func(s): return s.key)
-	_check(keys == ["shop"], "NPC_CH_SMITH offers exactly [\"shop\"] (got %s)" % [keys])
-	for town_smith in ["NPC_WC_SMITH", "NPC_KT_SMITH", "NPC_EU_SMITH",
-			"NPC_CA_SMITH", "NPC_SD_M_AREA_SMITH"]:
-		var ts = NpcServiceReader.services_for(town_smith, shops)
-		_check(not ts.map(func(s): return s.key).has("repair"),
-			town_smith + " lists no repair talk line (interaction 4 adds no item in FUN_00700440)")
-	# The fortress smith's real SN_FORTRESS_SMITH_REPAIR line comes from
-	# interaction 0x1a (FUN_00700200 -> IF_NPCTalk::FUN_006fe030 case 0x36),
-	# a fortress system OpenSRO does not have -- deliberately not offered.
-	var fs := NpcServiceReader.services_for("NPC_KT_FORTRESS_SMITH", shops)
-	_check(not fs.map(func(s): return s.key).has("repair"),
-		"NPC_KT_FORTRESS_SMITH offers no repair (its real line is interaction 0x1a, fortress only)")
-	# Armour merchants get no repair talk line either; no NPC does. Id 4 has no
-	# reader on the server (round 458). The client reader found in review,
-	# 0x88b8c5 in FUN_0088b200, shows the store window's repair buttons, not a
-	# talk line.
-	var armor := NpcServiceReader.services_for("NPC_CH_ARMOR", shops)
-	_check(not armor.map(func(s): return s.key).has("repair"),
-		"NPC_CH_ARMOR offers no repair talk line (id 4 reads only as the store's buttons)")
-	var wh := NpcServiceReader.services_for("NPC_CH_WAREHOUSE", shops)
-	_check(wh.map(func(s): return s.key).has("storage"), "a warehouse offers storage")
+	# Round 727: the lines come from the NPC's interaction-id set, which the
+	# server sends (0xB045); services_from_ids walks it in FUN_00700440's
+	# order. Each set below is the one OpenSRO's server builds for that
+	# codename (npcspawn.Interactions, CGObjNPCNPC::Create's rules). The
+	# codename derivation (services_for) is gone.
+	var reader_script := load("res://scripts/npc/npc_service_reader.gd") as Script
+	var consts := reader_script.get_script_constant_map()
+	var has_composer := false
+	var has_from_ids := false
+	for m in reader_script.get_script_method_list():
+		if str(m.get("name", "")) == "talk_menu_lines":
+			has_composer = true
+		if str(m.get("name", "")) == "services_from_ids":
+			has_from_ids = true
+	_check(has_from_ids, "NpcServiceReader has services_from_ids")
+	_check(not consts.has("GUILD_PATTERNS") and not consts.has("JOB_TRADER_PATTERNS"),
+		"the codename tables of the client-side derivation are gone (round 727)")
+	var from := func(ids: Array, lines: Array = [], gid: int = -1, master: bool = false, job: int = 0, level: int = 0) -> Array:
+		if not has_from_ids:
+			return []
+		return reader_script.call("services_from_ids", PackedByteArray(ids), lines, gid, master, job, level)
+	var store := [{"tabgroup": "G1", "name_strid": "SN_G1"}]
 
-	# Round 513: the talk lines carry the client's own UIIT string ids. The
-	# constants are read through the script's constant map, and `strid`
-	# through get(), so that a reader without them FAILS here rather than
-	# failing to parse.
-	var consts := (load("res://scripts/npc/npc_service_reader.gd") as Script).get_script_constant_map()
+	# A town smith {1, 4, 0x20}: its store line and item 0x2f; id 4 adds no
+	# line (round 512: LAB_00700b10 has no membership branch; FUN_006fcd60
+	# has no repair label) -- it shows the store window's repair buttons.
+	var smith: Array = from.call([1, 4, 0x20], store)
+	_check(_keys(smith) == ["shop:G1", "avatar_magic_option"],
+		"a smith {1, 4, 0x20}: the store line, then item 0x2f (got %s)" % [_keys(smith)])
+	var magic: Variant = _find(smith, "avatar_magic_option")
+	_check(magic != null and str(magic.get("strid")) == "UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM",
+		"item 0x2f's token is UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM")
+	_check(not _keys(from.call([1, 4], store)).has("repair"), "an armour merchant {1, 4} lists no repair line")
+	# The fortress smith {0x1a, 4}: 0x1a is FUN_00700200's (fortress, not
+	# built), so no line.
+	_check((from.call([0x1a, 4]) as Array).is_empty(), "a fortress smith {0x1a, 4} offers no line here")
+
 	# (a) The warehouse's storage line is the client's item 3: FUN_006fcd60
 	# case 3, emitted by FUN_00700440 for interaction id 3 (0x700b73
 	# `push 0; push 3; ... call 0x6fcd60`).
-	var wh_storage: Variant = null
-	for s in NpcServiceReader.services_for("NPC_CH_WAREHOUSE_M", shops):
-		if s.key == "storage":
-			wh_storage = s
+	var wh_storage: Variant = _find(from.call([1, 3]), "storage")
 	_check(wh_storage != null and str(wh_storage.get("strid")) == "UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"
 			and str(consts.get("STOREHOUSE_STRID", "")) == "UIIT_STT_NPC_CHATTING_WND_STOREHOUSE",
 		"the warehouse storage line's strid is UIIT_STT_NPC_CHATTING_WND_STOREHOUSE (got %s)"
 			% [wh_storage.get("strid") if wh_storage != null else "no storage service"])
 	_check(wh_storage != null and wh_storage.label == "Storage",
 		"the storage line keeps \"Storage\" as its fallback label")
-	# (e) The shop line has no single token in the client (item 1 is
-	# FUN_006fb630's per-store lines, not built), so it stays "Buy".
-	var smith_shop: Variant = smith[0] if smith.size() > 0 else null
-	_check(smith_shop != null and str(smith_shop.get("strid")) == "" and smith_shop.label == "Buy",
-		"the smith's shop line has an empty strid and the label \"Buy\" (got strid %s)"
-			% [smith_shop.get("strid") if smith_shop != null else "no shop service"])
 	# (f) The end line is the client's item 0: FUN_006fcd60 case 0, .rdata
 	# 0xdadd28. TALKEND2 (0xdadd70) is chosen only for an NPC holding id
 	# 0x1f, the siege pulley, so it is not carried.
@@ -135,8 +129,7 @@ func _init() -> void:
 	# row with the English at [8], and later a 19-column row with "0" at [8]
 	# and the English at [9]. Since round 634's review the FIRST row wins, as
 	# the client's loader keeps it (TextStringManager 0x8cac30 -> 0x8ca120's
-	# insert returns the existing entry): the box's archive now reads
-	# "Deposit items/gold into storage." where it read "Deposit into storage.".
+	# insert returns the existing entry).
 	var a16 := PackedStringArray()
 	a16.resize(16)
 	a16.fill("0")
@@ -149,274 +142,69 @@ func _init() -> void:
 	b19[0] = "1"
 	b19[1] = "UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"
 	b19[9] = "LAYOUT-B"
-	var ui_rows := "\t".join(a16) + "\n" + "\t".join(b19) + "\n"
-	var ui := UiTextTable.parse(ui_rows.to_utf16_buffer())
+	var ui := UiTextTable.parse(("\t".join(a16) + "\n" + "\t".join(b19) + "\n").to_utf16_buffer())
 	_check(ui.get_text("UIIT_STT_NPC_CHATTING_WND_STOREHOUSE") == "LAYOUT-A",
 		"the first (16-column) STOREHOUSE row wins (got %s)" % ui.get_text("UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"))
 
-	# (h) The composition a warehouse keeper really gets. The player's
-	# refshopgroup.txt lists 8 of the 9 keepers npcpos spawns as running a
-	# store: col 3 GROUP_STORE_*_HONOR, col 4 NPC_*_WAREHOUSE* (measured round
-	# 513 with client/tools/dump_text_table.gd on the render box's Media.pk2,
-	# --grep=WAREHOUSE: 9 rows, CH _M/_W, WC _W twice, KT, EU, CA and both SD
-	# keepers; NPC_WC_WAREHOUSE_M, which npcpos also spawns, is in no row and
-	# gets storage only). So a listed
-	# keeper has the shop service AND storage, shop first, and the talk box
-	# numbers the end line 3, not 2. The shop set above leaves the warehouse
-	# out, which is why (a) alone never showed this. The id column is not read,
-	# so it is 0 here.
-	var wh_shops := NpcServiceReader.parse_shop_npcs(("\n".join(PackedStringArray([
-		"//Service\tCountry\tID\tCodeName\tOwnerNPC",
-		"1\t15\t0\tGROUP_STORE_CH_HONOR\tNPC_CH_WAREHOUSE_M",
-	])) + "\n").to_utf16_buffer())
-	var wh_m := NpcServiceReader.services_for("NPC_CH_WAREHOUSE_M", wh_shops)
-	var wh_m_keys: Array = wh_m.map(func(s): return s.key)
-	_check(wh_m_keys == ["shop", "storage"],
-		"a warehouse keeper in refshopgroup offers [shop, storage] in that order (got %s)" % [wh_m_keys])
-	# The talk box's own lines for that composition, from the same composer
-	# the talk window calls (talk_menu_lines), against a synthetic text table
-	# (19-column rows, text at [9]). The resolver passed in has the same rules
-	# as HudPanels._resolve_ui: an empty token, or no text for it, gives the
-	# fallback. The HUD itself cannot be loaded here in _init: hud_panels.gd
-	# compiles only once the NetClient autoload is registered, which is why
-	# check (j) runs in _initialize. The composer is reached through the
-	# script object, so a reader without it FAILS this check rather than
-	# failing to parse, which would hang the suite.
-	var ui_tokens := {
-		"UIIT_STT_NPC_CHATTING_WND_STOREHOUSE": "STORE-TEXT",
-		"UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT",
-	}
-	var ui2_rows := ""
-	for token in ui_tokens:
-		var row := PackedStringArray()
-		row.resize(19)
-		row.fill("0")
-		row[0] = "1"
-		row[1] = token
-		row[9] = ui_tokens[token]
-		ui2_rows += "\t".join(row) + "\n"
-	var ui2 := UiTextTable.parse(ui2_rows.to_utf16_buffer())
+	# (h) A warehouse keeper {1, 3}: its store lines, the storage line, and
+	# the honor ranking line 0x2e (0x700bad, always after item 3); the
+	# academy line 0x2d only from level 0x3c. A keeper with no tab group
+	# (NPC_WC_WAREHOUSE_M, which the player's refshopgroup.txt does not list)
+	# writes no store line: FUN_006fb630 walks no shop.
+	var keeper: Array = from.call([1, 3], store)
+	_check(_keys(keeper) == ["shop:G1", "storage", "honor_rank"],
+		"a keeper {1, 3}: [shop:G1, storage, honor_rank] (got %s)" % [_keys(keeper)])
 	var resolve := func(token: String, fallback: String) -> String:
-		var t := ui2.get_text(token) if token != "" else ""
-		return t if t != "" and t != token else fallback
-	var reader_script := load("res://scripts/npc/npc_service_reader.gd") as Script
-	var has_composer := false
-	for m in reader_script.get_script_method_list():
-		if str(m.get("name", "")) == "talk_menu_lines":
-			has_composer = true
+		return str({"UIIT_STT_NPC_CHATTING_WND_STOREHOUSE": "STORE-TEXT", "UIIT_STT_TC_HONOR_RANKING": "HONOR-TEXT",
+			"UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT", "SN_G1": "G1-TEXT"}.get(token, fallback))
 	var menu := PackedStringArray()
 	if has_composer:
-		menu = reader_script.call("talk_menu_lines", "NPC_CH_WAREHOUSE_M", wh_m, resolve)
-	var want_menu := PackedStringArray([
-		"[url=shop]1. Buy[/url]",
-		"[url=storage]2. STORE-TEXT[/url]",
-		"[url=end]3. END-TEXT[/url]",
-	])
-	_check(menu == want_menu,
-		"the warehouse keeper's talk menu is 1. Buy / 2. storage text / 3. end text (got %s)" % [menu])
-	# The exception: a keeper refshopgroup does NOT list -- NPC_WC_WAREHOUSE_M,
-	# whose town's second HONOR row names NPC_WC_WAREHOUSE_W again -- runs no
-	# store, so its menu is storage and the end line only, numbered 1 and 2.
-	var wc_shops := NpcServiceReader.parse_shop_npcs(("\n".join(PackedStringArray([
-		"//Service\tCountry\tID\tCodeName\tOwnerNPC",
-		"1\t15\t0\tGROUP_STORE_WC_HONOR\tNPC_WC_WAREHOUSE_W",
-		"1\t15\t0\tGROUP_STORE_WC_HONOR2\tNPC_WC_WAREHOUSE_W",
-	])) + "\n").to_utf16_buffer())
-	var wc_m := NpcServiceReader.services_for("NPC_WC_WAREHOUSE_M", wc_shops)
-	var wc_m_keys: Array = wc_m.map(func(s): return s.key)
-	_check(wc_m_keys == ["storage"],
-		"a keeper refshopgroup does not list (NPC_WC_WAREHOUSE_M) offers storage only (got %s)" % [wc_m_keys])
-	var wc_menu := PackedStringArray()
-	if has_composer:
-		wc_menu = reader_script.call("talk_menu_lines", "NPC_WC_WAREHOUSE_M", wc_m, resolve)
-	_check(wc_menu == PackedStringArray(["[url=storage]1. STORE-TEXT[/url]", "[url=end]2. END-TEXT[/url]"]),
-		"and its talk menu is 1. storage text / 2. end text (got %s)" % [wc_menu])
-	var plain := NpcServiceReader.services_for("NPC_CH_FISHERMAN", shops)
-	_check(plain.is_empty(), "an NPC with no shop/keyword offers no listed service")
+		menu = reader_script.call("talk_menu_lines", "NPC_CH_WAREHOUSE_M", keeper, resolve)
+	_check(menu == PackedStringArray(["[url=shop:G1]1. G1-TEXT[/url]", "[url=storage]2. STORE-TEXT[/url]",
+			"[url=honor_rank]3. HONOR-TEXT[/url]", "[url=end]4. END-TEXT[/url]"]),
+		"the keeper's talk menu (got %s)" % [menu])
+	_check(_keys(from.call([1, 3], [])) == ["storage", "honor_rank"],
+		"a keeper with no tab group: [storage, honor_rank] (got %s)" % [_keys(from.call([1, 3], []))])
+	_check(_keys(from.call([1, 3], [], -1, false, 0, 0x3c)) == ["storage", "academy_open", "honor_rank"],
+		"from level 0x3c the academy line comes before honor rank")
+	_check((from.call([]) as Array).is_empty(), "an empty set offers no line")
 
-	# Guild: the server's own seven patterns, not a bare "GUILD" token
-	# (CGObjNPCNPC::Create registers interaction 0x0f on exactly these).
-	for guild_npc in ["NPC_CH_GENARAL_SP", "NPC_WC_GUILD", "NPC_KT_GUILD",
-			"NPC_EU_GUILD", "NPC_CA_GUILD", "NPC_SD_M_AREA_GUILD",
-			"NPC_SD_T_AREA_GUILD2"]:
-		var g = NpcServiceReader.services_for(guild_npc, shops)
-		_check(g.map(func(s): return s.key).has("guild"), guild_npc + " offers guild")
-
-	# The two defects a bare "GUILD" token had. NPC_CH_GENARAL_SP is covered
-	# above -- it has no "GUILD" in its name and used to be MISSED. The three
-	# agents were wrongly MATCHED. No codename test in CGObjNPCNPC::Create
-	# registers an interaction id on them: their strstr chain ends in
-	# IGObj::SetBodyMode (slot 198, 0x4c6ddd), not AddAvailableInteraction
-	# (slot 89). Round 520 corrected round 458's "specialty goods (0x0c)"; see
-	# GUILD_PATTERNS.
-	for agent in ["NPC_SD_GUILD_AGENT", "NPC_SD_GUILD_AGENT2", "NPC_SD_GUILD_AGENT3"]:
-		var a = NpcServiceReader.services_for(agent, shops)
-		_check(not a.map(func(s): return s.key).has("guild"),
-			agent + " gets no interaction id by codename, so offers no Guild")
-
-	# (k) Round 521: the guild NPC's lines follow the player's guild state, as
-	# the client's FUN_00700440 id 0x0f block does: FUN_009870e0() == 0 ->
-	# item 0x12 UIIT_CTL_GUILD_CREATE; else FUN_00989ce0(name) == 0 -> item
-	# 0x1c UIIT_CTL_GUILD_SECESSION; else the master's items, which have no
-	# server here, so a master keeps the placeholder. The new arguments and
-	# guild_services are reached through the script object after checking the
-	# method list, so a reader without them FAILS here rather than raising a
-	# call error that stops _init and hangs the suite.
-	var sf_args := -1
-	var has_guild_services := false
-	for m in reader_script.get_script_method_list():
-		if str(m.get("name", "")) == "services_for":
-			sf_args = (m.get("args", []) as Array).size()
-		if str(m.get("name", "")) == "guild_services":
-			has_guild_services = true
-	var stateful := sf_args >= 4
-	_check(stateful, "services_for takes the guild state (got %d argument(s))" % sf_args)
-	_check(sf_args == 6, "services_for's signature is (code, shops, guild_id, guild_master, player_job_kind, store_lines) (got %d)" % sf_args)
-	_check(has_guild_services, "NpcServiceReader has guild_services")
-	# Unknown state: the 2-argument calls above already showed "guild" for all
-	# seven patterns. Passing -1 explicitly is the same.
-	if stateful:
-		var unknown: Array = reader_script.call("services_for", "NPC_WC_GUILD", shops, -1, false)
-		_check(_keys(unknown) == ["guild"], "guild_id -1 (unknown) keeps the \"guild\" placeholder (got %s)" % [_keys(unknown)])
-	# NEGATIVE (fails before round 521): a guildless player at the Chinese
-	# guild NPC gets the create line, with its UIIT token, and no placeholder.
-	var none: Array = []
-	if stateful:
-		none = reader_script.call("services_for", "NPC_CH_GENARAL_SP", shops, 0, false)
+	# (k) The guild NPCs {0x0f, 1}: the lines follow the player's guild state,
+	# as the client's FUN_00700440 id 0x0f block does (guild_services), and
+	# FUN_009870e0 gates the store line (round 524).
+	var guild_ids := [1, 0x0f]
+	_check(_keys(from.call(guild_ids, store, -1)) == ["shop:G1", "guild"],
+		"guild state unknown (-1): the store line and the placeholder (got %s)" % [_keys(from.call(guild_ids, store, -1))])
+	var none: Array = from.call(guild_ids, store, 0)
+	_check(_keys(none) == ["guild_create"], "a guildless player: [guild_create], no store line (got %s)" % [_keys(none)])
 	var create: Variant = _find(none, "guild_create")
-	_check(create != null, "a guildless player at NPC_CH_GENARAL_SP has guild_create (got %s)" % [_keys(none)])
 	_check(create != null and str(create.get("strid")) == "UIIT_CTL_GUILD_CREATE"
 			and str(consts.get("GUILD_CREATE_STRID", "")) == "UIIT_CTL_GUILD_CREATE",
 		"guild_create's strid is UIIT_CTL_GUILD_CREATE (FUN_006fcd60 case 0x12)")
-	_check(not _keys(none).has("guild"), "and no \"guild\" placeholder (got %s)" % [_keys(none)])
-	# A member who is not the master gets exactly the leave line.
-	var member: Array = []
-	if stateful:
-		member = reader_script.call("services_for", "NPC_WC_GUILD", shops, 7, false)
-	_check(_keys(member) == ["guild_leave"], "a member at NPC_WC_GUILD gets exactly [\"guild_leave\"] (got %s)" % [_keys(member)])
+	var member: Array = from.call(guild_ids, store, 7, false)
+	_check(_keys(member) == ["shop:G1", "guild_leave"], "a member: [shop:G1, guild_leave] (got %s)" % [_keys(member)])
 	var leave: Variant = _find(member, "guild_leave")
 	_check(leave != null and str(leave.get("strid")) == "UIIT_CTL_GUILD_SECESSION"
 			and str(consts.get("GUILD_SECESSION_STRID", "")) == "UIIT_CTL_GUILD_SECESSION",
 		"guild_leave's strid is UIIT_CTL_GUILD_SECESSION (FUN_006fcd60 case 0x1c)")
-	# NEGATIVE: the master is never offered secession (the 0x1c push is only
-	# in FUN_00989ce0's zero branch) nor creation; it keeps the placeholder.
-	var master: Array = []
-	if stateful:
-		master = reader_script.call("services_for", "NPC_WC_GUILD", shops, 7, true)
-	_check(stateful and not _keys(master).has("guild_leave") and not _keys(master).has("guild_create"),
-		"a master at NPC_WC_GUILD has neither guild_leave nor guild_create (got %s)" % [_keys(master)])
-	_check(stateful and _keys(master) == ["guild"], "the master keeps the \"guild\" placeholder (got %s)" % [_keys(master)])
-	# The guild agents register no id by codename (round 520), so a known
-	# guild state adds nothing there either.
-	for agent in ["NPC_SD_GUILD_AGENT", "NPC_SD_GUILD_AGENT2", "NPC_SD_GUILD_AGENT3"]:
-		for state in [[0, false], [7, false], [7, true]]:
-			var ag: Array = []
-			if stateful:
-				ag = reader_script.call("services_for", agent, shops, state[0], state[1])
-			var guildish := _keys(ag).filter(func(k): return str(k).begins_with("guild"))
-			_check(stateful and guildish.is_empty(),
-				"%s with guild state %s offers no guild* line (got %s)" % [agent, state, _keys(ag)])
-	# The fallback labels are the archive's own text for the two tokens.
-	var gs0: Array = []
-	var gs7: Array = []
-	if has_guild_services:
-		gs0 = reader_script.call("guild_services", 0, false)
-		gs7 = reader_script.call("guild_services", 7, false)
-	_check(gs0.size() == 1 and gs0[0].label == "Create a new guild",
-		"guild_services(0, false)[0].label == \"Create a new guild\"")
-	_check(gs7.size() == 1 and gs7[0].label == "Leave guild.",
-		"guild_services(7, false)[0].label == \"Leave guild.\"")
-	# The talk menu a guildless player sees, from the same composer: the
-	# create line, resolved through the text table, then the end line.
-	if stateful and has_composer:
-		var ui3 := {"UIIT_CTL_GUILD_CREATE": "CREATE-TEXT", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}
+	_check(_keys(from.call(guild_ids, store, 7, true)) == ["shop:G1", "guild"],
+		"a master keeps the placeholder, never secession or creation")
+	_check(_keys(from.call([1], store, 0)) == ["shop:G1"], "without 0x0f the guild state does not gate the store line")
+	var gs0: Array = NpcServiceReader.guild_services(0, false)
+	var gs7: Array = NpcServiceReader.guild_services(7, false)
+	_check(gs0.size() == 1 and gs0[0].label == "Create a new guild", "guild_services(0, false)[0].label == \"Create a new guild\"")
+	_check(gs7.size() == 1 and gs7[0].label == "Leave guild.", "guild_services(7, false)[0].label == \"Leave guild.\"")
+	if has_composer:
 		var resolve3 := func(token: String, fallback: String) -> String:
-			return str(ui3.get(token, fallback)) if token != "" else fallback
+			return str({"UIIT_CTL_GUILD_CREATE": "CREATE-TEXT", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}.get(token, fallback))
 		var gmenu: PackedStringArray = reader_script.call("talk_menu_lines", "NPC_CH_GENARAL_SP", none, resolve3)
 		_check(gmenu == PackedStringArray(["[url=guild_create]1. CREATE-TEXT[/url]", "[url=end]2. END-TEXT[/url]"]),
-			"a guildless player's NPC_CH_GENARAL_SP menu is 1. create text / 2. end text (got %s)" % [gmenu])
-	else:
-		_check(false, "the guildless talk menu could not be composed (services_for stateful=%s, composer=%s)" % [stateful, has_composer])
+			"a guildless player's guild menu starts at 1. create text (got %s)" % [gmenu])
 
-	# (o) Round 524: a guild NPC's store line only for a player in a guild.
-	# The server registers id 1 beside 0x0f on all seven GUILD_PATTERNS
-	# (CGObjNPCNPC::Create 0x4c6a4f), and with 0x0f present the client's
-	# FUN_00700440 emits item 1 (the store lines) only when FUN_009870e0
-	# answers nonzero (0x7009fc `call 0x9870e0`, 0x700a03 `je 0x700b10`). The
-	# shop set here is shaped like the player's refshopgroup.txt, which names
-	# all seven as running a GROUP_STORE_*_GUILD store (col 4 is the owner;
-	# the id column is not read, so it is 0), plus a potion seller. The shop
-	# set in (k) leaves the guild NPCs out, which is why (k) never showed "Buy"
-	# at them.
-	var guild_shop_rows := PackedStringArray(["//Service\tCountry\tID\tCodeName\tOwnerNPC"])
-	for pair in [["CH", "NPC_CH_GENARAL_SP"], ["WC", "NPC_WC_GUILD"], ["KT", "NPC_KT_GUILD"],
-			["EU", "NPC_EU_GUILD"], ["CA", "NPC_CA_GUILD"], ["SD_M", "NPC_SD_M_AREA_GUILD"],
-			["SD_T", "NPC_SD_T_AREA_GUILD2"]]:
-		guild_shop_rows.append("1\t15\t0\tGROUP_STORE_%s_GUILD\t%s" % pair)
-	guild_shop_rows.append("1\t15\t0\tGROUP_STORE_CH_POTION\tNPC_CH_POTION")
-	var guild_shops := NpcServiceReader.parse_shop_npcs(("\n".join(guild_shop_rows) + "\n").to_utf16_buffer())
-	_check(guild_shops.size() == 8, "the guild shop fixture lists 8 NPCs (got %d)" % guild_shops.size())
-	var sf := func(code: String, gid: int, master: bool) -> Array:
-		if not stateful:
-			return []
-		return reader_script.call("services_for", code, guild_shops, gid, master)
-	# NEGATIVE (fails before round 524): a guildless player at each guild NPC
-	# gets no shop line, only the create line.
-	for guild_npc in ["NPC_CH_GENARAL_SP", "NPC_WC_GUILD", "NPC_KT_GUILD", "NPC_EU_GUILD",
-			"NPC_CA_GUILD", "NPC_SD_M_AREA_GUILD", "NPC_SD_T_AREA_GUILD2"]:
-		var g0: Array = sf.call(guild_npc, 0, false)
-		_check(stateful and _keys(g0) == ["guild_create"],
-			"a guildless player at %s gets exactly [\"guild_create\"], no shop (got %s)" % [guild_npc, _keys(g0)])
-	# The talk menu that player sees: the create line is 1, as in the real
-	# client, where the skipped item 1 takes no number.
-	if stateful and has_composer:
-		var ui_o := {"UIIT_CTL_GUILD_CREATE": "Create a new guild", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "End conversation."}
-		var resolve_o := func(token: String, fallback: String) -> String:
-			return str(ui_o.get(token, fallback)) if token != "" else fallback
-		var omenu: PackedStringArray = reader_script.call("talk_menu_lines", "NPC_CH_GENARAL_SP",
-			sf.call("NPC_CH_GENARAL_SP", 0, false), resolve_o)
-		_check(omenu == PackedStringArray(["[url=guild_create]1. Create a new guild[/url]", "[url=end]2. End conversation.[/url]"]),
-			"a guildless player's NPC_CH_GENARAL_SP menu starts at 1. Create a new guild (got %s)" % [omenu])
-	else:
-		_check(false, "the guildless shop-NPC talk menu could not be composed (stateful=%s, composer=%s)" % [stateful, has_composer])
-	# A member keeps the shop line, ahead of the guild line (item 1 comes
-	# before the 0x0f block in FUN_00700440). So does a master.
-	var g7: Array = sf.call("NPC_CH_GENARAL_SP", 7, false)
-	_check(stateful and _keys(g7) == ["shop", "guild_leave"],
-		"a member at NPC_CH_GENARAL_SP gets [\"shop\", \"guild_leave\"] (got %s)" % [_keys(g7)])
-	var g7m: Array = sf.call("NPC_WC_GUILD", 7, true)
-	_check(stateful and _keys(g7m) == ["shop", "guild"],
-		"a master at NPC_WC_GUILD gets [\"shop\", \"guild\"] (got %s)" % [_keys(g7m)])
-	# Guild state not known yet (-1, and the two-argument call): unchanged.
-	var gu: Array = sf.call("NPC_CH_GENARAL_SP", -1, false)
-	_check(stateful and _keys(gu) == ["shop", "guild"],
-		"guild_id -1 at NPC_CH_GENARAL_SP keeps [\"shop\", \"guild\"] (got %s)" % [_keys(gu)])
-	var g2 := NpcServiceReader.services_for("NPC_CH_GENARAL_SP", guild_shops)
-	_check(_keys(g2) == ["shop", "guild"],
-		"the two-argument call at NPC_CH_GENARAL_SP keeps [\"shop\", \"guild\"] (got %s)" % [_keys(g2)])
-	# Any other store is untouched: its item 1 does not pass through the
-	# 0x0f branch (0x7009f5 `je 0x700a0e` when 0x0f is absent).
-	var potion0: Array = sf.call("NPC_CH_POTION", 0, false)
-	_check(stateful and _keys(potion0) == ["shop"],
-		"a guildless player at NPC_CH_POTION still gets [\"shop\"] (got %s)" % [_keys(potion0)])
-
-	# (p) Round 526: the job guilds' join lines. The server registers id 0x14
-	# (Trader) on six codename literals, 0x16 (Hunter) on six and 0x15
-	# (Thief) on two (CGObjNPCNPC::Create: push 0x14 at 0x4c6c33, 0x16 at
-	# 0x4c6d09, 0x15 at 0x4c6d57). The client's FUN_00700440 hands each to
-	# FUN_006fdeb0(n, 1 / 3 / 2), which emits item 0x1e only when the
-	# player's job byte (+0x7be) is 0. FUN_006fcd60 case 0x1e picks the
-	# token by that kind. Read through get() and the constant map, so a
-	# reader without job_kind or the tokens FAILS here rather than failing
-	# to parse. The English is not pinned: the talk window resolves the
-	# tokens through the archive's own text.
-	var want_jobs := [
-		["NPC_CH_DOCTOR", 1], ["NPC_WC_DOCTOR", 1], ["NPC_KT_DESIGNER", 1],
-		["NPC_EU_MERCHANT", 1], ["NPC_CA_MERCHANT", 1], ["NPC_SD_M_AREA_MERCHANT", 1],
-		["NPC_CH_GENARAL_SW", 3], ["NPC_WC_GENARAL_SW", 3], ["NPC_KT_MINISTER", 3],
-		["NPC_EU_HUNTER", 3], ["NPC_CA_HUNTER", 3], ["NPC_SD_M_AREA_HUNTER", 3],
-		["NPC_TD_THIEF_SELL", 2], ["NPC_SD_T_AREA_THIEF", 2],
-	]
+	# (p) The job guilds' join lines: ids 0x14 (Trader), 0x16 (Hunter), 0x15
+	# (Thief), handed to FUN_006fdeb0 with kinds 1, 3, 2, which emits item
+	# 0x1e only for a player whose job byte (+0x7be) is 0; FUN_006fcd60 case
+	# 0x1e picks the token by kind.
 	var want_strid := {
 		1: "UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN",
 		2: "UIIT_STT_NPC_CHATTING_THIEFMENU_JOIN",
@@ -424,72 +212,23 @@ func _init() -> void:
 	}
 	_check(consts.get("JOB_JOIN_STRIDS", {}) == want_strid,
 		"JOB_JOIN_STRIDS is exactly FUN_006fcd60 case 0x1e's three tokens (got %s)" % [consts.get("JOB_JOIN_STRIDS")])
-	var job_lines := func(services: Array) -> Array:
-		return services.filter(func(s): return s.key == "job_guild")
-	# NEGATIVE (fails before round 526): each of the 14 has exactly one join
-	# line, of its own kind and token, for a jobless player.
-	for pair in want_jobs:
-		var jcode: String = pair[0]
-		var jkind: int = pair[1]
-		var js: Array = []
-		if stateful:
-			js = reader_script.call("services_for", jcode, shops, -1, false, 0)
-		var jl: Array = job_lines.call(js)
-		var ok: bool = jl.size() == 1 and jl[0].get("job_kind") == jkind \
-			and str(jl[0].get("strid")) == want_strid[jkind]
-		_check(stateful and ok, "%s offers exactly one job_guild, kind %d, strid %s (got %s)"
-			% [jcode, jkind, want_strid[jkind],
-				jl.map(func(s): return [s.get("job_kind"), s.get("strid")])])
-	# NEGATIVE: the codenames a wildcard would have caught, read as a
-	# substring pattern the way the server's strstr tests match (an anchored
-	# NPC_*_MERCHANT stops at _CHANGER), carry none of the three ids, and
-	# neither does an ordinary store.
-	for jcode in ["NPC_SD_MERCHANT_CHANGER", "NPC_TD_THIEF_BUY", "NPC_TD_THIEF_A",
-			"NPC_SD_THIEF_AGENT_CHANGER", "NPC_CH_POTION"]:
-		var jn: Array = []
-		if stateful:
-			jn = reader_script.call("services_for", jcode, shops, -1, false, 0)
-		_check(stateful and (job_lines.call(jn) as Array).is_empty(),
-			"%s offers no job_guild (got %s)" % [jcode, _keys(jn)])
-	# The Chinese guild NPC is not the hunter NPC: NPC_CH_GENARAL_SP has id
-	# 0x0f, NPC_CH_GENARAL_SW id 0x16.
-	var gsp: Array = []
-	if stateful:
-		gsp = reader_script.call("services_for", "NPC_CH_GENARAL_SP", shops, -1, false, 0)
-	_check(stateful and _keys(gsp).has("guild") and (job_lines.call(gsp) as Array).is_empty(),
-		"NPC_CH_GENARAL_SP offers guild and no job_guild (got %s)" % [_keys(gsp)])
-	# REGRESSION GUARDS, not negatives (round 527): these pass on the reader
-	# before round 526 too, which offered no join line at all. A player who
-	# has a job gets no join line, whether it is this guild's job
-	# (FUN_006fdeb0's 0x1f branch) or another (its bare tail): the join line
-	# needs the job byte to be 0 (0x6fdec4 `test al,al`, 0x6fdec6 `jne
-	# 0x6fdee0`). Kind 1 (the trader's own) and kind 3 (another) at the
-	# Jangan trader, and kind 2 (Thief, FUN_00700440 0x7012bf `push 2`) at
-	# both thief NPCs.
-	var held_cases := [
-		["NPC_CH_DOCTOR", 1], ["NPC_CH_DOCTOR", 3],
-		["NPC_TD_THIEF_SELL", 2], ["NPC_SD_T_AREA_THIEF", 2],
-	]
-	for hc in held_cases:
-		var hcode: String = hc[0]
-		var held: int = hc[1]
-		var jh: Array = []
-		if stateful:
-			jh = reader_script.call("services_for", hcode, shops, -1, false, held)
-		_check(stateful and (job_lines.call(jh) as Array).is_empty(),
-			"a player with job kind %d at %s gets no job_guild (got %s)" % [held, hcode, _keys(jh)])
-	# The composed menu at the Jangan trader: the join line's token resolved
-	# through the text table, then the end line.
-	if stateful and has_composer:
-		var ui_p := {"UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN": "JOIN-TEXT", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}
+	for pair in [[0x14, 1], [0x16, 3], [0x15, 2]]:
+		var jl: Array = from.call([pair[0]])
+		_check(jl.size() == 1 and jl[0].key == "job_guild" and jl[0].get("job_kind") == pair[1]
+				and str(jl[0].get("strid")) == want_strid[pair[1]],
+			"id 0x%x offers one job_guild of kind %d" % pair)
+		for held in [1, 2, 3]:
+			_check((from.call([pair[0]], [], -1, false, held) as Array).is_empty(),
+				"id 0x%x offers no join line to a player with job %d" % [pair[0], held])
+	# The Hunter NPC NPC_CH_GENARAL_SW {2, 0x0e, 0x16}: talk, then its join
+	# line; 0x0e adds none.
+	_check(_keys(from.call([2, 0x0e, 0x16])) == ["talk", "job_guild"], "NPC_CH_GENARAL_SW's set: talk, join")
+	if has_composer:
 		var resolve_p := func(token: String, fallback: String) -> String:
-			return str(ui_p.get(token, fallback)) if token != "" else fallback
-		var pmenu: PackedStringArray = reader_script.call("talk_menu_lines", "NPC_CH_DOCTOR",
-			reader_script.call("services_for", "NPC_CH_DOCTOR", shops, -1, false, 0), resolve_p)
+			return str({"UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN": "JOIN-TEXT", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}.get(token, fallback))
+		var pmenu: PackedStringArray = reader_script.call("talk_menu_lines", "NPC_CH_DOCTOR", from.call([0x14]), resolve_p)
 		_check(pmenu == PackedStringArray(["[url=job_guild]1. JOIN-TEXT[/url]", "[url=end]2. END-TEXT[/url]"]),
-			"a jobless player's NPC_CH_DOCTOR menu is 1. join text / 2. end text (got %s)" % [pmenu])
-	else:
-		_check(false, "the job-guild talk menu could not be composed (stateful=%s, composer=%s)" % [stateful, has_composer])
+			"a jobless player's trader menu is 1. join text / 2. end text (got %s)" % [pmenu])
 
 	# (i) Round 514: the store window shows Repair / Repair All only at an NPC
 	# with interaction id 4. The client's 0xb045 reply handler FUN_0088b200
@@ -561,10 +300,9 @@ func _init() -> void:
 		"the return line is item 0x10's token, UIIT_CTL_TELEPORT_TO_RESURRECT_POS")
 	_check(has_gate and (reader_script.call("gate_services", false, false, false) as Array).is_empty(),
 		"a gate with no link and no registration offers nothing")
-	# NEGATIVE: the gate's codename alone is no shop, warehouse, guild or job
-	# pattern -- its lines come only from gate_services.
-	_check(NpcServiceReader.services_for("STORE_CH_GATE", {}).is_empty(),
-		"services_for(\"STORE_CH_GATE\", {}) alone yields nothing")
+	# Round 727: the same lines from a gate's interaction ids {7, 8}.
+	_check(_keys(from.call([7, 8])) == ["recall_designate", "teleport"],
+		"services_from_ids({7, 8}) is the town gate's two lines (got %s)" % [_keys(from.call([7, 8]))])
 	if has_gate and has_composer:
 		var ui_q := {"UIIT_CTL_RECALL_POSITION": "DESIGNATE-TEXT", "UIIT_CTL_TELEPORT_TARGET": "SELECT-TEXT",
 			"UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}

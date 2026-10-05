@@ -57,23 +57,30 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 		session.InstallNPCs(nil, logger)
 		return
 	}
-	if table == nil && monsters == nil {
-		logger.Warn("no NPCs: telling an NPC row of -npcpos-csv from a monster's needs -npcs-csv or -monsters-csv")
-		session.InstallNPCs(nil, logger)
-		return
+	// Round 727's review: the NPC table is required wherever NPCs spawn. The
+	// talk menu is the server's interaction-id set (0xB045), built from the
+	// NPC's code name and shop; without the table every NPC would offer
+	// "End conversation." alone, and the client derives no line itself.
+	if table == nil {
+		logger.Error("-npcpos-csv spawns NPCs but no -npcs-csv (OPENSRO_NPCS_CSV) is configured: every NPC menu " +
+			"would be empty. Export it with `export-refdata -mode npcs` (deploy/README.md, \"NPCs\") and pass it.")
+		os.Exit(1)
 	}
-	teleportFlags := map[int64][2]bool{}
+	// The teleport row's ids on its associated object: 7 and 9 from its two
+	// flags, 8 (round 727) when links leave the point (Teleport8's stand-in).
+	teleportFlags := map[int64][3]bool{}
 	if tp != nil {
 		for _, p := range tp.Points {
 			if p.ObjectID != 0 {
 				f := teleportFlags[int64(p.ObjectID)]
-				teleportFlags[int64(p.ObjectID)] = [2]bool{f[0] || p.Interaction7, f[1] || p.Interaction9}
+				teleportFlags[int64(p.ObjectID)] = [3]bool{f[0] || p.Interaction7, f[1] || p.Interaction9,
+					f[2] || len(tp.LinksFrom(p.ID)) > 0}
 			}
 		}
 	}
 	info := func(id int64) (npcspawn.Info, bool) {
 		r, ok := table[id]
-		return npcspawn.Info{Code: r.Code}, ok
+		return npcspawn.Info{Code: r.Code, Shop: r.Shop}, ok
 	}
 	if table == nil {
 		info = nil
@@ -83,7 +90,8 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 			return 0, nil
 		}
 		f := teleportFlags[id]
-		return npcspawn.Interactions(code, npcspawn.InteractionInputs{Teleport7: f[0], Teleport9: f[1], HasShop: table[id].Shop})
+		return npcspawn.Interactions(code, npcspawn.InteractionInputs{Teleport7: f[0], Teleport9: f[1], Teleport8: f[2],
+			OwnsShop: table[id].Shop})
 	}
 	npcs, rep := npcspawn.Place(npcRows(placements, monsters, table), db, info, interactions)
 	filed := session.InstallNPCs(npcs, logger)

@@ -896,8 +896,8 @@ func main() {
 	npcsCSV := flag.String("npcs-csv", os.Getenv("OPENSRO_NPCS_CSV"),
 		"path to the NPC reference rows (from cmd/export-refdata -mode npcs on a client's own characterdata "+
 			"parts and refshopgroup.txt; round 708): the code names the NPC spawn record's interaction list "+
-			"is built from. Optional: without it the server still spawns every NPC row of -npcpos-csv (the rows "+
-			"-monsters-csv does not name), with an empty interaction list. A configured path that does not load is fatal.")
+			"is built from, and the talk menus with it (0xB045, round 727). REQUIRED with -npcpos-csv: the boot "+
+			"fails without it. A configured path that does not load is fatal.")
 	teleportDir := flag.String("teleport-dir", os.Getenv("OPENSRO_TELEPORT_DIR"),
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
@@ -2084,6 +2084,9 @@ func main() {
 		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
 		session.MotionHandler(hub),
+		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
+		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
+		session.NPCTalkHandler(hub, trades),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
@@ -2133,6 +2136,7 @@ func main() {
 			// from.
 			duelDisconnect(sess)
 			tradeDisconnect(sess)
+			session.ForgetNPCInteraction(sess.ID())
 			guildPointsDisconnect(sess)
 			berserkDisconnect(sess)
 			// The party removal first, then the match entry, as the
