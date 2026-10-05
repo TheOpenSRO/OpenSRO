@@ -246,6 +246,10 @@ func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader) -> Array:
 				continue
 			fx.loop = true
 			fx.auto_free = false
+			# Blended in display values, as the original's Direct3D 9 blends
+			# (round 722, EfpEffect.display_shader; OURS scope: the objects'
+			# ambient effects only).
+			fx.use_display_blend()
 			if e.rotated:
 				fx.follow_basis = rotation_basis(e.angles)
 			if e.mode == 0:
@@ -320,6 +324,8 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 			g.visible = hit.is_empty()
 			g.blocker = "" if g.visible else "%s n.d %.2f" % [_blocker_name(hit),
 				(hit.get("normal", Vector3.ZERO) as Vector3).dot((p - eye).normalized())]
+			if not last_passed.is_empty():
+				g.blocker += " (passed %s)" % ", ".join(last_passed)
 	for g in shown:
 		g.alpha = step_alpha(g.alpha, g.visible, frame_ms, g.seen_frame == _frame - 1)
 		g.seen_frame = _frame
@@ -334,13 +340,99 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 ## Jangan's glow hidden from 150 units by a bare tree's leaf cards.
 static func occluder(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3) -> Dictionary:
 	var exclude: Array[RID] = []
+	last_passed.clear()
 	for _i in range(MAX_PASS_THROUGH + 1):
 		var q := PhysicsRayQueryParameters3D.create(from, to, OCCLUDER_MASK, exclude)
 		var hit := space.intersect_ray(q)
 		if hit.is_empty() or not _alpha_tested(hit.get("collider")):
 			return hit
+		# The texel the depth test would have kept or cut (round 722): an
+		# opaque texel hides the point as any surface does; a cut one lets
+		# the ray on. Unreadable (no face, UV or image) passes, as round 720
+		# passed every alpha-tested piece.
+		if texel_kept(hit) == 1:
+			return hit
+		last_passed.append(_blocker_name(hit))
 		exclude.append(hit["rid"])
 	return {}
+
+## Whether an alpha-tested piece keeps the texel a ray hit lands on (round
+## 722): 1 kept (its mip-0 alpha at or above the material's threshold, the
+## alpha test GREATEREQUAL 0x80 READ in BMT_FORMAT.md), 0 cut, -1 not
+## readable. The hit's face is the trimesh's (`face_index`: the piece's
+## faces are its index list in order, ObjectLoader._piece_faces), its UV the
+## barycentric mix of that face's three corners.
+static func texel_kept(hit: Dictionary) -> int:
+	var c = hit.get("collider")
+	if not (c is Node):
+		return -1
+	var mi := (c as Node).get_parent() as MeshInstance3D
+	if mi == null or mi.mesh == null or mi.mesh.get_surface_count() == 0:
+		return -1
+	var m := mi.material_override as ShaderMaterial
+	if m == null:
+		return -1
+	var tex = m.get_shader_parameter("albedo_texture")
+	var ref = m.get_shader_parameter("alpha_scissor")
+	if not (tex is Texture2D) or ref == null:
+		return -1
+	var face := int(hit.get("face_index", -1))
+	var arrays := _surface_arrays(mi.mesh)
+	var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var pos: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var uvs = arrays[Mesh.ARRAY_TEX_UV]
+	if face < 0 or uvs == null or 3 * face + 2 >= idx.size():
+		return -1
+	var a := idx[3 * face]
+	var b := idx[3 * face + 1]
+	var d := idx[3 * face + 2]
+	var local: Vector3 = mi.global_transform.affine_inverse() * (hit["position"] as Vector3)
+	var bary := Geometry3D.get_triangle_barycentric_coords(local, pos[a], pos[b], pos[d])
+	if bary == Vector3.ZERO:
+		return -1
+	var uv: Vector2 = (uvs as PackedVector2Array)[a] * bary.x + (uvs as PackedVector2Array)[b] * bary.y \
+		+ (uvs as PackedVector2Array)[d] * bary.z
+	var img := _alpha_image(tex as Texture2D)
+	if img == null:
+		return -1
+	var w := img.get_width()
+	var h := img.get_height()
+	var x := posmod(int(floor(uv.x * w)), w)
+	var y := posmod(int(floor(uv.y * h)), h)
+	return 1 if img.get_pixel(x, y).a >= float(ref) else 0
+
+## A mesh's first surface's arrays, kept (the glow test asks every 500 ms).
+static var _arrays_cache := {}
+static func _surface_arrays(mesh: Mesh) -> Array:
+	var key := mesh.get_rid()
+	if _arrays_cache.has(key):
+		return _arrays_cache[key]
+	if _arrays_cache.size() > 256:
+		_arrays_cache.clear()
+	var arr := mesh.surface_get_arrays(0)
+	_arrays_cache[key] = arr
+	return arr
+
+## A texture's mip-0 image, decompressed, kept.
+static var _image_cache := {}
+static func _alpha_image(tex: Texture2D) -> Image:
+	var key := tex.get_rid()
+	if _image_cache.has(key):
+		return _image_cache[key]
+	if _image_cache.size() > 64:
+		_image_cache.clear()
+	var img := tex.get_image()
+	if img != null:
+		img = img.duplicate() as Image
+		if img.is_compressed():
+			img.decompress()
+		img.clear_mipmaps()
+	_image_cache[key] = img
+	return img
+
+## The alpha-tested pieces the last occluder() ray passed through (the QA
+## log, round 722).
+static var last_passed: Array[String] = []
 
 ## How many alpha-tested pieces one ray passes through before giving up
 ## (OURS; a glow behind more foliage than this is taken as visible).
@@ -376,7 +468,7 @@ static func _blocker_name(hit: Dictionary) -> String:
 ## For the QA log (round 722): each effect's world position, its distance
 ## from the camera and where it lands on the screen (off when behind the eye
 ## or outside the frustum), and the camera's own position.
-func describe_screen(camera: Camera3D) -> String:
+func describe_screen(camera: Camera3D, space: PhysicsDirectSpaceState3D = null) -> String:
 	if camera == null:
 		return ""
 	var parts: Array[String] = ["camera %s" % str(camera.global_position.round())]
@@ -390,8 +482,14 @@ func describe_screen(camera: Camera3D) -> String:
 		var where := "off"
 		if not camera.is_position_behind(at) and camera.is_position_in_frustum(at):
 			where = str(camera.unproject_position(at).round())
-		parts.append("%s[%d] at %s d%.0f screen %s" % [(fx as EfpEffect).path.get_file(), int(pair[1]),
-			str(at.round()), camera.global_position.distance_to(at), where])
+		var box: AABB = (fx as EfpEffect).particle_extent()
+		var first_hit := ""
+		if space != null:
+			var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(camera.global_position, at, OCCLUDER_MASK))
+			if not hit.is_empty():
+				first_hit = " ray hits %s at d%.1f" % [_blocker_name(hit), camera.global_position.distance_to(hit["position"])]
+		parts.append("%s[%d] at %s d%.0f screen %s particles %s..%s" % [(fx as EfpEffect).path.get_file(), int(pair[1]),
+			str(at.round()), camera.global_position.distance_to(at), where, str(box.position.round()), str(box.end.round())] + first_hit)
 	_effects = keep
 	return ", ".join(parts)
 
@@ -403,5 +501,5 @@ func describe() -> String:
 	var parts: Array[String] = []
 	for g in _glows:
 		if is_instance_valid(g.fx):
-			parts.append("%s a%d %s" % [g.fx.path.get_file(), g.alpha, "vis" if g.visible else "hid by " + g.blocker])
+			parts.append("%s a%d %s" % [g.fx.path.get_file(), g.alpha, ("vis " + g.blocker) if g.visible else "hid by " + g.blocker])
 	return ", ".join(parts)

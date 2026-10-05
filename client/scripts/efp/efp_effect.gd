@@ -265,6 +265,112 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 			fx._has_billboard = true
 	return fx
 
+## The blend class a template shader was built for (_shader).
+const BLEND_CLASS_META := "opensro_efp_blend_class"
+
+## Draws this effect's nodes blended in display values (round 722): each node
+## gets its own copy of its material on display_shader. Call before
+## make_glow, so the glow copies are made from these. Used for the objects'
+## ambient effects (AmbientParticles.attach).
+func use_display_blend() -> void:
+	var nodes: Array = []
+	for d in _draws:
+		nodes.append(d[1])
+	for l in _links:
+		nodes.append(l[1])
+	for n in nodes:
+		var gi := n as GeometryInstance3D
+		var m := gi.material_override as ShaderMaterial
+		if m == null or m.shader == null or not m.shader.has_meta(BLEND_CLASS_META):
+			continue
+		var c := m.duplicate() as ShaderMaterial
+		c.shader = display_shader(m.shader)
+		gi.material_override = c
+
+## A template shader that blends as Direct3D 9 does, in the framebuffer's
+## display values (round 722). The original sets no D3DRS_SRGBWRITEENABLE
+## (WORLD_ISSUES, round 705's fog), so its blend adds and mixes the values the
+## screen shows; Forward+ blends in a linear buffer, where an additive glow
+## over a bright background (Samarkand's arch against the sky) barely shows
+## (MEASURED, round 722: Compatibility, which blends in display values, draws
+## the arch's glow; Forward+ does not). Under Forward+ the shader reads the
+## colour underneath (hint_screen_texture: the opaque scene, before the
+## transparent pass), turns it into what the screen shows (Godot's tone map
+## forward, ObjectLight's tonemap vector), makes the blend the class names on
+## those values, and writes what turns into that once Godot's own blend and
+## tone map are done: an additive class adds the difference (ALPHA 1), a
+## mixing class the colour whose linear mix lands on it. Under Compatibility
+## (OUTPUT_IS_SRGB) nothing changes: it already blends in display values.
+## OURS: overlapping particles each blend against the opaque scene and their
+## differences add, which is the display sum only while nothing saturates; a
+## transparent surface underneath (water, another effect) is not in the
+## screen texture.
+static func display_shader(sh: Shader) -> Shader:
+	var key := "display|%d" % sh.get_instance_id()
+	if _shaders.has(key):
+		return _shaders[key]
+	var cls := String(sh.get_meta(BLEND_CLASS_META, "mix"))
+	var code := sh.code
+	code = code.replace("\nvoid fragment() {", DISPLAY_FN + "\nvoid fragment() {")
+	var rule := "mix(srr_d, srr_s, srr_a)"
+	var out := "ALBEDO = max((srr_t - (1.0 - srr_a) * srr_bg) / max(srr_a, 1.0 / 255.0), vec3(0.0));"
+	if cls == "add" or cls == "add_one":
+		rule = "srr_d + srr_s * srr_a"
+		out = "ALBEDO = max(srr_t - srr_bg, vec3(0.0));\n\t\tALPHA = 1.0;"
+	code = code.replace(DISPLAY_TAIL_FROM, DISPLAY_TAIL_TO.replace("{RULE}", rule).replace("{OUT}", out))
+	var g := Shader.new()
+	g.code = code
+	g.set_meta(BLEND_CLASS_META, cls)
+	_shaders[key] = g
+	return g
+
+const DISPLAY_TAIL_FROM := "\tALPHA = clamp(a, 0.0, 1.0);\n}"
+const DISPLAY_TAIL_TO := """	ALPHA = clamp(a, 0.0, 1.0);
+	if (!OUTPUT_IS_SRGB) {
+		vec3 srr_bg = textureLod(srr_screen, SCREEN_UV, 0.0).rgb;
+		vec3 srr_d = srr_shown(srr_bg);
+		vec3 srr_s = clamp(c, 0.0, 1.0);
+		float srr_a = ALPHA;
+		vec3 srr_t = srr_unshown(clamp({RULE}, vec3(0.0), vec3(1.0)));
+		{OUT}
+	}
+}"""
+
+## The screen read and Godot's tone map both ways for display_shader (the
+## filmic curve and its inverse are ObjectLight's, round 706).
+const DISPLAY_FN := """
+uniform sampler2D srr_screen : hint_screen_texture, filter_nearest;
+global uniform vec4 srr_obj_tonemap;
+float srr_fx_filmic_raw(float x) {
+	return (x * (0.88 * x + 0.1 * 0.6) + 0.2 * 0.01) / (x * (0.88 * x + 0.6) + 0.2 * 0.3) - 0.01 / 0.3;
+}
+float srr_fx_filmic_inverse(float t, float white) {
+	float u = clamp(t, 0.0, 0.999) * srr_fx_filmic_raw(white) + 0.01 / 0.3;
+	float a = 0.88 * (u - 1.0);
+	float b = 0.6 * (u - 0.1);
+	float c = 0.2 * (0.3 * u - 0.01);
+	float disc = max(b * b - 4.0 * a * c, 0.0);
+	return max((-b - sqrt(disc)) / (2.0 * a), 0.0);
+}
+// A linear scene value -> the display value the screen shows for it.
+vec3 srr_shown(vec3 srr_l) {
+	vec3 srr_v = srr_l * srr_obj_tonemap.x;
+	if (srr_obj_tonemap.z > 0.5) {
+		float srr_w = srr_fx_filmic_raw(srr_obj_tonemap.y);
+		srr_v = vec3(srr_fx_filmic_raw(srr_v.r), srr_fx_filmic_raw(srr_v.g), srr_fx_filmic_raw(srr_v.b)) / srr_w;
+	}
+	return srr_linear_to_srgb(clamp(srr_v, vec3(0.0), vec3(1.0)));
+}
+// A display value -> the linear scene value the screen shows it for.
+vec3 srr_unshown(vec3 srr_v) {
+	vec3 srr_l = srr_srgb_to_linear(clamp(srr_v, vec3(0.0), vec3(1.0)));
+	if (srr_obj_tonemap.z > 0.5) {
+		srr_l = vec3(srr_fx_filmic_inverse(srr_l.r, srr_obj_tonemap.y), srr_fx_filmic_inverse(srr_l.g, srr_obj_tonemap.y), srr_fx_filmic_inverse(srr_l.b, srr_obj_tonemap.y));
+	}
+	return srr_l / max(srr_obj_tonemap.x, 0.0001);
+}
+"""
+
 ## The glow pass's draw (round 720, AmbientParticles; READ there): every
 ## node of this effect is drawn with the depth test off, and its particle
 ## colours' alpha is scaled by the glow alpha. Each node gets its own copy of
@@ -330,6 +436,12 @@ static func warm_glow_shaders() -> Array[Shader]:
 				var sh := _shader(cls, no_cull, link)
 				out.append(sh)
 				out.append(glow_shader(sh))
+				# The display-blended twins the objects' ambient effects draw
+				# with (round 722), for the classes plates and meshes use.
+				if not link and cls in ["mix", "add", "add_one"]:
+					var dsh := display_shader(sh)
+					out.append(dsh)
+					out.append(glow_shader(dsh))
 	return out
 
 ## Draws every EFP shader and its glow twin once, as tiny instanced quads in
@@ -383,6 +495,8 @@ static func glow_shader(sh: Shader) -> Shader:
 		"\tvec4 d = COLOR;\n\tif (glow_alpha < 255) d.a = floor(floor(d.a * 255.0 + 0.5) * float(glow_alpha) / 256.0) / 255.0;")
 	var g := Shader.new()
 	g.code = code
+	if sh.has_meta(BLEND_CLASS_META):
+		g.set_meta(BLEND_CLASS_META, sh.get_meta(BLEND_CLASS_META))
 	_shaders[key] = g
 	return g
 
@@ -730,6 +844,23 @@ func drawn_particles() -> int:
 				n += 1
 	return n
 
+## The world-space box of the drawn particles' centres (the QA log, round
+## 722), or an empty AABB at the effect when none is drawn.
+func particle_extent() -> AABB:
+	var out := AABB(global_position, Vector3.ZERO)
+	var first := true
+	for d in _draws:
+		var mmi := d[1] as MultiMeshInstance3D
+		var mm := mmi.multimesh
+		for i in range(mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count):
+			var at := mmi.global_transform * mm.get_instance_transform(i).origin
+			if first:
+				out = AABB(at, Vector3.ZERO)
+				first = false
+			else:
+				out = out.expand(at)
+	return out
+
 func _exit_tree() -> void:
 	if sim != null:
 		sim.clear()
@@ -904,6 +1035,7 @@ static func _shader(cls: String, no_cull: bool, link: bool = false) -> Shader:
 		.replace("{UVMAP}", "" if link else UVMAP_INSTANCE) \
 		.replace("{DECODE}", ShaderColour.DECODE_ALBEDO) \
 		.replace("\nvoid fragment() {", ShaderColour.DECODE_FN + "\nvoid fragment() {")
+	sh.set_meta(BLEND_CLASS_META, cls)
 	_shaders[key] = sh
 	return sh
 

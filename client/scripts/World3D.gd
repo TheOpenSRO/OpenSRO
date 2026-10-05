@@ -7671,7 +7671,7 @@ func _ambient_step(delta: float) -> void:
 	# Round 722: where each effect lands on the screen, every 20 ticks.
 	if _qa_ambient_log and Engine.get_physics_frames() % 20 == 0:
 		print("QA AMBIENT screen tick %d frame %d: %s" % [Engine.get_physics_frames(), Engine.get_frames_drawn(),
-			_ambient.describe_screen(camera_3d)])
+			_ambient.describe_screen(camera_3d, get_world_3d().direct_space_state)])
 	if _ambient.glow_count() == 0:
 		return
 	_ambient.update(delta * 1000.0, camera_3d, get_world_3d().direct_space_state)

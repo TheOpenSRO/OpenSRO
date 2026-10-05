@@ -67,6 +67,7 @@ func _init() -> void:
 	_test_glow_shader()
 	_test_light_effect()
 	_test_night_and_bones()
+	_test_display_shader()
 	# The camera tests need the tree: after the first frame.
 	process_frame.connect(_in_tree, CONNECT_ONE_SHOT)
 
@@ -240,3 +241,21 @@ func _test_glow_shader() -> void:
 	_check(g.code.contains("if (glow_alpha < 255) d.a ="), "the alpha scales the particle colour's alpha")
 	_check(EfpEffect.glow_shader(m.shader) == g, "cached per shader")
 	_check(not m.shader.code.contains("glow_alpha"), "the shared shader is untouched")
+
+## Round 722: the display-blended twin of a template shader.
+func _test_display_shader() -> void:
+	var add := EfpEffect._shader("add", true)
+	var d := EfpEffect.display_shader(add)
+	_check(d.code.contains("hint_screen_texture") and d.code.contains("srr_d + srr_s * srr_a")
+		and d.code.contains("ALBEDO = max(srr_t - srr_bg, vec3(0.0));") and d.code.contains("ALPHA = 1.0;"),
+		"an additive class adds the display sum's difference, alpha 1")
+	_check(d.code.contains("if (!OUTPUT_IS_SRGB)") and d.code.contains("blend_add"),
+		"only where the output is linear; Godot's own additive blend kept")
+	var mix := EfpEffect.display_shader(EfpEffect._shader("mix", true))
+	_check(mix.code.contains("mix(srr_d, srr_s, srr_a)") and mix.code.contains("/ max(srr_a, 1.0 / 255.0)"),
+		"a mixing class writes the colour whose linear mix lands on the display mix")
+	_check(EfpEffect.display_shader(add) == d and String(d.get_meta(EfpEffect.BLEND_CLASS_META)) == "add",
+		"cached, and it keeps its class")
+	var g := EfpEffect.glow_shader(d)
+	_check(g.code.contains("depth_test_disabled") and g.code.contains("hint_screen_texture") and g.code.contains("glow_alpha"),
+		"its glow twin keeps the screen read and adds the glow's states")

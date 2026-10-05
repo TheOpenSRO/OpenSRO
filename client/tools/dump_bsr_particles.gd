@@ -128,3 +128,32 @@ func _census(archive: Pk2Reader) -> void:
 	print("  entry modes: %s" % str(by_mode))
 	for b in bone_files:
 		print("  bone entry: %s" % b)
+	_texani_census(archive, files)
+
+## Round 722: every TEXANI mod -- its set, dispatch, method (0 the frame grid,
+## 1 the matrix rates), mode, frames and grid -- one line each, then counts.
+func _texani_census(archive: Pk2Reader, files: Array) -> void:
+	var files_with := 0
+	var counts := {}
+	for pair in files:
+		var data: PackedByteArray = archive.read_file(pair[1])
+		if data.size() < BsrReader.PREAMBLE_END:
+			continue
+		var mods := BsrReader.texani_mods(data)
+		if mods.is_empty():
+			continue
+		files_with += 1
+		for t in mods:
+			var key := "set %d w1 %d method %d mode %d" % [t["set_kind"], t["w1"], t["method"], t["mode"]]
+			counts[key] = int(counts.get(key, 0)) + 1
+			var r: PackedFloat32Array = t["rates"]
+			var nz: Array[String] = []
+			for i in range(r.size()):
+				if r[i] != 0.0:
+					nz.append("%d:%.3f" % [i, r[i]])
+			print("TEXANI %s: set %d w1 %d material %d method %d mode %d frames %d..%d flags %d fps %d grid %dx%d rates [%s]" % [
+				pair[0], t["set_kind"], t["w1"], int(t["material"]), t["method"], t["mode"], t["start"], t["end"],
+				t["flags"], t["fps"], t["rows"], t["cols"], ", ".join(nz)])
+	print("TEXANI CENSUS: %d .bsr with a TEXANI mod" % files_with)
+	for k in counts:
+		print("  %s: %d" % [k, counts[k]])
