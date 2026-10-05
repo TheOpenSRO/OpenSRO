@@ -2272,8 +2272,9 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 ## open, the source the bag 0x46), the whole stack (0x6815ff..0x68160f,
 ## FUN_008ba460, the slot's count). The original first asks, with
 ## UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL, before selling an item the store will
-## not buy back; which items those are is not read, and OpenSRO has no buy
-## back at all, so no such question is asked (OPEN).
+## not buy back; which items those are is not read (the set behind
+## UI_SILKMALL 0x67b3d0), so no such question is asked (OPEN). Round 728: a
+## quick-sold item does go into the buy-back row.
 func _ctrl_sell(slot: int, qty: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(_bag_item_id_at_slot(slot))
@@ -2764,6 +2765,9 @@ func _on_storage_deposit_result(ok: bool, reason: String) -> void:
 	if ok:
 		print("HudPanels: deposit accepted")
 		_refresh_storage_and_bag()
+		# Round 728: the deposit fee left the purse.
+		if NetClient.current_character_name != "":
+			NetClient.character_stats(NetClient.current_character_name)
 	else:
 		push_warning("HudPanels: deposit refused: %s" % reason)
 		# Round 728: short of the fee. The server's storage handlers refuse it
@@ -4290,6 +4294,14 @@ func qa_print_slots() -> void:
 				var slot := _bag_page * BAG_PAGE_SLOTS + i
 				if cell != null and cell.is_visible_in_tree() and slot < _bag_size_shown():
 					print("QA SLOT bag:%d at %s item %d" % [slot, _qa_xy(cell), _bag_item_id_at_slot(slot)])
+		# Round 728: every stack's count, so a live run reads a split.
+		var said := PackedStringArray()
+		for entry in _bag_slots:
+			var index = _first_field(entry, ["slot", "slot_index", "index"])
+			var id = _first_field(entry, ["item_id", "id"])
+			var n = _first_field(entry, COUNT_FIELDS)
+			said.append("%s=%s x%s" % [str(index), str(id), str(n)])
+		print("QA BAG %s" % " ".join(said))
 		for i in range(17):
 			var ws := inv.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
 			if ws != null and ws.is_visible_in_tree():
@@ -4304,6 +4316,8 @@ func qa_print_slots() -> void:
 					continue
 				if tr.has_meta("wh_slot"):
 					print("QA SLOT storage:%d at %s item %d" % [int(tr.get_meta("wh_slot")), _qa_xy(tr), int(tr.get_meta("wh_item_id"))])
+				elif tr.has_meta("buyback_index"):
+					print("QA SLOT buyback:%d at %s" % [int(tr.get_meta("buyback_index")), _qa_xy(tr)])
 				elif tr.has_meta("shop_item_id"):
 					print("QA SLOT shop:%s at %s item %d" % [tr.get_parent().name, _qa_xy(tr), int(tr.get_meta("shop_item_id"))])
 			for b in win.find_children("*", "BaseButton", true, false):

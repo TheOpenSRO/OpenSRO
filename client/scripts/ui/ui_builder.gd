@@ -1054,7 +1054,12 @@ func _build_slot(def: UiLayoutParser.ControlDef, background: Texture2D = null,
 	# hold can spill past it.
 	slot.size = inner
 	slot.custom_minimum_size = inner
-	slot.clip_contents = true
+	# A square item slot is not clipped (round 728): its layers are sized
+	# exactly, and the original draws a 4-digit count from 1 px left of the
+	# slot (ItemCountLabel, READ), which a clip cut off -- measured against
+	# qty_Pp886X3.png, the '5' of "5000" lost its first column. Row slots,
+	# whose text can run long, stay clipped.
+	slot.clip_contents = inner.x != inner.y
 
 	var art: Texture2D = background
 	if art == null and def.ddj != "" and not is_slice_base(def.ddj):

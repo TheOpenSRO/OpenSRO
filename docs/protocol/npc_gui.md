@@ -307,11 +307,11 @@ Ids → line kinds → text keys, in the builder's order:
 |---|---|---|---|---|---|
 | buy (drag a good onto the bag; Ctrl+click buys with no box) | `CItemMallConfirmBuy`, `ifinventory.txt` "ConfirmBuy", ID 400, 327x155 grown to **327x177** by its gold row (`ifitemmallconfirmslot.txt`), `msgbox2_window_` | | "Confirmation window" | Buy | count x unit, "%I64d", "Gold" |
 | sell (drag onto the store) | `CIFMessageBox` mode 6, purpose 2, 327x175 | MsgBoxStoreConfirm | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` "Sell" | P = count x unit, less ftol(P x the store's tax rate) (0x63bd60), plain digits; spins shown, a stack prefilled with its size |
-| buy back | mode 6, purpose 0x14 | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_RE_BUY_OBJECT` | spins hidden |
-| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | max(1, fee), the fee ref +0xcc x max(1, count), plain digits (READ round 726 review; the column is unmapped); spins hidden; a non-stacking item hides the quantity group |
+| buy back | mode 6, purpose 0x14 | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_RE_BUY_OBJECT` | spins hidden; opened by a buy-back slot (source kind 0x45) put down on the bag, `CIFInventory::vslot_028` 0x6b5b80 -> fill 0x6b0520: the inventory's box (+0x390), price "%I64d" of ref +0xb8 x count, count the slot's (READ round 728) |
+| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | max(1, fee), the fee ref +0xcc x max(1, count), plain digits (READ round 726 review); round 728 takes +0xcc as itemdata col 30 KeepingFee (INFERRED from the schema name; the premium time items' 0 matches MKtR5Kd.png's "1") and the server charges the same sum; spins hidden; a non-stacking item hides the quantity group |
 | withdraw an item | mode 6, purpose 6 (0x11) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_WITHDRAW` "Take" | "0"; spins, the price label and the name hidden |
 | deposit / withdraw gold | mode 3, purpose 3 / 4 (0x12 / 0x13) | MsgBoxStoreMoney | "Confirmation window" | "Deposit" / "Take" | the amount, opening at 0, at most min(balance, 1,000,000,000); icon `icon\mini_gold_icon.ddj` (the openers'); "Unit" hidden |
-| split a stack (Shift+click) | mode 5 | MsgBoxDivideCount | | `UIIT_CTL_CONFIRM` | |
+| split a stack (Shift+click) | mode 5 | MsgBoxDivideCount | `UIIT_STT_INPUT_BOX` "Input window" | `UIIT_CTL_CONFIRM` | 300x183 (0x640020); fill 0x6b3fa0: stackable and more than one, retained = the stack, the edit "1", no minimum, max stack - 1; OK 0x63d920 flags an empty or 0 edit (READ round 728) |
 
 **MsgBoxStoreConfirm** (READ, `ifmessagebox.txt`; rects in the box):
 - background `com_bg_tile_b` 16,40,295,106;
@@ -360,7 +360,7 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 | 7 | The stray "Gold: …" label under the store (`_build_shop_purse` / `_update_shop_purse`, OURS) | A (remove) |
 | 8 | The storage is titled with the NPC's name; the original's is `UIIT_STT_STORAGEROOM` "Storage" | A |
 | 9 | ~~Our confirm boxes are our own panels~~ Round 726: `StoreMessageBox` builds them from `ifmessagebox.txt`, `ifitemmallconfirmbuy.txt` and `ifitemmallconfirmslot.txt` | B (done) |
-| 10 | ~~Buy opens a box on click~~ Round 726: pick a good up and put it on the bag (ConfirmBuy), Ctrl+click buys with no box; sell by putting a bag item on the store, Ctrl+click sells with no box. The split box (Shift+click, MsgBoxDivideCount) is not built: OpenSRO's move has no count | B (split: C) |
+| 10 | ~~Buy opens a box on click~~ Round 726: pick a good up and put it on the bag (ConfirmBuy), Ctrl+click buys with no box; sell by putting a bag item on the store, Ctrl+click sells with no box. Round 728: the split box (Shift+click, MsgBoxDivideCount) is built and OpenSRO's move carries an optional count (OURS) | B |
 | 11 | Repair buttons: shown for smiths only in ours (`_show_repair_buttons`); retail's rule is OPEN | A (keep, labelled) |
 | 12 | Protocol: ours uses its own opcodes (`OpShopList 0x0052`/`0x0053`, OpShopBuy/Sell, OpStorage* `0x0056`-`0x005d`, our NPC talk is client-only). The original uses select `0x7045`/`0xb045` (with the interaction ids), open `0x7046`/`0xb046`, end `0x704b`/`0xb04b`, and moves items with the item-move request (`FUN_007950b0`, store window `0x0f` → inventory `0x46`) | C |
 | 13 | Other windows built from layouts with `#ifdef`s use hand-picked defines (`HudChat.LAYOUT_DEFINES`, `PANEL_DEFINES`) instead of `config\define.txt` | A (store/NPC/message box now; global as a follow-up) |
