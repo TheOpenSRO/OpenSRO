@@ -10,6 +10,16 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## Round 720 follow-ups (the teleport structures' effects)
+
+- [ ] **The gates' animated textures and material mods** (round 720's review): the `ambient` sets of
+      Hotan's `oas_hot_portal`, Constantinople's `euro_esteuro_fountain01` and the guild `charge_gate`
+      carry a TEXANI and an MTRL mod beside their particles, `pha_gate` an MTRL; not drawn
+      (docs/protocol/teleport_effects.md). `CRTModTexAni` is read in outline (BSR_FORMAT.md).
+- [ ] **Every placed object's `ambient` set** (OURS: only the teleport structures play theirs). The
+      review measured play-everywhere at Jangan: 112 objects, 135 effects, 113 glows, frame 1.53 ->
+      2.97 ms (+94 %). For the user to decide; prerequisites in docs/rounds/r720_review.md.
+
 ## The party epic (round 709+, requested 2026-10-04)
 
 The user asked for the whole party system "fully working", matching the original down to the

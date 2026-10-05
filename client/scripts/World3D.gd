@@ -511,6 +511,9 @@ func apply_video_options(o: VideoOptions) -> void:
 	# flare's nearest piece.
 	if _sun_glow != null:
 		_sun_glow.visible = o.value(VideoOptions.LENS_FLARE) == 1
+	# Light Effect (round 720's review, READ: case 0xb -> the thunk 0xbbdad0
+	# -> the effect manager's +0x1a4): the teleport gates' glow pass, live.
+	_ambient.set_light_effect(o.value(VideoOptions.LIGHT) == 1)
 	# SSAO (OURS) through the environment; Bloom Effect is the original's
 	# bloom (RetailBloom, round 702 review), in both renderers.
 	if world_environment != null and (changed.call(VideoOptions.SSAO) or changed.call(VideoOptions.BLOOM)):
@@ -536,8 +539,9 @@ func apply_video_options(o: VideoOptions) -> void:
 	# the animated objects) and Display Friendly/Enemy (the large-battle
 	# outfit swap, GlobalDataManager::FUN_009dae90) are kept and saved, and
 	# change nothing here: this client draws no environment-map sheen, no
-	# torch or sun light effect, no cloth or hair motion, and no battle
-	# outfits (docs/protocol/OPTION_VIDEO.md).
+	# torch or sun light effect (Light Effect drives only the teleport gates'
+	# glow pass, above), no cloth or hair motion, and no battle outfits
+	# (docs/protocol/OPTION_VIDEO.md).
 	print("World3D: video options applied in %d us -- %s" % [Time.get_ticks_usec() - t0, describe_video(o)])
 
 ## OPENSRO_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
@@ -1675,6 +1679,12 @@ func _ready() -> void:
 	# table, drawn from the same Particles.pk2.
 	BerserkLook.set_archive(_open_particles_pk2_if_set())
 	BerserkLook.warm()
+	# The effects' plate/mesh/link shaders and their glow twins (round 720's
+	# review): compiled behind the loading screen, not as a gate's region
+	# binds.
+	var sw_efp := Time.get_ticks_usec()
+	var warmed := EfpEffect.warm(camera_3d)
+	print("World3D: warming %d effect shader(s) in %d us" % [warmed, Time.get_ticks_usec() - sw_efp])
 	# The fade-in's shaders (round 676's review): compiled behind the loading
 	# screen, not on the first monster's frame.
 	print("World3D: warming %d appear-fade shader(s)" % AppearFade.warm(camera_3d))
@@ -7215,6 +7225,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	# placed portal is in the tree, and a region streamed out and back in is
 	# bound again with its fresh copies.
 	_bind_region_gates(region_x, region_y, group)
+	_attach_gate_effects(region_x, region_y)
 	var key := "%d_%d" % [region_x, region_y]
 	var uids: Dictionary = _npc_uids_by_region.get(key, {})
 	if uids.is_empty():
@@ -7504,6 +7515,168 @@ func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
 		print("World3D: teleport gate %s clickable at %d/%d local (%.0f, %.0f, %.0f): its BCRadius %.0f / BCHeight %.0f box, world %s (point %d)" % [
 			building.code, region_x, region_y, building.x, building.y, building.z, building.bc_radius, building.bc_height,
 			str(pick.global_position.round() if pick.is_inside_tree() else (_chain_transform(group) * Vector3(building.x, building.y, building.z)).round()), point.id])
+
+## The teleport structures' own effects (round 720; AmbientParticles has
+## what is READ and what is OURS): every teleportbuilding row standing in
+## the region -- the town gates, the guild and fortress gates, every other
+## -- plays the `ambient` particle effects of the placed objects that make
+## it up: those of the region's placed objects within GATE_EFFECT_RADIUS of
+## the row's position (horizontally, region-local) that carry any. Jangan's
+## gate draws its glow from `cj_portal_stone` beside `cj_portal`, Alexandria
+## North's portal stands 15.1 from its row, Hotan's fortress gates up to
+## 26.0 (MEASURED, docs/protocol/teleport_effects.md). An object takes its
+## effects once (META_GATE_EFFECTS); a region streamed out takes them with
+## its objects.
+const GATE_EFFECT_RADIUS := 30.0
+const META_GATE_EFFECTS := "gate_effects"
+var _ambient := AmbientParticles.new()
+
+## Retries left for a region whose gate effects are still decoding.
+const GATE_EFFECT_RETRIES := 50
+
+func _attach_gate_effects(region_x: int, region_y: int, retries: int = GATE_EFFECT_RETRIES) -> void:
+	# OPENSRO_QA_AMBIENT=off (round 720): none, for a comparison frame.
+	if _teleport_reader == null or OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+		return
+	var container := _object_containers.get("_%d_%d" % [region_x, region_y]) as Node3D
+	if container == null or not is_instance_valid(container):
+		return
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return
+	_ambient.set_light_effect(video_options().value(VideoOptions.LIGHT) == 1)
+	# Effects still decoding on a preload task: come back shortly rather than
+	# decode them on this thread (round 720's review).
+	if retries > 0 and not _gate_effects_decoded(container, region_x, region_y):
+		_after(0.1, func() -> void: _attach_gate_effects(region_x, region_y, retries - 1))
+		return
+	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
+		var building: TeleportReader.Building = building_v
+		var at := Vector2(building.x, building.z)
+		for child in container.get_children():
+			var obj := child as Node3D
+			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES) or obj.has_meta(META_GATE_EFFECTS):
+				continue
+			var d := Vector2(obj.position.x, obj.position.z).distance_to(at)
+			if d > GATE_EFFECT_RADIUS:
+				continue
+			obj.set_meta(META_GATE_EFFECTS, true)
+			var mods: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
+			var sw_attach := Time.get_ticks_usec()
+			var made := _ambient.attach(obj, mods, particles)
+			sw_attach = Time.get_ticks_usec() - sw_attach
+			var total := 0
+			for entries in mods:
+				total += (entries as Array).size()
+			print("World3D: gate %s -- %s at %.1f from its row plays %d of its %d ambient effect(s), built in %d us" % [
+				building.code, obj.name, d, made.size(), total, sw_attach])
+			# The placement, measured: each effect's position in its object's
+			# frame, which should be the entry's offset (AmbientParticles).
+			if _qa_ambient_log:
+				for fx_v in made:
+					var fx := fx_v as EfpEffect
+					print("QA AMBIENT placed %s: %s in the object's frame" % [fx.path.get_file(),
+						str(obj.global_transform.affine_inverse() * fx.placed_at())])
+
+## The region-local x/z of the teleport rows of the region `node_suffix`
+## (`_<x>_<y>`) names, for its objects job (round 720's review).
+func _gate_points_for(node_suffix: String) -> Array:
+	var out: Array = []
+	if OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+		return out
+	# The teleport tables load with the NPC tables (_load_npc_tables), which
+	# the first regions' jobs are built before: loaded here first (once).
+	if _teleport_reader == null:
+		_load_npc_tables()
+	if _teleport_reader == null:
+		return out
+	var parts := node_suffix.split("_", false)
+	if parts.size() != 2:
+		return out
+	for building_v in _teleport_reader.buildings_in_region(int(parts[0]), int(parts[1])):
+		var building: TeleportReader.Building = building_v
+		out.append(Vector2(building.x, building.z))
+	return out
+
+## On the objects job's worker (round 720's review): decodes the ambient
+## effects of the models placed within GATE_EFFECT_RADIUS of a teleport row
+## -- their .efp, textures and meshes (EfpEffect's preload) -- so the commit's
+## attach finds them warm.
+static func _preload_gate_effects(job: Dictionary, placements: Array, models: Dictionary,
+		table: ObjidxReader.Table) -> void:
+	var gates: Array = job.get("gate_points", [])
+	var particles: Pk2Reader = job.get("particles_pk2")
+	if gates.is_empty() or particles == null:
+		return
+	var paths := PackedStringArray()
+	for placement in placements:
+		var at: Vector3 = placement["position"]
+		var near := false
+		for g in gates:
+			if Vector2(at.x, at.z).distance_to(g) <= GATE_EFFECT_RADIUS:
+				near = true
+				break
+		if not near:
+			continue
+		var prepared: Dictionary = models.get(placement_model_path(placement, table).to_lower(), {})
+		if prepared.is_empty():
+			continue
+		for p in _ambient_efps(prepared.get("root")):
+			if not paths.has(p):
+				paths.append(p)
+	if paths.is_empty():
+		return
+	# On a worker the decode runs here; a job prepared on the main thread (the
+	# entry's first regions) hands it to a task, and the attach waits for it
+	# (_attach_gate_effects) rather than decoding it a second time.
+	if OS.get_thread_caller_id() == OS.get_main_thread_id():
+		EfpEffect.preload_paths(paths, particles)
+		print("World3D: %s -- %d gate effect(s) preloading on a task" % [job.get("mapo_path", "?"), paths.size()])
+	else:
+		var sw := Time.get_ticks_usec()
+		EfpEffect._preload_task(paths, particles)
+		print("World3D: %s -- %d gate effect(s) preloaded in %d us on the job's worker" % [job.get("mapo_path", "?"),
+			paths.size(), Time.get_ticks_usec() - sw])
+
+## The ambient effect files of a prepared node and its compound children.
+static func _ambient_efps(node) -> PackedStringArray:
+	var out := PackedStringArray()
+	if not (node is Dictionary):
+		return out
+	if node.has("ambient"):
+		out.append_array(AmbientParticles.efp_paths(node["ambient"]))
+	for child in node.get("children", []):
+		out.append_array(_ambient_efps(child))
+	return out
+
+## Whether every ambient effect of the gate objects in `container` is
+## decoded.
+func _gate_effects_decoded(container: Node3D, region_x: int, region_y: int) -> bool:
+	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
+		var building: TeleportReader.Building = building_v
+		var at := Vector2(building.x, building.z)
+		for child in container.get_children():
+			var obj := child as Node3D
+			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES) or obj.has_meta(META_GATE_EFFECTS):
+				continue
+			if Vector2(obj.position.x, obj.position.z).distance_to(at) > GATE_EFFECT_RADIUS:
+				continue
+			for p in AmbientParticles.efp_paths(obj.get_meta(AmbientParticles.META_ENTRIES)):
+				if not EfpEffect.has_template(p):
+					return false
+	return true
+
+## The glow pass (AmbientParticles.update), once a physics tick.
+func _ambient_step(delta: float) -> void:
+	if _ambient.glow_count() == 0:
+		return
+	_ambient.update(delta * 1000.0, camera_3d, get_world_3d().direct_space_state)
+	# OPENSRO_QA_AMBIENT=1 (round 720): each glow's alpha and visibility,
+	# every 60 ticks.
+	if _qa_ambient_log and Engine.get_physics_frames() % 60 == 0:
+		print("QA AMBIENT tick %d: %s" % [Engine.get_physics_frames(), _ambient.describe()])
+
+var _qa_ambient_log := OS.get_environment("OPENSRO_QA_AMBIENT") not in ["", "off"]
 
 ## A town gate's pick box layer (round 690): its own bit (10), which only the
 ## talk ray masks -- nothing walks into it, no camera or ground ray meets it.
@@ -10574,6 +10747,7 @@ static func _objects_prepare(job: Dictionary) -> void:
 	job["models"] = models
 	job["textures"] = textures
 	_job_lap(job, "models", sw)
+	_preload_gate_effects(job, placements, models, table)
 	job["prepared"] = true
 
 ## The objects a region's `.o2` gives the world, the way the retail loader
@@ -10682,6 +10856,10 @@ func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String)
 		"here": null,
 		"templates_held": _object_templates.held_keys(),
 		"known_textures": ObjectLoader.snapshot_textures(_object_textures),
+		# The teleport rows standing here and the effects archive (round 720's
+		# review): the prepare preloads the gate objects' ambient effects.
+		"particles_pk2": _open_particles_pk2_if_set(),
+		"gate_points": _gate_points_for(node_suffix),
 		"threaded": false,
 		"dispatched_frame": -1,
 		"laps": [],
@@ -11295,6 +11473,8 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_YAW=deg    camera yaw (0 looks along +Z)
 ##   OPENSRO_QA_PITCH=deg  camera pitch (-90 is straight down)
 ##   OPENSRO_QA_DIST=n     camera distance from the player
+##   OPENSRO_QA_AMBIENT=1|off  log the teleport gates' glows every 60 ticks
+##                         (round 720), or attach no gate effects at all
 ##   OPENSRO_QA_WALK=deg   walk continuously on that heading
 ##   OPENSRO_QA_FREE=1     let the camera pass through geometry
 ##   OPENSRO_QA_NOFOG=1    disable fog (for high overview shots)
@@ -14562,6 +14742,8 @@ func _physics_process(delta: float) -> void:
 	BerserkLook.tick(delta)
 	# Monsters and other players fading into existence (round 676).
 	_appear_fades.step(delta)
+	# The teleport gates' glows (round 720).
+	_ambient_step(delta)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
 	var cells_before := _load_timings.cell_work_usec

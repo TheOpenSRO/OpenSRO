@@ -193,6 +193,12 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 		return null
 
 	var node := {"kind": "bsr", "name": obj.object_name, "pieces": []}
+	# The object's always-on particle effects (round 720): the entries of its
+	# `ambient` mod set (AmbientParticles.ambient_entries, READ), kept on the
+	# committed node as meta for the world to play where it chooses to.
+	var ambient := AmbientParticles.ambient_entries(obj.particle_mods)
+	if not ambient.is_empty():
+		node["ambient"] = ambient
 
 	# A real, genuine mesh-less object (obj.mesh_path == "") is a real
 	# particle-effect-only marker, not a failure -- see BsrReader.parse's
@@ -327,6 +333,8 @@ static func _piece_faces(arrays: Array) -> Variant:
 static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 	var root := Node3D.new()
 	root.name = node["name"]
+	if node.has("ambient"):
+		root.set_meta(AmbientParticles.META_ENTRIES, node["ambient"])
 	if node["kind"] == "cpd":
 		for child in node["children"]:
 			root.add_child(_commit_node(child, texture_cache))
