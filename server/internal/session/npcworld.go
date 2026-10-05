@@ -51,6 +51,17 @@ type npcWorld struct {
 	sent   map[uint64]combat.Cell
 	// placed counts NPC placements (an NPC in two zone frames counts twice).
 	placed int
+	// byUID is every placement of an NPC by its unique id (round 727): the
+	// 0x7045 select and the 0x7046 open look the target up by the id the
+	// client sends, in the selecting player's zone.
+	byUID map[uint32][]npcPlacement
+}
+
+// npcPlacement is one NPC placed in one zone frame, at x, z of that frame.
+type npcPlacement struct {
+	zone string
+	x, z float64
+	npc  *npcspawn.NPC
 }
 
 var npcWorldRuntime atomic.Pointer[npcWorld]
@@ -71,7 +82,8 @@ func InstallNPCs(npcs []npcspawn.NPC, logger *slog.Logger) int {
 		npcWorldRuntime.Store(nil)
 		return 0
 	}
-	w := &npcWorld{logger: logger, byCell: map[combat.Cell][]*npcspawn.NPC{}, sent: map[uint64]combat.Cell{}}
+	w := &npcWorld{logger: logger, byCell: map[combat.Cell][]*npcspawn.NPC{}, sent: map[uint64]combat.Cell{},
+		byUID: map[uint32][]npcPlacement{}}
 	zones := make([]string, 0, len(worldmap.ZoneCentre))
 	for z := range worldmap.ZoneCentre {
 		zones = append(zones, z)
@@ -86,6 +98,7 @@ func InstallNPCs(npcs []npcspawn.NPC, logger *slog.Logger) int {
 		if SingleFrame() {
 			x, z := worldmap.ToWorld(rx, ry, float64(n.X), float64(n.Z), worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
 			w.file(combat.CellOf(worldmap.WorldBucket, x, z), n)
+			w.byUID[n.UID] = append(w.byUID[n.UID], npcPlacement{zone: worldmap.WorldBucket, x: x, z: z, npc: n})
 			continue
 		}
 		for _, zone := range zones {
@@ -96,6 +109,7 @@ func InstallNPCs(npcs []npcspawn.NPC, logger *slog.Logger) int {
 			x, z, ok := worldmap.ToZoneWorld(zone, rx, ry, float64(n.X), float64(n.Z))
 			if ok {
 				w.file(combat.CellOf(zone, x, z), n)
+				w.byUID[n.UID] = append(w.byUID[n.UID], npcPlacement{zone: zone, x: x, z: z, npc: n})
 			}
 		}
 	}
@@ -263,6 +277,21 @@ func forgetNPCWindow(id uint64) {
 		delete(w.sent, id)
 		w.mu.Unlock()
 	}
+}
+
+// npcInZone is the placement of the NPC with unique id uid in zone, if the
+// NPC runtime is installed and the NPC stands in that zone's frame.
+func npcInZone(uid uint32, zone string) (npcPlacement, bool) {
+	w := npcWorldRuntime.Load()
+	if w == nil {
+		return npcPlacement{}, false
+	}
+	for _, p := range w.byUID[uid] {
+		if p.zone == zone {
+			return p, true
+		}
+	}
+	return npcPlacement{}, false
 }
 
 // NPCsInWindow is how many NPC placements the window centred on cell holds

@@ -77,13 +77,30 @@ type InteractionInputs struct {
 	// (teleportdata Interaction7/Interaction9), when the NPC is a row's
 	// AssocRefObj.
 	Teleport7, Teleport9 bool
-	// HasShop is INFERRED: Create adds 0x11 when a map in the reference
-	// manager (FUN_004ccb70, keyed by the object's slot-1 id) holds a
-	// non-empty string for it, and only while the world-config byte at
-	// +0x42404 is 0. That the map is the shop group's NPC (refshopgroup names
-	// its NPC: RefShopGroup_ExtractData 0x6a9fb0, "can't find assoc NPC with
-	// this shop") and that the byte is 0 are not read.
-	HasShop bool
+	// Teleport8 (round 727) is id 8, "Select teleport area": the teleport
+	// row's link registrar (0x6a7f70, round 642) puts 8 in the source
+	// point's ref list when the row's last byte is 1. That byte has no
+	// column in the client's teleportdata.txt, so "the point has outgoing
+	// links" STANDS IN for it (INFERRED; the client's round-642 gate lines
+	// use the same stand-in). Like 7 and 9 it is copied from the ref list,
+	// without flag bit 1.
+	Teleport8 bool
+	// OwnsShop (round 727) is id 1, the store. READ: the NPC's init at
+	// 0x4c7920 looks its ref id up in the reference manager's shop map
+	// (0x4ccaa0), and when it finds one builds the NPC's store object
+	// (0x411bc0, kept at +0x1d1c) and calls AddAvailableInteraction(1)
+	// (0x4c7996), then 0xc when the store passes 0x867850 (not modelled).
+	// That the map is refshopgroup's AssocNPC -> group is INFERRED from it
+	// building the store (RefShopGroup_ExtractData 0x6a9fb0 stores the
+	// group's NPC id, "can't find assoc NPC with this shop").
+	//
+	// Until round 727 this field was HasShop and added 0x11. Id 0x11 is
+	// registered from a different map (FUN_004ccb70 on refmgr+0x110, while
+	// the world-config byte +0x42404 is 0; round 523 found the gacha NPC map
+	// a candidate, not a finding), so a shop NPC is NOT given 0x11 any more.
+	// The client turns 0x11 into its gacha/open-market line, which the
+	// herbalist does not show.
+	OwnsShop bool
 }
 
 // Interactions is the flag byte and the interaction list of code's spawn
@@ -95,6 +112,9 @@ func Interactions(code string, in InteractionInputs) (flags byte, ids []byte) {
 	}
 	if in.Teleport9 {
 		set[9] = true
+	}
+	if in.Teleport8 {
+		set[8] = true
 	}
 	add := func(v ...byte) {
 		flags |= FlagInteractions
@@ -121,15 +141,22 @@ func Interactions(code string, in InteractionInputs) (flags byte, ids []byte) {
 	if strings.EqualFold(code, "NPC_SIEGE_DUNGEON_TELEPORT") {
 		add(0x28)
 	}
-	if in.HasShop {
-		add(0x11)
+	// The shop init (0x4c7920) and the quests (questtalk.go) run after Create
+	// in the original; the set is ordered on the wire, so the order of these
+	// adds does not show.
+	if in.OwnsShop {
+		add(1)
+	}
+	if QuestTalk(code) {
+		add(2)
 	}
 	if strings.Contains(code, "NPC_CH_GACHA_OPERATOR") {
 		add(0x12)
 	}
-	if flags&FlagInteractions == 0 {
-		return 0, nil
-	}
+	// The whole set, flag or not (round 727): the spawn record writes the
+	// list only with bit 1 (AppendRecord), but the 0xB045 select reply's
+	// PublishAvailableInteractions (0x4a95a0) copies every id of +0x130 --
+	// the teleport row's 7, 8 and 9 included, which set no bit.
 	for b := range set {
 		ids = append(ids, b)
 	}

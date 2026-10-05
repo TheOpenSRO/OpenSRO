@@ -132,7 +132,77 @@ func _check_store_confirm() -> void:
 	var bb := _box(StoreMessageBox.Kind.BUY_BACK, {"name": "x", "count": 1, "max": 1, "unit_price": 10})
 	_check(_text_of(bb, "GDR_MBS_CONFIRM_BTN_SELL") == "Buy back" and not _visible(bb, "GDR_MBS_CONFIRM_SPINBTN_UP"),
 		"buy back: OK reads Buy back, spins hidden")
+	_check(bb.price_text() == "10", "buy back: count x the sell price (got %s)" % bb.price_text())
 	bb.queue_free()
+	var bb3 := _box(StoreMessageBox.Kind.BUY_BACK, {"name": "x", "count": 3, "max": 3, "unit_price": 210})
+	_check(bb3.price_text() == "630", "buy back: 3 x 210 = 630 (got %s)" % bb3.price_text())
+	bb3.queue_free()
+	# Round 728: the fee a unit (+0xcc, KeepingFee) times the count, floored at 1.
+	var fee := _box(StoreMessageBox.Kind.DEPOSIT, {"name": "x", "count": 5, "max": 5, "unit_price": 11})
+	_check(fee.price_text() == "55", "deposit: 5 x a fee of 11 = 55 (got %s)" % fee.price_text())
+	fee.queue_free()
+	var free_fee := _box(StoreMessageBox.Kind.DEPOSIT, {"name": "x", "count": 5, "max": 5, "unit_price": 0})
+	_check(free_fee.price_text() == "1", "deposit: a zero fee still shows 1 (got %s)" % free_fee.price_text())
+	free_fee.queue_free()
+
+## Round 728: the split box, MsgBoxDivideCount (0x640020, 0x6b3fa0).
+func _check_divide() -> void:
+	var d := _box(StoreMessageBox.Kind.DIVIDE, {"name": "Vigor Recovery Grain (Small)", "stack": 5000, "count": 1, "min": 0, "max": 4999})
+	_check(d.size == Vector2(300, 183), "divide: 300x183 (READ 0x6400c8), got %s" % d.size)
+	_check(_text_of(d, "Title") == "Input window" or _text_of(d, "Title") == "UIIT_STT_INPUT_BOX", "divide: titled Input window (got %s)" % _text_of(d, "Title"))
+	_check(_text_of(d, "GDR_MBDC_STATIC_CURRENT_AMOUNT") == "5000", "divide: retained 5000")
+	_check(_text_of(d, "GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT") == "1", "divide: the edit opens at 1 (0xd87bdc)")
+	# Held to its authored 42x24 (review F8). Measured live at 42x24 with the
+	# client's art; this fixture has none, so Godot's default stylebox and font
+	# floor the size here -- the test checks what the box asks for.
+	var de := d.find_child("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT", true, false) as LineEdit
+	_check(de != null and de.position == Vector2(223, 102) and de.custom_minimum_size == Vector2(42, 24)
+		and de.get_theme_constant("minimum_character_width") == 0,
+		"divide: the edit asks for its authored 223,102,42,24 (review F8)")
+	_check(_text_of(d, "GDR_MBDC_STATIC_NAMEBOARD") == "Vigor Recovery Grain (Small)", "divide: the name on the board")
+	var got := [-1]
+	d.confirmed.connect(func(q: int) -> void: got[0] = q)
+	var edit := d.find_child("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT", true, false) as LineEdit
+	edit.text = "9000"
+	edit.text_changed.emit("9000")
+	_check(d.count == 4999, "divide: held to stack - 1 (0x634f20), got %d" % d.count)
+	edit.text = "250"
+	(d.find_child("GDR_MBDC_BTN_OK", true, false) as BaseButton).pressed.emit()
+	_check(got[0] == 250, "divide: OK hands back 250, got %d" % got[0])
+	var e := _box(StoreMessageBox.Kind.DIVIDE, {"stack": 3, "count": 1, "min": 0, "max": 2})
+	var got0 := [-1]
+	e.confirmed.connect(func(q: int) -> void: got0[0] = q)
+	(e.find_child("GDR_MBDC_STATIC_DIVIDE_AMOUNT_EDIT", true, false) as LineEdit).text = ""
+	(e.find_child("GDR_MBDC_BTN_OK", true, false) as BaseButton).pressed.emit()
+	_check(got0[0] == 0, "divide: an empty edit gives 0 (the 0x8076 flag), got %d" % got0[0])
+
+	# The digit label (ItemCountLabel, FUN_0067bd70).
+	_check(ItemCountLabel.digit_xs(1) == [2], "count: one digit at x0+2, got %s" % [ItemCountLabel.digit_xs(1)])
+	_check(ItemCountLabel.digit_xs(4) == [-1, 4, 9, 14], "count: 4 digits from x0-1, pitch 5, got %s" % [ItemCountLabel.digit_xs(4)])
+	_check(ItemCountLabel.shows_count([3, 3, 1, 1], false, 1), "count: an expendable shows even 1")
+	_check(not ItemCountLabel.shows_count([1, 6, 1, 1], false, 1) and not ItemCountLabel.shows_count([3, 3, 1, 1], true, 5),
+		"count: equipment and bionic show none")
+
+	# The retail item operation (ItemOpNet), against session/itemop_test.go's bytes.
+	_check(ItemOpNet.encode_split(0, 2, 250) == PackedByteArray([0, 13, 15, 0xfa, 0]), "0x7034 type 0 encodes")
+	_check(ItemOpNet.encode_sell(1, 20, 0x01020304) == PackedByteArray([9, 14, 20, 0, 4, 3, 2, 1]), "0x7034 type 9 encodes")
+	_check(ItemOpNet.encode_deposit(0, 5, 7) == PackedByteArray([2, 13, 5, 7, 0, 0, 0]), "0x7034 type 2 encodes")
+	_check(ItemOpNet.encode_buyback(7, 3) == PackedByteArray([7, 0, 0, 0, 3]), "0x7168 encodes")
+	var sold := ItemOpNet.decode_result(PackedByteArray([1, 9, 14, 20, 0, 7, 0, 0, 0, 1]))
+	_check(sold.ok and sold.type == 9 and sold.src == 1 and sold.count == 20 and sold.npc == 7 and sold.book == 1, "0xB034 type 9 decodes")
+	var back := ItemOpNet.decode_result(PackedByteArray([1, 0x22, 14, 0, 20, 0]))
+	_check(back.ok and back.type == 0x22 and back.dst == 1 and back.index == 0 and back.count == 20, "0xB034 type 0x22 decodes")
+	var bad := ItemOpNet.decode_result(PackedByteArray([2, 0x0f, 0x18]))
+	_check(not bad.ok and bad.code == 0x180f, "a failure decodes its code")
+	# The client's list (c:0x78d900): 0xFF books nothing, the sixth drops the oldest.
+	var book: Array = []
+	for n in range(6):
+		book = ItemOpNet.book_sale(book, 100 + n, 1, n + 1)
+	book = ItemOpNet.book_sale(book, 999, 1, ItemOpNet.NOT_BOOKED)
+	_check(book.size() == 5 and int(book[0].item_id) == 101 and int(book[4].item_id) == 105, "the list keeps the newest five, oldest first")
+	_check(ItemOpNet.never_booked([3, 2, 1, 1], false, "") and ItemOpNet.never_booked([3, 3, 8, 1], false, "")
+		and not ItemOpNet.never_booked([3, 3, 1, 1], false, "ITEM_ETC_HP_POTION_05") and ItemOpNet.never_booked([3, 3, 1, 1], false, "ITEM_QSP_X"),
+		"the never-booked set (gs:0x6b2950)")
 
 func _check_money() -> void:
 	var g := _box(StoreMessageBox.Kind.GOLD_DEPOSIT, {"count": 0, "min": 0, "max": 5000})
@@ -301,6 +371,7 @@ func _process(_delta: float) -> bool:
 		_check_buy()
 		_check_store_confirm()
 		_check_money()
+		_check_divide()
 		_check_placement()
 		_check_gestures()
 	elif _frame == 3:

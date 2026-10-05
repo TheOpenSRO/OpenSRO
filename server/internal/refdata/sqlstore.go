@@ -98,6 +98,9 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS can_pick BOOLEAN NOT NULL DEFAULT TRU
 ALTER TABLE items ADD COLUMN IF NOT EXISTS code_name TEXT NOT NULL DEFAULT '';
 -- CompositeDesc (round 632 review): a composite item's timed-job list.
 ALTER TABLE items ADD COLUMN IF NOT EXISTS composite_desc TEXT NOT NULL DEFAULT '';
+-- KeepingFee, itemdata column 30 (round 728): the warehouse's per-item
+-- deposit fee. 0 on an import that predates the column.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS keeping_fee BIGINT NOT NULL DEFAULT 0;
 -- GetItemByCode looks items up by code (composite review).
 CREATE INDEX IF NOT EXISTS items_code_name_idx ON items (code_name);
 -- The potion restore amounts. REAL and exported since the Param block was
@@ -299,8 +302,8 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
 			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
-			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72)
+			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id1=excluded.type_id1, type_id2=excluded.type_id2, type_id3=excluded.type_id3, type_id4=excluded.type_id4,
 			country=excluded.country, req_gender=excluded.req_gender,
@@ -337,7 +340,7 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			cooltime_group=excluded.cooltime_group, cooltime_ms=excluded.cooltime_ms,
 			parry_ratio_min=excluded.parry_ratio_min, parry_ratio_max=excluded.parry_ratio_max,
 			can_use=excluded.can_use, can_pick=excluded.can_pick, code_name=excluded.code_name,
-			composite_desc=excluded.composite_desc
+			composite_desc=excluded.composite_desc, keeping_fee=excluded.keeping_fee
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -360,7 +363,7 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			it.ReinforcePhysMinHi, it.ReinforcePhysMaxHi, it.ReinforceMagMinHi, it.ReinforceMagMaxHi,
 			it.Range, int64(it.ReinforceRate1), int64(it.ReinforceRate2), int64(it.ReinforceRate3),
 			int64(it.CooltimeGroup), it.CooltimeMs,
-			it.ParryRatioMin, it.ParryRatioMax, it.CanUse, it.CanPick, it.CodeName, it.CompositeDesc,
+			it.ParryRatioMin, it.ParryRatioMax, it.CanUse, it.CanPick, it.CodeName, it.CompositeDesc, it.KeepingFee,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting item %d: %w", it.ID, err)
 		}
@@ -387,7 +390,7 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
 			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
-			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc
+			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee
 		FROM items WHERE id = $1`, id)
 	var rr [3]int64
 	var cg int64
@@ -405,7 +408,7 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 		&it.PhysAttackMinHi, &it.PhysAttackMaxHi, &it.MagAttackMinHi, &it.MagAttackMaxHi,
 		&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
 		&it.Range, &rr[0], &rr[1], &rr[2], &cg, &it.CooltimeMs,
-		&it.ParryRatioMin, &it.ParryRatioMax, &it.CanUse, &it.CanPick, &it.CodeName, &it.CompositeDesc,
+		&it.ParryRatioMin, &it.ParryRatioMax, &it.CanUse, &it.CanPick, &it.CodeName, &it.CompositeDesc, &it.KeepingFee,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
@@ -456,7 +459,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
 			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
-			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc
+			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee
 		FROM items ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing items: %w", err)
@@ -482,7 +485,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			&it.PhysAttackMinHi, &it.PhysAttackMaxHi, &it.MagAttackMinHi, &it.MagAttackMaxHi,
 			&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
 			&it.Range, &rr[0], &rr[1], &rr[2], &cg, &it.CooltimeMs,
-			&it.ParryRatioMin, &it.ParryRatioMax, &it.CanUse, &it.CanPick, &it.CodeName, &it.CompositeDesc,
+			&it.ParryRatioMin, &it.ParryRatioMax, &it.CanUse, &it.CanPick, &it.CodeName, &it.CompositeDesc, &it.KeepingFee,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning item: %w", err)
 		}

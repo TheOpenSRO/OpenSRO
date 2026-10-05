@@ -39,6 +39,7 @@ func (s Source) String() string {
 type NPC struct {
 	Record
 	Code   string // characterdata CodeName, "" without an NPC table
+	Shop   bool   // runs a store (Info.Shop, round 727)
 	Source Source
 	NestID int64
 	// Near: the nest came from the second pass (NearRadius), not from the
@@ -73,6 +74,10 @@ const NearRadius = 200.0
 // Info is what the placement needs of an NPC's reference row.
 type Info struct {
 	Code string
+	// Shop: the NPC runs a store (the NPC table's Shop column, round 727):
+	// the open of id 1 refuses code 3 without one (FUN_00619c10 == 0,
+	// 0x5103ba..0x5103c3).
+	Shop bool
 }
 
 // Report counts what Place did, per source and per area.
@@ -228,6 +233,7 @@ func Place(rows []Row, db *nest.DB, info func(int64) (Info, bool), interactions 
 		if info != nil {
 			if in, ok := info(r.RefID); ok {
 				n.Code = in.Code
+				n.Shop = in.Shop
 			}
 		}
 		if interactions != nil {

@@ -204,8 +204,11 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
 /tmp/export-refdata  -mode regions -out regions.csv refregion.txt         # 3,194 regions, 103 towns; the server reads it with -regions-csv (round 674)
 /tmp/export-refdata  -mode chargen -out chargen.csv $(order characterdata.txt) $(order itemdata.txt)
                      # 104 creatable ids (52 bodies, 52 items) and 2 ammunition rows; the server reads it with -chargen-csv (round 682)
+/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refshopgroup.txt" -out refshopgroup.txt
+/tmp/export-refdata  -mode npcs -out npcs.csv $(order characterdata.txt) refshopgroup.txt
+                     # 313 NPC rows, 84 named by refshopgroup (round 708); REQUIRED with -npcpos-csv since round 727 (-npcs-csv)
 rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt characterdata_* leveldata.txt \
-      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refregion.txt
+      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refregion.txt refshopgroup.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
 # The exporter grows a strict-suffix column now and then (latest: skill columns 47-61, round 616 -- the buff
@@ -292,6 +295,15 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #   654's count on a retail archive).
 # Since round 666 the server also WARNs at every boot while no skill carries status params:
 # `skills store has NO status params (N skills, 0 with status_params) ... RE-EXPORT skills.csv`.
+# ROUND 728 (the warehouse deposit fee) NEEDS THE ITEMS RE-EXPORT ON opensro-01: re-run
+# `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 73 columns, the new
+# column 72 KeepingFee, itemdata column 30), then the NEW `import-refdata` (step 3) -- its store adds
+# items.keeping_fee BIGINT NOT NULL DEFAULT 0 before it writes the rows -- then restart the server.
+# Until then keeping_fee is 0 on every row and EVERY DEPOSIT COSTS 1 GOLD (before round 728 deposits
+# were free, so players see a change either way). Check:
+# `SELECT keeping_fee FROM items WHERE id = 8;` answers 11 (ITEM_ETC_HP_POTION_05) on a retail
+# archive. The client needs no step: the release build compiles the native library with the new
+# column; an older library shows a fee of 1 in the deposit box while the server charges the real one.
 
 # ROUND 691 (Europe's masteries and skills) NEEDS NO RE-EXPORT AND NO RE-IMPORT: the race filter
 # reads two columns every skills table already has -- skills.mastery1 and skills.req_learn_race
@@ -342,6 +354,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/opensro?sslmode=disable"
 #         - "-leveldata-csv=/data/leveldata.csv"
 #         - "-npcpos-csv=/data/npcpos.csv"       # real monster placements (round 253); omit for the town anchors
+#         - "-npcs-csv=/data/npcs.csv"           # the NPC table (round 708); REQUIRED with -npcpos-csv since round 727: the talk menus
 #         - "-teleport-dir=/data/teleport"       # the teleport network (round 575); the town teleporters use it (round 576)
 #         - "-monsters-csv=/data/monsters.csv"   # the monster species table (round 654); see "Monster species table"
 #         - "-regions-csv=/data/regions.csv"     # the towns (round 674): a monster entering one is removed; see "Towns"
@@ -441,21 +454,52 @@ comes into a player's 3 x 3 window, and despawns when it goes out (`docs/protoco
   monster's: `-monsters-csv` (an NPC row is one it does not name) or the new `-npcs-csv`.
   `-nest-db-dir` gives each NPC its nest's position and `wInitialDir` -- the direction it faces --
   where the shard has a nest of its own for it; the others stand at their npcpos position and the
-  client faces them by its stand-in. **opensro-01 needs no change for this:** it already runs with
-  `-npcpos-csv`, `-monsters-csv` and `-nest-db-dir` (and `-full-map`, so the NPCs are filed in the
-  one world frame). The boot log says what it did: `NPCs spawned by the server (round 708) ...
+  client faces them by its stand-in. opensro-01 runs with `-npcpos-csv`, `-monsters-csv` and `-nest-db-dir` (and `-full-map`, so the
+  NPCs are filed in the one world frame); **since round 727 it needs `-npcs-csv` too** (below). The boot log says what it did: `NPCs spawned by the server (round 708) ...
   rows=257 from_nest=230 from_npcpos=27 near_nest=2`.
-- **Optional, `-npcs-csv` (`OPENSRO_NPCS_CSV`):** the NPC code names, from which the spawn record's
-  interaction list is built (empty without it; the OpenSRO client builds its talk menus from its own
-  archive either way). Export it on the same archive as the other tables:
-
-  ```
-  export-refdata -mode npcs -out npcs.csv $(order characterdata.txt) refshopgroup.txt
-  ```
-
-  (`refshopgroup.txt` extracted like the other textdata files; `order` as in "Reference data" above.)
+- **Required with `-npcpos-csv` since round 727: `-npcs-csv` (`OPENSRO_NPCS_CSV`).** The NPC
+  code names and which NPCs run a store. The server builds each NPC's interaction ids from it, and
+  since round 727 those ids ARE the talk menu: the select reply `0xB045` carries them, and the
+  client builds its lines from them alone (`docs/protocol/npc_gui.md` §8). Without the table every
+  NPC would offer "End conversation." alone, so the server now refuses to boot:
+  `-npcpos-csv spawns NPCs but no -npcs-csv (OPENSRO_NPCS_CSV) is configured` and exit 1. It is a
+  CSV the server reads at boot; nothing goes into Postgres.
 - **Order of rollout:** a client from round 708 shows no NPC on a server older than round 708 (which
-  sends none). Deploy the server first, or with the client.
+  sends none). A client from round 727 opens no NPC window on a server older than round 727 (its
+  `0x7045` select gets no answer). Deploy the server, with `npcs.csv`, first.
+
+### Round 727 on opensro-01: export, copy, restart (before the round-727 client ships)
+
+```
+# 1. On a machine with the client's Media.pk2 and the tools of "Reference data" step 1 (built from
+#    round 727 or later). In an empty directory:
+MEDIA=/path/to/Media.pk2
+/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\characterdata.txt" -out characterdata.txt
+/tmp/pk2list -pk2 "$MEDIA" -filter 'textdata\' | awk '{print $2}' \
+  | grep -iE 'textdata\\characterdata_[0-9]+\.txt$' | while IFS= read -r p; do
+    /tmp/pk2list -pk2 "$MEDIA" -extract "$p" -out "$(basename "$(echo "$p" | tr '\\' /)")"; done
+/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refshopgroup.txt" -out refshopgroup.txt
+order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//' | grep -v '^$' \
+          | tr 'A-Z' 'a-z' | while read -r n; do [ -f "$n" ] && echo "$n"; done; }
+/tmp/export-refdata -mode npcs -out npcs.csv $(order characterdata.txt) refshopgroup.txt
+#    prints: export-refdata: wrote 313 NPC rows (TypeID 1,2,2,x), 84 named by refshopgroup
+rm -f characterdata.txt characterdata_* refshopgroup.txt     # game data; keep only npcs.csv
+
+# 2. Copy it next to the other CSVs on the server host:
+scp npcs.csv opensro@opensro-01:~/opensro-data/npcs.csv
+
+# 3. On opensro-01, add the flag to the (untracked) override's server command, beside -npcpos-csv:
+#      - "-npcs-csv=/data/npcs.csv"
+#    (or the environment variable OPENSRO_NPCS_CSV=/data/npcs.csv). Then pull and restart:
+cd ~/opensro && git pull && docker compose up -d --build
+docker compose logs server | grep -E 'NPC table loaded|NPCs spawned by the server'
+#    expect: NPC table loaded path=/data/npcs.csv rows=313
+#    and:    NPCs spawned by the server (round 708) ... rows=257 ... npc_table=true
+#    A missing flag shows as: -npcpos-csv spawns NPCs but no -npcs-csv ... and the server exits.
+```
+
+Check from a client: the Jangan herbalist's window lists "1. Talk to this person." and "2. Purchase/
+Sell recovery liquid medicine"; from level 20, "3. Withdrawing Skill" too, then "End conversation."
 
 ## Monster AI (off by default)
 

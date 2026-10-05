@@ -715,6 +715,9 @@ const ITEM_COL_CODE_NAME: usize = 2;
 const ITEM_COL_NAME: usize = 3;
 const ITEM_COL_NAME_STRID: usize = 5;
 const ITEM_COL_SELL_PRICE: usize = 31;
+/// KeepingFee, the warehouse deposit fee a unit (round 728; the column is INFERRED from the
+/// schema name, docs/rounds/r728.md).
+const ITEM_COL_KEEPING_FEE: usize = 30;
 const ITEM_COL_MAX_STACK: usize = 57;
 const ITEM_COL_TYPE_ID1: usize = 9;
 /// CashItem and Bionic, the type word's bits 0 and 1 (characterdata.md, cols 7-12).
@@ -754,6 +757,7 @@ pub struct Items {
     pub model_counts: Vec<i64>,
     pub max_stacks: Vec<i64>,
     pub sell_prices: Vec<i64>,
+    pub keeping_fees: Vec<i64>,
     pub countries: Vec<i64>,
     pub req_genders: Vec<i64>,
     pub durabilities: Vec<i64>,
@@ -840,6 +844,7 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         let stack = int_at(cols, ITEM_COL_MAX_STACK);
         o.max_stacks.push(if stack > 0 { stack } else { 1 });
         o.sell_prices.push(int_at(cols, ITEM_COL_SELL_PRICE));
+        o.keeping_fees.push(int_at(cols, ITEM_COL_KEEPING_FEE));
         o.type_ids.extend((ITEM_COL_TYPE_ID1..=ITEM_COL_TYPE_ID4).map(|c| int_at(cols, c)));
         o.cash_items.push(int_at(cols, ITEM_COL_CASH_ITEM));
         o.bionics.push(int_at(cols, ITEM_COL_BIONIC));
@@ -1234,6 +1239,7 @@ mod tests {
         cols[5] = "SN_ITEM_X".into();
         cols[9] = "1".into();
         cols[12] = "3".into();
+        cols[30] = "3".into();
         cols[31] = "427".into();
         cols[32] = "1".into();
         cols[33] = "5".into();
@@ -1259,6 +1265,7 @@ mod tests {
         assert_eq!(it.drop_models, vec!["", ""]);
         assert_eq!(it.max_stacks, vec![1, 1]);
         assert_eq!(it.sell_prices, vec![427, 0]);
+        assert_eq!(it.keeping_fees, vec![3, 0]);
         assert_eq!(&it.type_ids[..4], &[1, 0, 0, 3]);
         assert_eq!(it.cash_items, vec![1, 0]);
         assert_eq!(it.bionics, vec![0, 0]);

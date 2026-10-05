@@ -7094,6 +7094,547 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-twenty-ninth round: building textures flickering as the camera moves -- the world camera's near plane is retail's 1.0
+
+The user (2026-10-05): "certain textures in the game seem to flicker when I move or move the camera
+... you can see the windows on building kind of glitching" (`/root/opensro-handoff/world_refs/
+flicker_jEfh158.png`, an Alexandria house wall, native Linux build on RADV Navi33, Forward+,
+3840x2004, far 11,520 in their log).
+
+### The cause (MEASURED)
+
+**The layers.** `tools/probe_coplanar.gd` reads a model's overlay meshes and, for each triangle,
+the nearest parallel, overlapping structural triangle behind it. `alex_minga02` (the Alexandria
+house in the user's view):
+
+| overlay mesh | triangles over a structural face | separation min / median / max | against |
+|---|---|---|---|
+| `window` (grilles) | 30 / 54 | 0.0696 / 1.0090 / 1.7266 | wall02, wall03, wall08, wall01, wall07 |
+| `window_alpha` | 20 / 20 | 0.2270 / 1.1469 / 1.2853 | wall02, wall03 |
+| `dark` (insets) | 24 / 150 | 0.0099 / 1.0827 / 1.7121 | column02, inside03, column01 |
+| `door01` | 16 / 139 | 0.0098 / 0.8815 / 1.8403 | column02, wall08, wall07 |
+| `dark01`, `door02`, `door03` | none within 2.0 | | |
+
+**The depth buffer.** OpenSRO's world camera kept Godot's default near plane, **0.05**; retail's is
+**1.0** (READ, round 648: `fld1` in the camera constructor `FUN_00bae0a0`, never written again;
+`docs/protocol/MAPM_FORMAT.md` "Depth"). With a standard-z depth buffer (Godot 4.2 has no reversed
+z, which arrived in 4.3 -- INFERRED from the release history, not read in its source), the depth
+step it can tell apart at view distance d is about d^2 x 2^-24 / near:
+
+| layers apart | fight beyond, near 0.05 | fight beyond, near 1.0 (retail) |
+|---|---|---|
+| 1.0 (the median window) | ~920 units | ~4,100 units |
+| 0.07 (the closest grille) | ~240 units | ~1,080 units |
+| 0.01 (the closest inset/door) | ~90 units | ~410 units |
+
+(d = sqrt(separation x near x 2^24): where the depth step reaches the layers' separation.) The
+measured house stood about 955 units from the camera (`QA LOOK`, `Obj_alex_minga02_16`): there the
+0.05 near cannot separate layers closer than ~1.09 units, which is almost every window, inset and
+door layer above; the 1.0 near separates everything above ~0.054.
+
+**The flicker, measured on one build** (`OPENSRO_QA_CAMERA_NEAR` sets the near for measurement
+only). The view is region 90/48 at local (452, 864), yaw 90, pitch 4 (the house with the flower
+boxes). Eight shots step the camera back 0.02 units at a time, which moves the building's edges by
+about 0.004 px, so any pixel that changes is a depth decision flipping, not motion. The pixels
+changing by more than 15 % between consecutive shots, inside the building's box (280 x 110 at
+460, 195):
+
+| near | per step | total over 7 steps |
+|---|---|---|
+| 0.05 (before) | 268, 440, 250, 294, 502, 296, 286 | **2,336** |
+| 1.0 (after) | 26, 27, 21, 11, 12, 21, 9 | **127** |
+
+The residue at 1.0 is the swaying flower boxes. The same camera rendered at both near planes differs
+in 1,460-2,150 pixels, all on that house's balcony and window layers and on distant building edges.
+
+**A negative, recorded:** the Jangan shop fronts (97/168 local (300, 1100), yaw 270) give the same
+flip count at both near planes (38,966 vs 38,358 over the upper 420 rows, all animated things), so
+that view has no fighting layers. A first 0.15-degree yaw sweep measured nothing either way, because
+2 px of motion per step swamped it; the distance sweep replaced it.
+
+### What the original does for coplanar layers (READ)
+
+Nothing beyond its depth precision and draw order:
+- **No depth bias.** A census of every immediate state passed to the render-state wrapper
+  `FUN_00471360` (679 calls) finds ZENABLE, ZWRITEENABLE, ZFUNC, cull, blend, alpha test, fog,
+  lighting, colour write and the rest, but never `D3DRS_DEPTHBIAS` (195) or
+  `D3DRS_SLOPESCALEDEPTHBIAS` (175). The seven other `push 0xc3` sites in the image are UI and sound
+  calls (`0x469020`, `0x468c50`, `0x65a390` with `ecx = 0x115dd40`), not render states. A state passed
+  in a register is not covered by the census.
+- **ZFUNC is LESSEQUAL.** Both ZFUNC writes (`0x9f4adc`, `0x9f514a`) set 4.
+- **Near 1.0, far the view distance, a 24-bit depth buffer** (round 648, above).
+
+### The fix
+
+`CameraPlanes.NEAR = 1.0` (`client/scripts/world/camera_planes.gd`), set with the far plane in
+`World3D._apply_camera_far_plane`. The water reflection and overlay cameras copy the main camera's
+planes, so they follow. The cloud layer sits at z = w (round 628) and does not depend on the near
+plane.
+
+**Close geometry (the caveat round 648 left open).** The camera arm sweeps a radius-3 sphere with a
+5-unit margin (`World3D.tscn`), so no collider reaches the near plane's corners: 1.39 / 1.54 / 1.60 /
+1.77 units out at aspect 4:3 / 16:9 / the user's 1.92 / 21:9 (`camera_near_test.gd`). Rendered at the
+minimum zoom (20) in seven tight Jangan views (the spawn at four headings, the gate, the shops, and a
+camera looking up), the same camera at the two near planes differs in 0-536 of 921,600 pixels, all on
+distant building edges. Nothing near the camera is clipped.
+
+### Tests
+
+- `client/scripts/world/camera_near_test.gd` (new): the near is 1.0, and the near plane's corners lie
+  inside the arm's sphere at four aspects. ALL PASS.
+- Box (`RENDER_DIR=/opt/opensro-client-r729`): `check` loads 621 scripts and 9 scenes; the full suite
+  runs 238 suites, 0 failing.
+
+### Perf gate
+
+`client/tools/perf_gate.sh --sites jangan,reeds,cross --frames 12000`, base `d7af294b` vs the working
+tree (`8f2e2525` plus these notes), 1280x720, Forward+ on the RX 7600, median of 3 runs: all SAME.
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.55 -> 1.53 | 9734 -> 9579 | 3357 -> 3385 | 5 -> 4 |
+| reeds | 1.41 -> 1.41 | 7180 -> 7155 | 1994 -> 1991 | 2 -> 2 |
+| cross | 1.71 -> 1.70 | 10653 -> 10463 | 3362 -> 3408 | 5 -> 4 |
+
+### OPEN
+
+- Whether Godot 4.2's depth attachment on RADV is D24 or D32F: either way it is standard z, and the
+  precision rule above holds. Not read in Godot's source.
+- Layers 0.01 apart (`dark`, `door01`) still fight beyond about 410 units, as they would in retail.
+- Other models' overlay layers were not censused; `probe_coplanar.gd` takes any model folder
+  (`--dir` with `|` for a space, `--model`, `--overlay`).
+
+**Review** (coordinator, light at the user's request): the change is the camera's near plane 0.05 -> 1.0, READ in round 648 (`fld1` in `FUN_00bae0a0`); the flicker metric (2,336 -> 127 changed pixels on the user's house) and the close-geometry sweep are in the notes.
+
+Perf gate (jangan, reeds, cross), all SAME -- the table is in the notes.
+
+## Seven-hundred-and-twenty-eighth round: stack counts drawn as the original draws them, splitting a stack, buy back, and the warehouse deposit fee
+
+NPC GUI epic. The user asked (2026-10-05) for buy back, splitting stacks and the storage deposit fee,
+and for the stack count at the item's top left "like the original game". Their references are in
+`/root/opensro-handoff/npc_refs/`: `qty_Pp886X3.png` (counts), `split_z4uFWIL.png` (the split
+box), `3Gw7Ene.png` (the store's buy-back row) and `MKtR5Kd.png` (a deposit box showing price 1).
+The tax line is left until fortress war is supported (the user's call).
+
+### The stack count (READ; `client/scripts/ui/item_count_label.gd`)
+
+- **Images, not a font.** `CIFSlotWithHelp::vslot_010` (0x66b460) loads
+  `interface\item_number\item_number_%d.ddj`, ten 8x8 RGBA images. The glyph sits at the image's
+  top-left and the image has a dark rim on its right and bottom. That rim is the "black border"
+  the user saw.
+- **Position.** `FUN_0067bd70` writes the count with `_itoa_s` and draws it from the last digit:
+  - the first quad's left edge is `x0 - 2 + 4n`, and each next one is 5 px further left;
+  - every digit is drawn at `y0 + 2`;
+  - each quad spans (x - 0.5)..(x + 7.5), i.e. exactly 8x8 pixels.
+
+  So the digits overlap by 3 px, and a 4-digit count starts 1 px left of the slot.
+- **When.** `vslot_013` (0x685e50) draws the count only when `FUN_00680da0` holds: the item is an
+  expendable (not bionic, TypeID1 3, TypeID2 3) and its stack is non-zero. A count of 1 is drawn
+  too.
+- **Square item slots are no longer clipped** (`UiBuilder._build_slot`). The clip cut off the
+  first column of a 4-digit count. Row slots stay clipped.
+- **Measured against `qty_Pp886X3.png`** (live run 2, frame `09_deposit_box`, bag slot 1 = 5000).
+  - In both images the white glyph pixels of "5000" start **2 px left of the icon's light frame**
+    and **1 px below its top row**.
+  - The reference's rows 294-300 and ours, rows 234-240, are the same character strings, pixel
+    for pixel.
+  - In the reference, a 1-digit "9" starts at frame + 1, which is the 3 px the formula predicts
+    between 1 and 4 digits.
+  - The first run, with the clip still on, lost the '5's first column. That is how the clip was
+    found.
+
+### Splitting a stack (READ unless marked)
+
+- **The trigger.** Shift+click on a bag stack (`CIFSlotWithHelp` click 0x681903 calls fill
+  0x6b3fa0). It only opens for a stackable item (`0x538410`) with a count of 2 or more.
+- **The box.** `CIFMessageBox` mode 5, `MsgBoxDivideCount` (`0x640020`), built as the
+  inventory's one box (+0x390).
+  - Size 300x183 (`push 0xb7; push 0x12c`), titled `UIIT_STT_INPUT_BOX` ("Input window").
+  - Members: 11 icon, 12 name board, 15 retained count, 17 edit, 220 OK, 221 Cancel.
+- **The fill.**
+  - Retained count = the whole stack.
+  - The edit's style is 3, its text "1" (`0xd87bdc`); it takes focus.
+  - No minimum; the maximum is the stack - 1 (`0x634f20`).
+  - The name goes on the board.
+- **OK** (`0x63d920`) reads the edit as a 64-bit number and posts 0x8076, flagged 0 when the edit
+  is empty or 0. In that case nothing is sent: the owner `c:0x6b62d0` sends only on 1 (READ).
+- **What OK sends (READ, round 728 review).** The typed count moves into the bag's first empty
+  slot (`c:0x6b6280`); with no empty slot, or the 0 flag (`c:0x6b62d0` sends only on 1), nothing
+  is sent. The request is the retail **0x7034 type 0** `{u8 src+13, u8 dst+13, u16 count}`
+  (`session/itemop.go`, `ItemOpNet`); the first version's invented count on OpenSRO's own move
+  message is gone.
+- **The server (READ, gs:0x4b2450).** A count below 1 refuses **0x1829**, an empty source
+  0x1809; into an empty slot the whole stack moves, a count above the stack refuses **0x1814**
+  (no whole-stack fallback), a smaller count splits (`inventory.Splitter`, mem and SQL, one
+  transaction, the instance kept); onto an occupied slot it merges or swaps. The success is
+  0xB034 type 0 `{src, dst, u16 count, u8 0}`; the client then re-reads the bag (OURS: the
+  original applies the record itself).
+- The layout matches `split_z4uFWIL.png`, down to "Retained numbe5000Distributed numb" running
+  together as the original's statics do. The edit is held to its authored 42 px (review F8:
+  Godot's LineEdit had grown it to ~53 by its theme's `minimum_character_width`).
+
+### Buy back (reworked onto the retail messages by the review)
+
+- **The list is the client's (READ).** It is never requested. Every 0xB034 type-9 (sell) result
+  carries a trailing byte: the book's size after the sale (1..5), or 0xFF when the item is not
+  booked. On anything but 0xFF the client (`c:0x87f370` → `c:0x78d900`) drops the oldest entry
+  when five are held and appends the sold item at the back (`ItemOpNet.book_sale`). The row is
+  drawn newest at the left (`c:0x6d4360` walks the list backwards); an index counts from the
+  **oldest**.
+- **The row's counts (READ).** `c:0x680da0` lists kind 0x45, the buy-back row, with the bag kinds
+  under the same expendable test.
+- **The box (READ).** A buy-back slot (kind 0x45) put on the bag goes `CIFInventory::vslot_028`
+  0x6b5b80 → fill `0x6b0520`: the inventory's box (+0x390), mode 6, purpose 0x14, priced "%I64d"
+  of the item reference's +0xb8 (the sell price) times the slot's count. The count is the
+  entry's, fixed: 0x7168 carries no count and the server restores the stored item whole (READ,
+  not OURS as the first version said).
+- **The request (READ).** **0x7168** `{u32 NPC unique id, u8 index}`. Success is an **0xB034 of
+  type 0x22** `{u8 dst+13, u8 index, u16 count}`, on which the client erases that entry
+  (`c:0x784fe0`); failure only is **0xB168** `{u8 2, u16 code}`.
+- **The server (READ, gs:0x42aae0, gs:0x6194e0, gs:0x42af00).**
+  - The book is a vector on the PC object, appended at the back, the front dropped at five; it
+    is serialized only by `CGObjPC` vslot 291/292. There is **no DB table for the book**:
+    `AQ_StorageUpdater::RestoreSoldItem` writes the restored item's row. Ours is in memory per
+    character; that it survives a relog is OURS.
+  - A sale is booked unless the item is in the never-booked set (`gs:0x61b820`, filled by
+    `ReferenceData::0x6b2950`): TypeID 3/3/8 unless bionic, any 3/2/x, 3/1/13, or a CodeName
+    starting `ITEM_QNO`, `ITEM_QTUTORIAL`, `ITEM_QSP`, `ITEM_QCX`, `ITEM_ETC_E`,
+    `SN_ITEM_EVENT`, or equal to `SN_ITEM_ETC_TAIWAN_50000_GOLD` (`shop.NeverBooked`). The
+    server does not test the bionic exception (refdata carries no Bionic column); an itemdata
+    row with TypeID1 3 is taken to be non-bionic (not counted).
+  - An entry's price is max(the gold actually paid, SellPrice x count). With no tax that equals
+    the sale.
+  - The buy back, in order: an index past the book **0x18d3**; no empty bag slot **0x1807**
+    before any gold moves; short of gold **0x180f**; the item into **the first empty slot,
+    never merged** (`inventory.Placer`); not creatable 0x1842; a DB failure 0x1811.
+  - **The NPC gate (OPEN).** Retail requires a live NPC interaction (`gs:0x511860`,
+    `HasAvailableInteraction`, answering 3). That needs round 727's NPC interaction state, which
+    has not landed on `dev`; the NPC uid is carried and not checked. The same holds for the sell
+    and the deposit.
+- **The Ctrl+sell warning (READ).** `CIFSlotWithHelp::vslot_029` looks the item up in a set
+  (`UI_SILKMALL 0x67cf30`) and, when it is there, asks through `GInterface 0x788270`
+  (MsgBoxSimple, 360x151 -- `push 0x97; push 0x168` inside 0x788270 -- style 1 Yes / No,
+  caption `UIIT_STT_CONFIRM_BOX`, the text `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL` formatted with the
+  item's name; 0x6814ae..0x681597). Built from round 714's `PartyMatchConfirm` (the same generic
+  box); Yes sells. The set is taken to be the server's never-booked one
+  (`ItemOpNet.never_booked`); that the client's own set (`c:0x67b3d0`) holds the same items is
+  INFERRED, not compared.
+- **Refusals** go to the system channel (OURS: where the original shows them), with the
+  client's own lines: 0x180f `UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD`, 0x1807
+  `UIIT_MSG_STRGERR_INVENTORY_FULL`, 0x18d3 `UIIT_MSG_ERROR_RE_BUY_OBJECT_CANT`, 0x183b
+  `UIIT_MSG_STRGERR_CANNOT_DEAL_AT_SHOP`.
+- **The sell** is now the retail **0x7034 type 9** `{u8 src+13, u16 count, u32 NPC uid}`; its
+  result `{src, u16 count, u32 NPC uid, u8 book}`. Refusals: CanSell 0x183b (READ); an empty slot
+  0x1809, a count below 1 0x1829, anything else 0x1811 (OURS: the sell's own codes not mapped).
+
+### The deposit fee
+
+- **The column (READ).** itemdata **column 30, KeepingFee**: `RefObjCommon_ExtractData`
+  (`gs:0x6a3090`) reads columns 26..31 into +0x9c Price, +0xa4 CostRepair, +0xa8 CostRevive,
+  +0xa0 CostBorrow, **+0xac KeepingFee**, +0xb0 SellPrice, and the deposit's unit fee
+  (`gs:0x523650`) is ref +0xac. The client's +0xcc was not separately mapped.
+- **The box (READ, round 726).** It shows max(1, the fee x the count), no cap.
+- **The server (READ, gs:0x524160, move type 2).** The request is **0x7034 type 2**
+  `{u8 src+13, u8 dst warehouse slot, u32 NPC uid}` -- **no count**: the server moves and prices
+  the **whole stack**, KeepingFee x stack clamped to **1..10,000,000** (`gs:0x524300`;
+  `storage.DepositFee`). Short of gold refuses **0x180f** before anything moves; the item moves
+  first and the gold is taken **only after the move succeeds** (`storage.DepositStack`). So above
+  the cap the box shows more than is charged -- 30 real items (review F2), e.g.
+  `ITEM_ETC_ARCHEMY_ATTRSTONE_ER_11` 2,500 x 10,000 shows 25,000,000 and is charged 10,000,000.
+  The first version's "the server charges what the box shows (INFERRED)" was wrong.
+- **The destination (OURS).** The client names the warehouse's first empty slot; the original
+  names the slot the item was put down on.
+- **The data paths.** The column is in refdata (`Item.KeepingFee`, CSV column 72,
+  `items.keeping_fee`, the export), the client's `ItemTableReader` (GD and the native port,
+  `keeping_fees`; an older native library reads 0), and now `table_parity`'s comparison.
+  `deploy/README.md` has the production steps (re-export, import, restart, check id 8 = 11).
+
+### What is on the retail wire now, and what is not
+
+| Flow | Request | Result |
+|---|---|---|
+| split | 0x7034 type 0 | 0xB034 type 0 |
+| sell | 0x7034 type 9 | 0xB034 type 9 + book byte |
+| buy back | 0x7168 | 0xB034 type 0x22 / 0xB168 |
+| deposit | 0x7034 type 2 | 0xB034 type 2 |
+
+OpenSRO's other item moves -- bag to bag without a count, the doll, buy, withdraw, and the
+warehouse gold -- stay on OpenSRO's own messages. They live in separate handlers from the new
+`ItemOpHandler`, so moving them is a matter of adding their 0x7034 types to it and the client's
+`ItemOpNet`; **that is the next step**. The server refuses any 0x7034 type it does not handle
+with 0x1811 (OURS).
+
+### Review fixes (round 728 review, `docs/rounds/r728_review.md`)
+
+| Finding | Fix |
+|---|---|
+| F1 invented 0x0118-0x011B | dropped, with the move's invented count field; split, sell, deposit on 0x7034/0xB034, buy back on 0x7168/0xB168 + 0xB034 type 0x22 (`session/itemop.go`, `ItemOpNet`); the list is the client's, from the sell results |
+| F2 no fee cap | `DepositFee` clamps to 1..10,000,000; tests at the cap (2,500 x 10,000 and 1,000 x 10,000 → 10,000,000; 999 x 10,000 → 9,990,000) |
+| F3 "charges what the box shows" | relabelled READ server side: the whole stack, the clamp, 0x180f, the gold taken after the move (`DepositStack`) |
+| F4 merged buy back | the first empty slot, never merged (`inventory.Placer`); 0x1807 before any gold moves |
+| F5 every sale booked | `shop.NeverBooked` / `ItemOpNet.never_booked`; the sell answers 0xFF; the Ctrl+sell warning asks for the same set |
+| F6 "the DB keeps the book" | relabelled: in memory on the PC, serialized by vslot 291/292 |
+| F7 partial deposit | the retail type 2 carries no count: the whole stack moves and is priced |
+| F8 split edit too wide | held to its authored 42x24 (`minimum_character_width` 0); tested |
+| F9 split edges | 0x1829 below 1, 0x1814 above the stack, no fallback; tested |
+| F10 refusal mapping, NPC gate | the codes 0x18d3 / 0x180f / 0x1807 / 0x1842 / 0x1811 with their own lines; the NPC gate OPEN (round 727 not landed) |
+| F11 labels | KeepingFee column 30, newest-left order, the row's count gate, the split's flag, the buy-back price, the fixed count: all READ |
+| F12 table_parity | `keeping_fee` added to the comparison; not run (no native library in this lane's box copy) |
+| F13 deploy note | `deploy/README.md` "ROUND 728" |
+
+### Tests
+
+- **`go test -count=1 -p 1 ./...`**: PASS. The round's tests:
+  - `session/itemop_test.go`: the 0x7034 bodies against the client's serializer bytes, and an end
+    to end run over TCP -- split 20 of 50 into slot 1, the 0x1829 and 0x1814 refusals, the sell
+    (book byte 1), the buy back (0xB034 type 0x22 into slot 1, -200 gold), an empty index (0xB168
+    0x18d3), the deposit of the whole 30 into warehouse slot 4 (-330), a deposit short of the fee
+    (0x180f, nothing moved);
+  - `shop/buyback_test.go`: booked oldest first, the newest five kept, bought back into the first
+    empty slot unmerged, the never-booked set, refusals including the full bag before any gold;
+  - `storage/fee_test.go`: the arithmetic and the cap, the whole-stack deposit into a named slot;
+  - `inventory/split_test.go`: mem and SQL.
+- **`cargo test`** (native): 45 passed.
+- **`store_message_box_test.gd`**: the split box (now its authored edit rect), the buy-back
+  price, the deposit fee, the count label, and `ItemOpNet` against the Go bytes (the four
+  requests, the type 9 / 0x22 / failure results, the client list's five-entry rule, the
+  never-booked set).
+- **The box suite** (`RENDER_DIR=/opt/opensro-client-r728`, the shared lock `/var/tmp/godot-lock/lock`):
+  `check` 620 scripts and 9 scenes, ALL LOAD; `tests` 237 suites, 0 failing. (A first run failed
+  one check -- the split edit's size under the art-less fixture, which Godot's default stylebox
+  floors at 67x31; the check now tests what the box asks for, and the live run measured 42x24.)
+
+### Live, after the review (run 3: real X input, xdotool, the retail messages)
+
+`/var/tmp/r728/live728.sh run3`: the same steps against a server built from the fixed tree and an
+items.csv exported by it. The client log names each retail result it applied.
+
+| step | result (client log / server gold) |
+|---|---|
+| Ctrl+click two goods | bag 0 = item 8 x5000, 1 = item 15 x5000; 100,001,000 → 94,001,000 |
+| Shift+click bag 0, type 250, Confirm | the edit measured **42x24 at 223,102** (`QA BOX`); 0x7034 type 0 → "split 250 from bag slot 0 into 2"; bag 0 x4750, 2 x250 |
+| bag 2 onto the store, Sell | 0xB034 type 9, **book byte 0x1**, the client's list [8 x250]; → 94,053,500; buy-back slot 1 shows the 250 |
+| the buy-back slot onto an empty bag slot, OK | 0x7168 → 0xB034 type 0x22, "bought back entry 0 x250 into bag slot 2" -- **the first empty slot, not merged** into bag 0's 4750; → 94,001,000; the list empty |
+| bag 0 (item 8 x4750) onto the warehouse, Deposit | 0x7034 type 2 → "deposit accepted (bag slot 0 -> warehouse slot 0)"; **the whole 4750 for 52,250** (11 x 4750) → 93,948,750 |
+
+### Live, first version (runs 1 and 2, OpenSRO's own messages; superseded by run 3)
+
+`/var/tmp/r728/live728.sh`: the potion seller's store, then Shift+F11 for the warehouse.
+Coordinates come from the client's own F11 print, which now also lists the buy-back slots and every
+stack's count (`QA BAG`). Runs 1 and 2 gave the same results:
+
+| step | result (client log / server gold) |
+|---|---|
+| Ctrl+click two goods | bag 0 = item 8 x5000, 1 = item 15 x5000; 100,001,000 → 94,001,000 |
+| Shift+click bag 0 | "Input window", count 1 of 4999; type 250, Confirm → bag 0 x4750, **bag 2 x250** (the first empty slot) |
+| bag 2 onto the store, Sell | sell box "52500"; → 94,053,500; **buy-back slot 1 shows the 250** |
+| buy-back slot onto an empty bag slot | buy-back box, count 250 of 250, "52500"; OK → "bought back for 52500 gold", 94,001,000; bag 0 x5000; row empty |
+| bag 0 (item 8 x5000) onto the warehouse | deposit box "55000" (fee 11 x 5000); Deposit → **93,946,000 (-55,000)**, storage 0 = item 8 |
+
+### OPEN
+
+1. **The NPC gate.** Retail checks a live NPC interaction before a sell, a deposit or a buy back
+   (`gs:0x511860`, answering 3). It needs round 727's NPC interaction state, not on `dev` yet;
+   the uid is carried and not checked.
+2. The client's own never-booked set (`c:0x67b3d0`) is not compared with the server's
+   (`gs:0x6b2950`); the Ctrl+sell warning uses the server's rule.
+3. The rest of the item moves on 0x7034 (bag to bag without a count, the doll, buy, withdraw,
+   the gold): the next step (see "What is on the retail wire now").
+4. The deposit's warehouse slot is the first empty one (OURS); the original names the slot the
+   item was put down on. The refusal codes the sell and the deposit have of their own (retail's
+   3, 5, 0x1843) are not mapped.
+5. The tax adjustment on buy-back and sell prices waits for fortress war (the user's call).
+6. **Deployment.** Production's items table needs re-exporting and re-importing to carry
+   KeepingFee (`deploy/README.md`, "ROUND 728"); until then every deposit costs 1 gold.
+7. Quick slots that point at bag items: the original draws their counts too; OpenSRO's bar
+   carries none.
+8. What bit 0x02 of the split edit's style 3 does; whether the original clamps an over-max count
+   as we do.
+9. `table_parity` now compares `keeping_fee` but was not run: this lane's box copy has no native
+   library.
+
+**Review** (kept beside the notes): `docs/rounds/r728_review.md` -- the invented buy-back messages replaced by retail `0x7168`/`0xB168` and `0x7034`/`0xB034` types 0/9/0x22/2; the deposit fee capped 1..10,000,000 on the whole stack; buy back to the first empty slot, never booking the excluded items; the split edit's width. All fixed.
+
+**Deployed 2026-10-05:** opensro-01's items table re-exported and re-imported (keeping_fee; id 8 = 11), backup `items-table.bak-20261005-1141.sql.gz`.
+
+No perf gate: UI and server only.
+
+## Seven-hundred-and-twenty-seventh round: the NPC menus from the server's interaction ids, on the retail NPC opcodes (lane C1 of the NPC GUI epic)
+
+This round builds lane C's first part of `docs/protocol/npc_gui.md`. The spec's new §8 has the
+protocol, the id sources and the OPEN items. The labels are the spec's: READ (from the exe, with the
+address), MEASURED, INFERRED and OURS. The store's and warehouse's item messages (buy, sell, buy
+back, split, deposit fee) belong to lane 728 and were not touched. The tax line was left as it is,
+by the user's decision: it waits for fortress war.
+
+The round changes no drawing, loading or world code. Its client changes are the talk flow and the
+menu builder, so it runs no perf gate.
+
+### Server
+
+- **The interaction ids** (`npcspawn.Interactions`):
+  - **id 1** comes from the NPC owning a shop (the NPC init `0x4c7920` → `AddAvailableInteraction(1)`
+    at `0x4c7996`, READ);
+  - **id 2** comes from the quest census, `npcspawn/questtalk.go`, 89 codenames:
+    - the pushes are READ: `FUN_00926ed0` and `FUN_00927040` walk each quest's mission-NPC block,
+      and three classes push directly;
+    - that every listed quest is in service is INFERRED;
+  - **id 8** comes from the teleport links, a stand-in (disclosed);
+  - **0x11 no longer goes to shops.** Its registrar reads another map (`FUN_004ccb70`), so the
+    herbalist does not get the gacha line.
+  - The whole set now reaches the select reply even when the flag byte is 0, as the ferry seller's
+    {7, 9} does.
+- **The opcodes** (`internal/npctalk`, `session/npctalk.go`): `0x7045`→`0xb045`, `0x7046`→`0xb046`
+  and `0x704b`→`0xb04b`. Every field and refusal code is READ (npc_gui.md §8).
+  - INTERACTMODE is 5 for ids 2 and 10, none for 0x23, and 6 otherwise.
+  - The reach is 300, in 3-D, from the player to the NPC's spot in the player's frame.
+  - Trading counts as busy (OURS: through the trade hub).
+- **OpenSRO's `0x0050`–`0x005d`** stay. They are all store or warehouse item messages (lane 728's),
+  and `0x7046` replaces only the open, for which OpenSRO had no message.
+
+### Client
+
+- **`NpcTalkNet`** (new) holds the codecs and the state.
+  - It never sends `0x704b` while a `0x7046` is in flight. That is READ: the close slot `0x7040b0`
+    asks `0x841780` first.
+- **World3D:**
+  - A server NPC's click (or a talk approach's arrival) sends `0x7045`. The talk window opens on
+    `0xb045` with the server's set.
+  - The store line closes the talk window (`0x704b`), then sends `0x7046 {1}`. The store opens on
+    `0xb046`.
+  - The warehouse line sends `0x7046 {3}` before the hide.
+  - The talk line sends `0x7046 {2}`, and the window stays.
+  - The close button, the end line, and the store's and storage's close send `0x704b`
+    (`HudPanels.npc_window_hidden`). The store and storage closes are READ, closing OPEN 4.
+- **`NpcServiceReader.services_from_ids`** walks `FUN_00700440`'s order with `FUN_006fcd60`'s
+  tokens. The codename derivation `services_for` is removed, along with its `GUILD_PATTERNS` and
+  `JOB_*_PATTERNS` tables.
+  - **New lines, all READ:**
+    - Talk (2) and Withdrawing Skill (10);
+    - for id 3, Academy Establishment (level ≥ 0x3c, `0x700b96`) and Honor Rank;
+    - for 0x20, Grant magic option;
+    - the last rows: 0x11, 0x12, 0x23, 0xc, 0x27 and 0x29;
+    - an NPC with no tab group writes no store line. Round 725's "Buy" stand-in is gone.
+  - **Not modelled, and labelled:**
+    - the keeper's store gate `FUN_00989d20`, a string compare whose strings are not read;
+    - the academy membership byte, taken as 0;
+    - 0x1e's `FUN_006f98d0` lines;
+    - 6 (item 0xb, which has no text).
+  - Clicking a line with no system behind it says "not available yet" (OURS, as before).
+- **Gates** are client-placed and have no uid, so their set comes from their teleport point
+  (`gate_ids`, OURS). With no server, an NPC's window shows its greeting and the end line.
+
+### What id 2 and id 10 do (as corrected by the review fixes below)
+
+- **Id 2:** `0x7046 {2}` is answered `{1, 2}` with INTERACTMODE 5. The talk window stays.
+  - In the original, an NPC with no talk menu gets `RaiseEvent(1)`. With one, `ShowFirstTalkMenu`
+    sends `ShowMenu`'s `0x30D4`, which the client answers with `0x70D4` (READ by the review).
+  - OpenSRO registers no talk items, so it takes the first branch and sends nothing more.
+  - The static id-2 set is a stand-in for the per-player filter `0x4c9310`.
+- **Id 10:** the herbalists (`NPC_CH/WC/KT/EU/CA_POTION`) offer it per player from level 20
+  (`CQSP_ALL_POTION_1`/`_2` on event `0xb`, READ by the review).
+  - Its open is answered `{1, 2}`, mode 5, as in the original.
+  - The withdrawal itself (event `0x12`) is not built, and the client's line says "not available
+    yet".
+
+### Tests
+
+- **Go:**
+  - `npctalk` golden bytes for every message and refusal, and decode round trips;
+  - `TestNPCTalkSelectOpenEnd` over a real socket: out of reach, unknown, the select's set,
+    not offered, the store open and mode 6, busy, select while open, end, end again, and talk with
+    mode 5;
+  - `TestInteractions`, updated;
+  - `go test -count=1 -p 1 ./...`: green, after the orphan list took the npctalk client halves and
+    dropped `LinksFrom`, which the server now calls.
+- **GD:**
+  - `npc_talk_net_test.gd` (new): the same golden bytes, the state (no end in flight), the
+    herbalist's original four lines composed from {1, 2, 10}, OpenSRO's {1, 2}, the gate's {7, 8},
+    the whole builder order with one of every id, and the guild, academy, job and keeper gates;
+  - `npc_service_reader_test`, `npc_talk_view_test` and `teleport_reader_test`, rewritten onto
+    id sets.
+- **Box,** with `RENDER_DIR=/opt/opensro-client-r727` and `GODOT_LOCK=/var/tmp/r727/lock`:
+  - `check`: ALL LOAD, 620 scripts and 9 scenes;
+  - the full suite: 238 suites, 0 failing.
+
+### Live run (MEASURED from the client log; `/var/tmp/r727/live`, `live.sh`)
+
+The server was built from this worktree and ran with npcpos, the NPC table (`export-refdata -mode
+npcs`, 84 shop owners) and the teleport network. The run used `qa_shot.sh --server` on Vulkan
+(RX 7600). The player went to the herbalist with `/tp 624 -347`, local (1584, 1307), 100 from the
+NPC.
+
+- **The herbalist:**
+  - `0x7045` uid 2130706565 got the set `[1, 2]`.
+  - The menu was "1. Talk to this person. / 2. Purchase/ Sell recovery liquid medicine / 3. End
+    conversation.", which is `tcHCl0v.png`'s lines without "Withdrawing Skill". That was the
+    pre-review run, at level 1; see the live run after the fixes for level 20.
+- **The talk line** got `0xb046` id 2, and the window stayed.
+- **The store line:**
+  - `0x704b` went out (npctalk closed), then the store got `0xb046` id 1 and opened.
+  - Closing the store sent `0x704b`.
+  - The client logged no refusal.
+- **The Dimensional Gate** (client set {7, 8}) showed "1. Designate as return/recall point / 2.
+  Select teleport area / 3. End conversation.", equal to `1llywhJ.png`.
+- A first attempt was killed by another lane's `qa_shot.sh` reap while it held a private lock. The
+  run that counts held the shared lock with `QA_SHOT_REAP=0`.
+
+### OPEN
+
+1. **The skill withdrawal itself** (event `0x12`, `CQSP_ALL_POTION_1` `0x88b7be`).
+2. **`0x30D4`'s payload fields**, and the talk items behind id 2 (`+0x2198`, `+0x2280`,
+   `+0x219c`). OpenSRO shows id 2 statically.
+3. **The NPC `u8` at the end of `0xb045`.** OpenSRO sends 0; it is on the fortress side.
+4. **The keeper's store gate `FUN_00989d20`.** It compares the player's `+0x84c` string with the
+   string at `0xeeebd8+0x26c`.
+5. **The repair buttons still come from the codename** (`offers_repair`), not from id 4 in the set.
+   That is the store window, lane 728's file.
+6. **The store's and warehouse's item handlers do not yet test INTERACTMODE**
+   (`NPCInteractionMode`). That is lane 728's messages.
+7. **The gates' sets are built client-side**, until gates are server objects.
+8. **Paths labelled in `session/npctalk.go`, not modelled:**
+   - the open's slot `0x5a0`;
+   - the type filter `0x146`;
+   - the job changers' `0x1C26`;
+   - 0x23's own code;
+   - the select's INTERACTMODE 1 case;
+   - 0xc's `+0x1cf0`;
+   - a zone change does not end the interaction.
+
+### Review fixes (`docs/rounds/r727_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | BUG: `0xB045` lacked the target's flag byte before the count | `SelectNPC.Flag`, plus `FlagWord`, the u32 sent when bit 0 is set. An NPC sends 0 (`0x4c79f0`, READ). `decode_select` reads it as `0x88b37c` does. The golden bytes are the original herbalist's `01 23 01 00 7f 00 03 01 02 0a 00` (level 20) and `... 00 02 01 02 00` (level 19), on both sides. §8's table is corrected |
+| 2 | REGRESSION: no menus without `-npcs-csv` | `installNPCs` exits 1 when `-npcpos-csv` comes without `-npcs-csv`, with a message naming the export. The flag's help says REQUIRED. `deploy/README.md` has the export (step 2), the override line (step 4), and a "Round 727 on opensro-01" block with the exact export, `scp`, override and restart commands and the boot lines to expect. `qa_shot.sh` passes `-npcpos-csv` only together with `npcs.csv` |
+| 3 | id 10 has a registrar | `npcspawn.WithdrawSkill`: the five herbalists, level ≥ 20. `session.selectIDs` builds each select's set (`+0x1c78`) per player, and the open's offered test reads that set. Id 10's open is `{1, 2}`, mode 5, with no withdrawal (labelled). Tested: socket level 19 → `{1, 2}`, level 20 → `{1, 2, 10}`, open 10 at level 1 → 5, at level 20 → `{1, 2}` mode 5. `TestNPCTalkSelectIDs` checks that the NPC's own set is untouched |
+| 4 | id 2 is per player | `questtalk.go` and §8 label the static set a stand-in for `0x4c9310` / `IsFirstTalkMenuEnable` (OURS), still shown at the quest NPCs |
+| 5 | id 2's open is readable | §8 records `RaiseEvent(1)` and `ShowFirstTalkMenu` → `ShowMenu` `0x30D4` → `0x70D4`, and the handler's comment does too. `0x30D4`/`0x70D4` are not implemented: OpenSRO has no talk items, so it is the first branch (OPEN 2) |
+| 6 | 0xc's mode is conditional | No mode for 0xc, since `+0x1cf0` is unmodelled (labelled). Tested: `{1, 0c, 00}` and mode 0 |
+| 7 | handler paths | Implemented: the end clears the select's flag only for mode 5 or a bare select (a second end after mode 6 gets `{1}`, tested), and id 1 at an NPC with no store is refused code 3 (`npcspawn.NPC.Shop` from the NPC table, tested on a keeper). Labelled in `npctalk.go`: slot `0x5a0`, filter `0x146`, the job changers' `0x1C26`, 0x23's code, INTERACTMODE 1 |
+| 8 | warehouse ordering label | `hud_panels.gd`'s note and §8 say: the original hides first and the hide sends nothing; OpenSRO sends first and holds the end, so the bytes are the same |
+| 9 | QA recipe, cleanup | `client/tools/README.md` says NPC talk renders need `--server` and the NPC table. `ForgetNPCInteraction`'s comment says only the disconnect calls it |
+
+**Tests after the fixes:**
+
+- `go test -count=1 -p 1 ./...`: green.
+- On the box (`RENDER_DIR=/opt/opensro-client-r727`, the shared lock, killing nothing):
+  - `check`: ALL LOAD, 620 scripts and 9 scenes;
+  - the full suite: 238 suites, 0 failing.
+
+**Live run after the fixes** (server rebuilt from the worktree; `/var/tmp/r727/live2.sh <level>`;
+MEASURED from the client log):
+
+- **Level 19:** `0xB045` ids `[1, 2]`. The menu is "1. Talk to this person. / 2. Purchase/ Sell
+  recovery liquid medicine / 3. End conversation."
+- **Level 20:** ids `[1, 2, 10]`. The menu is "1. Talk to this person. / 2. Purchase/ Sell
+  recovery liquid medicine / 3. Withdrawing Skill / 4. End conversation.", which is
+  `tcHCl0v.png`'s four lines.
+
+**Review** (kept beside the notes): `docs/rounds/r727_review.md` -- `0xB045` was missing its flag byte before the id count (our server and client agreed, so tests passed); without `-npcs-csv` every NPC lost its lines (now required at boot); id 10 "Withdrawing Skill" READ from the herbalist quests at level 20+; id 2's per-player filter labelled a stand-in. All fixed.
+
+No perf gate: no drawing or loading change.
+
 ## Seven-hundred-and-twenty-sixth round: the store's and warehouse's confirm boxes from the client's own layouts, and the retail gestures
 
 NPC GUI epic, lane B (spec: round 724, `docs/protocol/npc_gui.md` §4 and `message_box.md`). Our own

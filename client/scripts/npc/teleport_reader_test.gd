@@ -198,17 +198,18 @@ func _initialize() -> void:
 		world.set("_object_name_table", UiTextTable.parse(("\t".join(names_row) + "\n").to_utf16_buffer()))
 		var layer: int = world_script.get_script_constant_map().get("NPC_COLLISION_LAYER", -1)
 
-		# (a) The talk lines: the gate code alone is no shop, warehouse or
-		# guild pattern; World3D adds its gate lines from the point.
-		_check(NpcServiceReader.services_for("STORE_CH_GATE", {}).is_empty(),
-			"services_for(\"STORE_CH_GATE\") alone offers nothing")
-		var services: Array = world.call("_npc_services", "STORE_CH_GATE")
+		# (a) The talk lines: a gate is client-placed, so World3D builds its
+		# interaction ids from its point (round 727, _client_talk_ids: 7 and 8
+		# for Jangan's), and the menu from them.
+		var gate_ids: PackedByteArray = world.call("_client_talk_ids", "STORE_CH_GATE")
+		_check(Array(gate_ids) == [7, 8], "Jangan's gate's ids are [7, 8] (got %s)" % [Array(gate_ids)])
+		var services: Array = world.call("_npc_services", "STORE_CH_GATE", world.call("_client_talk_ids", "STORE_CH_GATE"))
 		var keys: Array = services.map(func(s): return s.key)
 		_check(keys == ["recall_designate", "teleport"],
 			"Jangan's gate offers the designate line then the teleport line, the client's order (got %s)" % [keys])
-		var td_keys: Array = (world.call("_npc_services", "STORE_TD_GATE") as Array).map(func(s): return s.key)
+		var td_keys: Array = (world.call("_npc_services", "STORE_TD_GATE", world.call("_client_talk_ids", "STORE_TD_GATE")) as Array).map(func(s): return s.key)
 		_check(td_keys == ["recall_return"], "GATE_TD (id 9, no links) offers the return line alone (got %s)" % [td_keys])
-		var smith: Array = world.call("_npc_services", "NPC_CH_SMITH")
+		var smith: Array = world.call("_npc_services", "NPC_CH_SMITH", world.call("_client_talk_ids", "NPC_CH_SMITH"))
 		_check(smith.map(func(s): return s.key).filter(func(k): return k in ["teleport", "recall_designate", "recall_return"]).is_empty(),
 			"an NPC gets no gate line")
 
@@ -381,16 +382,16 @@ func _initialize() -> void:
 			"the ferry is not a building (point_for_building does not find it)")
 		world.set("_teleport_reader", ferry_reader)
 		world.set("_npc_codes", {2011: "NPC_CH_FERRY", 2056: "NPC_WC_FERRY", 2000: "NPC_CH_SMITH"})
-		var ferry_keys: Array = (world.call("_npc_services", "NPC_CH_FERRY") as Array).map(func(s): return s.key)
+		var ferry_keys: Array = (world.call("_npc_services", "NPC_CH_FERRY", world.call("_client_talk_ids", "NPC_CH_FERRY")) as Array).map(func(s): return s.key)
 		_check(ferry_keys == ["teleport"], "the ferry seller offers the teleport line alone (got %s)" % [ferry_keys])
-		var smith_keys: Array = (world.call("_npc_services", "NPC_CH_SMITH") as Array).map(func(s): return s.key)
+		var smith_keys: Array = (world.call("_npc_services", "NPC_CH_SMITH", world.call("_client_talk_ids", "NPC_CH_SMITH")) as Array).map(func(s): return s.key)
 		_check(not ("teleport" in smith_keys), "the smith still offers no teleport line (got %s)" % [smith_keys])
 		var ferry_point = world.call("_teleport_point_for_code", "npc_ch_ferry")
 		_check(ferry_point != null and ferry_point.id == 3, "the codename is matched without case")
 		var dests: Array = (ferry_reader.call("links_from", 3) as Array).map(func(l): return [l.to_id, l.fee])
 		_check(dests == [[4, 500]], "the ferry lists the far bank for 500 (got %s)" % [dests])
 		world.set("_npc_codes", {2056: "NPC_WC_FERRY"})
-		_check((world.call("_npc_services", "NPC_CH_FERRY") as Array).is_empty(),
+		_check((world.call("_npc_services", "NPC_CH_FERRY", world.call("_client_talk_ids", "NPC_CH_FERRY")) as Array).is_empty(),
 			"a ferry the NPC tables do not know gets no line")
 		world.set("_teleport_reader", reader)
 

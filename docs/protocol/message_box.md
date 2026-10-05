@@ -131,12 +131,13 @@ box as a child. This client closes a window's boxes when the window closes. That
 | Buy, by Ctrl+click on a store slot | `CIFSlotWithHelp::vslot_029` 0x680fa0 (store source 0xf → the bag, 0x6816a0..0x6816d6, with the specialty refusal `UIIT_MSG_COS_CANNOT_BUY_SPECIALTY_TO_INVENTORY`); ForPackage: 0x68a6c0 (`GetKeyState(VK_CONTROL)`, the store open, target the bag 0x46) | No box. The count is the item's max stack (ref +0x1c0), or 1. Both slot classes buy on Ctrl+click: round 631's row was right (round 726 review). |
 | Sell, by dragging a bag item onto the store | `CIFStore::vslot_028` 0x6d1400 → 0x6b07d0 | Mode 6, purpose 2. A stack is prefilled with its size. |
 | Sell, by Ctrl+click on a bag slot | `CIFSlotWithHelp::vslot_029` 0x680fa0, its bag branch: Ctrl, the store open, source the bag (0x46) | No box; the stack when `0x538410(ref)` holds, else 1 (0x6815e0..0x681608). **Refused** with `UIIT_MSG_STRGERR_CANT_QUICKSELL_CASHITEM` (0xda4060, through 0x7781b0) when `0x5dd660(ref)` holds -- not bionic, TypeID1 3, the CashItem bit (0x6813f3..0x681417) -- or ref +0xa0 is 2 or 6 (0x8ba600; that column is not mapped, OPEN). An item that passes both and cannot be bought back first gets `GInterface::0x788270` with `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL`. |
-| Deposit an item | `CIFStorageRoom::vslot_028` 0x6cd350 → 0x6b0e90 | Mode 6, purpose 5 (0x10 for the guild). The fill writes the item's reference +0xcc times max(1, count) through 0x64db50 with its grouping argument 0 (0x6b100c), so plain digits; `CIFMessageBox::vslot_012` (0x63d340) then rewrites it for purpose 5 as **max(1, fee)** (0x63d676..0x63d698). Which itemdata column +0xcc is, is not mapped. A non-stacking item hides the quantity group (`0x63bc80(3)`). |
+| Deposit an item | `CIFStorageRoom::vslot_028` 0x6cd350 → 0x6b0e90 | Mode 6, purpose 5 (0x10 for the guild). The fill writes the item's reference +0xcc times max(1, count) through 0x64db50 with its grouping argument 0 (0x6b100c), so plain digits; `CIFMessageBox::vslot_012` (0x63d340) then rewrites it for purpose 5 as **max(1, fee)** (0x63d676..0x63d698). The fee is itemdata column 30, KeepingFee: READ on the server (`RefObjCommon_ExtractData` gs:0x6a3090 puts column 30 at ref +0xac, and the deposit's unit fee gs:0x523650 reads +0xac); the client's +0xcc was not separately mapped. The server's deposit (move type 2, gs:0x524160) charges KeepingFee x the **whole stack** clamped to 1..10,000,000 (gs:0x524300), refuses 0x180f when short and takes the gold only after the move; so above the cap the box shows more than is charged (round 728 review). A non-stacking item hides the quantity group (`0x63bc80(3)`). |
 | Withdraw an item, the fill | 0x6b15b0 | The price edit is "%d" of 0. |
 | Withdraw an item | `CIFInventory::vslot_028` → 0x6b15b0 | Mode 6, purpose 6 (0x11 for the guild). |
 | Deposit gold | 0x6b2800 | Mode 3, purpose 3 |
 | Withdraw gold | 0x6b29f0, from 0x6cc050 | Mode 3, purpose 4 |
-| Split a stack, by Shift+click | 0x6b3fa0, from 0x681903 | Mode 5, MsgBoxDivideCount |
+| Split a stack, by Shift+click | 0x6b3fa0, from 0x681903 | Mode 5, MsgBoxDivideCount (round 728) |
+| Buy back, by putting a buy-back slot on the bag | `CIFInventory::vslot_028` 0x6b5b80, source kind 0x45 -> 0x6b0520 | Mode 6, purpose 0x14; the price "%I64d" of ref +0xb8 x the count (round 728) |
 | A generic question | `GInterface::0x788270` | Mode 9, MsgBoxSimple (below) |
 
 ## Layouts for the RENEWAL branch
@@ -291,7 +292,13 @@ Unconditional.
 
 ### MsgBoxDivideCount: splitting a stack
 
-Unconditional.
+Unconditional. Mode 5 (`0x640020`) sizes the box 300x183 (`push 0xb7; push 0x12c`, slot 0x54) and
+titles it `UIIT_STT_INPUT_BOX` ("Input window"); members 11 +0x814 icon, 12 +0x818 name board,
+15 +0x904 retained count, 17 +0x900 the edit, 220 +0x800 OK, 221 +0x804 Cancel. The fill
+(`0x6b3fa0`, Shift+click from `0x681903`) runs for a stackable item (`0x538410`) of more than one:
+the retained count is the stack, the edit's style 3, text "1" (`0xd87bdc`), focus, no minimum
+(`0x634ff0(0)`), maximum stack - 1 (`0x634f20`). OK (`0x63d920`) reads the edit as a 64-bit number
+into +0x8b8 and posts 0x8076 flagged 0 when the edit is empty or 0 (READ, round 728).
 - OK: id 220 at 71,143;
 - Cancel: id 221 at 151,143;
 - divide edit: id 17 at 223,102,42,24;

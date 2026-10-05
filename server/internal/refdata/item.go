@@ -426,6 +426,15 @@ type Item struct {
 	// desc +0x2c4). The exporter joins every such Desc with ",". Empty
 	// otherwise.
 	CompositeDesc string
+
+	// KeepingFee is the warehouse's per-item deposit fee in gold, itemdata
+	// column 30 (round 728). READ on the server: RefObjCommon_ExtractData
+	// (gs:0x6a3090) reads columns 26..31 into +0x9c Price, +0xa4 CostRepair,
+	// +0xa8 CostRevive, +0xa0 CostBorrow, +0xac KeepingFee, +0xb0 SellPrice,
+	// and the deposit's unit fee (gs:0x523650) is ref +0xac
+	// (r728_review.md F11). The server charges it x the whole stack, clamped
+	// to 1..10,000,000 (storage.DepositFee). 0 on an older import.
+	KeepingFee int64
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

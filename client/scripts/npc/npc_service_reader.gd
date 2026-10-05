@@ -1,18 +1,17 @@
 extends RefCounted
 class_name NpcServiceReader
 
-## Reads, from the player's own Media.pk2, what services an NPC offers and its
-## greeting -- so the talk window lists the real options, not a placeholder.
-## All grounded in the client's own textdata; nothing invented.
+## The talk menu's lines and an NPC's greeting. Since round 727 the lines come
+## from the NPC's interaction-id set, which the server sends in the 0xB045
+## select reply (services_from_ids, the client's own FUN_00700440 order); the
+## greeting from the player's own Media.pk2.
 ##
 ## refshopgroup.txt (tab, 0-indexed): [3]=shop group code (GROUP_STORE_CH_SMITH),
-##   [4]=the NPC codename that runs it (NPC_CH_SMITH). An NPC that appears here
-##   sells a shop -> the "Buy" service.
+##   [4]=the NPC codename that runs it (NPC_CH_SMITH). Id 1 (the store) is
+##   now the server's (round 727, the NPC's own shop); the parse stays for
+##   its tests and tools.
 ## npcchat.txt (tab): [1]=NPC codename, [2]/[3]=greeting string ids (SN_*),
 ##   resolved through the UI text table.
-## Storage / guild / stable / special are named by the NPC's own codename
-## (NPC_*_WAREHOUSE, _GUILD, _HORSE, _SPECIAL) -- the game's own self-describing
-## codes, not a guess.
 
 const SHOP_TABLE := "server_dep\\silkroad\\textdata\\refshopgroup.txt"
 const CHAT_TABLE := "server_dep\\silkroad\\textdata\\npcchat.txt"
@@ -164,159 +163,143 @@ static func _pp_parse_greetings(data: PackedByteArray) -> Dictionary:
 		out[code.to_upper()] = [m1, m2]
 	return out
 
-## The services an NPC offers, from its codename + the shop set. Which services
-## an NPC has is GROUNDED (shop = refshopgroup membership, gated at a guild NPC
-## by the player's guild; the rest are named by the NPC's own self-describing
-## codename).
+## The talk menu's lines for an NPC's interaction-id set (round 727): the
+## set the server sends in the 0xB045 select reply (NpcTalkNet), walked in
+## the client's own order. READ from FUN_00700440 (the builder) and
+## FUN_006fcd60 (the line adder, a switch on the item with one token each);
+## docs/protocol/npc_gui.md §1, "Which lines". The end line is not here:
+## talk_menu_lines adds it.
 ##
-## Labels (round 513): storage carries the client's own string id,
-## STOREHOUSE_STRID, which the talk window resolves through the player's
-## textuisystem.txt. The talk window adds the end line from TALKEND_STRID. So
-## do the guild NPC's create and leave lines, GUILD_CREATE_STRID and
-## GUILD_SECESSION_STRID (guild_services, round 521), and the job guilds'
-## join lines, JOB_JOIN_STRIDS (round 526). The other labels are
-## this project's plain-English text with no strid:
-##   * "Buy" -- the real client has no single shop line. Item 1 runs
-##     FUN_006fb630, which formats its own "%d. " line per store, and those
-##     lines are not built here. A town warehouse keeper usually gets "Buy"
-##     too: the player's refshopgroup.txt lists 8 of the 9 keepers npcpos
-##     spawns as running a GROUP_STORE_*_HONOR store (measured round 513,
-##     dump_text_table.gd on Media.pk2), so their menu is "1. Buy",
-##     "2. <storage>", "3. <end>". NPC_WC_WAREHOUSE_M is the exception: WC's
-##     second HONOR row names NPC_WC_WAREHOUSE_W again, so the _M keeper runs
-##     no store and its menu is "1. <storage>", "2. <end>". The
-##     real client shows item 1 for a keeper (ids 1 and 3, no 0xf) only if
-##     FUN_00989d20 answers nonzero (call at 0x700a71). That call is in the
-##     branch for id 0xf absent and id 3 present (0x7009f5 `je 0x700a0e`
-##     skips to it when 0xf is absent); with 0xf present, FUN_009870e0
-##     decides instead (0x7009fc). That is the guild NPCs' case, and
-##     services_for follows it (round 524): a guild NPC gets no "Buy" for a
-##     player known to have no guild. See the gate in the body.
-##   * "Guild" -- the placeholder a guild NPC gets while the player's guild
-##     state is unknown (guild_id < 0), and for a guild master. The guild's
-##     real lines (FUN_00700440 id 0x0f -> items 0x12, 0x14, 0x17-0x1d, 0x43)
-##     depend on the player's guild membership, so a caller that knows it
-##     passes it and gets guild_services' lines instead (round 521).
-## The real client also adds two more lines after the storage line for id 3,
-## and neither is listed here: item 0x2d UIIT_STT_TC_OPEN, behind two tests
-## (0x700b7f-0x700b9d), and item 0x2e UIIT_STT_TC_HONOR_RANKING (pushes from
-## 0x700bad, call at 0x700bb4).
-## See docs/protocol/character_state.md, "The client's first talk menu".
+## Until round 727 the client derived the lines from the NPC's codename and
+## refshopgroup.txt (services_for, OURS). Which lines an NPC shows is server
+## data in the original, and now in OpenSRO too: the server's
+## npcspawn.Interactions builds each NPC's set (CGObjNPCNPC::Create's
+## codename rules, shop ownership for id 1, the quest census for id 2, the
+## teleport columns for 7, 9 and 8).
 ##
-## The optional arguments (round 521): `guild_id` is the player's guild as the
-## server last reported it -- -1 unknown (no guild reply yet), 0 no guild, else
-## the guild's id -- and `guild_master` whether the player leads it. They pick
-## the guild NPC's lines through guild_services, and at a guild NPC
-## guild_id 0 also drops "Buy" (round 524). Called with two arguments, a
-## guild NPC keeps "Buy" and the "Guild" placeholder, as before.
-## `player_job_kind` is the player's job (round 526): 0 none, 1 Trader,
-## 2 Thief, 3 Hunter -- the byte the real client keeps at +0x7be of the
-## player object. At a job-guild NPC only a player with no job gets the join
-## line (see the job block in the body). World3D does not pass it: the client
-## has no record of the player's job yet, so every player is treated as
-## jobless, which is the case the join line is shown for.
+## In order, each `id -> item token`:
+##   * 2 -> item 4, TALKSTART_STRID, "Talk to this person.";
+##   * 1 -> item 1, the store lines (FUN_006fb630, one per tab group, worded
+##     by the group's own name; `store_lines`, round 725). Gated:
+##       - with 0x0f in the set, only when FUN_009870e0() is non-zero (a guild
+##         NPC; read as "the player is in a guild", guild_services): a
+##         `guild_id` of 0 drops the lines, -1 (not known yet) keeps them;
+##       - with 3 and no 0x0f (a warehouse keeper), only when FUN_00989d20
+##         answers true (0x700a71): a compare of the player's string at
+##         +0x84c (0x9d6580 on [0xeef5ec]) with the string at +0x26c of the
+##         object at 0xeeebd8 (FUN_00987130 is its +0x268 block, whose +0x20
+##         byte the academy line below tests). If +0x84c is the character's
+##         name, as guild_services infers, the keeper's store would show only
+##         to one player; neither string's writer is read (OPEN), so the
+##         keeper's store lines are kept, as round 513 kept them (OURS);
+##     an NPC with no tab group writes no line: FUN_006fb630 walks the NPC's
+##     shops and writes one per group, so none gives none (a keeper the
+##     player's refshopgroup.txt does not list, NPC_WC_WAREHOUSE_M). Round
+##     725's one "Buy" stand-in for that case is gone;
+##   * 3 -> item 3, STOREHOUSE_STRID; then item 0x2d, UIIT_STT_TC_OPEN, when
+##     the byte at +0x20 of that block is 0 and the player's level
+##     (+0x868) is above 0x3b, and item 0x2e, UIIT_STT_TC_HONOR_RANKING,
+##     always (0x700b73..0x700bb4). OpenSRO has no academy, so the +0x20 byte
+##     is taken as 0 (OURS: the block's writer is not read);
+##   * 0x20 -> item 0x2f, UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM;
+##   * 7 -> item 9 (the lookup of 5 before it only positions the iterator);
+##     9 -> item 0x10; 8 -> item 10 (gate_services' three);
+##   * 6 -> item 0xb, which FUN_006fcd60 writes no text for; not offered;
+##   * 0x1e -> UI_ITEM::FUN_006f98d0's lines when the talk target's class
+##     test FUN_00b94b90(0xef1ac4) passes. What it adds is not read (OPEN);
+##     not offered;
+##   * 0x0f -> the guild lines (guild_services);
+##   * 0x13 -> item 0x15, UIIT_MSG_XMAS_EVENT_CHANGE;
+##   * 10 -> item 0x16, UIIT_MSG_CIRCULATION_WITHDRAW_SKILL, "Withdrawing
+##     Skill";
+##   * 0x14, 0x16, 0x15 -> the job guilds' join lines, kinds 1, 3, 2
+##     (IF_NPCTalk::FUN_006fdeb0), only for a player with no job;
+##   * 0x11 -> item 0x27, SN_TALK_CH_GACHA_MACHINE_2; 0x12 -> item 0x28,
+##     SN_TALK_CH_GACHA_OPERATOR_2; 0x23 -> item 0x3f,
+##     SN_NPC_OPEN_MARKET_START; 0x0c -> item 0x39,
+##     UIIT_PAG_SPECIAL_PRICE_CONDITION_INFO; 0x1c -> item 0x2a at a teleport
+##     gate only, which has no text either (not offered); 0x27 -> item 0x3d,
+##     UIIT_PAG_PARTY_SUMMON; 0x29 -> item 0x3e, UIIT_STT_DUNGEON_EXIT.
+## Ids the builder never asks for (4, 0x0b, 0x0d, 0x0e, 0x17-0x19, 0x1b,
+## 0x1f, 0x21, 0x22, 0x28, ...) add no line: id 4 is the store's repair
+## buttons (offers_repair), 0x1f picks the end line's TALKEND2.
 ##
-## `store_lines` (round 725) is ShopReader.store_lines_for(code): with any,
-## the shop is offered as one line per tab group, keyed `shop:<tab group>`
-## and worded by the group's own name (SN_STORE_*), as the client's
-## FUN_006fb630 writes them (docs/protocol/npc_gui.md §1). Without, the one
-## "Buy" line stands in (OURS) for an NPC whose tab groups do not resolve.
-static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1,
-		guild_master: bool = false, player_job_kind: int = 0, store_lines: Array = []) -> Array:
+## The fallback labels are the stock textuisystem.txt English for each token
+## (the 19-column rows, /var/tmp/tables/textuisystem.txt on the render box);
+## the SN_ tokens live in the NPC text tables, so their fallback is the token
+## and World3D resolves them (_resolve_any_text).
+static func services_from_ids(ids: PackedByteArray, store_lines: Array = [], guild_id: int = -1,
+		guild_master: bool = false, player_job_kind: int = 0, player_level: int = 0) -> Array:
 	var out: Array = []
-	var up := code.to_upper()
-	var guild_npc := false
-	for pattern in GUILD_PATTERNS:
-		if up.contains(pattern):
-			guild_npc = true
-			break
-	# A shop (buy) -- grounded by refshopgroup membership, except at a guild
-	# NPC for a player known to have no guild (round 524). The server
-	# registers id 1 beside 0x0f on all seven GUILD_PATTERNS
-	# (CGObjNPCNPC::Create 0x4c6a4f: `push 0xf`, then `push 0x1`, each
-	# through vtable +0x164). In the client's FUN_00700440, id 1 present and
-	# 0x0f present sends item 1 (the store lines, FUN_006fcd60 case 1 ->
-	# FUN_006fb630) through FUN_009870e0: 0x7009f7 `mov ecx,0xeeebd8`,
-	# 0x7009fc `call 0x9870e0`, 0x700a01 `test al,al`, 0x700a03
-	# `je 0x700b10` skips it on 0, and 0x700a09 `jmp 0x700afe` emits it
-	# otherwise. 0x700b10 is the next row's start (the id 4 lookup), so only
-	# item 1 is skipped, and it takes no number. FUN_009870e0 == 0 is read
-	# as "not in a guild" (guild_services: an inference from what it gates).
-	# The player's refshopgroup.txt names all seven as running a
-	# GROUP_STORE_*_GUILD store, so without this they would show "Buy".
-	# guild_id -1 (not known yet) keeps "Buy", as before.
-	if shop_npcs.has(up) and not (guild_npc and guild_id == 0):
-		if store_lines.is_empty():
-			out.append(Service.new("shop", "Buy"))
+	if ids.has(2):
+		out.append(Service.new("talk", "Talk to this person.", TALKSTART_STRID))
+	if ids.has(1) and not (ids.has(0x0f) and guild_id == 0):
 		for line_v in store_lines:
 			var line: Dictionary = line_v
 			out.append(Service.new("%s%s" % [SHOP_KEY_PREFIX, str(line.get("tabgroup", ""))], "Buy",
 				str(line.get("name_strid", ""))))
-	# The rest match the NPC's codename the way the SERVER does -- see
-	# GUILD_PATTERNS below for where these patterns come from.
-	if up.contains("WAREHOUSE"):
-		# The server's own pattern for this one is the bare word too. Its
-		# talk line is the client's item 3 (STOREHOUSE_STRID above).
+	if ids.has(3):
 		out.append(Service.new("storage", "Storage", STOREHOUSE_STRID))
-	if guild_npc:
-		# The server registers id 0x0f here, and the client's lines for
-		# 0x0f depend on the player's guild (guild_services).
+		if player_level > ACADEMY_OPEN_ABOVE_LEVEL:
+			out.append(Service.new("academy_open", "Academy Establishment", ACADEMY_OPEN_STRID))
+		out.append(Service.new("honor_rank", "Honor Rank", HONOR_RANKING_STRID))
+	if ids.has(0x20):
+		out.append(Service.new("avatar_magic_option", "Grant magic option on avatar item", AVATAR_MAGIC_OPTION_STRID))
+	out.append_array(gate_services(ids.has(8), ids.has(7), ids.has(9)))
+	if ids.has(0x0f):
 		out.append_array(guild_services(guild_id, guild_master))
-	# The job guilds' join lines (round 526). The server registers id 0x14
-	# (Trader), 0x16 (Hunter) and 0x15 (Thief) on the codenames in
-	# JOB_TRADER_PATTERNS, JOB_HUNTER_PATTERNS and JOB_THIEF_PATTERNS below.
-	# The client's FUN_00700440 asks for them after the 0x0f block and hands
-	# each present id to IF_NPCTalk::FUN_006fdeb0 with its kind, in the order
-	# JOB_KIND_ORDER. FUN_006fdeb0 reads the player's job, FUN_009db0d0 on
-	# [0xeef5ec] (`mov al,[ecx+0x7be]`), and emits the join line, item 0x1e,
-	# only when it is 0: 0x6fdebf `call 0x9db0d0`, 0x6fdec4 `test al,al`,
-	# 0x6fdec6 `jne 0x6fdee0`, then 0x6fdec8 `mov ebx,[esp+0x38]` (the
-	# kind) and 0x6fded0-0x6fded6 `push ebx; push 0x1e; push eax (n);
-	# call 0x6fcd60`. The same function's other lines
-	# (0x1f-0x24, 0x26 and, at three desert NPCs, 0x3c) have no server in
-	# OpenSRO and are not offered -- this project's choice, not a claim that
-	# the real client lacks them (character_state.md, "The job guilds' lines
-	# (round 526)").
+	if ids.has(0x13):
+		out.append(Service.new("xmas_change", "Give the socks and receive a gift.", XMAS_CHANGE_STRID))
+	if ids.has(10):
+		out.append(Service.new("withdraw_skill", "Withdrawing Skill", WITHDRAW_SKILL_STRID))
 	if player_job_kind == 0:
-		for kind_v in JOB_KIND_ORDER:
-			var kind: int = kind_v
-			for pattern in _job_patterns(kind):
-				if up.contains(pattern):
-					out.append(Service.new("job_guild", str(JOB_FALLBACK_LABELS[kind]),
-						str(JOB_JOIN_STRIDS[kind]), kind))
-					break
-	# Town smiths get NO Repair talk line (round 512). The server
-	# registers interactions 4 and 0x20 on NPC_*_SMITH (CGObjNPCNPC::Create;
-	# docs/protocol/character_state.md, the interaction-id table), and the
-	# client's talk-menu builder adds nothing for id 4: FUN_00700440 looks id 4
-	# up at LAB_00700b10 (0x700b12-0x700b37: `mov byte [esp+0x14],4; call
-	# 0x534ef0`, then only the iterator checks) with no membership branch and
-	# no item -- unlike id 3 right after it (0x700b60-0x700b71 `cmp [eax+4]`,
-	# then item 3). The item switch FUN_006fcd60 (cases 0..0x43) has no repair
-	# label, and the set-membership test UI_SILKMALL::FUN_00676390 is never
-	# asked about id 4 at any of its 15 direct call sites.
-	#
-	# The client does read id 4, but not for a talk line: it decides whether
-	# the store window shows its Repair and Repair All buttons. The chain is
-	# cited on offers_repair below (verified round 514). So repair is the store
-	# window's two buttons (hud_panels.gd, _wire_repair_buttons), reached
-	# through "Buy", and id 4 is what shows them.
-	#
-	# Id 0x20 does add a line in the real client -- FUN_00700440 -> item 0x2f,
-	# UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM -- which this talk window
-	# likewise does not offer.
-	#
-	# The FORTRESS smith (NPC_*_FORTRESS_SMITH*) does have a real repair line:
-	# interaction 0x1a -> FUN_00700200 -> IF_NPCTalk::FUN_006fe030 case 0x36
-	# adds SN_FORTRESS_SMITH_REPAIR (beside SN_FORTRESS_SMITH_PRODUCT), behind
-	# a gate that is not named. OpenSRO has no fortress system, so it is
-	# deliberately not offered here -- a choice of this project, not a claim
-	# that the real client lacks it.
-	#
-	# NPC_*_ARMOR gets no repair talk line either: no NPC does. Round 458's
-	# "id 4 has no reader" holds for the SERVER only. The armour merchants
-	# carry id 4 like the smiths (REPAIR_PATTERNS below), so their store window
-	# shows the repair buttons too (offers_repair, round 514).
+		for pair in JOB_IDS:
+			if ids.has(int(pair[0])):
+				var kind: int = pair[1]
+				out.append(Service.new("job_guild", str(JOB_FALLBACK_LABELS[kind]), str(JOB_JOIN_STRIDS[kind]), kind))
+	for row in TAIL_LINES:
+		if ids.has(int(row[0])):
+			out.append(Service.new(str(row[1]), str(row[3]), str(row[2])))
+	return out
+
+## Item 4's token (FUN_006fcd60 case 4).
+const TALKSTART_STRID := "UIIT_STT_NPC_CHATTING_WND_TALKSTART"
+## Item 0x16's token (case 0x16).
+const WITHDRAW_SKILL_STRID := "UIIT_MSG_CIRCULATION_WITHDRAW_SKILL"
+## Items 0x2d, 0x2e and 0x2f (cases 0x2d-0x2f), and 0x15.
+const ACADEMY_OPEN_STRID := "UIIT_STT_TC_OPEN"
+const HONOR_RANKING_STRID := "UIIT_STT_TC_HONOR_RANKING"
+const AVATAR_MAGIC_OPTION_STRID := "UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM"
+const XMAS_CHANGE_STRID := "UIIT_MSG_XMAS_EVENT_CHANGE"
+## The academy line wants a level of 0x3c or more (0x700b96 `cmp byte
+## [eax+0x868],0x3c`, 0x700b9d `jb` past it; READ).
+const ACADEMY_OPEN_ABOVE_LEVEL := 0x3b
+## The job ids in the order FUN_00700440 asks for them, with the kind it
+## hands FUN_006fdeb0: 0x14 -> 1, 0x16 -> 3, 0x15 -> 2.
+const JOB_IDS := [[0x14, 1], [0x16, 3], [0x15, 2]]
+## The builder's last rows, in its order: [id, key, token, fallback label].
+const TAIL_LINES := [
+	[0x11, "gacha_machine", "SN_TALK_CH_GACHA_MACHINE_2", "SN_TALK_CH_GACHA_MACHINE_2"],
+	[0x12, "gacha_operator", "SN_TALK_CH_GACHA_OPERATOR_2", "SN_TALK_CH_GACHA_OPERATOR_2"],
+	[0x23, "open_market", "SN_NPC_OPEN_MARKET_START", "SN_NPC_OPEN_MARKET_START"],
+	[0x0c, "special_price", "UIIT_PAG_SPECIAL_PRICE_CONDITION_INFO", "Trade Export Details"],
+	[0x27, "party_summon", "UIIT_PAG_PARTY_SUMMON", "Summon Party member"],
+	[0x29, "dungeon_exit", "UIIT_STT_DUNGEON_EXIT", "Exit Dungeon"],
+]
+
+## The ids a teleport gate's own point gives it (round 577's reading, READ:
+## RefTeleport_ExtractData registers 7 and 9 from teleportdata columns 10
+## and 11; id 8 stands in from `has_links`, disclosed at gate_services). The
+## client-placed gates have no server uid, so their set is built here (OURS:
+## the original's comes in the 0xB045 reply like an NPC's).
+static func gate_ids(has_links: bool, designate: bool, recall: bool) -> PackedByteArray:
+	var out := PackedByteArray()
+	if designate:
+		out.append(7)
+	if has_links:
+		out.append(8)
+	if recall:
+		out.append(9)
 	return out
 
 ## The guild NPC's lines for the player's guild state (round 521): `guild_id`
@@ -355,7 +338,7 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 ##
 ## The same FUN_009870e0 test gates item 1 (the store lines) at a guild NPC,
 ## which the server also gives id 1 (0x4c6a4f): 0x7009fc `call 0x9870e0`,
-## 0x700a03 `je 0x700b10`. services_for applies it (round 524): at a guild
+## 0x700a03 `je 0x700b10`. services_from_ids applies it (round 524, round 727): at a guild
 ## NPC a guildless player (guild_id 0) gets no "Buy", so the create line is
 ## numbered 1, as in the real client (character_state.md, "The guild NPC's
 ## lines (round 521)").
@@ -418,7 +401,7 @@ static func offers_repair(code: String) -> bool:
 			return true
 	return false
 
-## The numbered, clickable lines of the talk menu, built from services_for's
+## The numbered, clickable lines of the talk menu, built from services_from_ids's
 ## list: one line per service, then the end line. `resolve` is the talk
 ## window's (token, fallback) -> text resolver (HudPanels._resolve_ui, which
 ## reads the player's own textuisystem.txt). It is passed in so that this
@@ -452,75 +435,6 @@ static func talk_menu_lines(npc_name: String, services: Array, resolve: Callable
 	print("NPCTALK %s line %d: %d. %s" % [npc_name, n, n, end_text])
 	lines.append("[url=end]%d. %s[/url]" % [n, end_text])
 	return lines
-
-## The guild NPCs, as the SERVER identifies them. `CGObjNPCNPC::Create`
-## (0x4c6350) registers interaction id 0x0f -- the guild service, confirmed by
-## its reader `CGuildManager::HandleCreateGuild` -- on exactly these seven
-## codename patterns, tested with `strstr`. Recovered round 455, verified round
-## 458; see docs/protocol/character_state.md.
-##
-## A bare "GUILD" token, which this used to use, is wrong in BOTH directions:
-##   * it misses NPC_CH_GENARAL_SP, the Chinese guild NPC, whose codename has no
-##     "GUILD" in it at all -- it heads the server's own list;
-##   * it wrongly matches NPC_SD_GUILD_AGENT/2/3, on which no codename test in
-##     the server registers any interaction id (round 520; round 458 said 0x0c,
-##     a misreading). Their strstr chain (0x4c6d6b-0x4c6ddb, which also tests
-##     NPC_SD_THIEF_AGENT_CHANGER) ends at 0x4c6ddd in vtable slot 198 (+0x318,
-##     IGObj::SetBodyMode; docs/protocol/igobj_vtable.md, the table), called
-##     with (4, 0xff, 0, 0) only when the byte at CMainProcess (DAT_00d6a8dc)
-##     +0x42404 is 1 (`cmp esi,1`; esi loaded at 0x4c6494). It never reaches
-##     slot 89 (+0x164, AddAvailableInteraction). Id 0x0c has two
-##     registrations in Create, neither on the agents: the NEXT chain, the
-##     NPC_*_SPECIAL literals (push 0xc at 0x4c6f39), and NPC_TD_THIEF_BUY
-##     (push 0xc at 0x4c6ae1, followed by 0xd). The data-driven paths are
-##     covered in docs/protocol/character_state.md, "Two misattributions,
-##     corrected (rounds 520 and 523)".
-const GUILD_PATTERNS := [
-	"NPC_CH_GENARAL_SP",
-	"NPC_WC_GUILD",
-	"NPC_KT_GUILD",
-	"NPC_EU_GUILD",
-	"NPC_CA_GUILD",
-	"NPC_SD_M_AREA_GUILD",
-	"NPC_SD_T_AREA_GUILD2",
-]
-
-## The job-guild NPCs, as the SERVER identifies them (round 526; ids named in
-## docs/protocol/jobs.md, "The three job guilds have three interaction ids
-## (round 453)"). In `CGObjNPCNPC::Create` (0x4c6350) each id is pushed once
-## through vtable +0x164 (AddAvailableInteraction), behind a `strstr`
-## (FUN_009dddc0) chain on these literals, read with objdump -s on
-## SR_GameServer.exe:
-##   * id 0x14 (Trader), `push 0x14` at 0x4c6c33: .rdata 0xaeed10 to 0xaeed60,
-##     the six below;
-const JOB_TRADER_PATTERNS := [
-	"NPC_CH_DOCTOR",
-	"NPC_WC_DOCTOR",
-	"NPC_KT_DESIGNER",
-	"NPC_EU_MERCHANT",
-	"NPC_CA_MERCHANT",
-	"NPC_SD_M_AREA_MERCHANT",
-]
-##   * id 0x16 (Hunter), `push 0x16` at 0x4c6d09: .rdata 0xaeecd8, 0xaeecec,
-##     0xaeed00 (the three the id-0xe chain tests too), 0xaeed78, 0xaeed88,
-##     0xaeed98;
-const JOB_HUNTER_PATTERNS := [
-	"NPC_CH_GENARAL_SW",
-	"NPC_WC_GENARAL_SW",
-	"NPC_KT_MINISTER",
-	"NPC_EU_HUNTER",
-	"NPC_CA_HUNTER",
-	"NPC_SD_M_AREA_HUNTER",
-]
-##   * id 0x15 (Thief), `push 0x15` at 0x4c6d57: .rdata 0xaeedb0, 0xaeedc4.
-## The other thief and merchant codenames in the player's characterdata_*.txt
-## (/var/tmp/tables on the render box) -- NPC_TD_THIEF_BUY, NPC_TD_THIEF_A to
-## _D, NPC_SD_THIEF_AGENT_CHANGER, NPC_SD_MERCHANT_CHANGER -- contain none of
-## these, so they get no join line.
-const JOB_THIEF_PATTERNS := [
-	"NPC_TD_THIEF_SELL",
-	"NPC_SD_T_AREA_THIEF",
-]
 
 ## A teleport gate's lines (round 577), in the order the real client asks for
 ## their interaction ids in FUN_00700440 (docs/protocol/character_state.md,
@@ -566,18 +480,6 @@ static func gate_services(has_links: bool, designate: bool, recall: bool) -> Arr
 const RECALL_POSITION_STRID := "UIIT_CTL_RECALL_POSITION"
 const TELEPORT_TO_RESURRECT_STRID := "UIIT_CTL_TELEPORT_TO_RESURRECT_POS"
 const TELEPORT_TARGET_STRID := "UIIT_CTL_TELEPORT_TARGET"
-
-## The server's codename literals for one job kind (1 Trader, 2 Thief,
-## 3 Hunter); empty for any other kind.
-static func _job_patterns(kind: int) -> Array:
-	match kind:
-		1:
-			return JOB_TRADER_PATTERNS
-		2:
-			return JOB_THIEF_PATTERNS
-		3:
-			return JOB_HUNTER_PATTERNS
-	return []
 
 ## The NPCs the SERVER gives interaction id 4, which offers_repair reads
 ## (round 514). `CGObjNPCNPC::Create` (0x4c6350) registers id 4 through

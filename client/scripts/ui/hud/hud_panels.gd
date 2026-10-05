@@ -566,6 +566,10 @@ signal skill_use_requested(skill_id: int, basic_code: String)
 ## the service's stable key (NpcServiceReader.Service.key -- "shop", "storage",
 ## ...). World3D acts on it (opens the shop, ...).
 signal npc_service_selected(key: String)
+## The talk window, the store or the storage was hidden (round 727): World3D
+## sends the end request 0x704B for a server NPC (NpcTalkNet.end, which holds
+## it while an open is in flight, as the original's close slot does).
+signal npc_window_hidden(panel_id: String)
 ## The guild name prompt (open_guild_name_prompt, round 521) was submitted
 ## with this name. World3D sends it to the server (NetClient.create_guild).
 signal guild_create_requested(guild_name: String)
@@ -691,6 +695,9 @@ func cancel_held_icon(why: String = "") -> void:
 ## one of these windows (World3D registers HudUnderbar.button_at).
 var click_pass_through: Array[Callable] = []
 
+## The windows of an NPC interaction, whose hiding ends it (round 727).
+const NPC_INTERACTION_WINDOWS := ["npctalk", "store", "storage"]
+
 ## Shows a panel, building it the first time it is asked for. Does nothing
 ## if its authored layout isn't in the archive -- a missing panel is a real
 ## possibility (layout names are our own mapping) and should not be an
@@ -763,6 +770,10 @@ func open(panel_id: String) -> HudWindow:
 			# CIFExchange::Create sets both offers to 0 (0x7b2941 / 0x7b294c).
 			set_exchange_money(0, 0)
 		_wire_close_sound(panel_id, window)
+		if panel_id in NPC_INTERACTION_WINDOWS:
+			window.visibility_changed.connect(func() -> void:
+				if not window.visible:
+					npc_window_hidden.emit(panel_id))
 		_populate(panel_id)
 	if panel_id == "exchange" and not was_shown:
 		# CIFExchange::vslot_023, showing: the alchemy window is destroyed if
@@ -1221,11 +1232,22 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	#   lines keep the box up (ours).
 	# The store and the storage are not closed by the NPC window's hide (READ,
 	# 0x704100), so they stay up from here on.
+	#
+	# Round 727: the store line's close ends the selection (0x704B, through
+	# npc_window_hidden) before the store's request goes. The original's
+	# warehouse line hides the window FIRST (+0x5c(0), 0x70242f..0x70243c),
+	# and that hide sends nothing (ShowWindow, not the close slot), then sends
+	# 0x7046 {3} (0x702466..). OURS: here the request goes first and the hide
+	# after it, because this window's hide reaches npc_window_hidden; the end
+	# is held while the request is in flight (NpcTalkNet.end), so the bytes
+	# are the original's.
 	if NpcServiceReader.is_shop_key(key):
 		close("npctalk")
 		UiSounds.window_toggled(false, _interface_shown(), "npctalk store line (vslot_043)")
 	elif key == "storage":
+		npc_service_selected.emit(key)
 		close("npctalk")
+		return
 	npc_service_selected.emit(key)
 
 ## Whether a text line has the keyboard: the focus owner of this viewport is
@@ -1872,6 +1894,8 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 		if who != "":
 			NetClient.character_stats(who)
 			NetClient.list_inventory(who)
+	# The buy-back row is the client's own list (round 728 review; c:0x78d900).
+	_fill_buyback_row()
 
 ## The item ids of every good this NPC sells, across all its tabs -- what to
 ## ask the server to price.
@@ -2145,7 +2169,7 @@ func _open_store_box(host_id: String, box_name: String, box_kind: int, opts: Dic
 	# across the store and the warehouse (READ, round 726 review).
 	# ConfirmBuy is a separate object (ID 400) and stays separate.
 	if box_kind != StoreMessageBox.Kind.BUY:
-		for host in ["store", "storage"]:
+		for host in ["store", "storage", "inventory"]:
 			var w: HudWindow = _windows.get(host)
 			if w == null:
 				continue
@@ -2271,8 +2295,14 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 ## open, the source the bag 0x46), the whole stack (0x6815ff..0x68160f,
 ## FUN_008ba460, the slot's count). The original first asks, with
 ## UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL, before selling an item the store will
-## not buy back; which items those are is not read, and OpenSRO has no buy
-## back at all, so no such question is asked (OPEN).
+## not buy back: CIFSlotWithHelp::vslot_029 looks the item up in the set
+## UI_SILKMALL 0x67cf30 searches and, when it is there, asks through
+## GInterface 0x788270 (MsgBoxSimple, 360x151, style 1 Yes / No, caption
+## UIIT_STT_CONFIRM_BOX, the text UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL formatted
+## with the item's name; 0x6814ae..0x681597, READ round 728 review). The set
+## is taken to be the server's never-booked one (ItemOpNet.never_booked, READ
+## on the server, gs:0x6b2950); that the client's set 0x67b3d0 holds the same
+## items is INFERRED (not compared).
 func _ctrl_sell(slot: int, qty: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(_bag_item_id_at_slot(slot))
@@ -2281,8 +2311,39 @@ func _ctrl_sell(slot: int, qty: int) -> void:
 		print("HudPanels: ctrl+click quick-sell refused, a cash item (bag slot %d)" % slot)
 		system_notice.emit(line if line != "" and line != CANT_QUICKSELL_CASHITEM else "Item mall items cannot be quick-sold.")
 		return
+	if item != null and ItemOpNet.never_booked(item.type_ids, item.bionic != 0, item.code_name):
+		_ask_cannot_buyback(slot, maxi(1, qty), item)
+		return
 	print("HudPanels: ctrl+click sells bag slot %d x%d with no box" % [slot, maxi(1, qty)])
 	_do_sell(slot, maxi(1, qty))
+
+## The question before quick-selling an item that cannot be bought back
+## (see _ctrl_sell): Yes sells.
+func _ask_cannot_buyback(slot: int, qty: int, item: ItemTableReader.Item) -> void:
+	var old := get_node_or_null("BuybackWarning")
+	if old != null:
+		old.queue_free()
+	var fmt := _ui_line("UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL", "%s cannot be bought back once sold. Sell it?")
+	var box := PartyMatchConfirm.new()
+	if not box.build(_builder, fmt.replace("%s", item.display_name(_object_names))):
+		box.queue_free()
+		return
+	box.name = "BuybackWarning"
+	box.confirmed.connect(func() -> void:
+		print("HudPanels: ctrl+click sells bag slot %d x%d after the buy-back warning" % [slot, qty])
+		_do_sell(slot, qty))
+	box.centre_on(get_viewport_rect().size)
+	add_child(box)
+	print("HudPanels: BuybackWarning opened for bag slot %d (item %d)" % [slot, item.id])
+
+## The server's reason for a deposit short of its fee (session.StorageNotEnoughGold).
+const STORAGE_NOT_ENOUGH_GOLD_REASON := "not enough gold"
+const STRGERR_NOT_ENOUGH_GOLD := "UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD"
+
+## A textuisystem line by key, or `fallback` when the table lacks it.
+func _ui_line(key: String, fallback: String) -> String:
+	var line := _builder.resolve_text(key) if _builder != null else ""
+	return line if line != "" and line != key else fallback
 
 ## The refusal CIFSlotWithHelp::vslot_029's bag branch shows (0xda4060, through
 ## 0x7781b0) before a Ctrl+click quick-sell of a cash item (READ, round 726
@@ -2323,12 +2384,14 @@ func _bag_slot_still_holds(slot: int, item_id: int, q: int, what: String) -> boo
 	print("HudPanels: %s not sent -- bag slot %d no longer holds item %d x%d" % [what, slot, item_id, q])
 	return false
 
+## Sells on the retail 0x7034 type 9 (round 728 review, ItemOpNet): the
+## result's book byte decides whether the sale enters the buy-back list.
 func _do_sell(slot: int, quantity: int) -> void:
-	var who := NetClient.current_character_name
-	if who == "" or not NetClient.is_connected_to_server():
+	if not NetClient.is_connected_to_server():
 		_set_shop_status("Not connected.")
 		return
-	NetClient.sell_item(who, slot, maxi(1, quantity))
+	_pending_sells[slot] = {"item_id": _bag_item_id_at_slot(slot), "count": maxi(1, quantity)}
+	NetClient.sell_item_retail(slot, maxi(1, quantity), npc_uid)
 
 func _on_shop_sell_result(ok: bool, reason: String, gold_received: int) -> void:
 	if not _windows.has("store"):
@@ -2341,6 +2404,163 @@ func _on_shop_sell_result(ok: bool, reason: String, gold_received: int) -> void:
 			NetClient.list_inventory(who)
 	else:
 		_set_shop_status("Could not sell: %s" % reason)
+
+## The NPC whose store or warehouse is open: its unique id, which the retail
+## sell, deposit and buy back carry (World3D sets it; 0 when unknown -- the
+## server does not check it yet, r728.md OPEN).
+var npc_uid := 0
+## Sells in flight, by bag slot: {"item_id", "count"} -- the result names the
+## slot and the count, the list needs the item.
+var _pending_sells := {}
+
+## A retail item operation's result (0xB034, ItemOpNet.decode_result).
+func _on_item_op_result(r: Dictionary) -> void:
+	if r.is_empty():
+		return
+	var who := NetClient.current_character_name
+	if not bool(r.get("ok", false)):
+		var code := int(r.get("code", 0))
+		print("HudPanels: item operation refused, code 0x%x" % code)
+		_item_error_notice(code)
+		if who != "":
+			NetClient.list_inventory(who)
+		return
+	match int(r.get("type", -1)):
+		ItemOpNet.TYPE_BAG_TO_BAG:
+			print("HudPanels: split %d from bag slot %d into %d" % [int(r.count), int(r.src), int(r.dst)])
+			if who != "":
+				NetClient.list_inventory(who)
+		ItemOpNet.TYPE_SELL:
+			var sold: Dictionary = _pending_sells.get(int(r.src), {})
+			_pending_sells.erase(int(r.src))
+			_buyback_book = ItemOpNet.book_sale(_buyback_book, int(sold.get("item_id", -1)), int(r.count), int(r.book))
+			print("HudPanels: sold bag slot %d x%d, book byte 0x%x, buy-back list %s" % [int(r.src), int(r.count), int(r.book), _book_text()])
+			_set_shop_status("Sold.")
+			if who != "":
+				NetClient.character_stats(who)
+				NetClient.list_inventory(who)
+			_fill_buyback_row()
+		ItemOpNet.TYPE_BUYBACK:
+			var index := int(r.index)
+			if index >= 0 and index < _buyback_book.size():
+				_buyback_book.remove_at(index)
+			print("HudPanels: bought back entry %d x%d into bag slot %d, buy-back list %s" % [index, int(r.count), int(r.dst), _book_text()])
+			if who != "":
+				NetClient.character_stats(who)
+				NetClient.list_inventory(who)
+			_fill_buyback_row()
+		ItemOpNet.TYPE_DEPOSIT:
+			print("HudPanels: deposit accepted (bag slot %d -> warehouse slot %d)" % [int(r.src), int(r.dst)])
+			_refresh_storage_and_bag()
+			if who != "":
+				NetClient.character_stats(who)
+
+## A buy back's failure (0xB168).
+func _on_buyback_failed(code: int) -> void:
+	print("HudPanels: buy back refused, code 0x%x" % code)
+	_item_error_notice(code)
+
+## The line for a refusal code (ItemOpNet.ERROR_TEXT), to the system channel
+## as the store's refusals go (OURS: where the original shows it).
+func _item_error_notice(code: int) -> void:
+	if ItemOpNet.ERROR_TEXT.has(code):
+		var key: String = ItemOpNet.ERROR_TEXT[code]
+		system_notice.emit(_ui_line(key, key))
+
+func _book_text() -> String:
+	var said := PackedStringArray()
+	for e in _buyback_book:
+		said.append("%d x%d" % [int(e.item_id), int(e.quantity)])
+	return "[%s]" % ", ".join(said)
+
+# --- Buy back (round 728) ----------------------------------------------------
+## The store's buy-back row: the five GDR_STORE_ICON_SLOT_01..05 under
+## "Buy back" (resinfo\ifstore.txt, #ifdef RESTORE_SOLDITEM_INSHOP; the
+## user's 3Gw7Ene.png). READ (round 728 review): the list is the CLIENT's,
+## built from the sell results (c:0x87f370 -> 0x78d900, ItemOpNet.book_sale)
+## and never requested; it is drawn newest at the left (c:0x6d4360 walks it
+## backwards), and an entry's index counts from the oldest. A slot (kind 0x45)
+## is picked up and put down on the bag, which opens the purpose-0x14 box:
+## CIFInventory::vslot_028 (0x6b5b80) -> the fill 0x6b0520, the inventory's
+## one box (+0x390), priced "%I64d" of the reference's +0xb8 (the sell price)
+## times the count, the count the slot's own -- fixed: 0x7168 carries no
+## count and the server restores the stored item whole.
+const BUYBACK_SLOT_FMT := "GDR_STORE_ICON_SLOT_%02d"
+const BUYBACK_SLOTS := 5
+## {"item_id", "quantity"}, oldest first.
+var _buyback_book: Array = []
+
+## Draws the list on the row's five slots, newest at the left.
+func _fill_buyback_row() -> void:
+	var window: HudWindow = _windows.get("store")
+	if window == null:
+		return
+	_load_items()
+	for i in range(BUYBACK_SLOTS):
+		var slot := window.node(BUYBACK_SLOT_FMT % (i + 1)) as Control
+		if slot == null:
+			continue
+		var icon := slot.get_node_or_null("ItemIcon") as TextureRect
+		var count := slot.get_node_or_null("CountLabel") as Label
+		if icon == null:
+			continue
+		if not icon.has_meta("buyback_click_wired"):
+			icon.set_meta("buyback_click_wired", true)
+			icon.gui_input.connect(func(ev: InputEvent) -> void: _on_buyback_cell_input(ev, icon))
+		var index := _buyback_book.size() - 1 - i
+		if index < 0:
+			icon.texture = null
+			icon.tooltip_text = ""
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if icon.has_meta("buyback_index"):
+				icon.remove_meta("buyback_index")
+			if count != null:
+				count.text = ""
+				count.queue_redraw()
+			continue
+		var e: Dictionary = _buyback_book[index]
+		icon.texture = _item_icon(int(e.item_id))
+		icon.tooltip_text = _item_tooltip(int(e.item_id))
+		icon.mouse_filter = Control.MOUSE_FILTER_STOP
+		icon.set_meta("buyback_index", index)
+		if count != null:
+			# The row's kind 0x45 is under the bag's expendable test
+			# (c:0x680da0, READ).
+			count.text = str(int(e.quantity)) if _shows_count(int(e.item_id), int(e.quantity)) else ""
+			count.queue_redraw()
+
+func _on_buyback_cell_input(event: InputEvent, icon: TextureRect) -> void:
+	if _is_pick_click_on(event, icon) and icon.has_meta("buyback_index"):
+		var index := int(icon.get_meta("buyback_index"))
+		if index >= _buyback_book.size():
+			return
+		var e: Dictionary = _buyback_book[index]
+		pick_up_icon({"kind": "buyback", "index": index, "item_id": int(e.item_id), "qty": int(e.quantity), "icon": icon.texture},
+			icon.texture, icon, (event as InputEventMouseButton).global_position)
+
+## The buy-back box (purpose 0x14), for list entry `index`.
+func _confirm_buyback(index: int, item_id: int) -> void:
+	if index < 0 or index >= _buyback_book.size() or int(_buyback_book[index].item_id) != item_id:
+		return
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	var n: int = maxi(1, int(_buyback_book[index].quantity))
+	_open_store_box("store", "BuybackConfirm", StoreMessageBox.Kind.BUY_BACK, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
+		"count": n, "min": n, "max": n, "unit_price": item.sell_price if item != null else 0,
+	}, func(_q: int) -> void:
+		_do_buyback(index, item_id))
+
+func _do_buyback(index: int, item_id: int) -> void:
+	if not NetClient.is_connected_to_server():
+		_set_shop_status("Not connected.")
+		return
+	# OURS (the box is not modal): the list may have changed under it.
+	if index >= _buyback_book.size() or int(_buyback_book[index].item_id) != item_id:
+		print("HudPanels: buy back not sent -- entry %d no longer holds item %d" % [index, item_id])
+		return
+	print("HudPanels: buy back entry %d (item %d)" % [index, item_id])
+	NetClient.buyback_retail(npc_uid, index)
 
 ## QA only: an item to buy in a render standing in for a click (a render
 ## cannot click a shop cell). Prefers the cheapest stackable good across the
@@ -2535,7 +2755,7 @@ func _fill_storage_grid(slots: Array) -> void:
 			icon.set_meta("wh_click_wired", true)
 			icon.gui_input.connect(func(ev: InputEvent) -> void: _on_storage_cell_input(ev, icon))
 		var count_label := cell.get_node_or_null("CountLabel") as Label
-		if count_label != null and entry.quantity > 1:
+		if count_label != null and _shows_count(int(entry.item_id), int(entry.quantity)):
 			count_label.text = str(entry.quantity)
 
 ## A click on a warehouse item picks it up onto the cursor; putting it down
@@ -2552,17 +2772,20 @@ func _on_storage_cell_input(event: InputEvent, icon: TextureRect) -> void:
 ## count edit restyled 0x81 and left unfocused (READ; whether the count can be
 ## changed is not settled); a stack starts at its size (INFERRED, as the sell
 ## box's); an item that does not stack hides the whole quantity group (READ).
-## The price field shows the original's floor, 1 (0x63d676): OpenSRO's
-## warehouse charges no fee (OURS; the original's fee is the item reference's
-## +0xcc times the count, 0x6b0fe8..0x6b101c, a field not mapped to an
-## itemdata column).
+## The price field is the fee: the item reference's +0xcc times the count,
+## floored at 1 (0x6b0fe8..0x6b101c, 0x63d676; READ). The fee is itemdata's
+## KeepingFee, column 30 (READ on the server, ref +0xac; round 728 review).
+## The server charges KeepingFee x the WHOLE stack clamped to 1..10,000,000
+## (gs:0x524160 / 0x524300), so above the cap this box shows more than is
+## charged, as the original's does.
 func _confirm_deposit(bag_slot: int, item_id: int, held: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	var n := maxi(1, held)
 	_open_store_box("storage", "DepositConfirm", StoreMessageBox.Kind.DEPOSIT, {
 		"icon": _item_icon(item_id), "name": item.display_name(_object_names) if item != null else "",
-		"count": n, "max": n, "fixed_price": 0, "stackable": is_stack_item(item),
+		"count": n, "max": n, "unit_price": item.keeping_fee if item != null else 0,
+		"stackable": is_stack_item(item),
 	}, func(q: int) -> void:
 		if _bag_slot_still_holds(bag_slot, item_id, q, "deposit"):
 			_do_deposit(bag_slot, q))
@@ -2593,10 +2816,25 @@ func _storage_slot_still_holds(slot: int, item_id: int, q: int) -> bool:
 	print("HudPanels: withdraw not sent -- warehouse slot %d no longer holds item %d x%d" % [slot, item_id, q])
 	return false
 
-func _do_deposit(bag_slot: int, quantity: int) -> void:
-	var who := NetClient.current_character_name
-	if who != "" and NetClient.is_connected_to_server():
-		NetClient.deposit_to_storage(who, bag_slot, maxi(1, quantity))
+## The retail deposit (0x7034 type 2, round 728 review): the whole stack --
+## the request carries no count (c:0x7950b0 0x46 -> 0x13 sets none, READ) --
+## into the warehouse's first empty slot (OURS: the original names the slot
+## the item was put down on).
+func _do_deposit(bag_slot: int, _quantity: int) -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	var taken := {}
+	for entry in _storage_slots_cache:
+		taken[int(entry.slot_index)] = true
+	var dst := -1
+	for i in range(maxi(_storage_capacity, 1)):
+		if not taken.has(i):
+			dst = i
+			break
+	if dst < 0:
+		print("HudPanels: deposit not sent -- the warehouse has no empty slot")
+		return
+	NetClient.deposit_retail(bag_slot, dst, npc_uid)
 
 func _do_withdraw(warehouse_slot: int, quantity: int) -> void:
 	var who := NetClient.current_character_name
@@ -2628,8 +2866,17 @@ func _on_storage_deposit_result(ok: bool, reason: String) -> void:
 	if ok:
 		print("HudPanels: deposit accepted")
 		_refresh_storage_and_bag()
+		# Round 728: the deposit fee left the purse.
+		if NetClient.current_character_name != "":
+			NetClient.character_stats(NetClient.current_character_name)
 	else:
 		push_warning("HudPanels: deposit refused: %s" % reason)
+		# Round 728: short of the fee. The server's storage handlers refuse it
+		# with UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD (0x180f; SR_GameServer 0x524160,
+		# error_attributed_functions.md); the line goes to the system channel
+		# as the store's refusals do (OURS: where the original shows it).
+		if reason == STORAGE_NOT_ENOUGH_GOLD_REASON:
+			system_notice.emit(_ui_line(STRGERR_NOT_ENOUGH_GOLD, "Not enough gold."))
 
 func _on_storage_withdraw_result(ok: bool, reason: String) -> void:
 	if ok:
@@ -3373,9 +3620,9 @@ func _close_confirm_box(box: Control) -> void:
 	box.queue_free()
 
 ## The confirm boxes a store or warehouse window can carry, by node name.
-const CONFIRM_BOXES := ["BuyConfirm", "SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog"]
+const CONFIRM_BOXES := ["BuyConfirm", "SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog", "BuybackConfirm", "SplitConfirm"]
 ## The boxes that are the inventory's one message box (+0x390) in the original.
-const INVENTORY_BOXES := ["SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog"]
+const INVENTORY_BOXES := ["SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog", "BuybackConfirm", "SplitConfirm"]
 
 ## Closes every confirm box on `window`. A box holds what it was opened on --
 ## the sell box a bag SLOT, not the item -- so one left behind a closed
@@ -3782,8 +4029,19 @@ func _draw_bag_page() -> void:
 				icon.set_meta("inv_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_inventory_cell_input(ev, icon))
 		var count_label := cell.get_node_or_null("CountLabel") as Label
-		if count_label != null and qty > 1:
+		if count_label != null and _shows_count(int(item_id), qty):
 			count_label.text = str(qty)
+
+## Whether a bag-type slot shows this stack's count (round 728): the original
+## draws it for an expendable, a stack of 1 included (ItemCountLabel.shows_count,
+## READ FUN_00680da0). An item the table does not know falls back to the old
+## rule, a stack of two or more (OURS).
+func _shows_count(item_id: int, qty: int) -> bool:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null:
+		return qty > 1
+	return ItemCountLabel.shows_count(Array(item.type_ids), item.bionic != 0, qty)
 
 ## Puts a bag cell's icon (or count) on the slot's 32x32 at the cell's
 ## top-left (BAG_SLOT_ICON), where the client's slot sits.
@@ -3829,9 +4087,60 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			and (held_icon == null or not held_icon.is_holding()):
 		_ctrl_sell(slot, qty)
 		return
+	# Round 728: Shift+click splits a stack (_open_split).
+	if _is_shift_click_on(event, icon) and (held_icon == null or not held_icon.is_holding()):
+		_open_split(slot, item_id, qty)
+		return
 	if _is_pick_click_on(event, icon):
 		pick_up_icon({"kind": "bag", "slot": slot, "item_id": item_id, "qty": qty, "icon": icon.texture},
 			icon.texture, icon, mb.global_position)
+
+## Whether an event is a left click released with Shift held (no Ctrl or
+## Alt) over `control`: the original's Shift+click on a slot (0x681903).
+func _is_shift_click_on(event: InputEvent, control: Control) -> bool:
+	if not (event is InputEventMouseButton):
+		return false
+	var mb := event as InputEventMouseButton
+	return mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed and mb.shift_pressed \
+		and not mb.ctrl_pressed and not mb.alt_pressed and control != null \
+		and (not control.is_inside_tree() or control.get_global_rect().has_point(mb.global_position))
+
+## The split box (round 728): CIFMessageBox mode 5, MsgBoxDivideCount, the
+## inventory's one box (+0x390), for a stackable item of more than one
+## (0x6b3fa0, READ; StoreMessageBox._build_divide). OK moves the typed count
+## into the bag's first empty slot (the 0x8076 owner, READ); none free, or a
+## count of 0, sends nothing (c:0x6b62d0 sends only on the 1 flag, READ).
+## Sent as the retail 0x7034 type 0 (ItemOpNet).
+func _open_split(slot: int, item_id: int, qty: int) -> void:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null or not is_stack_item(item) or qty <= 1:
+		return
+	_open_store_box("inventory", "SplitConfirm", StoreMessageBox.Kind.DIVIDE, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
+		"stack": qty, "count": 1, "min": 0, "max": qty - 1,
+	}, func(q: int) -> void:
+		if q < 1 or not _bag_slot_still_holds(slot, item_id, q + 1, "split"):
+			return
+		var to := first_empty_bag_slot()
+		if to < 0:
+			print("HudPanels: split not sent -- no empty bag slot")
+			return
+		if NetClient.is_connected_to_server():
+			print("HudPanels: split %d off bag slot %d into slot %d" % [q, slot, to])
+			NetClient.split_item(slot, to, q))
+
+## The bag's first empty slot (the open pages' order), or -1.
+func first_empty_bag_slot() -> int:
+	var taken := {}
+	for entry in _bag_slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		if index != null:
+			taken[int(index)] = true
+	for s in range(_bag_size_shown()):
+		if not taken.has(s):
+			return s
+	return -1
 
 ## Whether `event` is the click that picks `control`'s icon up: a plain left
 ## release (HeldIcon.is_pick_click, READ) that is still over the control --
@@ -3967,6 +4276,11 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 			# (FUN_007950b0 case 0x0f sets none), so the server places it.
 			if on_bag and _window_shown("store"):
 				_confirm_buy(item_id)
+		"buyback":
+			# Round 728: a buy-back slot (source kind 0x45) put down on the
+			# bag: CIFInventory::vslot_028 0x6b5b80 -> 0x6b0520 (READ).
+			if on_bag and _window_shown("store"):
+				_confirm_buyback(int(what.get("index", -1)), item_id)
 		"skill":
 			if not _over_any_window(at):
 				held_dropped_outside.emit(what, at)
@@ -4079,6 +4393,14 @@ func qa_print_slots() -> void:
 				var slot := _bag_page * BAG_PAGE_SLOTS + i
 				if cell != null and cell.is_visible_in_tree() and slot < _bag_size_shown():
 					print("QA SLOT bag:%d at %s item %d" % [slot, _qa_xy(cell), _bag_item_id_at_slot(slot)])
+		# Round 728: every stack's count, so a live run reads a split.
+		var said := PackedStringArray()
+		for entry in _bag_slots:
+			var index = _first_field(entry, ["slot", "slot_index", "index"])
+			var id = _first_field(entry, ["item_id", "id"])
+			var n = _first_field(entry, COUNT_FIELDS)
+			said.append("%s=%s x%s" % [str(index), str(id), str(n)])
+		print("QA BAG %s" % " ".join(said))
 		for i in range(17):
 			var ws := inv.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
 			if ws != null and ws.is_visible_in_tree():
@@ -4093,6 +4415,8 @@ func qa_print_slots() -> void:
 					continue
 				if tr.has_meta("wh_slot"):
 					print("QA SLOT storage:%d at %s item %d" % [int(tr.get_meta("wh_slot")), _qa_xy(tr), int(tr.get_meta("wh_item_id"))])
+				elif tr.has_meta("buyback_index"):
+					print("QA SLOT buyback:%d at %s" % [int(tr.get_meta("buyback_index")), _qa_xy(tr)])
 				elif tr.has_meta("shop_item_id"):
 					print("QA SLOT shop:%s at %s item %d" % [tr.get_parent().name, _qa_xy(tr), int(tr.get_meta("shop_item_id"))])
 			for b in win.find_children("*", "BaseButton", true, false):
@@ -4287,7 +4611,7 @@ func qa_fill_sample_inventory() -> void:
 		if icon != null:
 			icon.texture = _item_icon(ids[i])
 		var count := cell.get_node_or_null("CountLabel") as Label
-		if count != null and qtys[i] > 1:
+		if count != null and _shows_count(ids[i], qtys[i]):
 			count.text = str(qtys[i])
 
 ## The worn items as last reported, so opening the equipment window fills
@@ -5511,6 +5835,8 @@ func connect_net() -> void:
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 	NetClient.shop_sell_result.connect(_on_shop_sell_result)
+	NetClient.item_op_result.connect(_on_item_op_result)
+	NetClient.buyback_failed.connect(_on_buyback_failed)
 	NetClient.storage_list_result.connect(_on_storage_list_result)
 	NetClient.storage_deposit_result.connect(_on_storage_deposit_result)
 	NetClient.storage_withdraw_result.connect(_on_storage_withdraw_result)

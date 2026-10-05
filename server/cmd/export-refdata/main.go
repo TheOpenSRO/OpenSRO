@@ -115,6 +115,10 @@ const (
 	// 53-57 are five more string reads and the row's are the .bsr/.bsr/.ddj
 	// asset paths plus two "xxx". See docs/protocol/refobj_binary_format.md.
 	fRepairCost = 27
+	// fKeepingFee is the warehouse deposit fee (round 728): _RefObjCommon's
+	// KeepingFee, column 30 -- see refdata.Item.KeepingFee for why the column
+	// is INFERRED rather than READ.
+	fKeepingFee = 30
 	// The Param block stores a value beside its own label: 118 "HP...",
 	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts --
 	// on the recovery rows (TypeID 3/3/1, TypeID4 not 4..10) only, which is
@@ -801,6 +805,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		str(fCodeName), // 70 CodeName (col 2)
 		// 71: CompositeDesc (round 632 review, see compositeDescOf).
 		compositeDescOf(cols, get(fTypeID1), get(fTypeID1+1), get(fTypeID1+2), get(fTypeID1+3)),
+		// 72: KeepingFee, itemdata column 30 (round 728, see
+		// refdata.Item.KeepingFee).
+		num(fKeepingFee),
 	}, true
 }
 

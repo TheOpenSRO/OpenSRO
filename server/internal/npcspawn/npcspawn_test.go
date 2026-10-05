@@ -284,14 +284,22 @@ func TestInteractions(t *testing.T) {
 		{"NPC_CH_SMITH", InteractionInputs{}, 2, []byte{4, 0x20}},
 		{"NPC_CH_ARMOR", InteractionInputs{}, 2, []byte{4}},
 		{"NPC_CH_WAREHOUSE_M", InteractionInputs{}, 2, []byte{1, 3}},
-		{"NPC_CH_HORSE", InteractionInputs{}, 2, []byte{1, 0x0b}},
+		// Round 727: NPC_CH_HORSE and NPC_CH_GENARAL_SW are quest NPCs (id 2).
+		{"NPC_CH_HORSE", InteractionInputs{}, 2, []byte{1, 2, 0x0b}},
 		{"NPC_CH_SOLDIER_EM1", InteractionInputs{}, 2, []byte{0x1e}},
-		{"NPC_CH_GENARAL_SW", InteractionInputs{}, 2, []byte{0x0e, 0x16}},
-		{"NPC_CH_POTION", InteractionInputs{HasShop: true}, 2, []byte{0x11}},
-		{"NPC_CH_POTION", InteractionInputs{}, 0, nil},
-		// A teleport NPC with no rule: 7 and 9 are in its set, but no rule
-		// set bit 1, so nothing is written.
-		{"NPC_CH_FERRY", InteractionInputs{Teleport7: true, Teleport9: true}, 0, nil},
+		{"NPC_CH_GENARAL_SW", InteractionInputs{}, 2, []byte{2, 0x0e, 0x16}},
+		// The herbalist (round 727): its shop gives 1 (0x4c7920), the potion
+		// quests 2 -- the original's "Talk to this person." and
+		// "Purchase/ Sell ..." lines. No longer 0x11.
+		{"NPC_CH_POTION", InteractionInputs{OwnsShop: true}, 2, []byte{1, 2}},
+		{"NPC_CH_POTION", InteractionInputs{}, 2, []byte{2}},
+		{"NPC_CH_POTION2", InteractionInputs{}, 0, nil},
+		// A teleport NPC with no rule and no quest: 7 and 9 are in its set,
+		// but nothing set bit 1: the spawn record writes no list, the select
+		// reply (the whole set) still carries them.
+		{"NPC_WC_FERRY", InteractionInputs{Teleport7: true, Teleport9: true}, 0, []byte{7, 9}},
+		// A ferry a quest names: bit 1 set, so its teleport ids go out too.
+		{"NPC_CH_FERRY", InteractionInputs{Teleport7: true, Teleport9: true, Teleport8: true}, 2, []byte{2, 7, 8, 9}},
 		// With a rule, the set carries them.
 		{"NPC_CH_SOLDIER_EM1", InteractionInputs{Teleport9: true}, 2, []byte{9, 0x1e}},
 		{"NPC_BATTLE_ARENA_MANAGER", InteractionInputs{}, 2, []byte{0x21}},
