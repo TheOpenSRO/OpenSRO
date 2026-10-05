@@ -107,21 +107,25 @@ type FeeLookup interface {
 	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
 }
 
-// DepositFee is what depositing count of an item costs: max(1, KeepingFee x
-// max(1, count)). The client's deposit box shows exactly this number --
-// the fill 0x6b0e90 writes the fee times max(1, count) and
-// `CIFMessageBox::vslot_012` (0x63d676..0x63d698) shows max(1, that) for
-// purpose 5 (READ, docs/protocol/message_box.md). That the server charges the
-// shown number at the deposit is INFERRED (the server's warehouse path was not
-// read); refdata.Item.KeepingFee records why the column is INFERRED too.
+// DepositFeeCap is the most a deposit costs (READ: gs:0x524300,
+// `uVar6 = 10000000`).
+const DepositFeeCap = 10_000_000
+
+// DepositFee is what depositing count of an item costs, READ in the server's
+// deposit (move type 2, gs:0x524160): the unit fee (gs:0x523650, the item
+// reference's +0xac, itemdata column 30 KeepingFee) times the count, 0 or
+// less becoming 1 and DepositFeeCap or more becoming DepositFeeCap. The
+// server prices the WHOLE stack: its type-2 request carries no count and it
+// overwrites the count with the stack (r728_review.md F2/F7). The client's
+// box (purpose 5, 0x63d676) shows max(1, the fee) with no cap, so above the
+// cap the box shows more than is charged.
 func DepositFee(keepingFee int64, count int) int64 {
-	c := int64(count)
-	if c < 1 {
-		c = 1
-	}
-	fee := keepingFee * c
+	fee := keepingFee * int64(count)
 	if fee < 1 {
 		fee = 1
+	}
+	if fee > DepositFeeCap {
+		fee = DepositFeeCap
 	}
 	return fee
 }
@@ -288,20 +292,32 @@ func (s *Service) List(ctx context.Context, characterID int64) ([]inventory.Slot
 	return s.Warehouse.List(ctx, c.AccountID)
 }
 
-// Deposit moves quantity from the character's bag slot into the account's warehouse.
+// Deposit moves quantity from the character's bag slot into the account's
+// warehouse, charging the fee on what moves (Charge).
 func (s *Service) Deposit(ctx context.Context, characterID int64, bagSlot, quantity int) error {
+	if quantity <= 0 {
+		return ErrNothingToMove
+	}
+	return s.deposit(ctx, characterID, bagSlot, quantity, -1)
+}
+
+// DepositStack is the retail deposit (0x7034 type 2, gs:0x524160): the WHOLE
+// stack in bagSlot into warehouse slot dst (the server's own choice when dst
+// is taken, out of range, or the warehouse cannot place -- OURS), the fee
+// for the whole stack (DepositFee).
+func (s *Service) DepositStack(ctx context.Context, characterID int64, bagSlot, dst int) error {
+	return s.deposit(ctx, characterID, bagSlot, 0, dst)
+}
+
+// deposit is both: quantity 0 is the whole stack. In the retail order: the
+// purse is checked against the fee first (0x180f, character.ErrInsufficientGold),
+// the item is moved, and only then is the gold taken (READ, gs:0x524160 ->
+// 0x523f70, reason 0x21). A purse emptied between the check and the charge
+// undoes the move.
+func (s *Service) deposit(ctx context.Context, characterID int64, bagSlot, quantity, dst int) error {
 	c, err := s.accountOf(ctx, characterID)
 	if err != nil {
 		return err
-	}
-	if s.Items == nil {
-		return move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, quantity)
-	}
-	// The fee (round 728): priced on what will really move -- the slot's own
-	// item and no more than it holds -- charged first, refunded if the move
-	// then fails, so a refusal costs nothing.
-	if quantity <= 0 {
-		return ErrNothingToMove
 	}
 	slots, err := s.Bag.List(ctx, characterID)
 	if err != nil {
@@ -317,21 +333,53 @@ func (s *Service) Deposit(ctx context.Context, characterID int64, bagSlot, quant
 	if found == nil || found.Quantity <= 0 {
 		return ErrSlotEmpty
 	}
-	count := quantity
-	if count > found.Quantity {
-		count = found.Quantity
+	count := found.Quantity
+	if quantity > 0 && quantity < count {
+		count = quantity
 	}
-	var keeping int64
-	if it, e := s.Items.GetItem(ctx, found.ItemID); e == nil && it != nil {
-		keeping = it.KeepingFee
+	var fee int64
+	if s.Items != nil {
+		var keeping int64
+		if it, e := s.Items.GetItem(ctx, found.ItemID); e == nil && it != nil {
+			keeping = it.KeepingFee
+		}
+		fee = DepositFee(keeping, count)
+		ch, err := s.Gold.GetByID(ctx, characterID)
+		if err != nil {
+			return fmt.Errorf("storage: reading purse: %w", err)
+		}
+		if ch.Gold < fee {
+			return character.ErrInsufficientGold
+		}
 	}
-	fee := DepositFee(keeping, count)
+	placed := false
+	if p, ok := s.Warehouse.(inventory.Placer); ok && dst >= 0 && count == found.Quantity {
+		if err := s.Bag.RemoveItem(ctx, characterID, bagSlot, count); err != nil {
+			return fmt.Errorf("storage: taking from the bag: %w", err)
+		}
+		if err := p.PlaceItemInstance(ctx, c.AccountID, dst, found.ItemID, count, found.Instance()); err == nil {
+			placed = true
+		} else if backErr := s.Bag.AddItemInstance(ctx, characterID, found.ItemID, count, found.Instance()); backErr != nil {
+			return fmt.Errorf("storage: placing failed (%w) AND returning to the bag failed (%v)", err, backErr)
+		}
+	}
+	if !placed {
+		if err := move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, count); err != nil {
+			return err
+		}
+	}
+	if fee == 0 {
+		return nil
+	}
 	if err := s.Gold.DeductGold(ctx, characterID, fee); err != nil {
-		return err
-	}
-	if err := move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, count); err != nil {
-		if backErr := s.Gold.AddGold(ctx, characterID, fee); backErr != nil {
-			return fmt.Errorf("storage: deposit failed (%w) AND refunding the fee failed (%v)", err, backErr)
+		// Undo the move (the purse changed under the check).
+		if list, lerr := s.Warehouse.List(ctx, c.AccountID); lerr == nil {
+			for _, w := range list {
+				if w.ItemID == found.ItemID && w.Quantity >= count && w.Instance() == found.Instance() {
+					_ = move(ctx, s.Warehouse, c.AccountID, s.Bag, characterID, w.Index, count)
+					break
+				}
+			}
 		}
 		return err
 	}

@@ -428,13 +428,12 @@ type Item struct {
 	CompositeDesc string
 
 	// KeepingFee is the warehouse's per-item deposit fee in gold, itemdata
-	// column 30 (round 728). The client's deposit box shows
-	// max(1, fee x max(1, count)) (`CIFMessageBox::vslot_012` 0x63d676 and the
-	// fill 0x6b0e90, READ). That the fee the fill multiplies is THIS column is
-	// INFERRED: the column's name in _RefObjCommon's schema is KeepingFee, it
-	// sits between the repair price basis (27, READ) and SellPrice (31), and a
-	// zero-fee ticket shows the box's "1" in the user's screenshot of the
-	// original (MKtR5Kd.png). 0 on an older import.
+	// column 30 (round 728). READ on the server: RefObjCommon_ExtractData
+	// (gs:0x6a3090) reads columns 26..31 into +0x9c Price, +0xa4 CostRepair,
+	// +0xa8 CostRevive, +0xa0 CostBorrow, +0xac KeepingFee, +0xb0 SellPrice,
+	// and the deposit's unit fee (gs:0x523650) is ref +0xac
+	// (r728_review.md F11). The server charges it x the whole stack, clamped
+	// to 1..10,000,000 (storage.DepositFee). 0 on an older import.
 	KeepingFee int64
 }
 

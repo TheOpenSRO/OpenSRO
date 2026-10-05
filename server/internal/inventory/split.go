@@ -18,9 +18,11 @@ import (
 // sends nothing. So a split always lands in an empty slot, chosen by the
 // client.
 //
-// What the retail server does with it was not read; this checks what the
-// client guarantees (an empty destination, 0 < count < the stack) and refuses
-// anything else.
+// The server's bag -> bag (gs:0x4b2450, READ, r728_review.md F9): a count
+// below 1 refuses 0x1829, an empty source 0x1809; into an empty slot the
+// whole stack moves, a count above it refuses 0x1814, a smaller one splits
+// (CGStorage::SplitItemTo). The session's 0x7034 type 0 (session/itemop.go)
+// applies those; SplitItem is the split itself.
 
 // ErrSplitCount is returned when a split's count is not in 1..stack-1.
 var ErrSplitCount = errors.New("inventory: split count must be less than the stack")
@@ -108,6 +110,79 @@ func (s *SQLStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`),
 		characterID, to, itemID, count, variance, durability); err != nil {
 		return fmt.Errorf("inventory: filling slot %d: %w", to, err)
+	}
+	return tx.Commit()
+}
+
+// Placer is a Store that can put an item instance into one named EMPTY slot,
+// never merging (round 728's review: the retail buy back, GObjPC 0x42aae0,
+// takes CGStorage::FindFirstEmptySlot and SetItem -- READ). Implemented by
+// MemStore and SQLStore.
+type Placer interface {
+	PlaceItemInstance(ctx context.Context, characterID int64, slot int, itemID int64, quantity int, inst Instance) error
+	PlacementCapacityFor(ctx context.Context, owner int64) int
+}
+
+// FirstEmptySlot is the lowest slot below the placement capacity that holds
+// nothing, or -1 when the bag is full.
+func FirstEmptySlot(ctx context.Context, st Store, p Placer, characterID int64) (int, error) {
+	held, err := st.List(ctx, characterID)
+	if err != nil {
+		return -1, err
+	}
+	taken := make(map[int]bool, len(held))
+	for _, s := range held {
+		taken[s.Index] = true
+	}
+	for i := 0; i < p.PlacementCapacityFor(ctx, characterID); i++ {
+		if !taken[i] {
+			return i, nil
+		}
+	}
+	return -1, nil
+}
+
+// PlaceItemInstance implements Placer.
+func (m *MemStore) PlaceItemInstance(ctx context.Context, characterID int64, slot int, itemID int64, quantity int, inst Instance) error {
+	if slot < 0 || slot >= m.placeCapacityFor(ctx, characterID) || quantity <= 0 {
+		return ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	held := m.slots[characterID]
+	if held == nil {
+		held = make(map[int]*Slot)
+		m.slots[characterID] = held
+	}
+	if held[slot] != nil {
+		return ErrSlotTaken
+	}
+	held[slot] = &Slot{Index: slot, ItemID: itemID, Quantity: quantity, Variance: inst.Variance, Durability: inst.Durability}
+	return nil
+}
+
+// PlaceItemInstance implements Placer.
+func (s *SQLStore) PlaceItemInstance(ctx context.Context, characterID int64, slot int, itemID int64, quantity int, inst Instance) error {
+	if slot < 0 || slot >= s.placeCapacityFor(ctx, characterID) || quantity <= 0 {
+		return ErrInvalidSlot
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("inventory: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+	var taken int
+	if err := tx.QueryRowContext(ctx,
+		s.q(`SELECT COUNT(*) FROM %s WHERE character_id = $1 AND slot = $2`), characterID, slot).Scan(&taken); err != nil {
+		return fmt.Errorf("inventory: reading slot %d: %w", slot, err)
+	}
+	if taken > 0 {
+		return ErrSlotTaken
+	}
+	if _, err := tx.ExecContext(ctx,
+		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`),
+		characterID, slot, itemID, quantity, int64(inst.Variance), inst.Durability); err != nil {
+		return fmt.Errorf("inventory: filling slot %d: %w", slot, err)
 	}
 	return tx.Commit()
 }

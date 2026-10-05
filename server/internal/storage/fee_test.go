@@ -19,15 +19,17 @@ func (f feeItems) GetItem(_ context.Context, id int64) (*refdata.Item, error) {
 	return &refdata.Item{ID: id, KeepingFee: fee}, nil
 }
 
-// Round 728: the fee is what the client's deposit box shows, max(1, KeepingFee
-// x max(1, count)) (READ for the box, message_box.md).
+// Round 728: the server's fee, KeepingFee x the count clamped to
+// 1..10,000,000 (READ, gs:0x524160 / 0x524300).
 func TestDepositFeeArithmetic(t *testing.T) {
 	cases := []struct {
 		fee   int64
 		count int
 		want  int64
 	}{
-		{0, 1, 1}, {0, 50, 1}, {11, 1, 11}, {11, 3, 33}, {21, 0, 21},
+		{0, 1, 1}, {0, 50, 1}, {11, 1, 11}, {11, 3, 33}, {21, 0, 1},
+		// ITEM_ETC_ARCHEMY_ATTRSTONE_ER_11: 2,500 x 10,000 is charged the cap.
+		{2500, 10000, DepositFeeCap}, {1000, 10000, DepositFeeCap}, {999, 10000, 9_990_000},
 	}
 	for _, c := range cases {
 		if got := DepositFee(c.fee, c.count); got != c.want {
@@ -93,5 +95,30 @@ func TestDepositWithoutItemsChargesNothing(t *testing.T) {
 	after, _ := f.chars.GetByID(ctx, cid)
 	if before.Gold != after.Gold {
 		t.Fatalf("charged %d with no item lookup", before.Gold-after.Gold)
+	}
+}
+
+// The retail deposit (0x7034 type 2): the whole stack into the named warehouse
+// slot, the fee for the whole stack, the gold taken after the move.
+func TestDepositStackMovesTheWholeStackIntoTheSlot(t *testing.T) {
+	ctx := context.Background()
+	const item = int64(100)
+	f := newFixture(t)
+	f.svc.Items = feeItems{item: 11}
+	cid := f.aria.ID
+	if err := f.svc.Bag.AddItem(ctx, cid, item, 5); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.chars.GetByID(ctx, cid)
+	if err := f.svc.DepositStack(ctx, cid, slotOf(t, f.svc.Bag, cid, item).Index, 3); err != nil {
+		t.Fatalf("DepositStack: %v", err)
+	}
+	after, _ := f.chars.GetByID(ctx, cid)
+	if before.Gold-after.Gold != 55 {
+		t.Fatalf("charged %d, want 55 (11 x the whole 5)", before.Gold-after.Gold)
+	}
+	list, _ := f.svc.List(ctx, cid)
+	if len(list) != 1 || list[0].Index != 3 || list[0].Quantity != 5 {
+		t.Fatalf("warehouse %+v, want 5 in slot 3", list)
 	}
 }

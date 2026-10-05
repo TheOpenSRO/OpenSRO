@@ -126,7 +126,7 @@ type Service struct {
 	Items ItemLookup
 
 	// The buy-back book (round 728, buyback.go): each character's last
-	// BuybackSlots sales, newest first.
+	// BuybackSlots sales, oldest first.
 	soldMu sync.Mutex
 	sold   map[int64][]Sold
 }
@@ -162,12 +162,20 @@ func (s *Service) Buy(ctx context.Context, characterID, itemID int64, quantity i
 // Returns the gold credited. If crediting gold fails after the items were
 // removed, the items are put back before returning the error.
 func (s *Service) Sell(ctx context.Context, characterID int64, slot, quantity int) (int64, error) {
+	gold, _, err := s.SellBooked(ctx, characterID, slot, quantity)
+	return gold, err
+}
+
+// SellBooked is Sell, also answering the buy-back book byte the retail sell
+// result carries: the book's size after the sale (1..5), or NotBooked
+// (buyback.go).
+func (s *Service) SellBooked(ctx context.Context, characterID int64, slot, quantity int) (int64, byte, error) {
 	if quantity <= 0 {
-		return 0, ErrNothingToSell
+		return 0, 0, ErrNothingToSell
 	}
 	slots, err := s.Inv.List(ctx, characterID)
 	if err != nil {
-		return 0, fmt.Errorf("shop: reading inventory: %w", err)
+		return 0, 0, fmt.Errorf("shop: reading inventory: %w", err)
 	}
 	var found *inventory.Slot
 	for i := range slots {
@@ -177,14 +185,14 @@ func (s *Service) Sell(ctx context.Context, characterID int64, slot, quantity in
 		}
 	}
 	if found == nil || found.Quantity <= 0 {
-		return 0, ErrSlotEmpty
+		return 0, 0, ErrSlotEmpty
 	}
 	if quantity > found.Quantity {
 		quantity = found.Quantity
 	}
 	item, err := s.Items.GetItem(ctx, found.ItemID)
 	if err != nil {
-		return 0, ErrItemNotFound
+		return 0, 0, ErrItemNotFound
 	}
 	// THE ITEM'S OWN SELL FLAG, the engine's refusal at this exact point.
 	// `CanSell` is vtable slot 50 (`IGObj::CanSell`), and the shop path returns
@@ -194,22 +202,28 @@ func (s *Service) Sell(ctx context.Context, characterID int64, slot, quantity in
 	//
 	// Checked BEFORE the item is removed, so a refusal costs nothing.
 	if item != nil && !item.CanSell {
-		return 0, ErrCannotSell
+		return 0, 0, ErrCannotSell
 	}
 
 	gold := SellValue(item) * int64(quantity)
 
 	if err := s.Inv.RemoveItem(ctx, characterID, slot, quantity); err != nil {
-		return 0, fmt.Errorf("shop: removing sold item: %w", err)
+		return 0, 0, fmt.Errorf("shop: removing sold item: %w", err)
 	}
 	if err := s.Gold.AddGold(ctx, characterID, gold); err != nil {
 		if backErr := s.Inv.AddItemInstance(ctx, characterID, found.ItemID, quantity, found.Instance()); backErr != nil {
-			return 0, fmt.Errorf("shop: crediting gold failed (%w) AND putting the item back failed (%v) -- character may have lost an item", err, backErr)
+			return 0, 0, fmt.Errorf("shop: crediting gold failed (%w) AND putting the item back failed (%v) -- character may have lost an item", err, backErr)
 		}
-		return 0, fmt.Errorf("shop: crediting gold: %w", err)
+		return 0, 0, fmt.Errorf("shop: crediting gold: %w", err)
 	}
-	s.recordSold(characterID, Sold{ItemID: found.ItemID, Quantity: quantity, Unit: SellValue(item), Inst: found.Instance()})
-	return gold, nil
+	if item != nil && NeverBooked(item) {
+		return gold, NotBooked, nil
+	}
+	price := gold
+	if item != nil && item.SellPrice*int64(quantity) > price {
+		price = item.SellPrice * int64(quantity)
+	}
+	return gold, s.recordSold(characterID, Sold{ItemID: found.ItemID, Quantity: quantity, Price: price, Inst: found.Instance()}), nil
 }
 
 // Catalog returns every purchasable item (the entire refdata catalog --
