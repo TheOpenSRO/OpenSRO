@@ -7527,6 +7527,14 @@ func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
 ## 26.0 (MEASURED, docs/protocol/teleport_effects.md). An object takes its
 ## effects once (META_GATE_EFFECTS); a region streamed out takes them with
 ## its objects.
+##
+## Round 723: "the region's placed objects" was too narrow. A gate's model
+## can sit in a NEIGHBOUR's container (a placement several sectors list is
+## placed by whichever loads first), and then the gate played nothing --
+## Samarkand's on the user's teleport in (GateEffectMatch has the evidence).
+## So the rows of the committed region and its eight neighbours are matched
+## against the objects of all nine containers, in the committed region's
+## frame, on every region's commit: either load order finds the pair.
 const GATE_EFFECT_RADIUS := 30.0
 const META_GATE_EFFECTS := "gate_effects"
 var _ambient := AmbientParticles.new()
@@ -7538,45 +7546,90 @@ func _attach_gate_effects(region_x: int, region_y: int, retries: int = GATE_EFFE
 	# OPENSRO_QA_AMBIENT=off (round 720): none, for a comparison frame.
 	if _teleport_reader == null or OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
 		return
-	var container := _object_containers.get("_%d_%d" % [region_x, region_y]) as Node3D
-	if container == null or not is_instance_valid(container):
+	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
+	if group == null or not is_instance_valid(group):
 		return
 	var particles := _open_particles_pk2_if_set()
 	if particles == null:
 		return
 	_ambient.set_light_effect(video_options().value(VideoOptions.LIGHT) == 1)
+	# Round 723 (GateEffectMatch): the rows of this region and its eight
+	# neighbours against the objects of the same nine containers, in this
+	# region's frame -- a gate's model can sit in a neighbour's container.
+	var pairs := _gate_pairs_around(region_x, region_y, group)
+	if pairs.is_empty():
+		return
 	# Effects still decoding on a preload task: come back shortly rather than
 	# decode them on this thread (round 720's review).
-	if retries > 0 and not _gate_effects_decoded(container, region_x, region_y):
-		_after(0.1, func() -> void: _attach_gate_effects(region_x, region_y, retries - 1))
-		return
-	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
-		var building: TeleportReader.Building = building_v
-		var at := Vector2(building.x, building.z)
+	if retries > 0:
+		for pair in pairs:
+			var waiting: Node3D = pair["node"]
+			for p in AmbientParticles.efp_paths(waiting.get_meta(AmbientParticles.META_ENTRIES)):
+				if not EfpEffect.has_template(p):
+					_after(0.1, func() -> void: _attach_gate_effects(region_x, region_y, retries - 1))
+					return
+	for pair in pairs:
+		var obj: Node3D = pair["node"]
+		var building: TeleportReader.Building = pair["building"]
+		if not is_instance_valid(obj) or obj.has_meta(META_GATE_EFFECTS):
+			continue
+		obj.set_meta(META_GATE_EFFECTS, true)
+		var mods: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
+		var sw_attach := Time.get_ticks_usec()
+		var made := _ambient.attach(obj, mods, particles)
+		sw_attach = Time.get_ticks_usec() - sw_attach
+		var total := 0
+		for entries in mods:
+			total += (entries as Array).size()
+		var holder := String(obj.get_parent().name) if obj.get_parent() != null else "?"
+		print("World3D: gate %s -- %s (in %s) at %.1f from its row plays %d of its %d ambient effect(s), built in %d us" % [
+			building.code, obj.name, holder, float(pair["distance"]), made.size(), total, sw_attach])
+		# The placement, measured: each effect's position in its object's
+		# frame, which should be the entry's offset (AmbientParticles).
+		if _qa_ambient_log:
+			for fx_v in made:
+				var fx := fx_v as EfpEffect
+				print("QA AMBIENT placed %s: %s in the object's frame" % [fx.path.get_file(),
+					str(obj.global_transform.affine_inverse() * fx.placed_at())])
+
+## The gate rows of region (region_x, region_y) and its neighbours paired with
+## the not-yet-done objects carrying ambient entries in the same nine regions'
+## containers (round 723, GateEffectMatch), all in `group`'s local frame:
+## [{"node", "building", "distance"}].
+func _gate_pairs_around(region_x: int, region_y: int, group: Node3D) -> Array:
+	var here := Vector2i(region_x, region_y)
+	var rows: Array = []
+	var buildings := {}
+	for r in GateEffectMatch.around(here):
+		var at_r: Vector2i = r
+		for building_v in _teleport_reader.buildings_in_region(at_r.x, at_r.y):
+			var building: TeleportReader.Building = building_v
+			var key: int = rows.size()
+			buildings[key] = building
+			rows.append({"key": key, "at": GateEffectMatch.row_in_frame(Vector2(building.x, building.z), at_r, here)})
+	if rows.is_empty():
+		return []
+	var to_frame := _chain_transform(group).affine_inverse()
+	var objects: Array = []
+	var nodes := {}
+	for r in GateEffectMatch.around(here):
+		var at_r: Vector2i = r
+		var container := _object_containers.get("_%d_%d" % [at_r.x, at_r.y]) as Node3D
+		if container == null or not is_instance_valid(container) or container.is_queued_for_deletion():
+			continue
+		var to_here := to_frame * _chain_transform(container)
 		for child in container.get_children():
 			var obj := child as Node3D
-			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES) or obj.has_meta(META_GATE_EFFECTS):
+			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES):
 				continue
-			var d := Vector2(obj.position.x, obj.position.z).distance_to(at)
-			if d > GATE_EFFECT_RADIUS:
-				continue
-			obj.set_meta(META_GATE_EFFECTS, true)
-			var mods: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
-			var sw_attach := Time.get_ticks_usec()
-			var made := _ambient.attach(obj, mods, particles)
-			sw_attach = Time.get_ticks_usec() - sw_attach
-			var total := 0
-			for entries in mods:
-				total += (entries as Array).size()
-			print("World3D: gate %s -- %s at %.1f from its row plays %d of its %d ambient effect(s), built in %d us" % [
-				building.code, obj.name, d, made.size(), total, sw_attach])
-			# The placement, measured: each effect's position in its object's
-			# frame, which should be the entry's offset (AmbientParticles).
-			if _qa_ambient_log:
-				for fx_v in made:
-					var fx := fx_v as EfpEffect
-					print("QA AMBIENT placed %s: %s in the object's frame" % [fx.path.get_file(),
-						str(obj.global_transform.affine_inverse() * fx.placed_at())])
+			var p := to_here * obj.position
+			var key: int = nodes.size()
+			nodes[key] = obj
+			objects.append({"key": key, "at": Vector2(p.x, p.z), "done": obj.has_meta(META_GATE_EFFECTS)})
+	var out: Array = []
+	for pair in GateEffectMatch.pairs(rows, objects, GATE_EFFECT_RADIUS):
+		out.append({"node": nodes[pair["object"]], "building": buildings[pair["row"]], "distance": pair["distance"]})
+	return out
 
 ## The region-local x/z of the teleport rows of the region `node_suffix`
 ## (`_<x>_<y>`) names, for its objects job (round 720's review).
@@ -7593,9 +7646,14 @@ func _gate_points_for(node_suffix: String) -> Array:
 	var parts := node_suffix.split("_", false)
 	if parts.size() != 2:
 		return out
-	for building_v in _teleport_reader.buildings_in_region(int(parts[0]), int(parts[1])):
-		var building: TeleportReader.Building = building_v
-		out.append(Vector2(building.x, building.z))
+	# Round 723: the neighbours' rows too, in this region's frame, so a model
+	# placed here for a gate standing next door is preloaded as well.
+	var here := Vector2i(int(parts[0]), int(parts[1]))
+	for r in GateEffectMatch.around(here):
+		var at_r: Vector2i = r
+		for building_v in _teleport_reader.buildings_in_region(at_r.x, at_r.y):
+			var building: TeleportReader.Building = building_v
+			out.append(GateEffectMatch.row_in_frame(Vector2(building.x, building.z), at_r, here))
 	return out
 
 ## On the objects job's worker (round 720's review): decodes the ambient
@@ -7648,23 +7706,6 @@ static func _ambient_efps(node) -> PackedStringArray:
 	for child in node.get("children", []):
 		out.append_array(_ambient_efps(child))
 	return out
-
-## Whether every ambient effect of the gate objects in `container` is
-## decoded.
-func _gate_effects_decoded(container: Node3D, region_x: int, region_y: int) -> bool:
-	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
-		var building: TeleportReader.Building = building_v
-		var at := Vector2(building.x, building.z)
-		for child in container.get_children():
-			var obj := child as Node3D
-			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES) or obj.has_meta(META_GATE_EFFECTS):
-				continue
-			if Vector2(obj.position.x, obj.position.z).distance_to(at) > GATE_EFFECT_RADIUS:
-				continue
-			for p in AmbientParticles.efp_paths(obj.get_meta(AmbientParticles.META_ENTRIES)):
-				if not EfpEffect.has_template(p):
-					return false
-	return true
 
 ## The glow pass (AmbientParticles.update), once a physics tick.
 func _ambient_step(delta: float) -> void:
