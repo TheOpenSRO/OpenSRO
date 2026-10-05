@@ -11968,11 +11968,15 @@ func _qa_reequip_step() -> void:
 	if _qa_tick == int(parts[0]):
 		_qa_reequip_item = int(_player_equipped_last.get(EquipmentNet.SLOT_WEAPON, 0))
 		print("QA REEQUIP: tick %d taking off weapon %d" % [_qa_tick, _qa_reequip_item])
+		# As the window's button does (_on_unequip_pressed): the ack refreshes
+		# the bag the weapon lands in.
+		_awaiting_equip_ack = true
 		NetClient.unequip(who, EquipmentNet.SLOT_WEAPON)
 	elif _qa_tick == int(parts[1]):
 		for s in _inventory_slots:
 			if s.item_id == _qa_reequip_item:
 				print("QA REEQUIP: tick %d putting weapon %d back on from bag slot %d" % [_qa_tick, s.item_id, s.slot_index])
+				_awaiting_equip_ack = true
 				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, s.slot_index)
 				return
 		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
