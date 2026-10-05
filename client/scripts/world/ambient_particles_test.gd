@@ -67,11 +67,81 @@ func _init() -> void:
 	_test_glow_shader()
 	_test_light_effect()
 	_test_night_and_bones()
+	_test_display_shader()
 	# The camera tests need the tree: after the first frame.
 	process_frame.connect(_in_tree, CONNECT_ONE_SHOT)
 
 func _in_tree() -> void:
 	_test_point_on_screen()
+	_texel_setup()
+	# The bodies take a physics step before a ray meets them.
+	_texel_wait = 4
+	physics_frame.connect(_texel_tick)
+
+var _texel_wait := 0
+func _texel_tick() -> void:
+	_texel_wait -= 1
+	if _texel_wait == 0:
+		physics_frame.disconnect(_texel_tick)
+		_texel_checks()
+
+## Round 722: a 2 x 2 quad at z 0 whose texture is cut on its left half
+## (alpha 0) and kept on its right (alpha 255), alpha-tested at 128.
+var _quads: Array = []
+func _texel_quad(x0: float, with_uv: bool) -> void:
+	var pos := PackedVector3Array([Vector3(x0 - 1, -1, 0), Vector3(x0 + 1, -1, 0), Vector3(x0 + 1, 1, 0), Vector3(x0 - 1, 1, 0)])
+	var uv := PackedVector2Array([Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)])
+	var idx := PackedInt32Array([0, 1, 2, 0, 2, 3])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = pos
+	arrays[Mesh.ARRAY_INDEX] = idx
+	if with_uv:
+		arrays[Mesh.ARRAY_TEX_UV] = uv
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.set_meta(AmbientParticles.META_ARRAYS, arrays)
+	var img := Image.create(2, 1, false, Image.FORMAT_RGBA8)
+	img.set_pixel(0, 0, Color(1, 1, 1, 0))
+	img.set_pixel(1, 0, Color(1, 1, 1, 1))
+	var tex := ImageTexture.create_from_image(img)
+	tex.set_meta(AmbientParticles.META_IMAGE, img)
+	var mat := ShaderMaterial.new()
+	mat.shader = ObjectLoader.object_shader("one")
+	mat.set_shader_parameter("albedo_texture", tex)
+	mat.set_shader_parameter("alpha_scissor", 128.0 / 255.0)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var faces := PackedVector3Array()
+	for i in idx:
+		faces.append(pos[i])
+	var concave := ConcavePolygonShape3D.new()
+	concave.set_faces(faces)
+	concave.backface_collision = true
+	shape.shape = concave
+	body.add_child(shape)
+	mi.add_child(body)
+	root.add_child(mi)
+	_quads.append(mi)
+
+func _texel_setup() -> void:
+	_texel_quad(0.0, true)
+	_texel_quad(10.0, false)
+
+func _texel_hit(x: float) -> Dictionary:
+	var space := root.get_world_3d().direct_space_state
+	return space.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(x, 0.2, 5), Vector3(x, 0.2, -5)))
+
+func _texel_checks() -> void:
+	var cut := _texel_hit(-0.5)
+	var kept := _texel_hit(0.5)
+	var bare := _texel_hit(10.5)
+	_check(not cut.is_empty() and AmbientParticles.texel_kept(cut) == 0, "texel_kept: the cut half reads 0 (got %s)" % str(AmbientParticles.texel_kept(cut) if not cut.is_empty() else "no hit"))
+	_check(not kept.is_empty() and AmbientParticles.texel_kept(kept) == 1, "texel_kept: the kept half reads 1")
+	_check(not bare.is_empty() and AmbientParticles.texel_kept(bare) == -1, "texel_kept: a mesh without UVs is unreadable (-1)")
 	print("ambient_particles_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)
 
@@ -240,3 +310,21 @@ func _test_glow_shader() -> void:
 	_check(g.code.contains("if (glow_alpha < 255) d.a ="), "the alpha scales the particle colour's alpha")
 	_check(EfpEffect.glow_shader(m.shader) == g, "cached per shader")
 	_check(not m.shader.code.contains("glow_alpha"), "the shared shader is untouched")
+
+## Round 722: the display-blended twin of a template shader.
+func _test_display_shader() -> void:
+	var add := EfpEffect._shader("add", true)
+	var d := EfpEffect.display_shader(add)
+	_check(d.code.contains("hint_screen_texture") and d.code.contains("srr_d + srr_s * srr_a")
+		and d.code.contains("ALBEDO = max(srr_t - srr_bg, vec3(0.0));") and d.code.contains("ALPHA = 1.0;"),
+		"an additive class adds the display sum's difference, alpha 1")
+	_check(d.code.contains("if (!OUTPUT_IS_SRGB)") and d.code.contains("blend_add"),
+		"only where the output is linear; Godot's own additive blend kept")
+	var mix := EfpEffect.display_shader(EfpEffect._shader("mix", true))
+	_check(mix.code.contains("mix(srr_d, srr_s, srr_a)") and mix.code.contains("/ max(srr_a, 1.0 / 255.0)"),
+		"a mixing class writes the colour whose linear mix lands on the display mix")
+	_check(EfpEffect.display_shader(add) == d and String(d.get_meta(EfpEffect.BLEND_CLASS_META)) == "add",
+		"cached, and it keeps its class")
+	var g := EfpEffect.glow_shader(d)
+	_check(g.code.contains("depth_test_disabled") and g.code.contains("hint_screen_texture") and g.code.contains("glow_alpha"),
+		"its glow twin keeps the screen read and adds the glow's states")

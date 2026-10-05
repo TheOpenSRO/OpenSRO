@@ -12,10 +12,14 @@ where it stopped, the tools for it, the traps — and points back here for every
 
 ## Round 720 follow-ups (the teleport structures' effects)
 
-- [ ] **The gates' animated textures and material mods** (round 720's review): the `ambient` sets of
-      Hotan's `oas_hot_portal`, Constantinople's `euro_esteuro_fountain01` and the guild `charge_gate`
-      carry a TEXANI and an MTRL mod beside their particles, `pha_gate` an MTRL; not drawn
-      (docs/protocol/teleport_effects.md). `CRTModTexAni` is read in outline (BSR_FORMAT.md).
+- [x] ~~The gates' animated textures and material mods~~ -- **round 722**: TEXANI read and drawn
+      for every placed object (359 files carry one); the MTRL mods were already drawn (round 625).
+      Left: TEXANI on characters and items (SkinnedBsrAssembler), and the mode 0/1 draw-flag
+      difference (shader variants 3 and 4), not read.
+- [ ] **Display-value blending for every EFP** (round 722): the objects' ambient effects now blend
+      in display values under Forward+ (`EfpEffect.display_shader`, a screen read), as Direct3D 9
+      does; skills and auras still blend linearly. One switch (`use_display_blend`) would extend it.
+      A user decision: every skill's look changes, and a screen copy is taken while one draws.
 - [ ] **Every placed object's `ambient` set** (OURS: only the teleport structures play theirs). The
       review measured play-everywhere at Jangan: 112 objects, 135 effects, 113 glows, frame 1.53 ->
       2.97 ms (+94 %). For the user to decide; prerequisites in docs/rounds/r720_review.md.
@@ -3060,8 +3064,7 @@ Still open, by the files each would add:
 - **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the
   Tarim rope bridges, have unskinned pieces that stay put. Whether retail hangs them on a bone is
   OPEN; mesh+0x3c bit 0x400 is the lead.
-- **TEXANI sprite animation** (52 models, 253 placements). READ in outline in BSR_FORMAT.md, "How a
-  map object animates". It needs the material path to offset the UV by the frame grid.
+- ~~**TEXANI sprite animation**~~ -- drawn since round 722 (docs/rounds/r722.md).
 - **Cloth**, the DYVERTEX/DYJOINT/DYLATTICE mods (143 models, 550 placements: tents, sails, banners,
   including the Taklamakan `ruin_takla_tent*`). Not read.
 - **`.o2` list +0x24** objects update only in the 9 nearest sectors at range 480. This client does

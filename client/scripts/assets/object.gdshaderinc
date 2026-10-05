@@ -105,8 +105,15 @@ vec3 srr_obj_present(vec3 srr_v) {
 	return srr_linear_to_srgb(srr_l / max(srr_obj_tonemap.x, 0.0001));
 }
 
+// A TEXANI mod's texture-coordinate matrix, rows c23 and c24 (TexAni, round
+// 722; READ: vertexshader0texani.c's m3x3 oT0, (u, v, 1), c23). The
+// identity for every other material.
+uniform vec3 texani_u = vec3(1.0, 0.0, 0.0);
+uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
+
 void vertex() {
 	srr_od0 = srr_obj_od0(MODEL_NORMAL_MATRIX * NORMAL, srr_color(albedo, OUTPUT_IS_SRGB).rgb, object_color, object_tint);
+	UV = vec2(dot(vec3(UV, 1.0), texani_u), dot(vec3(UV, 1.0), texani_v));
 }
 
 void fragment() {
