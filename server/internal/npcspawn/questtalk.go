@@ -32,10 +32,19 @@ package npcspawn
 // no quest table, so it lists them all.
 //
 // The id goes into the NPC's own set (+0x130) through AddAvailableInteraction,
-// which sets flag bit 1 (FlagInteractions). It therefore reaches both the
-// spawn record and the 0xB045 select reply (PublishAvailableInteractions copies
-// +0x130), for every player alike. The lookup is by exact codename
-// (DAT_00c8277c slot 0x1c), not strstr.
+// which sets flag bit 1 (FlagInteractions), so it reaches the spawn record.
+// The lookup is by exact codename (DAT_00c8277c slot 0x1c), not strstr.
+//
+// It is NOT for every player alike (round 727's review). The select reply
+// (PublishAvailableInteractions 0x4a95a0) copies +0x130 into the per-select
+// set +0x1c78 and then calls the NPC's slot 0x640, 0x4c9310: when the NPC
+// has a talk menu it erases 2 (0x4c9375) unless the player's
+// IsFirstTalkMenuEnable (0x4f0730: +0x2280 == 1.0 and +0x219c != 0) holds --
+// the player's list of talk items the quests registered with id 2
+// (FUN_00926ed0's slots 0x280 / 0x284, copied to the player's +0x2198 at
+// 0x4a9711). OpenSRO has no quest progress and no talk items, so this
+// static set is a STAND-IN (OURS) for that per-player result: the line shows
+// at every listed NPC for every player.
 var questTalkNPCs = map[string]bool{
 	"NPC_AM_SPECIAL":        true,
 	"NPC_CA_ACCESSORY":      true,
@@ -130,3 +139,25 @@ var questTalkNPCs = map[string]bool{
 
 // QuestTalk reports whether code is an NPC some quest registers id 2 on.
 func QuestTalk(code string) bool { return questTalkNPCs[code] }
+
+// WithdrawSkillLevel and WithdrawSkill: id 10, "Withdrawing Skill" (round
+// 727's review, READ in srgs.asm). The herbalist quests CQSP_ALL_POTION_1 and
+// _2 subscribe to event 0xb on the five NPCs below (vslot_017 0x88b3db..
+// 0x88b448 walks the table at 0xc805d4 and finds each by exact codename).
+// PublishAvailableInteractions raises 0xb on every select of an NPC by a
+// player (0x4a9719..0x4a9728), and the quest's handler (vslot_002 0x88b760 /
+// 0x88d240) adds 10 to that select's set through the NPC's slot +0x270,
+// IGObj::SetAvailableInteractionPerGObj, when the player's level is 20 or
+// more (0x88b796 GetLevel, 0x88b79e `cmp al,0x14; jb`). So it is per player
+// and per select, never in the NPC's own set. That the two quests are in
+// service is INFERRED, as for id 2.
+const WithdrawSkillLevel = 20
+
+var withdrawSkillNPCs = map[string]bool{
+	"NPC_CH_POTION": true, "NPC_WC_POTION": true, "NPC_KT_POTION": true, "NPC_EU_POTION": true, "NPC_CA_POTION": true,
+}
+
+// WithdrawSkill reports whether a player of level gets id 10 at NPC code.
+func WithdrawSkill(code string, level int) bool {
+	return withdrawSkillNPCs[code] && level >= WithdrawSkillLevel
+}

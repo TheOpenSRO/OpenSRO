@@ -26,16 +26,21 @@ func _test_codecs() -> void:
 	# The requests (npctalk TestGoldenBytes' first three rows).
 	_check(_hex(NpcTalkNet.encode_entity(0x7f000123)) == "23 01 00 7f", "0x7045 / 0x704b {u32 entity}")
 	_check(_hex(NpcTalkNet.encode_open(0x7f000123, 1)) == "23 01 00 7f 01", "0x7046 {u32 entity, u8 1}")
-	# The herbalist's select reply: ids {1, 2}, the NPC byte 0.
-	var herb := NpcTalkNet.decode_select(PackedByteArray([0x01, 0x23, 0x01, 0x00, 0x7f, 0x02, 0x01, 0x02, 0x00]))
-	_check(not herb.is_empty() and int(herb["entity"]) == 0x7f000123 and Array(herb["ids"]) == [1, 2]
-		and int(herb["npc_byte"]) == 0, "0xb045 herbalist decodes (got %s)" % [herb])
+	# The herbalist's select reply for a player of level 20 or more, as the
+	# original sends it: 01 | uid | 00 (the NPC's flag, s:0x4c79f0) | 03 |
+	# 01 02 0a | 00 (round 727's review).
+	var herb := NpcTalkNet.decode_select(PackedByteArray([0x01, 0x23, 0x01, 0x00, 0x7f, 0x00, 0x03, 0x01, 0x02, 0x0a, 0x00]))
+	_check(not herb.is_empty() and int(herb["entity"]) == 0x7f000123 and int(herb["flag"]) == 0
+		and Array(herb["ids"]) == [1, 2, 10] and int(herb["npc_byte"]) == 0, "0xb045 herbalist decodes (got %s)" % [herb])
+	# Flag bit 0: a u32 follows (c:0x88b385).
+	var fl := NpcTalkNet.decode_select(PackedByteArray([0x01, 0x01, 0, 0, 0, 0x01, 0x0d, 0x0c, 0x0b, 0x0a, 0x01, 0x01, 0x00]))
+	_check(int(fl.get("flag_word", -1)) == 0x0a0b0c0d and Array(fl.get("ids", [])) == [1], "0xb045 with flag bit 0 (got %s)" % [fl])
 	# 0x1f: the u16 before the NPC byte; 0x21: the u16 after it.
-	var st := NpcTalkNet.decode_select(PackedByteArray([0x01, 0x01, 0, 0, 0, 0x01, 0x1f, 0x03, 0x02, 0x07]))
+	var st := NpcTalkNet.decode_select(PackedByteArray([0x01, 0x01, 0, 0, 0, 0x00, 0x01, 0x1f, 0x03, 0x02, 0x07]))
 	_check(int(st.get("structure_word", -1)) == 0x0203 and int(st.get("npc_byte", -1)) == 7, "0xb045 with 0x1f (got %s)" % [st])
-	var ar := NpcTalkNet.decode_select(PackedByteArray([0x01, 0x01, 0, 0, 0, 0x01, 0x21, 0x00, 0x05, 0x04]))
+	var ar := NpcTalkNet.decode_select(PackedByteArray([0x01, 0x01, 0, 0, 0, 0x00, 0x01, 0x21, 0x00, 0x05, 0x04]))
 	_check(int(ar.get("arena_word", -1)) == 0x0405, "0xb045 with 0x21 (got %s)" % [ar])
-	_check(NpcTalkNet.decode_select(PackedByteArray([0x01, 0x01, 0, 0, 0, 0x02, 0x01])).is_empty(), "a short select reply decodes to {}")
+	_check(NpcTalkNet.decode_select(PackedByteArray([0x01, 0x01, 0, 0, 0, 0x00, 0x02, 0x01])).is_empty(), "a short select reply decodes to {}")
 	_check(NpcTalkNet.refusal_code(PackedByteArray([0x02, 0x0b, 0x1c])) == 0x1c0b, "a refusal's code (busy 0x1c0b)")
 	_check(NpcTalkNet.refusal_code(PackedByteArray([0x01, 0x02])) == -1, "an ok is no refusal")
 
@@ -53,7 +58,7 @@ func _test_state() -> void:
 	net.select(0x7f000123)
 	net.handle(PackedByteArray([0x02, 0x04, 0x00]), NpcTalkNet.OP_SELECT_RESULT)
 	_check(got.get("select_refused", -1) == 4 and net.entity == 0, "a refused select (4, out of reach) names nothing")
-	net.handle(PackedByteArray([0x01, 0x23, 0x01, 0x00, 0x7f, 0x02, 0x01, 0x02, 0x00]), NpcTalkNet.OP_SELECT_RESULT)
+	net.handle(PackedByteArray([0x01, 0x23, 0x01, 0x00, 0x7f, 0x00, 0x02, 0x01, 0x02, 0x00]), NpcTalkNet.OP_SELECT_RESULT)
 	_check(got.get("selected", []) == [0x7f000123, [1, 2]] and net.entity == 0x7f000123, "the select reply names the NPC and its set")
 	# The store line: the close's end goes first, then the open.
 	_check(net.end(), "the talk window's close sends 0x704b")

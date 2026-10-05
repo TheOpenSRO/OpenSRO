@@ -68,18 +68,32 @@ static func encode_open(e: int, id: int) -> PackedByteArray:
 	return b
 
 ## The select reply: {} on a short or failed message, else
-## {"entity", "ids", "structure_word", "npc_byte", "arena_word"} -- the
-## client's own read order (c:0x88b400..0x88b6dc): u8 1, u32 entity, u8 n,
-## n ids, a u16 when 0x1f is among them, the NPC's u8, a u16 when 0x21 is.
+## {"entity", "flag", "flag_word", "ids", "structure_word", "npc_byte",
+## "arena_word"} -- the client's own read order (c:0x88b200): u8 1, u32
+## entity, the target's u8 flag (0x88b37c; an NPC's is 0, s:0x4c79f0) and a
+## u32 when its bit 0 is set (0x88b385..0x88b393), u8 n (0x88b3fb), n ids
+## (0x88b419), a u16 when 0x1f is among them, the NPC's u8, a u16 when 0x21
+## is.
 static func decode_select(data: PackedByteArray) -> Dictionary:
-	if data.size() < 6 or data[0] != 1:
+	if data.size() < 7 or data[0] != 1:
 		return {}
-	var n := int(data[5])
-	if data.size() < 6 + n:
+	var out := {"entity": data.decode_u32(1), "flag": int(data[5]), "flag_word": 0, "ids": PackedByteArray(),
+		"structure_word": 0, "npc_byte": 0, "arena_word": 0}
+	var at := 6
+	if int(data[5]) & 1:
+		if data.size() < at + 4:
+			return {}
+		out["flag_word"] = data.decode_u32(at)
+		at += 4
+	if data.size() < at + 1:
 		return {}
-	var id_set := data.slice(6, 6 + n)
-	var at := 6 + n
-	var out := {"entity": data.decode_u32(1), "ids": id_set, "structure_word": 0, "npc_byte": 0, "arena_word": 0}
+	var n := int(data[at])
+	at += 1
+	if data.size() < at + n:
+		return {}
+	var id_set := data.slice(at, at + n)
+	out["ids"] = id_set
+	at += n
 	if id_set.has(ID_STRUCTURE_UPDATE):
 		if data.size() < at + 2:
 			return {}

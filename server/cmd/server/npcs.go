@@ -57,10 +57,14 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 		session.InstallNPCs(nil, logger)
 		return
 	}
-	if table == nil && monsters == nil {
-		logger.Warn("no NPCs: telling an NPC row of -npcpos-csv from a monster's needs -npcs-csv or -monsters-csv")
-		session.InstallNPCs(nil, logger)
-		return
+	// Round 727's review: the NPC table is required wherever NPCs spawn. The
+	// talk menu is the server's interaction-id set (0xB045), built from the
+	// NPC's code name and shop; without the table every NPC would offer
+	// "End conversation." alone, and the client derives no line itself.
+	if table == nil {
+		logger.Error("-npcpos-csv spawns NPCs but no -npcs-csv (OPENSRO_NPCS_CSV) is configured: every NPC menu " +
+			"would be empty. Export it with `export-refdata -mode npcs` (deploy/README.md, \"NPCs\") and pass it.")
+		os.Exit(1)
 	}
 	// The teleport row's ids on its associated object: 7 and 9 from its two
 	// flags, 8 (round 727) when links leave the point (Teleport8's stand-in).
@@ -76,7 +80,7 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 	}
 	info := func(id int64) (npcspawn.Info, bool) {
 		r, ok := table[id]
-		return npcspawn.Info{Code: r.Code}, ok
+		return npcspawn.Info{Code: r.Code, Shop: r.Shop}, ok
 	}
 	if table == nil {
 		info = nil

@@ -296,13 +296,15 @@ if [ "$SERVER" = "start" ]; then
   MONSTERS_CSV="${OPENSRO_MONSTERS_CSV:-$PK2_DIR/monsters.csv}"
   NPCS_CSV="${OPENSRO_NPCS_CSV:-$PK2_DIR/npcs.csv}"
   NEST_DB_DIR="${OPENSRO_NEST_DB_DIR:-}"
-  if [ -f "$NPCPOS_CSV" ] && { [ -f "$MONSTERS_CSV" ] || [ -f "$NPCS_CSV" ]; }; then
+  # Round 727's review: the server refuses -npcpos-csv without -npcs-csv (the
+  # talk menus are the NPC table's), so both are needed.
+  if [ -f "$NPCPOS_CSV" ] && [ -f "$NPCS_CSV" ]; then
     SERVER_ARGS+=(-npcpos-csv "$NPCPOS_CSV")
     [ -f "$MONSTERS_CSV" ] && SERVER_ARGS+=(-monsters-csv "$MONSTERS_CSV")
     [ -f "$NPCS_CSV" ] && SERVER_ARGS+=(-npcs-csv "$NPCS_CSV")
     [ -n "$NEST_DB_DIR" ] && SERVER_ARGS+=(-nest-db-dir "$NEST_DB_DIR")
   else
-    echo "qa_shot: no npcpos CSV at $NPCPOS_CSV (or no monster/NPC table beside it) -- the server spawns no NPC; OPENSRO_QA_LOCAL_NPCS=1 places the archive's" >&2
+    echo "qa_shot: no npcpos CSV at $NPCPOS_CSV (or no NPC table, npcs.csv, beside it) -- the server spawns no NPC; OPENSRO_QA_LOCAL_NPCS=1 places the archive's" >&2
     export OPENSRO_QA_LOCAL_NPCS="${OPENSRO_QA_LOCAL_NPCS-1}"
   fi
   "$SERVER_BIN" "${SERVER_ARGS[@]}" >"$OUT/server.log" 2>&1 &

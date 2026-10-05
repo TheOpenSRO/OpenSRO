@@ -101,6 +101,14 @@ func EncodeOpen(entity uint32, id byte) []byte {
 // PublishAvailableInteractions (0x4a95a0) after FUN_0050faf0's status and id.
 type SelectNPC struct {
 	Entity uint32
+	// Flag is the target's own byte, written before the count by its vtable
+	// slot +0x4d8 (PublishAvailableInteractions 0x4a973a..0x4a9747, called
+	// with (1, msg)). CGObjNPCNPC's is 0x4c79f0, which writes 0
+	// (0x4c79ff `mov byte [esp+7],0`). The client reads it at 0x88b37c and,
+	// when bit 0 is set, a u32 after it (0x88b385..0x88b393, FlagWord); bits
+	// 1 and 2 are asserts there. An NPC sends 0 (READ).
+	Flag     byte
+	FlagWord uint32
 	// IDs is the NPC's whole interaction set, in set (ascending) order.
 	IDs []byte
 	// StructureWord is the u16 sent when IDs holds 0x1f (FUN_004c95c0's
@@ -119,6 +127,8 @@ type SelectNPC struct {
 //
 //	u8  1                    0x50fc3c
 //	u32 entity               0x50fc4d
+//	u8  flag (an NPC: 0)     0x4c79f0 via slot +0x4d8; c:0x88b37c
+//	u32 if flag bit 0        c:0x88b385..0x88b393
 //	u8  count                0x4a975f (+0x1c80, the set's size)
 //	u8  x count  ids         0x4a97ae
 //	u16 if 0x1f in the set   0x4a97ed
@@ -129,6 +139,10 @@ type SelectNPC struct {
 func EncodeSelectNPC(s SelectNPC) []byte {
 	out := []byte{ResultOK}
 	out = binary.LittleEndian.AppendUint32(out, s.Entity)
+	out = append(out, s.Flag)
+	if s.Flag&1 != 0 {
+		out = binary.LittleEndian.AppendUint32(out, s.FlagWord)
+	}
 	out = append(out, byte(len(s.IDs)))
 	out = append(out, s.IDs...)
 	if has(s.IDs, IDStructureUpdate) {
@@ -144,12 +158,24 @@ func EncodeSelectNPC(s SelectNPC) []byte {
 // DecodeSelectNPC reads an EncodeSelectNPC payload (for tests and bots).
 func DecodeSelectNPC(b []byte) (SelectNPC, error) {
 	var s SelectNPC
-	if len(b) < 6 || b[0] != ResultOK {
+	if len(b) < 7 || b[0] != ResultOK {
 		return s, ErrShort
 	}
 	s.Entity = binary.LittleEndian.Uint32(b[1:])
-	n := int(b[5])
+	s.Flag = b[5]
 	b = b[6:]
+	if s.Flag&1 != 0 {
+		if len(b) < 4 {
+			return s, ErrShort
+		}
+		s.FlagWord = binary.LittleEndian.Uint32(b)
+		b = b[4:]
+	}
+	if len(b) < 1 {
+		return s, ErrShort
+	}
+	n := int(b[0])
+	b = b[1:]
 	if len(b) < n {
 		return s, ErrShort
 	}

@@ -896,8 +896,8 @@ func main() {
 	npcsCSV := flag.String("npcs-csv", os.Getenv("OPENSRO_NPCS_CSV"),
 		"path to the NPC reference rows (from cmd/export-refdata -mode npcs on a client's own characterdata "+
 			"parts and refshopgroup.txt; round 708): the code names the NPC spawn record's interaction list "+
-			"is built from. Optional: without it the server still spawns every NPC row of -npcpos-csv (the rows "+
-			"-monsters-csv does not name), with an empty interaction list. A configured path that does not load is fatal.")
+			"is built from, and the talk menus with it (0xB045, round 727). REQUIRED with -npcpos-csv: the boot "+
+			"fails without it. A configured path that does not load is fatal.")
 	teleportDir := flag.String("teleport-dir", os.Getenv("OPENSRO_TELEPORT_DIR"),
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
