@@ -384,8 +384,9 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 1. Which message carries a fortress NPC's tax data (talk window `+0x800` fortress id, `+0x804` rate). The sell box takes the same rate off its price (0x63bd60, round 726 review): OpenSRO uses 0 until it arrives (`HudPanels.shop_tax_rate`).
 2. Which kinds the other six NPC-window closes in the click handler belong to (jump table of
    `FUN_007020c0`).
-3. What `0x7046 {e,2}` ("Talk to this person") shows: `ShowFirstTalkMenu`'s message is not read
-   (§8, round 727).
+3. What `0x7046 {e,2}` ("Talk to this person") shows. Round 727's review read the path: `RaiseEvent(1)`
+   with no talk menu, otherwise `ShowMenu`'s `0x30D4`, answered by `0x70D4` (§8). `0x30D4`'s
+   payload fields are still to read, and OpenSRO models no talk items.
 4. ~~Whether closing the store or storage sends `0x704b`.~~ **Closed, READ** (round 727, §8:
    `FUN_0079dbd0` with show = 0 reaches `0x78fc20`).
 5. The Repair buttons' visibility rule.
@@ -403,7 +404,8 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
        can take or continue. That is lane C's to send from the quest state.
    - **Round 727:** the server sends the set (§8). Id 2 comes from the quest census, and id 1 from
      the NPC's own shop.
-   - **Id 10's registrar is still OPEN** (withdrawing skill). §8 lists what was ruled out.
+   - **Id 10, closed (round 727's review):** the herbalist quests add it per player from level 20
+     (§8). The withdrawal itself is not built.
 8. ~~Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills.~~ **Closed, READ**
    (round 725's review, §0: both use the map at `0xeed4e0`).
 9. ~~Which wording of the duplicated `textuisystem.txt` rows to show.~~ **Closed by a USER
@@ -422,7 +424,7 @@ OpenSRO now runs the NPC select, open and end on the retail opcodes. The server'
 | opcode | direction | payload | read at |
 |---|---|---|---|
 | `0x7045` select | C→S | `u32 entity` | c:`0x78f5f0` (`0x78f6a3`) |
-| `0xb045` | S→C | `u8 1, u32 entity, u8 n, n × u8 id, [u16 if 0x1f], u8 npc, [u16 if 0x21]`; refusal `u8 2, u16 code` | s:`0x50faf0` → `PublishAvailableInteractions 0x4a95a0`; c:`0x88b200` (`0x88b400..0x88b6dc`) |
+| `0xb045` | S→C | `u8 1, u32 entity, u8 flag, [u32 if flag bit 0], u8 n, n × u8 id, [u16 if 0x1f], u8 npc, [u16 if 0x21]`; refusal `u8 2, u16 code` | s:`0x50faf0` → `PublishAvailableInteractions 0x4a95a0`, the flag by the target's slot `+0x4d8` (an NPC's `0x4c79f0` writes 0); c:`0x88b200` (flag `0x88b37c`, its u32 `0x88b385..0x88b393`, count `0x88b3fb`, ids `0x88b419`, tail `..0x88b6dc`) |
 | `0x7046` open | C→S | `u32 entity, u8 id` | c:`0x702316..0x702323`; s:`0x510250` |
 | `0xb046` | S→C | `u8 1, u8 id` (10 echoed as 2, `0x5104a8`; one more `u8` for 0xc, `0x5104fb`); refusal `u8 2, u16 code` | s:`0x510250` |
 | `0x704b` end | C→S | `u32 entity` | c:`0x78fc20`; s:`GObjPC::EndInteraction 0x5107c0` |
@@ -434,16 +436,43 @@ OpenSRO now runs the NPC select, open and end on the retail opcodes. The server'
   - the open's: `0x1c0b` (`UIIT_MSG_INTERACTION_FAIL_IM_BUSY`, INTERACTMODE ≠ 0) and 5 (an id
     the NPC does not offer);
   - the end's: `0x1c0d` (nothing open).
-- **State:** the select sets the requester flag `+0x728`. The open sets INTERACTMODE (chardata+6):
-  5 for ids 2 and 10, none for 0x23, 6 otherwise. The end clears both.
+- **The flag byte (round 727's review):** the target's own byte, before the count. An NPC's is 0
+  (`0x4c79f0`: `mov byte [esp+7],0`). The original herbalist's reply for a player of level 20 or
+  more is `01 | uid | 00 | 03 | 01 02 0a | 00`. Round 727 first shipped without the byte; both
+  OpenSRO halves agreed, so its live run passed.
+- **State:** the select sets the requester flag `+0x728` and the per-select set `+0x1c78`, which
+  the open's offered test reads (`HasAvailableInteraction 0x50cd80`). The open sets INTERACTMODE
+  (chardata+6), from the jump table at `0x510624`:
+  - 5 for ids 2 (`0x510584`) and 10 (`0x5105f1`);
+  - none for 0x23 (`0x510428`);
+  - for 0xc (`0x5105ca`), none when the NPC's `+0x1cf0` is 0, otherwise 6. OpenSRO does not model
+    `+0x1cf0`, so it sets none (OURS);
+  - 6 for the rest.
+
+  The end clears the mode. It clears the select's flag only for mode 5, or for a bare select with
+  mode 0 (`0x5107f0`, `0x51090d`), so a second `0x704b` after a mode-6 end still gets `{1}`.
+- **Open refusals beyond those:**
+  - id 1 at an NPC with no store is refused with code 3 (`FUN_00619c10`, `0x5103ba`); OpenSRO
+    implements it;
+  - labelled in `session/npctalk.go`, not modelled:
+    - the player's slot `0x5a0` (`0x1c0b`);
+    - the type filter `0x146` (code 3);
+    - the job changers' `0x1c26`;
+    - 0x23's own code;
+    - the select's INTERACTMODE 1 case.
 - **The NPC `u8`** is `FUN_00645790` with the siege manager. What the client uses it for is not
   read (the fortress side the user deferred); OpenSRO sends 0 (OURS). The two `u16`s are 0 too:
   OpenSRO has no siege structures (0x1f) or arena (0x21).
 - **The client's sends:** the click in reach (or a talk approach's arrival) sends `0x7045`, and
   the talk window opens on the reply.
   - A store line closes the talk window, sending `0x704b`, then sends `0x7046 {1}`.
-  - The warehouse line sends `0x7046 {3}`. The window's hide sends nothing while the open is in
-    flight (`0x841780`).
+  - The warehouse line hides the window first (`+0x5c(0)` at `0x70242f..0x70243c`, ShowWindow,
+    not the close slot, so the hide sends nothing), then sends `0x7046 {3}` (`0x702466..0x702487`).
+    - OpenSRO sends the request first and hides after it. `NpcTalkNet.end()` declines while the
+      open is in flight, so the bytes are the same.
+    - OpenSRO's window is already hidden at that point. Where the original's close slot
+      `0x7040b0` refuses to close while a `0x7046` is in flight, the original's window would
+      stay open.
   - The talk line sends `0x7046 {2}` and the window stays.
   - The end line and the close button send `0x704b`.
   - **The store's and storage's close send `0x704b` too (OPEN 4, closed):**
@@ -465,26 +494,26 @@ OpenSRO now runs the NPC select, open and end on the retail opcodes. The server'
 | 0x21, 0x22, 0x28, 0x12 | the arena, siege-teleport and gacha codename tests | READ |
 | 1 (any shop) | the NPC init `0x4c7920` builds its store from the reference manager's shop map and adds 1 (`0x4c7996`) | READ; the map being refshopgroup's owner → group INFERRED |
 | 7, 9, 8 | the teleport point's columns and links (ref list `+0x90`) | 7/9 READ, 8 stands in from the links (disclosed, round 454) |
-| 2 | the quest classes: `FUN_00926ed0`/`FUN_00927040` walk each quest's mission-NPC block (`quest+0x310`) and push 2 on each named NPC; `CQSP_ALL_POTION_3`, `CQNO_WC_PRIEST3_1`, `CQNO_WC_SOLDIER_SO_1` push it directly. 89 codenames (`npcspawn/questtalk.go`) | the pushes READ; that every listed quest is in service INFERRED (OpenSRO loads no quest table) |
-| 10 | not found | OPEN, not offered |
+| 2 | the quest classes: `FUN_00926ed0`/`FUN_00927040` walk each quest's mission-NPC block (`quest+0x310`) and push 2 on each named NPC; `CQSP_ALL_POTION_3`, `CQNO_WC_PRIEST3_1`, `CQNO_WC_SOLDIER_SO_1` push it directly. 89 codenames (`npcspawn/questtalk.go`) | the pushes READ; that every listed quest is in service INFERRED. **The static set is a stand-in (OURS):** the select's `0x4c9310` erases 2 per player unless the player's `IsFirstTalkMenuEnable` (`0x4f0730`: `+0x2280 == 1.0`, `+0x219c != 0`) holds; OpenSRO has no quest progress and keeps 2 at every listed NPC |
+| 10 | per player, per select: `CQSP_ALL_POTION_1`/`_2` (`vslot_002` `0x88b760` / `0x88d240`) handle event `0xb`, which every select raises (`0x4a9719..0x4a9728`), and add 10 through the NPC's slot `+0x270` (`SetAvailableInteractionPerGObj`, into `+0x1c78`) when the player's level is 20 or more (`0x88b79e cmp al,0x14; jb`); at `NPC_CH/WC/KT/EU/CA_POTION` (table `0xc805d4`) | READ (round 727's review); the quests in service INFERRED; OpenSRO adds it at select time (`session.selectIDs`, `npcspawn.WithdrawSkill`) |
 | 0x11 | registered from another map (`FUN_004ccb70`, refmgr `+0x110`), not from shops | round 727 corrected: shops no longer get 0x11 |
 
-- **What id 2 opens:** `0x7046 {2}` sets INTERACTMODE 5 and runs `CGObjPC::ShowFirstTalkMenu`
-  (vtable `+0x28c`), which walks the player's quests for the NPC.
-  - The message it sends is not read: the decompile is lost there. OpenSRO's quests are its own.
-  - So OpenSRO answers `{1, 2}`, the talk window stays, and nothing more comes (OPEN 3).
-  - The client's `0xb046` handler shows nothing for id 2 (READ).
-- **Id 10 (OPEN 7):** no registrar was found. These were ruled out:
-  - every `[vtable+0x164]` call in the server, with the pushes on both sides of the vtable load
-    (the census found no push of 10);
-  - `CGObjNPCNPC::Create`;
-  - the shop init `0x4c7920` (1, 0xc);
-  - the ref list `+0x90` (7, 9, 8);
-  - the three quest classes that push directly (2 only).
-
-  The open handler sends id 10 to the NPC's slot `0x144` with `0x12` (the withdrawal). OpenSRO has
-  no skill withdrawal, so no NPC offers it. The herbalist therefore shows three of the original's
-  four lines: Talk, Purchase/Sell, End.
+- **What id 2 opens (READ, round 727's review):** `0x7046 {2}` sets INTERACTMODE 5 (`0x510584`).
+  - **When the NPC has no talk menu,** it raises `RaiseEvent(1, 0, player)` on the NPC
+    (`0x51059b..0x5105aa`), the quest event, and sends nothing more.
+  - **When it has one,** the player's `+0x28c`, `CGObjPC::ShowFirstTalkMenu` (`0x4f05d0`), collects
+    the enabled items of the player's list `+0x2198`. It calls `CGObjPC::ShowMenu` (`0x4ec930`,
+    slot `+0x150`) with `(0, 4, NPC+0x1d20 title, items, n, 0, 0, 0)`, which sends **`0x30D4`**.
+  - The client answers with **`0x70D4`** (`GObjPC_HandleTalkMenuSelectMsg_0d4` `0x516670`: a u8
+    choice, then EndInteraction).
+  - OpenSRO registers no talk item (it has no quest progress), so it takes the first branch:
+    `{1, 2}`, mode 5, nothing more.
+  - `0x30D4`'s payload is not read field by field yet (OPEN 3).
+  - The client's `0xb046` handler shows nothing for id 2.
+- **What id 10 opens:** `0x7046 {10}` is answered `{1, 2}` with mode 5 and raises event `0x12` on the
+  NPC. Its subscriber `CQSP_ALL_POTION_1` (`0x88b7be`) runs the withdrawal after testing level 20
+  again. OpenSRO has no skill withdrawal: the answer and the mode are the original's, and nothing
+  more happens (OURS). The client's line says "not available yet".
 
 **The menu from the set** (`NpcServiceReader.services_from_ids`) follows `FUN_00700440`'s order
 exactly, each line with `FUN_006fcd60`'s token (§1's table). It adds three findings, each READ:

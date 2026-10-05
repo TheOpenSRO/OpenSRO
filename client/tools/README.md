@@ -34,6 +34,14 @@ and every release was Compatibility. Before round 581, releases ran Forward+ whi
 Compatibility. Keep that in mind when reading an older round's picture against a tester's.
 `scripts/project_settings_test.gd` fails if the setting stops applying.
 
+**NPC talk renders need `--server` since round 727.** The talk menu is the server's interaction-id
+set (`0xB045`); `OPENSRO_QA_TALK` without a server shows a gate's lines (built from its teleport
+point) but an NPC's greeting and end line only. Round 725/726's offline recipes (`docs/rounds/
+r725.md`) no longer show store or storage lines. A `--server` run needs the NPC table:
+`OPENSRO_NPCPOS_CSV` and `OPENSRO_NPCS_CSV` (the server refuses `-npcpos-csv` without
+`-npcs-csv`); `/var/tmp/r727/live.sh` on the box is a working recipe, with `/tp` to stand within
+300 of the NPC, since `QA_AT` does not move the server's copy of the player.
+
 `QA_SHOT_REAP=0` skips qa_shot's start-up kill of every Godot, Xvfb and weston on the box. Use it
 with your own `GODOT_LOCK` in a lane, so another lane's runs survive. `frame_ab.py a.png b.png
 [--box x,y,w,h]` (numpy + ImageMagick, on the box) prints how two frames differ: mean colour, luma

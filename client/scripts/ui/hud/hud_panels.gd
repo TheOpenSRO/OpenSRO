@@ -1234,9 +1234,13 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	# 0x704100), so they stay up from here on.
 	#
 	# Round 727: the store line's close ends the selection (0x704B, through
-	# npc_window_hidden) before the store's request goes; the warehouse's
-	# request goes first and the hide after it, so the end is held while
-	# the request is in flight (NpcTalkNet.end), as ShowWindow(0) sends none.
+	# npc_window_hidden) before the store's request goes. The original's
+	# warehouse line hides the window FIRST (+0x5c(0), 0x70242f..0x70243c),
+	# and that hide sends nothing (ShowWindow, not the close slot), then sends
+	# 0x7046 {3} (0x702466..). OURS: here the request goes first and the hide
+	# after it, because this window's hide reaches npc_window_hidden; the end
+	# is held while the request is in flight (NpcTalkNet.end), so the bytes
+	# are the original's.
 	if NpcServiceReader.is_shop_key(key):
 		close("npctalk")
 		UiSounds.window_toggled(false, _interface_shown(), "npctalk store line (vslot_043)")
