@@ -214,3 +214,14 @@ static func tick(ms: float) -> void:
 
 static func live_count() -> int:
 	return _live.size()
+
+## For the QA log (round 722): how many materials animate, and the first
+## few one's rows.
+static func describe(n: int = 3) -> String:
+	var parts: Array[String] = ["%d live" % _live.size()]
+	for i in range(mini(n, _live.size())):
+		var mat = (_live[i][0] as WeakRef).get_ref()
+		var t: TexAni = _live[i][1]
+		var r := t.rows()
+		parts.append("%s u%s v%s" % [(mat as Resource).resource_name if mat != null else "?", str(r[0]), str(r[1])])
+	return ", ".join(parts)
