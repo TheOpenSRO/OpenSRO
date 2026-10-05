@@ -253,6 +253,15 @@ func get_text(token: String, default_val: String = "") -> String:
 		return default_val
 	return token
 
+## Adds `other`'s rows whose tokens this table lacks (round 731: the item
+## names span two files, ItemTableReader.load_object_names).
+func merge_missing(other: UiTextTable) -> void:
+	if other == null:
+		return
+	for k in other._strings:
+		if not _strings.has(k):
+			_strings[k] = other._strings[k]
+
 func has(token: String) -> bool:
 	return _strings.has(token)
 

@@ -179,6 +179,36 @@ const COL_DESC_STRID := 6
 const FAMILY_WEAPON := 6
 const CHINA_ARMOUR_FAMILIES := [1, 2, 3]
 const EUROPE_ARMOUR_FAMILIES := [9, 10, 11]
+## The object-name tables, as the client has them (round 731): its text
+## lookups (FUN_008c9bb0 for an object's name, FUN_008c9c30 for a UI key)
+## both read TextStringManager's one map (FUN_008c9b20, READ), filled from
+## the files textdataname.txt lists -- TextData_Equip&Skill.txt and
+## TextData_Object.txt (MEASURED). With the object file alone 4,811 of the
+## 11,772 item rows had no name (the raw code showed); with both, 271 -- the
+## equip file holds e.g. SN_ITEM_EU_LIGHT_01_HA_A "Sagittarius Savage
+## Sallet" (MEASURED, round 731); the two files share no key (MEASURED: 10,893 and 7,814
+## keys, 0 in both), so their order does not matter.
+const OBJECT_NAME_PATHS := [
+	"server_dep\\silkroad\\textdata\\textdata_object.txt",
+	"server_dep\\silkroad\\textdata\\textdata_equip&skill.txt",
+]
+
+## Both tables parsed and merged, or null when the archive has neither.
+static func load_object_names(archive) -> UiTextTable:
+	var out: UiTextTable = null
+	if archive == null:
+		return null
+	for path in OBJECT_NAME_PATHS:
+		var entry = ObjectLoader.find_file(archive, path)
+		if entry == null:
+			continue
+		var t := UiTextTable.parse(archive.read_file(entry))
+		if out == null:
+			out = t
+		else:
+			out.merge_missing(t)
+	return out
+
 const REQ_LEVEL_PAIRS := 4
 
 class Item:
@@ -291,10 +321,10 @@ class Item:
 		return phys_def != Vector2.ZERO or mag_def != Vector2.ZERO
 
 	## The real English display name: the name string id (column 5) resolved
-	## through textdata_object.txt -- and ONLY that table: the 9,315 `SN_ITEM_`
-	## keys live there and nowhere else (textuisystem.txt holds none, measured
-	## 2026-09-19), so a caller handing in the UI-string table gets nothing
-	## resolved. When no table is given or the id does not resolve, the
+	## through the object-name tables (load_object_names: textdata_object.txt
+	## and textdata_equip&skill.txt, round 731) -- textuisystem.txt holds no
+	## `SN_ITEM_` key (measured 2026-09-19), so a caller handing in the
+	## UI-string table gets nothing resolved. When no table is given or the id does not resolve, the
 	## column-3 object name is used only if it reads as English: it is English
 	## for weapons and armour but Korean for many consumables, and in this
 	## archive the Korean is already mangled to question marks in the file

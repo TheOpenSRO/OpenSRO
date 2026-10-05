@@ -6561,10 +6561,8 @@ func _load_npc_tables() -> void:
 	# The same characterdata parts give the model and the name: a row
 	# carries an id, an `SN_` key and a `.bsr`, and textdata_object turns
 	# the key into what the game calls the NPC. Read once, joined twice.
-	var names_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
-	var names: UiTextTable = null
-	if names_entry != null:
-		names = UiTextTable.parse(_media_pk2.read_file(names_entry))
+	# Both object-name files (round 731, ItemTableReader.load_object_names).
+	var names: UiTextTable = ItemTableReader.load_object_names(_media_pk2)
 	# NPC greetings resolve through a different table than names: npcchat's SN_
 	# ids live in textquest_speechname.txt (with the English in a later column,
 	# which UiTextTable picks by content).
@@ -18494,9 +18492,9 @@ func _try_setup_ground_items() -> void:
 ## HUD through this table, read "HP Recovery Herb".
 func _object_names() -> UiTextTable:
 	if _object_name_table == null and _media_pk2 != null:
-		var entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.OBJECT_NAME_TABLE_PATH)
-		if entry != null:
-			_object_name_table = UiTextTable.parse(_media_pk2.read_file(entry))
+		# Round 731: with textdata_equip&skill.txt, the other half of the
+		# client's object names (ItemTableReader.load_object_names).
+		_object_name_table = ItemTableReader.load_object_names(_media_pk2)
 	return _object_name_table
 
 ## The client's own English name for an item id, resolved the way the

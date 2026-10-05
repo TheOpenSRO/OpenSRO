@@ -232,7 +232,24 @@ func _lines_tests() -> void:
 		"a potion: name, sort, price (got %s)" % str(_texts(pl)))
 	_check(pl[0]["color"] == L.WHITE and pl[0]["icon"], "its name is white with the icon")
 
+## A text file's bytes as the archive stores them: UTF-16LE with its BOM.
+func _utf16(text: String) -> PackedByteArray:
+	var out := PackedByteArray([0xFF, 0xFE])
+	out.append_array(text.to_utf16_buffer())
+	return out
+
 func _type_name_tests() -> void:
+	# Item names span both object-name files (ItemTableReader.load_object_names).
+	var obj := UiTextTable.parse(_utf16("1\tSN_ITEM_CH_SPEAR\t?\t0\t0\t0\t0\t0\tSpear One\r\n"))
+	var equip := UiTextTable.parse(_utf16("1\tSN_ITEM_EU_LIGHT_01_HA_A\t?\t0\t0\t0\t0\t0\tSagittarius Savage Sallet\r\n1\tSN_ITEM_CH_SPEAR\t?\t0\t0\t0\t0\t0\tOther\r\n"))
+	obj.merge_missing(equip)
+	var hood := _item([3, 1, 10, 1], "")
+	hood.code_name = "ITEM_EU_W_LIGHT_01_HA_A"
+	hood.name_strid = "SN_ITEM_EU_LIGHT_01_HA_A"
+	_check(hood.display_name(obj) == "Sagittarius Savage Sallet" and obj.get_text("SN_ITEM_CH_SPEAR") == "Spear One",
+		"an item named in textdata_equip&skill.txt resolves; a key already present is kept (got %s)" % hood.display_name(obj))
+	_check(L.compose(hood, {"names": obj})[0]["text"] == "Sagittarius Savage Sallet", "and the tooltip shows it, not the code name")
+	_check(ItemTableReader.OBJECT_NAME_PATHS.size() == 2, "both files the client's textdataname.txt lists")
 	var groups := "﻿1\t3\t3\t1\t6\t4\r\n1\t10\t3\t1\t5\t2\r\n".to_utf16_buffer()
 	var bom := PackedByteArray([0xFF, 0xFE])
 	var cats := "1\tWK_CH_WEAPON\tUIIT_CTL_WK_CH_WEAPON\txxx\t0\t0\n1\tWK_CH_WEAPON_SPEAR\tUIIT_CTL_WK_CH_WEAPON_SPEAR\tWK_CH_WEAPON\t3\t11\n1\tWK_CH_ACCESSORY_NECKLACE\tUIIT_CTL_WK_CH_ACCESSORY_NECKLACE\tWK_CH_ACCESSORY\t10\t11\n".to_utf8_buffer()

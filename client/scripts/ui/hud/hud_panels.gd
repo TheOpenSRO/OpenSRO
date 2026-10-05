@@ -3589,9 +3589,9 @@ func _load_items() -> void:
 			_items = ItemTableReader.parse(archive.read_file(entry), _items)
 	for item in _items.values():
 		_items_by_code[(item as ItemTableReader.Item).code_name] = item
-	var names_entry := ObjectLoader.find_file(archive, OBJECT_NAME_TABLE_PATH)
-	if names_entry != null:
-		_object_names = UiTextTable.parse(archive.read_file(names_entry))
+	# Round 731: both files the client's text map holds (ItemTableReader.
+	# load_object_names); the equip one names 4,540 of the items.
+	_object_names = ItemTableReader.load_object_names(archive)
 	print("HudPanels: %d item(s) resolvable by id" % _items.size())
 
 ## Closes one of this client's own confirm boxes from its own buttons (Buy,
