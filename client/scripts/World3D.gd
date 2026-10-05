@@ -1999,6 +1999,15 @@ func _try_initialize_pk2_ui() -> void:
 	if text_entry != null:
 		var text_bytes := _media_pk2.read_file(text_entry)
 		_ui_text_table = UiTextTable.parse(text_bytes)
+	# The blue options' rows and line keys (round 732, MagicOptionTable),
+	# for the item tooltip and the instance log lines.
+	var magic_entry := ObjectLoader.find_file(_media_pk2, MagicOptionTable.PATH)
+	if magic_entry != null:
+		MagicOptionTable.shared = MagicOptionTable.new().load(_media_pk2.read_file(magic_entry))
+		if _ui_text_table != null:
+			var texts: UiTextTable = _ui_text_table
+			MagicOptionTable.shared_text = func(key: String) -> String: return texts.get_text(key, key)
+		print("World3D: %d magic option rows" % MagicOptionTable.shared.size())
 
 	_ui_builder = UiBuilder.new(_media_pk2, _ui_text_table)
 	# Every text node of the in-game UI in the client's own face, at its
