@@ -283,6 +283,10 @@ func ShopHandler(chars character.Store, svc *shop.Service, trades *trade.Hub) ga
 			return handleShopList(ctx, sess, p, svc)
 		case OpShopSell:
 			return handleShopSell(ctx, sess, p, chars, svc, trades)
+		case OpShopBuybackList:
+			return handleShopBuybackList(ctx, sess, p, chars, svc)
+		case OpShopBuyback:
+			return handleShopBuyback(ctx, sess, p, chars, svc, trades)
 		default:
 			return nil
 		}

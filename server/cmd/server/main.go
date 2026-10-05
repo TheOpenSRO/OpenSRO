@@ -1447,7 +1447,7 @@ func main() {
 		"perCharacter", bagSizes != nil)
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
-	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold, ChestSizes: chestSizes}
+	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold, ChestSizes: chestSizes, Items: refItems}
 	zerkTracker := berserk.NewTracker()
 	// The Energy of life scroll's grants (round 632 review, session/composite.go).
 	compositeKeeper := session.NewCompositeKeeper()

@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
@@ -123,6 +124,11 @@ type Service struct {
 	Gold  character.Store
 	Inv   inventory.Store
 	Items ItemLookup
+
+	// The buy-back book (round 728, buyback.go): each character's last
+	// BuybackSlots sales, newest first.
+	soldMu sync.Mutex
+	sold   map[int64][]Sold
 }
 
 // Buy attempts to purchase quantity of itemID for characterID: looks up
@@ -202,6 +208,7 @@ func (s *Service) Sell(ctx context.Context, characterID int64, slot, quantity in
 		}
 		return 0, fmt.Errorf("shop: crediting gold: %w", err)
 	}
+	s.recordSold(characterID, Sold{ItemID: found.ItemID, Quantity: quantity, Unit: SellValue(item), Inst: found.Instance()})
 	return gold, nil
 }
 

@@ -426,6 +426,16 @@ type Item struct {
 	// desc +0x2c4). The exporter joins every such Desc with ",". Empty
 	// otherwise.
 	CompositeDesc string
+
+	// KeepingFee is the warehouse's per-item deposit fee in gold, itemdata
+	// column 30 (round 728). The client's deposit box shows
+	// max(1, fee x max(1, count)) (`CIFMessageBox::vslot_012` 0x63d676 and the
+	// fill 0x6b0e90, READ). That the fee the fill multiplies is THIS column is
+	// INFERRED: the column's name in _RefObjCommon's schema is KeepingFee, it
+	// sits between the repair price basis (27, READ) and SellPrice (31), and a
+	// zero-fee ticket shows the box's "1" in the user's screenshot of the
+	// original (MKtR5Kd.png). 0 on an older import.
+	KeepingFee int64
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

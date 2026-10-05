@@ -107,6 +107,10 @@ var itemCSVColumns = []string{
 	// ITEM_ETC_INCREASE_HWAN_TIME_01]" -- see Item.CompositeDesc. Empty on
 	// every other row and on an older export.
 	"CompositeDesc",
+	// Appended later still (round 728): KeepingFee, itemdata column 30, the
+	// warehouse's per-item deposit fee (see Item.KeepingFee). 0 on an older
+	// export.
+	"KeepingFee",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -373,6 +377,9 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 71 {
 		it.CompositeDesc = strings.TrimSpace(f[71])
+	}
+	if len(f) > 72 {
+		it.KeepingFee = int64(parseInt(f[72]))
 	}
 
 	if err != nil {

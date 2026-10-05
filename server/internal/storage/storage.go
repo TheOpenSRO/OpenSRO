@@ -35,6 +35,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // DefaultCapacity is the warehouse's slot count for every account.
@@ -96,6 +97,33 @@ type Service struct {
 	// expansion. The Warehouse store must be bounded by the same sizes
 	// (SetCapacityFunc(CapacityOf(ChestSizes))).
 	ChestSizes account.ChestSizeStore
+	// Items prices the deposit fee (round 728, DepositFee). Nil charges
+	// nothing -- the warehouse as it was before the fee existed.
+	Items FeeLookup
+}
+
+// FeeLookup resolves an item's reference row for its KeepingFee.
+type FeeLookup interface {
+	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
+}
+
+// DepositFee is what depositing count of an item costs: max(1, KeepingFee x
+// max(1, count)). The client's deposit box shows exactly this number --
+// the fill 0x6b0e90 writes the fee times max(1, count) and
+// `CIFMessageBox::vslot_012` (0x63d676..0x63d698) shows max(1, that) for
+// purpose 5 (READ, docs/protocol/message_box.md). That the server charges the
+// shown number at the deposit is INFERRED (the server's warehouse path was not
+// read); refdata.Item.KeepingFee records why the column is INFERRED too.
+func DepositFee(keepingFee int64, count int) int64 {
+	c := int64(count)
+	if c < 1 {
+		c = 1
+	}
+	fee := keepingFee * c
+	if fee < 1 {
+		fee = 1
+	}
+	return fee
 }
 
 // Balances is a character's carried gold and the account's warehouse gold.
@@ -266,7 +294,48 @@ func (s *Service) Deposit(ctx context.Context, characterID int64, bagSlot, quant
 	if err != nil {
 		return err
 	}
-	return move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, quantity)
+	if s.Items == nil {
+		return move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, quantity)
+	}
+	// The fee (round 728): priced on what will really move -- the slot's own
+	// item and no more than it holds -- charged first, refunded if the move
+	// then fails, so a refusal costs nothing.
+	if quantity <= 0 {
+		return ErrNothingToMove
+	}
+	slots, err := s.Bag.List(ctx, characterID)
+	if err != nil {
+		return fmt.Errorf("storage: reading source: %w", err)
+	}
+	var found *inventory.Slot
+	for i := range slots {
+		if slots[i].Index == bagSlot {
+			found = &slots[i]
+			break
+		}
+	}
+	if found == nil || found.Quantity <= 0 {
+		return ErrSlotEmpty
+	}
+	count := quantity
+	if count > found.Quantity {
+		count = found.Quantity
+	}
+	var keeping int64
+	if it, e := s.Items.GetItem(ctx, found.ItemID); e == nil && it != nil {
+		keeping = it.KeepingFee
+	}
+	fee := DepositFee(keeping, count)
+	if err := s.Gold.DeductGold(ctx, characterID, fee); err != nil {
+		return err
+	}
+	if err := move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, count); err != nil {
+		if backErr := s.Gold.AddGold(ctx, characterID, fee); backErr != nil {
+			return fmt.Errorf("storage: deposit failed (%w) AND refunding the fee failed (%v)", err, backErr)
+		}
+		return err
+	}
+	return nil
 }
 
 // Withdraw moves quantity from the account's warehouse slot back into the character's bag.

@@ -25,11 +25,21 @@ type InventoryMoveRequest struct {
 	CharacterName string
 	From          int32
 	To            int32
+	// Count is how many of From's stack to move (round 728, the stack split):
+	// 0 -- or absent, as an older client sends it -- moves the whole stack, as
+	// retail's bag -> bag drop does (quantity -1, docs/protocol/held_icon.md).
+	// A count below the stack splits it into To, which must be empty
+	// (inventory.Splitter).
+	Count int32
 }
 
 func (r *InventoryMoveRequest) Encode() []byte {
 	out := append(encodeStrings(r.CharacterName), encodeInt64(int64(r.From))...)
-	return append(out, encodeInt64(int64(r.To))...)
+	out = append(out, encodeInt64(int64(r.To))...)
+	if r.Count > 0 {
+		out = append(out, encodeInt64(int64(r.Count))...)
+	}
+	return out
 }
 
 func DecodeInventoryMoveRequest(data []byte) (*InventoryMoveRequest, error) {
@@ -41,11 +51,15 @@ func DecodeInventoryMoveRequest(data []byte) (*InventoryMoveRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding InventoryMoveRequest: from: %w", err)
 	}
-	to, _, err := decodeInt64(rest)
+	to, rest, err := decodeInt64(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding InventoryMoveRequest: to: %w", err)
 	}
-	return &InventoryMoveRequest{CharacterName: fields[0], From: int32(from), To: int32(to)}, nil
+	req := &InventoryMoveRequest{CharacterName: fields[0], From: int32(from), To: int32(to)}
+	if count, _, err := decodeInt64(rest); err == nil && count > 0 {
+		req.Count = int32(count)
+	}
+	return req, nil
 }
 
 // InventoryMoveHandler returns a gateway.Handler implementing OpInventoryMove.
@@ -77,8 +91,18 @@ func InventoryMoveHandler(chars character.Store, inv inventory.Store, items Item
 			return fail("no inventory")
 		}
 
-		if err := inv.MoveItem(ctx, characterID, int(req.From), int(req.To)); err != nil {
+		var err2 error
+		if sp, ok := inv.(inventory.Splitter); ok && req.Count > 0 && splitsStack(ctx, inv, characterID, int(req.From), int(req.Count)) {
+			err2 = sp.SplitItem(ctx, characterID, int(req.From), int(req.To), int(req.Count))
+		} else {
+			err2 = inv.MoveItem(ctx, characterID, int(req.From), int(req.To))
+		}
+		if err := err2; err != nil {
 			switch {
+			case errors.Is(err, inventory.ErrSlotTaken):
+				return fail("slot is taken")
+			case errors.Is(err, inventory.ErrSplitCount):
+				return fail("invalid count")
 			case errors.Is(err, inventory.ErrInvalidSlot):
 				return fail("invalid slot")
 			case errors.Is(err, inventory.ErrSlotEmpty):
@@ -94,4 +118,19 @@ func InventoryMoveHandler(chars character.Store, inv inventory.Store, items Item
 		}
 		return sess.Send(&proto.Packet{Opcode: OpInventoryMoveResult, Data: bagListResult(ctx, inv, characterID, slots, items).Encode()})
 	}
+}
+
+// splitsStack says whether moving count out of slot from is a split: less than
+// the stack it holds (a count at or past the stack moves the whole stack).
+func splitsStack(ctx context.Context, inv inventory.Store, characterID int64, from, count int) bool {
+	slots, err := inv.List(ctx, characterID)
+	if err != nil {
+		return false
+	}
+	for _, sl := range slots {
+		if sl.Index == from {
+			return count < sl.Quantity
+		}
+	}
+	return false
 }
