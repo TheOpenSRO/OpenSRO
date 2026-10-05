@@ -7546,6 +7546,13 @@ func _attach_gate_effects(region_x: int, region_y: int) -> void:
 			var made := _ambient.attach(obj, entries, particles)
 			print("World3D: gate %s -- %s at %.1f from its row plays %d of its %d ambient effect(s)" % [
 				building.code, obj.name, d, made.size(), entries.size()])
+			# The placement, measured: each effect's position in its object's
+			# frame, which should be the entry's offset (AmbientParticles).
+			if _qa_ambient_log:
+				for fx_v in made:
+					var fx := fx_v as EfpEffect
+					print("QA AMBIENT placed %s: %s in the object's frame" % [fx.path.get_file(),
+						str(obj.global_transform.affine_inverse() * fx.placed_at())])
 
 ## The glow pass (AmbientParticles.update), once a physics tick.
 func _ambient_step(delta: float) -> void:
