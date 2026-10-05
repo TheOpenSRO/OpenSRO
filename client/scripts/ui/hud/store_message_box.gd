@@ -331,7 +331,7 @@ func _build_store_money(opts: Dictionary) -> bool:
 ## "1" (0xd87bdc), focus (0x635030(1)), no minimum (0x634ff0(0)), its maximum
 ## the stack - 1 (0x634f20), the name on the board. OK (0x63d920) reads the
 ## edit as a 64-bit number and posts 0x8076 flagged 0 when it is empty or 0
-## (READ); the owner then sends nothing (INFERRED from the flag).
+## (READ); the owner then sends nothing (c:0x6b62d0 sends only on 1, READ).
 ## `opts`: "icon", "name", "stack" (the slot's count).
 func _build_divide(opts: Dictionary) -> bool:
 	_set_box_size(DIVIDE_SIZE)

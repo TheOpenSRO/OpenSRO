@@ -2751,9 +2751,11 @@ func _on_storage_cell_input(event: InputEvent, icon: TextureRect) -> void:
 ## changed is not settled); a stack starts at its size (INFERRED, as the sell
 ## box's); an item that does not stack hides the whole quantity group (READ).
 ## The price field is the fee: the item reference's +0xcc times the count,
-## floored at 1 (0x6b0fe8..0x6b101c, 0x63d676; READ). Round 728 reads +0xcc as
-## itemdata's KeepingFee, column 30 (INFERRED from the schema's name), and the
-## server charges the same sum (storage.DepositFee).
+## floored at 1 (0x6b0fe8..0x6b101c, 0x63d676; READ). The fee is itemdata's
+## KeepingFee, column 30 (READ on the server, ref +0xac; round 728 review).
+## The server charges KeepingFee x the WHOLE stack clamped to 1..10,000,000
+## (gs:0x524160 / 0x524300), so above the cap this box shows more than is
+## charged, as the original's does.
 func _confirm_deposit(bag_slot: int, item_id: int, held: int) -> void:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)

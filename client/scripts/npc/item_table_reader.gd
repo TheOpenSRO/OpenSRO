@@ -55,9 +55,10 @@ const COL_NAME_STRID := 5
 ## under the buy price on every row (Copper Sword 890 buy / 427 sell). Shown as
 ## the estimate in the sell confirm; the server's result carries the true gold.
 const COL_SELL_PRICE := 31
-## KeepingFee (round 728): the warehouse fee a unit. The column is INFERRED
-## from the schema's name; the original's deposit box reads the reference's
-## +0xcc (0x6b1002, READ), not tied to a column.
+## KeepingFee (round 728): the warehouse fee a unit. The column is READ on the
+## server (RefObjCommon_ExtractData gs:0x6a3090 -> ref +0xac; round 728
+## review); the client's deposit box reads its reference's +0xcc (0x6b1002),
+## not separately mapped.
 const COL_KEEPING_FEE := 30
 ## MaxStack (column 57): 1 for equipment, the real per-item cap for stackables
 ## (a potion 5000, arrows 2500) -- so the shop can offer buying a stack.
@@ -154,7 +155,7 @@ class Item:
 	var max_stack: int = 1
 	## SellPrice (column 31): the NPC buy-back price, for the sell estimate.
 	var sell_price: int = 0
-	## KeepingFee (column 30, INFERRED): the warehouse deposit fee a unit.
+	## KeepingFee (column 30, READ): the warehouse deposit fee a unit.
 	var keeping_fee: int = 0
 	## Archive path of the inventory icon, ICON_PREFIX already applied.
 	var icon_path: String

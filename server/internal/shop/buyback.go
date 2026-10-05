@@ -111,13 +111,6 @@ func (s *Service) recordSold(characterID int64, e Sold) byte {
 	return byte(len(book))
 }
 
-// soldList returns characterID's book, oldest first (a copy).
-func (s *Service) soldList(characterID int64) []Sold {
-	s.soldMu.Lock()
-	defer s.soldMu.Unlock()
-	return append([]Sold(nil), s.sold[characterID]...)
-}
-
 // Bought is a buy back's outcome: where the item went and what it cost.
 type Bought struct {
 	Slot     int

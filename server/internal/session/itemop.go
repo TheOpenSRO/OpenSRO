@@ -110,24 +110,6 @@ func DecodeItemMove(b []byte) (*ItemMoveRequest, error) {
 	return r, nil
 }
 
-// encodeItemMove is the client's side, for the tests.
-func encodeItemMove(r ItemMoveRequest) []byte {
-	out := []byte{r.Type}
-	switch r.Type {
-	case ItemMoveBagToBag:
-		out = append(out, byte(r.Src+ItemWireBagOffset), byte(r.Dst+ItemWireBagOffset))
-		out = binary.LittleEndian.AppendUint16(out, uint16(r.Count))
-	case ItemMoveSell:
-		out = append(out, byte(r.Src+ItemWireBagOffset))
-		out = binary.LittleEndian.AppendUint16(out, uint16(r.Count))
-		out = binary.LittleEndian.AppendUint32(out, r.NPC)
-	case ItemMoveDeposit:
-		out = append(out, byte(r.Src+ItemWireBagOffset), byte(r.Dst))
-		out = binary.LittleEndian.AppendUint32(out, r.NPC)
-	}
-	return out
-}
-
 // EncodeItemFail is a failure: u8 2, u16 code (0xB034 and 0xB168 alike).
 func EncodeItemFail(code uint16) []byte {
 	return binary.LittleEndian.AppendUint16([]byte{itemOpFail}, code)

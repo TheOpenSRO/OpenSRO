@@ -161,3 +161,10 @@ func TestBuybackRefusals(t *testing.T) {
 		t.Fatal("a full-bag refusal must move no gold and keep the entry")
 	}
 }
+
+// soldList returns characterID's book, oldest first (a copy).
+func (s *Service) soldList(characterID int64) []Sold {
+	s.soldMu.Lock()
+	defer s.soldMu.Unlock()
+	return append([]Sold(nil), s.sold[characterID]...)
+}

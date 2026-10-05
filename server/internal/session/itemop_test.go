@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -148,4 +149,22 @@ func TestItemOpFlow(t *testing.T) {
 	if b := bag(); b[1] != 20 {
 		t.Fatalf("a refused deposit moved the stack: %v", b)
 	}
+}
+
+// encodeItemMove is the client's side, for the tests.
+func encodeItemMove(r ItemMoveRequest) []byte {
+	out := []byte{r.Type}
+	switch r.Type {
+	case ItemMoveBagToBag:
+		out = append(out, byte(r.Src+ItemWireBagOffset), byte(r.Dst+ItemWireBagOffset))
+		out = binary.LittleEndian.AppendUint16(out, uint16(r.Count))
+	case ItemMoveSell:
+		out = append(out, byte(r.Src+ItemWireBagOffset))
+		out = binary.LittleEndian.AppendUint16(out, uint16(r.Count))
+		out = binary.LittleEndian.AppendUint32(out, r.NPC)
+	case ItemMoveDeposit:
+		out = append(out, byte(r.Src+ItemWireBagOffset), byte(r.Dst))
+		out = binary.LittleEndian.AppendUint32(out, r.NPC)
+	}
+	return out
 }
