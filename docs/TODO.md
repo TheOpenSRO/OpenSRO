@@ -803,7 +803,8 @@ are not drawn.
   `*_ef_alpha`) are authored translucent, so their draw state (any MTRL mod in the fullset
   `.bsr`) has to be read first.
 - **Enhanced-gear glow.** `CRTModProgEquipPow` (BMT_FORMAT.md) is attached only to a +N item
-  with a matching glow row; it overrides the material state entirely. Not modelled.
+  with a matching glow row; it overrides the material state entirely. Not modelled yet. Round 733
+  specced it, with the tables, the tiers, the particles and the lanes: `docs/protocol/weapon_glow.md`.
 - **Object-space skin entry.** An empty skin slot lands on the client's palette entry 0, drawn
   here in the model's own space (BMS_FORMAT.md). That entry 0 is the object transform is
   INFERRED, not read from the vertex shader's constant upload.
