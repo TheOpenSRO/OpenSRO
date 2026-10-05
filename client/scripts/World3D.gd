@@ -2293,6 +2293,7 @@ func _try_initialize_pk2_ui() -> void:
 		# 0x6523d0: any CIFButton), e.g. its page arrows.
 		_hud_panels.click_pass_through.append(_hud_underbar.button_at)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
+	_hud_panels.npc_window_hidden.connect(_on_npc_window_hidden)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
 	# The party window's requests and the invitation box (round 711).
@@ -12436,6 +12437,14 @@ func _qa_step() -> void:
 			# display name.
 			_load_npc_tables()
 			var code: String = at[0]
+			# Round 727: an NPC the server spawned goes through the select, as
+			# a click does (0x7045 -> 0xB045 -> the window with the server's
+			# set); the server measures the reach from the player.
+			var qa_holder := _qa_server_npc(code)
+			if qa_holder != null:
+				print("QA TALK %s: select 0x7045 uid %d" % [code, int(qa_holder.get_meta("npc_uid"))])
+				_open_talk(qa_holder)
+				continue
 			# The NPC's own name (characterdata + textdata_object), as a click
 			# would title the window; the code when the tables lack it.
 			var qa_name: String = str(_npc_names.get(_npc_id_for_code(code), ""))
@@ -12446,6 +12455,7 @@ func _qa_step() -> void:
 					qa_name = _gate_display_name(qa_gate)
 			_talk_npc_name = qa_name if qa_name != "" else code
 			_talk_npc_code = code
+			_talk_ids = _client_talk_ids(code)
 			_hud_panels.open_npc_talk(_talk_npc_name, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
 
 	# OPENSRO_QA_TALK_PICK="<n>@<tick>[;<n>@<tick>...]" (round 725) presses the
@@ -16911,10 +16921,99 @@ func _select_for_talk(node: Node) -> void:
 	_selected_character = -1
 	_clear_target()
 
+## The retail NPC interaction (round 727; NpcTalkNet has the bytes): the
+## state, built on the first talk.
+var _npc_talk: NpcTalkNet = null
+## The holder a select is out for (a WeakRef), null when none.
+var _talk_select_node: WeakRef = null
+## The interaction-id set the open talk window was built from.
+var _talk_ids := PackedByteArray()
+## Whether the open talk is the server's (an 0xB045 reply), not a gate's.
+var _talk_server := false
+## The tab group of the store line whose 0x7046 is out ("" for all tabs).
+var _talk_pending_tabgroup := ""
+
+func _npc_talk_net() -> NpcTalkNet:
+	if _npc_talk != null:
+		return _npc_talk
+	_npc_talk = NpcTalkNet.new()
+	_npc_talk.send = func(op: int, payload: PackedByteArray) -> void:
+		if NetClient.is_connected_to_server():
+			NetClient._send(op, payload)
+	_npc_talk.register_with(NetClient)
+	_npc_talk.selected.connect(_on_npc_selected)
+	_npc_talk.opened.connect(_on_npc_opened)
+	# The refusals: the client shows nothing for a refused select (round
+	# 701's reading of 0x88b200); the open's and end's codes are logged.
+	_npc_talk.select_refused.connect(func(code: int) -> void:
+		print("NPC select refused, code %d" % code))
+	_npc_talk.open_refused.connect(func(code: int) -> void:
+		print("NPC open refused, code 0x%x" % code))
+	_npc_talk.end_refused.connect(func(code: int) -> void:
+		print("NPC end refused, code 0x%x" % code))
+	return _npc_talk
+
+## The 0xB045 reply (FUN_0088b200 -> IF_NPCWindow::FUN_00703ff0): the talk
+## window opens for the NPC with the server's set.
+func _on_npc_selected(entity: int, ids: PackedByteArray) -> void:
+	var node: Node = _talk_select_node.get_ref() if _talk_select_node != null else null
+	_talk_select_node = null
+	if node == null or not is_instance_valid(node) or int(node.get_meta("npc_uid", 0)) != entity:
+		node = _npc_holders.get(entity)
+	if node == null or not is_instance_valid(node):
+		print("NPC select: uid %d has no holder here" % entity)
+		return
+	print("NPC select: uid %d '%s' ids %s" % [entity, str(node.get_meta("npc_code", "")), Array(ids)])
+	_talk_server = true
+	_show_talk(node, ids)
+
+## The 0xB046 reply: the store (id 1) or the storage (3) opens; the talk
+## line (2) keeps the talk window (INTERACTMODE 5; what the original then
+## shows, CGObjPC::ShowFirstTalkMenu's message, is OPEN).
+func _on_npc_opened(id: int) -> void:
+	print("NPC open: id %d" % id)
+	match id:
+		1:
+			if _shop_reader != null and _talk_npc_code != "":
+				_hud_panels.open_shop(_talk_npc_name, _shop_reader.tabs_for(_talk_npc_code, _talk_pending_tabgroup),
+					_talk_npc_code)
+		3:
+			_hud_panels.open_storage(_talk_npc_name)
+
+## The talk window, the store or the storage went away (HudPanels'
+## npc_window_hidden): the end request 0x704B (READ: the NPC window's close
+## slot 0x7040b0 while no open is in flight, and the store's and storage's
+## close).
+func _on_npc_window_hidden(panel_id: String) -> void:
+	if not _talk_server or _npc_talk == null:
+		return
+	if _npc_talk.end():
+		print("NPC end 0x704B: %s closed" % panel_id)
+
 ## Opens the talk window for an NPC or gate holder (the click in reach, or a
 ## talk approach's arrival): the name, greeting and lines, the ring under an
 ## NPC.
 func _open_talk(node: Node) -> void:
+	_talk_server = false
+	# Talking supersedes an attack still walking into reach: the attack would
+	# otherwise go out behind the talk window.
+	_drop_pending_attack()
+	# A server NPC (round 727): the select request 0x7045 (FUN_0078f5f0),
+	# whose 0xB045 reply names the NPC's interaction ids and opens the talk
+	# window (_on_npc_selected). Nothing opens before the reply, as in the
+	# original.
+	if _is_server_npc(node):
+		_talk_select_node = weakref(node)
+		_npc_talk_net().select(int(node.get_meta("npc_uid")))
+		return
+	# A client-placed teleport gate, or no server: the set is built here
+	# (_client_talk_ids, OURS).
+	_show_talk(node, _client_talk_ids(str(node.get_meta("npc_code")) if node.has_meta("npc_code") else ""))
+
+## Opens the talk window for `node` with interaction-id set `ids`: the name,
+## greeting, tax line and lines (NpcServiceReader.services_from_ids), the
+## ring under an NPC.
+func _show_talk(node: Node, ids: PackedByteArray) -> void:
 	var npc_name := str(node.get_meta("npc_name"))
 	if npc_name == "":
 		npc_name = "..."
@@ -16922,14 +17021,36 @@ func _open_talk(node: Node) -> void:
 	_talk_npc_name = npc_name
 	_talk_npc_code = code
 	_talk_node = node as Node3D
+	_talk_ids = ids
 	# The ring under an NPC (round 698; the 0xB045 reply selects a CICharactor,
 	# texture 1); a teleport gate is not one and gets none.
 	if not node.has_meta("gate_point_id") and node is Node3D:
 		_markers().attach("npc:%d" % node.get_instance_id(), GroundMarkers.Kind.NPC)
-	# Talking supersedes an attack still walking into reach: the attack would
-	# otherwise go out behind the talk window.
-	_drop_pending_attack()
 	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
+
+## Whether a talk with `node` goes through the server (round 727): an NPC the
+## server spawned (its uid), while connected. A gate is client-placed.
+func _is_server_npc(node: Node) -> bool:
+	return node.has_meta("npc_uid") and int(node.get_meta("npc_uid")) != 0 \
+		and not node.has_meta("gate_point_id") and NetClient.is_connected_to_server()
+
+## The placed holder of a server-spawned NPC with codename `code` nearest the
+## player (QA_TALK, round 727), or null.
+func _qa_server_npc(code: String) -> Node3D:
+	var best: Node3D = null
+	var best_d := INF
+	for uid in _npc_holders:
+		var h = _npc_holders[uid]
+		if not is_instance_valid(h) or not (h as Node).is_inside_tree():
+			continue
+		var holder := h as Node3D
+		if str(holder.get_meta("npc_code", "")).to_upper() != code.to_upper() or not _is_server_npc(holder):
+			continue
+		var d := holder.global_position.distance_to(player.global_position) if player != null else 0.0
+		if d < best_d:
+			best_d = d
+			best = holder
+	return best
 
 ## The talk approach (round 701). READ from sro_client.exe:
 ## - The object click 0x793570 measures the object's +0x24c, the 3-D distance
@@ -17108,40 +17229,42 @@ func _npc_greeting_text(code: String) -> String:
 				return resolved
 	return ""
 
-## The services the NPC offers (grounded detection; see NpcServiceReader), as
-## Service objects (key + label) for the talk window's clickable options. The
-## player's guild state picks a guild NPC's lines (round 521).
-func _npc_services(code: String) -> Array:
-	if code == "":
-		return []
+## The talk window's lines (round 727): the interaction-id set `ids` -- the
+## server's 0xB045 reply for an NPC, _client_talk_ids for a gate -- walked in
+## the client's order (NpcServiceReader.services_from_ids); the last talk's
+## set when `ids` is null. The player's guild state picks a guild NPC's lines
+## (round 521) and gates its store line (round 524), the level the academy
+## line (round 727). The job is not known to this client, so every player is
+## jobless (round 526).
+func _npc_services(code: String, ids: Variant = null) -> Array:
+	var id_set: PackedByteArray = _talk_ids if ids == null else ids
 	# Round 725: the store lines, one per tab group, each worded by its group's
 	# own name (ShopReader.store_lines_for; FUN_006fb630, READ). The name is
 	# resolved here through both text tables, so the talk box shows it even
-	# where its own UI table has no SN_STORE_* row.
-	var store_lines: Array = _shop_reader.store_lines_for(code) if _shop_reader != null else []
-	var out := NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master, 0, store_lines)
+	# where its own UI table has no SN_STORE_* row; so are the SN_ tokens of
+	# the builder's last lines (textdata_object / the NPC text table).
+	var store_lines: Array = _shop_reader.store_lines_for(code) if _shop_reader != null and code != "" else []
+	var out := NpcServiceReader.services_from_ids(id_set, store_lines, _guild_id, _guild_master, 0, _player_level)
 	for svc_v in out:
 		var svc: NpcServiceReader.Service = svc_v
-		if svc.key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):
+		if svc.key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX) or svc.strid.begins_with("SN_"):
 			svc.label = _resolve_any_text(svc.strid, svc.label)
-	# A teleport gate (round 577, _bind_region_gates): its lines come from its
-	# teleportdata point -- the two registration columns and whether any link
-	# leaves it (NpcServiceReader.gate_services). "teleport" lists the
-	# destinations in the talk box (_open_teleport_list, round 603); the recall lines fall to
-	# _on_npc_service_selected's default until they have a server.
-	#
-	# Since round 642 a teleport NPC gets the same lines: the ferry, airship
-	# and tunnel ticket sellers, Jangan's gate soldiers and Constantinople's
-	# guides are the associated objects of their teleportdata points
-	# (_teleport_point_for_code), and the engine serves them as it serves a
-	# gate (docs/protocol/teleport_network.md, "Teleport NPCs (round 642)").
-	# Their points carry neither registration flag, so they list the
-	# teleport line and the end line.
-	var point := _teleport_point_for_code(code)
-	if point != null:
-		out.append_array(NpcServiceReader.gate_services(
-			not _teleport_reader.links_from(point.id).is_empty(), point.interaction7, point.interaction9))
 	return out
+
+## The interaction ids of a talk the server does not answer (round 727). A
+## teleport gate is placed by this client and has no server uid, so its set
+## is built from its teleportdata point, as the server's own registrar reads
+## it (NpcServiceReader.gate_ids: 7 and 9 READ, 8 from the links, disclosed);
+## so is a teleport NPC's (round 642: the ferry, airship and tunnel sellers,
+## Jangan's gate soldiers) when no server sends its set. OURS: in the
+## original every set comes in the 0xB045 reply. Anything else without a
+## server has no set: its window shows the greeting and the end line.
+func _client_talk_ids(code: String) -> PackedByteArray:
+	var point := _teleport_point_for_code(code)
+	if point == null:
+		return PackedByteArray()
+	return NpcServiceReader.gate_ids(not _teleport_reader.links_from(point.id).is_empty(),
+		point.interaction7, point.interaction9)
 
 ## The teleport point the thing being talked to stands for: a gate
 ## structure's (its teleportbuilding code, round 577) or, since round 642, an
@@ -17189,9 +17312,24 @@ func _refresh_open_talk_menu() -> void:
 ## then leaves it. The others (a
 ## guild master's "guild") are their own systems, still to come, so they say
 ## so rather than doing nothing silently. A smith lists no Repair line (round
-## 512, NpcServiceReader.services_for): repair is the store window's own
+## 512, NpcServiceReader.services_from_ids): repair is the store window's own
 ## buttons.
 func _on_npc_service_selected(key: String) -> void:
+	# A server NPC's store, storage and talk lines (round 727): the open
+	# request 0x7046 with the line's id (CIF_NPCTalk::FUN_007020c0: kind 1 ->
+	# 1, kind 3 -> 3, kind 4 -> 2); the windows open on its reply
+	# (_on_npc_opened).
+	if _talk_server and _npc_talk != null:
+		if NpcServiceReader.is_shop_key(key):
+			_talk_pending_tabgroup = NpcServiceReader.tabgroup_of(key)
+			_npc_talk.open(1)
+			return
+		if key == "storage":
+			_npc_talk.open(3)
+			return
+		if key == "talk":
+			_npc_talk.open(2)
+			return
 	# A tab group's store line (round 725): that group's tabs.
 	if key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX):
 		if _shop_reader != null and _talk_npc_code != "":

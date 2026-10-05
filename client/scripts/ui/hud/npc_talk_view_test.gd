@@ -103,13 +103,15 @@ func _keys(services: Array) -> Array:
 
 func _menu_checks() -> void:
 	var lines := [{"tabgroup": "G1", "name_strid": "SN_G1"}, {"tabgroup": "G2", "name_strid": "SN_G2"}]
-	var shop := NpcServiceReader.services_for("NPC_FX_POTION", {"NPC_FX_POTION": true}, -1, false, 0, lines)
+	# Round 727: the lines come from the server's interaction-id set.
+	var shop := NpcServiceReader.services_from_ids(PackedByteArray([1]), lines)
 	_check(_keys(shop) == ["shop:G1", "shop:G2"], "store lines first, one per tab group (got %s)" % [_keys(shop)])
 	_check((shop[0] as NpcServiceReader.Service).strid == "SN_G1", "a store line's token is its group's name key")
-	var keeper := NpcServiceReader.services_for("NPC_FX_WAREHOUSE_M", {"NPC_FX_WAREHOUSE_M": true}, -1, false, 0, lines.slice(0, 1))
-	_check(_keys(keeper) == ["shop:G1", "storage"], "a keeper: store line, then the warehouse line (kind 3) (got %s)" % [_keys(keeper)])
-	var fallback := NpcServiceReader.services_for("NPC_FX_POTION", {"NPC_FX_POTION": true})
-	_check(_keys(fallback) == ["shop"], "an NPC whose tab groups do not resolve keeps the Buy stand-in (got %s)" % [_keys(fallback)])
+	var keeper := NpcServiceReader.services_from_ids(PackedByteArray([1, 3]), lines.slice(0, 1))
+	_check(_keys(keeper) == ["shop:G1", "storage", "honor_rank"],
+		"a keeper {1, 3}: store line, the warehouse line (kind 3), honor rank (0x2e) (got %s)" % [_keys(keeper)])
+	var none := NpcServiceReader.services_from_ids(PackedByteArray([1]))
+	_check(none.is_empty(), "id 1 with no tab group writes no line (FUN_006fb630 walks no shop) (got %s)" % [_keys(none)])
 	var gate := NpcServiceReader.gate_services(true, true, false)
 	_check(_keys(gate) == ["recall_designate", "teleport"], "a gate: recall (id 7 -> kind 9), then teleport (id 8 -> kind 10) (got %s)" % [_keys(gate)])
 	var drawn := NpcServiceReader.talk_menu_lines("fx", shop, func(t: String, f: String) -> String: return "Purchase " + t if t != "" else f)
