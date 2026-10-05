@@ -239,7 +239,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off]"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -262,6 +262,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.gotoSpot(actor, args)
 	case "give":
 		res = d.give(ctx, actor, args)
+	case "item":
+		res = d.item(ctx, actor, args)
 	case "gold":
 		res = d.gold(ctx, actor, args)
 	case "level":
@@ -494,19 +496,29 @@ func (d *Deps) gotoSpot(actor Actor, args []string) Result {
 	return refuse("no place called " + strings.Join(args, " ") + ". Zones: " + strings.Join(d.Zones, ", ") + ". Monsters: " + d.speciesNames())
 }
 
+// give adds an item to the bag; the optional third argument is the plus
+// (OptLevel) each fresh copy gets -- a GM test hook (OURS, round 732).
 func (d *Deps) give(ctx context.Context, actor Actor, args []string) Result {
-	if len(args) < 1 || len(args) > 2 {
-		return refuse("usage: /give <item id> [qty]")
+	const usage = "usage: /give <item id> [qty] [plus]"
+	if len(args) < 1 || len(args) > 3 {
+		return refuse(usage)
 	}
 	itemID, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil || itemID <= 0 {
-		return refuse("usage: /give <item id> [qty] -- the id is the item table's numeric id (the client resolves a code name to one)")
+		return refuse(usage + " -- the id is the item table's numeric id (the client resolves a code name to one)")
 	}
 	qty := 1
-	if len(args) == 2 {
+	if len(args) >= 2 {
 		qty, err = strconv.Atoi(args[1])
 		if err != nil || qty < 1 {
-			return refuse("usage: /give <item id> [qty] -- qty must be a positive number")
+			return refuse(usage + " -- qty must be a positive number")
+		}
+	}
+	plus := 0
+	if len(args) == 3 {
+		plus, err = strconv.Atoi(args[2])
+		if err != nil || plus < 0 || plus > 255 {
+			return refuse(usage + " -- plus must be 0 to 255")
 		}
 	}
 	if d.Items == nil {
@@ -518,13 +530,156 @@ func (d *Deps) give(ctx context.Context, actor Actor, args []string) Result {
 	if d.Inv == nil {
 		return refuse("no inventory store")
 	}
+	var before map[int]bool
+	if plus > 0 {
+		slots, err := d.Inv.List(ctx, actor.CharacterID)
+		if err != nil {
+			return refuse("reading the bag failed: " + err.Error())
+		}
+		before = make(map[int]bool, len(slots))
+		for _, sl := range slots {
+			before[sl.Index] = true
+		}
+	}
 	if err := d.Inv.AddItem(ctx, actor.CharacterID, itemID, qty); err != nil {
 		if errors.Is(err, inventory.ErrNoRoom) {
 			return refuse("no room in the bag")
 		}
 		return refuse("giving the item failed: " + err.Error())
 	}
-	return Result{Text: fmt.Sprintf("gave %d x item %d", qty, itemID), RefreshInventory: true}
+	if plus == 0 {
+		return Result{Text: fmt.Sprintf("gave %d x item %d", qty, itemID), RefreshInventory: true}
+	}
+	// The plus goes on the slots the give filled fresh; a top-up of an
+	// existing stack keeps that stack's own instance.
+	slots, err := d.Inv.List(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("reading the bag failed: " + err.Error())
+	}
+	var at []string
+	for _, sl := range slots {
+		if before[sl.Index] || sl.ItemID != itemID {
+			continue
+		}
+		inst := sl.Instance()
+		inst.OptLevel = uint8(plus)
+		if err := d.Inv.SetInstance(ctx, actor.CharacterID, sl.Index, inst); err != nil {
+			return refuse("setting the plus failed: " + err.Error())
+		}
+		at = append(at, strconv.Itoa(sl.Index))
+	}
+	// The slots are named so /item can follow up on them.
+	return Result{Text: fmt.Sprintf("gave %d x item %d +%d (bag slot %s)", qty, itemID, plus, strings.Join(at, ", ")), RefreshInventory: true}
+}
+
+// itemUsage is /item's: a GM test hook (OURS, round 732) for an item's own
+// data -- the plus, the white-stat variance, the blue options and the
+// advanced elixir -- until drops, alchemy and the elixirs set them.
+const itemUsage = "usage: /item <bag slot> plus <n> | var <u64> | quality <0-31> | opt <option id> <value> | adv <n> | clear"
+
+// item edits one bag slot's instance.
+func (d *Deps) item(ctx context.Context, actor Actor, args []string) Result {
+	if len(args) < 2 {
+		return refuse(itemUsage)
+	}
+	slot, err := strconv.Atoi(args[0])
+	if err != nil || slot < 0 {
+		return refuse(itemUsage)
+	}
+	if d.Inv == nil {
+		return refuse("no inventory store")
+	}
+	slots, err := d.Inv.List(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("reading the bag failed: " + err.Error())
+	}
+	var found *inventory.Slot
+	for i := range slots {
+		if slots[i].Index == slot {
+			found = &slots[i]
+		}
+	}
+	if found == nil {
+		return refuse(fmt.Sprintf("bag slot %d is empty", slot))
+	}
+	// Only equipment (TypeID 3/1) carries an instance the lists send; a
+	// stack would drop it again when stacks merge (round 732 review F9).
+	if d.Items == nil {
+		return refuse("no item table loaded on this server (-items-csv), so the item cannot be checked")
+	}
+	if it, err := d.Items.GetItem(ctx, found.ItemID); err != nil || it.TypeID1 != 3 || it.TypeID2 != 1 {
+		return refuse(fmt.Sprintf("bag slot %d holds item %d, not equipment: /item sets equipment only", slot, found.ItemID))
+	}
+	inst := found.Instance()
+	num := func(i int, max uint64) (uint64, bool) {
+		if i >= len(args) {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(args[i], 0, 64)
+		return v, err == nil && v <= max
+	}
+	var what string
+	switch op := strings.ToLower(args[1]); {
+	case op == "plus" && len(args) == 3:
+		v, ok := num(2, 255)
+		if !ok {
+			return refuse(itemUsage)
+		}
+		inst.OptLevel, what = uint8(v), fmt.Sprintf("plus %d", v)
+	case op == "var" && len(args) == 3:
+		v, ok := num(2, ^uint64(0))
+		if !ok {
+			return refuse(itemUsage)
+		}
+		inst.Variance, what = v, fmt.Sprintf("variance %#x", v)
+	case op == "quality" && len(args) == 3:
+		// Every one of the twelve 5-bit groups at q: q/31 of the way up
+		// each white stat's range (c:0x8bd980).
+		q, ok := num(2, 31)
+		if !ok {
+			return refuse(itemUsage)
+		}
+		inst.Variance = 0
+		for g := 0; g < 12; g++ {
+			inst.Variance |= q << (5 * g)
+		}
+		what = fmt.Sprintf("every white stat at %d/31 (variance %#x)", q, inst.Variance)
+	case op == "opt" && len(args) == 4:
+		id, okID := num(2, 0xffff)
+		v, okV := num(3, 0xffffffff)
+		if !okID || !okV || id == 0 {
+			return refuse(itemUsage)
+		}
+		p := inventory.MagParam(uint16(id), uint32(v))
+		replaced := false
+		for k, old := range inst.MagParams {
+			if inventory.MagParamOption(old) == uint16(id) {
+				inst.MagParams[k], replaced = p, true
+			}
+		}
+		if !replaced {
+			if len(inst.MagParams) >= inventory.MaxMagParams {
+				return refuse(fmt.Sprintf("the item already carries %d options, the most it can", inventory.MaxMagParams))
+			}
+			inst.MagParams = append(inst.MagParams, p)
+		}
+		what = fmt.Sprintf("option %d = %d", id, v)
+	case op == "adv" && len(args) == 3:
+		v, ok := num(2, 255)
+		if !ok {
+			return refuse(itemUsage)
+		}
+		inst.AdvElixir, what = uint8(v), fmt.Sprintf("advanced elixir +%d", v)
+	case op == "clear" && len(args) == 2:
+		inst.OptLevel, inst.MagParams, inst.AdvElixir = 0, nil, 0
+		what = "plus, options and advanced elixir cleared"
+	default:
+		return refuse(itemUsage)
+	}
+	if err := d.Inv.SetInstance(ctx, actor.CharacterID, slot, inst); err != nil {
+		return refuse("setting the item failed: " + err.Error())
+	}
+	return Result{Text: fmt.Sprintf("bag slot %d: %s", slot, what), RefreshInventory: true}
 }
 
 func (d *Deps) gold(ctx context.Context, actor Actor, args []string) Result {

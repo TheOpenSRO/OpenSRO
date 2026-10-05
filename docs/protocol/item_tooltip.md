@@ -102,7 +102,7 @@ A blank entry has colour 0.
 3. Normalise against the ref's [lower, upper] range: f = (base − lower) / (upper − lower), or 1.0 when the range is empty.
 4. The percentage is f × 100, truncated (`_ftol2`).
 
-Which of the two range ends feeds the shown value is OPEN (the decompile loses the argument).
+**Settled in round 732 (READ, the x87 code):** both ends are used — the percent is trunc((f_lo + f_hi) × 0.5 × 100) — and the plus bonus in step 2 is TRUNCATED, not rounded (the fistp runs with the rounding control set to chop). Single-value lines, the durability line (`trunc(q / 0.31)`, so 31 shows 99%), the stat builder and the blue-option percent are in `docs/rounds/r732.md`; the code is `client/scripts/items/item_quality.gd` and `server/internal/durability/quality.go`.
 
 The accessory lines our necklace lacks are Phy./Mag. absorption (`PARAM_PR` / `PARAM_MR`), plus
 anything else in the stat block that is non-zero, the requirements and race lines, and Max. no. of
@@ -155,12 +155,12 @@ the user which to follow, as was done for party matching.
 1. The window alpha (`+0x131`) and the screen placement and clamping.
 2. The rule drawing for blank entries.
 3. The seal and set order (see §3).
-4. `0x670dd0`'s per-option formats.
+4. `0x670dd0`'s per-option formats — the main ones read in round 732 (`MagicOptionTable.FORMATS`); the reinforce-timer, 3rd-job, avatar and Nasrun ones remain.
 5. The non-equipment builders.
 6. `0x66f850`'s line.
 7. What `0x8bd660` tests (the pink seal colour).
-8. Which range end the "(+x%)" uses.
-9. The retail item-instance wire layout for opt level, variance and magic params. Read it in lane B, from `docs/protocol/` records and the client's inventory parser.
+8. ~~Which range end the "(+x%)" uses.~~ Both, averaged (round 732).
+9. ~~The retail item-instance wire layout.~~ Read in round 732 and its review: u32 rent block (0, or bit 0/bit 1 branches, c:0x8bb130), u32 RefItemID, u8 OptLevel, u64 Variance, u32 Durability (the period word active<<31|seconds for TypeID3 14), u8 MagParamNum ≤ 12, N × u64 (low u16 id, high u32 value), two binding blocks, type 1 then type 2, each entry u8 nSlot and a u64 (low nOptID|nOptLvl<<16, high the value; gs:0x825a40). See `docs/rounds/r732.md` and `server/internal/session/iteminfo.go`.
 
 ## Implementation lanes
 

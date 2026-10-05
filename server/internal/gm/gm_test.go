@@ -2,6 +2,7 @@ package gm
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -187,7 +188,7 @@ func TestGiveChecksTheItemTableAndAddsToTheBag(t *testing.T) {
 	if len(bag) != 1 || bag[0].ItemID != 3 || bag[0].Quantity != 5 {
 		t.Fatalf("bag after /give 3 5: %+v", bag)
 	}
-	for _, bad := range []string{"/give", "/give x", "/give 3 0", "/give 3 -1", "/give 3 1 2"} {
+	for _, bad := range []string{"/give", "/give x", "/give 3 0", "/give 3 -1", "/give 3 1 2 4", "/give 3645 1 256", "/give 3645 1 x"} {
 		if res := f.run(t, bad); !res.Refused {
 			t.Errorf("%q should be refused: %+v", bad, res)
 		}
@@ -196,6 +197,58 @@ func TestGiveChecksTheItemTableAndAddsToTheBag(t *testing.T) {
 	noItems.Items = nil
 	if res := noItems.Run(f.ctx, f.actor, "/give 3"); !res.Refused || !strings.Contains(res.Text, "no item table") {
 		t.Fatalf("without an item table: %+v", res)
+	}
+}
+
+// /give's plus and /item are GM test hooks for an item's own data (OURS,
+// round 732).
+func TestGivePlusAndItemEditTheInstance(t *testing.T) {
+	f := newFixture(t)
+	if res := f.run(t, "/give 3645 2 5"); res.Refused || !res.RefreshInventory || !strings.Contains(res.Text, "+5 (bag slot 0, 1)") {
+		t.Fatalf("/give 3645 2 5: %+v", res)
+	}
+	bag, _ := f.inv.List(f.ctx, f.actor.CharacterID)
+	if len(bag) != 2 || bag[0].OptLevel != 5 || bag[1].OptLevel != 5 {
+		t.Fatalf("bag after /give 3645 2 5: %+v", bag)
+	}
+	for _, line := range []string{"/item 0 quality 31", "/item 0 opt 1 7", "/item 0 opt 2 9", "/item 0 opt 1 8", "/item 0 adv 3", "/item 0 plus 6"} {
+		if res := f.run(t, line); res.Refused || !res.RefreshInventory {
+			t.Fatalf("%s: %+v", line, res)
+		}
+	}
+	bag, _ = f.inv.List(f.ctx, f.actor.CharacterID)
+	got := bag[0].Instance()
+	want := []uint64{inventory.MagParam(1, 8), inventory.MagParam(2, 9)}
+	if got.OptLevel != 6 || got.AdvElixir != 3 || got.Variance != 0x0fffffffffffffff ||
+		len(got.MagParams) != 2 || got.MagParams[0] != want[0] || got.MagParams[1] != want[1] {
+		t.Fatalf("slot 0 after /item: %+v", got)
+	}
+	if bag[1].OptLevel != 5 || len(bag[1].MagParams) != 0 {
+		t.Fatalf("slot 1 changed: %+v", bag[1])
+	}
+	if res := f.run(t, "/item 0 clear"); res.Refused {
+		t.Fatalf("/item 0 clear: %+v", res)
+	}
+	bag, _ = f.inv.List(f.ctx, f.actor.CharacterID)
+	if c := bag[0].Instance(); c.OptLevel != 0 || c.AdvElixir != 0 || len(c.MagParams) != 0 || c.Variance != 0x0fffffffffffffff {
+		t.Fatalf("after clear: %+v", c)
+	}
+	for i := 0; i < inventory.MaxMagParams; i++ {
+		f.run(t, "/item 0 opt "+strconv.Itoa(i+1)+" 1")
+	}
+	for _, bad := range []string{"/item", "/item 0", "/item 7 plus 1", "/item 0 plus 256", "/item 0 quality 32",
+		"/item 0 opt 0 1", "/item 0 opt 1", "/item 0 opt 99 1", "/item 0 bogus 1", "/item 0 clear 1"} {
+		if res := f.run(t, bad); !res.Refused {
+			t.Errorf("%q should be refused: %+v", bad, res)
+		}
+	}
+	// A stackable (item 3) is refused: the lists carry no instance for it,
+	// and a merge would drop it (review F9).
+	if res := f.run(t, "/give 3 5"); res.Refused {
+		t.Fatalf("/give 3 5: %+v", res)
+	}
+	if res := f.run(t, "/item 2 plus 3"); !res.Refused || !strings.Contains(res.Text, "not equipment") {
+		t.Errorf("/item on a stack: %+v", res)
 	}
 }
 

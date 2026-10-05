@@ -60,6 +60,7 @@ func (m *MemStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 	part := *src
 	part.Index = to
 	part.Quantity = count
+	part.MagParams = cloneParams(src.MagParams)
 	src.Quantity -= count
 	held[to] = &part
 	return nil
@@ -81,9 +82,11 @@ func (s *SQLStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 	var itemID int64
 	var qty, durability int
 	var variance int64
+	var opt, adv int
+	var params []byte
 	err = tx.QueryRowContext(ctx,
-		s.q(`SELECT item_id, quantity, variance, durability FROM %s WHERE character_id = $1 AND slot = $2`),
-		characterID, from).Scan(&itemID, &qty, &variance, &durability)
+		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 AND slot = $2`),
+		characterID, from).Scan(&itemID, &qty, &variance, &durability, &opt, &params, &adv)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
 	}
@@ -107,8 +110,8 @@ func (s *SQLStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 		return fmt.Errorf("inventory: decrementing slot %d: %w", from, err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`),
-		characterID, to, itemID, count, variance, durability); err != nil {
+		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
+		characterID, to, itemID, count, variance, durability, opt, params, adv); err != nil {
 		return fmt.Errorf("inventory: filling slot %d: %w", to, err)
 	}
 	return tx.Commit()
@@ -157,7 +160,9 @@ func (m *MemStore) PlaceItemInstance(ctx context.Context, characterID int64, slo
 	if held[slot] != nil {
 		return ErrSlotTaken
 	}
-	held[slot] = &Slot{Index: slot, ItemID: itemID, Quantity: quantity, Variance: inst.Variance, Durability: inst.Durability}
+	sl := &Slot{Index: slot, ItemID: itemID, Quantity: quantity}
+	sl.SetInstance(inst)
+	held[slot] = sl
 	return nil
 }
 
@@ -180,8 +185,8 @@ func (s *SQLStore) PlaceItemInstance(ctx context.Context, characterID int64, slo
 		return ErrSlotTaken
 	}
 	if _, err := tx.ExecContext(ctx,
-		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability) VALUES ($1, $2, $3, $4, $5, $6)`),
-		characterID, slot, itemID, quantity, int64(inst.Variance), inst.Durability); err != nil {
+		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
+		characterID, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir)); err != nil {
 		return fmt.Errorf("inventory: filling slot %d: %w", slot, err)
 	}
 	return tx.Commit()

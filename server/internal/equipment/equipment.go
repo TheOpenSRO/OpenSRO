@@ -215,11 +215,23 @@ type Equipped struct {
 	// bag slot it came from and back again (see inventory.Slot).
 	Variance   uint64
 	Durability int
+	// OptLevel, MagParams and AdvElixir: the rest of the instance (round
+	// 732, inventory.Instance).
+	OptLevel  uint8
+	MagParams []uint64
+	AdvElixir uint8
 }
 
 // Instance returns the worn item's per-instance fields.
 func (e Equipped) Instance() inventory.Instance {
-	return inventory.Instance{Variance: e.Variance, Durability: e.Durability}
+	return inventory.Instance{Variance: e.Variance, Durability: e.Durability, OptLevel: e.OptLevel,
+		MagParams: append([]uint64(nil), e.MagParams...), AdvElixir: e.AdvElixir}
+}
+
+// SetInstance writes inst's fields onto the worn item.
+func (e *Equipped) SetInstance(inst inventory.Instance) {
+	e.Variance, e.Durability = inst.Variance, inst.Durability
+	e.OptLevel, e.MagParams, e.AdvElixir = inst.OptLevel, append([]uint64(nil), inst.MagParams...), inst.AdvElixir
 }
 
 // Store is anything that can equip, unequip, and list a character's

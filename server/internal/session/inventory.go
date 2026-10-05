@@ -181,5 +181,6 @@ func bagListResult(ctx context.Context, store inventory.Store, characterID int64
 	return &StorageListResult{
 		InventoryListResult: InventoryListResult{Slots: snaps, Durabilities: inventoryDurabilities(ctx, slots, items)},
 		Capacity:            inventory.CapacityOf(ctx, store, characterID),
+		Infos:               slotItemInfos(ctx, slots, items),
 	}
 }

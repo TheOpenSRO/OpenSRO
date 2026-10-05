@@ -375,7 +375,7 @@ func (s *Service) deposit(ctx context.Context, characterID int64, bagSlot, quant
 		// Undo the move (the purse changed under the check).
 		if list, lerr := s.Warehouse.List(ctx, c.AccountID); lerr == nil {
 			for _, w := range list {
-				if w.ItemID == found.ItemID && w.Quantity >= count && w.Instance() == found.Instance() {
+				if w.ItemID == found.ItemID && w.Quantity >= count && w.Instance().Equal(found.Instance()) {
 					_ = move(ctx, s.Warehouse, c.AccountID, s.Bag, characterID, w.Index, count)
 					break
 				}

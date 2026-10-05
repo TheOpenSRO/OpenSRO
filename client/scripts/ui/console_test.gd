@@ -131,7 +131,7 @@ func _test_gm_forwarding_and_unknown() -> void:
 	_check(_logged.is_empty(), "forwarding a GM command prints nothing locally (the server replies)")
 	# Every GM word the server's help line names is forwarded -- /heal was
 	# missing from the list once and silently became "unknown command".
-	for word in ["tp", "goto", "give", "gold", "level", "heal", "spawn", "kill", "durability", "sp"]:
+	for word in ["tp", "goto", "give", "item", "gold", "level", "heal", "spawn", "kill", "durability", "sp"]:
 		_reset()
 		c.submit("/" + word)
 		_check(_calls.get("gm") == word, "/%s is forwarded to the server" % word)
