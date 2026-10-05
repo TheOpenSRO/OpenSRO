@@ -7094,6 +7094,113 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-twenty-third round: a gate's effects attach when its model sits in a neighbouring region
+
+The user, after v0.1.494 (2026-10-05): Samarkand and Donwhang still show no glow, with every video
+option on except bloom (screenshots `/root/opensro-handoff/teleport_refs/ours_iurb7RC.jpeg`,
+`ours_tcxFdYo.png`). Their own client log (native Linux build on a Steam Machine, RADV Navi33,
+copied to the render box as `/root/opensro_full.log`) settled the cause. It was not the drawing.
+
+### The cause (MEASURED, the user's log)
+
+- **Samarkand never attached.** On the user's teleport into Samarkand (`teleport accepted -- to
+  SN_ZONE_22005`), no `World3D: gate STORE_CA_GATE -- ... plays N of its M ambient effect(s)` line
+  appears and no `gate effect(s) preloading` line for `107\107`. Jangan (`STORE_CH_GATE`), Hotan
+  (`STORE_KT_GATE`) and Constantinople (`STORE_EU_GATE`) each logged theirs in the same session.
+- **The row is on the region's edge:** `teleport gate STORE_CA_GATE clickable at 107/107 local
+  (1917, 250, 108)`, 3 units inside a 1920-unit region.
+- **The model was placed by a neighbour.** The arrival is `in RealTerrain_106_108`, which loaded
+  before 107/107. 107/107's load line reads "9 already placed by a loaded region, 7 owned by a
+  neighbour and placed in its frame". The gate's model `samarkand_center_01` is listed by several
+  sectors and is placed once, by whichever loads first, so it sat in a neighbour's container.
+- **`_attach_gate_effects(rx, ry)` searched only `_object_containers["_rx_ry"]`**, the row's own
+  region, and `_gate_points_for` gave a job only its own region's rows. So a gate whose model lives
+  in another container never played anything.
+- **Donwhang's row has the same shape:** `STORE_WC_GATE clickable at 103/153 local (962, -35, 8)`,
+  with z = 8 on the region's edge. The user's log has no Donwhang visit after v0.1.494 to confirm
+  it there; the live run below covers it.
+- **Why the rounds 720-722 renders showed the glows:** they booted with the gate's region as the
+  `--region`, so it loaded first and owned the model.
+
+### The fix (`GateEffectMatch`, `World3D._attach_gate_effects` / `_gate_pairs_around` / `_gate_points_for`)
+
+- **Search the neighbourhood.** A row is matched against the objects of its region and its eight
+  neighbours, horizontally, within `GATE_EFFECT_RADIUS` (30, OURS as before).
+- **One frame.** Everything is matched in the committed region's local frame:
+  - a neighbour's row by its grid offset: region (x + dx, y + dy)'s local origin is at
+    (dy * 1920, dx * 1920) before the world's z mirror (region y → world X, region x → world Z;
+    `World3D._cell_offset`);
+  - a container's objects through the containers' chain transforms.
+- **Any load order.** The match runs on every region's commit, for that region and its neighbours.
+  Whichever region loads last finds the pair. An object still plays once (`META_GATE_EFFECTS`), and
+  an object near two rows pairs once.
+- **Preload covers neighbours.** A job's gate points now include the neighbours' rows in its own
+  frame, so a model placed here for a gate next door is preloaded on the worker as before.
+- **The log line now names the holder:** `gate <code> -- <object> (in <container>) at <d> ...`.
+
+### Tests
+
+- `scripts/world/gate_effect_match_test.gd` (10 checks, 0 failures):
+  - the frame offsets on both axes;
+  - Samarkand's shape in both load orders: the row's region first, then the model's; and the
+    model's region first;
+  - once per object;
+  - the radius across the boundary;
+  - the neighbourhood's extent.
+- Box `check`: 613 scripts and 9 scenes, ALL LOAD.
+- Full suite on the box (`RENDER_DIR=/opt/opensro-client-r723`): 235 suites, 0 failing.
+
+### Live (the user's path: a teleport from the Jangan gate)
+
+Stock `qa_shot.sh --server --region '97\168.m' --radius 1 --at 1230,1380 --teleport <id>` with
+`OPENSRO_QA_CLICK=gate` (the retail teleport CSVs; `/var/tmp/r723/run.sh`, logs in
+`/var/tmp/r723/tp25/` and `tp2/`). The player clicks the Jangan gate and takes its Move.
+
+**Samarkand (25):**
+```
+World3D: teleport accepted -- to SN_ZONE_22005, 0 gold charged, waiver 1: Teleport to [Samarkand] (no cost).
+World3D: 106\107.o -- 1 gate effect(s) preloading on a task
+World3D: gate STORE_CA_GATE -- Obj_samarkand_center_01_55 (in RealMapObjects_106_107) at 1.0 from its row plays 2 of its 2 ambient effect(s), built in 629 us
+World3D: teleport arrival in RealTerrain_106_108 at local (270.0, 1421.0) ...
+```
+The gate's model is held by **106/107's** container, a neighbour of the row's region 107/107,
+exactly as the cause predicted. Under round 722's code it would have played nothing, as in the
+user's log.
+
+**Donwhang (2):**
+```
+World3D: teleport accepted -- to SN_ZONE_22002, 0 gold charged, waiver 1: Teleport to [Donwhang] (no cost).
+World3D: 102\153.o -- 2 gate effect(s) preloading on a task
+World3D: gate STORE_WC_GATE -- Obj_w_cd_portal_71 (in RealMapObjects_102_153) at 3.3 from its row plays 3 of its 3 ambient effect(s), built in 947 us
+```
+Donwhang's row is at 103/153; its model `w_cd_portal` sits in **102/153**, a neighbour too. So
+Donwhang had the same fault.
+
+**Other checks:**
+- The preload now runs in the neighbour's job, because its gate points include the row next door.
+- Jangan's own gate attaches as before.
+- The attach cost is unchanged: 629-947 us, against 538-2185 us in the user's log.
+
+**Not shown in a frame:** after arrival the camera faces away from both gates
+(`/var/tmp/r723/tp25/f00000899.png`, `tp2/f00000899.png`), so these frames show neither glow. The
+glows' look is round 722's, unchanged here. This round changes which gates attach, and the log lines
+above are the measurement of that.
+
+No perf gate: no per-frame code changed. The match runs once per region commit over nine containers'
+children, at the cost shown above.
+
+**Review** (coordinator, kept light at the user's request to save usage): the diff matches the rows of the
+committed region and its eight neighbours against the objects of all nine containers in one frame, on every
+commit, so either load order pairs them. The live pairs' distances (Samarkand 1.0, Donwhang 3.3) equal round 720's
+same-region census, which checks the cross-region offsets on the region-x axis both gates straddle; the region-y
+axis offset is covered by the unit test only. No perf gate: no per-frame code.
+
+**Also in this release -- the chat input box (a round-718 regression, the user's report 2026-10-05):** round 718
+gave every builder edit an empty stylebox, and CIFEInputChatBox's dark look had only ever come from Godot's default
+LineEdit box, so the chat line went see-through. An edit that names a DDJ now draws it as a StyleBoxTexture behind
+its text (`c8d5d2af`). MEASURED against the real ifchatviewer layout: GDR_CHAT_INPUTBOX -> StyleBoxTexture, a
+380x20 window_all.ddj slice, opaque black at its centre; ui_builder_test's two new checks pass.
+
 ## Seven-hundred-and-twenty-second round: the gates' animated water (TEXANI), and their glows blended in display values as Direct3D 9 blends
 
 The user (2026-10-04), after v0.1.493: "Samarkand and Donwhang don't have glow effects and they
