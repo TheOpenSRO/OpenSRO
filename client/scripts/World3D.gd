@@ -11953,6 +11953,30 @@ var _qa_berserk_tab_sent := false
 var _qa_pmi_spec := OS.get_environment("OPENSRO_QA_PMI")
 var _qa_pmi_state := -1
 
+## OPENSRO_QA_REEQUIP="<unequip tick>,<equip tick>" (round 735): takes the
+## weapon off at the first tick and puts the same item back on from the bag at
+## the second, through the real equip messages, so a second client sees the
+## server's 0x3039 and 0x3038. QA only; never set in real play.
+var _qa_reequip_spec := OS.get_environment("OPENSRO_QA_REEQUIP")
+var _qa_reequip_item := 0
+
+func _qa_reequip_step() -> void:
+	var parts := _qa_reequip_spec.split(",")
+	if parts.size() != 2 or not NetClient.is_connected_to_server():
+		return
+	var who := NetClient.current_character_name
+	if _qa_tick == int(parts[0]):
+		_qa_reequip_item = int(_player_equipped_last.get(EquipmentNet.SLOT_WEAPON, 0))
+		print("QA REEQUIP: tick %d taking off weapon %d" % [_qa_tick, _qa_reequip_item])
+		NetClient.unequip(who, EquipmentNet.SLOT_WEAPON)
+	elif _qa_tick == int(parts[1]):
+		for s in _inventory_slots:
+			if s.item_id == _qa_reequip_item:
+				print("QA REEQUIP: tick %d putting weapon %d back on from bag slot %d" % [_qa_tick, s.item_id, s.slot_index])
+				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, s.slot_index)
+				return
+		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
+
 func _qa_pmi_click(control_name: String) -> void:
 	var c := _hud_player_info.find_child(control_name, true, false) as Control
 	if c == null:
@@ -12685,6 +12709,8 @@ func _qa_step() -> void:
 	_qa_tick += 1
 	if _qa_pmi_spec != "":
 		_qa_pmi_step()
+	if _qa_reequip_spec != "":
+		_qa_reequip_step()
 	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
