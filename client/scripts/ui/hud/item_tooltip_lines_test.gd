@@ -144,7 +144,13 @@ func _lines_tests() -> void:
 	var owned := L.compose(_spear(), {"type_name": "Spear",
 		"instance": {"unknown_variance": true, "durability": [92, 93]}})
 	_check(_find(owned, "Phy. atk.")["text"] == "Phy. atk. pwr. 1729 ~ 2059", "an owned item without its variance shows no (+x%)")
-	_check(_find(owned, "Durability")["text"] == "Durability 92/93 (+44%)", "its durability is the instance's, rated on 85 ~ 103 (got %s)" % _find(owned, "Durability").get("text", ""))
+	_check(_find(owned, "Durability")["text"] == "Durability 92/93", "its durability is the server's, with no invented percent (got %s)" % _find(owned, "Durability").get("text", ""))
+	var known := L.compose(_spear(), {"instance": {"durability": [92, 93], "stats": {"dur_max": 93, "dur_q": 64}}})
+	_check(_find(known, "Durability")["text"] == "Durability 92/93 (+64%)", "an instance's durability percent is lane B's q / 0.31")
+	_check(L.range_quality(5, 5, 7, 7) == 100 and L.range_quality(5, 5, 7, 9) == 50 and L.range_quality(5, 6, 7, 9) == 0,
+		"a min ~ max line averages its two ends (round 732)")
+	_check(ItemTooltipInstance.available() or ItemTooltipInstance.fields(_spear(), RefCounted.new()).is_empty(),
+		"without lane B's classes the instance adapter gives nothing")
 	var broken := L.compose(_spear(), {"instance": {"durability": [0, 93]}})
 	_check(_find(broken, "Durability")["color"] == L.RED, "a broken item's durability is red")
 
