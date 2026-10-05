@@ -254,9 +254,10 @@ Section = Create,"0,0,0,0","0"
 static func builder() -> UiBuilder:
 	var b := UiBuilder.new(null, null)
 	var defines := PackedStringArray(StoreMessageBox.DEFINES)
-	var key := "".join(defines)
-	var cache: Dictionary = b.get("_layout_cache")
-	cache[StoreMessageBox.MSGBOX_LAYOUT + key] = UiLayoutParser.parse(CREATE + STORE_CONFIRM + STORE_MONEY, true, defines)
-	cache[StoreMessageBox.CONFIRM_BUY_LAYOUT + key] = UiLayoutParser.parse(CONFIRM_BUY, true, defines)
-	cache[StoreMessageBox.CONFIRM_SLOT_LAYOUT + key] = UiLayoutParser.parse(CONFIRM_SLOT, true, defines)
+	# UiBuilder.load_layout's own key: the path, \x01, the defines joined by \x02.
+	var key := String.chr(1) + String.chr(2).join(defines)
+	# Straight into the builder's own cache (Object.get hands back a copy).
+	b._layout_cache[StoreMessageBox.MSGBOX_LAYOUT + key] = UiLayoutParser.parse(CREATE + STORE_CONFIRM + STORE_MONEY, true, defines)
+	b._layout_cache[StoreMessageBox.CONFIRM_BUY_LAYOUT + key] = UiLayoutParser.parse(CONFIRM_BUY, true, defines)
+	b._layout_cache[StoreMessageBox.CONFIRM_SLOT_LAYOUT + key] = UiLayoutParser.parse(CONFIRM_SLOT, true, defines)
 	return b

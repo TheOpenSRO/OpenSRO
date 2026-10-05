@@ -242,9 +242,11 @@ func _build_store_money(opts: Dictionary) -> bool:
 			var sb := StyleBoxEmpty.new()
 			if old != null:
 				sb.content_margin_left = old.content_margin_left
-				sb.content_margin_top = old.content_margin_top
 				sb.content_margin_right = old.content_margin_right
-				sb.content_margin_bottom = old.content_margin_bottom
+			# The ClientRect's 5 + 5 vertical insets plus Godot's line height
+			# would hold the edit above the 24 the purpose sizes it to; with
+			# them dropped Godot centres the line in the 24, where the
+			# insets put it (INFERRED: CIFEdit draws at the inset's top).
 			_count_edit.add_theme_stylebox_override(style, sb)
 		_place(_count_edit, MONEY_EDIT_RECT)
 	_wire_count(_count_edit)

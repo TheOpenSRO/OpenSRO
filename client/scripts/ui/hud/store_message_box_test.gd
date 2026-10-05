@@ -125,7 +125,10 @@ func _check_money() -> void:
 	_check(_text_of(g, "GDR_MBS_STATIC_NAME1") == "Deposit" and _text_of(g, "GDR_MBS_BTN_OK") == "Deposit", "gold deposit: NAME1 and OK read Deposit")
 	_check(not _visible(g, "GDR_MBS_STATIC_PRICET1") and not _visible(g, "GDR_MBS_STATIC_NAME2") and not _visible(g, "GDR_MBS_STATIC_PRICE"),
 		"gold: IDs 8, 9 and 2 hidden")
-	_check(_rect(g, "GDR_MBS_EDIT_AMOUNT") == Rect2(121, 66, 121, 24), "gold: the amount edit moved to (121,66) 121x24 (got %s)" % _rect(g, "GDR_MBS_EDIT_AMOUNT"))
+	# The rect the settling pass holds it to (a font-less test cannot lay a
+	# LineEdit out below Godot's default line height).
+	var amount_rect: Rect2 = (g.find_child("GDR_MBS_EDIT_AMOUNT", true, false) as Control).get_meta(UiBuilder.AUTHORED_RECT_META, Rect2())
+	_check(amount_rect == Rect2(121, 66, 121, 24), "gold: the amount edit moved to (121,66) 121x24 (got %s)" % amount_rect)
 	var edit := g.find_child("GDR_MBS_EDIT_AMOUNT", true, false) as LineEdit
 	edit.text = "250"
 	edit.text_changed.emit("250")
