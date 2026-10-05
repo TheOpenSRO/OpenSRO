@@ -185,7 +185,13 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 	# table (FUN_008c9bb0), white, then a blank -- only when it resolves.
 	var desc: String = ctx.get("description", "")
 	if desc != "":
-		_add(lines, desc, WHITE)
+		# The text can be <sml2> markup (the archive's own descriptions, e.g.
+		# "<sml2><strong><font color=...>Locked Item</font></strong><br>...") --
+		# the user's report of 2026-10-05 showed it raw. One row per <br>,
+		# each in its <font> colour (A,R,G,B, round 714's review) and bold
+		# under <strong>, every tag stripped.
+		for row in sml2_rows(desc, WHITE):
+			_add(lines, row["text"], row["color"], row["bold"])
 		_blank(lines)
 
 	# 4. The stat block (0x66c5b0).
@@ -409,6 +415,61 @@ static func _compose_other(item: ItemTableReader.Item, ctx: Dictionary) -> Array
 		_blank(lines)
 	_price(lines, ctx, t)
 	return lines
+
+## `<sml2>` markup as tooltip rows (the user's report, 2026-10-05): split
+## at `<br>`; a row takes the colour of the `<font color="a,r,g,b">` span it
+## opens with or sits in (the four numbers are A, R, G, B -- round 714's
+## review), and is bold inside `<strong>`; every tag is stripped, unknown ones
+## too. A row mixing two colours takes its first (OURS: a tooltip row is one
+## colour here). Plain text without tags is one row, unchanged.
+static func sml2_rows(s: String, default_color: Color) -> Array:
+	var rows: Array = []
+	var colour := default_color
+	var bold := false
+	var text := ""
+	var row_colour: Variant = null
+	var row_bold := false
+	var i := 0
+	var src := s.replace("\r", "").replace("\n", "<br>")
+	while i < src.length():
+		var ch := src[i]
+		if ch == "<":
+			var close := src.find(">", i)
+			if close == -1:
+				text += src.substr(i)
+				break
+			var tag := src.substr(i + 1, close - i - 1).strip_edges()
+			var lower := tag.to_lower()
+			if lower == "br" or lower == "br/" or lower == "br /":
+				rows.append({"text": text.strip_edges(false, true), "color": row_colour if row_colour != null else colour, "bold": row_bold or bold})
+				text = ""
+				row_colour = null
+				row_bold = false
+			elif lower == "strong" or lower == "b":
+				bold = true
+			elif lower == "/strong" or lower == "/b":
+				bold = false
+			elif lower.begins_with("font"):
+				var q1 := tag.find("\"")
+				var q2 := tag.find("\"", q1 + 1)
+				if q1 != -1 and q2 != -1:
+					var parts := tag.substr(q1 + 1, q2 - q1 - 1).split(",")
+					if parts.size() == 4:
+						colour = Color8(int(parts[1]), int(parts[2]), int(parts[3]), int(parts[0]))
+			elif lower == "/font":
+				colour = default_color
+			i = close + 1
+			continue
+		if text.strip_edges() == "" and ch != " ":
+			row_colour = colour
+			row_bold = bold
+		elif row_colour == null:
+			row_colour = colour
+		text += ch
+		i += 1
+	if text.strip_edges() != "" or rows.is_empty():
+		rows.append({"text": text.strip_edges(false, true), "color": row_colour if row_colour != null else colour, "bold": row_bold or bold})
+	return rows
 
 static func _add(lines: Array, text: String, colour: Color, bold: bool = false, icon: bool = false) -> void:
 	lines.append({"text": text, "color": colour, "bold": bold, "icon": icon})

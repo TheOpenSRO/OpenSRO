@@ -19,6 +19,7 @@ func _check(cond: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	_lines_tests()
+	_sml2_tests()
 	_type_name_tests()
 	await process_frame
 	_bubble_tests()
@@ -28,6 +29,25 @@ func _initialize() -> void:
 	else:
 		print("FAILURES: %d" % _failures)
 	quit(1 if _failures > 0 else 0)
+
+## The description's <sml2> markup (the user's report, 2026-10-05: the
+## Reaper Soul Spear's description showed raw).
+func _sml2_tests() -> void:
+	var desc := "<sml2><strong><font color=\"255,255,255,255\">Locked Item</font></strong><br><br><font color=\"255,236,219,156\">Model: Default (11D)</font><br><font color=\"255,236,219,156\">Glow: Default</font></sml2>"
+	var rows := ItemTooltipLines.sml2_rows(desc, ItemTooltipLines.WHITE)
+	_check(rows.size() == 4, "the spear's description is 4 rows (got %d)" % rows.size())
+	if rows.size() == 4:
+		_check(rows[0]["text"] == "Locked Item" and rows[0]["bold"] and rows[0]["color"] == Color8(255, 255, 255, 255),
+			"row 1: bold white \"Locked Item\" (got %s)" % str(rows[0]))
+		_check(rows[1]["text"] == "", "row 2: the blank from <br><br>")
+		_check(rows[2]["text"] == "Model: Default (11D)" and not rows[2]["bold"] and rows[2]["color"] == Color8(236, 219, 156, 255),
+			"row 3: beige A,R,G,B (236,219,156) (got %s)" % str(rows[2]))
+		_check(rows[3]["text"] == "Glow: Default" and rows[3]["color"] == Color8(236, 219, 156, 255), "row 4: beige \"Glow: Default\"")
+	var plain := ItemTooltipLines.sml2_rows("A plain description.", ItemTooltipLines.WHITE)
+	_check(plain.size() == 1 and plain[0]["text"] == "A plain description." and plain[0]["color"] == ItemTooltipLines.WHITE,
+		"plain text is one white row, unchanged")
+	for r in rows:
+		_check(not String(r["text"]).contains("<"), "no tag left in \"%s\"" % r["text"])
 
 func _item(types: Array, name: String) -> ItemTableReader.Item:
 	var it := ItemTableReader.Item.new()
