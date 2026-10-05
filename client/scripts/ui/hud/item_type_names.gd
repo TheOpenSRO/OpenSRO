@@ -4,15 +4,19 @@ class_name ItemTypeNames
 ## The two names an item's tooltip needs from the archive besides its own
 ## (round 731):
 ##
-## "Sort of item" -- the name of the item's category. GlobalDataManager::
-## RefParse_fmntidgroupmapdata (0x6d5570, READ) reads fmntidgroupmapdata.txt,
-## rows `service, group, TypeID1, TypeID2, TypeID3, TypeID4`, and packs the four
-## TypeIDs into the item type word the tooltip looks the name up by;
-## fmncategorytreedata.txt rows are `service, code, text key, parent code,
-## group, ?`. A group's key is the category row of the same group number:
-## (3,1,6,4) -> group 3 -> UIIT_CTL_WK_CH_WEAPON_SPEAR -> "Spear". The join
-## is one key per group and one group per TypeID quadruple across the
-## archive's 138 and 72 rows (MEASURED, round 731).
+## "Sort of item" -- the name of the item's category. INFERRED (round 731's
+## review): the builders call FUN_00941240(out, TypeID word, ref+8), which
+## tries a map keyed by the ref's code name (owner +0x6b8, FUN_009411d0), then
+## one keyed by TypeID & 0xfffe holding a string (owner +0x6a8, FUN_0093acb0);
+## what fills either map is not read (OPEN). This file joins
+## fmntidgroupmapdata.txt (`service, group, TypeID1..4`) to
+## fmncategorytreedata.txt (`service, code, text key, parent, group, ?`) on
+## the group: (3,1,6,4) -> group 3 -> UIIT_CTL_WK_CH_WEAPON_SPEAR -> "Spear",
+## one key per group and one group per TypeID quadruple over the archive's
+## 138 and 72 rows (MEASURED). The reference screenshot reads "Twohand staff"
+## (UIIT_CTL_WNETWORK_EU_TSTAFF) where this join gives "Staff": the European
+## names may be the WNETWORK set ("Onehand sword", "Light staff", "Twohand
+## staff", "Heavy armor") -- Esro's client is modified, so not settled.
 ##
 ## The set name -- refsetitemgroup.txt, column 1 the set id (itemdata col 62),
 ## column 4 the set's name key (SN_ITEM_11_SET_A_WEAPON...). The key's text is
@@ -32,6 +36,10 @@ var type_keys: Dictionary = {}
 var set_keys: Dictionary = {}
 ## set id -> the set's English name.
 var set_names: Dictionary = {}
+## Other keys the tooltip needs from the same table -- the mastery names
+## UIIT_STT_WARRIOR.. live there, not in textuisystem.txt (MEASURED, round
+## 731) -- key -> English.
+var equip_texts: Dictionary = {}
 
 static func decode(data: PackedByteArray) -> String:
 	if data.size() >= 2 and data[0] == 0xFF and data[1] == 0xFE:
@@ -68,14 +76,20 @@ func parse_sets(data: PackedByteArray) -> void:
 
 ## Resolves the set keys through the equip text table's rows (token in
 ## column 1, the language column picked as UiTextTable picks it).
-func parse_set_names(data: PackedByteArray) -> void:
-	if set_keys.is_empty():
-		return
+func parse_set_names(data: PackedByteArray, extra_keys: Array = []) -> void:
 	var wanted := {}
 	for id in set_keys:
 		wanted[set_keys[id]] = id
+	for k in extra_keys:
+		wanted[k] = -1
 	for r in _rows(data):
 		if r.size() > 2 and wanted.has(r[1]):
+			if int(wanted[r[1]]) < 0:
+				if not equip_texts.has(r[1]):
+					var et := UiTextTable._pick_language_column(r, UiTextTable.COL_ENGLISH)
+					if et != "":
+						equip_texts[r[1]] = et
+				continue
 			var text := UiTextTable._pick_language_column(r, UiTextTable.COL_ENGLISH)
 			if text != "":
 				for id in set_keys:
@@ -102,5 +116,5 @@ static func load_from(archive) -> ItemTypeNames:
 		n.parse_sets(archive.read_file(s))
 		var e = ObjectLoader.find_file(archive, EQUIP_TEXT_PATH)
 		if e != null:
-			n.parse_set_names(archive.read_file(e))
+			n.parse_set_names(archive.read_file(e), ItemTooltipLines.MASTERY_KEYS.values())
 	return n

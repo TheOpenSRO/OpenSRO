@@ -163,6 +163,17 @@ const COL_MAG_REINFORCE_MIN_UPPER := 110
 const COL_MAG_REINFORCE_MAX_UPPER := 112
 const COL_ATTACK_RATE_UPPER := 114
 const COL_CRITICAL_UPPER := 117
+## Armour and shield reinforce, PDStr 82/83 and MDInt 84/85: the client's row
+## parser (GlobalDataManager::FUN_00975a10) stores them / 1000 at ref
+## +0x224..+0x230, and 0x66c5b0 prints them x 100 as the single-value
+## reinforce line when the weapon pair is zero (round 731's review, READ).
+const COL_ARMOUR_PHYS_REINFORCE_MIN := 82
+const COL_ARMOUR_PHYS_REINFORCE_MAX := 83
+const COL_ARMOUR_MAG_REINFORCE_MIN := 84
+const COL_ARMOUR_MAG_REINFORCE_MAX := 85
+## The description key, column 6 (DescStrID128, ref +0x7c): 0x66f850 prints
+## its text when the object table resolves it (round 731's review, READ).
+const COL_DESC_STRID := 6
 
 ## TypeID3 (the item family) values, index 2 of type_ids.
 const FAMILY_WEAPON := 6
@@ -255,6 +266,12 @@ class Item:
 	var mag_reinforce_upper := Vector2i.ZERO
 	var attack_rate_upper: int = 0
 	var critical_upper: int = 0
+	## Armour/shield reinforce in the column's own unit (thousandths: 222 is
+	## 22.2 %), (lower, upper).
+	var armour_phys_reinforce := Vector2.ZERO
+	var armour_mag_reinforce := Vector2.ZERO
+	## Column 6, the description's key ("xxx" where none).
+	var desc_strid: String = ""
 
 	func is_equipment() -> bool:
 		return model_path != ""
@@ -349,6 +366,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.item_name = cols[COL_NAME].strip_edges()
 		if cols.size() > COL_NAME_STRID:
 			item.name_strid = cols[COL_NAME_STRID].strip_edges()
+		if cols.size() > COL_DESC_STRID:
+			item.desc_strid = cols[COL_DESC_STRID].strip_edges()
 		var stack := _int_at(cols, COL_MAX_STACK)
 		if stack > 0:
 			item.max_stack = stack
@@ -399,6 +418,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.mag_reinforce_upper = Vector2i(_int_at(cols, COL_MAG_REINFORCE_MIN_UPPER), _int_at(cols, COL_MAG_REINFORCE_MAX_UPPER))
 		item.attack_rate_upper = _int_at(cols, COL_ATTACK_RATE_UPPER)
 		item.critical_upper = _int_at(cols, COL_CRITICAL_UPPER)
+		item.armour_phys_reinforce = Vector2(_float_at(cols, COL_ARMOUR_PHYS_REINFORCE_MIN), _float_at(cols, COL_ARMOUR_PHYS_REINFORCE_MAX))
+		item.armour_mag_reinforce = Vector2(_float_at(cols, COL_ARMOUR_MAG_REINFORCE_MIN), _float_at(cols, COL_ARMOUR_MAG_REINFORCE_MAX))
 		# A row with neither a name nor an icon tells the player nothing.
 		if item.item_name == "" and item.icon_path == "":
 			continue
@@ -419,6 +440,7 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var code_names: PackedStringArray = rows["code_names"]
 	var item_names: PackedStringArray = rows["item_names"]
 	var name_strids: PackedStringArray = rows["name_strids"]
+	var desc_strids: PackedStringArray = rows.get("desc_strids", PackedStringArray())
 	var icon_paths: PackedStringArray = rows["icon_paths"]
 	var drop_models: PackedStringArray = rows["drop_models"]
 	var models: PackedStringArray = rows["models"]
@@ -453,6 +475,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.code_name = code_names[i]
 		item.item_name = item_names[i]
 		item.name_strid = name_strids[i]
+		if desc_strids.size() > i:
+			item.desc_strid = desc_strids[i]
 		item.max_stack = max_stacks[i]
 		item.sell_price = sell_prices[i]
 		if i < keeping_fees.size():
@@ -503,13 +527,15 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 			item.mag_reinforce_upper = Vector2i(ext_ints[e + 13], ext_ints[e + 14])
 			item.attack_rate_upper = ext_ints[e + 15]
 			item.critical_upper = ext_ints[e + 16]
-		var f := i * 14
-		if f + 13 < ext_floats.size():
+		var f := i * 18
+		if f + 17 < ext_floats.size():
 			item.parry = Vector2(ext_floats[f], ext_floats[f + 1])
 			item.phys_absorb = Vector2(ext_floats[f + 2], ext_floats[f + 3])
 			item.mag_absorb = Vector2(ext_floats[f + 4], ext_floats[f + 5])
 			for k in range(8):
 				item.plus_incs.append(ext_floats[f + 6 + k])
+			item.armour_phys_reinforce = Vector2(ext_floats[f + 14], ext_floats[f + 15])
+			item.armour_mag_reinforce = Vector2(ext_floats[f + 16], ext_floats[f + 17])
 		else:
 			for k in range(8):
 				item.plus_incs.append(0.0)

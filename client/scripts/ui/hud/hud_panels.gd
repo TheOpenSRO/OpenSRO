@@ -2710,6 +2710,8 @@ func _fill_storage_grid(slots: Array) -> void:
 		var icon0 := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon0 != null:
 			icon0.texture = null
+			_set_item_tip(icon0, -1)
+			icon0.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			for m in ["wh_slot", "wh_item_id", "wh_qty"]:
 				if icon0.has_meta(m):
 					icon0.remove_meta(m)
@@ -3762,7 +3764,7 @@ func item_tip_bubble() -> ItemTooltipBubble:
 	return _tip_bubble
 
 ## OPENSRO_QA_ITEM_TIP (round 731): the tooltips of `spec`'s items --
-## "<id>[:where[:cur/max[:price]]]", comma separated -- in bubbles of their
+## "<id or code name>[:where[:cur/max[:price]]]", comma separated -- in bubbles of their
 ## own, side by side from the top-left, for a render; each one's lines and
 ## rect logged as `QA ITEM_TIP`.
 func qa_show_item_tips(spec: String) -> void:
@@ -3776,7 +3778,9 @@ func qa_show_item_tips(spec: String) -> void:
 		if f.size() > 2 and f[2].contains("/"):
 			cur = int(f[2].get_slice("/", 0))
 			mx = int(f[2].get_slice("/", 1))
-		var lines := item_tip_lines(int(f[0]), f[1] if f.size() > 1 else "bag", -1, cur, mx,
+		_load_items()
+		var id: int = int(f[0]) if f[0].is_valid_int() else (_items_by_code[f[0]].id if _items_by_code.has(f[0]) else -1)
+		var lines := item_tip_lines(id, f[1] if f.size() > 1 else "bag", -1, cur, mx,
 			int(f[3]) if f.size() > 3 else -1)
 		var b := ItemTooltipBubble.new(_builder)
 		add_child(b)
@@ -3820,13 +3824,14 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 			instance.erase("unknown_variance")
 			instance.merge(extra, true)
 	return ItemTooltipLines.compose(item, {
-		"text": Callable(self, "_resolve_ui"),
+		"text": Callable(self, "_tip_text"),
 		"names": _object_names,
 		"type_name": _resolve_ui(type_key, "") if type_key != "" else "",
 		"set_name": set_name,
 		"player": _tip_player(),
 		"instance": instance,
 		"price": price,
+		"description": _item_description(item),
 	})
 
 ## The ItemInstance (round 732) the server sent for this site's slot, or null:
@@ -3842,6 +3847,22 @@ func _item_instance(where: String, slot: int) -> Object:
 		return list[slot] as Object
 	return null
 
+## A tooltip key's text: the UI table, else the equip text table's rows the
+## tooltip asked for (the client looks keys up across every text file).
+func _tip_text(key: String, fallback: String) -> String:
+	var text := _resolve_ui(key, "")
+	if text == "" and _type_names != null:
+		text = String(_type_names.equip_texts.get(key, ""))
+	return text if text != "" else fallback
+
+## Column 6's description through the object text table (0x66f850 prints
+## it when it resolves), or "".
+func _item_description(item: ItemTableReader.Item) -> String:
+	if _object_names == null or item.desc_strid == "" or item.desc_strid == "xxx":
+		return ""
+	var text := _object_names.get_text(item.desc_strid)
+	return "" if text == item.desc_strid else text
+
 ## The player's level, Str, Int, gender (0 woman, 1 man) and country (0
 ## Chinese, 1 European) for the requirement lines' colours; -1 where unknown
 ## (the line is then white).
@@ -3851,6 +3872,8 @@ func _tip_player() -> Dictionary:
 		p["level"] = _stats.level
 		p["str"] = _stats.str
 		p["int"] = _stats.intel
+	if not _skill_mastery_levels.is_empty():
+		p["masteries"] = _skill_mastery_levels
 	var scene := get_tree().current_scene if is_inside_tree() else null
 	if scene == null:
 		return p

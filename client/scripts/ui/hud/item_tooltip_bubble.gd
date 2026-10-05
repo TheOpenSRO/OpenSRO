@@ -20,7 +20,11 @@ class_name ItemTooltipBubble
 ##   - the text's pen at the frame's inner edge, 8 px in, its cap top 3 px
 ##     below the line's top (MEASURED in XjjJyA5.png: the outer black column
 ##     at x 346, the first glyph column at 355 after a 1-px bearing, the
-##     name's cap top at 239 for the box's top at 228);
+##     name's cap top at 239 for the box's top at 228); so its baseline is 12
+##     px below the line's top (cap top 3 + a 9-row cap), and each label is
+##     placed by that baseline -- line_top + 12 - the face's ascent -- so
+##     any face the client loads (Tahoma, or the disclosed Arial fallback a
+##     Linux client gets) sits where the original's text sits;
 ##   - the name icon, com_itemsign.ddj (GDR_ITEMNAME_L, 12x12), at the name
 ##     line's start; the name is padded with spaces past it (READ, 0x776d20:
 ##     it adds ceil(12 / space) + 1 spaces -- 16 px at 12 px, MEASURED: the
@@ -51,6 +55,8 @@ const FRAME := 8
 const LINE_HEIGHT := 18
 const LINE_HEIGHT_SINGLE := 14
 const ICON_SIZE := 12
+## The text's baseline below its line's top (MEASURED, see above).
+const BASELINE := 12
 const WINDOW_ALPHA := 200.0 / 255.0
 ## The fill where no texture is available (a test without an archive): the
 ## edge's own fill texel, A1R5G5B5 (3, 4, 8) (MEASURED).
@@ -176,7 +182,8 @@ func show_lines(lines: Array, anchor: Rect2, from: Control = null) -> void:
 		label.add_theme_font_override("font", _bold if l.get("bold", false) else _font)
 		label.add_theme_color_override("font_color", l["color"])
 		var x := FRAME + (icon_indent() if l.get("icon", false) else 0.0)
-		label.position = Vector2(x, FRAME + i * _line_height)
+		var face: Font = _bold if l.get("bold", false) else _font
+		label.position = Vector2(x, FRAME + i * _line_height + BASELINE - roundf(face.get_ascent(_size)))
 		label.size = Vector2(maxf(text_width(l), 1.0) + 2.0, _line_height)
 		if l.get("icon", false):
 			_icon.visible = _icon.texture != null

@@ -373,7 +373,7 @@ func _canon_items(items: Dictionary) -> Dictionary:
 			it.rarity, it.item_class, it.set_id, it.durability_max, it.req_str, it.req_int,
 			it.max_magic_options, it.parry, it.phys_absorb, it.mag_absorb, it.plus_incs,
 			it.phys_atk_upper, it.mag_atk_upper, it.phys_reinforce_upper, it.mag_reinforce_upper,
-			it.attack_rate_upper, it.critical_upper]
+			it.attack_rate_upper, it.critical_upper, it.armour_phys_reinforce, it.armour_mag_reinforce, it.desc_strid]
 	return out
 
 ## The first place two results differ, for the FAIL line.

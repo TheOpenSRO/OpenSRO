@@ -102,12 +102,19 @@ static func fields(item: ItemTableReader.Item, inst: Object) -> Dictionary:
 		var v: int = Q.int_stat(int(item.block.x), int(item.block.y), q.call("block"), 0.0, 0)
 		s["br"] = v
 		s["br_q"] = Q.single_pct(v, item.block.x, item.block.y, 0.0, 0)
-	# Reinforce: fractional, no plus term.
-	for spec in [["ps", "phys_reinforce", item.phys_reinforce, item.phys_reinforce_upper],
-			["ms", "mag_reinforce", item.mag_reinforce, item.mag_reinforce_upper]]:
+	# Reinforce: fractional, no plus term. The weapon pair (105-112) gives the
+	# range line; without it the armour/shield pair (82-85) gives the single
+	# line (ItemTooltipLines._stats; lane B's groups 1/2 for both).
+	for spec in [["ps", "phys_reinforce", item.phys_reinforce, item.phys_reinforce_upper, item.armour_phys_reinforce],
+			["ms", "mag_reinforce", item.mag_reinforce, item.mag_reinforce_upper, item.armour_mag_reinforce]]:
 		var r: Vector2i = spec[2]
 		var ru: Vector2i = spec[3]
+		var a: Vector2 = spec[4]
 		if r == Vector2i.ZERO:
+			if a != Vector2.ZERO:
+				var v: float = Q.float_stat(a.x, a.y, q.call(spec[1]), 0.0, 0)
+				s[spec[0]] = v
+				s[spec[0] + "_q"] = Q.single_pct(v, a.x, a.y, 0.0, 0)
 			continue
 		var lo: float = Q.float_stat(r.x, ru.x, q.call(spec[1]), 0.0, 0)
 		var hi: float = Q.float_stat(r.y, ru.y, q.call(spec[1]), 0.0, 0)
@@ -120,13 +127,13 @@ static func fields(item: ItemTableReader.Item, inst: Object) -> Dictionary:
 		s["dur_q"] = Q.durability_pct(dq)
 		out["durability_cur"] = int(inst.get("durability"))
 	out["stats"] = s
-	out["magic_options"] = blue_lines(inst)
+	out["magic_options"] = blue_lines(inst, item.item_class)
 	return out
 
 ## The blue lines (MagicOptionTable.format_line); an option whose format is
 ## not read yet (MagicOptionTable's OPEN codes) shows its code and value --
 ## a stand-in, OURS, so the option is not silently lost.
-static func blue_lines(inst: Object) -> Array:
+static func blue_lines(inst: Object, item_class: int = 0) -> Array:
 	var lines: Array = []
 	if _magic == null:
 		return lines
@@ -140,7 +147,11 @@ static func blue_lines(inst: Object) -> Array:
 		if row == null:
 			lines.append("%d %d" % [id, value])
 			continue
-		var pct: int = _magic.blue_pct(row, value)
+		# Lane B's review (10970e81): the percent comes from the option's row
+		# at the item's degree, option_pct(id, value, ItemClass); the older
+		# row + blue_pct is the fallback.
+		var pct: int = int(table.option_pct(id, value, item_class)) if table.has_method("option_pct") \
+			else int(_magic.blue_pct(row, value))
 		var line: String = _magic.format_line(String(row.code), value, pct, text if text is Callable else Callable())
 		lines.append(line if line != "" else "%s %d" % [row.code, value])
 	return lines

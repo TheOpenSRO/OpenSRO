@@ -95,6 +95,8 @@ func _helm() -> ItemTableReader.Item:
 	it.req_int = 40
 	it.req_gender = ItemTableReader.REQ_GENDER_MAN
 	it.max_magic_options = 9
+	it.armour_phys_reinforce = Vector2(222, 231)
+	it.armour_mag_reinforce = Vector2(473, 492)
 	return it
 
 func _texts(lines: Array) -> PackedStringArray:
@@ -118,7 +120,7 @@ func _lines_tests() -> void:
 		"Durability 85/85 (+0%)", "Attack distance 1.8 m", "Attack rate 120 (+0%)", "Critical 5 (+0%)",
 		"Phy. reinforce 257.3 % ~ 306.3 % (+0%)", "Mag. reinforce 441.1 % ~ 539.1 % (+0%)",
 		"", "Required level 111", "Chinese", "Max. no. of magic options: 9Unit",
-		"Able to use Advanced elixir.", "", "Store purchasing price 1000"])
+		"Able to use Advanced elixir.", "Price : 1000Gold"])
 	_check(_texts(spear) == want, "the weapon's lines in the binary's order, seal under the name (got %s)" % str(_texts(spear)))
 	_check(spear[0]["color"] == L.GOLD and spear[0]["bold"] and spear[0]["icon"], "a seal item's name is gold, bold, with the icon")
 	_check(spear[2]["color"] == L.GOLD and spear[2]["bold"], "the seal line is gold and bold")
@@ -130,7 +132,14 @@ func _lines_tests() -> void:
 	for l in spear:
 		if String(l["text"]) == "":
 			blanks += 1
-	_check(blanks == 4, "four group breaks: after the name, after the degree, before the requirements and the price (got %d)" % blanks)
+	_check(blanks == 3, "three group breaks: after the name, after the degree, before the requirements -- none before a store's price (got %d)" % blanks)
+	var flat := _spear()
+	flat.mag_reinforce = Vector2i(4411, 4411)
+	flat.max_magic_options = 0
+	var ft := _texts(L.compose(flat, {"description": "A fortress hammer."}))
+	_check(ft.has("Mag. reinforce 441.1 % ~ 441.1 % (+0%)"), "a weapon's reinforce keeps the range form with equal ends (the weapon pair decides)")
+	_check(ft.has("Max. no. of magic options: 0Unit"), "max magic options shows at 0 too")
+	_check(ft.slice(5, 8) == PackedStringArray(["", "A fortress hammer.", ""]), "the description (column 6) after the degree's blank, then a blank (got %s)" % str(ft.slice(5, 8)))
 
 	# --- the empty range: 100 % (the original's "Critical 2 (+100%)") ---
 	var even := _spear()
@@ -183,6 +192,19 @@ func _lines_tests() -> void:
 	_check(ht.slice(0, 7) == PackedStringArray(["Set Helm", "", "", "Set A", "Sort of item: Heavy armor", "Mounting part: Head", "Degree: 11 degrees"]),
 		"a set item: name, its blank, the set's own blank, the green set line, sort, mounting part, degree (got %s)" % str(ht.slice(0, 7)))
 	_check(helm[3]["color"] == L.GREEN and helm[3]["bold"], "the set line is green and bold")
+	_check(ht.has("Phy. reinforce 22.2 % (+0%)") and ht.has("Mag. reinforce 47.3 % (+0%)"),
+		"armour shows its single-value reinforce lines from columns 82-85 (got %s)" % str(ht))
+	var eu := _item([3, 1, 10, 1], "Light Hood")
+	eu.country = 1
+	eu.req_level_types = PackedInt32Array([0x201, 0x203, 0, 0])
+	eu.req_levels = PackedInt32Array([1, 3, 0, 0])
+	var eu_lines := L.compose(eu, {"player": {"masteries": {0x201: 0, 0x203: 5}}})
+	_check(_texts(eu_lines).has("Mastery level: UIIT_STT_WARRIOR Mastery 1") and _texts(eu_lines).has("Mastery level: UIIT_STT_ROG Mastery 3"),
+		"European gear shows its mastery requirements (got %s)" % str(_texts(eu_lines)))
+	_check(_find(eu_lines, "Mastery level: UIIT_STT_WARRIOR")["color"] == L.WHITE, "one colour for the pairs: white when any is met")
+	var eu_red := L.compose(eu, {"player": {"masteries": {0x201: 0}}})
+	_check(_find(eu_red, "Mastery level: UIIT_STT_ROG")["color"] == L.RED and _find(eu_red, "Mastery level: UIIT_STT_WARRIOR")["color"] == L.RED,
+		"and red, all of them, when none is")
 	_check(ht.has("Phy. def. pwr. 274.1 (+0%)") and ht.has("Mag. def. pwr. 358.8 (+0%)") and ht.has("Parry rate 21 (+0%)"),
 		"defences and parry, one value each")
 	_check(_find(helm, "Required level")["color"] == L.RED, "level 101 against a level-90 player is red")
@@ -206,7 +228,7 @@ func _lines_tests() -> void:
 	# --- a potion: outside the four builders ---
 	var pot := _item([3, 3, 1, 1], "HP Recovery Herb")
 	var pl := L.compose(pot, {"type_name": "Potion", "price": 40})
-	_check(_texts(pl) == PackedStringArray(["HP Recovery Herb", "", "Sort of item: Potion", "", "Store purchasing price 40"]),
+	_check(_texts(pl) == PackedStringArray(["HP Recovery Herb", "", "Sort of item: Potion", "", "Price : 40Gold"]),
 		"a potion: name, sort, price (got %s)" % str(_texts(pl)))
 	_check(pl[0]["color"] == L.WHITE and pl[0]["icon"], "its name is white with the icon")
 
@@ -247,8 +269,9 @@ func _bubble_tests() -> void:
 	var shown := labels.filter(func(x): return x.visible)
 	_check(shown.size() == lines.size(), "one label a line")
 	var lab: Label = shown[3]
-	_check(lab.position == Vector2(8, 8 + 3 * 18) and lab.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST,
-		"line 3 at (8, 62), drawn crisp (got %s)" % lab.position)
+	var want_y := 8 + 3 * 18 + 12 - roundf(ThemeDB.fallback_font.get_ascent(12))
+	_check(lab.position == Vector2(8, want_y) and lab.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST,
+		"line 3's baseline 12 px below its top, whatever the face (got %s, want y %s), drawn crisp" % [lab.position, want_y])
 	_check(lab.get_theme_constant("shadow_offset_x") == 1 and lab.get_theme_constant("shadow_offset_y") == 1
 		and lab.get_theme_color("font_shadow_color") == Color(0, 0, 0), "a black drop shadow 1 px right and down")
 	_check((shown[0] as Label).position.x == 8 + b.icon_indent() and b.icon_indent() > 12.0, "the name starts past the icon")

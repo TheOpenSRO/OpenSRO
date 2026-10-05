@@ -69,7 +69,7 @@ A blank entry has colour 0.
 | 4a | Armour position (armour only) | `"%s: %s"` `UIIT_STT_ARMOR_POSITION` + `_HEAD/_SHOULDER/_BREAST/_LEG/_HAND/_FOOT` by TypeID4 | beige | 1 | `0x6827c0` |
 | 5 | Degree | `UIIT_TOOLTIP_EQUIPMENT_CLASS` "Degree: %d degrees", degree = (ItemClass − 1) / 3 + 1, only when ItemClass ≠ 0 | beige | 1 | `0x66f0c0` (`0x66f13b..0x66f15b`) |
 | — | blank | | 0 | 1 | |
-| 6 | (optional) | `0x66f850`: a `"%s_%d"`-keyed line, then a blank | white | 1 | OPEN what it names |
+| 6 | Description (when it resolves) | `0x66f850`: the ref's column 6 key (`DescStrID128`, `+0x7c`) through the object text table, then a blank (round 731's review) | white | 1 | READ |
 | 7 | Stats | see the stat table below | white (durability: its own colour) | 1 | `0x66c5b0` |
 | 8 | Requirements | blank, then: `PARAM_REQ_LV` "Required level %d"; job grade (`UIIT_STT_CHAR_JOBGRADE` + `UIIT_STT_CLASS_*_%d`); guild level (`UIIT_STT_GUILD_REQUIRE_LEVEL`); mastery (`PARAM_MASTERY`: name `PARAM_MASTERY_LEVEL` %d); `PARAM_STR` / `PARAM_INT` %d; race `UIO_NEWCHAR_CTL_CHINESE` "Chinese" / `_EUROPEAN` "European" / `_ARABIAN`; gender `UIO_NEWCHAR_CTL_MALE` / `_FEMALE`; fortress use rules | white when met, **red `0xffff4a4a` when not** | 1 | `IFSlotWithHelp::0x67eec0` |
 | 9 | Max. no. of magic options | `"%s: %d%s"` `UIIT_STT_AVATAR_MAGICOPTION_MAXCOUNT` + count + `UIIT_STT_UNIT` "Unit" | beige | 1 | `0x66e030` |
@@ -144,7 +144,7 @@ the user which to follow, as was done for party matching.
 
 ## 5. Gap list (OpenSRO today)
 
-1. **The window:** Godot's `tooltip_text`. It is blurry at DPI 2.0, uses the wrong font, a grey box, and has no frame, icon or rules.
+1. **The window:** Godot's `tooltip_text`. It is blurry at DPI 2.0, uses the wrong font, a grey box, and has no frame or icon. (Fixed in round 731.)
 2. **The text:** hard-coded English ("Phy. atk. pwr.", "China", "Man only") instead of the text table's keys ("Chinese", the gender keys). There is no degree line, no "(+x%)", no armour position, no requirement colours and no "Max. no. of magic options".
 3. **Missing stat lines:** absorption, parry, blocking and range-format lines are missing, so accessories show almost nothing (the user's necklace).
 4. **Colours:** the name is always white (no gold, pink or blue), and there are no seal, set or magic-option lines.
@@ -152,12 +152,14 @@ the user which to follow, as was done for party matching.
 
 ## OPEN
 
-1. The window alpha (`+0x131`) and the screen placement and clamping.
-2. The rule drawing for blank entries.
+1. The window alpha byte (`+0x131`) itself; the clamping (OURS).
+2. ~~The rule drawing~~: there is none (round 731).
 3. The seal and set order (see §3).
 4. `0x670dd0`'s per-option formats.
 5. The non-equipment builders.
-6. `0x66f850`'s line.
+6. ~~`0x66f850`'s line~~: the description, column 6 (round 731's review).
+10. **"Sort of item"'s source** (round 731's review): `FUN_00941240` tries a code-name map (`+0x6b8`, `FUN_009411d0`) then a TypeID & 0xfffe -> string map (`+0x6a8`, `FUN_0093acb0`); their writers are not read. OpenSRO's fmn join is INFERRED, and `XjjJyA5.png` reads "Twohand staff" (`UIIT_CTL_WNETWORK_EU_TSTAFF`) where the join gives "Staff".
+11. The job-grade requirement types 2/3/4, and `PARAM_STORE_PURCHASE_PRICE` (the store's offer for a bag item while a shop is open).
 7. What `0x8bd660` tests (the pink seal colour).
 8. Which range end the "(+x%)" uses.
 9. The retail item-instance wire layout for opt level, variance and magic params. Read it in lane B, from `docs/protocol/` records and the client's inventory parser.
@@ -191,7 +193,8 @@ Lane A first. Lane B can run in parallel; A consumes B's fields when they land.
 
 ## Round 731 (lane A) additions
 
-- "Sort of item" is `fmntidgroupmapdata.txt` (TypeID1-4 -> group) joined to `fmncategorytreedata.txt`'s key by group (MEASURED 1:1); the set name's key resolves in `textdata_equip&skill.txt` (listed by `textdataname.txt` with `textdata_object.txt`), SN_ITEM_11_SET_A_WEAPON = "Power".
+- "Sort of item" is taken from `fmntidgroupmapdata.txt` (TypeID1-4 -> group) joined to `fmncategorytreedata.txt`'s key by group (the join MEASURED 1:1; that the client uses it INFERRED, OPEN 10); the set name's key resolves in `textdata_equip&skill.txt` (listed by `textdataname.txt` with `textdata_object.txt`), SN_ITEM_11_SET_A_WEAPON = "Power".
 - The Int requirement line prints the Str requirement's value (READ, `0x67eec0`, PARAM_INT with ref `+0x1c8`); OpenSRO reproduces it.
 - Font arg 3 is the same face bold (same 9-row cap height, 2-px stems, MEASURED), not FontIndex 3.
 - Implementation and measurements: `docs/rounds/r731.md`.
+- Round 731's review fixes: armour/shield reinforce from columns 82-85 (single-value line when the weapon pair is zero); a store's goods print `"%s : %I64d%s"` (`UIIT_STT_PRICE`, `UIIT_STT_GOLD`, no blank before, `0x678cf2`); all four requirement pairs (level, masteries 0x101-0x114 / 0x201-0x206 as `"%s: %s %s %d"`) in one colour, white if any is met; the mastery names resolve in `textdata_equip&skill.txt`; "Max. no. of magic options" always.

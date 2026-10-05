@@ -4,8 +4,8 @@ class_name ItemTooltipLines
 ## The lines of an item's hover tooltip, composed as the original composes
 ## them (round 731; docs/protocol/item_tooltip.md). Each entry is a
 ## Dictionary {"text": String, "color": Color, "bold": bool, "icon": bool};
-## a blank entry has text "" -- the original's colour-0 entries, the group
-## breaks the bubble draws as rules (ItemTooltipBubble).
+## a blank entry has text "" -- the original's colour-0 entries, drawn as an
+## empty line (no rule: round 731 measured the "rules" as the window behind).
 ##
 ## The four equipment builders share one skeleton (READ, UI_SILKMALL
 ## 0x6827c0 armour, 0x683040 shield, 0x682ba0 accessory, 0x682df0 weapon):
@@ -16,12 +16,13 @@ class_name ItemTooltipLines
 ##   armour position (armour only, 0x6827c0)     -- beige
 ##   "Degree: %d degrees" (0x66f0c0)             -- beige
 ##   [blank]
+##   the description (0x66f850) [blank]          -- white, when it resolves
 ##   the stat block (0x66c5b0)                   -- white
 ##   [blank] requirements (IFSlotWithHelp 0x67eec0) -- white / red
 ##   "Max. no. of magic options: %dUnit" (0x66e030) -- beige
 ##   [blank] magic options (0x6780c0)            -- cyan
 ##   advanced elixir (UI_SOCKET 0x66fd60)        -- grey, bold
-##   [blank] prices (0x6784a0)                   -- white
+##   a store's price (0x6784a0, slot kind 0x0f)  -- white
 ##
 ## What is not the binary's is labelled OURS where it is done.
 
@@ -121,7 +122,8 @@ static func range_quality(lo_l: float, lo_u: float, hi_l: float, hi_u: float) ->
 ##     (Array of String), "adv_elixir" (int), "stats" (Dictionary of the
 ##     instance's computed values, lane B), "unknown_variance" (bool: an
 ##     owned item whose white stats the client does not have yet)
-##   "price": int, the store's purchase price, or -1
+##   "price": int, a store's own price for its goods, or -1
+##   "description": String, column 6's text through the object table, or ""
 static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 	var lines: Array = []
 	if item == null:
@@ -179,6 +181,13 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 		_add(lines, fmt.replace("%d", str(deg)), BEIGE)
 	_blank(lines)
 
+	# 3b. The description (0x66f850): column 6's key through the object text
+	# table (FUN_008c9bb0), white, then a blank -- only when it resolves.
+	var desc: String = ctx.get("description", "")
+	if desc != "":
+		_add(lines, desc, WHITE)
+		_blank(lines)
+
 	# 4. The stat block (0x66c5b0).
 	_stats(lines, item, ctx, t, plus)
 
@@ -186,10 +195,10 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 	# red when not.
 	_requirements(lines, item, ctx, t)
 
-	# 6. Max. no. of magic options (0x66e030), beige.
-	if item.max_magic_options > 0:
-		_add(lines, "%s: %d%s" % [t.call("UIIT_STT_AVATAR_MAGICOPTION_MAXCOUNT", "Max. no. of magic options"),
-			item.max_magic_options, t.call("UIIT_STT_UNIT", "Unit")], BEIGE)
+	# 6. Max. no. of magic options (0x66e030), beige -- always, 0 included
+	# (every builder calls it unconditionally).
+	_add(lines, "%s: %d%s" % [t.call("UIIT_STT_AVATAR_MAGICOPTION_MAXCOUNT", "Max. no. of magic options"),
+		item.max_magic_options, t.call("UIIT_STT_UNIT", "Unit")], BEIGE)
 
 	# 7. Magic options (0x6780c0): a blank, then each option in cyan. The
 	# option texts come from the instance (lane B, round 732).
@@ -208,7 +217,11 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 		var used: String = t.call("UIIT_STT_SOCKET_TIP_UPPER_REINFOREC_USED", "%d")
 		_add(lines, used.replace("%d", str(adv)), WHITE, true)
 
-	# 9. Prices (0x6784a0): a blank, then "Store purchasing price %d".
+	# 9. Prices (0x6784a0): a store's goods (slot kind 0x0f) print
+	# "%s : %I64d%s" with UIIT_STT_PRICE and UIIT_STT_GOLD, no blank before
+	# (READ, 0x678cf2..). PARAM_STORE_PURCHASE_PRICE is the store's offer for
+	# the player's own item while a shop is open (kinds 0x46/0x47/0x21): not
+	# built (OPEN).
 	_price(lines, ctx, t)
 	return lines
 
@@ -225,7 +238,8 @@ static func _stats(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t:
 	var given: Dictionary = instance.get("stats", {})
 	var unknown := bool(instance.get("unknown_variance", false)) and given.is_empty()
 	var inc := item.plus_incs
-	var inc_at := func(i: int) -> float: return float(inc[i]) * plus if i < inc.size() else 0.0
+	# The plus bonus is TRUNCATED (round 732: c:0x8bdb75's fistp chops).
+	var inc_at := func(i: int) -> float: return float(int(float(inc[i]) * plus)) if i < inc.size() else 0.0
 
 	# Phy./Mag. atk: "%s %d ~ %d (+%d%%)".
 	if item.phys_atk != Vector2i.ZERO:
@@ -284,35 +298,73 @@ static func _stats(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t:
 		_stat(lines, "%s %d" % [t.call("PARAM_BLOCKING", "Blocking rate"), v],
 			int(given.get("br_q", quality(item.block.x, item.block.x, item.block.y))), unknown)
 	# Reinforce: "%s %.1f %% ~ %.1f %% (+%d%%)", tenths of a percent.
-	for spec in [["ps", "PARAM_PHYSICAL_SPECIALIZE", "Phy. reinforce", item.phys_reinforce, item.phys_reinforce_upper],
-			["ms", "PARAM_MAGICAL_SPECIALIZE", "Mag. reinforce", item.mag_reinforce, item.mag_reinforce_upper]]:
+	# 0x66c5b0 picks the form by the WEAPON pair: non-zero -> the range form
+	# from columns 105-112; zero -> the single form from the armour/shield
+	# pair, columns 82/83 (84/85 magic), stored / 1000 and shown x 100, i.e.
+	# the column / 10, rated on its own [L, U] (round 731's review, READ).
+	for spec in [["ps", "PARAM_PHYSICAL_SPECIALIZE", "Phy. reinforce", item.phys_reinforce, item.phys_reinforce_upper, item.armour_phys_reinforce],
+			["ms", "PARAM_MAGICAL_SPECIALIZE", "Mag. reinforce", item.mag_reinforce, item.mag_reinforce_upper, item.armour_mag_reinforce]]:
 		var r: Vector2i = spec[3]
 		var ru: Vector2i = spec[4]
-		if r == Vector2i.ZERO:
-			continue
-		var vals: Array = given.get(spec[0], [r.x, r.y])
+		var a: Vector2 = spec[5]
 		var label: String = t.call(spec[1], spec[2])
-		var body: String
-		if is_equal_approx(float(vals[0]), float(vals[1])):
-			body = "%s %.1f %%" % [label, float(vals[0]) / 10.0]
-		else:
-			body = "%s %.1f %% ~ %.1f %%" % [label, float(vals[0]) / 10.0, float(vals[1]) / 10.0]
-		_stat(lines, body, int(given.get(spec[0] + "_q", range_quality(r.x, ru.x, r.y, ru.y))), unknown)
+		if r != Vector2i.ZERO:
+			var vals: Array = given.get(spec[0], [r.x, r.y])
+			var body := "%s %.1f %% ~ %.1f %%" % [label, float(vals[0]) / 10.0, float(vals[1]) / 10.0]
+			_stat(lines, body, int(given.get(spec[0] + "_q", range_quality(r.x, ru.x, r.y, ru.y))), unknown)
+		elif a != Vector2.ZERO:
+			var v: float = float(given.get(spec[0], a.x))
+			_stat(lines, "%s %.1f %%" % [label, v / 10.0], int(given.get(spec[0] + "_q", quality(a.x, a.x, a.y))), unknown)
 
 static func _stat(lines: Array, body: String, q: int, unknown: bool) -> void:
 	_add(lines, body if unknown else "%s (+%d%%)" % [body, q], WHITE)
 
-## The requirement lines (0x67eec0): a blank, the level, Str, Int, gender and
-## race, each white when the player meets it and red when not. The binary's
-## Int line prints the Str requirement's value (its format reads ref +0x1c8 for
-## both, READ in 0x67eec0: `L"%s %d"` with PARAM_INT and ref +0x1c8); reproduced.
+## The mastery requirement types (ReqLevelType 0x101..0x114, 0x201..0x206)
+## and their name keys, READ from 0x67eec0's branches; the type is the
+## mastery's own id (257 = 0x101 ... 518 = 0x206).
+const MASTERY_KEYS := {
+	0x101: "UIIT_STT_MASTERY_VI", 0x102: "UIIT_STT_MASTERY_HEUK", 0x103: "UIIT_STT_MASTERY_PA",
+	0x111: "UIIT_STT_MASTERY_HAN", 0x112: "UIIT_STT_MASTERY_PUNG", 0x113: "UIIT_STT_MASTERY_HWA",
+	0x114: "UIIT_STT_MASTERY_GI",
+	0x201: "UIIT_STT_WARRIOR", 0x202: "UIIT_STT_WIZARD", 0x203: "UIIT_STT_ROG",
+	0x204: "UIIT_STT_WARLOCK", 0x205: "UIIT_STT_BARD", 0x206: "UIIT_STT_CLERIC",
+}
+
+## The requirement lines (0x67eec0): a blank; the four ReqLevelType /
+## ReqLevel pairs (ref +0xd0 / +0xe0) in order -- type 1 "Required level %d",
+## a mastery "%s: %s %s %d" (PARAM_MASTERY_LEVEL, the mastery's name,
+## PARAM_MASTERY, the level) -- all in ONE colour, white when any of them is
+## met and red when none is (cStack_585); then Str, Int, gender and race,
+## each its own colour. The job-grade types 2/3/4 are not built (OPEN). The
+## binary's Int line prints the Str requirement's value (READ in 0x67eec0:
+## `L"%s %d"` with PARAM_INT and ref +0x1c8); reproduced.
 static func _requirements(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t: Callable) -> void:
 	var p: Dictionary = ctx.get("player", {})
 	_blank(lines)
-	var level := item.required_character_level()
-	if level > 0:
-		var met: bool = int(p.get("level", -1)) < 0 or int(p.get("level", 0)) >= level
-		_add(lines, "%s %d" % [t.call("PARAM_REQ_LV", "Required level"), level], WHITE if met else RED)
+	var pair_lines := PackedStringArray()
+	var any_met := false
+	var any_unknown := false
+	var masteries: Dictionary = p.get("masteries", {})
+	for i in mini(item.req_level_types.size(), item.req_levels.size()):
+		var kind: int = item.req_level_types[i]
+		var need: int = item.req_levels[i]
+		if kind == ItemTableReader.REQ_TYPE_CHARACTER_LEVEL:
+			pair_lines.append("%s %d" % [t.call("PARAM_REQ_LV", "Required level"), need])
+			var lv: int = int(p.get("level", -1))
+			if lv < 0:
+				any_unknown = true
+			elif lv >= need:
+				any_met = true
+		elif MASTERY_KEYS.has(kind):
+			pair_lines.append("%s: %s %s %d" % [t.call("PARAM_MASTERY_LEVEL", "Mastery level"),
+				t.call(MASTERY_KEYS[kind], MASTERY_KEYS[kind]), t.call("PARAM_MASTERY", "Mastery"), need])
+			if masteries.is_empty():
+				any_unknown = true
+			elif int(masteries.get(kind, 0)) >= need:
+				any_met = true
+	var pair_colour := WHITE if any_met or any_unknown else RED
+	for l in pair_lines:
+		_add(lines, l, pair_colour)
 	if item.req_str != 0:
 		var met: bool = int(p.get("str", -1)) < 0 or int(p.get("str", 0)) >= item.req_str
 		_add(lines, "%s %d" % [t.call("PARAM_STR", "Str"), item.req_str], WHITE if met else RED)
@@ -334,8 +386,7 @@ static func _price(lines: Array, ctx: Dictionary, t: Callable) -> void:
 	var price: int = int(ctx.get("price", -1))
 	if price < 0:
 		return
-	_blank(lines)
-	_add(lines, "%s %d" % [t.call("PARAM_STORE_PURCHASE_PRICE", "Store purchasing price"), price], WHITE)
+	_add(lines, "%s : %d%s" % [t.call("UIIT_STT_PRICE", "Price"), price, t.call("UIIT_STT_GOLD", "Gold")], WHITE)
 
 ## Items outside the four equipment builders (consumables, alchemy, quest
 ## items...): their builders (other branches of 0x6860a0) are not read, so
@@ -354,6 +405,8 @@ static func _compose_other(item: ItemTableReader.Item, ctx: Dictionary) -> Array
 		_add(lines, "%s: %s" % [t.call("UIIT_STT_ITEM_TYPE", "Sort of item"), type_name], BEIGE)
 	if item.required_character_level() > 0 or item.req_gender != ItemTableReader.REQ_GENDER_ANY:
 		_requirements(lines, item, ctx, t)
+	if int(ctx.get("price", -1)) >= 0:
+		_blank(lines)
 	_price(lines, ctx, t)
 	return lines
 
