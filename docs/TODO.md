@@ -3220,7 +3220,10 @@ Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.
   itself (a `.dof` world) and the `wave1..3.ddj` textures are not traced.
 - **WaterColor's timing.** It is sampled at the fixed environment reference time, and the special
   modes (+0x2eb4, +0x2e5c) are not applied.
-- **Depth precision (round 648).** Retail's world camera has near 1.0, far the view distance
+- ~~**Depth precision (round 648).**~~ **DONE, round 729:** the world camera's near is now retail's 1.0
+  (`CameraPlanes`); the camera arm's radius-3 sphere keeps colliders outside the near plane's
+  corners (`camera_near_test.gd`), and building layers stopped z-fighting (docs/rounds/r729.md).
+  The original note: Retail's world camera has near 1.0, far the view distance
   (3,500 by default) and a 24-bit depth buffer (READ; MAPM_FORMAT.md, "Depth"). This client's camera
   keeps Godot's default near 0.05, with far 1920 x (radius + 1) x 2, which gives about 20 times less
   depth precision at any distance. Water that lies under the ground, hidden only by the depth test,

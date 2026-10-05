@@ -2658,6 +2658,8 @@ func _apply_camera_far_plane() -> void:
 	# Round 694: times the Background Sight Range's factor (1 at the default;
 	# _apply_view_distance).
 	camera_3d.far = REGION_SPAN * (_region_load_radius() + 1) * 2.0 * _far_scale
+	camera_3d.near = CameraPlanes.near()
+
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
@@ -11520,6 +11522,7 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_YAW=deg    camera yaw (0 looks along +Z)
 ##   OPENSRO_QA_PITCH=deg  camera pitch (-90 is straight down)
 ##   OPENSRO_QA_DIST=n     camera distance from the player
+##   OPENSRO_QA_CAMERA_NEAR=n  the world camera's near plane (retail 1.0; round 729, measurement only)
 ##   OPENSRO_QA_AMBIENT=1|off  log the teleport gates' glows every 60 ticks
 ##                         (round 720), or attach no gate effects at all
 ##   OPENSRO_QA_WALK=deg   walk continuously on that heading
