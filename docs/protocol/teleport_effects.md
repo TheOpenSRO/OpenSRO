@@ -137,11 +137,26 @@ elsewhere, spawned by the server, or in a dungeon the map files do not place).
 
 **Every entry above is mode 1** (an offset; MEASURED). Glow bytes not listed are 0.
 
-**Not drawn yet (OPEN, round 720's review, MEASURED):** the `ambient` sets of `oas_hot_portal`
-(Hotan), `euro_esteuro_fountain01` (Constantinople) and the guild `charge_gate` also carry a TEXANI
-mod (`0x10000`, an animated texture: likely the portal's surface and the fountain's water) and an
-MTRL mod (`0x0`); `pha_gate` carries an MTRL. `CRTModTexAni` is read in outline (BSR_FORMAT.md: the
-frame step and the UV offset) but not drawn -- docs/TODO.md. No gate model carries a sound mod.
+**TEXANI and MTRL (round 722).** The `ambient` sets of `oas_hot_portal` (Hotan),
+`euro_esteuro_fountain01` (Constantinople) and the guild `charge_gate` carry a TEXANI mod (`0x10000`)
+and an MTRL mod (`0x0`); `pha_gate` an MTRL.
+- **TEXANI is now drawn.** Hotan's water (material 3, `Oas_hot_potal_water`) scrolls v at 0.48/s;
+  the fountain's water (material 6) grows its 2x2 matrix at (+0.02, +0.03, -0.02, +0.03)/s; the
+  charge gate's (material 3) scrolls v at -0.7/s. The reading (CRTModTexAni's steps, the archive's
+  `vertexshader0texani.c`), the census (359 files) and the build are in docs/rounds/r722.md and
+  BSR_FORMAT.md.
+- **The MTRL mods were already drawn.** Round 625's ambient-set path (`mtrl_mod_for`) blends them.
+  Round 720's "not drawn" said otherwise and was wrong.
+- No gate model carries a sound mod.
+
+**The blend (round 722).** The effects' plates are D3D-blended (most SRCALPHA/ONE). The original
+blends in the display values (no D3DRS_SRGBWRITEENABLE), Forward+ in a linear buffer, where
+Samarkand's additive plates over the sky barely show (MEASURED: the arch's mean 175,220,238 against
+Compatibility's 214,233,243 and the effects-off 164,210,205). The ambient effects now blend in
+display values under Forward+ (`EfpEffect.display_shader`, a screen read; OURS method): 208,229,240.
+Donwhang's low glow (byte 41) tests hidden by its own platform floor (`W_CD_portal_04`) from the
+bridge, as the original's depth test would. Its visible light is the scene-drawn `w_cd_potal_blue`
+and the high glow (49). docs/rounds/r722.md has the measurements.
 
 Across the whole archive (MEASURED, `dump_bsr_particles.gd --census` over 8,539 `.bsr`): 1,526
 files carry particle mods (11,600 entries), **1,300 of them an `ambient` set**; the rest are
@@ -168,7 +183,10 @@ mod sections do not parse.
   as its object draws), and the test point must be on screen and in front of the eye before the ray.
 - **The occlusion query is a physics ray** from the camera to the moved point against the terrain,
   the placed objects and the characters' pick bodies (monsters, other players, the player; not the
-  NPCs, whose layer is the invisible navmesh walls'). It **passes through alpha-tested pieces**:
+  NPCs, whose layer is the invisible navmesh walls'). An alpha-tested piece hides the point only
+  where its texel is kept (round 722: the hit's face, its UV, the texture's mip-0 alpha against the
+  material's threshold -- `AmbientParticles.texel_kept`); round 720 **passed through every
+  alpha-tested piece**:
   the original's depth buffer has holes where a leaf card's texels fail the test, a collision
   trimesh does not -- a bare tree's leaf cards hid Jangan's glow from 150 units until the ray
   passed them (MEASURED, the QA log's blocker). Their opaque texels then hide nothing either.
