@@ -153,9 +153,10 @@ func Interactions(code string, in InteractionInputs) (flags byte, ids []byte) {
 	if strings.Contains(code, "NPC_CH_GACHA_OPERATOR") {
 		add(0x12)
 	}
-	if flags&FlagInteractions == 0 {
-		return 0, nil
-	}
+	// The whole set, flag or not (round 727): the spawn record writes the
+	// list only with bit 1 (AppendRecord), but the 0xB045 select reply's
+	// PublishAvailableInteractions (0x4a95a0) copies every id of +0x130 --
+	// the teleport row's 7, 8 and 9 included, which set no bit.
 	for b := range set {
 		ids = append(ids, b)
 	}

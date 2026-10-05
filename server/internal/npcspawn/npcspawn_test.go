@@ -295,8 +295,9 @@ func TestInteractions(t *testing.T) {
 		{"NPC_CH_POTION", InteractionInputs{}, 2, []byte{2}},
 		{"NPC_CH_POTION2", InteractionInputs{}, 0, nil},
 		// A teleport NPC with no rule and no quest: 7 and 9 are in its set,
-		// but nothing set bit 1, so nothing is written.
-		{"NPC_WC_FERRY", InteractionInputs{Teleport7: true, Teleport9: true}, 0, nil},
+		// but nothing set bit 1: the spawn record writes no list, the select
+		// reply (the whole set) still carries them.
+		{"NPC_WC_FERRY", InteractionInputs{Teleport7: true, Teleport9: true}, 0, []byte{7, 9}},
 		// A ferry a quest names: bit 1 set, so its teleport ids go out too.
 		{"NPC_CH_FERRY", InteractionInputs{Teleport7: true, Teleport9: true, Teleport8: true}, 2, []byte{2, 7, 8, 9}},
 		// With a rule, the set carries them.

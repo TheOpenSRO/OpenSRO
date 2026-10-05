@@ -2084,6 +2084,9 @@ func main() {
 		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
 		session.MotionHandler(hub),
+		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
+		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
+		session.NPCTalkHandler(hub, trades),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
@@ -2133,6 +2136,7 @@ func main() {
 			// from.
 			duelDisconnect(sess)
 			tradeDisconnect(sess)
+			session.ForgetNPCInteraction(sess.ID())
 			guildPointsDisconnect(sess)
 			berserkDisconnect(sess)
 			// The party removal first, then the match entry, as the
