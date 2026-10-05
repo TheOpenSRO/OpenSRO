@@ -126,6 +126,30 @@ const COL_BLOCK_MAX := 75
 const COL_MAG_DEF_MIN := 76
 const COL_MAG_DEF_MAX := 77
 
+## Round 731 (the item tooltip, docs/protocol/item_tooltip.md): the columns the
+## original's tooltip reads that this reader did not, MEASURED against real
+## rows (a Pearl Necklace reads 17.4 ~ 18.0, 0.3 in 71-73 and 79-81; a D11
+## spear 31 in 61, 9 in 158; a heavy armour 21 ~ 63 in 68-69). Rarity is
+## _RefObjCommon's column 15 (2 the seal items, 3 the set items, 6 seal).
+const COL_RARITY := 15
+const COL_REQ_STR := 59
+const COL_REQ_INT := 60
+const COL_ITEM_CLASS := 61
+const COL_SET_ID := 62
+const COL_DURABILITY_MAX := 64
+const COL_PARRY_MIN := 68
+const COL_PARRY_MAX := 69
+const COL_PHYS_ABSORB_MIN := 71
+const COL_PHYS_ABSORB_MAX := 72
+const COL_MAG_ABSORB_MIN := 79
+const COL_MAG_ABSORB_MAX := 80
+const COL_MAX_MAGIC_OPTIONS := 158
+## The per-plus increments, in PLUS_INC_* order: PD 67, ER 70, PAR 73, MD 78,
+## MAR 81, phy. atk 99, mag. atk 104, attack rate 115 (the fifth float of each
+## group; ITEM_FORMAT.md). Lane B's "(+x%)" subtracts them (item_tooltip.md §2).
+const PLUS_INC_COLS := [67, 70, 73, 78, 81, 99, 104, 115]
+enum { PLUS_INC_PD, PLUS_INC_ER, PLUS_INC_PAR, PLUS_INC_MD, PLUS_INC_MAR, PLUS_INC_PA, PLUS_INC_MA, PLUS_INC_HR }
+
 ## TypeID3 (the item family) values, index 2 of type_ids.
 const FAMILY_WEAPON := 6
 const CHINA_ARMOUR_FAMILIES := [1, 2, 3]
@@ -206,6 +230,19 @@ class Item:
 	var phys_def := Vector2.ZERO
 	var mag_def := Vector2.ZERO
 	var block := Vector2.ZERO
+	## Round 731 (the tooltip's columns, COL_RARITY.. above).
+	var rarity: int = 0
+	var item_class: int = 0
+	var set_id: int = 0
+	var durability_max: int = 0
+	var req_str: int = 0
+	var req_int: int = 0
+	var max_magic_options: int = 0
+	var parry := Vector2.ZERO
+	var phys_absorb := Vector2.ZERO
+	var mag_absorb := Vector2.ZERO
+	## PLUS_INC_COLS' values, PLUS_INC_* order.
+	var plus_incs: PackedFloat32Array = PackedFloat32Array()
 
 	func is_equipment() -> bool:
 		return model_path != ""
@@ -374,6 +411,18 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.phys_def = Vector2(_float_at(cols, COL_PHYS_DEF_MIN), _float_at(cols, COL_PHYS_DEF_MAX))
 		item.mag_def = Vector2(_float_at(cols, COL_MAG_DEF_MIN), _float_at(cols, COL_MAG_DEF_MAX))
 		item.block = Vector2(_float_at(cols, COL_BLOCK_MIN), _float_at(cols, COL_BLOCK_MAX))
+		item.rarity = _int_at(cols, COL_RARITY)
+		item.item_class = _int_at(cols, COL_ITEM_CLASS)
+		item.set_id = _int_at(cols, COL_SET_ID)
+		item.durability_max = _int_at(cols, COL_DURABILITY_MAX)
+		item.req_str = _int_at(cols, COL_REQ_STR)
+		item.req_int = _int_at(cols, COL_REQ_INT)
+		item.max_magic_options = _int_at(cols, COL_MAX_MAGIC_OPTIONS)
+		item.parry = Vector2(_float_at(cols, COL_PARRY_MIN), _float_at(cols, COL_PARRY_MAX))
+		item.phys_absorb = Vector2(_float_at(cols, COL_PHYS_ABSORB_MIN), _float_at(cols, COL_PHYS_ABSORB_MAX))
+		item.mag_absorb = Vector2(_float_at(cols, COL_MAG_ABSORB_MIN), _float_at(cols, COL_MAG_ABSORB_MAX))
+		for col in PLUS_INC_COLS:
+			item.plus_incs.append(_float_at(cols, col))
 		# A row with neither a name nor an icon tells the player nothing.
 		if item.item_name == "" and item.icon_path == "":
 			continue
@@ -418,6 +467,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var req_levels: PackedInt64Array = rows["req_levels"]
 	var attacks: PackedInt64Array = rows["attacks"]
 	var defences: PackedFloat64Array = rows["defences"]
+	# Round 731: a library from before these columns has none (all 0).
+	var ext_ints: PackedInt64Array = rows.get("ext_ints", PackedInt64Array())
+	var ext_floats: PackedFloat64Array = rows.get("ext_floats", PackedFloat64Array())
 	var m := 0
 	for i in ids.size():
 		var item := Item.new()
@@ -460,6 +512,25 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.phys_def = Vector2(defences[d], defences[d + 1])
 		item.mag_def = Vector2(defences[d + 2], defences[d + 3])
 		item.block = Vector2(defences[d + 4], defences[d + 5])
+		var e := i * 7
+		if e + 6 < ext_ints.size():
+			item.rarity = ext_ints[e]
+			item.item_class = ext_ints[e + 1]
+			item.set_id = ext_ints[e + 2]
+			item.durability_max = ext_ints[e + 3]
+			item.req_str = ext_ints[e + 4]
+			item.req_int = ext_ints[e + 5]
+			item.max_magic_options = ext_ints[e + 6]
+		var f := i * 14
+		if f + 13 < ext_floats.size():
+			item.parry = Vector2(ext_floats[f], ext_floats[f + 1])
+			item.phys_absorb = Vector2(ext_floats[f + 2], ext_floats[f + 3])
+			item.mag_absorb = Vector2(ext_floats[f + 4], ext_floats[f + 5])
+			for k in range(8):
+				item.plus_incs.append(ext_floats[f + 6 + k])
+		else:
+			for k in range(8):
+				item.plus_incs.append(0.0)
 		into[item.id] = item
 	return true
 

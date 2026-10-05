@@ -190,6 +190,8 @@ impl SrNativeTables {
                 d.set("req_levels", &ints(o.req_levels));
                 d.set("attacks", &ints(o.attacks));
                 d.set("defences", &floats(o.defences));
+                d.set("ext_ints", &ints(o.ext_ints));
+                d.set("ext_floats", &floats(o.ext_floats));
                 d
             }
             Err(f) => fallback(f),

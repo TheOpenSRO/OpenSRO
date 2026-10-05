@@ -368,7 +368,10 @@ func _canon_items(items: Dictionary) -> Dictionary:
 			it.icon_path, it.model_path, it.model_paths, it.drop_model_path, it.type_ids, it.country,
 			it.req_gender, it.req_level_types, it.req_levels, it.durability, it.phys_atk, it.mag_atk,
 			it.phys_reinforce, it.mag_reinforce, it.attack_rate, it.critical, it.attack_range,
-			it.param1, it.phys_def, it.mag_def, it.block]
+			it.param1, it.phys_def, it.mag_def, it.block, it.cash_item, it.bionic,
+			# Round 731: the tooltip's columns.
+			it.rarity, it.item_class, it.set_id, it.durability_max, it.req_str, it.req_int,
+			it.max_magic_options, it.parry, it.phys_absorb, it.mag_absorb, it.plus_incs]
 	return out
 
 ## The first place two results differ, for the FAIL line.
