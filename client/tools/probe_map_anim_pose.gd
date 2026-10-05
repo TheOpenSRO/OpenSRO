@@ -24,6 +24,10 @@ var _root: Node3D
 var _frames := 0
 var _times: PackedFloat32Array = [0.0]
 var _path := ""
+## Round 721: the `.bsk`'s stored binds (Skeleton3DBuilder.stored_world_binds)
+## and the bones the clip keys, printed beside each bone's rest and pose.
+var _binds := {}
+var _keyed := {}
 
 func _arg(flag: String) -> String:
 	for a in OS.get_cmdline_user_args():
@@ -66,6 +70,11 @@ func _initialize() -> void:
 	for track in clip.bones:
 		if not track.keyframes.is_empty():
 			key0[track.bone_name] = track.keyframes[0]
+			_keyed[track.bone_name] = true
+	var bsr := BsrReader.parse(archive.read_file(ObjectLoader.find_file(archive, _path)))
+	var bsk_entry := ObjectLoader.find_file(archive, bsr.skeleton_path)
+	if bsk_entry != null:
+		_binds = Skeleton3DBuilder.stored_world_binds(BskReader.parse(archive.read_file(bsk_entry)))
 	print("bones (%d)  rest local rot / pos | key0 rot / pos" % skeleton.get_bone_count())
 	for i in range(skeleton.get_bone_count()):
 		var name := skeleton.get_bone_name(i)
@@ -87,9 +96,22 @@ func _process(_delta: float) -> bool:
 		player.seek(t, true)
 		skeleton.force_update_all_bone_transforms()
 		print("t = %.2f s" % t)
+		# Round 721: every bone's global rest against its global pose, so a
+		# bone whose pose leaves its rest at t = 0 (a track that is not the
+		# rest's kind of value) shows by name.
+		for b in range(skeleton.get_bone_count()):
+			var stored := "-"
+			if _binds.has(skeleton.get_bone_name(b)):
+				stored = _v((_binds[skeleton.get_bone_name(b)] as Transform3D).origin)
+			print("  bone %-24s global rest %s  global pose %s  stored bind %s  keyed %s" % [skeleton.get_bone_name(b),
+				_v(skeleton.get_bone_global_rest(b).origin), _v(skeleton.get_bone_global_pose(b).origin), stored,
+				str(_keyed.has(skeleton.get_bone_name(b)))])
 		for mi in _root.find_children("*", "MeshInstance3D", true, false):
 			var m := mi as MeshInstance3D
-			if m.skin == null or m.mesh == null:
+			if m.mesh == null:
+				continue
+			if m.skin == null:
+				print("  still piece %-22s centre %s size %s" % [m.name, _v(m.mesh.get_aabb().get_center()), _v(m.mesh.get_aabb().size)])
 				continue
 			var arrays: Array = m.mesh.surface_get_arrays(0)
 			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -107,7 +129,10 @@ func _process(_delta: float) -> bool:
 					q += w * (skeleton.get_bone_global_pose(m.skin.get_bind_bone(k)) * m.skin.get_bind_pose(k) * verts[i])
 				still = still.expand(verts[i])
 				posed = AABB(q, Vector3.ZERO) if i == 0 else posed.expand(q)
-			print("  piece %-28s %5d verts  still size %s  posed size %s  posed centre %s" % [
-				m.name, verts.size(), _v(still.size), _v(posed.size), _v(posed.get_center())])
+			var bound := PackedStringArray()
+			for k in range(m.skin.get_bind_count()):
+				bound.append(skeleton.get_bone_name(m.skin.get_bind_bone(k)))
+			print("  piece %-28s %5d verts  still size %s centre %s  posed size %s  posed centre %s  bones %s" % [
+				m.name, verts.size(), _v(still.size), _v(still.get_center()), _v(posed.size), _v(posed.get_center()), ",".join(bound)])
 	quit(0)
 	return true

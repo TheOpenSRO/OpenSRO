@@ -265,6 +265,127 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 			fx._has_billboard = true
 	return fx
 
+## The glow pass's draw (round 720, AmbientParticles; READ there): every
+## node of this effect is drawn with the depth test off, and its particle
+## colours' alpha is scaled by the glow alpha. Each node gets its own copy of
+## its material, so the alpha is this effect's alone.
+func make_glow() -> void:
+	var nodes: Array = []
+	for d in _draws:
+		nodes.append(d[1])
+	for l in _links:
+		nodes.append(l[1])
+	for n in nodes:
+		var gi := n as GeometryInstance3D
+		var m := gi.material_override as ShaderMaterial
+		if m == null:
+			continue
+		var g := m.duplicate() as ShaderMaterial
+		g.shader = glow_shader(m.shader)
+		g.set_shader_parameter("glow_alpha", 0)
+		gi.material_override = g
+		_glow_materials.append(g)
+		_glow_swaps.append([gi, m, g])
+	_glow_on = true
+	set_glow_alpha(0)
+
+var _glow_materials: Array[ShaderMaterial] = []
+var _glow_swaps: Array = [] # of [GeometryInstance3D, its own material, its glow copy]
+var _glow_on := false
+var _glow_alpha := -1
+
+## Light Effect off (round 720's review, READ: with the effect manager's
+## +0x1a4 at 0, CRTModParticle::FUN_00c81450 draws the effect with the scene,
+## depth-tested and at full alpha): the nodes take their own materials back
+## and the effect shows. On: the glow copies, at the last glow alpha.
+func use_glow(on: bool) -> void:
+	if on == _glow_on or _glow_swaps.is_empty():
+		return
+	_glow_on = on
+	for sw in _glow_swaps:
+		(sw[0] as GeometryInstance3D).material_override = sw[2] if on else sw[1]
+	visible = (not on) or _glow_alpha > 0
+
+## The glow alpha, 0..255 (CEFEffect +0x4a): 0 draws nothing
+## (CRTModParticle::FUN_00c81130), 255 leaves the colours as they are. Set
+## only when it changes (round 720's review).
+func set_glow_alpha(a: int) -> void:
+	if a == _glow_alpha:
+		return
+	_glow_alpha = a
+	if not _glow_on:
+		return
+	visible = a > 0
+	for m in _glow_materials:
+		m.set_shader_parameter("glow_alpha", a)
+
+## Builds every plate, mesh and link shader with its glow twin (round 720's
+## review: the glow shader's first compile cost 75 ms on the main thread as
+## a gate's region bound). Returns the shaders made.
+static func warm_glow_shaders() -> Array[Shader]:
+	var out: Array[Shader] = []
+	for cls in ["mix", "add", "add_one", "darken", "other"]:
+		for no_cull in [false, true]:
+			for link in [false, true]:
+				var sh := _shader(cls, no_cull, link)
+				out.append(sh)
+				out.append(glow_shader(sh))
+	return out
+
+## Draws every EFP shader and its glow twin once, as tiny instanced quads in
+## front of `camera`, so their pipelines compile behind the loading screen
+## (round 720's review; AppearFade.warm's way: they free themselves after a
+## few frames). Returns how many it warms.
+static func warm(camera: Camera3D) -> int:
+	if camera == null:
+		return 0
+	var node := AppearFade.Warm.new()
+	node.name = "EfpWarm"
+	var white := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	white.fill(Color.WHITE)
+	var tex := ImageTexture.create_from_image(white)
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.01, 0.01)
+	var shaders := warm_glow_shaders()
+	for i in range(shaders.size()):
+		var m := ShaderMaterial.new()
+		m.shader = shaders[i]
+		m.set_shader_parameter("tex", tex)
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_colors = true
+		mm.use_custom_data = true
+		mm.mesh = quad
+		mm.instance_count = 1
+		mm.set_instance_transform(0, Transform3D.IDENTITY)
+		mm.set_instance_color(0, Color(1, 1, 1, 0.0))
+		mm.set_instance_custom_data(0, Color(0, 0, 1, 1))
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = m
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.position = Vector3(0.002 * i, 0.0, -1.0)
+		node.add_child(mmi)
+	camera.add_child(node)
+	return shaders.size()
+
+## `sh` with the depth test off and the glow alpha applied to the particle
+## colour (EFEffect::FUN_00c893f0 at 0x00c8affd: when the effect's alpha is
+## not 255, the colour's alpha byte becomes (a x alpha) >> 8). Cached per
+## shader.
+static func glow_shader(sh: Shader) -> Shader:
+	var key := "glow|%d" % sh.get_instance_id()
+	if _shaders.has(key):
+		return _shaders[key]
+	var code := sh.code.replace("render_mode unshaded,", "render_mode unshaded, depth_test_disabled,")
+	code = code.replace("uniform int c_op = 4;", "uniform int glow_alpha = 255;\nuniform int c_op = 4;")
+	code = code.replace("\tvec4 d = COLOR;",
+		"\tvec4 d = COLOR;\n\tif (glow_alpha < 255) d.a = floor(floor(d.a * 255.0 + 0.5) * float(glow_alpha) / 256.0) / 255.0;")
+	var g := Shader.new()
+	g.code = code
+	_shaders[key] = g
+	return g
+
 ## How many nodes draw.
 func draw_count() -> int:
 	return _draws.size() + _links.size()
@@ -442,6 +563,15 @@ func _end() -> void:
 func placed_at() -> Vector3:
 	return _placed.origin if _anchored else global_position
 
+## A turn applied at the attach point in the host's frame (round 720: an
+## object's particle mod entry with a rotation, AmbientParticles), identity
+## for every other effect.
+var follow_basis := Basis.IDENTITY
+## Placed at the bone's full transform rather than its origin (round 720's
+## review: an object's mode-0 particle entry, CRTModParticle::FUN_00c81190
+## 0xc811c5..0xc811e0 multiplies the bone's matrix by the world's).
+var follow_bone_full := false
+
 func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
 	_follow_host = host
 	_follow_bone_name = bone
@@ -486,13 +616,16 @@ func _place() -> bool:
 	var placed: Transform3D
 	if skel != null and skel.is_inside_tree():
 		var at := _follow_offset
-		if _follow_bone >= 0:
-			at += skel.get_bone_global_pose(_follow_bone).origin
-		placed = skel.global_transform * Transform3D(Basis.IDENTITY, at)
+		if follow_bone_full and _follow_bone >= 0:
+			placed = skel.global_transform * skel.get_bone_global_pose(_follow_bone) * Transform3D(follow_basis, at)
+		else:
+			if _follow_bone >= 0:
+				at += skel.get_bone_global_pose(_follow_bone).origin
+			placed = skel.global_transform * Transform3D(follow_basis, at)
 	elif _follow_host.is_inside_tree():
 		# No skeleton yet: the host's own frame, never a bare world position
 		# (review: this node is top_level once anchored).
-		placed = _follow_host.global_transform * Transform3D(Basis.IDENTITY, _follow_offset)
+		placed = _follow_host.global_transform * Transform3D(follow_basis, _follow_offset)
 	else:
 		return false
 	_placed = placed
@@ -936,6 +1069,13 @@ static func _preload_task(paths: PackedStringArray, particles: Pk2Reader) -> voi
 					_mutex.lock()
 					_mesh_arrays[mk] = arr
 					_mutex.unlock()
+
+## Whether `efp_path`'s template is decoded (or known not to decode).
+static func has_template(efp_path: String) -> bool:
+	_mutex.lock()
+	var have := _templates.has(efp_path.to_lower())
+	_mutex.unlock()
+	return have
 
 ## Waits for every preload task (tests; a world teardown).
 static func wait_preloads() -> void:
