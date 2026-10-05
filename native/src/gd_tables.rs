@@ -183,6 +183,8 @@ impl SrNativeTables {
                 d.set("ranges", &ints(o.ranges));
                 d.set("param1s", &ints(o.param1s));
                 d.set("type_ids", &ints(o.type_ids));
+                d.set("cash_items", &ints(o.cash_items));
+                d.set("bionics", &ints(o.bionics));
                 d.set("req_types", &ints(o.req_types));
                 d.set("req_levels", &ints(o.req_levels));
                 d.set("attacks", &ints(o.attacks));
