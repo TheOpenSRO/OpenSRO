@@ -98,8 +98,8 @@ func DecodeEquipmentResult(data []byte) (*EquipmentResult, error) {
 		result.Items = append(result.Items, *snap)
 	}
 	result.Durabilities = decodeDurabilityBlock(rest)
-	if len(rest) >= 2 {
-		rest = rest[2+12*len(result.Durabilities):]
+	if skip := 2 + 12*len(result.Durabilities); len(rest) >= skip {
+		rest = rest[skip:]
 		infos, err := decodeItemInfoBlock(rest)
 		if err != nil {
 			return nil, fmt.Errorf("session: decoding EquipmentResult: %w", err)
