@@ -69,12 +69,7 @@ static func _pp_parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_f
 	# order, with the keep-first rule applied here as below.
 	var rows := NativeAssets.table_rows("ui_text_rows", [data, lang_col])
 	if not rows.is_empty():
-		var tokens: PackedStringArray = rows["keys"]
-		var values: PackedStringArray = rows["values"]
-		for i in tokens.size():
-			if keep_first and table._strings.has(tokens[i]):
-				continue
-			table._strings[tokens[i]] = values[i]
+		table._strings = select_rows(rows["keys"], rows["values"], keep_first)
 		return table
 
 	# Strip UTF-16LE BOM if present (0xFF, 0xFE)
@@ -92,6 +87,8 @@ static func _pp_parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_f
 
 	var lines := full_text.split("\n")
 	ParseProfile.add("text.decode_split", _pp, data.size())
+	var tokens := PackedStringArray()
+	var values := PackedStringArray()
 	for line in lines:
 		var clean_line := line.strip_edges()
 		if clean_line.is_empty() or clean_line.begins_with("//") or clean_line.begins_with("#"):
@@ -119,19 +116,99 @@ static func _pp_parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_f
 			# the client names the hat "0").
 			val = cols[lang_col].strip_edges() if lang_col < cols.size() else ""
 
-		# The FIRST row for a key wins (round 634's review, READ): the
-		# client's loader TextStringManager 0x8cac30 -- which reads
-		# textdataname.txt's list, textuisystem, textzonename, textquest,
-		# texthelp and textevent -- inserts every row into a hash map
-		# (0x8ca120), which hands back the existing entry for a key it
-		# already holds, and the caller at 0x8cb266 ignores it. `keep_first`
-		# false keeps the old last-row rule, for the tool that lists the
-		# difference (docs/protocol/chat.md).
-		if keep_first and table._strings.has(token):
-			continue
-		table._strings[token] = val
+		tokens.append(token)
+		values.append(val)
 
+	table._strings = select_rows(tokens, values, keep_first)
 	return table
+
+## Which row of a key is kept, from every accepted row in file order (both
+## the native reader and the loop above hand their rows here).
+##
+## **The client keeps the FIRST row (READ, round 634's review, confirmed by
+## round 725's):** its loader TextStringManager 0x8cac30 -- which reads
+## textdataname.txt's list, textuisystem, textzonename, textquest, texthelp
+## and textevent -- inserts every row into a stdext::hash_map (0x8ca120, the
+## only call at 0x8cb266), which hands back the existing entry for a key it
+## already holds and never writes the value. `keep_first` false keeps the old
+## last-row rule, for the tool that lists the difference (docs/protocol/chat.md).
+##
+## **USER DECISION (2026-10-05), a departure from that rule: the stock
+## English wins in a joined table.** The archive's textuisystem.txt is two
+## whole tables, one after the other: a private server's reworded English
+## (lines 1-6955, 16 columns) and then the stock English (6956-13915, 19
+## columns); 5,167 keys are in both and 433 read differently. With keep-first
+## the binary shows the reworded block; the user's own screenshots of the
+## original show the stock wording ("Phy. atk", "Teleport to [%s]area.",
+## "Party informaiton"), and the user chose it. So when the table is joined,
+## a key's first row in the LATER table replaces the earlier one.
+## - **Joined, by structure, not by a line number** (joined_table_start):
+##   the file's opening keys appear again, in the same order, for at least
+##   JOINED_MIN_RUN rows, and at least JOINED_MIN_SHARE of the keys before
+##   that point appear again after it -- a whole table restarting. (The
+##   archive's second table repeats the first's opening 89 keys in order.) A
+##   vanilla archive with one table never restarts, and keeps every first row
+##   exactly as before; so does a file with a stray repeated key. Of the
+##   archive's text tables only textuisystem.txt is joined (round 725 census,
+##   docs/rounds/r725.md): textdata_equip&skill.txt's first key recurs after a
+##   4-row preamble, which neither rule accepts.
+## - **OURS:** a later row with no English (no usable Latin field -- 109 of
+##   the 433, Korean-only rows such as UIO_MSG_AUTOLOGIN) does not replace an
+##   English one; the earlier row stays.
+static func select_rows(tokens: PackedStringArray, values: PackedStringArray, keep_first: bool) -> Dictionary:
+	var out: Dictionary = {}
+	for i in tokens.size():
+		if keep_first and out.has(tokens[i]):
+			continue
+		out[tokens[i]] = values[i]
+	if not keep_first:
+		return out
+	var restart := joined_table_start(tokens)
+	if restart < 0:
+		return out
+	var seen_later: Dictionary = {}
+	for i in range(restart, tokens.size()):
+		var token := tokens[i]
+		if seen_later.has(token):
+			continue
+		seen_later[token] = true
+		if _is_usable(values[i]) and _has_latin_letter(values[i]):
+			out[token] = values[i]
+	return out
+
+## Of the keys before a restart, at least this share must come back after it
+## for the file to count as two joined tables (OURS thresholds, round 725:
+## the archive's textuisystem.txt has 5,167 of 5,960 and an 89-key run;
+## textdata_equip&skill.txt's preamble 1 of 4 and a 1-key run).
+const JOINED_MIN_SHARE := 0.5
+## How many of the file's opening keys must restart in order.
+const JOINED_MIN_RUN := 8
+
+## The row index where a second whole table starts, or -1: the first later
+## row carrying the file's first key, when the next JOINED_MIN_RUN keys from
+## there repeat the file's opening keys in order and at least
+## JOINED_MIN_SHARE of the keys before it appear again after it.
+static func joined_table_start(tokens: PackedStringArray) -> int:
+	if tokens.size() < 2:
+		return -1
+	var restart := -1
+	for i in range(1, tokens.size()):
+		if tokens[i] == tokens[0]:
+			restart = i
+			break
+	if restart < JOINED_MIN_RUN or restart + JOINED_MIN_RUN > tokens.size():
+		return -1
+	for j in JOINED_MIN_RUN:
+		if tokens[restart + j] != tokens[j]:
+			return -1
+	var before: Dictionary = {}
+	for i in restart:
+		before[tokens[i]] = true
+	var again: Dictionary = {}
+	for i in range(restart, tokens.size()):
+		if before.has(tokens[i]):
+			again[tokens[i]] = true
+	return restart if float(again.size()) >= JOINED_MIN_SHARE * float(before.size()) else -1
 
 ## True if a field carries real text rather than the "0" filler this file
 ## uses for "no string in this language".

@@ -7094,6 +7094,585 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-twenty-sixth round: the store's and warehouse's confirm boxes from the client's own layouts, and the retail gestures
+
+NPC GUI epic, lane B (spec: round 724, `docs/protocol/npc_gui.md` §4 and `message_box.md`). Our own
+panels (BuyConfirm, SellConfirm, DepositConfirm, WithdrawConfirm, GoldDialog) are replaced by
+`StoreMessageBox` (`client/scripts/ui/hud/store_message_box.gd`), which builds each box from
+`resinfo\ifmessagebox.txt`, `ifitemmallconfirmbuy.txt` and `ifitemmallconfirmslot.txt` under the
+defines `config\define.txt` sets. HudPanels keeps only the trigger and network functions.
+
+### The boxes (READ unless marked)
+
+| box | source | size | title | OK / Cancel | count | price |
+|---|---|---|---|---|---|---|
+| buy (pick a good up, put it on the bag) | `CItemMallConfirmBuy` "Create" + one `CIFItemMallConfirmSlot` gold row (0x7c3f70: row y 80+20, window and BG 4 +22) | 327x177, BG 295x128 | its own TITLE (ID 5) `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_BUY` at (82, h-40) / `UIIS_CTL_CANCEL` at (170, h-40) | 1, spins to the max stack | count x unit, "%I64d" |
+| sell (put a bag item on the store) | `CIFMessageBox` mode 6 (MsgBoxStoreConfirm), purpose 2 | 327x175 | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` / `UIIT_CTL_CANCEL` | a stack prefilled with its size, spins shown | P = count x unit, less ftol(P x the store's tax rate) (0x63bd60; the rate 0 until lane C, OPEN) |
+| buy back | mode 6, purpose 0x14 | 327x175 | as above | `UIIT_STT_RE_BUY_OBJECT` | spins hidden | built and tested, **not wired** (no server buy back) |
+| deposit (put a bag item on the warehouse) | mode 6, purpose 5 | 327x175 | as above | `UIIT_STT_DEPOSIT` | the held count, spins hidden; a non-stacking item hides the quantity group (0x63bc80(3)) | max(1, fee) (0x63d676), so **1**: the fee is ref +0xcc x max(1, count), plain digits (0x6b0e90 → 0x64db50, grouping argument 0); the column is unmapped and OpenSRO charges nothing (OURS) |
+| withdraw (put a stored item on the bag) | mode 6, purpose 6 | 327x175 | as above | `UIIT_STT_WITHDRAW` | spins hidden; the price label (86) and the name (79) hidden too (0x63ee85); a non-stacking item hides the quantity group | "%d" 0 (0x6b15b0) |
+| gold deposit / withdraw (the bag's / the warehouse's gold button) | mode 3 (MsgBoxStoreMoney), purpose 3 / 4 | 308x148 | as above | `UIIT_STT_DEPOSIT` / `UIIT_STT_WITHDRAW` | the amount edit, moved to (121, 66), 121x24, art stripped; opens at 0, no minimum, at most min(balance, 1,000,000,000) | NAME1 `UIIT_STT_DEPOSITMONEY` / `UIIT_STT_WITHDRAWMONEY`; IDs 8, 9, 2 and 4 ("Unit") hidden; icon `icon\mini_gold_icon.ddj` |
+
+- **Placement (READ, new this round).** Each inventory box is destroyed and recreated per open
+  (`FUN_006aef20`, `FUN_006af530`), created at 308x148 and moved by `0x798b70` to
+  (W/2 - 154, H/2 - 74); the purpose's resize keeps that corner. ConfirmBuy centres itself at its
+  final size (0x7c5d3c after the rows). `StoreMessageBox.screen_position`; 1280x720 gives (477, 272)
+  for buy and (486, 286) for the rest. The box's host window is raised when the box opens (OURS:
+  the box is a child of its window here, a window of its own in the original).
+- **The gold icon** is `icon\mini_gold_icon.ddj`, which both openers put over the purpose's
+  `interface\icon\moneyicon.ddj` (not in Media.pk2). The first version of this round read only
+  the purpose and left the icon empty (corrected, review finding 1).
+- **OURS:** the boxes are not modal (modality OPEN, `message_box.md`); an item count typed below 1
+  is held to 1; a non-stackable buy hides the spins; Sell / Deposit / Take send nothing when the
+  slot no longer holds the box's item (review finding 12).
+
+### The gestures (READ)
+
+- **Pick and drop** (retail slots take no press; `HeldIcon`, round 652): a good onto the bag opens
+  the buy box; a bag item onto the store the sell box; onto the warehouse the deposit box; a stored
+  item onto the bag the withdraw box.
+- **Ctrl+click buys with no box**: `CIFSlotWithHelpForPackage::vslot_029` 0x68a6c0, Ctrl held, the
+  store open, the count the item's max stack (+0x1c0) or 1. **Ctrl+click sells with no box**:
+  `CIFSlotWithHelp::vslot_029` 0x680fa0, the whole stack -- **except a cash item** (not bionic,
+  TypeID1 3, the CashItem bit: itemdata cols 7-9), refused with
+  `UIIT_MSG_STRGERR_CANT_QUICKSELL_CASHITEM` (0x6813f3..0x681417). 0x680fa0 also buys from the
+  store (round 631's row was right; the first version of this note called it swapped).
+- **Gold:** the warehouse's `GDR_STORAGE_BTN_MONEY` withdraws (0x6b29f0); the bag's
+  `GDR_INVENTORY_BTN_MONEY` deposits while the warehouse is open (0x6b2800 from 0x6b2e74).
+- **Retired:** our click-to-open buy box and `_quantity_move_confirm`; the GoldDialog's own panel.
+
+### Tests
+
+- `store_message_box_test.gd` (new): every box's geometry, captions, visibility, price arithmetic,
+  spins and clamping, typed counts, confirm/cancel, placement (integer halves), and the Ctrl+click
+  gestures through a recording HudPanels: ALL PASS.
+- `confirm_box_test.gd` (updated to the new boxes, `StoreBoxFixture`): ALL PASS, including the
+  live click through the viewport (round 631's crash case).
+- `remote_godot.sh check` and `tests` with `RENDER_DIR=/opt/opensro-client-r726`,
+  `GODOT_LOCK=/var/tmp/r726/lock`, on the final client tree: 617 scripts and 9 scenes ALL LOAD;
+  236 suites, 0 failing.
+
+### Live (real X input, xdotool; server built from this worktree; `/var/tmp/r726/live726.sh`)
+
+Login route, the potion seller's store, Shift+F11 for the warehouse, coordinates from the client's
+own F11 print (now also every open box's controls, `QA BOX`). Run 3 (`/var/tmp/r726/live/run3`):
+
+| step | result (client log / server gold) |
+|---|---|
+| a good onto bag slot 20 | buy box at (477, 272) 327x177, "600"; Buy → 100,001,000 → 100,000,400 |
+| Ctrl+click two goods | no box; item 15 x5000 and 10377 x500 bought (→ 47,000,400) |
+| bag item onto the store | sell box at (486, 286) 327x175, "210"; Sell → +210 |
+| Ctrl+click a bag stack | no box; slot 1 x5000 sold (→ 48,050,610) |
+| a stack onto the warehouse | deposit box, count 500, spins hidden; Deposit → storage:0 holds 10377 |
+| the stored item onto the bag | withdraw box; Take → back in bag:0 |
+| bag gold button, type 250, Deposit | gold box (486, 286) 308x148, edit 121x24 at (121, 66); stored 250 (the withdraw box's max) |
+| warehouse gold button, Take | gold withdraw box, max 250; the warehouse's Total Gold 250 → 249 (frames 14/15) |
+| a stack onto the warehouse, Cancel | box closed (snd_window_close), bag:0 still item 10377 |
+
+Run 2 found two faults, both fixed before run 3: the gold box drew under the inventory window (the
+host is now raised), and the Ctrl+click buys were refused for gold ("Could not buy: insufficient
+gold" -- 5000 x 600 > 1,000,400: the gesture was right, the test character poor).
+
+### Measured against the references (pixels; `edges.py`, dark-row probe along one column)
+
+- **Buy box vs `3Gw7Ene.png`:** reference rows from the frame's top 148: +6..8, +30, +48 (name
+  field), +101 (price field), +138 (Buy), +176 (bottom edge). Ours from 272: +6..8, +30, +48, +101,
+  +138, +176. **Identical: 327x177**, the price row at 100, the buttons at h-40. (A first
+  luma-jump probe read the reference's top as 150, i.e. 175 tall; the dark-row probe showed the top
+  border at 148.)
+- **Deposit box vs `MKtR5Kd.png`** (our sell box, the same layout and size): reference rows from
+  426: +0, +6/+7, +158, +174; ours from 286: +0, +6/+7, +158, +174. **Identical: 327x175.**
+- Position: the references' boxes are not where 0x798b70 puts them (about (343, 148) and (388, 426)
+  on 1353x823); the boxes can be moved by the player. INFERRED, not measured.
+- Visual (picture only): the reference deposit box shows "Price 1 Gold" where ours shows 0 (the
+  OURS fee above); the buy box's text, spin and buttons match.
+
+### OPEN
+
+1. Split a stack (MsgBoxDivideCount, Shift+click): not built -- OpenSRO's item move carries no
+   count. Lane C.
+2. Buy back: the box is built (purpose 0x14) but no trigger; the server has none.
+3. The drop-gold box (purpose 9, the bag's gold button with no warehouse open): not built.
+4. Ctrl+sell of an item that cannot be bought back: the original asks first
+   (`UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL`); not built. The quick-sell refusal's second test (ref
+   +0xa0 is 2 or 6, 0x8ba600) waits on that column.
+5. The deposit fee's reference column (+0xcc); the fee itself needs a server change.
+6. Modality: `0x63b5b0` registers the box in a window list (0x110f618); what that does to input
+   was not read.
+7. The store tax rate the sell box takes off (lane C; `HudPanels.shop_tax_rate` is 0).
+8. ConfirmBuy caps the count at 5 instead of the max stack when `0x8bf0d0` holds (0x7c5776); the
+   predicate is unread (review finding 14).
+9. Repair and teleport-cost boxes: the spec does not cover them.
+
+### Review fixes (`r726_review.md`)
+
+| # | finding | fix | label |
+|---|---|---|---|
+| 1 | the gold boxes had no icon | `icon\mini_gold_icon.ddj` into `GDR_MBS_STATIC_ICON` (`StoreMessageBox.GOLD_ICON`) | READ 0x6b299c / 0x6b2b68 |
+| 2 | "Unit" drawn on the gold box | `GDR_MBS_STATIC_AMOUNT` hidden | READ 0x6b28a8 |
+| 3 | the gold amount opened at 1, held to 1..balance | opens at 0, `min_count` 0, max min(balance, 1,000,000,000) (`GOLD_CAP`), both directions | READ 0x6b28c8, 0x634ff0(0), 0x6b295b / 0x6b2bb6 |
+| 4 | a non-stacking deposit / withdraw showed "Quantity 1" | `stackable` (`HudPanels.is_stack_item`: TypeID1 3, TypeID2 3, not bionic) hides EDIT_COUNT, STA_COUNT, BUY_BLACKSQUARE_6, EDIT_BG6 | READ 0x63bc80(3) |
+| 5 | several inventory boxes at once | `_open_store_box` closes SellConfirm / DepositConfirm / WithdrawConfirm / GoldDialog on the store and the warehouse first; ConfirmBuy stays separate | READ 0x6aef20 |
+| 6 | Ctrl+click quick-sold cash items | `HudPanels.is_cash_item` refuses with `UIIT_MSG_STRGERR_CANT_QUICKSELL_CASHITEM` to the system window; `ItemTableReader` (and the native reader) now read CashItem (col 7) and Bionic (col 8) | READ 0x6813f3; ref +0xa0 OPEN |
+| 7 | the deposit box showed 0 | max(1, fee): 1 | READ 0x63d676 |
+| 8 | "thousands grouping" in three docs | plain digits, grouping argument 0 | READ 0x6b100c, 0x63d39e |
+| 9 | the sell price lacked the tax term | P - ftol(P x rate), `tax_rate` from `HudPanels.shop_tax_rate` (0 until lane C) | formula READ 0x63bd60; the rate OPEN |
+| 10 | "round 631 swapped the addresses" | restored: 0x680fa0 buys and sells, ForPackage 0x68a6c0 buys | READ |
+| 11 | the count edit's style and focus | 0x80 drops Backspace for buy back / deposit / withdraw; sell, withdraw and the gold boxes focus their edit, deposit does not | READ 0x635150(0x81), 0x635030 |
+| 12 | an open box acts on a changed slot | OK checks the bag / warehouse slot still holds the item and the count | OURS |
+| 13 | stale "gold dialog" comments | rewritten | -- |
+
+Tests: `store_message_box_test.gd` gains the non-stack group (deposit, withdraw, and sell keeping
+it), the deposit floor, the sell tax, the gold prefill / no minimum / Unit, one box at a time, the
+cash refusal, and the changed-slot check; ALL PASS. `confirm_box_test.gd` ALL PASS. The native
+reader's `items` test (local cargo) checks the two new columns.
+
+**Live after the fixes** (real X input, `/var/tmp/r726/live726b.sh`, run 5; server from this
+worktree; the client's `QA BOX` print and pixel reads of the frames):
+
+| check | measured |
+|---|---|
+| the worn boots (Cotton Shoes, non-stacking) onto the warehouse | DepositConfirm 327x175 at (486, 286); price "1"; no count, "Quantity", black square or tile printed (hidden); Deposit → storage:0 |
+| the bag's gold button while that box is open | the deposit box closes, GoldDialog 308x148 at (486, 286) opens: amount "0", focused, the caret after it; "Unit" not printed; the icon rect (25, 51, 32x32) mean luma 160 / max 238 (run 2: nothing above 60) |
+| type 1000, Deposit | the edit reads "1000"; the warehouse's Total Gold 0 → 1,000 |
+| the stored boots onto the bag | WithdrawConfirm: no name, no "Price" label, no quantity group, price "0"; Take → back in bag:0, the warehouse empty |
+
+Run 4 found one more fault, fixed for run 5: Godot left the focused edit's caret before the "0"
+prefill, so typing 1000 gave 10000. The caret now goes after the text (OURS: where CIFEdit puts
+it is not read).
+
+`remote_godot.sh check` (617 scripts, 9 scenes, ALL LOAD) and `tests` (236 suites, 0 failing),
+`RENDER_DIR=/opt/opensro-client-r726`, `GODOT_LOCK=/var/tmp/r726/lock`, on the fixed tree before
+the caret change; after it, the two box suites (ALL PASS) and `check` (ALL LOAD) again.
+
+**Review** (kept beside the notes): `docs/rounds/r726_review.md` -- the gold boxes' mini_gold_icon, hidden Unit label and 0 prefill, non-stacking deposits hiding the quantity group, one box at a time, the cash-item quick-sell refusal, deposit price max(1, fee), the sell price's tax term; all fixed.
+
+No perf gate: UI only.
+
+## Seven-hundred-and-twenty-fifth round: the NPC window, the store and storage in their registry frames, the talk text, and the chaining (lane A of the NPC GUI epic)
+
+This round builds lane A of round 724's spec, `docs/protocol/npc_gui.md` §1–§3, §5 and §6.
+Labels are as in the spec: READ (exe or layout, with the address or file), MEASURED, INFERRED and
+OURS. The confirm boxes and the buy/sell gestures belong to lane B, and the opcodes to lane C. This
+round is UI only, so it runs no perf gate.
+
+### What was built
+
+#### The NPC window (READ structure, `NpcTalkView`, new)
+- **The window.** It is `GDR_NPCWINDOW`, built as a registry window from `if_npcwindow.txt`: 386x451,
+  with the `mframe_wnd_` chrome, caption and close button. Its `GDR_NW_NPCTALK` at 11,48 is the
+  `npc_conversation_window_` 8-slice.
+- **The talk box.** `NpcTalkView.compose` builds `if_npctalk.txt`'s Create inside the window, since
+  `CIF_NPCTalk::Create` (0x6fa110) loads it with itself as the parent. It holds the `com_bg_tile_d`
+  panel, the text at talk-box 23,23 (window 34,71, 302x343) and the scroll bar at 336,27. The quest
+  parchment is hidden.
+  - When the archive lacks `if_npcwindow.txt`, the old self-framed `if_npctalk.txt` window is the
+    fallback (`PANEL_FALLBACKS`).
+- **The scroll bar.** It is `HudChat.ChatScroll` (the CIFVerticalScroll), with a length of 320, READ
+  from `push 0x140` at 0x6fa1c9 into 0x65a390. One step is one line, and the wheel scrolls it too.
+- **The line pitch.** It is 18, READ from `push 0x12` at 0x6fa1e1 into 0x638c20, the chat's 14-pitch
+  setter. Wrapped lines take the same pitch, which MEASURED 18 px in `tcHCl0v.png`. The label gets
+  `line_separation` = 18 − the font's height.
+- **The title.** It is the NPC's name. The store's is too (0x704050 → the ref name, READ).
+
+#### The talk text (READ: `FUN_00700440`, `FUN_006fcd60`, `FUN_006fb630`)
+- **The greeting** is white `0xffffffff`.
+- **The tax line** is `SN_FORTRESS_SHOP_TAX` in green `0xffd6ff7e`, followed by a blank line.
+  - The fortress name comes from `textdata_object` (`SN_FORTRESS_JANGAN` → "Jangan Fortress").
+    `World3D._resolve_any_text` now also tries the object-name table, which is the only one that
+    holds it.
+  - **Which NPCs get the line, and the rate, are OURS.** `NpcTalkView.fortress_strid_for` maps
+    `_CH_` → Jangan and `_KT_` → Hotan, the two fortresses in `siegefortress.txt`, and the rate is
+    0%. The server sends no fortress data, and the original's test (`+0x18c`, `+0x800`) is unread.
+    This holds until lane C reads the message (spec OPEN 1).
+- **The menu lines** are "`%d. `" + caption:
+  - beige `0xffefdaa4` normally;
+  - orange `0xffff8a00` for the other two states (INFERRED to be hover and press; the RichTextLabel's
+    meta-hover re-renders the line);
+  - no underline (`meta_underlined = false`);
+  - "End conversation." last.
+- **The menu comes from the id set, in the spec's order.** The ids are derived client-side from the
+  tables and codenames (OURS until lane C reads them from `0xb045`).
+  - **One store line per tab group.** The line is worded by its group's `SN_STORE_*` name: READ,
+    `FUN_006fb630` walks the NPC's tab groups and `refshoptabgroup.txt` [4] is the name.
+    - `ShopReader.store_lines_for` / `tabs_for(code, tabgroup)` follow the chain refshopgroup →
+      refmappingshopgroup → refmappingshopwithtab → refshoptabgroup.
+    - The key is `shop:<TABGROUP>`, and the store opens with that group's tabs only.
+  - **Ids 2 ("Talk to this person.") and 10 ("Withdrawing Skill") are not offered.** Their
+    registrar is absent from `CGObjNPCNPC::Create` (0x4c6350; it registers no 2 or 10 through
+    `[vtable+0x164]`). So the herbalist's menu has two lines fewer than `tcHCl0v.png`'s (spec
+    OPEN 7).
+- **"Select teleport area"** replaces the menu in place (round 603's list, now in `NpcTalkView`).
+- **A gate's greeting.** `NpcServiceReader.parse_greetings` dropped every `npcchat.txt` owner that
+  is not an `NPC_` code, so a Dimensional Gate greeted with "...". The original greets with
+  `STORE_CH_GATE_BS` (`1llywhJ.png`, verbatim), so the filter is gone.
+
+#### `config\define.txt` (READ: `CGame` 0x848210 → 0x6441b0)
+- **Reading it.** `UiBuilder.archive_defines()` reads the file once from Media.pk2, once the
+  archive is open; an earlier call is not cached.
+- **Parsing it.** `UiBuilder.parse_define_txt` parses it as the client does (READ, from the
+  review). Each line is split on `=`, `"`, `,`, space and tab, and its first token is a name.
+  - Every listed name counts as defined, `NAME = 0` included.
+  - There is no comment handling, so `//` becomes a name, which is harmless.
+  - The archive's copy gives 22 names.
+- **The parser reads the same table (READ, from the review).** The layout parser's `#ifdef` reads
+  the map that `define.txt` fills, at `0xeed4e0`.
+- **The store.** It builds with those defines (`ARCHIVE_DEFINE_PANELS`, and the registry frame's
+  `archive_defines`). That selects the `RENEWAL_SHOP_SYSTEM` + `RESTORE_SOLDITEM_INSHOP` branch:
+  `CIFStoreForPackage`, 254x370, with the buy-back row.
+- **The NPC window** is marked `archive_defines` as well, but `if_npcwindow.txt`, `if_npctalk.txt`
+  and `ifstorageroom.txt` hold no `#ifdef`, so their builds are unchanged and their cache keys stay
+  plain.
+- **The only window whose build changed this round is the store.**
+
+**Census of the `#ifdef` layouts (34 `resinfo` files).** Every symbol they test is in `define.txt`
+except these four:
+
+| Symbol | Layout | Original | OpenSRO |
+|---|---|---|---|
+| `EVENT_FESTIVAL` | `ginterface.txt` | off | read (all branches) |
+| `PROVIDE_ITEM_BY_COUPON` | `ifmessagebox.txt` | off | read (all branches) |
+| `EU_QUESTWINDOW_IMPROVE_SECOND` | `ifquestslot.txt` | off | read (all branches) |
+| `APPLY_GNGWC_SYSTEM_2007` | `pstitle.txt` | off | read (all branches) |
+
+OpenSRO's difference from the original here is OPEN 11. The store's and the NPC window's registry
+entries are parsed from `ginterface.txt` with the archive defines, so that parse differs from the
+one every other registry entry gets.
+
+The other windows keep their hand-picked defines (`HudChat.LAYOUT_DEFINES`, `PANEL_DEFINES`) or
+read-all-branches. Moving them all to `define.txt` is a follow-up, since each one's build would
+change and needs its own check.
+
+#### The store and the storage
+- **The store** is `GDR_STORE` in its registry frame (254x370), titled with the NPC's name. It has:
+  - the tabs, the 6x5 grid and the page spin;
+  - the buy-back row (`UIIT_STT_RE_BUY_OBJECT` and five slots);
+  - the inventory beside it.
+- **Repair** keeps the existing READ chain: interaction 4 via the `0xb045` handler (round 514,
+  `offers_repair`). The spec leaves the visibility rule OPEN 5.
+- **The stray "Gold:" purse label is removed.** That is `_build_shop_purse`, `_update_shop_purse`
+  and their constants (OURS, spec gap 7). The shop status now goes to the system notice.
+- **The storage** is `GDR_STORAGEROOM`, titled `UIIT_STT_STORAGEROOM` "Storage". `open_storage` no
+  longer retitles it with the NPC's name.
+
+#### Two corrections from measuring the renders against the originals
+- **The store's tabs.** Their rect is READ from `CIFStoreForPackage::vslot_010`:
+  `{16 + 56 i, 0x26, 0x38, 0x18}`, written at 0x6d2d69..0x6d2d7d and passed to gwnd 0xba20b0. That
+  puts each tab at y 38, 56x24.
+  - The old build stood the texture on the grid frame's top edge, at y 36 (ours). The original
+    MEASURES 38.
+  - The caption is now white; it was beige (ours). This is READ: the create path sets no colour,
+    so the caption keeps the `CTextBoard` default `0xffffffff` (0x655b50 → 0x8b4f30 → 0x8b46d0,
+    from the review). It also measures white in `3Gw7Ene.png`.
+- **Registry window captions are white (READ).** `CIFMainFrame::vslot_010` (0x816f80) sets the
+  caption's font and alignment, never its colour, so the caption keeps the same `CTextBoard`
+  default. Nothing in the class chain calls the colour setter 0x8b2b70.
+  - It agrees with five windows in the user's original: the NPC window, the store, Inventory,
+    Storage, and the confirmation window.
+  - `HudWindow` now draws a registry window's caption white (`MAINFRAME_CAPTION_COLOUR`).
+  - Self-framed windows keep the old beige.
+  - This changes every registry-framed window's caption colour, not only lane A's.
+
+#### Chaining (spec §5)
+- **A store line** closes the NPC window, then the store opens. READ: the close goes through
+  vslot_043 0x7040b0, which plays the window-close sound (`UiSounds.window_toggled(false, …)`).
+- **The warehouse line** closes the NPC window silently (READ: `ShowWindow(0)` at 0x702438), then
+  the storage opens.
+- **The window stays** for the recall designate line, the teleport line (the list replaces the menu)
+  and the guild lines (READ, `FUN_007020c0`'s other cases).
+- **Closing the store or storage** sends nothing, as before (spec OPEN 4).
+
+#### QA hooks
+- `OPENSRO_QA_TALK="<CODE>@<tick>;..."` talks to several NPCs in one boot; a bare code means tick 30.
+  The window is titled with the NPC's name, or with the gate's structure name for a gate code.
+- `OPENSRO_QA_TALK_PICK="<n>@<tick>;close@<tick>..."` presses line n through the label's own
+  `meta_clicked` (`HudPanels.qa_press_talk_line`). `close` shuts the talk, store, storage and bag.
+
+### Tests
+- **`client/scripts/ui/hud/npc_talk_view_test.gd`** (new) covers:
+  - `define.txt` parsing;
+  - store lines from fixture tables;
+  - the menu's order and keys;
+  - the colours;
+  - the fortress mapping;
+  - the live window: 386x451; the talk box composed with the quest parts hidden; the clip at 34,71,
+    302x343; the scroll at 347,59 with length 320;
+  - no underline;
+  - greeting / tax / menu order;
+  - the pitch: font height + separation = 18, so 60 lines give 41 steps and scrolling 3 lines moves
+    the text by 54;
+  - the store at 254x370 with the buy-back slot and no `ShopPurse`, and the 317 branch without
+    defines;
+  - the storage titled from its layout and not retitled;
+  - chaining: `shop:` and storage close the window; designate, teleport and guild do not;
+  - `qa_press_talk_line`.
+- **`npc_service_reader_test.gd`:** the `services_for` signature is now 6 arguments (with
+  `store_lines`), and a gate's `npcchat` row is kept.
+- **`teleport_board_test.gd`:** finds the label by name.
+- **The full suite** ran on the box with `RENDER_DIR=/opt/opensro-client-r725
+  GODOT_LOCK=/var/tmp/r725/lock`: 236 suites, 0 failing. `check`: ALL LOAD. This lane's box directory
+  counted 616 scripts, the review's clean directory 615. The extra script was this lane's own probe,
+  `tools/zz_r725_probe.gd`, left in its synced directory; it is now deleted. The tree has 615. After
+  the review fixes, the check counts 615.
+
+### Live renders (MEASURED)
+**The run.** It was one offline boot on the render box: `/var/tmp/r725/run_npc.sh`, with
+`qa_shot.sh --region 97\168.m --radius 1 --at 1002,1020 --frames 430`.
+- **The GL path.** The run banner reads "Vulkan API 1.4.305 - Forward+ - AMD Radeon RX 7600 (RADV
+  NAVI33)". It is the GPU, not llvmpipe.
+- **The steps.** `QA_TALK` opened the herbalist at tick 60, the storage keeper at 200 and Jangan's
+  gate at 330. `QA_TALK_PICK` pressed these lines:
+
+  | Tick | Line pressed | What it did |
+  |---|---|---|
+  | 110 | herbalist line 1 | the store opened and the talk window closed |
+  | 250 | keeper line 2 | the storage opened and the talk window closed |
+  | 380 | gate line 2 | the destination list appeared |
+
+- **How it was measured.** Frames 90, 140, 230, 290, 360 and 420 were measured pixel by pixel with
+  a stdlib PNG reader. The window edges were found by the frame's own border pattern (a dark
+  (16,20,16) pixel, then (131,129,131), then (131,121,90)). The text rows are runs of pixels
+  brighter than 140, and each colour is the brightest pixel in its run. The originals were measured
+  the same way. The frames are regenerable and were deleted afterwards.
+
+| what | original (user's screenshot) | ours (render) | |
+|---|---|---|---|
+| NPC window frame | 386x451 (`tcHCl0v` x 54–439, y 109–559) | 386x451 (x 447–832, y 135–585) | equal |
+| talk-box frame inset | 11 | 11 | equal |
+| first text row from the window's top-left | +34, +73 | +34, +73 | equal |
+| row pitch (wrapped and plain) | 18 (182, 200, 218, 254, 290, 308, …) | 18 (208, 226, 244, 280, 316, 334) | equal, after the READ pitch (it was 14 before) |
+| greeting / tax / menu colour | 255,255,255 / 214,255,126 / 239,218,163 | 255,255,255 / 214,255,126 / 239,218,164 | equal (the original's 163 is a JPEG-era rounding of 0xa4 = 164) |
+| herbalist greeting wrap | 3 rows: "…almost / …herbs / to sell." | the same 3 rows | equal |
+| gate greeting (`1llywhJ`) | 5 rows, tax at +108, menu at +144 | 5 rows, tax at +108, menu at +144 | equal after the `npcchat` fix (it was "...") |
+| gate list (`hWWsCP0`) | greeting, a blank row, then the list from +108 | the same | equal; the wording differs (OPEN 8) |
+| store frame (`3Gw7Ene`) | 254x370 | 254x370 | equal |
+| store: buy-back frame / "Buy back" text / page digit | +288 / +302 / +124,+260 | +288 / +302 / +124,+260 | equal |
+| store tab top | +38 | +36 in round 724's build, **+38** now (READ rect) | equal after the fix |
+| store tab caption | white | beige before, **white** now | equal after the fix |
+| storage frame (`MKtR5Kd`) | 254x317 | 254x317 | equal |
+| storage: title / "Deposit Items" / "Total Gold" | +105,+15 / +89,+48 / +16,+290 | +106,+14 / +91,+47 / +16,+290 | within 2 px (font raster) |
+| window captions (NPC window, store, storage) | 255,255,255 | beige before, **white** now | equal after the fix |
+| glyph height | 12 rows | 11 rows | the font's raster, unchanged |
+
+**What the renders show beyond the table:**
+- **Titles** read "Herbalist Yangyun", "Storage-Keeper Wangu" and "Dimensional Gate" for the talk
+  windows. The store reads "Herbalist Yangyun" and the storage "Storage".
+- **The herbalist's menu** is "1. Purchase/ Sell recovery liquid medicine / 2. End conversation.".
+  The original also has "Talk to this person." and "Withdrawing Skill" (OPEN 2).
+- **The keeper's greeting** is "…": that is its row's text as resolved.
+- **Window positions** differ, because ours are centred (OPEN 10).
+
+### OPEN
+1. **The tax line's data.** Which message fills the fortress id and rate (`+0x800`/`+0x804`),
+   and which NPCs carry it.
+   - Ours is the codename mapping at 0% (OURS).
+   - It is wider than the original can be: it covers every `_CH_`/`_KT_` code, keepers, guild and
+     job NPCs included. The original also needs the NPC's own `+0x18c`.
+   - When lane C reads `+0x18c`, the line is restricted to it.
+2. **Ids 2 (Talk) and 10 (Withdrawing Skill)** have no registrar in `CGObjNPCNPC::Create`, so
+   OpenSRO does not offer them.
+   - **Where id 2 comes from (the review, `srgs.asm`, for lane C).** The quest classes push it
+     through the NPC's `[vtable+0x164]`:
+     - `CQSP_ALL_POTION_3::vslot_017` at 0x88ea5b (the herbalist's quest);
+     - `CQNO_WC_PRIEST3_1::vslot_017` at 0x898557;
+     - `CQNO_WC_SOLDIER_SO_1` at 0x89a36b;
+     - 0x926ed0, 0x927040, `GObjPC::FUN_0092f740` and 0x931f30.
+
+     So the server lists id 2 while the NPC is the talk target of a quest the player can take or
+     continue.
+   - **Id 10's registrar is still OPEN.**
+3. **The Repair buttons' visibility rule** (spec OPEN 5).
+4. **Whether closing the store or storage sends `0x704b`** (spec OPEN 4, lane C).
+5. **The Escape order** past its first entries (`FUN_0079d620`).
+6. **The six other NPC-window-closing kinds** in `FUN_007020c0`'s jump table (spec OPEN 2).
+7. **Buy-back:** the row is drawn, but filling and using it is lane B and C.
+8. **The box's archive is not the user's** (spec OPEN 9, relabelled by the review).
+   - `UIIT_CTL_RECALL_POSITION`, `UIIT_CTL_TELEPORT_TARGET` and `UIIT_CTL_TELEPORT_RESULT` each have
+     a 16-column row (649–651) and a 19-column row (7577–7579).
+   - The user's original shows the later rows' wording ("Designate as return/recall point", "Select
+     teleport area", "Teleport to [%s]area. [%d]gold").
+   - `UiTextTable` keeps the first, which is the client's rule (READ at 0x8cb266, and confirmed
+     by the review).
+   - The box's file is a private server's block placed before the stock table: 5,181 keys appear
+     twice, 404 of them with different English. The user's install shows the stock wording.
+   - **Closed by a USER DECISION (2026-10-05): the stock wording.** See the section at the end of
+     these notes.
+9. **The title icon.** It is present on Storage and Inventory in `MKtR5Kd.png` and absent on the
+   store in `3Gw7Ene.png`, and its source is unread (spec OPEN 10).
+10. **Window positions** (where the NPC window, store and storage first appear) are not read.
+    OpenSRO centres them.
+11. **Global `define.txt` adoption** for the 33 other `#ifdef` layouts.
+12. **The store line's red state** (`0xffff4a4a`, `FUN_006fb630`) is not modelled. It applies
+    to id 0x0f with what looks like a guild level of 2 or less, and to id 0x19 when `0x997ea0` and
+    `0x997f00` both fail. OpenSRO derives neither id, and those tests are unread, so it is
+    recorded in spec §1.
+13. **The renders ran offline.** No `--server` was used, because lane A is client-only. So the
+    store's goods are the archive's `refshopgoods` (7 for the herbalist), not the original server's
+    list, and the gold field is empty.
+
+### Review fixes (round 725's review, `docs/rounds/r725_review.md`)
+- **F1, F2:** the white registry captions and store tab captions are relabelled READ, as the
+  `CTextBoard` default.
+- **F3:** the `define.txt` → `#ifdef` link is relabelled READ, and the spec's OPEN 8 is closed.
+- **F4:** `parse_define_txt` now tokenises as the client does. The test covers `NAME = 0`, `//` and
+  quoted names.
+- **F5:** the red store line is recorded as OPEN (OPEN 12; spec §1).
+- **F6:** where id 2 comes from is added to OPEN 2 and spec OPEN 7.
+- **F7:** the tax rule's `+0x18c` note is added (OPEN 1, `fortress_strid_for`).
+- **F8:** the census table is reworded.
+- **F9:** `archive_defines()` no longer caches before the archive opens, and a test checks it.
+- **F10:** the script count is corrected.
+- **Not done here:** `UiTextTable.keep_first`; see the USER DECISION section below.
+
+### USER DECISION (2026-10-05): the stock English wording
+The coordinator relayed the decision after the review.
+- **The archive.** The box's `textuisystem.txt`, which is also the user's, is two tables joined:
+  - lines 1–6955: a private server's reworded English, 16 columns;
+  - lines 6956–13915: the stock English, 19 columns.
+  
+  The first table holds 5,960 keys and the second 6,088. 5,167 keys are in both, and 433 of those
+  read differently.
+- **The conflict.** The binary keeps the first row (READ, 0x8ca120), so with this archive it would
+  show the reworded block. The user's screenshots show the stock wording.
+
+**The implementation (`client/scripts/ui/ui_text_table.gd`):**
+- **One rule for both readers.** `UiTextTable.select_rows` decides which row of a key is kept, for
+  the native reader's rows and the GDScript loop's alike. The native reader returns rows before
+  that choice, so `native/src/core/tables.rs` needed no change.
+- **The stock row wins when the file is two joined tables.** `joined_table_start` detects that by
+  structure, not by a line number:
+  - the file's opening keys restart in order for at least 8 rows (here 89 do);
+  - at least half of the keys before the restart come back after it (here 5,167 of 5,960).
+
+  Both thresholds are OURS.
+- **A single table is unchanged.** It never restarts, so it keeps every first row exactly as
+  before, and so does a file with a stray repeated key.
+- **OURS: a stock row with no English does not replace an English one.** 109 of the 433 are
+  Korean-only stock rows, such as `UIO_MSG_AUTOLOGIN` and the DirectX checks; they keep the
+  reworded English instead of going blank.
+- **Labels.** The rule is labelled USER DECISION and a departure. The keep-first rule stays
+  documented as READ.
+
+**Census of the other text tables (box archive):**
+
+| File | Joined? | Why |
+|---|---|---|
+| `textuisystem.txt` | **yes** | the only joined one |
+| `textdata_object.txt` | no | its first key never recurs; its 382 width-16/18 duplicate pairs are not a second table |
+| `textdata_equip&skill.txt`, `textdata_equipskill.txt` | no | the first key recurs after a 4-row preamble, 1 of whose 4 keys returns; both rules reject it |
+| `textquest_*` (otherstring, queststring, speechname, speech&name) | no | no duplicate keys |
+| `textzonename.txt` | no | 10 duplicates, no restart |
+| `texthelp.txt`, `textevent.txt` | no | no duplicates |
+| `textquest.txt` | no | no service-1 rows |
+
+**The font follows the rule.** `UIC_STT_FONTNAME` is the first key of both tables: "Arial" in the
+reworded one and "Tahoma" in the stock one. So OpenSRO now asks for Tahoma.
+- **On the box** Tahoma is not installed, so the log reads "UI face 'Tahoma' … disclosed fallback
+  vplus\vfont.ttf (Arial)". The box's drawing is unchanged.
+- **On a machine with Tahoma** (Windows, CrossOver) the UI draws in Tahoma.
+- **The original's face is wider than Arial** (MEASURED on `tcHCl0v.png`, as Tahoma is wider):
+  - the herbalist's first greeting line is 286 px in the original and 279 px in OpenSRO's Arial;
+  - the tax line is 253 px against 244.
+  
+  That is a hint, not a proof.
+- **The login screen asks for the same face as the world.** It scans for only this one row, and
+  now goes through the same rule whenever the key appears more than once.
+
+**Tests:**
+- `ui_text_table_test` checks that:
+  - a joined table takes the stock row;
+  - a Korean-only stock row does not replace English;
+  - keys found in only one table keep their row;
+  - `joined_table_start` is found;
+  - `keep_first` false still keeps the last row.
+- Its NEGATIVE cases: a single table with a stray stock-shaped repeat keeps the first row, and a
+  3-key restart is not a second table.
+- `table_parity.gd` ran on the box with this lane's freshly built native library (`native/build.sh`,
+  build output only): `--only=Media.pk2`, 670 `.txt` files, **TABLE PARITY PASS**. Both readers
+  agree on `UiTextTable.parse` at columns 8, 3 and 12, with `keep_first` true and false.
+- The full suite and `check` are in the round's final commit.
+
+**Measured on a live render.** It was one offline boot on the box's GPU (`/var/tmp/r725/run_txt.sh`,
+RX 7600 Vulkan). The talk lines come from the client's own `NPCTALK` log lines:
+- The gate menu reads "1. Designate as return/recall point" and "2. Select teleport area", as
+  `1llywhJ.png` does.
+- The list reads "1. Teleport to [Donwhang]area. [5000]gold" and so on, the format `hWWsCP0.png`
+  shows (the fees are the archive's, not the private server's 100000).
+- The character panel (frame 50) reads "Phy. atk", "Phy. def.", "Phy. balance", "Hit rate",
+  "Mag. atk" and "Parry ratio", the original's wording. Those labels were read off the frame.
+- The talk box's geometry is unchanged: rows at 208/226/244/280, and the tax line is
+  214,255,126.
+
+**Review** (kept beside the notes): `docs/rounds/r725_review.md` -- no BUG or REGRESSION; white titles READ (the window text default 0xffffffff); define.txt -> layout #ifdef READ; the joined textuisystem.txt found (a private server's reworded table, then the stock one; the binary keeps the first row). **USER DECISION 2026-10-05: the stock wording wins** when the archive carries both.
+
+No perf gate: UI only.
+
+## Seven-hundred-and-twenty-fourth round: the NPC GUIs specified from the client -- the NPC window and its menu, the store and storage, the confirm boxes, and how they chain
+
+A spec round, documentation only. The user (2026-10-05) asked for the NPC GUIs fixed, as close to the
+original as possible, confirmation windows included, with an NPC window closing when the window it
+opens appears ("there might be exceptions … reference the game code"). Their screenshots are in
+`/root/opensro-handoff/npc_refs/` (ours: `rb5gAPe.jpeg`; the original: `tcHCl0v`, `1llywhJ`, `hWWsCP0`,
+`3Gw7Ene`, `MKtR5Kd`).
+
+The spec is `docs/protocol/npc_gui.md`.
+
+**Findings (READ unless marked):**
+- **The `#ifdef` defines are data.** `CGame` reads `config\define.txt` from Media.pk2 at start-up
+  (`0x848210`) and sets each listed name to 1 (`0x6441b0`, logging "`%s Value 0 => 1`").
+  - It defines `RENEWAL_SHOP_SYSTEM`, `RESTORE_SOLDITEM_INSHOP`, `EUROPE_SYSTEM`,
+    `UI_UPDATE_2009_FIRST`, `APPLY_EXCHANGE_UPDATE_1TH` and 17 more.
+  - That closes the "unreadable `#ifdef`" items in `message_box.md` and `UI_TODO.md`: the store is
+    `CIFStoreForPackage` 254x370 with the **buy-back row** (`UIIT_STT_RE_BUY_OBJECT` and 5 slots).
+  - That the layout parser reads this table is INFERRED, strongly.
+- **The NPC window** is `GDR_NPCWINDOW:CIF_NPCWindow`, a CIFMainFrame registry window (386x451,
+  `mframe_wnd_`). It holds `CIF_NPCTalk` at 11,48 with the 8-slice `npc_conversation_window_` frame,
+  a `com_bg_tile_d` panel, a CIFTextBox and a vertical scroll bar.
+- **The text:**
+  - the greeting is white;
+  - the tax line `SN_FORTRESS_SHOP_TAX` is green `0xffd6ff7e`, added only for a fortress NPC;
+  - menu lines are "`%d. `" plus the caption, beige `0xffefdaa4` with orange `0xffff8a00` for the
+    other states, and no underline;
+  - "End conversation." comes last.
+- **The menu is built from the NPC's interaction-id set**, which the server sends in `0xb045`. The
+  id → line table is in the spec: 2 Talk, 1 one line per shop group by its `SN_STORE_*` name, 3/4
+  warehouse, 5/7 recall point, 8 teleport list, 10 Withdrawing Skill, and so on. It reproduces both
+  of the user's original menus.
+- **Chaining:**
+  - a **store** line closes the NPC window first (its close sends `0x704b` while the talk box is
+    up), then sends `0x7046 {entity, 1}`;
+  - the **warehouse** line hides it, then sends `0x7046 {entity, 3}`;
+  - Talk, recall and the teleport list keep the window;
+  - the store opens titled with the NPC's name, with the inventory pane shown beside it;
+  - hiding the NPC window closes the fortress, tax and trade-info windows, not the store or storage.
+- **The storage** is titled `UIIT_STT_STORAGEROOM` "Storage" (registry Text), not the NPC's name.
+- **The confirm boxes** were already read in round 631 (`message_box.md`). `MsgBoxStoreConfirm`
+  matches the user's buy and deposit boxes.
+
+**The gap list** has 13 items, in the spec §6. The largest:
+- the talk and store windows lack their registry frames;
+- the menu comes from our heuristics, not the id set;
+- no tax line;
+- the talk window stays open;
+- the store is the wrong branch, with a stray "Gold:" label;
+- the confirm boxes are our own panels;
+- the whole NPC flow runs on OpenSRO's own opcodes.
+
+**The lane plan:**
+- A: the windows, text and chaining (client);
+- B: the confirm boxes (client);
+- C: the retail NPC protocol (server and client).
+
+**OPEN:** eight items, in the spec §7. Among them: the tax data's message, the remaining close kinds,
+what "Talk to this person" shows, the Repair rule, and which NPC offers which ids on the server.
+
+No code changed, no perf gate. The archive files extracted for reading were deleted. The decompile
+excerpts stay in `/var/tmp/r724/` on the render box for the lanes.
+
+No separate review: the spec was checked area by area by the two implementation rounds' independent reviews (r725_review.md, r726_review.md), which corrected it in place.
+
+No perf gate: UI only.
+
 ## Seven-hundred-and-twenty-third round: a gate's effects attach when its model sits in a neighbouring region
 
 The user, after v0.1.494 (2026-10-05): Samarkand and Donwhang still show no glow, with every video

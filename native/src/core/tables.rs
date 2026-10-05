@@ -717,6 +717,9 @@ const ITEM_COL_NAME_STRID: usize = 5;
 const ITEM_COL_SELL_PRICE: usize = 31;
 const ITEM_COL_MAX_STACK: usize = 57;
 const ITEM_COL_TYPE_ID1: usize = 9;
+/// CashItem and Bionic, the type word's bits 0 and 1 (characterdata.md, cols 7-12).
+const ITEM_COL_CASH_ITEM: usize = 7;
+const ITEM_COL_BIONIC: usize = 8;
 const ITEM_COL_TYPE_ID4: usize = 12;
 const ITEM_COL_COUNTRY: usize = 14;
 const ITEM_COL_REQ_LEVEL_TYPE1: usize = 32;
@@ -760,6 +763,8 @@ pub struct Items {
     pub param1s: Vec<i64>,
     /// 4 a row: TypeID1..4.
     pub type_ids: Vec<i64>,
+    pub cash_items: Vec<i64>,
+    pub bionics: Vec<i64>,
     /// 4 a row each.
     pub req_types: Vec<i64>,
     pub req_levels: Vec<i64>,
@@ -836,6 +841,8 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.max_stacks.push(if stack > 0 { stack } else { 1 });
         o.sell_prices.push(int_at(cols, ITEM_COL_SELL_PRICE));
         o.type_ids.extend((ITEM_COL_TYPE_ID1..=ITEM_COL_TYPE_ID4).map(|c| int_at(cols, c)));
+        o.cash_items.push(int_at(cols, ITEM_COL_CASH_ITEM));
+        o.bionics.push(int_at(cols, ITEM_COL_BIONIC));
         o.countries.push(int_at(cols, ITEM_COL_COUNTRY));
         o.req_genders.push(int_at(cols, ITEM_COL_REQ_GENDER));
         for pair in 0..ITEM_REQ_LEVEL_PAIRS {
@@ -1234,6 +1241,7 @@ mod tests {
         cols[53] = "xxx".into();
         cols[54] = "item\\a.ddj".into();
         cols[57] = "0".into();
+        cols[7] = "1".into();
         cols[65] = "2.5".into();
         cols[66] = "3".into();
         cols[95] = "15".into();
@@ -1252,6 +1260,8 @@ mod tests {
         assert_eq!(it.max_stacks, vec![1, 1]);
         assert_eq!(it.sell_prices, vec![427, 0]);
         assert_eq!(&it.type_ids[..4], &[1, 0, 0, 3]);
+        assert_eq!(it.cash_items, vec![1, 0]);
+        assert_eq!(it.bionics, vec![0, 0]);
         assert_eq!(&it.req_types[..4], &[1, 0, 0, 0]);
         assert_eq!(&it.req_levels[..4], &[5, 0, 0, 0]);
         assert_eq!(&it.attacks[..2], &[15, 16]);

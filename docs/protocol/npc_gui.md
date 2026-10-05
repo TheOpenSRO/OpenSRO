@@ -46,8 +46,22 @@ TRIJOB_SYSTEM_IMPROVEMENT, CHATTING_BLOCKING_SYSTEM, SIEGE_FORTRESS_SYSTEM_IMPRO
 RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
 ```
 
-- **INFERRED, strongly:** this is the defined-name table the layout parser's `#ifdef` consults. It is
-  the only define list in the archive, and every symbol the layouts test is in it.
+- **READ (round 725's review): this is the table the layout parser's `#ifdef` consults.**
+  - The parser's directive switch (`IFTVariable::FUN_00b37a30`, case 1 = `#ifdef`, from `0xb350f0`)
+    asks `IFTVariable::FUN_005004a0`. That function looks the name up in the `std::map` at
+    `0xeed4e0` (`mov ecx,0xeed4e0` at `0x500502`) and answers 0 for an absent name.
+  - The `define.txt` loader writes that same map: `0x6441b0` with `ecx = [CGame]+0x660`, and
+    `0xeece80 + 0x660 = 0xeed4e0` (`0x848355..0x8483ba`). The other callers of `0x6441b0` write
+    other maps.
+  - The parser knows only `#ifdef`, `#else` and `#endif`.
+- **How the loader reads the file (READ):**
+  - It splits each line on `=`, `"`, `,`, space and tab (`0x401070` with `0x3d`, `0x22`, `0x2c`,
+    `0x20`, `0x09` at `0x8482e4..0x848341`).
+  - The first token is a name.
+  - It forces a value of 0, or no value, to 1. So every listed name is defined, including
+    `NAME = 0`.
+  - There is no comment handling: `// Define String` defines `//`.
+  - `UiBuilder.parse_define_txt` does the same.
 - **Correction:** `message_box.md` and `UI_TODO.md` said the `RENEWAL_SHOP_SYSTEM` and
   `RESTORE_SOLDITEM_INSHOP` branches are unreadable, and that the parser's define source was not
   found. It is this file. So:
@@ -80,8 +94,22 @@ RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
 
 - **Title:** the NPC's name. INFERRED from the screenshots; the store takes the same string
   (`0x704050` → the NPC's ref name, `+0x60`, READ).
-- **MEASURED** on `tcHCl0v.png`: the window is 382 px wide, against the registry's 386. That matches
-  at a screenshot scale of about 1.
+- **The scroll bar's length (READ, round 725):** `CIF_NPCTalk::Create` sets it to **320**
+  (`push 0x140` at `0x6fa1c9` into `0x65a390` at `0x6fa1d6`, the setter the chat's 308 goes
+  through), stored at `+0x7b4`. Its parts are `ifverticalscroll.txt`'s: thumb
+  `com_scroll_button.ddj`, arrows `chattingwnd\chat_arrow_up/_down.ddj`, the up arrow at
+  `(0,-16)` (READ, the layout).
+- **The line pitch (READ, round 725):** 18. `CIF_NPCTalk::Create` calls `0x638c20(0x12)` on the
+  text box (`push 0x12` at `0x6fa1e1`), the setter the chat's 14 goes through (`0x7abeb8`). Wrapped
+  lines take the same pitch: `tcHCl0v.png`'s rows are 18 px apart, the greeting's wrapped lines
+  (187, 205, 223) and the menu's (295, 313, 331, 349) alike (MEASURED). The same Create stores 100
+  at `+0x3a0` (the chat's line cap) and 19 at `+0x3a4`. 343 / 18 rounds down to 19, so `+0x3a4` is
+  INFERRED to be the number of lines shown.
+- **MEASURED** on `tcHCl0v.png` (corrected in round 725): the window's frame runs from x 54 to 439
+  and from y 109 to 559, which is **386x451, the registry's size exactly**. Round 724's "382" was
+  read off the picture by eye. The talk box's frame is 11 px inside the window, and the first text
+  row is 34 px right of the window's left edge and 73 px below its top. OpenSRO's round 725 render
+  measures the same four numbers (`docs/rounds/r725.md`).
 
 ### The text, in order (READ: the builder `FUN_00700440`, line adder `FUN_006fcd60`)
 1. **The greeting.** From the NPC's chat record (`FUN_00938000` → `+0x20`, `+0x3c`), drawn in
@@ -97,8 +125,38 @@ RENEWAL_NEWBIE_SUPPORT, ADD_HELPWND_EXTEND
    - colour triple `0xffefdaa4`, `0xffff8a00`, `0xffff8a00`: beige (239,218,164) normally, and
      orange (255,138,0) for the other two states (INFERRED: hover and press);
    - **no underline** (none is set; MEASURED: the original screenshots show none);
-   - a store line can instead use `0xffff4a4a` (red) as its first colour, in a branch of
-     `FUN_006fb630` (INFERRED: unusable).
+   - a store line can instead use `0xffff4a4a` (red) as its first colour, with the hover still
+     `0xffff8a00`, in two branches of `FUN_006fb630` (round 725's review):
+     - the NPC offers id 0x0f and `FUN_009870d0()+5 <= 2`, apparently a guild level of 2 or less;
+     - the NPC offers id 0x19 and both `0x997ea0` and `0x997f00` fail.
+
+     **OPEN, not modelled:** OpenSRO derives neither id client-side. Nothing has read what
+     `0x997ea0` and `0x997f00` test, or what that guild-level field is (lane C). No Jangan NPC
+     rendered offers either id.
+   - **The wording of three lines differs between the box's archive and the user's client (OPEN
+     9, round 725, relabelled by its review).**
+     `textuisystem.txt` holds two rows for `UIIT_CTL_RECALL_POSITION`, `UIIT_CTL_TELEPORT_TARGET`
+     and `UIIT_CTL_TELEPORT_RESULT`: rows 649-651, 16 columns, read "Designate this region as your
+     return & recall point!", "Select a teleport area:" and "Teleport to [%s] for [%d] Gold.". Rows
+     7577-7579, 19 columns, read "Designate as return/recall point", "Select teleport area" and
+     "Teleport to [%s]area. [%d]gold". The user's original (`1llywhJ.png`, `hWWsCP0.png`) shows the
+     later rows. `UiTextTable` keeps the first row of a key, which is the client's rule.
+     - **The rule is READ** (round 634; confirmed by round 725's review).
+       - `0x8cb266` is the only call to the `stdext::hash_map` insert `0x8ca120`.
+       - On an equal key, the insert returns the existing entry and does not write.
+       - Neither the service column nor the language column selects the later row.
+     - **The box's `textuisystem.txt` is two whole tables, one after the other.**
+       - Lines 1–6955 are a private server's reworded 16-column rows.
+       - Lines 6956–13915 are the stock 19-column rows.
+       - 5,181 keys appear twice, 404 of them with different English.
+       
+       The user's original shows the stock wording on all six duplicated keys checked (three here,
+       three in the party window). So the user's install differs from the box's: either their
+       `Media.pk2` lacks the prepended block, or `vsroplus_lib.dll` patches the loader.
+     - **USER DECISION (2026-10-05): use the stock wording.** In a table joined this way the
+       stock row wins (`UiTextTable.select_rows`, round 725). It is a departure from the binary's
+       keep-first rule, which stays documented as READ. OpenSRO now shows "Designate as
+       return/recall point", "Select teleport area" and "Teleport to [%s]area. [%d]gold".
 4. **The end line,** always last: kind 0, `UIIT_STT_NPC_CHATTING_WND_TALKEND` "End conversation.". It
    is `…_TALKEND2` when interaction 0x1f is offered.
 
@@ -128,6 +186,16 @@ Ids → line kinds → text keys, in the builder's order:
 | 0x11, 0x12, 0x23, 0xc, 0x1c, 0x27, 0x29 | 0x27, 0x28, 0x3f, 0x39, 0x2a, 0x3d, 0x3e | gacha, open market, special price, …, dungeon exit | |
 | always | 0 | `UIIT_STT_NPC_CHATTING_WND_TALKEND` | "End conversation." |
 
+- **The store line's text (READ, round 725):** `FUN_006fb630` walks the NPC's shops
+  (`GlobalDataManager::FUN_00983cb0`) and inside each its tab groups (`FUN_00982760`), and for each
+  writes "`%d. `" and the group's own name (`FUN_0093fa50(group)` → `+0x24` → `FUN_008c9bb0`). The
+  name is `refshoptabgroup.txt` column 4 (`STORE_CH_POTION_GROUP1` → `SN_STORE_POTION_GROUP1`,
+  MEASURED in the archive). A shop can have two tab groups (`STORE_WC_ARMOR`), so two lines.
+- **Ids 2 and 10 have no registration in `CGObjNPCNPC::Create` (READ, round 725):** every
+  `[vtable+0x164]` (AddAvailableInteraction) call in `0x4c6350..0x4c7900` pushes one of 3, 1, 4,
+  0x20, 0xb, 0xf, 0x1e, 0xc, 0xd, 0xe, 0x18, 0x17, 0x19, 0x1b, 0x1f, 0x22, 0x23, 0x27, 0x29, 0x28,
+  0x11, 0x12 -- never 2 or 10. So "Talk to this person." and "Withdrawing Skill" come from another
+  registrar (OPEN 7); OpenSRO does not offer them until it is read (round 725).
 - The herbalist's lines in `tcHCl0v.png` (Talk / Purchase-Sell / Withdrawing Skill / End) are ids
   {2, 1, 10}.
 - The gate's lines in `1llywhJ.png` are ids {5|7, 8}.
@@ -200,6 +268,16 @@ Ids → line kinds → text keys, in the builder's order:
   | `GDR_STORE_BTN_REPAIR` / `_REPAIRALL` | 86,332 / 166,332, 76x24 | `UIIT_CTL_REPAIR` / `UIIT_CTL_REPAIR_ALL` |
 
   - The tabs are built in code (`com_short_tab_*`, x from 16 step 56; `reference_shop_system`).
+    **Their whole rect (READ, round 725)** is `{16 + 56 i, 0x26, 0x38, 0x18}` = (16 + 56 i, 38,
+    56x24). `CIFStoreForPackage::vslot_010` writes it at `0x6d2d69..0x6d2d7d` and passes it to
+    gwnd `0xba20b0`.
+    - The caption is white, READ. The create path (`0x6d2da4..0x6d2dfa`) sets only the font and
+      the alignment, so the caption keeps the `CTextBoard` default `0xffffffff` (`0x655b50` →
+      `0x8b4f30` → `0x8b46d0`).
+    - MEASURED on `3Gw7Ene.png`, agreeing: the tab's top is 38 below the window's, and its caption
+      is 255,255,255.
+    - Round 724's build had the tab 2 px higher and its caption beige. Both values were ours, and
+      both are now corrected.
   - **INFERRED from `3Gw7Ene.png`:** Repair is hidden for a non-smith store (the herbalist shows no
     Repair). **OPEN:** the code that hides it.
 - **Not part of the store:** the small two-column box at the left of `3Gw7Ene.png`. No window is
@@ -227,12 +305,12 @@ Ids → line kinds → text keys, in the builder's order:
 
 | action (retail trigger) | box | section / class | title | OK caption | price field |
 |---|---|---|---|---|---|
-| buy (drag a good onto the bag; Ctrl+click buys with no box) | `CItemMallConfirmBuy`, `ifinventory.txt` "ConfirmBuy", ID 400, 327x155, `msgbox2_window_` | | "Confirmation window" | Buy | price x count, "Gold" |
-| sell (drag onto the store) | `CIFMessageBox` mode 6 | MsgBoxStoreConfirm | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` "Sell" | |
-| buy back | mode 6, purpose 0x14 | MsgBoxStoreConfirm | "Confirmation window" | "Buy back" | |
-| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | a fee (`price*n/2` INFERRED) |
-| withdraw an item | mode 6, purpose 6 (0x11) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_WITHDRAW` "Take" | |
-| deposit / withdraw gold | mode 3, purpose 3 / 4 (0x12 / 0x13) | MsgBoxStoreMoney | "Confirmation window" | "Deposit" / "Take" | the amount; icon `moneyicon.ddj` |
+| buy (drag a good onto the bag; Ctrl+click buys with no box) | `CItemMallConfirmBuy`, `ifinventory.txt` "ConfirmBuy", ID 400, 327x155 grown to **327x177** by its gold row (`ifitemmallconfirmslot.txt`), `msgbox2_window_` | | "Confirmation window" | Buy | count x unit, "%I64d", "Gold" |
+| sell (drag onto the store) | `CIFMessageBox` mode 6, purpose 2, 327x175 | MsgBoxStoreConfirm | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` "Sell" | P = count x unit, less ftol(P x the store's tax rate) (0x63bd60), plain digits; spins shown, a stack prefilled with its size |
+| buy back | mode 6, purpose 0x14 | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_RE_BUY_OBJECT` | spins hidden |
+| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | max(1, fee), the fee ref +0xcc x max(1, count), plain digits (READ round 726 review; the column is unmapped); spins hidden; a non-stacking item hides the quantity group |
+| withdraw an item | mode 6, purpose 6 (0x11) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_WITHDRAW` "Take" | "0"; spins, the price label and the name hidden |
+| deposit / withdraw gold | mode 3, purpose 3 / 4 (0x12 / 0x13) | MsgBoxStoreMoney | "Confirmation window" | "Deposit" / "Take" | the amount, opening at 0, at most min(balance, 1,000,000,000); icon `icon\mini_gold_icon.ddj` (the openers'); "Unit" hidden |
 | split a stack (Shift+click) | mode 5 | MsgBoxDivideCount | | `UIIT_CTL_CONFIRM` | |
 
 **MsgBoxStoreConfirm** (READ, `ifmessagebox.txt`; rects in the box):
@@ -246,6 +324,10 @@ Ids → line kinds → text keys, in the builder's order:
 - buttons at 82,135 (OK) and 170,135 (`UIIS_CTL_CANCEL`), text colour (255,255,245,218).
 
 This matches `3Gw7Ene.png`'s and `MKtR5Kd.png`'s boxes.
+
+**Where they appear** (READ round 726, `message_box.md` "Where the boxes appear"): the inventory's
+boxes at the corner a 308x148 box centred on the screen has, the buy box centred at its own size.
+**Modality** is OPEN.
 
 - **The box closes itself** on OK and Cancel (READ, `message_box.md`).
 - **What retail does with an open box when its window closes** stays OPEN.
@@ -277,15 +359,29 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 | 6 | The store builds the non-renewal branch (`PANEL_DEFINES "store": []`): no buy-back row, the wrong height. The store is not in its `GDR_STORE` registry frame (254x370), so it has no frame and the title floats | A |
 | 7 | The stray "Gold: …" label under the store (`_build_shop_purse` / `_update_shop_purse`, OURS) | A (remove) |
 | 8 | The storage is titled with the NPC's name; the original's is `UIIT_STT_STORAGEROOM` "Storage" | A |
-| 9 | Our confirm boxes are our own panels (BuyConfirm, SellConfirm, DepositConfirm, WithdrawConfirm, GoldDialog), not `CIFMessageBox` / `CItemMallConfirmBuy` with their art, title, Quantity spin and captions. The party lane built `MsgBoxINIF` from `ifmessagebox.txt`, so a message-box builder exists to extend | B |
-| 10 | Buy: ours opens a box on click. Retail buys by dragging a good onto the bag (ConfirmBuy), or by Ctrl+click with no box. Sell: by dragging onto the store (mode 6, purpose 2), or Ctrl+click with no box | B |
+| 9 | ~~Our confirm boxes are our own panels~~ Round 726: `StoreMessageBox` builds them from `ifmessagebox.txt`, `ifitemmallconfirmbuy.txt` and `ifitemmallconfirmslot.txt` | B (done) |
+| 10 | ~~Buy opens a box on click~~ Round 726: pick a good up and put it on the bag (ConfirmBuy), Ctrl+click buys with no box; sell by putting a bag item on the store, Ctrl+click sells with no box. The split box (Shift+click, MsgBoxDivideCount) is not built: OpenSRO's move has no count | B (split: C) |
 | 11 | Repair buttons: shown for smiths only in ours (`_show_repair_buttons`); retail's rule is OPEN | A (keep, labelled) |
 | 12 | Protocol: ours uses its own opcodes (`OpShopList 0x0052`/`0x0053`, OpShopBuy/Sell, OpStorage* `0x0056`-`0x005d`, our NPC talk is client-only). The original uses select `0x7045`/`0xb045` (with the interaction ids), open `0x7046`/`0xb046`, end `0x704b`/`0xb04b`, and moves items with the item-move request (`FUN_007950b0`, store window `0x0f` → inventory `0x46`) | C |
 | 13 | Other windows built from layouts with `#ifdef`s use hand-picked defines (`HudChat.LAYOUT_DEFINES`, `PANEL_DEFINES`) instead of `config\define.txt` | A (store/NPC/message box now; global as a follow-up) |
 
+**After round 725** (`docs/rounds/r725.md`):
+
+- **Done:** rows 1, 2, 5, 6, 7 and 8.
+- **Row 3, lane A's part:**
+  - The menu comes from the id set, which is derived client-side (OURS).
+  - Store lines are worded by their tab groups' `SN_STORE_*` names.
+  - Talk (2) and Withdrawing Skill (10) are not offered (OPEN 7).
+- **Row 4:** the tax line shows for Jangan and Hotan NPCs and gates at 0%. Which NPCs get it comes
+  from their codenames (OURS), until lane C reads the message.
+- **Row 13:** only the store and the NPC window take `config\define.txt`.
+- **Gate greetings:** a gate's talk box now greets with its `npcchat.txt` row (`STORE_CH_GATE` →
+  `STORE_CH_GATE_BS`), as `1llywhJ.png` does. `NpcServiceReader.parse_greetings` had dropped every
+  owner that is not an `NPC_` code.
+
 ## 7. OPEN
 
-1. Which message carries a fortress NPC's tax data (talk window `+0x800` fortress id, `+0x804` rate).
+1. Which message carries a fortress NPC's tax data (talk window `+0x800` fortress id, `+0x804` rate). The sell box takes the same rate off its price (0x63bd60, round 726 review): OpenSRO uses 0 until it arrives (`HudPanels.shop_tax_rate`).
 2. Which kinds the other six NPC-window closes in the click handler belong to (jump table of
    `FUN_007020c0`).
 3. What `0x7046 {e,2}` ("Talk to this person") shows.
@@ -293,10 +389,26 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 5. The Repair buttons' visibility rule.
 6. The Escape order past its first entries (`FUN_0079d620`).
 7. Server side: which NPCs offer which interaction ids. Round 454 found the registration for ids 7, 8
-   and 9 only. Shops (1) follow `refshopgroup`, the warehouse (3/4) the `_WAREHOUSE` NPCs, talk (2)
-   and withdraw skill (10) are OPEN.
-8. Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills (INFERRED strongly,
-   §0).
+   and 9 only. Shops (1) follow `refshopgroup`, and the warehouse (3/4) the `_WAREHOUSE` NPCs.
+   - **Id 2 (talk) comes from the quest classes.** This is round 725's review, in `srgs.asm`.
+     - The quest classes push id 2 through the NPC's `[vtable+0x164]`:
+       - `CQSP_ALL_POTION_3::vslot_017` at `0x88ea5b` (the herbalist's potion quest);
+       - `CQNO_WC_PRIEST3_1::vslot_017` at `0x898557`;
+       - `CQNO_WC_SOLDIER_SO_1` at `0x89a36b`.
+     - So do `0x926ed0`, `0x927040`, `GObjPC::FUN_0092f740` and `0x931f30`.
+     - The receiving NPC being the quest's talk NPC is INFERRED from the shape of the call.
+     - So the server lists id 2 in `0xb045` while the NPC is the talk target of a quest the player
+       can take or continue. That is lane C's to send from the quest state.
+   - **Id 10's registrar is still OPEN** (withdrawing skill). No push of it was found next to a
+     `+0x164` load.
+8. ~~Whether the layout parser's `#ifdef` reads exactly the table `0x6441b0` fills.~~ **Closed, READ**
+   (round 725's review, §0: both use the map at `0xeed4e0`).
+9. ~~Which wording of the duplicated `textuisystem.txt` rows to show.~~ **Closed by a USER
+   DECISION (2026-10-05): the stock wording.** The client keeps the first row (READ). OpenSRO lets
+   the stock table's row win when the file is two joined tables (§1, the menu; round 725).
+10. The title icon. The original draws one left of the Storage and Inventory titles (`MKtR5Kd.png`)
+    but none on the store's (`3Gw7Ene.png`). `ginterface.txt` has no field for it, so its source in
+    the code is unread and OpenSRO draws none.
 
 ## Implementation lanes
 

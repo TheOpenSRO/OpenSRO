@@ -20,6 +20,10 @@ const T_MAPTAB := "server_dep\\silkroad\\textdata\\refmappingshopwithtab.txt"
 const T_TAB := "server_dep\\silkroad\\textdata\\refshoptab.txt"
 const T_GOODS := "server_dep\\silkroad\\textdata\\refshopgoods.txt"
 const T_SCRAP := "server_dep\\silkroad\\textdata\\refscrapofpackageitem.txt"
+## refshoptabgroup: [3] the tab group's code (STORE_CH_POTION_GROUP1), [4] its
+## name's string id (SN_STORE_POTION_GROUP1) -- the talk menu's store line
+## (round 725, store_lines_for).
+const T_TABGROUP := "server_dep\\silkroad\\textdata\\refshoptabgroup.txt"
 
 ## One tab of a shop: its display-name string id and the item codenames it
 ## sells, in the archive's slot order.
@@ -34,20 +38,34 @@ var _tabgroup_by_shop: Dictionary = {} # shop -> tab group
 var _tabs_by_group: Dictionary = {}    # tab group -> Array of [tab_code, name_strid], in order
 var _goods_by_tab: Dictionary = {}     # tab code -> Array of [slot, package_code]
 var _item_by_pkg: Dictionary = {}      # package code -> item codename
+## Every row kept, in file order (round 725): an NPC can run several groups, a
+## group map to several shops, a shop to several tab groups (STORE_WC_ARMOR
+## has two). The single maps above keep the last row, as before.
+var _groups_by_npc: Dictionary = {}    # NPC code (upper) -> Array of group codes
+var _shops_by_group: Dictionary = {}   # group -> Array of shops
+var _tabgroups_by_shop: Dictionary = {} # shop -> Array of tab groups
+var _tabgroup_name: Dictionary = {}    # tab group -> name string id
 
-## Parses all six tables from an open Media.pk2 (via a reader callback that
+## Parses the shop tables from an open Media.pk2 (via a reader callback that
 ## returns the raw bytes for a textdata path, or an empty array). Returns self.
 func load(read: Callable) -> ShopReader:
 	var _pp := ParseProfile.t0()
 	for r in _rows(read.call(T_SHOPGROUP)):
 		if r.size() > 4 and r[4].begins_with("NPC_"):
-			_group_by_npc[r[4].strip_edges().to_upper()] = r[3].strip_edges()
+			var npc: String = r[4].strip_edges().to_upper()
+			_group_by_npc[npc] = r[3].strip_edges()
+			_append_unique(_groups_by_npc, npc, r[3].strip_edges())
 	for r in _rows(read.call(T_MAPGROUP)):
 		if r.size() > 3:
 			_shop_by_group[r[2].strip_edges()] = r[3].strip_edges()
+			_append_unique(_shops_by_group, r[2].strip_edges(), r[3].strip_edges())
 	for r in _rows(read.call(T_MAPTAB)):
 		if r.size() > 3:
 			_tabgroup_by_shop[r[2].strip_edges()] = r[3].strip_edges()
+			_append_unique(_tabgroups_by_shop, r[2].strip_edges(), r[3].strip_edges())
+	for r in _rows(read.call(T_TABGROUP)):
+		if r.size() > 4:
+			_tabgroup_name[r[3].strip_edges()] = r[4].strip_edges()
 	for r in _rows(read.call(T_TAB)):
 		if r.size() > 5:
 			var grp: String = r[4].strip_edges()
@@ -71,15 +89,35 @@ func load(read: Callable) -> ShopReader:
 func has_shop(npc_code: String) -> bool:
 	return _group_by_npc.has(npc_code.to_upper())
 
-## The shop's tabs for an NPC codename, each with its real item codenames.
-## Empty when the NPC has no shop.
-func tabs_for(npc_code: String) -> Array:
+## The talk menu's store lines for an NPC (round 725): one per tab group of
+## each shop the NPC runs, in table order, each `{"tabgroup": code,
+## "name_strid": SN_STORE_*}`. READ: the client's store-line builder
+## FUN_006fb630 walks the NPC's shops (GlobalDataManager::FUN_00983cb0) and,
+## inside each, its tab groups (FUN_00982760), writing "%d. " and then the
+## group's own name (FUN_0093fa50(group) -> +0x24, resolved by FUN_008c9bb0);
+## refshoptabgroup's [4] is that name (SN_STORE_POTION_GROUP1 "Purchase/ Sell
+## recovery liquid medicine"). INFERRED: the walk's order is the tables' row
+## order. Empty for an NPC with no resolvable tab group.
+func store_lines_for(npc_code: String) -> Array:
 	var out: Array = []
-	var group: String = _group_by_npc.get(npc_code.to_upper(), "")
-	if group == "":
-		return out
-	var shop: String = _shop_by_group.get(group, "")
-	var tabgroup: String = _tabgroup_by_shop.get(shop, "")
+	for group in _groups_by_npc.get(npc_code.to_upper(), []):
+		for shop in _shops_by_group.get(group, []):
+			for tabgroup in _tabgroups_by_shop.get(shop, []):
+				out.append({"tabgroup": tabgroup, "name_strid": _tabgroup_name.get(tabgroup, "")})
+	return out
+
+## The shop's tabs for an NPC codename, each with its real item codenames.
+## Empty when the NPC has no shop. `tabgroup` (round 725) picks one store
+## line's tab group (store_lines_for); empty takes the NPC's last-listed one,
+## as before.
+func tabs_for(npc_code: String, tabgroup: String = "") -> Array:
+	var out: Array = []
+	if tabgroup == "":
+		var group: String = _group_by_npc.get(npc_code.to_upper(), "")
+		if group == "":
+			return out
+		var shop: String = _shop_by_group.get(group, "")
+		tabgroup = _tabgroup_by_shop.get(shop, "")
 	if tabgroup == "":
 		return out
 	for pair in _tabs_by_group.get(tabgroup, []):
@@ -95,6 +133,12 @@ func tabs_for(npc_code: String) -> Array:
 				t.item_codes.append(item)
 		out.append(t)
 	return out
+
+static func _append_unique(map: Dictionary, key: String, value: String) -> void:
+	if not map.has(key):
+		map[key] = []
+	if not (map[key] as Array).has(value):
+		(map[key] as Array).append(value)
 
 static func _rows(data: PackedByteArray) -> Array:
 	if data == null or data.is_empty():

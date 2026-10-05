@@ -92,12 +92,21 @@ const CLOSE_BUTTON_INSET := 26.0
 ## control's Text (0x8b5706). The resize slot 21 (0x817210) re-lays the three
 ## the same way (0x817170).
 ##
-## The caption's colour is not read: nothing in OnCreate sets it, and the
-## entry's FontColor goes to the frame's own text board (0x8b56d4), not the
-## caption's. It keeps the colour every window here uses (`_add_title_bar`).
+## The caption's colour is READ (round 725's review): CIFMainFrame::vslot_010
+## (0x816f80) creates the caption CIFStatic at +0x7b0 and sets its font and
+## alignment, never a colour, and every window is a CTextBoard whose
+## constructor 0x655b50 runs 0x8b4f30 -> 0x8b46d0, which writes 0xffffffff to
+## the five colour slots +0x10..+0x20 (the ones the setter 0x8b2b70 writes;
+## nothing in the CIFStatic..CIFMainFrame chain calls it). The entry's
+## FontColor goes to the frame's own text board (0x8b56d4), not the
+## caption's. So a registry window's caption is white
+## (MAINFRAME_CAPTION_COLOUR), as the user's original shows on five windows. A
+## self-framed window keeps the beige every window here used before (OURS).
 const MAINFRAME_CAPTION_X := 10.0
 const MAINFRAME_CAPTION_Y := 12.0
 const MAINFRAME_CAPTION_HEIGHT := 12.0
+## A registry window's caption colour: the CTextBoard default (READ, see above).
+const MAINFRAME_CAPTION_COLOUR := Color(1, 1, 1)
 ## The caption and drag strip are the window's width less 0x15.
 const MAINFRAME_STRIP_WIDTH_LESS := 21.0
 const MAINFRAME_DRAG_HEIGHT := 34.0
@@ -378,7 +387,8 @@ func _add_title_bar(title: String) -> void:
 		else VERTICAL_ALIGNMENT_CENTER
 	_place_title_bar(bar)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
+	bar.add_theme_color_override("font_color", MAINFRAME_CAPTION_COLOUR if registry_def != null \
+		else Color(0.93, 0.87, 0.70))
 	# The client's own UI font, so a window title doesn't sit in Godot's
 	# default face over authored artwork.
 	if _builder != null:

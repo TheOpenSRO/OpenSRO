@@ -28,6 +28,61 @@ var _window_registry_data: Variant = null
 var _window_registry_by_defines: Dictionary = {}
 var _layout_cache: Dictionary = {} # String -> UiLayoutParser.LayoutDef
 
+## The client's `#ifdef` symbol table (round 725; docs/protocol/npc_gui.md
+## §0). READ: at start-up CGame opens `config\define.txt` through the archive
+## reader (`push 0xdd3d60` at 0x848210) and writes each name it lists into the
+## std::map at [CGame]+0x660 = 0xeed4e0 (0x6441b0, 0x848355..0x8483ba), with
+## the value 0 or absent forced to 1 ("%s Value 0 => 1"). READ (round 725's
+## review): the layout parser's `#ifdef` (IFTVariable::FUN_00b37a30, case 1)
+## asks IFTVariable::FUN_005004a0, which looks the name up in that same map
+## (`mov ecx,0xeed4e0` at 0x500502) and answers 0 for an absent name. The
+## archive's copy defines 22 names, RENEWAL_SHOP_SYSTEM and
+## RESTORE_SOLDITEM_INSHOP among them.
+const DEFINE_TXT_PATH := "config\\define.txt"
+## null until read; a test may set it.
+var _archive_defines: Variant = null
+
+## The names `config\define.txt` defines, read once from the archive. Empty
+## with no archive or no file.
+func archive_defines() -> PackedStringArray:
+	if _archive_defines == null:
+		# Cached only once the archive is open, so an early call does not
+		# leave the table empty for good.
+		if _media_pk2 == null:
+			return PackedStringArray()
+		_archive_defines = PackedStringArray()
+		var entry := ObjectLoader.find_file(_media_pk2, DEFINE_TXT_PATH)
+		if entry != null:
+			_archive_defines = parse_define_txt(_media_pk2.read_file(entry))
+	return _archive_defines
+
+## The names a define.txt lists, as the client's loader reads it (READ,
+## round 725's review): each line is split on `=`, `"`, `,`, space and tab
+## (0x401070 with 0x3d, 0x22, 0x2c, 0x20, 0x09 at 0x8482e4..0x848341) and its
+## first token is a name. Every listed name is defined, `NAME = 0` included
+## (the loader forces a 0 value to 1). There is no comment handling: a
+## `// Define String` line defines the token `//`, which no layout tests.
+## Bytes are read one per character (the file is ANSI; the names are ASCII).
+## A line's trailing CR is dropped (OURS: the review measured the archive's
+## CRLF file giving the same 22 names in the client).
+static func parse_define_txt(data: PackedByteArray) -> PackedStringArray:
+	var out := PackedStringArray()
+	var token := ""
+	var first := true
+	for i in data.size() + 1:
+		var b: int = data[i] if i < data.size() else 0x0a
+		if b == 0x0a or b == 0x0d or b == 0x3d or b == 0x22 or b == 0x2c or b == 0x20 or b == 0x09:
+			if token != "" and first:
+				if not out.has(token):
+					out.append(token)
+				first = false
+			token = ""
+			if b == 0x0a:
+				first = true
+			continue
+		token += String.chr(b)
+	return out
+
 ## Loads and caches a layout file from Media.pk2 by its archive path
 ## (e.g. "resinfo\\ifinventory.txt"). Returns null if it isn't there.
 ## Loads and parses a layout. `defines` selects `#ifdef` branches (see
@@ -1422,10 +1477,15 @@ func load_texture_region(ddj_path: String, uv_lt: Vector2, uv_rb: Vector2) -> Te
 ##
 ## The box's Media.pk2 has two `UIC_STT_FONTNAME` rows: the file's FIRST
 ## line says **Arial** in the English columns, and a later row says Tahoma
-## ("굴림체" in its Korean one). The client keeps a key's first row
-## (TextStringManager 0x8cac30, UiTextTable.parse -- round 634's review), so
-## it asks GDI for Arial there; an archive whose first row says Tahoma gets
-## Tahoma. The bundled files are TaeUtum, SeUtum, Arial Rounded MT Bold
+## ("굴림체" in its Korean one). The binary keeps a key's first row
+## (TextStringManager 0x8cac30 -- round 634's review), so it would ask GDI
+## for Arial there. The later row opens the stock table that follows the
+## private server's one, and by the USER DECISION of 2026-10-05 the stock row
+## wins in such a joined table (UiTextTable.select_rows), so OpenSRO asks for
+## **Tahoma**. MEASURED, round 725: the user's original draws the herbalist's
+## first greeting line 286 px wide and the tax line 253 px, where OpenSRO's
+## Arial draws 279 and 244 -- the original's face is wider than Arial, as
+## Tahoma is (a hint, not a proof of the face). The bundled files are TaeUtum, SeUtum, Arial Rounded MT Bold
 ## (`fonts\\`) and Arial (`vplus\\vfont.ttf`); Tahoma, if named, is a
 ## Windows system font, which the real client takes from the system.
 ##
@@ -1479,8 +1539,17 @@ func _scan_face_name_row() -> String:
 	var entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textuisystem.txt")
 	if entry == null:
 		return ""
-	var text := _media_pk2.read_file(entry).get_string_from_utf16()
+	var data := _media_pk2.read_file(entry)
+	var text := data.get_string_from_utf16()
 	var at := text.find("\t" + FONT_NAME_KEY + "\t")
+	# A key written more than once goes through the table's own row rule
+	# (UiTextTable.select_rows: in a joined table the stock row wins, USER
+	# DECISION 2026-10-05), so the login screen asks for the same face as the
+	# world. Only then is the whole table parsed.
+	if at != -1 and text.find("\t" + FONT_NAME_KEY + "\t", at + 1) != -1:
+		var table := UiTextTable.parse(data)
+		var name := table.get_text(FONT_NAME_KEY, "")
+		return "" if name == FONT_NAME_KEY else name
 	while at != -1:
 		var line_start := text.rfind("\n", at) + 1
 		var line_end := text.find("\n", at)
