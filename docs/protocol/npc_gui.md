@@ -227,11 +227,11 @@ Ids → line kinds → text keys, in the builder's order:
 
 | action (retail trigger) | box | section / class | title | OK caption | price field |
 |---|---|---|---|---|---|
-| buy (drag a good onto the bag; Ctrl+click buys with no box) | `CItemMallConfirmBuy`, `ifinventory.txt` "ConfirmBuy", ID 400, 327x155, `msgbox2_window_` | | "Confirmation window" | Buy | price x count, "Gold" |
-| sell (drag onto the store) | `CIFMessageBox` mode 6 | MsgBoxStoreConfirm | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` "Sell" | |
-| buy back | mode 6, purpose 0x14 | MsgBoxStoreConfirm | "Confirmation window" | "Buy back" | |
-| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | a fee (`price*n/2` INFERRED) |
-| withdraw an item | mode 6, purpose 6 (0x11) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_WITHDRAW` "Take" | |
+| buy (drag a good onto the bag; Ctrl+click buys with no box) | `CItemMallConfirmBuy`, `ifinventory.txt` "ConfirmBuy", ID 400, 327x155 grown to **327x177** by its gold row (`ifitemmallconfirmslot.txt`), `msgbox2_window_` | | "Confirmation window" | Buy | count x unit, "%I64d", "Gold" |
+| sell (drag onto the store) | `CIFMessageBox` mode 6, purpose 2, 327x175 | MsgBoxStoreConfirm | `UIIT_STT_CONFIRM_BOX` | `UIIT_STT_SELL` "Sell" | the unit price, "%I64d"; spins shown, a stack prefilled with its size |
+| buy back | mode 6, purpose 0x14 | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_RE_BUY_OBJECT` | spins hidden |
+| deposit an item | mode 6, purpose 5 (0x10 guild) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_DEPOSIT` "Deposit" | a fee: ref +0xcc x max(1, count), grouped (READ round 726; the column is unmapped); spins hidden |
+| withdraw an item | mode 6, purpose 6 (0x11) | MsgBoxStoreConfirm | "Confirmation window" | `UIIT_STT_WITHDRAW` "Take" | "0"; spins, the price label and the name hidden |
 | deposit / withdraw gold | mode 3, purpose 3 / 4 (0x12 / 0x13) | MsgBoxStoreMoney | "Confirmation window" | "Deposit" / "Take" | the amount; icon `moneyicon.ddj` |
 | split a stack (Shift+click) | mode 5 | MsgBoxDivideCount | | `UIIT_CTL_CONFIRM` | |
 
@@ -246,6 +246,10 @@ Ids → line kinds → text keys, in the builder's order:
 - buttons at 82,135 (OK) and 170,135 (`UIIS_CTL_CANCEL`), text colour (255,255,245,218).
 
 This matches `3Gw7Ene.png`'s and `MKtR5Kd.png`'s boxes.
+
+**Where they appear** (READ round 726, `message_box.md` "Where the boxes appear"): the inventory's
+boxes at the corner a 308x148 box centred on the screen has, the buy box centred at its own size.
+**Modality** is OPEN.
 
 - **The box closes itself** on OK and Cancel (READ, `message_box.md`).
 - **What retail does with an open box when its window closes** stays OPEN.
@@ -277,8 +281,8 @@ From `rb5gAPe.jpeg`, `hud_panels.gd` and `npc_service_reader.gd`:
 | 6 | The store builds the non-renewal branch (`PANEL_DEFINES "store": []`): no buy-back row, the wrong height. The store is not in its `GDR_STORE` registry frame (254x370), so it has no frame and the title floats | A |
 | 7 | The stray "Gold: …" label under the store (`_build_shop_purse` / `_update_shop_purse`, OURS) | A (remove) |
 | 8 | The storage is titled with the NPC's name; the original's is `UIIT_STT_STORAGEROOM` "Storage" | A |
-| 9 | Our confirm boxes are our own panels (BuyConfirm, SellConfirm, DepositConfirm, WithdrawConfirm, GoldDialog), not `CIFMessageBox` / `CItemMallConfirmBuy` with their art, title, Quantity spin and captions. The party lane built `MsgBoxINIF` from `ifmessagebox.txt`, so a message-box builder exists to extend | B |
-| 10 | Buy: ours opens a box on click. Retail buys by dragging a good onto the bag (ConfirmBuy), or by Ctrl+click with no box. Sell: by dragging onto the store (mode 6, purpose 2), or Ctrl+click with no box | B |
+| 9 | ~~Our confirm boxes are our own panels~~ Round 726: `StoreMessageBox` builds them from `ifmessagebox.txt`, `ifitemmallconfirmbuy.txt` and `ifitemmallconfirmslot.txt` | B (done) |
+| 10 | ~~Buy opens a box on click~~ Round 726: pick a good up and put it on the bag (ConfirmBuy), Ctrl+click buys with no box; sell by putting a bag item on the store, Ctrl+click sells with no box. The split box (Shift+click, MsgBoxDivideCount) is not built: OpenSRO's move has no count | B (split: C) |
 | 11 | Repair buttons: shown for smiths only in ours (`_show_repair_buttons`); retail's rule is OPEN | A (keep, labelled) |
 | 12 | Protocol: ours uses its own opcodes (`OpShopList 0x0052`/`0x0053`, OpShopBuy/Sell, OpStorage* `0x0056`-`0x005d`, our NPC talk is client-only). The original uses select `0x7045`/`0xb045` (with the interaction ids), open `0x7046`/`0xb046`, end `0x704b`/`0xb04b`, and moves items with the item-move request (`FUN_007950b0`, store window `0x0f` → inventory `0x46`) | C |
 | 13 | Other windows built from layouts with `#ifdef`s use hand-picked defines (`HudChat.LAYOUT_DEFINES`, `PANEL_DEFINES`) instead of `config\define.txt` | A (store/NPC/message box now; global as a follow-up) |

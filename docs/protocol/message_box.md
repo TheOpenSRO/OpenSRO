@@ -128,10 +128,11 @@ box as a child. This client closes a window's boxes when the window closes. That
 | Action | Retail path | Box |
 |---|---|---|
 | Buy, by dragging a good onto the bag | `CIFInventory::vslot_028` 0x6b5b80 → 0x6b2570 → 0x6b24c0(1) | `ifinventory.txt` "ConfirmBuy" = `CItemMallConfirmBuy`, ID 400, 95,111,327,155, frame msgbox2_window_. Its OK (0x7c4880) sends 0x0f→0x46. |
-| Buy, by Ctrl+click on a store slot | `CIFSlotWithHelp::vslot_029` 0x680fa0 (ForPackage: 0x68a6c0) | No box. The count is the item's max stack, or 1. |
+| Buy, by Ctrl+click on a store slot | `CIFSlotWithHelpForPackage::vslot_029` 0x68a6c0: `GetKeyState(VK_CONTROL)`, the store open, target the bag (0x46) | No box. The count is the item's max stack (item +0x1c0), or 1. (Round 726 corrects round 631, which gave the sell slot's address here.) |
 | Sell, by dragging a bag item onto the store | `CIFStore::vslot_028` 0x6d1400 → 0x6b07d0 | Mode 6, purpose 2. A stack is prefilled with its size. |
-| Sell, by Ctrl+click | | No box, except that an item which cannot be bought back gets `GInterface::0x788270` with `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL`. |
-| Deposit an item | `CIFStorageRoom::vslot_028` 0x6cd350 → 0x6b0e90 | Mode 6, purpose 5 (0x10 for the guild). The price field shows a fee; the `price*n/2` rule is INFERRED. |
+| Sell, by Ctrl+click on a bag slot | `CIFSlotWithHelp::vslot_029` 0x680fa0: Ctrl, the store open, source the bag (0x46) | No box; the whole stack. An item which cannot be bought back first gets `GInterface::0x788270` with `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL`. |
+| Deposit an item | `CIFStorageRoom::vslot_028` 0x6cd350 → 0x6b0e90 | Mode 6, purpose 5 (0x10 for the guild). The price field shows a fee: the item's reference +0xcc times max(1, count), formatted by 0x64db50 (`_i64tow`, then 0x8c1350's thousands grouping) -- READ round 726; which itemdata column +0xcc is, is not mapped. |
+| Withdraw an item, the fill | 0x6b15b0 | The price edit is "%d" of 0. |
 | Withdraw an item | `CIFInventory::vslot_028` → 0x6b15b0 | Mode 6, purpose 6 (0x11 for the guild). |
 | Deposit gold | 0x6b2800 | Mode 3, purpose 3 |
 | Withdraw gold | 0x6b29f0, from 0x6cc050 | Mode 3, purpose 4 |
@@ -145,6 +146,21 @@ Rects are x,y,w,h.
 ### MsgBoxStoreConfirm: sell, deposit, withdraw
 
 `ifmessagebox.txt` lines 1141-1509. The section exists only under RENEWAL and has no `#else`.
+
+**What each purpose does to it** (READ round 726, 0x63ea80, jump table 0x63ff38 indexed by
+purpose - 1: 2 → 0x63eb8f, 5 / 0x10 → 0x63ed1f, 6 / 0x11 → 0x63edaa, 0x14 → 0x63ec3f):
+- every one resizes the box to **327x175** (`push 0xaf; push 0x147`, vslot 21 → 0x652970 SetSize
+  and 0x63b420's frame re-layout) and titles it `UIIT_STT_CONFIRM_BOX`;
+- OK is `UIIT_STT_SELL` (2), `UIIT_STT_RE_BUY_OBJECT` (0x14), `UIIT_STT_DEPOSIT` (5),
+  `UIIT_STT_WITHDRAW` (6); Cancel is `UIIT_CTL_CANCEL` in all four;
+- the spins (81 / 82) stay for sell and are hidden for buy back, deposit and withdraw;
+- withdraw also hides the price label (86, +0x898) and the name edit (79, +0x818)
+  (0x63ee85..0x63ee9f);
+- 0x63bc80(2) shows the count edit and its label; (3) hides the group.
+
+The sell fill (0x6b07d0) writes the unit price "%I64d" with no grouping into the price edit and,
+for a stack (type test `(b&2)==0 && (b&0x1c)==0xc && (b&0x60)==0x60`), shows the count prefilled
+with the stack size (FUN_008ba460).
 
 | Id | Control | Rect | Notes |
 |---|---|---|---|
@@ -196,7 +212,11 @@ In the `#else` branch, 61/62 sit at 104,200 / 203,200 and the background is 16,4
    row through `gwnd::FUN_00ba20b0`. A row's rect starts at `{0, 80, 327, 22}`; y moves +20
    before the first row and +22 before each later row. Each row adds 22 (20 for flag 0x4) to
    both the window's and background 4's height.
-3. It resizes the window and background 4 with slot 0x54 (SetSize).
+3. It resizes the window and background 4 with slot 0x54 (SetSize). The row's own controls come
+   from `resinfo\ifitemmallconfirmslot.txt` (the string at 0xdc92f8, loaded at 0x7c1f30): a
+   label (4) at 50,2,53,16, the edit (3) at 112,2,102,16 and a second label (5) at 222,2,15,16 --
+   for the gold row `UIIT_CTL_WARENETWORK_RESULT_PRICE` / "%I64d" of count x unit / `UIIT_STT_GOLD`.
+   One gold row makes the store's buy box **327x177** (background 295x128), the row at y 100.
 4. It moves **Buy (61, 0x3d) to (X+82, Y+H-40)** and **Cancel (62, 0x3e) to (X+170, Y+H-40)**
    with slot 0x98 (MoveWindow, absolute coordinates; CIFButton vtable 0xd9ec0c → 0x6529a0 →
    0xb90cf0). Asm 0x7c47ef..0x7c4871.
@@ -257,6 +277,24 @@ Unconditional.
 
 `resinfo\ifconfirmbox.txt` is **not** a confirm box: it is the global-authentication captcha.
 
+### Where the boxes appear (READ, round 726)
+
+- **The inventory's boxes** (sell, buy back, deposit, withdraw, gold) are new each time: every
+  open destroys the last (`FUN_006aef20`: 0xba0e40 on +0x390) and creates it again at
+  `{0,0,308,148}` (`FUN_006af530`), whose call to `FUN_00798b70` (0x6af59a) moves it to
+  `(screenW/2 - 308/2, screenH/2 - 148/2)` -- integer halves; 0x798b70 reads the screen from
+  `FUN_004f9cd0` +0x24/+0x28 and the box's (x, y, w, h) from +0x40 (0xb8f420; SetSize 0xb91a40
+  writes w, h to +0x48/+0x4c). The purpose's resize keeps that corner, so a 327x175 box sits 9
+  right and 13 down of true centre: at 1280x720, (486, 286).
+- **ConfirmBuy** centres itself at its final size: `0x7c5650` adds the rows (0x7c3f70 at 0x7c5c63)
+  and then calls 0x798b70 (0x7c5d3c). At 1280x720 a one-row box is at (477, 272).
+- 3Gw7Ene.png's and MKtR5Kd.png's boxes are elsewhere (a 1353x823 capture puts them at about
+  (344, 150) and (389, 427), not (513-163, 411-88) or (522, 337)); the boxes are frames the
+  player can move, and a box moved by the player is the likely reason. INFERRED: not measured.
+- **Modality: OPEN.** `0x63b5b0` stores the owner at +0x7c0 and registers the box in the global
+  window list at 0x110f618 (0xba03a0, undone at destruction by 0xb912c0); what that list does to
+  input was not read.
+
 ## Text (`textuisystem`)
 
 The English column was taken as the first Latin column, not checked against a header.
@@ -265,6 +303,7 @@ The English column was taken as the first Latin column, not checked against a he
 |---|---|
 | `UIIT_STT_CONFIRM_BOX` | Confirmation window |
 | `UIIT_STT_SELL` | Sell |
+| `UIIT_STT_RE_BUY_OBJECT` | (buy back; text not checked) |
 | `UIIT_CTL_CANCEL` / `UIIS_CTL_CANCEL` | Cancel |
 | `UIIT_CTL_CONFIRM` | Confirm |
 | `UIIT_CTL_YES` / `UIIT_CTL_NO` | Yes / No |
@@ -282,7 +321,8 @@ The English column was taken as the first Latin column, not checked against a he
 - Which mouse event `vslot_029` is. Only the Ctrl, Shift and Alt checks are read.
 - Who fills the resinfo define map at 0xeed4e0. The branch above is taken from the code.
 - The 64-bit amount fields are only partly traced.
-- The deposit fee rule.
+- Which itemdata column the deposit fee's reference +0xcc is (the rule itself is READ above).
+- The box's modality (above).
 - The triggers of the GInterface-wide reset (0x788180, 0x86dab0).
 - The NPC-talk close path.
 - The MsgBoxStore + purpose 1 path at 0x6b0b10 has no caller found by a byte scan, so it is
