@@ -12423,14 +12423,22 @@ func _qa_step() -> void:
 
 	# OPENSRO_QA_TALK="<name>" opens the NPC dialogue for a render, standing
 	# in for a click on an NPC (which a render cannot make).
-	if OS.get_environment("OPENSRO_QA_TALK") != "" and _qa_tick == 30 and _hud_panels != null:
-		# The env value is an NPC codename (e.g. NPC_CH_SMITH) so a render shows
-		# its real greeting + services; falls back to using it as a display name.
-		_load_npc_tables()
-		var code := OS.get_environment("OPENSRO_QA_TALK")
-		_talk_npc_name = code
-		_talk_npc_code = code
-		_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
+	# Round 725: "<CODE>@<tick>;<CODE>@<tick>..." talks to several in one boot
+	# (a bare code is tick 30, as before).
+	if OS.get_environment("OPENSRO_QA_TALK") != "" and _hud_panels != null:
+		for step in OS.get_environment("OPENSRO_QA_TALK").split(";", false):
+			var at := step.split("@")
+			var tick := int(at[1]) if at.size() == 2 else 30
+			if tick != _qa_tick:
+				continue
+			# The env value is an NPC codename (e.g. NPC_CH_SMITH) so a render
+			# shows its real greeting + services; falls back to using it as a
+			# display name.
+			_load_npc_tables()
+			var code: String = at[0]
+			_talk_npc_name = code
+			_talk_npc_code = code
+			_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
 
 	# OPENSRO_QA_TALK_PICK="<n>@<tick>[;<n>@<tick>...]" (round 725) presses the
 	# talk box's numbered line n at that tick, through the label's own

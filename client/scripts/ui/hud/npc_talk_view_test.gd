@@ -167,9 +167,11 @@ func _builder(defines: PackedStringArray) -> UiBuilder:
 		+ _control("GDR_NPCTALK_BGTILE", "CIFNormalTile", "20,20,324,351")))
 	var store := _control("GDR_STORE_FRAME", "CIFFrame", "9,60,236,219") \
 		+ "#ifdef RESTORE_SOLDITEM_INSHOP\n" + _control("GDR_STORE_ICON_SLOT_01", "CIFSlotWithHelp", "61,289,32,32") + "#endif\n"
-	cache["resinfo\\ifstore.txt" + "".join(defines)] = UiLayoutParser.parse(store, true, defines)
-	cache["resinfo\\ifstorageroom.txt" + "".join(defines)] = UiLayoutParser.parse(_layout(
-		_control("GDR_STORAGE_BG_CTRL", "CIFSubFrame", "9,38,236,241")), true, defines)
+	# UiBuilder.load_layout's key for a read with #ifdef selection: the path,
+	# \u0001, then the defines joined with \u0002.
+	cache["resinfo\\ifstore.txt" + "\u0001" + "\u0002".join(defines)] = UiLayoutParser.parse(_layout(store), true, defines)
+	cache["resinfo\\ifstorageroom.txt"] = UiLayoutParser.parse(_layout(
+		_control("GDR_STORAGE_BG_CTRL", "CIFSubFrame", "9,38,236,241")))
 	builder.set("_window_registry", UiLayoutParser.parse(_registry()))
 	builder.set("_window_registry_loaded", true)
 	builder.set("_window_registry_data", _registry())

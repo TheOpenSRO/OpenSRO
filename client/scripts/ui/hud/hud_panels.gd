@@ -135,11 +135,12 @@ const PANEL_DEFINES := {}
 ## RESTORE_SOLDITEM_INSHOP, so the store is CIFStoreForPackage's 254x370 with
 ## the buy-back row (READ) -- before this the store took neither branch by a
 ## guess (`PANEL_DEFINES "store": []`). if_npcwindow, if_npctalk and
-## ifstorageroom have no #ifdef; their registry entries are read the same way.
-## The other #ifdef windows keep their hand-picked defines (HudChat,
-## "exchange" below), which the archive's table also defines (round 725's
-## census, docs/rounds/r725.md).
-const ARCHIVE_DEFINE_PANELS := ["store", "npctalk", "storage"]
+## ifstorageroom have no #ifdef, so they are read as before; GDR_STORE's and
+## GDR_NPCWINDOW's registry entries take the table too (REGISTRY_FRAMES). The
+## other #ifdef windows keep their hand-picked defines (HudChat, "exchange"
+## below), which the archive's table also defines (round 725's census,
+## docs/rounds/r725.md).
+const ARCHIVE_DEFINE_PANELS := ["store"]
 
 ## A panel to build instead when its own layout does not build (round 725):
 ## the NPC talk box alone, self-framed, as before GDR_NPCWINDOW.
@@ -195,7 +196,7 @@ const PANEL_FALLBACKS := {
 const REGISTRY_FRAMES := {
 	"store": {"name": "GDR_STORE", "archive_defines": true},
 	"npctalk": {"name": "GDR_NPCWINDOW", "archive_defines": true},
-	"storage": {"name": "GDR_STORAGEROOM", "archive_defines": true},
+	"storage": {"name": "GDR_STORAGEROOM"},
 	"exchange": {"name": "GDR_EXCHANGE",
 		"defines": ["APPLY_EXCHANGE_UPDATE_1TH", "UI_UPDATE_2009_FIRST"]},
 	"system": {"name": "GDR_SYSTEM"},
