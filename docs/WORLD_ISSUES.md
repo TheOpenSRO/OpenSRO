@@ -7094,6 +7094,33 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-forty-fourth round: standing on Karakoram's frozen lake -- the .nvm floor plane
+
+The full notes are in `docs/rounds/r744.md`; the rule is in `docs/protocol/NVM_FORMAT.md`
+("PlaneTypeMap: bit 1 is a floor").
+- **The bug:** the player walked through the ice of "Karakoram Ancient Remains" (regions
+  88-92 / 124-130, ice at height 800; `/goto hotan` then `/tp -15360 3840` is 90/127 local
+  960, 960). Our walk took its ground from the heightmap alone, which is the lakebed, 260-300
+  units under the ice. The heightmaps themselves are right (`.nvm` = `.m` on all 9,409 vertices
+  checked).
+- **The original's rule (READ):** `CRTNavMeshTerrain::vslot_001` (0x004051b0) interpolates the
+  heightmap, then tests `PlaneTypeMap[row*6+col] & 2` (0x405319) for the 320-unit block. When
+  the bit is set and the block's plane height is above the ground, the plane height wins
+  (0x405333-0x405347).
+- **Census (MEASURED, all 4,704 regions):** the bit is set on exactly 955 still-surface blocks
+  (type 3: 844; type 2: 111, which are not drawn). Ordinary water, type 1 (35,045 blocks), stays
+  wadeable.
+- **Fix:**
+  - `NvmCollision.terrain_height` is used everywhere `sample_height` was: the walk, landing,
+    Ghost Walk, QA.
+  - One two-sided 320x320 collision quad per floor block (`SolidPlanes`), so clicks, the camera
+    and monster placement stop at the ice. That the click ray hits the ice is OURS.
+  - The server has no navmesh and takes positions from the client, so it is unchanged.
+- **Tests:** `nvm_collision_test` `_solid_planes` and `nav_graph_test` `_walk_on_the_ice`. With
+  the old height function swapped back in, the walk test fails 5 times at y 505.81.
+- **Gates:** box check ALL LOAD; tests "ran 245 suite(s), 0 failing". No render or perf gate (the
+  user tests it live; the added cost is one small collision shape per ice region).
+
 ## Seven-hundred-and-thirty-fifth round: other players see each other's plus (weapon glow lane B)
 
 The full notes are in `docs/rounds/r735.md` (review: `r735_review.md`).
