@@ -7190,6 +7190,69 @@ The full notes are in `docs/rounds/r738.md`; the review is `r738_review.md`. The
   - box "ran 251 suite(s), 0 failing" on the lane branch;
   - dev integration re-run below.
 
+## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
+
+The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.
+- **Template builds off the main thread:** body and item templates are built on WorkerThreadPool
+  tasks (at most 2), on bones-only scratch skeletons, and adopted onto the layout's shared skin.
+  The dressing pump follows the frame (`HITCH_TARGET_USEC` 90 ms, OURS).
+- **The crash the review found (READ, Godot 4.2.2):**
+  - GDScript `const` arrays are read-only. Reading an element copies it into one shared slot
+    (`array.cpp:84-98`), so a worker and the main thread reading one const array race unlocked
+    and corrupt the heap.
+  - Measured: 18 of 19 stress runs crashed.
+  - Fixed: 25 constants in worker-reachable code became `static var`, some already in released
+    builds (`IDLE_ANIMATION_HINTS`, `VERTEX_REC_SIZE_CANDIDATES`, the inflate tables, and others).
+  - A lint suite (`const_array_lint_test.gd`, 61 scripts) keeps it out.
+  - After the fix: 5 x 300 s stress runs, 0 crashes.
+- **Other fixes:**
+  - EquipFx keeps one master per effect file. Every weapon showing a file shows the same particles
+    at the same moment (OURS, disclosed).
+  - The driver runs after the player's pose.
+  - Templates and efp waits are never stranded.
+  - A freed-weapon guard.
+- **`FrameSplit`** (QA): READ, `TIME_PROCESS` includes the render.
+
+## Seven-hundred-and-forty-seventh round: the GPU crowd (A5) -- far players instanced and skinned in the shader
+
+The full notes are in `docs/rounds/r747.md`; the review is `r747_review.md`, and the spec
+`docs/protocol/crowd_gpu.md`.
+- **Probe (READ and MEASURED):** in Godot 4.2.2 a MultiMesh draw of a skinned mesh keeps its bone
+  indices and weights in the shader. 8 Figures drawn both ways differ in 5-14 of about 30,000
+  pixels, on silhouettes, in both Forward+ and Compatibility.
+- **CrowdGpu:**
+  - Far body parts are instances of a MultiMesh shared per (mesh, material), with a twin of the
+    body's own shader (the glow included).
+  - Bones come from a `Texture2DArray` of round 738's baked frames, in pages of 1,024 rows.
+  - Each body has a per-body texel for its transform and clip; the clip clock is the global
+    `srr_crowd_clock`.
+- **Near set (OURS):** 16 bodies, with hysteresis at 20. Bodies stay near while dressing, fading,
+  berserk, carrying an effect, casting a Detail shadow, or wearing a blended part (Roc sets, wing
+  avatars, some 11D switch items: 352 of 38,832 builds).
+- **Far bodies within 600 still play their clip sounds,** driven from the clip time without
+  posing, as retail hears everyone within 600.
+- **Switch:** `[video] gpu_crowd` (OURS, default on) for weak GPUs.
+- **Visual parity:** with the clocks frozen, A5 on vs off differs in 25-367 of 225,000 pixels by
+  more than 2.
+
+**Combined 747+748 (MEASURED, 1080p Forward+ Middle, everything on; base `daeb1b0c`):**
+
+| n | standing p50 | walking p95 (move / net) | arrival worst frame |
+|---|---|---|---|
+| 200 | 21.4 -> **8.2-8.6** ms | 38.6 -> **17.3-18.0** / 17.7-18.0 | 449 -> **54-65** ms |
+| 1000 | 92-94 -> **17.3-17.8** ms | 184 -> **62-64** / 48-53 | 470 -> **110-115** ms |
+
+- **Target at 1000:** standing 16.7 ms (0.6-1.1 over), walking p95 33 (not met), arrival 100
+  (about 10 over).
+- **Open:**
+  - the net walk's 42 ms p50 (the walk each packet starts);
+  - 3-D voice cost in walking crowds;
+  - the arrival spikes;
+  - 40 `!is_geometry_instance` errors a boot (`crowd_gpu`);
+  - the HD 630 / 4K check.
+- **Gates:** box "ran 255 suite(s), 0 failing"; `perf_gate.sh --sites jangan,reeds,cross`: SAME
+  everywhere.
+
 ## Seven-hundred-and-forty-sixth round: every characterdata part, world-axis seal effects, a whole-weapon budget
 
 The full notes are in `docs/rounds/r746.md`; the review is `r746_review.md`. This follows up round
