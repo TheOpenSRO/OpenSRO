@@ -210,8 +210,8 @@ func _test_europe() -> void:
 		and SkillDataReader.cast_clip_path("china_man", "a") == "Prim\\Ani\\Char\\China\\man\\a.ban"
 		and SkillDataReader.cast_clip_path("", "a") == "Prim\\Ani\\Char\\China\\man\\a.ban",
 		"the other bodies keep China's directories")
-	_check(SkillDataReader.tables_for_race(1) == SkillDataReader.EUROPE_SKILL_TABLES
-		and SkillDataReader.tables_for_race(0) == SkillDataReader.SKILL_TABLES, "each race reads its own tables")
+	_check(SkillDataReader.tables_for_race(1) == SkillDataReader.LEGACY_EUROPE_SKILL_TABLES
+		and SkillDataReader.tables_for_race(0) == SkillDataReader.LEGACY_SKILL_TABLES, "without an archive, each race reads its legacy cover")
 	var all := SkillDataReader.all_tables()
 	var nums: Array = []
 	for p in all:

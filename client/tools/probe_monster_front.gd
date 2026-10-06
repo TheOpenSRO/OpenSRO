@@ -82,7 +82,7 @@ func _init() -> void:
 	var names_entry := ObjectLoader.find_file(media, NpcTableReader.OBJECT_NAME_TABLE_PATH)
 	if names_entry != null:
 		names = UiTextTable.parse(media.read_file(names_entry))
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
+	for path in NpcTableReader.model_table_paths(media):
 		var entry := ObjectLoader.find_file(media, path)
 		if entry != null:
 			var bytes := media.read_file(entry)

@@ -72,7 +72,7 @@ func _open_archives() -> void:
 	_media_pk2 = Pk2Reader.open(media_path)
 	if _media_pk2 == null:
 		return
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
+	for path in NpcTableReader.model_table_paths(_media_pk2):
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry != null:
 			_bodies = NpcTableReader.parse_models_by_code(_media_pk2.read_file(entry), _bodies)

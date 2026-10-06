@@ -5033,7 +5033,8 @@ func _load_skill_catalog_for(race: int) -> void:
 	for id in MasteryReader.RACE_MASTERIES.get(race, []):
 		ids.append(int(id))
 	var datas: Array = []
-	for path in SkillDataReader.tables_for_race(race):
+	# Every part the archive's skilldata.txt names (round 746).
+	for path in SkillDataReader.tables_for_race(race, archive):
 		var e := ObjectLoader.find_file(archive, path)
 		if e != null:
 			datas.append(archive.read_file(e))

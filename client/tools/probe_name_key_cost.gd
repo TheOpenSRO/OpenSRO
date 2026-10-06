@@ -21,7 +21,7 @@ func _scan(pk2: Pk2Reader, id: int) -> Array:
 	var t := Time.get_ticks_usec()
 	var key := ""
 	var parts := 0
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
+	for path in NpcTableReader.model_table_paths(pk2):
 		var entry := ObjectLoader.find_file(pk2, path)
 		if entry == null:
 			continue
@@ -44,7 +44,7 @@ func _init() -> void:
 	var t := Time.get_ticks_usec()
 	var index := {}
 	var bytes := 0
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
+	for path in NpcTableReader.model_table_paths(pk2):
 		var entry := ObjectLoader.find_file(pk2, path)
 		if entry != null:
 			var data := pk2.read_file(entry)

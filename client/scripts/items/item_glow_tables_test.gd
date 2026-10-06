@@ -393,6 +393,10 @@ func _test_inheritance() -> void:
 		_item(21, "B_MID", "C_TOP", WEAPON),
 		_item(22, "A2", "Z_MID", WEAPON),
 		_item(23, "Z_MID", "C_TOP", WEAPON),
+		# The groups' name items (round 746: a name that is no item's code
+		# gives nothing, as in the client).
+		_item(24, "ITEM_TEST_SHIELD", "", SHIELD),
+		_item(25, "C_TOP", "", [3, 1, 1, 1]),
 	])
 	_check(t.type_of("ITEM_EVENT_T_BLADE_A") == 0, "before inherit(): only itemoption.txt's own types")
 	var added := t.inherit(items)
@@ -412,7 +416,7 @@ func _test_inheritance() -> void:
 	# A partial table, then the whole one: as the whole one alone.
 	var p := ItemGlowTables.new()
 	p.load_options(_bytes(["ITEM_T_BLADE_A\t2", "ITEM_TEST_SHIELD\t1", "ITEM_T_OWN\t4", "C_TOP\t3"]))
-	p.inherit(_rows([items[20], items[22], items[11]]))
+	p.inherit(_rows([items[20], items[22], items[11], items[10]]))
 	_check(p.type_of("A2") == 0 and p.type_of("ITEM_EVENT_T_BLADE_A") == 2, "partial: what the rows so far allow")
 	p.inherit(items)
 	var same := true
@@ -426,6 +430,15 @@ func _test_inheritance() -> void:
 	late.inherit(items)
 	late.load_options(_bytes(["ITEM_T_BLADE_A\t2"]))
 	_check(late.type_of("ITEM_EVENT_T_BLADE_A") == 2, "types loaded after the rows inherit too")
+	# Round 746 (the review's finding 3, READ: the client looks the group's
+	# name up as an item code first): a name that is a table row's code but
+	# no item's gives nothing -- until an item of that code arrives.
+	var ghost := ItemGlowTables.new()
+	ghost.load_options(_bytes(["ITEM_GHOST_BASE\t2"]))
+	ghost.inherit(_rows([_item(30, "ITEM_EVENT_GHOST", "ITEM_GHOST_BASE", WEAPON)]))
+	_check(ghost.type_of("ITEM_EVENT_GHOST") == 0, "a group named by a code no item has: no type (the client drops the name)")
+	ghost.inherit(_rows([_item(31, "ITEM_GHOST_BASE", "", WEAPON)]))
+	_check(ghost.type_of("ITEM_EVENT_GHOST") == 2, "the name's item arriving later (a fuller table): the group resolves")
 
 ## Round 740: the particle map, filled by two calls of FUN_00aa0270 (itemrare.txt,
 ## then itemoptionefp.txt), each ending with the same inheritance, the member
@@ -451,6 +464,10 @@ func _test_inherited_particles() -> void:
 		_item(13, "ITEM_EVENT_T_OWN_RARE", "ITEM_T_BLADE_A", WEAPON),
 		_item(14, "ITEM_EVENT_T_BLADE_C", "ITEM_T_BLADE_C", WEAPON),
 		_item(15, "ITEM_EVENT_T_NONE", "ITEM_T_NO_ROWS", WEAPON),
+		_item(16, "ITEM_T_BLADE_C", "", WEAPON),
+		_item(17, "ITEM_T_NO_ROWS", "", WEAPON),
+		# Round 746: a group whose name has particle rows but is no item.
+		_item(18, "ITEM_EVENT_T_GHOST", "ITEM_EVENT_T_OWN_RARE_GHOST", WEAPON),
 	])
 	t.inherit(items)
 	_check(t.particle_rows("ITEM_EVENT_T_BLADE_A", 0).size() == 1 and t.particle_rows("ITEM_EVENT_T_BLADE_A", 9).size() == 3,
@@ -465,6 +482,10 @@ func _test_inherited_particles() -> void:
 		"a base with only an itemoptionefp row: its member inherits at the second call")
 	_check(t.particle_rows("ITEM_EVENT_T_NONE", 9).is_empty(), "an Org item with no rows gives none")
 	_check(t.inherited_particles == 3, "3 items gained a particle list (%d)" % t.inherited_particles)
+	var g2 := ItemGlowTables.new()
+	g2.load_particles(_bytes(["ITEM_NOT_AN_ITEM\tsystem\\x.efp\t130\tai_end\tnone"]))
+	g2.inherit(_rows([_item(40, "ITEM_EVENT_MEMBER", "ITEM_NOT_AN_ITEM", WEAPON)]))
+	_check(g2.particle_rows("ITEM_EVENT_MEMBER", 0).is_empty(), "particles: a group named by a code no item has gives no list (round 746)")
 
 ## Round 734's review, F8: the glow's clock is a script accumulator wrapped at
 ## a whole number of every pulse cycle, not TIME (whose 3600 s rollover cut

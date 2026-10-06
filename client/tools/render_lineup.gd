@@ -42,7 +42,7 @@ func _initialize() -> void:
 
 	# Body code -> .bsr, resolved from Media's character table (as World3D does).
 	var bodies := {}
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
+	for path in NpcTableReader.model_table_paths(media):
 		var entry := ObjectLoader.find_file(media, path)
 		if entry != null:
 			bodies = NpcTableReader.parse_models_by_code(media.read_file(entry), bodies)

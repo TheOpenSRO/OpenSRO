@@ -25,11 +25,15 @@ class_name EquipFx
 ## **What this changes against retail, all OURS:**
 ## - every weapon with the same effect shows the same particles, in step;
 ## - the particles follow the bone rigidly. Retail simulates each effect in
-##   world space with the host's motion as its placement, so a particle that
-##   does not follow the effect stays behind. Every node of the 16 enchant
-##   files follows its parent in position, orbit and rotation (u2 = u3 = u6
-##   = 1 at every depth, MEASURED round 741), so for them rigid IS retail's
-##   motion; only an effect with a free node would differ;
+##   world space with the host's motion as its placement. Every node of the
+##   74 equipment files follows its parent in position and orbit (MEASURED,
+##   rounds 741 and its review), so rigid is retail's motion -- EXCEPT for a
+##   command whose vector or rotation is along the WORLD's axes (round 746,
+##   world_commands: SetConeVel space 0, SetRVelocity, a per-axis
+##   SetSpherePos; 35 of the 74 files, client/tools/census_equip_world.gd).
+##   Turned with the holder, those point along the bone. So such an effect's
+##   OWN_BUDGET nearest hosts run their own world-space simulation (the
+##   per-weapon path); beyond them it draws the shared master turned (OURS);
 ## - a budget: only the VISIBLE_BUDGET weapons nearest the camera within
 ##   MAX_DISTANCE and inside the view (or within ALWAYS_NEAR of it, in view
 ##   or not) show their particles, re-chosen every RESELECT_FRAMES frames
@@ -44,6 +48,15 @@ class_name EquipFx
 
 const MAX_DISTANCE := 800.0
 const VISIBLE_BUDGET := 64
+## Round 746 (OURS): how many WEAPONS carrying a world-axis effect (Kind.own),
+## nearest the camera, run those effects on their own world-space simulation,
+## as retail does; the rest draw the shared master turned with their bone. A
+## per-weapon simulation costs about 0.17 ms a frame (round 734's profile: 6.8
+## ms for 40), and a weapon carries at most 3 world-axis effects (a Nova bow
+## or shield: _02 and _03; MEASURED, census_equip_world.gd), so 4 weapons
+## bound it near 2 ms -- the player's own weapon and its neighbours, where the
+## difference shows.
+const OWN_BUDGET := 4
 const RESELECT_FRAMES := 10
 ## A weapon this close to the camera shows its effect even outside the view
 ## (OURS: so an effect larger than its host does not drop when the host's
@@ -61,12 +74,25 @@ class Host:
 	var key: String
 	var scale: float
 	var holder: EfpEffect = null
+	## A world-axis kind's own simulation (Kind.own), while this host is
+	## among the OWN_BUDGET nearest; then `holder` is hidden.
+	var own_fx: EfpEffect = null
+	## Its distance from the camera at the last scan.
+	var dist := 0.0
 	## The cycle that last chose it (_finish_cycle).
 	var shown_cycle := -1
 
 class Kind:
 	var key: String
 	var master: EfpEffect
+	## Round 746 (the review's finding 1): an effect with a world-axis
+	## command (world_commands > 0). The OWN_BUDGET nearest of its shown
+	## hosts run their own EfpEffect on the per-weapon path, simulated in the
+	## world with the bone's frame as its placement, as retail does; the rest
+	## draw the shared master, turned (OURS: the departure the review found,
+	## kept only beyond the nearest weapons). `efp` is its file.
+	var own := false
+	var efp := ""
 	var active := 0
 	var idle := 0
 	## Hosts registered with this effect, shown or not.
@@ -180,6 +206,9 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 		var k := Kind.new()
 		k.key = key
 		k.master = m
+		k.efp = efp
+		var tmpl := EfpEffect.template_for(efp, archive)
+		k.own = tmpl != null and world_commands(tmpl) > 0
 		_kinds[key] = k
 	var h := Host.new()
 	h.id = id
@@ -207,9 +236,77 @@ func _drop(id: String) -> void:
 	var h: Host = _hosts[id]
 	if h.holder != null and is_instance_valid(h.holder):
 		h.holder.queue_free()
+	if h.own_fx != null and is_instance_valid(h.own_fx):
+		h.own_fx.queue_free()
 	if _kinds.has(h.key):
 		(_kinds[h.key] as Kind).hosts -= 1
 	_hosts.erase(id)
+
+## A host's own effect for a world-space kind (Kind.own, round 746): the
+## per-weapon path, as round 734 built it before EquipFx -- EfpEffect.create,
+## kept (the row's `1`, READ), at the row's scale (CEFEffect::vslot_010, READ),
+## placed every frame at the bone's whole frame (follow_bone_full: READ,
+## CRTModParticle::FUN_00c81190) and simulated in a space that does not turn
+## with it, so a space-0 vector points along the world's axes as in retail.
+func _own_holder(h: Host, k: Kind) -> EfpEffect:
+	var fx: EfpEffect = own_factory.call(k.efp) if own_factory.is_valid() else EfpEffect.create(k.efp, particles)
+	if fx == null:
+		return null
+	fx.name = "EquipFxOwn"
+	fx.set_meta(EquipGlow.FX_META, true)
+	fx.loop = true
+	fx.auto_free = false
+	fx.effect_scale = h.scale
+	fx.follow_bone_full = true
+	h.skel.add_child(fx)
+	fx.follow_host(h.skel, h.skel.get_bone_name(h.bone), Vector3.ZERO)
+	return fx
+
+## Tests only: makes an own simulation's effect from its file name instead of
+## the archive.
+static var own_factory := Callable()
+
+## How many of a template's commands take a vector or a rotation along the
+## WORLD's axes (round 746, the review's finding 1; rules READ, EFP_FORMAT.md
+## "What the space selects"): a position command with r = 0 (space < 3:
+## SetPosition, SetConePos, SetBANPos), a velocity, cone velocity, force or
+## cone force with space 0 (no frame), SetRotation / SetBANRot with space 0
+## (an absolute rotation), any SetRVelocity (applied after the rotation, in
+## the outer frame), and a SetSpherePos whose scale differs per axis (a
+## world-axis ellipsoid; space 0 always). A zero vector counts for nothing.
+## Such an effect cannot be simulated once and turned per holder.
+static func world_commands(t: EfpSim.Template) -> int:
+	var n := 0
+	for tp in t.tpls:
+		for frame in tp.schedule:
+			if not (frame is Array):
+				continue
+			for c in frame:
+				if not (c is Array) or (c as Array).size() < 3:
+					continue
+				if _is_world(int(c[0]), int(c[1]), c[2]):
+					n += 1
+	return n
+
+static func _is_world(kind: int, space: int, v) -> bool:
+	match kind:
+		EfpSim.K_POS, EfpSim.K_BANPOS:
+			return space < 3 and v is Vector3 and (v as Vector3) != Vector3.ZERO
+		EfpSim.K_CONEPOS:
+			return space < 3 and v is Vector3 and (v as Vector3) != Vector3.ZERO
+		EfpSim.K_VEL, EfpSim.K_FORCE, EfpSim.K_CONEVEL, EfpSim.K_CONEFORCE:
+			return space == 0 and v is Vector3 and (v as Vector3) != Vector3.ZERO
+		EfpSim.K_ROT, EfpSim.K_BANROT:
+			return space == 0 and v is Basis and not (v as Basis).is_equal_approx(Basis.IDENTITY)
+		EfpSim.K_RVEL:
+			return v is Basis and not (v as Basis).is_equal_approx(Basis.IDENTITY)
+		EfpSim.K_SPHERE:
+			if space == 0:
+				return true
+			if v is Vector3:
+				var w := v as Vector3
+				return not (is_equal_approx(w.x, w.y) and is_equal_approx(w.y, w.z))
+	return false
 
 ## A holder sharing `master`'s draws (see the header).
 static func _holder_for(master: EfpEffect) -> EfpEffect:
@@ -257,8 +354,8 @@ func _process(_delta: float) -> void:
 			_finish_cycle()
 			_begin_cycle()
 	for h in _shown:
-		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
-			continue
+		if h.holder == null or not is_instance_valid(h.holder) or not h.holder.visible or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+			continue # an own simulation places itself (EfpEffect.follow_host)
 		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale)
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)
@@ -296,7 +393,7 @@ static var _qa_log_every := int(OS.get_environment("OPENSRO_QA_EQUIPFX_LOG")) if
 
 func _qa_log(cam: Camera3D) -> void:
 	for h in _shown:
-		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+		if not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
 		var k: Kind = _kinds.get(h.key)
 		if k == null:
@@ -321,7 +418,13 @@ func _qa_log(cam: Camera3D) -> void:
 ## bone's position, the effect's axes along the world's). Empty when nothing
 ## is drawn or the item has no other end bone.
 static func measure(h: Host, k: Kind) -> Dictionary:
-	if k.master == null or k.master.sim == null or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+	if not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+		return {}
+	# The effect whose particles are measured: the shared master, or the
+	# host's own simulation while it runs (its particles in its anchor's space).
+	var own := h.own_fx != null and is_instance_valid(h.own_fx) and h.own_fx.visible
+	var fx: EfpEffect = h.own_fx if own else k.master
+	if fx == null or not is_instance_valid(fx) or fx.sim == null:
 		return {}
 	var g: Transform3D = h.skel.global_transform
 	var tip: Vector3 = g * h.skel.get_bone_global_pose(h.bone).origin
@@ -346,11 +449,13 @@ static func measure(h: Host, k: Kind) -> Dictionary:
 		return {}
 	var dir := axis / axis_len
 	var drawn := {}
-	for d in k.master._draws:
+	for d in fx._draws:
 		drawn[int(d[0])] = true
-	for l in k.master._links:
+	for l in fx._links:
 		drawn[int(l[0])] = true
-	var ht := holder_transform(h.skel, h.bone, h.scale)
+	# A shared master's particles are placed as the holders place them; an
+	# own effect's are in its anchor's space already (its global transform).
+	var ht := fx.global_transform if own else holder_transform(h.skel, h.bone, h.scale)
 	var old := Transform3D(Basis.from_scale(Vector3.ONE * (h.scale * _uniform_scale(g.basis))), tip)
 	var n := 0
 	var sum := Vector3.ZERO
@@ -360,7 +465,7 @@ static func measure(h: Host, k: Kind) -> Dictionary:
 	var off_sum := 0.0
 	var was_max := 0.0
 	var was_sum := Vector3.ZERO
-	for p in k.master.sim.particles:
+	for p in fx.sim.particles:
 		if not drawn.has(p.tpl):
 			continue
 		var w := ht * p.pos
@@ -380,7 +485,7 @@ static func measure(h: Host, k: Kind) -> Dictionary:
 		return {}
 	return {"tip": tip, "bone": name, "other": other_name, "axis": axis_len, "particles": n, "centroid": sum / n,
 		"lo": lo, "hi": hi, "off_max": off_max, "off_mean": off_sum / n, "was_max": was_max, "was_centroid": was_sum / n,
-		"heading": rad_to_deg(atan2(g.basis.z.x, g.basis.z.z))}
+		"heading": rad_to_deg(atan2(g.basis.z.x, g.basis.z.z)), "own": own}
 
 ## The size of the host's own scale (round 734's review, F4): the body's height
 ## factor (CharacterAppearance.HEIGHT_FACTORS) reaches the particles as it did
@@ -436,31 +541,75 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 		_cand.append(h)
 		_cand_d.append(d)
 
-## The cycle's choice: the VISIBLE_BUDGET nearest candidates show their
-## effect, every other holder hides, and masters with none pause. No sort while
-## the candidates fit the budget; past it, only their distances are sorted
-## (natively) for the budget's cut.
+## The cycle's choice: the VISIBLE_BUDGET nearest WEAPONS show their effects
+## -- every effect of a chosen weapon, so a weapon's seal and +8 effects come
+## and go together (round 746, the review's finding 2; OURS, the budget is
+## not READ) -- every other holder hides, and masters with none pause. No
+## sort while the weapons fit the budget; past it, only their distances are
+## sorted (natively) for the cut.
 func _finish_cycle() -> void:
 	_cycle += 1
+	# One distance per weapon (an item skeleton): its hosts share it.
+	var weapon_d := {}
+	for i in _cand.size():
+		weapon_d[(_cand[i] as Host).skel.get_instance_id()] = _cand_d[i]
 	var limit := INF
-	if _cand.size() > VISIBLE_BUDGET:
-		var sorted := _cand_d.duplicate()
+	if weapon_d.size() > VISIBLE_BUDGET:
+		var sorted := PackedFloat32Array(weapon_d.values())
 		sorted.sort()
 		limit = sorted[VISIBLE_BUDGET - 1]
 	for k in _kinds.values():
 		(k as Kind).active = 0
 	var before := _shown
 	_shown = []
+	var chosen := {}
+	var world_shown: Array = []
 	for i in _cand.size():
-		if _shown.size() >= VISIBLE_BUDGET:
-			break
 		var h: Host = _cand[i]
 		if _cand_d[i] > limit or _hosts.get(h.id) != h or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
+		var sid := h.skel.get_instance_id()
+		if not chosen.has(sid):
+			if chosen.size() >= VISIBLE_BUDGET:
+				continue
+			chosen[sid] = true
+		h.dist = _cand_d[i]
 		h.shown_cycle = _cycle
 		_shown.append(h)
 		var k: Kind = _kinds[h.key]
 		k.active += 1
+		if k.own:
+			world_shown.append(h)
+	# The OWN_BUDGET nearest weapons with a world-axis effect run every such
+	# effect they carry on its own simulation (Kind.own), so a weapon's effects
+	# stay on one path together.
+	var own_set := {}
+	if not world_shown.is_empty():
+		world_shown.sort_custom(func(a, b): return (a as Host).dist < (b as Host).dist)
+		var own_weapons := {}
+		for wh in world_shown:
+			var wsid := (wh as Host).skel.get_instance_id()
+			if not own_weapons.has(wsid):
+				if own_weapons.size() >= OWN_BUDGET:
+					continue
+				own_weapons[wsid] = true
+			own_set[(wh as Host).id] = true
+	var owns := 0
+	for h in _shown:
+		var k: Kind = _kinds[h.key]
+		if own_set.has(h.id):
+			if h.own_fx == null or not is_instance_valid(h.own_fx):
+				h.own_fx = _own_holder(h, k)
+			if h.own_fx != null:
+				h.own_fx.visible = true
+				h.own_fx.set_process(true)
+				owns += 1
+				if h.holder != null and is_instance_valid(h.holder):
+					h.holder.visible = false
+				continue
+		if h.own_fx != null and is_instance_valid(h.own_fx):
+			h.own_fx.visible = false
+			h.own_fx.set_process(false)
 		if h.holder == null or not is_instance_valid(h.holder):
 			h.holder = _holder_for(k.master)
 			h.skel.add_child(h.holder)
@@ -470,8 +619,15 @@ func _finish_cycle() -> void:
 			h.holder.set_process(false)
 		h.holder.visible = true
 	for h in before:
-		if (h as Host).shown_cycle != _cycle and h.holder != null and is_instance_valid(h.holder):
+		if (h as Host).shown_cycle == _cycle:
+			continue
+		if h.holder != null and is_instance_valid(h.holder):
 			h.holder.visible = false
+		if h.own_fx != null and is_instance_valid(h.own_fx):
+			# A hidden weapon's own simulation pauses (OURS: retail's limits
+			# are not READ, as for the budget).
+			h.own_fx.visible = false
+			h.own_fx.set_process(false)
 	_cand.clear()
 	_cand_d.clear()
 	for key in _kinds.keys():
@@ -481,6 +637,8 @@ func _finish_cycle() -> void:
 		if k.idle > IDLE_FRAMES and k.hosts <= 0:
 			k.master.queue_free()
 			_kinds.erase(key)
+	stats["weapons"] = chosen.size()
+	stats["own"] = owns
 	stats["hosts"] = _hosts.size()
 	stats["shown"] = _shown.size()
 	stats["kinds"] = _kinds.size()
