@@ -24,9 +24,9 @@ import (
 const (
 	OpEnterWorld       uint16 = 0x0020 // client -> server
 	OpEnterWorldResult uint16 = 0x0021 // server -> client
-	OpMove             uint16 = 0x0022 // client -> server, no reply
+	OpMove             uint16 = 0x0022 // client -> server, no reply: since round 749 a stop, a placement, an older client's walk (destmove.go)
 	OpEntityEntered    uint16 = 0x0023 // server -> client, broadcast
-	OpEntityMoved      uint16 = 0x0024 // server -> client, broadcast
+	OpEntityMoved      uint16 = 0x0024 // server -> client: not sent since round 749 (retail's 0xB021 / 0xB023 instead); the client still reads it
 	OpEntityLeft       uint16 = 0x0025 // server -> client, broadcast
 	OpChangeZone       uint16 = 0x0026 // client -> server
 	OpChangeZoneResult uint16 = 0x0027 // server -> client
@@ -942,6 +942,11 @@ type MoveRequest struct {
 	Run        bool
 	RunCommand byte
 	RunAngle   uint16
+	// Stopped (round 749, OURS) marks where the client's walk stopped short
+	// of what the server was told by its 0x7021 -- a wall, an approach in
+	// reach, a sit (destmove.go). Bit 2 of the flags byte (moveFlagStopped);
+	// an older server reads a walked position.
+	Stopped bool
 }
 
 // The trailing flags byte's bits (OURS framing).
@@ -995,7 +1000,15 @@ func (r *MoveRequest) Encode() []byte {
 	out := encodeFloat32(r.X)
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
-	return encodeMoveTail(out, r.Relocated, r.Run, r.RunCommand, r.RunAngle)
+	n := len(out)
+	out = encodeMoveTail(out, r.Relocated, r.Run, r.RunCommand, r.RunAngle)
+	if r.Stopped {
+		if len(out) == n {
+			out = append(out, 0)
+		}
+		out[n] |= moveFlagStopped
+	}
+	return out
 }
 
 func DecodeMoveRequest(data []byte) (*MoveRequest, error) {
@@ -1013,6 +1026,7 @@ func DecodeMoveRequest(data []byte) (*MoveRequest, error) {
 	}
 	r := &MoveRequest{X: x, Y: y, Z: z}
 	r.Relocated, r.Run, r.RunCommand, r.RunAngle = decodeMoveTail(rest)
+	r.Stopped = len(rest) > 0 && rest[0]&moveFlagStopped != 0
 	return r, nil
 }
 
@@ -1273,6 +1287,9 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 			return handleStart(ctx, sess, p, chars, eq, hub, onEnter, zerk)
 		case OpMove:
 			return handleMove(sess, p, hub, chars)
+		case proto.OpMovementRequest:
+			// Round 749: retail's click move (destmove.go).
+			return handleMovementRequest(sess, p, hub, chars)
 		case OpChangeZone:
 			return handleChangeZone(ctx, sess, p, eq, chars, hub, zerk)
 		default:
@@ -1320,8 +1337,10 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 			// the next login starts at its own speed, so a demotion (a server
 			// restarted without the account in -gm-accounts) leaves nothing.
 			buffBooks.SetGMSpeedFactor(left.CharacterID, 1)
-			// And a pending warp landing (round 646's review).
+			// And a pending warp landing (round 646's review), and the points
+			// the server named for it (round 749).
 			forgetWarpLanding(left.CharacterID)
+			forgetLandings(left.CharacterID)
 		}
 		// Nor may it save where the stale session last stood, or tell the
 		// zone the character left: the live session's entity is still there,
@@ -1485,6 +1504,10 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	closePlayerView(owned.ID, sess, viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk})
 	invalidateLook(owned.ID) // what it wears is read afresh at each entry
 	hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	// The arrival and the client's spawn spot there are points the server
+	// named: the client's placement on its ground is taken there (round 749,
+	// destmove.go relocationAdmits).
+	noteArrivalLanding(owned.ID, zone, pos)
 	// The heading comes back with a restored position (round 637's review
 	// follow-up; character.HeadingStore, OURS): the zone sees the character
 	// facing the way it left, and so does its own client (the result's own
@@ -1639,6 +1662,7 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// A walled caster's landing is its client's to report (round 646,
 	// walls.go noteWarpLanding): the root holds it where it lands.
 	noteZoneWarpLanding(old.CharacterID, zone, pos, time.Now())
+	noteArrivalLanding(old.CharacterID, zone, pos) // round 749, destmove.go
 	// The new label and frame are what a later save writes under, and the
 	// arrival itself is saved at once under -persist-position (round 573).
 	rememberPlace(sess, zone, frame, time.Now())
@@ -1734,39 +1758,55 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 		return nil
 	}
 	pos := world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}
-	// A walk turns the character to face the way it moved; a relocation keeps
-	// its heading (round 637's review follow-up; world.MoveWalk); a
-	// heading run faces the run's own heading (round 653, world.Hub
-	// .MoveHeading) -- a relocation still wins, as it aims nothing.
+	now := time.Now()
+	// Round 749 (destmove.go): a walk is retail's 0x7021 now, and this
+	// message carries only where a walk stopped short (the stop flag), a
+	// placement (the relocated flag), or an older client's walked position.
+	// Each is taken only within the server's own leg's reach, or at a point
+	// the server named; one it does not take ends the leg where the server
+	// has it, and the window -- the mover included -- is told so (0xB023).
+	//
+	// A relocation or a stop keeps the heading (round 637's review
+	// follow-up: the client places an object without aiming it,
+	// FUN_009e11e0); an older client's walked position faces the way it
+	// moved, and its heading run the run's heading (round 653).
 	kind, heading := world.MoveWalk, 0.0
 	switch {
-	case req.Relocated:
+	case req.Relocated, req.Stopped:
 		kind = world.MoveRelocate
 	case req.Run:
 		kind, heading = world.MoveHeading, world.HeadingFromWire(req.RunAngle)
 	}
-	moved, ok := hub.Relocate(sess, pos, kind, heading)
+	admit := func(at time.Time, cur world.Entity) bool {
+		if req.Relocated {
+			return relocationAdmits(cur, pos.X, pos.Z, at)
+		}
+		return trustPositions.Load() || stopAdmits(at, cur, pos.X, pos.Z)
+	}
+	moved, admitted, ok := hub.StopAt(sess, pos, kind, heading, admit)
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}
+	if !admitted {
+		correctMover(sess, hub)
+		return nil
+	}
 	entity := moved.Entity
-	// A move is the player's own cancel of a running auto-attack -- see
-	// keepup.go for why this packet stands in for the retail client's.
-	keepUp.Cancel(entity.CharacterID)
+	motions.walking(entity.CharacterID, now)
+	// An older client's walked position is the player's own move, and cancels
+	// a running auto-attack as it did (keepup.go); a stop report or a
+	// placement is not a move the player asked for.
+	if !req.Relocated && !req.Stopped {
+		keepUp.Cancel(entity.CharacterID)
+	}
 	// Under -persist-position the walk is saved at most once every
 	// positionSaveInterval (round 573), so a crash loses little of it.
-	savePositionEvery(chars, sess, entity, time.Now())
-
-	// A heading run is relayed with its heading form (round 653), so the
-	// watchers face its heading; a relocation carries none.
-	//
-	// Round 737 (crowd_scale.md C1, C2): to the players in view of the
-	// mover's block that hold it (retail's 3 x 3 send, CMsgBlockObject::
-	// FUN_00534150), encoded once for all of them; and, when it crossed a
-	// block line, the players that came into or went out of view are spawned
-	// and despawned both ways (playerview.go).
-	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z, Relocated: req.Relocated,
-		Run: req.Run && !req.Relocated, RunCommand: req.RunCommand, RunAngle: req.RunAngle}
-	afterRelocate(sess, moved, false, gateway.MustFrame(&proto.Packet{Opcode: OpEntityMoved, Data: msg.Encode()}))
+	savePositionEvery(chars, sess, entity, now)
+	// Round 749: relayed as retail's 0xB023 (the stop/position message,
+	// FUN_008a4f80, which snaps the body there and ends its turn) to the
+	// players in view that hold the mover -- not to the mover, whose client
+	// is already there. A block crossing spawns and despawns both ways, as
+	// before (round 737, playerview.go).
+	stopRelay(sess, moved, false)
 	return nil
 }

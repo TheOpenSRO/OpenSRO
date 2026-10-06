@@ -844,26 +844,27 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("Bram's spawn has body %d, want the default gender's %d", bramRec.RefObjID, want)
 	}
 
-	// Bob moves; Alice should see OpEntityMoved.
+	// Bob's position (the suite's trusted placement); Alice hears retail's
+	// 0xB023 (round 749).
 	if err := proto.Write(connB, &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: 10, Y: 20, Z: 30}).Encode()}, nil, nil); err != nil {
 		t.Fatalf("bob move write: %v", err)
 	}
 	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
 	moved, err := proto.Read(rA, nil, nil)
 	if err != nil {
-		t.Fatalf("reading OpEntityMoved: %v", err)
+		t.Fatalf("reading 0xB023: %v", err)
 	}
-	if moved.Opcode != OpEntityMoved {
-		t.Fatalf("got opcode 0x%04x, want OpEntityMoved", moved.Opcode)
+	if moved.Opcode != OpMovementStop {
+		t.Fatalf("got opcode 0x%04x, want 0xB023", moved.Opcode)
 	}
-	movedMsg, err := DecodeEntityMoved(moved.Data)
-	if err != nil || movedMsg.X != 10 || movedMsg.Y != 20 || movedMsg.Z != 30 {
-		t.Fatalf("unexpected EntityMoved: %+v (err=%v)", movedMsg, err)
+	movedID, movedPos, _ := stopWorld(t, spawnZone, moved.Data)
+	if movedPos != (world.Position{X: 10, Y: 20, Z: 30}) {
+		t.Fatalf("unexpected 0xB023: %d at %+v", movedID, movedPos)
 	}
 
 	// Bob disconnects; Alice should drop him (retail's 0x3016).
 	connB.Close()
-	expectPlayerDespawn(t, connA, rA, movedMsg.CharacterID)
+	expectPlayerDespawn(t, connA, rA, movedID)
 }
 
 // ---- The player's dead state, the server half (round 549) ----

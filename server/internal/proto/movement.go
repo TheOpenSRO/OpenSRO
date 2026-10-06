@@ -29,9 +29,11 @@ const MovementKindHeading byte = 0
 const MovementCommandForward byte = 1
 
 // MovementRegionWorldBit is the bit in the region word that says the three
-// coordinates are float32 world/dungeon coordinates rather than region-local
-// uint16s. Same encoding this project recovered for positions elsewhere:
-// region span 1920, local coordinates [0, 1920).
+// coordinates are a dungeon's i32s rather than region-local i16s (round 737's
+// correction, READ: the server's reader 0x48bc20 stores them as ints and uses
+// them with fild, the client fills them with ftol). Same region encoding this
+// project recovered for positions elsewhere: region span 1920, local
+// coordinates [0, 1920).
 const MovementRegionWorldBit uint16 = 0x8000
 
 // The angle scale, read as IEEE doubles out of both PE images and
@@ -96,11 +98,14 @@ type Movement struct {
 	// Region is the destination's region word. Its MovementRegionWorldBit
 	// decides which of the two coordinate triples below is on the wire.
 	Region uint16
-	// X, Y, Z are world/dungeon coordinates, used when Region has
-	// MovementRegionWorldBit set.
-	X, Y, Z float32
-	// LocalX, LocalY, LocalZ are region-local coordinates, used otherwise.
-	LocalX, LocalY, LocalZ uint16
+	// X, Y, Z are a dungeon's coordinates, three i32 (round 737's correction:
+	// not f32), used when Region has MovementRegionWorldBit set.
+	X, Y, Z int32
+	// LocalX, LocalY, LocalZ are the region-local coordinates, three SIGNED
+	// i16 of the raw local units, truncated (round 737's correction, READ:
+	// the click builds them with ftol, 0x9ec080, and nothing scales them by
+	// 10; the 0xB021 reader sign-extends them, 0x8a5640). Used otherwise.
+	LocalX, LocalY, LocalZ int16
 }
 
 // ErrShortMovement is returned when a payload ends before a field it promised.
@@ -118,13 +123,13 @@ func (m *Movement) Encode() []byte {
 	}
 	out = binary.LittleEndian.AppendUint16(out, m.Region)
 	if m.Region&MovementRegionWorldBit != 0 {
-		for _, f := range [3]float32{m.X, m.Y, m.Z} {
-			out = binary.LittleEndian.AppendUint32(out, math.Float32bits(f))
+		for _, v := range [3]int32{m.X, m.Y, m.Z} {
+			out = binary.LittleEndian.AppendUint32(out, uint32(v))
 		}
 		return out
 	}
-	for _, v := range [3]uint16{m.LocalX, m.LocalY, m.LocalZ} {
-		out = binary.LittleEndian.AppendUint16(out, v)
+	for _, v := range [3]int16{m.LocalX, m.LocalY, m.LocalZ} {
+		out = binary.LittleEndian.AppendUint16(out, uint16(v))
 	}
 	return out
 }
@@ -165,16 +170,16 @@ func DecodeMovement(b []byte, hasExtra bool) (m *Movement, angle uint16, err err
 		if len(b) < 12 {
 			return nil, 0, ErrShortMovement
 		}
-		m.X = math.Float32frombits(binary.LittleEndian.Uint32(b[0:4]))
-		m.Y = math.Float32frombits(binary.LittleEndian.Uint32(b[4:8]))
-		m.Z = math.Float32frombits(binary.LittleEndian.Uint32(b[8:12]))
+		m.X = int32(binary.LittleEndian.Uint32(b[0:4]))
+		m.Y = int32(binary.LittleEndian.Uint32(b[4:8]))
+		m.Z = int32(binary.LittleEndian.Uint32(b[8:12]))
 		return m, 0, nil
 	}
 	if len(b) < 6 {
 		return nil, 0, ErrShortMovement
 	}
-	m.LocalX = binary.LittleEndian.Uint16(b[0:2])
-	m.LocalY = binary.LittleEndian.Uint16(b[2:4])
-	m.LocalZ = binary.LittleEndian.Uint16(b[4:6])
+	m.LocalX = int16(binary.LittleEndian.Uint16(b[0:2]))
+	m.LocalY = int16(binary.LittleEndian.Uint16(b[2:4]))
+	m.LocalZ = int16(binary.LittleEndian.Uint16(b[4:6]))
 	return m, 0, nil
 }

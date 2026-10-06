@@ -45,8 +45,8 @@ does not.
   - The client's click builds it with `ftol` (`0x9ec080`); nothing scales it by 10.
   - The 0xB021 reader sign-extends it (`0x8a5640`).
   - Only 0xB021's *source* position is scaled by 10 (below).
-- `server/internal/proto/movement.go` still decodes the dungeon form as f32. Nothing sends that form
-  to it yet. This is OPEN, for the C3 work.
+- ~~`server/internal/proto/movement.go` still decodes the dungeon form as f32.~~ Fixed in round 749:
+  `proto.Movement` carries three i32 for a dungeon and three signed i16 for a field destination.
 
 The region-or-float split is the position encoding this project already recovered elsewhere:
 region span 1920, local coordinates `[0, 1920)`, and the high bit marking a world/dungeon
@@ -463,8 +463,13 @@ The heading form's byte was "not read" above. It is now:
 
 ### OpenSRO (OURS framing, READ form)
 
-OpenSRO's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`), not retail's
-0x7021 requests that the server steps. So:
+**Superseded on the wire by round 749** (`docs/rounds/r749.md`): the sky click sends retail's
+heading form of 0x7021 itself, once, and the window hears 0xB021's heading form; the run's end at a
+wall is the client's stop report, relayed as 0xB023. The walk itself is unchanged: what follows
+still describes the client's run.
+
+Before round 749, OpenSRO's movement was client-authoritative positions (`OpMove`/`OpEntityMoved`),
+not retail's 0x7021 requests that the server steps. So:
 
 - **The run is the client's.** A sky click (no pick hit within 1000) starts a heading run
   (`World3D._start_heading_run`). `_step_click_walk` steps it at the full run speed (`/speed`
@@ -492,6 +497,24 @@ OpenSRO's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`),
     up to 0.2 toward its cell's centre, and at 60 re-issues a second that crept it along the wall
     by 22.7 units in 2 s (MEASURED, `click_walk_test.gd`).
   - Only the QA walk (`OPENSRO_QA_WALK`, no order) still slides.
+
+## 0xB023, the stop (round 749)
+
+READ this round from both decompiles on the box (`/var/tmp/decomp_server`, `/var/tmp/decomp_client`):
+
+- **The composer** is the CGObjChar slot-300 stop, `GObjPC::FUN_004a9430(angle, send)`: when `send`
+  is not 0 it begins `FUN_00430a00(0xb023)`, appends the object's uid (`param_1 + 2`, obj `+8`),
+  calls `FUN_00487c80` (the angle through `FUN_00488050`, then the region and position at obj
+  `+0x84`) and sends through `FUN_00484d90`, the 3 x 3 send 0xB021 uses. After it, a character
+  whose motion state is WALK (2) or RUN (3) is set to STAND (vtable `+0x55c(0, 0xff, 0)`). The
+  stop is called through vtable `+0x4b0` from about 40 places (skills, attacks, the sit); the arrival
+  passes `send` 0, so an arrival sends nothing (as above).
+- **The client** registers `0xb023 -> NetProcessInNavAndSkill::FUN_008a4f80` beside `0xb021 ->
+  FUN_008a5750` (`funcs_010.c`, the dispatch table's `FUN_0086f740` calls). The reader takes 4 bytes
+  (uid), 2 (region) and 0xe (x, y, z f32 and the u16 angle), ignores a dead object, turns the angle
+  into a heading (`FUN_009c40b0`) and snaps the object there (`FUN_009e00f0`, `FUN_009e11e0`).
+
+So: `u32 uid | u16 region | f32 x | f32 y | f32 z | u16 angle`, 20 bytes, region-local.
 
 ## Not read
 
@@ -537,6 +560,7 @@ on events, so movement with no push would make them jump rather than walk (round
 - [x] The server's response opcode — **`0xB021`, read from the binary** in round 366 and now in
       `opcodes.go` as `OpMovementResponse`. Round 737: both, to the mover and its 3 x 3 blocks, with the u32 unique id first (0xB021 in full, above)
 - [x] Which caller emits the optional extra byte — `CGObjMobile::vslot_292`, action kind 3
-- [ ] Wiring: nothing calls this yet. It is the target format for `docs/TODO.md`'s
-      move packet, and monster movement additionally needs the server to step
-      positions on a tick and push them (round 362)
+- [x] Wiring (round 749, `docs/rounds/r749.md`): a player's walk is this message now. The client
+      sends one 0x7021 per click (`DestMoveNet`, `MoveOrderSync`); the server answers 0xB021 to the
+      3 x 3, the mover included (`session/destmove.go`), keeps the leg (`world.Mover`) and tells a
+      stop with 0xB023. Monsters still move by OpenSRO's own OpMonsterMoved (round 533).

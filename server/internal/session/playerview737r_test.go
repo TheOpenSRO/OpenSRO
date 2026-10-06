@@ -104,8 +104,8 @@ func TestEntryRaceSpawnsWhoWalkedInDuringTheEntry(t *testing.T) {
 	}
 	// And his moves reach her now.
 	f.send(t, f.connB, OpMove, (&MoveRequest{X: float32(home.X + 10), Y: float32(home.Y), Z: float32(home.Z)}).Encode())
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEntityMoved {
-		t.Fatalf("Bram's move reached Aria as %#04x, want OpEntityMoved", p.Opcode)
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpMovementStop {
+		t.Fatalf("Bram's move reached Aria as %#04x, want 0xB023", p.Opcode)
 	}
 }
 

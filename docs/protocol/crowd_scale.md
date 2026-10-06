@@ -451,8 +451,12 @@ Files: in World3D, `_physics_step`'s others loop, `_spawn_or_update_other`, `_on
   - in a town: 2,777 ms per s serial, 2,099 parallel;
   - spread over 10 x 10 blocks: 385.
 - **C4:** the hub's write lock is held 66.6 -> 29.4 µs per move at 1000, with 293 -> 11 KB allocated.
-- **C3 is not built.** It needs World3D's walk and a stop report the server can check. The spec is in
-  r737.md.
+- ~~**C3 is not built.**~~ **Round 749 built C3** (`docs/rounds/r749.md`): one 0x7021 per click,
+  0xB021 to the 3 x 3 (the mover included), the server's own leg per mover (`world.Mover`) refiled
+  by a 250 ms pass, the client's stop report relayed as 0xB023, and the other players walked from
+  0xB021 by the client. At 1000 walking in a town the server's CPU went from 87,688 ms per
+  simulated second (the old client's 20 positions a second, MEASURED) to 5,172 (one click a second),
+  and in a 10 x 10-block field from 14,332 to 872. The 10,000 numbers are in r749.md.
 
 ### Order and gates
 

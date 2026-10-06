@@ -254,6 +254,20 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	if r.Life == 0 {
 		r.Life = byte(world.LifeAlive)
 	}
+	// A character on a leg (round 749): the record carries the mover's
+	// destination, or the heading run's command and angle, and the motion
+	// state the accepted move set -- RUN, 2 + (+0x155 != 0) with the run flag
+	// 1 (READ, 0x4b11b6) -- so the viewer's client walks it on.
+	if m := e.Move; m != nil {
+		r.Motion = MotionRun
+		if m.Heading {
+			r.MoveCommand, r.MoveAngle = m.Command, m.WireAngle
+		} else {
+			region, lx, lz := regionLocalOf(e.Zone, m.Dest)
+			r.HasDest, r.DestRegion = true, region
+			r.DestX, r.DestY, r.DestZ = int16(lx), int16(m.Dest.Y), int16(lz)
+		}
+	}
 	// A character sitting down (the 1.5 s CHANGEMOTION that lands on SIT) is
 	// written as SIT, as the arrival list's Seated counted it since round
 	// 607: the sit's own broadcast went out before this viewer held the body,

@@ -156,6 +156,9 @@ type motionEntry struct {
 	until     time.Time
 	lastMove  time.Time
 	nextRegen time.Time
+	// legEnd is when the character's leg arrives (round 749, destmove.go):
+	// it walks until then, as retail's WALK/RUN motion state lasts the move.
+	legEnd time.Time
 }
 
 type motionTracker struct {
@@ -306,6 +309,14 @@ func (t *motionTracker) movedUnrooted(characterID int64, now time.Time) (accepte
 	return true, leftSit
 }
 
+// walking records that characterID's leg runs until `until` (round 749): an
+// accepted 0x7021 sets it to the leg's arrival, a stop to the stop's time.
+func (t *motionTracker) walking(characterID int64, until time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.entryLocked(characterID, time.Now()).legEnd = until
+}
+
 // regenRate is the 'hprg'/'mprg' a tick would use now, and false when the tick
 // does nothing in this motion state: only STAND and SIT regenerate.
 func (t *motionTracker) regenRate(characterID int64, now time.Time) (float32, bool) {
@@ -318,6 +329,9 @@ func (t *motionTracker) regenRate(characterID int64, now time.Time) (float32, bo
 	case MotionStand:
 		if !e.lastMove.IsZero() && now.Sub(e.lastMove) < movingWindow {
 			return 0, false // walking or running
+		}
+		if now.Before(e.legEnd) {
+			return 0, false // a leg still running (round 749)
 		}
 		return mana.StandRegenPercent, true
 	default:
@@ -443,9 +457,14 @@ func MotionHandler(hub *world.Hub) gateway.Handler {
 			return nil
 		}
 		// The engine sits down from a walk by stopping first (slot 0x4b0);
-		// here the client stops itself before it asks. A running auto-attack
+		// here the client stops itself before it asks, and reports a stop
+		// short of its destination first. A leg the server still runs (the
+		// client stopped within its stop distance and asked before the
+		// server's leg arrived) ends where the server has it, and the window
+		// hears that 0xB023 (round 749, destmove.go). A running auto-attack
 		// ends: the client does not send N while an action runs (its state-2
 		// gate), so a sitter has none.
+		haltForSit(sess, hub)
 		keepUp.Cancel(e.CharacterID)
 		broadcastMotion(hub, e, value)
 		return nil

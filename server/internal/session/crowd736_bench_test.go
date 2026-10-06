@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -141,8 +142,9 @@ func (c *crowdChild) snap(t testing.TB) (bytes, frames []int64) {
 	return b, f
 }
 
-// snap3 is snap with each connection's OpEntityMoved frames (round 737: the
-// moves told apart from the spawns a block crossing adds).
+// snap3 is snap with each connection's move frames -- OpEntityMoved before
+// round 749, 0xB021 and 0xB023 since (round 737: the moves told apart from
+// the spawns a block crossing adds).
 func (c *crowdChild) snap3(t testing.TB) (bytes, frames, moves []int64) {
 	t.Helper()
 	if _, err := io.WriteString(c.in, "snap\n"); err != nil {
@@ -209,7 +211,11 @@ type crowdResult struct {
 	seconds                        int
 	driveWall, drainWall, cpu      time.Duration
 	rxBytes, rxFrames              int64 // received by the N movers over the run
-	rxMoves, wantMoves             int64 // their OpEntityMoved frames, and the window rule's count (serial drive)
+	rxMoves, wantMoves             int64 // their move frames (OpEntityMoved, 0xB021, 0xB023), and the window rule's count (serial drive)
+	model                          string
+	rate                           int           // moves a simulated second per player
+	checked                        bool          // the window rule was counted
+	passWall                       time.Duration // in the mover pass (model "dest")
 	enterErr                       error
 	enterWall, leaveWall           time.Duration
 	burstBytes, burstFrames        int64 // to the arriver
@@ -219,7 +225,7 @@ type crowdResult struct {
 }
 
 // runCrowd runs one layout at n players.
-func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResult {
+func runCrowd(t *testing.T, n int, layout, drive, model string, seconds int) crowdResult {
 	t.Helper()
 	ctx := context.Background()
 	chars, eq, cs := crowdStores(t, n+1)
@@ -278,6 +284,10 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 		// Round 737: everyone in one 320-unit block, all in view of all --
 		// round 736's town as the bucket made it, to measure C2 alone.
 		span, origin = 300.0, -310.0
+	case "wide":
+		// Round 737's review: 100 x 100 blocks, about one player a block at
+		// 10,000.
+		span, origin = 32000.0, -16000.0
 	}
 	pos := make([]world.Position, n)
 	for i := 0; i < n; i++ {
@@ -287,7 +297,6 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 	// Round 737: each player's client holds the players in its view, as the
 	// world entry leaves it (playerview.go) -- the production path, where
 	// every move is checked against the recipient's known set.
-	cur := append([]world.Position(nil), pos...) // where each stands, for the window rule below
 	deps := viewDeps{hub: hub, eq: eq, chars: chars}
 	for i := 0; i < n; i++ {
 		invalidateLook(cs[i].ID)
@@ -337,24 +346,91 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 	b2, f2 := quiet()
 	r.leftBytes, r.leftFrames = sumFrom(diff(b2, b1), 0, n), sumFrom(diff(f2, f1), 0, n)
 
-	// The moves: every player once per simulated second.
-	pkts := make([][]*proto.Packet, seconds)
+	// The moves (round 749: three models).
+	//
+	//   - "pos1", rounds 736/737's: every player sends one OpMove position a
+	//     simulated second (OURS model), each a random step of up to 5 on x
+	//     and z.
+	//   - "pos20": the round-737 client's real cadence while walking, one
+	//     OpMove every MIN_SEND_INTERVAL = 0.05 s (20 a second), each 2.5
+	//     units along the walk -- the run speed of 50.
+	//   - "dest", round 749's (retail's): every player clicks once a
+	//     simulated second (OURS model: a click a second, so every player is
+	//     always walking, the mover pass's worst case), a 0x7021 to a point 50
+	//     units off in a random direction -- a one-second leg at the run speed
+	//     of 50 -- and the mover pass runs four times a simulated second
+	//     (moverPassPeriod) on the hub's simulated clock.
+	//
+	// The OpMove models run with the suite's -trust-client-positions (TestMain),
+	// as the client's own stream was taken before round 749.
+	rate := 1
+	if model == "pos20" {
+		rate = 20
+	}
+	base := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	var simNow atomic.Int64
+	simNow.Store(base.UnixNano())
+	if model == "dest" {
+		hub.SetClock(func() time.Time { return time.Unix(0, simNow.Load()) })
+		moverPassAuto.Store(false)
+		defer moverPassAuto.Store(true)
+	}
+	steps := seconds * rate
+	pkts := make([][]*proto.Packet, steps)
 	for s := range pkts {
 		pkts[s] = make([]*proto.Packet, n)
 		for i := 0; i < n; i++ {
-			pos[i].X += rng.Float64()*10 - 5
-			pos[i].Z += rng.Float64()*10 - 5
-			pkts[s][i] = &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: float32(pos[i].X), Z: float32(pos[i].Z)}).Encode()}
+			switch model {
+			case "dest":
+				a := rng.Float64() * 2 * math.Pi
+				dest := world.Position{X: pos[i].X + 50*math.Sin(a), Z: pos[i].Z + 50*math.Cos(a)}
+				region, lx, lz := regionLocalOf(spawnZone, dest)
+				mv := &proto.Movement{Kind: 1, Region: region, LocalX: int16(lx), LocalZ: int16(lz)}
+				x, z := worldOfRegionLocal(spawnZone, region, float64(mv.LocalX), float64(mv.LocalZ))
+				pos[i] = world.Position{X: x, Z: z}
+				pkts[s][i] = &proto.Packet{Opcode: proto.OpMovementRequest, Data: mv.Encode()}
+			case "pos20":
+				a := rng.Float64() * 2 * math.Pi
+				pos[i].X += 2.5 * math.Sin(a)
+				pos[i].Z += 2.5 * math.Cos(a)
+				pkts[s][i] = &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: float32(pos[i].X), Z: float32(pos[i].Z)}).Encode()}
+			default:
+				pos[i].X += rng.Float64()*10 - 5
+				pos[i].Z += rng.Float64()*10 - 5
+				pkts[s][i] = &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: float32(pos[i].X), Z: float32(pos[i].Z)}).Encode()}
+			}
 		}
 	}
-	r.events = n * seconds
-	// The window rule (round 737): a move reaches the others whose block is
-	// within one of the mover's new block, counted here as the serial drive
-	// makes them (each mover's position as of its own move).
+	handle := func(i int, p *proto.Packet) {
+		if p.Opcode == proto.OpMovementRequest {
+			_ = handleMovementRequest(sessions[i], p, hub, nil)
+			return
+		}
+		_ = handleMove(sessions[i], p, hub, nil)
+	}
+	r.events = n * steps
+	// The window rule (round 737): a move reaches the others that see the
+	// mover both before and after it (one that sees it only after is spawned
+	// it instead, the 0x3015 carrying the position; one that saw it only
+	// before is despawned) -- and, for a 0x7021, the mover itself (0xB021 goes
+	// to the mover too). Counted from the hub's own window around each move,
+	// on the serial drive at n <= 1000; its time is taken out of the drive's
+	// wall time and, being single-threaded, out of its CPU.
+	checkRule := drive != "parallel" && n <= 1000
+	var ruleTime time.Duration
+	others := func(i int) map[int64]bool {
+		out := map[int64]bool{}
+		for _, o := range hub.ViewOfCharacter(cs[i].ID) {
+			if o.CharacterID != cs[i].ID {
+				out[o.CharacterID] = true
+			}
+		}
+		return out
+	}
 	_, _, m2 := child.snap3(t)
 	cpu0 := cpuNow()
 	t0 = time.Now()
-	for s := 0; s < seconds; s++ {
+	for s := 0; s < steps; s++ {
 		order := rng.Perm(n)
 		if drive == "parallel" {
 			// One goroutine per mover, as the gateway's read loops are.
@@ -363,34 +439,48 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 			for _, i := range order {
 				go func(i int) {
 					defer wg.Done()
-					_ = handleMove(sessions[i], pkts[s][i], hub, nil)
+					handle(i, pkts[s][i])
 				}(i)
 			}
 			wg.Wait()
 		} else {
 			for _, i := range order {
-				_ = handleMove(sessions[i], pkts[s][i], hub, nil)
-				// A player that sees the mover before and after the move is
-				// sent it; one that sees it only after is spawned it instead
-				// (the 0x3015 carries the position), and one that saw it
-				// only before is despawned.
-				m, _ := DecodeMoveRequest(pkts[s][i].Data)
-				co := world.CellOf(spawnZone, cur[i])
-				cur[i] = world.Position{X: float64(m.X), Z: float64(m.Z)}
-				ci := world.CellOf(spawnZone, cur[i])
-				for j := 0; j < n; j++ {
-					cj := world.CellOf(spawnZone, cur[j])
-					if j != i && world.InView(ci, cj) && world.InView(co, cj) {
+				var before map[int64]bool
+				if checkRule {
+					r0 := time.Now()
+					before = others(i)
+					ruleTime += time.Since(r0)
+				}
+				handle(i, pkts[s][i])
+				if checkRule {
+					r0 := time.Now()
+					for id := range others(i) {
+						if before[id] {
+							r.wantMoves++
+						}
+					}
+					if model == "dest" {
 						r.wantMoves++
 					}
+					ruleTime += time.Since(r0)
 				}
 			}
 		}
+		if model == "dest" {
+			// The second's four mover passes, on the simulated clock.
+			for k := 1; k <= 4; k++ {
+				simNow.Store(base.Add(time.Duration(s)*time.Second + time.Duration(k)*moverPassPeriod).UnixNano())
+				p0 := time.Now()
+				moverPass(hub)
+				r.passWall += time.Since(p0)
+			}
+		}
 	}
-	r.driveWall = time.Since(t0)
+	r.driveWall = time.Since(t0) - ruleTime
 	b3, last := settleQuiet(t, child, n)
-	r.drainWall = last.Sub(t0)
-	r.cpu = cpuNow() - cpu0
+	r.drainWall = last.Sub(t0) - ruleTime
+	r.cpu = cpuNow() - cpu0 - ruleTime
+	r.model, r.rate, r.checked = model, rate, checkRule
 	_, f3, m3 := child.snap3(t)
 	mb, mf := diff(b3, b2), diff(f3, f2)
 	r.rxBytes, r.rxFrames = sumFrom(mb, 0, n), sumFrom(mf, 0, n)
@@ -400,8 +490,8 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 		r.minClientBytes = min(r.minClientBytes, x)
 		r.maxClientBytes = max(r.maxClientBytes, x)
 	}
-	if drive != "parallel" && r.rxMoves != r.wantMoves {
-		t.Errorf("n=%d %s: the movers received %d OpEntityMoved, the window rule says %d", n, layout, r.rxMoves, r.wantMoves)
+	if checkRule && r.rxMoves != r.wantMoves {
+		t.Errorf("n=%d %s %s: the movers received %d moves, the window rule says %d", n, layout, model, r.rxMoves, r.wantMoves)
 	}
 	return r
 }
@@ -432,12 +522,15 @@ func (r crowdResult) log(t *testing.T) {
 		enter = "FAILED: " + r.enterErr.Error()
 	}
 	rule := "n/a: a parallel drive's order is the scheduler's"
-	if r.drive != "parallel" {
+	if r.checked {
 		rule = strconv.FormatInt(r.wantMoves, 10)
+	} else if r.drive != "parallel" {
+		rule = "not counted above n=1000"
 	}
-	t.Logf("CROWD736 n=%d layout=%s drive=%s | moves/s=%d ns/move=%.0f wall-ms/sim-s=%.1f delivered-ms/sim-s=%.1f cpu-ms/sim-s=%.1f | per-client pkts/s=%.1f KB/s=%.2f (min %.2f max %.2f) | total MB/s=%.3f pkts/s=%.0f | moves delivered %d (window rule %s)",
-		r.n, r.layout, r.drive, r.n,
+	t.Logf("CROWD736 n=%d layout=%s drive=%s model=%s | moves/s=%d ns/move=%.0f pass-ms/sim-s=%.1f wall-ms/sim-s=%.1f delivered-ms/sim-s=%.1f cpu-ms/sim-s=%.1f | per-client pkts/s=%.1f KB/s=%.2f (min %.2f max %.2f) | total MB/s=%.3f pkts/s=%.0f | moves delivered %d (window rule %s)",
+		r.n, r.layout, r.drive, r.model, r.n*r.rate,
 		float64(r.driveWall.Nanoseconds())/float64(r.events),
+		float64(r.passWall.Microseconds())/1000/sec,
 		float64(r.driveWall.Microseconds())/1000/sec, float64(r.drainWall.Microseconds())/1000/sec, float64(r.cpu.Microseconds())/1000/sec,
 		float64(r.rxFrames)/n/sec, float64(r.rxBytes)/n/sec/1000,
 		float64(r.minClientBytes)/sec/1000, float64(r.maxClientBytes)/sec/1000,
@@ -499,7 +592,8 @@ func TestCrowd736Child(t *testing.T) {
 					p = p[step:]
 					if have == 6 {
 						frames[i].Add(1)
-						if binary.LittleEndian.Uint16(hdr[2:]) == OpEntityMoved {
+						switch binary.LittleEndian.Uint16(hdr[2:]) {
+						case OpEntityMoved, proto.OpMovementResponse, OpMovementStop:
 							moves[i].Add(1)
 						}
 						need = int(binary.LittleEndian.Uint16(hdr[:]) & proto.MaxPayload)
@@ -532,14 +626,15 @@ func TestCrowd736Child(t *testing.T) {
 	}
 }
 
-// TestCrowd736Smoke is the N=20 run, always on: each move reaches the 19
-// others as one 26-byte OpEntityMoved, the arrival burst fits, and the
-// arrival list's frame limit is where the encoder says.
+// TestCrowd736Smoke is the N=20 run, always on: each move reaches the
+// players in view (round 749: a click's 0xB021, the mover included, and the
+// mover pass's crossings), the arrival burst fits, and the arrival list's
+// frame limit is where the encoder says.
 func TestCrowd736Smoke(t *testing.T) {
 	if os.Getenv("OPENSRO_CROWD736_CHILD") != "" {
 		t.Skip("child")
 	}
-	r := runCrowd(t, 20, "town", "serial", 5)
+	r := runCrowd(t, 20, "town", "serial", "dest", 5)
 	r.log(t)
 	if r.enterErr != nil {
 		t.Fatalf("enter at n=20: %v", r.enterErr)
@@ -575,8 +670,18 @@ func TestCrowd736Measure(t *testing.T) {
 			sizes = append(sizes, v)
 		}
 	}
+	// Round 749: OPENSRO_CROWD736_MODELS picks the move models (default
+	// "dest"; "pos1,pos20,dest" for the comparison) and
+	// OPENSRO_CROWD736_SECONDS the simulated seconds.
+	models := []string{"dest"}
+	if s := os.Getenv("OPENSRO_CROWD736_MODELS"); s != "" {
+		models = strings.Split(s, ",")
+	}
 	for _, n := range sizes {
 		seconds := max(3, 4000/n)
+		if s := os.Getenv("OPENSRO_CROWD736_SECONDS"); s != "" {
+			seconds, _ = strconv.Atoi(s)
+		}
 		layouts := [][2]string{{"town", "serial"}, {"field", "serial"}, {"town", "parallel"}, {"block", "serial"}, {"block", "parallel"}}
 		if s := os.Getenv("OPENSRO_CROWD736_LAYOUTS"); s != "" {
 			layouts = nil
@@ -587,8 +692,10 @@ func TestCrowd736Measure(t *testing.T) {
 			}
 		}
 		for _, run := range layouts {
-			r := runCrowd(t, n, run[0], run[1], seconds)
-			r.log(t)
+			for _, model := range models {
+				r := runCrowd(t, n, run[0], run[1], model, seconds)
+				r.log(t)
+			}
 		}
 	}
 }

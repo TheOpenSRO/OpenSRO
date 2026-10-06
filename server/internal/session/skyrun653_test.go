@@ -98,25 +98,27 @@ func TestRound653AHeadingRunIsRelayedWithItsHeading(t *testing.T) {
 	if math.Abs(e.Heading-math.Pi/2) > 1e-3 {
 		t.Errorf("on the run Aria faces %v, want the run's pi/2 (the step alone says 0)", e.Heading)
 	}
+	// Round 749: an older client's run position reaches Bram as retail's
+	// 0xB023, which carries the run's heading as its angle. (A round-749
+	// client sends the run as 0x7021's heading form: destmove749_test.go.)
 	bGot := drain(t, w.bram, 200*time.Millisecond)
-	i := indexOf(bGot, OpEntityMoved)
+	i := indexOf(bGot, OpMovementStop)
 	if i < 0 {
 		t.Fatal("Bram did not hear Aria's run")
 	}
-	em, err := DecodeEntityMoved(bGot[i].Data)
-	if err != nil || !em.Run || em.RunAngle != wire || em.RunCommand != 1 || em.Relocated {
-		t.Fatalf("Bram heard %+v, %v; want the run's heading form (angle %d)", em, err, wire)
+	if s, ok := DecodeMoveStop(bGot[i].Data); !ok || s.Angle != wire {
+		t.Fatalf("Bram heard %+v; want the run's angle %d", s, wire)
 	}
 
-	// The stop at the wall: a plain position, relayed plain.
+	// The stop at the wall: a plain position.
 	w.aria.send(t, OpMove, (&MoveRequest{X: float32(e0.Pos.X) + 5, Y: 0, Z: float32(e0.Pos.Z) + 20}).Encode())
 	time.Sleep(150 * time.Millisecond)
 	bGot = drain(t, w.bram, 200*time.Millisecond)
-	i = indexOf(bGot, OpEntityMoved)
+	i = indexOf(bGot, OpMovementStop)
 	if i < 0 {
 		t.Fatal("Bram did not hear Aria's stop")
 	}
-	if em, err := DecodeEntityMoved(bGot[i].Data); err != nil || em.Run || em.X != float32(e0.Pos.X)+5 {
-		t.Fatalf("Bram heard the stop as %+v, %v; want a plain position", em, err)
+	if _, at, _ := stopWorld(t, e.Zone, bGot[i].Data); math.Abs(at.X-(e0.Pos.X+5)) > 1e-3 {
+		t.Fatalf("Bram heard the stop at %+v; want x %v", at, e0.Pos.X+5)
 	}
 }

@@ -53,6 +53,13 @@ class Record:
 	var job_state: int = JOB_STATE_NONE
 	## The 0x3015's spawn-type byte (-1 in a group).
 	var spawn_type := -1
+	## The mover (round 749): walking to dest_local of dest_region, or the
+	## heading form's command (bit 0 runs) and angle.
+	var has_dest := false
+	var dest_region: int
+	var dest_local := Vector3i.ZERO
+	var move_command: int
+	var move_angle: int
 
 ## The item table the reader asks (World3D's own: RefItemID ->
 ## ItemTableReader.Item).
@@ -140,12 +147,27 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 	var z := r.f32()
 	rec.local_position = Vector3(x, y, z)
 	rec.angle = r.u16()
-	if r.u8() != 0 and r.error == "":
-		r.error = "a destination in a player record"
-		return null
+	# The mover (0x48be00; round 749): a destination -- its region and three
+	# i16, or a dungeon's three i32 -- or the command byte and the mover's
+	# angle (+0x168, +0x164: a heading run while the command's bit 0 is set).
+	var has_dest := r.u8()
 	r.u8() # run flag
-	r.u8() # source byte
-	r.u16() # the mover's angle
+	if has_dest != 0:
+		rec.has_dest = true
+		rec.dest_region = r.u16()
+		if rec.dest_region & 0x8000:
+			r.bytes(12)
+			if r.error == "":
+				r.error = "a dungeon destination in a player record"
+			return null
+		var dx := r.u16()
+		var dy := r.u16()
+		var dz := r.u16()
+		rec.dest_local = Vector3i(dx - 0x10000 if dx >= 0x8000 else dx, dy - 0x10000 if dy >= 0x8000 else dy,
+			dz - 0x10000 if dz >= 0x8000 else dz)
+	else:
+		rec.move_command = r.u8()
+		rec.move_angle = r.u16()
 	rec.life = r.u8()
 	r.u8()
 	rec.motion = r.u8()
@@ -209,6 +231,13 @@ static func to_snapshot(rec: Record, types: Types, frame: Vector2i) -> WorldNet.
 	s.ref_obj_id = rec.ref_id
 	s.scale = rec.scale
 	s.has_model = true
+	s.run_speed = rec.run
+	if rec.has_dest:
+		var d := world_xz(rec.dest_region, float(rec.dest_local.x), float(rec.dest_local.z), frame)
+		s.has_dest = true
+		s.dest = Vector3(d.x, float(rec.dest_local.y), d.y)
+	elif rec.move_command & SkyRun.COMMAND_FORWARD:
+		s.run_wire = rec.move_angle
 	for it in rec.items:
 		var slot := types.equip_slot(int(it["id"])) if types != null else -1
 		if slot < 0:

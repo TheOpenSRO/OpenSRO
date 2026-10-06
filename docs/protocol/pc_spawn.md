@@ -66,10 +66,11 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
 | 12 | u16 | region | `0x487ce0`: `+0x84` | `+0xfc` | `worldmap.FromWorld` in the zone's frame |
 | 13 | f32 ×3 | x, y, z (region-local) | `0x487d90` | `+0x100..+0x108` | the same |
 | 14 | u16 | angle | `0x488050` | `+0x10c` (+ pi/2) | `proto.EncodeMovementAngle(world.WireAngle(heading))` |
-| 15 | u8 | has destination | `0x48be00`: mover `+0x154` | `0x8a5640(.., 1)` | 0 (OURS: positions are the client's) |
+| 15 | u8 | has destination | `0x48be00`: mover `+0x154` | `0x8a5640(.., 1)` | 1 while the character walks to a point (round 749: the hub's leg, `world.Mover`), else 0 |
 | 16 | u8 | run flag | mover `+0x155` | +1 | 1 (INFERRED: the mover's default) |
-| 17 | u8, u16 | (no destination) source byte, angle | mover `+0x168`, `+0x164` | `+0x14`, `+0x10` | 0, the angle again |
-| 18 | u8 ×4 | life, [1], motion, body mode | chardata `[0..3]` (`0x4a9b70`) | `+0x271`, `+0x273`, `+0x272`, `+0x470` | life from the hub; 0; `motions.state` (4 = SIT); 1 while berserk (round 651's value) |
+| 17 | u8, u16 | (no destination) source byte, angle | mover `+0x168`, `+0x164` | `+0x14`, `+0x10` | 0 and the angle again; on a heading run (round 749) the run's command (1) and its wire angle |
+| 17' | u16, i16 x 3 | (destination) region, x, y, z | the 0x48bad0 serialiser | `0x8a5640` | round 749: the leg's destination, region-local, truncated (a dungeon's would be i32 x 3) |
+| 18 | u8 ×4 | life, [1], motion, body mode | chardata `[0..3]` (`0x4a9b70`) | `+0x271`, `+0x273`, `+0x272`, `+0x470` | life from the hub; 0; `motions.state` (4 = SIT; 3 = RUN while a leg runs, round 749: the accepted move's SetMotionState(2 + run flag), READ `0x4b11b6`); 1 while berserk (round 651's value) |
 | 19 | f32 ×3 | walk, run, param 140 | params 23, 24, 140 | `+0x254`, `+0x258`, `+0x4e8` | 16 (MEASURED: characterdata column 46); `buffBooks.RunSpeed`; 100 (READ, `0x4e3200`) |
 | 20 | u8 | buff count | `0x59cdc0` | `0x9d1300` | 0. OpenSRO's buffs follow the spawn as its own `OpBuffStart` (a DEPARTURE in carrier only) |
 | 21 | u16 + bytes | name | the char name when the job state is 4, else the job alias | `+0x110` | the character name |

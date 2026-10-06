@@ -33,23 +33,24 @@ func TestRelocationIsRelayedAndKeepsTheHeading(t *testing.T) {
 	// Aria walks toward +x (heading pi/2, wire angle 0) ...
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 200}).Encode())
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: 110, Y: 0, Z: 200}).Encode())
+	// Round 749: each reaches Bram as retail's 0xB023, carrying the heading.
 	for i := 0; i < 2; i++ {
-		if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityMoved || len(p.Data) != 20 {
-			t.Fatalf("walk %d reached Bram as %#04x of %d bytes, want OpEntityMoved of 20 (no flag on a walk)", i, p.Opcode, len(p.Data))
+		if p := f.read(t, f.connB, f.rB); p.Opcode != OpMovementStop || len(p.Data) != 20 {
+			t.Fatalf("walk %d reached Bram as %#04x of %d bytes, want 0xB023 of 20", i, p.Opcode, len(p.Data))
 		}
 	}
 	// ... then is put 400 units toward -z: the flags byte, bit 0.
 	relocated := append((&MoveRequest{X: 110, Y: 0, Z: -200}).Encode()[:12], 1)
 	f.send(t, f.connA, OpMove, relocated)
 	p := f.read(t, f.connB, f.rB)
-	if p.Opcode != OpEntityMoved {
-		t.Fatalf("the relocation reached Bram as %#04x, want OpEntityMoved", p.Opcode)
+	if p.Opcode != OpMovementStop {
+		t.Fatalf("the relocation reached Bram as %#04x, want 0xB023", p.Opcode)
 	}
-	if len(p.Data) != 21 || p.Data[20]&1 == 0 {
-		t.Errorf("the relocation is relayed as %d bytes (last %#x), want 21 with the relocated flag", len(p.Data), p.Data[len(p.Data)-1])
+	if _, at, _ := stopWorld(t, spawnZone, p.Data); at.X != 110 || at.Z != -200 {
+		t.Errorf("the relocation's 0xB023 puts Aria at %+v", at)
 	}
-	if m, err := DecodeEntityMoved(p.Data); err != nil || m.X != 110 || m.Z != -200 {
-		t.Errorf("an older decoder reads the flagged move as %+v, %v", m, err)
+	if s, _ := DecodeMoveStop(p.Data); s.Angle != 0 {
+		t.Errorf("the relocation's 0xB023 carries wire angle %d, want 0 (the walk's heading kept)", s.Angle)
 	}
 	// The heading is still the walk's: Bram goes on, Aria follows.
 	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK {
@@ -73,8 +74,8 @@ func TestArrivalListCarriesTheHeadingsOfThoseStanding(t *testing.T) {
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 200}).Encode())
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 190}).Encode())
 	for i := 0; i < 2; i++ { // both walks are in the hub once Bram has heard them
-		if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityMoved {
-			t.Fatalf("Bram's packet %d is %#04x, want OpEntityMoved", i, p.Opcode)
+		if p := f.read(t, f.connB, f.rB); p.Opcode != OpMovementStop {
+			t.Fatalf("Bram's packet %d is %#04x, want 0xB023", i, p.Opcode)
 		}
 	}
 	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK {

@@ -701,7 +701,7 @@ func TestCounterKillLeavesThePlayerDeadUntilRevived(t *testing.T) {
 	z.aria.write(t, OpMove, (&MoveRequest{X: 50, Y: 0, Z: 50}).Encode())
 	z.aria.barrier(t)
 	for _, p := range z.bram.barrier(t) {
-		if p.Opcode == OpEntityMoved {
+		if p.Opcode == OpMovementStop {
 			t.Errorf("Bram was relayed a dead character's move")
 		}
 	}
@@ -739,7 +739,7 @@ func TestCounterKillLeavesThePlayerDeadUntilRevived(t *testing.T) {
 	z.aria.barrier(t)
 	moved := false
 	for _, p := range z.bram.barrier(t) {
-		if p.Opcode == OpEntityMoved {
+		if p.Opcode == OpMovementStop {
 			moved = true
 		}
 	}

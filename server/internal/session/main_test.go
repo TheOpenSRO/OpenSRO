@@ -23,8 +23,15 @@ import (
 // package's full-flow tests use the local PostgreSQL test database, and two
 // `go test` processes on one host clobbered each other's rows on 2026-09-19
 // (see internal/testdb).
+//
+// Round 749: the suite places its characters with OpMove wherever a test
+// needs them -- the QA path, -trust-client-positions. The production bound
+// on those positions (a stop on the server's own leg, a placement at a point
+// it named) has its own tests in destmove749_test.go, each of which turns the
+// trust off for itself (strictPositions).
 func TestMain(m *testing.M) {
 	damageRollNG = nil
+	trustPositions.Store(true)
 	release := testdb.Lock(inventoryTestDSN())
 	code := m.Run()
 	release()

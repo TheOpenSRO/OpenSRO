@@ -93,8 +93,13 @@ type Entity struct {
 	Heading float64
 	// Cell is the message block the entity stands in (combat.CellOf of Pos
 	// in Zone), kept by the hub as Pos changes (round 737): the players in
-	// view are those of the ViewRadius window of blocks around it.
+	// view are those of the ViewRadius window of blocks around it. A
+	// character with a leg is refiled by AdvanceMovers (round 749).
 	Cell combat.Cell
+	// Move is the character's leg in progress, nil when it stands (round
+	// 749, mover.go). Every Entity the hub hands out carries the leg's
+	// position at that moment in Pos.
+	Move *Mover
 }
 
 // ViewRadius is how many message blocks around its own a player sees other
@@ -135,6 +140,10 @@ type Hub struct {
 	// byCell is every entity by the block it stands in (Entity.Cell).
 	byCell   map[combat.Cell]map[uint64]*Entity
 	arrivals uint64
+	// moving is every entity with a leg (Entity.Move), by session: the
+	// periodic pass's work list (round 749).
+	moving map[uint64]*Entity
+	clock  func() time.Time
 }
 
 // NewHub returns an empty Hub.
@@ -145,6 +154,8 @@ func NewHub() *Hub {
 		byChar:    make(map[int64]*Entity),
 		byName:    make(map[string]*Entity),
 		byCell:    make(map[combat.Cell]map[uint64]*Entity),
+		moving:    make(map[uint64]*Entity),
+		clock:     time.Now,
 	}
 }
 
@@ -179,7 +190,8 @@ func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Entity, ok 
 	if !exists {
 		return Entity{}, nil, false
 	}
-	left = *e
+	left = outLocked(e, h.clock())
+	left.Move = nil
 	h.removeLocked(sess.ID())
 	return left, h.viewOthersLocked(&left), true
 }
@@ -221,47 +233,9 @@ type MoveResult struct {
 // is MoveHeading's), and refiles it under its new block. ok=false if the
 // session isn't in the world.
 func (h *Hub) Relocate(sess *gateway.Session, pos Position, kind MoveKind, heading float64) (MoveResult, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	e, exists := h.bySession[sess.ID()]
-	if !exists {
-		return MoveResult{}, false
-	}
-	switch kind {
-	case MoveWalk:
-		e.Heading = HeadingToward(e.Heading, pos.X-e.Pos.X, pos.Z-e.Pos.Z)
-	case MoveHeading:
-		e.Heading = heading
-	}
-	e.Pos = pos
-	old := e.Cell
-	now := CellOf(e.Zone, pos)
-	var r MoveResult
-	if now != old {
-		h.uncellLocked(e)
-		e.Cell = now
-		h.cellLocked(e)
-		r.Crossed = true
-		h.forWindowLocked(old, func(o *Entity) {
-			if o != e && !InView(now, o.Cell) {
-				r.Lost = append(r.Lost, *o)
-			}
-		})
-		h.forWindowLocked(now, func(o *Entity) {
-			if o != e && !InView(old, o.Cell) {
-				r.Gained = append(r.Gained, *o)
-			}
-		})
-	}
-	r.Watchers = make([]Watcher, 0, h.windowCountLocked(now))
-	h.forWindowLocked(now, func(o *Entity) {
-		if o != e {
-			r.Watchers = append(r.Watchers, Watcher{Session: o.Session, CharacterID: o.CharacterID})
-		}
-	})
-	r.Entity = *e
-	return r, true
+	// A placement ends a leg in progress (round 749, mover.go StopAt).
+	r, _, ok := h.StopAt(sess, pos, kind, heading, nil)
+	return r, ok
 }
 
 // ChangeZone moves sess's character to newZone at pos, the same discrete
@@ -283,7 +257,8 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	if !exists {
 		return Entity{}, nil, nil, false
 	}
-	old = *e
+	old = outLocked(e, h.clock())
+	old.Move = nil
 	// A stale session of a reconnect -- its character entered again on a
 	// newer session, which took the character and the name -- stays the
 	// stale one through its zone change (round 737's verification, N4):
@@ -384,9 +359,10 @@ func (h *Hub) EntitiesInZone(zone string) []Entity {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	now := h.clock()
 	var out []Entity
 	for _, e := range h.byZone[zone] {
-		out = append(out, *e)
+		out = append(out, outLocked(e, now))
 	}
 	return out
 }
@@ -401,8 +377,9 @@ func (h *Hub) ViewOfCharacter(characterID int64) []Entity {
 	if !ok {
 		return nil
 	}
+	now := h.clock()
 	var out []Entity
-	h.forWindowLocked(e.Cell, func(o *Entity) { out = append(out, *o) })
+	h.forWindowLocked(e.Cell, func(o *Entity) { out = append(out, outLocked(o, now)) })
 	return out
 }
 
@@ -429,9 +406,10 @@ func (h *Hub) Sees(a, b uint64) bool {
 func (h *Hub) AllEntities() []Entity {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	now := h.clock()
 	out := make([]Entity, 0, len(h.bySession))
 	for _, e := range h.bySession {
-		out = append(out, *e)
+		out = append(out, outLocked(e, now))
 	}
 	return out
 }
@@ -455,7 +433,7 @@ func (h *Hub) EntityBySession(sessionID uint64) (Entity, bool) {
 	if !ok {
 		return Entity{}, false
 	}
-	return *e, true
+	return outLocked(e, h.clock()), true
 }
 
 // EntityByCharacterID returns the entity for characterID, if they're
@@ -469,7 +447,7 @@ func (h *Hub) EntityByCharacterID(characterID int64) (Entity, bool) {
 	if !ok {
 		return Entity{}, false
 	}
-	return *e, true
+	return outLocked(e, h.clock()), true
 }
 
 // FindByName returns the entity for the character named name, if they're
@@ -484,7 +462,7 @@ func (h *Hub) FindByName(name string) (Entity, bool) {
 	if !ok {
 		return Entity{}, false
 	}
-	return *e, true
+	return outLocked(e, h.clock()), true
 }
 
 // insertLocked files e under every index, its block from its position.
@@ -523,6 +501,7 @@ func (h *Hub) removeLocked(sessionID uint64) {
 		delete(h.byName, e.Name)
 	}
 	h.uncellLocked(e)
+	delete(h.moving, sessionID)
 }
 
 func (h *Hub) cellLocked(e *Entity) {
@@ -568,10 +547,11 @@ func (h *Hub) windowCountLocked(c combat.Cell) int {
 // viewOthersLocked returns a snapshot of every entity in view of e's
 // position, except e's own session. Caller must hold h.mu.
 func (h *Hub) viewOthersLocked(e *Entity) []Entity {
+	now := h.clock()
 	var out []Entity
 	h.forWindowLocked(CellOf(e.Zone, e.Pos), func(o *Entity) {
 		if o.Session.ID() != e.Session.ID() {
-			out = append(out, *o)
+			out = append(out, outLocked(o, now))
 		}
 	})
 	return out

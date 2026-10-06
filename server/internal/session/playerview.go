@@ -586,11 +586,15 @@ func departPlayer(hub *world.Hub, gone world.Entity, recips []world.Entity) {
 // was held (round 737's verification, N1).
 func afterRelocate(sess *gateway.Session, r world.MoveResult, self bool, frame *gateway.Frame) {
 	bumpPlayerState(r.Entity.CharacterID)
-	if self && sess != nil {
-		_ = sess.SendFrames(frame)
-	}
-	for _, w := range r.Watchers {
-		sendIfKnown(w.Session, w.CharacterID, r.Entity.CharacterID, frame)
+	// A frame of nil is a crossing with no message of its own: the mover
+	// pass's refiling of a leg (round 749, destmove.go moverPass).
+	if frame != nil {
+		if self && sess != nil {
+			_ = sess.SendFrames(frame)
+		}
+		for _, w := range r.Watchers {
+			sendIfKnown(w.Session, w.CharacterID, r.Entity.CharacterID, frame)
+		}
 	}
 	if !r.Crossed || sess == nil {
 		return

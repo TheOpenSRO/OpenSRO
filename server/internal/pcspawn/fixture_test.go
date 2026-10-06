@@ -74,6 +74,55 @@ func fixtureBytes(t *testing.T) (group []byte, single []byte, despawn []byte) {
 	return group, single, despawn
 }
 
+// Round 749: two 0x3015s of players spawned moving, which
+// client/scripts/net/dest_move_net_test.gd reads: Cara walking to region
+// 0x61a8 local (1500, -2, 300) (0x48be00's destination branch), and Dane on a
+// heading run (command 1, angle 0x1234).
+const (
+	fixtureWalker = "73070000220000006d0005000003000000a86100807a440000604000007f4400400101a861dc05feff2c010100030000008041000048420000c8420004004361726100000000000000000000000000000000000000000000000000000000000000ff04"
+	fixtureRunner = "73070000220000006d0005000004000000a86100807a440000604000007f44004000010134120100030000008041000048420000c84200040044616e6500000000000000000000000000000000000000000000000000000000000000ff04"
+)
+
+func movingRecords() (walker, runner Record) {
+	base := Record{
+		RefObjID: 1907, Scale: 0x22, InventorySize: 109, AvatarSize: 5,
+		Region: 0x61a8, X: 1002, Y: 3.5, Z: 1020, Angle: 16384, RunFlag: 1,
+		Life: 1, Motion: 3, Walk: 16, Run: 50, Param140: 100,
+		JobState: JobStateNone, Team: TeamNone,
+	}
+	walker, runner = base, base
+	walker.UID, walker.Name = 3, "Cara"
+	walker.HasDest, walker.DestRegion, walker.DestX, walker.DestY, walker.DestZ = true, 0x61a8, 1500, -2, 300
+	runner.UID, runner.Name = 4, "Dane"
+	runner.MoveCommand, runner.MoveAngle = 1, 0x1234
+	return
+}
+
+func TestClientMovingFixture(t *testing.T) {
+	walker, runner := movingRecords()
+	for _, c := range []struct {
+		name string
+		r    Record
+		want string
+	}{{"walker", walker, fixtureWalker}, {"runner", runner, fixtureRunner}} {
+		b, err := Append(nil, c.r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b = append(b, 4)
+		got := hex.EncodeToString(b)
+		t.Logf("%s %s", c.name, got)
+		if got != c.want {
+			t.Errorf("the %s bytes changed: dest_move_net_test.gd holds the old ones (update both)", c.name)
+		}
+		d, rest, err := Decode(b, nil)
+		if err != nil || len(rest) != 1 || d.HasDest != c.r.HasDest || d.DestX != c.r.DestX || d.DestY != c.r.DestY ||
+			d.MoveCommand != c.r.MoveCommand || d.MoveAngle != c.r.MoveAngle {
+			t.Fatalf("%s decoded %+v rest %d %v", c.name, d, len(rest), err)
+		}
+	}
+}
+
 // TestClientFixture checks the three byte strings the GD test embeds are
 // what the encoders write (and prints them), and that they read back here as
 // they must there.

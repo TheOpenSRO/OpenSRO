@@ -62,6 +62,20 @@ type Record struct {
 	Angle   uint16
 	// RunFlag is the mover's +0x155 (the motion setter's 2 + (it != 0)).
 	RunFlag byte
+	// The mover (0x48be00, READ; round 749): a character walking to a point
+	// carries its destination -- has-destination 1, then the run flag, the
+	// destination's region and three i16 region-local coordinates -- so a
+	// client that spawns it mid-walk walks it on (FUN_009ca320 aims a body
+	// that spawned moving). Otherwise has-destination 0, the run flag, the
+	// mover's command byte (+0x168: 1 while a heading run steps) and its
+	// angle (+0x164).
+	// MoveAngle is written only with a non-zero MoveCommand; a still
+	// character's mover angle is its Angle.
+	HasDest             bool
+	DestRegion          uint16
+	DestX, DestY, DestZ int16
+	MoveCommand         byte
+	MoveAngle           uint16
 	// The stance bytes, chardata[0..3]: the life state, an unread byte, the
 	// motion state (0 STAND, 2 WALK, 3 RUN, 4 SIT) and the body mode.
 	Life, Stance1, Motion, BodyMode byte
@@ -126,8 +140,22 @@ func Append(out []byte, r Record) ([]byte, error) {
 	out = appendF32(out, r.Y)
 	out = appendF32(out, r.Z)
 	out = binary.LittleEndian.AppendUint16(out, r.Angle)
-	out = append(out, 0, r.RunFlag, 0)
-	out = binary.LittleEndian.AppendUint16(out, r.Angle)
+	if r.HasDest {
+		// 0x48be00's destination branch: the 0x48bad0 serialiser's region
+		// and i16 x, y, z (the client's 0x8a5640(.., 1) reads them).
+		out = append(out, 1, r.RunFlag)
+		out = binary.LittleEndian.AppendUint16(out, r.DestRegion)
+		for _, v := range [3]int16{r.DestX, r.DestY, r.DestZ} {
+			out = binary.LittleEndian.AppendUint16(out, uint16(v))
+		}
+	} else {
+		angle := r.Angle
+		if r.MoveCommand != 0 {
+			angle = r.MoveAngle
+		}
+		out = append(out, 0, r.RunFlag, r.MoveCommand)
+		out = binary.LittleEndian.AppendUint16(out, angle)
+	}
 	out = append(out, r.Life, r.Stance1, r.Motion, r.BodyMode)
 	out = appendF32(out, r.Walk)
 	out = appendF32(out, r.Run)
@@ -240,13 +268,22 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 	d.Region = r.u16()
 	d.X, d.Y, d.Z = r.f32(), r.f32(), r.f32()
 	d.Angle = r.u16()
-	if r.u8() != 0 && r.err == nil {
-		return d, nil, fmt.Errorf("pcspawn: a destination form is not OpenSRO's")
-	}
+	d.HasDest = r.u8() != 0
 	d.RunFlag = r.u8()
-	r.u8()
-	if a := r.u16(); a != d.Angle && r.err == nil {
-		return d, nil, fmt.Errorf("pcspawn: mover angle %d, position angle %d", a, d.Angle)
+	if d.HasDest {
+		d.DestRegion = r.u16()
+		if d.DestRegion&0x8000 != 0 && r.err == nil {
+			return d, nil, fmt.Errorf("pcspawn: a dungeon destination is not OpenSRO's")
+		}
+		d.DestX, d.DestY, d.DestZ = int16(r.u16()), int16(r.u16()), int16(r.u16())
+	} else {
+		d.MoveCommand = r.u8()
+		a := r.u16()
+		if d.MoveCommand != 0 {
+			d.MoveAngle = a
+		} else if a != d.Angle && r.err == nil {
+			return d, nil, fmt.Errorf("pcspawn: mover angle %d, position angle %d", a, d.Angle)
+		}
 	}
 	d.Life, d.Stance1, d.Motion, d.BodyMode = r.u8(), r.u8(), r.u8(), r.u8()
 	d.Walk, d.Run, d.Param140 = r.f32(), r.f32(), r.f32()

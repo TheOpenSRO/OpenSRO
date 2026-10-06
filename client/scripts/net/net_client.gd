@@ -40,6 +40,13 @@ signal entity_entered(snapshot: WorldNet.EntitySnapshot)
 signal user_group_begin
 signal user_group_end
 signal entity_moved(moved: WorldNet.EntityMoved)
+## Round 749 (DestMoveNet): retail's 0xB021, an accepted move -- to the 3 x 3
+## blocks, this player's own included -- with its world points resolved
+## (echo.dest_world, echo.source_world); and 0xB023, a stop or placement the
+## server tells the window (stop.world), this player's own when the server
+## did not take a stop or placement it was told.
+signal entity_move_echo(echo: DestMoveNet.Echo)
+signal entity_move_stop(stop: DestMoveNet.Stop)
 signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
 ## A character's state changed (WorldNet.OP_STATE_CHANGE, round 607): kind 1 is
@@ -626,6 +633,32 @@ func enter_world(char_name: String) -> void:
 func move_to(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1) -> void:
 	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated, heading_wire))
 
+## Round 749: where the player's walk stopped short of the destination its
+## 0x7021 named (WorldNet.MOVE_FLAG_STOPPED, OURS) -- the server takes it on
+## its own leg and tells the window with retail's 0xB023.
+func report_stop(x: float, y: float, z: float) -> void:
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, false, -1, true))
+
+## Round 749: retail's click move, 0x7021's destination form, for the world
+## point `at` in the frame the server named (the last result's FrameRegion):
+## the region and the local coordinates truncated (FUN_009ec080). Returns the
+## world point the server will walk to -- the truncated one -- or
+## Vector3.INF when no frame is known (nothing is sent).
+func move_order_destination(at: Vector3) -> Vector3:
+	if _spawn_frame.x < 0:
+		return Vector3.INF
+	var l := DestMoveNet.local_of_world(at.x, at.z, _spawn_frame)
+	var lx := float(int(float(l["lx"])))
+	var lz := float(int(float(l["lz"])))
+	_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_destination(int(l["region"]), lx, at.y, lz))
+	var w := DestMoveNet.world_of_local(int(l["region"]), lx, lz, _spawn_frame)
+	return Vector3(w.x, float(int(at.y)), w.y)
+
+## Round 749: 0x7021's heading form (the sky click, FUN_009ebec0): kind 0,
+## the command (SkyRun.COMMAND_FORWARD) and the u16 wire angle.
+func move_order_heading(command: int, angle: int) -> void:
+	_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_heading(command, angle))
+
 ## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key).
 func request_motion(value: int) -> void:
 	_send(WorldNet.OP_MOTION_REQUEST, WorldNet.encode_motion_request(value))
@@ -1042,6 +1075,15 @@ func _on_zone_notice(data: PackedByteArray) -> void:
 	elif data[0] == 2:
 		zone_departures[uid] = true
 
+## Round 749: an 0xB021's world points in frame.
+static func resolve_echo(echo: DestMoveNet.Echo, frame: Vector2i) -> void:
+	if echo.kind == DestMoveNet.KIND_DESTINATION:
+		var d := DestMoveNet.world_of_local(echo.region, float(echo.local.x), float(echo.local.z), frame)
+		echo.dest_world = Vector3(d.x, float(echo.local.y), d.y)
+	if echo.has_source:
+		var s := DestMoveNet.world_of_local(echo.source_region, echo.source_local.x, echo.source_local.z, frame)
+		echo.source_world = Vector3(s.x, echo.source_local.y, s.y)
+
 ## A spawn message that may name a player: read now, or queued behind any
 ## that wait for the item table.
 func _user_spawn_message(op: int, data: PackedByteArray) -> void:
@@ -1052,6 +1094,21 @@ func _user_spawn_message(op: int, data: PackedByteArray) -> void:
 
 func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 	match op:
+		DestMoveNet.OP_MOVEMENT_ECHO:
+			var echo := DestMoveNet.decode_echo(data)
+			if echo.error != "":
+				push_warning("NetClient: a 0xB021 that does not read (%s)" % echo.error)
+				return
+			resolve_echo(echo, _spawn_frame)
+			entity_move_echo.emit(echo)
+		DestMoveNet.OP_MOVEMENT_STOP:
+			var stop := DestMoveNet.decode_stop(data)
+			if stop.error != "":
+				push_warning("NetClient: a 0xB023 that does not read (%s)" % stop.error)
+				return
+			var at := DestMoveNet.world_of_local(stop.region, stop.local.x, stop.local.z, _spawn_frame)
+			stop.world = Vector3(at.x, stop.local.y, at.y)
+			entity_move_stop.emit(stop)
 		NpcSpawnNet.OP_SINGLE_SPAWN:
 			if _spawn_types == null:
 				_pending_spawns.append({"op": op, "data": data})
@@ -1353,6 +1410,10 @@ func _dispatch(p: Packet) -> void:
 					monster_list_result.emit(whole, "")
 		NpcSpawnNet.OP_FACING_UNKNOWN:
 			npc_roster.facing_unknown(NpcSpawnNet.decode_facing_unknown(p.data))
+		DestMoveNet.OP_MOVEMENT_ECHO, DestMoveNet.OP_MOVEMENT_STOP:
+			# Round 749: in order behind any player spawn still waiting for the
+			# item table, so a body is never told to walk before it exists.
+			_user_spawn_message(p.opcode, p.data)
 		NpcSpawnNet.OP_SINGLE_SPAWN:
 			# A player's record (round 737) or an NPC's, by its RefObjID.
 			if p.data.size() >= 4 and UserSpawnNet.is_player_ref(p.data.decode_u32(0)):

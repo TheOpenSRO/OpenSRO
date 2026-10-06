@@ -805,7 +805,7 @@ func readCancelledBy(t *testing.T, p tradePeer, by string) {
 	}
 }
 
-// movePeer moves p and drains the OpEntityMoved each of others gets. OpMove
+// movePeer moves p and drains the 0xB023 each of others gets (round 749). OpMove
 // has no reply, so reading those broadcasts is also what orders the move
 // before whatever the test sends next.
 func movePeer(t *testing.T, p tradePeer, x, y, z float32, others ...tradePeer) {
@@ -814,7 +814,7 @@ func movePeer(t *testing.T, p tradePeer, x, y, z float32, others ...tradePeer) {
 		t.Fatalf("%s: writing OpMove: %v", p.name, err)
 	}
 	for _, o := range others {
-		readPacket(t, o, OpEntityMoved)
+		readPacket(t, o, OpMovementStop)
 	}
 }
 

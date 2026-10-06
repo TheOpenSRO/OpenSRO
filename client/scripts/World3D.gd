@@ -839,6 +839,8 @@ var _fog_pass: MeshInstance3D = null
 ## stutter itself; this is raised too so the interpolated target updates
 ## often enough to track a fast-moving real player closely, not as a claim
 ## about any real client's own network rate.
+## Round 749: a walk is retail's 0x7021, one per click (MoveOrderSync); this
+## interval now paces only the QA walk's positions (OPENSRO_QA_WALK).
 const MIN_SEND_INTERVAL := 0.05
 const MIN_SEND_DISTANCE := 0.05 * PLAYER_SCALE_RATIO
 ## How quickly (per real second, exponential catch-up rate) another
@@ -1255,6 +1257,18 @@ var _other_bodies := {} # character_id -> Node3D
 ## target every frame instead of teleporting to it, so motion reads as
 ## continuous regardless of how often real updates actually arrive.
 var _other_body_targets := {} # character_id -> Vector3
+## Round 749 (OtherWalk): character_id -> the leg another player's body walks,
+## from its 0xB021 (or a spawn that names a destination): {"dest": Vector3,
+## "speed": float, "run": bool, "dir": Vector2, "h_xz": Vector2}. A body
+## with a leg steps along it every frame at its run speed (MonsterMotion's
+## mover step, READ) instead of easing toward _other_body_targets.
+var _other_legs := {}
+## character_id -> another player's run speed as last told (its spawn
+## record's param 24, a buff packet's runSpeed); OtherWalk.DEFAULT_SPEED
+## until one is.
+var _other_speeds := {}
+## Round 749 (MoveOrderSync): what this player's walk has told the server.
+var _move_sync := MoveOrderSync.new()
 ## character_id -> {skeleton, gender, group, moving}: what another player's
 ## body is playing, so its gait can follow its movement.
 var _other_gaits := {}
@@ -1785,6 +1799,8 @@ func _ready() -> void:
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		_walked_since_send = 0.0
+		# Round 749: the server has the character here, with no leg.
+		_move_sync.placed(player.position)
 		# Facing the way this character left (round 637's review follow-up:
 		# the heading restored with the position, OURS), when the server sends
 		# one.
@@ -1796,6 +1812,9 @@ func _ready() -> void:
 	NetClient.user_group_begin.connect(_on_user_group_begin)
 	NetClient.user_group_end.connect(_on_user_group_end)
 	NetClient.entity_moved.connect(_on_entity_moved)
+	# Round 749: retail's 0xB021 and 0xB023 (DestMoveNet).
+	NetClient.entity_move_echo.connect(_on_entity_move_echo)
+	NetClient.entity_move_stop.connect(_on_entity_move_stop)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
@@ -5924,6 +5943,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
 	_walked_since_send = 0.0
+	# Round 749: the server has the character here, with no leg; the old
+	# zone's walkers walk no more.
+	_move_sync.placed(player.position)
+	_other_legs.clear()
 	# The monsters of the old zone are left behind, and so is any attack
 	# still walking toward one of them -- with the walk, whose target is a
 	# spot in the old zone's coordinates.
@@ -6059,6 +6082,7 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	for character_id in _other_bodies.keys():
 		_other_bodies[character_id].queue_free()
 	_other_bodies.clear()
+	_other_legs.clear() # round 749
 	_other_gaits.clear()
 	_other_seated.clear()
 	# Round 739: and their queued dressing and their uids.
@@ -10730,7 +10754,7 @@ func _rewalk_after_refusal(result: CombatNet.AttackResult) -> bool:
 ## on every OpMove (session/world.go), so a move sent after the attack would
 ## end the swings it had just started.
 func _flush_position() -> void:
-	if not NetClient.is_connected_to_server() or player.position == _last_sent_pos:
+	if not NetClient.is_connected_to_server():
 		return
 	# Not while seated (round 607): the server would take it as walking off
 	# and stand the character. A seated body has not moved, so a swing from
@@ -10738,10 +10762,14 @@ func _flush_position() -> void:
 	# it sits without one.
 	if _sit.sitting or _motion_locked():
 		return
-	NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
-	_last_sent_pos = player.position
-	_walked_since_send = 0.0
-	_time_since_send = 0.0
+	# Round 749: a placement the walk cannot account for, as the tick sends
+	# it; else the stop, when the player stands more than
+	# MoveOrderSync.FLUSH_SLACK from where the server has (or will have) it.
+	if _position_relocated():
+		_send_placement()
+		return
+	if _move_sync.flush(player.position) == "stop":
+		_send_stop()
 
 ## Sends an attack request: a plain swing when skill_id is 0, else the cast --
 ## whose animation, battle stance and hit effect are armed here, when the
@@ -11643,6 +11671,9 @@ func _end_blocked_click_walk(graph: NavGraph, step: NavGraph.StepResult) -> void
 func _ask_pickup_after_walk() -> void:
 	if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
 		_pickup_inflight = true
+		# Round 749: where the walk ended goes first, so the server measures
+		# the 10 units from there (a wall that stopped it short).
+		_flush_position()
 		NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
 
 ## When a blocked approach was last logged (it is re-issued every tick).
@@ -12149,6 +12180,42 @@ func _teleport_local(lx: float, lz: float) -> bool:
 # -- the windows on screen, the keyboard focus, the keys that reached
 # World3D._unhandled_input (the last stage: every HUD handler ran first),
 # and what the key table ran (KeyInput.dispatched, since the action).
+## OPENSRO_QA_WALK_TO="<tick>:<x>,<z>[;<tick>:run:<deg>;<tick>:sit;<tick>:attack...]"
+## (round 749): at each tick, a ground click on world (x, z) -- the walk a
+## click issues (_issue_walk: the click filter, the order, its 0x7021), at
+## the ground's height there -- a sky click's heading run toward <deg> (0 is
+## +z, 90 is +x: the QA walk's convention), the N key's sit toggle, or one
+## attack on the nearest monster. The two-client checks drive A this way, so
+## B draws A from 0xB021. QA only; never set in real play.
+var _qa_walk_to_spec := OS.get_environment("OPENSRO_QA_WALK_TO")
+
+func _qa_walk_to_step() -> void:
+	for part in _qa_walk_to_spec.split(";", false):
+		var bits := part.split(":", false)
+		if bits.size() < 2 or not bits[0].is_valid_int() or int(bits[0]) != _qa_tick:
+			continue
+		if bits[1] == "run" and bits.size() >= 3:
+			var ang := deg_to_rad(float(bits[2]))
+			print("QA WALK_TO %d: %s" % [_qa_tick, _start_heading_run(Vector3(sin(ang), 0.0, cos(ang)))])
+			continue
+		# "sit": the N key's toggle (_request_sit_toggle); "attack": one
+		# attack on the nearest monster, walking into reach as a click does
+		# (_qa_attack_nearest).
+		if bits[1] == "sit":
+			print("QA WALK_TO %d: sit -- %s" % [_qa_tick, _request_sit_toggle()])
+			continue
+		if bits[1] == "attack":
+			print("QA WALK_TO %d: attack the nearest monster from (%.1f, %.1f)" % [_qa_tick, player.position.x, player.position.z])
+			_qa_attack_nearest()
+			continue
+		var xz := bits[1].split(",", false)
+		if xz.size() != 2:
+			continue
+		var at := Vector3(float(xz[0]), player.position.y, float(xz[1]))
+		at.y = _terrain_height_at(at)
+		print("QA WALK_TO %d: click at (%.1f, %.1f, %.1f) from (%.1f, %.1f): %s" % [_qa_tick, at.x, at.y, at.z,
+			player.position.x, player.position.z, _issue_walk(at)])
+
 var _qa_input_steps: Dictionary = {}
 var _qa_input_armed := false
 var _qa_input_report := ""
@@ -12550,6 +12617,8 @@ func _qa_step() -> void:
 		print("QA HELP: opened the Help window")
 	if OS.get_environment("OPENSRO_QA_COMMANDS") != "" and _qa_tick == 60:
 		_run_qa_commands(OS.get_environment("OPENSRO_QA_COMMANDS"))
+	if _qa_walk_to_spec != "":
+		_qa_walk_to_step()
 	if OS.get_environment("OPENSRO_QA_NOTICES") != "":
 		_qa_notices_step(OS.get_environment("OPENSRO_QA_NOTICES"))
 	var qa_party := OS.get_environment("OPENSRO_QA_PARTY")
@@ -13453,12 +13522,10 @@ func _qa_attack_nearest() -> void:
 		spot.y = _terrain_height_at(spot)
 		player.global_position = spot
 		player.velocity = Vector3.ZERO
-		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
-		# Recorded as sent, so _attack_monster's _flush_position does not send
-		# the same OpMove a second time.
-		_last_sent_pos = player.position
-		_walked_since_send = 0.0
-		_time_since_send = 0.0
+		# A QA placement (round 749: taken under -trust-client-positions),
+		# recorded as sent, so _attack_monster's _flush_position does not send
+		# it a second time.
+		_send_placement()
 		nearest = target.global_position.distance_to(player.global_position)
 		print("QA ATTACK: moved next to monster %d at %.1f,%.1f,%.1f" % [nearest_id, spot.x, spot.y, spot.z])
 	print("QA ATTACK: monster %d at %.0f" % [nearest_id, nearest])
@@ -15300,22 +15367,14 @@ func _physics_step(delta: float) -> void:
 		_tick_party_hud()
 
 	_time_since_send += delta
-	# No position goes out while seated or getting up or down (round 607): the
+	# Round 749: the walk is retail's 0x7021 now -- one per click, not a
+	# position every MIN_SEND_INTERVAL (_sync_move_order, MoveOrderSync).
+	# Nothing goes out while seated or getting up or down (round 607): the
 	# server takes any move while seated as walking off and stands the
 	# character, and refuses one in its transition -- a settling body must not
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
-	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
-			and not _sit.sitting and not _motion_locked():
-		# A heading run's positions carry its heading (round 653; retail's
-		# heading form relayed, WorldNet.encode_move).
-		var run_wire := SkyRun.wire_angle(_move_heading) if (_has_move_target and _move_heading_run) else -1
-		if _qa_move_log:
-			print("MOVE send t=%d ms=%d pos=(%.3f,%.3f)%s" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z,
-				(" heading=%d" % run_wire) if run_wire >= 0 else ""])
-		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated(), run_wire)
-		_last_sent_pos = player.position
-		_walked_since_send = 0.0
-		_time_since_send = 0.0
+	if not _sit.sitting and not _motion_locked():
+		_sync_move_order()
 
 	# Smooths every other real entity toward its latest known position
 	# instead of teleporting the instant an update arrives -- see
@@ -15463,6 +15522,75 @@ func _position_relocated() -> bool:
 	var relocated := _relocated_pending or moved > _walked_since_send + RELOCATE_MARGIN
 	_relocated_pending = false
 	return relocated
+
+## Round 749: one physics tick of what the walk owes the server
+## (MoveOrderSync): a placement the walk cannot account for goes out as a
+## relocation, as before; then the order -- a 0x7021 for a new or moved
+## point, its heading form for a heading run -- or, when the order ended short
+## of the point sent, the stop. The walk itself never waits for any of it, so
+## the player moves exactly as before.
+func _sync_move_order() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	if _position_relocated():
+		_send_placement()
+	_last_sent_pos = player.position
+	_walked_since_send = 0.0
+	if _qa_walk != "" and not _has_move_target and not _player_dead:
+		# QA only (OPENSRO_QA_WALK: a fixed-heading walk with no order, which
+		# slides along walls): its positions go out as they did before round
+		# 749, a MIN_SEND_INTERVAL apart -- an older client's stream, which a
+		# server takes only under -trust-client-positions (qa_shot's).
+		if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_move_sync.rest) >= MIN_SEND_DISTANCE:
+			NetClient.move_to(player.position.x, player.position.y, player.position.z)
+			_note_position_sent()
+		return
+	var run := _has_move_target and _move_heading_run
+	var wire := SkyRun.wire_angle(_move_heading) if run else -1
+	match _move_sync.decide(_has_move_target, run, _move_target, wire, player.position):
+		"dest":
+			var sent := NetClient.move_order_destination(_move_target)
+			if sent != Vector3.INF:
+				_move_sync.sent_destination(sent)
+				_time_since_send = 0.0
+				if _qa_move_log:
+					print("MOVE send t=%d ms=%d 0x7021 to (%.3f,%.3f) from (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(),
+						sent.x, sent.z, player.position.x, player.position.z])
+		"heading":
+			NetClient.move_order_heading(SkyRun.COMMAND_FORWARD, wire)
+			_move_sync.sent_heading(wire)
+			_time_since_send = 0.0
+			if _qa_move_log:
+				print("MOVE send t=%d ms=%d 0x7021 heading=%d from (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(),
+					wire, player.position.x, player.position.z])
+		"stop":
+			_send_stop()
+		"ended":
+			_move_sync.arrived()
+
+## A placement (relocated OpMove, round 637's review follow-up): the server
+## has the player here, with no leg.
+func _send_placement() -> void:
+	if _qa_move_log:
+		print("MOVE send t=%d ms=%d placement (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z])
+	NetClient.move_to(player.position.x, player.position.y, player.position.z, true)
+	_relocated_pending = false
+	_note_position_sent()
+
+## Round 749: the walk stopped short of the point the server walks to (OpMove
+## with the stop flag, OURS); the window hears it as retail's 0xB023.
+func _send_stop() -> void:
+	if _qa_move_log:
+		print("MOVE send t=%d ms=%d stop (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z])
+	NetClient.report_stop(player.position.x, player.position.y, player.position.z)
+	_note_position_sent()
+
+## The server has the player where it stands now, with no leg.
+func _note_position_sent() -> void:
+	_move_sync.placed(player.position)
+	_last_sent_pos = player.position
+	_walked_since_send = 0.0
+	_time_since_send = 0.0
 
 ## The player's own turn (round 637's review follow-up): the heading its walk
 ## turns toward, NAN when no turn is in progress. READ: the player's click is
@@ -15624,12 +15752,15 @@ func _aim_remote_body(body: Node3D, dir: Vector3, front_yaw: float) -> void:
 ## gait tests the distance the old last step saw), then their turns. Called
 ## from _process, after the frame's physics.
 func _step_other_bodies(delta: float, steps: int) -> void:
+	# Round 749: the bodies on a leg (0xB021) walk it; the rest ease toward
+	# their last position as before (an older server's OpEntityMoved stream).
+	_step_other_legs(delta)
 	var n := maxi(steps, 1)
 	var step_delta := delta / float(n)
 	var f := OtherCrowd.lerp_factor(OTHER_BODY_INTERPOLATION_SPEED, step_delta, n)
 	for character_id in _other_body_targets:
 		var body = _other_bodies.get(character_id)
-		if body == null:
+		if body == null or _other_legs.has(character_id):
 			continue
 		var target: Vector3 = _other_body_targets[character_id]
 		var at: Vector3 = (body as Node3D).position
@@ -16063,7 +16194,173 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 			return
 		_aim_remote_body(body, to - body.position, 0.0)
 
+## Round 749: another player's run speed from a buff packet (0: unchanged).
+func _note_other_speed(character_id: int, run_speed: int) -> void:
+	if run_speed <= 0:
+		return
+	_other_speeds[character_id] = float(run_speed)
+	var leg = _other_legs.get(character_id)
+	if leg != null:
+		leg["speed"] = float(run_speed)
+
+func _other_speed(character_id: int) -> float:
+	return float(_other_speeds.get(character_id, OtherWalk.DEFAULT_SPEED))
+
+## Round 749: retail's 0xB021 (NetProcessInNavAndSkill::FUN_008a5750), an
+## accepted move. Another player's body walks it (OtherWalk): from where it is
+## drawn (or the source, when it has drifted), toward the destination or
+## along the heading, at its run speed, turning at 3 pi rad/s
+## (_aim_remote_body). This player's own echo is its receipt: its walk began
+## on the click (MoveOrderSync), so nothing changes -- no rubber-banding.
+func _on_entity_move_echo(echo: DestMoveNet.Echo) -> void:
+	_sync_own_id()
+	var id := int(echo.uid)
+	if _own_id() >= 0 and id == (_own_id() & 0xffffffff):
+		if _qa_move_log:
+			print("MOVE echo self ms=%d kind=%d dest=(%.3f,%.3f)" % [Time.get_ticks_msec(), echo.kind, echo.dest_world.x, echo.dest_world.z])
+		return
+	var other := _other_by_uid(id)
+	if other >= 0:
+		id = other
+	if _qa_move_log:
+		print("MOVE recv %d ms=%d 0xB021 kind=%d dest=(%.3f,%.3f) src=(%.3f,%.3f)" % [id, Time.get_ticks_msec(), echo.kind,
+			echo.dest_world.x, echo.dest_world.z, echo.source_world.x, echo.source_world.z])
+	var leg := OtherWalk.to_point(echo.dest_world, _other_speed(id)) if echo.kind == DestMoveNet.KIND_DESTINATION \
+		else OtherWalk.on_heading(echo.angle, _other_speed(id))
+	if _arrival_pending and _arrival_entries.has(id):
+		# Laid out with the arrival list: it walks on from there.
+		var kept: WorldNet.EntitySnapshot = _arrival_entries[id]
+		if echo.has_source:
+			kept.x = echo.source_world.x
+			kept.y = echo.source_world.y
+			kept.z = echo.source_world.z
+		kept.has_dest = echo.kind == DestMoveNet.KIND_DESTINATION
+		kept.dest = echo.dest_world
+		kept.run_wire = echo.angle if echo.kind == DestMoveNet.KIND_HEADING else -1
+		return
+	if not _other_bodies.has(id):
+		return
+	var body: Node3D = _other_bodies[id]
+	body.position = OtherWalk.start_at(body.position, echo.source_world, echo.has_source)
+	# A sitter still waiting to be dressed who walks off is on their feet
+	# (round 739's review, F2): the server's move stands them, no 0x30BF.
+	if _other_build_args.has(id):
+		_other_seated.erase(id)
+	_start_other_leg(id, leg)
+
+## Starts `leg` on another player's body (OtherWalk), turned toward it.
+func _start_other_leg(id: int, leg: Dictionary) -> void:
+	var body: Node3D = _other_bodies[id]
+	_other_legs[id] = leg
+	_other_body_targets[id] = body.position
+	_aim_remote_body(body, OtherWalk.facing(leg, body.position), 0.0)
+	_set_other_gait(id, true)
+
+## A spawn that names a move (round 749: the record's mover, 0x48be00) walks
+## on, as FUN_009ca320 aims a body that spawned moving; and its run speed is
+## kept.
+func _resume_other_leg(snapshot: WorldNet.EntitySnapshot) -> void:
+	var id := snapshot.character_id
+	if snapshot.run_speed > 0.0:
+		_other_speeds[id] = snapshot.run_speed
+	if not _other_bodies.has(id):
+		return
+	if snapshot.has_dest:
+		_start_other_leg(id, OtherWalk.to_point(snapshot.dest, _other_speed(id)))
+	elif snapshot.run_wire >= 0:
+		_start_other_leg(id, OtherWalk.on_heading(snapshot.run_wire, _other_speed(id)))
+	else:
+		_other_legs.erase(id)
+
+## Round 749: retail's 0xB023 (FUN_008a4f80): a stop or placement. Another
+## player's body is put there, facing the message's angle, its turn and its
+## leg over (FUN_009e00f0 / FUN_009e11e0). For this player it is the server's
+## correction -- a stop or placement it did not take -- and the player is
+## put where the server has it.
+func _on_entity_move_stop(stop: DestMoveNet.Stop) -> void:
+	_sync_own_id()
+	var id := int(stop.uid)
+	var h := RemoteFacing.from_wire_angle(stop.angle)
+	if _own_id() >= 0 and id == (_own_id() & 0xffffffff):
+		_apply_own_correction(stop.world, h)
+		return
+	var other := _other_by_uid(id)
+	if other >= 0:
+		id = other
+	if _qa_move_log:
+		print("MOVE recv %d ms=%d 0xB023 pos=(%.3f,%.3f)" % [id, Time.get_ticks_msec(), stop.world.x, stop.world.z])
+	if _arrival_pending and _arrival_entries.has(id):
+		var kept: WorldNet.EntitySnapshot = _arrival_entries[id]
+		kept.x = stop.world.x
+		kept.y = stop.world.y
+		kept.z = stop.world.z
+		kept.has_dest = false
+		kept.run_wire = -1
+		kept.heading = h
+		return
+	if not _other_bodies.has(id):
+		return
+	var body: Node3D = _other_bodies[id]
+	_other_legs.erase(id)
+	body.position = stop.world
+	_other_body_targets[id] = stop.world
+	body.rotation.y = RemoteFacing.yaw_of(h, 0.0)
+	_remote_turns.erase(body.get_instance_id())
+	_set_other_gait(id, false)
+
+## The server did not take this player's stop or placement (round 749,
+## destmove.go correctMover) -- or anything that moved it out of its walk's
+## reach: it stands where the server has it, its order over.
+func _apply_own_correction(at: Vector3, heading: float) -> void:
+	print("MOVE correction: the server has this player at (%.2f, %.2f, %.2f), the client at (%.2f, %.2f, %.2f) -- put there" % [
+		at.x, at.y, at.z, player.position.x, player.position.y, player.position.z])
+	_has_move_target = false
+	_move_heading_run = false
+	player.velocity = Vector3.ZERO
+	var spot := at
+	var ground := _terrain_hit_height(spot)
+	if not is_nan(ground):
+		spot.y = ground
+	player.position = spot
+	player.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+	_player_turn_target = NAN
+	_relocated_pending = false
+	_note_position_sent()
+
+## Round 749: one frame of every other player's leg (OtherWalk.step), before
+## the eased bodies: the body steps along it at its run speed and its height is
+## resolved from the ground as it goes (MonsterMotion.needs_height, a budget a
+## frame -- the monsters' rule). A leg that lands on its point ends.
+func _step_other_legs(delta: float) -> void:
+	if _other_legs.is_empty():
+		return
+	var budget := MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME
+	for id in _other_legs.keys():
+		var body = _other_bodies.get(id)
+		if body == null or not is_instance_valid(body):
+			_other_legs.erase(id)
+			continue
+		var leg: Dictionary = _other_legs[id]
+		var r := OtherWalk.step(leg, (body as Node3D).position, delta)
+		var at: Vector3 = r["pos"]
+		var xz := Vector2(at.x, at.z)
+		if bool(r["done"]) or (budget > 0 and MonsterMotion.needs_height(leg["h_xz"], xz)):
+			var ground := _moving_monster_hit_height(at)
+			if not is_nan(ground):
+				at.y = ground
+				leg["h_xz"] = xz
+			budget -= 1
+		(body as Node3D).position = at
+		_other_body_targets[id] = at
+		# Every frame, so a body dressed mid-leg (round 739's queue) takes its
+		# run at once; a no-op once it plays it.
+		_set_other_gait(id, not bool(r["done"]))
+		if bool(r["done"]):
+			_other_legs.erase(id)
+
 func _on_entity_left(character_id: int) -> void:
+	_other_legs.erase(character_id)
+	_other_speeds.erase(character_id)
 	if _arrival_pending:
 		_arrival_entries.erase(character_id)
 		_arrival_left[character_id] = true
@@ -16307,6 +16604,7 @@ func _land_teleport_arrival(x: float, z: float) -> bool:
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
 	_walked_since_send = 0.0
+	_move_sync.placed(player.position) # round 749: the gate's point is the server's
 	_refresh_zone_label_position()
 	print("World3D: teleport arrival in %s at local (%.1f, %.1f), height %.2f -- the destination gate's point, on the walkable graph" % [
 		group.name, local.x, local.z, player.global_position.y])
@@ -16900,10 +17198,11 @@ func _place_player_at_world(x: float, z: float) -> void:
 	spot.y = _terrain_height_at(spot)
 	player.global_position = spot
 	player.velocity = Vector3.ZERO
-	_last_sent_pos = player.position
-	_walked_since_send = 0.0
-	_relocated_pending = false
-	NetClient.move_to(player.position.x, player.position.y, player.position.z, true)
+	# Round 749: the GM's point is one the server named (destmove.go
+	# noteGMLanding); any walk in effect ends here.
+	_has_move_target = false
+	_move_heading_run = false
+	_send_placement()
 
 ## The developer chrome that has no authored equivalent yet: the zone travel
 ## box, Log Out, and the Hide UI button. Shown with Shift+F1 (KeyMap, run by
@@ -19101,10 +19400,9 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 		player.global_position = pos + Vector3(2.0, 0.0, 0.0)
 		player.velocity = Vector3.ZERO
 		# Tell the server where we now stand and let that packet land before the
-		# pick, so its range check sees us on the item, not where we were.
-		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
-		_last_sent_pos = player.position
-		_walked_since_send = 0.0
+		# pick, so its range check sees us on the item, not where we were (a
+		# QA placement, round 749: under -trust-client-positions).
+		_send_placement()
 		print("QA PICKUP: standing at %.1f,%.1f,%.1f next to ground item %d; picking shortly" % [
 			player.global_position.x, player.global_position.y, player.global_position.z, snap.id])
 		# A moment on the ground (frames show the drop lying there), then pick.
@@ -19112,7 +19410,7 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 		# nothing teleports us away in between.
 		await get_tree().create_timer(1.2).timeout
 		if _ground_items != null and _ground_items.has(snap.id):
-			NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
+			_send_placement()
 			await get_tree().create_timer(0.2).timeout
 			NetClient.pick_up(NetClient.current_character_name, snap.id)
 
@@ -20792,12 +21090,10 @@ func _request_sit_toggle() -> String:
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
 	# The stop is sent before the request, so the server does not take a
-	# later position update for a move made in its transition.
-	if player.position != _last_sent_pos:
-		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
-		_last_sent_pos = player.position
-		_walked_since_send = 0.0
-		_time_since_send = 0.0
+	# later position update for a move made in its transition (round 749:
+	# the stop report, when the walk ended short of where the server walks).
+	if not was_sitting:
+		_flush_position()
 	_sit.press(_player_anim_time)
 	print("SIT: N pressed -- sending 0x704f [04] (sitting=%s)" % str(was_sitting))
 	NetClient.request_motion(WorldNet.MOTION_SIT)
@@ -21128,6 +21424,8 @@ func _on_buff_started(start: SkillNet.BuffStart) -> void:
 	if mine:
 		_apply_buff_run_speed(start.run_speed, "OpBuffStart skill %d token %d" % [start.skill_id, start.token])
 		_refresh_stat_panel("own buff started")
+	elif start.owner_kind == SkillNet.OWNER_CHARACTER:
+		_note_other_speed(start.owner_id, start.run_speed)
 	_target_buff_book.start(_fx_owner_key(start.owner_id, start.owner_kind), start.token, start.skill_id)
 	_fx_on_buff_started(start)
 
@@ -21139,6 +21437,8 @@ func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 	if mine:
 		_apply_buff_run_speed(ended.run_speed, "OpBuffEnd tokens %s" % str(ended.tokens))
 		_refresh_stat_panel("own buff ended")
+	elif ended.owner_kind == SkillNet.OWNER_CHARACTER:
+		_note_other_speed(ended.owner_id, ended.run_speed)
 	_target_buff_book.end(_fx_owner_key(ended.owner_id, ended.owner_kind), ended.tokens)
 	_fx_on_buff_ended(ended)
 
@@ -21191,6 +21491,8 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 		var body: Node3D = _other_bodies[moved.character_id]
 		body.position = to
 		_other_body_targets[moved.character_id] = to
+		# The server's Relocate ended any leg it walked (round 749).
+		_other_legs.erase(moved.character_id)
 		print("SKILL move handled: player %d snapped to (%.1f, %.1f, %.1f) by skill %d" % [
 			moved.character_id, to.x, to.y, to.z, moved.skill_id])
 		return
@@ -21202,9 +21504,7 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 		player.velocity = Vector3.ZERO
 		var held: Dictionary = _settle_skill_move_footing(to)
 		player.position = held["to"]
-		_last_sent_pos = player.position
-		_walked_since_send = 0.0
-		_time_since_send = 0.0
+		_note_position_sent() # round 749: the server holds it here, with no leg
 		print("ROOT: the server holds this player at (%.1f, %.1f, %.1f) -- its wall (skill %d) roots it" % [
 			player.position.x, player.position.y, player.position.z, moved.skill_id])
 		return
@@ -21226,10 +21526,9 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	to = settled["to"]
 	var footing: String = settled["footing"]
 	player.position = to
-	# The server already has the player there; do not send it back.
-	_last_sent_pos = to
-	_walked_since_send = 0.0
-	_time_since_send = 0.0
+	# The server already has the player there, with no leg (round 749: its
+	# Relocate ended one); do not send it back.
+	_note_position_sent()
 	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d, footing %s" % [
 		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id, footing])
 
@@ -21449,14 +21748,14 @@ func _apply_player_motion(value: int) -> void:
 func _leave_sit_by_moving() -> void:
 	var was_sitting := _sit.leave_by_moving()
 	if was_sitting and NetClient.is_connected_to_server():
-		# The server stands a seated character on its first accepted move; a
-		# tap too short for the ordinary send gate must still reach it, or the
-		# server keeps her seated while this client draws her standing (round
-		# 607's review).
-		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
-		_last_sent_pos = player.position
-		_walked_since_send = 0.0
-		_time_since_send = 0.0
+		# The server stands a seated character on its first accepted move; it
+		# must reach it, or the server keeps her seated while this client
+		# draws her standing (round 607's review). Round 749: an order goes
+		# out as its 0x7021 at the end of this tick (_sync_move_order), which
+		# the server's move handler stands her for (SetMotionState(WALK/RUN),
+		# READ); a walk with no order (the QA walk) reports where she stands.
+		if not _has_move_target:
+			_send_stop()
 	if not _player_one_shot_hold and _player_sit_clip != null and _player_one_shot == _player_sit_clip:
 		_player_one_shot = null
 	_player_sit_clip = null
@@ -21479,6 +21778,8 @@ func _spawn_result_others(others: Array, seated: Array) -> void:
 		# follow-up; NAN from an older server).
 		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped,
 			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE, other.pluses)
+		# Round 749: one spawned walking walks on (the record's mover).
+		_resume_other_leg(other)
 	_other_build_defer -= 1
 	_seat_result_others(seated)
 	if _other_build_defer == 0:

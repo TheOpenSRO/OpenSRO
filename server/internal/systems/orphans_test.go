@@ -43,6 +43,9 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 749: the hub's clock, swapped only by the session tests and the
+	// crowd bench (a simulated second); production keeps time.Now.
+	"SetClock": "round 749: world.Hub's clock for the mover tests and crowd736_bench_test.go's simulated seconds; production uses time.Now.",
 	// Round 732: the tooltip's (+x%) and the instance stats, READ from the
 	// client (0x66c5b0, 0x8bd980); the Go mirror of
 	// client/scripts/items/item_quality.gd, which the tooltip calls. Server

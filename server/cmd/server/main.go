@@ -1022,6 +1022,13 @@ func main() {
 			"struck and the wire is what it was. Forced off with a WARN unless -monster-battle is in "+
 			"effect and -player-dead-state is on. Needs the client releases those two need (rounds 546 "+
 			"and 548). See deploy/README.md, \"Monster aggro (off by default)\".")
+	trustPositions := flag.Bool("trust-client-positions", false,
+		"take every position a client reports in OpMove (a placement, a stop, an older client's walk), "+
+			"wherever it is, as before round 749. Default OFF: a stop is taken only on the server's own "+
+			"leg of the character's move, a placement only there or at a point the server named (an "+
+			"arrival, a GM /tp or /goto), and anything else is answered with the server's own position "+
+			"(0xB023). For QA runs, which place their players anywhere (OPENSRO_QA_AT and its kin); "+
+			"never on a public server.")
 	singleFrameEnv, singleFrameEnvErr := envBool("OPENSRO_SINGLE_FRAME")
 	singleFrame := flag.Bool("single-frame", singleFrameEnv,
 		"put the whole world in ONE coordinate frame (env OPENSRO_SINGLE_FRAME): every zone with a "+
@@ -1819,6 +1826,11 @@ func main() {
 	// zone and coordinates (rosterInstances), and the world handlers for every
 	// arrival (session.arrival).
 	session.SetSingleFrame(*singleFrame)
+	// Round 749: the move by destination's placement bound (destmove.go).
+	session.SetTrustClientPositions(*trustPositions)
+	if *trustPositions {
+		logger.Warn("trust-client-positions on: every position a client reports is taken (QA only)")
+	}
 	if *singleFrame {
 		logger.Info(fmt.Sprintf("single frame on: origin %d/%d -- every zone with a frame is named in one frame and kept in one bucket (%q), every roster monster with it; a zone change lands at the town's landing in that frame",
 			worldmap.WorldOrigin[0], worldmap.WorldOrigin[1], worldmap.WorldBucket))

@@ -76,15 +76,23 @@ func TestMovementEncodeLayout(t *testing.T) {
 			want: []byte{0x01, 0x00, 0x61, 100, 0, 200, 0, 0x2c, 0x01},
 		},
 		{
-			// A region WITH the world bit carries three float32s. 1.0 is
-			// 0x3f800000, 2.0 is 0x40000000, -1.0 is 0xbf800000.
-			name: "destination, world coordinates",
+			// A region WITH the world bit carries three i32 (round 737's
+			// correction: the server's reader 0x48bc20 stores ints, the
+			// client fills them with ftol).
+			name: "destination, dungeon coordinates",
 			m: Movement{Kind: 1, Region: MovementRegionWorldBit | 0x0100,
 				X: 1, Y: 2, Z: -1},
 			want: []byte{0x01, 0x00, 0x81,
-				0x00, 0x00, 0x80, 0x3f,
-				0x00, 0x00, 0x00, 0x40,
-				0x00, 0x00, 0x80, 0xbf},
+				0x01, 0x00, 0x00, 0x00,
+				0x02, 0x00, 0x00, 0x00,
+				0xff, 0xff, 0xff, 0xff},
+		},
+		{
+			// The field form's coordinates are SIGNED i16 (the 0xB021
+			// reader sign-extends them, 0x8a5640): a height below 0.
+			name: "destination, region-local, negative height",
+			m:    Movement{Kind: 1, Region: 0x61a8, LocalX: 1002, LocalY: -3, LocalZ: 1020},
+			want: []byte{0x01, 0xa8, 0x61, 0xea, 0x03, 0xfd, 0xff, 0xfc, 0x03},
 		},
 	}
 	for _, c := range cases {
@@ -103,7 +111,8 @@ func TestMovementRoundTrip(t *testing.T) {
 		{"heading", Movement{Kind: MovementKindHeading, HeadingByte: 9}, false},
 		{"heading with extra", Movement{Kind: MovementKindHeading, Extra: 3, HasExtra: true, HeadingByte: 9}, true},
 		{"region-local", Movement{Kind: 1, Region: 0x6100, LocalX: 1, LocalY: 2, LocalZ: 3}, false},
-		{"world", Movement{Kind: 1, Region: MovementRegionWorldBit, X: 1.5, Y: -2.5, Z: 3.5}, false},
+		{"dungeon", Movement{Kind: 1, Region: MovementRegionWorldBit, X: 15, Y: -25, Z: 35}, false},
+		{"negative local", Movement{Kind: 1, Region: 0x6100, LocalX: -1, LocalY: -200, LocalZ: 1919}, false},
 	}
 	for _, c := range cases {
 		got, _, err := DecodeMovement(c.m.Encode(), c.hasExtra)

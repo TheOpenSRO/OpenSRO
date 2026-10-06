@@ -20,6 +20,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"math"
 	"net"
 	"strings"
 	"testing"
@@ -400,11 +401,12 @@ func TestRound646AWalledCastersWarpLandingIsTaken(t *testing.T) {
 		t.Errorf("the walled Aria's warp landing left her at %+v, want (0.5, 3, -0.5), the arrival point where her client stands her: the zone sees her wall where she is not", e.Pos)
 	}
 	bGot := drain(t, w.bram, 200*time.Millisecond)
-	moved := indexOf(bGot, OpEntityMoved)
+	moved := indexOf(bGot, OpMovementStop)
 	if moved < 0 {
 		t.Errorf("Bram did not hear Aria's landing")
-	} else if em, err := DecodeEntityMoved(bGot[moved].Data); err != nil || em.X != 0.5 || !em.Relocated {
-		t.Errorf("Bram heard %+v, %v, want Aria relocated to x 0.5", em, err)
+	} else if _, at, _ := stopWorld(t, e.Zone, bGot[moved].Data); math.Abs(at.X-0.5) > 1e-3 {
+		// Round 749: retail's 0xB023, region-local f32s back in the frame.
+		t.Errorf("Bram heard Aria at %+v, want x 0.5", at)
 	}
 
 	// A walk is still dropped by the root.

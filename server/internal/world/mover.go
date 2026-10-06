@@ -1,0 +1,375 @@
+package world
+
+import (
+	"math"
+	"time"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+)
+
+// Moving by destination (round 749, docs/protocol/crowd_scale.md C3).
+//
+// READ (docs/protocol/opcodes/movement.md, "0xB021 in full"): retail's client
+// sends one 0x7021 per accepted click, the server answers it with one 0xB021
+// to the 3 x 3 blocks, the mover included, and then steps the mover itself
+// (CGObjMoverByDest::vslot_003, 0x48c4e0) and refiles it in its message block
+// as it walks. Nothing is sent per step and nothing on arrival.
+//
+// OURS: OpenSRO's server has no navigation mesh for players (round 744), so it
+// does not step them. It keeps each mover's leg -- where it started, where it
+// goes, when, how fast -- and computes the position the leg gives at any
+// moment (Mover.At). Every copy the hub hands out carries that position, so a
+// range check, a monster's chase, a pick-up's reach or a spawn record reads
+// where the character is now, not where its last message left it. A periodic
+// pass (AdvanceMovers) refiles the movers whose position crossed a block line,
+// which the spawn and despawn messages follow, and settles the ones that
+// arrived. A wall that stops the walk is the client's to report (session's
+// stop report); the hub takes the position the report gives (StopAt).
+
+// Mover is one character's leg in progress. A Mover is never changed once the
+// hub has published it on an entity: a change replaces the pointer, so a copy
+// of an Entity read under the lock stays valid after it.
+type Mover struct {
+	// Src is where the leg starts, at Start.
+	Src Position
+	// Dest is the destination form's point (Heading false).
+	Dest Position
+	// Heading is the heading form: no point, a direction (DirX, DirZ) the
+	// character runs along until something stops it (round 653's sky run;
+	// READ, CGObjMoverByCmd steps while the command's bit 0 is set).
+	Heading    bool
+	DirX, DirZ float64
+	// Command and WireAngle are the heading form's own bytes, kept for the
+	// spawn record of a character still running (0x48be00's no-destination
+	// branch writes the mover's +0x168 and +0x164).
+	Command   byte
+	WireAngle uint16
+	// Start is when the leg began; Speed is units a second.
+	Start time.Time
+	Speed float64
+	// dist is the destination form's ground length.
+	dist float64
+}
+
+// At is the position the leg gives at now: Src plus the travel direction times
+// Speed x the time since Start, cut at Dest -- a retail mover never passes its
+// destination (CGObjMoverByDest::vslot_003 replaces a step longer than what is
+// left with dest - position, READ). arrived reports a destination leg that has
+// reached its point. The height is interpolated along the leg: the server has
+// no ground to take it from (OURS).
+func (m *Mover) At(now time.Time) (pos Position, arrived bool) {
+	t := now.Sub(m.Start).Seconds()
+	if t < 0 {
+		t = 0
+	}
+	d := m.Speed * t
+	if m.Heading {
+		return Position{X: m.Src.X + m.DirX*d, Y: m.Src.Y, Z: m.Src.Z + m.DirZ*d}, false
+	}
+	if d >= m.dist || m.dist <= 0 {
+		return m.Dest, true
+	}
+	f := d / m.dist
+	return Position{
+		X: m.Src.X + (m.Dest.X-m.Src.X)*f,
+		Y: m.Src.Y + (m.Dest.Y-m.Src.Y)*f,
+		Z: m.Src.Z + (m.Dest.Z-m.Src.Z)*f,
+	}, false
+}
+
+// Travelled is how far along the leg the character is at now.
+func (m *Mover) Travelled(now time.Time) float64 {
+	t := now.Sub(m.Start).Seconds()
+	if t < 0 {
+		t = 0
+	}
+	d := m.Speed * t
+	if !m.Heading && d > m.dist {
+		return m.dist
+	}
+	return d
+}
+
+// Length is the destination leg's ground length (+Inf for a heading run).
+func (m *Mover) Length() float64 {
+	if m.Heading {
+		return math.Inf(1)
+	}
+	return m.dist
+}
+
+// Along projects the ground point (x, z) onto the leg: how far along it the
+// nearest point of the leg lies (clamped to [0, Length]) and how far (x, z)
+// is from that point.
+func (m *Mover) Along(x, z float64) (along, off float64) {
+	dx, dz := m.DirX, m.DirZ
+	if !m.Heading {
+		if m.dist <= 0 {
+			return 0, math.Hypot(x-m.Src.X, z-m.Src.Z)
+		}
+		dx, dz = (m.Dest.X-m.Src.X)/m.dist, (m.Dest.Z-m.Src.Z)/m.dist
+	}
+	px, pz := x-m.Src.X, z-m.Src.Z
+	along = px*dx + pz*dz
+	if along < 0 {
+		along = 0
+	}
+	if l := m.Length(); along > l {
+		along = l
+	}
+	return along, math.Hypot(px-dx*along, pz-dz*along)
+}
+
+// MoveOrder is an accepted 0x7021 as the hub needs it: the destination (or
+// the heading form) and the speed the leg runs at.
+type MoveOrder struct {
+	Dest Position
+	// Heading is the heading form; HeadingRadians is the character's heading
+	// (HeadingFromWire of the wire angle), Command and WireAngle the form's
+	// bytes.
+	Heading        bool
+	HeadingRadians float64
+	Command        byte
+	WireAngle      uint16
+	Speed          float64
+}
+
+// MoveStatus is what StartMove did.
+type MoveStatus int
+
+const (
+	// MoveAccepted: the leg is the character's now.
+	MoveAccepted MoveStatus = iota
+	// MoveNotInWorld: the session has no character in the world.
+	MoveNotInWorld
+	// MoveRefusedNear: a destination within NearDestination of the one the
+	// character is already walking to (READ, GObjPC::FUN_004b0ea0's last gate,
+	// 0xb45b28 = 5.0). Refused silently.
+	MoveRefusedNear
+)
+
+// NearDestination is the 0x7021 handler's "same destination" distance: while
+// the character moves, a new destination within it of the current one is
+// refused (READ, 0xb45b28).
+const NearDestination = 5.0
+
+// SetClock replaces the hub's clock (tests and the crowd bench: a simulated
+// second). Nil restores time.Now.
+func (h *Hub) SetClock(f func() time.Time) {
+	if f == nil {
+		f = time.Now
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clock = f
+}
+
+// outLocked is e as the hub hands it out at now: its position the leg gives,
+// and no Mover once the leg has arrived. Caller holds h.mu.
+func outLocked(e *Entity, now time.Time) Entity {
+	c := *e
+	if m := e.Move; m != nil {
+		p, arrived := m.At(now)
+		c.Pos = p
+		if arrived {
+			c.Move = nil
+		}
+	}
+	return c
+}
+
+// settleLocked brings e's stored position up to now: a leg that has arrived
+// ends, one still running leaves e.Pos at its current point (the leg itself
+// is unchanged). Caller holds h.mu for writing.
+func (h *Hub) settleLocked(e *Entity, now time.Time) {
+	m := e.Move
+	if m == nil {
+		return
+	}
+	p, arrived := m.At(now)
+	e.Pos = p
+	if arrived {
+		e.Move = nil
+		delete(h.moving, e.Session.ID())
+	}
+}
+
+// endMoveLocked ends e's leg at its stored position.
+func (h *Hub) endMoveLocked(e *Entity) {
+	e.Move = nil
+	delete(h.moving, e.Session.ID())
+}
+
+// refileLocked files e under the block its stored position is in and fills
+// r's crossing (Gained, Lost) and recipients (Watchers) for that position.
+// Caller holds h.mu for writing.
+func (h *Hub) refileLocked(e *Entity, now time.Time, r *MoveResult) {
+	old := e.Cell
+	cell := CellOf(e.Zone, e.Pos)
+	if cell != old {
+		h.uncellLocked(e)
+		e.Cell = cell
+		h.cellLocked(e)
+		r.Crossed = true
+		h.forWindowLocked(old, func(o *Entity) {
+			if o != e && !InView(cell, o.Cell) {
+				r.Lost = append(r.Lost, outLocked(o, now))
+			}
+		})
+		h.forWindowLocked(cell, func(o *Entity) {
+			if o != e && !InView(old, o.Cell) {
+				r.Gained = append(r.Gained, outLocked(o, now))
+			}
+		})
+	}
+	r.Watchers = make([]Watcher, 0, h.windowCountLocked(cell))
+	h.forWindowLocked(cell, func(o *Entity) {
+		if o != e {
+			r.Watchers = append(r.Watchers, Watcher{Session: o.Session, CharacterID: o.CharacterID})
+		}
+	})
+}
+
+// StartMove gives sess's character the leg o asks for, starting where its
+// current leg (or its stored position) has it now. The result's Entity
+// stands at that start (Pos) with the new leg (Move); its Watchers are the
+// other players in view there, who are sent the 0xB021; a start in another
+// block than the one the character was filed under (a leg's position the
+// periodic pass had not refiled yet) carries the crossing.
+func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveStatus) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.clock()
+	e, ok := h.bySession[sess.ID()]
+	if !ok {
+		return MoveResult{}, MoveNotInWorld
+	}
+	if cur := e.Move; cur != nil && !o.Heading && !cur.Heading {
+		if _, arrived := cur.At(now); !arrived && math.Hypot(o.Dest.X-cur.Dest.X, o.Dest.Z-cur.Dest.Z) <= NearDestination {
+			return MoveResult{}, MoveRefusedNear
+		}
+	}
+	h.settleLocked(e, now)
+	m := &Mover{Src: e.Pos, Start: now, Speed: o.Speed}
+	if o.Heading {
+		m.Heading = true
+		m.DirX, m.DirZ = math.Sin(o.HeadingRadians), math.Cos(o.HeadingRadians)
+		m.Command, m.WireAngle = o.Command, o.WireAngle
+		e.Heading = o.HeadingRadians
+	} else {
+		m.Dest = o.Dest
+		m.dist = math.Hypot(o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
+		e.Heading = HeadingToward(e.Heading, o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
+	}
+	e.Move = m
+	h.moving[sess.ID()] = e
+	var r MoveResult
+	h.refileLocked(e, now, &r)
+	r.Entity = *e
+	return r, MoveAccepted
+}
+
+// StopAt ends sess's character's leg at pos -- the client's report of where
+// its walk stopped (a wall, an approach in reach, a sit) -- when admit, shown
+// the character as it stands now (its leg's position and the leg), takes it.
+// The result is as Relocate's; admitted is false when admit refused (nothing
+// changed) and ok false when the session is not in the world. The heading is
+// kept.
+func (h *Hub) StopAt(sess *gateway.Session, pos Position, kind MoveKind, heading float64, admit func(now time.Time, cur Entity) bool) (r MoveResult, admitted, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.clock()
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return MoveResult{}, false, false
+	}
+	if admit != nil && !admit(now, outLocked(e, now)) {
+		r.Entity = outLocked(e, now)
+		return r, false, true
+	}
+	// A placement ends a leg in progress: the heading of a walk is measured
+	// from where the leg had the character.
+	h.settleLocked(e, now)
+	h.endMoveLocked(e)
+	switch kind {
+	case MoveWalk:
+		e.Heading = HeadingToward(e.Heading, pos.X-e.Pos.X, pos.Z-e.Pos.Z)
+	case MoveHeading:
+		e.Heading = heading
+	}
+	e.Pos = pos
+	h.refileLocked(e, now, &r)
+	r.Entity = *e
+	return r, true, true
+}
+
+// AdvanceMovers is the periodic pass over the characters with a leg: each
+// one's stored position is brought up to now, a leg that arrived ends, and
+// the ones whose position crossed into another block are refiled. It returns
+// one MoveResult per crossing (Watchers, Gained, Lost as Relocate's), for the
+// caller to deliver the spawns and despawns. speedOf, when not nil, is each
+// mover's run speed now: a leg whose speed changed (a buff, a GM's /speed)
+// is re-based at it from where it stands. It must not call back into the hub.
+func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) []MoveResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.clock()
+	var out []MoveResult
+	for _, e := range h.moving {
+		h.settleLocked(e, now)
+		if speedOf != nil && e.Move != nil {
+			if s := speedOf(e.CharacterID); s > 0 {
+				rebaseLocked(e, now, s)
+			}
+		}
+		if CellOf(e.Zone, e.Pos) == e.Cell {
+			continue
+		}
+		var r MoveResult
+		h.refileLocked(e, now, &r)
+		r.Entity = outLocked(e, now)
+		out = append(out, r)
+	}
+	return out
+}
+
+// Moving reports how many characters have a leg (the pass's work).
+func (h *Hub) Moving() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.moving)
+}
+
+// rebaseLocked restarts e's leg at speed from where it stands now: a buff or
+// a GM's /speed changed its run speed mid-walk. Caller holds h.mu for writing
+// and has settled e.
+func rebaseLocked(e *Entity, now time.Time, speed float64) {
+	if e.Move == nil || e.Move.Speed == speed {
+		return
+	}
+	m := *e.Move
+	m.Src, m.Start, m.Speed = e.Pos, now, speed
+	if !m.Heading {
+		m.dist = math.Hypot(m.Dest.X-m.Src.X, m.Dest.Z-m.Src.Z)
+	}
+	e.Move = &m
+}
+
+// Halt ends sess's character's leg where the leg has it now -- a stop the
+// server makes itself (a refused report, a sit) -- and refiles it. ok is
+// false when the session is not in the world; moved says it had a leg.
+func (h *Hub) Halt(sess *gateway.Session) (r MoveResult, moved, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.clock()
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return MoveResult{}, false, false
+	}
+	moved = e.Move != nil
+	h.settleLocked(e, now)
+	h.endMoveLocked(e)
+	h.refileLocked(e, now, &r)
+	r.Entity = *e
+	return r, moved, true
+}

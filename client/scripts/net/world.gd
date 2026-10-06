@@ -97,6 +97,16 @@ class EntitySnapshot:
 	## into view -- World3D logs "X entered the zone." only then.
 	var seated: bool = false
 	var zone_arrival: bool = false
+	## Round 749 (the record's mover, 0x48be00): a character spawned while
+	## walking to a point (has_dest, dest in world coordinates), or on a
+	## heading run (run_wire, the u16 wire angle; -1 for none), and its run
+	## speed (the record's param 24; 0 when the message carries none) --
+	## World3D walks the body on (FUN_009ca320 aims a body that spawned
+	## moving).
+	var has_dest: bool = false
+	var dest := Vector3.ZERO
+	var run_wire: int = -1
+	var run_speed: float = 0.0
 
 	func item_in(slot: int) -> int:
 		return int(equipped.get(slot, 0))
@@ -125,17 +135,25 @@ static func encode_enter_world(character_name: String) -> PackedByteArray:
 ## (docs/protocol/opcodes/movement.md): kind 0, the command byte
 ## (SkyRun.COMMAND_FORWARD) and the u16 wire angle. -1 sends none. An older
 ## server reads bit 0 alone and ignores the rest.
+##
+## `stopped` (round 749, OURS, docs/rounds/r749.md): the flags byte's bit 2 --
+## where the walk stopped short of the destination the client's 0x7021 named
+## (a wall, an approach in reach, a sit). The server takes it on its own leg
+## and relays retail's 0xB023 (DestMoveNet). An older server reads a walked
+## position.
 const MOVE_FLAG_RELOCATED := 1
 const MOVE_FLAG_HEADING_RUN := 2
+const MOVE_FLAG_STOPPED := 4
 const MOVEMENT_KIND_HEADING := 0
 
-static func encode_move(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1) -> PackedByteArray:
+static func encode_move(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1, stopped: bool = false) -> PackedByteArray:
 	var out := PackedByteArray()
 	out.resize(12)
 	out.encode_float(0, x)
 	out.encode_float(4, y)
 	out.encode_float(8, z)
-	var flags := (MOVE_FLAG_RELOCATED if relocated else 0) | (MOVE_FLAG_HEADING_RUN if heading_wire >= 0 else 0)
+	var flags := (MOVE_FLAG_RELOCATED if relocated else 0) | (MOVE_FLAG_HEADING_RUN if heading_wire >= 0 else 0) \
+		| (MOVE_FLAG_STOPPED if stopped else 0)
 	if flags != 0:
 		out.append(flags)
 	if heading_wire >= 0:

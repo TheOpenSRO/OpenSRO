@@ -8,8 +8,8 @@ import (
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/gm"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
@@ -235,6 +235,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// noteWarpLanding, OURS).
 		if out.HasPos && !out.Refused {
 			noteWarpLanding(characterID, time.Now(), [2]float64{out.X, out.Z})
+			// And for anyone (round 749, destmove.go): a relocation to the
+			// GM's point is taken.
+			noteGMLanding(characterID, time.Now(), out.X, out.Z)
 		}
 
 		// A GM /kill removes the monster server-side; tell the rest of the

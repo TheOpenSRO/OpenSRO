@@ -391,6 +391,12 @@ func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 	// chosen, not a read one (docs/protocol/skill_buffs.md, OPEN).
 	if changed {
 		endBuffsOf(deps.hub, characterID)
+		// Round 749: a leg still running ends where the server has the body
+		// (the CGObjChar slot-300 stop, READ, sends 0xB023 to the window);
+		// its own client stopped at the blow.
+		if e, ok := deps.hub.EntityByCharacterID(characterID); ok && e.Session != nil {
+			haltForSit(e.Session, deps.hub)
+		}
 	}
 	return changed
 }

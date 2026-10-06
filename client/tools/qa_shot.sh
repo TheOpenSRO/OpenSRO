@@ -281,6 +281,12 @@ if [ "$SERVER" = "start" ]; then
   # --reconnect-via-login finds no character to start (round 693).
   CHARGEN_CSV="${OPENSRO_CHARGEN_CSV:-$PK2_DIR/chargen.csv}"
   SERVER_ARGS=(-in-memory -addr "127.0.0.1:$SERVER_PORT")
+  # Round 749: the QA hooks place the player anywhere (OPENSRO_QA_AT, the
+  # attack and pick-up placements), which a server takes only under
+  # -trust-client-positions; a binary from before round 749 has no such flag.
+  if "$SERVER_BIN" -h 2>&1 | grep -q -- "-trust-client-positions"; then
+    SERVER_ARGS+=(-trust-client-positions)
+  fi
   [ -f "$ITEMS_CSV" ]     && SERVER_ARGS+=(-items-csv "$ITEMS_CSV")
   [ -f "$SKILLS_CSV" ]    && SERVER_ARGS+=(-skills-csv "$SKILLS_CSV")
   [ -f "$LEVELDATA_CSV" ] && SERVER_ARGS+=(-leveldata-csv "$LEVELDATA_CSV")
