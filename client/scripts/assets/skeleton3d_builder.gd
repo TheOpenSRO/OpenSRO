@@ -394,6 +394,40 @@ static func stored_inverse_bind(b: BskReader.Bone):
 		return null
 	return inv
 
+## One Skin for every mesh skinned to `skeleton` (round 738, A2; OURS): bind
+## i is bone i, at the inverse of its global rest -- exactly the bind
+## build_skin gives a palette entry naming that bone (and IDENTITY, which is
+## that same inverse, for OBJECT_SPACE_BONE). Godot writes every bind of every
+## Skin registered on a skeleton each time it is posed (Godot 4.2.2
+## skeleton_3d.cpp:245-297, READ in round 736), so a body of 14 pieces with
+## one skin each wrote 14 skeletons; sharing this one writes one.
+## Only for skeletons whose pieces bind to the composed rest (no
+## `world_binds`): CharacterAppearance's bodies and their worn items.
+static func canonical_skin(skeleton: Skeleton3D) -> Skin:
+	var skin := Skin.new()
+	for i in range(skeleton.get_bone_count()):
+		skin.add_bind(i, skeleton.get_bone_global_rest(i).affine_inverse())
+	return skin
+
+## `mesh` as BmsReader.to_array_mesh builds it, with each vertex's palette
+## index turned into the skeleton bone `palette_skin` binds it to
+## (build_skin's skin for the mesh): the mesh canonical_skin draws. Every
+## bind of a build_skin skin is canonical_skin's bind for its bone, so each
+## vertex is moved by the same matrices it was.
+static func canonical_mesh(mesh: BmsReader.ParsedMesh, palette_skin: Skin) -> ArrayMesh:
+	var arrays := BmsReader.to_arrays(mesh)
+	var bones = arrays[Mesh.ARRAY_BONES]
+	if bones is PackedInt32Array:
+		var map := PackedInt32Array()
+		for i in range(palette_skin.get_bind_count()):
+			map.append(palette_skin.get_bind_bone(i))
+		var remapped: PackedInt32Array = bones
+		for k in range(remapped.size()):
+			var p := remapped[k]
+			remapped[k] = map[p] if p >= 0 and p < map.size() else map[0]
+		arrays[Mesh.ARRAY_BONES] = remapped
+	return BmsReader.mesh_from_arrays(arrays)
+
 ## The skeleton's OBJECT_SPACE_BONE, added on first use.
 static func _object_space_bone(skeleton: Skeleton3D) -> int:
 	var obj := skeleton.find_bone(OBJECT_SPACE_BONE)

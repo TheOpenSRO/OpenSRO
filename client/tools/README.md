@@ -469,6 +469,22 @@ jangan  hitches    base 5  head 5  (+0.0)  SAME
 It also shows what a player waits through at every Jangan entry: about 14 s, with a single frame
 of about 4.9 s and five over 100 ms.
 
+### Crowd probe (rounds 736, 739)
+
+The gate's views have no crowd. For other players at 20 / 200 / 1000, `crowd_run.sh` boots one
+`QaCrowdProbe` run (r736's recipe at the Jangan spawn, 1920x1080 Forward+), waits for no other
+lane's Godot and counts any that overlap. Run it on the box, under the box lock, from a shipped
+client; its header has the switches, and `docs/rounds/r739.md` ("How to rerun") what each line
+means:
+
+```
+flock /var/tmp/godot-lock/lock /opt/opensro-client-<lane>/tools/crowd_run.sh \
+  /opt/opensro-client-<lane> /var/tmp/<lane>/n1000.log 1000 base,move,net,base
+```
+
+A boot printing `overlap:` above 0 shared the CPU with another lane: repeat it. A 1000-body boot
+takes about 5 minutes; its log is about 0.4 MB.
+
 ### Release checks (round 668)
 
 - `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that
@@ -608,6 +624,25 @@ writer, e.g. `/var/tmp/world689/gl.sh <out> <env file>` with `OPENSRO_MAPM_PATH=
 players instead (`OPENSRO_QA_CREATE=ref:scale:chest:legs:feet:weapon` makes the character; the
 live pair is `/var/tmp/world689/live.sh`). The world needs `OPENSRO_MAPM_PATH` offline: without it
 the grid builds no cells and the lineup never finds ground.
+
+### A crowd's animation: the shared skin and the baked poses (round 738)
+
+`crowd_anim_probe.gd` runs headless through `remote_godot.sh script ... -- --pk2=... --media=...`,
+for about a minute. It measures three things against the real archives:
+
+- **The shared skin (A2).** It builds the 52 Figures, each at Volume 0, 2 and 4, twice:
+  - once with per-piece skins (`CharacterAppearance.canonical = false`, the old way);
+  - once with the one shared skin.
+
+  It CPU-skins every visible vertex of both builds under a stand and a run pose. It prints the
+  worst distance between the two builds (round 738: 0 over 1,184,652 vertices; over 1e-4 is a
+  `PARITY FAIL`). It also prints the skins and binds each build registers on a body skeleton.
+- **The pose quantum (A3).** For every clip those bodies play, the worst bone displacement of the
+  baked pose against the exact one, with the bone named.
+- **One frame's motion (A4).** The worst bone motion in 1/60 s, in pixels at 300 and 900 units.
+
+In the world, `QaCrowdProbe`'s `anim=<1i34|->` steps switch the round's rules for one step, and
+`OPENSRO_QA_CROWD_SKINS=own` builds a boot with the old per-piece skins (`docs/rounds/r738.md`).
 
 ### Load benchmark
 

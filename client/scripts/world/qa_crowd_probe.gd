@@ -39,6 +39,11 @@ class_name QaCrowdProbe
 ##            (what an off-screen crowd costs)
 ##   gone     every body out of the tree (kept in memory): the scene without them
 ##   nodraw   mesh + labels + fx + blobs + overlay together
+##   anim=<s> (round 738) CrowdAnim's switches for the step, back on after it:
+##            "1" A1 (pose only what is in view), "i" the indexed pose, "3" A3
+##            (baked poses), "4" A4 (the far bodies' LOD); "anim=-" all off,
+##            which poses another player exactly as before the round. The
+##            skins (A2) are the boot's (OPENSRO_QA_CROWD_SKINS=own: per piece)
 
 const SETTLE := 1.5
 
@@ -58,6 +63,7 @@ var _frame_ms: PackedFloat32Array = PackedFloat32Array()
 var _removed: Dictionary = {}  # node -> [parent, child] for collide / gone
 var _homes: Dictionary = {}    # id -> Vector3
 var _hidden_meshes: Array = []  # the meshes the mesh switch hid
+var _shadowed: Array = []  # [mesh, its cast_shadow] the shadow switch turned off
 var _move_t := 0.0
 var _rng := RandomNumberGenerator.new()
 var _net_due := 0.0
@@ -69,8 +75,19 @@ var net_rate := 1.0
 static func wanted() -> bool:
 	return OS.get_environment("OPENSRO_QA_CROWD_STEPS") != ""
 
-func setup(w: Node, lineup_bodies: Array) -> void:
+## Round 739: the arrival, measured from the spawn (QaLineup's start) until
+## the last body is dressed (World3D._pump_other_builds): one `QA CROWD
+## arrival` line with every frame's wall time in it -- the worst, the p95, how
+## many were over 100 ms -- before the census and the steps.
+var _arriving := true
+var _arrival_last_us := 0
+var _arrival_start_us := 0
+var _arrival_ms: PackedFloat32Array = PackedFloat32Array()
+
+func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	world = w
+	_arrival_start_us = spawn_usec if spawn_usec > 0 else Time.get_ticks_usec()
+	_arrival_last_us = _arrival_start_us
 	for b in lineup_bodies:
 		var node: Node3D = world._other_bodies.get(b["id"])
 		if node != null:
@@ -93,20 +110,44 @@ func setup(w: Node, lineup_bodies: Array) -> void:
 	if world._qa_split == null:
 		world._qa_split = MonsterCrowd.Split.new(1 << 30)
 	print("QA CROWD: %d bodies, steps %s, %.1f s each (%.1f settle), first after %.1f s" % [bodies.size(), ",".join(steps), seconds, SETTLE, delay])
+
+## The arrival's frames (round 739), then the census once every body is dressed.
+func _arrival_frame() -> void:
+	var now := Time.get_ticks_usec()
+	_arrival_ms.append(float(now - _arrival_last_us) / 1000.0)
+	_arrival_last_us = now
+	var queue = world.get("_other_builds")
+	if queue != null and not queue.is_empty():
+		return
+	_arriving = false
+	var sorted := _arrival_ms.duplicate()
+	sorted.sort()
+	var over := 0
+	for v in sorted:
+		if v > 100.0:
+			over += 1
+	print("QA CROWD arrival n=%d frames=%d seconds=%.2f worst_ms=%.1f p50=%.1f p95=%.1f over100=%d" % [
+		bodies.size(), sorted.size(), float(now - _arrival_start_us) / 1e6, sorted[-1] if not sorted.is_empty() else 0.0,
+		sorted[sorted.size() / 2] if not sorted.is_empty() else 0.0,
+		sorted[mini(int(sorted.size() * 0.95), sorted.size() - 1)] if not sorted.is_empty() else 0.0, over])
 	_census()
 
 ## What one other player is made of, and how much of it is shared: one line
 ## for the first body and one for all of them.
 func _census() -> void:
 	var tot := {"nodes": 0, "meshes": 0, "visible_meshes": 0, "skinned": 0, "surfaces": 0, "shadow": 0, "skeletons": 0, "bones": 0,
-		"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0}
+		"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0, "visible_materials": 0}
 	var mats := {}
 	var meshes := {}
 	var skins := {}
 	var first := ""
 	for b in bodies:
 		var c := {"nodes": 0, "meshes": 0, "visible_meshes": 0, "skinned": 0, "surfaces": 0, "shadow": 0, "skeletons": 0, "bones": 0,
-			"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0}
+			"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0, "visible_materials": 0}
+		# Round 739 (B5's write-up): the distinct materials among a body's
+		# visible surfaces -- the draws a body would make if its meshes were
+		# merged one per material.
+		var own_mats := {}
 		var stack: Array[Node] = [b["node"]]
 		while not stack.is_empty():
 			var n: Node = stack.pop_back()
@@ -131,6 +172,8 @@ func _census() -> void:
 						var m := mi.get_active_material(i)
 						if m != null:
 							mats[m.get_instance_id()] = true
+							if mi.visible:
+								own_mats[m.get_instance_id()] = true
 				if mi.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF and mi.visible:
 					c["shadow"] += 1
 			elif n is MultiMeshInstance3D:
@@ -141,12 +184,39 @@ func _census() -> void:
 				c["bodies3d"] += 1
 			if n is EfpEffect:
 				c["fx"] += 1
+		c["visible_materials"] = own_mats.size()
 		for k in c:
 			tot[k] += c[k]
 		if first == "":
 			first = str(c)
 	print("QA CROWD census: first body %s" % first)
 	print("QA CROWD census: all %d bodies %s; distinct meshes %d, materials %d, skins %d" % [bodies.size(), str(tot), meshes.size(), mats.size(), skins.size()])
+	# Round 738 (A2): what one pose of a body skeleton writes -- every bind of
+	# every distinct skin registered on it (Godot 4.2.2 skeleton_3d.cpp:245-297).
+	var regs := 0
+	var binds := 0
+	var posed_skels := 0
+	var shown := false
+	for b in bodies:
+		for sk in (b["node"] as Node).find_children("*", "Skeleton3D", true, false):
+			var on := {}
+			for mi in CharacterAppearance._skinned_to(sk as Skeleton3D):
+				if not on.has(mi.skin):
+					on[mi.skin] = []
+				(on[mi.skin] as Array).append(String(mi.name))
+			if (sk as Skeleton3D).has_meta(MonsterCrowd.META_LAYOUT):
+				posed_skels += 1
+				regs += on.size()
+				for skin in on:
+					binds += (skin as Skin).get_bind_count()
+				if not shown:
+					shown = true
+					var parts := PackedStringArray()
+					for skin in on:
+						parts.append("%d binds: %s" % [(skin as Skin).get_bind_count(), ",".join(PackedStringArray(on[skin]))])
+					print("QA CROWD census: the first body skeleton's skins (%d bones): %s" % [(sk as Skeleton3D).get_bone_count(), " | ".join(parts)])
+	print("QA CROWD census: body skeletons %d, skins registered on them %d (%.1f a body), binds written per pose %d (%.1f a body)" % [
+		posed_skels, regs, float(regs) / maxf(float(posed_skels), 1.0), binds, float(binds) / maxf(float(posed_skels), 1.0)])
 
 func _next() -> void:
 	if _i >= 0:
@@ -164,6 +234,9 @@ func _next() -> void:
 
 func _process(delta: float) -> void:
 	if world == null:
+		return
+	if _arriving:
+		_arrival_frame()
 		return
 	if _i < 0:
 		delay -= delta
@@ -225,7 +298,7 @@ func _report() -> void:
 	if vp0.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp0.get_meta(EquipFx.DRIVER_META)):
 		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
 		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"])]
-	print("QA CROWD step %-8s n=%d in_view=%d frames=%d frame_ms=%.2f p50=%.2f p95=%.2f render_cpu_ms=%.2f render_gpu_ms=%.2f process_ms=%.2f physics_ms=%.2f idle_ms=%.2f pose_ms=%.2f sound_ms=%.2f minimap_ms=%.2f posed_per_frame=%.0f steps_per_frame=%.2f draws=%d objects=%d prims=%d nodes=%d%s" % [
+	print("QA CROWD step %-8s n=%d in_view=%d frames=%d frame_ms=%.2f p50=%.2f p95=%.2f render_cpu_ms=%.2f render_gpu_ms=%.2f process_ms=%.2f physics_ms=%.2f idle_ms=%.2f pose_ms=%.2f sound_ms=%.2f minimap_ms=%.2f posed_per_frame=%.0f steps_per_frame=%.2f draws=%d objects=%d prims=%d nodes=%d anim=%s baked=%d static_mb=%.1f%s" % [
 		steps[_i], bodies.size(), in_view, int(f), wall, p50, p95,
 		_acc["cpu"] / f, _acc["gpu"] / f, _acc["proc"] / f, _acc["phys"] / f,
 		float(sp.idle_usec - int(_acc["idle_us"])) / 1000.0 / f,
@@ -235,7 +308,8 @@ func _report() -> void:
 		float(sp.posed - int(_acc["posed"])) / f,
 		float(sp.steps - int(_acc["steps"])) / f,
 		int(_acc["draws"] / f), int(_acc["objects"] / f), int(_acc["prims"] / f),
-		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), fx_line])
+		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), CrowdAnim.switches(), CrowdAnim.baked_frames,
+		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line])
 	if steps[_i].begins_with("net"):
 		var sent := _net_sent - int(_acc["net_sent"])
 		print("QA CROWD net: %d packets in %d frames, %.2f ms a frame in NetClient._dispatch, %.1f us a packet" % [
@@ -247,6 +321,9 @@ func _meshes(node: Node) -> Array:
 func _switch(step: String, off: bool) -> void:
 	if step.begins_with("net"):
 		step = "net"
+	if step.begins_with("anim="):
+		CrowdAnim.set_switches(step.substr(5) if off else "1i34")
+		return
 	match step:
 		"pose", "sound":
 			var arr: PackedStringArray = world._qa_split_off
@@ -299,9 +376,21 @@ func _switch(step: String, off: bool) -> void:
 					if h.holder != null and is_instance_valid(h.holder):
 						h.holder.visible = false if off else h.holder.visible
 		"shadow":
-			for b in bodies:
-				for gi in (b["node"] as Node).find_children("*", "GeometryInstance3D", true, false):
-					(gi as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if off else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			# Only what was casting, and only that given back (round 739: the
+			# first version turned every mesh's shadow on after, the EquipFx
+			# particles' and Detail's switched-off ones included).
+			if off:
+				_shadowed.clear()
+				for b in bodies:
+					for gi in (b["node"] as Node).find_children("*", "GeometryInstance3D", true, false):
+						if (gi as GeometryInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+							_shadowed.append([gi, (gi as GeometryInstance3D).cast_shadow])
+							(gi as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			else:
+				for pair in _shadowed:
+					if is_instance_valid(pair[0]):
+						(pair[0] as GeometryInstance3D).cast_shadow = pair[1]
+				_shadowed.clear()
 		"blobs":
 			for b in bodies:
 				var n: Node = b["node"]

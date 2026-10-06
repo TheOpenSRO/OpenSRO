@@ -1270,6 +1270,17 @@ var _other_pluses := {}
 ## a tenth of the body's height (REAL_CHARACTER_NATIVE_HEIGHT), so the tail
 ## of the interpolation reads as standing.
 const OTHER_GAIT_THRESHOLD := 1.4
+## Round 739 (OtherCrowd, OURS): the others' walk once a rendered frame (B1),
+## their bodies dressed over frames nearest first (B4: id -> the spawn's
+## {equipped, scale} until dressed) and the uid map (B7). Their 600 hearing
+## cut (B3) keeps its state on the cull-cache entry (_tick_idle_animations).
+var _other_step_gate := OtherCrowd.StepGate.new()
+var _other_builds := OtherCrowd.BuildQueue.new()
+var _other_build_args := {}
+## How many callers are queuing a list whole (round 739's review, F5): while
+## above 0 an arrival is queued without pumping; the last one out pumps.
+var _other_build_defer := 0
+var _other_uids := OtherCrowd.UidIndex.new()
 var _monster_bodies := {} # monster_id -> Node3D
 ## monster_id -> CombatNet.MonsterSnapshot, as last listed -- except x/z, which
 ## follow the drawn body while it walks (_step_monster_bodies), so the reach
@@ -1782,6 +1793,8 @@ func _ready() -> void:
 		_spawn_result_others(result.others, result.seated)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
+	NetClient.user_group_begin.connect(_on_user_group_begin)
+	NetClient.user_group_end.connect(_on_user_group_end)
 	NetClient.entity_moved.connect(_on_entity_moved)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
@@ -6048,6 +6061,10 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	_other_bodies.clear()
 	_other_gaits.clear()
 	_other_seated.clear()
+	# Round 739: and their queued dressing and their uids.
+	_other_builds.clear()
+	_other_build_args.clear()
+	_other_uids.clear()
 	# Their buffs went with them (round 638): the new zone's owners, this
 	# player included, are re-sent on arrival (sendBuffsInView). Round 646:
 	# the re-sent starts can arrive during _on_change_zone_result's loading-
@@ -6345,8 +6362,8 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 ## too, and a monster's model (MonsterDraw.META_HIDE) is hidden. The clock
 ## runs on regardless, so a body coming into view is posed
 ## where its clip has got to, and a one-shot still hands back to its loop on
-## time. The player, other players and the character window's doll are not
-## culled.
+## time. Another player is posed only while in view (round 738, CrowdAnim).
+## The player and the character window's doll are not culled.
 func _tick_idle_animations(delta: float) -> void:
 	if _animated.is_empty():
 		return
@@ -6374,6 +6391,9 @@ func _tick_idle_animations(delta: float) -> void:
 	var pose_tick := _crowd_cull.ticks()
 	var cull_ids: Dictionary = _crowd_cull.by_id()
 	var lod_skipped := 0
+	# The characters in the tick, for the players' animation LOD (round 738,
+	# CrowdAnim.CROWD_MIN).
+	var crowd_count := _animated.size()
 	var posed := 0
 	var timing := _qa_split != null
 	var t0 := 0
@@ -6396,7 +6416,41 @@ func _tick_idle_animations(delta: float) -> void:
 		if cam != null:
 			var cached = cull_ids.get(skeleton.get_instance_id())
 			info = cached if cached != null else _crowd_cull.info(skeleton)
-		if not info.is_empty():
+		if info.size() == CrowdAnim.PLAYER_INFO_SIZE:
+			# Another player (round 738, CrowdAnim): posed only while its
+			# sphere is in view (A1, READ: the original poses a character only
+			# if it was drawn), and far ones in a crowd every second or fourth
+			# frame (A4, OURS). Its clock and its sounds run on.
+			# Character Sight Range (round 738's review, F6): a body whose whole
+			# sphere is past the range draws nothing, so it is not posed either.
+			if CrowdAnim.cull_players and have_planes:
+				var at := skeleton.global_position
+				var r: float = info[0]
+				pose = p0.distance_to(at) <= r and p1.distance_to(at) <= r and p2.distance_to(at) <= r \
+					and p3.distance_to(at) <= r and p4.distance_to(at) <= r and p5.distance_to(at) <= r \
+					and (_character_range <= 0.0 or at.distance_to(eye) - r <= _character_range)
+			# A body's first tick, and its first tick back in view, is never
+			# skipped by the LOD (round 738's review, F2): info[4] is "never posed",
+			# info[2] "in view at the last tick" (MonsterCrowd.CullCache.info).
+			var seen := pose
+			if info[4] > 0.0:
+				pose = true
+				info[4] = 0.0
+			elif pose and info[2] > 0.0 and CrowdAnim.lod_players and crowd_count >= CrowdAnim.CROWD_MIN \
+					and not MonsterCrowd.pose_due(pose_tick, int(info[3]), CrowdAnim.pose_interval(skeleton.global_position.distance_to(eye), crowd_count)):
+				pose = false
+				lod_skipped += 1
+			info[2] = 1.0 if seen else 0.0
+			# Its clip sounds only within the core's cull of the listener
+			# (round 739, B3: READ 600, the monsters' rule below), rested once
+			# as they go. info[1] is the player entry's own "out of hearing at
+			# the last tick" (its review's F1; info[2] is A1's "in view").
+			audible = skeleton.global_position.distance_squared_to(listener) <= SoundTable.CULL_DISTANCE_SQ
+			if audible != (info[1] == 0.0):
+				info[1] = 0.0 if audible else 1.0
+				if not audible:
+					_anim_sounds.rest(skeleton)
+		elif not info.is_empty():
 			# A looping body that was neither in view nor in hearing at its
 			# last test is tested every second frame, on its slot (round 664,
 			# MonsterCrowd.recheck_due; OURS): one coming into view is posed at
@@ -15070,6 +15124,25 @@ func _physics_process(delta: float) -> void:
 		if _qa_split.due():
 			_qa_split_print()
 
+## Round 739 (B1; its review's F3): the once-a-frame work that places things,
+## after every physics step of the frame has run -- the others' walk and
+## turns over the steps the frame ran (OtherCrowd.StepGate), the circles and
+## Detail's casters, and characters' object colour by the tile under them
+## (round 706). Run from the frame's first physics step instead, below 60 fps
+## they trailed the bodies the later steps moved. A frame with no physics step
+## (rendering faster than 60) moved nothing, so places nothing; the arrived
+## bodies' dressing runs every frame (B4).
+func _process(_delta: float) -> void:
+	if title_mode:
+		return
+	var others_delta := _other_step_gate.take()
+	if others_delta >= 0.0:
+		_step_other_bodies(others_delta, _other_step_gate.steps)
+		_update_blob_shadow()
+		if _character_light != null:
+			_character_light.step(get_tree())
+	_pump_other_builds()
+
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
 func _physics_step(delta: float) -> void:
@@ -15225,10 +15298,6 @@ func _physics_step(delta: float) -> void:
 		if _qa_split != null:
 			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
 		_tick_party_hud()
-	_update_blob_shadow()
-	# Characters' object colour by the tile under them (round 706).
-	if _character_light != null:
-		_character_light.step(get_tree())
 
 	_time_since_send += delta
 	# No position goes out while seated or getting up or down (round 607): the
@@ -15255,18 +15324,11 @@ func _physics_step(delta: float) -> void:
 	# quickly a body catches up to its target each frame), not a claim
 	# about real client behavior -- tuned so a body visually arrives at
 	# its target well within one real MIN_SEND_INTERVAL period.
-	for character_id in _other_body_targets:
-		if not _other_bodies.has(character_id):
-			continue
-		var body: Node3D = _other_bodies[character_id]
-		var target: Vector3 = _other_body_targets[character_id]
-		# Still catching up to the last update means the player is on the
-		# move; arrived means standing. The threshold is a fraction of the
-		# body's own height, so a settled body does not flicker between the
-		# two on the last inch of the lerp.
-		_set_other_gait(character_id, body.position.distance_to(target) > OTHER_GAIT_THRESHOLD)
-		body.position = body.position.lerp(target, minf(OTHER_BODY_INTERPOLATION_SPEED * delta, 1.0))
-	_step_remote_turns(delta)
+	# Round 739 (B1, OtherCrowd.StepGate): once a rendered frame, after the
+	# frame's physics (_process, its review's F3), with the steps it covers
+	# folded in -- the same walk and turn as one pass a step, which a slow
+	# frame paid up to eight times.
+	_other_step_gate.add(delta)
 	if _qa_facing_log:
 		_qa_facing_report()
 	if _qa_move_log:
@@ -15556,6 +15618,37 @@ func _aim_remote_body(body: Node3D, dir: Vector3, front_yaw: float) -> void:
 	var target := RemoteFacing.heading_toward(current, dir)
 	_remote_turns[body.get_instance_id()] = {"target": target, "front": front_yaw}
 
+## Round 739 (B1): one rendered frame of the others' walk, covering `steps`
+## physics steps of `delta` seconds in all (OtherCrowd.lerp_factor: the
+## per-step lerp folded, so one step a frame is exactly the old pass, and the
+## gait tests the distance the old last step saw), then their turns. Called
+## from _process, after the frame's physics.
+func _step_other_bodies(delta: float, steps: int) -> void:
+	var n := maxi(steps, 1)
+	var step_delta := delta / float(n)
+	var f := OtherCrowd.lerp_factor(OTHER_BODY_INTERPOLATION_SPEED, step_delta, n)
+	for character_id in _other_body_targets:
+		var body = _other_bodies.get(character_id)
+		if body == null:
+			continue
+		var target: Vector3 = _other_body_targets[character_id]
+		var at: Vector3 = (body as Node3D).position
+		if at.distance_squared_to(target) < OtherCrowd.SNAP_DISTANCE_SQ:
+			# On it, or an ulp or two short (its review's F6): put on it once,
+			# then never written again while the target stays.
+			if at != target:
+				(body as Node3D).position = target
+			_set_other_gait(character_id, false)
+			continue
+		# Still catching up to the last update means the player is on the
+		# move; arrived means standing. The threshold is a fraction of the
+		# body's own height, so a settled body does not flicker between the
+		# two on the last inch of the lerp.
+		_set_other_gait(character_id, OtherCrowd.distance_before_last(at.distance_to(target),
+			OTHER_BODY_INTERPOLATION_SPEED, step_delta, n) > OTHER_GAIT_THRESHOLD)
+		(body as Node3D).position = at.lerp(target, f)
+	_step_remote_turns(delta)
+
 ## One frame of every turn in progress: FUN_009e02f0 with the frame's time
 ## (the mover's tick, FUN_009e0e60 -> FUN_009e0c10). A turn that reaches its
 ## target ends there; a body that has gone is dropped.
@@ -15601,6 +15694,10 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# _other_body_targets' own doc comment for why this replaced a
 		# direct position snap.
 		_other_body_targets[character_id] = pos
+		# Still waiting to be dressed: dressed in what this spawn names
+		# (round 739's review, F8; a drawn body is not redressed by it).
+		if _other_build_args.has(character_id) and not equipped.is_empty():
+			_other_build_args[character_id]["equipped"] = equipped
 		if not is_nan(heading):
 			var drawn: Node3D = _other_bodies[character_id]
 			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
@@ -15611,6 +15708,60 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	node.position = pos
 	if not is_nan(heading):
 		node.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+	node.set_meta("character_id", character_id)
+	node.set_meta("character_name", char_name)
+	# Its body key, for the target window's race emblem (round 638; its own
+	# model since round 689).
+	node.set_meta("body", body)
+	other_entities.add_child(node)
+	_other_bodies[character_id] = node
+	_other_body_targets[character_id] = pos
+	_other_uids.add(character_id)
+	# Round 739 (B4, OtherCrowd.BuildQueue, OURS): the node is theirs from now
+	# -- moves, the departure and equipment changes act on it -- and it is
+	# dressed (_dress_other) over the next frames, nearest the player first,
+	# with what they wear and do by then. A frame with budget left dresses it
+	# at once, as before.
+	_other_build_args[character_id] = {"equipped": equipped, "scale": scale}
+	_other_builds.queue(character_id)
+	if _other_build_defer == 0:
+		_pump_other_builds()
+
+## Round 739 (B4): the frame's share of the arrived bodies to dress, nearest
+## the player first (OtherCrowd.BuildQueue). Logs the queue's totals as it
+## drains.
+func _pump_other_builds() -> int:
+	if _other_builds.is_empty():
+		return 0
+	var from := Vector3.ZERO
+	if player != null and other_entities != null and player.is_inside_tree() and other_entities.is_inside_tree():
+		from = other_entities.to_local(player.global_position)
+	var made := _other_builds.pump(Engine.get_process_frames(), from, _other_bodies, _dress_other)
+	if _other_builds.is_empty() and _other_builds.started_usec >= 0 and _other_builds.built > 1:
+		var spent: Array = _other_builds.spent_summary()
+		print("World3D: %d other player bod(ies) dressed over %d frame(s) in %.0f ms, longest frame %.1f ms, p50 %.1f, p95 %.1f, %d over 100 ms (budget %.1f ms)" % [
+			_other_builds.built, _other_builds.frames, (Time.get_ticks_usec() - _other_builds.started_usec) / 1000.0,
+			_other_builds.longest_usec / 1000.0, float(spent[0]), float(spent[1]), int(spent[2]), _other_builds.budget_usec / 1000.0])
+		_other_builds.started_usec = -1
+	return made
+
+## Dresses an arrived player's node (round 739, B4: split out of
+## _spawn_or_update_other, which made it all in one call): the body, the
+## plate, the click body, the sounds and the loop. What it is dressed with is
+## what is known by now: the worn items and pluses as 0x3038/0x3039 left them
+## (_redress_other keeps the queued items current), the seat (_other_seated),
+## the place it has walked to.
+func _dress_other(character_id: int) -> void:
+	var held = _other_bodies.get(character_id)
+	var args: Dictionary = _other_build_args.get(character_id, {})
+	_other_build_args.erase(character_id)
+	if not is_instance_valid(held) or (held as Node).is_queued_for_deletion():
+		return
+	var node: Node3D = held
+	var equipped: Dictionary = args.get("equipped", {})
+	var scale: int = int(args.get("scale", CharacterAppearance.DEFAULT_SCALE))
+	var body := String(node.get_meta("body", ""))
+	var char_name := String(node.get_meta("character_name", ""))
 
 	# The same builder and the same dressing as the local player: their
 	# model, scale byte and every worn item's id come in the snapshot (see
@@ -15629,8 +15780,15 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# position update (see _set_other_gait). Without this they stood
 		# in the bind pose, arms out, which no character in the game does.
 		body = String(skeleton.get_meta("body", body))
+		node.set_meta("body", body)
 		var group := _weapon_group_for(equipped, body)
+		# Seated while they waited (a Seated tail, a 0x30bf): the sitting
+		# loop without the sit-down clip, as _spawn_result_others seats a
+		# body drawn at once (round 607).
+		var seated := _other_seated.has(character_id)
 		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false}
+		if seated:
+			_other_gaits[character_id]["sitting"] = true
 		# Their sounds come from where their body is; the cell under them is
 		# found from the height (_audio_material_at), not carried as the
 		# local player's is. Their berserk arrives as their body mode (round
@@ -15638,10 +15796,13 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
 		owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
 		_anim_sounds.register(skeleton, owner)
-		var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, group)
+		var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_SITTING if seated else BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
 		if frames > 1:
 			_animated.append([skeleton, idle, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
+		if seated:
+			print("SIT: player %d drawn seated on spawn -- loop %s (type 14)" % [character_id,
+				_body_animation_path(body, BsrReader.AnimationEntry.TYPE_SITTING, group)])
 	else:
 		var mesh := MeshInstance3D.new()
 		var capsule := CapsuleMesh.new()
@@ -15658,21 +15819,15 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# within range -- over the assembled body's own height.
 	var top := _skeleton_top(skeleton) if skeleton != null else 1.8 * PLAYER_SCALE_RATIO
 	node.add_child(_name_plate(char_name, top))
-
 	# A click body on its own layer (round 622), so the player can be selected.
-	node.set_meta("character_id", character_id)
-	node.set_meta("character_name", char_name)
-	# Its body key, for the target window's race emblem (round 638; its own
-	# model since round 689).
-	node.set_meta("body", body)
 	node.add_child(_other_player_collider(top))
-
-	other_entities.add_child(node)
-	_other_bodies[character_id] = node
 	# Its round shadow in Circle (round 702, CharacterBlobs).
 	CharacterBlobs.register(node, float(_bc_radius_by_code.get(String(node.get_meta("body", "")), 0.0)))
+	# Under Detail it arrives casting nothing; the next pass lets it cast if it
+	# is one of the ten nearest (round 739, B2, CharacterBlobs.select_detail).
+	if video_options().value(VideoOptions.SHADOW) >= 2:
+		CharacterBlobs.set_casting(node, false)
 	_light_character(node)
-	_other_body_targets[character_id] = pos
 	# The auras of the buffs this client holds for them go on the new body
 	# (round 646): a zone change's arrival list and the world entry build the
 	# body after the server's replay may already have arrived.
@@ -15718,9 +15873,13 @@ func _note_other_pluses(snapshot: WorldNet.EntitySnapshot) -> void:
 ## id's low 32 bits it is, drawn or waiting in a zone change's arrival list.
 ## -1 when there is none.
 func _other_by_uid(uid: int) -> int:
-	for id in _other_bodies:
-		if (int(id) & 0xffffffff) == uid:
-			return int(id)
+	# Round 739 (B7): from the map _spawn_or_update_other keeps, not a scan of
+	# every body.
+	# Every body comes through _spawn_or_update_other, which adds it; a miss
+	# (a uid out of view) costs no scan (its review's F9).
+	var drawn := _other_uids.find(uid)
+	if drawn >= 0 and _other_bodies.has(drawn):
+		return drawn
 	for id in _arrival_entries:
 		if (int(id) & 0xffffffff) == uid:
 			return int(id)
@@ -15818,6 +15977,11 @@ func _flush_pending_equip_changes() -> void:
 ## its click body, its place and its facing; the gait, sounds and idle or run
 ## follow the new weapon's group.
 func _redress_other(character_id: int) -> void:
+	# Still waiting to be dressed (round 739, B4): it is dressed with these
+	# items when its turn comes; the pluses are read then from _other_pluses.
+	if _other_build_args.has(character_id):
+		_other_build_args[character_id]["equipped"] = (_other_equipped.get(character_id, {}) as Dictionary).duplicate()
+		return
 	var node: Node3D = _other_bodies.get(character_id)
 	var gait: Dictionary = _other_gaits.get(character_id, {})
 	if node == null or not is_instance_valid(node) or gait.is_empty():
@@ -15834,6 +15998,9 @@ func _redress_other(character_id: int) -> void:
 		old.queue_free()
 	skeleton.rotation.y = PI
 	node.add_child(skeleton)
+	# The new meshes take the body's Detail state (round 739, B2): casting
+	# only if it is one of the ten.
+	CharacterBlobs.refresh_detail(node)
 	body = String(skeleton.get_meta("body", body))
 	var group := _weapon_group_for(equipped, body)
 	var moving := bool(gait.get("moving", false))
@@ -15881,6 +16048,12 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		if moved.relocated:
 			body.position = to
 			return
+		# A sitter still waiting to be dressed who walks off is on their feet
+		# (round 739's review, F2): the server sends no stand for it (its
+		# move handler stands them), and a dressed body's gait would have
+		# cleared the seat at its first step (_set_other_gait).
+		if _other_build_args.has(moved.character_id):
+			_other_seated.erase(moved.character_id)
 		# Round 653: a heading run faces its heading (retail's echo of the
 		# heading form, FUN_008a5750 -> FUN_009e08a0 -> FUN_009e02f0, turns
 		# the mover to it at 3 pi rad/s), not the next position.
@@ -15906,6 +16079,10 @@ func _on_entity_left(character_id: int) -> void:
 	_set_other_gait(character_id, false)
 	_other_gaits.erase(character_id)
 	_other_pluses.erase(character_id)
+	# Gone before their turn to be dressed came (round 739, B4).
+	_other_builds.drop(character_id)
+	_other_build_args.erase(character_id)
+	_other_uids.remove(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_abnormal_states.erase(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
@@ -15925,6 +16102,10 @@ func _on_entity_left(character_id: int) -> void:
 			if child is Label3D:
 				departing_name = child.text
 				break
+		# A body not dressed yet has no plate (round 739, B4): its name is on
+		# the node.
+		if departing_name == "Someone" and body.has_meta("character_name"):
+			departing_name = String(body.get_meta("character_name"))
 		# They fade out over 1.5 s (round 677; READ: CICUser's vslot 0x4c,
 		# 0x9daf10, ends in IGIDObject::FUN_009c32f0's CIDecoDisappear -- but
 		# for its modes 4/6/7, which this client does not draw), no longer
@@ -20147,6 +20328,10 @@ func _fx_owner_body(owner_id: int, owner_kind: int) -> Node3D:
 		return _fx_monster_body(owner_id)
 	if _buff_owner_is_self(owner_id, owner_kind):
 		return player
+	# A body still waiting to be dressed is not drawn (round 739's review,
+	# F7): its auras come with it, _dress_other resyncs them from the book.
+	if _other_build_args.has(owner_id):
+		return null
 	var body = _other_bodies.get(owner_id)
 	return body if body != null and is_instance_valid(body) else null
 
@@ -21129,6 +21314,10 @@ func _berserk_apply(object_id: int, value: int, instant: bool) -> void:
 	var body: Node3D = player if mine else _other_bodies.get(object_id)
 	if body == null or not is_instance_valid(body):
 		return
+	# Not drawn while it waits to be dressed (round 739's review, F7):
+	# _dress_other puts the look on from NetClient's body modes.
+	if not mine and _other_build_args.has(object_id):
+		return
 	if value == 1:
 		BerserkLook.start(body, instant, mine)
 		if mine and not instant:
@@ -21280,12 +21469,37 @@ func _leave_sit_by_moving() -> void:
 ## client before the world scene, or the new zone's bodies, existed. A body
 ## drawn seated takes the sitting loop without the sit-down clip.
 func _spawn_result_others(others: Array, seated: Array) -> void:
+	# Round 739 (B4): the whole list queued first, so the frame's budget goes
+	# to the nearest of them, not the first listed; dressed after the seats
+	# are known (below), so a seated arrival is dressed seated.
+	_other_build_defer += 1
 	for other in others:
 		_note_other_pluses(other)
 		# Each faces its heading from the list's tail (round 637's review
 		# follow-up; NAN from an older server).
 		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped,
 			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE, other.pluses)
+	_other_build_defer -= 1
+	_seat_result_others(seated)
+	if _other_build_defer == 0:
+		_pump_other_builds()
+
+## A group spawn's players (0x3017/0x3019/0x3018, round 737) arrive one
+## entity_entered at a time; NetClient brackets them (round 739's review, F5),
+## so the page is queued whole and the frame's budget goes to the nearest of
+## it, not to the first the server listed.
+func _on_user_group_begin() -> void:
+	_other_build_defer += 1
+
+func _on_user_group_end() -> void:
+	_other_build_defer = maxi(_other_build_defer - 1, 0)
+	if _other_build_defer == 0:
+		_pump_other_builds()
+
+## The seats of an enter-world or zone-change result (round 607): an arrival
+## still waiting to be dressed is dressed seated (_dress_other reads
+## _other_seated); one already drawn swaps to the sitting loop.
+func _seat_result_others(seated: Array) -> void:
 	for id in seated:
 		if not _other_bodies.has(int(id)):
 			continue

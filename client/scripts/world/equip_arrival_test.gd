@@ -61,6 +61,8 @@ func _test_plus_only() -> void:
 	skel.set_meta(CharacterAppearance.GLOW_WEARS_META, wears)
 	skel.set_meta("glow_pluses", {6: 7})
 	(world.get("_other_bodies") as Dictionary)[5] = node
+	# As _spawn_or_update_other registers a body's uid (round 739, B7).
+	world.get("_other_uids").add(5)
 	(world.get("_other_gaits") as Dictionary)[5] = {"skeleton": skel, "body": "", "scale": CharacterAppearance.DEFAULT_SCALE}
 	(world.get("_other_equipped") as Dictionary)[5] = {1: 4842, 6: 3727}
 	(world.get("_other_pluses") as Dictionary)[5] = {6: 7}

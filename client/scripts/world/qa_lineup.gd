@@ -137,6 +137,14 @@ func step(delta: float) -> void:
 			print("LINEUP: the player stepped %s aside to %s" % [aside, str(world.player.global_position.round())])
 		_spawn(appearance)
 		_t = 0.0
+		return
+	# Round 739: the bodies are dressed over frames (World3D._pump_other_builds);
+	# the first phase starts once every one is.
+	if _phase < 0:
+		if not world._other_builds.is_empty():
+			return
+		_refresh_bodies()
+		_t = 0.0
 		_phase = 0
 		_start_phase()
 		return
@@ -239,6 +247,12 @@ func _spawn(appearance: CharacterAppearance) -> void:
 			fwd = f.normalized()
 	var yaw := atan2(fwd.x, fwd.z)
 	var right := Vector3(fwd.z, 0.0, -fwd.x)
+	# Round 739: the kits once per (race, sex, weapon), and the QA-only work
+	# (kits, ground rays) timed apart, so the probe's arrival frame is the
+	# spawn path's own: _kit walks the whole item table, about 5 s for 1000
+	# bodies (MEASURED, round 739).
+	var kit_cache := {}
+	var qa_usec := 0
 	# OPENSRO_QA_LINEUP_TURNS="0,45,90,..." (round 741): body i turned that
 	# many more degrees (i mod the list), so one run sees a weapon at many
 	# headings.
@@ -247,15 +261,20 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		turns.append(float(t))
 	for i in range(specs.size()):
 		var sp: Dictionary = specs[i]
+		var qa_t0 := Time.get_ticks_usec()
 		var col := i % columns
 		var row := i / columns
 		var at := base + fwd * (40.0 + row * spacing_z) + right * ((col - (columns - 1) * 0.5) * spacing_x)
 		var gy := _ground_at(at)
 		if not is_nan(gy):
 			at.y = gy
-		var equipped := _kit(sp)
+		var kit_key := "%d:%s:%d" % [int(sp["race"]), str(sp["woman"]), int(sp["weapon"])]
+		if not kit_cache.has(kit_key):
+			kit_cache[kit_key] = _kit(sp)
+		var equipped: Dictionary = (kit_cache[kit_key] as Dictionary).duplicate()
 		if sp.has("kit"):
 			equipped.merge(sp["kit"], true)
+		qa_usec += Time.get_ticks_usec() - qa_t0
 		var id := 990000 + i
 		var code: String = world._body_key_for(int(sp["ref"]), "")
 		# Facing the player (heading = yaw + pi in RemoteFacing's frame is
@@ -268,13 +287,23 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		var gait: Dictionary = world._other_gaits.get(id, {})
 		bodies.append({"id": id, "ref": int(sp["ref"]), "code": code, "scale": int(sp["scale"]), "weapon": int(sp["weapon"]),
 			"group": String(gait.get("group", "")), "skeleton": gait.get("skeleton")})
-	print("LINEUP: %d bodies (%s weapons) in rows of %d in front of the player at %s, actions %s, %.1f s each; built in %d ms" % [
-		bodies.size(), mode, columns, str(base.round()), ",".join(actions), phase_seconds, (Time.get_ticks_usec() - spawn_t0) / 1000])
+	print("LINEUP: %d bodies (%s weapons) in rows of %d in front of the player at %s, actions %s, %.1f s each; built in %d ms (%d of it the QA kits and ground; %d still queued to dress, round 739)" % [
+		bodies.size(), mode, columns, str(base.round()), ",".join(actions), phase_seconds, (Time.get_ticks_usec() - spawn_t0) / 1000,
+		qa_usec / 1000, world._other_builds.size()])
+	spawn_t0 += qa_usec
 	if QaCrowdProbe.wanted():
 		var probe := QaCrowdProbe.new()
 		probe.name = "QaCrowdProbe"
 		world.add_child(probe)
-		probe.setup(world, bodies)
+		probe.setup(world, bodies, spawn_t0)
+
+## Each body's skeleton and group as dressed (round 739: dressed after the
+## spawn, over frames).
+func _refresh_bodies() -> void:
+	for b in bodies:
+		var gait: Dictionary = world._other_gaits.get(b["id"], {})
+		b["group"] = String(gait.get("group", ""))
+		b["skeleton"] = gait.get("skeleton")
 
 func _int_of(t: String) -> int:
 	t = t.strip_edges()
@@ -424,6 +453,10 @@ func _pose_current(skel: Skeleton3D) -> void:
 			var anim: BanReader.ParsedAnimation = entry[1]
 			var secs: float = world._idle_anim_time - float(entry[5]) + float(entry[3])
 			Skeleton3DBuilder.apply_ban_pose_at(skel, anim, secs, bool(entry[4]))
+			# Not CrowdAnim's baked frames: the next baked pose writes every
+			# channel (round 738's review, F7).
+			if skel.has_meta(CrowdAnim.META_LAST):
+				skel.remove_meta(CrowdAnim.META_LAST)
 			return
 	if skel == world._player_skeleton:
 		return # the player is posed every frame by its own tick
