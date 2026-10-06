@@ -549,6 +549,9 @@ static func _skinned_instance(
 	# NodePath cannot be taken to a node the instance has no parent under.
 	return mi
 
+## Meta on a clip animation_for parsed: its file path, lower case.
+const CLIP_PATH_META := "opensro_clip_path"
+
 ## The animation an assembled character plays for one action type in one
 ## group -- the file's own table (BsrReader.ParsedObject.animation_for),
 ## parsed on first use. Null when the file lists none for it.
@@ -574,6 +577,10 @@ static func animation_for(
 		anim = null
 	if anim != null:
 		anim.set_meta(BsrReader.CLIP_META, found)
+		# The file it came from (round 738's review, F1): CrowdAnim shares a
+		# clip's baked poses between bodies by path, never the clip object,
+		# whose entry tag is the body's own.
+		anim.set_meta(CLIP_PATH_META, path.to_lower())
 	assembled.animation_cache[path] = anim
 	return anim
 

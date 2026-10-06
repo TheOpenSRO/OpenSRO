@@ -424,6 +424,10 @@ func _pose_current(skel: Skeleton3D) -> void:
 			var anim: BanReader.ParsedAnimation = entry[1]
 			var secs: float = world._idle_anim_time - float(entry[5]) + float(entry[3])
 			Skeleton3DBuilder.apply_ban_pose_at(skel, anim, secs, bool(entry[4]))
+			# Not CrowdAnim's baked frames: the next baked pose writes every
+			# channel (round 738's review, F7).
+			if skel.has_meta(CrowdAnim.META_LAST):
+				skel.remove_meta(CrowdAnim.META_LAST)
 			return
 	if skel == world._player_skeleton:
 		return # the player is posed every frame by its own tick

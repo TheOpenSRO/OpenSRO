@@ -49,12 +49,14 @@ func _initialize() -> void:
 		_test_canonical_skin()
 		_test_volume()
 		_test_share_template()
+		_test_sound_tags()
 		_test_baked_pose()
 		_test_lod_bands()
 		var world := _make_world()
 		if world != null:
 			await process_frame
 			_test_world_tick(world)
+			_test_world_lod_and_range(world)
 			root.remove_child(world)
 			world.free()
 	else:
@@ -221,12 +223,26 @@ func _test_volume() -> void:
 	_check(a.skin == canon, "neutral Volume gives the base back")
 	other.free()
 	s.free()
+	# F3: the base holds its variants weakly, so the two make no cycle: with
+	# nothing else holding them, both are freed.
+	var s2 := _body()
+	var base := Skeleton3DBuilder.canonical_skin(s2)
+	CharacterAppearance._mark_canonical(base)
+	var variant := CharacterAppearance.volume_skin(base, s2, {"Bip01 Spine": 1.2})
+	var held = (base.get_meta(CharacterAppearance.VOLUME_VARIANTS_META) as Dictionary).values()[0]
+	_check(held is WeakRef, "the base keeps its variant as a WeakRef")
+	var wb: WeakRef = weakref(base)
+	var wv: WeakRef = weakref(variant)
+	base = null
+	variant = null
+	held = null
+	_check(wb.get_ref() == null and wv.get_ref() == null, "F3: a base skin and its Volume variant are freed once nothing wears them")
+	s2.free()
 
-## Two body templates on one skeleton file share one skin, and every
-## template reads one clip cache.
+## Two body templates on one skeleton file share one skin; their clips stay
+## their own (round 738's review, F1).
 func _test_share_template() -> void:
 	var by_layout := {}
-	var clips := {}
 	var made: Array = []
 	for n in range(2):
 		var t := SkinnedBsrAssembler.AssembledCharacter.new()
@@ -240,18 +256,64 @@ func _test_share_template() -> void:
 		t.skeleton.add_child(mi)
 		mi.skin = t.canonical_skin
 		mi.skeleton = mi.get_path_to(t.skeleton)
-		t.animation_cache["ani\\stand.ban"] = BanReader.ParsedAnimation.new()
-		CharacterAppearance.share_template(t, by_layout, clips)
+		CharacterAppearance.share_template(t, by_layout)
 		made.append(t)
 	var a: SkinnedBsrAssembler.AssembledCharacter = made[0]
 	var b: SkinnedBsrAssembler.AssembledCharacter = made[1]
 	_check(b.canonical_skin == a.canonical_skin and (b.skeleton.get_child(0) as MeshInstance3D).skin == a.canonical_skin,
 		"a second template on the same skeleton file takes the first's skin, and so do its pieces")
 	_check(CharacterAppearance.canonical_base(a.canonical_skin) == a.canonical_skin, "the shared skin is marked for Volume")
-	_check(is_same(a.animation_cache, b.animation_cache) and b.animation_cache["ani\\stand.ban"] == clips["ani\\stand.ban"],
-		"both templates read one clip cache: a file is one clip object")
+	_check(not is_same(a.animation_cache, b.animation_cache), "each template keeps its own clip cache")
 	for t in made:
 		(t as SkinnedBsrAssembler.AssembledCharacter).skeleton.free()
+
+## The review's case (F1, MEASURED there: chinaman_merchant_walkforward.ban is
+## the Chinese bodies' `1:default` walk, with footsteps, and the European staff
+## bodies' `1:onehand_staff` walk, with no sound set). Two Figures play one
+## file: each keeps the tag it found the file as, so each hears its own sound
+## set however the lookups interleave, and the two share the file's baked
+## poses.
+func _test_sound_tags() -> void:
+	var path := "res\\ani\\merchant_walkforward.ban"
+	var china := SkinnedBsrAssembler.AssembledCharacter.new()
+	china.parsed = BsrReader.ParsedObject.new()
+	var euro := SkinnedBsrAssembler.AssembledCharacter.new()
+	euro.parsed = BsrReader.ParsedObject.new()
+	for pair in [[china, "default"], [euro, "onehand_staff"]]:
+		var t: SkinnedBsrAssembler.AssembledCharacter = pair[0]
+		var entry := BsrReader.AnimationEntry.new()
+		entry.action_type = BsrReader.AnimationEntry.TYPE_WALK
+		entry.path = path
+		t.parsed.animation_groups[pair[1]] = [entry]
+		var clip := _clip(10, 4, 1166)
+		clip.set_meta(SkinnedBsrAssembler.CLIP_PATH_META, path.to_lower())
+		t.animation_cache[path] = clip
+	var steps := BsrReader.SoundSet.new()
+	steps.action_type = BsrReader.AnimationEntry.TYPE_WALK
+	steps.name = "default"
+	steps.tracks.append(BsrReader.SoundTrack.new())
+	china.parsed.sound_sets_by_type["1:default"] = steps
+	var by_layout := {}
+	CharacterAppearance.share_template(china, by_layout)
+	CharacterAppearance.share_template(euro, by_layout)
+	var walk := BsrReader.AnimationEntry.TYPE_WALK
+	var heard := func(t: SkinnedBsrAssembler.AssembledCharacter, clip: BanReader.ParsedAnimation) -> bool:
+		var tag = clip.get_meta(BsrReader.CLIP_META, null)
+		return tag != null and t.parsed.sound_set_for(int(tag[0]), String(tag[1])) != null
+	var c := SkinnedBsrAssembler.animation_for(null, china, walk, "default")
+	var e := SkinnedBsrAssembler.animation_for(null, euro, walk, "onehand_staff")
+	_check(c != null and e != null and c != e, "the two Figures hold the file as two clip objects")
+	_check(heard.call(china, c) and not heard.call(euro, e), "after the European lookup the Chinese body still hears its footsteps, and the European none")
+	SkinnedBsrAssembler.animation_for(null, china, walk, "default")
+	_check(heard.call(china, c) and not heard.call(euro, e), "and after the Chinese lookup the European body is still silent")
+	var sa := _skeleton(10)
+	sa.set_meta(MonsterCrowd.META_LAYOUT, "synthetic|10")
+	var sb := _skeleton(10)
+	sb.set_meta(MonsterCrowd.META_LAYOUT, "synthetic|10")
+	_check(CrowdAnim.frames_for(sa, c) == CrowdAnim.frames_for(sb, e), "and the two share the file's baked poses (by path and layout)")
+	CrowdAnim.clear_shared_frames()
+	sa.free()
+	sb.free()
 
 # --- A3: baked poses ----------------------------------------------------------
 
@@ -490,6 +552,9 @@ func _test_world_tick(world: Node) -> void:
 			if (plane as Plane).distance_to(skel.global_position) > r:
 				return false
 		return true
+	# The bodies' first tick poses each once wherever it is (the review's F2,
+	# tested below); A1 is what the ticks after it do.
+	world.call("_tick_idle_animations", 0.0)
 	reset.call()
 	world.set("_idle_anim_time", 0.25)
 	world.call("_tick_idle_animations", 0.0)
@@ -534,6 +599,66 @@ func _test_world_tick(world: Node) -> void:
 			unposed += 1
 	_check(unposed == 0, "with the switches off every other player is posed, in view or not (%d not)" % unposed)
 	CrowdAnim.set_switches("1i34")
+	cam.queue_free()
+	holder.queue_free()
+	(world.get("_animated") as Array).clear()
+
+## Round 738's review, F2 and F6: a crowd of 110 far bodies (A4 is live).
+## Every body is posed at its first tick wherever it is (none left in the
+## bind pose); a body's first tick back in view is never skipped by the LOD;
+## and a body past Character Sight Range is not posed.
+func _test_world_lod_and_range(world: Node) -> void:
+	var cam := Camera3D.new()
+	world.add_child(cam)
+	cam.global_position = Vector3(0.0, 20.0, 0.0)
+	cam.look_at(Vector3(0.0, 0.0, -100.0))
+	cam.far = 6000.0
+	cam.make_current()
+	var holder := Node3D.new()
+	world.add_child(holder)
+	var clip := _turn_clip()
+	var skels: Array = []
+	for i in range(110):
+		var x := float(i % 11) * 40.0 - 200.0
+		var z := -1000.0 - float(i / 11) * 100.0
+		skels.append(_other_player(world, holder, Vector3(x, 0.0, z), 2000 + i, clip))
+	# One body behind the camera: never in view.
+	var behind := _other_player(world, holder, Vector3(0.0, 0.0, 300.0), 3000, clip)
+	var sentinel := Quaternion(Vector3.UP, 1.234)
+	var reset := func() -> void:
+		for sk in skels:
+			(sk as Skeleton3D).set_bone_pose_rotation(1, sentinel)
+		behind.set_bone_pose_rotation(1, sentinel)
+	var turned := func(skel: Skeleton3D) -> bool: return not skel.get_bone_pose_rotation(1).is_equal_approx(sentinel)
+	var count_turned := func() -> int:
+		var n := 0
+		for sk in skels:
+			if turned.call(sk):
+				n += 1
+		return n
+	reset.call()
+	world.call("_tick_idle_animations", 0.0)
+	_check(count_turned.call() == 110 and turned.call(behind),
+		"F2: every body's first tick poses it, the one behind the camera too (%d of 110)" % count_turned.call())
+	reset.call()
+	world.call("_tick_idle_animations", 0.0)
+	var steady: int = count_turned.call()
+	_check(steady < 110 and not turned.call(behind), "the next tick the far LOD skips some (%d of 110 posed) and the one behind is not posed" % steady)
+	# Out of view for a tick, then back: the first tick back poses all.
+	cam.look_at(Vector3(0.0, 0.0, 100.0))
+	world.call("_tick_idle_animations", 0.0)
+	cam.look_at(Vector3(0.0, 0.0, -100.0))
+	reset.call()
+	world.call("_tick_idle_animations", 0.0)
+	_check(count_turned.call() == 110, "F2: the first tick back in view poses every body, whatever its LOD slot (%d of 110)" % count_turned.call())
+	# Character Sight Range 600: these bodies, 1,000 and more away, draw
+	# nothing and are not posed.
+	world.set("_character_range", 600.0)
+	reset.call()
+	world.call("_tick_idle_animations", 0.0)
+	world.call("_tick_idle_animations", 0.0)
+	_check(count_turned.call() == 0, "F6: past Character Sight Range no body is posed (%d)" % count_turned.call())
+	world.set("_character_range", 0.0)
 	cam.queue_free()
 	holder.queue_free()
 	(world.get("_animated") as Array).clear()

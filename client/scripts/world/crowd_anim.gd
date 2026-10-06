@@ -30,9 +30,14 @@ class_name CrowdAnim
 ##   is given only the channels the clip moves. What a body shows is always
 ##   an exact pose of its clip, at a clip time at most QUANTUM_MS / 2 from its
 ##   own. The clip clock advances in whole physics steps (1/60 s, two quanta:
-##   MonsterCrowd.TickGate sums them), so that offset is the same at every
-##   pose of a body -- a fixed shift of its clip's phase, which is itself ours
-##   (World3D gives each body 0.37 s times its index) -- not a jitter.
+##   MonsterCrowd.TickGate sums them), so within one cycle of a loop that
+##   offset is the same at every pose of a body -- a fixed shift of its clip's
+##   phase, which is itself ours (World3D gives each body 0.37 s times its
+##   index). At a loop's wrap it is re-rounded unless the duration is a
+##   multiple of the quantum: at most 0.67 ms of step error once a cycle
+##   (MEASURED by round 738's review: 50 of the Figures' 75 loops, worst
+##   chinaman_fighter_walkforward). A one-shot's clock lands on its frames
+##   exactly (the review: 0.000004 units worst over 38 one-shots).
 ##   MEASURED (tools/crowd_anim_probe.gd, the 52 Figures standing and
 ##   running): the fastest bone, a running foot, is 0.44 units from the exact
 ##   pose at the worst offset.
@@ -75,8 +80,8 @@ const POSE_HALF := 1800.0
 
 ## The baking quantum of A3, in milliseconds of clip time (OURS). 1000/120:
 ## half a physics step, so a body's offset from its own time (at most 4.2 ms)
-## is fixed (see the header). docs/rounds/r738.md has what it moves a bone
-## and what the frames cost in memory (MEASURED).
+## is fixed within a loop's cycle (see the header). docs/rounds/r738.md has
+## what it moves a bone and what the frames cost in memory (MEASURED).
 const QUANTUM_MS := 1000.0 / 120.0
 
 ## How much a player's cull sphere is grown past its meshes' bind-pose reach
@@ -254,16 +259,43 @@ class Frames:
 
 ## The frames of `anim` on `skeleton`'s layout (MonsterCrowd.META_LAYOUT),
 ## made once and kept on the clip.
+##
+## Frames are shared by file and layout between clip objects (round 738's
+## review, F1): each body template keeps its own clip objects, since a clip
+## carries the entry its body found it as (BsrReader.CLIP_META, the key to
+## that body's sound set), but the same file is the same poses. A clip
+## SkinnedBsrAssembler.animation_for parsed carries its path
+## (CLIP_PATH_META); one without (a cast clip parsed for one cast) bakes its
+## own. The answer is kept on the clip too, so the path is looked up once.
 static func frames_for(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation) -> Frames:
 	var layout = skeleton.get_meta(MonsterCrowd.META_LAYOUT)
 	var by_layout: Dictionary = anim.get_meta(META_FRAMES) if anim.has_meta(META_FRAMES) else {}
 	var got = by_layout.get(layout)
 	if got != null:
 		return got
-	var made := Frames.new(anim, MonsterCrowd.bone_map(skeleton, anim))
+	var made: Frames = null
+	var key := ""
+	if anim.has_meta(SkinnedBsrAssembler.CLIP_PATH_META):
+		key = "%s|%s" % [String(anim.get_meta(SkinnedBsrAssembler.CLIP_PATH_META)), str(layout)]
+		made = _shared.get(key)
+	if made == null:
+		made = Frames.new(anim, MonsterCrowd.bone_map(skeleton, anim))
+		if key != "":
+			_shared[key] = made
 	by_layout[layout] = made
 	anim.set_meta(META_FRAMES, by_layout)
 	return made
+
+## Frames by "clip path|layout", shared between the bodies' own clip objects.
+static var _shared := {}
+
+## Forgets the shared frames (CharacterAppearance.free_templates). A clip
+## object keeps what it already found.
+static func clear_shared_frames() -> void:
+	_shared.clear()
+
+static func shared_frames() -> int:
+	return _shared.size()
 
 ## The baked frame a body `seconds` into `anim` takes: the nearest multiple
 ## of QUANTUM_MS, a loop's time wrapped at its duration (the frame past its

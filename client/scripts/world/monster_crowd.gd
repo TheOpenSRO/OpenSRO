@@ -89,8 +89,12 @@ class CullCache:
 			made = [float(skeleton.get_meta(MonsterDraw.META_RADIUS, 1.0)),
 				1.0 if skeleton.has_meta(MonsterDraw.META_HIDE) else 0.0, 0.0, _slots, 0.0]
 		elif CrowdAnim.is_other_player(skeleton):
+			# [radius, 0, in view at the last tick, slot, never posed yet, 1]
+			# (round 738 and its review's F2: the first tick poses the body
+			# wherever it is, so none is left in the bind pose; the first tick
+			# back in view is never skipped by the LOD).
 			_slots += 1
-			made = [CrowdAnim.player_radius(skeleton), 0.0, 0.0, _slots, 0.0, 1.0]
+			made = [CrowdAnim.player_radius(skeleton), 0.0, 0.0, _slots, 1.0, 1.0]
 			if skeleton.has_meta(META_LAYOUT):
 				skeleton.set_meta(CrowdAnim.META_CACHED, true)
 		_by_id[id] = made
@@ -167,9 +171,12 @@ static func recheck_due(tick: int, slot: int) -> bool:
 ## recomputes its transforms once, at the end of the frame, as Godot does
 ## for any pose change. The pose itself is the same: the same two keys, the
 ## same blend (the test compares the two bone by bone). A skeleton without
-## META_LAYOUT (the player, NPCs) takes the old path; other players carry it
-## since round 738 (CharacterAppearance.build: their body's skeleton file and
-## bone count).
+## META_LAYOUT (NPCs) takes the old path. Since round 738 every body
+## CharacterAppearance.build makes carries it (its skeleton file and bone
+## count): other players, and the character window's doll, which is in the
+## clip tick and so takes this indexed path too (the same values, its globals
+## left to the end-of-frame update). The local player carries it as well but
+## is posed by its own tick through apply_ban_pose_at, never through here.
 const META_LAYOUT := "opensro_crowd_layout"
 const META_BONE_MAPS := "opensro_crowd_bone_maps"
 
@@ -183,6 +190,10 @@ static func pose_at(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, secon
 		if CrowdAnim.cache_poses and anim.duration_ms > 0:
 			CrowdAnim.pose_cached(skeleton, anim, seconds, loop)
 			return
+		# Posed by another path: the baked frames it last took no longer hold
+		# (round 738's review, F7).
+		if skeleton.has_meta(CrowdAnim.META_LAST):
+			skeleton.remove_meta(CrowdAnim.META_LAST)
 		if not CrowdAnim.indexed_players:
 			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, seconds, loop)
 			return

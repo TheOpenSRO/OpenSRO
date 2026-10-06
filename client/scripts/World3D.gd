@@ -6361,15 +6361,26 @@ func _tick_idle_animations(delta: float) -> void:
 			# sphere is in view (A1, READ: the original poses a character only
 			# if it was drawn), and far ones in a crowd every second or fourth
 			# frame (A4, OURS). Its clock and its sounds run on.
+			# Character Sight Range (round 738's review, F6): a body whose whole
+			# sphere is past the range draws nothing, so it is not posed either.
 			if CrowdAnim.cull_players and have_planes:
 				var at := skeleton.global_position
 				var r: float = info[0]
 				pose = p0.distance_to(at) <= r and p1.distance_to(at) <= r and p2.distance_to(at) <= r \
-					and p3.distance_to(at) <= r and p4.distance_to(at) <= r and p5.distance_to(at) <= r
-			if pose and CrowdAnim.lod_players and crowd_count >= CrowdAnim.CROWD_MIN \
+					and p3.distance_to(at) <= r and p4.distance_to(at) <= r and p5.distance_to(at) <= r \
+					and (_character_range <= 0.0 or at.distance_to(eye) - r <= _character_range)
+			# A body's first tick, and its first tick back in view, is never
+			# skipped by the LOD (round 738's review, F2): info[4] is "never posed",
+			# info[2] "in view at the last tick" (MonsterCrowd.CullCache.info).
+			var seen := pose
+			if info[4] > 0.0:
+				pose = true
+				info[4] = 0.0
+			elif pose and info[2] > 0.0 and CrowdAnim.lod_players and crowd_count >= CrowdAnim.CROWD_MIN \
 					and not MonsterCrowd.pose_due(pose_tick, int(info[3]), CrowdAnim.pose_interval(skeleton.global_position.distance_to(eye), crowd_count)):
 				pose = false
 				lod_skipped += 1
+			info[2] = 1.0 if seen else 0.0
 		elif not info.is_empty():
 			# A looping body that was neither in view nor in hearing at its
 			# last test is tested every second frame, on its slot (round 664,

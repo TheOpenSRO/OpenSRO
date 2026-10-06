@@ -54,7 +54,7 @@ func _initialize() -> void:
 	var shared := CharacterAppearance.from_archives(data, media)
 	shared.canonical = true
 	shared.glow_enabled = false
-	var clips := {}  # ParsedAnimation -> [skeleton (a shared-skin body's), name]
+	var clips := {}  # clip file path -> [ParsedAnimation, skeleton (a shared-skin body's), name]
 	_measure_skins(own, shared, clips)
 	_measure_clips(clips, shared)
 	own.free_templates()
@@ -129,12 +129,13 @@ func _measure_skins(own: CharacterAppearance, shared: CharacterAppearance, clips
 						var cb := shared.animation_for(b, action)
 						if ca == null or cb == null:
 							continue
-						if scale == 0x22 and not clips.has(cb):
+						var ckey: String = String(cb.get_meta(SkinnedBsrAssembler.CLIP_PATH_META, str(cb.get_instance_id())))
+						if scale == 0x22 and not clips.has(ckey):
 							var keep := b.skeleton.duplicate() as Skeleton3D
 							for c in keep.get_children():
 								keep.remove_child(c)
 								c.free()
-							clips[cb] = [keep, "%s %s %s" % [figs[i].code, b.weapon_group, "stand" if action == BsrReader.AnimationEntry.TYPE_STAND else "run"]]
+							clips[ckey] = [cb, keep, "%s %s %s" % [figs[i].code, b.weapon_group, "stand" if action == BsrReader.AnimationEntry.TYPE_STAND else "run"]]
 						for t in [0.0, 0.37, 1.13]:
 							Skeleton3DBuilder.apply_ban_pose_at(a.skeleton, ca, t, true)
 							Skeleton3DBuilder.apply_ban_pose_at(b.skeleton, cb, t, true)
@@ -215,8 +216,8 @@ func _measure_clips(clips: Dictionary, shared: CharacterAppearance) -> void:
 	var worst_q_bone := ""
 	var worst_shape := 0.0
 	for clip in clips:
-		var anim: BanReader.ParsedAnimation = clip
-		var keep: Skeleton3D = clips[clip][0]
+		var anim: BanReader.ParsedAnimation = clips[clip][0]
+		var keep: Skeleton3D = clips[clip][1]
 		var exact := keep.duplicate() as Skeleton3D
 		var baked := keep.duplicate() as Skeleton3D
 		var fr := CrowdAnim.frames_for(baked, anim)
@@ -247,10 +248,10 @@ func _measure_clips(clips: Dictionary, shared: CharacterAppearance) -> void:
 				clip_30 = maxf(clip_30, _worst(ge, _globals(exact)))
 		if clip_q > worst_q:
 			worst_q = clip_q
-			worst_q_name = clips[clip][1]
+			worst_q_name = clips[clip][2]
 		if clip_60 > worst_60:
 			worst_60 = clip_60
-			worst_60_name = clips[clip][1]
+			worst_60_name = clips[clip][2]
 		worst_30 = maxf(worst_30, clip_30)
 		exact.free()
 		baked.free()

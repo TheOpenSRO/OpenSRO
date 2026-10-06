@@ -99,7 +99,12 @@ class_name CharacterAppearance
 ##
 ## Each body's skeleton also carries MonsterCrowd.META_LAYOUT, its skeleton
 ## file and bone count, so the world's clip tick finds a clip's bone indices
-## once per layout (CrowdAnim, round 738).
+## once per layout (CrowdAnim, round 738). That reaches every body built here:
+## other players, and also the character window's doll, which the world's
+## clip tick poses through MonsterCrowd.pose_at's indexed path (round 738's
+## review, F4: the same values, the bone globals left to the end-of-frame
+## update). The local player carries it too but is posed by its own tick
+## (apply_ban_pose_at), and the screens pose theirs through Body.pose.
 
 ## READ, table 0xec64b0.
 const HEIGHT_FACTORS := [0.94, 0.97, 1.00, 1.03, 1.06]
@@ -197,10 +202,8 @@ var _extra_bodies: Dictionary = {}
 var _body_templates: Dictionary = {}  # bsr path -> AssembledCharacter (detached)
 var _item_templates: Dictionary = {}  # "skeleton|bones|item path" -> Node3D (detached) or null
 ## Round 738: the shared skin of each skeleton layout ("skeleton path|bone
-## count" -> Skin), and the clips every body template reads (path ->
-## ParsedAnimation): see share_template.
+## count" -> Skin): see share_template.
 var _canonical_by_layout: Dictionary = {}
-var _clip_cache: Dictionary = {}
 ## item path (lower case) -> its BsrReader.Attachable, or null when its block
 ## did not parse; filled as the item templates are made.
 var _item_attachables: Dictionary = {}
@@ -239,6 +242,7 @@ func _notification(what: int) -> void:
 		var n = _item_templates[key]
 		if n != null and is_instance_valid(n):
 			(n as Node).free()
+	_canonical_by_layout.clear()
 
 ## An appearance over the player's archives. `items`, when given, is a table
 ## already parsed (item id -> ItemTableReader.Item, World3D's `_item_rows`), so
@@ -399,8 +403,10 @@ static func apply_volume(skeleton: Skeleton3D, scales: Dictionary) -> void:
 			skin.set_bind_pose(i, bind)
 
 ## Meta on a body's shared skin (Skeleton3DBuilder.canonical_skin, round
-## 738): its Volume variants, scale signature -> Skin. And on a variant: the
-## shared skin it was made from.
+## 738): its Volume variants, scale signature -> WeakRef to the Skin. And on a
+## variant: the shared skin it was made from. Only the variant holds its base:
+## the base's references to its variants are weak, so the two make no cycle
+## and go when no mesh wears them (round 738's review, F3).
 const VOLUME_VARIANTS_META := "opensro_volume_variants"
 const VOLUME_BASE_META := "opensro_volume_base"
 
@@ -419,25 +425,22 @@ static func _mark_canonical(skin: Skin) -> void:
 	if skin != null and not skin.has_meta(VOLUME_VARIANTS_META):
 		skin.set_meta(VOLUME_VARIANTS_META, {})
 
-## What a new body template shares with the ones before it (round 738):
-## - **its shared skin, per skeleton layout.** Worn items are made once per
-##   layout (_item_instance), on whichever body of that layout wore them first,
-##   so a body wearing them must be on that same Skin object -- two objects
-##   with equal binds are two skins to the skeleton. The 52 Figures name two
-##   skeleton files (MEASURED, round 683), so this is a handful of skins.
-## - **its clips, per path** (`clips`, the appearance's): the Figures play the
-##   same `.ban` files (round 738's probe: 104 clips standing and running, 32
-##   names), and CrowdAnim bakes a clip's poses once per clip object and
-##   layout. A clip found as another entry by another body is the same file;
-##   the entry tag (BsrReader.CLIP_META) is set on every lookup, as within one
-##   body before.
-static func share_template(t: SkinnedBsrAssembler.AssembledCharacter, by_layout: Dictionary, clips: Dictionary) -> void:
+## What a new body template shares with the ones before it (round 738): its
+## shared skin, per skeleton layout. Worn items are made once per layout
+## (_item_instance), on whichever body of that layout wore them first, so a
+## body wearing them must be on that same Skin object -- two objects with
+## equal binds are two skins to the skeleton. The 52 Figures name two
+## skeleton files (MEASURED, round 683), so this is a handful of skins.
+##
+## Its clips are NOT shared (round 738's review, F1): a clip carries the entry
+## its body found it as (BsrReader.CLIP_META), which AnimSounds looks the
+## body's own sound set up by, and one file is a different entry in different
+## Figures' `.bsr` (the review counted 169 body pairs that hear differently).
+## What is shared is the baked poses, by file path and layout
+## (CrowdAnim.frames_for, SkinnedBsrAssembler.CLIP_PATH_META).
+static func share_template(t: SkinnedBsrAssembler.AssembledCharacter, by_layout: Dictionary) -> void:
 	if t == null:
 		return
-	for path in t.animation_cache:
-		if not clips.has(path):
-			clips[path] = t.animation_cache[path]
-	t.animation_cache = clips
 	if t.canonical_skin == null or t.skeleton == null:
 		return
 	var key := "%s|%d" % [t.parsed.skeleton_path if t.parsed != null else "", t.skeleton.get_bone_count()]
@@ -467,9 +470,11 @@ static func volume_skin(base: Skin, skeleton: Skeleton3D, scales: Dictionary) ->
 		return base
 	var key := ";".join(parts)
 	var variants: Dictionary = base.get_meta(VOLUME_VARIANTS_META, {})
-	var got = variants.get(key)
-	if got != null:
-		return got
+	var held = variants.get(key)
+	if held != null:
+		var got = (held as WeakRef).get_ref()
+		if got != null:
+			return got
 	var skin := base.duplicate() as Skin
 	for i in range(skin.get_bind_count()):
 		var bone := skin.get_bind_bone(i)
@@ -481,7 +486,7 @@ static func volume_skin(base: Skin, skeleton: Skeleton3D, scales: Dictionary) ->
 	skin.set_meta(VOLUME_BASE_META, base)
 	if skin.has_meta(VOLUME_VARIANTS_META):
 		skin.remove_meta(VOLUME_VARIANTS_META)
-	variants[key] = skin
+	variants[key] = weakref(skin)
 	base.set_meta(VOLUME_VARIANTS_META, variants)
 	return skin
 
@@ -743,7 +748,8 @@ static func _fallback_of(path: String) -> String:
 			return path.substr(0, path.length() - suffix.length()) + ".bsr"
 	return ""
 
-## Frees the cached templates (a screen closing).
+## Frees the cached templates (a screen closing), the shared skins and the
+## baked poses shared by clip path.
 func free_templates() -> void:
 	for path in _body_templates:
 		var t: SkinnedBsrAssembler.AssembledCharacter = _body_templates[path]
@@ -756,6 +762,9 @@ func free_templates() -> void:
 			n.free()
 	_item_templates.clear()
 	_item_attachables.clear()
+	_canonical_by_layout.clear()
+	# The baked poses shared by path (round 738's review, F3).
+	CrowdAnim.clear_shared_frames()
 
 func _body_template(bsr_path: String) -> SkinnedBsrAssembler.AssembledCharacter:
 	if _body_templates.has(bsr_path):
@@ -764,7 +773,7 @@ func _body_template(bsr_path: String) -> SkinnedBsrAssembler.AssembledCharacter:
 		return null
 	var t := SkinnedBsrAssembler.assemble_from_archive(_data, bsr_path, false, canonical)
 	if t != null:
-		share_template(t, _canonical_by_layout, _clip_cache)
+		share_template(t, _canonical_by_layout)
 	stats["body_assemblies"] += 1
 	_body_templates[bsr_path] = t
 	return t
