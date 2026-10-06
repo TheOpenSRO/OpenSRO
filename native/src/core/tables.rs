@@ -713,6 +713,9 @@ pub fn char_models_name_keys(data: &[u8]) -> Result<StrStrings, Fallback> {
 const ITEM_COL_ID: usize = 1;
 const ITEM_COL_CODE_NAME: usize = 2;
 const ITEM_COL_NAME: usize = 3;
+/// OrgObjCodeName, column 4 (round 740: the glow tables' inheritance, docs/protocol/weapon_glow.md
+/// §1; the client's wide reader stores `xxx` as "", READ characterdata.md).
+const ITEM_COL_ORG_CODE_NAME: usize = 4;
 const ITEM_COL_NAME_STRID: usize = 5;
 const ITEM_COL_SELL_PRICE: usize = 31;
 /// KeepingFee, the warehouse deposit fee a unit (round 728; the column is INFERRED from the
@@ -763,6 +766,8 @@ pub const ICON_PREFIX: &str = "icon\\";
 pub struct Items {
     pub ids: Vec<i64>,
     pub code_names: Vec<String>,
+    /// Column 4, OrgObjCodeName; "" for `xxx` (any case) or a missing column (round 740).
+    pub org_code_names: Vec<String>,
     pub item_names: Vec<String>,
     pub name_strids: Vec<String>,
     /// Column 6, the description key (round 731).
@@ -862,6 +867,8 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         }
         o.ids.push(to_int(id_text));
         o.code_names.push(strip(cols[ITEM_COL_CODE_NAME]).to_owned());
+        let org = cols.get(ITEM_COL_ORG_CODE_NAME).map_or("", |c| strip(c));
+        o.org_code_names.push(if equals_lower(org, "xxx") { String::new() } else { org.to_owned() });
         o.item_names.push(item_name.to_owned());
         o.name_strids.push(cols.get(ITEM_COL_NAME_STRID).map_or("", |c| strip(c)).to_owned());
         o.desc_strids.push(cols.get(ITEM_COL_DESC_STRID).map_or("", |c| strip(c)).to_owned());
@@ -1277,6 +1284,7 @@ mod tests {
         cols[82] = "222".into();
         cols[6] = "SN_ITEM_X_TT_DESC".into();
         cols[2] ="ITEM_CH_CLOTHES_01".into();
+        cols[4] = " ITEM_CH_CLOTHES_BASE ".into();
         cols[3] = " Cotton Suit ".into();
         cols[5] = "SN_ITEM_X".into();
         cols[9] = "1".into();
@@ -1300,6 +1308,7 @@ mod tests {
         let data = utf16(&[row.as_str(), nameless, short, "1\t7\tC\tName"].join("\r\n"));
         let it = items(&data).unwrap();
         assert_eq!(it.ids, vec![4842, 7]);
+        assert_eq!(it.org_code_names, vec!["ITEM_CH_CLOTHES_BASE", ""]);
         assert_eq!(it.item_names, vec!["Cotton Suit", "Name"]);
         assert_eq!(it.icon_paths, vec!["icon\\item\\a.ddj", ""]);
         assert_eq!(it.models, vec!["item\\a_ba.bsr", "item\\b_ba_fullset.BSR"]);
