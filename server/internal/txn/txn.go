@@ -30,8 +30,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -253,11 +255,23 @@ func (r Runner) Run(ctx context.Context, fn func(ctx context.Context) error) err
 	attempts := maxAttempts
 	if InSQL(ctx) {
 		attempts = 1 // the enclosing transaction decides whether to run again
+	} else {
+		// The action's deadline (round 743's review, F6): a database that
+		// stops answering fails the action instead of holding its locks --
+		// and a trade's latch -- for good.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, ActionTimeout)
+		defer cancel()
 	}
 	var err error
 	for attempt := 1; ; attempt++ {
 		err = r.once(ctx, fn)
 		if err == nil || !Retryable(err) || attempt >= attempts {
+			break
+		}
+		// A short, growing, jittered pause before the retry (the review's
+		// F4), so two actions that just deadlocked do not collide again.
+		if !backoff(ctx, attempt) {
 			break
 		}
 	}
@@ -267,6 +281,27 @@ func (r Runner) Run(ctx context.Context, fn func(ctx context.Context) error) err
 		}
 	}
 	return err
+}
+
+// ActionTimeout bounds one action, every retry included. OURS: far above an
+// action's normal few milliseconds (round 742's pgbench: about 1 ms a commit),
+// short enough that a stuck database frees a trade's two players within a
+// quarter of a minute.
+// A variable only so a test can shorten it.
+var ActionTimeout = 15 * time.Second
+
+// backoff sleeps before retry attempt+1: attempt x 10 ms plus up to 10 ms of
+// jitter (OURS). It answers false when ctx ended first.
+func backoff(ctx context.Context, attempt int) bool {
+	d := time.Duration(attempt)*10*time.Millisecond + time.Duration(rand.Int64N(int64(10*time.Millisecond)))
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 func (r Runner) once(ctx context.Context, fn func(ctx context.Context) error) error {

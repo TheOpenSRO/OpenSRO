@@ -68,9 +68,14 @@ ALTER TABLE <t> ALTER COLUMN serial SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS <t>_serial_key ON <t> (serial);
 ```
 
-The backfill is one `UPDATE` over each table and the `ALTER`s take a brief exclusive lock; the
-server is down for the rebuild while they run, so nothing waits on them. Every existing stack gets
-its own serial; nothing else about an item changes. To check it took on opensro-01, after the
+Each table's statements run as one implicit transaction, so the `ADD COLUMN`'s ACCESS EXCLUSIVE
+lock is held through the backfill and the index build: measured by round 743's review, 7.3 s for
+1.44 M bag rows and 2.6 s for 600 k warehouse rows, during which any other query on the table
+waits. That is harmless here -- the server is down for the rebuild, the boot runs the migration
+before it serves, and production's tables are far smaller -- but a rolling restart of several
+servers (the spec's M2) would need the backfill batched outside the lock. Two processes booting at
+once take turns (one advisory lock around every store's schema). Every existing stack gets its own
+serial; nothing else about an item changes. To check it took on opensro-01, after the
 update:
 
 ```

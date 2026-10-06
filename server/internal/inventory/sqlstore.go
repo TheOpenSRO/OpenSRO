@@ -160,10 +160,7 @@ func OpenSQLStoreOwned(dsn string, maxStacks MaxStackLookup, table, owner string
 // with the other stores (round 743: one capped pool per process, so an
 // action's one transaction can span gold and items). Close does not close it.
 func NewSQLStoreOwned(db *sql.DB, maxStacks MaxStackLookup, table, owner string) (*SQLStore, error) {
-	if _, err := db.Exec(txn.Schema); err != nil {
-		return nil, fmt.Errorf("inventory: creating the economy schema: %w", err)
-	}
-	if _, err := db.Exec(schemaFor(table, owner)); err != nil {
+	if err := txn.Migrate(db, txn.Schema, schemaFor(table, owner)); err != nil {
 		return nil, fmt.Errorf("inventory: creating schema: %w", err)
 	}
 	return &SQLStore{db: db, maxStacks: maxStacks, table: table, owner: owner, capacity: SlotsPerCharacter}, nil

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/testdb"
 )
@@ -241,5 +242,79 @@ func TestOpenPoolIsCapped(t *testing.T) {
 	defer db.Close()
 	if got := db.Stats().MaxOpenConnections; got != 3 {
 		t.Fatalf("MaxOpenConnections = %d, want 3", got)
+	}
+}
+
+// The review's F6: an action that cannot get its lock fails at its deadline
+// instead of waiting for good.
+func TestRunHasADeadline(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO txn_probe (k, v) VALUES ('held', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Rollback()
+	if _, err := hold.Exec(`SELECT 1 FROM txn_probe WHERE k = 'held' FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	old := ActionTimeout
+	ActionTimeout = 300 * time.Millisecond
+	defer func() { ActionTimeout = old }()
+	start := time.Now()
+	err = Runner{DB: db}.Run(ctx, func(ctx context.Context) error {
+		_, err := Conn(ctx, db).ExecContext(ctx, `UPDATE txn_probe SET v = v + 1 WHERE k = 'held'`)
+		return err
+	})
+	if err == nil || time.Since(start) > 3*time.Second {
+		t.Fatalf("a blocked action: err %v after %s; want an error at about its deadline", err, time.Since(start))
+	}
+}
+
+// The review's F7: stores booting at once run their schemas one at a time.
+// Without the lock, CREATE ... IF NOT EXISTS raced itself and one boot
+// failed with a duplicate key on pg_class.
+func TestMigrateRacedBootsAllSucceed(t *testing.T) {
+	db := openDB(t)
+	defer db.Exec(`DROP TABLE IF EXISTS mig_probe; DROP SEQUENCE IF EXISTS mig_probe_seq`)
+	for round := 0; round < 5; round++ {
+		if _, err := db.Exec(`DROP TABLE IF EXISTS mig_probe; DROP SEQUENCE IF EXISTS mig_probe_seq`); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		errs := make([]error, 4)
+		for i := range errs {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				errs[i] = Migrate(db, `CREATE SEQUENCE IF NOT EXISTS mig_probe_seq; CREATE TABLE IF NOT EXISTS mig_probe (id BIGINT PRIMARY KEY DEFAULT nextval('mig_probe_seq'))`)
+			}(i)
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: a racing boot failed: %v", round, err)
+			}
+		}
+	}
+}
+
+// The review's F4: a retry waits a little, more each time, and not at all
+// once the action's context has ended.
+func TestBackoff(t *testing.T) {
+	start := time.Now()
+	if !backoff(context.Background(), 2) {
+		t.Fatal("backoff gave up on a live context")
+	}
+	if d := time.Since(start); d < 20*time.Millisecond || d > 200*time.Millisecond {
+		t.Fatalf("the second retry waited %s, want 20-30 ms", d)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if backoff(ctx, 3) {
+		t.Fatal("backoff waited on an ended context")
 	}
 }

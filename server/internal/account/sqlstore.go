@@ -58,7 +58,7 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 // NewSQLStore is OpenSQLStore on a pool the caller owns and shares with the
 // other stores (round 743). Close does not close it.
 func NewSQLStore(db *sql.DB) (*SQLStore, error) {
-	if _, err := db.Exec(schema); err != nil {
+	if err := txn.Migrate(db, schema); err != nil {
 		return nil, fmt.Errorf("account: creating schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil

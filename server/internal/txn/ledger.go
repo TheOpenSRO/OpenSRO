@@ -36,6 +36,34 @@ CREATE TABLE IF NOT EXISTS economy_ops (
 CREATE INDEX IF NOT EXISTS economy_ops_created_at ON economy_ops (created_at);
 `
 
+// migrationLock is the advisory-lock key every store's boot-time schema runs
+// under (Migrate). OURS: any constant no other code uses.
+const migrationLock = 743_000_001
+
+// Migrate runs a store's boot-time schema statements under one
+// session-level advisory lock (round 743's review, F7), so two processes
+// starting at once take turns: `CREATE ... IF NOT EXISTS` is not safe
+// against itself, and the loser of that race failed with a duplicate key on
+// pg_class and exited. Each statement string may hold several statements.
+func Migrate(db *sql.DB, stmts ...string) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("txn: a connection for the schema: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, int64(migrationLock)); err != nil {
+		return fmt.Errorf("txn: locking the schema: %w", err)
+	}
+	defer conn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, int64(migrationLock))
+	for _, st := range stmts {
+		if _, err := conn.ExecContext(ctx, st); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ErrAlreadyApplied is Claim's answer for a key already in the ledger: the
 // action happened once already, and must not happen again.
 var ErrAlreadyApplied = errors.New("txn: this action was already applied")

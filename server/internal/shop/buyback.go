@@ -176,7 +176,7 @@ func (s *Service) Buyback(ctx context.Context, characterID int64, index int) (Bo
 			return fmt.Errorf("shop: %w", err)
 		}
 		if err := placer.PlaceItemInstance(ctx, characterID, slot, e.ItemID, e.Quantity, e.Inst); err != nil {
-			return fmt.Errorf("%w: %v", ErrBuybackCreate, err)
+			return fmt.Errorf("%w: %w", ErrBuybackCreate, err) // both wrapped, so Run can retry a deadlock (the review's F5)
 		}
 		return nil
 	})

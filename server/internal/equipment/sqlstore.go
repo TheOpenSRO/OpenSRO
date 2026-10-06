@@ -62,7 +62,7 @@ func OpenSQLStore(dsn string, inv inventory.Store) (*SQLStore, error) {
 // bag's store (round 743), so equipping is one transaction across both
 // tables. Close does not close it.
 func NewSQLStore(db *sql.DB, inv inventory.Store) (*SQLStore, error) {
-	if _, err := db.Exec(schema); err != nil {
+	if err := txn.Migrate(db, schema); err != nil {
 		return nil, fmt.Errorf("equipment: creating schema: %w", err)
 	}
 	return &SQLStore{db: db, inv: inv}, nil

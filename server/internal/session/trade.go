@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
@@ -669,7 +670,20 @@ func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	itemA, itemB, failReason, err := executeTrade(ctx, chars, inv, items, tradeSess)
 	trades.Finish(characterID)
 	if err != nil {
-		return fmt.Errorf("trade: executing: %w", err)
+		// A store failure, or a commit whose answer was lost: the ledger
+		// says which (round 743's review, F2). Either way BOTH sides are
+		// told -- the trade is no longer in the hub, so nothing else would
+		// tell the partner, who would be left in the window.
+		applied := false
+		if tradeSess.ID != 0 {
+			done, lerr := txn.For(chars, inv).Applied(context.WithoutCancel(ctx), tradeLedgerKey(tradeSess))
+			applied = lerr == nil && done
+		}
+		slog.Warn("trade execution failed", "trade", tradeSess.ID, "a", tradeSess.A.CharacterID, "b", tradeSess.B.CharacterID,
+			"applied", applied, "error", err)
+		if !applied {
+			failReason = "trade failed"
+		}
 	}
 
 	if failReason != "" {
@@ -748,6 +762,14 @@ func offerItemID(ctx context.Context, inv inventory.Store, characterID int64, of
 // reason travels in executeTrade's failReason.
 var errTradeRefused = errors.New("trade: refused")
 
+// offerGone reports a take refused because the offered slot no longer holds
+// what was offered -- an orderly refusal, not a store failure.
+func offerGone(err error) bool {
+	return errors.Is(err, inventory.ErrSlotEmpty) || errors.Is(err, inventory.ErrItemChanged) ||
+		errors.Is(err, inventory.ErrInsufficientQuantity) || errors.Is(err, inventory.ErrInvalidSlot) ||
+		errors.Is(err, inventory.ErrInvalidQuantity)
+}
+
 // tradeLedgerKey is the trade's key in the economy ledger (txn.Claim): one
 // trade applies once, even if something runs it twice.
 func tradeLedgerKey(sess *trade.Session) string {
@@ -822,63 +844,77 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 			return refuse(reason)
 		}
 
-		for _, d := range []struct {
-			who  int64
-			gold int64
-		}{{sess.A.CharacterID, sess.OfferA.Gold}, {sess.B.CharacterID, sess.OfferB.Gold}} {
-			if d.gold <= 0 {
+		// Both sides in ascending character id (round 743's review, F1):
+		// every action that locks several characters' rows -- a trade, a
+		// party's gold split -- locks them in that one order, so none can
+		// wait on another in a cycle. Each side's own debit comes before its
+		// credit, so incoming gold never pays for an offer.
+		type side struct {
+			who      int64
+			offer    trade.Offer
+			itemID   int64
+			inst     *inventory.Instance
+			incoming int64 // the partner's gold
+		}
+		a := side{sess.A.CharacterID, sess.OfferA, itemA, &instA, sess.OfferB.Gold}
+		b := side{sess.B.CharacterID, sess.OfferB, itemB, &instB, sess.OfferA.Gold}
+		sides := []*side{&a, &b}
+		if b.who < a.who {
+			sides[0], sides[1] = &b, &a
+		}
+		partner := func(x *side) *side {
+			if x == &a {
+				return &b
+			}
+			return &a
+		}
+		for _, x := range sides {
+			if x.offer.Gold > 0 {
+				if err := chars.DeductGold(ctx, x.who, x.offer.Gold); err != nil {
+					if errors.Is(err, character.ErrInsufficientGold) {
+						return refuse("insufficient gold")
+					}
+					return err
+				}
+			}
+			if x.incoming > 0 {
+				if err := chars.AddGold(ctx, x.who, x.incoming); err != nil {
+					return fmt.Errorf("crediting gold to recipient: %w", err)
+				}
+			}
+		}
+
+		// The items, taken in the same order, each checked to still be the
+		// item offered. Only a changed offer refuses; any other error (a
+		// deadlock, a lost connection) is returned as it is, so Run can
+		// retry it (the review's F5).
+		for _, x := range sides {
+			if x.offer.ItemSlot < 0 {
 				continue
 			}
-			if err := chars.DeductGold(ctx, d.who, d.gold); err != nil {
-				if errors.Is(err, character.ErrInsufficientGold) {
-					return refuse("insufficient gold")
+			got, err := inventory.Take(ctx, inv, x.who, x.offer.ItemSlot, x.offer.Quantity, x.itemID, *x.inst)
+			if err != nil {
+				if offerGone(err) {
+					return refuse("offer no longer valid")
 				}
-				return err
+				return fmt.Errorf("taking the offered item: %w", err)
 			}
-		}
-
-		if sess.OfferA.ItemSlot >= 0 {
-			if instA, err = inventory.Take(ctx, inv, sess.A.CharacterID, sess.OfferA.ItemSlot, sess.OfferA.Quantity, itemA, instA); err != nil {
-				return refuse("offer no longer valid")
-			}
-		}
-		if sess.OfferB.ItemSlot >= 0 {
-			if instB, err = inventory.Take(ctx, inv, sess.B.CharacterID, sess.OfferB.ItemSlot, sess.OfferB.Quantity, itemB, instB); err != nil {
-				return refuse("offer no longer valid")
-			}
-		}
-
-		if sess.OfferA.Gold > 0 {
-			if err := chars.AddGold(ctx, sess.B.CharacterID, sess.OfferA.Gold); err != nil {
-				return fmt.Errorf("crediting gold to recipient: %w", err)
-			}
-		}
-		if sess.OfferB.Gold > 0 {
-			if err := chars.AddGold(ctx, sess.A.CharacterID, sess.OfferB.Gold); err != nil {
-				return fmt.Errorf("crediting gold to recipient: %w", err)
-			}
+			*x.inst = got
 		}
 
 		// A credit that finds no room (the race the pre-check cannot close:
 		// a slot free at the check and taken since) refuses the whole trade
 		// rather than losing the item, as it did before round 743.
-		credit := func(to, itemID int64, qty int, inst inventory.Instance) error {
-			if err := inv.AddItemInstance(ctx, to, itemID, qty, inst); err != nil {
+		for _, x := range sides {
+			from := partner(x)
+			if from.offer.ItemSlot < 0 {
+				continue
+			}
+			if err := inv.AddItemInstance(ctx, x.who, from.itemID, from.offer.Quantity, *from.inst); err != nil {
 				if errors.Is(err, inventory.ErrNoRoom) {
 					return refuse("no room")
 				}
 				return fmt.Errorf("crediting item to recipient: %w", err)
-			}
-			return nil
-		}
-		if sess.OfferA.ItemSlot >= 0 {
-			if err := credit(sess.B.CharacterID, itemA, sess.OfferA.Quantity, instA); err != nil {
-				return err
-			}
-		}
-		if sess.OfferB.ItemSlot >= 0 {
-			if err := credit(sess.A.CharacterID, itemB, sess.OfferB.Quantity, instB); err != nil {
-				return err
 			}
 		}
 		return nil
@@ -887,7 +923,9 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 		return 0, 0, failReason, nil
 	}
 	if err != nil {
-		return 0, 0, "", err
+		// The items stay named: a caller that finds the trade applied after
+		// all (a lost commit answer) reports them.
+		return itemA, itemB, "", err
 	}
 	return itemA, itemB, "", nil
 }

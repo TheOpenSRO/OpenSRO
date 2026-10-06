@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 
+	"errors"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
+	"sync"
 )
 
 const schema = `
@@ -254,6 +256,12 @@ type SQLStore struct {
 	db *sql.DB
 	// ownsDB is false on a shared pool (NewSQLStore), which Close leaves open.
 	ownsDB bool
+	// items caches the item rows read so far (round 743's review, F3): the
+	// reference data does not change while the server runs (cmd/import-refdata
+	// is followed by a restart, deploy/README.md), and GetItem, GetMaxStack
+	// and DurabilityRange are asked inside economy transactions that hold row
+	// and advisory locks. Only rows found are cached; ImportItems clears it.
+	items sync.Map // int64 -> *Item
 }
 
 // OpenSQLStore opens a PostgreSQL database at dsn and ensures its schema
@@ -297,6 +305,7 @@ func (s *SQLStore) Close() error {
 
 // ImportItems upserts every item in items (by ID), inside one transaction.
 func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
+	defer s.items.Range(func(k, _ any) bool { s.items.Delete(k); return true })
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("refdata: beginning transaction: %w", err)
@@ -389,8 +398,24 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 	return tx.Commit()
 }
 
-// GetItem looks up one item by ID.
+// GetItem looks up one item by ID: from the cache once read (a copy, so a
+// caller's change never reaches another), else from the table.
 func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
+	if v, ok := s.items.Load(id); ok {
+		cp := *v.(*Item)
+		return &cp, nil
+	}
+	it, err := s.queryItem(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	cached := *it
+	s.items.Store(id, &cached)
+	return it, nil
+}
+
+// queryItem reads one item row.
+func (s *SQLStore) queryItem(ctx context.Context, id int64) (*Item, error) {
 	var it Item
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, max_stack, req_str, req_int, item_class, two_handed,
@@ -521,11 +546,10 @@ func (s *SQLStore) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// GetMaxStack implements inventory.MaxStackLookup.
+// GetMaxStack implements inventory.MaxStackLookup, through GetItem's cache.
 func (s *SQLStore) GetMaxStack(ctx context.Context, itemID int64) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT max_stack FROM items WHERE id = $1`, itemID).Scan(&n)
-	if err == sql.ErrNoRows {
+	it, err := s.GetItem(ctx, itemID)
+	if errors.Is(err, ErrItemNotFound) {
 		// No row means no configured stack limit, which the inventory
 		// already reads as "this does not stack" -- same as a row that
 		// says zero. Returning an error instead made an item with no
@@ -539,7 +563,7 @@ func (s *SQLStore) GetMaxStack(ctx context.Context, itemID int64) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("refdata: querying max stack for item %d: %w", itemID, err)
 	}
-	return n, nil
+	return it.MaxStack, nil
 }
 
 // ImportSkills upserts every skill in skills (by ID), inside one

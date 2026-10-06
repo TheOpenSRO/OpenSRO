@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
@@ -605,7 +606,11 @@ func applyPickup(ctx context.Context, runner txn.Runner, chars character.Store, 
 			return err
 		}
 		if it.Gold {
-			for _, g := range shares {
+			// In ascending character id (round 743's review, F1): every
+			// action that locks several characters' rows locks them in one
+			// order, so two members picking at once cannot deadlock. shares'
+			// own order (the picker first) is left for the messages.
+			for _, g := range sharesByCharacter(shares) {
 				if err := chars.AddGold(ctx, g.characterID, g.amount); err != nil {
 					return err
 				}
@@ -646,4 +651,12 @@ func RunGroundItemSweep(ctx context.Context, ground *grounditem.Hub, hub *world.
 			}
 		}
 	}
+}
+
+// sharesByCharacter is a copy of shares in ascending character id, the order
+// every multi-character action locks rows in.
+func sharesByCharacter(shares []goldShare) []goldShare {
+	out := append([]goldShare(nil), shares...)
+	sort.Slice(out, func(i, j int) bool { return out[i].characterID < out[j].characterID })
+	return out
 }

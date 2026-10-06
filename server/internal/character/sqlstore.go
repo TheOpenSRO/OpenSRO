@@ -119,11 +119,8 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 // other stores (round 743: one capped pool, so one transaction can move gold
 // and items together). Close does not close it.
 func NewSQLStore(db *sql.DB) (*SQLStore, error) {
-	if _, err := db.Exec(schema); err != nil {
+	if err := txn.Migrate(db, schema, txn.Schema); err != nil {
 		return nil, fmt.Errorf("character: creating schema: %w", err)
-	}
-	if _, err := db.Exec(txn.Schema); err != nil {
-		return nil, fmt.Errorf("character: creating the economy schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil
 }
