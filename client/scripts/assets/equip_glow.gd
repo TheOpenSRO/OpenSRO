@@ -205,18 +205,13 @@ static func apply(nodes: Array, row: ItemGlowTables.GlowRow, particle_rows: Arra
 			stats["no_bone"] += 1
 			print("EquipGlow %s: no bone '%s' for %s -- not attached" % [label, r.bone, r.efp])
 			continue
-		var fx := EfpEffect.create(r.efp, particles)
-		if fx == null:
+		if particles == null or EfpEffect.template_for(r.efp, particles) == null:
 			stats["particles_failed"] += 1
-			print("EquipGlow %s: %s did not build (%s)" % [label, r.efp, EfpEffect.last_error])
+			print("EquipGlow %s: %s did not build (%s)" % [label, r.efp, EfpEffect.last_error if particles != null else "no Particles.pk2"])
 			continue
-		fx.loop = true
-		fx.auto_free = false
-		fx.follow_bone_full = true
-		fx.effect_scale = r.scale
-		fx.set_meta(FX_META, true)
-		SkillEffects.attach(fx, host, r.bone, r.offset)
-		out["particles"] += 1
+		# Drawn through EquipFx: one simulation per (efp, scale), shared by
+		# every weapon showing it (OURS, see its header).
+		out["particles"] += EquipFx.attach(host, [r], particles)
 	stats["items"] += 1
 	stats["meshes"] += out["meshes"]
 	stats["particles"] += out["particles"]
@@ -279,7 +274,7 @@ static func strip_particles(root: Node) -> int:
 	var stack: Array[Node] = [root]
 	while not stack.is_empty():
 		var c: Node = stack.pop_back()
-		if c is EfpEffect and c.has_meta(FX_META):
+		if c.has_meta(FX_META):
 			found.append(c)
 			continue
 		for k in c.get_children():
