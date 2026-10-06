@@ -401,6 +401,14 @@ Files: `world/monster_crowd.gd` or a new `world/crowd_anim.gd`, `ui/character_ap
 | A4 | **Animation LOD for players by distance**: every 2nd / 4th frame beyond 300 / 900, as `MonsterCrowd.pose_interval`. Retail skips only far non-players past 100 characters. | OURS (retail: READ, non-players only) | Up to half to three quarters of the remaining pose and re-skin for far bodies |
 | A5 | **GPU crowd for far bodies**: bake each clip's bone matrices into a texture; draw far bodies as `MultiMesh` instances per (mesh part, material) with a per-instance clip and time; keep full skeletons for the nearest ~50. Removes `Skeleton3D`, skin and per-body draw calls for the far crowd. | OURS | The pose (-125) and draw (render CPU -20) shares for far bodies. The largest single item, and the largest build |
 
+**Round 738 built A1-A4 and wrote A5's spec.**
+
+- The rules are in `client/scripts/world/crowd_anim.gd` and `CharacterAppearance`'s shared skin.
+- The measurements are in `docs/rounds/r738.md`.
+- A5's spec is `docs/protocol/crowd_gpu.md`.
+- A4's bands are 900 / 1,800, not 300 / 900. Near and mid-range bodies must look as before, and
+  the fastest bone moves 5.5 px in 1/60 s at 300 (MEASURED).
+
 ### Lane B: client per-body systems, arrival and network
 
 Files: in World3D, `_physics_step`'s others loop, `_spawn_or_update_other`, `_on_entity_moved`,

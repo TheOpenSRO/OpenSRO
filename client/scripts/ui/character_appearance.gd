@@ -79,11 +79,32 @@ class_name CharacterAppearance
 ##
 ## **Caching (OURS):** each body is assembled once into a detached template
 ## and each item once per skeleton layout; a build duplicates them, so meshes,
-## textures and materials are shared between every character built here. The
-## skins are copied per character so Volume stays per character. A caller that
-## wants one character translucent (a pending deletion's 0xcc) must use the
-## instance's GeometryInstance3D.transparency, not the shared materials.
-## free_templates() releases the cache.
+## textures and materials are shared between every character built here. A
+## caller that wants one character translucent (a pending deletion's 0xcc)
+## must use the instance's GeometryInstance3D.transparency, not the shared
+## materials. free_templates() releases the cache.
+##
+## **One skin per body (round 738, A2; OURS).** Every piece skinned to the
+## body's skeleton -- the body's own and the worn ones weighted onto it --
+## shares one Skin naming every bone (Skeleton3DBuilder.canonical_skin), its
+## vertices remapped from their palette to the skeleton's bones at template
+## time; the matrices, and so the vertices, are the ones the per-piece skins
+## gave. Godot writes every registered skin on each pose, so a body wrote 14
+## and writes 1. Volume is a variant of that skin per scale (volume_skin),
+## shared by every body of the same skeleton and Volume, instead of a copy of
+## every skin per body. `canonical` false (QA: OPENSRO_QA_CROWD_SKINS=own)
+## builds the old way, a skin per piece copied per body. An item with its own
+## skeleton (a weapon, a shoulder piece) keeps its own skins, shared between
+## bodies: that skeleton is never posed.
+##
+## Each body's skeleton also carries MonsterCrowd.META_LAYOUT, its skeleton
+## file and bone count, so the world's clip tick finds a clip's bone indices
+## once per layout (CrowdAnim, round 738). That reaches every body built here:
+## other players, and also the character window's doll, which the world's
+## clip tick poses through MonsterCrowd.pose_at's indexed path (round 738's
+## review, F4: the same values, the bone globals left to the end-of-frame
+## update). The local player carries it too but is posed by its own tick
+## (apply_ban_pose_at), and the screens pose theirs through Body.pose.
 
 ## READ, table 0xec64b0.
 const HEIGHT_FACTORS := [0.94, 0.97, 1.00, 1.03, 1.06]
@@ -180,6 +201,9 @@ var _full_items_loaded := false
 var _extra_bodies: Dictionary = {}
 var _body_templates: Dictionary = {}  # bsr path -> AssembledCharacter (detached)
 var _item_templates: Dictionary = {}  # "skeleton|bones|item path" -> Node3D (detached) or null
+## Round 738: the shared skin of each skeleton layout ("skeleton path|bone
+## count" -> Skin): see share_template.
+var _canonical_by_layout: Dictionary = {}
 ## item path (lower case) -> its BsrReader.Attachable, or null when its block
 ## did not parse; filled as the item templates are made.
 var _item_attachables: Dictionary = {}
@@ -195,6 +219,9 @@ var glow_tables: ItemGlowTables = null
 var particles: Pk2Reader = null
 var glow_enabled := true
 var _particles_tried := false
+## Round 738 (A2): one shared skin per body skeleton (see the header). QA:
+## OPENSRO_QA_CROWD_SKINS=own turns it off for an A/B.
+var canonical := OS.get_environment("OPENSRO_QA_CROWD_SKINS") != "own"
 ## Timings, microseconds: the last build, and the running totals.
 var last_build_usec: int = 0
 var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_usec": 0, "item_table_usec": 0, "item_table_rows": 0}
@@ -215,6 +242,7 @@ func _notification(what: int) -> void:
 		var n = _item_templates[key]
 		if n != null and is_instance_valid(n):
 			(n as Node).free()
+	_canonical_by_layout.clear()
 
 ## An appearance over the player's archives. `items`, when given, is a table
 ## already parsed (item id -> ItemTableReader.Item, World3D's `_item_rows`), so
@@ -350,12 +378,20 @@ static func apply_scale(body: Body, scale: int) -> void:
 ## Sets every bind of every skin bound to `skeleton` to its bone's rest
 ## inverse, pre-multiplied by `scale(1, f, f)` for a bone in `scales` (the
 ## bone's own Y and Z, READ RTSkeleton::FUN_00c4a180). A bone not in `scales`
-## gets its plain bind back, so this can be re-applied.
+## gets its plain bind back, so this can be re-applied. A piece on the
+## body's shared skin (round 738) is given the shared variant for `scales`
+## (volume_skin) instead of an edit.
 static func apply_volume(skeleton: Skeleton3D, scales: Dictionary) -> void:
 	if skeleton == null:
 		return
 	for mi in _skinned_to(skeleton):
 		var skin: Skin = mi.skin
+		var base := canonical_base(skin)
+		if base != null:
+			var want := volume_skin(base, skeleton, scales)
+			if mi.skin != want:
+				mi.skin = want
+			continue
 		for i in range(skin.get_bind_count()):
 			var bone := skin.get_bind_bone(i)
 			if bone < 0 or bone >= skeleton.get_bone_count():
@@ -365,6 +401,94 @@ static func apply_volume(skeleton: Skeleton3D, scales: Dictionary) -> void:
 			if f != 1.0:
 				bind = Transform3D(Basis.from_scale(Vector3(1.0, f, f)), Vector3.ZERO) * bind
 			skin.set_bind_pose(i, bind)
+
+## Meta on a body's shared skin (Skeleton3DBuilder.canonical_skin, round
+## 738): its Volume variants, scale signature -> WeakRef to the Skin. And on a
+## variant: the shared skin it was made from. Only the variant holds its base:
+## the base's references to its variants are weak, so the two make no cycle
+## and go when no mesh wears them (round 738's review, F3).
+const VOLUME_VARIANTS_META := "opensro_volume_variants"
+const VOLUME_BASE_META := "opensro_volume_base"
+
+## The shared skin `skin` is, or was made from; null for a per-piece skin.
+static func canonical_base(skin: Skin) -> Skin:
+	if skin == null:
+		return null
+	if skin.has_meta(VOLUME_BASE_META):
+		return skin.get_meta(VOLUME_BASE_META)
+	if skin.has_meta(VOLUME_VARIANTS_META):
+		return skin
+	return null
+
+## Marks a body template's shared skin, so apply_volume knows it.
+static func _mark_canonical(skin: Skin) -> void:
+	if skin != null and not skin.has_meta(VOLUME_VARIANTS_META):
+		skin.set_meta(VOLUME_VARIANTS_META, {})
+
+## What a new body template shares with the ones before it (round 738): its
+## shared skin, per skeleton layout. Worn items are made once per layout
+## (_item_instance), on whichever body of that layout wore them first, so a
+## body wearing them must be on that same Skin object -- two objects with
+## equal binds are two skins to the skeleton. The 52 Figures name two
+## skeleton files (MEASURED, round 683), so this is a handful of skins.
+##
+## Its clips are NOT shared (round 738's review, F1): a clip carries the entry
+## its body found it as (BsrReader.CLIP_META), which AnimSounds looks the
+## body's own sound set up by, and one file is a different entry in different
+## Figures' `.bsr` (the review counted 169 body pairs that hear differently).
+## What is shared is the baked poses, by file path and layout
+## (CrowdAnim.frames_for, SkinnedBsrAssembler.CLIP_PATH_META).
+static func share_template(t: SkinnedBsrAssembler.AssembledCharacter, by_layout: Dictionary) -> void:
+	if t == null:
+		return
+	if t.canonical_skin == null or t.skeleton == null:
+		return
+	var key := "%s|%d" % [t.parsed.skeleton_path if t.parsed != null else "", t.skeleton.get_bone_count()]
+	var shared: Skin = by_layout.get(key)
+	if shared == null:
+		_mark_canonical(t.canonical_skin)
+		by_layout[key] = t.canonical_skin
+		return
+	for mi in _skinned_to(t.skeleton):
+		if mi.skin == t.canonical_skin:
+			mi.skin = shared
+	t.canonical_skin = shared
+
+## The shared skin `base` with Volume `scales` applied as apply_volume
+## applies it (each bind of a bone in `scales` pre-multiplied by
+## `scale(1, f, f)`), made once per signature and kept on `base`; `base`
+## itself when no factor differs from 1.
+static func volume_skin(base: Skin, skeleton: Skeleton3D, scales: Dictionary) -> Skin:
+	var parts := PackedStringArray()
+	var names := scales.keys()
+	names.sort()
+	for name in names:
+		var f: float = float(scales[name])
+		if f != 1.0 and skeleton.find_bone(String(name)) != -1:
+			parts.append("%s=%.6f" % [name, f])
+	if parts.is_empty():
+		return base
+	var key := ";".join(parts)
+	var variants: Dictionary = base.get_meta(VOLUME_VARIANTS_META, {})
+	var held = variants.get(key)
+	if held != null:
+		var got = (held as WeakRef).get_ref()
+		if got != null:
+			return got
+	var skin := base.duplicate() as Skin
+	for i in range(skin.get_bind_count()):
+		var bone := skin.get_bind_bone(i)
+		if bone < 0 or bone >= skeleton.get_bone_count():
+			continue
+		var f: float = float(scales.get(skeleton.get_bone_name(bone), 1.0))
+		if f != 1.0:
+			skin.set_bind_pose(i, Transform3D(Basis.from_scale(Vector3(1.0, f, f)), Vector3.ZERO) * skeleton.get_bone_global_rest(bone).affine_inverse())
+	skin.set_meta(VOLUME_BASE_META, base)
+	if skin.has_meta(VOLUME_VARIANTS_META):
+		skin.remove_meta(VOLUME_VARIANTS_META)
+	variants[key] = weakref(skin)
+	base.set_meta(VOLUME_VARIANTS_META, variants)
+	return skin
 
 ## Every MeshInstance3D under `skeleton` skinned to it (not to an item's own
 ## skeleton hung from one of its bones).
@@ -510,6 +634,7 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 	apply_hides(body)
 	_own_skins(skel)
 	apply_scale(body, scale)
+	skel.set_meta(MonsterCrowd.META_LAYOUT, "%s|%d" % [tmpl.parsed.skeleton_path if tmpl.parsed != null else bsr_path, skel.get_bone_count()])
 	last_build_usec = Time.get_ticks_usec() - t0
 	stats["builds"] += 1
 	stats["build_usec"] += last_build_usec
@@ -623,7 +748,8 @@ static func _fallback_of(path: String) -> String:
 			return path.substr(0, path.length() - suffix.length()) + ".bsr"
 	return ""
 
-## Frees the cached templates (a screen closing).
+## Frees the cached templates (a screen closing), the shared skins and the
+## baked poses shared by clip path.
 func free_templates() -> void:
 	for path in _body_templates:
 		var t: SkinnedBsrAssembler.AssembledCharacter = _body_templates[path]
@@ -636,13 +762,18 @@ func free_templates() -> void:
 			n.free()
 	_item_templates.clear()
 	_item_attachables.clear()
+	_canonical_by_layout.clear()
+	# The baked poses shared by path (round 738's review, F3).
+	CrowdAnim.clear_shared_frames()
 
 func _body_template(bsr_path: String) -> SkinnedBsrAssembler.AssembledCharacter:
 	if _body_templates.has(bsr_path):
 		return _body_templates[bsr_path]
 	if _data == null:
 		return null
-	var t := SkinnedBsrAssembler.assemble_from_archive(_data, bsr_path, false)
+	var t := SkinnedBsrAssembler.assemble_from_archive(_data, bsr_path, false, canonical)
+	if t != null:
+		share_template(t, _canonical_by_layout)
 	stats["body_assemblies"] += 1
 	_body_templates[bsr_path] = t
 	return t
@@ -746,7 +877,7 @@ func _make_item_template(tmpl: SkinnedBsrAssembler.AssembledCharacter, item_path
 	var scratch := tmpl.skeleton.duplicate() as Skeleton3D
 	# The client's rule for a palette bone the body lacks (READ, see
 	# Skeleton3DBuilder.build_skin): the Europe man's heavy legs need it.
-	var attached := SkinnedBsrAssembler.attach_item_from_archive(_data, scratch, item_path, true)
+	var attached := SkinnedBsrAssembler.attach_item_from_archive(_data, scratch, item_path, true, tmpl.canonical_skin)
 	stats["item_assemblies"] += 1
 	var node: Node3D = null
 	if attached != null and attached.node != null:
@@ -757,18 +888,17 @@ func _make_item_template(tmpl: SkinnedBsrAssembler.AssembledCharacter, item_path
 	scratch.free()
 	return node
 
-## Gives every skinned mesh on the body its own copy of its skin, so Volume
-## (a bind pose edit) stays on this character. A mesh and its front-pass twin
-## (ObjectLoader.add_front_pass) share one skin and keep sharing the copy.
+## Gives every mesh skinned to the body's skeleton its own copy of its skin,
+## so Volume (a bind pose edit) stays on this character. A mesh and its
+## front-pass twin (ObjectLoader.add_front_pass) share one skin and keep
+## sharing the copy. A piece on the shared skin (round 738) is left on it:
+## Volume swaps it for a shared variant, never edits it. So is a piece skinned
+## to an item's own skeleton, which Volume never touches (until round 738 it
+## was copied too).
 static func _own_skins(skel: Skeleton3D) -> void:
 	var copies := {}
-	var stack: Array[Node] = [skel]
-	while not stack.is_empty():
-		var n: Node = stack.pop_back()
-		for c in n.get_children():
-			stack.append(c)
-		var mi := n as MeshInstance3D
-		if mi == null or mi.skin == null:
+	for mi in _skinned_to(skel):
+		if canonical_base(mi.skin) != null:
 			continue
 		if not copies.has(mi.skin):
 			copies[mi.skin] = mi.skin.duplicate()

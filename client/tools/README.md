@@ -625,6 +625,25 @@ players instead (`OPENSRO_QA_CREATE=ref:scale:chest:legs:feet:weapon` makes the 
 live pair is `/var/tmp/world689/live.sh`). The world needs `OPENSRO_MAPM_PATH` offline: without it
 the grid builds no cells and the lineup never finds ground.
 
+### A crowd's animation: the shared skin and the baked poses (round 738)
+
+`crowd_anim_probe.gd` runs headless through `remote_godot.sh script ... -- --pk2=... --media=...`,
+for about a minute. It measures three things against the real archives:
+
+- **The shared skin (A2).** It builds the 52 Figures, each at Volume 0, 2 and 4, twice:
+  - once with per-piece skins (`CharacterAppearance.canonical = false`, the old way);
+  - once with the one shared skin.
+
+  It CPU-skins every visible vertex of both builds under a stand and a run pose. It prints the
+  worst distance between the two builds (round 738: 0 over 1,184,652 vertices; over 1e-4 is a
+  `PARITY FAIL`). It also prints the skins and binds each build registers on a body skeleton.
+- **The pose quantum (A3).** For every clip those bodies play, the worst bone displacement of the
+  baked pose against the exact one, with the bone named.
+- **One frame's motion (A4).** The worst bone motion in 1/60 s, in pixels at 300 and 900 units.
+
+In the world, `QaCrowdProbe`'s `anim=<1i34|->` steps switch the round's rules for one step, and
+`OPENSRO_QA_CROWD_SKINS=own` builds a boot with the old per-piece skins (`docs/rounds/r738.md`).
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing
