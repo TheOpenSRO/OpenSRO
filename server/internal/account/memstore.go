@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"errors"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"sync"
 )
 
@@ -101,7 +102,7 @@ func (m *MemStore) StorageGold(_ context.Context, accountID int64) (int64, error
 }
 
 // AddStorageGold implements StorageGoldStore.
-func (m *MemStore) AddStorageGold(_ context.Context, accountID int64, amount int64) error {
+func (m *MemStore) AddStorageGold(ctx context.Context, accountID int64, amount int64) error {
 	if amount <= 0 {
 		return errors.New("account: storage gold amount must be positive")
 	}
@@ -112,11 +113,12 @@ func (m *MemStore) AddStorageGold(_ context.Context, accountID int64, amount int
 		return ErrNoSuchAccount
 	}
 	acc.StorageGold += amount
+	m.undoLocked(ctx, accountID, func(a *Account) { a.StorageGold -= amount })
 	return nil
 }
 
 // DeductStorageGold implements StorageGoldStore.
-func (m *MemStore) DeductStorageGold(_ context.Context, accountID int64, amount int64) error {
+func (m *MemStore) DeductStorageGold(ctx context.Context, accountID int64, amount int64) error {
 	if amount <= 0 {
 		return errors.New("account: storage gold amount must be positive")
 	}
@@ -130,6 +132,7 @@ func (m *MemStore) DeductStorageGold(_ context.Context, accountID int64, amount 
 		return ErrInsufficientStorageGold
 	}
 	acc.StorageGold -= amount
+	m.undoLocked(ctx, accountID, func(a *Account) { a.StorageGold += amount })
 	return nil
 }
 
@@ -162,4 +165,16 @@ func (m *MemStore) ExpandChest(_ context.Context, accountID int64, base, amount,
 	}
 	acc.ChestSize = next
 	return next, nil
+}
+
+// undoLocked registers, for an action that may fail (txn.Runner.Run), the
+// reverse of a change just made to one account. Called with m.mu held.
+func (m *MemStore) undoLocked(ctx context.Context, accountID int64, reverse func(a *Account)) {
+	txn.OnRollback(ctx, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if a := m.byID(accountID); a != nil {
+			reverse(a)
+		}
+	})
 }

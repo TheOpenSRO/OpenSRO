@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/trade"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
@@ -662,11 +663,14 @@ func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Pac
 		return nil
 	}
 
+	// This call's Confirm latched the trade (trade.Hub.Confirm answers
+	// both-confirmed once per trade), so this is the one execution; the
+	// trade ends whatever its outcome.
 	itemA, itemB, failReason, err := executeTrade(ctx, chars, inv, items, tradeSess)
+	trades.Finish(characterID)
 	if err != nil {
 		return fmt.Errorf("trade: executing: %w", err)
 	}
-	trades.End(characterID)
 
 	if failReason != "" {
 		cancelled := &TradeCancelled{CancelledByName: ""} // system cancellation, not either player
@@ -740,127 +744,152 @@ func offerItemID(ctx context.Context, inv inventory.Store, characterID int64, of
 	return 0, inventory.Instance{}, errOfferInvalid
 }
 
-// executeTrade performs the actual gold/item transfer once both sides have
-// confirmed. Returns a non-empty failReason (and no error) for an
-// orderly, expected failure (insufficient gold, an offer that's gone
-// stale) that should cancel the trade cleanly; returns a non-nil error
-// only for unexpected store failures.
-//
-// Not a true cross-store transaction: gold moves via character.Store,
-// items via inventory.Store, and there's no shared transaction spanning
-// both. Ordering (validate both offers -> deduct both golds, with refund
-// on the second failing -> remove both items, with refund on the second
-// failing -> credit everything) minimizes the window, and the one gap
-// left is documented at the final AddItem calls below.
-func executeTrade(ctx context.Context, chars character.Store, inv inventory.Store, items ItemLookup, sess *trade.Session) (itemA, itemB int64, failReason string, err error) {
-	var instA, instB inventory.Instance
-	itemA, instA, err = offerItemID(ctx, inv, sess.A.CharacterID, sess.OfferA)
-	if err != nil {
-		if errors.Is(err, errOfferInvalid) {
-			return 0, 0, "offer no longer valid", nil
-		}
-		return 0, 0, "", err
-	}
-	itemB, instB, err = offerItemID(ctx, inv, sess.B.CharacterID, sess.OfferB)
-	if err != nil {
-		if errors.Is(err, errOfferInvalid) {
-			return 0, 0, "offer no longer valid", nil
-		}
-		return 0, 0, "", err
-	}
+// errTradeRefused rolls an execution back for an orderly refusal; the
+// reason travels in executeTrade's failReason.
+var errTradeRefused = errors.New("trade: refused")
 
-	// THE ITEM'S OWN TRADE FLAG, RE-CHECKED AT COMMIT. The engine's trade-offer
-	// handler (CGStorage::TradeOfferItem, `0x00526910`) calls CanTrade (vtable
-	// slot 49) and returns 0x183a UIIT_MSG_STRGERR_CANNOT_BE_TRADED when the
-	// flag is clear; handleTradeSetOffer applies that at offer time (round
-	// 482, offerTradeFlagRefusal). This is the commit-time re-check: an
-	// inventory move between offering and confirming can put an untradeable
-	// item into the offered slot, and the offer names a slot, not an item. In
-	// a real itemdata the flag is clear on every starter item (all 52 `_A_DEF`
-	// rows) and every quest item (all 558 `ITEM_QNO_` rows). See
-	// refdata.Item.CanTrade.
-	if reason, err := tradeFlagRefusal(ctx, items, sess, itemA, itemB); err != nil || reason != "" {
-		return 0, 0, reason, err
-	}
-
-	// THE RECIPIENT-CAPACITY PRE-CHECK, added 2026-09-16 and taken from the
-	// engine. Nothing has moved yet at this point, so a refusal here is free.
-	if reason, err := tradeSpaceShortfall(ctx, inv, sess); err != nil || reason != "" {
-		return 0, 0, reason, err
-	}
-
-	if sess.OfferA.Gold > 0 {
-		if err := chars.DeductGold(ctx, sess.A.CharacterID, sess.OfferA.Gold); err != nil {
-			if errors.Is(err, character.ErrInsufficientGold) {
-				return 0, 0, "insufficient gold", nil
-			}
-			return 0, 0, "", err
-		}
-	}
-	if sess.OfferB.Gold > 0 {
-		if err := chars.DeductGold(ctx, sess.B.CharacterID, sess.OfferB.Gold); err != nil {
-			if sess.OfferA.Gold > 0 {
-				chars.AddGold(ctx, sess.A.CharacterID, sess.OfferA.Gold)
-			}
-			if errors.Is(err, character.ErrInsufficientGold) {
-				return 0, 0, "insufficient gold", nil
-			}
-			return 0, 0, "", err
-		}
-	}
-
-	if sess.OfferA.ItemSlot >= 0 {
-		if err := inv.RemoveItem(ctx, sess.A.CharacterID, sess.OfferA.ItemSlot, sess.OfferA.Quantity); err != nil {
-			refundGold(ctx, chars, sess)
-			return 0, 0, "offer no longer valid", nil
-		}
-	}
-	if sess.OfferB.ItemSlot >= 0 {
-		if err := inv.RemoveItem(ctx, sess.B.CharacterID, sess.OfferB.ItemSlot, sess.OfferB.Quantity); err != nil {
-			refundGold(ctx, chars, sess)
-			if sess.OfferA.ItemSlot >= 0 {
-				inv.AddItemInstance(ctx, sess.A.CharacterID, itemA, sess.OfferA.Quantity, instA)
-			}
-			return 0, 0, "offer no longer valid", nil
-		}
-	}
-
-	if sess.OfferA.Gold > 0 {
-		chars.AddGold(ctx, sess.B.CharacterID, sess.OfferA.Gold)
-	}
-	if sess.OfferB.Gold > 0 {
-		chars.AddGold(ctx, sess.A.CharacterID, sess.OfferB.Gold)
-	}
-
-	// Items have already left both givers' inventories at this point. If
-	// AddItem fails here the item is lost rather than returned.
-	//
-	// THE PRE-CHECK THIS NOTE ASKED FOR NOW EXISTS -- see
-	// tradeSpaceShortfall, above, which refuses before anything moves. What
-	// is left is only the race: a slot that was free when the trade was
-	// validated and is not by the time it commits, which needs a shared
-	// transaction across the two stores rather than a better check.
-	if sess.OfferA.ItemSlot >= 0 {
-		if err := inv.AddItemInstance(ctx, sess.B.CharacterID, itemA, sess.OfferA.Quantity, instA); err != nil {
-			return 0, 0, "", fmt.Errorf("crediting item to recipient: %w", err)
-		}
-	}
-	if sess.OfferB.ItemSlot >= 0 {
-		if err := inv.AddItemInstance(ctx, sess.A.CharacterID, itemB, sess.OfferB.Quantity, instB); err != nil {
-			return 0, 0, "", fmt.Errorf("crediting item to recipient: %w", err)
-		}
-	}
-
-	return itemA, itemB, "", nil
+// tradeLedgerKey is the trade's key in the economy ledger (txn.Claim): one
+// trade applies once, even if something runs it twice.
+func tradeLedgerKey(sess *trade.Session) string {
+	return fmt.Sprintf("trade:%s:%d", txn.BootID, sess.ID)
 }
 
-func refundGold(ctx context.Context, chars character.Store, sess *trade.Session) {
-	if sess.OfferA.Gold > 0 {
-		chars.AddGold(ctx, sess.A.CharacterID, sess.OfferA.Gold)
+// executeTrade performs the gold and item transfer once both sides have
+// confirmed, as ONE transaction (round 743, the spec's M1): both debits,
+// both items taken (under each bag's lock, checked to be the item offered),
+// both credits, and the ledger row that makes the trade apply once -- all
+// committed together or not at all. There is no refund or put-back code:
+// any refusal or failure rolls everything back. Before round 743 gold and
+// items went through separate pools and commits, and a failure between a
+// debit and its credit destroyed value
+// (TestTradeFailedCreditLosesNothing).
+//
+// Returns a non-empty failReason (and no error) for an orderly, expected
+// refusal (insufficient gold, an offer that has gone stale, no room) that
+// should cancel the trade cleanly; a non-nil error only for an unexpected
+// store failure. Either way nothing has moved.
+func executeTrade(ctx context.Context, chars character.Store, inv inventory.Store, items ItemLookup, sess *trade.Session) (itemA, itemB int64, failReason string, err error) {
+	err = txn.For(chars, inv).Run(ctx, func(ctx context.Context) error {
+		itemA, itemB, failReason = 0, 0, ""
+		refuse := func(reason string) error {
+			failReason = reason
+			return errTradeRefused
+		}
+		if sess.ID != 0 {
+			if err := txn.Claim(ctx, tradeLedgerKey(sess)); err != nil {
+				return err
+			}
+		}
+		var instA, instB inventory.Instance
+		var err error
+		itemA, instA, err = offerItemID(ctx, inv, sess.A.CharacterID, sess.OfferA)
+		if err != nil {
+			if errors.Is(err, errOfferInvalid) {
+				return refuse("offer no longer valid")
+			}
+			return err
+		}
+		itemB, instB, err = offerItemID(ctx, inv, sess.B.CharacterID, sess.OfferB)
+		if err != nil {
+			if errors.Is(err, errOfferInvalid) {
+				return refuse("offer no longer valid")
+			}
+			return err
+		}
+
+		// THE ITEM'S OWN TRADE FLAG, RE-CHECKED AT COMMIT. The engine's
+		// trade-offer handler (CGStorage::TradeOfferItem, `0x00526910`) calls
+		// CanTrade (vtable slot 49) and returns 0x183a
+		// UIIT_MSG_STRGERR_CANNOT_BE_TRADED when the flag is clear;
+		// handleTradeSetOffer applies that at offer time (round 482,
+		// offerTradeFlagRefusal). This is the commit-time re-check: an
+		// inventory move between offering and confirming can put an
+		// untradeable item into the offered slot, and the offer names a slot,
+		// not an item. In a real itemdata the flag is clear on every starter
+		// item (all 52 `_A_DEF` rows) and every quest item (all 558
+		// `ITEM_QNO_` rows). See refdata.Item.CanTrade.
+		if reason, err := tradeFlagRefusal(ctx, items, sess, itemA, itemB); err != nil {
+			return err
+		} else if reason != "" {
+			return refuse(reason)
+		}
+
+		// THE RECIPIENT-CAPACITY PRE-CHECK, added 2026-09-16 and taken from
+		// the engine. A refusal here is free: the transaction rolls back.
+		if reason, err := tradeSpaceShortfall(ctx, inv, sess); err != nil {
+			return err
+		} else if reason != "" {
+			return refuse(reason)
+		}
+
+		for _, d := range []struct {
+			who  int64
+			gold int64
+		}{{sess.A.CharacterID, sess.OfferA.Gold}, {sess.B.CharacterID, sess.OfferB.Gold}} {
+			if d.gold <= 0 {
+				continue
+			}
+			if err := chars.DeductGold(ctx, d.who, d.gold); err != nil {
+				if errors.Is(err, character.ErrInsufficientGold) {
+					return refuse("insufficient gold")
+				}
+				return err
+			}
+		}
+
+		if sess.OfferA.ItemSlot >= 0 {
+			if instA, err = inventory.Take(ctx, inv, sess.A.CharacterID, sess.OfferA.ItemSlot, sess.OfferA.Quantity, itemA, instA); err != nil {
+				return refuse("offer no longer valid")
+			}
+		}
+		if sess.OfferB.ItemSlot >= 0 {
+			if instB, err = inventory.Take(ctx, inv, sess.B.CharacterID, sess.OfferB.ItemSlot, sess.OfferB.Quantity, itemB, instB); err != nil {
+				return refuse("offer no longer valid")
+			}
+		}
+
+		if sess.OfferA.Gold > 0 {
+			if err := chars.AddGold(ctx, sess.B.CharacterID, sess.OfferA.Gold); err != nil {
+				return fmt.Errorf("crediting gold to recipient: %w", err)
+			}
+		}
+		if sess.OfferB.Gold > 0 {
+			if err := chars.AddGold(ctx, sess.A.CharacterID, sess.OfferB.Gold); err != nil {
+				return fmt.Errorf("crediting gold to recipient: %w", err)
+			}
+		}
+
+		// A credit that finds no room (the race the pre-check cannot close:
+		// a slot free at the check and taken since) refuses the whole trade
+		// rather than losing the item, as it did before round 743.
+		credit := func(to, itemID int64, qty int, inst inventory.Instance) error {
+			if err := inv.AddItemInstance(ctx, to, itemID, qty, inst); err != nil {
+				if errors.Is(err, inventory.ErrNoRoom) {
+					return refuse("no room")
+				}
+				return fmt.Errorf("crediting item to recipient: %w", err)
+			}
+			return nil
+		}
+		if sess.OfferA.ItemSlot >= 0 {
+			if err := credit(sess.B.CharacterID, itemA, sess.OfferA.Quantity, instA); err != nil {
+				return err
+			}
+		}
+		if sess.OfferB.ItemSlot >= 0 {
+			if err := credit(sess.A.CharacterID, itemB, sess.OfferB.Quantity, instB); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, errTradeRefused) {
+		return 0, 0, failReason, nil
 	}
-	if sess.OfferB.Gold > 0 {
-		chars.AddGold(ctx, sess.B.CharacterID, sess.OfferB.Gold)
+	if err != nil {
+		return 0, 0, "", err
 	}
+	return itemA, itemB, "", nil
 }
 
 // TradeDisconnectHandler returns a func suitable for gateway.Server's

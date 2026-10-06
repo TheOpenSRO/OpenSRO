@@ -50,6 +50,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
@@ -142,7 +143,16 @@ type Item struct {
 	// stack fresh off the loot table, which the bag rolls on pick-up exactly
 	// as it would any new item.
 	Instance *inventory.Instance
-	busy     bool
+	// Serial is the drop's identity (round 743, the spec's M1: "the ground
+	// item gets a serial at drop time"), from the hub's serial source
+	// (SetSerialSource: item_serial_seq in production). The pick-up's
+	// transaction claims it in the economy ledger, so the item can be
+	// granted once however many times a pick is attempted. Negative when
+	// the hub has no source or it failed: a number unique within this
+	// process, which the pick-up's key pairs with the process's boot id
+	// (session.pickupLedgerKey).
+	Serial int64
+	busy   bool
 	// noPick is an item whose reference row answers CanPick = 0 (itemdata
 	// column 21, flags bit 5): CheckCanPickUp refuses it 0x1839 to everyone,
 	// owner included. Set at Drop from the hub's rules lookup.
@@ -186,6 +196,21 @@ type Hub struct {
 	// means no reference data was given, and every drop gets the zero
 	// DropRules (FallbackLifetime, released, pickable, shared).
 	rules func(itemID int64) DropRules
+	// serial numbers each drop (Item.Serial); nil leaves it zero.
+	serial func() int64
+}
+
+// localSerials numbers drops without a serial source, across every Hub of
+// the process (Item.Serial, negated).
+var localSerials atomic.Int64
+
+// SetSerialSource gives each later drop a serial from next, called once per
+// drop before the hub's lock is taken (it may reach the database). A zero
+// answer leaves the drop without one.
+func (h *Hub) SetSerialSource(next func() int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.serial = next
 }
 
 func NewHub() *Hub {
@@ -300,11 +325,18 @@ func OwnerOnlyPick(typeID1, typeID2, typeID3 int, codeName string) bool {
 // up once, before the hub's lock is taken (SetRulesLookup).
 func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z float32, ownerID int64) Item {
 	h.mu.Lock()
-	lookup := h.rules
+	lookup, nextSerial := h.rules, h.serial
 	h.mu.Unlock()
 	var r DropRules
 	if lookup != nil {
 		r = lookup(itemID)
+	}
+	var serial int64
+	if nextSerial != nil {
+		serial = nextSerial()
+	}
+	if serial == 0 {
+		serial = -localSerials.Add(1)
 	}
 
 	h.mu.Lock()
@@ -313,7 +345,7 @@ func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z
 	now := h.now()
 	it := &Item{ID: h.nextID, Zone: zone, ItemID: itemID, Quantity: quantity, Gold: gold,
 		X: x, Y: y, Z: z, OwnerID: ownerID, Bound: r.Bound, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(r.DecayTimeMs)),
-		noPick: r.NoPick, ownerOnly: r.OwnerOnly, Expendable: r.Expendable}
+		noPick: r.NoPick, ownerOnly: r.OwnerOnly, Expendable: r.Expendable, Serial: serial}
 	h.items[it.ID] = it
 	return *it
 }

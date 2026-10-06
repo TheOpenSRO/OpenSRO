@@ -36,6 +36,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // DefaultCapacity is the warehouse's slot count for every account.
@@ -235,8 +236,8 @@ func (s *Service) GoldBalances(ctx context.Context, characterID int64) (Balances
 }
 
 // DepositGold moves amount from the character's purse into the account's
-// warehouse, returning the balances afterwards. Refunds the purse if crediting
-// the warehouse fails.
+// warehouse, returning the balances afterwards. The debit and the credit are
+// ONE transaction (round 743): there is no refund step.
 func (s *Service) DepositGold(ctx context.Context, characterID int64, amount int64) (Balances, error) {
 	if amount <= 0 {
 		return Balances{}, ErrNothingToMove
@@ -245,21 +246,23 @@ func (s *Service) DepositGold(ctx context.Context, characterID int64, amount int
 	if err != nil {
 		return Balances{}, err
 	}
-	if err := s.Gold.DeductGold(ctx, characterID, amount); err != nil {
-		return Balances{}, fmt.Errorf("storage: taking gold from purse: %w", err)
-	}
-	if err := s.Accounts.AddStorageGold(ctx, c.AccountID, amount); err != nil {
-		if backErr := s.Gold.AddGold(ctx, characterID, amount); backErr != nil {
-			return Balances{}, fmt.Errorf("storage: crediting warehouse failed (%w) AND refunding purse failed (%v) -- gold may be lost", err, backErr)
+	err = s.run(ctx, func(ctx context.Context) error {
+		if err := s.Gold.DeductGold(ctx, characterID, amount); err != nil {
+			return fmt.Errorf("storage: taking gold from purse: %w", err)
 		}
-		return Balances{}, fmt.Errorf("storage: crediting warehouse gold: %w", err)
+		if err := s.Accounts.AddStorageGold(ctx, c.AccountID, amount); err != nil {
+			return fmt.Errorf("storage: crediting warehouse gold: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Balances{}, err
 	}
 	return s.GoldBalances(ctx, characterID)
 }
 
 // WithdrawGold moves amount from the account's warehouse back into the
-// character's purse, returning the balances afterwards. Refunds the warehouse
-// if crediting the purse fails.
+// character's purse, returning the balances afterwards, in ONE transaction.
 func (s *Service) WithdrawGold(ctx context.Context, characterID int64, amount int64) (Balances, error) {
 	if amount <= 0 {
 		return Balances{}, ErrNothingToMove
@@ -268,19 +271,28 @@ func (s *Service) WithdrawGold(ctx context.Context, characterID int64, amount in
 	if err != nil {
 		return Balances{}, err
 	}
-	if err := s.Accounts.DeductStorageGold(ctx, c.AccountID, amount); err != nil {
-		if errors.Is(err, account.ErrInsufficientStorageGold) {
-			return Balances{}, fmt.Errorf("storage: taking gold from warehouse: %w", character.ErrInsufficientGold)
+	err = s.run(ctx, func(ctx context.Context) error {
+		if err := s.Accounts.DeductStorageGold(ctx, c.AccountID, amount); err != nil {
+			if errors.Is(err, account.ErrInsufficientStorageGold) {
+				return fmt.Errorf("storage: taking gold from warehouse: %w", character.ErrInsufficientGold)
+			}
+			return fmt.Errorf("storage: taking gold from warehouse: %w", err)
 		}
-		return Balances{}, fmt.Errorf("storage: taking gold from warehouse: %w", err)
-	}
-	if err := s.Gold.AddGold(ctx, characterID, amount); err != nil {
-		if backErr := s.Accounts.AddStorageGold(ctx, c.AccountID, amount); backErr != nil {
-			return Balances{}, fmt.Errorf("storage: crediting purse failed (%w) AND returning to warehouse failed (%v) -- gold may be lost", err, backErr)
+		if err := s.Gold.AddGold(ctx, characterID, amount); err != nil {
+			return fmt.Errorf("storage: crediting purse gold: %w", err)
 		}
-		return Balances{}, fmt.Errorf("storage: crediting purse gold: %w", err)
+		return nil
+	})
+	if err != nil {
+		return Balances{}, err
 	}
 	return s.GoldBalances(ctx, characterID)
+}
+
+// run runs one warehouse action as one transaction over the service's
+// stores (txn.Runner).
+func (s *Service) run(ctx context.Context, fn func(ctx context.Context) error) error {
+	return txn.For(s.Bag, s.Warehouse, s.Gold, s.Accounts).Run(ctx, fn)
 }
 
 // List returns the account's warehouse as seen by this character.
@@ -312,78 +324,73 @@ func (s *Service) DepositStack(ctx context.Context, characterID int64, bagSlot, 
 // deposit is both: quantity 0 is the whole stack. In the retail order: the
 // purse is checked against the fee first (0x180f, character.ErrInsufficientGold),
 // the item is moved, and only then is the gold taken (READ, gs:0x524160 ->
-// 0x523f70, reason 0x21). A purse emptied between the check and the charge
-// undoes the move.
+// 0x523f70, reason 0x21). All of it is ONE transaction (round 743): a purse
+// emptied between the check and the charge rolls the move back, where
+// before a best-effort search put the item back.
 func (s *Service) deposit(ctx context.Context, characterID int64, bagSlot, quantity, dst int) error {
 	c, err := s.accountOf(ctx, characterID)
 	if err != nil {
 		return err
 	}
-	slots, err := s.Bag.List(ctx, characterID)
-	if err != nil {
-		return fmt.Errorf("storage: reading source: %w", err)
-	}
-	var found *inventory.Slot
-	for i := range slots {
-		if slots[i].Index == bagSlot {
-			found = &slots[i]
-			break
-		}
-	}
-	if found == nil || found.Quantity <= 0 {
-		return ErrSlotEmpty
-	}
-	count := found.Quantity
-	if quantity > 0 && quantity < count {
-		count = quantity
-	}
-	var fee int64
-	if s.Items != nil {
-		var keeping int64
-		if it, e := s.Items.GetItem(ctx, found.ItemID); e == nil && it != nil {
-			keeping = it.KeepingFee
-		}
-		fee = DepositFee(keeping, count)
-		ch, err := s.Gold.GetByID(ctx, characterID)
+	return s.run(ctx, func(ctx context.Context) error {
+		slots, err := s.Bag.List(ctx, characterID)
 		if err != nil {
-			return fmt.Errorf("storage: reading purse: %w", err)
+			return fmt.Errorf("storage: reading source: %w", err)
 		}
-		if ch.Gold < fee {
-			return character.ErrInsufficientGold
-		}
-	}
-	placed := false
-	if p, ok := s.Warehouse.(inventory.Placer); ok && dst >= 0 && count == found.Quantity {
-		if err := s.Bag.RemoveItem(ctx, characterID, bagSlot, count); err != nil {
-			return fmt.Errorf("storage: taking from the bag: %w", err)
-		}
-		if err := p.PlaceItemInstance(ctx, c.AccountID, dst, found.ItemID, count, found.Instance()); err == nil {
-			placed = true
-		} else if backErr := s.Bag.AddItemInstance(ctx, characterID, found.ItemID, count, found.Instance()); backErr != nil {
-			return fmt.Errorf("storage: placing failed (%w) AND returning to the bag failed (%v)", err, backErr)
-		}
-	}
-	if !placed {
-		if err := move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, count); err != nil {
-			return err
-		}
-	}
-	if fee == 0 {
-		return nil
-	}
-	if err := s.Gold.DeductGold(ctx, characterID, fee); err != nil {
-		// Undo the move (the purse changed under the check).
-		if list, lerr := s.Warehouse.List(ctx, c.AccountID); lerr == nil {
-			for _, w := range list {
-				if w.ItemID == found.ItemID && w.Quantity >= count && w.Instance().Equal(found.Instance()) {
-					_ = move(ctx, s.Warehouse, c.AccountID, s.Bag, characterID, w.Index, count)
-					break
-				}
+		var found *inventory.Slot
+		for i := range slots {
+			if slots[i].Index == bagSlot {
+				found = &slots[i]
+				break
 			}
 		}
-		return err
-	}
-	return nil
+		if found == nil || found.Quantity <= 0 {
+			return ErrSlotEmpty
+		}
+		count := found.Quantity
+		if quantity > 0 && quantity < count {
+			count = quantity
+		}
+		var fee int64
+		if s.Items != nil {
+			var keeping int64
+			if it, e := s.Items.GetItem(ctx, found.ItemID); e == nil && it != nil {
+				keeping = it.KeepingFee
+			}
+			fee = DepositFee(keeping, count)
+			ch, err := s.Gold.GetByID(ctx, characterID)
+			if err != nil {
+				return fmt.Errorf("storage: reading purse: %w", err)
+			}
+			if ch.Gold < fee {
+				return character.ErrInsufficientGold
+			}
+		}
+		placed := false
+		if p, ok := s.Warehouse.(inventory.Placer); ok && dst >= 0 && count == found.Quantity {
+			inst, err := inventory.Take(ctx, s.Bag, characterID, bagSlot, count, found.ItemID, found.Instance())
+			if err != nil {
+				return fmt.Errorf("storage: taking from the bag: %w", err)
+			}
+			if err := p.PlaceItemInstance(ctx, c.AccountID, dst, found.ItemID, count, inst); err == nil {
+				placed = true
+			} else if err := s.Warehouse.AddItemInstance(ctx, c.AccountID, found.ItemID, count, inst); err != nil {
+				// dst was taken or out of range: the server's own choice.
+				return fmt.Errorf("storage: adding to destination: %w", err)
+			} else {
+				placed = true
+			}
+		}
+		if !placed {
+			if err := move(ctx, s.Bag, characterID, s.Warehouse, c.AccountID, bagSlot, count); err != nil {
+				return err
+			}
+		}
+		if fee == 0 {
+			return nil
+		}
+		return s.Gold.DeductGold(ctx, characterID, fee)
+	})
 }
 
 // Withdraw moves quantity from the account's warehouse slot back into the character's bag.
@@ -397,41 +404,44 @@ func (s *Service) Withdraw(ctx context.Context, characterID int64, warehouseSlot
 
 // move takes quantity from `from`'s slot and adds it to `to`, reading the
 // slot's own item and count from the source (never trusting a caller for what
-// is there) and moving no more than the slot holds. If adding to the
-// destination fails after the source was decremented, the items are returned
-// to the source before the error propagates.
+// is there) and moving no more than the slot holds. ONE transaction (round
+// 743; a savepoint inside the caller's): the item is taken under the
+// source's lock, checked to be the item read, and added; a destination that
+// will not take it rolls the take back. What crosses is what left -- the
+// same instance, with its serial when the whole stack moves.
 func move(ctx context.Context, from inventory.Store, fromOwner int64, to inventory.Store, toOwner int64, slot, quantity int) error {
 	if quantity <= 0 {
 		return ErrNothingToMove
 	}
-	slots, err := from.List(ctx, fromOwner)
-	if err != nil {
-		return fmt.Errorf("storage: reading source: %w", err)
-	}
-	var found *inventory.Slot
-	for i := range slots {
-		if slots[i].Index == slot {
-			found = &slots[i]
-			break
+	return txn.For(from, to).Run(ctx, func(ctx context.Context) error {
+		slots, err := from.List(ctx, fromOwner)
+		if err != nil {
+			return fmt.Errorf("storage: reading source: %w", err)
 		}
-	}
-	if found == nil || found.Quantity <= 0 {
-		return ErrSlotEmpty
-	}
-	if quantity > found.Quantity {
-		quantity = found.Quantity
-	}
-
-	if err := from.RemoveItem(ctx, fromOwner, slot, quantity); err != nil {
-		return fmt.Errorf("storage: removing from source: %w", err)
-	}
-	// The same instance crosses the counter -- its variance and durability
-	// go with it and come back with it, never re-rolled.
-	if err := to.AddItemInstance(ctx, toOwner, found.ItemID, quantity, found.Instance()); err != nil {
-		if backErr := from.AddItemInstance(ctx, fromOwner, found.ItemID, quantity, found.Instance()); backErr != nil {
-			return fmt.Errorf("storage: adding to destination failed (%w) AND returning it failed (%v) -- character may have lost an item", err, backErr)
+		var found *inventory.Slot
+		for i := range slots {
+			if slots[i].Index == slot {
+				found = &slots[i]
+				break
+			}
 		}
-		return fmt.Errorf("storage: adding to destination: %w", err)
-	}
-	return nil
+		if found == nil || found.Quantity <= 0 {
+			return ErrSlotEmpty
+		}
+		n := quantity
+		if n > found.Quantity {
+			n = found.Quantity
+		}
+		inst, err := inventory.Take(ctx, from, fromOwner, slot, n, found.ItemID, found.Instance())
+		if err != nil {
+			if errors.Is(err, inventory.ErrSlotEmpty) || errors.Is(err, inventory.ErrItemChanged) {
+				return ErrSlotEmpty
+			}
+			return fmt.Errorf("storage: removing from source: %w", err)
+		}
+		if err := to.AddItemInstance(ctx, toOwner, found.ItemID, n, inst); err != nil {
+			return fmt.Errorf("storage: adding to destination: %w", err)
+		}
+		return nil
+	})
 }

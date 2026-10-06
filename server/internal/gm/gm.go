@@ -36,6 +36,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
@@ -533,18 +534,48 @@ func (d *Deps) give(ctx context.Context, actor Actor, args []string) Result {
 	if d.Inv == nil {
 		return refuse("no inventory store")
 	}
-	var before map[int]bool
-	if plus > 0 {
+	// The give and its plus are ONE transaction (round 743): a plus that
+	// cannot be set takes the item back with it.
+	var at []string
+	err = txn.For(d.Inv).Run(ctx, func(ctx context.Context) error {
+		at = nil
+		var before map[int]bool
+		if plus > 0 {
+			slots, err := d.Inv.List(ctx, actor.CharacterID)
+			if err != nil {
+				return fmt.Errorf("reading the bag failed: %w", err)
+			}
+			before = make(map[int]bool, len(slots))
+			for _, sl := range slots {
+				before[sl.Index] = true
+			}
+		}
+		if err := d.Inv.AddItem(ctx, actor.CharacterID, itemID, qty); err != nil {
+			return err
+		}
+		if plus == 0 {
+			return nil
+		}
+		// The plus goes on the slots the give filled fresh; a top-up of an
+		// existing stack keeps that stack's own instance.
 		slots, err := d.Inv.List(ctx, actor.CharacterID)
 		if err != nil {
-			return refuse("reading the bag failed: " + err.Error())
+			return fmt.Errorf("reading the bag failed: %w", err)
 		}
-		before = make(map[int]bool, len(slots))
 		for _, sl := range slots {
-			before[sl.Index] = true
+			if before[sl.Index] || sl.ItemID != itemID {
+				continue
+			}
+			inst := sl.Instance()
+			inst.OptLevel = uint8(plus)
+			if err := d.Inv.SetInstance(ctx, actor.CharacterID, sl.Index, inst); err != nil {
+				return fmt.Errorf("setting the plus failed: %w", err)
+			}
+			at = append(at, strconv.Itoa(sl.Index))
 		}
-	}
-	if err := d.Inv.AddItem(ctx, actor.CharacterID, itemID, qty); err != nil {
+		return nil
+	})
+	if err != nil {
 		if errors.Is(err, inventory.ErrNoRoom) {
 			return refuse("no room in the bag")
 		}
@@ -552,24 +583,6 @@ func (d *Deps) give(ctx context.Context, actor Actor, args []string) Result {
 	}
 	if plus == 0 {
 		return Result{Text: fmt.Sprintf("gave %d x item %d", qty, itemID), RefreshInventory: true}
-	}
-	// The plus goes on the slots the give filled fresh; a top-up of an
-	// existing stack keeps that stack's own instance.
-	slots, err := d.Inv.List(ctx, actor.CharacterID)
-	if err != nil {
-		return refuse("reading the bag failed: " + err.Error())
-	}
-	var at []string
-	for _, sl := range slots {
-		if before[sl.Index] || sl.ItemID != itemID {
-			continue
-		}
-		inst := sl.Instance()
-		inst.OptLevel = uint8(plus)
-		if err := d.Inv.SetInstance(ctx, actor.CharacterID, sl.Index, inst); err != nil {
-			return refuse("setting the plus failed: " + err.Error())
-		}
-		at = append(at, strconv.Itoa(sl.Index))
 	}
 	// The slots are named so /item can follow up on them.
 	return Result{Text: fmt.Sprintf("gave %d x item %d +%d (bag slot %s)", qty, itemID, plus, strings.Join(at, ", ")), RefreshInventory: true}

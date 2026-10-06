@@ -10,6 +10,7 @@ package trade
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
@@ -77,6 +78,10 @@ var ErrNotTrading = errors.New("trade: not trading")
 // quantity value.
 var ErrInvalidOffer = errors.New("trade: invalid offer")
 
+// ErrExecuting is returned by SetOffer while the trade is being executed:
+// both sides confirmed, and the offers are what is being moved.
+var ErrExecuting = errors.New("trade: the trade is being executed")
+
 // Member identifies one side of a request or trade.
 type Member struct {
 	Session     *gateway.Session
@@ -97,6 +102,15 @@ type Session struct {
 	A, B                   Member
 	OfferA, OfferB         Offer
 	ConfirmedA, ConfirmedB bool
+	// ID numbers the trade within this process, across every Hub (round 743): with
+	// txn.BootID it is the trade's key in the economy ledger, so one trade
+	// can be applied once.
+	ID uint64
+	// executing is the latch (round 743): set by the Confirm that completes
+	// both confirmations, once. While it is set no Confirm answers
+	// both-confirmed again, no offer changes, and End leaves the trade to
+	// Finish.
+	executing bool
 }
 
 // Other returns the counterparty to characterID in this session, and their
@@ -133,6 +147,10 @@ type Hub struct {
 	active  map[int64]*Session       // character ID -> shared session (same pointer for both sides)
 	lastID  uint64                   // the last PendingRequest.ID handed out
 }
+
+// tradeIDs numbers trades across every Hub of the process, so no two trades
+// of one run share a ledger key (Session.ID).
+var tradeIDs atomic.Uint64
 
 // NewHub returns an empty Hub.
 func NewHub() *Hub {
@@ -206,7 +224,7 @@ func (h *Hub) Respond(target Member, accept bool) (requester Member, err error) 
 		if _, busy := h.active[target.CharacterID]; busy {
 			return Member{}, ErrAlreadyTrading
 		}
-		sess := &Session{A: requester, B: target, OfferA: Offer{ItemSlot: -1}, OfferB: Offer{ItemSlot: -1}}
+		sess := &Session{A: requester, B: target, OfferA: Offer{ItemSlot: -1}, OfferB: Offer{ItemSlot: -1}, ID: tradeIDs.Add(1)}
 		h.active[requester.CharacterID] = sess
 		h.active[target.CharacterID] = sess
 	}
@@ -275,6 +293,9 @@ func (h *Hub) SetOffer(characterID int64, offer Offer) (*Session, error) {
 	if !ok {
 		return nil, ErrNotTrading
 	}
+	if sess.executing {
+		return nil, ErrExecuting
+	}
 	switch characterID {
 	case sess.A.CharacterID:
 		sess.OfferA = offer
@@ -287,38 +308,73 @@ func (h *Hub) SetOffer(characterID int64, offer Offer) (*Session, error) {
 }
 
 // Confirm marks characterID's side of their active session as confirmed.
-// Returns the session and whether both sides are now confirmed (the
-// caller should then execute the trade and call End).
+// bothConfirmed is true for exactly ONE call per trade: the one that
+// completes both confirmations, which latches the trade as executing and
+// returns a copy of it, the offers as they will be moved. The caller then
+// executes the trade and calls Finish.
+//
+// Round 743: there was no latch, so a confirm resent by the side that had
+// already confirmed, arriving while the other side's handler executed the
+// trade, answered both-confirmed again and the trade ran twice
+// (session.TestTradeResentConfirmDuplicatesItem). A confirm while the trade
+// executes now answers false, and changes nothing.
 func (h *Hub) Confirm(characterID int64) (sess *Session, bothConfirmed bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	sess, ok := h.active[characterID]
+	live, ok := h.active[characterID]
 	if !ok {
 		return nil, false, ErrNotTrading
 	}
-	switch characterID {
-	case sess.A.CharacterID:
-		sess.ConfirmedA = true
-	case sess.B.CharacterID:
-		sess.ConfirmedB = true
+	if live.executing {
+		cp := *live
+		return &cp, false, nil
 	}
-	return sess, sess.ConfirmedA && sess.ConfirmedB, nil
+	switch characterID {
+	case live.A.CharacterID:
+		live.ConfirmedA = true
+	case live.B.CharacterID:
+		live.ConfirmedB = true
+	}
+	cp := *live
+	if !(live.ConfirmedA && live.ConfirmedB) {
+		return &cp, false, nil
+	}
+	live.executing = true
+	cp.executing = true
+	return &cp, true, nil
 }
 
 // End ends characterID's active trade session (if any), removing both
-// sides. Returns the session that was ended.
+// sides. Returns the session that was ended. A trade being executed is not
+// ended (ok false): its executor ends it with Finish once the outcome is
+// known, so a cancel or a disconnect mid-execution cannot tell the partner
+// "cancelled" about a trade that completes.
 func (h *Hub) End(characterID int64) (sess *Session, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	sess, ok = h.active[characterID]
-	if !ok {
+	if !ok || sess.executing {
 		return nil, false
 	}
 	delete(h.active, sess.A.CharacterID)
 	delete(h.active, sess.B.CharacterID)
 	return sess, true
+}
+
+// Finish ends the trade characterID's Confirm latched as executing, whatever
+// its outcome. Only the executor calls it.
+func (h *Hub) Finish(characterID int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	sess, ok := h.active[characterID]
+	if !ok {
+		return
+	}
+	delete(h.active, sess.A.CharacterID)
+	delete(h.active, sess.B.CharacterID)
 }
 
 // CancelPendingFor removes every pending request involving characterID: the
