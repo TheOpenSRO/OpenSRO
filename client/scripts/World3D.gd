@@ -1815,6 +1815,7 @@ func _ready() -> void:
 	# Round 749: retail's 0xB021 and 0xB023 (DestMoveNet).
 	NetClient.entity_move_echo.connect(_on_entity_move_echo)
 	NetClient.entity_move_stop.connect(_on_entity_move_stop)
+	NetClient.unstuck_result.connect(_on_unstuck_result)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
@@ -2690,7 +2691,7 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	_debug_panel = DebugPanel.new(self)
 	$UI.add_child(_debug_panel)
 	_log_system("Debug panel (build, position, entities, loading, performance): Shift+F3")
-	_log_system("Stuck in a wall or building? Type /unstuck to return to the zone entry.")
+	_log_system("Stuck in a wall or building? Type /unstuck to return to the zone's landing spot (once a minute).")
 	# Round 700: no game cursor -- say where sro_client.exe goes (GameCursor).
 	GameCursor.load_once()
 	if not GameCursor.has_cursors():
@@ -6018,8 +6019,15 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		else:
 			print("World3D: zone %s has no loaded region to stand at local %s, %s -- left at the server's own landing spot" % [
 				result.zone, spot.x, spot.y])
-	else:
-		_place_at_zone_spawn(result.zone)
+	elif not _place_at_zone_spawn(result.zone) and _pending_gm_pos == null:
+		# A zone with no landing spot of its own (every town but Jangan):
+		# stood on the walkable graph at the server's landing point, as a
+		# teleport arrival is, and reported with that height (round 749's
+		# verification, c). It used to keep the server's height 0 until the
+		# terrain snap lifted it -- 12.5 under Hotan's plaza (round 690) --
+		# and never told the server the ground's.
+		_teleport_landing = Vector2(result.x, result.z)
+		_step_teleport_landing()
 
 	# A GM /goto or /tp that crossed a zone boundary carried a world position
 	# to stand at once the zone loaded -- honour it now, over the zone's own
@@ -12181,7 +12189,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 # -- the windows on screen, the keyboard focus, the keys that reached
 # World3D._unhandled_input (the last stage: every HUD handler ran first),
 # and what the key table ran (KeyInput.dispatched, since the action).
-## OPENSRO_QA_WALK_TO="<tick>:<x>,<z>[;<tick>:run:<deg>;<tick>:sit;<tick>:attack...]"
+## OPENSRO_QA_WALK_TO="<tick>:<x>,<z>[;<tick>:rel:<dx>,<dz>;<tick>:run:<deg>;<tick>:sit;<tick>:attack...]"
 ## (round 749): at each tick, a ground click on world (x, z) -- the walk a
 ## click issues (_issue_walk: the click filter, the order, its 0x7021), at
 ## the ground's height there -- a sky click's heading run toward <deg> (0 is
@@ -12209,10 +12217,16 @@ func _qa_walk_to_step() -> void:
 			print("QA WALK_TO %d: attack the nearest monster from (%.1f, %.1f)" % [_qa_tick, player.position.x, player.position.z])
 			_qa_attack_nearest()
 			continue
-		var xz := bits[1].split(",", false)
+		# "rel:<dx>,<dz>" (round 749's verification): a click that far from
+		# where the player stands, for a walk after an arrival whose point the
+		# run does not know beforehand.
+		var rel := bits[1] == "rel" and bits.size() >= 3
+		var xz := (bits[2] if rel else bits[1]).split(",", false)
 		if xz.size() != 2:
 			continue
 		var at := Vector3(float(xz[0]), player.position.y, float(xz[1]))
+		if rel:
+			at += Vector3(player.position.x, 0.0, player.position.z)
 		at.y = _terrain_height_at(at)
 		print("QA WALK_TO %d: click at (%.1f, %.1f, %.1f) from (%.1f, %.1f): %s" % [_qa_tick, at.x, at.y, at.z,
 			player.position.x, player.position.z, _issue_walk(at)])
@@ -14184,6 +14198,10 @@ var _qa_teleport_wait := 0
 
 func _qa_advance_teleport() -> void:
 	var want := OS.get_environment("OPENSRO_QA_TELEPORT")
+	# The HUD is built after the sign-in: a run signing in to a server ticks
+	# here first (round 749's verification run gave up on "25" that way).
+	if _hud_panels == null and want.is_valid_int():
+		return
 	if not want.is_valid_int() or _hud_panels == null:
 		_qa_teleport_stage = 2
 		print("QA TELEPORT: '%s' is not a teleportdata id" % want)
@@ -16368,18 +16386,53 @@ func _apply_own_correction(at: Vector3, heading: float) -> void:
 	_has_move_target = false
 	_move_heading_run = false
 	player.velocity = Vector3.ZERO
-	var spot := at
-	var ground := _terrain_hit_height(spot)
-	if not is_nan(ground):
-		spot.y = ground
-	player.position = spot
+	# Stood on the ground the walk stands on (round 749's verification): the
+	# walkable graph's surface nearest the server's height, as a skill move's
+	# landing is settled (the walk's own footing carried from there), the
+	# terrain ray only where no graph is loaded -- the terrain-only ray put a
+	# player corrected on a bridge or a deck under it.
+	player.position = _ground_on_walk_surface(at)
 	player.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
 	_player_turn_target = NAN
 	_relocated_pending = false
-	# Round 749's review, F3: a 0x7021 already in flight when the server sent
-	# this would start a leg from here that this client does not walk; the
-	# stop here ends it (on that leg at its start, so the server takes it).
-	_send_stop()
+	# Round 749's verification (FP1-FP3): a stop answers a correction only
+	# when a 0x7021 may still be in flight -- the server would take it after
+	# this and start a leg from here that this client does not walk; the stop
+	# here ends it (on that leg at its start, so the server takes it) -- and
+	# never twice for the same server point (MoveOrderSync.corrected). Any
+	# other correction is the server's last word: nothing is sent, so no
+	# correction can loop.
+	var answer := _move_sync.corrected(at)
+	_last_sent_pos = player.position
+	_walked_since_send = 0.0
+	_time_since_send = 0.0
+	if answer:
+		_send_stop()
+
+## A point the server named (its correction, its /unstuck), stood on the ground
+## the walk stands on: the walkable graph's surface at its (x, z) nearest its
+## height (NavGraph.surface_at, the walk's footing settled there as a skill
+## move's is), else the terrain ray, else the point as it is.
+func _ground_on_walk_surface(at: Vector3) -> Vector3:
+	var pair := _nav_graph_for(at)
+	if pair.is_empty():
+		var ground := _terrain_hit_height(at)
+		if not is_nan(ground):
+			at.y = ground
+		return at
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	var local := group.to_local(at)
+	# A height under the terrain (a server's guess, an arrival's 0) is
+	# measured from the terrain: surface_at holds a reference that far below
+	# the ground at the reference rather than lift it.
+	var ref := maxf(local.y, NvmCollision.terrain_height(graph.region, local.x, local.z))
+	var surface := graph.surface_at(local.x, local.z, ref)
+	_nav_footing = surface.object_index
+	_nav_footing_graph = graph
+	var spot := group.to_global(Vector3(local.x, surface.height, local.z))
+	_nav_footing_pos = spot
+	return spot
 
 ## Round 749: one frame of every other player's leg (OtherWalk.step), before
 ## the eased bodies: the body steps along it at its run speed and its height is
@@ -16656,11 +16709,15 @@ func _land_teleport_arrival(x: float, z: float) -> bool:
 	var local := group.to_local(Vector3(x, 0.0, z))
 	player.global_position = group.to_global(Vector3(local.x, graph.landing_height_at(local.x, local.z), local.z))
 	player.velocity = Vector3.ZERO
-	_last_sent_pos = player.position
+	# Round 749's verification (c): the server has the point at a height it
+	# only guesses (a teleport's 0, a landing's), so the arrival goes out as
+	# a placement with the ground's -- once, at the point the server named,
+	# which it takes (destmove.go claimBound's Named). _last_sent_pos stays
+	# the server's point, so the send loop reports it on its next tick.
 	_walked_since_send = 0.0
-	_move_sync.placed(player.position) # round 749: the gate's point is the server's
+	_relocated_pending = true
 	_refresh_zone_label_position()
-	print("World3D: teleport arrival in %s at local (%.1f, %.1f), height %.2f -- the destination gate's point, on the walkable graph" % [
+	print("World3D: arrival in %s at local (%.1f, %.1f), height %.2f -- the server's point, on the walkable graph" % [
 		group.name, local.x, local.z, player.global_position.y])
 	return true
 
@@ -17249,7 +17306,10 @@ func _apply_gm_move(result: GmNet.Result) -> void:
 ## tell the server.
 func _place_player_at_world(x: float, z: float) -> void:
 	var spot := Vector3(x, player.global_position.y, z)
-	spot.y = _terrain_height_at(spot)
+	# On the walkable graph's landing height where a graph is loaded, as an
+	# arrival is (round 749's verification, c), else the terrain ray.
+	var landing := _navmesh_height_at(spot)
+	spot.y = _terrain_height_at(spot) if is_nan(landing) else landing
 	player.global_position = spot
 	player.velocity = Vector3.ZERO
 	# Round 749: the GM's point is one the server named (destmove.go
@@ -18550,6 +18610,8 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 ## and run the click filter FUN_009ec240. The caller has placed the ring.
 ## Returns "walk" or "ignore" (the filter sent nothing).
 func _issue_walk(point: Vector3) -> String:
+	if _own_move_blocked():
+		return "ignore"
 	# A click on the ground supersedes an attack that was walking into reach,
 	# and a friendly cast walking to its player (round 622's review) -- even
 	# one the filter below does not send (OURS: where retail drops a pending
@@ -18575,12 +18637,33 @@ func _issue_walk(point: Vector3) -> String:
 	_move_heading_run = false
 	return "walk"
 
+## The abnormal states that refuse a move: freeze, sleep, root (0xc1) and stun
+## (0x4000). READ: the server's 0x7021 handler (GObjPC::FUN_004b0ea0, `test
+## al,0xc1` 0x4b0fa6, `test eax,0x4000` 0x4b0fae; statuseffect.Holder.CanMove).
+const MOVE_BLOCKING_STATES := 0xc1 | 0x4000
+
+## Whether this player may not start a walk now (round 749's verification):
+## its own abnormal states hold one of MOVE_BLOCKING_STATES, or a trade is
+## established (the server refuses a move in either, destmove.go). OURS: the
+## click is not sent rather than sent and refused -- where retail's client
+## filters it is not read.
+func _own_move_blocked() -> bool:
+	if _trade_established:
+		return true
+	var id := _own_id()
+	if id < 0:
+		return false
+	var st: Dictionary = _abnormal_states.get(_fx_owner_key(id, SkillNet.OWNER_CHARACTER), {})
+	return not st.is_empty() and (int(st["mask"]) & MOVE_BLOCKING_STATES) != 0
+
 ## Starts a heading run along the pick ray `dir` (round 653, SkyRun): the ray's
 ## ground direction becomes the run's heading, and the body turns to it at the
 ## client's rate while it runs (FUN_009e08a0 -> FUN_009e02f0, 3 pi rad/s). Not
 ## started -- "keep" -- when the player is moving and the heading is within 5
 ## degrees of its facing (FUN_0078f8d0, READ; SkyRun.click_rule).
 func _start_heading_run(dir: Vector3) -> String:
+	if _own_move_blocked():
+		return "ignore"
 	var current := RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
 	var h := SkyRun.heading_of_ray(current, dir)
 	# READ: retail keeps the run only while the player moves (state bit 9)
@@ -18672,6 +18755,15 @@ func _send_chat(text: String) -> void:
 ## zone travel does the same the heavy way; this stays in the zone. The move
 ## sync in _process sends the new position (it differs from _last_sent_pos).
 func _unstuck_player() -> void:
+	# Round 749's verification (FP6): online, /unstuck is the server's -- it
+	# takes a client's placement only near where it has the character, so the
+	# client's own landing was corrected back into the spot it was stuck at.
+	# The server puts the character at its zone's landing spot (its 0xB023,
+	# _apply_own_correction) and answers _on_unstuck_result. Offline, the
+	# client's own path below.
+	if NetClient.is_connected_to_server():
+		NetClient.request_unstuck()
+		return
 	var result = NetClient.last_enter_world_result
 	if result == null or not result.ok:
 		_log_system("Unstuck: no spawn point known yet -- try zone travel (Shift+F1).")
@@ -18689,6 +18781,19 @@ func _unstuck_player() -> void:
 			return
 	player.position = Vector3(result.x, result.y, result.z)
 	_log_system("Unstuck: returned to the zone entry point.")
+
+## The server's answer to /unstuck (round 749's verification, FP6): done --
+## its 0xB023 has put the player at the zone's landing spot -- or refused,
+## with how long until it may be asked again (0: not here at all -- dead,
+## stunned, trading, or no landing known in this zone).
+func _on_unstuck_result(ok: bool, wait_seconds: int) -> void:
+	if ok:
+		_log_system("Unstuck: returned to the zone's landing spot.")
+	elif wait_seconds > 0:
+		_log_system("Unstuck: wait %d s before using it again." % wait_seconds)
+	else:
+		_log_system("Unstuck: not possible right now -- try zone travel (Shift+F1).")
+	print("World3D: /unstuck answered ok=%s wait=%d" % [str(ok), wait_seconds])
 
 func _on_disconnected() -> void:
 	# Restart / Exit from the System menu and a dropped peer all come here
@@ -23546,6 +23651,7 @@ func _on_trade_respond_result(ok: bool, reason: String) -> void:
 func _on_trade_started(started: TradeNet.Started) -> void:
 	if started == null:
 		return
+	_trade_established = true
 	trade_status_label.text = "Trading with %s. Set your offer below." % started.partner_name
 	trade_their_offer_label.text = "Their offer: (none yet)"
 	# The exchange window's gold boxes start at 0 (CIFExchange's clear path,
@@ -23568,6 +23674,11 @@ func _on_trade_set_offer_pressed() -> void:
 	var quantity := int(qty_text) if qty_text.is_valid_int() else 0
 	_trade_pending_gold = gold
 	NetClient.trade_set_offer(NetClient.current_character_name, gold, item_slot, quantity)
+
+## A trade is established (OpTradeStarted until it completes or is
+## cancelled): the server refuses a move meanwhile (round 749's verification;
+## trade.Hub.Established, INTERACTMODE 2), so the client sends none.
+var _trade_established := false
 
 ## The gold this side last offered, and the amount of the offer in flight,
 ## for the exchange window's GDR_EXCHANGE_STATIC_MYMONEY.
@@ -23596,6 +23707,7 @@ func _on_trade_offer_updated(updated: TradeNet.OfferUpdated) -> void:
 func _on_trade_completed(completed: TradeNet.Completed) -> void:
 	if completed == null:
 		return
+	_trade_established = false
 	var received := ""
 	if completed.received_item_id != 0:
 		var label := _item_label_for_line(completed.received_item_id)
@@ -23606,6 +23718,7 @@ func _on_trade_completed(completed: TradeNet.Completed) -> void:
 func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:
 	if cancelled == null:
 		return
+	_trade_established = false
 	var by_whom := cancelled.cancelled_by_name if cancelled.cancelled_by_name != "" else "the system"
 	trade_status_label.text = "Trade cancelled by %s." % by_whom
 	trade_their_offer_label.text = "Their offer: (none yet)"

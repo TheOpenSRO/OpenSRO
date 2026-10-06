@@ -266,6 +266,11 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 			return MoveResult{}, MoveRefusedNear
 		}
 	}
+	// Round 749's verification, FP5: the standing time before a first walk is
+	// banked at this speed, as a claim's is (Claim).
+	if e.allowSpeed == 0 {
+		e.allowSpeed = o.Speed
+	}
 	h.settleLocked(e, now)
 	if e.Move == nil {
 		e.Pos = e.Trusted
@@ -279,6 +284,7 @@ func (h *Hub) StartMove(sess *gateway.Session, o MoveOrder) (MoveResult, MoveSta
 	} else {
 		m.Dest = o.Dest
 		m.dist = math.Hypot(o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
+		e.noteClientY(o.Dest.X, o.Dest.Y, o.Dest.Z) // the clicked ground's height
 		e.Heading = HeadingToward(e.Heading, o.Dest.X-e.Pos.X, o.Dest.Z-e.Pos.Z)
 	}
 	e.Move = m
@@ -309,6 +315,7 @@ func (h *Hub) StopAt(sess *gateway.Session, pos Position, kind MoveKind, heading
 	}
 	h.placeLocked(e, now, pos, kind, heading, &r)
 	e.Trusted = pos
+	e.clientYKnown = false // the server's placement: its height is a guess
 	r.Entity.Trusted = pos
 	return r, true, true
 }

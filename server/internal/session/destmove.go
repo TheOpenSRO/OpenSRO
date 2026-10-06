@@ -84,12 +84,18 @@ const moveFlagStopped byte = 4
 // destination the wire truncated (up to 1.42 away), and a click within 5.0 of
 // the point being walked to is walked but not sent (the server would refuse
 // it: READ 0xb45b28) -- 5 + 2.39 + 1.42 = 8.8 (round 749's review, F5).
-// claimHeight bounds a claim's height against the anchor's (F10): a sanity
-// bound so a saved or reported height cannot be anywhere, not a measured
-// terrain figure.
+// claimHeight bounds a claim's or a destination's height (F10) from the last
+// height the client itself gave, plus the ground distance from where it gave
+// it (world.Entity.HeightAllows; round 749's verification, FP1-FP3: never from
+// a height the server only guesses -- an arrival's 0, a leg's straight line, a
+// run's start -- which pinned honest players at Hotan in a correction loop).
+// claimSanity is the absolute range every height must lie in: raw .m heights
+// reach 4,056 (GATE_RC_MOUNTAIN_GATE, MEASURED by the verification), and a
+// frame's anchor shifts them by a few hundred at most. Both OURS.
 const (
 	claimSlack  = 9.0
 	claimHeight = 100.0
+	claimSanity = 10000.0
 )
 
 // moverPassPeriod is how often the movers are refiled (OURS): a block
@@ -263,10 +269,10 @@ func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hu
 		}
 		x, z := worldOfRegionLocal(e.Zone, m.Region, float64(m.LocalX), float64(m.LocalZ))
 		order.Dest = world.Position{X: x, Y: float64(m.LocalY), Z: z}
-		// Round 749's review, F10 (OURS): a destination's height within
-		// claimHeight plus the ground distance of the start's -- the leg
-		// interpolates the height, and a saved one must not be anywhere.
-		if math.Abs(order.Dest.Y-e.Pos.Y) > claimHeight+math.Hypot(x-e.Pos.X, z-e.Pos.Z) {
+		// Round 749's review, F10, and its verification, FP1 (OURS): a
+		// destination's height is bounded as a claim's is, from the last
+		// height the client gave (world.Entity.HeightAllows).
+		if !e.HeightAllows(x, order.Dest.Y, z, claimHeight, claimSanity) {
 			return nil
 		}
 	}
@@ -324,7 +330,7 @@ func legEnd(m *world.Mover, now time.Time) time.Time {
 // placement the points the server named (used up when one is taken).
 func claimBound(characterID int64, placement bool, now time.Time) world.Bound {
 	b := world.Bound{Speed: float64(buffBooks.RunSpeed(characterID)), Slack: claimSlack, Height: claimHeight,
-		Trust: trustPositions.Load()}
+		Sanity: claimSanity, Trust: trustPositions.Load()}
 	if placement {
 		b.Named = func(x, z float64) bool { return landingTake(characterID, x, z, now) }
 	}

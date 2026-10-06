@@ -92,6 +92,33 @@ func _test_echo() -> void:
 	s.confirm(DestMoveNet.KIND_HEADING, Vector3.ZERO, 0x4000)
 	_check(s.pending_ms == -1, "a heading echo confirms the run")
 
+## Round 749's verification, FP4: the echo timeout stays inside the server's
+## banked second (server/internal/world/claim.go AllowanceSeconds 1.0).
+## FP1-FP3: a correction is answered with a stop only while a 0x7021 may be in
+## flight, and never twice for the same server point -- so no correction can
+## loop. And an order that ended unreported awaits no echo any more.
+func _test_corrections() -> void:
+	_check(MoveOrderSync.ECHO_TIMEOUT_MS <= 1000, "the echo timeout is at most the server's banked second (%d ms)" % MoveOrderSync.ECHO_TIMEOUT_MS)
+	var s := MoveOrderSync.new()
+	_check(not s.corrected(Vector3(5, 0, 5)), "a correction with nothing in flight is not answered")
+	_check(s.rest == Vector3(5, 0, 5) and not s.active, "and the server has the player there, with no leg")
+	_check(not s.corrected(Vector3(5, 0, 5)), "nor is a second at the same point")
+	s.sent_destination(Vector3(100, 0, 0), 1000)
+	_check(s.corrected(Vector3(5, 0, 5)), "a correction while a 0x7021 is in flight is answered with a stop")
+	_check(s.pending_ms == -1, "and the order awaits no echo any more")
+	_check(not s.corrected(Vector3(5, 0, 5)), "the correction that answers that stop is not answered again")
+	s.sent_destination(Vector3(100, 0, 0), 2000)
+	s.answered = Vector3(5, 0, 5)
+	_check(not s.corrected(Vector3(5, 0, 5)), "never twice for the same server point, even with an order in flight")
+	s.sent_destination(Vector3(100, 0, 0), 3000)
+	_check(s.corrected(Vector3(9, 0, 9)), "a new order in flight and a new point: answered")
+	# A walk that ends at its point before its echo comes.
+	s.sent_destination(Vector3(100, 0, 0), 4000)
+	s.arrived()
+	_check(s.pending_ms == -1, "an order that ended at its point awaits no echo")
+	_check(s.decide(false, false, Vector3.INF, Vector3.INF, -1, Vector3(100, 0, 0), 4000 + 5 * MoveOrderSync.ECHO_TIMEOUT_MS) == "",
+		"so the ended order is never taken as refused")
+
 func _test_other_walk() -> void:
 	var leg := OtherWalk.to_point(Vector3(100, 7, 0), 50.0)
 	var at := Vector3.ZERO
@@ -123,6 +150,7 @@ func _init() -> void:
 	_test_heading_run()
 	_test_flush()
 	_test_echo()
+	_test_corrections()
 	_test_other_walk()
 	if _failures == 0:
 		print("ALL PASS")

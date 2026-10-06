@@ -238,7 +238,21 @@ func TestRound749ReviewTheClickBucket(t *testing.T) {
 func TestRound749ReviewHeightIsBounded(t *testing.T) {
 	strictPositions(t)
 	f := startDeadWorldFixture(t)
-	f.send(t, f.connA, proto.OpMovementRequest, clickTo(10, 5000, 0))
+	// Fresh from the entry the server has no height of the client's own (its
+	// arrival's is a guess): only the sanity range applies (round 749's
+	// verification, FP1).
+	f.send(t, f.connA, proto.OpMovementRequest, clickTo(10, claimSanity+1000, 0))
+	if !f.nothing(t, f.connA, f.rA) {
+		t.Fatal("a destination past the sanity range was taken")
+	}
+	// The client gives a height (its click's ground, 0); from it, a point
+	// 5000 up ten units on is refused.
+	advance := fakeHubClock(t, f.hub)
+	f.send(t, f.connA, proto.OpMovementRequest, clickTo(10, 0, 0))
+	readOp(t, f, f.connA, f.rA, proto.OpMovementResponse)
+	advance(time.Second)
+	drainQuiet(t, f.connB, f.rB)
+	f.send(t, f.connA, proto.OpMovementRequest, clickTo(20, 5000, 0))
 	if !f.nothing(t, f.connA, f.rA) {
 		t.Fatal("a destination 5000 up was taken")
 	}

@@ -1290,6 +1290,9 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 		case proto.OpMovementRequest:
 			// Round 749: retail's click move (destmove.go).
 			return handleMovementRequest(sess, p, hub, chars)
+		case OpUnstuck:
+			// Round 749's verification, FP6: the server's /unstuck (unstuck.go).
+			return handleUnstuck(sess, hub, chars)
 		case OpChangeZone:
 			return handleChangeZone(ctx, sess, p, eq, chars, hub, zerk)
 		default:
@@ -1781,6 +1784,13 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// with a clocked allowance (world.Hub.Claim, destmove.go claimBound).
 	self, inWorld := hub.EntityBySession(sess.ID())
 	if !inWorld {
+		return nil
+	}
+	// Round 749's verification (minor): a character whose states stop a move,
+	// or in an established trade, may not move by claims either (as by
+	// 0x7021, destmove.go); its client is put back where the server has it.
+	if !trustPositions.Load() && (!statusFX.characterCanMove(self.CharacterID) || tradeEstablishedOn(hub, self.CharacterID)) {
+		correctMover(sess, hub)
 		return nil
 	}
 	moved, admitted, ok := hub.Claim(sess, pos, kind, heading, claimBound(self.CharacterID, req.Relocated, now))

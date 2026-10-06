@@ -210,6 +210,13 @@ var user_roster := {}
 var _zone_arrivals := {}
 var zone_departures := {}
 const OP_PLAYER_ZONE_NOTICE := 0x00b7
+## Round 749's verification (FP6; OURS, retail has no such command): /unstuck
+## is the server's -- the client asks (empty), the server puts the character
+## at its zone's landing spot with its own 0xB023 and answers u8 ok, u16 the
+## seconds until it may be asked again (server/internal/session/unstuck.go).
+const OP_UNSTUCK := 0x00b8
+const OP_UNSTUCK_RESULT := 0x00b9
+signal unstuck_result(ok: bool, wait_seconds: int)
 ## Every other character's abnormal states as last told (0x3057 for a
 ## character; uid -> StatusNet.ObjectStatus), so a scene that was not
 ## listening -- World3D at the world entry, or during a zone change's load,
@@ -636,6 +643,11 @@ func move_to(x: float, y: float, z: float, relocated: bool = false, heading_wire
 ## Round 749: where the player's walk stopped short of the destination its
 ## 0x7021 named (WorldNet.MOVE_FLAG_STOPPED, OURS) -- the server takes it on
 ## its own leg and tells the window with retail's 0xB023.
+## Round 749's verification (FP6): asks the server to put the character at its
+## zone's landing spot (OP_UNSTUCK; answered by unstuck_result).
+func request_unstuck() -> void:
+	_send(OP_UNSTUCK)
+
 func report_stop(x: float, y: float, z: float) -> void:
 	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, false, -1, true))
 
@@ -1404,6 +1416,9 @@ func _dispatch(p: Packet) -> void:
 				object_status.emit(st)
 		OP_PLAYER_ZONE_NOTICE:
 			_on_zone_notice(p.data)
+		OP_UNSTUCK_RESULT:
+			if p.data.size() >= 3:
+				unstuck_result.emit(p.data[0] == 1, p.data.decode_u16(1))
 		CombatNet.OP_LOOT_DROPPED:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		CombatNet.OP_MONSTER_LIST_RESULT:

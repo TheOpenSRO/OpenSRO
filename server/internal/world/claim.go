@@ -28,7 +28,10 @@ import (
 //     worth. A leg's own travel is charged against the accrual, so walking
 //     banks nothing and a second's lead is shared across legs, not granted to
 //     each. The anchor moves by what was paid, toward the claim.
-//   - The height is bounded (Bound.Height) against the anchor's.
+//   - The height is bounded from the last height the client itself gave
+//     (Entity.HeightAllows: Bound.Height plus the ground distance from where
+//     it gave it, a 45-degree slope), never from a height the server guesses
+//     (round 749's verification, FP1-FP3), and always by Bound.Sanity.
 //
 // So no chain of stops, placements or click-and-stop pairs moves a character
 // faster than its run speed, beyond one slack and one banked second.
@@ -45,8 +48,30 @@ type Bound struct {
 	Speed  float64
 	Slack  float64
 	Height float64
+	Sanity float64
 	Trust  bool
 	Named  func(x, z float64) bool
+}
+
+// HeightAllows reports whether height y at ground point (x, z) may follow the
+// last height the client gave (round 749's verification, FP1-FP3; OURS): within
+// slack plus the ground distance from where it gave it (no steeper than 45
+// degrees, plus slack), and always within +-sanity. With no height from the
+// client yet -- after an arrival or a placement the server made, whose height
+// is the server's guess -- only the sanity range applies.
+func (e Entity) HeightAllows(x, y, z, slack, sanity float64) bool {
+	if math.Abs(y) > sanity {
+		return false
+	}
+	if !e.clientYKnown {
+		return true
+	}
+	return math.Abs(y-e.clientY) <= slack+math.Hypot(x-e.clientYX, z-e.clientYZ)
+}
+
+// noteClientY records y at (x, z) as the last height the client gave.
+func (e *Entity) noteClientY(x, y, z float64) {
+	e.clientY, e.clientYX, e.clientYZ, e.clientYKnown = y, x, z, true
 }
 
 // accrueLocked brings e's allowance up to now: the run speed times the time
@@ -132,7 +157,7 @@ func (h *Hub) Claim(sess *gateway.Session, pos Position, kind MoveKind, heading 
 	admitted = b.Trust
 	if admitted {
 		trusted = pos
-	} else if math.Abs(pos.Y-anchor.Y) <= b.Height {
+	} else if outLocked(e, now).HeightAllows(pos.X, pos.Y, pos.Z, b.Height, b.Sanity) {
 		d := math.Hypot(pos.X-anchor.X, pos.Z-anchor.Z)
 		switch need := d - b.Slack; {
 		case need <= 0:
@@ -153,6 +178,7 @@ func (h *Hub) Claim(sess *gateway.Session, pos Position, kind MoveKind, heading 
 	h.placeLocked(e, now, pos, kind, heading, &r)
 	e.allow -= paid
 	e.Trusted = trusted
+	e.noteClientY(pos.X, pos.Y, pos.Z)
 	r.Entity = *e
 	return r, true, true
 }

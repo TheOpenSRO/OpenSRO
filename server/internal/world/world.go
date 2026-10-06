@@ -114,6 +114,16 @@ type Entity struct {
 	// accrues at.
 	allow, allowLeg, allowSpeed float64
 	allowAt                     time.Time
+	// The last height the CLIENT gave (a taken claim's, a 0x7021
+	// destination's) and where (round 749's verification, FP1-FP3): a claim's
+	// or a destination's height is bounded from it, never from a height the
+	// server only guesses (an arrival's, a leg's straight line, a run's
+	// start). clientYKnown is false until the client gives one, and again
+	// after a placement the server makes.
+	clientY      float64
+	clientYX     float64
+	clientYZ     float64
+	clientYKnown bool
 }
 
 // ViewRadius is how many message blocks around its own a player sees other

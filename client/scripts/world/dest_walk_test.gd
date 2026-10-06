@@ -168,4 +168,21 @@ func _test_own(world: Node) -> void:
 	_check(not bool(world.get("_has_move_target")), "its order over")
 	var sync: MoveOrderSync = world.get("_move_sync")
 	_check(not sync.active and sync.rest == player.position, "and the server is taken to have it there")
+	# Round 749's verification, FP1-FP3: nothing was in flight, so nothing
+	# answers it; with a 0x7021 in flight, a stop does, once.
+	_check(sync.answered == Vector3.INF, "a correction with no 0x7021 in flight is not answered")
+	sync.sent_destination(Vector3(500, 0, 10), Time.get_ticks_msec())
+	world.call("_on_entity_move_stop", _stop(777, Vector3(-30, 0, 10), 0))
+	_check(sync.answered == Vector3(-30, 0, 10), "one with a 0x7021 in flight is answered with a stop there (%s)" % str(sync.answered))
+	# Round 749's verification: no click is sent while stunned or trading.
+	var states: Dictionary = world.get("_abnormal_states")
+	states["character:777"] = {"mask": 0x4000, "levels": []}
+	_check(String(world.call("_issue_walk", Vector3(100, 0, 10))) == "ignore", "a click while stunned walks nowhere")
+	_check(String(world.call("_start_heading_run", Vector3(1.0, 0.2, 0.0))) == "ignore", "nor does a sky click")
+	states.erase("character:777")
+	world.set("_trade_established", true)
+	_check(String(world.call("_issue_walk", Vector3(100, 0, 10))) == "ignore", "nor a click in an established trade")
+	world.set("_trade_established", false)
+	_check(String(world.call("_issue_walk", Vector3(100, 0, 10))) == "walk", "and one with neither walks")
+	world.set("_has_move_target", false)
 	net.set("own_character_id", -1)

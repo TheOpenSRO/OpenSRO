@@ -56,7 +56,17 @@ const MIN_ORDER := 0.5
 ## as refused. A round trip on the public server is well under it; a click
 ## the server refuses (or its bucket drops) costs at most this much walk,
 ## which the stop then reconciles.
-const ECHO_TIMEOUT_MS := 1500
+##
+## 1.0 s since round 749's verification (FP4), down from 1.5: the stop it
+## sends lies up to this much run from the server's anchor, and the server's
+## claim bound grants one slack (9) plus AllowanceSeconds (1.0) of run banked
+## while standing (server/internal/world/claim.go). At 1.5 s a lag spike past
+## 1.0 s made an honest stop exceed it and be corrected. Raising the
+## allowance to 2.0 s instead would let every client, honest or not, bank a
+## second more of free movement on every stop and placement; lowering the
+## timeout costs only an honest player whose echo takes over 1 s an early
+## stop, which the next click resumes.
+const ECHO_TIMEOUT_MS := 1000
 
 ## The server has a leg this client sent (as far as the client knows).
 var active := false
@@ -69,6 +79,9 @@ var heading_wire := -1
 var rest := Vector3.INF
 ## The last 0x7021's echo, awaited since pending_ms (-1: none awaited).
 var pending_ms := -1
+## The server point the last correction was answered at (Vector3.INF: none
+## answered since the last order).
+var answered := Vector3.INF
 
 ## The tick's decision for the order in effect (has_order, the walk's point
 ## `target` and that point as the wire truncates it, `qtarget`; or a heading
@@ -105,6 +118,7 @@ func flush(pos: Vector3) -> String:
 ## A 0x7021 to `sent_dest` (the truncated point the server walks to) went out
 ## at now_ms.
 func sent_destination(sent_dest: Vector3, now_ms: int = 0) -> void:
+	answered = Vector3.INF
 	active = true
 	heading_run = false
 	dest = sent_dest
@@ -113,6 +127,7 @@ func sent_destination(sent_dest: Vector3, now_ms: int = 0) -> void:
 
 ## A heading form went out at now_ms.
 func sent_heading(wire: int, now_ms: int = 0) -> void:
+	answered = Vector3.INF
 	active = true
 	heading_run = true
 	heading_wire = wire
@@ -137,6 +152,10 @@ func arrived() -> void:
 	heading_run = false
 	rest = dest
 	heading_wire = -1
+	# Round 749's verification: an echo still awaited for an order that has
+	# ended is not awaited any more (the next tick would otherwise take the
+	# ended order as refused and send a stop).
+	pending_ms = -1
 
 ## A stop or placement went out, or the server placed the player (its own
 ## 0xB023): the server has the player at `at`, with no leg.
@@ -147,6 +166,23 @@ func placed(at: Vector3) -> void:
 	dest = Vector3.INF
 	rest = at
 	pending_ms = -1
+
+## The server's correction (its own 0xB023 for this player) put the player at
+## `at`, with no leg. Returns whether the client answers it with a stop there
+## (round 749's verification, FP1-FP3): only when a 0x7021 may still be in
+## flight -- sent, and its echo not yet come -- which the server would take
+## after the correction and start a leg from there that this client does not
+## walk; and never twice for the same server point. Any other correction is
+## the server's last word: answering it with a stop could only be corrected
+## again, which is how the 1d06b4ab client looped.
+func corrected(at: Vector3) -> bool:
+	var in_flight := pending_ms >= 0
+	var again := answered != Vector3.INF and at.distance_to(answered) < 0.01
+	placed(at)
+	if in_flight and not again:
+		answered = at
+		return true
+	return false
 
 static func _flat(v: Vector3) -> float:
 	return Vector2(v.x, v.z).length()

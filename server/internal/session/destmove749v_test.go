@@ -2,13 +2,13 @@ package session
 
 import (
 	"math"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Round 749's fix verification (docs/rounds/r749_review.md, "Fix verification
@@ -21,22 +21,20 @@ import (
 // to its (x, z), taking the ground's height there, and sending a stop from it
 // (_apply_own_correction).
 //
-// The TestR749vFP* tests are the false positives found: each runs and logs
-// what the server did; it FAILS only under OPENSRO_R749V_FP=1, so the default
-// suite stays green until the fix lands (then drop the gate). The
-// TestR749vHonest* tests are scenarios that must keep passing.
+// The TestR749vFP* tests are the false positives the verification found; the
+// fixes landed (round 749's second fix round), so they assert now -- the gate
+// is gone. The TestR749vHonest* tests are scenarios that must keep passing.
+// (The client's answer to every correction they model was the 1d06b4ab
+// client's; since the fix it answers only when a 0x7021 may be in flight --
+// the server no longer issues the corrections they would answer.)
 
-// echoTimeout is MoveOrderSync.ECHO_TIMEOUT_MS.
-const echoTimeout = 1500 * time.Millisecond
+// echoTimeout is MoveOrderSync.ECHO_TIMEOUT_MS (1.0 s since the fix, FP4).
+const echoTimeout = 1000 * time.Millisecond
 
-// fpGate fails t with the message when OPENSRO_R749V_FP is set, else logs it.
+// fpGate fails t: a false positive the fixes must have removed.
 func fpGate(t *testing.T, format string, args ...any) {
 	t.Helper()
-	if os.Getenv("OPENSRO_R749V_FP") != "" {
-		t.Errorf(format, args...)
-		return
-	}
-	t.Logf("FALSE POSITIVE (gated, OPENSRO_R749V_FP=1 fails it): "+format, args...)
+	t.Errorf(format, args...)
 }
 
 // warm walks Aria 10 east and back, both arrived, and lets her stand `rest`:
@@ -289,8 +287,8 @@ func TestR749vFP4LagSpikes(t *testing.T) {
 		{"jitter: click 300 ms, stop 50 ms", 2 * time.Second, 300 * time.Millisecond, time.Second, 50 * time.Millisecond, false},
 		{"spike 1.0 s on the click, stop bunched behind it", 2 * time.Second, time.Second, 900 * time.Millisecond, 50 * time.Millisecond, false},
 		{"spike 1.2 s, stop bunched", 2 * time.Second, 1200 * time.Millisecond, 1100 * time.Millisecond, 50 * time.Millisecond, false},
-		{"spike 1.6 s: the echo timeout stops the walk at 1.5 s", 2 * time.Second, 1600 * time.Millisecond, echoTimeout, 50 * time.Millisecond, false},
-		{"spike 3 s: the echo timeout stops the walk at 1.5 s", 2 * time.Second, 3 * time.Second, echoTimeout, 50 * time.Millisecond, false},
+		{"spike 1.6 s: the echo timeout stops the walk at 1.0 s", 2 * time.Second, 1600 * time.Millisecond, echoTimeout, 50 * time.Millisecond, false},
+		{"spike 3 s: the echo timeout stops the walk at 1.0 s", 2 * time.Second, 3 * time.Second, echoTimeout, 50 * time.Millisecond, false},
 		{"spike 0.5 s within 0.2 s of the last arrival (little banked)", 200 * time.Millisecond, 500 * time.Millisecond, 400 * time.Millisecond, 50 * time.Millisecond, false},
 	}
 	for _, c := range cases {
@@ -509,11 +507,16 @@ func TestR749vHonestRegionCrossing(t *testing.T) {
 	}
 }
 
-// /unstuck (the client's placement at the zone's landing) past the arrival's
-// grace: refused and corrected back into the spot it was stuck at.
+// /unstuck past the arrival's grace (FP6): since the fix it is the server's
+// (unstuck.go). The character, stuck 300 east, asks; the server puts it at the
+// zone's landing spot -- Jangan's spawn spot, worldmap.LandingSpotFor -- and
+// says so with its own 0xB023 and OpUnstuckResult; a second ask within the
+// cooldown is refused with the wait; and nothing ever returns it to a logout
+// spot.
 func TestR749vFP6UnstuckAfterGrace(t *testing.T) {
 	strictPositions(t)
 	f := startDeadWorldFixture(t)
+	t.Cleanup(func() { unstuckLast.Delete(f.aria) })
 	advance := fakeHubClock(t, f.hub)
 	// Walk 300 east (into a building, say) and get stuck there.
 	f.send(t, f.connA, proto.OpMovementRequest, clickTo(300, 0, 0))
@@ -521,17 +524,31 @@ func TestR749vFP6UnstuckAfterGrace(t *testing.T) {
 		t.Fatal("setup: the click was refused")
 	}
 	advance(10 * time.Second)
-	// Three minutes later: /unstuck puts the client at the entry point.
-	noteArrivalLanding(f.aria, spawnZone, spawnPos) // the entry named it at login
 	landingsMu.Lock()
-	for i := range landings[f.aria] {
-		landings[f.aria][i].deadline = time.Now().Add(-time.Second) // past the grace
-	}
+	delete(landings, f.aria) // the arrival's grace long gone
 	landingsMu.Unlock()
-	f.send(t, f.connA, OpMove, (&MoveRequest{X: 0, Y: 0, Z: 0, Relocated: true}).Encode())
-	at, corrected := f.correction(t)
-	t.Logf("/unstuck past the grace: corrected %v (to %+v)", corrected, at)
-	if corrected {
-		fpGate(t, "/unstuck 3 minutes after the arrival was corrected back to %+v", at)
+	f.send(t, f.connA, OpUnstuck, nil)
+	at, moved := f.correction(t)
+	wantX, wantZ, _ := worldmap.LandingSpotFor(spawnZone, spawnPos.X, spawnPos.Z)
+	if !moved || math.Abs(at.X-wantX) > 1e-3 || math.Abs(at.Z-wantZ) > 1e-3 {
+		fpGate(t, "/unstuck past the grace: put %v at %+v, want the zone's landing spot (%.1f, %.1f)", moved, at, wantX, wantZ)
+	}
+	p, _ := readOp(t, f, f.connA, f.rA, OpUnstuckResult)
+	if r, ok := DecodeUnstuckResult(p.Data); !ok || !r.OK {
+		t.Fatalf("/unstuck answered %+v", r)
+	}
+	if e, _ := f.hub.EntityByCharacterID(f.aria); math.Abs(e.Pos.X-wantX) > 1e-3 {
+		t.Fatalf("the server has Aria at %+v", e.Pos)
+	}
+	// The client stands on its ground there and walks on: taken.
+	f.stopAt(t, wantX, 37, wantZ)
+	if again, corrected := f.correction(t); corrected {
+		t.Fatalf("the client's stop at the landing spot was corrected to %+v", again)
+	}
+	// Again at once: refused, with the wait.
+	f.send(t, f.connA, OpUnstuck, nil)
+	p, _ = readOp(t, f, f.connA, f.rA, OpUnstuckResult)
+	if r, ok := DecodeUnstuckResult(p.Data); !ok || r.OK || r.Wait == 0 || r.Wait > uint16(unstuckCooldown/time.Second) {
+		t.Fatalf("a second /unstuck at once answered %+v, want a refusal with the wait", r)
 	}
 }
