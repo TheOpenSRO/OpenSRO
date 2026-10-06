@@ -6209,6 +6209,8 @@ func _load_object_template(model_path: String) -> Node3D:
 func _exit_tree() -> void:
 	if ParseProfile.enabled and _initial_load_done:
 		print(ParseProfile.report("after the entry"))
+	SoundTable.set_listener(null)
+	_leave_ground_pick("the world left the tree")
 	# Round 747: the far crowd's instances go with the world, and its hooks.
 	if _crowd_gpu != null:
 		_crowd_gpu.release_all()
@@ -6220,8 +6222,6 @@ func _exit_tree() -> void:
 	if EquipFx.far_frame == _crowd_item_frame:
 		EquipFx.far_frame = Callable()
 		EquipFx.far_origin = Callable()
-	SoundTable.set_listener(null)
-	_leave_ground_pick("the world left the tree")
 	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
 	# world leaving before it asked for its item, character and skill tables
 	# leaves no worker running behind it.

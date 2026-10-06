@@ -150,6 +150,8 @@ class Body:
 	var parts: Array = []
 	## The MeshInstance3Ds its instances stand for, hidden while it is far.
 	var hidden: Array = []
+	## Clip -> its frames on this body's layout (set_clip).
+	var by_clip := {}
 	var xf := Transform3D()
 	## The skeleton's own transform under its holder, kept while it is
 	## top_level (add()).
@@ -330,18 +332,29 @@ func remove(skel: Skeleton3D, push: bool = true) -> Array:
 ## `frames`, in its entry (as MonsterMotion.swap_loop does), when its frames
 ## are baked. False when they are not (queued): the caller brings the body
 ## near and swaps there.
+##
+## Cheap, since a walking crowd changes gait in bursts (every body that gets a
+## new target starts running in the same frame): the clip's frames are looked
+## up once per body and clip.
 func set_clip(skel: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, idle_time: float) -> bool:
 	var b: Body = _bodies.get(skel)
 	if b == null or anim == null:
 		return false
-	var probe := b.entry.duplicate()
-	probe[1] = anim
-	probe[2] = frames
-	if not can_draw(skel, probe):
+	if anim == b.entry[1]:
+		b.entry[2] = frames
+		return true
+	if anim.duration_ms <= 0 or anim.key_times.is_empty():
+		return false
+	var fr: CrowdAnim.Frames = b.by_clip.get(anim)
+	if fr == null:
+		fr = CrowdAnim.frames_for(b.layout.scratch, anim)
+		b.by_clip[anim] = fr
+	if not b.layout.clips.has(fr):
+		_queue_bake(b.layout, fr)
 		return false
 	b.entry[1] = anim
 	b.entry[2] = frames
-	b.frames = CrowdAnim.frames_for(b.layout.scratch, anim)
+	b.frames = fr
 	_write_clip(b, idle_time)
 	return true
 

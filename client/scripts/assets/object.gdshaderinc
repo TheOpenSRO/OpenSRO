@@ -154,7 +154,7 @@ void vertex() {
 	// CrowdGpu.twin_shader): skinned and placed here first.
 #include "res://scripts/world/crowd_gpu_vertex.gdshaderinc"
 #endif
-	srr_od0 =srr_obj_od0(MODEL_NORMAL_MATRIX * NORMAL, srr_color(albedo, OUTPUT_IS_SRGB).rgb, object_color, object_tint);
+	srr_od0 = srr_obj_od0(MODEL_NORMAL_MATRIX * NORMAL, srr_color(albedo, OUTPUT_IS_SRGB).rgb, object_color, object_tint);
 	UV = vec2(dot(vec3(UV, 1.0), texani_u), dot(vec3(UV, 1.0), texani_v));
 }
 
