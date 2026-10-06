@@ -13,6 +13,7 @@ package world
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
@@ -100,6 +101,19 @@ type Entity struct {
 	// 749, mover.go). Every Entity the hub hands out carries the leg's
 	// position at that moment in Pos.
 	Move *Mover
+	// Trusted is the last point the server itself fixed for the character
+	// (round 749's review, F1; claim.go): an arrival, a placement it made, the
+	// end of a leg, a correction. A client's stop or placement is measured
+	// from it (or from the leg), never from the client's previous claim, so
+	// claims cannot creep. While a leg runs, the leg is the reference.
+	Trusted Position
+	// The movement allowance (claim.go): units of run banked while standing,
+	// at most AllowanceSeconds' worth, that a claim beyond the free slack
+	// draws from. allowAt is when it was last brought up to date, allowLeg
+	// how far the current leg had gone then, allowSpeed the run speed it
+	// accrues at.
+	allow, allowLeg, allowSpeed float64
+	allowAt                     time.Time
 }
 
 // ViewRadius is how many message blocks around its own a player sees other
@@ -144,6 +158,9 @@ type Hub struct {
 	// periodic pass's work list (round 749).
 	moving map[uint64]*Entity
 	clock  func() time.Time
+	// passHold is how long the last AdvanceMovers held the write lock, in
+	// nanoseconds (round 749's review, F7: measured by world's tests).
+	passHold atomic.Int64
 }
 
 // NewHub returns an empty Hub.
@@ -173,7 +190,7 @@ func (h *Hub) Enter(sess *gateway.Session, characterID int64, name string, level
 	h.removeLocked(sess.ID())
 
 	h.arrivals++
-	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: h.arrivals}
+	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: h.arrivals, Trusted: pos, allowAt: h.clock()}
 	h.insertLocked(e)
 	return h.viewOthersLocked(e)
 }
@@ -273,7 +290,7 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	// return point moves a dead character before it revives it (round 665,
 	// session.ReviveHandler), and a state is never reset by a move.
 	h.arrivals++
-	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading}
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading, Trusted: pos, allowAt: h.clock(), allowSpeed: old.allowSpeed}
 	h.insertLocked(next)
 	if stale {
 		if live != nil {

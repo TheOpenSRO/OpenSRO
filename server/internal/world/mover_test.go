@@ -135,16 +135,16 @@ func TestAdvanceMoversRefilesACrossingAndEndsAnArrival(t *testing.T) {
 	}
 	h.StartMove(a, MoveOrder{Dest: Position{X: 3*320 + 10, Z: 10}, Speed: 100})
 	c.add(time.Second) // x 110: same block
-	if out := h.AdvanceMovers(nil); len(out) != 0 {
+	if out := h.AdvanceMovers(nil).Crossings; len(out) != 0 {
 		t.Fatalf("no crossing yet, got %d", len(out))
 	}
 	c.add(3 * time.Second) // x 410: block 1, Bram (block 4) still out of view
-	out := h.AdvanceMovers(nil)
+	out := h.AdvanceMovers(nil).Crossings
 	if len(out) != 1 || len(out[0].Gained) != 0 {
 		t.Fatalf("x 410: %+v", out)
 	}
 	c.add(6 * time.Second) // x 970: block 3, Bram in view
-	out = h.AdvanceMovers(nil)
+	out = h.AdvanceMovers(nil).Crossings
 	if len(out) != 1 || len(out[0].Gained) != 1 || out[0].Gained[0].CharacterID != 200 {
 		t.Fatalf("x 970: %+v", out)
 	}

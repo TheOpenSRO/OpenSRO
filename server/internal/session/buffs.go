@@ -495,10 +495,10 @@ func endCategoryOnSkillUseLocked(hub *world.Hub, casterID int64, row *refdata.Sk
 // every buff packet's runSpeed carries it, and the new speed reaches the
 // client the way a buff's does -- an OpBuffEnd with no tokens and the speed,
 // to the owner's zone (a client applies only its own owner's runSpeed,
-// World3D._on_buff_ended). The server does not police movement speed
-// (handleMove stores what the client sends; no speed or distance check
-// exists -- re-measured by grep in round 636), so nothing else has to
-// accept it.
+// World3D._on_buff_ended). Since round 749 the server moves the character
+// itself at buffBooks.RunSpeed (world.Mover, destmove.go: the GM's factor
+// included, re-based on the mover pass), and bounds a client's claims by that
+// speed (world.Hub.Claim's allowance), so the factor is policed through it.
 type gmSpeed struct{ hub *world.Hub }
 
 func (g gmSpeed) SetGMSpeed(characterID int64, factor float64) uint32 {

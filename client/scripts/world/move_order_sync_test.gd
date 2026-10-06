@@ -19,39 +19,48 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
+## decide with the target already on whole units (its own truncation) at 0 ms.
+func _dec(s: MoveOrderSync, has: bool, run: bool, target: Vector3, wire: int, pos: Vector3) -> String:
+	return s.decide(has, run, target, target, wire, pos, 0)
+
 func _test_click_walk() -> void:
 	var s := MoveOrderSync.new()
 	var pos := Vector3(0, 0, 0)
 	var d := Vector3(100, 0, 0)
-	_check(s.decide(false, false, Vector3.ZERO, -1, pos) == "", "no order, nothing")
-	_check(s.decide(true, false, d, -1, pos) == "dest", "a click sends its 0x7021")
+	_check(_dec(s, false, false, Vector3.ZERO, -1, pos) == "", "no order, nothing")
+	_check(_dec(s, true, false, d, -1, pos) == "dest", "a click sends its 0x7021")
 	s.sent_destination(d)
-	_check(s.decide(true, false, d, -1, Vector3(10, 0, 0)) == "", "the same point is not sent again")
-	_check(s.decide(true, false, d + Vector3(3, 0, -2.9), -1, Vector3(10, 0, 0)) == "", "a point moved 4 is not sent again (the server's 5.0)")
-	_check(s.decide(true, false, d + Vector3(0, 0, 5), -1, Vector3(10, 0, 0)) == "dest", "a point moved 5 is")
+	_check(_dec(s, true, false, d, -1, Vector3(10, 0, 0)) == "", "the same point is not sent again")
+	_check(_dec(s, true, false, d + Vector3(3, 0, -2.9), -1, Vector3(10, 0, 0)) == "", "a point moved 4 is not sent again (the server's 5.0)")
+	# Round 749's review, F5: the server refuses a destination within 5.0,
+	# `<=`, of its own, both truncated: exactly 5 is not sent, past it is.
+	_check(_dec(s, true, false, d + Vector3(0, 0, 5), -1, Vector3(10, 0, 0)) == "", "a point moved exactly 5 is not sent (the server's <=)")
+	_check(_dec(s, true, false, d + Vector3(0, 0, 6), -1, Vector3(10, 0, 0)) == "dest", "a point moved 6 is")
+	_check(s.decide(true, false, d + Vector3(0, 0, 5.9), d + Vector3(0, 0, 5), -1, Vector3(10, 0, 0), 0) == "",
+		"a point 5.9 off that the wire truncates to 5.0 is not sent")
 	s.sent_destination(d + Vector3(0, 0, 5))
 	# The walk ends within its stop distance of the point: nothing.
-	_check(s.decide(false, false, Vector3.ZERO, -1, Vector3(98, 0, 5)) == "ended", "a walk that ends 2 short of the point says nothing")
+	_check(_dec(s, false, false, Vector3.ZERO, -1, Vector3(98, 0, 5)) == "ended", "a walk that ends 2 short of the point says nothing")
 	s.arrived()
 	_check(not s.active and s.rest == Vector3(100, 0, 5), "and the server is taken to stand on the point")
-	_check(s.decide(false, false, Vector3.ZERO, -1, Vector3(98, 0, 5)) == "", "nothing more after it")
+	_check(_dec(s, false, false, Vector3.ZERO, -1, Vector3(98, 0, 5)) == "", "nothing more after it")
 	# A wall: the walk ends well short.
-	_check(s.decide(true, false, Vector3(300, 0, 5), -1, Vector3(98, 0, 5)) == "dest", "a new click from rest is sent")
+	_check(_dec(s, true, false, Vector3(300, 0, 5), -1, Vector3(98, 0, 5)) == "dest", "a new click from rest is sent")
 	s.sent_destination(Vector3(300, 0, 5))
-	_check(s.decide(false, false, Vector3.ZERO, -1, Vector3(150, 0, 5)) == "stop", "a walk a wall ended 150 short reports its stop")
+	_check(_dec(s, false, false, Vector3.ZERO, -1, Vector3(150, 0, 5)) == "stop", "a walk a wall ended 150 short reports its stop")
 	s.placed(Vector3(150, 0, 5))
 	_check(s.rest == Vector3(150, 0, 5) and not s.active, "the stop is where the server has it")
-	_check(s.decide(true, false, Vector3(150.2, 0, 5), -1, Vector3(150, 0, 5)) == "", "an order closer than 0.5 is not sent")
+	_check(_dec(s, true, false, Vector3(150.2, 0, 5), -1, Vector3(150, 0, 5)) == "", "an order closer than 0.5 is not sent")
 
 func _test_heading_run() -> void:
 	var s := MoveOrderSync.new()
 	var pos := Vector3(1, 0, 1)
-	_check(s.decide(true, true, Vector3.ZERO, 0x4000, pos) == "heading", "a sky click sends the heading form")
+	_check(_dec(s, true, true, Vector3.ZERO, 0x4000, pos) == "heading", "a sky click sends the heading form")
 	s.sent_heading(0x4000)
-	_check(s.decide(true, true, Vector3.ZERO, 0x4000, pos) == "", "the same heading is not sent again")
-	_check(s.decide(true, true, Vector3.ZERO, 0x4100, pos) == "heading", "a new heading is")
+	_check(_dec(s, true, true, Vector3.ZERO, 0x4000, pos) == "", "the same heading is not sent again")
+	_check(_dec(s, true, true, Vector3.ZERO, 0x4100, pos) == "heading", "a new heading is")
 	s.sent_heading(0x4100)
-	_check(s.decide(false, false, Vector3.ZERO, -1, pos) == "stop", "a heading run's end is always reported (it has no point)")
+	_check(_dec(s, false, false, Vector3.ZERO, -1, pos) == "stop", "a heading run's end is always reported (it has no point)")
 	_check(s.flush(pos) == "stop", "and flushed")
 
 func _test_flush() -> void:
@@ -63,6 +72,25 @@ func _test_flush() -> void:
 	s.sent_destination(Vector3(50, 0, 5))
 	_check(s.flush(Vector3(49.8, 0, 5)) == "", "on the point being walked to: nothing")
 	_check(s.flush(Vector3(40, 0, 5)) == "stop", "short of it (an approach in reach): the stop")
+
+## Round 749's review, F3: an order with no echo within ECHO_TIMEOUT_MS is
+## refused; its echo confirms it; an older order's echo does not.
+func _test_echo() -> void:
+	var s := MoveOrderSync.new()
+	s.sent_destination(Vector3(100, 0, 0), 1000)
+	_check(s.decide(true, false, Vector3(100, 0, 0), Vector3(100, 0, 0), -1, Vector3.ZERO, 1000 + MoveOrderSync.ECHO_TIMEOUT_MS) == "",
+		"waiting for the echo")
+	_check(s.decide(true, false, Vector3(100, 0, 0), Vector3(100, 0, 0), -1, Vector3.ZERO, 1001 + MoveOrderSync.ECHO_TIMEOUT_MS) == "unconfirmed",
+		"no echo past the timeout: refused")
+	s.sent_destination(Vector3(100, 0, 0), 5000)
+	s.confirm(DestMoveNet.KIND_DESTINATION, Vector3(40, 0, 0), -1)
+	_check(s.pending_ms == 5000, "an echo of another point confirms nothing")
+	s.confirm(DestMoveNet.KIND_DESTINATION, Vector3(100, 0, 0), -1)
+	_check(s.pending_ms == -1, "its own echo confirms it")
+	_check(s.decide(true, false, Vector3(100, 0, 0), Vector3(100, 0, 0), -1, Vector3.ZERO, 99999) == "", "and nothing times out")
+	s.sent_heading(0x4000, 0)
+	s.confirm(DestMoveNet.KIND_HEADING, Vector3.ZERO, 0x4000)
+	_check(s.pending_ms == -1, "a heading echo confirms the run")
 
 func _test_other_walk() -> void:
 	var leg := OtherWalk.to_point(Vector3(100, 7, 0), 50.0)
@@ -94,6 +122,7 @@ func _init() -> void:
 	_test_click_walk()
 	_test_heading_run()
 	_test_flush()
+	_test_echo()
 	_test_other_walk()
 	if _failures == 0:
 		print("ALL PASS")

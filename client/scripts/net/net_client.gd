@@ -648,9 +648,20 @@ func move_order_destination(at: Vector3) -> Vector3:
 	if _spawn_frame.x < 0:
 		return Vector3.INF
 	var l := DestMoveNet.local_of_world(at.x, at.z, _spawn_frame)
+	_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_destination(int(l["region"]), float(l["lx"]), at.y, float(l["lz"])))
+	return quantize_destination(at)
+
+## Round 749's review, F5: the world point the server will take for a
+## destination `at` -- the region-local coordinates truncated as the wire
+## carries them, turned back into world ones -- without sending anything, so
+## the client's 5.0 rule compares what the server compares. Vector3.INF when
+## no frame is known.
+func quantize_destination(at: Vector3) -> Vector3:
+	if _spawn_frame.x < 0:
+		return Vector3.INF
+	var l := DestMoveNet.local_of_world(at.x, at.z, _spawn_frame)
 	var lx := float(int(float(l["lx"])))
 	var lz := float(int(float(l["lz"])))
-	_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_destination(int(l["region"]), lx, at.y, lz))
 	var w := DestMoveNet.world_of_local(int(l["region"]), lx, lz, _spawn_frame)
 	return Vector3(w.x, float(int(at.y)), w.y)
 

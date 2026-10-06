@@ -306,11 +306,26 @@ func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, mons
 		h.Put(r)
 	}
 	msg := &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: characterID, Mask: h.Mask(), Levels: h.Levels()}
+	stopped := !h.CanMove()
 	s.mu.Unlock()
 	s.tracef("status: character %d took %v from monster %d (mask %#x)", characterID, codesOf(recs), monster.ID, msg.Mask)
 	if e, ok := entityOf(d.hub, characterID); ok {
 		broadcastStatus(d.hub, e.Zone, msg)
 	}
+	// A state that stops a move ends the leg where the server has it (round
+	// 749's review, F4; READ vslot 0x570 -> the slot-300 stop's 0xB023).
+	if stopped && d.hub != nil {
+		haltForState(d.hub, characterID)
+	}
+}
+
+// characterCanMove reports whether characterID's states let it walk (round
+// 749's review, F4: Holder.CanMove, the 0x7021 handler's 0xc1 | 0x4000 gate).
+func (s *statusRuntime) characterCanMove(characterID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.pcs[characterID]
+	return h == nil || h.CanMove()
 }
 
 // monsterMayAct reports whether monsterID's states let it strike (the

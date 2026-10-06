@@ -11647,6 +11647,7 @@ func _step_click_walk(delta: float) -> bool:
 ## (docs/protocol/auto_command.md, phase 1, READ).
 func _end_blocked_click_walk(graph: NavGraph, step: NavGraph.StepResult) -> void:
 	var was_run := _move_heading_run
+	_order_end_blocked = true
 	var approach := not _pending_attack.is_empty() or not _pending_friend_cast.is_empty()
 	if approach:
 		_approach_blocked_at = _move_target
@@ -15547,18 +15548,22 @@ func _sync_move_order() -> void:
 		return
 	var run := _has_move_target and _move_heading_run
 	var wire := SkyRun.wire_angle(_move_heading) if run else -1
-	match _move_sync.decide(_has_move_target, run, _move_target, wire, player.position):
+	var now_ms := Time.get_ticks_msec()
+	var qtarget := NetClient.quantize_destination(_move_target) if (_has_move_target and not run) else Vector3.INF
+	match _move_sync.decide(_has_move_target, run, _move_target, qtarget, wire, player.position, now_ms):
 		"dest":
 			var sent := NetClient.move_order_destination(_move_target)
 			if sent != Vector3.INF:
-				_move_sync.sent_destination(sent)
+				_move_sync.sent_destination(sent, now_ms)
+				_order_end_blocked = false
 				_time_since_send = 0.0
 				if _qa_move_log:
 					print("MOVE send t=%d ms=%d 0x7021 to (%.3f,%.3f) from (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(),
 						sent.x, sent.z, player.position.x, player.position.z])
 		"heading":
 			NetClient.move_order_heading(SkyRun.COMMAND_FORWARD, wire)
-			_move_sync.sent_heading(wire)
+			_move_sync.sent_heading(wire, now_ms)
+			_order_end_blocked = false
 			_time_since_send = 0.0
 			if _qa_move_log:
 				print("MOVE send t=%d ms=%d 0x7021 heading=%d from (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(),
@@ -15566,7 +15571,50 @@ func _sync_move_order() -> void:
 		"stop":
 			_send_stop()
 		"ended":
-			_move_sync.arrived()
+			# Round 749's review, F6: a wall that ended the walk, or one between
+			# where the player stands and the point the server walks to, is
+			# reported -- else the server, and every observer, keeps the player
+			# up to ARRIVE_SLACK on the far side of it.
+			if _order_end_blocked or _walk_blocked_to(_move_sync.dest):
+				_send_stop()
+			else:
+				_move_sync.arrived()
+		"unconfirmed":
+			# Round 749's review, F3: the last 0x7021 had no echo -- the server
+			# refused it, silently as retail's does (a stun, a transition, the
+			# 5.0 gate, its bucket). The walk stops here and the stop goes out:
+			# the server takes it within its bound or puts the player back.
+			print("MOVE unconfirmed: no echo for the last 0x7021 in %d ms -- stopped at (%.2f, %.2f) and reported" % [
+				MoveOrderSync.ECHO_TIMEOUT_MS, player.position.x, player.position.z])
+			_has_move_target = false
+			_move_heading_run = false
+			player.velocity.x = 0.0
+			player.velocity.z = 0.0
+			_send_stop()
+
+## Round 749's review, F6: a wall ended the order in effect (set by
+## _end_blocked_click_walk, cleared by the next order): its end is always
+## reported, however near the point it stopped.
+var _order_end_blocked := false
+
+## Round 749's review, F6: whether the navigation graph blocks the ground
+## straight from where the player stands to `to` (the point the server's leg
+## ended on): the no-slide walk's own test (NavGraph.blocked), in the region
+## the player stands in. False with no graph under the player.
+func _walk_blocked_to(to: Vector3) -> bool:
+	if to == Vector3.INF or player == null:
+		return false
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		return false
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	var from := group.to_local(player.global_position)
+	var dest := group.to_local(to)
+	if Vector2(dest.x - from.x, dest.z - from.z).length() < 0.01:
+		return false
+	var on := _nav_footing if graph == _nav_footing_graph else NavGraph.ON_TERRAIN
+	return graph.blocked(Vector2(from.x, from.z), Vector2(dest.x, dest.z), on, from.y)
 
 ## A placement (relocated OpMove, round 637's review follow-up): the server
 ## has the player here, with no leg.
@@ -15582,7 +15630,8 @@ func _send_placement() -> void:
 func _send_stop() -> void:
 	if _qa_move_log:
 		print("MOVE send t=%d ms=%d stop (%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z])
-	NetClient.report_stop(player.position.x, player.position.y, player.position.z)
+	if NetClient.is_connected_to_server():
+		NetClient.report_stop(player.position.x, player.position.y, player.position.z)
 	_note_position_sent()
 
 ## The server has the player where it stands now, with no leg.
@@ -16218,6 +16267,8 @@ func _on_entity_move_echo(echo: DestMoveNet.Echo) -> void:
 	if _own_id() >= 0 and id == (_own_id() & 0xffffffff):
 		if _qa_move_log:
 			print("MOVE echo self ms=%d kind=%d dest=(%.3f,%.3f)" % [Time.get_ticks_msec(), echo.kind, echo.dest_world.x, echo.dest_world.z])
+		# Round 749's review, F3: it confirms the order it names.
+		_move_sync.confirm(echo.kind, echo.dest_world, echo.angle)
 		return
 	var other := _other_by_uid(id)
 	if other >= 0:
@@ -16325,7 +16376,10 @@ func _apply_own_correction(at: Vector3, heading: float) -> void:
 	player.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
 	_player_turn_target = NAN
 	_relocated_pending = false
-	_note_position_sent()
+	# Round 749's review, F3: a 0x7021 already in flight when the server sent
+	# this would start a leg from here that this client does not walk; the
+	# stop here ends it (on that leg at its start, so the server takes it).
+	_send_stop()
 
 ## Round 749: one frame of every other player's leg (OtherWalk.step), before
 ## the eased bodies: the body steps along it at its run speed and its height is

@@ -10,6 +10,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/trade"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
@@ -51,15 +52,18 @@ import (
 //     crossed a block line (moverPassPeriod).
 //   - A wall, an approach that arrived in reach, a sit or a stop short of the
 //     destination is the client's to report: OpMove with the stop flag
-//     (moveFlagStopped). The server takes it when the point lies on the leg
-//     as far as the leg can have gone (stopAdmits) and relays it to the window
-//     as retail's 0xB023. A report it does not take ends the leg where the
-//     server has it, and the window -- the mover included -- is told that
-//     with a 0xB023: the speed bound is the server's own leg.
-//   - A relocation (OpMove with the relocated flag: a placement, a recovery)
-//     is taken only near where the server has the character, at a point the
-//     server itself named (an arrival, a GM's /tp or /goto), or under
-//     cmd/server's -trust-client-positions (QA). It is relayed as 0xB023.
+//     (moveFlagStopped). A placement is OpMove with the relocated flag. Each
+//     is a CLAIM (world.Hub.Claim, round 749's review F1): measured from the
+//     server's own anchor -- the leg's travelled segment, or the last point
+//     the server fixed -- with a free slack (claimSlack) and, beyond it, a
+//     clocked allowance of at most a second of run banked while standing.
+//     That is the speed bound: no chain of claims moves a character faster
+//     than its run speed, beyond one slack and one banked second. A
+//     placement may also land on a point the server named (an arrival, a GM
+//     /tp or /goto), once, within landingGrace. A claim the server takes is
+//     relayed to the window as retail's 0xB023; one it does not take puts
+//     the character back on its anchor, and the window -- the mover
+//     included -- hears that 0xB023. -trust-client-positions (QA) takes all.
 //   - The accepted 0xB021 goes to the mover too, as retail's does; OpenSRO's
 //     client walks its own click at once and takes its own echo as a receipt.
 //     A stop the mover reported is relayed to the others only: its own
@@ -75,20 +79,17 @@ const OpMovementStop uint16 = 0xB023
 // it as a walked position.
 const moveFlagStopped byte = 4
 
-// The stop report's bounds (OURS). The client is never ahead of the server's
-// leg by more than its own clock's drift over the leg (both start the leg
-// from the same click, the server one transit later, and the report reaches
-// it one transit after it was taken), so stopLead covers a frame, a hitch
-// and the speed's float noise; stopLateral covers the destination's
-// truncation to whole units (1.42), the client's no-slide wall nudge (0.2,
-// READ) and its stop distance (2.39). idleSlack is how far from a standing
-// character's position a report may land: a click walk ends within its stop
-// distance (2.39) of the truncated destination (1.42 away).
+// The claim's bounds (OURS, world.Bound). claimSlack is the free distance
+// from the anchor: a click walk ends within its stop distance (2.39) of the
+// destination the wire truncated (up to 1.42 away), and a click within 5.0 of
+// the point being walked to is walked but not sent (the server would refuse
+// it: READ 0xb45b28) -- 5 + 2.39 + 1.42 = 8.8 (round 749's review, F5).
+// claimHeight bounds a claim's height against the anchor's (F10): a sanity
+// bound so a saved or reported height cannot be anywhere, not a measured
+// terrain figure.
 const (
-	stopLateral     = 8.0
-	stopLeadSeconds = 1.0
-	stopLeadUnits   = 5.0
-	idleSlack       = 6.0
+	claimSlack  = 9.0
+	claimHeight = 100.0
 )
 
 // moverPassPeriod is how often the movers are refiled (OURS): a block
@@ -220,12 +221,25 @@ func DecodeMoveEcho(b []byte) (MoveEcho, bool) {
 
 // handleMovementRequest is 0x7021 (READ above; OURS where the comments say).
 func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars character.Store) error {
+	// Round 749's review, F8 (OURS: retail's handler has no rate gate): a
+	// click beyond the session's bucket is dropped, silently as every refusal
+	// (its client takes a missing echo as a refusal: MoveOrderSync).
+	if !moveBucketTake(sess, time.Now()) {
+		return nil
+	}
 	m, angle, err := proto.DecodeMovement(p.Data, false)
 	if err != nil || (m.Kind != proto.MovementKindHeading && m.Kind != 1) {
 		return nil // a kind other than 0 or 1 is refused
 	}
 	e, ok := hub.EntityBySession(sess.ID())
 	if !ok || e.Life == world.LifeDead {
+		return nil
+	}
+	// Round 749's review, F4 (READ, GObjPC::FUN_004b0ea0): the abnormal
+	// states that stop a move -- the bits 0xc1 | 0x4000 (`test al,0xc1` at
+	// 0x4b0fa6), stun, freeze, sleep, root: statuseffect.Holder.CanMove --
+	// and an established trade (interaction state 2; 0 and 1 pass).
+	if !statusFX.characterCanMove(e.CharacterID) || tradeEstablishedOn(hub, e.CharacterID) {
 		return nil
 	}
 	order := world.MoveOrder{Speed: float64(buffBooks.RunSpeed(e.CharacterID))}
@@ -249,6 +263,12 @@ func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hu
 		}
 		x, z := worldOfRegionLocal(e.Zone, m.Region, float64(m.LocalX), float64(m.LocalZ))
 		order.Dest = world.Position{X: x, Y: float64(m.LocalY), Z: z}
+		// Round 749's review, F10 (OURS): a destination's height within
+		// claimHeight plus the ground distance of the start's -- the leg
+		// interpolates the height, and a saved one must not be anywhere.
+		if math.Abs(order.Dest.Y-e.Pos.Y) > claimHeight+math.Hypot(x-e.Pos.X, z-e.Pos.Z) {
+			return nil
+		}
 	}
 	now := time.Now()
 	// Round 640, OURS: a character its own protection wall holds does not
@@ -299,15 +319,16 @@ func legEnd(m *world.Mover, now time.Time) time.Time {
 	return m.Start.Add(time.Duration(m.Length() / m.Speed * float64(time.Second)))
 }
 
-// stopAdmits is the stop report's bound (OURS): with a leg, a point within
-// stopLateral of the leg and no farther along it than the leg can have gone
-// by now (plus stopLead); standing, a point within idleSlack.
-func stopAdmits(now time.Time, cur world.Entity, x, z float64) bool {
-	if m := cur.Move; m != nil {
-		along, off := m.Along(x, z)
-		return off <= stopLateral && along <= m.Travelled(now)+m.Speed*stopLeadSeconds+stopLeadUnits
+// claimBound is a stop's or a placement's world.Bound for characterID now:
+// its run speed, the slack, the height, -trust-client-positions, and for a
+// placement the points the server named (used up when one is taken).
+func claimBound(characterID int64, placement bool, now time.Time) world.Bound {
+	b := world.Bound{Speed: float64(buffBooks.RunSpeed(characterID)), Slack: claimSlack, Height: claimHeight,
+		Trust: trustPositions.Load()}
+	if placement {
+		b.Named = func(x, z float64) bool { return landingTake(characterID, x, z, now) }
 	}
-	return math.Hypot(x-cur.Pos.X, z-cur.Pos.Z) <= idleSlack
+	return b
 }
 
 // stopRelay is the 0xB023 of r's entity, to its watchers that hold it (and
@@ -320,7 +341,7 @@ func stopRelay(sess *gateway.Session, r world.MoveResult, self bool) {
 // the window, the mover included: a report or relocation the server did not
 // take. The client snaps there (FUN_008a4f80).
 func correctMover(sess *gateway.Session, hub *world.Hub) {
-	r, _, ok := hub.Halt(sess)
+	r, ok := hub.Correct(sess)
 	if !ok {
 		return
 	}
@@ -340,77 +361,85 @@ func haltForSit(sess *gateway.Session, hub *world.Hub) {
 	stopRelay(sess, r, false)
 }
 
-// relocationAdmits is the relocation's bound (OURS): near where the server
-// has the character (stopAdmits), at a point the server named (an arrival, a
-// GM's move), or anywhere under -trust-client-positions.
-func relocationAdmits(e world.Entity, x, z float64, now time.Time) bool {
-	return trustPositions.Load() || stopAdmits(now, e, x, z) || landingAdmits(e.CharacterID, x, z, now)
-}
-
 // landings holds, per character, the points the server itself named for it
-// to stand at: the world entry's and the last zone change's arrival and the
-// client's spawn spot in that region (no deadline: /unstuck may return there
-// at any time), and a GM's /tp or /goto point (for landingGrace). OURS.
-var landings sync.Map // int64 -> *landingSet
+// to stand at (OURS): an arrival's (the world entry's, a zone change's, a
+// teleport's, a return's) and the client's spawn spot in that region, and a
+// GM's /tp or /goto point. Round 749's review, F2: each point is taken ONCE
+// and only within landingGrace of being named -- the arrival's placement on
+// its ground -- so a logout spot is no free recall.
+var (
+	landingsMu sync.Mutex
+	landings   = map[int64][]landingPoint{}
+)
 
-type landingSet struct {
-	arrival  [][2]float64
-	gm       [][2]float64
+type landingPoint struct {
+	x, z     float64
 	deadline time.Time
 }
 
-// landingGrace is how long a GM's point is taken (warpLandingGrace's reason:
+// landingGrace is how long a named point is taken (warpLandingGrace's reason:
 // a slow machine's zone load).
 const landingGrace = warpLandingGrace
 
-func landingOf(characterID int64) *landingSet {
-	if v, ok := landings.Load(characterID); ok {
-		return v.(*landingSet)
+// noteLandings names pts for characterID until now + landingGrace. An
+// arrival replaces the points named before it; a GM's point is added.
+func noteLandings(characterID int64, now time.Time, replace bool, pts ...[2]float64) {
+	landingsMu.Lock()
+	defer landingsMu.Unlock()
+	if replace {
+		delete(landings, characterID)
 	}
-	return nil
+	for _, p := range pts {
+		landings[characterID] = append(landings[characterID], landingPoint{x: p[0], z: p[1], deadline: now.Add(landingGrace)})
+	}
 }
 
-// noteArrivalLanding records an arrival at pos in zone (a world entry, a zone
+// noteArrivalLanding names an arrival at pos in zone (a world entry, a zone
 // change, a teleport, a return): the point and the client's spawn spot there.
 func noteArrivalLanding(characterID int64, zone string, pos world.Position) {
 	pts := [][2]float64{{pos.X, pos.Z}}
 	if x, z, ok := worldmap.LandingSpotFor(zone, pos.X, pos.Z); ok {
 		pts = append(pts, [2]float64{x, z})
 	}
-	n := &landingSet{arrival: pts}
-	if l := landingOf(characterID); l != nil {
-		n.gm, n.deadline = l.gm, l.deadline
-	}
-	landings.Store(characterID, n)
+	noteLandings(characterID, time.Now(), true, pts...)
 }
 
-// noteGMLanding records a GM /tp or /goto point.
+// noteGMLanding names a GM /tp or /goto point.
 func noteGMLanding(characterID int64, now time.Time, x, z float64) {
-	n := &landingSet{gm: [][2]float64{{x, z}}, deadline: now.Add(landingGrace)}
-	if l := landingOf(characterID); l != nil {
-		n.arrival = l.arrival
-	}
-	landings.Store(characterID, n)
+	noteLandings(characterID, now, false, [2]float64{x, z})
 }
 
-func forgetLandings(characterID int64) { landings.Delete(characterID) }
+func forgetLandings(characterID int64) {
+	landingsMu.Lock()
+	defer landingsMu.Unlock()
+	delete(landings, characterID)
+}
 
-// landingAdmits reports whether (x, z) is one of characterID's named points,
-// within warpLandingTolerance on x and z (the height is the client's).
-func landingAdmits(characterID int64, x, z float64, now time.Time) bool {
-	l := landingOf(characterID)
-	if l == nil {
-		return false
-	}
-	near := func(pts [][2]float64) bool {
-		for _, p := range pts {
-			if math.Abs(x-p[0]) <= warpLandingTolerance && math.Abs(z-p[1]) <= warpLandingTolerance {
-				return true
-			}
+// landingTake reports whether (x, z) is one of characterID's named points,
+// within warpLandingTolerance on x and z (the height is the client's) and
+// inside its grace, and uses it up when it is. Expired points are dropped.
+func landingTake(characterID int64, x, z float64, now time.Time) bool {
+	landingsMu.Lock()
+	defer landingsMu.Unlock()
+	pts := landings[characterID]
+	kept := pts[:0]
+	took := false
+	for _, p := range pts {
+		if now.After(p.deadline) {
+			continue
 		}
-		return false
+		if !took && math.Abs(x-p.x) <= warpLandingTolerance && math.Abs(z-p.z) <= warpLandingTolerance {
+			took = true
+			continue
+		}
+		kept = append(kept, p)
 	}
-	return near(l.arrival) || (now.Before(l.deadline) && near(l.gm))
+	if len(kept) == 0 {
+		delete(landings, characterID)
+	} else {
+		landings[characterID] = kept
+	}
+	return took
 }
 
 // The mover pass: one goroutine per hub while it has movers (OURS).
@@ -455,8 +484,15 @@ func ensureMoverPass(hub *world.Hub) {
 // delivers what each crossing owes (afterRelocate with no move message): the
 // mover the group spawns and despawns, those players its 0x3015 / 0x3016.
 func moverPass(hub *world.Hub) {
-	for _, r := range hub.AdvanceMovers(moverSpeed) {
+	pass := hub.AdvanceMovers(moverSpeed)
+	for _, r := range pass.Crossings {
 		afterRelocate(r.Entity.Session, r, false, nil)
+	}
+	// A heading run past world.HeadingRunLimit ended (round 749's review,
+	// F10): the window and the mover hear where the server stopped it.
+	for _, r := range pass.Ended {
+		motions.walking(r.Entity.CharacterID, time.Now())
+		stopRelay(r.Entity.Session, r, true)
 	}
 }
 
@@ -464,4 +500,68 @@ func moverPass(hub *world.Hub) {
 // included): the pass re-bases a leg whose speed a buff changed.
 func moverSpeed(characterID int64) float64 {
 	return float64(buffBooks.RunSpeed(characterID))
+}
+
+// The 0x7021 bucket (round 749's review, F8; OURS -- retail's handler has
+// none, READ). An honest client sends one 0x7021 per click and, for an
+// approach re-aimed every tick at a target on the move, one per 5.0 units the
+// target's point moves: at most about (75 + 50) / 5 = 25 a second against the
+// fastest roster monster (Earth Ghost's run 75, characterdata col 47) at the
+// base run speed. moveBucketRate is above that, moveBucketBurst holds two
+// seconds of it; a session past them has its clicks dropped.
+const (
+	moveBucketRate  = 30.0
+	moveBucketBurst = 60.0
+	moveBucketKey   = "session.move.bucket"
+)
+
+type moveBucket struct {
+	tokens float64
+	at     time.Time
+}
+
+// moveBucketTake takes one token from sess's bucket, refilled at
+// moveBucketRate up to moveBucketBurst; false when it is empty. Only the
+// session's own read loop calls it.
+func moveBucketTake(sess *gateway.Session, now time.Time) bool {
+	v, _ := sess.Get(moveBucketKey)
+	b, _ := v.(*moveBucket)
+	if b == nil {
+		b = &moveBucket{tokens: moveBucketBurst, at: now}
+		sess.Set(moveBucketKey, b)
+	}
+	b.tokens = math.Min(moveBucketBurst, b.tokens+now.Sub(b.at).Seconds()*moveBucketRate)
+	b.at = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// moveTrades is each hub's trade hub (round 749's review, F4), registered by
+// TradeHandler, for the move's established-trade gate.
+var moveTrades sync.Map // *world.Hub -> *trade.Hub
+
+func tradeEstablishedOn(hub *world.Hub, characterID int64) bool {
+	v, ok := moveTrades.Load(hub)
+	return ok && v.(*trade.Hub).Established(characterID)
+}
+
+// haltForState ends characterID's leg where the server has it when a state
+// that stops a move lands on it (READ: freeze, stun and sleep call vslot
+// 0x570 on apply, GObjPC::FUN_004aa340, which stops the move; the slot-300
+// stop sends 0xB023 to the 3 x 3, the mover included -- round 749's review,
+// F4). Its client snaps there (FUN_008a4f80).
+func haltForState(hub *world.Hub, characterID int64) {
+	e, ok := hub.EntityByCharacterID(characterID)
+	if !ok || e.Session == nil {
+		return
+	}
+	r, moved, ok := hub.Halt(e.Session)
+	if !ok || !moved {
+		return
+	}
+	motions.walking(characterID, time.Now())
+	stopRelay(e.Session, r, true)
 }

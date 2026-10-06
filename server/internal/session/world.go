@@ -1777,13 +1777,13 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	case req.Run:
 		kind, heading = world.MoveHeading, world.HeadingFromWire(req.RunAngle)
 	}
-	admit := func(at time.Time, cur world.Entity) bool {
-		if req.Relocated {
-			return relocationAdmits(cur, pos.X, pos.Z, at)
-		}
-		return trustPositions.Load() || stopAdmits(at, cur, pos.X, pos.Z)
+	// Round 749's review, F1: a claim, measured from the server's own anchor
+	// with a clocked allowance (world.Hub.Claim, destmove.go claimBound).
+	self, inWorld := hub.EntityBySession(sess.ID())
+	if !inWorld {
+		return nil
 	}
-	moved, admitted, ok := hub.StopAt(sess, pos, kind, heading, admit)
+	moved, admitted, ok := hub.Claim(sess, pos, kind, heading, claimBound(self.CharacterID, req.Relocated, now))
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}

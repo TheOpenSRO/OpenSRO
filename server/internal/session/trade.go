@@ -347,6 +347,10 @@ func DecodeTradeCancelled(data []byte) (*TradeCancelled, error) {
 // TradeHandler returns a gateway.Handler implementing the client->server
 // trade opcodes.
 func TradeHandler(chars character.Store, inv inventory.Store, items ItemLookup, hub *world.Hub, trades *trade.Hub) gateway.Handler {
+	// The move's established-trade gate reads it (round 749's review, F4).
+	if hub != nil && trades != nil {
+		moveTrades.Store(hub, trades)
+	}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpTradeRequest:

@@ -89,6 +89,9 @@ type tradeTestFixture struct {
 	// accounts and addr let a test bring a third player in (addTradePlayer).
 	accounts *account.MemStore
 	addr     string
+	// hub is the world hub (round 749's review: the production-bound trade
+	// test walks on its clock).
+	hub *world.Hub
 }
 
 func setupTradeTest(t *testing.T) *tradeTestFixture {
@@ -210,7 +213,7 @@ func setupTradeTestWrapped(t *testing.T, items ItemLookup, extra func(d tradeFix
 	drainPlayerSpawn(t, connA, rA)
 	drainPlayerSpawn(t, connB, rB)
 
-	return &tradeTestFixture{chars: chars, inv: inv, trades: trades, ariaID: aria.ID, bramID: bram.ID, connA: connA, connB: connB, rA: rA, rB: rB, accounts: accounts, addr: addr}
+	return &tradeTestFixture{chars: chars, inv: inv, trades: trades, ariaID: aria.ID, bramID: bram.ID, connA: connA, connB: connB, rA: rA, rB: rB, accounts: accounts, addr: addr, hub: hub}
 }
 
 // startTrade has Aria request a trade with Bram and Bram accept, and drains

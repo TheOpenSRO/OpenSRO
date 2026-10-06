@@ -1,0 +1,158 @@
+package world
+
+import (
+	"math"
+	"time"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+)
+
+// A client's claim about where its character is (round 749's review, F1).
+//
+// Since round 749 the server keeps the leg of every walk, but a client still
+// reports where its walk stopped short (a wall, an approach in reach, a sit)
+// and where it was put (a placement). Round 749 measured each claim from the
+// character's previous claim with a fixed slack, so 300 claims of 5.5 moved a
+// character 1,650 units in 8 ms (the review, MEASURED). This bound has a clock
+// and an anchor (OURS, both):
+//
+//   - The ANCHOR is the server's own reference: the leg's travelled segment
+//     while a leg runs, else Entity.Trusted -- a point the server itself fixed
+//     (an arrival, its own placement, a leg's end, a correction). A claim
+//     never moves the anchor by itself, so claims cannot creep.
+//   - A claim within Bound.Slack of the anchor (horizontally) is free: the
+//     client's stop distance, the wire's truncation and the no-slide wall
+//     nudge live there.
+//   - Beyond it, the claim draws the excess from the character's ALLOWANCE:
+//     run banked at its run speed while it stands, at most AllowanceSeconds'
+//     worth. A leg's own travel is charged against the accrual, so walking
+//     banks nothing and a second's lead is shared across legs, not granted to
+//     each. The anchor moves by what was paid, toward the claim.
+//   - The height is bounded (Bound.Height) against the anchor's.
+//
+// So no chain of stops, placements or click-and-stop pairs moves a character
+// faster than its run speed, beyond one slack and one banked second.
+
+// AllowanceSeconds is how much standing run a character may bank (OURS: the
+// one second round 749 granted every stop as a lead, now shared).
+const AllowanceSeconds = 1.0
+
+// Bound is one claim's limits: the character's run speed now, the free
+// slack, the height bound, whether to trust it whatever it says (QA), and the
+// named points it may also be taken at (an arrival, a GM's point; used up by
+// the call when it answers true).
+type Bound struct {
+	Speed  float64
+	Slack  float64
+	Height float64
+	Trust  bool
+	Named  func(x, z float64) bool
+}
+
+// accrueLocked brings e's allowance up to now: the run speed times the time
+// since, less what the current leg travelled meanwhile, kept between 0 and
+// AllowanceSeconds of run. Caller holds h.mu for writing.
+func accrueLocked(e *Entity, now time.Time) {
+	dt := now.Sub(e.allowAt).Seconds()
+	if dt < 0 {
+		dt = 0
+	}
+	legDelta := 0.0
+	if m := e.Move; m != nil {
+		tr := m.Travelled(now)
+		legDelta = tr - e.allowLeg
+		e.allowLeg = tr
+	}
+	e.allow += e.allowSpeed*dt - legDelta
+	if limit := e.allowSpeed * AllowanceSeconds; e.allow > limit {
+		e.allow = limit
+	}
+	if e.allow < 0 {
+		e.allow = 0
+	}
+	e.allowAt = now
+}
+
+// pointAt is the leg's point `along` units from its source.
+func (m *Mover) pointAt(along float64) Position {
+	if m.Heading {
+		return Position{X: m.Src.X + m.DirX*along, Y: m.Src.Y, Z: m.Src.Z + m.DirZ*along}
+	}
+	if m.dist <= 0 {
+		return m.Src
+	}
+	f := along / m.dist
+	return Position{
+		X: m.Src.X + (m.Dest.X-m.Src.X)*f,
+		Y: m.Src.Y + (m.Dest.Y-m.Src.Y)*f,
+		Z: m.Src.Z + (m.Dest.Z-m.Src.Z)*f,
+	}
+}
+
+// anchorLocked is the server's reference for a claim at (x, z) at now: the
+// nearest point of the leg's travelled segment, or the trusted point.
+func anchorLocked(e *Entity, x, z float64, now time.Time) Position {
+	m := e.Move
+	if m == nil {
+		return e.Trusted
+	}
+	if _, arrived := m.At(now); arrived {
+		return m.Dest
+	}
+	along, _ := m.Along(x, z)
+	if tr := m.Travelled(now); along > tr {
+		along = tr
+	}
+	return m.pointAt(along)
+}
+
+// Claim takes a client's claim that sess's character stands at pos (a stop,
+// or a placement) when b admits it, measured from the anchor with the
+// allowance (above). Taken, the leg ends there, the character stands at pos,
+// turned as kind says, and the anchor moves by what was paid; refused,
+// nothing changes (admitted false) and the caller corrects. ok is false when
+// the session is not in the world.
+func (h *Hub) Claim(sess *gateway.Session, pos Position, kind MoveKind, heading float64, b Bound) (r MoveResult, admitted, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.clock()
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return MoveResult{}, false, false
+	}
+	if e.allowSpeed == 0 {
+		e.allowSpeed = b.Speed
+	}
+	accrueLocked(e, now)
+	if b.Speed > 0 {
+		e.allowSpeed = b.Speed
+	}
+	anchor := anchorLocked(e, pos.X, pos.Z, now)
+	trusted, paid := anchor, 0.0
+	admitted = b.Trust
+	if admitted {
+		trusted = pos
+	} else if math.Abs(pos.Y-anchor.Y) <= b.Height {
+		d := math.Hypot(pos.X-anchor.X, pos.Z-anchor.Z)
+		switch need := d - b.Slack; {
+		case need <= 0:
+			admitted = true
+		case need <= e.allow:
+			admitted, paid = true, need
+			trusted.X += (pos.X - anchor.X) / d * need
+			trusted.Z += (pos.Z - anchor.Z) / d * need
+		}
+	}
+	if !admitted && b.Named != nil && b.Named(pos.X, pos.Z) {
+		admitted, trusted = true, pos
+	}
+	if !admitted {
+		r.Entity = outLocked(e, now)
+		return r, false, true
+	}
+	h.placeLocked(e, now, pos, kind, heading, &r)
+	e.allow -= paid
+	e.Trusted = trusted
+	r.Entity = *e
+	return r, true, true
+}

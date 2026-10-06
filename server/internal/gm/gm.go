@@ -309,8 +309,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 // multiplier on top of the buffs (0.1 <= x <= 10, buff.MaxGMSpeedFactor),
 // /speed off (or 1) clears it, /speed alone shows it. The new speed reaches
 // the client through the buff path's runSpeed (an OpBuffEnd with no
-// tokens); the server does not police movement speed, so nothing else has
-// to accept it.
+// tokens); since round 749 the server's own legs and its claim bound run at
+// the same speed (session/destmove.go), so both ends agree.
 func (d *Deps) speed(actor Actor, args []string) Result {
 	const usage = "usage: /speed [x|off] (x from 0.1 to 10: a multiplier on your run speed)"
 	if d.Speed == nil {
