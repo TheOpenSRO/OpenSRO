@@ -7160,6 +7160,41 @@ beneath it.
 - **Tests:** four `plane_choice` checks in `ground_markers_test`. Box: ALL LOAD, "ran 245
   suite(s), 0 failing". No render (the user tests it live).
 
+## Seven-hundred-and-forty-third round: every value-moving action is one Postgres transaction (M1; the trade dupe)
+
+The full notes are in `docs/rounds/r743.md`; the review is `r743_review.md`. This is M1 of
+`docs/protocol/server_architecture.md` (round 742), the user's chosen first round.
+- **Proven against real Postgres, failing before the fix (MEASURED):**
+  - a resent trade confirm ran the trade twice (`TestTradeResentConfirmDuplicatesItem`: "Aria holds
+    0, Bram holds 3");
+  - a failed credit destroyed the item and still moved the gold;
+  - raced `RemoveItem` / stack merge / equip / unequip duplicated items;
+  - a raced shop sell paid twice;
+  - a raced warehouse withdraw gave two swords from one.
+- **Now:**
+  - `internal/txn`: the transaction travels in the context, with savepoints, in-memory undo,
+    deadlock retries with backoff, per-owner advisory locks, a 15 s action deadline (OURS), and
+    the `economy_ops` idempotency ledger;
+  - **one transaction each:** trade (with an executing latch), shop buy/sell, buyback, pickup
+    (a serial per drop), warehouse (and its fee), split/merge, equip/unequip, GM `/give` with a
+    plus;
+  - item serials on `inventory_slots` / `account_storage_slots`, backfilled at boot under an
+    advisory lock;
+  - one capped pool (`OPENSRO_PG_MAX_CONNS`, default 40) instead of ten uncapped pools.
+  
+  Opcodes are unchanged.
+- **Review:**
+  - party gold pickups deadlocked (66/200 failed, 14 s). Shares are now credited in character-id
+    order: 0 failed, worst 8.8 ms.
+  - A trade error left the partner stuck. The ledger now decides between Completed and Cancelled.
+- **Open:**
+  - debit-then-refund paths (teleport fee, repair, guild, item use);
+  - equipment serials;
+  - cross-table serial uniqueness;
+  - the quest-kill reward is two commits;
+  - a batched backfill for rolling restarts (M2).
+- **Gates:** Go 68 packages ok; `-race` session (971 s), txn, trade, inventory, gateway ok.
+
 ## Seven-hundred-and-forty-first round: every item part read, and weapon effects turn with the weapon
 
 The full notes are in `docs/rounds/r741.md`; the review is `r741_review.md`.
