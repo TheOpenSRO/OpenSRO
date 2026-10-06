@@ -34,27 +34,68 @@ class_name EquipGlow
 const PLAIN_META := "opensro_glow_plain"
 ## On an EfpEffect made here.
 const FX_META := "opensro_glow_fx"
+## On a glow shader: [cull, alpha_test, present] (glow_shader).
+const GLOW_SHADER_META := "opensro_glow_shader"
 
 static var _shaders := {}
 static var _option_textures := {}   # lower-case path -> Texture2D (null: missing)
 static var _materials := {}         # key -> WeakRef(ShaderMaterial)
 static var _lock := Mutex.new()
+## The glow's clock (round 734's review, F8). Godot's TIME rolls over at
+## 3600 s, and +14's 1.4 s pulse is not a whole number of cycles in 3600 s, so
+## it jumped once an hour. This accumulator advances by every process frame's
+## delta (so a run at a fixed frame rate steps it as it steps TIME) and wraps
+## at CLOCK_WRAP = 7 x 3600 s: a whole number of both pulse cycles in the
+## tables (2 s and 1.4 s: 12600 and 18000 of them) and of every scroll cycle
+## (each fits 3600 s, the review's check). The wrap is OURS; a float's step at
+## 25200 s is about 2 ms.
+const CLOCK_WRAP := 25200.0
+const CLOCK_GLOBAL := &"srr_glow_clock"
+static var clock := 0.0
+static var _clock_running := false
+
+## Starts the clock once, on the main thread (glow_shader may run on a loader
+## thread, so it defers this).
+static func _start_clock() -> void:
+	if _clock_running:
+		return
+	var main := Engine.get_main_loop() as SceneTree
+	if main == null:
+		return
+	_clock_running = true
+	main.process_frame.connect(_tick_clock.bind(main))
+
+static func _tick_clock(main: SceneTree) -> void:
+	clock = fmod(clock + main.root.get_process_delta_time(), CLOCK_WRAP)
+	RenderingServer.global_shader_parameter_set(CLOCK_GLOBAL, clock)
+
 static var stats := {"items": 0, "meshes": 0, "particles": 0, "particles_failed": 0, "no_bone": 0}
 
 ## The glow shader for a cull mode ("back", "front", "disabled") and the row's
 ## alpha-test flag. Flag 0 turns the alpha test OFF and flag 1 tests alpha >=
-## 1/255 (READ, vslot_004: RS 15/24/25), so a flag-0 item draws solid
-## whatever its own layer did.
-static func glow_shader(cull: String, alpha_test: bool) -> Shader:
-	var key := "%s/%s" % [cull, alpha_test]
+## 1/255 (READ, vslot_004: RS 15/24/25, and FUN_00c42a60 skips the item's own
+## 0x200 test under the mod's 0x20000000, weapon_glow.md §2.2), so a flag-0
+## item draws solid whatever its own layer did.
+##
+## `present` false is the variant for a view whose tone map is Linear (the
+## portrait's and the equipment window's SubViewports, PlayerPortrait): the
+## display value is written as it is, without the world's srr_obj_present,
+## whose global srr_obj_tonemap describes the world's environment (round 734's
+## review, F1).
+static func glow_shader(cull: String, alpha_test: bool, present: bool = true) -> Shader:
+	var key := "%s/%s/%s" % [cull, alpha_test, present]
 	_lock.lock()
 	var cached: Shader = _shaders.get(key)
 	_lock.unlock()
 	if cached != null:
 		return cached
 	var sh := Shader.new()
-	sh.code = "shader_type spatial;\n// An item's glow, cull %s%s (EquipGlow, round 734).\nrender_mode unshaded, cull_%s;\n#define EQUIP_GLOW\n%s#include \"res://scripts/assets/object.gdshaderinc\"\n" % [
-		cull, ", alpha-tested" if alpha_test else "", cull, "" if alpha_test else "#define OBJECT_SOLID\n"]
+	sh.code = "shader_type spatial;\n// An item's glow, cull %s%s%s (EquipGlow, round 734).\nrender_mode unshaded, cull_%s;\n#define EQUIP_GLOW\n%s%s#include \"res://scripts/assets/object.gdshaderinc\"\n" % [
+		cull, ", alpha-tested" if alpha_test else "", "" if present else ", for a Linear view", cull,
+		"" if alpha_test else "#define OBJECT_SOLID\n", "" if present else "#define OBJECT_NO_PRESENT\n"]
+	sh.set_meta(GLOW_SHADER_META, [cull, alpha_test, present])
+	if not _clock_running:
+		_start_clock.call_deferred()
 	_lock.lock()
 	if _shaders.has(key):
 		sh = _shaders[key]
@@ -99,6 +140,22 @@ static func plain_of(m: Material) -> Material:
 ## Whether `m` is a glow material.
 static func is_glow(m: Material) -> bool:
 	return m != null and m.has_meta(PLAIN_META)
+
+## A copy of the glow material `glow` for another view of the character (round
+## 734's review, F1): the same uniforms, on the Linear-view shader unless
+## `present`, standing in for `plain` -- that view's own material for the
+## item's plain layer, which the view's fades and lighting use (PLAIN_META).
+## Not shared: a view's materials are its own.
+static func view_copy(glow: ShaderMaterial, plain: Material, present: bool) -> ShaderMaterial:
+	var key: Array = glow.shader.get_meta(GLOW_SHADER_META, ["back", true, true])
+	var mat := ShaderMaterial.new()
+	mat.resource_name = glow.resource_name
+	mat.shader = glow_shader(String(key[0]), bool(key[1]), present)
+	for u in glow.shader.get_shader_uniform_list():
+		var n: String = u["name"]
+		mat.set_shader_parameter(n, glow.get_shader_parameter(n))
+	mat.set_meta(PLAIN_META, plain)
+	return mat
 
 ## The uniforms a row sets (the shader's names), for the material and the
 ## tests: speed uv x 50 a second, the period in seconds, op0's factor, op1's
@@ -191,10 +248,10 @@ static func apply(nodes: Array, row: ItemGlowTables.GlowRow, particle_rows: Arra
 			if not is_instance_valid(node):
 				continue
 			for mi in meshes_of(node):
-				var plain := plain_of(mi.material_override)
+				var plain := plain_of(AppearFade.original_material(mi))
 				if plain == null:
 					continue
-				mi.material_override = material_for(plain, row, option_tex)
+				_put(mi, material_for(plain, row, option_tex))
 				out["meshes"] += 1
 	for pr in particle_rows:
 		var r := pr as ItemGlowTables.ParticleRow
@@ -258,11 +315,24 @@ static func clear(root: Node) -> int:
 	if root == null:
 		return 0
 	for mi in meshes_of(root):
-		if is_glow(mi.material_override):
-			mi.material_override = plain_of(mi.material_override)
+		var drawn := AppearFade.original_material(mi)
+		if is_glow(drawn):
+			_put(mi, plain_of(drawn))
 			n += 1
 	strip_particles(root)
 	return n
+
+## Puts `m` on `mi` as the material it draws with (round 734's review, F6).
+## While an appear fade draws `mi` on its twin, the twin stays and the fade
+## gives `m` back at its end (AppearFade.Fades._restore_mesh reads its
+## ORIGINAL_META): a reglow mid-fade neither takes the twin for the glow's
+## plain material nor pops the item opaque. The twin was made from the same
+## plain material (_make_twin takes plain_of), so it still fits.
+static func _put(mi: MeshInstance3D, m: Material) -> void:
+	if AppearFade.original_material(mi) != mi.material_override:
+		mi.set_meta(AppearFade.ORIGINAL_META, m)
+	else:
+		mi.material_override = m
 
 ## Frees the particle effects made here under `root` (a copied body, as the
 ## portrait's, whose duplicated effects have no simulation). Returns how many.

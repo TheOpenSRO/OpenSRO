@@ -49,6 +49,9 @@ func _initialize() -> void:
 	_test_particles()
 	_test_appearance()
 	_test_loadout()
+	_test_view_glow()
+	_test_reglow_mid_fade()
+	await _test_clock()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
 	quit(1 if _failures > 0 else 0)
 
@@ -137,7 +140,7 @@ func _test_material() -> void:
 	var plain := _plain()
 	var g := EquipGlow.material_for(plain, row, null)
 	_check(EquipGlow.is_glow(g) and EquipGlow.plain_of(g) == plain and EquipGlow.plain_of(plain) == plain, "the glow keeps its plain material")
-	_check(g.get_shader_parameter("albedo_texture") == plain.get_shader_parameter("albedo_texture"), "the item's own texture on stage 1 (INFERRED, OPEN 9)")
+	_check(g.get_shader_parameter("albedo_texture") == plain.get_shader_parameter("albedo_texture"), "the item's own texture on stage 1 (READ, OPEN 9 closed: 0x80000000 -> SetTexture(1) at 0xbf10ce)")
 	_check(EquipGlow.material_for(plain, row, null) == g, "a glow material is shared per (row, plain material)")
 	_check(not ObjectLight.is_object_material(g), "CharacterLight leaves a glow material alone (it is unlit)")
 	_check(EquipGlow.cull_of(_foliage_two()) == "disabled" and EquipGlow.cull_of(plain) == "back", "the cull follows the plain material")
@@ -244,3 +247,101 @@ func _test_loadout() -> void:
 	var k := EquipGlow.parse_loadout("6=3632+13,7=0,1=3637,bad,4=x,5=3+y", bad)
 	_check((k[0] as Dictionary) == {6: 3632, 7: 0, 1: 3637} and (k[1] as Dictionary) == {6: 13}, "QA loadout: slot=id[+plus] (%s)" % str(k))
 	_check(bad.size() == 3, "QA loadout: the malformed pairs named (%s)" % str(bad))
+
+## Round 734's review, F1 (its probe A as a test): the select screen, the
+## equipment window and the portrait put their own materials on a dressed body
+## (PlayerPortrait._apply_materials). A glowing item keeps its glow there, and
+## the plain layer behind it keeps its alpha reference. NEGATIVE on cf11fefa:
+## after _apply_materials, is_glow false and alpha_ref 0 (the flag-0 row's
+## alpha_scissor taken for the plain layer's 0.502).
+func _test_view_glow() -> void:
+	var t := _tables()
+	for case in [["ITEM_TEST_SHIELD", 3, false], ["ITEM_TEST_SWORD", 13, true]]:
+		var row := t.glow_row(String(case[0]), int(case[1]))
+		var plain := _plain()
+		plain.set_shader_parameter("alpha_scissor", 0.502)
+		var opt := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+		var glow := EquipGlow.material_for(plain, row, opt)
+		for world in [false, true]:
+			var node := Node3D.new()
+			var mi := MeshInstance3D.new()
+			mi.mesh = BoxMesh.new()
+			mi.material_override = glow
+			node.add_child(mi)
+			var view := PlayerPortrait.new()
+			view.glow_world_present = world
+			view.call("_apply_materials", node)
+			var m := mi.material_override as ShaderMaterial
+			var back := EquipGlow.plain_of(m) as ShaderMaterial
+			var key: Array = m.shader.get_meta(EquipGlow.GLOW_SHADER_META, []) if m != null and m.shader != null else []
+			var label := "%s +%d, %s" % [case[0], case[1], "select screen" if world else "portrait / equipment window"]
+			_check(m != null and m != glow and EquipGlow.is_glow(m) and key.size() == 3 and bool(key[1]) == bool(case[2]) and bool(key[2]) == world,
+				"%s: the glow is kept, on the %s glow shader, alpha test %s (%s)" % [label, "world's" if world else "Linear view's", case[2], str(key)])
+			_check(m != null and m.get_shader_parameter("glow_texture") == opt and _near(float(m.get_shader_parameter("glow_period")), float(row.period_ms) / 1000.0)
+				and m.get_shader_parameter("albedo_texture") == plain.get_shader_parameter("albedo_texture")
+				and _near(float(m.get_shader_parameter("alpha_scissor")), float(EquipGlow.row_params(row)["alpha_scissor"])),
+				"%s: the row's uniforms copied (option texture, period, the item's texture, the row's alpha test)" % label)
+			_check(back != null and back != plain and _near(float(back.get_shader_parameter("alpha_ref")), 0.502),
+				"%s: behind it, the view's own plain material with the item's alpha_ref 0.502 (%s)" % [label, str(back.get_shader_parameter("alpha_ref")) if back != null else "none"])
+			var mats: Array = view.get("_materials")
+			_check(mats.has(back) and not mats.has(m), "%s: the plain material takes the view's light, the unlit glow is not in its list" % label)
+			_check(EquipGlow.is_glow(glow) and EquipGlow.plain_of(glow) == plain, "%s: the world's shared glow material is untouched" % label)
+			node.free()
+			view.free()
+	var lin := EquipGlow.glow_shader("back", true, false)
+	_check(lin.code.contains("#define OBJECT_NO_PRESENT") and not EquipGlow.glow_shader("back", true).code.contains("OBJECT_NO_PRESENT")
+		and lin != EquipGlow.glow_shader("back", true), "the Linear view's glow shader skips srr_obj_present; the world's keeps it")
+	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
+	_check(inc.contains("#ifdef OBJECT_NO_PRESENT\n\t// A Linear view (the portrait, the equipment window): written as is.\n\tALBEDO = srr_glow("),
+		"object.gdshaderinc: OBJECT_NO_PRESENT writes the glow without srr_obj_present")
+
+## Round 734's review, F6: a reglow while the body fades in (AppearFade) keeps
+## the fade's twin on the mesh, builds the new glow on the plain material (not
+## on the twin), and the fade's end gives the new glow back -- or, at +0, the
+## plain material. NEGATIVE on cf11fefa: the twin became the glow's plain
+## material, and a clear left the old glow to come back at the fade's end.
+func _test_reglow_mid_fade() -> void:
+	var t := _tables()
+	var plain := _plain()
+	var node := Node3D.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = BoxMesh.new()
+	mi.material_override = plain
+	node.add_child(mi)
+	EquipGlow.apply([node], t.glow_row("ITEM_TEST_SWORD", 7), [], null, null, "test")
+	var g7 := mi.material_override
+	var fades := AppearFade.Fades.new()
+	fades.start(node)
+	fades.step(0.5)
+	var twin := mi.material_override
+	_check(twin != g7 and twin.has_meta(AppearFade.TWIN_META), "fading: the mesh draws on the fade's twin")
+	EquipGlow.clear(node)
+	EquipGlow.apply([node], t.glow_row("ITEM_TEST_SWORD", 9), [], null, null, "test")
+	var given: Material = mi.get_meta(AppearFade.ORIGINAL_META, null)
+	_check(mi.material_override == twin and EquipGlow.is_glow(given) and EquipGlow.plain_of(given) == plain,
+		"reglow +7 -> +9 mid-fade: the twin stays, the +9 glow is built on the plain material and waits for the fade's end")
+	fades.step(2.0)
+	_check(mi.material_override == given and not mi.has_meta(AppearFade.ORIGINAL_META), "the fade's end gives back the +9 glow")
+	fades.start(node)
+	fades.step(0.5)
+	EquipGlow.clear(node)
+	_check(mi.get_meta(AppearFade.ORIGINAL_META, null) == plain and mi.material_override.has_meta(AppearFade.TWIN_META), "reglow to +0 mid-fade: the plain material waits")
+	fades.step(2.0)
+	_check(mi.material_override == plain, "and the fade's end gives back the plain material, not the old glow")
+	node.free()
+
+## Round 734's review, F8: the glow's clock is a script accumulator wrapped at
+## a whole number of every pulse cycle, not TIME (whose 3600 s rollover cut
+## +14's 1.4 s cycle).
+func _test_clock() -> void:
+	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
+	_check(inc.contains("global uniform float srr_glow_clock;") and inc.contains("srr_glow(tex.rgb, UV, srr_glow_clock)")
+		and not inc.contains("srr_glow(tex.rgb, UV, TIME)"), "the glow runs on srr_glow_clock, not TIME")
+	for cycle in [2.0, 1.4]:
+		var n: float = EquipGlow.CLOCK_WRAP / float(cycle)
+		_check(absf(n - roundf(n)) < 1e-6, "the wrap holds a whole number of %.1f s pulse cycles (%.1f)" % [cycle, n])
+	_check(absf(fmod(EquipGlow.CLOCK_WRAP, 3600.0)) < 1e-6, "the wrap is a multiple of 3600 s, so every scroll cycle that fit TIME's rollover fits it")
+	var before := EquipGlow.clock
+	await process_frame
+	await process_frame
+	_check(EquipGlow.clock != before, "the clock advances with the frames (%.4f -> %.4f)" % [before, EquipGlow.clock])

@@ -119,10 +119,14 @@ uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
 // each clamped to 0..1, with no lighting (TFACTOR stands where DIFFUSE was).
 // TFACTOR is round(lerp(c1, c2, t) x 255) / 255 with t a triangle wave of
 // period 2 x glow_period starting at colour 1; the scroll is uv x 50 a
-// second. Both run on TIME (OURS: retail's clock is per mod, from when the
+// second. Both run on srr_glow_clock, one clock for every glow (OURS: retail's clock is per mod, from when the
 // item was put on, and stops while the character fades; every glow here
-// pulses in step). That stage 1's texture is the item's own is INFERRED
-// (OPEN 9).
+// pulses in step). Stage 1's texture is the item's own: READ (round 734's
+// review, F7; weapon_glow.md OPEN 9): the mod's 0x80000000 makes
+// CObjRendererVS::FUN_00bf0e20 bind the item's texture to stage 1
+// (SetTexture(1, FUN_00c39f70(i)) at 0xbf10ce).
+// The clock (EquipGlow's accumulator, not TIME: round 734's review, F8).
+global uniform float srr_glow_clock;
 uniform sampler2D glow_texture : hint_default_black, filter_linear_mipmap, repeat_enable;
 uniform vec2 glow_uv_speed = vec2(0.0);
 uniform vec3 glow_c1 = vec3(1.0);
@@ -152,7 +156,12 @@ void vertex() {
 void fragment() {
 	vec4 tex = texture(albedo_texture, UV);
 #ifdef EQUIP_GLOW
-	ALBEDO = srr_obj_present(srr_glow(tex.rgb, UV, TIME));
+#ifdef OBJECT_NO_PRESENT
+	// A Linear view (the portrait, the equipment window): written as is.
+	ALBEDO = srr_glow(tex.rgb, UV, srr_glow_clock);
+#else
+	ALBEDO = srr_obj_present(srr_glow(tex.rgb, UV, srr_glow_clock));
+#endif
 #else
 	ALBEDO = srr_obj_present(clamp(2.0 * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)));
 #endif

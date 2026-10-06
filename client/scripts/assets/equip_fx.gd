@@ -24,38 +24,64 @@ class_name EquipFx
 ##   with it (EfpEffect's follow levels); here they move with the weapon
 ##   rigidly and do not turn;
 ## - a budget: only the VISIBLE_BUDGET weapons nearest the camera within
-##   MAX_DISTANCE and inside the view show their particles, re-chosen every
-##   RESELECT_FRAMES frames. Retail's own limits are not READ: Effect
+##   MAX_DISTANCE and inside the view (or within ALWAYS_NEAR of it, in view
+##   or not) show their particles, re-chosen every RESELECT_FRAMES frames
+##   from a scan spread over those frames. Retail's own limits are not READ: Effect
 ##   Quality's reader and Character Sight Range's (round 694: none found) are
 ##   OPEN, and so is FUN_00c43780's gate (weapon_glow.md OPEN 6, 11).
+## - the particles take the host's uniform scale (the body's height factor)
+##   times the row's col3/100, as the per-weapon path did; retail's further
+##   global factor in CEFEffect::vslot_010 (`*(this+4)+0x264`, weapon_glow.md
+##   §8 item 5) is applied by neither path: what it holds is OPEN.
 ## The glow itself is untouched (a material, no per-frame work).
 
 const MAX_DISTANCE := 800.0
 const VISIBLE_BUDGET := 64
 const RESELECT_FRAMES := 10
+## A weapon this close to the camera shows its effect even outside the view
+## (OURS: so an effect larger than its host does not drop when the host's
+## origin leaves the frustum at the screen's edge).
+const ALWAYS_NEAR := 30.0
 ## How long a master with no weapon showing it is kept before it is freed.
 const IDLE_FRAMES := 600
 
 const DRIVER_META := "opensro_equip_fx_driver"
 
 class Host:
+	var id: String
 	var skel: Skeleton3D
 	var bone: int
 	var key: String
 	var scale: float
 	var holder: EfpEffect = null
+	## The cycle that last chose it (_finish_cycle).
+	var shown_cycle := -1
 
 class Kind:
 	var key: String
 	var master: EfpEffect
 	var active := 0
 	var idle := 0
+	## Hosts registered with this effect, shown or not.
+	var hosts := 0
 
 var particles: Pk2Reader
 var _hosts: Dictionary = {}   # "skel id|bone" -> Host
 var _kinds: Dictionary = {}   # key -> Kind
 var _frame := 0
 var _shown: Array = []        # the hosts drawing their effect, placed every frame
+# The spread re-selection (_begin_cycle): this cycle's host ids, how far the
+# scan is, the candidates found with their distances, the frame it began on
+# and the hosts measured a frame.
+var _scan: Array = []
+var _scan_at := 0
+var _cand: Array = []
+var _cand_d := PackedFloat32Array()
+var _cycle := 0
+var _cycle_frame := 0
+var _per_frame := 0
+var _paused := false
+var _hurry := false
 ## Counts for the QA line and the tests.
 var stats := {"hosts": 0, "shown": 0, "kinds": 0}
 
@@ -139,11 +165,20 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 		k.master = m
 		_kinds[key] = k
 	var h := Host.new()
+	h.id = id
 	h.skel = skel
 	h.bone = b
 	h.key = key
 	h.scale = scale
 	_hosts[id] = h
+	(_kinds[key] as Kind).hosts += 1
+	# Measured in the cycle under way (its slices are fixed at its start, and
+	# the cycle's last frame scans whatever is left); while the hosts fit the
+	# budget, a whole cycle runs next frame, so the select screen's and the
+	# equipment window's few bodies show theirs at once (OURS).
+	_scan.append(id)
+	if _hosts.size() <= VISIBLE_BUDGET:
+		_hurry = true
 
 func remove_skel(skel: Skeleton3D) -> void:
 	var sid := "%d|" % skel.get_instance_id()
@@ -155,6 +190,8 @@ func _drop(id: String) -> void:
 	var h: Host = _hosts[id]
 	if h.holder != null and is_instance_valid(h.holder):
 		h.holder.queue_free()
+	if _kinds.has(h.key):
+		(_kinds[h.key] as Kind).hosts -= 1
 	_hosts.erase(id)
 
 ## A holder sharing `master`'s draws (see the header).
@@ -186,68 +223,131 @@ func _process(_delta: float) -> void:
 	_frame += 1
 	var t0 := Time.get_ticks_usec() if EfpEffect.profile else 0
 	var cam := get_viewport().get_camera_3d()
-	if _frame % RESELECT_FRAMES == 1 or RESELECT_FRAMES <= 1:
-		_reselect(cam)
+	var paused := _viewport_paused()
+	if paused != _paused or _hurry:
+		# The equipment window opened or closed (round 734's review, F5): a
+		# whole cycle at once, so its particles show, or stop, this frame.
+		_paused = paused
+		_hurry = false
+		_begin_cycle()
+		_scan_slice(cam, _scan.size())
+		_finish_cycle()
+		_begin_cycle()
+	else:
+		_scan_slice(cam, _per_frame)
+		if _frame - _cycle_frame >= RESELECT_FRAMES:
+			_scan_slice(cam, _scan.size())
+			_finish_cycle()
+			_begin_cycle()
 	for h in _shown:
 		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
-		var at: Vector3 = h.skel.global_transform * h.skel.get_bone_global_pose(h.bone).origin
-		h.holder.global_transform = Transform3D(Basis.from_scale(Vector3.ONE * h.scale), at)
+		var g: Transform3D = h.skel.global_transform
+		var at: Vector3 = g * h.skel.get_bone_global_pose(h.bone).origin
+		h.holder.global_transform = Transform3D(Basis.from_scale(Vector3.ONE * (h.scale * _uniform_scale(g.basis))), at)
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
 
-## Chooses the hosts that show their effect: valid, in view, within
-## MAX_DISTANCE, the VISIBLE_BUDGET nearest. Masters with none pause.
-func _reselect(cam: Camera3D) -> void:
-	var cands: Array = []
-	var gone: Array = []
-	for id in _hosts:
-		var h: Host = _hosts[id]
+## The size of the host's own scale (round 734's review, F4): the body's height
+## factor (CharacterAppearance.HEIGHT_FACTORS) reaches the particles as it did
+## on the per-weapon path (EfpEffect.scale_basis on the anchor). Its magnitude
+## only, the cube root of |det| (OURS): the master's billboards face the
+## camera in world axes, so a holder takes no mirror (the select screen's
+## root is scaled (1, 1, -1)) and no rotation.
+static func _uniform_scale(b: Basis) -> float:
+	return pow(absf(b.determinant()), 1.0 / 3.0)
+
+## Whether this driver's viewport draws nothing now: the equipment window's
+## SubViewport keeps its nodes and camera while closed, at UPDATE_DISABLED
+## (PaperDoll.set_active), and its hosts would keep the masters simulating
+## unseen (round 734's review, F5).
+func _viewport_paused() -> bool:
+	var vp := get_viewport()
+	return vp is SubViewport and (vp as SubViewport).render_target_update_mode == SubViewport.UPDATE_DISABLED
+
+## The re-selection is spread over RESELECT_FRAMES frames (round 734's review,
+## F3, OURS): each frame measures a slice of the hosts, and the cycle's last
+## frame picks the nearest VISIBLE_BUDGET of those found. A host added during a
+## cycle joins it (add_host).
+func _begin_cycle() -> void:
+	_scan = _hosts.keys()
+	_scan_at = 0
+	_cand.clear()
+	_cand_d.clear()
+	_cycle_frame = _frame
+	_per_frame = ceili(float(_scan.size()) / float(maxi(RESELECT_FRAMES, 1)))
+
+## Measures up to `count` more hosts of this cycle: a host is a candidate when
+## valid, drawn, and in the view within MAX_DISTANCE -- or within ALWAYS_NEAR
+## of the camera, in view or not.
+func _scan_slice(cam: Camera3D, count: int) -> void:
+	var end := mini(_scan_at + count, _scan.size())
+	var from := cam.global_position if cam != null else Vector3.ZERO
+	while _scan_at < end:
+		var id: String = _scan[_scan_at]
+		_scan_at += 1
+		var h: Host = _hosts.get(id)
+		if h == null:
+			continue
 		if not is_instance_valid(h.skel) or h.skel.is_queued_for_deletion():
-			gone.append(id)
+			_drop(id)
 			continue
-		if not h.skel.is_inside_tree() or not h.skel.is_visible_in_tree():
-			cands.append([INF, id])
+		if _paused or not h.skel.is_inside_tree() or not h.skel.is_visible_in_tree():
 			continue
-		var p := h.skel.global_position
-		var d := cam.global_position.distance_to(p) if cam != null else 0.0
-		if cam != null and (d > MAX_DISTANCE or not cam.is_position_in_frustum(p)) and d > 30.0:
-			d = INF
-		cands.append([d, id])
-	for id in gone:
-		_drop(id)
-	cands.sort_custom(func(a, b): return a[0] < b[0])
+		var d := 0.0
+		if cam != null:
+			var p := h.skel.global_position
+			d = from.distance_to(p)
+			if d > ALWAYS_NEAR and (d > MAX_DISTANCE or not cam.is_position_in_frustum(p)):
+				continue
+		_cand.append(h)
+		_cand_d.append(d)
+
+## The cycle's choice: the VISIBLE_BUDGET nearest candidates show their
+## effect, every other holder hides, and masters with none pause. No sort while
+## the candidates fit the budget; past it, only their distances are sorted
+## (natively) for the budget's cut.
+func _finish_cycle() -> void:
+	_cycle += 1
+	var limit := INF
+	if _cand.size() > VISIBLE_BUDGET:
+		var sorted := _cand_d.duplicate()
+		sorted.sort()
+		limit = sorted[VISIBLE_BUDGET - 1]
 	for k in _kinds.values():
 		(k as Kind).active = 0
-	var shown := 0
-	_shown.clear()
-	for i in cands.size():
-		var h: Host = _hosts[cands[i][1]]
-		var on: bool = shown < VISIBLE_BUDGET and cands[i][0] < INF
-		if on:
-			shown += 1
-			_shown.append(h)
-			var k: Kind = _kinds[h.key]
-			k.active += 1
-			if h.holder == null or not is_instance_valid(h.holder):
-				h.holder = _holder_for(k.master)
-				h.skel.add_child(h.holder)
-			h.holder.visible = true
-		elif h.holder != null and is_instance_valid(h.holder):
+	var before := _shown
+	_shown = []
+	for i in _cand.size():
+		if _shown.size() >= VISIBLE_BUDGET:
+			break
+		var h: Host = _cand[i]
+		if _cand_d[i] > limit or _hosts.get(h.id) != h or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+			continue
+		h.shown_cycle = _cycle
+		_shown.append(h)
+		var k: Kind = _kinds[h.key]
+		k.active += 1
+		if h.holder == null or not is_instance_valid(h.holder):
+			h.holder = _holder_for(k.master)
+			h.skel.add_child(h.holder)
+			# A holder only draws what its master simulates: no _process of
+			# its own (the review, F3). After add_child, whose ready would
+			# turn it back on.
+			h.holder.set_process(false)
+		h.holder.visible = true
+	for h in before:
+		if (h as Host).shown_cycle != _cycle and h.holder != null and is_instance_valid(h.holder):
 			h.holder.visible = false
+	_cand.clear()
+	_cand_d.clear()
 	for key in _kinds.keys():
 		var k: Kind = _kinds[key]
 		k.master.set_process(k.active > 0)
-		k.idle = 0 if k.active > 0 else k.idle + RESELECT_FRAMES
-		if k.idle > IDLE_FRAMES and not _uses(key):
+		k.idle = 0 if k.active > 0 else k.idle + maxi(_frame - _cycle_frame, 1)
+		if k.idle > IDLE_FRAMES and k.hosts <= 0:
 			k.master.queue_free()
 			_kinds.erase(key)
 	stats["hosts"] = _hosts.size()
-	stats["shown"] = shown
+	stats["shown"] = _shown.size()
 	stats["kinds"] = _kinds.size()
-
-func _uses(key: String) -> bool:
-	for id in _hosts:
-		if (_hosts[id] as Host).key == key:
-			return true
-	return false

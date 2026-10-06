@@ -1,0 +1,143 @@
+extends SceneTree
+
+## Round 734's review fixes in EquipFx (the kept particles of glowing gear,
+## drawn per effect type):
+## - F3: the re-selection is spread over RESELECT_FRAMES frames, sorts nothing
+##   while the candidates fit the budget, and a holder runs no _process;
+## - F4: a holder takes the host's uniform scale (the body's height factor)
+##   times the row's, never a mirror;
+## - F5: a viewport drawing nothing (the closed equipment window) shows none
+##   and pauses its masters, and shows them again the frame it opens.
+##   godot4 --headless --path client --script res://scripts/assets/equip_fx_test.gd
+## SYNTHETIC: masters are empty EfpEffects put under the key add_host builds,
+## so no Particles.pk2 is read.
+
+const EFP := "system\\test_fx.efp"
+const SCALE := 1.75
+
+var _failures := 0
+
+func _check(cond: bool, msg: String) -> void:
+	if cond:
+		print("ok  " + msg)
+	else:
+		print("FAIL " + msg)
+		_failures += 1
+
+func _initialize() -> void:
+	await process_frame
+	_test_budget()
+	_test_scale_and_pause()
+	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
+	quit(1 if _failures > 0 else 0)
+
+func _viewport() -> SubViewport:
+	var vp := SubViewport.new()
+	vp.size = Vector2i(320, 180)
+	vp.own_world_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	root.add_child(vp)
+	var cam := Camera3D.new()
+	vp.add_child(cam)
+	cam.look_at_from_position(Vector3(0, 5, -50), Vector3(0, 0, 400))
+	cam.current = true
+	return vp
+
+## The driver of `vp`, stepped by hand, with an empty master for EFP at SCALE.
+func _driver(vp: SubViewport) -> EquipFx:
+	var d := EquipFx.driver_for(vp)
+	d.set_process(false)
+	var key := "%s|%s" % [EFP.to_lower(), str(snappedf(SCALE, 0.0001))]
+	if not d._kinds.has(key):
+		var m := EfpEffect.new()
+		var mm := MultiMeshInstance3D.new()
+		mm.multimesh = MultiMesh.new()
+		m.add_child(mm)
+		d.add_child(m)
+		var k := EquipFx.Kind.new()
+		k.key = key
+		k.master = m
+		d._kinds[key] = k
+	return d
+
+func _host(parent: Node, d: EquipFx, pos: Vector3) -> Skeleton3D:
+	var s := Skeleton3D.new()
+	s.add_bone("ai_end")
+	s.position = pos
+	parent.add_child(s)
+	d.add_host(s, "ai_end", EFP, SCALE, null)
+	return s
+
+func _shown_holder(s: Skeleton3D) -> EfpEffect:
+	for c in s.get_children():
+		if c is EfpEffect and (c as EfpEffect).visible:
+			return c
+	return null
+
+func _test_budget() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	var near: Array = []
+	for i in 10:
+		near.append(_host(vp, d, Vector3(0, 0, 10 + i * 5)))
+	d._process(1.0 / 60.0)
+	_check(int(d.stats["shown"]) == 10, "10 weapons, under the budget: all 10 show, the frame after they were added (%d)" % int(d.stats["shown"]))
+	var processing := 0
+	var holders := 0
+	for s in near:
+		var h := _shown_holder(s)
+		if h != null:
+			holders += 1
+			if h.is_processing():
+				processing += 1
+	_check(holders == 10 and processing == 0, "every holder is made, and none runs a _process of its own (%d holders, %d processing)" % [holders, processing])
+	var far: Array = []
+	for i in 70:
+		far.append(_host(vp, d, Vector3(0, 0, 200 + i * 5)))
+	for f in EquipFx.RESELECT_FRAMES + 1:
+		d._process(1.0 / 60.0)
+	_check(int(d.get("_per_frame")) == 8, "a cycle's scan is spread: 80 hosts, 8 a frame (%d)" % int(d.get("_per_frame")))
+	var shown_far := 0
+	for s in far:
+		if _shown_holder(s) != null:
+			shown_far += 1
+	var near_kept := 0
+	for s in near:
+		if _shown_holder(s) != null:
+			near_kept += 1
+	_check(int(d.stats["shown"]) == EquipFx.VISIBLE_BUDGET and near_kept == 10 and shown_far == EquipFx.VISIBLE_BUDGET - 10,
+		"80 weapons: the 64 nearest show (all 10 near, %d of the far)" % shown_far)
+	var nearest_far := true
+	for i in far.size():
+		if (_shown_holder(far[i]) != null) != (i < EquipFx.VISIBLE_BUDGET - 10):
+			nearest_far = false
+	_check(nearest_far, "the far ones chosen are the nearest of them")
+	vp.free()
+
+func _test_scale_and_pause() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	# The select screen's root is mirrored (1, 1, -1); a tall body is 1.06.
+	var mirror := Node3D.new()
+	mirror.scale = Vector3(1, 1, -1)
+	vp.add_child(mirror)
+	var body := Node3D.new()
+	body.scale = Vector3.ONE * 1.06
+	body.position = Vector3(0, 0, -20)
+	mirror.add_child(body)
+	var s := _host(body, d, Vector3.ZERO)
+	d._process(1.0 / 60.0)
+	var h := _shown_holder(s)
+	var b := h.global_transform.basis if h != null else Basis()
+	_check(h != null and absf(b.x.length() - SCALE * 1.06) < 1e-4 and absf(b.z.length() - SCALE * 1.06) < 1e-4 and b.determinant() > 0.0,
+		"the holder takes the body's height factor x the row's scale, %.4f, unmirrored (%s)" % [SCALE * 1.06, str(b.get_scale()) if h != null else "none"])
+	var k: EquipFx.Kind = d._kinds.values()[0]
+	_check(k.master.is_processing(), "shown: its master simulates")
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	d._process(1.0 / 60.0)
+	_check(int(d.stats["shown"]) == 0 and not k.master.is_processing() and _shown_holder(s) == null,
+		"the viewport drawing nothing (the closed equipment window): none shown, the master paused, the frame it closes")
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	d._process(1.0 / 60.0)
+	_check(int(d.stats["shown"]) == 1 and k.master.is_processing() and _shown_holder(s) != null, "opened again: shown the same frame")
+	vp.free()

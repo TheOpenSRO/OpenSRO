@@ -45,8 +45,45 @@ func _test_arrival_list() -> void:
 	_check((world.get("_pending_equip_changes") as Array).is_empty(), "loading: the buffer is emptied")
 	world.free()
 
+## Round 734's review, F2: a 0x3038 that changes only the plus of the item
+## drawn in its slot redraws the glow on the body as it stands
+## (CharacterAppearance.reglow), and one that changes the item rebuilds the
+## body (_redress_other). NEGATIVE on cf11fefa: both rebuilt the body.
+func _test_plus_only() -> void:
+	var world_script := load("res://scripts/World3D.gd") as GDScript
+	var world: Node = world_script.new()
+	var app := CharacterAppearance.new()
+	world.set("_appearance", app)
+	var node := Node3D.new()
+	var skel := Skeleton3D.new()
+	node.add_child(skel)
+	var wears := [{"slot": CharacterAppearance.SLOT_WEAPON, "code": "ITEM_TEST_SWORD", "plus": 7, "nodes": []}]
+	skel.set_meta(CharacterAppearance.GLOW_WEARS_META, wears)
+	skel.set_meta("glow_pluses", {6: 7})
+	(world.get("_other_bodies") as Dictionary)[5] = node
+	(world.get("_other_gaits") as Dictionary)[5] = {"skeleton": skel, "body": "", "scale": CharacterAppearance.DEFAULT_SCALE}
+	(world.get("_other_equipped") as Dictionary)[5] = {1: 4842, 6: 3727}
+	(world.get("_other_pluses") as Dictionary)[5] = {6: 7}
+	world.call("_on_other_equipment_changed", 5, 6, 3727, 13)
+	var gait: Dictionary = (world.get("_other_gaits") as Dictionary)[5]
+	_check(gait.get("skeleton") == skel and is_instance_valid(skel) and not skel.is_queued_for_deletion(), "plus only: the body is kept, not rebuilt")
+	_check(int((wears[0] as Dictionary)["plus"]) == 13 and (skel.get_meta("glow_pluses") as Dictionary) == {6: 13},
+		"plus only: the glow is redrawn at +13 (reglow) and the body marked with it")
+	_check(int(((world.get("_other_pluses") as Dictionary)[5] as Dictionary).get(6, 0)) == 13, "plus only: _other_pluses at +13")
+	# Another item in the slot: the body is rebuilt (_redress_other; with no
+	# archives it builds nothing, so the old body stays with its mark).
+	world.call("_on_other_equipment_changed", 5, 6, 3728, 13)
+	_check(int((wears[0] as Dictionary)["plus"]) == 13 and int(((world.get("_other_equipped") as Dictionary)[5] as Dictionary)[6]) == 3728,
+		"another item: no reglow, the slot's item changed for the rebuild")
+	world.call("_on_other_equipment_changed", 5, 6, 3728, 0)
+	_check(int((wears[0] as Dictionary)["plus"]) == 0 and not ((world.get("_other_pluses") as Dictionary)[5] as Dictionary).has(6),
+		"plus only, to +0: the glow taken off on the standing body")
+	node.free()
+	world.free()
+
 func _initialize() -> void:
 	_test_arrival_list()
+	_test_plus_only()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

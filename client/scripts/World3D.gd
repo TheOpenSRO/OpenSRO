@@ -9167,8 +9167,9 @@ func _refresh_player_portrait(skel: Skeleton3D, equipped: Dictionary, body: Stri
 	var copy := skel.duplicate() as Skeleton3D
 	if copy == null:
 		return
-	# The glow's material comes along with the copy (the portrait borrows the
-	# equipment window's avatar: INFERRED, as _refresh_paper_doll); its
+	# The glow comes along with the copy (the portrait borrows the equipment
+	# window's avatar: INFERRED, as _refresh_paper_doll), on the Linear-view
+	# glow shader PlayerPortrait gives it (round 734's review, F1); its
 	# particle effects do not -- a duplicated EfpEffect has no simulation,
 	# and a picture rendered once would hold one still frame of them (OURS).
 	EquipGlow.strip_particles(copy)
@@ -15492,13 +15493,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		_other_equipped[character_id] = equipped
 	if pluses is Dictionary:
 		_other_pluses[character_id] = pluses
-		var gait: Dictionary = _other_gaits.get(character_id, {})
-		var skel: Skeleton3D = gait.get("skeleton") as Skeleton3D
-		# Redrawn only when it differs from what the body was drawn with
-		# (_build_assembled_character marks it).
-		if _appearance != null and skel != null and is_instance_valid(skel) and skel.get_meta("glow_pluses", {}) != pluses:
-			_appearance.reglow(skel, pluses)
-			skel.set_meta("glow_pluses", (pluses as Dictionary).duplicate())
+		_reglow_other(character_id, pluses)
 	if _other_bodies.has(character_id):
 		# Sets the real interpolation *target* only -- see
 		# _other_body_targets' own doc comment for why this replaced a
@@ -15656,6 +15651,7 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 	var kept: WorldNet.EntitySnapshot = _arrival_entries.get(id)
 	var worn: Dictionary = (kept.equipped if kept != null else _other_equipped.get(id, {}) as Dictionary).duplicate()
 	var pluses: Dictionary = (kept.pluses if kept != null else _other_pluses.get(id, {}) as Dictionary).duplicate()
+	var same_item := plus >= 0 and worn.has(slot) and int(worn[slot]) == ref_id
 	if plus >= 0:
 		worn[slot] = ref_id
 		if plus > 0:
@@ -15672,7 +15668,32 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 		return
 	_other_equipped[id] = worn
 	_other_pluses[id] = pluses
+	# Only the plus changed (the slot's item is the one drawn): the glow is
+	# redrawn on the body as it stands, not the whole body rebuilt (round 734's
+	# review, F2) -- the server sends one 0x3038 per plused item of every
+	# player in an arrival list too long for one frame.
+	if same_item and _reglow_other(id, pluses):
+		return
 	_redress_other(id)
+
+## Redraws another player's weapon and shield glow at `pluses` on the body
+## drawn now (CharacterAppearance.reglow), only when they differ from those it
+## was drawn with (_build_assembled_character marks them), and lights it again:
+## a glow taken off gives back the plain material at the default object
+## colour (round 734's review, F6). False when no body is drawn to redraw.
+func _reglow_other(character_id: int, pluses: Dictionary) -> bool:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	var skel: Skeleton3D = gait.get("skeleton") as Skeleton3D
+	if _appearance == null or skel == null or not is_instance_valid(skel):
+		return false
+	if skel.get_meta("glow_pluses", {}) != pluses:
+		_appearance.reglow(skel, pluses)
+		skel.set_meta("glow_pluses", pluses.duplicate())
+		var node: Node3D = _other_bodies.get(character_id)
+		if node != null and is_instance_valid(node):
+			node.remove_meta(CharacterLight.META_VALUE)
+			_light_character(node)
+	return true
 
 ## Broadcasts kept while a zone change's arrival list was not drawn (round 735's
 ## review, finding 1): [uid, slot, ref_id, plus] in arrival order.
@@ -15785,7 +15806,6 @@ func _on_entity_left(character_id: int) -> void:
 	_abnormal_states.erase(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_fx_owner_buffs.erase(_fx_owner_key(character_id, 0))
 	_other_seated.erase(character_id)
-	_other_pluses.erase(character_id)
 	# A monster's blow on this player may cross the notice (round 546,
 	# MonsterStrikes.is_own_unpaired); remembered for the grace window.
 	var now_ms := Time.get_ticks_msec()

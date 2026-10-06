@@ -535,8 +535,10 @@ class Fades:
 			return
 		var surface: int = m[1]
 		if surface < 0:
+			# The mesh's mark, not m[2]: EquipGlow re-marks a mesh whose glow
+			# changed mid-fade (round 734's review, F6).
 			if (mi as MeshInstance3D).material_override == m[3]:
-				(mi as MeshInstance3D).material_override = m[2]
+				(mi as MeshInstance3D).material_override = (mi as Node).get_meta(AppearFade.ORIGINAL_META, m[2])
 			(mi as Node).remove_meta(AppearFade.ORIGINAL_META)
 		elif (mi as MeshInstance3D).get_surface_override_material(surface) == m[3]:
 			(mi as MeshInstance3D).set_surface_override_material(surface, m[2])

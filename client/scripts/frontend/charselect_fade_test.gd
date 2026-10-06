@@ -79,6 +79,30 @@ func _init() -> void:
 	var at := t.find("ALPHA = select_fade;")
 	_check(at > t.find("void fragment()") and at < t.find("void light()"), "the fade line lands at the end of fragment()")
 
+	# Round 734's review, F8 (OURS): a glowing weapon's particle holders fade
+	# with the body; other effects are not this screen's to touch.
+	var stage := CharSelectStage.new()
+	var d := CharSelectStage.Drawn.new()
+	d.body = CharacterAppearance.Body.new()
+	var holder := EfpEffect.new()
+	holder.set_meta(EquipGlow.FX_META, true)
+	var part := MeshInstance3D.new()
+	holder.add_child(part)
+	d.body.add_child(holder)
+	var other := EfpEffect.new()
+	var other_part := MeshInstance3D.new()
+	other.add_child(other_part)
+	d.body.add_child(other)
+	d.alpha = 102.0
+	stage.call("_apply_alpha", d)
+	_check(absf(part.transparency - 0.6) < 1e-4 and other_part.transparency == 0.0,
+		"alpha 102: the glow's particle holder drawn at 0.4 (transparency %.3f), another effect untouched" % part.transparency)
+	d.alpha = 255.0
+	stage.call("_apply_alpha", d)
+	_check(part.transparency == 0.0, "full alpha: the holder opaque again")
+	d.body.free()
+	stage.free()
+
 	portrait.free()
 	print("charselect_fade_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)

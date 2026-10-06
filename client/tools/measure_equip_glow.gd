@@ -8,7 +8,7 @@ extends SceneTree
 ##    row of the real table, drawn with the real glow shader over 1x1
 ##    textures of known colour (item 0.2, option 0.3: nothing clamps before
 ##    stage 1), so every pixel should be ItemGlowTables.glow_colour at the
-##    frame's pulse. The engine's TIME at a frame is not readable, so the run
+##    frame's pulse. The clock's value at a drawn frame is not read, so the run
 ##    finds the pulse's two ends in the frames (the frames nearest colour 1
 ##    and colour 2) and reports: the rendered colour there against the
 ##    expected one (in 0..255), and the frames between the ends (x 1000 /
@@ -26,7 +26,8 @@ extends SceneTree
 ##    the far frame of each. `--scenes` adds one picture per case of the
 ##    whole dressed body with its particles, every `--scene-every` frames.
 ##
-## Run with a fixed frame rate so TIME advances 1/fps a frame:
+## Run with a fixed frame rate so the glow clock (EquipGlow.clock, a process
+## frame accumulator since the review fixes) advances 1/fps a frame:
 ##   tools/xwl_run.sh godot --rendering-method forward_plus --rendering-driver vulkan \
 ##     --fixed-fps 60 --path client --script res://tools/measure_equip_glow.gd -- \
 ##     --pk2dir=/opt/sro-files/client --frames=150 \

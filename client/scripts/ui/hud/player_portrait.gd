@@ -238,6 +238,11 @@ var unmapped_materials := 0
 var last_build_usec := 0
 ## How many renders were asked for (one per dress).
 var renders_requested := 0
+## A glowing weapon's copy keeps the world's srr_obj_present (round 734's
+## review, F1): set by the select screen, whose bodies stand in the world's
+## Filmic environment. The portrait and the equipment window draw in a Linear
+## SubViewport and leave it false.
+var glow_world_present := false
 
 func _init() -> void:
 	size = Vector2i(BUFFER_SIZE, BUFFER_SIZE)
@@ -459,6 +464,8 @@ func _apply_materials(node: Node) -> void:
 ## alpha func, blend) with the portrait's lighting injected (_mod_material).
 ## Null only for a material none of that describes.
 func _portrait_material(src: Material) -> ShaderMaterial:
+	if EquipGlow.is_glow(src) and src is ShaderMaterial:
+		return _glow_material(src as ShaderMaterial)
 	var tex: Texture2D = null
 	var color := Color(1, 1, 1, 1)
 	var alpha_ref := 0.0
@@ -513,6 +520,21 @@ func _portrait_material(src: Material) -> ShaderMaterial:
 		mat.set_meta(SkinnedBsrAssembler.ENV_MAPPED_META, true)
 	_materials.append(mat)
 	return mat
+
+## A glowing weapon or shield in this view (round 734's review, F1): the glow
+## material copied (EquipGlow.view_copy) onto the Linear-view glow shader --
+## or the world's on the select screen (glow_world_present) -- standing in for
+## this view's own material for the item's plain layer, which keeps that
+## layer's alpha reference and takes the view's light. The glow is unlit, so
+## the copy is not in _materials (no light push; the select screen's tone-map
+## undo is for the lit materials and leaves it alone). A plain layer this view
+## has no material for (a blended one) stays the world's behind the copy.
+func _glow_material(src: ShaderMaterial) -> ShaderMaterial:
+	var plain: Material = _portrait_material(EquipGlow.plain_of(src))
+	if plain == null:
+		unmapped_materials += 1
+		plain = EquipGlow.plain_of(src)
+	return EquipGlow.view_copy(src, plain, glow_world_present)
 
 ## An MTRL mod pass in the portrait: the same shader code with MOD_INJECT's
 ## vertex colour standing in for Godot's lighting as its DIFFUSE, unshaded,
