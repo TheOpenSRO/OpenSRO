@@ -7160,6 +7160,59 @@ beneath it.
 - **Tests:** four `plane_choice` checks in `ground_markers_test`. Box: ALL LOAD, "ran 245
   suite(s), 0 failing". No render (the user tests it live).
 
+## Seven-hundred-and-forty-first round: every item part read, and weapon effects turn with the weapon
+
+The full notes are in `docs/rounds/r741.md`; the review is `r741_review.md`.
+- **Invisible items (MEASURED):** `ItemTableReader` read 7 hard-coded parts, while the archive's
+  index `itemdata.txt` names 63 (ItemData_1000..63000). That left 3,566 items without an icon,
+  name or model, among them 62607, the 11D Nova spear.
+  - The table now reads the index, parsed once per archive, on a worker from the top of
+    `World3D._ready`: the main thread waited 0.42-0.45 s, against 0.71 s before.
+  - It is shared by the world, the HUD, the preview and the appearance.
+  - Still OPEN: characterdata (4,576 codes, 670 `MOB_`) and skilldata (1 row) have the same short
+    list.
+- **Particles beside the weapon:**
+  - **READ:** retail places the effect at bone matrix x world matrix (`CRTModParticle::FUN_00c81190`).
+    Round 734's `EquipFx` used the bone's position only, so the enchant's sparks (0 to -4.8 along
+    the effect's X) ran along a fixed world axis. That is the user's "lines up only facing south
+    east".
+  - **Also:** hosts were keyed by (skeleton, bone), which dropped a seal weapon's second effect on
+    `ai_end`.
+  - **Now:**
+    - holders take the bone's full frame, scaled by the row's scale x the body's height;
+    - billboards and pipe ribbons are built in the shader per camera (OURS);
+    - hosts are keyed by (bone, effect).
+  - **Measured:** spread over 8 headings 0.000, against 13.8; the enchant at most 0.005 off the
+    blade.
+- **Review:** ship.
+  - DEPARTURE: in 10 Nova and Egyptian files, retail's world-space vectors (`SetConeVel` space 0,
+    and others) now turn with the bone.
+  - The 64 budget counts (bone, effect) hosts, not weapons.
+  - Both are follow-ups.
+- **Perf:**
+  - jangan SAME (1.60 -> 1.55 ms);
+  - 200 Sun spears at +9: +1.7 ms. That is the enchant effect now drawn beside the seal effect, as
+    retail draws both.
+- **Tests:** box "ran 247 suite(s), 0 failing".
+
+## Seven-hundred-and-fortieth round: seal effects (itemrare.txt) and OrgObjCodeName inheritance
+
+The full notes are in `docs/rounds/r740.md`; the spec is `docs/protocol/weapon_glow.md`, sections 1.4 and 1.5.
+- **Seal effects exist (READ):**
+  - `Client_LoadAllRefData` calls `UI_ALCHEMYBOX::FUN_00aa0270` twice (0x846755..0x84676e):
+    first `resinfo\itemrare.txt`, then `itemoptionefp.txt`, into the same RefID -> particle map.
+  - Missing min/max default to 0/0xFF (0xaa0acc), so seal rows show at **every plus**:
+    - Star/Moon/Sun: `system_raretype_a_step1/2/3`;
+    - Nova: `eternity_11_nova_01..03`;
+    - Egyptian: `eternity_11_egya/egyb_*`.
+  - This overturns round 733's "seals choose no effect", which had checked only two tables. The
+    user corrected it from play.
+- **Inheritance (READ, `FUN_00a9f2e0` / `FUN_00aa0270`):** weapons and shields with a non-empty
+  OrgObjCodeName (`+0x40`; `xxx` reads as empty) take the base item's glow type and share its
+  particle list. 480 `ITEM_EVENT_*` items gain both (MEASURED).
+- **11D `_A_RARE` (e.g. 4116):** no rows at all. Only `_A_RARE_ACTIVE` (62607) is the glowing Nova.
+- **Native reader:** the Rust table reader gains `org_code_names`.
+
 ## Seven-hundred-and-forty-fourth round: standing on Karakoram's frozen lake -- the .nvm floor plane
 
 The full notes are in `docs/rounds/r744.md`; the rule is in `docs/protocol/NVM_FORMAT.md`
