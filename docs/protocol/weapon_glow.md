@@ -495,10 +495,10 @@ particle loader is called with first (READ, §1).
    built per camera in the vertex shader (`EfpEffect.use_shared_turn`, OURS; `docs/rounds/r741.md`).
    **Round 746:** an effect with a command along the WORLD's axes (`EquipFx.world_commands`:
    `SetConeVel` space 0, `SetRVelocity`, a per-axis `SetSpherePos`; 35 of the 74 equipment files,
-   MEASURED with `client/tools/census_equip_world.gd`) cannot be simulated once and turned: on the 4
-   nearest weapons carrying one it runs its own world-space simulation (the per-weapon path,
-   `follow_bone_full`), beyond them the shared master turned (OURS). The 64-holder budget is now 64
-   weapons, all of a chosen weapon's effects shown together (OURS; `docs/rounds/r746.md`).
+   MEASURED with `client/tools/census_equip_world.gd`) cannot be simulated once and turned: on the
+   nearest weapon carrying one (the player's own) it runs its own world-space simulation (the per-weapon path,
+   `follow_bone_full`), elsewhere the shared master turned (OURS). The 64-holder budget cuts by whole weapons, all of
+   a chosen weapon's effects shown together (OURS; `docs/rounds/r746.md`).
 6. **`FUN_00c43780`**: `mod+0x3c >= *(owner+8)+0x7c`, the latter a 0..1 value clamped by
    `CCompChar::FUN_00c25620` (a virtual). Still OPEN; OpenSRO does not gate on it.
 7. **The starting direction: READ (round 734).** The constructor (`FxModManager::FUN_00c847f0`) sets

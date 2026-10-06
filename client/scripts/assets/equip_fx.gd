@@ -31,9 +31,10 @@ class_name EquipFx
 ##   command whose vector or rotation is along the WORLD's axes (round 746,
 ##   world_commands: SetConeVel space 0, SetRVelocity, a per-axis
 ##   SetSpherePos; 35 of the 74 files, client/tools/census_equip_world.gd).
-##   Turned with the holder, those point along the bone. So such an effect's
-##   OWN_BUDGET nearest hosts run their own world-space simulation (the
-##   per-weapon path); beyond them it draws the shared master turned (OURS);
+##   Turned with the holder, those point along the bone. So on the
+##   OWN_BUDGET nearest weapons (one: the player's own) such an effect runs
+##   its own world-space simulation (the per-weapon path); elsewhere it draws
+##   the shared master turned (OURS);
 ## - a budget: only the VISIBLE_BUDGET weapons nearest the camera within
 ##   MAX_DISTANCE and inside the view (or within ALWAYS_NEAR of it, in view
 ##   or not) show their particles, re-chosen every RESELECT_FRAMES frames
@@ -58,7 +59,8 @@ const VISIBLE_BUDGET := 64
 ## 200 Sun spears, headless): 4 own weapons cost 3.7 ms a frame of script
 ## (place, simulate, redraw and rebuild the pipes every frame as the hand
 ## moves), and the 200-spear gate went 21.9 -> 28.4 ms with 4.
-static var OWN_BUDGET := 1
+## OPENSRO_QA_EQUIPFX_OWN=<n> (QA, round 746) sets it, for a gate's A/B.
+static var OWN_BUDGET := int(OS.get_environment("OPENSRO_QA_EQUIPFX_OWN")) if OS.get_environment("OPENSRO_QA_EQUIPFX_OWN").is_valid_int() else 1
 const RESELECT_FRAMES := 10
 ## A weapon this close to the camera shows its effect even outside the view
 ## (OURS: so an effect larger than its host does not drop when the host's
