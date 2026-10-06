@@ -18,13 +18,15 @@ class_name CharTables
 ## boot readers alone went from 484 to 1,193 ms in GDScript (MEASURED). So two
 ## worker tasks, started at the top of World3D._ready (preload_async), each
 ## reading the parts itself:
-## - the BOOT task: walk and run speeds, BCRadius, DecayTime, Country (the
-##   readers _load_character_assets ran) and the bodies' catalogue
-##   (CharCatalog.from_tables), which _load_character_assets waits for (boot);
-## - the ENTRY task: the NPC tables (models, codes, names) and the monster
-##   tables (models by code, Org codes, models by name) with the object-name
-##   table they join through, which the NPC and monster loaders wait for
-##   (entry) -- by then it has usually finished.
+## - the BOOT task: walk and run speeds and Country (the CHAR_ rows) and the
+##   bodies' catalogue (CharCatalog.from_tables), what _load_character_assets
+##   needs at once and waits for (boot);
+## - the ENTRY task: BCRadius and DecayTime (every row; read at boot before,
+##   used only once characters and monsters spawn), the NPC tables (models,
+##   codes, names) and the monster tables (models by code, Org codes, models
+##   by name) with the object-name table they join through, which the world
+##   takes when the NPC or monster loaders first ask or the entry's grid is
+##   in (entry) -- by then it has usually finished.
 ## Every reader is the one the world called before, on the same bytes; only
 ## the part list and the thread changed. Results are shared per archive path
 ## (Pk2Reader.source_path) and read-only to their callers.
@@ -34,14 +36,14 @@ class Boot:
 	var bytes := 0
 	var usec := 0
 	var speeds := {}
-	var bc_radius := {}
-	var decay := {}
 	var country := {}
 	var bodies: CharCatalog = null
 
 class Entry:
 	var usec := 0
 	var names: UiTextTable = null
+	var bc_radius := {}
+	var decay := {}
 	var npc_models := {}
 	var npc_codes := {}
 	var npc_names := {}
@@ -171,8 +173,6 @@ static func read_boot(media: Pk2Reader) -> Boot:
 		b.parts += 1
 		b.bytes += (bytes as PackedByteArray).size()
 		b.speeds = NpcTableReader.parse_speeds_by_code(bytes, b.speeds)
-		b.bc_radius = NpcTableReader.parse_bc_radius_by_code(bytes, b.bc_radius)
-		b.decay = NpcTableReader.parse_decay_by_code(bytes, b.decay)
 		b.country = NpcTableReader.parse_country_by_code(bytes, b.country)
 	b.bodies = CharCatalog.from_tables(parts, [])
 	b.usec = Time.get_ticks_usec() - t0
@@ -185,6 +185,8 @@ static func read_entry(media: Pk2Reader) -> Entry:
 	var e := Entry.new()
 	e.names = ItemTableReader.load_object_names(media)
 	for bytes in _parts(media):
+		e.bc_radius = NpcTableReader.parse_bc_radius_by_code(bytes, e.bc_radius)
+		e.decay = NpcTableReader.parse_decay_by_code(bytes, e.decay)
 		e.npc_models = NpcTableReader.parse_models(bytes, e.npc_models)
 		e.npc_codes = NpcTableReader.parse_codes(bytes, e.npc_codes)
 		e.mob_models_by_code = NpcTableReader.parse_models_by_code(bytes, e.mob_models_by_code, "")

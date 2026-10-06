@@ -213,6 +213,14 @@ The examples the brief asked about:
 - `ITEM_EVENT_CH_BOW_10_C_RARE` (25181, Org `ITEM_CH_BOW_10_C_RARE`): type 2 from its Org item; the
   same for `ITEM_EVENT_CH_SWORD_08_A_RARE` (25186, type 4), and so on.
 
+**Group names resolve as item codes (round 746, the review of round 741's finding 3; READ).** Both
+loaders look a group's key up as a code name in the item walk's map first (`FUN_00aa0270` via
+`FUN_004f19f0`; `FUN_00a9f2e0` the same), and a table row whose code is no item never enters their
+maps. `ItemGlowTables.inherit` therefore keeps the code names of every item it is given and skips a
+group whose name is not one of them. On the retail archive this changes nothing (the 480 inheritors
+stand); a table row for a code that is no item (194 in `itemoption.txt`, 228 in `itemrare.txt`) can
+no longer give its group a type or a list.
+
 ### 1.5 `itemrare.txt`: the seal particles (READ; MEASURED)
 
 `FUN_00aa0270` is called with `resinfo\itemrare.txt` before `itemoptionefp.txt` (READ, above). The two
@@ -485,6 +493,12 @@ particle loader is called with first (READ, §1).
    with it at one heading only. Since round 741 a holder takes the bone's frame
    (`EquipFx.holder_transform`, mirror included), and the shared master's billboards and pipes are
    built per camera in the vertex shader (`EfpEffect.use_shared_turn`, OURS; `docs/rounds/r741.md`).
+   **Round 746:** an effect with a command along the WORLD's axes (`EquipFx.world_commands`:
+   `SetConeVel` space 0, `SetRVelocity`, a per-axis `SetSpherePos`; 35 of the 74 equipment files,
+   MEASURED with `client/tools/census_equip_world.gd`) cannot be simulated once and turned: on the 4
+   nearest weapons carrying one it runs its own world-space simulation (the per-weapon path,
+   `follow_bone_full`), beyond them the shared master turned (OURS). The 64-holder budget is now 64
+   weapons, all of a chosen weapon's effects shown together (OURS; `docs/rounds/r746.md`).
 6. **`FUN_00c43780`**: `mod+0x3c >= *(owner+8)+0x7c`, the latter a 0..1 value clamped by
    `CCompChar::FUN_00c25620` (a virtual). Still OPEN; OpenSRO does not gate on it.
 7. **The starting direction: READ (round 734).** The constructor (`FxModManager::FUN_00c847f0`) sets

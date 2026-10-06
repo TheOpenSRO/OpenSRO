@@ -5437,6 +5437,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		print(_load_timings.summary())
 		_qa_print_entry_probe()
 		_land_restored_return_point()
+		_adopt_char_entry()
 		_initial_load_done = true
 		return
 	# Reuse the screen the caller put up (_ready and _on_change_zone_result
@@ -5519,7 +5520,29 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	_loading_screen = null
 	print("LoadingScreen: lifted at frame %d" % Engine.get_frames_drawn())
 	_land_restored_return_point()
+	_adopt_char_entry()
 	_initial_load_done = true
+
+## Round 746: BCRadius and DecayTime from every characterdata part (CharTables'
+## entry task, a worker), taken once -- by the NPC or monster loaders or, at
+## the latest, when the entry's grid is in, before any character or monster
+## spawns into it.
+var _char_entry_adopted := false
+func _adopt_char_entry() -> void:
+	if _char_entry_adopted or _media_pk2 == null:
+		return
+	_char_entry_adopted = true
+	var t := Time.get_ticks_usec()
+	var centry := CharTables.entry(_media_pk2)
+	_bc_radius_by_code = centry.bc_radius
+	_monster_decay_ms_by_code = centry.decay
+	# Every row's BCRadius (column 50), for the attack approach: the player's
+	# body and the monsters' species both feed the reach band.
+	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s); %d monster DecayTime row(s) from column 13 (MOB_CH_MANGNYANG: %s ms); taken in %d us, %d us of it waiting" % [
+		_bc_radius_by_code.size(), GENDER_BODY_CODE[DEFAULT_GENDER],
+		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none")),
+		_monster_decay_ms_by_code.size(), str(_monster_decay_ms_by_code.get("MOB_CH_MANGNYANG", "none")),
+		Time.get_ticks_usec() - t, CharTables.last_entry_wait_usec])
 
 ## A restored entry's position (round 690), world (x, z), until the entry's
 ## grid is in; null otherwise. _land_restored_return_point consumes it.
@@ -6650,6 +6673,7 @@ func _load_npc_tables() -> void:
 	# the key into what the game calls the NPC. Read once, joined twice.
 	# Both object-name files (round 731, ItemTableReader.load_object_names).
 	var t_npc := Time.get_ticks_usec()
+	_adopt_char_entry()
 	var centry := CharTables.entry(_media_pk2)
 	var names: UiTextTable = centry.names
 	# NPC greetings resolve through a different table than names: npcchat's SN_
@@ -8738,18 +8762,9 @@ func _load_character_assets() -> void:
 	var t_chars := Time.get_ticks_usec()
 	var cboot := CharTables.boot(_media_pk2)
 	_speeds_by_code = cboot.speeds
-	_bc_radius_by_code = cboot.bc_radius
-	_monster_decay_ms_by_code = cboot.decay
 	_country_by_code = cboot.country
 	print("World3D: characterdata boot tables from %d part(s), %d bytes (read %d us on a worker; this call %d us, of which %d us waiting)" % [
 		cboot.parts, cboot.bytes, cboot.usec, Time.get_ticks_usec() - t_chars, CharTables.last_boot_wait_usec])
-	# Every row's BCRadius (column 50), for the attack approach: the player's
-	# body and the monsters' species both feed the reach band.
-	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s)" % [
-		_bc_radius_by_code.size(), GENDER_BODY_CODE[DEFAULT_GENDER],
-		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none"))])
-	print("World3D: %d monster DecayTime row(s) from characterdata column 13 (MOB_CH_MANGNYANG: %s ms)" % [
-		_monster_decay_ms_by_code.size(), str(_monster_decay_ms_by_code.get("MOB_CH_MANGNYANG", "none"))])
 	# The player's run speed is its body row's own (column 47), set when the
 	# body is known (_apply_player_speed); the default body's until then.
 	_apply_player_speed(GENDER_BODY_CODE[DEFAULT_GENDER])
@@ -18312,6 +18327,7 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 			# names use it too) -- see _object_names().
 			# Every characterdata part (round 746), read by CharTables' entry
 			# task with the object-name table they join through.
+			_adopt_char_entry()
 			var centry := CharTables.entry(_media_pk2)
 			if _object_name_table == null:
 				_object_name_table = centry.names

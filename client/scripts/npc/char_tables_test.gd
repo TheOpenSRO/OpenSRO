@@ -99,10 +99,10 @@ func _init() -> void:
 		"server_dep\\silkroad\\textdata\\CharacterData_45000.txt"]), "table_paths is the index's list, in order")
 	CharTables.preload_async(media)
 	var b := CharTables.boot(media)
-	_check(b.parts == 2 and b.speeds.has("CHAR_CH_MAN_ADVENTURER") and b.decay.has("MOB_LATE_AREA") and b.bc_radius.has("MOB_LATE_AREA"),
-		"boot: speeds, DecayTime and BCRadius from both indexed parts (%d parts)" % b.parts)
-	_check(not b.decay.has("MOB_LEGACY_ONLY"), "a part the index does not name is not read")
 	var e := CharTables.entry(media)
+	_check(b.parts == 2 and b.speeds.has("CHAR_CH_MAN_ADVENTURER") and e.decay.has("MOB_LATE_AREA") and e.bc_radius.has("MOB_LATE_AREA"),
+		"boot: speeds; entry: DecayTime and BCRadius, from both indexed parts (%d parts)" % b.parts)
+	_check(not e.decay.has("MOB_LEGACY_ONLY"), "a part the index does not name is not read")
 	_check(e.mob_models_by_code.get("MOB_LATE_AREA", "") == "prim\\mtrl\\late.bsr",
 		"entry: a monster defined only in characterdata_45000.txt has its model (the 670 MOB_ codes the old list missed)")
 	_check(is_same(CharTables.entry(media), e) and is_same(CharTables.boot(media), b), "the tables are shared, read once")
@@ -122,7 +122,7 @@ func _init() -> void:
 	CharTables.clear_shared()
 	var lm := Pk2Reader.open(lpath)
 	_check(CharTables.table_paths(lm) == PackedStringArray(NpcTableReader.LEGACY_MODEL_TABLE_PATHS), "without an index, the legacy list")
-	_check(CharTables.boot(lm).decay.has("MOB_LEGACY_ONLY"), "and its parts are read")
+	_check(CharTables.entry(lm).decay.has("MOB_LEGACY_ONLY"), "and its parts are read")
 	lm.close()
 	DirAccess.remove_absolute(lpath)
 	CharTables.clear_shared()
