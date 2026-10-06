@@ -157,6 +157,11 @@ const COL_ID := 1
 const COL_CODE_NAME := 2
 const COL_NAME := 3
 const COL_NAME_STRID := 5
+## OrgObjCodeName (column 4): the code name of the item this one is a variant
+## of, `xxx` for none (read as "", as the client's wide reader stores it:
+## docs/protocol/characterdata.md). The glow tables inherit through it (round
+## 740, ItemGlowTables.inherit).
+const COL_ORG_CODE_NAME := 4
 ## SellPrice (column 31): what the NPC pays to buy an item back -- real, and
 ## under the buy price on every row (Copper Sword 890 buy / 427 sell). Shown as
 ## the estimate in the sell confirm; the server's result carries the true gold.
@@ -320,6 +325,8 @@ const REQ_LEVEL_PAIRS := 4
 class Item:
 	var id: int
 	var code_name: String
+	## Column 4, OrgObjCodeName; "" for `xxx` (round 740).
+	var org_code_name: String = ""
 	## The internal object name (column 3): English for weapons, but Korean for
 	## many consumables. Prefer display_name(), which resolves the string id.
 	var item_name: String
@@ -484,6 +491,12 @@ const REQ_GENDER_ANY := 2
 
 ## Parses one itemdata part into {id -> Item}, merging into `into` so the
 ## parts can be accumulated.
+## Column 4's text as the item keeps it: stripped, `xxx` (any case, as
+## NpcTableReader.parse_org_codes) read as "".
+static func org_of(field: String) -> String:
+	var org := field.strip_edges()
+	return "" if org.to_lower() == "xxx" else org
+
 static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 	var _pp := ParseProfile.t0()
 	if _parse_native(data, into):
@@ -500,6 +513,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.id = int(id_text)
 		item.code_name = cols[COL_CODE_NAME].strip_edges()
 		item.item_name = cols[COL_NAME].strip_edges()
+		if cols.size() > COL_ORG_CODE_NAME:
+			item.org_code_name = org_of(cols[COL_ORG_CODE_NAME])
 		if cols.size() > COL_NAME_STRID:
 			item.name_strid = cols[COL_NAME_STRID].strip_edges()
 		if cols.size() > COL_DESC_STRID:
@@ -574,6 +589,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		return false
 	var ids: PackedInt64Array = rows["ids"]
 	var code_names: PackedStringArray = rows["code_names"]
+	# Round 740: a library from before this column has none (no Org: nothing
+	# inherits a glow).
+	var org_code_names: PackedStringArray = rows.get("org_code_names", PackedStringArray())
 	var item_names: PackedStringArray = rows["item_names"]
 	var name_strids: PackedStringArray = rows["name_strids"]
 	var desc_strids: PackedStringArray = rows.get("desc_strids", PackedStringArray())
@@ -609,6 +627,8 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		var item := Item.new()
 		item.id = ids[i]
 		item.code_name = code_names[i]
+		if i < org_code_names.size():
+			item.org_code_name = org_code_names[i]
 		item.item_name = item_names[i]
 		item.name_strid = name_strids[i]
 		if desc_strids.size() > i:

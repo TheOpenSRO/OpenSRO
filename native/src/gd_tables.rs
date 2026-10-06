@@ -167,6 +167,7 @@ impl SrNativeTables {
                 let mut d = VarDictionary::new();
                 d.set("ids", &ints(o.ids));
                 d.set("code_names", &strings(&o.code_names));
+                d.set("org_code_names", &strings(&o.org_code_names));
                 d.set("item_names", &strings(&o.item_names));
                 d.set("name_strids", &strings(&o.name_strids));
                 d.set("desc_strids", &strings(&o.desc_strids));

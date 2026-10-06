@@ -229,9 +229,11 @@ static func from_archives(data_pk2: Pk2Reader, media_pk2: Pk2Reader, items: Dict
 		var e: CharCatalog.Entry = a._catalog.entries[id]
 		if not e.is_body:
 			a._items[id] = {"models": PackedStringArray([e.model_path]) if e.model_path != "" else PackedStringArray(), "type_ids": e.type_ids, "code": e.code}
+	# The glow tables first: add_item_rows hands them the rows to inherit
+	# through (round 740).
+	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
 	if not items.is_empty():
 		a.add_item_rows(items)
-	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
 	return a
 
 ## An appearance over a catalogue already built (round 689: the world builds
@@ -243,9 +245,11 @@ static func from_catalog(data_pk2: Pk2Reader, media_pk2: Pk2Reader, catalog: Cha
 	a._media = media_pk2
 	a._catalog = catalog
 	a.default_wear = DefaultWear.from_archive(media_pk2) if media_pk2 != null else null
+	# The glow tables first: add_item_rows hands them the rows to inherit
+	# through (round 740).
+	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
 	if not items.is_empty():
 		a.add_item_rows(items)
-	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
 	return a
 
 ## The catalogue this appearance resolves bodies through.
@@ -279,6 +283,13 @@ func add_item_rows(rows: Dictionary) -> void:
 		var item: ItemTableReader.Item = rows[id]
 		_items[int(id)] = {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name}
 	_full_items_loaded = true
+	_inherit_glow(rows)
+
+## The glow tables' OrgObjCodeName inheritance over item rows this appearance
+## was given or parsed (round 740, ItemGlowTables.inherit).
+func _inherit_glow(rows: Dictionary) -> void:
+	if glow_tables != null:
+		glow_tables.inherit(rows)
 
 ## A body for an id the catalogue does not hold (an NPC body, a test).
 func add_body(ref_obj_id: int, bsr_path: String) -> void:
@@ -777,6 +788,7 @@ func _item_info(id: int) -> Dictionary:
 		for rid in rows:
 			var item: ItemTableReader.Item = rows[rid]
 			_items[int(rid)] = {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name}
+		_inherit_glow(rows)
 		stats["item_table_usec"] = Time.get_ticks_usec() - t0
 		stats["item_table_rows"] = rows.size()
 	return _items.get(id, {})
