@@ -52,6 +52,8 @@ static var _lock := Mutex.new()
 const CLOCK_WRAP := 25200.0
 const CLOCK_GLOBAL := &"srr_glow_clock"
 static var clock := 0.0
+## QA only (round 747, QaCrowdProbe's `ab` step): the clock held.
+static var hold := false
 static var _clock_running := false
 
 ## Starts the clock once, on the main thread (glow_shader may run on a loader
@@ -66,7 +68,8 @@ static func _start_clock() -> void:
 	main.process_frame.connect(_tick_clock.bind(main))
 
 static func _tick_clock(main: SceneTree) -> void:
-	clock = fmod(clock + main.root.get_process_delta_time(), CLOCK_WRAP)
+	if not hold:
+		clock = fmod(clock + main.root.get_process_delta_time(), CLOCK_WRAP)
 	RenderingServer.global_shader_parameter_set(CLOCK_GLOBAL, clock)
 
 static var stats := {"items": 0, "meshes": 0, "particles": 0, "particles_failed": 0, "no_bone": 0}

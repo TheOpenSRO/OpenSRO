@@ -39,6 +39,13 @@ class_name QaCrowdProbe
 ##            (what an off-screen crowd costs)
 ##   gone     every body out of the tree (kept in memory): the scene without them
 ##   nodraw   mesh + labels + fx + blobs + overlay together
+##   ab       (round 747) the same frame drawn with A5 on, then off: the clip,
+##            glow and texture clocks held, EquipFx's particles hidden, each
+##            frame saved to OPENSRO_QA_CROWD_SHOTS (ab_<n>_gpu.png, then
+##            ab_<n>_gpu2.png on the same path as many frames later -- the
+##            noise floor -- then ab_<n>_near.png)
+##            with the near and far bodies' screen boxes printed (`QA CROWD ab`)
+##            for client/tools/frame_ab.py
 ##   anim=<s> (round 738) CrowdAnim's switches for the step, back on after it:
 ##            "1" A1 (pose only what is in view), "i" the indexed pose, "3" A3
 ##            (baked poses), "4" A4 (the far bodies' LOD); "anim=-" all off,
@@ -71,6 +78,9 @@ var _net_next := 0
 var _net_us := 0
 var _net_sent := 0
 var net_rate := 1.0
+## The switches the boot started with (CrowdAnim.switches()), given back after
+## each `anim=` step (round 747: "5" is A5, CrowdGpu).
+var _boot_switches := ""
 
 static func wanted() -> bool:
 	return OS.get_environment("OPENSRO_QA_CROWD_STEPS") != ""
@@ -105,6 +115,7 @@ func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	if dl.is_valid_float():
 		delay = float(dl)
 	_rng.seed = 736
+	_boot_switches = CrowdAnim.switches()
 	RenderingServer.viewport_set_measure_render_time(world.get_viewport().get_viewport_rid(), true)
 	# The pose and sound switches go through the frame split's own (round 664).
 	if world._qa_split == null:
@@ -260,6 +271,7 @@ func _process(delta: float) -> void:
 		_acc = {"frames": 0, "cpu": 0.0, "gpu": 0.0, "proc": 0.0, "phys": 0.0, "draws": 0, "objects": 0, "prims": 0,
 			"pose_us": world._qa_split.pose_usec, "sound_us": world._qa_split.sound_usec,
 			"idle_us": world._qa_split.idle_usec, "minimap_us": world._qa_split.minimap_usec, "posed": world._qa_split.posed,
+			"crowd_us": world._qa_split.crowd_usec, "others_us": world._qa_split.others_usec,
 			"steps": world._qa_split.steps, "start_us": now, "net_us": _net_us, "net_sent": _net_sent}
 		_last_us = now
 		return
@@ -298,7 +310,12 @@ func _report() -> void:
 	if vp0.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp0.get_meta(EquipFx.DRIVER_META)):
 		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
 		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"])]
-	print("QA CROWD step %-8s n=%d in_view=%d frames=%d frame_ms=%.2f p50=%.2f p95=%.2f render_cpu_ms=%.2f render_gpu_ms=%.2f process_ms=%.2f physics_ms=%.2f idle_ms=%.2f pose_ms=%.2f sound_ms=%.2f minimap_ms=%.2f posed_per_frame=%.0f steps_per_frame=%.2f draws=%d objects=%d prims=%d nodes=%d anim=%s baked=%d static_mb=%.1f%s" % [
+	var gpu_line := ""
+	var crowd = world.get("_crowd_gpu")
+	if crowd != null:
+		gpu_line = " gpu: " + (crowd as CrowdGpu).describe() + " gpu_ms=%.2f" % (float(sp.crowd_usec - int(_acc["crowd_us"])) / 1000.0 / f)
+	gpu_line += " others_ms=%.2f" % (float(sp.others_usec - int(_acc["others_us"])) / 1000.0 / f)
+	print("QA CROWD step %-8s n=%d in_view=%d frames=%d frame_ms=%.2f p50=%.2f p95=%.2f render_cpu_ms=%.2f render_gpu_ms=%.2f process_ms=%.2f physics_ms=%.2f idle_ms=%.2f pose_ms=%.2f sound_ms=%.2f minimap_ms=%.2f posed_per_frame=%.0f steps_per_frame=%.2f draws=%d objects=%d prims=%d nodes=%d anim=%s baked=%d static_mb=%.1f%s%s" % [
 		steps[_i], bodies.size(), in_view, int(f), wall, p50, p95,
 		_acc["cpu"] / f, _acc["gpu"] / f, _acc["proc"] / f, _acc["phys"] / f,
 		float(sp.idle_usec - int(_acc["idle_us"])) / 1000.0 / f,
@@ -309,7 +326,7 @@ func _report() -> void:
 		float(sp.steps - int(_acc["steps"])) / f,
 		int(_acc["draws"] / f), int(_acc["objects"] / f), int(_acc["prims"] / f),
 		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), CrowdAnim.switches(), CrowdAnim.baked_frames,
-		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line])
+		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line, gpu_line])
 	if steps[_i].begins_with("net"):
 		var sent := _net_sent - int(_acc["net_sent"])
 		print("QA CROWD net: %d packets in %d frames, %.2f ms a frame in NetClient._dispatch, %.1f us a packet" % [
@@ -322,7 +339,7 @@ func _switch(step: String, off: bool) -> void:
 	if step.begins_with("net"):
 		step = "net"
 	if step.begins_with("anim="):
-		CrowdAnim.set_switches(step.substr(5) if off else "1i34")
+		CrowdAnim.set_switches(step.substr(5) if off else _boot_switches)
 		return
 	match step:
 		"pose", "sound":
@@ -435,8 +452,87 @@ func _switch(step: String, off: bool) -> void:
 				_switch(s, off)
 		"base":
 			pass
+		"ab":
+			if off:
+				_ab.call_deferred()
 		_:
 			push_warning("QA CROWD: unknown step %s" % step)
+
+## The `ab` step (round 747): one frame with the far bodies on the GPU, one
+## with every body on the full path, at the same held clocks.
+var _ab_n := 0
+
+func _ab() -> void:
+	var dir := OS.get_environment("OPENSRO_QA_CROWD_SHOTS")
+	if dir == "":
+		dir = "/var/tmp/qa_crowd_ab"
+	DirAccess.make_dir_recursive_absolute(dir)
+	_ab_n += 1
+	var tag := "ab_%d" % _ab_n
+	var tree := world.get_tree()
+	var hold := func() -> void: RenderingServer.global_shader_parameter_set(EquipGlow.CLOCK_GLOBAL, EquipGlow.clock)
+	world._qa_anim_hold = true
+	EquipGlow.hold = true
+	TexAni.hold = true
+	tree.process_frame.connect(hold)
+	_switch("fx", true)
+	for i in range(3):
+		await tree.process_frame
+	var boxes := _ab_boxes()
+	await RenderingServer.frame_post_draw
+	var a := world.get_viewport().get_texture().get_image()
+	var pa := dir.path_join(tag + "_gpu.png")
+	a.save_png(pa)
+	# The noise floor: the same path again after as many frames -- what moves
+	# anyway (the sky, the trees, the local player, who is not held).
+	for i in range(3):
+		await tree.process_frame
+	await RenderingServer.frame_post_draw
+	var a2 := world.get_viewport().get_texture().get_image()
+	a2.save_png(dir.path_join(tag + "_gpu2.png"))
+	CrowdGpu.enabled = false
+	for i in range(3):
+		await tree.process_frame
+	await RenderingServer.frame_post_draw
+	var b := world.get_viewport().get_texture().get_image()
+	var pb := dir.path_join(tag + "_near.png")
+	b.save_png(pb)
+	print("QA CROWD ab %s far=%d near=%d far_box=%s near_box=%s files %s %s" % [tag, int(boxes[0]), int(boxes[1]),
+		_box_arg(boxes[2]), _box_arg(boxes[3]), pa, pb])
+	CrowdGpu.enabled = true
+	_switch("fx", false)
+	tree.process_frame.disconnect(hold)
+	TexAni.hold = false
+	EquipGlow.hold = false
+	world._qa_anim_hold = false
+
+## [far count, near count, far bodies' screen Rect2, near bodies' screen Rect2]:
+## each body's feet and a point 20 units above, through the camera.
+func _ab_boxes() -> Array:
+	var cam: Camera3D = world.get_viewport().get_camera_3d()
+	var crowd = world.get("_crowd_gpu")
+	var far := Rect2()
+	var near := Rect2()
+	var nf := 0
+	var nn := 0
+	for b in bodies:
+		var n: Node3D = b["node"]
+		var gait: Dictionary = world._other_gaits.get(b["id"], {})
+		if cam == null or not is_instance_valid(n) or gait.is_empty() or not cam.is_position_in_frustum(n.global_position):
+			continue
+		var p0 := cam.unproject_position(n.global_position)
+		var p1 := cam.unproject_position(n.global_position + Vector3(0, 20, 0))
+		var r := Rect2(p0, Vector2.ZERO).expand(p1).grow(8.0)
+		if crowd != null and (crowd as CrowdGpu).has(gait["skeleton"]):
+			far = r if nf == 0 else far.merge(r)
+			nf += 1
+		else:
+			near = r if nn == 0 else near.merge(r)
+			nn += 1
+	return [nf, nn, far, near]
+
+static func _box_arg(r: Rect2) -> String:
+	return "%d,%d,%d,%d" % [int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y)]
 
 ## The position packets due this frame, round robin over the bodies, each a
 ## new spot within 8 units of its home, through NetClient's own dispatch.

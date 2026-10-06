@@ -381,7 +381,9 @@ func _start_phase() -> void:
 				var gait: Dictionary = world._other_gaits.get(id, {})
 				if not gait.is_empty():
 					var clip: BanReader.ParsedAnimation = world._body_animation_for(String(gait["body"]), BsrReader.AnimationEntry.TYPE_ATTACK, String(gait["group"]))
-					MonsterMotion.swap_loop(world._animated, gait["skeleton"], clip, world._frame_count(clip), world._idle_anim_time)
+					# Through World3D's own swap (round 747): a far body's entry is
+					# CrowdGpu's, not _animated's.
+					world._swap_other_loop(gait["skeleton"], clip)
 			_:
 				world._apply_other_motion(id, WorldNet.MOTION_STAND)
 				world._set_other_gait(id, false)
@@ -448,7 +450,13 @@ func _measure() -> void:
 		print("LINEUP SHOT %s (%s)" % [path, error_string(img.save_png(path)) if img != null else "no image"])
 
 func _pose_current(skel: Skeleton3D) -> void:
-	for entry in world._animated:
+	var entries: Array = world._animated
+	# A far body's entry is CrowdGpu's (round 747): the hidden skeleton is posed
+	# for the measure as a near one is.
+	var crowd = world.get("_crowd_gpu")
+	if crowd != null and (crowd as CrowdGpu).has(skel):
+		entries = [(crowd as CrowdGpu).entry_of(skel)]
+	for entry in entries:
 		if entry[0] == skel and entry[1] != null:
 			var anim: BanReader.ParsedAnimation = entry[1]
 			var secs: float = world._idle_anim_time - float(entry[5]) + float(entry[3])

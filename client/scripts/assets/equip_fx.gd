@@ -395,6 +395,12 @@ func _process(_delta: float) -> void:
 	for h in _shown:
 		if h.holder == null or not is_instance_valid(h.holder) or not h.holder.visible or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue # an own simulation places itself (EfpEffect.follow_host)
+		# A weapon whose body went far (round 747, CrowdGpu: its skeleton
+		# hidden and unposed) shows nothing until the next cycle chooses again;
+		# its bone would be where it was last posed.
+		if not h.skel.is_visible_in_tree():
+			h.holder.visible = false
+			continue
 		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale)
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)

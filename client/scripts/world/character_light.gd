@@ -141,10 +141,15 @@ func describe(pos: Vector3) -> String:
 	return "%s local %.0f,%.0f %s byte %d -> %.3f" % [group.name, local.x, local.z,
 		"terrain" if surf == null or surf.is_terrain else "object %d" % surf.object_index, b, color_at(pos)]
 
+## Round 747: called with a body whose meshes set_on gave other materials
+## (World3D: a far body's instances follow, CrowdGpu.refresh). Unset in tests.
+static var on_changed: Callable = Callable()
+
 ## Draws every mesh under `body` at object colour `value` (rescanning them
 ## when `rescan`): each object material, override or surface override, swapped
 ## for its copy at that level.
 static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
+	var changed := false
 	var meshes: Array = body.get_meta(META_MESHES, [])
 	if rescan or meshes.is_empty():
 		meshes = body.find_children("*", "MeshInstance3D", true, false)
@@ -161,6 +166,7 @@ static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
 			var want := ObjectLight.with_object_color(mi.material_override, value)
 			if want != mi.material_override:
 				mi.material_override = want
+				changed = true
 		if mi.mesh == null:
 			continue
 		for i in mi.get_surface_override_material_count():
@@ -169,3 +175,6 @@ static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
 				var want_s := ObjectLight.with_object_color(sm, value)
 				if want_s != sm:
 					mi.set_surface_override_material(i, want_s)
+					changed = true
+	if changed and on_changed.is_valid():
+		on_changed.call(body)

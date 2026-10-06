@@ -261,6 +261,10 @@ class Split:
 	var pose_usec := 0
 	var sound_usec := 0
 	var minimap_usec := 0
+	## Round 747: World3D._process's others (walk, turns, circles, light, the
+	## build pump) and the far crowd's step (CrowdGpu), QA only.
+	var others_usec := 0
+	var crowd_usec := 0
 	var posed := 0
 	var started_usec := 0
 	var last_frame := -1
