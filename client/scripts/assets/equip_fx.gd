@@ -52,13 +52,13 @@ const MAX_DISTANCE := 800.0
 const VISIBLE_BUDGET := 64
 ## Round 746 (OURS): how many WEAPONS carrying a world-axis effect (Kind.own),
 ## nearest the camera, run those effects on their own world-space simulation,
-## as retail does; the rest draw the shared master turned with their bone. A
-## per-weapon simulation costs about 0.17 ms a frame (round 734's profile: 6.8
-## ms for 40), and a weapon carries at most 3 world-axis effects (a Nova bow
-## or shield: _02 and _03; MEASURED, census_equip_world.gd), so 4 weapons
-## bound it near 2 ms -- the player's own weapon and its neighbours, where the
-## difference shows.
-const OWN_BUDGET := 4
+## as retail does; the rest draw the shared master turned with their bone.
+## One: the nearest weapon, which is the player's own while the camera follows
+## the player -- the weapon the player looks at. MEASURED (profile_equip_crowd.gd,
+## 200 Sun spears, headless): 4 own weapons cost 3.7 ms a frame of script
+## (place, simulate, redraw and rebuild the pipes every frame as the hand
+## moves), and the 200-spear gate went 21.9 -> 28.4 ms with 4.
+static var OWN_BUDGET := 1
 const RESELECT_FRAMES := 10
 ## A weapon this close to the camera shows its effect even outside the view
 ## (OURS: so an effect larger than its host does not drop when the host's
