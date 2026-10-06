@@ -49,6 +49,61 @@ A backup first (`pg_dump`) is the usual precaution; rolling back to an older ser
 columns in place, unread and harmless. GMs can set the values with `/give <id> [qty] [plus]` and
 `/item <bag slot> plus|var|quality|opt|adv|clear ...` (OpenSRO's own test hooks).
 
+## Economy transactions, item serials and one connection pool (round 743)
+
+Round 743 makes every trade, shop sale, buy back, pick-up and warehouse move one Postgres
+transaction (`docs/rounds/r743.md`). The server adds what it needs itself the first time it opens
+the tables, so **the update needs no manual step**:
+
+```
+-- run by the server at boot (txn.Schema, then inventory.schemaFor for inventory_slots and
+-- account_storage_slots); every statement is a no-op on a second boot:
+CREATE SEQUENCE IF NOT EXISTS item_serial_seq;
+CREATE TABLE IF NOT EXISTS economy_ops (op_key TEXT PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS economy_ops_created_at ON economy_ops (created_at);
+ALTER TABLE <t> ADD COLUMN IF NOT EXISTS serial BIGINT;                         -- nullable first
+UPDATE <t> SET serial = nextval('item_serial_seq') WHERE serial IS NULL;         -- the backfill
+ALTER TABLE <t> ALTER COLUMN serial SET DEFAULT nextval('item_serial_seq');
+ALTER TABLE <t> ALTER COLUMN serial SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS <t>_serial_key ON <t> (serial);
+```
+
+Each table's statements run as one implicit transaction, so the `ADD COLUMN`'s ACCESS EXCLUSIVE
+lock is held through the backfill and the index build: measured by round 743's review, 7.3 s for
+1.44 M bag rows and 2.6 s for 600 k warehouse rows, during which any other query on the table
+waits. That is harmless here -- the server is down for the rebuild, the boot runs the migration
+before it serves, and production's tables are far smaller -- but a rolling restart of several
+servers (the spec's M2) would need the backfill batched outside the lock. Two processes booting at
+once take turns (one advisory lock around every store's schema). Every existing stack gets its own
+serial; nothing else about an item changes. To check it took on opensro-01, after the
+update:
+
+```
+docker compose exec postgres psql -U postgres -d opensro -c "SELECT count(*), count(DISTINCT serial), count(*) FILTER (WHERE serial IS NULL) FROM inventory_slots"
+docker compose exec postgres psql -U postgres -d opensro -c "SELECT count(*), count(DISTINCT serial), count(*) FILTER (WHERE serial IS NULL) FROM account_storage_slots"
+#   the first two numbers equal, the third 0
+docker compose exec postgres psql -U postgres -d opensro -c "SELECT count(*) FROM economy_ops"   # grows with trades and pick-ups; rows older than a day are pruned hourly
+```
+
+**Connections.** The server now opens one capped pool for its stores and a small one for the
+reference data, instead of ten uncapped pools. `OPENSRO_PG_MAX_CONNS` is the whole budget (default
+40: 32 for the stores, 8 for the reference data; a value under 4 is ignored). It is optional; to
+set it, add it to the server service in the untracked `docker-compose.override.yml`:
+
+```
+services:
+  server:
+    environment:
+      OPENSRO_PG_MAX_CONNS: "40"
+```
+
+The boot log says what it used: `postgres pools stores=32 refdata=8`. Keep the budget of every
+process that shares the database under Postgres's `max_connections` (100 by default).
+
+**Rolling back** to an older server leaves the column, the sequence and the ledger in place: an
+older server's inserts take the column's default, so nothing breaks; it simply does not use them.
+A `pg_dump` first is the usual precaution.
+
 ## Moving an install from srrevamp to OpenSRO (round 704)
 
 The project was called srrevamp until 2026-10-03. The rename changed every name a deployed

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // InventorySizeStore is each character's own bag size: the engine's
@@ -88,7 +89,7 @@ func (m *MemStore) ExpandInventory(_ context.Context, characterID int64, base, a
 // InventorySize implements InventorySizeStore.
 func (s *SQLStore) InventorySize(ctx context.Context, characterID int64) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT inventory_size FROM characters WHERE id = $1`, characterID).Scan(&n)
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT inventory_size FROM characters WHERE id = $1`, characterID).Scan(&n)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -100,7 +101,7 @@ func (s *SQLStore) InventorySize(ctx context.Context, characterID int64) (int, e
 
 // SetInventorySize implements InventorySizeStore.
 func (s *SQLStore) SetInventorySize(ctx context.Context, characterID int64, size int) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE characters SET inventory_size = $1 WHERE id = $2`, size, characterID)
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx, `UPDATE characters SET inventory_size = $1 WHERE id = $2`, size, characterID)
 	if err != nil {
 		return fmt.Errorf("character: setting inventory size: %w", err)
 	}
@@ -121,7 +122,7 @@ func (s *SQLStore) ExpandInventory(ctx context.Context, characterID int64, base,
 		return 0, fmt.Errorf("character: expanding by %d", amount)
 	}
 	var next int
-	err := s.db.QueryRowContext(ctx, `
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `
 		UPDATE characters
 		SET inventory_size = (CASE WHEN inventory_size > 0 THEN inventory_size ELSE $2 END) + $3
 		WHERE id = $1 AND (CASE WHEN inventory_size > 0 THEN inventory_size ELSE $2 END) + $3 <= $4

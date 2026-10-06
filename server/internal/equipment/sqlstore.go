@@ -9,6 +9,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 const schema = `
@@ -33,6 +34,8 @@ type SQLStore struct {
 	db        *sql.DB
 	inv       inventory.Store
 	rollFresh func(ctx context.Context, itemID int64) (inventory.Instance, error)
+	// ownsDB is false on a shared pool (NewSQLStore), which Close leaves open.
+	ownsDB bool
 }
 
 // OpenSQLStore opens a PostgreSQL database at dsn and ensures its schema
@@ -46,22 +49,63 @@ func OpenSQLStore(dsn string, inv inventory.Store) (*SQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("equipment: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	s, err := NewSQLStore(db, inv)
+	if err != nil {
 		db.Close()
+		return nil, err
+	}
+	s.ownsDB = true
+	return s, nil
+}
+
+// NewSQLStore is OpenSQLStore on a pool the caller owns and shares with the
+// bag's store (round 743), so equipping is one transaction across both
+// tables. Close does not close it.
+func NewSQLStore(db *sql.DB, inv inventory.Store) (*SQLStore, error) {
+	if err := txn.Migrate(db, schema); err != nil {
 		return nil, fmt.Errorf("equipment: creating schema: %w", err)
 	}
 	return &SQLStore{db: db, inv: inv}, nil
 }
 
-// Close closes the underlying database connection.
+// TxDB implements txn.TxDBer.
+func (s *SQLStore) TxDB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
+// Close closes the underlying database connection, unless it is a shared
+// pool.
 func (s *SQLStore) Close() error {
+	if !s.ownsDB {
+		return nil
+	}
 	return s.db.Close()
+}
+
+// begin opens Equip's or Unequip's transaction (a savepoint inside the
+// context's) with the character's worn-slot lock taken. Round 743: before it
+// the bag's removal and the worn row's write were separate commits, and two
+// racing unequips of one slot both read the worn row and both returned it to
+// the bag -- one item became two (TestSQLUnequipRacedReturnsOnce).
+func (s *SQLStore) begin(ctx context.Context, characterID int64) (*txn.Tx, error) {
+	tx, err := txn.Begin(ctx, s.db)
+	if err != nil {
+		return nil, fmt.Errorf("equipment: %w", err)
+	}
+	if err := txn.LockOwner(tx.Ctx, tx, "equipment_slots", characterID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
 }
 
 // TruncateForTest clears all equipment data, for other packages' tests
 // sharing this Postgres instance. Not for production use.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE equipment_slots`)
+	_, err := txn.Conn(ctx, s.db).ExecContext(ctx, `TRUNCATE TABLE equipment_slots`)
 	return err
 }
 
@@ -77,7 +121,7 @@ func validSlot(slot Slot) bool {
 
 // Get implements Store.
 func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx,
 		`SELECT slot, item_id, variance, durability, opt_level, mag_params, adv_elixir FROM equipment_slots WHERE character_id = $1`, characterID)
 	if err != nil {
 		return nil, fmt.Errorf("equipment: listing equipped items: %w", err)
@@ -117,7 +161,7 @@ func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, erro
 			continue
 		}
 		out[i].Variance, out[i].Durability = inst.Variance, inst.Durability
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 			`UPDATE equipment_slots SET variance = $1, durability = $2 WHERE character_id = $3 AND slot = $4`,
 			int64(inst.Variance), inst.Durability, characterID, int(out[i].Slot)); err != nil {
 			return nil, fmt.Errorf("equipment: initialising slot %d: %w", out[i].Slot, err)
@@ -126,11 +170,18 @@ func (s *SQLStore) Get(ctx context.Context, characterID int64) ([]Equipped, erro
 	return out, nil
 }
 
-// Equip implements Store.
+// Equip implements Store, in one transaction (round 743): the bag's removal,
+// the displaced item's return and the worn row are one commit.
 func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inventorySlot int) error {
 	if !validSlot(slot) {
 		return ErrInvalidSlot
 	}
+	tx, err := s.begin(ctx, characterID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ctx = tx.Ctx
 
 	invSlots, err := s.inv.List(ctx, characterID)
 	if err != nil {
@@ -146,47 +197,60 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 	if incoming == nil {
 		return ErrInventorySlotEmpty
 	}
+	inst := incoming.Instance()
 
 	// A swap, as retail's CGObjPC::AttachEquipItem (0x00524cd0) does it
 	// with CGStorage::SwapItem(bag, worn) (round 652, READ): the incoming
 	// item leaves the bag first, then whatever was worn goes back (never
-	// lost) into the bag slot it left.
-	if err := s.inv.RemoveItem(ctx, characterID, inventorySlot, 1); err != nil {
+	// lost) into the bag slot it left. Taken under the bag's lock, checked to
+	// be the item just read.
+	if tk, ok := s.inv.(inventory.Taker); ok {
+		if _, inst, err = tk.TakeItem(ctx, characterID, inventorySlot, 1, incoming.ItemID); err != nil {
+			return fmt.Errorf("equipment: removing item from inventory: %w", err)
+		}
+	} else if err := s.inv.RemoveItem(ctx, characterID, inventorySlot, 1); err != nil {
 		return fmt.Errorf("equipment: removing item from inventory: %w", err)
 	}
 	before, _ := s.inv.List(ctx, characterID)
 	displaced := wornItemID(ctx, s, characterID, slot)
 	if err := s.unequipIfPresent(ctx, characterID, slot); err != nil {
-		putBack(ctx, s.inv, characterID, *incoming)
-		return err
+		return err // the transaction puts the item back
 	}
 	if displaced >= 0 {
 		after, _ := s.inv.List(ctx, characterID)
 		settleInto(ctx, s.inv, characterID, landedIndex(before, after, displaced), inventorySlot)
 	}
 
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO equipment_slots (character_id, slot, item_id, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (character_id, slot) DO UPDATE SET item_id = excluded.item_id, variance = excluded.variance, durability = excluded.durability,
 		   opt_level = excluded.opt_level, mag_params = excluded.mag_params, adv_elixir = excluded.adv_elixir`,
-		characterID, int(slot), incoming.ItemID, int64(incoming.Variance), incoming.Durability,
-		int(incoming.OptLevel), inventory.EncodeMagParams(incoming.MagParams), int(incoming.AdvElixir)); err != nil {
+		characterID, int(slot), incoming.ItemID, int64(inst.Variance), inst.Durability,
+		int(inst.OptLevel), inventory.EncodeMagParams(inst.MagParams), int(inst.AdvElixir)); err != nil {
 		return fmt.Errorf("equipment: equipping item: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
-// Unequip implements Store.
+// Unequip implements Store, in one transaction (round 743): the worn row is
+// read FOR UPDATE and its delete must find it, so two racing unequips return
+// the item once.
 func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) error {
 	if !validSlot(slot) {
 		return ErrInvalidSlot
 	}
+	tx, err := s.begin(ctx, characterID)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ctx = tx.Ctx
 
 	var itemID, variance int64
 	var dura, opt, adv int
 	var params []byte
-	err := s.db.QueryRowContext(ctx,
-		`SELECT item_id, variance, durability, opt_level, mag_params, adv_elixir FROM equipment_slots WHERE character_id = $1 AND slot = $2`,
+	err = tx.QueryRowContext(ctx,
+		`SELECT item_id, variance, durability, opt_level, mag_params, adv_elixir FROM equipment_slots WHERE character_id = $1 AND slot = $2 FOR UPDATE`,
 		characterID, int(slot)).Scan(&itemID, &variance, &dura, &opt, &params, &adv)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
@@ -199,11 +263,15 @@ func (s *SQLStore) Unequip(ctx context.Context, characterID int64, slot Slot) er
 		OptLevel: uint8(opt), MagParams: inventory.DecodeMagParams(params), AdvElixir: uint8(adv)}); err != nil {
 		return fmt.Errorf("equipment: returning item to inventory: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM equipment_slots WHERE character_id = $1 AND slot = $2`, characterID, int(slot)); err != nil {
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM equipment_slots WHERE character_id = $1 AND slot = $2`, characterID, int(slot))
+	if err != nil {
 		return fmt.Errorf("equipment: clearing slot: %w", err)
 	}
-	return nil
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return ErrSlotEmpty
+	}
+	return tx.Commit()
 }
 
 // unequipIfPresent is like Unequip but treats an empty slot as a no-op,
@@ -213,7 +281,7 @@ func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot Sl
 	if !validSlot(slot) {
 		return ErrInvalidSlot
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE equipment_slots SET durability = $1 WHERE character_id = $2 AND slot = $3`,
 		durabilityLeft, characterID, int(slot))
 	if err != nil {
@@ -230,7 +298,7 @@ func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot Slot
 	if !validSlot(slot) {
 		return ErrInvalidSlot
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE equipment_slots SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5
 		 WHERE character_id = $6 AND slot = $7`,
 		int64(inst.Variance), inst.Durability, int(inst.OptLevel), inventory.EncodeMagParams(inst.MagParams), int(inst.AdvElixir),

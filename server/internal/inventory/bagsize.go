@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // The bag's pages, READ from the client (round 633). IFInventory 0x6b6620
@@ -197,7 +199,7 @@ func (m *MemStore) HighestSlot(_ context.Context, owner int64) (int, error) {
 // HighestSlot implements HighestSlotter.
 func (s *SQLStore) HighestSlot(ctx context.Context, owner int64) (int, error) {
 	var hi int
-	err := s.db.QueryRowContext(ctx, s.q(`SELECT COALESCE(MAX(slot), -1) FROM %s WHERE character_id = $1`), owner).Scan(&hi)
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, s.q(`SELECT COALESCE(MAX(slot), -1) FROM %s WHERE character_id = $1`), owner).Scan(&hi)
 	if err != nil {
 		return -1, err
 	}

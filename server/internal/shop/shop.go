@@ -24,6 +24,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // ErrItemNotFound is returned by Service.Buy when itemID isn't in the
@@ -131,10 +132,10 @@ type Service struct {
 	sold   map[int64][]Sold
 }
 
-// Buy attempts to purchase quantity of itemID for characterID: looks up
-// the price, deducts gold, then adds the item to the inventory. If adding
-// to the inventory fails after gold was already deducted (e.g. no room),
-// the gold is refunded before returning the error.
+// Buy attempts to purchase quantity of itemID for characterID: looks up the
+// price, then deducts the gold and adds the item in ONE transaction (round
+// 743), so a purchase that does not fit (no room) or fails costs nothing --
+// there is no refund step to fail.
 func (s *Service) Buy(ctx context.Context, characterID, itemID int64, quantity int) error {
 	item, err := s.Items.GetItem(ctx, itemID)
 	if err != nil {
@@ -142,17 +143,15 @@ func (s *Service) Buy(ctx context.Context, characterID, itemID int64, quantity i
 	}
 
 	cost := Price(item) * int64(quantity)
-	if err := s.Gold.DeductGold(ctx, characterID, cost); err != nil {
-		return fmt.Errorf("shop: %w", err)
-	}
-
-	if err := s.Inv.AddItem(ctx, characterID, itemID, quantity); err != nil {
-		if refundErr := s.Gold.AddGold(ctx, characterID, cost); refundErr != nil {
-			return fmt.Errorf("shop: adding item failed (%w) AND refund failed (%v) -- character may have lost gold", err, refundErr)
+	return txn.For(s.Gold, s.Inv).Run(ctx, func(ctx context.Context) error {
+		if err := s.Gold.DeductGold(ctx, characterID, cost); err != nil {
+			return fmt.Errorf("shop: %w", err)
 		}
-		return fmt.Errorf("shop: adding item to inventory: %w", err)
-	}
-	return nil
+		if err := s.Inv.AddItem(ctx, characterID, itemID, quantity); err != nil {
+			return fmt.Errorf("shop: adding item to inventory: %w", err)
+		}
+		return nil
+	})
 }
 
 // Sell sells quantity from the given inventory slot back to the NPC: it reads
@@ -207,14 +206,27 @@ func (s *Service) SellBooked(ctx context.Context, characterID int64, slot, quant
 
 	gold := SellValue(item) * int64(quantity)
 
-	if err := s.Inv.RemoveItem(ctx, characterID, slot, quantity); err != nil {
-		return 0, 0, fmt.Errorf("shop: removing sold item: %w", err)
-	}
-	if err := s.Gold.AddGold(ctx, characterID, gold); err != nil {
-		if backErr := s.Inv.AddItemInstance(ctx, characterID, found.ItemID, quantity, found.Instance()); backErr != nil {
-			return 0, 0, fmt.Errorf("shop: crediting gold failed (%w) AND putting the item back failed (%v) -- character may have lost an item", err, backErr)
+	// The item out and the gold in, ONE transaction (round 743). The item is
+	// taken under the bag's lock and checked to be the one priced, so two
+	// racing sales of one stack sell it once; what left (its serial, when the
+	// whole stack went) is what the book keeps.
+	sold := found.Instance()
+	err = txn.For(s.Gold, s.Inv).Run(ctx, func(ctx context.Context) error {
+		inst, err := inventory.Take(ctx, s.Inv, characterID, slot, quantity, found.ItemID, found.Instance())
+		if err != nil {
+			if errors.Is(err, inventory.ErrSlotEmpty) || errors.Is(err, inventory.ErrItemChanged) {
+				return ErrSlotEmpty
+			}
+			return fmt.Errorf("shop: removing sold item: %w", err)
 		}
-		return 0, 0, fmt.Errorf("shop: crediting gold: %w", err)
+		sold = inst
+		if err := s.Gold.AddGold(ctx, characterID, gold); err != nil {
+			return fmt.Errorf("shop: crediting gold: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
 	}
 	if item != nil && NeverBooked(item) {
 		return gold, NotBooked, nil
@@ -223,7 +235,7 @@ func (s *Service) SellBooked(ctx context.Context, characterID int64, slot, quant
 	if item != nil && item.SellPrice*int64(quantity) > price {
 		price = item.SellPrice * int64(quantity)
 	}
-	return gold, s.recordSold(characterID, Sold{ItemID: found.ItemID, Quantity: quantity, Price: price, Inst: found.Instance()}), nil
+	return gold, s.recordSold(characterID, Sold{ItemID: found.ItemID, Quantity: quantity, Price: price, Inst: sold}), nil
 }
 
 // Catalog returns every purchasable item (the entire refdata catalog --

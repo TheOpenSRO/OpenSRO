@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS character_mastery_levels (
 // SQLStore is a Store backed by PostgreSQL.
 type SQLStore struct {
 	db *sql.DB
+	// ownsDB is false on a shared pool (NewSQLStore), which Close leaves open.
+	ownsDB bool
 }
 
 // OpenSQLStore opens a PostgreSQL database at dsn and ensures its schema
@@ -52,15 +54,31 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("skill: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	s, err := NewSQLStore(db)
+	if err != nil {
 		db.Close()
+		return nil, err
+	}
+	s.ownsDB = true
+	return s, nil
+}
+
+// NewSQLStore is OpenSQLStore on a pool the caller owns and shares with the
+// other stores (round 743: one capped pool per process). Close does not
+// close it.
+func NewSQLStore(db *sql.DB) (*SQLStore, error) {
+	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("skill: creating schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil
 }
 
-// Close closes the underlying database connection.
+// Close closes the underlying database connection, unless it is a shared
+// pool.
 func (s *SQLStore) Close() error {
+	if !s.ownsDB {
+		return nil
+	}
 	return s.db.Close()
 }
 

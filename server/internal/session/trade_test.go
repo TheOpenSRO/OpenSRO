@@ -118,6 +118,13 @@ type tradeFixtureDeps struct {
 // builds, chained after the trade handler (nil adds none).
 func setupTradeTestWith(t *testing.T, items ItemLookup, extra func(d tradeFixtureDeps) []gateway.Handler) *tradeTestFixture {
 	t.Helper()
+	return setupTradeTestWrapped(t, items, extra, nil)
+}
+
+// setupTradeTestWrapped is setupTradeTestWith with the trade handler's bag
+// store wrapped by wrap (nil: none) -- a test injects a store failure there.
+func setupTradeTestWrapped(t *testing.T, items ItemLookup, extra func(d tradeFixtureDeps) []gateway.Handler, wrap func(*inventory.SQLStore) inventory.Store) *tradeTestFixture {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -150,7 +157,11 @@ func setupTradeTestWith(t *testing.T, items ItemLookup, extra func(d tradeFixtur
 
 	hub := world.NewHub()
 	trades := trade.NewHub()
-	handlers := []gateway.Handler{LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, items, hub, trades)}
+	var tradeInv inventory.Store = inv
+	if wrap != nil {
+		tradeInv = wrap(inv)
+	}
+	handlers := []gateway.Handler{LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, tradeInv, items, hub, trades)}
 	if extra != nil {
 		handlers = append(handlers, extra(tradeFixtureDeps{accounts: accounts, chars: chars, inv: inv, trades: trades})...)
 	}
