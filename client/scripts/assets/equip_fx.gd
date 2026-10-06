@@ -242,9 +242,43 @@ func _drop(id: String) -> void:
 		h.holder.queue_free()
 	if h.own_fx != null and is_instance_valid(h.own_fx):
 		h.own_fx.queue_free()
+	_own_parked.erase(id)
 	if _kinds.has(h.key):
 		(_kinds[h.key] as Kind).hosts -= 1
 	_hosts.erase(id)
+
+## Round 746's review, findings 4-5 (OURS): the node whose weapons run their
+## own simulation first (World3D sets the player), the hysteresis margin, how
+## long a parked own effect is kept, and the pre-roll a new or resumed one
+## gets so it does not pop in empty.
+var prefer_root: Node = null
+const OWN_KEEP_MARGIN := 0.2
+const OWN_FREE_CYCLES := 30
+const OWN_PREROLL_STEPS := 10
+var _own_prev := {}     # weapon (skeleton id) -> true: the own weapons last cycle
+var _own_parked := {}   # host id -> the cycle its own effect was parked
+
+## Hides and pauses `h`'s own effect, noting when (it is freed after
+## OWN_FREE_CYCLES cycles parked).
+func _park_own(h: Host) -> void:
+	if h.own_fx == null or not is_instance_valid(h.own_fx) or not h.own_fx.visible:
+		return
+	# A hidden weapon's own simulation pauses (OURS: retail's limits are not
+	# READ, as for the budget).
+	h.own_fx.visible = false
+	h.own_fx.set_process(false)
+	_own_parked[h.id] = _cycle
+
+## Starts `fx` (an own effect) at its current placement and steps it
+## OWN_PREROLL_STEPS frames (0.5 s), so it shows particles at once: from
+## empty when `restart`.
+static func _preroll(fx: EfpEffect, restart: bool) -> void:
+	if fx == null or fx.sim == null:
+		return
+	if restart:
+		fx.sim.restart()
+	for i in OWN_PREROLL_STEPS:
+		fx.sim.step()
 
 ## A host's own effect for a world-space kind (Kind.own, round 746): the
 ## per-weapon path, as round 734 built it before EquipFx -- EfpEffect.create,
@@ -264,6 +298,7 @@ func _own_holder(h: Host, k: Kind) -> EfpEffect:
 	fx.follow_bone_full = true
 	h.skel.add_child(fx)
 	fx.follow_host(h.skel, h.skel.get_bone_name(h.bone), Vector3.ZERO)
+	_preroll(fx, false)
 	return fx
 
 ## Tests only: makes an own simulation's effect from its file name instead of
@@ -597,17 +632,22 @@ func _finish_cycle() -> void:
 		h.dist = _cand_d[i]
 		h.shown_cycle = _cycle
 		_shown.append(h)
-		var k: Kind = _kinds[h.key]
-		k.active += 1
-		if k.own:
+		if (_kinds[h.key] as Kind).own:
 			world_shown.append(h)
-	# The OWN_BUDGET nearest weapons with a world-axis effect run every such
-	# effect they carry on its own simulation (Kind.own), so a weapon's effects
-	# stay on one path together.
+	# The OWN_BUDGET weapons with a world-axis effect that run every such
+	# effect on its own simulation (Kind.own), a weapon's effects together.
+	# Round 746's review, finding 4 (OURS): the player's own weapon first
+	# (prefer_root), then the weapons that already run one, whose distance
+	# counts OWN_KEEP_MARGIN less (a hysteresis, so two weapons at about the
+	# same distance do not trade the slot every cycle), then the nearest.
 	var own_set := {}
-	if not world_shown.is_empty():
-		world_shown.sort_custom(func(a, b): return (a as Host).dist < (b as Host).dist)
-		var own_weapons := {}
+	var own_weapons := {}
+	if not world_shown.is_empty() and OWN_BUDGET > 0:
+		var rank := func(h: Host) -> float:
+			if prefer_root != null and is_instance_valid(prefer_root) and prefer_root.is_ancestor_of(h.skel):
+				return -1.0
+			return h.dist * (1.0 - OWN_KEEP_MARGIN) if _own_prev.has(h.skel.get_instance_id()) else h.dist
+		world_shown.sort_custom(func(a, b): return rank.call(a) < rank.call(b))
 		for wh in world_shown:
 			var wsid := (wh as Host).skel.get_instance_id()
 			if not own_weapons.has(wsid):
@@ -615,22 +655,29 @@ func _finish_cycle() -> void:
 					continue
 				own_weapons[wsid] = true
 			own_set[(wh as Host).id] = true
+	_own_prev = own_weapons
 	var owns := 0
 	for h in _shown:
 		var k: Kind = _kinds[h.key]
 		if own_set.has(h.id):
-			if h.own_fx == null or not is_instance_valid(h.own_fx):
+			var fresh := h.own_fx == null or not is_instance_valid(h.own_fx)
+			if fresh:
 				h.own_fx = _own_holder(h, k)
+			elif not h.own_fx.visible:
+				# Resumed after a pause: its particles are where the weapon
+				# was then. Start it over, pre-rolled (finding 4).
+				_preroll(h.own_fx, true)
 			if h.own_fx != null:
 				h.own_fx.visible = true
 				h.own_fx.set_process(true)
+				_own_parked.erase(h.id)
 				owns += 1
 				if h.holder != null and is_instance_valid(h.holder):
 					h.holder.visible = false
 				continue
-		if h.own_fx != null and is_instance_valid(h.own_fx):
-			h.own_fx.visible = false
-			h.own_fx.set_process(false)
+		# Drawn through the master: only these keep it stepping (finding 6).
+		k.active += 1
+		_park_own(h)
 		if h.holder == null or not is_instance_valid(h.holder):
 			h.holder = _holder_for(k.master)
 			h.skel.add_child(h.holder)
@@ -644,11 +691,16 @@ func _finish_cycle() -> void:
 			continue
 		if h.holder != null and is_instance_valid(h.holder):
 			h.holder.visible = false
-		if h.own_fx != null and is_instance_valid(h.own_fx):
-			# A hidden weapon's own simulation pauses (OURS: retail's limits
-			# are not READ, as for the budget).
-			h.own_fx.visible = false
-			h.own_fx.set_process(false)
+		_park_own(h)
+	# Finding 5: an own effect parked for OWN_FREE_CYCLES cycles is freed.
+	for id in _own_parked.keys():
+		if _cycle - int(_own_parked[id]) < OWN_FREE_CYCLES:
+			continue
+		_own_parked.erase(id)
+		var ph: Host = _hosts.get(id)
+		if ph != null and ph.own_fx != null and is_instance_valid(ph.own_fx):
+			ph.own_fx.queue_free()
+			ph.own_fx = null
 	_cand.clear()
 	_cand_d.clear()
 	for key in _kinds.keys():

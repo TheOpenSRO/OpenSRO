@@ -50,14 +50,23 @@ const LEGACY_EUROPE_SKILL_TABLES := [
 	"server_dep\\silkroad\\textdata\\skilldata_35000.txt",
 ]
 
-## Round 746: the client loads the parts its index `textdata\skilldata.txt`
-## names (MEASURED: SkillData_1000 .. SkillData_47000, 47 names), and the two
-## lists above were a measured cover of the mastery rows -- which missed one
-## on the retail archive: SKILL_CH_WATER_BATTLEA_OVERHEAL_B_01 (35005, Service
-## 1, only in skilldata_36000.txt; round 741's measurement), and 7 mastery ids
-## whose later definition is in an unlisted part. They are now only the
-## fallback for an archive with no index (LEGACY_*); every reader reads the
-## index's parts.
+## Round 746 and its review (finding 1). Retail's skill rows come from
+## `textdata\skilldataenc.txt` (READ: Client_LoadAllRefData 0x844cd0 names
+## only that list), whose ENC parts are encrypted twins of the plain ones.
+## The plain index `textdata\skilldata.txt` (47 parts) is a SUPERSET of them:
+## 66 ids retail lacks -- among them 35004/35005
+## (SKILL_CH_WATER_BATTLEA_OVERHEAL_A/B_01, a Europe cleric's leftovers in the
+## plain twin of skilldata_36000) -- and one disagreeing duplicate, 36791,
+## whose required mastery level is 110 in both ENC parts but 10 in plain
+## skilldata_37000 (MEASURED by the review against the decrypted ENC rows).
+## So:
+## - the SKILL BOARD reads the legacy covers below (tables_for_race without an
+##   archive), which match the ENC rows on every player-mastery row;
+## - the cast effects and sounds (SkillEffects, SkillAudio: timings and effect
+##   ids keyed by skill id) read the whole plain index (all_tables with an
+##   archive), which over their columns only adds ids (MEASURED, the review).
+## Reading the ENC rows themselves needs the key tables in the player's own
+## sro_client.exe: OPEN.
 const INDEX := "skilldata.txt"
 
 ## Every skilldata part `media` holds, as archive paths, in its index's
@@ -70,8 +79,9 @@ static func index_tables(media: Pk2Reader) -> PackedStringArray:
 		out = PackedStringArray(all_tables())
 	return out
 
-## The files a race's skill board reads (MasteryReader.RACE_*): the index's
-## parts when `media` is given (round 746), else the legacy cover for it.
+## The files a race's skill board reads (MasteryReader.RACE_*): the legacy
+## cover (the board's choice, see above); with `media`, the plain index's parts
+## instead (not for the board: it is not retail's list).
 static func tables_for_race(race: int, media: Pk2Reader = null) -> Array:
 	if media != null:
 		return Array(index_tables(media))

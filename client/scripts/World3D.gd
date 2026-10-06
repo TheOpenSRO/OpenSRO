@@ -1697,6 +1697,12 @@ func _ready() -> void:
 	SkillEffects.set_archive(_open_particles_pk2_if_set())
 	SkillEffects.warm_async()
 	SkillEffects.own_body = player
+	# Round 746's review, finding 4: the player's own weapon is the one whose
+	# world-axis effects simulate on their own (EquipFx.prefer_root). Deferred:
+	# the driver is a child of the viewport, which is still setting up.
+	(func() -> void:
+		if is_inside_tree():
+			EquipFx.driver_for(get_viewport()).prefer_root = player).call_deferred()
 	# Berserk's look (round 651): the SYSTEM_CH_HWANMODE rows of the same
 	# table, drawn from the same Particles.pk2.
 	BerserkLook.set_archive(_open_particles_pk2_if_set())
@@ -6175,14 +6181,17 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
-	# Round 746 (the review's finding 5): a world leaving before it asked for
-	# its item (and character) rows leaves no worker running behind it.
-	ItemTableReader.wait_pending()
-	CharTables.wait_pending()
 	if ParseProfile.enabled and _initial_load_done:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
+	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
+	# world leaving before it asked for its item, character and skill tables
+	# leaves no worker running behind it.
+	ItemTableReader.wait_pending()
+	CharTables.wait_pending()
+	SkillAudio.wait_pending()
+	SkillEffects.wait_pending()
 	# Round 732's static lambda (MagicOptionTable.shared_text, made in this
 	# node's script) aborted every quit -- "corrupted size vs. prev_size in
 	# fastbins", rc 134 -- when Godot 4.2.2 freed it after the script at exit

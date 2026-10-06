@@ -278,6 +278,13 @@ static func warm_async() -> void:
 
 static var _warm_task := -1
 
+## Waits for a warm_async under way (a world leaving the tree; round 746's
+## review, finding 9).
+static func wait_pending() -> void:
+	if _warm_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		_warm_task = -1
+
 static func _warm_now() -> void:
 	if _loaded:
 		return

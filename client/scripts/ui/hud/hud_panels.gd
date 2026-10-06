@@ -456,6 +456,7 @@ func _ensure_party_match() -> PartyMatchWindow:
 ## Lets the matching controller go with this HudPanels (review B6): it is
 ## hooked to NetClient.party, which outlives every HudPanels.
 func _exit_tree() -> void:
+	_wait_skill_parses()
 	if party_match != null:
 		party_match.dispose()
 		party_match = null
@@ -5020,6 +5021,50 @@ func _load_skill_catalog() -> void:
 	_load_masteries()
 	_load_skill_catalog_for(_skill_race)
 
+## One race's board rows: its masteries' rows of the race's skilldata files
+## (plain data: safe on a worker).
+##
+## Round 746's review, finding 1: the board reads the race's LEGACY cover
+## (SkillDataReader.tables_for_race without an archive), not the plain
+## index. Retail's board rows come from `skilldataenc.txt` (READ,
+## Client_LoadAllRefData 0x844cd0); the cover matches those on every
+## player-mastery row, where the plain index adds 35004/35005 (a Europe
+## cleric's leftovers in the plain twin of skilldata_36000) and takes 36791's
+## required mastery level 10 instead of 110 (MEASURED by the review).
+static func _parse_skill_board(archive: Pk2Reader, race: int) -> Dictionary:
+	var ids := PackedInt32Array()
+	for id in MasteryReader.RACE_MASTERIES.get(race, []):
+		ids.append(int(id))
+	var datas: Array = []
+	for path in SkillDataReader.tables_for_race(race):
+		var e := ObjectLoader.find_file(archive, path)
+		if e != null:
+			datas.append(archive.read_file(e))
+	return SkillDataReader.parse_skills(datas, ids)
+
+## race -> [task id, [grid]]: board parses started by preload_skill_catalog.
+var _skill_parse_tasks: Dictionary = {}
+
+## Round 746's review, finding 3: parses `race`'s board on a worker at world
+## entry, so the first cast, the hotbar restore or the first K waits for it
+## (if at all) instead of parsing ~170 ms on the main thread then.
+func preload_skill_catalog(race: int) -> void:
+	if _skill_catalog_races.has(race) or _skill_parse_tasks.has(race) or _builder == null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	var box: Array = [{}]
+	var task := WorkerThreadPool.add_task(func() -> void:
+		box[0] = HudPanels._parse_skill_board(archive, race), false, "skill board %d" % race)
+	_skill_parse_tasks[race] = [task, box]
+
+## Waits for the board parses still under way (leaving the tree).
+func _wait_skill_parses() -> void:
+	for race in _skill_parse_tasks.keys():
+		WorkerThreadPool.wait_for_task_completion(int((_skill_parse_tasks[race] as Array)[0]))
+	_skill_parse_tasks.clear()
+
 ## Reads one race's skills (its masteries' rows of its skilldata files) into
 ## _skill_grid and _skill_reach_by_id, once.
 func _load_skill_catalog_for(race: int) -> void:
@@ -5029,16 +5074,15 @@ func _load_skill_catalog_for(race: int) -> void:
 	if archive == null:
 		return
 	_skill_catalog_races[race] = true
-	var ids := PackedInt32Array()
-	for id in MasteryReader.RACE_MASTERIES.get(race, []):
-		ids.append(int(id))
-	var datas: Array = []
-	# Every part the archive's skilldata.txt names (round 746).
-	for path in SkillDataReader.tables_for_race(race, archive):
-		var e := ObjectLoader.find_file(archive, path)
-		if e != null:
-			datas.append(archive.read_file(e))
-	var grid := SkillDataReader.parse_skills(datas, ids)
+	var grid: Dictionary
+	if _skill_parse_tasks.has(race):
+		# Started at world entry (preload_skill_catalog): wait for it.
+		var pending: Array = _skill_parse_tasks[race]
+		WorkerThreadPool.wait_for_task_completion(int(pending[0]))
+		_skill_parse_tasks.erase(race)
+		grid = (pending[1] as Array)[0]
+	else:
+		grid = _parse_skill_board(archive, race)
 	for key in grid:
 		_skill_grid[key] = grid[key]
 	for key in grid:
@@ -5985,6 +6029,7 @@ func connect_net() -> void:
 	var entered: WorldNet.EnterWorldResult = NetClient.last_enter_world_result
 	if entered != null and entered.ok:
 		set_skill_race(MasteryReader.RACE_EUROPE if entered.gender.begins_with("europe") else MasteryReader.RACE_CHINA)
+	preload_skill_catalog(_skill_race)
 	NetClient.character_stats_result.connect(_apply_stats)
 	NetClient.skill_state_result.connect(_apply_skill_state)
 	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)

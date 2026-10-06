@@ -106,6 +106,12 @@ func begin(day_phase: float) -> bool:
 	var sw := Time.get_ticks_usec()
 	appearance = CharacterAppearance.from_archives(_data, _media)
 	print("CharSelectStage: catalogue read in %.1f ms" % ((Time.get_ticks_usec() - sw) / 1000.0))
+	# Round 746's review, finding 2: the world's characterdata and itemdata
+	# tables start parsing here, on workers, while the player picks a
+	# character; the world, opening the same Media.pk2, takes them shared
+	# (keyed by the file's path) instead of waiting for them at entry.
+	CharTables.preload_async(_media)
+	ItemTableReader.preload_async(_media)
 	return true
 
 ## The camera, standing where the screen last put it. MEASURED (round 684):

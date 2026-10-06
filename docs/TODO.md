@@ -24,6 +24,23 @@ where it stopped, the tools for it, the traps — and points back here for every
       review measured play-everywhere at Jangan: 112 objects, 135 effects, 113 glows, frame 1.53 ->
       2.97 ms (+94 %). For the user to decide; prerequisites in docs/rounds/r720_review.md.
 
+## Round 746 follow-ups (the review: the skill rows are skilldataenc's)
+
+- [ ] **The server's `skills.csv` comes from the plain skilldata index, not retail's
+      `skilldataenc.txt`** (the review of round 746, finding 8; MEASURED). It carries 66 ids
+      retail lacks, among them 35004/35005 (`SKILL_CH_WATER_BATTLEA_OVERHEAL_A/B_01`, a Europe
+      cleric's leftovers in the plain `skilldata_36000`). It also has 36791
+      (`SKILL_CH_LIGHT_SAINTA_ABNORMAL_A_01`) at a required mastery level of 10, where both ENC
+      parts say 110. So the server would accept a learn retail refuses. The client's skill board
+      reads the old cover, which matches the ENC rows, so the board does not show them. This
+      predates round 746. The options: export from the decrypted ENC rows (the key tables are in
+      the player's own `sro_client.exe`, `docs/protocol/magic_state_board.md`), or drop the 66 ids
+      and take 36791 from `skilldata_35000`. **For the user to decide.**
+- [ ] **characterdata duplicates** (the review of round 746, finding 7): the by-name monster
+      fallback changes its winner for `"large gate phase i"` and a junk key `"0"`. `NPC_SOSUN`
+      (61183) is the one code-keyed id whose parts disagree (`chinaman_spidey.bsr` first,
+      `sd_m_area_merchant.bsr` last). Retail's duplicate rule for characterdata is not READ.
+
 ## The party epic (round 709+, requested 2026-10-04)
 
 The user asked for the whole party system "fully working", matching the original down to the

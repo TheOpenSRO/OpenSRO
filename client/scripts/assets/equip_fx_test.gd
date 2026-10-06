@@ -32,6 +32,7 @@ func _initialize() -> void:
 	_test_weapon_budget()
 	_test_world_commands()
 	_test_own_nearest()
+	_test_own_prefer_keep_free()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
 	quit(1 if _failures > 0 else 0)
 
@@ -276,5 +277,76 @@ func _test_own_nearest() -> void:
 			ok = false
 	_check(ok and int(d.stats["own"]) == EquipFx.OWN_BUDGET,
 		"12 weapons with a world-axis effect: the %d nearest simulate on their own, the rest draw the shared master (%d own)" % [EquipFx.OWN_BUDGET, int(d.stats["own"])])
+	EquipFx.own_factory = Callable()
+	vp.free()
+
+## Round 746's review, findings 4-6: the player's weapon first, a margin
+## before the own slot moves, a parked own effect freed after a while, and a
+## master no shared holder uses does not step.
+func _own_of(s: Skeleton3D) -> bool:
+	for c in s.get_children():
+		if c is EfpEffect and (c as EfpEffect).visible and String(c.name).begins_with("EquipFxOwn"):
+			return true
+	return false
+
+func _cycle(d: EquipFx) -> void:
+	for f in EquipFx.RESELECT_FRAMES:
+		d._process(1.0 / 60.0)
+
+func _test_own_prefer_keep_free() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	var key := "%s|%s" % [EFP.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var k: EquipFx.Kind = d._kinds[key]
+	k.own = true
+	EquipFx.own_factory = func(_efp: String) -> EfpEffect:
+		return EfpEffect.new()
+	var budget := EquipFx.OWN_BUDGET
+	EquipFx.OWN_BUDGET = 1
+	# The player's weapon (the farthest here) is preferred.
+	var player := Node3D.new()
+	vp.add_child(player)
+	var near := _host(vp, d, Vector3(0, 0, 10))
+	var mine := _host(player, d, Vector3(0, 0, 40))
+	d.prefer_root = player
+	d._process(1.0 / 60.0)
+	_check(_own_of(mine) and not _own_of(near), "the player's own weapon runs the own simulation, not the nearer one")
+	# Finding 6: the only host drawn through the master is `near`; with both
+	# own, the master would pause.
+	_check(k.master.is_processing(), "a master a shared holder uses keeps stepping")
+	d.prefer_root = null
+	EquipFx.OWN_BUDGET = 2
+	_cycle(d)
+	_check(_own_of(mine) and _own_of(near) and not k.master.is_processing(),
+		"every shown host on its own: the master does not step (finding 6)")
+	# Hysteresis: one slot, `near` holds it; a weapon 15 % nearer does not
+	# take it, one 30 % nearer does.
+	EquipFx.OWN_BUDGET = 1
+	mine.position = Vector3(0, 0, 400)
+	_cycle(d)
+	_cycle(d)
+	var held := _own_of(near)
+	var rival := _host(vp, d, Vector3(0, 0, 0))
+	var dn := (near.global_position - vp.get_camera_3d().global_position).length()
+	rival.position = Vector3(0, 0, 10 - 0.15 * dn)
+	_cycle(d)
+	_cycle(d)
+	_check(held and _own_of(near) and not _own_of(rival), "a rival 15 %% nearer does not take the slot (margin %.0f %%)" % (EquipFx.OWN_KEEP_MARGIN * 100))
+	rival.position = Vector3(0, 0, 10 - 0.3 * dn)
+	# Two cycles: the scan that saw the move ends on the cycle after it.
+	_cycle(d)
+	_cycle(d)
+	_check(_own_of(rival) and not _own_of(near), "a rival 30 % nearer does")
+	# Finding 5: `near`'s parked own effect goes after OWN_FREE_CYCLES.
+	var hid := ""
+	for id in d._hosts:
+		if (d._hosts[id] as EquipFx.Host).skel == near:
+			hid = id
+	var h: EquipFx.Host = d._hosts[hid]
+	_check(h.own_fx != null and is_instance_valid(h.own_fx) and not h.own_fx.visible, "the old own effect is parked")
+	for c in EquipFx.OWN_FREE_CYCLES + 1:
+		_cycle(d)
+	_check(h.own_fx == null, "and freed after %d cycles parked" % EquipFx.OWN_FREE_CYCLES)
+	EquipFx.OWN_BUDGET = budget
 	EquipFx.own_factory = Callable()
 	vp.free()
