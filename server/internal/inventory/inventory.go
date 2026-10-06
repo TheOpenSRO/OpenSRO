@@ -214,6 +214,10 @@ type Slot struct {
 	OptLevel  uint8
 	MagParams []uint64
 	AdvElixir uint8
+	// serial is MemStore's copy of a stack's identity (the SQL store keeps
+	// it in its `serial` column): set when a whole stack moved in with one
+	// (Instance.Serial), handed back by TakeItem.
+	serial int64
 }
 
 // Instance is what makes one item different from another of the same id:
@@ -236,6 +240,36 @@ type Instance struct {
 	OptLevel   uint8
 	MagParams  []uint64
 	AdvElixir  uint8
+	// Serial is the stack's identity (round 743; the SQL store's `serial`
+	// column), set only by TakeItem when a WHOLE stack left its slot. A store
+	// that places it as a new row keeps it; zero means a new serial. It is
+	// not part of what Equal compares, and Slot.Instance leaves it zero, so a
+	// part of a stack never carries its source's serial.
+	Serial int64
+}
+
+// ErrItemChanged is TakeItem's answer when the slot no longer holds the item
+// the caller validated (it was moved and another took its place).
+var ErrItemChanged = errors.New("inventory: the slot holds a different item")
+
+// Taker is a Store that can take a counted part of one slot and say exactly
+// what left, under the same lock and in the same transaction as the check:
+// the slot must hold wantItem (when non-zero) and at least quantity. Moving
+// it into another container is then AddItemInstance with the returned
+// instance, so a whole stack keeps its serial. Implemented by MemStore and
+// SQLStore (round 743).
+type Taker interface {
+	TakeItem(ctx context.Context, owner int64, slot, quantity int, wantItem int64) (itemID int64, inst Instance, err error)
+}
+
+// Take is TakeItem on a store that has it, and RemoveItem answering seen --
+// the instance the caller read -- on one that does not.
+func Take(ctx context.Context, st Store, owner int64, slot, quantity int, wantItem int64, seen Instance) (Instance, error) {
+	if tk, ok := st.(Taker); ok {
+		_, inst, err := tk.TakeItem(ctx, owner, slot, quantity, wantItem)
+		return inst, err
+	}
+	return seen, st.RemoveItem(ctx, owner, slot, quantity)
 }
 
 // MaxMagParams is the cap on an item's blue options (READ: c:0x8bcdf0's

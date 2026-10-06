@@ -36,6 +36,8 @@ class_name QaLineup
 ##                                                     the particles); not with KITS
 ##   OPENSRO_QA_CROWD_STEPS=...                       (round 736) the crowd's cost split
 ##                                                     after the spawn (QaCrowdProbe's header)
+##   OPENSRO_QA_LINEUP_TURNS=<deg>,<deg>,..           (round 741) body i turned by entry
+##                                                     i mod n beyond facing the camera
 ##
 ## The kit is OURS for the picture: the race's `_A_DEF` weapon (CharCatalog's
 ## rule on World3D's item table), a shield beside ONE_HANDED_WITH_SHIELD, and the
@@ -251,6 +253,12 @@ func _spawn(appearance: CharacterAppearance) -> void:
 	# bodies (MEASURED, round 739).
 	var kit_cache := {}
 	var qa_usec := 0
+	# OPENSRO_QA_LINEUP_TURNS="0,45,90,..." (round 741): body i turned that
+	# many more degrees (i mod the list), so one run sees a weapon at many
+	# headings.
+	var turns: Array = []
+	for t in OS.get_environment("OPENSRO_QA_LINEUP_TURNS").split(",", false):
+		turns.append(float(t))
 	for i in range(specs.size()):
 		var sp: Dictionary = specs[i]
 		var qa_t0 := Time.get_ticks_usec()
@@ -275,7 +283,7 @@ func _spawn(appearance: CharacterAppearance) -> void:
 			sp.get("pluses", {}))
 		var node: Node3D = world._other_bodies.get(id)
 		if node != null:
-			node.rotation.y = yaw + PI
+			node.rotation.y = yaw + PI + (deg_to_rad(float(turns[i % turns.size()])) if not turns.is_empty() else 0.0)
 		var gait: Dictionary = world._other_gaits.get(id, {})
 		bodies.append({"id": id, "ref": int(sp["ref"]), "code": code, "scale": int(sp["scale"]), "weapon": int(sp["weapon"]),
 			"group": String(gait.get("group", "")), "skeleton": gait.get("skeleton")})

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
@@ -29,6 +30,8 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS chest_size INTEGER NOT NULL DEFAUL
 // driver, registered under the "pgx" database/sql driver name).
 type SQLStore struct {
 	db *sql.DB
+	// ownsDB is false on a shared pool (NewSQLStore), which Close leaves open.
+	ownsDB bool
 }
 
 // OpenSQLStore opens a PostgreSQL database at dsn (e.g.
@@ -43,15 +46,38 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("account: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	s, err := NewSQLStore(db)
+	if err != nil {
 		db.Close()
+		return nil, err
+	}
+	s.ownsDB = true
+	return s, nil
+}
+
+// NewSQLStore is OpenSQLStore on a pool the caller owns and shares with the
+// other stores (round 743). Close does not close it.
+func NewSQLStore(db *sql.DB) (*SQLStore, error) {
+	if err := txn.Migrate(db, schema); err != nil {
 		return nil, fmt.Errorf("account: creating schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil
 }
 
-// Close closes the underlying database connection.
+// TxDB implements txn.TxDBer.
+func (s *SQLStore) TxDB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
+// Close closes the underlying database connection, unless it is a shared
+// pool.
 func (s *SQLStore) Close() error {
+	if !s.ownsDB {
+		return nil
+	}
 	return s.db.Close()
 }
 
@@ -63,7 +89,7 @@ func (s *SQLStore) Register(ctx context.Context, username, password string) (*Ac
 	}
 
 	var id int64
-	err = s.db.QueryRowContext(ctx,
+	err = txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`INSERT INTO accounts (username, password_hash) VALUES ($1, $2) RETURNING id`,
 		username, hash).Scan(&id)
 	if err != nil {
@@ -80,7 +106,7 @@ func (s *SQLStore) Authenticate(ctx context.Context, username, password string) 
 	var acc Account
 	// chest_size is selected so Account.ChestSize means the same here as in
 	// MemStore: the stored warehouse size, 0 when none was stored (round 501).
-	row := s.db.QueryRowContext(ctx,
+	row := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`SELECT id, username, password_hash, blocked, block_reason, chest_size FROM accounts WHERE username = $1`, username)
 	if err := row.Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &acc.Blocked, &acc.BlockReason, &acc.ChestSize); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -100,7 +126,7 @@ func (s *SQLStore) Authenticate(ctx context.Context, username, password string) 
 
 // SetBlocked sets an existing account's blocked status and reason.
 func (s *SQLStore) SetBlocked(ctx context.Context, username string, blocked bool, reason string) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE accounts SET blocked = $1, block_reason = $2 WHERE username = $3`, blocked, reason, username)
 	if err != nil {
 		return fmt.Errorf("account: updating blocked status: %w", err)
@@ -122,7 +148,7 @@ func isUniqueConstraintErr(err error) bool {
 // StorageGold implements StorageGoldStore.
 func (s *SQLStore) StorageGold(ctx context.Context, accountID int64) (int64, error) {
 	var gold int64
-	err := s.db.QueryRowContext(ctx, `SELECT storage_gold FROM accounts WHERE id = $1`, accountID).Scan(&gold)
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT storage_gold FROM accounts WHERE id = $1`, accountID).Scan(&gold)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoSuchAccount
 	}
@@ -137,7 +163,7 @@ func (s *SQLStore) AddStorageGold(ctx context.Context, accountID int64, amount i
 	if amount <= 0 {
 		return errors.New("account: storage gold amount must be positive")
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE accounts SET storage_gold = storage_gold + $1 WHERE id = $2`, amount, accountID)
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx, `UPDATE accounts SET storage_gold = storage_gold + $1 WHERE id = $2`, amount, accountID)
 	if err != nil {
 		return fmt.Errorf("account: adding storage gold: %w", err)
 	}
@@ -153,14 +179,14 @@ func (s *SQLStore) DeductStorageGold(ctx context.Context, accountID int64, amoun
 	if amount <= 0 {
 		return errors.New("account: storage gold amount must be positive")
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE accounts SET storage_gold = storage_gold - $1 WHERE id = $2 AND storage_gold >= $1`, amount, accountID)
 	if err != nil {
 		return fmt.Errorf("account: deducting storage gold: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		var exists bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM accounts WHERE id = $1)`, accountID).Scan(&exists); err == nil && !exists {
+		if err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM accounts WHERE id = $1)`, accountID).Scan(&exists); err == nil && !exists {
 			return ErrNoSuchAccount
 		}
 		return ErrInsufficientStorageGold
@@ -172,7 +198,7 @@ func (s *SQLStore) DeductStorageGold(ctx context.Context, accountID int64, amoun
 // `_ChestInfo.ChestSize`; 0 means no size was ever stored.
 func (s *SQLStore) ChestSize(ctx context.Context, accountID int64) (int, error) {
 	var size int
-	err := s.db.QueryRowContext(ctx, `SELECT chest_size FROM accounts WHERE id = $1`, accountID).Scan(&size)
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT chest_size FROM accounts WHERE id = $1`, accountID).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoSuchAccount
 	}
@@ -189,13 +215,13 @@ func (s *SQLStore) ExpandChest(ctx context.Context, accountID int64, base, amoun
 		return 0, errors.New("account: chest expansion must be positive")
 	}
 	var size int
-	err := s.db.QueryRowContext(ctx,
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`UPDATE accounts SET chest_size = GREATEST(chest_size, $2) + $3
 		 WHERE id = $1 AND GREATEST(chest_size, $2) + $3 <= $4
 		 RETURNING chest_size`, accountID, base, amount, ceiling).Scan(&size)
 	if errors.Is(err, sql.ErrNoRows) {
 		var exists bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM accounts WHERE id = $1)`, accountID).Scan(&exists); err != nil {
+		if err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM accounts WHERE id = $1)`, accountID).Scan(&exists); err != nil {
 			return 0, fmt.Errorf("account: checking account after a refused expansion: %w", err)
 		}
 		if !exists {

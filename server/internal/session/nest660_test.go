@@ -79,7 +79,7 @@ func TestLeashFromTactics(t *testing.T) {
 	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
 		t.Fatalf("struck from 100 units: %v, want BATTLE", st)
 	}
-	f.hub.Move(f.ariaSession(t), world.Position{X: 160, Z: 0})
+	f.hub.Relocate(f.ariaSession(t), world.Position{X: 160, Z: 0}, world.MoveRelocate, 0)
 	for i := 0; i < 3; i++ {
 		monsterAITick(now)
 		now = now.Add(MonsterAITick)

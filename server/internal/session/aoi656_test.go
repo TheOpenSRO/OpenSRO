@@ -154,7 +154,7 @@ func TestAOIEnterLeaveAsThePlayerMoves(t *testing.T) {
 	}
 
 	sess := r.session(1)
-	r.hub.Move(sess, world.Position{X: cellX(1) - 150, Z: 0}) // over the line at x = 320
+	r.hub.Relocate(sess, world.Position{X: cellX(1) - 150, Z: 0}, world.MoveRelocate, 0) // over the line at x = 320
 	v.reconcile()
 	left, entered, legs := aoiFrames(t, c.quiet(t, 200*time.Millisecond))
 	if !sameIDs(left, []int64{west}) || !sameIDs(entered, []int64{east}) {
@@ -164,7 +164,7 @@ func TestAOIEnterLeaveAsThePlayerMoves(t *testing.T) {
 		t.Fatalf("the walking monster's leg: %+v, want one leg for %d to x %.0f", legs, east, cellX(2)+100)
 	}
 
-	r.hub.Move(sess, world.Position{X: 0, Z: 0})
+	r.hub.Relocate(sess, world.Position{X: 0, Z: 0}, world.MoveRelocate, 0)
 	v.reconcile()
 	left, entered, _ = aoiFrames(t, c.quiet(t, 200*time.Millisecond))
 	if !sameIDs(left, []int64{east}) || !sameIDs(entered, []int64{west}) {
@@ -270,7 +270,7 @@ func TestSleepingBrainsWaitForAPlayer(t *testing.T) {
 		t.Fatalf("the sleeper moved: %+v", m)
 	}
 
-	hub.Move(sess, world.Position{X: cellX(10) - 300})
+	hub.Relocate(sess, world.Position{X: cellX(10) - 300}, world.MoveRelocate, 0)
 	parked, _ := monsters.Get(near)
 	sleeperMoved := false
 	for i := 0; i < 600; i++ {
@@ -339,7 +339,7 @@ func TestHomingMonsterNeverSleeps(t *testing.T) {
 	if st := a.brains[id].machine.State(); st != ai.StateHoming {
 		t.Fatalf("precondition: the strayed monster runs home, state %v", st)
 	}
-	hub.Move(sess, world.Position{X: cellX(20)}) // the player goes far away
+	hub.Relocate(sess, world.Position{X: cellX(20)}, world.MoveRelocate, 0) // the player goes far away
 	start, _ := monsters.Get(id)
 	for i := 0; i < 100; i++ {
 		now = now.Add(MonsterAITick)

@@ -386,22 +386,6 @@ func modelOf(c *character.Character) (uint32, uint8) {
 	return uint32(ref), uint8(scale)
 }
 
-func entitySnapshotFromWorld(ctx context.Context, eq equipment.Store, chars character.Store, e world.Entity) EntitySnapshot {
-	gender, ref, scale := bodyOf(ctx, chars, e.CharacterID)
-	return EntitySnapshot{
-		CharacterID: e.CharacterID,
-		Name:        e.Name,
-		X:           float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z),
-		Equipped: equippedItems(ctx, eq, e.CharacterID),
-		Gender:   gender,
-		// Sent in the arrival lists' headings tail (round 637's review
-		// follow-up), not by Encode.
-		Heading: e.Heading, HasHeading: true,
-		// Sent in the results' models tail (round 689), not by Encode.
-		RefObjID: ref, Scale: scale, HasModel: true,
-	}
-}
-
 // EnterWorldRequest is the OpEnterWorld payload.
 type EnterWorldRequest struct {
 	CharacterName string
@@ -943,7 +927,7 @@ type MoveRequest struct {
 	// the world entry's placement, a QA or GM relocation. It is a trailing
 	// flags byte (bit 0), sent only when set: an older server's decoder reads
 	// three floats and ignores it. A relocated move keeps the heading
-	// (world.Hub.Move, not MoveFacing) and is relayed with the flag, so no
+	// (world.MoveRelocate, not MoveWalk) and is relayed with the flag, so no
 	// client turns the body toward it: the retail client places an object at
 	// a message's source position (FUN_009e11e0) without aiming it.
 	Relocated bool
@@ -1306,6 +1290,9 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
 		left, remaining, ok := hub.Leave(sess)
+		if ok {
+			forgetPlayerView(left.CharacterID, sess)
+		}
 		if !ok {
 			return
 		}
@@ -1346,10 +1333,11 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// A character leaving dead is saved at its return point (round 665,
 		// savedPlace).
 		savePosition(chars, sess, savedPlace(chars, sess, left))
-		msg := &EntityLeft{CharacterID: left.CharacterID}
-		for _, other := range remaining {
-			other.Session.Send(&proto.Packet{Opcode: OpEntityLeft, Data: msg.Encode()})
-		}
+		// The players in view drop it: retail's 0x3016 (round 737,
+		// playerview.go; CMsgBlock slot 3 -> FUN_00534050), where OpenSRO
+		// sent its own OpEntityLeft.
+		departPlayer(hub, left, remaining)
+		forgetLeftPlayer(hub, left.CharacterID)
 	}
 }
 
@@ -1491,7 +1479,12 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// NPC window forgets what it sent this session and spawns it whole again
 	// on its next tick, even when the character re-enters where it left.
 	forgetNPCWindow(sess.ID())
-	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	// Closed until the result is out (round 737's review, F3): nothing
+	// about another player reaches the client before it, and arrivePlayer
+	// spawns whoever is in view when it opens.
+	closePlayerView(owned.ID, sess, viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk})
+	invalidateLook(owned.ID) // what it wears is read afresh at each entry
+	hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 	// The heading comes back with a restored position (round 637's review
 	// follow-up; character.HeadingStore, OURS): the zone sees the character
 	// facing the way it left, and so does its own client (the result's own
@@ -1504,20 +1497,19 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// motion.go).
 	motions.enter(owned.ID, time.Now())
 
-	otherSnapshots := make([]EntitySnapshot, len(others))
-	for i, o := range others {
-		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, chars, o)
-	}
+	// The players already here are not listed in the result any more (round
+	// 737, crowd_scale.md C1): they follow it as retail's group spawns, one
+	// group per block of the arrival's 3 x 3 window (arrivePlayer), however
+	// many there are. The list in one frame refused the arriving session past
+	// 166 full-kit players (round 736, MEASURED).
 	result := &EnterWorldResult{
 		OK: true, Zone: zone,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Gender:      owned.Gender,
 		HP:          int32(owned.HP),
 		MaxHP:       int32(owned.MaxHP()),
-		Others:      otherSnapshots,
 		FrameRegion: frame,
 		Restored:    restored,
-		Seated:      seatedAmong(others),
 		Heading:     heading,
 		HasHeading:  true,
 	}
@@ -1543,30 +1535,23 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// client keeps an identical record in place (World3D._on_npc_spawned).
 	forgetNPCWindow(sess.ID())
 
-	// The entry faces the restored heading, or 0 on a fresh arrival.
-	entered := &EntitySnapshot{
-		CharacterID: owned.ID, Name: owned.Name,
-		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
-		Equipped:   equippedItems(ctx, eq, owned.ID),
-		Gender:     owned.Gender,
-		Heading:    heading,
-		HasHeading: true,
-		RefObjID:   ownRef, Scale: ownScale, HasModel: true,
-	}
-	for _, other := range others {
-		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.EncodeEntered()})
+	// The players in view (round 737, playerview.go): the arriving client
+	// is sent theirs as group spawns, each followed by its buffs, and they
+	// are sent its 0x3015 -- the record carries the heading, the model, the
+	// worn items with their pluses, the motion and the body mode.
+	arrived, inWorld := hub.EntityBySession(sess.ID())
+	if inWorld {
+		arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived)
 	}
 	// The client's own character id (round 616, OpSelfID), after the
 	// world-entry messages and before any buff that may name it.
 	if err := sess.Send(&proto.Packet{Opcode: OpSelfID, Data: (&SelfID{CharacterID: owned.ID}).Encode()}); err != nil {
 		return err
 	}
-	// The zone's active buffs, after the snapshots that name their owners
-	// (round 616, buffs.go; OURS).
-	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
-		sendBuffsInView(hub, e, time.Now())
-		// And who is berserk here (round 651, sendBodyModesInView).
-		sendBodyModesInView(hub, zerk, e)
+	// Its own buffs (round 616, buffs.go; OURS) -- the others' came with
+	// their spawns.
+	if inWorld {
+		sendOwnBuffs(arrived, time.Now())
 	}
 	return nil
 }
@@ -1625,9 +1610,26 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // the session is not in the world: the mover is then sent the "not in the
 // world" refusal, as handleChangeZone always did, and nothing moved.
 func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame string) (moved bool, err error) {
-	old, remainingOld, othersNew, ok := hub.ChangeZone(sess, bucket, pos)
+	old, remainingOld, _, ok := hub.ChangeZone(sess, bucket, pos)
 	if !ok {
 		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
+	}
+	// The old view goes with the old zone (round 737's review, F3): the
+	// client starts over at its result, and arrivePlayer opens a new view on
+	// the players in view then. Closed meanwhile, nothing about another
+	// player is recorded in a view about to be thrown away.
+	d := viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}
+	if !storeViewIfLive(hub, old.CharacterID, sess, closedView(sess, d)) {
+		// A stale session of a reconnect (round 737's verification, N4): the
+		// hub moved its entity, but the character is live on a newer
+		// session, whose view, motion, berserk, saved place and watchers
+		// this must not touch. Its own client hears its result.
+		data, _ := (&ChangeZoneResult{
+			OK: true, Zone: zone,
+			X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
+			FrameRegion: frame,
+		}).EncodeFitting()
+		return true, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data})
 	}
 	keepUp.Cancel(old.CharacterID)
 	// A character arrives standing (round 607, motion.go; ours: the retail
@@ -1644,54 +1646,44 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	arrived.Zone, arrived.Pos = bucket, pos
 	savePosition(chars, sess, arrived)
 
-	otherSnapshots := make([]EntitySnapshot, len(othersNew))
-	for i, o := range othersNew {
-		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, chars, o)
-	}
+	// The players where it lands follow the result as group spawns (round
+	// 737, arrivePlayer), not in its list.
 	result := &ChangeZoneResult{
 		OK: true, Zone: zone,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
-		Others:      otherSnapshots,
 		FrameRegion: frame,
-		Seated:      seatedAmong(othersNew),
 	}
-	data, dropped := result.EncodeFitting()
+	if warpBeforeResultHook != nil {
+		warpBeforeResultHook(sess)
+	}
+	data, _ := result.EncodeFitting()
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data}); err != nil {
 		return true, err
 	}
-	if dropped {
-		sendPlusesAsBroadcasts(sess, result.Others)
-	}
 
-	leftMsg := &EntityLeft{CharacterID: old.CharacterID}
-	for _, other := range remainingOld {
-		other.Session.Send(&proto.Packet{Opcode: OpEntityLeft, Data: leftMsg.Encode()})
-	}
+	// The window it left drops it (0x3016), even a window it lands in view
+	// of again: it was taken out and put back, as retail's block removal and
+	// insertion are, and its new spawn follows. Each client sent the 0x3016
+	// hears the OURS zone notice (left) ahead of it, and only those.
+	departPlayer(hub, old, remainingOld)
 
 	// The arrival faces the way the character last moved: the hub carries
-	// the heading through the change (world.Hub.ChangeZone).
-	entered := &EntitySnapshot{
-		CharacterID: old.CharacterID, Name: old.Name,
-		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
-		Equipped: equippedItems(ctx, eq, old.CharacterID),
-		Heading:  old.Heading, HasHeading: true,
-		HasModel: true,
+	// the heading through the change (world.Hub.ChangeZone). A zone change
+	// keeps the book (OURS: whether retail's teleport keeps buffs was not
+	// read); the players in view learn the mover's with its spawn, and the
+	// mover theirs with theirs (round 737).
+	if now, ok := hub.EntityBySession(sess.ID()); ok {
+		arrived = now
 	}
-	entered.Gender, entered.RefObjID, entered.Scale = bodyOf(ctx, chars, old.CharacterID)
-	for _, other := range othersNew {
-		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.EncodeEntered()})
-	}
-	// A zone change keeps the book (OURS: whether retail's teleport keeps
-	// buffs was not read); the new zone learns them, and the mover learns its
-	// new neighbours' (round 616, buffs.go).
 	arrived.Session = sess
-	sendBuffsInView(hub, arrived, time.Now())
-	sendBodyModesInView(hub, zerk, arrived)
 	// A running berserk ends with the zone change (endBerserk: the world
 	// entry's body mode is READ, that a zone change is a re-entry INFERRED),
-	// as the client's display does (FUN_00787860); the new zone and the mover
-	// hear body mode 0.
+	// as the client's display does (FUN_00787860): the mover hears body mode
+	// 0, and the players where it lands spawn it with 0 (round 737: before
+	// the spawns, so their records carry it).
 	endBerserk(hub, zerk, old.CharacterID)
+	arrivePlayer(d, arrived)
+	sendOwnBuffs(arrived, time.Now())
 	return true, nil
 }
 
@@ -1743,23 +1735,21 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	}
 	pos := world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}
 	// A walk turns the character to face the way it moved; a relocation keeps
-	// its heading (round 637's review follow-up; world.Hub.MoveFacing); a
+	// its heading (round 637's review follow-up; world.MoveWalk); a
 	// heading run faces the run's own heading (round 653, world.Hub
 	// .MoveHeading) -- a relocation still wins, as it aims nothing.
-	move := hub.MoveFacing
+	kind, heading := world.MoveWalk, 0.0
 	switch {
 	case req.Relocated:
-		move = hub.Move
+		kind = world.MoveRelocate
 	case req.Run:
-		heading := world.HeadingFromWire(req.RunAngle)
-		move = func(s *gateway.Session, p world.Position) (world.Entity, []world.Entity, bool) {
-			return hub.MoveHeading(s, p, heading)
-		}
+		kind, heading = world.MoveHeading, world.HeadingFromWire(req.RunAngle)
 	}
-	entity, others, ok := move(sess, pos)
+	moved, ok := hub.Relocate(sess, pos, kind, heading)
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}
+	entity := moved.Entity
 	// A move is the player's own cancel of a running auto-attack -- see
 	// keepup.go for why this packet stands in for the retail client's.
 	keepUp.Cancel(entity.CharacterID)
@@ -1769,10 +1759,14 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 
 	// A heading run is relayed with its heading form (round 653), so the
 	// watchers face its heading; a relocation carries none.
+	//
+	// Round 737 (crowd_scale.md C1, C2): to the players in view of the
+	// mover's block that hold it (retail's 3 x 3 send, CMsgBlockObject::
+	// FUN_00534150), encoded once for all of them; and, when it crossed a
+	// block line, the players that came into or went out of view are spawned
+	// and despawned both ways (playerview.go).
 	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z, Relocated: req.Relocated,
 		Run: req.Run && !req.Relocated, RunCommand: req.RunCommand, RunAngle: req.RunAngle}
-	for _, other := range others {
-		other.Session.Send(&proto.Packet{Opcode: OpEntityMoved, Data: msg.Encode()})
-	}
+	afterRelocate(sess, moved, false, gateway.MustFrame(&proto.Packet{Opcode: OpEntityMoved, Data: msg.Encode()}))
 	return nil
 }

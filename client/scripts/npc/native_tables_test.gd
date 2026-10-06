@@ -68,6 +68,7 @@ func _items() -> PackedByteArray:
 	r1[1] = "4842"
 	r1[2] = "ITEM_CH_M_CLOTHES_01_BA_A_DEF"
 	r1[3] = " Cotton Suit "
+	r1[4] = " ITEM_CH_M_CLOTHES_01_BA_BASE "
 	r1[5] = "SN_ITEM_CH_M_CLOTHES_01_BA_A"
 	r1[9] = "1"
 	r1[12] = "3"
@@ -92,6 +93,7 @@ func _items() -> PackedByteArray:
 		"1\t5\tNONAME\t\t",
 		"1\t6\tSHORT",
 		"1\t7\tC\tName",
+		"1\t8\tD\tName\tXXX",
 		"\t".join(r2),
 	]) + "\r\n")
 
@@ -135,7 +137,7 @@ func _canon_items(items: Dictionary) -> Dictionary:
 	var out := {}
 	for id in items:
 		var it: ItemTableReader.Item = items[id]
-		out[id] = [it.id, it.code_name, it.item_name, it.name_strid, it.max_stack, it.sell_price,
+		out[id] = [it.id, it.code_name, it.org_code_name, it.item_name, it.name_strid, it.max_stack, it.sell_price,
 			it.icon_path, it.model_path, it.model_paths, it.drop_model_path, it.type_ids, it.country,
 			it.req_gender, it.req_level_types, it.req_levels, it.durability, it.phys_atk, it.mag_atk,
 			it.phys_reinforce, it.mag_reinforce, it.attack_rate, it.critical, it.attack_range,
@@ -249,6 +251,8 @@ func _init() -> void:
 	_check(suit != null and suit.item_name == "Later Suit" and suit.model_paths.size() == 2 and suit.phys_def == Vector2(2.5, 15.0),
 		"items: the last duplicate wins, both set models are kept, '1.5e' reads 15")
 	_check(items.has(7) and not items.has(5) and not items.has(6), "items: a nameless iconless row and a short row are skipped")
+	_check(suit != null and suit.org_code_name == "ITEM_CH_M_CLOTHES_01_BA_BASE" and items[7].org_code_name == "" and items[8].org_code_name == "",
+		"items: OrgObjCodeName (column 4) stripped; a missing column and `XXX` read as none (round 740)")
 
 	if not loaded:
 		_check(NativeAssets.new_tables() == null, "with the native readers off there is no native table reader")

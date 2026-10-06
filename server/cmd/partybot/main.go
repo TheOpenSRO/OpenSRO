@@ -62,7 +62,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/session"
 )
@@ -78,6 +80,8 @@ type bot struct {
 	other chan *proto.Packet
 	mu    sync.Mutex
 	seen  map[string]int64 // character name -> id, from the world messages
+	// group is the group spawn being received (round 737).
+	group []npcspawn.GroupFrame
 	// zone and x, y, z are where the character entered the world.
 	zone    string
 	x, y, z float32
@@ -145,7 +149,45 @@ func (b *bot) note(p *proto.Packet) {
 			b.seen[e.Name] = e.CharacterID
 			b.mu.Unlock()
 		}
+	// Round 737: the players in view arrive as retail's spawns, a 0x3015 or a
+	// group (0x3017 / 0x3019 / 0x3018) of pcspawn records.
+	case npcspawn.OpSingleSpawn:
+		if rec, _, err := pcspawn.Decode(p.Data, nil); err == nil {
+			b.saw(rec)
+		}
+	case npcspawn.OpGroupBegin:
+		b.mu.Lock()
+		b.group = []npcspawn.GroupFrame{{Opcode: p.Opcode, Data: p.Data}}
+		b.mu.Unlock()
+	case npcspawn.OpGroupData, npcspawn.OpGroupEnd:
+		b.mu.Lock()
+		b.group = append(b.group, npcspawn.GroupFrame{Opcode: p.Opcode, Data: p.Data})
+		frames := b.group
+		b.mu.Unlock()
+		if p.Opcode == npcspawn.OpGroupEnd && len(frames) >= 2 && len(frames[0].Data) == 3 && frames[0].Data[0] == npcspawn.GroupSpawn {
+			var body []byte
+			for _, f := range frames[1 : len(frames)-1] {
+				body = append(body, f.Data...)
+			}
+			n := int(frames[0].Data[1]) | int(frames[0].Data[2])<<8
+			for i := 0; i < n; i++ {
+				rec, rest, err := pcspawn.Decode(body, nil)
+				if err != nil {
+					break // an NPC's record: the rest is not this bot's
+				}
+				b.saw(rec)
+				body = rest
+			}
+		}
 	}
+}
+
+// saw files a spawned player's name under its uid (the character id's low
+// 32 bits, as OpenSRO names players on retail messages).
+func (b *bot) saw(rec pcspawn.Record) {
+	b.mu.Lock()
+	b.seen[rec.Name] = int64(rec.UID)
+	b.mu.Unlock()
 }
 
 func (b *bot) idOf(name string) (int64, bool) {

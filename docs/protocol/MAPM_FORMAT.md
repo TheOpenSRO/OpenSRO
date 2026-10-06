@@ -124,7 +124,9 @@ The draw (READ, `Map::FUN_00a220b0`):
 - **Culling:** none.
 
 Census (MEASURED, 4,704 regions): PlaneType -1 on 128,879 blocks, 0 on 39,510, 1 on 955. The type-1
-blocks are all at plane 800, in whole regions around 88-92/124-129. The `.nvm` plane map is a poor
+blocks are all at plane 800, in whole regions around 88-92/124-129. Their `.nvm` blocks are
+floors a character stands on: Karakoram's frozen lake (NVM_FORMAT.md, "PlaneTypeMap: bit 1 is a
+floor", round 744). The `.nvm` plane map is a poor
 stand-in:
 - it marks 3,846 blocks as water where the `.m` has -1;
 - it misses 6,259 drawn type-0 blocks.

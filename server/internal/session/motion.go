@@ -379,13 +379,14 @@ const seatedRefusal = "cannot use that skill while sitting"
 // broadcastMotion sends 0x30bf {id, kind 1, value} to everyone in the
 // character's zone, the character included -- the engine's broadcast reaches
 // the requester's own client too, which is the only way it learns (0x8a80a0).
+//
+// Round 737: "everyone" is the players in view that hold the character
+// (playerview.go, sendAboutPlayer); one arriving later learns the motion
+// from its spawn record's motion byte.
 func broadcastMotion(hub *world.Hub, e world.Entity, value byte) {
 	msg := (&StateChange{ObjectID: uint32(e.CharacterID), Kind: StateKindMotion, Value: value}).Encode()
-	for _, other := range hub.EntitiesInZone(e.Zone) {
-		if other.Session != nil {
-			_ = other.Session.Send(&proto.Packet{Opcode: OpStateChange, Data: msg})
-		}
-	}
+	bumpPlayerState(e.CharacterID)
+	sendAboutPlayerPacket(hub, e.CharacterID, true, OpStateChange, msg)
 }
 
 // standOnHit is Combat_ApplyActionEffects' FUN_004b1480(0) for a sitter: a
@@ -406,20 +407,6 @@ func standOnHit(hub *world.Hub, characterID int64, damage int) {
 	if e, found := hub.EntityByCharacterID(characterID); found {
 		broadcastMotion(hub, e, value)
 	}
-}
-
-// seatedAmong lists the characters in others who are sitting or sitting down,
-// for the Seated tail of an enter-world or zone-change result (round 607):
-// the snapshot that spawns their bodies carries no motion state of its own.
-func seatedAmong(others []world.Entity) []int64 {
-	now := time.Now()
-	var ids []int64
-	for _, o := range others {
-		if motions.sittingOrSittingDown(o.CharacterID, now) {
-			ids = append(ids, o.CharacterID)
-		}
-	}
-	return ids
 }
 
 // sittingOrSittingDown reports whether characterID is SIT or in the

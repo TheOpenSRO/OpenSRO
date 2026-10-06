@@ -1396,8 +1396,7 @@ func useSkillHandler(
 			if isBuff && friendly {
 				done = startBuffOnLocked(hub, castRow, characterID, friendTarget.CharacterID, now) != startFailed
 			} else if isBuff {
-				e, _ := hub.EntityBySession(sess.ID())
-				done = startCasterBuffLocked(hub.EntitiesInZone(e.Zone), castRow, characterID, now) != startFailed
+				done = startCasterBuffLocked(zoneOf(hub, characterID), castRow, characterID, now) != startFailed
 			}
 			if isGround && done {
 				done = moveBySkill(sess, hub, chars, req.SkillID, groundDest, now)

@@ -351,12 +351,16 @@ var _materials: Dictionary = {} ## texture index -> ShaderMaterial, or null when
 var _built_group: Node3D = null
 var _built_window := Vector2i(1 << 30, 1 << 30)
 var _built_water_y := NAN
+var _built_on_plane := false
 var _dirty := true
 ## The placed-floor branch (round 701): what the floor test last ran for (the
 ## group, the FLOOR_CELL cell, the height), its answer, and whether the mesh
 ## is a floor drape. The samples: grid index -> region-local height (NAN: a
 ## miss), valid for one group and one reference height.
 var on_floor := false
+## Round 745 (OURS): the point stands on a .nvm solid plane (Karakoram's frozen
+## lake, round 744) high above the height map; only the flat quad is drawn.
+var on_plane := false
 var _floor_key_group: Node3D = null
 ## The key's cell as its lower corner (region-local x, z) -- float compares
 ## are what a tick pays on the terrain path.
@@ -545,6 +549,7 @@ func _refresh() -> void:
 		_floor_key_z0 = cell.y * FLOOR_CELL
 		_floor_key_y = local.y
 		on_floor = _floor_test(group, local)
+		on_plane = not on_floor and _plane_test(group, local)
 		if on_floor:
 			_rebuild_floor(group, local, cell)
 			# Every floor triangle rejected (round 701's review): the terrain
@@ -554,10 +559,10 @@ func _refresh() -> void:
 	if not on_floor:
 		var reach := cell_reach(SIZE)
 		var window := Vector2i(int(floor(local.x / CELL)) - reach, int(floor(local.z / CELL)) - reach)
-		var water_y := local.y + WATER_QUAD_LIFT if block_has_still_water(_block_at(group, local)) else NAN
+		var water_y := local.y + WATER_QUAD_LIFT if on_plane or block_has_still_water(_block_at(group, local)) else NAN
 		var water_changed := is_nan(water_y) != is_nan(_built_water_y) or (not is_nan(water_y) and absf(water_y - _built_water_y) > 1e-4)
-		if _dirty or _built_is_floor or group != _built_group or window != _built_window or water_changed:
-			_rebuild(group, local, window, water_y)
+		if _dirty or _built_is_floor or group != _built_group or window != _built_window or water_changed or on_plane != _built_on_plane:
+			_rebuild(group, local, window, water_y, on_plane)
 	if _mesh_instance.global_transform != group.global_transform:
 		_mesh_instance.global_transform = group.global_transform
 	if _mesh_instance.material_override != material:
@@ -572,15 +577,18 @@ func _refresh() -> void:
 
 ## The mesh for one 3 x 3 window, in the group's own frame (the instance takes
 ## the group's transform, so the shader's VERTEX.xz is region-local).
-func _rebuild(group: Node3D, local: Vector3, window: Vector2i, water_y: float) -> void:
+func _rebuild(group: Node3D, local: Vector3, window: Vector2i, water_y: float, plane_only := false) -> void:
 	_dirty = false
 	_built_is_floor = false
+	_built_on_plane = plane_only
 	_built_group = group
 	_built_window = window
 	_built_water_y = water_y
 	var lc := Vector2(local.x, local.z)
 	var drape := drape_arrays(lc, SIZE, func(c: int, r: int) -> float: return _vertex_height(group, c, r), DRAPE_LIFT)
-	var verts: PackedVector3Array = (drape["vertices"] as PackedVector3Array).duplicate()
+	# On a solid plane (round 745, OURS) the height-map drape would land on the
+	# lakebed under the ice: it is left out, and only the flat quad is drawn.
+	var verts: PackedVector3Array = PackedVector3Array() if plane_only else (drape["vertices"] as PackedVector3Array).duplicate()
 	var water := not is_nan(water_y)
 	if water:
 		# The still-water quad over the whole window at the point's height + 0.1:
@@ -617,6 +625,25 @@ func _floor_test(group: Node3D, local: Vector3) -> bool:
 	var probe := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, world.x, world.z,
 		world.y + FLOOR_PROBE_UP, world.y - FLOOR_PROBE_DOWN, PICK_MASK)
 	return floor_choice(local.y - terrain, probe)
+
+## The solid-plane test at region-local `local` of `group` (round 745, OURS):
+## the point is more than FLOOR_MIN_ABOVE_TERRAIN over the height map and the
+## short ray down from it hits the terrain layer -- World3D's SolidPlanes, the
+## .nvm floor-plane quads (round 744) -- rather than a placed floor.
+func _plane_test(group: Node3D, local: Vector3) -> bool:
+	var terrain := TerrainCollision.mesh_height_at(_heights_for(group), local.x, local.z)
+	if is_nan(terrain) or local.y - terrain <= FLOOR_MIN_ABOVE_TERRAIN or not is_inside_tree():
+		return false
+	var world := group.global_transform * local
+	var probe := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, world.x, world.z,
+		world.y + FLOOR_PROBE_UP, world.y - FLOOR_PROBE_DOWN, PICK_MASK)
+	return plane_choice(local.y - terrain, probe)
+
+## The solid-plane choice (round 745, OURS): high above the height map, and the
+## ray hit the terrain layer, not a placed object.
+static func plane_choice(above_terrain: float, probe: Dictionary) -> bool:
+	return not is_nan(above_terrain) and above_terrain > FLOOR_MIN_ABOVE_TERRAIN \
+		and not probe.is_empty() and not is_floor_hit(probe)
 
 ## The floor mesh for the FLOOR_CELL cell `cell` round a point at `local`:
 ## the grid points whose 12 x 12 art can reach from anywhere in the cell.

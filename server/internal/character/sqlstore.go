@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
@@ -90,6 +91,8 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS appointed_teleport BIGINT NOT NU
 // approach as account.SQLStore.
 type SQLStore struct {
 	db *sql.DB
+	// ownsDB is false on a shared pool (NewSQLStore), which Close leaves open.
+	ownsDB bool
 }
 
 // OpenSQLStore opens a PostgreSQL database at dsn and ensures its schema
@@ -103,21 +106,45 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("character: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	s, err := NewSQLStore(db)
+	if err != nil {
 		db.Close()
+		return nil, err
+	}
+	s.ownsDB = true
+	return s, nil
+}
+
+// NewSQLStore is OpenSQLStore on a pool the caller owns and shares with the
+// other stores (round 743: one capped pool, so one transaction can move gold
+// and items together). Close does not close it.
+func NewSQLStore(db *sql.DB) (*SQLStore, error) {
+	if err := txn.Migrate(db, schema, txn.Schema); err != nil {
 		return nil, fmt.Errorf("character: creating schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil
 }
 
-// Close closes the underlying database connection.
+// TxDB implements txn.TxDBer.
+func (s *SQLStore) TxDB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
+// Close closes the underlying database connection, unless it is a shared
+// pool.
 func (s *SQLStore) Close() error {
+	if !s.ownsDB {
+		return nil
+	}
 	return s.db.Close()
 }
 
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx,
 		`SELECT `+characterColumns+` FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
@@ -138,7 +165,7 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 // Create implements Store.
 func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*Character, error) {
 	var count int
-	if err := s.db.QueryRowContext(ctx,
+	if err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM characters WHERE account_id = $1`, accountID).Scan(&count); err != nil {
 		return nil, fmt.Errorf("character: counting existing characters: %w", err)
 	}
@@ -147,7 +174,7 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 	}
 
 	var id int64
-	err := s.db.QueryRowContext(ctx,
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`INSERT INTO characters (account_id, name, gold, hp, gender, level, str, intel, ref_obj_id, scale) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 		accountID, name, StartingGold, StartingMaxHP, DefaultGender, StartingLevel,
 		StartingStr, StartingInt, LegacyModelFor(DefaultGender), DefaultScale).Scan(&id)
@@ -164,7 +191,7 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 
 // Delete implements Store.
 func (s *SQLStore) Delete(ctx context.Context, accountID, characterID int64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`DELETE FROM characters WHERE id = $1 AND account_id = $2`, characterID, accountID)
 	if err != nil {
 		return fmt.Errorf("character: deleting character: %w", err)
@@ -181,7 +208,7 @@ func (s *SQLStore) Delete(ctx context.Context, accountID, characterID int64) err
 
 // AddGold implements Store.
 func (s *SQLStore) AddGold(ctx context.Context, characterID int64, amount int64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET gold = gold + $1 WHERE id = $2`, amount, characterID)
 	if err != nil {
 		return fmt.Errorf("character: adding gold: %w", err)
@@ -198,7 +225,7 @@ func (s *SQLStore) AddGold(ctx context.Context, characterID int64, amount int64)
 
 // DeductGold implements Store.
 func (s *SQLStore) DeductGold(ctx context.Context, characterID int64, amount int64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET gold = gold - $1 WHERE id = $2 AND gold >= $1`, amount, characterID)
 	if err != nil {
 		return fmt.Errorf("character: deducting gold: %w", err)
@@ -211,7 +238,7 @@ func (s *SQLStore) DeductGold(ctx context.Context, characterID int64, amount int
 		// Either the character doesn't exist, or gold was insufficient --
 		// distinguish so callers get an accurate error.
 		var exists bool
-		if err := s.db.QueryRowContext(ctx,
+		if err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 			`SELECT EXISTS(SELECT 1 FROM characters WHERE id = $1)`, characterID).Scan(&exists); err != nil {
 			return fmt.Errorf("character: checking existence: %w", err)
 		}
@@ -225,7 +252,7 @@ func (s *SQLStore) DeductGold(ctx context.Context, characterID int64, amount int
 
 // AddStorageGold implements Store.
 func (s *SQLStore) AddStorageGold(ctx context.Context, characterID int64, amount int64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET storage_gold = storage_gold + $1 WHERE id = $2`, amount, characterID)
 	if err != nil {
 		return fmt.Errorf("character: adding storage gold: %w", err)
@@ -242,7 +269,7 @@ func (s *SQLStore) AddStorageGold(ctx context.Context, characterID int64, amount
 
 // SetHwanCount implements Store.
 func (s *SQLStore) SetHwanCount(ctx context.Context, characterID int64, count int) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET hwan_count = $1 WHERE id = $2`, count, characterID)
 	if err != nil {
 		return fmt.Errorf("character: setting hwan count: %w", err)
@@ -259,7 +286,7 @@ func (s *SQLStore) SetHwanCount(ctx context.Context, characterID int64, count in
 
 // DeductStorageGold implements Store.
 func (s *SQLStore) DeductStorageGold(ctx context.Context, characterID int64, amount int64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET storage_gold = storage_gold - $1 WHERE id = $2 AND storage_gold >= $1`, amount, characterID)
 	if err != nil {
 		return fmt.Errorf("character: deducting storage gold: %w", err)
@@ -270,7 +297,7 @@ func (s *SQLStore) DeductStorageGold(ctx context.Context, characterID int64, amo
 	}
 	if n == 0 {
 		var exists bool
-		if err := s.db.QueryRowContext(ctx,
+		if err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 			`SELECT EXISTS(SELECT 1 FROM characters WHERE id = $1)`, characterID).Scan(&exists); err != nil {
 			return fmt.Errorf("character: checking existence: %w", err)
 		}
@@ -288,7 +315,7 @@ func (s *SQLStore) DeductStorageGold(ctx context.Context, characterID int64, amo
 // UPDATE skipped is then told apart from a missing one.
 func (s *SQLStore) ApplyDamage(ctx context.Context, characterID int64, amount int) (int, bool, error) {
 	var hp int
-	err := s.db.QueryRowContext(ctx,
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`UPDATE characters SET hp = GREATEST(hp - $1, 0) WHERE id = $2 AND hp > 0 RETURNING hp`,
 		amount, characterID).Scan(&hp)
 	if err == nil {
@@ -300,7 +327,7 @@ func (s *SQLStore) ApplyDamage(ctx context.Context, characterID int64, amount in
 	// No row above 0: the character is missing, or the blow found it at 0.
 	// The 0 reported is the HP the blow found; nothing was written.
 	var exists bool
-	err = s.db.QueryRowContext(ctx, `SELECT true FROM characters WHERE id = $1`, characterID).Scan(&exists)
+	err = txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT true FROM characters WHERE id = $1`, characterID).Scan(&exists)
 	if err == sql.ErrNoRows {
 		return 0, false, ErrNotFound
 	}
@@ -320,7 +347,7 @@ func (s *SQLStore) Heal(ctx context.Context, characterID int64, amount, maxHP in
 		return c.HP, nil
 	}
 	var hp int
-	err := s.db.QueryRowContext(ctx,
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`UPDATE characters SET hp = LEAST(hp + $1, $2) WHERE id = $3 RETURNING hp`,
 		amount, maxHP, characterID).Scan(&hp)
 	if err == sql.ErrNoRows {
@@ -336,7 +363,7 @@ func (s *SQLStore) Heal(ctx context.Context, characterID int64, amount, maxHP in
 // RespawnHP implements Store: back from death at RespawnFraction of maximum,
 // floored at 1 so a character never respawns dead.
 func (s *SQLStore) RespawnHP(ctx context.Context, characterID int64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET hp = GREATEST(1, FLOOR(ROUND(str * $1 * POWER($2, level - 1)) * $3)) WHERE id = $4`,
 		HPPerStr, StatGrowth, RespawnFraction, characterID)
 	if err != nil {
@@ -355,7 +382,7 @@ func (s *SQLStore) RespawnHP(ctx context.Context, characterID int64) error {
 func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 	// Max HP scales with the row's own level (base + per-level), so a reset
 	// heals to the level-appropriate maximum.
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET hp = ROUND(str * $1 * POWER($2, level - 1)) WHERE id = $3`,
 		HPPerStr, StatGrowth, characterID)
 	if err != nil {
@@ -373,7 +400,7 @@ func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 
 // GetByID implements Store.
 func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, error) {
-	c, err := scanCharacter(s.db.QueryRowContext(ctx,
+	c, err := scanCharacter(txn.Conn(ctx, s.db).QueryRowContext(ctx,
 		`SELECT `+characterColumns+` FROM characters WHERE id = $1`, characterID))
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -386,7 +413,7 @@ func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, 
 
 // SetLeveling implements Store.
 func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int, exp int64, statPoints, str, intel int) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET level = $1, exp = $2, stat_points = $3, str = $4, intel = $5 WHERE id = $6`,
 		level, exp, statPoints, str, intel, characterID)
 	if err != nil {
@@ -406,7 +433,7 @@ func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int
 func (s *SQLStore) SetGender(ctx context.Context, characterID int64, gender string) error {
 	// A China gender carries its legacy body with it (LegacyModelFor), so the
 	// old create path and the tests that set a gender keep RefObjID agreeing.
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET gender = $1, ref_obj_id = CASE WHEN $1 IN ('china_man', 'china_woman') THEN $3 ELSE ref_obj_id END WHERE id = $2`,
 		gender, characterID, LegacyModelFor(gender))
 	if err != nil {
@@ -424,7 +451,7 @@ func (s *SQLStore) SetGender(ctx context.Context, characterID int64, gender stri
 
 // SavePosition implements Store.
 func (s *SQLStore) SavePosition(ctx context.Context, characterID int64, zone, frame string, x, y, z float64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET latest_zone = $1, latest_frame = $2, pos_x = $3, pos_y = $4, pos_z = $5 WHERE id = $6`,
 		zone, frame, x, y, z, characterID)
 	if err != nil {

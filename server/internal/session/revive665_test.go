@@ -41,9 +41,7 @@ func (f *deadWorldFixture) goDonwhang(t *testing.T) {
 	if czr, err := DecodeChangeZoneResult(f.read(t, f.connA, f.rA).Data); err != nil || !czr.OK {
 		t.Fatalf("setup: Aria's zone change answered %+v (err %v)", czr, err)
 	}
-	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityLeft {
-		t.Fatalf("setup: Bram received %#04x, want OpEntityLeft", p.Opcode)
-	}
+	expectPlayerDespawn(t, f.connB, f.rB, f.aria)
 }
 
 // Option 1, "Resurrect at the specified point.": a level-30 player killed in
@@ -69,6 +67,7 @@ func TestReviveOptionOneReturnsToTheReturnPoint(t *testing.T) {
 	if err != nil || !czr.OK || czr.Zone != spawnZone {
 		t.Fatalf("option 1's zone change %+v (err %v), want OK to %q", czr, err, spawnZone)
 	}
+	f.expectSpawnIfInView(t) // Bram, at the return point (round 737)
 	p = f.read(t, f.connA, f.rA)
 	if p.Opcode != OpReviveResult {
 		t.Fatalf("after the zone change Aria received %#04x, want OpReviveResult", p.Opcode)
@@ -88,9 +87,7 @@ func TestReviveOptionOneReturnsToTheReturnPoint(t *testing.T) {
 	if e.Life != world.LifeAlive || e.Zone != wantBucket || e.Pos != wantPos {
 		t.Errorf("after option 1: life %d in %q at %+v; want alive in %q at %+v (the return point, not donwhang)", e.Life, e.Zone, e.Pos, wantBucket, wantPos)
 	}
-	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityEntered {
-		t.Errorf("Bram, in jangan, received %#04x, want Aria's OpEntityEntered at the return point", p.Opcode)
-	}
+	expectPlayerSpawn(t, f.connB, f.rB, f.aria)
 }
 
 // Option 2, "Resurrect at the present point.", is honoured at max level 10 or
@@ -152,6 +149,7 @@ func TestEmptyReviveAboveLevelTenReturnsToTheReturnPoint(t *testing.T) {
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpChangeZoneResult {
 		t.Fatalf("an empty request at level 30 answered %#04x first, want the zone change to the return point", p.Opcode)
 	}
+	f.expectSpawnIfInView(t)
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpReviveResult {
 		t.Fatalf("then %#04x, want OpReviveResult", p.Opcode)
 	}

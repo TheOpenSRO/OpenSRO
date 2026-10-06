@@ -14,7 +14,7 @@ func _initialize() -> void:
 	var data := Pk2Reader.open("/opt/sro-files/client/Data.pk2")
 	var media := Pk2Reader.open("/opt/sro-files/client/Media.pk2")
 	var items := {}
-	for path in ItemTableReader.TABLE_PATHS:
+	for path in ItemTableReader.table_paths(media):
 		var e := ObjectLoader.find_file(media, path)
 		if e != null:
 			ItemTableReader.parse(media.read_file(e), items)

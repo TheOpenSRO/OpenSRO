@@ -182,9 +182,7 @@ func TestZoneChangeEndsBerserk(t *testing.T) {
 		t.Fatalf("Aria got %#04x, want OpChangeZoneResult", p.Opcode)
 	}
 	f.expectBodyMode(t, "Aria", f.read(t, f.connA, f.rA), 0)
-	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityLeft {
-		t.Fatalf("Bram got %#04x, want OpEntityLeft", p.Opcode)
-	}
+	expectPlayerDespawn(t, f.connB, f.rB, f.aria)
 	if zerk.Active(f.aria) {
 		t.Fatal("still berserk after the zone change")
 	}

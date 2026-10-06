@@ -1,28 +1,14 @@
 package session
 
 import (
-	"bytes"
-	"encoding/binary"
 	"testing"
 )
 
 // Round 637's review follow-up: the arrival faces the way the character last
-// walked (OpEntityEntered's trailing wire angle), and a relocation is relayed
-// as one and turns nothing.
-//
-// Written against the payloads as bytes, through decoders dev 5a82339 already
-// had, so the same test runs -- and fails -- there (the round's negative).
-
-// enteredTail reads OpEntityEntered's payload the way an older client does
-// (one snapshot) and returns what follows it.
-func enteredTail(t *testing.T, data []byte) []byte {
-	t.Helper()
-	_, rest, err := decodeEntitySnapshot(data)
-	if err != nil {
-		t.Fatalf("an older decoder cannot read the OpEntityEntered payload: %v", err)
-	}
-	return rest
-}
+// walked, and a relocation is relayed as one and turns nothing. Since round
+// 737 the arrival is retail's spawn record, whose u16 angle (pcspawn,
+// FUN_009c3a70's) carries the heading where OpEntityEntered's trailing wire
+// angle did.
 
 func TestArrivalFacesTheLastWalk(t *testing.T) {
 	f := startDeadWorldFixture(t)
@@ -30,26 +16,14 @@ func TestArrivalFacesTheLastWalk(t *testing.T) {
 	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK {
 		t.Fatalf("Bram's change to donwhang refused: %+v", czr)
 	}
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEntityLeft {
-		t.Fatalf("Aria's packet after Bram left is %#04x, want OpEntityLeft", p.Opcode)
-	}
+	expectPlayerDespawn(t, f.connA, f.rA, f.bram)
 	// Aria walks, last toward -z: heading pi, wire angle pi/2 = 16384.
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 200}).Encode())
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 190}).Encode())
 	if czr := changeZone(t, f, f.connA, f.rA, "donwhang"); !czr.OK {
 		t.Fatalf("Aria's change to donwhang refused: %+v", czr)
 	}
-	p := f.read(t, f.connB, f.rB)
-	if p.Opcode != OpEntityEntered {
-		t.Fatalf("Bram's packet after Aria arrived is %#04x, want OpEntityEntered", p.Opcode)
-	}
-	tail := enteredTail(t, p.Data)
-	// The 2-byte wire angle, then (round 689) the 5-byte model an older
-	// client never reaches.
-	if len(tail) != 2+5 {
-		t.Fatalf("OpEntityEntered carries %d byte(s) after the snapshot, want the 2-byte wire angle and the 5-byte model", len(tail))
-	}
-	if got := binary.LittleEndian.Uint16(tail); got != 16384 {
+	if got := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0].Angle; got != 16384 {
 		t.Errorf("the arrival's wire angle is %d, want 16384 (heading pi, the last walk toward -z)", got)
 	}
 }
@@ -81,30 +55,19 @@ func TestRelocationIsRelayedAndKeepsTheHeading(t *testing.T) {
 	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK {
 		t.Fatalf("Bram's change refused: %+v", czr)
 	}
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEntityLeft {
-		t.Fatalf("Aria's packet after Bram left is %#04x, want OpEntityLeft", p.Opcode)
-	}
+	expectPlayerDespawn(t, f.connA, f.rA, f.bram)
 	if czr := changeZone(t, f, f.connA, f.rA, "donwhang"); !czr.OK {
 		t.Fatalf("Aria's change refused: %+v", czr)
 	}
-	p = f.read(t, f.connB, f.rB)
-	if p.Opcode != OpEntityEntered {
-		t.Fatalf("Bram's packet after Aria arrived is %#04x, want OpEntityEntered", p.Opcode)
-	}
-	tail := enteredTail(t, p.Data)
-	if len(tail) != 2+5 {
-		t.Fatalf("OpEntityEntered carries %d byte(s) after the snapshot, want 2 + the round-689 model's 5", len(tail))
-	}
-	if got := binary.LittleEndian.Uint16(tail); got != 0 {
+	if got := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0].Angle; got != 0 {
 		t.Errorf("after the relocation the wire angle is %d, want 0 (heading pi/2 kept from the walk, not pi toward the jump)", got)
 	}
 }
 
-// The arrival lists (round 637's review follow-up, "headings in the arrival
+// The arrivals (round 637's review follow-up, "headings in the arrival
 // lists"): someone arriving where a character already stands sees it facing
-// the way it last walked. The ChangeZoneResult's tail after the frame is the
-// always-written Seated (a zero count), then the headings: a count of 1 and
-// Aria's wire angle, 16384 for heading pi (her last walk toward -z).
+// the way it last walked. Since round 737 that is the group spawn's record of
+// Aria: wire angle 16384 for heading pi (her last walk toward -z).
 func TestArrivalListCarriesTheHeadingsOfThoseStanding(t *testing.T) {
 	f := startDeadWorldFixture(t)
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 200}).Encode())
@@ -117,20 +80,10 @@ func TestArrivalListCarriesTheHeadingsOfThoseStanding(t *testing.T) {
 	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK {
 		t.Fatalf("Bram's change to donwhang refused: %+v", czr)
 	}
-	f.send(t, f.connB, OpChangeZone, (&ChangeZoneRequest{Zone: "jangan"}).Encode())
-	p := f.read(t, f.connB, f.rB)
-	if p.Opcode != OpChangeZoneResult {
-		t.Fatalf("Bram's change back answered %#04x, want OpChangeZoneResult", p.Opcode)
+	if czr := changeZone(t, f, f.connB, f.rB, "jangan"); !czr.OK || len(czr.Others) != 0 {
+		t.Fatalf("Bram's change back: %+v; want OK with no list", czr)
 	}
-	czr, err := DecodeChangeZoneResult(p.Data)
-	if err != nil || !czr.OK || len(czr.Others) != 1 {
-		t.Fatalf("Bram's change back: %+v, %v; want Aria in the list", czr, err)
-	}
-	// Then (round 689) the models tail: a count of 1 and Aria's model, 5
-	// bytes, which an older decoder never reaches.
-	want := []byte{0, 0, 1, 0, 0x00, 0x40, 1, 0}
-	if len(p.Data) < 5 || !bytes.HasSuffix(p.Data[:len(p.Data)-5], want) {
-		t.Errorf("the arrival list ends % x, want the tail % x (no one seated, 1 heading, wire angle 16384, 1 model) and a model",
-			p.Data[max(0, len(p.Data)-13):], want)
+	if got := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0].Angle; got != 16384 {
+		t.Errorf("Bram's spawn of Aria faces wire angle %d, want 16384 (heading pi)", got)
 	}
 }

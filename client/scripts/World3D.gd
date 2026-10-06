@@ -1665,6 +1665,11 @@ func _ready() -> void:
 	# process environment (OPENSRO_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
+	# Round 741: every itemdata part the index names (63, ~1.7 s of GDScript
+	# on the render box) parses on a worker while the rest of _ready runs;
+	# _load_character_assets waits for it. Free when the select screen
+	# already parsed the same archive (ItemTableReader.load_all is shared).
+	ItemTableReader.preload_async(_open_media_pk2_if_set())
 	# OPENSRO_QA_UI_SCALE=<f> (round 695, OURS): a QA run boots this scene
 	# directly, past Boot's ClientSettings.apply_ui_scale, so it ran at 1.0
 	# whatever the settings say; this applies a scale for the run (nothing is
@@ -1746,6 +1751,9 @@ func _ready() -> void:
 
 	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
+	# The other players' spawn records are read by the item table (round
+	# 737, UserSpawnNet): the spawns that came before it are read now.
+	NetClient.set_spawn_item_rows(_item_rows)
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
 	# The readers' own time so far, by function (round 667, ParseProfile;
 	# OPENSRO_PARSE_PROFILE=1): boot and these tables, then a fresh window
@@ -1815,6 +1823,7 @@ func _ready() -> void:
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.object_status.connect(_on_object_status)
+	_replay_character_states()
 	NetClient.level_up.connect(_on_level_up)
 	NetClient.exp_gained.connect(_on_exp_gained)
 	NetClient.gold_total.connect(_on_gold_total)
@@ -3799,12 +3808,39 @@ func _nav_graph_for_region(region_x: int, region_y: int) -> Array:
 static func _prepare_navmesh_walls(job: Dictionary) -> void:
 	var region: NvmReader.ParsedRegion = job.get("navmesh")
 	job["wall_faces"] = PackedVector3Array()
+	job["solid_plane_faces"] = PackedVector3Array()
 	if region == null:
 		return
+	job["solid_plane_faces"] = NvmCollision.solid_plane_faces(region)
 	var faces := NvmCollision.build_wall_triangles(region, NAVMESH_WALL_HEIGHT)
 	job["wall_faces"] = faces
 	job["wall_line"] = "World3D: loaded real navmesh walls for %s (%d real blocking of %d internal + %d global edges)" % [
 		job["mapm_path"], NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()]
+
+## Round 744: the region's solid planes (NvmCollision.solid_plane_faces --
+## Karakoram's frozen lake, whose `.nvm` blocks carry SOLID_PLANE_BIT) as a
+## body on the terrain layer, so what is under a click, the camera's arm and
+## every terrain ray (TerrainCollision.vertical_ray: the snap, monster and
+## ground-item placement) stop at the ice the walk stands on
+## (NvmCollision.terrain_height, READ) rather than at the lakebed under it.
+## Two-sided: the terrain group's mirrored z flips the faces' winding. That the
+## original's pick hits the plane is OURS -- its pick was not read; its height
+## query's rule is.
+func _add_solid_planes(terrain_group: Node3D, job: Dictionary) -> void:
+	var faces: PackedVector3Array = job.get("solid_plane_faces", PackedVector3Array())
+	if faces.is_empty():
+		return
+	var shape := ConcavePolygonShape3D.new()
+	shape.backface_collision = true
+	shape.set_faces(faces)
+	var body := StaticBody3D.new()
+	body.name = "SolidPlanes"
+	body.collision_layer = TERRAIN_COLLISION_LAYER
+	var body_shape := CollisionShape3D.new()
+	body_shape.shape = shape
+	body.add_child(body_shape)
+	terrain_group.add_child(body)
+	print("World3D: %d solid plane block(s) (ice) for %s" % [faces.size() / 6, job["mapm_path"]])
 
 ## Adds this region's real navmesh walls: every real blocking edge in its
 ## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
@@ -5999,8 +6035,17 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	# below, and this player's, takes its auras from it.
 	_target_buff_book.clear()
 	_abnormal_states.clear()
+	# The new zone's players' states, told during the load (round 737's
+	# review: a spawn's states follow it), from what NetClient holds.
+	_replay_character_states()
 	_fx_owner_buffs.clear()
-	_spawn_result_others(list, seated)
+	# Who sits among those spawned during the load (their records' motion
+	# byte, round 737's review) is drawn seated with the list's own.
+	var sat: Array = seated.duplicate()
+	for o in list:
+		if o.seated and not sat.has(int(o.character_id)):
+			sat.append(int(o.character_id))
+	_spawn_result_others(list, sat)
 	# The equipment broadcasts that arrived while the list was not drawn
 	# (round 735's review, finding 1).
 	_flush_pending_equip_changes()
@@ -6941,6 +6986,12 @@ func _owner_buffs_and_states(owner_key: String) -> Array:
 	if not st.is_empty():
 		out.append_array(HudTargetBuffs.abnormal_entries(int(st["mask"]), st["levels"]))
 	return out
+
+## The other characters' abnormal states NetClient holds (round 737's
+## review): told before this scene listened, or during a zone change's load.
+func _replay_character_states() -> void:
+	for id in NetClient.character_states:
+		_on_object_status(NetClient.character_states[id])
 
 func _on_object_status(st: StatusNet.ObjectStatus) -> void:
 	var key := _fx_owner_key(st.owner_id, st.owner_kind)
@@ -8477,6 +8528,7 @@ func _terrain_commit(job: Dictionary) -> float:
 	_add_mirror_terrain(terrain_group, single_patch)
 
 	_add_navmesh_walls(terrain_group, job)
+	_add_solid_planes(terrain_group, job)
 	sw = _load_timings.lap("terrain", "wallshape", sw)
 	_try_add_real_water(terrain_group, job["region"], mapm_path)
 	sw = _load_timings.lap("terrain", "water", sw)
@@ -8719,18 +8771,23 @@ func _load_character_assets() -> void:
 	# The player's run speed is its body row's own (column 47), set when the
 	# body is known (_apply_player_speed); the default body's until then.
 	_apply_player_speed(GENDER_BODY_CODE[DEFAULT_GENDER])
-	for path in ItemTableReader.TABLE_PATHS:
-		var entry := ObjectLoader.find_file(_media_pk2, path)
-		if entry == null:
-			continue
-		for item in ItemTableReader.parse(_media_pk2.read_file(entry)).values():
-			_item_rows[item.id] = item
-			if item.drop_model_path != "":
-				_item_drop_models[item.id] = item.drop_model_path
-			if item.model_path != "":
-				_item_models[item.id] = item.model_path
-				if item.type_ids.size() >= 4:
-					_item_kinds[item.id] = item.type_ids[3]
+	# Every part the archive's itemdata.txt index names (round 741: a hand-kept
+	# list of seven left items such as 62607, in itemdata_45000.txt, without a
+	# name, an icon or a model). Parsed once per archive and shared with the
+	# HUD and the appearance builder (ItemTableReader.load_all).
+	var t_items := Time.get_ticks_usec()
+	var all_items := ItemTableReader.load_all(_media_pk2)
+	print("World3D: %d item row(s) from %d itemdata part(s) (parse %d us; this call %d us, of which %d us waiting for the preload)" % [
+		all_items.size(), ItemTableReader.last_load_parts, ItemTableReader.last_load_usec,
+		Time.get_ticks_usec() - t_items, ItemTableReader.last_wait_usec])
+	for item in all_items.values():
+		_item_rows[item.id] = item
+		if item.drop_model_path != "":
+			_item_drop_models[item.id] = item.drop_model_path
+		if item.model_path != "":
+			_item_models[item.id] = item.model_path
+			if item.type_ids.size() >= 4:
+				_item_kinds[item.id] = item.type_ids[3]
 
 	# The bodies (round 689): the catalogue's rule over the parts just read.
 	var t_cat := Time.get_ticks_usec()
@@ -11867,6 +11924,11 @@ func _update_blob_shadow() -> void:
 ##                          phase -- posed or T-posed, feet against the
 ##                          ground -- as `LINEUP` lines (QaLineup has the
 ##                          companion variables; round 689)
+##   OPENSRO_QA_EQUIPFX_LOG=<frames>  (round 741) every that many frames a
+##                          `QA EQUIPFX` line per shown weapon effect: where
+##                          its drawn particles are along and off the weapon's
+##                          own bone axis (EquipFx.measure), and where round
+##                          734's position-only placement put them
 ##   OPENSRO_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -14443,7 +14505,7 @@ func _qa_columns_report(spec: String) -> void:
 		# runs look like they disagreed when they did not.
 		var world_here := (pair[1] as Node3D).to_global(Vector3(x, 0.0, z))
 		print("QA COLUMN (%d, %d): terrain %.1f, surfaces %s, landing %.1f | world (%.0f, %.0f) in the frame centred on %d/%d" % [
-			int(x), int(z), NvmCollision.sample_height(graph.region, x, z),
+			int(x), int(z), NvmCollision.terrain_height(graph.region, x, z),
 			str(graph.heights_at(x, z)), graph.landing_height_at(x, z), world_here.x, world_here.z,
 			_grid_origin_region.x, _grid_origin_region.y])
 		# The real file's own answer first: which objects the navmesh cell
@@ -15701,15 +15763,18 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	# During a zone change's load the old zone's bodies are still drawn and
 	# the arrival list is not laid out yet: an arrival is kept for it
 	# (round 646's review, _replace_others_for_arrival), not built to be freed.
+	# Round 737's review: the chat line is for a real arrival in the zone
+	# (OpPlayerZoneNotice), not a walk into view; a sitter is drawn seated
+	# (its record's motion byte), here or when the arrival list is laid out.
 	if _arrival_pending:
 		_arrival_left.erase(snapshot.character_id)
 		_arrival_entries[snapshot.character_id] = snapshot
-		_log_system("%s entered the zone." % snapshot.char_name)
+		if snapshot.zone_arrival:
+			_log_system("%s entered the zone." % snapshot.char_name)
 		return
-	_note_other_pluses(snapshot)
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped,
-		_snapshot_body(snapshot), snapshot.heading, snapshot.scale if snapshot.has_model else CharacterAppearance.DEFAULT_SCALE, snapshot.pluses)
-	_log_system("%s entered the zone." % snapshot.char_name)
+	_spawn_result_others([snapshot], [snapshot.character_id] if snapshot.seated else [])
+	if snapshot.zone_arrival:
+		_log_system("%s entered the zone." % snapshot.char_name)
 
 ## Keeps another player's worn pluses from their snapshot (round 735), and
 ## logs the ones they have -- the two-client check reads it.
@@ -15966,7 +16031,11 @@ func _on_entity_left(character_id: int) -> void:
 		_fade_out_body(body)
 		_other_bodies.erase(character_id)
 		_other_body_targets.erase(character_id)
-		_log_system("%s left the zone." % departing_name)
+		# Only a real leave of the zone (OpPlayerZoneNotice, round 737's
+		# review), not a walk out of view.
+		if NetClient.zone_departures.has(character_id):
+			_log_system("%s left the zone." % departing_name)
+	NetClient.zone_departures.erase(character_id)
 
 func _on_disconnect_pressed() -> void:
 	NetClient.disconnect_from_server()
@@ -19839,7 +19908,7 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 	# from a server with -monster-battle (round 546) -- is this player's when
 	# its target is drawn nowhere here (MonsterStrikes.is_own_unpaired).
 	var own_unpaired := claim == MonsterStrikes.CLAIM_NONE and MonsterStrikes.is_own_unpaired(
-		attacked.target_character_id, _other_bodies, _recently_left, Time.get_ticks_msec())
+		attacked.target_character_id, _other_bodies, _recently_left, Time.get_ticks_msec(), NetClient.own_character_id)
 	var how := "on another player"
 	match claim:
 		MonsterStrikes.CLAIM_HELD:

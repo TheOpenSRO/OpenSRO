@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
@@ -43,8 +44,25 @@ ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS opt_level SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS mag_params BYTEA NOT NULL DEFAULT ''::bytea;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS adv_elixir SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS serial BIGINT;
+UPDATE %[1]s SET serial = nextval('item_serial_seq') WHERE serial IS NULL;
+ALTER TABLE %[1]s ALTER COLUMN serial SET DEFAULT nextval('item_serial_seq');
+ALTER TABLE %[1]s ALTER COLUMN serial SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS %[1]s_serial_key ON %[1]s (serial);
 `, table, owner)
 }
+
+// The serial (round 743, the spec's M1; retail's _ITEMS carries a Serial64,
+// internal/persistence/schema.go). Every row -- one stack -- has one, unique
+// within its table, numbered by item_serial_seq (txn.Schema). The schema
+// above is safe on a live database and re-runnable: the column is added
+// nullable, every row that has none is numbered (the backfill), and only then
+// does the column take its default, NOT NULL and the unique index; on a
+// second start each step is a no-op. A new row takes the next number unless
+// it is a whole stack moving in with its own (Instance.Serial, set by
+// TakeItem), which keeps it: the item keeps its identity across a trade, the
+// warehouse and the ground, and the unique index refuses the same stack
+// being written into one table twice.
 
 // The per-instance columns. `variance` is the 64-bit white-stat field
 // (twelve 5-bit groups; it never uses the sign bit); `durability` is the
@@ -69,6 +87,18 @@ type SQLStore struct {
 	durabilities DurabilityLookup
 	// Rand is the source the instance rolls draw from; tests set it.
 	Rand durability.Rand
+	// ownsDB is false for a store opened on a shared pool (NewSQLStoreOwned),
+	// which Close leaves open for the others.
+	ownsDB bool
+}
+
+// TxDB implements txn.TxDBer: the database an action over this store runs
+// its transaction on.
+func (s *SQLStore) TxDB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
 }
 
 // q renders one statement for this container: `%s` is the table, and the
@@ -117,8 +147,20 @@ func OpenSQLStoreOwned(dsn string, maxStacks MaxStackLookup, table, owner string
 		db.Close()
 		return nil, fmt.Errorf("inventory: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schemaFor(table, owner)); err != nil {
+	s, err := NewSQLStoreOwned(db, maxStacks, table, owner)
+	if err != nil {
 		db.Close()
+		return nil, err
+	}
+	s.ownsDB = true
+	return s, nil
+}
+
+// NewSQLStoreOwned is OpenSQLStoreOwned on a pool the caller owns and shares
+// with the other stores (round 743: one capped pool per process, so an
+// action's one transaction can span gold and items). Close does not close it.
+func NewSQLStoreOwned(db *sql.DB, maxStacks MaxStackLookup, table, owner string) (*SQLStore, error) {
+	if err := txn.Migrate(db, txn.Schema, schemaFor(table, owner)); err != nil {
 		return nil, fmt.Errorf("inventory: creating schema: %w", err)
 	}
 	return &SQLStore{db: db, maxStacks: maxStacks, table: table, owner: owner, capacity: SlotsPerCharacter}, nil
@@ -180,14 +222,26 @@ func (s *SQLStore) TruncateForTest(ctx context.Context) error {
 	return err
 }
 
-// Close closes the underlying database connection.
+// Close closes the underlying database connection, unless it is a shared
+// pool (NewSQLStoreOwned), which its owner closes.
 func (s *SQLStore) Close() error {
+	if !s.ownsDB {
+		return nil
+	}
 	return s.db.Close()
+}
+
+// lock takes this container's per-owner write lock inside q's transaction
+// (txn.LockOwner): every write to one owner's slots runs one at a time, so a
+// slot picked as free is still free at the insert and a quantity read is
+// still the quantity at the update.
+func (s *SQLStore) lock(ctx context.Context, q txn.Querier, owner int64) error {
+	return txn.LockOwner(ctx, q, s.table, owner)
 }
 
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx,
 		s.q(`SELECT slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
 	if err != nil {
@@ -221,7 +275,7 @@ func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) 
 	// Persist the instances legacy rows just received, so the roll happens
 	// once and every later read agrees with this one.
 	for _, sl := range legacy {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 			s.q(`UPDATE %s SET variance = $1, durability = $2 WHERE character_id = $3 AND slot = $4`),
 			int64(sl.Variance), sl.Durability, characterID, sl.Index); err != nil {
 			return nil, fmt.Errorf("inventory: initialising slot %d: %w", sl.Index, err)
@@ -255,7 +309,7 @@ func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot in
 	if slot < 0 || slot >= s.capacityFor(ctx, characterID) {
 		return ErrInvalidSlot
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		s.q(`UPDATE %s SET durability = $1 WHERE character_id = $2 AND slot = $3`),
 		durabilityLeft, characterID, slot)
 	if err != nil {
@@ -272,7 +326,7 @@ func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot int,
 	if slot < 0 || slot >= s.capacityFor(ctx, characterID) {
 		return ErrInvalidSlot
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		s.q(`UPDATE %s SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5 WHERE character_id = $6 AND slot = $7`),
 		int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), characterID, slot)
 	if err != nil {
@@ -296,11 +350,14 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	// held item keeps reachable past it (SetKeepHeld).
 	capacity := s.placeCapacityFor(ctx, characterID)
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := txn.Begin(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("inventory: beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := s.lock(ctx, tx, characterID); err != nil {
+		return err
+	}
 
 	existing, occupied, err := s.loadOccupancy(ctx, tx, characterID, capacity)
 	if err != nil {
@@ -308,6 +365,9 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	}
 
 	remaining := quantity
+	// A whole stack moving in with its serial keeps it in the first row it
+	// fills; any further row (more than one stack's worth) gets a new one.
+	serial := inst.Serial
 
 	// Fill existing under-full stacks of the same item first.
 	for i := range existing {
@@ -337,15 +397,100 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 		occupied[slotIdx] = true
 
 		add := min(maxStack, remaining)
-		if _, err := tx.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
-			characterID, slotIdx, itemID, add, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir)); err != nil {
-			return fmt.Errorf("inventory: inserting into slot %d: %w", slotIdx, err)
+		if err := s.insertRow(ctx, tx, characterID, slotIdx, itemID, add, inst, serial); err != nil {
+			return err
 		}
+		serial = 0
 		remaining -= add
 	}
 
 	return tx.Commit()
+}
+
+// insertRow writes one new stack. serial 0 takes the next from the sequence
+// (the column's default); a non-zero one is kept, and the unique index
+// refuses it if this table already holds it.
+func (s *SQLStore) insertRow(ctx context.Context, q txn.Querier, owner int64, slot int, itemID int64, quantity int, inst Instance, serial int64) error {
+	var err error
+	if serial != 0 {
+		_, err = q.ExecContext(ctx,
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`),
+			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), serial)
+	} else {
+		_, err = q.ExecContext(ctx,
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
+			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir))
+	}
+	if err != nil {
+		return fmt.Errorf("inventory: inserting into slot %d: %w", slot, err)
+	}
+	return nil
+}
+
+// takeLocked removes quantity from one slot inside tx, which must already
+// hold the owner's lock: the row is read FOR UPDATE, checked (it holds
+// wantItem when that is non-zero, and at least quantity), and deleted or
+// decremented with the affected row counted. It answers what left: the item
+// and its instance, with the row's serial when the whole stack went.
+func (s *SQLStore) takeLocked(ctx context.Context, tx txn.Querier, owner int64, slot, quantity int, wantItem int64) (int64, Instance, error) {
+	var itemID, variance, serial int64
+	var current, dura, opt, adv int
+	var params []byte
+	err := tx.QueryRowContext(ctx,
+		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
+		owner, slot).Scan(&itemID, &current, &variance, &dura, &opt, &params, &adv, &serial)
+	if err == sql.ErrNoRows {
+		return 0, Instance{}, ErrSlotEmpty
+	}
+	if err != nil {
+		return 0, Instance{}, fmt.Errorf("inventory: reading slot %d: %w", slot, err)
+	}
+	if wantItem != 0 && itemID != wantItem {
+		return 0, Instance{}, ErrItemChanged
+	}
+	if quantity > current {
+		return 0, Instance{}, ErrInsufficientQuantity
+	}
+	inst := Instance{Variance: uint64(variance), Durability: dura, OptLevel: uint8(opt), MagParams: DecodeMagParams(params), AdvElixir: uint8(adv)}
+	var res sql.Result
+	if quantity == current {
+		inst.Serial = serial
+		res, err = tx.ExecContext(ctx, s.q(`DELETE FROM %s WHERE character_id = $1 AND slot = $2 AND serial = $3`), owner, slot, serial)
+	} else {
+		res, err = tx.ExecContext(ctx,
+			s.q(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3 AND serial = $4 AND quantity >= $1`),
+			quantity, owner, slot, serial)
+	}
+	if err != nil {
+		return 0, Instance{}, fmt.Errorf("inventory: taking from slot %d: %w", slot, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return 0, Instance{}, ErrSlotEmpty
+	}
+	return itemID, inst, nil
+}
+
+// TakeItem implements Taker, in one transaction (or inside the context's).
+func (s *SQLStore) TakeItem(ctx context.Context, owner int64, slot, quantity int, wantItem int64) (int64, Instance, error) {
+	if slot < 0 || slot >= s.capacityFor(ctx, owner) {
+		return 0, Instance{}, ErrInvalidSlot
+	}
+	if quantity <= 0 {
+		return 0, Instance{}, ErrInvalidQuantity
+	}
+	tx, err := txn.Begin(ctx, s.db)
+	if err != nil {
+		return 0, Instance{}, fmt.Errorf("inventory: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.lock(ctx, tx, owner); err != nil {
+		return 0, Instance{}, err
+	}
+	itemID, inst, err := s.takeLocked(ctx, tx, owner, slot, quantity, wantItem)
+	if err != nil {
+		return 0, Instance{}, err
+	}
+	return itemID, inst, tx.Commit()
 }
 
 // RemoveItem implements Store.
@@ -359,37 +504,20 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 		return ErrInvalidQuantity
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Round 743: under the owner's lock, the row read FOR UPDATE and the
+	// write's affected row counted (takeLocked). Before it, two racing
+	// removals of one stack both read it, both deleted, and both answered
+	// nil -- TestSQLRemoveItemRacedRemovesOnce.
+	tx, err := txn.Begin(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("inventory: beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
-
-	var current int
-	err = tx.QueryRowContext(ctx,
-		s.q(`SELECT quantity FROM %s WHERE character_id = $1 AND slot = $2`),
-		characterID, slot).Scan(&current)
-	if err == sql.ErrNoRows {
-		return ErrSlotEmpty
+	if err := s.lock(ctx, tx, characterID); err != nil {
+		return err
 	}
-	if err != nil {
-		return fmt.Errorf("inventory: reading slot %d: %w", slot, err)
-	}
-	if quantity > current {
-		return ErrInsufficientQuantity
-	}
-
-	if quantity == current {
-		if _, err := tx.ExecContext(ctx,
-			s.q(`DELETE FROM %s WHERE character_id = $1 AND slot = $2`), characterID, slot); err != nil {
-			return fmt.Errorf("inventory: clearing slot %d: %w", slot, err)
-		}
-	} else {
-		if _, err := tx.ExecContext(ctx,
-			s.q(`UPDATE %s SET quantity = quantity - $1 WHERE character_id = $2 AND slot = $3`),
-			quantity, characterID, slot); err != nil {
-			return fmt.Errorf("inventory: decrementing slot %d: %w", slot, err)
-		}
+	if _, _, err := s.takeLocked(ctx, tx, characterID, slot, quantity, 0); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -410,11 +538,17 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		return nil
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := txn.Begin(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("inventory: beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
+	// Round 743: the owner's lock and the rows read FOR UPDATE. Before it two
+	// racing merges both read the source and both added it to the target:
+	// 6 from 4 (TestSQLMoveItemRacedMergeConserves).
+	if err := s.lock(ctx, tx, characterID); err != nil {
+		return err
+	}
 
 	type row struct {
 		itemID     int64
@@ -424,11 +558,12 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		optLevel   int
 		magParams  []byte
 		advElixir  int
+		serial     int64
 	}
 	readSlot := func(slot int) (r row, found bool, err error) {
 		err = tx.QueryRowContext(ctx,
-			s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 AND slot = $2`),
-			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability, &r.optLevel, &r.magParams, &r.advElixir)
+			s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
+			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability, &r.optLevel, &r.magParams, &r.advElixir, &r.serial)
 		if err == sql.ErrNoRows {
 			return row{}, false, nil
 		}
@@ -493,9 +628,9 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9), ($1, $10, $11, $12, $13, $14, $15, $16, $17)`),
-			characterID, to, srcItem, srcQty, src.variance, src.durability, src.optLevel, src.magParams, src.advElixir,
-			from, dstItem, dstQty, dst.variance, dst.durability, dst.optLevel, dst.magParams, dst.advElixir); err != nil {
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10), ($1, $11, $12, $13, $14, $15, $16, $17, $18, $19)`),
+			characterID, to, srcItem, srcQty, src.variance, src.durability, src.optLevel, src.magParams, src.advElixir, src.serial,
+			from, dstItem, dstQty, dst.variance, dst.durability, dst.optLevel, dst.magParams, dst.advElixir, dst.serial); err != nil {
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 	}
@@ -517,7 +652,7 @@ func (s *SQLStore) mergeSpace(ctx context.Context, itemID int64, have int) int {
 // loadOccupancy returns the current slots plus a capacity-sized occupancy
 // map, for AddItem's stacking/placement logic. capacity is the owner's own
 // (capacityFor), read before the transaction began.
-func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64, capacity int) ([]Slot, []bool, error) {
+func (s *SQLStore) loadOccupancy(ctx context.Context, tx txn.Querier, characterID int64, capacity int) ([]Slot, []bool, error) {
 	occupied := make([]bool, capacity)
 	rows, err := tx.QueryContext(ctx,
 		s.q(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`),

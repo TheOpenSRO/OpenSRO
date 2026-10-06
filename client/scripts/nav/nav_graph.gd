@@ -471,7 +471,7 @@ func objects_at(x: float, z: float) -> Array[int]:
 ## point: the terrain, plus any real object cell covering it. Heights only.
 func heights_at(x: float, z: float) -> PackedFloat32Array:
 	var out := PackedFloat32Array()
-	out.append(NvmCollision.sample_height(region, x, z))
+	out.append(NvmCollision.terrain_height(region, x, z))
 	for oi in objects_at(x, z):
 		var placed: PlacedObject = objects[oi]
 		if x < placed.bounds_min.x or x > placed.bounds_max.x:
@@ -501,7 +501,7 @@ func heights_at(x: float, z: float) -> PackedFloat32Array:
 ## client does and what keeps a wall a wall.
 func surface_at(x: float, z: float, reference_y: float) -> Surface:
 	var best := Surface.new()
-	best.height = NvmCollision.sample_height(region, x, z)
+	best.height = NvmCollision.terrain_height(region, x, z)
 	best.is_terrain = true
 	best.object_index = ON_TERRAIN
 	var found := false
@@ -558,7 +558,7 @@ func height_at(x: float, z: float, reference_y: float) -> float:
 ## widening it to clear one measured plaza would be fitting a threshold to a
 ## single observation while making every overhead bridge a hazard.
 func landing_height_at(x: float, z: float) -> float:
-	var best := NvmCollision.sample_height(region, x, z)
+	var best := NvmCollision.terrain_height(region, x, z)
 	for oi in objects_at(x, z):
 		var placed: PlacedObject = objects[oi]
 		if x < placed.bounds_min.x or x > placed.bounds_max.x:
@@ -687,7 +687,7 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 					result.entered = reach
 					pos.y = _surface_near(objects[reach], pos.x, pos.z, pos.y)
 				else:
-					pos.y = NvmCollision.sample_height(region, pos.x, pos.z)
+					pos.y = NvmCollision.terrain_height(region, pos.x, pos.z)
 				source = landed
 				remaining = _onward(to2 - landed, dir)
 			"block":
@@ -722,7 +722,7 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 		else:
 			pos.y = h
 	if on == ON_TERRAIN:
-		pos.y = NvmCollision.sample_height(region, pos.x, pos.z)
+		pos.y = NvmCollision.terrain_height(region, pos.x, pos.z)
 	result.position = pos
 	result.standing_on = on
 	return result

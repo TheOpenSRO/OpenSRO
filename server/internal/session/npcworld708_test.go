@@ -125,14 +125,14 @@ func TestNPCWindowSpawnsAndDespawns(t *testing.T) {
 	}
 
 	sess := r.session(1)
-	r.hub.Move(sess, world.Position{X: cellX(1) - 150, Z: 0})
+	r.hub.Relocate(sess, world.Position{X: cellX(1) - 150, Z: 0}, world.MoveRelocate, 0)
 	v.reconcile()
 	spawned, despawned, unfaced, _ = npcFrames(t, cl.quiet(t, 200*time.Millisecond))
 	if !sameUIDs(spawned, b.UID) || !sameUIDs(despawned, c.UID) || len(unfaced) != 0 {
 		t.Fatalf("crossing east: spawned %v despawned %v unfaced %v", spawned, despawned, unfaced)
 	}
 
-	r.hub.Move(sess, world.Position{X: 0, Z: 0})
+	r.hub.Relocate(sess, world.Position{X: 0, Z: 0}, world.MoveRelocate, 0)
 	v.reconcile()
 	spawned, despawned, unfaced, _ = npcFrames(t, cl.quiet(t, 200*time.Millisecond))
 	if !sameUIDs(spawned, c.UID) || !sameUIDs(despawned, b.UID) || !sameUIDs(unfaced, c.UID) {

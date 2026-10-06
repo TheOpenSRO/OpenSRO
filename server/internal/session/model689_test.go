@@ -103,7 +103,8 @@ func TestRound689WorldMessagesCarryTheModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := chars.CreateCharacter(ctx, 2, character.NewCharacter{Name: "Bram", RefObjID: 1925, Scale: 0x40, Gender: character.GenderChinaWoman}); err != nil {
+	bram, err := chars.CreateCharacter(ctx, 2, character.NewCharacter{Name: "Bram", RefObjID: 1925, Scale: 0x40, Gender: character.GenderChinaWoman})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := chars.Create(ctx, 3, "Cyra"); err != nil {
@@ -113,7 +114,7 @@ func TestRound689WorldMessagesCarryTheModel(t *testing.T) {
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandlerWithHook(chars, nil, hub, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
-	f := &deadWorldFixture{chars: chars, hub: hub, aria: aria.ID}
+	f := &deadWorldFixture{chars: chars, hub: hub, aria: aria.ID, bram: bram.ID}
 	f.connA = dialTestServer(t, addr)
 	t.Cleanup(func() { f.connA.Close() })
 	f.rA = bufio.NewReader(f.connA)
@@ -129,37 +130,34 @@ func TestRound689WorldMessagesCarryTheModel(t *testing.T) {
 	if !b.HasModel || b.RefObjID != 1925 || b.Scale != 0x40 {
 		t.Fatalf("Bram's own result carries model %d/%#x, want 1925/0x40", b.RefObjID, b.Scale)
 	}
-	if len(b.Others) != 1 || !b.Others[0].HasModel || b.Others[0].RefObjID != 14875 || b.Others[0].Scale != 0x14 {
-		t.Fatalf("Bram's arrival list: %+v, want Aria with model 14875/0x14", b.Others)
+	// Round 737: the players in view are not in the result any more; each
+	// arrives as retail's spawn record, whose RefObjID and scale byte are the
+	// model (pcspawn: the record's first u32 and the byte after it).
+	if len(b.Others) != 0 {
+		t.Fatalf("Bram's result lists %+v; the players in view follow it as spawns", b.Others)
 	}
-	p := f.read(t, f.connA, f.rA)
-	if p.Opcode != OpEntityEntered {
-		t.Fatalf("Aria's packet after Bram entered is %#04x, want OpEntityEntered", p.Opcode)
+	if r := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0]; r.RefObjID != 14875 || r.Scale != 0x14 || r.Name != "Aria" {
+		t.Fatalf("Bram's spawn of Aria: %+v, want model 14875/0x14", r)
 	}
-	e, err := DecodeEntityEntered(p.Data)
-	if err != nil || !e.HasModel || e.RefObjID != 1925 || e.Scale != 0x40 || e.Name != "Bram" {
-		t.Fatalf("Bram's OpEntityEntered: %+v, %v; want model 1925/0x40", e, err)
-	}
-	// An older decoder (one snapshot, then the angle) still reads it.
-	if _, rest, err := decodeEntitySnapshot(p.Data); err != nil || len(rest) != 2+5 {
-		t.Fatalf("an older decoder of Bram's arrival: %d byte(s) left, %v", len(rest), err)
+	if r := expectPlayerSpawn(t, f.connA, f.rA, f.bram)[0]; r.RefObjID != 1925 || r.Scale != 0x40 || r.Name != "Bram" {
+		t.Fatalf("Aria's spawn of Bram: %+v; want model 1925/0x40", r)
 	}
 
-	// Bram changes zone and back: the arrival list names Aria's model, and
-	// Aria hears Bram arrive with his.
+	// Bram changes zone and back: his spawn of Aria names her model, and
+	// Aria's of him his.
 	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK {
 		t.Fatalf("Bram's change to donwhang refused: %+v", czr)
 	}
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEntityLeft {
-		t.Fatalf("Aria's packet after Bram left is %#04x, want OpEntityLeft", p.Opcode)
-	}
+	expectPlayerDespawn(t, f.connA, f.rA, f.bram)
 	czr := changeZone(t, f, f.connB, f.rB, "jangan")
-	if !czr.OK || len(czr.Others) != 1 || !czr.Others[0].HasModel || czr.Others[0].RefObjID != 14875 {
-		t.Fatalf("Bram's change back: %+v, want Aria with model 14875", czr)
+	if !czr.OK || len(czr.Others) != 0 {
+		t.Fatalf("Bram's change back: %+v, want OK with no list", czr)
 	}
-	p = f.read(t, f.connA, f.rA)
-	if e, err := DecodeEntityEntered(p.Data); p.Opcode != OpEntityEntered || err != nil || !e.HasModel || e.RefObjID != 1925 {
-		t.Fatalf("Aria hears Bram come back as %#04x %+v, %v; want model 1925", p.Opcode, e, err)
+	if r := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0]; r.RefObjID != 14875 {
+		t.Fatalf("Bram's spawn of Aria after the change back: %+v, want model 14875", r)
+	}
+	if r := expectPlayerSpawn(t, f.connA, f.rA, f.bram)[0]; r.RefObjID != 1925 {
+		t.Fatalf("Aria hears Bram come back as %+v; want model 1925", r)
 	}
 
 	// A legacy row: Cyra, made through Store.Create, is the migrated body.

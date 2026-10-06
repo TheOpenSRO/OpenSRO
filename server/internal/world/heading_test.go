@@ -35,19 +35,22 @@ func TestWireAngleIsTheHeadingLessAQuarterTurn(t *testing.T) {
 	}
 }
 
-func TestMoveFacingTurnsAndMoveAndChangeZoneKeep(t *testing.T) {
+func TestWalkTurnsAndRelocateAndChangeZoneKeep(t *testing.T) {
 	h := NewHub()
 	s := fakeSession(1)
 	h.Enter(s, 100, "Aria", 1, "jangan", Position{X: 10, Z: 10})
-	e, _, _ := h.MoveFacing(s, Position{X: 20, Z: 10})
+	r, _ := h.Relocate(s, Position{X: 20, Z: 10}, MoveWalk, 0)
+	e := r.Entity
 	if math.Abs(e.Heading-math.Pi/2) > 1e-9 {
 		t.Fatalf("a walk toward +x faces pi/2, got %v", e.Heading)
 	}
-	e, _, _ = h.MoveFacing(s, Position{X: 20, Y: 5, Z: 10})
+	r, _ = h.Relocate(s, Position{X: 20, Y: 5, Z: 10}, MoveWalk, 0)
+	e = r.Entity
 	if math.Abs(e.Heading-math.Pi/2) > 1e-9 {
 		t.Fatalf("a step straight up has no ground heading and keeps pi/2, got %v", e.Heading)
 	}
-	e, _, _ = h.Move(s, Position{X: 20, Z: -500})
+	r, _ = h.Relocate(s, Position{X: 20, Z: -500}, MoveRelocate, 0)
+	e = r.Entity
 	if math.Abs(e.Heading-math.Pi/2) > 1e-9 {
 		t.Fatalf("a relocation (Move) keeps the heading, got %v", e.Heading)
 	}

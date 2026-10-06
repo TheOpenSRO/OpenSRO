@@ -39,7 +39,7 @@ func _initialize() -> void:
 
 	var rows := 0
 	var shown := 0
-	for path in ItemTableReader.TABLE_PATHS:
+	for path in ItemTableReader.table_paths(media):
 		var entry := ObjectLoader.find_file(media, path)
 		if entry == null:
 			continue

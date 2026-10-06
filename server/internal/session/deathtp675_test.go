@@ -75,11 +75,14 @@ func (f *deadWorldFixture) moveAria(t *testing.T, lx, lz float64, relocated bool
 		t.Fatalf("Aria's zone %q has no frame", e.Zone)
 	}
 	x, z := worldmap.ToWorld(97, 168, lx, lz, fx, fy)
+	before := f.sees(f.aria, f.bram)
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: float32(x), Z: float32(z), Relocated: relocated}).Encode())
 	// The move has no answer; a revive request has one, and the session
 	// handles one packet at a time, so its answer means the move was handled.
+	// A move across Bram's view line is first answered by his spawn or
+	// despawn (round 737).
 	f.send(t, f.connA, OpRevive, []byte{1})
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpReviveResult {
+	if p := f.readAfterAriaMoved(t, before); p.Opcode != OpReviveResult {
 		t.Fatalf("the probe after a move answered %#04x, want OpReviveResult", p.Opcode)
 	}
 }
@@ -114,6 +117,9 @@ func (f *deadWorldFixture) drainOptionOne(t *testing.T) {
 	for _, want := range []uint16{OpChangeZoneResult, OpReviveResult, OpCharacterStatsResult} {
 		if p := f.read(t, f.connA, f.rA); p.Opcode != want {
 			t.Fatalf("option 1 answered %#04x, want %#04x", p.Opcode, want)
+		}
+		if want == OpChangeZoneResult {
+			f.expectSpawnIfInView(t) // Bram, at the return point (round 737)
 		}
 	}
 }
@@ -208,6 +214,7 @@ func TestTeleportFromJanganAfterFlagOffReturn(t *testing.T) {
 			if p := f.read(t, f.connA, f.rA); p.Opcode != OpChangeZoneResult {
 				t.Fatalf("the flag-off return answered %#04x, want OpChangeZoneResult", p.Opcode)
 			}
+			f.expectSpawnIfInView(t) // Bram, at the return point (round 737)
 			f.moveAria(t, 1230, 1340, false)
 			f.teleportToDonwhang(t, logs, "flag off")
 		})

@@ -2227,7 +2227,7 @@ func TestMonsterNoticesAPlayerWalkingIntoRange(t *testing.T) {
 	}
 	// She walks to 50 units of wherever the monster stands now.
 	cur, _ := f.monsters.Get(m.ID)
-	f.hub.Move(f.ariaSession(t), world.Position{X: cur.X + 50, Z: cur.Z})
+	f.hub.Relocate(f.ariaSession(t), world.Position{X: cur.X + 50, Z: cur.Z}, world.MoveRelocate, 0)
 	f.rec.reset()
 	now, noticed := tickUntilBattle(t, f.a, m.ID, now, 16)
 	if !noticed {
@@ -2347,7 +2347,7 @@ func TestMonsterAcquisitionRadiusIsInclusive(t *testing.T) {
 	} else {
 		now = now2
 	}
-	f.hub.Move(f.ariaSession(t), world.Position{X: 106, Z: 0})
+	f.hub.Relocate(f.ariaSession(t), world.Position{X: 106, Z: 0}, world.MoveRelocate, 0)
 	if _, noticed := tickUntilBattle(t, f.a, m.ID, now, 16); !noticed {
 		t.Fatalf("a player at exactly 106 units was not noticed within a scan period; state %v", stateOf(t, f.a, m.ID))
 	}

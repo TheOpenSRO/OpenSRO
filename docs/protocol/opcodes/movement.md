@@ -29,10 +29,24 @@ does not.
 | `angle` | u16 | |
 | **if `kind != 0`** — a destination | | |
 | `region` | u16 | |
-| `x`, `y`, `z` | f32 ×3 | when `region & 0x8000` |
-| `x`, `y`, `z` | u16 ×3 | otherwise |
+| `x`, `y`, `z` | ~~f32 ×3~~ **i32 ×3** (round 737) | when `region & 0x8000` |
+| `x`, `y`, `z` | ~~u16 ×3~~ **i16 ×3**, raw region-local units (round 737) | otherwise |
 
 `kind == 0xff` trips the server's own assert.
+
+**Round 737's corrections** (READ, `docs/rounds/r737.md` has the addresses):
+
+- **A dungeon destination is three i32, not three f32.**
+  - The server's reader `0x48bc20` stores them as ints.
+  - The server uses them with `fild` (`0x4b1109`, `0x48c362`).
+  - The client fills them with ftol (`0x9ec0ca` -> `0xb42d10`, `cvttsd2si`) and reads them back
+    with `fild` (`0x8a58ef`).
+- **A field destination is three signed i16 of the raw local coordinates, truncated.**
+  - The client's click builds it with `ftol` (`0x9ec080`); nothing scales it by 10.
+  - The 0xB021 reader sign-extends it (`0x8a5640`).
+  - Only 0xB021's *source* position is scaled by 10 (below).
+- `server/internal/proto/movement.go` still decodes the dungeon form as f32. Nothing sends that form
+  to it yet. This is OPEN, for the C3 work.
 
 The region-or-float split is the position encoding this project already recovered elsewhere:
 region span 1920, local coordinates `[0, 1920)`, and the high bit marking a world/dungeon
@@ -89,11 +103,87 @@ MsgBuf opcode field at `+0x1050` — the argument is dropped by the decompiler b
 the call site. It then appends one leading field and **the same movement destination this page
 specifies**, through the `0x0048bad0` serialiser with the optional extra byte absent.
 
-**Not read:** whether `0xB021` is a per-request acknowledgement, a broadcast to observers, or
-both; and what the one leading field before the destination is.
+~~**Not read:** whether `0xB021` is a per-request acknowledgement, a broadcast to observers, or
+both; and what the one leading field before the destination is.~~ Read in round 737: both (the mover and the 3 x 3), and the field is the u32 unique id (next section).
 
 **`0x3021` is not a server opcode.** It appears in the client and **never in the server**, so
 whatever it is, it is not the movement broadcast.
+
+## 0xB021 in full, its recipients, and the server's gates (round 737)
+
+READ from both binaries in round 737. The addresses are in `docs/rounds/r737.md`, where the plan to
+move OpenSRO onto this message (crowd_scale.md's C3) is written up.
+
+**The handler.** `GObjPC::FUN_004b0ea0` *is* the 0x7021 handler. It is entry 0x21 of the per-object
+table at `0xccf110` (thunk `0x4b23e0` -> vtable `+0x5e4`, slot 377). The request is parsed by
+`0x48bc20`.
+
+**What it refuses**, silently (no reply on any path):
+
+- a stunned PC (`+0xc44`);
+- a PC that slot `0x540` answers 1 for (`+0x1d18` set with ride state 1);
+- an interaction state other than 0 or 1 (a running trade);
+- a kind other than 0 or 1;
+- a motion state of 8, 0x10 or 0x12 (CHANGEMOTION and two others, INFERRED knockdown and knockback);
+- a pending action (slot `0x5a0`);
+- the abnormal-state bits `0xc1` or `0x4000`;
+- a dead character (slot 301);
+- a destination outside the 3 x 3 regions around the mover (`FUN_0048c2d0`: each region byte
+  within ±1);
+- while moving, a destination within 5.0 (`0xb45b28`) of the one already set.
+
+The server checks **no navmesh, no speed and no distance** beyond the region rule. Collision is the
+walk's, per step.
+
+**What an accepted move does:**
+
+1. It clears `chardata+0x13` (`FUN_004e0c60`).
+2. It ends the buffs flagged to end on a move, sending 0xB072 for each.
+3. It sends 0xB021.
+4. It copies the position (`0x4a6940`).
+5. It sets the motion state to WALK or RUN (`2 + (+0x155 != 0)`).
+
+**The payload** (asm `0x4b0ff8..0x4b1197`; client reader `0x8a5750`):
+
+| field | width | source |
+|---|---|---|
+| unique id | u32 | `obj+8` |
+| movement | the destination serialiser `0x48bad0(0)`, no extra byte | kind, then (1) u16 region + i16 ×3 (i32 ×3 in a dungeon), or (0) the command byte + u16 angle |
+| flag | u8 | 1 for the heading form always. For a destination: 1 when `acos(dot(heading, normalize(dest))) > pi/4` (`0xb460e0`). INFERRED: that test normalises the destination's absolute coordinates, an original defect, so 1 is always safe to send |
+| (flag 1) source region | u16 | `obj+0x84` |
+| (flag 1) source x | u16 `ftol(x * 10.0)` (`0xb45c60`), or i32 when the region has bit 15 | `obj+0x88` |
+| (flag 1) source y | f32 | `obj+0x8c` |
+| (flag 1) source z | as x | `obj+0x90` |
+
+The client picks the x/z width by its *own* player's region bit (`[0xeef5ec]+0x7c`), and divides by
+10.0 (`0xe1b840`).
+
+**Who receives it:** `0x484d90` -> `CMsgBlockObject::FUN_00534150`. That is every PC in the mover's
+block and its 8 neighbours, **the mover included** (`0x5342a0` adds every PC in the block's list,
+with no exclusion).
+
+**No position stream.**
+
+- The server steps the mover itself:
+  - `CGObjMoverByDest::vslot_003` `0x48c4e0` moves it by `min(|speed x dt|, 160.0)` (`0xb45ea8`,
+    the cap that was not read before), cut to what is left;
+  - it refiles the mover in its message block as it walks (`0x4858e0` -> `0x485bb0`).
+- **Nothing is sent per step, and nothing on arrival.** The stop `FUN_004a9430(angle, 0)` sends no
+  message.
+- **A blocked or refused step sends 0xB023 to the 3 x 3, the mover included**:
+  `u32 uid, u16 region, f32 x, f32 y, f32 z, u16 angle` (`0x487c80`; the client's `0x8a4f80` snaps
+  the object there).
+- Observers walk the destination themselves.
+
+**The client's click** (`0x9ec570` -> `0x9ec240` -> `0x9ec080`):
+
+- It sends `01 | region u16 | x i16 | y i16 | z i16`, 9 bytes, once per accepted click.
+- There is no periodic send for a destination walk.
+- The heading run alone sends 0x7024 {u16 angle} whenever its heading moves 1° or more (`0x9e0d50`
+  -> `0x9eb470`).
+- The client treats its own 0xB021 like anyone else's:
+  - flag 1 snaps it to the source and clears its order;
+  - then a destination more than 5 units off aims it.
 
 ## The optional extra byte has exactly one emitter (round 366)
 
@@ -445,7 +535,7 @@ on events, so movement with no push would make them jump rather than walk (round
 - [ ] What the optional `extra` byte at `+1` carries, and which callers pass non-zero
 - [x] When a sender picks the heading form over a destination: the sky click, the arrow keys (round 653)
 - [x] The server's response opcode — **`0xB021`, read from the binary** in round 366 and now in
-      `opcodes.go` as `OpMovementResponse`. Whether it is an ack, a broadcast or both is not read
+      `opcodes.go` as `OpMovementResponse`. Round 737: both, to the mover and its 3 x 3 blocks, with the u32 unique id first (0xB021 in full, above)
 - [x] Which caller emits the optional extra byte — `CGObjMobile::vslot_292`, action kind 3
 - [ ] Wiring: nothing calls this yet. It is the target format for `docs/TODO.md`'s
       move packet, and monster movement additionally needs the server to step

@@ -72,6 +72,12 @@ var npcWorldRuntime atomic.Pointer[npcWorld]
 // nil in production.
 var enterWorldBeforeResultHook func(sess *gateway.Session)
 
+// warpBeforeResultHook, when set, runs in a zone change between the hub's
+// change and the OpChangeZoneResult send: a test's way to move another player
+// into the mover's new window in that gap (round 737's review, F3). nil in
+// production.
+var warpBeforeResultHook func(sess *gateway.Session)
+
 // InstallNPCs installs the NPC runtime with npcs, filed under the zone and
 // cell each stands in: the one world frame under -single-frame (read now, so
 // call it after SetSingleFrame), else every named zone whose centre is

@@ -125,18 +125,17 @@ func isEquipmentItem(ctx context.Context, items ItemLookup, itemID int64) bool {
 }
 
 // equipObservers is who hears characterID's equipment change: everyone in
-// its zone, the mover included (retail's own-uid branch). Empty when there is
-// no hub or the character is not in it.
+// view of it (round 737: the 3 x 3 blocks, as retail's region-scoped
+// GObjPC::FUN_00484d90 send; the zone until then), the mover included
+// (retail's own-uid branch). The send itself reaches another player only
+// while its client holds the mover's body (sendAboutOwner). Empty when there
+// is no hub or the character is not in it.
 func equipObservers(hub *world.Hub, characterID int64) []world.Entity {
 	if hub == nil {
 		return nil
 	}
-	e, ok := hub.EntityByCharacterID(characterID)
-	if !ok {
-		return nil
-	}
 	var out []world.Entity
-	for _, other := range hub.EntitiesInZone(e.Zone) {
+	for _, other := range hub.ViewOfCharacter(characterID) {
 		if other.Session != nil {
 			out = append(out, other)
 		}
@@ -164,6 +163,7 @@ func sendPlusesAsBroadcasts(sess interface{ Send(*proto.Packet) error }, others 
 // equip, and after a plus change on a worn item. Nothing for an empty slot
 // or one past BroadcastSlotMax.
 func broadcastWorn(ctx context.Context, hub *world.Hub, store equipment.Store, items ItemLookup, characterID int64, slot equipment.Slot) {
+	invalidateLook(characterID) // round 737: the spawn record's cached look
 	if slot > BroadcastSlotMax || store == nil {
 		return
 	}
@@ -183,13 +183,14 @@ func broadcastWorn(ctx context.Context, hub *world.Hub, store equipment.Store, i
 		if isEquipmentItem(ctx, items, w.ItemID) {
 			msg.Plus, msg.HasPlus = w.EffectivePlus(), true
 		}
-		sendEquipBroadcast(to, OpEquipBroadcast, msg.Encode())
+		sendAboutOwner(to, characterID, OpEquipBroadcast, msg.Encode())
 		return
 	}
 }
 
 // broadcastUnworn sends a 0x3039: characterID took itemID out of slot.
 func broadcastUnworn(hub *world.Hub, characterID int64, slot equipment.Slot, itemID int64) {
+	invalidateLook(characterID) // round 737: the spawn record's cached look
 	if slot > BroadcastSlotMax {
 		return
 	}
@@ -198,13 +199,7 @@ func broadcastUnworn(hub *world.Hub, characterID int64, slot equipment.Slot, ite
 		return
 	}
 	msg := &EquipBroadcast{UID: uint32(characterID), Slot: uint8(slot), RefItemID: uint32(itemID)}
-	sendEquipBroadcast(to, OpUnequipBroadcast, msg.Encode())
-}
-
-func sendEquipBroadcast(to []world.Entity, opcode uint16, data []byte) {
-	for _, e := range to {
-		_ = e.Session.Send(&proto.Packet{Opcode: opcode, Data: data})
-	}
+	sendAboutOwner(to, characterID, OpUnequipBroadcast, msg.Encode())
 }
 
 // wornIn is the item id characterID wears in slot, or 0.

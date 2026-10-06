@@ -411,8 +411,16 @@ func TestMonsterStrikePushCarriesTheFlags(t *testing.T) {
 		t.Errorf("the killing push %+v, want %+v", got, want)
 	}
 	// Then, the flag being off, the respawn's move to her return point
-	// (round 665, returnAfterKill): after the push, never before it.
-	if ops := opcodesOf(ariaAfter); len(ops) != 2 || ops[0] != OpMonsterAttacked || ops[1] != OpChangeZoneResult {
+	// (round 665, returnAfterKill): after the push, never before it. (The
+	// group spawn of the players at the return point follows the zone change
+	// since round 737; it is not what this test is of.)
+	var ops []uint16
+	for _, op := range opcodesOf(ariaAfter) {
+		if !isPlayerViewOpcode(op) {
+			ops = append(ops, op)
+		}
+	}
+	if len(ops) != 2 || ops[0] != OpMonsterAttacked || ops[1] != OpChangeZoneResult {
 		t.Fatalf("after her result Aria received %#04x, want one OpMonsterAttacked and then the OpChangeZoneResult to her return point", ops)
 	}
 	if flags := ariaAfter[0].Data[20]; flags != StrikeCritical|StrikeTargetDied {
