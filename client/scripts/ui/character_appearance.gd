@@ -107,21 +107,21 @@ class_name CharacterAppearance
 ## (apply_ban_pose_at), and the screens pose theirs through Body.pose.
 
 ## READ, table 0xec64b0.
-const HEIGHT_FACTORS := [0.94, 0.97, 1.00, 1.03, 1.06]
+static var HEIGHT_FACTORS := [0.94, 0.97, 1.00, 1.03, 1.06]
 ## READ, table 0xec64c8: {group, min, max}. Men's (INFERRED, see above).
-const VOLUME_TABLE_MEN := [
+static var VOLUME_TABLE_MEN := [
 	[2, 0.88, 1.10], [3, 0.95, 1.11], [8, 0.92, 1.20], [19, 0.92, 1.20],
 	[29, 0.90, 1.15], [33, 0.90, 1.15], [1, 0.90, 1.00],
 ]
 ## READ, table 0xec6528. Women's (INFERRED, see above).
-const VOLUME_TABLE_WOMEN := [
+static var VOLUME_TABLE_WOMEN := [
 	[2, 0.95, 1.10], [3, 0.95, 1.00], [8, 0.95, 1.15], [19, 0.95, 1.15],
 	[29, 0.90, 1.15], [33, 0.90, 1.15], [1, 0.90, 1.08], [37, 0.80, 1.18],
 ]
 ## READ: the 38 names `FUN_00d79e00` assigns to the strings at 0xed9b68 +
 ## i * 0x1c, in order; a Volume group number indexes it (0xc2ca90 refuses 38
 ## and above, and 38 = '&' ends each table).
-const BONE_GROUP_NAMES := [
+static var BONE_GROUP_NAMES := [
 	"Bip01", "Bip01 Pelvis", "Bip01 Spine", "Bip01 Spine1", "Bip01 Neck",
 	"Bip01 Neck1", "Bip01 Head", "Bip01 L Clavicle", "Bip01 L UpperArm",
 	"Bip01 L Forearm", "Bip01 L Hand", "Bip01 L Finger0", "Bip01 L Finger01",
@@ -234,6 +234,22 @@ var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_us
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE:
 		return
+	# A task's Callable holds this object's id, not a reference (round 748's
+	# review, F3; READ core/variant/callable.cpp:331-343), so a task may still
+	# be running: wait for each before freeing what they share (the object is
+	# whole during PREDELETE), then free whatever finished unadopted.
+	for path in _prep_tasks:
+		var id := int(_prep_tasks[path])
+		if id >= 0:
+			WorkerThreadPool.wait_for_task_completion(id)
+	_prep_tasks.clear()
+	for path in _prep_done:
+		_free_prepared(_prep_done[path])
+	_prep_done.clear()
+	for q in _prep_queue:
+		if q[1] != null and is_instance_valid(q[1]):
+			(q[1] as Node).free()
+	_prep_queue.clear()
 	for path in _body_templates:
 		var t: SkinnedBsrAssembler.AssembledCharacter = _body_templates[path]
 		if t != null and is_instance_valid(t.skeleton):
@@ -541,7 +557,7 @@ static func visual_slot(type_ids: PackedInt32Array) -> int:
 ## a dual axe or dagger from `<path>_l.bsr` and `<path>_r.bsr`, a harp on a
 ## woman from `<path>_f.bsr`, anything else from its own path. When the `_r`
 ## or `_f` resource does not load the client loads the plain path instead
-## (0xa5f4f0 -> LAB_00a5f851); build() does the same (_FALLBACK_SUFFIXES).
+## (0xa5f4f0 -> LAB_00a5f851); build() does the same (_fallback_of).
 ## The client's second-resource branch for a visual record that names its own
 ## `.bsr` (the record from 0x4ec9b0, charactervisualchange.txt's BsrName
 ## columns) is not modelled: OPEN.
@@ -581,37 +597,10 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 	body.add_child(skel)
 
 	# One visual per slot, the later replacing the earlier; avatars on top.
-	var by_slot := {}
-	var avatars: Array = []
-	for raw in items:
-		var id := int(raw["id"]) if raw is Dictionary else int(raw)
-		var plus := int(raw.get("plus", 0)) if raw is Dictionary else 0
-		if id == 0:
-			continue
-		var info := _item_info(id)
-		if info.is_empty():
-			push_warning("CharacterAppearance: item %d is in no item table -- not drawn" % id)
-			continue
-		var slot := visual_slot(info["type_ids"])
-		if slot < 0 or (slot > SLOT_SUIT and slot != SLOT_AVATAR):
-			continue
-		var models: PackedStringArray = info["models"]
-		var wear := {"id": id, "plus": plus & 0xFF, "slot": slot, "type_ids": info["type_ids"], "code": String(info.get("code", "")),
-			"models": item_models(models[0] if not models.is_empty() else "", info["type_ids"], body.is_woman),
-			"nodes": []}
-		if slot == SLOT_AVATAR:
-			avatars.append(wear)
-		else:
-			by_slot[slot] = wear
-		if slot == SLOT_WEAPON:
-			body.weapon_kind = (info["type_ids"] as PackedInt32Array)[3]
+	var resolved := _resolve_wears(items, body.is_woman, true)
+	var wears: Array = resolved[0]
+	body.weapon_kind = int(resolved[1])
 	body.weapon_group = BodyAnimations.group_for_weapon(body.weapon_kind, body_race(body))
-	var order: Array = by_slot.keys()
-	order.sort()
-	var wears: Array = []
-	for slot in order:
-		wears.append(by_slot[slot])
-	wears.append_array(avatars)
 	for wear in wears:
 		var drawn := PackedStringArray()
 		var blocks: Array = []
@@ -639,6 +628,45 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 	stats["builds"] += 1
 	stats["build_usec"] += last_build_usec
 	return body
+
+## The worn entries a build of `items` makes (build's own rule): one visual
+## per slot, the later replacing the earlier, in slot order, then the avatars
+## on top; and the held weapon's TypeID4 (0 for none). `warn` logs an id no
+## table holds (build), not a look-ahead's (template_paths).
+func _resolve_wears(items: Array, woman: bool, warn: bool) -> Array:
+	var by_slot := {}
+	var avatars: Array = []
+	var weapon_kind := 0
+	for raw in items:
+		var id := int(raw["id"]) if raw is Dictionary else int(raw)
+		var plus := int(raw.get("plus", 0)) if raw is Dictionary else 0
+		if id == 0:
+			continue
+		var info := _item_info(id)
+		if info.is_empty():
+			if warn:
+				push_warning("CharacterAppearance: item %d is in no item table -- not drawn" % id)
+			continue
+		var slot := visual_slot(info["type_ids"])
+		if slot < 0 or (slot > SLOT_SUIT and slot != SLOT_AVATAR):
+			continue
+		var models: PackedStringArray = info["models"]
+		var wear := {"id": id, "plus": plus & 0xFF, "slot": slot, "type_ids": info["type_ids"], "code": String(info.get("code", "")),
+			"models": item_models(models[0] if not models.is_empty() else "", info["type_ids"], woman),
+			"nodes": []}
+		if slot == SLOT_AVATAR:
+			avatars.append(wear)
+		else:
+			by_slot[slot] = wear
+		if slot == SLOT_WEAPON:
+			weapon_kind = (info["type_ids"] as PackedInt32Array)[3]
+	var order: Array = by_slot.keys()
+	order.sort()
+	var wears: Array = []
+	for slot in order:
+		wears.append(by_slot[slot])
+	wears.append_array(avatars)
+	return [wears, weapon_kind]
 
 ## Hides the body's own pieces under what it wears, as retail does: every
 ## body mesh shown, then each worn item's attachable block with flag 1 hides
@@ -738,14 +766,22 @@ func body_path(ref_obj_id: int) -> String:
 		return e.model_path
 	return String(_extra_bodies.get(ref_obj_id, ""))
 
-## The variants whose failure falls back to the plain model (READ 0xa5f4f0).
-const _FALLBACK_SUFFIXES := ["_r.bsr", "_f.bsr"]
-
-## The plain model a `_r` / `_f` variant falls back to, "" for any other path.
+## The plain model a `_r` / `_f` variant falls back to, "" for any other path
+## (the variants whose failure falls back to the plain model: READ 0xa5f4f0).
+##
+## Round 748's review, F1: no `const` Array here. A GDScript `const` Array is
+## read-only, and Godot 4.2.2 reads a read-only Array's element through ONE
+## Variant slot the array shares with every reader (`core/variant/array.cpp:
+## 84-98`, `*_p->read_only = _p->array[p_idx]`; the VM's `for` loop and
+## `CONST[i]` both go through it). The template task (_prep_task) and the
+## main thread both called this: two threads swapped Strings through that
+## slot unlocked and corrupted the heap (the review's stress: 18 of 19 runs
+## crashed; none once this read no constant). `ConstArrayLint` keeps such
+## reads out of the scripts worker tasks run.
 static func _fallback_of(path: String) -> String:
-	for suffix in _FALLBACK_SUFFIXES:
-		if path.to_lower().ends_with(suffix):
-			return path.substr(0, path.length() - suffix.length()) + ".bsr"
+	var low := path.to_lower()
+	if low.ends_with("_r.bsr") or low.ends_with("_f.bsr"):
+		return path.substr(0, path.length() - 6) + ".bsr"
 	return ""
 
 ## Frees the cached templates (a screen closing), the shared skins and the
@@ -765,6 +801,382 @@ func free_templates() -> void:
 	_canonical_by_layout.clear()
 	# The baked poses shared by path (round 738's review, F3).
 	CrowdAnim.clear_shared_frames()
+	# Round 748: template tasks still running are waited for and what they
+	# made is freed, never adopted into the cleared caches.
+	wait_prepared(false)
+
+# --- templates made off the main thread (round 748) ---------------------------
+
+## OURS (round 748, crowd_scale.md lane B, B4's open item): the first body of
+## a new kind -- its `.bsr` assembled, each worn item assembled onto a scratch
+## copy of it -- cost 250-500 ms on the main thread (MEASURED, the crowd
+## probe's `QA DRESS` lines: build 220-378 ms of a 263-400 ms dressing, the
+## rest under 45 ms). prepare() makes what a build of (body, items) still
+## lacks on a WorkerThreadPool task, as the monsters' species templates are
+## made since round 661; poll_prepared() adopts the finished ones on the main
+## thread; build() itself is unchanged and, with everything cached, only
+## duplicates. A caller that builds without asking still gets the synchronous
+## path. Only the shared-skin bodies (`canonical`, the default) take it: an
+## item template's key holds the skeleton's bone count, which a per-piece
+## body (QA: OPENSRO_QA_CROWD_SKINS=own) may grow while it is dressed.
+##
+## The task reads `_data` and, for a body already assembled, a scratch copy of
+## its template's skeleton made here on the main thread (the template itself
+## stays the main thread's); it writes only its own result, under `_prep_lock`.
+## Its item templates carry the skin they were made on: when adoption puts a
+## new body template on its layout's shared skin (share_template), they are
+## moved to it too, so a body still writes one skin a pose (round 738, A2).
+## The glow's particle files are decoded on EfpEffect's own preload task.
+var _prep_tasks := {}   # body .bsr path -> WorkerThreadPool task id, or -1 while queued
+var _prep_done := {}    # body .bsr path -> the task's result (under _prep_lock)
+## Requests waiting for a free slot, in the order they were made (the world
+## asks nearest body first): [path, scratch, skin, items, group].
+var _prep_queue: Array = []
+## At most this many template tasks run at once (OURS). One body's assembly
+## is 50-400 ms of GDScript reading the archives; 52 at once (the Figures'
+## first arrival) took the main thread's share of the CPU and of the
+## archive's lock (MEASURED, round 748: arrival frames of 1.5-2.2 s with every
+## kind's task started together).
+const PREP_MAX_RUNNING := 2
+var _prep_running := 0
+## Tests only: stand-ins for the task's two assemblies, so the async path runs
+## on synthetic templates without an archive. body_assembler(path) ->
+## AssembledCharacter or null; item_assembler(source skeleton, skin, path) ->
+## [node or null, attachable or null], as _item_template_on.
+var body_assembler := Callable()
+var item_assembler := Callable()
+var _prep_lock := Mutex.new()
+## Bumped whenever poll_prepared adopts something, so a caller can cache a
+## "not ready" answer until something new arrives.
+var prep_generation := 0
+## Counts for the log and the tests: tasks started, templates adopted, and
+## the task time.
+var prep_stats := {"tasks": 0, "bodies": 0, "items": 0, "task_usec": 0, "longest_usec": 0}
+
+## The item `.bsr` paths a build of `items` on `ref_obj_id` hangs: every worn
+## model, each `_r` / `_f` model's plain fallback (_fallback_of), and
+## the default wear the worn visuals leave uncovered (_refresh_default_wear's
+## rule); the particle files the weapon's and shield's glow names at their
+## plus; and the animation group the held weapon picks (build's rule).
+## [items, efps, group].
+func template_paths(ref_obj_id: int, items: Array) -> Array:
+	var woman := is_woman(ref_obj_id)
+	var resolved := _resolve_wears(items, woman, false)
+	var paths := PackedStringArray()
+	var efps := PackedStringArray()
+	var worn: Array = []
+	for wear in resolved[0]:
+		for m in wear["models"]:
+			if not paths.has(m):
+				paths.append(m)
+			var fb := _fallback_of(m)
+			if fb != "" and not paths.has(fb):
+				paths.append(fb)
+		if int(wear["slot"]) != SLOT_AVATAR:
+			worn.append({"slot": wear["slot"], "type_ids": wear["type_ids"]})
+		var slot := int(wear["slot"])
+		if glow_enabled and glow_tables != null and (slot == SLOT_WEAPON or slot == SLOT_SHIELD) and String(wear["code"]) != "":
+			for r in glow_tables.particle_rows(String(wear["code"]), int(wear["plus"])):
+				var efp := (r as ItemGlowTables.ParticleRow).efp
+				if not efps.has(efp):
+					efps.append(efp)
+	if default_wear != null:
+		for d in default_wear.wear_for(race_of(ref_obj_id), woman, worn, default_wear_flag):
+			if not paths.has(String(d["path"])):
+				paths.append(String(d["path"]))
+	return [paths, efps, BodyAnimations.group_for_weapon(int(resolved[1]), race_of(ref_obj_id))]
+
+## The item template key of `item_path` on a body template (_item_instance's).
+static func _item_key(tmpl: SkinnedBsrAssembler.AssembledCharacter, body_bsr: String, item_path: String) -> String:
+	return "%s|%d|%s" % [tmpl.parsed.skeleton_path if tmpl.parsed != null else body_bsr, tmpl.skeleton.get_bone_count(), item_path.to_lower()]
+
+## The item paths of `paths` that a build on `tmpl` would still assemble: no
+## template under its key yet, or a failed one whose fallback has none.
+func _missing_items(tmpl: SkinnedBsrAssembler.AssembledCharacter, bsr_path: String, paths: PackedStringArray) -> PackedStringArray:
+	var out := PackedStringArray()
+	for p in paths:
+		if not _item_templates.has(_item_key(tmpl, bsr_path, p)):
+			out.append(p)
+	return out
+
+## Whether build(ref_obj_id, _, items) would assemble nothing on the main
+## thread: the body's template and every item template are cached (or known
+## to fail), the glow's particle files decoded, and no task for the body is
+## still running. An unknown body, or a per-piece-skin appearance, answers
+## true: build() takes them as before.
+func templates_ready(ref_obj_id: int, items: Array) -> bool:
+	return _prepare(ref_obj_id, items, false)
+
+## Starts a task for whatever a build of (ref_obj_id, items) still lacks, and
+## answers whether everything is ready already (templates_ready). A body whose
+## task is running gets no second one; ask again after poll_prepared adopts it.
+func prepare(ref_obj_id: int, items: Array) -> bool:
+	return _prepare(ref_obj_id, items, true)
+
+func _prepare(ref_obj_id: int, items: Array, start: bool) -> bool:
+	if not canonical or (_data == null and not body_assembler.is_valid()):
+		return true
+	var bsr_path := body_path(ref_obj_id)
+	if bsr_path == "":
+		return true
+	var wanted := template_paths(ref_obj_id, items)
+	var efp_ready := _efps_ready(wanted[1], start)
+	if _prep_tasks.has(bsr_path):
+		return false
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = null
+	var missing := PackedStringArray()
+	if _body_templates.has(bsr_path):
+		tmpl = _body_templates[bsr_path]
+		if tmpl == null:
+			return true
+		missing = _missing_items(tmpl, bsr_path, wanted[0])
+		# A failed template whose fallback has none: that one too.
+		for p in wanted[0]:
+			var key := _item_key(tmpl, bsr_path, p)
+			if _item_templates.has(key) and _item_templates[key] == null:
+				var fb := _fallback_of(p)
+				if fb != "" and not missing.has(fb) and not _item_templates.has(_item_key(tmpl, bsr_path, fb)):
+					missing.append(fb)
+		if missing.is_empty():
+			return efp_ready
+	else:
+		missing = wanted[0]
+	if not start:
+		return false
+	# The task's own copy of an existing template's skeleton: the template
+	# stays the main thread's (build() duplicates it). Its bones only
+	# (_bare_skeleton): a duplicate carries the body's mesh nodes, which
+	# share the template's meshes, and freeing those on the worker
+	# disconnected them from the shared meshes' `changed` signal while the
+	# main thread connected new bodies to it -- Godot 4.2.2's Object signal
+	# map has no lock (READ: core/object/object.h has no signal mutex;
+	# MeshInstance3D::set_mesh connects unconditionally). MEASURED: a
+	# 200-body arrival crashed with a corrupted CowData ("Index p_index = 0
+	# is out of bounds (size() = -995350686)") on the main thread.
+	var scratch: Skeleton3D = _bare_skeleton(tmpl.skeleton) if tmpl != null else null
+	var canon: Skin = tmpl.canonical_skin if tmpl != null else null
+	_prep_tasks[bsr_path] = -1
+	_prep_queue.append([bsr_path, scratch, canon, missing, String(wanted[2])])
+	_start_queued()
+	return false
+
+## A skeleton with `src`'s bones -- names, parents, rests, poses at rest --
+## and nothing else: what attaching an item reads (bone indices, rests, the
+## object-space bone a shared-skin body has).
+static func _bare_skeleton(src: Skeleton3D) -> Skeleton3D:
+	var s := Skeleton3D.new()
+	# No name (round 748's review, F2): a template's skeleton is unnamed, and
+	# setting an empty one is an engine ERROR in the log; nothing reads it.
+	s.transform = src.transform
+	for i in range(src.get_bone_count()):
+		s.add_bone(src.get_bone_name(i))
+	for i in range(src.get_bone_count()):
+		s.set_bone_parent(i, src.get_bone_parent(i))
+		s.set_bone_rest(i, src.get_bone_rest(i))
+		s.reset_bone_pose(i)
+	return s
+
+## Starts queued requests while fewer than PREP_MAX_RUNNING run. Low
+## priority: the world's own cell prepares (high) go first.
+func _start_queued() -> void:
+	while _prep_running < PREP_MAX_RUNNING and not _prep_queue.is_empty():
+		var q: Array = _prep_queue.pop_front()
+		var path: String = q[0]
+		prep_stats["tasks"] += 1
+		_prep_running += 1
+		_prep_tasks[path] = WorkerThreadPool.add_task(_prep_task.bind(path, q[1], q[2], q[3], q[4]), false,
+			"character template %s" % path.get_file())
+
+## The task: the body's template if `scratch` is null (none yet), then each of
+## `items` assembled onto it, each failed `_r` / `_f` model's fallback too.
+## Plain results only; adopted on the main thread (_finish_prep).
+func _prep_task(bsr_path: String, scratch: Skeleton3D, canon: Skin, items: PackedStringArray, group: String = "") -> void:
+	var sw := Time.get_ticks_usec()
+	var made_body: SkinnedBsrAssembler.AssembledCharacter = null
+	var source := scratch
+	if source == null:
+		made_body = body_assembler.call(bsr_path) if body_assembler.is_valid() \
+			else SkinnedBsrAssembler.assemble_from_archive(_data, bsr_path, false, canonical)
+		if made_body != null:
+			source = made_body.skeleton
+			canon = made_body.canonical_skin
+			# Its stand and run clips in the held weapon's group, into the
+			# new template's own clip cache (nobody else holds it yet): the
+			# first body's clip lookup read and parsed them on the main
+			# thread (QA DRESS `clip`, up to 180 ms behind the workers).
+			if _data != null:
+				for action in [BsrReader.AnimationEntry.TYPE_STAND, BsrReader.AnimationEntry.TYPE_RUN]:
+					SkinnedBsrAssembler.animation_for(_data, made_body, action, group if group != "" else "default")
+	var made_items := {}
+	if source != null:
+		for p in items:
+			var lower := p.to_lower()
+			if made_items.has(lower):
+				continue
+			var pair: Array = item_assembler.call(source, canon, p) if item_assembler.is_valid() else _item_template_on(_data, source, canon, p, true)
+			made_items[lower] = pair
+			var fb := _fallback_of(p)
+			if pair[0] == null and fb != "" and not made_items.has(fb.to_lower()):
+				made_items[fb.to_lower()] = item_assembler.call(source, canon, fb) if item_assembler.is_valid() \
+					else _item_template_on(_data, source, canon, fb, true)
+	if scratch != null:
+		scratch.free()
+	var result := {"body": made_body, "assembled": made_body != null or scratch == null, "items": made_items, "canon": canon,
+		"usec": Time.get_ticks_usec() - sw}
+	_prep_lock.lock()
+	_prep_done[bsr_path] = result
+	_prep_lock.unlock()
+
+## Whether the glow's particle files are decoded (EfpEffect's cache), the
+## ones neither decoded nor on their way handed to EfpEffect's preload task
+## when `start`. No Particles.pk2: nothing to wait for (EquipGlow draws none).
+func _efps_ready(efps: PackedStringArray, start: bool) -> bool:
+	if efps.is_empty():
+		return true
+	var arch := _particles_archive()
+	if arch == null:
+		return true
+	var todo := PackedStringArray()
+	for e in efps:
+		if EfpEffect.has_template(e) and not EfpEffect.is_preloading(e):
+			continue
+		_efp_waiting[e] = true
+		if not EfpEffect.is_preloading(e):
+			todo.append(e)
+	if not todo.is_empty() and start:
+		EfpEffect.preload_paths(todo, arch)
+	for e in efps:
+		if not EfpEffect.has_template(e) or EfpEffect.is_preloading(e):
+			return false
+	return true
+
+## Particle files a prepare waited on (path -> true); poll_prepared bumps
+## prep_generation as they arrive.
+var _efp_waiting := {}
+
+## Adopts every finished task, then starts queued ones; answers how many
+## were adopted. Main thread.
+func poll_prepared() -> int:
+	var n := 0
+	for e in _efp_waiting.keys():
+		if EfpEffect.has_template(e) and not EfpEffect.is_preloading(e):
+			_efp_waiting.erase(e)
+			prep_generation += 1
+			n += 1
+		elif not EfpEffect.is_preloading(e):
+			# Neither decoded nor on its way: evicted before it was seen (the
+			# review's F4). Dropped, and the generation bumped, so the next
+			# ask preloads it again.
+			_efp_waiting.erase(e)
+			prep_generation += 1
+	for path in _prep_tasks.keys():
+		var id: int = _prep_tasks[path]
+		if id >= 0 and WorkerThreadPool.is_task_completed(id):
+			_finish_prep(path, true)
+			n += 1
+	_start_queued()
+	return n
+
+## Waits for every task (a teardown, the tests); adopts what they made when
+## `adopt`, else frees it. With `adopt`, queued requests run too, one after
+## another; without, they are dropped.
+func wait_prepared(adopt: bool = true) -> void:
+	if not adopt:
+		for q in _prep_queue:
+			if q[1] != null and is_instance_valid(q[1]):
+				(q[1] as Node).free()
+			_prep_tasks.erase(q[0])
+		_prep_queue.clear()
+	while not _prep_tasks.is_empty():
+		for path in _prep_tasks.keys():
+			if int(_prep_tasks[path]) >= 0:
+				_finish_prep(path, adopt)
+		_start_queued()
+
+## Whether a template task is still running.
+func preparing() -> bool:
+	return not _prep_tasks.is_empty()
+
+func _finish_prep(bsr_path: String, adopt: bool) -> void:
+	WorkerThreadPool.wait_for_task_completion(_prep_tasks[bsr_path])
+	_prep_tasks.erase(bsr_path)
+	_prep_running -= 1
+	_prep_lock.lock()
+	var r = _prep_done.get(bsr_path)
+	_prep_done.erase(bsr_path)
+	_prep_lock.unlock()
+	# Every finish, a result or none (a task that hit a script error writes
+	# none), is news to a caller that cached "not ready" (round 748's review,
+	# F4): asked again, the kind gets a new task instead of waiting for an
+	# unrelated adoption.
+	prep_generation += 1
+	if r == null:
+		return
+	if not adopt:
+		_free_prepared(r)
+		return
+	var res: Dictionary = r
+	prep_stats["task_usec"] += int(res["usec"])
+	prep_stats["longest_usec"] = maxi(int(prep_stats["longest_usec"]), int(res["usec"]))
+	var made: SkinnedBsrAssembler.AssembledCharacter = res["body"]
+	if bool(res["assembled"]):
+		if _body_templates.has(bsr_path):
+			# Built meanwhile by a build() that did not wait: keep that one.
+			if made != null and is_instance_valid(made.skeleton):
+				made.skeleton.free()
+		else:
+			if made != null:
+				share_template(made, _canonical_by_layout)
+			stats["body_assemblies"] += 1
+			prep_stats["bodies"] += 1
+			_body_templates[bsr_path] = made
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = _body_templates.get(bsr_path)
+	var items: Dictionary = res["items"]
+	if tmpl == null:
+		for lower in items:
+			if items[lower][0] != null:
+				(items[lower][0] as Node).free()
+		return
+	var task_skin: Skin = res["canon"]
+	for lower in items:
+		var pair: Array = items[lower]
+		var node: Node3D = pair[0]
+		var key := _item_key(tmpl, bsr_path, lower)
+		if _item_templates.has(key):
+			if node != null:
+				node.free()
+			continue
+		if node != null and task_skin != null and tmpl.canonical_skin != null and task_skin != tmpl.canonical_skin:
+			_reskin(node, task_skin, tmpl.canonical_skin)
+		_item_templates[key] = node
+		stats["item_assemblies"] += 1
+		prep_stats["items"] += 1
+		if node != null:
+			_item_attachables[lower] = pair[1]
+
+## Every mesh under `node` on skin `from` moved to `to` (the layout's shared
+## skin: the same binds, Skeleton3DBuilder.canonical_skin of the same layout).
+static func _reskin(node: Node, from: Skin, to: Skin) -> void:
+	var stack: Array[Node] = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		for c in n.get_children():
+			stack.append(c)
+		var mi := n as MeshInstance3D
+		if mi != null and mi.skin == from:
+			mi.skin = to
+
+## Frees what a task made that will not be adopted.
+static func _free_prepared(r) -> void:
+	if r == null:
+		return
+	var made: SkinnedBsrAssembler.AssembledCharacter = r["body"]
+	if made != null and is_instance_valid(made.skeleton):
+		made.skeleton.free()
+	var items: Dictionary = r["items"]
+	for lower in items:
+		if items[lower][0] != null and is_instance_valid(items[lower][0]):
+			(items[lower][0] as Node).free()
 
 func _body_template(bsr_path: String) -> SkinnedBsrAssembler.AssembledCharacter:
 	if _body_templates.has(bsr_path):
@@ -874,19 +1286,44 @@ func _particles_archive() -> Pk2Reader:
 	return particles
 
 func _make_item_template(tmpl: SkinnedBsrAssembler.AssembledCharacter, item_path: String) -> Node3D:
-	var scratch := tmpl.skeleton.duplicate() as Skeleton3D
+	var made := _item_template_on(_data, tmpl.skeleton, tmpl.canonical_skin, item_path)
+	stats["item_assemblies"] += 1
+	if made[0] != null:
+		_item_attachables[item_path.to_lower()] = made[1]
+	return made[0]
+
+## An item's template (round 748: split out of _make_item_template so a
+## WorkerThreadPool task can make one): `item_path` attached to a scratch copy
+## of `source` (a body template's skeleton), lifted off and kept; [the node or
+## null, its BsrReader.Attachable or null].
+##
+## `in_place` (the task's): attached to `source` itself and lifted off it --
+## a skeleton only the caller holds (a new template not yet adopted, or a copy
+## the main thread made for the task). Node.duplicate() reads every property
+## through the Node3D getters, which Godot 4.2.2 refuses on a WorkerThreadPool
+## thread whether or not the node is in a tree (READ: node.h, ERR_READ_THREAD_GUARD
+## -> is_readable_from_caller_thread -> is_current_thread_safe_for_nodes, false
+## on a pool thread): the copy's transforms came back as defaults, with an
+## error per property (MEASURED in character_template_async_test's first
+## version). Attaching adds the item's node and no bone: a shared-skin body's
+## skeleton has the object-space bone already (Skeleton3DBuilder
+## ._object_space_bone at assembly), the only bone build_skin adds. So the
+## skeleton is as it was once the node is lifted off.
+static func _item_template_on(data: Pk2Reader, source: Skeleton3D, canonical_skin: Skin, item_path: String, in_place: bool = false) -> Array:
+	var scratch := source if in_place else source.duplicate() as Skeleton3D
 	# The client's rule for a palette bone the body lacks (READ, see
 	# Skeleton3DBuilder.build_skin): the Europe man's heavy legs need it.
-	var attached := SkinnedBsrAssembler.attach_item_from_archive(_data, scratch, item_path, true, tmpl.canonical_skin)
-	stats["item_assemblies"] += 1
+	var attached := SkinnedBsrAssembler.attach_item_from_archive(data, scratch, item_path, true, canonical_skin)
 	var node: Node3D = null
+	var attachable = null
 	if attached != null and attached.node != null:
 		node = attached.node
-		_item_attachables[item_path.to_lower()] = attached.attachable
+		attachable = attached.attachable
 		scratch.remove_child(node)
 		node.set_meta("bone_count", scratch.get_bone_count())
-	scratch.free()
-	return node
+	if not in_place:
+		scratch.free()
+	return [node, attachable]
 
 ## Gives every mesh skinned to the body's skeleton its own copy of its skin,
 ## so Volume (a bind pose edit) stays on this character. A mesh and its

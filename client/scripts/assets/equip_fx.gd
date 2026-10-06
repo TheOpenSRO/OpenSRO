@@ -6,8 +6,9 @@ class_name EquipFx
 ## on screen (2026-10-06), and one EfpEffect per weapon cost ~0.13 ms a frame
 ## each (MEASURED: 20 bodies at +13, 40 effects, +5.1 ms at the Jangan spawn).
 ##
-## **How (OURS throughout).** One driver per viewport. For each (efp, scale)
-## in use it keeps ONE master EfpEffect, simulated at the world origin and
+## **How (OURS throughout).** One driver per viewport. For each effect file
+## in use (round 748: not per row scale, kind_key) it keeps ONE master
+## EfpEffect, simulated at the world origin and
 ## never moved, whose own draws are hidden; every weapon showing that effect
 ## gets a holder (an EfpEffect with no simulation, so AppearFade, BerserkLook
 ## and EquipGlow pass it by as an effect) whose MultiMeshInstance3D and Link
@@ -70,6 +71,18 @@ const ALWAYS_NEAR := 30.0
 const IDLE_FRAMES := 600
 
 const DRIVER_META := "opensro_equip_fx_driver"
+## The driver's process_priority (round 748's review, F6, OURS): after the
+## world's _process at 0.
+const PROCESS_PRIORITY := 100
+
+## Round 747 (CrowdGpu, World3D sets them): a weapon's item skeleton -> its
+## frame (Transform3D) while its body is drawn far on the GPU, else null; and
+## the place the choice of the nearest measures it at.
+static var far_frame: Callable = Callable()
+static var far_origin: Callable = Callable()
+
+static func _far(skel: Node3D):
+	return far_frame.call(skel) if far_frame.is_valid() else null
 
 class Host:
 	var id: String
@@ -170,6 +183,11 @@ static func driver_for(vp: Viewport) -> EquipFx:
 			return d
 	var nd := EquipFx.new()
 	nd.name = "EquipFx"
+	# After every default-priority _process (round 748's review, F6): the
+	# world poses its player in its own _process now, and a driver made by
+	# the select screen sits before the world in tree order, so it placed the
+	# player's holders from the last frame's pose.
+	nd.process_priority = PROCESS_PRIORITY
 	vp.add_child(nd)
 	vp.set_meta(DRIVER_META, nd)
 	return nd
@@ -178,7 +196,7 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	var b := skel.find_bone(bone)
 	if b < 0:
 		return
-	var key := "%s|%s" % [efp.to_lower(), str(snappedf(scale, 0.0001))]
+	var key := kind_key(efp, scale)
 	# One host per (bone, effect), not per bone (round 741): a seal weapon has
 	# its itemrare.txt row and, from +8, its itemoptionefp.txt row on the same
 	# bone (Sun spear 4118: raretype_a_step3 and enchant_a_01, both ai_end),
@@ -186,21 +204,25 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	# by bone alone, the second was dropped. The same file at the same scale
 	# twice on one bone is drawn once (OURS; no item has that, MEASURED by
 	# round 740: no itemoptionefp row lands in a list that already has it).
-	var id := "%d|%d|%s" % [skel.get_instance_id(), b, key]
+	var id := "%d|%d|%s|%s" % [skel.get_instance_id(), b, key, str(snappedf(scale, 0.0001))]
 	if _hosts.has(id):
 		return
 	if particles == null:
 		particles = archive
 	if not _kinds.has(key):
+		var qa_t0 := Time.get_ticks_usec() if FrameSplit.on else 0
 		var m := EfpEffect.create(efp, archive)
 		if m == null:
 			return
+		var qa_t1 := Time.get_ticks_usec() if FrameSplit.on else 0
 		m.loop = true
 		m.auto_free = false
 		m.top_level = true
 		# The holders turn with their bones (round 741); the billboards are
 		# built in the shader so they still face the camera.
 		m.use_shared_turn()
+		if FrameSplit.on:
+			print("QA EQUIPFX master %s: create %.1f ms, shared turn %.1f ms" % [efp, (qa_t1 - qa_t0) / 1000.0, (Time.get_ticks_usec() - qa_t1) / 1000.0])
 		m.name = "master_%d" % _kinds.size()
 		for c in m.get_children():
 			if c is GeometryInstance3D:
@@ -229,6 +251,22 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	_scan.append(id)
 	if _hosts.size() <= VISIBLE_BUDGET:
 		_hurry = true
+
+## The kind (one master) an effect file at a row's scale is drawn through.
+## Round 748: the file alone. A master is simulated at the world origin with
+## no scale (the holder carries the row's scale, holder_transform), so the
+## 1000-body crowd's 13 (file, scale) kinds (QA CROWD census) are 6 masters.
+## **What this changes, OURS (round 748's review, F7):** a master's random
+## stream is its own (EfpSim._init randomizes), so before, weapons of one
+## file at different row scales showed different particles; now every
+## weapon showing a file shows the SAME particles at the same moment, each
+## at its own scale and turned with its own bone -- in a crowd, identical
+## sparks on every enchanted weapon of a file. (One master per file already
+## did that for the weapons of one scale since round 734.) A per-holder phase
+## into the shared stream would need a buffer of past frames per master and
+## a MultiMesh swap per holder each step; not built.
+static func kind_key(efp: String, _scale: float) -> String:
+	return efp.to_lower()
 
 func remove_skel(skel: Skeleton3D) -> void:
 	var sid := "%d|" % skel.get_instance_id()
@@ -395,11 +433,19 @@ func _process(_delta: float) -> void:
 	for h in _shown:
 		if h.holder == null or not is_instance_valid(h.holder) or not h.holder.visible or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue # an own simulation places itself (EfpEffect.follow_host)
-		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale)
+		# A hidden weapon shows nothing until the next cycle chooses again.
+		if not h.skel.is_visible_in_tree():
+			h.holder.visible = false
+			continue
+		# A weapon on a far body (round 747, CrowdGpu): its skeleton is not
+		# posed, so its frame is the one the GPU draws the body at.
+		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale, _far(h.skel))
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
+		if FrameSplit.on:
+			FrameSplit.add("fx_driver", Time.get_ticks_usec() - t0)
 
 ## Where a host's holder goes (round 741): the bone's whole frame in the world
 ## -- READ, CRTModParticle::FUN_00c81190 places the effect at the bone's
@@ -410,8 +456,8 @@ func _process(_delta: float) -> void:
 ## SetPosition offsets (enchant_a_01: 0, -1.2 .. -4.8 along the effect's X,
 ## in its parent's frame, space 7) pointed along fixed world axes: the
 ## column of sparks beside the spear, lined up with it at one heading only.
-static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float) -> Transform3D:
-	var g: Transform3D = skel.global_transform
+static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float, frame = null) -> Transform3D:
+	var g: Transform3D = frame if frame != null else skel.global_transform
 	var at: Transform3D = g * skel.get_bone_global_pose(bone)
 	var b := at.basis.orthonormalized()
 	return Transform3D(b * (row_scale * _uniform_scale(g.basis)), at.origin)
@@ -574,6 +620,11 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 		var d := 0.0
 		if cam != null:
 			var p := h.skel.global_position
+			# A far body's weapon (round 747): its body's place.
+			if far_origin.is_valid():
+				var o = far_origin.call(h.skel)
+				if o != null:
+					p = o
 			d = from.distance_to(p)
 			if d > ALWAYS_NEAR and (d > MAX_DISTANCE or not cam.is_position_in_frustum(p)):
 				continue
@@ -595,6 +646,11 @@ func _finish_cycle() -> void:
 	var weapon_d := {}
 	var weapon_n := {}
 	for i in _cand.size():
+		# A weapon freed since this cycle's scan measured it (a body freed
+		# outright, not queued): skipped here as in the loop below (round
+		# 748, MEASURED in the review's stress: 459-667 SCRIPT ERRORs a run).
+		if not is_instance_valid((_cand[i] as Host).skel):
+			continue
 		var wsid := (_cand[i] as Host).skel.get_instance_id()
 		weapon_d[wsid] = _cand_d[i]
 		weapon_n[wsid] = int(weapon_n.get(wsid, 0)) + 1
@@ -632,7 +688,9 @@ func _finish_cycle() -> void:
 		h.dist = _cand_d[i]
 		h.shown_cycle = _cycle
 		_shown.append(h)
-		if (_kinds[h.key] as Kind).own:
+		# A far body's weapon draws the shared master (round 747): an own
+		# simulation follows the skeleton, which is not posed while far.
+		if (_kinds[h.key] as Kind).own and _far(h.skel) == null:
 			world_shown.append(h)
 	# The OWN_BUDGET weapons with a world-axis effect that run every such
 	# effect on its own simulation (Kind.own), a weapon's effects together.

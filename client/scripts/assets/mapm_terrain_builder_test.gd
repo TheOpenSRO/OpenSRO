@@ -291,8 +291,10 @@ func _test_retail_texcoords() -> void:
 	_check(consts.get("TEXCOORD_PER_VERTEX") == 0.25,
 		"the tile texcoord step per vertex is retail's 0.25 (got %s)" % str(consts.get("TEXCOORD_PER_VERTEX")))
 	var want_scales := [1.0, 0.5, 0.25, 2.0, 4.0, 0.0, 0.0, 0.0]
-	_check(str(consts.get("TEXTURE_MATRIX_SCALES")) == str(want_scales),
-		"the eight stage-1 texture matrices scale by 1, 0.5, 0.25, 2, 4, 0, 0, 0 (got %s)" % str(consts.get("TEXTURE_MATRIX_SCALES")))
+	# A static var since round 748's review (F1/F5: a const Array read from a
+	# worker task races), so read directly, not from the constant map.
+	_check(str(MapmTerrainBuilder.TEXTURE_MATRIX_SCALES) == str(want_scales),
+		"the eight stage-1 texture matrices scale by 1, 0.5, 0.25, 2, 4, 0, 0, 0 (got %s)" % str(MapmTerrainBuilder.TEXTURE_MATRIX_SCALES))
 	var lookup := {5: ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))}
 	var region := _make_region(func(_band_row, band_col):
 		return _make_block(func(r, c): return 0.0, 5 | (band_col << 13)))

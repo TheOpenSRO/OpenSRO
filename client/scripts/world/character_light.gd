@@ -86,7 +86,14 @@ func visit(body: Node3D) -> void:
 		return
 	var visits := int(body.get_meta(META_VISITS, 0)) + 1
 	body.set_meta(META_VISITS, visits)
-	var rescan := visits % RESCAN_VISITS == 1
+	# Each body's rescans fall on its own visits (round 748): counted from 1
+	# alone, every body of a crowd that arrived together rescanned in the
+	# same pass of the queue -- 12 rescans a frame for one pass in eight, the
+	# rest none (MEASURED at 1000 standing: 0.05 to 1.8 ms a frame between
+	# 6-second steps). The same one rescan in RESCAN_VISITS visits per body;
+	# the offset is the id hashed, as consecutive bodies' ids step by their
+	# node count (28 a body: two offsets in eight, MEASURED no better).
+	var rescan := posmod(visits + hash(body.get_instance_id()), RESCAN_VISITS) == 1
 	var pos := body.global_position
 	var had := body.has_meta(META_VALUE)
 	if had and not rescan and (body.get_meta(META_POS, Vector3.INF) as Vector3).distance_to(pos) < MOVE_EPSILON:
@@ -141,10 +148,15 @@ func describe(pos: Vector3) -> String:
 	return "%s local %.0f,%.0f %s byte %d -> %.3f" % [group.name, local.x, local.z,
 		"terrain" if surf == null or surf.is_terrain else "object %d" % surf.object_index, b, color_at(pos)]
 
+## Round 747: called with a body whose meshes set_on gave other materials
+## (World3D: a far body's instances follow, CrowdGpu.refresh). Unset in tests.
+static var on_changed: Callable = Callable()
+
 ## Draws every mesh under `body` at object colour `value` (rescanning them
 ## when `rescan`): each object material, override or surface override, swapped
 ## for its copy at that level.
 static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
+	var changed := false
 	var meshes: Array = body.get_meta(META_MESHES, [])
 	if rescan or meshes.is_empty():
 		meshes = body.find_children("*", "MeshInstance3D", true, false)
@@ -161,6 +173,7 @@ static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
 			var want := ObjectLight.with_object_color(mi.material_override, value)
 			if want != mi.material_override:
 				mi.material_override = want
+				changed = true
 		if mi.mesh == null:
 			continue
 		for i in mi.get_surface_override_material_count():
@@ -169,3 +182,6 @@ static func set_on(body: Node3D, value: float, rescan: bool = true) -> void:
 				var want_s := ObjectLight.with_object_color(sm, value)
 				if want_s != sm:
 					mi.set_surface_override_material(i, want_s)
+					changed = true
+	if changed and on_changed.is_valid():
+		on_changed.call(body)

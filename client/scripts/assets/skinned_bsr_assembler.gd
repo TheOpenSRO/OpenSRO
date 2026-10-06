@@ -81,7 +81,7 @@ class AssembledCharacter:
 ## the NPC -- and that is read first; these hints are what kept models
 ## animating before the groups were read, and still cover a file this
 ## reader cannot parse the groups of.
-const IDLE_ANIMATION_HINTS := ["stand01", "stand", "basic", "idle", "wait"]
+static var IDLE_ANIMATION_HINTS := ["stand01", "stand", "basic", "idle", "wait"]
 
 ## Picks the idle animation from a model's own list, or "" if it has none.
 static func idle_animation_path(paths: Array) -> String:

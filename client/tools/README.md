@@ -485,6 +485,17 @@ flock /var/tmp/godot-lock/lock /opt/opensro-client-<lane>/tools/crowd_run.sh \
 A boot printing `overlap:` above 0 shared the CPU with another lane: repeat it. A 1000-body boot
 takes about 5 minutes; its log is about 0.4 MB.
 
+**Where a frame goes (round 748).** After each `QA CROWD step` line, and once for the arrival, the
+probe prints `QA CROWD split <step>`: the frame's phases in ms a frame (`phys_cb` the physics
+callbacks, `phys_engine` the rest of each physics step with its message flushes, `proc_cb` the
+`_process` callbacks, `post_flush`, `draw` RenderingServer's draw, `post_tail`), then the timers
+the code feeds while the probe runs (`FrameSplit`: World3D's `w_*` in `_process` and `p_*` in the
+physics step, EquipFx's `fx_driver` / `fx_effects`, `rs_setup` the draw's scene update,
+`rs_main_cpu` / `rs_overlay_cpu` each viewport's render). Read it instead of `process_ms`: Godot's
+`TIME_PROCESS` is the longest process-plus-render of the last second, not script time
+(`frame_split.gd`'s header has the source lines). `QA DRESS` lines name every body whose dressing
+took over 40 ms, by phase.
+
 ### Release checks (round 668)
 
 - `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that
@@ -643,6 +654,34 @@ for about a minute. It measures three things against the real archives:
 
 In the world, `QaCrowdProbe`'s `anim=<1i34|->` steps switch the round's rules for one step, and
 `OPENSRO_QA_CROWD_SKINS=own` builds a boot with the old per-piece skins (`docs/rounds/r738.md`).
+
+### The far crowd on the GPU (round 747)
+
+`CrowdGpu` (`scripts/world/crowd_gpu.gd`) draws far other players as MultiMesh instances skinned in
+the vertex shader. `crowd_gpu_probe.gd` holds it to the near path on real Figures (+13 kit, Volume
+0/2/4, standing or running), two ways:
+
+- `--mode=cpu`, headless (`remote_godot.sh script res://tools/crowd_gpu_probe.gd -- --pk2=...
+  --media=... --mode=cpu`, about a minute): every visible vertex skinned by the body's own skins
+  (Godot's sum) against `CrowdGpu.cpu_skin` (the vertex shader's arithmetic on the textures' data).
+  Over 1e-3 units is `PARITY FAIL` (round 747: 8e-6 over 22,230 vertices).
+- `--mode=pixels --out=<dir>`, on the GPU: the row drawn by the near path, then by CrowdGpu, at the
+  same clip times, saved as `<renderer>_<near|far>_<t>.png` for `frame_ab.py` (whose `d2` and `dmax`
+  fields round 747 added). Forward+ through `xwl_run.sh ... --rendering-method forward_plus
+  --rendering-driver vulkan --script res://tools/crowd_gpu_probe.gd -- ...`, Compatibility through
+  `xvfb-run -a ... vglrun -d egl0 ... --rendering-driver opengl3`; a shader that fails to compile
+  shows as `SHADER ERROR`.
+
+- `--mode=census` (round 747's review, F8; headless, about 25 minutes): every item the item table
+  draws on a body, on the first Figure of each race and sex, and every visible surface's draw kind;
+  each item with a blended part (which keeps a body near) is printed.
+
+In the world: `OPENSRO_QA_CROWD_GPU=0` (or `[video] gpu_crowd = false` in `user://settings.cfg`) boots without it, `OPENSRO_QA_CROWD_NEAR=<n>` keeps `n`
+bodies near (64), `QaCrowdProbe`'s `anim=1i34` step turns it off for one step (`5` is A5), and its
+`ab` step saves the same frame drawn with A5 on and off (`OPENSRO_QA_CROWD_SHOTS=<dir>`), clocks held,
+with the near and far bodies' screen boxes for `frame_ab.py --box`. A step may join switches with `+`
+(`net+sound`); `farsound` silences only the far bodies' clip sounds and `mute` every effect voice. Each `QA CROWD step` line ends
+with `gpu: far=.. groups=.. instances=.. ... kept_near={..}` and `gpu_ms` / `others_ms`.
 
 ### Load benchmark
 

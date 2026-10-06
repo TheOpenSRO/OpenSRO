@@ -17,6 +17,10 @@ extends SceneTree
 ## the summed delta, min(15 x 8/60, 1) = 1: a teleport) fails "8 folded steps";
 ## pump() ignoring the distance (arrival order) fails "nearest first";
 ## select_detail without its reach fails "the one at 350 does not cast".
+## Round 748: pump() building an id `ready` refused fails "a body whose
+## templates are not ready waits"; the old scan for every body dressed fails
+## "asked once each"; note_frame ignoring the frame fails "a 95 ms frame";
+## a second pump in a frame re-reading the whole queue fails "looked at alone".
 
 var _failures := 0
 
@@ -36,6 +40,7 @@ func _initialize() -> void:
 	_test_step_gate()
 	_test_folded_walk()
 	_test_build_queue()
+	_test_ready_and_budget()
 	_test_uids()
 	_test_detail()
 	if _failures == 0:
@@ -120,6 +125,82 @@ func _test_build_queue() -> void:
 		"a body dropped from the queue or freed is never dressed (got %s)" % str(order))
 	_check(q.frames >= 1 and q.built == 2, "the queue counts its frames and bodies (%d frames, %d built)" % [q.frames, q.built])
 	_free_all(bodies)
+
+## Round 748: the readiness test (templates still being made off the main
+## thread) and the budget that follows the frame.
+func _test_ready_and_budget() -> void:
+	var bodies := _bodies([Vector3(50, 0, 0), Vector3(5, 0, 0), Vector3(20, 0, 0), Vector3(0, 0, 2)])
+	var order: Array = []
+	var build := func(id: int) -> void: order.append(id)
+	var not_ready := {103: true, 102: true}
+	var asked := {}
+	var ready := func(id: int) -> bool:
+		asked[id] = int(asked.get(id, 0)) + 1
+		return not not_ready.has(id)
+	var q := OtherCrowd.BuildQueue.new()
+	q.budget_usec = 1 << 30
+	for id in [100, 101, 102, 103]:
+		q.queue(id)
+	_check(q.pump(1, Vector3.ZERO, bodies, build, ready) == 2 and order == [101, 100],
+		"a body whose templates are not ready waits; the ready ones are dressed nearest first (got %s)" % str(order))
+	_check(q.has(103) and q.has(102) and q.size() == 2 and q.waiting_skips == 2, "the two waiting stay queued (%d skips)" % q.waiting_skips)
+	not_ready.clear()
+	_check(q.pump(2, Vector3.ZERO, bodies, build, ready) == 2 and order == [101, 100, 103, 102],
+		"once ready they are dressed, nearest first (got %s)" % str(order))
+	_free_all(bodies)
+	# 300 waiting: each is asked once a frame, and nothing is built.
+	var many: Array = []
+	for i in 300:
+		many.append(Vector3(float(i), 0, 0))
+	var crowd := _bodies(many)
+	var q2 := OtherCrowd.BuildQueue.new()
+	q2.budget_usec = 1 << 30
+	for id in crowd:
+		q2.queue(id)
+	asked.clear()
+	var none := func(id: int) -> bool:
+		asked[id] = int(asked.get(id, 0)) + 1
+		return false
+	_check(q2.pump(3, Vector3.ZERO, crowd, build, none) == 0 and q2.size() == 300, "none ready: none dressed, all 300 still queued")
+	var once := asked.size() == 300
+	for id in asked:
+		if int(asked[id]) != 1:
+			once = false
+	_check(once, "each waiting body is asked once a frame (%d asked)" % asked.size())
+	# Another arrival in the same frame: only it is looked at, not the 300.
+	var late := Node3D.new()
+	late.position = Vector3(1, 0, 0)
+	crowd[999] = late
+	q2.queue(999)
+	asked.clear()
+	order.clear()
+	var only_new := func(id: int) -> bool:
+		asked[id] = int(asked.get(id, 0)) + 1
+		return id == 999
+	_check(q2.pump(3, Vector3.ZERO, crowd, build, only_new) == 1 and order == [999] and asked.size() == 1,
+		"a later arrival in the frame of a full pass is looked at alone (%d asked)" % asked.size())
+	asked.clear()
+	q2.pump(4, Vector3.ZERO, crowd, build, none)
+	_check(asked.size() == 300, "the next frame looks at the whole queue again (%d asked)" % asked.size())
+	_free_all(crowd)
+	# The budget follows the frame (HITCH_TARGET_USEC).
+	var q3 := OtherCrowd.BuildQueue.new()
+	q3.budget_usec = 25000
+	_check(q3.frame_budget() == 25000, "before any frame is noted the budget is budget_usec")
+	q3.note_frame(95000)
+	_check(q3.frame_budget() == 0, "a 95 ms frame leaves no budget under the 90 ms target (%d)" % q3.frame_budget())
+	q3.note_frame(50000)
+	_check(q3.frame_budget() == 25000, "a 50 ms frame: the whole budget (%d)" % q3.frame_budget())
+	q3.last_spent = 20000
+	q3.note_frame(100000)
+	_check(q3.frame_budget() == 10000, "a 100 ms frame of which 20 ms was dressing: 90 - 80 = 10 ms (%d)" % q3.frame_budget())
+	var b3 := _bodies([Vector3(1, 0, 0), Vector3(2, 0, 0)])
+	order.clear()
+	for id in b3:
+		q3.queue(id)
+	q3.note_frame(200000)
+	_check(q3.pump(4, Vector3.ZERO, b3, build) == 1, "with no budget left one body is still dressed a frame")
+	_free_all(b3)
 
 func _test_uids() -> void:
 	var u := OtherCrowd.UidIndex.new()

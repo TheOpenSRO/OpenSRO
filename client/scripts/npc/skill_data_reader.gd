@@ -25,7 +25,7 @@ const GROUP_TABLE := "server_dep\\silkroad\\textdata\\skillgroup.txt"
 ## The skilldata files that carry China mastery skills, measured against the
 ## pserver archive. The client splits skilldata across many files; only these
 ## hold player-mastery (257-259, 273-276) skills.
-const LEGACY_SKILL_TABLES := [
+static var LEGACY_SKILL_TABLES := [
 	"server_dep\\silkroad\\textdata\\skilldata_1000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_5000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_10000.txt",
@@ -41,7 +41,7 @@ const LEGACY_SKILL_TABLES := [
 ## 12000 and 22000 for the last 65 (a greedy cover; 11000, 25000, 31000,
 ## 32000 and 36000 add none). Listed in the index's numeric order, which is
 ## the order the client loads them in (skilldata.txt).
-const LEGACY_EUROPE_SKILL_TABLES := [
+static var LEGACY_EUROPE_SKILL_TABLES := [
 	"server_dep\\silkroad\\textdata\\skilldata_9000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_10000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_12000.txt",

@@ -460,7 +460,7 @@ static func _resolve_texture_id(extra: PackedByteArray, texture_lookup: Dictiona
 ## was wrong: the field is an index into the table below, and 16 (index 2)
 ## makes a texture *larger*, not smaller.
 const TEXCOORD_PER_VERTEX := 0.25
-const TEXTURE_MATRIX_SCALES: Array[float] = [1.0, 0.5, 0.25, 2.0, 4.0, 0.0, 0.0, 0.0]
+static var TEXTURE_MATRIX_SCALES: Array[float] = [1.0, 0.5, 0.25, 2.0, 4.0, 0.0, 0.0, 0.0]
 
 ## The tile-UV step per vertex for a vertex's TextureInfo (see
 ## TEXTURE_MATRIX_SCALES). A vertex with no TextureInfo gets the unscaled

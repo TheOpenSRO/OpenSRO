@@ -209,25 +209,45 @@ static func gait_clip(archive: Pk2Reader, assembled: SkinnedBsrAssembler.Assembl
 ## other-player gait swap (_set_other_gait) goes through here too since round
 ## 540, when another player's body began playing a hit one-shot.
 ## Returns whether anything changed; a null clip changes nothing.
-static func swap_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float) -> bool:
+##
+## `hint` (round 748, OURS): a one-element array holding the index the
+## skeleton's entry was found at last time, read and updated. A hint that
+## still names this skeleton's entry is used without a scan; any other is
+## found by the scan as before. Other players' gait swaps scanned the whole
+## list (every monster and player) once each: 1000 players walking spent
+## about 13 ms a frame on it (MEASURED, round 748's crowd split).
+static func swap_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float, hint: Array = []) -> bool:
 	if skeleton == null or anim == null or frames <= 1:
 		return false
-	for entry in animated:
+	if not hint.is_empty():
+		var h: int = hint[0]
+		if h >= 0 and h < animated.size() and animated[h][0] == skeleton:
+			return _swap_entry(animated, animated[h], skeleton, anim, frames, now)
+	for i in animated.size():
+		var entry: Array = animated[i]
 		if entry[0] != skeleton:
 			continue
-		if entry[4]:
-			entry[1] = anim
-			entry[2] = frames
-			return true
-		if entry.size() > 7 and bool(entry[7]):
-			return false
-		if entry[6] == null:
-			entry[6] = _new_loop(animated, skeleton, anim, frames, now)
-			return true
-		entry[6][1] = anim
-		entry[6][2] = frames
-		return true
+		if not hint.is_empty():
+			hint[0] = i
+		return _swap_entry(animated, entry, skeleton, anim, frames, now)
+	if not hint.is_empty():
+		hint[0] = animated.size()
 	animated.append(_new_loop(animated, skeleton, anim, frames, now))
+	return true
+
+## swap_loop on the skeleton's entry, found.
+static func _swap_entry(animated: Array, entry: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float) -> bool:
+	if entry[4]:
+		entry[1] = anim
+		entry[2] = frames
+		return true
+	if entry.size() > 7 and bool(entry[7]):
+		return false
+	if entry[6] == null:
+		entry[6] = _new_loop(animated, skeleton, anim, frames, now)
+		return true
+	entry[6][1] = anim
+	entry[6][2] = frames
 	return true
 
 ## A loop entry for swap_loop, with the staggered phase

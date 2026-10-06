@@ -57,7 +57,7 @@ class_name CharacterAssembler
 ## single-element array for an unpaired part (attached as-is), or a
 ## two-element [positive-X bone, negative-X bone] array for a paired part
 ## (mesh split by triangle-centroid X sign).
-const BODY_PART_BONES := {
+static var BODY_PART_BONES := {
 	"pelvis": ["Bip01 Pelvis"],
 	"torso_lower": ["Bip01 Spine"],
 	"torso_upper": ["Bip01 Spine1"],

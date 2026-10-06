@@ -38,7 +38,7 @@ class_name SeasonalObjects
 ## `compound\struct\etc\x_mas\` compound), halloween 3287-3296 and 3298
 ## (11), obt 3268-3283, 3285, 3286 (18), summer 2095-2109 (15).
 
-const SETS := ["christmas", "halloween", "obt", "summer"]
+static var SETS := ["christmas", "halloween", "obt", "summer"]
 
 ## Each set's rule: a substring of the lowercased object.ifo path.
 const RULES := {

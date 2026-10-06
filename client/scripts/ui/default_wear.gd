@@ -53,7 +53,7 @@ const CONDITION_DEFAULT := 6
 const MASK_MAIL := 0x2
 const MASK_PANTS := 0x10
 ## [default wear number, its mask, the visual slot it fills] (READ 0xa5e010).
-const WEARS := [[0, MASK_MAIL, CharacterAppearance.SLOT_CHEST], [1, MASK_PANTS, CharacterAppearance.SLOT_LEGS]]
+static var WEARS := [[0, MASK_MAIL, CharacterAppearance.SLOT_CHEST], [1, MASK_PANTS, CharacterAppearance.SLOT_LEGS]]
 
 ## packed TypeID -> Slot mask, from the ConditionID 1 rows.
 var item_masks: Dictionary = {}

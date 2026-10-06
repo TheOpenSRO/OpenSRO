@@ -203,6 +203,8 @@ static func animates_base(data: Dictionary) -> bool:
 ## The live materials: one runtime each (weakly held, so a freed region's
 ## materials leave on the next tick).
 static var _live: Array = []
+## QA only (round 747, QaCrowdProbe's `ab` step): every animation held.
+static var hold := false
 
 ## Starts animating `mat` with `data` (a TEXANI mod for its layer).
 static func bind(mat: Material, data: Dictionary) -> void:
@@ -217,9 +219,22 @@ static func bind(mat: Material, data: Dictionary) -> void:
 		t.apply_to(front)
 		_live.append([weakref(front), t])
 
+## Animates `twin` with `src`'s runtime, if `src` is animated (round 747: a
+## far body's GPU twin, CrowdGpu._twin). Returns whether it was.
+static func bind_like(twin: ShaderMaterial, src: Material) -> bool:
+	if twin == null or src == null:
+		return false
+	for pair in _live:
+		if (pair[0] as WeakRef).get_ref() == src:
+			var t: TexAni = pair[1]
+			t.apply_to(twin)
+			_live.append([weakref(twin), t])
+			return true
+	return false
+
 ## One frame for every live material (World3D, once a frame).
 static func tick(ms: float) -> void:
-	if _live.is_empty():
+	if _live.is_empty() or hold:
 		return
 	var keep: Array = []
 	var stepped := {}
