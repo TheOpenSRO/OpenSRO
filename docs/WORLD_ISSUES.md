@@ -7146,6 +7146,37 @@ The full notes are in `docs/rounds/r736.md`; the spec is `docs/protocol/crowd_sc
 - **Tools:** `QaCrowdProbe` (`OPENSRO_QA_CROWD_STEPS`), `QaLineup` count and plus, and the server
   bench `crowd736_bench_test.go`.
 
+## Seven-hundred-and-forty-sixth round: every characterdata part, world-axis seal effects, a whole-weapon budget
+
+The full notes are in `docs/rounds/r746.md`; the review is `r746_review.md`. This follows up round
+741's review.
+- **characterdata reads its index:** 63 parts, read by `CharTables` on worker threads. 4,576 codes
+  with a model now resolve, 670 of them `MOB_`; live NPC models went from 5,423 to 9,999.
+  - The review diffed every reader, old 7 parts against new 63: 0 changed winners, 0 lost keys.
+  - Retail reads the same index (READ).
+- **The skill board stays on the per-race list:** retail reads `skilldataenc.txt` (READ,
+  `Client_LoadAllRefData` 0x844cd0), and the old list matched it on every mastery row. The plain
+  index would add 35004/35005 and lower 36791's requirement from 110 to 10.
+  - The full index feeds only cast effects and sounds.
+  - The board parses on a worker from world entry.
+- **World-axis commands (MEASURED, `census_equip_world.gd`):** 35 of 74 equipment effects have
+  them (`SetConeVel` space 0, `SetRVelocity`, per-axis `SetSpherePos`).
+  - Such an effect runs its own world-space simulation on one weapon (`OWN_BUDGET` = 1, OURS; USER
+    DECISION 2026-10-06: "exact on my weapon").
+  - The player's weapon is preferred, with a 20% keep margin and a 10-frame pre-run.
+  - Others share the bone-turned simulation (OURS departure).
+- **Budget:** 64 holders, cut by whole weapons.
+- **Inheritance:** groups resolve through the item table.
+- **Preloads:** started from the select screen, and waited for at `_exit_tree`.
+- **Perf:**
+  - jangan SAME (entry -0.5 s, freeze -0.5 s);
+  - 200 seal weapons with an own simulation: +1.4-2.3 ms, the user's choice.
+- **Open:**
+  - the server's `skills.csv` comes from the plain index (66 extra ids, 36791 at 10), not
+    `skilldataenc`. A server departure, raised with the user.
+  - NPC_SOSUN's two definitions.
+- **Tests:** box "ran 249 suite(s), 0 failing".
+
 ## Seven-hundred-and-forty-fifth round: the click ring on the frozen lake draws on the ice only
 
 The user (v0.1.502): the destination ring showed both on Karakoram's ice and on the lakebed far
