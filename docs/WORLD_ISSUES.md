@@ -7146,6 +7146,50 @@ The full notes are in `docs/rounds/r736.md`; the spec is `docs/protocol/crowd_sc
 - **Tools:** `QaCrowdProbe` (`OPENSRO_QA_CROWD_STEPS`), `QaLineup` count and plus, and the server
   bench `crowd736_bench_test.go`.
 
+## Seven-hundred-and-thirty-ninth round: crowd scale, the per-body systems (lane B)
+
+The full notes are in `docs/rounds/r739.md`; the review is `r739_review.md`.
+- **B1 (OURS):** other players walk once per rendered frame, from `_process` after the frame's
+  physics; k steps fold exactly into `lerp(1-(1-a)^k)`. The blob circles and `CharacterLight` move
+  there too.
+- **B2 (READ, `SWorld::vslot_025` 0xa17ab0):** Detail shadows only for the ten nearest within 300,
+  keyed by distance x 10.0 (0xe1b840), and the local player is one of the ten. "Characters
+  only" is OURS. Detail draws at 1000 fell from 24,682 to 8,803.
+- **B3 (READ):** the 600 hearing cut applies to players, in 738's player branch.
+- **B4 (OURS):** an arrival build pump, nearest first, 25 ms a frame; a group-spawn page is queued
+  whole. Moves, departures, 0x3038/9, seats and buffs act on bodies not yet built.
+- **B7 (OURS):** an O(1) uid map.
+
+## Seven-hundred-and-thirty-eighth round: crowd scale, animation and skinning (lane A)
+
+The full notes are in `docs/rounds/r738.md`; the review is `r738_review.md`. The A5 GPU-crowd spec is
+`docs/protocol/crowd_gpu.md`.
+- **A1 (READ: retail poses only what was drawn):** other players are posed only while in view and
+  within Character Sight Range. Each is posed once at spawn and on the first tick back in view.
+- **A2 (OURS):** one Skin per skeleton file, with bone indices remapped: 12 skins a body became 1.
+  2,860 builds and 3.7 M vertices differ by 0 units (MEASURED).
+- **Indexed pose, and A3 (OURS):** baked poses per (clip path, layout) at 1/120 s, shared between
+  bodies. Each body keeps its own clip objects, so sound tags stay per body (the review's
+  footstep regression, fixed). Worst bone offset 0.44.
+- **A4 (OURS):** with 100 or more characters, bodies past 900 are posed every 2nd frame, past
+  1800 every 4th.
+
+**Combined 738+739 (MEASURED, 1080p Forward+ Middle, RX 7600; base `3fc71af2` -> head):**
+
+| n | standing p50 | walking p95 | arrival worst frame |
+|---|---|---|---|
+| 200 | 42.6 -> 24.0 ms | 59.8 -> 43.0 | one 4,307 ms frame -> 466 |
+| 1000 | 228 -> 95 ms | 399 -> 184 | one 6,270 ms frame -> 483 |
+
+- **Target:** 1000 at 16.7 ms standing, not reached.
+- **What remains at 1000:** about 56 ms of process time (`EquipFx` about 11), render CPU 25 ms
+  (about 8,500 draw calls), the clip tick 20, and first-of-kind template builds on the main
+  thread. A5 (the GPU crowd) is next.
+- **Gates:**
+  - `perf_gate.sh --sites jangan,reeds,cross`: SAME everywhere;
+  - box "ran 251 suite(s), 0 failing" on the lane branch;
+  - dev integration re-run below.
+
 ## Seven-hundred-and-forty-sixth round: every characterdata part, world-axis seal effects, a whole-weapon budget
 
 The full notes are in `docs/rounds/r746.md`; the review is `r746_review.md`. This follows up round
