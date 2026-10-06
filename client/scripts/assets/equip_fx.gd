@@ -47,6 +47,8 @@ class_name EquipFx
 ## The glow itself is untouched (a material, no per-frame work).
 
 const MAX_DISTANCE := 800.0
+## The most holders drawn at once (round 746: whole weapons only, see
+## _finish_cycle). OURS.
 const VISIBLE_BUDGET := 64
 ## Round 746 (OURS): how many WEAPONS carrying a world-axis effect (Kind.own),
 ## nearest the camera, run those effects on their own world-space simulation,
@@ -541,38 +543,55 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 		_cand.append(h)
 		_cand_d.append(d)
 
-## The cycle's choice: the VISIBLE_BUDGET nearest WEAPONS show their effects
-## -- every effect of a chosen weapon, so a weapon's seal and +8 effects come
-## and go together (round 746, the review's finding 2; OURS, the budget is
-## not READ) -- every other holder hides, and masters with none pause. No
-## sort while the weapons fit the budget; past it, only their distances are
-## sorted (natively) for the cut.
+## The cycle's choice (round 746, the review's finding 2; OURS, the budget is
+## not READ): the nearest WHOLE weapons whose effects together fit
+## VISIBLE_BUDGET holders show them -- every effect of a chosen weapon, so a
+## weapon's seal and +8 effects come and go together, and never more than
+## VISIBLE_BUDGET holders drawn. (Measured: counting 64 WEAPONS instead let 200
+## Sun spears draw 128 holders and cost +8 ms a frame, r746.md.) Every other
+## holder hides, and masters with none pause. No sort while everything fits;
+## past it, the weapons' distances are sorted natively for a first cut at
+## VISIBLE_BUDGET weapons, and only those are ranked.
 func _finish_cycle() -> void:
 	_cycle += 1
 	# One distance per weapon (an item skeleton): its hosts share it.
 	var weapon_d := {}
+	var weapon_n := {}
 	for i in _cand.size():
-		weapon_d[(_cand[i] as Host).skel.get_instance_id()] = _cand_d[i]
-	var limit := INF
-	if weapon_d.size() > VISIBLE_BUDGET:
-		var sorted := PackedFloat32Array(weapon_d.values())
-		sorted.sort()
-		limit = sorted[VISIBLE_BUDGET - 1]
+		var wsid := (_cand[i] as Host).skel.get_instance_id()
+		weapon_d[wsid] = _cand_d[i]
+		weapon_n[wsid] = int(weapon_n.get(wsid, 0)) + 1
+	var chosen := {}
+	if _cand.size() <= VISIBLE_BUDGET:
+		chosen = weapon_d
+	else:
+		var limit := INF
+		if weapon_d.size() > VISIBLE_BUDGET:
+			var sorted := PackedFloat32Array(weapon_d.values())
+			sorted.sort()
+			limit = sorted[VISIBLE_BUDGET - 1]
+		var near: Array = []
+		for wsid in weapon_d:
+			if float(weapon_d[wsid]) <= limit:
+				near.append(wsid)
+		near.sort_custom(func(a, b): return float(weapon_d[a]) < float(weapon_d[b]))
+		var n := 0
+		for wsid in near:
+			n += int(weapon_n[wsid])
+			if n > VISIBLE_BUDGET:
+				break
+			chosen[wsid] = true
 	for k in _kinds.values():
 		(k as Kind).active = 0
 	var before := _shown
 	_shown = []
-	var chosen := {}
 	var world_shown: Array = []
 	for i in _cand.size():
 		var h: Host = _cand[i]
-		if _cand_d[i] > limit or _hosts.get(h.id) != h or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+		if _hosts.get(h.id) != h or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
-		var sid := h.skel.get_instance_id()
-		if not chosen.has(sid):
-			if chosen.size() >= VISIBLE_BUDGET:
-				continue
-			chosen[sid] = true
+		if not chosen.has(h.skel.get_instance_id()):
+			continue
 		h.dist = _cand_d[i]
 		h.shown_cycle = _cycle
 		_shown.append(h)

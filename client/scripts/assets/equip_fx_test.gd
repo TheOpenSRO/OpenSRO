@@ -180,8 +180,9 @@ func _test_two_rows_one_bone() -> void:
 	_check(d._hosts.is_empty(), "the skeleton leaving takes both")
 	vp.free()
 
-## Round 746 (the review's finding 2): the budget is 64 WEAPONS (item
-## skeletons), and a chosen weapon shows every effect it carries.
+## Round 746 (the review's finding 2): the budget cuts by whole weapons (item
+## skeletons): a chosen weapon shows every effect it carries, within 64
+## holders.
 func _test_weapon_budget() -> void:
 	var vp := _viewport()
 	var d := _driver(vp)
@@ -214,18 +215,19 @@ func _test_weapon_budget() -> void:
 			whole += 1
 		elif n == 1:
 			half += 1
-	_check(int(d.stats["weapons"]) == EquipFx.VISIBLE_BUDGET and int(d.stats["shown"]) == 2 * EquipFx.VISIBLE_BUDGET,
-		"80 weapons with 2 effects each: 64 weapons shown, 128 holders (%d, %d)" % [int(d.stats["weapons"]), int(d.stats["shown"])])
-	_check(whole == EquipFx.VISIBLE_BUDGET and half == 0, "every shown weapon shows both its effects, none half (%d whole, %d half)" % [whole, half])
+	var cap := EquipFx.VISIBLE_BUDGET / 2
+	_check(int(d.stats["weapons"]) == cap and int(d.stats["shown"]) == EquipFx.VISIBLE_BUDGET,
+		"80 weapons with 2 effects each: 64 holders, 32 whole weapons (%d, %d)" % [int(d.stats["weapons"]), int(d.stats["shown"])])
+	_check(whole == cap and half == 0, "every shown weapon shows both its effects, none half (%d whole, %d half)" % [whole, half])
 	var nearest := true
 	for i in skels.size():
 		var shown := false
 		for c in (skels[i] as Node).get_children():
 			if c is EfpEffect and (c as EfpEffect).visible:
 				shown = true
-		if shown != (i < EquipFx.VISIBLE_BUDGET):
+		if shown != (i < cap):
 			nearest = false
-	_check(nearest, "the weapons shown are the 64 nearest")
+	_check(nearest, "the weapons shown are the nearest")
 	vp.free()
 
 ## Round 746 (the review's finding 1): which commands point along the world.
