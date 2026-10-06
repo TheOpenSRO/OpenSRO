@@ -46,6 +46,7 @@ func _initialize() -> void:
 		_test_twin_code()
 		await _test_parity()
 		_test_frames_and_rebase()
+		_test_review_fixes()
 		var world := _make_world()
 		if world != null:
 			await process_frame
@@ -364,6 +365,73 @@ func _test_frames_and_rebase() -> void:
 	root.remove_child(holder)
 	holder.free()
 
+## Round 747's review: F3 (pages), F7 (empty groups go), F8 (a blended part
+## keeps the body near), F9 (a mirrored body stays near), F11 (the switch).
+func _test_review_fixes() -> void:
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	var skel := _make_body()
+	var holder := Node3D.new()
+	holder.set_meta("character_id", 900)
+	holder.add_child(skel)
+	root.add_child(holder)
+	skel.set_meta(CrowdAnim.META_CACHED, true)
+	# F3: a short clip, then a 12 s one, so the long one's rows run past the
+	# first page; a frame in the second page lands where the near skin does.
+	var short := _clip(900, 4, 0.1)
+	crowd.can_draw(skel, [skel, short, 4, 0.0, true, 0.0, null])
+	var long := _clip(12000, 9, 0.2)
+	var entry := [skel, long, 9, 0.0, true, 0.0, null]
+	crowd.can_draw(skel, entry)
+	crowd.bake_all()
+	var t := 11.0
+	MonsterCrowd.pose_at(skel, long, t, true)
+	var near := _near_vertices(skel)
+	_check(crowd.add(holder, skel, entry, t), "F3: a body on a clip baked past the first page is drawn far")
+	crowd.flush(t)
+	var row := crowd.frame_of(skel, t)
+	var far := crowd.cpu_skin(skel, t)
+	var worst := 0.0
+	for p in range(mini(near.size(), far.size())):
+		for k in range((near[p] as PackedVector3Array).size()):
+			worst = maxf(worst, (near[p] as PackedVector3Array)[k].distance_to((far[p] as PackedVector3Array)[k]))
+	var l: CrowdGpu.Layout = crowd.body_of(skel).layout
+	var clip_rows: Vector3i = l.clips[crowd.body_of(skel).frames]
+	_check(clip_rows.x + row >= CrowdGpu.PAGE_ROWS and l.pages.size() == 2 and l.tex != null and l.tex.get_layers() == 2,
+		"F3: its frame is in the second page (row %d), two pages, a two-layer texture" % (clip_rows.x + row))
+	_check(far.size() == near.size() and worst < 1e-4, "F3: and it is skinned where the near path skins it (worst %s)" % str(worst))
+	# F7: emptied groups go after GROUP_EMPTY_CYCLES cycles, with their twins.
+	var groups_before := crowd.describe()
+	crowd.remove(skel)
+	for c in range(CrowdGpu.GROUP_EMPTY_CYCLES - 1):
+		crowd.collect()
+	_check(crowd._groups.size() > 0, "F7: an empty group is kept for a while (%d)" % crowd._groups.size())
+	crowd.collect()
+	_check(crowd._groups.is_empty() and crowd._twins.is_empty(), "F7: then freed, its twin with it (%s, then %d groups, %d twins)" % [groups_before, crowd._groups.size(), crowd._twins.size()])
+	# F8: a blended part keeps the body near.
+	var piece := skel.get_node("Piece") as MeshInstance3D
+	var plain := piece.material_override
+	var blend := ShaderMaterial.new()
+	blend.shader = ObjectLoader._mod_shader("back", "mix", true)
+	piece.material_override = blend
+	_check(not crowd.add(holder, skel, entry, t) and crowd.refusals.has("blended"), "F8: a body with a blended part is not drawn far")
+	piece.material_override = plain
+	# F9: a mirrored body stays near.
+	holder.scale = Vector3(-1.0, 1.0, 1.0)
+	_check(not crowd.add(holder, skel, entry, t) and crowd.refusals.has("mirrored"), "F9: a mirrored body is not drawn far")
+	holder.scale = Vector3.ONE
+	_check(crowd.add(holder, skel, entry, t), "... and the same body, plain and unmirrored, is")
+	crowd.remove(skel)
+	root.remove_child(holder)
+	holder.free()
+	# F11: the player's switch round-trips through the settings file.
+	var path := "user://crowd_gpu_test_settings.cfg"
+	var o := VideoOptions.new()
+	_check(o.gpu_crowd, "F11: the far crowd on the GPU is on by default")
+	o.gpu_crowd = false
+	o.save(path)
+	_check(not VideoOptions.load_saved(path).gpu_crowd and not o.duplicate_options().gpu_crowd, "F11: off is saved, loaded and copied")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
 # --- the world ---------------------------------------------------------------------
 
 func _make_world() -> Node:
@@ -389,6 +457,79 @@ func _make_world() -> Node:
 	world.set_script(sub)
 	root.add_child(world)
 	return world
+
+## Round 747's review, F2: a far body within 600 of the listener plays its
+## clip sounds from the CPU, advanced only when its clock passes the clip's
+## next key; out of hearing it is rested and fires nothing.
+func _test_far_sounds(world: Node, skel: Skeleton3D, clip: BanReader.ParsedAnimation) -> void:
+	var crowd: CrowdGpu = world.get("_crowd_gpu")
+	_check(crowd.has(skel), "the sound body is far")
+	var sounds = world.get("_anim_sounds")
+	var stub = load("res://scripts/audio_anim/anim_sound_stub.gd").new()
+	AnimSoundSeam.set_sink(stub)
+	var obj := BsrReader.ParsedObject.new()
+	var set := BsrReader.SoundSet.new()
+	for k in [100, 600]:
+		var tr := BsrReader.SoundTrack.new()
+		tr.key_ms = k
+		tr.name = "snd_run1"
+		set.tracks.append(tr)
+	obj.sound_sets_by_type["7:default"] = set
+	clip.set_meta(BsrReader.CLIP_META, [7, "default"])
+	var owner := AnimSounds.Owner.new()
+	owner.label = "far body"
+	owner.token = "MOB_TEST"
+	owner.parsed = obj
+	owner.node = skel.get_parent()
+	owner.material = func() -> int: return 0
+	sounds.register(skel, owner)
+	sounds.print_lines = false
+	var b: CrowdGpu.Body = crowd.body_of(skel)
+	b.sound_due = -INF
+	var player := world.get("player") as Node3D
+	if player != null:
+		player.global_position = Vector3.ZERO
+	var adv0 := int(crowd.stats.get("sound_advances", 0))
+	sounds.fired.clear()
+	var t0: float = world.get("_idle_anim_time")
+	# Two seconds at 60 frames: the 1000 ms loop passes 100 and 600 twice.
+	for f in range(120):
+		world.set("_idle_anim_time", t0 + float(f + 1) / 60.0)
+		world._crowd_gpu_step()
+	var mine := 0
+	for e in sounds.fired:
+		if String(e[2]) == "far body":
+			mine += 1
+	var advances := int(crowd.stats.get("sound_advances", 0)) - adv0
+	# What a body advanced every frame would fire over the same frames (the
+	# near tick's way): the keys crossed from the first frame's clip time on.
+	var want := 0
+	var phase := float(b.entry[3])
+	var prev := fposmod((t0 + 1.0 / 60.0 + phase) * 1000.0, 1000.0)
+	for f in range(1, 120):
+		var now := fposmod((t0 + float(f + 1) / 60.0 + phase) * 1000.0, 1000.0)
+		want += AnimSounds.crossed(set.tracks, prev, now, 1000.0, true).size()
+		prev = now
+	_check(b.heard and want >= 3 and mine == want, "a far body within hearing fires its loop's keys from the CPU, as a body advanced every frame would: %d of %d" % [mine, want])
+	_check(advances <= 8, "... advanced only at its keys, not every frame (%d advances in 120 frames)" % advances)
+	# Out of hearing: rested, silent.
+	if player != null:
+		player.global_position = Vector3(5000.0, 0.0, 0.0)
+	for f in range(CrowdGpu.RESELECT_FRAMES * 2):
+		world._crowd_gpu_step()
+	sounds.fired.clear()
+	var t1: float = world.get("_idle_anim_time")
+	for f in range(120):
+		world.set("_idle_anim_time", t1 + float(f + 1) / 60.0)
+		world._crowd_gpu_step()
+	_check(not b.heard and sounds.fired.is_empty(), "past 600 of the listener it is not heard and fires nothing (%d)" % sounds.fired.size())
+	if player != null:
+		player.global_position = Vector3.ZERO
+	for f in range(CrowdGpu.RESELECT_FRAMES * 2):
+		world._crowd_gpu_step()
+	sounds.unregister(skel)
+	AnimSoundSeam.set_sink(null)
+	clip.remove_meta(BsrReader.CLIP_META)
 
 func _piece(s) -> MeshInstance3D:
 	return (s as Skeleton3D).get_node("Piece") as MeshInstance3D
@@ -459,6 +600,7 @@ func _test_world(world: Node) -> void:
 	_check(in_tick == skels.size() - crowd.body_count() and crowd.body_count() >= 7 and world._animated_total() == total_before,
 		"a far body's entry leaves the clip tick (%d left in it), the total stays (%d)" % [in_tick, world._animated_total()])
 	_check(not _piece(skels[6]).visible and _piece(skels[0]).visible, "far bodies' meshes are hidden, near ones shown")
+	_test_far_sounds(world, skels[7], clip)
 	# A one-shot brings a far body back.
 	var hit := _clip(400, 3, 0.25)
 	hit.cyclic = false

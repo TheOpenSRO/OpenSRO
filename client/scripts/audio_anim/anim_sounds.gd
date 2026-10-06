@@ -164,6 +164,48 @@ func rest(skeleton: Object) -> void:
 		if _owners.has(id):
 			_state[id] = null
 
+## Round 747 (its review, F1): a rested body that comes back for a clip
+## starting now -- a far body brought back to the full path for a hit, a
+## death, a sit-down (World3D._crowd_wake) -- forgets its rest, so the clip's
+## first advance fires from its start (a key at 0 ms included) as a body that
+## was never rested does. rest() is for time a body was away; this one-shot
+## begins at the moment it comes back.
+func wake(skeleton: Object) -> void:
+	if skeleton != null:
+		_state.erase(skeleton.get_instance_id())
+
+## Round 747 (F2): how many ms of clip time from `clip_ms` until the next
+## sound track of `anim` on `skeleton` (wrapping for a loop), or INF when the
+## clip has no track for this body (no owner, no tag, no sound set: every
+## sitting loop and most stand sets). A far body is advanced only when its
+## clock passes that time (World3D._crowd_sound_step).
+func next_key_ms(skeleton: Object, anim: Object, clip_ms: float, loops: bool) -> float:
+	if skeleton == null or anim == null:
+		return INF
+	var pair = _owners.get(skeleton.get_instance_id())
+	if pair == null:
+		return INF
+	var owner: Owner = pair[1]
+	var tag = anim.get_meta(BsrReader.CLIP_META, null)
+	if owner.parsed == null or tag == null:
+		return INF
+	var sound_set := owner.parsed.sound_set_for(int(tag[0]), String(tag[1]))
+	if sound_set == null or sound_set.tracks.is_empty():
+		return INF
+	var duration := float(anim.get("duration_ms"))
+	var best := INF
+	var first := INF
+	for t in sound_set.tracks:
+		var key := float((t as BsrReader.SoundTrack).key_ms)
+		if loops and duration > 0.0 and key >= duration:
+			continue
+		first = minf(first, key)
+		if key > clip_ms:
+			best = minf(best, key - clip_ms)
+	if best == INF and loops and first != INF and duration > 0.0:
+		best = duration - clip_ms + first
+	return best
+
 func owner_of(skeleton: Object) -> Owner:
 	if skeleton == null:
 		return null

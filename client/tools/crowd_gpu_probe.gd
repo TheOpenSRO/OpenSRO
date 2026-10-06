@@ -59,6 +59,9 @@ func _initialize() -> void:
 	_cam = Camera3D.new()
 	_world.add_child(_cam)
 	_crowd = CrowdGpu.new(root.find_world_3d().scenario)
+	if _arg("--mode", "cpu") == "census":
+		_census.call_deferred()
+		return
 	_build_row(int(_arg("--count", "8")), _arg("--action", "run"))
 	if _arg("--mode", "cpu") == "pixels":
 		_pixels.call_deferred()
@@ -253,6 +256,74 @@ func _save(out: String, renderer: String, side: String, t: float) -> void:
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)),
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
+
+# --- census (round 747's review, F8) -------------------------------------------------
+
+## --mode=census: every item the item table draws on a body (armour of every
+## degree, job suits, avatars, weapons, shields), worn by the first Figure of
+## each race and sex it fits, and every visible surface's draw kind counted:
+## blended (a `blend_` render mode: CrowdGpu refuses such a body), alpha-tested,
+## two-sided, solid, glow. Prints each blended item.
+func _census() -> void:
+	await process_frame
+	_appearance._item_info(-1)
+	var cat := _appearance.catalog()
+	var counts := {}
+	var items := 0
+	var blended_items: Array = []
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	for r in [CharCatalog.RACE_CHINA, CharCatalog.RACE_EUROPE]:
+		for s in [CharCatalog.SEX_MAN, CharCatalog.SEX_WOMAN]:
+			var figs := cat.figures(r, s)
+			if figs.is_empty():
+				continue
+			var fig: CharCatalog.Entry = figs[0]
+			for id in _appearance._items.keys():
+				var info: Dictionary = _appearance._items[id]
+				var slot := CharacterAppearance.visual_slot(info.get("type_ids", PackedInt32Array()))
+				if slot < 0 or (slot > CharacterAppearance.SLOT_SUIT and slot != CharacterAppearance.SLOT_AVATAR):
+					continue
+				var body := _appearance.build(fig.id, 0x22, [{"id": int(id), "plus": 0}])
+				if body == null:
+					continue
+				var worn := false
+				for w in body.worn:
+					if int(w["id"]) == int(id) and not (w["nodes"] as Array).is_empty():
+						worn = true
+				if not worn:
+					body.free()
+					continue
+				items += 1
+				var any_blend := false
+				for n in body.skeleton.find_children("*", "MeshInstance3D", true, false):
+					var mi := n as MeshInstance3D
+					if not CrowdGpu._shown_under(mi, body.skeleton) or mi.mesh == null:
+						continue
+					var mat := mi.get_active_material(0) as ShaderMaterial
+					var kind := "not a shader"
+					if mat != null and mat.shader != null:
+						var code := mat.shader.code
+						if crowd.blended(mat.shader):
+							kind = "blended"
+							any_blend = true
+						elif code.contains("EQUIP_GLOW"):
+							kind = "glow"
+						elif code.contains("kind two"):
+							kind = "two-sided"
+						elif code.contains("kind one"):
+							kind = "alpha-tested"
+						elif code.contains("kind solid"):
+							kind = "solid"
+						else:
+							kind = "mod, opaque"
+					counts[kind] = int(counts.get(kind, 0)) + 1
+				if any_blend:
+					blended_items.append("%s %d %s" % [fig.code, int(id), String(info.get("code", ""))])
+				body.free()
+	print("PROBE census: %d item builds; surfaces by kind %s" % [items, str(counts)])
+	print("PROBE census: %d with a blended part%s" % [blended_items.size(), (": " + ", ".join(PackedStringArray(blended_items.slice(0, 60)))) if not blended_items.is_empty() else ""])
+	_crowd = crowd
+	_finish()
 
 func _finish() -> void:
 	_crowd.release_all()

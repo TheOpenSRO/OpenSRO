@@ -37,24 +37,27 @@ class_name CrowdGpu
 ## SkinnedBsrAssembler.attach_item_from_archive) with the bone's pose from the
 ## same texture.
 ##
-## World3D decides which bodies are far (the K nearest in view stay near) and
+## World3D decides which bodies are far (the K nearest the camera, in view or
+## not, stay near) and
 ## when a body must come back (a one-shot, berserk, an aura, Detail's shadow,
 ## a fade): CrowdGpu only draws.
 
-## QA (OPENSRO_QA_CROWD_GPU=0) and QaCrowdProbe's `anim=` steps ("5"): off,
-## every body is drawn as before.
+## Off: every body is drawn as before. The player's config (VideoOptions
+## `gpu_crowd`, OURS: retail has no such option; World3D applies it) unless
+## QA sets it (OPENSRO_QA_CROWD_GPU=0/1, and QaCrowdProbe's `anim=` steps, "5").
 static var enabled := OS.get_environment("OPENSRO_QA_CROWD_GPU") != "0"
 ## How many bodies nearest the camera stay on the full path (OURS;
 ## OPENSRO_QA_CROWD_NEAR=<n> for the QA A/B). The far path draws the same
 ## pixels as the near one (round 747's parity probe and `ab` step), a far
 ## weapon's particles are placed from its body's GPU frame (item_frame), and
 ## Detail's casters, a fading, berserk or effect-carrying body stay near
-## whatever their rank (World3D._crowd_eligible). What the number still
-## decides is who is heard: a far body's clip sounds rest. 16 (MEASURED in
-## r747.md against 64: about 6 ms a frame at 1000).
+## whatever their rank (World3D._crowd_eligible), and a far body within
+## hearing plays its clip sounds from the CPU (World3D._crowd_sound_step). So
+## the number decides only who is posed on the CPU. 16 (MEASURED in r747.md
+## against 64: about 5 ms a frame at 1000).
 static var near_count := int(OS.get_environment("OPENSRO_QA_CROWD_NEAR")) if OS.get_environment("OPENSRO_QA_CROWD_NEAR").is_valid_int() else 16
 ## A near body goes far only once it is no longer among this factor times
-## near_count nearest in view (OURS: by rank, not distance, so the near set
+## near_count nearest the camera, in view or not (OURS: by rank, not distance, so the near set
 ## stays at most 1.25 x near_count in a dense crowd), so a body on the line
 ## does not change path every cycle.
 const NEAR_HYSTERESIS := 1.25
@@ -81,12 +84,18 @@ const FLOATS_PER_BODY := TEXELS_PER_BODY * 4
 const EPOCH_SECONDS := 60.0
 ## Rows a layout's bone texture may hold (Godot's and Vulkan's 2-D limit).
 const MAX_ROWS := 16384
-const FIRST_ROWS := 256
+## Rows a page of a layout's bone store holds (crowd_gpu.gdshaderinc's
+## SRR_CG_PAGE_ROWS): one layer of its Texture2DArray (OURS).
+const PAGE_ROWS := 1024
 ## While clips are baking, a layout's bone texture goes up at most every this
 ## many frames (OURS): each upload is the whole texture, up to ~16 MB.
 const UPLOAD_FRAMES := 15
 ## Floats a MultiMesh instance takes: a 3 x 4 transform and the custom data.
 const INSTANCE_FLOATS := 16
+## A group empty for this many cycles (RESELECT_FRAMES each) is freed (OURS:
+## about 5 s at 60 fps, so a body walking across a light level and back does
+## not re-make its groups).
+const GROUP_EMPTY_CYCLES := 30
 const IDENTITY_ROWS := [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
 
 const VERTEX_INCLUDE := "res://scripts/world/crowd_gpu_vertex.gdshaderinc"
@@ -112,10 +121,16 @@ class Layout:
 	## Clips being baked: [Frames, next frame, first row].
 	var pending: Array = []
 	var queued := {}
-	var data := PackedFloat32Array()
+	## The baked rows in pages of PAGE_ROWS (round 747's review, F3): one
+	## PackedFloat32Array a page, one layer of a Texture2DArray each, so a new
+	## clip uploads the pages it wrote (2.2 MB at most) rather than the whole
+	## store (16.5 MB at the catalogue's 8192 rows: 12 ms of main thread,
+	## MEASURED by the review).
+	var pages: Array = []
+	var dirty_pages := {}
 	var rows := 0
-	var cap := 0
-	var tex: ImageTexture = null
+	var tex: Texture2DArray = null
+	var tex_layers := 0
 	var dirty := false
 	## Volume variant Skin -> row.
 	var vol_rows := {}
@@ -138,6 +153,9 @@ class Group:
 	## Each instance's part record ([Group, index, Body]), in instance order.
 	var owners: Array = []
 	var dirty := false
+	## Cycles (collect()) it has been empty; its twin's key.
+	var empty_cycles := 0
+	var twin_key := ""
 
 class Body:
 	var node: Node3D
@@ -152,6 +170,10 @@ class Body:
 	var hidden: Array = []
 	## Clip -> its frames on this body's layout (set_clip).
 	var by_clip := {}
+	## Within hearing of the listener (World3D's scan), and the clip time
+	## (World3D._idle_anim_time) its clip sounds are next due (F2).
+	var heard := false
+	var sound_due := INF
 	var xf := Transform3D()
 	## The skeleton's own transform under its holder, kept while it is
 	## top_level (add()).
@@ -164,7 +186,8 @@ var _bodies := {}             # Skeleton3D -> Body
 var _by_node := {}            # Node3D -> Body
 var _twin_shaders := {}       # Shader -> Shader
 var _twins := {}              # "material id|layout" -> ShaderMaterial
-var _twin_sources := {}       # the same key -> the source material (kept alive with its twin)
+var _twin_sources := {}       # the same key -> WeakRef to the source material (its id is the key)
+var _twin_users := {}         # the same key -> groups drawing with it
 var _rigid := {}              # "mesh id|layout|bone" -> ArrayMesh
 var _free_slots: Array[int] = []
 var _slots := 0
@@ -225,6 +248,30 @@ func entry_of(skel: Skeleton3D) -> Array:
 func skeletons() -> Array:
 	return _bodies.keys()
 
+## The far body record of `skel`, or null (World3D's sound step).
+func body_of(skel: Skeleton3D) -> Body:
+	return _bodies.get(skel)
+
+## The far bodies within hearing (World3D._crowd_sound_step), kept as their
+## `heard` flags change.
+func heard_bodies() -> Array:
+	if _heard_dirty:
+		_heard_dirty = false
+		_heard.clear()
+		for skel in _bodies:
+			var b: Body = _bodies[skel]
+			if b.heard:
+				_heard.append(b)
+	return _heard
+
+func set_heard(b: Body, on: bool) -> void:
+	if b.heard != on:
+		b.heard = on
+		_heard_dirty = true
+
+var _heard: Array = []
+var _heard_dirty := true
+
 ## Whether `entry`'s clip can be drawn here now: a loop whose frames are baked
 ## on `skel`'s layout. A clip not baked yet is queued (bake_step), so a later
 ## call answers true.
@@ -265,6 +312,12 @@ func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float) -> bool
 	# The skeleton hangs straight from its holder (World3D._dress_other): its
 	# place while far is the holder's times its own transform.
 	if skel.get_parent() != node or not can_draw(skel, entry):
+		return false
+	# A mirrored body would draw with the wrong winding (round 747's review,
+	# F9): Godot flips a mirrored instance's cull from its transform, and a far
+	# part's instance transform is the identity. None is mirrored in the world.
+	if node.is_inside_tree() and (node.global_transform * skel.transform).basis.determinant() < 0.0:
+		_refuse("mirrored")
 		return false
 	var l := _layout_for(skel)
 	var parts = _parts_of(skel, l)
@@ -315,6 +368,7 @@ func remove(skel: Skeleton3D, push: bool = true) -> Array:
 		_push_groups()
 	_bodies.erase(skel)
 	_keys_dirty = true
+	_heard_dirty = true
 	if _by_node.get(b.node) == b:
 		_by_node.erase(b.node)
 	_moved.erase(b)
@@ -416,7 +470,7 @@ func item_frame(item_skel: Node3D):
 		return null
 	var clip: Vector3i = b.layout.clips.get(b.frames, Vector3i(0, 1, 1))
 	var row := clip.x + frame_of(b.skel, _last_time)
-	var k := _row_xf(b.layout.data, (row * b.layout.width + bone * 3) * 4)
+	var k := _bone_xf(b.layout, row, bone)
 	return b.xf * k * b.layout.rests[bone] * item_skel.transform
 
 ## A far weapon's place for EquipFx's choice of the nearest: its body's (OURS:
@@ -536,22 +590,33 @@ func _upload(force: bool = false) -> void:
 		stats["uploads"] += 1
 	for k in _layouts:
 		var l: Layout = _layouts[k]
-		# The whole texture goes up each time (Godot 4.2 has no partial 2-D
-		# update): at most every UPLOAD_FRAMES while clips are baking, at once
-		# when the last is done.
-		if l.dirty and l.cap > 0 and (force or l.pending.is_empty() or _frame - l.last_upload >= UPLOAD_FRAMES):
+		# The pages written go up (a layer each: ImageTextureLayered.update_layer),
+		# at most every UPLOAD_FRAMES while clips are baking, at once when the
+		# last is done; a new page re-makes the array (rare: a layout's 8th at most).
+		if l.dirty and not l.pages.is_empty() and (force or l.pending.is_empty() or _frame - l.last_upload >= UPLOAD_FRAMES):
+			var t0 := Time.get_ticks_usec()
 			l.dirty = false
 			l.last_upload = _frame
 			l.clips.merge(l.uploading, true)
 			l.uploading.clear()
-			var img := Image.create_from_data(l.width, l.cap, false, Image.FORMAT_RGBAF, l.data.to_byte_array())
-			if l.tex == null or l.tex.get_height() != l.cap:
-				l.tex = ImageTexture.create_from_image(img)
+			if l.tex == null or l.tex_layers != l.pages.size():
+				var imgs: Array[Image] = []
+				for p in l.pages:
+					imgs.append(Image.create_from_data(l.width, PAGE_ROWS, false, Image.FORMAT_RGBAF, (p as PackedFloat32Array).to_byte_array()))
+				l.tex = Texture2DArray.new()
+				l.tex.create_from_images(imgs)
+				l.tex_layers = l.pages.size()
 				for t in l.twins:
 					t.set_shader_parameter("crowd_bones", l.tex)
 			else:
-				l.tex.update(img)
+				for pi in l.dirty_pages:
+					l.tex.update_layer(Image.create_from_data(l.width, PAGE_ROWS, false, Image.FORMAT_RGBAF,
+						(l.pages[pi] as PackedFloat32Array).to_byte_array()), int(pi))
+			l.dirty_pages.clear()
 			stats["uploads"] += 1
+			var spent := Time.get_ticks_usec() - t0
+			stats["upload_usec"] = int(stats.get("upload_usec", 0)) + spent
+			stats["upload_max_usec"] = maxi(int(stats.get("upload_max_usec", 0)), spent)
 		if l.vol_dirty:
 			l.vol_dirty = false
 			var rows := maxi(l.vol_count, 1)
@@ -725,12 +790,10 @@ func _queue_bake(l: Layout, fr: CrowdAnim.Frames, first: bool = true) -> void:
 		return
 	var row0 := l.rows
 	l.rows += fr.count
-	if l.rows > l.cap:
-		var cap := maxi(FIRST_ROWS, l.cap)
-		while cap < l.rows:
-			cap *= 2
-		l.cap = mini(cap, MAX_ROWS)
-		l.data.resize(l.cap * l.width * 4)
+	while l.pages.size() * PAGE_ROWS < l.rows:
+		var page := PackedFloat32Array()
+		page.resize(PAGE_ROWS * l.width * 4)
+		l.pages.append(page)
 		l.dirty = true
 	l.queued[fr] = true
 	var job := [fr, 0, row0]
@@ -764,22 +827,29 @@ func _bake_frame(l: Layout, fr: CrowdAnim.Frames, f: int, row: int) -> void:
 	# Out of the tree a pose change does not mark the skeleton dirty
 	# (skeleton_3d.cpp:575, READ), so its globals are composed here, once.
 	sk.force_update_all_bone_transforms()
-	var base := row * l.width * 4
+	# The page is taken out of the Array while it is written, so the writes
+	# do not copy it (a packed array shared by two holders copies on write).
+	var pi := row / PAGE_ROWS
+	var data: PackedFloat32Array = l.pages[pi]
+	l.pages[pi] = PackedFloat32Array()
+	var base := (row % PAGE_ROWS) * l.width * 4
 	for b in range(l.bones):
 		var m: Transform3D = sk.get_bone_global_pose(b) * l.binds[b]
 		var o := base + b * 12
-		l.data[o] = m.basis.x.x
-		l.data[o + 1] = m.basis.y.x
-		l.data[o + 2] = m.basis.z.x
-		l.data[o + 3] = m.origin.x
-		l.data[o + 4] = m.basis.x.y
-		l.data[o + 5] = m.basis.y.y
-		l.data[o + 6] = m.basis.z.y
-		l.data[o + 7] = m.origin.y
-		l.data[o + 8] = m.basis.x.z
-		l.data[o + 9] = m.basis.y.z
-		l.data[o + 10] = m.basis.z.z
-		l.data[o + 11] = m.origin.z
+		data[o] = m.basis.x.x
+		data[o + 1] = m.basis.y.x
+		data[o + 2] = m.basis.z.x
+		data[o + 3] = m.origin.x
+		data[o + 4] = m.basis.x.y
+		data[o + 5] = m.basis.y.y
+		data[o + 6] = m.basis.z.y
+		data[o + 7] = m.origin.y
+		data[o + 8] = m.basis.x.z
+		data[o + 9] = m.basis.y.z
+		data[o + 10] = m.basis.z.z
+		data[o + 11] = m.origin.z
+	l.pages[pi] = data
+	l.dirty_pages[pi] = true
 
 ## The row of a Volume variant skin (rest x variant bind per bone, so that
 ## base bind x it is the variant's bind), -1 for the base skin itself.
@@ -851,6 +921,13 @@ func _parts_of(skel: Skeleton3D, l: Layout):
 		if mat == null or mat.shader == null or mat.next_pass != null:
 			_refuse("material")
 			return null
+		# A blended part (an MTRL mod's blend) is not drawn far (round 747's
+		# review, F8): a MultiMesh's instances are not sorted against each
+		# other, and every far group shares one AABB, so blended parts would
+		# sort as one object. The body stays near, drawn as before.
+		if blended(mat.shader):
+			_refuse("blended")
+			return null
 		var target: Node = mi.get_node_or_null(mi.skeleton) if mi.skin != null else null
 		var p := {"layers": mi.layers, "sort": mi.sorting_offset, "mi": mi}
 		if target == skel:
@@ -887,6 +964,7 @@ func _parts_of(skel: Skeleton3D, l: Layout):
 			p["vol"] = -1
 			p["centre"] = (l.rests[bone] * chain * mi.mesh.get_aabb().get_center()).y
 		p["material"] = _twin(mat, l)
+		p["twin_key"] = "%d|%s" % [mat.get_instance_id(), l.key]
 		if p["material"] == null:
 			_refuse("shader")
 			return null
@@ -994,6 +1072,8 @@ func _add_part(b: Body, p: Dictionary) -> void:
 		RenderingServer.instance_set_pivot_data(g.inst, float(p["sort"]), true)
 		if _aabb_set:
 			RenderingServer.instance_set_custom_aabb(g.inst, _aabb)
+		g.twin_key = String(p["twin_key"])
+		_twin_users[g.twin_key] = int(_twin_users.get(g.twin_key, 0)) + 1
 		_groups[key] = g
 	if g.count >= g.cap:
 		g.cap = maxi(8, g.cap * 2)
@@ -1039,7 +1119,9 @@ func _remove_part(rec: Array) -> void:
 func _twin(src: ShaderMaterial, l: Layout) -> ShaderMaterial:
 	var key := "%d|%s" % [src.get_instance_id(), l.key]
 	var got: ShaderMaterial = _twins.get(key)
-	if got != null:
+	# Held weakly (F7): a twin whose source died answers for no new material
+	# that took its id.
+	if got != null and _twin_sources.has(key) and (_twin_sources[key] as WeakRef).get_ref() == src:
 		return got
 	var sh := twin_shader(src.shader)
 	if sh == null:
@@ -1065,8 +1147,25 @@ func _twin(src: ShaderMaterial, l: Layout) -> ShaderMaterial:
 	TexAni.bind_like(t, src)
 	l.twins.append(t)
 	_twins[key] = t
-	_twin_sources[key] = src
+	_twin_sources[key] = weakref(src)
 	return t
+
+## Whether a shader blends: a `blend_` render mode (ObjectLoader._mod_shader's
+## MTRL blends, AppearFade's fade twins). Cached per shader.
+func blended(sh: Shader) -> bool:
+	var got = _blended.get(sh)
+	if got != null:
+		return got
+	var yes := false
+	for line in sh.code.split("\n"):
+		var t := line.strip_edges()
+		if t.begins_with("render_mode") and t.contains("blend_"):
+			yes = true
+			break
+	_blended[sh] = yes
+	return yes
+
+var _blended := {}
 
 ## `src`'s code with CROWD_GPU defined and crowd_gpu.gdshaderinc included
 ## after its render_mode, and crowd_gpu_vertex.gdshaderinc at the top of its
@@ -1108,6 +1207,39 @@ static func twin_code(code: String) -> String:
 		return out.replace("void vertex() {", "void vertex() {\n#include \"%s\"\n" % VERTEX_INCLUDE)
 	return out + "\nvoid vertex() {\n#include \"%s\"\n}\n" % VERTEX_INCLUDE
 
+## Once a cycle (World3D._crowd_choose): a group empty for GROUP_EMPTY_CYCLES
+## cycles goes -- its instance and MultiMesh freed -- and a twin no group
+## uses any more with it (round 747's review, F7: a walking crowd's light
+## levels made groups and twins without end, and the twins held every level
+## copy ObjectLight keeps only weakly). Returns the groups freed.
+func collect() -> int:
+	var freed := 0
+	for key in _groups.keys():
+		var g: Group = _groups[key]
+		if g.count > 0:
+			g.empty_cycles = 0
+			continue
+		g.empty_cycles += 1
+		if g.empty_cycles < GROUP_EMPTY_CYCLES:
+			continue
+		RenderingServer.free_rid(g.inst)
+		RenderingServer.free_rid(g.mm)
+		_groups.erase(key)
+		freed += 1
+		var users := int(_twin_users.get(g.twin_key, 0)) - 1
+		if users > 0:
+			_twin_users[g.twin_key] = users
+			continue
+		_twin_users.erase(g.twin_key)
+		var t: ShaderMaterial = _twins.get(g.twin_key)
+		_twins.erase(g.twin_key)
+		_twin_sources.erase(g.twin_key)
+		if t != null:
+			for k in _layouts:
+				(_layouts[k] as Layout).twins.erase(t)
+	stats["groups_freed"] = int(stats.get("groups_freed", 0)) + freed
+	return freed
+
 ## Census for the QA line.
 func describe() -> String:
 	var rows := 0
@@ -1116,9 +1248,11 @@ func describe() -> String:
 		var l: Layout = _layouts[k]
 		rows += l.rows
 		clips += l.clips.size()
-	return "far=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f refused=%s kept_near=%s" % [
-		_bodies.size(), _groups.size(), int(stats["instances"]), _layouts.size(), clips, rows, _twins.size(), _rigid.size(),
+	return "far=%d heard=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f upload_ms=%.1f upload_max_ms=%.1f sound_advances=%d groups_freed=%d refused=%s kept_near=%s" % [
+		_bodies.size(), heard_bodies().size(), _groups.size(), int(stats["instances"]), _layouts.size(), clips, rows, _twins.size(), _rigid.size(),
 		int(stats["added"]), int(stats["removed"]), float(stats.get("switch_usec", 0)) / 1000.0, float(stats["bake_usec"]) / 1000.0,
+		float(stats.get("upload_usec", 0)) / 1000.0, float(stats.get("upload_max_usec", 0)) / 1000.0,
+		int(stats.get("sound_advances", 0)), int(stats.get("groups_freed", 0)),
 		str(refusals).replace(" ", ""), str(ineligible).replace(" ", "")]
 
 # --- checks -------------------------------------------------------------------------
@@ -1154,13 +1288,18 @@ func cpu_skin(skel: Skeleton3D, idle_time: float) -> Array:
 				if w <= 0.0:
 					continue
 				var bone := int(vb[k * per + j])
-				var m := _row_xf(l.data, (row * l.width + bone * 3) * 4)
+				var m := _bone_xf(l, row, bone)
 				if vol >= 0:
 					m = m * _row_xf(l.vol_data, (vol * l.width + bone * 3) * 4)
 				p += (m * v[k]) * w
 			pts[k] = b.xf * p
 		out.append(pts)
 	return out
+
+## The baked skin matrix of `bone` in `row` of layout `l`'s pages.
+static func _bone_xf(l: Layout, row: int, bone: int) -> Transform3D:
+	var page: PackedFloat32Array = l.pages[row / PAGE_ROWS]
+	return _row_xf(page, ((row % PAGE_ROWS) * l.width + bone * 3) * 4)
 
 ## Three row texels at `o` as a Transform3D.
 static func _row_xf(data: PackedFloat32Array, o: int) -> Transform3D:
