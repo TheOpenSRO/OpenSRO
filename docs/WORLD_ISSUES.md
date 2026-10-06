@@ -7094,7 +7094,87 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Seven-hundred-and-thirty-second round: # Round 732 — item instance data (tooltip epic, lane B)
+## Seven-hundred-and-thirty-fifth round: other players see each other's plus (weapon glow lane B)
+
+The full notes are in `docs/rounds/r735.md` (review: `r735_review.md`).
+- **Retail layouts, READ from both binaries:**
+  - `0x3038` (put on) is u32 uid, u8 slot, u32 RefItemID, then u8 plus for equipment only (server
+    `s:0x4e9de2` → `CInstanceItem::vslot_010` `s:0x42e230`; client `FUN_008a9260`);
+  - `0x3039` (taken off) is u32 uid, u8 slot, u32 RefItemID (`s:0x4e9d03`/`s:0x4e9f98`, client
+    `FUN_008a9560`);
+  - a spawned PC's item list carries u32 RefItemID + u8 plus per equipment item.
+- **The plus on the wire is the effective plus:** OptLevel plus the advanced elixirs, added in a
+  byte (`s:0x846200`, READ). This closes spec OPEN 2 (server half) and OPEN 3.
+- **The mover is told too** (READ, the own-uid branch of both handlers).
+- **Server:**
+  - every snapshot gains a pluses tail (OURS framing, retail content), written only when something
+    has a plus, so every other payload is byte for byte the old one;
+  - `equip_broadcast.go` sends `0x3038`/`0x3039` zone-wide (DEPARTURE: retail sends region-scoped);
+  - GM `/item worn <slot> plus N | adv N` (OURS);
+  - the character list carries each worn item's effective plus.
+- **Client:** decodes the tails and `0x3038`/`0x3039`, and keeps any that arrive before the
+  arrival list is drawn.
+- **Live two-client check:** B saw A's +7 sword glow live, after a reconnect and after a re-equip.
+
+## Seven-hundred-and-thirty-fourth round: weapon and shield glows drawn as the client draws them (weapon glow lane A)
+
+The full notes are in `docs/rounds/r734.md` (review: `r734_review.md`, with its fixes).
+- **`ItemGlowTables`** reads `itemoption.txt`, `itemtypenumber.txt` and `itemoptionefp.txt` at
+  runtime with `0xa9f2e0`'s parsing (MEASURED on retail: 2,467 typed items, 44 rows, 2,468 particle
+  items, 0 lines skipped).
+- **The glow is `CRTModProgEquipPow`'s pass,** as the `EQUIP_GLOW` path of `object.gdshaderinc`.
+  Everything below was checked against the binary by the review:
+  - tier = the highest threshold at or below the plus, capped at +14;
+  - TFACTOR is a triangle wave starting at colour 1 (`FUN_00c847f0`), rounded to 0–255;
+  - the UV scrolls at ×50 a second;
+  - stages 0/1 are MODULATE/MODULATE2X and ADD/ADDSIGNED2X, drawn unlit;
+  - skipped while the body fades.
+  
+  A flag-0 type draws **without** the alpha test. That is READ: `FUN_00bf0e20` runs the mod before
+  `FUN_00c42a60`, which skips the item's test when `0x20000000` is set. The `0x80000000` bit binds
+  the item texture to stage 1 (`0xbf10ce`, closes OPEN 9).
+- **Particles from +8:** rows with min ≤ plus ≤ max on the row's bone, scale col3/100 × the body's
+  height factor. They are drawn by `EquipFx`, one shared simulation per (efp, scale), with holders
+  at the bones. Its limits are all OURS:
+  - the nearest 64 weapons in view within 800, re-chosen over 10 frames;
+  - always shown within 30 units;
+  - every weapon in step, and the followers don't turn with the weapon.
+  
+  `CEFEffect::vslot_010`'s factor at `*(this+4)+0x264` is OPEN, not applied.
+- **Every dressed view glows:** the world, other players, character select (its list's plus, READ
+  `FUN_0085a580`), the equipment window and the portrait. The last three keep the glow and the
+  item's alpha test after the review's F1, which MEASURED `alpha_ref` 0.502 where it had been 0.
+- **Seals:** no seal-specific effect exists in the data (round 733, MEASURED). Per the user's
+  decision "follow the data", none was invented.
+- **Review fixes:**
+  - a plus-only `0x3038` reglows instead of rebuilding the body;
+  - EquipFx's re-selection is spread across frames (worst frame at 1000 weapons 2.87 → 0.46 ms,
+    MEASURED, upper bounds);
+  - a reglow mid-fade keeps the right material, and +0 re-lights;
+  - the glow runs on `srr_glow_clock`, wrapped at 25,200 s (OURS), so the +14 pulse never jumps.
+- **Perf:**
+  - 20 players at +13 measured **SAME** after EquipFx (the per-weapon particles had cost +5.1 ms);
+  - 200 players cost +3.1 ms, carried to the crowd rounds (736+);
+  - `perf_gate.sh --sites jangan --frames 12000` against dev `33b051fd`, medians of 3:
+
+| Site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.60 → 1.53 SAME | 10090 → 9668 SAME | 3591 → 3401 SAME | 4.5 → 5 SAME |
+
+## Seven-hundred-and-thirty-third round: weapon and shield glows specified from the client (spec only)
+
+The spec is `docs/protocol/weapon_glow.md`; the notes are `docs/rounds/r733.md`.
+- **Two effects, both keyed by the plus:**
+  - the `CRTModProgEquipPow` glow, with tiers +3, +5, +6..+14 (READ `0xa93900`);
+  - an `.efp` on a weapon bone from +8 (MEASURED: every `itemoptionefp.txt` row has min 8).
+- **Three `Media.pk2 resinfo\` tables,** loaded by `UI_ALCHEMYBOX::FUN_00a9f2e0` (READ). The type
+  (1–4) changes only the UV scroll and the alpha-test flag; the colours are the same per tier
+  (MEASURED).
+- **Seals do not choose an effect** (MEASURED). Nova/Star/Moon/Sun use the normal item's glow and
+  particles. Only the Egyptian set items differ: glow type 1, scales 185/215, and own files for the
+  `_SWITCHnn` variants.
+
+## Seven-hundred-and-thirty-second round: item instance data (tooltip epic, lane B)
 
 Each item's own data — plus, white-stat variance, durability, blue options, advanced elixir — is
 stored on the server and sent to the client in the original's item record. The "(+x%)" maths and
