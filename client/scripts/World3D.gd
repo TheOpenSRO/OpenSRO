@@ -6757,7 +6757,7 @@ func _crowd_listener() -> Vector3:
 ## costs one compare a body a frame, a running one about two advances a body
 ## a second.
 func _crowd_sound_step() -> void:
-	if _qa_split != null and _qa_split_off.has("sound"):
+	if _qa_split != null and (_qa_split_off.has("sound") or _qa_split_off.has("farsound")):
 		return
 	var t := _idle_anim_time
 	for fb in _crowd_gpu.heard_bodies():
@@ -6946,7 +6946,10 @@ func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation) -> void
 			# as a near body's loop swap is).
 			var fb := _crowd_gpu.body_of(skel)
 			if fb != null and fb.heard:
-				fb.sound_due = -INF
+				var ms := _loop_ms(anim, _idle_anim_time + float(fb.entry[3]))
+				_anim_sounds.prime(skel, anim, float(fb.entry[5]), ms)
+				var next := _anim_sounds.next_key_ms(skel, anim, ms, true)
+				fb.sound_due = _idle_anim_time + next / 1000.0 if next != INF else INF
 			return
 		_crowd_wake(skel)
 	MonsterMotion.swap_loop(_animated, skel, anim, frames, _idle_anim_time)

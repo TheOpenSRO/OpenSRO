@@ -260,7 +260,7 @@ func _process(delta: float) -> void:
 	var now := Time.get_ticks_usec()
 	if steps[_i].begins_with("net"):
 		_net_step(delta, float(steps[_i].substr(3)) if steps[_i].substr(3).is_valid_float() else net_rate)
-	if steps[_i] == "move":
+	if steps[_i].split("+")[0] == "move":
 		_move_t += delta
 		if _move_t >= 1.0:
 			_move_t = 0.0
@@ -336,13 +336,18 @@ func _meshes(node: Node) -> Array:
 	return node.find_children("*", "MeshInstance3D", true, false)
 
 func _switch(step: String, off: bool) -> void:
+	# Round 747's review: two switches in one step ("net+sound").
+	if step.contains("+"):
+		for part in step.split("+", false):
+			_switch(part, off)
+		return
 	if step.begins_with("net"):
 		step = "net"
 	if step.begins_with("anim="):
 		CrowdAnim.set_switches(step.substr(5) if off else _boot_switches)
 		return
 	match step:
-		"pose", "sound":
+		"pose", "sound", "farsound":
 			var arr: PackedStringArray = world._qa_split_off
 			if off and not arr.has(step):
 				arr.append(step)
@@ -452,6 +457,12 @@ func _switch(step: String, off: bool) -> void:
 				_switch(s, off)
 		"base":
 			pass
+		"mute":
+			# Round 747: every effect voice muted (AudioOptions.effect_muted):
+			# the sounds' own playback cost, against the far step's advances.
+			var svc := AudioService.instance()
+			if svc != null and svc.options != null:
+				svc.options.effect_muted = off
 		"ab":
 			if off:
 				_ab.call_deferred()
