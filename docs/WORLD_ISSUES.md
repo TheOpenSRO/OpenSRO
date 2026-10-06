@@ -7094,6 +7094,58 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-thirty-seventh round: players see each other the way the original server sends them (3x3 blocks, group spawns)
+
+The full notes are in `docs/rounds/r737.md`, with three reviews in `r737_review.md`. The layouts are in
+`docs/protocol/pc_spawn.md` and `opcodes/movement.md`.
+- **Retail, READ from both binaries:**
+  - **A player's spawn record (0x3015):** 32 fields, in the same order and widths on the server
+    (`CGObjPC::vslot_294` 0x4e5a10 ...) and the client (`FUN_008a6bd0`, CICUser slots 22/23/25).
+  - **Arrivals as group spawns:** 0x3017 {u8 kind, u16 count} / 0x3019 data (4,052 bytes a frame)
+    / 0x3018, one group per block, never interleaved (client assert at 0x8abfa0).
+  - **The 3x3 window:** a crossing sends only the difference between the 3x3 windows of
+    320-unit blocks, despawns first.
+  - **0xB021** goes to the 3x3 window, the mover included.
+- **Built:**
+  - a hub filed by block; a per-session known set, keyed by character id, gating every message
+    about a player;
+  - encode once per event;
+  - one write per queue drain (no linger; the 2 ms one added 2 ms to every reply and batched
+    nothing);
+  - a per-character look cache with generations;
+  - O(1) lookups;
+  - a handler-panic recover that ends only that session;
+  - the OURS notice 0x00B7 (entered/left the zone), sent only with real spawns and despawns.
+- **Fixes a real bug:** an arrival with 167 or more players present closed the arriving session.
+  1000 present now arrive in 41-63 frames.
+- **Bench (MEASURED, one move a body a second, 1000 bodies; CPU ms per second, against
+  round 736's 5,870):** 4,324 serial / 3,044 parallel with everyone in view, 2,777 in a town
+  layout, 385 in the field. **10,000 players:** a wide spread keeps up (995 ms/s), the field does
+  not (70.8 CPU-s/s), and a town of 6,033 in view each is far behind. Cost is visible-per-viewer, so
+  C3 (move by destination, spec in r737.md) comes next.
+- **Reviews:**
+  - first: arrows hid a whole block, blows landed on the wrong player, and an entry or zone-change
+    race;
+  - second: a closed-view crossing panic, and a stale-look cache race;
+  - all fixed with regression tests.
+- **Gates:** Go 68 packages ok; session `-race` clean (959 s); box "ran 246 suite(s), 0 failing".
+- **Version skew:** a pre-737 client shows no other players. Client and server ship together.
+
+## Seven-hundred-and-thirty-sixth round: crowd scale specified and measured (spec only)
+
+The full notes are in `docs/rounds/r736.md`; the spec is `docs/protocol/crowd_scale.md`.
+- **Retail (READ):**
+  - no cap or LOD for other players;
+  - a character is posed only if it was drawn last frame;
+  - shadows for the ten nearest; names within 300;
+  - Character Sight Range is likely dead;
+  - the server sends 3x3 blocks of 320.
+- **OpenSRO (MEASURED, 1080p Middle, RX 7600):** 1000 in view cost about 196 ms a frame. The
+  frame is CPU-bound, with posing about 65% of it: every other player is posed every frame, with
+  14 Skins per body. Rounds 738/739 (client) and 737 (server) follow.
+- **Tools:** `QaCrowdProbe` (`OPENSRO_QA_CROWD_STEPS`), `QaLineup` count and plus, and the server
+  bench `crowd736_bench_test.go`.
+
 ## Seven-hundred-and-forty-fifth round: the click ring on the frozen lake draws on the ice only
 
 The user (v0.1.502): the destination ring showed both on Karakoram's ice and on the lakebed far
