@@ -195,16 +195,17 @@ section 6:
 
 1. **OPEN 1, answered (MEASURED):** a `MultiMesh` draw of a skinned surface does get its bones and
    weights in a shader that reads them, under Forward+ and Compatibility. `client/tools/crowd_gpu_probe.gd`
-   draws real Figures both ways at the same pose: about 18 pixels of 921,600 differ by more than 2
-   (silhouette edges); the CPU replica of the shader's arithmetic lands within 8e-6 units of Godot's
-   skin over 22,230 vertices.
-2. **OPEN 2 and 5 (MEASURED):** render GPU time at 1000 is about 4.2 ms with 920 far bodies skinned in
-   the vertex shader every frame, against about 6.7 ms for all 1000 skinned by Godot's compute pass
-   (r747.md, the crowd table). The GPU is not the limit.
+   draws real Figures both ways at the same pose: 5 to 14 of about 30,000 body pixels differ by more
+   than 2 (silhouette edges); the CPU replica of the shader's arithmetic lands within 8e-6 units of
+   Godot's skin over 22,230 vertices.
+2. **OPEN 2 and 5 (MEASURED):** render GPU time at 1000 is 4.18 ms with 980 far bodies skinned in
+   the vertex shader every frame, against 6.68 ms for all 1000 skinned by Godot's compute pass
+   (r747.md, section 5). The GPU is not the limit.
 3. **OPEN 3:** a CharacterLight level is a material copy, so it gets its own twin and its own group;
    `CharacterLight.set_on` reports a change and a far body's parts are re-read.
 4. **OPEN 4:** the glow's twin is EquipGlow's shader with the skin; drawn far it matches the near draw
-   at a held clock. Weapon particles are drawn for near bodies only (EquipFx's 64).
+   at a held clock. A far weapon's particles still draw: its body's meshes are hidden one by one (not
+   its skeleton), and EquipFx places the holders from the weapon's GPU frame (`CrowdGpu.item_frame`).
 5. **OPEN 6** is unchanged (the device, 4K).
 
 Departures from sections 3 and 5 (all OURS):
@@ -214,12 +215,13 @@ Departures from sections 3 and 5 (all OURS):
   Volume row and the part's centre height. A clip change is a texel write.
 - **Volume as a per-layout factor texture** (`rest x variant bind` per bone and variant), the spec's
   first option in matrix form.
-- **The switch is by rank, not by distance:** the 64 nearest in view stay near (an `EquipFx` budget's
-  worth), a near body goes far only past the 80th. In round 736's lineup every body is within 300 of the
+- **The switch is by rank, not by distance:** the 16 bodies nearest the camera, in view or not, stay
+  near; a near body goes far only past the 20th. In round 736's lineup every body is within 300 of the
   player, so a distance rule from section 3's table (300 for names) would have left all 1000 near.
-  The table's per-row constraints are met by keeping such bodies near instead: names and click bodies
-  are not part of the skeleton and stay per body; Detail's casters, bodies with effects, fading and
-  berserk bodies stay near.
+  The table's rows are met otherwise: names and click bodies are not part of the skeleton and stay per
+  body; EquipFx's particles are placed from the GPU frame; Detail's casters, bodies with effects,
+  fading and berserk bodies stay near whatever their rank. What the rank still decides is who is
+  heard: a far body's clip sounds rest (a departure from the READ 600 rule, r747.md section 2).
 - **Fading bodies stay near** (no fade on instances); a departing body comes back to fade.
 - **Items** are pre-moved meshes skinned to their attach bone with weight 1 (no extra texture column).
 - **One AABB for every group**, re-measured each cycle: a group is drawn or culled as a whole.

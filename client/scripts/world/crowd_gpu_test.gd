@@ -22,7 +22,8 @@ extends SceneTree
 ##   body leaving the tree, and A5 switched off each bring a body back, with
 ##   its entry and its skeleton shown.
 ##
-## NEGATIVE, on the base (daeb1b0c): CrowdGpu does not exist, so every check fails.
+## NEGATIVE, on the base (daeb1b0c): CrowdGpu does not exist, so the suite
+## does not parse (INFERRED, not run).
 
 var _failures := 0
 
