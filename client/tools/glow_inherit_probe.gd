@@ -48,9 +48,10 @@ func _init() -> void:
 		return
 	var t := ItemGlowTables.for_archive(media)
 	print("direct: %d typed code name(s), %d with particles" % [t.item_count(), t._particles.size()])
-	# The world's seven parts first, as World3D hands them to CharacterAppearance.
+	# The seven parts the world read before round 741 (its old list, now
+	# ItemTableReader.LEGACY_TABLE_PATHS), then every indexed part.
 	var world := {}
-	for path in ItemTableReader.TABLE_PATHS:
+	for path in ItemTableReader.LEGACY_TABLE_PATHS:
 		var entry := ObjectLoader.find_file(media, path)
 		if entry != null:
 			ItemTableReader.parse(media.read_file(entry), world)

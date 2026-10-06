@@ -253,6 +253,8 @@ func _process(_delta: float) -> void:
 		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
 		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale)
+	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
+		_qa_log(cam)
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
 
@@ -270,6 +272,78 @@ static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float) -> T
 	var at: Transform3D = g * skel.get_bone_global_pose(bone)
 	var b := at.basis.orthonormalized()
 	return Transform3D(b * (row_scale * _uniform_scale(g.basis)), at.origin)
+
+## OPENSRO_QA_EQUIPFX_LOG=<frames> (round 741): every that many frames, one
+## line per shown host measuring where its drawn particles are against its
+## weapon's own bones -- the measurement, not a picture:
+##   QA EQUIPFX <efp> bone <b> heading <deg> at (x,y,z) particles <n>
+##     centroid (x,y,z) | axis <ai_end -> other bone> span [<min>, <max>] along,
+##     off max <d> mean <d> | was (position-only placement) off max <d>
+##     | screen tip (x,y) centroid (x,y)
+## `along` and `off` are each drawn particle's distance along and from the line
+## from the row's bone to the item skeleton's other end bone (ai_start for
+## ai_end and back; Bone03 for Bone01 and back), in world units; `was` is the
+## same measure for round 734's placement (the bone's position, the effect's
+## axes along the world's).
+static var _qa_log_every := int(OS.get_environment("OPENSRO_QA_EQUIPFX_LOG")) if OS.get_environment("OPENSRO_QA_EQUIPFX_LOG").is_valid_int() else 0
+
+func _qa_log(cam: Camera3D) -> void:
+	for h in _shown:
+		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+			continue
+		var k: Kind = _kinds.get(h.key)
+		if k == null or k.master.sim == null:
+			continue
+		var g: Transform3D = h.skel.global_transform
+		var tip: Vector3 = g * h.skel.get_bone_global_pose(h.bone).origin
+		var name: String = h.skel.get_bone_name(h.bone)
+		var other_name := "ai_start" if name == "ai_end" else ("ai_end" if name == "ai_start" else ("Bone03" if name == "Bone01" else "Bone01"))
+		var ob: int = h.skel.find_bone(other_name)
+		var axis := Vector3.ZERO
+		if ob >= 0:
+			axis = (g * h.skel.get_bone_global_pose(ob).origin - tip)
+		var axis_len := axis.length()
+		var dir := axis / axis_len if axis_len > 1e-6 else Vector3.ZERO
+		var drawn := {}
+		for d in k.master._draws:
+			drawn[int(d[0])] = true
+		for l in k.master._links:
+			drawn[int(l[0])] = true
+		var ht: Transform3D = h.holder.global_transform
+		var old := Transform3D(Basis.from_scale(Vector3.ONE * (h.scale * _uniform_scale(g.basis))), tip)
+		var n := 0
+		var sum := Vector3.ZERO
+		var lo := INF
+		var hi := -INF
+		var off_max := 0.0
+		var off_sum := 0.0
+		var was_max := 0.0
+		for p in k.master.sim.particles:
+			if not drawn.has(p.tpl):
+				continue
+			var w := ht * p.pos
+			n += 1
+			sum += w
+			if dir != Vector3.ZERO:
+				var along := (w - tip).dot(dir)
+				lo = minf(lo, along)
+				hi = maxf(hi, along)
+				var off := ((w - tip) - dir * along).length()
+				off_max = maxf(off_max, off)
+				off_sum += off
+				var wo := old * p.pos
+				var along_o := (wo - tip).dot(dir)
+				was_max = maxf(was_max, ((wo - tip) - dir * along_o).length())
+		if n == 0:
+			continue
+		var c := sum / n
+		var heading := rad_to_deg(atan2(g.basis.z.x, g.basis.z.z))
+		var scr := ""
+		if cam != null and not cam.is_position_behind(tip):
+			scr = " | screen tip %s centroid %s" % [str(cam.unproject_position(tip).round()), str(cam.unproject_position(c).round())]
+		print("QA EQUIPFX %s bone %s heading %.0f at %s particles %d centroid %s | axis %s->%s len %.2f span [%.2f, %.2f] along, off max %.3f mean %.3f | was off max %.3f%s" % [
+			k.key.get_slice("|", 0), name, heading, str(tip.snapped(Vector3.ONE * 0.01)), n, str(c.snapped(Vector3.ONE * 0.01)),
+			name, other_name if ob >= 0 else "none", axis_len, lo, hi, off_max, off_sum / n, was_max, scr])
 
 ## The size of the host's own scale (round 734's review, F4): the body's height
 ## factor (CharacterAppearance.HEIGHT_FACTORS) reaches the particles as it did

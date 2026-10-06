@@ -5,7 +5,7 @@ extends SceneTree
 ## - F3: the re-selection is spread over RESELECT_FRAMES frames, sorts nothing
 ##   while the candidates fit the budget, and a holder runs no _process;
 ## - F4: a holder takes the host's uniform scale (the body's height factor)
-##   times the row's, never a mirror;
+##   times the row's (round 741: and the bone's frame, mirror included);
 ## - F5: a viewport drawing nothing (the closed equipment window) shows none
 ##   and pauses its masters, and shows them again the frame it opens.
 ##   godot4 --headless --path client --script res://scripts/assets/equip_fx_test.gd
@@ -129,8 +129,10 @@ func _test_scale_and_pause() -> void:
 	d._process(1.0 / 60.0)
 	var h := _shown_holder(s)
 	var b := h.global_transform.basis if h != null else Basis()
-	_check(h != null and absf(b.x.length() - SCALE * 1.06) < 1e-4 and absf(b.z.length() - SCALE * 1.06) < 1e-4 and b.determinant() > 0.0,
-		"the holder takes the body's height factor x the row's scale, %.4f, unmirrored (%s)" % [SCALE * 1.06, str(b.get_scale()) if h != null else "none"])
+	# Round 741: the holder takes the bone's whole frame, so it is mirrored with
+	# the body (its billboards are built per camera and do not care).
+	_check(h != null and absf(b.x.length() - SCALE * 1.06) < 1e-4 and absf(b.z.length() - SCALE * 1.06) < 1e-4 and b.determinant() < 0.0,
+		"the holder takes the body's height factor x the row's scale, %.4f, mirrored with the body (%s)" % [SCALE * 1.06, str(b.get_scale()) if h != null else "none"])
 	var k: EquipFx.Kind = d._kinds.values()[0]
 	_check(k.master.is_processing(), "shown: its master simulates")
 	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED

@@ -29,6 +29,8 @@ class_name QaLineup
 ##                                                     EquipGlow): the weapon glow tiers
 ##                                                     side by side, or a crowd of them
 ##   OPENSRO_QA_LINEUP_SPACING=<x>[,<z>]              the gaps between bodies (14, 22)
+##   OPENSRO_QA_LINEUP_TURNS=<deg>,<deg>,..           (round 741) body i turned by entry
+##                                                     i mod n beyond facing the camera
 ##
 ## The kit is OURS for the picture: the race's `_A_DEF` weapon (CharCatalog's
 ## rule on World3D's item table), a shield beside ONE_HANDED_WITH_SHIELD, and the
@@ -218,6 +220,12 @@ func _spawn(appearance: CharacterAppearance) -> void:
 			fwd = f.normalized()
 	var yaw := atan2(fwd.x, fwd.z)
 	var right := Vector3(fwd.z, 0.0, -fwd.x)
+	# OPENSRO_QA_LINEUP_TURNS="0,45,90,..." (round 741): body i turned that
+	# many more degrees (i mod the list), so one run sees a weapon at many
+	# headings.
+	var turns: Array = []
+	for t in OS.get_environment("OPENSRO_QA_LINEUP_TURNS").split(",", false):
+		turns.append(float(t))
 	for i in range(specs.size()):
 		var sp: Dictionary = specs[i]
 		var col := i % columns
@@ -237,7 +245,7 @@ func _spawn(appearance: CharacterAppearance) -> void:
 			sp.get("pluses", {}))
 		var node: Node3D = world._other_bodies.get(id)
 		if node != null:
-			node.rotation.y = yaw + PI
+			node.rotation.y = yaw + PI + (deg_to_rad(float(turns[i % turns.size()])) if not turns.is_empty() else 0.0)
 		var gait: Dictionary = world._other_gaits.get(id, {})
 		bodies.append({"id": id, "ref": int(sp["ref"]), "code": code, "scale": int(sp["scale"]), "weapon": int(sp["weapon"]),
 			"group": String(gait.get("group", "")), "skeleton": gait.get("skeleton")})

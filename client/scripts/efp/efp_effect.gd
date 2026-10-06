@@ -622,10 +622,16 @@ func _update_links() -> void:
 				EfpLinks.gather_from(p, false, a)
 				var b: EfpLinks.Buf = d[5]
 				EfpLinks.spline(a, b)
-				EfpLinks.pipe_ribbon(b, vp, right, up, out)
+				if out.turn:
+					EfpLinks.pipe_turn(b, out)
+				else:
+					EfpLinks.pipe_ribbon(b, vp, right, up, out)
 			_:
 				EfpLinks.gather_from(p, false, a)
-				EfpLinks.pipe_ribbon(a, vp, right, up, out)
+				if out.turn:
+					EfpLinks.pipe_turn(a, out)
+				else:
+					EfpLinks.pipe_ribbon(a, vp, right, up, out)
 	for d in _links:
 		if _link_budget_left <= 0:
 			return
@@ -633,7 +639,7 @@ func _update_links() -> void:
 		var am: ArrayMesh = (d[1] as MeshInstance3D).mesh
 		am.clear_surfaces()
 		if out.nv >= 3:
-			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays())
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays(), [], {}, out.format_flags())
 		_link_budget_left -= out.triangles()
 
 ## Each Link node's live particles, one list per emitter, oldest first:
@@ -948,7 +954,32 @@ func use_shared_turn() -> void:
 		while d.size() < 4:
 			d.append(false)
 		d[3] = true
+	# The pipes (LinkPipe, LinkDPipe): their side is the camera's, so the
+	# shader builds it per holder (EfpLinks.pipe_turn). LinkObj's side is the
+	# particle's own Y axis (READ), which turns with the holder as it should.
+	_has_pipe = false
+	for l in _links:
+		if int(l[6]) == 2:
+			continue
+		var mi := l[1] as MeshInstance3D
+		var m := mi.material_override as ShaderMaterial
+		if m == null or m.shader == null:
+			_has_pipe = true
+			continue
+		var key := "%d|pipe" % m.get_instance_id()
+		if not _turn_materials.has(key):
+			var c := m.duplicate() as ShaderMaterial
+			c.shader = pipe_turn_shader(m.shader)
+			_turn_materials[key] = c
+		mi.material_override = _turn_materials[key]
+		(l[3] as EfpLinks.Out).turn = true
 	shared_turn = true
+
+## A shared-turn instance's custom data: the shape's rotation as a
+## quaternion (x, y, z, w); its transform is the particle's scale and position.
+static func turn_custom(p: EfpSim.Particle) -> Color:
+	var q := p.shape.orthonormalized().get_rotation_quaternion()
+	return Color(q.x, q.y, q.z, q.w)
 
 ## Whether use_shared_turn ran.
 var shared_turn := false
@@ -982,22 +1013,67 @@ const TURN_VERTEX := """void vertex() {
 }
 """
 
-## `sh` (a template shader) with its vertex stage replaced by TURN_VERTEX.
-static func turn_shader(sh: Shader, y_billboard: bool) -> Shader:
-	var key := "turn|%d|%s" % [sh.get_instance_id(), str(y_billboard)]
+## A shared-turn pipe's vertex stage (EfpLinks.pipe_turn): the point's two
+## neighbours (CUSTOM0.xyz, CUSTOM1.xyz) projected to normalised device
+## coordinates by the camera drawing this holder, d = previous - next, and the
+## side right * d.y - up * d.x (READ, EFEffect::FUN_00c8d0e0 through the
+## billboard matrix's rows), normalised and scaled to the signed width
+## (CUSTOM0.w) times the holder's own scale -- what pipe_ribbon computes in
+## the effect's space, for one camera. The projection's off-centre terms
+## cancel in the difference; its signs are dropped (abs) so a renderer whose
+## projection flips Y draws the same side (OURS).
+const PIPE_TURN_VERTEX := """void vertex() {
+	mat4 srr_mv = VIEW_MATRIX * MODEL_MATRIX;
+	vec3 srr_a = (srr_mv * vec4(CUSTOM0.xyz, 1.0)).xyz;
+	vec3 srr_b = (srr_mv * vec4(CUSTOM1.xyz, 1.0)).xyz;
+	bool srr_ortho = PROJECTION_MATRIX[3][3] > 0.5;
+	float srr_wa = srr_ortho ? 1.0 : max(-srr_a.z, 1e-4);
+	float srr_wb = srr_ortho ? 1.0 : max(-srr_b.z, 1e-4);
+	vec2 srr_k = vec2(abs(PROJECTION_MATRIX[0][0]), abs(PROJECTION_MATRIX[1][1]));
+	vec2 srr_d = srr_k * srr_a.xy / srr_wa - srr_k * srr_b.xy / srr_wb;
+	vec3 srr_side = INV_VIEW_MATRIX[0].xyz * srr_d.y - INV_VIEW_MATRIX[1].xyz * srr_d.x;
+	float srr_l = length(srr_side);
+	float srr_s = length(MODEL_MATRIX[0].xyz);
+	vec3 srr_w = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (srr_l > 0.0) {
+		srr_w += srr_side * (CUSTOM0.w * srr_s / srr_l);
+	}
+	VERTEX = (VIEW_MATRIX * vec4(srr_w, 1.0)).xyz;
+	NORMAL = vec3(0.0, 0.0, 1.0);
+}
+"""
+
+## A link shader with its vertex stage replaced by PIPE_TURN_VERTEX.
+static func pipe_turn_shader(sh: Shader) -> Shader:
+	var key := "pipeturn|%d" % sh.get_instance_id()
 	if _shaders.has(key):
 		return _shaders[key]
+	var out := _with_vertex(sh, PIPE_TURN_VERTEX)
+	_shaders[key] = out
+	return out
+
+## `sh`'s code with its `void vertex() { ... }` replaced by `vertex_code` and
+## `skip_vertex_transform` added (the stage writes view-space VERTEX).
+static func _with_vertex(sh: Shader, vertex_code: String) -> Shader:
 	var code := sh.code
 	var at := code.find("void vertex() {")
 	var end := code.find("}", at)
 	if at < 0 or end < 0:
 		return sh
-	code = code.substr(0, at) + TURN_VERTEX.replace("{UP}", "vec3(0.0, 1.0, 0.0)" if y_billboard else "INV_VIEW_MATRIX[1].xyz") + code.substr(end + 1)
+	code = code.substr(0, at) + vertex_code + code.substr(end + 1)
 	code = code.replace("render_mode unshaded,", "render_mode unshaded, skip_vertex_transform,")
 	var out := Shader.new()
 	out.code = code
 	for m in sh.get_meta_list():
 		out.set_meta(m, sh.get_meta(m))
+	return out
+
+## `sh` (a template shader) with its vertex stage replaced by TURN_VERTEX.
+static func turn_shader(sh: Shader, y_billboard: bool) -> Shader:
+	var key := "turn|%d|%s" % [sh.get_instance_id(), str(y_billboard)]
+	if _shaders.has(key):
+		return _shaders[key]
+	var out := _with_vertex(sh, TURN_VERTEX.replace("{UP}", "vec3(0.0, 1.0, 0.0)" if y_billboard else "INV_VIEW_MATRIX[1].xyz"))
 	_shaders[key] = out
 	return out
 
@@ -1030,8 +1106,7 @@ func _update_draws() -> void:
 				var p: EfpSim.Particle = ps[i]
 				mm.set_instance_transform(i, Transform3D(Basis.from_scale(p.scale), p.pos))
 				mm.set_instance_color(i, EfpSim.color_of(p.color))
-				var q := p.shape.orthonormalized().get_rotation_quaternion()
-				mm.set_instance_custom_data(i, Color(q.x, q.y, q.z, q.w))
+				mm.set_instance_custom_data(i, turn_custom(p))
 			continue
 		for i in range(ps.size()):
 			var p: EfpSim.Particle = ps[i]
