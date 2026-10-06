@@ -62,14 +62,22 @@ const RESELECT_FRAMES := 6
 const GROUP := &"srr_blob_caster"
 const META_RADIUS := &"srr_blob_radius"
 
-## **Detail's casters (round 739, crowd_scale.md B2).** READ (above): Detail
-## draws projected shadows for at most ten characters, the nearest the player,
-## and walks its list only while the key is at most 3000 -- 300 units. Here
-## Detail is the sun's shadow map (OURS stand-in, round 702), into which every
-## character's meshes used to cast (r736 MEASURED: about 10 ms a frame at
-## 1000 players). So only the ten nearest within 300 cast: the others' meshes
-## have their cast_shadow turned off, and given back when they are chosen.
-## READ: ten, and 300.
+## **Detail's casters (round 739, crowd_scale.md B2).** READ (round 739's
+## review, F4): SWorld::vslot_025 (0xa17ab0) walks the map at 0xec24c0, which
+## CICPlayer::vslot_005 fills from the global GID-object list (0xec4ae4) keyed
+## round(|object - player| x 10.0) (the double at 0xe1b840), and stops at the
+## tenth drawn object or past key 3000 -- 300 units. The local player is in
+## that list (CIGIDObject's constructor FUN_009c2340 -> FUN_009c1e30 links
+## it), at key 0, so it is one of the ten. Unlike Circle's vslot_024, the walk
+## has NO IsKindOf-CICharactor test: any GID object whose vslot 0x50 answers
+## (+0xbc != 0) and that has a model (+0x9c) takes a slot -- COS, structures,
+## particle objects. Here the set is this group's, characters only: OURS
+## (OpenSRO draws no COS or structures yet). Detail itself is the sun's shadow
+## map (OURS stand-in, round 702), into which every character's meshes used to
+## cast (r736 MEASURED: about 10 ms a frame at 1000 players); now only the ten
+## nearest within 300 cast, the others' meshes have their cast_shadow turned
+## off, and given back when they are chosen. READ: ten, 300, the player one
+## of them.
 const DETAIL_MAX := 10
 const DETAIL_RANGE := 300.0
 ## OURS: the casters a pass sets up for the first time (a caster that arrived

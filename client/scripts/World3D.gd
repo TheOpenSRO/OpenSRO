@@ -1277,7 +1277,9 @@ const OTHER_GAIT_THRESHOLD := 1.4
 var _other_step_gate := OtherCrowd.StepGate.new()
 var _other_builds := OtherCrowd.BuildQueue.new()
 var _other_build_args := {}
-var _other_build_defer := false
+## How many callers are queuing a list whole (round 739's review, F5): while
+## above 0 an arrival is queued without pumping; the last one out pumps.
+var _other_build_defer := 0
 var _other_uids := OtherCrowd.UidIndex.new()
 var _other_hearing := {}
 var _monster_bodies := {} # monster_id -> Node3D
@@ -1779,6 +1781,8 @@ func _ready() -> void:
 		_spawn_result_others(result.others, result.seated)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
+	NetClient.user_group_begin.connect(_on_user_group_begin)
+	NetClient.user_group_end.connect(_on_user_group_end)
 	NetClient.entity_moved.connect(_on_entity_moved)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
@@ -15057,6 +15061,25 @@ func _physics_process(delta: float) -> void:
 		if _qa_split.due():
 			_qa_split_print()
 
+## Round 739 (B1; its review's F3): the once-a-frame work that places things,
+## after every physics step of the frame has run -- the others' walk and
+## turns over the steps the frame ran (OtherCrowd.StepGate), the circles and
+## Detail's casters, and characters' object colour by the tile under them
+## (round 706). Run from the frame's first physics step instead, below 60 fps
+## they trailed the bodies the later steps moved. A frame with no physics step
+## (rendering faster than 60) moved nothing, so places nothing; the arrived
+## bodies' dressing runs every frame (B4).
+func _process(_delta: float) -> void:
+	if title_mode:
+		return
+	var others_delta := _other_step_gate.take()
+	if others_delta >= 0.0:
+		_step_other_bodies(others_delta, _other_step_gate.steps)
+		_update_blob_shadow()
+		if _character_light != null:
+			_character_light.step(get_tree())
+	_pump_other_builds()
+
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
 func _physics_step(delta: float) -> void:
@@ -15212,12 +15235,6 @@ func _physics_step(delta: float) -> void:
 		if _qa_split != null:
 			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
 		_tick_party_hud()
-		# The circles and Detail's casters, and characters' object colour by
-		# the tile under them (round 706): once a rendered frame too (round
-		# 739, B1) -- both walk the character group.
-		_update_blob_shadow()
-		if _character_light != null:
-			_character_light.step(get_tree())
 
 	_time_since_send += delta
 	# No position goes out while seated or getting up or down (round 607): the
@@ -15244,12 +15261,11 @@ func _physics_step(delta: float) -> void:
 	# quickly a body catches up to its target each frame), not a claim
 	# about real client behavior -- tuned so a body visually arrives at
 	# its target well within one real MIN_SEND_INTERVAL period.
-	# Round 739 (B1, OtherCrowd.StepGate): once a rendered frame, with the
-	# physics steps it covers folded in -- the same walk and turn as one
-	# pass a step, which a slow frame paid up to eight times.
-	var others_delta := _other_step_gate.take(Engine.get_process_frames(), delta)
-	if others_delta >= 0.0:
-		_step_other_bodies(others_delta, _other_step_gate.steps)
+	# Round 739 (B1, OtherCrowd.StepGate): once a rendered frame, after the
+	# frame's physics (_process, its review's F3), with the steps it covers
+	# folded in -- the same walk and turn as one pass a step, which a slow
+	# frame paid up to eight times.
+	_other_step_gate.add(delta)
 	if _qa_facing_log:
 		_qa_facing_report()
 	if _qa_move_log:
@@ -15542,8 +15558,8 @@ func _aim_remote_body(body: Node3D, dir: Vector3, front_yaw: float) -> void:
 ## Round 739 (B1): one rendered frame of the others' walk, covering `steps`
 ## physics steps of `delta` seconds in all (OtherCrowd.lerp_factor: the
 ## per-step lerp folded, so one step a frame is exactly the old pass, and the
-## gait tests the distance the old last step saw), then their turns and the
-## frame's share of the arrived bodies to dress (B4).
+## gait tests the distance the old last step saw), then their turns. Called
+## from _process, after the frame's physics.
 func _step_other_bodies(delta: float, steps: int) -> void:
 	var n := maxi(steps, 1)
 	var step_delta := delta / float(n)
@@ -15554,7 +15570,11 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 			continue
 		var target: Vector3 = _other_body_targets[character_id]
 		var at: Vector3 = (body as Node3D).position
-		if at == target:
+		if at.distance_squared_to(target) < OtherCrowd.SNAP_DISTANCE_SQ:
+			# On it, or an ulp or two short (its review's F6): put on it once,
+			# then never written again while the target stays.
+			if at != target:
+				(body as Node3D).position = target
 			_set_other_gait(character_id, false)
 			continue
 		# Still catching up to the last update means the player is on the
@@ -15565,7 +15585,6 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 			OTHER_BODY_INTERPOLATION_SPEED, step_delta, n) > OTHER_GAIT_THRESHOLD)
 		(body as Node3D).position = at.lerp(target, f)
 	_step_remote_turns(delta)
-	_pump_other_builds()
 
 ## One frame of every turn in progress: FUN_009e02f0 with the frame's time
 ## (the mover's tick, FUN_009e0e60 -> FUN_009e0c10). A turn that reaches its
@@ -15612,6 +15631,10 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# _other_body_targets' own doc comment for why this replaced a
 		# direct position snap.
 		_other_body_targets[character_id] = pos
+		# Still waiting to be dressed: dressed in what this spawn names
+		# (round 739's review, F8; a drawn body is not redressed by it).
+		if _other_build_args.has(character_id) and not equipped.is_empty():
+			_other_build_args[character_id]["equipped"] = equipped
 		if not is_nan(heading):
 			var drawn: Node3D = _other_bodies[character_id]
 			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
@@ -15638,7 +15661,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# at once, as before.
 	_other_build_args[character_id] = {"equipped": equipped, "scale": scale}
 	_other_builds.queue(character_id)
-	if not _other_build_defer:
+	if _other_build_defer == 0:
 		_pump_other_builds()
 
 ## Round 739 (B4): the frame's share of the arrived bodies to dress, nearest
@@ -15790,15 +15813,11 @@ func _note_other_pluses(snapshot: WorldNet.EntitySnapshot) -> void:
 func _other_by_uid(uid: int) -> int:
 	# Round 739 (B7): from the map _spawn_or_update_other keeps, not a scan of
 	# every body.
+	# Every body comes through _spawn_or_update_other, which adds it; a miss
+	# (a uid out of view) costs no scan (its review's F9).
 	var drawn := _other_uids.find(uid)
 	if drawn >= 0 and _other_bodies.has(drawn):
 		return drawn
-	# A body the map has not seen (one put in _other_bodies by other means):
-	# the old scan, once, and remembered.
-	for id in _other_bodies:
-		if (int(id) & 0xffffffff) == uid:
-			_other_uids.add(int(id))
-			return int(id)
 	for id in _arrival_entries:
 		if (int(id) & 0xffffffff) == uid:
 			return int(id)
@@ -15969,6 +15988,12 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		if moved.relocated:
 			body.position = to
 			return
+		# A sitter still waiting to be dressed who walks off is on their feet
+		# (round 739's review, F2): the server sends no stand for it (its
+		# move handler stands them), and a dressed body's gait would have
+		# cleared the seat at its first step (_set_other_gait).
+		if _other_build_args.has(moved.character_id):
+			_other_seated.erase(moved.character_id)
 		# Round 653: a heading run faces its heading (retail's echo of the
 		# heading form, FUN_008a5750 -> FUN_009e08a0 -> FUN_009e02f0, turns
 		# the mover to it at 3 pi rad/s), not the next position.
@@ -20247,6 +20272,10 @@ func _fx_owner_body(owner_id: int, owner_kind: int) -> Node3D:
 		return _fx_monster_body(owner_id)
 	if _buff_owner_is_self(owner_id, owner_kind):
 		return player
+	# A body still waiting to be dressed is not drawn (round 739's review,
+	# F7): its auras come with it, _dress_other resyncs them from the book.
+	if _other_build_args.has(owner_id):
+		return null
 	var body = _other_bodies.get(owner_id)
 	return body if body != null and is_instance_valid(body) else null
 
@@ -21229,6 +21258,10 @@ func _berserk_apply(object_id: int, value: int, instant: bool) -> void:
 	var body: Node3D = player if mine else _other_bodies.get(object_id)
 	if body == null or not is_instance_valid(body):
 		return
+	# Not drawn while it waits to be dressed (round 739's review, F7):
+	# _dress_other puts the look on from NetClient's body modes.
+	if not mine and _other_build_args.has(object_id):
+		return
 	if value == 1:
 		BerserkLook.start(body, instant, mine)
 		if mine and not instant:
@@ -21383,16 +21416,29 @@ func _spawn_result_others(others: Array, seated: Array) -> void:
 	# Round 739 (B4): the whole list queued first, so the frame's budget goes
 	# to the nearest of them, not the first listed; dressed after the seats
 	# are known (below), so a seated arrival is dressed seated.
-	_other_build_defer = true
+	_other_build_defer += 1
 	for other in others:
 		_note_other_pluses(other)
 		# Each faces its heading from the list's tail (round 637's review
 		# follow-up; NAN from an older server).
 		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped,
 			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE, other.pluses)
-	_other_build_defer = false
+	_other_build_defer -= 1
 	_seat_result_others(seated)
-	_pump_other_builds()
+	if _other_build_defer == 0:
+		_pump_other_builds()
+
+## A group spawn's players (0x3017/0x3019/0x3018, round 737) arrive one
+## entity_entered at a time; NetClient brackets them (round 739's review, F5),
+## so the page is queued whole and the frame's budget goes to the nearest of
+## it, not to the first the server listed.
+func _on_user_group_begin() -> void:
+	_other_build_defer += 1
+
+func _on_user_group_end() -> void:
+	_other_build_defer = maxi(_other_build_defer - 1, 0)
+	if _other_build_defer == 0:
+		_pump_other_builds()
 
 ## The seats of an enter-world or zone-change result (round 607): an arrival
 ## still waiting to be dressed is dressed seated (_dress_other reads

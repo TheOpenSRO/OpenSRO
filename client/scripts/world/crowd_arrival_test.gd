@@ -38,6 +38,7 @@ func _initialize() -> void:
 		await _test_arrival(world)
 		_test_walk(world)
 		_test_hearing(world)
+		await _test_review(world)
 		root.remove_child(world)
 		world.free()
 	if _failures == 0:
@@ -193,3 +194,56 @@ func _test_hearing(world: Node) -> void:
 	body.position = here + Vector3(100, 0, 0)
 	world.call("_tick_idle_animations", 1.0 / 60.0)
 	_check(hearing.get(sid) == true, "and back in at 100")
+
+## Round 739's review: F5 (a group page queued whole), F2 (a waiting sitter who
+## walks off), F7 (a waiting body is not drawn for its auras), F8 (a re-sent
+## spawn's items for a waiting body), F6 (a body an ulp short is put on its
+## target and then left alone).
+## NEGATIVES: without NetClient's bracket (the begin/end calls dropped) the
+## first-listed Far1 is dressed first; without F2's erase Mid1 is dressed on
+## the sitting loop.
+func _test_review(world: Node) -> void:
+	var queue = world.get("_other_builds")
+	queue.budget_usec = 0
+	var here := _here(world)
+	var gaits: Dictionary = world.get("_other_gaits")
+	var bodies: Dictionary = world.get("_other_bodies")
+	var dressed: Array = world.get("dressed")
+	await process_frame
+	world.call("_on_user_group_begin")
+	for sn in [_snap(301, "Far1", here + Vector3(0, 0, 60)), _snap(302, "Near1", here + Vector3(0, 0, -6)),
+			_snap(303, "Mid1", here + Vector3(0, 0, -25))]:
+		world.call("_on_entity_entered", sn)
+	_check(not gaits.has(301) and not gaits.has(302) and not gaits.has(303), "F5: inside a group page nothing is dressed yet")
+	world.call("_on_user_group_end")
+	_check(gaits.has(302) and not gaits.has(301) and not gaits.has(303),
+		"F5: at the page's end its nearest is dressed first, not the first listed (dressed %s)" % str(gaits.keys()))
+	# F2: Mid1 sits while waiting, then walks off.
+	world.call("_seat_result_others", [303])
+	world.call("_on_entity_moved", _moved(303, here + Vector3(4, 0, -25)))
+	_check(not (world.get("_other_seated") as Dictionary).has(303), "F2: a waiting sitter who walks off is not seated any more")
+	# F7 and F8 on Far1, still waiting.
+	_check(world.call("_fx_owner_body", 301, SkillNet.OWNER_CHARACTER) == null, "F7: a waiting body is not drawn for its auras")
+	world.call("_spawn_or_update_other", 301, "Far1", here + Vector3(0, 0, 60), {EquipmentNet.SLOT_WEAPON: 7777})
+	await process_frame
+	world.call("_pump_other_builds")
+	_check(gaits.has(303) and not bool((gaits[303] as Dictionary).get("sitting", false)), "F2: and it is dressed standing")
+	var loop = null
+	if gaits.has(303):
+		for entry in world.get("_animated"):
+			if entry[0] == gaits[303]["skeleton"]:
+				loop = entry[1]
+	_check(loop == world.call("_body_animation_for", "", BsrReader.AnimationEntry.TYPE_STAND, "default"), "F2: on the stand loop")
+	await process_frame
+	world.call("_pump_other_builds")
+	_check(gaits.has(301), "the last of the page is dressed the frame after")
+	var last: Array = dressed[-1] if not dressed.is_empty() else [{}, {}]
+	_check(int((last[0] as Dictionary).get(EquipmentNet.SLOT_WEAPON, 0)) == 7777, "F8: in the items a re-sent spawn named while it waited (got %s)" % str(last[0]))
+	_check(world.call("_fx_owner_body", 301, SkillNet.OWNER_CHARACTER) == bodies.get(301), "F7: dressed, it is the auras' body")
+	# F6: an ulp short of its target.
+	var near: Node3D = bodies[302]
+	var target: Vector3 = (world.get("_other_body_targets") as Dictionary)[302]
+	near.position = target + Vector3(0.0001, 0, 0)
+	world.call("_step_other_bodies", 1.0 / 60.0, 1)
+	_check(near.position == target, "F6: a body within the snap distance is put on its target (%s against %s)" % [str(near.position), str(target)])
+

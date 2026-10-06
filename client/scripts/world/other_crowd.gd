@@ -25,27 +25,36 @@ class_name OtherCrowd
 ## - **B7, the uid lookup** (UidIndex): retail's u32 uid to the character id,
 ##   from a map instead of a scan of every body.
 
-## B1: the physics steps since the last rendered frame ticked, folded into one
-## tick (as MonsterCrowd.TickGate, which also counts them). take() answers the
-## delta to tick with, or a negative number when this rendered frame has ticked
-## already; `steps` is how many physics steps the last tick covers.
+## B1: the physics steps of a rendered frame, folded into one tick that runs
+## after them (round 739's review, F3: World3D._process, so what it places is
+## where the frame's last step left things). add() is each physics step's;
+## take() answers the time the frame's steps covered, or a negative number
+## when no step ran this frame, and `steps` how many there were.
 class StepGate:
-	var _frame := -1
 	var _pending := 0.0
 	var _pending_steps := 0
 	var steps := 0
 
-	func take(frame: int, delta: float) -> float:
-		if frame == _frame:
-			_pending += delta
-			_pending_steps += 1
+	func add(delta: float) -> void:
+		_pending += delta
+		_pending_steps += 1
+
+	func take() -> float:
+		if _pending_steps == 0:
+			steps = 0
 			return -1.0
-		_frame = frame
-		var total := _pending + delta
-		steps = _pending_steps + 1
+		var total := _pending
+		steps = _pending_steps
 		_pending = 0.0
 		_pending_steps = 0
 		return total
+
+## B1 (round 739's review, F6): a body this close to its target (squared, in
+## units) is put on it. float32 lerps at one or two steps a frame stop an ulp
+## or two short and would write `position` every frame for ever (COMPUTED in
+## the review); on it, the body is not touched again. OURS: 1e-6 is a
+## thousandth of a unit, far under a pixel.
+const SNAP_DISTANCE_SQ := 1e-6
 
 ## B1: the fraction of the way to its target a body covers in `steps` physics
 ## steps of `step_delta` seconds each, when each step covers

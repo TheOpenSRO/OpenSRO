@@ -48,15 +48,14 @@ func _initialize() -> void:
 func _test_step_gate() -> void:
 	var g := OtherCrowd.StepGate.new()
 	var d := 1.0 / 60.0
-	_check(is_equal_approx(g.take(1, d), d) and g.steps == 1, "the first step of a frame ticks with its own delta, one step")
-	var none := true
-	for i in 7:
-		if g.take(1, d) >= 0.0:
-			none = false
-	_check(none, "the frame's next 7 steps do not tick")
-	var t := g.take(2, d)
-	_check(is_equal_approx(t, 8.0 * d) and g.steps == 8, "the next frame ticks with all 8 steps' time (got %.4f, %d steps)" % [t, g.steps])
-	_check(is_equal_approx(g.take(3, d), d) and g.steps == 1, "and then one step again")
+	_check(g.take() < 0.0 and g.steps == 0, "a frame with no physics step ticks nothing")
+	g.add(d)
+	_check(is_equal_approx(g.take(), d) and g.steps == 1, "one step: the frame ticks with its delta, one step")
+	for i in 8:
+		g.add(d)
+	var t := g.take()
+	_check(is_equal_approx(t, 8.0 * d) and g.steps == 8, "eight steps: one tick after them with all 8 steps' time (got %.4f, %d steps)" % [t, g.steps])
+	_check(g.take() < 0.0, "and nothing more until the next step")
 
 ## The per-step loop as World3D ran it, against the folded tick.
 func _test_folded_walk() -> void:

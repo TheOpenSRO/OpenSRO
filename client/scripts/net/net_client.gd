@@ -35,6 +35,10 @@ signal lobby_result(result: LobbyNet.Result)
 signal start_result(ok: bool, code: int, reason: String)
 signal enter_world_result(result: WorldNet.EnterWorldResult)
 signal entity_entered(snapshot: WorldNet.EntitySnapshot)
+## Round 739's review (F5): around a group spawn's players, so World3D queues
+## the page whole before it dresses any (its arrival build pump, nearest first).
+signal user_group_begin
+signal user_group_end
 signal entity_moved(moved: WorldNet.EntityMoved)
 signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
@@ -1080,8 +1084,11 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 						(" and %d NPC(s)" % g.npcs.size()) if not g.npcs.is_empty() else ""])
 				for rec in g.npcs:
 					npc_spawned.emit(npc_roster.spawn(rec))
-				for rec in g.users:
-					_user_spawned(rec)
+				if not g.users.is_empty():
+					user_group_begin.emit()
+					for rec in g.users:
+						_user_spawned(rec)
+					user_group_end.emit()
 			else:
 				var players := 0
 				for u in g.uids:
