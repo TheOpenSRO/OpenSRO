@@ -68,6 +68,10 @@ class AssembledCharacter:
 	## than rigidly. A model with all of its pieces skinned can be animated;
 	## one with none cannot.
 	var skinned_pieces: int = 0
+	## Round 738 (A2): the one Skin every mesh skinned to this skeleton shares
+	## when it was assembled with `canonical` (Skeleton3DBuilder.canonical_skin);
+	## null otherwise.
+	var canonical_skin: Skin = null
 
 ## Substrings that name a standing-still animation, most specific first.
 ##
@@ -95,8 +99,16 @@ static func idle_animation_path(paths: Array) -> String:
 ## with_animation parses the model's idle animation too. Off by default
 ## because a caller that only wants to look at geometry should not pay for
 ## it, and because a .ban that fails to parse should not cost a whole model.
+##
+## `canonical` (round 738, A2; CharacterAppearance's bodies): every skinned
+## piece shares one Skin naming every bone of the skeleton
+## (Skeleton3DBuilder.canonical_skin), its vertices' palette indices turned
+## into bone indices -- the same matrices, so the same vertices; one skin
+## for the skeleton to write per pose instead of one per piece. The
+## skeleton gets its OBJECT_SPACE_BONE first, so every copy of it, and every
+## item made on one, has the same bones.
 static func assemble_from_archive(
-	archive: Pk2Reader, bsr_path: String, with_animation: bool = false
+	archive: Pk2Reader, bsr_path: String, with_animation: bool = false, canonical: bool = false
 ) -> AssembledCharacter:
 	var bsr_data := _read(archive, bsr_path)
 	if bsr_data.is_empty():
@@ -131,6 +143,9 @@ static func assemble_from_archive(
 
 	var result := AssembledCharacter.new()
 	result.skeleton = skeleton
+	if canonical:
+		Skeleton3DBuilder._object_space_bone(skeleton)
+		result.canonical_skin = Skeleton3DBuilder.canonical_skin(skeleton)
 	result.animation_paths = parsed.animation_paths
 	result.parsed = parsed
 
@@ -194,11 +209,14 @@ static func assemble_from_archive(
 				# template keeps the meta; an unnamed node's generated name it
 				# does not.
 				mi.name = piece
-				mi.mesh = BmsReader.to_array_mesh(mesh)
+				if result.canonical_skin != null:
+					mi.mesh = Skeleton3DBuilder.canonical_mesh(mesh, skin)
+				else:
+					mi.mesh = BmsReader.to_array_mesh(mesh)
 				if godot_material != null:
 					mi.material_override = godot_material
 				skeleton.add_child(mi)
-				mi.skin = skin
+				mi.skin = result.canonical_skin if result.canonical_skin != null else skin
 				mi.skeleton = mi.get_path_to(skeleton)
 				mi.set_meta(BODY_MESH_META, i)
 				var twin := ObjectLoader.add_front_pass(mi)
@@ -360,9 +378,14 @@ class AttachedItem:
 ## `missing_bones_to_object_space` passes the client's rule for a palette bone
 ## the body lacks to Skeleton3DBuilder.build_skin (round 683; off by default,
 ## so the world draws as before until it opts in).
+##
+## `canonical` (round 738, A2): the body's shared Skin
+## (AssembledCharacter.canonical_skin); a piece weighted onto the body is
+## then remapped onto it as the body's own pieces are. An item with its own
+## skeleton keeps its own skins: that skeleton is never posed.
 static func attach_item_from_archive(
 	archive: Pk2Reader, skeleton: Skeleton3D, bsr_path: String,
-	missing_bones_to_object_space: bool = false
+	missing_bones_to_object_space: bool = false, canonical: Skin = null
 ) -> AttachedItem:
 	var bsr_data := _read(archive, bsr_path)
 	if bsr_data.is_empty():
@@ -421,7 +444,7 @@ static func attach_item_from_archive(
 		var any_skinned := false
 		for pair in meshes:
 			var mesh: BmsReader.ParsedMesh = pair[0]
-			var mi := _skinned_instance(skeleton, mesh, pair[1], missing_bones_to_object_space)
+			var mi := _skinned_instance(skeleton, mesh, pair[1], missing_bones_to_object_space, canonical)
 			if mi == null:
 				continue
 			holder.add_child(mi)
@@ -504,7 +527,7 @@ static func attach_item_from_archive(
 ## does not have.
 static func _skinned_instance(
 	skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material,
-	missing_bones_to_object_space: bool = false
+	missing_bones_to_object_space: bool = false, canonical: Skin = null
 ) -> MeshInstance3D:
 	if not mesh.is_skinned():
 		return null
@@ -514,7 +537,11 @@ static func _skinned_instance(
 		return null
 	var mi := MeshInstance3D.new()
 	mi.name = mesh.mesh_name if mesh.mesh_name != "" else "piece"
-	mi.mesh = BmsReader.to_array_mesh(mesh)
+	if canonical != null:
+		mi.mesh = Skeleton3DBuilder.canonical_mesh(mesh, skin)
+		skin = canonical
+	else:
+		mi.mesh = BmsReader.to_array_mesh(mesh)
 	if material != null:
 		mi.material_override = material
 	mi.skin = skin

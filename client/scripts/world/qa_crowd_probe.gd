@@ -39,6 +39,11 @@ class_name QaCrowdProbe
 ##            (what an off-screen crowd costs)
 ##   gone     every body out of the tree (kept in memory): the scene without them
 ##   nodraw   mesh + labels + fx + blobs + overlay together
+##   anim=<s> (round 738) CrowdAnim's switches for the step, back on after it:
+##            "1" A1 (pose only what is in view), "i" the indexed pose, "3" A3
+##            (baked poses), "4" A4 (the far bodies' LOD); "anim=-" all off,
+##            which poses another player exactly as before the round. The
+##            skins (A2) are the boot's (OPENSRO_QA_CROWD_SKINS=own: per piece)
 
 const SETTLE := 1.5
 
@@ -147,6 +152,32 @@ func _census() -> void:
 			first = str(c)
 	print("QA CROWD census: first body %s" % first)
 	print("QA CROWD census: all %d bodies %s; distinct meshes %d, materials %d, skins %d" % [bodies.size(), str(tot), meshes.size(), mats.size(), skins.size()])
+	# Round 738 (A2): what one pose of a body skeleton writes -- every bind of
+	# every distinct skin registered on it (Godot 4.2.2 skeleton_3d.cpp:245-297).
+	var regs := 0
+	var binds := 0
+	var posed_skels := 0
+	var shown := false
+	for b in bodies:
+		for sk in (b["node"] as Node).find_children("*", "Skeleton3D", true, false):
+			var on := {}
+			for mi in CharacterAppearance._skinned_to(sk as Skeleton3D):
+				if not on.has(mi.skin):
+					on[mi.skin] = []
+				(on[mi.skin] as Array).append(String(mi.name))
+			if (sk as Skeleton3D).has_meta(MonsterCrowd.META_LAYOUT):
+				posed_skels += 1
+				regs += on.size()
+				for skin in on:
+					binds += (skin as Skin).get_bind_count()
+				if not shown:
+					shown = true
+					var parts := PackedStringArray()
+					for skin in on:
+						parts.append("%d binds: %s" % [(skin as Skin).get_bind_count(), ",".join(PackedStringArray(on[skin]))])
+					print("QA CROWD census: the first body skeleton's skins (%d bones): %s" % [(sk as Skeleton3D).get_bone_count(), " | ".join(parts)])
+	print("QA CROWD census: body skeletons %d, skins registered on them %d (%.1f a body), binds written per pose %d (%.1f a body)" % [
+		posed_skels, regs, float(regs) / maxf(float(posed_skels), 1.0), binds, float(binds) / maxf(float(posed_skels), 1.0)])
 
 func _next() -> void:
 	if _i >= 0:
@@ -225,7 +256,7 @@ func _report() -> void:
 	if vp0.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp0.get_meta(EquipFx.DRIVER_META)):
 		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
 		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"])]
-	print("QA CROWD step %-8s n=%d in_view=%d frames=%d frame_ms=%.2f p50=%.2f p95=%.2f render_cpu_ms=%.2f render_gpu_ms=%.2f process_ms=%.2f physics_ms=%.2f idle_ms=%.2f pose_ms=%.2f sound_ms=%.2f minimap_ms=%.2f posed_per_frame=%.0f steps_per_frame=%.2f draws=%d objects=%d prims=%d nodes=%d%s" % [
+	print("QA CROWD step %-8s n=%d in_view=%d frames=%d frame_ms=%.2f p50=%.2f p95=%.2f render_cpu_ms=%.2f render_gpu_ms=%.2f process_ms=%.2f physics_ms=%.2f idle_ms=%.2f pose_ms=%.2f sound_ms=%.2f minimap_ms=%.2f posed_per_frame=%.0f steps_per_frame=%.2f draws=%d objects=%d prims=%d nodes=%d anim=%s baked=%d static_mb=%.1f%s" % [
 		steps[_i], bodies.size(), in_view, int(f), wall, p50, p95,
 		_acc["cpu"] / f, _acc["gpu"] / f, _acc["proc"] / f, _acc["phys"] / f,
 		float(sp.idle_usec - int(_acc["idle_us"])) / 1000.0 / f,
@@ -235,7 +266,8 @@ func _report() -> void:
 		float(sp.posed - int(_acc["posed"])) / f,
 		float(sp.steps - int(_acc["steps"])) / f,
 		int(_acc["draws"] / f), int(_acc["objects"] / f), int(_acc["prims"] / f),
-		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), fx_line])
+		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), CrowdAnim.switches(), CrowdAnim.baked_frames,
+		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line])
 	if steps[_i].begins_with("net"):
 		var sent := _net_sent - int(_acc["net_sent"])
 		print("QA CROWD net: %d packets in %d frames, %.2f ms a frame in NetClient._dispatch, %.1f us a packet" % [
@@ -247,6 +279,9 @@ func _meshes(node: Node) -> Array:
 func _switch(step: String, off: bool) -> void:
 	if step.begins_with("net"):
 		step = "net"
+	if step.begins_with("anim="):
+		CrowdAnim.set_switches(step.substr(5) if off else "1i34")
+		return
 	match step:
 		"pose", "sound":
 			var arr: PackedStringArray = world._qa_split_off

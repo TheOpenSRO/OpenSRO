@@ -6257,8 +6257,8 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 ## too, and a monster's model (MonsterDraw.META_HIDE) is hidden. The clock
 ## runs on regardless, so a body coming into view is posed
 ## where its clip has got to, and a one-shot still hands back to its loop on
-## time. The player, other players and the character window's doll are not
-## culled.
+## time. Another player is posed only while in view (round 738, CrowdAnim).
+## The player and the character window's doll are not culled.
 func _tick_idle_animations(delta: float) -> void:
 	if _animated.is_empty():
 		return
@@ -6286,6 +6286,9 @@ func _tick_idle_animations(delta: float) -> void:
 	var pose_tick := _crowd_cull.ticks()
 	var cull_ids: Dictionary = _crowd_cull.by_id()
 	var lod_skipped := 0
+	# The characters in the tick, for the players' animation LOD (round 738,
+	# CrowdAnim.CROWD_MIN).
+	var crowd_count := _animated.size()
 	var posed := 0
 	var timing := _qa_split != null
 	var t0 := 0
@@ -6308,7 +6311,21 @@ func _tick_idle_animations(delta: float) -> void:
 		if cam != null:
 			var cached = cull_ids.get(skeleton.get_instance_id())
 			info = cached if cached != null else _crowd_cull.info(skeleton)
-		if not info.is_empty():
+		if info.size() == CrowdAnim.PLAYER_INFO_SIZE:
+			# Another player (round 738, CrowdAnim): posed only while its
+			# sphere is in view (A1, READ: the original poses a character only
+			# if it was drawn), and far ones in a crowd every second or fourth
+			# frame (A4, OURS). Its clock and its sounds run on.
+			if CrowdAnim.cull_players and have_planes:
+				var at := skeleton.global_position
+				var r: float = info[0]
+				pose = p0.distance_to(at) <= r and p1.distance_to(at) <= r and p2.distance_to(at) <= r \
+					and p3.distance_to(at) <= r and p4.distance_to(at) <= r and p5.distance_to(at) <= r
+			if pose and CrowdAnim.lod_players and crowd_count >= CrowdAnim.CROWD_MIN \
+					and not MonsterCrowd.pose_due(pose_tick, int(info[3]), CrowdAnim.pose_interval(skeleton.global_position.distance_to(eye), crowd_count)):
+				pose = false
+				lod_skipped += 1
+		elif not info.is_empty():
 			# A looping body that was neither in view nor in hearing at its
 			# last test is tested every second frame, on its slot (round 664,
 			# MonsterCrowd.recheck_due; OURS): one coming into view is posed at

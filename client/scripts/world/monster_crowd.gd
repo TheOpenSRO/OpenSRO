@@ -66,15 +66,18 @@ static func hearable(origin: Vector3, listener: Vector3) -> bool:
 ## and frustum tests out in the loop and rests a body's sounds only when it
 ## goes out of hearing, not every frame it stays out.
 class CullCache:
-	## The answer for a skeleton that is not culled (the player, other
-	## players, the doll): no metas.
+	## The answer for a skeleton that is not culled (the player, the doll):
+	## no metas. Other players are culled since round 738 (CrowdAnim).
 	const NONE: Array = []
-	var _by_id := {}   # skeleton instance id -> [radius, hides (1/0), resting (1/0), slot, quiet (1/0)], or NONE
+	var _by_id := {}   # skeleton instance id -> [radius, hides (1/0), resting (1/0), slot, quiet (1/0)(, 1 for another player)], or NONE
 	var _ticks := 0
 	var _slots := 0
 
-	## [radius, hides, resting, slot, quiet] for a skeleton with MonsterDraw.META_CULL,
-	## else NONE. The array is the cache's own: a write to [2] is kept.
+	## [radius, hides, resting, slot, quiet] for a skeleton with MonsterDraw.META_CULL;
+	## for another player's (round 738, CrowdAnim.is_other_player) a sixth
+	## field, 1 (CrowdAnim.PLAYER_INFO_SIZE), its radius CrowdAnim.player_radius,
+	## and the skeleton marked to be posed from CrowdAnim's baked frames; else
+	## NONE. The array is the cache's own: a write to [2] is kept.
 	func info(skeleton: Skeleton3D) -> Array:
 		var id := skeleton.get_instance_id()
 		var got = _by_id.get(id)
@@ -85,6 +88,11 @@ class CullCache:
 			_slots += 1
 			made = [float(skeleton.get_meta(MonsterDraw.META_RADIUS, 1.0)),
 				1.0 if skeleton.has_meta(MonsterDraw.META_HIDE) else 0.0, 0.0, _slots, 0.0]
+		elif CrowdAnim.is_other_player(skeleton):
+			_slots += 1
+			made = [CrowdAnim.player_radius(skeleton), 0.0, 0.0, _slots, 0.0, 1.0]
+			if skeleton.has_meta(META_LAYOUT):
+				skeleton.set_meta(CrowdAnim.META_CACHED, true)
 		_by_id[id] = made
 		return made
 
@@ -159,7 +167,9 @@ static func recheck_due(tick: int, slot: int) -> bool:
 ## recomputes its transforms once, at the end of the frame, as Godot does
 ## for any pose change. The pose itself is the same: the same two keys, the
 ## same blend (the test compares the two bone by bone). A skeleton without
-## META_LAYOUT (the player, other players, NPCs) takes the old path.
+## META_LAYOUT (the player, NPCs) takes the old path; other players carry it
+## since round 738 (CharacterAppearance.build: their body's skeleton file and
+## bone count).
 const META_LAYOUT := "opensro_crowd_layout"
 const META_BONE_MAPS := "opensro_crowd_bone_maps"
 
@@ -167,6 +177,15 @@ static func pose_at(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, secon
 	if not skeleton.has_meta(META_LAYOUT):
 		Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, seconds, loop)
 		return
+	# Another player's body (round 738, A3): from the clip's baked frames, or
+	# (QA, CrowdAnim's switches off) the old name-searched path.
+	if skeleton.has_meta(CrowdAnim.META_CACHED):
+		if CrowdAnim.cache_poses and anim.duration_ms > 0:
+			CrowdAnim.pose_cached(skeleton, anim, seconds, loop)
+			return
+		if not CrowdAnim.indexed_players:
+			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, seconds, loop)
+			return
 	var count := anim.key_times.size()
 	if count == 0:
 		return
