@@ -247,7 +247,8 @@ func _spawn(appearance: CharacterAppearance) -> void:
 	var right := Vector3(fwd.z, 0.0, -fwd.x)
 	# Round 739: the kits once per (race, sex, weapon), and the QA-only work
 	# (kits, ground rays) timed apart, so the probe's arrival frame is the
-	# spawn path's own: _kit walks the whole item table, 3.7 s for 1000 bodies.
+	# spawn path's own: _kit walks the whole item table, about 5 s for 1000
+	# bodies (MEASURED, round 739).
 	var kit_cache := {}
 	var qa_usec := 0
 	for i in range(specs.size()):

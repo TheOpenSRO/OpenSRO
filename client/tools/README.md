@@ -469,6 +469,22 @@ jangan  hitches    base 5  head 5  (+0.0)  SAME
 It also shows what a player waits through at every Jangan entry: about 14 s, with a single frame
 of about 4.9 s and five over 100 ms.
 
+### Crowd probe (rounds 736, 739)
+
+The gate's views have no crowd. For other players at 20 / 200 / 1000, `crowd_run.sh` boots one
+`QaCrowdProbe` run (r736's recipe at the Jangan spawn, 1920x1080 Forward+), waits for no other
+lane's Godot and counts any that overlap. Run it on the box, under the box lock, from a shipped
+client; its header has the switches, and `docs/rounds/r739.md` ("How to rerun") what each line
+means:
+
+```
+flock /var/tmp/godot-lock/lock /opt/opensro-client-<lane>/tools/crowd_run.sh \
+  /opt/opensro-client-<lane> /var/tmp/<lane>/n1000.log 1000 base,move,net,base
+```
+
+A boot printing `overlap:` above 0 shared the CPU with another lane: repeat it. A 1000-body boot
+takes about 5 minutes; its log is about 0.4 MB.
+
 ### Release checks (round 668)
 
 - `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that
