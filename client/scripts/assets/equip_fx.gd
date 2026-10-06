@@ -385,9 +385,8 @@ static func measure(h: Host, k: Kind) -> Dictionary:
 ## The size of the host's own scale (round 734's review, F4): the body's height
 ## factor (CharacterAppearance.HEIGHT_FACTORS) reaches the particles as it did
 ## on the per-weapon path (EfpEffect.scale_basis on the anchor). Its magnitude
-## only, the cube root of |det| (OURS): the master's billboards face the
-## camera in world axes, so a holder takes no mirror (the select screen's
-## root is scaled (1, 1, -1)) and no rotation.
+## only, the cube root of |det| (OURS); the rotation and any mirror come from
+## the bone's frame (holder_transform, round 741).
 static func _uniform_scale(b: Basis) -> float:
 	return pow(absf(b.determinant()), 1.0 / 3.0)
 

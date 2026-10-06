@@ -11850,6 +11850,11 @@ func _update_blob_shadow() -> void:
 ##                          phase -- posed or T-posed, feet against the
 ##                          ground -- as `LINEUP` lines (QaLineup has the
 ##                          companion variables; round 689)
+##   OPENSRO_QA_EQUIPFX_LOG=<frames>  (round 741) every that many frames a
+##                          `QA EQUIPFX` line per shown weapon effect: where
+##                          its drawn particles are along and off the weapon's
+##                          own bone axis (EquipFx.measure), and where round
+##                          734's position-only placement put them
 ##   OPENSRO_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
