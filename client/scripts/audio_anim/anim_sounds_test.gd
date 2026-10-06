@@ -331,6 +331,40 @@ func _init() -> void:
 		sounds.unregister(fresh)
 		fresh.free()
 
+	# Round 747 (its review, F1): a rested body woken for a one-shot starting
+	# now fires the one-shot's first key. Without the wake it is lost (the
+	# negative: a rested body's first advance takes prev = clip_ms).
+	_check(sounds.has_method("wake"), "AnimSounds.wake exists")
+	if sounds.has_method("wake"):
+		stub.calls.clear()
+		sounds.advance(mob_skel, run_anim, 0.0, 300.0, true)
+		sounds.rest(mob_skel)
+		sounds.advance(mob_skel, die, 11.0, 0.0, false)
+		_check(not stub.keys().has("MOB_MANGNYANG:voc_death:-:-:-:-"), "rested, a die at 0 ms loses voc_death (the regression the wake fixes; %s)" % str(stub.keys()))
+		stub.calls.clear()
+		sounds.advance(mob_skel, run_anim, 0.0, 300.0, true)
+		sounds.rest(mob_skel)
+		sounds.call("wake", mob_skel)
+		sounds.advance(mob_skel, die, 12.0, 0.0, false)
+		_check(stub.keys() == ["MOB_MANGNYANG:voc_death:-:-:-:-"], "rested then woken, the die fires voc_death at 0 (%s)" % str(stub.keys()))
+		stub.calls.clear()
+		sounds.advance(mob_skel, run_anim, 0.0, 300.0, true)
+		sounds.rest(mob_skel)
+		sounds.call("wake", mob_skel)
+		sounds.advance(mob_skel, _anim(500, 3, "default"), 13.0, 16.7, false)
+		_check(stub.keys() == ["MOB_MANGNYANG:voc_moan:-:NORMAL:-:-"], "woken, a hit's first tick at 16.7 ms fires the moan (%s)" % str(stub.keys()))
+		stub.calls.clear()
+		sounds.call("wake", mob_skel)
+		sounds.advance(mob_skel, run_anim, 0.0, 300.0, true)
+		_check(stub.keys().is_empty(), "woken onto a loop, it joins mid-cycle silently, as any loop's first frame")
+	# Round 747 (F2): the next key a far body is advanced at.
+	_check(sounds.has_method("next_key_ms"), "AnimSounds.next_key_ms exists")
+	if sounds.has_method("next_key_ms"):
+		_check(is_equal_approx(float(sounds.call("next_key_ms", mob_skel, run_anim, 300.0, true)), 319.0), "from 300 the run's next key is 319 ms away")
+		_check(is_equal_approx(float(sounds.call("next_key_ms", mob_skel, run_anim, 650.0, true)), 305.0), "from 650 it wraps: 16 + 289 = 305 ms")
+		_check(float(sounds.call("next_key_ms", mob_skel, _anim(1000, 14, "default"), 0.0, true)) == INF, "a clip with no sound set: never")
+		_check(float(sounds.call("next_key_ms", mob_skel, die, 1600.0, false)) == INF, "a one-shot past its last key: never")
+
 	# Track-fired pick-up and blocking (retail's own tracks: 66 and 67 of them).
 	var pickup = BsrReaderScript.SoundTrack.new()
 	pickup.name = "snd_pickup"

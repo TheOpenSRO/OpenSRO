@@ -464,6 +464,10 @@ func apply_video_options(o: VideoOptions) -> void:
 	var before: VideoOptions = _video if _video_applied else null
 	_video = o
 	_video_applied = true
+	# Round 747's review, F11: the far crowd on the GPU, the player's config
+	# switch (OURS), unless a QA run set it.
+	if OS.get_environment("OPENSRO_QA_CROWD_GPU") == "":
+		CrowdGpu.enabled = o.gpu_crowd
 	VideoOptions.set_in_force(o)
 	# Only what changed is applied again (round 694 review: Apply on any tab
 	# re-applied the whole record); everything on the first apply.
@@ -693,6 +697,9 @@ func _build_fog_pass() -> void:
 ## are not reached (see _character_range_nodes).
 func _set_character_range(range_: float) -> void:
 	_character_range = range_
+	# The far crowd's parts too (round 747, CrowdGpu: in its vertex shader).
+	if _crowd_gpu != null:
+		_crowd_gpu.set_range(range_)
 	if not _character_range_watch and is_inside_tree():
 		# The first time: what is there now, then every mesh as it is added.
 		if other_entities != null:
@@ -1638,6 +1645,12 @@ func _ready() -> void:
 	# Characters' object colour by their tile (round 706 and its review: both
 	# renderers, through per-level material copies).
 	_character_light = CharacterLight.new(_nav_graph_for)
+	# Round 747 (CrowdGpu): a far body follows its meshes' new materials, and
+	# comes back to cast Detail's shadow.
+	CharacterLight.on_changed = _crowd_light_changed
+	CharacterBlobs.on_cast = _crowd_wake_node
+	EquipFx.far_frame = _crowd_item_frame
+	EquipFx.far_origin = _crowd_item_origin
 	# The original's bloom (round 702 review); the Bloom row shows it.
 	_retail_bloom = RetailBloom.new()
 	_retail_bloom.visible = false
@@ -6060,6 +6073,7 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 		_other_bodies[character_id].queue_free()
 	_other_bodies.clear()
 	_other_gaits.clear()
+	_other_hint_by_skel.clear()
 	_other_settled.clear()
 	_other_seated.clear()
 	# Round 739: and their queued dressing and their uids.
@@ -6203,6 +6217,17 @@ func _exit_tree() -> void:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
+	# Round 747: the far crowd's instances go with the world, and its hooks.
+	if _crowd_gpu != null:
+		_crowd_gpu.release_all()
+		_crowd_gpu = null
+	if CharacterLight.on_changed == _crowd_light_changed:
+		CharacterLight.on_changed = Callable()
+	if CharacterBlobs.on_cast == _crowd_wake_node:
+		CharacterBlobs.on_cast = Callable()
+	if EquipFx.far_frame == _crowd_item_frame:
+		EquipFx.far_frame = Callable()
+		EquipFx.far_origin = Callable()
 	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
 	# world leaving before it asked for its item, character and skill tables
 	# leaves no worker running behind it.
@@ -6341,6 +6366,9 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 	var frames := _frame_count(anim)
 	if skeleton == null or frames <= 1:
 		return 0.0
+	# A far body plays its one-shot on the full path (round 747, CrowdGpu
+	# draws loops only): back now, posed where its loop is.
+	_crowd_wake(skeleton)
 	var resume = null
 	for i in range(_animated.size()):
 		var entry: Array = _animated[i]
@@ -6370,9 +6398,14 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 ## time. Another player is posed only while in view (round 738, CrowdAnim).
 ## The player and the character window's doll are not culled.
 func _tick_idle_animations(delta: float) -> void:
+	if _animated.is_empty() and (_crowd_gpu == null or _crowd_gpu.body_count() == 0):
+		return
+	# QA only (round 747, QaCrowdProbe's `ab` step): the clip clock held, so
+	# two frames drawn two ways show the same poses.
+	if not _qa_anim_hold:
+		_idle_anim_time += delta
 	if _animated.is_empty():
 		return
-	_idle_anim_time += delta
 	var cam := get_viewport().get_camera_3d() if is_inside_tree() and get_viewport() != null else null
 	var eye: Vector3 = cam.global_position if cam != null else Vector3.ZERO
 	var planes: Array = cam.get_frustum() if cam != null else []
@@ -6398,7 +6431,7 @@ func _tick_idle_animations(delta: float) -> void:
 	var lod_skipped := 0
 	# The characters in the tick, for the players' animation LOD (round 738,
 	# CrowdAnim.CROWD_MIN).
-	var crowd_count := _animated.size()
+	var crowd_count := _animated_total()
 	var posed := 0
 	var timing := _qa_split != null
 	var t0 := 0
@@ -6558,6 +6591,7 @@ func _tick_idle_animations(delta: float) -> void:
 		alive.append(entry)
 	if alive.size() != _animated.size():
 		_animated = alive
+		_rehint_other_loops()
 	_anim_posed_last = posed
 	_anim_culled_last = culled
 	_anim_lod_skipped_last = lod_skipped
@@ -6578,10 +6612,394 @@ static func _loop_ms(anim: BanReader.ParsedAnimation, seconds: float) -> float:
 	return fposmod(seconds * 1000.0, float(anim.duration_ms))
 
 var _idle_anim_time := 0.0
+## QA only (round 747): the clip clock held (QaCrowdProbe's `ab` step).
+var _qa_anim_hold := false
 ## Round 664: the clip tick runs once per rendered frame (MonsterCrowd.TickGate),
 ## and reads each culled skeleton's metas from one cache (MonsterCrowd.CullCache).
 var _idle_tick_gate := MonsterCrowd.TickGate.new()
 var _crowd_cull := MonsterCrowd.CullCache.new()
+
+## Round 747 (crowd scale A5, CrowdGpu; docs/protocol/crowd_gpu.md): far
+## other players drawn as GPU instances. Every RESELECT_FRAMES frames the
+## CrowdGpu.near_count bodies nearest the camera, in view or not (and every body that
+## needs its skeleton: a one-shot, berserk, an aura, Detail's shadow, a fade)
+## stay on the full path; every other dressed body is drawn by `_crowd_gpu`:
+## its skeleton hidden and unposed, its clip entry out of _animated (so the
+## clip tick never visits it), its parts instances of shared MultiMeshes posed
+## by the vertex shader. The decision is a scan spread over the cycle; the
+## switches to the GPU at most CrowdGpu.SWITCH_BUDGET a frame. A body comes
+## back at once when something needs it (_crowd_wake), posed where its clip
+## is, so it draws the same frame.
+var _crowd_gpu: CrowdGpu = null
+## This cycle's scan: the character ids, how far it has got, and per id
+## [distance from the camera, in view, eligible].
+var _crowd_scan: Array = []
+var _crowd_scan_at := 0
+var _crowd_scan_got := {}
+## This cycle's bodies that must stay near, by reason (QA: CrowdGpu.describe).
+var _crowd_why := {}
+var _crowd_cycle_frame := 0
+var _crowd_frame := 0
+## Bodies chosen for the GPU and not switched yet (the budget).
+var _crowd_pending: Array = []
+## Meta on a body skeleton: the Callable its tree_exiting runs (_crowd_on_exit).
+const CROWD_EXIT_META := &"opensro_crowd_exit"
+
+func _crowd_gpu_get() -> CrowdGpu:
+	if _crowd_gpu == null and is_inside_tree() and get_world_3d() != null:
+		_crowd_gpu = CrowdGpu.new(get_world_3d().scenario)
+		_crowd_gpu.set_range(_character_range)
+	return _crowd_gpu
+
+## Whether another player's body could be drawn far now: dressed, in the
+## tree, seen by the clip tick's cull cache (so posed from A3's frames), and
+## needing nothing the instances do not draw.
+## Returns "" when it can, else why not (counted for the QA line).
+func _crowd_eligible(character_id: int, node: Node3D, skel: Skeleton3D) -> String:
+	if not is_instance_valid(skel) or not skel.is_inside_tree() or not node.is_inside_tree():
+		return "tree"
+	if not skel.has_meta(CrowdAnim.META_CACHED) or _other_build_args.has(character_id):
+		return "dressing"
+	if _appear_fades.fading(node) or _appear_fades.fading_out(node):
+		return "fade"
+	if BerserkLook.active(node):
+		return "berserk"
+	# Detail's ten casters (round 739, B2) cast from their meshes.
+	if bool(node.get_meta(CharacterBlobs.META_DETAIL, false)):
+		return "detail"
+	# An effect on the body follows a bone of the posed skeleton
+	# (EfpEffect.follow_host; crowd_gpu.md section 3).
+	for c in node.get_children():
+		if c is EfpEffect:
+			return "effect"
+	return ""
+
+## Once a rendered frame, after the others have moved (_process): a slice of
+## the near/far scan, the cycle's choice, the switches due, and CrowdGpu's
+## flush (its clock, the moved bodies, the baking, the uploads).
+func _crowd_gpu_step() -> void:
+	var on := CrowdGpu.enabled and CrowdAnim.cache_poses
+	if not on:
+		if _crowd_gpu != null and _crowd_gpu.body_count() > 0:
+			for skel in _crowd_gpu.skeletons():
+				_crowd_wake(skel, false)
+			_crowd_gpu.flush(_idle_anim_time)
+		return
+	if _other_gaits.is_empty() and (_crowd_gpu == null or _crowd_gpu.body_count() == 0):
+		return
+	var crowd := _crowd_gpu_get()
+	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+	if crowd == null or cam == null:
+		return
+	_crowd_frame += 1
+	if _crowd_scan.is_empty() and _crowd_scan_at == 0:
+		_crowd_scan = _other_gaits.keys()
+		_crowd_scan_got.clear()
+		_crowd_cycle_frame = _crowd_frame
+	var eye := cam.global_position
+	var listener := _crowd_listener()
+	var planes: Array = cam.get_frustum()
+	var per := ceili(float(_crowd_scan.size()) / float(CrowdGpu.RESELECT_FRAMES))
+	var end := mini(_crowd_scan_at + per, _crowd_scan.size())
+	while _crowd_scan_at < end:
+		var id: int = int(_crowd_scan[_crowd_scan_at])
+		_crowd_scan_at += 1
+		var node = _other_bodies.get(id)
+		var gait: Dictionary = _other_gaits.get(id, {})
+		if node == null or not is_instance_valid(node) or gait.is_empty() or not is_instance_valid(gait.get("skeleton")):
+			continue
+		var skel: Skeleton3D = gait["skeleton"]
+		var at := (node as Node3D).global_position
+		var info: Array = _crowd_cull.info(skel)
+		var r: float = info[0] if info.size() == CrowdAnim.PLAYER_INFO_SIZE else 20.0
+		var seen := planes.size() == 6
+		if seen:
+			for p in planes:
+				if (p as Plane).distance_to(at) > r:
+					seen = false
+					break
+		var why := _crowd_eligible(id, node, skel)
+		if why != "":
+			_crowd_why[why] = int(_crowd_why.get(why, 0)) + 1
+		# A far body's hearing (F2): the READ 600 of the listener, as the
+		# tick's rule for a near one; rested as it leaves, advanced at once
+		# as it comes back (it carries on from there, silently, as any body
+		# back in hearing does).
+		var fb := crowd.body_of(skel)
+		if fb != null:
+			var heard := at.distance_squared_to(listener) <= SoundTable.CULL_DISTANCE_SQ
+			if heard != fb.heard:
+				crowd.set_heard(fb, heard)
+				var cinfo: Array = _crowd_cull.info(skel)
+				if cinfo.size() == CrowdAnim.PLAYER_INFO_SIZE:
+					cinfo[1] = 0.0 if heard else 1.0
+				if heard:
+					fb.sound_due = -INF
+				else:
+					fb.sound_due = INF
+					_anim_sounds.rest(skel)
+		_crowd_scan_got[id] = [eye.distance_to(at), seen, why == ""]
+	if _crowd_frame - _crowd_cycle_frame >= CrowdGpu.RESELECT_FRAMES - 1 and _crowd_scan_at >= _crowd_scan.size():
+		crowd.ineligible = _crowd_why
+		_crowd_why = {}
+		_crowd_choose()
+		_crowd_scan = []
+		_crowd_scan_at = 0
+	_crowd_switch_due()
+	crowd.flush(_idle_anim_time)
+	_crowd_sound_step()
+
+## The sound listener (AudioService: the player), as the clip tick's.
+func _crowd_listener() -> Vector3:
+	if player != null and player.is_inside_tree():
+		return player.global_position
+	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+	return cam.global_position if cam != null else Vector3.ZERO
+
+## Round 747's review, F2: the far bodies within hearing play their clip
+## sounds, as retail plays every body's within 600 (READ, round 664's rule),
+## without being posed. A body is advanced only when its clock passes its
+## clip's next sound key (AnimSounds.next_key_ms); a clip with no track for
+## it (every sitting loop, most stand sets) never is. So a standing crowd
+## costs one compare a body a frame, a running one about two advances a body
+## a second.
+func _crowd_sound_step() -> void:
+	if _qa_split != null and (_qa_split_off.has("sound") or _qa_split_off.has("farsound")):
+		return
+	var t := _idle_anim_time
+	for fb in _crowd_gpu.heard_bodies():
+		var b: CrowdGpu.Body = fb
+		if b.sound_due > t:
+			continue
+		if not is_instance_valid(b.skel):
+			b.sound_due = INF
+			continue
+		var e: Array = b.entry
+		var anim: BanReader.ParsedAnimation = e[1]
+		var ms := _loop_ms(anim, t + float(e[3]))
+		_anim_sounds.advance(b.skel, anim, float(e[5]), ms, true)
+		var next := _anim_sounds.next_key_ms(b.skel, anim, ms, true)
+		b.sound_due = t + next / 1000.0 if next != INF else INF
+		_crowd_gpu.stats["sound_advances"] = int(_crowd_gpu.stats.get("sound_advances", 0)) + 1
+
+## The cycle's choice: the CrowdGpu.near_count bodies nearest the camera,
+## in view or not, stay near (a near body goes only once it is past the
+## NEAR_HYSTERESIS x near_count nearest: by rank, so a dense crowd does not
+## keep a ring of bodies near), every other eligible body goes to the GPU; a
+## far body now among the nearest, or no longer eligible, comes back. In view
+## or not: the nearest are the ones heard (their clip sounds run near only).
+func _crowd_choose() -> void:
+	var dists := PackedFloat32Array()
+	var seen := 0
+	for id in _crowd_scan_got:
+		var got: Array = _crowd_scan_got[id]
+		dists.append(got[0])
+		if got[1]:
+			seen += 1
+	var come := INF
+	var stay := INF
+	var k := CrowdGpu.near_count
+	if dists.size() > k:
+		dists.sort()
+		come = dists[maxi(k - 1, 0)]
+		var k_out := int(ceil(float(k) * CrowdGpu.NEAR_HYSTERESIS))
+		stay = dists[mini(k_out, dists.size()) - 1] if k_out > 0 else -1.0
+	_crowd_pending.clear()
+	var counts := {"in_view": seen, "come_within": snappedf(come, 0.1), "stay_within": snappedf(stay, 0.1)}
+	for id in _crowd_scan_got:
+		var got: Array = _crowd_scan_got[id]
+		var gait: Dictionary = _other_gaits.get(id, {})
+		var skel = gait.get("skeleton")
+		if skel == null or not is_instance_valid(skel):
+			continue
+		var far := _crowd_gpu.has(skel)
+		var want := bool(got[2]) and float(got[0]) > (come if far else stay)
+		if not want and bool(got[2]):
+			counts["nearest"] = int(counts.get("nearest", 0)) + 1
+		if want and not far:
+			_crowd_pending.append(id)
+		elif not want and far:
+			# Sent to the server with the frame's flush, below.
+			_crowd_wake(skel, false)
+	_crowd_gpu.ineligible.merge(counts, true)
+	_crowd_gpu.reset_aabb()
+	_crowd_gpu.collect()
+
+## The chosen bodies to the GPU, for up to CrowdGpu.SWITCH_BUDGET_USEC a
+## frame: each one's loop entry taken out of _animated (one pass over it for
+## all of them); the rest wait for the next frame.
+func _crowd_switch_due() -> void:
+	if _crowd_pending.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+	var want := {}
+	var take := mini(_crowd_pending.size(), CrowdGpu.SWITCH_BUDGET)
+	for i in range(take):
+		var id: int = _crowd_pending[i]
+		var gait: Dictionary = _other_gaits.get(id, {})
+		var skel = gait.get("skeleton")
+		var node = _other_bodies.get(id)
+		if skel != null and is_instance_valid(skel) and node != null and is_instance_valid(node):
+			want[skel] = [node, id]
+	var gone := {}
+	var done := {}
+	for entry in _animated:
+		var raw = entry[0]
+		if not is_instance_valid(raw) or not want.has(raw):
+			continue
+		var skel: Skeleton3D = raw
+		if done.has(skel):
+			continue
+		done[skel] = true
+		# A loop only: a one-shot's hand-back is the clip tick's (it comes
+		# far at a later cycle, back on its loop).
+		# Eligible still (round 747's review, F6): it may have become a Detail
+		# caster, berserk or an effect's host since the scan chose it.
+		if bool(entry[4]) and _crowd_eligible(int(want[skel][1]), want[skel][0], skel) == "" \
+				and _crowd_gpu.add(want[skel][0], skel, entry, _idle_anim_time):
+			gone[skel] = true
+			# Its clip sounds go on from the CPU while it is within hearing
+			# (round 747's review, F2: the READ 600 rule), from where the near
+			# tick left them.
+			var fb := _crowd_gpu.body_of(skel)
+			var heard := (want[skel][0] as Node3D).global_position.distance_squared_to(_crowd_listener()) <= SoundTable.CULL_DISTANCE_SQ
+			_crowd_gpu.set_heard(fb, heard)
+			fb.sound_due = -INF if heard else INF
+			# Its run baked ahead, so a step does not bring it back (a gait
+			# change on a far body whose loop is not baked does).
+			var gait: Dictionary = _other_gaits.get(int(want[skel][1]), {})
+			if not gait.is_empty():
+				_crowd_gpu.prebake(skel, _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_RUN, gait["group"]))
+			if not skel.has_meta(CROWD_EXIT_META):
+				var cb := _crowd_on_exit.bind(skel)
+				skel.set_meta(CROWD_EXIT_META, cb)
+				skel.tree_exiting.connect(cb)
+		if Time.get_ticks_usec() - t0 >= CrowdGpu.SWITCH_BUDGET_USEC:
+			break
+	# Those not reached this frame wait; those tried (switched or refused) do not.
+	var left: Array = []
+	for i in range(_crowd_pending.size()):
+		var id: int = _crowd_pending[i]
+		if i < take:
+			var gait: Dictionary = _other_gaits.get(id, {})
+			var skel = gait.get("skeleton")
+			if skel == null or not is_instance_valid(skel) or done.has(skel) or not want.has(skel):
+				continue
+		left.append(id)
+	_crowd_pending = left
+	if gone.is_empty():
+		return
+	var kept: Array = []
+	for entry in _animated:
+		var raw = entry[0]
+		if is_instance_valid(raw) and gone.has(raw):
+			continue
+		kept.append(entry)
+	_animated = kept
+	_rehint_other_loops()
+	_crowd_gpu.stats["switch_usec"] = int(_crowd_gpu.stats.get("switch_usec", 0)) + Time.get_ticks_usec() - t0
+
+## Brings a far body back to the full path: its entry back in the clip tick,
+## posed now at its clip's current frame (the frame the GPU drew), shown.
+## Nothing for a body that is not far. `push` false leaves the instances'
+## change for the frame's flush (a caller inside _crowd_gpu_step).
+func _crowd_wake(skel, push: bool = true) -> void:
+	if _crowd_gpu == null or skel == null or not is_instance_valid(skel) or not _crowd_gpu.has(skel):
+		return
+	var entry := _crowd_gpu.remove(skel, push)
+	if entry.is_empty():
+		return
+	_animated.append(entry)
+	# Its sounds carry on from a live state, so a one-shot starting now (a
+	# hit's moan, a death's voice, a sit-down, a pick-up) fires its first key
+	# (round 747's review, F1). A body out of hearing is rested again by the
+	# tick's own rule.
+	_anim_sounds.wake(skel)
+	var s: Skeleton3D = skel
+	if s.is_inside_tree():
+		MonsterCrowd.pose_at(s, entry[1], _idle_anim_time + float(entry[3]), true)
+	# Its next tick poses it whatever the A4 slot (CullCache's "never posed").
+	var info: Array = _crowd_cull.info(s)
+	if info.size() == CrowdAnim.PLAYER_INFO_SIZE:
+		info[4] = 1.0
+
+## _crowd_wake for the body `node` is the holder of.
+func _crowd_wake_node(node) -> void:
+	if _crowd_gpu == null or node == null or not is_instance_valid(node):
+		return
+	var id := int((node as Node).get_meta("character_id", -1))
+	var gait: Dictionary = _other_gaits.get(id, {})
+	if not gait.is_empty():
+		_crowd_wake(gait.get("skeleton"))
+
+## A far skeleton leaving the tree (a body freed, re-dressed, a zone change,
+## the QA `gone` step): off the instances, its entry back (the tick skips or
+## drops it as it does any other).
+func _crowd_on_exit(skel: Skeleton3D) -> void:
+	if _crowd_gpu != null and _crowd_gpu.has(skel):
+		var entry := _crowd_gpu.remove(skel)
+		if not entry.is_empty():
+			_animated.append(entry)
+			var info: Array = _crowd_cull.info(skel)
+			if info.size() == CrowdAnim.PLAYER_INFO_SIZE:
+				info[4] = 1.0
+
+## Another player's loop changes (MonsterMotion.swap_loop's job): a far body
+## swaps on the GPU when the new clip is baked, else comes back first.
+func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation, hint: Array = []) -> void:
+	var frames := _frame_count(anim)
+	if frames > 1 and _crowd_gpu != null and _crowd_gpu.has(skel):
+		if frames > 1 and _crowd_gpu.set_clip(skel, anim, frames, _idle_anim_time):
+			# Its sounds move to the new loop now (its first frame is silent,
+			# as a near body's loop swap is).
+			var fb := _crowd_gpu.body_of(skel)
+			if fb != null and fb.heard:
+				var ms := _loop_ms(anim, _idle_anim_time + float(fb.entry[3]))
+				_anim_sounds.prime(skel, anim, float(fb.entry[5]), ms)
+				var next := _anim_sounds.next_key_ms(skel, anim, ms, true)
+				fb.sound_due = _idle_anim_time + next / 1000.0 if next != INF else INF
+			return
+		_crowd_wake(skel)
+	MonsterMotion.swap_loop(_animated, skel, anim, frames, _idle_anim_time, hint)
+
+## Round 748 (the merge with 747): other players' swap hints (gait["at"]) by
+## skeleton id, the same arrays, so a rebuild of `_animated` can set them.
+var _other_hint_by_skel := {}
+
+## After `_animated` is rebuilt (a far switch drops entries, the tick drops
+## dead ones), every hint names its entry's new index again -- one pass,
+## instead of each walker's next swap scanning the list.
+func _rehint_other_loops() -> void:
+	if _other_hint_by_skel.is_empty():
+		return
+	for h in _other_hint_by_skel.values():
+		(h as Array)[0] = -1
+	for i in range(_animated.size()):
+		var raw = (_animated[i] as Array)[0]
+		if not is_instance_valid(raw):
+			continue
+		var h = _other_hint_by_skel.get((raw as Object).get_instance_id())
+		if h != null:
+			(h as Array)[0] = i
+
+## A weapon's item skeleton on a far body: its frame, and its body's place
+## (EquipFx places and chooses a far weapon's particles by them).
+func _crowd_item_frame(item_skel: Node3D):
+	return _crowd_gpu.item_frame(item_skel) if _crowd_gpu != null else null
+
+func _crowd_item_origin(item_skel: Node3D):
+	return _crowd_gpu.item_origin(item_skel) if _crowd_gpu != null else null
+
+## CharacterLight gave a body's meshes their level's materials: a far body's
+## instances take them, or it comes back when they cannot.
+func _crowd_light_changed(body: Node3D) -> void:
+	if _crowd_gpu != null and not _crowd_gpu.refresh(body):
+		_crowd_wake_node(body)
+
+## The bodies the clip tick holds, near and far (a new loop's phase, A4's
+## crowd count).
+func _animated_total() -> int:
+	return _animated.size() + (_crowd_gpu.body_count() if _crowd_gpu != null else 0)
 
 ## The map objects that move (round 645): MapAnimation.Driver runs each clip
 ## while its object is in range and in view, as retail's update does.
@@ -9379,10 +9797,13 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	# plays a hit on this body (_play_other_hit, round 540), and a swap that
 	# appended a loop beside it would leave two entries driving one skeleton.
 	# Round 748: with the entry's last index (a hint, checked before use), not
-	# a scan of every animated body.
+	# a scan of every animated body; through round 747's swap, which hands a
+	# far body's loop to the GPU (the hint is kept current when its rebuilds
+	# move entries, _rehint_other_loops).
 	if not gait.has("at"):
 		gait["at"] = [-1]
-	MonsterMotion.swap_loop(_animated, gait["skeleton"], anim, frames, _idle_anim_time, gait["at"])
+		_other_hint_by_skel[(gait["skeleton"] as Object).get_instance_id()] = gait["at"]
+	_swap_other_loop(gait["skeleton"], anim, gait["at"])
 
 ## Plays anim once on the player's body, over stand or run, and returns
 ## how long it runs. A one-shot HELD on its last frame -- the die clip,
@@ -10312,6 +10733,10 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 				# 637's review follow-up). OURS: the angle is toward the target;
 				# retail's comes in the message.
 				body.rotation.y = atan2(d.x, d.y)
+				# A far body's place is re-read at the frame's flush (round
+				# 747's review, F5).
+				if _crowd_gpu != null:
+					_crowd_gpu.moved(body)
 		var clip := 0.0
 		if sc.caster_kind == SkillNet.OWNER_CHARACTER:
 			clip = _play_other_cast_anim(sc.caster_id, sc.skill_id)
@@ -15185,6 +15610,7 @@ func _process(_delta: float) -> void:
 			var t1 := Time.get_ticks_usec()
 			FrameSplit.add("w_selfpose", t1 - t)
 			t = t1
+	var t0 := Time.get_ticks_usec() if _qa_split != null else 0
 	var others_delta := _other_step_gate.take()
 	if others_delta >= 0.0:
 		_step_other_bodies(others_delta, _other_step_gate.steps)
@@ -15211,6 +15637,12 @@ func _process(_delta: float) -> void:
 	_pump_other_builds()
 	if fs:
 		FrameSplit.add("w_pump", Time.get_ticks_usec() - t)
+	var t1 := Time.get_ticks_usec() if _qa_split != null else 0
+	# Round 747 (A5): which bodies are drawn far, and the far crowd's frame.
+	_crowd_gpu_step()
+	if _qa_split != null:
+		_qa_split.others_usec += t1 - t0
+		_qa_split.crowd_usec += Time.get_ticks_usec() - t1
 
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
@@ -15756,6 +16188,8 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 			# then never written again while the target stays.
 			if at != target:
 				(body as Node3D).position = target
+				if _crowd_gpu != null:
+					_crowd_gpu.moved(body)
 			_set_other_gait(character_id, false)
 			_other_settled[character_id] = true
 			continue
@@ -15766,6 +16200,9 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 		# two on the last inch of the lerp.
 		_set_other_gait(character_id, at.distance_to(target) * before_last > OTHER_GAIT_THRESHOLD)
 		(body as Node3D).position = at.lerp(target, f)
+		# A far body's transform is re-read at the frame's flush (round 747).
+		if _crowd_gpu != null:
+			_crowd_gpu.moved(body)
 	_step_remote_turns(delta)
 
 ## One frame of every turn in progress: FUN_009e02f0 with the frame's time
@@ -15783,6 +16220,8 @@ func _step_remote_turns(delta: float) -> void:
 		var front := float(turn["front"])
 		var r := RemoteFacing.turn(RemoteFacing.heading_of_yaw(body.rotation.y, front), float(turn["target"]), delta * 1000.0)
 		body.rotation.y = RemoteFacing.yaw_of(float(r["heading"]), front)
+		if _crowd_gpu != null:
+			_crowd_gpu.moved(body)
 		if not bool(r["turning"]):
 			_remote_turns.erase(id)
 
@@ -15822,6 +16261,8 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		if not is_nan(heading):
 			var drawn: Node3D = _other_bodies[character_id]
 			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+			if _crowd_gpu != null:
+				_crowd_gpu.moved(drawn)
 			_remote_turns.erase(drawn.get_instance_id())
 		return
 
@@ -16008,7 +16449,7 @@ func _dress_other(character_id: int) -> void:
 		var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_SITTING if seated else BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
 		if frames > 1:
-			_animated.append([skeleton, idle, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
+			_animated.append([skeleton, idle, frames, float(_animated_total()) * 0.37, true, _idle_anim_time, null])
 		if dt != null:
 			dt.mark("clip")
 		if seated:
@@ -16190,6 +16631,9 @@ func _reglow_other(character_id: int, pluses: Dictionary) -> bool:
 	if _appearance == null or skel == null or not is_instance_valid(skel):
 		return false
 	if skel.get_meta("glow_pluses", {}) != pluses:
+		# New glow materials: a far body comes back (round 747, CrowdGpu); the
+		# next cycle draws it far with them.
+		_crowd_wake(skel)
 		_appearance.reglow(skel, pluses)
 		skel.set_meta("glow_pluses", pluses.duplicate())
 		var node: Node3D = _other_bodies.get(character_id)
@@ -16234,6 +16678,9 @@ func _redress_other(character_id: int) -> void:
 		return
 	var old = gait.get("skeleton")
 	if old != null and is_instance_valid(old):
+		# Off the far instances now, not when it leaves the tree at the end of
+		# the frame (round 747, CrowdGpu).
+		_crowd_wake(old)
 		_anim_sounds.unregister(old)
 		old.queue_free()
 	skeleton.rotation.y = PI
@@ -16287,6 +16734,8 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		var body: Node3D = _other_bodies[moved.character_id]
 		if moved.relocated:
 			body.position = to
+			if _crowd_gpu != null:
+				_crowd_gpu.moved(body)
 			return
 		# A sitter still waiting to be dressed who walks off is on their feet
 		# (round 739's review, F2): the server sends no stand for it (its
@@ -16316,7 +16765,13 @@ func _on_entity_left(character_id: int) -> void:
 	# A departing body stops running before it fades (OURS, as a monster's
 	# does in _free_monster_body: whether retail's mover runs on during the
 	# 1.5 s was not read).
+	# A far body fades out on the full path (round 747, CrowdGpu): AppearFade
+	# swaps its meshes' materials.
+	_crowd_wake((_other_gaits.get(character_id, {}) as Dictionary).get("skeleton"))
 	_set_other_gait(character_id, false)
+	var gone_gait: Dictionary = _other_gaits.get(character_id, {})
+	if gone_gait.has("skeleton") and is_instance_valid(gone_gait["skeleton"]):
+		_other_hint_by_skel.erase((gone_gait["skeleton"] as Object).get_instance_id())
 	_other_gaits.erase(character_id)
 	_other_settled.erase(character_id)
 	_other_pluses.erase(character_id)
@@ -20574,6 +21029,9 @@ func _fx_owner_body(owner_id: int, owner_kind: int) -> Node3D:
 	if _other_build_args.has(owner_id):
 		return null
 	var body = _other_bodies.get(owner_id)
+	# An effect follows a bone of the posed skeleton (EfpEffect.follow_host):
+	# a far body comes back to the full path first (round 747, CrowdGpu).
+	_crowd_wake_node(body)
 	return body if body != null and is_instance_valid(body) else null
 
 static func _fx_owner_key(owner_id: int, owner_kind: int) -> String:
@@ -21432,6 +21890,8 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 		var body: Node3D = _other_bodies[moved.character_id]
 		body.position = to
 		_other_body_targets[moved.character_id] = to
+		if _crowd_gpu != null:
+			_crowd_gpu.moved(body)
 		print("SKILL move handled: player %d snapped to (%.1f, %.1f, %.1f) by skill %d" % [
 			moved.character_id, to.x, to.y, to.z, moved.skill_id])
 		return
@@ -21559,6 +22019,10 @@ func _berserk_apply(object_id: int, value: int, instant: bool) -> void:
 	# _dress_other puts the look on from NetClient's body modes.
 	if not mine and _other_build_args.has(object_id):
 		return
+	# BerserkLook tints the body's meshes: a far body comes back first
+	# (round 747, CrowdGpu).
+	if not mine:
+		_crowd_wake_node(body)
 	if value == 1:
 		BerserkLook.start(body, instant, mine)
 		if mine and not instant:
@@ -21750,7 +22214,7 @@ func _seat_result_others(seated: Array) -> void:
 			continue
 		gait["sitting"] = true
 		var loop := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])
-		MonsterMotion.swap_loop(_animated, gait["skeleton"], loop, _frame_count(loop), _idle_anim_time)
+		_swap_other_loop(gait["skeleton"], loop)
 		print("SIT: player %d drawn seated on spawn -- loop %s (type 14)" % [int(id),
 			_body_animation_path(gait["body"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])])
 
@@ -21780,7 +22244,7 @@ func _apply_other_motion(character_id: int, value: int) -> void:
 		_:
 			return
 	var loop := _body_animation_for(gait["body"], loop_type, gait["group"])
-	MonsterMotion.swap_loop(_animated, gait["skeleton"], loop, _frame_count(loop), _idle_anim_time)
+	_swap_other_loop(gait["skeleton"], loop)
 	if once_type != -1:
 		var once := _body_animation_for(gait["body"], once_type, gait["group"])
 		if once != null:
@@ -22390,6 +22854,9 @@ func _play_skill_hit_effect_on(body: Node3D, world_height: float, basic_code: St
 func _play_hit_efp_on(body: Node3D, world_height: float, efp: String) -> void:
 	if body == null or not is_instance_valid(body):
 		return
+	# The effect follows a bone of the posed skeleton: a far body comes back
+	# first (round 747's review, F4: a wall blow, a DefenseEfp).
+	_crowd_wake_node(body)
 	var particles := _open_particles_pk2_if_set()
 	if particles == null:
 		return

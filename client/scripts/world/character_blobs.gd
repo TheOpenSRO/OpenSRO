@@ -265,10 +265,16 @@ func detail_chosen() -> Array:
 ## Turns `node`'s meshes' shadow off (keeping which were casting) or gives
 ## them back. Labels, and meshes set not to cast by whoever built them, are
 ## left alone.
+## Round 747: called with a node about to cast (World3D: a far body comes
+## back to its posed meshes first, CrowdGpu). Unset in tests.
+static var on_cast: Callable = Callable()
+
 static func set_casting(node: Node, on: bool) -> void:
 	if node == null or not is_instance_valid(node):
 		return
 	var off: Array = node.get_meta(META_DETAIL_OFF, [])
+	if on and on_cast.is_valid():
+		on_cast.call(node)
 	if on:
 		for gi in off:
 			if is_instance_valid(gi):

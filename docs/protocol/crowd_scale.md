@@ -409,6 +409,11 @@ Files: `world/monster_crowd.gd` or a new `world/crowd_anim.gd`, `ui/character_ap
 - The rules are in `client/scripts/world/crowd_anim.gd` and `CharacterAppearance`'s shared skin.
 - The measurements are in `docs/rounds/r738.md`.
 - A5's spec is `docs/protocol/crowd_gpu.md`.
+
+**Round 747 built A5** (`client/scripts/world/crowd_gpu.gd`, `docs/rounds/r747.md`): every body but the
+16 nearest the camera is drawn as MultiMesh instances skinned in the vertex shader. 1000 standing went
+from about 92 to 17.6-18.5 ms a frame, walking p95 from 124 / 181 to 49 / 65 (with every far body
+within 600 heard, after its review); 200 standing 21 -> 8.3.
 - A4's bands are 900 / 1,800, not 300 / 900. Near and mid-range bodies must look as before, and
   the fastest bone moves 5.5 px in 1/60 s at 300 (MEASURED).
 

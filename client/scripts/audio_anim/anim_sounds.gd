@@ -164,6 +164,67 @@ func rest(skeleton: Object) -> void:
 		if _owners.has(id):
 			_state[id] = null
 
+## Round 747 (its review, F1): a rested body that comes back for a clip
+## starting now -- a far body brought back to the full path for a hit, a
+## death, a sit-down (World3D._crowd_wake) -- forgets its rest, so the clip's
+## first advance fires from its start (a key at 0 ms included) as a body that
+## was never rested does. rest() is for time a body was away; this one-shot
+## begins at the moment it comes back.
+func wake(skeleton: Object) -> void:
+	if skeleton != null:
+		_state.erase(skeleton.get_instance_id())
+
+## Round 747 (F2): how many ms of clip time from `clip_ms` until the next
+## sound track of `anim` on `skeleton` (wrapping for a loop), or INF when the
+## clip has no track for this body (no owner, no tag, no sound set: every
+## sitting loop and most stand sets). A far body is advanced only when its
+## clock passes that time (World3D._crowd_sound_step).
+func next_key_ms(skeleton: Object, anim: Object, clip_ms: float, loops: bool) -> float:
+	if skeleton == null or anim == null:
+		return INF
+	var pair = _owners.get(skeleton.get_instance_id())
+	if pair == null:
+		return INF
+	var owner: Owner = pair[1]
+	if owner.parsed == null:
+		return INF
+	# The clip's sound set for this body's file, looked up once (a far crowd
+	# asks at every key and every gait change).
+	var per = _sets.get(anim)
+	if per == null:
+		per = {}
+		_sets[anim] = per
+	var sound_set = per.get(owner.parsed, false)
+	if typeof(sound_set) == TYPE_BOOL:
+		var tag = anim.get_meta(BsrReader.CLIP_META, null)
+		sound_set = owner.parsed.sound_set_for(int(tag[0]), String(tag[1])) if tag != null else null
+		per[owner.parsed] = sound_set
+	if sound_set == null or (sound_set as BsrReader.SoundSet).tracks.is_empty():
+		return INF
+	var duration := float(anim.get("duration_ms"))
+	var best := INF
+	var first := INF
+	for t in sound_set.tracks:
+		var key := float((t as BsrReader.SoundTrack).key_ms)
+		if loops and duration > 0.0 and key >= duration:
+			continue
+		first = minf(first, key)
+		if key > clip_ms:
+			best = minf(best, key - clip_ms)
+	if best == INF and loops and first != INF and duration > 0.0:
+		best = duration - clip_ms + first
+	return best
+
+## clip -> {parsed .bsr -> its SoundSet or null} (next_key_ms).
+var _sets := {}
+
+## Round 747 (F2): `skeleton` is on loop `anim` at `clip_ms` from now, with
+## nothing fired: what advance() does on a loop's first frame, without its
+## lookups (a far body's gait change, in a crowd's bursts).
+func prime(skeleton: Object, anim: Object, start: float, clip_ms: float) -> void:
+	if skeleton != null and _owners.has(skeleton.get_instance_id()):
+		_state[skeleton.get_instance_id()] = [anim, start, clip_ms]
+
 func owner_of(skeleton: Object) -> Owner:
 	if skeleton == null:
 		return null
@@ -352,6 +413,9 @@ func _log(rate_key: String, line: String) -> void:
 ## Drops bodies whose skeleton has been freed (a region streamed out, a
 ## monster gone).
 func _prune() -> void:
+	for a in _sets.keys():
+		if not is_instance_valid(a):
+			_sets.erase(a)
 	for id in _owners.keys():
 		if not is_instance_valid(_owners[id][0]):
 			_owners.erase(id)

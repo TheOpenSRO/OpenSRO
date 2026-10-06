@@ -75,6 +75,15 @@ const DRIVER_META := "opensro_equip_fx_driver"
 ## world's _process at 0.
 const PROCESS_PRIORITY := 100
 
+## Round 747 (CrowdGpu, World3D sets them): a weapon's item skeleton -> its
+## frame (Transform3D) while its body is drawn far on the GPU, else null; and
+## the place the choice of the nearest measures it at.
+static var far_frame: Callable = Callable()
+static var far_origin: Callable = Callable()
+
+static func _far(skel: Node3D):
+	return far_frame.call(skel) if far_frame.is_valid() else null
+
 class Host:
 	var id: String
 	var skel: Skeleton3D
@@ -424,7 +433,13 @@ func _process(_delta: float) -> void:
 	for h in _shown:
 		if h.holder == null or not is_instance_valid(h.holder) or not h.holder.visible or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue # an own simulation places itself (EfpEffect.follow_host)
-		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale)
+		# A hidden weapon shows nothing until the next cycle chooses again.
+		if not h.skel.is_visible_in_tree():
+			h.holder.visible = false
+			continue
+		# A weapon on a far body (round 747, CrowdGpu): its skeleton is not
+		# posed, so its frame is the one the GPU draws the body at.
+		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale, _far(h.skel))
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)
 	if EfpEffect.profile:
@@ -441,8 +456,8 @@ func _process(_delta: float) -> void:
 ## SetPosition offsets (enchant_a_01: 0, -1.2 .. -4.8 along the effect's X,
 ## in its parent's frame, space 7) pointed along fixed world axes: the
 ## column of sparks beside the spear, lined up with it at one heading only.
-static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float) -> Transform3D:
-	var g: Transform3D = skel.global_transform
+static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float, frame = null) -> Transform3D:
+	var g: Transform3D = frame if frame != null else skel.global_transform
 	var at: Transform3D = g * skel.get_bone_global_pose(bone)
 	var b := at.basis.orthonormalized()
 	return Transform3D(b * (row_scale * _uniform_scale(g.basis)), at.origin)
@@ -605,6 +620,11 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 		var d := 0.0
 		if cam != null:
 			var p := h.skel.global_position
+			# A far body's weapon (round 747): its body's place.
+			if far_origin.is_valid():
+				var o = far_origin.call(h.skel)
+				if o != null:
+					p = o
 			d = from.distance_to(p)
 			if d > ALWAYS_NEAR and (d > MAX_DISTANCE or not cam.is_position_in_frustum(p)):
 				continue
@@ -663,7 +683,9 @@ func _finish_cycle() -> void:
 		h.dist = _cand_d[i]
 		h.shown_cycle = _cycle
 		_shown.append(h)
-		if (_kinds[h.key] as Kind).own:
+		# A far body's weapon draws the shared master (round 747): an own
+		# simulation follows the skeleton, which is not posed while far.
+		if (_kinds[h.key] as Kind).own and _far(h.skel) == null:
 			world_shown.append(h)
 	# The OWN_BUDGET weapons with a world-axis effect that run every such
 	# effect on its own simulation (Kind.own), a weapon's effects together.

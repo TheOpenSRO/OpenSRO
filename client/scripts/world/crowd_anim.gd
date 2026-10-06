@@ -126,12 +126,14 @@ static func pose_interval(dist: float, characters: int) -> int:
 	return 2 if dist < POSE_HALF else 4
 
 ## Sets the switches from a step's list: "1" A1, "i" the indexed pose, "3"
-## A3, "4" A4; any other text (e.g. "-") none. QA only.
+## A3, "4" A4, "5" A5 (round 747: far bodies drawn by CrowdGpu, which needs
+## A3's frames); any other text (e.g. "-") none. QA only.
 static func set_switches(list: String) -> void:
 	cull_players = list.contains("1")
 	indexed_players = list.contains("i")
 	cache_poses = list.contains("3")
 	lod_players = list.contains("4")
+	CrowdGpu.enabled = list.contains("5")
 
 static func switches() -> String:
 	var s := ""
@@ -143,6 +145,8 @@ static func switches() -> String:
 		s += "3"
 	if lod_players:
 		s += "4"
+	if CrowdGpu.enabled:
+		s += "5"
 	return s if s != "" else "-"
 
 ## One clip's poses on one skeleton layout, baked at multiples of QUANTUM_MS.
