@@ -756,3 +756,80 @@ recipient that holds this arrival.
 - The two verifier probes fail by design (N1, N2) and are not in the tree.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+## N-fix verification (`a70fd608..fcb37d3d`)
+
+An independent check of the N1-N6 fixes, in a detached worktree at `fcb37d3d`. No code was changed. Labels: MEASURED,
+READ, INFERRED.
+
+### Verdict: ship
+
+N1 to N6 are fixed. The fixes add no new bug on a path that runs today. Two follow-ups are about what the new panic
+recover does **after** some other bug panics (P1, P2). Neither can happen without a further bug, and without the
+recover that bug would end the process.
+
+| # | Verdict | Evidence (READ unless marked) |
+|---|---|---|
+| N1 crossing on a closed view | **FIXED** | `afterRelocate` reads `open` and `deps` under `v.mu` and crosses only an open view with a hub (`playerview.go:589-598`). `closedView` carries the deps as a second guard. `TestACrossingWhileTheViewIsClosedWaitsForTheArrival` passes (MEASURED). |
+| N1 panic recover | **FIXED**, see P1 and P2 | `dispatch` recovers and returns `ErrHandlerPanic`. `serveConn` returns, and the `OnDisconnect` deferred before the read loop runs, so `duelDisconnect` ... `worldDisconnect` remove the hub entity, the trade, the party and the view (`cmd/server/main.go:2139-2158`). A recovered session leaves no ghost body or stuck trade **unless a lock or a disconnect hook is left mid-way** (P1, P2). `TestAHandlerPanicEndsOnlyItsSession` checks `OnDisconnect` and a second session (MEASURED). |
+| N2 look generations | **FIXED** | The generation is stored **in** the entry and compared on load, so a store that slips in after the invalidation's bump is never served (the check-then-store gap is harmless). Epoch: the table goes in before the bump, so a read under the new epoch reads the new table. `TestALookReadBeforeAnUnequipIsNotServedAfterIt` passes (MEASURED). |
+| N2 counter growth | **OK** | `lookGens` keeps one `*atomic.Uint64` per character id ever looked up, never deleted. That is bounded by the characters table (roughly 100 bytes each), and `lookOf` is called only for player characters. The uint64 cannot wrap. |
+| N3 `forgetLeftPlayer` | **FIXED** (narrowed) | It re-reads `EntityByCharacterID` before it drops anything. A new session's `hub.Enter` that lands between that read and the delete still loses its counter. That is the original ABA, now far narrower (INFERRED, very unlikely). |
+| N4 `storeViewIfLive` | **FIXED** | Load, then `liveOn`, then CAS, in a loop. A newer session's `closePlayerView` (before its `hub.Enter`) makes the CAS fail. A stale session can then re-store its view only while it is still live, and the newer session's `arrivePlayer` replaces it after `Enter`. The stale `warpTo` branch returns before motion, berserk, `rememberPlace`, `savePosition`, depart and arrive. |
+| N4 hub `ChangeZone` | **FIXED** | `stale := byChar[id] != e`, taken before `removeLocked`. With a live entity, `byChar` and `byName` are restored to it. With none (the live one already left), the stale entity stays out of both, as it was before the change. `byChar` and `byName` cannot disagree, because `Enter`, `removeLocked` and `ChangeZone` are their only writers (`world.go:166,302-313,492-520`). Name and character lookups after a reconnect therefore stay on the live session, including after a later zone change of the live session. `insertLocked` has no other caller. `TestAStaleSessionsZoneChangeLeavesTheCharacterLive` passes (MEASURED). |
+| N5 notice with its spawn or despawn | **FIXED** | The notice is sent under the same lock and the same condition as the 0x3015 / 0x3016, only on the arrival path (`again`), never on a crossing. The F3 dedup case and the reconnect's late leave now send neither. `playerZoneNotice` is gone (grep). The notice and the spawn are two `SendFrames` calls, so another goroutine's frame can land between them. The client keys its note by uid until that uid's spawn or despawn, so this is harmless. |
+| N6 docs | **FIXED** | `pc_spawn.md` "OpenSRO's additions" and `PROTOCOL_DECISION.md`. |
+
+### Follow-ups
+
+#### P1 LOW-MEDIUM: a recovered panic under another player's view lock leaves that lock held
+
+**Where.** `gateway.go:829-833` names this case but says only that "the hub's locks are all released by defer". The
+view locks are not.
+
+- `spawnPlayerToOthersAs` (`playerview.go:396-411`) takes the recipient's `v.mu` without `defer`, and calls
+  `spawn.fresh(d)` under it. That is the record builder and its store reads.
+- `despawnPlayerFromOthers` (`:483-488`) does the same with `stillSees`.
+- `sendIfKnown` (`:194-198`) and `afterRelocate` (`:593-595`) take the lock without `defer` too.
+
+**What follows** (INFERRED). Suppose the record builder panics for one mover, which is the newest code here.
+
+1. The recover ends the mover's session.
+2. The **recipient's** view stays locked for ever.
+3. The recipient's own next crossing blocks in `afterRelocate`.
+4. Every goroutine that then sends to it blocks as well. That includes other players' handlers, monster AI workers, and
+   the status broadcast (`status.go:796` → `sendAboutOwner`).
+
+That is a slow, partial freeze with no restart. Before the recover, the same panic was a crash, which the container
+restarts.
+
+**Fix.** Put the per-recipient body in a `func` with `defer v.mu.Unlock()`.
+
+About 54 other non-deferred locks in `internal/session` carry the same caveat. Most guard a small map operation that
+cannot plausibly panic.
+
+#### P2 LOW: one recover covers the whole `OnDisconnect` chain
+
+**Where.** `gateway.go` `serveConn`, and `cmd/server/main.go:2139-2158`.
+
+**What follows** (INFERRED). A panic in `duelDisconnect`, `tradeDisconnect`, `partyDisconnect` or another early hook is
+logged, and the hooks after it are skipped. That includes `worldDisconnect`, which runs last. The hub keeps the dead
+session's entity, which is a ghost body in `bySession` and in its cells. Its partner's trade or party state is left
+too. Before the recover, the same panic was a crash.
+
+**Fix.** Recover per hook in `main.go`, so that `worldDisconnect` always runs.
+
+### Tests (MEASURED)
+
+The tests ran against a private test DB (`opensro_test_r737n`, dropped afterwards). Another lane held the shared lock.
+
+- `go build ./...` and `go vet` on the three packages: clean.
+- `go test -count=1 -p 1 ./internal/session/ ./internal/world/ ./internal/gateway/ ./internal/pcspawn/`:
+  - `ok internal/session 149.903s`
+  - `ok internal/world 0.002s`
+  - `ok internal/gateway 9.465s`
+  - `ok internal/pcspawn 0.002s`
+- `go test -race -count=2 ./internal/gateway/ ./internal/world/`:
+  - `ok internal/gateway 20.280s`
+  - `ok internal/world 1.012s`
+  - No data race.
