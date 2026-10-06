@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"syscall"
 	"time"
@@ -2141,11 +2142,22 @@ func main() {
 			// before worldDisconnect: all three look the disconnecting
 			// session up in world.Hub, which worldDisconnect removes them
 			// from.
-			duelDisconnect(sess)
-			tradeDisconnect(sess)
-			session.ForgetNPCInteraction(sess.ID())
-			guildPointsDisconnect(sess)
-			berserkDisconnect(sess)
+			// Each hook runs under its own recover (round 737's verification,
+			// P2): a panic in an early one must not skip the rest, above all
+			// worldDisconnect, or the hub keeps a ghost body.
+			step := func(name string, f func()) {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("disconnect hook panicked", "hook", name, "panic", r, "stack", string(debug.Stack()))
+					}
+				}()
+				f()
+			}
+			step("duel", func() { duelDisconnect(sess) })
+			step("trade", func() { tradeDisconnect(sess) })
+			step("npc", func() { session.ForgetNPCInteraction(sess.ID()) })
+			step("guild points", func() { guildPointsDisconnect(sess) })
+			step("berserk", func() { berserkDisconnect(sess) })
 			// The party removal first, then the match entry, as the
 			// ShardManager's logout does (SM 0x4296f0: 0x44f580 moves a
 			// leader's entry to the next leader before 0x451590 deletes a
@@ -2153,9 +2165,9 @@ func main() {
 			// reads the session's character from world.Hub, and a page built
 			// while a leader is out of the world but still in its party would
 			// otherwise skip its entry (round 713's review).
-			partyDisconnect(sess)
-			partyMatchDisconnect(sess)
-			worldDisconnect(sess)
+			step("party", func() { partyDisconnect(sess) })
+			step("party match", func() { partyMatchDisconnect(sess) })
+			step("world", func() { worldDisconnect(sess) })
 		},
 	}
 

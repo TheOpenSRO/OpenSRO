@@ -192,10 +192,10 @@ func sendIfKnown(sess *gateway.Session, recipient, owner int64, fs ...*gateway.F
 		return
 	}
 	v.mu.Lock()
+	defer v.mu.Unlock() // a recovered panic must not leave the view locked
 	if _, ok := v.known[owner]; ok && v.open {
 		_ = sess.SendFrames(fs...)
 	}
-	v.mu.Unlock()
 }
 
 // sendAboutPlayer sends fs to every client that holds owner's body -- the
@@ -393,22 +393,29 @@ func spawnPlayerToOthersAs(d viewDeps, mover world.Entity, recips []world.Entity
 		if v == nil {
 			continue // no view, or a stale session's: no spawns (F3)
 		}
-		v.mu.Lock()
-		if at, held := v.known[mover.CharacterID]; v.open && (!held || (again && at != spawn.e.Arrival)) && d.hub.Sees(r.Session.ID(), mover.Session.ID()) {
-			if spawn.version != playerStateVersion(mover.CharacterID) {
-				if spawn, ok = spawn.fresh(d); !ok {
-					v.mu.Unlock()
-					return
+		// Each recipient's lock is released by defer, so a recovered panic in
+		// the record builder (spawn.fresh) cannot leave the view locked.
+		stop := func() bool {
+			v.mu.Lock()
+			defer v.mu.Unlock()
+			if at, held := v.known[mover.CharacterID]; v.open && (!held || (again && at != spawn.e.Arrival)) && d.hub.Sees(r.Session.ID(), mover.Session.ID()) {
+				if spawn.version != playerStateVersion(mover.CharacterID) {
+					if spawn, ok = spawn.fresh(d); !ok {
+						return true
+					}
+					frames = spawnFrames(spawn)
 				}
-				frames = spawnFrames(spawn)
+				if notice != nil {
+					_ = r.Session.SendFrames(notice)
+				}
+				_ = r.Session.SendFrames(frames...)
+				v.known[mover.CharacterID] = spawn.e.Arrival
 			}
-			if notice != nil {
-				_ = r.Session.SendFrames(notice)
-			}
-			_ = r.Session.SendFrames(frames...)
-			v.known[mover.CharacterID] = spawn.e.Arrival
+			return false
+		}()
+		if stop {
+			return
 		}
-		v.mu.Unlock()
 	}
 }
 
@@ -480,12 +487,14 @@ func despawnPlayerFromOthers(d viewDeps, gone world.Entity, recips []world.Entit
 		if v == nil {
 			continue
 		}
-		v.mu.Lock()
-		if _, held := v.known[gone.CharacterID]; held && v.open && !stillSees(d.hub, r, gone) {
-			_ = r.Session.SendFrames(frame)
-			delete(v.known, gone.CharacterID)
-		}
-		v.mu.Unlock()
+		func() {
+			v.mu.Lock()
+			defer v.mu.Unlock() // a recovered panic must not leave the view locked
+			if _, held := v.known[gone.CharacterID]; held && v.open && !stillSees(d.hub, r, gone) {
+				_ = r.Session.SendFrames(frame)
+				delete(v.known, gone.CharacterID)
+			}
+		}()
 	}
 }
 
