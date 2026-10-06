@@ -225,6 +225,25 @@ func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot Sl
 	return nil
 }
 
+// SetInstance implements InstanceSetter.
+func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot Slot, inst inventory.Instance) error {
+	if !validSlot(slot) {
+		return ErrInvalidSlot
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE equipment_slots SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5
+		 WHERE character_id = $6 AND slot = $7`,
+		int64(inst.Variance), inst.Durability, int(inst.OptLevel), inventory.EncodeMagParams(inst.MagParams), int(inst.AdvElixir),
+		characterID, int(slot))
+	if err != nil {
+		return fmt.Errorf("equipment: setting the instance of slot %d: %w", slot, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrSlotEmpty
+	}
+	return nil
+}
+
 // SetFreshInstanceRoller gives the store a way to initialise worn rows
 // written before durability existed: the same roll the bag store makes for
 // a new item. Optional; without it legacy worn rows stay Untracked.

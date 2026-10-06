@@ -228,6 +228,22 @@ func (e Equipped) Instance() inventory.Instance {
 		MagParams: append([]uint64(nil), e.MagParams...), AdvElixir: e.AdvElixir}
 }
 
+// EffectivePlus is the plus other players are told the worn item carries:
+// OptLevel plus the advanced elixir, summed in a byte (round 735, READ: the
+// server's CInstanceItem::vslot_010 mode 2 at 0x42e230 writes
+// (u8)(FUN_00846200's elixir sum + OptLevel at +0x2c) for an equipment item,
+// the byte 0x3038 and the 0x3015 spawn carry).
+func (e Equipped) EffectivePlus() uint8 {
+	return e.OptLevel + e.AdvElixir
+}
+
+// InstanceSetter is a Store that can rewrite a worn item's instance in
+// place -- the GM's /item worn (round 735, OURS). Both stores implement it;
+// it is kept out of Store so the tests' small fakes need not.
+type InstanceSetter interface {
+	SetInstance(ctx context.Context, characterID int64, slot Slot, inst inventory.Instance) error
+}
+
 // SetInstance writes inst's fields onto the worn item.
 func (e *Equipped) SetInstance(inst inventory.Instance) {
 	e.Variance, e.Durability = inst.Variance, inst.Durability

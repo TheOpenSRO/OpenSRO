@@ -262,7 +262,7 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 | Character select | Retail's list carries a plus per item (`charselect.md`: u32 RefItemID, u8 plus), and the screen installs each item with it (`PSCharacterSelect::FUN_0085a580` -> `InstallEquipVisual(slot, id, plus, 0)`), so it glows. | READ (round 734) |
 | Portrait / paper doll | Not checked | OPEN 10 |
 | Sheathed or drawn | SRO has no sheathing. The weapon is always in the hand. | INFERRED |
-| Advanced elixir | Round 732 READ that the client adds the elixir's value into the item's `+0x8c` plus. Whether the byte in `CObjCharacter+0x3c+slot*0xc` is that sum for your own character, and whether the server's `0x3038` byte includes it, are not read. | OPEN 2 |
+| Advanced elixir | Round 732 READ that the client adds the elixir's value into the item's `+0x8c` plus. **Round 735 READ: the server's `0x3038` and `0x3015` byte includes it.** `CInstanceItem::vslot_010` (`s:0x42e230`) mode 2 writes, for equipment, `(u8)(FUN_00846200's elixir sum + OptLevel at +0x2c)` (`s:0x846200` adds each attached elixir's `+0x2c`). Your own character's `CObjCharacter+0x3c+slot*0xc` byte is that sum too (round 735's review, §8 item 2). | READ (round 735) |
 | Avatar / switch models | `_SWITCHnn` items are separate RefIDs with their own rows. They are not chosen by plus. | MEASURED |
 
 ## 5. The data path
@@ -270,23 +270,40 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 ### Retail (READ)
 
 - **Equip changes** (`0x3038`, handler `FUN_008a9260`): u32 unique id, u8 slot, u32 RefItemID, then
-  **u8 OptLevel**. The OptLevel is present only for equipment, that is when the type word has
+  **u8 plus**, the effective one: OptLevel + the advanced elixir (round 735, READ in the server:
+  `0x4e9de2` writes the uid at `[ebp+8]`, the move's destination slot `[edi+4]`, then the item's
+  vslot 294 at mode 2 -> `CInstanceItem::vslot_010` `0x42e230`: `FUN_004958c0(+0x28)` the RefItemID,
+  then the plus byte). The client reads its slot byte into a variable the RefItemID overwrites, and
+  redresses by `ResolveVisualSlotForItem`. The server sends it only for an item
+  `FUN_00490390` passes (READ, round 735's review: the item is equipment, `CGObj::IsEquip`, and
+  its equip slot is 8 or less, or it is an avatar, TypeID3 13, or a devil's spirit, TypeID3 14),
+  through `FUN_00484d90`, a region-scoped send that reaches the mover too (both client handlers
+  have an own-uid branch updating the character window and preview). The OptLevel is present only for equipment, that is when the type word has
   `!(w & 2) && (b & 0x1c) == 0xc && (b & 0x60) == 0x20`. The handler calls the equip setter
   `FUN_009daf70(…, refId, plus, 0)` and plays `ITEM_SETITEM_ACTIVE` / `_DEACTIVE` with
   `snd_setitem_active`.
-- **Unequip** (`0x3039`) goes to `FUN_008a9560`.
-- **Spawning another player** (`0x3015`): the per-item plus is OPEN 3 (not read this round).
+- **Unequip** (`0x3039`) goes to `FUN_008a9560`: u32 unique id, u8 slot, u32 RefItemID, no plus
+  (round 735, READ; the server writes it at `0x4e9f98`, gated by `FUN_00490390`, and at
+  `0x4e9d03`, the move-type-7 path, not gated, slots 0..12: uid, the move's source slot `[edi+3]`,
+  the item's RefItemID from its vslot 1). Unlike `0x3038`'s handler it uses its slot byte:
+  `FUN_009daf70(slot, 0, 0, 0)` clears that slot.
+- **Spawning another player** (`0x3015`, round 735 READ, closes OPEN 3): the PC body reader
+  `GlobalDataManager::FUN_009de2f0` (CICUser vslot 25, table `0xde2e7c`) reads u8 inventory size,
+  u8 item count, then per item u32 RefItemID and, for equipment by the same type-word test, **u8
+  plus**; the avatar block follows. The server writes it with `CGObjPC::vslot_294` (`0x4e5a10`) mode 2
+  -> `GStorage::FUN_004b8ad0` -> each item's `CInstanceItem::vslot_010` mode 2, the same effective plus
+  as `0x3038`.
 - **Your own gear**: the item record (round 732) carries OptLevel at `+0x8c`.
 
 ### OpenSRO today (MEASURED in the tree)
 
 | Path | What it carries | File |
 |---|---|---|
-| `OP_ENTITY_ENTERED 0x0023` and the snapshot in the enter-world/zone lists | per worn slot: u8 slot + s64 item id, **no plus**. The list sits *before* the gender, so a per-item field cannot be added in place without breaking older decoders. | `server/internal/session/equipment.go` `EquippedSnapshot`, `world.go` `EncodeEntered`; `client/scripts/net/world.gd` ~l.205 |
-| Equip changes seen by others | **None found**: `equipment.go` sends no broadcast, and only enter-world and region crossing send `OpEntityEntered` | `server/internal/session/equipment.go`, `world.go` 1383/1504 |
+| `OP_ENTITY_ENTERED 0x0023` and the snapshot in the enter-world/zone lists | per worn slot: u8 slot + s64 item id; **since round 735 each worn item's effective plus in a trailing pluses tail** (u8 count, then u8 slot + u8 plus per item with a plus; OURS framing, retail content), after `EncodeEntered`'s model and after the results' models tail | `server/internal/session/world.go` (`encodePlusesList`, `appendPluses`); `client/scripts/net/world.gd` (`_decode_pluses`, `EntitySnapshot.pluses`) |
+| Equip changes seen by others | **Round 735: retail `0x3038` / `0x3039`** to the other characters in the zone on every equip and unequip, and a `0x3038` on the GM's `/item worn <slot> plus N` (OURS: retail changes no worn item's plus) | `server/internal/session/equip_broadcast.go`; `client/scripts/net/equipment.gd` (`decode_broadcast`), `net_client.gd` (`other_player_equipment_changed`), `World3D.gd` (`_on_other_equipment_changed`, `_redress_other`, `_other_pluses`) |
 | Own equipment list `0x0040–0x0043` (OURS) | the item record with OptLevel and the advanced elixir (round 732) | `equipment.go`; `client/scripts/net/equipment.go` |
 | Char select list | plus per item | `charselect.md` |
-| Test plus values | `/give <id> [qty] [plus]` and `/item <slot> plus N` (GM, OURS, round 732) | `server/internal/gm/gm.go` |
+| Test plus values | `/give <id> [qty] [plus]` and `/item <slot> plus N` (GM, OURS, round 732); `/item worn <equip slot> plus N` / `adv N` on a worn item (round 735) | `server/internal/gm/gm.go` |
 | QA dress | `OPENSRO_QA_EQUIP="slot=item_id,…"`, no plus | `World3D.gd` `_parse_qa_equip` |
 
 ## 6. Options and gating
@@ -319,7 +336,7 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
    `FUN_008ba570` hands `InstallEquipVisual` (0xa61010) the item's `+0x8c` byte, which the record
    reader fills with OptLevel + the advanced elixir (c:0x8bb070), a u8. Others: `0x3038`'s byte. The
    server's `0x3038` value is lane B's.
-3. **`0x3015` per-item OptLevel** for spawned players: lane B.
+3. **`0x3015` per-item OptLevel**: closed in round 735 (§5): u32 RefItemID + u8 effective plus per equipment item, `0x9de2f0`.
 4. **The two compound parts** that `FUN_00a60a90` passes: still OPEN. OpenSRO glows every mesh of the
    item (both `_l`/`_r` models of a dual weapon) and puts each particle row on the first item skeleton
    carrying its bone.
@@ -445,3 +462,13 @@ Acceptance:
 - No perf gate (no drawing change).
 
 Lane B can run in parallel with lane A. Until B lands, A uses the QA hook and your own character.
+
+**Lane B as built (round 735, `docs/rounds/r735.md`).** What lane A consumes:
+- `WorldNet.EntitySnapshot.pluses` (slot -> effective plus; `plus_in(slot)`), filled from the pluses
+  tail of `OpEntityEntered`, `OpEnterWorldResult` and `OpChangeZoneResult`.
+- `World3D._other_pluses[character_id]` (slot -> plus), kept from every snapshot and every `0x3038`.
+- `NetClient.other_player_equipment_changed(uid, slot, ref_id, plus)`: `uid` is the u32 (the low 32
+  bits of the character id; `World3D._other_by_uid` resolves it), `plus` -1 on an unequip.
+- `World3D._redress_other(character_id)` rebuilds the body with `_build_assembled_character(equipped,
+  body, scale)`; when lane A gives that builder the pluses, this is the one other caller to pass
+  `_other_pluses[character_id]` from (and `_spawn_or_update_other`'s callers, from `snapshot.pluses`).

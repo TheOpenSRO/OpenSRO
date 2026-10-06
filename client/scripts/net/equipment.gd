@@ -141,6 +141,44 @@ static func decode_result(data: PackedByteArray) -> Result:
 		result.instances = ItemInstance.decode_block(data, offset + 2 + 12 * result.durabilities.size())
 	return result
 
+## Retail's equipment-change broadcasts (round 735; server
+## session/equip_broadcast.go): another player put an item on or took one off.
+## READ in both binaries -- the client's FUN_008a9260 (0x3038) and
+## FUN_008a9560 (0x3039), the server's 0x4e9de2 / 0x4e9d03 / 0x4e9f98:
+##   0x3038  u32 uid, u8 slot, u32 RefItemID, u8 plus (equipment only)
+##   0x3039  u32 uid, u8 slot, u32 RefItemID
+## The plus is the effective one, OptLevel + the advanced elixir
+## (CInstanceItem::vslot_010 mode 2, 0x42e230). The 0x3038 handler ignores
+## its slot byte (overwritten by the RefItemID; the slot comes from the item's
+## type); the 0x3039 handler clears the message's slot (FUN_009daf70(slot,
+## 0, 0, 0)), so OpenSRO's client keys both by the slot byte, which for 0x3038
+## is the same equip slot. OpenSRO also sends a 0x3038 when a GM changes a
+## worn item's plus (OURS).
+const OP_EQUIP_BROADCAST := 0x3038   # server -> client
+const OP_UNEQUIP_BROADCAST := 0x3039 # server -> client
+
+## One 0x3038 or 0x3039. `plus` is -1 when no plus byte came (a 0x3039, or a
+## non-equipment item's 0x3038).
+class Broadcast:
+	var uid: int
+	var slot: int
+	var ref_item_id: int
+	var plus: int = -1
+
+## Decodes either broadcast; null when cut short. Retail's client reads the
+## plus byte when the item's type word says equipment; OpenSRO's server writes
+## it by the same rule, so its presence is read from the length here.
+static func decode_broadcast(data: PackedByteArray) -> Broadcast:
+	if data.size() < 9:
+		return null
+	var b := Broadcast.new()
+	b.uid = data.decode_u32(0)
+	b.slot = int(data[4])
+	b.ref_item_id = data.decode_u32(5)
+	if data.size() >= 10:
+		b.plus = int(data[9])
+	return b
+
 ## Repair opcodes (session/repair.go). An NPC's repair buttons: restore a
 ## worn slot, or all worn items, to full durability for gold.
 const OP_REPAIR := 0x007a        # client -> server

@@ -9,6 +9,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gm"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
@@ -284,6 +285,16 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// after the GM's own reply.
 		if out.Notice != "" {
 			BroadcastNotice(hub, out.Notice)
+		}
+		// A worn item's new plus (/item worn, round 735) reaches the zone as
+		// a 0x3038 of the same item (equip_broadcast.go, OURS: retail changes
+		// no worn item's plus).
+		for _, slot := range out.WornChanged {
+			var items ItemLookup
+			if deps.Items != nil {
+				items = deps.Items
+			}
+			broadcastWorn(ctx, hub, deps.Equip, items, characterID, equipment.Slot(slot))
 		}
 		// A GM /spawn is pushed to the whole zone, the GM included, after the
 		// GM's own reply (round 542, behind -monster-spawn-push; off, nothing

@@ -176,6 +176,9 @@ type Result struct {
 	// Notice is /notice's text, for the session layer to broadcast to every
 	// character as a chat type-7 line (round 634, session.BroadcastNotice).
 	Notice string
+	// WornChanged are the equip slots whose worn item /item worn changed,
+	// for the session layer to show the zone (retail 0x3038, round 735).
+	WornChanged []int
 }
 
 // LevelUp mirrors the combat path's level-up announcement.
@@ -575,10 +578,64 @@ func (d *Deps) give(ctx context.Context, actor Actor, args []string) Result {
 // itemUsage is /item's: a GM test hook (OURS, round 732) for an item's own
 // data -- the plus, the white-stat variance, the blue options and the
 // advanced elixir -- until drops, alchemy and the elixirs set them.
-const itemUsage = "usage: /item <bag slot> plus <n> | var <u64> | quality <0-31> | opt <option id> <value> | adv <n> | clear"
+const itemUsage = "usage: /item <bag slot> plus <n> | var <u64> | quality <0-31> | opt <option id> <value> | adv <n> | clear; /item worn <equip slot 0-12> plus <n> | adv <n>"
+
+// itemWornUsage is /item worn's (round 735, OURS): a worn item's plus or
+// advanced elixir, changed in place so the zone sees the new plus (retail's
+// 0x3038 of the same item, session/equip_broadcast.go).
+const itemWornUsage = "usage: /item worn <equip slot 0-12> plus <n> | adv <n>"
+
+// itemWorn edits a worn item's plus or advanced elixir.
+func (d *Deps) itemWorn(ctx context.Context, actor Actor, args []string) Result {
+	if len(args) != 3 {
+		return refuse(itemWornUsage)
+	}
+	slot, err := strconv.Atoi(args[0])
+	if err != nil || slot < int(equipment.SlotHelm) || slot > int(equipment.SlotRingRight) {
+		return refuse(itemWornUsage)
+	}
+	v, err := strconv.ParseUint(args[2], 0, 8)
+	if err != nil {
+		return refuse(itemWornUsage)
+	}
+	setter, ok := d.Equip.(equipment.InstanceSetter)
+	if d.Equip == nil || !ok {
+		return refuse("no equipment store that can change a worn item")
+	}
+	worn, err := d.Equip.Get(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("reading the worn items failed: " + err.Error())
+	}
+	var found *equipment.Equipped
+	for i := range worn {
+		if int(worn[i].Slot) == slot {
+			found = &worn[i]
+		}
+	}
+	if found == nil {
+		return refuse(fmt.Sprintf("nothing worn in slot %d", slot))
+	}
+	inst := found.Instance()
+	var what string
+	switch strings.ToLower(args[1]) {
+	case "plus":
+		inst.OptLevel, what = uint8(v), fmt.Sprintf("plus %d", v)
+	case "adv":
+		inst.AdvElixir, what = uint8(v), fmt.Sprintf("advanced elixir +%d", v)
+	default:
+		return refuse(itemWornUsage)
+	}
+	if err := setter.SetInstance(ctx, actor.CharacterID, equipment.Slot(slot), inst); err != nil {
+		return refuse("setting the worn item failed: " + err.Error())
+	}
+	return Result{Text: fmt.Sprintf("worn slot %d: %s", slot, what), RefreshEquipment: true, WornChanged: []int{slot}}
+}
 
 // item edits one bag slot's instance.
 func (d *Deps) item(ctx context.Context, actor Actor, args []string) Result {
+	if len(args) > 0 && strings.EqualFold(args[0], "worn") {
+		return d.itemWorn(ctx, actor, args[1:])
+	}
 	if len(args) < 2 {
 		return refuse(itemUsage)
 	}
