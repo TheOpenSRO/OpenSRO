@@ -35,6 +35,9 @@ class_name QaCrowdProbe
 ##   net      every body sent a position packet once a second (OPENSRO_QA_CROWD_NET_RATE
 ##            a body a second, 1; `net20` sends 20 a body a second), through NetClient's own dispatch: the client's
 ##            share of a moving crowd's traffic (decode, handler, turn, walk)
+##   dest     (round 749) as net, but each packet is retail's 0xB021 to a spot
+##            within 8 units of the body's home: the walk is OtherWalk's leg
+##            (`dest20`: 20 a body a second)
 ##   away     the camera turned 180 degrees: the crowd behind it, none in view
 ##            (what an off-screen crowd costs)
 ##   gone     every body out of the tree (kept in memory): the scene without them
@@ -285,6 +288,8 @@ func _process(delta: float) -> void:
 	var now := Time.get_ticks_usec()
 	if steps[_i].begins_with("net"):
 		_net_step(delta, float(steps[_i].substr(3)) if steps[_i].substr(3).is_valid_float() else net_rate)
+	elif steps[_i].begins_with("dest"):
+		_net_step(delta, float(steps[_i].substr(4)) if steps[_i].substr(4).is_valid_float() else net_rate, true)
 	if steps[_i].split("+")[0] == "move":
 		_move_t += delta
 		if _move_t >= 1.0:
@@ -363,7 +368,7 @@ func _report() -> void:
 		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), CrowdAnim.switches(), CrowdAnim.baked_frames,
 		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line, gpu_line])
 	print(split_line(steps[_i], _split_at, FrameSplit.snapshot(), _prof_at, EfpEffect.prof, f))
-	if steps[_i].begins_with("net"):
+	if steps[_i].begins_with("net") or steps[_i].begins_with("dest"):
 		var sent := _net_sent - int(_acc["net_sent"])
 		print("QA CROWD net: %d packets in %d frames, %.2f ms a frame in NetClient._dispatch, %.1f us a packet" % [
 			sent, int(f), float(_net_us - int(_acc["net_us"])) / 1000.0 / f, float(_net_us - int(_acc["net_us"])) / maxf(float(sent), 1.0)])
@@ -404,7 +409,7 @@ func _switch(step: String, off: bool) -> void:
 		for part in step.split("+", false):
 			_switch(part, off)
 		return
-	if step.begins_with("net"):
+	if step.begins_with("net") or step.begins_with("dest"):
 		step = "net"
 	if step.begins_with("anim="):
 		CrowdAnim.set_switches(step.substr(5) if off else _boot_switches)
@@ -610,14 +615,33 @@ static func _box_arg(r: Rect2) -> String:
 
 ## The position packets due this frame, round robin over the bodies, each a
 ## new spot within 8 units of its home, through NetClient's own dispatch.
-func _net_step(delta: float, rate: float) -> void:
+func _net_step(delta: float, rate: float, dest := false) -> void:
 	_net_due += delta * rate * bodies.size()
 	var t0 := Time.get_ticks_usec()
+	# The 0xB021's frame: the connection's, else the grid's centre region
+	# (an offline run has none; the client reads the packet back in it).
+	if dest and NetClient._spawn_frame.x < 0:
+		NetClient._spawn_frame = Vector2i(97, 168)
 	while _net_due >= 1.0 and not bodies.is_empty():
 		_net_due -= 1.0
 		var b: Dictionary = bodies[_net_next % bodies.size()]
 		_net_next += 1
 		var home: Vector3 = _homes[b["id"]]
+		if dest:
+			var to := home + Vector3(_rng.randf_range(-8.0, 8.0), 0.0, _rng.randf_range(-8.0, 8.0))
+			var l := DestMoveNet.local_of_world(to.x, to.z, NetClient._spawn_frame)
+			var echo := PackedByteArray()
+			echo.resize(14)
+			echo.encode_u32(0, int(b["id"]) & 0xffffffff)
+			echo[4] = DestMoveNet.KIND_DESTINATION
+			echo.encode_u16(5, int(l["region"]))
+			echo.encode_s16(7, int(float(l["lx"])))
+			echo.encode_s16(9, int(home.y))
+			echo.encode_s16(11, int(float(l["lz"])))
+			echo[13] = 0
+			NetClient._dispatch(Packet.new(DestMoveNet.OP_MOVEMENT_ECHO, echo))
+			_net_sent += 1
+			continue
 		var payload := PackedByteArray()
 		payload.resize(21)
 		payload.encode_s64(0, int(b["id"]))
