@@ -211,8 +211,10 @@ func TestSeatedCastRefusedFollowsTheGate(t *testing.T) {
 }
 
 // A player who enters after Aria sat down, or changes zone into hers, is told
-// so IN the result that spawns her body (round 607's review: a separate 0x30bf
-// after the list reached the client before the world scene, or the new zone's
+// so IN the spawn that makes her body: her record's motion byte is SIT (round
+// 737, where retail carries it -- chardata[2], GObjPC::FUN_004a9b70; until
+// then the result's Seated list, round 607's review: a separate 0x30bf after
+// the list reached the client before the world scene, or the new zone's
 // bodies, existed).
 func TestLateArrivalHearsWhoIsSeated(t *testing.T) {
 	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
@@ -225,21 +227,25 @@ func TestLateArrivalHearsWhoIsSeated(t *testing.T) {
 	// Bram re-enters the world.
 	f.send(t, f.connB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode())
 	p := f.read(t, f.connB, f.rB)
-	ewr, err := DecodeEnterWorldResult(p.Data)
-	if p.Opcode != OpEnterWorldResult || err != nil || len(ewr.Seated) != 1 || ewr.Seated[0] != f.aria {
-		t.Fatalf("Bram's enter-world result: %#04x %+v (err %v), want Seated [Aria %d]", p.Opcode, ewr, err, f.aria)
+	if _, err := DecodeEnterWorldResult(p.Data); p.Opcode != OpEnterWorldResult || err != nil {
+		t.Fatalf("Bram's enter-world result: %#04x (err %v)", p.Opcode, err)
+	}
+	if got := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0].Motion; got != MotionSit {
+		t.Fatalf("Bram's spawn of Aria has motion %d, want SIT %d", got, MotionSit)
 	}
 	if !f.nothing(t, f.connB, f.rB) {
-		t.Error("a separate packet followed the enter-world result; the seated state belongs in it")
+		t.Error("a separate packet followed the spawn; the seated state belongs in it")
 	}
 	// Bram leaves for another zone and comes back into Aria's.
 	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK || len(czr.Seated) != 0 {
 		t.Fatalf("change to donwhang: %+v, want OK with nobody seated", czr)
 	}
 	f.nothing(t, f.connA, f.rA) // drain Aria's notice of Bram leaving (not asserted)
-	czr := changeZone(t, f, f.connB, f.rB, "jangan")
-	if !czr.OK || len(czr.Seated) != 1 || czr.Seated[0] != f.aria {
-		t.Fatalf("change back to jangan: %+v, want Seated [Aria %d]", czr, f.aria)
+	if czr := changeZone(t, f, f.connB, f.rB, "jangan"); !czr.OK {
+		t.Fatalf("change back to jangan: %+v", czr)
+	}
+	if got := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0].Motion; got != MotionSit {
+		t.Fatalf("back in jangan, Bram's spawn of Aria has motion %d, want SIT %d", got, MotionSit)
 	}
 }
 

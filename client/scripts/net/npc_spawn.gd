@@ -17,8 +17,9 @@ class_name NpcSpawnNet
 ## - OpNpcFacingUnknown 0x00B6 (OURS): the uids about to be spawned whose angle
 ##   is not their nest's; World3D faces those by NpcFacing.
 ##
-## Only the CICNPC record is read: every object OpenSRO's server sends this
-## way is an NPC (TypeID 1,2,2,x), and a record of another class would read
+## This reader takes the CICNPC record. Since round 737 the server sends the
+## other players the same way, with a CICUser record (UserSpawnNet, whose
+## read_group takes both by RefObjID); a record of another class would read
 ## wrong, so a decode error drops the group and says so.
 
 const OP_SINGLE_SPAWN := 0x3015
@@ -190,6 +191,17 @@ class Group:
 	func append(data: PackedByteArray) -> void:
 		if open:
 			buffer.append_array(data)
+
+	## Ends the group and returns its buffer (the 0x3017's three bytes, then
+	## the 0x3019s), empty for a 0x3018 with no 0x3017 -- for a reader that
+	## takes every class of record (round 737, UserSpawnNet.read_group).
+	func take() -> PackedByteArray:
+		if not open:
+			return PackedByteArray()
+		open = false
+		var out := buffer
+		buffer = PackedByteArray()
+		return out
 
 	## Ends the group: {"kind": 1|2, "records": Array[Record], "uids":
 	## Array[int], "error": String}.

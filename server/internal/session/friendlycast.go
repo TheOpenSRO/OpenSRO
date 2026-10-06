@@ -197,7 +197,7 @@ func announceCast(hub *world.Hub, casterID int64, req *UseSkillRequest, ref *ref
 	if !inWorld {
 		return
 	}
-	sendToAll(othersInZone(hub, casterID), OpSkillCast, msg.Encode())
+	sendAboutOwner(othersInZone(hub, casterID), casterID, OpSkillCast, msg.Encode())
 	act := msg
 	act.Phase = CastPhaseAct
 	send := func() {
@@ -210,7 +210,7 @@ func announceCast(hub *world.Hub, casterID int64, req *UseSkillRequest, ref *ref
 		if !ok || now.Life != world.LifeAlive || now.Arrival != started.Arrival || now.Zone != started.Zone {
 			return
 		}
-		sendToAll(othersInZone(hub, casterID), OpSkillCast, act.Encode())
+		sendAboutOwner(othersInZone(hub, casterID), casterID, OpSkillCast, act.Encode())
 	}
 	if d := castActDelay(ref); d > 0 {
 		castAfter(d, send)

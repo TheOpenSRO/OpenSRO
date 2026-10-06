@@ -86,7 +86,7 @@ func TestRound653AHeadingRunIsRelayedWithItsHeading(t *testing.T) {
 
 	e0, _ := w.hub.EntityByCharacterID(w.aria.id)
 	// The run faces +x (heading pi/2); the step itself goes toward +z, so a
-	// heading taken from the step (MoveFacing) would be 0, not pi/2.
+	// heading taken from the step (MoveWalk) would be 0, not pi/2.
 	wire := proto.EncodeMovementAngle(world.WireAngle(math.Pi / 2))
 	w.aria.send(t, OpMove, (&MoveRequest{X: float32(e0.Pos.X), Y: 0, Z: float32(e0.Pos.Z) + 20,
 		Run: true, RunCommand: proto.MovementCommandForward, RunAngle: wire}).Encode())

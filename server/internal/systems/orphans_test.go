@@ -66,8 +66,9 @@ var knownOrphans = map[string]string{
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
 		"world before any player, so a player always meets them in a group spawn and the server never sends this " +
 		"(docs/protocol/npc_spawn.md); kept with its golden test so both sides hold the layout.",
-	"SingleDespawn": "round 708: the retail 0x3016 payload. OpenSRO's NPCs never leave a block (they are static), " +
-		"so only the group despawn is sent; kept with its golden test, as SingleSpawn.",
+	"EncodeEntered": "round 737: OpEntityEntered is no longer sent -- the players in view arrive as retail's " +
+		"0x3015 / group spawns (docs/protocol/pc_spawn.md) -- but the client still decodes the payload from an " +
+		"older server, and the golden tests that pin it for client/scripts/net/world_test.gd encode it with this.",
 	"HeadingOf": "round 708: the client's heading of a spawn's angle (FUN_009c3a70 + FUN_009c40b0), the READ " +
 		"chain written down and tested end to end (TestWireAngleRoundTrip, TestCardinalAngles); the server sends " +
 		"the angle, the client applies it.",

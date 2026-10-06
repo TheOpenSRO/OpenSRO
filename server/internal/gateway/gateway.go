@@ -6,9 +6,9 @@ package gateway
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -97,6 +97,7 @@ type Session struct {
 	debt                    time.Duration
 	timeout, budget, window time.Duration
 	queueLimit              int
+	coalesce                time.Duration
 	// The send accounting's own record, for the disconnect line and the peak
 	// lines (round 656's third review; round 662 adds the queue): the highest
 	// debt reached, the longest single write, the bytes written, the most
@@ -170,6 +171,20 @@ var (
 // batch). The limit is about 8x that burst -- what a client frozen 4 s with
 // the kernel holding nothing would have queued -- and 20x the queue's peak.
 var SendQueueLimit = 2 << 20
+
+// SendCoalesce is how long a session's writer, woken to fewer than
+// coalesceBytes queued, waits for more frames before its one write (round
+// 737, crowd_scale.md C2). OURS, chosen from a measurement: at 1000 players
+// in one block each moving once a second, every client is sent ~1000
+// 26-byte moves a second, and with no wait each woke its writer for a write
+// of its own -- 70% of the server's CPU in the write syscall (round 737's
+// profile). 2 ms is far under a frame (16.7 ms) and under the move rate's
+// 50 ms. A variable so a test can change it; 0 writes at once.
+var SendCoalesce = 2 * time.Millisecond
+
+// coalesceBytes is the queue size from which the writer writes at once.
+// OURS: about three MTU-sized TCP segments.
+const coalesceBytes = 4 << 10
 
 // SendBurstWindow is the window the "burst" figure in the session's
 // disconnect line is measured over: the most bytes Sent to the session within
@@ -283,6 +298,57 @@ func (s *Session) Send(p *proto.Packet) error {
 // nothing: a payload too large for one frame refuses the whole batch before
 // anything is queued.
 func (s *Session) SendBatch(ps ...*proto.Packet) error {
+	return s.enqueue(ps, nil)
+}
+
+// Frame is one packet encoded once for many sessions (round 737,
+// crowd_scale.md C2, OURS): a broadcast's payload and header are built once
+// per event, not once per recipient. A session with no per-session security
+// (SetSecurity never called -- every production session today) queues the
+// encoded bytes as they are; one with security draws its own rolling byte and
+// checksum for the frame, as Send does.
+type Frame struct {
+	p    proto.Packet
+	wire []byte
+}
+
+// NewFrame encodes p once. It refuses a payload too large for one frame, as
+// Send does. The payload is copied.
+func NewFrame(p *proto.Packet) (*Frame, error) {
+	if len(p.Data) > proto.MaxPayload {
+		return nil, fmt.Errorf("proto: payload of %d bytes too large for a single frame", len(p.Data))
+	}
+	f := &Frame{p: proto.Packet{Opcode: p.Opcode, Data: append([]byte(nil), p.Data...)}}
+	var b bytes.Buffer
+	b.Grow(6 + len(p.Data))
+	_ = proto.Write(&b, &f.p, nil, nil)
+	f.wire = b.Bytes()
+	return f, nil
+}
+
+// MustFrame is NewFrame for a payload the caller knows fits (a fixed-size
+// message); it panics otherwise.
+func MustFrame(p *proto.Packet) *Frame {
+	f, err := NewFrame(p)
+	if err != nil {
+		panic(err)
+	}
+	return f
+}
+
+// Opcode is the frame's opcode.
+func (f *Frame) Opcode() uint16 { return f.p.Opcode }
+
+// Payload is the frame's payload; the caller must not change it.
+func (f *Frame) Payload() []byte { return f.p.Data }
+
+// SendFrames queues pre-encoded frames as one batch, as SendBatch does.
+func (s *Session) SendFrames(fs ...*Frame) error {
+	return s.enqueue(nil, fs)
+}
+
+// enqueue is SendBatch and SendFrames: ps then fs, as one batch.
+func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 	for _, p := range ps {
 		if len(p.Data) > proto.MaxPayload {
 			return fmt.Errorf("proto: payload of %d bytes too large for a single frame", len(p.Data))
@@ -318,6 +384,9 @@ func (s *Session) SendBatch(ps ...*proto.Packet) error {
 	for _, p := range ps {
 		size += 6 + len(p.Data)
 	}
+	for _, f := range fs {
+		size += len(f.wire)
+	}
 	if pending := len(s.out) + s.inFlight; s.queueLimit > 0 && pending > 0 && pending+size > s.queueLimit {
 		s.stallLocked("queue")
 		s.outMu.Unlock()
@@ -329,6 +398,13 @@ func (s *Session) SendBatch(ps ...*proto.Packet) error {
 		// Writing into the queue's own buffer cannot fail; the size was
 		// checked above.
 		_ = proto.Write(w, p, sendRoll, sendSum)
+	}
+	for _, f := range fs {
+		if sendRoll == nil && sendSum == nil {
+			s.out = append(s.out, f.wire...)
+		} else {
+			_ = proto.Write(w, &f.p, sendRoll, sendSum)
+		}
 	}
 	added := len(s.out) - before
 	s.queued += int64(added)
@@ -360,6 +436,7 @@ func (w queueWriter) Write(b []byte) (int, error) {
 // startWriter makes the session's queue and starts its writer goroutine.
 func (s *Session) startWriter() {
 	s.timeout, s.budget, s.window, s.queueLimit = SendTimeout, SendBlockBudget, SendBlockWindow, SendQueueLimit
+	s.coalesce = SendCoalesce
 	s.outCond = sync.NewCond(&s.outMu)
 	s.writerDone = make(chan struct{})
 	go s.writeLoop()
@@ -371,7 +448,7 @@ func (s *Session) startWriter() {
 const writerKeepCap = 64 << 10
 
 // writeLoop is the session's writer: it takes everything queued, writes it
-// out a frame per write (writeFrames), and repeats, until the session closes
+// out in one write (writeFrames, round 737), and repeats, until the session closes
 // and the queue is empty or the connection fails. The deadline for what it
 // took is SendTimeout capped by what is left of the blocking budget (round
 // 656), one deadline for all those frames; a write that times out, or one
@@ -383,6 +460,15 @@ func (s *Session) writeLoop() {
 		s.outMu.Lock()
 		for len(s.out) == 0 && !s.closing {
 			s.outCond.Wait()
+		}
+		// Round 737 (crowd_scale.md C2): a writer woken to a short queue
+		// lingers SendCoalesce for more before it writes, so a crowd's
+		// stream of small broadcasts -- a move is 26 bytes -- goes out
+		// several to a syscall rather than one.
+		if s.coalesce > 0 && len(s.out) < coalesceBytes && !s.closing && !s.stalled.Load() {
+			s.outMu.Unlock()
+			time.Sleep(s.coalesce)
+			s.outMu.Lock()
 		}
 		if len(s.out) == 0 || s.stalled.Load() {
 			// Closing with nothing left to write, or given up: the queue is
@@ -482,41 +568,23 @@ func (s *Session) writeLoop() {
 	}
 }
 
-// writeFrames writes buf, whole encoded frames, one frame per write, and
-// returns the bytes written. Not one write for the lot (round 662's live
-// check, MEASURED): the client (packet_reader.gd) reads a frame's payload
-// only once all of it is in its socket's receive buffer, and over loopback a
-// single large write arrives as a few large segments whose kernel memory
-// (truesize) is charged in full until each is read to its end. After the
-// return to Jangan -- ~1,250 monsters' enters, legs, then three 32 KB list
-// pages -- the client's receive buffer was full (skmem r137152 of rb138172)
-// holding 31,250 bytes, short of the 32,735-byte page it waited for, the
-// window was shut, and neither side moved again.
-//
-// A frame per write MITIGATES that wedge; it does not fix it (round 662's
-// review). It keeps a frame in segments of its own only while the socket's
-// send queue is drained: once it is backlogged -- the client's window shut,
-// as it is while a load freezes the client -- Linux's tcp_sendmsg appends
-// each new write into the unsent tail skb, up to its size goal (~64 KB over
-// loopback), so frames coalesce into large segments however they were
-// written, and the same wedge can recur. The fix is the client's, and it is
-// done: since round 663 packet_reader.gd reads what is available into its
-// own buffer on every poll, whatever sizes the segments come in.
+// writeFrames writes buf, whole encoded frames, in ONE write: the whole queue
+// the writer took (round 737, crowd_scale.md C2, OURS). Round 662 wrote one
+// frame per write (MEASURED then: the client read a frame's payload only once
+// all of it sat in its socket's receive buffer, and over loopback one large
+// write arrived as a few large segments whose kernel memory filled that buffer
+// short of the 32 KB page the client waited for -- the wedge). That was the
+// client's to fix, and it is fixed: since round 663 packet_reader.gd reads
+// whatever is available into its own buffer on every poll, whatever sizes
+// the segments come in. The frame-per-write mitigation then cost the server
+// one syscall per frame -- round 736 MEASURED 79% of the server's CPU at 1000
+// players in one place in `write` under this function -- so a drain is one
+// write again. net.Conn.Write writes all of buf or returns an error.
 func writeFrames(w io.Writer, buf []byte) (int, error) {
-	written := 0
-	for len(buf) >= 6 {
-		size := 6 + int(binary.LittleEndian.Uint16(buf)&proto.MaxPayload)
-		if size > len(buf) {
-			size = len(buf)
-		}
-		n, err := w.Write(buf[:size])
-		written += n
-		if err != nil {
-			return written, err
-		}
-		buf = buf[size:]
+	if len(buf) == 0 {
+		return 0, nil
 	}
-	return written, nil
+	return w.Write(buf)
 }
 
 // dropLocked frees the queue; outMu is held.

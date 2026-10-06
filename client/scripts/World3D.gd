@@ -1736,6 +1736,9 @@ func _ready() -> void:
 
 	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
+	# The other players' spawn records are read by the item table (round
+	# 737, UserSpawnNet): the spawns that came before it are read now.
+	NetClient.set_spawn_item_rows(_item_rows)
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
 	# The readers' own time so far, by function (round 667, ParseProfile;
 	# OPENSRO_PARSE_PROFILE=1): boot and these tables, then a fresh window

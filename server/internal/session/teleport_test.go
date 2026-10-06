@@ -160,10 +160,11 @@ func newTeleportRig(t *testing.T, o teleportRigOpts) *teleportRig {
 		}
 	}
 	if o.observer {
-		// Aria hears Bram arrive; drain it so her next packet is her own.
-		if p := rig.next("Aria", time.Second); p == nil || p.Opcode != OpEntityEntered {
-			t.Fatalf("Aria's OpEntityEntered for Bram: got %+v", p)
-		}
+		// Aria hears Bram arrive (0x3015) and Bram is spawned Aria (a group,
+		// round 737); drain both so each next packet is their own.
+		a, b := rig.players["Aria"], rig.players["Bram"]
+		expectPlayerSpawn(t, a.conn, a.r, b.charID)
+		expectPlayerSpawn(t, b.conn, b.r, a.charID)
 	}
 	return rig
 }
@@ -303,14 +304,10 @@ func TestTeleportChargesTheFeeAndMovesToTheGatePoint(t *testing.T) {
 	if !ok || e.Zone != "donwhang" || math.Abs(e.Pos.X-float64(czr.X)) > 0.01 || math.Abs(e.Pos.Z-float64(czr.Z)) > 0.01 {
 		t.Fatalf("hub has Aria at %+v; want donwhang at the arrival (%v, %v)", e, czr.X, czr.Z)
 	}
-	// warpTo's broadcast tail: Bram, left in Jangan, sees her go.
-	p := rig.next("Bram", 2*time.Second)
-	if p == nil || p.Opcode != OpEntityLeft {
-		t.Fatalf("Bram got %+v; want OpEntityLeft", p)
-	}
-	if left, err := DecodeEntityLeft(p.Data); err != nil || left.CharacterID != rig.players["Aria"].charID {
-		t.Fatalf("Bram's OpEntityLeft %+v %v; want Aria", left, err)
-	}
+	// warpTo's broadcast tail: Bram, left in Jangan, sees her go (retail's
+	// 0x3016, round 737).
+	b := rig.players["Bram"]
+	expectPlayerDespawn(t, b.conn, b.r, rig.players["Aria"].charID)
 }
 
 // (b) NEGATIVE: 4,000 gold is short of the 5,000 fee. The engine refuses

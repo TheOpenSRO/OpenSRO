@@ -48,7 +48,7 @@ func TestTownRemovalReachesAViewThatMovedOffBeforeThePush(t *testing.T) {
 	tickPushHook = func() {
 		// The player walks off: her view moves to row 10, out of the window
 		// of row 5, before the pass's pushes go out.
-		r.hub.Move(sess, world.Position{X: 0, Z: 2400})
+		r.hub.Relocate(sess, world.Position{X: 0, Z: 2400}, world.MoveRelocate, 0)
 		v.reconcile()
 	}
 	t.Cleanup(func() { tickPushHook = nil })

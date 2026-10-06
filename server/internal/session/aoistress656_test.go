@@ -155,7 +155,7 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 	// The player: walks, and now and then jumps across the map; lists sometimes.
 	run(func(rr *rand.Rand) {
 		x, z := randPos(rr, 3.5)
-		r.hub.Move(sess, world.Position{X: x, Z: z})
+		r.hub.Relocate(sess, world.Position{X: x, Z: z}, world.MoveRelocate, 0)
 		if rr.Intn(20) == 0 {
 			proto.Write(c.conn, &proto.Packet{Opcode: OpMonsterList, Data: []byte{MonsterListFlagPaged}}, nil, nil)
 		}
@@ -276,7 +276,7 @@ func rv656Interleave(t *testing.T, reconcileFirst bool, playerFrom, playerTo, mo
 	r.list(t, c, 0)
 	c.quiet(t, 100*time.Millisecond)
 	monsters.SetMotion(id, monTo, 0, 1600, 1)
-	r.hub.Move(r.session(1), world.Position{X: playerTo, Z: 0})
+	r.hub.Relocate(r.session(1), world.Position{X: playerTo, Z: 0}, world.MoveRelocate, 0)
 	if reconcileFirst {
 		v.reconcile()
 	}
@@ -338,7 +338,7 @@ func TestAOIReconcileWaitsForTheStep(t *testing.T) {
 	c.quiet(t, 100*time.Millisecond)
 	monsters.SetMotion(m1, cellX(2), 0, 1600, 1)
 	monsters.SetMotion(m2, cellX(-2), 0, 1600, 1)
-	r.hub.Move(r.session(1), world.Position{X: cellX(1) - 150, Z: 0})
+	r.hub.Relocate(r.session(1), world.Position{X: cellX(1) - 150, Z: 0}, world.MoveRelocate, 0)
 
 	reconciled := make(chan struct{})
 	waited := false

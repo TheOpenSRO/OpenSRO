@@ -15,7 +15,6 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/gm"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
@@ -91,11 +90,9 @@ func (f *deadWorldFixture) designate(t *testing.T, gate uint16) []byte {
 	req := make([]byte, 2)
 	binary.LittleEndian.PutUint16(req, gate)
 	f.send(t, f.connA, wireRecallDesignate, req)
-	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	p, err := proto.Read(f.rA, nil, nil)
-	if err != nil {
-		t.Fatalf("no answer to the designate request for gate %d: %v", gate, err)
-	}
+	// A walk across a block line before it is answered by spawns (round
+	// 737); the fixture's read steps over them.
+	p := f.read(t, f.connA, f.rA)
 	if p.Opcode != wireRecallDesignateResult {
 		t.Fatalf("the designate request answered %#04x, want %#04x", p.Opcode, wireRecallDesignateResult)
 	}

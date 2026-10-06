@@ -219,6 +219,9 @@ These counts are MEASURED by `QaCrowdProbe`'s census and are the same at 20, 200
 
 ### The server (READ; the details are in r736.md, from `crowd736_bench_test.go`'s investigation)
 
+This is the server as round 736 found it. Round 737 changed it (section 5, Lane C): players now
+have the 3 x 3 blocks and retail's spawns, and frames are encoded once and written once per drain.
+
 - **Players have no interest area.**
   - `aoi.go`'s 3 x 3 blocks cover monsters (and NPCs). A player sees every player in its hub bucket
     (`world.Entity.Zone`), which under `-full-map` is the whole world.
@@ -421,6 +424,25 @@ Files: in World3D, `_physics_step`'s others loop, `_spawn_or_update_other`, `_on
 | C2 | **Encode once per event; one write per queue drain** (writev). Round 663's client reader takes split frames, so the 662 workaround can go (live check needed). | OURS | Most of the 79% of CPU spent in syscalls: about 6 s -> well under 1 s of CPU per second at 1000 (INFERRED) |
 | C3 | **Destination moves** (retail 0xB021 per click, `docs/protocol/opcodes/movement.md`) instead of 20 positions a second; observers walk the path. | READ | Traffic and server CPU / 20 for walkers (INFERRED from the per-move cost) |
 | C4 | The hub lock: recipients from the cell index under a read lock; O(1) maps for `EntityByCharacterID` and `FindByName`. | OURS | 59 µs per move under the write lock at 1000 |
+
+**Round 737 (`docs/rounds/r737.md`) built C1, C2 and C4, and wrote C3 up as a spec.**
+
+- **C1.**
+  - Players are in the 3 x 3 blocks.
+  - Arrivals are retail's group spawns, one group per block, with the CICUser record
+    (`docs/protocol/pc_spawn.md`). Others hear an arrival as a 0x3015, and a leave or a block-line
+    crossing as a 0x3016 / type-2 group.
+  - **No arrival is refused at any size.** At 1000 present it is 41 to 63 frames, about 146 KB.
+- **C2.**
+  - Frames are encoded once.
+  - There is one write per drain, with a 2 ms linger (OURS).
+  - At 1000 with everyone in view: CPU 5,870 -> 1,598 ms per s serial, and 5,794 -> 787 parallel.
+- **C1 and C2 together, at 1000:**
+  - in a town: 1,009 ms per s;
+  - spread over 10 x 10 blocks: 163.
+- **C4:** the hub's write lock is held 66.6 -> 29.4 µs per move at 1000, with 293 -> 11 KB allocated.
+- **C3 is not built.** It needs World3D's walk and a stop report the server can check. The spec is in
+  r737.md.
 
 ### Order and gates
 

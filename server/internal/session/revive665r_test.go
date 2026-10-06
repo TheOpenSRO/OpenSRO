@@ -43,9 +43,10 @@ func startReviveStoreFixture(t *testing.T, wrap func(*character.MemStore) charac
 	f.rB = bufio.NewReader(f.connB)
 	f.login(t, f.connA, f.rA, "alice", "hunter2", "Aria")
 	f.login(t, f.connB, f.rB, "bob", "hunter3", "Bram")
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEntityEntered {
-		t.Fatalf("Aria's first packet after Bram entered is %#04x, want OpEntityEntered", p.Opcode)
-	}
+	// Round 737: Bram's arrival reaches Aria as retail's 0x3015, and Aria
+	// reaches Bram as a group spawn after his result (playerview.go).
+	expectPlayerSpawn(t, f.connA, f.rA, f.bram)
+	expectPlayerSpawn(t, f.connB, f.rB, f.aria)
 	return f
 }
 

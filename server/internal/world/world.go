@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 )
 
@@ -85,20 +86,55 @@ type Entity struct {
 	Arrival uint64
 	// Heading is the way the character faces, the client's heading (+0x8c,
 	// radians in [0, 2 pi); HeadingToward has the frame), kept from the
-	// direction of its last move (MoveFacing) and carried through a zone
+	// direction of its last walk (Relocate with MoveWalk) and carried through a zone
 	// change, so the zone it arrives in sees it facing that way (round 637's
 	// review follow-up; OpEntityEntered's trailing wire angle). 0 until the
 	// character first moves: a heading is not saved with the position.
 	Heading float64
+	// Cell is the message block the entity stands in (combat.CellOf of Pos
+	// in Zone), kept by the hub as Pos changes (round 737): the players in
+	// view are those of the ViewRadius window of blocks around it.
+	Cell combat.Cell
 }
 
-// Hub tracks all entities currently in the world, grouped by zone. Safe for
-// concurrent use.
+// ViewRadius is how many message blocks around its own a player sees other
+// players in: 1, the 3 x 3 window of retail's 320-unit blocks (READ, round
+// 664; docs/protocol/crowd_scale.md section 1, "The server": CMsgBlock links
+// every block to its 8 neighbours, and an object put in a block is sent to,
+// and sent, the objects of those nine). The same window as the monsters'
+// (session.AOIRadius); players got it in round 737 (crowd_scale.md C1).
+const ViewRadius = 1
+
+// CellOf is the message block a position of zone falls in: combat.CellOf,
+// the monsters' own index (combat.CellSpan = 320).
+func CellOf(zone string, pos Position) combat.Cell {
+	return combat.CellOf(zone, pos.X, pos.Z)
+}
+
+// InView reports whether a player standing in block a sees one in block b:
+// the same zone and within ViewRadius blocks on both axes. Symmetric.
+func InView(a, b combat.Cell) bool {
+	return a.Near(b, ViewRadius)
+}
+
+// Hub tracks all entities currently in the world, grouped by zone and, since
+// round 737, by message block (combat.Cell): a player's interest area is the
+// ViewRadius window of blocks around its own, and the hub answers who is in
+// it without copying the zone. Safe for concurrent use.
 type Hub struct {
 	mu        sync.RWMutex
 	byZone    map[string]map[uint64]*Entity // zone -> session ID -> entity
 	bySession map[uint64]*Entity
-	arrivals  uint64
+	// byChar and byName answer the lookups by character id and by name in
+	// O(1) (round 737, crowd_scale.md C4: they were scans of every session).
+	// A character in the world on two sessions at once (a reconnect racing
+	// the old session's leave) is filed under the later; the earlier's
+	// removal leaves the later's entry alone.
+	byChar map[int64]*Entity
+	byName map[string]*Entity
+	// byCell is every entity by the block it stands in (Entity.Cell).
+	byCell   map[combat.Cell]map[uint64]*Entity
+	arrivals uint64
 }
 
 // NewHub returns an empty Hub.
@@ -106,13 +142,17 @@ func NewHub() *Hub {
 	return &Hub{
 		byZone:    make(map[string]map[uint64]*Entity),
 		bySession: make(map[uint64]*Entity),
+		byChar:    make(map[int64]*Entity),
+		byName:    make(map[string]*Entity),
+		byCell:    make(map[combat.Cell]map[uint64]*Entity),
 	}
 }
 
 // Enter adds sess's character, at level, to zone at pos. If the session was
 // already in the world (e.g. re-entering without a clean Leave), it's moved
 // rather than duplicated. Returns a snapshot of the other entities already in
-// that zone, for the caller to send an initial "who's here" packet. The level
+// view of pos (the ViewRadius window of blocks, round 737), for the caller to
+// spawn to the arriving client and to announce the arrival to. The level
 // is a parameter rather than a later SetLevel so no entity ever exists
 // without one (Entity.Level).
 func (h *Hub) Enter(sess *gateway.Session, characterID int64, name string, level int, zone string, pos Position) []Entity {
@@ -123,17 +163,12 @@ func (h *Hub) Enter(sess *gateway.Session, characterID int64, name string, level
 
 	h.arrivals++
 	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: h.arrivals}
-	h.bySession[sess.ID()] = e
-	if h.byZone[zone] == nil {
-		h.byZone[zone] = make(map[uint64]*Entity)
-	}
-	h.byZone[zone][sess.ID()] = e
-
-	return h.othersInZoneLocked(zone, sess.ID())
+	h.insertLocked(e)
+	return h.viewOthersLocked(e)
 }
 
 // Leave removes sess's character from the world, if present. Returns the
-// entity that left and a snapshot of the entities remaining in its zone (to
+// entity that left and a snapshot of the entities that had it in view (to
 // notify that this one left), or ok=false if the session wasn't in the
 // world.
 func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Entity, ok bool) {
@@ -146,69 +181,94 @@ func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Entity, ok 
 	}
 	left = *e
 	h.removeLocked(sess.ID())
-	return left, h.othersInZoneLocked(left.Zone, sess.ID()), true
+	return left, h.viewOthersLocked(&left), true
 }
 
-// Move updates sess's character's position. Returns the updated entity and
-// a snapshot of the other entities in the same zone (to notify), or
-// ok=false if the session isn't in the world.
-func (h *Hub) Move(sess *gateway.Session, pos Position) (entity Entity, others []Entity, ok bool) {
+// MoveKind is how a position change turns the character (Relocate).
+type MoveKind int
+
+const (
+	// MoveWalk faces the way it moved (HeadingToward from the old position).
+	MoveWalk MoveKind = iota
+	// MoveRelocate keeps the heading: a skill's jump, a client's recovery or
+	// teleport (the client's own placement, FUN_009e11e0, aims nothing).
+	MoveRelocate
+	// MoveHeading faces the given heading (a heading run, round 653).
+	MoveHeading
+)
+
+// MoveResult is what a position change did (round 737): the entity after
+// it; the sessions of the other players in view of its new block, the move's
+// recipients; and, when it crossed into another block, the players that came
+// into view (Gained: in the new window, not the old) and went out of it
+// (Lost: in the old window, not the new). Visibility is symmetric, so each of
+// Gained now sees the mover and each of Lost no longer does.
+type MoveResult struct {
+	Entity   Entity
+	Watchers []*gateway.Session
+	Crossed  bool
+	Gained   []Entity
+	Lost     []Entity
+}
+
+// Relocate moves sess's character to pos, turning it as kind says (heading
+// is MoveHeading's), and refiles it under its new block. ok=false if the
+// session isn't in the world.
+func (h *Hub) Relocate(sess *gateway.Session, pos Position, kind MoveKind, heading float64) (MoveResult, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	e, exists := h.bySession[sess.ID()]
 	if !exists {
-		return Entity{}, nil, false
+		return MoveResult{}, false
+	}
+	switch kind {
+	case MoveWalk:
+		e.Heading = HeadingToward(e.Heading, pos.X-e.Pos.X, pos.Z-e.Pos.Z)
+	case MoveHeading:
+		e.Heading = heading
 	}
 	e.Pos = pos
-	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
-}
-
-// MoveFacing is Move for a walk: the character also turns to face the way it
-// moved (HeadingToward from the old position to pos), keeping its heading
-// when the step is too short to have one. A relocation -- a skill's jump, a
-// client's recovery or teleport -- goes through Move and keeps the heading, as
-// the client's own placement (FUN_009e11e0) aims nothing.
-func (h *Hub) MoveFacing(sess *gateway.Session, pos Position) (entity Entity, others []Entity, ok bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	e, exists := h.bySession[sess.ID()]
-	if !exists {
-		return Entity{}, nil, false
+	old := e.Cell
+	now := CellOf(e.Zone, pos)
+	var r MoveResult
+	if now != old {
+		h.uncellLocked(e)
+		e.Cell = now
+		h.cellLocked(e)
+		r.Crossed = true
+		h.forWindowLocked(old, func(o *Entity) {
+			if o != e && !InView(now, o.Cell) {
+				r.Lost = append(r.Lost, *o)
+			}
+		})
+		h.forWindowLocked(now, func(o *Entity) {
+			if o != e && !InView(old, o.Cell) {
+				r.Gained = append(r.Gained, *o)
+			}
+		})
 	}
-	e.Heading = HeadingToward(e.Heading, pos.X-e.Pos.X, pos.Z-e.Pos.Z)
-	e.Pos = pos
-	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
-}
-
-// MoveHeading is Move for a position on a heading run (round 653, the sky
-// click): the character faces the run's own heading, which the client sent
-// with the position, rather than the direction of the step.
-func (h *Hub) MoveHeading(sess *gateway.Session, pos Position, heading float64) (entity Entity, others []Entity, ok bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	e, exists := h.bySession[sess.ID()]
-	if !exists {
-		return Entity{}, nil, false
-	}
-	e.Heading = heading
-	e.Pos = pos
-	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
+	r.Watchers = make([]*gateway.Session, 0, h.windowCountLocked(now))
+	h.forWindowLocked(now, func(o *Entity) {
+		if o != e {
+			r.Watchers = append(r.Watchers, o.Session)
+		}
+	})
+	r.Entity = *e
+	return r, true
 }
 
 // ChangeZone moves sess's character to newZone at pos, the same discrete
 // "leave the old zone, appear fresh in the new one" semantics as Leave
 // followed by Enter, but as one atomic operation (no window where the
 // character is in neither zone's byZone index). Returns the character's
-// state before the move, everyone left behind in the old zone (to notify
-// they left), and everyone already present in the new zone (to notify
+// state before the move, everyone that had it in view where it was (to
+// notify they left), and everyone in view where it arrives (to notify
 // someone new arrived) -- or ok=false if the session wasn't in the world.
-// A change into the zone the character is already in (-single-frame's warp
-// between two towns of the one bucket, round 571) removes and re-adds it, so
-// everyone else in the zone is in both lists: they hear it leave and then
-// arrive at pos.
+// A change to a point in view of where it was (-single-frame's warp between
+// two towns of the one bucket, round 571, landing near) removes and re-adds
+// it, so those players are in both lists: they hear it leave and then arrive
+// at pos.
 func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -219,7 +279,7 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	}
 	old = *e
 	h.removeLocked(sess.ID())
-	remainingOld = h.othersInZoneLocked(old.Zone, sess.ID())
+	remainingOld = h.viewOthersLocked(&old)
 
 	// The life state, the level and the heading travel with the character: a zone change
 	// is refused while dead (session.handleChangeZone), but the return to the
@@ -227,12 +287,8 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	// session.ReviveHandler), and a state is never reset by a move.
 	h.arrivals++
 	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading}
-	h.bySession[sess.ID()] = next
-	if h.byZone[newZone] == nil {
-		h.byZone[newZone] = make(map[uint64]*Entity)
-	}
-	h.byZone[newZone][sess.ID()] = next
-	othersNew = h.othersInZoneLocked(newZone, sess.ID())
+	h.insertLocked(next)
+	othersNew = h.viewOthersLocked(next)
 
 	return old, remainingOld, othersNew, true
 }
@@ -249,22 +305,20 @@ func (h *Hub) SetLifeState(characterID int64, from, to LifeState, at time.Time) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	for _, e := range h.bySession {
-		if e.CharacterID != characterID {
-			continue
-		}
-		if e.Life != from {
-			return false
-		}
-		e.Life = to
-		if to == LifeDead {
-			e.DiedAt = at
-		} else {
-			e.DiedAt = time.Time{}
-		}
-		return true
+	e, ok := h.byChar[characterID]
+	if !ok {
+		return false
 	}
-	return false
+	if e.Life != from {
+		return false
+	}
+	e.Life = to
+	if to == LifeDead {
+		e.DiedAt = at
+	} else {
+		e.DiedAt = time.Time{}
+	}
+	return true
 }
 
 // SetLevel moves characterID's cached level to level (Entity.Level) and
@@ -277,13 +331,12 @@ func (h *Hub) SetLevel(characterID int64, level int) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	for _, e := range h.bySession {
-		if e.CharacterID == characterID {
-			e.Level = level
-			return true
-		}
+	e, ok := h.byChar[characterID]
+	if !ok {
+		return false
 	}
-	return false
+	e.Level = level
+	return true
 }
 
 // SetHeading sets sess's character's heading -- a restored one at world entry
@@ -313,6 +366,37 @@ func (h *Hub) EntitiesInZone(zone string) []Entity {
 		out = append(out, *e)
 	}
 	return out
+}
+
+// ViewOfCharacter returns every entity in view of characterID's block as the
+// hub has it now (the ViewRadius window, round 737): who sees it and whom it
+// sees, itself included; nil when it is not in the world.
+func (h *Hub) ViewOfCharacter(characterID int64) []Entity {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	e, ok := h.byChar[characterID]
+	if !ok {
+		return nil
+	}
+	var out []Entity
+	h.forWindowLocked(e.Cell, func(o *Entity) { out = append(out, *o) })
+	return out
+}
+
+// Sees reports whether the players on sessions a and b are both in the world
+// and in view of each other now (InView of their blocks).
+func (h *Hub) Sees(a, b uint64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	ea, ok := h.bySession[a]
+	if !ok {
+		return false
+	}
+	eb, ok := h.bySession[b]
+	if !ok {
+		return false
+	}
+	return InView(ea.Cell, eb.Cell)
 }
 
 // AllEntities returns every entity currently in the world, in any zone.
@@ -358,12 +442,11 @@ func (h *Hub) EntityByCharacterID(characterID int64) (Entity, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	for _, e := range h.bySession {
-		if e.CharacterID == characterID {
-			return *e, true
-		}
+	e, ok := h.byChar[characterID]
+	if !ok {
+		return Entity{}, false
 	}
-	return Entity{}, false
+	return *e, true
 }
 
 // FindByName returns the entity for the character named name, if they're
@@ -374,15 +457,29 @@ func (h *Hub) FindByName(name string) (Entity, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	for _, e := range h.bySession {
-		if e.Name == name {
-			return *e, true
-		}
+	e, ok := h.byName[name]
+	if !ok {
+		return Entity{}, false
 	}
-	return Entity{}, false
+	return *e, true
 }
 
-// removeLocked removes a session's entity from both indexes. Caller must
+// insertLocked files e under every index, its block from its position.
+// Caller must hold h.mu for writing.
+func (h *Hub) insertLocked(e *Entity) {
+	id := e.Session.ID()
+	e.Cell = CellOf(e.Zone, e.Pos)
+	h.bySession[id] = e
+	if h.byZone[e.Zone] == nil {
+		h.byZone[e.Zone] = make(map[uint64]*Entity)
+	}
+	h.byZone[e.Zone][id] = e
+	h.byChar[e.CharacterID] = e
+	h.byName[e.Name] = e
+	h.cellLocked(e)
+}
+
+// removeLocked removes a session's entity from every index. Caller must
 // hold h.mu.
 func (h *Hub) removeLocked(sessionID uint64) {
 	e, exists := h.bySession[sessionID]
@@ -396,17 +493,63 @@ func (h *Hub) removeLocked(sessionID uint64) {
 			delete(h.byZone, e.Zone)
 		}
 	}
+	if h.byChar[e.CharacterID] == e {
+		delete(h.byChar, e.CharacterID)
+	}
+	if h.byName[e.Name] == e {
+		delete(h.byName, e.Name)
+	}
+	h.uncellLocked(e)
 }
 
-// othersInZoneLocked returns a snapshot of every entity in zone except
-// excludeSessionID. Caller must hold h.mu (read or write).
-func (h *Hub) othersInZoneLocked(zone string, excludeSessionID uint64) []Entity {
-	var out []Entity
-	for id, e := range h.byZone[zone] {
-		if id == excludeSessionID {
-			continue
-		}
-		out = append(out, *e)
+func (h *Hub) cellLocked(e *Entity) {
+	m := h.byCell[e.Cell]
+	if m == nil {
+		m = make(map[uint64]*Entity)
+		h.byCell[e.Cell] = m
 	}
+	m[e.Session.ID()] = e
+}
+
+func (h *Hub) uncellLocked(e *Entity) {
+	if m := h.byCell[e.Cell]; m != nil {
+		delete(m, e.Session.ID())
+		if len(m) == 0 {
+			delete(h.byCell, e.Cell)
+		}
+	}
+}
+
+// forWindowLocked calls f for every entity in the ViewRadius window of c.
+// Caller must hold h.mu.
+func (h *Hub) forWindowLocked(c combat.Cell, f func(*Entity)) {
+	for x := c.X - ViewRadius; x <= c.X+ViewRadius; x++ {
+		for z := c.Z - ViewRadius; z <= c.Z+ViewRadius; z++ {
+			for _, o := range h.byCell[combat.Cell{Zone: c.Zone, X: x, Z: z}] {
+				f(o)
+			}
+		}
+	}
+}
+
+func (h *Hub) windowCountLocked(c combat.Cell) int {
+	n := 0
+	for x := c.X - ViewRadius; x <= c.X+ViewRadius; x++ {
+		for z := c.Z - ViewRadius; z <= c.Z+ViewRadius; z++ {
+			n += len(h.byCell[combat.Cell{Zone: c.Zone, X: x, Z: z}])
+		}
+	}
+	return n
+}
+
+// viewOthersLocked returns a snapshot of every entity in view of e's
+// position, except e's own session. Caller must hold h.mu.
+func (h *Hub) viewOthersLocked(e *Entity) []Entity {
+	var out []Entity
+	h.forWindowLocked(CellOf(e.Zone, e.Pos), func(o *Entity) {
+		if o.Session.ID() != e.Session.ID() {
+			out = append(out, *o)
+		}
+	})
 	return out
 }

@@ -41,9 +41,7 @@ func (f *deadWorldFixture) goDonwhang(t *testing.T) {
 	if czr, err := DecodeChangeZoneResult(f.read(t, f.connA, f.rA).Data); err != nil || !czr.OK {
 		t.Fatalf("setup: Aria's zone change answered %+v (err %v)", czr, err)
 	}
-	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityLeft {
-		t.Fatalf("setup: Bram received %#04x, want OpEntityLeft", p.Opcode)
-	}
+	expectPlayerDespawn(t, f.connB, f.rB, f.aria)
 }
 
 // Option 1, "Resurrect at the specified point.": a level-30 player killed in
@@ -88,9 +86,7 @@ func TestReviveOptionOneReturnsToTheReturnPoint(t *testing.T) {
 	if e.Life != world.LifeAlive || e.Zone != wantBucket || e.Pos != wantPos {
 		t.Errorf("after option 1: life %d in %q at %+v; want alive in %q at %+v (the return point, not donwhang)", e.Life, e.Zone, e.Pos, wantBucket, wantPos)
 	}
-	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityEntered {
-		t.Errorf("Bram, in jangan, received %#04x, want Aria's OpEntityEntered at the return point", p.Opcode)
-	}
+	expectPlayerSpawn(t, f.connB, f.rB, f.aria)
 }
 
 // Option 2, "Resurrect at the present point.", is honoured at max level 10 or
