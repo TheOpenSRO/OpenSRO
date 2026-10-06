@@ -198,8 +198,17 @@ not add a separate draw. All of the following is READ:
     for 0.010. The offset is never wrapped; the texture's wrap mode wraps it. It is written into two
     matrices, the translation row at `+0x78/+0x7c` and at `+0xa8/+0xac`.
 - **Begin** (`vslot_004`). The D3D9 names come from the standard enums.
-  - It saves the caller's flag word and ORs in `0xe21f0000` with bit `0x1000` cleared. The meaning of
-    these bits is OPEN 8.
+  - It saves the caller's flag word and ORs in `0xe21f0000` with bit `0x1000` cleared. Three of
+    these bits are READ (round 734's review, F7; `CObjRendererVS::FUN_00bf0e20` and `FUN_00c42a60`):
+    - `0x20000000` turns off the item's own alpha test. `FUN_00bf0e20` runs the mods' `vslot_004`
+      first (`FUN_00c451e0` → `FUN_00c7b540`, vtable +0x10, with the flag word's address) and only
+      then `FUN_00c42a60(flags)`, which enables the material's test (`0x200`: RS 15 = 1, RS 24 =
+      0x80) only when `!(flags & 0x20000000)`. So a flag-0 row draws with no alpha test at all.
+    - The cleared `0x1000` keeps `FUN_00c42a60` from setting stage 0 back to MODULATE2X (its `0x1000`
+      branch sets stage 0's op to 5).
+    - `0x80000000` binds the item's own texture to **stage 1**: `SetTexture(1, FUN_00c39f70(i))`
+      (device vtable +0x104) at `0xbf10ce`, where a plain draw binds it to stage 0.
+    - The other bits (`0x40000000`, `0x02000000`, `0x001f0000`) are still OPEN 8.
   - Flag 0: `ALPHATESTENABLE` (RS 15) = 0 and `ALPHAREF` (RS 24) = 0x80. Flag 1: `ALPHATESTENABLE`
     = 1, `ALPHAFUNC` (RS 25) = 7 (GREATEREQUAL) and `ALPHAREF` = 1.
   - `TEXTUREFACTOR` (RS 60) is set to the animated colour.
@@ -216,7 +225,8 @@ not add a separate draw. All of the following is READ:
   - stage 0 is MODULATE2X(TEXTURE, DIFFUSE) with alpha SELECTARG1(TEXTURE);
   - stage 1 is off.
 
-**What the glow looks like (INFERRED from the stage setup):**
+**What the glow looks like (READ: the stage setup above, and stage 1's texture from the `0x80000000`
+bit, round 734's review):**
 
 ```
 colour = op5(optionTex(uv + scroll), TFACTOR)  op6  stage1Tex
@@ -226,7 +236,7 @@ alpha  = stage1Tex.a
 `op5` is MODULATE at +3 and MODULATE2X from +5 up. `op6` is ADD, or ADDSIGNED2X at +13. Stage 0 uses
 TFACTOR instead of DIFFUSE, so the weapon is not lit while it glows. The texture on stage 1 must be the
 item's own diffuse texture, because its alpha drives the alpha test of the cut-out weapon types (2 and
-4). Who binds it there is OPEN 9. The flag word bits are the likely switch.
+4). The mod's `0x80000000` bit binds it there (READ, round 734's review: OPEN 9 closed).
 
 So the glowing weapon is its own texture, unlit, plus a scrolling coloured pattern, pulsing between
 two colours.
@@ -259,10 +269,10 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 |---|---|---|
 | Weapons and shields only? | Yes. Only attachments of kind 1 reach `FUN_00a60a90`, and the tables list only weapons and shields (shield rows such as `ITEM_CH_SHIELD_11_*`, particles `enchantshield_a` on `Bone01`). | READ (gate), MEASURED (tables) |
 | Other players? | Yes. The same `CObjCharacter` path runs for every character, and `0x3038` delivers others' plus. | READ |
-| Character select | Retail's list carries a plus per item (`charselect.md`: u32 RefItemID, u8 plus). The preview is a `CObjCharacter`, so it glows. | INFERRED |
-| Portrait / paper doll | Not checked | OPEN 10 |
+| Character select | Retail's list carries a plus per item (`charselect.md`: u32 RefItemID, u8 plus), and the screen installs each item with it (`PSCharacterSelect::FUN_0085a580` -> `InstallEquipVisual(slot, id, plus, 0)`), so it glows. | READ (round 734) |
+| Portrait / paper doll | Glows, INFERRED (OPEN 10, below). OpenSRO draws the glow in both on a Linear-view variant of the glow shader (round 734's review, F1) | INFERRED |
 | Sheathed or drawn | SRO has no sheathing. The weapon is always in the hand. | INFERRED |
-| Advanced elixir | Round 732 READ that the client adds the elixir's value into the item's `+0x8c` plus. Whether the byte in `CObjCharacter+0x3c+slot*0xc` is that sum for your own character, and whether the server's `0x3038` byte includes it, are not read. | OPEN 2 |
+| Advanced elixir | Round 732 READ that the client adds the elixir's value into the item's `+0x8c` plus. **Round 735 READ: the server's `0x3038` and `0x3015` byte includes it.** `CInstanceItem::vslot_010` (`s:0x42e230`) mode 2 writes, for equipment, `(u8)(FUN_00846200's elixir sum + OptLevel at +0x2c)` (`s:0x846200` adds each attached elixir's `+0x2c`). Your own character's `CObjCharacter+0x3c+slot*0xc` byte is that sum too (round 735's review, §8 item 2). | READ (round 735) |
 | Avatar / switch models | `_SWITCHnn` items are separate RefIDs with their own rows. They are not chosen by plus. | MEASURED |
 
 ## 5. The data path
@@ -270,23 +280,40 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 ### Retail (READ)
 
 - **Equip changes** (`0x3038`, handler `FUN_008a9260`): u32 unique id, u8 slot, u32 RefItemID, then
-  **u8 OptLevel**. The OptLevel is present only for equipment, that is when the type word has
+  **u8 plus**, the effective one: OptLevel + the advanced elixir (round 735, READ in the server:
+  `0x4e9de2` writes the uid at `[ebp+8]`, the move's destination slot `[edi+4]`, then the item's
+  vslot 294 at mode 2 -> `CInstanceItem::vslot_010` `0x42e230`: `FUN_004958c0(+0x28)` the RefItemID,
+  then the plus byte). The client reads its slot byte into a variable the RefItemID overwrites, and
+  redresses by `ResolveVisualSlotForItem`. The server sends it only for an item
+  `FUN_00490390` passes (READ, round 735's review: the item is equipment, `CGObj::IsEquip`, and
+  its equip slot is 8 or less, or it is an avatar, TypeID3 13, or a devil's spirit, TypeID3 14),
+  through `FUN_00484d90`, a region-scoped send that reaches the mover too (both client handlers
+  have an own-uid branch updating the character window and preview). The OptLevel is present only for equipment, that is when the type word has
   `!(w & 2) && (b & 0x1c) == 0xc && (b & 0x60) == 0x20`. The handler calls the equip setter
   `FUN_009daf70(…, refId, plus, 0)` and plays `ITEM_SETITEM_ACTIVE` / `_DEACTIVE` with
   `snd_setitem_active`.
-- **Unequip** (`0x3039`) goes to `FUN_008a9560`.
-- **Spawning another player** (`0x3015`): the per-item plus is OPEN 3 (not read this round).
+- **Unequip** (`0x3039`) goes to `FUN_008a9560`: u32 unique id, u8 slot, u32 RefItemID, no plus
+  (round 735, READ; the server writes it at `0x4e9f98`, gated by `FUN_00490390`, and at
+  `0x4e9d03`, the move-type-7 path, not gated, slots 0..12: uid, the move's source slot `[edi+3]`,
+  the item's RefItemID from its vslot 1). Unlike `0x3038`'s handler it uses its slot byte:
+  `FUN_009daf70(slot, 0, 0, 0)` clears that slot.
+- **Spawning another player** (`0x3015`, round 735 READ, closes OPEN 3): the PC body reader
+  `GlobalDataManager::FUN_009de2f0` (CICUser vslot 25, table `0xde2e7c`) reads u8 inventory size,
+  u8 item count, then per item u32 RefItemID and, for equipment by the same type-word test, **u8
+  plus**; the avatar block follows. The server writes it with `CGObjPC::vslot_294` (`0x4e5a10`) mode 2
+  -> `GStorage::FUN_004b8ad0` -> each item's `CInstanceItem::vslot_010` mode 2, the same effective plus
+  as `0x3038`.
 - **Your own gear**: the item record (round 732) carries OptLevel at `+0x8c`.
 
 ### OpenSRO today (MEASURED in the tree)
 
 | Path | What it carries | File |
 |---|---|---|
-| `OP_ENTITY_ENTERED 0x0023` and the snapshot in the enter-world/zone lists | per worn slot: u8 slot + s64 item id, **no plus**. The list sits *before* the gender, so a per-item field cannot be added in place without breaking older decoders. | `server/internal/session/equipment.go` `EquippedSnapshot`, `world.go` `EncodeEntered`; `client/scripts/net/world.gd` ~l.205 |
-| Equip changes seen by others | **None found**: `equipment.go` sends no broadcast, and only enter-world and region crossing send `OpEntityEntered` | `server/internal/session/equipment.go`, `world.go` 1383/1504 |
+| `OP_ENTITY_ENTERED 0x0023` and the snapshot in the enter-world/zone lists | per worn slot: u8 slot + s64 item id; **since round 735 each worn item's effective plus in a trailing pluses tail** (u8 count, then u8 slot + u8 plus per item with a plus; OURS framing, retail content), after `EncodeEntered`'s model and after the results' models tail | `server/internal/session/world.go` (`encodePlusesList`, `appendPluses`); `client/scripts/net/world.gd` (`_decode_pluses`, `EntitySnapshot.pluses`) |
+| Equip changes seen by others | **Round 735: retail `0x3038` / `0x3039`** to the other characters in the zone on every equip and unequip, and a `0x3038` on the GM's `/item worn <slot> plus N` (OURS: retail changes no worn item's plus) | `server/internal/session/equip_broadcast.go`; `client/scripts/net/equipment.gd` (`decode_broadcast`), `net_client.gd` (`other_player_equipment_changed`), `World3D.gd` (`_on_other_equipment_changed`, `_redress_other`, `_other_pluses`) |
 | Own equipment list `0x0040–0x0043` (OURS) | the item record with OptLevel and the advanced elixir (round 732) | `equipment.go`; `client/scripts/net/equipment.go` |
 | Char select list | plus per item | `charselect.md` |
-| Test plus values | `/give <id> [qty] [plus]` and `/item <slot> plus N` (GM, OURS, round 732) | `server/internal/gm/gm.go` |
+| Test plus values | `/give <id> [qty] [plus]` and `/item <slot> plus N` (GM, OURS, round 732); `/item worn <equip slot> plus N` / `adv N` on a worn item (round 735) | `server/internal/gm/gm.go` |
 | QA dress | `OPENSRO_QA_EQUIP="slot=item_id,…"`, no plus | `World3D.gd` `_parse_qa_equip` |
 
 ## 6. Options and gating
@@ -303,34 +330,79 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 
 - The glow costs one changed material on at most two meshes per character (weapon and shield), with
   no extra draw (READ: it is a state change around the item's own draw). In Godot this is one
-  `ShaderMaterial` per glowing item. `TIME` in the shader does the pulse and the scroll, so there is
-  no per-frame script work. A material is shared per (type, tier, item texture).
+  `ShaderMaterial` per glowing item. One clock does the pulse and the scroll for every glow (built:
+  `srr_glow_clock`, a global uniform that `EquipGlow` advances once a frame and wraps at 25200 s, not
+  `TIME`, whose 3600 s rollover cut +14's 1.4 s cycle; round 734's review, F8), so there is no
+  per-material script work. A material is shared per (type, tier, item texture).
 - Particles start at +8, one `.efp` per item, through the existing `EfpEffect`. In a crowded town, N
   players at +8 or more add N to 2N emitters. Lane A measures them in the gate and may share an
   instance, but must not cap them (OPEN 11: we do not know whether retail drops them).
 - This is a world-drawing round, so `perf_gate.sh` runs, and the table goes in the round entry.
 
-## 8. Gaps (OPEN)
+## 8. Gaps (OPEN), with round 734's answers
 
-1. **Seal-specific effects.** The user expects distinct effects for Star, Moon, Sun and Nova. These
-   archives and this client have none (§3). Either the memory is of the item models and textures, or
-   of another client version, or of a private-server mod. The user decides. Until then we draw only
-   what the tables say.
-2. **The effective plus.** Does the glow use plus + advanced elixir? Read the code that fills
-   `CObjCharacter+0x3c+slot*0xc` for your own character, and the server's `0x3038` writer.
-3. **`0x3015` per-item OptLevel** for spawned players: read the spawn parser.
-4. **The two compound parts** that `FUN_00a60a90` passes. They might be the weapon and its trail
-   holder, or two mesh groups.
-5. **The particle attach** `FUN_00c77ca0`: what its `1` and trailing `0` arguments mean, and which of
-   the two strings (+0x10 or +0x2c) is the efp path and which the bone (INFERRED: in file order).
-6. **`FUN_00c43780`**: `mod+0x3c` against `owner+8 → +0x7c`. It could be distance or LOD, or a time.
-7. **The starting direction of the triangle wave**: the mod constructor's value at `+0xd8`.
-8. **The flag-word bits** `0xe21f0000` and `~0x1000`.
-9. **The stage-1 texture**: who binds the item's diffuse texture to stage 1 during the mod.
-10. **The portrait and paper doll**: is the glow drawn there?
-11. **Particle quality gating** inside the efp manager.
-12. **Item bones**: whether OpenSRO's item `.bsr`/`.bms` load keeps `ai_end`, `ai_start` and
-    `Bone01`–`03` as attach points. Lane A checks this first.
+1. **Seal-specific effects.** USER DECISION (2026-10-05): follow the data; no seal effects are
+   invented. Three user reference pictures (Seal of Sun bow +10, an Egyptian-set glaive, a Nova
+   glaive at +5) were compared qualitatively in `docs/rounds/r734.md`.
+2. **The effective plus: READ (round 734).** Your own gear: `CICPlayer::vslot_025` (0x9d9a80) ->
+   `FUN_008ba570` hands `InstallEquipVisual` (0xa61010) the item's `+0x8c` byte, which the record
+   reader fills with OptLevel + the advanced elixir (c:0x8bb070), a u8. Others: `0x3038`'s byte. The
+   server's `0x3038` value is lane B's.
+3. **`0x3015` per-item OptLevel**: closed in round 735 (§5): u32 RefItemID + u8 effective plus per equipment item, `0x9de2f0`.
+4. **The two compound parts** that `FUN_00a60a90` passes: still OPEN. OpenSRO glows every mesh of the
+   item (both `_l`/`_r` models of a dual weapon) and puts each particle row on the first item skeleton
+   carrying its bone.
+5. **The particle attach: READ (round 734).** `CRTModParticle::FUN_00c816c0`: the first string
+   (+0x10) is the efp (assigned with `FUN_00425bf0`), the second (+0x2c) the bone, compared with
+   "none"; an unknown bone returns 0 and the mod is freed. The `1` goes to +0xb4 and becomes
+   IEasyFxEffect slot 4 with 1 (kept, looping) in `FUN_00c81350`; the trailing `0` is +0xc4, a start
+   delay in ms counted down by `FUN_00c81410`. The scale goes to +0xc0 and is handed to
+   `CEFEffect::vslot_010` (the effect's uniform scale, times a factor at `*(this+4)+0x264`) on
+   every placement (`FUN_00c81190`). What `*(this+4)+0x264` holds (a global setting or the effect
+   file's own value) is OPEN, and OpenSRO does not apply it. OpenSRO's particles take the row's
+   scale times the host's uniform scale, the body's height factor (round 734's review, F4: as the
+   per-weapon path's anchor did), never a mirror (OURS: the shared simulation's billboards face the
+   camera in world axes). A weapon within 30 units of the camera shows its effect even outside the
+   view (OURS, `EquipFx.ALWAYS_NEAR`).
+6. **`FUN_00c43780`**: `mod+0x3c >= *(owner+8)+0x7c`, the latter a 0..1 value clamped by
+   `CCompChar::FUN_00c25620` (a virtual). Still OPEN; OpenSRO does not gate on it.
+7. **The starting direction: READ (round 734).** The constructor (`FxModManager::FUN_00c847f0`) sets
+   +0xd8 = 1, +0xd4 = 0, and `vslot_001` sets the colour to colour 1: the pulse starts at colour 1
+   going to colour 2. The update runs only while the gate holds, so the pulse pauses while a character
+   fades (OURS: OpenSRO's runs on one clock, `srr_glow_clock`, all glows in step).
+8. **The flag-word bits**: three READ (round 734's review, §2.2): `0x20000000` skips the item's
+   own alpha test (`FUN_00c42a60` runs after the mod's `vslot_004` in `FUN_00bf0e20`), so a flag-0
+   row draws with no test; the cleared `0x1000` keeps stage 0 from being reset to MODULATE2X;
+   `0x80000000` is item 9. `0x40000000`, `0x02000000` and `0x001f0000` are still OPEN.
+9. **The stage-1 texture: READ (round 734's review).** The mod's `0x80000000` makes `FUN_00bf0e20`
+   bind the item's own texture to stage 1, `SetTexture(1, FUN_00c39f70(i))` at `0xbf10ce`. OpenSRO
+   uses the item's own texture there.
+10. **The portrait and paper doll**: the character select is READ (`PSCharacterSelect::FUN_0085a580`
+    calls `InstallEquipVisual(slot, id, plus, 0)`), so it glows. The equipment window's avatar (and
+    the portrait that borrows it) is INFERRED to glow: the client's copy of one character's dress
+    onto another (`UI_SILKMALL::FUN_00a617d0`) carries each slot's plus. The character-creation
+    screen installs plus 0 (`FUN_0080b440`). In OpenSRO all three keep the glow (round 734's review,
+    F1: before it, `PlayerPortrait._apply_materials` replaced the glow material with a plain lit one).
+    The equipment window and the portrait draw it on the glow shader's Linear-view variant
+    (`OBJECT_NO_PRESENT`: their SubViewports tone-map Linear), the select screen on the world's. The
+    plain layer behind it keeps its own alpha reference. The portrait drops the particle effects (a
+    picture rendered once, OURS); the equipment window keeps them, paused while it is closed.
+11. **Particle quality gating** inside the efp manager: OPEN; nothing is capped.
+12. **Item bones: MEASURED (round 734).** The item `.bsk` files carry `ai_end`, `ai_start`,
+    `Bone01`..`03`; OpenSRO's item skeleton keeps them.
+
+Note on §1.3 (round 734, MEASURED): spears use `enchant_a_01` on `ai_end` (e.g. `CH_SPEAR_11_*`, 230),
+and only the `_SET_A/B_RARE_SWITCHnn` variants name `*_set_a_rare_01` / `_set_b_rare_01`; the plain
+`_SET_A_RARE` rows name the ordinary file at their own scale (`CH_TBLADE_11_SET_A_RARE`: `enchant_a_01`,
+320, `ai_end`, where `CH_TBLADE_11_A` has `enchant_b_01`, 310, `ai_start`).
+
+**Built (round 734, lane A):** `ItemGlowTables` (client/scripts/items/item_glow_tables.gd), `EquipGlow`
+(client/scripts/assets/equip_glow.gd) and the `EQUIP_GLOW` path of `object.gdshaderinc`, applied by
+`CharacterAppearance.build` to slots 6 and 7; the particles go through `EquipFx` (client/scripts/assets/equip_fx.gd), one shared simulation per (efp, scale), drawn at each bone, nearest 64 in view within 800 units (OURS, r734.md). `OPENSRO_QA_EQUIP` takes `slot=item_id+plus`;
+`OPENSRO_QA_LINEUP_KITS` draws bodies side by side with given pluses; `OPENSRO_QA_FAKECHARS_PLUS`
+gives the select screen's QA characters a weapon plus; `client/tools/measure_equip_glow.gd` measures
+the drawn glow against the arithmetic. The lobby list the server sends carries plus 0
+(`server/internal/session/lobbyhandler.go`, the `LobbyItem` without `Plus`): lane B's to fill.
 
 ## Implementation lanes
 
@@ -416,3 +488,13 @@ Acceptance:
 - No perf gate (no drawing change).
 
 Lane B can run in parallel with lane A. Until B lands, A uses the QA hook and your own character.
+
+**Lane B as built (round 735, `docs/rounds/r735.md`).** What lane A consumes:
+- `WorldNet.EntitySnapshot.pluses` (slot -> effective plus; `plus_in(slot)`), filled from the pluses
+  tail of `OpEntityEntered`, `OpEnterWorldResult` and `OpChangeZoneResult`.
+- `World3D._other_pluses[character_id]` (slot -> plus), kept from every snapshot and every `0x3038`.
+- `NetClient.other_player_equipment_changed(uid, slot, ref_id, plus)`: `uid` is the u32 (the low 32
+  bits of the character id; `World3D._other_by_uid` resolves it), `plus` -1 on an unequip.
+- `World3D._redress_other(character_id)` rebuilds the body with `_build_assembled_character(equipped,
+  body, scale)`; when lane A gives that builder the pluses, this is the one other caller to pass
+  `_other_pluses[character_id]` from (and `_spawn_or_update_other`'s callers, from `snapshot.pluses`).

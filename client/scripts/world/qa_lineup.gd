@@ -22,6 +22,13 @@ class_name QaLineup
 ##                                                     (<dir>/lineup_<phase>_<action>.png)
 ##   OPENSRO_QA_LINEUP_ASIDE=<units>                  first step the player that far to its
 ##                                                     right (a live pair then stands apart)
+##   OPENSRO_QA_LINEUP_KITS="<slot>=<id>[+<plus>],..;.."  (round 734) one body per
+##                                                     `;` part, each the FIRST lineup
+##                                                     Figure in its kit with these slots
+##                                                     put on at these pluses (the glow,
+##                                                     EquipGlow): the weapon glow tiers
+##                                                     side by side, or a crowd of them
+##   OPENSRO_QA_LINEUP_SPACING=<x>[,<z>]              the gaps between bodies (14, 22)
 ##
 ## The kit is OURS for the picture: the race's `_A_DEF` weapon (CharCatalog's
 ## rule on World3D's item table), a shield beside ONE_HANDED_WITH_SHIELD, and the
@@ -55,6 +62,8 @@ var bodies: Array = []         # [{id, ref, code, scale, weapon, skeleton}]
 var _t := 0.0
 var _wait := 0.0
 var spawn_delay := 3.0
+var spacing_x := SPACING_X
+var spacing_z := SPACING_Z
 var _phase := -1
 var _spawned := false
 var _done := false
@@ -80,7 +89,20 @@ static func from_env(w: Node) -> QaLineup:
 	var tol := OS.get_environment("OPENSRO_QA_LINEUP_TOLERANCE")
 	if tol.is_valid_float():
 		q.tolerance = float(tol)
+	var sp := OS.get_environment("OPENSRO_QA_LINEUP_SPACING").split(",", false)
+	if sp.size() >= 1 and sp[0].is_valid_float():
+		q.spacing_x = float(sp[0])
+	if sp.size() >= 2 and sp[1].is_valid_float():
+		q.spacing_z = float(sp[1])
 	return q
+
+## OPENSRO_QA_LINEUP_KITS (round 734): [[equipped overrides, pluses], ...],
+## one per `;` part (EquipGlow.parse_loadout); [] when unset.
+static func parse_kits(spec: String) -> Array:
+	var out: Array = []
+	for part in spec.split(";", false):
+		out.append(EquipGlow.parse_loadout(part))
+	return out
 
 ## Called every physics frame by World3D once the player's body is built.
 func step(delta: float) -> void:
@@ -159,6 +181,15 @@ func _spawn(appearance: CharacterAppearance) -> void:
 	var mode := OS.get_environment("OPENSRO_QA_LINEUP_WEAPONS")
 	if mode == "":
 		mode = "rotate"
+	var kits := parse_kits(OS.get_environment("OPENSRO_QA_LINEUP_KITS"))
+	if not kits.is_empty() and not ids.is_empty():
+		var e0 := cat.get_entry(int(ids[0][0]))
+		for kit in kits:
+			specs.append({"ref": int(ids[0][0]), "scale": int(ids[0][1]), "weapon": int((kit[0] as Dictionary).get(EquipmentNet.SLOT_WEAPON, 0)),
+				"race": e0.race if e0 != null else 0, "woman": e0 != null and e0.sex == CharCatalog.SEX_WOMAN,
+				"kit": kit[0], "pluses": kit[1]})
+		mode = "kits"
+		ids = []
 	var k := 0
 	for pair in ids:
 		var e := cat.get_entry(int(pair[0]))
@@ -191,16 +222,19 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		var sp: Dictionary = specs[i]
 		var col := i % columns
 		var row := i / columns
-		var at := base + fwd * (40.0 + row * SPACING_Z) + right * ((col - (columns - 1) * 0.5) * SPACING_X)
+		var at := base + fwd * (40.0 + row * spacing_z) + right * ((col - (columns - 1) * 0.5) * spacing_x)
 		var gy := _ground_at(at)
 		if not is_nan(gy):
 			at.y = gy
 		var equipped := _kit(sp)
+		if sp.has("kit"):
+			equipped.merge(sp["kit"], true)
 		var id := 990000 + i
 		var code: String = world._body_key_for(int(sp["ref"]), "")
 		# Facing the player (heading = yaw + pi in RemoteFacing's frame is
 		# not needed here: the node's yaw is set below).
-		world._spawn_or_update_other(id, "%s" % code.trim_prefix("CHAR_"), at, equipped, code, NAN, int(sp["scale"]))
+		world._spawn_or_update_other(id, "%s" % code.trim_prefix("CHAR_"), at, equipped, code, NAN, int(sp["scale"]),
+			sp.get("pluses", {}))
 		var node: Node3D = world._other_bodies.get(id)
 		if node != null:
 			node.rotation.y = yaw + PI

@@ -2045,7 +2045,7 @@ func main() {
 		}, zerkTracker),
 		session.InventoryHandler(chars, inv, refItems),
 		session.InventoryMoveHandler(chars, inv, refItems),
-		session.EquipmentHandlerWithRules(chars, eq, inv, refItems, trades),
+		session.EquipmentHandlerWithBroadcast(chars, eq, inv, refItems, trades, hub),
 		session.CharacterStatsHandler(chars, eq, refItems, skills, manaTracker),
 		session.SpendStatPointsHandler(chars, eq, refItems, skills, manaTracker),
 		session.GMCommandHandler(chars, gmGate, gmDeps, hub, logger),

@@ -199,6 +199,9 @@ func _dress(body: Node) -> void:
 		return
 	if _lighter == null:
 		_lighter = PlayerPortrait.new()
+		# A glowing weapon keeps the world's glow shader here: the backdrop
+		# is the world's environment (round 734's review, F1).
+		_lighter.glow_world_present = true
 		var zl = backdrop.world.get("_portrait_zone_light") if backdrop != null and backdrop.world != null else null
 		if zl is Array and (zl as Array).size() == 2:
 			_zone_light = zl
@@ -614,6 +617,8 @@ func _tick(d: Drawn, delta: float) -> void:
 		d.alpha_t = minf(d.alpha_t + delta, CharSelectMath.MODEL_FADE_S)
 		d.alpha = lerpf(d.alpha_from, d.alpha_target, d.alpha_t / CharSelectMath.MODEL_FADE_S)
 		_apply_alpha(d)
+	elif d.alpha < 254.5:
+		_fade_particles(d, clampf(d.alpha / 255.0, 0.0, 1.0))
 	if d.body == null or d.anim == null:
 		return
 	var t := _clock - d.anim_start
@@ -664,6 +669,23 @@ func _apply_alpha(d: Drawn) -> void:
 			mi.transparency = 1.0 - a
 	for m in d.fade_colours:
 		m.set_shader_parameter("select_fade", a)
+	_fade_particles(d, 1.0 if full else a)
+
+## A glowing weapon's particles (EquipFx's holders under the body) fade with
+## the body (round 734's review, F8; OURS: whether retail fades a character's
+## particle effects with it is not read). Per holder, as GeometryInstance3D.
+## transparency: the holders share their master's MultiMesh and materials.
+## Run on every alpha step, and in _tick while the body stays translucent, as
+## the driver makes a holder only once its weapon is first chosen.
+func _fade_particles(d: Drawn, a: float) -> void:
+	if d.body == null:
+		return
+	for fx in d.body.find_children("*", "EfpEffect", true, false):
+		if not (fx as Node).has_meta(EquipGlow.FX_META):
+			continue
+		for g in (fx as Node).get_children():
+			if g is GeometryInstance3D:
+				(g as GeometryInstance3D).transparency = 1.0 - a
 
 var _qa_instance_fade := OS.get_environment("OPENSRO_QA_SELECT_INSTANCE_FADE") != ""
 
@@ -747,6 +769,9 @@ func _unfade_mesh(mi: MeshInstance3D) -> void:
 ## next_pass, or -- for a layer that blends without writing depth -- its colour
 ## pass alone. Null when `src` is not a ShaderMaterial this can rewrite.
 func _fade_pair(d: Drawn, src: Material) -> Material:
+	# A glowing weapon is translucent on its plain material: the glow is drawn
+	# only at full alpha (READ, CRTModProgEquipPow; EquipGlow, round 734).
+	src = EquipGlow.plain_of(src)
 	var id := src.get_instance_id()
 	if d.fade_pairs.has(id):
 		return d.fade_pairs[id]
@@ -760,7 +785,7 @@ func _fade_pair(d: Drawn, src: Material) -> Material:
 			# READ (FUN_00c428c0's stage-0 ALPHAOP): texture alpha x fade, but the
 			# fade alone for an object with an env-map mod, whose flag word gets
 			# 0x40000000 (CRTModEnvMap::vslot_004). ProgEquipPow (enhanced gear,
-			# 0xe21f0000) is not drawn by this client: OPEN.
+			# 0xe21f0000) is off while translucent (its gate, above).
 			colour.set_shader_parameter("select_use_tex",
 				0.0 if sm.has_meta(SkinnedBsrAssembler.ENV_MAPPED_META) else 1.0)
 			d.fade_colours.append(colour)

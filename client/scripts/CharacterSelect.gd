@@ -633,7 +633,10 @@ func _qa_sample_characters() -> Array:
 	# OURS, QA only: clearly-fake names over real catalogue ids (charselect.md
 	# section 4 lists them; references, not data). OPENSRO_QA_FAKECHARS=<n>
 	# gives n of them (default 3); the third is pending deletion.
+	# OPENSRO_QA_FAKECHARS_PLUS=<n> (round 734) puts that plus on each one's
+	# last item, the weapon, for the glow (EquipGlow).
 	var n := 3
+	var weapon_plus := clampi(OS.get_environment("OPENSRO_QA_FAKECHARS_PLUS").to_int(), 0, 255)
 	var v := OS.get_environment("OPENSRO_QA_FAKECHARS")
 	if v.is_valid_int():
 		n = clampi(v.to_int(), 0, 8)
@@ -669,8 +672,9 @@ func _qa_sample_characters() -> Array:
 		if pend != "":
 			s.deleting = s.char_name == pend
 			s.minutes_left = 4321 if s.deleting else 0
-		for id in spec[5]:
-			s.items.append({"id": id, "plus": 0})
+		var kit: Array = spec[5]
+		for j in range(kit.size()):
+			s.items.append({"id": kit[j], "plus": weapon_plus if j == kit.size() - 1 else 0})
 		out.append(s)
 	return out
 

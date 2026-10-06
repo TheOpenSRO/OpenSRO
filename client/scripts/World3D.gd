@@ -1261,6 +1261,11 @@ var _other_gaits := {}
 ## character_id -> {slot: item id}, as last reported: what the debug panel
 ## lists for another player.
 var _other_equipped := {}
+## character_id -> {slot: effective plus} (round 735): each other player's
+## worn pluses, from their snapshot's pluses tail and every 0x3038 since. A
+## slot not listed is +0. Lane A's glow reads it (with
+## NetClient.other_player_equipment_changed for the moment it changes).
+var _other_pluses := {}
 ## How far a body may still be from its target before it counts as moving:
 ## a tenth of the body's height (REAL_CHARACTER_NATIVE_HEIGHT), so the tail
 ## of the interpolation reads as standing.
@@ -1534,6 +1539,11 @@ var _player_weapon_group := "default"
 ## _real_player_equipped_items() is a coroutine that asks the server, and
 ## a panel refreshing twice a second must not.
 var _player_equipped_last: Dictionary = {}
+## slot -> the glow's plus the body was last dressed with (round 734,
+## _player_pluses), so a plus change alone redresses it.
+var _player_pluses_last: Dictionary = {}
+## slot -> plus from OPENSRO_QA_EQUIP's "slot=item_id+plus" pairs (round 734).
+var _qa_equip_pluses: Dictionary = {}
 
 var _media_pk2: Pk2Reader
 ## textuisystem.txt -- the UI string catalog (button captions, system
@@ -1753,6 +1763,7 @@ func _ready() -> void:
 	NetClient.entity_entered.connect(_on_entity_entered)
 	NetClient.entity_moved.connect(_on_entity_moved)
 	NetClient.entity_left.connect(_on_entity_left)
+	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
 	NetClient.recall_designate_result.connect(_on_recall_designate_result)
@@ -5975,6 +5986,9 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	_abnormal_states.clear()
 	_fx_owner_buffs.clear()
 	_spawn_result_others(list, seated)
+	# The equipment broadcasts that arrived while the list was not drawn
+	# (round 735's review, finding 1).
+	_flush_pending_equip_changes()
 	_fx_resync_all("the zone change's arrival")
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
@@ -8695,6 +8709,8 @@ func _load_character_assets() -> void:
 	var t_cat := Time.get_ticks_usec()
 	var bodies := CharCatalog.from_tables(char_parts, [])
 	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
+	# The weapon glow's particles (round 734) come from the world's own reader.
+	_appearance.particles = _open_particles_pk2_if_set()
 	_body_anims = BodyAnimations.new(_data_pk2)
 	for id in bodies.entries:
 		var e: CharCatalog.Entry = bodies.entries[id]
@@ -8950,7 +8966,11 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 ## 0xc25460 -> RTSkeleton 0xc4bcb0), with meta "body" and "weapon_group".
 ## Falls back to the default gender's body if `body` cannot be built; null
 ## only if even that fails.
-func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE) -> Skeleton3D:
+##
+## `pluses` (round 734) is slot -> the plus byte the glow is chosen by
+## (EquipGlow): your own gear's OptLevel + advanced elixir (_player_pluses),
+## another player's from their spawn or equip change; a slot it lacks is +0.
+func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE, pluses: Dictionary = {}) -> Skeleton3D:
 	if _appearance == null:
 		return null
 	var assets := _body_assets(body)
@@ -8967,7 +8987,7 @@ func _build_assembled_character(equipped: Dictionary = {}, body: String = "", sc
 		if not _item_models.has(item_id):
 			print("World3D: item %d in slot %d has no worn model in the item table -- not drawn" % [item_id, slot])
 			continue
-		items.append({"id": item_id, "plus": 0})
+		items.append({"id": item_id, "plus": int(pluses.get(slot, 0)) & 0xFF})
 	var built := _appearance.build(int(assets["ref"]), scale, items)
 	if built == null:
 		return null
@@ -8976,13 +8996,18 @@ func _build_assembled_character(equipped: Dictionary = {}, body: String = "", sc
 	skeleton.scale = built.scale
 	skeleton.set_meta("body", body)
 	skeleton.set_meta("weapon_group", built.weapon_group)
+	skeleton.set_meta("glow_pluses", pluses.duplicate())
 	var drawn := 0
+	var glows := PackedStringArray()
 	for w in built.worn:
 		if not w.get("default", false) and not (w["nodes"] as Array).is_empty():
 			drawn += 1
+		if int(w.get("glow", 0)) > 0 or int(w.get("glow_fx", 0)) > 0:
+			glows.append("%s +%d (row +%d, %d effect(s))" % [w.get("code", ""), int(w["plus"]), int(w["glow"]), int(w["glow_fx"])])
 	if not equipped.is_empty():
-		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them" % [
-			body, scale, built.height_factor, drawn, equipped.size(), built.hidden_body_meshes])
+		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them%s" % [
+			body, scale, built.height_factor, drawn, equipped.size(), built.hidden_body_meshes,
+			("; glow: " + ", ".join(glows)) if not glows.is_empty() else ""])
 	built.free()
 	return skeleton
 
@@ -9011,6 +9036,8 @@ func _try_apply_real_player_character() -> void:
 ## character" (playtest 2026-09-20).
 func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_equipped_last = equipped
+	var pluses := _player_pluses()
+	_player_pluses_last = pluses
 	var gender := DEFAULT_GENDER
 	var ref_obj_id := 0
 	var scale := CharacterAppearance.DEFAULT_SCALE
@@ -9035,7 +9062,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# asking -- and this says which side to look at.
 	print("World3D: player equipment %s" % str(equipped))
 
-	var skeleton := _build_assembled_character(equipped, body, scale)
+	var skeleton := _build_assembled_character(equipped, body, scale, pluses)
 	if skeleton == null:
 		return
 	body = String(skeleton.get_meta("body", body))
@@ -9110,7 +9137,11 @@ func _refresh_paper_doll(equipped: Dictionary, body: String) -> void:
 		_paper_doll.set_active(_hud_panels.paper_doll_shown())
 		_hud_panels.paper_doll_shown_changed.connect(_paper_doll.set_active)
 		_hud_panels.paper_doll_measure_requested.connect(_log_paper_doll_pose)
-	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale)
+	# With the glow (round 734, INFERRED, weapon_glow.md OPEN 10): the
+	# window's avatar is a character object, and the client's copy of one
+	# character's dress onto another (UI_SILKMALL::FUN_00a617d0) carries
+	# each slot's plus into InstallEquipVisual.
+	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale, _player_pluses_last)
 	if doll_skeleton == null:
 		return
 	_paper_doll.set_character(doll_skeleton)
@@ -9136,6 +9167,12 @@ func _refresh_player_portrait(skel: Skeleton3D, equipped: Dictionary, body: Stri
 	var copy := skel.duplicate() as Skeleton3D
 	if copy == null:
 		return
+	# The glow comes along with the copy (the portrait borrows the equipment
+	# window's avatar: INFERRED, as _refresh_paper_doll), on the Linear-view
+	# glow shader PlayerPortrait gives it (round 734's review, F1); its
+	# particle effects do not -- a duplicated EfpEffect has no simulation,
+	# and a picture rendered once would hold one still frame of them (OURS).
+	EquipGlow.strip_particles(copy)
 	var pose := _body_animation_for(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body))
 	_hud_player_info.set_portrait(copy, pose)
 	var p := _hud_player_info.portrait()
@@ -10632,16 +10669,35 @@ func _real_player_equipped_items() -> Dictionary:
 ## EquipmentNet.SLOT_* numbers; item ids are real ones from the item table. A
 ## malformed pair is skipped with a log line rather than guessed at. Only the
 ## QA screenshot harness sets OPENSRO_QA_EQUIP -- see _real_player_equipped_items.
+## Round 734: "slot=item_id+plus" gives the item that plus for the glow
+## (into _qa_equip_pluses, which _player_pluses reads with no server).
 func _parse_qa_equip(spec: String) -> Dictionary:
-	var equipped := {}
-	for pair in spec.split(",", false):
-		var kv: PackedStringArray = String(pair).split("=")
-		if kv.size() != 2 or not kv[0].strip_edges().is_valid_int() or not kv[1].strip_edges().is_valid_int():
-			printerr("World3D: OPENSRO_QA_EQUIP: bad pair '%s' (want slot=item_id)" % pair)
-			continue
-		equipped[int(kv[0].strip_edges())] = int(kv[1].strip_edges())
-	print("World3D: QA equipment loadout %s" % str(equipped))
+	var bad: Array = []
+	var parsed := EquipGlow.parse_loadout(spec, bad)
+	for pair in bad:
+		printerr("World3D: OPENSRO_QA_EQUIP: bad pair '%s' (want slot=item_id[+plus])" % pair)
+	var equipped: Dictionary = parsed[0]
+	_qa_equip_pluses = parsed[1]
+	print("World3D: QA equipment loadout %s, pluses %s" % [str(equipped), str(_qa_equip_pluses)])
 	return equipped
+
+## The plus each worn slot's glow is chosen by (round 734): the item's
+## OptLevel plus its advanced elixir, as a u8 -- READ, the client's item
+## +0x8c byte (OptLevel + elixir, c:0x8bb070) is what CICPlayer::vslot_025
+## (0x9d9a80) -> FUN_008ba570 hands InstallEquipVisual for your own gear --
+## from the equipment list's instance block (round 732, ItemInstance). With
+## no server, OPENSRO_QA_EQUIP's pluses.
+func _player_pluses() -> Dictionary:
+	if not NetClient.is_connected_to_server():
+		return _qa_equip_pluses
+	var out := {}
+	for slot in NetClient.last_equipment_instances:
+		var it: ItemInstance = NetClient.last_equipment_instances[slot]
+		if it != null:
+			var p := it.effective_plus() & 0xFF
+			if p != 0:
+				out[int(slot)] = p
+	return out
 
 ## Loads a real Map.pk2 region's real object placements (OPENSRO_MAPO_PATH,
 ## e.g. "0\\0.o", via OPENSRO_MAP_PK2_PATH -- same archive as
@@ -11955,6 +12011,34 @@ var _qa_berserk_tab_sent := false
 var _qa_pmi_spec := OS.get_environment("OPENSRO_QA_PMI")
 var _qa_pmi_state := -1
 
+## OPENSRO_QA_REEQUIP="<unequip tick>,<equip tick>" (round 735): takes the
+## weapon off at the first tick and puts the same item back on from the bag at
+## the second, through the real equip messages, so a second client sees the
+## server's 0x3039 and 0x3038. QA only; never set in real play.
+var _qa_reequip_spec := OS.get_environment("OPENSRO_QA_REEQUIP")
+var _qa_reequip_item := 0
+
+func _qa_reequip_step() -> void:
+	var parts := _qa_reequip_spec.split(",")
+	if parts.size() != 2 or not NetClient.is_connected_to_server():
+		return
+	var who := NetClient.current_character_name
+	if _qa_tick == int(parts[0]):
+		_qa_reequip_item = int(_player_equipped_last.get(EquipmentNet.SLOT_WEAPON, 0))
+		print("QA REEQUIP: tick %d taking off weapon %d" % [_qa_tick, _qa_reequip_item])
+		# As the window's button does (_on_unequip_pressed): the ack refreshes
+		# the bag the weapon lands in.
+		_awaiting_equip_ack = true
+		NetClient.unequip(who, EquipmentNet.SLOT_WEAPON)
+	elif _qa_tick == int(parts[1]):
+		for s in _inventory_slots:
+			if s.item_id == _qa_reequip_item:
+				print("QA REEQUIP: tick %d putting weapon %d back on from bag slot %d" % [_qa_tick, s.item_id, s.slot_index])
+				_awaiting_equip_ack = true
+				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, s.slot_index)
+				return
+		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
+
 func _qa_pmi_click(control_name: String) -> void:
 	var c := _hud_player_info.find_child(control_name, true, false) as Control
 	if c == null:
@@ -12687,6 +12771,8 @@ func _qa_step() -> void:
 	_qa_tick += 1
 	if _qa_pmi_spec != "":
 		_qa_pmi_step()
+	if _qa_reequip_spec != "":
+		_qa_reequip_step()
 	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
@@ -15396,9 +15482,18 @@ func _step_remote_turns(delta: float) -> void:
 ## `body` and `scale` (round 689) are the character's own model -- a Figure's
 ## code name (_body_key_for of the snapshot's RefObjID, or of its gender from
 ## an older server) and its scale byte -- drawn as the local player's is.
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, body: String = "", heading: float = NAN, scale: int = CharacterAppearance.DEFAULT_SCALE) -> void:
+##
+## `pluses` (round 734, the hook for the plus of others' gear) is slot -> the
+## plus byte retail carries per item (0x3038's OptLevel; the spawn's, OPEN
+## 3): their weapon and shield glow at it (EquipGlow). null leaves what the
+## body has; given for a body already drawn, the glow is redrawn on it
+## (CharacterAppearance.reglow) without rebuilding the body.
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, body: String = "", heading: float = NAN, scale: int = CharacterAppearance.DEFAULT_SCALE, pluses = null) -> void:
 	if not equipped.is_empty():
 		_other_equipped[character_id] = equipped
+	if pluses is Dictionary:
+		_other_pluses[character_id] = pluses
+		_reglow_other(character_id, pluses)
 	if _other_bodies.has(character_id):
 		# Sets the real interpolation *target* only -- see
 		# _other_body_targets' own doc comment for why this replaced a
@@ -15420,7 +15515,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# bodyOf and equippedItems in server/internal/session/world.go, both
 	# queried live), and each item is drawn from its own model. Falls back to
 	# the labeled placeholder capsule if the bodies never loaded.
-	var skeleton := _build_assembled_character(equipped, body, scale)
+	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}))
 	if skeleton != null:
 		# Same 180deg front correction as the local player (see
 		# _try_apply_real_player_character) -- the body's own front is -Z, and
@@ -15501,9 +15596,156 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 		_arrival_entries[snapshot.character_id] = snapshot
 		_log_system("%s entered the zone." % snapshot.char_name)
 		return
+	_note_other_pluses(snapshot)
 	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped,
-		_snapshot_body(snapshot), snapshot.heading, snapshot.scale if snapshot.has_model else CharacterAppearance.DEFAULT_SCALE)
+		_snapshot_body(snapshot), snapshot.heading, snapshot.scale if snapshot.has_model else CharacterAppearance.DEFAULT_SCALE, snapshot.pluses)
 	_log_system("%s entered the zone." % snapshot.char_name)
+
+## Keeps another player's worn pluses from their snapshot (round 735), and
+## logs the ones they have -- the two-client check reads it.
+func _note_other_pluses(snapshot: WorldNet.EntitySnapshot) -> void:
+	_other_pluses[snapshot.character_id] = snapshot.pluses.duplicate()
+	for slot in snapshot.pluses:
+		print("World3D: player %d spawns with slot %d item %d at +%d" % [snapshot.character_id, int(slot),
+			snapshot.item_in(int(slot)), int(snapshot.pluses[slot])])
+
+## The character id retail's u32 uid names (round 735): the other player whose
+## id's low 32 bits it is, drawn or waiting in a zone change's arrival list.
+## -1 when there is none.
+func _other_by_uid(uid: int) -> int:
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) == uid:
+			return int(id)
+	for id in _arrival_entries:
+		if (int(id) & 0xffffffff) == uid:
+			return int(id)
+	return -1
+
+## Retail 0x3038 / 0x3039 (round 735, NetClient.other_player_equipment_changed):
+## another player put an item on (or its plus changed) or took one off. The
+## retail client redresses the character by the item's visual slot
+## (FUN_008a9260 / FUN_008a9560 -> ResolveVisualSlotForItem); OpenSRO keys its
+## worn map by equip slot, which is the message's slot byte. plus -1 is a
+## removal.
+func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) -> void:
+	var op := 0x3038 if plus >= 0 else 0x3039
+	# Retail tells the mover too (its handlers' own-uid branch updates the
+	# character window and preview); this client did that from its equipment
+	# result (0x0041), which the server sends first.
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		print("World3D: 0x%x for this player -- drawn from the equipment result" % op)
+		return
+	var id := _other_by_uid(uid)
+	if id < 0:
+		# A zone change's result is laid out after its loading screen; until
+		# then its others are nowhere this handler can reach (round 735's
+		# review, finding 1). Kept and replayed once they are drawn.
+		if _arrival_pending:
+			_pending_equip_changes.append([uid, slot, ref_id, plus])
+			print("World3D: 0x%x for uid %d kept until the arrival list is drawn" % [op, uid])
+			return
+		print("World3D: 0x%x for uid %d, who is not drawn -- ignored" % [op, uid])
+		return
+	# A player waiting in the arrival list changes their kept snapshot, not
+	# whatever this client last drew of them (round 735's review, finding 1).
+	var kept: WorldNet.EntitySnapshot = _arrival_entries.get(id)
+	var worn: Dictionary = (kept.equipped if kept != null else _other_equipped.get(id, {}) as Dictionary).duplicate()
+	var pluses: Dictionary = (kept.pluses if kept != null else _other_pluses.get(id, {}) as Dictionary).duplicate()
+	var same_item := plus >= 0 and worn.has(slot) and int(worn[slot]) == ref_id
+	if plus >= 0:
+		worn[slot] = ref_id
+		if plus > 0:
+			pluses[slot] = plus
+		else:
+			pluses.erase(slot)
+	else:
+		worn.erase(slot)
+		pluses.erase(slot)
+	print("World3D: player %d now wears slot %d item %d at +%d" % [id, slot, int(worn.get(slot, 0)), int(pluses.get(slot, 0))])
+	if kept != null:
+		kept.equipped = worn
+		kept.pluses = pluses
+		return
+	_other_equipped[id] = worn
+	_other_pluses[id] = pluses
+	# Only the plus changed (the slot's item is the one drawn): the glow is
+	# redrawn on the body as it stands, not the whole body rebuilt (round 734's
+	# review, F2) -- the server sends one 0x3038 per plused item of every
+	# player in an arrival list too long for one frame.
+	if same_item and _reglow_other(id, pluses):
+		return
+	_redress_other(id)
+
+## Redraws another player's weapon and shield glow at `pluses` on the body
+## drawn now (CharacterAppearance.reglow), only when they differ from those it
+## was drawn with (_build_assembled_character marks them), and lights it again:
+## a glow taken off gives back the plain material at the default object
+## colour (round 734's review, F6). False when no body is drawn to redraw.
+func _reglow_other(character_id: int, pluses: Dictionary) -> bool:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	var skel: Skeleton3D = gait.get("skeleton") as Skeleton3D
+	if _appearance == null or skel == null or not is_instance_valid(skel):
+		return false
+	if skel.get_meta("glow_pluses", {}) != pluses:
+		_appearance.reglow(skel, pluses)
+		skel.set_meta("glow_pluses", pluses.duplicate())
+		var node: Node3D = _other_bodies.get(character_id)
+		if node != null and is_instance_valid(node):
+			node.remove_meta(CharacterLight.META_VALUE)
+			_light_character(node)
+	return true
+
+## Broadcasts kept while a zone change's arrival list was not drawn (round 735's
+## review, finding 1): [uid, slot, ref_id, plus] in arrival order.
+var _pending_equip_changes: Array = []
+
+## Replays the kept broadcasts once the arrival list is drawn; a uid still not
+## drawn is then ignored as any other.
+func _flush_pending_equip_changes() -> void:
+	var pending := _pending_equip_changes
+	_pending_equip_changes = []
+	for c in pending:
+		_on_other_equipment_changed(int(c[0]), int(c[1]), int(c[2]), int(c[3]))
+
+## Rebuilds another player's dressed body inside their node from
+## _other_equipped (round 735), as _apply_player_equipment_visual redresses the
+## player's: the new skeleton replaces the old, keeping the node, its plate,
+## its click body, its place and its facing; the gait, sounds and idle or run
+## follow the new weapon's group.
+func _redress_other(character_id: int) -> void:
+	var node: Node3D = _other_bodies.get(character_id)
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if node == null or not is_instance_valid(node) or gait.is_empty():
+		return
+	var equipped: Dictionary = _other_equipped.get(character_id, {})
+	var body := String(gait.get("body", node.get_meta("body", "")))
+	var scale := int(gait.get("scale", CharacterAppearance.DEFAULT_SCALE))
+	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}))
+	if skeleton == null:
+		return
+	var old = gait.get("skeleton")
+	if old != null and is_instance_valid(old):
+		_anim_sounds.unregister(old)
+		old.queue_free()
+	skeleton.rotation.y = PI
+	node.add_child(skeleton)
+	body = String(skeleton.get_meta("body", body))
+	var group := _weapon_group_for(equipped, body)
+	var moving := bool(gait.get("moving", false))
+	var sitting := bool(gait.get("sitting", false))
+	_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false, "sitting": sitting}
+	var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
+	owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
+	_anim_sounds.register(skeleton, owner)
+	var action := BsrReader.AnimationEntry.TYPE_SITTING if sitting else BsrReader.AnimationEntry.TYPE_STAND
+	var loop := _body_animation_for(body, action, group)
+	var frames := _frame_count(loop)
+	if frames > 1:
+		_animated.append([skeleton, loop, frames, 0.0, true, _idle_anim_time, null])
+	if moving:
+		_set_other_gait(character_id, true)
+	node.remove_meta(CharacterLight.META_VALUE)
+	_light_character(node)
 
 ## Another player's position (OpEntityMoved): their body's new walk target,
 ## and (round 637) the heading toward it, which the body turns to at the
@@ -15558,6 +15800,7 @@ func _on_entity_left(character_id: int) -> void:
 	# 1.5 s was not read).
 	_set_other_gait(character_id, false)
 	_other_gaits.erase(character_id)
+	_other_pluses.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_abnormal_states.erase(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
@@ -20930,10 +21173,11 @@ func _leave_sit_by_moving() -> void:
 ## drawn seated takes the sitting loop without the sit-down clip.
 func _spawn_result_others(others: Array, seated: Array) -> void:
 	for other in others:
+		_note_other_pluses(other)
 		# Each faces its heading from the list's tail (round 637's review
 		# follow-up; NAN from an older server).
 		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped,
-			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE)
+			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE, other.pluses)
 	for id in seated:
 		if not _other_bodies.has(int(id)):
 			continue
@@ -21774,7 +22018,7 @@ func _on_equipment_result(items: Array, error: String) -> void:
 	# REDRESS THE CHARACTER. This list is the server's word on what is worn, and
 	# until now only a text widget listened to it -- the 3D body kept whatever
 	# it was built with at login, so taking a sword off left it in the hand.
-	if _player_skeleton != null and equipped != _player_equipped_last:
+	if _player_skeleton != null and (equipped != _player_equipped_last or _player_pluses() != _player_pluses_last):
 		_apply_player_equipment_visual(equipped)
 
 func _on_unequip_pressed(slot: int) -> void:

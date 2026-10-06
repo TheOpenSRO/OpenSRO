@@ -603,7 +603,13 @@ func (d *LobbyDeps) list(ctx context.Context, sess *gateway.Session, accountID i
 //     mana tracker's value, which is its maximum when it has none (OURS).
 //   - Items: the worn items in slots 0..8, the nine the record holds (INFERRED:
 //     the nine non-accessory slots, which is OpenSRO's WearableSlots), each
-//     with plus 0 -- OpenSRO keeps no plus on an item yet (OURS).
+//     with its effective plus, OptLevel + the advanced elixir in a byte
+//     (round 735; equipment.Equipped.EffectivePlus). The byte's place, after
+//     each u32 RefItemID, is READ (the client's SCharacterInfo reader
+//     0x85e620; FUN_0085a580 installs each item with it, so the select
+//     screen can draw the glow). The value is the one 0x3038 and 0x3015
+//     carry (READ); whether retail's list builder adds the elixir too was
+//     not read.
 //   - No avatars: OpenSRO has none.
 //   - Academy 0: OpenSRO has no academy.
 func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time.Time) LobbyCharacter {
@@ -628,7 +634,7 @@ func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time
 			for slot := equipment.Slot(0); slot < equipment.Slot(LobbyMaxItems); slot++ {
 				for _, w := range worn {
 					if w.Slot == slot {
-						rec.Items = append(rec.Items, LobbyItem{RefItemID: uint32(w.ItemID)})
+						rec.Items = append(rec.Items, LobbyItem{RefItemID: uint32(w.ItemID), Plus: w.EffectivePlus()})
 					}
 				}
 			}

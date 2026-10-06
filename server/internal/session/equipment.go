@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/trade"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Equipment opcodes, our own protocol. All take a character name (like
@@ -28,6 +29,11 @@ const (
 type EquippedSnapshot struct {
 	Slot   int
 	ItemID int64
+	// Plus is the item's effective plus (equipment.Equipped.EffectivePlus,
+	// round 735), for the snapshots that show other players. Encode leaves
+	// it out -- the own list's items carry their whole instance in Infos --
+	// and the entity snapshots send it in their pluses tail (encodePluses).
+	Plus uint8
 }
 
 func (e *EquippedSnapshot) Encode() []byte {
@@ -206,14 +212,22 @@ func EquipmentHandler(chars character.Store, store equipment.Store) gateway.Hand
 // (tradeEquipLockedReason, tradebusy.go); a pending request does not lock
 // equipment. trades may be nil, which locks nothing.
 func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) gateway.Handler {
+	return EquipmentHandlerWithBroadcast(chars, store, inv, items, trades, nil)
+}
+
+// EquipmentHandlerWithBroadcast is EquipmentHandlerWithRules plus the
+// world hub the change is told to: a successful equip sends retail 0x3038
+// and an unequip 0x3039 to the other characters in the zone
+// (equip_broadcast.go, round 735). A nil hub tells no one.
+func EquipmentHandlerWithBroadcast(chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub, hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEquipmentList:
 			return handleEquipmentList(ctx, sess, p, chars, store, items)
 		case OpEquip:
-			return handleEquip(ctx, sess, p, chars, store, inv, items, trades)
+			return handleEquip(ctx, sess, p, chars, store, inv, items, trades, hub)
 		case OpUnequip:
-			return handleUnequip(ctx, sess, p, chars, store, items, trades)
+			return handleUnequip(ctx, sess, p, chars, store, items, trades, hub)
 		default:
 			return nil
 		}
@@ -360,7 +374,7 @@ func sendWornList(ctx context.Context, sess *gateway.Session, store equipment.St
 		Infos: wornItemInfos(ctx, worn, lookup)}).Encode()})
 }
 
-func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
+func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub, hub *world.Hub) error {
 	req, err := DecodeEquipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -380,10 +394,14 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
-	return sendWornList(ctx, sess, store, items, characterID)
+	err = sendWornList(ctx, sess, store, items, characterID)
+	// The zone sees it put on (0x3038, round 735). A swap is one 0x3038 of
+	// the incoming item, as retail's: the client's handler replaces the slot.
+	broadcastWorn(ctx, hub, store, items, characterID, req.Slot)
+	return err
 }
 
-func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup, trades *trade.Hub) error {
+func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup, trades *trade.Hub, hub *world.Hub) error {
 	req, err := DecodeUnequipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -402,10 +420,14 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	// CGStorage::FindFirstEmptySlot(13) (0x5258c6, READ). req.InventorySlot
 	// is parsed and not used (round 652, the user's choice: the original's
 	// rule).
+	removed := wornIn(ctx, store, characterID, req.Slot)
 	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
-	return sendWornList(ctx, sess, store, items, characterID)
+	err = sendWornList(ctx, sess, store, items, characterID)
+	// The zone sees it taken off (0x3039, round 735).
+	broadcastUnworn(hub, characterID, req.Slot, removed)
+	return err
 }
 
 func equipErrorMessage(err error) string {

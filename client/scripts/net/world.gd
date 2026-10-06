@@ -87,9 +87,16 @@ class EntitySnapshot:
 	var ref_obj_id: int = 0
 	var scale: int = 0x22
 	var has_model: bool = false
+	## slot -> the worn item's effective plus (OptLevel + advanced elixir;
+	## round 735, the server's pluses tail), for the slots whose item has
+	## one. A slot not here is +0, which is also what an older server means.
+	var pluses: Dictionary = {}
 
 	func item_in(slot: int) -> int:
 		return int(equipped.get(slot, 0))
+
+	func plus_in(slot: int) -> int:
+		return int(pluses.get(slot, 0))
 
 ## Encodes an OpEnterWorld request: just a character name.
 static func encode_enter_world(character_name: String) -> PackedByteArray:
@@ -332,7 +339,11 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 						result.ref_obj_id = ref
 						result.scale = data[tail + 4]
 						result.has_model = true
-					result.error = _decode_models(data, tail + 5, result.others)[0]
+					var models := _decode_models(data, tail + 5, result.others)
+					result.error = models[0]
+					# The pluses tail (round 735), after the models.
+					if result.error == "":
+						result.error = _decode_pluses_list(data, int(models[1]), result.others)[0]
 	return result
 
 ## Reads the models tail (round 689; the server's decodeModels) of an
@@ -359,6 +370,41 @@ static func _decode_models(data: PackedByteArray, offset: int, others: Array) ->
 			snap.scale = data[offset + 5 * i + 4]
 			snap.has_model = true
 	return ["", offset + 5 * n]
+
+## Reads one snapshot's pluses block (round 735; the server's decodePluses):
+## a u8 count, then a u8 slot and a u8 plus per entry, onto snap.pluses.
+## Retail sends the byte after each item's RefItemID in its 0x3015 spawn
+## (CICUser vslot 25, 0x9de2f0, READ); OpenSRO's snapshot carries it in this
+## trailing block. Returns [error, next].
+static func _decode_pluses(data: PackedByteArray, offset: int, snap: EntitySnapshot) -> Array:
+	if offset >= data.size():
+		return ["truncated plus count", offset]
+	var n := int(data[offset])
+	offset += 1
+	if offset + 2 * n > data.size():
+		return ["truncated pluses", offset]
+	for i in range(n):
+		snap.pluses[int(data[offset + 2 * i])] = int(data[offset + 2 * i + 1])
+	return ["", offset + 2 * n]
+
+## Reads a result's pluses tail (round 735; the server's decodePluses List),
+## after the models tail: a u16 count equal to the list's length and one
+## block per other. Nothing there is an older server. Returns [error, next].
+static func _decode_pluses_list(data: PackedByteArray, offset: int, others: Array) -> Array:
+	if offset >= data.size():
+		return ["", offset]
+	if offset + 2 > data.size():
+		return ["truncated pluses count", offset]
+	var n := data.decode_u16(offset)
+	offset += 2
+	if n != others.size():
+		return ["%d pluses blocks for %d others" % [n, others.size()], offset]
+	for i in range(n):
+		var r := _decode_pluses(data, offset, others[i] as EntitySnapshot)
+		if r[0] != "":
+			return r
+		offset = int(r[1])
+	return ["", offset]
 
 ## Reads the Seated tail of an OpEnterWorldResult or OpChangeZoneResult (round
 ## 607; server/internal/session/world.go's decodeSeated): a u16 count and an
@@ -436,6 +482,10 @@ static func decode_entity_entered(data: PackedByteArray) -> EntitySnapshot:
 		snap.ref_obj_id = data.decode_u32(end + 2)
 		snap.scale = data[end + 6]
 		snap.has_model = snap.ref_obj_id != 0
+	# The pluses (round 735), after the model -- which the server writes as
+	# 0/0 when it has none and pluses follow.
+	if snap != null and end >= 0 and end + 2 + 5 < data.size():
+		_decode_pluses(data, end + 7, snap)
 	return snap
 
 ## Result of decode_entity_moved().
@@ -620,7 +670,11 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 			result.error = heads[0]
 			# The models tail (round 689), after the headings.
 			if result.error == "":
-				result.error = _decode_models(data, int(heads[1]), result.others)[0]
+				var models := _decode_models(data, int(heads[1]), result.others)
+				result.error = models[0]
+				# The pluses tail (round 735), after the models.
+				if result.error == "":
+					result.error = _decode_pluses_list(data, int(models[1]), result.others)[0]
 	return result
 
 ## Encodes an OpRevive request: retail's one option byte (see OP_REVIVE) --

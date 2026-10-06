@@ -690,6 +690,11 @@ var follow_basis := Basis.IDENTITY
 ## review: an object's mode-0 particle entry, CRTModParticle::FUN_00c81190
 ## 0xc811c5..0xc811e0 multiplies the bone's matrix by the world's).
 var follow_bone_full := false
+## The effect's own uniform scale on top of its host's (round 734): an
+## equipment glow's particle row asks for col 3 / 100 (READ: CRTModParticle
+## +0xc0, handed each placement to CEFEffect::vslot_010, which sets the
+## effect's scale). 1 for every other effect.
+var effect_scale := 1.0
 
 func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
 	_follow_host = host
@@ -751,7 +756,7 @@ func _place() -> bool:
 	var redraw := false
 	if not _anchored:
 		_anchored = true
-		_anchor = Transform3D(scale_basis(placed.basis), placed.origin)
+		_anchor = Transform3D(scale_basis(placed.basis) * effect_scale, placed.origin)
 		top_level = true
 	var e := _anchor.affine_inverse() * placed
 	if e.origin.length() > ANCHOR_JUMP and sim != null:
@@ -784,8 +789,16 @@ func _process(delta: float) -> void:
 	if max_life > 0.0 and _life >= max_life and loop:
 		stop()
 		return
+	var t0 := Time.get_ticks_usec() if profile else 0
 	var moved := _place()
+	var t1 := Time.get_ticks_usec() if profile else 0
 	var stepped := sim.advance(delta)
+	if profile:
+		prof["place"] += t1 - t0
+		prof["sim"] += Time.get_ticks_usec() - t1
+		prof["calls"] += 1
+		prof["moved"] += 1 if moved else 0
+		prof["steps"] += stepped
 	# Finished -- nothing alive, no emitter spawning -- ends the effect, kept
 	# or not (READ: CRTModParticle::FUN_00c80ff0 releases the effect when
 	# CEFEffect::vslot_000 returns 0; round 620's restart of a finished kept
@@ -820,13 +833,22 @@ func _process(delta: float) -> void:
 	# (Round 621: also when the host moved the effect, whose followers the
 	# placement pass moved this frame, or the space re-centred.)
 	if stepped > 0 or moved or (_has_billboard and _camera_turned()):
+		var t3 := Time.get_ticks_usec() if profile else 0
 		_update_draws()
+		if profile:
+			prof["draws"] += Time.get_ticks_usec() - t3
+			prof["draw_calls"] += 1
 	# The Link strips likewise: after a step, or when the camera or the
 	# effect moved for a screen-space pipe (round 621's review follow-up).
 	if not _links.is_empty() and (stepped > 0 or moved or (_has_pipe and _link_camera_moved())):
 		_update_links()
 	if stepped > 0 and _qa_log():
 		print("QA FXLOG %s frame %d particles %d drawn %d" % [path, sim.age, sim.particles.size(), drawn_particles()])
+
+## Round 734: per-part timings of every effect's _process, microseconds,
+## while `profile` is set (QA and tools only; off by default).
+static var profile := false
+static var prof := {"place": 0, "sim": 0, "draws": 0, "calls": 0, "moved": 0, "steps": 0, "draw_calls": 0}
 
 ## OPENSRO_QA_FXLOG=1 (round 623): every effect prints its particle and
 ## drawn counts after each simulation frame, so a render's frames can be

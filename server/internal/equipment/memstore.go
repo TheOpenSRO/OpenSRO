@@ -137,3 +137,19 @@ func (m *MemStore) SetDurability(_ context.Context, characterID int64, slot Slot
 	m.worn[characterID][slot] = worn
 	return nil
 }
+
+// SetInstance implements InstanceSetter.
+func (m *MemStore) SetInstance(_ context.Context, characterID int64, slot Slot, inst inventory.Instance) error {
+	if !validSlot(slot) {
+		return ErrInvalidSlot
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	worn, ok := m.worn[characterID][slot]
+	if !ok {
+		return ErrSlotEmpty
+	}
+	worn.SetInstance(inst)
+	m.worn[characterID][slot] = worn
+	return nil
+}

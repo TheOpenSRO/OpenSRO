@@ -126,8 +126,17 @@ func (e *EntitySnapshot) EncodeEntered() []byte {
 	out := e.Encode()
 	angle := proto.EncodeMovementAngle(world.WireAngle(e.Heading))
 	out = append(out, byte(angle), byte(angle>>8))
+	pluses := anyPlus(*e)
 	if e.HasModel {
 		out = appendModel(out, e.RefObjID, e.Scale)
+	} else if pluses {
+		// The pluses follow the model, which is then written: 0/0 is "no
+		// model" to every decoder (decode_entity_entered's ref != 0).
+		out = appendModel(out, 0, 0)
+	}
+	// Round 735: the pluses tail, last.
+	if pluses {
+		out = appendPluses(out, *e)
 	}
 	return out
 }
@@ -154,10 +163,17 @@ func DecodeEntityEntered(data []byte) (*EntitySnapshot, error) {
 		snap.HasHeading = true
 	}
 	// The model (round 689), from a server that sends it.
+	// A 0 RefObjID is a model written only for the pluses after it.
 	if len(rest) >= 2+5 {
-		snap.RefObjID = binary.LittleEndian.Uint32(rest[2:])
-		snap.Scale = rest[6]
-		snap.HasModel = true
+		if ref := binary.LittleEndian.Uint32(rest[2:]); ref != 0 {
+			snap.RefObjID, snap.Scale, snap.HasModel = ref, rest[6], true
+		}
+	}
+	// The pluses (round 735), from a server that sends them.
+	if len(rest) > 2+5 {
+		if _, err := decodePluses(rest[7:], snap); err != nil {
+			return nil, fmt.Errorf("session: decoding EntityEntered: %w", err)
+		}
 	}
 	return snap, nil
 }
@@ -232,9 +248,110 @@ func equippedItems(ctx context.Context, eq equipment.Store, characterID int64) [
 	}
 	var out []EquippedSnapshot
 	for _, it := range items {
-		out = append(out, EquippedSnapshot{Slot: int(it.Slot), ItemID: it.ItemID})
+		out = append(out, EquippedSnapshot{Slot: int(it.Slot), ItemID: it.ItemID, Plus: it.EffectivePlus()})
 	}
 	return out
+}
+
+// The pluses tail (round 735; docs/protocol/weapon_glow.md lane B): each
+// worn item's effective plus, so another player's weapon and shield glow at
+// their level. Retail carries the byte after each item's RefItemID in the
+// 0x3015 spawn (READ: the client's CICUser vslot 25, 0x9de2f0, reads u32
+// RefItemID then, for equipment, a u8 plus; the server writes it with
+// CInstanceItem::vslot_010 mode 2, 0x42e230, as OptLevel + the advanced
+// elixir sum). OpenSRO's snapshot lists its items mid-payload, so the value
+// rides a trailing block an older decoder stops before (OURS framing, retail
+// content): a u8 count, then a u8 slot and a u8 plus per entry. It is the
+// LAST field of each payload that carries it -- after OpEntityEntered's
+// model, and after a result's models tail -- and written only when some
+// snapshot holds a non-zero plus, so every other payload is byte for byte
+// what it was. A slot with no entry is +0.
+//
+// THE TRAP, ONE FIELD ON: a field after this one must make it always written
+// (a zero count), as this one makes the models tail written.
+
+// anyPlus reports whether a worn item in snaps carries a plus.
+func anyPlus(snaps ...EntitySnapshot) bool {
+	for _, s := range snaps {
+		for _, it := range s.Equipped {
+			if it.Plus != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// appendPluses writes one snapshot's pluses block: the items with a plus.
+func appendPluses(out []byte, s EntitySnapshot) []byte {
+	n := 0
+	for _, it := range s.Equipped {
+		if it.Plus != 0 {
+			n++
+		}
+	}
+	out = append(out, byte(n))
+	for _, it := range s.Equipped {
+		if it.Plus != 0 {
+			out = append(out, byte(it.Slot), it.Plus)
+		}
+	}
+	return out
+}
+
+// decodePluses reads one snapshot's pluses block onto its Equipped entries.
+// An entry naming a slot the snapshot does not list is skipped.
+func decodePluses(rest []byte, s *EntitySnapshot) ([]byte, error) {
+	if len(rest) < 1 {
+		return nil, errors.New("truncated plus count")
+	}
+	n := int(rest[0])
+	rest = rest[1:]
+	if len(rest) < 2*n {
+		return nil, errors.New("truncated pluses")
+	}
+	for i := 0; i < n; i++ {
+		slot, plus := int(rest[2*i]), rest[2*i+1]
+		for k := range s.Equipped {
+			if s.Equipped[k].Slot == slot {
+				s.Equipped[k].Plus = plus
+			}
+		}
+	}
+	return rest[2*n:], nil
+}
+
+// encodePlusesList is a result's pluses tail: a u16 count, equal to
+// len(others), and one block per other in list order.
+func encodePlusesList(others []EntitySnapshot) []byte {
+	out := []byte{byte(len(others)), byte(len(others) >> 8)}
+	for _, o := range others {
+		out = appendPluses(out, o)
+	}
+	return out
+}
+
+// decodePlusesList reads a result's pluses tail into others: nothing there
+// is an older server.
+func decodePlusesList(rest []byte, others []EntitySnapshot) ([]byte, error) {
+	if len(rest) == 0 {
+		return rest, nil
+	}
+	if len(rest) < 2 {
+		return nil, errors.New("truncated pluses count")
+	}
+	n := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	if n != len(others) {
+		return nil, fmt.Errorf("%d pluses blocks for %d others", n, len(others))
+	}
+	var err error
+	for i := range others {
+		if rest, err = decodePluses(rest, &others[i]); err != nil {
+			return nil, fmt.Errorf("other %d: %w", i, err)
+		}
+	}
+	return rest, nil
 }
 
 // bodyOf looks up characterID's Gender, RefObjID and scale byte in one
@@ -427,6 +544,25 @@ func decodeModels(rest []byte, others []EntitySnapshot) ([]byte, error) {
 }
 
 func (r *EnterWorldResult) Encode() []byte {
+	b, _ := r.EncodeFitting()
+	return b
+}
+
+// EncodeFitting is Encode, and whether the pluses tail was left out because
+// the payload with it would not fit one frame (proto.MaxPayload; round 735's
+// review, finding 8). The tail is the only optional part, so it is the part
+// dropped; the sender then tells the arriving client the pluses as retail
+// 0x3038s (sendPlusesAsBroadcasts). A list too long without the tail was
+// already too long before round 735 (about 255 others with full kits).
+func (r *EnterWorldResult) EncodeFitting() ([]byte, bool) {
+	full := r.encode(true)
+	if len(full) <= proto.MaxPayload || !anyPlus(r.Others...) {
+		return full, false
+	}
+	return r.encode(false), true
+}
+
+func (r *EnterWorldResult) encode(withPluses bool) []byte {
 	out := encodeOKReason(r.OK, r.Reason)
 	if !r.OK {
 		return out
@@ -447,7 +583,10 @@ func (r *EnterWorldResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	models := r.HasModel || anyModel(r.Others)
+	// The pluses tail (round 735) follows the models tail, which it makes
+	// written.
+	pluses := withPluses && anyPlus(r.Others...)
+	models := r.HasModel || anyModel(r.Others) || pluses
 	if models && !r.HasHeading {
 		// The trap above, enforced here (round 689's review): the models tail
 		// follows the own wire angle, so a result with a model always carries
@@ -455,7 +594,7 @@ func (r *EnterWorldResult) Encode() []byte {
 		// (HasHeading true). Encoded from a copy; r is left as it was.
 		withHeading := *r
 		withHeading.HasHeading = true
-		return withHeading.Encode()
+		return withHeading.encode(withPluses)
 	}
 	heads := r.HasHeading || anyHeading(r.Others) || models
 	if r.Restored || len(r.Seated) > 0 || heads {
@@ -481,7 +620,11 @@ func (r *EnterWorldResult) Encode() []byte {
 	} else {
 		out = appendModel(out, 0, 0)
 	}
-	return append(out, encodeModels(r.Others)...)
+	out = append(out, encodeModels(r.Others)...)
+	if !pluses {
+		return out
+	}
+	return append(out, encodePlusesList(r.Others)...)
 }
 
 // The headings tail (round 637's review follow-up): the Others' headings, so
@@ -685,7 +828,11 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 			if ref := binary.LittleEndian.Uint32(after); ref != 0 {
 				r.RefObjID, r.Scale, r.HasModel = ref, after[4], true
 			}
-			if _, err = decodeModels(after[5:], r.Others); err != nil {
+			if after, err = decodeModels(after[5:], r.Others); err != nil {
+				return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
+			}
+			// The pluses tail (round 735).
+			if _, err = decodePlusesList(after, r.Others); err != nil {
 				return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
 			}
 		}
@@ -986,6 +1133,20 @@ type ChangeZoneResult struct {
 }
 
 func (r *ChangeZoneResult) Encode() []byte {
+	b, _ := r.EncodeFitting()
+	return b
+}
+
+// EncodeFitting is EnterWorldResult.EncodeFitting's twin.
+func (r *ChangeZoneResult) EncodeFitting() ([]byte, bool) {
+	full := r.encode(true)
+	if len(full) <= proto.MaxPayload || !anyPlus(r.Others...) {
+		return full, false
+	}
+	return r.encode(false), true
+}
+
+func (r *ChangeZoneResult) encode(withPluses bool) []byte {
 	out := encodeOKReason(r.OK, r.Reason)
 	if !r.OK {
 		return out
@@ -1001,7 +1162,8 @@ func (r *ChangeZoneResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	models := anyModel(r.Others)
+	pluses := withPluses && anyPlus(r.Others...)
+	models := anyModel(r.Others) || pluses
 	if !anyHeading(r.Others) && !models {
 		return append(out, encodeSeated(r.Seated)...)
 	}
@@ -1014,7 +1176,12 @@ func (r *ChangeZoneResult) Encode() []byte {
 	}
 	// The models tail (round 689), after the headings, which it makes always
 	// written: an older client stops at the headings.
-	return append(out, encodeModels(r.Others)...)
+	out = append(out, encodeModels(r.Others)...)
+	if !pluses {
+		return out
+	}
+	// The pluses tail (round 735), after the models, which it makes written.
+	return append(out, encodePlusesList(r.Others)...)
 }
 
 func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
@@ -1073,7 +1240,10 @@ func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
 	if after, err = decodeHeadings(after, r.Others); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
-	if _, err = decodeModels(after, r.Others); err != nil {
+	if after, err = decodeModels(after, r.Others); err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
+	}
+	if _, err = decodePlusesList(after, r.Others); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
 	return r, nil
@@ -1357,8 +1527,12 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	if enterWorldBeforeResultHook != nil {
 		enterWorldBeforeResultHook(sess)
 	}
-	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
+	data, dropped := result.EncodeFitting()
+	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: data}); err != nil {
 		return err
+	}
+	if dropped {
+		sendPlusesAsBroadcasts(sess, result.Others)
 	}
 	// And again after the result (round 708's review, HIGH 1): the area of
 	// interest ticks on its own goroutine, so a tick between hub.Enter above
@@ -1481,8 +1655,12 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		FrameRegion: frame,
 		Seated:      seatedAmong(othersNew),
 	}
-	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
+	data, dropped := result.EncodeFitting()
+	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data}); err != nil {
 		return true, err
+	}
+	if dropped {
+		sendPlusesAsBroadcasts(sess, result.Others)
 	}
 
 	leftMsg := &EntityLeft{CharacterID: old.CharacterID}
