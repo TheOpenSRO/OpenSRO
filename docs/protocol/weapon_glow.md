@@ -259,7 +259,7 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 |---|---|---|
 | Weapons and shields only? | Yes. Only attachments of kind 1 reach `FUN_00a60a90`, and the tables list only weapons and shields (shield rows such as `ITEM_CH_SHIELD_11_*`, particles `enchantshield_a` on `Bone01`). | READ (gate), MEASURED (tables) |
 | Other players? | Yes. The same `CObjCharacter` path runs for every character, and `0x3038` delivers others' plus. | READ |
-| Character select | Retail's list carries a plus per item (`charselect.md`: u32 RefItemID, u8 plus). The preview is a `CObjCharacter`, so it glows. | INFERRED |
+| Character select | Retail's list carries a plus per item (`charselect.md`: u32 RefItemID, u8 plus), and the screen installs each item with it (`PSCharacterSelect::FUN_0085a580` -> `InstallEquipVisual(slot, id, plus, 0)`), so it glows. | READ (round 734) |
 | Portrait / paper doll | Not checked | OPEN 10 |
 | Sheathed or drawn | SRO has no sheathing. The weapon is always in the hand. | INFERRED |
 | Advanced elixir | Round 732 READ that the client adds the elixir's value into the item's `+0x8c` plus. Whether the byte in `CObjCharacter+0x3c+slot*0xc` is that sum for your own character, and whether the server's `0x3038` byte includes it, are not read. | OPEN 2 |
@@ -310,27 +310,56 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
   instance, but must not cap them (OPEN 11: we do not know whether retail drops them).
 - This is a world-drawing round, so `perf_gate.sh` runs, and the table goes in the round entry.
 
-## 8. Gaps (OPEN)
+## 8. Gaps (OPEN), with round 734's answers
 
-1. **Seal-specific effects.** The user expects distinct effects for Star, Moon, Sun and Nova. These
-   archives and this client have none (§3). Either the memory is of the item models and textures, or
-   of another client version, or of a private-server mod. The user decides. Until then we draw only
-   what the tables say.
-2. **The effective plus.** Does the glow use plus + advanced elixir? Read the code that fills
-   `CObjCharacter+0x3c+slot*0xc` for your own character, and the server's `0x3038` writer.
-3. **`0x3015` per-item OptLevel** for spawned players: read the spawn parser.
-4. **The two compound parts** that `FUN_00a60a90` passes. They might be the weapon and its trail
-   holder, or two mesh groups.
-5. **The particle attach** `FUN_00c77ca0`: what its `1` and trailing `0` arguments mean, and which of
-   the two strings (+0x10 or +0x2c) is the efp path and which the bone (INFERRED: in file order).
-6. **`FUN_00c43780`**: `mod+0x3c` against `owner+8 → +0x7c`. It could be distance or LOD, or a time.
-7. **The starting direction of the triangle wave**: the mod constructor's value at `+0xd8`.
-8. **The flag-word bits** `0xe21f0000` and `~0x1000`.
-9. **The stage-1 texture**: who binds the item's diffuse texture to stage 1 during the mod.
-10. **The portrait and paper doll**: is the glow drawn there?
-11. **Particle quality gating** inside the efp manager.
-12. **Item bones**: whether OpenSRO's item `.bsr`/`.bms` load keeps `ai_end`, `ai_start` and
-    `Bone01`–`03` as attach points. Lane A checks this first.
+1. **Seal-specific effects.** USER DECISION (2026-10-05): follow the data; no seal effects are
+   invented. Three user reference pictures (Seal of Sun bow +10, an Egyptian-set glaive, a Nova
+   glaive at +5) were compared qualitatively in `docs/rounds/r734.md`.
+2. **The effective plus: READ (round 734).** Your own gear: `CICPlayer::vslot_025` (0x9d9a80) ->
+   `FUN_008ba570` hands `InstallEquipVisual` (0xa61010) the item's `+0x8c` byte, which the record
+   reader fills with OptLevel + the advanced elixir (c:0x8bb070), a u8. Others: `0x3038`'s byte. The
+   server's `0x3038` value is lane B's.
+3. **`0x3015` per-item OptLevel** for spawned players: lane B.
+4. **The two compound parts** that `FUN_00a60a90` passes: still OPEN. OpenSRO glows every mesh of the
+   item (both `_l`/`_r` models of a dual weapon) and puts each particle row on the first item skeleton
+   carrying its bone.
+5. **The particle attach: READ (round 734).** `CRTModParticle::FUN_00c816c0`: the first string
+   (+0x10) is the efp (assigned with `FUN_00425bf0`), the second (+0x2c) the bone, compared with
+   "none"; an unknown bone returns 0 and the mod is freed. The `1` goes to +0xb4 and becomes
+   IEasyFxEffect slot 4 with 1 (kept, looping) in `FUN_00c81350`; the trailing `0` is +0xc4, a start
+   delay in ms counted down by `FUN_00c81410`. The scale goes to +0xc0 and is handed to
+   `CEFEffect::vslot_010` (the effect's uniform scale, times a global factor at `*(+4)+0x264`) on
+   every placement (`FUN_00c81190`).
+6. **`FUN_00c43780`**: `mod+0x3c >= *(owner+8)+0x7c`, the latter a 0..1 value clamped by
+   `CCompChar::FUN_00c25620` (a virtual). Still OPEN; OpenSRO does not gate on it.
+7. **The starting direction: READ (round 734).** The constructor (`FxModManager::FUN_00c847f0`) sets
+   +0xd8 = 1, +0xd4 = 0, and `vslot_001` sets the colour to colour 1: the pulse starts at colour 1
+   going to colour 2. The update runs only while the gate holds, so the pulse pauses while a character
+   fades (OURS: OpenSRO's runs on `TIME`, all glows in step).
+8. **The flag-word bits**: OPEN.
+9. **The stage-1 texture**: OPEN; OpenSRO uses the item's own texture (INFERRED, as before).
+10. **The portrait and paper doll**: the character select is READ (`PSCharacterSelect::FUN_0085a580`
+    calls `InstallEquipVisual(slot, id, plus, 0)`), so it glows. The equipment window's avatar (and
+    the portrait that borrows it) is INFERRED to glow: the client's copy of one character's dress
+    onto another (`UI_SILKMALL::FUN_00a617d0`) carries each slot's plus. The character-creation
+    screen installs plus 0 (`FUN_0080b440`). OpenSRO's portrait keeps the glow and drops the particle
+    effects (a picture rendered once, OURS).
+11. **Particle quality gating** inside the efp manager: OPEN; nothing is capped.
+12. **Item bones: MEASURED (round 734).** The item `.bsk` files carry `ai_end`, `ai_start`,
+    `Bone01`..`03`; OpenSRO's item skeleton keeps them.
+
+Note on §1.3 (round 734, MEASURED): spears use `enchant_a_01` on `ai_end` (e.g. `CH_SPEAR_11_*`, 230),
+and only the `_SET_A/B_RARE_SWITCHnn` variants name `*_set_a_rare_01` / `_set_b_rare_01`; the plain
+`_SET_A_RARE` rows name the ordinary file at their own scale (`CH_TBLADE_11_SET_A_RARE`: `enchant_a_01`,
+320, `ai_end`, where `CH_TBLADE_11_A` has `enchant_b_01`, 310, `ai_start`).
+
+**Built (round 734, lane A):** `ItemGlowTables` (client/scripts/items/item_glow_tables.gd), `EquipGlow`
+(client/scripts/assets/equip_glow.gd) and the `EQUIP_GLOW` path of `object.gdshaderinc`, applied by
+`CharacterAppearance.build` to slots 6 and 7. `OPENSRO_QA_EQUIP` takes `slot=item_id+plus`;
+`OPENSRO_QA_LINEUP_KITS` draws bodies side by side with given pluses; `OPENSRO_QA_FAKECHARS_PLUS`
+gives the select screen's QA characters a weapon plus; `client/tools/measure_equip_glow.gd` measures
+the drawn glow against the arithmetic. The lobby list the server sends carries plus 0
+(`server/internal/session/lobbyhandler.go`, the `LobbyItem` without `Plus`): lane B's to fill.
 
 ## Implementation lanes
 
