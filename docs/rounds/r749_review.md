@@ -355,3 +355,253 @@ the hub, so there is no inversion.
   - `remote_godot.sh tests`: **ran 255 suite(s), 0 failing**.
 - Probes (scratch worktree, deleted): `TestReview749IdleCreep`, `RelocateCreep`, `LegHop`,
   `HeadingRunsForever`, and `world`'s `TestReview749PassLockHold` (F1, F7, F10).
+
+## Fix verification (honest play)
+
+A second verifier checked the fixes `2fc6770b..1d06b4ab` for the opposite failure: **honest players
+the new bound refuses or snaps back**. Labels as above. Code is unchanged; the scenarios are tests
+in `server/internal/session/destmove749v_test.go` (separate commit), all run **without**
+`-trust-client-positions`. Each models the client as `World3D` + `MoveOrderSync` behave at
+`1d06b4ab`:
+
+- it walks a click at once;
+- it reports a stop when the walk ends short, when a sky run ends, and when no echo has come
+  within 1.5 s;
+- it answers **every** own 0xB023 the same way (`_apply_own_correction`, READ, `World3D.gd`
+  16365-16382): it snaps to the correction's (x, z), takes the terrain's height there
+  (`_terrain_hit_height`, the terrain-only ray), and **sends a stop from it**.
+
+The `TestR749vFP*` tests log the false positive and fail only under `OPENSRO_R749V_FP=1`, so the
+suite stays green until the fixes land. Once they do, drop the gate.
+
+### Verdict
+
+**Ship after FP1 (with FP2 and FP3, one fix), FP4 and FP5.** Each is a few lines. FP6 should come
+before a public test too; the minor items can be filed.
+
+The latency handling itself is sound. The cause of every serious false positive is the
+**claim height bound** (`claimHeight` 100) checked against heights the server only guesses:
+
+- a leg's straight line;
+- a sky run's start height;
+- an arrival's `spawnPos.Y` 0, while the client stands bodies in a frame shifted by its grid anchor.
+
+Combined with the client's unconditional answer to a correction, one refused claim becomes **an
+endless correction loop at the round trip**:
+
+- the player is pinned;
+- the mover and every watcher get a 0xB023 per round trip (MEASURED: 25 of 25 corrections
+  answered in a row in each of FP1-FP3; the cap was the test's. LIVE at Hotan: 6,758
+  corrections in 112.6 s, 60 a second).
+
+### False positives found
+
+**FP1 (SEVERE). After a teleport or zone change to Hotan, Samarkand or Donwhang, production's
+`-full-map` pins the player.**
+
+- **The server's height.** Production runs `-full-map=true`, which forces `-single-frame` (READ,
+  the prod override, line 45). The server lands every arrival at `spawnPos.Y` = 0
+  (`arrival`, `teleportArrival`).
+- **The client's height.** The client stands the body on its ground, at the raw `.m` height less
+  its grid anchor: block 0, vertex 8 of the frame region
+  (`MapmTerrainBuilder.near_row_middle_height`, `_frame_anchor_height`). Under `-single-frame`
+  that frame is Jangan's for every town, with an anchor of -2.5.
+- **The client tells the server nothing.** A teleport arrival calls `_move_sync.placed()` only
+  (`_land_teleport_arrival`); a zone change only lifts Y. So no placement reaches the named
+  point.
+- **MEASURED** (the user's `Map.pk2`, all 124 field teleport points of `teleportdata.csv`; the
+  sampler agrees with the rows' own retail Y at the field gates, which checks the axes). The client's ground
+  against the server's 0, single frame:
+
+  | Arrival | Client's ground vs the server's 0 |
+  |---|---|
+  | Hotan landing | **+246.3** |
+  | Samarkand landing | **+182.5** |
+  | Donwhang landing | -104.1 |
+  | GATE_KT (Hotan) | +234.6 |
+  | GATE_CA (Samarkand) | +182.5 |
+  | GATE_WC (Donwhang) | -104.3 |
+  | All 124 field teleport points | **53 more than 100 off** |
+
+  In each town's own frame (`-single-frame` off), 45 of the 124 are more than 100 off, among them
+  the Jangan ferries (-336, -255).
+- **What the player gets** (`TestR749vFP1ArrivalHeightLoop`, a real `/goto hotan` zone change on a
+  `-single-frame` fixture):
+  1. A click 40 east is **not echoed**. The destination bound refuses
+     |246 - 0| > 100 + 40, so every click within 146 of the landing is silently dropped.
+  2. The client's no-echo stop is corrected.
+  3. Each of **25 of 25** honest answers to a correction is corrected again.
+- **Control:** the same spot claimed at the server's height 0 is taken, so the cause is the height
+  bound.
+- **The loop does not end on its own.** A click more than 146 away is taken, but the correction
+  already in flight cancels it, and the stop from the leg's start is refused on height again. A
+  relog restores the saved height 0 and loops again.
+- **Return points:** a designated return point in those towns (revive option 1) lands the same way.
+- **LIVE, confirmed** (`/var/tmp/r749v/run_fp.sh`, client C):
+  - **Setup:** this branch's server (`-single-frame`, in memory, no trust) and client
+    (`/opt/opensro-client-r749v`), headless at real time under the shared lock. Bram (GM) ran
+    `/goto hotan`.
+  - **The height:** the client stood him at **246.31**. The server had 0.00, as computed above.
+  - **The first click** (40 east, tick 3600): no echo; `MOVE unconfirmed` after 1,500 ms.
+  - **The loop:** a stop, then `MOVE correction: the server has this player at (-63360.00, 0.00,
+    9600.00), the client at (-63321.73, 246.31, 9600.00)`, and then **6,758 corrections** in
+    112.6 s (ms 77,340 -> 189,986). That is one per client physics tick, **60 a second**, to the
+    end of the run.
+  - **The second click** (40 south, tick 4500) was sent and cancelled by the next correction in
+    the same tick.
+  - No `SCRIPT ERROR`.
+
+**FP2 (SEVERE, same loop). A sky run keeps its start height** (`Mover.At` heading branch:
+`Y: m.Src.Y`).
+
+- **MEASURED** on real terrain, the share of straight runs whose end lies more than 100 from the
+  start height:
+
+  | Run | Within 4 regions of Jangan | All 4,360 regions with relief |
+  |---|---|---|
+  | 300 units | 12 % | 29 % |
+  | 1,000 units | 30 % | 49 % |
+  | 100 units | -- | 12 % |
+
+  Hotan's own centre region, run +x from local (60, 960) to (360, 960): 117.8 -> 243.6.
+- `TestR749vFP2SkyRunHeight`: a 6 s run rising 125.8 has its end **corrected**, and 25 of 25
+  answers are corrected again.
+- The same happens at `HeadingRunLimit`: its 0xB023 reaches the mover, which answers it.
+
+**FP3 (SEVERE, same loop). A destination leg's height is the straight line between its ends.**
+
+- **MEASURED**, Jangan's fields: 99/168, leg (1500, 120) -> (1800, 120). The ends are at 45.1 and
+  -23.7; the middle is at 146.3, **135.6 above the line**.
+- **MEASURED**, share of honest mid-leg stops more than 100 off the line:
+
+  | Leg | All regions with relief | Around Jangan |
+  |---|---|---|
+  | 200 units | 1.1 % | 0.7 % |
+  | 400 units | 5.6 % | 2.0 % |
+
+- `TestR749vFP3LegMiddleHeight`: a wall or approach stop there is **corrected**, then 25 of 25
+  again.
+- A stun mid-leg (`haltForState` sends 0xB023 to the mover) on such a spot loops the same way. On
+  flat ground it ends after one exchange (`TestR749vHonestStunHaltEnds`, passes).
+
+**Fix for FP1-FP3, three independent pieces. Any one of the first two ends the loop.**
+
+- **(a) Client:** `_apply_own_correction` answers with a stop only when a 0x7021 may be in flight,
+  that is, when it sent one since the last echo or placement. Never answer the same server point
+  twice.
+- **(b) Server:** do not refuse a claim on height while the reference height is a guess.
+  - Either measure the height against the last height the **client** gave (a destination, a taken
+    claim), with `claimHeight` plus the ground distance from that point, as the 0x7021 check
+    already does;
+  - or keep only an absolute sanity range (MEASURED: raw heights reach 4,056 at
+    GATE_RC_MOUNTAIN_GATE).
+  - The 0x7021 destination check needs the same rule.
+- **(c) Client:** a teleport or zone-change arrival sends its placement (relocated, with its ground
+  height). The arrival's named point takes it once, so `Trusted.Y` becomes the client's ground.
+
+**FP4 (MODERATE). An uplink stall of about 1.2 s or more while walking snaps the player back.**
+
+- The client stops a walk with no echo at `ECHO_TIMEOUT_MS` 1.5 s, 75 units at the base speed.
+- The click and that stop then reach the server together (TCP keeps the order), so the leg has
+  travelled about 0.
+- The bound takes `claimSlack` 9 plus the allowance, at most 1 s of run (50), which is 59.
+
+`TestR749vFP4LagSpikes` (a warmed-up character that stood 2 s; MEASURED, the lead is the client's
+distance ahead of the server's leg):
+
+| Case | Lead | Result |
+|---|---|---|
+| Steady 150 ms | 0.0 | taken |
+| Jitter (300 ms click, 50 ms stop) | 12.5 | taken |
+| 1.0 s spike | 45.0 | taken |
+| 1.2 s spike | 55.0 | taken |
+| 1.6 s spike | 75.0 | **corrected** |
+| 3 s spike | 75.0 | **corrected** |
+
+- Under a steady latency the server's leg starts exactly where the client turned, so redirects
+  cost nothing (COMPUTED, and `TestR749vHonestChaseUnderJitter` passes).
+- **LIVE, confirmed** (`/var/tmp/r749v/run_lag.sh`, run `live2`):
+  - **Setup:** the same server (own frame), with Aria's link through a scratch proxy. The proxy
+    holds the uplink 1.6 s from every second 0x7021, so the click and everything behind it reach
+    the server together. Downlink is immediate; the base delay is 50 ms. Clicks alternate
+    between (42, -60) and (342, -60), 8 s apart.
+  - **Both held clicks** went `MOVE unconfirmed` at 1,500 ms, about 76 units into the walk:
+    stopped at 264.51 from 340.3, and at 119.49 from 43.7.
+  - **Both were corrected:** `the server has this player at (342.00, ...) the client at (264.51,
+    ...)` and `(42.00, ...)` / `(119.49, ...)`. The player snapped back 77.5 units each time.
+  - **The answering stop** was taken each time (flat ground, no loop).
+  - The on-time clicks were clean. No `SCRIPT ERROR`.
+- **Fix:** make `AllowanceSeconds` at least the echo timeout plus a margin (2.0 takes 109), or
+  lower `ECHO_TIMEOUT_MS` to 1.0 s. Either way the bound stays a speed bound.
+
+**FP5 (MODERATE). The first walk after a world entry or zone change banks nothing, however long
+the player stood.**
+
+- `Hub.Enter` leaves `allowSpeed` 0. `ChangeZone` copies the old one, which is 0 if the player
+  never moved.
+- `StartMove` brings the allowance up to date (`settleLocked` -> `accrueLocked`) **before** it
+  sets `allowSpeed` (READ, `mover.go` 268-285). So the standing time is credited at speed 0.
+- `Claim` sets `allowSpeed` before it accrues, so a claim is not affected.
+- `TestR749vFP5FirstWalkAfterEntryBanksNothing`: after 10 s standing, a 0.5 s spike on the first
+  walk (20 ahead) is **corrected**.
+- **Fix:** in `StartMove`, `if e.allowSpeed == 0 { e.allowSpeed = o.Speed }` before
+  `settleLocked`, as `Claim` already does.
+
+**FP6 (MODERATE, the question asked). `/unstuck` after the 2-minute grace is corrected back into
+the spot the player was stuck in** (`TestR749vFP6UnstuckAfterGrace`).
+
+- The hint shown at every login says "Stuck in a wall or building? Type /unstuck". The server has
+  no navmesh, so a client wedged by its own walk has no way out but a teleport, a GM, or a relog.
+- **Not acceptable for a public test without a server-side path.** Either a server `/unstuck`
+  that names the zone's landing (or LandingSpot), taken once per few minutes, or reword the hint.
+- A town-centre recall on a cooldown is benign. F2's concern was the *logout spot* as a free
+  recall, which this would not restore.
+
+**Minor (file):**
+
+- **The client does not gate its own clicks** on states it knows: a stun from OpObjectStatus, or
+  an established trade.
+  - The server refuses such a click silently, as retail does, but OpenSRO's client walks it for
+    1.5 s and reports. A click more than 59 away snaps back.
+  - Aside on the exploit side: `handleMove` (claims) checks neither `characterCanMove` nor the
+    trade, so a stunned or trading client can still move up to 9 plus its allowance by stop
+    reports (REASONED).
+- **A correction grounds by the terrain-only ray.** A correction on a bridge or a building's upper
+  floor drops the body onto the terrain beneath. If that is more than 100 down, FP1's loop
+  follows. Not measured.
+- **A downlink-only delay over 1.5 s** stops the walk at 1.5 s. The stop is taken, but the player
+  must click again.
+- **`MoveOrderSync.arrived()` leaves `pending_ms` set**, so a late echo after a short walk sends
+  one extra stop at the destination. It is harmless.
+
+### Honest scenarios that held
+
+| Scenario | Evidence |
+|---|---|
+| Steady latency, jitter, spikes up to about 1.2 s | `TestR749vFP4LagSpikes` (above) |
+| A chase with four re-aims under 100-400 ms jittered uplink | `TestR749vHonestChaseUnderJitter`: the approach stop is taken |
+| The click bucket | `TestR749vHonestBucketChase`: 23 a second for 10 s loses none; a 4 s stall of 15 re-aims a second (60) delivered at once loses none. A stall longer than 4 s at the fastest roster monster would drop the newest re-aims; the client then stops (minor) |
+| A speed buff mid-walk, re-based 250 ms late, heard 100 ms late | `TestR749vHonestSpeedBuffMidWalk`: taken (3.75 ahead) |
+| A stun halt on flat ground | `TestR749vHonestStunHaltEnds`: one exchange |
+| Ghost Walk with a click in flight | `TestR749vHonestGhostWalkWithClickInFlight`: taken |
+| A long walk across a region line | `TestR749vHonestRegionCrossing`: taken, refiled |
+| The sit/stand transition | REASONED: the client's lock starts when its answer arrives, so it ends no earlier than the server's CHANGEMOTION; a click cannot reach the server inside it (`SitState.answer`, `motion.go`) |
+| Walk/run toggle, mounts or COS, knockback | Do not exist: no code in client or server; a held mouse button sends nothing more (`World3D.gd` 775) |
+| Death and resurrection | Moves are dropped while dead. Revive at the Jangan return point lands within 52 of the server's height (MEASURED: client -51.9 at the landing). A return point in Hotan or Samarkand is FP1 |
+| The frozen lake (round 744) | REASONED: the ice's collision quads are on the terrain layer (`World3D.gd` 3873), so a click, a correction's grounding and the leg's destination heights all read the ice (802 in the single frame), not the lakebed. No height disagreement arises there unless FP2 or FP3's geometry does |
+| A reconnect mid-walk | A fresh entity: Trusted is the saved spot, named once. Its first walk is FP5 |
+
+### Gates (this verification, on `1d06b4ab` + the test commit)
+
+- `go vet ./internal/session/`: clean.
+- `go test -count=1 -run TestR749v ./internal/session/`: **ok**. With `OPENSRO_R749V_FP=1`, the
+  six FP tests fail as recorded above (MEASURED).
+- **Terrain measurements:** scratch Go tools over `/opt/sro-files/client/Map.pk2` on the box
+  (built from this tree's `mapm` and `pk2` readers, not committed):
+  - the deviation census of random legs and runs;
+  - the client height at the 124 field teleport points;
+  - concrete examples.
+- **Live runs:** the shared lock was taken when no other Godot ran. Godot ran only on the box.
+  `live` and `live2` are kept under `/var/tmp/r749v/`. The first run's client A spawned at
+  (0, -1380) without a `/tp` and was walled in (no measurement), so A was rerun with `/tp 42 -60`
+  as `live2`.
