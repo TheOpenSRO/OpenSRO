@@ -646,6 +646,11 @@ func _finish_cycle() -> void:
 	var weapon_d := {}
 	var weapon_n := {}
 	for i in _cand.size():
+		# A weapon freed since this cycle's scan measured it (a body freed
+		# outright, not queued): skipped here as in the loop below (round
+		# 748, MEASURED in the review's stress: 459-667 SCRIPT ERRORs a run).
+		if not is_instance_valid((_cand[i] as Host).skel):
+			continue
 		var wsid := (_cand[i] as Host).skel.get_instance_id()
 		weapon_d[wsid] = _cand_d[i]
 		weapon_n[wsid] = int(weapon_n.get(wsid, 0)) + 1
