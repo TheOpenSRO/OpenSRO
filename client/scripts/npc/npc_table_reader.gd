@@ -22,7 +22,7 @@ class_name NpcTableReader
 ## itself and _5000 .. _30000, 7 of the 63 parts the index names. Now only the
 ## fallback for an archive with no index; model_table_paths (CharTables) reads
 ## the index, as the client does.
-const LEGACY_MODEL_TABLE_PATHS := [
+static var LEGACY_MODEL_TABLE_PATHS := [
 	"server_dep\\silkroad\\textdata\\characterdata.txt",
 	"server_dep\\silkroad\\textdata\\characterdata_5000.txt",
 	"server_dep\\silkroad\\textdata\\characterdata_10000.txt",

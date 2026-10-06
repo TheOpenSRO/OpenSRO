@@ -1,6 +1,7 @@
 # Crowd scale A5: far bodies drawn as GPU instances (spec)
 
-Round 738 wrote this; it builds nothing. It is lane A's fifth item in `crowd_scale.md` section 5:
+Round 738 wrote this. **Round 747 built it** (`client/scripts/world/crowd_gpu.gd`, `docs/rounds/r747.md`);
+section 8 says what it answered and where it departs from the design below. It is lane A's fifth item in `crowd_scale.md` section 5:
 draw far other players as `MultiMesh` instances skinned in the vertex shader from baked bone
 matrices, and keep full skeletons for the near ones. Round 738 built A1-A4 (`docs/rounds/r738.md`).
 This spec says why A5 is the next step, what in Godot 4.2.2 makes it possible, how to build it
@@ -186,3 +187,46 @@ The A5 round measures that cost (OPEN 5).
   `EquipFx` reads `h.skel.get_bone_global_pose(h.bone)` (`assets/equip_fx.gd:246`).
 - Measure it first: a `QaCrowdProbe` step that detaches the attachments' signal would give its
   real share.
+
+## 8. Round 747: what was built, and the answers
+
+The build is described in `docs/rounds/r747.md` (section 2); the measurements are there too. Against
+section 6:
+
+1. **OPEN 1, answered (MEASURED):** a `MultiMesh` draw of a skinned surface does get its bones and
+   weights in a shader that reads them, under Forward+ and Compatibility. `client/tools/crowd_gpu_probe.gd`
+   draws real Figures both ways at the same pose: 5 to 14 of about 30,000 body pixels differ by more
+   than 2 (silhouette edges); the CPU replica of the shader's arithmetic lands within 8e-6 units of
+   Godot's skin over 22,230 vertices.
+2. **OPEN 2 and 5 (MEASURED):** render GPU time at 1000 is 4.18 ms with 980 far bodies skinned in
+   the vertex shader every frame, against 6.68 ms for all 1000 skinned by Godot's compute pass
+   (r747.md, section 5). The GPU is not the limit.
+3. **OPEN 3:** a CharacterLight level is a material copy, so it gets its own twin and its own group;
+   `CharacterLight.set_on` reports a change and a far body's parts are re-read.
+4. **OPEN 4:** the glow's twin is EquipGlow's shader with the skin; drawn far it matches the near draw
+   at a held clock. A far weapon's particles still draw: its body's meshes are hidden one by one (not
+   its skeleton), and EquipFx places the holders from the weapon's GPU frame (`CrowdGpu.item_frame`).
+5. **OPEN 6** is unchanged (the device, 4K).
+
+Departures from sections 3 and 5 (all OURS):
+
+- **No per-instance clip or fade in `INSTANCE_CUSTOM`.** The clip, its frame count, duration and the
+  body's offset are 4 texels of a body texture; the instance's custom data names the body's slot, its
+  Volume row and the part's centre height. A clip change is a texel write.
+- **Volume as a per-layout factor texture** (`rest x variant bind` per bone and variant), the spec's
+  first option in matrix form.
+- **The switch is by rank, not by distance:** the 16 bodies nearest the camera, in view or not, stay
+  near; a near body goes far only past the 20th. In round 736's lineup every body is within 300 of the
+  player, so a distance rule from section 3's table (300 for names) would have left all 1000 near.
+  The table's rows are met otherwise: names and click bodies are not part of the skeleton and stay per
+  body; EquipFx's particles are placed from the GPU frame; Detail's casters, bodies with effects,
+  fading and berserk bodies stay near whatever their rank. A far body within 600 of the listener
+  plays its clip sounds from the CPU, advanced only at its clip's keys (after round 747's review,
+  F2). What the rank still decides is who is posed on the CPU.
+- **Bone pages:** the bone store is pages of 1,024 rows, the layers of a `Texture2DArray`, so a new
+  clip uploads its pages, not the store (after the review, F3).
+- **Not drawn far:** a body with a blended part (F8), a mirrored body (F9).
+- **Fading bodies stay near** (no fade on instances); a departing body comes back to fade.
+- **Items** are pre-moved meshes skinned to their attach bone with weight 1 (no extra texture column).
+- **One AABB for every group**, re-measured each cycle: a group is drawn or culled as a whole.
+

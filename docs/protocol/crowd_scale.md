@@ -93,10 +93,13 @@ when it is used is OPEN.
 
 - getter case 0x18 is set (a hidden "no names" switch; its setter was not found);
 - the object's own hide bits are set;
-- the object is not within 300.0 of the player (`0xd85224` against `+0x24c`), unless `+0xf0`, the
-  hover flag the cursor pick sets, is set.
+- the object is not within 300.0 of the player (`0xd85224` against `+0x24c`), unless `+0xf0` is
+  set.
 
-So a hovered name shows at any distance. `0xec4b58` is a GM console toggle (initial value 1),
+What sets `+0xf0` is OPEN (corrected in round 748: this line called it "the hover flag the cursor
+pick sets", but round 673 recorded that its writer was not found, and round 748's grep of the
+decompile for writes of 1 to `+0xf0` found only unrelated objects). So whether a hovered name shows
+at any distance is not READ. `0xec4b58` is a GM console toggle (initial value 1),
 INFERRED to be "ID".
 
 **Shadows** (round 702, READ):
@@ -406,6 +409,11 @@ Files: `world/monster_crowd.gd` or a new `world/crowd_anim.gd`, `ui/character_ap
 - The rules are in `client/scripts/world/crowd_anim.gd` and `CharacterAppearance`'s shared skin.
 - The measurements are in `docs/rounds/r738.md`.
 - A5's spec is `docs/protocol/crowd_gpu.md`.
+
+**Round 747 built A5** (`client/scripts/world/crowd_gpu.gd`, `docs/rounds/r747.md`): every body but the
+16 nearest the camera is drawn as MultiMesh instances skinned in the vertex shader. 1000 standing went
+from about 92 to 17.6-18.5 ms a frame, walking p95 from 124 / 181 to 49 / 65 (with every far body
+within 600 heard, after its review); 200 standing 21 -> 8.3.
 - A4's bands are 900 / 1,800, not 300 / 900. Near and mid-range bodies must look as before, and
   the fastest bone moves 5.5 px in 1/60 s at 300 (MEASURED).
 
@@ -423,6 +431,13 @@ Files: in World3D, `_physics_step`'s others loop, `_spawn_or_update_other`, `_on
 | B5 | **Merge each body's meshes into one draw per material** at build (one skinned mesh per body). | OURS | Draw calls 8 -> about 3-5 per body; part of render CPU's 20 ms |
 | B6 | `EquipFx`: replace the sort over every host every 10 frames with a grid or partial select. Keep the 64 budget (OURS). Retail draws players' particles at every distance (READ), so the budget is a disclosed difference. | OURS | About 9 ms at 200 and 8 ms at 1000 (`TIME_PROCESS` -15 ms) |
 | B7 | `_other_by_uid` from a map. `NetClient._dispatch` itself is 7-10 µs a packet (MEASURED), about 1 ms a frame at 1000 x 1/s. | OURS | Small |
+
+**Round 739 built B1-B4 and B7 (`docs/rounds/r739.md`). Round 748 (`docs/rounds/r748.md`)
+followed up:** the frame split (`FrameSplit`; `TIME_PROCESS` is the second's longest
+process-plus-render, READ), character templates on worker threads (no arrival frame is a template
+build: the worst at 1000 470 -> 100-122 ms), EquipFx one master per effect file (13 -> 6), the gait
+swap without a scan (walking p95 at 1000 184 -> 143), and the local player's pose and the fades
+once a rendered frame. At 1000 standing went 92-98 -> 85 ms; about 68 ms of it is lane A's.
 
 ### Lane C: server interest management (server only)
 

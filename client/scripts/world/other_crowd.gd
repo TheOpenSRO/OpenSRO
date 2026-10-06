@@ -83,6 +83,13 @@ static func distance_before_last(distance: float, speed: float, step_delta: floa
 const BUILD_BUDGET_USEC := 25000
 ## Bodies dressed in a frame whatever the budget says, so a queue always drains.
 const MIN_BUILDS_PER_FRAME := 1
+## Round 748 (OURS): the frame an arrival aims to stay under. Each frame the
+## budget is what the last frame left of this after its own work without the
+## dressing (BuildQueue.note_frame), at most BUILD_BUDGET_USEC: while the
+## crowd's own frame is long the queue dresses fewer bodies a frame (one at
+## least) instead of adding its whole budget to a frame already near the
+## 100 ms hitch line, and once the frame is short it dresses at full budget.
+const HITCH_TARGET_USEC := 90000
 
 ## B4: the arrived bodies still to dress, and the frame's budget. The queue
 ## holds ids only; whatever a body is dressed with is read when it is dressed,
@@ -103,6 +110,25 @@ class BuildQueue:
 	## drain line's percentiles).
 	var spent_by_frame: Dictionary = {}
 	var _last_counted_frame := -1
+	## Round 748: ids pump() passed over because `ready` said no (tests, QA).
+	var waiting_skips := 0
+	## Round 748: the frame whose pump went through every queued body with
+	## budget to spare (all the rest were waiting on `ready`), and the ids
+	## queued since a pump last looked. A second pump in that frame looks at
+	## those only: an arrival list outside a group bracket (QA's lineup: 1000
+	## spawns in a frame, each pumping) otherwise sorted and asked the whole
+	## queue once per arrival -- O(n^2) in one frame, MEASURED about 0.5 s of
+	## the 1000-body spawn frame once nothing in it was ready.
+	var _passed_frame := -1
+	var _fresh: Array = []
+
+	## Round 748: something new may be ready (templates adopted): the next
+	## pump looks at the whole queue again, even in the frame of a full pass.
+	func reopen() -> void:
+		_passed_frame = -1
+	const INDEX_BITS := 20
+	const INDEX_MASK := (1 << 20) - 1
+	const DIST_KEY_MAX := 4.0e12
 
 	func _init() -> void:
 		var qa := OS.get_environment("OPENSRO_QA_OTHER_BUILD_BUDGET_MS")
@@ -110,6 +136,7 @@ class BuildQueue:
 			budget_usec = int(float(qa) * 1000.0)
 
 	func queue(id: int) -> void:
+		_fresh.append(id)
 		if _pending.is_empty():
 			started_usec = Time.get_ticks_usec()
 			frames = 0
@@ -137,10 +164,26 @@ class BuildQueue:
 	func ids() -> Array:
 		return _pending.keys()
 
+	## Round 748: this frame's budget (note_frame), and what the last pump
+	## spent, which note_frame takes out of the frame it is told.
+	var _frame_cap := 1 << 30
+	var last_spent := 0
+
+	## Round 748: the last frame's wall time, in microseconds; the next
+	## frames' budget becomes HITCH_TARGET_USEC less that frame without its
+	## dressing, within [0, budget_usec].
+	func note_frame(frame_usec: int) -> void:
+		_frame_cap = clampi(HITCH_TARGET_USEC - (frame_usec - last_spent), 0, budget_usec)
+		last_spent = 0
+
+	## This frame's budget: budget_usec, or less after note_frame.
+	func frame_budget() -> int:
+		return mini(budget_usec, _frame_cap)
+
 	## Whether this frame may still dress a body.
 	func can_build(frame: int) -> bool:
 		_roll(frame)
-		return _built_in_frame < MIN_BUILDS_PER_FRAME or _spent < budget_usec
+		return _built_in_frame < MIN_BUILDS_PER_FRAME or _spent < frame_budget()
 
 	func _roll(frame: int) -> void:
 		if frame != _frame:
@@ -151,39 +194,55 @@ class BuildQueue:
 	## Dresses queued bodies, nearest `from` first, while the frame's budget
 	## lasts. `bodies` is id -> Node3D (positions in the same space as
 	## `from`); an id with no valid node is dropped. `build` is called with
-	## each id. Returns how many were built.
-	func pump(frame: int, from: Vector3, bodies: Dictionary, build: Callable) -> int:
+	## each id. `ready` (round 748), when given, is asked first: an id it
+	## answers false for stays queued (its templates are still being made off
+	## the main thread) and the next nearest is tried. Returns how many were
+	## built.
+	##
+	## Round 748: the order is one native sort a frame of (squared distance,
+	## arrival index) packed into an int, not a scan of the queue for every
+	## body dressed -- with bodies waiting on `ready` that scan was O(n^2) a
+	## frame. Squared distances are kept to 1/256 of a unit squared; ties go
+	## to the earlier arrival, as the scan's did.
+	func pump(frame: int, from: Vector3, bodies: Dictionary, build: Callable, ready: Callable = Callable()) -> int:
 		if _pending.is_empty() or not can_build(frame):
+			_fresh.clear()
 			return 0
-		var ids := _pending.keys()
-		var dist := PackedFloat32Array()
-		dist.resize(ids.size())
+		var ids: Array = _fresh if frame == _passed_frame else _pending.keys()
+		_fresh = []
+		var order := PackedInt64Array()
 		for i in ids.size():
+			if not _pending.has(ids[i]):
+				continue
 			var n = bodies.get(ids[i])
 			if not is_instance_valid(n):
 				_pending.erase(ids[i])
-				dist[i] = INF
 				continue
-			dist[i] = (n as Node3D).position.distance_squared_to(from)
+			var d := minf((n as Node3D).position.distance_squared_to(from) * 256.0, DIST_KEY_MAX)
+			order.append((int(d) << INDEX_BITS) | i)
+		order.sort()
 		var made := 0
-		while not _pending.is_empty() and can_build(frame):
-			var best := -1
-			var best_d := INF
-			for i in ids.size():
-				if dist[i] < best_d:
-					best_d = dist[i]
-					best = i
-			if best < 0:
+		var all_seen := true
+		for key in order:
+			if _pending.is_empty() or not can_build(frame):
+				all_seen = false
 				break
-			var id: int = ids[best]
-			dist[best] = INF
+			var id: int = ids[key & INDEX_MASK]
+			if not _pending.has(id):
+				continue # dropped by an earlier build this frame
+			if ready.is_valid() and not bool(ready.call(id)):
+				waiting_skips += 1
+				continue
 			_pending.erase(id)
 			var t0 := Time.get_ticks_usec()
 			build.call(id)
 			_spent += Time.get_ticks_usec() - t0
 			_built_in_frame += 1
 			made += 1
+		if all_seen:
+			_passed_frame = frame
 		built += made
+		last_spent = _spent
 		if _last_counted_frame != frame:
 			_last_counted_frame = frame
 			frames += 1

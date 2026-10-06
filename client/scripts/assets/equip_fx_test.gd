@@ -52,7 +52,7 @@ func _viewport() -> SubViewport:
 func _driver(vp: SubViewport) -> EquipFx:
 	var d := EquipFx.driver_for(vp)
 	d.set_process(false)
-	var key := "%s|%s" % [EFP.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var key := EquipFx.kind_key(EFP, SCALE)
 	if not d._kinds.has(key):
 		var m := EfpEffect.new()
 		var mm := MultiMeshInstance3D.new()
@@ -82,6 +82,9 @@ func _shown_holder(s: Skeleton3D) -> EfpEffect:
 func _test_budget() -> void:
 	var vp := _viewport()
 	var d := _driver(vp)
+	# Round 748's review, F6: the driver places holders after the world's
+	# _process, which poses the player.
+	_check(d.process_priority > 0, "the driver runs after default-priority _process (priority %d)" % d.process_priority)
 	var near: Array = []
 	for i in 10:
 		near.append(_host(vp, d, Vector3(0, 0, 10 + i * 5)))
@@ -157,7 +160,7 @@ func _test_two_rows_one_bone() -> void:
 	var vp := _viewport()
 	var d := _driver(vp)
 	var other := "system\\test_fx_2.efp"
-	var key2 := "%s|%s" % [other.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var key2 := EquipFx.kind_key(other, SCALE)
 	var m := EfpEffect.new()
 	var mm := MultiMeshInstance3D.new()
 	mm.multimesh = MultiMesh.new()
@@ -188,7 +191,7 @@ func _test_weapon_budget() -> void:
 	var vp := _viewport()
 	var d := _driver(vp)
 	var other := "system\\test_fx_2.efp"
-	var key2 := "%s|%s" % [other.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var key2 := EquipFx.kind_key(other, SCALE)
 	var m := EfpEffect.new()
 	var mm := MultiMeshInstance3D.new()
 	mm.multimesh = MultiMesh.new()
@@ -255,7 +258,7 @@ func _test_world_commands() -> void:
 func _test_own_nearest() -> void:
 	var vp := _viewport()
 	var d := _driver(vp)
-	var key := "%s|%s" % [EFP.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var key := EquipFx.kind_key(EFP, SCALE)
 	(d._kinds[key] as EquipFx.Kind).own = true
 	EquipFx.own_factory = func(_efp: String) -> EfpEffect:
 		return EfpEffect.new()
@@ -296,7 +299,7 @@ func _cycle(d: EquipFx) -> void:
 func _test_own_prefer_keep_free() -> void:
 	var vp := _viewport()
 	var d := _driver(vp)
-	var key := "%s|%s" % [EFP.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var key := EquipFx.kind_key(EFP, SCALE)
 	var k: EquipFx.Kind = d._kinds[key]
 	k.own = true
 	EquipFx.own_factory = func(_efp: String) -> EfpEffect:

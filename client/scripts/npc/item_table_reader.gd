@@ -41,7 +41,7 @@ class_name ItemTableReader
 ##
 ## LEGACY_TABLE_PATHS is only the fallback for an archive with no index file
 ## (the old list, kept so a partial or repacked archive still yields rows).
-const LEGACY_TABLE_PATHS := [
+static var LEGACY_TABLE_PATHS := [
 	"server_dep\\silkroad\\textdata\\itemdata_5000.txt",
 	"server_dep\\silkroad\\textdata\\itemdata_10000.txt",
 	"server_dep\\silkroad\\textdata\\itemdata_15000.txt",
@@ -281,7 +281,7 @@ const COL_MAX_MAGIC_OPTIONS := 158
 ## The per-plus increments, in PLUS_INC_* order: PD 67, ER 70, PAR 73, MD 78,
 ## MAR 81, phy. atk 99, mag. atk 104, attack rate 115 (the fifth float of each
 ## group; ITEM_FORMAT.md). Lane B's "(+x%)" subtracts them (item_tooltip.md §2).
-const PLUS_INC_COLS := [67, 70, 73, 78, 81, 99, 104, 115]
+static var PLUS_INC_COLS := [67, 70, 73, 78, 81, 99, 104, 115]
 enum { PLUS_INC_PD, PLUS_INC_ER, PLUS_INC_PAR, PLUS_INC_MD, PLUS_INC_MAR, PLUS_INC_PA, PLUS_INC_MA, PLUS_INC_HR }
 ## The upper ends of the int ranges whose lower ends the reader already has
 ## (phys_atk is (95, 97), each of its two ends a [lower, upper] pair whose
@@ -322,7 +322,7 @@ const EUROPE_ARMOUR_FAMILIES := [9, 10, 11]
 ## equip file holds e.g. SN_ITEM_EU_LIGHT_01_HA_A "Sagittarius Savage
 ## Sallet" (MEASURED, round 731); the two files share no key (MEASURED: 10,893 and 7,814
 ## keys, 0 in both), so their order does not matter.
-const OBJECT_NAME_PATHS := [
+static var OBJECT_NAME_PATHS := [
 	"server_dep\\silkroad\\textdata\\textdata_object.txt",
 	"server_dep\\silkroad\\textdata\\textdata_equip&skill.txt",
 ]

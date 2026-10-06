@@ -29,7 +29,7 @@ const HEADER_PTRS_BASE := 0x10
 ## normal come out unit-length -- the same self-validating technique
 ## already used for .m's two real per-vertex sizes (see MapmReader's own
 ## detect_vertex_size). See docs/protocol/BMS_FORMAT.md.
-const VERTEX_REC_SIZE_CANDIDATES := [44, 52]
+static var VERTEX_REC_SIZE_CANDIDATES := [44, 52]
 
 ## Header offset of the real pointer to the object's own navigation/collision
 ## mesh -- the real walkable surface the client's own navmesh code uses for

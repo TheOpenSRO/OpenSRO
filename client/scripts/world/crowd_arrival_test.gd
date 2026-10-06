@@ -17,6 +17,9 @@ extends SceneTree
 ## put on while it waited"; the pump in arrival order fails "the nearest is
 ## dressed first"; _on_entity_left without the queue drop fails "a body that
 ## left before its turn is never dressed".
+## Round 748: the pump without its readiness test fails "a body whose
+## templates are being made waits"; the readiness kept for ever fails "once
+## adopted it is dressed".
 
 var _failures := 0
 
@@ -39,6 +42,7 @@ func _initialize() -> void:
 		_test_walk(world)
 		_test_hearing(world)
 		await _test_review(world)
+		await _test_async_templates(world)
 		root.remove_child(world)
 		world.free()
 	if _failures == 0:
@@ -250,3 +254,50 @@ func _test_review(world: Node) -> void:
 	world.call("_step_other_bodies", 1.0 / 60.0, 1)
 	_check(near.position == target, "F6: a body within the snap distance is put on its target (%s against %s)" % [str(near.position), str(target)])
 
+
+## Round 748: an arrival whose templates are not made yet waits in the queue
+## while they are made off the main thread, and a farther body of a ready
+## kind is not held up by a nearer one still waiting. The appearance is a synthetic one whose task assemblies are stand-ins
+## (CharacterAppearance.body_assembler / item_assembler); the subclass's own
+## _build_assembled_character still dresses the body.
+func _test_async_templates(world: Node) -> void:
+	var queue = world.get("_other_builds")
+	queue.budget_usec = 1 << 30
+	var here := _here(world)
+	var gaits: Dictionary = world.get("_other_gaits")
+	var app := CharacterAppearance.new()
+	app.add_body(1907, "char\\test\\man.bsr")
+	app.add_body(1908, "char\\test\\woman.bsr")
+	app._items[5001] = {"models": PackedStringArray(["item\\chest_a.bsr"]), "type_ids": PackedInt32Array([3, 1, 1, 3]), "code": "ITEM_CHEST"}
+	app._full_items_loaded = true
+	app.body_assembler = func(path: String) -> SkinnedBsrAssembler.AssembledCharacter:
+		var s3 := Skeleton3D.new()
+		s3.add_bone("Bip01")
+		var t := SkinnedBsrAssembler.AssembledCharacter.new()
+		t.skeleton = s3
+		t.canonical_skin = Skeleton3DBuilder.canonical_skin(s3)
+		return t
+	app.item_assembler = func(source: Skeleton3D, _skin: Skin, item_path: String) -> Array:
+		var holder := Node3D.new()
+		holder.name = item_path.get_file().get_basename()
+		holder.set_meta("bone_count", source.get_bone_count())
+		return [holder, null]
+	world.set("_appearance", app)
+	(world.get("_body_id_by_code") as Dictionary)["CHAR_TEST_MAN"] = 1907
+	(world.get("_body_id_by_code") as Dictionary)["CHAR_TEST_WOMAN"] = 1908
+	(world.get("_item_models") as Dictionary)[5001] = PackedStringArray(["item\\chest_a.bsr"])
+	# The man's kind made first (the queue waits for it), then a woman near
+	# and a man far: the far man (ready) is dressed, the near woman waits.
+	world.call("_spawn_or_update_other", 401, "Man1", here + Vector3(0, 0, -10), {1: 5001}, "CHAR_TEST_MAN")
+	_check(not gaits.has(401) and app.preparing(), "a body whose templates are being made waits; its task runs")
+	app.wait_prepared()
+	world.call("_pump_other_builds")
+	_check(gaits.has(401), "once adopted it is dressed")
+	world.call("_spawn_or_update_other", 402, "Woman1", here + Vector3(0, 0, -5), {1: 5001}, "CHAR_TEST_WOMAN")
+	world.call("_spawn_or_update_other", 403, "Man2", here + Vector3(0, 0, -50), {1: 5001}, "CHAR_TEST_MAN")
+	_check(gaits.has(403) and not gaits.has(402), "a farther body of a ready kind is dressed; the nearer one of a new kind waits")
+	app.wait_prepared()
+	world.call("_pump_other_builds")
+	_check(gaits.has(402) and (queue as OtherCrowd.BuildQueue).is_empty(), "and the waiting one once its kind is made")
+	world.set("_appearance", null)
+	app.free_templates()

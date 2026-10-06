@@ -112,3 +112,11 @@ srr_glow_clock={
 "type": "float",
 "value": 0.0
 }
+
+; The far crowd's clip clock in ms (round 747, CrowdGpu.flush): the world's
+; clip time less CrowdGpu's epoch, rebased every CrowdGpu.EPOCH_SECONDS so a
+; float keeps the quantum's precision.
+srr_crowd_clock={
+"type": "float",
+"value": 0.0
+}

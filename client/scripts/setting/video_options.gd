@@ -70,6 +70,11 @@ const KEY_FULLSCREEN := "fullscreen"
 const KEY_RESOLUTION := "resolution"
 const KEY_QUALITY := "quality"
 const KEY_BRIGHTNESS := "brightness"
+## Round 747's review, F11 (OURS: not one of retail's options): far other
+## players drawn as GPU instances (CrowdGpu). On by default; a weak GPU (an
+## Intel HD 630 class part) can turn it off in [video] gpu_crowd = false.
+## No row in the window: a config switch.
+const KEY_GPU_CROWD := "gpu_crowd"
 
 # --- the rows -------------------------------------------------------------------
 
@@ -280,6 +285,8 @@ var resolution_touched := false
 ## A line for the player about the last store (a renderer choice that could
 ## not be written, say); "" for none. Not saved.
 var notice := ""
+## Far crowd on the GPU (KEY_GPU_CROWD).
+var gpu_crowd := true
 ## The View row as the window left it ("free" / "third_person" / "quarter",
 ## World3D.CAMERA_VIEWS), "" for unchanged. Not saved here: [ui] camera_view
 ## is its key.
@@ -299,6 +306,7 @@ func duplicate_options() -> VideoOptions:
 	o.fullscreen = fullscreen
 	o.resolution = resolution
 	o.camera_view = camera_view
+	o.gpu_crowd = gpu_crowd
 	return o
 
 ## The number of choices a row offers.
@@ -432,6 +440,7 @@ static func load_saved(path: String = ClientSettings.PATH) -> VideoOptions:
 	o.active = clampi(int(file.get_value(SECTION, KEY_PROFILE, 1)) - 1, 0, 1)
 	o.fullscreen = bool(file.get_value(SECTION, KEY_FULLSCREEN, false))
 	o.resolution = parse_resolution(str(file.get_value(SECTION, KEY_RESOLUTION, "")))
+	o.gpu_crowd = bool(file.get_value(SECTION, KEY_GPU_CROWD, true))
 	# Before round 694 the one video setting was [world] water_reflection
 	# (round 628). A record with no section of its own starts as Middle (the
 	# user's decision); a stored explicit choice there still wins -- as the
@@ -461,6 +470,7 @@ func save(path: String = ClientSettings.PATH) -> bool:
 	file.set_value(SECTION, KEY_PROFILE, active + 1)
 	file.set_value(SECTION, KEY_FULLSCREEN, fullscreen)
 	file.set_value(SECTION, KEY_RESOLUTION, format_resolution(resolution))
+	file.set_value(SECTION, KEY_GPU_CROWD, gpu_crowd)
 	for i in 2:
 		var p: Profile = profiles[i]
 		var sec: String = PROFILE_SECTIONS[i]
