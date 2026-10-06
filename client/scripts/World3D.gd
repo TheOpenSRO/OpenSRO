@@ -6086,6 +6086,14 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	# Round 732's static lambda (MagicOptionTable.shared_text, made in this
+	# node's script) aborted every quit -- "corrupted size vs. prev_size in
+	# fastbins", rc 134 -- when Godot 4.2.2 freed it after the script at exit
+	# (round 735's review: reproduced in a minimal project 3/3; clearing the
+	# static before quit exits 0). Cleared here, with the table, so a later
+	# world entry reloads both.
+	MagicOptionTable.shared_text = Callable()
+	MagicOptionTable.shared = null
 	if ParseProfile.enabled and _initial_load_done:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
