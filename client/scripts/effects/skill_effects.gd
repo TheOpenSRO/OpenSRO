@@ -256,15 +256,45 @@ static func set_archive(particles: Pk2Reader) -> void:
 	_particles = particles
 
 static func warm() -> void:
+	if _warm_task >= 0:
+		# Started by warm_async: wait for it, and for SkillAudio's tables,
+		# which the rows join through.
+		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		_warm_task = -1
+		SkillAudio.warm()
+	if _loaded:
+		return
+	SkillAudio.warm()
+	_warm_now()
+
+## Round 746: warm() on a worker (every skilldata part the index names, as
+## SkillAudio.warm_async); warm() waits for it. SkillAudio's own tables are
+## warmed by its own task (World3D starts both).
+static func warm_async() -> void:
+	if _loaded or _warm_task >= 0:
+		return
+	_warm_task = WorkerThreadPool.add_task(func() -> void:
+		SkillEffects._warm_now(), false, "skill effect tables")
+
+static var _warm_task := -1
+
+## Waits for a warm_async under way (a world leaving the tree; round 746's
+## review, finding 9).
+static func wait_pending() -> void:
+	if _warm_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		_warm_task = -1
+
+static func _warm_now() -> void:
 	if _loaded:
 		return
 	_loaded = true
-	SkillAudio.warm()
 	var t0 := Time.get_ticks_msec()
 	_rows = parse_rows(AudioBank.read_table("media", SKILLEFFECT_PATH))
 	# Both races' skill files (round 691): a Europe cast keys its sound and
 	# effect rows by its id like a China one, so its rows must be read too.
-	for path in SkillDataReader.all_tables():
+	# Every part the archive's skilldata.txt names (round 746).
+	for path in SkillDataReader.all_tables(AudioBank._archive("media")):
 		parse_timings(AudioBank.read_table("media", path), _timings)
 	var n := 0
 	for k in _rows:
@@ -618,6 +648,9 @@ static func clear_live() -> void:
 
 ## Clears every table and live reference (tests, a world reload).
 static func reset() -> void:
+	if _warm_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		_warm_task = -1
 	clear_live()
 	_rows = {}
 	_timings = {}

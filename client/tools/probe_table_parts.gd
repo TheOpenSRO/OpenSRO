@@ -98,6 +98,31 @@ func _init() -> void:
 	# --- characterdata
 	var old_chars: Array = read.call(OLD_CHARS)
 	var new_chars: Array = CharCatalog.index_parts(media, CharCatalog.CHAR_INDEX)
+	var names := ItemTableReader.load_object_names(media)
+	var entry_readers := func(parts: Array) -> void:
+		var r1 := {}
+		var r2 := {}
+		var r3 := {}
+		var r4 := {}
+		var r5 := {}
+		var r6 := {}
+		for bytes in parts:
+			r1 = NpcTableReader.parse_models(bytes, r1)
+			r2 = NpcTableReader.parse_codes(bytes, r2)
+			r3 = NpcTableReader.parse_models_by_code(bytes, r3, "")
+			r4 = NpcTableReader.parse_org_codes(bytes, r4)
+			r5 = NpcTableReader.parse_names(bytes, names, r5)
+			r6 = NpcTableReader.parse_models_by_name(bytes, names, r6)
+	print("PARTS characterdata entry readers (NPC models/codes/names, monster models/org/by name): old %.1f ms, index %.1f ms" % [
+		_ms(func(): entry_readers.call(old_chars)), _ms(func(): entry_readers.call(new_chars))])
+	var t_ct := Time.get_ticks_usec()
+	CharTables.clear_shared()
+	CharTables.preload_async(media)
+	var ctb := CharTables.boot(media)
+	var ce := CharTables.entry(media)
+	print("PARTS CharTables: boot %.1f ms and entry %.1f ms on two workers, %.1f ms wall; %d codes with a model by code, %d MOB_" % [
+		ctb.usec / 1000.0, ce.usec / 1000.0, (Time.get_ticks_usec() - t_ct) / 1000.0, ce.mob_models_by_code.size(),
+		ce.mob_models_by_code.keys().filter(func(k): return String(k).begins_with("MOB_")).size()])
 	var codes := func(parts: Array) -> Dictionary:
 		var into := {}
 		for d in parts:
@@ -127,4 +152,39 @@ func _init() -> void:
 	print("PARTS characterdata index: %d part(s), %d bytes, %d code(s) with a model, boot readers %.1f ms" % [
 		new_chars.size(), bytes_of.call(new_chars), cb.size(), _ms(func(): boot.call(new_chars))])
 	print("PARTS characterdata: %d code(s) only the index's parts define (%d MOB_)" % [c_only, c_mob_only])
+	# --- skilldata
+	var old_sk: Array = read.call(SkillDataReader.all_tables())
+	var new_sk: Array = read.call(Array(SkillDataReader.index_tables(media)))
+	var timings := func(parts: Array) -> void:
+		var tm := {}
+		var sk := {}
+		for bytes in parts:
+			SkillEffects.parse_timings(bytes, tm)
+			SkillAudio.parse_skills(bytes, sk)
+	print("PARTS skilldata old: %d part(s), %d bytes; index: %d part(s), %d bytes" % [
+		old_sk.size(), bytes_of.call(old_sk), new_sk.size(), bytes_of.call(new_sk)])
+	print("PARTS skilldata timings+audio readers: old %.1f ms, index %.1f ms" % [
+		_ms(func(): timings.call(old_sk)), _ms(func(): timings.call(new_sk))])
+	for race in [0, 1]:
+		var ids := PackedInt32Array()
+		for id in MasteryReader.RACE_MASTERIES.get(race, []):
+			ids.append(int(id))
+		var old_r: Array = read.call(SkillDataReader.LEGACY_EUROPE_SKILL_TABLES if race == 1 else SkillDataReader.LEGACY_SKILL_TABLES)
+		var g_old := SkillDataReader.parse_skills(old_r, ids)
+		var g_new := SkillDataReader.parse_skills(new_sk, ids)
+		var count := func(g: Dictionary) -> int:
+			var n := 0
+			for k in g:
+				for bs in g[k]:
+					n += (bs as SkillDataReader.BaseSkill).level_ids.size()
+			return n
+		print("PARTS skill board race %d: old %d level row(s) in %.1f ms, index %d in %.1f ms" % [race, count.call(g_old),
+			_ms(func(): SkillDataReader.parse_skills(old_r, ids)), count.call(g_new), _ms(func(): SkillDataReader.parse_skills(new_sk, ids))])
+		var has35005 := false
+		for k in g_new:
+			for bs in g_new[k]:
+				if (bs as SkillDataReader.BaseSkill).level_ids.has(35005):
+					has35005 = true
+		if race == 0:
+			print("PARTS skill 35005 (SKILL_CH_WATER_BATTLEA_OVERHEAL_B_01) on the China board from the index's parts: %s" % str(has35005))
 	quit()

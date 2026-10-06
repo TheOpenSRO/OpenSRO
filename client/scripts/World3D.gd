@@ -1660,6 +1660,11 @@ func _ready() -> void:
 	# _load_character_assets waits for it. Free when the select screen
 	# already parsed the same archive (ItemTableReader.load_all is shared).
 	ItemTableReader.preload_async(_open_media_pk2_if_set())
+	# Round 746: characterdata the same way -- every part its index names
+	# (63; the world read 7), its boot and entry readers on two workers
+	# (CharTables), waited for by _load_character_assets and the NPC and
+	# monster loaders.
+	CharTables.preload_async(_open_media_pk2_if_set())
 	# OPENSRO_QA_UI_SCALE=<f> (round 695, OURS): a QA run boots this scene
 	# directly, past Boot's ClientSettings.apply_ui_scale, so it ran at 1.0
 	# whatever the settings say; this applies a scale for the run (nothing is
@@ -1683,13 +1688,21 @@ func _ready() -> void:
 	SoundTable.set_listener(player, camera_3d)
 	# The skill tables the combat sounds key by (round 614), read while the
 	# world loads rather than on the first blow.
-	SkillAudio.warm()
+	# Round 746: on workers (every skilldata part the index names); the first
+	# use waits for them.
+	SkillAudio.warm_async()
 	# Skill visual effects (round 620): the same rows, their .efp drawn by
 	# EfpEffect from the player's Particles.pk2. The buff auras follow
 	# OpBuffStart / OpBuffEnd (rounds 616-618, _fx_on_buff_started).
 	SkillEffects.set_archive(_open_particles_pk2_if_set())
-	SkillEffects.warm()
+	SkillEffects.warm_async()
 	SkillEffects.own_body = player
+	# Round 746's review, finding 4: the player's own weapon is the one whose
+	# world-axis effects simulate on their own (EquipFx.prefer_root). Deferred:
+	# the driver is a child of the viewport, which is still setting up.
+	(func() -> void:
+		if is_inside_tree():
+			EquipFx.driver_for(get_viewport()).prefer_root = player).call_deferred()
 	# Berserk's look (round 651): the SYSTEM_CH_HWANMODE rows of the same
 	# table, drawn from the same Particles.pk2.
 	BerserkLook.set_archive(_open_particles_pk2_if_set())
@@ -5430,6 +5443,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		print(_load_timings.summary())
 		_qa_print_entry_probe()
 		_land_restored_return_point()
+		_adopt_char_entry()
 		_initial_load_done = true
 		return
 	# Reuse the screen the caller put up (_ready and _on_change_zone_result
@@ -5512,7 +5526,29 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	_loading_screen = null
 	print("LoadingScreen: lifted at frame %d" % Engine.get_frames_drawn())
 	_land_restored_return_point()
+	_adopt_char_entry()
 	_initial_load_done = true
+
+## Round 746: BCRadius and DecayTime from every characterdata part (CharTables'
+## entry task, a worker), taken once -- by the NPC or monster loaders or, at
+## the latest, when the entry's grid is in, before any character or monster
+## spawns into it.
+var _char_entry_adopted := false
+func _adopt_char_entry() -> void:
+	if _char_entry_adopted or _media_pk2 == null:
+		return
+	_char_entry_adopted = true
+	var t := Time.get_ticks_usec()
+	var centry := CharTables.entry(_media_pk2)
+	_bc_radius_by_code = centry.bc_radius
+	_monster_decay_ms_by_code = centry.decay
+	# Every row's BCRadius (column 50), for the attack approach: the player's
+	# body and the monsters' species both feed the reach band.
+	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s); %d monster DecayTime row(s) from column 13 (MOB_CH_MANGNYANG: %s ms); taken in %d us, %d us of it waiting" % [
+		_bc_radius_by_code.size(), GENDER_BODY_CODE[DEFAULT_GENDER],
+		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none")),
+		_monster_decay_ms_by_code.size(), str(_monster_decay_ms_by_code.get("MOB_CH_MANGNYANG", "none")),
+		Time.get_ticks_usec() - t, CharTables.last_entry_wait_usec])
 
 ## A restored entry's position (round 690), world (x, z), until the entry's
 ## grid is in; null otherwise. _land_restored_return_point consumes it.
@@ -6149,6 +6185,13 @@ func _exit_tree() -> void:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
+	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
+	# world leaving before it asked for its item, character and skill tables
+	# leaves no worker running behind it.
+	ItemTableReader.wait_pending()
+	CharTables.wait_pending()
+	SkillAudio.wait_pending()
+	SkillEffects.wait_pending()
 	# Round 732's static lambda (MagicOptionTable.shared_text, made in this
 	# node's script) aborted every quit -- "corrupted size vs. prev_size in
 	# fastbins", rc 134 -- when Godot 4.2.2 freed it after the script at exit
@@ -6638,21 +6681,22 @@ func _load_npc_tables() -> void:
 	# carries an id, an `SN_` key and a `.bsr`, and textdata_object turns
 	# the key into what the game calls the NPC. Read once, joined twice.
 	# Both object-name files (round 731, ItemTableReader.load_object_names).
-	var names: UiTextTable = ItemTableReader.load_object_names(_media_pk2)
+	var t_npc := Time.get_ticks_usec()
+	_adopt_char_entry()
+	var centry := CharTables.entry(_media_pk2)
+	var names: UiTextTable = centry.names
 	# NPC greetings resolve through a different table than names: npcchat's SN_
 	# ids live in textquest_speechname.txt (with the English in a later column,
 	# which UiTextTable picks by content).
 	var greet_entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textquest_speechname.txt")
 	if greet_entry != null:
 		_npc_text_table = UiTextTable.parse(_media_pk2.read_file(greet_entry))
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
-		var entry := ObjectLoader.find_file(_media_pk2, path)
-		if entry != null:
-			var bytes := _media_pk2.read_file(entry)
-			_npc_models = NpcTableReader.parse_models(bytes, _npc_models)
-			_npc_codes = NpcTableReader.parse_codes(bytes, _npc_codes)
-			if names != null:
-				_npc_names = NpcTableReader.parse_names(bytes, names, _npc_names)
+	# Every characterdata part (round 746), read by CharTables' entry task.
+	_npc_models = centry.npc_models
+	_npc_codes = centry.npc_codes
+	_npc_names = centry.npc_names
+	print("World3D: characterdata entry tables (read %d us on a worker; this call %d us, of which %d us waiting)" % [
+		centry.usec, Time.get_ticks_usec() - t_npc, CharTables.last_entry_wait_usec])
 	# What each NPC offers: shops (refshopgroup) and greetings (npcchat).
 	var shop_entry := ObjectLoader.find_file(_media_pk2, NpcServiceReader.SHOP_TABLE)
 	if shop_entry != null:
@@ -8722,25 +8766,14 @@ func _load_character_assets() -> void:
 		print("World3D: no Media.pk2 -- no character or item tables, characters stay placeholders")
 		return
 
-	var speeds := {}
-	var char_parts: Array = []
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
-		var entry := ObjectLoader.find_file(_media_pk2, path)
-		if entry != null:
-			var bytes := _media_pk2.read_file(entry)
-			char_parts.append(bytes)
-			speeds = NpcTableReader.parse_speeds_by_code(bytes, speeds)
-			_bc_radius_by_code = NpcTableReader.parse_bc_radius_by_code(bytes, _bc_radius_by_code)
-			_monster_decay_ms_by_code = NpcTableReader.parse_decay_by_code(bytes, _monster_decay_ms_by_code)
-			_country_by_code = NpcTableReader.parse_country_by_code(bytes, _country_by_code)
-	_speeds_by_code = speeds
-	# Every row's BCRadius (column 50), for the attack approach: the player's
-	# body and the monsters' species both feed the reach band.
-	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s)" % [
-		_bc_radius_by_code.size(), GENDER_BODY_CODE[DEFAULT_GENDER],
-		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none"))])
-	print("World3D: %d monster DecayTime row(s) from characterdata column 13 (MOB_CH_MANGNYANG: %s ms)" % [
-		_monster_decay_ms_by_code.size(), str(_monster_decay_ms_by_code.get("MOB_CH_MANGNYANG", "none"))])
+	# Every part characterdata.txt names (round 746), read by CharTables'
+	# boot task on a worker; the dictionaries are shared, read-only here.
+	var t_chars := Time.get_ticks_usec()
+	var cboot := CharTables.boot(_media_pk2)
+	_speeds_by_code = cboot.speeds
+	_country_by_code = cboot.country
+	print("World3D: characterdata boot tables from %d part(s), %d bytes (read %d us on a worker; this call %d us, of which %d us waiting)" % [
+		cboot.parts, cboot.bytes, cboot.usec, Time.get_ticks_usec() - t_chars, CharTables.last_boot_wait_usec])
 	# The player's run speed is its body row's own (column 47), set when the
 	# body is known (_apply_player_speed); the default body's until then.
 	_apply_player_speed(GENDER_BODY_CODE[DEFAULT_GENDER])
@@ -8750,9 +8783,16 @@ func _load_character_assets() -> void:
 	# HUD and the appearance builder (ItemTableReader.load_all).
 	var t_items := Time.get_ticks_usec()
 	var all_items := ItemTableReader.load_all(_media_pk2)
-	print("World3D: %d item row(s) from %d itemdata part(s) (parse %d us; this call %d us, of which %d us waiting for the preload)" % [
-		all_items.size(), ItemTableReader.last_load_parts, ItemTableReader.last_load_usec,
-		Time.get_ticks_usec() - t_items, ItemTableReader.last_wait_usec])
+	# Round 746 (the review's finding 6): the parse's own numbers only when
+	# this call's rows were parsed now or by this world's preload; "shared"
+	# rows were parsed earlier (the select screen) and cost nothing here.
+	if ItemTableReader.last_source == "shared":
+		print("World3D: %d item row(s), shared (parsed before this world; this call %d us)" % [
+			all_items.size(), Time.get_ticks_usec() - t_items])
+	else:
+		print("World3D: %d item row(s) from %d itemdata part(s), %s (parse %d us; this call %d us, of which %d us waiting for the preload)" % [
+			all_items.size(), ItemTableReader.last_load_parts, ItemTableReader.last_source, ItemTableReader.last_load_usec,
+			Time.get_ticks_usec() - t_items, ItemTableReader.last_wait_usec])
 	for item in all_items.values():
 		_item_rows[item.id] = item
 		if item.drop_model_path != "":
@@ -8764,7 +8804,7 @@ func _load_character_assets() -> void:
 
 	# The bodies (round 689): the catalogue's rule over the parts just read.
 	var t_cat := Time.get_ticks_usec()
-	var bodies := CharCatalog.from_tables(char_parts, [])
+	var bodies: CharCatalog = cboot.bodies if cboot.bodies != null else CharCatalog.new()
 	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
 	# The weapon glow's particles (round 734) come from the world's own reader.
 	_appearance.particles = _open_particles_pk2_if_set()
@@ -18294,16 +18334,15 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 		if _media_pk2 != null:
 			# One parse of textdata_object.txt for the whole world (the item
 			# names use it too) -- see _object_names().
-			var names: UiTextTable = _object_names()
-			for path in NpcTableReader.MODEL_TABLE_PATHS:
-				var entry := ObjectLoader.find_file(_media_pk2, path)
-				if entry == null:
-					continue
-				var bytes := _media_pk2.read_file(entry)
-				_monster_models_by_code = NpcTableReader.parse_models_by_code(bytes, _monster_models_by_code, "")
-				_monster_org_by_code = NpcTableReader.parse_org_codes(bytes, _monster_org_by_code)
-				if names != null:
-					_monster_models_by_name = NpcTableReader.parse_models_by_name(bytes, names, _monster_models_by_name)
+			# Every characterdata part (round 746), read by CharTables' entry
+			# task with the object-name table they join through.
+			_adopt_char_entry()
+			var centry := CharTables.entry(_media_pk2)
+			if _object_name_table == null:
+				_object_name_table = centry.names
+			_monster_models_by_code = centry.mob_models_by_code
+			_monster_org_by_code = centry.mob_org
+			_monster_models_by_name = centry.mob_models_by_name
 			var through_org := 0
 			for code in _monster_org_by_code:
 				if not _monster_models_by_code.has(code) and _monster_models_by_code.has(_monster_org_by_code[code]):
@@ -21574,7 +21613,7 @@ func _preload_name_key_index() -> void:
 	_name_key_task = WorkerThreadPool.add_task(func() -> void:
 		var t := Time.get_ticks_msec()
 		var index := {}
-		for path in NpcTableReader.MODEL_TABLE_PATHS:
+		for path in CharTables.table_paths(pk2):
 			var entry := ObjectLoader.find_file(pk2, path)
 			if entry != null:
 				NpcTableReader.parse_name_keys(pk2.read_file(entry), index)

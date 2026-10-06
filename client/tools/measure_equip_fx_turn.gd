@@ -100,7 +100,7 @@ func _report() -> void:
 			if not is_instance_valid(host.skel):
 				continue
 			var k: EquipFx.Kind = fx._kinds.get(host.key)
-			if k == null or k.master.sim == null:
+			if k == null or (not k.own and k.master.sim == null):
 				continue
 			var spec := ""
 			var heading := 0
@@ -112,9 +112,9 @@ func _report() -> void:
 			if m.is_empty():
 				if heading == 0:
 					print("TURN %s %s bone %s: nothing measured (%d live particle(s), bones %s)" % [spec, k.key.get_slice("|", 0),
-						host.skel.get_bone_name(host.bone), k.master.sim.particles.size(), str(range(host.skel.get_bone_count()).map(func(i): return host.skel.get_bone_name(i)))])
+						host.skel.get_bone_name(host.bone), (k.master.sim.particles.size() if not k.own else -1), str(range(host.skel.get_bone_count()).map(func(i): return host.skel.get_bone_name(i)))])
 				continue
-			var key := "%s|%s|%s" % [spec, k.key.get_slice("|", 0), m["bone"]]
+			var key := "%s|%s%s|%s" % [spec, k.key.get_slice("|", 0), " (own simulation)" if bool(m.get("own", false)) else "", m["bone"]]
 			_others[key] = "%s->%s" % [m["bone"], m["other"]]
 			if not sums.has(key):
 				sums[key] = {"n": 0, "p": 0, "lo": INF, "hi": -INF, "off": 0.0, "was": 0.0, "axis": 0.0, "headings": [], "cent": []}
@@ -153,6 +153,15 @@ func _report() -> void:
 		for kk in (d as EquipFx)._kinds:
 			var kind: EquipFx.Kind = (d as EquipFx)._kinds[kk]
 			var turned := 0
+			if kind.own:
+				var running := 0
+				for h in (d as EquipFx)._hosts.values():
+					var hh := h as EquipFx.Host
+					if hh.key == kk and hh.own_fx != null and is_instance_valid(hh.own_fx) and hh.own_fx.visible:
+						running += 1
+				print("TURN effect %s: %d world-axis command(s) -> its %d nearest hosts simulate on their own (%d running)" % [
+					String(kk).get_slice("|", 0), EquipFx.world_commands(EfpEffect.template_for(kind.efp, (d as EquipFx).particles)),
+					EquipFx.OWN_BUDGET, running])
 			for dr in kind.master._draws:
 				if dr.size() > 3 and bool(dr[3]):
 					turned += 1

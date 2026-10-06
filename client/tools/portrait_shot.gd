@@ -44,7 +44,7 @@ func _init() -> void:
 		printerr("portrait_shot: set OPENSRO_PK2_PATH and OPENSRO_MEDIA_PK2_PATH")
 		quit(2)
 		return
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
+	for path in NpcTableReader.model_table_paths(_media):
 		var entry := ObjectLoader.find_file(_media, path)
 		if entry != null:
 			_bodies = NpcTableReader.parse_models_by_code(_media.read_file(entry), _bodies)

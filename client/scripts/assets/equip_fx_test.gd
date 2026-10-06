@@ -29,6 +29,10 @@ func _initialize() -> void:
 	_test_budget()
 	_test_scale_and_pause()
 	_test_two_rows_one_bone()
+	_test_weapon_budget()
+	_test_world_commands()
+	_test_own_nearest()
+	_test_own_prefer_keep_free()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
 	quit(1 if _failures > 0 else 0)
 
@@ -175,4 +179,174 @@ func _test_two_rows_one_bone() -> void:
 	_check(holders == 2, "both are drawn (%d holders)" % holders)
 	d.remove_skel(s)
 	_check(d._hosts.is_empty(), "the skeleton leaving takes both")
+	vp.free()
+
+## Round 746 (the review's finding 2): the budget cuts by whole weapons (item
+## skeletons): a chosen weapon shows every effect it carries, within 64
+## holders.
+func _test_weapon_budget() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	var other := "system\\test_fx_2.efp"
+	var key2 := "%s|%s" % [other.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var m := EfpEffect.new()
+	var mm := MultiMeshInstance3D.new()
+	mm.multimesh = MultiMesh.new()
+	m.add_child(mm)
+	d.add_child(m)
+	var k := EquipFx.Kind.new()
+	k.key = key2
+	k.master = m
+	d._kinds[key2] = k
+	var skels: Array = []
+	for i in 80:
+		var s := _host(vp, d, Vector3(0, 0, 10 + i * 5))
+		d.add_host(s, "ai_end", other, SCALE, null)
+		skels.append(s)
+	for f in EquipFx.RESELECT_FRAMES + 2:
+		d._process(1.0 / 60.0)
+	var whole := 0
+	var half := 0
+	for i in skels.size():
+		var n := 0
+		for c in (skels[i] as Node).get_children():
+			if c is EfpEffect and (c as EfpEffect).visible:
+				n += 1
+		if n == 2:
+			whole += 1
+		elif n == 1:
+			half += 1
+	var cap := EquipFx.VISIBLE_BUDGET / 2
+	_check(int(d.stats["weapons"]) == cap and int(d.stats["shown"]) == EquipFx.VISIBLE_BUDGET,
+		"80 weapons with 2 effects each: 64 holders, 32 whole weapons (%d, %d)" % [int(d.stats["weapons"]), int(d.stats["shown"])])
+	_check(whole == cap and half == 0, "every shown weapon shows both its effects, none half (%d whole, %d half)" % [whole, half])
+	var nearest := true
+	for i in skels.size():
+		var shown := false
+		for c in (skels[i] as Node).get_children():
+			if c is EfpEffect and (c as EfpEffect).visible:
+				shown = true
+		if shown != (i < cap):
+			nearest = false
+	_check(nearest, "the weapons shown are the nearest")
+	vp.free()
+
+## Round 746 (the review's finding 1): which commands point along the world.
+func _test_world_commands() -> void:
+	var t := EfpSim.Template.new()
+	var tp := EfpSim.Tpl.new()
+	tp.schedule = [[
+		[EfpSim.K_CONEVEL, 0, Vector3(0, 0.5, 0.2)],   # world: no frame
+		[EfpSim.K_CONEVEL, 2, Vector3(0, 0.5, 0.2)],   # the parent's frame
+		[EfpSim.K_POS, 7, Vector3(-1.2, 0, 0)],        # parent's position, turned by it
+		[EfpSim.K_POS, 1, Vector3(1, 0, 0)],           # parent's position, NOT turned: world
+		[EfpSim.K_POS, 1, Vector3.ZERO],               # nothing to turn
+		[EfpSim.K_SPHERE, 1, Vector3(2, 2, 2)],        # a ball: the same in any frame
+		[EfpSim.K_SPHERE, 1, Vector3(1, 0, 1)],        # a disc in the world's XZ
+		[EfpSim.K_RVEL, 0, Basis(Vector3.UP, 0.1)],    # applied in the outer frame
+		[EfpSim.K_FORCE, 2, Vector3(0, -1, 0)],
+		[EfpSim.K_SCALE, 0, Vector3.ONE],
+	]]
+	t.tpls.append(tp)
+	_check(EquipFx.world_commands(t) == 4, "world-axis commands: cone velocity space 0, a position space 1, a disc, a rotation velocity (%d)" % EquipFx.world_commands(t))
+
+## Round 746: a world-axis effect's OWN_BUDGET nearest weapons run their own
+## simulation; the rest draw the shared master.
+func _test_own_nearest() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	var key := "%s|%s" % [EFP.to_lower(), str(snappedf(SCALE, 0.0001))]
+	(d._kinds[key] as EquipFx.Kind).own = true
+	EquipFx.own_factory = func(_efp: String) -> EfpEffect:
+		return EfpEffect.new()
+	var skels: Array = []
+	for i in 12:
+		skels.append(_host(vp, d, Vector3(0, 0, 10 + i * 5)))
+	d._process(1.0 / 60.0)
+	var ok := true
+	for i in skels.size():
+		var own := false
+		var shared := false
+		for c in (skels[i] as Node).get_children():
+			if c is EfpEffect and (c as EfpEffect).visible:
+				if String(c.name).begins_with("EquipFxOwn"):
+					own = true
+				else:
+					shared = true
+		if own != (i < EquipFx.OWN_BUDGET) or shared == own:
+			ok = false
+	_check(ok and int(d.stats["own"]) == EquipFx.OWN_BUDGET,
+		"12 weapons with a world-axis effect: the %d nearest simulate on their own, the rest draw the shared master (%d own)" % [EquipFx.OWN_BUDGET, int(d.stats["own"])])
+	EquipFx.own_factory = Callable()
+	vp.free()
+
+## Round 746's review, findings 4-6: the player's weapon first, a margin
+## before the own slot moves, a parked own effect freed after a while, and a
+## master no shared holder uses does not step.
+func _own_of(s: Skeleton3D) -> bool:
+	for c in s.get_children():
+		if c is EfpEffect and (c as EfpEffect).visible and String(c.name).begins_with("EquipFxOwn"):
+			return true
+	return false
+
+func _cycle(d: EquipFx) -> void:
+	for f in EquipFx.RESELECT_FRAMES:
+		d._process(1.0 / 60.0)
+
+func _test_own_prefer_keep_free() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	var key := "%s|%s" % [EFP.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var k: EquipFx.Kind = d._kinds[key]
+	k.own = true
+	EquipFx.own_factory = func(_efp: String) -> EfpEffect:
+		return EfpEffect.new()
+	var budget := EquipFx.OWN_BUDGET
+	EquipFx.OWN_BUDGET = 1
+	# The player's weapon (the farthest here) is preferred.
+	var player := Node3D.new()
+	vp.add_child(player)
+	var near := _host(vp, d, Vector3(0, 0, 10))
+	var mine := _host(player, d, Vector3(0, 0, 40))
+	d.prefer_root = player
+	d._process(1.0 / 60.0)
+	_check(_own_of(mine) and not _own_of(near), "the player's own weapon runs the own simulation, not the nearer one")
+	# Finding 6: the only host drawn through the master is `near`; with both
+	# own, the master would pause.
+	_check(k.master.is_processing(), "a master a shared holder uses keeps stepping")
+	d.prefer_root = null
+	EquipFx.OWN_BUDGET = 2
+	_cycle(d)
+	_check(_own_of(mine) and _own_of(near) and not k.master.is_processing(),
+		"every shown host on its own: the master does not step (finding 6)")
+	# Hysteresis: one slot, `near` holds it; a weapon 15 % nearer does not
+	# take it, one 30 % nearer does.
+	EquipFx.OWN_BUDGET = 1
+	mine.position = Vector3(0, 0, 400)
+	_cycle(d)
+	_cycle(d)
+	var held := _own_of(near)
+	var rival := _host(vp, d, Vector3(0, 0, 0))
+	var dn := (near.global_position - vp.get_camera_3d().global_position).length()
+	rival.position = Vector3(0, 0, 10 - 0.15 * dn)
+	_cycle(d)
+	_cycle(d)
+	_check(held and _own_of(near) and not _own_of(rival), "a rival 15 %% nearer does not take the slot (margin %.0f %%)" % (EquipFx.OWN_KEEP_MARGIN * 100))
+	rival.position = Vector3(0, 0, 10 - 0.3 * dn)
+	# Two cycles: the scan that saw the move ends on the cycle after it.
+	_cycle(d)
+	_cycle(d)
+	_check(_own_of(rival) and not _own_of(near), "a rival 30 % nearer does")
+	# Finding 5: `near`'s parked own effect goes after OWN_FREE_CYCLES.
+	var hid := ""
+	for id in d._hosts:
+		if (d._hosts[id] as EquipFx.Host).skel == near:
+			hid = id
+	var h: EquipFx.Host = d._hosts[hid]
+	_check(h.own_fx != null and is_instance_valid(h.own_fx) and not h.own_fx.visible, "the old own effect is parked")
+	for c in EquipFx.OWN_FREE_CYCLES + 1:
+		_cycle(d)
+	_check(h.own_fx == null, "and freed after %d cycles parked" % EquipFx.OWN_FREE_CYCLES)
+	EquipFx.OWN_BUDGET = budget
+	EquipFx.own_factory = Callable()
 	vp.free()

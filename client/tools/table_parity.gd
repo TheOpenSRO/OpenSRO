@@ -213,7 +213,7 @@ func _compare_reader(where: String, label: String, run: Callable, data: PackedBy
 func _merged(media: Pk2Reader) -> void:
 	# The parts, accumulated in World3D's order: duplicates across parts.
 	var parts: Array = []
-	for p in NpcTableReader.MODEL_TABLE_PATHS:
+	for p in NpcTableReader.model_table_paths(media):
 		var e := ObjectLoader.find_file(media, p)
 		if e != null:
 			parts.append(media.read_file(e))

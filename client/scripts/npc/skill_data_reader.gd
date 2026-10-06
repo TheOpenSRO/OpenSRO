@@ -25,7 +25,7 @@ const GROUP_TABLE := "server_dep\\silkroad\\textdata\\skillgroup.txt"
 ## The skilldata files that carry China mastery skills, measured against the
 ## pserver archive. The client splits skilldata across many files; only these
 ## hold player-mastery (257-259, 273-276) skills.
-const SKILL_TABLES := [
+const LEGACY_SKILL_TABLES := [
 	"server_dep\\silkroad\\textdata\\skilldata_1000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_5000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_10000.txt",
@@ -41,7 +41,7 @@ const SKILL_TABLES := [
 ## 12000 and 22000 for the last 65 (a greedy cover; 11000, 25000, 31000,
 ## 32000 and 36000 add none). Listed in the index's numeric order, which is
 ## the order the client loads them in (skilldata.txt).
-const EUROPE_SKILL_TABLES := [
+const LEGACY_EUROPE_SKILL_TABLES := [
 	"server_dep\\silkroad\\textdata\\skilldata_9000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_10000.txt",
 	"server_dep\\silkroad\\textdata\\skilldata_12000.txt",
@@ -50,15 +50,50 @@ const EUROPE_SKILL_TABLES := [
 	"server_dep\\silkroad\\textdata\\skilldata_35000.txt",
 ]
 
-## The files a race's skill board reads (MasteryReader.RACE_*).
-static func tables_for_race(race: int) -> Array:
-	return EUROPE_SKILL_TABLES if race == 1 else SKILL_TABLES
+## Round 746 and its review (finding 1). Retail's skill rows come from
+## `textdata\skilldataenc.txt` (READ: Client_LoadAllRefData 0x844cd0 names
+## only that list), whose ENC parts are encrypted twins of the plain ones.
+## The plain index `textdata\skilldata.txt` (47 parts) is a SUPERSET of them:
+## 66 ids retail lacks -- among them 35004/35005
+## (SKILL_CH_WATER_BATTLEA_OVERHEAL_A/B_01, a Europe cleric's leftovers in the
+## plain twin of skilldata_36000) -- and one disagreeing duplicate, 36791,
+## whose required mastery level is 110 in both ENC parts but 10 in plain
+## skilldata_37000 (MEASURED by the review against the decrypted ENC rows).
+## So:
+## - the SKILL BOARD reads the legacy covers below (tables_for_race without an
+##   archive), which match the ENC rows on every player-mastery row;
+## - the cast effects and sounds (SkillEffects, SkillAudio: timings and effect
+##   ids keyed by skill id) read the whole plain index (all_tables with an
+##   archive), which over their columns only adds ids (MEASURED, the review).
+## Reading the ENC rows themselves needs the key tables in the player's own
+## sro_client.exe: OPEN.
+const INDEX := "skilldata.txt"
+
+## Every skilldata part `media` holds, as archive paths, in its index's
+## order; the legacy lists (both races, numeric order) without an index.
+static func index_tables(media: Pk2Reader) -> PackedStringArray:
+	var out := PackedStringArray()
+	for name in CharCatalog.index_part_names(media, INDEX):
+		out.append(CharCatalog.TEXTDATA_DIR + name)
+	if out.is_empty():
+		out = PackedStringArray(all_tables())
+	return out
+
+## The files a race's skill board reads (MasteryReader.RACE_*): the legacy
+## cover (the board's choice, see above); with `media`, the plain index's parts
+## instead (not for the board: it is not retail's list).
+static func tables_for_race(race: int, media: Pk2Reader = null) -> Array:
+	if media != null:
+		return Array(index_tables(media))
+	return LEGACY_EUROPE_SKILL_TABLES if race == 1 else LEGACY_SKILL_TABLES
 
 ## Both races' files once each, in the index's numeric order -- for the
 ## tables that must know every player skill (cast sounds, effects).
-static func all_tables() -> Array:
+static func all_tables(media: Pk2Reader = null) -> Array:
+	if media != null:
+		return Array(index_tables(media))
 	var out: Array = []
-	for p in SKILL_TABLES + EUROPE_SKILL_TABLES:
+	for p in LEGACY_SKILL_TABLES + LEGACY_EUROPE_SKILL_TABLES:
 		if not out.has(p):
 			out.append(p)
 	out.sort_custom(func(a, b): return SkillDataReader._table_number(a) < SkillDataReader._table_number(b))

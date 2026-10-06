@@ -254,6 +254,32 @@ static func effect_rows_in(skills: Dictionary, effects: Dictionary, skill_id: in
 ## call; World3D calls it while the world loads so the first blow does not
 ## pay for it.
 static func warm() -> void:
+	if _warm_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		_warm_task = -1
+	if _loaded:
+		return
+	_warm_now()
+
+## Round 746: warm() on a worker. The skilldata parts are now every one the
+## index names (47, 47.5 MB against 26.0 MB), so the read leaves the main
+## thread; warm() waits for it.
+static func warm_async() -> void:
+	if _loaded or _warm_task >= 0:
+		return
+	_warm_task = WorkerThreadPool.add_task(func() -> void:
+		SkillAudio._warm_now(), false, "skill audio tables")
+
+static var _warm_task := -1
+
+## Waits for a warm_async under way (a world leaving the tree; round 746's
+## review, finding 9).
+static func wait_pending() -> void:
+	if _warm_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		_warm_task = -1
+
+static func _warm_now() -> void:
 	if _loaded:
 		return
 	_loaded = true
@@ -261,7 +287,8 @@ static func warm() -> void:
 	var skills: Dictionary = {}
 	# Both races' skill files (round 691): a Europe cast keys its sound and
 	# effect rows by its id like a China one, so its rows must be read too.
-	for path in SkillDataReader.all_tables():
+	# Every part the archive's skilldata.txt names (round 746).
+	for path in SkillDataReader.all_tables(AudioBank._archive("media")):
 		parse_skills(AudioBank.read_table("media", path), skills)
 	_skills = skills
 	_effects = parse_effect_sounds(AudioBank.read_table("media", SKILLEFFECT_PATH))

@@ -78,6 +78,7 @@ static func load_all(media: Pk2Reader) -> Dictionary:
 	var key := _key_of(media)
 	last_wait_usec = 0
 	if key == _shared_key:
+		last_source = "shared"
 		return _shared
 	if _pending_task >= 0 and _pending_key == key:
 		# Started by preload_async: wait for it rather than parse twice.
@@ -88,11 +89,29 @@ static func load_all(media: Pk2Reader) -> Dictionary:
 		_shared_key = key
 		_shared = _pending_box[0]
 		_pending_box = [{}]
+		last_source = "preload"
 		return _shared
+	# A preload for ANOTHER archive is still under way: let it finish first,
+	# so its result is not lost (the review's finding 5).
+	wait_pending()
 	var rows := _read_all(media)
 	_shared_key = key
 	_shared = rows
+	last_source = "parsed"
 	return rows
+
+## Waits for a preload under way and keeps its rows as the shared ones (round
+## 746, the review's finding 5): a world that leaves the tree before it asks
+## for the rows (World3D._exit_tree) or a load of another archive. A no-op
+## when none is pending.
+static func wait_pending() -> void:
+	if _pending_task < 0:
+		return
+	WorkerThreadPool.wait_for_task_completion(_pending_task)
+	_pending_task = -1
+	_shared_key = _pending_key
+	_shared = _pending_box[0]
+	_pending_box = [{}]
 
 ## Starts parsing every part of `media` on a worker thread (round 741: 63
 ## parts cost ~1.7 s of GDScript on the render box, MEASURED), so the world
@@ -116,6 +135,10 @@ static var _pending_key := ""
 static var _pending_box: Array = [{}]
 ## How long the last `load_all` waited for a preload, microseconds.
 static var last_wait_usec := 0
+## Where the last `load_all`'s rows came from: "shared" (parsed by an earlier
+## call; no parse now), "preload" (the worker's parse) or "parsed" (now, on
+## the caller's thread). The boot log line says which (the review's finding 6).
+static var last_source := ""
 
 static func _key_of(media: Pk2Reader) -> String:
 	return media.source_path if media.source_path != "" else str(media.get_instance_id())

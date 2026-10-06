@@ -35,7 +35,7 @@ func _init() -> void:
 		return
 	var models := {}
 	var orgs := {}
-	for path in NpcTableReader.MODEL_TABLE_PATHS:
+	for path in NpcTableReader.model_table_paths(media):
 		var entry := ObjectLoader.find_file(media, path)
 		if entry == null:
 			continue

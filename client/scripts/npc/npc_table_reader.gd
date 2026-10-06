@@ -18,10 +18,11 @@ class_name NpcTableReader
 ## The region id is the same `(x << 8) | y` key used for navmesh filenames
 ## and teleport destinations -- `25257` is region 98/169, `25001` is 97/169.
 
-## The characterdata table is split across these; the unnumbered file is
-## the small header table. Missing parts are skipped, so a partial archive
-## still yields whatever it does have.
-const MODEL_TABLE_PATHS := [
+## The characterdata parts the world read until round 746: the index file
+## itself and _5000 .. _30000, 7 of the 63 parts the index names. Now only the
+## fallback for an archive with no index; model_table_paths (CharTables) reads
+## the index, as the client does.
+const LEGACY_MODEL_TABLE_PATHS := [
 	"server_dep\\silkroad\\textdata\\characterdata.txt",
 	"server_dep\\silkroad\\textdata\\characterdata_5000.txt",
 	"server_dep\\silkroad\\textdata\\characterdata_10000.txt",
@@ -30,6 +31,11 @@ const MODEL_TABLE_PATHS := [
 	"server_dep\\silkroad\\textdata\\characterdata_25000.txt",
 	"server_dep\\silkroad\\textdata\\characterdata_30000.txt",
 ]
+## Every characterdata part `media` holds, in its index's order (round 746,
+## CharTables.table_paths).
+static func model_table_paths(media: Pk2Reader) -> PackedStringArray:
+	return CharTables.table_paths(media)
+
 const POSITION_TABLE_PATH := "server_dep\\silkroad\\textdata\\npcpos.txt"
 ## Maps the `SN_` name key a characterdata row carries to a display name --
 ## `SN_MOB_CH_MANGNYANG` to "Mangyang". Same shape as the UI string table,
@@ -395,7 +401,7 @@ static func parse_decay_by_code(data: PackedByteArray, into: Dictionary = {}, pr
 ##
 ## Keyed by code name, which is what MonsterSnapshot carries. Measured in round
 ## 519 on the render box's extracted copies of the six data files among
-## MODEL_TABLE_PATHS (the seventh, characterdata.txt, lists part-file names
+## LEGACY_MODEL_TABLE_PATHS (the seventh, characterdata.txt, lists part-file names
 ## -- CharacterData_1000.txt, ... -- not rows): 13,291 rows with a numeric
 ## column 50 and 13,291 distinct code names, so no row shadows another (a live
 ## client read the same 13,291 keys out of Media.pk2). The row

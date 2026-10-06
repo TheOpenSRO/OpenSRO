@@ -111,6 +111,12 @@ var _particle_calls: Array = []
 ## OrgObjCodeName (as written) -> {member code name (upper): true}: the
 ## groups of weapons and shields inherit() has seen.
 var _groups := {}
+## Every item code name (upper) inherit() has been given (round 746, the
+## review's finding 3): the client resolves a group's name as a code name in
+## its item walk's map first (READ, FUN_00aa0270 via FUN_004f19f0, and
+## FUN_00a9f2e0 the same), and a table row whose code is no item never enters
+## its maps. So a group whose name is not an item's code gives nothing.
+var _item_codes := {}
 ## How many items gained a type, a particle list, through inheritance.
 var inherited_types := 0
 var inherited_particles := 0
@@ -272,9 +278,16 @@ static func inherits_glow(cash_item: int, bionic: int, type_ids: PackedInt32Arra
 ## Returns the members added.
 func inherit(items: Dictionary) -> int:
 	var added := 0
+	var new_codes := 0
 	for id in items:
 		var it: ItemTableReader.Item = items[id]
-		if it == null or it.org_code_name == "" or not inherits_glow(it.cash_item, it.bionic, it.type_ids):
+		if it == null:
+			continue
+		var code := it.code_name.to_upper()
+		if code != "" and not _item_codes.has(code):
+			_item_codes[code] = true
+			new_codes += 1
+		if it.org_code_name == "" or not inherits_glow(it.cash_item, it.bionic, it.type_ids):
 			continue
 		if not _groups.has(it.org_code_name):
 			_groups[it.org_code_name] = {}
@@ -283,7 +296,9 @@ func inherit(items: Dictionary) -> int:
 		if not g.has(key):
 			g[key] = true
 			added += 1
-	if added > 0:
+	# A group named by an item seen only now resolves now (the review's
+	# finding 3): rebuild when new item codes arrive too.
+	if added > 0 or (new_codes > 0 and not _groups.is_empty()):
 		_rebuild_types()
 		_rebuild_particles()
 		print("ItemGlowTables: %d weapon(s)/shield(s) in %d OrgObjCodeName group(s); %d inherit a glow type, %d a particle list" % [
@@ -307,7 +322,7 @@ func _rebuild_types() -> void:
 	inherited_types = 0
 	for org in _group_names():
 		var base := String(org).to_upper()
-		if not _types.has(base):
+		if not _item_codes.has(base) or not _types.has(base):
 			continue
 		for key in _groups[org]:
 			if not _types.has(key):
@@ -331,7 +346,7 @@ func _rebuild_particles() -> void:
 			(_particles[key] as Array).append(pair[1])
 		for org in names:
 			var base := String(org).to_upper()
-			if not _particles.has(base):
+			if not _item_codes.has(base) or not _particles.has(base):
 				continue
 			for member in _groups[org]:
 				if not _particles.has(member):
