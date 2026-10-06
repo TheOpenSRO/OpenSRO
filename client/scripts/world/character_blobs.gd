@@ -62,10 +62,37 @@ const RESELECT_FRAMES := 6
 const GROUP := &"srr_blob_caster"
 const META_RADIUS := &"srr_blob_radius"
 
+## **Detail's casters (round 739, crowd_scale.md B2).** READ (above): Detail
+## draws projected shadows for at most ten characters, the nearest the player,
+## and walks its list only while the key is at most 3000 -- 300 units. Here
+## Detail is the sun's shadow map (OURS stand-in, round 702), into which every
+## character's meshes used to cast (r736 MEASURED: about 10 ms a frame at
+## 1000 players). So only the ten nearest within 300 cast: the others' meshes
+## have their cast_shadow turned off, and given back when they are chosen.
+## READ: ten, and 300.
+const DETAIL_MAX := 10
+const DETAIL_RANGE := 300.0
+## OURS: the casters a pass sets up for the first time (a caster that arrived
+## since, or all of them when Detail is turned on), at most this many a pass,
+## so turning Detail on beside a crowd is not one long frame; only those within
+## ADOPT_RANGE of the player, as farther ones are beyond the shadow map's
+## reach (World3D.SHADOW_MAP_DISTANCE, 400 from the camera, which is at most
+## 90 from the player) and cast nothing into it.
+const DETAIL_ADOPT_PER_PASS := 64
+const DETAIL_ADOPT_RANGE := 500.0
+## Whether a caster's meshes cast now (true / false; missing: not set up).
+const META_DETAIL := &"srr_detail_cast"
+## The meshes a caster had casting that were turned off, to give back.
+const META_DETAIL_OFF := &"srr_detail_off"
+
 var _blobs: Array[MeshInstance3D] = []
 var _chosen: Array = []
 var _frame := 0
 var _texture: Texture2D = null
+var _detail_chosen: Dictionary = {}   # instance id -> Node3D
+var _detail_frame := 0
+## Casters whose shadow was switched in the last pass (for the tests and the probe).
+var detail_switched := 0
 
 ## The Shadow Detail values that draw the circle: Circle only (READ, above).
 static func blobs_visible(shadow_detail: int) -> bool:
@@ -152,6 +179,8 @@ static func nearest(nodes: Array, from: Vector3, limit: int, max_distance: float
 ## row; `ground_y` maps a caster to the height its circle lies at (NAN: none
 ## found, no circle); `max_distance` is the Character Sight Range (0: any).
 func update(from: Vector3, shadow_detail: int, ground_y: Callable, max_distance: float = 0.0) -> void:
+	if shadow_detail >= 2:
+		update_detail(from, max_distance)
 	if _blobs.is_empty():
 		return
 	if not blobs_visible(shadow_detail):
@@ -176,3 +205,85 @@ func update(from: Vector3, shadow_detail: int, ground_y: Callable, max_distance:
 		b.global_transform = Transform3D(Basis(Vector3.RIGHT, -PI / 2.0).scaled(Vector3(size, size, size)),
 			Vector3(n.global_position.x, y + LIFT, n.global_position.z))
 		b.visible = true
+
+## Detail's casters for this frame (round 739, B2): every RESELECT_FRAMES the
+## DETAIL_MAX nearest `from` within DETAIL_RANGE (and the Character Sight
+## Range, when it is nearer) cast into the shadow map, and no other caster
+## does. Only the casters that change are touched, and new ones are set up
+## DETAIL_ADOPT_PER_PASS a pass.
+func update_detail(from: Vector3, max_distance: float = 0.0) -> void:
+	var due := _detail_frame % RESELECT_FRAMES == 0
+	_detail_frame += 1
+	if not due:
+		return
+	var reach := DETAIL_RANGE if max_distance <= 0.0 else minf(DETAIL_RANGE, max_distance)
+	var casters: Array = get_tree().get_nodes_in_group(GROUP) if is_inside_tree() else []
+	select_detail(casters, from, reach)
+
+## The pass itself, on plain data (the tests call it).
+func select_detail(casters: Array, from: Vector3, reach: float) -> void:
+	var chosen := {}
+	for n in nearest(casters, from, DETAIL_MAX, reach):
+		chosen[(n as Node).get_instance_id()] = n
+	detail_switched = 0
+	for id in _detail_chosen:
+		if not chosen.has(id):
+			var gone = _detail_chosen[id]
+			if is_instance_valid(gone):
+				set_casting(gone, false)
+				detail_switched += 1
+	for id in chosen:
+		var n: Node3D = chosen[id]
+		if n.get_meta(META_DETAIL, false) != true:
+			set_casting(n, true)
+			detail_switched += 1
+	_detail_chosen = chosen
+	var adopted := 0
+	var adopt_d2 := DETAIL_ADOPT_RANGE * DETAIL_ADOPT_RANGE
+	for n in casters:
+		if adopted >= DETAIL_ADOPT_PER_PASS:
+			break
+		if not (n is Node3D) or not is_instance_valid(n) or (n as Node).has_meta(META_DETAIL):
+			continue
+		if (n as Node3D).global_position.distance_squared_to(from) > adopt_d2:
+			continue
+		set_casting(n, chosen.has((n as Node).get_instance_id()))
+		adopted += 1
+
+## The casters Detail lets cast now (for the tests and the probe).
+func detail_chosen() -> Array:
+	return _detail_chosen.values()
+
+## Turns `node`'s meshes' shadow off (keeping which were casting) or gives
+## them back. Labels, and meshes set not to cast by whoever built them, are
+## left alone.
+static func set_casting(node: Node, on: bool) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	var off: Array = node.get_meta(META_DETAIL_OFF, [])
+	if on:
+		for gi in off:
+			if is_instance_valid(gi):
+				(gi as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		if node.has_meta(META_DETAIL_OFF):
+			node.remove_meta(META_DETAIL_OFF)
+	else:
+		var kept: Array = []
+		for gi in off:
+			if is_instance_valid(gi):
+				kept.append(gi)
+		for gi in node.find_children("*", "GeometryInstance3D", true, false):
+			if gi is Label3D:
+				continue
+			if (gi as GeometryInstance3D).cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
+				(gi as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				kept.append(gi)
+		node.set_meta(META_DETAIL_OFF, kept)
+	node.set_meta(META_DETAIL, on)
+
+## A caster whose meshes were rebuilt (a redress) or given back by someone
+## else: its state applied again to the meshes it has now -- a caster that
+## casts keeps its new meshes casting, one that does not has them switched off.
+static func refresh_detail(node: Node) -> void:
+	if node != null and is_instance_valid(node) and node.has_meta(META_DETAIL):
+		set_casting(node, bool(node.get_meta(META_DETAIL)))

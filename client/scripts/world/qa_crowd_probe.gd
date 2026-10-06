@@ -58,6 +58,7 @@ var _frame_ms: PackedFloat32Array = PackedFloat32Array()
 var _removed: Dictionary = {}  # node -> [parent, child] for collide / gone
 var _homes: Dictionary = {}    # id -> Vector3
 var _hidden_meshes: Array = []  # the meshes the mesh switch hid
+var _shadowed: Array = []  # [mesh, its cast_shadow] the shadow switch turned off
 var _move_t := 0.0
 var _rng := RandomNumberGenerator.new()
 var _net_due := 0.0
@@ -69,8 +70,19 @@ var net_rate := 1.0
 static func wanted() -> bool:
 	return OS.get_environment("OPENSRO_QA_CROWD_STEPS") != ""
 
-func setup(w: Node, lineup_bodies: Array) -> void:
+## Round 739: the arrival, measured from the spawn (QaLineup's start) until
+## the last body is dressed (World3D._pump_other_builds): one `QA CROWD
+## arrival` line with every frame's wall time in it -- the worst, the p95, how
+## many were over 100 ms -- before the census and the steps.
+var _arriving := true
+var _arrival_last_us := 0
+var _arrival_start_us := 0
+var _arrival_ms: PackedFloat32Array = PackedFloat32Array()
+
+func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	world = w
+	_arrival_start_us = spawn_usec if spawn_usec > 0 else Time.get_ticks_usec()
+	_arrival_last_us = _arrival_start_us
 	for b in lineup_bodies:
 		var node: Node3D = world._other_bodies.get(b["id"])
 		if node != null:
@@ -93,20 +105,44 @@ func setup(w: Node, lineup_bodies: Array) -> void:
 	if world._qa_split == null:
 		world._qa_split = MonsterCrowd.Split.new(1 << 30)
 	print("QA CROWD: %d bodies, steps %s, %.1f s each (%.1f settle), first after %.1f s" % [bodies.size(), ",".join(steps), seconds, SETTLE, delay])
+
+## The arrival's frames (round 739), then the census once every body is dressed.
+func _arrival_frame() -> void:
+	var now := Time.get_ticks_usec()
+	_arrival_ms.append(float(now - _arrival_last_us) / 1000.0)
+	_arrival_last_us = now
+	var queue = world.get("_other_builds")
+	if queue != null and not queue.is_empty():
+		return
+	_arriving = false
+	var sorted := _arrival_ms.duplicate()
+	sorted.sort()
+	var over := 0
+	for v in sorted:
+		if v > 100.0:
+			over += 1
+	print("QA CROWD arrival n=%d frames=%d seconds=%.2f worst_ms=%.1f p50=%.1f p95=%.1f over100=%d" % [
+		bodies.size(), sorted.size(), float(now - _arrival_start_us) / 1e6, sorted[-1] if not sorted.is_empty() else 0.0,
+		sorted[sorted.size() / 2] if not sorted.is_empty() else 0.0,
+		sorted[mini(int(sorted.size() * 0.95), sorted.size() - 1)] if not sorted.is_empty() else 0.0, over])
 	_census()
 
 ## What one other player is made of, and how much of it is shared: one line
 ## for the first body and one for all of them.
 func _census() -> void:
 	var tot := {"nodes": 0, "meshes": 0, "visible_meshes": 0, "skinned": 0, "surfaces": 0, "shadow": 0, "skeletons": 0, "bones": 0,
-		"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0}
+		"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0, "visible_materials": 0}
 	var mats := {}
 	var meshes := {}
 	var skins := {}
 	var first := ""
 	for b in bodies:
 		var c := {"nodes": 0, "meshes": 0, "visible_meshes": 0, "skinned": 0, "surfaces": 0, "shadow": 0, "skeletons": 0, "bones": 0,
-			"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0}
+			"labels": 0, "bodies3d": 0, "fx": 0, "multimesh": 0, "visible_materials": 0}
+		# Round 739 (B5's write-up): the distinct materials among a body's
+		# visible surfaces -- the draws a body would make if its meshes were
+		# merged one per material.
+		var own_mats := {}
 		var stack: Array[Node] = [b["node"]]
 		while not stack.is_empty():
 			var n: Node = stack.pop_back()
@@ -131,6 +167,8 @@ func _census() -> void:
 						var m := mi.get_active_material(i)
 						if m != null:
 							mats[m.get_instance_id()] = true
+							if mi.visible:
+								own_mats[m.get_instance_id()] = true
 				if mi.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF and mi.visible:
 					c["shadow"] += 1
 			elif n is MultiMeshInstance3D:
@@ -141,6 +179,7 @@ func _census() -> void:
 				c["bodies3d"] += 1
 			if n is EfpEffect:
 				c["fx"] += 1
+		c["visible_materials"] = own_mats.size()
 		for k in c:
 			tot[k] += c[k]
 		if first == "":
@@ -164,6 +203,9 @@ func _next() -> void:
 
 func _process(delta: float) -> void:
 	if world == null:
+		return
+	if _arriving:
+		_arrival_frame()
 		return
 	if _i < 0:
 		delay -= delta
@@ -299,9 +341,21 @@ func _switch(step: String, off: bool) -> void:
 					if h.holder != null and is_instance_valid(h.holder):
 						h.holder.visible = false if off else h.holder.visible
 		"shadow":
-			for b in bodies:
-				for gi in (b["node"] as Node).find_children("*", "GeometryInstance3D", true, false):
-					(gi as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if off else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			# Only what was casting, and only that given back (round 739: the
+			# first version turned every mesh's shadow on after, the EquipFx
+			# particles' and Detail's switched-off ones included).
+			if off:
+				_shadowed.clear()
+				for b in bodies:
+					for gi in (b["node"] as Node).find_children("*", "GeometryInstance3D", true, false):
+						if (gi as GeometryInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+							_shadowed.append([gi, (gi as GeometryInstance3D).cast_shadow])
+							(gi as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			else:
+				for pair in _shadowed:
+					if is_instance_valid(pair[0]):
+						(pair[0] as GeometryInstance3D).cast_shadow = pair[1]
+				_shadowed.clear()
 		"blobs":
 			for b in bodies:
 				var n: Node = b["node"]
