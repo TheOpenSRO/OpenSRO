@@ -6060,6 +6060,7 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 		_other_bodies[character_id].queue_free()
 	_other_bodies.clear()
 	_other_gaits.clear()
+	_other_settled.clear()
 	_other_seated.clear()
 	# Round 739: and their queued dressing and their uids.
 	_other_builds.clear()
@@ -6233,6 +6234,10 @@ func _exit_tree() -> void:
 	if _name_key_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_name_key_task)
 		_name_key_task = -1
+	# Nor the other players' template tasks (round 748): what they made is
+	# freed, not adopted.
+	if _appearance != null:
+		_appearance.wait_prepared(false)
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
@@ -9351,10 +9356,15 @@ func _log_paper_doll_pose() -> void:
 ## their body starts and stops moving. The entry keeps its phase so a
 ## crowd stays out of step.
 func _set_other_gait(character_id: int, moving: bool) -> void:
-	var gait: Dictionary = _other_gaits.get(character_id, {})
+	var held = _other_gaits.get(character_id)
+	if held == null:
+		return
+	var gait: Dictionary = held
 	if gait.is_empty() or bool(gait["moving"]) == moving:
 		return
 	gait["moving"] = moving
+	if moving:
+		_other_settled.erase(character_id)
 	# A sitter who moves is on their feet at once, as the server's movement
 	# handler makes them (round 607); one who stops is not seated again.
 	if moving:
@@ -9368,7 +9378,11 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	# Through swap_loop, which knows a one-shot's resume slot: a monster's blow
 	# plays a hit on this body (_play_other_hit, round 540), and a swap that
 	# appended a loop beside it would leave two entries driving one skeleton.
-	MonsterMotion.swap_loop(_animated, gait["skeleton"], anim, frames, _idle_anim_time)
+	# Round 748: with the entry's last index (a hint, checked before use), not
+	# a scan of every animated body.
+	if not gait.has("at"):
+		gait["at"] = [-1]
+	MonsterMotion.swap_loop(_animated, gait["skeleton"], anim, frames, _idle_anim_time, gait["at"])
 
 ## Plays anim once on the player's body, over stand or run, and returns
 ## how long it runs. A one-shot HELD on its last frame -- the die clip,
@@ -15098,20 +15112,34 @@ func _physics_process(delta: float) -> void:
 		return
 	var sw := Time.get_ticks_usec()
 	_hover_tick()
+	if FrameSplit.on:
+		FrameSplit.add("p_hover", Time.get_ticks_usec() - sw)
 	if _qa_split != null:
 		_qa_split.on_step(Engine.get_frames_drawn())
+	var fs_t := Time.get_ticks_usec() if FrameSplit.on else 0
 	SkillEffects.tick(delta)
 	BerserkLook.tick(delta)
-	# Monsters and other players fading into existence (round 676).
-	_appear_fades.step(delta)
+	# Monsters and other players fading into existence (round 676): the
+	# frame's steps' time, stepped once in _process (round 748, item 4: a
+	# crowd's arrival keeps dozens of fades running, each setting its
+	# twins' alpha, and a slow frame ran that in every physics step; the
+	# alpha a frame draws is the one its last step reached, the same either
+	# way).
+	_appear_fade_due += delta
 	# The teleport gates' glows (round 720).
 	_ambient_step(delta)
 	# Animated texture coordinates, a TEXANI mod per material (round 722).
 	TexAni.tick(delta * 1000.0)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
+	if FrameSplit.on and fs_t > 0:
+		var t1 := Time.get_ticks_usec()
+		FrameSplit.add("p_ticks", t1 - fs_t)
+		fs_t = t1
 	var cells_before := _load_timings.cell_work_usec
 	_physics_step(delta)
+	if FrameSplit.on and fs_t > 0:
+		FrameSplit.add("p_step", Time.get_ticks_usec() - fs_t)
 	# The ring follows its object, or hides (round 698).
 	if _ground_markers != null:
 		_ground_markers.step()
@@ -15135,13 +15163,54 @@ func _physics_process(delta: float) -> void:
 func _process(_delta: float) -> void:
 	if title_mode:
 		return
+	var fs := FrameSplit.on
+	var t := Time.get_ticks_usec() if fs else 0
+	# Round 748 (item 4): the local player's pose once a rendered frame, at
+	# the clip time the frame's last physics step reached (_player_pose_due),
+	# not once a step -- a slow frame runs up to eight steps and posed (and
+	# re-skinned) the player in each. The clock, the clip choice and the clip
+	# sounds stay in the step.
+	if _appear_fade_due > 0.0:
+		_appear_fades.step(_appear_fade_due)
+		_appear_fade_due = 0.0
+		if fs:
+			var t1 := Time.get_ticks_usec()
+			FrameSplit.add("w_fades", t1 - t)
+			t = t1
+	if not _player_pose_due.is_empty():
+		if _player_skeleton != null and is_instance_valid(_player_skeleton):
+			Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, _player_pose_due[0], float(_player_pose_due[1]), bool(_player_pose_due[2]))
+		_player_pose_due = []
+		if fs:
+			var t1 := Time.get_ticks_usec()
+			FrameSplit.add("w_selfpose", t1 - t)
+			t = t1
 	var others_delta := _other_step_gate.take()
 	if others_delta >= 0.0:
 		_step_other_bodies(others_delta, _other_step_gate.steps)
+		if fs:
+			var t1 := Time.get_ticks_usec()
+			FrameSplit.add("w_others", t1 - t)
+			t = t1
 		_update_blob_shadow()
+		if fs:
+			var t1 := Time.get_ticks_usec()
+			FrameSplit.add("w_blobs", t1 - t)
+			t = t1
 		if _character_light != null:
 			_character_light.step(get_tree())
+		if fs:
+			var t1 := Time.get_ticks_usec()
+			FrameSplit.add("w_light", t1 - t)
+			t = t1
+	# Round 748: the dressing's budget follows the frame (BuildQueue.note_frame).
+	var now := Time.get_ticks_usec()
+	if _other_frame_usec > 0:
+		_other_builds.note_frame(now - _other_frame_usec)
+	_other_frame_usec = now
 	_pump_other_builds()
+	if fs:
+		FrameSplit.add("w_pump", Time.get_ticks_usec() - t)
 
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
@@ -15163,17 +15232,25 @@ func _physics_step(delta: float) -> void:
 	_step_heights(delta)
 	if _qa_split != null:
 		_qa_split.heights_usec += Time.get_ticks_usec() - split_sw
+	if FrameSplit.on:
+		FrameSplit.add("p_heights", Time.get_ticks_usec() - split_sw)
 	# OPENSRO_QA_MOBS (round 655): a dense monster list, once.
 	_qa_mobs_step()
 	# OPENSRO_QA_LINEUP (round 689): the Figures as other players, measured.
 	if _qa_lineup != null:
+		var lt := Time.get_ticks_usec()
 		_qa_lineup.step(delta)
+		if FrameSplit.on:
+			FrameSplit.add("p_lineup", Time.get_ticks_usec() - lt)
 	# The monster bodies a list queued, a frame's budget of them (round 655).
 	split_sw = Time.get_ticks_usec()
 	_pump_monster_builds()
 	if _qa_split != null:
 		_qa_split.pump_usec += Time.get_ticks_usec() - split_sw
+	if FrameSplit.on:
+		FrameSplit.add("p_mobpump", Time.get_ticks_usec() - split_sw)
 	# V and Z, while held (round 608).
+	var player_sw := Time.get_ticks_usec()
 	_apply_key_holds()
 
 	# No key moves the character (round 608): the player walks by clicking,
@@ -15285,10 +15362,15 @@ func _physics_step(delta: float) -> void:
 		_relocated_pending = true
 
 	_recover_if_below_terrain()
+	if FrameSplit.on:
+		FrameSplit.add("p_player", Time.get_ticks_usec() - player_sw)
 
+	split_sw = Time.get_ticks_usec()
 	_maybe_stream_regions()
 	_process_stream_queue()
 	_refresh_zone_label_position()
+	if FrameSplit.on:
+		FrameSplit.add("p_stream", Time.get_ticks_usec() - split_sw)
 	# The minimap once per rendered frame, like the clip tick (round 664):
 	# its signs walk every body, and a slow frame ran it in each physics step.
 	if _minimap_frame != Engine.get_process_frames():
@@ -15297,7 +15379,10 @@ func _physics_step(delta: float) -> void:
 		_refresh_minimap()
 		if _qa_split != null:
 			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
+		split_sw = Time.get_ticks_usec()
 		_tick_party_hud()
+		if FrameSplit.on:
+			FrameSplit.add("p_party", Time.get_ticks_usec() - split_sw)
 
 	_time_since_send += delta
 	# No position goes out while seated or getting up or down (round 607): the
@@ -15391,17 +15476,25 @@ func _physics_step(delta: float) -> void:
 	if idle_delta >= 0.0:
 		# Name plates within 300 of the player (round 673, NamePlates): a
 		# share of them each rendered frame.
+		split_sw = Time.get_ticks_usec()
 		if player != null and player.is_inside_tree():
 			_plate_sweep.step(player.global_position)
 			_step_monster_plate_scale()
+		if FrameSplit.on:
+			FrameSplit.add("p_plates", Time.get_ticks_usec() - split_sw)
 		split_sw = Time.get_ticks_usec()
 		_tick_idle_animations(idle_delta)
 		if _qa_split != null:
 			_qa_split.idle_usec += Time.get_ticks_usec() - split_sw
 			_qa_split.posed += _anim_posed_last
 	# Map objects that move -- trees, reeds, tentacles (round 645).
+	split_sw = Time.get_ticks_usec()
 	_tick_map_animations()
+	if FrameSplit.on:
+		FrameSplit.add("p_mapanim", Time.get_ticks_usec() - split_sw)
 
+	if FrameSplit.on:
+		split_sw = Time.get_ticks_usec()
 	if _player_skeleton != null and not _body_assets(_player_body).is_empty():
 		# The game's default gait is a run -- `chinaman_fighter_runforward`
 		# is the type-7 entry, and it is the one a held sword replaces with
@@ -15431,7 +15524,7 @@ func _physics_step(delta: float) -> void:
 				# A held one-shot (the die clip, round 548) keeps its last
 				# keyframe past its end: apply_ban_pose_at pins a non-looping
 				# clip on it once `seconds` reaches the duration.
-				Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, _player_one_shot, elapsed, false)
+				_player_pose_due = [_player_one_shot, elapsed, false]
 				_anim_sounds.advance(_player_skeleton, _player_one_shot, _player_one_shot_start, elapsed * 1000.0, false)
 		if _player_one_shot == null and anim != null and not anim.bones.is_empty():
 			var ref_track: BanReader.Bone = anim.bones[0]
@@ -15447,8 +15540,10 @@ func _physics_step(delta: float) -> void:
 					# file gives it, blended in between. See BAN_FORMAT.md --
 					# a fixed 30 keyframes a second ran the idle five times
 					# too fast.
-					Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, anim, _player_anim_time, true)
+					_player_pose_due = [anim, _player_anim_time, true]
 					_anim_sounds.advance(_player_skeleton, anim, 0.0, _loop_ms(anim, _player_anim_time), true)
+	if FrameSplit.on:
+		FrameSplit.add("p_selfpose", Time.get_ticks_usec() - split_sw)
 
 ## Whether the OpMove about to go out is a relocation (round 637's review
 ## follow-up), consumed by the send: one already known (_relocated_pending:
@@ -15618,6 +15713,21 @@ func _aim_remote_body(body: Node3D, dir: Vector3, front_yaw: float) -> void:
 	var target := RemoteFacing.heading_toward(current, dir)
 	_remote_turns[body.get_instance_id()] = {"target": target, "front": front_yaw}
 
+## Round 748: when the last _process ran (the dressing budget's frame clock).
+var _other_frame_usec := 0
+
+## Round 748: the fades' time the frame's physics steps ran, stepped once in
+## _process.
+var _appear_fade_due := 0.0
+
+## Round 748: the local player's pose the frame's physics steps asked for,
+## [clip, seconds, loop], applied once in _process; empty when none.
+var _player_pose_due: Array = []
+
+## Round 748: other players standing on their target with their gait at
+## rest (id -> true), whom _step_other_bodies passes over.
+var _other_settled := {}
+
 ## Round 739 (B1): one rendered frame of the others' walk, covering `steps`
 ## physics steps of `delta` seconds in all (OtherCrowd.lerp_factor: the
 ## per-step lerp folded, so one step a frame is exactly the old pass, and the
@@ -15627,25 +15737,34 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 	var n := maxi(steps, 1)
 	var step_delta := delta / float(n)
 	var f := OtherCrowd.lerp_factor(OTHER_BODY_INTERPOLATION_SPEED, step_delta, n)
+	# The gait test's fold, once a frame (round 748): distance_before_last is
+	# the distance times this factor (exactly 1 at one step a frame).
+	var before_last := OtherCrowd.distance_before_last(1.0, OTHER_BODY_INTERPOLATION_SPEED, step_delta, n)
 	for character_id in _other_body_targets:
 		var body = _other_bodies.get(character_id)
 		if body == null:
 			continue
 		var target: Vector3 = _other_body_targets[character_id]
 		var at: Vector3 = (body as Node3D).position
+		# Round 748: on its target and already standing (settled below): the
+		# frame has nothing to do for it. A move, a placement or a gait set
+		# elsewhere moves it off the target or clears the mark.
+		if at == target and _other_settled.has(character_id):
+			continue
 		if at.distance_squared_to(target) < OtherCrowd.SNAP_DISTANCE_SQ:
 			# On it, or an ulp or two short (its review's F6): put on it once,
 			# then never written again while the target stays.
 			if at != target:
 				(body as Node3D).position = target
 			_set_other_gait(character_id, false)
+			_other_settled[character_id] = true
 			continue
+		_other_settled.erase(character_id)
 		# Still catching up to the last update means the player is on the
 		# move; arrived means standing. The threshold is a fraction of the
 		# body's own height, so a settled body does not flicker between the
 		# two on the last inch of the lerp.
-		_set_other_gait(character_id, OtherCrowd.distance_before_last(at.distance_to(target),
-			OTHER_BODY_INTERPOLATION_SPEED, step_delta, n) > OTHER_GAIT_THRESHOLD)
+		_set_other_gait(character_id, at.distance_to(target) * before_last > OTHER_GAIT_THRESHOLD)
 		(body as Node3D).position = at.lerp(target, f)
 	_step_remote_turns(delta)
 
@@ -15698,6 +15817,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# (round 739's review, F8; a drawn body is not redressed by it).
 		if _other_build_args.has(character_id) and not equipped.is_empty():
 			_other_build_args[character_id]["equipped"] = equipped
+			_other_build_args[character_id].erase("kind")
 		if not is_nan(heading):
 			var drawn: Node3D = _other_bodies[character_id]
 			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
@@ -15736,7 +15856,19 @@ func _pump_other_builds() -> int:
 	var from := Vector3.ZERO
 	if player != null and other_entities != null and player.is_inside_tree() and other_entities.is_inside_tree():
 		from = other_entities.to_local(player.global_position)
-	var made := _other_builds.pump(Engine.get_process_frames(), from, _other_bodies, _dress_other)
+	# Round 748: a body whose templates are still being made off the main
+	# thread waits in the queue (_other_template_ready) and the next nearest
+	# ready one is dressed.
+	if _appearance != null:
+		if _appearance.poll_prepared() > 0 and FrameSplit.on:
+			FrameSplit.add("tmpl_adopted", 1)
+		# Something adopted since the last pump: every waiting body may be
+		# ready now, even in a frame whose pump already went through them.
+		if _appearance.prep_generation != _other_prep_seen:
+			_other_prep_seen = _appearance.prep_generation
+			_other_builds.reopen()
+	var made := _other_builds.pump(Engine.get_process_frames(), from, _other_bodies, _dress_other,
+		_other_template_ready if _other_async_templates else Callable())
 	if _other_builds.is_empty() and _other_builds.started_usec >= 0 and _other_builds.built > 1:
 		var spent: Array = _other_builds.spent_summary()
 		print("World3D: %d other player bod(ies) dressed over %d frame(s) in %.0f ms, longest frame %.1f ms, p50 %.1f, p95 %.1f, %d over 100 ms (budget %.1f ms)" % [
@@ -15744,6 +15876,66 @@ func _pump_other_builds() -> int:
 			_other_builds.longest_usec / 1000.0, float(spent[0]), float(spent[1]), int(spent[2]), _other_builds.budget_usec / 1000.0])
 		_other_builds.started_usec = -1
 	return made
+
+## Round 748 (OURS): whether an arrived body's templates are made, so its
+## dressing assembles nothing on the main thread (CharacterAppearance.prepare:
+## the body and item templates on a WorkerThreadPool task, the glow's particle
+## files on EfpEffect's preload). A body whose kind is not ready waits in the
+## queue; asking starts the work. The answer is kept per kind (body, worn
+## items, pluses) and asked again only after the appearance adopts something
+## (prep_generation). A body this cannot resolve answers true and is dressed
+## the old way. OPENSRO_QA_SYNC_TEMPLATES=1 dresses everything as before.
+var _other_async_templates := OS.get_environment("OPENSRO_QA_SYNC_TEMPLATES") == ""
+var _other_kinds := {}   # kind key -> [ready, the prep_generation it was asked at]
+var _other_prep_seen := 0
+
+func _other_template_ready(character_id: int) -> bool:
+	if _appearance == null:
+		return true
+	var args = _other_build_args.get(character_id)
+	var node = _other_bodies.get(character_id)
+	if args == null or not is_instance_valid(node):
+		return true
+	var kind: String = (args as Dictionary).get("kind", "")
+	if kind == "":
+		kind = "%s|%s|%s" % [String((node as Node).get_meta("body", "")), str((args as Dictionary).get("equipped", {})),
+			str(_other_pluses.get(character_id, {}))]
+		args["kind"] = kind
+	var known = _other_kinds.get(kind)
+	if known != null and (bool(known[0]) or int(known[1]) == _appearance.prep_generation):
+		return bool(known[0])
+	var spec := _other_build_spec(String((node as Node).get_meta("body", "")), (args as Dictionary).get("equipped", {}),
+		_other_pluses.get(character_id, {}))
+	var ok := spec.is_empty() or _appearance.prepare(int(spec[0]), spec[1])
+	_other_kinds[kind] = [ok, _appearance.prep_generation]
+	return ok
+
+## What _build_assembled_character hands CharacterAppearance.build for this
+## body, worked out without building anything: [the model id, the items], or
+## empty when the body cannot be resolved (it then builds the old way).
+func _other_build_spec(body: String, equipped: Dictionary, pluses: Dictionary) -> Array:
+	var ref := _body_ref_for(body)
+	if ref < 0:
+		ref = _body_ref_for(String(GENDER_BODY_CODE[DEFAULT_GENDER]))
+	if ref < 0:
+		return []
+	var items: Array = []
+	for slot in equipped:
+		var item_id: int = int(equipped[slot])
+		if item_id == 0 or not _item_models.has(item_id):
+			continue
+		items.append({"id": item_id, "plus": int(pluses.get(slot, 0)) & 0xFF})
+	return [ref, items]
+
+## A body key's model id as _body_assets would find it, without assembling
+## its template; -1 when unknown.
+func _body_ref_for(body: String) -> int:
+	if _character_assets.has(body):
+		var a: Dictionary = _character_assets[body]
+		return int(a.get("ref", -1)) if not a.is_empty() else -1
+	if _appearance != null and _body_id_by_code.has(body):
+		return int(_body_id_by_code[body])
+	return -1
 
 ## Dresses an arrived player's node (round 739, B4: split out of
 ## _spawn_or_update_other, which made it all in one call): the body, the
@@ -15762,6 +15954,9 @@ func _dress_other(character_id: int) -> void:
 	var scale: int = int(args.get("scale", CharacterAppearance.DEFAULT_SCALE))
 	var body := String(node.get_meta("body", ""))
 	var char_name := String(node.get_meta("character_name", ""))
+	# QA (round 748): where a slow dressing goes (FrameSplit's probe only).
+	var dt := DressTimer.new() if FrameSplit.on else null
+	var stats_before := _appearance.stats.duplicate() if dt != null and _appearance != null else {}
 
 	# The same builder and the same dressing as the local player: their
 	# model, scale byte and every worn item's id come in the snapshot (see
@@ -15769,12 +15964,16 @@ func _dress_other(character_id: int) -> void:
 	# queried live), and each item is drawn from its own model. Falls back to
 	# the labeled placeholder capsule if the bodies never loaded.
 	var skeleton := _build_assembled_character(equipped, body, scale, _other_pluses.get(character_id, {}))
+	if dt != null:
+		dt.mark("build")
 	if skeleton != null:
 		# Same 180deg front correction as the local player (see
 		# _try_apply_real_player_character) -- the body's own front is -Z, and
 		# the node points +Z where it moves/faces.
 		skeleton.rotation.y = PI
 		node.add_child(skeleton)
+		if dt != null:
+			dt.mark("enter")
 		# Another player stands in the town idle of the group their weapon
 		# selects, and runs while their body is still catching up to a
 		# position update (see _set_other_gait). Without this they stood
@@ -15796,10 +15995,14 @@ func _dress_other(character_id: int) -> void:
 		var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
 		owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
 		_anim_sounds.register(skeleton, owner)
+		if dt != null:
+			dt.mark("sounds")
 		var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_SITTING if seated else BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
 		if frames > 1:
 			_animated.append([skeleton, idle, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
+		if dt != null:
+			dt.mark("clip")
 		if seated:
 			print("SIT: player %d drawn seated on spawn -- loop %s (type 14)" % [character_id,
 				_body_animation_path(body, BsrReader.AnimationEntry.TYPE_SITTING, group)])
@@ -15828,6 +16031,8 @@ func _dress_other(character_id: int) -> void:
 	if video_options().value(VideoOptions.SHADOW) >= 2:
 		CharacterBlobs.set_casting(node, false)
 	_light_character(node)
+	if dt != null:
+		dt.mark("plate_click_light")
 	# The auras of the buffs this client holds for them go on the new body
 	# (round 646): a zone change's arrival list and the world entry build the
 	# body after the server's replay may already have arrived.
@@ -15838,6 +16043,30 @@ func _dress_other(character_id: int) -> void:
 	# They fade into existence over 2.0 s, as a monster does (round 676,
 	# AppearFade: READ, CICUser vslot 0x6c FUN_009dbcc0 -> FUN_009d17e0).
 	_appear_fades.start(node)
+	if dt != null:
+		dt.mark("fade")
+		dt.report(character_id, body, stats_before, _appearance.stats if _appearance != null else {})
+
+## QA (round 748): one dressing's phases, printed when it took over
+## REPORT_MS (`QA DRESS` lines; the crowd probe's FrameSplit only).
+class DressTimer:
+	const REPORT_MS := 40.0
+	var t0 := Time.get_ticks_usec()
+	var last := t0
+	var parts := PackedStringArray()
+	func mark(label: String) -> void:
+		var now := Time.get_ticks_usec()
+		parts.append("%s=%.1f" % [label, float(now - last) / 1000.0])
+		last = now
+	func report(id: int, body: String, before: Dictionary, after: Dictionary) -> void:
+		var total := float(Time.get_ticks_usec() - t0) / 1000.0
+		FrameSplit.add("dress", Time.get_ticks_usec() - t0)
+		FrameSplit.add("dress_calls", 1)
+		if total < REPORT_MS:
+			return
+		print("QA DRESS player %d %s total=%.1f ms %s body_assemblies+%d item_assemblies+%d" % [id, body, total, " ".join(parts),
+			int(after.get("body_assemblies", 0)) - int(before.get("body_assemblies", 0)),
+			int(after.get("item_assemblies", 0)) - int(before.get("item_assemblies", 0))])
 
 ## Another player's body key: their model's (round 689), or their gender's from
 ## an older server (_body_key_for).
@@ -15981,6 +16210,7 @@ func _redress_other(character_id: int) -> void:
 	# items when its turn comes; the pluses are read then from _other_pluses.
 	if _other_build_args.has(character_id):
 		_other_build_args[character_id]["equipped"] = (_other_equipped.get(character_id, {}) as Dictionary).duplicate()
+		_other_build_args[character_id].erase("kind")
 		return
 	var node: Node3D = _other_bodies.get(character_id)
 	var gait: Dictionary = _other_gaits.get(character_id, {})
@@ -16078,6 +16308,7 @@ func _on_entity_left(character_id: int) -> void:
 	# 1.5 s was not read).
 	_set_other_gait(character_id, false)
 	_other_gaits.erase(character_id)
+	_other_settled.erase(character_id)
 	_other_pluses.erase(character_id)
 	# Gone before their turn to be dressed came (round 739, B4).
 	_other_builds.drop(character_id)

@@ -135,6 +135,10 @@ static var _used: Dictionary = {} # "kind|path" -> use stamp (LRU)
 static var _stamp := 0
 static var _mutex := Mutex.new()
 static var _preloads: Array = [] # WorkerThreadPool task ids still running
+## Round 748: the files a preload task has taken and not finished yet (lower
+## case -> true, under _mutex), so a second preload_paths does not decode
+## them again and a caller can tell "on its way" from "never asked".
+static var _preloading: Dictionary = {}
 static var last_error := ""
 
 const CACHE_TEMPLATES := 256 ## OURS
@@ -791,6 +795,15 @@ static func scale_basis(b: Basis) -> Basis:
 func _process(delta: float) -> void:
 	if sim == null:
 		return
+	if profile and FrameSplit.on:
+		var t := Time.get_ticks_usec()
+		_process_effect(delta)
+		FrameSplit.add("fx_effects", Time.get_ticks_usec() - t)
+		FrameSplit.add("fx_effect_calls", 1)
+		return
+	_process_effect(delta)
+
+func _process_effect(delta: float) -> void:
 	_life += delta
 	if max_life > 0.0 and _life >= max_life and loop:
 		stop()
@@ -1368,8 +1381,9 @@ static func preload_paths(paths: PackedStringArray, particles: Pk2Reader) -> int
 	var todo := PackedStringArray()
 	_mutex.lock()
 	for p in paths:
-		if not _templates.has(p.to_lower()) and not todo.has(p):
+		if not _templates.has(p.to_lower()) and not _preloading.has(p.to_lower()) and not todo.has(p):
 			todo.append(p)
+			_preloading[p.to_lower()] = true
 	_mutex.unlock()
 	if todo.is_empty():
 		return -1
@@ -1384,6 +1398,8 @@ static func _preload_task(paths: PackedStringArray, particles: Pk2Reader) -> voi
 		_mutex.lock()
 		if not _templates.has(p.to_lower()):
 			_templates[p.to_lower()] = t
+		if t == null:
+			_preloading.erase(p.to_lower())
 		_mutex.unlock()
 		if t == null:
 			continue
@@ -1413,6 +1429,22 @@ static func _preload_task(paths: PackedStringArray, particles: Pk2Reader) -> voi
 					_mutex.lock()
 					_mesh_arrays[mk] = arr
 					_mutex.unlock()
+		# Round 748: on its way until its textures and meshes are decoded
+		# too (is_preloading), not only its template: a caller that waited
+		# for the template alone made the effect while the task was still
+		# decoding its first texture, and decoded it again on the main thread
+		# (MEASURED: the 1000-body arrival's first weapon effect, 140 ms).
+		_mutex.lock()
+		_preloading.erase(p.to_lower())
+		_mutex.unlock()
+
+## Whether a preload task has `efp_path` and has not finished it -- its
+## template, first textures and meshes (round 748).
+static func is_preloading(efp_path: String) -> bool:
+	_mutex.lock()
+	var on := _preloading.has(efp_path.to_lower())
+	_mutex.unlock()
+	return on
 
 ## Whether `efp_path`'s template is decoded (or known not to decode).
 static func has_template(efp_path: String) -> bool:

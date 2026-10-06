@@ -71,6 +71,11 @@ var _net_next := 0
 var _net_us := 0
 var _net_sent := 0
 var net_rate := 1.0
+var _split: FrameSplit = null
+var _split_at: Dictionary = {}
+var _arrival_split_at: Dictionary = {}
+var _arrival_prof_at: Dictionary = {}
+var _prof_at: Dictionary = {}
 
 static func wanted() -> bool:
 	return OS.get_environment("OPENSRO_QA_CROWD_STEPS") != ""
@@ -106,6 +111,15 @@ func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 		delay = float(dl)
 	_rng.seed = 736
 	RenderingServer.viewport_set_measure_render_time(world.get_viewport().get_viewport_rid(), true)
+	# Round 748: the frame's phases and the per-body systems' own timers
+	# (FrameSplit; `QA CROWD split` after each step line).
+	_split = FrameSplit.new()
+	_split.name = "FrameSplit"
+	add_child(_split)
+	_split.install(world.get_tree().root)
+	EfpEffect.profile = true
+	_arrival_split_at = FrameSplit.snapshot()
+	_arrival_prof_at = EfpEffect.prof.duplicate()
 	# The pose and sound switches go through the frame split's own (round 664).
 	if world._qa_split == null:
 		world._qa_split = MonsterCrowd.Split.new(1 << 30)
@@ -130,6 +144,8 @@ func _arrival_frame() -> void:
 		bodies.size(), sorted.size(), float(now - _arrival_start_us) / 1e6, sorted[-1] if not sorted.is_empty() else 0.0,
 		sorted[sorted.size() / 2] if not sorted.is_empty() else 0.0,
 		sorted[mini(int(sorted.size() * 0.95), sorted.size() - 1)] if not sorted.is_empty() else 0.0, over])
+	# Round 748: where the arrival's frames went (ms a frame over its frames).
+	print(split_line("arrival", _arrival_split_at, FrameSplit.snapshot(), _arrival_prof_at, EfpEffect.prof, float(sorted.size())))
 	_census()
 
 ## What one other player is made of, and how much of it is shared: one line
@@ -215,6 +231,15 @@ func _census() -> void:
 					for skin in on:
 						parts.append("%d binds: %s" % [(skin as Skin).get_bind_count(), ",".join(PackedStringArray(on[skin]))])
 					print("QA CROWD census: the first body skeleton's skins (%d bones): %s" % [(sk as Skeleton3D).get_bone_count(), " | ".join(parts)])
+	# Round 748: the equipment effects' kinds (EquipFx: one master each).
+	var vpk := world.get_viewport()
+	if vpk.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vpk.get_meta(EquipFx.DRIVER_META)):
+		var dk: EquipFx = vpk.get_meta(EquipFx.DRIVER_META)
+		var per_kind := PackedStringArray()
+		for key in dk._kinds:
+			var kk: EquipFx.Kind = dk._kinds[key]
+			per_kind.append("%s(%d hosts%s)" % [key, kk.hosts, ", own" if kk.own else ""])
+		print("QA CROWD census: equipment effect kinds %d: %s" % [dk._kinds.size(), " ".join(per_kind)])
 	print("QA CROWD census: body skeletons %d, skins registered on them %d (%.1f a body), binds written per pose %d (%.1f a body)" % [
 		posed_skels, regs, float(regs) / maxf(float(posed_skels), 1.0), binds, float(binds) / maxf(float(posed_skels), 1.0)])
 
@@ -261,6 +286,8 @@ func _process(delta: float) -> void:
 			"pose_us": world._qa_split.pose_usec, "sound_us": world._qa_split.sound_usec,
 			"idle_us": world._qa_split.idle_usec, "minimap_us": world._qa_split.minimap_usec, "posed": world._qa_split.posed,
 			"steps": world._qa_split.steps, "start_us": now, "net_us": _net_us, "net_sent": _net_sent}
+		_split_at = FrameSplit.snapshot()
+		_prof_at = EfpEffect.prof.duplicate()
 		_last_us = now
 		return
 	if _on:
@@ -275,6 +302,14 @@ func _process(delta: float) -> void:
 		_acc["draws"] += int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 		_acc["objects"] += int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))
 		_acc["prims"] += int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
+		# Round 748: the draw's scene update and the overlay's own render.
+		FrameSplit.add("rs_setup", int(RenderingServer.get_frame_setup_time_cpu() * 1000.0))
+		var ov = world._overlay_view
+		if ov != null and is_instance_valid(ov) and ov._viewport != null:
+			var orid: RID = (ov._viewport as SubViewport).get_viewport_rid()
+			RenderingServer.viewport_set_measure_render_time(orid, true)
+			FrameSplit.add("rs_overlay_cpu", int(RenderingServer.viewport_get_measured_render_time_cpu(orid) * 1000.0))
+		FrameSplit.add("rs_main_cpu", int(RenderingServer.viewport_get_measured_render_time_cpu(vp) * 1000.0))
 	if _t >= seconds:
 		_report()
 		_next()
@@ -310,10 +345,38 @@ func _report() -> void:
 		int(_acc["draws"] / f), int(_acc["objects"] / f), int(_acc["prims"] / f),
 		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), CrowdAnim.switches(), CrowdAnim.baked_frames,
 		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line])
+	print(split_line(steps[_i], _split_at, FrameSplit.snapshot(), _prof_at, EfpEffect.prof, f))
 	if steps[_i].begins_with("net"):
 		var sent := _net_sent - int(_acc["net_sent"])
 		print("QA CROWD net: %d packets in %d frames, %.2f ms a frame in NetClient._dispatch, %.1f us a packet" % [
 			sent, int(f), float(_net_us - int(_acc["net_us"])) / 1000.0 / f, float(_net_us - int(_acc["net_us"])) / maxf(float(sent), 1.0)])
+
+## Round 748: one step's `QA CROWD split` line -- every FrameSplit counter's
+## change over the step, in ms a frame (the phases first), and EfpEffect's own
+## profile (place, sim, draws). `frames` is the step's measured frames.
+static func split_line(step: String, before: Dictionary, after: Dictionary, prof_before: Dictionary, prof_after: Dictionary, frames: float) -> String:
+	var f := maxf(frames, 1.0)
+	var parts := PackedStringArray()
+	var keys := after.keys()
+	keys.sort()
+	var phases := ["phys_cb", "phys_engine", "proc_cb", "post_flush", "draw", "post_tail"]
+	for k in phases:
+		parts.append("%s=%.2f" % [k, float(int(after.get(k, 0)) - int(before.get(k, 0))) / 1000.0 / f])
+	for k in keys:
+		if k in phases:
+			continue
+		var d := int(after[k]) - int(before.get(k, 0))
+		if String(k).ends_with("_calls"):
+			parts.append("%s=%.1f" % [k, float(d) / f])
+		else:
+			parts.append("%s=%.2f" % [k, float(d) / 1000.0 / f])
+	for k in ["place", "sim", "draws", "steps", "draw_calls"]:
+		var d := int(prof_after.get(k, 0)) - int(prof_before.get(k, 0))
+		if k == "steps" or k == "draw_calls":
+			parts.append("efp_%s=%.1f" % [k, float(d) / f])
+		else:
+			parts.append("efp_%s=%.2f" % [k, float(d) / 1000.0 / f])
+	return "QA CROWD split %-8s %s" % [step, " ".join(parts)]
 
 func _meshes(node: Node) -> Array:
 	return node.find_children("*", "MeshInstance3D", true, false)

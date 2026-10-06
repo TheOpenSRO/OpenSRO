@@ -93,10 +93,13 @@ when it is used is OPEN.
 
 - getter case 0x18 is set (a hidden "no names" switch; its setter was not found);
 - the object's own hide bits are set;
-- the object is not within 300.0 of the player (`0xd85224` against `+0x24c`), unless `+0xf0`, the
-  hover flag the cursor pick sets, is set.
+- the object is not within 300.0 of the player (`0xd85224` against `+0x24c`), unless `+0xf0` is
+  set.
 
-So a hovered name shows at any distance. `0xec4b58` is a GM console toggle (initial value 1),
+What sets `+0xf0` is OPEN (corrected in round 748: this line called it "the hover flag the cursor
+pick sets", but round 673 recorded that its writer was not found, and round 748's grep of the
+decompile for writes of 1 to `+0xf0` found only unrelated objects). So whether a hovered name shows
+at any distance is not READ. `0xec4b58` is a GM console toggle (initial value 1),
 INFERRED to be "ID".
 
 **Shadows** (round 702, READ):

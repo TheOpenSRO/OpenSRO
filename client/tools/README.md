@@ -485,6 +485,17 @@ flock /var/tmp/godot-lock/lock /opt/opensro-client-<lane>/tools/crowd_run.sh \
 A boot printing `overlap:` above 0 shared the CPU with another lane: repeat it. A 1000-body boot
 takes about 5 minutes; its log is about 0.4 MB.
 
+**Where a frame goes (round 748).** After each `QA CROWD step` line, and once for the arrival, the
+probe prints `QA CROWD split <step>`: the frame's phases in ms a frame (`phys_cb` the physics
+callbacks, `phys_engine` the rest of each physics step with its message flushes, `proc_cb` the
+`_process` callbacks, `post_flush`, `draw` RenderingServer's draw, `post_tail`), then the timers
+the code feeds while the probe runs (`FrameSplit`: World3D's `w_*` in `_process` and `p_*` in the
+physics step, EquipFx's `fx_driver` / `fx_effects`, `rs_setup` the draw's scene update,
+`rs_main_cpu` / `rs_overlay_cpu` each viewport's render). Read it instead of `process_ms`: Godot's
+`TIME_PROCESS` is the longest process-plus-render of the last second, not script time
+(`frame_split.gd`'s header has the source lines). `QA DRESS` lines name every body whose dressing
+took over 40 ms, by phase.
+
 ### Release checks (round 668)
 
 - `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that

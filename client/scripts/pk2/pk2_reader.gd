@@ -199,10 +199,7 @@ func read_file(file: Entry) -> PackedByteArray:
 func _read_block_chain(offset: int) -> Array[Entry]:
 	if _native != null:
 		return _native_dir(offset)
-	_lock.lock()
-	var out := _read_block_chain_locked(offset)
-	_lock.unlock()
-	return out
+	return _read_block_chain_locked(offset)
 
 ## A directory through the native reader, as Entry objects in on-disk order
 ## -- the same list _read_block_chain_locked builds -- cached in `_dir_cache`
@@ -251,19 +248,32 @@ func find_native(path: String) -> Entry:
 	e.size = d["size"]
 	return e
 
-## _read_block_chain's body, run under `_lock` -- split out so every return
-## path unlocks in one place.
+## _read_block_chain's body. Round 748: `_lock` is held only for the cache
+## lookup, each block's seek and read, and the cache insert -- not for the
+## Blowfish decrypt and the entry parse, which in GDScript take far longer
+## than the reads (a directory of a few thousand entries is a few hundred
+## blocks). Held through the whole chain, one thread's first look into a big
+## directory stalled every other thread's reads behind it: MEASURED, round
+## 748, a frame of 1.5-2.2 s while character templates were assembled on
+## workers. Two threads may now decode the same directory at once; the first
+## to finish is cached and both return it.
 func _read_block_chain_locked(offset: int) -> Array[Entry]:
 	var cache_key := offset
+	_lock.lock()
 	if _dir_cache.has(cache_key):
-		return _dir_cache[cache_key]
+		var hit: Array[Entry] = _dir_cache[cache_key]
+		_lock.unlock()
+		return hit
+	_lock.unlock()
 
 	var out: Array[Entry] = []
 
 	for _chain_step in range(MAX_CHAIN_BLOCKS):
 		var pp := ParseProfile.t0()
+		_lock.lock()
 		_file.seek(offset)
 		var block := _file.get_buffer(BLOCK_SIZE)
+		_lock.unlock()
 		ParseProfile.add("pk2.dir_io", pp, block.size())
 		pp = ParseProfile.t0()
 		if _encrypted:
@@ -293,7 +303,11 @@ func _read_block_chain_locked(offset: int) -> Array[Entry]:
 			break
 		offset = next_offset
 
-	_dir_cache[cache_key] = out
+	_lock.lock()
+	if not _dir_cache.has(cache_key):
+		_dir_cache[cache_key] = out
+	out = _dir_cache[cache_key]
+	_lock.unlock()
 	return out
 
 ## Returns the bytes up to (not including) the first NUL, decoded as ASCII.

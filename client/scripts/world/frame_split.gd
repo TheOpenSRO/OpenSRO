@@ -1,0 +1,111 @@
+extends Node
+class_name FrameSplit
+
+## QA only (round 748): where a rendered frame's wall time goes, for the crowd
+## probe (QaCrowdProbe's `QA CROWD split` line). Never made in play: the probe
+## adds it, and every timer it feeds is behind `FrameSplit.on`.
+##
+## **Why not `Performance.TIME_PROCESS`.** READ, Godot 4.2.2 `main/main.cpp`
+## (Main::iteration, l. 3679-3736): `process_ticks` runs from before
+## SceneTree::process to after `RenderingServer::draw`, so it holds every
+## `_process` callback, the message queue's flush AND the whole render on the
+## CPU; and the monitor is set once a second to the MAXIMUM of those (the
+## `process_max` reset at l. 3734), not their mean. `TIME_PHYSICS_PROCESS` is
+## likewise the longest single physics step of the second. So "TIME_PROCESS
+## 56 ms" was the worst frame's process-plus-render, not script time.
+##
+## **The phases** (MEASURED by two marker nodes, the first and the last of the
+## tree's process and physics order: SceneTree sorts a group by
+## process_priority, then tree order):
+##   phys_cb      first to last `_physics_process` of a step, summed over the
+##                frame's steps (GDScript; World3D's own split is in its parts)
+##   phys_engine  the rest of each step: NavigationServer3D.process, the
+##                message queue (deferred skeleton updates of a pose made in a
+##                physics callback), PhysicsServer3D.step, and the next step's
+##                sync -- up to the next step or the process callbacks
+##   proc_cb      first to last `_process` callback
+##   post_flush   from the last `_process` to RenderingServer's
+##                `frame_pre_draw`: the message queue flush (what the process
+##                callbacks deferred) and RenderingServer::sync
+##   draw         `frame_pre_draw` to `frame_post_draw`: RenderingServer::draw
+##                -- the scene update (dirty instances, skinned AABBs; the
+##                probe's `setup` is RenderingServer.get_frame_setup_time_cpu),
+##                every viewport's render on the CPU, the canvas
+##   post_tail    `frame_post_draw` to the next frame's first callback: audio,
+##                ScriptServer::frame, input, the frame timer
+## `usec` holds those and every label the instrumented code adds.
+
+static var on := false
+static var usec: Dictionary = {}
+
+static func add(label: String, us: int) -> void:
+	usec[label] = int(usec.get(label, 0)) + us
+
+## A snapshot of the counters, for a step's deltas.
+static func snapshot() -> Dictionary:
+	return usec.duplicate()
+
+const PRIORITY := 1000000
+
+var _first: Mark
+var _last: Mark
+var _prev := ""
+var _prev_us := 0
+
+class Mark extends Node:
+	var split: FrameSplit
+	var tag_physics := ""
+	var tag_process := ""
+	func _physics_process(_d: float) -> void:
+		split.event(tag_physics)
+	func _process(_d: float) -> void:
+		split.event(tag_process)
+
+## Puts the two markers at the ends of `root`'s order and switches the
+## counters on.
+func install(root: Node) -> void:
+	on = true
+	_first = Mark.new()
+	_first.name = "FrameSplitFirst"
+	_first.split = self
+	_first.tag_physics = "P0"
+	_first.tag_process = "R0"
+	_first.process_priority = -PRIORITY
+	_first.process_physics_priority = -PRIORITY
+	_last = Mark.new()
+	_last.name = "FrameSplitLast"
+	_last.split = self
+	_last.tag_physics = "P1"
+	_last.tag_process = "R1"
+	_last.process_priority = PRIORITY
+	_last.process_physics_priority = PRIORITY
+	root.add_child(_first)
+	root.add_child(_last)
+	RenderingServer.frame_pre_draw.connect(func() -> void: event("D0"))
+	RenderingServer.frame_post_draw.connect(func() -> void: event("D1"))
+
+## The segment between two events, by (previous, this).
+static func segment(prev: String, cur: String) -> String:
+	match prev:
+		"P0":
+			return "phys_cb" if cur == "P1" else ""
+		"P1":
+			return "phys_engine" if cur == "P0" or cur == "R0" else ""
+		"R0":
+			return "proc_cb" if cur == "R1" else ""
+		"R1":
+			return "post_flush" if cur == "D0" else ""
+		"D0":
+			return "draw" if cur == "D1" else ""
+		"D1":
+			return "post_tail" if cur == "P0" or cur == "R0" else ""
+	return ""
+
+func event(tag: String) -> void:
+	var now := Time.get_ticks_usec()
+	if _prev != "":
+		var seg := segment(_prev, tag)
+		if seg != "":
+			add(seg, now - _prev_us)
+	_prev = tag
+	_prev_us = now

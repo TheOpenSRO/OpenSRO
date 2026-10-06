@@ -1,0 +1,220 @@
+extends SceneTree
+
+## Round 748: CharacterAppearance's templates made off the main thread
+## (prepare / poll_prepared / wait_prepared), on synthetic templates (never
+## real game data): the task's two assemblies are stand-ins
+## (body_assembler, item_assembler) that build what the archive would, on the
+## worker. Run headless on the render box: `client/tools/remote_godot.sh tests`.
+##
+## What it holds the path to:
+## - a build of a new kind is not ready until its task is adopted; asking
+##   starts one task per body, never a second while it runs;
+## - after adoption build() assembles nothing on the main thread and dresses
+##   the body as the synchronous path does;
+## - a `_r` model that does not assemble brings its plain fallback (READ
+##   0xa5f4f0's rule, as _item_instance has it);
+## - a second body of the same skeleton layout ends on the layout's one shared
+##   skin, its items too (round 738's A2: one skin a body);
+## - at most PREP_MAX_RUNNING tasks run; the rest wait their turn;
+## - a teardown (wait_prepared(false)) adopts nothing.
+##
+## NEGATIVES: _finish_prep without _reskin fails "one skin"; _prepare without
+## its in-flight test fails "no second task"; _start_queued without the cap
+## fails "at most 2 run"; dropping the fallback fails "the plain model".
+
+var _failures := 0
+
+func _check(cond: bool, msg: String) -> void:
+	if cond:
+		print("ok  " + msg)
+	else:
+		print("FAIL " + msg)
+		_failures += 1
+
+func _initialize() -> void:
+	var watchdog := create_timer(60.0)
+	watchdog.timeout.connect(func() -> void:
+		print("FAIL the suite never reported (a script error stopped it)")
+		quit(1))
+	await process_frame
+	_test_prepare_adopt_build()
+	_test_shared_skin()
+	_test_cap_and_teardown()
+	if _failures == 0:
+		print("ALL PASS")
+		quit(0)
+	else:
+		print("%d FAILURES" % _failures)
+		quit(1)
+
+## The stand-ins, in a class of their own: the lambdas that call them run on
+## worker threads, where a call through the test script's own `self` fails.
+class Stand:
+	## A body skeleton as an assembled template has it: three bones, one skinned
+	## body mesh on the canonical skin.
+	static func template(skel_path: String) -> SkinnedBsrAssembler.AssembledCharacter:
+		var s := Skeleton3D.new()
+		s.add_bone("Bip01")
+		s.set_bone_rest(0, Transform3D.IDENTITY)
+		s.add_bone("Bip01 Spine")
+		s.set_bone_parent(1, 0)
+		s.set_bone_rest(1, Transform3D(Basis.IDENTITY, Vector3(0, 10, 0)))
+		s.add_bone("Bip01 R Hand")
+		s.set_bone_parent(2, 1)
+		s.set_bone_rest(2, Transform3D(Basis.IDENTITY, Vector3(3, 0, 0)))
+		for i in range(s.get_bone_count()):
+			s.reset_bone_pose(i)
+		var t := SkinnedBsrAssembler.AssembledCharacter.new()
+		t.skeleton = s
+		t.canonical_skin = Skeleton3DBuilder.canonical_skin(s)
+		t.parsed = BsrReader.ParsedObject.new()
+		t.parsed.skeleton_path = skel_path
+		var mi := MeshInstance3D.new()
+		mi.name = "body_piece"
+		mi.mesh = BoxMesh.new()
+		s.add_child(mi)
+		mi.skin = t.canonical_skin
+		mi.skeleton = mi.get_path_to(s)
+		return t
+
+	## An item as _item_template_on makes one: a holder lifted off a scratch copy
+	## of `source`, its mesh on `skin`; null for a path in `fails`.
+	static func item(source: Skeleton3D, skin: Skin, path: String, fails: Array, calls: Array, lock: Mutex) -> Array:
+		lock.lock()
+		calls.append(path.to_lower())
+		lock.unlock()
+		if fails.has(path.to_lower()):
+			return [null, null]
+		# In place, as the task's _item_template_on: no Node.duplicate() on a
+		# worker thread (its Node3D getters refuse there).
+		var scratch := source
+		var holder := Node3D.new()
+		holder.name = path.get_file().get_basename()
+		scratch.add_child(holder)
+		var mi := MeshInstance3D.new()
+		mi.name = holder.name + "_mesh"
+		mi.mesh = BoxMesh.new()
+		holder.add_child(mi)
+		mi.skin = skin
+		mi.skeleton = NodePath("../..")
+		scratch.remove_child(holder)
+		holder.set_meta("bone_count", scratch.get_bone_count())
+		return [holder, null]
+
+func _appearance(bodies: Dictionary, fails: Array, calls: Array, body_calls: Array) -> CharacterAppearance:
+	var app := CharacterAppearance.new()
+	for ref in bodies:
+		app.add_body(int(ref), String(bodies[ref][0]))
+	var layouts := {}
+	for ref in bodies:
+		layouts[String(bodies[ref][0])] = String(bodies[ref][1])
+	# The stand-ins run on worker threads, two at a time: their logs are
+	# appended under a lock.
+	var lock := Mutex.new()
+	app.body_assembler = func(path: String) -> SkinnedBsrAssembler.AssembledCharacter:
+		lock.lock()
+		body_calls.append(path)
+		lock.unlock()
+		return Stand.template(String(layouts[path]))
+	app.item_assembler = func(source: Skeleton3D, skin: Skin, path: String) -> Array:
+		return Stand.item(source, skin, path, fails, calls, lock)
+	app._items[5001] = {"models": PackedStringArray(["item\\chest_a.bsr"]), "type_ids": PackedInt32Array([3, 1, 1, 3]), "code": "ITEM_CHEST"}
+	app._items[5004] = {"models": PackedStringArray(["item\\dagger_01.bsr"]), "type_ids": PackedInt32Array([3, 1, 6, 13]), "code": "ITEM_DAGGER"}
+	app._full_items_loaded = true
+	return app
+
+## The skins of every skinned mesh under `n`.
+static func _skins(n: Node) -> Dictionary:
+	var out := {}
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		if (mi as MeshInstance3D).skin != null:
+			out[(mi as MeshInstance3D).skin] = true
+	return out
+
+static func _has_mesh(n: Node, name: String) -> bool:
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		if String(mi.name) == name:
+			return true
+	return false
+
+func _test_prepare_adopt_build() -> void:
+	var calls: Array = []
+	var body_calls: Array = []
+	# The dagger's _r model does not assemble: its plain model is the fallback.
+	var app := _appearance({1907: ["char\\test\\man.bsr", "res\\man.bsk"]}, ["item\\dagger_01_r.bsr"], calls, body_calls)
+	var kit := [{"id": 5001, "plus": 0}, {"id": 5004, "plus": 0}]
+	var paths: Array = app.template_paths(1907, kit)
+	_check(Array(paths[0]) == ["item\\chest_a.bsr", "item\\dagger_01_l.bsr", "item\\dagger_01_r.bsr", "item\\dagger_01.bsr"],
+		"the paths a build hangs: the chest, the dagger's _l and _r and the _r's fallback (got %s)" % str(paths[0]))
+	_check(String(paths[2]) == "dagger", "and the dagger's animation group (%s)" % String(paths[2]))
+	_check(not app.templates_ready(1907, kit), "a new kind is not ready")
+	_check(app.prep_stats["tasks"] == 0, "asking whether it is ready starts nothing")
+	_check(not app.prepare(1907, kit) and app.preparing(), "prepare starts its task and answers not ready")
+	_check(not app.prepare(1907, kit) and app.prep_stats["tasks"] == 1, "no second task for the body while one runs")
+	app.wait_prepared()
+	_check(not app.preparing() and app.prep_generation > 0, "the task is adopted (generation %d)" % app.prep_generation)
+	_check(body_calls == ["char\\test\\man.bsr"], "the body was assembled once, by the task (%s)" % str(body_calls))
+	_check(calls.has("item\\dagger_01.bsr") and calls.has("item\\dagger_01_r.bsr"), "the _r model failed and its plain model was made (%s)" % str(calls))
+	_check(app.templates_ready(1907, kit), "after adoption the kind is ready")
+	_check(app.prepare(1907, kit) and app.prep_stats["tasks"] == 1, "and asking again starts nothing")
+	var before := app.stats.duplicate()
+	var made := calls.size()
+	var b := app.build(1907, 0x22, kit)
+	_check(b != null and calls.size() == made and app.stats["body_assemblies"] == before["body_assemblies"]
+		and app.stats["item_assemblies"] == before["item_assemblies"], "build assembles nothing on the main thread")
+	if b != null:
+		_check(_has_mesh(b, "chest_a_mesh") and _has_mesh(b, "dagger_01_l_mesh") and _has_mesh(b, "dagger_01_mesh"),
+			"the body wears the chest, the dagger's _l and the _r's fallback")
+		_check(b.weapon_group == "dagger", "and holds the dagger's group (%s)" % b.weapon_group)
+		b.free()
+	app.free_templates()
+
+func _test_shared_skin() -> void:
+	var calls: Array = []
+	var body_calls: Array = []
+	# Two bodies of one skeleton layout (file and bone count).
+	var app := _appearance({1907: ["char\\test\\man_a.bsr", "res\\man.bsk"], 1908: ["char\\test\\man_b.bsr", "res\\man.bsk"]}, [], calls, body_calls)
+	var kit := [{"id": 5001, "plus": 0}]
+	app.prepare(1907, kit)
+	app.wait_prepared()
+	app.prepare(1908, kit)
+	app.wait_prepared()
+	_check(app.templates_ready(1907, kit) and app.templates_ready(1908, kit), "both kinds ready")
+	var a := app.build(1907, 0x22, kit)
+	var b := app.build(1908, 0x22, kit)
+	if a == null or b == null:
+		_check(false, "both build")
+		return
+	var sa := _skins(a)
+	var sb := _skins(b)
+	_check(sa.size() == 1 and sb.size() == 1 and sa.keys()[0] == sb.keys()[0],
+		"one skin a body, the layout's one shared skin on both, items included (%d, %d)" % [sa.size(), sb.size()])
+	a.free()
+	b.free()
+	app.free_templates()
+
+func _test_cap_and_teardown() -> void:
+	var calls: Array = []
+	var body_calls: Array = []
+	var bodies := {}
+	for i in 5:
+		bodies[2000 + i] = ["char\\test\\b%d.bsr" % i, "res\\b%d.bsk" % i]
+	var app := _appearance(bodies, [], calls, body_calls)
+	for ref in bodies:
+		app.prepare(int(ref), [])
+	_check(app._prep_running <= CharacterAppearance.PREP_MAX_RUNNING and app._prep_queue.size() == 5 - app._prep_running,
+		"at most %d run; the rest wait their turn (%d running, %d queued)" % [CharacterAppearance.PREP_MAX_RUNNING, app._prep_running, app._prep_queue.size()])
+	app.wait_prepared()
+	var all := true
+	for ref in bodies:
+		if not app.templates_ready(int(ref), []):
+			all = false
+	_check(all and app.prep_stats["tasks"] == 5, "every queued request ran in turn (%d tasks)" % app.prep_stats["tasks"])
+	app.free_templates()
+	# A teardown: started and queued requests are dropped, nothing adopted.
+	var app2 := _appearance(bodies, [], calls, body_calls)
+	for ref in bodies:
+		app2.prepare(int(ref), [])
+	app2.wait_prepared(false)
+	_check(not app2.preparing() and app2._body_templates.is_empty() and app2._prep_queue.is_empty(),
+		"wait_prepared(false) adopts nothing and leaves no request")

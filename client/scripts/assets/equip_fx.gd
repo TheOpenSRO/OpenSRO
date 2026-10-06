@@ -6,8 +6,9 @@ class_name EquipFx
 ## on screen (2026-10-06), and one EfpEffect per weapon cost ~0.13 ms a frame
 ## each (MEASURED: 20 bodies at +13, 40 effects, +5.1 ms at the Jangan spawn).
 ##
-## **How (OURS throughout).** One driver per viewport. For each (efp, scale)
-## in use it keeps ONE master EfpEffect, simulated at the world origin and
+## **How (OURS throughout).** One driver per viewport. For each effect file
+## in use (round 748: not per row scale, kind_key) it keeps ONE master
+## EfpEffect, simulated at the world origin and
 ## never moved, whose own draws are hidden; every weapon showing that effect
 ## gets a holder (an EfpEffect with no simulation, so AppearFade, BerserkLook
 ## and EquipGlow pass it by as an effect) whose MultiMeshInstance3D and Link
@@ -178,7 +179,7 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	var b := skel.find_bone(bone)
 	if b < 0:
 		return
-	var key := "%s|%s" % [efp.to_lower(), str(snappedf(scale, 0.0001))]
+	var key := kind_key(efp, scale)
 	# One host per (bone, effect), not per bone (round 741): a seal weapon has
 	# its itemrare.txt row and, from +8, its itemoptionefp.txt row on the same
 	# bone (Sun spear 4118: raretype_a_step3 and enchant_a_01, both ai_end),
@@ -186,21 +187,25 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	# by bone alone, the second was dropped. The same file at the same scale
 	# twice on one bone is drawn once (OURS; no item has that, MEASURED by
 	# round 740: no itemoptionefp row lands in a list that already has it).
-	var id := "%d|%d|%s" % [skel.get_instance_id(), b, key]
+	var id := "%d|%d|%s|%s" % [skel.get_instance_id(), b, key, str(snappedf(scale, 0.0001))]
 	if _hosts.has(id):
 		return
 	if particles == null:
 		particles = archive
 	if not _kinds.has(key):
+		var qa_t0 := Time.get_ticks_usec() if FrameSplit.on else 0
 		var m := EfpEffect.create(efp, archive)
 		if m == null:
 			return
+		var qa_t1 := Time.get_ticks_usec() if FrameSplit.on else 0
 		m.loop = true
 		m.auto_free = false
 		m.top_level = true
 		# The holders turn with their bones (round 741); the billboards are
 		# built in the shader so they still face the camera.
 		m.use_shared_turn()
+		if FrameSplit.on:
+			print("QA EQUIPFX master %s: create %.1f ms, shared turn %.1f ms" % [efp, (qa_t1 - qa_t0) / 1000.0, (Time.get_ticks_usec() - qa_t1) / 1000.0])
 		m.name = "master_%d" % _kinds.size()
 		for c in m.get_children():
 			if c is GeometryInstance3D:
@@ -229,6 +234,15 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	_scan.append(id)
 	if _hosts.size() <= VISIBLE_BUDGET:
 		_hurry = true
+
+## The kind (one master) an effect file at a row's scale is drawn through.
+## Round 748: the file alone. A master is simulated at the world origin with
+## no scale (the holder carries the row's scale, holder_transform), from the
+## same template and seed whatever the row's scale, so a master per (file,
+## scale) simulated identical particles once per scale; the 1000-body crowd's
+## weapons and shields named 13 such kinds (QA CROWD census).
+static func kind_key(efp: String, _scale: float) -> String:
+	return efp.to_lower()
 
 func remove_skel(skel: Skeleton3D) -> void:
 	var sid := "%d|" % skel.get_instance_id()
@@ -400,6 +414,8 @@ func _process(_delta: float) -> void:
 		_qa_log(cam)
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
+		if FrameSplit.on:
+			FrameSplit.add("fx_driver", Time.get_ticks_usec() - t0)
 
 ## Where a host's holder goes (round 741): the bone's whole frame in the world
 ## -- READ, CRTModParticle::FUN_00c81190 places the effect at the bone's

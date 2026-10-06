@@ -86,7 +86,12 @@ func visit(body: Node3D) -> void:
 		return
 	var visits := int(body.get_meta(META_VISITS, 0)) + 1
 	body.set_meta(META_VISITS, visits)
-	var rescan := visits % RESCAN_VISITS == 1
+	# Each body's rescans fall on its own visits (round 748): counted from 1
+	# alone, every body of a crowd that arrived together rescanned in the
+	# same pass of the queue -- 12 rescans a frame for one pass in eight, the
+	# rest none (MEASURED at 1000 standing: 0.05 to 1.8 ms a frame between
+	# 6-second steps). The same one rescan in RESCAN_VISITS visits per body.
+	var rescan := posmod(visits + body.get_instance_id() % RESCAN_VISITS, RESCAN_VISITS) == 1
 	var pos := body.global_position
 	var had := body.has_meta(META_VALUE)
 	if had and not rescan and (body.get_meta(META_POS, Vector3.INF) as Vector3).distance_to(pos) < MOVE_EPSILON:
