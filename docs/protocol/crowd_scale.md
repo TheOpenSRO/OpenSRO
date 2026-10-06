@@ -427,6 +427,13 @@ Files: in World3D, `_physics_step`'s others loop, `_spawn_or_update_other`, `_on
 | B6 | `EquipFx`: replace the sort over every host every 10 frames with a grid or partial select. Keep the 64 budget (OURS). Retail draws players' particles at every distance (READ), so the budget is a disclosed difference. | OURS | About 9 ms at 200 and 8 ms at 1000 (`TIME_PROCESS` -15 ms) |
 | B7 | `_other_by_uid` from a map. `NetClient._dispatch` itself is 7-10 µs a packet (MEASURED), about 1 ms a frame at 1000 x 1/s. | OURS | Small |
 
+**Round 739 built B1-B4 and B7 (`docs/rounds/r739.md`). Round 748 (`docs/rounds/r748.md`)
+followed up:** the frame split (`FrameSplit`; `TIME_PROCESS` is the second's longest
+process-plus-render, READ), character templates on worker threads (no arrival frame is a template
+build: the worst at 1000 470 -> 100-122 ms), EquipFx one master per effect file (13 -> 6), the gait
+swap without a scan (walking p95 at 1000 184 -> 143), and the local player's pose and the fades
+once a rendered frame. At 1000 standing went 92-98 -> 85 ms; about 68 ms of it is lane A's.
+
 ### Lane C: server interest management (server only)
 
 | # | Item | Label | Expected saving |
