@@ -470,9 +470,21 @@ particle loader is called with first (READ, §1).
    every placement (`FUN_00c81190`). What `*(this+4)+0x264` holds (a global setting or the effect
    file's own value) is OPEN, and OpenSRO does not apply it. OpenSRO's particles take the row's
    scale times the host's uniform scale, the body's height factor (round 734's review, F4: as the
-   per-weapon path's anchor did), never a mirror (OURS: the shared simulation's billboards face the
-   camera in world axes). A weapon within 30 units of the camera shows its effect even outside the
-   view (OURS, `EquipFx.ALWAYS_NEAR`).
+   per-weapon path's anchor did). A weapon within 30 units of the camera shows its effect even
+   outside the view (OURS, `EquipFx.ALWAYS_NEAR`).
+   **The placement: READ (round 741).** `FUN_00c81190` builds the effect's matrix. With a bone
+   (+0x50 non-zero, `0xc811c5`) it takes the bone object's matrix (`[+0x50]+0x80`, then `+0x40`)
+   and multiplies it by the owner's world matrix (vtable +0x18 of `+0x5c`) through `0x55ebd0`. With
+   no bone (`0xc811e5`) it is a translation by the row's offset times the scale, times the world
+   matrix. When the mod's `+8` byte is set, the rotation part is first multiplied by the mod's own
+   matrix at `+0xc` (the translation kept). Then `vslot_010(+0xc0)` sets the scale and `vslot_007`
+   (`+0x1c`) hands the matrix to the effect. So **the effect turns with the bone**, rotation
+   included. Round 734's `EquipFx` placed each holder at the bone's position only: the effect's
+   offsets (the +8 enchant's `SetPosition` space 7: 0, −1.2, −2.4, −3.6, −4.8 along the effect's X,
+   MEASURED) then ran along world axes, the column of sparks beside the user's spear that lined up
+   with it at one heading only. Since round 741 a holder takes the bone's frame
+   (`EquipFx.holder_transform`, mirror included), and the shared master's billboards and pipes are
+   built per camera in the vertex shader (`EfpEffect.use_shared_turn`, OURS; `docs/rounds/r741.md`).
 6. **`FUN_00c43780`**: `mod+0x3c >= *(owner+8)+0x7c`, the latter a 0..1 value clamped by
    `CCompChar::FUN_00c25620` (a virtual). Still OPEN; OpenSRO does not gate on it.
 7. **The starting direction: READ (round 734).** The constructor (`FxModManager::FUN_00c847f0`) sets
@@ -507,7 +519,7 @@ and only the `_SET_A/B_RARE_SWITCHnn` variants name `*_set_a_rare_01` / `_set_b_
 
 **Built (round 734, lane A):** `ItemGlowTables` (client/scripts/items/item_glow_tables.gd), `EquipGlow`
 (client/scripts/assets/equip_glow.gd) and the `EQUIP_GLOW` path of `object.gdshaderinc`, applied by
-`CharacterAppearance.build` to slots 6 and 7; the particles go through `EquipFx` (client/scripts/assets/equip_fx.gd), one shared simulation per (efp, scale), drawn at each bone, nearest 64 in view within 800 units (OURS, r734.md). `OPENSRO_QA_EQUIP` takes `slot=item_id+plus`;
+`CharacterAppearance.build` to slots 6 and 7; the particles go through `EquipFx` (client/scripts/assets/equip_fx.gd), one shared simulation per (efp, scale), drawn in each bone's frame (round 741: position and rotation, READ above), nearest 64 in view within 800 units (OURS, r734.md). `OPENSRO_QA_EQUIP` takes `slot=item_id+plus`;
 `OPENSRO_QA_LINEUP_KITS` draws bodies side by side with given pluses; `OPENSRO_QA_FAKECHARS_PLUS`
 gives the select screen's QA characters a weapon plus; `client/tools/measure_equip_glow.gd` measures
 the drawn glow against the arithmetic. The lobby list the server sends carries plus 0

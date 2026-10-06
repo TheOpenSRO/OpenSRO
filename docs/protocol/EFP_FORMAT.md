@@ -736,7 +736,20 @@ scale change `vslot_010` uses it.
 - a synthetic node without the block follows its parent's translation (u6 = 1, b1), round 620's
   behaviour.
 - The host's turn reaches the effect as its rotation. The bone's own rotation is not used (the
-  effect "turns with the body", round 620).
+  effect "turns with the body", round 620) -- except where the placement READ says otherwise: an
+  object's mode-0 entry (round 720, `follow_bone_full`) and an equipment row (round 741,
+  `CRTModParticle::FUN_00c81190`: the bone's matrix times the world's; `EquipFx.holder_transform`)
+  take the bone's whole frame.
+- **A shared simulation drawn turned** (round 741, OURS: `EfpEffect.use_shared_turn`). `EquipFx`
+  simulates one effect and draws it at many bones, each turned. A billboard must still face the
+  camera and a pipe's side is the camera's, so those nodes build their geometry in the vertex
+  shader: a plate's instance carries its scale (basis) and position, its custom data the shape's
+  quaternion, and the shader lays it on the camera's right, up (world up for YBillboard) and look;
+  a pipe's vertices carry their point, their neighbours and the signed width, and the shader
+  projects the neighbours and builds `right·d.y − up·d.x` as `EfpLinks.pipe_ribbon` does. ViewNone,
+  ViewVBillboard and LinkObj nodes need nothing: they turn with the holder as they should. A
+  billboard node with a TextureSlide keeps the old path (its custom data is the UV rectangle):
+  none among the 74 enchant and seal files (MEASURED).
 
 **Link files that make a triangle** (`efp_census.gd --build`, peak of 40 frames, 975 files with a
 drawn Link node):

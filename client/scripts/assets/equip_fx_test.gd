@@ -28,6 +28,7 @@ func _initialize() -> void:
 	await process_frame
 	_test_budget()
 	_test_scale_and_pause()
+	_test_two_rows_one_bone()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
 	quit(1 if _failures > 0 else 0)
 
@@ -142,4 +143,36 @@ func _test_scale_and_pause() -> void:
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	d._process(1.0 / 60.0)
 	_check(int(d.stats["shown"]) == 1 and k.master.is_processing() and _shown_holder(s) != null, "opened again: shown the same frame")
+	vp.free()
+
+## Round 741: a seal weapon's itemrare.txt row and its +8 itemoptionefp.txt row
+## sit on the same bone (Sun spear 4118: raretype_a_step3 and enchant_a_01,
+## both ai_end); retail makes a mod for each (FUN_00a5f3e0's loop). Keyed by
+## bone alone, round 734 dropped the second.
+func _test_two_rows_one_bone() -> void:
+	var vp := _viewport()
+	var d := _driver(vp)
+	var other := "system\\test_fx_2.efp"
+	var key2 := "%s|%s" % [other.to_lower(), str(snappedf(SCALE, 0.0001))]
+	var m := EfpEffect.new()
+	var mm := MultiMeshInstance3D.new()
+	mm.multimesh = MultiMesh.new()
+	m.add_child(mm)
+	d.add_child(m)
+	var k := EquipFx.Kind.new()
+	k.key = key2
+	k.master = m
+	d._kinds[key2] = k
+	var s := _host(vp, d, Vector3(0, 0, 20))
+	d.add_host(s, "ai_end", other, SCALE, null)
+	d.add_host(s, "ai_end", EFP, SCALE, null)
+	_check(d._hosts.size() == 2, "two effects on one bone: two hosts, the same one twice: still two (%d)" % d._hosts.size())
+	d._process(1.0 / 60.0)
+	var holders := 0
+	for c in s.get_children():
+		if c is EfpEffect and (c as EfpEffect).visible:
+			holders += 1
+	_check(holders == 2, "both are drawn (%d holders)" % holders)
+	d.remove_skel(s)
+	_check(d._hosts.is_empty(), "the skeleton leaving takes both")
 	vp.free()
