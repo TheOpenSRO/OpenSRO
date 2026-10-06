@@ -70,13 +70,15 @@ type itemLookupBox struct{ ItemLookup }
 
 // SetSpawnItemRefs installs the item table the spawn record reads (cmd/server).
 func SetSpawnItemRefs(items ItemLookup) {
-	// The cached looks were read through the old table.
-	looks.Range(func(k, _ any) bool { looks.Delete(k); return true })
 	if items == nil {
 		spawnItemRefs.Store(nil)
-		return
+	} else {
+		spawnItemRefs.Store(&itemLookupBox{items})
 	}
-	spawnItemRefs.Store(&itemLookupBox{items})
+	// The cached looks were read through the old table: the epoch moves
+	// after the new table is in, so a read under the new epoch reads it.
+	lookEpoch.Add(1)
+	looks.Range(func(k, _ any) bool { looks.Delete(k); return true })
 }
 
 // jobStateOf is the job state the client will take from the worn items: the
@@ -127,11 +129,14 @@ type look struct {
 	jobState byte
 }
 
-// lookEntry is a cached look and the stores it was read from.
+// lookEntry is a cached look, the stores it was read from, and the
+// character's look generation and the item-table epoch when the read began.
 type lookEntry struct {
 	eq    equipment.Store
 	chars character.Store
 	look  look
+	gen   uint64
+	epoch uint64
 }
 
 // looks caches each character's look (round 737's review, F8): an arrival in
@@ -142,8 +147,32 @@ type lookEntry struct {
 // stores than the caller's is read again.
 var looks sync.Map // int64 -> lookEntry
 
-// invalidateLook drops characterID's cached look.
-func invalidateLook(characterID int64) { looks.Delete(characterID) }
+// lookGens numbers each character's look invalidations, and lookEpoch the
+// item table's (SetSpawnItemRefs): a read that began before an invalidation
+// may finish after it and store what it read, so an entry is served only
+// while both numbers are still the ones it was read under (round 737's
+// verification, N2). A character's counter is kept after it leaves -- a
+// counter dropped and made again would start at 0, and an entry stored by a
+// read begun before the drop could then match it.
+var (
+	lookGens  sync.Map // int64 -> *atomic.Uint64
+	lookEpoch atomic.Uint64
+)
+
+func lookGen(characterID int64) *atomic.Uint64 {
+	if g, ok := lookGens.Load(characterID); ok {
+		return g.(*atomic.Uint64)
+	}
+	g, _ := lookGens.LoadOrStore(characterID, new(atomic.Uint64))
+	return g.(*atomic.Uint64)
+}
+
+// invalidateLook drops characterID's cached look, and any a read already
+// under way would store.
+func invalidateLook(characterID int64) {
+	lookGen(characterID).Add(1)
+	looks.Delete(characterID)
+}
 
 // sameStore reports whether a and b are the same store value, and false for
 // a store type == cannot compare (a struct holding a map, say): such a store
@@ -161,8 +190,9 @@ func sameStore(a, b any) bool {
 
 // lookOf is characterID's look, from the cache or read now.
 func lookOf(ctx context.Context, d viewDeps, characterID int64) look {
+	gen, epoch := lookGen(characterID).Load(), lookEpoch.Load()
 	if v, ok := looks.Load(characterID); ok {
-		if le := v.(lookEntry); sameStore(le.eq, d.eq) && sameStore(le.chars, d.chars) {
+		if le := v.(lookEntry); le.gen == gen && le.epoch == epoch && sameStore(le.eq, d.eq) && sameStore(le.chars, d.chars) {
 			return le.look
 		}
 	}
@@ -191,7 +221,9 @@ func lookOf(ctx context.Context, d viewDeps, characterID int64) look {
 		}
 	}
 	lk.jobState = jobStateOf(ctx, slot8)
-	looks.Store(characterID, lookEntry{eq: d.eq, chars: d.chars, look: lk})
+	if lookGen(characterID).Load() == gen && lookEpoch.Load() == epoch {
+		looks.Store(characterID, lookEntry{eq: d.eq, chars: d.chars, look: lk, gen: gen, epoch: epoch})
+	}
 	return lk
 }
 

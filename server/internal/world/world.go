@@ -284,6 +284,12 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 		return Entity{}, nil, nil, false
 	}
 	old = *e
+	// A stale session of a reconnect -- its character entered again on a
+	// newer session, which took the character and the name -- stays the
+	// stale one through its zone change (round 737's verification, N4):
+	// before, its re-insertion took the character back from the live
+	// session.
+	live, stale := h.byChar[old.CharacterID], h.byChar[old.CharacterID] != e
 	h.removeLocked(sess.ID())
 	remainingOld = h.viewOthersLocked(&old)
 
@@ -294,6 +300,17 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	h.arrivals++
 	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading}
 	h.insertLocked(next)
+	if stale {
+		if live != nil {
+			h.byChar[old.CharacterID] = live
+			h.byName[live.Name] = live
+		} else {
+			delete(h.byChar, old.CharacterID)
+			if h.byName[next.Name] == next {
+				delete(h.byName, next.Name)
+			}
+		}
+	}
 	othersNew = h.viewOthersLocked(next)
 
 	return old, remainingOld, othersNew, true

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -216,4 +217,13 @@ func expectPlayerDespawn(t *testing.T, conn net.Conn, r *bufio.Reader, ids ...in
 			t.Fatalf("despawn of %v, want %v", uids, ids)
 		}
 	}
+}
+
+// startPlayerView opens a fresh, empty view for characterID on sess, as
+// arrivePlayer does, without its hub check: the tests' and the bench's
+// sessions are put in a view directly.
+func startPlayerView(characterID int64, sess *gateway.Session, d viewDeps) *playerView {
+	v := openedView(sess, d)
+	playerViews.Store(characterID, v)
+	return v
 }

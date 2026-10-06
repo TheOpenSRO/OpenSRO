@@ -121,6 +121,21 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
   - The client asserts on a second 0x3017 before the 0x3018 (`0x8abfa0`), so groups must not
     interleave. OpenSRO sends each group in one `SendFrames` batch.
 
+## OpenSRO's additions (OURS)
+
+- **OpPlayerZoneNotice 0x00B7**: u8 kind (1 entered, 2 left), u32 unique id (the character id, as
+  in the record and the 0x3016), u16 length + the name's bytes. Little-endian, as every OpenSRO
+  message. It goes immediately ahead of a 0x3015 or 0x3016 for a player who **arrived in or left
+  the recipient's zone** -- a world entry, a zone change, a logout -- and to exactly the clients
+  that spawn or despawn is sent to: one that does not hold the player is sent no despawn and no
+  notice, and one that already holds this arrival is sent neither (round 737's verification, N5;
+  `zoneNoticeFrame`, `arrivePlayer`, `departPlayer` in `server/internal/session/playerview.go`).
+  A walk across a block line sends the spawn messages with no notice, so the client keeps its
+  "X entered the zone." / "X left the zone." lines for real arrivals, as before round 737
+  (`NetClient._on_zone_notice`, `World3D._on_entity_entered` / `_on_entity_left`). Retail prints
+  neither line and has no such message. The opcode sits beside OpNpcFacingUnknown 0x00B6
+  (`npc_spawn.md`); 0x00B7 was free in `server/` and `client/scripts/net` (grep, 2026-10-06).
+
 ## Which class a record is
 
 `FUN_008a6bd0` creates the object from its RefObjID's TypeID (READ).

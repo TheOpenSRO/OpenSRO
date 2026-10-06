@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -820,6 +821,34 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 }
 
+// ErrHandlerPanic is what dispatch returns for a handler that panicked: the
+// session ends, the server goes on (round 737's verification, N1: one
+// player's bug must never take the server down).
+var ErrHandlerPanic = errors.New("gateway: handler panicked")
+
+// dispatch runs s.Handle on p, turning a panic into ErrHandlerPanic after
+// logging it with its stack. Only the session's own goroutine is covered:
+// a panic on another goroutine (a ticker, a worker) still ends the process.
+// A handler that panicked while holding a lock it takes without defer leaves
+// it held; the hub's locks are all released by defer.
+func (s *Server) dispatch(ctx context.Context, sess *Session, p *proto.Packet, logger *slog.Logger) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("handler panic, closing session", "addr", sess.RemoteAddr(), "opcode", fmt.Sprintf("0x%04x", p.Opcode), "panic", r, "stack", string(debug.Stack()))
+			err = ErrHandlerPanic
+		}
+	}()
+	return s.Handle(ctx, sess, p)
+}
+
+// recoverSession, deferred, logs a panic of the session's what (its
+// disconnect bookkeeping) and lets the rest of the teardown run.
+func recoverSession(logger *slog.Logger, sess *Session, what string) {
+	if r := recover(); r != nil {
+		logger.Error("session "+what+" panic", "addr", sess.RemoteAddr(), "panic", r, "stack", string(debug.Stack()))
+	}
+}
+
 func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logger) {
 	sess := &Session{id: s.nextSessionID.Add(1), conn: conn, logger: logger}
 	sess.startWriter()
@@ -850,7 +879,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 			"send_queue_peak", queuePeak, "send_burst_peak", burst)
 	}()
 	if s.OnDisconnect != nil {
-		defer s.OnDisconnect(sess)
+		defer func() {
+			defer recoverSession(logger, sess, "disconnect")
+			s.OnDisconnect(sess)
+		}()
 	}
 
 	r := bufio.NewReader(conn)
@@ -877,7 +909,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 		if s.Handle == nil {
 			continue
 		}
-		if err := s.Handle(ctx, sess, p); err != nil {
+		if err := s.dispatch(ctx, sess, p, logger); err != nil {
 			if errors.Is(err, ErrEndSession) {
 				logger.Debug("session ended by its handler", "addr", sess.RemoteAddr())
 				return

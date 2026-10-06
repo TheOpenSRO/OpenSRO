@@ -1336,10 +1336,8 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// The players in view drop it: retail's 0x3016 (round 737,
 		// playerview.go; CMsgBlock slot 3 -> FUN_00534050), where OpenSRO
 		// sent its own OpEntityLeft.
-		playerZoneNotice(zoneNoticeLeft, left, remaining)
 		departPlayer(hub, left, remaining)
-		forgetPlayerState(left.CharacterID)
-		invalidateLook(left.CharacterID)
+		forgetLeftPlayer(hub, left.CharacterID)
 	}
 }
 
@@ -1484,7 +1482,7 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// Closed until the result is out (round 737's review, F3): nothing
 	// about another player reaches the client before it, and arrivePlayer
 	// spawns whoever is in view when it opens.
-	closePlayerView(owned.ID, sess)
+	closePlayerView(owned.ID, sess, viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk})
 	invalidateLook(owned.ID) // what it wears is read afresh at each entry
 	hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 	// The heading comes back with a restored position (round 637's review
@@ -1543,7 +1541,6 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// worn items with their pluses, the motion and the body mode.
 	arrived, inWorld := hub.EntityBySession(sess.ID())
 	if inWorld {
-		playerZoneNotice(zoneNoticeEntered, arrived, othersInView(hub, arrived))
 		arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived)
 	}
 	// The client's own character id (round 616, OpSelfID), after the
@@ -1621,7 +1618,19 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// client starts over at its result, and arrivePlayer opens a new view on
 	// the players in view then. Closed meanwhile, nothing about another
 	// player is recorded in a view about to be thrown away.
-	closePlayerView(old.CharacterID, sess)
+	d := viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}
+	if !storeViewIfLive(hub, old.CharacterID, sess, closedView(sess, d)) {
+		// A stale session of a reconnect (round 737's verification, N4): the
+		// hub moved its entity, but the character is live on a newer
+		// session, whose view, motion, berserk, saved place and watchers
+		// this must not touch. Its own client hears its result.
+		data, _ := (&ChangeZoneResult{
+			OK: true, Zone: zone,
+			X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
+			FrameRegion: frame,
+		}).EncodeFitting()
+		return true, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data})
+	}
 	keepUp.Cancel(old.CharacterID)
 	// A character arrives standing (round 607, motion.go; ours: the retail
 	// object's re-creation is inferred). The client drops its own sit on the
@@ -1654,8 +1663,8 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 
 	// The window it left drops it (0x3016), even a window it lands in view
 	// of again: it was taken out and put back, as retail's block removal and
-	// insertion are, and its new spawn follows.
-	playerZoneNotice(zoneNoticeLeft, old, remainingOld)
+	// insertion are, and its new spawn follows. Each client sent the 0x3016
+	// hears the OURS zone notice (left) ahead of it, and only those.
 	departPlayer(hub, old, remainingOld)
 
 	// The arrival faces the way the character last moved: the hub carries
@@ -1673,8 +1682,7 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// 0, and the players where it lands spawn it with 0 (round 737: before
 	// the spawns, so their records carry it).
 	endBerserk(hub, zerk, old.CharacterID)
-	playerZoneNotice(zoneNoticeEntered, arrived, othersInView(hub, arrived))
-	arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived)
+	arrivePlayer(d, arrived)
 	sendOwnBuffs(arrived, time.Now())
 	return true, nil
 }
