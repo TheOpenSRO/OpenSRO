@@ -6097,6 +6097,14 @@ func _exit_tree() -> void:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
+	# Round 732's static lambda (MagicOptionTable.shared_text, made in this
+	# node's script) aborted every quit -- "corrupted size vs. prev_size in
+	# fastbins", rc 134 -- when Godot 4.2.2 freed it after the script at exit
+	# (round 735's review: reproduced in a minimal project 3/3; clearing the
+	# static before quit exits 0). Cleared here, with the table, so a later
+	# world entry reloads both.
+	MagicOptionTable.shared_text = Callable()
+	MagicOptionTable.shared = null
 	# The screens after the world (character select, login) show the
 	# default cursor, as retail's do (round 697).
 	if not title_mode:
