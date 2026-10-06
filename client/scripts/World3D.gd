@@ -1272,8 +1272,8 @@ var _other_pluses := {}
 const OTHER_GAIT_THRESHOLD := 1.4
 ## Round 739 (OtherCrowd, OURS): the others' walk once a rendered frame (B1),
 ## their bodies dressed over frames nearest first (B4: id -> the spawn's
-## {equipped, scale} until dressed), the uid map (B7), and their skeletons'
-## hearing state for the 600 cut (B3: instance id -> heard last frame).
+## {equipped, scale} until dressed) and the uid map (B7). Their 600 hearing
+## cut (B3) keeps its state on the cull-cache entry (_tick_idle_animations).
 var _other_step_gate := OtherCrowd.StepGate.new()
 var _other_builds := OtherCrowd.BuildQueue.new()
 var _other_build_args := {}
@@ -1281,7 +1281,6 @@ var _other_build_args := {}
 ## above 0 an arrival is queued without pumping; the last one out pumps.
 var _other_build_defer := 0
 var _other_uids := OtherCrowd.UidIndex.new()
-var _other_hearing := {}
 var _monster_bodies := {} # monster_id -> Node3D
 ## monster_id -> CombatNet.MonsterSnapshot, as last listed -- except x/z, which
 ## follow the drawn body while it walks (_step_monster_bodies), so the reach
@@ -6026,11 +6025,10 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	_other_bodies.clear()
 	_other_gaits.clear()
 	_other_seated.clear()
-	# Round 739: and their queued dressing, their uids and hearing.
+	# Round 739: and their queued dressing and their uids.
 	_other_builds.clear()
 	_other_build_args.clear()
 	_other_uids.clear()
-	_other_hearing.clear()
 	# Their buffs went with them (round 638): the new zone's owners, this
 	# player included, are re-sent on arrival (sendBuffsInView). Round 646:
 	# the re-sent starts can arrive during _on_change_zone_result's loading-
@@ -6400,6 +6398,15 @@ func _tick_idle_animations(delta: float) -> void:
 				pose = false
 				lod_skipped += 1
 			info[2] = 1.0 if seen else 0.0
+			# Its clip sounds only within the core's cull of the listener
+			# (round 739, B3: READ 600, the monsters' rule below), rested once
+			# as they go. info[1] is the player entry's own "out of hearing at
+			# the last tick" (its review's F1; info[2] is A1's "in view").
+			audible = skeleton.global_position.distance_squared_to(listener) <= SoundTable.CULL_DISTANCE_SQ
+			if audible != (info[1] == 0.0):
+				info[1] = 0.0 if audible else 1.0
+				if not audible:
+					_anim_sounds.rest(skeleton)
 		elif not info.is_empty():
 			# A looping body that was neither in view nor in hearing at its
 			# last test is tested every second frame, on its slot (round 664,
@@ -6441,18 +6448,6 @@ func _tick_idle_animations(delta: float) -> void:
 			if pose and not MonsterCrowd.pose_due(pose_tick, int(info[3]), MonsterCrowd.pose_interval(dist)):
 				pose = false
 				lod_skipped += 1
-		elif not _other_hearing.is_empty():
-			# Another player's clip sounds within the core's cull of the
-			# listener too (round 739, B3: READ 600, the monsters' rule above);
-			# rested once as they go, as a monster's.
-			var sid := skeleton.get_instance_id()
-			var heard = _other_hearing.get(sid)
-			if heard != null:
-				audible = skeleton.global_position.distance_squared_to(listener) <= SoundTable.CULL_DISTANCE_SQ
-				if audible != bool(heard):
-					_other_hearing[sid] = audible
-					if not audible:
-						_anim_sounds.rest(skeleton)
 		if _qa_split != null:
 			if pose and _qa_split_off.has("pose"):
 				pose = false
@@ -15754,7 +15749,6 @@ func _dress_other(character_id: int) -> void:
 		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false}
 		if seated:
 			_other_gaits[character_id]["sitting"] = true
-		_other_hearing[skeleton.get_instance_id()] = true
 		# Their sounds come from where their body is; the cell under them is
 		# found from the height (_audio_material_at), not carried as the
 		# local player's is. Their berserk arrives as their body mode (round
@@ -15961,11 +15955,9 @@ func _redress_other(character_id: int) -> void:
 	var old = gait.get("skeleton")
 	if old != null and is_instance_valid(old):
 		_anim_sounds.unregister(old)
-		_other_hearing.erase(old.get_instance_id())
 		old.queue_free()
 	skeleton.rotation.y = PI
 	node.add_child(skeleton)
-	_other_hearing[skeleton.get_instance_id()] = true
 	# The new meshes take the body's Detail state (round 739, B2): casting
 	# only if it is one of the ten.
 	CharacterBlobs.refresh_detail(node)
@@ -16045,9 +16037,6 @@ func _on_entity_left(character_id: int) -> void:
 	# does in _free_monster_body: whether retail's mover runs on during the
 	# 1.5 s was not read).
 	_set_other_gait(character_id, false)
-	var left_skel = (_other_gaits.get(character_id, {}) as Dictionary).get("skeleton")
-	if left_skel != null and is_instance_valid(left_skel):
-		_other_hearing.erase((left_skel as Object).get_instance_id())
 	_other_gaits.erase(character_id)
 	_other_pluses.erase(character_id)
 	# Gone before their turn to be dressed came (round 739, B4).

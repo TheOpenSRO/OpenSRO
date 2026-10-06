@@ -89,7 +89,8 @@ class CullCache:
 			made = [float(skeleton.get_meta(MonsterDraw.META_RADIUS, 1.0)),
 				1.0 if skeleton.has_meta(MonsterDraw.META_HIDE) else 0.0, 0.0, _slots, 0.0]
 		elif CrowdAnim.is_other_player(skeleton):
-			# [radius, 0, in view at the last tick, slot, never posed yet, 1]
+			# [radius, out of hearing at the last tick (round 739, B3), in view
+			# at the last tick, slot, never posed yet, 1]
 			# (round 738 and its review's F2: the first tick poses the body
 			# wherever it is, so none is left in the bind pose; the first tick
 			# back in view is never skipped by the LOD).

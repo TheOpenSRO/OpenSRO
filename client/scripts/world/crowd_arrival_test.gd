@@ -179,21 +179,24 @@ func _test_walk(world: Node) -> void:
 	_check(body.position.distance_to(p) < 1e-3, "8 folded steps walk the body where 8 per-step passes did (%.4f off)" % body.position.distance_to(p))
 	_check(bool((gaits[202] as Dictionary).get("moving", false)), "and it runs while still catching up")
 
-## B3: another player's clip sounds are rested past 600 from the listener.
+## B3: another player's clip sounds are rested past 600 from the listener, in
+## round 738's player branch of the tick (round 739's review, F1): the state is
+## the player cull entry's info[1], "out of hearing at the last tick".
+## NEGATIVE: on the scratch merge of 738 before F1 (B3 in an `elif` the player
+## branch never reaches) the 700 case fails.
 func _test_hearing(world: Node) -> void:
 	var gaits: Dictionary = world.get("_other_gaits")
-	var hearing: Dictionary = world.get("_other_hearing")
 	var skel: Skeleton3D = gaits[202]["skeleton"]
-	var sid := skel.get_instance_id()
-	_check(hearing.has(sid), "a dressed body's skeleton is in the hearing map")
 	var body: Node3D = (world.get("_other_bodies") as Dictionary)[202]
 	var here := _here(world)
 	body.position = here + Vector3(700, 0, 0)
 	world.call("_tick_idle_animations", 1.0 / 60.0)
-	_check(hearing.get(sid) == false, "700 from the listener its sounds are out of hearing")
+	var info: Array = world.get("_crowd_cull").info(skel)
+	_check(info.size() == CrowdAnim.PLAYER_INFO_SIZE, "another player's skeleton takes the player branch (entry of %d fields)" % info.size())
+	_check(info.size() > 1 and float(info[1]) == 1.0, "700 from the listener its sounds are out of hearing")
 	body.position = here + Vector3(100, 0, 0)
 	world.call("_tick_idle_animations", 1.0 / 60.0)
-	_check(hearing.get(sid) == true, "and back in at 100")
+	_check(info.size() > 1 and float(info[1]) == 0.0, "and back in at 100")
 
 ## Round 739's review: F5 (a group page queued whole), F2 (a waiting sitter who
 ## walks off), F7 (a waiting body is not drawn for its auras), F8 (a re-sent
