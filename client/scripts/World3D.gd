@@ -6086,6 +6086,10 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	if ParseProfile.enabled and _initial_load_done:
+		print(ParseProfile.report("after the entry"))
+	SoundTable.set_listener(null)
+	_leave_ground_pick("the world left the tree")
 	# Round 732's static lambda (MagicOptionTable.shared_text, made in this
 	# node's script) aborted every quit -- "corrupted size vs. prev_size in
 	# fastbins", rc 134 -- when Godot 4.2.2 freed it after the script at exit
@@ -6094,10 +6098,6 @@ func _exit_tree() -> void:
 	# world entry reloads both.
 	MagicOptionTable.shared_text = Callable()
 	MagicOptionTable.shared = null
-	if ParseProfile.enabled and _initial_load_done:
-		print(ParseProfile.report("after the entry"))
-	SoundTable.set_listener(null)
-	_leave_ground_pick("the world left the tree")
 	# The screens after the world (character select, login) show the
 	# default cursor, as retail's do (round 697).
 	if not title_mode:
