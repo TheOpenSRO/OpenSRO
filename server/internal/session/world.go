@@ -544,6 +544,25 @@ func decodeModels(rest []byte, others []EntitySnapshot) ([]byte, error) {
 }
 
 func (r *EnterWorldResult) Encode() []byte {
+	b, _ := r.EncodeFitting()
+	return b
+}
+
+// EncodeFitting is Encode, and whether the pluses tail was left out because
+// the payload with it would not fit one frame (proto.MaxPayload; round 735's
+// review, finding 8). The tail is the only optional part, so it is the part
+// dropped; the sender then tells the arriving client the pluses as retail
+// 0x3038s (sendPlusesAsBroadcasts). A list too long without the tail was
+// already too long before round 735 (about 255 others with full kits).
+func (r *EnterWorldResult) EncodeFitting() ([]byte, bool) {
+	full := r.encode(true)
+	if len(full) <= proto.MaxPayload || !anyPlus(r.Others...) {
+		return full, false
+	}
+	return r.encode(false), true
+}
+
+func (r *EnterWorldResult) encode(withPluses bool) []byte {
 	out := encodeOKReason(r.OK, r.Reason)
 	if !r.OK {
 		return out
@@ -566,7 +585,7 @@ func (r *EnterWorldResult) Encode() []byte {
 	out = append(out, encodeStrings(r.FrameRegion)...)
 	// The pluses tail (round 735) follows the models tail, which it makes
 	// written.
-	pluses := anyPlus(r.Others...)
+	pluses := withPluses && anyPlus(r.Others...)
 	models := r.HasModel || anyModel(r.Others) || pluses
 	if models && !r.HasHeading {
 		// The trap above, enforced here (round 689's review): the models tail
@@ -575,7 +594,7 @@ func (r *EnterWorldResult) Encode() []byte {
 		// (HasHeading true). Encoded from a copy; r is left as it was.
 		withHeading := *r
 		withHeading.HasHeading = true
-		return withHeading.Encode()
+		return withHeading.encode(withPluses)
 	}
 	heads := r.HasHeading || anyHeading(r.Others) || models
 	if r.Restored || len(r.Seated) > 0 || heads {
@@ -1114,6 +1133,20 @@ type ChangeZoneResult struct {
 }
 
 func (r *ChangeZoneResult) Encode() []byte {
+	b, _ := r.EncodeFitting()
+	return b
+}
+
+// EncodeFitting is EnterWorldResult.EncodeFitting's twin.
+func (r *ChangeZoneResult) EncodeFitting() ([]byte, bool) {
+	full := r.encode(true)
+	if len(full) <= proto.MaxPayload || !anyPlus(r.Others...) {
+		return full, false
+	}
+	return r.encode(false), true
+}
+
+func (r *ChangeZoneResult) encode(withPluses bool) []byte {
 	out := encodeOKReason(r.OK, r.Reason)
 	if !r.OK {
 		return out
@@ -1129,7 +1162,7 @@ func (r *ChangeZoneResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	pluses := anyPlus(r.Others...)
+	pluses := withPluses && anyPlus(r.Others...)
 	models := anyModel(r.Others) || pluses
 	if !anyHeading(r.Others) && !models {
 		return append(out, encodeSeated(r.Seated)...)
@@ -1494,8 +1527,12 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	if enterWorldBeforeResultHook != nil {
 		enterWorldBeforeResultHook(sess)
 	}
-	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
+	data, dropped := result.EncodeFitting()
+	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: data}); err != nil {
 		return err
+	}
+	if dropped {
+		sendPlusesAsBroadcasts(sess, result.Others)
 	}
 	// And again after the result (round 708's review, HIGH 1): the area of
 	// interest ticks on its own goroutine, so a tick between hub.Enter above
@@ -1618,8 +1655,12 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		FrameRegion: frame,
 		Seated:      seatedAmong(othersNew),
 	}
-	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
+	data, dropped := result.EncodeFitting()
+	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data}); err != nil {
 		return true, err
+	}
+	if dropped {
+		sendPlusesAsBroadcasts(sess, result.Others)
 	}
 
 	leftMsg := &EntityLeft{CharacterID: old.CharacterID}

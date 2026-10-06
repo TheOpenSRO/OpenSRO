@@ -75,8 +75,10 @@ signal equipment_result(items: Array, error: String)
 ## and the worn slots' durability afterwards (EquipmentNet.RepairResult).
 signal repair_result(code: int, gold_spent: int, durabilities: Array)
 ## Round 735 (lane A's hook for the glow): another player's worn item changed
-## -- retail 0x3038 (put on, or its plus changed: `ref_id` and `plus` set) or
-## 0x3039 (taken off: `plus` -1). `uid` is retail's u32 unique id, the low 32
+## -- retail 0x3038 (put on, or its plus changed: `ref_id` and `plus` >= 0) or
+## 0x3039 (taken off from `slot`, the message's own slot byte as retail's
+## FUN_008a9560 uses it: `plus` -1). The server sends them to the mover too, as
+## retail does; World3D skips its own uid (its equipment result redrew it). `uid` is retail's u32 unique id, the low 32
 ## bits of the character id (WorldNet.EntitySnapshot.character_id & 0xffffffff);
 ## `slot` the equip slot (EquipmentNet.SLOT_*); `plus` the effective plus
 ## (OptLevel + advanced elixir). World3D redresses the body from it
@@ -1064,7 +1066,10 @@ func _dispatch(p: Packet) -> void:
 			if eb != null:
 				var on := p.opcode == EquipmentNet.OP_EQUIP_BROADCAST
 				print("NetClient: %s uid %d slot %d item %d plus %d" % ["0x3038" if on else "0x3039", eb.uid, eb.slot, eb.ref_item_id, eb.plus])
-				other_player_equipment_changed.emit(eb.uid, eb.slot, eb.ref_item_id, eb.plus if on else -1)
+				# A 0x3038 with no plus byte (a non-equipment item, which retail's
+				# layout allows) is a +0 put on, never a removal (round 735's
+				# review, finding 7): only a 0x3039 is -1.
+				other_player_equipment_changed.emit(eb.uid, eb.slot, eb.ref_item_id, maxi(eb.plus, 0) if on else -1)
 		ShopNet.OP_BUY_RESULT:
 			var r := ShopNet.decode_buy_result(p.data)
 			shop_buy_result.emit(r.ok, r.reason if r.error == "" else r.error)

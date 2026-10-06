@@ -20,35 +20,48 @@ import (
 //	0x3039  u32 uid, u8 slot, u32 RefItemID
 //
 // Server: the inventory-move handler builds them at 0x4e9de2 (0x3038) and
-// 0x4e9d03 / 0x4e9f98 (0x3039). Each writes the mover's u32 unique id
+// 0x4e9f98 / 0x4e9d03 (0x3039). Each writes the mover's u32 unique id
 // ([ebp+8]) and the slot byte of the move (the destination, [edi+4], for an
 // equip; the source, [edi+3], for an unequip). 0x3038 then serializes the
 // item with its vslot 294 at mode 2, which reaches CInstanceItem::vslot_010
 // (0x42e230): u32 RefItemID (FUN_004958c0 of +0x28), then -- for an
 // equipment item, !(w&2) && (b&0x1c)==0xc && (b&0x60)==0x20 -- one byte,
 // OptLevel (+0x2c) plus the advanced elixir's sum (CInstanceItem::FUN_00846200).
-// 0x3039 writes the RefItemID alone (the item's vslot 1 at +4). Both go out
-// through GObjPC::FUN_00484d90, the character's own broadcast, and only for
-// an item GObjPC::FUN_00490390 passes: an equip slot of 8 or less (the
-// armour, weapon, shield and job suit; never an accessory), or one of two
-// virtual tests at +0x454/+0x470 that were not read.
+// 0x3039 writes the RefItemID alone (the item's vslot 1 at +4). They go out
+// through GObjPC::FUN_00484d90, a region-scoped send from the mover's own
+// object.
+//
+// Which items (READ, round 735's review): the equip (0x4e9de2) and the
+// type-0 unequip (0x4e9f98) are gated by FUN_00490390 on the ITEM: vslot
+// +0x84 CGObj::IsEquip (0x483210: TypeID1 3, TypeID2 1), then either
+// +0x454 (0x483b70: TypeID3 13, the avatars) or +0x470 (0x483cc0: TypeID3
+// 14, the devil's spirit) or ResolveEquipSlotForItem 0..8 (armour, weapon,
+// shield, job suit; never an accessory). The move-type-7 path's 0x3039
+// (0x4e9d03: [edi] 7, source [edi+3] below 0xd) is NOT gated and covers every
+// equip slot 0..12; OpenSRO has no such move. OpenSRO has no avatar slots, so
+// its gate is slots 0..8.
 //
 // Client: FUN_008a9260 (0x3038) reads u32 uid, u8, u32 RefItemID and, for an
-// equipment item by the same type-word test, u8 plus; FUN_008a9560 (0x3039)
-// reads u32 uid, u8, u32 RefItemID. Both find the character by uid and redress
-// it through the visual slot the item's type resolves to
-// (GlobalDataManager::ResolveVisualSlotForItem) -- the 0x3038 handler reads
-// its slot byte into a variable the RefItemID then overwrites.
+// equipment item by the same type-word test, u8 plus; it reads its slot byte
+// into a variable the RefItemID then overwrites and redresses through the
+// visual slot the item's type resolves to (ResolveVisualSlotForItem).
+// FUN_008a9560 (0x3039) reads u32 uid, u8 slot, u32 RefItemID and, for a
+// non-avatar item, clears THE MESSAGE'S SLOT (FUN_009daf70(slot, 0, 0, 0) ->
+// InstallEquipVisual). Both then, for the player's own uid (DAT_00eef5e8,
+// written only by CICPlayer::vslot_018), update the character window and its
+// preview -- so retail tells the mover too.
 //
 // OpenSRO's side:
 //   - uid is the low 32 bits of the character id, the u32 every retail
 //     message OpenSRO sends names a player by (round 710).
 //   - slot is OpenSRO's equipment.Slot, which is retail's equip slot index
 //     (equipment.go's WearableSlots doc).
-//   - The receivers are the other characters in the mover's zone, OpenSRO's
-//     observer set (world.Hub.EntitiesInZone). The mover is left out: its own
-//     client redresses from its equipment result. Whether retail's
-//     FUN_00484d90 also reaches the mover was not read (OURS).
+//   - The receivers are every character in the mover's zone, the mover
+//     included, as retail's own-uid branch shows (round 735's review,
+//     finding 5). The zone is OpenSRO's visibility scope (players spawn
+//     zone-wide), where retail's send is by region: a DEPARTURE in scope only.
+//     The mover's client has already redrawn its window and preview from its
+//     equipment result (0x0041) and skips its own uid.
 //   - A plus change on a worn item (the GM's /item worn, OURS -- retail
 //     changes no worn item's plus) is sent as a 0x3038 of the same item.
 const (
@@ -57,7 +70,7 @@ const (
 )
 
 // BroadcastSlotMax is the highest equip slot that is broadcast
-// (GObjPC::FUN_00490390's `8 < slot` refusal, READ).
+// (FUN_00490390's `8 < slot` refusal, READ; its avatar arms do not apply).
 const BroadcastSlotMax = equipment.SlotJobSuit
 
 // EquipBroadcast is a 0x3038 or 0x3039 payload.
@@ -111,8 +124,9 @@ func isEquipmentItem(ctx context.Context, items ItemLookup, itemID int64) bool {
 	return it.TypeID1 == 3 && it.TypeID2 == 1
 }
 
-// equipObservers is who hears characterID's equipment change: everyone else
-// in its zone. Empty when there is no hub or the character is not in it.
+// equipObservers is who hears characterID's equipment change: everyone in
+// its zone, the mover included (retail's own-uid branch). Empty when there is
+// no hub or the character is not in it.
 func equipObservers(hub *world.Hub, characterID int64) []world.Entity {
 	if hub == nil {
 		return nil
@@ -123,11 +137,27 @@ func equipObservers(hub *world.Hub, characterID int64) []world.Entity {
 	}
 	var out []world.Entity
 	for _, other := range hub.EntitiesInZone(e.Zone) {
-		if other.CharacterID != characterID && other.Session != nil {
+		if other.Session != nil {
 			out = append(out, other)
 		}
 	}
 	return out
+}
+
+// sendPlusesAsBroadcasts tells one arriving client the pluses a result had
+// to leave out (EncodeFitting): a retail 0x3038 for every worn item with a
+// plus, slots 0..8, of every other in the list. Only reached when the list
+// with its pluses tail would not fit one frame.
+func sendPlusesAsBroadcasts(sess interface{ Send(*proto.Packet) error }, others []EntitySnapshot) {
+	for _, o := range others {
+		for _, it := range o.Equipped {
+			if it.Plus == 0 || equipment.Slot(it.Slot) > BroadcastSlotMax {
+				continue
+			}
+			msg := &EquipBroadcast{UID: uint32(o.CharacterID), Slot: uint8(it.Slot), RefItemID: uint32(it.ItemID), Plus: it.Plus, HasPlus: true}
+			_ = sess.Send(&proto.Packet{Opcode: OpEquipBroadcast, Data: msg.Encode()})
+		}
+	}
 }
 
 // broadcastWorn sends a 0x3038 of what characterID wears in slot: after an

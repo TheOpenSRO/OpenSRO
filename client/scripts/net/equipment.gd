@@ -148,8 +148,12 @@ static func decode_result(data: PackedByteArray) -> Result:
 ##   0x3038  u32 uid, u8 slot, u32 RefItemID, u8 plus (equipment only)
 ##   0x3039  u32 uid, u8 slot, u32 RefItemID
 ## The plus is the effective one, OptLevel + the advanced elixir
-## (CInstanceItem::vslot_010 mode 2, 0x42e230). OpenSRO also sends a 0x3038
-## when a GM changes a worn item's plus (OURS).
+## (CInstanceItem::vslot_010 mode 2, 0x42e230). The 0x3038 handler ignores
+## its slot byte (overwritten by the RefItemID; the slot comes from the item's
+## type); the 0x3039 handler clears the message's slot (FUN_009daf70(slot,
+## 0, 0, 0)), so OpenSRO's client keys both by the slot byte, which for 0x3038
+## is the same equip slot. OpenSRO also sends a 0x3038 when a GM changes a
+## worn item's plus (OURS).
 const OP_EQUIP_BROADCAST := 0x3038   # server -> client
 const OP_UNEQUIP_BROADCAST := 0x3039 # server -> client
 

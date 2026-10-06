@@ -131,16 +131,16 @@ func TestResultsPlusesTail(t *testing.T) {
 	}
 }
 
-// equipObservers: the others in the mover's zone, never the mover, never
-// another zone.
+// equipObservers: everyone in the mover's zone, the mover included (retail's
+// own-uid branch, round 735's review), never another zone.
 func TestEquipObserversAreTheZone(t *testing.T) {
 	hub := world.NewHub()
 	hub.Enter(gateway.NewTestSession(1), 100, "a", 1, "jangan", world.Position{})
 	hub.Enter(gateway.NewTestSession(2), 200, "b", 1, "jangan", world.Position{X: 500})
 	hub.Enter(gateway.NewTestSession(3), 300, "c", 1, "donwhang", world.Position{})
 	got := equipObservers(hub, 100)
-	if len(got) != 1 || got[0].CharacterID != 200 {
-		t.Fatalf("observers %+v, want only 200", got)
+	if len(got) != 2 || got[0].CharacterID+got[1].CharacterID != 300 {
+		t.Fatalf("observers %+v, want 100 and 200", got)
 	}
 	if equipObservers(hub, 999) != nil || equipObservers(nil, 100) != nil {
 		t.Fatal("observers of a character not in the hub")
@@ -149,7 +149,7 @@ func TestEquipObserversAreTheZone(t *testing.T) {
 
 // An equip, a plus change by the GM and an unequip, end to end: Bram, beside
 // Aria, hears 0x3038 with the +7, 0x3038 with the +13, then 0x3039; Aria
-// hears only her own equipment results.
+// hears each after her own result, as retail tells the mover too.
 func TestEquipBroadcastReachesObservers(t *testing.T) {
 	ctx := context.Background()
 	inv := inventory.NewMemStore(nil)
@@ -168,7 +168,7 @@ func TestEquipBroadcastReachesObservers(t *testing.T) {
 	expect := func(p *proto.Packet, op uint16, plus int) {
 		t.Helper()
 		if p.Opcode != op {
-			t.Fatalf("Bram got %#04x, want %#04x", p.Opcode, op)
+			t.Fatalf("got %#04x, want %#04x", p.Opcode, op)
 		}
 		b, err := DecodeEquipBroadcast(p.Data)
 		if err != nil || b.UID != uint32(aria) || b.Slot != uint8(equipment.SlotWeapon) || b.RefItemID != 3727 {
@@ -183,21 +183,24 @@ func TestEquipBroadcastReachesObservers(t *testing.T) {
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEquipmentResult {
 		t.Fatalf("Aria got %#04x, want her equipment result", p.Opcode)
 	}
+	expect(f.read(t, f.connA, f.rA), OpEquipBroadcast, 7)
 	expect(f.read(t, f.connB, f.rB), OpEquipBroadcast, 7)
 
 	f.send(t, f.connA, OpGMCommand, (&GMCommandRequest{Name: "Aria", Line: "/item worn 6 plus 13"}).Encode())
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpGMCommandResult {
 		t.Fatalf("Aria got %#04x, want the GM result", p.Opcode)
 	}
+	expect(f.read(t, f.connA, f.rA), OpEquipBroadcast, 13)
 	expect(f.read(t, f.connB, f.rB), OpEquipBroadcast, 13)
 
 	f.send(t, f.connA, OpUnequip, (&UnequipRequest{CharacterName: "Aria", Slot: equipment.SlotWeapon}).Encode())
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEquipmentResult {
 		t.Fatalf("Aria got %#04x, want her equipment result", p.Opcode)
 	}
+	expect(f.read(t, f.connA, f.rA), OpUnequipBroadcast, -1)
 	expect(f.read(t, f.connB, f.rB), OpUnequipBroadcast, -1)
-	if !f.nothing(t, f.connA, f.rA) {
-		t.Fatal("Aria heard her own change")
+	if !f.nothing(t, f.connA, f.rA) || !f.nothing(t, f.connB, f.rB) {
+		t.Fatal("a broadcast too many")
 	}
 }
 
@@ -219,3 +222,45 @@ func TestEquippedItemsCarryEffectivePlus(t *testing.T) {
 		t.Fatalf("equippedItems %+v, want the weapon at +9", got)
 	}
 }
+
+// Round 735's review, finding 8: a list whose pluses tail would push it past
+// one frame is sent without the tail (EncodeFitting reports it), and its
+// pluses go out as retail 0x3038s instead; a list that fits keeps the tail.
+func TestResultsDropPlusesTailPastOneFrame(t *testing.T) {
+	big := make([]EntitySnapshot, 0, 250)
+	for i := 0; i < 250; i++ {
+		s := plusSnapshot()
+		s.CharacterID = int64(1000 + i)
+		for k := 0; k < 6; k++ {
+			s.Equipped = append(s.Equipped, EquippedSnapshot{Slot: k + 2, ItemID: 9000, Plus: 3})
+		}
+		big = append(big, s)
+	}
+	r := &EnterWorldResult{OK: true, Zone: "jangan", Others: big}
+	data, dropped := r.EncodeFitting()
+	if !dropped || len(data) > proto.MaxPayload {
+		t.Fatalf("250 full kits: dropped %v, %d bytes", dropped, len(data))
+	}
+	back, err := DecodeEnterWorldResult(data)
+	if err != nil || len(back.Others) != 250 || back.Others[0].Equipped[1].Plus != 0 {
+		t.Fatalf("decoded without the tail: %v", err)
+	}
+	z := &ChangeZoneResult{OK: true, Zone: "jangan", Others: big}
+	if zd, zdrop := z.EncodeFitting(); !zdrop || len(zd) > proto.MaxPayload {
+		t.Fatalf("change zone: dropped %v, %d bytes", zdrop, len(zd))
+	}
+	small := &EnterWorldResult{OK: true, Zone: "jangan", Others: big[:10]}
+	if _, d := small.EncodeFitting(); d {
+		t.Fatal("ten others lost their tail")
+	}
+	var sent []*proto.Packet
+	sendPlusesAsBroadcasts(sendFunc(func(p *proto.Packet) error { sent = append(sent, p); return nil }), big[:1])
+	// plusSnapshot's +7 (slot 6) and +13 (slot 7), and six +3 in slots 2..7.
+	if len(sent) != 8 || sent[0].Opcode != OpEquipBroadcast {
+		t.Fatalf("sent %d broadcasts", len(sent))
+	}
+}
+
+type sendFunc func(*proto.Packet) error
+
+func (f sendFunc) Send(p *proto.Packet) error { return f(p) }

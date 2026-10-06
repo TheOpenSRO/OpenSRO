@@ -262,7 +262,7 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 | Character select | Retail's list carries a plus per item (`charselect.md`: u32 RefItemID, u8 plus). The preview is a `CObjCharacter`, so it glows. | INFERRED |
 | Portrait / paper doll | Not checked | OPEN 10 |
 | Sheathed or drawn | SRO has no sheathing. The weapon is always in the hand. | INFERRED |
-| Advanced elixir | Round 732 READ that the client adds the elixir's value into the item's `+0x8c` plus. **Round 735 READ: the server's `0x3038` and `0x3015` byte includes it.** `CInstanceItem::vslot_010` (`s:0x42e230`) mode 2 writes, for equipment, `(u8)(FUN_00846200's elixir sum + OptLevel at +0x2c)` (`s:0x846200` adds each attached elixir's `+0x2c`). Whether your own character's `CObjCharacter+0x3c+slot*0xc` byte is that sum is still not read. | READ (round 735) |
+| Advanced elixir | Round 732 READ that the client adds the elixir's value into the item's `+0x8c` plus. **Round 735 READ: the server's `0x3038` and `0x3015` byte includes it.** `CInstanceItem::vslot_010` (`s:0x42e230`) mode 2 writes, for equipment, `(u8)(FUN_00846200's elixir sum + OptLevel at +0x2c)` (`s:0x846200` adds each attached elixir's `+0x2c`). Your own character's `CObjCharacter+0x3c+slot*0xc` byte is that sum too (round 735's review, §8 item 2). | READ (round 735) |
 | Avatar / switch models | `_SWITCHnn` items are separate RefIDs with their own rows. They are not chosen by plus. | MEASURED |
 
 ## 5. The data path
@@ -275,14 +275,18 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
   vslot 294 at mode 2 -> `CInstanceItem::vslot_010` `0x42e230`: `FUN_004958c0(+0x28)` the RefItemID,
   then the plus byte). The client reads its slot byte into a variable the RefItemID overwrites, and
   redresses by `ResolveVisualSlotForItem`. The server sends it only for an item
-  `GObjPC::FUN_00490390` passes (equip slot 8 or less, or two vslot tests at `+0x454`/`+0x470` not
-  read), through `GObjPC::FUN_00484d90`. The OptLevel is present only for equipment, that is when the type word has
+  `FUN_00490390` passes (READ, round 735's review: the item is equipment, `CGObj::IsEquip`, and
+  its equip slot is 8 or less, or it is an avatar, TypeID3 13, or a devil's spirit, TypeID3 14),
+  through `FUN_00484d90`, a region-scoped send that reaches the mover too (both client handlers
+  have an own-uid branch updating the character window and preview). The OptLevel is present only for equipment, that is when the type word has
   `!(w & 2) && (b & 0x1c) == 0xc && (b & 0x60) == 0x20`. The handler calls the equip setter
   `FUN_009daf70(…, refId, plus, 0)` and plays `ITEM_SETITEM_ACTIVE` / `_DEACTIVE` with
   `snd_setitem_active`.
 - **Unequip** (`0x3039`) goes to `FUN_008a9560`: u32 unique id, u8 slot, u32 RefItemID, no plus
-  (round 735, READ; the server writes it at `0x4e9d03` and `0x4e9f98`: uid, the move's source slot
-  `[edi+3]`, the item's RefItemID from its vslot 1).
+  (round 735, READ; the server writes it at `0x4e9f98`, gated by `FUN_00490390`, and at
+  `0x4e9d03`, the move-type-7 path, not gated, slots 0..12: uid, the move's source slot `[edi+3]`,
+  the item's RefItemID from its vslot 1). Unlike `0x3038`'s handler it uses its slot byte:
+  `FUN_009daf70(slot, 0, 0, 0)` clears that slot.
 - **Spawning another player** (`0x3015`, round 735 READ, closes OPEN 3): the PC body reader
   `GlobalDataManager::FUN_009de2f0` (CICUser vslot 25, table `0xde2e7c`) reads u8 inventory size,
   u8 item count, then per item u32 RefItemID and, for equipment by the same type-word test, **u8
@@ -330,8 +334,10 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
    of another client version, or of a private-server mod. The user decides. Until then we draw only
    what the tables say.
 2. **The effective plus.** ~~Does the glow use plus + advanced elixir?~~ Round 735 READ: the
-   server's `0x3038` and `0x3015` byte is OptLevel + the advanced elixir (§5). Still open: the code
-   that fills `CObjCharacter+0x3c+slot*0xc` for your own character.
+   server's `0x3038` and `0x3015` byte is OptLevel + the advanced elixir (§5). Round 735's review
+   READ the client half: your own character's `CObjCharacter+0x3c+slot*0xc` byte is also the
+   effective plus (`CICPlayer::vslot_025` passes item `+0x8c`, which `SOItem::FUN_008bb070` raises
+   by each advanced-elixir binding). Lane A: use OptLevel + AdvElixir for the local player too.
 3. ~~**`0x3015` per-item OptLevel** for spawned players~~ Closed in round 735 (§5): u32 RefItemID +
    u8 effective plus per equipment item, `0x9de2f0`.
 4. **The two compound parts** that `FUN_00a60a90` passes. They might be the weapon and its trail

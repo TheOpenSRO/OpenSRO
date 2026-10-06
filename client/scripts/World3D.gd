@@ -5981,6 +5981,9 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	_abnormal_states.clear()
 	_fx_owner_buffs.clear()
 	_spawn_result_others(list, seated)
+	# The equipment broadcasts that arrived while the list was not drawn
+	# (round 735's review, finding 1).
+	_flush_pending_equip_changes()
 	_fx_resync_all("the zone change's arrival")
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
@@ -15561,12 +15564,29 @@ func _other_by_uid(uid: int) -> int:
 ## worn map by equip slot, which is the message's slot byte. plus -1 is a
 ## removal.
 func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) -> void:
+	var op := 0x3038 if plus >= 0 else 0x3039
+	# Retail tells the mover too (its handlers' own-uid branch updates the
+	# character window and preview); this client did that from its equipment
+	# result (0x0041), which the server sends first.
+	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		print("World3D: 0x%x for this player -- drawn from the equipment result" % op)
+		return
 	var id := _other_by_uid(uid)
 	if id < 0:
-		print("World3D: 0x%x for uid %d, who is not drawn -- ignored" % [0x3038 if plus >= 0 else 0x3039, uid])
+		# A zone change's result is laid out after its loading screen; until
+		# then its others are nowhere this handler can reach (round 735's
+		# review, finding 1). Kept and replayed once they are drawn.
+		if _arrival_pending:
+			_pending_equip_changes.append([uid, slot, ref_id, plus])
+			print("World3D: 0x%x for uid %d kept until the arrival list is drawn" % [op, uid])
+			return
+		print("World3D: 0x%x for uid %d, who is not drawn -- ignored" % [op, uid])
 		return
-	var worn: Dictionary = (_other_equipped.get(id, {}) as Dictionary).duplicate()
-	var pluses: Dictionary = (_other_pluses.get(id, {}) as Dictionary).duplicate()
+	# A player waiting in the arrival list changes their kept snapshot, not
+	# whatever this client last drew of them (round 735's review, finding 1).
+	var kept: WorldNet.EntitySnapshot = _arrival_entries.get(id)
+	var worn: Dictionary = (kept.equipped if kept != null else _other_equipped.get(id, {}) as Dictionary).duplicate()
+	var pluses: Dictionary = (kept.pluses if kept != null else _other_pluses.get(id, {}) as Dictionary).duplicate()
 	if plus >= 0:
 		worn[slot] = ref_id
 		if plus > 0:
@@ -15576,15 +15596,26 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 	else:
 		worn.erase(slot)
 		pluses.erase(slot)
-	_other_equipped[id] = worn
-	_other_pluses[id] = pluses
 	print("World3D: player %d now wears slot %d item %d at +%d" % [id, slot, int(worn.get(slot, 0)), int(pluses.get(slot, 0))])
-	if _arrival_entries.has(id):
-		var kept: WorldNet.EntitySnapshot = _arrival_entries[id]
+	if kept != null:
 		kept.equipped = worn
 		kept.pluses = pluses
 		return
+	_other_equipped[id] = worn
+	_other_pluses[id] = pluses
 	_redress_other(id)
+
+## Broadcasts kept while a zone change's arrival list was not drawn (round 735's
+## review, finding 1): [uid, slot, ref_id, plus] in arrival order.
+var _pending_equip_changes: Array = []
+
+## Replays the kept broadcasts once the arrival list is drawn; a uid still not
+## drawn is then ignored as any other.
+func _flush_pending_equip_changes() -> void:
+	var pending := _pending_equip_changes
+	_pending_equip_changes = []
+	for c in pending:
+		_on_other_equipment_changed(int(c[0]), int(c[1]), int(c[2]), int(c[3]))
 
 ## Rebuilds another player's dressed body inside their node from
 ## _other_equipped (round 735), as _apply_player_equipment_visual redresses the
