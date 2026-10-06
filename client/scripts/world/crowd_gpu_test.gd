@@ -166,6 +166,12 @@ func _make_body(scales: Dictionary = {}) -> Skeleton3D:
 	item.rotation = Vector3(0.2, 0.0, 0.4)
 	item.material_override = _mat
 	att.add_child(item)
+	# A weapon's own skeleton on the attachment (EquipFx's host), no mesh.
+	var isk := Skeleton3D.new()
+	isk.name = "ItemSkeleton"
+	isk.add_bone("i0")
+	isk.transform = Transform3D(Basis(Vector3.UP, 0.4), Vector3(0.3, 0.2, 0.1))
+	att.add_child(isk)
 	if not scales.is_empty():
 		CharacterAppearance.apply_volume(s, scales)
 	s.set_meta(MonsterCrowd.META_LAYOUT, "crowd_gpu_test|%d" % s.get_bone_count())
@@ -250,15 +256,26 @@ func _test_parity() -> void:
 			_check(crowd.can_draw(skel, entry), "%s: the clip baked for the layout serves this body too" % c[2])
 		crowd.bake_all()
 		var case_worst := 0.0
+		var frame_worst := 0.0
 		var compared := 0
 		var rest := _near_vertices(skel)
 		for t in [0.0, 0.29, 0.733, 1.51]:
 			crowd.remove(skel)
 			MonsterCrowd.pose_at(skel, clip, t + float(entry[3]), true)
 			var near := _near_vertices(skel)
+			var isk := skel.find_child("ItemSkeleton", true, false) as Skeleton3D
+			var near_item := isk.global_transform
 			_check(crowd.add(holder, skel, entry, t), "%s: drawn far at t=%.2f" % [c[2], t])
 			crowd.flush(t)
 			var far := crowd.cpu_skin(skel, t)
+			var far_item = crowd.item_frame(isk)
+			if far_item == null:
+				frame_worst = INF
+			else:
+				var fi: Transform3D = far_item
+				frame_worst = maxf(frame_worst, fi.origin.distance_to(near_item.origin))
+				for ax in range(3):
+					frame_worst = maxf(frame_worst, (fi.basis[ax] - near_item.basis[ax]).length())
 			if far.size() != near.size():
 				_check(false, "%s: %d parts far, %d near" % [c[2], far.size(), near.size()])
 				continue
@@ -271,8 +288,10 @@ func _test_parity() -> void:
 					moved = maxf(moved, a[k].distance_to((rest[p] as PackedVector3Array)[k]))
 					compared += 1
 		_check(compared > 0 and case_worst < 1e-4, "%s: every vertex lands where the near path's skin puts it (%d compared, worst %s)" % [c[2], compared, str(case_worst)])
+		_check(frame_worst < 1e-4, "%s: a weapon's item skeleton is where its BoneAttachment3D puts it near (item_frame, worst %s)" % [c[2], str(frame_worst)])
 		worst = maxf(worst, case_worst)
-		_check(not skel.visible and skel.has_meta(CrowdGpu.META_FAR), "%s: a far body's skeleton is hidden" % c[2])
+		_check(not (skel.get_node("Piece") as MeshInstance3D).visible and skel.visible and skel.has_meta(CrowdGpu.META_FAR),
+			"%s: a far body's meshes are hidden, its skeleton (and what else hangs from it) not" % c[2])
 		i += 1
 	_check(rigid_seen, "the rigid piece on its BoneAttachment3D is drawn far too")
 	_check(moved > 1.0, "the clip moves the vertices (%.2f), so the parity is not of a rest pose" % moved)
@@ -282,7 +301,7 @@ func _test_parity() -> void:
 	var gone: Skeleton3D = bodies[0]
 	var entry_back := crowd.remove(gone)
 	crowd.flush(2.0)
-	_check(not entry_back.is_empty() and gone.visible and not gone.has_meta(CrowdGpu.META_FAR),
+	_check(not entry_back.is_empty() and (gone.get_node("Piece") as MeshInstance3D).visible and not gone.has_meta(CrowdGpu.META_FAR),
 		"a removed body gives its entry back and is shown")
 	_check(int(crowd.stats["instances"]) == before - 2, "... and its two instances leave their groups (%d -> %d)" % [before, int(crowd.stats["instances"])])
 	var still: Skeleton3D = bodies[1]
@@ -370,6 +389,9 @@ func _make_world() -> Node:
 	root.add_child(world)
 	return world
 
+func _piece(s) -> MeshInstance3D:
+	return (s as Skeleton3D).get_node("Piece") as MeshInstance3D
+
 func _test_world(world: Node) -> void:
 	var cam := Camera3D.new()
 	world.add_child(cam)
@@ -388,7 +410,7 @@ func _test_world(world: Node) -> void:
 	var spots: Array = []
 	for k in range(11):
 		spots.append(Vector3(0.0, 0.0, -10.0 * float(k + 1)))
-	spots.append(Vector3(0.0, 0.0, 40.0))
+	spots.append(Vector3(0.0, 0.0, 35.0))
 	var skels: Array = []
 	for k in range(spots.size()):
 		var node := Node3D.new()
@@ -413,10 +435,10 @@ func _test_world(world: Node) -> void:
 	for k in range(skels.size()):
 		if crowd.has(skels[k]):
 			far_ids.append(k)
-	# Near from the start: the five nearest (10..50, NEAR_HYSTERESIS x 4 by
-	# rank) stay near; 60 and on go far, and the one behind the camera (out of
-	# view) too.
-	_check(far_ids == [5, 6, 7, 8, 9, 10, 11], "the nearest in view stay near, the rest go far (far: %s)" % str(far_ids))
+	# Near from the start: the five nearest (NEAR_HYSTERESIS x 4 by rank:
+	# 10..40 ahead and the one 35 behind the camera, out of view but among
+	# the nearest, so heard) stay near; 50 and on go far.
+	_check(far_ids == [4, 5, 6, 7, 8, 9, 10], "the nearest stay near, in view or not, the rest go far (far: %s)" % str(far_ids))
 	# A far body is not among the 4 nearest: it does not come back; once one
 	# of them goes, the 5th nearest... stays near either way, and a far body
 	# moved among the nearest comes back.
@@ -424,7 +446,7 @@ func _test_world(world: Node) -> void:
 	mover.position = Vector3(0.0, 0.0, -5.0)
 	for f in range(CrowdGpu.RESELECT_FRAMES * 2):
 		world._crowd_gpu_step()
-	_check(not crowd.has(skels[10]) and (skels[10] as Skeleton3D).visible, "a far body that comes among the nearest comes back to the full path")
+	_check(not crowd.has(skels[10]) and _piece(skels[10]).visible, "a far body that comes among the nearest comes back to the full path")
 	mover.position = spots[10]
 	for f in range(CrowdGpu.RESELECT_FRAMES * 2):
 		world._crowd_gpu_step()
@@ -435,7 +457,7 @@ func _test_world(world: Node) -> void:
 			in_tick += 1
 	_check(in_tick == skels.size() - crowd.body_count() and crowd.body_count() >= 7 and world._animated_total() == total_before,
 		"a far body's entry leaves the clip tick (%d left in it), the total stays (%d)" % [in_tick, world._animated_total()])
-	_check(not (skels[6] as Skeleton3D).visible and (skels[0] as Skeleton3D).visible, "far skeletons are hidden, near ones shown")
+	_check(not _piece(skels[6]).visible and _piece(skels[0]).visible, "far bodies' meshes are hidden, near ones shown")
 	# A one-shot brings a far body back.
 	var hit := _clip(400, 3, 0.25)
 	hit.cyclic = false
@@ -444,7 +466,7 @@ func _test_world(world: Node) -> void:
 	for e in world.get("_animated"):
 		if e[0] == skels[6] and e[1] == hit:
 			found = true
-	_check(not crowd.has(skels[6]) and (skels[6] as Skeleton3D).visible and found,
+	_check(not crowd.has(skels[6]) and _piece(skels[6]).visible and found,
 		"a one-shot on a far body brings it back to the full path and plays there")
 	# A loop it has baked keeps a far body far; one it has not brings it back.
 	world._swap_other_loop(skels[7], clip)
@@ -471,7 +493,7 @@ func _test_world(world: Node) -> void:
 	_check(crowd.body_count() == 0, "A5 switched off brings every body back")
 	var shown := true
 	for s in skels:
-		shown = shown and (s as Skeleton3D).visible
+		shown = shown and _piece(s).visible
 	_check(shown and world._animated_total() == world.get("_animated").size(), "... shown, every entry in the clip tick")
 	CrowdGpu.enabled = true
 	CrowdGpu.near_count = 64

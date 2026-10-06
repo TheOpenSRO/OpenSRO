@@ -44,14 +44,15 @@ class_name CrowdGpu
 ## QA (OPENSRO_QA_CROWD_GPU=0) and QaCrowdProbe's `anim=` steps ("5"): off,
 ## every body is drawn as before.
 static var enabled := OS.get_environment("OPENSRO_QA_CROWD_GPU") != "0"
-## How many bodies nearest the camera, in view, stay on the full path (OURS;
-## OPENSRO_QA_CROWD_NEAR=<n> for the QA A/B). EquipFx shows the particles of
-## at most EquipFx.VISIBLE_BUDGET (64) weapons nearest the camera, and Detail
-## casts the ten nearest within 300 (CharacterBlobs): both need posed
-## skeletons, so the near set is at least that many. Round 747's parity probe
-## measured the far path drawing the same pixels as the near one
-## (docs/rounds/r747.md), so the number is about cost, not looks.
-static var near_count := int(OS.get_environment("OPENSRO_QA_CROWD_NEAR")) if OS.get_environment("OPENSRO_QA_CROWD_NEAR").is_valid_int() else 64
+## How many bodies nearest the camera stay on the full path (OURS;
+## OPENSRO_QA_CROWD_NEAR=<n> for the QA A/B). The far path draws the same
+## pixels as the near one (round 747's parity probe and `ab` step), a far
+## weapon's particles are placed from its body's GPU frame (item_frame), and
+## Detail's casters, a fading, berserk or effect-carrying body stay near
+## whatever their rank (World3D._crowd_eligible). What the number still
+## decides is who is heard: a far body's clip sounds rest. 16 (MEASURED in
+## r747.md against 64: about 6 ms a frame at 1000).
+static var near_count := int(OS.get_environment("OPENSRO_QA_CROWD_NEAR")) if OS.get_environment("OPENSRO_QA_CROWD_NEAR").is_valid_int() else 16
 ## A near body goes far only once it is no longer among this factor times
 ## near_count nearest in view (OURS: by rank, not distance, so the near set
 ## stays at most 1.25 x near_count in a dense crowd), so a body on the line
@@ -67,7 +68,7 @@ const SWITCH_BUDGET := 128
 const SWITCH_BUDGET_USEC := 3000
 ## Baking: frames composed a frame at most, by time (OURS). A clip of 188
 ## frames bakes over a few frames; a body waiting on its clip stays near.
-const BAKE_BUDGET_USEC := 2000
+const BAKE_BUDGET_USEC := 4000
 ## Every far body's transform is re-read at least every this many frames (OURS),
 ## besides the moves World3D reports (moved()).
 const REFRESH_FRAMES := 15
@@ -147,6 +148,8 @@ class Body:
 	var entry: Array
 	var frames: CrowdAnim.Frames
 	var parts: Array = []
+	## The MeshInstance3Ds its instances stand for, hidden while it is far.
+	var hidden: Array = []
 	var xf := Transform3D()
 	## The skeleton's own transform under its holder, kept while it is
 	## top_level (add()).
@@ -173,6 +176,8 @@ var _range := 0.0
 var _aabb := AABB()
 var _aabb_set := false
 var _frame := 0
+## The clip time of the last flush (item_frame).
+var _last_time := 0.0
 var _keys: Array = []
 var _keys_dirty := true
 var _ring := 0
@@ -245,10 +250,10 @@ func prebake(skel: Skeleton3D, anim: BanReader.ParsedAnimation) -> void:
 		return
 	var l := _layout_for(skel)
 	if l != null:
-		_queue_bake(l, CrowdAnim.frames_for(l.scratch, anim))
+		_queue_bake(l, CrowdAnim.frames_for(l.scratch, anim), false)
 
 ## Draws `skel`'s body (under `node`) as instances from now on, playing
-## `entry` (World3D._animated's, a loop). Hides the skeleton. False, with
+## `entry` (World3D._animated's, a loop). Hides its meshes. False, with
 ## nothing changed, when it cannot: its clip is not baked (it is queued), a
 ## part is not one this path draws (a material that is not a ShaderMaterial,
 ## a piece hung some other way), or no layout.
@@ -279,7 +284,7 @@ func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float) -> bool
 	_write_clip(b, idle_time)
 	for p in parts:
 		_add_part(b, p)
-	skel.visible = false
+	_hide(b, parts)
 	# Out of its holder's transform propagation while far: a walking body
 	# would otherwise send every hidden piece's transform to the server each
 	# frame (Node3D._propagate_transform_changed skips a top_level child;
@@ -313,10 +318,10 @@ func remove(skel: Skeleton3D, push: bool = true) -> Array:
 	_moved.erase(b)
 	_free_slots.append(b.slot)
 	# A freed slot draws nothing: no instance names it.
+	_unhide(b)
 	if is_instance_valid(skel):
 		skel.top_level = false
 		skel.transform = b.local
-		skel.visible = true
 		skel.remove_meta(META_FAR)
 	stats["removed"] += 1
 	return b.entry
@@ -353,6 +358,7 @@ func refresh(node: Node3D) -> bool:
 	var b: Body = _by_node.get(node)
 	if b == null:
 		return true
+	_unhide(b)
 	var parts = _parts_of(b.skel, b.layout)
 	if parts == null:
 		return false
@@ -361,7 +367,53 @@ func refresh(node: Node3D) -> bool:
 	b.parts.clear()
 	for p in parts:
 		_add_part(b, p)
+	_hide(b, parts)
 	return true
+
+## The parts' own meshes hidden while their instances draw them: each mesh,
+## not the skeleton, so what else hangs from it (EquipFx's particle holders
+## on a weapon) still draws, placed from item_frame.
+func _hide(b: Body, parts: Array) -> void:
+	for p in parts:
+		var mi: MeshInstance3D = p["mi"]
+		mi.visible = false
+		b.hidden.append(mi)
+
+func _unhide(b: Body) -> void:
+	for mi in b.hidden:
+		if is_instance_valid(mi):
+			(mi as MeshInstance3D).visible = true
+	b.hidden.clear()
+
+## Where the item skeleton `item_skel` (a weapon's, hung from a far body's
+## bone through a BoneAttachment3D) is now: the body's transform times its
+## bone's pose this frame (the baked skin matrix times the bone's rest, the
+## frame the vertex shader draws) times the item skeleton's own transform
+## under the attachment. Null when its body is not far. EquipFx places a far
+## weapon's particles by it (EquipFx.far_frame).
+func item_frame(item_skel: Node3D):
+	var att := item_skel.get_parent() as BoneAttachment3D if item_skel != null else null
+	if att == null:
+		return null
+	var b: Body = _bodies.get(att.get_parent())
+	if b == null:
+		return null
+	var bone := att.get_bone_idx()
+	if bone < 0 or bone >= b.layout.bones:
+		return null
+	var clip: Vector3i = b.layout.clips.get(b.frames, Vector3i(0, 1, 1))
+	var row := clip.x + frame_of(b.skel, _last_time)
+	var k := _row_xf(b.layout.data, (row * b.layout.width + bone * 3) * 4)
+	return b.xf * k * b.layout.rests[bone] * item_skel.transform
+
+## A far weapon's place for EquipFx's choice of the nearest: its body's (OURS:
+## the choice is by distance; the frame is item_frame's). Null when not far.
+func item_origin(item_skel: Node3D):
+	var att := item_skel.get_parent() as BoneAttachment3D if item_skel != null else null
+	if att == null:
+		return null
+	var b: Body = _bodies.get(att.get_parent())
+	return b.xf.origin if b != null else null
 
 ## Character Sight Range (0: none) for every far part.
 func set_range(r: float) -> void:
@@ -388,6 +440,7 @@ func release_all() -> Array:
 ## bodies' transforms, the baking, and every upload due.
 func flush(idle_time: float) -> void:
 	_frame += 1
+	_last_time = idle_time
 	if idle_time - _epoch > EPOCH_SECONDS or idle_time < _epoch:
 		_rebase(idle_time)
 	RenderingServer.global_shader_parameter_set(&"srr_crowd_clock", float((idle_time - _epoch) * 1000.0))
@@ -651,7 +704,8 @@ func _layout_for(skel: Skeleton3D) -> Layout:
 	_layouts[key] = l
 	return l
 
-func _queue_bake(l: Layout, fr: CrowdAnim.Frames) -> void:
+## `first`: a clip a body waits on goes before the ones baked ahead (prebake).
+func _queue_bake(l: Layout, fr: CrowdAnim.Frames, first: bool = true) -> void:
 	if l.queued.has(fr) or l.clips.has(fr) or l.uploading.has(fr):
 		return
 	if l.rows + fr.count > MAX_ROWS:
@@ -666,7 +720,12 @@ func _queue_bake(l: Layout, fr: CrowdAnim.Frames) -> void:
 		l.data.resize(l.cap * l.width * 4)
 		l.dirty = true
 	l.queued[fr] = true
-	l.pending.append([fr, 0, row0])
+	var job := [fr, 0, row0]
+	# Never ahead of the clip being baked now (its job is pending[0]).
+	if first and l.pending.size() > 1:
+		l.pending.insert(1, job)
+	else:
+		l.pending.append(job)
 
 ## One baked frame: the layout's scratch skeleton at the clip's frame `f` --
 ## every channel the clip has from its first key (CrowdAnim.pose_cached's
@@ -780,7 +839,7 @@ func _parts_of(skel: Skeleton3D, l: Layout):
 			_refuse("material")
 			return null
 		var target: Node = mi.get_node_or_null(mi.skeleton) if mi.skin != null else null
-		var p := {"layers": mi.layers, "sort": mi.sorting_offset}
+		var p := {"layers": mi.layers, "sort": mi.sorting_offset, "mi": mi}
 		if target == skel:
 			var base := CharacterAppearance.canonical_base(mi.skin)
 			if base == null or not _identity_under(mi, skel):

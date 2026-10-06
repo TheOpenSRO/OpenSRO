@@ -1645,6 +1645,8 @@ func _ready() -> void:
 	# comes back to cast Detail's shadow.
 	CharacterLight.on_changed = _crowd_light_changed
 	CharacterBlobs.on_cast = _crowd_wake_node
+	EquipFx.far_frame = _crowd_item_frame
+	EquipFx.far_origin = _crowd_item_origin
 	# The original's bloom (round 702 review); the Bloom row shows it.
 	_retail_bloom = RetailBloom.new()
 	_retail_bloom.visible = false
@@ -6215,6 +6217,9 @@ func _exit_tree() -> void:
 		CharacterLight.on_changed = Callable()
 	if CharacterBlobs.on_cast == _crowd_wake_node:
 		CharacterBlobs.on_cast = Callable()
+	if EquipFx.far_frame == _crowd_item_frame:
+		EquipFx.far_frame = Callable()
+		EquipFx.far_origin = Callable()
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
 	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
@@ -6714,17 +6719,20 @@ func _crowd_gpu_step() -> void:
 	_crowd_switch_due()
 	crowd.flush(_idle_anim_time)
 
-## The cycle's choice: the CrowdGpu.near_count nearest in view stay near (a
-## near body goes only once it is past the NEAR_HYSTERESIS x near_count
-## nearest: by rank, so a dense crowd does not keep a ring of bodies near),
-## every other eligible body goes to the GPU; a far body now among the
-## nearest, or no longer eligible, comes back.
+## The cycle's choice: the CrowdGpu.near_count bodies nearest the camera,
+## in view or not, stay near (a near body goes only once it is past the
+## NEAR_HYSTERESIS x near_count nearest: by rank, so a dense crowd does not
+## keep a ring of bodies near), every other eligible body goes to the GPU; a
+## far body now among the nearest, or no longer eligible, comes back. In view
+## or not: the nearest are the ones heard (their clip sounds run near only).
 func _crowd_choose() -> void:
 	var dists := PackedFloat32Array()
+	var seen := 0
 	for id in _crowd_scan_got:
 		var got: Array = _crowd_scan_got[id]
+		dists.append(got[0])
 		if got[1]:
-			dists.append(got[0])
+			seen += 1
 	var come := INF
 	var stay := INF
 	var k := CrowdGpu.near_count
@@ -6734,7 +6742,7 @@ func _crowd_choose() -> void:
 		var k_out := int(ceil(float(k) * CrowdGpu.NEAR_HYSTERESIS))
 		stay = dists[mini(k_out, dists.size()) - 1] if k_out > 0 else -1.0
 	_crowd_pending.clear()
-	var counts := {"in_view": dists.size(), "come_within": snappedf(come, 0.1), "stay_within": snappedf(stay, 0.1)}
+	var counts := {"in_view": seen, "come_within": snappedf(come, 0.1), "stay_within": snappedf(stay, 0.1)}
 	for id in _crowd_scan_got:
 		var got: Array = _crowd_scan_got[id]
 		var gait: Dictionary = _other_gaits.get(id, {})
@@ -6742,7 +6750,7 @@ func _crowd_choose() -> void:
 		if skel == null or not is_instance_valid(skel):
 			continue
 		var far := _crowd_gpu.has(skel)
-		var want := bool(got[2]) and (not bool(got[1]) or float(got[0]) > (come if far else stay))
+		var want := bool(got[2]) and float(got[0]) > (come if far else stay)
 		if not want and bool(got[2]):
 			counts["nearest"] = int(counts.get("nearest", 0)) + 1
 		if want and not far:
@@ -6869,6 +6877,14 @@ func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation) -> void
 			return
 		_crowd_wake(skel)
 	MonsterMotion.swap_loop(_animated, skel, anim, frames, _idle_anim_time)
+
+## A weapon's item skeleton on a far body: its frame, and its body's place
+## (EquipFx places and chooses a far weapon's particles by them).
+func _crowd_item_frame(item_skel: Node3D):
+	return _crowd_gpu.item_frame(item_skel) if _crowd_gpu != null else null
+
+func _crowd_item_origin(item_skel: Node3D):
+	return _crowd_gpu.item_origin(item_skel) if _crowd_gpu != null else null
 
 ## CharacterLight gave a body's meshes their level's materials: a far body's
 ## instances take them, or it comes back when they cannot.
