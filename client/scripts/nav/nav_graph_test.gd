@@ -240,6 +240,35 @@ func _placed_list(placed: NavGraph.PlacedObject) -> Array[NavGraph.PlacedObject]
 	var out: Array[NavGraph.PlacedObject] = [placed]
 	return out
 
+## Round 744: a walk onto Karakoram's frozen lake stays on the ice. MEASURED
+## (90/127, the real files on the render box): lakebed 505.81 at local
+## (960, 960), `.nvm` PlaneType 3 at PlaneHeight 800. Here one block, r3 c3
+## (local 960..1280 on both axes), carries the plane over flat ground at the
+## measured lakebed height; READ rule: NvmCollision.terrain_height.
+func _walk_on_the_ice() -> void:
+	var lake := _region(505.81)
+	lake.plane_types.resize(NvmReader.PLANE_COUNT)
+	lake.plane_types.fill(0)
+	lake.plane_heights.resize(NvmReader.PLANE_COUNT)
+	lake.plane_heights.fill(800.0)
+	lake.plane_types[21] = 3
+	var none: Array[NavGraph.PlacedObject] = []
+	var g := NavGraph.build(lake, none)
+	var onto := g.step_tracked(Vector3(940.0, 505.81, 1000.0), Vector2(40.0, 0.0), NavGraph.ON_TERRAIN)
+	_check(onto.standing_on == NavGraph.ON_TERRAIN and absf(onto.position.x - 980.0) < 0.01 and absf(onto.position.y - 800.0) < 0.001,
+		"walking onto the ice block stands on the ice at 800 (y %.2f)" % onto.position.y)
+	var across := onto
+	for _i in range(10):
+		across = g.step_tracked(across.position, Vector2(20.0, 20.0), across.standing_on)
+	_check(absf(across.position.y - 800.0) < 0.001,
+		"walking across the ice never sinks to the lakebed (y %.2f at %.0f, %.0f)" % [across.position.y, across.position.x, across.position.z])
+	var off := g.step_tracked(Vector3(1270.0, 800.0, 1000.0), Vector2(20.0, 0.0), NavGraph.ON_TERRAIN)
+	_check(absf(off.position.y - 505.81) < 0.001, "past the block's edge the ground is the lakebed again (y %.2f)" % off.position.y)
+	_check(absf(g.landing_height_at(1000.0, 1000.0) - 800.0) < 0.001, "a landing on the ice lands on it")
+	_check(absf(g.height_at(1000.0, 1000.0, 800.0) - 800.0) < 0.001, "height_at under someone on the ice is the ice")
+	var heights := g.heights_at(1000.0, 1000.0)
+	_check(heights.size() == 1 and absf(heights[0] - 800.0) < 0.001, "heights_at reports the ice as the terrain surface")
+
 func _initialize() -> void:
 	# --- terrain only -------------------------------------------------
 	var flat := _region(10.0)
@@ -566,6 +595,7 @@ func _initialize() -> void:
 
 	_bridge_over_its_own_pier(region)
 	_inferred_cell_guards(region)
+	_walk_on_the_ice()
 
 	if _failures == 0:
 		print("ALL PASS")

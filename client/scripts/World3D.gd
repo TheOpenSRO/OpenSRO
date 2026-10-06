@@ -3789,12 +3789,39 @@ func _nav_graph_for_region(region_x: int, region_y: int) -> Array:
 static func _prepare_navmesh_walls(job: Dictionary) -> void:
 	var region: NvmReader.ParsedRegion = job.get("navmesh")
 	job["wall_faces"] = PackedVector3Array()
+	job["solid_plane_faces"] = PackedVector3Array()
 	if region == null:
 		return
+	job["solid_plane_faces"] = NvmCollision.solid_plane_faces(region)
 	var faces := NvmCollision.build_wall_triangles(region, NAVMESH_WALL_HEIGHT)
 	job["wall_faces"] = faces
 	job["wall_line"] = "World3D: loaded real navmesh walls for %s (%d real blocking of %d internal + %d global edges)" % [
 		job["mapm_path"], NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()]
+
+## Round 744: the region's solid planes (NvmCollision.solid_plane_faces --
+## Karakoram's frozen lake, whose `.nvm` blocks carry SOLID_PLANE_BIT) as a
+## body on the terrain layer, so what is under a click, the camera's arm and
+## every terrain ray (TerrainCollision.vertical_ray: the snap, monster and
+## ground-item placement) stop at the ice the walk stands on
+## (NvmCollision.terrain_height, READ) rather than at the lakebed under it.
+## Two-sided: the terrain group's mirrored z flips the faces' winding. That the
+## original's pick hits the plane is OURS -- its pick was not read; its height
+## query's rule is.
+func _add_solid_planes(terrain_group: Node3D, job: Dictionary) -> void:
+	var faces: PackedVector3Array = job.get("solid_plane_faces", PackedVector3Array())
+	if faces.is_empty():
+		return
+	var shape := ConcavePolygonShape3D.new()
+	shape.backface_collision = true
+	shape.set_faces(faces)
+	var body := StaticBody3D.new()
+	body.name = "SolidPlanes"
+	body.collision_layer = TERRAIN_COLLISION_LAYER
+	var body_shape := CollisionShape3D.new()
+	body_shape.shape = shape
+	body.add_child(body_shape)
+	terrain_group.add_child(body)
+	print("World3D: %d solid plane block(s) (ice) for %s" % [faces.size() / 6, job["mapm_path"]])
 
 ## Adds this region's real navmesh walls: every real blocking edge in its
 ## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
@@ -8450,6 +8477,7 @@ func _terrain_commit(job: Dictionary) -> float:
 	_add_mirror_terrain(terrain_group, single_patch)
 
 	_add_navmesh_walls(terrain_group, job)
+	_add_solid_planes(terrain_group, job)
 	sw = _load_timings.lap("terrain", "wallshape", sw)
 	_try_add_real_water(terrain_group, job["region"], mapm_path)
 	sw = _load_timings.lap("terrain", "water", sw)
@@ -14416,7 +14444,7 @@ func _qa_columns_report(spec: String) -> void:
 		# runs look like they disagreed when they did not.
 		var world_here := (pair[1] as Node3D).to_global(Vector3(x, 0.0, z))
 		print("QA COLUMN (%d, %d): terrain %.1f, surfaces %s, landing %.1f | world (%.0f, %.0f) in the frame centred on %d/%d" % [
-			int(x), int(z), NvmCollision.sample_height(graph.region, x, z),
+			int(x), int(z), NvmCollision.terrain_height(graph.region, x, z),
 			str(graph.heights_at(x, z)), graph.landing_height_at(x, z), world_here.x, world_here.z,
 			_grid_origin_region.x, _grid_origin_region.y])
 		# The real file's own answer first: which objects the navmesh cell

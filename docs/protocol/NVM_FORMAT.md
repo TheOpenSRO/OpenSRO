@@ -150,6 +150,35 @@ those means "blocking" was not established at the time of that round, and no
 collision was built on a guess about it — see the next section, which settles it
 from the client's movement code.
 
+## PlaneTypeMap: bit 1 is a floor (READ, round 744)
+
+The terrain's height query, `CRTNavMeshTerrain::vslot_001` (0x004051b0), is the only reader of
+the map besides the matching ground normal (`FUN_00403980`). The loader puts the map at
++0x1b360 and the heights at +0x1b384 (`FUN_00403450`).
+
+1. It interpolates the heightmap at (x, z). The tile is `_ftol(x / 20)`, `_ftol(z / 20)`.
+2. It takes the block: `col = tile_x >> 4`, `row = tile_z >> 4`, index `row * 6 + col`, the same
+   index as the `.m` blocks.
+3. When `PlaneTypeMap[i] & 2` is set (`test BYTE PTR [edx+esi],0x2` at 0x405319) and
+   `PlaneHeight[i]` is above the interpolated height, that plane is the answer
+   (0x405333-0x405347).
+
+So a type with bit 1 set is a surface to stand on: Karakoram's frozen lake.
+
+The values (MEASURED, `waterat -census` over 4,704 regions):
+
+| `.nvm` type | `.m` PlaneType | blocks | What it is |
+|---|---|---|---|
+| 0 | -1 (120,137), 0 (6,259) | 126,396 | no plane |
+| 1 | 0 (31,199), -1 (3,846) | 35,045 | water: wade through it, nothing to stand on |
+| 3 | 1 | 844 | the ice: drawn still surface and a floor |
+| 2 | 1 (WaveID 0, not drawn) | 111 | a floor that is not drawn |
+
+Every `.m` PlaneType-1 block is a floor, and nothing else is. All of them are at plane 800, in
+88-92/124-129 ("Karakoram Ancient Remains") and nearby. The ground under the ice is as low as
+396 (90/127). `NvmCollision.terrain_height` implements the rule, and `solid_plane_faces` turns the
+floors into terrain-layer collision.
+
 ## Edge flag semantics: solved (2026-09-05)
 
 **`(m_nFlag & 3) != 0` means the edge blocks movement.** Given the only real
