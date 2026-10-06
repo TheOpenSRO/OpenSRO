@@ -1328,7 +1328,10 @@ static func _texture(p: String, particles: Pk2Reader) -> Texture2D:
 	if not pre:
 		img = _decode_image(p, particles)
 	var tex: Texture2D = ImageTexture.create_from_image(img) if img != null else null
+	# Under the lock (round 748): a preload task reads `_textures`.
+	_mutex.lock()
 	_textures[key] = tex
+	_mutex.unlock()
 	_touch("x", key)
 	_evict()
 	return tex
@@ -1355,7 +1358,9 @@ static func _mesh(p: String, particles: Pk2Reader) -> ArrayMesh:
 	if not pre:
 		arrays = _decode_mesh(p, particles)
 	var mesh: ArrayMesh = BmsReader.mesh_from_arrays(arrays) if arrays is Array else null
+	_mutex.lock()
 	_meshes[key] = mesh
+	_mutex.unlock()
 	_touch("m", key)
 	_evict()
 	return mesh
@@ -1470,13 +1475,23 @@ static func _evict() -> void:
 	_evict_kind("x", _textures, CACHE_TEXTURES)
 	_evict_kind("m", _meshes, CACHE_MESHES)
 
+## Round 748: the whole of it under `_mutex`. It read the cache's size and
+## keys unlocked while a preload task inserted into `_templates` under the
+## lock (and read `_textures` / `_meshes`): the main thread could copy keys
+## from a map being rehashed. A 200-body arrival crashed the client with a
+## corrupted String (`Index p_index = 0 is out of bounds (size() =
+## -995350686)`, MEASURED once, in the main thread's GDScript) while
+## character templates and particle preloads ran on workers; this race is
+## the one found that fits (INFERRED: the crash was not reproduced under a
+## debugger).
 static func _evict_kind(kind: String, cache: Dictionary, bound: int) -> void:
+	_mutex.lock()
 	if cache.size() <= bound:
+		_mutex.unlock()
 		return
 	var keys := cache.keys()
 	keys.sort_custom(func(a, b): return int(_used.get(kind + "|" + String(a), 0)) < int(_used.get(kind + "|" + String(b), 0)))
 	var n := cache.size() - bound
-	_mutex.lock()
 	for i in range(n):
 		var k = keys[i]
 		if kind == "x" and cache[k] != null:

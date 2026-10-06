@@ -18,7 +18,9 @@ extends SceneTree
 ## - at most PREP_MAX_RUNNING tasks run; the rest wait their turn;
 ## - a teardown (wait_prepared(false)) adopts nothing.
 ##
-## NEGATIVES: _finish_prep without _reskin fails "one skin"; _prepare without
+## NEGATIVES: a task given Node.duplicate()'s copy (mesh nodes sharing the
+## template's meshes) fails "bones only";
+## _finish_prep without _reskin fails "one skin"; _prepare without
 ## its in-flight test fails "no second task"; _start_queued without the cap
 ## fails "at most 2 run"; dropping the fallback fails "the plain model".
 
@@ -40,6 +42,7 @@ func _initialize() -> void:
 	_test_prepare_adopt_build()
 	_test_shared_skin()
 	_test_cap_and_teardown()
+	_test_bare_skeleton()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -218,3 +221,17 @@ func _test_cap_and_teardown() -> void:
 	app2.wait_prepared(false)
 	_check(not app2.preparing() and app2._body_templates.is_empty() and app2._prep_queue.is_empty(),
 		"wait_prepared(false) adopts nothing and leaves no request")
+
+## The task's copy of an existing template's skeleton: its bones only, so
+## nothing the task frees shares a mesh (and its signal) with the main thread.
+func _test_bare_skeleton() -> void:
+	var t := Stand.template("res\\x.bsk")
+	var b := CharacterAppearance._bare_skeleton(t.skeleton)
+	var same := b.get_bone_count() == t.skeleton.get_bone_count()
+	for i in range(mini(b.get_bone_count(), t.skeleton.get_bone_count())):
+		if b.get_bone_name(i) != t.skeleton.get_bone_name(i) or b.get_bone_parent(i) != t.skeleton.get_bone_parent(i) \
+				or not b.get_bone_rest(i).is_equal_approx(t.skeleton.get_bone_rest(i)):
+			same = false
+	_check(same and b.get_child_count() == 0, "the task's skeleton copy: the same bones, rests and parents, bones only (%d children)" % b.get_child_count())
+	b.free()
+	t.skeleton.free()

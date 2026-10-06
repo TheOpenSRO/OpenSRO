@@ -929,13 +929,36 @@ func _prepare(ref_obj_id: int, items: Array, start: bool) -> bool:
 	if not start:
 		return false
 	# The task's own copy of an existing template's skeleton: the template
-	# stays the main thread's (build() duplicates it).
-	var scratch: Skeleton3D = tmpl.skeleton.duplicate() as Skeleton3D if tmpl != null else null
+	# stays the main thread's (build() duplicates it). Its bones only
+	# (_bare_skeleton): a duplicate carries the body's mesh nodes, which
+	# share the template's meshes, and freeing those on the worker
+	# disconnected them from the shared meshes' `changed` signal while the
+	# main thread connected new bodies to it -- Godot 4.2.2's Object signal
+	# map has no lock (READ: core/object/object.h has no signal mutex;
+	# MeshInstance3D::set_mesh connects unconditionally). MEASURED: a
+	# 200-body arrival crashed with a corrupted CowData ("Index p_index = 0
+	# is out of bounds (size() = -995350686)") on the main thread.
+	var scratch: Skeleton3D = _bare_skeleton(tmpl.skeleton) if tmpl != null else null
 	var canon: Skin = tmpl.canonical_skin if tmpl != null else null
 	_prep_tasks[bsr_path] = -1
 	_prep_queue.append([bsr_path, scratch, canon, missing, String(wanted[2])])
 	_start_queued()
 	return false
+
+## A skeleton with `src`'s bones -- names, parents, rests, poses at rest --
+## and nothing else: what attaching an item reads (bone indices, rests, the
+## object-space bone a shared-skin body has).
+static func _bare_skeleton(src: Skeleton3D) -> Skeleton3D:
+	var s := Skeleton3D.new()
+	s.name = src.name
+	s.transform = src.transform
+	for i in range(src.get_bone_count()):
+		s.add_bone(src.get_bone_name(i))
+	for i in range(src.get_bone_count()):
+		s.set_bone_parent(i, src.get_bone_parent(i))
+		s.set_bone_rest(i, src.get_bone_rest(i))
+		s.reset_bone_pose(i)
+	return s
 
 ## Starts queued requests while fewer than PREP_MAX_RUNNING run. Low
 ## priority: the world's own cell prepares (high) go first.
