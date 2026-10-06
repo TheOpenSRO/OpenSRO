@@ -5961,6 +5961,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# zone's walkers walk no more.
 	_move_sync.placed(player.position)
 	_other_legs.clear()
+	_other_heights_pending.clear()
 	# The monsters of the old zone are left behind, and so is any attack
 	# still walking toward one of them -- with the walk, whose target is a
 	# spot in the old zone's coordinates.
@@ -6104,6 +6105,7 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 		_other_bodies[character_id].queue_free()
 	_other_bodies.clear()
 	_other_legs.clear() # round 749
+	_other_heights_pending.clear()
 	_other_gaits.clear()
 	_other_hint_by_skel.clear()
 	_other_settled.clear()
@@ -17017,8 +17019,14 @@ func _start_other_leg(id: int, leg: Dictionary) -> void:
 	_other_settled.erase(id)
 	if _crowd_gpu != null:
 		_crowd_gpu.moved(body)
+	var fs := FrameSplit.on
+	var t0 := Time.get_ticks_usec() if fs else 0
 	_aim_remote_body(body, OtherWalk.facing(leg, body.position), 0.0)
+	var t1 := Time.get_ticks_usec() if fs else 0
 	_set_other_gait(id, true)
+	if fs:
+		FrameSplit.add("o_start_aim", t1 - t0)
+		FrameSplit.add("o_start_gait", Time.get_ticks_usec() - t1)
 
 ## A spawn that names a move (round 749: the record's mover, 0x48be00) walks
 ## on, as FUN_009ca320 aims a body that spawned moving; and its run speed is
@@ -17138,10 +17146,40 @@ func _ground_on_walk_surface(at: Vector3) -> Vector3:
 ## the eased bodies: the body steps along it at its run speed and its height is
 ## resolved from the ground as it goes (MonsterMotion.needs_height, a budget a
 ## frame -- the monsters' rule). A leg that lands on its point ends.
+##
+## The arrival's height takes the same budget (round 749's merge with 747/748,
+## MEASURED at 1000 walking by retail's 0xB021 a body a second: 12.8 ms a
+## frame of height rays when every arrival took one outside it). One that finds
+## the budget spent stands where its last resolve put it and waits on
+## _other_heights_pending, served first the next frame.
 func _step_other_legs(delta: float) -> void:
-	if _other_legs.is_empty():
+	if _other_legs.is_empty() and _other_heights_pending.is_empty():
 		return
+	var fs := FrameSplit.on
+	var t_legs := Time.get_ticks_usec() if fs else 0
+	var h_usec := 0
+	var g_usec := 0
 	var budget := MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME
+	for id in _other_heights_pending.keys():
+		if budget <= 0:
+			break
+		_other_heights_pending.erase(id)
+		var standing = _other_bodies.get(id)
+		if standing == null or not is_instance_valid(standing) or _other_legs.has(id):
+			continue
+		var th0 := Time.get_ticks_usec() if fs else 0
+		var spot: Vector3 = (standing as Node3D).position
+		var ground0 := _moving_monster_hit_height(spot)
+		budget -= 1
+		if fs:
+			h_usec += Time.get_ticks_usec() - th0
+		if is_nan(ground0) or ground0 == spot.y:
+			continue
+		spot.y = ground0
+		(standing as Node3D).position = spot
+		_other_body_targets[id] = spot
+		if _crowd_gpu != null:
+			_crowd_gpu.moved(standing)
 	for id in _other_legs.keys():
 		var body = _other_bodies.get(id)
 		if body == null or not is_instance_valid(body):
@@ -17151,12 +17189,18 @@ func _step_other_legs(delta: float) -> void:
 		var r := OtherWalk.step(leg, (body as Node3D).position, delta)
 		var at: Vector3 = r["pos"]
 		var xz := Vector2(at.x, at.z)
-		if bool(r["done"]) or (budget > 0 and MonsterMotion.needs_height(leg["h_xz"], xz)):
+		var done := bool(r["done"])
+		if done and budget <= 0:
+			_other_heights_pending[id] = true
+		elif budget > 0 and (done or MonsterMotion.needs_height(leg["h_xz"], xz)):
+			var th := Time.get_ticks_usec() if fs else 0
 			var ground := _moving_monster_hit_height(at)
 			if not is_nan(ground):
 				at.y = ground
 				leg["h_xz"] = xz
 			budget -= 1
+			if fs:
+				h_usec += Time.get_ticks_usec() - th
 		(body as Node3D).position = at
 		_other_body_targets[id] = at
 		# A far body's transform is re-read at the frame's flush (round 747).
@@ -17165,14 +17209,26 @@ func _step_other_legs(delta: float) -> void:
 		# Every frame, so a body dressed mid-leg (round 739's queue) takes its
 		# run at once; a no-op once it plays it (round 748's swap hint keeps it
 		# cheap).
+		var tg := Time.get_ticks_usec() if fs else 0
 		_set_other_gait(id, not bool(r["done"]))
+		if fs:
+			g_usec += Time.get_ticks_usec() - tg
 		if bool(r["done"]):
 			_other_legs.erase(id)
 			# On its point and standing: the eased pass skips it (round 748).
 			_other_settled[id] = true
+	if fs:
+		FrameSplit.add("o_legs", Time.get_ticks_usec() - t_legs)
+		FrameSplit.add("o_leg_h", h_usec)
+		FrameSplit.add("o_leg_gait", g_usec)
+
+## Round 749's merge: other players whose arrival found the frame's height
+## budget spent (id -> true), resolved first the next frame (_step_other_legs).
+var _other_heights_pending := {}
 
 func _on_entity_left(character_id: int) -> void:
 	_other_legs.erase(character_id)
+	_other_heights_pending.erase(character_id)
 	_other_speeds.erase(character_id)
 	if _arrival_pending:
 		_arrival_entries.erase(character_id)
