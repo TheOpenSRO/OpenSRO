@@ -40,7 +40,7 @@ func _init() -> void:
 				out.append(media.read_file(e))
 		return out
 	var chars: Array = read.call(NpcTableReader.MODEL_TABLE_PATHS)
-	var items: Array = read.call(ItemTableReader.TABLE_PATHS)
+	var items: Array = read.call(Array(ItemTableReader.table_paths(media)))
 	var obj: Array = read.call([NpcTableReader.OBJECT_NAME_TABLE_PATH])
 	NativeAssets.force_gdscript = true
 	var names := UiTextTable.parse(obj[0])

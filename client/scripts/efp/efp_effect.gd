@@ -902,6 +902,105 @@ func _camera_turned() -> bool:
 	_last_cam = b
 	return true
 
+## Round 741: an effect simulated once and drawn at many hosts, each turned
+## by its own bone (EquipFx). The effect's frame turns with the host --
+## CRTModParticle::FUN_00c81190 (READ) hands the effect the bone's whole
+## matrix times the world's (`0xc811c5`: the bone object's +0x80 -> +0x40
+## matrix, multiplied by the owner's world matrix through `0x55ebd0`), then
+## CEFEffect::vslot_007 makes that the effect's placement -- so a holder's
+## transform carries the bone's rotation. A billboard, though, must face the
+## camera whatever the holder's turn, and the instances are shared: so for
+## every ViewBillboard / ViewYBillboard plate or mesh node this switches the
+## node to a shader that builds the billboard itself (OURS, the same READ
+## basis: the camera's right, up -- or world up for YBillboard -- and look,
+## EFP_FORMAT.md "Drawing"). The instance then carries only the particle's
+## scale (its basis) and position, and its custom data the shape's rotation
+## as a quaternion; the shader takes the scale from the instance matrix's
+## column lengths (times the holder's uniform scale, which is in them too),
+## turns the plate by the shape, lays it on the camera's axes and puts it at
+## the instance's turned position. A negative particle scale would lose its
+## sign there (none in the 16 enchant files: MEASURED, round 741).
+##
+## A node with a TextureSlide keeps the old path (its custom data is the UV
+## rectangle), and with it the old fault: its billboards turn with the
+## holder. No node of the 16 enchant files has one (MEASURED, round 741).
+## Call once, after the effect is built.
+func use_shared_turn() -> void:
+	_has_billboard = false
+	for d in _draws:
+		var view := String(d[2])
+		if view != "ViewBillboard" and view != "ViewYBillboard":
+			continue
+		if _slides(int(d[0])):
+			_has_billboard = true
+			continue
+		var mmi := d[1] as MultiMeshInstance3D
+		var m := mmi.material_override as ShaderMaterial
+		if m == null or m.shader == null:
+			_has_billboard = true
+			continue
+		var key := "%d|%s" % [m.get_instance_id(), view]
+		if not _turn_materials.has(key):
+			var c := m.duplicate() as ShaderMaterial
+			c.shader = turn_shader(m.shader, view == "ViewYBillboard")
+			_turn_materials[key] = c
+		mmi.material_override = _turn_materials[key]
+		while d.size() < 4:
+			d.append(false)
+		d[3] = true
+	shared_turn = true
+
+## Whether use_shared_turn ran.
+var shared_turn := false
+static var _turn_materials: Dictionary = {} # "material id|view" -> ShaderMaterial
+
+## Whether template node `tpl_index` runs a TextureSlide (its instances then
+## carry their UV rectangle).
+func _slides(tpl_index: int) -> bool:
+	if sim == null or sim.template == null or tpl_index < 0 or tpl_index >= sim.template.tpls.size():
+		return true
+	for frame in sim.template.tpls[tpl_index].schedule:
+		if frame is Array:
+			for c in frame:
+				if c is Array and not (c as Array).is_empty() and int(c[0]) == EfpSim.K_SLIDE:
+					return true
+	return false
+
+## The billboard as the vertex shader builds it for a shared-turn node (see
+## use_shared_turn): scale, then shape, then the view basis -- the camera's
+## right, up (world up for YBillboard, READ) and look (-back, EfpEffect's
+## view_basis) -- then the instance's position in the world.
+const TURN_VERTEX := """void vertex() {
+	vec3 srr_sc = vec3(length(MODEL_MATRIX[0].xyz), length(MODEL_MATRIX[1].xyz), length(MODEL_MATRIX[2].xyz));
+	vec4 srr_q = INSTANCE_CUSTOM;
+	vec3 srr_v = VERTEX * srr_sc;
+	srr_v = srr_v + 2.0 * cross(srr_q.xyz, cross(srr_q.xyz, srr_v) + srr_q.w * srr_v);
+	vec3 srr_up = {UP};
+	vec3 srr_w = MODEL_MATRIX[3].xyz + INV_VIEW_MATRIX[0].xyz * srr_v.x + srr_up * srr_v.y - INV_VIEW_MATRIX[2].xyz * srr_v.z;
+	VERTEX = (VIEW_MATRIX * vec4(srr_w, 1.0)).xyz;
+	NORMAL = vec3(0.0, 0.0, 1.0);
+}
+"""
+
+## `sh` (a template shader) with its vertex stage replaced by TURN_VERTEX.
+static func turn_shader(sh: Shader, y_billboard: bool) -> Shader:
+	var key := "turn|%d|%s" % [sh.get_instance_id(), str(y_billboard)]
+	if _shaders.has(key):
+		return _shaders[key]
+	var code := sh.code
+	var at := code.find("void vertex() {")
+	var end := code.find("}", at)
+	if at < 0 or end < 0:
+		return sh
+	code = code.substr(0, at) + TURN_VERTEX.replace("{UP}", "vec3(0.0, 1.0, 0.0)" if y_billboard else "INV_VIEW_MATRIX[1].xyz") + code.substr(end + 1)
+	code = code.replace("render_mode unshaded,", "render_mode unshaded, skip_vertex_transform,")
+	var out := Shader.new()
+	out.code = code
+	for m in sh.get_meta_list():
+		out.set_meta(m, sh.get_meta(m))
+	_shaders[key] = out
+	return out
+
 ## Writes every drawn node's particles into its MultiMesh.
 func _update_draws() -> void:
 	draw_updates += 1
@@ -923,6 +1022,17 @@ func _update_draws() -> void:
 		if ps.size() > mm.instance_count:
 			mm.instance_count = maxi(ps.size(), mm.instance_count * 2)
 		mm.visible_instance_count = ps.size()
+		if d.size() > 3 and bool(d[3]):
+			# A shared-turn node (use_shared_turn): the shader billboards, so
+			# the instance carries only the particle's scale and position
+			# and, in its custom data, the shape's rotation.
+			for i in range(ps.size()):
+				var p: EfpSim.Particle = ps[i]
+				mm.set_instance_transform(i, Transform3D(Basis.from_scale(p.scale), p.pos))
+				mm.set_instance_color(i, EfpSim.color_of(p.color))
+				var q := p.shape.orthonormalized().get_rotation_quaternion()
+				mm.set_instance_custom_data(i, Color(q.x, q.y, q.z, q.w))
+			continue
 		for i in range(ps.size()):
 			var p: EfpSim.Particle = ps[i]
 			mm.set_instance_transform(i, particle_transform(p, String(d[2]), cam_rot))
@@ -1285,6 +1395,7 @@ static func clear_caches() -> void:
 	_meshes.clear()
 	_materials.clear()
 	_shaders.clear()
+	_turn_materials.clear()
 	_images.clear()
 	_mesh_arrays.clear()
 	_used.clear()

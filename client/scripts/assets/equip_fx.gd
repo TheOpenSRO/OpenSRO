@@ -12,17 +12,24 @@ class_name EquipFx
 ## gets a holder (an EfpEffect with no simulation, so AppearFade, BerserkLook
 ## and EquipGlow pass it by as an effect) whose MultiMeshInstance3D and Link
 ## children SHARE the master's MultiMesh and meshes. The driver puts each
-## holder at its bone's position, scaled by the row's col3/100, every frame.
-## The master's billboards face the camera in world axes, and a holder has no
-## rotation, so they face it under every weapon.
+## holder in its bone's frame -- position AND rotation (round 741, READ:
+## CRTModParticle::FUN_00c81190 hands the effect the bone's matrix times the
+## world's; holder_transform) -- scaled by the row's col3/100, every frame.
+## The billboards still face the camera because the master's plates are
+## drawn on EfpEffect's shared-turn shader (EfpEffect.use_shared_turn), which
+## builds each billboard from the camera in the vertex stage rather than
+## baking it into the shared instances. Round 734 placed holders at the bone's
+## position only: the effect's offsets then ran along fixed world axes, a
+## column of sparks beside the weapon that lined up with it at one heading.
 ##
 ## **What this changes against retail, all OURS:**
 ## - every weapon with the same effect shows the same particles, in step;
-## - the particles follow the bone's position only: retail simulates each
-##   effect in world space with the host's motion as its placement, so a
-##   running weapon leaves its free particles behind and the followers turn
-##   with it (EfpEffect's follow levels); here they move with the weapon
-##   rigidly and do not turn;
+## - the particles follow the bone rigidly. Retail simulates each effect in
+##   world space with the host's motion as its placement, so a particle that
+##   does not follow the effect stays behind. Every node of the 16 enchant
+##   files follows its parent in position, orbit and rotation (u2 = u3 = u6
+##   = 1 at every depth, MEASURED round 741), so for them rigid IS retail's
+##   motion; only an effect with a free node would differ;
 ## - a budget: only the VISIBLE_BUDGET weapons nearest the camera within
 ##   MAX_DISTANCE and inside the view (or within ALWAYS_NEAR of it, in view
 ##   or not) show their particles, re-chosen every RESELECT_FRAMES frames
@@ -154,6 +161,9 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 		m.loop = true
 		m.auto_free = false
 		m.top_level = true
+		# The holders turn with their bones (round 741); the billboards are
+		# built in the shader so they still face the camera.
+		m.use_shared_turn()
 		m.name = "master_%d" % _kinds.size()
 		for c in m.get_children():
 			if c is GeometryInstance3D:
@@ -242,11 +252,24 @@ func _process(_delta: float) -> void:
 	for h in _shown:
 		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
-		var g: Transform3D = h.skel.global_transform
-		var at: Vector3 = g * h.skel.get_bone_global_pose(h.bone).origin
-		h.holder.global_transform = Transform3D(Basis.from_scale(Vector3.ONE * (h.scale * _uniform_scale(g.basis))), at)
+		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale)
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
+
+## Where a host's holder goes (round 741): the bone's whole frame in the world
+## -- READ, CRTModParticle::FUN_00c81190 places the effect at the bone's
+## matrix times the world's (`0xc811c5`..`0xc81288`, then CEFEffect::vslot_007)
+## -- with its rotation (and a mirror, if the frame has one) kept, its own
+## scale replaced by the row's col3/100 times the host's uniform scale. Round
+## 734 placed the holder at the bone's position only, so the effect's
+## SetPosition offsets (enchant_a_01: 0, -1.2 .. -4.8 along the effect's X,
+## in its parent's frame, space 7) pointed along fixed world axes: the
+## column of sparks beside the spear, lined up with it at one heading only.
+static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float) -> Transform3D:
+	var g: Transform3D = skel.global_transform
+	var at: Transform3D = g * skel.get_bone_global_pose(bone)
+	var b := at.basis.orthonormalized()
+	return Transform3D(b * (row_scale * _uniform_scale(g.basis)), at.origin)
 
 ## The size of the host's own scale (round 734's review, F4): the body's height
 ## factor (CharacterAppearance.HEIGHT_FACTORS) reaches the particles as it did

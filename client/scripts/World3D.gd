@@ -1655,6 +1655,11 @@ func _ready() -> void:
 	# process environment (OPENSRO_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
+	# Round 741: every itemdata part the index names (63, ~1.7 s of GDScript
+	# on the render box) parses on a worker while the rest of _ready runs;
+	# _load_character_assets waits for it. Free when the select screen
+	# already parsed the same archive (ItemTableReader.load_all is shared).
+	ItemTableReader.preload_async(_open_media_pk2_if_set())
 	# OPENSRO_QA_UI_SCALE=<f> (round 695, OURS): a QA run boots this scene
 	# directly, past Boot's ClientSettings.apply_ui_scale, so it ran at 1.0
 	# whatever the settings say; this applies a scale for the run (nothing is
@@ -8692,18 +8697,23 @@ func _load_character_assets() -> void:
 	# The player's run speed is its body row's own (column 47), set when the
 	# body is known (_apply_player_speed); the default body's until then.
 	_apply_player_speed(GENDER_BODY_CODE[DEFAULT_GENDER])
-	for path in ItemTableReader.TABLE_PATHS:
-		var entry := ObjectLoader.find_file(_media_pk2, path)
-		if entry == null:
-			continue
-		for item in ItemTableReader.parse(_media_pk2.read_file(entry)).values():
-			_item_rows[item.id] = item
-			if item.drop_model_path != "":
-				_item_drop_models[item.id] = item.drop_model_path
-			if item.model_path != "":
-				_item_models[item.id] = item.model_path
-				if item.type_ids.size() >= 4:
-					_item_kinds[item.id] = item.type_ids[3]
+	# Every part the archive's itemdata.txt index names (round 741: a hand-kept
+	# list of seven left items such as 62607, in itemdata_45000.txt, without a
+	# name, an icon or a model). Parsed once per archive and shared with the
+	# HUD and the appearance builder (ItemTableReader.load_all).
+	var t_items := Time.get_ticks_usec()
+	var all_items := ItemTableReader.load_all(_media_pk2)
+	print("World3D: %d item row(s) from %d itemdata part(s) (parse %d us; this call %d us, of which %d us waiting for the preload)" % [
+		all_items.size(), ItemTableReader.last_load_parts, ItemTableReader.last_load_usec,
+		Time.get_ticks_usec() - t_items, ItemTableReader.last_wait_usec])
+	for item in all_items.values():
+		_item_rows[item.id] = item
+		if item.drop_model_path != "":
+			_item_drop_models[item.id] = item.drop_model_path
+		if item.model_path != "":
+			_item_models[item.id] = item.model_path
+			if item.type_ids.size() >= 4:
+				_item_kinds[item.id] = item.type_ids[3]
 
 	# The bodies (round 689): the catalogue's rule over the parts just read.
 	var t_cat := Time.get_ticks_usec()

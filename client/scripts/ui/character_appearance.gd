@@ -770,11 +770,10 @@ func _item_info(id: int) -> Dictionary:
 		_full_items_loaded = true
 		var t0 := Time.get_ticks_usec()
 		# Every part itemdata.txt names, in its order, so a later definition
-		# of an id wins as it does in the client and in refdata/chargen.go
-		# (ItemTableReader.TABLE_PATHS, the world's list, names 7 of them).
-		var rows := {}
-		for part in CharCatalog.index_parts(_media, CharCatalog.ITEM_INDEX):
-			ItemTableReader.parse(part, rows)
+		# of an id wins as it does in the client and in refdata/chargen.go;
+		# shared with the world and the HUD (ItemTableReader.load_all, round
+		# 741: the world's list had named 7 parts of the index's 63).
+		var rows := ItemTableReader.load_all(_media)
 		for rid in rows:
 			var item: ItemTableReader.Item = rows[rid]
 			_items[int(rid)] = {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name}

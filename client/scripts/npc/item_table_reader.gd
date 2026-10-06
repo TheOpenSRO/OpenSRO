@@ -27,8 +27,21 @@ class_name ItemTableReader
 ## `icon\item\china\man_item\clothes_01_ba.ddj`. A real archive holds 5,370
 ## of them.
 
-const TABLE_PATHS := [
-	"server_dep\\silkroad\\textdata\\itemdata.txt",
+## **Which parts** (round 741). The client loads the parts its index file
+## `textdata\itemdata.txt` names, in that order (MEASURED on the retail
+## Media.pk2: ItemData_1000.txt .. ItemData_63000.txt, 63 names; the archive
+## also holds itemdata_55500.txt, which no index line names and which is not
+## read). Until round 741 this reader had a hand-kept list of seven paths --
+## the index itself and 5000..30000 -- so every item defined in another part
+## (the Seal of Nova spear 62607 lives in itemdata_45000.txt) had no name, no
+## icon and no model: invisible in the inventory and in the hand.
+## `table_paths` reads the index (CharCatalog.index_part_names, the same
+## reading the character catalogue uses); `load_all` parses every part once
+## per archive and every consumer shares the result.
+##
+## LEGACY_TABLE_PATHS is only the fallback for an archive with no index file
+## (the old list, kept so a partial or repacked archive still yields rows).
+const LEGACY_TABLE_PATHS := [
 	"server_dep\\silkroad\\textdata\\itemdata_5000.txt",
 	"server_dep\\silkroad\\textdata\\itemdata_10000.txt",
 	"server_dep\\silkroad\\textdata\\itemdata_15000.txt",
@@ -36,6 +49,99 @@ const TABLE_PATHS := [
 	"server_dep\\silkroad\\textdata\\itemdata_25000.txt",
 	"server_dep\\silkroad\\textdata\\itemdata_30000.txt",
 ]
+
+## Every itemdata part `media` holds, as full archive paths, in the order the
+## index names them; the legacy list when the archive has no index.
+static func table_paths(media: Pk2Reader) -> PackedStringArray:
+	var out := PackedStringArray()
+	for name in CharCatalog.index_part_names(media, CharCatalog.ITEM_INDEX):
+		out.append(CharCatalog.TEXTDATA_DIR + name)
+	if out.is_empty():
+		out = PackedStringArray(LEGACY_TABLE_PATHS)
+	return out
+
+## The archive whose rows `_shared` holds, by its file path (two handles on
+## one Media.pk2 -- the world's and the UI builder's -- share one parse).
+static var _shared_key := ""
+static var _shared: Dictionary = {}
+## How long the last fresh `load_all` took, and how many parts it read
+## (the world's boot log line).
+static var last_load_usec := 0
+static var last_load_parts := 0
+
+## Every item row of `media`, {id -> Item}, parsed once per archive and
+## shared: callers must treat it as read-only. Later parts replace earlier
+## definitions of an id, as `parse` merges.
+static func load_all(media: Pk2Reader) -> Dictionary:
+	if media == null:
+		return {}
+	var key := _key_of(media)
+	last_wait_usec = 0
+	if key == _shared_key:
+		return _shared
+	if _pending_task >= 0 and _pending_key == key:
+		# Started by preload_async: wait for it rather than parse twice.
+		var tw := Time.get_ticks_usec()
+		WorkerThreadPool.wait_for_task_completion(_pending_task)
+		_pending_task = -1
+		last_wait_usec = Time.get_ticks_usec() - tw
+		_shared_key = key
+		_shared = _pending_box[0]
+		_pending_box = [{}]
+		return _shared
+	var rows := _read_all(media)
+	_shared_key = key
+	_shared = rows
+	return rows
+
+## Starts parsing every part of `media` on a worker thread (round 741: 63
+## parts cost ~1.7 s of GDScript on the render box, MEASURED), so the world
+## can overlap it with its other boot work; `load_all` then waits for it. A
+## no-op when the rows are already shared or a parse is under way.
+static func preload_async(media: Pk2Reader) -> void:
+	if media == null:
+		return
+	var key := _key_of(media)
+	if key == _shared_key or _pending_task >= 0:
+		return
+	_pending_key = key
+	var box: Array = [{}]
+	_pending_box = box
+	_pending_task = WorkerThreadPool.add_task(func() -> void:
+		box[0] = ItemTableReader._read_all(media), false, "itemdata parts")
+
+static var _pending_task := -1
+static var _pending_key := ""
+## The worker's result: [rows], filled when the task ends.
+static var _pending_box: Array = [{}]
+## How long the last `load_all` waited for a preload, microseconds.
+static var last_wait_usec := 0
+
+static func _key_of(media: Pk2Reader) -> String:
+	return media.source_path if media.source_path != "" else str(media.get_instance_id())
+
+static func _read_all(media: Pk2Reader) -> Dictionary:
+	var t0 := Time.get_ticks_usec()
+	var rows := {}
+	var parts := 0
+	for path in table_paths(media):
+		var entry := ObjectLoader.find_file(media, path)
+		if entry == null:
+			continue
+		parse(media.read_file(entry), rows)
+		parts += 1
+	last_load_usec = Time.get_ticks_usec() - t0
+	last_load_parts = parts
+	return rows
+
+## Drops the shared rows (tests).
+static func clear_shared() -> void:
+	if _pending_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_pending_task)
+		_pending_task = -1
+	_pending_box = [{}]
+	_shared_key = ""
+	_shared = {}
 
 ## Icon paths in the table are relative to this directory in Media.pk2.
 const ICON_PREFIX := "icon\\"

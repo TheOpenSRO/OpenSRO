@@ -527,7 +527,7 @@ func _compare(mask: Image, both: Image) -> Array:
 # --- items only the index names ----------------------------------------------------
 
 ## An avatar hat from ItemData_23000.txt, a part itemdata.txt names and
-## ItemTableReader.TABLE_PATHS does not (MEASURED: ITEM_MALL_AVATAR_M_CH_WEDDING_HAT,
+## the world's old seven-path item list did not (MEASURED: ITEM_MALL_AVATAR_M_CH_WEDDING_HAT,
 ## 22912, `item\Avatar\avatar_m_ch_wedding_hat.bsr`), drawn on a China man.
 func _check_index_items(app: CharacterAppearance) -> void:
 	var b := app.build(1909, 0x22, [{"id": 22912, "plus": 0}])
