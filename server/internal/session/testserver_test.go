@@ -34,7 +34,9 @@ func startTestServer(t *testing.T, handle gateway.Handler) (string, func()) {
 	return addr, cancel
 }
 
-// dialTestServer dials addr and hides OpSelfID (round 616) from the reader:
+// dialTestServer dials addr and hides OpSelfID (round 616) and
+// OpPlayerZoneNotice (round 737's review, OURS: the "entered/left the zone"
+// line ahead of a real arrival's spawn or a leave's despawn) from the reader:
 // every test written before it reads the packet after OpEnterWorldResult as
 // the answer to its next request, and the id is not what any of them tests.
 // A test of OpSelfID itself uses dialTestServerRaw.
@@ -57,7 +59,7 @@ func (c *selfIDFilterConn) Read(p []byte) (int, error) {
 			if len(c.raw) < 6+size {
 				break
 			}
-			if binary.LittleEndian.Uint16(c.raw[2:4]) != OpSelfID {
+			if op := binary.LittleEndian.Uint16(c.raw[2:4]); op != OpSelfID && op != OpPlayerZoneNotice {
 				c.out = append(c.out, c.raw[:6+size]...)
 			}
 			c.raw = c.raw[6+size:]

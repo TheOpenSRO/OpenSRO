@@ -51,7 +51,7 @@ func TestMoveUpdatesPositionAndReturnsOthers(t *testing.T) {
 	if r.Entity.Pos != (Position{X: 5, Y: 6, Z: 7}) {
 		t.Fatalf("got position %+v, want {5 6 7}", r.Entity.Pos)
 	}
-	if len(r.Watchers) != 1 || r.Watchers[0] != s2 {
+	if len(r.Watchers) != 1 || r.Watchers[0].Session != s2 || r.Watchers[0].CharacterID != 200 {
 		t.Fatalf("expected Bram's session as the move's one watcher, got %+v", r.Watchers)
 	}
 }

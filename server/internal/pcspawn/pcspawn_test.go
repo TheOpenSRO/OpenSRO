@@ -71,7 +71,9 @@ func TestPlainRecordBytes(t *testing.T) {
 
 type suit struct{ state byte }
 
-func (s suit) HasPlus(uint32) bool        { return true }
+// HasPlus is the client's TypeID 3/1 test: the fixture's arrows (3/3/4,
+// worn in equip slot 7) carry no plus byte (round 737's review, F1).
+func (s suit) HasPlus(id uint32) bool     { return id != fixtureArrows }
 func (s suit) JobState(items []Item) byte { return s.state }
 
 // A record decodes back as the client reads it, and the bytes after it are

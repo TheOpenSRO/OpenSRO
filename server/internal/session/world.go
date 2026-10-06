@@ -1290,7 +1290,9 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
 		left, remaining, ok := hub.Leave(sess)
-		forgetPlayerView(sess.ID())
+		if ok {
+			forgetPlayerView(left.CharacterID, sess)
+		}
 		if !ok {
 			return
 		}
@@ -1334,8 +1336,10 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// The players in view drop it: retail's 0x3016 (round 737,
 		// playerview.go; CMsgBlock slot 3 -> FUN_00534050), where OpenSRO
 		// sent its own OpEntityLeft.
-		departPlayer(left, remaining)
+		playerZoneNotice(zoneNoticeLeft, left, remaining)
+		departPlayer(hub, left, remaining)
 		forgetPlayerState(left.CharacterID)
+		invalidateLook(left.CharacterID)
 	}
 }
 
@@ -1477,7 +1481,12 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// NPC window forgets what it sent this session and spawns it whole again
 	// on its next tick, even when the character re-enters where it left.
 	forgetNPCWindow(sess.ID())
-	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	// Closed until the result is out (round 737's review, F3): nothing
+	// about another player reaches the client before it, and arrivePlayer
+	// spawns whoever is in view when it opens.
+	closePlayerView(owned.ID, sess)
+	invalidateLook(owned.ID) // what it wears is read afresh at each entry
+	hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 	// The heading comes back with a restored position (round 637's review
 	// follow-up; character.HeadingStore, OURS): the zone sees the character
 	// facing the way it left, and so does its own client (the result's own
@@ -1534,7 +1543,8 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// worn items with their pluses, the motion and the body mode.
 	arrived, inWorld := hub.EntityBySession(sess.ID())
 	if inWorld {
-		arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived, others)
+		playerZoneNotice(zoneNoticeEntered, arrived, othersInView(hub, arrived))
+		arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived)
 	}
 	// The client's own character id (round 616, OpSelfID), after the
 	// world-entry messages and before any buff that may name it.
@@ -1603,10 +1613,15 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // the session is not in the world: the mover is then sent the "not in the
 // world" refusal, as handleChangeZone always did, and nothing moved.
 func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame string) (moved bool, err error) {
-	old, remainingOld, othersNew, ok := hub.ChangeZone(sess, bucket, pos)
+	old, remainingOld, _, ok := hub.ChangeZone(sess, bucket, pos)
 	if !ok {
 		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
+	// The old view goes with the old zone (round 737's review, F3): the
+	// client starts over at its result, and arrivePlayer opens a new view on
+	// the players in view then. Closed meanwhile, nothing about another
+	// player is recorded in a view about to be thrown away.
+	closePlayerView(old.CharacterID, sess)
 	keepUp.Cancel(old.CharacterID)
 	// A character arrives standing (round 607, motion.go; ours: the retail
 	// object's re-creation is inferred). The client drops its own sit on the
@@ -1629,6 +1644,9 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		FrameRegion: frame,
 	}
+	if warpBeforeResultHook != nil {
+		warpBeforeResultHook(sess)
+	}
 	data, _ := result.EncodeFitting()
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data}); err != nil {
 		return true, err
@@ -1637,7 +1655,8 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// The window it left drops it (0x3016), even a window it lands in view
 	// of again: it was taken out and put back, as retail's block removal and
 	// insertion are, and its new spawn follows.
-	departPlayer(old, remainingOld)
+	playerZoneNotice(zoneNoticeLeft, old, remainingOld)
+	departPlayer(hub, old, remainingOld)
 
 	// The arrival faces the way the character last moved: the hub carries
 	// the heading through the change (world.Hub.ChangeZone). A zone change
@@ -1654,7 +1673,8 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// 0, and the players where it lands spawn it with 0 (round 737: before
 	// the spawns, so their records carry it).
 	endBerserk(hub, zerk, old.CharacterID)
-	arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived, othersNew)
+	playerZoneNotice(zoneNoticeEntered, arrived, othersInView(hub, arrived))
+	arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived)
 	sendOwnBuffs(arrived, time.Now())
 	return true, nil
 }

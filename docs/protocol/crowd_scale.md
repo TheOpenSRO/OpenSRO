@@ -435,11 +435,13 @@ Files: in World3D, `_physics_step`'s others loop, `_spawn_or_update_other`, `_on
   - **No arrival is refused at any size.** At 1000 present it is 41 to 63 frames, about 146 KB.
 - **C2.**
   - Frames are encoded once.
-  - There is one write per drain, with a 2 ms linger (OURS).
-  - At 1000 with everyone in view: CPU 5,870 -> 1,598 ms per s serial, and 5,794 -> 787 parallel.
+  - There is one write per drain, sliced at 64 KB. The 2 ms write linger the round first shipped was
+    removed after its review (`docs/rounds/r737_review.md`, F9): an isolated reply goes out at once.
+  - At 1000 with everyone in view: CPU 5,870 -> 4,324 ms per s serial, and 5,794 -> 3,044 parallel
+    (with the linger it was 1,598 and 787).
 - **C1 and C2 together, at 1000:**
-  - in a town: 1,009 ms per s;
-  - spread over 10 x 10 blocks: 163.
+  - in a town: 2,777 ms per s serial, 2,099 parallel;
+  - spread over 10 x 10 blocks: 385.
 - **C4:** the hub's write lock is held 66.6 -> 29.4 µs per move at 1000, with 293 -> 11 KB allocated.
 - **C3 is not built.** It needs World3D's walk and a stop report the server can check. The spec is in
   r737.md.

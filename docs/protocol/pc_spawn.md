@@ -59,7 +59,7 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
 | 5 | u8 | AutoInvestExp | instance `+0xa8` (`0x4e5a4f`) | slot 22 → `0xef1bb9` | 0 |
 | 6 | u8 | inventory size | storage capacity | read, dropped | 109 = `inventory.DefaultBagSlots` + 13 (OURS) |
 | 7 | u8 | item count | equip slots 0..8 holding an item | loop | the worn count |
-| 8 | u32 + u8 | each item: RefItemID, then the plus **for a TypeID 3/1 item** | `CInstanceItem::vslot_010` `0x42e230` mode 2 | `0x9de350` | slots 0..8 ascending, the effective plus (OptLevel + advanced elixir) |
+| 8 | u32 + u8 | each item: RefItemID, then the plus **for a TypeID 3/1 item** | `CInstanceItem::vslot_010` `0x42e230` mode 2 | `0x9de350` | slots 0..8 ascending; the effective plus (OptLevel + advanced elixir) for a 3/1 item only -- not for ammunition (3/3/4) in slot 7 |
 | 9 | u8, u8 | the avatar list: size, count (then items) | the avatar storage | `0x9de3e2` | 5 (INFERRED), 0 |
 | 10 | u8 | has mask | PC `+0x21a0` non-null (`GObjPC::FUN_004dd6b0`) | `0x9de4ba` | 0 |
 | 11 | u32 | unique id | `0x484fb0`: obj `+8` | `0x9c3a70` | the character id's low 32 bits (OURS, round 710's rule) |
@@ -81,7 +81,7 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
 | 27 | u8 | interact mode | chardata `+6` | `+0x471` | 0 (a 4, a stall's owner, adds the stall block) |
 | 28 | u8 | trade rank | `0x60c330` | `+0x50e` | 0 |
 | 29 | u16 + bytes | guild name | when a membership exists | `+0x7e4` | empty |
-| 30 | guild block, **only while the job state is 4** | u32 guild id, u16 + bytes nickname, u32 ×3, u8 "no membership", u8 fortress role | `0x4e5d3b..0x4e5eb3` | `0x9ddf84..0x9de054` | the no-guild form: all zero |
+| 30 | guild block, **only while the job state is 4** (`pcspawn.Record.JobState` 0, the zero value, is written as 4) | u32 guild id, u16 + bytes nickname, u32 ×3, u8 "no membership", u8 fortress role | `0x4e5d3b..0x4e5eb3` | `0x9ddf84..0x9de054` | the no-guild form: all zero |
 | 31 | u8 | timer byte | `0x4e5f54..0x4e5fa3` | `0x9dafe0` → `+0x7bc` | 0 |
 | 32 | u8 | world team byte | `0x669f00` / `0x645b70` | `+0x81d` | 0xff (READ for world 1) |
 
@@ -89,9 +89,15 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
 
 - **Rows 7 and 9:** the server writes the count byte only when the size is non-zero, but the client
   always reads it. A size of 0 is therefore never sent (`pcspawn.Append` refuses it).
-- **Row 8:** every item in equip slots 0..8 is TypeID 3/1, because only equipment can be worn there.
-  So every item OpenSRO lists carries its plus byte. The accessories (slots 9..12) are not in the
-  record.
+- **Row 8:** the plus byte follows an item only when its type word is TypeID 3/1 (READ: the server's
+  `0x42e230` writes it only then, and the client reads it only when `(w&2)==0 && (w&0x1c)==0xc &&
+  (w&0x60)==0x20`, `0x9de370..0x9de385`).
+  - **Equip slot 7 also holds ammunition**, TypeID 3/3/4 (`equipment.SlotFor`, the engine's
+    resolver), which carries no plus byte. Round 737 wrote one for every item; with arrows worn, every
+    record after it misread, and a whole block's players vanished (round 737's review, F1).
+  - OpenSRO asks its item table (`session.itemHasPlus`, through `SetSpawnItemRefs`). An item the
+    table does not know is taken as 3/1, as OpenSRO's client takes it (`UserSpawnNet.Types.has_plus`).
+  - The accessories (slots 9..12) are not in the record.
 - **Row 21's and row 30's job state** comes from the suit in equip slot 8:
   - TypeID 3/1/7/1..3 gives its TypeID4;
   - anything else gives 4.
@@ -99,11 +105,12 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
   The server (`0x4e124e`) and the client (`0x9db8b0`) agree on this rule. OpenSRO asks its item table
   (`session.SetSpawnItemRefs`), and the client asks World3D's (`NetClient.set_spawn_item_rows`).
 - **0x3015** is the record plus a u8 spawn type (`FUN_00533f70`; the client's `FUN_009c2180` stores
-  it at `+0xf4`):
+  it at `+0xf4`). **For spawn types 5 and 6 a u32 follows** (`obj+0x154`, `0x533fe1..0x534009`,
+  READ, round 737's review); those types assert IsItem, so never for a player, and OpenSRO sends 4:
   - READ: a walk's block crossing passes 4 (`0x485b36`). That the stack slot is that argument is
     INFERRED.
   - OPEN: the world entry's and the zone change's values. OpenSRO sends 4 for them too (OURS).
-  - OpenSRO's client does not read it.
+  - OpenSRO's client reads it (`UserSpawnNet.decode_single_spawn`) and does not use it.
 - **0x3016 and the type-2 group** carry u32 unique ids, the same for every class (READ:
   `FUN_00534050`, `FUN_00533b90`).
 - **The group's data frames** carry 4,052 bytes each. This is READ: the message buffer's capacity of

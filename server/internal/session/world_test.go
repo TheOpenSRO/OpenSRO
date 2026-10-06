@@ -963,14 +963,13 @@ func startDeadWorldFixtureZerk(t *testing.T, zerk *berserk.Tracker, extra func(c
 	return f
 }
 
-// read reads the next packet that is not a player spawn or despawn (round
-// 737): this fixture's tests are of revives, zone changes and walks, which
-// bring the players at the other end into view and take those behind out of
-// it; a test of those spawns reads them with expectPlayerSpawn /
-// expectPlayerDespawn, which do not step over them.
+// read reads the next packet, whatever it is: a test that expects a player
+// spawn or despawn reads it (expectPlayerSpawn / expectPlayerDespawn), so a
+// missing or a duplicate one fails it (round 737's review, F3: stepping over
+// them hid the entry race).
 func (f *deadWorldFixture) read(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
 	t.Helper()
-	return readPastSpawns(t, conn, r)
+	return readFrame737(t, conn, r)
 }
 
 // nothing reports that conn receives no packet within 300 ms.

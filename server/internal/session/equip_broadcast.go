@@ -163,6 +163,7 @@ func sendPlusesAsBroadcasts(sess interface{ Send(*proto.Packet) error }, others 
 // equip, and after a plus change on a worn item. Nothing for an empty slot
 // or one past BroadcastSlotMax.
 func broadcastWorn(ctx context.Context, hub *world.Hub, store equipment.Store, items ItemLookup, characterID int64, slot equipment.Slot) {
+	invalidateLook(characterID) // round 737: the spawn record's cached look
 	if slot > BroadcastSlotMax || store == nil {
 		return
 	}
@@ -189,6 +190,7 @@ func broadcastWorn(ctx context.Context, hub *world.Hub, store equipment.Store, i
 
 // broadcastUnworn sends a 0x3039: characterID took itemID out of slot.
 func broadcastUnworn(hub *world.Hub, characterID int64, slot equipment.Slot, itemID int64) {
+	invalidateLook(characterID) // round 737: the spawn record's cached look
 	if slot > BroadcastSlotMax {
 		return
 	}

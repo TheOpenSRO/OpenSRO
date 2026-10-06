@@ -198,14 +198,20 @@ const (
 )
 
 // MoveResult is what a position change did (round 737): the entity after
-// it; the sessions of the other players in view of its new block, the move's
-// recipients; and, when it crossed into another block, the players that came
+// it; the other players in view of its new block (session and character),
+// the move's recipients; and, when it crossed into another block, the players that came
 // into view (Gained: in the new window, not the old) and went out of it
 // (Lost: in the old window, not the new). Visibility is symmetric, so each of
 // Gained now sees the mover and each of Lost no longer does.
+// Watcher is one of a move's recipients: its session and its character.
+type Watcher struct {
+	Session     *gateway.Session
+	CharacterID int64
+}
+
 type MoveResult struct {
 	Entity   Entity
-	Watchers []*gateway.Session
+	Watchers []Watcher
 	Crossed  bool
 	Gained   []Entity
 	Lost     []Entity
@@ -248,10 +254,10 @@ func (h *Hub) Relocate(sess *gateway.Session, pos Position, kind MoveKind, headi
 			}
 		})
 	}
-	r.Watchers = make([]*gateway.Session, 0, h.windowCountLocked(now))
+	r.Watchers = make([]Watcher, 0, h.windowCountLocked(now))
 	h.forWindowLocked(now, func(o *Entity) {
 		if o != e {
-			r.Watchers = append(r.Watchers, o.Session)
+			r.Watchers = append(r.Watchers, Watcher{Session: o.Session, CharacterID: o.CharacterID})
 		}
 	})
 	r.Entity = *e

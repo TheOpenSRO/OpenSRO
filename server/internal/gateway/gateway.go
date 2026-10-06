@@ -97,7 +97,6 @@ type Session struct {
 	debt                    time.Duration
 	timeout, budget, window time.Duration
 	queueLimit              int
-	coalesce                time.Duration
 	// The send accounting's own record, for the disconnect line and the peak
 	// lines (round 656's third review; round 662 adds the queue): the highest
 	// debt reached, the longest single write, the bytes written, the most
@@ -171,20 +170,6 @@ var (
 // batch). The limit is about 8x that burst -- what a client frozen 4 s with
 // the kernel holding nothing would have queued -- and 20x the queue's peak.
 var SendQueueLimit = 2 << 20
-
-// SendCoalesce is how long a session's writer, woken to fewer than
-// coalesceBytes queued, waits for more frames before its one write (round
-// 737, crowd_scale.md C2). OURS, chosen from a measurement: at 1000 players
-// in one block each moving once a second, every client is sent ~1000
-// 26-byte moves a second, and with no wait each woke its writer for a write
-// of its own -- 70% of the server's CPU in the write syscall (round 737's
-// profile). 2 ms is far under a frame (16.7 ms) and under the move rate's
-// 50 ms. A variable so a test can change it; 0 writes at once.
-var SendCoalesce = 2 * time.Millisecond
-
-// coalesceBytes is the queue size from which the writer writes at once.
-// OURS: about three MTU-sized TCP segments.
-const coalesceBytes = 4 << 10
 
 // SendBurstWindow is the window the "burst" figure in the session's
 // disconnect line is measured over: the most bytes Sent to the session within
@@ -436,7 +421,6 @@ func (w queueWriter) Write(b []byte) (int, error) {
 // startWriter makes the session's queue and starts its writer goroutine.
 func (s *Session) startWriter() {
 	s.timeout, s.budget, s.window, s.queueLimit = SendTimeout, SendBlockBudget, SendBlockWindow, SendQueueLimit
-	s.coalesce = SendCoalesce
 	s.outCond = sync.NewCond(&s.outMu)
 	s.writerDone = make(chan struct{})
 	go s.writeLoop()
@@ -448,7 +432,7 @@ func (s *Session) startWriter() {
 const writerKeepCap = 64 << 10
 
 // writeLoop is the session's writer: it takes everything queued, writes it
-// out in one write (writeFrames, round 737), and repeats, until the session closes
+// out in one write (writeDrain, round 737), and repeats, until the session closes
 // and the queue is empty or the connection fails. The deadline for what it
 // took is SendTimeout capped by what is left of the blocking budget (round
 // 656), one deadline for all those frames; a write that times out, or one
@@ -460,15 +444,6 @@ func (s *Session) writeLoop() {
 		s.outMu.Lock()
 		for len(s.out) == 0 && !s.closing {
 			s.outCond.Wait()
-		}
-		// Round 737 (crowd_scale.md C2): a writer woken to a short queue
-		// lingers SendCoalesce for more before it writes, so a crowd's
-		// stream of small broadcasts -- a move is 26 bytes -- goes out
-		// several to a syscall rather than one.
-		if s.coalesce > 0 && len(s.out) < coalesceBytes && !s.closing && !s.stalled.Load() {
-			s.outMu.Unlock()
-			time.Sleep(s.coalesce)
-			s.outMu.Lock()
 		}
 		if len(s.out) == 0 || s.stalled.Load() {
 			// Closing with nothing left to write, or given up: the queue is
@@ -514,7 +489,7 @@ func (s *Session) writeLoop() {
 			if s.stalled.Load() {
 				err = ErrSendStalled
 			} else {
-				n, err = writeFrames(s.conn, buf)
+				n, err = s.writeDrain(buf)
 			}
 		}
 		took := time.Since(start)
@@ -568,8 +543,38 @@ func (s *Session) writeLoop() {
 	}
 }
 
-// writeFrames writes buf, whole encoded frames, in ONE write: the whole queue
-// the writer took (round 737, crowd_scale.md C2, OURS). Round 662 wrote one
+// writeSlice is the most one write of a drain carries (round 737's review,
+// F4; OURS): a drain is written in slices of at most this, and each slice
+// leaves the queue's in-flight count as soon as it is on the socket, so the
+// queue limit measures what is still unwritten rather than a whole drain
+// until its last byte lands. 64 KB is the loopback segment size the round-662
+// notes measured; a frame is at most 32 KB.
+const writeSlice = 64 << 10
+
+// writeDrain writes buf, whole encoded frames taken off the queue, in slices
+// of at most writeSlice, taking each slice off s.inFlight as it is written.
+// It returns the bytes written.
+func (s *Session) writeDrain(buf []byte) (int, error) {
+	written := 0
+	for len(buf) > 0 {
+		k := min(len(buf), writeSlice)
+		n, err := writeFrames(s.conn, buf[:k])
+		written += n
+		s.outMu.Lock()
+		s.inFlight -= n
+		s.outMu.Unlock()
+		if err != nil {
+			return written, err
+		}
+		buf = buf[k:]
+	}
+	return written, nil
+}
+
+// writeFrames writes buf, encoded frames, in ONE write: the writer's drain
+// (round 737, crowd_scale.md C2, OURS), whatever was queued while its last
+// write was on the socket -- so frames that pile up during a write go out
+// together, and an isolated reply goes out at once. Round 662 wrote one
 // frame per write (MEASURED then: the client read a frame's payload only once
 // all of it sat in its socket's receive buffer, and over loopback one large
 // write arrived as a few large segments whose kernel memory filled that buffer

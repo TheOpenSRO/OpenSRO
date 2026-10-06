@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"log"
+	"reflect"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -68,6 +70,8 @@ type itemLookupBox struct{ ItemLookup }
 
 // SetSpawnItemRefs installs the item table the spawn record reads (cmd/server).
 func SetSpawnItemRefs(items ItemLookup) {
+	// The cached looks were read through the old table.
+	looks.Range(func(k, _ any) bool { looks.Delete(k); return true })
 	if items == nil {
 		spawnItemRefs.Store(nil)
 		return
@@ -92,6 +96,103 @@ func jobStateOf(ctx context.Context, slot8 int64) byte {
 		return byte(it.TypeID4)
 	}
 	return pcspawn.JobStateNone
+}
+
+// itemHasPlus reports whether the record carries a plus byte after itemID:
+// only for TypeID 3/1 (READ: the server's CInstanceItem::vslot_010 0x42e230
+// mode 2 writes it only then, and the client reads it only when the type word
+// passes (w&2)==0 && (w&0x1c)==0xc && (w&0x60)==0x20, 0x9de370..0x9de385).
+// Equip slot 7 also holds ammunition, TypeID 3/3/4, which carries none
+// (round 737's review, F1). An item the table does not know is taken as
+// equipment, as OpenSRO's client takes it (UserSpawnNet.Types.has_plus).
+func itemHasPlus(ctx context.Context, itemID int64) bool {
+	box := spawnItemRefs.Load()
+	if box == nil {
+		return true
+	}
+	it, err := box.GetItem(ctx, itemID)
+	if err != nil || it == nil {
+		return true
+	}
+	return it.TypeID1 == 3 && it.TypeID2 == 1
+}
+
+// look is the part of a spawn record that only an equipment change or a new
+// character changes: the body, the worn items and the job state their slot-8
+// suit gives.
+type look struct {
+	ref      uint32
+	scale    uint8
+	items    []pcspawn.Item
+	jobState byte
+}
+
+// lookEntry is a cached look and the stores it was read from.
+type lookEntry struct {
+	eq    equipment.Store
+	chars character.Store
+	look  look
+}
+
+// looks caches each character's look (round 737's review, F8): an arrival in
+// a crowd builds a record per player in view, and each read two stores --
+// two queries each with the SQL stores. Invalidated by every change of what
+// is worn (broadcastWorn / broadcastUnworn, the equip, unequip and the GM's
+// worn-plus paths), by a world entry and by a leave; an entry read from other
+// stores than the caller's is read again.
+var looks sync.Map // int64 -> lookEntry
+
+// invalidateLook drops characterID's cached look.
+func invalidateLook(characterID int64) { looks.Delete(characterID) }
+
+// sameStore reports whether a and b are the same store value, and false for
+// a store type == cannot compare (a struct holding a map, say): such a store
+// is never served from the cache.
+func sameStore(a, b any) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	ta := reflect.TypeOf(a)
+	if ta != reflect.TypeOf(b) || !ta.Comparable() {
+		return false
+	}
+	return a == b
+}
+
+// lookOf is characterID's look, from the cache or read now.
+func lookOf(ctx context.Context, d viewDeps, characterID int64) look {
+	if v, ok := looks.Load(characterID); ok {
+		if le := v.(lookEntry); sameStore(le.eq, d.eq) && sameStore(le.chars, d.chars) {
+			return le.look
+		}
+	}
+	var lk look
+	if d.chars != nil {
+		_, lk.ref, lk.scale = bodyOf(ctx, d.chars, characterID)
+	} else {
+		lk.ref, lk.scale = uint32(character.LegacyModelFor(character.DefaultGender)), character.DefaultScale
+	}
+	// Equip slots 0..8, ascending (CGPCInventoryOP slot 29); the
+	// accessories (9..12) are not in the record.
+	worn := equippedItems(ctx, d.eq, characterID)
+	sort.Slice(worn, func(i, j int) bool { return worn[i].Slot < worn[j].Slot })
+	var slot8 int64
+	for _, it := range worn {
+		if it.Slot < 0 || equipment.Slot(it.Slot) > equipment.SlotJobSuit || it.ItemID <= 0 {
+			continue
+		}
+		item := pcspawn.Item{RefItemID: uint32(it.ItemID)}
+		if itemHasPlus(ctx, it.ItemID) {
+			item.Plus, item.HasPlus = it.Plus, true
+		}
+		lk.items = append(lk.items, item)
+		if equipment.Slot(it.Slot) == equipment.SlotJobSuit {
+			slot8 = it.ItemID
+		}
+	}
+	lk.jobState = jobStateOf(ctx, slot8)
+	looks.Store(characterID, lookEntry{eq: d.eq, chars: d.chars, look: lk})
+	return lk
 }
 
 // playerRecord is e's spawn record now: e as the hub has it (position,
@@ -132,11 +233,8 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	if d.zerk != nil && d.zerk.Active(e.CharacterID) {
 		r.BodyMode = bodyModeBerserk
 	}
-	if d.chars != nil {
-		_, r.RefObjID, r.Scale = bodyOf(ctx, d.chars, e.CharacterID)
-	} else {
-		r.RefObjID, r.Scale = uint32(character.LegacyModelFor(character.DefaultGender)), character.DefaultScale
-	}
+	lk := lookOf(ctx, d, e.CharacterID)
+	r.RefObjID, r.Scale, r.Items, r.JobState = lk.ref, lk.scale, lk.items, lk.jobState
 	// The frame's region and the local position in it (worldmap.FromWorld,
 	// as teleport's reach and the party record do). A zone with no frame --
 	// none OpenSRO serves -- sends region 0 and the frame coordinates (OURS).
@@ -147,22 +245,6 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	} else {
 		r.X, r.Z = float32(e.Pos.X), float32(e.Pos.Z)
 	}
-	// Equip slots 0..8, ascending (CGPCInventoryOP slot 29): every item
-	// there is equipment (TypeID 3/1, the equip rule), so each carries its
-	// plus; the accessories (9..12) are not in the record.
-	worn := equippedItems(ctx, d.eq, e.CharacterID)
-	sort.Slice(worn, func(i, j int) bool { return worn[i].Slot < worn[j].Slot })
-	var slot8 int64
-	for _, it := range worn {
-		if it.Slot < 0 || equipment.Slot(it.Slot) > equipment.SlotJobSuit || it.ItemID <= 0 {
-			continue
-		}
-		r.Items = append(r.Items, pcspawn.Item{RefItemID: uint32(it.ItemID), Plus: it.Plus, HasPlus: true})
-		if equipment.Slot(it.Slot) == equipment.SlotJobSuit {
-			slot8 = it.ItemID
-		}
-	}
-	r.JobState = jobStateOf(ctx, slot8)
 	out, err := pcspawn.Append(nil, r)
 	if err != nil {
 		// Unreachable with the values above; logged rather than sent short.

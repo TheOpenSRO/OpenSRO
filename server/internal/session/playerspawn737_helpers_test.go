@@ -151,29 +151,52 @@ func drainPlayerSpawn(t *testing.T, conn net.Conn, r *bufio.Reader) []pcspawn.Re
 	return playerSpawnsIn(t, readFrame737(t, conn, r), func() *proto.Packet { return readFrame737(t, conn, r) })
 }
 
-// isPlayerViewOpcode reports whether op is one of the spawn messages.
-func isPlayerViewOpcode(op uint16) bool {
-	return op >= npcspawn.OpSingleSpawn && op <= npcspawn.OpGroupData
+// sees reports whether characters a and b are both in the world and in view
+// of each other in f's hub now.
+func (f *deadWorldFixture) sees(a, b int64) bool {
+	ea, okA := f.hub.EntityByCharacterID(a)
+	eb, okB := f.hub.EntityByCharacterID(b)
+	return okA && okB && f.hub.Sees(ea.Session.ID(), eb.Session.ID())
 }
 
-// readPastSpawns reads the next packet on conn that is not part of a player
-// spawn or despawn: a zone change or a walk across a block line is followed
-// by the spawns and despawns of the players that come into or go out of
-// view (round 737), which a test of something else steps over.
-func readPastSpawns(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
+// expectSpawnIfInView reads Bram's spawn on Aria's connection when the hub
+// has them in view now -- after a zone change or a warp that brought her
+// where he stands (her client was spawned nobody before it).
+func (f *deadWorldFixture) expectSpawnIfInView(t *testing.T) {
 	t.Helper()
-	for {
-		p := readFrame737(t, conn, r)
-		if !isPlayerViewOpcode(p.Opcode) {
-			return p
-		}
+	if f.sees(f.aria, f.bram) {
+		expectPlayerSpawn(t, f.connA, f.rA, f.bram)
 	}
 }
 
-// readPastSpawns is the fixture's read that steps over player spawns.
-func (f *deadWorldFixture) readPastSpawns(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
+// readAfterAriaMoved reads Aria's next packet after a move she sent, first
+// reading the spawn or despawn of Bram the move owes her when it took her
+// into or out of his view (before is whether she saw him before the move).
+// The hub is read after the first packet arrives, which the server sends
+// only after it has handled the move.
+func (f *deadWorldFixture) readAfterAriaMoved(t *testing.T, before bool) *proto.Packet {
 	t.Helper()
-	return readPastSpawns(t, conn, r)
+	p := f.read(t, f.connA, f.rA)
+	after := f.sees(f.aria, f.bram)
+	next := func() *proto.Packet { return f.read(t, f.connA, f.rA) }
+	switch {
+	case before && !after:
+		if uids := playerDespawnsIn(t, p, next); len(uids) != 1 || uids[0] != uint32(f.bram) {
+			t.Fatalf("the move out of Bram's view despawned %v", uids)
+		}
+		p = f.read(t, f.connA, f.rA)
+	case !before && after:
+		if recs := playerSpawnsIn(t, p, next); len(recs) != 1 || recs[0].UID != uint32(f.bram) {
+			t.Fatalf("the move into Bram's view spawned %d record(s)", len(recs))
+		}
+		p = f.read(t, f.connA, f.rA)
+	}
+	return p
+}
+
+// isPlayerViewOpcode reports whether op is one of the spawn messages.
+func isPlayerViewOpcode(op uint16) bool {
+	return op >= npcspawn.OpSingleSpawn && op <= npcspawn.OpGroupData
 }
 
 // expectPlayerDespawn reads the next player despawn on conn and checks it

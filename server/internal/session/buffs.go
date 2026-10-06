@@ -381,7 +381,7 @@ func sendAboutOwner(to []world.Entity, owner int64, op uint16, data []byte) {
 			_ = e.Session.SendFrames(f)
 			continue
 		}
-		sendIfKnown(e.Session, owner, f)
+		sendIfKnown(e.Session, e.CharacterID, owner, f)
 	}
 }
 
@@ -613,7 +613,7 @@ func BuffHandler(chars character.Store, hub *world.Hub) gateway.Handler {
 		if res != buff.Cancelled {
 			return nil
 		}
-		broadcastBuffEnd(hub.EntitiesInZone(e.Zone), characterID, []buff.Record{rec}, sp)
+		broadcastBuffEnd(zoneOf(hub, characterID), characterID, []buff.Record{rec}, sp)
 		return nil
 	}
 }

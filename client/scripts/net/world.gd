@@ -91,6 +91,12 @@ class EntitySnapshot:
 	## round 735, the server's pluses tail), for the slots whose item has
 	## one. A slot not here is +0, which is also what an older server means.
 	var pluses: Dictionary = {}
+	## Round 737 (a retail spawn record, UserSpawnNet): whether the record's
+	## motion byte says SIT -- World3D draws the body seated -- and whether an
+	## OpPlayerZoneNotice named it arriving in the zone, as opposed to walking
+	## into view -- World3D logs "X entered the zone." only then.
+	var seated: bool = false
+	var zone_arrival: bool = false
 
 	func item_in(slot: int) -> int:
 		return int(equipped.get(slot, 0))

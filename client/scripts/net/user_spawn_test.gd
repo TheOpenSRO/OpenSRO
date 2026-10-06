@@ -3,13 +3,14 @@ extends SceneTree
 ## UserSpawnNet (round 737): the other players' retail spawn records, read
 ## from the bytes server/internal/pcspawn TestClientFixture pins (a group of
 ## Aria -- sitting, berserk, two items --, an NPC and Bram -- a job suit, so no
-## guild block --, a 0x3015 of Aria, a group despawn of both), and NetClient's
+## guild block; arrows in slot 7, which carry no plus byte --, a 0x3015 of
+## Aria, a group despawn of both), and NetClient's
 ## handling of them: a group that comes before World3D's item table waits for
 ## it, then joins the entry's list; a despawn of a player leaves by
 ## entity_left, of an NPC by npc_despawned.
 ## `godot4 --headless --path client --script res://scripts/net/user_spawn_test.gd`
 
-const GROUP := "01030073070000220000006d023b0e000000300e00000705000001000000a86100807a440000604000007f44004000010000400100040100008041000048420000c8420004004172696100000000000000000000000000000000000000000000000000000000000000ffd00700000100007fa861000061440000000000806d44000000010000000100000000000000000000000000c84200020207091b3a0000440000006d02ea2900000df82a00000005000002000000a961000020410000000000d0ee4400c000010000c00100000000008041000096420000c8420004004272616d0000000000000000000000ff"
+const GROUP := "01030073070000220000006d023b0e000000300e00000705000001000000a86100807a440000604000007f44004000010000400100040100008041000048420000c8420004004172696100000000000000000000000000000000000000000000000000000000000000ffd00700000100007fa861000061440000000000806d44000000010000000100000000000000000000000000c84200020207091b3a0000440000006d03ea2900000d3e000000f82a00000005000002000000a961000020410000000000d0ee4400c000010000c00100000000008041000096420000c8420004004272616d0000000000000000000000ff"
 const SINGLE := "73070000220000006d023b0e000000300e00000705000001000000a86100807a440000604000007f44004000010000400100040100008041000048420000c8420004004172696100000000000000000000000000000000000000000000000000000000000000ff04"
 const DESPAWN := "0202000100000002000000"
 
@@ -26,7 +27,7 @@ func _check(cond: bool, msg: String) -> void:
 ## swords and a job suit (TypeID 3/1/7/2: job state 2).
 func _rows() -> Dictionary:
 	var rows := {}
-	for e in [[3643, [3, 1, 1, 3]], [3632, [3, 1, 6, 2]], [10730, [3, 1, 6, 2]], [11000, [3, 1, 7, 2]]]:
+	for e in [[3643, [3, 1, 1, 3]], [3632, [3, 1, 6, 2]], [10730, [3, 1, 6, 2]], [11000, [3, 1, 7, 2]], [62, [3, 3, 4, 1]]]:
 		var it := ItemTableReader.Item.new()
 		it.id = e[0]
 		it.type_ids = PackedInt32Array(e[1])
@@ -61,6 +62,9 @@ func _test_records() -> void:
 	_check(aria.job_state == UserSpawnNet.JOB_STATE_NONE and is_equal_approx(aria.run, 50.0), "Aria: no job suit, run 50")
 	_check(bram.ref_id == 14875 and bram.uid == 2 and bram.job_state == 2 and bram.name == "Bram", "Bram: a job suit, job state 2, no guild block")
 	_check(int(bram.items[0]["plus"]) == 13 and is_equal_approx(bram.run, 75.0), "Bram's +13 and run 75")
+	# Arrows (3/3/4) in slot 7 carry no plus byte (round 737's review, F1): the
+	# records after them still read, and the suit after them is still the suit.
+	_check(bram.items.size() == 3 and int(bram.items[1]["id"]) == 62 and int(bram.items[1]["plus"]) == 0 and int(bram.items[2]["id"]) == 11000, "Bram's arrows read with no plus byte, then his suit")
 	var npc: NpcSpawnNet.Record = g.npcs[0]
 	_check(npc.uid == 0x7f000001 and npc.ref_id == 2000 and npc.interactions == PackedByteArray([7, 9]), "the NPC between them")
 
@@ -78,7 +82,7 @@ func _test_records() -> void:
 	_check(s.equipped.get(CharacterAppearance.SLOT_CHEST) == 3643 and s.equipped.get(CharacterAppearance.SLOT_WEAPON) == 3632, "Aria's items by equip slot %s" % [s.equipped])
 	_check(s.pluses.size() == 1 and s.pluses.get(CharacterAppearance.SLOT_WEAPON) == 7, "Aria's pluses %s" % [s.pluses])
 	_check(is_equal_approx(s.heading, RemoteFacing.from_wire_angle(16384)), "Aria faces the wire angle's heading")
-	_check(b.equipped.get(CharacterAppearance.SLOT_SUIT) == 11000 and b.gender == CharacterNet.GENDER_EUROPE_MAN, "Bram's suit in slot 8, a Europe man")
+	_check(b.equipped.get(CharacterAppearance.SLOT_SUIT) == 11000 and b.equipped.get(CharacterAppearance.SLOT_SHIELD) == 62 and b.gender == CharacterNet.GENDER_EUROPE_MAN, "Bram's suit in slot 8, arrows in 7, a Europe man")
 
 	# The single spawn and the despawn group.
 	var one := UserSpawnNet.decode_single_spawn(SINGLE.hex_decode(), types)
@@ -121,13 +125,35 @@ func _test_net_client() -> void:
 	npc_uid.encode_u32(0, 0x7f000001)
 	nc._apply_spawn_message(NpcSpawnNet.OP_SINGLE_DESPAWN, npc_uid)
 	_check(left == [2] and despawned == [0x7f000001], "Bram left, the NPC despawned (%s, %s)" % [left, despawned])
-	# A single spawn while listening: entity_entered, then her sitting.
+	# A single spawn while listening: entity_entered with her seated (her
+	# record's motion byte), no separate SIT (round 737's review: a SIT for a
+	# body still loading was dropped, one for a drawn body played the
+	# sit-down clip) -- and, with no zone notice before it, no zone arrival.
 	var entered := []
 	var states := []
-	nc.entity_entered.connect(func(snap): entered.append(snap.character_id))
+	nc.entity_entered.connect(func(snap): entered.append([snap.character_id, snap.seated, snap.zone_arrival]))
 	nc.state_changed.connect(func(c): states.append([c.object_id, c.kind, c.value]))
 	nc._user_spawn_message(NpcSpawnNet.OP_SINGLE_SPAWN, SINGLE.hex_decode())
-	_check(entered == [1] and states == [[1, WorldNet.STATE_KIND_MOTION, WorldNet.MOTION_SIT]], "Aria enters, then sits (%s, %s)" % [entered, states])
+	_check(entered == [[1, true, false]] and states.is_empty(), "Aria enters seated, by a walk into view (%s, %s)" % [entered, states])
+	# An OpPlayerZoneNotice (OURS) before the spawn marks a real arrival in
+	# the zone; one before a despawn marks a real leave.
+	var notice := PackedByteArray([1, 1, 0, 0, 0, 4, 0])
+	notice.append_array("Aria".to_utf8_buffer())
+	nc._on_zone_notice(notice)
+	nc._user_spawn_message(NpcSpawnNet.OP_SINGLE_SPAWN, SINGLE.hex_decode())
+	_check(entered.size() == 2 and entered[1] == [1, true, true], "after a zone notice the spawn is a zone arrival (%s)" % [entered])
+	var leave := notice.duplicate()
+	leave[0] = 2
+	nc._on_zone_notice(leave)
+	_check(nc.zone_departures.has(1), "a leave notice is kept for the despawn")
+	# A character's abnormal state is kept for a scene that was not listening.
+	var st := StatusNet.ObjectStatus.new()
+	st.owner_kind = SkillNet.OWNER_CHARACTER
+	st.owner_id = 1
+	st.mask = 0x8
+	nc.character_states[1] = st
+	nc._user_left(1)
+	_check(not nc.character_states.has(1), "a player's states go with its despawn")
 	nc.free()
 
 func _init() -> void:

@@ -290,17 +290,18 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 	cur := append([]world.Position(nil), pos...) // where each stands, for the window rule below
 	deps := viewDeps{hub: hub, eq: eq, chars: chars}
 	for i := 0; i < n; i++ {
-		v := startPlayerView(sessions[i].ID(), deps)
+		invalidateLook(cs[i].ID)
+		v := startPlayerView(cs[i].ID, sessions[i], deps)
 		e, _ := hub.EntityBySession(sessions[i].ID())
 		for _, o := range hub.ViewOfCharacter(e.CharacterID) {
 			if o.CharacterID != e.CharacterID {
-				v.known[o.CharacterID] = struct{}{}
+				v.known[o.CharacterID] = o.Arrival
 			}
 		}
 	}
 	defer func() {
 		for i := 0; i <= n; i++ {
-			forgetPlayerView(sessions[i].ID())
+			forgetPlayerView(cs[i].ID, sessions[i])
 		}
 	}()
 
@@ -545,13 +546,14 @@ func TestCrowd736Smoke(t *testing.T) {
 	}
 	// Round 737: the moves reach exactly the players in view (runCrowd checks
 	// the count against the window rule); the arrival is a 0x3015 to each of
-	// the 20 present (all in its 3 x 3 blocks) and group spawns to it, and the
-	// leave a 0x3016 to each.
+	// the 20 present (all in its 3 x 3 blocks), after its zone notice (round
+	// 737's review), and group spawns to it; the
+	// leave a notice and a 0x3016 to each.
 	if r.rxMoves == 0 || r.rxMoves != r.wantMoves {
 		t.Fatalf("moves: %d delivered, the window rule says %d", r.rxMoves, r.wantMoves)
 	}
-	if r.enteredFrames != 20 || r.leftFrames != 20 {
-		t.Fatalf("entered %d, left %d, want 20 each", r.enteredFrames, r.leftFrames)
+	if r.enteredFrames != 40 || r.leftFrames != 40 {
+		t.Fatalf("entered %d, left %d, want 40 each (an OpPlayerZoneNotice and the spawn or despawn, to each of 20)", r.enteredFrames, r.leftFrames)
 	}
 	if r.burstFrames < 3 {
 		t.Fatalf("the arriver got %d frames, want its group spawns", r.burstFrames)

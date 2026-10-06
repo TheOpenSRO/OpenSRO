@@ -33,8 +33,8 @@ The retail layouts themselves hold up. Every field sampled matches both binaries
 - **`-race`** on `session`, `world`, `gateway`, `pcspawn` and `npcspawn`:
   - `world`, `pcspawn` and `npcspawn`: ok.
   - `gateway`: **FAIL**, `TestTheQueueLimitBoundsAGrowingQueueNotOneBatch` (F4). The race detector reported no data race.
-  - `session`: the default 10-minute timeout expired under `-race`. It is being re-run with `-timeout 90m`; the result is
-    in the hand-back message, not in this file.
+  - `session`: the default 10-minute timeout expired under `-race`. Re-run with `-timeout 90m`: **no data race** in
+    914.5 s. The only failure was the review's own deliberate F3 probe, `TestReview737EntryRace` (MEASURED).
 - The box (`RENDER_DIR=/opt/opensro-client-r737rev`, `GODOT_LOCK=/var/tmp/r737rev/lock`):
   - `remote_godot.sh check`: `checked 645 scripts and 9 scenes`, `ALL LOAD`.
   - `remote_godot.sh tests`: **`ran 245 suite(s), 0 failing`**.

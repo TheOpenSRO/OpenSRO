@@ -76,9 +76,12 @@ type Record struct {
 	InteractMode        byte
 	TradeRank           byte
 	GuildName           string
-	JobState            byte
-	Timer               byte
-	Team                byte
+	// JobState is the job state the slot-8 suit gives; the guild block is
+	// written only for JobStateNone. 0, the zero value, is no job state the
+	// engine has and is written as JobStateNone (round 737's review).
+	JobState byte
+	Timer    byte
+	Team     byte
 }
 
 // Append appends r's bytes in wire order. It refuses what the reader could
@@ -135,7 +138,7 @@ func Append(out []byte, r Record) ([]byte, error) {
 	out = append(out, r.JobType, r.JobLevel, r.PVPState, r.RideState, r.BattleState)
 	out = append(out, r.TeleportState, r.InteractMode, r.TradeRank)
 	out = appendString(out, r.GuildName)
-	if r.JobState == JobStateNone {
+	if r.JobState == JobStateNone || r.JobState == 0 {
 		// The guild block (0x4e5d3b..0x4e5eb3): guild id, member nickname,
 		// three u32, the "no membership" byte, the fortress role. OpenSRO
 		// writes the no-guild form.

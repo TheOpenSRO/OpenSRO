@@ -69,6 +69,7 @@ func TestReviveOptionOneWithAFailingStoreIsRefused(t *testing.T) {
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpChangeZoneResult {
 		t.Fatalf("option 1's first answer is %#04x, want the zone change home", p.Opcode)
 	}
+	f.expectSpawnIfInView(t)
 	p := f.read(t, f.connA, f.rA)
 	rr, err := DecodeReviveResult(p.Data)
 	if p.Opcode != OpReviveResult || err != nil || rr.Error == "" {

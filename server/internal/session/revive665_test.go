@@ -67,6 +67,7 @@ func TestReviveOptionOneReturnsToTheReturnPoint(t *testing.T) {
 	if err != nil || !czr.OK || czr.Zone != spawnZone {
 		t.Fatalf("option 1's zone change %+v (err %v), want OK to %q", czr, err, spawnZone)
 	}
+	f.expectSpawnIfInView(t) // Bram, at the return point (round 737)
 	p = f.read(t, f.connA, f.rA)
 	if p.Opcode != OpReviveResult {
 		t.Fatalf("after the zone change Aria received %#04x, want OpReviveResult", p.Opcode)
@@ -148,6 +149,7 @@ func TestEmptyReviveAboveLevelTenReturnsToTheReturnPoint(t *testing.T) {
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpChangeZoneResult {
 		t.Fatalf("an empty request at level 30 answered %#04x first, want the zone change to the return point", p.Opcode)
 	}
+	f.expectSpawnIfInView(t)
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpReviveResult {
 		t.Fatalf("then %#04x, want OpReviveResult", p.Opcode)
 	}

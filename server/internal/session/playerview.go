@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
@@ -28,7 +29,7 @@ import (
 // out, it gets the GROUP DESPAWN of those blocks (FUN_00533e70(2)) and they
 // get its SINGLE DESPAWN (0x3016, FUN_00534050). A move is sent only to the
 // players of the 3 x 3 blocks around the mover (CMsgBlockObject::
-// FUN_00534150). Players included -- until this round OpenSRO showed every
+// FUN_00534150). Players included -- until round 737 OpenSRO showed every
 // player to every other in the zone bucket, which under -single-frame is the
 // whole world, and listed them all in one EnterWorldResult, which refused the
 // arriving session past 166 full-kit players (round 736, MEASURED).
@@ -46,76 +47,112 @@ import (
 //     (the difference of the two windows: the hub's MoveResult).
 //   - A leave sends the window the 0x3016.
 //
-// THE KNOWN SET. Each session that has been through the world entry has a
-// playerView: the characters its client holds a body for. Every message about
-// a player -- its spawn, despawn, move, motion, body mode, equipment and buffs
-// -- reaches a viewer only through the viewer's playerView lock: a spawn only
-// when the hub says the two are in view of each other at that moment and the
-// client does not hold the body yet, a despawn only when it holds it and they
-// are not, anything else only when it holds it. A spawn's record is read from
-// the hub (and the motion, berserk and buff books) under that same lock. Every
-// change of truth -- a move across a line, an arrival, a leave, a state change
-// -- is followed by its own deliveries, so whatever order two goroutines'
-// messages reach a viewer's lock in, the client ends holding what the hub
-// says, and never hears of a state before the spawn that would carry it or
-// after the despawn that took it away. A session with no playerView -- one
-// put in the hub directly, as unit tests and the crowd benchmark do -- hears
-// everything in its window, as every session heard everything in its zone
-// before this round.
+// THE KNOWN SET. Each character in the world on a session has a playerView,
+// keyed by CHARACTER id (round 737's review: a session id is unique only
+// within one process): the session it is for and the characters its client
+// holds a body for. Every message about a player -- its spawn, despawn, move,
+// motion, body mode, equipment, buffs, status and casts -- reaches a viewer
+// only through the viewer's view lock: a spawn only when the view is OPEN,
+// the hub says the two see each other at that moment and the client does not
+// hold the body yet; a despawn only when it holds it and they do not;
+// anything else only when it holds it. Every change of truth -- a move across
+// a line, an arrival, a leave, a state change -- is followed by its own
+// deliveries, so whatever order two goroutines' messages reach a viewer's
+// lock in, the client ends holding what the hub says.
+//
+// A view is CLOSED from just before its character is put in the hub (a world
+// entry, a zone change) until its result has been sent: nothing about another
+// player reaches it then, and a player who comes into view in that gap is
+// spawned when the view opens, from the hub's window read after it opened
+// (round 737's review, F3: the gap used to drop such a spawn for good).
+//
+// A session with no view at all -- one put in the hub directly, as unit tests
+// do -- is sent no spawn or despawn, and hears every other message in its
+// window, as every session heard everything in its zone before round 737.
 
 // pcGroupChunk is how many body bytes one 0x3019 of a player group carries:
 // retail's 4052 (READ, pcGroupChunkRetail).
 const pcGroupChunk = pcGroupChunkRetail
 
-// playerView is one session's known set, and the stores its own spawns and
-// crossings are built from (the world entry's).
+// playerView is one character's known set on one session, and the stores its
+// own spawns and crossings are built from (the world entry's).
 type playerView struct {
 	mu    sync.Mutex
-	known map[int64]struct{}
+	sess  *gateway.Session
+	open  bool
+	known map[int64]uint64 // character id -> its world.Entity.Arrival when spawned here
 	deps  viewDeps
 }
 
-// playerViews is every session's view by session id: read once per
-// recipient of every move, written at a world entry, a zone change and a
+// playerViews is every in-world character's view by character id: read once
+// per recipient of every move, written at a world entry, a zone change and a
 // leave -- a sync.Map, so the reads take no shared lock.
-var playerViews sync.Map // uint64 -> *playerView
+var playerViews sync.Map // int64 -> *playerView
 
-// startPlayerView gives sessionID a fresh, empty known set: its client has
-// just started over (OpEnterWorldResult, OpChangeZoneResult).
-func startPlayerView(sessionID uint64, d viewDeps) *playerView {
+// closePlayerView gives characterID on sess a closed, empty view: it is about
+// to be put in the hub (or moved to another zone) and its client has not had
+// its result yet. It replaces any view the character had, on this session or
+// a stale one.
+func closePlayerView(characterID int64, sess *gateway.Session) {
+	playerViews.Store(characterID, &playerView{sess: sess, known: map[int64]uint64{}})
+}
+
+// startPlayerView opens a fresh, empty view for characterID on sess: its
+// client has just started over (OpEnterWorldResult, OpChangeZoneResult).
+func startPlayerView(characterID int64, sess *gateway.Session, d viewDeps) *playerView {
 	d.ctx = context.Background()
-	v := &playerView{known: map[int64]struct{}{}, deps: d}
-	playerViews.Store(sessionID, v)
+	v := &playerView{sess: sess, open: true, known: map[int64]uint64{}, deps: d}
+	playerViews.Store(characterID, v)
 	return v
 }
 
-// playerViewOf is sessionID's view, nil when it has none.
-func playerViewOf(sessionID uint64) *playerView {
-	if v, ok := playerViews.Load(sessionID); ok {
+// playerViewOf is characterID's view, nil when it has none.
+func playerViewOf(characterID int64) *playerView {
+	if v, ok := playerViews.Load(characterID); ok {
 		return v.(*playerView)
 	}
 	return nil
 }
 
-// forgetPlayerView drops sessionID's view: it left the world.
-func forgetPlayerView(sessionID uint64) {
-	playerViews.Delete(sessionID)
+// viewFor is the view of characterID on sess: nil when the character has
+// none, or has one for another session (a stale session of a reconnect).
+func viewFor(sess *gateway.Session, characterID int64) (v *playerView, other bool) {
+	v = playerViewOf(characterID)
+	if v == nil {
+		return nil, false
+	}
+	if v.sess != sess {
+		return nil, true
+	}
+	return v, false
 }
 
-// sendIfKnown sends fs to sess when its client holds owner's body (or it has
-// no view at all). The check and the send are one step under the view's
-// lock.
-func sendIfKnown(sess *gateway.Session, owner int64, fs ...*gateway.Frame) {
+// forgetPlayerView drops characterID's view when it is sess's: the session
+// left the world. A newer session's view (a reconnect that entered first) is
+// left alone.
+func forgetPlayerView(characterID int64, sess *gateway.Session) {
+	if v := playerViewOf(characterID); v != nil && v.sess == sess {
+		playerViews.CompareAndDelete(characterID, v)
+	}
+}
+
+// sendIfKnown sends fs to the client of recipient (its session and character)
+// when it holds owner's body. A session with no view at all hears it (the
+// unit tests' sessions); a closed view, or one for another session, does not.
+// The check and the send are one step under the view's lock.
+func sendIfKnown(sess *gateway.Session, recipient, owner int64, fs ...*gateway.Frame) {
 	if sess == nil {
 		return
 	}
-	v := playerViewOf(sess.ID())
+	v, other := viewFor(sess, recipient)
 	if v == nil {
-		_ = sess.SendFrames(fs...)
+		if !other {
+			_ = sess.SendFrames(fs...)
+		}
 		return
 	}
 	v.mu.Lock()
-	if _, ok := v.known[owner]; ok {
+	if _, ok := v.known[owner]; ok && v.open {
 		_ = sess.SendFrames(fs...)
 	}
 	v.mu.Unlock()
@@ -135,7 +172,7 @@ func sendAboutPlayer(hub *world.Hub, owner int64, self bool, fs ...*gateway.Fram
 			}
 			continue
 		}
-		sendIfKnown(r.Session, owner, fs...)
+		sendIfKnown(r.Session, r.CharacterID, owner, fs...)
 	}
 }
 
@@ -157,18 +194,22 @@ type viewDeps struct {
 	zerk  *berserk.Tracker
 }
 
-// playerSpawn is one player's spawn as one delivery builds it: its record
-// and the state messages that follow it (its buffs).
+// playerSpawn is one player's spawn as one delivery builds it: its record,
+// the state messages that follow it (its buffs and abnormal states), and the
+// state version it was built at.
 type playerSpawn struct {
-	e      world.Entity
-	record []byte
-	after  []*gateway.Frame
+	e       world.Entity
+	record  []byte
+	after   []*gateway.Frame
+	version uint64
 }
 
 // buildPlayerSpawn reads e's record and state now. e is re-read from the hub
 // by session, so the record carries where it stands at this moment; ok is
-// false when it has left.
+// false when it has left. The version is read first, so a change made while
+// the record is read shows as a newer version than the one returned.
 func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, bool) {
+	version := playerStateVersion(e.CharacterID)
 	cur, ok := d.hub.EntityBySession(e.Session.ID())
 	if !ok || cur.CharacterID != e.CharacterID {
 		return playerSpawn{}, false
@@ -177,42 +218,83 @@ func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, b
 	if rec == nil {
 		return playerSpawn{}, false
 	}
-	return playerSpawn{e: cur, record: rec, after: buffStateFrames(cur.CharacterID, now)}, true
+	after := buffStateFrames(cur.CharacterID, now)
+	if f := characterStatusFrame(cur.CharacterID); f != nil {
+		after = append(after, f)
+	}
+	return playerSpawn{e: cur, record: rec, after: after, version: version}, true
+}
+
+// fresh is s, rebuilt if its owner's state moved since it was built (rare:
+// a change between the build, made outside the viewer's lock, and the send).
+func (s playerSpawn) fresh(d viewDeps) (playerSpawn, bool) {
+	if playerStateVersion(s.e.CharacterID) == s.version {
+		return s, true
+	}
+	return buildPlayerSpawn(d, s.e, time.Now())
 }
 
 // spawnPlayersTo sends viewer the group spawns of those of others that are in
 // view of it now and its client does not hold yet, one group per block (the
-// window's blocks in order), followed by their buffs; and records them known.
+// window's blocks in order), followed by their buffs and states; and records
+// them known. The records are read before the viewer's lock is taken (round
+// 737's review, F8: with the SQL stores they are two queries each, and other
+// players' sends to this viewer wait on that lock), then checked again under
+// it.
 func spawnPlayersTo(d viewDeps, viewer world.Entity, others []world.Entity) {
 	if viewer.Session == nil || len(others) == 0 {
 		return
 	}
-	v := playerViewOf(viewer.Session.ID())
+	v, _ := viewFor(viewer.Session, viewer.CharacterID)
 	if v == nil {
 		return
 	}
-	now := time.Now()
 	v.mu.Lock()
-	defer v.mu.Unlock()
-	byCell := map[combat.Cell][]playerSpawn{}
+	if !v.open {
+		v.mu.Unlock()
+		return
+	}
+	var want []world.Entity
 	for _, o := range others {
 		if o.Session == nil || o.CharacterID == viewer.CharacterID {
 			continue
 		}
-		if _, held := v.known[o.CharacterID]; held {
-			continue
+		if _, held := v.known[o.CharacterID]; !held {
+			want = append(want, o)
 		}
+	}
+	v.mu.Unlock()
+	now := time.Now()
+	var built []playerSpawn
+	for _, o := range want {
 		if !d.hub.Sees(viewer.Session.ID(), o.Session.ID()) {
 			continue
 		}
-		s, ok := buildPlayerSpawn(d, o, now)
+		if s, ok := buildPlayerSpawn(d, o, now); ok {
+			built = append(built, s)
+		}
+	}
+	if len(built) == 0 {
+		return
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.open || playerViewOf(viewer.CharacterID) != v {
+		return
+	}
+	byCell := map[combat.Cell][]playerSpawn{}
+	for _, s := range built {
+		if _, held := v.known[s.e.CharacterID]; held {
+			continue
+		}
+		if !d.hub.Sees(viewer.Session.ID(), s.e.Session.ID()) {
+			continue
+		}
+		s, ok := s.fresh(d)
 		if !ok {
 			continue
 		}
 		byCell[s.e.Cell] = append(byCell[s.e.Cell], s)
-	}
-	if len(byCell) == 0 {
-		return
 	}
 	var frames []*gateway.Frame
 	var after []*gateway.Frame
@@ -230,60 +312,65 @@ func spawnPlayersTo(d viewDeps, viewer world.Entity, others []world.Entity) {
 			frames = append(frames, gateway.MustFrame(&proto.Packet{Opcode: gf.Opcode, Data: gf.Data}))
 		}
 		for _, s := range group {
-			v.known[s.e.CharacterID] = struct{}{}
+			v.known[s.e.CharacterID] = s.e.Arrival
 			after = append(after, s.after...)
 		}
 	}
-	_ = viewer.Session.SendFrames(append(frames, after...)...)
+	if len(frames) > 0 {
+		_ = viewer.Session.SendFrames(append(frames, after...)...)
+	}
 }
 
 // spawnPlayerToOthers sends mover's single spawn (0x3015) to each of recips
-// that sees it now and does not hold it yet, followed by its buffs, and
-// records it known there. The record is built once.
+// that sees it now and does not hold it yet, followed by its buffs and
+// states, and records it known there. The record is built once, before any
+// recipient's lock, and rebuilt only if mover's state moved meanwhile.
 func spawnPlayerToOthers(d viewDeps, mover world.Entity, recips []world.Entity) {
 	spawnPlayerToOthersAs(d, mover, recips, false)
 }
 
 // spawnPlayerToOthersAs is spawnPlayerToOthers; with again, a recipient that
-// already holds mover is sent the spawn too (an arrival: the same character
-// on a new session, whose client draws it where it now is).
+// holds mover from an EARLIER arrival (its known entry names another
+// world.Entity.Arrival) is sent the spawn too: the same character on a new
+// session, whose client draws it where it now is. One that holds this very
+// arrival -- its own crossing spawned it a moment ago -- is not sent it twice.
 func spawnPlayerToOthersAs(d viewDeps, mover world.Entity, recips []world.Entity, again bool) {
 	if len(recips) == 0 {
 		return
 	}
-	var frames []*gateway.Frame
-	built := false
-	var version uint64
+	spawn, ok := buildPlayerSpawn(d, mover, time.Now())
+	if !ok {
+		return
+	}
+	frames := spawnFrames(spawn)
 	for _, r := range recips {
 		if r.Session == nil || r.CharacterID == mover.CharacterID {
 			continue
 		}
-		v := playerViewOf(r.Session.ID())
+		v, _ := viewFor(r.Session, r.CharacterID)
 		if v == nil {
-			// A session with no view (put in the hub directly) hears the
-			// arrival as it heard OpEntityEntered before round 737.
-			v = &playerView{known: map[int64]struct{}{}}
+			continue // no view, or a stale session's: no spawns (F3)
 		}
 		v.mu.Lock()
-		if _, held := v.known[mover.CharacterID]; (again || !held) && d.hub.Sees(r.Session.ID(), mover.Session.ID()) {
-			// The version is read before the record, so a change between the
-			// two rebuilds it at the next recipient at worst.
-			if now := playerStateVersion(mover.CharacterID); !built || now != version {
-				version = now
-				spawn, ok := buildPlayerSpawn(d, mover, time.Now())
-				if !ok {
+		if at, held := v.known[mover.CharacterID]; v.open && (!held || (again && at != spawn.e.Arrival)) && d.hub.Sees(r.Session.ID(), mover.Session.ID()) {
+			if spawn.version != playerStateVersion(mover.CharacterID) {
+				if spawn, ok = spawn.fresh(d); !ok {
 					v.mu.Unlock()
 					return
 				}
-				data := append(append([]byte(nil), spawn.record...), pcSpawnType)
-				frames = append([]*gateway.Frame{gateway.MustFrame(&proto.Packet{Opcode: npcspawn.OpSingleSpawn, Data: data})}, spawn.after...)
-				built = true
+				frames = spawnFrames(spawn)
 			}
 			_ = r.Session.SendFrames(frames...)
-			v.known[mover.CharacterID] = struct{}{}
+			v.known[mover.CharacterID] = spawn.e.Arrival
 		}
 		v.mu.Unlock()
 	}
+}
+
+// spawnFrames is a 0x3015 of s and the state messages after it.
+func spawnFrames(s playerSpawn) []*gateway.Frame {
+	data := append(append([]byte(nil), s.record...), pcSpawnType)
+	return append([]*gateway.Frame{gateway.MustFrame(&proto.Packet{Opcode: npcspawn.OpSingleSpawn, Data: data})}, s.after...)
 }
 
 // despawnPlayersFrom sends viewer the group despawns of those of others its
@@ -293,12 +380,15 @@ func despawnPlayersFrom(d viewDeps, viewer world.Entity, others []world.Entity) 
 	if viewer.Session == nil || len(others) == 0 {
 		return
 	}
-	v := playerViewOf(viewer.Session.ID())
+	v, _ := viewFor(viewer.Session, viewer.CharacterID)
 	if v == nil {
 		return
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if !v.open {
+		return
+	}
 	byCell := map[combat.Cell][]int64{}
 	for _, o := range others {
 		if _, held := v.known[o.CharacterID]; !held {
@@ -312,7 +402,7 @@ func despawnPlayersFrom(d viewDeps, viewer world.Entity, others []world.Entity) 
 		byCell[o.Cell] = append(byCell[o.Cell], o.CharacterID)
 	}
 	var frames []*gateway.Frame
-	for _, c := range sortedCellsIDs(byCell) {
+	for _, c := range playerCellsInOrder(byCell) {
 		ids := byCell[c]
 		uids := make([]uint32, len(ids))
 		for i, id := range ids {
@@ -341,16 +431,12 @@ func despawnPlayerFromOthers(d viewDeps, gone world.Entity, recips []world.Entit
 		if r.Session == nil || r.CharacterID == gone.CharacterID {
 			continue
 		}
-		v := playerViewOf(r.Session.ID())
+		v, _ := viewFor(r.Session, r.CharacterID)
 		if v == nil {
-			// A session with no view heard of gone through the zone's
-			// messages before round 737: it hears the despawn as it would
-			// have heard OpEntityLeft.
-			_ = r.Session.SendFrames(frame)
 			continue
 		}
 		v.mu.Lock()
-		if _, held := v.known[gone.CharacterID]; held && !stillSees(d.hub, r, gone) {
+		if _, held := v.known[gone.CharacterID]; held && v.open && !stillSees(d.hub, r, gone) {
 			_ = r.Session.SendFrames(frame)
 			delete(v.known, gone.CharacterID)
 		}
@@ -371,32 +457,53 @@ func stillSees(hub *world.Hub, r, gone world.Entity) bool {
 	return hub.Sees(r.Session.ID(), gone.Session.ID())
 }
 
-// arrivePlayer is a player's arrival where others is everyone in view (the
-// world entry, a zone change's landing): its client starts with an empty
-// view and is sent their group spawns, and they are sent its 0x3015.
-func arrivePlayer(d viewDeps, arrived world.Entity, others []world.Entity) {
-	startPlayerView(arrived.Session.ID(), d)
+// arrivePlayer opens arrived's view (its client has just had its result) and
+// spawns both ways with the players in view of it NOW: the window is read
+// from the hub after the view opened, so a player who came into view while
+// it was closed is in it, and one who comes into view after it is spawned by
+// its own crossing (round 737's review, F3).
+func arrivePlayer(d viewDeps, arrived world.Entity) {
+	startPlayerView(arrived.CharacterID, arrived.Session, d)
+	others := othersInView(d.hub, arrived)
 	spawnPlayersTo(d, arrived, others)
 	spawnPlayerToOthersAs(d, arrived, others, true)
+}
+
+// othersInView is the players in view of e as the hub has them now, e's own
+// session left out.
+func othersInView(hub *world.Hub, e world.Entity) []world.Entity {
+	var out []world.Entity
+	for _, o := range hub.ViewOfCharacter(e.CharacterID) {
+		if o.Session != e.Session {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // departPlayer sends gone's 0x3016 to each of recips that holds it, whether
 // or not it still sees it: gone was taken out of the world and put back
 // (a zone change, a warp -- retail's CMsgBlock slot 3 then slot 2), so a
-// client that holds it must drop it before its new spawn.
-func departPlayer(gone world.Entity, recips []world.Entity) {
+// client that holds it must drop it before its new spawn. Nothing when the
+// character is in the world on another session (a reconnect whose old
+// session leaves late: the live one's body stays).
+func departPlayer(hub *world.Hub, gone world.Entity, recips []world.Entity) {
+	if hub != nil {
+		if cur, ok := hub.EntityByCharacterID(gone.CharacterID); ok && cur.Session != gone.Session {
+			return
+		}
+	}
 	frame := gateway.MustFrame(&proto.Packet{Opcode: npcspawn.OpSingleDespawn, Data: npcspawn.SingleDespawn(uint32(gone.CharacterID))})
 	for _, r := range recips {
 		if r.Session == nil || r.CharacterID == gone.CharacterID {
 			continue
 		}
-		v := playerViewOf(r.Session.ID())
+		v, _ := viewFor(r.Session, r.CharacterID)
 		if v == nil {
-			_ = r.Session.SendFrames(frame)
 			continue
 		}
 		v.mu.Lock()
-		if _, held := v.known[gone.CharacterID]; held {
+		if _, held := v.known[gone.CharacterID]; held && v.open {
 			_ = r.Session.SendFrames(frame)
 			delete(v.known, gone.CharacterID)
 		}
@@ -414,12 +521,12 @@ func afterRelocate(sess *gateway.Session, r world.MoveResult, self bool, frame *
 		_ = sess.SendFrames(frame)
 	}
 	for _, w := range r.Watchers {
-		sendIfKnown(w, r.Entity.CharacterID, frame)
+		sendIfKnown(w.Session, w.CharacterID, r.Entity.CharacterID, frame)
 	}
 	if !r.Crossed || sess == nil {
 		return
 	}
-	if v := playerViewOf(sess.ID()); v != nil {
+	if v, _ := viewFor(sess, r.Entity.CharacterID); v != nil {
 		crossPlayer(v.deps, r)
 	}
 }
@@ -451,36 +558,67 @@ func playerCellsInOrder[T any](m map[combat.Cell]T) []combat.Cell {
 	return out
 }
 
-func sortedCellsIDs(m map[combat.Cell][]int64) []combat.Cell { return playerCellsInOrder(m) }
-
 // playerStateVersions numbers each player's changes of what its spawn record
 // and its spawn's state messages carry (a move, a motion, a body mode, its
-// equipment, a buff): bumpPlayerState is called after the change and before
-// its delivery. A single spawn built once for many recipients
-// (spawnPlayerToOthers) is rebuilt when the number moved under it, so no
-// recipient is sent a record older than a change whose own delivery skipped
-// it for not holding the body yet.
-var playerStateVersions = struct {
-	mu sync.Mutex
-	m  map[int64]uint64
-}{m: map[int64]uint64{}}
+// equipment, a buff, a status): bumpPlayerState is called after the change
+// and before its delivery. A spawn built outside a recipient's lock is
+// rebuilt when the number moved under it, so no recipient is sent a record
+// older than a change whose own delivery skipped it for not holding the body
+// yet. One atomic per character (round 737's review, F11: a process-wide
+// mutex was taken on every move).
+var playerStateVersions sync.Map // int64 -> *atomic.Uint64
 
-func playerStateVersion(id int64) uint64 {
-	playerStateVersions.mu.Lock()
-	defer playerStateVersions.mu.Unlock()
-	return playerStateVersions.m[id]
+func playerStateCounter(id int64) *atomic.Uint64 {
+	if c, ok := playerStateVersions.Load(id); ok {
+		return c.(*atomic.Uint64)
+	}
+	c, _ := playerStateVersions.LoadOrStore(id, new(atomic.Uint64))
+	return c.(*atomic.Uint64)
 }
 
-func bumpPlayerState(id int64) {
-	playerStateVersions.mu.Lock()
-	playerStateVersions.m[id]++
-	playerStateVersions.mu.Unlock()
-}
+func playerStateVersion(id int64) uint64 { return playerStateCounter(id).Load() }
 
-func forgetPlayerState(id int64) {
-	playerStateVersions.mu.Lock()
-	delete(playerStateVersions.m, id)
-	playerStateVersions.mu.Unlock()
+func bumpPlayerState(id int64) { playerStateCounter(id).Add(1) }
+
+func forgetPlayerState(id int64) { playerStateVersions.Delete(id) }
+
+// OpPlayerZoneNotice tells a client that a player arrived in its zone or
+// left it -- the world entry, a zone change, a logout -- as opposed to
+// walking into or out of its 3 x 3 blocks, which the spawn messages carry
+// alike (round 737's review). OURS, an additive message like every OpenSRO
+// opcode (docs/protocol/PROTOCOL_DECISION.md): retail prints nothing for
+// either, and OpenSRO's client keeps its "X entered the zone." / "X left the
+// zone." lines for the real arrivals only, as before round 737. u8 kind
+// (zoneNoticeEntered, zoneNoticeLeft), u32 uid, u16 length + the name.
+// 0x00B7 was free in server/ and client/scripts/net (grep, 2026-10-06).
+const OpPlayerZoneNotice uint16 = 0x00b7
+
+const (
+	zoneNoticeEntered byte = 1
+	zoneNoticeLeft    byte = 2
+)
+
+// playerZoneNotice sends e's zone notice of kind to each of recips with a
+// view (open) or none at all, ahead of the spawn or despawn that follows it.
+func playerZoneNotice(kind byte, e world.Entity, recips []world.Entity) {
+	data := []byte{kind}
+	data = append(data, byte(e.CharacterID), byte(e.CharacterID>>8), byte(e.CharacterID>>16), byte(e.CharacterID>>24))
+	data = append(data, byte(len(e.Name)), byte(len(e.Name)>>8))
+	data = append(data, e.Name...)
+	f, err := gateway.NewFrame(&proto.Packet{Opcode: OpPlayerZoneNotice, Data: data})
+	if err != nil {
+		return
+	}
+	for _, r := range recips {
+		if r.Session == nil || r.CharacterID == e.CharacterID {
+			continue
+		}
+		v, other := viewFor(r.Session, r.CharacterID)
+		if other || (v != nil && !v.open) {
+			continue
+		}
+		_ = r.Session.SendFrames(f)
+	}
 }
 
 // buffStateFrames is owner's active buffs as the OpBuffStart packets a

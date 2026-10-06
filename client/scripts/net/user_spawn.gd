@@ -88,7 +88,12 @@ class Types:
 	## (CharacterAppearance.visual_slot, ResolveVisualSlotForItem), which is
 	## the equip slot for every item the list can hold; -1 when unknown.
 	func equip_slot(id: int) -> int:
-		var s := CharacterAppearance.visual_slot(type_ids(id))
+		var t := type_ids(id)
+		# Ammunition (TypeID 3/3/4) is worn in equip slot 7, the shield's
+		# (server equipment.SlotFor, READ from the engine's resolver).
+		if t.size() >= 3 and t[0] == 3 and t[1] == 3 and t[2] == 4:
+			return CharacterAppearance.SLOT_SHIELD
+		var s := CharacterAppearance.visual_slot(t)
 		return s if s >= 0 and s <= CharacterAppearance.SLOT_SUIT else -1
 
 ## Whether a RefObjID is a player body (the 52 creatable Figures, OURS: see
