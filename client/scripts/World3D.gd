@@ -1736,6 +1736,9 @@ func _ready() -> void:
 
 	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
+	# The other players' spawn records are read by the item table (round
+	# 737, UserSpawnNet): the spawns that came before it are read now.
+	NetClient.set_spawn_item_rows(_item_rows)
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
 	# The readers' own time so far, by function (round 667, ParseProfile;
 	# OPENSRO_PARSE_PROFILE=1): boot and these tables, then a fresh window
@@ -1805,6 +1808,7 @@ func _ready() -> void:
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.object_status.connect(_on_object_status)
+	_replay_character_states()
 	NetClient.level_up.connect(_on_level_up)
 	NetClient.exp_gained.connect(_on_exp_gained)
 	NetClient.gold_total.connect(_on_gold_total)
@@ -6011,8 +6015,17 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	# below, and this player's, takes its auras from it.
 	_target_buff_book.clear()
 	_abnormal_states.clear()
+	# The new zone's players' states, told during the load (round 737's
+	# review: a spawn's states follow it), from what NetClient holds.
+	_replay_character_states()
 	_fx_owner_buffs.clear()
-	_spawn_result_others(list, seated)
+	# Who sits among those spawned during the load (their records' motion
+	# byte, round 737's review) is drawn seated with the list's own.
+	var sat: Array = seated.duplicate()
+	for o in list:
+		if o.seated and not sat.has(int(o.character_id)):
+			sat.append(int(o.character_id))
+	_spawn_result_others(list, sat)
 	# The equipment broadcasts that arrived while the list was not drawn
 	# (round 735's review, finding 1).
 	_flush_pending_equip_changes()
@@ -6941,6 +6954,12 @@ func _owner_buffs_and_states(owner_key: String) -> Array:
 	if not st.is_empty():
 		out.append_array(HudTargetBuffs.abnormal_entries(int(st["mask"]), st["levels"]))
 	return out
+
+## The other characters' abnormal states NetClient holds (round 737's
+## review): told before this scene listened, or during a zone change's load.
+func _replay_character_states() -> void:
+	for id in NetClient.character_states:
+		_on_object_status(NetClient.character_states[id])
 
 func _on_object_status(st: StatusNet.ObjectStatus) -> void:
 	var key := _fx_owner_key(st.owner_id, st.owner_kind)
@@ -15619,15 +15638,18 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	# During a zone change's load the old zone's bodies are still drawn and
 	# the arrival list is not laid out yet: an arrival is kept for it
 	# (round 646's review, _replace_others_for_arrival), not built to be freed.
+	# Round 737's review: the chat line is for a real arrival in the zone
+	# (OpPlayerZoneNotice), not a walk into view; a sitter is drawn seated
+	# (its record's motion byte), here or when the arrival list is laid out.
 	if _arrival_pending:
 		_arrival_left.erase(snapshot.character_id)
 		_arrival_entries[snapshot.character_id] = snapshot
-		_log_system("%s entered the zone." % snapshot.char_name)
+		if snapshot.zone_arrival:
+			_log_system("%s entered the zone." % snapshot.char_name)
 		return
-	_note_other_pluses(snapshot)
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped,
-		_snapshot_body(snapshot), snapshot.heading, snapshot.scale if snapshot.has_model else CharacterAppearance.DEFAULT_SCALE, snapshot.pluses)
-	_log_system("%s entered the zone." % snapshot.char_name)
+	_spawn_result_others([snapshot], [snapshot.character_id] if snapshot.seated else [])
+	if snapshot.zone_arrival:
+		_log_system("%s entered the zone." % snapshot.char_name)
 
 ## Keeps another player's worn pluses from their snapshot (round 735), and
 ## logs the ones they have -- the two-client check reads it.
@@ -15855,7 +15877,11 @@ func _on_entity_left(character_id: int) -> void:
 		_fade_out_body(body)
 		_other_bodies.erase(character_id)
 		_other_body_targets.erase(character_id)
-		_log_system("%s left the zone." % departing_name)
+		# Only a real leave of the zone (OpPlayerZoneNotice, round 737's
+		# review), not a walk out of view.
+		if NetClient.zone_departures.has(character_id):
+			_log_system("%s left the zone." % departing_name)
+	NetClient.zone_departures.erase(character_id)
 
 func _on_disconnect_pressed() -> void:
 	NetClient.disconnect_from_server()
@@ -19728,7 +19754,7 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 	# from a server with -monster-battle (round 546) -- is this player's when
 	# its target is drawn nowhere here (MonsterStrikes.is_own_unpaired).
 	var own_unpaired := claim == MonsterStrikes.CLAIM_NONE and MonsterStrikes.is_own_unpaired(
-		attacked.target_character_id, _other_bodies, _recently_left, Time.get_ticks_msec())
+		attacked.target_character_id, _other_bodies, _recently_left, Time.get_ticks_msec(), NetClient.own_character_id)
 	var how := "on another player"
 	match claim:
 		MonsterStrikes.CLAIM_HELD:

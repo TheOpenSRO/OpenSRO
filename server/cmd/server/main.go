@@ -1477,6 +1477,10 @@ func main() {
 	// a wall's end once its HP is gone. The walls read the monster skills'
 	// 'att' masks from the same skill table the casts use.
 	session.SetMonsterSkillRefs(refItems)
+	// The players' spawn records (round 737) ask the item table whether the
+	// suit in equip slot 8 is a job suit: the record's job state, which
+	// decides its guild block, as the client decides it.
+	session.SetSpawnItemRefs(refItems)
 	go session.RunToggleTicker(ctx, hub, chars, session.RegenDeps{
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)

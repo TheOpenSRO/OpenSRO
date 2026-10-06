@@ -70,11 +70,11 @@ func TestNPCTalkSelectOpenEnd(t *testing.T) {
 	}
 
 	// Out of reach: 400 from the NPC.
-	hub.Move(e.Session, world.Position{X: 500, Z: 0})
+	hub.Relocate(e.Session, world.Position{X: 500, Z: 0}, world.MoveRelocate, 0)
 	c.send(npctalk.OpSelect, npctalk.EncodeEntity(uid))
 	expect(npctalk.OpSelectResult, npctalk.EncodeFail(npctalk.CodeTooFar), "select beyond 300")
 	// An id nobody has.
-	hub.Move(e.Session, world.Position{X: 50, Z: 0})
+	hub.Relocate(e.Session, world.Position{X: 50, Z: 0}, world.MoveRelocate, 0)
 	c.send(npctalk.OpSelect, npctalk.EncodeEntity(uid+999))
 	expect(npctalk.OpSelectResult, npctalk.EncodeFail(npctalk.CodeNoTarget), "select an unknown id")
 	// In reach: the reply carries the NPC's set.

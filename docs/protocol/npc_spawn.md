@@ -86,8 +86,8 @@ One group per block. Around a world entry OpenSRO forgets the session's window t
 (and spawns the window before the result, which clears the client's roster) is followed by the whole
 window again after it; the client keeps an identical record in place (round 708's review). OpenSRO sends one group per gained / lost block from the player's 3 x 3 window
 (round 664's blocks), on the area-of-interest tick; its NPCs are all in the world before any player,
-so it never needs a 0x3015 for them. Monsters and players still ride OpenSRO's own messages, so its
-groups carry NPCs only, where retail's carry every object of the block (a departure, OURS).
+so it never needs a 0x3015 for them. Monsters still ride OpenSRO's own messages. Since round 737 the players ride these (docs/protocol/pc_spawn.md), in groups of their own; so the groups
+of a block are an NPC group and a player group, where retail's one group carries every object of the block (a departure, OURS).
 
 ## The interaction list (READ, three parts INFERRED)
 

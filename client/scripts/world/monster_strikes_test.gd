@@ -142,6 +142,12 @@ func _test_own_unpaired() -> void:
 		"the grace window is inclusive at LEFT_GRACE_MS")
 	_check(MonsterStrikes.is_own_unpaired(66, others, left, 1001 + MonsterStrikes.LEFT_GRACE_MS),
 		"past the grace window the id is this player's again")
+	# Round 737's review (F2): with its own id known, a push for a player drawn
+	# nowhere here (out of this client's 3 x 3 blocks) is NOT this player's;
+	# only a push naming its own id is.
+	_check(not MonsterStrikes.is_own_unpaired(42, others, left, 5000, 7), "known own id 7: an undrawn 42 is someone else")
+	_check(MonsterStrikes.is_own_unpaired(7, others, left, 5000, 7), "known own id 7: a push on 7 is this player's")
+	_check(not MonsterStrikes.is_own_unpaired(55, others, left, 5000, 7), "known own id 7: a drawn 55 is not")
 
 ## Round 548: whether a kill LEFT the player dead. A server with the dead
 ## state reports HP 0; every server before it respawned the player in the

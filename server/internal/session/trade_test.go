@@ -12,6 +12,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/shop"
@@ -193,10 +194,10 @@ func setupTradeTestWith(t *testing.T, items ItemLookup, extra func(d tradeFixtur
 	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil {
-		t.Fatalf("draining EntityEntered: %v", err)
-	}
+	// Round 737: Aria hears Bram arrive as a 0x3015, and Bram is spawned
+	// Aria as a group after his result.
+	drainPlayerSpawn(t, connA, rA)
+	drainPlayerSpawn(t, connB, rB)
 
 	return &tradeTestFixture{chars: chars, inv: inv, trades: trades, ariaID: aria.ID, bramID: bram.ID, connA: connA, connB: connB, rA: rA, rB: rB, accounts: accounts, addr: addr}
 }
@@ -736,7 +737,7 @@ func (f *tradeTestFixture) bram() tradePeer { return tradePeer{"Bram", f.connB, 
 
 // addTradePlayer brings a third player into a trade fixture: a new account and
 // character, logged in and entered at the spawn beside the others. It drains
-// the OpEntityEntered each of others gets.
+// the arrival spawns it and each of others get.
 func addTradePlayer(t *testing.T, f *tradeTestFixture, user, name string, others ...tradePeer) (tradePeer, int64) {
 	t.Helper()
 	acc, err := f.accounts.Add(user, "pw-"+user)
@@ -758,8 +759,13 @@ func addTradePlayer(t *testing.T, f *tradeTestFixture, user, name string, others
 	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
 		t.Fatalf("%s enter world failed: err=%v result=%+v", name, err, ewr)
 	}
+	// Round 737: the newcomer is spawned the players already beside it (one
+	// group: they stand in one block), and each of them hears it as a 0x3015.
+	if len(others) > 0 {
+		drainPlayerSpawn(t, p.conn, p.r)
+	}
 	for _, o := range others {
-		readPacket(t, o, OpEntityEntered)
+		drainPlayerSpawn(t, o.conn, o.r)
 	}
 	return p, c.ID
 }
@@ -889,7 +895,7 @@ func TestTradeRequestNeedsTheEngineRange(t *testing.T) {
 	if cz, err := DecodeChangeZoneResult(resp.Data); err != nil || !cz.OK {
 		t.Fatalf("Bram's zone change = %+v (err %v)", cz, err)
 	}
-	readPacket(t, aria, OpEntityLeft)
+	readPacket(t, aria, npcspawn.OpSingleDespawn) // retail 0x3016 (round 737)
 	if rr := requestResult(t, aria, "Bram"); rr.OK || rr.Reason != tradeTooFarReason {
 		t.Fatalf("other zone: request = %+v, want refused %q", rr, tradeTooFarReason)
 	}

@@ -44,23 +44,22 @@ func TestMoveUpdatesPositionAndReturnsOthers(t *testing.T) {
 	h.Enter(s1, 100, "Aria", 1, "jangan", Position{})
 	h.Enter(s2, 200, "Bram", 1, "jangan", Position{})
 
-	entity, others, ok := h.Move(s1, Position{X: 5, Y: 6, Z: 7})
+	r, ok := h.Relocate(s1, Position{X: 5, Y: 6, Z: 7}, MoveRelocate, 0)
 	if !ok {
-		t.Fatal("Move should succeed for an entered session")
+		t.Fatal("Relocate should succeed for an entered session")
 	}
-	if entity.Pos != (Position{X: 5, Y: 6, Z: 7}) {
-		t.Fatalf("got position %+v, want {5 6 7}", entity.Pos)
+	if r.Entity.Pos != (Position{X: 5, Y: 6, Z: 7}) {
+		t.Fatalf("got position %+v, want {5 6 7}", r.Entity.Pos)
 	}
-	if len(others) != 1 || others[0].Name != "Bram" {
-		t.Fatalf("expected to see Bram as the other occupant, got %+v", others)
+	if len(r.Watchers) != 1 || r.Watchers[0].Session != s2 || r.Watchers[0].CharacterID != 200 {
+		t.Fatalf("expected Bram's session as the move's one watcher, got %+v", r.Watchers)
 	}
 }
 
 func TestMoveUnknownSessionFails(t *testing.T) {
 	h := NewHub()
-	_, _, ok := h.Move(fakeSession(99), Position{})
-	if ok {
-		t.Fatal("expected Move to fail for a session that never entered")
+	if _, ok := h.Relocate(fakeSession(99), Position{}, MoveRelocate, 0); ok {
+		t.Fatal("expected Relocate to fail for a session that never entered")
 	}
 }
 
@@ -79,7 +78,7 @@ func TestLeaveRemovesAndReturnsRemaining(t *testing.T) {
 	}
 
 	// s1 should no longer be movable/found.
-	if _, _, ok := h.Move(s1, Position{}); ok {
+	if _, ok := h.Relocate(s1, Position{}, MoveRelocate, 0); ok {
 		t.Fatal("expected s1 to be gone after Leave")
 	}
 }

@@ -131,10 +131,10 @@ func TestDuelDeclineFlow(t *testing.T) {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
 	// Aria was already in the zone; drain her EntityEntered broadcast for Bram.
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil {
-		t.Fatalf("draining EntityEntered: %v", err)
-	}
+	// Round 737: Aria hears Bram arrive as a 0x3015, and Bram is spawned
+	// Aria as a group after his result.
+	drainPlayerSpawn(t, connA, rA)
+	drainPlayerSpawn(t, connB, rB)
 
 	resp = doSend(connA, rA, OpDuelChallenge, (&DuelChallengeRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
 	if cr, err := DecodeDuelChallengeResult(resp.Data); err != nil || !cr.OK {
@@ -252,10 +252,10 @@ func TestDuelFullFightFlow(t *testing.T) {
 	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil {
-		t.Fatalf("draining EntityEntered: %v", err)
-	}
+	// Round 737: Aria hears Bram arrive as a 0x3015, and Bram is spawned
+	// Aria as a group after his result.
+	drainPlayerSpawn(t, connA, rA)
+	drainPlayerSpawn(t, connB, rB)
 
 	resp = doSend(connA, rA, OpDuelChallenge, (&DuelChallengeRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
 	if cr, err := DecodeDuelChallengeResult(resp.Data); err != nil || !cr.OK {
@@ -424,10 +424,10 @@ func TestDuelArmorMitigation(t *testing.T) {
 	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil {
-		t.Fatalf("draining EntityEntered: %v", err)
-	}
+	// Round 737: Aria hears Bram arrive as a 0x3015, and Bram is spawned
+	// Aria as a group after his result.
+	drainPlayerSpawn(t, connA, rA)
+	drainPlayerSpawn(t, connB, rB)
 
 	resp = doSend(connA, rA, OpDuelChallenge, (&DuelChallengeRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
 	if cr, err := DecodeDuelChallengeResult(resp.Data); err != nil || !cr.OK {
@@ -582,7 +582,9 @@ func TestDuelBlowOnAnOpponentAliveAtZeroEndsTheDuel(t *testing.T) {
 	if ewr, err := DecodeEnterWorldResult(doSend(connB, rB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode()).Data); err != nil || !ewr.OK {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
-	read(connA, rA, "EntityEntered")
+	// Round 737: Aria hears Bram as a 0x3015; Bram is spawned Aria as a group.
+	drainPlayerSpawn(t, connA, rA)
+	drainPlayerSpawn(t, connB, rB)
 	if cr, err := DecodeDuelChallengeResult(doSend(connA, rA, OpDuelChallenge, (&DuelChallengeRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode()).Data); err != nil || !cr.OK {
 		t.Fatalf("challenge failed: err=%v result=%+v", err, cr)
 	}

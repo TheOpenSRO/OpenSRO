@@ -61,14 +61,28 @@ func (f *deadWorldFixture) warpBramAndBack(t *testing.T) []StateChange {
 }
 
 // Aria goes berserk; Bram leaves the zone and comes back. Coming back, Bram is
-// told Aria's body mode is 1 -- the arrival's view of her -- and nothing else.
+// spawned Aria with body mode 1 in her record -- the arrival's view of her,
+// where retail carries it (round 737; until then a 0x30BF followed the
+// arrival list) -- and hears no body mode besides.
 func TestRound651ArrivalSeesARunningBerserk(t *testing.T) {
 	f, zerk := berserkFixture(t, 10*time.Second)
 	f.goBerserk(t)
 	f.bodyModesUntilQuiet(t, f.connA, f.rA)
-	got := f.warpBramAndBack(t)
-	if len(got) != 1 || got[0].ObjectID != uint32(f.aria) || got[0].Value != 1 {
-		t.Fatalf("Bram, back beside a berserk Aria, heard body modes %+v; want exactly Aria's 1", got)
+	for _, zone := range []string{"donwhang", "jangan"} {
+		f.send(t, f.connB, OpChangeZone, (&ChangeZoneRequest{Zone: zone}).Encode())
+		if p := f.read(t, f.connB, f.rB); p.Opcode != OpChangeZoneResult {
+			t.Fatalf("Bram's change to %s answered %#04x", zone, p.Opcode)
+		}
+		if zone == "donwhang" {
+			f.bodyModesUntilQuiet(t, f.connB, f.rB)
+		}
+	}
+	rec := expectPlayerSpawn(t, f.connB, f.rB, f.aria)[0]
+	if rec.BodyMode != bodyModeBerserk {
+		t.Fatalf("Bram, back beside a berserk Aria, spawned her with body mode %d; want %d", rec.BodyMode, bodyModeBerserk)
+	}
+	if got := f.bodyModesUntilQuiet(t, f.connB, f.rB); len(got) != 0 {
+		t.Fatalf("and then heard body modes %+v; want none", got)
 	}
 	if !zerk.Active(f.aria) {
 		t.Fatal("Aria is no longer berserk")

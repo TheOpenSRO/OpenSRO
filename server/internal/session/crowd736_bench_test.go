@@ -43,14 +43,22 @@ import (
 //     writers' syscalls, GC), not the readers'.
 //   - The N players already standing there are put in the world.Hub with
 //     hub.Enter directly (OURS harness shortcut): entering them through
-//     enterOwned would fail past ~150 players (the arrival list outgrows one
-//     frame, measured below), which is itself a finding.
+//     enterOwned failed past ~150 players until round 737 (the arrival list
+//     outgrew one frame). Since round 737 each is given a player view holding
+//     the players of its 3 x 3 blocks (playerview.go), as the world entry
+//     leaves it, so every move goes through the production known-set check.
 //   - The one ARRIVING player goes through the real enterOwned (the shared
 //     tail of OpEnterWorld/Start, world.go) against in-memory stores, and
 //     leaves through the real WorldDisconnectHandler: the spawn burst and the
 //     enter/leave costs. With the SQL stores production uses, enterOwned also
-//     makes two store reads per player already present
-//     (entitySnapshotFromWorld); the memory stores make those cheap here.
+//     makes two store reads per player in view (playerRecord's body and
+//     worn items); the memory stores make those cheap here.
+//   - Round 737: a move reaches only the players in view of the mover (the
+//     3 x 3 blocks). The serial drive checks the count against the window
+//     rule; the layouts are "town" (one 3 x 3 window around the arrival
+//     point), "field" (10 x 10 blocks) and "block" (one block: everyone sees
+//     everyone, round 736's fan-out, to measure C2 alone).
+//     OPENSRO_CROWD736_LAYOUTS picks them ("block/serial,town/parallel").
 //   - The moves are the real handleMove (world.go), called from the test
 //     goroutine with the server-side session -- the gateway read loop's
 //     decode of a 12-byte payload is skipped. Each player moves once per
@@ -129,6 +137,13 @@ type crowdChild struct {
 
 // snap returns each connection's cumulative bytes and frames received.
 func (c *crowdChild) snap(t testing.TB) (bytes, frames []int64) {
+	b, f, _ := c.snap3(t)
+	return b, f
+}
+
+// snap3 is snap with each connection's OpEntityMoved frames (round 737: the
+// moves told apart from the spawns a block crossing adds).
+func (c *crowdChild) snap3(t testing.TB) (bytes, frames, moves []int64) {
 	t.Helper()
 	if _, err := io.WriteString(c.in, "snap\n"); err != nil {
 		t.Fatal(err)
@@ -142,12 +157,13 @@ func (c *crowdChild) snap(t testing.TB) (bytes, frames []int64) {
 			continue
 		}
 		f := strings.Fields(line)[1:]
-		bytes, frames = make([]int64, len(f)/2), make([]int64, len(f)/2)
+		bytes, frames, moves = make([]int64, len(f)/3), make([]int64, len(f)/3), make([]int64, len(f)/3)
 		for i := range bytes {
-			bytes[i], _ = strconv.ParseInt(f[2*i], 10, 64)
-			frames[i], _ = strconv.ParseInt(f[2*i+1], 10, 64)
+			bytes[i], _ = strconv.ParseInt(f[3*i], 10, 64)
+			frames[i], _ = strconv.ParseInt(f[3*i+1], 10, 64)
+			moves[i], _ = strconv.ParseInt(f[3*i+2], 10, 64)
 		}
-		return bytes, frames
+		return bytes, frames, moves
 	}
 }
 
@@ -193,6 +209,7 @@ type crowdResult struct {
 	seconds                        int
 	driveWall, drainWall, cpu      time.Duration
 	rxBytes, rxFrames              int64 // received by the N movers over the run
+	rxMoves, wantMoves             int64 // their OpEntityMoved frames, and the window rule's count (serial drive)
 	enterErr                       error
 	enterWall, leaveWall           time.Duration
 	burstBytes, burstFrames        int64 // to the arriver
@@ -254,25 +271,40 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 	// The crowd: n players already standing there.
 	rng := rand.New(rand.NewSource(736))
 	span, origin := 960.0, -320.0 // town: one 3x3 window of 320-unit blocks around the arrival point (0,0)
-	if layout == "field" {
+	switch layout {
+	case "field":
 		span, origin = 3200.0, -1600.0 // a 10x10-block field
+	case "block":
+		// Round 737: everyone in one 320-unit block, all in view of all --
+		// round 736's town as the bucket made it, to measure C2 alone.
+		span, origin = 300.0, -310.0
 	}
 	pos := make([]world.Position, n)
 	for i := 0; i < n; i++ {
 		pos[i] = world.Position{X: origin + rng.Float64()*span, Z: origin + rng.Float64()*span}
 		hub.Enter(sessions[i], cs[i].ID, cs[i].Name, cs[i].Level, spawnZone, pos[i])
 	}
-
-	settle := func(want func(b []int64) bool) []int64 {
-		deadline := time.Now().Add(120 * time.Second)
-		for {
-			b, _ := child.snap(t)
-			if want(b) || time.Now().After(deadline) {
-				return b
+	// Round 737: each player's client holds the players in its view, as the
+	// world entry leaves it (playerview.go) -- the production path, where
+	// every move is checked against the recipient's known set.
+	cur := append([]world.Position(nil), pos...) // where each stands, for the window rule below
+	deps := viewDeps{hub: hub, eq: eq, chars: chars}
+	for i := 0; i < n; i++ {
+		invalidateLook(cs[i].ID)
+		v := startPlayerView(cs[i].ID, sessions[i], deps)
+		e, _ := hub.EntityBySession(sessions[i].ID())
+		for _, o := range hub.ViewOfCharacter(e.CharacterID) {
+			if o.CharacterID != e.CharacterID {
+				v.known[o.CharacterID] = o.Arrival
 			}
-			time.Sleep(20 * time.Millisecond)
 		}
 	}
+	defer func() {
+		for i := 0; i <= n; i++ {
+			forgetPlayerView(cs[i].ID, sessions[i])
+		}
+	}()
+
 	quiet := func() ([]int64, []int64) {
 		// Nothing more arriving for 150 ms.
 		prev, _ := child.snap(t)
@@ -316,8 +348,10 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 		}
 	}
 	r.events = n * seconds
-	perMove := int64(6 + 20) // OpEntityMoved: header + id, x, y, z
-	want := sumFrom(b2, 0, n) + int64(r.events)*int64(n-1)*perMove
+	// The window rule (round 737): a move reaches the others whose block is
+	// within one of the mover's new block, counted here as the serial drive
+	// makes them (each mover's position as of its own move).
+	_, _, m2 := child.snap3(t)
 	cpu0 := cpuNow()
 	t0 = time.Now()
 	for s := 0; s < seconds; s++ {
@@ -336,25 +370,58 @@ func runCrowd(t *testing.T, n int, layout, drive string, seconds int) crowdResul
 		} else {
 			for _, i := range order {
 				_ = handleMove(sessions[i], pkts[s][i], hub, nil)
+				// A player that sees the mover before and after the move is
+				// sent it; one that sees it only after is spawned it instead
+				// (the 0x3015 carries the position), and one that saw it
+				// only before is despawned.
+				m, _ := DecodeMoveRequest(pkts[s][i].Data)
+				co := world.CellOf(spawnZone, cur[i])
+				cur[i] = world.Position{X: float64(m.X), Z: float64(m.Z)}
+				ci := world.CellOf(spawnZone, cur[i])
+				for j := 0; j < n; j++ {
+					cj := world.CellOf(spawnZone, cur[j])
+					if j != i && world.InView(ci, cj) && world.InView(co, cj) {
+						r.wantMoves++
+					}
+				}
 			}
 		}
 	}
 	r.driveWall = time.Since(t0)
-	b3 := settle(func(b []int64) bool { return sumFrom(b, 0, n) >= want })
-	r.drainWall = time.Since(t0)
+	b3, last := settleQuiet(t, child, n)
+	r.drainWall = last.Sub(t0)
 	r.cpu = cpuNow() - cpu0
-	_, f3 := child.snap(t)
+	_, f3, m3 := child.snap3(t)
 	mb, mf := diff(b3, b2), diff(f3, f2)
 	r.rxBytes, r.rxFrames = sumFrom(mb, 0, n), sumFrom(mf, 0, n)
+	r.rxMoves = sumFrom(diff(m3, m2), 0, n)
 	r.minClientBytes, r.maxClientBytes = mb[0], mb[0]
 	for _, x := range mb[:n] {
 		r.minClientBytes = min(r.minClientBytes, x)
 		r.maxClientBytes = max(r.maxClientBytes, x)
 	}
-	if got := sumFrom(b3, 0, n); got < want {
-		t.Errorf("n=%d %s: the movers received %d bytes, want %d", n, layout, got, want)
+	if drive != "parallel" && r.rxMoves != r.wantMoves {
+		t.Errorf("n=%d %s: the movers received %d OpEntityMoved, the window rule says %d", n, layout, r.rxMoves, r.wantMoves)
 	}
 	return r
+}
+
+// settleQuiet waits until the n movers' byte counts have not changed for
+// 300 ms and returns them with the time of the last change seen (the drain's
+// end, to within the 10 ms poll).
+func settleQuiet(t *testing.T, child *crowdChild, n int) ([]int64, time.Time) {
+	t.Helper()
+	b, _ := child.snap(t)
+	last := time.Now()
+	deadline := last.Add(180 * time.Second)
+	for time.Since(last) < 300*time.Millisecond && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		nb, _ := child.snap(t)
+		if sumFrom(nb, 0, n) != sumFrom(b, 0, n) {
+			b, last = nb, time.Now()
+		}
+	}
+	return b, last
 }
 
 func (r crowdResult) log(t *testing.T) {
@@ -364,13 +431,17 @@ func (r crowdResult) log(t *testing.T) {
 	if r.enterErr != nil {
 		enter = "FAILED: " + r.enterErr.Error()
 	}
-	t.Logf("CROWD736 n=%d layout=%s drive=%s | moves/s=%d ns/move=%.0f wall-ms/sim-s=%.1f delivered-ms/sim-s=%.1f cpu-ms/sim-s=%.1f | per-client pkts/s=%.1f KB/s=%.2f (min %.2f max %.2f) | total MB/s=%.3f pkts/s=%.0f",
+	rule := "n/a: a parallel drive's order is the scheduler's"
+	if r.drive != "parallel" {
+		rule = strconv.FormatInt(r.wantMoves, 10)
+	}
+	t.Logf("CROWD736 n=%d layout=%s drive=%s | moves/s=%d ns/move=%.0f wall-ms/sim-s=%.1f delivered-ms/sim-s=%.1f cpu-ms/sim-s=%.1f | per-client pkts/s=%.1f KB/s=%.2f (min %.2f max %.2f) | total MB/s=%.3f pkts/s=%.0f | moves delivered %d (window rule %s)",
 		r.n, r.layout, r.drive, r.n,
 		float64(r.driveWall.Nanoseconds())/float64(r.events),
 		float64(r.driveWall.Microseconds())/1000/sec, float64(r.drainWall.Microseconds())/1000/sec, float64(r.cpu.Microseconds())/1000/sec,
 		float64(r.rxFrames)/n/sec, float64(r.rxBytes)/n/sec/1000,
 		float64(r.minClientBytes)/sec/1000, float64(r.maxClientBytes)/sec/1000,
-		float64(r.rxBytes)/sec/1e6, float64(r.rxFrames)/sec)
+		float64(r.rxBytes)/sec/1e6, float64(r.rxFrames)/sec, r.rxMoves, rule)
 	t.Logf("CROWD736 n=%d layout=%s | enter %s in %v: arriver got %d frames / %d bytes (MaxPayload %d); the %d present got %d frames / %d bytes | leave in %v: %d frames / %d bytes",
 		r.n, r.layout, enter, r.enterWall, r.burstFrames, r.burstBytes, proto.MaxPayload,
 		r.n, r.enteredFrames, r.enteredBytes, r.leaveWall, r.leftFrames, r.leftBytes)
@@ -387,6 +458,7 @@ func TestCrowd736Child(t *testing.T) {
 	n, _ := strconv.Atoi(os.Getenv("OPENSRO_CROWD736_CONNS"))
 	bytes := make([]atomic.Int64, n)
 	frames := make([]atomic.Int64, n)
+	moves := make([]atomic.Int64, n)
 	conns := make([]net.Conn, n)
 	for i := 0; i < n; i++ {
 		var c net.Conn
@@ -427,6 +499,9 @@ func TestCrowd736Child(t *testing.T) {
 					p = p[step:]
 					if have == 6 {
 						frames[i].Add(1)
+						if binary.LittleEndian.Uint16(hdr[2:]) == OpEntityMoved {
+							moves[i].Add(1)
+						}
 						need = int(binary.LittleEndian.Uint16(hdr[:]) & proto.MaxPayload)
 						have = 0
 					}
@@ -444,7 +519,7 @@ func TestCrowd736Child(t *testing.T) {
 		case "snap":
 			w.WriteString("CROWD")
 			for i := 0; i < n; i++ {
-				fmt.Fprintf(w, " %d %d", bytes[i].Load(), frames[i].Load())
+				fmt.Fprintf(w, " %d %d %d", bytes[i].Load(), frames[i].Load(), moves[i].Load())
 			}
 			w.WriteString("\n")
 			w.Flush()
@@ -453,31 +528,6 @@ func TestCrowd736Child(t *testing.T) {
 				c.Close()
 			}
 			return
-		}
-	}
-}
-
-// crowdResultFits is how many others with the crowd's full kit one
-// EnterWorldResult carries before it outgrows a frame, with the pluses tail
-// and without it (EncodeFitting drops it first), through the real encoder.
-func crowdResultFits() (withPluses, withoutPluses int) {
-	snap := func(i int) EntitySnapshot {
-		s := EntitySnapshot{CharacterID: int64(1000 + i), Name: fmt.Sprintf("Crowd%07d", i), Gender: character.DefaultGender,
-			HasHeading: true, RefObjID: 1907, Scale: 0x44, HasModel: true}
-		for _, slot := range crowdKit() {
-			s.Equipped = append(s.Equipped, EquippedSnapshot{Slot: int(slot), ItemID: int64(3700 + int(slot)), Plus: 3})
-		}
-		return s
-	}
-	var others []EntitySnapshot
-	for i := 0; ; i++ {
-		others = append(others, snap(i))
-		r := &EnterWorldResult{OK: true, Zone: spawnZone, Others: others, HasModel: true, HasHeading: true}
-		if withPluses == 0 && len(r.encode(true)) > proto.MaxPayload {
-			withPluses = i
-		}
-		if len(r.encode(false)) > proto.MaxPayload {
-			return withPluses, i
 		}
 	}
 }
@@ -494,16 +544,19 @@ func TestCrowd736Smoke(t *testing.T) {
 	if r.enterErr != nil {
 		t.Fatalf("enter at n=20: %v", r.enterErr)
 	}
-	if r.rxFrames != int64(r.events*(r.n-1)) || r.rxBytes != r.rxFrames*26 {
-		t.Fatalf("moves: %d frames / %d bytes for %d events to %d others", r.rxFrames, r.rxBytes, r.events, r.n-1)
+	// Round 737: the moves reach exactly the players in view (runCrowd checks
+	// the count against the window rule); the arrival is a 0x3015 to each of
+	// the 20 present (all in its 3 x 3 blocks), after its zone notice (round
+	// 737's review), and group spawns to it; the
+	// leave a notice and a 0x3016 to each.
+	if r.rxMoves == 0 || r.rxMoves != r.wantMoves {
+		t.Fatalf("moves: %d delivered, the window rule says %d", r.rxMoves, r.wantMoves)
 	}
-	if r.enteredFrames != 20 || r.leftFrames != 20 {
-		t.Fatalf("entered %d, left %d, want 20 each", r.enteredFrames, r.leftFrames)
+	if r.enteredFrames != 40 || r.leftFrames != 40 {
+		t.Fatalf("entered %d, left %d, want 40 each (an OpPlayerZoneNotice and the spawn or despawn, to each of 20)", r.enteredFrames, r.leftFrames)
 	}
-	with, without := crowdResultFits()
-	t.Logf("CROWD736 one EnterWorldResult fits %d full-kit others with the pluses tail, %d without", with, without)
-	if without < 20 || without > 1000 {
-		t.Fatalf("result fits %d", without)
+	if r.burstFrames < 3 {
+		t.Fatalf("the arriver got %d frames, want its group spawns", r.burstFrames)
 	}
 }
 
@@ -524,7 +577,16 @@ func TestCrowd736Measure(t *testing.T) {
 	}
 	for _, n := range sizes {
 		seconds := max(3, 4000/n)
-		for _, run := range [][2]string{{"town", "serial"}, {"field", "serial"}, {"town", "parallel"}} {
+		layouts := [][2]string{{"town", "serial"}, {"field", "serial"}, {"town", "parallel"}, {"block", "serial"}, {"block", "parallel"}}
+		if s := os.Getenv("OPENSRO_CROWD736_LAYOUTS"); s != "" {
+			layouts = nil
+			for _, f := range strings.Split(s, ",") {
+				if l, d, ok := strings.Cut(f, "/"); ok {
+					layouts = append(layouts, [2]string{l, d})
+				}
+			}
+		}
+		for _, run := range layouts {
 			r := runCrowd(t, n, run[0], run[1], seconds)
 			r.log(t)
 		}
@@ -532,7 +594,7 @@ func TestCrowd736Measure(t *testing.T) {
 }
 
 // BenchmarkCrowd736HubMove is the part of a move done under the world hub's
-// write lock (world.Hub.MoveFacing): the position written and every other
+// write lock (world.Hub.Relocate): the position written, the block refiled
 // entity in the bucket copied out. Every mover in the bucket serialises on
 // it.
 func BenchmarkCrowd736HubMove(b *testing.B) {
@@ -546,7 +608,7 @@ func BenchmarkCrowd736HubMove(b *testing.B) {
 			}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				hub.MoveFacing(sess[i%n], world.Position{X: float64(i % 640), Z: 1})
+				hub.Relocate(sess[i%n], world.Position{X: float64(i % 640), Z: 1}, world.MoveWalk, 0)
 			}
 		})
 	}

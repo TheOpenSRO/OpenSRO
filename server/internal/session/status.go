@@ -661,7 +661,7 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 	msg.StatusTick = true
 	p := &proto.Packet{Opcode: OpMonsterAttacked, Data: msg.Encode()}
 	if e, ok := entityOf(d.hub, ct.id); ok {
-		for _, o := range d.hub.EntitiesInZone(e.Zone) {
+		for _, o := range d.hub.ViewOfCharacter(e.CharacterID) {
 			if o.Session != nil {
 				sendMonsterPush(o.Session, p)
 			}
@@ -784,9 +784,16 @@ func pushStats(ctx context.Context, d strikeDeps, st RegenDeps, characterID int6
 	e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: res.Encode()})
 }
 
-// broadcastStatus sends msg to every session in zone.
+// broadcastStatus sends msg to every session in zone -- for a character's,
+// since round 737, to the players in view that hold its body and to itself
+// (sendAboutOwner); one arriving later is sent it with the spawn
+// (characterStatusFrame).
 func broadcastStatus(hub *world.Hub, zone string, msg *ObjectStatus) {
 	if hub == nil || msg == nil {
+		return
+	}
+	if msg.OwnerKind == OwnerCharacter {
+		sendAboutOwner(zoneOf(hub, msg.OwnerID), msg.OwnerID, OpObjectStatus, msg.Encode())
 		return
 	}
 	p := &proto.Packet{Opcode: OpObjectStatus, Data: msg.Encode()}
@@ -795,6 +802,22 @@ func broadcastStatus(hub *world.Hub, zone string, msg *ObjectStatus) {
 			e.Session.Send(p)
 		}
 	}
+}
+
+// characterStatusFrame is a character's abnormal states as the OpObjectStatus
+// a client that spawns it is sent after the spawn (round 737's review, F7),
+// or nil when it has none.
+func characterStatusFrame(id int64) *gateway.Frame {
+	statusFX.mu.Lock()
+	var msg *ObjectStatus
+	if h := statusFX.pcs[id]; h != nil && !h.Empty() {
+		msg = &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}
+	}
+	statusFX.mu.Unlock()
+	if msg == nil {
+		return nil
+	}
+	return gateway.MustFrame(&proto.Packet{Opcode: OpObjectStatus, Data: msg.Encode()})
 }
 
 // monsterStatusPacket is a monster's mask as an OpObjectStatus, or nil when

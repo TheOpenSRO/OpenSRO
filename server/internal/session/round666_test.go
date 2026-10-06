@@ -54,10 +54,10 @@ func TestSleepingBrainsFallBackToTheAwake(t *testing.T) {
 		}
 	}
 	for k := 0; k < n; k++ { // the walk: ten seconds beside each monster
-		hub.Move(sess, world.Position{X: cellX(4 * k)})
+		hub.Relocate(sess, world.Position{X: cellX(4 * k)}, world.MoveRelocate, 0)
 		run(100)
 	}
-	hub.Move(sess, world.Position{X: cellX(0)})
+	hub.Relocate(sess, world.Position{X: cellX(0)}, world.MoveRelocate, 0)
 	run(900) // 90 s: longer than HOMING's 50 s dwell, so nothing is left insistent
 
 	e, _ := hub.EntityByCharacterID(1)
@@ -92,7 +92,7 @@ func TestSleepingBrainsFallBackToTheAwake(t *testing.T) {
 
 	// And they wake again: the player walks back past them all.
 	for k := 0; k < n; k++ {
-		hub.Move(sess, world.Position{X: cellX(4 * k)})
+		hub.Relocate(sess, world.Position{X: cellX(4 * k)}, world.MoveRelocate, 0)
 		run(1)
 		a.mu.Lock()
 		b := a.brains[ids[k]]
@@ -182,7 +182,7 @@ func TestWokenBrainKeepsWhatItFiled(t *testing.T) {
 // filed asleep, ticking until they are (or failing).
 func fileAsleep(t *testing.T, a *monsterAI, hub *world.Hub, sess *gateway.Session, now *time.Time, ids ...int64) {
 	t.Helper()
-	hub.Move(sess, world.Position{X: cellX(200)})
+	hub.Relocate(sess, world.Position{X: cellX(200)}, world.MoveRelocate, 0)
 	for i := 0; i < 900; i++ {
 		*now = now.Add(MonsterAITick)
 		a.tick(*now)
@@ -271,7 +271,7 @@ func TestFiledMonsterTakesADoTBlow(t *testing.T) {
 	t.Cleanup(func() { monsterAIRuntime.Store(nil) })
 	now := aiT0
 	a.tick(now)
-	hub.Move(sess, world.Position{X: cellX(40)})
+	hub.Relocate(sess, world.Position{X: cellX(40)}, world.MoveRelocate, 0)
 	for i := 0; i < 600; i++ { // until it is asleep, filed
 		now = now.Add(MonsterAITick)
 		a.tick(now)

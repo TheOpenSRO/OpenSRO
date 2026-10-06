@@ -103,7 +103,7 @@ func (w *partyWorld) move(t *testing.T, name string, x, z float64) {
 	if !ok {
 		t.Fatalf("%s not in the world", name)
 	}
-	w.hub.Move(e.Session, world.Position{X: x, Z: z})
+	w.hub.Relocate(e.Session, world.Position{X: x, Z: z}, world.MoveRelocate, 0)
 }
 
 func expectAck(t *testing.T, c *chatClient, op uint16) party.Ack {
