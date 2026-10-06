@@ -7094,6 +7094,187 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-thirty-seventh round: players see each other the way the original server sends them (3x3 blocks, group spawns)
+
+The full notes are in `docs/rounds/r737.md`, with three reviews in `r737_review.md`. The layouts are in
+`docs/protocol/pc_spawn.md` and `opcodes/movement.md`.
+- **Retail, READ from both binaries:**
+  - **A player's spawn record (0x3015):** 32 fields, in the same order and widths on the server
+    (`CGObjPC::vslot_294` 0x4e5a10 ...) and the client (`FUN_008a6bd0`, CICUser slots 22/23/25).
+  - **Arrivals as group spawns:** 0x3017 {u8 kind, u16 count} / 0x3019 data (4,052 bytes a frame)
+    / 0x3018, one group per block, never interleaved (client assert at 0x8abfa0).
+  - **The 3x3 window:** a crossing sends only the difference between the 3x3 windows of
+    320-unit blocks, despawns first.
+  - **0xB021** goes to the 3x3 window, the mover included.
+- **Built:**
+  - a hub filed by block; a per-session known set, keyed by character id, gating every message
+    about a player;
+  - encode once per event;
+  - one write per queue drain (no linger; the 2 ms one added 2 ms to every reply and batched
+    nothing);
+  - a per-character look cache with generations;
+  - O(1) lookups;
+  - a handler-panic recover that ends only that session;
+  - the OURS notice 0x00B7 (entered/left the zone), sent only with real spawns and despawns.
+- **Fixes a real bug:** an arrival with 167 or more players present closed the arriving session.
+  1000 present now arrive in 41-63 frames.
+- **Bench (MEASURED, one move a body a second, 1000 bodies; CPU ms per second, against
+  round 736's 5,870):** 4,324 serial / 3,044 parallel with everyone in view, 2,777 in a town
+  layout, 385 in the field. **10,000 players:** a wide spread keeps up (995 ms/s), the field does
+  not (70.8 CPU-s/s), and a town of 6,033 in view each is far behind. Cost is visible-per-viewer, so
+  C3 (move by destination, spec in r737.md) comes next.
+- **Reviews:**
+  - first: arrows hid a whole block, blows landed on the wrong player, and an entry or zone-change
+    race;
+  - second: a closed-view crossing panic, and a stale-look cache race;
+  - all fixed with regression tests.
+- **Gates:** Go 68 packages ok; session `-race` clean (959 s); box "ran 246 suite(s), 0 failing".
+- **Version skew:** a pre-737 client shows no other players. Client and server ship together.
+
+## Seven-hundred-and-thirty-sixth round: crowd scale specified and measured (spec only)
+
+The full notes are in `docs/rounds/r736.md`; the spec is `docs/protocol/crowd_scale.md`.
+- **Retail (READ):**
+  - no cap or LOD for other players;
+  - a character is posed only if it was drawn last frame;
+  - shadows for the ten nearest; names within 300;
+  - Character Sight Range is likely dead;
+  - the server sends 3x3 blocks of 320.
+- **OpenSRO (MEASURED, 1080p Middle, RX 7600):** 1000 in view cost about 196 ms a frame. The
+  frame is CPU-bound, with posing about 65% of it: every other player is posed every frame, with
+  14 Skins per body. Rounds 738/739 (client) and 737 (server) follow.
+- **Tools:** `QaCrowdProbe` (`OPENSRO_QA_CROWD_STEPS`), `QaLineup` count and plus, and the server
+  bench `crowd736_bench_test.go`.
+
+## Seven-hundred-and-forty-fifth round: the click ring on the frozen lake draws on the ice only
+
+The user (v0.1.502): the destination ring showed both on Karakoram's ice and on the lakebed far
+beneath it.
+- **Cause:** the ring is projected onto the height map (READ: `SWorld::vslot_022`). On the
+  ice that is the lakebed, 294 units down. The flat still-water quad at the point's height
+  was drawn on the ice as well. The ice is drawn see-through, so both rings showed.
+- **Fix (OURS):** `GroundMarkers._plane_test` / `plane_choice`. When the point is more than
+  `FLOOR_MIN_ABOVE_TERRAIN` above the height map, and the short ray down hits the terrain
+  layer (round 744's SolidPlanes, not a placed object), only the flat quad is drawn, at the
+  point's height + 0.1. Ordinary water and ground are unchanged.
+- **Tests:** four `plane_choice` checks in `ground_markers_test`. Box: ALL LOAD, "ran 245
+  suite(s), 0 failing". No render (the user tests it live).
+
+## Seven-hundred-and-forty-third round: every value-moving action is one Postgres transaction (M1; the trade dupe)
+
+The full notes are in `docs/rounds/r743.md`; the review is `r743_review.md`. This is M1 of
+`docs/protocol/server_architecture.md` (round 742), the user's chosen first round.
+- **Proven against real Postgres, failing before the fix (MEASURED):**
+  - a resent trade confirm ran the trade twice (`TestTradeResentConfirmDuplicatesItem`: "Aria holds
+    0, Bram holds 3");
+  - a failed credit destroyed the item and still moved the gold;
+  - raced `RemoveItem` / stack merge / equip / unequip duplicated items;
+  - a raced shop sell paid twice;
+  - a raced warehouse withdraw gave two swords from one.
+- **Now:**
+  - `internal/txn`: the transaction travels in the context, with savepoints, in-memory undo,
+    deadlock retries with backoff, per-owner advisory locks, a 15 s action deadline (OURS), and
+    the `economy_ops` idempotency ledger;
+  - **one transaction each:** trade (with an executing latch), shop buy/sell, buyback, pickup
+    (a serial per drop), warehouse (and its fee), split/merge, equip/unequip, GM `/give` with a
+    plus;
+  - item serials on `inventory_slots` / `account_storage_slots`, backfilled at boot under an
+    advisory lock;
+  - one capped pool (`OPENSRO_PG_MAX_CONNS`, default 40) instead of ten uncapped pools.
+  
+  Opcodes are unchanged.
+- **Review:**
+  - party gold pickups deadlocked (66/200 failed, 14 s). Shares are now credited in character-id
+    order: 0 failed, worst 8.8 ms.
+  - A trade error left the partner stuck. The ledger now decides between Completed and Cancelled.
+- **Open:**
+  - debit-then-refund paths (teleport fee, repair, guild, item use);
+  - equipment serials;
+  - cross-table serial uniqueness;
+  - the quest-kill reward is two commits;
+  - a batched backfill for rolling restarts (M2).
+- **Gates:** Go 68 packages ok; `-race` session (971 s), txn, trade, inventory, gateway ok.
+
+## Seven-hundred-and-forty-first round: every item part read, and weapon effects turn with the weapon
+
+The full notes are in `docs/rounds/r741.md`; the review is `r741_review.md`.
+- **Invisible items (MEASURED):** `ItemTableReader` read 7 hard-coded parts, while the archive's
+  index `itemdata.txt` names 63 (ItemData_1000..63000). That left 3,566 items without an icon,
+  name or model, among them 62607, the 11D Nova spear.
+  - The table now reads the index, parsed once per archive, on a worker from the top of
+    `World3D._ready`: the main thread waited 0.42-0.45 s, against 0.71 s before.
+  - It is shared by the world, the HUD, the preview and the appearance.
+  - Still OPEN: characterdata (4,576 codes, 670 `MOB_`) and skilldata (1 row) have the same short
+    list.
+- **Particles beside the weapon:**
+  - **READ:** retail places the effect at bone matrix x world matrix (`CRTModParticle::FUN_00c81190`).
+    Round 734's `EquipFx` used the bone's position only, so the enchant's sparks (0 to -4.8 along
+    the effect's X) ran along a fixed world axis. That is the user's "lines up only facing south
+    east".
+  - **Also:** hosts were keyed by (skeleton, bone), which dropped a seal weapon's second effect on
+    `ai_end`.
+  - **Now:**
+    - holders take the bone's full frame, scaled by the row's scale x the body's height;
+    - billboards and pipe ribbons are built in the shader per camera (OURS);
+    - hosts are keyed by (bone, effect).
+  - **Measured:** spread over 8 headings 0.000, against 13.8; the enchant at most 0.005 off the
+    blade.
+- **Review:** ship.
+  - DEPARTURE: in 10 Nova and Egyptian files, retail's world-space vectors (`SetConeVel` space 0,
+    and others) now turn with the bone.
+  - The 64 budget counts (bone, effect) hosts, not weapons.
+  - Both are follow-ups.
+- **Perf:**
+  - jangan SAME (1.60 -> 1.55 ms);
+  - 200 Sun spears at +9: +1.7 ms. That is the enchant effect now drawn beside the seal effect, as
+    retail draws both.
+- **Tests:** box "ran 247 suite(s), 0 failing".
+
+## Seven-hundred-and-fortieth round: seal effects (itemrare.txt) and OrgObjCodeName inheritance
+
+The full notes are in `docs/rounds/r740.md`; the spec is `docs/protocol/weapon_glow.md`, sections 1.4 and 1.5.
+- **Seal effects exist (READ):**
+  - `Client_LoadAllRefData` calls `UI_ALCHEMYBOX::FUN_00aa0270` twice (0x846755..0x84676e):
+    first `resinfo\itemrare.txt`, then `itemoptionefp.txt`, into the same RefID -> particle map.
+  - Missing min/max default to 0/0xFF (0xaa0acc), so seal rows show at **every plus**:
+    - Star/Moon/Sun: `system_raretype_a_step1/2/3`;
+    - Nova: `eternity_11_nova_01..03`;
+    - Egyptian: `eternity_11_egya/egyb_*`.
+  - This overturns round 733's "seals choose no effect", which had checked only two tables. The
+    user corrected it from play.
+- **Inheritance (READ, `FUN_00a9f2e0` / `FUN_00aa0270`):** weapons and shields with a non-empty
+  OrgObjCodeName (`+0x40`; `xxx` reads as empty) take the base item's glow type and share its
+  particle list. 480 `ITEM_EVENT_*` items gain both (MEASURED).
+- **11D `_A_RARE` (e.g. 4116):** no rows at all. Only `_A_RARE_ACTIVE` (62607) is the glowing Nova.
+- **Native reader:** the Rust table reader gains `org_code_names`.
+
+## Seven-hundred-and-forty-fourth round: standing on Karakoram's frozen lake -- the .nvm floor plane
+
+The full notes are in `docs/rounds/r744.md`; the rule is in `docs/protocol/NVM_FORMAT.md`
+("PlaneTypeMap: bit 1 is a floor").
+- **The bug:** the player walked through the ice of "Karakoram Ancient Remains" (regions
+  88-92 / 124-130, ice at height 800; `/goto hotan` then `/tp -15360 3840` is 90/127 local
+  960, 960). Our walk took its ground from the heightmap alone, which is the lakebed, 260-300
+  units under the ice. The heightmaps themselves are right (`.nvm` = `.m` on all 9,409 vertices
+  checked).
+- **The original's rule (READ):** `CRTNavMeshTerrain::vslot_001` (0x004051b0) interpolates the
+  heightmap, then tests `PlaneTypeMap[row*6+col] & 2` (0x405319) for the 320-unit block. When
+  the bit is set and the block's plane height is above the ground, the plane height wins
+  (0x405333-0x405347).
+- **Census (MEASURED, all 4,704 regions):** the bit is set on exactly 955 still-surface blocks
+  (type 3: 844; type 2: 111, which are not drawn). Ordinary water, type 1 (35,045 blocks), stays
+  wadeable.
+- **Fix:**
+  - `NvmCollision.terrain_height` is used everywhere `sample_height` was: the walk, landing,
+    Ghost Walk, QA.
+  - One two-sided 320x320 collision quad per floor block (`SolidPlanes`), so clicks, the camera
+    and monster placement stop at the ice. That the click ray hits the ice is OURS.
+  - The server has no navmesh and takes positions from the client, so it is unchanged.
+- **Tests:** `nvm_collision_test` `_solid_planes` and `nav_graph_test` `_walk_on_the_ice`. With
+  the old height function swapped back in, the walk test fails 5 times at y 505.81.
+- **Gates:** box check ALL LOAD; tests "ran 245 suite(s), 0 failing". No render or perf gate (the
+  user tests it live; the added cost is one small collision shape per ice region).
+
 ## Seven-hundred-and-thirty-fifth round: other players see each other's plus (weapon glow lane B)
 
 The full notes are in `docs/rounds/r735.md` (review: `r735_review.md`).

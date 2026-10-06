@@ -178,7 +178,18 @@ const LEFT_GRACE_MS := 10000
 ## keyed by character id) and none that left within LEFT_GRACE_MS of `now_ms`
 ## (`left`, character id -> the tick the left notice came, World3D's
 ## _recently_left). See the class comment for why elimination is sound.
-static func is_own_unpaired(target_id: int, others: Dictionary, left: Dictionary, now_ms: int) -> bool:
+##
+## Round 737's review (F2): since round 737 a client holds bodies only for
+## the players in its 3 x 3 message blocks, while a strike push goes to the
+## watchers of the MONSTER's blocks -- so a blow on a player out of this
+## client's view is drawn nowhere here and elimination would take it for this
+## player's. When this client knows its own id (`own_id`, OpSelfID, sent at
+## every world entry since round 616), the push is its own exactly when the
+## target is that id; elimination is only the fallback for an older server
+## that sends no id (own_id -1).
+static func is_own_unpaired(target_id: int, others: Dictionary, left: Dictionary, now_ms: int, own_id: int = -1) -> bool:
+	if own_id >= 0:
+		return target_id == own_id
 	if others.has(target_id):
 		return false
 	if left.has(target_id) and now_ms - int(left[target_id]) <= LEFT_GRACE_MS:

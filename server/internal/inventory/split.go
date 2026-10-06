@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // Splitting a stack (round 728).
@@ -57,7 +59,9 @@ func (m *MemStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 	if count <= 0 || count >= src.Quantity {
 		return ErrSplitCount
 	}
+	m.journalLocked(ctx, characterID)
 	part := *src
+	part.serial = 0 // the new stack is a new identity
 	part.Index = to
 	part.Quantity = count
 	part.MagParams = cloneParams(src.MagParams)
@@ -73,11 +77,14 @@ func (s *SQLStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 	if from < 0 || from >= reach || to < 0 || to >= place || from == to {
 		return ErrInvalidSlot
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := txn.Begin(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("inventory: beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := s.lock(ctx, tx, characterID); err != nil {
+		return err
+	}
 
 	var itemID int64
 	var qty, durability int
@@ -85,7 +92,7 @@ func (s *SQLStore) SplitItem(ctx context.Context, characterID int64, from, to, c
 	var opt, adv int
 	var params []byte
 	err = tx.QueryRowContext(ctx,
-		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 AND slot = $2`),
+		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
 		characterID, from).Scan(&itemID, &qty, &variance, &durability, &opt, &params, &adv)
 	if err == sql.ErrNoRows {
 		return ErrSlotEmpty
@@ -160,7 +167,8 @@ func (m *MemStore) PlaceItemInstance(ctx context.Context, characterID int64, slo
 	if held[slot] != nil {
 		return ErrSlotTaken
 	}
-	sl := &Slot{Index: slot, ItemID: itemID, Quantity: quantity}
+	m.journalLocked(ctx, characterID)
+	sl := &Slot{Index: slot, ItemID: itemID, Quantity: quantity, serial: inst.Serial}
 	sl.SetInstance(inst)
 	held[slot] = sl
 	return nil
@@ -171,11 +179,14 @@ func (s *SQLStore) PlaceItemInstance(ctx context.Context, characterID int64, slo
 	if slot < 0 || slot >= s.placeCapacityFor(ctx, characterID) || quantity <= 0 {
 		return ErrInvalidSlot
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := txn.Begin(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("inventory: beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := s.lock(ctx, tx, characterID); err != nil {
+		return err
+	}
 	var taken int
 	if err := tx.QueryRowContext(ctx,
 		s.q(`SELECT COUNT(*) FROM %s WHERE character_id = $1 AND slot = $2`), characterID, slot).Scan(&taken); err != nil {
@@ -184,10 +195,8 @@ func (s *SQLStore) PlaceItemInstance(ctx context.Context, characterID int64, slo
 	if taken > 0 {
 		return ErrSlotTaken
 	}
-	if _, err := tx.ExecContext(ctx,
-		s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
-		characterID, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir)); err != nil {
-		return fmt.Errorf("inventory: filling slot %d: %w", slot, err)
+	if err := s.insertRow(ctx, tx, characterID, slot, itemID, quantity, inst, inst.Serial); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

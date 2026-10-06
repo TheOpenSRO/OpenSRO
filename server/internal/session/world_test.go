@@ -419,22 +419,17 @@ func TestChangeZoneFlow(t *testing.T) {
 		}
 	}
 
-	// All three start in the default spawn zone ("jangan").
+	// All three start in the default spawn zone ("jangan"). Round 737: each
+	// arrival is spawned the players already there (a group spawn after its
+	// result), and they hear it as a 0x3015.
 	login(connA, rA, "alice", "hunter2", "Aria")
 	login(connB, rB, "bob", "hunter3", "Bram")
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil { // Aria's OpEntityEntered for Bram
-		t.Fatalf("draining Aria's OpEntityEntered for Bram: %v", err)
-	}
+	expectPlayerSpawn(t, connB, rB, 1)
+	expectPlayerSpawn(t, connA, rA, 2)
 	login(connC, rC, "cara", "hunter4", "Cyra")
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil { // Aria's OpEntityEntered for Cyra
-		t.Fatalf("draining Aria's OpEntityEntered for Cyra: %v", err)
-	}
-	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rB, nil, nil); err != nil { // Bram's OpEntityEntered for Cyra
-		t.Fatalf("draining Bram's OpEntityEntered for Cyra: %v", err)
-	}
+	expectPlayerSpawn(t, connC, rC, 1, 2)
+	expectPlayerSpawn(t, connA, rA, 3)
+	expectPlayerSpawn(t, connB, rB, 3)
 
 	// Guard rails: empty zone and same-zone are both rejected, no state change.
 	resp := sendRecv(connB, rB, OpChangeZone, (&ChangeZoneRequest{Zone: ""}).Encode())
@@ -459,50 +454,24 @@ func TestChangeZoneFlow(t *testing.T) {
 	if len(czr.Others) != 0 {
 		t.Fatalf("Bram should be alone in 100/100, got Others=%+v", czr.Others)
 	}
-	for name, r := range map[string]*bufio.Reader{"Aria": rA, "Cyra": rC} {
-		var conn net.Conn = connA
-		if name == "Cyra" {
-			conn = connC
-		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		left, err := proto.Read(r, nil, nil)
-		if err != nil || left.Opcode != OpEntityLeft {
-			t.Fatalf("%s should see OpEntityLeft for Bram: opcode=%v err=%v", name, left, err)
-		}
-		leftMsg, err := DecodeEntityLeft(left.Data)
-		if err != nil || leftMsg.CharacterID != 2 {
-			t.Fatalf("%s's EntityLeft should name Bram (id 2): %+v (err=%v)", name, leftMsg, err)
-		}
-	}
+	// Aria and Cyra, left behind in jangan, drop him (retail's 0x3016).
+	expectPlayerDespawn(t, connA, rA, 2)
+	expectPlayerDespawn(t, connC, rC, 2)
 
-	// Cyra follows Bram into 100/100: Bram should see her OpEntityEntered
-	// there, and Aria (left behind in jangan) should see her OpEntityLeft.
+	// Cyra follows Bram into 100/100: she is spawned Bram there, Bram is
+	// spawned her, and Aria (left behind in jangan) drops her.
 	resp = sendRecv(connC, rC, OpChangeZone, (&ChangeZoneRequest{Zone: "100/100"}).Encode())
 	czr, err = DecodeChangeZoneResult(resp.Data)
-	if err != nil || !czr.OK || czr.Zone != "100/100" {
-		t.Fatalf("Cyra's zone change: got %+v (err=%v), want ok zone=100/100", czr, err)
+	if err != nil || !czr.OK || czr.Zone != "100/100" || len(czr.Others) != 0 {
+		t.Fatalf("Cyra's zone change: got %+v (err=%v), want ok zone=100/100 with no list", czr, err)
 	}
-	if len(czr.Others) != 1 || czr.Others[0].Name != "Bram" {
-		t.Fatalf("Cyra should see Bram already in 100/100, got Others=%+v", czr.Others)
+	if r := expectPlayerSpawn(t, connC, rC, 2)[0]; r.Name != "Bram" {
+		t.Fatalf("Cyra's spawn of Bram names %q", r.Name)
 	}
-	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	entered, err := proto.Read(rB, nil, nil)
-	if err != nil || entered.Opcode != OpEntityEntered {
-		t.Fatalf("Bram should see OpEntityEntered for Cyra: opcode=%v err=%v", entered, err)
+	if r := expectPlayerSpawn(t, connB, rB, 3)[0]; r.Name != "Cyra" {
+		t.Fatalf("Bram's spawn of Cyra names %q", r.Name)
 	}
-	enteredSnap, _, err := decodeEntitySnapshot(entered.Data)
-	if err != nil || enteredSnap.Name != "Cyra" {
-		t.Fatalf("expected EntityEntered for Cyra, got %+v (err=%v)", enteredSnap, err)
-	}
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	left, err := proto.Read(rA, nil, nil)
-	if err != nil || left.Opcode != OpEntityLeft {
-		t.Fatalf("Aria should see OpEntityLeft for Cyra: opcode=%v err=%v", left, err)
-	}
-	leftMsg, err := DecodeEntityLeft(left.Data)
-	if err != nil || leftMsg.CharacterID != 3 {
-		t.Fatalf("Aria's EntityLeft should name Cyra (id 3): %+v (err=%v)", leftMsg, err)
-	}
+	expectPlayerDespawn(t, connA, rA, 3)
 }
 
 // startFrameWorld serves the world handlers over TCP with in-memory stores
@@ -594,61 +563,64 @@ func TestSingleFramePutsEveryTownInOneFrameAndOneBucket(t *testing.T) {
 		t.Fatalf("nobody else is in the world yet, got Others=%+v", czr.Others)
 	}
 
-	// Aria enters at Jangan. One bucket: Bram is in her list, standing at
-	// Donwhang's landing, and Bram -- the Donwhang player -- hears the Jangan
-	// player arrive.
+	// Aria enters at Jangan. One bucket -- but Bram, at Donwhang's landing, is
+	// thousands of units away, far outside her 3 x 3 message blocks (round
+	// 737, crowd_scale.md C1; until then the one bucket showed every player
+	// to every other, the whole world over): she is spawned nobody, and he
+	// hears nothing.
 	ewrA := f.login(t, connA, rA, "alice", "hunter2", "Aria")
-	if ewrA.FrameRegion != "97/168" || len(ewrA.Others) != 1 || ewrA.Others[0].Name != "Bram" ||
-		!near(ewrA.Others[0].X, ewrA.Others[0].Z, donX, donZ) {
-		t.Fatalf("Aria entered in frame %q with Others=%+v, want 97/168 and Bram at (%g, %g)", ewrA.FrameRegion, ewrA.Others, donX, donZ)
+	if ewrA.FrameRegion != "97/168" || len(ewrA.Others) != 0 {
+		t.Fatalf("Aria entered in frame %q with Others=%+v, want 97/168 and no list", ewrA.FrameRegion, ewrA.Others)
 	}
-	p := f.read(t, connB, rB)
-	if p.Opcode != OpEntityEntered {
-		t.Fatalf("Bram in Donwhang got %#04x after Aria entered Jangan, want OpEntityEntered", p.Opcode)
-	}
-	if snap, _, err := decodeEntitySnapshot(p.Data); err != nil || snap.Name != "Aria" || !near(snap.X, snap.Z, janganX, janganZ) {
-		t.Fatalf("Bram's OpEntityEntered: %+v (err=%v), want Aria at (%g, %g)", snap, err, janganX, janganZ)
+	if !f.nothing(t, connA, rA) || !f.nothing(t, connB, rB) {
+		t.Fatal("Aria at Jangan and Bram at Donwhang heard of each other")
 	}
 
-	// Bram warps on to Hotan. The same bucket is left and re-entered, so Aria
-	// hears him leave and then arrive at Hotan's landing: the Jangan player
-	// gets the other's OpEntityEntered too (the flicker the round records).
+	// Bram warps to Jangan, beside her: he is spawned Aria, standing at
+	// Jangan's landing, and she hears him arrive there.
+	czr = changeZone(t, f, connB, rB, "jangan")
+	if !czr.OK || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, janganX, janganZ) || len(czr.Others) != 0 {
+		t.Fatalf("Bram's change to jangan: %+v, want ok in 97/168 at (%g, %g)", czr, janganX, janganZ)
+	}
+	ownX, ownZ := func() (float64, float64) {
+		r := expectPlayerSpawn(t, connB, rB, 1)[0]
+		rx, ry := worldmap.RegionXY(int(r.Region))
+		return worldmap.ToWorld(rx, ry, float64(r.X), float64(r.Z), origin[0], origin[1])
+	}()
+	if math.Abs(ownX-janganX) > 0.01 || math.Abs(ownZ-janganZ) > 0.01 {
+		t.Fatalf("Bram's spawn of Aria stands at (%g, %g), want Jangan's landing (%g, %g)", ownX, ownZ, janganX, janganZ)
+	}
+	expectPlayerSpawn(t, connA, rA, 2)
+
+	// In one bucket a label is a grid hint, not a place he is "already in":
+	// asking for Jangan again is another warp to its landing. He is taken out
+	// and put back, so Aria drops him and is spawned him again (retail's
+	// block removal and insertion: 0x3016 then 0x3015).
+	if czr = changeZone(t, f, connB, rB, "jangan"); !czr.OK || !near(czr.X, czr.Z, janganX, janganZ) {
+		t.Fatalf("Bram's second change to jangan: %+v, want ok at (%g, %g)", czr, janganX, janganZ)
+	}
+	expectPlayerDespawn(t, connA, rA, 2)
+	expectPlayerSpawn(t, connA, rA, 2)
+	expectPlayerSpawn(t, connB, rB, 1)
+
+	// Bram warps on to Hotan, out of her view: she drops him, and he is
+	// spawned nobody.
 	hot := worldmap.ZoneCentre["hotan"]
 	hotX, hotZ := worldmap.ToWorld(hot[0], hot[1], 960, 960, origin[0], origin[1])
 	czr = changeZone(t, f, connB, rB, "hotan")
-	if !czr.OK || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, hotX, hotZ) || len(czr.Others) != 1 || czr.Others[0].Name != "Aria" {
-		t.Fatalf("Bram's change to hotan: %+v, want ok in 97/168 at (%g, %g) with Aria in Others", czr, hotX, hotZ)
+	if !czr.OK || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, hotX, hotZ) || len(czr.Others) != 0 {
+		t.Fatalf("Bram's change to hotan: %+v, want ok in 97/168 at (%g, %g)", czr, hotX, hotZ)
 	}
-	if p := f.read(t, connA, rA); p.Opcode != OpEntityLeft {
-		t.Fatalf("Aria's first packet after Bram's warp is %#04x, want OpEntityLeft", p.Opcode)
-	}
-	p = f.read(t, connA, rA)
-	if p.Opcode != OpEntityEntered {
-		t.Fatalf("Aria's second packet after Bram's warp is %#04x, want OpEntityEntered", p.Opcode)
-	}
-	if snap, _, err := decodeEntitySnapshot(p.Data); err != nil || snap.Name != "Bram" || !near(snap.X, snap.Z, hotX, hotZ) {
-		t.Fatalf("Aria's OpEntityEntered: %+v (err=%v), want Bram at (%g, %g)", snap, err, hotX, hotZ)
-	}
-
-	// In one bucket a label is a grid hint, not a place he is "already in":
-	// asking for Hotan again is another warp to its landing.
-	if czr = changeZone(t, f, connB, rB, "hotan"); !czr.OK || !near(czr.X, czr.Z, hotX, hotZ) {
-		t.Fatalf("Bram's second change to hotan: %+v, want ok at (%g, %g)", czr, hotX, hotZ)
-	}
-	f.read(t, connA, rA) // Aria's OpEntityLeft
-	f.read(t, connA, rA) // Aria's OpEntityEntered
+	expectPlayerDespawn(t, connA, rA, 2)
 
 	// A label with no frame keeps its own bucket and the old wire: FrameRegion
-	// "", spawnPos, alone -- Aria hears him leave and nothing more.
+	// "", spawnPos, alone -- and Aria, who no longer holds him, hears nothing.
 	czr = changeZone(t, f, connB, rB, "nowhere")
 	if !czr.OK || czr.FrameRegion != "" || czr.X != float32(spawnPos.X) || czr.Y != float32(spawnPos.Y) || czr.Z != float32(spawnPos.Z) || len(czr.Others) != 0 {
 		t.Fatalf("Bram's change to an unframed label: %+v, want ok, no frame, spawnPos, alone", czr)
 	}
-	if p := f.read(t, connA, rA); p.Opcode != OpEntityLeft {
-		t.Fatalf("Aria's packet after Bram left the world bucket is %#04x, want OpEntityLeft", p.Opcode)
-	}
 	if !f.nothing(t, connA, rA) {
-		t.Fatal("Aria heard more than Bram's OpEntityLeft when he went to an unframed label")
+		t.Fatal("Aria heard of Bram's move between two places out of her view")
 	}
 }
 
@@ -835,7 +807,9 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("alice's own EnterWorldResult should carry her real gender %q, got %q", character.GenderChinaWoman, ewr.Gender)
 	}
 
-	// Bob logs in and enters the world; should see Aria as an "other".
+	// Bob logs in and enters the world; his result lists nobody (round 737),
+	// and Aria follows it as retail's group spawn: her record carries her
+	// body and what she wears, as RefItemIDs in equip-slot order.
 	resp = sendRecv(connB, rB, OpLogin, (&LoginRequest{Username: "bob", Password: "hunter3"}).Encode())
 	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
 		t.Fatalf("bob login failed: err=%v result=%+v", err, lr)
@@ -845,53 +819,29 @@ func TestWorldFullFlow(t *testing.T) {
 	if err != nil || !ewr.OK {
 		t.Fatalf("bob enter world failed: err=%v result=%+v", err, ewr)
 	}
-	if len(ewr.Others) != 1 || ewr.Others[0].Name != "Aria" {
-		t.Fatalf("bob should see Aria, got %+v", ewr.Others)
-	}
-	for _, slot := range equipment.ArmorSlots {
-		if id := ewr.Others[0].EquippedIn(slot); id != 0 {
-			t.Fatalf("Aria has no armor equipped, but bob's snapshot claims item %d in slot %v: %+v", id, slot, ewr.Others[0])
-		}
-	}
-	if ewr.Others[0].EquippedIn(equipment.SlotWeapon) != 201 {
-		t.Fatalf("Aria has item 201 equipped as her weapon, but bob's snapshot says %+v", ewr.Others[0])
-	}
-	if ewr.Others[0].EquippedIn(equipment.SlotShield) != 0 {
-		t.Fatalf("Aria has no shield equipped, but bob's snapshot claims one: %+v", ewr.Others[0])
-	}
-	if ewr.Others[0].Gender != character.GenderChinaWoman {
-		t.Fatalf("bob's snapshot of Aria should carry her real gender %q, got %q", character.GenderChinaWoman, ewr.Others[0].Gender)
+	if len(ewr.Others) != 0 {
+		t.Fatalf("bob's result lists %+v; the players in view follow it as spawns", ewr.Others)
 	}
 	if ewr.Gender != character.GenderChinaMan {
 		t.Fatalf("bob's own EnterWorldResult should carry his real (default) gender %q, got %q", character.GenderChinaMan, ewr.Gender)
 	}
+	ariaRec := expectPlayerSpawn(t, connB, rB, aria.ID)[0]
+	if ariaRec.Name != "Aria" || len(ariaRec.Items) != 1 || ariaRec.Items[0].RefItemID != 201 {
+		t.Fatalf("bob's spawn of Aria: %+v, want her weapon 201 alone", ariaRec)
+	}
+	if want := uint32(character.LegacyModelFor(character.GenderChinaWoman)); ariaRec.RefObjID != want {
+		t.Fatalf("bob's spawn of Aria has body %d, want her gender's %d", ariaRec.RefObjID, want)
+	}
 
-	// Alice should now receive an OpEntityEntered for Bram carrying the
-	// item in his mail slot -- his real equipped state, queried live from
-	// the equipment store, not a hardcoded/default value.
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	entered, err := proto.Read(rA, nil, nil)
-	if err != nil {
-		t.Fatalf("reading OpEntityEntered: %v", err)
+	// Alice should now receive Bram's 0x3015 carrying the item in his mail
+	// slot and his shield -- his real equipped state, queried live from the
+	// equipment store, not a hardcoded/default value.
+	bramRec := expectPlayerSpawn(t, connA, rA, bram.ID)[0]
+	if bramRec.Name != "Bram" || len(bramRec.Items) != 2 || bramRec.Items[0].RefItemID != 200 || bramRec.Items[1].RefItemID != 202 {
+		t.Fatalf("Bram has mail 200 and shield 202 equipped, but his spawn says %+v", bramRec)
 	}
-	if entered.Opcode != OpEntityEntered {
-		t.Fatalf("got opcode 0x%04x, want OpEntityEntered", entered.Opcode)
-	}
-	enteredSnap, _, err := decodeEntitySnapshot(entered.Data)
-	if err != nil || enteredSnap.Name != "Bram" {
-		t.Fatalf("expected EntityEntered for Bram, got %+v (err=%v)", enteredSnap, err)
-	}
-	if enteredSnap.EquippedIn(equipment.SlotMail) != 200 {
-		t.Fatalf("Bram has item 200 equipped as mail, but EntityEntered says %+v", enteredSnap)
-	}
-	if enteredSnap.EquippedIn(equipment.SlotWeapon) != 0 {
-		t.Fatalf("Bram has no weapon equipped, but EntityEntered claims one: %+v", enteredSnap)
-	}
-	if enteredSnap.EquippedIn(equipment.SlotShield) != 202 {
-		t.Fatalf("Bram has item 202 equipped as his shield, but EntityEntered says %+v", enteredSnap)
-	}
-	if enteredSnap.Gender != character.GenderChinaMan {
-		t.Fatalf("Bram's real gender is the default %q, got %q", character.GenderChinaMan, enteredSnap.Gender)
+	if want := uint32(character.LegacyModelFor(character.GenderChinaMan)); bramRec.RefObjID != want {
+		t.Fatalf("Bram's spawn has body %d, want the default gender's %d", bramRec.RefObjID, want)
 	}
 
 	// Bob moves; Alice should see OpEntityMoved.
@@ -911,20 +861,9 @@ func TestWorldFullFlow(t *testing.T) {
 		t.Fatalf("unexpected EntityMoved: %+v (err=%v)", movedMsg, err)
 	}
 
-	// Bob disconnects; Alice should see OpEntityLeft.
+	// Bob disconnects; Alice should drop him (retail's 0x3016).
 	connB.Close()
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	left, err := proto.Read(rA, nil, nil)
-	if err != nil {
-		t.Fatalf("reading OpEntityLeft: %v", err)
-	}
-	if left.Opcode != OpEntityLeft {
-		t.Fatalf("got opcode 0x%04x, want OpEntityLeft", left.Opcode)
-	}
-	leftMsg, err := DecodeEntityLeft(left.Data)
-	if err != nil || leftMsg.CharacterID != movedMsg.CharacterID {
-		t.Fatalf("unexpected EntityLeft: %+v (err=%v)", leftMsg, err)
-	}
+	expectPlayerDespawn(t, connA, rA, movedMsg.CharacterID)
 }
 
 // ---- The player's dead state, the server half (round 549) ----
@@ -1017,20 +956,20 @@ func startDeadWorldFixtureZerk(t *testing.T, zerk *berserk.Tracker, extra func(c
 	f.rB = bufio.NewReader(f.connB)
 	f.login(t, f.connA, f.rA, "alice", "hunter2", "Aria")
 	f.login(t, f.connB, f.rB, "bob", "hunter3", "Bram")
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEntityEntered { // Aria's notice of Bram
-		t.Fatalf("Aria's first packet after Bram entered is %#04x, want OpEntityEntered", p.Opcode)
-	}
+	// Round 737: Bram's arrival reaches Aria as retail's 0x3015, and Aria
+	// reaches Bram as a group spawn after his result (playerview.go).
+	expectPlayerSpawn(t, f.connA, f.rA, f.bram)
+	expectPlayerSpawn(t, f.connB, f.rB, f.aria)
 	return f
 }
 
+// read reads the next packet, whatever it is: a test that expects a player
+// spawn or despawn reads it (expectPlayerSpawn / expectPlayerDespawn), so a
+// missing or a duplicate one fails it (round 737's review, F3: stepping over
+// them hid the entry race).
 func (f *deadWorldFixture) read(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
 	t.Helper()
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	p, err := proto.Read(r, nil, nil)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	return p
+	return readFrame737(t, conn, r)
 }
 
 // nothing reports that conn receives no packet within 300 ms.
@@ -1109,9 +1048,7 @@ func TestDeadCharacterCannotChangeZoneUntilRevived(t *testing.T) {
 	if czr, err := DecodeChangeZoneResult(f.read(t, f.connA, f.rA).Data); err != nil || !czr.OK {
 		t.Fatalf("the revived character's zone change answered %+v (err %v), want OK", czr, err)
 	}
-	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityLeft {
-		t.Errorf("Bram received %#04x after Aria left, want OpEntityLeft", p.Opcode)
-	}
+	expectPlayerDespawn(t, f.connB, f.rB, f.aria)
 	f.send(t, f.connB, OpRevive, nil)
 	if rr, err := DecodeReviveResult(f.read(t, f.connB, f.rB).Data); err != nil || rr.Error != "not dead" {
 		t.Errorf("a living character's OpRevive answered %+v (err %v), want \"not dead\"", rr, err)

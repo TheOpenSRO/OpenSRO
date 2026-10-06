@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // HeadingStore keeps the way each character last faced, saved with its
@@ -50,7 +51,7 @@ func (m *MemStore) SetHeading(_ context.Context, characterID int64, heading floa
 // Heading implements HeadingStore.
 func (s *SQLStore) Heading(ctx context.Context, characterID int64) (float64, error) {
 	var h float64
-	err := s.db.QueryRowContext(ctx, `SELECT heading FROM characters WHERE id = $1`, characterID).Scan(&h)
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT heading FROM characters WHERE id = $1`, characterID).Scan(&h)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -62,7 +63,7 @@ func (s *SQLStore) Heading(ctx context.Context, characterID int64) (float64, err
 
 // SetHeading implements HeadingStore.
 func (s *SQLStore) SetHeading(ctx context.Context, characterID int64, heading float64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE characters SET heading = $1 WHERE id = $2`, heading, characterID)
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx, `UPDATE characters SET heading = $1 WHERE id = $2`, heading, characterID)
 	if err != nil {
 		return fmt.Errorf("character: saving heading: %w", err)
 	}

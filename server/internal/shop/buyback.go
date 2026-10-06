@@ -9,6 +9,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // Buy back (round 728, reworked by its review onto the retail rules).
@@ -164,19 +165,24 @@ func (s *Service) Buyback(ctx context.Context, characterID int64, index int) (Bo
 		putBack()
 		return Bought{}, ErrBagFull
 	}
-	if err := s.Gold.DeductGold(ctx, characterID, e.Price); err != nil {
-		putBack()
-		if errors.Is(err, character.ErrInsufficientGold) {
-			return Bought{}, err
+	// The gold and the item, ONE transaction (round 743): a placement that
+	// fails costs nothing, with no refund step. The entry was taken out of
+	// the book above, so two racing buy backs of it buy it once.
+	err = txn.For(s.Gold, s.Inv).Run(ctx, func(ctx context.Context) error {
+		if err := s.Gold.DeductGold(ctx, characterID, e.Price); err != nil {
+			if errors.Is(err, character.ErrInsufficientGold) {
+				return err
+			}
+			return fmt.Errorf("shop: %w", err)
 		}
-		return Bought{}, fmt.Errorf("shop: %w", err)
-	}
-	if err := placer.PlaceItemInstance(ctx, characterID, slot, e.ItemID, e.Quantity, e.Inst); err != nil {
-		putBack()
-		if refundErr := s.Gold.AddGold(ctx, characterID, e.Price); refundErr != nil {
-			return Bought{}, fmt.Errorf("shop: buy back failed (%w) AND refund failed (%v)", err, refundErr)
+		if err := placer.PlaceItemInstance(ctx, characterID, slot, e.ItemID, e.Quantity, e.Inst); err != nil {
+			return fmt.Errorf("%w: %w", ErrBuybackCreate, err) // both wrapped, so Run can retry a deadlock (the review's F5)
 		}
-		return Bought{}, fmt.Errorf("%w: %v", ErrBuybackCreate, err)
+		return nil
+	})
+	if err != nil {
+		putBack()
+		return Bought{}, err
 	}
 	return Bought{Slot: slot, Quantity: e.Quantity, Paid: e.Price}, nil
 }

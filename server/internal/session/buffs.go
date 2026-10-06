@@ -351,24 +351,37 @@ func startsCasterBuff(ref *refdata.Skill) bool {
 	return !ref.TargetRequired || ref.TargetSelf || ref.TargetAlly || ref.TargetParty
 }
 
-// zoneOf returns every entity in characterID's zone, the character included,
-// or nil when it is not in the world.
+// zoneOf returns every entity in view of characterID, the character
+// included, or nil when it is not in the world. Until round 737 it was the
+// character's whole zone; it is now its interest area (world.Hub.
+// ViewOfCharacter, the 3 x 3 blocks, crowd_scale.md C1): a player out of view
+// holds no body for it.
 func zoneOf(hub *world.Hub, characterID int64) []world.Entity {
 	if hub == nil {
 		return nil
 	}
-	e, ok := hub.EntityByCharacterID(characterID)
-	if !ok {
-		return nil
-	}
-	return hub.EntitiesInZone(e.Zone)
+	return hub.ViewOfCharacter(characterID)
 }
 
-func sendToAll(to []world.Entity, op uint16, data []byte) {
+// sendAboutOwner sends one packet about owner, encoded once, to each of to:
+// owner's own client always, any other only while it holds owner's body
+// (playerview.go, sendIfKnown -- so a buff or a cast never reaches a client
+// before the spawn that would carry it, nor after the despawn).
+func sendAboutOwner(to []world.Entity, owner int64, op uint16, data []byte) {
+	f, err := gateway.NewFrame(&proto.Packet{Opcode: op, Data: data})
+	if err != nil {
+		return
+	}
+	bumpPlayerState(owner)
 	for _, e := range to {
-		if e.Session != nil {
-			e.Session.Send(&proto.Packet{Opcode: op, Data: data})
+		if e.Session == nil {
+			continue
 		}
+		if e.CharacterID == owner {
+			_ = e.Session.SendFrames(f)
+			continue
+		}
+		sendIfKnown(e.Session, e.CharacterID, owner, f)
 	}
 }
 
@@ -410,7 +423,7 @@ func broadcastBuffEnd(to []world.Entity, ownerID int64, ended []buff.Record, sp 
 		for _, r := range ended[:n] {
 			msg.Tokens = append(msg.Tokens, r.Token)
 		}
-		sendToAll(to, OpBuffEnd, msg.Encode())
+		sendAboutOwner(to, ownerID, OpBuffEnd, msg.Encode())
 		ended = ended[n:]
 	}
 }
@@ -438,7 +451,7 @@ func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerI
 	// Both packets carry the speed the one operation left: the end's and the
 	// start's agree, whichever the client applies last.
 	broadcastBuffEnd(zone, ownerID, ended, sp)
-	sendToAll(zone, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
+	sendAboutOwner(zone, ownerID, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
 	wallStarted(ownerID, rec, now)
 	return startDone
 }
@@ -509,7 +522,7 @@ func (g gmSpeed) GMSpeed(characterID int64) (float64, uint32) {
 // carrying no tokens. The caller holds buffLock(ownerID).
 func sendSpeed(zone []world.Entity, ownerID int64, runSpeed uint32) {
 	msg := &BuffEnd{OwnerID: ownerID, RunSpeed: runSpeed, OwnerKind: OwnerCharacter}
-	sendToAll(zone, OpBuffEnd, msg.Encode())
+	sendAboutOwner(zone, ownerID, OpBuffEnd, msg.Encode())
 }
 
 // endBuffsOf clears ownerID's whole book and tells its zone (a death).
@@ -552,59 +565,20 @@ func RunBuffTicker(ctx context.Context, hub *world.Hub, logger *slog.Logger) {
 // buffPoll is how often RunBuffTicker looks. OURS.
 const buffPoll = 100 * time.Millisecond
 
-// sendBuffsInView is what a character entering a zone learns and tells: the
-// active buffs of everyone already there go to it, and its own go to them.
-// OURS -- whether retail re-sends active buffs on entering view is OPEN (spec
-// §6 item 7); without it a player arriving would see no aura or icon on a
-// character already buffed, and a player's own bar would lose nothing (its
-// own buffs come back to it too, and the client keys them by token).
-func sendBuffsInView(hub *world.Hub, arriving world.Entity, now time.Time) {
-	if hub == nil {
+// sendOwnBuffs tells an arriving client its own character's buffs and its
+// GM /speed (sendBuffsInView's own part): since round 737 the players in
+// view learn its buffs with its spawn, and it learns theirs with theirs
+// (playerview.go, buffStateFrames).
+func sendOwnBuffs(arriving world.Entity, now time.Time) {
+	if arriving.Session == nil {
 		return
 	}
-	// A record that writes the run speed carries its owner's current one
-	// (round 616's review), so a client arriving -- or the owner's own, after
-	// a zone change -- learns the speed along with the buff.
-	packets := func(owner int64) [][]byte {
-		recs := buffBooks.Active(owner)
-		if len(recs) == 0 {
-			return nil
-		}
-		speed := buffBooks.RunSpeed(owner)
-		var out [][]byte
-		for _, rec := range recs {
-			s := uint32(0)
-			if buff.Contributes(rec) {
-				s = speed
-			}
-			out = append(out, buffStartPacket(rec, now, s))
-		}
-		return out
-	}
-	for _, other := range hub.EntitiesInZone(arriving.Zone) {
-		for _, data := range packets(other.CharacterID) {
-			arriving.Session.Send(&proto.Packet{Opcode: OpBuffStart, Data: data})
-		}
-	}
-	// A /speed multiplier (round 636, OURS) outlives a zone change, a death
-	// and a reconnect that replaces a live session (a logout clears it,
-	// world.go); the arriving client learns it here, since a buff
-	// packet carries a speed only for a record that writes one.
-	if _, ok := buffBooks.GMSpeedFactor(arriving.CharacterID); ok && arriving.Session != nil {
+	if _, ok := buffBooks.GMSpeedFactor(arriving.CharacterID); ok {
 		msg := &BuffEnd{OwnerID: arriving.CharacterID, RunSpeed: buffBooks.RunSpeed(arriving.CharacterID), OwnerKind: OwnerCharacter}
 		arriving.Session.Send(&proto.Packet{Opcode: OpBuffEnd, Data: msg.Encode()})
 	}
-	mine := packets(arriving.CharacterID)
-	if len(mine) == 0 {
-		return
-	}
-	for _, other := range hub.EntitiesInZone(arriving.Zone) {
-		if other.CharacterID == arriving.CharacterID || other.Session == nil {
-			continue
-		}
-		for _, data := range mine {
-			other.Session.Send(&proto.Packet{Opcode: OpBuffStart, Data: data})
-		}
+	if fs := buffStateFrames(arriving.CharacterID, now); len(fs) > 0 {
+		_ = arriving.Session.SendFrames(fs...)
 	}
 }
 
@@ -639,7 +613,7 @@ func BuffHandler(chars character.Store, hub *world.Hub) gateway.Handler {
 		if res != buff.Cancelled {
 			return nil
 		}
-		broadcastBuffEnd(hub.EntitiesInZone(e.Zone), characterID, []buff.Record{rec}, sp)
+		broadcastBuffEnd(zoneOf(hub, characterID), characterID, []buff.Record{rec}, sp)
 		return nil
 	}
 }
@@ -673,7 +647,7 @@ func finitePosition(x, y, z float32) bool {
 }
 
 // moveBySkill puts the session's character at pos the way a move does
-// (world.Hub.Move, the periodic position save), and tells the zone -- the
+// (world.Hub.Relocate, the periodic position save), and tells the zone -- the
 // caster included -- with OpSkillMove.
 //
 // NOT MODELLED, disclosed: the navmesh reachability test FUN_005862e0 runs
@@ -688,14 +662,17 @@ func moveBySkill(sess *gateway.Session, hub *world.Hub, chars character.Store, s
 			return false
 		}
 	}
-	entity, _, ok := hub.Move(sess, pos)
+	moved, ok := hub.Relocate(sess, pos, world.MoveRelocate, 0)
 	if !ok {
 		return false
 	}
+	entity := moved.Entity
 	keepUp.Cancel(entity.CharacterID)
 	savePositionEvery(chars, sess, entity, now)
 	msg := &SkillMove{CharacterID: entity.CharacterID, SkillID: skillID,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z)}
-	sendToAll(hub.EntitiesInZone(entity.Zone), OpSkillMove, msg.Encode())
+	// The caster and the players in view that hold it (round 737); a jump
+	// across a block line spawns and despawns as a walk's does.
+	afterRelocate(sess, moved, true, gateway.MustFrame(&proto.Packet{Opcode: OpSkillMove, Data: msg.Encode()}))
 	return true
 }

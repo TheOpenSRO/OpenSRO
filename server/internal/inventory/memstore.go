@@ -2,9 +2,11 @@ package inventory
 
 import (
 	"context"
-	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 	"sort"
 	"sync"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // MemStore is an in-memory Store, for tests and for running the server
@@ -128,6 +130,7 @@ func (m *MemStore) SetDurability(ctx context.Context, characterID int64, slot in
 	if sl == nil {
 		return ErrSlotEmpty
 	}
+	m.journalLocked(ctx, characterID)
 	sl.Durability = durabilityLeft
 	return nil
 }
@@ -143,6 +146,7 @@ func (m *MemStore) SetInstance(ctx context.Context, characterID int64, slot int,
 	if sl == nil {
 		return ErrSlotEmpty
 	}
+	m.journalLocked(ctx, characterID)
 	sl.SetInstance(inst)
 	return nil
 }
@@ -193,6 +197,9 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 		add := min(maxStack, remaining)
 		sl := Slot{Index: index, ItemID: itemID, Quantity: add}
 		sl.SetInstance(inst)
+		if len(fresh) == 0 {
+			sl.serial = inst.Serial // a whole stack keeps its identity
+		}
 		fresh = append(fresh, sl)
 		remaining -= add
 	}
@@ -200,6 +207,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 		return ErrNoRoom
 	}
 
+	m.journalLocked(ctx, characterID)
 	for index, add := range topUps {
 		held[index].Quantity += add
 	}
@@ -231,6 +239,7 @@ func (m *MemStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 	if quantity > sl.Quantity {
 		return ErrInsufficientQuantity
 	}
+	m.journalLocked(ctx, characterID)
 	if quantity == sl.Quantity {
 		delete(m.slots[characterID], slot)
 		return nil
@@ -280,6 +289,7 @@ func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		return ErrSlotEmpty
 	}
 	dst := held[to]
+	m.journalLocked(ctx, characterID)
 
 	// Plain move into a free slot.
 	if dst == nil {
@@ -315,4 +325,63 @@ func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int
 	src.Index, dst.Index = to, from
 	held[to], held[from] = src, dst
 	return nil
+}
+
+// journalLocked records owner's slots as they are now, so a failed action
+// (txn.Runner.Run) puts them back. Called with m.mu held, before a change;
+// outside an action it does nothing.
+func (m *MemStore) journalLocked(ctx context.Context, owner int64) {
+	if !txn.InAction(ctx) {
+		return
+	}
+	var snap map[int]*Slot
+	if held, ok := m.slots[owner]; ok {
+		snap = make(map[int]*Slot, len(held))
+		for i, sl := range held {
+			cp := *sl
+			cp.MagParams = cloneParams(sl.MagParams)
+			snap[i] = &cp
+		}
+	}
+	txn.OnRollback(ctx, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if snap == nil {
+			delete(m.slots, owner)
+			return
+		}
+		m.slots[owner] = snap
+	})
+}
+
+// TakeItem implements Taker.
+func (m *MemStore) TakeItem(ctx context.Context, owner int64, slot, quantity int, wantItem int64) (int64, Instance, error) {
+	if slot < 0 || slot >= m.capacityFor(ctx, owner) {
+		return 0, Instance{}, ErrInvalidSlot
+	}
+	if quantity <= 0 {
+		return 0, Instance{}, ErrInvalidQuantity
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sl := m.slots[owner][slot]
+	if sl == nil {
+		return 0, Instance{}, ErrSlotEmpty
+	}
+	if wantItem != 0 && sl.ItemID != wantItem {
+		return 0, Instance{}, ErrItemChanged
+	}
+	if quantity > sl.Quantity {
+		return 0, Instance{}, ErrInsufficientQuantity
+	}
+	m.journalLocked(ctx, owner)
+	inst := sl.Instance()
+	itemID := sl.ItemID
+	if quantity == sl.Quantity {
+		inst.Serial = sl.serial
+		delete(m.slots[owner], slot)
+	} else {
+		sl.Quantity -= quantity
+	}
+	return itemID, inst, nil
 }

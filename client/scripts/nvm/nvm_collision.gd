@@ -75,6 +75,89 @@ static func sample_height(region: NvmReader.ParsedRegion, x: float, z: float) ->
 	var h11 := region.heights[r1 * side + c1]
 	return lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
 
+## The bit of a `.nvm` PlaneTypeMap entry that makes the block's plane a
+## surface to stand on (round 744, READ). The client's terrain height query,
+## `CRTNavMeshTerrain::vslot_001` (0x004051b0), interpolates the heightmap and
+## then tests `PlaneTypeMap[row * 6 + col] & 2` (0x405319, `test BYTE PTR
+## [edx+esi*1],0x2` at the map's +0x1b360); when it is set and the block's
+## PlaneHeight (+0x1b384) is above the interpolated ground, the plane's height
+## is the answer (0x405333-0x405347: `fcom`, `test ah,0x41`, `fstp` into y).
+## `row` and `col` are the 20-unit tile indices (truncated, `_ftol` at
+## 0xb42d10) shifted right by 4 -- the 6x6 blocks of 320. These are the only
+## two readers of the map in the client (the other is FUN_00403980, the
+## matching ground normal, which returns a flat one on the plane).
+##
+## MEASURED (waterat -census, all 4,704 regions): the bit is set on exactly
+## the 955 blocks whose `.m` PlaneType is 1, the still surface MapmWater draws
+## (844 `.nvm` type 3, 111 type 2) -- Karakoram's frozen lake, plane 800, over
+## ground at 396-837 in 90/127. Plain water is `.nvm` type 1 and stays wadeable.
+const SOLID_PLANE_BIT := 2
+## One PlaneTypeMap block's span: 16 tiles of 20 (6 blocks a region).
+const PLANE_BLOCK_SPAN := 320.0
+
+## The block of the PlaneTypeMap a region-local point falls in, as
+## row * 6 + col, the way vslot_001 indexes it. Outside [0, 1920) the tile is
+## clamped to the region's own last one (OURS: the client is only ever asked
+## about a point inside the region it holds).
+static func plane_index(x: float, z: float) -> int:
+	var side := NvmReader.PLANE_MAP_SIDE
+	var tiles := NvmReader.TILE_MAP_SIDE
+	var tx := clampi(int(floorf(x / TILE_SIZE)), 0, tiles - 1)
+	var tz := clampi(int(floorf(z / TILE_SIZE)), 0, tiles - 1)
+	return (tz >> 4) * side + (tx >> 4)
+
+## The height of the solid plane over a region-local point -- Karakoram's ice
+## -- or NAN where the block has none (SOLID_PLANE_BIT clear).
+static func solid_plane_height(region: NvmReader.ParsedRegion, x: float, z: float) -> float:
+	var count := NvmReader.PLANE_COUNT
+	if region.plane_types.size() < count or region.plane_heights.size() < count:
+		return NAN
+	var i := plane_index(x, z)
+	if (region.plane_types[i] & SOLID_PLANE_BIT) == 0:
+		return NAN
+	return region.plane_heights[i]
+
+## The terrain's height at a region-local point the way the client's own
+## height query gives it (CRTNavMeshTerrain::vslot_001, see SOLID_PLANE_BIT):
+## the heightmap, raised to the block's solid plane where there is one and it
+## is higher. This, not sample_height, is the ground a character stands on:
+## with the heightmap alone a walker on Karakoram's frozen lake sank to the
+## lakebed, 260-300 units under the ice drawn over it (round 744).
+static func terrain_height(region: NvmReader.ParsedRegion, x: float, z: float) -> float:
+	var h := sample_height(region, x, z)
+	var plane := solid_plane_height(region, x, z)
+	if not is_nan(plane) and plane > h:
+		return plane
+	return h
+
+## The solid planes as collision triangles, region-local: one flat 320 x 320
+## quad at PlaneHeight per block with SOLID_PLANE_BIT, two triangles each, for
+## a ConcavePolygonShape3D on the terrain layer -- so the click-to-move ray, the
+## camera and every terrain ray stop at the ice instead of the lakebed under
+## it. The caller makes the shape two-sided (World3D's terrain group mirrors z,
+## which flips any winding). Empty for a region with no solid plane. Plain
+## data (the terrain prepare runs it on a task).
+static func solid_plane_faces(region: NvmReader.ParsedRegion) -> PackedVector3Array:
+	var faces := PackedVector3Array()
+	var side := NvmReader.PLANE_MAP_SIDE
+	if region == null or region.plane_types.size() < side * side or region.plane_heights.size() < side * side:
+		return faces
+	for row in range(side):
+		for col in range(side):
+			var i := row * side + col
+			if (region.plane_types[i] & SOLID_PLANE_BIT) == 0:
+				continue
+			var h := region.plane_heights[i]
+			var x0 := col * PLANE_BLOCK_SPAN
+			var z0 := row * PLANE_BLOCK_SPAN
+			var x1 := x0 + PLANE_BLOCK_SPAN
+			var z1 := z0 + PLANE_BLOCK_SPAN
+			faces.append_array([
+				Vector3(x0, h, z0), Vector3(x0, h, z1), Vector3(x1, h, z1),
+				Vector3(x0, h, z0), Vector3(x1, h, z1), Vector3(x1, h, z0),
+			])
+	return faces
+
 ## Builds a triangle soup of vertical walls, one quad per blocking edge,
 ## in region-local space (X/Z in [0, 1920], Y from the region's own
 ## heightmap). Feed it straight to ConcavePolygonShape3D.set_faces().
@@ -93,8 +176,8 @@ static func build_wall_triangles(
 		var b := edge.line_max
 		if a.is_equal_approx(b):
 			continue
-		var ha := sample_height(region, a.x, a.y)
-		var hb := sample_height(region, b.x, b.y)
+		var ha := terrain_height(region, a.x, a.y)
+		var hb := terrain_height(region, b.x, b.y)
 		var a_lo := Vector3(a.x, ha, a.y)
 		var b_lo := Vector3(b.x, hb, b.y)
 		var a_hi := Vector3(a.x, ha + wall_height, a.y)

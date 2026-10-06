@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 )
 
 // RecallStore keeps each character's designated return point (round 686): the
@@ -64,7 +65,7 @@ func (m *MemStore) SetAppointedTeleport(_ context.Context, characterID int64, ob
 // AppointedTeleport implements RecallStore.
 func (s *SQLStore) AppointedTeleport(ctx context.Context, characterID int64) (int64, error) {
 	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT appointed_teleport FROM characters WHERE id = $1`, characterID).Scan(&id)
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT appointed_teleport FROM characters WHERE id = $1`, characterID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -76,7 +77,7 @@ func (s *SQLStore) AppointedTeleport(ctx context.Context, characterID int64) (in
 
 // SetAppointedTeleport implements RecallStore.
 func (s *SQLStore) SetAppointedTeleport(ctx context.Context, characterID int64, objectID int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE characters SET appointed_teleport = $1 WHERE id = $2`, objectID, characterID)
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx, `UPDATE characters SET appointed_teleport = $1 WHERE id = $2`, objectID, characterID)
 	if err != nil {
 		return fmt.Errorf("character: saving the appointed teleport: %w", err)
 	}

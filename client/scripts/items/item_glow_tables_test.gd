@@ -51,6 +51,8 @@ func _initialize() -> void:
 	_test_loadout()
 	_test_view_glow()
 	_test_reglow_mid_fade()
+	_test_inheritance()
+	_test_inherited_particles()
 	await _test_clock()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
 	quit(1 if _failures > 0 else 0)
@@ -329,6 +331,140 @@ func _test_reglow_mid_fade() -> void:
 	fades.step(2.0)
 	_check(mi.material_override == plain, "and the fade's end gives back the plain material, not the old glow")
 	node.free()
+
+## An item row as ItemTableReader gives it: code name, OrgObjCodeName,
+## TypeID1..4, Bionic.
+func _item(id: int, code: String, org: String, t: Array, bionic: int = 0) -> ItemTableReader.Item:
+	var it := ItemTableReader.Item.new()
+	it.id = id
+	it.code_name = code
+	it.org_code_name = org
+	it.type_ids = PackedInt32Array(t)
+	it.bionic = bionic
+	return it
+
+const WEAPON := [3, 1, 6, 2]
+const SHIELD := [3, 1, 4, 1]
+
+func _rows(list: Array) -> Dictionary:
+	var out := {}
+	for it in list:
+		out[(it as ItemTableReader.Item).id] = it
+	return out
+
+## Round 740: the glow type inherited through OrgObjCodeName (READ,
+## FUN_00a9f2e0: the item walk, the type-word gate, the per-group step after
+## itemoption.txt).
+func _test_inheritance() -> void:
+	# The gate, test by test (0xa9f45b..0xa9f4d7).
+	_check(ItemGlowTables.inherits_glow(0, 0, PackedInt32Array(WEAPON)) and ItemGlowTables.inherits_glow(1, 0, PackedInt32Array([3, 1, 6, 15])),
+		"gate: a weapon (TypeID 3/1/6, any TypeID4; CashItem does not matter)")
+	_check(ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([3, 1, 4, 1])) and ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([3, 1, 4, 2]))
+		and not ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([3, 1, 4, 3])) and not ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([3, 1, 4, 0])),
+		"gate: a shield is TypeID3 4 with TypeID4 1 or 2 only")
+	_check(not ItemGlowTables.inherits_glow(0, 1, PackedInt32Array(WEAPON)), "gate: a Bionic item never (w & 2)")
+	_check(not ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([3, 1, 1, 1])) and not ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([3, 2, 6, 2]))
+		and not ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([1, 1, 6, 2])) and not ItemGlowTables.inherits_glow(0, 0, PackedInt32Array([3, 1])),
+		"gate: armour, TypeID2 2, TypeID1 1 and a short type list never")
+	_check(ItemTableReader.org_of(" xxx ") == "" and ItemTableReader.org_of("XXX") == "" and ItemTableReader.org_of(" ITEM_A ") == "ITEM_A",
+		"OrgObjCodeName `xxx` reads as none (the client's wide reader stores \"\")")
+
+	var t := ItemGlowTables.new()
+	t.load_options(_bytes(["ITEM_T_BLADE_A\t2", "ITEM_TEST_SHIELD\t1", "ITEM_T_OWN\t4", "C_TOP\t3"]))
+	var type_rows: Array = []
+	for p in THRESHOLDS:
+		type_rows.append("2\t%d\t0,0\tprim\\mtrl\\itemoption\\test.ddj\t5\t7\t1,1,1\t1,1,1\t1000\t0" % p)
+	t.load_types(_bytes(type_rows))
+	var items := _rows([
+		_item(10, "ITEM_T_BLADE_A", "", WEAPON),
+		_item(11, "ITEM_EVENT_T_BLADE_A", "ITEM_T_BLADE_A", WEAPON),
+		_item(12, "ITEM_EVENT_T_BLADE_B", "ITEM_T_BLADE_B", WEAPON),
+		_item(13, "ITEM_T_BLADE_B", "", WEAPON),
+		_item(14, "ITEM_EVENT_T_SHIELD", "ITEM_TEST_SHIELD", SHIELD),
+		_item(15, "ITEM_EVENT_T_SHIELD_3", "ITEM_TEST_SHIELD", [3, 1, 4, 3]),
+		_item(16, "ITEM_EVENT_T_ARMOUR", "ITEM_T_BLADE_A", [3, 1, 1, 1]),
+		_item(17, "ITEM_EVENT_T_BIONIC", "ITEM_T_BLADE_A", WEAPON, 1),
+		_item(18, "ITEM_T_OWN", "ITEM_T_BLADE_A", WEAPON),
+		_item(19, "item_event_t_lower", "item_t_blade_a", WEAPON),
+		# Order: groups run in name order, and a name item's type counts only
+		# once its own group has run. "B_MID" runs before "C_TOP", so A1 finds
+		# B_MID untyped; "C_TOP" runs before "Z_MID", so A2 finds Z_MID typed.
+		_item(20, "A1", "B_MID", WEAPON),
+		_item(21, "B_MID", "C_TOP", WEAPON),
+		_item(22, "A2", "Z_MID", WEAPON),
+		_item(23, "Z_MID", "C_TOP", WEAPON),
+	])
+	_check(t.type_of("ITEM_EVENT_T_BLADE_A") == 0, "before inherit(): only itemoption.txt's own types")
+	var added := t.inherit(items)
+	_check(added == 9 and t.group_member_count() == 9, "inherit: the 9 weapons and shields with an Org join groups (%d)" % added)
+	_check(t.type_of("ITEM_EVENT_T_BLADE_A") == 2 and t.glow_row("ITEM_EVENT_T_BLADE_A", 7).plus == 7,
+		"an item whose Org item has type 2 gets type 2, and glows")
+	_check(t.type_of("ITEM_EVENT_T_BLADE_B") == 0, "an Org item with no type gives none")
+	_check(t.type_of("ITEM_T_BLADE_A") == 2 and t.type_of("ITEM_T_BLADE_B") == 0, "the base items keep their own (none for none)")
+	_check(t.type_of("ITEM_EVENT_T_SHIELD") == 1 and t.type_of("ITEM_EVENT_T_SHIELD_3") == 0, "a shield inherits; TypeID4 3 is not a shield to the gate")
+	_check(t.type_of("ITEM_EVENT_T_ARMOUR") == 0 and t.type_of("ITEM_EVENT_T_BIONIC") == 0, "armour and a Bionic weapon inherit nothing")
+	_check(t.type_of("ITEM_T_OWN") == 4, "a member with a type of its own keeps it")
+	_check(t.type_of("ITEM_EVENT_T_LOWER") == 2, "names compare in upper case (OURS)")
+	_check(t.type_of("B_MID") == 3 and t.type_of("A1") == 0, "a chain: B_MID's group ran before B_MID had a type, so A1 has none")
+	_check(t.type_of("Z_MID") == 3 and t.type_of("A2") == 3, "a chain the other way: C_TOP's group ran first, so A2 has Z_MID's inherited type")
+	_check(t.inherited_types == 6, "6 items gained a type (%d)" % t.inherited_types)
+	_check(t.inherit(items) == 0 and t.inherited_types == 6, "the same rows again add nothing")
+	# A partial table, then the whole one: as the whole one alone.
+	var p := ItemGlowTables.new()
+	p.load_options(_bytes(["ITEM_T_BLADE_A\t2", "ITEM_TEST_SHIELD\t1", "ITEM_T_OWN\t4", "C_TOP\t3"]))
+	p.inherit(_rows([items[20], items[22], items[11]]))
+	_check(p.type_of("A2") == 0 and p.type_of("ITEM_EVENT_T_BLADE_A") == 2, "partial: what the rows so far allow")
+	p.inherit(items)
+	var same := true
+	for id in items:
+		var code: String = (items[id] as ItemTableReader.Item).code_name
+		same = same and p.type_of(code) == t.type_of(code)
+	_check(same and p.inherited_types == t.inherited_types, "partial then whole ends as the whole alone")
+	# itemoption.txt after the rows (the order for_archive does not take, but
+	# the result does not depend on it).
+	var late := ItemGlowTables.new()
+	late.inherit(items)
+	late.load_options(_bytes(["ITEM_T_BLADE_A\t2"]))
+	_check(late.type_of("ITEM_EVENT_T_BLADE_A") == 2, "types loaded after the rows inherit too")
+
+## Round 740: the particle map, filled by two calls of FUN_00aa0270 (itemrare.txt,
+## then itemoptionefp.txt), each ending with the same inheritance, the member
+## sharing the base's list (READ: the base's vector pointer inserted).
+func _test_inherited_particles() -> void:
+	var t := ItemGlowTables.new()
+	# itemrare.txt: five columns, no plus range.
+	t.load_particles(_bytes(["//Item Code Name\tParticle\tScale\tBone\tOffset",
+		"ITEM_T_BLADE_A\tsystem\\rare_a.efp\t130\tai_end\tnone",
+		"ITEM_EVENT_T_OWN_RARE\tsystem\\rare_own.efp\t130\tai_end\tnone"]))
+	# itemoptionefp.txt: the plus range.
+	t.load_particles(_bytes(["ITEM_T_BLADE_A\tsystem\\enchant_a.efp\t175\tai_end\tnone\t8\t100\t100",
+		"ITEM_EVENT_T_BLADE_A2\tsystem\\own_enchant.efp\t150\tai_end\tnone\t8\t100\t100",
+		"ITEM_T_BLADE_C\tsystem\\enchant_c.efp\t175\tai_end\tnone\t8\t100\t100"]))
+	var r0: Array = t.particle_rows("ITEM_T_BLADE_A", 0)
+	_check(r0.size() == 1 and (r0[0] as ItemGlowTables.ParticleRow).efp == "system\\rare_a.efp" and (r0[0] as ItemGlowTables.ParticleRow).max_plus == 255,
+		"an itemrare.txt row shows at +0 (no min/max columns: 0..255)")
+	_check(t.particle_rows("ITEM_T_BLADE_A", 9).size() == 2, "at +9 the itemrare row and the itemoptionefp row, in that order")
+	var items := _rows([
+		_item(10, "ITEM_T_BLADE_A", "", WEAPON),
+		_item(11, "ITEM_EVENT_T_BLADE_A", "ITEM_T_BLADE_A", WEAPON),
+		_item(12, "ITEM_EVENT_T_BLADE_A2", "ITEM_T_BLADE_A", WEAPON),
+		_item(13, "ITEM_EVENT_T_OWN_RARE", "ITEM_T_BLADE_A", WEAPON),
+		_item(14, "ITEM_EVENT_T_BLADE_C", "ITEM_T_BLADE_C", WEAPON),
+		_item(15, "ITEM_EVENT_T_NONE", "ITEM_T_NO_ROWS", WEAPON),
+	])
+	t.inherit(items)
+	_check(t.particle_rows("ITEM_EVENT_T_BLADE_A", 0).size() == 1 and t.particle_rows("ITEM_EVENT_T_BLADE_A", 9).size() == 3,
+		"a member with no rows shares its base's list: the rare row, the base's efp row and A2's (%d)" % t.particle_rows("ITEM_EVENT_T_BLADE_A", 9).size())
+	var base9 := t.particle_rows("ITEM_T_BLADE_A", 9)
+	_check(base9.size() == 3 and (base9[2] as ItemGlowTables.ParticleRow).efp == "system\\own_enchant.efp",
+		"A2 shared the base's list after the first call, so its own itemoptionefp row lands in that list, the base's too (READ quirk)")
+	_check(t.particle_rows("ITEM_EVENT_T_OWN_RARE", 0).size() == 1 and t.particle_rows("ITEM_EVENT_T_OWN_RARE", 9).size() == 1
+		and (t.particle_rows("ITEM_EVENT_T_OWN_RARE", 9)[0] as ItemGlowTables.ParticleRow).efp == "system\\rare_own.efp",
+		"a member with rows of its own keeps its own list")
+	_check(t.particle_rows("ITEM_EVENT_T_BLADE_C", 9).size() == 1 and t.particle_rows("ITEM_EVENT_T_BLADE_C", 0).is_empty(),
+		"a base with only an itemoptionefp row: its member inherits at the second call")
+	_check(t.particle_rows("ITEM_EVENT_T_NONE", 9).is_empty(), "an Org item with no rows gives none")
+	_check(t.inherited_particles == 3, "3 items gained a particle list (%d)" % t.inherited_particles)
 
 ## Round 734's review, F8: the glow's clock is a script accumulator wrapped at
 ## a whole number of every pulse cycle, not TIME (whose 3600 s rollover cut

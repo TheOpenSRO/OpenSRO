@@ -57,17 +57,19 @@ var knownOrphans = map[string]string{
 	// Round 710: the party API published for the next party lanes (the round-709
 	// plan in docs/protocol/party_protocol.md, "Implementation lanes"). Each is
 	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.
-	"PartyByID":        "round 710: lane S3 finds the party behind a match entry; party_test.go.",
-	"DecodeItemNotice": "round 712: the 0x3068 reader as c:0x873990 reads it (the class from the item's TypeIDs), for the client lane's tests; golden-tested.",
-	"DecodeGold":       "round 716: the 0x304E kind-1 reader, the Go mirror of c:0x8a70d0 for the codec tests; the Godot client consumes the message over the socket.",
-	"KillExp":          "round 712: Formula_MonsterExpReward (0x4105d0), whose only callers are the PC death dispatch; the kill path pays through KillBase and ContributorExp instead. Kept as the recovered formula and its tests' anchor.",
+	"SetAfterCommitHookForTest": "round 743: txn's fault hook, an error answered after a successful commit; the pick-up and trade tests drive the commit-then-error path through it.",
+	"PartyByID":                 "round 710: lane S3 finds the party behind a match entry; party_test.go.",
+	"DecodeItemNotice":          "round 712: the 0x3068 reader as c:0x873990 reads it (the class from the item's TypeIDs), for the client lane's tests; golden-tested.",
+	"DecodeGold":                "round 716: the 0x304E kind-1 reader, the Go mirror of c:0x8a70d0 for the codec tests; the Godot client consumes the message over the socket.",
+	"KillExp":                   "round 712: Formula_MonsterExpReward (0x4105d0), whose only callers are the PC death dispatch; the kill path pays through KillBase and ContributorExp instead. Kept as the recovered formula and its tests' anchor.",
 	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
 		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
 		"world before any player, so a player always meets them in a group spawn and the server never sends this " +
 		"(docs/protocol/npc_spawn.md); kept with its golden test so both sides hold the layout.",
-	"SingleDespawn": "round 708: the retail 0x3016 payload. OpenSRO's NPCs never leave a block (they are static), " +
-		"so only the group despawn is sent; kept with its golden test, as SingleSpawn.",
+	"EncodeEntered": "round 737: OpEntityEntered is no longer sent -- the players in view arrive as retail's " +
+		"0x3015 / group spawns (docs/protocol/pc_spawn.md) -- but the client still decodes the payload from an " +
+		"older server, and the golden tests that pin it for client/scripts/net/world_test.gd encode it with this.",
 	"HeadingOf": "round 708: the client's heading of a spawn's angle (FUN_009c3a70 + FUN_009c40b0), the READ " +
 		"chain written down and tested end to end (TestWireAngleRoundTrip, TestCardinalAngles); the server sends " +
 		"the angle, the client applies it.",

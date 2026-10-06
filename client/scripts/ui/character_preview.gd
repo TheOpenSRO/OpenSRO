@@ -77,12 +77,9 @@ func _open_archives() -> void:
 		if entry != null:
 			_bodies = NpcTableReader.parse_models_by_code(_media_pk2.read_file(entry), _bodies)
 	# Item id -> worn model, so the starting kit can be hung on the body.
-	for path in ItemTableReader.TABLE_PATHS:
-		var entry := ObjectLoader.find_file(_media_pk2, path)
-		if entry != null:
-			for item in ItemTableReader.parse(_media_pk2.read_file(entry)).values():
-				if item.model_path != "":
-					_item_models[item.id] = item.model_path
+	for item in ItemTableReader.load_all(_media_pk2).values():
+		if item.model_path != "":
+			_item_models[item.id] = item.model_path
 
 ## Shows the body for `gender` (one of GENDER_BODY_CODE's keys). Cheap to
 ## call with the current gender (a no-op).

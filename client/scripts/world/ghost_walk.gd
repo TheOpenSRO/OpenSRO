@@ -211,7 +211,7 @@ static func _land(from: Vector3, target: Vector3, footing: int, footing_graph: N
 		h = NavGraph._surface_near(graph.objects[on], tx, tz, local.y)
 	if is_nan(h):
 		on = NavGraph.ON_TERRAIN
-		h = NvmCollision.sample_height(graph.region, tx, tz)
+		h = NvmCollision.terrain_height(graph.region, tx, tz)
 	return {
 		"position": group.to_global(Vector3(tx, h, tz)),
 		"sent": group.to_global(Vector3(tx, _trunc(h) if truncated else h, tz)),

@@ -885,6 +885,6 @@ func startUsu1Buff(hub *world.Hub, ref *refdata.Skill, lasts time.Duration, char
 	}
 	zone := zoneOf(hub, characterID)
 	broadcastBuffEnd(zone, characterID, ended, sp)
-	sendToAll(zone, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
+	sendAboutOwner(zone, characterID, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
 	return true
 }

@@ -143,10 +143,10 @@ func TestFriendFullFlow(t *testing.T) {
 		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
 	}
 	// Aria was already in the zone; drain her EntityEntered broadcast for Bram.
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil {
-		t.Fatalf("draining EntityEntered: %v", err)
-	}
+	// Round 737: Aria hears Bram arrive as a 0x3015, and Bram is spawned
+	// Aria as a group after his result.
+	drainPlayerSpawn(t, connA, rA)
+	drainPlayerSpawn(t, connB, rB)
 
 	resp = doSend(connA, rA, OpFriendRequest, (&FriendRequestRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
 	if rr, err := DecodeFriendRequestResult(resp.Data); err != nil || !rr.OK {

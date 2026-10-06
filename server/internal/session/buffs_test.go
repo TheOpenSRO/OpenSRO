@@ -391,7 +391,7 @@ func TestGhostWalkClampsToTele1(t *testing.T) {
 				t.Fatalf("the hub holds %+v, the move said %+v", now.Pos, mv)
 			}
 			// Put her back for the next case.
-			w.hub.Move(e.Session, from)
+			w.hub.Relocate(e.Session, from, world.MoveRelocate, 0)
 		})
 	}
 	// A Ghost Walk with no point is refused (the context builder aborts).

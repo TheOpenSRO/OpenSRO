@@ -218,7 +218,7 @@ func _merged(media: Pk2Reader) -> void:
 		if e != null:
 			parts.append(media.read_file(e))
 	var item_parts: Array = []
-	for p in ItemTableReader.TABLE_PATHS:
+	for p in ItemTableReader.table_paths(media):
 		var e := ObjectLoader.find_file(media, p)
 		if e != null:
 			item_parts.append(media.read_file(e))

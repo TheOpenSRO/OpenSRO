@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
@@ -18,6 +19,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
@@ -477,23 +479,52 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 			sharing := itemSharePartyOf(parties, characterID)
 			recipient := characterID
 			pickedQty := it.Quantity
+			var shares []goldShare
 			if it.Gold {
-				shares := []goldShare{{characterID, int64(it.Quantity)}}
+				shares = []goldShare{{characterID, int64(it.Quantity)}}
 				if sharing != nil {
 					shares = splitGold(hub, sharing, entity, int64(it.Quantity))
 				}
-				credited := 0
-				var gerr error
-				for _, g := range shares {
-					if gerr = chars.AddGold(ctx, g.characterID, g.amount); gerr != nil {
-						break
-					}
-					credited++
+			} else if sharing != nil && !it.OwnerOnly() {
+				recipient = roundRobinRecipient(hub, parties, sharing, entity)
+			}
+			// The grant is ONE transaction with the item's ledger claim (round
+			// 743): every share of a gold split or none of them, and an item
+			// granted at most once however many picks reach it -- a pick whose
+			// commit succeeded but whose answer was lost, a retry, a second
+			// process. See applyPickup.
+			runner := txn.For(chars, inv)
+			key := pickupLedgerKey(it)
+			addErr := applyPickup(ctx, runner, chars, inv, it, key, recipient, shares)
+			if addErr != nil && !errors.Is(addErr, txn.ErrAlreadyApplied) && !pickupRefusal(addErr) {
+				// An error that does not say whether the commit happened:
+				// the ledger does.
+				if done, err := runner.Applied(ctx, key); err == nil && done {
+					addErr = nil
 				}
-				if gerr != nil && credited == 0 {
-					ground.Release(it.ID)
-					return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
+			}
+			switch {
+			case addErr == nil:
+			case errors.Is(addErr, txn.ErrAlreadyApplied):
+				// Granted already: it is not on the ground any more.
+				if gone, ok := ground.Remove(it.ID); ok {
+					broadcastGroundRemoval(hub, gone, 0)
 				}
+				return reply(&PickUpResult{Code: grounditem.ErrNotThere, GroundItemID: it.ID})
+			default:
+				ground.Release(it.ID)
+				if !it.Gold && recipient != characterID && errors.Is(addErr, inventory.ErrNoRoom) {
+					// The chosen member's bag is full: the picker is
+					// refused 0x18da UIIT_MSG_STRGERR_PARTY_INVENTORY_FULL
+					// and the item stays on the ground (READ, GS
+					// FUN_00526090 0x52633d-0x5263a8). The member is told
+					// 0x1807 in retail (op result 0xb034), which OpenSRO
+					// has no message for (GAP).
+					return reply(&PickUpResult{Code: ErrPartyInventoryFull, GroundItemID: it.ID})
+				}
+				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
+			}
+			if it.Gold {
 				// The picker's own line reports the picker's part (its
 				// client reads the balance back from the server). Every
 				// credit also sends 0x304E kind 1, the new total (round 716):
@@ -503,38 +534,12 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 				// Item Auto Share party, the split (0x5bc7f0) calls it with
 				// (amount, 0, 0x17, 1, 1) for EVERY share, the picker's
 				// included -- shown, so each client prints
-				// UIIT_MSG_STATE_GAIN_GOLD with its rise (c:0x8a70d0). A share
-				// that failed to credit is not told.
+				// UIIT_MSG_STATE_GAIN_GOLD with its rise (c:0x8a70d0).
 				show := sharing != nil
-				for _, g := range shares[:credited] {
+				for _, g := range shares {
 					tellGold(ctx, chars, hub, g.characterID, show)
 				}
 				pickedQty = int32(shares[0].amount)
-			} else {
-				if sharing != nil && !it.OwnerOnly() {
-					recipient = roundRobinRecipient(hub, parties, sharing, entity)
-				}
-				// A stack that already had an instance keeps it; a fresh drop
-				// gets one the way any new item does (rolled by the bag).
-				var addErr error
-				if it.Instance != nil {
-					addErr = inv.AddItemInstance(ctx, recipient, it.ItemID, int(it.Quantity), *it.Instance)
-				} else {
-					addErr = inv.AddItem(ctx, recipient, it.ItemID, int(it.Quantity))
-				}
-				if addErr != nil {
-					ground.Release(it.ID)
-					if recipient != characterID && errors.Is(addErr, inventory.ErrNoRoom) {
-						// The chosen member's bag is full: the picker is
-						// refused 0x18da UIIT_MSG_STRGERR_PARTY_INVENTORY_FULL
-						// and the item stays on the ground (READ, GS
-						// FUN_00526090 0x52633d-0x5263a8). The member is told
-						// 0x1807 in retail (op result 0xb034), which OpenSRO
-						// has no message for (GAP).
-						return reply(&PickUpResult{Code: ErrPartyInventoryFull, GroundItemID: it.ID})
-					}
-					return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: it.ID})
-				}
 			}
 			ground.Remove(it.ID)
 			// The picker hears the result before the zone hears the removal,
@@ -557,15 +562,68 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 				sendItemNotice(hub, sharing, recipient, party.ItemNotice{RecipientJID: party.JIDOf(recipient),
 					RefItemID: uint32(it.ItemID), Class: class, Amount: amount})
 			}
-			removed := &GroundItemRemoved{ID: it.ID, Reason: GroundItemRemovedPicked, PickerID: characterID}
-			pkt := &proto.Packet{Opcode: OpGroundItemRemoved, Data: removed.Encode()}
-			for _, e := range hub.EntitiesInZone(it.Zone) {
-				e.Session.Send(pkt)
-			}
+			broadcastGroundRemoval(hub, it, characterID)
 			return nil
 		}
 		return nil
 	}
+}
+
+// broadcastGroundRemoval tells its zone the item was picked (by picker; 0
+// when the picker is not known).
+func broadcastGroundRemoval(hub *world.Hub, it grounditem.Item, picker int64) {
+	removed := &GroundItemRemoved{ID: it.ID, Reason: GroundItemRemovedPicked, PickerID: picker}
+	pkt := &proto.Packet{Opcode: OpGroundItemRemoved, Data: removed.Encode()}
+	for _, e := range hub.EntitiesInZone(it.Zone) {
+		e.Session.Send(pkt)
+	}
+}
+
+// pickupLedgerKey is a ground item's key in the economy ledger: its serial
+// (item_serial_seq, unique across processes and restarts) when it has one,
+// else this process's boot id and its process-local number (a negative
+// Serial, grounditem.Hub.Drop).
+func pickupLedgerKey(it grounditem.Item) string {
+	if it.Serial > 0 {
+		return fmt.Sprintf("pickup:%d", it.Serial)
+	}
+	return fmt.Sprintf("pickup:%s:%d", txn.BootID, -it.Serial)
+}
+
+// pickupRefusal reports an orderly refusal of a pick-up's grant (the bag has
+// no room), as opposed to an error that leaves its commit in doubt.
+func pickupRefusal(err error) bool {
+	return errors.Is(err, inventory.ErrNoRoom) || errors.Is(err, inventory.ErrInvalidQuantity)
+}
+
+// applyPickup grants a ground item as ONE transaction (round 743, the spec's
+// M1): the item's ledger key is claimed first, then gold goes to every share
+// or the item to its recipient. txn.ErrAlreadyApplied means the key was
+// claimed before -- the item was granted already -- and nothing changed.
+func applyPickup(ctx context.Context, runner txn.Runner, chars character.Store, inv inventory.Store, it grounditem.Item, key string, recipient int64, shares []goldShare) error {
+	return runner.Run(ctx, func(ctx context.Context) error {
+		if err := txn.Claim(ctx, key); err != nil {
+			return err
+		}
+		if it.Gold {
+			// In ascending character id (round 743's review, F1): every
+			// action that locks several characters' rows locks them in one
+			// order, so two members picking at once cannot deadlock. shares'
+			// own order (the picker first) is left for the messages.
+			for _, g := range sharesByCharacter(shares) {
+				if err := chars.AddGold(ctx, g.characterID, g.amount); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		// A stack that already had an instance keeps it; a fresh drop gets
+		// one the way any new item does (rolled by the bag).
+		if it.Instance != nil {
+			return inv.AddItemInstance(ctx, recipient, it.ItemID, int(it.Quantity), *it.Instance)
+		}
+		return inv.AddItem(ctx, recipient, it.ItemID, int(it.Quantity))
+	})
 }
 
 // RunGroundItemSweep releases expired ownerships and removes items past
@@ -593,4 +651,12 @@ func RunGroundItemSweep(ctx context.Context, ground *grounditem.Hub, hub *world.
 			}
 		}
 	}
+}
+
+// sharesByCharacter is a copy of shares in ascending character id, the order
+// every multi-character action locks rows in.
+func sharesByCharacter(shares []goldShare) []goldShare {
+	out := append([]goldShare(nil), shares...)
+	sort.Slice(out, func(i, j int) bool { return out[i].characterID < out[j].characterID })
+	return out
 }

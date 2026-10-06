@@ -2,7 +2,7 @@ package refdata
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -24,15 +24,15 @@ func (m *MemStore) DurabilityRange(_ context.Context, itemID int64) (durMin, dur
 // DurabilityRange answers inventory.DurabilityLookup from PostgreSQL; see the
 // MemStore method for the semantics.
 func (s *SQLStore) DurabilityRange(ctx context.Context, itemID int64) (durMin, durMax float64, ok bool, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT durability_min, durability_max FROM items WHERE id = $1`, itemID).Scan(&durMin, &durMax)
-	if err == sql.ErrNoRows {
+	it, err := s.GetItem(ctx, itemID) // cached once read (round 743's review, F3)
+	if errors.Is(err, ErrItemNotFound) {
 		return 0, 0, false, nil
 	}
 	if err != nil {
 		return 0, 0, false, fmt.Errorf("refdata: querying durability of item %d: %w", itemID, err)
 	}
-	if durMax <= 0 {
+	if it.DurabilityMax <= 0 {
 		return 0, 0, false, nil
 	}
-	return durMin, durMax, true, nil
+	return it.DurabilityMin, it.DurabilityMax, true, nil
 }

@@ -12,17 +12,24 @@ class_name EquipFx
 ## gets a holder (an EfpEffect with no simulation, so AppearFade, BerserkLook
 ## and EquipGlow pass it by as an effect) whose MultiMeshInstance3D and Link
 ## children SHARE the master's MultiMesh and meshes. The driver puts each
-## holder at its bone's position, scaled by the row's col3/100, every frame.
-## The master's billboards face the camera in world axes, and a holder has no
-## rotation, so they face it under every weapon.
+## holder in its bone's frame -- position AND rotation (round 741, READ:
+## CRTModParticle::FUN_00c81190 hands the effect the bone's matrix times the
+## world's; holder_transform) -- scaled by the row's col3/100, every frame.
+## The billboards still face the camera because the master's plates are
+## drawn on EfpEffect's shared-turn shader (EfpEffect.use_shared_turn), which
+## builds each billboard from the camera in the vertex stage rather than
+## baking it into the shared instances. Round 734 placed holders at the bone's
+## position only: the effect's offsets then ran along fixed world axes, a
+## column of sparks beside the weapon that lined up with it at one heading.
 ##
 ## **What this changes against retail, all OURS:**
 ## - every weapon with the same effect shows the same particles, in step;
-## - the particles follow the bone's position only: retail simulates each
-##   effect in world space with the host's motion as its placement, so a
-##   running weapon leaves its free particles behind and the followers turn
-##   with it (EfpEffect's follow levels); here they move with the weapon
-##   rigidly and do not turn;
+## - the particles follow the bone rigidly. Retail simulates each effect in
+##   world space with the host's motion as its placement, so a particle that
+##   does not follow the effect stays behind. Every node of the 16 enchant
+##   files follows its parent in position, orbit and rotation (u2 = u3 = u6
+##   = 1 at every depth, MEASURED round 741), so for them rigid IS retail's
+##   motion; only an effect with a free node would differ;
 ## - a budget: only the VISIBLE_BUDGET weapons nearest the camera within
 ##   MAX_DISTANCE and inside the view (or within ALWAYS_NEAR of it, in view
 ##   or not) show their particles, re-chosen every RESELECT_FRAMES frames
@@ -66,7 +73,7 @@ class Kind:
 	var hosts := 0
 
 var particles: Pk2Reader
-var _hosts: Dictionary = {}   # "skel id|bone" -> Host
+var _hosts: Dictionary = {}   # "skel id|bone|efp key" -> Host
 var _kinds: Dictionary = {}   # key -> Kind
 var _frame := 0
 var _shown: Array = []        # the hosts drawing their effect, placed every frame
@@ -141,12 +148,19 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	var b := skel.find_bone(bone)
 	if b < 0:
 		return
-	var id := "%d|%d" % [skel.get_instance_id(), b]
+	var key := "%s|%s" % [efp.to_lower(), str(snappedf(scale, 0.0001))]
+	# One host per (bone, effect), not per bone (round 741): a seal weapon has
+	# its itemrare.txt row and, from +8, its itemoptionefp.txt row on the same
+	# bone (Sun spear 4118: raretype_a_step3 and enchant_a_01, both ai_end),
+	# and retail makes a mod for each entry (FUN_00a5f3e0's loop, READ). Keyed
+	# by bone alone, the second was dropped. The same file at the same scale
+	# twice on one bone is drawn once (OURS; no item has that, MEASURED by
+	# round 740: no itemoptionefp row lands in a list that already has it).
+	var id := "%d|%d|%s" % [skel.get_instance_id(), b, key]
 	if _hosts.has(id):
 		return
 	if particles == null:
 		particles = archive
-	var key := "%s|%s" % [efp.to_lower(), str(snappedf(scale, 0.0001))]
 	if not _kinds.has(key):
 		var m := EfpEffect.create(efp, archive)
 		if m == null:
@@ -154,6 +168,9 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 		m.loop = true
 		m.auto_free = false
 		m.top_level = true
+		# The holders turn with their bones (round 741); the billboards are
+		# built in the shader so they still face the camera.
+		m.use_shared_turn()
 		m.name = "master_%d" % _kinds.size()
 		for c in m.get_children():
 			if c is GeometryInstance3D:
@@ -242,18 +259,134 @@ func _process(_delta: float) -> void:
 	for h in _shown:
 		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
-		var g: Transform3D = h.skel.global_transform
-		var at: Vector3 = g * h.skel.get_bone_global_pose(h.bone).origin
-		h.holder.global_transform = Transform3D(Basis.from_scale(Vector3.ONE * (h.scale * _uniform_scale(g.basis))), at)
+		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale)
+	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
+		_qa_log(cam)
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
+
+## Where a host's holder goes (round 741): the bone's whole frame in the world
+## -- READ, CRTModParticle::FUN_00c81190 places the effect at the bone's
+## matrix times the world's (`0xc811c5`..`0xc81288`, then CEFEffect::vslot_007)
+## -- with its rotation (and a mirror, if the frame has one) kept, its own
+## scale replaced by the row's col3/100 times the host's uniform scale. Round
+## 734 placed the holder at the bone's position only, so the effect's
+## SetPosition offsets (enchant_a_01: 0, -1.2 .. -4.8 along the effect's X,
+## in its parent's frame, space 7) pointed along fixed world axes: the
+## column of sparks beside the spear, lined up with it at one heading only.
+static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float) -> Transform3D:
+	var g: Transform3D = skel.global_transform
+	var at: Transform3D = g * skel.get_bone_global_pose(bone)
+	var b := at.basis.orthonormalized()
+	return Transform3D(b * (row_scale * _uniform_scale(g.basis)), at.origin)
+
+## OPENSRO_QA_EQUIPFX_LOG=<frames> (round 741): every that many frames, one
+## line per shown host measuring where its drawn particles are against its
+## weapon's own bones -- the measurement, not a picture:
+##   QA EQUIPFX <efp> bone <b> heading <deg> at (x,y,z) particles <n>
+##     centroid (x,y,z) | axis <ai_end -> other bone> span [<min>, <max>] along,
+##     off max <d> mean <d> | was (position-only placement) off max <d>
+##     | screen tip (x,y) centroid (x,y)
+## `along` and `off` are each drawn particle's distance along and from the line
+## from the row's bone to the item skeleton's other end bone (ai_start for
+## ai_end and back; Bone03 for Bone01 and back), in world units; `was` is the
+## same measure for round 734's placement (the bone's position, the effect's
+## axes along the world's).
+static var _qa_log_every := int(OS.get_environment("OPENSRO_QA_EQUIPFX_LOG")) if OS.get_environment("OPENSRO_QA_EQUIPFX_LOG").is_valid_int() else 0
+
+func _qa_log(cam: Camera3D) -> void:
+	for h in _shown:
+		if not is_instance_valid(h.holder) or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+			continue
+		var k: Kind = _kinds.get(h.key)
+		if k == null:
+			continue
+		var m := measure(h, k)
+		if m.is_empty():
+			continue
+		var scr := ""
+		var tip: Vector3 = m["tip"]
+		if cam != null and not cam.is_position_behind(tip):
+			scr = " | screen tip %s centroid %s" % [str(cam.unproject_position(tip).round()), str(cam.unproject_position(m["centroid"]).round())]
+		print("QA EQUIPFX %s bone %s heading %.0f at %s particles %d centroid %s | axis %s->%s len %.2f span [%.2f, %.2f] along, off max %.3f mean %.3f | was off max %.3f%s" % [
+			k.key.get_slice("|", 0), m["bone"], m["heading"], str(tip.snapped(Vector3.ONE * 0.01)), m["particles"],
+			str((m["centroid"] as Vector3).snapped(Vector3.ONE * 0.01)), m["bone"], m["other"], m["axis"], m["lo"], m["hi"],
+			m["off_max"], m["off_mean"], m["was_max"], scr])
+
+## Where `h`'s drawn particles are against its weapon (the QA log and
+## tools/measure_equip_fx_turn.gd): each drawn particle of the kind's master,
+## placed by holder_transform as the holders are, measured along and off the
+## line from the row's bone to the item's other end bone (ai_start <-> ai_end,
+## Bone01 <-> Bone03); `was_max` is the same for round 734's placement (the
+## bone's position, the effect's axes along the world's). Empty when nothing
+## is drawn or the item has no other end bone.
+static func measure(h: Host, k: Kind) -> Dictionary:
+	if k.master == null or k.master.sim == null or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+		return {}
+	var g: Transform3D = h.skel.global_transform
+	var tip: Vector3 = g * h.skel.get_bone_global_pose(h.bone).origin
+	var name: String = h.skel.get_bone_name(h.bone)
+	# The other end: its pair (ai_start <-> ai_end, Bone01 <-> Bone03), else
+	# the first of the item's named bones that is not this one (a shield has
+	# Bone01 and no Bone03).
+	var other_name := "ai_start" if name == "ai_end" else ("ai_end" if name == "ai_start" else ("Bone03" if name == "Bone01" else "Bone01"))
+	var ob: int = h.skel.find_bone(other_name)
+	if ob < 0:
+		for cand in ["ai_start", "ai_end", "Bone01", "Bone02", "Bone03"]:
+			var ci := h.skel.find_bone(cand)
+			if ci >= 0 and ci != h.bone:
+				ob = ci
+				other_name = cand
+				break
+	if ob < 0:
+		return {}
+	var axis: Vector3 = g * h.skel.get_bone_global_pose(ob).origin - tip
+	var axis_len := axis.length()
+	if axis_len < 1e-6:
+		return {}
+	var dir := axis / axis_len
+	var drawn := {}
+	for d in k.master._draws:
+		drawn[int(d[0])] = true
+	for l in k.master._links:
+		drawn[int(l[0])] = true
+	var ht := holder_transform(h.skel, h.bone, h.scale)
+	var old := Transform3D(Basis.from_scale(Vector3.ONE * (h.scale * _uniform_scale(g.basis))), tip)
+	var n := 0
+	var sum := Vector3.ZERO
+	var lo := INF
+	var hi := -INF
+	var off_max := 0.0
+	var off_sum := 0.0
+	var was_max := 0.0
+	var was_sum := Vector3.ZERO
+	for p in k.master.sim.particles:
+		if not drawn.has(p.tpl):
+			continue
+		var w := ht * p.pos
+		n += 1
+		sum += w
+		var along := (w - tip).dot(dir)
+		lo = minf(lo, along)
+		hi = maxf(hi, along)
+		var off := ((w - tip) - dir * along).length()
+		off_max = maxf(off_max, off)
+		off_sum += off
+		var wo := old * p.pos
+		was_sum += wo
+		var along_o := (wo - tip).dot(dir)
+		was_max = maxf(was_max, ((wo - tip) - dir * along_o).length())
+	if n == 0:
+		return {}
+	return {"tip": tip, "bone": name, "other": other_name, "axis": axis_len, "particles": n, "centroid": sum / n,
+		"lo": lo, "hi": hi, "off_max": off_max, "off_mean": off_sum / n, "was_max": was_max, "was_centroid": was_sum / n,
+		"heading": rad_to_deg(atan2(g.basis.z.x, g.basis.z.z))}
 
 ## The size of the host's own scale (round 734's review, F4): the body's height
 ## factor (CharacterAppearance.HEIGHT_FACTORS) reaches the particles as it did
 ## on the per-weapon path (EfpEffect.scale_basis on the anchor). Its magnitude
-## only, the cube root of |det| (OURS): the master's billboards face the
-## camera in world axes, so a holder takes no mirror (the select screen's
-## root is scaled (1, 1, -1)) and no rotation.
+## only, the cube root of |det| (OURS); the rotation and any mirror come from
+## the bone's frame (holder_transform, round 741).
 static func _uniform_scale(b: Basis) -> float:
 	return pow(absf(b.determinant()), 1.0 / 3.0)
 

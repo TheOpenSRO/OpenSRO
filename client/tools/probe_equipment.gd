@@ -43,7 +43,7 @@ func _initialize() -> void:
 			bodies = NpcTableReader.parse_models_by_code(media.read_file(entry), bodies)
 	var body_bsr: String = bodies.get(body, "")
 	var items := {}
-	for path in ItemTableReader.TABLE_PATHS:
+	for path in ItemTableReader.table_paths(media):
 		var entry := ObjectLoader.find_file(media, path)
 		if entry != null:
 			ItemTableReader.parse(media.read_file(entry), items)

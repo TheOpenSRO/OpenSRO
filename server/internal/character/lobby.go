@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"time"
 )
 
@@ -168,7 +169,7 @@ func scanCharacter(r rowScanner) (*Character, error) {
 // transaction under a per-account advisory lock, so two creates on one account
 // cannot both pass the limit.
 func (s *SQLStore) CreateCharacter(ctx context.Context, accountID int64, nc NewCharacter) (*Character, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := txn.Begin(ctx, s.db)
 	if err != nil {
 		return nil, fmt.Errorf("character: beginning create: %w", err)
 	}
@@ -211,7 +212,7 @@ func lobbyLockKey(accountID int64) int64 { return 0x6c6f6262<<32 | (accountID & 
 // NameTaken implements LobbyStore.
 func (s *SQLStore) NameTaken(ctx context.Context, name string) (bool, error) {
 	var taken bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM characters WHERE LOWER(name) = LOWER($1))`, name).Scan(&taken); err != nil {
+	if err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM characters WHERE LOWER(name) = LOWER($1))`, name).Scan(&taken); err != nil {
 		return false, fmt.Errorf("character: checking name: %w", err)
 	}
 	return taken, nil
@@ -219,7 +220,7 @@ func (s *SQLStore) NameTaken(ctx context.Context, name string) (bool, error) {
 
 // MarkDeleted implements LobbyStore.
 func (s *SQLStore) MarkDeleted(ctx context.Context, accountID, characterID int64, at time.Time) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET deleted_at = $3 WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL`,
 		characterID, accountID, at)
 	if err != nil {
@@ -230,7 +231,7 @@ func (s *SQLStore) MarkDeleted(ctx context.Context, accountID, characterID int64
 
 // Restore implements LobbyStore.
 func (s *SQLStore) Restore(ctx context.Context, accountID, characterID int64) error {
-	res, err := s.db.ExecContext(ctx,
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
 		`UPDATE characters SET deleted_at = NULL WHERE id = $1 AND account_id = $2 AND deleted_at IS NOT NULL`,
 		characterID, accountID)
 	if err != nil {
@@ -250,7 +251,7 @@ func (s *SQLStore) lobbyOutcome(ctx context.Context, res sql.Result, accountID, 
 		return nil
 	}
 	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM characters WHERE id = $1 AND account_id = $2)`,
+	if err := txn.Conn(ctx, s.db).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM characters WHERE id = $1 AND account_id = $2)`,
 		characterID, accountID).Scan(&exists); err != nil {
 		return fmt.Errorf("character: checking existence: %w", err)
 	}
@@ -262,7 +263,7 @@ func (s *SQLStore) lobbyOutcome(ctx context.Context, res sql.Result, accountID, 
 
 // PurgeDeleted implements LobbyStore.
 func (s *SQLStore) PurgeDeleted(ctx context.Context, cutoff time.Time) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx,
 		`DELETE FROM characters WHERE deleted_at IS NOT NULL AND deleted_at <= $1 RETURNING id`, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("character: purging: %w", err)

@@ -38,6 +38,12 @@ server spawns them with the retail group spawn 0x3017 / 0x3019 / 0x3018 (and the
 extension rides beside them, OpNpcFacingUnknown 0x00B6 (the NPCs with no nest angle), sent only ahead
 of a group that holds such an NPC. Monsters and players still use OpenSRO's own messages.
 
+**Round 737: players by retail's spawn messages too.** Other players reach the client as retail's
+0x3015 / 0x3016 and player groups, the CICUser record byte for byte (`docs/protocol/pc_spawn.md`).
+One OpenSRO extension rides beside them, OpPlayerZoneNotice 0x00B7 (a player arrived in or left the
+zone, as opposed to walking into or out of view), sent only ahead of the spawn or despawn it
+explains, to the clients that spawn or despawn is sent to (`pc_spawn.md`, "OpenSRO's additions").
+
 **Noted by the user (2026-10-01), not designed:** a server may want to hand the client settings it
 keeps out of the client's `setting/config.yaml` -- during the server list or after login. That would
 be one more extension message of the kind item 2 below describes (docs/TODO.md).

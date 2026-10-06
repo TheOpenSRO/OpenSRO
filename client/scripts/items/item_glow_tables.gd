@@ -1,25 +1,38 @@
 extends RefCounted
 class_name ItemGlowTables
 
-## The three tables the weapon and shield glow is chosen from (round 734,
+## The tables the weapon and shield glow is chosen from (round 734,
 ## docs/protocol/weapon_glow.md §1), read from the player's Media.pk2 at
-## runtime as `UI_ALCHEMYBOX::FUN_00a9f2e0` reads them (READ):
+## runtime as the client's two loaders read them (READ; both are called from
+## `Client_LoadAllRefData`, 0x846750..0x84676e):
 ##
-## - `resinfo\itemoption.txt`: item code name -> glow type number;
-## - `resinfo\itemtypenumber.txt`: type number -> its glow rows, one per plus
-##   threshold (GlowRow);
-## - `resinfo\itemoptionefp.txt`: item code name -> its particle rows
-##   (ParticleRow).
+## - `UI_ALCHEMYBOX::FUN_00a9f2e0`: `resinfo\itemoption.txt`, item code name
+##   -> glow type number, and `resinfo\itemtypenumber.txt`, type number -> its
+##   glow rows, one per plus threshold (GlowRow);
+## - `UI_ALCHEMYBOX::FUN_00aa0270`, called twice into one map:
+##   `resinfo\itemrare.txt` first, then `resinfo\itemoptionefp.txt`, item code
+##   name -> its particle rows (ParticleRow; itemrare.txt since round 740).
 ##
-## The client keys the first and third by RefID, the code name resolved
-## through the item table; keyed here by the code name itself, which names
-## the same item (OURS: compared in upper case).
+## **Inheritance through OrgObjCodeName (round 740, READ in both loaders).**
+## Before parsing, each loader walks the item table and groups every weapon
+## or shield (inherits_glow) whose OrgObjCodeName is not empty under that
+## name. After parsing, for each group in name order, the group's name is
+## looked up as a code name; if that item has a type (a particle list), every
+## member of the group that has none gets the same type (the SAME list: the
+## map holds a vector pointer, so a later file's rows for either land in
+## both). inherit() replays this over the item rows it is given.
+##
+## The client keys the maps by RefID, the code name resolved through the item
+## table; keyed here by the code name itself, which names the same item (OURS:
+## compared in upper case; MEASURED round 740: no two item rows share a code
+## name, even ignoring case).
 ##
 ## The lookups are the client's own:
 ## - glow_row: the row with the HIGHEST threshold <= plus, none for plus 0
 ##   (READ: `FUN_00a5f3e0` asks only when plus != 0, `FUN_00a93900` keeps
 ##   `row[0] <= plus && row[0] > best`);
-## - particle_rows: every row with min <= plus <= max (READ, FUN_00a5f3e0).
+## - particle_rows: every row with min <= plus <= max, at any plus, 0 too
+##   (READ, FUN_00a5f3e0: the particle loop is outside the plus test).
 ## The plus is the u8 the character holds per slot (`CObjCharacter+0x3c +
 ## slot*0xc`): for your own gear the item's +0x8c byte, OptLevel plus the
 ## advanced elixir (round 734 READ, weapon_glow.md §5).
@@ -27,6 +40,11 @@ class_name ItemGlowTables
 const OPTION_PATH := "resinfo\\itemoption.txt"
 const TYPE_PATH := "resinfo\\itemtypenumber.txt"
 const EFP_PATH := "resinfo\\itemoptionefp.txt"
+## The seal particles (round 740): `FUN_00aa0270` is called with
+## `resinfo\itemrare.txt` at 0x84675f, before itemoptionefp.txt at 0x84676e
+## (READ: the pushed strings 0xdd30f8 and 0xdd30dc). Its rows have five
+## columns and no plus range, so they show at every plus.
+const RARE_PATH := "resinfo\\itemrare.txt"
 
 ## D3DTEXTUREOP values the glow rows name (col 5 and col 6).
 const OP_MODULATE := 4
@@ -80,9 +98,22 @@ class ParticleRow:
 ## The tables the world loaded (World3D, CharacterAppearance); null before.
 static var shared: ItemGlowTables = null
 
-var _types := {}      # code name (upper) -> type number
+var _direct_types := {}  # code name (upper) -> type number, itemoption.txt's own
+var _types := {}      # code name (upper) -> type number, inherited ones too
 var _rows := {}       # type number -> Array of GlowRow
-var _particles := {}  # code name (upper) -> Array of ParticleRow
+## code name (upper) -> Array of ParticleRow. An item that inherited shares
+## its base's Array (the client's map holds a vector pointer).
+var _particles := {}
+## Each particle file's rows in file order, [code name (upper), ParticleRow],
+## one entry per load call (itemrare.txt, then itemoptionefp.txt), so the
+## inheritance can be replayed call by call.
+var _particle_calls: Array = []
+## OrgObjCodeName (as written) -> {member code name (upper): true}: the
+## groups of weapons and shields inherit() has seen.
+var _groups := {}
+## How many items gained a type, a particle list, through inheritance.
+var inherited_types := 0
+var inherited_particles := 0
 ## Lines that did not parse, per table, for the load's log line.
 var skipped := {"option": 0, "type": 0, "efp": 0}
 
@@ -95,7 +126,9 @@ static func for_archive(media: Pk2Reader) -> ItemGlowTables:
 		return null
 	var t := ItemGlowTables.new()
 	var found := 0
-	for p in [OPTION_PATH, TYPE_PATH, EFP_PATH]:
+	# The client's order (READ, above): itemrare.txt's particle rows before
+	# itemoptionefp.txt's.
+	for p in [OPTION_PATH, TYPE_PATH, RARE_PATH, EFP_PATH]:
 		var e := ObjectLoader.find_file(media, p)
 		if e == null:
 			continue
@@ -104,7 +137,7 @@ static func for_archive(media: Pk2Reader) -> ItemGlowTables:
 		match p:
 			OPTION_PATH: t.load_options(bytes)
 			TYPE_PATH: t.load_types(bytes)
-			EFP_PATH: t.load_particles(bytes)
+			RARE_PATH, EFP_PATH: t.load_particles(bytes)
 	if found == 0:
 		return null
 	shared = t
@@ -154,7 +187,8 @@ func load_options(bytes: PackedByteArray) -> ItemGlowTables:
 		if c.size() < 2 or c[0] == "" or not c[1].is_valid_int():
 			skipped["option"] += 1
 			continue
-		_types[c[0].to_upper()] = int(c[1])
+		_direct_types[c[0].to_upper()] = int(c[1])
+	_rebuild_types()
 	return self
 
 func load_types(bytes: PackedByteArray) -> ItemGlowTables:
@@ -182,7 +216,10 @@ func load_types(bytes: PackedByteArray) -> ItemGlowTables:
 		(_rows[r.type_number] as Array).append(r)
 	return self
 
+## One particle file, one call of the client's loader: its rows go after
+## those of the files loaded before it (itemrare.txt, then itemoptionefp.txt).
 func load_particles(bytes: PackedByteArray) -> ItemGlowTables:
+	var file_rows: Array = []
 	for line in _lines(bytes):
 		var c := _cols(line)
 		if c.size() < 4 or c[0] == "" or c[1] == "":
@@ -199,11 +236,114 @@ func load_particles(bytes: PackedByteArray) -> ItemGlowTables:
 		# column is never read (the loop takes seven tokens).
 		p.min_plus = (int(c[5]) & 0xFF) if c.size() > 5 and c[5].is_valid_int() else 0
 		p.max_plus = (int(c[6]) & 0xFF) if c.size() > 6 and c[6].is_valid_int() else 0xFF
-		var key := c[0].to_upper()
-		if not _particles.has(key):
-			_particles[key] = []
-		(_particles[key] as Array).append(p)
+		file_rows.append([c[0].to_upper(), p])
+	_particle_calls.append(file_rows)
+	_rebuild_particles()
 	return self
+
+# --- inheritance through OrgObjCodeName (round 740) ---------------------------
+
+## Whether an item joins its OrgObjCodeName's group: the type-word tests both
+## loaders make before reading +0x40 (READ, `FUN_00a9f2e0` 0xa9f45b..0xa9f4d7,
+## the same in `FUN_00aa0270`): not Bionic (`w & 2`), TypeID1 3 (`b & 0x1c ==
+## 0xc`), TypeID2 1 (`b & 0x60 == 0x20`), and TypeID3 6 (`w & 0x780 ==
+## 0x300`, a weapon), or TypeID3 4 (`== 0x200`) with TypeID4 (`w >> 11`) 1 or
+## 2 (a shield). The word is packed from the columns as characterdata.md
+## gives it (bit 0 CashItem, 1 Bionic, 2-4 TypeID1, 5-6 TypeID2, 7-10
+## TypeID3, 11-15 TypeID4), and the client's tests are made on it as written.
+static func inherits_glow(cash_item: int, bionic: int, type_ids: PackedInt32Array) -> bool:
+	if type_ids.size() < 4:
+		return false
+	var w := (cash_item & 1) | ((bionic & 1) << 1) | ((type_ids[0] & 7) << 2) | ((type_ids[1] & 3) << 5) \
+		| ((type_ids[2] & 15) << 7) | ((type_ids[3] & 31) << 11)
+	var b := w & 0xFF
+	if (w & 2) != 0 or (b & 0x1c) != 0xc or (b & 0x60) != 0x20:
+		return false
+	if (w & 0x780) == 0x300:
+		return true
+	return (w & 0x780) == 0x200 and ((w >> 11) == 1 or (w >> 11) == 2)
+
+## Adds the groups of `items` (id -> ItemTableReader.Item: its code name,
+## OrgObjCodeName, CashItem, Bionic and TypeIDs) and replays the inheritance.
+## An item whose OrgObjCodeName is empty (`xxx` in the table) joins none
+## (READ: the +0x54 length test). Members already seen add nothing, so a
+## partial table and then the whole one (the world's seven parts, then
+## CharacterAppearance's full load) end where the whole one alone would.
+## Returns the members added.
+func inherit(items: Dictionary) -> int:
+	var added := 0
+	for id in items:
+		var it: ItemTableReader.Item = items[id]
+		if it == null or it.org_code_name == "" or not inherits_glow(it.cash_item, it.bionic, it.type_ids):
+			continue
+		if not _groups.has(it.org_code_name):
+			_groups[it.org_code_name] = {}
+		var g: Dictionary = _groups[it.org_code_name]
+		var key := it.code_name.to_upper()
+		if not g.has(key):
+			g[key] = true
+			added += 1
+	if added > 0:
+		_rebuild_types()
+		_rebuild_particles()
+		print("ItemGlowTables: %d weapon(s)/shield(s) in %d OrgObjCodeName group(s); %d inherit a glow type, %d a particle list" % [
+			group_member_count(), _groups.size(), inherited_types, inherited_particles])
+	return added
+
+## The groups' names in the client's order: its map is keyed by the wide
+## string, so ordinal order (OURS: String's < compares code points, the same
+## order for these ASCII names). The order matters only when a group's name
+## item itself inherits (MEASURED round 740: none does).
+func _group_names() -> Array:
+	var names := _groups.keys()
+	names.sort()
+	return names
+
+## The glow types' last step (READ, FUN_00a9f2e0 from 0xa9f940): for each
+## group, the type its name's item has by then (one inherited from an earlier
+## group counts), given to each member that has none.
+func _rebuild_types() -> void:
+	_types = _direct_types.duplicate()
+	inherited_types = 0
+	for org in _group_names():
+		var base := String(org).to_upper()
+		if not _types.has(base):
+			continue
+		for key in _groups[org]:
+			if not _types.has(key):
+				_types[key] = _types[base]
+				inherited_types += 1
+
+## The particle map, call by call (READ, FUN_00aa0270): a file's rows go to
+## the item's list (made at its first row, or the one it holds already, which
+## may be a base's it shares: asm 0xaa090f, the append at 0xaa0ae0 on that
+## pointer), then each group's members with no list share their name item's
+## (0xaa0cf1, the base's pointer inserted).
+func _rebuild_particles() -> void:
+	_particles = {}
+	inherited_particles = 0
+	var names := _group_names()
+	for file_rows in _particle_calls:
+		for pair in file_rows:
+			var key: String = pair[0]
+			if not _particles.has(key):
+				_particles[key] = []
+			(_particles[key] as Array).append(pair[1])
+		for org in names:
+			var base := String(org).to_upper()
+			if not _particles.has(base):
+				continue
+			for member in _groups[org]:
+				if not _particles.has(member):
+					_particles[member] = _particles[base]
+					inherited_particles += 1
+
+## The weapons and shields in a group, over every group.
+func group_member_count() -> int:
+	var n := 0
+	for org in _groups:
+		n += (_groups[org] as Dictionary).size()
+	return n
 
 ## The item's glow type number, 0 for none.
 func type_of(code_name: String) -> int:

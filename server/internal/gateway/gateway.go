@@ -6,14 +6,15 @@ package gateway
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -283,6 +284,57 @@ func (s *Session) Send(p *proto.Packet) error {
 // nothing: a payload too large for one frame refuses the whole batch before
 // anything is queued.
 func (s *Session) SendBatch(ps ...*proto.Packet) error {
+	return s.enqueue(ps, nil)
+}
+
+// Frame is one packet encoded once for many sessions (round 737,
+// crowd_scale.md C2, OURS): a broadcast's payload and header are built once
+// per event, not once per recipient. A session with no per-session security
+// (SetSecurity never called -- every production session today) queues the
+// encoded bytes as they are; one with security draws its own rolling byte and
+// checksum for the frame, as Send does.
+type Frame struct {
+	p    proto.Packet
+	wire []byte
+}
+
+// NewFrame encodes p once. It refuses a payload too large for one frame, as
+// Send does. The payload is copied.
+func NewFrame(p *proto.Packet) (*Frame, error) {
+	if len(p.Data) > proto.MaxPayload {
+		return nil, fmt.Errorf("proto: payload of %d bytes too large for a single frame", len(p.Data))
+	}
+	f := &Frame{p: proto.Packet{Opcode: p.Opcode, Data: append([]byte(nil), p.Data...)}}
+	var b bytes.Buffer
+	b.Grow(6 + len(p.Data))
+	_ = proto.Write(&b, &f.p, nil, nil)
+	f.wire = b.Bytes()
+	return f, nil
+}
+
+// MustFrame is NewFrame for a payload the caller knows fits (a fixed-size
+// message); it panics otherwise.
+func MustFrame(p *proto.Packet) *Frame {
+	f, err := NewFrame(p)
+	if err != nil {
+		panic(err)
+	}
+	return f
+}
+
+// Opcode is the frame's opcode.
+func (f *Frame) Opcode() uint16 { return f.p.Opcode }
+
+// Payload is the frame's payload; the caller must not change it.
+func (f *Frame) Payload() []byte { return f.p.Data }
+
+// SendFrames queues pre-encoded frames as one batch, as SendBatch does.
+func (s *Session) SendFrames(fs ...*Frame) error {
+	return s.enqueue(nil, fs)
+}
+
+// enqueue is SendBatch and SendFrames: ps then fs, as one batch.
+func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 	for _, p := range ps {
 		if len(p.Data) > proto.MaxPayload {
 			return fmt.Errorf("proto: payload of %d bytes too large for a single frame", len(p.Data))
@@ -318,6 +370,9 @@ func (s *Session) SendBatch(ps ...*proto.Packet) error {
 	for _, p := range ps {
 		size += 6 + len(p.Data)
 	}
+	for _, f := range fs {
+		size += len(f.wire)
+	}
 	if pending := len(s.out) + s.inFlight; s.queueLimit > 0 && pending > 0 && pending+size > s.queueLimit {
 		s.stallLocked("queue")
 		s.outMu.Unlock()
@@ -329,6 +384,13 @@ func (s *Session) SendBatch(ps ...*proto.Packet) error {
 		// Writing into the queue's own buffer cannot fail; the size was
 		// checked above.
 		_ = proto.Write(w, p, sendRoll, sendSum)
+	}
+	for _, f := range fs {
+		if sendRoll == nil && sendSum == nil {
+			s.out = append(s.out, f.wire...)
+		} else {
+			_ = proto.Write(w, &f.p, sendRoll, sendSum)
+		}
 	}
 	added := len(s.out) - before
 	s.queued += int64(added)
@@ -371,7 +433,7 @@ func (s *Session) startWriter() {
 const writerKeepCap = 64 << 10
 
 // writeLoop is the session's writer: it takes everything queued, writes it
-// out a frame per write (writeFrames), and repeats, until the session closes
+// out in one write (writeDrain, round 737), and repeats, until the session closes
 // and the queue is empty or the connection fails. The deadline for what it
 // took is SendTimeout capped by what is left of the blocking budget (round
 // 656), one deadline for all those frames; a write that times out, or one
@@ -428,7 +490,7 @@ func (s *Session) writeLoop() {
 			if s.stalled.Load() {
 				err = ErrSendStalled
 			} else {
-				n, err = writeFrames(s.conn, buf)
+				n, err = s.writeDrain(buf)
 			}
 		}
 		took := time.Since(start)
@@ -482,41 +544,53 @@ func (s *Session) writeLoop() {
 	}
 }
 
-// writeFrames writes buf, whole encoded frames, one frame per write, and
-// returns the bytes written. Not one write for the lot (round 662's live
-// check, MEASURED): the client (packet_reader.gd) reads a frame's payload
-// only once all of it is in its socket's receive buffer, and over loopback a
-// single large write arrives as a few large segments whose kernel memory
-// (truesize) is charged in full until each is read to its end. After the
-// return to Jangan -- ~1,250 monsters' enters, legs, then three 32 KB list
-// pages -- the client's receive buffer was full (skmem r137152 of rb138172)
-// holding 31,250 bytes, short of the 32,735-byte page it waited for, the
-// window was shut, and neither side moved again.
-//
-// A frame per write MITIGATES that wedge; it does not fix it (round 662's
-// review). It keeps a frame in segments of its own only while the socket's
-// send queue is drained: once it is backlogged -- the client's window shut,
-// as it is while a load freezes the client -- Linux's tcp_sendmsg appends
-// each new write into the unsent tail skb, up to its size goal (~64 KB over
-// loopback), so frames coalesce into large segments however they were
-// written, and the same wedge can recur. The fix is the client's, and it is
-// done: since round 663 packet_reader.gd reads what is available into its
-// own buffer on every poll, whatever sizes the segments come in.
-func writeFrames(w io.Writer, buf []byte) (int, error) {
+// writeSlice is the most one write of a drain carries (round 737's review,
+// F4; OURS): a drain is written in slices of at most this, and each slice
+// leaves the queue's in-flight count as soon as it is on the socket, so the
+// queue limit measures what is still unwritten rather than a whole drain
+// until its last byte lands. 64 KB is the loopback segment size the round-662
+// notes measured; a frame is at most 32 KB.
+const writeSlice = 64 << 10
+
+// writeDrain writes buf, whole encoded frames taken off the queue, in slices
+// of at most writeSlice, taking each slice off s.inFlight as it is written.
+// It returns the bytes written.
+func (s *Session) writeDrain(buf []byte) (int, error) {
 	written := 0
-	for len(buf) >= 6 {
-		size := 6 + int(binary.LittleEndian.Uint16(buf)&proto.MaxPayload)
-		if size > len(buf) {
-			size = len(buf)
-		}
-		n, err := w.Write(buf[:size])
+	for len(buf) > 0 {
+		k := min(len(buf), writeSlice)
+		n, err := writeFrames(s.conn, buf[:k])
 		written += n
+		s.outMu.Lock()
+		s.inFlight -= n
+		s.outMu.Unlock()
 		if err != nil {
 			return written, err
 		}
-		buf = buf[size:]
+		buf = buf[k:]
 	}
 	return written, nil
+}
+
+// writeFrames writes buf, encoded frames, in ONE write: the writer's drain
+// (round 737, crowd_scale.md C2, OURS), whatever was queued while its last
+// write was on the socket -- so frames that pile up during a write go out
+// together, and an isolated reply goes out at once. Round 662 wrote one
+// frame per write (MEASURED then: the client read a frame's payload only once
+// all of it sat in its socket's receive buffer, and over loopback one large
+// write arrived as a few large segments whose kernel memory filled that buffer
+// short of the 32 KB page the client waited for -- the wedge). That was the
+// client's to fix, and it is fixed: since round 663 packet_reader.gd reads
+// whatever is available into its own buffer on every poll, whatever sizes
+// the segments come in. The frame-per-write mitigation then cost the server
+// one syscall per frame -- round 736 MEASURED 79% of the server's CPU at 1000
+// players in one place in `write` under this function -- so a drain is one
+// write again. net.Conn.Write writes all of buf or returns an error.
+func writeFrames(w io.Writer, buf []byte) (int, error) {
+	if len(buf) == 0 {
+		return 0, nil
+	}
+	return w.Write(buf)
 }
 
 // dropLocked frees the queue; outMu is held.
@@ -747,6 +821,34 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 }
 
+// ErrHandlerPanic is what dispatch returns for a handler that panicked: the
+// session ends, the server goes on (round 737's verification, N1: one
+// player's bug must never take the server down).
+var ErrHandlerPanic = errors.New("gateway: handler panicked")
+
+// dispatch runs s.Handle on p, turning a panic into ErrHandlerPanic after
+// logging it with its stack. Only the session's own goroutine is covered:
+// a panic on another goroutine (a ticker, a worker) still ends the process.
+// A handler that panicked while holding a lock it takes without defer leaves
+// it held; the hub's locks are all released by defer.
+func (s *Server) dispatch(ctx context.Context, sess *Session, p *proto.Packet, logger *slog.Logger) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("handler panic, closing session", "addr", sess.RemoteAddr(), "opcode", fmt.Sprintf("0x%04x", p.Opcode), "panic", r, "stack", string(debug.Stack()))
+			err = ErrHandlerPanic
+		}
+	}()
+	return s.Handle(ctx, sess, p)
+}
+
+// recoverSession, deferred, logs a panic of the session's what (its
+// disconnect bookkeeping) and lets the rest of the teardown run.
+func recoverSession(logger *slog.Logger, sess *Session, what string) {
+	if r := recover(); r != nil {
+		logger.Error("session "+what+" panic", "addr", sess.RemoteAddr(), "panic", r, "stack", string(debug.Stack()))
+	}
+}
+
 func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logger) {
 	sess := &Session{id: s.nextSessionID.Add(1), conn: conn, logger: logger}
 	sess.startWriter()
@@ -777,7 +879,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 			"send_queue_peak", queuePeak, "send_burst_peak", burst)
 	}()
 	if s.OnDisconnect != nil {
-		defer s.OnDisconnect(sess)
+		defer func() {
+			defer recoverSession(logger, sess, "disconnect")
+			s.OnDisconnect(sess)
+		}()
 	}
 
 	r := bufio.NewReader(conn)
@@ -804,7 +909,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 		if s.Handle == nil {
 			continue
 		}
-		if err := s.Handle(ctx, sess, p); err != nil {
+		if err := s.dispatch(ctx, sess, p, logger); err != nil {
 			if errors.Is(err, ErrEndSession) {
 				logger.Debug("session ended by its handler", "addr", sess.RemoteAddr())
 				return

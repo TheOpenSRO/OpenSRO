@@ -32,6 +32,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/quest"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
@@ -223,9 +224,10 @@ func sameTokens(got []uint32, want ...uint32) bool {
 	return true
 }
 
-// B enters where a buffed A stands: B is sent A's two buffs -- after its
-// OpEnterWorldResult (whose Others carry A's body) -- the timed one with what
-// is left of it and the wall untimed; A is sent nothing for B, who has none.
+// B enters where a buffed A stands: B is sent A's two buffs -- after A's
+// group spawn, which follows its OpEnterWorldResult since round 737 -- the
+// timed one with what is left of it and the wall untimed; A is sent nothing
+// for B, who has none.
 func TestRound646AnArrivalIsSentTheBuffsOfThoseAlreadyThere(t *testing.T) {
 	w := startReplayWorld(t)
 	w.enter(t, w.aria, "alice", "hunter2", "Aria")
@@ -234,10 +236,13 @@ func TestRound646AnArrivalIsSentTheBuffsOfThoseAlreadyThere(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	ewr := w.enter(t, w.bram, "bob", "hunter3", "Bram")
-	if len(ewr.Others) != 1 || ewr.Others[0].CharacterID != w.aria.id {
-		t.Fatalf("Bram's entry lists %+v, want Aria's body", ewr.Others)
+	if len(ewr.Others) != 0 {
+		t.Fatalf("Bram's entry lists %+v; the players in view follow it as spawns", ewr.Others)
 	}
 	got := drain(t, w.bram, 300*time.Millisecond)
+	if spawned, first := indexOf(got, npcspawn.OpGroupEnd), indexOf(got, OpBuffStart); spawned < 0 || first < spawned {
+		t.Fatalf("Bram's group spawn of Aria ends at packet %d and her first buff is packet %d; want the body first", spawned, first)
+	}
 	if tok := startsFor(t, got, w.aria.id); !sameTokens(tok, gw.Token, wall.Token) {
 		t.Fatalf("Bram was sent Aria's tokens %v, want %d (Grass Walk) and %d (the wall)", tok, gw.Token, wall.Token)
 	}
@@ -259,7 +264,7 @@ func TestRound646AnArrivalIsSentTheBuffsOfThoseAlreadyThere(t *testing.T) {
 	}
 	// A hears B arrive and no buff of B's.
 	aGot := drain(t, w.aria, 300*time.Millisecond)
-	if indexOf(aGot, OpEntityEntered) < 0 {
+	if indexOf(aGot, npcspawn.OpSingleSpawn) < 0 {
 		t.Fatal("Aria was not told Bram entered")
 	}
 	if tok := startsFor(t, aGot, w.bram.id); len(tok) != 0 {
@@ -268,7 +273,7 @@ func TestRound646AnArrivalIsSentTheBuffsOfThoseAlreadyThere(t *testing.T) {
 }
 
 // A, buffed, changes zone into B's (separate buckets, -single-frame off):
-// B hears A's OpEntityEntered and then A's buffs, in that order; A hears its
+// B hears A's 0x3015 (round 737) and then A's buffs, in that order; A hears its
 // OpChangeZoneResult, then its own buffs and B's. The zone A left hears it
 // leave and no buff.
 func TestRound646AZoneChangeCarriesTheMoversBuffsToItsNewZone(t *testing.T) {
@@ -289,7 +294,7 @@ func TestRound646AZoneChangeCarriesTheMoversBuffsToItsNewZone(t *testing.T) {
 	aGot := drain(t, w.aria, 400*time.Millisecond)
 	bGot := drain(t, w.bram, 400*time.Millisecond)
 
-	entered := indexOf(bGot, OpEntityEntered)
+	entered := indexOf(bGot, npcspawn.OpSingleSpawn)
 	if entered < 0 {
 		t.Fatal("Bram was not told Aria entered his zone")
 	}
@@ -314,10 +319,12 @@ func TestRound646AZoneChangeCarriesTheMoversBuffsToItsNewZone(t *testing.T) {
 	}
 }
 
-// Under -single-frame every town is one bucket, so a /goto or a gate between
-// two towns re-enters the same bucket: B hears A leave, enter, and then A's
-// buffs, in that order (round 571's flicker, which drops the aura with the
-// body; the starts put it back on the new one).
+// Under -single-frame every town is one bucket, so a /goto or a gate re-enters
+// the same bucket: B, in view of where A lands, hears A leave, enter, and then
+// A's buffs, in that order (round 571's flicker, which drops the aura with the
+// body; the starts put it back on the new one). Since round 737 that is a
+// warp that lands in B's view -- a town's own landing; B beside a warp to a
+// town out of its view hears A leave only.
 func TestRound646AWarpInsideTheOneBucketResendsTheBuffsAfterTheReentry(t *testing.T) {
 	SetSingleFrame(true)
 	t.Cleanup(func() { SetSingleFrame(false) })
@@ -327,9 +334,9 @@ func TestRound646AWarpInsideTheOneBucketResendsTheBuffsAfterTheReentry(t *testin
 	gw := castSelf(t, w.aria, "Aria", skGrassWalkA1)
 	drain(t, w.bram, 200*time.Millisecond)
 
-	w.aria.send(t, OpChangeZone, (&ChangeZoneRequest{Zone: "donwhang"}).Encode())
+	w.aria.send(t, OpChangeZone, (&ChangeZoneRequest{Zone: "jangan"}).Encode())
 	bGot := drain(t, w.bram, 400*time.Millisecond)
-	left, entered, started := indexOf(bGot, OpEntityLeft), indexOf(bGot, OpEntityEntered), indexOf(bGot, OpBuffStart)
+	left, entered, started := indexOf(bGot, npcspawn.OpSingleDespawn), indexOf(bGot, npcspawn.OpSingleSpawn), indexOf(bGot, OpBuffStart)
 	if left < 0 || entered < 0 || started < 0 || !(left < entered && entered < started) {
 		t.Fatalf("Bram heard left %d, entered %d, buff %d (packet indices), want all three in that order", left, entered, started)
 	}
@@ -349,12 +356,12 @@ func TestRound646ARelogEndsTheBuffsForEveryone(t *testing.T) {
 	drain(t, w.bram, 200*time.Millisecond)
 	w.aria.conn.Close()
 	bGot := drain(t, w.bram, 400*time.Millisecond)
-	if indexOf(bGot, OpEntityLeft) < 0 {
+	if indexOf(bGot, npcspawn.OpSingleDespawn) < 0 {
 		t.Fatal("Bram did not hear Aria leave")
 	}
 	w.enter(t, w.aria, "alice", "hunter2", "Aria")
 	bGot = drain(t, w.bram, 400*time.Millisecond)
-	if indexOf(bGot, OpEntityEntered) < 0 {
+	if indexOf(bGot, npcspawn.OpSingleSpawn) < 0 {
 		t.Fatal("Bram did not hear Aria return")
 	}
 	if tok := startsFor(t, bGot, w.aria.id); len(tok) != 0 {

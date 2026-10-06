@@ -2,6 +2,7 @@ package character
 
 import (
 	"context"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"sort"
 	"sync"
 )
@@ -109,7 +110,7 @@ func (m *MemStore) Delete(_ context.Context, accountID, characterID int64) error
 }
 
 // AddGold implements Store.
-func (m *MemStore) AddGold(_ context.Context, characterID int64, amount int64) error {
+func (m *MemStore) AddGold(ctx context.Context, characterID int64, amount int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -118,11 +119,12 @@ func (m *MemStore) AddGold(_ context.Context, characterID int64, amount int64) e
 		return ErrNotFound
 	}
 	c.Gold += amount
+	m.undoLocked(ctx, characterID, func(c *Character) { c.Gold -= amount })
 	return nil
 }
 
 // DeductGold implements Store.
-func (m *MemStore) DeductGold(_ context.Context, characterID int64, amount int64) error {
+func (m *MemStore) DeductGold(ctx context.Context, characterID int64, amount int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -134,6 +136,7 @@ func (m *MemStore) DeductGold(_ context.Context, characterID int64, amount int64
 		return ErrInsufficientGold
 	}
 	c.Gold -= amount
+	m.undoLocked(ctx, characterID, func(c *Character) { c.Gold += amount })
 	return nil
 }
 
@@ -150,7 +153,7 @@ func (s *MemStore) SetHwanCount(ctx context.Context, characterID int64, count in
 }
 
 // AddStorageGold implements Store.
-func (m *MemStore) AddStorageGold(_ context.Context, characterID int64, amount int64) error {
+func (m *MemStore) AddStorageGold(ctx context.Context, characterID int64, amount int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -159,11 +162,12 @@ func (m *MemStore) AddStorageGold(_ context.Context, characterID int64, amount i
 		return ErrNotFound
 	}
 	c.StorageGold += amount
+	m.undoLocked(ctx, characterID, func(c *Character) { c.StorageGold -= amount })
 	return nil
 }
 
 // DeductStorageGold implements Store.
-func (m *MemStore) DeductStorageGold(_ context.Context, characterID int64, amount int64) error {
+func (m *MemStore) DeductStorageGold(ctx context.Context, characterID int64, amount int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -175,6 +179,7 @@ func (m *MemStore) DeductStorageGold(_ context.Context, characterID int64, amoun
 		return ErrInsufficientGold
 	}
 	c.StorageGold -= amount
+	m.undoLocked(ctx, characterID, func(c *Character) { c.StorageGold += amount })
 	return nil
 }
 
@@ -305,4 +310,16 @@ func (m *MemStore) SavePosition(_ context.Context, characterID int64, zone, fram
 	c.Zone, c.Frame = zone, frame
 	c.PosX, c.PosY, c.PosZ = x, y, z
 	return nil
+}
+
+// undoLocked registers, for an action that may fail (txn.Runner.Run), the
+// reverse of a change just made to one character. Called with m.mu held.
+func (m *MemStore) undoLocked(ctx context.Context, characterID int64, reverse func(c *Character)) {
+	txn.OnRollback(ctx, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if c, ok := m.byID[characterID]; ok {
+			reverse(c)
+		}
+	})
 }

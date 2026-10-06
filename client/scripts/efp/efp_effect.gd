@@ -622,10 +622,16 @@ func _update_links() -> void:
 				EfpLinks.gather_from(p, false, a)
 				var b: EfpLinks.Buf = d[5]
 				EfpLinks.spline(a, b)
-				EfpLinks.pipe_ribbon(b, vp, right, up, out)
+				if out.turn:
+					EfpLinks.pipe_turn(b, out)
+				else:
+					EfpLinks.pipe_ribbon(b, vp, right, up, out)
 			_:
 				EfpLinks.gather_from(p, false, a)
-				EfpLinks.pipe_ribbon(a, vp, right, up, out)
+				if out.turn:
+					EfpLinks.pipe_turn(a, out)
+				else:
+					EfpLinks.pipe_ribbon(a, vp, right, up, out)
 	for d in _links:
 		if _link_budget_left <= 0:
 			return
@@ -633,7 +639,7 @@ func _update_links() -> void:
 		var am: ArrayMesh = (d[1] as MeshInstance3D).mesh
 		am.clear_surfaces()
 		if out.nv >= 3:
-			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays())
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays(), [], {}, out.format_flags())
 		_link_budget_left -= out.triangles()
 
 ## Each Link node's live particles, one list per emitter, oldest first:
@@ -902,6 +908,175 @@ func _camera_turned() -> bool:
 	_last_cam = b
 	return true
 
+## Round 741: an effect simulated once and drawn at many hosts, each turned
+## by its own bone (EquipFx). The effect's frame turns with the host --
+## CRTModParticle::FUN_00c81190 (READ) hands the effect the bone's whole
+## matrix times the world's (`0xc811c5`: the bone object's +0x80 -> +0x40
+## matrix, multiplied by the owner's world matrix through `0x55ebd0`), then
+## CEFEffect::vslot_007 makes that the effect's placement -- so a holder's
+## transform carries the bone's rotation. A billboard, though, must face the
+## camera whatever the holder's turn, and the instances are shared: so for
+## every ViewBillboard / ViewYBillboard plate or mesh node this switches the
+## node to a shader that builds the billboard itself (OURS, the same READ
+## basis: the camera's right, up -- or world up for YBillboard -- and look,
+## EFP_FORMAT.md "Drawing"). The instance then carries only the particle's
+## scale (its basis) and position, and its custom data the shape's rotation
+## as a quaternion; the shader takes the scale from the instance matrix's
+## column lengths (times the holder's uniform scale, which is in them too),
+## turns the plate by the shape, lays it on the camera's axes and puts it at
+## the instance's turned position. A negative particle scale would lose its
+## sign there (none in the 16 enchant files: MEASURED, round 741).
+##
+## A node with a TextureSlide keeps the old path (its custom data is the UV
+## rectangle), and with it the old fault: its billboards turn with the
+## holder. No node of the 16 enchant files has one (MEASURED, round 741).
+## Call once, after the effect is built.
+func use_shared_turn() -> void:
+	_has_billboard = false
+	for d in _draws:
+		var view := String(d[2])
+		if view != "ViewBillboard" and view != "ViewYBillboard":
+			continue
+		if _slides(int(d[0])):
+			_has_billboard = true
+			continue
+		var mmi := d[1] as MultiMeshInstance3D
+		var m := mmi.material_override as ShaderMaterial
+		if m == null or m.shader == null:
+			_has_billboard = true
+			continue
+		var key := "%d|%s" % [m.get_instance_id(), view]
+		if not _turn_materials.has(key):
+			var c := m.duplicate() as ShaderMaterial
+			c.shader = turn_shader(m.shader, view == "ViewYBillboard")
+			_turn_materials[key] = c
+		mmi.material_override = _turn_materials[key]
+		while d.size() < 4:
+			d.append(false)
+		d[3] = true
+	# The pipes (LinkPipe, LinkDPipe): their side is the camera's, so the
+	# shader builds it per holder (EfpLinks.pipe_turn). LinkObj's side is the
+	# particle's own Y axis (READ), which turns with the holder as it should.
+	_has_pipe = false
+	for l in _links:
+		if int(l[6]) == 2:
+			continue
+		var mi := l[1] as MeshInstance3D
+		var m := mi.material_override as ShaderMaterial
+		if m == null or m.shader == null:
+			_has_pipe = true
+			continue
+		var key := "%d|pipe" % m.get_instance_id()
+		if not _turn_materials.has(key):
+			var c := m.duplicate() as ShaderMaterial
+			c.shader = pipe_turn_shader(m.shader)
+			_turn_materials[key] = c
+		mi.material_override = _turn_materials[key]
+		(l[3] as EfpLinks.Out).turn = true
+	shared_turn = true
+
+## A shared-turn instance's custom data: the shape's rotation as a
+## quaternion (x, y, z, w); its transform is the particle's scale and position.
+static func turn_custom(p: EfpSim.Particle) -> Color:
+	var q := p.shape.orthonormalized().get_rotation_quaternion()
+	return Color(q.x, q.y, q.z, q.w)
+
+## Whether use_shared_turn ran.
+var shared_turn := false
+static var _turn_materials: Dictionary = {} # "material id|view" -> ShaderMaterial
+
+## Whether template node `tpl_index` runs a TextureSlide (its instances then
+## carry their UV rectangle).
+func _slides(tpl_index: int) -> bool:
+	if sim == null or sim.template == null or tpl_index < 0 or tpl_index >= sim.template.tpls.size():
+		return true
+	for frame in sim.template.tpls[tpl_index].schedule:
+		if frame is Array:
+			for c in frame:
+				if c is Array and not (c as Array).is_empty() and int(c[0]) == EfpSim.K_SLIDE:
+					return true
+	return false
+
+## The billboard as the vertex shader builds it for a shared-turn node (see
+## use_shared_turn): scale, then shape, then the view basis -- the camera's
+## right, up (world up for YBillboard, READ) and look (-back, EfpEffect's
+## view_basis) -- then the instance's position in the world.
+const TURN_VERTEX := """void vertex() {
+	vec3 srr_sc = vec3(length(MODEL_MATRIX[0].xyz), length(MODEL_MATRIX[1].xyz), length(MODEL_MATRIX[2].xyz));
+	vec4 srr_q = INSTANCE_CUSTOM;
+	vec3 srr_v = VERTEX * srr_sc;
+	srr_v = srr_v + 2.0 * cross(srr_q.xyz, cross(srr_q.xyz, srr_v) + srr_q.w * srr_v);
+	vec3 srr_up = {UP};
+	vec3 srr_w = MODEL_MATRIX[3].xyz + INV_VIEW_MATRIX[0].xyz * srr_v.x + srr_up * srr_v.y - INV_VIEW_MATRIX[2].xyz * srr_v.z;
+	VERTEX = (VIEW_MATRIX * vec4(srr_w, 1.0)).xyz;
+	NORMAL = vec3(0.0, 0.0, 1.0);
+}
+"""
+
+## A shared-turn pipe's vertex stage (EfpLinks.pipe_turn): the point's two
+## neighbours (CUSTOM0.xyz, CUSTOM1.xyz) projected to normalised device
+## coordinates by the camera drawing this holder, d = previous - next, and the
+## side right * d.y - up * d.x (READ, EFEffect::FUN_00c8d0e0 through the
+## billboard matrix's rows), normalised and scaled to the signed width
+## (CUSTOM0.w) times the holder's own scale -- what pipe_ribbon computes in
+## the effect's space, for one camera. The projection's off-centre terms
+## cancel in the difference; its signs are dropped (abs) so a renderer whose
+## projection flips Y draws the same side (OURS).
+const PIPE_TURN_VERTEX := """void vertex() {
+	mat4 srr_mv = VIEW_MATRIX * MODEL_MATRIX;
+	vec3 srr_a = (srr_mv * vec4(CUSTOM0.xyz, 1.0)).xyz;
+	vec3 srr_b = (srr_mv * vec4(CUSTOM1.xyz, 1.0)).xyz;
+	bool srr_ortho = PROJECTION_MATRIX[3][3] > 0.5;
+	float srr_wa = srr_ortho ? 1.0 : max(-srr_a.z, 1e-4);
+	float srr_wb = srr_ortho ? 1.0 : max(-srr_b.z, 1e-4);
+	vec2 srr_k = vec2(abs(PROJECTION_MATRIX[0][0]), abs(PROJECTION_MATRIX[1][1]));
+	vec2 srr_d = srr_k * srr_a.xy / srr_wa - srr_k * srr_b.xy / srr_wb;
+	vec3 srr_side = INV_VIEW_MATRIX[0].xyz * srr_d.y - INV_VIEW_MATRIX[1].xyz * srr_d.x;
+	float srr_l = length(srr_side);
+	float srr_s = length(MODEL_MATRIX[0].xyz);
+	vec3 srr_w = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (srr_l > 0.0) {
+		srr_w += srr_side * (CUSTOM0.w * srr_s / srr_l);
+	}
+	VERTEX = (VIEW_MATRIX * vec4(srr_w, 1.0)).xyz;
+	NORMAL = vec3(0.0, 0.0, 1.0);
+}
+"""
+
+## A link shader with its vertex stage replaced by PIPE_TURN_VERTEX.
+static func pipe_turn_shader(sh: Shader) -> Shader:
+	var key := "pipeturn|%d" % sh.get_instance_id()
+	if _shaders.has(key):
+		return _shaders[key]
+	var out := _with_vertex(sh, PIPE_TURN_VERTEX)
+	_shaders[key] = out
+	return out
+
+## `sh`'s code with its `void vertex() { ... }` replaced by `vertex_code` and
+## `skip_vertex_transform` added (the stage writes view-space VERTEX).
+static func _with_vertex(sh: Shader, vertex_code: String) -> Shader:
+	var code := sh.code
+	var at := code.find("void vertex() {")
+	var end := code.find("}", at)
+	if at < 0 or end < 0:
+		return sh
+	code = code.substr(0, at) + vertex_code + code.substr(end + 1)
+	code = code.replace("render_mode unshaded,", "render_mode unshaded, skip_vertex_transform,")
+	var out := Shader.new()
+	out.code = code
+	for m in sh.get_meta_list():
+		out.set_meta(m, sh.get_meta(m))
+	return out
+
+## `sh` (a template shader) with its vertex stage replaced by TURN_VERTEX.
+static func turn_shader(sh: Shader, y_billboard: bool) -> Shader:
+	var key := "turn|%d|%s" % [sh.get_instance_id(), str(y_billboard)]
+	if _shaders.has(key):
+		return _shaders[key]
+	var out := _with_vertex(sh, TURN_VERTEX.replace("{UP}", "vec3(0.0, 1.0, 0.0)" if y_billboard else "INV_VIEW_MATRIX[1].xyz"))
+	_shaders[key] = out
+	return out
+
 ## Writes every drawn node's particles into its MultiMesh.
 func _update_draws() -> void:
 	draw_updates += 1
@@ -923,6 +1098,16 @@ func _update_draws() -> void:
 		if ps.size() > mm.instance_count:
 			mm.instance_count = maxi(ps.size(), mm.instance_count * 2)
 		mm.visible_instance_count = ps.size()
+		if d.size() > 3 and bool(d[3]):
+			# A shared-turn node (use_shared_turn): the shader billboards, so
+			# the instance carries only the particle's scale and position
+			# and, in its custom data, the shape's rotation.
+			for i in range(ps.size()):
+				var p: EfpSim.Particle = ps[i]
+				mm.set_instance_transform(i, Transform3D(Basis.from_scale(p.scale), p.pos))
+				mm.set_instance_color(i, EfpSim.color_of(p.color))
+				mm.set_instance_custom_data(i, turn_custom(p))
+			continue
 		for i in range(ps.size()):
 			var p: EfpSim.Particle = ps[i]
 			mm.set_instance_transform(i, particle_transform(p, String(d[2]), cam_rot))
@@ -1285,6 +1470,7 @@ static func clear_caches() -> void:
 	_meshes.clear()
 	_materials.clear()
 	_shaders.clear()
+	_turn_materials.clear()
 	_images.clear()
 	_mesh_arrays.clear()
 	_used.clear()

@@ -100,6 +100,10 @@ var _lock := Mutex.new()
 ## native one is held to it byte for byte (native/README.md, "Parity").
 var _native: Object = null
 
+## The file this handle was opened from (round 741: the shared item table
+## caches by it, so two handles on one archive parse it once).
+var source_path := ""
+
 ## Opens path for reading. Returns null (and pushes an error) on failure.
 static func open(path: String) -> Pk2Reader:
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -119,6 +123,7 @@ static func open(path: String) -> Pk2Reader:
 
 	var reader := Pk2Reader.new()
 	reader._file = f
+	reader.source_path = path
 	reader._encrypted = header[0x22] != 0
 	reader._root_offset = HEADER_SIZE
 	if reader._encrypted:

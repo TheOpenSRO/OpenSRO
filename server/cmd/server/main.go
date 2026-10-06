@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"syscall"
 	"time"
@@ -46,6 +47,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/storage"
 	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
 	"github.com/OpenSRO/OpenSRO/server/internal/trade"
+	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
@@ -1193,6 +1195,9 @@ func main() {
 	// wirings below are interchangeable. account is split in two because
 	// login and registration take different halves of it.
 	var (
+		// serials numbers ground items (round 743): item_serial_seq on the
+		// stores' pool, or an in-memory count.
+		serials    = &txn.Serials{}
 		accounts   account.Store
 		registerer account.Registerer
 		chars      character.Store
@@ -1295,26 +1300,62 @@ func main() {
 			logger.Error("opening account store", "error", err)
 			os.Exit(1)
 		}
-		sqlAccounts, err := account.OpenSQLStore(*postgresDSN)
+		// ONE capped pool for the stores and a small one for the reference
+		// data (round 743, txn.PoolSizes): every economy action is one
+		// transaction on the stores' pool, and the reference lookups it makes
+		// meanwhile never wait on that pool. Before, ten pools opened
+		// uncapped.
+		storeConns, refConns := txn.PoolSizes()
+		storePool, err := txn.OpenPool(*postgresDSN, storeConns)
+		if err != nil {
+			logger.Error("opening the postgres pool", "error", err)
+			os.Exit(1)
+		}
+		defer storePool.Close()
+		refPool, err := txn.OpenPool(*postgresDSN, refConns)
+		if err != nil {
+			logger.Error("opening the reference-data pool", "error", err)
+			os.Exit(1)
+		}
+		defer refPool.Close()
+		logger.Info("postgres pools", "stores", storeConns, "refdata", refConns, "budgetVar", txn.MaxConnsEnv)
+		serials = &txn.Serials{DB: storePool}
+
+		sqlAccounts, err := account.NewSQLStore(storePool)
 		if err != nil {
 			logger.Error("opening account store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlAccounts.Close()
 
-		sqlChars, err := character.OpenSQLStore(*postgresDSN)
+		sqlChars, err := character.NewSQLStore(storePool)
 		if err != nil {
 			logger.Error("opening character store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlChars.Close()
+		// The economy ledger keeps a day (txn.PruneLedger): long past any
+		// retry of the actions it guards.
+		go func() {
+			t := time.NewTicker(time.Hour)
+			defer t.Stop()
+			for {
+				if n, err := txn.PruneLedger(ctx, storePool, 24*time.Hour); err != nil {
+					logger.Warn("pruning the economy ledger", "error", err)
+				} else if n > 0 {
+					logger.Info("pruned the economy ledger", "rows", n)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+				}
+			}
+		}()
 
-		sqlRef, err := refdata.OpenSQLStore(*postgresDSN)
+		sqlRef, err := refdata.NewSQLStore(refPool)
 		if err != nil {
 			logger.Error("opening refdata store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlRef.Close()
 
 		// Say at boot what reference data the database actually holds. The
 		// public test server ran for a week with every one of these at zero --
@@ -1345,24 +1386,22 @@ func main() {
 			}
 		}
 
-		sqlInv, err := inventory.OpenSQLStore(*postgresDSN, sqlRef)
+		sqlInv, err := inventory.NewSQLStoreOwned(storePool, sqlRef, inventory.DefaultTable, inventory.DefaultOwnerColumn)
 		if err != nil {
 			logger.Error("opening inventory store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlInv.Close()
 		sqlInv.SetDurabilityLookup(sqlRef)
 
 		// The warehouse is a second inventory container on its own table,
 		// owned by the ACCOUNT (the game's `_CHEST WHERE UserJID=%d`; see
 		// internal/storage). A database written by the older per-character
 		// server is moved over once, losslessly, before anything opens it.
-		sqlWarehouse, err := inventory.OpenSQLStoreOwned(*postgresDSN, sqlRef, inventory.WarehouseTable, inventory.WarehouseOwnerColumn)
+		sqlWarehouse, err := inventory.NewSQLStoreOwned(storePool, sqlRef, inventory.WarehouseTable, inventory.WarehouseOwnerColumn)
 		if err != nil {
 			logger.Error("opening warehouse store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlWarehouse.Close()
 		sqlWarehouse.SetDurabilityLookup(sqlRef)
 		sqlWarehouse.SetCapacity(storage.DefaultCapacity)
 		// Each account's own size, grown by the expansion item (round 498).
@@ -1378,45 +1417,40 @@ func main() {
 				"characters", moved.Characters, "accounts", moved.Accounts, "orphanRowsLeft", moved.Orphans)
 		}
 
-		sqlEq, err := equipment.OpenSQLStore(*postgresDSN, sqlInv)
+		sqlEq, err := equipment.NewSQLStore(storePool, sqlInv)
 		if err != nil {
 			logger.Error("opening equipment store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlEq.Close()
 		// Worn rows written before durability existed get their instance on
 		// first read, with the same roll a fresh bag item gets.
 		sqlEq.SetFreshInstanceRoller(func(ctx context.Context, itemID int64) (inventory.Instance, error) {
 			return inventory.FreshInstance(ctx, sqlRef, nil, itemID)
 		})
 
-		sqlSkills, err := skill.OpenSQLStore(*postgresDSN)
+		sqlSkills, err := skill.NewSQLStore(storePool)
 		if err != nil {
 			logger.Error("opening skill store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlSkills.Close()
 
-		sqlGuilds, err := guild.OpenSQLStore(*postgresDSN)
+		sqlGuilds, err := guild.NewSQLStore(storePool)
 		if err != nil {
 			logger.Error("opening guild store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlGuilds.Close()
 
-		sqlQuests, err := quest.OpenSQLStore(*postgresDSN)
+		sqlQuests, err := quest.NewSQLStore(storePool)
 		if err != nil {
 			logger.Error("opening quest store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlQuests.Close()
 
-		sqlFriends, err := friend.OpenSQLStore(*postgresDSN)
+		sqlFriends, err := friend.NewSQLStore(storePool)
 		if err != nil {
 			logger.Error("opening friend store", "error", err)
 			os.Exit(1)
 		}
-		defer sqlFriends.Close()
 
 		accounts, registerer = sqlAccounts, sqlAccounts
 		chars, refItems = sqlChars, sqlRef
@@ -1477,6 +1511,10 @@ func main() {
 	// a wall's end once its HP is gone. The walls read the monster skills'
 	// 'att' masks from the same skill table the casts use.
 	session.SetMonsterSkillRefs(refItems)
+	// The players' spawn records (round 737) ask the item table whether the
+	// suit in equip slot 8 is a job suit: the record's job state, which
+	// decides its guild block, as the client decides it.
+	session.SetSpawnItemRefs(refItems)
 	go session.RunToggleTicker(ctx, hub, chars, session.RegenDeps{
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)
@@ -1530,6 +1568,16 @@ func main() {
 	// ITEM_QNO_RM_ARCHEMY* is its owner's alone, party or not
 	// (GObjPC::CheckCanPickUp, grounditem.OwnerOnlyPick).
 	ground.SetRulesLookup(groundDropRules(ctx, refItems))
+	// Each drop gets its serial (round 743): the pick-up's key in the
+	// economy ledger, so a drop is granted once.
+	ground.SetSerialSource(func() int64 {
+		v, err := serials.Next(ctx)
+		if err != nil {
+			logger.Warn("numbering a ground item", "error", err)
+			return 0
+		}
+		return v
+	})
 	go session.RunGroundItemSweep(ctx, ground, hub)
 	// The server's own gain multipliers, under the game's knob names. All
 	// default to 1x, and the engine's floor means a server cannot be
@@ -2137,11 +2185,22 @@ func main() {
 			// before worldDisconnect: all three look the disconnecting
 			// session up in world.Hub, which worldDisconnect removes them
 			// from.
-			duelDisconnect(sess)
-			tradeDisconnect(sess)
-			session.ForgetNPCInteraction(sess.ID())
-			guildPointsDisconnect(sess)
-			berserkDisconnect(sess)
+			// Each hook runs under its own recover (round 737's verification,
+			// P2): a panic in an early one must not skip the rest, above all
+			// worldDisconnect, or the hub keeps a ghost body.
+			step := func(name string, f func()) {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("disconnect hook panicked", "hook", name, "panic", r, "stack", string(debug.Stack()))
+					}
+				}()
+				f()
+			}
+			step("duel", func() { duelDisconnect(sess) })
+			step("trade", func() { tradeDisconnect(sess) })
+			step("npc", func() { session.ForgetNPCInteraction(sess.ID()) })
+			step("guild points", func() { guildPointsDisconnect(sess) })
+			step("berserk", func() { berserkDisconnect(sess) })
 			// The party removal first, then the match entry, as the
 			// ShardManager's logout does (SM 0x4296f0: 0x44f580 moves a
 			// leader's entry to the next leader before 0x451590 deletes a
@@ -2149,9 +2208,9 @@ func main() {
 			// reads the session's character from world.Hub, and a page built
 			// while a leader is out of the world but still in its party would
 			// otherwise skip its entry (round 713's review).
-			partyDisconnect(sess)
-			partyMatchDisconnect(sess)
-			worldDisconnect(sess)
+			step("party", func() { partyDisconnect(sess) })
+			step("party match", func() { partyMatchDisconnect(sess) })
+			step("world", func() { worldDisconnect(sess) })
 		},
 	}
 

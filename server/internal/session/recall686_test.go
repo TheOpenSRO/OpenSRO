@@ -15,7 +15,6 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/gm"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
@@ -82,7 +81,27 @@ func (f *deadWorldFixture) walkTo(t *testing.T, rx, ry int, lx, lz float64) {
 		t.Fatalf("Aria's zone %q has no frame", e.Zone)
 	}
 	x, z := worldmap.ToWorld(rx, ry, lx, lz, fx, fy)
+	before := f.sees(f.aria, f.bram)
 	f.send(t, f.connA, OpMove, (&MoveRequest{X: float32(x), Z: float32(z)}).Encode())
+	// The move has no answer: wait for the hub to hold it, then read the
+	// spawn or despawn of Bram it owes when it crossed into or out of his
+	// view (round 737).
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if cur, ok := f.hub.EntityByCharacterID(f.aria); ok && math.Abs(cur.Pos.X-x) < 0.01 && math.Abs(cur.Pos.Z-z) < 0.01 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the hub never took Aria's move to (%v, %v)", x, z)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	switch after := f.sees(f.aria, f.bram); {
+	case before && !after:
+		expectPlayerDespawn(t, f.connA, f.rA, f.bram)
+	case !before && after:
+		expectPlayerSpawn(t, f.connA, f.rA, f.bram)
+	}
 }
 
 // designate sends Aria's request for gate and returns the reply's bytes.
@@ -91,11 +110,9 @@ func (f *deadWorldFixture) designate(t *testing.T, gate uint16) []byte {
 	req := make([]byte, 2)
 	binary.LittleEndian.PutUint16(req, gate)
 	f.send(t, f.connA, wireRecallDesignate, req)
-	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	p, err := proto.Read(f.rA, nil, nil)
-	if err != nil {
-		t.Fatalf("no answer to the designate request for gate %d: %v", gate, err)
-	}
+	// A walk across a block line before it is answered by spawns (round
+	// 737); the fixture's read steps over them.
+	p := f.read(t, f.connA, f.rA)
 	if p.Opcode != wireRecallDesignateResult {
 		t.Fatalf("the designate request answered %#04x, want %#04x", p.Opcode, wireRecallDesignateResult)
 	}
@@ -122,6 +139,7 @@ func (f *deadWorldFixture) reviveAtReturnPoint(t *testing.T) *ChangeZoneResult {
 	if p.Opcode != OpChangeZoneResult || err != nil || !czr.OK {
 		t.Fatalf("option 1 answered %#04x %+v (err %v), want the zone change to the return point", p.Opcode, czr, err)
 	}
+	f.expectSpawnIfInView(t)
 	for _, want := range []uint16{OpReviveResult, OpCharacterStatsResult} {
 		if p := f.read(t, f.connA, f.rA); p.Opcode != want {
 			t.Fatalf("after the zone change Aria received %#04x, want %#04x", p.Opcode, want)
@@ -165,6 +183,7 @@ func TestDesignatedGateIsWhereOptionOneReturns(t *testing.T) {
 			if czr, err := DecodeChangeZoneResult(f.read(t, f.connA, f.rA).Data); err != nil || !czr.OK {
 				t.Fatalf("the walk home answered %+v (err %v)", czr, err)
 			}
+			f.expectSpawnIfInView(t)
 			czr := f.reviveAtReturnPoint(t)
 			wantArrivalAt(t, czr, "donwhang", 26265, 957, 1508)
 			e, _ := f.hub.EntityByCharacterID(f.aria)
@@ -316,6 +335,7 @@ func TestFlagOffRespawnGoesToTheDesignatedGate(t *testing.T) {
 	}
 	f.send(t, f.connA, OpChangeZone, (&ChangeZoneRequest{Zone: "jangan"}).Encode())
 	f.read(t, f.connA, f.rA)
+	f.expectSpawnIfInView(t)
 	returnAfterKill(context.Background(), f.chars, nil, f.hub, f.aria)
 	p := f.read(t, f.connA, f.rA)
 	czr, err := DecodeChangeZoneResult(p.Data)

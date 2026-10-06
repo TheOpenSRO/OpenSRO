@@ -184,6 +184,33 @@ var buff_roster := BuffRoster.new()
 var npc_roster := NpcSpawnNet.Roster.new()
 signal npc_spawned(rec: NpcSpawnNet.Record)
 signal npc_despawned(uid: int)
+## Round 737 (crowd_scale.md C1): the other players in view arrive as the
+## same retail spawn messages, with a CICUser record (UserSpawnNet), and leave
+## by 0x3016 / a type-2 group. user_roster is the uids spawned and not
+## despawned (a despawn's uid is a player's when it is here, else an NPC's).
+## A player record is read with World3D's item table (_spawn_types, handed
+## over by set_spawn_item_rows); the spawns that come before it wait in
+## _pending_spawns, in order. _spawn_frame is the frame the records' region
+## coordinates are turned into world ones in: the last result's FrameRegion.
+var user_roster := {}
+## Round 737's review: the uids an OpPlayerZoneNotice named as arriving in the
+## zone (the next spawn of each is a real arrival) and as leaving it (World3D
+## reads and erases the entry when the despawn comes).
+var _zone_arrivals := {}
+var zone_departures := {}
+const OP_PLAYER_ZONE_NOTICE := 0x00b7
+## Every other character's abnormal states as last told (0x3057 for a
+## character; uid -> StatusNet.ObjectStatus), so a scene that was not
+## listening -- World3D at the world entry, or during a zone change's load,
+## which clears its own -- can take them back (round 737's review: a spawn's
+## states follow it).
+var character_states := {}
+## OPENSRO_QA_SPAWN_LOG=1 prints one line per player spawned or despawned
+## (live checks); off, only one line per group.
+var _spawn_log := OS.get_environment("OPENSRO_QA_SPAWN_LOG") != ""
+var _spawn_types: UserSpawnNet.Types = null
+var _pending_spawns: Array = []
+var _spawn_frame := Vector2i(-1, -1)
 ## Every character's berserk body mode (0x30BF kind 4) as this connection was
 ## last told (round 651): character id -> 1 while berserk. Kept, cleared and
 ## dropped with buff_roster, and for the same reason -- the server's in-view
@@ -391,6 +418,11 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	own_character_id = -1
 	buff_roster.clear()
 	npc_roster.clear()
+	user_roster.clear()
+	character_states.clear()
+	_zone_arrivals.clear()
+	zone_departures.clear()
+	_pending_spawns.clear()
 	body_modes.clear()
 	party.reset_connection()
 	_unhandled_warned.clear()
@@ -471,6 +503,11 @@ func disconnect_from_server() -> void:
 	own_character_id = -1
 	buff_roster.clear()
 	npc_roster.clear()
+	user_roster.clear()
+	character_states.clear()
+	_zone_arrivals.clear()
+	zone_departures.clear()
+	_pending_spawns.clear()
 	body_modes.clear()
 	party.reset_connection()
 	_forget_session_lists()
@@ -966,6 +1003,150 @@ func _dispatch_lobby(r: LobbyNet.Result) -> void:
 		LobbyNet.ACTION_NAME_CHECK:
 			name_check_result.emit(ok, why)
 
+## World3D's item table (RefItemID -> ItemTableReader.Item), for the
+## players' spawn records (round 737, UserSpawnNet): World3D hands it over
+## as soon as it has read it. The spawns that waited for it are read now, in
+## the order they came.
+func set_spawn_item_rows(rows: Dictionary) -> void:
+	_spawn_types = UserSpawnNet.Types.new(rows)
+	var waiting := _pending_spawns
+	_pending_spawns = []
+	for m in waiting:
+		_apply_spawn_message(int(m["op"]), m["data"])
+
+## A world entry or zone change: the players in view start over, and their
+## records' coordinates are in frame (the result's FrameRegion).
+func _start_user_view(frame: String) -> void:
+	user_roster.clear()
+	_pending_spawns.clear()
+	_zone_arrivals.clear()
+	zone_departures.clear()
+	character_states.clear()
+	_spawn_frame = UserSpawnNet.parse_frame(frame)
+
+## OpPlayerZoneNotice (round 737's review, OURS): u8 kind (1 entered, 2
+## left), u32 uid, u16 + name -- a real arrival in the zone or a leave of
+## it, ahead of its spawn or despawn, as opposed to a walk into or out of
+## view. Kept for the spawn (snapshot.zone_arrival) and the despawn
+## (zone_departures), which World3D logs.
+func _on_zone_notice(data: PackedByteArray) -> void:
+	if data.size() < 7:
+		return
+	var uid := data.decode_u32(1)
+	if data[0] == 1:
+		_zone_arrivals[uid] = true
+	elif data[0] == 2:
+		zone_departures[uid] = true
+
+## A spawn message that may name a player: read now, or queued behind any
+## that wait for the item table.
+func _user_spawn_message(op: int, data: PackedByteArray) -> void:
+	if not _pending_spawns.is_empty():
+		_pending_spawns.append({"op": op, "data": data})
+		return
+	_apply_spawn_message(op, data)
+
+func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
+	match op:
+		NpcSpawnNet.OP_SINGLE_SPAWN:
+			if _spawn_types == null:
+				_pending_spawns.append({"op": op, "data": data})
+				return
+			var rec := UserSpawnNet.decode_single_spawn(data, _spawn_types)
+			if rec == null:
+				push_warning("NetClient: a 0x3015 that does not read as a player record (%d bytes)" % data.size())
+			else:
+				if _spawn_log:
+					print("NetClient: 0x3015 player %d %s came into view" % [rec.uid, rec.name])
+				_user_spawned(rec)
+		NpcSpawnNet.OP_SINGLE_DESPAWN:
+			var gone := NpcSpawnNet.decode_single_despawn(data)
+			if user_roster.has(gone):
+				if _spawn_log:
+					print("NetClient: 0x3016 player %d went out of view" % gone)
+				_user_left(gone)
+			elif gone >= 0 and npc_roster.despawn(gone):
+				npc_despawned.emit(gone)
+		NpcSpawnNet.OP_GROUP_END:
+			var g := UserSpawnNet.read_group(data, _spawn_types)
+			if g.deferred:
+				_pending_spawns.append({"op": op, "data": data})
+				return
+			if g.error != "":
+				push_warning("NetClient: a group spawn that does not read (%s) -- dropped" % g.error)
+			elif g.kind == NpcSpawnNet.GROUP_SPAWN:
+				if not g.users.is_empty():
+					print("NetClient: group spawn of %d player(s)%s" % [g.users.size(),
+						(" and %d NPC(s)" % g.npcs.size()) if not g.npcs.is_empty() else ""])
+				for rec in g.npcs:
+					npc_spawned.emit(npc_roster.spawn(rec))
+				for rec in g.users:
+					_user_spawned(rec)
+			else:
+				var players := 0
+				for u in g.uids:
+					if user_roster.has(u):
+						players += 1
+				if players > 0:
+					print("NetClient: group despawn of %d player(s)" % players)
+				for u in g.uids:
+					if user_roster.has(u):
+						_user_left(u)
+					elif npc_roster.despawn(u):
+						npc_despawned.emit(u)
+
+## A player came into view: World3D's snapshot of it, its body mode kept for
+## its body (_berserk_resync), and its sitting.
+func _user_spawned(rec: UserSpawnNet.Record) -> void:
+	var snap := UserSpawnNet.to_snapshot(rec, _spawn_types, _spawn_frame)
+	user_roster[rec.uid] = true
+	var mode := WorldNet.StateChange.new()
+	mode.object_id = rec.uid
+	mode.kind = WorldNet.STATE_KIND_BODY_MODE
+	mode.value = 1 if rec.body_mode == UserSpawnNet.BODY_MODE_BERSERK else 0
+	WorldNet.note_body_mode(body_modes, mode)
+	var sitting := rec.motion == UserSpawnNet.MOTION_SIT
+	# Round 737's review: World3D draws a sitter seated from the snapshot --
+	# at once, or when a zone change's load lays its arrivals out -- rather
+	# than from a SIT state change, which a body still being loaded drops and
+	# a drawn one answers with the sit-down clip.
+	snap.seated = sitting
+	# A real arrival in the zone (OpPlayerZoneNotice came first), not a walk
+	# into view: World3D says so in the chat, as it did before round 737.
+	snap.zone_arrival = _zone_arrivals.has(rec.uid)
+	_zone_arrivals.erase(rec.uid)
+	var res := last_enter_world_result
+	if entity_entered.get_connections().is_empty() and res != null and res.ok:
+		# World3D is not up yet -- the entry's spawns come while
+		# CharacterSelect swaps it in -- and lays out the result's list when
+		# it is: the spawn joins that list.
+		for i in res.others.size():
+			if res.others[i].character_id == snap.character_id:
+				res.others.remove_at(i)
+				break
+		res.others.append(snap)
+		res.seated.erase(snap.character_id)
+		if sitting:
+			res.seated.append(snap.character_id)
+		return
+	entity_entered.emit(snap)
+
+## A player went out of view (0x3016, or a type-2 group): as OpEntityLeft.
+func _user_left(uid: int) -> void:
+	user_roster.erase(uid)
+	buff_roster.drop(BuffRoster.key_of(uid, SkillNet.OWNER_CHARACTER))
+	body_modes.erase(uid)
+	character_states.erase(uid)
+	var res := last_enter_world_result
+	if entity_left.get_connections().is_empty() and res != null and res.ok:
+		for i in res.others.size():
+			if res.others[i].character_id == uid:
+				res.others.remove_at(i)
+				break
+		res.seated.erase(uid)
+		return
+	entity_left.emit(uid)
+
 func _dispatch(p: Packet) -> void:
 	if wire_logging:
 		print("WIRE recv opcode=0x%04x size=%d" % [p.opcode, p.data.size()])
@@ -1006,6 +1187,8 @@ func _dispatch(p: Packet) -> void:
 				# session at the entry (session.forgetNPCWindow) and spawns
 				# the whole window again.
 				npc_roster.clear()
+				# And the players in view (round 737): they follow as spawns.
+				_start_user_view(result.frame)
 			enter_world_result.emit(result)
 		WorldNet.OP_ENTITY_ENTERED:
 			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
@@ -1026,6 +1209,8 @@ func _dispatch(p: Packet) -> void:
 				# this result (round 646; sendBuffsInView).
 				buff_roster.clear()
 				body_modes.clear()
+				# And its players, as spawns (round 737).
+				_start_user_view(zone_result.frame)
 			change_zone_result.emit(zone_result)
 		WorldNet.OP_REVIVE_RESULT:
 			revive_result.emit(WorldNet.decode_revive_result(p.data))
@@ -1136,7 +1321,14 @@ func _dispatch(p: Packet) -> void:
 		StatusNet.OP_OBJECT_STATUS:
 			var st := StatusNet.decode_object_status(p.data)
 			if st.error == "":
+				if st.owner_kind == SkillNet.OWNER_CHARACTER:
+					if st.mask == 0:
+						character_states.erase(st.owner_id)
+					else:
+						character_states[st.owner_id] = st
 				object_status.emit(st)
+		OP_PLAYER_ZONE_NOTICE:
+			_on_zone_notice(p.data)
 		CombatNet.OP_LOOT_DROPPED:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		CombatNet.OP_MONSTER_LIST_RESULT:
@@ -1155,30 +1347,34 @@ func _dispatch(p: Packet) -> void:
 		NpcSpawnNet.OP_FACING_UNKNOWN:
 			npc_roster.facing_unknown(NpcSpawnNet.decode_facing_unknown(p.data))
 		NpcSpawnNet.OP_SINGLE_SPAWN:
-			var single := NpcSpawnNet.decode_single_spawn(p.data)
-			if single == null:
-				push_warning("NetClient: a 0x3015 that does not read as an NPC record (%d bytes)" % p.data.size())
+			# A player's record (round 737) or an NPC's, by its RefObjID.
+			if p.data.size() >= 4 and UserSpawnNet.is_player_ref(p.data.decode_u32(0)):
+				_user_spawn_message(NpcSpawnNet.OP_SINGLE_SPAWN, p.data)
 			else:
-				npc_spawned.emit(npc_roster.spawn(single))
+				var single := NpcSpawnNet.decode_single_spawn(p.data)
+				if single == null:
+					push_warning("NetClient: a 0x3015 that does not read as an NPC record (%d bytes)" % p.data.size())
+				else:
+					npc_spawned.emit(npc_roster.spawn(single))
 		NpcSpawnNet.OP_SINGLE_DESPAWN:
 			var gone := NpcSpawnNet.decode_single_despawn(p.data)
-			if gone >= 0 and npc_roster.despawn(gone):
+			if gone >= 0 and (user_roster.has(gone) or not _pending_spawns.is_empty()):
+				# A player's (round 737): in order behind any spawn still
+				# waiting for the item table.
+				_user_spawn_message(NpcSpawnNet.OP_SINGLE_DESPAWN, p.data)
+			elif gone >= 0 and npc_roster.despawn(gone):
 				npc_despawned.emit(gone)
 		NpcSpawnNet.OP_GROUP_BEGIN:
 			npc_roster.group.begin(p.data)
 		NpcSpawnNet.OP_GROUP_DATA:
 			npc_roster.group.append(p.data)
 		NpcSpawnNet.OP_GROUP_END:
-			var g: Dictionary = npc_roster.group.finish()
-			if g.error != "":
-				push_warning("NetClient: a group spawn that does not read (%s) -- dropped" % g.error)
-			elif g.kind == NpcSpawnNet.GROUP_SPAWN:
-				for rec in g.records:
-					npc_spawned.emit(npc_roster.spawn(rec))
+			# Every record by its class (round 737: players' too).
+			var buffer: PackedByteArray = npc_roster.group.take()
+			if buffer.is_empty():
+				push_warning("NetClient: a group spawn that does not read (0x3018 with no 0x3017) -- dropped")
 			else:
-				for u in g.uids:
-					if npc_roster.despawn(u):
-						npc_despawned.emit(u)
+				_user_spawn_message(NpcSpawnNet.OP_GROUP_END, buffer)
 		CombatNet.OP_MONSTER_LEFT:
 			monster_left.emit(CombatNet.decode_monster_left(p.data))
 		CombatNet.OP_MONSTER_MOVED:
