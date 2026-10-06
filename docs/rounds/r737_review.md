@@ -537,3 +537,222 @@ The encode-once `gateway.Frame` helps a split: while no session uses per-session
 forwardable as they are.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+## Fix verification (`4b39360e..ebdf457c`)
+
+An independent check of the review fixes, in a detached worktree at `ebdf457c`. No code was changed. The two probes
+written for it were kept out of the tree (`zz_verify737_test.go`); their decisive parts are quoted under N1 and N2.
+
+Labels: MEASURED, READ, INFERRED.
+
+### Verdict: ship after N1 and N2
+
+Every finding is fixed. The fixes add two new bugs, both small to fix:
+
+- **N1 (MEDIUM): a server crash.** It needs `-player-dead-state` off and a narrow race.
+- **N2 (MEDIUM): the new look cache can keep a stale look.** Other players are then drawn in gear the character no
+  longer wears, until its next equipment change or re-entry.
+
+N3 to N6 are LOW and can follow.
+
+### The findings
+
+| # | Verdict | Evidence |
+|---|---|---|
+| F1 ammo plus byte | **FIXED** | `pcrecord.go` `itemHasPlus`: a plus byte only for TypeID 3/1, an unknown item counted as 3/1, matching `user_spawn.gd` `has_plus` (READ). `TestArrowsInTheRecordCarryNoPlus` decodes two archer records back to back (MEASURED, passes). The `pcspawn` fixture and `user_spawn_test.gd` now carry arrows (box suite passes). `pc_spawn.md` row 8 is corrected. `SetSpawnItemRefs` clears the look cache, so no look read through an older table survives. |
+| F2 `monster_strikes` `own_id` | **FIXED** | `is_own_unpaired(..., own_id)` returns `target_id == own_id` once the id is known. `World3D.gd:19709` passes `NetClient.own_character_id`. That id is reset at connect, at disconnect and at `enter_world`, and set by OpSelfID. So the elimination fallback runs only in the gap between a result and its OpSelfID (READ). Three new checks in `monster_strikes_test.gd` pass. |
+| F3 entry / zone-change race | **FIXED** (but see N1, N4) | `closePlayerView` runs before `hub.Enter` (`world.go:1487`) and right after `hub.ChangeZone` (`:1624`). A closed view is skipped by every spawn, despawn and `sendIfKnown` path. `arrivePlayer` opens the view, then reads the window from the hub (`othersInView`). The arrival-number dedup records `world.Entity.Arrival`, which the hub sets afresh on every `Enter` and `ChangeZone` (`world.go:164`, `:294`). A no-view session gets no spawn or despawn. The reviewer's probe (now `TestEntryRaceSpawnsWhoWalkedInDuringTheEntry`) and `TestZoneChangeRaceSpawnsWhoWalkedInDuringTheChange` pass (MEASURED). |
+| F4 writer slices | **FIXED** | `TestTheQueueLimitBoundsAGrowingQueueNotOneBatch`, `-race -count=50`: **50 / 50 ok**. Measured while the session `-race` run loaded the machine; the review's head failed 14 / 20. Details are below the table. |
+| F5 seated snapshot | **FIXED** | `EntitySnapshot.seated` comes from the record's motion byte. `_on_entity_entered` draws through `_spawn_result_others([snap], seated)`, which also does `_note_other_pluses`, as the old path did. `_replace_others_for_arrival` folds the load's sitters into `seated`. The separate SIT state change is gone. `user_spawn_test.gd` checks "enters seated, no SIT" (box, passes). |
+| F5 0x00B7 zone notice | **FIXED** (but see N5, N6) | It is sent ahead of a real arrival (world entry, zone change) and a real leave (zone change, logout). World3D logs only those. Per-player prints sit behind `OPENSRO_QA_SPAWN_LOG`. **Collision check** (grep of every `Op… = 0x….` in `server/internal` and every `OP_… = 0x….` in `client/scripts`): `0x00b7` appears only in `playerview.go:594` and `net_client.gd:201`, and in no `docs/protocol/*.tsv` retail table. **Convention:** it follows the only precedent, OpNpcFacingUnknown `0x00B6` (round 708): a low, un-negotiated OpenSRO opcode next to the retail ones. The negotiated extension range in `PROTOCOL_DECISION.md` is still a proposal (OPEN), so nothing stricter applies yet. |
+| F5 abnormal-state replay | **FIXED** | `buildPlayerSpawn` appends `characterStatusFrame` to `after`. A character's `broadcastStatus` now goes to the window through `sendAboutOwner`, the owner included. NetClient keeps `character_states`: cleared at `_start_user_view`, dropped per uid at `_user_left`, and replayed by World3D at `_ready` and after a load clears `_abnormal_states`. `TestASpawnCarriesTheAbnormalStates` passes. |
+| F6 no linger | **FIXED** | `SendCoalesce` and the sleep are gone from `writeLoop`. The CPU cost is disclosed in `r737.md` and `crowd_scale.md` (C2 at 1000 is now -26% / -47%, against -73% / -86% with the linger). |
+| F6 records outside the lock | **FIXED** | `spawnPlayersTo` collects what it wants under the lock, builds the records with the lock released, then re-checks `open`, the view's identity, `held`, `Sees` and the state version under the lock. `spawnPlayerToOthersAs` builds once before any recipient's lock. |
+| F6 look cache | **PARTIAL**: see N2 | Every path that changes what is worn invalidates the cache. That is equip, unequip and the GM's `/item worn` (`broadcastWorn` / `broadcastUnworn`, which invalidate **first**, even for slots past `BroadcastSlotMax` or with no observer), plus each world entry (`world.go:1488`), each leave (`:1342`) and a new item table. Paths that need nothing: job suits go through `Equip` → `broadcastWorn`. OpenSRO has no avatar slots, and its record sends 0 avatars. A body (RefObjID, scale) cannot change in the world. Durability is not in the look, since `EffectivePlus` is OptLevel + AdvElixir only. Ammunition is never spent (`skill.go:992`, NOT MODELLED). A reconnect is a world entry. **But** an invalidation can be undone by a read that started before it (N2). |
+| F6 atomic `bumpPlayerState` | **FIXED** | A `sync.Map` of `*atomic.Uint64`, with `LoadOrStore` on first use. |
+| F6 window-scoped buffs and status | **FIXED** | `skill.go:1399`, `buffs.go:616`, `status.go:664` and `status.go:795` (characters) now use `zoneOf` / `ViewOfCharacter`. The `EntitiesInZone` calls that remain are for monsters, ground items, chat and safe zones, none of them a buff or status path. |
+| F7 late leave | **FIXED** | `departPlayer` returns when `EntityByCharacterID` names another session. `forgetPlayerView` compares the session (`CompareAndDelete`). `TestALateLeaveOfAStaleSessionKeepsTheLiveBody` passes. |
+| F7 docs | **FIXED** | `pc_spawn.md` covers row 8, the u32 for types 5 and 6, "reads, does not use", and `JobState` 0 → 4 (`pcspawn.Append` writes it). |
+| views by character id | **FIXED** (but see N4) | `playerViews` is keyed by `int64`. Every lookup goes through `viewFor(sess, characterID)`, which refuses a view held for another session. `MoveResult.Watchers` carries both the session and the character. A stale session is sent nothing about others, and its own moves cross nothing. |
+
+**F4, how the slicing behaves** (READ):
+
+- **Ordering:** one writer goroutine writes the slices in sequence.
+- **Partial writes:** `net.Conn.Write` writes everything or returns an error, and the drain stops at the first error.
+- **Close or stall during a write:** `stallLocked` sets a past deadline, so the next slice fails at once.
+- **`inFlight`:** only the writer itself calls `dropLocked`, so `inFlight` cannot go negative.
+
+### New issues
+
+#### N1 BUG (MEDIUM: a process crash; needs `-player-dead-state` off and a race): the mover's own crossing while its view is closed dereferences a nil hub
+
+**Where.**
+
+- `playerview.go:96`: `closePlayerView` stores a view with **zero `deps`**.
+- `playerview.go:529-531`: `afterRelocate` finds that view (`viewFor` returns it, closed but not nil) and calls
+  `crossPlayer(v.deps, r)`.
+- From there, `spawnPlayerToOthers` → `buildPlayerSpawn` → `d.hub.EntityBySession` on a nil `*world.Hub`.
+- `despawnPlayerFromOthers` → `stillSees(d.hub, …)` would do the same, and under another player's view lock.
+
+Nothing in `gateway` or `session` recovers a handler panic (grep: the only `recover()` is the monster AI's,
+`monsterai.go:1606`). So **the whole server exits**.
+
+**When.** The session's own `handleMove` or `moveBySkill` has to relocate it across a block line while its view is
+closed:
+
+- **A world entry cannot do this:** `enterOwned` runs on the session's own goroutine, so its moves wait.
+- **A zone change can,** when `warpTo` runs off that goroutine. `returnAfterKill` does exactly that: it is called from a
+  monster strike worker (`monsterai.go:1675`) or the status tick (`status.go:672`), and only while `-player-dead-state`
+  is **off**. In that case the client, never told it died, keeps walking (`deadstate.go:619-629`).
+- **`returnGuard` narrows it but does not close it.** A step taken within 400 units of the landing ends the guard and
+  is accepted. A step whose guard check ran just before `armReturnGuard` relocates after `ChangeZone`.
+
+Before the fix, this gap held the old, fully wired view, so it could not crash.
+
+**MEASURED** (`TestVerify737ClosedViewSelfCrossing`). The fixture is under `-single-frame`. Aria walks 5000 units off,
+and Bram changes zone. `warpBeforeResultHook` relocates **Bram's own session** onto Aria, which is what his concurrent
+OpMove does.
+
+```
+Bram's own move in the gap: ok=true crossed=true gained=1 lost=0
+PANIC in afterRelocate with a closed view: runtime error: invalid memory address or nil pointer dereference
+  world.go:434 (Hub.EntityBySession) <- playerview.go:213 buildPlayerSpawn <- :341 spawnPlayerToOthersAs
+  <- :329 spawnPlayerToOthers <- :544 crossPlayer <- :530 afterRelocate
+```
+
+**Fix.** Skip the crossing while the view is closed: in `afterRelocate`, `if v != nil && v.open { crossPlayer(…) }`,
+reading `open` under `v.mu`. This is correct, not only safe: `arrivePlayer` reads the window from the hub when the view
+opens, and the old window's holders are sent their 0x3016 by `departPlayer(remainingOld)`. Giving `closePlayerView`
+the deps as well is a cheap second guard.
+
+#### N2 BUG (MEDIUM): an equipment change during a record read leaves the old look cached
+
+**Where.** `pcrecord.go:163-195`. `lookOf` reads the stores, then calls `looks.Store` unconditionally. If an equip,
+unequip or `/item worn` lands between the read and the store, the sequence is:
+
+1. the store changes;
+2. `broadcastWorn` / `broadcastUnworn` calls `invalidateLook`;
+3. the read that began earlier stores the **old** look after that invalidation.
+
+**Effects.**
+
+- Every later spawn of that character, to anyone, shows the old gear and pluses. This lasts until its next equipment
+  change, its next world entry or its leave.
+- `playerStateVersion` does not save it. The equip bumps the version, and `fresh()` rebuilds, but the rebuild is served
+  by the same stale cache entry.
+
+**How likely.** The gap is the store read. With the SQL stores in production that is a query, and an arrival in a
+crowd runs one read per player in view.
+
+**MEASURED** (`TestVerify737LookCacheStaleAfterRace`). An `equipment.Store` wrapper blocks its first `Get` after
+reading. In that gap the test unequips the mail and calls `invalidateLook`, exactly as `handleUnequip` →
+`broadcastUnworn` does.
+
+```
+store now wears 0 item(s); the cached look has [{3643 5 true}]
+STALE: the store wears nothing, the look cache still serves [{3643 5 true}]
+```
+
+**Fix.** Keep a generation per character:
+
+- `invalidateLook` increments it (an atomic in a `sync.Map`) and then deletes the entry.
+- `lookOf` reads the generation **before** reading the stores, and stores the entry with that generation.
+- A load serves an entry only when its generation is still current.
+
+A stale store then lands but is never served.
+
+#### N3 LOW: `forgetPlayerState` and `invalidateLook` run for a stale session's late leave
+
+**Where.** `world.go:1341-1342`. Both run unconditionally after the leave, even when `departPlayer` has just seen that
+the character is live on another session.
+
+**Effects.**
+
+- `invalidateLook` there is harmless: the cache is just read again.
+- `forgetPlayerState` deletes the **live** character's version counter. A bump that has already loaded the old counter
+  then increments an orphan. In principle a spawn built just before the change could then compare equal and be sent
+  stale (an ABA), but that needs exact counter alignment (INFERRED, very unlikely).
+
+**Fix.** Return early from both, on the same check `departPlayer` makes.
+
+#### N4 LOW: a stale session's zone change replaces the live session's view
+
+**Where.** `world.go:1624` (`closePlayerView(old.CharacterID, sess)`) and `arrivePlayer` → `startPlayerView`. Neither
+checks that `sess` is still the character's session in the hub.
+
+**What goes wrong.** Suppose the old session of a reconnect is still in the hub and handles an `OpChangeZone` or a
+teleport of its own.
+
+1. The new, live session's view is replaced by one for the old session.
+2. While the old session lasts, the live client is sent no spawn, despawn or move of anyone (`viewFor` → other).
+3. After the old session leaves, `forgetPlayerView` deletes the view. The live session is then a no-view session: it
+   hears moves for bodies it never got, and still no spawns.
+4. This lasts until the live client's next zone change or entry.
+
+This is READ, not run. It needs the dying connection to deliver a zone-change request after the new login, and
+`returnAfterKill` cannot cause it, because it resolves the character through `byChar`, which names the later session.
+
+**Fix.** In `warpTo` and `arrivePlayer`, act only when `hub.EntityByCharacterID(id).Session == sess`.
+
+#### N5 LOW (cosmetic): a zone notice whose spawn or despawn never comes leaves a stale entry, and a later walk prints a false chat line
+
+**Where.**
+
+- **Server:** `playerZoneNotice` runs ahead of `arrivePlayer` and `departPlayer` (`world.go:1339`, `:1546`, `:1658`,
+  `:1676`). It is sent to every open-view recipient in the window, whether or not the despawn or spawn that follows
+  reaches it.
+- **Client:** `net_client.gd` keeps `_zone_arrivals` and `zone_departures` until the uid's next spawn or despawn, or
+  the next result.
+
+**Where a notice is left behind.**
+
+- **The F3 dedup case.** A recipient's own crossing spawned the arriver during the closed window. Its 0x3015 then came
+  before the notice and is not re-sent. `_zone_arrivals[uid]` stays set. That real arrival is not logged, and the
+  arriver's next walk into this client's view prints "X entered the zone.".
+- **The F10 case.** A reconnect's late leave sends the "left" notice, but `departPlayer` sends no 0x3016.
+  `zone_departures[uid]` stays set, and the next walk out of view prints "X left the zone.".
+
+**Fix.** Send the notice from inside the spawn and despawn sends, as a frame ahead of the 0x3015 / 0x3016, under the
+same view lock and condition. Or have `departPlayer`'s reconnect check cover the notice too, and skip "entered" for a
+recipient that holds this arrival.
+
+#### N6 LOW (docs): 0x00B7 is not in `docs/protocol`
+
+0x00B6 is documented in `npc_spawn.md` and named in `PROTOCOL_DECISION.md`'s round 708 paragraph. 0x00B7's layout
+(u8 kind 1/2, u32 uid, u16 + name) is only in the Go comment and `r737.md`.
+
+**Fix.** Add a row to `pc_spawn.md`, beside 0x3015 / 0x3016, and one line to `PROTOCOL_DECISION.md`.
+
+#### Checked and found sound
+
+- **Arrival-number dedup** (READ, with the hub's `Arrival` rule). A recipient skips the arrival's 0x3015 only when it
+  holds **this** arrival number. Every way of losing and regaining a body clears or changes that entry:
+  - A walk out and back, or `/tp` out and back (the client's relocated OpMove → `Relocate`): the crossing's 0x3016
+    deletes the entry, and the return spawns with `!held`.
+  - A zone change out and back, or a logout and login: `departPlayer` deletes the entry, and the new `Enter` /
+    `ChangeZone` gets a fresh number.
+  - A recipient whose own view was closed when the body left: that view is replaced by an empty one when it opens.
+
+  No legitimate re-spawn is suppressed.
+- **Closed views on error paths.** A closed view stays only:
+  - when the result's `Send` fails, and the session is then stalled or closed;
+  - or when the character is no longer in the hub at `enterOwned`'s end.
+
+  In both cases no live client is left blind. A leftover entry is replaced at the character's next
+  `closePlayerView`. That is a small leak (one `playerView` per such character), not a blind player.
+- **Writer slices:** ordering, partial writes, and close or stall during a write. See F4 above.
+
+### Gates (MEASURED, this worktree at `ebdf457c`)
+
+- `cd server && go build ./...`: ok.
+- `go test -count=1 -p 1 ./...`: **68 packages ok, none failing, exit 0** (`session` 145.2 s).
+- `go test -race -count=3 ./internal/gateway/ ./internal/world/`: `gateway` ok (30.1 s), `world` ok (1.0 s). No data
+  race.
+- `go test -race -count=50 -run TestTheQueueLimitBoundsAGrowingQueueNotOneBatch ./internal/gateway/`: ok, 50 / 50.
+- `go test -race -count=1 -timeout 90m ./internal/session/`: **ok in 963.5 s**, no `DATA RACE`.
+- The box (`RENDER_DIR=/opt/opensro-client-r737v`, `GODOT_LOCK=/var/tmp/r737v/lock`):
+  - `remote_godot.sh check`: `checked 645 scripts and 9 scenes`, `ALL LOAD`.
+  - `remote_godot.sh tests`: `ran 245 suite(s), 0 failing`.
+- The two verifier probes fail by design (N1, N2) and are not in the tree.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
