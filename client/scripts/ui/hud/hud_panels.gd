@@ -3583,10 +3583,9 @@ func _load_items() -> void:
 	var archive := _builder.media_archive()
 	if archive == null:
 		return
-	for path in ItemTableReader.TABLE_PATHS:
-		var entry := ObjectLoader.find_file(archive, path)
-		if entry != null:
-			_items = ItemTableReader.parse(archive.read_file(entry), _items)
+	# Every part the archive's index names, parsed once and shared with the
+	# world (round 741; read-only here).
+	_items = ItemTableReader.load_all(archive)
 	for item in _items.values():
 		_items_by_code[(item as ItemTableReader.Item).code_name] = item
 	# Round 731: both files the client's text map holds (ItemTableReader.

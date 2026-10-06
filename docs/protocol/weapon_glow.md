@@ -17,29 +17,37 @@ tables at runtime.
      by a colour that pulses between two colours, to the weapon's own draw. It starts at **+3**.
      The tiers are +3, +5, +6, +7, +8, +9, +10, +11, +12, +13 and +14. +4 keeps the +3 look, and
      anything above +14 keeps the +14 look.
-  2. **The particles** are an `.efp` attached to a bone of the weapon. Every row in the table runs
-     from **+8** to +100.
-- **The seal does not choose the effect in this client and these archives** (MEASURED, §3). Seal of
-  Star, Moon, Sun and Nova items use the same glow type number, the same particle file, the same
-  particle scale and the same model as the normal item of their kind and degree. Only the Egyptian
-  set items' `_SWITCHnn` variants have particle files of their own
-  (`system_enchant*_set_a_rare_01.efp` and `_set_b_rare_01.efp`). What the user remembers of seal
-  effects is a gap for the user to settle (OPEN 1).
+  2. **The particles** are an `.efp` attached to a bone of the weapon. Every row in
+     `itemoptionefp.txt` runs from **+8** to +100.
+- **Round 740 corrects round 733 here: the seal does choose particles.** The particle map is filled
+  twice, first from **`resinfo\itemrare.txt`** and then from `itemoptionefp.txt` (READ, §1.5).
+  `itemrare.txt` gives the seal items (`_A_RARE`, `_B_RARE`, `_C_RARE`, Nova `_A_RARE_ACTIVE`, the
+  Egyptian sets) their own particle files, such as `system_raretype_a_step1/2/3.efp` and
+  `eternity_11_nova_01..03.efp`. Its rows have no plus range, so they show **at every plus, +0
+  included**. The glow type still goes with the kind and degree (§1.1). Round 733 measured only
+  `itemoptionefp.txt` and missed `itemrare.txt`, whose name is not near the other two in the
+  executable (0xdd30f8).
+- **An item can inherit its glow type and particles from its OrgObjCodeName item** (READ, §1.4).
+  On the box's archive this gives 480 `ITEM_EVENT_*` weapons and shields the type and the particle
+  list of the item they copy (MEASURED, round 740).
 - Retail sends the plus of other players' gear in the equip-change broadcast `0x3038` (READ). OpenSRO
   sends no plus for other players' gear, and does not broadcast equip changes (§5).
 
 ## 1. The tables (MEASURED; the loader READ)
 
-All three are loaded by `UI_ALCHEMYBOX::FUN_00a9f2e0` (READ) into three maps:
+`Client_LoadAllRefData` (0x844cd0) calls two loaders after the item table is loaded (READ, asm
+0x84674b..0x84676e): `UI_ALCHEMYBOX::FUN_00a9f2e0()`, then `UI_ALCHEMYBOX::FUN_00aa0270(path)` twice,
+with `"resinfo\itemrare.txt"` (0xdd30f8) and then `"resinfo\itemoptionefp.txt"` (0xdd30dc). They
+fill three maps:
 
 | Map | Key → value | Filled from |
 |---|---|---|
-| `DAT_0110ac80` | item RefID → type number | `Media.pk2 resinfo\itemoption.txt`: `codename<TAB>type_number`. The code name is resolved to a RefID through the item table. |
-| `DAT_0110ac8c` | type number → vector of 0x4c-byte glow rows | `Media.pk2 resinfo\itemtypenumber.txt` |
-| `DAT_0110ac98` | item RefID → vector of 0x4c-byte particle rows | `Media.pk2 resinfo\itemoptionefp.txt` |
+| `DAT_0110ac80` | item RefID → type number | `FUN_00a9f2e0`: `Media.pk2 resinfo\itemoption.txt`, `codename<TAB>type_number`. The code name is resolved to a RefID through the item table. Then the OrgObjCodeName inheritance (§1.4). |
+| `DAT_0110ac8c` | type number → vector of 0x4c-byte glow rows | `FUN_00a9f2e0`: `Media.pk2 resinfo\itemtypenumber.txt` |
+| `DAT_0110ac98` | item RefID → pointer to a vector of 0x4c-byte particle rows | `FUN_00aa0270`, twice: `resinfo\itemrare.txt`, then `resinfo\itemoptionefp.txt` (§1.5); each call ends with the inheritance (§1.4) |
 
-All three files are ASCII with CRLF line ends. `//` lines are comments. The comment in
-`itemtypenumber.txt` is EUC-KR.
+All four files are ASCII with CRLF line ends. `//` lines are comments. The comments in
+`itemtypenumber.txt` and `itemoptionefp.txt` are EUC-KR.
 
 ### 1.1 `itemoption.txt`: which glow type an item uses (MEASURED)
 
@@ -110,7 +118,8 @@ There are no rows for +1, +2 or +4. All the textures are in `Data.pk2 Prim\Mtrl\
 ### 1.3 `itemoptionefp.txt`: the particle rows (MEASURED; the columns READ)
 
 There are 2,546 lines. The columns are `codename, efp, scale, bone, offset, min_plus, max_plus, col8`.
-The parser at `0xaa0622..` (inside the same loader) builds a 0x4c-byte entry:
+The parser at `0xaa0622..` (in `FUN_00aa0270`, the particle loader; round 734 placed it inside
+`FUN_00a9f2e0`, corrected in round 740) builds a 0x4c-byte entry:
 
 | Col | Field | Entry offset | Read as |
 |---|---|---|---|
@@ -148,6 +157,91 @@ Bows and crossbows use `enchantbow_a`. Staves and rods use `enchantstaff_a`, on 
 Here is one degree's rows as an example (MEASURED). `ITEM_CH_SWORD_11_A`, `_B`, `_A_RARE_ACTIVE`,
 `_B_RARE` and `_C_RARE` all have `system_enchant_a_01.efp`, scale 175, `ai_end`, +8..+100.
 `_SET_A_RARE` has the same file at 185, and `_SET_B_RARE` at 215.
+
+### 1.4 Inheritance through OrgObjCodeName (READ, round 740)
+
+Round 734 implemented only the direct mapping: code name → RefID → value. Both loaders do more. Each
+one begins by walking the item table (`FUN_00a9f2e0` 0xa9f388..0xa9f65a; `FUN_00aa0270` the same code
+from 0xaa031f). `FUN_008cb810` returns `mgr+600`, a `std::map`; a node holds the RefID at +0xc and the
+record at +0x10, and `FUN_00973420` returns the record's RefObjCommon block (+0x10, the block of
+`characterdata.md`). For every item:
+
+1. Its CodeName (+0x08) goes into a local map, code name → RefID (`FUN_004f1840`, an insert).
+2. The type word (+0x00) is tested (asm 0xa9f45b..0xa9f4d7): `!(w & 2)` (not Bionic),
+   `(b & 0x1c) == 0xc` (TypeID1 3), `(b & 0x60) == 0x20` (TypeID2 1), and either
+   `(w & 0x780) == 0x300` (TypeID3 6, a weapon, any TypeID4) or `(w & 0x780) == 0x200` with
+   `w >> 11` equal to 1 or 2 (TypeID3 4 with TypeID4 1 or 2, a shield).
+3. If it passes and its OrgObjCodeName (+0x40) has a non-zero length (+0x54, `cmp [eax+0x14],ebx` at
+   0xa9f4e7), the RefID is pushed onto a vector in a second local map, OrgObjCodeName → vector of
+   RefIDs (`FUN_00a8f7b0` finds, `FUN_00a9f070` inserts an empty vector, `FUN_00451bd0` pushes). The
+   wide reader stores `xxx` as "" (`characterdata.md`), so an Org of `xxx` joins no group.
+
+Then the file is parsed (§1.1, §1.5). After it, the second map is walked in key order (a `std::map`
+keyed by the wide string). Each key is looked up as a code name (`FUN_004f19f0`) to get a RefID, and
+that RefID in the output map (`FUN_004522f0` on `DAT_0110ac80` at 0xa9f9d3; `FUN_00a8f680` on
+`DAT_0110ac98`). If it has a value, every RefID of the vector that has none yet is inserted with that
+value (`FUN_00452230` at 0xa9fb04; `FUN_00a8f5c0` at 0xaa0cf1). For the particles the value is the
+base's **vector pointer**, so the member shares the base's list (see §1.5 for what that does).
+
+What follows from it:
+- A member that has a value of its own keeps it.
+- A group whose name item has no value gives nothing.
+- A group sees the values earlier groups gave out, so a chain (A's Org is B, B's Org is C) works only
+  when B's group key sorts after C's. The archive has no chain (MEASURED below).
+
+**Measured on the box's archive** (`/root/pk2/Media.pk2`, round 740; a replay of the loaders over the
+extracted tables, and the client's own `ItemGlowTables.inherit` through `client/tools/glow_inherit_probe.gd`):
+
+| What | Count |
+|---|---|
+| Item rows (the 63 parts `itemdata.txt` names, last definition of an id wins) | 15,338 |
+| Code names shared by two rows (exactly, or ignoring case) | 0 |
+| Weapons and shields in a group (Org not empty, the gate passed) | 496, in 496 groups |
+| `itemoption.txt` rows, and those whose code name is not in the item table | 2,467, 194 (e.g. `ITEM_CH_SWORD_11_B`) |
+| Items typed directly | 2,273 |
+| **Items that gain a type through inheritance** | **480**: type 1 204, type 2 105, type 3 93, type 4 78 |
+| … of them `ITEM_EVENT_*` | all 480 |
+| Groups whose name item itself inherits (chains) | 0 |
+| Items that gain a particle list (all at the `itemrare.txt` call) | 480, the same items |
+| Service 0 rows' effect on any count | none (the counts are the same with Service 1 rows only) |
+
+The examples the brief asked about:
+- `ITEM_CH_SPEAR_11_A_RARE` (4116, Org `xxx`): no type, no group.
+- `ITEM_CH_SPEAR_11_A_RARE_ACTIVE` (62607): type 3, directly.
+- The 22 `ITEM_EVENT_*_11_A_RARE` rows are all rings, earrings and necklaces with Org `xxx`: none is a
+  weapon or a shield, and none inherits.
+- `ITEM_EVENT_CH_BOW_10_C_RARE` (25181, Org `ITEM_CH_BOW_10_C_RARE`): type 2 from its Org item; the
+  same for `ITEM_EVENT_CH_SWORD_08_A_RARE` (25186, type 4), and so on.
+
+### 1.5 `itemrare.txt`: the seal particles (READ; MEASURED)
+
+`FUN_00aa0270` is called with `resinfo\itemrare.txt` before `itemoptionefp.txt` (READ, above). The two
+files have the same parser and the same columns, but `itemrare.txt` has only five:
+`code name, efp, scale, bone, offset` (header `//Item Code Name Particle Scale Bone Offset`). The min
+and max plus are then 0 and 0xFF (READ, §1.3), so **its rows show at every plus**. `FUN_00a5f3e0`
+runs the particle loop whatever the plus (READ: only the glow call is inside `if (plus != 0)`).
+
+The archive's file (MEASURED, round 740): 3,445 data rows, 228 of them naming a code not in the item
+table; every row has five columns and offset `none`. 1,458 items have rows of their own, and 480
+more share them through §1.4 (1,938). Bones: `ai_end` 1,841, `Bone03` 812, `Bone01` 627, `ai_start` 165. There are 58 different
+effect files, all of them in `Particles.pk2`, for example:
+
+| Items | Effect files (`system\…`) |
+|---|---|
+| Star / Moon / Sun (`_A_RARE`, `_B_RARE`, `_C_RARE`) | `system_raretype_a_step1/2/3`, `system_raretype_b_step…` (and `_add`), `system_rarebow_a/b/c`, `system_rareshield_a/b/c`, … |
+| Nova (`_A_RARE_ACTIVE`) | `eternity_11_nova_01/02/03` (three rows), `eternity_11_nova_bow_…`, `eternity_11_nova_shield_…` |
+| Egyptian sets | `eternity_11_egya_glowset1/2_purple`, `_sealhusk_purple`; `eternity_11_egyb_coreglow/defsun/sealhusk_green` (and `_bow`, `_shield`) |
+
+For example `ITEM_CH_SWORD_11_A_RARE_ACTIVE` has the three Nova rows at scale 175 on `ai_end` from
+`itemrare.txt`, then `system_enchant_a_01.efp` (+8..+100) from `itemoptionefp.txt`. Every one of the 1,458 items with `itemrare.txt` rows of its own also has
+`itemoptionefp.txt` rows of its own; 816 items have only the latter.
+
+**The shared list.** In the second call a row goes to the list the item already holds (asm 0xaa090f
+reads the map's value; the append at 0xaa0ae0 is made through it). An item that inherited the base's
+list at the first call therefore adds its own `itemoptionefp.txt` rows to the base's list, and the
+base's later rows reach it too. On this archive no `itemoptionefp.txt` row names such an item
+(MEASURED: 0), so here it only means that the 480 members see their base's rows from both files.
+OpenSRO replays both calls in order with one shared `Array` per base (`ItemGlowTables.inherit`).
 
 ## 2. The mechanism (READ)
 
@@ -243,6 +337,16 @@ two colours.
 
 ## 3. Seals: what the data says (MEASURED)
 
+**Round 740: this section was written from `itemoption.txt` and `itemoptionefp.txt` only.** The seal
+items have particle rows of their own in `itemrare.txt` (§1.5), at every plus, ahead of the
+`itemoptionefp.txt` rows below. For the degree-11 sword (MEASURED): `_A_RARE_ACTIVE` (Nova)
+`eternity_11_nova_01/02/03.efp`; `_B_RARE` (Moon) `system_raretype_a_step2.efp`; `_C_RARE` (Sun)
+`system_raretype_a_step3.efp`; `_SET_A_RARE` `eternity_11_egya_glowset1/glowset2/sealhusk_purple.efp`
+at 185; `_SET_B_RARE` `eternity_11_egyb_coreglow/sealhusk/defsun_green.efp` at 215; the `_HONOR`
+items `system_raretype_a_step1/2/3_honor.efp`; all on `ai_end` at the item's own scale (175 for the
+plain degree-11 sword). Degree 8 has `_A_RARE` (Star) `step1`, `_B_RARE` `step2`, `_C_RARE` `step3`, at
+165. The table below is still right about the glow type and the `itemoptionefp.txt` row.
+
 | Seal | Code suffix (degree 11 example) | ItemClass | Glow type | Particle file / scale / bone | Model |
 |---|---|---|---|---|---|
 | none (normal) | `_A`, `_B`, `_C` | 31 | 3 | `enchant_a_01`, 175, `ai_end` | `sword_11.bsr` |
@@ -258,10 +362,13 @@ ItemClass and rarity are columns of the itemdata rows, counted in the archive. L
 the same pattern: Star (`_A_RARE`), Moon and Sun share the normal item's type and particle row (for
 example CH_SWORD_08 is type 4 throughout).
 
-A seal item looks different only through its own model or texture. Its glow and particles come from
-the same tables, keyed by the same plus. This client has no table, string or code path that picks an
-effect by rarity: `FUN_00a5f3e0`'s only inputs are the RefID and the plus (READ). The executable's
-strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTTI (MEASURED).
+~~A seal item looks different only through its own model or texture.~~ (Wrong, round 740.) A seal
+item's glow comes from the same type as the normal item's, but its particles do not: `itemrare.txt`
+lists the seal items by code name. No code path picks an effect by rarity as such:
+`FUN_00a5f3e0`'s only inputs are the RefID and the plus (READ); the seal effect is chosen because the
+seal item is a different RefID with its own rows. Round 733's string search ("the executable names only
+`itemoption.txt`, `itemoptionefp.txt`") missed `resinfo\itemrare.txt` at 0xdd30f8, which the
+particle loader is called with first (READ, §1).
 
 ## 4. Which items, and where they show
 
@@ -343,7 +450,9 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
 
 1. **Seal-specific effects.** USER DECISION (2026-10-05): follow the data; no seal effects are
    invented. Three user reference pictures (Seal of Sun bow +10, an Egyptian-set glaive, a Nova
-   glaive at +5) were compared qualitatively in `docs/rounds/r734.md`.
+   glaive at +5) were compared qualitatively in `docs/rounds/r734.md`. **Round 740: the data has
+   them** (`itemrare.txt`, §1.5), and OpenSRO now loads it: seal weapons and shields carry their
+   seal particles at every plus. Not yet compared against the user's pictures on a render (OPEN).
 2. **The effective plus: READ (round 734).** Your own gear: `CICPlayer::vslot_025` (0x9d9a80) ->
    `FUN_008ba570` hands `InstallEquipVisual` (0xa61010) the item's `+0x8c` byte, which the record
    reader fills with OptLevel + the advanced elixir (c:0x8bb070), a u8. Others: `0x3038`'s byte. The
@@ -361,9 +470,21 @@ strings name only `itemoption.txt`, `itemoptionefp.txt` and the ProgEquipPow RTT
    every placement (`FUN_00c81190`). What `*(this+4)+0x264` holds (a global setting or the effect
    file's own value) is OPEN, and OpenSRO does not apply it. OpenSRO's particles take the row's
    scale times the host's uniform scale, the body's height factor (round 734's review, F4: as the
-   per-weapon path's anchor did), never a mirror (OURS: the shared simulation's billboards face the
-   camera in world axes). A weapon within 30 units of the camera shows its effect even outside the
-   view (OURS, `EquipFx.ALWAYS_NEAR`).
+   per-weapon path's anchor did). A weapon within 30 units of the camera shows its effect even
+   outside the view (OURS, `EquipFx.ALWAYS_NEAR`).
+   **The placement: READ (round 741).** `FUN_00c81190` builds the effect's matrix. With a bone
+   (+0x50 non-zero, `0xc811c5`) it takes the bone object's matrix (`[+0x50]+0x80`, then `+0x40`)
+   and multiplies it by the owner's world matrix (vtable +0x18 of `+0x5c`) through `0x55ebd0`. With
+   no bone (`0xc811e5`) it is a translation by the row's offset times the scale, times the world
+   matrix. When the mod's `+8` byte is set, the rotation part is first multiplied by the mod's own
+   matrix at `+0xc` (the translation kept). Then `vslot_010(+0xc0)` sets the scale and `vslot_007`
+   (`+0x1c`) hands the matrix to the effect. So **the effect turns with the bone**, rotation
+   included. Round 734's `EquipFx` placed each holder at the bone's position only: the effect's
+   offsets (the +8 enchant's `SetPosition` space 7: 0, −1.2, −2.4, −3.6, −4.8 along the effect's X,
+   MEASURED) then ran along world axes, the column of sparks beside the user's spear that lined up
+   with it at one heading only. Since round 741 a holder takes the bone's frame
+   (`EquipFx.holder_transform`, mirror included), and the shared master's billboards and pipes are
+   built per camera in the vertex shader (`EfpEffect.use_shared_turn`, OURS; `docs/rounds/r741.md`).
 6. **`FUN_00c43780`**: `mod+0x3c >= *(owner+8)+0x7c`, the latter a 0..1 value clamped by
    `CCompChar::FUN_00c25620` (a virtual). Still OPEN; OpenSRO does not gate on it.
 7. **The starting direction: READ (round 734).** The constructor (`FxModManager::FUN_00c847f0`) sets
@@ -398,11 +519,21 @@ and only the `_SET_A/B_RARE_SWITCHnn` variants name `*_set_a_rare_01` / `_set_b_
 
 **Built (round 734, lane A):** `ItemGlowTables` (client/scripts/items/item_glow_tables.gd), `EquipGlow`
 (client/scripts/assets/equip_glow.gd) and the `EQUIP_GLOW` path of `object.gdshaderinc`, applied by
-`CharacterAppearance.build` to slots 6 and 7; the particles go through `EquipFx` (client/scripts/assets/equip_fx.gd), one shared simulation per (efp, scale), drawn at each bone, nearest 64 in view within 800 units (OURS, r734.md). `OPENSRO_QA_EQUIP` takes `slot=item_id+plus`;
+`CharacterAppearance.build` to slots 6 and 7; the particles go through `EquipFx` (client/scripts/assets/equip_fx.gd), one shared simulation per (efp, scale), drawn in each bone's frame (round 741: position and rotation, READ above), nearest 64 in view within 800 units (OURS, r734.md). `OPENSRO_QA_EQUIP` takes `slot=item_id+plus`;
 `OPENSRO_QA_LINEUP_KITS` draws bodies side by side with given pluses; `OPENSRO_QA_FAKECHARS_PLUS`
 gives the select screen's QA characters a weapon plus; `client/tools/measure_equip_glow.gd` measures
 the drawn glow against the arithmetic. The lobby list the server sends carries plus 0
 (`server/internal/session/lobbyhandler.go`, the `LobbyItem` without `Plus`): lane B's to fill.
+
+**Built (round 740):** `ItemGlowTables.for_archive` loads `itemrare.txt` before `itemoptionefp.txt`
+(§1.5), and `ItemGlowTables.inherit(items)` replays §1.4 over item rows: `inherits_glow` is the
+type-word gate, the groups are kept by OrgObjCodeName, and the types and particle lists are rebuilt in
+group-name order, call by call, with members sharing their base's `Array`. `ItemTableReader.Item`
+carries `org_code_name` (column 4, `xxx` → ""; the native reader's `org_code_names` too).
+`CharacterAppearance` hands the tables every item table it is given or parses (`add_item_rows`,
+`_item_info`'s full load); a later, larger table adds only its new members. On the box's archive the
+world's seven parts already hold all 496 members: 480 types and 480 particle lists inherited, in
+18.7 ms (MEASURED, `client/tools/glow_inherit_probe.gd`).
 
 ## Implementation lanes
 

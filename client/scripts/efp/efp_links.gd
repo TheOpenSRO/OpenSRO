@@ -175,6 +175,13 @@ class Out:
 	var _pre := 0
 	var _prefix := 0
 	var _stitch := false
+	## Round 741, a shared-turn pipe (pipe_turn): every vertex is its point's
+	## centre, and these carry what the shader needs to build the side --
+	## c0 the previous point and the signed width, c1 the next point (4
+	## floats a vertex each).
+	var turn := false
+	var c0 := PackedFloat32Array()
+	var c1 := PackedFloat32Array()
 
 	func clear() -> void:
 		nv = 0
@@ -185,6 +192,9 @@ class Out:
 			verts.resize(c)
 			colors.resize(c)
 			uvs.resize(c)
+		if turn and c0.size() < 4 * verts.size():
+			c0.resize(4 * verts.size())
+			c1.resize(4 * verts.size())
 
 	## Upper bound of the triangles drawn (degenerate ones included).
 	func triangles() -> int:
@@ -209,13 +219,22 @@ class Out:
 			verts[at] = verts[at - 1]
 			colors[at] = colors[at - 1]
 			uvs[at] = uvs[at - 1]
+			if turn:
+				_copy_custom(at - 1, at)
 			at += 1
 		var first := _pre + _prefix
 		while at < first:
 			verts[at] = verts[first]
 			colors[at] = colors[first]
 			uvs[at] = uvs[first]
+			if turn:
+				_copy_custom(first, at)
 			at += 1
+
+	func _copy_custom(from: int, to: int) -> void:
+		for k in 4:
+			c0[4 * to + k] = c0[4 * from + k]
+			c1[4 * to + k] = c1[4 * from + k]
 
 	## Two vertices of a strip step.
 	func pair(a: Vector3, b: Vector3, c: int, u: float) -> void:
@@ -253,7 +272,18 @@ class Out:
 		a[Mesh.ARRAY_VERTEX] = verts.slice(0, nv)
 		a[Mesh.ARRAY_COLOR] = colors.slice(0, nv)
 		a[Mesh.ARRAY_TEX_UV] = uvs.slice(0, nv)
+		if turn:
+			a[Mesh.ARRAY_CUSTOM0] = c0.slice(0, 4 * nv)
+			a[Mesh.ARRAY_CUSTOM1] = c1.slice(0, 4 * nv)
 		return a
+
+	## The surface format flags arrays() needs (the two custom channels of a
+	## shared-turn pipe are RGBA floats).
+	func format_flags() -> int:
+		if not turn:
+			return 0
+		return (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) \
+			| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT)
 
 ## A chain's particles from its head along next_link into `b`, with the
 ## mode's dedupe (see the header). `head` is the emitter's oldest live
@@ -493,6 +523,61 @@ static func pipe_ribbon(b: Buf, vp: Projection, right: Vector3, up: Vector3, out
 
 ## The projected points' scratch (reused, see pipe_ribbon).
 static var _ndc := PackedVector2Array()
+
+## pipe_ribbon for a shared-turn effect (round 741; EfpEffect.use_shared_turn):
+## one effect simulated once, drawn by holders each turned by its own bone, so
+## the camera -- and with it the side of the ribbon -- differs per holder.
+## Instead of the two side vertices this writes the point itself twice, with
+## the neighbours pipe_ribbon projects (i - 1 and i + 1, clamped at the ends,
+## READ) and the width signed +w / -w in the custom channels; the shader
+## (EfpEffect.PIPE_TURN_VERTEX) projects the neighbours with the camera that
+## draws the holder and builds the same side, right * d.y - up * d.x, scaled
+## to w. Colour and u as pipe_ribbon. `out.turn` must be set.
+static func pipe_turn(b: Buf, out: Out) -> void:
+	var n := b.n
+	if n < 2:
+		return
+	out.begin_strip(2 * n)
+	var bp := b.pos
+	var bc := b.col
+	var bw := b.w
+	var v := out.nv
+	var inv := 1.0 / float(n - 1)
+	var last := n - 1
+	var c0 := out.c0
+	var c1 := out.c1
+	out.c0 = PackedFloat32Array()
+	out.c1 = PackedFloat32Array()
+	var last_c := -1
+	var col := Color()
+	for i in range(n):
+		var p := bp[i]
+		var pa := bp[i - 1 if i > 0 else 0]
+		var pb := bp[i + 1 if i < last else last]
+		var c: int = bc[i]
+		if c != last_c:
+			last_c = c
+			col = Color(((c >> 16) & 0xFF) / 255.0, ((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0,
+				((c >> 24) & 0xFF) / 255.0)
+		var u := 0.0 if i == 0 else (1.0 if i == last else float(i) * inv)
+		for k in 2:
+			var at := v + k
+			out.verts[at] = p
+			out.colors[at] = col
+			out.uvs[at] = Vector2(u, float(k))
+			c0[4 * at] = pa.x
+			c0[4 * at + 1] = pa.y
+			c0[4 * at + 2] = pa.z
+			c0[4 * at + 3] = bw[i] if k == 0 else -bw[i]
+			c1[4 * at] = pb.x
+			c1[4 * at + 1] = pb.y
+			c1[4 * at + 2] = pb.z
+			c1[4 * at + 3] = 0.0
+		v += 2
+	out.c0 = c0
+	out.c1 = c1
+	out.nv = v
+	out.end_strip()
 
 ## LinkObj's strip from the taken particles in `b` (with their Y axes),
 ## appended to `out`.
