@@ -7094,6 +7094,20 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-forty-fifth round: the click ring on the frozen lake draws on the ice only
+
+The user (v0.1.502): the destination ring showed both on Karakoram's ice and on the lakebed far
+beneath it.
+- **Cause:** the ring is projected onto the height map (READ: `SWorld::vslot_022`). On the
+  ice that is the lakebed, 294 units down. The flat still-water quad at the point's height
+  was drawn on the ice as well. The ice is drawn see-through, so both rings showed.
+- **Fix (OURS):** `GroundMarkers._plane_test` / `plane_choice`. When the point is more than
+  `FLOOR_MIN_ABOVE_TERRAIN` above the height map, and the short ray down hits the terrain
+  layer (round 744's SolidPlanes, not a placed object), only the flat quad is drawn, at the
+  point's height + 0.1. Ordinary water and ground are unchanged.
+- **Tests:** four `plane_choice` checks in `ground_markers_test`. Box: ALL LOAD, "ran 245
+  suite(s), 0 failing". No render (the user tests it live).
+
 ## Seven-hundred-and-forty-fourth round: standing on Karakoram's frozen lake -- the .nvm floor plane
 
 The full notes are in `docs/rounds/r744.md`; the rule is in `docs/protocol/NVM_FORMAT.md`

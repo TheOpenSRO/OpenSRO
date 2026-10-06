@@ -160,6 +160,12 @@ func _test_floor_rules() -> void:
 	_check(not GroundMarkers.floor_choice(3.0, {"collider": ground}), "3 above but the ray meets a terrain body: the terrain")
 	_check(not GroundMarkers.floor_choice(3.0, {}), "3 above and the short ray meets nothing: the terrain (retail's drape)")
 	_check(not GroundMarkers.floor_choice(NAN, {"collider": placed}), "no terrain height known: the terrain path")
+	# Round 745: on Karakoram's ice (a .nvm solid plane, round 744) the short ray
+	# meets the terrain layer's SolidPlanes 294 over the lakebed: the flat quad only.
+	_check(GroundMarkers.plane_choice(294.0, {"collider": ground}), "294 above the height map on a terrain body: the solid plane (flat quad only)")
+	_check(not GroundMarkers.plane_choice(294.0, {"collider": placed}), "294 above on a placed object: not the plane branch (the floor branch)")
+	_check(not GroundMarkers.plane_choice(0.5, {"collider": ground}), "on the height map itself: the drape")
+	_check(not GroundMarkers.plane_choice(294.0, {}), "high above with nothing under the point: not the plane branch")
 	placed.free()
 	ground.free()
 	# A flat floor at 10 over the 10 x 10 grid: 81 cells, 162 triangles at 10.05.
