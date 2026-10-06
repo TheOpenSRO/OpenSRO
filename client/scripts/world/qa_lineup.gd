@@ -29,6 +29,13 @@ class_name QaLineup
 ##                                                     EquipGlow): the weapon glow tiers
 ##                                                     side by side, or a crowd of them
 ##   OPENSRO_QA_LINEUP_SPACING=<x>[,<z>]              the gaps between bodies (14, 22)
+##   OPENSRO_QA_LINEUP_COUNT=<n>                      (round 736) the body list cycled
+##                                                     (or cut) to n bodies: a crowd
+##   OPENSRO_QA_LINEUP_PLUS=<p>                       (round 736) every lineup weapon and
+##                                                     shield at +p (the glow and, from +8,
+##                                                     the particles); not with KITS
+##   OPENSRO_QA_CROWD_STEPS=...                       (round 736) the crowd's cost split
+##                                                     after the spawn (QaCrowdProbe's header)
 ##
 ## The kit is OURS for the picture: the race's `_A_DEF` weapon (CharCatalog's
 ## rule on World3D's item table), a shield beside ONE_HANDED_WITH_SHIELD, and the
@@ -207,6 +214,18 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		for w in picks:
 			specs.append({"ref": int(pair[0]), "scale": int(pair[1]), "weapon": int(w), "race": race, "woman": woman})
 		k += 1
+	# Round 736: a crowd of n, the list cycled; every weapon and shield at +p.
+	var count := OS.get_environment("OPENSRO_QA_LINEUP_COUNT")
+	if count.is_valid_int() and int(count) > 0 and not specs.is_empty():
+		var cycled: Array = []
+		for i in range(int(count)):
+			cycled.append((specs[i % specs.size()] as Dictionary).duplicate())
+		specs = cycled
+	var plus := OS.get_environment("OPENSRO_QA_LINEUP_PLUS")
+	if plus.is_valid_int() and mode != "kits":
+		for sp in specs:
+			sp["pluses"] = {EquipmentNet.SLOT_WEAPON: int(plus), EquipmentNet.SLOT_SHIELD: int(plus)}
+	var spawn_t0 := Time.get_ticks_usec()
 	var base: Vector3 = world.player.global_position
 	# In front of the camera, facing it (so a picture sees their fronts).
 	var fwd := Vector3(0.0, 0.0, 1.0)
@@ -241,8 +260,13 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		var gait: Dictionary = world._other_gaits.get(id, {})
 		bodies.append({"id": id, "ref": int(sp["ref"]), "code": code, "scale": int(sp["scale"]), "weapon": int(sp["weapon"]),
 			"group": String(gait.get("group", "")), "skeleton": gait.get("skeleton")})
-	print("LINEUP: %d bodies (%s weapons) in rows of %d in front of the player at %s, actions %s, %.1f s each" % [
-		bodies.size(), mode, columns, str(base.round()), ",".join(actions), phase_seconds])
+	print("LINEUP: %d bodies (%s weapons) in rows of %d in front of the player at %s, actions %s, %.1f s each; built in %d ms" % [
+		bodies.size(), mode, columns, str(base.round()), ",".join(actions), phase_seconds, (Time.get_ticks_usec() - spawn_t0) / 1000])
+	if QaCrowdProbe.wanted():
+		var probe := QaCrowdProbe.new()
+		probe.name = "QaCrowdProbe"
+		world.add_child(probe)
+		probe.setup(world, bodies)
 
 func _int_of(t: String) -> int:
 	t = t.strip_edges()
