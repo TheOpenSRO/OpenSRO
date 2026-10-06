@@ -661,10 +661,15 @@ the vertex shader. `crowd_gpu_probe.gd` holds it to the near path on real Figure
   `xvfb-run -a ... vglrun -d egl0 ... --rendering-driver opengl3`; a shader that fails to compile
   shows as `SHADER ERROR`.
 
-In the world: `OPENSRO_QA_CROWD_GPU=0` boots without it, `OPENSRO_QA_CROWD_NEAR=<n>` keeps `n`
+- `--mode=census` (round 747's review, F8; headless, about 25 minutes): every item the item table
+  draws on a body, on the first Figure of each race and sex, and every visible surface's draw kind;
+  each item with a blended part (which keeps a body near) is printed.
+
+In the world: `OPENSRO_QA_CROWD_GPU=0` (or `[video] gpu_crowd = false` in `user://settings.cfg`) boots without it, `OPENSRO_QA_CROWD_NEAR=<n>` keeps `n`
 bodies near (64), `QaCrowdProbe`'s `anim=1i34` step turns it off for one step (`5` is A5), and its
 `ab` step saves the same frame drawn with A5 on and off (`OPENSRO_QA_CROWD_SHOTS=<dir>`), clocks held,
-with the near and far bodies' screen boxes for `frame_ab.py --box`. Each `QA CROWD step` line ends
+with the near and far bodies' screen boxes for `frame_ab.py --box`. A step may join switches with `+`
+(`net+sound`); `farsound` silences only the far bodies' clip sounds and `mute` every effect voice. Each `QA CROWD step` line ends
 with `gpu: far=.. groups=.. instances=.. ... kept_near={..}` and `gpu_ms` / `others_ms`.
 
 ### Load benchmark

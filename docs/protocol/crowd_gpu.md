@@ -220,8 +220,12 @@ Departures from sections 3 and 5 (all OURS):
   player, so a distance rule from section 3's table (300 for names) would have left all 1000 near.
   The table's rows are met otherwise: names and click bodies are not part of the skeleton and stay per
   body; EquipFx's particles are placed from the GPU frame; Detail's casters, bodies with effects,
-  fading and berserk bodies stay near whatever their rank. What the rank still decides is who is
-  heard: a far body's clip sounds rest (a departure from the READ 600 rule, r747.md section 2).
+  fading and berserk bodies stay near whatever their rank. A far body within 600 of the listener
+  plays its clip sounds from the CPU, advanced only at its clip's keys (after round 747's review,
+  F2). What the rank still decides is who is posed on the CPU.
+- **Bone pages:** the bone store is pages of 1,024 rows, the layers of a `Texture2DArray`, so a new
+  clip uploads its pages, not the store (after the review, F3).
+- **Not drawn far:** a body with a blended part (F8), a mirrored body (F9).
 - **Fading bodies stay near** (no fade on instances); a departing body comes back to fade.
 - **Items** are pre-moved meshes skinned to their attach bone with weight 1 (no extra texture column).
 - **One AABB for every group**, re-measured each cycle: a group is drawn or culled as a whole.
