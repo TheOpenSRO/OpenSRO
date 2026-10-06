@@ -97,7 +97,7 @@ const C_PREP := 11 ## skilldata Action_PreparingTime (ms)
 const C_CAST := 12 ## skilldata Action_CastingTime (ms)
 
 ## ActType vocabulary (the client's own UTF-16 strings, spec §1.1).
-const ACT_TYPES := ["AT_ONE_FOLLOW", "AT_LOOP", "AT_STOP", "AT_TARGET", "AT_TARGET_F",
+static var ACT_TYPES := ["AT_ONE_FOLLOW", "AT_LOOP", "AT_STOP", "AT_TARGET", "AT_TARGET_F",
 	"AT_SOURCE", "AT_DMG_POS", "AT_MOV_1TAR", "AT_MOV_OPTION", "AT_MOV_APIECE",
 	"AT_MOV_SPLASH", "AT_MOV_PIERCE"]
 const AT_ONE_FOLLOW := 0

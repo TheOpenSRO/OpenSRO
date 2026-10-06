@@ -18,7 +18,14 @@ extends SceneTree
 ## - at most PREP_MAX_RUNNING tasks run; the rest wait their turn;
 ## - a teardown (wait_prepared(false)) adopts nothing.
 ##
-## NEGATIVES: a task given Node.duplicate()'s copy (mesh nodes sharing the
+## - (the review's F1) the readers a task and the main thread share --
+##   _fallback_of, the scale tables -- give every thread the right answer
+##   while two pool tasks and the main thread call them together.
+##
+## NEGATIVES: _fallback_of over a `const` Array (as before the review) is
+## the heap race the review's stress crashed 18 of 19 times; this case is
+## its cheap guard, const_array_lint_test.gd the static one;
+## a task given Node.duplicate()'s copy (mesh nodes sharing the
 ## template's meshes) fails "bones only";
 ## _finish_prep without _reskin fails "one skin"; _prepare without
 ## its in-flight test fails "no second task"; _start_queued without the cap
@@ -43,6 +50,7 @@ func _initialize() -> void:
 	_test_shared_skin()
 	_test_cap_and_teardown()
 	_test_bare_skeleton()
+	_test_shared_reads_concurrent()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -74,7 +82,8 @@ class Stand:
 		t.parsed.skeleton_path = skel_path
 		var mi := MeshInstance3D.new()
 		mi.name = "body_piece"
-		mi.mesh = BoxMesh.new()
+		# No mesh (round 748's review, F9): this runs on a pool thread, and the
+		# headless runner's dummy mesh storage is not thread-safe.
 		s.add_child(mi)
 		mi.skin = t.canonical_skin
 		mi.skeleton = mi.get_path_to(s)
@@ -96,7 +105,8 @@ class Stand:
 		scratch.add_child(holder)
 		var mi := MeshInstance3D.new()
 		mi.name = holder.name + "_mesh"
-		mi.mesh = BoxMesh.new()
+		# No mesh (round 748's review, F9): this runs on a pool thread, and the
+		# headless runner's dummy mesh storage is not thread-safe.
 		holder.add_child(mi)
 		mi.skin = skin
 		mi.skeleton = NodePath("../..")
@@ -235,3 +245,44 @@ func _test_bare_skeleton() -> void:
 	_check(same and b.get_child_count() == 0, "the task's skeleton copy: the same bones, rests and parents, bones only (%d children)" % b.get_child_count())
 	b.free()
 	t.skeleton.free()
+
+## The review's F1: the same readers on two pool threads and the main thread
+## for a second and a half; every answer checked (a race through a read-only
+## Array's shared slot returns the other thread's element, or worse).
+func _test_shared_reads_concurrent() -> void:
+	var stop := [false]
+	var bad := [0, 0]
+	var calls := [0, 0]
+	var lock := Mutex.new()
+	var job := func(slot: int) -> void:
+		var n := 0
+		var wrong := 0
+		while not stop[0]:
+			if CharacterAppearance._fallback_of("item\\a_r.bsr") != "item\\a.bsr":
+				wrong += 1
+			if CharacterAppearance._fallback_of("item\\b_f.BSR") != "item\\b.bsr" or CharacterAppearance._fallback_of("item\\c.bsr") != "":
+				wrong += 1
+			if not is_equal_approx(CharacterAppearance.height_factor(0x04), 1.06):
+				wrong += 1
+			if CharacterAppearance.volume_bone_scales(0x42, true).size() != 8:
+				wrong += 1
+			n += 1
+		lock.lock()
+		bad[slot] = wrong
+		calls[slot] = n
+		lock.unlock()
+	var t1 := WorkerThreadPool.add_task(job.bind(0))
+	var t2 := WorkerThreadPool.add_task(job.bind(1))
+	var main_wrong := 0
+	var main_calls := 0
+	var t0 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t0 < 1500:
+		if CharacterAppearance._fallback_of("item\\a_r.bsr") != "item\\a.bsr" or not is_equal_approx(CharacterAppearance.height_factor(0x00), 0.94) \
+				or CharacterAppearance.volume_bone_scales(0x02, false).size() != 7:
+			main_wrong += 1
+		main_calls += 1
+	stop[0] = true
+	WorkerThreadPool.wait_for_task_completion(t1)
+	WorkerThreadPool.wait_for_task_completion(t2)
+	_check(bad[0] == 0 and bad[1] == 0 and main_wrong == 0 and calls[0] > 0 and calls[1] > 0,
+		"two pool tasks and the main thread read the shared tables together: every answer right (%d + %d + %d calls)" % [calls[0], calls[1], main_calls])

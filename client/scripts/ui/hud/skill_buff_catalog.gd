@@ -75,7 +75,7 @@ const TERMINATORS := ["ssou", "sstt"]
 
 ## The four tags the buff bar reads (client ref fields cbuf +0x134, nbuf
 ## +0x138, bbuf +0x184, lnks +0x194; READ in 0x9bbca0).
-const BUFF_TAGS := ["cbuf", "nbuf", "bbuf", "lnks"]
+static var BUFF_TAGS := ["cbuf", "nbuf", "bbuf", "lnks"]
 
 ## The client parser's run table (0x9bbca0), in 32-bit words including the
 ## code word.

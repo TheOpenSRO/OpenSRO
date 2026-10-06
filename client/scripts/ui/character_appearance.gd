@@ -107,21 +107,21 @@ class_name CharacterAppearance
 ## (apply_ban_pose_at), and the screens pose theirs through Body.pose.
 
 ## READ, table 0xec64b0.
-const HEIGHT_FACTORS := [0.94, 0.97, 1.00, 1.03, 1.06]
+static var HEIGHT_FACTORS := [0.94, 0.97, 1.00, 1.03, 1.06]
 ## READ, table 0xec64c8: {group, min, max}. Men's (INFERRED, see above).
-const VOLUME_TABLE_MEN := [
+static var VOLUME_TABLE_MEN := [
 	[2, 0.88, 1.10], [3, 0.95, 1.11], [8, 0.92, 1.20], [19, 0.92, 1.20],
 	[29, 0.90, 1.15], [33, 0.90, 1.15], [1, 0.90, 1.00],
 ]
 ## READ, table 0xec6528. Women's (INFERRED, see above).
-const VOLUME_TABLE_WOMEN := [
+static var VOLUME_TABLE_WOMEN := [
 	[2, 0.95, 1.10], [3, 0.95, 1.00], [8, 0.95, 1.15], [19, 0.95, 1.15],
 	[29, 0.90, 1.15], [33, 0.90, 1.15], [1, 0.90, 1.08], [37, 0.80, 1.18],
 ]
 ## READ: the 38 names `FUN_00d79e00` assigns to the strings at 0xed9b68 +
 ## i * 0x1c, in order; a Volume group number indexes it (0xc2ca90 refuses 38
 ## and above, and 38 = '&' ends each table).
-const BONE_GROUP_NAMES := [
+static var BONE_GROUP_NAMES := [
 	"Bip01", "Bip01 Pelvis", "Bip01 Spine", "Bip01 Spine1", "Bip01 Neck",
 	"Bip01 Neck1", "Bip01 Head", "Bip01 L Clavicle", "Bip01 L UpperArm",
 	"Bip01 L Forearm", "Bip01 L Hand", "Bip01 L Finger0", "Bip01 L Finger01",
@@ -234,8 +234,15 @@ var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_us
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE:
 		return
-	# A template task holds this object through its Callable, so none runs
-	# by now; whatever finished unadopted is freed here (round 748).
+	# A task's Callable holds this object's id, not a reference (round 748's
+	# review, F3; READ core/variant/callable.cpp:331-343), so a task may still
+	# be running: wait for each before freeing what they share (the object is
+	# whole during PREDELETE), then free whatever finished unadopted.
+	for path in _prep_tasks:
+		var id := int(_prep_tasks[path])
+		if id >= 0:
+			WorkerThreadPool.wait_for_task_completion(id)
+	_prep_tasks.clear()
 	for path in _prep_done:
 		_free_prepared(_prep_done[path])
 	_prep_done.clear()
@@ -550,7 +557,7 @@ static func visual_slot(type_ids: PackedInt32Array) -> int:
 ## a dual axe or dagger from `<path>_l.bsr` and `<path>_r.bsr`, a harp on a
 ## woman from `<path>_f.bsr`, anything else from its own path. When the `_r`
 ## or `_f` resource does not load the client loads the plain path instead
-## (0xa5f4f0 -> LAB_00a5f851); build() does the same (_FALLBACK_SUFFIXES).
+## (0xa5f4f0 -> LAB_00a5f851); build() does the same (_fallback_of).
 ## The client's second-resource branch for a visual record that names its own
 ## `.bsr` (the record from 0x4ec9b0, charactervisualchange.txt's BsrName
 ## columns) is not modelled: OPEN.
@@ -759,14 +766,22 @@ func body_path(ref_obj_id: int) -> String:
 		return e.model_path
 	return String(_extra_bodies.get(ref_obj_id, ""))
 
-## The variants whose failure falls back to the plain model (READ 0xa5f4f0).
-const _FALLBACK_SUFFIXES := ["_r.bsr", "_f.bsr"]
-
-## The plain model a `_r` / `_f` variant falls back to, "" for any other path.
+## The plain model a `_r` / `_f` variant falls back to, "" for any other path
+## (the variants whose failure falls back to the plain model: READ 0xa5f4f0).
+##
+## Round 748's review, F1: no `const` Array here. A GDScript `const` Array is
+## read-only, and Godot 4.2.2 reads a read-only Array's element through ONE
+## Variant slot the array shares with every reader (`core/variant/array.cpp:
+## 84-98`, `*_p->read_only = _p->array[p_idx]`; the VM's `for` loop and
+## `CONST[i]` both go through it). The template task (_prep_task) and the
+## main thread both called this: two threads swapped Strings through that
+## slot unlocked and corrupted the heap (the review's stress: 18 of 19 runs
+## crashed; none once this read no constant). `ConstArrayLint` keeps such
+## reads out of the scripts worker tasks run.
 static func _fallback_of(path: String) -> String:
-	for suffix in _FALLBACK_SUFFIXES:
-		if path.to_lower().ends_with(suffix):
-			return path.substr(0, path.length() - suffix.length()) + ".bsr"
+	var low := path.to_lower()
+	if low.ends_with("_r.bsr") or low.ends_with("_f.bsr"):
+		return path.substr(0, path.length() - 6) + ".bsr"
 	return ""
 
 ## Frees the cached templates (a screen closing), the shared skins and the
@@ -839,7 +854,7 @@ var prep_generation := 0
 var prep_stats := {"tasks": 0, "bodies": 0, "items": 0, "task_usec": 0, "longest_usec": 0}
 
 ## The item `.bsr` paths a build of `items` on `ref_obj_id` hangs: every worn
-## model, each `_r` / `_f` model's plain fallback (_FALLBACK_SUFFIXES), and
+## model, each `_r` / `_f` model's plain fallback (_fallback_of), and
 ## the default wear the worn visuals leave uncovered (_refresh_default_wear's
 ## rule); the particle files the weapon's and shield's glow names at their
 ## plus; and the animation group the held weapon picks (build's rule).
@@ -950,7 +965,8 @@ func _prepare(ref_obj_id: int, items: Array, start: bool) -> bool:
 ## object-space bone a shared-skin body has).
 static func _bare_skeleton(src: Skeleton3D) -> Skeleton3D:
 	var s := Skeleton3D.new()
-	s.name = src.name
+	# No name (round 748's review, F2): a template's skeleton is unnamed, and
+	# setting an empty one is an engine ERROR in the log; nothing reads it.
 	s.transform = src.transform
 	for i in range(src.get_bone_count()):
 		s.add_bone(src.get_bone_name(i))
@@ -1047,6 +1063,12 @@ func poll_prepared() -> int:
 			_efp_waiting.erase(e)
 			prep_generation += 1
 			n += 1
+		elif not EfpEffect.is_preloading(e):
+			# Neither decoded nor on its way: evicted before it was seen (the
+			# review's F4). Dropped, and the generation bumped, so the next
+			# ask preloads it again.
+			_efp_waiting.erase(e)
+			prep_generation += 1
 	for path in _prep_tasks.keys():
 		var id: int = _prep_tasks[path]
 		if id >= 0 and WorkerThreadPool.is_task_completed(id):
@@ -1083,13 +1105,17 @@ func _finish_prep(bsr_path: String, adopt: bool) -> void:
 	var r = _prep_done.get(bsr_path)
 	_prep_done.erase(bsr_path)
 	_prep_lock.unlock()
+	# Every finish, a result or none (a task that hit a script error writes
+	# none), is news to a caller that cached "not ready" (round 748's review,
+	# F4): asked again, the kind gets a new task instead of waiting for an
+	# unrelated adoption.
+	prep_generation += 1
 	if r == null:
 		return
 	if not adopt:
 		_free_prepared(r)
 		return
 	var res: Dictionary = r
-	prep_generation += 1
 	prep_stats["task_usec"] += int(res["usec"])
 	prep_stats["longest_usec"] = maxi(int(prep_stats["longest_usec"]), int(res["usec"]))
 	var made: SkinnedBsrAssembler.AssembledCharacter = res["body"]

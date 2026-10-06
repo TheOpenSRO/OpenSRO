@@ -15807,6 +15807,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		_other_equipped[character_id] = equipped
 	if pluses is Dictionary:
 		_other_pluses[character_id] = pluses
+		_forget_other_kind(character_id)
 		_reglow_other(character_id, pluses)
 	if _other_bodies.has(character_id):
 		# Sets the real interpolation *target* only -- see
@@ -15888,6 +15889,13 @@ func _pump_other_builds() -> int:
 var _other_async_templates := OS.get_environment("OPENSRO_QA_SYNC_TEMPLATES") == ""
 var _other_kinds := {}   # kind key -> [ready, the prep_generation it was asked at]
 var _other_prep_seen := 0
+
+## Round 748's review, F8: a queued body's pluses changed, so its kind (the
+## glow's particle files it waits on) is worked out again.
+func _forget_other_kind(character_id: int) -> void:
+	var args = _other_build_args.get(character_id)
+	if args != null:
+		(args as Dictionary).erase("kind")
 
 func _other_template_ready(character_id: int) -> bool:
 	if _appearance == null:
@@ -16094,6 +16102,7 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 ## logs the ones they have -- the two-client check reads it.
 func _note_other_pluses(snapshot: WorldNet.EntitySnapshot) -> void:
 	_other_pluses[snapshot.character_id] = snapshot.pluses.duplicate()
+	_forget_other_kind(snapshot.character_id)
 	for slot in snapshot.pluses:
 		print("World3D: player %d spawns with slot %d item %d at +%d" % [snapshot.character_id, int(slot),
 			snapshot.item_in(int(slot)), int(snapshot.pluses[slot])])
@@ -16161,6 +16170,7 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 		return
 	_other_equipped[id] = worn
 	_other_pluses[id] = pluses
+	_forget_other_kind(id)
 	# Only the plus changed (the slot's item is the one drawn): the glow is
 	# redrawn on the body as it stands, not the whole body rebuilt (round 734's
 	# review, F2) -- the server sends one 0x3038 per plused item of every

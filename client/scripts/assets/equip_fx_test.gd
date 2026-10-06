@@ -82,6 +82,9 @@ func _shown_holder(s: Skeleton3D) -> EfpEffect:
 func _test_budget() -> void:
 	var vp := _viewport()
 	var d := _driver(vp)
+	# Round 748's review, F6: the driver places holders after the world's
+	# _process, which poses the player.
+	_check(d.process_priority > 0, "the driver runs after default-priority _process (priority %d)" % d.process_priority)
 	var near: Array = []
 	for i in 10:
 		near.append(_host(vp, d, Vector3(0, 0, 10 + i * 5)))

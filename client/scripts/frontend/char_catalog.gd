@@ -72,7 +72,7 @@ const ARMOUR_CLASS_NAMES := {
 ## - 12 crossbow, 13 dagger: light;
 ## - 10 warlock rod, 11 staff, 14 harp: robe;
 ## - 15 cleric rod: light, robe.
-const EUROPE_PROTECTOR_POSITIONS := {
+static var EUROPE_PROTECTOR_POSITIONS := {
 	7: [1, 2], 8: [1, 2], 9: [1, 2],
 	12: [2], 13: [2],
 	10: [3], 11: [3], 14: [3],

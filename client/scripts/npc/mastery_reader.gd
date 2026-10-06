@@ -75,7 +75,7 @@ const RACE_EUROPE := 1
 ## _RefCharDefault_SkillMastery (13 rows; Race 0 and Race 1, none for 3), which
 ## _AddNewChar copies into a new character's _CharSkillMastery at level 0. The
 ## server's skill.DefaultMasteries holds the same rows.
-const RACE_MASTERIES := {
+static var RACE_MASTERIES := {
 	RACE_CHINA: [257, 258, 259, 273, 274, 275, 276],
 	RACE_EUROPE: [513, 514, 515, 516, 517, 518],
 }

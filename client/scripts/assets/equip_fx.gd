@@ -71,6 +71,9 @@ const ALWAYS_NEAR := 30.0
 const IDLE_FRAMES := 600
 
 const DRIVER_META := "opensro_equip_fx_driver"
+## The driver's process_priority (round 748's review, F6, OURS): after the
+## world's _process at 0.
+const PROCESS_PRIORITY := 100
 
 class Host:
 	var id: String
@@ -171,6 +174,11 @@ static func driver_for(vp: Viewport) -> EquipFx:
 			return d
 	var nd := EquipFx.new()
 	nd.name = "EquipFx"
+	# After every default-priority _process (round 748's review, F6): the
+	# world poses its player in its own _process now, and a driver made by
+	# the select screen sits before the world in tree order, so it placed the
+	# player's holders from the last frame's pose.
+	nd.process_priority = PROCESS_PRIORITY
 	vp.add_child(nd)
 	vp.set_meta(DRIVER_META, nd)
 	return nd
@@ -237,10 +245,17 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 
 ## The kind (one master) an effect file at a row's scale is drawn through.
 ## Round 748: the file alone. A master is simulated at the world origin with
-## no scale (the holder carries the row's scale, holder_transform), from the
-## same template and seed whatever the row's scale, so a master per (file,
-## scale) simulated identical particles once per scale; the 1000-body crowd's
-## weapons and shields named 13 such kinds (QA CROWD census).
+## no scale (the holder carries the row's scale, holder_transform), so the
+## 1000-body crowd's 13 (file, scale) kinds (QA CROWD census) are 6 masters.
+## **What this changes, OURS (round 748's review, F7):** a master's random
+## stream is its own (EfpSim._init randomizes), so before, weapons of one
+## file at different row scales showed different particles; now every
+## weapon showing a file shows the SAME particles at the same moment, each
+## at its own scale and turned with its own bone -- in a crowd, identical
+## sparks on every enchanted weapon of a file. (One master per file already
+## did that for the weapons of one scale since round 734.) A per-holder phase
+## into the shared stream would need a buffer of past frames per master and
+## a MultiMesh swap per holder each step; not built.
 static func kind_key(efp: String, _scale: float) -> String:
 	return efp.to_lower()
 
