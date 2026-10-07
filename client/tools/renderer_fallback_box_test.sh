@@ -16,7 +16,7 @@
 # Prints PASS/FAIL per check and exits 1 on any FAIL.
 set -u
 D="${1:?client dir}"; O="${2:-/var/tmp/renderer-fallback-test.$$}"
-G="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
+G="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64}}"   # round 760: 4.7.2 unless set
 P="${PK2_DIR:-/opt/sro-files/client}"
 mkdir -p "$O"
 export OPENSRO_PK2_PATH=$P/Data.pk2 OPENSRO_MAP_PK2_PATH=$P/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$P/Media.pk2

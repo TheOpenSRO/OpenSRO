@@ -31,7 +31,7 @@ static func wait_tasks() -> void:
 	for id in [CharTables._boot_task, CharTables._entry_task, ItemTableReader._pending_task,
 			SkillAudio._warm_task, SkillEffects._warm_task]:
 		if int(id) >= 0:
-			WorkerThreadPool.wait_for_task_completion(int(id))
+			PoolWait.task(int(id))
 	CharTables._boot_task = -1
 	CharTables._entry_task = -1
 	ItemTableReader._pending_task = -1

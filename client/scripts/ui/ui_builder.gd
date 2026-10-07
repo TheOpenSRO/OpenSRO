@@ -1553,7 +1553,7 @@ func _scan_face_name_row() -> String:
 	if entry == null:
 		return ""
 	var data := _media_pk2.read_file(entry)
-	var text := data.get_string_from_utf16()
+	var text := TextDecode.utf16(data)
 	var at := text.find("\t" + FONT_NAME_KEY + "\t")
 	# A key written more than once goes through the table's own row rule
 	# (UiTextTable.select_rows: in a joined table the stock row wins, USER

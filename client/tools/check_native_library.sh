@@ -9,7 +9,8 @@
 #   client/opensro_native.gdextension names) and carry no debug sections or COFF symbols.
 # linux: the .so must export gdext_rust_init, need only base system libraries, ask for no
 #   glibc symbol newer than $GLIBC_FLOOR (default 2.28: Godot 4.2.2's own Linux binary
-#   needs GLIBC_2.28 at most, MEASURED round 668), and be stripped.
+#   needs GLIBC_2.28 at most, MEASURED round 668; 4.7.2's binary and templates too, MEASURED
+#   round 754), and be stripped.
 # Prints the imports and the size, and exits 1 on any failure.
 set -euo pipefail
 lib="${1:?library path}"

@@ -74,10 +74,10 @@ func _init() -> void:
 			size += (d as PackedByteArray).size()
 		var decode := _ms(func():
 			for d in parts:
-				(d as PackedByteArray).slice(2).get_string_from_utf16())
+				TextDecode.utf16((d as PackedByteArray).slice(2)))
 		var texts := []
 		for d in parts:
-			texts.append((d as PackedByteArray).slice(2).get_string_from_utf16())
+			texts.append(TextDecode.utf16((d as PackedByteArray).slice(2)))
 		var lines := _ms(func():
 			for x in texts:
 				(x as String).replace("\r", "").split("\n"))

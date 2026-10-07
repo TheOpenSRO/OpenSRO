@@ -56,8 +56,10 @@ file_logging/max_log_files=10
 ; under both renderers in round 693).
 ; Compatibility stays a choice per install: override.cfg beside the game
 ; (RendererChoice), written from setting/config.yaml's display.renderer or
-; by the Compatibility launcher. Godot 4.2.2 does not fall back to OpenGL by
-; itself when Vulkan fails (RendererChoice has the source it was read from).
+; by the Compatibility launcher. Godot 4.2.2 did not fall back to OpenGL by
+; itself when Vulkan fails (RendererChoice has the source it was read from);
+; 4.4+ does (rendering/rendering_device/fallback_to_opengl3, READ), and the
+; native library's probe (vk_fallback.rs) still runs first.
 ; Before round 581 these lines began with '#', which swallowed the key
 ; below, and every player ran Forward+ anyway.
 renderer/rendering_method="forward_plus"
@@ -65,6 +67,16 @@ renderer/rendering_method="forward_plus"
 ; before; no mobile build is exported. The web's ".web" key is the engine's
 ; own default, gl_compatibility (main/main.cpp), and is not set here.
 renderer/rendering_method.mobile="gl_compatibility"
+; Round 760 (Godot 4.7.2): the RenderingServer on its own thread (2). With the
+; skeletons' per-frame process off it is the fastest model measured: 1000 /
+; 3000 / 7000 players standing 5.9 / 7.1 / 9.4 ms a frame against 8.1 / 10.1 /
+; 13.2 on the default thread and 9.0 / 11.2 / 15.5 on 4.2.2 (docs/rounds/
+; r760.md), and 0 crashes in 5 x 300 s crowd runs with arrivals, walking and
+; zone changes. Godot calls it experimental; `--render-thread safe` on the
+; command line (or 1 here in override.cfg) gives the default model back. Under
+; 4.2.2 it crashed (round 757: an AnimatedTexture re-entered the draw); 4.7.2
+; emits frame_pre_draw on the main thread before it queues the draw (READ).
+driver/threads/thread_model=2
 
 [gui]
 

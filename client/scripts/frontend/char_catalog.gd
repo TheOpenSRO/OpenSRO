@@ -285,7 +285,7 @@ static func _text_lines(data) -> PackedStringArray:
 		return PackedStringArray()
 	var text := ""
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
-		text = raw.slice(2).get_string_from_utf16()
+		text = TextDecode.utf16(raw.slice(2))
 	else:
 		text = raw.get_string_from_utf8()
 	# Lines keep a trailing "\r"; every reader strips its fields, and a kept

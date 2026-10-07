@@ -160,8 +160,8 @@ static func _native_rgba(tex: ParsedTexture, pixels: PackedByteArray) -> PackedB
 ## few levels of what a GPU's DXT1 decoder gives (squish interpolates the
 ## middle colours in integer arithmetic; GPUs differ from it and from each
 ## other by about 1-3/255). It costs 8x the DXT1's memory, for those textures
-## only. A DXT1 with no transparent texel, and every DXT1 under Compatibility,
-## stays DXT1. (A DXT3 re-encode, a quarter of that memory, was tried and
+## only. A DXT1 with no transparent texel, and every DXT1 under Compatibility
+## before Godot 4.6 (dxt1_needs_alpha_format), stays DXT1. (A DXT3 re-encode, a quarter of that memory, was tried and
 ## rejected: WORLD_ISSUES round 695.)
 
 ## Tests set this: -1 asks the renderer, 0 keeps DXT1, 1 decodes. The QA
@@ -175,13 +175,26 @@ static var dxt1_alpha_decoded := 0
 static var dxt1_alpha_bytes := 0
 static var _dxt1_count_lock := Mutex.new()
 
-## True when DXT1's alpha would be lost: a RenderingDevice renderer drawing.
+## True when DXT1's alpha would be lost: a RenderingDevice renderer drawing,
+## or GL Compatibility from Godot 4.6.
+##
+## **Round 760: GL Compatibility drops it too from 4.6.** Godot 4.6 changed
+## GLES3's Image.FORMAT_DXT1 upload from COMPRESSED_RGBA_S3TC_DXT1 to
+## COMPRESSED_RGB_S3TC_DXT1 (READ, drivers/gles3/storage/texture_storage.cpp,
+## `case Image::FORMAT_DXT1`: RGBA at 4.2.2, 4.3, 4.4 and 4.5-stable, RGB at
+## 4.6 and 4.7.2-stable), and an RGB DXT1 samples a three-colour block's
+## transparent texel as opaque black, as Forward+ did before round 695.
+## MEASURED round 760 on 4.7.2 Compatibility: the Jangan square's balustrade
+## openings drew black (1.2 % of the frame), and Compatibility's frames were
+## darker there than 4.2.2's. So under 4.6+ Compatibility the same textures are
+## decoded to RGBA8, as under Forward+.
 static func dxt1_needs_alpha_format() -> bool:
 	if dxt1_alpha_override >= 0:
 		return dxt1_alpha_override == 1
 	if _dxt1_rd < 0:
 		# RendererChoice.running()'s test: headless draws nothing.
-		_dxt1_rd = 1 if DisplayServer.get_name() != "headless" and RenderingServer.get_rendering_device() != null \
+		var drops := RenderingServer.get_rendering_device() != null or int(Engine.get_version_info().hex) >= 0x040600
+		_dxt1_rd = 1 if DisplayServer.get_name() != "headless" and drops \
 			and OS.get_environment("OPENSRO_QA_DXT1_KEEP") != "1" else 0
 	return _dxt1_rd == 1
 

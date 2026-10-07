@@ -61,6 +61,8 @@ class_name QaCrowdProbe
 ##            (baked poses), "4" A4 (the far bodies' LOD); "anim=-" all off,
 ##            which poses another player exactly as before the round. The
 ##            skins (A2) are the boot's (OPENSRO_QA_CROWD_SKINS=own: per piece)
+##   rezone   (round 760) a real zone change to OPENSRO_QA_REZONE (Hotan) and
+##            back at the step's end, the crowd leaving and arriving again
 
 const SETTLE := 1.5
 ## Round 757: with the render on its own thread, the RenderingServer getters are
@@ -622,6 +624,43 @@ var _event_due := 0.0
 var _event_next := 0
 var events := 0
 
+## The `rezone` step's kits (round 760): one per lineup body, taken as it leaves.
+var _rezone_kits: Array = []
+var rezones := 0
+
+func _rezone(off: bool) -> void:
+	if off:
+		_rezone_kits = []
+		for b in bodies:
+			var id := int(b["id"])
+			var node = world._other_bodies.get(id)
+			if node == null or not is_instance_valid(node):
+				continue
+			var gait: Dictionary = world._other_gaits.get(id, {})
+			_rezone_kits.append([id, String((node as Node).get_meta("character_name", "")), (node as Node3D).position,
+				(world._other_equipped.get(id, {}) as Dictionary).duplicate(), String((node as Node).get_meta("body", "")),
+				int(gait.get("scale", CharacterAppearance.DEFAULT_SCALE)), (world._other_pluses.get(id, {}) as Dictionary).duplicate()])
+		world._replace_others_for_arrival([], [])
+		var away := OS.get_environment("OPENSRO_QA_REZONE")
+		world._reload_zone_assets(away if away != "" else "hotan")
+		print("QA CROWD rezone: left with %d bodies, grid for %s" % [_rezone_kits.size(), away if away != "" else "hotan"])
+		return
+	var home := String(OS.get_environment("OPENSRO_MAPM_PATH")).replace("\\", "/").trim_suffix(".m")
+	world._reload_zone_assets(home)
+	var at := OS.get_environment("OPENSRO_QA_AT").split(",")
+	var coords: Dictionary = world._parse_region_coords(home)
+	if at.size() == 2 and not coords.is_empty():
+		world._place_at_region_local(int(coords["x"]), int(coords["y"]), float(at[0]), float(at[1]))
+	for k in _rezone_kits:
+		world._spawn_or_update_other(int(k[0]), String(k[1]), k[2], k[3], String(k[4]), NAN, int(k[5]), k[6])
+	for b in bodies:
+		var fresh = world._other_bodies.get(int(b["id"]))
+		if fresh != null:
+			b["node"] = fresh
+	rezones += 1
+	print("QA CROWD rezone: back to %s, %d bodies arriving again (rezone %d)" % [home, _rezone_kits.size(), rezones])
+	_rezone_kits = []
+
 func _event_step(kind: String, delta: float, rate: float) -> void:
 	_event_due += delta * rate * bodies.size()
 	while _event_due >= 1.0 and not bodies.is_empty():
@@ -819,7 +858,7 @@ func _switch(step: String, off: bool) -> void:
 			_pool_busy = off
 			if not off:
 				for id in _pool_tasks:
-					WorkerThreadPool.wait_for_task_completion(int(id))
+					PoolWait.task(int(id))
 				_pool_tasks.clear()
 		"leaveall":
 			# Round 757: every lineup body leaves at once (0x3016's path): the
@@ -832,6 +871,15 @@ func _switch(step: String, off: bool) -> void:
 			# (_replace_others_for_arrival): every body freed in one frame.
 			if off:
 				world._replace_others_for_arrival([], [])
+		"rezone":
+			# Round 760: a real zone change and back, with the crowd: at the
+			# step's start every body leaves with an empty arrival list and the
+			# region grid is rebuilt for OPENSRO_QA_REZONE (Hotan unless set;
+			# the zone change's own _reload_zone_assets: the cell prepares in
+			# flight dropped, new ones started); at its end the grid is rebuilt
+			# for the spawn's zone, the player stood on the spawn, and every body
+			# arrives again with its kit (the arrival path: ghosts, dressing).
+			_rezone(off)
 		_:
 			push_warning("QA CROWD: unknown step %s" % step)
 
@@ -1013,7 +1061,7 @@ func _pool_busy_step() -> void:
 	var keep: Array = []
 	for id in _pool_tasks:
 		if WorkerThreadPool.is_task_completed(int(id)):
-			WorkerThreadPool.wait_for_task_completion(int(id))
+			PoolWait.task(int(id))
 		else:
 			keep.append(id)
 	_pool_tasks = keep

@@ -54,7 +54,7 @@ const WORKER_FILES := [
 	"res://scripts/npc/npc_table_reader.gd", "res://scripts/npc/skill_data_reader.gd",
 	"res://scripts/nvm/nvm_collision.gd", "res://scripts/nvm/nvm_reader.gd", "res://scripts/objidx/objidx_reader.gd",
 	"res://scripts/pk2/blowfish.gd", "res://scripts/pk2/native_assets.gd", "res://scripts/pk2/parse_profile.gd",
-	"res://scripts/pk2/pk2_reader.gd", "res://scripts/regioninfo/regioninfo_reader.gd",
+	"res://scripts/pk2/pk2_reader.gd", "res://scripts/regioninfo/regioninfo_reader.gd", "res://scripts/text_decode.gd",
 	"res://scripts/tile2d/tile_index_reader.gd", "res://scripts/ui/character_appearance.gd",
 	"res://scripts/ui/default_wear.gd", "res://scripts/ui/hud/skill_buff_catalog.gd", "res://scripts/ui/ui_text_table.gd",
 	"res://scripts/world/ambient_particles.gd", "res://scripts/world/map_animation.gd",

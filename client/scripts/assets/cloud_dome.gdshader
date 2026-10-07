@@ -28,10 +28,12 @@ render_mode unshaded, cull_disabled, blend_mix, depth_draw_never, fog_disabled, 
 // the output is linear (ShaderColour, round 693).
 uniform sampler2D cloud_tex : filter_linear_mipmap, repeat_enable;
 uniform vec2 uv_offset = vec2(0.0);
-// Godot 4.3+ reverses the depth buffer (round 754, WorldFog.reverse_z): the
-// far plane is clip z = 0, and z = w is the NEAR plane -- drawn over
-// everything.
-uniform bool reverse_z = false;
+// The far plane's clip z / w (WorldFog.far_clip_z): 1 before Godot 4.3; from
+// 4.3 the depth is reversed and z = w is the NEAR plane -- drawn over
+// everything -- so the far plane is 0 under Forward+ (Vulkan's 0..1) and -1
+// under Compatibility (OpenGL's -1..1; round 760: 0 there drew the clouds
+// over the far scenery).
+uniform float far_clip_z = 1.0;
 uniform vec3 cloud_color = vec3(1.0);
 uniform float cloud_alpha = 0.6;
 uniform vec3 fog_color = vec3(1.0);
@@ -135,7 +137,7 @@ void vertex() {
 	vec4 p = PROJECTION_MATRIX * vec4(v, 1.0);
 	// Depth 1.0: behind every surface the camera can draw, and on (not past)
 	// the far clip plane, so never clipped by it.
-	p.z = reverse_z ? 0.0 : p.w;
+	p.z = far_clip_z * p.w;
 	POSITION = p;
 }
 

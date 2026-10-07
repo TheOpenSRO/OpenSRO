@@ -43,7 +43,7 @@ var equip_texts: Dictionary = {}
 
 static func decode(data: PackedByteArray) -> String:
 	if data.size() >= 2 and data[0] == 0xFF and data[1] == 0xFE:
-		return data.get_string_from_utf16()
+		return TextDecode.utf16(data)
 	var s := data.get_string_from_utf8()
 	return s.substr(1) if s.begins_with("﻿") else s
 

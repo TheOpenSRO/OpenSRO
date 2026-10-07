@@ -5063,7 +5063,7 @@ func preload_skill_catalog(race: int) -> void:
 ## Waits for the board parses still under way (leaving the tree).
 func _wait_skill_parses() -> void:
 	for race in _skill_parse_tasks.keys():
-		WorkerThreadPool.wait_for_task_completion(int((_skill_parse_tasks[race] as Array)[0]))
+		PoolWait.task(int((_skill_parse_tasks[race] as Array)[0]))
 	_skill_parse_tasks.clear()
 
 ## Reads one race's skills (its masteries' rows of its skilldata files) into
@@ -5079,7 +5079,7 @@ func _load_skill_catalog_for(race: int) -> void:
 	if _skill_parse_tasks.has(race):
 		# Started at world entry (preload_skill_catalog): wait for it.
 		var pending: Array = _skill_parse_tasks[race]
-		WorkerThreadPool.wait_for_task_completion(int(pending[0]))
+		PoolWait.task(int(pending[0]))
 		_skill_parse_tasks.erase(race)
 		grid = (pending[1] as Array)[0]
 	else:

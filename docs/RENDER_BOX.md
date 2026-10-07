@@ -38,7 +38,8 @@ frame against 12.5-12.7; world entry 9.7-10.7 s against 14.0-15.5; longest freez
 
 | Path | What |
 |---|---|
-| `/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64` | Godot, matching the version CI builds with. |
+| `/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64` | Godot, matching the version CI builds with (round 760), and every tool's default. Its export templates are in `~ghidra/.local/share/godot/export_templates/4.7.2.stable/`. |
+| `/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64` | Godot 4.2.2, the version before round 760, for older revisions (`GODOT_BIN`). |
 | `/opt/opensro-client` | A copy of this repo's `client/`. Refresh with `scp` of changed files; re-run `--import --quit` only when a new `class_name` appears. Owned by `ghidra`. |
 | `/opt/opensro-server` | A copy of `server/`, for the Go analysis tools (`whatishere`, `o2sectors`, `pk2list`, `findregionassets`). Go 1.24 is installed. |
 | `/opt/sro-files/client/` | Real client archives — `Data.pk2`, `Map.pk2`, `Media.pk2`, `Music.pk2`, `Particles.pk2` — plus `sro_client.exe`, byte-identical to the image in Ghidra. On the new box all five are real files here, and `/var/tmp/pslocal/*.pk2` are symlinks back to them for older scripts (on the old box it was the reverse: `Data.pk2` and `Map.pk2` lived in `pslocal` because its 40 GB disk could not hold two copies). Everything (`qa_shot.sh`, `remote_godot.sh`, the docs) addresses them through this directory, so if a run reports `pk2: could not open .../Data.pk2: 7`, check the symlinks resolve before looking anywhere else — that error means the file is missing, not that the archive is corrupt. |
@@ -198,7 +199,7 @@ its own compositor and stops it.
 
 ```
 su - ghidra -c 'vulkaninfo --summary | grep deviceName'          # want: AMD Radeon RX 7600 (RADV NAVI33)
-su - ghidra -c '/opt/opensro-client/tools/xwl_run.sh /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 \
+su - ghidra -c '/opt/opensro-client/tools/xwl_run.sh /opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64 \
   --rendering-method forward_plus --rendering-driver vulkan --path <client> --quit-after 30' | grep "Vulkan API"
 # want: Vulkan API 1.4.305 - Forward+ - Using Vulkan Device #0: AMD - AMD Radeon RX 7600 (RADV NAVI33)
 ```

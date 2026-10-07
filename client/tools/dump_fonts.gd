@@ -47,7 +47,7 @@ func _initialize() -> void:
 		var table := UiTextTable.parse(media.read_file(text_entry))
 		print("UIC_STT_FONTNAME (English column pick) = '%s'" % table.get_text("UIC_STT_FONTNAME", "<missing>"))
 		# Every language column of that row, raw, so the per-locale faces show.
-		var raw := media.read_file(text_entry).get_string_from_utf16()
+		var raw := TextDecode.utf16(media.read_file(text_entry))
 		for line in raw.split("\n"):
 			if line.contains("UIC_STT_FONTNAME"):
 				var cols := line.strip_edges().split("\t")

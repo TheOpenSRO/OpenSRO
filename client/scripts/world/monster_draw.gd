@@ -143,7 +143,7 @@ class Templates:
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_PREDELETE:
 			for model in _tasks:
-				WorkerThreadPool.wait_for_task_completion(_tasks[model])
+				PoolWait.task(_tasks[model])
 			_tasks.clear()
 
 	func has(model: String) -> bool:
@@ -185,7 +185,7 @@ class Templates:
 	## also what a synchronous instance() of a pending model does, so it never
 	## assembles a second copy for the task to overwrite).
 	func _finish(model: String) -> void:
-		WorkerThreadPool.wait_for_task_completion(_tasks[model])
+		PoolWait.task(_tasks[model])
 		_tasks.erase(model)
 		_lock.lock()
 		var r = _done.get(model)
@@ -244,7 +244,7 @@ class Templates:
 	func free_all() -> int:
 		# An assembly still under way is waited for, then freed with the rest.
 		for model in _tasks.keys():
-			WorkerThreadPool.wait_for_task_completion(_tasks[model])
+			PoolWait.task(_tasks[model])
 		_tasks.clear()
 		for r in _done.values():
 			var orphan := (r as Array)[0] as SkinnedBsrAssembler.AssembledCharacter

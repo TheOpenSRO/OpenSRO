@@ -57,10 +57,40 @@ class_name Skeleton3DBuilder
 ## Skeleton3D does not physics-process for it: there this does nothing that
 ## matters (it is a 4.2.2 engine behaviour, not a project workaround for a
 ## bug).
+##
+## Round 760 (Godot 4.7.2): the same class of cost, once a frame instead of
+## once a step. READ, scene/3d/skeleton_3d.cpp at 4.7.2-stable: every
+## Skeleton3D entering the tree gets an internal PhysicalBoneSimulator3D child
+## (`setup_simulator`, the deprecated compat path, compiled into the official
+## builds), which is a SkeletonModifier3D, so `_find_modifiers` (it walks the
+## internal children too) always finds one; `_process_changed` turns the
+## internal process on for the default `modifier_callback_mode_process`
+## (Idle), and each frame's `advance()` then queues a deferred
+## NOTIFICATION_UPDATE_SKELETON (`_update_deferred(UPDATE_FLAG_MODIFIER)`), which
+## backs up and restores every bone around the (inactive) simulator. With
+## 18,035 skeletons that was 38.5 ms of wall a frame (MEASURED round 757,
+## tools/skeleton_process_bench.gd). The client builds no SkeletonModifier3D
+## (no IK, look-at or physical bones; MapAnimation's AnimationPlayer sets bone
+## poses, it is not a modifier), so the per-frame advance has nothing to run:
+## the Manual mode (2) stops it, and `_process_changed` keeps it off at every
+## tree entry (a plain set_process_internal(false) would be undone there). A
+## posed skeleton is unaffected: set_bone_pose_* marks it dirty and queues the
+## same deferred update (`_make_dirty` -> `_update_deferred(UPDATE_FLAG_POSE |
+## UPDATE_FLAG_MODIFIER)`), which updates its skin and emits
+## `skeleton_updated` for its BoneAttachment3Ds, whatever the mode
+## (skeleton_process_test.gd). The property is stored, so a template's
+## duplicates inherit it. On 4.2.2 the property does not exist.
 static func no_physics_step(skeleton: Skeleton3D) -> void:
 	if "animate_physical_bones" in skeleton:
 		skeleton.set("animate_physical_bones", false)
 	skeleton.set_physics_process_internal(false)
+	if "modifier_callback_mode_process" in skeleton:
+		skeleton.set("modifier_callback_mode_process", MODIFIER_CALLBACK_MANUAL)
+		skeleton.set_process_internal(false)
+
+## Skeleton3D.MODIFIER_CALLBACK_MODE_PROCESS_MANUAL (Godot 4.3+; READ
+## skeleton_3d.h at 4.7.2-stable), as a number so the script parses on 4.2.2.
+const MODIFIER_CALLBACK_MANUAL := 2
 
 static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 	var skeleton := Skeleton3D.new()

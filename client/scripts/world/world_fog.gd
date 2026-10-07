@@ -307,6 +307,23 @@ static func set_pass_tonemap(pass_mi: MeshInstance3D, env: Environment) -> void:
 static func reverse_z() -> bool:
 	return Engine.get_version_info().hex >= 0x040300
 
+## The far plane's clip z over w, where a vertex is pinned to sit on (not past)
+## it (cloud_dome.gdshader). Before 4.3: 1.0 (z = w) in both renderers. From
+## 4.3 the depth is reversed, and the two renderers' clip spaces differ (READ,
+## Godot 4.7.2-stable: core/math/projection.cpp set_depth_correction --
+## RenderingDevice (Forward+, Mobile) remaps z to Vulkan's 0..1 and reverses
+## it, so the far plane is z = 0; GL Compatibility calls it with p_remap_z
+## false (drivers/gles3/rasterizer_scene_gles3.cpp l. 890, 1540), keeping
+## OpenGL's -1..1 reversed, so the far plane is z = -w). Round 754 pinned the
+## cloud layer at z = 0 under both: under Compatibility that is window depth
+## 0.5, in front of everything past a few units, and the clouds were drawn
+## over the far scenery (round 760, MEASURED: the Jangan palace washed out,
+## +15.6 luma over the frame's top eighth).
+static func far_clip_z(compatibility: bool) -> float:
+	if not reverse_z():
+		return 1.0
+	return -1.0 if compatibility else 0.0
+
 ## The pass: a 2 x 2 quad whose vertex shader puts it over the whole view,
 ## parented to the camera so it is never culled (its margin covers the far
 ## plane). `compatibility` picks the depth's NDC range and the blend.

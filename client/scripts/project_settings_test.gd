@@ -57,6 +57,8 @@ func _initialize() -> void:
 	_check(method == "forward_plus", "the engine starts the Forward+ renderer on this platform (got %s)" % var_to_str(method))
 	_setting_is("rendering/renderer/rendering_method", "forward_plus")
 	_setting_is("rendering/renderer/rendering_method.mobile", "gl_compatibility")
+	# Round 760: the separate render thread (2) on Godot 4.7.2 (project.godot has why).
+	_setting_is("rendering/driver/threads/thread_model", 2)
 
 	_setting_is("debug/file_logging/enable_file_logging", true)
 	_setting_is("debug/file_logging/log_path", "user://logs/opensro.log")

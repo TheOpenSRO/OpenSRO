@@ -77,6 +77,31 @@ func _run() -> void:
 	blobs.update(Vector3.ZERO, 1, no_ground)
 	_check(blobs.shown_count() == 0, "no ground found: no circle")
 
+	# Round 760: a crowd freed all at once in the middle of a spread pass (a
+	# zone change's empty arrival list) -- the pass's snapshot holds freed
+	# nodes, which must be skipped, not tested with `is` (a SCRIPT ERROR each,
+	# the run's own check). A pass of 120 casters runs over RESELECT_FRAMES.
+	(casters[0] as Node3D).visible = true
+	var crowd: Array = []
+	for i in 120:
+		var c := Node3D.new()
+		root.add_child(c)
+		c.global_position = Vector3(float(i % 12) * 3.0, 0.0, float(i / 12) * 3.0)
+		CharacterBlobs.register(c, 4.0)
+		crowd.append(c)
+	# The running pass ended, so the next update takes a new snapshot (the
+	# twelve and the crowd) and reads its first share; the crowd is freed
+	# before the rest is read.
+	blobs.update(Vector3.ZERO, 1, ground)
+	blobs._scan_at = blobs._scan_nodes.size()
+	blobs.update(Vector3.ZERO, 1, ground)
+	_check(blobs._scan_nodes.size() == 132 and blobs._scan_at < 132, "probe: a pass over 132 casters is under way (%d of %d)" % [blobs._scan_at, blobs._scan_nodes.size()])
+	for c in crowd:
+		(c as Node).free()
+	for i in 12:
+		blobs.update(Vector3.ZERO, 1, ground)
+	_check(blobs.shown_count() == 10, "a crowd freed mid-pass: the pass skips the freed and the circles go back to the twelve (%d)" % blobs.shown_count())
+
 	# World3D's side.
 	var src := FileAccess.get_file_as_string("res://scripts/World3D.gd")
 	_check(src.count("CharacterBlobs.register(") >= 4 and src.contains("CharacterBlobs.register(holder,")

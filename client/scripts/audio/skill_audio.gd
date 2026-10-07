@@ -188,7 +188,7 @@ static func _utf16_lines(bytes: PackedByteArray) -> PackedStringArray:
 	var raw := bytes
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
 		raw = raw.slice(2)
-		return raw.get_string_from_utf16().replace("\r", "").split("\n")
+		return TextDecode.utf16(raw).replace("\r", "").split("\n")
 	return raw.get_string_from_utf8().replace("\r", "").split("\n")
 
 # --- lookups (pure, against given tables) -----------------------------------
@@ -255,7 +255,7 @@ static func effect_rows_in(skills: Dictionary, effects: Dictionary, skill_id: in
 ## pay for it.
 static func warm() -> void:
 	if _warm_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		PoolWait.task(_warm_task)
 		_warm_task = -1
 	if _loaded:
 		return
@@ -276,7 +276,7 @@ static var _warm_task := -1
 ## review, finding 9).
 static func wait_pending() -> void:
 	if _warm_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		PoolWait.task(_warm_task)
 		_warm_task = -1
 
 static func _warm_now() -> void:

@@ -16,7 +16,7 @@
 # wait for other lanes (error-count runs only), CROWD_TIMEOUT sets the run's limit (1500 s).
 DIR="$1"; LOG="$2"; N="$3"; STEPS="$4"; shift 4
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
-GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"   # GODOT_BIN: round 754
+GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64}}"   # GODOT_BIN: round 754; 4.7.2 unless set (round 760)
 export OPENSRO_PK2_PATH=$PK2_DIR/Data.pk2 OPENSRO_MAP_PK2_PATH=$PK2_DIR/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export OPENSRO_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 OPENSRO_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export OPENSRO_MAPM_PATH='97\168.m' OPENSRO_QA_AT=1002,1020 OPENSRO_QA_YAW=0 OPENSRO_QA_LOCAL_NPCS=1
@@ -42,11 +42,12 @@ if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
 fi
 timeout -k 10 "${CROWD_TIMEOUT:-1500}" "$DIR/tools/xwl_run.sh" -s 1920x1080 "$GODOT" --rendering-method forward_plus --rendering-driver vulkan \
   --resolution 1920x1080 --path "$DIR" res://scenes/World3D.tscn --quit-after 400000 --print-fps --disable-vsync ${CROWD_GODOT_ARGS:-} > "$LOG" 2>&1
+RC=$?   # round 760: the client's own exit status (124: the time limit; 134: an abort at quit)
 kill $W 2>/dev/null
 if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
   kill $SP 2>/dev/null; pkill -P $GP 2>/dev/null; kill $GP 2>/dev/null
 fi
-echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0)"
+echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0) rc: $RC"
 rm -f "$LOG.others"
 grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$LOG"   # 4.7.2 drops " API"
 grep -E "LINEUP: |QA CROWD (step|split|arrival|visible|page|plates|ghostcheck|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|QA BUFFS|QA RUNAT|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -160

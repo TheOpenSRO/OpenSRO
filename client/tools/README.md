@@ -42,14 +42,19 @@ r725.md`) no longer show store or storage lines. A `--server` run needs the NPC 
 `-npcs-csv`); `/var/tmp/r727/live.sh` on the box is a working recipe, with `/tp` to stand within
 300 of the NPC, since `QA_AT` does not move the server's copy of the player.
 
-**Another Godot binary** (round 754). `GODOT_BIN=/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64`
-makes `remote_godot.sh`, `qa_shot.sh`, `crowd_run.sh`, `check_scripts.sh` and the two box tests
-run that binary instead of the pinned 4.2.2; `perf_gate.sh` runs it on both sides, or with
-`BASE_GODOT_BIN` on the base side only (a base on another binary gets its own shared copy and
-cache), and `PERF_BOX_LOCK=/var/tmp/godot-lock/lock` holds the box lock around each run. Use it
-with a lane's own `RENDER_DIR` and `GODOT_LOCK`: a copy imported by 4.7.2 is upgraded and must
-not be run by 4.2.2 again. Unset, every tool runs 4.2.2 as before. `docs/rounds/r754.md` has the
-4.7.2 spike.
+**The Godot binary** (round 754; the default from round 760). Every tool runs
+`/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64` unless `GODOT_BIN` names another:
+`GODOT_BIN=/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64` runs a revision from before round 760
+(`remote_godot.sh`, `qa_shot.sh`, `crowd_run.sh`, `check_scripts.sh` and the two box tests);
+`perf_gate.sh` runs `GODOT_BIN` on both sides, or `BASE_GODOT_BIN` on the base side only (a base on
+any binary but 4.2.2 gets its own suffixed shared copy and cache: the unsuffixed ones on the box
+were imported by 4.2.2), and `PERF_BOX_LOCK=/var/tmp/godot-lock/lock` holds the box lock around
+each run. Use a lane's own `RENDER_DIR` and `GODOT_LOCK`: a copy imported by 4.7.2 is upgraded and
+must not be run by 4.2.2 again. A pre-760 base against this branch:
+`BASE_GODOT_BIN=/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 perf_gate.sh --base <rev>`.
+The client runs the separate render thread from round 760 (`project.godot`); `CROWD_GODOT_ARGS=
+"--render-thread safe"` gives a crowd boot the default one. `docs/rounds/r754.md` has the spike,
+`docs/rounds/r760.md` the switch.
 
 `QA_SHOT_REAP=0` skips qa_shot's start-up kill of every Godot, Xvfb and weston on the box. Use it
 with your own `GODOT_LOCK` in a lane, so another lane's runs survive. `frame_ab.py a.png b.png
@@ -74,8 +79,8 @@ WorldFog is one, and it is what blacked the screen: RetailBloom's header), then 
 with Bloom off at start, stepped to on and off (the bloom must ADD light over the plain frame x
 198/255: a pass that read a black screen keeps exactly that), and a second boot with Bloom off
 stepped to Brightness 3 (the brightness pass reads the screen too). About 4 minutes.
-`OPENSRO_QA_BLOOM_NO_ANCHOR=1` is its self-test: RetailBloom's anchor never shows, and every
-check must FAIL. Run it after a change to
+Round 760 removed RetailBloom's 3D anchor (Godot 4.7.2 keeps the back buffer's colour) and
+with it the `OPENSRO_QA_BLOOM_NO_ANCHOR` self-test. Run it after a change to
 RetailBloom, WorldFog, the brightness pass or any 3D screen or depth read. A Compatibility frame
 must be checked with a 3D view in the scene: round 702's canvas-only measurement passed while the
 game drew black.

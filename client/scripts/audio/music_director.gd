@@ -82,7 +82,7 @@ func _ready() -> void:
 ## only under 4.2.2).
 func _exit_tree() -> void:
 	for t in _tasks:
-		WorkerThreadPool.wait_for_task_completion(t["id"])
+		PoolWait.task(t["id"])
 	_tasks.clear()
 
 func _process(delta: float) -> void:
@@ -378,7 +378,7 @@ func _poll_tasks() -> void:
 	var done := false
 	for t in _tasks.duplicate():
 		if WorkerThreadPool.is_task_completed(t["id"]):
-			WorkerThreadPool.wait_for_task_completion(t["id"])
+			PoolWait.task(t["id"])
 			_tasks.erase(t)
 			done = true
 			print("AUDIO worker: %s ready in %d ms; cache %s" % [

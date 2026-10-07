@@ -16,6 +16,16 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
+## The engine's depth correction (READ, core/math/projection.cpp
+## set_depth_correction at 4.7.2-stable, no y flip): z scaled by +-1 (or
+## +-0.5 and offset 0.5 when remapped to 0..1). 4.2.2's RenderingDevice
+## correction is the remap without the reversal; its GLES3 applies none.
+func _depth_correction(reverse: bool, remap: bool) -> Projection:
+	if not reverse and not remap:
+		return Projection.IDENTITY
+	var zz := (-0.5 if reverse else 0.5) if remap else (-1.0 if reverse else 1.0)
+	return Projection(Vector4(1, 0, 0, 0), Vector4(0, 1, 0, 0), Vector4(0, 0, zz, 0), Vector4(0, 0, 0.5 if remap else 0.0, 1))
+
 func _initialize() -> void:
 	# D3D linear fog: none before the start, all of it from the end on.
 	_check(WorldFog.amount(0.0, 1250.0, 2250.0) == 0.0 and WorldFog.amount(1249.0, 1250.0, 2250.0) == 0.0,
@@ -130,6 +140,22 @@ func _initialize() -> void:
 	var ready_at := src.find("func _ready() -> void:")
 	var build_at := src.find("_build_fog_pass()", ready_at)
 	_check(build_at > ready_at and build_at < src.find("if title_mode:", ready_at), "World3D._ready builds the pass before the title branch (the title's backdrop is fogged too)")
+
+	# Round 760: the cloud layer's far-plane pin per engine and renderer (WorldFog.far_clip_z).
+	if WorldFog.reverse_z():
+		_check(WorldFog.far_clip_z(false) == 0.0 and WorldFog.far_clip_z(true) == -1.0,
+			"4.3+: the far plane is clip z 0 under Forward+ (0..1) and -w under Compatibility (-1..1)")
+	else:
+		_check(WorldFog.far_clip_z(false) == 1.0 and WorldFog.far_clip_z(true) == 1.0, "4.2: the far plane is z = w in both")
+	var cloud := FileAccess.get_file_as_string("res://scripts/assets/cloud_dome.gdshader")
+	_check(cloud.contains("p.z = far_clip_z * p.w;") and src.contains("WorldFog.far_clip_z(RendererChoice.running() != RendererChoice.FORWARD_PLUS)"),
+		"the cloud layer is pinned through far_clip_z, per renderer")
+	# The pin sits on the far plane after the engine's own depth correction (core/math/projection.cpp).
+	for compat in [false, true]:
+		var proj: Projection = _depth_correction(WorldFog.reverse_z(), not compat) * Projection.create_perspective(60.0, 1.5, 0.05, 11520.0)
+		var far_clip: Vector4 = proj * Vector4(0.0, 0.0, -11520.0, 1.0)
+		_check(absf(far_clip.z / far_clip.w - WorldFog.far_clip_z(compat)) < 1e-3,
+			"%s: a point on the far plane has clip z/w %.4f = far_clip_z" % ["Compatibility" if compat else "Forward+", far_clip.z / far_clip.w])
 
 	if _failures == 0:
 		print("ALL PASS")

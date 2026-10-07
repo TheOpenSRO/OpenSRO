@@ -83,7 +83,7 @@ static func load_all(media: Pk2Reader) -> Dictionary:
 	if _pending_task >= 0 and _pending_key == key:
 		# Started by preload_async: wait for it rather than parse twice.
 		var tw := Time.get_ticks_usec()
-		WorkerThreadPool.wait_for_task_completion(_pending_task)
+		PoolWait.task(_pending_task)
 		_pending_task = -1
 		last_wait_usec = Time.get_ticks_usec() - tw
 		_shared_key = key
@@ -107,7 +107,7 @@ static func load_all(media: Pk2Reader) -> Dictionary:
 static func wait_pending() -> void:
 	if _pending_task < 0:
 		return
-	WorkerThreadPool.wait_for_task_completion(_pending_task)
+	PoolWait.task(_pending_task)
 	_pending_task = -1
 	_shared_key = _pending_key
 	_shared = _pending_box[0]
@@ -160,7 +160,7 @@ static func _read_all(media: Pk2Reader) -> Dictionary:
 ## Drops the shared rows (tests).
 static func clear_shared() -> void:
 	if _pending_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_pending_task)
+		PoolWait.task(_pending_task)
 		_pending_task = -1
 	_pending_box = [{}]
 	_shared_key = ""
@@ -774,7 +774,7 @@ static func _lines(data: PackedByteArray) -> PackedStringArray:
 	var raw := data
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
 		raw = raw.slice(2)
-	var text := raw.get_string_from_utf16()
+	var text := TextDecode.utf16(raw)
 	if text.is_empty():
 		text = raw.get_string_from_utf8()
 	var _out := text.replace("\r", "").split("\n")

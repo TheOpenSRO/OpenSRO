@@ -241,7 +241,7 @@ func _notification(what: int) -> void:
 	for path in _prep_tasks:
 		var id := int(_prep_tasks[path])
 		if id >= 0:
-			WorkerThreadPool.wait_for_task_completion(id)
+			PoolWait.task(id)
 	_prep_tasks.clear()
 	for path in _prep_done:
 		_free_prepared(_prep_done[path])
@@ -1356,7 +1356,7 @@ func preparing() -> bool:
 	return not _prep_tasks.is_empty()
 
 func _finish_prep(bsr_path: String, adopt: bool) -> void:
-	WorkerThreadPool.wait_for_task_completion(_prep_tasks[bsr_path])
+	PoolWait.task(_prep_tasks[bsr_path])
 	_prep_tasks.erase(bsr_path)
 	_prep_running -= 1
 	_prep_lock.lock()

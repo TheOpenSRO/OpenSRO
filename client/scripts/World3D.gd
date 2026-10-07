@@ -4271,7 +4271,9 @@ func _build_cloud_dome(cloud_tex: Texture2D) -> void:
 	_sky_dome_material.shader = _cloud_dome_shader
 	_sky_dome_material.set_shader_parameter("cloud_tex", cloud_tex)
 	_sky_dome_material.set_shader_parameter("uv_offset", Vector2.ZERO)
-	_sky_dome_material.set_shader_parameter("reverse_z", WorldFog.reverse_z())  # round 754
+	# The far plane's clip z (round 754's reversed depth; round 760: per renderer).
+	_sky_dome_material.set_shader_parameter("far_clip_z",
+		WorldFog.far_clip_z(RendererChoice.running() != RendererChoice.FORWARD_PLUS))
 	# Drawn behind everything else transparent (cloud_dome.gdshader).
 	_sky_dome_material.render_priority = -128
 	_sky_dome = MeshInstance3D.new()
@@ -5349,7 +5351,7 @@ func _pump_cell_jobs(commit_budget: int, wait: bool) -> int:
 		# Every task is waited for once, which disposes of it (Godot 4.2's
 		# WorkerThreadPool reference: a task id "already awaited and disposed
 		# of" no longer exists); for a finished one it returns at once.
-		WorkerThreadPool.wait_for_task_completion(flight["task"])
+		PoolWait.task(flight["task"])
 		_finish_cell_job(flight)
 		_dispatch_cell_jobs()
 		finished += 1
@@ -5506,15 +5508,16 @@ func _prepared_again(job: Dictionary) -> Dictionary:
 ## change (the grid it was for is gone), a new grid, the world leaving the
 ## tree (a reconnect frees this instance, and a task still running would
 ## call into it). Blocks the main thread for at most the longest remaining
-## prepare -- a worker holds nothing the main thread holds, so the wait
-## ends -- and says how long it took.
+## prepare -- a worker holds nothing the main thread holds, and PoolWait
+## serves the RenderingServer calls a prepare queues for the main thread on
+## Godot 4.7.2 (round 760), so the wait ends -- and says how long it took.
 func _drop_cell_jobs(why: String) -> void:
 	if _cell_jobs.is_empty():
 		return
 	var started := Time.get_ticks_usec()
 	var n := _cell_jobs.size()
 	for flight in _cell_jobs:
-		WorkerThreadPool.wait_for_task_completion(flight["task"])
+		PoolWait.task(flight["task"])
 		_grid.queued_cells.erase(flight["cell"]["key"])
 	_cell_jobs.clear()
 	print("World3D: %d cell(s) still preparing dropped (%s) -- waited %.1f ms for their tasks" % [
@@ -6386,11 +6389,11 @@ func _exit_tree() -> void:
 	# The skilleffect.txt parse (_preload_skill_effect_table) is not left
 	# running behind a world that is gone.
 	if _skill_table_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_skill_table_task)
+		PoolWait.task(_skill_table_task)
 		_skill_table_task = -1
 	# Nor the characterdata name-key index (_preload_name_key_index).
 	if _name_key_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_name_key_task)
+		PoolWait.task(_name_key_task)
 		_name_key_task = -1
 	# Nor the other players' template tasks (round 748): what they made is
 	# freed, not adopted.
@@ -24023,7 +24026,7 @@ func _name_key_index() -> Dictionary:
 	if _name_key_task < 0:
 		_preload_name_key_index()
 	if _name_key_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_name_key_task)
+		PoolWait.task(_name_key_task)
 		_name_key_task = -1
 		_name_key_cache = _name_key_result.get("index", {})
 		print("World3D: characterdata -> %d SN_ name keys (built in %d ms off the main thread)" % [
@@ -24387,7 +24390,7 @@ func _skill_effect_tables() -> Dictionary:
 		_preload_skill_effect_table()
 	if _skill_table_task >= 0:
 		var waited := Time.get_ticks_msec()
-		WorkerThreadPool.wait_for_task_completion(_skill_table_task)
+		PoolWait.task(_skill_table_task)
 		_skill_table_task = -1
 		_skill_table_cache = _skill_table_result.get("tables", {"hit": {}, "aniset": {}})
 		print("World3D: skilleffect.txt -> %d skill hit effects, %d skillaniset rows (parsed in %d ms off the main thread; waited %d ms)" % [

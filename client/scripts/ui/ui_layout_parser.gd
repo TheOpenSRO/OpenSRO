@@ -78,11 +78,11 @@ static func parse(data: Variant, honor_ifdef: bool = false,
 	if data is PackedByteArray:
 		var raw: PackedByteArray = data
 		if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
-			text = raw.slice(2).get_string_from_utf16()
+			text = TextDecode.utf16(raw.slice(2))
 		else:
 			text = raw.get_string_from_utf8()
 			if text.is_empty() and raw.size() >= 2:
-				text = raw.get_string_from_utf16()
+				text = TextDecode.utf16(raw)
 	elif data is String:
 		text = data
 

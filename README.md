@@ -104,7 +104,7 @@ cd server
 go run ./cmd/server
 ```
 
-Either way, then open `client/` in the Godot 4.2 editor (or `godot4 --path client`) — it boots to
+Either way, then open `client/` in the Godot 4.7.2 editor (or `godot4 --path client`) — it boots to
 the login screen and connects to `127.0.0.1:15779` by default (see `client/scripts/Login.gd`).
 Log in, pick a character, and hit "3D View" in the World HUD to walk around in 3D.
 

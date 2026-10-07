@@ -1,7 +1,9 @@
 ; The native (Rust) asset readers -- round 667, native/README.md.
-; Round 754 (the Godot 4.7.2 spike): built with godot-rust's api-4-7, so 4.7
-; is the floor -- a 4.2.2 engine refuses the library and reads in GDScript.
-; Optional: when the library below is missing, Godot 4.2.2 prints one error
+; Round 760 (the client on Godot 4.7.2; round 754 was the spike): built with
+; godot-rust's api-4-7, so 4.7 is the floor -- an older engine refuses the
+; library and reads in GDScript (client/tools/check_release_zip.sh checks a
+; release's executable against this line).
+; Optional: when the library below is missing, Godot prints one error
 ; loading this extension and the client reads everything in GDScript
 ; (client/scripts/pk2/native_assets.gd). The libraries are build output and
 ; are never committed (.gitignore); native/README.md says how to build them.

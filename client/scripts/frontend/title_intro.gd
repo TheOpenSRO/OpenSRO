@@ -203,7 +203,7 @@ func _plan_done() -> bool:
 		return true
 	if not WorkerThreadPool.is_task_completed(_plan_task):
 		return false
-	WorkerThreadPool.wait_for_task_completion(_plan_task)
+	PoolWait.task(_plan_task)
 	_plan_task = -1
 	_plan_ms = _plan_job.ms
 	_plan_over_cap = _plan_job.over_cap
@@ -218,7 +218,7 @@ func _cancel_plan() -> void:
 	if _plan_task < 0:
 		return
 	_plan_job.cancel = true
-	WorkerThreadPool.wait_for_task_completion(_plan_task)
+	PoolWait.task(_plan_task)
 	_plan_task = -1
 
 ## The world's scene has loaded (FrontEndBackdrop.preload_world): build the

@@ -58,11 +58,31 @@ func _initialize() -> void:
 	sl.add_child(_stub)
 	root.add_child(sl)
 	# Compatibility's 3D anchor alone (round 707): the 3D pass's copy of the
-	# screen it causes, with no canvas pass.
-	_anchor = RetailBloom.anchor_node()
+	# screen it causes, with no canvas pass. Round 760 removed it from
+	# RetailBloom (4.7.2 does not need it); kept here, as it was, to time it.
+	_anchor = anchor_node()
 	_anchor.visible = false
 	root.add_child(_anchor)
 	_next()
+
+## Round 707's anchor (RetailBloom until round 760): one never-culled triangle
+## whose material reads the screen texture and draws no pixel.
+static func anchor_node() -> MeshInstance3D:
+	var sh := Shader.new()
+	sh.code = "shader_type spatial;\nrender_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_disabled, fog_disabled, shadows_disabled, skip_vertex_transform;\nuniform sampler2D screen_tex : hint_screen_texture, filter_nearest, repeat_disable;\nvoid vertex() { POSITION = vec4(2.0, 2.0, 2.0, 1.0); }\nvoid fragment() { ALBEDO = textureLod(screen_tex, SCREEN_UV, 0.0).rgb; ALPHA = 0.0; }\n"
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)])
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, mat)
+	mesh.custom_aabb = AABB(Vector3(-1.0e6, -1.0e6, -1.0e6), Vector3(2.0e6, 2.0e6, 2.0e6))
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
 
 func _next() -> void:
 	if _mode >= 0:

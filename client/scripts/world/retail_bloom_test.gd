@@ -3,12 +3,12 @@ extends SceneTree
 ## RetailBloom (round 702 review): the original's bloom arithmetic
 ## (Map::FUN_00a1d790, READ) and its place among the canvas layers; and
 ## ShadowCatcher's READ darkness. Round 707: Compatibility's per-pixel pass and
-## the 3D anchor that keeps it from reading a black screen.
+## the 3D anchor that kept it from reading a black screen under 4.2.2 (removed
+## in round 760: 4.7.2 keeps the back buffer's colour).
 ##
 ## `godot4 --headless --path client --script res://scripts/world/retail_bloom_test.gd`
 
 var _failures := 0
-var _bt: RetailBloom
 
 func _check(cond: bool, msg: String) -> void:
 	if cond:
@@ -64,28 +64,14 @@ func _initialize() -> void:
 		and bcode.contains("blend_premul_alpha") and bcode.contains("min(row, vec3(1.0))") and bcode.contains("T = 512.0")
 		and bcode.contains("2.6") and bcode.contains("5.2") and bcode.contains("198.0 / 255.0") and bcode.contains("192.0 / 255.0"),
 		"... whose 25 taps read level 0 by texelFetch (filtered here), threshold each tap, clamp each row and blend 192/255 + 198/255")
-	# Round 707's black frames: a 3D depth read (WorldFog's) made GLES3 create
-	# the back buffer without a colour texture. The anchor's screen read makes
-	# the 3D pass give it one.
-	var anc := bm.anchor()
-	_check(anc != null and anc.get_parent() == bm and anc.mesh != null
-		and (anc.mesh.surface_get_material(0) as ShaderMaterial).shader.code.contains("hint_screen_texture")
-		and anc.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF and (anc.mesh as ArrayMesh).custom_aabb.size.x >= 1.0e6,
-		"under Compatibility a never-culled 3D anchor reads the screen texture, so the GL back buffer keeps a colour texture")
-	var acode := (anc.mesh.surface_get_material(0) as ShaderMaterial).shader.code
-	_check(acode.contains("POSITION = vec4(2.0, 2.0, 2.0, 1.0)") and acode.contains("ALPHA = 0.0"), "... and draws no pixel (outside the clip volume)")
-	bm.visible = false
-	_check(not anc.visible, "the anchor follows the Bloom row off (no 3D screen copy with the bloom off)")
-	bm.visible = true
-	_check(anc.visible, "... and on")
+	# Round 760: no 3D anchor any more (round 707's, for 4.2.2's GLES3 back
+	# buffer without colour; MEASURED unneeded on 4.7.2 by round 754's box
+	# test): the layer holds the pass alone, under either renderer.
+	_check(bm.get_child_count() == 1 and not bm.has_method("anchor") and not bm.get_script().source_code.contains("ANCHOR_SHADER"),
+		"under Compatibility the bloom keeps no 3D screen-reading anchor (round 760)")
 	bm.free()
-	# ... and while the brightness pass shows (checked in _process, once the
-	# root is in the tree).
-	_bt = RetailBloom.new(false)
-	root.add_child(_bt)
-	_bt.visible = false
 	var bg := RetailBloom.new(true)
-	_check(bg.anchor() == null, "Forward+ needs no anchor (its canvas copies the screen itself)")
+	_check(bg.get_child_count() == 1, "... nor under Forward+")
 	bg.free()
 	# Godot's glow never; the scene carries no guessed glow values.
 	var tscn := FileAccess.get_file_as_string("res://scenes/World3D.tscn")
@@ -112,22 +98,6 @@ func _initialize() -> void:
 	_check(src.contains("const SHADOW_MAP_DISTANCE := 400.0"), "Detail's shadow reach is 400: the READ 300 from the player plus the camera's 90")
 
 func _process(_delta: float) -> bool:
-	# The brightness pass reads the screen as the bloom does, and read black
-	# the same way (round 707): the anchor shows for it too -- at once, when
-	# the layer enters or changes, not a frame later (no _bt._process call
-	# here; round 707's review).
-	_check(not _bt.anchor().visible, "Bloom off and no brightness pass: the anchor is off")
-	var lay := CanvasLayer.new()
-	lay.name = VideoOptions.BRIGHTNESS_LAYER
-	root.add_child(lay)
-	var on_enter := _bt.anchor().visible
-	lay.visible = false
-	var on_hide := _bt.anchor().visible
-	lay.visible = true
-	_check(on_enter and not on_hide and _bt.anchor().visible,
-		"the anchor follows the brightness pass the moment it enters, hides and shows (Bloom off)")
-	lay.free()
-	_bt.free()
 	if _failures == 0:
 		print("ALL PASS")
 	else:

@@ -80,7 +80,7 @@ static func _pp_parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_f
 
 	var full_text: String
 	if raw.size() >= 2:
-		full_text = raw.get_string_from_utf16()
+		full_text = TextDecode.utf16(raw)
 	if full_text.is_empty() and raw.size() > 0:
 		# Fallback in case utf-8 was passed
 		full_text = raw.get_string_from_utf8()

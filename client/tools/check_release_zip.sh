@@ -5,12 +5,16 @@
 #   client/tools/check_release_zip.sh dist/opensro-linux.zip linux [--run]
 #
 # Every zip must hold, in its one top-level folder: the executable, its .pck, the library
-# NEXT TO the executable (Godot 4.2.2 exports a GDExtension library beside the executable,
+# NEXT TO the executable (Godot exports a GDExtension library beside the executable,
 # editor_export_platform_pc.cpp, and OS::open_dynamic_library falls back to the
-# executable's folder when res://native_bin/... is not a real file), and
+# executable's folder when res://native_bin/... is not a real file; 4.2.2 and 4.7.2 alike), and
 # THIRD_PARTY_NOTICES.txt. The .pck must carry opensro_native.gdextension and the
 # .godot/extension_list.cfg that names it, or the exported game never loads the library.
 # The library itself goes through check_native_library.sh (imports, export, stripped).
+# Round 760 (Godot 4.7.2): the executable must be an engine the library accepts -- its
+# version string (`4.7.2.stable.official` in the 4.7.2 templates) at or above the
+# .gdextension's compatibility_minimum (4.7) -- or the game would refuse its own library and
+# read everything in GDScript; and the notices must name the same Godot release.
 #
 # --run (linux only) also runs the exported game headless, twice:
 #   - as shipped: the log must say "native readers ON" and hold no GDExtension error;
@@ -47,6 +51,18 @@ if [ -f "$dir/OpenSRO.pck" ]; then
   grep -q 'opensro_native.gdextension' <<< "$pck" || bad "OpenSRO.pck does not carry opensro_native.gdextension"
   grep -q 'extension_list.cfg' <<< "$pck" || bad "OpenSRO.pck does not carry .godot/extension_list.cfg"
 fi
+# The engine in the zip against the library's floor (round 760).
+floor=$(sed -n 's/^compatibility_minimum *= *"\{0,1\}\([0-9.]*\)"\{0,1\}.*/\1/p' "$here/../opensro_native.gdextension" | head -1)
+engine=""
+if [ -f "$dir/$exe" ]; then
+  engine=$(LC_ALL=C grep -aoE '[0-9]+\.[0-9]+(\.[0-9]+)?\.stable\.official' "$dir/$exe" | head -1 | sed 's/\.stable\.official//' || true)
+  echo "engine: Godot ${engine:-unknown}; the library's floor: ${floor:-unknown}"
+  if [ -z "$engine" ] || [ -z "$floor" ]; then
+    bad "could not read the engine version from $exe or the floor from opensro_native.gdextension"
+  elif [ "$(printf '%s\n%s\n' "$floor" "$engine" | sort -V | head -1)" != "$floor" ]; then
+    bad "$exe is Godot $engine, below the native library's compatibility_minimum $floor"
+  fi
+fi
 if [ -f "$dir/$lib" ]; then
   bash "$here/check_native_library.sh" "$dir/$lib" "$kind" || fail=1
   sha256sum "$dir/$lib" | sed "s#$tmp/##"
@@ -58,6 +74,9 @@ if [ -f "$dir/THIRD_PARTY_NOTICES.txt" ]; then
   grep -q '^FULL LICENCE TEXTS OF THE CRATES' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the crates' licence texts"
   grep -q '^THE RUST STANDARD LIBRARY' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the Rust standard library's texts"
   grep -q '^GODOT ENGINE 4\.' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks Godot Engine's licence and notices"
+  if [ -n "$engine" ] && ! grep -q "^GODOT ENGINE ${engine}" "$notices"; then
+    bad "THIRD_PARTY_NOTICES.txt names another Godot release than the executable's $engine"
+  fi
 fi
 
 if [ "$run" = "--run" ]; then

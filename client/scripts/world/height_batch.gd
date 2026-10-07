@@ -33,6 +33,13 @@ class_name HeightBatch
 ## group is waited for (freed) once it is complete, on a later frame (`reap`).
 ##
 ## Engine-independent: nothing here works around a 4.2.2 bug.
+##
+## **No RenderingServer call off the main thread** (round 760): a helper runs
+## NavGraph.landing_height_at alone, which reads arrays and dictionaries, so the
+## main thread's waits here (the spin in `work_and_wait`, `reap`, `reap_all`)
+## cannot meet Godot 4.7.2's queued RenderingServer calls (PoolWait's header);
+## they stay plain waits, marked `pool-wait: resource-free` for
+## pool_wait_lint_test.gd.
 
 ## Below this many points the tasks cost more than they save: run inline
 ## (OURS; a group task's dispatch and wait is tens of microseconds).
@@ -158,7 +165,7 @@ static func reap() -> void:
 	var keep: Array = []
 	for p in _pending:
 		if WorkerThreadPool.is_group_task_completed(int(p[0])):
-			WorkerThreadPool.wait_for_group_task_completion(int(p[0]))
+			WorkerThreadPool.wait_for_group_task_completion(int(p[0])) # pool-wait: resource-free (completed; NavGraph data only)
 		else:
 			keep.append(p)
 	_pending = keep
@@ -167,5 +174,5 @@ static func reap() -> void:
 ## left return at once.
 static func reap_all() -> void:
 	for p in _pending:
-		WorkerThreadPool.wait_for_group_task_completion(int(p[0]))
+		WorkerThreadPool.wait_for_group_task_completion(int(p[0])) # pool-wait: resource-free (NavGraph data only)
 	_pending = []

@@ -158,7 +158,7 @@ static func for_archive(media: Pk2Reader) -> ItemGlowTables:
 static func _lines(bytes: PackedByteArray) -> PackedStringArray:
 	var text := ""
 	if bytes.size() >= 2 and bytes[0] == 0xFF and bytes[1] == 0xFE:
-		text = bytes.slice(2).get_string_from_utf16()
+		text = TextDecode.utf16(bytes.slice(2))
 	else:
 		text = bytes.get_string_from_ascii()
 	var out := PackedStringArray()

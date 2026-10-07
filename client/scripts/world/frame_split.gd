@@ -45,7 +45,17 @@ static var usec: Dictionary = {}
 ## render thread (rendering_server_default.cpp l. 71-120, READ, 4.2.2), so the
 ## split does not listen to them, and a script getter on the server waits for
 ## the render thread (command_queue push_and_ret).
+##
+## Round 760 (Godot 4.7.2): Main consumes `--render-thread`, so it is not in
+## OS.get_cmdline_args() and a boot with it was taken as unthreaded; the
+## engine is asked instead (RenderingServer.is_on_render_thread, false on the
+## main thread exactly when the server has its own thread; READ
+## rendering_server_default.h at 4.7.2-stable). On 4.7.2 frame_pre_draw is
+## emitted on the main thread before the draw is queued, and frame_post_draw
+## is deferred to it, but one frame late: the split still does not listen.
 static func render_threaded() -> bool:
+	if RenderingServer.has_method("is_on_render_thread"):
+		return not bool(RenderingServer.call("is_on_render_thread"))
 	var args := OS.get_cmdline_args()
 	var i := args.find("--render-thread")
 	if i >= 0 and i + 1 < args.size():

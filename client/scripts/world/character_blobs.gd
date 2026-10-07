@@ -166,7 +166,7 @@ static func nearest(nodes: Array, from: Vector3, limit: int, max_distance: float
 	var best_d: Array = []
 	var max_d2 := max_distance * max_distance
 	for n in nodes:
-		if not (n is Node3D) or not is_instance_valid(n) or not (n as Node3D).is_visible_in_tree():
+		if not is_instance_valid(n) or not (n is Node3D) or not (n as Node3D).is_visible_in_tree():
 			continue
 		var d2 := (n as Node3D).global_position.distance_squared_to(from)
 		if max_distance > 0.0 and d2 > max_d2:
@@ -209,7 +209,11 @@ func _scan_step(from: Vector3, max_distance: float) -> void:
 	while _scan_at < end:
 		var n = _scan_nodes[_scan_at]
 		_scan_at += 1
-		if not (n is Node3D) or not is_instance_valid(n) or not (n as Node3D).is_visible_in_tree():
+		# Validity first (round 760): the pass's list is a snapshot, and a
+		# body freed since (a crowd leaving at a zone change) made `is` on it
+		# a SCRIPT ERROR ("Left operand of 'is' is a previously freed
+		# instance"), once per freed body a frame.
+		if not is_instance_valid(n) or not (n is Node3D) or not (n as Node3D).is_visible_in_tree():
 			continue
 		var d2 := (n as Node3D).global_position.distance_squared_to(from)
 		if max_distance > 0.0 and d2 > max_d2:
@@ -297,7 +301,7 @@ func select_detail(casters: Array, from: Vector3, reach: float) -> void:
 	for n in casters:
 		if adopted >= DETAIL_ADOPT_PER_PASS:
 			break
-		if not (n is Node3D) or not is_instance_valid(n) or (n as Node).has_meta(META_DETAIL):
+		if not is_instance_valid(n) or not (n is Node3D) or (n as Node).has_meta(META_DETAIL):
 			continue
 		if (n as Node3D).global_position.distance_squared_to(from) > adopt_d2:
 			continue

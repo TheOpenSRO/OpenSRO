@@ -1467,7 +1467,7 @@ static func has_template(efp_path: String) -> bool:
 ## Waits for every preload task (tests; a world teardown).
 static func wait_preloads() -> void:
 	for id in _preloads:
-		WorkerThreadPool.wait_for_task_completion(id)
+		PoolWait.task(id)
 	_preloads.clear()
 
 static func _touch(kind: String, key: String) -> void:

@@ -259,7 +259,7 @@ static func warm() -> void:
 	if _warm_task >= 0:
 		# Started by warm_async: wait for it, and for SkillAudio's tables,
 		# which the rows join through.
-		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		PoolWait.task(_warm_task)
 		_warm_task = -1
 		SkillAudio.warm()
 	if _loaded:
@@ -282,7 +282,7 @@ static var _warm_task := -1
 ## review, finding 9).
 static func wait_pending() -> void:
 	if _warm_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		PoolWait.task(_warm_task)
 		_warm_task = -1
 
 static func _warm_now() -> void:
@@ -649,7 +649,7 @@ static func clear_live() -> void:
 ## Clears every table and live reference (tests, a world reload).
 static func reset() -> void:
 	if _warm_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_warm_task)
+		PoolWait.task(_warm_task)
 		_warm_task = -1
 	clear_live()
 	_rows = {}

@@ -222,14 +222,14 @@ static func _add_region(out: Array[Vector2i], r: Vector2i) -> void:
 ## OURS) with or without EF BB BF.
 static func decode_text(bytes: PackedByteArray) -> String:
 	if bytes.size() >= 2 and bytes[0] == 0xFF and bytes[1] == 0xFE:
-		return bytes.slice(2).get_string_from_utf16()
+		return TextDecode.utf16(bytes.slice(2))
 	if bytes.size() >= 2 and bytes[0] == 0xFE and bytes[1] == 0xFF:
 		var swapped := bytes.slice(2)
 		for i in range(0, swapped.size() - 1, 2):
 			var t := swapped[i]
 			swapped[i] = swapped[i + 1]
 			swapped[i + 1] = t
-		return swapped.get_string_from_utf16()
+		return TextDecode.utf16(swapped)
 	if bytes.size() >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF:
 		return bytes.slice(3).get_string_from_utf8()
 	# No mark: UTF-16LE if the second byte of most leading pairs is zero.
@@ -239,7 +239,7 @@ static func decode_text(bytes: PackedByteArray) -> String:
 		if bytes[i * 2 + 1] == 0 and bytes[i * 2] != 0:
 			zeros += 1
 	if pairs > 0 and zeros * 2 > pairs:
-		return bytes.get_string_from_utf16()
+		return TextDecode.utf16(bytes)
 	return bytes.get_string_from_utf8()
 
 ## A line's tokens, split on tab and space (READ: the tokenizer's two

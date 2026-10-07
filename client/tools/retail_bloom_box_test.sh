@@ -24,11 +24,13 @@
 # convert. About 4 minutes. Run it after any change to RetailBloom, WorldFog, the brightness pass
 # or the 3D passes' screen or depth reads.
 #
-# Self-test: OPENSRO_QA_BLOOM_NO_ANCHOR=1 in the environment runs the client with RetailBloom's
-# anchor never shown; checks 1 to 3 must then FAIL (round 707 review).
+# Round 760 (Godot 4.7.2): RetailBloom's 3D anchor is gone -- 4.7.2's GLES3 keeps the back
+# buffer's colour texture (MEASURED round 754: every check passed with the anchor never shown) --
+# and with it the OPENSRO_QA_BLOOM_NO_ANCHOR self-test. The checks stay: they are what would
+# catch the black frame coming back.
 set -u
 D="${1:?client dir}"; O="${2:-/var/tmp/retail-bloom-test.$$}"
-G="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
+G="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64}}"   # round 760: 4.7.2 unless set
 P="${PK2_DIR:-/opt/sro-files/client}"
 mkdir -p "$O"
 fail=0

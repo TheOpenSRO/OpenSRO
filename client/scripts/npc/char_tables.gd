@@ -108,7 +108,7 @@ static func boot(media: Pk2Reader) -> Boot:
 		_entry = null
 	if _boot == null and _boot_task >= 0:
 		var t := Time.get_ticks_usec()
-		WorkerThreadPool.wait_for_task_completion(_boot_task)
+		PoolWait.task(_boot_task)
 		_boot_task = -1
 		last_boot_wait_usec = Time.get_ticks_usec() - t
 		_boot = _boot_box[0]
@@ -129,7 +129,7 @@ static func entry(media: Pk2Reader) -> Entry:
 		_entry = null
 	if _entry == null and _entry_task >= 0:
 		var t := Time.get_ticks_usec()
-		WorkerThreadPool.wait_for_task_completion(_entry_task)
+		PoolWait.task(_entry_task)
 		_entry_task = -1
 		last_entry_wait_usec = Time.get_ticks_usec() - t
 		_entry = _entry_box[0]
@@ -141,11 +141,11 @@ static func entry(media: Pk2Reader) -> Entry:
 ## tree before it asked, World3D._exit_tree).
 static func wait_pending() -> void:
 	if _boot_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_boot_task)
+		PoolWait.task(_boot_task)
 		_boot_task = -1
 		_boot = _boot_box[0]
 	if _entry_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_entry_task)
+		PoolWait.task(_entry_task)
 		_entry_task = -1
 		_entry = _entry_box[0]
 

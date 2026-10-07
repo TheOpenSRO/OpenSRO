@@ -81,7 +81,7 @@ func parse_into(data) -> void:
 	else:
 		var raw: PackedByteArray = data
 		if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
-			text = raw.slice(2).get_string_from_utf16()
+			text = TextDecode.utf16(raw.slice(2))
 		else:
 			text = raw.get_string_from_utf8()
 	for line in text.split("\n"):

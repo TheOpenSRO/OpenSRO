@@ -81,7 +81,7 @@ static func _decode(data: PackedByteArray) -> String:
 	var raw := data
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
 		raw = raw.slice(2)
-	var text := raw.get_string_from_utf16()
+	var text := TextDecode.utf16(raw)
 	if text.is_empty():
 		text = raw.get_string_from_utf8()
 	return text

@@ -158,7 +158,7 @@ version:
 | `/opt/sro-files/client/` | Real archives — `Data.pk2`, `Map.pk2`, `Media.pk2`, plus `sro_client.exe` byte-identical to the image in Ghidra |
 | `/opt/opensro-client/` | A checkout the tools run against. **There is no `rsync` on this box** — use `scp` per file. |
 | `/opt/opensro-server/` | Go checkout; `go` is at `/usr/bin/go` |
-| `/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64` | The engine. Set `GODOT_SILENCE_ROOT_WARNING=1`. |
+| `/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64` | The engine (round 760; the tools' default). `Godot_v4.2.2-stable_linux.x86_64` beside it for older revisions (`GODOT_BIN`). Set `GODOT_SILENCE_ROOT_WARNING=1`. |
 
 Ghidra with the client loaded is on the same box, reachable through the `mcp__ghidra__*` tools.
 Use it — the standing instruction from the user is *"stay true to form and review ghidra if need

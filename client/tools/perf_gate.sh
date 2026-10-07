@@ -109,8 +109,8 @@
 # for a Forward+ base is kept apart from the Compatibility ones (`_fp`).
 #
 # Two Godot binaries (round 754, the 4.7.2 spike): GODOT_BIN (or RENDER_GODOT)
-# is the binary both sides run, 4.2.2 unless set; BASE_GODOT_BIN gives the base
-# side its own. A base on a binary other than the pinned 4.2.2 gets its own
+# is the binary both sides run, 4.7.2 unless set (round 760; 4.2.2 before); BASE_GODOT_BIN
+# gives the base side its own. A base on a binary other than 4.2.2 gets its own
 # shared copy and cache (suffixed with the binary's version), so a 4.2.2 base
 # copy is never re-imported by another version. --ab-env and --ab-renderer run
 # one copy, so they refuse two binaries.
@@ -125,7 +125,8 @@ set -euo pipefail
 
 RENDER_HOST="${RENDER_HOST:-root@192.168.10.78}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
-GODOT_DEFAULT=/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64
+GODOT_DEFAULT=/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64   # round 760 (4.2.2 before)
+GODOT_422=/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64
 GODOT="${GODOT_BIN:-${RENDER_GODOT:-$GODOT_DEFAULT}}"
 BASE_GODOT="${BASE_GODOT_BIN:-$GODOT}"
 PERF_BOX_LOCK="${PERF_BOX_LOCK:-}"
@@ -177,9 +178,10 @@ lane="${PERF_LANE:-$(git rev-parse --abbrev-ref HEAD | tr -c 'a-zA-Z0-9\n' '-')}
 # gate that measures it: shipped and imported once, reused after (the ship and
 # the import were a large part of each gate).
 base_full_rev="$(git rev-parse "$base")"
-# A base on another binary than the pinned one (round 754) is its own copy and cache.
+# A base on another binary than 4.2.2 (round 754) is its own copy and cache: the unsuffixed
+# copies and caches on the box were imported and measured by 4.2.2, the default until round 760.
 gtag=""
-[ "$BASE_GODOT" != "$GODOT_DEFAULT" ] && gtag="-g$(basename "$BASE_GODOT" | sed -n 's/^Godot_v\([0-9.]*\)-.*/\1/p' | tr -d .)"
+[ "$BASE_GODOT" != "$GODOT_422" ] && gtag="-g$(basename "$BASE_GODOT" | sed -n 's/^Godot_v\([0-9.]*\)-.*/\1/p' | tr -d .)"
 box_base="/opt/opensro-client-perf-base-${base_full_rev:0:12}${gtag}"
 box_head="/opt/opensro-client-perf-${lane}-head"
 [ -n "$ab_env" ] && box_base="$box_head"

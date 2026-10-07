@@ -271,13 +271,13 @@ func start_index(shards: Array) -> void:
 ## 4.7 aborts at quit over a task nobody waited for; MusicDirector._exit_tree).
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _task_id >= 0:
-		WorkerThreadPool.wait_for_task_completion(_task_id)
+		PoolWait.task(_task_id)
 		_task_id = -1
 
 ## Collects a finished index; true once the catalog can answer.
 func poll() -> bool:
 	if _state == State.LOADING and _task_id >= 0 and WorkerThreadPool.is_task_completed(_task_id):
-		WorkerThreadPool.wait_for_task_completion(_task_id)
+		PoolWait.task(_task_id)
 		_task_id = -1
 		var rows: Dictionary = _task_result.get("rows", {})
 		var ms := int(_task_result.get("ms", 0))

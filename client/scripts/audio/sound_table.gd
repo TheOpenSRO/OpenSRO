@@ -228,7 +228,7 @@ static func culled(distance_sq: float) -> bool:
 static func parse_character_info(bytes: PackedByteArray) -> Dictionary:
 	var text := ""
 	if bytes.size() >= 2 and bytes[0] == 0xFF and bytes[1] == 0xFE:
-		text = bytes.slice(2).get_string_from_utf16()
+		text = TextDecode.utf16(bytes.slice(2))
 	else:
 		text = latin1(bytes)
 	var out: Dictionary = {}

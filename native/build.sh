@@ -4,7 +4,7 @@
 #   native/build.sh            # linux.x86_64  -> client/native_bin/libopensro_native.so
 #   native/build.sh windows    # windows.x86_64 (x86_64-pc-windows-gnu, mingw-w64) -> opensro_native.dll
 #   native/build.sh linux-release  # the release .so: linked by zig (cargo-zigbuild) against glibc
-#                                  # $GLIBC_FLOOR (2.28, Godot 4.2.2's own floor), native/README.md "CI"
+#                                  # $GLIBC_FLOOR (2.28, Godot's own floor: 4.2.2 and 4.7.2 alike), native/README.md "CI"
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out="$here/../client/native_bin"

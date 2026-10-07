@@ -78,7 +78,7 @@ static func parse(bytes: PackedByteArray) -> Array[Row]:
 	var rows: Array[Row] = []
 	if bytes.is_empty():
 		return rows
-	var text := bytes.get_string_from_utf16() if bytes.size() >= 2 and bytes[0] == 0xFF and bytes[1] == 0xFE else bytes.get_string_from_utf8()
+	var text := TextDecode.utf16(bytes) if bytes.size() >= 2 and bytes[0] == 0xFF and bytes[1] == 0xFE else bytes.get_string_from_utf8()
 	for raw_line in text.split("\n"):
 		var line := raw_line.strip_edges(false, true)
 		if line.begins_with("//") or line.strip_edges() == "":

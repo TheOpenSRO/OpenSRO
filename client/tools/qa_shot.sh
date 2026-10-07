@@ -125,8 +125,8 @@ fi
 
 CLIENT_DIR="${CLIENT_DIR:-/opt/opensro-client}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
-# GODOT_BIN (round 754) picks the binary, e.g. the 4.7.2 spike's; unset, 4.2.2.
-GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
+# GODOT_BIN (round 754) picks the binary; unset, 4.7.2 (round 760; 4.2.2 before, still beside it).
+GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64}}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
