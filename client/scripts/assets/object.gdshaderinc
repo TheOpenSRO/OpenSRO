@@ -162,11 +162,31 @@ vec3 srr_glow(vec3 srr_item, vec2 srr_uv, float srr_time) {
 varying flat vec4 srr_cg_g1;
 varying flat vec4 srr_cg_g2;
 varying flat vec4 srr_cg_g3;
+// The row's option texture (g3.w: its slot + 1, CrowdGpu.GLOW_TEX_SLOTS; 0 is
+// glow_texture), with glow_texture's sampling. A row is one instance's, so
+// the choice is the same over a whole primitive and its quads.
+uniform sampler2D crowd_glow_t0 : hint_default_black, filter_linear_mipmap, repeat_enable;
+uniform sampler2D crowd_glow_t1 : hint_default_black, filter_linear_mipmap, repeat_enable;
+uniform sampler2D crowd_glow_t2 : hint_default_black, filter_linear_mipmap, repeat_enable;
+uniform sampler2D crowd_glow_t3 : hint_default_black, filter_linear_mipmap, repeat_enable;
+vec3 srr_glow_opt(vec2 srr_at, float srr_slot) {
+	int srr_s = int(srr_slot + 0.5);
+	if (srr_s == 1) {
+		return texture(crowd_glow_t0, srr_at).rgb;
+	} else if (srr_s == 2) {
+		return texture(crowd_glow_t1, srr_at).rgb;
+	} else if (srr_s == 3) {
+		return texture(crowd_glow_t2, srr_at).rgb;
+	} else if (srr_s == 4) {
+		return texture(crowd_glow_t3, srr_at).rgb;
+	}
+	return texture(glow_texture, srr_at).rgb;
+}
 vec3 srr_glow_row(vec3 srr_item, vec2 srr_uv, float srr_time, vec4 srr_g1, vec4 srr_g2, vec4 srr_g3) {
 	float srr_ph = mod(srr_time, 2.0 * srr_g1.a) / srr_g1.a;
 	float srr_t = srr_ph <= 1.0 ? srr_ph : 2.0 - srr_ph;
 	vec3 srr_tf = round(mix(srr_g1.rgb, srr_g2.rgb, srr_t) * 255.0) / 255.0;
-	vec3 srr_opt = texture(glow_texture, srr_uv + fract(srr_g3.xy * srr_time)).rgb;
+	vec3 srr_opt = srr_glow_opt(srr_uv + fract(srr_g3.xy * srr_time), srr_g3.w);
 	vec3 srr_s0 = clamp(srr_opt * srr_tf * srr_g2.a, vec3(0.0), vec3(1.0));
 	vec3 srr_s1 = srr_g3.z > 0.5 ? (srr_item + srr_s0 - vec3(0.5)) * 2.0 : srr_item + srr_s0;
 	return clamp(srr_s1, vec3(0.0), vec3(1.0));

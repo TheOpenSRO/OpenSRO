@@ -435,11 +435,12 @@ func _test_glow_rows() -> void:
 	var rows := [[Color(1, 0.2, 0.1), Color(0.3, 0.3, 1), 2.0, 2.0, 0.0, Vector2(0.1, 0.0)],
 		[Color(0.2, 1, 0.1), Color(1, 1, 1), 1.4, 1.0, 1.0, Vector2(0.0, 0.25)]]
 	var opt := ImageTexture.create_from_image(Image.create(4, 4, false, Image.FORMAT_RGBA8))
+	var opt2 := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
 	var glows: Array = []
 	for r in rows:
 		var g := ShaderMaterial.new()
 		g.shader = EquipGlow.glow_shader("back", true)
-		g.set_shader_parameter("glow_texture", opt)
+		g.set_shader_parameter("glow_texture", opt if glows.is_empty() else opt2)
 		g.set_shader_parameter("glow_c1", r[0])
 		g.set_shader_parameter("glow_c2", r[1])
 		g.set_shader_parameter("glow_period", r[2])
@@ -479,7 +480,7 @@ func _test_glow_rows() -> void:
 			if glow_row >= 0:
 				item_groups[g] = true
 				got_rows.append(glow_row)
-	_check(item_groups.size() == 1, "the item at two glow rows draws from ONE group (%d)" % item_groups.size())
+	_check(item_groups.size() == 1, "the item at two glow rows, two option textures, draws from ONE group (%d)" % item_groups.size())
 	_check(got_rows.size() == 3 and got_rows[0] == got_rows[1] and got_rows[2] != got_rows[0],
 		"each instance carries its own row: %s" % str(got_rows))
 	var table_ok := got_rows.size() == 3
@@ -488,14 +489,15 @@ func _test_glow_rows() -> void:
 			var row: int = got_rows[0] if k == 0 else got_rows[2]
 			var o := row * CrowdGpu.GLOW_TEXELS * 4
 			var r: Array = rows[k]
-			var want := [r[0].r, r[0].g, r[0].b, r[2], r[1].r, r[1].g, r[1].b, r[3], r[5].x, r[5].y, r[4]]
+			var want := [r[0].r, r[0].g, r[0].b, r[2], r[1].r, r[1].g, r[1].b, r[3], r[5].x, r[5].y, r[4], float(k + 1)]
 			for i in range(want.size()):
 				if not is_equal_approx(crowd._glow_data[o + i], float(want[i])):
 					table_ok = false
-	_check(table_ok, "the glow table holds each row's c1, period, c2, mul0, scroll and signed2x")
+	_check(table_ok, "the glow table holds each row's c1, period, c2, mul0, scroll, signed2x and texture slot + 1")
 	var twin: ShaderMaterial = (item_groups.keys()[0] as CrowdGpu.Group).material if not item_groups.is_empty() else null
-	_check(twin != null and twin.get_shader_parameter("crowd_glow") == crowd._glow_tex and twin.get_shader_parameter("glow_texture") == opt,
-		"the group's twin reads the glow table and keeps the option texture")
+	_check(twin != null and twin.get_shader_parameter("crowd_glow") == crowd._glow_tex and twin.get_shader_parameter("crowd_glow_t0") == opt
+		and twin.get_shader_parameter("crowd_glow_t1") == opt2,
+		"the group's twin reads the glow table and holds both option textures in its slots")
 	# The shader's row arithmetic is srr_glow's, the uniforms read from the row.
 	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
 	var a := inc.find("vec3 srr_glow(vec3 srr_item")
@@ -504,7 +506,8 @@ func _test_glow_rows() -> void:
 	var b_body := inc.substr(inc.find("{", bpos), inc.find("\n}", bpos) - inc.find("{", bpos))
 	var subst := a_body
 	for pair in [["glow_c1", "srr_g1.rgb"], ["glow_period", "srr_g1.a"], ["glow_c2", "srr_g2.rgb"], ["glow_mul0", "srr_g2.a"],
-			["glow_uv_speed", "srr_g3.xy"], ["glow_signed2x", "srr_g3.z"]]:
+			["glow_uv_speed", "srr_g3.xy"], ["glow_signed2x", "srr_g3.z"],
+			["texture(glow_texture, srr_uv + fract(srr_g3.xy * srr_time)).rgb", "srr_glow_opt(srr_uv + fract(srr_g3.xy * srr_time), srr_g3.w)"]]:
 		subst = subst.replace(pair[0], pair[1])
 	var strip := func(t: String) -> String:
 		var out := PackedStringArray()
@@ -514,6 +517,13 @@ func _test_glow_rows() -> void:
 				out.append(ln)
 		return "\n".join(out)
 	_check(a >= 0 and bpos >= 0 and strip.call(subst) == strip.call(b_body), "srr_glow_row is srr_glow with the row's values for the uniforms")
+	var oi := inc.find("vec3 srr_glow_opt(")
+	var o_body := inc.substr(oi, inc.find("\n}", oi) - oi)
+	_check(oi >= 0 and o_body.contains("texture(crowd_glow_t0, srr_at).rgb") and o_body.contains("texture(crowd_glow_t3, srr_at).rgb")
+		and o_body.contains("return texture(glow_texture, srr_at).rgb;")
+		and inc.contains("uniform sampler2D crowd_glow_t0 : hint_default_black, filter_linear_mipmap, repeat_enable;")
+		and inc.contains("uniform sampler2D glow_texture : hint_default_black, filter_linear_mipmap, repeat_enable;"),
+		"the row's option texture is sampled as glow_texture is (the same hints), slot 0 the twin's own")
 	for sk in skels:
 		crowd.remove(sk)
 		var h: Node = (sk as Node).get_parent()

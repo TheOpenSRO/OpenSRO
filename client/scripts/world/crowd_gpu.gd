@@ -1729,8 +1729,15 @@ func _twin(src: ShaderMaterial, l: Layout, key_in: String = "") -> ShaderMateria
 ## colours, period and scroll split most of the far groups.
 const GLOW_ROW_PARAMS := ["glow_c1", "glow_c2", "glow_period", "glow_mul0", "glow_signed2x", "glow_uv_speed"]
 ## The glow table: 3 texels a row -- (c1, period), (c2, mul0), (uv speed,
-## signed2x, 0) -- in `crowd_glow` (crowd_gpu.gdshaderinc).
+## signed2x, texture slot + 1: 0 is the twin's own glow_texture) -- in
+## `crowd_glow` (crowd_gpu.gdshaderinc).
 const GLOW_TEXELS := 3
+## The option textures a glow row may name per instance, as the glow twins'
+## samplers crowd_glow_t0..3 (object.gdshaderinc). MEASURED live: the swarm's
+## glows use 4 (three 256 x 256, one 1024 x 1024), so no Texture2DArray (one
+## size); a fifth and later stay their twin's own glow_texture, in its key.
+const GLOW_TEX_SLOTS := 4
+var _glow_texs: Array = []
 var _glow_index := {}         # the row's values (their bytes, hex) -> row
 var _glow_data := PackedFloat32Array()
 var _glow_count := 0
@@ -1757,7 +1764,8 @@ func _glow_row(glow: ShaderMaterial) -> int:
 	var mul0 := float(mv) if mv != null else 1.0
 	var signed2x := float(sv) if sv != null else 0.0
 	var uv: Vector2 = uvv if uvv is Vector2 else Vector2.ZERO
-	var vals := PackedFloat32Array([c1.x, c1.y, c1.z, period, c2.x, c2.y, c2.z, mul0, uv.x, uv.y, signed2x, 0.0])
+	var slot := _glow_tex_slot(glow.get_shader_parameter("glow_texture"))
+	var vals := PackedFloat32Array([c1.x, c1.y, c1.z, period, c2.x, c2.y, c2.z, mul0, uv.x, uv.y, signed2x, float(slot + 1)])
 	var key := vals.to_byte_array().hex_encode()
 	var got = _glow_index.get(key)
 	if got != null:
@@ -1768,6 +1776,22 @@ func _glow_row(glow: ShaderMaterial) -> int:
 	_glow_data.append_array(vals)
 	_upload_glow()
 	return row
+
+## The slot (0..GLOW_TEX_SLOTS-1) of the option texture `tex` among the glow
+## twins' samplers, taken when new and free (and set on every glow twin); -1
+## when `tex` is none or the slots are full (its twin keeps it as its own).
+func _glow_tex_slot(tex) -> int:
+	if not (tex is Texture2D):
+		return -1
+	var i := _glow_texs.find(tex)
+	if i >= 0 or _glow_texs.size() >= GLOW_TEX_SLOTS:
+		return i
+	_glow_texs.append(tex)
+	i = _glow_texs.size() - 1
+	for k in _twins:
+		if String(k).begins_with("g|"):
+			(_twins[k] as ShaderMaterial).set_shader_parameter("crowd_glow_t%d" % i, tex)
+	return i
 
 ## The glow table to the GPU, on the twins when it is re-made (taller).
 func _upload_glow() -> void:
@@ -1795,8 +1819,10 @@ func _glow_twin(glow: ShaderMaterial, l: Layout) -> Array:
 			names.append(String(u["name"]))
 		_uniform_names[glow.shader] = names
 	var sig := PackedStringArray([str(glow.shader.get_instance_id()), str(glow.render_priority)])
+	# The option texture leaves the key when it has a slot (per instance).
+	var slotted := _glow_tex_slot(glow.get_shader_parameter("glow_texture")) >= 0
 	for n in names:
-		if n in GLOW_ROW_PARAMS or n.begins_with("crowd_"):
+		if n in GLOW_ROW_PARAMS or n.begins_with("crowd_") or (slotted and n == "glow_texture"):
 			continue
 		var v = glow.get_shader_parameter(n)
 		sig.append(str(v.get_instance_id()) if v is Object else str(v))
@@ -1809,7 +1835,11 @@ func _glow_twin(glow: ShaderMaterial, l: Layout) -> Array:
 		# signature's textures are held by the twin itself.
 		if held == null or (held is ShaderMaterial and (held as ShaderMaterial).shader == glow.shader):
 			return [got, tk]
-	return [_twin(glow, l, tk), tk]
+	var t := _twin(glow, l, tk)
+	if t != null:
+		for i in range(_glow_texs.size()):
+			t.set_shader_parameter("crowd_glow_t%d" % i, _glow_texs[i])
+	return [t, tk]
 
 ## Whether a shader blends: a `blend_` render mode (ObjectLoader._mod_shader's
 ## MTRL blends, AppearFade's fade twins). Cached per shader.
