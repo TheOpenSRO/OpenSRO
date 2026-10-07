@@ -3065,6 +3065,9 @@ var _qa_minimap_off := false
 
 func _refresh_minimap() -> void:
 	if player == null or _hud_minimap == null or not is_instance_valid(_hud_minimap) or _qa_minimap_off:
+		# Round 757: no minimap to write to (no HUD, a QA run): the moves it
+		# would have taken are not kept.
+		_minimap_moved.clear()
 		return
 	var pos := player.global_position
 	var local := Vector3.ZERO
