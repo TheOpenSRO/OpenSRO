@@ -64,6 +64,10 @@ const NEAR_HYSTERESIS := 1.25
 ## The near set is re-chosen every this many frames, from a scan spread over
 ## them (OURS, as EquipFx.RESELECT_FRAMES).
 const RESELECT_FRAMES := 10
+## Round 757 (OURS): World3D's near/far scan reads at most this many bodies a
+## frame; past 2,000 bodies a cycle takes longer than RESELECT_FRAMES (7,000:
+## 35 frames, about 0.6 s at 60 fps).
+const SCAN_PER_FRAME_MAX := 200
 ## Bodies switched to the GPU a frame at most, and the time they may take
 ## (OURS): a switch walks the body's parts and adds an instance per part
 ## (docs/rounds/r747.md has what one costs).
@@ -73,8 +77,11 @@ const SWITCH_BUDGET_USEC := 3000
 ## frames bakes over a few frames; a body waiting on its clip stays near.
 const BAKE_BUDGET_USEC := 4000
 ## Every far body's transform is re-read at least every this many frames (OURS),
-## besides the moves World3D reports (moved()).
-const REFRESH_FRAMES := 15
+## besides the moves World3D reports (moved()). Round 757: 15 -> 60. Every
+## path that moves a holder reports it (World3D._other_moved), so the spread
+## re-read is a safety net; at 7,000 far bodies 15 frames was 467 re-reads a
+## frame (part of `g_flush`'s 1.7 ms, MEASURED).
+const REFRESH_FRAMES := 60
 const SLOTS_PER_ROW := 256
 const TEXELS_PER_BODY := 4
 const FLOATS_PER_BODY := TEXELS_PER_BODY * 4
@@ -657,8 +664,14 @@ func _grow_aabb(at: Vector3) -> void:
 	# Grown with a margin, so a walking crowd does not reset every group often.
 	_aabb = _aabb.grow(16.0)
 	_aabb_set = true
+	if _qa_log:
+		printerr("QA CROWDGPU aabb grown: %d groups" % _groups.size())
 	for k in _groups:
 		RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
+
+## Round 757 (QA): the AABB writes logged, to place the engine's
+## `!is_geometry_instance` errors (40 a boot, from instance_set_custom_aabb).
+static var _qa_log := OS.get_environment("OPENSRO_QA_CROWDGPU_LOG") != ""
 
 ## Re-measures the bounds from every far body (World3D's cycle end).
 func reset_aabb() -> void:
@@ -670,11 +683,22 @@ func reset_aabb() -> void:
 		var p: Vector3 = (_bodies[skel] as Body).xf.origin
 		lo = Vector3(minf(lo.x, p.x), minf(lo.y, p.y), minf(lo.z, p.z))
 		hi = Vector3(maxf(hi.x, p.x), maxf(hi.y, p.y), maxf(hi.z, p.z))
+	reset_aabb_to(lo, hi)
+
+## Round 757: the bounds from the far bodies' places as the caller's cycle
+## scanned them (World3D: one cycle's scan reads every body anyway), so the
+## cycle's end does not walk every far body again. A body that moved since is
+## inside the grown margin, or grows the box itself (_grow_aabb).
+func reset_aabb_to(lo: Vector3, hi: Vector3) -> void:
+	if _bodies.is_empty():
+		return
 	var box := AABB(lo - Vector3(12.0, 2.0, 12.0), hi - lo + Vector3(24.0, 26.0, 24.0)).grow(16.0)
 	if _aabb_set and _aabb.encloses(box) and _aabb.get_volume() < box.get_volume() * 4.0:
 		return
 	_aabb = box
 	_aabb_set = true
+	if _qa_log:
+		printerr("QA CROWDGPU aabb reset: %d groups" % _groups.size())
 	for k in _groups:
 		RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
 
@@ -770,14 +794,16 @@ func _layout_for(skel: Skeleton3D) -> Layout:
 			return null
 		l.binds.append(base.get_bind_pose(i))
 		l.rests.append(skel.get_bone_global_rest(i))
-	var scratch := skel.duplicate(0) as Skeleton3D
-	for c in scratch.get_children():
-		scratch.remove_child(c)
-		c.free()
-	scratch.visible = true
-	for m in scratch.get_meta_list():
-		if m != MonsterCrowd.META_LAYOUT:
-			scratch.remove_meta(m)
+	# Round 757: the bones alone (CharacterAppearance._bare_skeleton: names,
+	# parents, rests, every pose at rest, the transform), not a duplicate of the
+	# live body. Node.duplicate() copied the body's children too -- among them
+	# its weapons' particle nodes, whose `custom_aabb` it sets before their
+	# `multimesh` (base-class properties first), so the RenderingServer refused
+	# each with "!is_geometry_instance" (renderer_scene_cull.cpp l. 1019, READ):
+	# the 40 engine errors of every crowd boot, 20 a layout (MEASURED: traced
+	# with unbuffered QA prints, round 757).
+	var scratch := CharacterAppearance._bare_skeleton(skel)
+	scratch.set_meta(MonsterCrowd.META_LAYOUT, key)
 	l.scratch = scratch
 	_layouts[key] = l
 	return l
@@ -1071,6 +1097,8 @@ func _add_part(b: Body, p: Dictionary) -> void:
 		RenderingServer.instance_set_layer_mask(g.inst, int(p["layers"]))
 		RenderingServer.instance_set_pivot_data(g.inst, float(p["sort"]), true)
 		if _aabb_set:
+			if _qa_log:
+				printerr("QA CROWDGPU aabb on a new group %s" % key)
 			RenderingServer.instance_set_custom_aabb(g.inst, _aabb)
 		g.twin_key = String(p["twin_key"])
 		_twin_users[g.twin_key] = int(_twin_users.get(g.twin_key, 0)) + 1

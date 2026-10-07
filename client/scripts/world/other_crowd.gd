@@ -130,10 +130,18 @@ class BuildQueue:
 	const INDEX_MASK := (1 << 20) - 1
 	const DIST_KEY_MAX := 4.0e12
 
+	## The frame the dressing aims to stay under (HITCH_TARGET_USEC);
+	## OPENSRO_QA_OTHER_BUILD_HITCH_MS overrides it (round 757, QA only: a
+	## 7,000-body lineup otherwise takes about 8 minutes to dress, MEASURED).
+	var hitch_usec := HITCH_TARGET_USEC
+
 	func _init() -> void:
 		var qa := OS.get_environment("OPENSRO_QA_OTHER_BUILD_BUDGET_MS")
 		if qa.is_valid_float():
 			budget_usec = int(float(qa) * 1000.0)
+		var qh := OS.get_environment("OPENSRO_QA_OTHER_BUILD_HITCH_MS")
+		if qh.is_valid_float():
+			hitch_usec = int(float(qh) * 1000.0)
 
 	func queue(id: int) -> void:
 		_fresh.append(id)
@@ -173,7 +181,7 @@ class BuildQueue:
 	## frames' budget becomes HITCH_TARGET_USEC less that frame without its
 	## dressing, within [0, budget_usec].
 	func note_frame(frame_usec: int) -> void:
-		_frame_cap = clampi(HITCH_TARGET_USEC - (frame_usec - last_spent), 0, budget_usec)
+		_frame_cap = clampi(hitch_usec - (frame_usec - last_spent), 0, budget_usec)
 		last_spent = 0
 
 	## This frame's budget: budget_usec, or less after note_frame.

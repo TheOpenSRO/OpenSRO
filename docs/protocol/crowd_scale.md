@@ -487,6 +487,25 @@ Every lane:
 - runs the probe at 200 and 1000 (`docs/rounds/r736.md`, "How to rerun");
 - puts the before and after `QA CROWD step` lines in its round.
 
+### Round 757: the main thread at 1,000 / 3,000 / 7,000
+
+`docs/rounds/r757.md`. The user's crowd ran on one core with the GPU at 10-13 %. Most of the frame
+was the engine working for us on the main thread, multiplied by the physics step spiral:
+
+- **Every body and item `Skeleton3D` had a physics-step callback** (18,035 at 7,000): Godot
+  4.2.2's `Node.duplicate()` sets `animate_physical_bones`, whose setter turns the skeleton's
+  internal physics process on. Off at build (`Skeleton3DBuilder.no_physics_step`).
+- **Name plates**: one `Label3D` each, with its own materials, 14,000 draws at 7,000. Now batched
+  (`NamePlateBatch`), the 300 rule in the shader.
+- **The minimap**: a `TextureRect` per sign, refilled from every body each frame. Now one
+  MultiMesh a kind (`MinimapSigns`), written as bodies move.
+- Per-frame loops over every body made event-driven or capped; the walkers' landing heights on
+  `WorkerThreadPool` (`HeightBatch`).
+
+7,000 standing (the dense lineup, 1080p, RX 7600): 99-103 -> 16.2-16.5 ms; 3,000: 46 -> 11.9;
+1,000: 17.7 -> 9.7. Rendering on its own thread crashes on 4.2.2 (an `AnimatedTexture` re-enters
+the draw on the render thread): left off, OPEN for the 4.7.2 spike.
+
 ## 6. OPEN
 
 - The LOD index lists' source, and the selector at draw time (`ResObject::FUN_00be3540`).

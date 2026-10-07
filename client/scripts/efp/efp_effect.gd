@@ -261,7 +261,12 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		mmi.multimesh = mm
 		mmi.material_override = material_for(tex, n.state, billboard)
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mmi.custom_aabb = DRAW_AABB
+		# Round 757: given to the RenderingServer, not stored on the node: a
+		# Node.duplicate() of a body (the portrait, CrowdGpu's layout until this
+		# round) copies a stored `custom_aabb` before the `multimesh`, and the
+		# server refuses it with "!is_geometry_instance" (READ,
+		# renderer_scene_cull.cpp l. 1019). The draw is the same.
+		RenderingServer.instance_set_custom_aabb(mmi.get_instance(), DRAW_AABB)
 		mmi.name = "node_%d" % tp.index
 		fx.add_child(mmi)
 		fx._draws.append([tp.index, mmi, view])
@@ -534,7 +539,8 @@ static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture:
 	mi.mesh = ArrayMesh.new()
 	mi.material_override = link_material_for(tex, n.state)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.custom_aabb = DRAW_AABB
+	# Round 757: not a stored property (the node above's note).
+	RenderingServer.instance_set_custom_aabb(mi.get_instance(), DRAW_AABB)
 	mi.name = "link_%d" % tp.index
 	fx.add_child(mi)
 	var kind := 2 if mode == "RenderLinkObj" else (1 if mode == "RenderLinkPipe" else 0)

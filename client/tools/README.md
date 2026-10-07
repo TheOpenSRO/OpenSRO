@@ -496,6 +496,23 @@ physics step, EquipFx's `fx_driver` / `fx_effects`, `rs_setup` the draw's scene 
 (`frame_split.gd`'s header has the source lines). `QA DRESS` lines name every body whose dressing
 took over 40 ms, by phase.
 
+**Threads, cores and the GPU (round 757).** `CROWD_SAMPLE=1` also samples, every half second, the
+client's threads' CPU (`/proc/<pid>/task`), the box's cores (`/proc/stat`) and the GPU
+(`gpu_sample`), and prints one `QA THREADS <step>` line per step from the step's own wall-clock
+window (`unix=` on the step line): `main` (the main thread, in cores), `others` (every other
+thread together), `box_busy` (all processes) and `gpu_gfx`. `crowd_threads.py` does the sampling
+and the report. Other switches: `CROWD_GODOT_ARGS` (`--render-thread separate`), `CROWD_TIMEOUT`,
+`CROWD_NOWAIT=1` (an error-count run that need not wait for other lanes). The census adds which
+nodes physics-process or process, by class (round 757 found 18,035 `Skeleton3D`s there).
+
+**The main thread natively (round 757).** The box cannot run `perf` (the host's
+`perf_event_paranoid` is 4). `main_thread_stacks.py sample <client dir> <out> <s>` takes the
+main thread's stack with `eu-stack` four times a second; `report <out> <t0> <t1>` gives each
+function's share. Use it with a Godot built with symbols (round 757: 4.2.2-stable
+`template_release production=yes lto=none debug_symbols=yes`, about 6 minutes on the box at -j10;
+pass it as `GODOT=` to `crowd_run.sh`). GDScript functions show as `GDScriptFunction::call`; the
+probe's `FrameSplit` labels name those.
+
 ### Release checks (round 668)
 
 - `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that

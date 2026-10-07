@@ -167,6 +167,8 @@ static func _refresh_text(window: Window) -> void:
 	# classes, so it is not propagated through the 3D world.
 	for n in window.find_children("*", "Control", true, false):
 		n.notification(Control.NOTIFICATION_THEME_CHANGED)
+	# Round 757: the batched plates (NamePlateBatch) are shaped again too.
+	NamePlateBatch.generation += 1
 	for n in window.find_children("*", "Label3D", true, false):
 		var plate := n as Label3D
 		var fs := plate.font_size

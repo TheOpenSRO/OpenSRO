@@ -79,6 +79,16 @@ class Sweep:
 	func size() -> int:
 		return _plates.size() + _fresh.size()
 
+	## Stops testing `label` (round 757: a plate NamePlateBatch draws).
+	func drop(label: Node3D) -> void:
+		var i := _plates.find(label)
+		if i >= 0:
+			_plates[i] = _plates[_plates.size() - 1]
+			_plates.pop_back()
+		i = _fresh.find(label)
+		if i >= 0:
+			_fresh.remove_at(i)
+
 	## One frame's share: every fresh plate, then the next
 	## max(MIN_PER_FRAME, ceil(size / SWEEP_FRAMES)) of the rest (at most all
 	## of them once). A freed plate

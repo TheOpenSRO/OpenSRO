@@ -43,8 +43,28 @@ class_name Skeleton3DBuilder
 ## is added first with an identity rest transform (its own bind-pose
 ## transform bytes are parsed but not retained by BskReader -- see
 ## bsk_reader.gd).
+## Round 757: a skeleton the client builds has no physical bones, so it needs
+## no callback in every physics step. READ, Godot 4.2.2 skeleton_3d.cpp
+## l. 303-315 and 660-671: Skeleton3D's internal physics process only walks
+## its bones for PhysicalBone3D children, and `set_animate_physical_bones`
+## switches it on for any skeleton outside the editor -- including the setter
+## Node.duplicate() calls when it copies the property (default true) onto every
+## body and item skeleton duplicated from a template. MEASURED (round 757, the
+## 7,000-body lineup): 18,035 Skeleton3Ds were physics-processing, about 5 ms a
+## physics step of engine callbacks outside every script (FrameSplit's phys_cb
+## less World3D's own). Turned off here, on the template, the copies inherit
+## it. On Godot 4.3+ the property moved to PhysicalBoneSimulator3D and a
+## Skeleton3D does not physics-process for it: there this does nothing that
+## matters (it is a 4.2.2 engine behaviour, not a project workaround for a
+## bug).
+static func no_physics_step(skeleton: Skeleton3D) -> void:
+	if "animate_physical_bones" in skeleton:
+		skeleton.set("animate_physical_bones", false)
+	skeleton.set_physics_process_internal(false)
+
 static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 	var skeleton := Skeleton3D.new()
+	no_physics_step(skeleton)
 	var world_positions := SkeletonPose.bind_positions(skel)
 	var world_rotations := {}
 	for b in skel.bones:

@@ -38,6 +38,20 @@ class_name FrameSplit
 static var on := false
 static var usec: Dictionary = {}
 
+## Round 757: whether the RenderingServer draws on its own thread (the
+## project's rendering/driver/threads/thread_model 2, or `--render-thread
+## separate` on the command line, which main.cpp l. 1201-1209 reads first).
+## Then RenderingServer's frame_pre_draw / frame_post_draw are emitted on the
+## render thread (rendering_server_default.cpp l. 71-120, READ, 4.2.2), so the
+## split does not listen to them, and a script getter on the server waits for
+## the render thread (command_queue push_and_ret).
+static func render_threaded() -> bool:
+	var args := OS.get_cmdline_args()
+	var i := args.find("--render-thread")
+	if i >= 0 and i + 1 < args.size():
+		return args[i + 1] == "separate"
+	return int(ProjectSettings.get_setting("rendering/driver/threads/thread_model", 1)) == 2
+
 static func add(label: String, us: int) -> void:
 	usec[label] = int(usec.get(label, 0)) + us
 
@@ -81,8 +95,13 @@ func install(root: Node) -> void:
 	_last.process_physics_priority = PRIORITY
 	root.add_child(_first)
 	root.add_child(_last)
-	RenderingServer.frame_pre_draw.connect(func() -> void: event("D0"))
-	RenderingServer.frame_post_draw.connect(func() -> void: event("D1"))
+	# Round 757: with the render on its own thread these signals come from
+	# that thread; `post_flush` is then everything from the last _process to
+	# the next frame's first callback (the flush, the wait for the previous
+	# frame's draw in RenderingServer.sync, the draw's push, the tail).
+	if not render_threaded():
+		RenderingServer.frame_pre_draw.connect(func() -> void: event("D0"))
+		RenderingServer.frame_post_draw.connect(func() -> void: event("D1"))
 
 ## The segment between two events, by (previous, this).
 static func segment(prev: String, cur: String) -> String:
@@ -94,7 +113,9 @@ static func segment(prev: String, cur: String) -> String:
 		"R0":
 			return "proc_cb" if cur == "R1" else ""
 		"R1":
-			return "post_flush" if cur == "D0" else ""
+			if cur == "D0":
+				return "post_flush"
+			return "post_flush" if cur == "P0" or cur == "R0" else ""
 		"D0":
 			return "draw" if cur == "D1" else ""
 		"D1":

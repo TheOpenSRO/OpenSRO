@@ -3060,8 +3060,11 @@ func _fill_party_marks(here_region: Vector2i) -> void:
 			_party_marks_mini[im] = at
 			im += 1
 
+## QA (round 757, QaCrowdProbe's `minimap` step): the minimap not refreshed.
+var _qa_minimap_off := false
+
 func _refresh_minimap() -> void:
-	if player == null or _hud_minimap == null or not is_instance_valid(_hud_minimap):
+	if player == null or _hud_minimap == null or not is_instance_valid(_hud_minimap) or _qa_minimap_off:
 		return
 	var pos := player.global_position
 	var local := Vector3.ZERO
@@ -3093,7 +3096,9 @@ func _refresh_minimap() -> void:
 	# own test still decides the edge).
 	var reach := HudMinimap.SIGN_RADIUS / maxf(_hud_minimap.tile_px(), 0.001) * HudMinimap.REGION_SPAN * 1.01
 	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
-	_minimap_fill_positions(_other_bodies, _minimap_others, pos, reach)
+	# Round 757: the other players' signs are kept by the minimap and written
+	# as bodies move (_other_moved), not refilled from every body each frame.
+	_minimap_others_sync()
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
 	_fill_party_marks(_minimap_region)
 	_hud_minimap.update_party(Vector2(local.x, local.z), _party_marks_mini)
@@ -3108,6 +3113,56 @@ func _refresh_minimap() -> void:
 	if _qa_walk != "" and _zone_label_tick % 30 == 0:
 		print("QA MINIMAP %d/%d local (%.0f, %.0f) facing (%.2f, %.2f) arrow %.0f deg" % [
 			rx, ry, local.x, local.z, facing.x, facing.y, rad_to_deg(HudMinimap.arrow_rotation(facing))])
+
+## Round 757: the other players' minimap signs, kept up to date from the moves
+## reported this frame (_other_moved) and a spread re-read of
+## MINIMAP_RESCAN_FRAMES (a body moved or hidden by a path that does not report,
+## an arrival, a departure). MEASURED at 7,000: the per-frame fill over every
+## body and the 7,000 TextureRects were 8.45 ms a frame.
+const MINIMAP_RESCAN_FRAMES := 60
+var _minimap_moved := {}
+var _minimap_scan: Array = []
+var _minimap_scan_at := 0
+var _minimap_sign_ids: Array = []
+var _minimap_sign_at := 0
+
+func _minimap_others_sync() -> void:
+	for b in _minimap_moved:
+		if is_instance_valid(b):
+			_minimap_put_other(b as Node3D)
+	_minimap_moved.clear()
+	# The spread re-read: every body once in MINIMAP_RESCAN_FRAMES refreshes.
+	if _minimap_scan_at >= _minimap_scan.size():
+		_minimap_scan = _other_bodies.keys()
+		_minimap_scan_at = 0
+	var per := ceili(float(_minimap_scan.size()) / float(MINIMAP_RESCAN_FRAMES))
+	var end := mini(_minimap_scan_at + per, _minimap_scan.size())
+	while _minimap_scan_at < end:
+		var body = _other_bodies.get(_minimap_scan[_minimap_scan_at])
+		_minimap_scan_at += 1
+		if body != null and is_instance_valid(body):
+			_minimap_put_other(body as Node3D)
+	# And the signs whose body is gone (a departure the leave path dropped
+	# already, or a body taken out some other way).
+	if _minimap_sign_at >= _minimap_sign_ids.size():
+		_minimap_sign_ids = _hud_minimap.other_ids()
+		_minimap_sign_at = 0
+	per = ceili(float(_minimap_sign_ids.size()) / float(MINIMAP_RESCAN_FRAMES))
+	end = mini(_minimap_sign_at + per, _minimap_sign_ids.size())
+	while _minimap_sign_at < end:
+		var id: int = int(_minimap_sign_ids[_minimap_sign_at])
+		_minimap_sign_at += 1
+		var body = _other_bodies.get(id)
+		if body == null or not is_instance_valid(body):
+			_hud_minimap.drop_other(id)
+
+func _minimap_put_other(body: Node3D) -> void:
+	if not body.has_meta("character_id") or not body.is_inside_tree():
+		return
+	var id := int(body.get_meta("character_id"))
+	if _other_bodies.get(id) != body:
+		return
+	_hud_minimap.put_other(id, body.global_position, body.visible or _objects_hidden)
 
 ## Fills `out` (kept, cleared and refilled) with the world positions of the live bodies in an id -> Node3D map (monsters,
 ## other players), skipping ones that are gone or hidden (a dead monster).
@@ -6104,11 +6159,15 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	for character_id in _other_bodies.keys():
 		_other_bodies[character_id].queue_free()
 	_other_bodies.clear()
+	_minimap_moved.clear()
+	if _hud_minimap != null and is_instance_valid(_hud_minimap):
+		_hud_minimap.clear_others()
 	_other_legs.clear() # round 749
 	_other_heights_pending.clear()
 	_other_gaits.clear()
 	_other_hint_by_skel.clear()
 	_other_settled.clear()
+	_other_awake.clear()
 	_other_seated.clear()
 	# Round 739: and their queued dressing and their uids.
 	_other_builds.clear()
@@ -6665,11 +6724,21 @@ var _crowd_cull := MonsterCrowd.CullCache.new()
 ## back at once when something needs it (_crowd_wake), posed where its clip
 ## is, so it draws the same frame.
 var _crowd_gpu: CrowdGpu = null
-## This cycle's scan: the character ids, how far it has got, and per id
-## [distance from the camera, in view, eligible].
+## This cycle's scan: the character ids, how far it has got, and per scanned
+## body (round 757: parallel packed arrays, not a Dictionary of Arrays, so the
+## cycle's choice is one cheap pass) its id, distance from the camera, flags
+## (CROWD_GOT_*), skeleton; and the far bodies' bounds.
 var _crowd_scan: Array = []
 var _crowd_scan_at := 0
-var _crowd_scan_got := {}
+var _crowd_got_ids := PackedInt64Array()
+var _crowd_got_dist := PackedFloat32Array()
+var _crowd_got_flags := PackedByteArray()
+var _crowd_got_skels: Array = []
+var _crowd_far_lo := Vector3.INF
+var _crowd_far_hi := -Vector3.INF
+const CROWD_GOT_ELIGIBLE := 1
+const CROWD_GOT_SEEN := 2
+const CROWD_GOT_FAR := 4
 ## This cycle's bodies that must stay near, by reason (QA: CrowdGpu.describe).
 var _crowd_why := {}
 var _crowd_cycle_frame := 0
@@ -6702,10 +6771,14 @@ func _crowd_eligible(character_id: int, node: Node3D, skel: Skeleton3D) -> Strin
 	if bool(node.get_meta(CharacterBlobs.META_DETAIL, false)):
 		return "detail"
 	# An effect on the body follows a bone of the posed skeleton
-	# (EfpEffect.follow_host; crowd_gpu.md section 3).
-	for c in node.get_children():
-		if c is EfpEffect:
-			return "effect"
+	# (EfpEffect.follow_host; crowd_gpu.md section 3). Round 757: a dressed
+	# body holds its skeleton, its plate and its click body; only a body with
+	# more is looked through (get_children() builds an Array a call, and this
+	# runs for every body each cycle).
+	if node.get_child_count() > 3:
+		for c in node.get_children():
+			if c is EfpEffect:
+				return "effect"
 	return ""
 
 ## Once a rendered frame, after the others have moved (_process): a slice of
@@ -6728,12 +6801,22 @@ func _crowd_gpu_step() -> void:
 	_crowd_frame += 1
 	if _crowd_scan.is_empty() and _crowd_scan_at == 0:
 		_crowd_scan = _other_gaits.keys()
-		_crowd_scan_got.clear()
+		_crowd_got_ids.clear()
+		_crowd_got_dist.clear()
+		_crowd_got_flags.clear()
+		_crowd_got_skels.clear()
+		_crowd_far_lo = Vector3.INF
+		_crowd_far_hi = -Vector3.INF
 		_crowd_cycle_frame = _crowd_frame
+	var fs := FrameSplit.on
+	var gt := Time.get_ticks_usec() if fs else 0
 	var eye := cam.global_position
 	var listener := _crowd_listener()
 	var planes: Array = cam.get_frustum()
-	var per := ceili(float(_crowd_scan.size()) / float(CrowdGpu.RESELECT_FRAMES))
+	# Round 757 (OURS): at most CrowdGpu.SCAN_PER_FRAME_MAX bodies a frame, so
+	# a very large crowd's cycle runs longer than RESELECT_FRAMES instead of
+	# scanning more a frame (MEASURED at 7,000: 700 bodies a frame, 4.4 ms).
+	var per := mini(ceili(float(_crowd_scan.size()) / float(CrowdGpu.RESELECT_FRAMES)), CrowdGpu.SCAN_PER_FRAME_MAX)
 	var end := mini(_crowd_scan_at + per, _crowd_scan.size())
 	while _crowd_scan_at < end:
 		var id: int = int(_crowd_scan[_crowd_scan_at])
@@ -6744,10 +6827,14 @@ func _crowd_gpu_step() -> void:
 			continue
 		var skel: Skeleton3D = gait["skeleton"]
 		var at := (node as Node3D).global_position
+		# In view: counted for the QA line only (the choice is by distance, in
+		# view or not), so measured only while the probe's split runs (round 757).
+		# (The cull cache's entry is made here too: CrowdAnim.META_CACHED, which
+		# _crowd_eligible asks for.)
 		var info: Array = _crowd_cull.info(skel)
-		var r: float = info[0] if info.size() == CrowdAnim.PLAYER_INFO_SIZE else 20.0
-		var seen := planes.size() == 6
+		var seen := fs and planes.size() == 6
 		if seen:
+			var r: float = info[0] if info.size() == CrowdAnim.PLAYER_INFO_SIZE else 20.0
 			for p in planes:
 				if (p as Plane).distance_to(at) > r:
 					seen = false
@@ -6769,19 +6856,44 @@ func _crowd_gpu_step() -> void:
 					cinfo[1] = 0.0 if heard else 1.0
 				if heard:
 					fb.sound_due = -INF
+					_sound_schedule(fb)
 				else:
 					fb.sound_due = INF
 					_anim_sounds.rest(skel)
-		_crowd_scan_got[id] = [eye.distance_to(at), seen, why == ""]
+		var far := fb != null
+		if far:
+			_crowd_far_lo = Vector3(minf(_crowd_far_lo.x, at.x), minf(_crowd_far_lo.y, at.y), minf(_crowd_far_lo.z, at.z))
+			_crowd_far_hi = Vector3(maxf(_crowd_far_hi.x, at.x), maxf(_crowd_far_hi.y, at.y), maxf(_crowd_far_hi.z, at.z))
+		_crowd_got_ids.append(id)
+		_crowd_got_dist.append(eye.distance_to(at))
+		_crowd_got_flags.append((CROWD_GOT_ELIGIBLE if why == "" else 0) | (CROWD_GOT_SEEN if seen else 0) | (CROWD_GOT_FAR if far else 0))
+		_crowd_got_skels.append(skel)
+	if fs:
+		gt = _fs_lap("g_scan", gt)
 	if _crowd_frame - _crowd_cycle_frame >= CrowdGpu.RESELECT_FRAMES - 1 and _crowd_scan_at >= _crowd_scan.size():
 		crowd.ineligible = _crowd_why
 		_crowd_why = {}
 		_crowd_choose()
 		_crowd_scan = []
 		_crowd_scan_at = 0
+	if fs:
+		gt = _fs_lap("g_choose", gt)
 	_crowd_switch_due()
+	if fs:
+		gt = _fs_lap("g_switch", gt)
 	crowd.flush(_idle_anim_time)
+	if fs:
+		gt = _fs_lap("g_flush", gt)
 	_crowd_sound_step()
+	if fs:
+		_fs_lap("g_sound", gt)
+
+## Round 757 (QA, FrameSplit): adds the time since `since` under `label` and
+## returns now.
+static func _fs_lap(label: String, since: int) -> int:
+	var now := Time.get_ticks_usec()
+	FrameSplit.add(label, now - since)
+	return now
 
 ## The sound listener (AudioService: the player), as the clip tick's.
 func _crowd_listener() -> Vector3:
@@ -6797,24 +6909,92 @@ func _crowd_listener() -> Vector3:
 ## it (every sitting loop, most stand sets) never is. So a standing crowd
 ## costs one compare a body a frame, a running one about two advances a body
 ## a second.
+##
+## Round 757: the bodies come due from a timing wheel (_sound_wheel: 0.1 s
+## buckets of the clip clock), not from a pass over every heard body each frame
+## (MEASURED at 7,000, every body within 600: 3.1 ms a frame for the pass). A
+## write of a body's sound_due schedules it (_sound_schedule); a spread
+## re-check of SOUND_RESCAN_FRAMES catches a write that did not.
+const SOUND_WHEEL_HZ := 10.0
+const SOUND_RESCAN_FRAMES := 30
+var _sound_wheel := {}
+var _sound_wheel_at := -1
+var _sound_ring: Array = []
+var _sound_ring_at := 0
+
+func _sound_schedule(b: CrowdGpu.Body) -> void:
+	if b == null or b.sound_due == INF:
+		return
+	var k := _sound_wheel_at
+	if b.sound_due != -INF:
+		k = maxi(int(floor(b.sound_due * SOUND_WHEEL_HZ)), _sound_wheel_at)
+	var bucket: Array = _sound_wheel.get(k, [])
+	if bucket.is_empty():
+		_sound_wheel[k] = bucket
+	bucket.append(b)
+
 func _crowd_sound_step() -> void:
 	if _qa_split != null and (_qa_split_off.has("sound") or _qa_split_off.has("farsound")):
 		return
 	var t := _idle_anim_time
-	for fb in _crowd_gpu.heard_bodies():
-		var b: CrowdGpu.Body = fb
-		if b.sound_due > t:
-			continue
-		if not is_instance_valid(b.skel):
-			b.sound_due = INF
-			continue
-		var e: Array = b.entry
-		var anim: BanReader.ParsedAnimation = e[1]
-		var ms := _loop_ms(anim, t + float(e[3]))
-		_anim_sounds.advance(b.skel, anim, float(e[5]), ms, true)
-		var next := _anim_sounds.next_key_ms(b.skel, anim, ms, true)
-		b.sound_due = t + next / 1000.0 if next != INF else INF
-		_crowd_gpu.stats["sound_advances"] = int(_crowd_gpu.stats.get("sound_advances", 0)) + 1
+	var cur := int(floor(t * SOUND_WHEEL_HZ))
+	if _sound_wheel_at < 0 or _sound_wheel_at > cur:
+		# First use, or the clock went back (a QA hold): every body filed
+		# again from now.
+		var all: Array = []
+		for k in _sound_wheel:
+			all.append_array(_sound_wheel[k])
+		_sound_wheel.clear()
+		_sound_wheel_at = cur
+		for fb in all:
+			_sound_schedule(fb)
+	var k := _sound_wheel_at
+	while k <= cur:
+		var bucket: Array = _sound_wheel.get(k, [])
+		if not bucket.is_empty():
+			_sound_wheel.erase(k)
+			var later: Array = []
+			for fb in bucket:
+				var b: CrowdGpu.Body = fb
+				if not b.heard or b.sound_due == INF:
+					continue
+				if b.sound_due > t:
+					# Not yet (this bucket is the current one), or moved to a later
+					# bucket by another write: kept only if it belongs here.
+					if int(floor(b.sound_due * SOUND_WHEEL_HZ)) <= k:
+						later.append(b)
+					continue
+				_crowd_sound_advance(b, t)
+			if not later.is_empty():
+				var keep: Array = _sound_wheel.get(cur, [])
+				keep.append_array(later)
+				_sound_wheel[cur] = keep
+		k += 1
+	_sound_wheel_at = cur
+	# The spread re-check.
+	if _sound_ring_at >= _sound_ring.size():
+		_sound_ring = _crowd_gpu.heard_bodies().duplicate()
+		_sound_ring_at = 0
+	var per := ceili(float(_sound_ring.size()) / float(SOUND_RESCAN_FRAMES))
+	var end := mini(_sound_ring_at + per, _sound_ring.size())
+	while _sound_ring_at < end:
+		var b: CrowdGpu.Body = _sound_ring[_sound_ring_at]
+		_sound_ring_at += 1
+		if b.heard and b.sound_due <= t:
+			_crowd_sound_advance(b, t)
+
+func _crowd_sound_advance(b: CrowdGpu.Body, t: float) -> void:
+	if not is_instance_valid(b.skel):
+		b.sound_due = INF
+		return
+	var e: Array = b.entry
+	var anim: BanReader.ParsedAnimation = e[1]
+	var ms := _loop_ms(anim, t + float(e[3]))
+	_anim_sounds.advance(b.skel, anim, float(e[5]), ms, true)
+	var next := _anim_sounds.next_key_ms(b.skel, anim, ms, true)
+	b.sound_due = t + next / 1000.0 if next != INF else INF
+	_sound_schedule(b)
+	_crowd_gpu.stats["sound_advances"] = int(_crowd_gpu.stats.get("sound_advances", 0)) + 1
 
 ## The cycle's choice: the CrowdGpu.near_count bodies nearest the camera,
 ## in view or not, stay near (a near body goes only once it is past the
@@ -6823,13 +7003,8 @@ func _crowd_sound_step() -> void:
 ## far body now among the nearest, or no longer eligible, comes back. In view
 ## or not: the nearest are the ones heard (their clip sounds run near only).
 func _crowd_choose() -> void:
-	var dists := PackedFloat32Array()
+	var dists := _crowd_got_dist.duplicate()
 	var seen := 0
-	for id in _crowd_scan_got:
-		var got: Array = _crowd_scan_got[id]
-		dists.append(got[0])
-		if got[1]:
-			seen += 1
 	var come := INF
 	var stay := INF
 	var k := CrowdGpu.near_count
@@ -6839,24 +7014,39 @@ func _crowd_choose() -> void:
 		var k_out := int(ceil(float(k) * CrowdGpu.NEAR_HYSTERESIS))
 		stay = dists[mini(k_out, dists.size()) - 1] if k_out > 0 else -1.0
 	_crowd_pending.clear()
-	var counts := {"in_view": seen, "come_within": snappedf(come, 0.1), "stay_within": snappedf(stay, 0.1)}
-	for id in _crowd_scan_got:
-		var got: Array = _crowd_scan_got[id]
-		var gait: Dictionary = _other_gaits.get(id, {})
-		var skel = gait.get("skeleton")
+	var nearest := 0
+	for i in range(_crowd_got_ids.size()):
+		var flags := _crowd_got_flags[i]
+		if flags & CROWD_GOT_SEEN:
+			seen += 1
+		var eligible := (flags & CROWD_GOT_ELIGIBLE) != 0
+		var was_far := (flags & CROWD_GOT_FAR) != 0
+		var want := eligible and _crowd_got_dist[i] > (come if was_far else stay)
+		if not want and eligible:
+			nearest += 1
+		if want == was_far:
+			continue
+		# Far or not as it was scanned; checked again here, since a body may
+		# have been woken or switched since (round 757).
+		var skel = _crowd_got_skels[i]
 		if skel == null or not is_instance_valid(skel):
 			continue
 		var far := _crowd_gpu.has(skel)
-		var want := bool(got[2]) and float(got[0]) > (come if far else stay)
-		if not want and bool(got[2]):
-			counts["nearest"] = int(counts.get("nearest", 0)) + 1
 		if want and not far:
-			_crowd_pending.append(id)
+			_crowd_pending.append(int(_crowd_got_ids[i]))
 		elif not want and far:
 			# Sent to the server with the frame's flush, below.
 			_crowd_wake(skel, false)
+	var counts := {"in_view": seen, "come_within": snappedf(come, 0.1), "stay_within": snappedf(stay, 0.1)}
+	if nearest > 0:
+		counts["nearest"] = nearest
 	_crowd_gpu.ineligible.merge(counts, true)
-	_crowd_gpu.reset_aabb()
+	# The bounds from this cycle's scan of the far bodies (round 757: not a
+	# pass over every far body at the cycle's end).
+	if _crowd_far_lo.x != INF:
+		_crowd_gpu.reset_aabb_to(_crowd_far_lo, _crowd_far_hi)
+	else:
+		_crowd_gpu.reset_aabb()
 	_crowd_gpu.collect()
 
 ## The chosen bodies to the GPU, for up to CrowdGpu.SWITCH_BUDGET_USEC a
@@ -6899,6 +7089,7 @@ func _crowd_switch_due() -> void:
 			var heard := (want[skel][0] as Node3D).global_position.distance_squared_to(_crowd_listener()) <= SoundTable.CULL_DISTANCE_SQ
 			_crowd_gpu.set_heard(fb, heard)
 			fb.sound_due = -INF if heard else INF
+			_sound_schedule(fb)
 			# Its run baked ahead, so a step does not bring it back (a gait
 			# change on a far body whose loop is not baked does).
 			var gait: Dictionary = _other_gaits.get(int(want[skel][1]), {})
@@ -6992,6 +7183,7 @@ func _swap_other_loop(skel: Skeleton3D, anim: BanReader.ParsedAnimation, hint: A
 				_anim_sounds.prime(skel, anim, float(fb.entry[5]), ms)
 				var next := _anim_sounds.next_key_ms(skel, anim, ms, true)
 				fb.sound_due = _idle_anim_time + next / 1000.0 if next != INF else INF
+				_sound_schedule(fb)
 			return
 		_crowd_wake(skel)
 	MonsterMotion.swap_loop(_animated, skel, anim, frames, _idle_anim_time, hint)
@@ -7707,6 +7899,82 @@ func set_name_plate_range(distance: float) -> void:
 	_name_plate_range = maxf(distance, 0.0)
 	_plate_sweep.reach = _name_plate_range
 	_plate_sweep.retest_all()
+	if _plate_batch != null:
+		_plate_batch.set_range(_name_plate_range)
+
+## Round 757 (NamePlateBatch): other players' plates drawn batched. Off with
+## OPENSRO_QA_PLATE_BATCH=0 (the A/B), or when the engine's Label3D material
+## does not have the line the batch moves (then every plate is a Label3D, as
+## before).
+static var plate_batch_on := OS.get_environment("OPENSRO_QA_PLATE_BATCH") != "0"
+var _plate_batch: NamePlateBatch = null
+var _plates_moved := {}
+var _plate_scan: Array = []
+var _plate_scan_at := 0
+
+func _plate_batch_get() -> NamePlateBatch:
+	if _plate_batch == null and plate_batch_on and is_inside_tree() and get_world_3d() != null:
+		_plate_batch = NamePlateBatch.new(get_world_3d().scenario, OverlayView.BIT)
+		_plate_batch.set_range(_name_plate_range)
+		if not _plate_batch.ok:
+			plate_batch_on = false
+	return _plate_batch if plate_batch_on else null
+
+## Once a frame, after the others have moved: the moved bodies' plates, a
+## spread re-read of every plate (a move or a hide by a path that does not
+## report, MINIMAP_RESCAN_FRAMES as the minimap's), and the batch's flush.
+func _plate_batch_step() -> void:
+	if _plate_batch == null or not plate_batch_on:
+		_plates_moved.clear()
+		return
+	for b in _plates_moved:
+		if is_instance_valid(b):
+			var label := (b as Node).get_node_or_null("Name") as Label3D
+			if label != null:
+				_plate_batch.moved(label)
+	_plates_moved.clear()
+	if _plate_scan_at >= _plate_scan.size():
+		_plate_scan = _plate_batch._plates.keys()
+		_plate_scan_at = 0
+	var per := ceili(float(_plate_scan.size()) / float(MINIMAP_RESCAN_FRAMES))
+	var end := mini(_plate_scan_at + per, _plate_scan.size())
+	while _plate_scan_at < end:
+		var label = _plate_scan[_plate_scan_at]
+		_plate_scan_at += 1
+		if is_instance_valid(label):
+			_plate_batch.moved(label)
+	var from := player.global_position if player != null and player.is_inside_tree() else Vector3.ZERO
+	_plate_batch.flush(from)
+
+## QA (round 757, QaCrowdProbe's `plateab` step): every other player's plate
+## to the batch (on) or back to a swept Label3D (off), the same frame.
+func _plate_batch_switch(on: bool) -> void:
+	for id in _other_bodies:
+		var body = _other_bodies[id]
+		if body == null or not is_instance_valid(body):
+			continue
+		var label := (body as Node).get_node_or_null("Name") as Label3D
+		if label == null:
+			continue
+		if on:
+			_plate_sweep.drop(label)
+			if _plate_batch != null and not _plate_batch.has(label):
+				_plate_batch.add(label, body)
+		else:
+			if _plate_batch != null and _plate_batch.has(label):
+				_plate_batch.remove(label)
+			_plate_sweep.add(label)
+
+## Draws `label` (made by _name_plate, unswept) in the batch over `owner`;
+## false when the batch is off (the caller sweeps it as a Label3D).
+func _plate_batch_add(label: Label3D, owner: Node3D) -> bool:
+	var batch := _plate_batch_get()
+	if batch == null or not batch.add(label, owner):
+		return false
+	label.tree_exiting.connect(func() -> void:
+		if _plate_batch != null:
+			_plate_batch.remove(label), CONNECT_ONE_SHOT)
+	return true
 
 ## The top of an assembled skeleton, in its own local space.
 func _skeleton_top(skeleton: Skeleton3D) -> float:
@@ -9817,6 +10085,7 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	gait["moving"] = moving
 	if moving:
 		_other_settled.erase(character_id)
+		_other_awake[character_id] = true
 	# A sitter who moves is on their feet at once, as the server's movement
 	# handler makes them (round 607); one who stops is not seated again.
 	if moving:
@@ -10769,8 +11038,7 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 				body.rotation.y = atan2(d.x, d.y)
 				# A far body's place is re-read at the frame's flush (round
 				# 747's review, F5).
-				if _crowd_gpu != null:
-					_crowd_gpu.moved(body)
+				_other_moved(body)
 		var clip := 0.0
 		if sc.caster_kind == SkillNet.OWNER_CHARACTER:
 			clip = _play_other_cast_anim(sc.caster_id, sc.skill_id)
@@ -15664,6 +15932,8 @@ func _physics_process(delta: float) -> void:
 		_qa_split.physics_usec += Time.get_ticks_usec() - sw
 		if _qa_split.due():
 			_qa_split_print()
+	if FrameSplit.on:
+		FrameSplit.add("p_world", Time.get_ticks_usec() - sw)
 
 ## Round 739 (B1; its review's F3): the once-a-frame work that places things,
 ## after every physics step of the frame has run -- the others' walk and
@@ -15678,6 +15948,7 @@ func _process(_delta: float) -> void:
 		return
 	var fs := FrameSplit.on
 	var t := Time.get_ticks_usec() if fs else 0
+	var t_world := t
 	# Round 748 (item 4): the local player's pose once a rendered frame, at
 	# the clip time the frame's last physics step reached (_player_pose_due),
 	# not once a step -- a slow frame runs up to eight steps and posed (and
@@ -15724,13 +15995,23 @@ func _process(_delta: float) -> void:
 	_other_frame_usec = now
 	_pump_other_builds()
 	if fs:
-		FrameSplit.add("w_pump", Time.get_ticks_usec() - t)
+		var tq := Time.get_ticks_usec()
+		FrameSplit.add("w_pump", tq - t)
+		t = tq
+	# Round 757: the batched plates' moves and their frame.
+	_plate_batch_step()
+	if fs:
+		var tp := Time.get_ticks_usec()
+		FrameSplit.add("w_plates", tp - t)
+		t = tp
 	var t1 := Time.get_ticks_usec() if _qa_split != null else 0
 	# Round 747 (A5): which bodies are drawn far, and the far crowd's frame.
 	_crowd_gpu_step()
 	if _qa_split != null:
 		_qa_split.others_usec += t1 - t0
 		_qa_split.crowd_usec += Time.get_ticks_usec() - t1
+	if fs:
+		FrameSplit.add("w_world", Time.get_ticks_usec() - t_world)
 
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
@@ -15899,6 +16180,8 @@ func _physics_step(delta: float) -> void:
 		_refresh_minimap()
 		if _qa_split != null:
 			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
+		if FrameSplit.on:
+			FrameSplit.add("p_minimap", Time.get_ticks_usec() - split_sw)
 		split_sw = Time.get_ticks_usec()
 		_tick_party_hud()
 		if FrameSplit.on:
@@ -16372,9 +16655,17 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 	# The gait test's fold, once a frame (round 748): distance_before_last is
 	# the distance times this factor (exactly 1 at one step a frame).
 	var before_last := OtherCrowd.distance_before_last(1.0, OTHER_BODY_INTERPOLATION_SPEED, step_delta, n)
-	for character_id in _other_body_targets:
+	# Round 757: only the awake bodies (_other_awake): every target write and
+	# every cleared settled mark wakes a body, and it sleeps again once it is
+	# settled on its target -- a standing crowd costs nothing here. MEASURED at
+	# 7,000 standing: the pass over every target was 5.8 ms a frame. A body
+	# moved off its target by a path that wrote neither is woken by the spread
+	# re-check (_other_wake_scan).
+	_other_wake_scan()
+	for character_id in _other_awake.keys():
 		var body = _other_bodies.get(character_id)
-		if body == null or _other_legs.has(character_id):
+		if body == null or _other_legs.has(character_id) or not _other_body_targets.has(character_id):
+			_other_awake.erase(character_id)
 			continue
 		var target: Vector3 = _other_body_targets[character_id]
 		var at: Vector3 = (body as Node3D).position
@@ -16382,18 +16673,20 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 		# frame has nothing to do for it. A move, a placement or a gait set
 		# elsewhere moves it off the target or clears the mark.
 		if at == target and _other_settled.has(character_id):
+			_other_awake.erase(character_id)
 			continue
 		if at.distance_squared_to(target) < OtherCrowd.SNAP_DISTANCE_SQ:
 			# On it, or an ulp or two short (its review's F6): put on it once,
 			# then never written again while the target stays.
 			if at != target:
 				(body as Node3D).position = target
-				if _crowd_gpu != null:
-					_crowd_gpu.moved(body)
+				_other_moved(body)
 			_set_other_gait(character_id, false)
 			_other_settled[character_id] = true
+			_other_awake.erase(character_id)
 			continue
 		_other_settled.erase(character_id)
+		_other_awake[character_id] = true
 		# Still catching up to the last update means the player is on the
 		# move; arrived means standing. The threshold is a fraction of the
 		# body's own height, so a settled body does not flicker between the
@@ -16401,9 +16694,33 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 		_set_other_gait(character_id, at.distance_to(target) * before_last > OTHER_GAIT_THRESHOLD)
 		(body as Node3D).position = at.lerp(target, f)
 		# A far body's transform is re-read at the frame's flush (round 747).
-		if _crowd_gpu != null:
-			_crowd_gpu.moved(body)
+		_other_moved(body)
 	_step_remote_turns(delta)
+
+## Round 757: the bodies the eased walk looks at this frame (id -> true).
+var _other_awake := {}
+var _other_wake_keys: Array = []
+var _other_wake_at := 0
+const OTHER_WAKE_SCAN_FRAMES := 30
+
+## A share of every body a frame (all of them once in OTHER_WAKE_SCAN_FRAMES):
+## one off its target or not settled is woken.
+func _other_wake_scan() -> void:
+	if _other_wake_at >= _other_wake_keys.size():
+		_other_wake_keys = _other_body_targets.keys()
+		_other_wake_at = 0
+	var per := ceili(float(_other_wake_keys.size()) / float(OTHER_WAKE_SCAN_FRAMES))
+	var end := mini(_other_wake_at + per, _other_wake_keys.size())
+	while _other_wake_at < end:
+		var id = _other_wake_keys[_other_wake_at]
+		_other_wake_at += 1
+		if _other_awake.has(id) or _other_legs.has(id):
+			continue
+		var body = _other_bodies.get(id)
+		if body == null or not is_instance_valid(body) or not _other_body_targets.has(id):
+			continue
+		if not _other_settled.has(id) or (body as Node3D).position != _other_body_targets[id]:
+			_other_awake[id] = true
 
 ## One frame of every turn in progress: FUN_009e02f0 with the frame's time
 ## (the mover's tick, FUN_009e0e60 -> FUN_009e0c10). A turn that reaches its
@@ -16420,8 +16737,7 @@ func _step_remote_turns(delta: float) -> void:
 		var front := float(turn["front"])
 		var r := RemoteFacing.turn(RemoteFacing.heading_of_yaw(body.rotation.y, front), float(turn["target"]), delta * 1000.0)
 		body.rotation.y = RemoteFacing.yaw_of(float(r["heading"]), front)
-		if _crowd_gpu != null:
-			_crowd_gpu.moved(body)
+		_other_moved(body)
 		if not bool(r["turning"]):
 			_remote_turns.erase(id)
 
@@ -16453,6 +16769,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# _other_body_targets' own doc comment for why this replaced a
 		# direct position snap.
 		_other_body_targets[character_id] = pos
+		_other_awake[character_id] = true
 		# Still waiting to be dressed: dressed in what this spawn names
 		# (round 739's review, F8; a drawn body is not redressed by it).
 		if _other_build_args.has(character_id) and not equipped.is_empty():
@@ -16461,8 +16778,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		if not is_nan(heading):
 			var drawn: Node3D = _other_bodies[character_id]
 			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
-			if _crowd_gpu != null:
-				_crowd_gpu.moved(drawn)
+			_other_moved(drawn)
 			_remote_turns.erase(drawn.get_instance_id())
 		return
 
@@ -16478,6 +16794,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	other_entities.add_child(node)
 	_other_bodies[character_id] = node
 	_other_body_targets[character_id] = pos
+	_other_awake[character_id] = true
 	_other_uids.add(character_id)
 	# Round 739 (B4, OtherCrowd.BuildQueue, OURS): the node is theirs from now
 	# -- moves, the departure and equipment changes act on it -- and it is
@@ -16670,7 +16987,14 @@ func _dress_other(character_id: int) -> void:
 	# The same plate as an NPC's -- fixed screen size, outlined, shown only
 	# within range -- over the assembled body's own height.
 	var top := _skeleton_top(skeleton) if skeleton != null else 1.8 * PLAYER_SCALE_RATIO
-	node.add_child(_name_plate(char_name, top))
+	# Round 757: batched (NamePlateBatch) unless it is off; the Label3D stays
+	# as the plate's record (its text, its look), never drawn.
+	var batched := _plate_batch_get() != null
+	var plate := _name_plate(char_name, top, not batched)
+	node.add_child(plate)
+	if batched and not _plate_batch_add(plate, node):
+		plate.visible = true
+		_plate_sweep.add(plate)
 	# A click body on its own layer (round 622), so the player can be selected.
 	node.add_child(_other_player_collider(top))
 	# Its round shadow in Circle (round 702, CharacterBlobs).
@@ -16931,11 +17255,11 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):
 		var to := Vector3(moved.x, moved.y, moved.z)
 		_other_body_targets[moved.character_id] = to
+		_other_awake[moved.character_id] = true
 		var body: Node3D = _other_bodies[moved.character_id]
 		if moved.relocated:
 			body.position = to
-			if _crowd_gpu != null:
-				_crowd_gpu.moved(body)
+			_other_moved(body)
 			return
 		# A sitter still waiting to be dressed who walks off is on their feet
 		# (round 739's review, F2): the server sends no stand for it (its
@@ -17013,12 +17337,13 @@ func _start_other_leg(id: int, leg: Dictionary) -> void:
 	var body: Node3D = _other_bodies[id]
 	_other_legs[id] = leg
 	_other_body_targets[id] = body.position
+	_other_awake[id] = true
 	# Off its target's rest (round 748's settled mark), and a far body's
 	# transform re-read at the frame's flush (round 747): the echo may have
 	# put it at the source.
 	_other_settled.erase(id)
-	if _crowd_gpu != null:
-		_crowd_gpu.moved(body)
+	_other_awake[id] = true
+	_other_moved(body)
 	var fs := FrameSplit.on
 	var t0 := Time.get_ticks_usec() if fs else 0
 	_aim_remote_body(body, OtherWalk.facing(leg, body.position), 0.0)
@@ -17076,14 +17401,14 @@ func _on_entity_move_stop(stop: DestMoveNet.Stop) -> void:
 	_other_legs.erase(id)
 	body.position = stop.world
 	_other_body_targets[id] = stop.world
+	_other_awake[id] = true
 	body.rotation.y = RemoteFacing.yaw_of(h, 0.0)
 	_remote_turns.erase(body.get_instance_id())
 	_set_other_gait(id, false)
 	# Standing on its target (round 748: _step_other_bodies passes over it),
 	# and a far body re-read at the flush (round 747).
 	_other_settled[id] = true
-	if _crowd_gpu != null:
-		_crowd_gpu.moved(body)
+	_other_moved(body)
 
 ## The server did not take this player's stop or placement (round 749,
 ## destmove.go correctMover) -- or anything that moved it out of its walk's
@@ -17152,14 +17477,28 @@ func _ground_on_walk_surface(at: Vector3) -> Vector3:
 ## frame of height rays when every arrival took one outside it). One that finds
 ## the budget spent stands where its last resolve put it and waits on
 ## _other_heights_pending, served first the next frame.
+##
+## Round 757: the frame's heights are found together, on WorkerThreadPool's
+## threads (HeightBatch: the walkable graph's landing height, plain data), and
+## applied after; a point with no loaded graph under it takes the terrain ray
+## on the main thread as before. With the work spread, the budget a frame is
+## OTHER_HEIGHT_BUDGET (OURS) instead of the monsters' 32.
+const OTHER_HEIGHT_BUDGET := 128
+var _height_batch := HeightBatch.new()
+
 func _step_other_legs(delta: float) -> void:
 	if _other_legs.is_empty() and _other_heights_pending.is_empty():
 		return
 	var fs := FrameSplit.on
 	var t_legs := Time.get_ticks_usec() if fs else 0
-	var h_usec := 0
 	var g_usec := 0
-	var budget := MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME
+	var budget := OTHER_HEIGHT_BUDGET
+	# The frame's points: [kind (0 a landing that waited, 1 a leg), id, body,
+	# point, result Dictionary or null, xz], and where each gets its height.
+	var asks: Array = []
+	var ask_index := PackedInt32Array()
+	var ask_height := PackedFloat32Array()
+	_height_batch.clear()
 	for id in _other_heights_pending.keys():
 		if budget <= 0:
 			break
@@ -17167,19 +17506,9 @@ func _step_other_legs(delta: float) -> void:
 		var standing = _other_bodies.get(id)
 		if standing == null or not is_instance_valid(standing) or _other_legs.has(id):
 			continue
-		var th0 := Time.get_ticks_usec() if fs else 0
-		var spot: Vector3 = (standing as Node3D).position
-		var ground0 := _moving_monster_hit_height(spot)
 		budget -= 1
-		if fs:
-			h_usec += Time.get_ticks_usec() - th0
-		if is_nan(ground0) or ground0 == spot.y:
-			continue
-		spot.y = ground0
-		(standing as Node3D).position = spot
-		_other_body_targets[id] = spot
-		if _crowd_gpu != null:
-			_crowd_gpu.moved(standing)
+		asks.append([0, id, standing, (standing as Node3D).position, null, Vector2.ZERO])
+	var stepped: Array = []
 	for id in _other_legs.keys():
 		var body = _other_bodies.get(id)
 		if body == null or not is_instance_valid(body):
@@ -17190,22 +17519,78 @@ func _step_other_legs(delta: float) -> void:
 		var at: Vector3 = r["pos"]
 		var xz := Vector2(at.x, at.z)
 		var done := bool(r["done"])
+		var entry := [1, id, body, at, r, xz, leg, -1]
 		if done and budget <= 0:
 			_other_heights_pending[id] = true
 		elif budget > 0 and (done or MonsterMotion.needs_height(leg["h_xz"], xz)):
-			var th := Time.get_ticks_usec() if fs else 0
-			var ground := _moving_monster_hit_height(at)
+			budget -= 1
+			entry[7] = asks.size()
+			asks.append(entry)
+		stepped.append(entry)
+	# The heights: the graph's on the pool, the terrain ray here. The loaded
+	# regions' transforms are read once for the frame (_nav_graph_for reads
+	# each region group's transform per point).
+	var th := Time.get_ticks_usec() if fs else 0
+	ask_index.resize(asks.size())
+	ask_height.resize(asks.size())
+	var regions: Array = []
+	if not asks.is_empty():
+		for pair in _grid.nav_graph_pairs():
+			var xf: Transform3D = (pair[1] as Node3D).global_transform
+			regions.append([pair[0], xf, xf.affine_inverse()])
+	for i in range(asks.size()):
+		var point: Vector3 = asks[i][3]
+		var found := -1
+		var local := Vector3.ZERO
+		for ri in range(regions.size()):
+			local = (regions[ri][2] as Transform3D) * point
+			if local.x >= 0.0 and local.z >= 0.0 and local.x <= REGION_SPAN and local.z <= REGION_SPAN:
+				found = ri
+				break
+		if found < 0:
+			ask_index[i] = -1
+			ask_height[i] = _terrain_hit_height(point)
+		else:
+			ask_index[i] = _height_batch.add(regions[found][0], regions[found][1], local.x, local.z)
+	if _height_batch.size() > 0:
+		_height_batch.resolve()
+	for i in range(asks.size()):
+		if ask_index[i] >= 0:
+			ask_height[i] = float(_height_batch.out[ask_index[i]])
+	if fs:
+		FrameSplit.add("o_leg_h", Time.get_ticks_usec() - th)
+		if _height_batch.last_threaded:
+			FrameSplit.add("o_leg_h_threaded_calls", 1000)
+	# The landings that waited.
+	for i in range(asks.size()):
+		var a: Array = asks[i]
+		if int(a[0]) != 0:
+			continue
+		var standing: Node3D = a[2]
+		var spot: Vector3 = a[3]
+		var ground0 := ask_height[i]
+		if is_nan(ground0) or ground0 == spot.y:
+			continue
+		spot.y = ground0
+		standing.position = spot
+		_other_body_targets[a[1]] = spot
+		_other_awake[a[1]] = true
+		_other_moved(standing)
+	# The legs.
+	for entry in stepped:
+		var id: int = entry[1]
+		var body: Node3D = entry[2]
+		var at: Vector3 = entry[3]
+		var r: Dictionary = entry[4]
+		if int(entry[7]) >= 0:
+			var ground := ask_height[int(entry[7])]
 			if not is_nan(ground):
 				at.y = ground
-				leg["h_xz"] = xz
-			budget -= 1
-			if fs:
-				h_usec += Time.get_ticks_usec() - th
-		(body as Node3D).position = at
+				(entry[6] as Dictionary)["h_xz"] = entry[5]
+		body.position = at
 		_other_body_targets[id] = at
 		# A far body's transform is re-read at the frame's flush (round 747).
-		if _crowd_gpu != null:
-			_crowd_gpu.moved(body)
+		_other_moved(body)
 		# Every frame, so a body dressed mid-leg (round 739's queue) takes its
 		# run at once; a no-op once it plays it (round 748's swap hint keeps it
 		# cheap).
@@ -17219,14 +17604,27 @@ func _step_other_legs(delta: float) -> void:
 			_other_settled[id] = true
 	if fs:
 		FrameSplit.add("o_legs", Time.get_ticks_usec() - t_legs)
-		FrameSplit.add("o_leg_h", h_usec)
 		FrameSplit.add("o_leg_gait", g_usec)
+
+## Round 757: every place that moves or turns another player's holder reports
+## it here, once a move: CrowdGpu re-reads a far body's transform at its flush
+## (round 747), the minimap's signs (MinimapSigns) and the batched name plates
+## (NamePlateBatch) take the new place at their next refresh -- so none of them
+## walks every body every frame. A body moved by a path that does not report is
+## caught by each consumer's spread re-read.
+func _other_moved(body: Node3D) -> void:
+	if _crowd_gpu != null:
+		_crowd_gpu.moved(body)
+	_minimap_moved[body] = true
+	_plates_moved[body] = true
 
 ## Round 749's merge: other players whose arrival found the frame's height
 ## budget spent (id -> true), resolved first the next frame (_step_other_legs).
 var _other_heights_pending := {}
 
 func _on_entity_left(character_id: int) -> void:
+	if _hud_minimap != null and is_instance_valid(_hud_minimap):
+		_hud_minimap.drop_other(character_id)
 	_other_legs.erase(character_id)
 	_other_heights_pending.erase(character_id)
 	_other_speeds.erase(character_id)
@@ -17251,6 +17649,7 @@ func _on_entity_left(character_id: int) -> void:
 		_other_hint_by_skel.erase((gone_gait["skeleton"] as Object).get_instance_id())
 	_other_gaits.erase(character_id)
 	_other_settled.erase(character_id)
+	_other_awake[character_id] = true
 	_other_pluses.erase(character_id)
 	# Gone before their turn to be dressed came (round 739, B4).
 	_other_builds.drop(character_id)
@@ -22422,10 +22821,10 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 		var body: Node3D = _other_bodies[moved.character_id]
 		body.position = to
 		_other_body_targets[moved.character_id] = to
+		_other_awake[moved.character_id] = true
 		# The server's Relocate ended any leg it walked (round 749).
 		_other_legs.erase(moved.character_id)
-		if _crowd_gpu != null:
-			_crowd_gpu.moved(body)
+		_other_moved(body)
 		print("SKILL move handled: player %d snapped to (%.1f, %.1f, %.1f) by skill %d" % [
 			moved.character_id, to.x, to.y, to.z, moved.skill_id])
 		return
