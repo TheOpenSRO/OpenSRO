@@ -12,7 +12,8 @@ extends SceneTree
 ## - after adoption build() assembles nothing on the main thread and dresses
 ##   the body as the synchronous path does;
 ## - a `_r` model that does not assemble brings its plain fallback (READ
-##   0xa5f4f0's rule, as _item_instance has it);
+##   0xa5f4f0's rule, as _item_instance has it), and one that does never
+##   asks for it (round 758);
 ## - a second body of the same skeleton layout ends on the layout's one shared
 ##   skin, its items too (round 738's A2: one skin a body);
 ## - at most PREP_MAX_RUNNING tasks run; the rest wait their turn;
@@ -29,7 +30,9 @@ extends SceneTree
 ## template's meshes) fails "bones only";
 ## _finish_prep without _reskin fails "one skin"; _prepare without
 ## its in-flight test fails "no second task"; _start_queued without the cap
-## fails "at most 2 run"; dropping the fallback fails "the plain model".
+## fails "at most 2 run"; dropping the fallback fails "the plain model";
+## template_paths listing every `_r`'s fallback again (as before round 758)
+## fails "asks for nothing else".
 
 var _failures := 0
 
@@ -47,6 +50,7 @@ func _initialize() -> void:
 		quit(1))
 	await process_frame
 	_test_prepare_adopt_build()
+	_test_fallback_only_on_failure()
 	_test_shared_skin()
 	_test_cap_and_teardown()
 	_test_bare_skeleton()
@@ -157,8 +161,8 @@ func _test_prepare_adopt_build() -> void:
 	var app := _appearance({1907: ["char\\test\\man.bsr", "res\\man.bsk"]}, ["item\\dagger_01_r.bsr"], calls, body_calls)
 	var kit := [{"id": 5001, "plus": 0}, {"id": 5004, "plus": 0}]
 	var paths: Array = app.template_paths(1907, kit)
-	_check(Array(paths[0]) == ["item\\chest_a.bsr", "item\\dagger_01_l.bsr", "item\\dagger_01_r.bsr", "item\\dagger_01.bsr"],
-		"the paths a build hangs: the chest, the dagger's _l and _r and the _r's fallback (got %s)" % str(paths[0]))
+	_check(Array(paths[0]) == ["item\\chest_a.bsr", "item\\dagger_01_l.bsr", "item\\dagger_01_r.bsr"],
+		"the paths a build hangs: the chest, the dagger's _l and _r -- the _r's fallback only once the _r fails (round 758; got %s)" % str(paths[0]))
 	_check(String(paths[2]) == "dagger", "and the dagger's animation group (%s)" % String(paths[2]))
 	_check(not app.templates_ready(1907, kit), "a new kind is not ready")
 	_check(app.prep_stats["tasks"] == 0, "asking whether it is ready starts nothing")
@@ -180,6 +184,44 @@ func _test_prepare_adopt_build() -> void:
 			"the body wears the chest, the dagger's _l and the _r's fallback")
 		_check(b.weapon_group == "dagger", "and holds the dagger's group (%s)" % b.weapon_group)
 		b.free()
+	app.free_templates()
+
+## Round 758: the plain fallback is made only when the `_r` fails. A dual axe
+## whose _l and _r assemble (as every axe in the archive does, which has no
+## plain axe_NN.bsr) never asks for the plain path -- asking logged "item ...
+## not found in archive" for every axe and set dagger in the world. A body
+## whose template is already cached, then given a dagger whose _r fails, still
+## gets the fallback from the task (the second branch of _prepare).
+func _test_fallback_only_on_failure() -> void:
+	var calls: Array = []
+	var body_calls: Array = []
+	var app := _appearance({1907: ["char\\test\\man.bsr", "res\\man.bsk"]}, ["item\\dagger_01_r.bsr"], calls, body_calls)
+	app._items[5006] = {"models": PackedStringArray(["item\\axe_11.bsr"]), "type_ids": PackedInt32Array([3, 1, 6, 9]), "code": "ITEM_AXE"}
+	var axe := [{"id": 5006, "plus": 0}]
+	app.prepare(1907, axe)
+	app.wait_prepared()
+	_check(calls == ["item\\axe_11_l.bsr", "item\\axe_11_r.bsr"], "an axe whose halves assemble asks for nothing else (%s)" % str(calls))
+	_check(app.templates_ready(1907, axe), "and is ready")
+	var b := app.build(1907, 0x22, axe)
+	if b != null:
+		_check(Array(b.worn[0]["drawn"]) == ["item\\axe_11_l.bsr", "item\\axe_11_r.bsr"] and b.weapon_group == "dual_axe",
+			"the axe draws both halves in the dual-axe group (%s, %s)" % [str(b.worn[0]["drawn"]), b.weapon_group])
+		b.free()
+	else:
+		_check(false, "the axe builds")
+	# The body is cached now: a dagger whose _r fails is the second branch.
+	calls.clear()
+	var dagger := [{"id": 5004, "plus": 0}]
+	_check(not app.templates_ready(1907, dagger), "a dagger on the cached body is not ready yet")
+	app.prepare(1907, dagger)
+	app.wait_prepared()
+	_check(calls == ["item\\dagger_01_l.bsr", "item\\dagger_01_r.bsr", "item\\dagger_01.bsr"],
+		"its _r failed, so the task made the plain fallback (%s)" % str(calls))
+	_check(app.templates_ready(1907, dagger), "and the dagger is ready")
+	var d := app.build(1907, 0x22, dagger)
+	if d != null:
+		_check(Array(d.worn[0]["drawn"]) == ["item\\dagger_01_l.bsr", "item\\dagger_01.bsr"], "the dagger draws _l and the fallback (%s)" % str(d.worn[0]["drawn"]))
+		d.free()
 	app.free_templates()
 
 func _test_shared_skin() -> void:

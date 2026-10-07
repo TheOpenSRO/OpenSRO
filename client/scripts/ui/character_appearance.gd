@@ -558,6 +558,10 @@ static func visual_slot(type_ids: PackedInt32Array) -> int:
 ## woman from `<path>_f.bsr`, anything else from its own path. When the `_r`
 ## or `_f` resource does not load the client loads the plain path instead
 ## (0xa5f4f0 -> LAB_00a5f851); build() does the same (_fallback_of).
+## The pairing keys on TypeID 3/1/6 and TypeID4 9 or 13 alone, never the
+## folder: the Egyptian set axes and daggers under item\etc\weapon pair too
+## (READ, the same test in 0xa5f4f0, icscriptobj 0x9e3890 and 0x80b980;
+## round 758's census: 0 weapons or shields whose files exist miss a model).
 ## The client's second-resource branch for a visual record that names its own
 ## `.bsr` (the record from 0x4ec9b0, charactervisualchange.txt's BsrName
 ## columns) is not modelled: OPEN.
@@ -854,11 +858,21 @@ var prep_generation := 0
 var prep_stats := {"tasks": 0, "bodies": 0, "items": 0, "task_usec": 0, "longest_usec": 0}
 
 ## The item `.bsr` paths a build of `items` on `ref_obj_id` hangs: every worn
-## model, each `_r` / `_f` model's plain fallback (_fallback_of), and
-## the default wear the worn visuals leave uncovered (_refresh_default_wear's
-## rule); the particle files the weapon's and shield's glow names at their
-## plus; and the animation group the held weapon picks (build's rule).
-## [items, efps, group].
+## model and the default wear the worn visuals leave uncovered
+## (_refresh_default_wear's rule); the particle files the weapon's and
+## shield's glow names at their plus; and the animation group the held
+## weapon picks (build's rule). [items, efps, group].
+##
+## Not a `_r` / `_f` model's plain fallback (_fallback_of): that is wanted
+## only when the `_r` / `_f` fails, as in the client (0xa5f4f0 ->
+## LAB_00a5f851), and _prep_task and _prepare ask for it then. Until round
+## 758 it was listed always, and every dual axe and dagger -- whose plain
+## `.bsr` the archive does not have (MEASURED: Data.pk2 holds axe_NN_l/_r and
+## eu_dagger_11_set_a_l/_r, no axe_NN.bsr) -- logged a "not found in archive"
+## error for a weapon that drew in full (census_weapon_models.gd: 522 asks
+## for a missing file before, 64 after: items with no file at all, and a
+## woman's `_f` of a harp that has only the plain model, which the client
+## tries first too).
 func template_paths(ref_obj_id: int, items: Array) -> Array:
 	var woman := is_woman(ref_obj_id)
 	var resolved := _resolve_wears(items, woman, false)
@@ -869,9 +883,6 @@ func template_paths(ref_obj_id: int, items: Array) -> Array:
 		for m in wear["models"]:
 			if not paths.has(m):
 				paths.append(m)
-			var fb := _fallback_of(m)
-			if fb != "" and not paths.has(fb):
-				paths.append(fb)
 		if int(wear["slot"]) != SLOT_AVATAR:
 			worn.append({"slot": wear["slot"], "type_ids": wear["type_ids"]})
 		var slot := int(wear["slot"])

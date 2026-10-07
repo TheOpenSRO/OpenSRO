@@ -242,6 +242,44 @@ func _init() -> void:
 		== ["item\\europe\\weapon\\harp_01.bsr"], "a man's harp is the plain model")
 	_check(Array(CharacterAppearance.item_models("item\\china\\weapon\\sword_01.bsr", tid.call([3, 1, 6, 2]), true)) \
 		== ["item\\china\\weapon\\sword_01.bsr"], "a sword is its own model")
+	# Round 758: the dual axe (TypeID4 9) is paired as the dagger is, and so
+	# are the Egyptian set axe and dagger under item\etc\weapon -- the client's
+	# rule is TypeID 3/1/6 with TypeID4 9 or 13, whatever the folder (READ
+	# 0xa5f4f0, 0x9e3890 and 0x80b980 all test `>> 0xb == 9 || == 0xd`).
+	_check(Array(CharacterAppearance.item_models("item\\europe\\weapon\\axe_11.bsr", tid.call([3, 1, 6, 9]), false)) \
+		== ["item\\europe\\weapon\\axe_11_l.bsr", "item\\europe\\weapon\\axe_11_r.bsr"], "a dual axe is drawn from _l and _r")
+	_check(Array(CharacterAppearance.item_models("item\\etc\\weapon\\eu_axe_11_set_b.bsr", tid.call([3, 1, 6, 9]), true)) \
+		== ["item\\etc\\weapon\\eu_axe_11_set_b_l.bsr", "item\\etc\\weapon\\eu_axe_11_set_b_r.bsr"], "an Egyptian set axe is paired too, on a woman as well")
+	_check(Array(CharacterAppearance.item_models("item\\etc\\weapon\\eu_dagger_11_set_a.bsr", tid.call([3, 1, 6, 13]), false)) \
+		== ["item\\etc\\weapon\\eu_dagger_11_set_a_l.bsr", "item\\etc\\weapon\\eu_dagger_11_set_a_r.bsr"], "an Egyptian set dagger is paired")
+	var single := []
+	for t4 in [2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 14, 15, 16]:
+		var got := Array(CharacterAppearance.item_models("item\\x\\w.bsr", tid.call([3, 1, 6, t4]), false))
+		if got != ["item\\x\\w.bsr"]:
+			single.append(t4)
+	_check(single.is_empty(), "every other weapon TypeID4 (2..16 bar 9 and 13; a man's harp) is its own model (wrong: %s)" % str(single))
+	_check(Array(CharacterAppearance.item_models("item\\china\\shield\\shield_01.bsr", tid.call([3, 1, 4, 1]), false)) \
+		== ["item\\china\\shield\\shield_01.bsr"] and Array(CharacterAppearance.item_models("item\\europe\\shield\\shield_01.bsr", tid.call([3, 1, 4, 2]), true)) \
+		== ["item\\europe\\shield\\shield_01.bsr"], "a shield is its own model")
+	_check(Array(CharacterAppearance.item_models("item\\x\\w.bsr", tid.call([3, 1, 4, 9]), false)) == ["item\\x\\w.bsr"],
+		"TypeID4 9 off a weapon (TypeID3 4) is not paired")
+	# The look-ahead asks for the _l and _r only, not the plain path the
+	# archive lacks for every dual axe (MEASURED: axe_NN_l/_r, no axe_NN.bsr):
+	# the plain one is the fallback of a failed _r, asked for then. Round 758:
+	# listing it always logged "item ... axe_11.bsr not found in archive" for an
+	# axe that drew in full. NEGATIVE: template_paths adding _fallback_of(m)
+	# again fails this.
+	var la := CharacterAppearance.new()
+	la._items[5101] = {"models": PackedStringArray(["item\\europe\\weapon\\axe_11.bsr"]), "type_ids": tid.call([3, 1, 6, 9]), "code": "ITEM_EU_AXE_11_A"}
+	la._items[5102] = {"models": PackedStringArray(["item\\etc\\weapon\\eu_dagger_11_set_a.bsr"]), "type_ids": tid.call([3, 1, 6, 13]), "code": "ITEM_EU_DAGGER_11_SET_A"}
+	la._items[5103] = {"models": PackedStringArray(["item\\europe\\weapon\\harp_01.bsr"]), "type_ids": tid.call([3, 1, 6, 14]), "code": "ITEM_EU_HARP_01_A"}
+	la._full_items_loaded = true
+	_check(Array(la.template_paths(4242, [{"id": 5101, "plus": 0}])[0]) == ["item\\europe\\weapon\\axe_11_l.bsr", "item\\europe\\weapon\\axe_11_r.bsr"],
+		"an axe's look-ahead: _l and _r, no plain fallback (got %s)" % str(la.template_paths(4242, [{"id": 5101, "plus": 0}])[0]))
+	_check(Array(la.template_paths(4242, [{"id": 5102, "plus": 0}])[0]) == ["item\\etc\\weapon\\eu_dagger_11_set_a_l.bsr", "item\\etc\\weapon\\eu_dagger_11_set_a_r.bsr"],
+		"a set dagger's look-ahead: _l and _r, no plain fallback")
+	_check(Array(la.template_paths(4242, [{"id": 5103, "plus": 0}])[0]) == ["item\\europe\\weapon\\harp_01.bsr"],
+		"a man's harp asks for its own model")
 
 	# --- the weapon -> animation group is BodyAnimations' (round 689) ---
 	# One table for the world and the screens; World3D no longer keeps its own

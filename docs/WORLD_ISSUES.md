@@ -7339,6 +7339,31 @@ The full notes are in `docs/rounds/r753.md`.
 - Box `check` "checked 674 scripts and 9 scenes", ALL LOAD. `tests` "ran 259 suite(s), 0
   failing". No perf gate: only a test was added.
 
+## Seven-hundred-and-fifty-eighth round: dual axes and set daggers drew all along; the look-ahead asked for files that do not exist
+
+The full notes are in `docs/rounds/r758.md`.
+- **The user's log** (v0.1.511) printed "item `axe_11.bsr` / `eu_axe_11_set_b.bsr` /
+  `eu_dagger_11_set_a.bsr` ... not found in archive". The brief's guess was that axes were not
+  paired as daggers are. That guess is **false**.
+- **READ:** `CObjCharacter::FUN_00a5f4f0`, `icscriptobj::FUN_009e3890` and `FUN_0080b980` all
+  pair `_l` / `_r` for TypeID 3/1/6 with TypeID4 9 or 13. A woman's harp (14) is `_f`. The folder
+  plays no part, so `item\etc\weapon\eu_*` pairs too. `item_models` already had this rule.
+- **MEASURED (Data.pk2):** every European axe and dagger and the four Egyptian set ones are
+  `_l` / `_r` pairs. No plain `axe_NN.bsr` exists.
+- **The cause:** `template_paths` (round 748) always listed each `_r`'s plain fallback, so the
+  template task asked for a file that is not there and logged it. A real build printed the error
+  and drew both halves (2 meshes, `dual_axe` / `dagger` group).
+- **The fix:** the fallback is listed only once the `_r` / `_f` fails (`_prep_task`, `_prepare`,
+  `build()`).
+- **Census (`tools/census_weapon_models.gd`, 6640 weapon/shield item-sex pairs):**
+  - Draw misses for items whose files exist: 0 before and 0 after.
+  - Look-ahead asks for a missing file: 522 before, 64 after. The 64 are the
+    `*_RARE_SWITCH23` rows naming `*_23.bsr`, which the archive lacks in every variant, and a
+    woman's `_f` for harp 14/16/22, which retail tries first too.
+- **Tests:** new checks in `character_appearance_test.gd` and `character_template_async_test.gd`.
+  NEGATIVE: the old lines put back fail 4 checks. Box `check` ALL LOAD (675 scripts); `tests`
+  "ran 259 suite(s), 0 failing".
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.
