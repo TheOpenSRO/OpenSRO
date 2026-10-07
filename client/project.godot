@@ -13,7 +13,13 @@ config_version=5
 config/name="OpenSRO"
 config/description="OpenSRO: a clean-room Silkroad Online-style MMO client. Requires user-supplied *.pk2 data files at runtime."
 run/main_scene="res://scenes/Boot.tscn"
-config/features=PackedStringArray("4.2")
+; Round 754 (the 4.7.2 spike): "4.7", as the 4.7 editor writes it on a save
+; (ProjectSettings::save_custom adds the renderer's name). Below "4.6" Godot
+; turns on animation/compatibility/default_parent_skeleton_in_mesh_instance_3d
+; by itself (core/config/project_settings.cpp, 4.7.2), but only when it reads
+; this text file, not an export's project.binary; every skinned MeshInstance3D
+; the client builds names its skeleton itself, so the 4.6+ default ("") holds.
+config/features=PackedStringArray("4.7", "Forward Plus")
 
 [autoload]
 
@@ -24,6 +30,10 @@ NetClient="*res://scripts/net/net_client.gd"
 ; The client's sound (round 611): buses, options, the effect table, the
 ; music and ambient. docs/protocol/SOUND_FORMAT.md holds the contract.
 Audio="*res://scripts/audio/audio_service.gd"
+; Round 754 (the 4.7.2 spike): frees the static caches' textures, meshes and
+; shaders at quit while the RenderingServer still exists; under 4.7.2 a world
+; run on Forward+ aborted at exit without it (scripts/shutdown_release.gd).
+ShutdownRelease="*res://scripts/shutdown_release.gd"
 
 [debug]
 

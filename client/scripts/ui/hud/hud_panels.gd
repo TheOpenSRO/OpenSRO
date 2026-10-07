@@ -1466,6 +1466,7 @@ func open_guild_name_prompt(npc_name: String) -> void:
 	var panel := _talk_prompt(window, "GuildNamePrompt",
 		_resolve_ui(NpcServiceReader.GUILD_CREATE_STRID, "Create a new guild"))
 	var name_edit := LineEdit.new()
+	KeyInput.line_edit_as_42(name_edit)  # round 754
 	name_edit.name = "GuildName"
 	name_edit.placeholder_text = "guild name"
 	name_edit.max_length = GUILD_NAME_MAX

@@ -230,8 +230,17 @@ static func _counts(window: HudWindow) -> Vector2i:
 	return Vector2i(int(floor(clip.size.y / h)), body.get_line_count())
 
 ## The scroll bar's range: lines that do not fit, one step each.
-static func _update_scroll(window: HudWindow) -> void:
-	if window == null or not is_instance_valid(window):
+##
+## Untyped, then tested (round 754): the call is deferred, and a window freed
+## before it runs no longer reaches a typed parameter under Godot 4.7 --
+## "Error calling deferred method: 'GDScript::_update_scroll': Cannot convert
+## argument 1 from Object to Object" (MEASURED, npc_service_reader_test.gd;
+## 4.2.2 passed the freed instance on to the validity test below).
+static func _update_scroll(window_arg) -> void:
+	if window_arg == null or not is_instance_valid(window_arg):
+		return
+	var window := window_arg as HudWindow
+	if window == null:
 		return
 	var scroll := window.find_child(SCROLL_NAME, true, false) as HudChat.ChatScroll
 	var body := body_of(window)

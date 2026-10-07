@@ -240,8 +240,11 @@ func _run() -> void:
 		settings.call("apply_ui_scale", get_root(), scale)
 		await process_frame
 		_check(get_root().is_using_font_oversampling(), "UI scale %.2f: the window drives font oversampling" % scale)
-		_check(is_equal_approx(ts.font_get_global_oversampling(), scale),
-			"UI scale %.2f: glyphs are rasterised at %.2f (got %.3f)" % [scale, scale, ts.font_get_global_oversampling()])
+		# Godot 4.5+ keeps the factor per viewport (client_settings_test's
+		# _oversampling has the source); 4.2.2 on the text server.
+		var got: float = float(get_root().call("get_oversampling")) if get_root().has_method("get_oversampling") else ts.font_get_global_oversampling()
+		_check(is_equal_approx(got, scale),
+			"UI scale %.2f: glyphs are rasterised at %.2f (got %.3f)" % [scale, scale, got])
 
 	# The game's own UI root gets the theme: World3D applies it to
 	# ui_control right after making its builder.

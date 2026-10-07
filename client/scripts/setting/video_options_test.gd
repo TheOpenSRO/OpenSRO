@@ -385,6 +385,13 @@ func _click(at: Vector2) -> void:
 		root.push_input(ev)
 
 func _page() -> void:
+	# After the first frame (round 754): the start-up resets a root size set
+	# before it to 64 x 64 (MEASURED, 4.2.2 and 4.7.2), and from Godot 4.7 a
+	# Button counts a press only while the mouse hovers it, which the viewport
+	# tracks inside its own rect alone (READ, base_button.cpp on_action_event,
+	# `status.hovering`; MEASURED: every click here reached the buttons'
+	# gui_input at (64, 64) and pressed none).
+	await _frames()
 	root.size = Vector2i(1152, 648)
 	await _frames()
 	var builder := UiBuilder.new(null, null)

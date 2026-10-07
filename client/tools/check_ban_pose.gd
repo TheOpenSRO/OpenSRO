@@ -54,7 +54,7 @@ func _initialize() -> void:
 		"Bip01 R Hand", "Bip01 L Foot", "Bip01 R Foot"]
 
 	skeleton.reset_bone_poses()
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 	print("bind pose (global positions):")
 	_report(skeleton, "", names)
 

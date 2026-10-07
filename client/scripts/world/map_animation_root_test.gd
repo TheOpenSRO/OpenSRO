@@ -170,7 +170,7 @@ func _process(_delta: float) -> bool:
 	for t in [0.0, 1.0]:
 		player.play("default")
 		player.seek(t, true)
-		skeleton.force_update_all_bone_transforms()
+		Skeleton3DBuilder.refresh_global_poses(skeleton)
 		var arrays: Array = leaf.mesh.surface_get_arrays(0)
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]

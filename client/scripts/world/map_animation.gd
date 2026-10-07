@@ -244,7 +244,7 @@ static func build_animation(skeleton: Skeleton3D, clip: BanReader.ParsedAnimatio
 			animation.track_set_interpolation_loop_wrap(t, true)
 			for k in range(count):
 				animation.position_track_insert_key(t, float(times[k]) / 1000.0, track.keyframes[k].position)
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 	return animation
 
 ## `sqrt((dx/2)^2 + (dz/2)^2)` of `box` -- the client's object radius

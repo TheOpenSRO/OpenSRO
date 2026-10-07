@@ -570,6 +570,14 @@ const EXPECTED_FINGERPRINTS := {
 ## alpha a pixel rule would have read the other way for two of them:
 ## `graded` (all 128) is untested, `dxt1solid` (opaque) is two-sided.
 const LAYER_FLAGS := {"bin": 0x341, "graded": 0x140, "dxt1cut": 0x340, "dxt1solid": 0x141}
+## A fingerprint with every whole float written bare (round 754): Godot 4.3
+## prints a Vector's or Color's whole components as "1.0" where 4.2.2 printed
+## "1" (MEASURED: albedo=(1.0, 1.0, 1.0, 1.0) against the recorded
+## (1, 1, 1, 1)), so both sides are brought to 4.2.2's spelling.
+static func _fp_norm(fp: String) -> String:
+	var re := RegEx.create_from_string("(-?\\d+)\\.0(?=[,)])")
+	return re.sub(fp, "$1", true)
+
 const ALPHA_EXPECTED := {"bin": true, "graded": false, "dxt1cut": true, "dxt1solid": false}
 const TWO_SIDED_EXPECTED := {"bin": true, "graded": false, "dxt1cut": false, "dxt1solid": true}
 
@@ -797,12 +805,13 @@ func _test_round_566() -> void:
 		var loaded := ObjectLoader.load_object(archive, spec[2])
 		var fp_loaded := _fingerprint(loaded) if loaded != null else "null"
 		print("fingerprint %s: %s" % [fp_name, fp_loaded])
-		var expected: String = EXPECTED_FINGERPRINTS[fp_name]
+		var expected: String = _fp_norm(EXPECTED_FINGERPRINTS[fp_name])
+		fp_loaded = _fp_norm(fp_loaded)
 		_check(fp_loaded == expected, "load_object builds %s exactly as the pre-split loader did" % fp_name)
 		if split_present:
 			var prepared: Dictionary = OL.prepare_object(archive, spec[2])
 			var committed: Node3D = OL.commit_object(prepared)
-			var fp_split := _fingerprint(committed) if committed != null else "null"
+			var fp_split := _fp_norm(_fingerprint(committed)) if committed != null else "null"
 			_check(fp_split == expected, "commit_object(prepare_object()) builds %s exactly as the pre-split loader did" % fp_name)
 			if fp_split != expected:
 				print("  got  %s" % fp_split)
@@ -960,7 +969,7 @@ func _test_prepare_on_a_task(OL, archive: Pk2Reader, path: String) -> void:
 	var bad := _forbidden(out["prepared"])
 	_check(bad.is_empty(), "the task's result holds no Node and no Resource but Image (found %s)" % str(bad))
 	var committed: Node3D = OL.commit_object(out["prepared"])
-	_check(committed != null and _fingerprint(committed) == EXPECTED_FINGERPRINTS["alphaobj"],
+	_check(committed != null and _fp_norm(_fingerprint(committed)) == _fp_norm(EXPECTED_FINGERPRINTS["alphaobj"]),
 		"the task-prepared object commits to the pre-split loader's tree")
 	_test_the_walk_sees_what_it_forbids(out["prepared"], committed)
 	if committed != null:

@@ -155,8 +155,48 @@ static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 	# makes get_bone_global_pose() correct immediately instead.
 	for name in bone_index:
 		skeleton.reset_bone_pose(bone_index[name])
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 	return skeleton
+
+## Composes every bone's global pose now, in or out of the scene tree: what
+## force_update_all_bone_transforms() alone did under Godot 4.2.2.
+##
+## From Godot 4.4 Skeleton3D caches each bone's global pose and recomposes
+## only bones marked stale, and set_bone_pose_position / _rotation / _scale
+## mark them stale only while the skeleton is in the tree (READ,
+## scene/3d/skeleton_3d.cpp at 4.7.2-stable: `if (is_inside_tree()) {
+## _make_dirty(); _make_bone_global_pose_subtree_dirty(p_bone); }`;
+## `bone_global_pose_dirty` is absent from 4.2.2 and 4.3 and present from
+## 4.4). So out of the tree -- the far crowd's bake (CrowdGpu._bake_frame),
+## the portrait, every headless tool and test -- the first global query
+## after the build was cached for ever and every later pose read back the
+## old one (MEASURED round 754 on the box: a child of a bone turned 90
+## degrees stayed at (20, 0, 0) under 4.7.2, (10, 0, -10) under 4.2.2).
+## set_show_rest_only marks every bone stale whatever the tree
+## (`_make_bone_global_poses_dirty()`), so writing the same value back is
+## the invalidation; in the tree it is not needed and is skipped.
+static func refresh_global_poses(skeleton: Skeleton3D) -> void:
+	if not skeleton.is_inside_tree():
+		skeleton.show_rest_only = skeleton.show_rest_only
+	skeleton.force_update_all_bone_transforms()
+
+## Moves every BoneAttachment3D on `skeleton` to the pose just set, now,
+## rather than at the skeleton's update later in the frame.
+##
+## Godot 4.2.2's BoneAttachment3D followed `bone_pose_changed`, emitted as
+## each global pose was composed, so the first global-pose query after a pose
+## moved the attachments at once; from 4.3 it follows `skeleton_updated`,
+## emitted only by the deferred NOTIFICATION_UPDATE_SKELETON (READ,
+## scene/3d/bone_attachment_3d.cpp and skeleton_3d.cpp at 4.2.2-stable and
+## 4.7.2-stable), so a script reading an attachment's (or its children's)
+## transform in the same frame as the pose gets the previous frame's
+## (MEASURED round 754: crowd_gpu_test.gd's near weapons 8-14 units off under
+## 4.7.2). Running the notification here does the deferred update early: it
+## clears the pending flags, so the deferred one does nothing more.
+static func flush_attachments(skeleton: Skeleton3D) -> void:
+	skeleton.get_bone_global_pose(0)
+	if Engine.get_version_info().hex >= 0x040300 and skeleton.is_inside_tree():
+		skeleton.notification(Skeleton3D.NOTIFICATION_UPDATE_SKELETON)
 
 ## The largest root local translation this treats as authored (OURS: a
 ## bound in the measured gap). MEASURED over Data.pk2's 1,208 skeletons
@@ -215,7 +255,7 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 	var kf: BanReader.Keyframe = track.keyframes[frame_idx % track.keyframes.size()]
 	skeleton.set_bone_pose_rotation(bone_idx, kf.rotation)
 	skeleton.set_bone_pose_position(bone_idx, kf.position)
-	skeleton.force_update_all_bone_transforms() # see build_skeleton3d()'s note on why this is needed
+	Skeleton3DBuilder.refresh_global_poses(skeleton) # see build_skeleton3d()'s note on why this is needed
 
 ## Applies every real bone track in a full .ban animation (BanReader.
 ## ParsedAnimation.bones) at frame_idx, the same per-bone delta-rotation
@@ -462,7 +502,7 @@ static func apply_ban_pose(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation
 		var kf: BanReader.Keyframe = track.keyframes[frame_idx % track.keyframes.size()]
 		skeleton.set_bone_pose_rotation(bone_idx, kf.rotation)
 		skeleton.set_bone_pose_position(bone_idx, kf.position)
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 
 ## Poses skeleton at `seconds` into anim on the clip's own clock: the two
 ## keyframes bracketing that moment in the file's key time table, blended
@@ -504,7 +544,7 @@ static func apply_ban_pose_at(skeleton: Skeleton3D, anim: BanReader.ParsedAnimat
 		var b: BanReader.Keyframe = track.keyframes[j % track.keyframes.size()]
 		skeleton.set_bone_pose_rotation(bone_idx, a.rotation.slerp(b.rotation, frac))
 		skeleton.set_bone_pose_position(bone_idx, a.position.lerp(b.position, frac))
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 
 ## A bare Skeleton3D has no visual representation of its own -- there's no
 ## confirmed real bone-weight/skinning data in .bms yet to bind a real mesh

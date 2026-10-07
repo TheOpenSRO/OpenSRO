@@ -825,8 +825,11 @@ func _bake_frame(l: Layout, fr: CrowdAnim.Frames, f: int, row: int) -> void:
 	for n in range(pb.size()):
 		sk.set_bone_pose_position(pb[n], poss[n])
 	# Out of the tree a pose change does not mark the skeleton dirty
-	# (skeleton_3d.cpp:575, READ), so its globals are composed here, once.
-	sk.force_update_all_bone_transforms()
+	# (skeleton_3d.cpp:575, READ), so its globals are composed here, once
+	# (through refresh_global_poses since round 754: under Godot 4.4+ a bare
+	# force_update_all_bone_transforms() out of the tree recomposed nothing,
+	# and every baked frame was the first one).
+	Skeleton3DBuilder.refresh_global_poses(sk)
 	# The page is taken out of the Array while it is written, so the writes
 	# do not copy it (a packed array shared by two holders copies on write).
 	var pi := row / PAGE_ROWS

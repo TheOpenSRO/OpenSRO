@@ -505,6 +505,7 @@ func _login_label(id: int, fallback: String) -> void:
 ## the labels carry 0; the password field masks with PASSWORD_CHAR.
 func _login_edit(id: int, secret: bool) -> LineEdit:
 	var field := LineEdit.new()
+	KeyInput.line_edit_as_42(field)  # round 754
 	style_login_edit(field, _frame.login_def(id), secret, _login_window)
 	return field
 
@@ -765,6 +766,7 @@ func _slot_field(panel: Control, panel_size: Vector2, slot: Array, label_text: S
 	label.size = Vector2(panel_size.x * (slot[1] - slot[0]) - 4.0, h)
 
 	var field := LineEdit.new()
+	KeyInput.line_edit_as_42(field)  # round 754
 	field.text = default_text
 	field.secret = secret
 	field.secret_character = PASSWORD_CHAR

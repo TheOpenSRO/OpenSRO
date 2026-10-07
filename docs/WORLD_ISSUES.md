@@ -7259,6 +7259,38 @@ The full notes are in `docs/rounds/r752.md`. The user, with thousands of swarm e
     on the old line.
   - Live: real clicks on the box page 0 → 1 → 2 → 1, and 13 → 12.
 
+## Seven-hundred-and-fifty-fourth round: SPIKE -- the client on Godot 4.7.2 (branch only, not merged)
+
+The full notes are in `docs/rounds/r754.md`. The user's choice: try Godot 4.7.2-stable (released
+2026-08-18, the newest stable) in place of 4.2.2. Branch `spike/r754-godot-4.7`; 4.2.2 stays
+installed and pinned everywhere else.
+- **Verdict:** upgrade after three things: Compatibility's colour (+6 to +12 luma in
+  sunlit views) and its +17 % frame, the crowd on the default render thread (+4 ms at 1000-3000 and
+  a Forward+ deadlock when the main thread waits on RID-making pool tasks), and a 4.7.2 heap
+  corruption in `table_parity.gd`. On Forward+ the perf gate is 21-27 % faster a frame at all
+  three views, entries 6-9 % shorter, none slower (MEASURED, base dev on 4.2.2).
+- **The port (MEASURED):** a clean first import and `check`; 12 of 258 suites failed, all fixed,
+  and the branch passes 258 of 258 on 4.7.2 AND on 4.2.2. The changes that matter for the game:
+  - Skeleton3D out of the tree (4.4): a pose change no longer reaches the global poses, so the
+    far crowd's bake would have frozen every far body (`Skeleton3DBuilder.refresh_global_poses`);
+  - reversed depth (4.3): WorldFog's sky test and the cloud layer's far-plane pin;
+  - LineEdit's editing state (4.4): Escape kept the keyboard and the next Enter sent nothing
+    (`KeyInput.line_edit_as_42`);
+  - every un-waited WorkerThreadPool task aborts 4.7.2 at quit, and the cursor's textures outlive
+    the RenderingServer: every world session crashed on quit until the waits and the new
+    `ShutdownRelease` autoload.
+- **The 4.2.2 workarounds:** the const-array race, the static-call-from-lambda null self and
+  `Node.duplicate()` off-thread are gone on 4.7.2 (MEASURED probes); the Compatibility back
+  buffer too (round 707's test passes without the anchor); the opaque sort is not (READ).
+- **Threading (round 757):** nodes and resources build on pool threads on 4.7.2 (4.2.2: 72,000
+  thread-guard errors a run), but Forward+ on the default render thread deadlocks when the main
+  thread waits on such tasks; the separate render thread crashes 4.2.2 and runs 4.7.2 at 15.0 ms
+  with 1000 players standing (4.2.2's best 17.5).
+- **Visual parity:** Forward+ the same picture (world views d8 <= 1.5 %); Compatibility brighter
+  by 6-12 luma in sunlit views (OPEN).
+- **Spike build for the user:** `/root/opensro-g472-spike/` on the render box (Linux and Windows
+  zips, own settings folder, no auto-update).
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.

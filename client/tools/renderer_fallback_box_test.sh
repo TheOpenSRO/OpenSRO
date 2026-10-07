@@ -16,7 +16,7 @@
 # Prints PASS/FAIL per check and exits 1 on any FAIL.
 set -u
 D="${1:?client dir}"; O="${2:-/var/tmp/renderer-fallback-test.$$}"
-G="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+G="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
 P="${PK2_DIR:-/opt/sro-files/client}"
 mkdir -p "$O"
 export OPENSRO_PK2_PATH=$P/Data.pk2 OPENSRO_MAP_PK2_PATH=$P/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$P/Media.pk2
@@ -30,7 +30,7 @@ boot() { # name [env...] -- [godot args...]
   rm -f "$O/$n.cfg"
   ( cd "$D" && env OPENSRO_OVERRIDE_CFG="$O/$n.cfg" "${envs[@]}" timeout 120 "$D/tools/xwl_run.sh" "$G" --path . --quit-after 200 "$@" > "$O/$n.log" 2>&1 )
 }
-banner() { grep -m1 -E "^(Vulkan|OpenGL) API" "$O/$1.log"; }
+banner() { grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$O/$1.log"; }
 recorded() { grep -s "renderer/rendering_method=\"gl_compatibility\"" "$O/$1.cfg" >/dev/null; }
 
 boot launcher -- --rendering-driver opengl3

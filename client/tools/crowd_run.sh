@@ -13,7 +13,7 @@
 # says: keep them under /var/tmp, never /tmp (tmpfs), and delete them after.
 DIR="$1"; LOG="$2"; N="$3"; STEPS="$4"; shift 4
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
-GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"   # GODOT_BIN: round 754
 export OPENSRO_PK2_PATH=$PK2_DIR/Data.pk2 OPENSRO_MAP_PK2_PATH=$PK2_DIR/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export OPENSRO_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 OPENSRO_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export OPENSRO_MAPM_PATH='97\168.m' OPENSRO_QA_AT=1002,1020 OPENSRO_QA_YAW=0 OPENSRO_QA_LOCAL_NPCS=1
@@ -21,7 +21,8 @@ export OPENSRO_QA_LINEUP=all OPENSRO_QA_LINEUP_COUNT=$N OPENSRO_QA_LINEUP_PLUS=1
 export OPENSRO_QA_LINEUP_SPACING=8,10 OPENSRO_QA_LINEUP_PHASE=100000 OPENSRO_QA_DIST=90 OPENSRO_QA_PITCH=-15
 export OPENSRO_QA_CROWD_STEPS="$STEPS" OPENSRO_QA_CROWD_SECONDS=6 OPENSRO_QA_CROWD_QUIT=1
 for kv in "$@"; do export "$kv"; done
-others() { pgrep -af "^$GODOT" | grep -v -- "--path $DIR " | wc -l; }
+# Any Godot 4.x on the box counts (round 754: a 4.7.2 lane beside the 4.2.2 ones).
+others() { pgrep -af "^/opt/godot-bin/Godot_v4" | grep -v -- "--path $DIR " | wc -l; }
 for i in $(seq 1 360); do [ "$(others)" = 0 ] && break; sleep 5; done
 rm -f "$LOG.others"
 ( while :; do n=$(others); [ "$n" -gt 0 ] && echo "$n" >> "$LOG.others"; sleep 2; done ) & W=$!
@@ -30,5 +31,5 @@ timeout -k 10 1500 "$DIR/tools/xwl_run.sh" -s 1920x1080 "$GODOT" --rendering-met
 kill $W 2>/dev/null
 echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0)"
 rm -f "$LOG.others"
-grep -m1 -E "^(Vulkan|OpenGL) API" "$LOG"
+grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$LOG"
 grep -E "LINEUP: |QA CROWD (step|split|arrival|census: all|census: equipment|net)|other player bod|QA DRESS|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -120

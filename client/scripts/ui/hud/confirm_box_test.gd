@@ -195,6 +195,12 @@ func _build_and_press() -> void:
 func _process(_delta: float) -> bool:
 	_frame += 1
 	if _frame == 1:
+		# Round 754: Godot 4.7 drops a pushed mouse event outside the
+		# viewport's rect (MEASURED: a click at (140, 115) on the headless
+		# 64x64 root fired a Button under 4.2.2 and not under 4.7.2), so the
+		# root is sized like a window -- here, as the start-up resets a size
+		# set in _initialize to 64x64 (MEASURED, both versions).
+		root.size = Vector2i(1280, 720)
 		_build_and_press()
 		if _panels == null:
 			return _finish()

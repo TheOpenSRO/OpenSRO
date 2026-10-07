@@ -67,7 +67,7 @@ func _initialize() -> void:
 ## Every visible skinned vertex of the meshes skinned to `skel`, CPU-skinned,
 ## in the skeleton's space, in mesh order.
 func _skin_all(skel: Skeleton3D) -> PackedVector3Array:
-	skel.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skel)
 	var out := PackedVector3Array()
 	for mi in CharacterAppearance._skinned_to(skel):
 		if String(mi.name).ends_with("_front") or not mi.visible or not (mi.get_parent() as Node3D).visible:
@@ -172,7 +172,7 @@ func _measure_skins(own: CharacterAppearance, shared: CharacterAppearance, clips
 
 ## Every bone's global position, after the pose.
 func _globals(skel: Skeleton3D) -> PackedVector3Array:
-	skel.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skel)
 	var out := PackedVector3Array()
 	for i in range(skel.get_bone_count()):
 		out.append(skel.get_bone_global_pose(i).origin)

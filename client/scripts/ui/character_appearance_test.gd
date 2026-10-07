@@ -41,7 +41,7 @@ func _skeleton() -> Skeleton3D:
 	s.set_bone_rest(2, Transform3D(Basis(Vector3(1, 0, 0), PI), Vector3(2, 8, 0)))
 	for i in range(s.get_bone_count()):
 		s.reset_bone_pose(i)
-	s.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(s)
 	var mi := MeshInstance3D.new()
 	mi.name = "body_piece"
 	mi.mesh = BoxMesh.new()

@@ -108,12 +108,27 @@
 # renderer than asked, or on llvmpipe (the CPU), fails the gate. A base cache
 # for a Forward+ base is kept apart from the Compatibility ones (`_fp`).
 #
+# Two Godot binaries (round 754, the 4.7.2 spike): GODOT_BIN (or RENDER_GODOT)
+# is the binary both sides run, 4.2.2 unless set; BASE_GODOT_BIN gives the base
+# side its own. A base on a binary other than the pinned 4.2.2 gets its own
+# shared copy and cache (suffixed with the binary's version), so a 4.2.2 base
+# copy is never re-imported by another version. --ab-env and --ab-renderer run
+# one copy, so they refuse two binaries.
+#   GODOT_BIN=/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64 \
+#   BASE_GODOT_BIN=/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 \
+#     client/tools/perf_gate.sh --base dev --sites jangan,reeds,cross --frames 12000
+# PERF_BOX_LOCK (box path) is taken around every run as well as the gates' own
+# lock, e.g. /var/tmp/godot-lock/lock so no lane's qa_shot runs meanwhile.
+#
 # Environment: RENDER_HOST, PK2_DIR, PERF_LANE (dir suffix; default: branch).
 set -euo pipefail
 
 RENDER_HOST="${RENDER_HOST:-root@192.168.10.78}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
-GODOT="${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+GODOT_DEFAULT=/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64
+GODOT="${GODOT_BIN:-${RENDER_GODOT:-$GODOT_DEFAULT}}"
+BASE_GODOT="${BASE_GODOT_BIN:-$GODOT}"
+PERF_BOX_LOCK="${PERF_BOX_LOCK:-}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 base="" head="" sites="jangan,reeds,cross" runs=3 frames=3000 ab_env="" cold=0 renderer="" ab_renderer="" both_env="" base_env="" size="1280x720"
@@ -151,6 +166,9 @@ if [ -n "$ab_env" ]; then
   fi
   base="HEAD"
 fi
+if [ "$BASE_GODOT" != "$GODOT" ] && { [ -n "$ab_env" ] || [ -n "$ab_renderer" ]; }; then
+  echo "--ab-env / --ab-renderer run one copy: give one Godot binary (BASE_GODOT_BIN differs from GODOT_BIN)" >&2; exit 2
+fi
 [ -n "$base" ] || base="$(git merge-base HEAD origin/dev 2>/dev/null || git merge-base HEAD dev)"
 base_short="$(git rev-parse --short "$base")"
 head_label="${head:-working tree}"
@@ -159,7 +177,10 @@ lane="${PERF_LANE:-$(git rev-parse --abbrev-ref HEAD | tr -c 'a-zA-Z0-9\n' '-')}
 # gate that measures it: shipped and imported once, reused after (the ship and
 # the import were a large part of each gate).
 base_full_rev="$(git rev-parse "$base")"
-box_base="/opt/opensro-client-perf-base-${base_full_rev:0:12}"
+# A base on another binary than the pinned one (round 754) is its own copy and cache.
+gtag=""
+[ "$BASE_GODOT" != "$GODOT_DEFAULT" ] && gtag="-g$(basename "$BASE_GODOT" | sed -n 's/^Godot_v\([0-9.]*\)-.*/\1/p' | tr -d .)"
+box_base="/opt/opensro-client-perf-base-${base_full_rev:0:12}${gtag}"
 box_head="/opt/opensro-client-perf-${lane}-head"
 [ -n "$ab_env" ] && box_base="$box_head"
 [ -n "$ab_renderer" ] && box_base="$box_head"
@@ -209,6 +230,7 @@ proj_renderer() { # $1 rev ('' = working tree)
 }
 head_renderer="${renderer:-$(proj_renderer "$head")}"
 if [ -n "$ab_renderer" ]; then base_renderer="$ab_renderer"; else base_renderer="${renderer:-$(proj_renderer "$base")}"; fi
+[ "$BASE_GODOT" != "$GODOT" ] && echo "perf gate: base runs $BASE_GODOT, head runs $GODOT"
 echo "perf gate: base $base_label vs head $head_label; sites $sites; $runs run(s) each$([ $cold = 1 ] && echo ', COLD page cache'); renderers base $base_renderer, head $head_renderer; box dirs $box_base, $box_head"
 [ -n "$both_env$base_env" ] && echo "perf gate: both sides env [$both_env], base side also [$base_env]"
 ssh -n "$RENDER_HOST" "mkdir -p '$work' && chown ghidra:ghidra '$work'"
@@ -221,7 +243,7 @@ git -C "$repo_root" archive "$base" $files | ssh "$RENDER_HOST" "flock '/var/tmp
   if [ -f \"$box_base/.shipped\" ]; then cat >/dev/null; echo \"perf gate: reusing the shared base copy $box_base\";
   else rm -rf \"$box_base\" && mkdir -p \"$box_base\" && tar xf - -C \"$box_base\" --strip-components=1 &&
     chown -R ghidra:ghidra \"$box_base\" &&
-    { su - ghidra -c \"$GODOT --headless --path $box_base --import --quit\" >/dev/null 2>&1 || true; } &&
+    { su - ghidra -c \"$BASE_GODOT --headless --path $box_base --import --quit\" >/dev/null 2>&1 || true; } &&
     touch \"$box_base/.shipped\" && echo \"perf gate: shipped the shared base copy $box_base\"; fi'"
 fi
 ship "$box_head" "$head"
@@ -230,7 +252,7 @@ ship "$box_head" "$head"
 # and prints "<frame ms> <entry ms> <freeze ms> <hitches> <other renders seen>".
 ssh "$RENDER_HOST" "cat > '$work/run1.sh'" <<EOF
 #!/bin/bash
-# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value] [cold: 1] [renderer]
+# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value] [cold: 1] [renderer] [base|head: which binary]
 export OPENSRO_PK2_PATH=$PK2_DIR/Data.pk2 OPENSRO_MAP_PK2_PATH=$PK2_DIR/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export OPENSRO_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 OPENSRO_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export OPENSRO_MAPM_PATH="\$3" OPENSRO_QA_AT="\$4" OPENSRO_QA_YAW="\$5" OPENSRO_QA_FORCE_LOADING=1
@@ -261,7 +283,11 @@ if [ "\${10:-gl_compatibility}" = forward_plus ]; then
 else
   LAUNCH="xvfb-run -a -s '-screen 0 ${size}x24' vglrun -d egl0"; RFLAGS="--rendering-driver opengl3"
 fi
-eval "\$LAUNCH" $GODOT \$RFLAGS \
+# The binary comes as "base" or "head", never as its path: a run waiting for the locks would
+# otherwise carry "Godot_v4..." on its command line, and every lane's "is another Godot running"
+# check (crowd_run.sh, this file's others()) would count the WAITING run as a render (round 754).
+GBIN="$GODOT"; [ "\${11:-head}" = base ] && GBIN="$BASE_GODOT"
+eval "\$LAUNCH" "\$GBIN" \$RFLAGS \
   --resolution $size --path "\$1" res://scenes/World3D.tscn --quit-after "\${7:-$frames}" \
   --print-fps --disable-vsync > "\$2" 2>&1 &
 G=\$!; wait \$G
@@ -276,7 +302,7 @@ freeze=\$(grep -o "longest work frame [0-9.]* ms" "\$2" | grep -o "[0-9.]*" | so
 hitches=\$(grep -o "; [0-9]* over 100 ms" "\$2" | grep -o "[0-9]* over" | grep -o "[0-9]*" | awk '{s+=\$1} END {print s+0}')
 native=\$(grep -m1 -o "native readers [A-Z]*" "\$2" | awk '{print \$3}'); native=\${native:-none}
 # The renderer that ran, from Godot's banner: <method>:<device, spaces as _>.
-banner=\$(grep -m1 -E "^(Vulkan|OpenGL) API" "\$2")
+banner=\$(grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "\$2")
 case "\$banner" in *" - Forward+ - "*) rmeth=forward_plus ;; *" - Compatibility - "*) rmeth=gl_compatibility ;; *) rmeth=unknown ;; esac
 rdev=\$(echo "\$banner" | sed -n 's/.*Using \(Vulkan \)\{0,1\}Device[^:]*: //p' | tr ' ' _ | cut -c1-60)
 echo "\$ms \$entry \$freeze \$hitches \$(sort -n "\$2.others" 2>/dev/null | tail -1 | grep . || echo 0) \$native \$rmeth:\${rdev:-none}"
@@ -311,13 +337,13 @@ ssh -n "$RENDER_HOST" "mkdir -p '$cache'"
 # one1 <base|head> <run tag>: one booted run, repeated if another lane's Godot
 # overlapped it; prints "ms entry freeze hitches" (progress goes to stderr).
 one1() {
-  local b=$1 tag=$2 dir="$box_base" out ms entry freeze hitches seen rend want_r="$base_renderer"
-  [ "$b" = head ] && dir="$box_head" && want_r="$head_renderer"
+  local b=$1 tag=$2 dir="$box_base" out ms entry freeze hitches seen rend want_r="$base_renderer" gbin=base
+  [ "$b" = head ] && dir="$box_head" && want_r="$head_renderer" && gbin=head
   for try in 1 2 3; do
     local env="$(echo "$extra $both_env" | xargs)"
     [ "$b" = base ] && [ -n "$ab_env" ] && env="$(echo "$env $ab_env" | xargs)"
     [ "$b" = base ] && [ -n "$base_env" ] && env="$(echo "$env $base_env" | xargs)"
-    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$env' '$cold' '$want_r'")
+    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock ${PERF_BOX_LOCK:+flock '$PERF_BOX_LOCK'} '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$env' '$cold' '$want_r' '$gbin'")
     read -r ms entry freeze hitches seen native rend <<<"$out"
     # The renderer that ran (round 693): the one asked for, on the GPU.
     if [ "${rend%%:*}" != "$want_r" ] || [[ "$rend" == *llvmpipe* ]]; then
@@ -360,7 +386,7 @@ for s in ${sites//,/ }; do
   # SLOWER threshold of the cached median -- a drifted box is measured again.
   # (`|| true`: an assignment takes its substitution's status, and under set -e
   # a false test there ended the gate silently -- round 693.)
-  cfile="$cache/${base_full}_${s}_${run_frames}$([ "$base_renderer" = forward_plus ] && echo _fp || true).vals"
+  cfile="$cache/${base_full}${gtag}_${s}_${run_frames}$([ "$base_renderer" = forward_plus ] && echo _fp || true).vals"
   cached=""
   # Same-build A/B and cold runs never use or fill the base cache: neither is
   # the base revision's ordinary warm measurement.

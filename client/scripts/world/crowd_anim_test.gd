@@ -87,7 +87,7 @@ func _body() -> Skeleton3D:
 	s.set_bone_rest(3, Transform3D(Basis(Vector3(0, 0, 1), 0.2), Vector3(0, 6, 0)))
 	for i in range(s.get_bone_count()):
 		s.reset_bone_pose(i)
-	s.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(s)
 	return s
 
 ## A skinned mesh whose palette is [calf, spine] (not the skeleton's order),
@@ -115,7 +115,7 @@ func _mesh() -> BmsReader.ParsedMesh:
 ## Every vertex of `mi` skinned on `s` as the GPU does it: the sum of
 ## weight x (bone global pose x bind) x vertex over its influences.
 func _skinned(mi: MeshInstance3D, s: Skeleton3D) -> PackedVector3Array:
-	s.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(s)
 	var out := PackedVector3Array()
 	var arr := mi.mesh.surface_get_arrays(0)
 	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]

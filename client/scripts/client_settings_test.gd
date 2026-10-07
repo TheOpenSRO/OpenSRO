@@ -26,7 +26,14 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL " + msg)
 		_failures += 1
 
+## The factor glyphs are rasterised at. Godot 4.5 moved font oversampling
+## from the text server's one global value to each viewport (READ, 4.7.2's
+## class reference: TextServer.font_get_global_oversampling "does nothing and
+## always returns 1.0"; Viewport.get_oversampling "Returns viewport
+## oversampling factor"), so the root window's own is read where it exists.
 func _oversampling() -> float:
+	if get_root().has_method("get_oversampling"):
+		return float(get_root().call("get_oversampling"))
 	return TextServerManager.get_primary_interface().font_get_global_oversampling()
 
 func _initialize() -> void:

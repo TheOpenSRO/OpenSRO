@@ -160,7 +160,7 @@ func _feet(b: CharacterAppearance.Body, anims: BodyAnimations, lookup: String, d
 	return [bind_y, _lowest(b.skeleton), path.get_file()]
 
 func _lowest(skel: Skeleton3D) -> float:
-	skel.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skel)
 	var lo := INF
 	for mi in CharacterAppearance._skinned_to(skel):
 		if String(mi.name).ends_with("_front") or not mi.visible:

@@ -137,6 +137,15 @@ class Templates:
 	var _done := {} # model -> [AssembledCharacter or null, usec], written by the task
 	var _lock := Mutex.new()
 
+	## Round 754: a Templates freed with assemblies still out waits for them --
+	## Godot 4.7 aborts at quit over a pool task nobody waited for
+	## (ShutdownRelease.wait_tasks has the measurement).
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_PREDELETE:
+			for model in _tasks:
+				WorkerThreadPool.wait_for_task_completion(_tasks[model])
+			_tasks.clear()
+
 	func has(model: String) -> bool:
 		return _by_model.has(model)
 

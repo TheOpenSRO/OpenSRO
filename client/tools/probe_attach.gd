@@ -86,7 +86,7 @@ func _initialize() -> void:
 		return
 	var skeleton := assembled.skeleton
 	get_root().add_child(skeleton)
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 
 	var items: Array = []
 	for i in _apath("--items").split(",", false):
@@ -121,7 +121,7 @@ func _initialize() -> void:
 
 	if assembled.idle_animation != null:
 		Skeleton3DBuilder.apply_ban_pose_at(skeleton, assembled.idle_animation, 0.0, true)
-		skeleton.force_update_all_bone_transforms()
+		Skeleton3DBuilder.refresh_global_poses(skeleton)
 		print("== IDLE pose (body's stand clip, 0 s) ==")
 		for it in parsed_items:
 			_report(it[0], skeleton, it[1], it[2], it[3], it[4])

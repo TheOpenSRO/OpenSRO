@@ -42,6 +42,15 @@ r725.md`) no longer show store or storage lines. A `--server` run needs the NPC 
 `-npcs-csv`); `/var/tmp/r727/live.sh` on the box is a working recipe, with `/tp` to stand within
 300 of the NPC, since `QA_AT` does not move the server's copy of the player.
 
+**Another Godot binary** (round 754). `GODOT_BIN=/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64`
+makes `remote_godot.sh`, `qa_shot.sh`, `crowd_run.sh`, `check_scripts.sh` and the two box tests
+run that binary instead of the pinned 4.2.2; `perf_gate.sh` runs it on both sides, or with
+`BASE_GODOT_BIN` on the base side only (a base on another binary gets its own shared copy and
+cache), and `PERF_BOX_LOCK=/var/tmp/godot-lock/lock` holds the box lock around each run. Use it
+with a lane's own `RENDER_DIR` and `GODOT_LOCK`: a copy imported by 4.7.2 is upgraded and must
+not be run by 4.2.2 again. Unset, every tool runs 4.2.2 as before. `docs/rounds/r754.md` has the
+4.7.2 spike.
+
 `QA_SHOT_REAP=0` skips qa_shot's start-up kill of every Godot, Xvfb and weston on the box. Use it
 with your own `GODOT_LOCK` in a lane, so another lane's runs survive. `frame_ab.py a.png b.png
 [--box x,y,w,h]` (numpy + ImageMagick, on the box) prints how two frames differ: mean colour, luma

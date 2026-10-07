@@ -15,12 +15,15 @@
 # every class_name registered before it can tell a broken script from one
 # that simply has not been seen yet -- see its own doc comment.
 #
-# Environment: RENDER_HOST, RENDER_DIR, RENDER_GODOT, PK2_DIR.
+# Environment: RENDER_HOST, RENDER_DIR, RENDER_GODOT (or GODOT_BIN), PK2_DIR.
+# GODOT_BIN (round 754) names the box binary for every tool, e.g.
+# GODOT_BIN=/opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64 with a lane's own
+# RENDER_DIR and GODOT_LOCK; unset, the project's pinned 4.2.2 runs.
 set -euo pipefail
 
 RENDER_HOST="${RENDER_HOST:-root@192.168.10.78}"
 RENDER_DIR="${RENDER_DIR:-/opt/opensro-client}"
-RENDER_GODOT="${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+RENDER_GODOT="${GODOT_BIN:-${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
