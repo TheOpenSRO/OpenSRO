@@ -86,9 +86,12 @@ func _make_world() -> Node:
 		"\treturn clips[action_type]",
 		"func _body_animation_path(_gender: String, action_type: int, _group: String) -> String:",
 		"\treturn \"type%d\" % action_type",
+		"var repeat := false",
 		"func _crowd_sound_advance(b: CrowdGpu.Body, t: float) -> void:",
 		"\tadvanced.append([b, t])",
-		"\tb.sound_due = INF",
+		"\tb.sound_due = t + 0.25 if repeat else INF",
+		"\tif repeat:",
+		"\t\t_sound_schedule(b)",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
 	var scene := load("res://scenes/World3D.tscn") as PackedScene
@@ -204,6 +207,16 @@ func _test_plates(world: Node) -> void:
 	_check(not batch.has(label) and sweep.size() > 0, "the QA switch hands it back to the sweep")
 	world.call("_plate_batch_switch", true)
 	_check(batch.has(label), "and to the batch again")
+	# The review's F4: V hides other players' plates in the same frame.
+	world.call("_plate_batch_step")
+	var slot: int = (batch._plates[label] as NamePlateBatch.Plate).slot
+	_check(batch._anchors[slot * 4 + 3] > -1.0e8, "the plate is shown before V")
+	world.call("_show_bodies", world.get("_other_bodies"), false, true)
+	world.call("_plate_batch_step")
+	_check(batch._anchors[slot * 4 + 3] < -1.0e8, "V hides the batched plate in the same frame")
+	world.call("_show_bodies", world.get("_other_bodies"), true, true)
+	world.call("_plate_batch_step")
+	_check(batch._anchors[slot * 4 + 3] > -1.0e8, "and releasing it shows it again in the same frame")
 	var before := batch.size()
 	body.queue_free()
 	(world.get("_other_bodies") as Dictionary).erase(311)
@@ -286,12 +299,15 @@ func _test_sound_wheel(world: Node) -> void:
 	advanced.clear()
 	var due := [10.05, 10.3, 10.3, 11.0]
 	var made: Array = []
+	var skels: Array = []
 	for d in due:
 		var b := CrowdGpu.Body.new()
+		b.skel = Skeleton3D.new()
+		skels.append(b.skel)
 		b.heard = true
 		b.sound_due = d
 		made.append(b)
-		crowd._bodies[made.size()] = b
+		crowd._bodies[b.skel] = b
 		world.call("_sound_schedule", b)
 	crowd._heard_dirty = true
 	# The spread re-check is kept busy on bodies out of hearing, so only the
@@ -316,6 +332,58 @@ func _test_sound_wheel(world: Node) -> void:
 		if at == null or float(at) < due[i] or float(at) > due[i] + 1.0 / 60.0 + 1e-6:
 			ok = false
 	_check(ok and advanced.size() == 4, "each far body's sound fires in the first frame at or after its key, from the wheel alone (%d advances)" % advanced.size())
+	# The review's F1: a far body brought near (CrowdGpu.remove, as _crowd_wake
+	# does) never advances from the wheel again, though it was filed and its
+	# advances reschedule it; nor does a record a later switch replaced.
+	world.set("repeat", true)
+	advanced.clear()
+	var woken := CrowdGpu.Body.new()
+	woken.skel = Skeleton3D.new()
+	woken.heard = true
+	woken.sound_due = t + 0.05
+	crowd._bodies[woken.skel] = woken
+	world.call("_sound_schedule", woken)
+	var replaced := CrowdGpu.Body.new()
+	replaced.skel = Skeleton3D.new()
+	replaced.heard = true
+	replaced.sound_due = t + 0.05
+	crowd._bodies[replaced.skel] = replaced
+	world.call("_sound_schedule", replaced)
+	var live := CrowdGpu.Body.new()
+	live.skel = Skeleton3D.new()
+	live.heard = true
+	live.sound_due = t + 0.05
+	crowd._bodies[live.skel] = live
+	world.call("_sound_schedule", live)
+	# One frame past the key: each fires once and is filed again.
+	for f in range(6):
+		t += 1.0 / 60.0
+		world.set("_idle_anim_time", t)
+		world.set("_sound_ring", decoys)
+		world.set("_sound_ring_at", 0)
+		world.call("_crowd_sound_step")
+	var fired_before := advanced.size()
+	crowd.remove(woken.skel)
+	var newer := CrowdGpu.Body.new()
+	newer.skel = replaced.skel
+	crowd._bodies[replaced.skel] = newer
+	_check(not woken.heard and woken.sound_due == INF, "CrowdGpu.remove takes the body off the far sounds (heard %s, due %s)" % [woken.heard, woken.sound_due])
+	advanced.clear()
+	for f in range(120):
+		t += 1.0 / 60.0
+		world.set("_idle_anim_time", t)
+		world.set("_sound_ring", [woken, replaced, live])
+		world.set("_sound_ring_at", 0)
+		world.call("_crowd_sound_step")
+	var by := {}
+	for e in advanced:
+		by[e[0]] = int(by.get(e[0], 0)) + 1
+	_check(fired_before == 3 and not by.has(woken) and not by.has(replaced) and int(by.get(live, 0)) >= 6,
+		"a woken body and a replaced record never advance again, the live one goes on (woken %d, replaced %d, live %d)" % [int(by.get(woken, 0)), int(by.get(replaced, 0)), int(by.get(live, 0))])
+	world.set("repeat", false)
+	for sk in skels + [woken.skel, replaced.skel, live.skel]:
+		if is_instance_valid(sk):
+			(sk as Node).free()
 	world.set("_crowd_gpu", null)
 
 func _test_prune() -> void:

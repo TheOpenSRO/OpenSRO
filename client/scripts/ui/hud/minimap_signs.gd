@@ -33,12 +33,17 @@ uniform vec2 player_world = vec2(0.0);
 uniform float px_per_unit = 0.0;
 uniform vec2 centre = vec2(0.0);
 uniform float radius = 0.0;
+uniform vec2 sign_half = vec2(4.0);
 void vertex() {
 	vec2 off = (INSTANCE_CUSTOM.xy - player_world) * px_per_unit;
 	if (INSTANCE_CUSTOM.z < 0.5 || length(off) >= radius) {
 		VERTEX = vec2(-100000.0);
 	} else {
-		VERTEX = centre + off + VERTEX;
+		// The quad's top-left on a whole unit, as the TextureRect it replaces
+		// was (Control.position rounded under gui/common/snap_controls_to_pixels,
+		// Godot's default): round 757's review, F2 -- a fractional corner drew
+		// every sign filtered across two pixels.
+		VERTEX = floor(centre + off - sign_half + 0.5) + (VERTEX + sign_half);
 	}
 }
 "
@@ -216,6 +221,7 @@ func place(player_world: Vector3, tile_px: float, centre: Vector2, radius: float
 	_material.set_shader_parameter("px_per_unit", tile_px / region_span)
 	_material.set_shader_parameter("centre", centre)
 	_material.set_shader_parameter("radius", radius)
+	_material.set_shader_parameter("sign_half", sign_size / 2.0)
 	for kind in _kinds:
 		var k: Kind = _kinds[kind]
 		if k.dirty and k.mm != null:

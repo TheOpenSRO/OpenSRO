@@ -77,6 +77,9 @@ func _test_layer() -> void:
 	s.set_list("npc", [player])
 	_check(s.drawn("npc", player, px, radius, span) == 1, "and a shorter list hides the rest")
 	_check(s.get_child_count() == 0, "no node a sign")
+	# The review's F2: the quad's top-left on a whole unit, as the TextureRect's
+	# position was (snap_controls_to_pixels rounds it), not between pixels.
+	_check(MinimapSigns.SHADER_CODE.contains("floor(centre + off - sign_half + 0.5)"), "a sign's corner is rounded to a whole unit")
 	# The buffer goes up when a kind changed, and only then.
 	s.place(player, px, Vector2(52.5, 52.5), radius, span)
 	_check(not k.dirty, "place() sends the changed kinds")

@@ -6359,6 +6359,8 @@ func _exit_tree() -> void:
 	# freed, not adopted.
 	if _appearance != null:
 		_appearance.wait_prepared(false)
+	# Nor a landing-height helper (round 757's review, F3).
+	HeightBatch.reap_all()
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
@@ -6959,7 +6961,7 @@ func _crowd_sound_step() -> void:
 			var later: Array = []
 			for fb in bucket:
 				var b: CrowdGpu.Body = fb
-				if not b.heard or b.sound_due == INF:
+				if not _sound_live(b):
 					continue
 				if b.sound_due > t:
 					# Not yet (this bucket is the current one), or moved to a later
@@ -6983,8 +6985,19 @@ func _crowd_sound_step() -> void:
 	while _sound_ring_at < end:
 		var b: CrowdGpu.Body = _sound_ring[_sound_ring_at]
 		_sound_ring_at += 1
-		if b.heard and b.sound_due <= t:
+		if _sound_live(b) and b.sound_due <= t:
 			_crowd_sound_advance(b, t)
+
+## Round 757's review, F1: a body is advanced from the wheel only while it is
+## still the far record of its skeleton. A body brought near (CrowdGpu.remove,
+## which also clears its hearing) or replaced by a later switch's new record is
+## stale: its bucket entry is dropped, and the near clip tick alone drives the
+## skeleton's sounds -- the stale record advancing its old loop overwrote the
+## one-shot's state in AnimSounds and replayed a hit's or a death's keys.
+func _sound_live(b: CrowdGpu.Body) -> bool:
+	if b == null or not b.heard or b.sound_due == INF or _crowd_gpu == null:
+		return false
+	return is_instance_valid(b.skel) and _crowd_gpu.body_of(b.skel) == b
 
 func _crowd_sound_advance(b: CrowdGpu.Body, t: float) -> void:
 	if not is_instance_valid(b.skel):
@@ -7085,6 +7098,11 @@ func _crowd_switch_due() -> void:
 		if bool(entry[4]) and _crowd_eligible(int(want[skel][1]), want[skel][0], skel) == "" \
 				and _crowd_gpu.add(want[skel][0], skel, entry, _idle_anim_time):
 			gone[skel] = true
+			# Round 757's review, F5: in this cycle's far bounds, which the
+			# cycle's end resets the groups' AABB to (the scan saw it near).
+			var at := (want[skel][0] as Node3D).global_position
+			_crowd_far_lo = Vector3(minf(_crowd_far_lo.x, at.x), minf(_crowd_far_lo.y, at.y), minf(_crowd_far_lo.z, at.z))
+			_crowd_far_hi = Vector3(maxf(_crowd_far_hi.x, at.x), maxf(_crowd_far_hi.y, at.y), maxf(_crowd_far_hi.z, at.z))
 			# Its clip sounds go on from the CPU while it is within hearing
 			# (round 747's review, F2: the READ 600 rule), from where the near
 			# tick left them.
@@ -17490,6 +17508,8 @@ const OTHER_HEIGHT_BUDGET := 128
 var _height_batch := HeightBatch.new()
 
 func _step_other_legs(delta: float) -> void:
+	# Round 757's review, F3: the helpers' groups left from earlier frames freed.
+	HeightBatch.reap()
 	if _other_legs.is_empty() and _other_heights_pending.is_empty():
 		return
 	var fs := FrameSplit.on
@@ -17564,6 +17584,8 @@ func _step_other_legs(delta: float) -> void:
 		FrameSplit.add("o_leg_h", Time.get_ticks_usec() - th)
 		if _height_batch.last_threaded:
 			FrameSplit.add("o_leg_h_threaded_calls", 1000)
+			# Points a pool helper did, in thousandths (the rest: the main thread).
+			FrameSplit.add("o_leg_h_helped_calls", _height_batch.last_by_helpers * 1000)
 	# The landings that waited.
 	for i in range(asks.size()):
 		var a: Array = asks[i]
@@ -22599,7 +22621,7 @@ func _on_key_held(action: String, _down: bool) -> void:
 func _apply_key_holds() -> void:
 	var hiding := _key_input != null and _key_input.is_held("hide_objects")
 	if hiding or hiding != _objects_hidden:
-		var players := _show_bodies(_other_bodies, not (hiding and KeyMap.hides_under_v("other_player")))
+		var players := _show_bodies(_other_bodies, not (hiding and KeyMap.hides_under_v("other_player")), true)
 		var monsters := _show_bodies(_monster_bodies, not (hiding and KeyMap.hides_under_v("monster")))
 		if hiding != _objects_hidden:
 			print("KEYS: V %s -- %d other player(s) and %d monster(s) %s; NPCs and dropped items kept" % [
@@ -22653,7 +22675,7 @@ func _qa_probe_hidden_pick() -> void:
 		str(best.get_meta("monster_id", "?")), best_d, screen, kind])
 
 ## Shows or hides every body in an id -> Node3D map; returns how many there are.
-func _show_bodies(bodies: Dictionary, shown: bool) -> int:
+func _show_bodies(bodies: Dictionary, shown: bool, others: bool = false) -> int:
 	var n := 0
 	for id in bodies:
 		var body := bodies[id] as Node3D
@@ -22661,6 +22683,10 @@ func _show_bodies(bodies: Dictionary, shown: bool) -> int:
 			n += 1
 			if body.visible != shown:
 				body.visible = shown
+				# Round 757's review, F4: other players' batched plates (and
+				# signs) hide and show with their bodies in the same frame.
+				if others:
+					_other_moved(body)
 	return n
 
 ## G: the nearest ground item strictly within PICKUP_SEARCH_RADIUS of the

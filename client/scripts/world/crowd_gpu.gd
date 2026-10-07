@@ -379,6 +379,10 @@ func remove(skel: Skeleton3D, push: bool = true) -> Array:
 	if _by_node.get(b.node) == b:
 		_by_node.erase(b.node)
 	_moved.erase(b)
+	# Round 757's review, F1: off the far sounds (World3D's wheel drops a
+	# record that is not heard, or not its skeleton's current one).
+	b.heard = false
+	b.sound_due = INF
 	_free_slots.append(b.slot)
 	# A freed slot draws nothing: no instance names it.
 	_unhide(b)

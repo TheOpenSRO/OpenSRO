@@ -309,6 +309,8 @@ func _process(delta: float) -> void:
 	_t += delta
 	var now := Time.get_ticks_usec()
 	# Round 757: each part of a combined step ("dest0.02+churn0.01") at its rate.
+	if _pool_busy:
+		_pool_busy_step()
 	for part in steps[_i].split("+", false):
 		if part.begins_with("net"):
 			_net_step(delta, float(part.substr(3)) if part.substr(3).is_valid_float() else net_rate)
@@ -402,7 +404,8 @@ func _report() -> void:
 	gpu_line += " others_ms=%.2f" % (float(sp.others_usec - int(_acc["others_us"])) / 1000.0 / f)
 	# Round 757: the step's wall-clock window, so a box-side sampler's
 	# per-thread CPU and GPU lines (tools/crowd_threads.py) can be matched to it.
-	var unix_line := " phys_active=%d phys_pairs=%d phys_islands=%d nav_ms=%.2f objects_total=%d unix=%.3f,%.3f" % [
+	var unix_line := " max_ms=%.2f" % (sorted[-1] if not sorted.is_empty() else 0.0)
+	unix_line += " phys_active=%d phys_pairs=%d phys_islands=%d nav_ms=%.2f objects_total=%d unix=%.3f,%.3f" % [
 		int(_acc.get("phys_active", 0)) / int(f), int(_acc.get("phys_pairs", 0)) / int(f), int(_acc.get("phys_islands", 0)) / int(f),
 		float(_acc.get("nav_ms", 0.0)) / f, int(Performance.get_monitor(Performance.OBJECT_COUNT)),
 		float(_acc.get("unix0", 0.0)), Time.get_unix_time_from_system()]
@@ -691,6 +694,15 @@ func _switch(step: String, off: bool) -> void:
 			# Round 757: the walkers' heights on the main thread (HeightBatch
 			# inline) for the step, against the pool's.
 			HeightBatch.threaded_min = (1 << 30) if off else HeightBatch.THREADED_MIN
+		"poolbusy":
+			# Round 757's review, F3: the pool kept busy for the step (as a
+			# region crossing's cell prepares keep it), POOL_BUSY tasks of
+			# POOL_BUSY_MS each always queued, high priority.
+			_pool_busy = off
+			if not off:
+				for id in _pool_tasks:
+					WorkerThreadPool.wait_for_task_completion(int(id))
+				_pool_tasks.clear()
 		"leaveall":
 			# Round 757: every lineup body leaves at once (0x3016's path): the
 			# end of a crowd. Not given back; the steps after it have no bodies.
@@ -869,6 +881,26 @@ func _wake(id) -> void:
 	var aw = world.get("_other_awake")
 	if aw is Dictionary:
 		(aw as Dictionary)[id] = true
+
+## The `poolbusy` step's tasks (QA).
+const POOL_BUSY := 8
+const POOL_BUSY_MS := 30
+var _pool_busy := false
+var _pool_tasks: Array = []
+
+static func _pool_busy_task() -> void:
+	OS.delay_msec(POOL_BUSY_MS)
+
+func _pool_busy_step() -> void:
+	var keep: Array = []
+	for id in _pool_tasks:
+		if WorkerThreadPool.is_task_completed(int(id)):
+			WorkerThreadPool.wait_for_task_completion(int(id))
+		else:
+			keep.append(id)
+	_pool_tasks = keep
+	while _pool_tasks.size() < POOL_BUSY:
+		_pool_tasks.append(WorkerThreadPool.add_task(QaCrowdProbe._pool_busy_task, true, "QA pool busy"))
 
 ## Every body to a new spot within 8 units of its home (the interpolation walks
 ## it there with its run loop, as a server's position update does).
