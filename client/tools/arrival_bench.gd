@@ -166,7 +166,9 @@ func _run() -> void:
 				a.append(_sig(p))
 			var c := PackedStringArray()
 			for g in _crowd._lit_parts(recipe, (geo as Array)[0], -1.0):
-				c.append(_sig(g))
+				var q: Dictionary = (g as Dictionary).duplicate()
+				q["material"] = _crowd._twin(g["lit"], (geo as Array)[0])
+				c.append(_sig(q))
 			a.sort()
 			c.sort()
 			if a != c:

@@ -272,7 +272,9 @@ func _test_recipe_parity(app: CharacterAppearance) -> void:
 			a.append(_part_sig(p))
 		var c := PackedStringArray()
 		for g in crowd._lit_parts(r, (geo as Array)[0], -1.0):
-			c.append(_part_sig(g))
+			var q: Dictionary = (g as Dictionary).duplicate()
+			q["material"] = crowd._twin(g["lit"], (geo as Array)[0])
+			c.append(_part_sig(q))
 		a.sort()
 		c.sort()
 		_check(a.size() == 3 and a == c, "scale 0x%02x: the recipe's parts are the built body's (%s | %s)" % [scale, ", ".join(a), ", ".join(c)])
@@ -340,6 +342,7 @@ func _ghost(world: Node, id: int, at: Vector3, equipped: Dictionary) -> Node3D:
 	return (world.get("_other_bodies") as Dictionary).get(id)
 
 func _test_world(world: Node, app: CharacterAppearance) -> void:
+	CrowdGpu.near_count = 16
 	var cam := Camera3D.new()
 	world.add_child(cam)
 	cam.global_position = Vector3(0.0, 5.0, 0.0)
@@ -369,21 +372,45 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	crowd.flush(t0)
 	var b: CrowdGpu.Body = crowd.body_of(n601)
 	_check(b != null and b.parts.size() == 3 and int(crowd.stats["instances"]) == 3, "its three parts are instances (%d)" % int(crowd.stats["instances"]))
-	_check(is_zero_approx(crowd.fade_elapsed(n601)) and String((b.parts[0][0] as CrowdGpu.Group).key).contains("fade"),
+	_check(is_zero_approx(crowd.fade_elapsed(n601)) and _fading_rec(b.parts[0]),
 		"it fades in from 0 on the fade groups")
 	var rec: Array = b.parts[0]
 	var w: float = (rec[0] as CrowdGpu.Group).buf[int(rec[1]) * CrowdGpu.INSTANCE_FLOATS + 15]
 	_check(w >= 0.0 and is_equal_approx(w, (t0 - crowd._epoch) * 1000.0),
 		"its instances carry the fade's start for the shader's per-instance alpha (%.1f)" % w)
 	var phase := float(b.entry[3])
-	# The gait: run not baked yet (nothing has asked for it) -> dressed now, running.
+	# The gait with its run not baked (a new run clip): never dressed for it
+	# (review F3); it keeps its loop, and runs on the GPU once the clip is up.
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = app._body_templates[BODY]
+	tmpl.animation_cache["t\\man_runforward.ban"] = _clip("run", 650)
 	var n603 := _ghost(world, 603, Vector3(0, 0, -90), kit)
+	var waits_before := (world.get("_ghost_gait_wait") as Dictionary).size()
 	world.call("_set_other_gait", 603, true)
+	_check(crowd.is_ghost(n603) and not gaits.has(603) and (world.get("_ghost_gait_wait") as Dictionary).has(603)
+		and String((crowd.entry_of(n603)[1] as BanReader.ParsedAnimation).animation_name) == "stand",
+		"a ghost starting a loop that is not baked stays a ghost on its loop, waiting (%d waiting before)" % waits_before)
+	crowd.bake_all()
+	world.call("_retry_ghost_gaits")
+	_check(crowd.is_ghost(n603) and String((crowd.entry_of(n603)[1] as BanReader.ParsedAnimation).animation_name) == "run"
+		and not (world.get("_ghost_gait_wait") as Dictionary).has(603), "... and runs on the GPU once its clip is up")
+	# An aura does not dress a ghost (review F1): it goes first in the dressing.
+	var owner_body = world.call("_fx_owner_body", 603, SkillNet.OWNER_CHARACTER)
+	var builds: OtherCrowd.BuildQueue = world.get("_other_builds")
+	_check(owner_body == null and crowd.is_ghost(n603) and builds.urgent.has(603),
+		"a buff on a ghost leaves it a ghost, first in the dressing queue")
+	var first: Array = []
+	builds.budget_usec = 0
+	builds.pump(Engine.get_process_frames() + 1000, Vector3.ZERO, world.get("_other_bodies"), func(id: int) -> void: first.append(id), Callable(), world.get("_ghost_ids"))
+	builds.budget_usec = OtherCrowd.BUILD_BUDGET_USEC
+	_check(first == [603], "... and is the next dressed (%s)" % str(first))
+	(world.get("_other_build_args") as Dictionary)[603] = {"equipped": kit, "scale": CharacterAppearance.DEFAULT_SCALE}
+	builds.queue(603)
+	world.call("_dress_ghost_now", 603)
 	var g603: Dictionary = gaits.get(603, {})
-	_check(n603 != null and not g603.is_empty() and bool(g603.get("moving", false)), "a ghost starting a loop that is not baked is dressed and runs")
+	_check(not g603.is_empty() and bool(g603.get("moving", false)), "dressed walking, it runs")
 	# Dressed far: the near set's line is nearer than it.
 	_advance(world, crowd, 2.1)
-	_check(crowd.fade_elapsed(n601) < 0.0 and not String((b.parts[0][0] as CrowdGpu.Group).key).contains("fade"),
+	_check(crowd.fade_elapsed(n601) < 0.0 and not _fading_rec(b.parts[0]),
 		"when the fade ends its parts move to the shared groups")
 	world.set("_crowd_come", 10.0)
 	world.call("_dress_ghost_now", 601)
@@ -393,6 +420,9 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	_check(skel != null and is_equal_approx(float(crowd.entry_of(skel)[3]), phase) and crowd.entry_of(skel)[0] == skel,
 		"... with the ghost's clip entry: the same phase")
 	_check(_count(n601, "Label3D") == 1 and _count(n601, "StaticBody3D") == 1, "... and no second plate or click body")
+	var plate: Label3D = n601.get_node("Name")
+	var want_y: float = float(world.call("_skeleton_top", skel)) * (1.0 + world.NAME_PLATE_CLEARANCE_FRACTION) if skel != null else -1.0
+	_check(skel != null and is_equal_approx(plate.position.y, want_y), "... its plate re-placed over the built body (%.3f, %.3f)" % [plate.position.y, want_y])
 	# Dressed near: within the line, posed on the full path, fading on.
 	var n602 := _ghost(world, 602, Vector3(0, 0, -5), kit)
 	_advance(world, crowd, 0.5)
@@ -426,9 +456,65 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 		"an equipment change draws the ghost in its new kind (Body1 shown again, no chest), its fade going on")
 	# A departure fades out on the GPU.
 	world.call("_on_entity_left", 605)
-	_check(crowd.is_ghost(n605) and String((b605b.parts[0][0] as CrowdGpu.Group).key).contains("fade"), "a departing ghost fades out")
+	_check(crowd.is_ghost(n605) and _fading_rec(b605b.parts[0]), "a departing ghost fades out")
 	var wo: float = ((b605b.parts[0] as Array)[0] as CrowdGpu.Group).buf[int((b605b.parts[0] as Array)[1]) * CrowdGpu.INSTANCE_FLOATS + 15]
 	_check(wo < 0.0, "... its instances marked fading out (%.1f)" % wo)
 	_advance(world, crowd, 1.6)
 	_check(not crowd.is_ghost(n605), "... and leaves the instances when its fade-out ends")
+	_test_stale_twins(world, crowd, kit)
+	_test_lit_bound(crowd, app)
 	world.set("_appearance", null)
+
+## Round 756's review, F2 (its probe): a kind's twins are freed by collect()
+## after its ghosts left; when the slot texture then grows, a new ghost of the
+## kind must draw from live twins, given the current textures.
+func _test_stale_twins(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
+	var n := _ghost(world, 620, Vector3(30, 0, -120), kit)
+	_advance(world, crowd, 2.1)
+	world.call("_on_entity_left", 620)
+	_advance(world, crowd, 1.6)
+	_check(not crowd.is_ghost(n), "the probe's ghost faded in, left and faded out")
+	# Every body of that kind gone: the other test bodies' kinds are the
+	# same, so take them off the instances too.
+	for g in crowd.ghosts():
+		crowd.remove(g)
+	for sk in crowd.skeletons():
+		crowd.remove(sk)
+	for i in range(CrowdGpu.GROUP_EMPTY_CYCLES + 1):
+		crowd.collect()
+	var cap0: int = crowd._slot_cap
+	for i in range(cap0 + 1):
+		crowd._take_slot()
+	crowd._body_dirty = true
+	crowd.flush(float(world.get("_idle_anim_time")))
+	_check(crowd._slot_cap > cap0, "the slot texture grew (%d -> %d)" % [cap0, crowd._slot_cap])
+	var n2 := _ghost(world, 621, Vector3(34, 0, -120), kit)
+	crowd.flush(float(world.get("_idle_anim_time")))
+	var b: CrowdGpu.Body = crowd.body_of(n2)
+	var live := 0
+	var current := 0
+	for rec in b.parts if b != null else []:
+		var g: CrowdGpu.Group = rec[0]
+		if crowd._twins.values().has(g.material):
+			live += 1
+		if g.material.get_shader_parameter("crowd_bodies") == crowd._body_tex:
+			current += 1
+	_check(b != null and b.parts.size() > 0 and live == b.parts.size() and current == b.parts.size(),
+		"a new ghost of a collected kind draws from live twins with the current body texture (%d, %d of %d)" % [live, current, b.parts.size() if b != null else 0])
+
+## Review F5: a recipe keeps a few light levels, not every one it was drawn at.
+func _test_lit_bound(crowd: CrowdGpu, app: CharacterAppearance) -> void:
+	var r := app.far_recipe(1907, 0x22, [{"id": 5001, "plus": 0}, {"id": 5004, "plus": 0}])
+	var geo = crowd._recipe_geometry(r)
+	for k in range(10):
+		crowd._lit_parts(r, (geo as Array)[0], 0.4 + 0.03 * float(k))
+	var held := 0
+	for key in crowd._recipe_lit:
+		if String(key).begins_with(r.key + "|"):
+			held += 1
+	_check(held <= CrowdGpu.LIT_LEVELS_PER_RECIPE, "a recipe keeps at most %d light levels (%d after 10)" % [CrowdGpu.LIT_LEVELS_PER_RECIPE, held])
+
+## Whether a part record draws from a fade group (a blended fade twin).
+static func _fading_rec(rec: Array) -> bool:
+	var g: CrowdGpu.Group = rec[0]
+	return g.material.shader.code.contains("APPEAR_FADE") or g.material.shader.code.contains("appear_alpha")

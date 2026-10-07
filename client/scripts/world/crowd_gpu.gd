@@ -202,7 +202,7 @@ var _by_node := {}            # Node3D -> Body
 var _twin_shaders := {}       # Shader -> Shader
 var _twins := {}              # "material id|layout" -> ShaderMaterial
 var _twin_sources := {}       # the same key -> WeakRef to the source material (its id is the key)
-var _twin_users := {}         # the same key -> groups drawing with it
+var _twin_users := {}         # twin ShaderMaterial -> groups drawing with it
 var _rigid := {}              # "mesh id|layout|bone" -> ArrayMesh
 var _free_slots: Array[int] = []
 var _slots := 0
@@ -415,6 +415,10 @@ func remove(skel: Object, push: bool = true) -> Array:
 	if _by_node.get(b.node) == b:
 		_by_node.erase(b.node)
 	_moved.erase(b)
+	# Out of hearing as it leaves (round 756's review, S4: a scheduler that
+	# still holds the Body must not advance it).
+	b.heard = false
+	b.sound_due = INF
 	_free_slots.append(b.slot)
 	# A freed slot draws nothing: no instance names it.
 	_unhide(b)
@@ -449,6 +453,8 @@ func set_clip(skel: Object, anim: BanReader.ParsedAnimation, frames: int, idle_t
 		b.by_clip[anim] = fr
 	if not b.layout.clips.has(fr):
 		_queue_bake(b.layout, fr)
+		if b.ghost:
+			_ghost_waits_bake = true
 		return false
 	b.entry[1] = anim
 	b.entry[2] = frames
@@ -523,12 +529,17 @@ var _ghost_waits_upload := false
 ## recipe key -> [Layout, [[part, material, overridden], ...]], or null when
 ## a piece is not drawable far (the body is dressed instead).
 var _recipe_geo := {}
-## "recipe key|light level" -> the parts with their lit materials' twins.
+## "recipe key|light level" -> the parts with their lit materials (no twins:
+## review F2), and per recipe its levels in the order they were made (F5).
 var _recipe_lit := {}
-## Fading ghosts (Body -> true), and part twin_key -> its fade part (null: the
-## material has no fade twin; that part pops).
+var _recipe_lit_order := {}
+const LIT_LEVELS_PER_RECIPE := 4
+const LIT_CACHE_CAP := 4096
+## Lit material id -> [WeakRef to it, its fade twin source] (_fade_src).
+var _fade_srcs := {}
+const FADE_SRC_CAP := 4096
+## Fading ghosts (Body -> true).
 var _fading := {}
-var _fade_parts := {}
 
 ## Draws `node` (another player's holder, in the tree) as the body `recipe`
 ## names, playing `entry` (World3D._animated's shape, entry[0] the node), its
@@ -550,6 +561,10 @@ func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array
 	if not ghost_clip_ready(recipe, anim):
 		return false
 	if _lit_parts(recipe, l, light).is_empty():
+		return false
+	# A mirrored holder, as add() refuses one (review F9; none is mirrored).
+	if (node.global_transform * local).basis.determinant() < 0.0:
+		_refuse("mirrored")
 		return false
 	var b := Body.new()
 	b.ghost = true
@@ -593,6 +608,15 @@ func ghost_clip_ready(recipe: CharacterAppearance.FarRecipe, anim: BanReader.Par
 		_queue_bake(l, fr)
 		_ghost_waits_bake = true
 	return false
+
+## Queues `anim`'s frames on `recipe`'s layout (World3D: a ghost's run, so
+## its first step finds it baked; review F3). Nothing when baked or queued.
+func prebake_recipe(recipe: CharacterAppearance.FarRecipe, anim: BanReader.ParsedAnimation) -> void:
+	var geo = _recipe_geometry(recipe) if recipe != null else null
+	if geo == null or anim == null or anim.duration_ms <= 0 or anim.key_times.is_empty():
+		return
+	var l: Layout = geo[0]
+	_queue_bake(l, CrowdAnim.frames_for(l.scratch, anim), false)
 
 ## Whether `recipe` can be drawn far at all (its pieces pass the far path's
 ## rules); its parts are worked out once.
@@ -674,32 +698,59 @@ func _add_ghost_parts(b: Body) -> void:
 	var parts := _lit_parts(b.recipe, b.layout, b.light)
 	b.mats.clear()
 	var w := _fade_w(b) if b.fade != 0 else 0.0
+	var l := b.layout
 	for p in parts:
-		b.mats.append(p["lit"])
-		var fp = _fade_part(p, b.layout) if b.fade != 0 else null
-		if fp != null:
-			_add_part(b, fp, w)
-		else:
-			_add_part(b, p)
-
-## The part `p` while its body fades: its fade group, drawn with the blended
-## fade twin of its material (AppearFade.fade_twin) with the skin added; null
-## (it pops) when the material has none. Made once a material.
-func _fade_part(p: Dictionary, l: Layout):
-	var key: String = p["twin_key"]
-	if not _fade_parts.has(key):
-		var src: Material = AppearFade.fade_twin(p["lit"])
-		var twin: ShaderMaterial = _twin(src as ShaderMaterial, l) if src is ShaderMaterial else null
+		var lit: Material = p["lit"]
+		b.mats.append(lit)
+		# The twin is looked up on every add, never cached with the part
+		# (round 756's review, F2): collect() frees a twin with its last
+		# group, and a cached one would no longer be given the crowd's
+		# textures as they grow.
+		var src := _fade_src(lit) if b.fade != 0 else null
+		var tk := "%d|%s" % [src.get_instance_id(), l.key] if src != null else String(p["tk"])
+		var twin: ShaderMaterial = _live_twin(src, tk, l) if src != null else null
 		if twin == null:
-			_fade_parts[key] = null
-		else:
-			var q := p.duplicate()
-			q["material"] = twin
-			q["twin_key"] = "%d|%s" % [src.get_instance_id(), l.key]
-			q["gkey"] = "%s|fade" % String(p["gkey"])
-			q["src"] = src
-			_fade_parts[key] = q
-	return _fade_parts[key]
+			src = lit
+			tk = p["tk"]
+			twin = _live_twin(lit, tk, l)
+		if twin == null:
+			continue
+		# The group key, kept per twin by id (never the twin itself, F2).
+		var gk_slot := "gk_fade" if src != lit else "gk"
+		var gk = p.get(gk_slot)
+		if gk == null or int(gk[0]) != twin.get_instance_id():
+			gk = [twin.get_instance_id(), "%d|%d|%d|%.4f" % [(p["mesh"] as Mesh).get_instance_id(), twin.get_instance_id(), int(p["layers"]), float(p["sort"])]]
+			p[gk_slot] = gk
+		var q := {"mesh": p["mesh"], "material": twin, "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"],
+			"twin_key": tk, "gkey": gk[1]}
+		_add_part(b, q, w if src != lit else 0.0)
+
+## `m`'s twin as _twin answers, without re-making its key: the live one in
+## _twins when it is still `m`'s (its source checked by the weak reference),
+## else _twin's.
+func _live_twin(m: Material, tk: String, l: Layout) -> ShaderMaterial:
+	var got: ShaderMaterial = _twins.get(tk)
+	if got != null:
+		var src = _twin_sources.get(tk)
+		if src != null and (src as WeakRef).get_ref() == m:
+			return got
+	return _twin(m as ShaderMaterial, l)
+
+## The blended fade twin of `lit` (AppearFade.fade_twin), or null when it
+## has none (the part pops). Made once a material, held while that material
+## lives (checked by a weak reference, so a new material that takes a freed
+## one's id is not given its fade); the cache is dropped whole past
+## FADE_SRC_CAP entries (they are remade on demand).
+func _fade_src(lit: Material) -> Material:
+	var id := lit.get_instance_id()
+	var got = _fade_srcs.get(id)
+	if got != null and (got[0] as WeakRef).get_ref() == lit:
+		return got[1]
+	if _fade_srcs.size() >= FADE_SRC_CAP:
+		_fade_srcs.clear()
+	var src: Material = AppearFade.fade_twin(lit)
+	_fade_srcs[id] = [weakref(lit), src]
+	return src
 
 ## The recipe's parts as the far path reads a built body (_part_for), once
 ## per recipe; null when one is not drawable far.
@@ -739,8 +790,14 @@ func _recipe_geometry(recipe: CharacterAppearance.FarRecipe):
 	return got
 
 ## The recipe's parts at object colour `light`: each overridden object
-## material swapped for its level's copy (CharacterLight.set_on's rule), its
-## twin, and its group key -- once per recipe and level.
+## material swapped for its level's copy (CharacterLight.set_on's rule) --
+## once per recipe and level, the twins left to each add (F2). Empty when a
+## material has no twin (twin_shader: the body is dressed instead).
+##
+## Bounded (round 756's review, F5): the entries hold their level's material
+## copies, which ObjectLight keeps only weakly, so a recipe keeps its last
+## LIT_LEVELS_PER_RECIPE levels and the whole cache is dropped past
+## LIT_CACHE_CAP entries (a ghost holds its own copies in Body.mats).
 func _lit_parts(recipe: CharacterAppearance.FarRecipe, l: Layout, light: float) -> Array:
 	# By the level ObjectLight draws it at (its copies are per level).
 	var key := "%s|%d" % [recipe.key, roundi(light * ObjectLight.VARIANT_STEPS) if light >= 0.0 else -1]
@@ -749,23 +806,25 @@ func _lit_parts(recipe: CharacterAppearance.FarRecipe, l: Layout, light: float) 
 		return got
 	var out: Array = []
 	for g in (_recipe_geo[recipe.key] as Array)[1]:
-		var p: Dictionary = (g[0] as Dictionary).duplicate()
+		var p: Dictionary = g[0]
 		var mat: Material = g[1]
 		var lit := mat
 		if light >= 0.0 and bool(g[2]) and ObjectLight.is_object_material(mat):
 			lit = ObjectLight.with_object_color(mat, light)
-		var twin := _twin(lit as ShaderMaterial, l)
-		if twin == null and lit != mat:
+		if twin_shader((lit as ShaderMaterial).shader) == null:
+			if lit == mat:
+				return []
 			lit = mat
-			twin = _twin(lit as ShaderMaterial, l)
-		if twin == null:
-			return []
-		p["material"] = twin
-		p["twin_key"] = "%d|%s" % [lit.get_instance_id(), l.key]
-		p["lit"] = lit
-		var mesh: Mesh = p["mesh"]
-		p["gkey"] = "%d|%d|%d|%.4f" % [mesh.get_instance_id(), (p["material"] as Material).get_instance_id(), int(p["layers"]), float(p["sort"])]
-		out.append(p)
+		out.append({"mesh": p["mesh"], "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"], "lit": lit,
+			"tk": "%d|%s" % [lit.get_instance_id(), l.key]})
+	if _recipe_lit.size() >= LIT_CACHE_CAP:
+		_recipe_lit.clear()
+		_recipe_lit_order.clear()
+	var order: Array = _recipe_lit_order.get(recipe.key, [])
+	order.append(key)
+	while order.size() > LIT_LEVELS_PER_RECIPE:
+		_recipe_lit.erase(order.pop_front())
+	_recipe_lit_order[recipe.key] = order
 	_recipe_lit[key] = out
 	return out
 
@@ -1453,7 +1512,7 @@ func _add_part(b: Body, p: Dictionary, fade_w: float = 0.0) -> void:
 		if _aabb_set:
 			RenderingServer.instance_set_custom_aabb(g.inst, _aabb)
 		g.twin_key = String(p["twin_key"])
-		_twin_users[g.twin_key] = int(_twin_users.get(g.twin_key, 0)) + 1
+		_twin_users[mat] = int(_twin_users.get(mat, 0)) + 1
 		_groups[key] = g
 	if g.count >= g.cap:
 		g.cap = maxi(8, g.cap * 2)
@@ -1617,17 +1676,20 @@ func collect() -> int:
 		RenderingServer.free_rid(g.mm)
 		_groups.erase(key)
 		freed += 1
-		var users := int(_twin_users.get(g.twin_key, 0)) - 1
+		# Counted by the twin itself, not its key (round 756's review, F2): a
+		# twin re-made for the same material has the same key, and a stale
+		# group's collection must not take the live one's count.
+		var t: ShaderMaterial = g.material
+		var users := int(_twin_users.get(t, 0)) - 1
 		if users > 0:
-			_twin_users[g.twin_key] = users
+			_twin_users[t] = users
 			continue
-		_twin_users.erase(g.twin_key)
-		var t: ShaderMaterial = _twins.get(g.twin_key)
-		_twins.erase(g.twin_key)
-		_twin_sources.erase(g.twin_key)
-		if t != null:
-			for k in _layouts:
-				(_layouts[k] as Layout).twins.erase(t)
+		_twin_users.erase(t)
+		if _twins.get(g.twin_key) == t:
+			_twins.erase(g.twin_key)
+			_twin_sources.erase(g.twin_key)
+		for k in _layouts:
+			(_layouts[k] as Layout).twins.erase(t)
 	stats["groups_freed"] = int(stats.get("groups_freed", 0)) + freed
 	return freed
 

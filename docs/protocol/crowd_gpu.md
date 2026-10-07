@@ -240,8 +240,11 @@ body at once from its kind's recipe (`CharacterAppearance.far_recipe`: the templ
 glow and Volume `build()` would give them, the hidden body pieces left out), keyed by its holder
 node; it fades in on the GPU (blended fade twins with the skin; the alpha per instance from the clock
 and the fade's start in `INSTANCE_CUSTOM.w`, so one twin a material serves every fade; OURS: the
-instances of a fade group are not sorted for the 2 s), takes CharacterLight's level a few frames
-later, swaps its stand/run loop as a texel write, and plays its clip sounds within 600. The dressing follows in the background, nearest first, and hands
+instances of a fade group are not sorted for the 2 s), is lit by CharacterLight's level as it
+appears, swaps its stand/run loop as a texel write (its run baked ahead), and plays its clip sounds
+within 600. After the review (`docs/rounds/r756_review.md`): the twins are never cached with a
+recipe's parts (collect() may free them) and are counted per twin, not per key; a recipe keeps four
+light levels; an aura or a gait change never dresses a ghost synchronously. The dressing follows in the background, nearest first, and hands
 the built skeleton the ghost's clip entry in the same frame (`World3D._ghost_handover`); anything that
 needs the skeleton (a one-shot, an effect, berserk, Detail) dresses it at once. `_parts_of` is now
 `_part_for` per mesh, so a recipe's pieces and a built body's are read by one set of rules

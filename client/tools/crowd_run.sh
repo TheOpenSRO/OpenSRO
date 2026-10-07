@@ -34,4 +34,4 @@ kill $W 2>/dev/null
 echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0)"
 rm -f "$LOG.others"
 grep -m1 -E "^(Vulkan|OpenGL) API" "$LOG"
-grep -E "LINEUP: |QA CROWD (step|split|arrival|visible|page|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -160
+grep -E "LINEUP: |QA CROWD (step|split|arrival|visible|page|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|QA BUFFS|QA RUNAT|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -160

@@ -124,7 +124,11 @@ func visit(body: Node3D) -> void:
 
 ## The object colour at a world position (ObjectLight.character_color).
 func color_at(pos: Vector3) -> float:
-	var pair: Array = lookup.call(pos) if lookup.is_valid() else []
+	return color_at_pair(pos, lookup.call(pos) if lookup.is_valid() else [])
+
+## color_at with the region lookup's answer already in hand (round 756: a
+## ghost asks whether a region is there and its colour with one lookup).
+func color_at_pair(pos: Vector3, pair: Array) -> float:
 	if pair.is_empty():
 		return ObjectLight.character_color(-1, true)
 	var graph: NavGraph = pair[0]

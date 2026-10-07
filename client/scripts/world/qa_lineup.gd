@@ -45,6 +45,15 @@ class_name QaLineup
 ##                                                     0x3017..0x3018 bracket), a block
 ##                                                     every <seconds> -- what crossing
 ##                                                     block borders toward a crowd sends
+##   OPENSRO_QA_LINEUP_BUFFS=1                         (round 756's review, F1) one OpBuffStart
+##                                                     a body (skill 0: no aura drawn) through
+##                                                     World3D._on_buff_started right after
+##                                                     its page, as the server orders them
+##                                                     (playerview.go); `QA BUFFS` times them
+##   OPENSRO_QA_LINEUP_RUNAT=<s>                      (round 756's review, F3) every lineup body
+##                                                     starts walking <s> s after the spawn (one
+##                                                     server tick of moves); `QA RUNAT` times it
+##                                                     and counts the ghosts before and after
 ##
 ## The kit is OURS for the picture: the race's `_A_DEF` weapon (CharCatalog's
 ## rule on World3D's item table), a shield beside ONE_HANDED_WITH_SHIELD, and the
@@ -89,6 +98,9 @@ var _pages: Array = []
 var _page_every := 0.0
 var _page_wait := 0.0
 var _probe: QaCrowdProbe = null
+## Round 756's review hooks: seconds since the spawn, and the run's time.
+var _since_spawn := 0.0
+var _run_at := -1.0
 
 static func from_env(w: Node) -> QaLineup:
 	var spec := OS.get_environment("OPENSRO_QA_LINEUP")
@@ -128,6 +140,11 @@ static func parse_kits(spec: String) -> Array:
 
 ## Called every physics frame by World3D once the player's body is built.
 func step(delta: float) -> void:
+	if _spawned and _run_at >= 0.0:
+		_since_spawn += delta
+		if _since_spawn >= _run_at:
+			_run_at = -1.0
+			_qa_run_all()
 	if _done:
 		return
 	var appearance: CharacterAppearance = world._appearance
@@ -332,6 +349,9 @@ func _spawn(appearance: CharacterAppearance) -> void:
 	spawn_t0 += qa_usec
 	if walkup.is_valid_float():
 		spawn_t0 = Time.get_ticks_usec()
+	var ra := OS.get_environment("OPENSRO_QA_LINEUP_RUNAT")
+	if ra.is_valid_float():
+		_run_at = float(ra)
 	if QaCrowdProbe.wanted():
 		_probe = QaCrowdProbe.new()
 		_probe.name = "QaCrowdProbe"
@@ -339,6 +359,11 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		_probe.setup(world, bodies, spawn_t0)
 	if walkup.is_valid_float():
 		_spawn_page(_pages.pop_front())
+	elif OS.get_environment("OPENSRO_QA_LINEUP_BUFFS") != "":
+		var all_ids: Array = []
+		for b in bodies:
+			all_ids.append(int(b["id"]))
+		_qa_buffs(all_ids)
 
 ## One lineup body through the other-player arrival path, facing `args[5]`.
 func _spawn_one(args: Array) -> void:
@@ -349,6 +374,31 @@ func _spawn_one(args: Array) -> void:
 	var node: Node3D = world._other_bodies.get(int(args[0]))
 	if node != null:
 		node.rotation.y = float(args[5])
+
+## Round 756's review hook (F1): one OpBuffStart a body of `ids`, as the
+## server sends each arriving player's buffs after its page.
+func _qa_buffs(ids: Array) -> void:
+	var t0 := Time.get_ticks_usec()
+	var token := 760000
+	for id in ids:
+		var b := SkillNet.BuffStart.new()
+		b.owner_id = int(id)
+		b.skill_id = 0
+		token += 1
+		b.token = token
+		b.owner_kind = SkillNet.OWNER_CHARACTER
+		world._on_buff_started(b)
+	print("QA BUFFS %d buff start(s) after the page in %.1f ms" % [ids.size(), (Time.get_ticks_usec() - t0) / 1000.0])
+
+## Round 756's review hook (F3): every lineup body starts walking at once.
+func _qa_run_all() -> void:
+	var crowd = world.get("_crowd_gpu")
+	var before := int((crowd as CrowdGpu).ghost_count()) if crowd != null else 0
+	var t0 := Time.get_ticks_usec()
+	for b in bodies:
+		world._set_other_gait(int(b["id"]), true)
+	print("QA RUNAT %d bodies set walking %.1f s after the spawn in %.1f ms; ghosts %d before, %d after" % [bodies.size(), _since_spawn,
+		(Time.get_ticks_usec() - t0) / 1000.0, before, int((crowd as CrowdGpu).ghost_count()) if crowd != null else 0])
 
 ## Round 756 (walk-up): one block's bodies as one group spawn, bracketed as
 ## NetClient brackets a 0x3017..0x3018 page (World3D._on_user_group_begin /
@@ -364,6 +414,8 @@ func _spawn_page(page: Array) -> void:
 	for args in page:
 		_spawn_one(args)
 	world._on_user_group_end()
+	if OS.get_environment("OPENSRO_QA_LINEUP_BUFFS") != "":
+		_qa_buffs(ids)
 	print("LINEUP: walk-up page of %d bodies spawned in %.1f ms (%d page(s) left)" % [page.size(), (Time.get_ticks_usec() - t0) / 1000.0, _pages.size()])
 
 ## Each body's skeleton and group as dressed (round 739: dressed after the

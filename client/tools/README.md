@@ -502,7 +502,10 @@ their worst frame and how many were over 100 ms. `OPENSRO_QA_LINEUP_WALKUP=<s>` 
 one 320-unit block at a time, nearest first, each as one group spawn (the 0x3017..0x3018 bracket),
 every `<s>` seconds -- the walk-up toward a crowd -- and the probe prints a `QA CROWD page` line per
 block. `OPENSRO_QA_GHOSTS=0` arrives as before round 756 (dressed, no ghosts);
-`OPENSRO_QA_PREP_RUNNING=<n>` lets n template tasks run at once. `crowd_run.sh` counts any lane's
+`OPENSRO_QA_PREP_RUNNING=<n>` lets n template tasks run at once. Round 756's review hooks:
+`OPENSRO_QA_LINEUP_BUFFS=1` sends one OpBuffStart a body right after its page, as the server does
+(`QA BUFFS`), and `OPENSRO_QA_LINEUP_RUNAT=<s>` starts every lineup body walking s seconds after the
+spawn (`QA RUNAT`, with the ghosts before and after). `crowd_run.sh` counts any lane's
 Godot (`[G]odot_v4|[x]vfb-run`) as an overlap.
 
 `arrival_bench.gd` (a `--script` tool, headless or under the GPU) times what one arriving body

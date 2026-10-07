@@ -104,9 +104,6 @@ const GHOST_HITCH_TARGET_USEC := 33000
 ## HITCH_TARGET_USEC), so a crowd whose own frame is already long gets fewer
 ## ghosts a frame (one at least) rather than a frame over the hitch line.
 const GHOST_BUDGET_USEC := 50000
-## Round 756 (OURS): the main-thread time a frame may spend reading new
-## ghosts' object colour (World3D._light_ghosts).
-const GHOST_LIGHT_BUDGET_USEC := 8000
 
 ## B4: the arrived bodies still to dress, and the frame's budget. The queue
 ## holds ids only; whatever a body is dressed with is read when it is dressed,
@@ -148,12 +145,24 @@ class BuildQueue:
 		_passed_frame = -1
 	const INDEX_BITS := 20
 	const INDEX_MASK := (1 << 20) - 1
-	const DIST_KEY_MAX := 4.0e12
+	## Squared distance x 256, capped (about 98,800 units): three bands of it,
+	## shifted by INDEX_BITS, stay under the int64 range (round 756).
+	const DIST_KEY_MAX := 2.5e12
 
 	func _init() -> void:
 		var qa := OS.get_environment("OPENSRO_QA_OTHER_BUILD_BUDGET_MS")
 		if qa.is_valid_float():
 			budget_usec = int(float(qa) * 1000.0)
+
+	## Round 756's review, F1: ids dressed before every other, nearest first
+	## among themselves (a ghost an aura is waiting on).
+	var urgent := {}
+
+	## Puts a queued id first (urgent); nothing for an id not queued.
+	func promote(id: int) -> void:
+		if _pending.has(id) and not urgent.has(id):
+			urgent[id] = true
+			reopen()
 
 	func queue(id: int) -> void:
 		_fresh.append(id)
@@ -171,9 +180,11 @@ class BuildQueue:
 
 	func drop(id: int) -> void:
 		_pending.erase(id)
+		urgent.erase(id)
 
 	func clear() -> void:
 		_pending.clear()
+		urgent.clear()
 
 	func size() -> int:
 		return _pending.size()
@@ -241,10 +252,12 @@ class BuildQueue:
 			var n = bodies.get(ids[i])
 			if not is_instance_valid(n):
 				_pending.erase(ids[i])
+				urgent.erase(ids[i])
 				continue
 			var d := minf((n as Node3D).position.distance_squared_to(from) * 256.0, DIST_KEY_MAX)
-			if later.has(ids[i]):
-				d += DIST_KEY_MAX
+			# Three bands, nearest first within each: urgent, unseen, ghosts.
+			if not urgent.has(ids[i]):
+				d += DIST_KEY_MAX * (2.0 if later.has(ids[i]) else 1.0)
 			order.append((int(d) << INDEX_BITS) | i)
 		order.sort()
 		var made := 0
@@ -260,6 +273,7 @@ class BuildQueue:
 				waiting_skips += 1
 				continue
 			_pending.erase(id)
+			urgent.erase(id)
 			var t0 := Time.get_ticks_usec()
 			build.call(id)
 			_spent += Time.get_ticks_usec() - t0
