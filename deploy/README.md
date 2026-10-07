@@ -1724,3 +1724,33 @@ They are EXTERNAL data from a private shard's backup, like the rest of this sect
 them. The loader reads the columns by name (43, 17 and 10 columns; `tab_refhive`'s last,
 `szDescString128`, is not read), masks `nRegionDBID` to the engine's u16 itself, and treats an
 empty `fLocalPosY` as NULL. A missing file or column is fatal at boot.
+
+## A bot crowd for load and looks (`server/cmd/swarm`)
+
+`swarm` stands bot players on Jangan's plaza: accounts `PREFIX0000..` (5-8 lowercase letters,
+default `swarm`), a mixed China/Europe crowd created through the retail lobby, worn gear with
+pluses and seals picked from the database's own `items` table and written into
+`equipment_slots` before each bot enters, about 10 % of them click-moving (0x7021). It changes
+no server setting and makes no GM. It needs the gateway and the server's Postgres; for
+opensro-01, tunnel Postgres first (it is pinned to the host's 127.0.0.1:5432):
+
+```
+ssh -N -L 15432:127.0.0.1:5432 opensro@192.168.5.25 &
+cd server && go build -o /tmp/swarm ./cmd/swarm
+PG='postgres://postgres:postgres@127.0.0.1:15432/opensro?sslmode=disable'
+/tmp/swarm items  -pg "$PG" -n 5                       # read-only: the gear it would pick
+/tmp/swarm up     -addr 192.168.5.25:15779 -pg "$PG" -n 1000 -prefix swarm   # runs until stopped
+/tmp/swarm status -prefix swarm -addr 192.168.5.25:15779 -pg "$PG"
+/tmp/swarm down   -prefix swarm -pg "$PG"              # logs them out, deletes every bot row
+```
+
+- **Capacity.** Bots count against `-max-players` (default 1000): at 1000 bots a default server
+  is full and turns non-GM logins away (GM accounts still log in). `-headroom N` caps the crowd
+  so N slots stay free.
+- **Load.** Logins are paced at `-rate` a second (default 20). Accounts are written with a
+  minimum-cost bcrypt, so a login costs the server about a millisecond of hashing instead of the
+  default cost's tens.
+- **down** stops the running `up` (its pid is in `$TMPDIR/opensro-swarm-PREFIX.json`), then in
+  one transaction deletes the accounts named exactly `^PREFIX[0-9]{4}$`, their characters and
+  every row that names them (equipment, bag, warehouse, skills, masteries, quests, friends,
+  guild rows; any other `character_id` / `account_id` column it finds). Re-running is a no-op.
