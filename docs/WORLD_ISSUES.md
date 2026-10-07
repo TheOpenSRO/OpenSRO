@@ -7364,6 +7364,54 @@ The full notes are in `docs/rounds/r758.md`.
   NEGATIVE: the old lines put back fail 4 checks. Box `check` ALL LOAD (675 scripts); `tests`
   "ran 259 suite(s), 0 failing".
 
+## Seven-hundred-and-fifty-sixth round: a crowd appears at once (arriving players drawn as GPU ghosts)
+
+The full notes are in `docs/rounds/r756.md`; the review is `r756_review.md`.
+- **READ:** retail creates every character of a group spawn synchronously in one call: 0x3018
+  `FUN_008ac3d0` -> `FUN_008a6d20` loops `FUN_008a6bd0`, with no budget or placeholder. Models load
+  synchronously; only textures load on a thread. Each character is drawn and clickable the same
+  frame, and fades in over 2.0 s.
+- **Ghosts (OURS):** an arriving player is drawn at once as CrowdGpu instances from
+  `CharacterAppearance.far_recipe`, with its fade done in the shader.
+  - From frame 1 the holder gets its batched name plate, its click body, its circle and its sounds.
+  - Dressing follows in the background, nearest first.
+  - Hits and casts dress at once; buffs and gait changes never do.
+  - Parity: 767 real kits, 0 mismatched parts.
+- **MEASURED:** a walk-up page of 260 known kinds goes from 6.9 s to about 3 frames. A cold
+  arrival of 1000 goes from 12.6 s to about 5 s. Template building on workers remains the floor.
+
+## Seven-hundred-and-fifty-seventh round: the client used one core -- the engine's hidden per-frame costs
+
+The full notes are in `docs/rounds/r757.md`; the review is `r757_review.md`. The user's live client
+(RTX 5080, 32 threads) ran a 7,000-player crowd at 6-11 fps on 3% CPU and 10% GPU.
+- **READ (Godot 4.2.2 `skeleton_3d.cpp`):** `Node.duplicate()` copies `animate_physical_bones` through
+  its setter, which turns on the internal physics process. So 18,035 cloned skeletons got a
+  callback every physics step, and a 100 ms frame ran 6-8 steps.
+  `Skeleton3DBuilder.no_physics_step` turns it off.
+- **Name plates:** `NamePlateBatch`, about 28 chunk meshes, replaces one `Label3D` per player, with
+  retail's 300-unit rule applied in the shader.
+- **Minimap:** `MinimapSigns` uses one MultiMesh per sign kind, pixel-identical (snapped).
+- **Loops:** the per-body loops are event-driven, through the `_other_moved` funnel, an awake set,
+  and a sound timing wheel.
+- **Heights:** walkers' landing heights are computed on `WorkerThreadPool`.
+- **MEASURED, RX 7600 at 1080p, everything on:**
+
+  | | before | after |
+  |---|---|---|
+  | 7000 standing p50 | 99 ms | 16 ms (GPU 80% busy, from 11%) |
+  | 3000 standing | 45 ms | 11.7 ms |
+  | 1000 standing | 17.4 ms | 9.3 ms |
+
+- **Errors:** `!is_geometry_instance` is fixed: it came from a CrowdGpu scratch built with
+  `duplicate()`.
+- **On 4.7.2:** every `Skeleton3D` processes every frame (38 ms at this scale). The upgrade must carry
+  an equivalent fix.
+- **Threaded rendering:** it crashes on 4.2.2 (an `AnimatedTexture` recursion), so it stays off.
+- **Merged with 756:** ghosts keyed by holder for sound, batched plates, inside the far bounds.
+- **Gates:**
+  - box "ran 262 suite(s), 0 failing";
+  - `perf_gate.sh --sites jangan,reeds,cross`: SAME everywhere.
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.
