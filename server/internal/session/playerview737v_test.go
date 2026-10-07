@@ -248,5 +248,5 @@ func TestAZoneNoticeGoesOnlyWithItsSpawnOrDespawn(t *testing.T) {
 	hv.mu.Lock()
 	delete(hv.known, f.aria) // holds nothing now: no despawn, so no notice
 	hv.mu.Unlock()
-	departPlayer(f.hub, ea, recips)
+	departPlayer(f.hub, ea, world.WatchersOf(recips))
 }

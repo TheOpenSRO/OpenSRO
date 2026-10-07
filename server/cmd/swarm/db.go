@@ -147,20 +147,34 @@ func standFor(seed int64, i int, p plaza) (lx, lz float64) {
 	return p.point(rand.New(rand.NewSource(seed*15485863 + int64(i))))
 }
 
+// spot is where a bot is put: region (RX, RY) local (X, Z) at height Y, in
+// Zone's frame.
+type spot struct {
+	Zone    string
+	RX, RY  int
+	X, Y, Z float64
+}
+
+// plazaSpot is a spot on Jangan's plaza deck.
+func plazaSpot(lx, y, lz float64) spot {
+	return spot{Zone: plazaZone, RX: plazaRX, RY: plazaRY, X: lx, Y: y, Z: lz}
+}
+
 // seedCharacter writes the bot's gear and start position in one transaction:
-// its worn rows replaced by gear, and its start spot in Jangan (start_zone,
-// which a character enters at whether -persist-position is on or off, the
-// saved position cleared so it applies with the flag on too), at height y,
+// its worn rows replaced by gear (none for an empty gear), and its start spot
+// (start_zone, which a character enters at whether -persist-position is on
+// or off, the saved position cleared so it applies with the flag on too),
 // and its level (party matching takes a creator of level 5 or more).
-func seedCharacter(ctx context.Context, db *sql.DB, prefix string, charID int64, gear []gearRow, lx, y, lz float64, level int) error {
+func seedCharacter(ctx context.Context, db *sql.DB, prefix string, charID int64, gear []gearRow, at spot, level int) error {
 	pattern, err := botPattern(prefix)
 	if err != nil {
 		return err
 	}
-	x, z, ok := worldmap.ToZoneWorld(plazaZone, plazaRX, plazaRY, lx, lz)
+	x, z, ok := worldmap.ToZoneWorld(at.Zone, at.RX, at.RY, at.X, at.Z)
 	if !ok {
-		return fmt.Errorf("no frame for %s", plazaZone)
+		return fmt.Errorf("no frame for %s", at.Zone)
 	}
+	y := at.Y
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -168,7 +182,7 @@ func seedCharacter(ctx context.Context, db *sql.DB, prefix string, charID int64,
 	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx, `UPDATE characters SET start_zone = $2, start_x = $3, start_y = $4, start_z = $5,
 		latest_zone = '', latest_frame = '', pos_x = 0, pos_y = 0, pos_z = 0, level = $7
-		WHERE id = $1 AND account_id IN (SELECT id FROM accounts WHERE username ~ $6)`, charID, plazaZone, x, y, z, pattern, level)
+		WHERE id = $1 AND account_id IN (SELECT id FROM accounts WHERE username ~ $6)`, charID, at.Zone, x, y, z, pattern, level)
 	if err != nil {
 		return fmt.Errorf("placing character %d: %w", charID, err)
 	}

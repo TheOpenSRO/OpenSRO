@@ -1,7 +1,8 @@
 // Command swarm puts a crowd of bot players on a running server and takes
 // it away again.
 //
-//	swarm up     -addr HOST:PORT -pg DSN [-n 1000] [-prefix swarm] [-rate 20] [-walk 10]
+//	swarm up     -addr HOST:PORT -pg DSN [-n 1000] [-prefix swarm] [-rate 20] [-walk 10] [-probe]
+//	swarm probe  -addr HOST:PORT -pg DSN [-prefix probe] [-probe-region 98/171]
 //	swarm status [-prefix swarm] [-addr HOST:PORT] [-pg DSN]
 //	swarm down   -pg DSN [-prefix swarm]
 //	swarm items  -pg DSN [-n 10]
@@ -16,10 +17,19 @@
 // (0x7001). Logins are paced (-rate a second) and capped at the room the
 // server's -max-players leaves. About -walk percent of the bots click-move
 // (retail 0x7021) to a nearby plaza point every -walk-every (3..7 s at 5 s).
-// Each bot lists a party-match entry (0x7069) and confirms every join request
-// and accepts every invitation (-party). A bot that drops reconnects. A summary is logged every 30 s
-// and the state file (-state) rewritten every 5 s. It runs until SIGINT or
-// SIGTERM (`swarm down` sends the latter), then logs every bot out.
+// Each bot lists a party-match entry (0x7069), keeps it listed (relist.go:
+// the server sends nothing when an entry expires after an hour, so the bot
+// renews it every 55 minutes and lists again when it learns it is gone), and
+// confirms every join request and accepts every invitation (-party). A bot
+// that drops reconnects. A summary is logged every 30 s and the state file
+// (-state) rewritten every 5 s. It runs until SIGINT or SIGTERM (`swarm down`
+// sends the latter), then logs every bot out. With -probe it also runs the
+// latency probe (below) as -probe-prefix0000.
+//
+// probe logs one bot (prefix0000, default prefix "probe") in somewhere quiet
+// and times the server's answer to a click four times a second (probe.go):
+// p50 / p99 / max every 10 s, and every round trip over 200 ms with its
+// timestamps.
 //
 // down stops a running up (its pid from the state file), then deletes every
 // bot account and character and every row that names them (db.go cleanup).
@@ -68,6 +78,8 @@ type config struct {
 	walkEvery               time.Duration
 	party                   bool
 	summaryEvery            time.Duration
+	probe                   bool
+	probeCfg                probeConfig
 }
 
 // stats are the run's counters.
@@ -76,6 +88,7 @@ type stats struct {
 	clicks, echoes, noEcho, corrections, walkersOn atomic.Int64
 	packetsIn, bytesIn                             atomic.Int64
 	listed, joinsAccepted, invitesAccepted         atomic.Int64
+	relistChecks, renewed, relisted                atomic.Int64
 	firstZone                                      atomic.Pointer[string]
 	errMu                                          sync.Mutex
 	errs                                           map[string]int
@@ -178,6 +191,9 @@ type stateFile struct {
 	NoEcho      int64          `json:"no_echo"`
 	Corrections int64          `json:"corrections"`
 	Listed      int64          `json:"party_match_listed"`
+	Checks      int64          `json:"party_match_checks"`
+	Renewed     int64          `json:"party_match_renewed"`
+	Relisted    int64          `json:"party_match_relisted"`
 	JoinsOK     int64          `json:"party_joins_accepted"`
 	InvitesOK   int64          `json:"party_invites_accepted"`
 	PacketsIn   int64          `json:"packets_in"`
@@ -232,7 +248,8 @@ func (sw *swarm) snapshot(stopped bool) stateFile {
 		Bots: len(sw.bots), Entries: sw.st.entries.Load(), Creates: sw.st.creates.Load(), Seeded: sw.st.seeded.Load(),
 		Drops: sw.st.drops.Load(), Reconnects: sw.st.reconnects.Load(), Clicks: sw.st.clicks.Load(), Echoes: sw.st.echoes.Load(),
 		NoEcho: sw.st.noEcho.Load(), Corrections: sw.st.corrections.Load(),
-		Listed: sw.st.listed.Load(), JoinsOK: sw.st.joinsAccepted.Load(), InvitesOK: sw.st.invitesAccepted.Load(), PacketsIn: sw.st.packetsIn.Load(),
+		Listed: sw.st.listed.Load(), Checks: sw.st.relistChecks.Load(), Renewed: sw.st.renewed.Load(), Relisted: sw.st.relisted.Load(),
+		JoinsOK: sw.st.joinsAccepted.Load(), InvitesOK: sw.st.invitesAccepted.Load(), PacketsIn: sw.st.packetsIn.Load(),
 		MBIn: float64(sw.st.bytesIn.Load()) / (1 << 20)}
 	for _, b := range sw.bots {
 		if b.walker {
@@ -273,9 +290,9 @@ func (sw *swarm) logSummary(prev *stateFile) {
 		seals = append(seals, fmt.Sprintf("%s %d", k, v))
 	}
 	sort.Strings(seals)
-	log.Printf("swarm %s: %d/%d in world (%d connected), %d walkers; entries %d, creates %d, drops %d, reconnects %d; clicks %d (echoed %d, unanswered %d, corrected %d); party-match entries %d, joins accepted %d, invites accepted %d; in %d pkts %.1f MB; cpu %.1f%% rss %.0f MB goroutines %d; observer sees %d players, %d geared, %d at +3 or more, %d at +8 or more (max +%d), weapons [%s], 0x3038 %d, undecoded %d, standing at y %.2f..%.2f",
+	log.Printf("swarm %s: %d/%d in world (%d connected), %d walkers; entries %d, creates %d, drops %d, reconnects %d; clicks %d (echoed %d, unanswered %d, corrected %d); party-match entries %d (checks %d, renewed %d, relisted %d), joins accepted %d, invites accepted %d; in %d pkts %.1f MB; cpu %.1f%% rss %.0f MB goroutines %d; observer sees %d players, %d geared, %d at +3 or more, %d at +8 or more (max +%d), weapons [%s], 0x3038 %d, undecoded %d, standing at y %.2f..%.2f",
 		sw.cfg.prefix, s.InWorld, s.Bots, s.Connected, s.Walkers, s.Entries, s.Creates, s.Drops, s.Reconnects,
-		s.Clicks, s.Echoes, s.NoEcho, s.Corrections, s.Listed, s.JoinsOK, s.InvitesOK, s.PacketsIn, s.MBIn, cpu, s.RSSMB, s.Goroutines,
+		s.Clicks, s.Echoes, s.NoEcho, s.Corrections, s.Listed, s.Checks, s.Renewed, s.Relisted, s.JoinsOK, s.InvitesOK, s.PacketsIn, s.MBIn, cpu, s.RSSMB, s.Goroutines,
 		o.Players, o.WithGear, o.Plus3, o.Plus8, o.MaxPlus, strings.Join(seals, ", "), o.Equips, o.DecodeErrors, o.MinY, o.MaxY)
 	if len(s.Errors) > 0 {
 		log.Printf("swarm %s: errors so far %v; last: %s", sw.cfg.prefix, s.Errors, s.LastError)
@@ -293,6 +310,17 @@ func up(cfg config) error {
 	if cfg.rate <= 0 {
 		return fmt.Errorf("-rate must be positive")
 	}
+	if cfg.probe {
+		if err := checkPrefix(cfg.probeCfg.prefix); err != nil {
+			return fmt.Errorf("-probe-prefix: %w", err)
+		}
+		if cfg.probeCfg.prefix == cfg.prefix {
+			return fmt.Errorf("-probe-prefix must differ from -prefix")
+		}
+		if _, err := cfg.probeCfg.spot(); err != nil {
+			return err
+		}
+	}
 	if st, err := readState(cfg.state); err == nil && !st.Stopped && alive(st.PID) && st.PID != os.Getpid() {
 		return fmt.Errorf("a swarm for prefix %q is already running (pid %d, %s)", cfg.prefix, st.PID, cfg.state)
 	}
@@ -303,6 +331,9 @@ func up(cfg config) error {
 		// A bot past the server's -max-players is refused "full" and would only
 		// retry: the swarm is capped at the room there is.
 		room := status.Max - status.Current - cfg.headroom
+		if cfg.probe {
+			room-- // the probe's
+		}
 		if room < 1 {
 			return fmt.Errorf("no room: %d of %d in the world (-headroom %d); raise the server's -max-players / OPENSRO_MAX_PLAYERS", status.Current, status.Max, cfg.headroom)
 		}
@@ -356,6 +387,17 @@ func up(cfg config) error {
 		sw.bots = append(sw.bots, &bot{sw: sw, i: i, name: botName(cfg.prefix, i), walker: (i*37+11)%100 < cfg.walkPct, observer: i == 0})
 	}
 	var wg sync.WaitGroup
+	if cfg.probe {
+		pcfg := cfg.probeCfg
+		pcfg.password = sw.password
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := runProbe(ctx, cfg.addr, db, pcfg); err != nil {
+				log.Printf("probe: %v", err)
+			}
+		}()
+	}
 	for _, b := range sw.bots {
 		wg.Add(1)
 		go func() { defer wg.Done(); b.run(ctx) }()
@@ -430,7 +472,8 @@ func status(cfg config) error {
 		fmt.Printf("  bots %d: connected %d, online (in the world) %d, walkers %d\n", st.Bots, st.Connected, st.InWorld, st.Walkers)
 		fmt.Printf("  entries %d, creates %d, seeded %d, drops %d, reconnects %d\n", st.Entries, st.Creates, st.Seeded, st.Drops, st.Reconnects)
 		fmt.Printf("  clicks %d, echoed %d, unanswered %d, corrected %d\n", st.Clicks, st.Echoes, st.NoEcho, st.Corrections)
-		fmt.Printf("  party-match entries listed %d, join requests accepted %d, invitations accepted %d\n", st.Listed, st.JoinsOK, st.InvitesOK)
+		fmt.Printf("  party-match entries listed %d (checks %d, renewed %d, relisted %d), join requests accepted %d, invitations accepted %d\n",
+			st.Listed, st.Checks, st.Renewed, st.Relisted, st.JoinsOK, st.InvitesOK)
 		fmt.Printf("  process: cpu %.1f s total, rss %.0f MB, %d goroutines; in %d packets, %.1f MB\n", st.CPUSeconds, st.RSSMB, st.Goroutines, st.PacketsIn, st.MBIn)
 		o := st.Observer
 		fmt.Printf("  observer (%s0000) sees %d players, %d geared, %d at +3 or more, %d at +8 or more, max +%d; weapons %v; standing at y %.2f..%.2f\n", st.Prefix, o.Players, o.WithGear, o.Plus3, o.Plus8, o.MaxPlus, o.Seals, o.MinY, o.MaxY)
@@ -529,7 +572,8 @@ func items(cfg config) error {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `usage:
-  swarm up     -addr HOST:PORT -pg DSN [-n 1000] [-prefix swarm] [-rate 20] [-walk 10]
+  swarm up     -addr HOST:PORT -pg DSN [-n 1000] [-prefix swarm] [-rate 20] [-walk 10] [-probe]
+  swarm probe  -addr HOST:PORT -pg DSN [-prefix probe] [-probe-region 98/171 -probe-x 960 -probe-z 960]
   swarm status [-prefix swarm] [-addr HOST:PORT] [-pg DSN]
   swarm down   -pg DSN [-prefix swarm]
   swarm items  -pg DSN [-n 10]
@@ -558,13 +602,35 @@ func main() {
 	fs.BoolVar(&cfg.party, "party", true, "up: each bot lists a party-match entry and accepts every join request and invitation")
 	fs.IntVar(&cfg.headroom, "headroom", 0, "up: cap the bots so this many of the server's -max-players slots stay free (0: no cap)")
 	fs.DurationVar(&cfg.summaryEvery, "summary", 30*time.Second, "up: how often the summary is logged")
+	pc := &cfg.probeCfg
+	fs.BoolVar(&cfg.probe, "probe", false, "up: also run the latency probe (as -probe-prefix0000)")
+	fs.StringVar(&pc.prefix, "probe-prefix", "probe", "up -probe: the probe's account prefix (5-8 lowercase letters, not -prefix)")
+	fs.StringVar(&pc.zone, "probe-zone", plazaZone, "probe: the zone frame its spot is written in")
+	fs.StringVar(&pc.region, "probe-region", "98/171", "probe: the region it stands in, x/y (default: a field three regions from Jangan's plaza with no nest)")
+	fs.Float64Var(&pc.x, "probe-x", 960, "probe: its region-local x (it clicks between x and x+8)")
+	fs.Float64Var(&pc.z, "probe-z", 960, "probe: its region-local z")
+	fs.Float64Var(&pc.y, "probe-y", 0, "probe: its height")
+	fs.DurationVar(&pc.every, "probe-every", 250*time.Millisecond, "probe: the time between clicks")
+	fs.DurationVar(&pc.spike, "probe-spike", 200*time.Millisecond, "probe: a round trip over this is logged on its own line")
+	fs.DurationVar(&pc.report, "probe-report", 10*time.Second, "probe: how often p50 / p99 / max are logged")
+	fs.DurationVar(&pc.timeout, "probe-timeout", 5*time.Second, "probe: a click with no echo within this is logged as lost")
 	switch cmd {
-	case "up", "down", "status", "items":
+	case "up", "down", "status", "items", "probe":
 	default:
 		usage()
 	}
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		os.Exit(2)
+	}
+	if cmd == "probe" {
+		// Its own prefix: never the crowd's default, whose prefix0000 is a
+		// running swarm's observer.
+		set := false
+		fs.Visit(func(f *flag.Flag) { set = set || f.Name == "prefix" })
+		if set {
+			pc.prefix = cfg.prefix
+		}
+		cfg.prefix = pc.prefix
 	}
 	if cfg.state == "" {
 		cfg.state = defaultState(cfg.prefix)
@@ -577,6 +643,12 @@ func main() {
 			err = errors.New("up needs -addr")
 		} else {
 			err = up(cfg)
+		}
+	case "probe":
+		if cfg.addr == "" {
+			err = errors.New("probe needs -addr")
+		} else {
+			err = probeOnly(cfg)
 		}
 	case "down":
 		err = down(cfg)
@@ -592,4 +664,26 @@ func main() {
 		fmt.Fprintln(os.Stderr, "swarm:", err)
 		os.Exit(1)
 	}
+}
+
+// probeOnly is `swarm probe`: the probe alone, until SIGINT or SIGTERM.
+func probeOnly(cfg config) error {
+	if err := checkPrefix(cfg.prefix); err != nil {
+		return err
+	}
+	db, err := openDB(cfg.pg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	pw := make([]byte, 12)
+	if _, err := rand.Read(pw); err != nil {
+		return err
+	}
+	pc := cfg.probeCfg
+	pc.prefix = cfg.prefix
+	pc.password = "pr-" + hex.EncodeToString(pw)
+	return runProbe(ctx, cfg.addr, db, pc)
 }

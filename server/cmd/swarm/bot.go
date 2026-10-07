@@ -185,50 +185,16 @@ func (b *bot) session(ctx context.Context) error {
 	defer stopOnCancel()
 	b.state.Store(stConnected)
 
-	// The login.
-	if err := c.send(session.OpLogin, (&session.LoginRequest{Username: b.name, Password: sw.password}).Encode()); err != nil {
+	if err := login(c, b.name, sw.password); err != nil {
 		return err
 	}
-	data, err := c.await(session.OpLoginResult, 15*time.Second)
-	if err != nil {
-		return fmt.Errorf("login: %w", err)
-	}
-	lr, err := session.DecodeLoginResult(data)
-	if err != nil {
-		return fmt.Errorf("login: %w", err)
-	}
-	if !lr.OK {
-		if lr.Reason == session.LoginRefusedFull {
-			return errFull
-		}
-		return fmt.Errorf("login refused: %s", lr.Reason)
-	}
-
 	// The character: created through the lobby the first time.
-	ch, ok, err := botCharacter(ctx, sw.db, sw.cfg.prefix, b.name)
+	ch, created, err := ensureCharacter(ctx, c, sw.db, sw.cfg.prefix, b.name, lookFor(sw.cfg.seed, b.i))
 	if err != nil {
-		return fmt.Errorf("looking up the character: %w", err)
+		return err
 	}
-	if !ok {
-		lk := lookFor(sw.cfg.seed, b.i)
-		if err := c.send(session.OpLobby, lk.createRequest(b.name).Encode()); err != nil {
-			return err
-		}
-		data, err := c.await(session.OpLobbyResult, 15*time.Second)
-		if err != nil {
-			return fmt.Errorf("create: %w", err)
-		}
-		res, err := session.DecodeLobbyResult(data)
-		if err != nil {
-			return fmt.Errorf("create: %w", err)
-		}
-		if !res.OK && res.Code != session.LobbyErrNameExists {
-			return fmt.Errorf("create refused: code 0x%x (is the server's -chargen-csv loaded?)", res.Code)
-		}
+	if created {
 		sw.st.creates.Add(1)
-		if ch, ok, err = botCharacter(ctx, sw.db, sw.cfg.prefix, b.name); err != nil || !ok {
-			return fmt.Errorf("the created character is not in the database: %v", err)
-		}
 	}
 
 	// Its gear and its spot, once a run, while it is not in the world.
@@ -237,7 +203,7 @@ func (b *bot) session(ctx context.Context) error {
 		gear := sw.cat.loadout(sw.cfg.seed, b.i, race, sex)
 		lx, lz := standFor(sw.cfg.seed, b.i, sw.plaza)
 		b.level = levelFor(sw.cfg.seed, b.i, gear)
-		if err := seedCharacter(ctx, sw.db, sw.cfg.prefix, ch.ID, gear, lx, sw.cfg.y, lz, b.level); err != nil {
+		if err := seedCharacter(ctx, sw.db, sw.cfg.prefix, ch.ID, gear, plazaSpot(lx, sw.cfg.y, lz), b.level); err != nil {
 			return fmt.Errorf("seeding: %w", err)
 		}
 		b.seeded = true
@@ -250,25 +216,7 @@ func (b *bot) session(ctx context.Context) error {
 	if b.observer {
 		c.side, c.sideKeep = sw.obs.frame, observes
 	}
-	if err := c.send(session.OpStart, (&session.StartRequest{Name: b.name}).Encode()); err != nil {
-		return err
-	}
-	data, err = c.await(session.OpEnterWorldResult, 20*time.Second)
-	if err != nil {
-		return fmt.Errorf("start: %w", err)
-	}
-	er, err := session.DecodeEnterWorldResult(data)
-	if err != nil {
-		return fmt.Errorf("start: %w", err)
-	}
-	if !er.OK {
-		return fmt.Errorf("enter world refused: %s", er.Reason)
-	}
-	data, err = c.await(session.OpSelfID, 15*time.Second)
-	if err != nil {
-		return err
-	}
-	self, err := session.DecodeSelfID(data)
+	er, uid, err := startWorld(c, b.name)
 	if err != nil {
 		return err
 	}
@@ -279,7 +227,6 @@ func (b *bot) session(ctx context.Context) error {
 		sw.st.firstZone.Store(&z)
 	}
 
-	uid := uint32(self.CharacterID)
 	var w *walker
 	if b.walker {
 		fx, fy, ok := parseFrame(er.FrameRegion)
@@ -297,13 +244,17 @@ func (b *bot) session(ctx context.Context) error {
 	if b.observer {
 		obs = sw.obs
 	}
+	var l *lister
 	if sw.cfg.party {
-		e := matchEntry(sw.cfg.seed, b.i)
-		if err := c.send(party.OpMatchRegister, party.AppendEntry(nil, &e)); err != nil {
+		l = newLister(c, &sw.st, matchEntry(sw.cfg.seed, b.i), uid, sw.cfg.seed+int64(b.i)*7+time.Now().UnixNano())
+		if err := l.register(); err != nil {
 			return err
 		}
+		done := make(chan struct{})
+		defer close(done)
+		go l.loop(ctx, done)
 	}
-	return b.read(c, uid, w, obs)
+	return b.read(c, uid, w, obs, l)
 }
 
 func parseFrame(s string) (int, int, bool) {
@@ -317,11 +268,13 @@ func parseFrame(s string) (int, int, bool) {
 }
 
 // read drains the connection until it fails.
-func (b *bot) read(c *conn, uid uint32, w *walker, obs *observer) error {
+func (b *bot) read(c *conn, uid uint32, w *walker, obs *observer, l *lister) error {
 	keep := func(op uint16) bool {
 		switch op {
-		case party.OpMatchJoin, party.OpInvitation, party.OpMatchRegAck:
+		case party.OpMatchJoin, party.OpInvitation:
 			return true
+		case party.OpMatchRegAck, party.OpMatchChgAck, party.OpEvent:
+			return l != nil
 		case proto.OpMovementResponse, opMoveStop:
 			return w != nil
 		}
@@ -336,8 +289,12 @@ func (b *bot) read(c *conn, uid uint32, w *walker, obs *observer) error {
 			continue
 		}
 		switch op {
-		case party.OpMatchJoin, party.OpInvitation, party.OpMatchRegAck:
+		case party.OpMatchJoin, party.OpInvitation:
 			if err := b.partyMessage(c, op, data); err != nil {
+				return err
+			}
+		case party.OpMatchRegAck, party.OpMatchChgAck, party.OpEvent:
+			if err := l.handle(op, data); err != nil {
 				return err
 			}
 		case proto.OpMovementResponse:
@@ -373,16 +330,10 @@ func matchEntry(seed int64, i int) party.Entry {
 
 // partyMessage answers what a party asks of a bot: every party-match join
 // request is confirmed (0x306e) and every party invitation accepted (0x3080
-// yes); the entry's registration is counted.
+// yes). The entry itself is the lister's (relist.go).
 func (b *bot) partyMessage(c *conn, op uint16, data []byte) error {
 	st := &b.sw.st
 	switch op {
-	case party.OpMatchRegAck:
-		if len(data) > 0 && data[0] == party.ResultOK {
-			st.listed.Add(1)
-		} else {
-			st.noteErr(fmt.Errorf("party-match register refused: % x", data))
-		}
 	case party.OpMatchJoin:
 		j, err := party.DecodeJoinRequest(data)
 		if err != nil {

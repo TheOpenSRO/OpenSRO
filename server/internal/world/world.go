@@ -206,10 +206,16 @@ func (h *Hub) Enter(sess *gateway.Session, characterID int64, name string, level
 }
 
 // Leave removes sess's character from the world, if present. Returns the
-// entity that left and a snapshot of the entities that had it in view (to
+// entity that left and the sessions and characters that had it in view (to
 // notify that this one left), or ok=false if the session wasn't in the
 // world.
-func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Entity, ok bool) {
+//
+// Only who, not a snapshot of each (OURS, a cost fix): a disconnect in a
+// crowd used to copy every entity in view, about a kilobyte each, under the
+// write lock -- 2.1 ms and 8 MB a disconnect at 7,000 in one window, so a
+// swarm's 3,000 dropping together held the lock for seconds (MEASURED,
+// BenchmarkLeaveInCrowd; docs/WORLD_ISSUES.md, "The swarm lane's lag hunt").
+func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Watcher, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -220,7 +226,29 @@ func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Entity, ok 
 	left = outLocked(e, h.clock())
 	left.Move = nil
 	h.removeLocked(sess.ID())
-	return left, h.viewOthersLocked(&left), true
+	return left, h.watchersLocked(&left), true
+}
+
+// watchersLocked is who is in view of e's position, except e's own session.
+// Caller must hold h.mu.
+func (h *Hub) watchersLocked(e *Entity) []Watcher {
+	cell := CellOf(e.Zone, e.Pos)
+	out := make([]Watcher, 0, h.windowCountLocked(cell))
+	h.forWindowLocked(cell, func(o *Entity) {
+		if o.Session.ID() != e.Session.ID() {
+			out = append(out, Watcher{Session: o.Session, CharacterID: o.CharacterID})
+		}
+	})
+	return out
+}
+
+// WatchersOf is es as Watchers.
+func WatchersOf(es []Entity) []Watcher {
+	out := make([]Watcher, len(es))
+	for i, e := range es {
+		out[i] = Watcher{Session: e.Session, CharacterID: e.CharacterID}
+	}
+	return out
 }
 
 // MoveKind is how a position change turns the character (Relocate).
@@ -387,7 +415,9 @@ func (h *Hub) EntitiesInZone(zone string) []Entity {
 	defer h.mu.RUnlock()
 
 	now := h.clock()
-	var out []Entity
+	// Sized up front (under -single-frame the zone is the whole world, and
+	// every blow on a monster asks for it twice: monsterWatchers).
+	out := make([]Entity, 0, len(h.byZone[zone]))
 	for _, e := range h.byZone[zone] {
 		out = append(out, outLocked(e, now))
 	}
@@ -575,8 +605,11 @@ func (h *Hub) windowCountLocked(c combat.Cell) int {
 // position, except e's own session. Caller must hold h.mu.
 func (h *Hub) viewOthersLocked(e *Entity) []Entity {
 	now := h.clock()
-	var out []Entity
-	h.forWindowLocked(CellOf(e.Zone, e.Pos), func(o *Entity) {
+	cell := CellOf(e.Zone, e.Pos)
+	// Sized up front: grown by append, a crowd's snapshot was copied over
+	// again at each doubling, under the write lock.
+	out := make([]Entity, 0, h.windowCountLocked(cell))
+	h.forWindowLocked(cell, func(o *Entity) {
 		if o.Session.ID() != e.Session.ID() {
 			out = append(out, outLocked(o, now))
 		}

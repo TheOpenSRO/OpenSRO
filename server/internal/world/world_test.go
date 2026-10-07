@@ -73,7 +73,7 @@ func TestLeaveRemovesAndReturnsRemaining(t *testing.T) {
 	if !ok || left.Zone != "jangan" || left.Name != "Aria" {
 		t.Fatalf("got left=%+v ok=%v, want zone=jangan name=Aria", left, ok)
 	}
-	if len(remaining) != 1 || remaining[0].Name != "Bram" {
+	if len(remaining) != 1 || remaining[0].CharacterID != 200 {
 		t.Fatalf("expected Bram to remain, got %+v", remaining)
 	}
 
