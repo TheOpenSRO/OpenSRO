@@ -7259,6 +7259,30 @@ The full notes are in `docs/rounds/r752.md`. The user, with thousands of swarm e
     on the old line.
   - Live: real clicks on the box page 0 → 1 → 2 → 1, and 13 → 12.
 
+## Seven-hundred-and-fifty-third round: no other lambda calls a static with a null self, and a lint
+
+The full notes are in `docs/rounds/r753.md`.
+- **Census (MEASURED, two scanners over all of `client/scripts`):**
+  - 355 lambdas; 19 call a static of their own class by the bare name.
+  - 17 of those are made in static funcs, which work.
+  - 2 are made in instance methods but also use the instance, so they work too:
+    `World3D.gd:21181` and `hud_panels.gd:5973`.
+  - **0 are broken.** Round 752's `_build_spin` arrow was the only one, so nothing needed
+    qualifying.
+- **Probe (MEASURED, bare 4.2.2 project):** a lambda captures self only when it names something
+  of the instance: `self`, a member, a signal, a native member, `$` or `%`.
+  - Still broken: a static var, a const, a captured local, a lua-style key, a parent's static, a
+    class-level `var` initialiser, an inner class's method, and a nested lambda under a
+    self-using one.
+  - Never broken: a reference to the static that is not a call (`var c := f`,
+    `f.call_deferred()`).
+  - An inner class's bare call to its outer class's static is a parse error.
+- **Lint:** `ui/static_lambda_lint_test.gd` scans 546 scripts in about 0.9 s. It self-checks on a
+  snippet of 9 banned and 14 allowed forms. With round 752's bare `_spin_step` put back, it fails
+  on `ui_builder.gd:1287`.
+- Box `check` "checked 674 scripts and 9 scenes", ALL LOAD. `tests` "ran 259 suite(s), 0
+  failing". No perf gate: only a test was added.
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.
