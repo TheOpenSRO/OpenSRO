@@ -91,6 +91,7 @@ Section = Create,"0,0,200,100","0"
 	_check_frame_pieces_at_own_size()
 	_check_six_piece_edges_rotated()
 	_check_edit_halign_and_client_rect()
+	_check_spin_arrows_step()
 	_check_edit_draws_its_own_art()
 	_check_section_size_measures_what_is_drawn()
 	_check_text_overrun_follows_alignment()
@@ -403,6 +404,39 @@ Section = Create,"0,0,0,0","0"
 
 ## **A CIFEdit** (round 718 review F2/F6): HAlign 2 is right-aligned 2 px in
 ## (0x637cad, 2.0 at 0xe1b898); ClientRect's insets are the text margins.
+## **The spin's arrows step it** (round 752; the user: "It only ever lets you
+## see 1 page"). Each arrow's press called `_spin_step` from a lambda by bare
+## name, which Godot 4.2.2 runs with a null self: every click was a SCRIPT
+## ERROR and the value never moved. Pressed here through the arrows' own
+## signal, as a click is: within [min, max] (0x658120 / 0x658160), the label
+## at value + 1 (0x657fb0), spin_changed carrying the new value.
+func _check_spin_arrows_step() -> void:
+	var builder := UiBuilder.new(null, null)
+	var text := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_S:CIFSpinButtonCtrl\n\t{\n\t\tRect=RECT,\"360,437,50,16\"\n\t}\n}\n"
+	var root := builder.build_section(UiLayoutParser.parse(text), "Create")
+	var spin := root.get_node_or_null("GDR_S") as Control
+	if spin == null:
+		_check(false, "the spin is built")
+		root.free()
+		return
+	var seen: Array = []
+	spin.connect("spin_changed", func(v: int) -> void: seen.append(v))
+	var right := spin.get_node("Right") as BaseButton
+	var left := spin.get_node("Left") as BaseButton
+	var label := spin.get_node("Value") as Label
+	UiBuilder.set_spin_range(spin, 0, 2)
+	_check(label.text == "1", "a new spin reads 1 (value 0 + 1)")
+	right.pressed.emit()
+	_check(UiBuilder.spin_value(spin) == 1 and label.text == "2" and seen == [1], "Right steps to 1, reads 2 (got %d, '%s', %s)" % [UiBuilder.spin_value(spin), label.text, str(seen)])
+	right.pressed.emit()
+	right.pressed.emit()
+	_check(UiBuilder.spin_value(spin) == 2 and label.text == "3" and seen == [1, 2], "Right stops at the top (got %d, %s)" % [UiBuilder.spin_value(spin), str(seen)])
+	left.pressed.emit()
+	left.pressed.emit()
+	left.pressed.emit()
+	_check(UiBuilder.spin_value(spin) == 0 and label.text == "1" and seen == [1, 2, 1, 0], "Left steps down and stops at 0 (got %s)" % str(seen))
+	root.free()
+
 func _check_edit_halign_and_client_rect() -> void:
 	var builder := UiBuilder.new(null, null)
 	var text := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_E:CIFEdit\n\t{\n\t\tRect=RECT,\"0,0,81,11\"\n\t\tClientRect=RECT,\"7,5,7,5\"\n\t\tHAlign=INTEGER,\"2\"\n\t}\n}\n"
