@@ -38,6 +38,13 @@ class_name QaLineup
 ##                                                     after the spawn (QaCrowdProbe's header)
 ##   OPENSRO_QA_LINEUP_TURNS=<deg>,<deg>,..           (round 741) body i turned by entry
 ##                                                     i mod n beyond facing the camera
+##   OPENSRO_QA_LINEUP_WALKUP=<seconds>               (round 756) the walk-up: the lineup
+##                                                     arrives one 320-unit message block
+##                                                     at a time, nearest block first, each
+##                                                     as one group spawn (World3D's
+##                                                     0x3017..0x3018 bracket), a block
+##                                                     every <seconds> -- what crossing
+##                                                     block borders toward a crowd sends
 ##
 ## The kit is OURS for the picture: the race's `_A_DEF` weapon (CharCatalog's
 ## rule on World3D's item table), a shield beside ONE_HANDED_WITH_SHIELD, and the
@@ -76,6 +83,12 @@ var spacing_z := SPACING_Z
 var _phase := -1
 var _spawned := false
 var _done := false
+## Round 756 (walk-up): the pages still to spawn ([[spawn args], ...] each),
+## the seconds between them and until the next.
+var _pages: Array = []
+var _page_every := 0.0
+var _page_wait := 0.0
+var _probe: QaCrowdProbe = null
 
 static func from_env(w: Node) -> QaLineup:
 	var spec := OS.get_environment("OPENSRO_QA_LINEUP")
@@ -137,6 +150,13 @@ func step(delta: float) -> void:
 			print("LINEUP: the player stepped %s aside to %s" % [aside, str(world.player.global_position.round())])
 		_spawn(appearance)
 		_t = 0.0
+		return
+	# Round 756 (walk-up): the next block's group spawn when it is due.
+	if not _pages.is_empty():
+		_page_wait -= delta
+		if _page_wait <= 0.0:
+			_page_wait = _page_every
+			_spawn_page(_pages.pop_front())
 		return
 	# Round 739: the bodies are dressed over frames (World3D._pump_other_builds);
 	# the first phase starts once every one is.
@@ -259,6 +279,8 @@ func _spawn(appearance: CharacterAppearance) -> void:
 	var turns: Array = []
 	for t in OS.get_environment("OPENSRO_QA_LINEUP_TURNS").split(",", false):
 		turns.append(float(t))
+	var walkup := OS.get_environment("OPENSRO_QA_LINEUP_WALKUP")
+	var by_block := {}
 	for i in range(specs.size()):
 		var sp: Dictionary = specs[i]
 		var qa_t0 := Time.get_ticks_usec()
@@ -277,25 +299,72 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		qa_usec += Time.get_ticks_usec() - qa_t0
 		var id := 990000 + i
 		var code: String = world._body_key_for(int(sp["ref"]), "")
-		# Facing the player (heading = yaw + pi in RemoteFacing's frame is
-		# not needed here: the node's yaw is set below).
-		world._spawn_or_update_other(id, "%s" % code.trim_prefix("CHAR_"), at, equipped, code, NAN, int(sp["scale"]),
-			sp.get("pluses", {}))
-		var node: Node3D = world._other_bodies.get(id)
-		if node != null:
-			node.rotation.y = yaw + PI + (deg_to_rad(float(turns[i % turns.size()])) if not turns.is_empty() else 0.0)
-		var gait: Dictionary = world._other_gaits.get(id, {})
+		var turn := yaw + PI + (deg_to_rad(float(turns[i % turns.size()])) if not turns.is_empty() else 0.0)
+		var args := [id, code, at, equipped, sp, turn]
 		bodies.append({"id": id, "ref": int(sp["ref"]), "code": code, "scale": int(sp["scale"]), "weapon": int(sp["weapon"]),
-			"group": String(gait.get("group", "")), "skeleton": gait.get("skeleton")})
-	print("LINEUP: %d bodies (%s weapons) in rows of %d in front of the player at %s, actions %s, %.1f s each; built in %d ms (%d of it the QA kits and ground; %d still queued to dress, round 739)" % [
-		bodies.size(), mode, columns, str(base.round()), ",".join(actions), phase_seconds, (Time.get_ticks_usec() - spawn_t0) / 1000,
-		qa_usec / 1000, world._other_builds.size()])
+			"group": "", "skeleton": null})
+		if walkup.is_valid_float():
+			# Its 320-unit block (round 664's message blocks), in world units.
+			var bk := "%d,%d" % [floori(at.x / 320.0), floori(at.z / 320.0)]
+			if not by_block.has(bk):
+				by_block[bk] = []
+			(by_block[bk] as Array).append(args)
+			continue
+		_spawn_one(args)
+	if walkup.is_valid_float():
+		# Nearest block first, as a walk toward the crowd brings them.
+		var block_keys := by_block.keys()
+		var at0: Vector3 = base
+		block_keys.sort_custom(func(a, b) -> bool:
+			var pa: Array = (by_block[a] as Array)[0]
+			var pb: Array = (by_block[b] as Array)[0]
+			return (pa[2] as Vector3).distance_squared_to(at0) < (pb[2] as Vector3).distance_squared_to(at0))
+		for bk2 in block_keys:
+			_pages.append(by_block[bk2])
+		_page_every = float(walkup)
+		_page_wait = _page_every
+		print("LINEUP: walk-up -- %d bodies in %d block group spawns, one every %.1f s (%d ms of QA kits and ground)" % [
+			bodies.size(), _pages.size(), _page_every, qa_usec / 1000])
+	else:
+		print("LINEUP: %d bodies (%s weapons) in rows of %d in front of the player at %s, actions %s, %.1f s each; built in %d ms (%d of it the QA kits and ground; %d still queued to dress, round 739)" % [
+			bodies.size(), mode, columns, str(base.round()), ",".join(actions), phase_seconds, (Time.get_ticks_usec() - spawn_t0) / 1000,
+			qa_usec / 1000, world._other_builds.size()])
 	spawn_t0 += qa_usec
+	if walkup.is_valid_float():
+		spawn_t0 = Time.get_ticks_usec()
 	if QaCrowdProbe.wanted():
-		var probe := QaCrowdProbe.new()
-		probe.name = "QaCrowdProbe"
-		world.add_child(probe)
-		probe.setup(world, bodies, spawn_t0)
+		_probe = QaCrowdProbe.new()
+		_probe.name = "QaCrowdProbe"
+		world.add_child(_probe)
+		_probe.setup(world, bodies, spawn_t0)
+	if walkup.is_valid_float():
+		_spawn_page(_pages.pop_front())
+
+## One lineup body through the other-player arrival path, facing `args[5]`.
+func _spawn_one(args: Array) -> void:
+	var sp: Dictionary = args[4]
+	var code: String = args[1]
+	world._spawn_or_update_other(int(args[0]), "%s" % code.trim_prefix("CHAR_"), args[2], args[3], code, NAN, int(sp["scale"]),
+		sp.get("pluses", {}))
+	var node: Node3D = world._other_bodies.get(int(args[0]))
+	if node != null:
+		node.rotation.y = float(args[5])
+
+## Round 756 (walk-up): one block's bodies as one group spawn, bracketed as
+## NetClient brackets a 0x3017..0x3018 page (World3D._on_user_group_begin /
+## _end), so the page arrives whole.
+func _spawn_page(page: Array) -> void:
+	var ids: Array = []
+	for args in page:
+		ids.append(int(args[0]))
+	if _probe != null:
+		_probe.page_started(ids)
+	var t0 := Time.get_ticks_usec()
+	world._on_user_group_begin()
+	for args in page:
+		_spawn_one(args)
+	world._on_user_group_end()
+	print("LINEUP: walk-up page of %d bodies spawned in %.1f ms (%d page(s) left)" % [page.size(), (Time.get_ticks_usec() - t0) / 1000.0, _pages.size()])
 
 ## Each body's skeleton and group as dressed (round 739: dressed after the
 ## spawn, over frames).

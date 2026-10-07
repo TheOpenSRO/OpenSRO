@@ -439,6 +439,13 @@ build: the worst at 1000 470 -> 100-122 ms), EquipFx one master per effect file 
 swap without a scan (walking p95 at 1000 184 -> 143), and the local player's pose and the fades
 once a rendered frame. At 1000 standing went 92-98 -> 85 ms; about 68 ms of it is lane A's.
 
+**Round 756 (`docs/rounds/r756.md`): a crowd appears at once.** Retail creates and draws every
+character of a group spawn inside the one 0x3018 call, models loaded synchronously, all fading in
+together (READ, r756.md section 1). B4's pump showed a crowd one body or a few a frame (13-15 s
+for 1000). An arriving body is now drawn at once as a CrowdGpu ghost from its kind's recipe
+(`CharacterAppearance.far_recipe`), with its name plate and click body, and dressed in the
+background; a kind whose templates are still being made appears whole the frame they are adopted.
+
 ### Lane C: server interest management (server only)
 
 | # | Item | Label | Expected saving |

@@ -230,3 +230,19 @@ Departures from sections 3 and 5 (all OURS):
 - **Items** are pre-moved meshes skinned to their attach bone with weight 1 (no extra texture column).
 - **One AABB for every group**, re-measured each cycle: a group is drawn or culled as a whole.
 
+
+## 9. Round 756: arriving bodies drawn far before they are built (ghosts)
+
+`docs/rounds/r756.md`. Retail creates and draws every character of a group spawn in the one 0x3018
+call (READ, r756.md section 1); this client dressed arrivals one or a few a frame (rounds 739/748),
+so a crowd filled in over seconds. A far body needs no node: `CrowdGpu.add_ghost` draws an arriving
+body at once from its kind's recipe (`CharacterAppearance.far_recipe`: the template meshes with the
+glow and Volume `build()` would give them, the hidden body pieces left out), keyed by its holder
+node; it fades in on the GPU (blended fade twins with the skin; the alpha per instance from the clock
+and the fade's start in `INSTANCE_CUSTOM.w`, so one twin a material serves every fade; OURS: the
+instances of a fade group are not sorted for the 2 s), takes CharacterLight's level a few frames
+later, swaps its stand/run loop as a texel write, and plays its clip sounds within 600. The dressing follows in the background, nearest first, and hands
+the built skeleton the ghost's clip entry in the same frame (`World3D._ghost_handover`); anything that
+needs the skeleton (a one-shot, an effect, berserk, Detail) dresses it at once. `_parts_of` is now
+`_part_for` per mesh, so a recipe's pieces and a built body's are read by one set of rules
+(MEASURED: 300 random real kits, 0 mismatched parts).

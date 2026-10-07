@@ -41,10 +41,17 @@ uniform sampler2D albedo_texture : hint_default_white, filter_linear_mipmap, rep
 // env-map mod that asks for its own, 0 for none -- every texel kept.
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.0;
 #ifdef APPEAR_FADE
+#ifdef CROWD_GPU
+// Round 756: a fading GPU ghost's alpha, per instance (CrowdGpu's fade
+// groups): the vertex include works it out from INSTANCE_CUSTOM.w.
+varying float appear_alpha;
+#define SRR_CG_FADE
+#else
 // A character fading into existence (AppearFade, round 676): the model's
 // alpha, 0 to 1 over the fade. Only the *_fade.gdshader variants define
 // APPEAR_FADE; the shaders the world draws with compile without it.
 uniform float appear_alpha : hint_range(0.0, 1.0) = 1.0;
+#endif
 #endif
 
 vec3 srr_srgb_to_linear(vec3 srr_v) {

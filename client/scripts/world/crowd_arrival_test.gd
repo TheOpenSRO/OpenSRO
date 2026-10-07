@@ -271,6 +271,10 @@ func _test_async_templates(world: Node) -> void:
 	app._items[5001] = {"models": PackedStringArray(["item\\chest_a.bsr"]), "type_ids": PackedInt32Array([3, 1, 1, 3]), "code": "ITEM_CHEST"}
 	app._full_items_loaded = true
 	app.body_assembler = func(path: String) -> SkinnedBsrAssembler.AssembledCharacter:
+		# A new kind's task takes a while (round 756: the stand-in finished
+		# between two spawns on a loaded box, and the "waits" case raced it).
+		if path.contains("woman"):
+			OS.delay_msec(500)
 		var s3 := Skeleton3D.new()
 		s3.add_bone("Bip01")
 		var t := SkinnedBsrAssembler.AssembledCharacter.new()

@@ -496,6 +496,24 @@ physics step, EquipFx's `fx_driver` / `fx_effects`, `rs_setup` the draw's scene 
 (`frame_split.gd`'s header has the source lines). `QA DRESS` lines name every body whose dressing
 took over 40 ms, by phase.
 
+**An arrival (round 756).** Before the arrival line the probe prints `QA CROWD visible`: the frames
+and seconds from the first packet until every lineup body was drawn (dressed, or a CrowdGpu ghost),
+their worst frame and how many were over 100 ms. `OPENSRO_QA_LINEUP_WALKUP=<s>` brings the lineup
+one 320-unit block at a time, nearest first, each as one group spawn (the 0x3017..0x3018 bracket),
+every `<s>` seconds -- the walk-up toward a crowd -- and the probe prints a `QA CROWD page` line per
+block. `OPENSRO_QA_GHOSTS=0` arrives as before round 756 (dressed, no ghosts);
+`OPENSRO_QA_PREP_RUNNING=<n>` lets n template tasks run at once. `crowd_run.sh` counts any lane's
+Godot (`[G]odot_v4|[x]vfb-run`) as an overlap.
+
+`arrival_bench.gd` (a `--script` tool, headless or under the GPU) times what one arriving body
+costs on the main thread, phase by phase, for 300 random kits from the item table (build, the far
+parts, the recipe, a ghost first and again), and checks that the far parts of each kind's recipe
+are those of its built body (`BENCH parity`):
+
+```
+remote_godot.sh script res://tools/arrival_bench.gd -- --pk2=<Data.pk2> --media=<Media.pk2> [--count=300]
+```
+
 ### Release checks (round 668)
 
 - `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that

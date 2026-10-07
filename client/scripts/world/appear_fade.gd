@@ -363,15 +363,26 @@ class Fades:
 	## Starts `model` fading in from nothing: from now every mesh under it
 	## (instances_of) draws with its material's twin at alpha 0, the deco's
 	## start value, until step() raises it.
-	func start(model: Node, duration: float = APPEAR_SECONDS) -> void:
+	##
+	## `elapsed` (round 756): the fade is already that far in (a body drawn
+	## as a GPU ghost while it began, CrowdGpu): it goes on from there, in a
+	## cohort of its own.
+	func start(model: Node, duration: float = APPEAR_SECONDS, elapsed: float = 0.0) -> void:
 		if model == null or not is_instance_valid(model) or fading(model):
 			return
-		if _open == null or _open.duration != duration:
+		var co := _open
+		if elapsed > 0.0:
+			co = Cohort.new()
+			co.duration = duration
+			co.elapsed = elapsed
+			_cohorts.append(co)
+		elif _open == null or _open.duration != duration:
 			_open = Cohort.new()
 			_open.duration = duration
 			_cohorts.append(_open)
-		if _take_model(_open, model, 0.0):
-			_open.models.append(model)
+			co = _open
+		if _take_model(co, model, float(AppearFade.alpha_at(co.elapsed, duration)) / AppearFade.FULL):
+			co.models.append(model)
 			_started += 1
 
 	## Starts `model` fading out (round 677; READ, CIDecoDisappear): from now
