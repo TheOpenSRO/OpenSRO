@@ -11,10 +11,13 @@
 // character through the retail lobby (0x7007) the first time -- a mixed crowd
 // of China and Europe, men and women, any figure, height and volume -- writes
 // its worn gear (seal and plus items from the database's own items table,
-// gear.go) and its start spot on Jangan's plaza into Postgres, and starts it
-// into the world (0x7001). Logins are paced (-rate a second). About -walk
-// percent of the bots click-move (retail 0x7021) to a nearby plaza point
-// every 3..7 s. A bot that drops reconnects. A summary is logged every 30 s
+// gear.go), its level and its start spot on Jangan's plaza deck (at the
+// deck's measured height, db.go) into Postgres, and starts it into the world
+// (0x7001). Logins are paced (-rate a second) and capped at the room the
+// server's -max-players leaves. About -walk percent of the bots click-move
+// (retail 0x7021) to a nearby plaza point every -walk-every (3..7 s at 5 s).
+// Each bot lists a party-match entry (0x7069) and confirms every join request
+// and accepts every invitation (-party). A bot that drops reconnects. A summary is logged every 30 s
 // and the state file (-state) rewritten every 5 s. It runs until SIGINT or
 // SIGTERM (`swarm down` sends the latter), then logs every bot out.
 //
@@ -61,6 +64,9 @@ type config struct {
 	seed                    int64
 	radius                  float64
 	headroom                int
+	y                       float64
+	walkEvery               time.Duration
+	party                   bool
 	summaryEvery            time.Duration
 }
 
@@ -69,6 +75,7 @@ type stats struct {
 	entries, creates, seeded, drops, reconnects    atomic.Int64
 	clicks, echoes, noEcho, corrections, walkersOn atomic.Int64
 	packetsIn, bytesIn                             atomic.Int64
+	listed, joinsAccepted, invitesAccepted         atomic.Int64
 	firstZone                                      atomic.Pointer[string]
 	errMu                                          sync.Mutex
 	errs                                           map[string]int
@@ -134,6 +141,7 @@ type swarm struct {
 	started  time.Time
 	gearMu   sync.Mutex
 	gearIDs  map[int64]int
+	plaza    plaza
 	plusHist [15]int
 }
 
@@ -169,6 +177,9 @@ type stateFile struct {
 	Echoes      int64          `json:"echoes"`
 	NoEcho      int64          `json:"no_echo"`
 	Corrections int64          `json:"corrections"`
+	Listed      int64          `json:"party_match_listed"`
+	JoinsOK     int64          `json:"party_joins_accepted"`
+	InvitesOK   int64          `json:"party_invites_accepted"`
 	PacketsIn   int64          `json:"packets_in"`
 	MBIn        float64        `json:"mb_in"`
 	Errors      map[string]int `json:"errors,omitempty"`
@@ -201,18 +212,27 @@ func writeState(path string, s stateFile) error {
 	return os.Rename(tmp, path)
 }
 
+// alive reports whether pid is a running `swarm up` (its command line read
+// from /proc), so a pid the system has since given to another process is
+// never signalled.
 func alive(pid int) bool {
-	if pid <= 0 {
+	if pid <= 0 || syscall.Kill(pid, 0) != nil {
 		return false
 	}
-	return syscall.Kill(pid, 0) == nil
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return true // no /proc: trust the signal probe
+	}
+	args := strings.Split(string(b), "\x00")
+	return len(args) > 1 && strings.Contains(filepath.Base(args[0]), "swarm") && args[1] == "up"
 }
 
 func (sw *swarm) snapshot(stopped bool) stateFile {
 	s := stateFile{PID: os.Getpid(), Prefix: sw.cfg.prefix, Addr: sw.cfg.addr, Started: sw.started, Updated: time.Now(), Stopped: stopped,
 		Bots: len(sw.bots), Entries: sw.st.entries.Load(), Creates: sw.st.creates.Load(), Seeded: sw.st.seeded.Load(),
 		Drops: sw.st.drops.Load(), Reconnects: sw.st.reconnects.Load(), Clicks: sw.st.clicks.Load(), Echoes: sw.st.echoes.Load(),
-		NoEcho: sw.st.noEcho.Load(), Corrections: sw.st.corrections.Load(), PacketsIn: sw.st.packetsIn.Load(),
+		NoEcho: sw.st.noEcho.Load(), Corrections: sw.st.corrections.Load(),
+		Listed: sw.st.listed.Load(), JoinsOK: sw.st.joinsAccepted.Load(), InvitesOK: sw.st.invitesAccepted.Load(), PacketsIn: sw.st.packetsIn.Load(),
 		MBIn: float64(sw.st.bytesIn.Load()) / (1 << 20)}
 	for _, b := range sw.bots {
 		if b.walker {
@@ -253,10 +273,10 @@ func (sw *swarm) logSummary(prev *stateFile) {
 		seals = append(seals, fmt.Sprintf("%s %d", k, v))
 	}
 	sort.Strings(seals)
-	log.Printf("swarm %s: %d/%d in world (%d connected), %d walkers; entries %d, creates %d, drops %d, reconnects %d; clicks %d (echoed %d, unanswered %d, corrected %d); in %d pkts %.1f MB; cpu %.1f%% rss %.0f MB goroutines %d; observer sees %d players, %d geared, %d at +3 or more, %d at +8 or more (max +%d), weapons [%s], 0x3038 %d, undecoded %d",
+	log.Printf("swarm %s: %d/%d in world (%d connected), %d walkers; entries %d, creates %d, drops %d, reconnects %d; clicks %d (echoed %d, unanswered %d, corrected %d); party-match entries %d, joins accepted %d, invites accepted %d; in %d pkts %.1f MB; cpu %.1f%% rss %.0f MB goroutines %d; observer sees %d players, %d geared, %d at +3 or more, %d at +8 or more (max +%d), weapons [%s], 0x3038 %d, undecoded %d, standing at y %.2f..%.2f",
 		sw.cfg.prefix, s.InWorld, s.Bots, s.Connected, s.Walkers, s.Entries, s.Creates, s.Drops, s.Reconnects,
-		s.Clicks, s.Echoes, s.NoEcho, s.Corrections, s.PacketsIn, s.MBIn, cpu, s.RSSMB, s.Goroutines,
-		o.Players, o.WithGear, o.Plus3, o.Plus8, o.MaxPlus, strings.Join(seals, ", "), o.Equips, o.DecodeErrors)
+		s.Clicks, s.Echoes, s.NoEcho, s.Corrections, s.Listed, s.JoinsOK, s.InvitesOK, s.PacketsIn, s.MBIn, cpu, s.RSSMB, s.Goroutines,
+		o.Players, o.WithGear, o.Plus3, o.Plus8, o.MaxPlus, strings.Join(seals, ", "), o.Equips, o.DecodeErrors, o.MinY, o.MaxY)
 	if len(s.Errors) > 0 {
 		log.Printf("swarm %s: errors so far %v; last: %s", sw.cfg.prefix, s.Errors, s.LastError)
 	}
@@ -280,14 +300,19 @@ func up(cfg config) error {
 		log.Printf("server status: %v (continuing)", err)
 	} else {
 		log.Printf("server status before the swarm: %d in the world, max %d", status.Current, status.Max)
-		if room := status.Max - status.Current - cfg.headroom; cfg.headroom > 0 && room < cfg.n {
-			if room < 1 {
-				return fmt.Errorf("no room: %d of %d in the world, -headroom %d", status.Current, status.Max, cfg.headroom)
-			}
-			log.Printf("capping the swarm at %d bots to leave %d slots free (-headroom)", room, cfg.headroom)
+		// A bot past the server's -max-players is refused "full" and would only
+		// retry: the swarm is capped at the room there is.
+		room := status.Max - status.Current - cfg.headroom
+		if room < 1 {
+			return fmt.Errorf("no room: %d of %d in the world (-headroom %d); raise the server's -max-players / OPENSRO_MAX_PLAYERS", status.Current, status.Max, cfg.headroom)
+		}
+		if room < cfg.n {
+			log.Printf("WARNING: the server takes %d players (%d in the world now, -headroom %d): running %d bots, not %d. Raise its -max-players / OPENSRO_MAX_PLAYERS for more.",
+				status.Max, status.Current, cfg.headroom, room, cfg.n)
 			cfg.n = room
-		} else if status.Current+cfg.n >= status.Max {
-			log.Printf("WARNING: %d bots will fill the server (max %d): non-GM logins are refused while it is full", cfg.n, status.Max)
+		}
+		if status.Current+cfg.n >= status.Max {
+			log.Printf("WARNING: %d bots fill the server (max %d): non-GM logins are refused while it is full (-headroom N keeps N free)", cfg.n, status.Max)
 		}
 	}
 	db, err := openDB(cfg.pg)
@@ -311,14 +336,21 @@ func up(cfg config) error {
 	if _, err := rand.Read(pw); err != nil {
 		return err
 	}
-	sw := &swarm{cfg: cfg, db: db, cat: cat, pace: &pacer{every: time.Duration(float64(time.Second) / cfg.rate)},
+	if cfg.radius <= 0 {
+		cfg.radius = autoRadius(cfg.n)
+	}
+	if cfg.walkEvery < time.Second {
+		return fmt.Errorf("-walk-every must be 1s or more")
+	}
+	sw := &swarm{cfg: cfg, db: db, cat: cat, plaza: plazaFor(cfg.radius), pace: &pacer{every: time.Duration(float64(time.Second) / cfg.rate)},
 		password: "sw-" + hex.EncodeToString(pw), started: time.Now(), gearIDs: map[int64]int{},
 		obs: &observer{players: map[uint32]pcspawn.Record{}, cat: cat}}
 	created, err := ensureAccounts(ctx, db, cfg.prefix, cfg.n, sw.password)
 	if err != nil {
 		return err
 	}
-	log.Printf("%d bot accounts (%d new), %s0000..%s; logging in at %.0f a second", cfg.n, created, cfg.prefix, botName(cfg.prefix, cfg.n-1), cfg.rate)
+	log.Printf("%d bot accounts (%d new), %s0000..%s; logging in at %.0f a second; standing at y %.3f in a %.0f-unit disc around 97/168 local (%.0f, %.0f); %d%% walk every ~%s",
+		cfg.n, created, cfg.prefix, botName(cfg.prefix, cfg.n-1), cfg.rate, cfg.y, sw.plaza.R, sw.plaza.X, sw.plaza.Z, cfg.walkPct, cfg.walkEvery)
 
 	for i := 0; i < cfg.n; i++ {
 		sw.bots = append(sw.bots, &bot{sw: sw, i: i, name: botName(cfg.prefix, i), walker: (i*37+11)%100 < cfg.walkPct, observer: i == 0})
@@ -398,9 +430,10 @@ func status(cfg config) error {
 		fmt.Printf("  bots %d: connected %d, online (in the world) %d, walkers %d\n", st.Bots, st.Connected, st.InWorld, st.Walkers)
 		fmt.Printf("  entries %d, creates %d, seeded %d, drops %d, reconnects %d\n", st.Entries, st.Creates, st.Seeded, st.Drops, st.Reconnects)
 		fmt.Printf("  clicks %d, echoed %d, unanswered %d, corrected %d\n", st.Clicks, st.Echoes, st.NoEcho, st.Corrections)
+		fmt.Printf("  party-match entries listed %d, join requests accepted %d, invitations accepted %d\n", st.Listed, st.JoinsOK, st.InvitesOK)
 		fmt.Printf("  process: cpu %.1f s total, rss %.0f MB, %d goroutines; in %d packets, %.1f MB\n", st.CPUSeconds, st.RSSMB, st.Goroutines, st.PacketsIn, st.MBIn)
 		o := st.Observer
-		fmt.Printf("  observer (%s0000) sees %d players, %d geared, %d at +3 or more, %d at +8 or more, max +%d; weapons %v\n", st.Prefix, o.Players, o.WithGear, o.Plus3, o.Plus8, o.MaxPlus, o.Seals)
+		fmt.Printf("  observer (%s0000) sees %d players, %d geared, %d at +3 or more, %d at +8 or more, max +%d; weapons %v; standing at y %.2f..%.2f\n", st.Prefix, o.Players, o.WithGear, o.Plus3, o.Plus8, o.MaxPlus, o.Seals, o.MinY, o.MaxY)
 		if o.Sample != "" {
 			fmt.Printf("  e.g. %s\n", o.Sample)
 		}
@@ -519,7 +552,10 @@ func main() {
 	fs.IntVar(&cfg.walkPct, "walk", 10, "up: percent of the bots that click-move")
 	fs.Float64Var(&cfg.rate, "rate", 20, "up: connection attempts a second (logins and reconnects)")
 	fs.Int64Var(&cfg.seed, "seed", 1, "up/items: the looks, gear and spots are fixed by it")
-	fs.Float64Var(&cfg.radius, "radius", defaultPlazaRadius, "up: the plaza disc's radius around Jangan's spawn (97/168 local 1002, 1020)")
+	fs.Float64Var(&cfg.radius, "radius", 0, "up: the plaza disc's radius, its north edge on the deck's at 97/168 local z 960 (0: 85 x sqrt(n/1000))")
+	fs.DurationVar(&cfg.walkEvery, "walk-every", 5*time.Second, "up: a walker's mean time between clicks (uniform over 0.6..1.4 of it)")
+	fs.Float64Var(&cfg.y, "y", plazaY, "up: the height the bots stand at (the plaza deck's, MEASURED)")
+	fs.BoolVar(&cfg.party, "party", true, "up: each bot lists a party-match entry and accepts every join request and invitation")
 	fs.IntVar(&cfg.headroom, "headroom", 0, "up: cap the bots so this many of the server's -max-players slots stay free (0: no cap)")
 	fs.DurationVar(&cfg.summaryEvery, "summary", 30*time.Second, "up: how often the summary is logged")
 	switch cmd {

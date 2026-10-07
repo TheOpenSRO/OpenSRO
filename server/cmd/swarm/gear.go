@@ -26,6 +26,7 @@ import (
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
@@ -97,21 +98,22 @@ func classify(code string) (s seal, degree int, ok bool) {
 
 // gearItem is one wearable row of the items table.
 type gearItem struct {
-	ID        int64
-	Code      string
-	Family    int // TypeID3
-	Kind      int // TypeID4
-	Country   int
-	ReqGender int
-	TwoHanded bool
-	Seal      seal
-	Degree    int
-	Slot      equipment.Slot
-	reqLevel  int
-	isArmour  bool
-	isShield  bool
-	isWeapon  bool
-	sexes     []int
+	ID           int64
+	Code         string
+	Family       int // TypeID3
+	Kind         int // TypeID4
+	Country      int
+	ReqGender    int
+	TwoHanded    bool
+	Seal         seal
+	Degree       int
+	Slot         equipment.Slot
+	reqLevel     int
+	reqLevelType int
+	isArmour     bool
+	isShield     bool
+	isWeapon     bool
+	sexes        []int
 }
 
 type armourKey struct {
@@ -226,7 +228,7 @@ func (c *catalogue) finish() {
 
 // loadCatalogue reads the wearable rows of the items table.
 func loadCatalogue(ctx context.Context, db *sql.DB) (*catalogue, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, code_name, type_id3, type_id4, country, req_gender, two_handed, req_level1
+	rows, err := db.QueryContext(ctx, `SELECT id, code_name, type_id3, type_id4, country, req_gender, two_handed, req_level1, req_level_type1
 		FROM items WHERE type_id1 = 3 AND type_id2 = 1 AND type_id3 IN (1, 2, 3, 4, 6, 9, 10, 11)`)
 	if err != nil {
 		return nil, fmt.Errorf("reading the items table: %w", err)
@@ -235,7 +237,7 @@ func loadCatalogue(ctx context.Context, db *sql.DB) (*catalogue, error) {
 	c := newCatalogue()
 	for rows.Next() {
 		var it gearItem
-		if err := rows.Scan(&it.ID, &it.Code, &it.Family, &it.Kind, &it.Country, &it.ReqGender, &it.TwoHanded, &it.reqLevel); err != nil {
+		if err := rows.Scan(&it.ID, &it.Code, &it.Family, &it.Kind, &it.Country, &it.ReqGender, &it.TwoHanded, &it.reqLevel, &it.reqLevelType); err != nil {
 			return nil, err
 		}
 		c.add(it)
@@ -400,6 +402,23 @@ func (c *catalogue) loadout(seed int64, i, race, sex int) []gearRow {
 		out = append(out, gearRow{Slot: it.Slot, Item: it, Opt: o, Adv: a})
 	}
 	return out
+}
+
+// levelFor is a bot's level: what its gear asks for (the highest character
+// level requirement it wears), at least party.MinCreatorLevel so it may list
+// a party-match entry, at most 110; a table with no requirements gives
+// 20..100. OURS.
+func levelFor(seed int64, i int, gear []gearRow) int {
+	lv := 0
+	for _, g := range gear {
+		if g.Item.reqLevelType == 1 || g.Item.reqLevelType == 0 {
+			lv = max(lv, g.Item.reqLevel)
+		}
+	}
+	if lv < party.MinCreatorLevel {
+		lv = 20 + rand.New(rand.NewSource(seed*7+int64(i))).Intn(81)
+	}
+	return min(lv, 110)
 }
 
 // summary describes the catalogue: how many rows of each kind and seal.

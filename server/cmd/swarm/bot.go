@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/session"
@@ -113,6 +114,7 @@ type bot struct {
 	walker   bool
 	observer bool
 	seeded   bool
+	level    int
 	state    atomic.Int32
 	c        atomic.Pointer[conn]
 }
@@ -233,8 +235,9 @@ func (b *bot) session(ctx context.Context) error {
 	if !b.seeded {
 		race, sex := raceSexOfGender(ch.Gender)
 		gear := sw.cat.loadout(sw.cfg.seed, b.i, race, sex)
-		lx, lz := standFor(sw.cfg.seed, b.i, sw.cfg.radius)
-		if err := seedCharacter(ctx, sw.db, sw.cfg.prefix, ch.ID, gear, lx, lz); err != nil {
+		lx, lz := standFor(sw.cfg.seed, b.i, sw.plaza)
+		b.level = levelFor(sw.cfg.seed, b.i, gear)
+		if err := seedCharacter(ctx, sw.db, sw.cfg.prefix, ch.ID, gear, lx, sw.cfg.y, lz, b.level); err != nil {
 			return fmt.Errorf("seeding: %w", err)
 		}
 		b.seeded = true
@@ -294,6 +297,12 @@ func (b *bot) session(ctx context.Context) error {
 	if b.observer {
 		obs = sw.obs
 	}
+	if sw.cfg.party {
+		e := matchEntry(sw.cfg.seed, b.i)
+		if err := c.send(party.OpMatchRegister, party.AppendEntry(nil, &e)); err != nil {
+			return err
+		}
+	}
 	return b.read(c, uid, w, obs)
 }
 
@@ -311,6 +320,8 @@ func parseFrame(s string) (int, int, bool) {
 func (b *bot) read(c *conn, uid uint32, w *walker, obs *observer) error {
 	keep := func(op uint16) bool {
 		switch op {
+		case party.OpMatchJoin, party.OpInvitation, party.OpMatchRegAck:
+			return true
 		case proto.OpMovementResponse, opMoveStop:
 			return w != nil
 		}
@@ -325,6 +336,10 @@ func (b *bot) read(c *conn, uid uint32, w *walker, obs *observer) error {
 			continue
 		}
 		switch op {
+		case party.OpMatchJoin, party.OpInvitation, party.OpMatchRegAck:
+			if err := b.partyMessage(c, op, data); err != nil {
+				return err
+			}
 		case proto.OpMovementResponse:
 			if len(data) >= 4 && binary.LittleEndian.Uint32(data) == uid {
 				if e, ok := session.DecodeMoveEcho(data); ok {
@@ -341,8 +356,49 @@ func (b *bot) read(c *conn, uid uint32, w *walker, obs *observer) error {
 	}
 }
 
+// matchEntry is bot i's party-match entry (0x7069, "Form party"): open to
+// every level (1..140) so anyone may ask to join, the Exp/Item share settings,
+// the purpose (hunting or quest) and the title varied by bot. OURS.
+func matchEntry(seed int64, i int) party.Entry {
+	r := rand.New(rand.NewSource(seed*92821 + int64(i)))
+	titles := []string{"Hunting in Jangan, all welcome", "Exp party, join up", "LF members, any level", "Quest party", "Farming party",
+		"Leveling, come along", "Party up!", "Need members", "Open party", "Hunting party"}
+	flags := []party.Flags{party.FlagExpShare | party.FlagItemShare, party.FlagExpShare | party.FlagItemShare, party.FlagExpShare, party.FlagItemShare, 0}
+	purpose := party.PurposeHunting
+	if r.Intn(10) < 3 {
+		purpose = party.PurposeQuest
+	}
+	return party.Entry{Flags: flags[r.Intn(len(flags))], Purpose: purpose, MinLevel: 1, MaxLevel: 140, Title: titles[r.Intn(len(titles))]}
+}
+
+// partyMessage answers what a party asks of a bot: every party-match join
+// request is confirmed (0x306e) and every party invitation accepted (0x3080
+// yes); the entry's registration is counted.
+func (b *bot) partyMessage(c *conn, op uint16, data []byte) error {
+	st := &b.sw.st
+	switch op {
+	case party.OpMatchRegAck:
+		if len(data) > 0 && data[0] == party.ResultOK {
+			st.listed.Add(1)
+		} else {
+			st.noteErr(fmt.Errorf("party-match register refused: % x", data))
+		}
+	case party.OpMatchJoin:
+		j, err := party.DecodeJoinRequest(data)
+		if err != nil {
+			return nil
+		}
+		st.joinsAccepted.Add(1)
+		return c.send(party.OpMatchAnswer, party.EncodeJoinAnswer(j.JobID, j.Requester, party.AnswerConfirm))
+	case party.OpInvitation:
+		st.invitesAccepted.Add(1)
+		return c.send(party.OpInvitation, party.EncodeAnswerYes())
+	}
+	return nil
+}
+
 // walker sends a retail 0x7021 click to a random nearby plaza point every few
-// seconds (3..7 s), one click per leg: the leg (at most about 40 units, under
+// seconds (-walk-every, 5 s: 3..7 s), one click per leg: the leg (at most about 40 units, under
 // a second at the base run speed of 50) has ended before the next click, so no
 // click falls inside the 5.0 near-destination gate, and the rate (one click
 // per 3 s at most) is far under the server's bucket of 30 a second.
@@ -364,7 +420,9 @@ func (w *walker) loop(ctx context.Context) {
 	st.walkersOn.Add(1)
 	defer st.walkersOn.Add(-1)
 	for {
-		wait := 3*time.Second + time.Duration(w.rnd.Int63n(int64(4*time.Second)))
+		// Uniform over 0.6..1.4 of the mean interval (3..7 s at 5 s).
+		mean := w.b.sw.cfg.walkEvery
+		wait := mean*3/5 + time.Duration(w.rnd.Int63n(int64(mean*4/5)+1))
 		select {
 		case <-ctx.Done():
 			return
@@ -401,12 +459,12 @@ func (w *walker) loop(ctx context.Context) {
 func (w *walker) nextClick() (*proto.Movement, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	radius := w.b.sw.cfg.radius
-	inPlaza := w.rx == plazaRX && w.ry == plazaRY && math.Hypot(w.x-plazaX, w.z-plazaZ) <= radius+40
+	pz := w.b.sw.plaza
+	inPlaza := w.rx == plazaRX && w.ry == plazaRY && math.Hypot(w.x-pz.X, w.z-pz.Z) <= pz.R+40
 	for try := 0; try < 30; try++ {
 		var lx, lz float64
 		if inPlaza {
-			lx, lz = plazaPoint(w.rnd, radius)
+			lx, lz = pz.point(w.rnd)
 		} else {
 			d, a := 8+w.rnd.Float64()*32, w.rnd.Float64()*2*math.Pi
 			lx, lz = w.x+d*math.Cos(a), w.z+d*math.Sin(a)
@@ -519,14 +577,24 @@ type census struct {
 	Players, WithGear, Plus3, Plus8, MaxPlus int
 	Seals                                    map[string]int
 	Equips, DecodeErrors                     int
-	Sample                                   string
+	// MinY and MaxY are the heights the spawn records stand the players at.
+	MinY, MaxY float32
+	Sample     string
 }
 
 func (o *observer) census() census {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	c := census{Players: len(o.players), Seals: map[string]int{}, Equips: o.equips, DecodeErrors: o.decErrs}
+	first := true
 	for _, r := range o.players {
+		if first || r.Y < c.MinY {
+			c.MinY = r.Y
+		}
+		if first || r.Y > c.MaxY {
+			c.MaxY = r.Y
+		}
+		first = false
 		if len(r.Items) == 0 {
 			continue
 		}

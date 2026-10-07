@@ -98,35 +98,61 @@ func botCharacter(ctx context.Context, db *sql.DB, prefix, name string) (botChar
 	return c, err == nil, err
 }
 
-// The plaza: a disc around Jangan's spawn, region 97/168 local (1002, 1020)
-// (AGENTS.md: the game's own spawn; the dragon's pedestal at (1002, 917) is
-// solid and stays outside a 60-unit disc). Height 20 is the China start
-// spawns' (session.StartSpawns, READ); a client lifts a body onto the ground.
+// The plaza: Jangan's town floor, region 97/168, the deck of the placed
+// object `cj_jang_gate` (footprint local 444-1505 x 295-1617).
+//
+//   - Height -30.116636 in the Jangan frame, MEASURED (docs/WORLD_ISSUES.md,
+//     "The picks' y of -30.116636 is real"): the deck's walkable surface is
+//     flat at local -32.609 over the plaza -- (1002, 1020), (985, 1000),
+//     (1002, 997/974) -- and south to the apron (960, 1418/1373), and the
+//     client stands a player on it at world -30.12. A client draws a standing
+//     body at the height the server gives it, so a bot must be given the
+//     deck's: the first swarm stood at 20 (the China start spawns' raw
+//     height, another frame's) and floated.
+//   - The deck's north edge, the railing before the dragon's pit, stops a walk
+//     at local z 953.5..954.6 for x 946..1002 (MEASURED, rounds 649 and 701).
+//     The bots stand in a disc whose north edge is z 960, so none is put past
+//     the railing; the disc's extent beyond the measured points is OURS.
 const (
 	plazaZone          = "jangan"
 	plazaRX, plazaRY   = 97, 168
-	plazaX, plazaZ     = 1002.0, 1020.0
-	plazaY             = 20.0
-	defaultPlazaRadius = 55.0
+	plazaX             = 1002.0
+	plazaNorth         = 960.0
+	plazaY             = -30.116636
+	defaultPlazaRadius = 85.0 // for 1000 bots; autoRadius scales it
 )
 
-// plazaPoint is a uniform point of the disc, region-local.
-func plazaPoint(r *rand.Rand, radius float64) (lx, lz float64) {
-	d := radius * math.Sqrt(r.Float64())
+// plaza is the disc the bots stand and walk in, region-local.
+type plaza struct{ X, Z, R float64 }
+
+// plazaFor is the disc of radius r with its north edge on the deck's.
+func plazaFor(r float64) plaza { return plaza{X: plazaX, Z: plazaNorth + r, R: r} }
+
+// autoRadius keeps the crowd's density at 1000 bots in an 85-unit disc
+// (about one bot per 23 square units): 85 x sqrt(n / 1000).
+func autoRadius(n int) float64 {
+	return defaultPlazaRadius * math.Sqrt(math.Max(float64(n), 1000)/1000)
+}
+
+// point is a uniform point of the disc, region-local.
+func (p plaza) point(r *rand.Rand) (lx, lz float64) {
+	d := p.R * math.Sqrt(r.Float64())
 	a := r.Float64() * 2 * math.Pi
-	return plazaX + d*math.Cos(a), plazaZ + d*math.Sin(a)
+	lx, lz = p.X+d*math.Cos(a), p.Z+d*math.Sin(a)
+	return lx, max(lz, plazaNorth)
 }
 
 // standFor is bot i's starting spot, region-local.
-func standFor(seed int64, i int, radius float64) (lx, lz float64) {
-	return plazaPoint(rand.New(rand.NewSource(seed*15485863+int64(i))), radius)
+func standFor(seed int64, i int, p plaza) (lx, lz float64) {
+	return p.point(rand.New(rand.NewSource(seed*15485863 + int64(i))))
 }
 
 // seedCharacter writes the bot's gear and start position in one transaction:
 // its worn rows replaced by gear, and its start spot in Jangan (start_zone,
 // which a character enters at whether -persist-position is on or off, the
-// saved position cleared so it applies with the flag on too).
-func seedCharacter(ctx context.Context, db *sql.DB, prefix string, charID int64, gear []gearRow, lx, lz float64) error {
+// saved position cleared so it applies with the flag on too), at height y,
+// and its level (party matching takes a creator of level 5 or more).
+func seedCharacter(ctx context.Context, db *sql.DB, prefix string, charID int64, gear []gearRow, lx, y, lz float64, level int) error {
 	pattern, err := botPattern(prefix)
 	if err != nil {
 		return err
@@ -141,8 +167,8 @@ func seedCharacter(ctx context.Context, db *sql.DB, prefix string, charID int64,
 	}
 	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx, `UPDATE characters SET start_zone = $2, start_x = $3, start_y = $4, start_z = $5,
-		latest_zone = '', latest_frame = '', pos_x = 0, pos_y = 0, pos_z = 0
-		WHERE id = $1 AND account_id IN (SELECT id FROM accounts WHERE username ~ $6)`, charID, plazaZone, x, plazaY, z, pattern)
+		latest_zone = '', latest_frame = '', pos_x = 0, pos_y = 0, pos_z = 0, level = $7
+		WHERE id = $1 AND account_id IN (SELECT id FROM accounts WHERE username ~ $6)`, charID, plazaZone, x, y, z, pattern, level)
 	if err != nil {
 		return fmt.Errorf("placing character %d: %w", charID, err)
 	}

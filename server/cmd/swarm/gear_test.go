@@ -1,11 +1,42 @@
 package main
 
 import (
+	"math"
 	"testing"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
 )
+
+func TestStandsAreOnTheDeckSouthOfTheRailing(t *testing.T) {
+	for _, n := range []int{100, 1000, 10000} {
+		p := plazaFor(autoRadius(n))
+		for i := 0; i < 3000; i++ {
+			lx, lz := standFor(1, i, p)
+			if lz < plazaNorth || math.Hypot(lx-p.X, lz-p.Z) > p.R+1e-9 {
+				t.Fatalf("n %d bot %d stands at (%.1f, %.1f), outside %+v", n, i, lx, lz, p)
+			}
+		}
+	}
+	if r := autoRadius(1000); r != defaultPlazaRadius {
+		t.Errorf("autoRadius(1000) = %v", r)
+	}
+}
+
+func TestPartyEntriesAndLevelsPassTheServerRules(t *testing.T) {
+	c := synthetic()
+	for i := 0; i < 500; i++ {
+		e := matchEntry(1, i)
+		if e.MinLevel != 1 || e.MaxLevel < 110 || !party.JobFitsPurpose(party.JobNone, e.Purpose) || e.Title == "" {
+			t.Fatalf("bot %d's entry %+v", i, e)
+		}
+		lk := lookFor(1, i)
+		if lv := levelFor(1, i, c.loadout(1, i, lk.Race, lk.Sex)); !party.CanCreate(lv) || lv > 110 {
+			t.Fatalf("bot %d level %d", i, lv)
+		}
+	}
+}
 
 func TestClassifyReadsTheSealFromTheCode(t *testing.T) {
 	for code, want := range map[string]seal{

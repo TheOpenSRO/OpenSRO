@@ -1730,9 +1730,11 @@ empty `fLocalPosY` as NULL. A missing file or column is fatal at boot.
 `swarm` stands bot players on Jangan's plaza: accounts `PREFIX0000..` (5-8 lowercase letters,
 default `swarm`), a mixed China/Europe crowd created through the retail lobby, worn gear with
 pluses and seals picked from the database's own `items` table and written into
-`equipment_slots` before each bot enters, about 10 % of them click-moving (0x7021). It changes
-no server setting and makes no GM. It needs the gateway and the server's Postgres; for
-opensro-01, tunnel Postgres first (it is pinned to the host's 127.0.0.1:5432):
+`equipment_slots` before each bot enters, about 10 % of them click-moving (0x7021), each listing
+a party-match entry and accepting every join request and invitation. It changes no server
+setting and makes no GM. Run it on another machine than the server (it is a client load of its
+own: at 10,000 it took about 6 cores, below). It needs the gateway and the server's Postgres;
+for opensro-01, tunnel Postgres first (it is pinned to the host's 127.0.0.1:5432):
 
 ```
 ssh -N -L 15432:127.0.0.1:5432 opensro@192.168.5.25 &
@@ -1744,13 +1746,31 @@ PG='postgres://postgres:postgres@127.0.0.1:15432/opensro?sslmode=disable'
 /tmp/swarm down   -prefix swarm -pg "$PG"              # logs them out, deletes every bot row
 ```
 
-- **Capacity.** Bots count against `-max-players` (default 1000): at 1000 bots a default server
-  is full and turns non-GM logins away (GM accounts still log in). `-headroom N` caps the crowd
-  so N slots stay free.
-- **Load.** Logins are paced at `-rate` a second (default 20). Accounts are written with a
-  minimum-cost bcrypt, so a login costs the server about a millisecond of hashing instead of the
-  default cost's tens.
-- **down** stops the running `up` (its pid is in `$TMPDIR/opensro-swarm-PREFIX.json`), then in
-  one transaction deletes the accounts named exactly `^PREFIX[0-9]{4}$`, their characters and
-  every row that names them (equipment, bag, warehouse, skills, masteries, quests, friends,
-  guild rows; any other `character_id` / `account_id` column it finds). Re-running is a no-op.
+Stopping `up` (Ctrl-C, SIGTERM) logs the bots out and keeps their accounts; the next `up`
+re-seeds their gear, level and spot. `down` deletes them.
+
+- **Where they stand.** On the plaza deck's height, -30.117 in the Jangan frame (MEASURED, see
+  `cmd/swarm/db.go`; a client draws a standing body at the height the server gives it), in a disc
+  whose north edge is the deck's railing line (97/168 local z 960), radius 85 x sqrt(n/1000) by
+  default (`-radius`). Where the deck was measured flat: x 946..1031, z 953..1418; a larger disc
+  reaches ground not measured.
+- **Capacity.** Bots count against `-max-players` (default 1000; `OPENSRO_MAX_PLAYERS`). `up`
+  reads the server's status first and runs no more bots than there is room for, warning when it
+  cuts `-n`; a full server turns non-GM logins away (GM accounts still log in). `-headroom N`
+  keeps N slots free. 10,000 bots need the server's maximum raised to at least 10,000 first.
+- **Load.** Logins are paced at `-rate` a second (default 20; 10,000 take about 8.5 minutes).
+  Accounts are written with a minimum-cost bcrypt, so a login costs the server about a
+  millisecond of hashing instead of the default cost's tens. Every walker's click goes to every
+  player in view, so the cost grows with walkers x crowd: at 10,000 in one plaza with `-walk 10`
+  the server delivered about 0.9 M packets a second (MEASURED locally, server and swarm on one
+  16-thread box: server 8.3 cores and 6.7 GB, swarm 6.3 cores and 600 MB). `-walk 2` or
+  `-walk-every 20s` cuts that in proportion.
+- **Party matching.** Each bot lists an entry open to levels 1..140 (the server takes a creator
+  of level 5 or more, so the bot's level is seeded from its gear's requirement, 5..110) and
+  confirms every join request (0x306e). A player holding an entry cannot be invited (the
+  server's 0x2c25, retail's rule); `-party=false` turns all of it off.
+- **down** stops the running `up` (its pid is in `$TMPDIR/opensro-swarm-PREFIX.json`, checked to
+  be a `swarm up` before it is signalled), then in one transaction deletes the accounts named
+  exactly `^PREFIX[0-9]{4}$`, their characters and every row that names them (equipment, bag,
+  warehouse, skills, masteries, quests, friends, guild rows; any other `character_id` /
+  `account_id` column it finds). Re-running is a no-op.
