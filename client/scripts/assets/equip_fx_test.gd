@@ -142,14 +142,14 @@ func _test_scale_and_pause() -> void:
 	_check(h != null and absf(b.x.length() - SCALE * 1.06) < 1e-4 and absf(b.z.length() - SCALE * 1.06) < 1e-4 and b.determinant() < 0.0,
 		"the holder takes the body's height factor x the row's scale, %.4f, mirrored with the body (%s)" % [SCALE * 1.06, str(b.get_scale()) if h != null else "none"])
 	var k: EquipFx.Kind = d._kinds.values()[0]
-	_check(k.master.is_processing(), "shown: its master simulates")
+	_check(d.steps_master(k), "shown: its master simulates")
 	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	d._process(1.0 / 60.0)
-	_check(int(d.stats["shown"]) == 0 and not k.master.is_processing() and _shown_holder(s) == null,
+	_check(int(d.stats["shown"]) == 0 and not d.steps_master(k) and _shown_holder(s) == null,
 		"the viewport drawing nothing (the closed equipment window): none shown, the master paused, the frame it closes")
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	d._process(1.0 / 60.0)
-	_check(int(d.stats["shown"]) == 1 and k.master.is_processing() and _shown_holder(s) != null, "opened again: shown the same frame")
+	_check(int(d.stats["shown"]) == 1 and d.steps_master(k) and _shown_holder(s) != null, "opened again: shown the same frame")
 	vp.free()
 
 ## Round 741: a seal weapon's itemrare.txt row and its +8 itemoptionefp.txt row
@@ -316,11 +316,11 @@ func _test_own_prefer_keep_free() -> void:
 	_check(_own_of(mine) and not _own_of(near), "the player's own weapon runs the own simulation, not the nearer one")
 	# Finding 6: the only host drawn through the master is `near`; with both
 	# own, the master would pause.
-	_check(k.master.is_processing(), "a master a shared holder uses keeps stepping")
+	_check(d.steps_master(k), "a master a shared holder uses keeps stepping")
 	d.prefer_root = null
 	EquipFx.OWN_BUDGET = 2
 	_cycle(d)
-	_check(_own_of(mine) and _own_of(near) and not k.master.is_processing(),
+	_check(_own_of(mine) and _own_of(near) and not d.steps_master(k),
 		"every shown host on its own: the master does not step (finding 6)")
 	# Hysteresis: one slot, `near` holds it; a weapon 15 % nearer does not
 	# take it, one 30 % nearer does.

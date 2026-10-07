@@ -6397,6 +6397,7 @@ func _exit_tree() -> void:
 		_appearance.wait_prepared(false)
 	# Nor a landing-height helper (round 757's review, F3).
 	HeightBatch.reap_all()
+	EfpSimBatch.reap_all()
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()

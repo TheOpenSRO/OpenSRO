@@ -810,17 +810,43 @@ func _process(delta: float) -> void:
 	_process_effect(delta)
 
 func _process_effect(delta: float) -> void:
+	if not step_pre(delta):
+		return
+	step_sim(delta)
+	step_post()
+
+## Round 759: _process_effect in three parts, so a driver (EquipFx) can step
+## many effects' simulations at once on WorkerThreadPool (EfpSimBatch): the
+## placement before and the draws after touch nodes and run on the main
+## thread; step_sim touches only the EfpSim (pure data) and this effect's own
+## fields. False when the effect stopped.
+var _pending_moved := false
+var _pending_steps := 0
+var _pending_sim_usec := 0
+
+func step_pre(delta: float) -> bool:
 	_life += delta
 	if max_life > 0.0 and _life >= max_life and loop:
 		stop()
-		return
+		return false
 	var t0 := Time.get_ticks_usec() if profile else 0
-	var moved := _place()
-	var t1 := Time.get_ticks_usec() if profile else 0
-	var stepped := sim.advance(delta)
+	_pending_moved = _place()
 	if profile:
-		prof["place"] += t1 - t0
-		prof["sim"] += Time.get_ticks_usec() - t1
+		prof["place"] += Time.get_ticks_usec() - t0
+	return true
+
+## Any thread: the simulation's frames for `delta` (its time kept here, not
+## in the shared `prof`, which step_post adds it to).
+func step_sim(delta: float) -> void:
+	var t1 := Time.get_ticks_usec() if profile else 0
+	_pending_steps = sim.advance(delta)
+	_pending_sim_usec = Time.get_ticks_usec() - t1 if profile else 0
+
+func step_post() -> void:
+	var moved := _pending_moved
+	var stepped := _pending_steps
+	if profile:
+		prof["sim"] += _pending_sim_usec
 		prof["calls"] += 1
 		prof["moved"] += 1 if moved else 0
 		prof["steps"] += stepped

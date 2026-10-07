@@ -525,6 +525,27 @@ block. `OPENSRO_QA_GHOSTS=0` arrives as before round 756 (dressed, no ghosts);
 spawn (`QA RUNAT`, with the ghosts before and after). `crowd_run.sh` counts any lane's
 Godot (`[G]odot_v4|[x]vfb-run`) as an overlap.
 
+**The live crowd and the swarm's gear (round 759).** `CROWD_LIVE=<host:port>` makes `crowd_run.sh`
+sign in to a running server (QaSignIn: register if new, log in, create the character if missing,
+enter) as `OPENSRO_QA_ACCOUNT` / `OPENSRO_QA_CHARACTER` -- never a GM account -- with
+`OPENSRO_QA_LINEUP=none`: the probe (`QaCrowdProbe.live`) waits `OPENSRO_QA_CROWD_LIVE_WAIT`
+seconds (90) for the server's players to arrive and dress, takes every other player then in the
+world as its bodies and runs the steps. The player stands where the server keeps it (QA_AT does
+not move the server's copy; walk it there with `OPENSRO_QA_WALK_TO`, whose `deck:<dx>,<dz>`
+clicks land on an object's floor, and the server remembers the spot for the next login).
+In live mode, or with `OPENSRO_QA_CROWD_PERSEC=1`, a `QA LIVE sec=<n>` line every second: fps,
+mean and worst frame, the engine's draw / object / primitive monitors, `rs_cpu`/`rs_gpu`/
+`rs_setup`, `TIME_PROCESS`/`TIME_PHYSICS_PROCESS`, the frame's phases (FrameSplit), the packets
+received and their read and dispatch time (`net_read`, `net_dispatch`), the bodies (others, near
+or undressed, still to dress), CrowdGpu's far bodies, ghosts and groups (`live_groups`, the
+distinct meshes, twins and shaders among them, the groups of 1 and of at most 3 instances),
+EquipFx's hosts, shown holders and kinds, and the batched plates; every 5 s `QA LIVE ops`, the
+opcodes by dispatch time; every 60 s `QA LIVE groups split`, the live groups there would be if a
+group were keyed by less (`CrowdGpu.split_census`). `OPENSRO_QA_LINEUP=swarm` (with
+`OPENSRO_QA_LINEUP_COUNT`) dresses an offline lineup as `server/cmd/swarm` dresses its bots
+(`QaSwarmGear`: its looks, its gear catalogue read from the item table, its pluses), so the live
+crowd's variety is reproducible without the server. `docs/rounds/r759.md` has the recipes.
+
 `arrival_bench.gd` (a `--script` tool, headless or under the GPU) times what one arriving body
 costs on the main thread, phase by phase, for 300 random kits from the item table (build, the far
 parts, the recipe, a ghost first and again), and checks that the far parts of each kind's recipe

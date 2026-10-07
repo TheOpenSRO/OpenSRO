@@ -341,6 +341,14 @@ var _root := Particle.new() ## the effect's origin: owner of the root emitter
 var _acc := 0.0
 var _rng := RandomNumberGenerator.new()
 var _scratch := Vector3.ZERO ## the interpreter's stack vector (see SetSpherePos)
+## Round 759 (EfpSimBatch): while stepped on a pool thread, this sim does not
+## touch the shared `live_total`: its spawns and deaths go to `_live_delta`,
+## and it may add at most `_allow` particles (net) -- its share of what the
+## global cap left at the batch's start -- so the cap still holds for the sum.
+## end_deferred() hands the delta back on the main thread.
+var _deferred := false
+var _allow := 0
+var _live_delta := 0
 
 
 ## Compiles a decoded file (or its root node) into a template. Unsupported
@@ -509,12 +517,31 @@ func restart() -> void:
 		e.owner = _root
 		emitters.append(e)
 
+## Round 759 (EfpSimBatch): the next advance() runs off the main thread, with
+## `allow` particles (net) its share of the global cap.
+func begin_deferred(allow: int) -> void:
+	_deferred = true
+	_allow = allow
+	_live_delta = 0
+
+## Back on the main thread: its particles counted in `live_total` again.
+func end_deferred() -> void:
+	_deferred = false
+	live_total += _live_delta
+	_live_delta = 0
+
+func _live_add(n: int) -> void:
+	if _deferred:
+		_live_delta += n
+	else:
+		live_total += n
+
 ## Drops every particle (and its share of the global count) and every
 ## emitter: the effect is finished.
 func clear() -> void:
 	for p in particles:
 		if p.alive:
-			live_total -= 1
+			_live_add(-1)
 			p.alive = false
 		# Break the link/next_link pairs: Particle is RefCounted, so a
 		# chain left linked would keep itself alive (round 621).
@@ -818,7 +845,7 @@ static func emit_spawns(tp: Tpl, owner_age: int, e: Emitter) -> int:
 ## A particle dies: the global count drops and its emitter's acc gives back
 ## 1.0, so `max_live` caps the live particles (READ, FUN_00c87a20).
 func _on_death(p: Particle) -> void:
-	live_total -= 1
+	_live_add(-1)
 	if p.emitter != null:
 		p.emitter.acc = maxf(p.emitter.acc - 1.0, 0.0)
 	_unlink(p)
@@ -847,6 +874,8 @@ static func _unlink(p: Particle) -> void:
 func can_spawn() -> bool:
 	if particles.size() >= MAX_PARTICLES:
 		return false
+	if _deferred:
+		return _live_delta < _allow
 	var limit := MAX_TOTAL if reserved else MAX_TOTAL - RESERVE
 	return live_total < limit
 
@@ -874,7 +903,7 @@ func _spawn(tpl_index: int, owner: Particle, from: Emitter = null) -> void:
 		p.vel -= p.f_move.vel # READ: the velocity is relative to the followed ancestor
 	_link_in(p, from)
 	particles.append(p)
-	live_total += 1
+	_live_add(1)
 	spawned += 1
 	if tp.schedule.size() > 0 and not (tp.schedule[0] as Array).is_empty():
 		_run_list(p, tp, tp.schedule[0])

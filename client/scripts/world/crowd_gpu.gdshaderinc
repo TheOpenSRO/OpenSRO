@@ -7,10 +7,11 @@
 // so the shader math here is new; tools/crowd_gpu_probe.gd holds it to the
 // engine's pixels).
 //
-// Every far body has 4 texels in crowd_bodies (CrowdGpu.TEXELS_PER_BODY, at
-// slot % 256 * 4, slot / 256): the rows of its skeleton's global transform,
+// Every far body has 5 texels in crowd_bodies (CrowdGpu.TEXELS_PER_BODY, at
+// slot % 256 * 5, slot / 256): the rows of its skeleton's global transform,
 // then (row of its clip's frame 0, the clip's frame count, its duration in
-// ms, the body's offset into it in ms). crowd_bones holds, per skeleton layout,
+// ms, the body's offset into it in ms), then (round 759) its object colour
+// in x (CrowdGpu._write_light). crowd_bones holds, per skeleton layout,
 // one row per baked frame and 3 texels per bone: the rows of the skin matrix
 // pose_global(bone) x inverse(global rest), which is what Godot's skeleton
 // writes for the shared skin (Skeleton3DBuilder.canonical_skin). crowd_volume
@@ -21,11 +22,16 @@ uniform sampler2D crowd_bodies : filter_nearest, repeat_disable;
 // 747's review, F3: a new clip uploads its pages, not the whole store).
 uniform sampler2DArray crowd_bones : filter_nearest, repeat_disable;
 uniform sampler2D crowd_volume : filter_nearest, repeat_disable;
+// Round 759: the glow rows (CrowdGpu._glow_row), 3 texels a row: (c1,
+// period), (c2, mul0), (uv speed, signed2x, 0).
+uniform sampler2D crowd_glow : filter_nearest, repeat_disable;
 // Character Sight Range (VideoOptions.CHARACTER_RANGE): 0 draws every body.
 uniform float crowd_range = 0.0;
 // The clip clock, ms since CrowdGpu's epoch (CrowdGpu.flush).
 global uniform float srr_crowd_clock;
 
+// CrowdGpu.TEXELS_PER_BODY (round 759: 5, the fifth the object colour).
+const int SRR_CG_TEXELS = 5;
 // CrowdAnim.QUANTUM_MS: 1000 / 120.
 const float SRR_CG_QUANTUM_MS = 1000.0 / 120.0;
 // CrowdGpu.PAGE_ROWS.

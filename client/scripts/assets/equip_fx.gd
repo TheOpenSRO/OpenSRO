@@ -229,6 +229,8 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 				(c as GeometryInstance3D).visible = false
 		add_child(m)
 		m.global_transform = Transform3D.IDENTITY
+		# Round 759: stepped by the driver (_step_masters), not its own _process.
+		m.set_process(false)
 		var k := Kind.new()
 		k.key = key
 		k.master = m
@@ -446,10 +448,38 @@ func _process(_delta: float) -> void:
 		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale, _far(h.skel))
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)
+	_step_masters(_delta)
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
 		if FrameSplit.on:
 			FrameSplit.add("fx_driver", Time.get_ticks_usec() - t0)
+
+## Round 759: whether `k`'s master is stepped this frame (_step_masters): a
+## shown weapon draws through it.
+func steps_master(k: Kind) -> bool:
+	return k.active > 0 and is_instance_valid(k.master)
+
+## Round 759: every master a shown weapon draws (Kind.active), stepped here
+## rather than in its own _process (masters do not process): the placement and
+## the draws on the main thread, the simulations together on WorkerThreadPool
+## (EfpSimBatch). MEASURED live before: 33 active masters, 14.8 ms a frame of
+## `efp_sim` on the main thread at 15 fps (a 50 ms step about 0.33 ms each).
+func _step_masters(delta: float) -> void:
+	var t0 := Time.get_ticks_usec() if FrameSplit.on else 0
+	var list: Array = []
+	for key in _kinds:
+		var k: Kind = _kinds[key]
+		if k.active <= 0 or not is_instance_valid(k.master) or k.master.sim == null or k.master.is_queued_for_deletion():
+			continue
+		if k.master.step_pre(delta):
+			list.append(k.master)
+	EfpSimBatch.run(list, delta)
+	for m in list:
+		if is_instance_valid(m):
+			(m as EfpEffect).step_post()
+	if FrameSplit.on:
+		FrameSplit.add("fx_masters", Time.get_ticks_usec() - t0)
+		FrameSplit.add("fx_masters_calls", list.size())
 
 ## Where a host's holder goes (round 741): the bone's whole frame in the world
 ## -- READ, CRTModParticle::FUN_00c81190 places the effect at the bone's
@@ -818,7 +848,6 @@ func _finish_cycle() -> void:
 	_cand_d.clear()
 	for key in _kinds.keys():
 		var k: Kind = _kinds[key]
-		k.master.set_process(k.active > 0)
 		k.idle = 0 if k.active > 0 else k.idle + maxi(_frame - _cycle_frame, 1)
 		if k.idle > IDLE_FRAMES and k.hosts <= 0:
 			k.master.queue_free()

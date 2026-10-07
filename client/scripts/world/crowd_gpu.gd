@@ -83,7 +83,9 @@ const BAKE_BUDGET_USEC := 4000
 ## frame (part of `g_flush`'s 1.7 ms, MEASURED).
 const REFRESH_FRAMES := 60
 const SLOTS_PER_ROW := 256
-const TEXELS_PER_BODY := 4
+## Round 759: a fifth texel, the body's object colour (_write_light), so a
+## character's light levels share one group per mesh (crowd_gpu.gdshaderinc).
+const TEXELS_PER_BODY := 5
 const FLOATS_PER_BODY := TEXELS_PER_BODY * 4
 ## The clock's epoch moves every this many seconds (OURS): the shader's clip
 ## time is a float, and at 60,000 ms its step is 0.004 ms against the
@@ -200,10 +202,17 @@ class Body:
 	## clip time (World3D._idle_anim_time) it began at.
 	var fade := 0
 	var fade_start := 0.0
+	## Round 759: the object colour its lit parts draw at (texel 4; -1 none),
+	## the value its level copy of a material would carry (ObjectLight).
+	var objc := -1.0
 
 var scenario: RID
 var _layouts := {}            # layout key -> Layout
 var _groups := {}             # group key -> Group
+## Round 759: the groups whose instances changed since the last push, and the
+## instances in every group (kept as they come and go).
+var _dirty_groups := {}       # Group -> true
+var _instances := 0
 var _bodies := {}             # Skeleton3D -> Body
 var _by_node := {}            # Node3D -> Body
 var _twin_shaders := {}       # Shader -> Shader
@@ -382,6 +391,8 @@ func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float) -> bool
 	_by_node[node] = b
 	_write_transform(b)
 	_write_clip(b, idle_time)
+	b.objc = _parts_objc(parts)
+	_write_light(b)
 	for p in parts:
 		_add_part(b, p)
 	_hide(b, parts)
@@ -488,6 +499,8 @@ func refresh(node: Node3D) -> bool:
 	var parts = _parts_of(b.skel, b.layout)
 	if parts == null:
 		return false
+	b.objc = _parts_objc(parts)
+	_write_light(b)
 	for p in b.parts:
 		_remove_part(p)
 	b.parts.clear()
@@ -600,6 +613,16 @@ func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array
 	stats["ghosts"] = int(stats.get("ghosts", 0)) + 1
 	return true
 
+## Round 759: a ghost's object colour, the value its lit parts' level copies
+## would carry (ObjectLight.object_color_at), or -1 when none is lit.
+func _ghost_objc(b: Body) -> float:
+	if b.light < 0.0:
+		return -1.0
+	for e in _lit_parts(b.recipe, b.layout, b.light):
+		if bool(e["lit_on"]):
+			return ObjectLight.object_color_at(e["lit"], b.light)
+	return -1.0
+
 ## Whether `anim` is drawable on `recipe`'s layout now (baked and up); a clip
 ## not baked is queued first. A ghost asks this before anything else.
 func ghost_clip_ready(recipe: CharacterAppearance.FarRecipe, anim: BanReader.ParsedAnimation) -> bool:
@@ -637,8 +660,14 @@ func ghost_light(node: Object, light: float) -> void:
 	var b: Body = _bodies.get(node) if node != null else null
 	if b == null or not b.ghost or roundi(b.light * ObjectLight.VARIANT_STEPS) == roundi(light * ObjectLight.VARIANT_STEPS):
 		return
+	var was_lit := b.light >= 0.0
 	b.light = light
-	_reparts(b)
+	# Round 759: a new level is the body's texel; its parts and groups stay.
+	if was_lit != (light >= 0.0):
+		_reparts(b)
+		return
+	b.objc = _ghost_objc(b)
+	_write_light(b)
 
 ## A ghost drawn again (a new kind, World3D._ghost_other) goes on with the
 ## fade-in it was in, from `start` (a clip time).
@@ -704,6 +733,8 @@ func _reparts(b: Body) -> void:
 
 func _add_ghost_parts(b: Body) -> void:
 	var parts := _lit_parts(b.recipe, b.layout, b.light)
+	b.objc = _ghost_objc(b)
+	_write_light(b)
 	b.mats.clear()
 	var w := _fade_w(b) if b.fade != 0 else 0.0
 	var l := b.layout
@@ -717,10 +748,19 @@ func _add_ghost_parts(b: Body) -> void:
 		var src := _fade_src(lit) if b.fade != 0 else null
 		var tk := "%d|%s" % [src.get_instance_id(), l.key] if src != null else String(p["tk"])
 		var twin: ShaderMaterial = _live_twin(src, tk, l) if src != null else null
+		var glow := -1
 		if twin == null:
 			src = lit
 			tk = p["tk"]
-			twin = _live_twin(lit, tk, l)
+			# Round 759: a glow material draws from its item's one glow twin,
+			# the row per instance.
+			if EquipGlow.is_glow(lit):
+				var gt := _glow_twin(lit, l)
+				twin = gt[0]
+				tk = gt[1]
+				glow = _glow_row(lit)
+			else:
+				twin = _live_twin(lit, tk, l)
 		if twin == null:
 			continue
 		# The group key, kept per twin by id (never the twin itself, F2).
@@ -731,6 +771,10 @@ func _add_ghost_parts(b: Body) -> void:
 			p[gk_slot] = gk
 		var q := {"mesh": p["mesh"], "material": twin, "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"],
 			"twin_key": tk, "gkey": gk[1]}
+		if bool(p.get("lit_on", false)):
+			q["objc"] = b.objc
+		if glow >= 0:
+			q["glow"] = glow
 		_add_part(b, q, w if src != lit else 0.0)
 
 ## `m`'s twin as _twin answers, without re-making its key: the live one in
@@ -797,18 +841,19 @@ func _recipe_geometry(recipe: CharacterAppearance.FarRecipe):
 	_recipe_geo[recipe.key] = got
 	return got
 
-## The recipe's parts at object colour `light`: each overridden object
-## material swapped for its level's copy (CharacterLight.set_on's rule) --
-## once per recipe and level, the twins left to each add (F2). Empty when a
-## material has no twin (twin_shader: the body is dressed instead).
+## The recipe's parts as drawn with object colour `light`: each overridden
+## object material (CharacterLight.set_on's rule) marked `lit_on`, so it takes
+## the body's level from its texel (round 759: before, each level swapped in
+## its own material copy, a twin and a group per level); with `light` < 0 the
+## materials as they are. Once per recipe and the two cases, the twins left
+## to each add (F2). Empty when a material has no twin (twin_shader: the body
+## is dressed instead).
 ##
-## Bounded (round 756's review, F5): the entries hold their level's material
-## copies, which ObjectLight keeps only weakly, so a recipe keeps its last
-## LIT_LEVELS_PER_RECIPE levels and the whole cache is dropped past
-## LIT_CACHE_CAP entries (a ghost holds its own copies in Body.mats).
+## Bounded (round 756's review, F5): a recipe keeps its last
+## LIT_LEVELS_PER_RECIPE entries and the whole cache is dropped past
+## LIT_CACHE_CAP entries.
 func _lit_parts(recipe: CharacterAppearance.FarRecipe, l: Layout, light: float) -> Array:
-	# By the level ObjectLight draws it at (its copies are per level).
-	var key := "%s|%d" % [recipe.key, roundi(light * ObjectLight.VARIANT_STEPS) if light >= 0.0 else -1]
+	var key := "%s|%d" % [recipe.key, 1 if light >= 0.0 else 0]
 	var got = _recipe_lit.get(key)
 	if got != null:
 		return got
@@ -816,15 +861,11 @@ func _lit_parts(recipe: CharacterAppearance.FarRecipe, l: Layout, light: float) 
 	for g in (_recipe_geo[recipe.key] as Array)[1]:
 		var p: Dictionary = g[0]
 		var mat: Material = g[1]
-		var lit := mat
-		if light >= 0.0 and bool(g[2]) and ObjectLight.is_object_material(mat):
-			lit = ObjectLight.with_object_color(mat, light)
-		if twin_shader((lit as ShaderMaterial).shader) == null:
-			if lit == mat:
-				return []
-			lit = mat
-		out.append({"mesh": p["mesh"], "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"], "lit": lit,
-			"tk": "%d|%s" % [lit.get_instance_id(), l.key]})
+		if twin_shader((mat as ShaderMaterial).shader) == null:
+			return []
+		out.append({"mesh": p["mesh"], "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"], "lit": mat,
+			"tk": "%d|%s" % [mat.get_instance_id(), l.key],
+			"lit_on": light >= 0.0 and bool(g[2]) and ObjectLight.is_object_material(mat)})
 	if _recipe_lit.size() >= LIT_CACHE_CAP:
 		_recipe_lit.clear()
 		_recipe_lit_order.clear()
@@ -1047,16 +1088,14 @@ func _push_groups() -> void:
 		_aabb_dirty = false
 		for k in _groups:
 			RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
-	var instances := 0
-	for k in _groups:
-		var g: Group = _groups[k]
-		instances += g.count
-		if not g.dirty:
-			continue
-		g.dirty = false
-		RenderingServer.multimesh_set_buffer(g.mm, g.buf)
-		RenderingServer.multimesh_set_visible_instances(g.mm, g.count)
-	stats["instances"] = instances
+	# Round 759: the groups marked dirty, not a pass over every group a frame
+	# (6,703 live, MEASURED: part of `g_flush`'s 5.9 ms).
+	for g in _dirty_groups:
+		(g as Group).dirty = false
+		RenderingServer.multimesh_set_buffer((g as Group).mm, (g as Group).buf)
+		RenderingServer.multimesh_set_visible_instances((g as Group).mm, (g as Group).count)
+	_dirty_groups.clear()
+	stats["instances"] = _instances
 
 ## The bounds every far instance is culled by (one for all: a MultiMesh is
 ## drawn or not as a whole). Grown as bodies arrive and move, re-measured by
@@ -1158,6 +1197,43 @@ func _write_clip(b: Body, idle_time: float) -> void:
 	_body_data[o + 2] = duration
 	_body_data[o + 3] = float(fposmod((_epoch + phase) * 1000.0, duration)) if duration > 0.0 else 0.0
 	_body_dirty = true
+
+## Round 759: the body's object colour, texel 4 (x). A part drawn with a
+## character's object material takes it in the vertex shader instead of the
+## material's own `object_color` (its instances' INSTANCE_CUSTOM.y carries
+## the lit bit, pack_y), so every light level of a material is ONE twin and one group
+## per mesh: before, each level was its own material copy (ObjectLight.
+## with_object_color), so its own twin and group -- a MultiMesh and its draws
+## per (mesh, level). MEASURED live (round 759): 6,587 groups for 1,678 meshes.
+func _write_light(b: Body) -> void:
+	var o := b.slot * FLOATS_PER_BODY + 16
+	if _body_data[o] == b.objc:
+		return
+	_body_data[o] = b.objc
+	_body_dirty = true
+
+## Round 759: INSTANCE_CUSTOM.y packs three integers, exactly in a float
+## (below 2^24): ((glow row + 1) x VOL_SPAN + (Volume row + 1)) x 2 + lit --
+## the part's Volume row (-1 none, as before), whether it takes the body's
+## object colour (_write_light), and its glow row in the glow table (-1 none;
+## _glow_row). crowd_gpu_vertex.gdshaderinc unpacks it.
+const VOL_SPAN := 512
+
+static func pack_y(vol: int, lit: bool, glow: int) -> float:
+	return float(((glow + 1) * VOL_SPAN + (vol + 1)) * 2 + (1 if lit else 0))
+
+## [Volume row, lit, glow row] of a packed INSTANCE_CUSTOM.y.
+static func unpack_y(y: float) -> Array:
+	var v := int(y + 0.5)
+	return [((v >> 1) % VOL_SPAN) - 1, (v & 1) == 1, (v >> 1) / VOL_SPAN - 1]
+
+## The object colour of `parts`' lit ones (the first: CharacterLight sets one
+## level on every lit mesh of a body), or -1 when none is lit.
+static func _parts_objc(parts: Array) -> float:
+	for p in parts:
+		if (p as Dictionary).get("objc", -1.0) >= 0.0:
+			return float(p["objc"])
+	return -1.0
 
 ## What the shader computes for `b` at `idle_time`: the baked frame's index
 ## in its clip (tests: held to CrowdAnim.frame_index).
@@ -1356,8 +1432,9 @@ func _parts_of(skel: Skeleton3D, l: Layout):
 			if att == null:
 				_refuse("hung")
 				return null
-		var p = _part_for(mi, mi.get_active_material(0), mi.skin, target == skel,
-			target == skel and _identity_under(mi, skel), att.bone_name if att != null else "", chain, l)
+		var mat := mi.get_active_material(0)
+		var p = _part_for(mi, mat, mi.skin, target == skel,
+			target == skel and _identity_under(mi, skel), att.bone_name if att != null else "", chain, l, true, lit_by_body(mi, mat))
 		if p == null:
 			return null
 		out.append(p)
@@ -1372,7 +1449,7 @@ func _parts_of(skel: Skeleton3D, l: Layout):
 ## the mesh up to that attachment. Null (counted in `refusals`) when it cannot
 ## be drawn here.
 func _part_for(mi: MeshInstance3D, mat_in: Material, skin: Skin, to_body: bool, identity: bool, bone_name: String,
-		chain: Transform3D, l: Layout, with_twin: bool = true):
+		chain: Transform3D, l: Layout, with_twin: bool = true, lit: bool = false):
 	if mi.mesh.get_surface_count() != 1 or mi.transparency > 0.0:
 		_refuse("surfaces")
 		return null
@@ -1415,12 +1492,36 @@ func _part_for(mi: MeshInstance3D, mat_in: Material, skin: Skin, to_body: bool, 
 			_refuse("shader")
 			return null
 		return p
-	p["material"] = _twin(mat, l)
-	p["twin_key"] = "%d|%s" % [mat.get_instance_id(), l.key]
+	# Round 759: a lit part draws with its level copy's base, and the level
+	# goes in the body's texel (_write_light): one twin for every level.
+	if lit:
+		p["objc"] = ObjectLight.object_color_of(mat)
+		mat = ObjectLight.base_of(mat) as ShaderMaterial
+	if EquipGlow.is_glow(mat):
+		# Round 759: every glow row of the item on one twin, the row per
+		# instance (_glow_twin, _glow_row).
+		var gt := _glow_twin(mat, l)
+		p["material"] = gt[0]
+		p["twin_key"] = gt[1]
+		p["glow"] = _glow_row(mat)
+	else:
+		p["material"] = _twin(mat, l)
+		p["twin_key"] = "%d|%s" % [mat.get_instance_id(), l.key]
 	if p["material"] == null:
 		_refuse("shader")
 		return null
 	return p
+
+## Round 759: whether `mat`, drawn by `mi`, is one CharacterLight puts a
+## body's level on (CharacterLight.set_on's rule: an object material as the
+## mesh's material_override or its surface override), so its far part takes
+## the body's object colour.
+static func lit_by_body(mi: MeshInstance3D, mat: Material) -> bool:
+	if mat == null or not ObjectLight.is_object_material(mat):
+		return false
+	if mi.material_override == mat:
+		return true
+	return mi.get_surface_override_material_count() > 0 and mi.get_surface_override_material(0) == mat
 
 ## Why a body was refused, counted (QA: describe()).
 var refusals := {}
@@ -1542,13 +1643,15 @@ func _add_part(b: Body, p: Dictionary, fade_w: float = 0.0) -> void:
 	for i in range(12):
 		g.buf[o + i] = IDENTITY_ROWS[i]
 	g.buf[o + 12] = float(b.slot)
-	g.buf[o + 13] = float(int(p["vol"]))
+	g.buf[o + 13] = pack_y(int(p["vol"]), p.has("objc"), int(p.get("glow", -1)))
 	g.buf[o + 14] = float(p["centre"])
 	g.buf[o + 15] = fade_w
 	var rec := [g, idx, b]
 	g.owners.append(rec)
 	b.parts.append(rec)
 	g.dirty = true
+	_dirty_groups[g] = true
+	_instances += 1
 
 func _remove_part(rec: Array) -> void:
 	var g: Group = rec[0]
@@ -1565,6 +1668,8 @@ func _remove_part(rec: Array) -> void:
 	g.owners.pop_back()
 	g.count = last
 	g.dirty = true
+	_dirty_groups[g] = true
+	_instances -= 1
 
 # --- materials ----------------------------------------------------------------------
 
@@ -1573,8 +1678,8 @@ func _remove_part(rec: Array) -> void:
 ## (ObjectLight.copy_material's way: round 706's review measured a
 ## Resource.duplicate() drawing brighter), and the crowd's textures. Its
 ## TexAni (round 722) animates it with `src`.
-func _twin(src: ShaderMaterial, l: Layout) -> ShaderMaterial:
-	var key := "%d|%s" % [src.get_instance_id(), l.key]
+func _twin(src: ShaderMaterial, l: Layout, key_in: String = "") -> ShaderMaterial:
+	var key := key_in if key_in != "" else "%d|%s" % [src.get_instance_id(), l.key]
 	var got: ShaderMaterial = _twins.get(key)
 	# Held weakly (F7): a twin whose source died answers for no new material
 	# that took its id.
@@ -1607,11 +1712,104 @@ func _twin(src: ShaderMaterial, l: Layout) -> ShaderMaterial:
 	else:
 		l.vol_dirty = true
 	t.set_shader_parameter("crowd_range", _range)
+	if _glow_tex != null:
+		t.set_shader_parameter("crowd_glow", _glow_tex)
 	TexAni.bind_like(t, src)
 	l.twins.append(t)
 	_twins[key] = t
 	_twin_sources[key] = weakref(src)
 	return t
+
+# --- glow rows (round 759) ----------------------------------------------------------
+
+## The parameters a glow row sets (EquipGlow.row_params, less alpha_scissor,
+## which picks the glow shader's variant and stays the material's): per
+## instance far, from the glow table, so an item worn at many pluses is one
+## twin and one group per mesh. MEASURED live before (round 759): the glow's
+## colours, period and scroll split most of the far groups.
+const GLOW_ROW_PARAMS := ["glow_c1", "glow_c2", "glow_period", "glow_mul0", "glow_signed2x", "glow_uv_speed"]
+## The glow table: 3 texels a row -- (c1, period), (c2, mul0), (uv speed,
+## signed2x, 0) -- in `crowd_glow` (crowd_gpu.gdshaderinc).
+const GLOW_TEXELS := 3
+var _glow_index := {}         # the row's values (their bytes, hex) -> row
+var _glow_data := PackedFloat32Array()
+var _glow_count := 0
+var _glow_tex: ImageTexture = null
+
+static func _v3(v) -> Vector3:
+	if v is Color:
+		return Vector3((v as Color).r, (v as Color).g, (v as Color).b)
+	if v is Vector3:
+		return v
+	return Vector3.ONE
+
+## `glow`'s row in the glow table (added and uploaded when new: a few dozen
+## rows in all, one a (plus, item type) row of the glow tables).
+func _glow_row(glow: ShaderMaterial) -> int:
+	var c1 := _v3(glow.get_shader_parameter("glow_c1"))
+	var c2 := _v3(glow.get_shader_parameter("glow_c2"))
+	var pv = glow.get_shader_parameter("glow_period")
+	var mv = glow.get_shader_parameter("glow_mul0")
+	var sv = glow.get_shader_parameter("glow_signed2x")
+	var uvv = glow.get_shader_parameter("glow_uv_speed")
+	# The shader's defaults where a row sets none (object.gdshaderinc).
+	var period := float(pv) if pv != null else 1.0
+	var mul0 := float(mv) if mv != null else 1.0
+	var signed2x := float(sv) if sv != null else 0.0
+	var uv: Vector2 = uvv if uvv is Vector2 else Vector2.ZERO
+	var vals := PackedFloat32Array([c1.x, c1.y, c1.z, period, c2.x, c2.y, c2.z, mul0, uv.x, uv.y, signed2x, 0.0])
+	var key := vals.to_byte_array().hex_encode()
+	var got = _glow_index.get(key)
+	if got != null:
+		return int(got)
+	var row := _glow_count
+	_glow_count += 1
+	_glow_index[key] = row
+	_glow_data.append_array(vals)
+	_upload_glow()
+	return row
+
+## The glow table to the GPU, on the twins when it is re-made (taller).
+func _upload_glow() -> void:
+	var h := 16
+	while h < _glow_count:
+		h *= 2
+	var data := _glow_data.duplicate()
+	data.resize(h * GLOW_TEXELS * 4)
+	var img := Image.create_from_data(GLOW_TEXELS, h, false, Image.FORMAT_RGBAF, data.to_byte_array())
+	if _glow_tex == null or _glow_tex.get_height() != h:
+		_glow_tex = ImageTexture.create_from_image(img)
+		for k in _twins:
+			(_twins[k] as ShaderMaterial).set_shader_parameter("crowd_glow", _glow_tex)
+	else:
+		_glow_tex.update(img)
+
+## The one twin of every glow material of an item on layout `l`: keyed by the
+## glow material's shader and every parameter but the row's (GLOW_ROW_PARAMS:
+## per instance), and made from the first such material seen (the others
+## differ only in those). [twin, its key]; [null, ""] when it has none.
+func _glow_twin(glow: ShaderMaterial, l: Layout) -> Array:
+	var names: PackedStringArray = _uniform_names.get(glow.shader, PackedStringArray())
+	if names.is_empty():
+		for u in glow.shader.get_shader_uniform_list():
+			names.append(String(u["name"]))
+		_uniform_names[glow.shader] = names
+	var sig := PackedStringArray([str(glow.shader.get_instance_id()), str(glow.render_priority)])
+	for n in names:
+		if n in GLOW_ROW_PARAMS or n.begins_with("crowd_"):
+			continue
+		var v = glow.get_shader_parameter(n)
+		sig.append(str(v.get_instance_id()) if v is Object else str(v))
+	var tk := "g|%s|%s" % ["|".join(sig).md5_text(), l.key]
+	var got: ShaderMaterial = _twins.get(tk)
+	if got != null:
+		var src = _twin_sources.get(tk)
+		var held = (src as WeakRef).get_ref() if src != null else null
+		# A twin made from a glow material that is gone answers too: its
+		# signature's textures are held by the twin itself.
+		if held == null or (held is ShaderMaterial and (held as ShaderMaterial).shader == glow.shader):
+			return [got, tk]
+	return [_twin(glow, l, tk), tk]
 
 ## Whether a shader blends: a `blend_` render mode (ObjectLoader._mod_shader's
 ## MTRL blends, AppearFade's fade twins). Cached per shader.
@@ -1671,6 +1869,10 @@ static func twin_code(code: String) -> String:
 		out = out.replace("uniform float appear_alpha = 1.0;", "varying float appear_alpha;\n#define SRR_CG_FADE")
 	if out.contains("object.gdshaderinc"):
 		return out
+	# Round 759: a mod shader's oD0 (ObjectLight.OD0_LINE in its own vertex())
+	# takes the body's object colour too (srr_cg_objc), as object.gdshaderinc's.
+	if out.contains(ObjectLight.OD0_LINE):
+		out = out.replace(ObjectLight.OD0_LINE, ObjectLight.OD0_LINE.replace("object_color,", "srr_cg_objc >= 0.0 ? vec3(srr_cg_objc) : object_color,"))
 	if out.contains("void vertex() {"):
 		return out.replace("void vertex() {", "void vertex() {\n#include \"%s\"\n" % VERTEX_INCLUDE)
 	return out + "\nvoid vertex() {\n#include \"%s\"\n}\n" % VERTEX_INCLUDE
@@ -1693,6 +1895,7 @@ func collect() -> int:
 		RenderingServer.free_rid(g.inst)
 		RenderingServer.free_rid(g.mm)
 		_groups.erase(key)
+		_dirty_groups.erase(g)
 		freed += 1
 		# Counted by the twin itself, not its key (round 756's review, F2): a
 		# twin re-made for the same material has the same key, and a stale
@@ -1787,7 +1990,19 @@ func split_census() -> String:
 	var parts := PackedStringArray()
 	for k in ["now", "no_light", "no_glow_v", "no_glow", "shader", "mesh"]:
 		parts.append("%s=%d" % [k, (keys[k] as Dictionary).size()])
-	return "groups if keyed by: " + " ".join(parts)
+	# The glow textures the live groups draw with, by size and format (a
+	# Texture2DArray of them would take the glow texture out of the key).
+	var gtex := {}
+	for key in _groups:
+		var g: Group = _groups[key]
+		if g.count > 0 and g.material != null:
+			var t = g.material.get_shader_parameter("glow_texture")
+			if t is Texture2D:
+				gtex[t] = "%dx%d" % [(t as Texture2D).get_width(), (t as Texture2D).get_height()]
+	var sizes := {}
+	for t in gtex:
+		sizes[gtex[t]] = int(sizes.get(gtex[t], 0)) + 1
+	return "groups if keyed by: " + " ".join(parts) + " glow_textures=%d by size %s" % [gtex.size(), str(sizes).replace(" ", "")]
 
 ## Census for the QA line.
 func describe() -> String:
@@ -1829,7 +2044,7 @@ func cpu_skin(skel: Skeleton3D, idle_time: float) -> Array:
 	for rec in b.parts:
 		var g: Group = rec[0]
 		var o: int = int(rec[1]) * INSTANCE_FLOATS
-		var vol := int(floor(g.buf[o + 13] + 0.5))
+		var vol: int = unpack_y(g.buf[o + 13])[0]
 		var arrays := g.mesh.surface_get_arrays(0)
 		var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		var vb = arrays[Mesh.ARRAY_BONES]
