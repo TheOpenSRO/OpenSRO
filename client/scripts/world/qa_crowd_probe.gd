@@ -849,8 +849,11 @@ func _switch(step: String, off: bool) -> void:
 			if vp.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp.get_meta(EquipFx.DRIVER_META)):
 				var d: EquipFx = vp.get_meta(EquipFx.DRIVER_META)
 				d.process_mode = Node.PROCESS_MODE_DISABLED if off else Node.PROCESS_MODE_INHERIT
+				# Round 759: the masters never process themselves (the driver
+				# steps them, EquipFx._step_masters); turning theirs on here
+				# stepped each twice after the switch.
 				for k in d._kinds.values():
-					(k.master as Node).set_process(not off)
+					(k.master as Node).set_process(false)
 				for h in d._hosts.values():
 					if h.holder != null and is_instance_valid(h.holder):
 						h.holder.visible = false if off else h.holder.visible
