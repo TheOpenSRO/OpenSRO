@@ -1088,6 +1088,7 @@ func _upload(force: bool = false) -> void:
 func _push_groups() -> void:
 	if _aabb_dirty:
 		_aabb_dirty = false
+		stats["aabb_pushes"] = int(stats.get("aabb_pushes", 0)) + 1
 		for k in _groups:
 			RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
 	# Round 759: the groups marked dirty, not a pass over every group a frame
@@ -1108,7 +1109,7 @@ func _grow_aabb(at: Vector3) -> void:
 		return
 	_aabb = box if not _aabb_set else _aabb.merge(box)
 	# Grown with a margin, so a walking crowd does not reset every group often.
-	_aabb = _aabb.grow(16.0)
+	_aabb = snap_box(_aabb.grow(16.0))
 	_aabb_set = true
 	# Sent to the groups with their instances (_push_groups), once however
 	# many bodies grew it (round 756: a page of ghosts, nearest first, grew it
@@ -1116,6 +1117,18 @@ func _grow_aabb(at: Vector3) -> void:
 	_aabb_dirty = true
 
 var _aabb_dirty := false
+
+## Round 759: the bounds snapped outward to AABB_SNAP units, so a crowd that
+## grows the box by a body's width does not move it (OURS). Every change is a
+## custom AABB on every group, each a DynamicBVH update in the next draw's
+## scene update: MEASURED (the live arrival, before, a symbolized build's main
+## thread sampled) 14.9 % of the main thread in DynamicBVH::update under
+## RendererSceneCull::update_dirty_instances, `rs_setup` 25-65 ms a frame.
+const AABB_SNAP := 64.0
+static func snap_box(b: AABB) -> AABB:
+	var lo := (b.position / AABB_SNAP).floor() * AABB_SNAP
+	var hi := (b.end / AABB_SNAP).ceil() * AABB_SNAP
+	return AABB(lo, hi - lo)
 
 ## Re-measures the bounds from every far body (World3D's cycle end).
 func reset_aabb() -> void:
@@ -1136,7 +1149,7 @@ func reset_aabb() -> void:
 func reset_aabb_to(lo: Vector3, hi: Vector3) -> void:
 	if _bodies.is_empty():
 		return
-	var box := AABB(lo - Vector3(12.0, 2.0, 12.0), hi - lo + Vector3(24.0, 26.0, 24.0)).grow(16.0)
+	var box := snap_box(AABB(lo - Vector3(12.0, 2.0, 12.0), hi - lo + Vector3(24.0, 26.0, 24.0)).grow(16.0))
 	if _aabb_set and _aabb.encloses(box) and _aabb.get_volume() < box.get_volume() * 4.0:
 		return
 	_aabb = box
@@ -2058,11 +2071,11 @@ func describe() -> String:
 	for g in ghosts():
 		if is_instance_valid(g) and _aabb_set and not _aabb.has_point((g as Node3D).global_position + Vector3(0.0, 5.0, 0.0)):
 			outside += 1
-	return ("ghosts_outside_aabb=%d ghost_sound_advances=%d " % [outside, int(stats.get("ghost_sound_advances", 0))]) + "far=%d ghosts=%d heard=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f upload_ms=%.1f upload_max_ms=%.1f sound_advances=%d groups_freed=%d refused=%s kept_near=%s" % [
+	return ("ghosts_outside_aabb=%d ghost_sound_advances=%d " % [outside, int(stats.get("ghost_sound_advances", 0))]) + "far=%d ghosts=%d heard=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f upload_ms=%.1f upload_max_ms=%.1f sound_advances=%d groups_freed=%d aabb_pushes=%d refused=%s kept_near=%s" % [
 		_bodies.size(), _ghost_count, heard_bodies().size(), _groups.size(), int(stats["instances"]), _layouts.size(), clips, rows, _twins.size(), _rigid.size(),
 		int(stats["added"]), int(stats["removed"]), float(stats.get("switch_usec", 0)) / 1000.0, float(stats["bake_usec"]) / 1000.0,
 		float(stats.get("upload_usec", 0)) / 1000.0, float(stats.get("upload_max_usec", 0)) / 1000.0,
-		int(stats.get("sound_advances", 0)), int(stats.get("groups_freed", 0)),
+		int(stats.get("sound_advances", 0)), int(stats.get("groups_freed", 0)), int(stats.get("aabb_pushes", 0)),
 		str(refusals).replace(" ", ""), str(ineligible).replace(" ", "")]
 
 # --- checks -------------------------------------------------------------------------
