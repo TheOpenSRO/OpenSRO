@@ -7079,6 +7079,8 @@ func _crowd_sound_advance(b: CrowdGpu.Body, t: float) -> void:
 	b.sound_due = t + next / 1000.0 if next != INF else INF
 	_sound_schedule(b)
 	_crowd_gpu.stats["sound_advances"] = int(_crowd_gpu.stats.get("sound_advances", 0)) + 1
+	if b.ghost:
+		_crowd_gpu.stats["ghost_sound_advances"] = int(_crowd_gpu.stats.get("ghost_sound_advances", 0)) + 1
 
 ## The cycle's choice: the CrowdGpu.near_count bodies nearest the camera,
 ## in view or not, stay near (a near body goes only once it is past the

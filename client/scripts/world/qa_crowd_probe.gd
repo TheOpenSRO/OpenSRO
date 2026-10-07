@@ -520,7 +520,19 @@ func _report() -> void:
 	print(split_line(steps[_i], _split_at, FrameSplit.snapshot(), _prof_at, EfpEffect.prof, f))
 	var pb = world.get("_plate_batch")
 	if pb != null:
-		print("QA CROWD plates %-8s %s" % [steps[_i], (pb as NamePlateBatch).describe()])
+		# And the other players' plates drawn as Label3Ds (not batched).
+		var drawn_labels := 0
+		var bodies_with_plate := 0
+		for id in world._other_bodies:
+			var ob = world._other_bodies[id]
+			if ob == null or not is_instance_valid(ob):
+				continue
+			var lab := (ob as Node).get_node_or_null("Name") as Label3D
+			if lab != null:
+				bodies_with_plate += 1
+				if lab.visible:
+					drawn_labels += 1
+		print("QA CROWD plates %-8s %s bodies_with_plate=%d label3d_drawn=%d" % [steps[_i], (pb as NamePlateBatch).describe(), bodies_with_plate, drawn_labels])
 	if OS.get_environment("OPENSRO_QA_CROWD_ATTACH_AUDIT") != "":
 		print("QA CROWD attach %-8s %s" % [steps[_i], attach_audit(world)])
 	if steps[_i].contains("net") or steps[_i].contains("dest"):

@@ -1719,7 +1719,14 @@ func describe() -> String:
 		var l: Layout = _layouts[k]
 		rows += l.rows
 		clips += l.clips.size()
-	return "far=%d ghosts=%d heard=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f upload_ms=%.1f upload_max_ms=%.1f sound_advances=%d groups_freed=%d refused=%s kept_near=%s" % [
+	# Round 757's merge (QA): ghosts whose place the groups' shared bounds do
+	# not hold (culled with them while the bounds are in view: S3), and the
+	# far sounds the ghosts played (S1).
+	var outside := 0
+	for g in ghosts():
+		if is_instance_valid(g) and _aabb_set and not _aabb.has_point((g as Node3D).global_position + Vector3(0.0, 5.0, 0.0)):
+			outside += 1
+	return ("ghosts_outside_aabb=%d ghost_sound_advances=%d " % [outside, int(stats.get("ghost_sound_advances", 0))]) + "far=%d ghosts=%d heard=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f upload_ms=%.1f upload_max_ms=%.1f sound_advances=%d groups_freed=%d refused=%s kept_near=%s" % [
 		_bodies.size(), _ghost_count, heard_bodies().size(), _groups.size(), int(stats["instances"]), _layouts.size(), clips, rows, _twins.size(), _rigid.size(),
 		int(stats["added"]), int(stats["removed"]), float(stats.get("switch_usec", 0)) / 1000.0, float(stats["bake_usec"]) / 1000.0,
 		float(stats.get("upload_usec", 0)) / 1000.0, float(stats.get("upload_max_usec", 0)) / 1000.0,
