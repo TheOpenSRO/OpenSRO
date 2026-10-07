@@ -347,15 +347,12 @@ func _glyph(p: Plate, ts: TextServer, g: Dictionary, at: Vector2, colour: Color,
 	var advance := float(g.get("advance", 0.0))
 	for _r in range(repeat):
 		if font_rid.is_valid():
-			var tex := ts.font_get_glyph_texture_rid(font_rid, size, index)
-			if tex.is_valid():
+			var gi := _glyph_info(p.label, ts, font_rid, size, index, outline, outline_size)
+			if not gi.is_empty():
+				var key: String = gi[0]
 				var goff: Vector2 = g.get("offset", Vector2.ZERO)
-				var gl_of := (ts.font_get_glyph_offset(font_rid, size, index) + goff) * px
-				var gl_sz := ts.font_get_glyph_size(font_rid, size, index) * px
-				var uv := ts.font_get_glyph_uv_rect(font_rid, size, index)
-				var texs := ts.font_get_glyph_texture_size(font_rid, size, index)
-				var msdf := ts.font_is_multichannel_signed_distance_field(font_rid)
-				var key := _key(p.label, tex, outline, outline_size, font_rid, msdf)
+				var gl_of: Vector2 = ((gi[1] as Vector2) + goff) * px
+				var gl_sz: Vector2 = (gi[2] as Vector2) * px
 				var part: Array = p.parts.get(key, [])
 				if part.is_empty():
 					part = [PackedVector3Array(), PackedVector2Array(), PackedColorArray(), PackedVector2Array()]
@@ -364,13 +361,41 @@ func _glyph(p: Plate, ts: TextServer, g: Dictionary, at: Vector2, colour: Color,
 				var v1 := Vector3(at.x + gl_of.x + gl_sz.x, at.y - gl_of.y, 0.0)
 				var v2 := Vector3(at.x + gl_of.x + gl_sz.x, at.y - gl_of.y - gl_sz.y, 0.0)
 				var v3 := Vector3(at.x + gl_of.x, at.y - gl_of.y - gl_sz.y, 0.0)
-				var u0 := Vector2(uv.position.x / texs.x, uv.position.y / texs.y)
-				var u1 := Vector2((uv.position.x + uv.size.x) / texs.x, uv.position.y / texs.y)
-				var u2 := Vector2((uv.position.x + uv.size.x) / texs.x, (uv.position.y + uv.size.y) / texs.y)
-				var u3 := Vector2(uv.position.x / texs.x, (uv.position.y + uv.size.y) / texs.y)
-				append_quad(part, PackedVector3Array([v0, v1, v2, v0, v2, v3]), PackedVector2Array([u0, u1, u2, u0, u2, u3]), colour, p.slot)
+				append_quad(part, PackedVector3Array([v0, v1, v2, v0, v2, v3]), gi[3], colour, p.slot)
 		at.x += advance * px
 	return at
+
+## Round 757's merge: a glyph's texture, metrics and UVs, asked of the
+## TextServer once per (font, size, outline, glyph) and kept -- a ghost page
+## makes hundreds of plates in a frame (round 756), and each glyph took six
+## TextServer calls (MEASURED: about 0.3 ms a plate at 3,000). [] when the glyph
+## has no texture (Label3D draws nothing for it either). Kept until the fonts'
+## caches change (`generation`, the UI scale): a glyph's place in its cache
+## texture does not move until then (TextServer adds textures, it does not
+## repack them).
+var _glyphs := {}
+
+func _glyph_info(label: Label3D, ts: TextServer, font_rid: RID, size: Vector2i, index: int, outline: bool, outline_size: int) -> Array:
+	var ck := "%d|%d|%d|%d|%d" % [font_rid.get_id(), size.x, size.y, index, label.texture_filter]
+	var hit = _glyphs.get(ck)
+	if hit != null:
+		return hit
+	var info: Array = []
+	var tex := ts.font_get_glyph_texture_rid(font_rid, size, index)
+	if tex.is_valid():
+		var uv := ts.font_get_glyph_uv_rect(font_rid, size, index)
+		var texs := ts.font_get_glyph_texture_size(font_rid, size, index)
+		var u0 := Vector2(uv.position.x / texs.x, uv.position.y / texs.y)
+		var u1 := Vector2((uv.position.x + uv.size.x) / texs.x, uv.position.y / texs.y)
+		var u2 := Vector2((uv.position.x + uv.size.x) / texs.x, (uv.position.y + uv.size.y) / texs.y)
+		var u3 := Vector2(uv.position.x / texs.x, (uv.position.y + uv.size.y) / texs.y)
+		var msdf := ts.font_is_multichannel_signed_distance_field(font_rid)
+		info = [_key(label, tex, outline, outline_size, font_rid, msdf), ts.font_get_glyph_offset(font_rid, size, index),
+			ts.font_get_glyph_size(font_rid, size, index), PackedVector2Array([u0, u1, u2, u0, u2, u3])]
+	# A glyph not yet rasterised has no texture: not kept, asked again next time.
+	if not info.is_empty():
+		_glyphs[ck] = info
+	return info
 
 ## Two triangles into a part ([verts, uvs, colours, uv2 slots]). Packed arrays
 ## are values: each is taken out, grown and put back -- an append on `part[0]`
@@ -446,6 +471,7 @@ func flush(player: Vector3) -> void:
 		return
 	if _generation != generation:
 		_generation = generation
+		_glyphs.clear()
 		for k in _plates:
 			var p: Plate = _plates[k]
 			if is_instance_valid(p.label):

@@ -112,6 +112,7 @@ var _arriving := true
 var _arrival_last_us := 0
 var _arrival_start_us := 0
 var _arrival_ms: PackedFloat32Array = PackedFloat32Array()
+var _arrival_n := 0
 ## Round 756: every lineup id, and when each was first drawn -- dressed, or a
 ## ghost (CrowdGpu.add_ghost) -- from the first packet: `visible_s` in the
 ## arrival line is the moment the last one was; `QA CROWD page` lines the
@@ -204,6 +205,15 @@ func _arrival_frame() -> void:
 	_arrival_ms.append(ms)
 	_arrival_last_us = now
 	_read_world()
+	# Round 757's merge (QA): while ghosts are drawn, every 60 arrival frames,
+	# how many lie outside the far groups' shared bounds (culled with them, S3)
+	# and the far sounds they have played (S1).
+	_arrival_n += 1
+	if _arrival_n % 60 == 0:
+		var cg = world.get("_crowd_gpu")
+		if cg != null and (cg as CrowdGpu).ghost_count() > 0:
+			var d := (cg as CrowdGpu).describe()
+			print("QA CROWD ghostcheck frame=%d %s" % [_arrival_n, d.substr(0, d.find(" far="))] + " ghosts=%d" % (cg as CrowdGpu).ghost_count())
 	if _visible_us < 0:
 		_visible_frames += 1
 		var all := true

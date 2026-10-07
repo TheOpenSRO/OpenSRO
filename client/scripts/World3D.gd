@@ -8052,6 +8052,13 @@ func _plate_batch_switch(on: bool) -> void:
 ## record (its text, its look), never drawn. The ghost (round 756) and the
 ## dressing both make it here.
 func _add_other_plate(node: Node3D, char_name: String, top: float) -> void:
+	var t0 := Time.get_ticks_usec() if FrameSplit.on else 0
+	_add_other_plate_now(node, char_name, top)
+	if FrameSplit.on:
+		FrameSplit.add("plate_add", Time.get_ticks_usec() - t0)
+		FrameSplit.add("plate_add_calls", 1000)
+
+func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	var batched := _plate_batch_get() != null
 	var plate := _name_plate(char_name, top, not batched)
 	node.add_child(plate)
