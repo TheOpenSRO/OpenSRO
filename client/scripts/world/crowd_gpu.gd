@@ -148,7 +148,9 @@ class Layout:
 	var vol_tex: ImageTexture = null
 	var vol_dirty := false
 	## The twin materials drawing with this layout's textures.
-	var twins: Array[ShaderMaterial] = []
+	## Round 759: a set (twin -> true), not an Array: collect() drops one per
+	## freed twin, and an Array's erase is a search through thousands.
+	var twins := {}
 
 class Group:
 	var key: String
@@ -1715,7 +1717,7 @@ func _twin(src: ShaderMaterial, l: Layout, key_in: String = "") -> ShaderMateria
 	if _glow_tex != null:
 		t.set_shader_parameter("crowd_glow", _glow_tex)
 	TexAni.bind_like(t, src)
-	l.twins.append(t)
+	l.twins[t] = true
 	_twins[key] = t
 	_twin_sources[key] = weakref(src)
 	return t
@@ -1912,6 +1914,13 @@ static func twin_code(code: String) -> String:
 ## uses any more with it (round 747's review, F7: a walking crowd's light
 ## levels made groups and twins without end, and the twins held every level
 ## copy ObjectLight keeps only weakly). Returns the groups freed.
+##
+## Round 759: at most COLLECT_MAX a call; the rest wait for the next cycles.
+## MEASURED (the swarm lineup at 7,000, before): an arrival leaves thousands of
+## groups empty at once (ghosts dressed, light levels left behind), and their
+## collection over a few cycles made frames of 400-723 ms (13,468 -> 7,762
+## groups), the twins' Array erase a search through thousands each time.
+const COLLECT_MAX := 128
 func collect() -> int:
 	var freed := 0
 	for key in _groups.keys():
@@ -1920,7 +1929,7 @@ func collect() -> int:
 			g.empty_cycles = 0
 			continue
 		g.empty_cycles += 1
-		if g.empty_cycles < GROUP_EMPTY_CYCLES:
+		if g.empty_cycles < GROUP_EMPTY_CYCLES or freed >= COLLECT_MAX:
 			continue
 		RenderingServer.free_rid(g.inst)
 		RenderingServer.free_rid(g.mm)

@@ -49,6 +49,7 @@ func _initialize() -> void:
 		_test_review_fixes()
 		_test_light_texel()
 		_test_glow_rows()
+		_test_collect_cap()
 		var world := _make_world()
 		if world != null:
 			await process_frame
@@ -530,6 +531,32 @@ func _test_glow_rows() -> void:
 		root.remove_child(h)
 		h.free()
 	crowd.flush(1.0)
+
+## Round 759: collect() frees at most COLLECT_MAX groups a call (MEASURED
+## before: an arrival's thousands of emptied groups collected together made
+## frames of 400-723 ms), the rest on the next calls.
+func _test_collect_cap() -> void:
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	var b := CrowdGpu.Body.new()
+	b.slot = 0
+	var mesh := BoxMesh.new()
+	var n := CrowdGpu.COLLECT_MAX + 40
+	for i in range(n):
+		var m := ShaderMaterial.new()
+		m.shader = ObjectLoader.OBJECT_SHADER
+		crowd._add_part(b, {"mesh": mesh, "material": m, "layers": 1, "sort": 0.0, "vol": -1, "centre": 0.0, "twin_key": "cap%d" % i})
+	crowd._push_groups()
+	_check(crowd._groups.size() == n and int(crowd.stats["instances"]) == n, "%d one-instance groups made (%d instances)" % [n, int(crowd.stats["instances"])])
+	for rec in b.parts.duplicate():
+		crowd._remove_part(rec)
+	b.parts.clear()
+	crowd._push_groups()
+	for c in range(CrowdGpu.GROUP_EMPTY_CYCLES - 1):
+		crowd.collect()
+	var first := crowd.collect()
+	var second := crowd.collect()
+	_check(first == CrowdGpu.COLLECT_MAX and second == 40 and crowd._groups.is_empty() and int(crowd.stats["instances"]) == 0,
+		"emptied, they are freed %d a call at most (%d, then %d), all of them in the end" % [CrowdGpu.COLLECT_MAX, first, second])
 
 func _test_frames_and_rebase() -> void:
 	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
