@@ -6,7 +6,12 @@ class_name PartyMatchQa
 ## goes through the window's own controls, as a player's click would:
 ##
 ##   match                     open the Party Matching window (page 0)
-##   page:<n>                  ask for page n (the spin)
+##   page:<n>                  ask for page n (the spin set to n)
+##   spin:right|left           a real mouse click on the page spin's arrow
+##                             (Input.parse_input_event at its centre), with
+##                             the controls under that point (round 752)
+##   click:<control>           the same real click on any control of it
+##   pagestate                 print the page held and the spin (`QA MATCH PAGE`)
 ##   form                      press Form party (the dialog stays up)
 ##   register:<purpose>,<min>,<max>[,<title>]   Form party, fill, OK
 ##   change:<purpose>,<min>,<max>[,<title>]     Change entry, fill, OK
@@ -30,7 +35,13 @@ static func do(panels: HudPanels, verb: String, arg: String) -> bool:
 		"match":
 			panels.open("partymatch")
 		"page":
-			w.state.request_page(int(arg))
+			# The spin set to n, then its handler (round 752: the label now
+			# follows only the spin, as the original's does).
+			var page_spin := w.node("GDR_PARTYMATCH_SPIN_PAGE")
+			if page_spin != null:
+				page_spin.set_meta("value", int(arg))
+				UiBuilder._spin_refresh(page_spin)
+			w.on_spin(int(arg))
 		"form":
 			panels.open("partymatch")
 			w.press_form()
@@ -107,6 +118,36 @@ static func do(panels: HudPanels, verb: String, arg: String) -> bool:
 				box.choose("object", int(v[0]))
 				box.choose("race", int(v[1]))
 			box.press_ok()
+		"spin":
+			# Round 752: a real left click on the page spin's arrow (arg
+			# "right" or "left"), pushed through Input at the arrow's centre
+			# as a player's mouse would, so whatever covers the arrow takes it.
+			panels.open("partymatch")
+			var spin := w.node("GDR_PARTYMATCH_SPIN_PAGE")
+			var arrow := spin.get_node_or_null("Right" if arg != "left" else "Left") as Control if spin != null else null
+			if arrow == null:
+				print("QA MATCH: no page spin arrow")
+				return true
+			var at := arrow.get_global_rect().get_center()
+			_report_under(panels.get_tree().root, at)
+			if not arrow.has_meta("qa_probe"):
+				arrow.set_meta("qa_probe", true)
+				(arrow as BaseButton).pressed.connect(func() -> void: print("QA MATCH ARROW PRESSED"))
+			_click(at)
+			print("QA MATCH: clicked the spin's %s arrow at %s" % [arg, at])
+		"click":
+			# Round 752's control: the same real click on any control of the
+			# window, by name.
+			panels.open("partymatch")
+			var c := w.node(arg)
+			if c == null:
+				print("QA MATCH: no control %s" % arg)
+				return true
+			var p := c.get_global_rect().get_center()
+			_click(p)
+			print("QA MATCH: clicked %s at %s" % [arg, p])
+		"pagestate":
+			_page_state(w)
 		"req":
 			_req_answer = arg
 			tick(panels)
@@ -131,6 +172,41 @@ static func tick(panels: HudPanels) -> void:
 		"cancel":
 			box.press_cancel()
 	_req_answer = ""
+
+## A left press and release at `at`, through Input as a mouse's are.
+static func _click(at: Vector2) -> void:
+	for down in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = down
+		ev.position = at
+		ev.global_position = at
+		Input.parse_input_event(ev)
+
+## Every visible control whose rect holds `at` and that takes the mouse, in
+## tree order (`QA MATCH UNDER`), so a click that lands elsewhere names what
+## took it.
+static func _report_under(n: Node, at: Vector2) -> void:
+	if n is CanvasItem and not (n as CanvasItem).is_visible_in_tree():
+		return
+	if n is Control:
+		var c := n as Control
+		if c.mouse_filter != Control.MOUSE_FILTER_IGNORE and c.get_global_rect().has_point(at):
+			print("QA MATCH UNDER: %s (%s) filter %d rect %s" % [c.get_path(), c.get_class(), c.mouse_filter, c.get_global_rect()])
+	for ch in n.get_children():
+		_report_under(ch, at)
+
+## The page spin and the page the state holds (`QA MATCH PAGE`, round 752).
+static func _page_state(w: PartyMatchWindow) -> void:
+	var spin := w.node("GDR_PARTYMATCH_SPIN_PAGE")
+	var label := spin.get_node_or_null("Value") as Label if spin != null else null
+	var rows := w.shown_rows()
+	print("QA MATCH PAGE: refresh lock %d ms" % w.refresh_locked_ms)
+	print("QA MATCH PAGE: state %d of %d, %d row(s) (first %s); spin value %s range %s..%s label '%s'" % [
+		w.state.page_index, w.state.page_count, w.state.rows.size(),
+		str((rows[0] as PartyMatchNet.Row).number) if not rows.is_empty() else "-",
+		str(spin.get_meta("value", "?")) if spin != null else "-", str(spin.get_meta("min", "?")) if spin != null else "-",
+		str(spin.get_meta("max", "?")) if spin != null else "-", label.text if label != null else "-"])
 
 ## Prints the window's rows (`QA MATCH ROW`), for the measurements.
 static func dump(panels: HudPanels) -> void:

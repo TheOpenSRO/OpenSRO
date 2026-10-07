@@ -1278,7 +1278,13 @@ func _build_spin(def: UiLayoutParser.ControlDef) -> Control:
 		btn.position = Vector2(side[2], 0.0)
 		btn.size = SPIN_ARROW_SIZE
 		var step: int = side[3]
-		btn.pressed.connect(func() -> void: _spin_step(ctrl, step))
+		# Qualified, not bare (round 752): Godot 4.2.2 runs a lambda made in
+		# an instance method that names only a static of its own class with
+		# a null self, so a bare `_spin_step(...)` failed on every click
+		# ("Nonexistent function '_spin_step' in base 'Nil'", MEASURED live
+		# and in a probe) -- the arrows never moved a party-match or
+		# warehouse page. `UiBuilder._spin_step` needs no self.
+		btn.pressed.connect(func() -> void: UiBuilder._spin_step(ctrl, step))
 		ctrl.add_child(btn)
 	_spin_refresh(ctrl)
 	return ctrl

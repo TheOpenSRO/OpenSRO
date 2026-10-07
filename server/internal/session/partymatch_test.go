@@ -20,11 +20,17 @@ import (
 // handlers (round 713). Eli is Europe, the rest China.
 func newMatchWorld(t *testing.T) (*partyWorld, *party.Matcher) {
 	t.Helper()
+	return newMatchWorldOf(t, []string{"Aria", "Bram", "Cato", "Dara", "Eli"})
+}
+
+// newMatchWorldOf is newMatchWorld with these characters (round 752's
+// crowd): Aria at level 10 and Eli Europe where present, the rest level 7.
+func newMatchWorldOf(t *testing.T, names []string) (*partyWorld, *party.Matcher) {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	chars := character.NewMemStore()
 	w := &partyWorld{hub: world.NewHub(), parties: party.NewHub(), chars: chars, ids: map[string]int64{}, c: map[string]*chatClient{}}
-	names := []string{"Aria", "Bram", "Cato", "Dara", "Eli"}
 	for i, n := range names {
 		accounts.Add(n, "pw")
 		c, err := chars.Create(ctx, int64(i+1), n)

@@ -7232,6 +7232,33 @@ the exploit fixes, and an honest-play verification.
 - **Version skew:** client and server ship together. An old client walks in snaps, and new
   observers see an old client's player move.
 
+## Seven-hundred-and-fifty-second round: party matching only ever showed one page
+
+The full notes are in `docs/rounds/r752.md`. The user, with thousands of swarm entries listed:
+"It only ever lets you see 1 page".
+- **Cause (MEASURED live, and in a probe):** `UiBuilder._build_spin` wired each arrow as
+  `func() -> void: _spin_step(ctrl, step)`.
+  - `_spin_step` is static and the lambda is made in an instance method. Godot 4.2.2 runs such a
+    lambda with a null self.
+  - So every click raised `Nonexistent function '_spin_step' in base 'Nil'`. No 0x706c was sent,
+    and the window stayed on page 0.
+  - The warehouse's page spin is built by the same function and was broken the same way.
+- **Not the cause (READ and MEASURED):**
+  - the server's pages (SM `0x450d20` / `0x451630`; 300 local swarm entries page 0..13 correctly);
+  - the u8 request;
+  - the client's count-then-index parse (`c:0x8841f0` → `0x97b930`: `+5` count, `+4` index).
+- **Fix:** the arrows call `UiBuilder._spin_step`, qualified. The party-match window now treats
+  the spin as the original's `CIFSpinButtonCtrl` does (READ):
+  - a page sets only its top, count - 1 (`0x73b5b0` → `0x658010`), never its number;
+  - a step drops the selection, then asks for the page (`0x732630`);
+  - an open starts it at "1".
+- **Tests:**
+  - Go: `TestMatchListPagesOverTheWire`, 50 entries over the wire, pages 0, 1, 2 (the last), 3
+    and 255.
+  - GD: `_test_paging` (19 checks) and `ui_builder_test`'s `_check_spin_arrows_step`. Both fail
+    on the old line.
+  - Live: real clicks on the box page 0 → 1 → 2 → 1, and 13 → 12.
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.

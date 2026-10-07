@@ -22,8 +22,10 @@ class_name PartyMatchWindow
 ## - the enable rules (0x7384a0) and the buttons' handlers (message map
 ##   0xebc5c8): see party_gui.md §3's button table;
 ## - opening asks for page 0 (0x73b1ff); Refresh asks for the spin's page and
-##   disables itself for 2 s (timer 10, 2000 ms; 0x73ab60); the spin asks for
-##   its page (0x732630);
+##   disables itself for 2 s (timer 10, 2000 ms; 0x73ab60); the spin lets
+##   the selection go and asks for its page (0x732630); a page sets only the
+##   spin's top, count - 1 (0x73b5b0 -> 0x658010), never its number (round
+##   752);
 ## - Search filters the held records (0x73bb80 -> 0x73b780); nothing left
 ##   says UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT (type 4);
 ## - while the joining window is up, Form, Auto match, Join, Search and
@@ -174,10 +176,31 @@ func attach(win: Control) -> void:
 		window.visibility_changed.connect(_on_window_visibility)
 	refresh()
 
-## The window was shown: page 0 (0x73b1ff), and Set locked (0x79c252).
+## The window was shown: page 0 (0x73b1ff), and Set locked (0x79c252). The
+## original creates "PartyMatch" on an open only when none exists
+## (0x79c170(1): 0x799680() == 0 -> 0x79ac50) and its close hands the name
+## to 0x8b59f0 (that it removes it: INFERRED), so its spin starts at 0,
+## showing "1" (the constructor 0x657f30 zeroes +0x380; Create 0x6581a0
+## draws value + 1). This window is kept, so its spin is set back (round
+## 752).
 func on_shown() -> void:
+	var spin := node("GDR_PARTYMATCH_SPIN_PAGE")
+	if spin != null:
+		spin.set_meta("value", 0)
+		UiBuilder._spin_refresh(spin)
 	state.request_page(0)
 	settings_lock.emit(true)
+
+## The page spin stepped (0x732630, READ): the selected slot is let go
+## (0x740ca0(0), +0x7ec = 0), then that page is asked for (0x732610 ->
+## 0x706c). The original does both only while its HUD request queue is
+## empty (0x6ec4b0(6) == 0), which this client does not keep -- as for
+## Refresh and Join.
+func on_spin(page: int) -> void:
+	selected_slot = -1
+	selected_number = 0
+	state.request_page(page)
+	refresh()
 
 ## The window's close (0x79c170(0)): refused while the joining window is up
 ## (0x732ae0); else its children go with it (the register, auto and joining
@@ -380,7 +403,7 @@ func _wire_buttons() -> void:
 			b.pressed.connect(map[n])
 	var spin := node("GDR_PARTYMATCH_SPIN_PAGE")
 	if spin != null and spin.has_user_signal("spin_changed"):
-		spin.connect("spin_changed", func(v: int) -> void: state.request_page(v))
+		spin.connect("spin_changed", on_spin)
 	var list := node("GDR_PARTYMATCH_SLOTLIST_BLACKSQUARE")
 	if list != null:
 		list.gui_input.connect(_on_list_input)
@@ -429,11 +452,15 @@ func refresh() -> void:
 		_fill_slot(slot, row, row != null and row == state.registration, i == selected_slot)
 	if _scroll_bar != null:
 		_scroll_bar.call("set_range", scroll_max(), clampi(_scroll, 0, scroll_max()))
+	# The page spin's top is the page count less one, 0 with no pages
+	# (0x73b5b0 -> 0x658010, READ). Only the top: its value and label are the
+	# spin's own -- the arrows step them (0x658120 / 0x658160) and nothing in
+	# CIFPartyMatch sets them from a page (0x658050 has no caller there), so
+	# a page the server clamped to 0 leaves the number where it was, as the
+	# original does (round 752).
 	var spin := node("GDR_PARTYMATCH_SPIN_PAGE")
 	if spin != null:
-		UiBuilder.set_spin_range(spin, 0, maxi(0, state.page_count - 1))
-		spin.set_meta("value", clampi(state.page_index, 0, maxi(0, state.page_count - 1)))
-		UiBuilder._spin_refresh(spin)
+		spin.set_meta("max", maxi(0, state.page_count - 1))
 	update_buttons()
 
 func _fill_slot(slot: Control, row: PartyMatchNet.Row, own: bool, selected: bool) -> void:

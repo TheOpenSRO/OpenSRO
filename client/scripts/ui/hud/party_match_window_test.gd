@@ -332,6 +332,104 @@ func _page_of_one(number: int, leader: String) -> PackedByteArray:
 	p.rows.append(r)
 	return PartyMatchNet.encode_page_ack(p)
 
+## A page of `n` rows numbered from `first`, out of `count` pages.
+func _page(count: int, index: int, first: int, n: int) -> PackedByteArray:
+	var p := PartyMatchNet.Page.new()
+	p.ok = true
+	p.page_count = count
+	p.page_index = index
+	for i in n:
+		var r := PartyMatchNet.Row.new()
+		r.number = first + i
+		r.leader_name = "Bot%d" % (first + i)
+		r.min_level = 1
+		r.max_level = 140
+		r.title = "t"
+		p.rows.append(r)
+	return PartyMatchNet.encode_page_ack(p)
+
+func _spin_label(w: PartyMatchWindow) -> String:
+	var spin := w.node("GDR_PARTYMATCH_SPIN_PAGE")
+	var l := spin.get_node_or_null("Value") as Label if spin != null else null
+	return l.text if l != null else "(no label)"
+
+## Presses one of the page spin's arrows through its own signal, as a click
+## on it does.
+func _press_arrow(w: PartyMatchWindow, side: String) -> void:
+	var spin := w.node("GDR_PARTYMATCH_SPIN_PAGE")
+	var b := spin.get_node_or_null(side) as BaseButton if spin != null else null
+	if b == null:
+		_check(false, "the page spin has a %s arrow" % side)
+		return
+	b.pressed.emit()
+
+## **Paging** (round 752; the user, with thousands of swarm entries: "It only
+## ever lets you see 1 page"). The spin's arrows ask for the page they step
+## to (0x732630 -> 0x706c [page]); a page sets the spin's top to its count
+## less one and leaves the number alone (0x73b5b0 -> 0x658010); the label
+## reads the spin's value + 1 (0x657fb0); a step lets the selection go
+## (0x740ca0(0)); opening starts at page 0 showing "1".
+func _test_paging(builder: UiBuilder) -> void:
+	var made := _make(builder, "Nobody", 10)
+	var w: PartyMatchWindow = made[0]
+	var st: PartyMatchState = made[1]
+	var sent: Array = made[2]
+	w.on_shown()
+	_check(sent.back()[0] == 0x706c and sent.back()[1] == PackedByteArray([0]) and _spin_label(w) == "1", "opening asks for page 0 and the spin reads 1")
+	st.handle(_page(3, 0, 1, 23), PartyMatchNet.OP_PAGE_ACK)
+	_check(_slot_text(w, 0, "GDR_PARTYMATCH_SLOT_ID") == "1" and _spin_label(w) == "1", "page 0 of 3: entry 1 first, the spin at 1")
+	w.select_slot(2)
+	_check(w.selected_number == 3, "entry 3 selected")
+	var before := sent.size()
+	_press_arrow(w, "Right")
+	_check(sent.size() == before + 1 and sent.back()[0] == 0x706c and sent.back()[1] == PackedByteArray([1]),
+		"the Right arrow asks for page 1 (0x706c [1]; got %s)" % str(sent.slice(before)))
+	_check(_spin_label(w) == "2", "the label reads 2 after one step (got '%s')" % _spin_label(w))
+	_check(w.selected_slot == -1 and w.selected_number == 0, "a spin step lets the selection go (0x732630: 0x740ca0(0))")
+	st.handle(_page(3, 1, 24, 23), PartyMatchNet.OP_PAGE_ACK)
+	_check(_slot_text(w, 0, "GDR_PARTYMATCH_SLOT_ID") == "24" and _spin_label(w) == "2", "page 1: entry 24 first, the label still 2")
+	_press_arrow(w, "Right")
+	_check(sent.back()[1] == PackedByteArray([2]) and _spin_label(w) == "3", "Right again asks for page 2, the last, reading 3")
+	st.handle(_page(3, 2, 47, 4), PartyMatchNet.OP_PAGE_ACK)
+	_check(_slot_text(w, 0, "GDR_PARTYMATCH_SLOT_ID") == "47" and _slot_text(w, 4, "GDR_PARTYMATCH_SLOT_ID") == "", "the last page: entries 47..50")
+	before = sent.size()
+	_press_arrow(w, "Right")
+	_check(sent.size() == before and _spin_label(w) == "3", "Right at the last page sends nothing (value == top, 0x658160)")
+	_press_arrow(w, "Left")
+	_check(sent.size() == before + 1 and sent.back()[1] == PackedByteArray([1]) and _spin_label(w) == "2", "Left asks for page 1, reading 2")
+	_press_arrow(w, "Left")
+	_check(sent.back()[1] == PackedByteArray([0]) and _spin_label(w) == "1", "Left again: page 0, reading 1")
+	before = sent.size()
+	_press_arrow(w, "Left")
+	_check(sent.size() == before and _spin_label(w) == "1", "Left at page 0 sends nothing (value == bottom, 0x658120)")
+	# Refresh asks for the spin's page (0x732a80 -> 0x658060).
+	st.handle(_page(3, 0, 1, 23), PartyMatchNet.OP_PAGE_ACK)
+	_press_arrow(w, "Right")
+	st.handle(_page(3, 1, 24, 23), PartyMatchNet.OP_PAGE_ACK)
+	w.press_refresh()
+	_check(sent.back()[1] == PackedByteArray([1]), "Refresh asks for the spin's page (1)")
+	w.advance(PartyMatchWindow.REFRESH_COOLDOWN_MS)
+	# The list shrank to one page: the server answers page 0 for page 1
+	# (SM 0x450d20); the spin's top falls to 0 but its number stays, as the
+	# original's (nothing in CIFPartyMatch calls 0x658050).
+	st.handle(_page(1, 0, 1, 5), PartyMatchNet.OP_PAGE_ACK)
+	_check(_slot_text(w, 0, "GDR_PARTYMATCH_SLOT_ID") == "1" and _spin_label(w) == "2", "a clamped page shows page 0's rows; the spin keeps its 2")
+	before = sent.size()
+	_press_arrow(w, "Right")
+	_check(sent.size() == before, "Right past the new top sends nothing")
+	_press_arrow(w, "Left")
+	_check(sent.size() == before + 1 and sent.back()[1] == PackedByteArray([0]) and _spin_label(w) == "1", "Left steps back to page 0")
+	# Reopening starts at page 0 again (the original builds a new window).
+	_press_arrow(w, "Right")
+	w.on_shown()
+	_check(sent.back()[1] == PackedByteArray([0]) and _spin_label(w) == "1", "reopening asks for page 0 and reads 1")
+	# No pages at all: the top is 0, nothing to step to.
+	st.handle(_fx("b06c_empty"), PartyMatchNet.OP_PAGE_ACK)
+	before = sent.size()
+	_press_arrow(w, "Right")
+	_check(sent.size() == before and _spin_label(w) == "1", "with no pages the spin stays at 1")
+	(made[3] as Control).queue_free()
+
 func _test_register(builder: UiBuilder) -> void:
 	# The fixture's type byte is 0x03 (exp and item share, no "anyone").
 	var party := PartyState.new()
@@ -424,6 +522,7 @@ func _initialize() -> void:
 	_test_req_join(builder)
 	_test_full_party_delete(builder)
 	_test_round718(builder)
+	_test_paging(builder)
 	if _failures == 0:
 		print("party_match_window_test: all checks passed")
 		quit(0)
