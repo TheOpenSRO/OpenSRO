@@ -149,15 +149,13 @@ func (m *Matcher) stamp() uint32 { return uint32(m.Now().Unix()) }
 
 // ListingOwner returns the character holding entry, through the Hub's
 // listings (which follow a new leader and vanish with a dissolved party).
+// A lookup in the Hub's inverted index (it was a scan of every listing,
+// called once per listing by Page and Sweep).
 func (h *Hub) ListingOwner(entry uint32) (int64, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for c, l := range h.listings {
-		if l.entry == entry {
-			return c, true
-		}
-	}
-	return 0, false
+	c, ok := h.byEntry[entry]
+	return c, ok
 }
 
 // setRequest and clearRequest mark a character's join request pending (its

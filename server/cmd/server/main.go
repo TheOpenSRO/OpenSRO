@@ -1108,6 +1108,10 @@ func main() {
 			"server's choice (round 633); the shard DB's _AddNewChar gives a new character "+
 			"InventorySize 109, the same 96 plus the 13 equipment slots (EXTERNAL, round 692). A GM's /invsize or the inventory expansion item gives a character its "+
 			"own. See deploy/README.md, \"Inventory size\".")
+	pprofAddr := flag.String("pprof-addr", os.Getenv("OPENSRO_PPROF_ADDR"),
+		"serve net/http/pprof on this address, e.g. 127.0.0.1:6060 (env OPENSRO_PPROF_ADDR), and log a runtime stats line "+
+			"every 30 s (GC, heap, goroutines, scheduler latency). OURS, debug only, off by default (empty). Never expose it: "+
+			"it serves stacks and the command line. See deploy/README.md, \"Profiling a lagging server\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -1197,6 +1201,10 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := startDebug(ctx, *pprofAddr, logger); err != nil {
+		logger.Error("pprof listener (-pprof-addr / OPENSRO_PPROF_ADDR)", "addr", *pprofAddr, "err", err)
+		os.Exit(1)
+	}
 
 	// The stores are held as interfaces so the in-memory and PostgreSQL
 	// wirings below are interchangeable. account is split in two because

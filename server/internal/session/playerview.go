@@ -548,7 +548,7 @@ func othersInView(hub *world.Hub, e world.Entity) []world.Entity {
 // session leaves late: the live one's body stays). Each recipient sent the
 // 0x3016 hears gone's OpPlayerZoneNotice (left) just ahead of it, and no
 // other does (round 737's verification, N5).
-func departPlayer(hub *world.Hub, gone world.Entity, recips []world.Entity) {
+func departPlayer(hub *world.Hub, gone world.Entity, recips []world.Watcher) {
 	if hub != nil {
 		if cur, ok := hub.EntityByCharacterID(gone.CharacterID); ok && cur.Session != gone.Session {
 			return

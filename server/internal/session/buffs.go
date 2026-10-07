@@ -668,11 +668,11 @@ func moveBySkill(sess *gateway.Session, hub *world.Hub, chars character.Store, s
 	}
 	entity := moved.Entity
 	keepUp.Cancel(entity.CharacterID)
-	savePositionEvery(chars, sess, entity, now)
 	msg := &SkillMove{CharacterID: entity.CharacterID, SkillID: skillID,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z)}
 	// The caster and the players in view that hold it (round 737); a jump
 	// across a block line spawns and despawns as a walk's does.
 	afterRelocate(sess, moved, true, gateway.MustFrame(&proto.Packet{Opcode: OpSkillMove, Data: msg.Encode()}))
+	savePositionEvery(chars, sess, entity, now) // after the messages
 	return true
 }

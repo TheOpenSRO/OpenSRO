@@ -7190,6 +7190,62 @@ The full notes are in `docs/rounds/r738.md`; the review is `r738_review.md`. The
   - box "ran 251 suite(s), 0 failing" on the lane branch;
   - dev integration re-run below.
 
+## The swarm lane's lag hunt (2026-10-07): a latency probe, pprof, the party-match relist, and three stalls
+
+The user's report against the Mac mini under 7,000 swarm bots: "sometimes the server lags" (also
+outside Jangan), and "nothing in party matching". Unnumbered: other lanes hold the next numbers.
+All measurements are LOCAL: own server and own Postgres on the 16-thread box, the Mac's settings
+(`-full-map`, which turns `-single-frame` on, so every player shares one "world" bucket; 65,321
+monsters alive; monster AI, aggro, battle; `-persist-position`), 3,000 bots on the plaza with
+`-walk 10`. The production server and swarms were not touched. Another lane's swarm was loading the
+same box (load average about 12), so the small numbers are noisy.
+
+- **Party matching was empty because nothing renews an entry.** An entry expires 61..62 minutes
+  after its registration or last change (`party.Matcher.Sweep`, READ SM 0x4504c0) and the owner is
+  told nothing: the ShardManager sends only 0x386f to its GameServer, which has no case for it; ours
+  sends nothing at all. The swarm listed once. Now each bot (`cmd/swarm/relist.go`) re-sends its own
+  entry unchanged as 0x706a every 52..58 minutes, which renews its time; 0xb06a [2][0x2c1c] means
+  gone and the bot lists again (0x7069); a party dissolving (0x3864 kind 1) or the bot leaving one
+  (kind 3, its own JID) triggers the same check 3 s later. Tested end to end against the real
+  handlers with the Matcher's clock moved (`TestListerRelistsAfterExpiry`). A running swarm keeps
+  the old behaviour until restarted with the new binary.
+- **Party matching was O(entries^2) under the party Hub's lock.** `Hub.ListingOwner` scanned every
+  listing, and the page builder (each 0x706c) and the 60 s sweep called it once per listing. At
+  10,000 entries: a page 339 ms and a sweep 222 ms, before; 3.9 ms and 1.8 ms with an entry index
+  (`Hub.byEntry`; `TestSweepOfManyEntriesIsLinear`). The monster AI tick takes that lock inside its
+  own (`linkAggro`), so the monsters waited too. A real client opening the party-matching window
+  paid the page cost per page; the sweep that expired a crowd's entries together paid it once.
+- **A periodic per-player stall: the position save sat in front of the click's echo.** Two probes
+  in separate processes both spiked to 8-13 ms exactly every 30 s, each on its own phase: the move
+  handler's `savePositionEvery` (two Postgres commits, `-persist-position`) ran before the 0xB021
+  echo and the watchers' messages. Moved after them (destmove, the old position stream, the skill
+  move); the 30 s spikes are gone. Against the Mac's remote Postgres (192.168.5.25) under a crowd's
+  load, each is two network round trips plus two commits, up to the 5 s timeout: a walking player
+  felt it every 30 s.
+- **A crowd leaving at once stalled every player.** `world.Hub.Leave` copied every entity in view
+  (about a kilobyte each with slice growth) under the world's write lock: 0.80 ms and 3 MB a
+  disconnect at 3,000 in one window, 2.08 ms and 8 MB at 7,000 (`BenchmarkLeaveInCrowd`). The swarm
+  killed (all 3,000 sockets closing in one second) gave the probe a **742 ms** round trip, and 21
+  GCs in that half minute against 3-4. Leave now returns only who watched (`[]world.Watcher`,
+  sized up front): 53 us and 48 KB at 3,000, 124 us and 112 KB at 7,000; the same kill gave the
+  probe **218 ms and 85 ms** (two runs). An arrival's snapshot is sized up front too: Enter at
+  7,000 is 0.58 ms and 1.9 MB.
+- **Steady state is not where the lag is.** 3,000 in view, 300 walking: probe p50 0.10-0.12 ms,
+  p99 1-11 ms, max 13 ms, no round trip over 200 ms in ~15 minutes; 3,000 arriving at 100 a second:
+  max 7 ms. Server 1.6 cores, two thirds of it socket writes; GC every 8-10 s with 0.05-6 ms
+  pauses at a 400-600 MB heap; scheduler latency p99 3-5 ms, max 25 ms (the box shared). The 60 s
+  sweep, the nest scheduler and the mover pass did not line up with any spike.
+- **Left as a write-up** (not contained fixes): under `-single-frame` each blow on a monster, each
+  respawn push and each ground-item event scans every player in the world twice
+  (`monsterWatchers` -> `EntitiesInZone`, plus an AOI lock per player); the 100 ms AOI, regen and
+  AI ticks each copy every entity (`AllEntities`, about 2 MB at 7,000, 30-40 times a second);
+  a burst of N disconnects in one window is still N^2 despawn sends (the work is inherent; the
+  lock hold is now 17x shorter); regen and party updates run per-character Postgres reads serially.
+- **Tools.** `swarm probe` / `up -probe` (one bot in region 98/171, a field with no nest three
+  regions from the plaza, clicking every 250 ms; p50/p99/max every 10 s and a `SPIKE` line per
+  round trip over 200 ms). `-pprof-addr` / `OPENSRO_PPROF_ADDR` (off by default; pprof, mutex
+  sampling, and a `runtime stats` line every 30 s). Both in deploy/README.md.
+
 ## Seven-hundred-and-forty-ninth round: moving by destination, as retail does (0x7021 / 0xB021 / 0xB023)
 
 The full notes are in `docs/rounds/r749.md`. There were three reviews in `r749_review.md`: the review,

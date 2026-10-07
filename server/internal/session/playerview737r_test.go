@@ -166,7 +166,7 @@ func TestASessionWithNoViewIsSentNoSpawn(t *testing.T) {
 	}()
 	d := viewDeps{hub: f.hub}
 	spawnPlayerToOthers(d, ea, []world.Entity{{Session: recorder, CharacterID: 300, Name: "Cyra", Zone: ea.Zone, Pos: ea.Pos}})
-	departPlayer(f.hub, ea, []world.Entity{{Session: recorder, CharacterID: 300}})
+	departPlayer(f.hub, ea, []world.Watcher{{Session: recorder, CharacterID: 300}})
 	despawnPlayerFromOthers(d, ea, []world.Entity{{Session: recorder, CharacterID: 300}})
 }
 

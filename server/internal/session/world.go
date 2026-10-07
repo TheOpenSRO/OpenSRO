@@ -1692,7 +1692,7 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// of again: it was taken out and put back, as retail's block removal and
 	// insertion are, and its new spawn follows. Each client sent the 0x3016
 	// hears the OURS zone notice (left) ahead of it, and only those.
-	departPlayer(hub, old, remainingOld)
+	departPlayer(hub, old, world.WatchersOf(remainingOld))
 
 	// The arrival faces the way the character last moved: the hub carries
 	// the heading through the change (world.Hub.ChangeZone). A zone change
@@ -1809,14 +1809,15 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	if !req.Relocated && !req.Stopped {
 		keepUp.Cancel(entity.CharacterID)
 	}
-	// Under -persist-position the walk is saved at most once every
-	// positionSaveInterval (round 573), so a crash loses little of it.
-	savePositionEvery(chars, sess, entity, now)
 	// Round 749: relayed as retail's 0xB023 (the stop/position message,
 	// FUN_008a4f80, which snaps the body there and ends its turn) to the
 	// players in view that hold the mover -- not to the mover, whose client
 	// is already there. A block crossing spawns and despawns both ways, as
 	// before (round 737, playerview.go).
 	stopRelay(sess, moved, false)
+	// Under -persist-position the walk is saved at most once every
+	// positionSaveInterval (round 573), so a crash loses little of it --
+	// after the relay (savePositionEvery).
+	savePositionEvery(chars, sess, entity, now)
 	return nil
 }

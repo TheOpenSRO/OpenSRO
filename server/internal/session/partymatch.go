@@ -496,7 +496,13 @@ func RunPartyMatchSweep(ctx context.Context, d PartyMatchDeps) {
 			return
 		case now := <-t.C:
 			if gone := d.Match.Sweep(now); len(gone) > 0 {
-				d.log().Info("party match: entries expired", "entries", gone)
+				// The numbers themselves only for a handful: a crowd's
+				// thousands expire together.
+				if len(gone) <= 50 {
+					d.log().Info("party match: entries expired", "count", len(gone), "entries", gone, "took", time.Since(now).String())
+				} else {
+					d.log().Info("party match: entries expired", "count", len(gone), "first", gone[0], "last", gone[len(gone)-1], "took", time.Since(now).String())
+				}
 			}
 		}
 	}

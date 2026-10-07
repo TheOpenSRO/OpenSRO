@@ -372,6 +372,10 @@ type Hub struct {
 	detached map[uint64]*Invite
 	seq      uint64
 	listings map[int64]listing
+	// byEntry is listings inverted, entry number to holder, so ListingOwner
+	// is a lookup: it is called per listing by the page builder and the
+	// sweep, which were O(listings^2) under this lock (OURS, a cost fix).
+	byEntry map[uint32]int64
 	// requests holds the characters with a party-match join request pending
 	// (lane S3, match.go): the GameServer writes their state byte to 1 when it
 	// forwards the request (READ, GS 0x5bf570) and back to 0 when it fails
@@ -397,6 +401,7 @@ func NewHub() *Hub {
 		invites:   make(map[int64]*Invite),
 		detached:  make(map[uint64]*Invite),
 		listings:  make(map[int64]listing),
+		byEntry:   make(map[uint32]int64),
 		requests:  make(map[int64]struct{}),
 		rotation:  make(map[uint32][]int64),
 		Timeout:   InviteTimeout,
@@ -509,7 +514,7 @@ func (h *Hub) removeLocked(characterID int64) (Removal, error) {
 		for _, m := range p.Members {
 			h.forgetLocked(m)
 		}
-		delete(h.listings, p.LeaderID)
+		h.clearListingLocked(p.LeaderID)
 		delete(h.parties, pid)
 		delete(h.rotation, pid)
 		r.Dissolved = true
@@ -523,8 +528,8 @@ func (h *Hub) removeLocked(characterID int64) (Removal, error) {
 		p.LeaderID = p.Members[0].CharacterID
 		r.NewLeader = p.LeaderID
 		if l, ok := h.listings[characterID]; ok {
-			delete(h.listings, characterID)
-			h.listings[p.LeaderID] = l
+			h.clearListingLocked(characterID)
+			h.setListingLocked(p.LeaderID, l)
 		}
 	}
 	r.After = p.clone()
@@ -614,14 +619,33 @@ func (h *Hub) All() []*Party {
 func (h *Hub) SetListing(characterID int64, entry uint32, flags Flags) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.listings[characterID] = listing{entry: entry, flags: flags}
+	h.setListingLocked(characterID, listing{entry: entry, flags: flags})
+}
+
+// setListingLocked and clearListingLocked keep listings and byEntry in step.
+func (h *Hub) setListingLocked(characterID int64, l listing) {
+	h.clearListingLocked(characterID)
+	if old, ok := h.byEntry[l.entry]; ok && old != characterID {
+		delete(h.listings, old)
+	}
+	h.listings[characterID] = l
+	h.byEntry[l.entry] = characterID
+}
+
+func (h *Hub) clearListingLocked(characterID int64) {
+	if l, ok := h.listings[characterID]; ok {
+		delete(h.listings, characterID)
+		if h.byEntry[l.entry] == characterID {
+			delete(h.byEntry, l.entry)
+		}
+	}
 }
 
 // ClearListing removes characterID's party-match entry.
 func (h *Hub) ClearListing(characterID int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	delete(h.listings, characterID)
+	h.clearListingLocked(characterID)
 }
 
 // Listing returns characterID's party-match entry.

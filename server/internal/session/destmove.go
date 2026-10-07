@@ -294,11 +294,13 @@ func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hu
 	motions.walking(e.CharacterID, legEnd(r.Entity.Move, now))
 	// A move is the player's own cancel of a running auto-attack (keepup.go).
 	keepUp.Cancel(e.CharacterID)
-	savePositionEvery(chars, sess, r.Entity, now)
 	region, lx, lz := regionLocalOf(r.Entity.Zone, r.Entity.Pos)
 	data := encodeMoveEcho(uint32(e.CharacterID), movementBytes(m, angle), region, r.Entity.Pos, lx, lz)
 	afterRelocate(sess, r, true, gateway.MustFrame(&proto.Packet{Opcode: proto.OpMovementResponse, Data: data}))
 	ensureMoverPass(hub)
+	// The periodic save is two Postgres writes: after the echo and the
+	// watchers' 0xB021, not before (savePositionEvery).
+	savePositionEvery(chars, sess, r.Entity, now)
 	return nil
 }
 

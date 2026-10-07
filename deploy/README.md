@@ -1724,3 +1724,108 @@ They are EXTERNAL data from a private shard's backup, like the rest of this sect
 them. The loader reads the columns by name (43, 17 and 10 columns; `tab_refhive`'s last,
 `szDescString128`, is not read), masks `nRegionDBID` to the engine's u16 itself, and treats an
 empty `fLocalPosY` as NULL. A missing file or column is fatal at boot.
+
+## A bot crowd for load and looks (`server/cmd/swarm`)
+
+`swarm` stands bot players on Jangan's plaza: accounts `PREFIX0000..` (5-8 lowercase letters,
+default `swarm`), a mixed China/Europe crowd created through the retail lobby, worn gear with
+pluses and seals picked from the database's own `items` table and written into
+`equipment_slots` before each bot enters, about 10 % of them click-moving (0x7021), each listing
+a party-match entry and accepting every join request and invitation. It changes no server
+setting and makes no GM. Run it on another machine than the server (it is a client load of its
+own: at 10,000 it took about 6 cores, below). It needs the gateway and the server's Postgres;
+for opensro-01, tunnel Postgres first (it is pinned to the host's 127.0.0.1:5432):
+
+```
+ssh -N -L 15432:127.0.0.1:5432 opensro@192.168.5.25 &
+cd server && go build -o /tmp/swarm ./cmd/swarm
+PG='postgres://postgres:postgres@127.0.0.1:15432/opensro?sslmode=disable'
+/tmp/swarm items  -pg "$PG" -n 5                       # read-only: the gear it would pick
+/tmp/swarm up     -addr 192.168.5.25:15779 -pg "$PG" -n 1000 -prefix swarm   # runs until stopped
+/tmp/swarm status -prefix swarm -addr 192.168.5.25:15779 -pg "$PG"
+/tmp/swarm down   -prefix swarm -pg "$PG"              # logs them out, deletes every bot row
+/tmp/swarm probe  -addr 192.168.5.25:15779 -pg "$PG" -prefix probe   # the latency probe, below
+/tmp/swarm down   -prefix probe -pg "$PG"              # removes the probe's account
+```
+
+Stopping `up` (Ctrl-C, SIGTERM) logs the bots out and keeps their accounts; the next `up`
+re-seeds their gear, level and spot. `down` deletes them.
+
+- **Where they stand.** On the plaza deck's height, -30.117 in the Jangan frame (MEASURED, see
+  `cmd/swarm/db.go`; a client draws a standing body at the height the server gives it), in a disc
+  whose north edge is the deck's railing line (97/168 local z 960), radius 85 x sqrt(n/1000) by
+  default (`-radius`). Where the deck was measured flat: x 946..1031, z 953..1418; a larger disc
+  reaches ground not measured.
+- **Capacity.** Bots count against `-max-players` (default 1000; `OPENSRO_MAX_PLAYERS`). `up`
+  reads the server's status first and runs no more bots than there is room for, warning when it
+  cuts `-n`; a full server turns non-GM logins away (GM accounts still log in). `-headroom N`
+  keeps N slots free. 10,000 bots need the server's maximum raised to at least 10,000 first.
+- **Load.** Logins are paced at `-rate` a second (default 20; 10,000 take about 8.5 minutes).
+  Accounts are written with a minimum-cost bcrypt, so a login costs the server about a
+  millisecond of hashing instead of the default cost's tens. Every walker's click goes to every
+  player in view, so the cost grows with walkers x crowd: at 10,000 in one plaza with `-walk 10`
+  the server delivered about 0.9 M packets a second (MEASURED locally, server and swarm on one
+  16-thread box: server 8.3 cores and 6.7 GB, swarm 6.3 cores and 600 MB). `-walk 2` or
+  `-walk-every 20s` cuts that in proportion.
+- **Party matching.** Each bot lists an entry open to levels 1..140 (the server takes a creator
+  of level 5 or more, so the bot's level is seeded from its gear's requirement, 5..110) and
+  confirms every join request (0x306e). A player holding an entry cannot be invited (the
+  server's 0x2c25, retail's rule); `-party=false` turns all of it off.
+- **Keeping the entries listed.** An entry expires 60 minutes after it was registered or last
+  changed (swept every minute), and the owner is told nothing: the server sends no 0xb06b and no
+  state change, as retail's ShardManager sends its client nothing (`internal/party/match.go`,
+  `Sweep`). A swarm built before this listed once, so an hour after `up` the party-matching
+  window was empty. Each bot now re-sends its own entry unchanged (0x706a) every 52..58 minutes,
+  which renews its time; a refusal 0x2c1c (gone) makes it list again (0x7069), and so does its
+  party dissolving or its leaving one (0x3864). The summary counts `checks`, `renewed` and
+  `relisted`. A swarm already running keeps the old behaviour until it is restarted with the new
+  binary.
+- **The latency probe** (`swarm probe`, or `up -probe` alongside a crowd, as `-probe-prefix`
+  default `probe`): one bot standing in a quiet field, region 98/171 local (960, 960) by default
+  (three regions from the plaza, no nest in it; `-probe-region`, `-probe-x`, `-probe-z`,
+  `-probe-y`), clicks (0x7021) between two points 8 units apart every 250 ms (`-probe-every`) and
+  times its own 0xB021 echo -- the server's answer to a click, through the move handler and the
+  world hub. Every 10 s (`-probe-report`) it logs `rtt p50 / p99 / max`; any round trip over
+  200 ms (`-probe-spike`) gets its own `SPIKE` line with the send and echo times to the
+  millisecond, in local time with the zone, for lining up with the server's log (mind the clocks
+  of the two machines); a click with no echo in 5 s is a `NO ECHO` line, a dropped connection a
+  `DISCONNECTED` one. One click is in flight at a time, so a stall shows as one long round trip.
+  Run it from the swarm's machine or any other: it is one connection.
+- **down** stops the running `up` (its pid is in `$TMPDIR/opensro-swarm-PREFIX.json`, checked to
+  be a `swarm up` before it is signalled), then in one transaction deletes the accounts named
+  exactly `^PREFIX[0-9]{4}$`, their characters and every row that names them (equipment, bag,
+  warehouse, skills, masteries, quests, friends, guild rows; any other `character_id` /
+  `account_id` column it finds). Re-running is a no-op.
+
+## Profiling a lagging server (`-pprof-addr`, off by default)
+
+`-pprof-addr ADDR` (env `OPENSRO_PPROF_ADDR`) serves Go's `net/http/pprof` on ADDR and, while it
+is on, logs a `runtime stats` line every 30 s: `gc_total` / `gc_window` (GC cycles), `gc_pause_last`
+and `gc_pause_max_window`, `heap_inuse_mb`, `heap_alloc_mb`, `sys_mb`, `goroutines`, and the
+scheduler latency over the window (`sched_lat_p50` / `p99` / `max`: how long a runnable goroutine
+waited for a thread; it climbs when the process is CPU-starved). Contended locks are sampled for
+`/debug/pprof/mutex` too. It is OURS and debug only: empty (the default) serves nothing and logs
+nothing. **Bind it to 127.0.0.1** -- it serves stacks and the command line (the Postgres DSN is in
+it); the server warns when ADDR is not a loopback address. Reach it over ssh.
+
+On the Mac mini (launch agent `com.opensro.server`; the script it starts is the plist's
+`ProgramArguments`, `~/opensro/run.sh` on the current install), with a binary that has the flag:
+
+```
+# on the Mac: in run.sh, with the other exports (before its exec line), add
+#   export OPENSRO_PPROF_ADDR=127.0.0.1:6060
+# then restart the agent and check
+launchctl kickstart -k gui/$(id -u)/com.opensro.server
+grep 'pprof on\|runtime stats' ~/opensro/logs/server.log | tail
+
+# from a workstation: tunnel, then profile
+ssh -N -L 6060:127.0.0.1:6060 opensro@192.168.10.146 &
+go tool pprof -top 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'     # CPU
+go tool pprof -top 'http://127.0.0.1:6060/debug/pprof/mutex'                  # lock waits
+curl -o trace.out 'http://127.0.0.1:6060/debug/pprof/trace?seconds=5' && go tool trace trace.out
+curl 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2' > stacks.txt        # during a stall
+```
+
+Delete the line and kickstart again to turn it off. Line a `swarm probe` `SPIKE` up with the
+`runtime stats` line of the same half minute, and with a goroutine dump or a trace taken while
+it happens.

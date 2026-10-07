@@ -148,6 +148,15 @@ func restoredHeading(ctx context.Context, chars character.Store, characterID int
 
 // savePositionEvery is the move handler's save: at most once every
 // positionSaveInterval per session (the place's clock).
+//
+// Its callers run it AFTER sending what the move owes (the mover's echo, the
+// watchers' messages): the save is two Postgres round trips, each a commit,
+// and before the echo every 30 s of a walk it delayed the click's answer by
+// them -- about 8-10 ms against a local Postgres, MEASURED with `swarm probe`
+// (docs/WORLD_ISSUES.md, "The swarm lane's lag hunt"), and more against a
+// remote or busy one, up to positionSaveTimeout. It stays on the session's
+// own goroutine, so it is still done before the disconnect's final save, and
+// the session's next message still waits for it.
 func savePositionEvery(chars character.Store, sess *gateway.Session, e world.Entity, now time.Time) {
 	if chars == nil || !persistPosition.Load() {
 		return
