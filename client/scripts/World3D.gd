@@ -1302,6 +1302,35 @@ var _other_build_args := {}
 ## above 0 an arrival is queued without pumping; the last one out pumps.
 var _other_build_defer := 0
 var _other_uids := OtherCrowd.UidIndex.new()
+## Round 756 (CrowdGpu ghosts, OURS; docs/rounds/r756.md): an arrived body is
+## drawn at once, before it is dressed, from its kind's recipe
+## (CharacterAppearance.far_recipe -> CrowdGpu.add_ghost), nearest first,
+## OtherCrowd.GHOST_BUDGET_USEC a frame (_ghost_other) -- with its name
+## plate, click body, circle shadow and clip sounds. The dressing follows in
+## the background (_pump_other_builds, nearest first) and hands the built
+## skeleton over in the same frame (_dress_other); anything that needs the
+## skeleton first (a one-shot, an effect, berserk, Detail's shadow) dresses it
+## at once (_dress_ghost_now).
+var _other_ghosts := _ghost_queue()
+## id -> true while the body is a ghost waiting to be dressed.
+var _ghost_ids := {}
+## id -> whether the ghost walks (its run loop drawn on the GPU).
+var _ghost_moving := {}
+## id -> true for a waiting body that cannot be a ghost (only dressing shows it).
+var _ghost_refused := {}
+## A ghost's skeleton transform under its holder, by Height factor: the turn
+## and scale _dress_other gives the built skeleton.
+var _ghost_local := {}
+## OPENSRO_QA_GHOSTS=0: arrivals dressed as before round 756 (QA A/B only).
+var _ghosts_on := OS.get_environment("OPENSRO_QA_GHOSTS") != "0"
+## The last near/far cycle's "comes near within" distance (_crowd_choose):
+## a ghost dressed within it stays near.
+var _crowd_come := INF
+
+static func _ghost_queue() -> OtherCrowd.BuildQueue:
+	var q := OtherCrowd.BuildQueue.new()
+	q.budget_usec = OtherCrowd.GHOST_BUDGET_USEC
+	return q
 var _monster_bodies := {} # monster_id -> Node3D
 ## monster_id -> CombatNet.MonsterSnapshot, as last listed -- except x/z, which
 ## follow the drawn body while it walks (_step_monster_bodies), so the reach
@@ -1662,6 +1691,7 @@ func _ready() -> void:
 	# Round 747 (CrowdGpu): a far body follows its meshes' new materials, and
 	# comes back to cast Detail's shadow.
 	CharacterLight.on_changed = _crowd_light_changed
+	CharacterLight.on_value = _crowd_ghost_light
 	CharacterBlobs.on_cast = _crowd_wake_node
 	EquipFx.far_frame = _crowd_item_frame
 	EquipFx.far_origin = _crowd_item_origin
@@ -6175,6 +6205,10 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	# Round 739: and their queued dressing and their uids.
 	_other_builds.clear()
 	_other_build_args.clear()
+	_other_ghosts.clear()
+	_ghost_ids.clear()
+	_ghost_moving.clear()
+	_ghost_refused.clear()
 	_other_uids.clear()
 	# Their buffs went with them (round 638): the new zone's owners, this
 	# player included, are re-sent on arrival (sendBuffsInView). Round 646:
@@ -6319,6 +6353,8 @@ func _exit_tree() -> void:
 		_crowd_gpu = null
 	if CharacterLight.on_changed == _crowd_light_changed:
 		CharacterLight.on_changed = Callable()
+	if CharacterLight.on_value == _crowd_ghost_light:
+		CharacterLight.on_value = Callable()
 	if CharacterBlobs.on_cast == _crowd_wake_node:
 		CharacterBlobs.on_cast = Callable()
 	if EquipFx.far_frame == _crowd_item_frame:
@@ -6795,6 +6831,14 @@ func _crowd_gpu_step() -> void:
 		if _crowd_gpu != null and _crowd_gpu.body_count() > 0:
 			for skel in _crowd_gpu.skeletons():
 				_crowd_wake(skel, false)
+			# Round 756: ghosts have no full path to go back to. Off the
+			# instances, and left to the dressing at its 90 ms aim (review F8:
+			# dressing them all here froze the frame for seconds at 3000).
+			for g in _crowd_gpu.ghosts():
+				_crowd_gpu.remove(g, false)
+				var gid := int((g as Node).get_meta("character_id", -1))
+				_ghost_ids.erase(gid)
+				_ghost_refused[gid] = true
 			_crowd_gpu.flush(_idle_anim_time)
 		return
 	if _other_gaits.is_empty() and (_crowd_gpu == null or _crowd_gpu.body_count() == 0):
@@ -6806,6 +6850,9 @@ func _crowd_gpu_step() -> void:
 	_crowd_frame += 1
 	if _crowd_scan.is_empty() and _crowd_scan_at == 0:
 		_crowd_scan = _other_gaits.keys()
+		# Round 756: the ghosts too, for their hearing (and, round 757's merge,
+		# S3: for the far bounds).
+		_crowd_scan.append_array(_ghost_ids.keys())
 		_crowd_got_ids.clear()
 		_crowd_got_dist.clear()
 		_crowd_got_flags.clear()
@@ -6828,6 +6875,23 @@ func _crowd_gpu_step() -> void:
 		_crowd_scan_at += 1
 		var node = _other_bodies.get(id)
 		var gait: Dictionary = _other_gaits.get(id, {})
+		if gait.is_empty() and _ghost_ids.has(id) and node != null and is_instance_valid(node):
+			# A ghost's hearing (round 756), by the far bodies' rule below.
+			var gb := crowd.body_of(node)
+			if gb != null:
+				var gat := (node as Node3D).global_position
+				var gheard := gat.distance_squared_to(listener) <= SoundTable.CULL_DISTANCE_SQ
+				if gheard != gb.heard:
+					crowd.set_heard(gb, gheard)
+					gb.sound_due = -INF if gheard else INF
+					# Round 757's merge, S1: filed on the sound wheel.
+					_sound_schedule(gb)
+					if not gheard:
+						_anim_sounds.rest(node)
+				# S3: inside the cycle's far bounds, as a dressed far body is.
+				_crowd_far_lo = Vector3(minf(_crowd_far_lo.x, gat.x), minf(_crowd_far_lo.y, gat.y), minf(_crowd_far_lo.z, gat.z))
+				_crowd_far_hi = Vector3(maxf(_crowd_far_hi.x, gat.x), maxf(_crowd_far_hi.y, gat.y), maxf(_crowd_far_hi.z, gat.z))
+			continue
 		if node == null or not is_instance_valid(node) or gait.is_empty() or not is_instance_valid(gait.get("skeleton")):
 			continue
 		var skel: Skeleton3D = gait["skeleton"]
@@ -6989,7 +7053,7 @@ func _crowd_sound_step() -> void:
 			_crowd_sound_advance(b, t)
 
 ## Round 757's review, F1: a body is advanced from the wheel only while it is
-## still the far record of its skeleton. A body brought near (CrowdGpu.remove,
+## still the far record of its skeleton (a ghost's: its holder, round 756). A body brought near (CrowdGpu.remove,
 ## which also clears its hearing) or replaced by a later switch's new record is
 ## stale: its bucket entry is dropped, and the near clip tick alone drives the
 ## skeleton's sounds -- the stale record advancing its old loop overwrote the
@@ -6997,17 +7061,21 @@ func _crowd_sound_step() -> void:
 func _sound_live(b: CrowdGpu.Body) -> bool:
 	if b == null or not b.heard or b.sound_due == INF or _crowd_gpu == null:
 		return false
-	return is_instance_valid(b.skel) and _crowd_gpu.body_of(b.skel) == b
+	var key: Object = b.node if b.ghost else b.skel
+	return is_instance_valid(key) and _crowd_gpu.body_of(key) == b
 
 func _crowd_sound_advance(b: CrowdGpu.Body, t: float) -> void:
-	if not is_instance_valid(b.skel):
+	# A ghost (round 756) has no skeleton: its sounds are registered on its
+	# holder (round 757's merge, S1).
+	var key: Object = b.node if b.ghost else b.skel
+	if not is_instance_valid(key):
 		b.sound_due = INF
 		return
 	var e: Array = b.entry
 	var anim: BanReader.ParsedAnimation = e[1]
 	var ms := _loop_ms(anim, t + float(e[3]))
-	_anim_sounds.advance(b.skel, anim, float(e[5]), ms, true)
-	var next := _anim_sounds.next_key_ms(b.skel, anim, ms, true)
+	_anim_sounds.advance(key, anim, float(e[5]), ms, true)
+	var next := _anim_sounds.next_key_ms(key, anim, ms, true)
 	b.sound_due = t + next / 1000.0 if next != INF else INF
 	_sound_schedule(b)
 	_crowd_gpu.stats["sound_advances"] = int(_crowd_gpu.stats.get("sound_advances", 0)) + 1
@@ -7030,6 +7098,7 @@ func _crowd_choose() -> void:
 		var k_out := int(ceil(float(k) * CrowdGpu.NEAR_HYSTERESIS))
 		stay = dists[mini(k_out, dists.size()) - 1] if k_out > 0 else -1.0
 	_crowd_pending.clear()
+	_crowd_come = come
 	var nearest := 0
 	for i in range(_crowd_got_ids.size()):
 		var flags := _crowd_got_flags[i]
@@ -7105,21 +7174,9 @@ func _crowd_switch_due() -> void:
 			_crowd_far_hi = Vector3(maxf(_crowd_far_hi.x, at.x), maxf(_crowd_far_hi.y, at.y), maxf(_crowd_far_hi.z, at.z))
 			# Its clip sounds go on from the CPU while it is within hearing
 			# (round 747's review, F2: the READ 600 rule), from where the near
-			# tick left them.
-			var fb := _crowd_gpu.body_of(skel)
-			var heard := (want[skel][0] as Node3D).global_position.distance_squared_to(_crowd_listener()) <= SoundTable.CULL_DISTANCE_SQ
-			_crowd_gpu.set_heard(fb, heard)
-			fb.sound_due = -INF if heard else INF
-			_sound_schedule(fb)
-			# Its run baked ahead, so a step does not bring it back (a gait
-			# change on a far body whose loop is not baked does).
-			var gait: Dictionary = _other_gaits.get(int(want[skel][1]), {})
-			if not gait.is_empty():
-				_crowd_gpu.prebake(skel, _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_RUN, gait["group"]))
-			if not skel.has_meta(CROWD_EXIT_META):
-				var cb := _crowd_on_exit.bind(skel)
-				skel.set_meta(CROWD_EXIT_META, cb)
-				skel.tree_exiting.connect(cb)
+			# tick left them; its run baked ahead, so a step does not bring it
+			# back (a gait change on a far body whose loop is not baked does).
+			_crowd_went_far(int(want[skel][1]), want[skel][0], skel)
 		if Time.get_ticks_usec() - t0 >= CrowdGpu.SWITCH_BUDGET_USEC:
 			break
 	# Those not reached this frame wait; those tried (switched or refused) do not.
@@ -7174,6 +7231,8 @@ func _crowd_wake_node(node) -> void:
 	if _crowd_gpu == null or node == null or not is_instance_valid(node):
 		return
 	var id := int((node as Node).get_meta("character_id", -1))
+	# Round 756: a ghost is dressed first (an effect, berserk, Detail's shadow).
+	_dress_ghost_now(id)
 	var gait: Dictionary = _other_gaits.get(id, {})
 	if not gait.is_empty():
 		_crowd_wake(gait.get("skeleton"))
@@ -7985,6 +8044,18 @@ func _plate_batch_switch(on: bool) -> void:
 			if _plate_batch != null and _plate_batch.has(label):
 				_plate_batch.remove(label)
 			_plate_sweep.add(label)
+
+## Round 757: another player's plate over `node` at `top`: batched
+## (NamePlateBatch) unless the batch is off; the Label3D stays as the plate's
+## record (its text, its look), never drawn. The ghost (round 756) and the
+## dressing both make it here.
+func _add_other_plate(node: Node3D, char_name: String, top: float) -> void:
+	var batched := _plate_batch_get() != null
+	var plate := _name_plate(char_name, top, not batched)
+	node.add_child(plate)
+	if batched and not _plate_batch_add(plate, node):
+		plate.visible = true
+		_plate_sweep.add(plate)
 
 ## Draws `label` (made by _name_plate, unswept) in the batch over `owner`;
 ## false when the batch is off (the caller sweeps it as a Label3D).
@@ -10099,6 +10170,7 @@ func _log_paper_doll_pose() -> void:
 func _set_other_gait(character_id: int, moving: bool) -> void:
 	var held = _other_gaits.get(character_id)
 	if held == null:
+		_set_ghost_gait(character_id, moving)
 		return
 	var gait: Dictionary = held
 	if gait.is_empty() or bool(gait["moving"]) == moving:
@@ -10128,6 +10200,55 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 		gait["at"] = [-1]
 		_other_hint_by_skel[(gait["skeleton"] as Object).get_instance_id()] = gait["at"]
 	_swap_other_loop(gait["skeleton"], anim, gait["at"])
+
+## Round 756: a ghost starting or stopping: its loop swapped on the GPU (a
+## texel write), or, when the new loop is not baked, it is dressed now and
+## swaps on the full path. A body not drawn yet keeps the state for its ghost.
+func _set_ghost_gait(character_id: int, moving: bool) -> void:
+	if not _other_build_args.has(character_id) or bool(_ghost_moving.get(character_id, false)) == moving:
+		return
+	_ghost_moving[character_id] = moving
+	if moving:
+		_other_settled.erase(character_id)
+		_other_seated.erase(character_id)
+	var node = _other_bodies.get(character_id)
+	if not _ghost_ids.has(character_id) or _crowd_gpu == null or node == null or not (node as Node).has_meta(GHOST_KIND_META):
+		return
+	var kind: Array = (node as Node).get_meta(GHOST_KIND_META)
+	var anim := _body_animation_for(String(kind[0]), BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND, String(kind[1]))
+	var frames := _frame_count(anim)
+	if frames <= 1:
+		return
+	if _crowd_gpu.set_clip(node, anim, frames, _idle_anim_time):
+		var fb := _crowd_gpu.body_of(node)
+		if fb != null and fb.heard:
+			var ms := _loop_ms(anim, _idle_anim_time + float(fb.entry[3]))
+			_anim_sounds.prime(node, anim, float(fb.entry[5]), ms)
+			var next := _anim_sounds.next_key_ms(node, anim, ms, true)
+			fb.sound_due = _idle_anim_time + next / 1000.0 if next != INF else INF
+			_sound_schedule(fb)  # round 757's merge, S1
+		return
+	# Not baked (review F3: never dressed here -- a server tick starts many
+	# at once): it keeps its loop meanwhile, and the swap is tried again when
+	# a clip goes up (_retry_ghost_gaits); the bake is queued first.
+	_ghost_gait_wait[character_id] = true
+
+## Round 756's review, F3: ghosts whose gait waits on its loop's bake, and
+## the clip_generation they were last tried at.
+var _ghost_gait_wait := {}
+var _ghost_gait_seen := -1
+
+func _retry_ghost_gaits() -> void:
+	if _ghost_gait_wait.is_empty() or _crowd_gpu == null or _crowd_gpu.clip_generation == _ghost_gait_seen:
+		return
+	_ghost_gait_seen = _crowd_gpu.clip_generation
+	for id in _ghost_gait_wait.keys():
+		_ghost_gait_wait.erase(id)
+		if not _ghost_ids.has(id):
+			continue
+		var moving := bool(_ghost_moving.get(id, false))
+		_ghost_moving[id] = not moving
+		_set_ghost_gait(id, moving)
 
 ## Plays anim once on the player's body, over stand or run, and returns
 ## how long it runs. A one-shot HELD on its last frame -- the die clip,
@@ -11025,6 +11146,12 @@ const RECENT_BUFF_START_MS := 8000
 ## (a player who came into view mid-cast) plays the act alone.
 func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 	_sync_own_id()
+	# A cast plays on a ghost's skeleton this frame: dressed now (round 756's
+	# review, F1: casts and hits only; an aura waits for the dressing).
+	if sc.caster_kind == SkillNet.OWNER_CHARACTER:
+		_dress_ghost_now(sc.caster_id)
+	if sc.target_type == SkillNet.TARGET_CHARACTER:
+		_dress_ghost_now(sc.target_id)
 	var body := _fx_owner_body(sc.caster_id, sc.caster_kind)
 	var target: Node3D = null
 	match sc.target_type:
@@ -11104,6 +11231,7 @@ func _describe_fx_target(sc: SkillNet.SkillCast) -> String:
 ## their gender's folder, falling back to their weapon group's swing, as the
 ## player's own cast falls back (a DISCLOSED stand-in). Returns its length.
 func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
+	_dress_ghost_now(character_id)
 	var gait: Dictionary = _other_gaits.get(character_id, {})
 	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
 		return 0.0
@@ -16013,6 +16141,9 @@ func _process(_delta: float) -> void:
 	var now := Time.get_ticks_usec()
 	if _other_frame_usec > 0:
 		_other_builds.note_frame(now - _other_frame_usec)
+		# Round 756: the ghosts' budget follows the frame too (a 3000-body
+		# crowd's own frame is 35-45 ms: 50 ms of ghosts on it was 110-160).
+		_other_ghosts.note_frame(now - _other_frame_usec)
 	_other_frame_usec = now
 	_pump_other_builds()
 	if fs:
@@ -16796,6 +16927,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		if _other_build_args.has(character_id) and not equipped.is_empty():
 			_other_build_args[character_id]["equipped"] = equipped
 			_other_build_args[character_id].erase("kind")
+			_reghost_later(character_id)
 		if not is_nan(heading):
 			var drawn: Node3D = _other_bodies[character_id]
 			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
@@ -16824,6 +16956,9 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# at once, as before.
 	_other_build_args[character_id] = {"equipped": equipped, "scale": scale}
 	_other_builds.queue(character_id)
+	# Round 756: drawn at once as a ghost when its kind's templates are made.
+	if _ghosts_on and CrowdGpu.enabled:
+		_other_ghosts.queue(character_id)
 	if _other_build_defer == 0:
 		_pump_other_builds()
 
@@ -16847,8 +16982,36 @@ func _pump_other_builds() -> int:
 		if _appearance.prep_generation != _other_prep_seen:
 			_other_prep_seen = _appearance.prep_generation
 			_other_builds.reopen()
-	var made := _other_builds.pump(Engine.get_process_frames(), from, _other_bodies, _dress_other,
-		_other_template_ready if _other_async_templates else Callable())
+	# Round 756: every arrived body whose kind is ready drawn now (ghosts),
+	# then the dressing: background work once every waiting body is drawn.
+	var frame := Engine.get_process_frames()
+	if not _other_ghosts.is_empty():
+		if _appearance != null and _appearance.prep_generation != _ghost_prep_seen:
+			_ghost_prep_seen = _appearance.prep_generation
+			_other_ghosts.reopen()
+		var gt := Time.get_ticks_usec()
+		if _crowd_gpu != null and _crowd_gpu.clip_generation != _ghost_clip_seen:
+			_ghost_clip_seen = _crowd_gpu.clip_generation
+			_other_ghosts.reopen()
+		var made_g := _other_ghosts.pump(frame, from, _other_bodies, _ghost_other, _ghost_ready)
+		if FrameSplit.on and Time.get_ticks_usec() - gt > 30000:
+			print("QA GHOSTS slow pump: %d made in %.1f ms (%s)" % [made_g, (Time.get_ticks_usec() - gt) / 1000.0,
+				str(_crowd_gpu.stats.get("ghosts", 0)) if _crowd_gpu != null else "-"])
+		if _other_ghosts.is_empty() and _other_ghosts.started_usec >= 0 and _other_ghosts.built > 1:
+			print("World3D: %d ghost(s) drawn over %d frame(s) in %.0f ms, longest frame %.1f ms" % [_other_ghosts.built,
+				_other_ghosts.frames, (Time.get_ticks_usec() - _other_ghosts.started_usec) / 1000.0, _other_ghosts.longest_usec / 1000.0])
+			_other_ghosts.started_usec = -1
+		if FrameSplit.on:
+			FrameSplit.add("ghosts", Time.get_ticks_usec() - gt)
+	_retry_ghost_gaits()
+	# A body that cannot be a ghost (refused) is the only one the dressing
+	# makes visible; while none waits, the dressing is background work.
+	# (Round 757's merge: the QA hitch override, OPENSRO_QA_OTHER_BUILD_HITCH_MS,
+	# applies to both, so a measured boot dresses in minutes.)
+	_other_builds.target_usec = _other_builds.hitch_usec if not _ghost_refused.is_empty() or not (_ghosts_on and CrowdGpu.enabled) \
+		or _other_builds.hitch_qa else OtherCrowd.GHOST_HITCH_TARGET_USEC
+	var made := _other_builds.pump(frame, from, _other_bodies, _dress_other,
+		_other_template_ready if _other_async_templates else Callable(), _ghost_ids)
 	if _other_builds.is_empty() and _other_builds.started_usec >= 0 and _other_builds.built > 1:
 		var spent: Array = _other_builds.spent_summary()
 		print("World3D: %d other player bod(ies) dressed over %d frame(s) in %.0f ms, longest frame %.1f ms, p50 %.1f, p95 %.1f, %d over 100 ms (budget %.1f ms)" % [
@@ -16868,6 +17031,22 @@ func _pump_other_builds() -> int:
 var _other_async_templates := OS.get_environment("OPENSRO_QA_SYNC_TEMPLATES") == ""
 var _other_kinds := {}   # kind key -> [ready, the prep_generation it was asked at]
 var _other_prep_seen := 0
+var _ghost_prep_seen := 0
+var _ghost_clip_seen := 0
+## kind key -> the CrowdGpu.clip_generation its loop was found not drawable
+## at: its ghosts wait in the queue until a clip goes up (_ghost_ready).
+var _ghost_clip_wait := {}
+
+## Round 756: whether a queued body can be made a ghost now: its kind's
+## templates made, and its loop not known to be still baking.
+func _ghost_ready(character_id: int) -> bool:
+	if _other_async_templates and not _other_template_ready(character_id):
+		return false
+	var args = _other_build_args.get(character_id)
+	if args == null or _crowd_gpu == null:
+		return true
+	var w = _ghost_clip_wait.get(String((args as Dictionary).get("kind", "")))
+	return w == null or int(w) != _crowd_gpu.clip_generation
 
 ## Round 748's review, F8: a queued body's pluses changed, so its kind (the
 ## glow's particle files it waits on) is worked out again.
@@ -16875,6 +17054,18 @@ func _forget_other_kind(character_id: int) -> void:
 	var args = _other_build_args.get(character_id)
 	if args != null:
 		(args as Dictionary).erase("kind")
+		_reghost_later(character_id)
+
+## Round 756: a ghost whose kind changed (an item, a plus) is drawn again in
+## the new one once its templates are made (_ghost_other); until then it
+## shows the old.
+func _reghost_later(character_id: int) -> void:
+	if not _ghost_ids.has(character_id):
+		return
+	var args = _other_build_args.get(character_id)
+	if args != null:
+		(args as Dictionary)["reghost"] = true
+		_other_ghosts.queue(character_id)
 
 func _other_template_ready(character_id: int) -> bool:
 	if _appearance == null:
@@ -16924,6 +17115,224 @@ func _body_ref_for(body: String) -> int:
 		return int(_body_id_by_code[body])
 	return -1
 
+## Round 756: draws an arrived player at once from its kind's recipe
+## (CrowdGpu.add_ghost), with what is the holder's own: the name plate and
+## the click body over the body's height (as _dress_other makes them), its
+## circle shadow, its clip sounds. A body that cannot be a ghost (a blended
+## part, an unknown body, a kind build() would grow) is left to the dressing;
+## one whose clip is still baking is asked again next frame. With `reghost`
+## set (its kind changed) the ghost is drawn again in its new kind, the
+## clip's phase kept and no fade.
+func _ghost_other(character_id: int) -> void:
+	var held = _other_bodies.get(character_id)
+	var args = _other_build_args.get(character_id)
+	if args == null or not is_instance_valid(held) or (held as Node).is_queued_for_deletion() or _appearance == null:
+		return
+	var node: Node3D = held
+	if not node.is_inside_tree():
+		return
+	var crowd := _crowd_gpu_get()
+	if crowd == null:
+		return
+	var re := bool((args as Dictionary).get("reghost", false))
+	var old: CrowdGpu.Body = crowd.body_of(node)
+	if old != null and not re:
+		return
+	var body := String(node.get_meta("body", ""))
+	if _body_assets(body).is_empty():
+		body = String(GENDER_BODY_CODE[DEFAULT_GENDER])
+	var equipped: Dictionary = (args as Dictionary).get("equipped", {})
+	var scale := int((args as Dictionary).get("scale", CharacterAppearance.DEFAULT_SCALE))
+	var spec := _other_build_spec(body, equipped, _other_pluses.get(character_id, {}))
+	if spec.is_empty():
+		if old == null:
+			_ghost_refused[character_id] = true
+		return
+	var qt := Time.get_ticks_usec() if FrameSplit.on else 0
+	var recipe := _appearance.far_recipe(int(spec[0]), scale, spec[1])
+	if FrameSplit.on:
+		FrameSplit.add("g_recipe", Time.get_ticks_usec() - qt)
+		qt = Time.get_ticks_usec()
+	if recipe == null or not crowd.can_ghost(recipe):
+		if re:
+			(args as Dictionary).erase("reghost")
+			# Its new kind cannot be a ghost (a blended part): dressed next,
+			# not when the queue reaches it (review F7).
+			_promote_ghost(character_id)
+		elif old == null:
+			_ghost_refused[character_id] = true
+		return
+	var group := _weapon_group_for(equipped, body)
+	var moving := bool(_ghost_moving.get(character_id, false))
+	var action := BsrReader.AnimationEntry.TYPE_STAND
+	if _other_seated.has(character_id):
+		action = BsrReader.AnimationEntry.TYPE_SITTING
+	elif moving:
+		action = BsrReader.AnimationEntry.TYPE_RUN
+	var anim := _body_animation_for(body, action, group)
+	var frames := _frame_count(anim)
+	if frames <= 1:
+		# No loop to draw it with: only the dressing shows it (review F9).
+		if old == null:
+			_ghost_refused[character_id] = true
+		return
+	# Its run baked ahead, so its first step finds it (review F3).
+	if action != BsrReader.AnimationEntry.TYPE_RUN:
+		crowd.prebake_recipe(recipe, _body_animation_for(body, BsrReader.AnimationEntry.TYPE_RUN, group))
+	# Its loop not drawable yet (baking): its kind waits for the next clip
+	# to go up (_ghost_ready), still queued.
+	if not crowd.ghost_clip_ready(recipe, anim):
+		_ghost_clip_wait[String((args as Dictionary).get("kind", ""))] = crowd.clip_generation
+		_other_ghosts.queue(character_id)
+		return
+	var phase := float(old.entry[3]) if old != null else float(_animated_total()) * 0.37
+	var entry := [node, anim, frames, phase, true, _idle_anim_time, null]
+	if FrameSplit.on:
+		FrameSplit.add("g_geo_clip", Time.get_ticks_usec() - qt)
+		qt = Time.get_ticks_usec()
+	# Lit where it stands as it appears (review F4: the original sets a
+	# character's colour with its position; a late light was a visible step).
+	var light := old.light if old != null else _ghost_light_at(node)
+	if FrameSplit.on:
+		FrameSplit.add("g_light", Time.get_ticks_usec() - qt)
+		qt = Time.get_ticks_usec()
+	var heard := node.global_position.distance_squared_to(_crowd_listener()) <= SoundTable.CULL_DISTANCE_SQ
+	# A ghost drawn again mid fade-in goes on with its fade.
+	var fading_from := old.fade_start if old != null and old.fade == CrowdGpu.FADE_IN else NAN
+	if old != null:
+		crowd.remove(node)
+	var added := crowd.add_ghost(node, recipe, entry, _ghost_local_for(recipe.height), light, _idle_anim_time, old == null)
+	if FrameSplit.on:
+		FrameSplit.add("g_add", Time.get_ticks_usec() - qt)
+		FrameSplit.add("g_add_calls", 1)
+		qt = Time.get_ticks_usec()
+	if not added:
+		if old != null:
+			# Its new clip is still baking: the old look stays meanwhile.
+			crowd.add_ghost(node, old.recipe, old.entry, old.local, old.light, _idle_anim_time, false)
+			if not is_nan(fading_from):
+				crowd.continue_fade_in(node, fading_from)
+		var b0 := crowd.body_of(node)
+		if b0 != null:
+			crowd.set_heard(b0, heard)
+			b0.sound_due = -INF if heard else INF
+			_sound_schedule(b0)  # round 757's merge, S1
+		_other_ghosts.queue(character_id)
+		return
+	(args as Dictionary).erase("reghost")
+	var b := crowd.body_of(node)
+	crowd.set_heard(b, heard)
+	b.sound_due = -INF if heard else INF
+	_sound_schedule(b)  # round 757's merge, S1
+	if not is_nan(fading_from):
+		crowd.continue_fade_in(node, fading_from)
+	node.set_meta(GHOST_KIND_META, [body, group])
+	if old != null:
+		return
+	_ghost_ids[character_id] = true
+	if light >= 0.0:
+		# CharacterLight's own visits find it lit where it stands.
+		node.set_meta(CharacterLight.META_VALUE, light)
+		node.set_meta(CharacterLight.META_POS, node.global_position)
+	# What _dress_other gives the holder, made now: the plate and the click
+	# body over the body's height (the body template's meshes: build() hangs
+	# no other drawn child on the skeleton itself) times its Height, as the
+	# built skeleton's scale gives it (review F6; the dressing re-places them
+	# from the built skeleton), the circle shadow.
+	var top := _skeleton_top(recipe.skeleton) * recipe.height
+	# Batched (round 757's merge, S2), as a dressed body's.
+	_add_other_plate(node, String(node.get_meta("character_name", "")), top)
+	node.add_child(_other_player_collider(top))
+	node.set_meta(GHOST_HOLDER_META, true)
+	CharacterBlobs.register(node, float(_bc_radius_by_code.get(body, 0.0)))
+	# Its clip sounds, keyed by the holder until it has a skeleton.
+	var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
+	owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
+	_anim_sounds.register(node, owner)
+	if not node.tree_exiting.is_connected(_crowd_ghost_exit):
+		node.tree_exiting.connect(_crowd_ghost_exit.bind(node))
+	if FrameSplit.on:
+		FrameSplit.add("g_holder", Time.get_ticks_usec() - qt)
+
+## Meta on a ghost's holder: [body key, animation group] its loops are read in.
+const GHOST_KIND_META := &"opensro_ghost_kind"
+## Meta on a holder a ghost gave its plate, click body, circle and sound
+## owner: the dressing does not make them again (it re-places the first two).
+const GHOST_HOLDER_META := &"opensro_ghost_holder"
+
+## Round 756's review, F1: a ghost something wants dressed but not this frame
+## (an aura) goes to the front of the budgeted dressing.
+func _promote_ghost(character_id: int) -> void:
+	if _ghost_ids.has(character_id):
+		_other_builds.promote(character_id)
+
+## A ghost's holder leaving the tree (freed, a zone change): off the instances.
+func _crowd_ghost_exit(node: Node3D) -> void:
+	if _crowd_gpu != null and _crowd_gpu.is_ghost(node):
+		_crowd_gpu.remove(node)
+	if is_instance_valid(node):
+		_anim_sounds.unregister(node)
+
+## The object colour a ghost is drawn at: CharacterLight's for where it
+## stands, or -1 (its materials as they are) where no region is loaded, as
+## CharacterLight.visit leaves a body there.
+func _ghost_light_at(node: Node3D) -> float:
+	if _character_light == null:
+		return -1.0
+	var pos := node.global_position
+	var pair: Array = _character_light.lookup.call(pos) if _character_light.lookup.is_valid() else []
+	if _character_light.lookup.is_valid() and pair.is_empty():
+		return -1.0
+	if _character_light._qa_value >= 0.0:
+		return _character_light._qa_value
+	return _character_light.color_at_pair(pos, pair)
+
+## The skeleton's place under its holder that _dress_other gives it (turned
+## by PI) times _build_assembled_character's Height.
+func _ghost_local_for(height: float) -> Transform3D:
+	var got = _ghost_local.get(height)
+	if got != null:
+		return got
+	var n := Node3D.new()
+	n.rotation.y = PI
+	n.scale = Vector3.ONE * height
+	var t := n.transform
+	n.free()
+	_ghost_local[height] = t
+	return t
+
+## CharacterLight read a new colour under `body`: a ghost's parts take it.
+func _crowd_ghost_light(body: Node3D, value: float) -> void:
+	if _crowd_gpu != null:
+		_crowd_gpu.ghost_light(body, value)
+
+## Round 756: dresses a ghost now, out of the queue's turn (something needs
+## its skeleton this frame). True when it was a ghost.
+func _dress_ghost_now(character_id: int) -> bool:
+	if not _ghost_ids.has(character_id) or not _other_build_args.has(character_id):
+		return false
+	_other_builds.drop(character_id)
+	_dress_other(character_id)
+	return true
+
+## The near path's bookkeeping for a body just drawn far (CrowdGpu.add): its
+## clip sounds from the CPU within hearing (round 747's review, F2), its run
+## baked ahead, its exit hook.
+func _crowd_went_far(character_id: int, node: Node3D, skel: Skeleton3D) -> void:
+	var fb := _crowd_gpu.body_of(skel)
+	var heard := node.global_position.distance_squared_to(_crowd_listener()) <= SoundTable.CULL_DISTANCE_SQ
+	_crowd_gpu.set_heard(fb, heard)
+	fb.sound_due = -INF if heard else INF
+	# Round 757's merge: filed on the sound wheel.
+	_sound_schedule(fb)
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if not gait.is_empty():
+		_crowd_gpu.prebake(skel, _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_RUN, gait["group"]))
+	if not skel.has_meta(CROWD_EXIT_META):
+		var cb := _crowd_on_exit.bind(skel)
+		skel.set_meta(CROWD_EXIT_META, cb)
+		skel.tree_exiting.connect(cb)
+
 ## Dresses an arrived player's node (round 739, B4: split out of
 ## _spawn_or_update_other, which made it all in one call): the body, the
 ## plate, the click body, the sounds and the loop. What it is dressed with is
@@ -16934,9 +17343,19 @@ func _dress_other(character_id: int) -> void:
 	var held = _other_bodies.get(character_id)
 	var args: Dictionary = _other_build_args.get(character_id, {})
 	_other_build_args.erase(character_id)
+	_other_ghosts.drop(character_id)
+	_ghost_ids.erase(character_id)
+	_ghost_refused.erase(character_id)
 	if not is_instance_valid(held) or (held as Node).is_queued_for_deletion():
 		return
 	var node: Node3D = held
+	# Round 756: drawn as a ghost until now -- its plate, click body, circle
+	# shadow and sounds are made; its clip entry (phase and all) goes on.
+	var ghost: CrowdGpu.Body = _crowd_gpu.body_of(node) if _crowd_gpu != null else null
+	if ghost != null and not ghost.ghost:
+		ghost = null
+	var held_ghost := node.has_meta(GHOST_HOLDER_META)
+	node.remove_meta(GHOST_HOLDER_META)
 	var equipped: Dictionary = args.get("equipped", {})
 	var scale: int = int(args.get("scale", CharacterAppearance.DEFAULT_SCALE))
 	var body := String(node.get_meta("body", ""))
@@ -16981,12 +17400,16 @@ func _dress_other(character_id: int) -> void:
 		# 651, _berserk_apply), which turns their swings to the hwan ones.
 		var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
 		owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
+		if held_ghost:
+			_anim_sounds.unregister(node)
 		_anim_sounds.register(skeleton, owner)
 		if dt != null:
 			dt.mark("sounds")
 		var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_SITTING if seated else BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
-		if frames > 1:
+		if ghost != null:
+			pass # its entry is handed over below
+		elif frames > 1:
 			_animated.append([skeleton, idle, frames, float(_animated_total()) * 0.37, true, _idle_anim_time, null])
 		if dt != null:
 			dt.mark("clip")
@@ -17008,18 +17431,20 @@ func _dress_other(character_id: int) -> void:
 	# The same plate as an NPC's -- fixed screen size, outlined, shown only
 	# within range -- over the assembled body's own height.
 	var top := _skeleton_top(skeleton) if skeleton != null else 1.8 * PLAYER_SCALE_RATIO
-	# Round 757: batched (NamePlateBatch) unless it is off; the Label3D stays
-	# as the plate's record (its text, its look), never drawn.
-	var batched := _plate_batch_get() != null
-	var plate := _name_plate(char_name, top, not batched)
-	node.add_child(plate)
-	if batched and not _plate_batch_add(plate, node):
-		plate.visible = true
-		_plate_sweep.add(plate)
-	# A click body on its own layer (round 622), so the player can be selected.
-	node.add_child(_other_player_collider(top))
-	# Its round shadow in Circle (round 702, CharacterBlobs).
-	CharacterBlobs.register(node, float(_bc_radius_by_code.get(String(node.get_meta("body", "")), 0.0)))
+	if not held_ghost:
+		# Round 757: batched (NamePlateBatch) unless it is off.
+		_add_other_plate(node, char_name, top)
+		# A click body on its own layer (round 622), so the player can be selected.
+		node.add_child(_other_player_collider(top))
+		# Its round shadow in Circle (round 702, CharacterBlobs).
+		CharacterBlobs.register(node, float(_bc_radius_by_code.get(String(node.get_meta("body", "")), 0.0)))
+	else:
+		# The plate and click body the ghost made, re-placed over the built
+		# body's own height (review F6).
+		_replace_plate_and_click(node, top)
+		# Its meshes take the level the ghost was drawn at (CharacterLight
+		# skips a body whose colour has not changed).
+		node.remove_meta(CharacterLight.META_VALUE)
 	# Under Detail it arrives casting nothing; the next pass lets it cast if it
 	# is one of the ten nearest (round 739, B2, CharacterBlobs.select_detail).
 	if video_options().value(VideoOptions.SHADOW) >= 2:
@@ -17036,10 +17461,70 @@ func _dress_other(character_id: int) -> void:
 	_berserk_resync(character_id, "their body was built")
 	# They fade into existence over 2.0 s, as a monster does (round 676,
 	# AppearFade: READ, CICUser vslot 0x6c FUN_009dbcc0 -> FUN_009d17e0).
-	_appear_fades.start(node)
+	if ghost == null:
+		_appear_fades.start(node)
+	elif skeleton != null:
+		_ghost_handover(character_id, node, skeleton, ghost)
+	else:
+		_crowd_gpu.remove(node)
 	if dt != null:
 		dt.mark("fade")
 		dt.report(character_id, body, stats_before, _appearance.stats if _appearance != null else {})
+
+## Round 756: a ghost's built skeleton takes its place in the same frame: the
+## ghost's clip entry (its clip and phase) is the skeleton's now; the body is
+## drawn far at once from the skeleton (the same meshes, materials and clip:
+## the same pixels) unless it is among the nearest the last cycle kept near,
+## still fading in (it then fades on from where the ghost's fade was) or not
+## eligible -- then it is posed on the full path at its clip's frame, as a
+## body brought back is (_crowd_wake).
+func _ghost_handover(character_id: int, node: Node3D, skeleton: Skeleton3D, ghost: CrowdGpu.Body) -> void:
+	var entry: Array = ghost.entry
+	entry[0] = skeleton
+	var fade_e := _crowd_gpu.fade_elapsed(node)
+	_crowd_gpu.remove(node)
+	_crowd_cull.info(skeleton)
+	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+	var near := cam == null or cam.global_position.distance_to(node.global_position) <= _crowd_come
+	if fade_e < 0.0 and not near and _crowd_eligible(character_id, node, skeleton) == "" \
+			and _crowd_gpu.add(node, skeleton, entry, _idle_anim_time):
+		_crowd_went_far(character_id, node, skeleton)
+	else:
+		_animated.append(entry)
+		MonsterCrowd.pose_at(skeleton, entry[1], _idle_anim_time + float(entry[3]), true)
+		var info: Array = _crowd_cull.info(skeleton)
+		if info.size() == CrowdAnim.PLAYER_INFO_SIZE:
+			info[4] = 1.0
+		if fade_e >= 0.0:
+			_appear_fades.start(node, AppearFade.APPEAR_SECONDS, fade_e)
+	# Walking as a ghost: the gait now, through the swap, so the loop is the
+	# run whatever the ghost could draw (review F3: it may have slid on its
+	# stand loop while the run baked).
+	var moving := bool(_ghost_moving.get(character_id, false))
+	_ghost_moving.erase(character_id)
+	_ghost_gait_wait.erase(character_id)
+	if moving:
+		var gait: Dictionary = _other_gaits.get(character_id, {})
+		if not gait.is_empty():
+			gait["moving"] = false
+			_set_other_gait(character_id, true)
+
+## The plate and click body a ghost gave `node`, set to `top` as
+## _name_plate and _other_player_collider make them.
+func _replace_plate_and_click(node: Node3D, top: float) -> void:
+	for c in node.get_children():
+		if c is Label3D and String(c.name) == "Name":
+			(c as Label3D).position = Vector3(0.0, top * (1.0 + NAME_PLATE_CLEARANCE_FRACTION), 0.0)
+			# A batched plate takes its new height now (round 757's merge, S2).
+			if _plate_batch != null:
+				_plate_batch.moved(c as Label3D)
+		elif c is StaticBody3D and String(c.name) == "PlayerClickBody":
+			for cs in c.get_children():
+				if cs is CollisionShape3D and (cs as CollisionShape3D).shape is CapsuleShape3D:
+					var shape := (cs as CollisionShape3D).shape as CapsuleShape3D
+					shape.height = maxf(top, 1.0)
+					shape.radius = maxf(top * 0.3, 1.0)
+					(cs as CollisionShape3D).position = Vector3(0.0, shape.height * 0.5, 0.0)
 
 ## QA (round 748): one dressing's phases, printed when it took over
 ## REPORT_MS (`QA DRESS` lines; the crowd probe's FrameSplit only).
@@ -17210,6 +17695,7 @@ func _redress_other(character_id: int) -> void:
 	if _other_build_args.has(character_id):
 		_other_build_args[character_id]["equipped"] = (_other_equipped.get(character_id, {}) as Dictionary).duplicate()
 		_other_build_args[character_id].erase("kind")
+		_reghost_later(character_id)
 		return
 	var node: Node3D = _other_bodies.get(character_id)
 	var gait: Dictionary = _other_gaits.get(character_id, {})
@@ -17679,6 +18165,10 @@ func _on_entity_left(character_id: int) -> void:
 	# Gone before their turn to be dressed came (round 739, B4).
 	_other_builds.drop(character_id)
 	_other_build_args.erase(character_id)
+	_other_ghosts.drop(character_id)
+	_ghost_ids.erase(character_id)
+	_ghost_moving.erase(character_id)
+	_ghost_refused.erase(character_id)
 	_other_uids.remove(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
@@ -20600,6 +21090,9 @@ func _fade_out_body(body: Node3D) -> void:
 	if body == null or not is_instance_valid(body) or body.is_queued_for_deletion():
 		return
 	_drop_click_body(body)
+	# Round 756: a ghost fades out on the GPU over the same 1.5 s.
+	if _crowd_gpu != null:
+		_crowd_gpu.fade_out(body)
 	if not _mob_logging():
 		_appear_fades.start_out(body)
 		return
@@ -21939,6 +22432,7 @@ func _face_monster_toward(monster_id: int, at: Vector2) -> void:
 ## gender and weapon group, once, back to their stand or run after
 ## (_play_once). A body with no assembled skeleton (the capsule) has none.
 func _play_other_hit(character_id: int) -> void:
+	_dress_ghost_now(character_id)
 	var gait: Dictionary = _other_gaits.get(character_id, {})
 	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
 		return
@@ -21980,7 +22474,12 @@ func _fx_owner_body(owner_id: int, owner_kind: int) -> Node3D:
 		return player
 	# A body still waiting to be dressed is not drawn (round 739's review,
 	# F7): its auras come with it, _dress_other resyncs them from the book.
+	# Round 756's review, F1: a ghost is not dressed here -- every arriving
+	# player's buffs follow its page, and dressing each on its buff froze the
+	# frame (726 ms for 260). It goes to the front of the budgeted dressing,
+	# which resyncs its auras (_dress_other).
 	if _other_build_args.has(owner_id):
+		_promote_ghost(owner_id)
 		return null
 	var body = _other_bodies.get(owner_id)
 	# An effect follows a bone of the posed skeleton (EfpEffect.follow_host):
@@ -22975,7 +23474,10 @@ func _berserk_apply(object_id: int, value: int, instant: bool) -> void:
 	if body == null or not is_instance_valid(body):
 		return
 	# Not drawn while it waits to be dressed (round 739's review, F7):
-	# _dress_other puts the look on from NetClient's body modes.
+	# _dress_other puts the look on from NetClient's body modes. Round 756:
+	# a ghost is drawn: dressed now.
+	if not mine:
+		_dress_ghost_now(object_id)
 	if not mine and _other_build_args.has(object_id):
 		return
 	# BerserkLook tints the body's meshes: a far body comes back first
@@ -23182,6 +23684,9 @@ func _seat_result_others(seated: Array) -> void:
 ## Another player's answer: the sitting loop under the sit-down clip, or the
 ## stand loop under the stand-up clip, from their own body's table.
 func _apply_other_motion(character_id: int, value: int) -> void:
+	# Round 756: a ghost sitting down or getting up plays a one-shot: dressed.
+	if value == WorldNet.MOTION_SIT or _other_seated.has(character_id):
+		_dress_ghost_now(character_id)
 	if value == WorldNet.MOTION_SIT:
 		_other_seated[character_id] = true
 	elif value == WorldNet.MOTION_STAND:

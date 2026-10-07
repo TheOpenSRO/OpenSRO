@@ -24,7 +24,10 @@ export OPENSRO_QA_LINEUP=all OPENSRO_QA_LINEUP_COUNT=$N OPENSRO_QA_LINEUP_PLUS=1
 export OPENSRO_QA_LINEUP_SPACING=8,10 OPENSRO_QA_LINEUP_PHASE=100000 OPENSRO_QA_DIST=90 OPENSRO_QA_PITCH=-15
 export OPENSRO_QA_CROWD_STEPS="$STEPS" OPENSRO_QA_CROWD_SECONDS=6 OPENSRO_QA_CROWD_QUIT=1
 for kv in "$@"; do export "$kv"; done
-others() { pgrep -af "^$GODOT" | grep -v -- "--path $DIR " | wc -l; }
+# Round 756: any lane's Godot (the 4.7.2 spike's binary too) or xvfb-run counts, not only this
+# binary's -- the box's rule for a measurement run. By process name, not command line: a run
+# waiting on the box lock names the Godot binary in its arguments without running it.
+others() { pgrep -a '^(Godot_v4|xvfb-run)' | grep -v -- "--path $DIR " | wc -l; }
 # CROWD_NOWAIT=1 (round 757): no wait for the other lanes -- a run that counts
 # errors or events, not time.
 [ "${CROWD_NOWAIT:-0}" = 1 ] || for i in $(seq 1 360); do [ "$(others)" = 0 ] && break; sleep 5; done
@@ -46,7 +49,7 @@ fi
 echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0)"
 rm -f "$LOG.others"
 grep -m1 -E "^(Vulkan|OpenGL) API" "$LOG"
-grep -E "LINEUP: |QA CROWD (step|split|arrival|census: all|census: equipment|net)|other player bod|QA DRESS|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -120
+grep -E "LINEUP: |QA CROWD (step|split|arrival|visible|page|plates|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|QA BUFFS|QA RUNAT|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -160
 if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
   python3 "$DIR/tools/crowd_threads.py" report "$LOG" "$LOG.threads" "$LOG.gpu"
 fi

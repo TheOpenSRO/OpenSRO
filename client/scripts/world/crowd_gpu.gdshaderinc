@@ -44,6 +44,20 @@ mat4 srr_cg_bone(int srr_bone, int srr_row) {
 		texelFetch(crowd_bones, srr_at + ivec3(2, 0, 0), 0));
 }
 
+// Round 756: a fading ghost's alpha (CrowdGpu's fade groups) from
+// INSTANCE_CUSTOM.w -- the clock (ms) its fade began at, or -1 - that for a
+// fade-out -- as AppearFade sets the model's byte: 255 / 2.0 s x elapsed,
+// truncated, up to 255 (READ, CIDecoAppear); 255 - 255 / 1.5 s x elapsed,
+// truncated, down to 0 (READ, CIDecoDisappear).
+float srr_cg_fade(float srr_w) {
+	if (srr_w >= 0.0) {
+		float srr_e = max(srr_crowd_clock - srr_w, 0.0) / 1000.0;
+		return min(floor(255.0 / 2.0 * srr_e), 255.0) / 255.0;
+	}
+	float srr_e = max(srr_crowd_clock - (-1.0 - srr_w), 0.0) / 1000.0;
+	return max(floor(255.0 - 255.0 / 1.5 * srr_e), 0.0) / 255.0;
+}
+
 mat4 srr_cg_volume(int srr_bone, int srr_row) {
 	return srr_cg_mat(texelFetch(crowd_volume, ivec2(srr_bone * 3, srr_row), 0),
 		texelFetch(crowd_volume, ivec2(srr_bone * 3 + 1, srr_row), 0),

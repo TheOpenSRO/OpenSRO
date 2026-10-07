@@ -290,6 +290,23 @@ const BODY_MESH_META := &"bsr_mesh_index"
 static func apply_body_hides(skeleton: Skeleton3D, body: BsrReader.ParsedObject, items: Array) -> int:
 	if skeleton == null:
 		return 0
+	for n in skeleton.get_children():
+		if n.has_meta(BODY_MESH_META):
+			(n as Node3D).visible = true
+	var got := hidden_body_nodes(skeleton, body, items)
+	for n in got[0]:
+		(n as Node3D).visible = false
+	return int(got[1])
+
+## apply_body_hides' rule without touching a node (round 756: a body drawn
+## far from its templates, CharacterAppearance.far_recipe): the children of
+## `skeleton` the worn `items` hide, as node -> true, and how many body meshes
+## that is (a mesh's front-pass twin and a rigid piece's attachment are the
+## same mesh drawn again, counted once). [Dictionary, int].
+static func hidden_body_nodes(skeleton: Skeleton3D, body: BsrReader.ParsedObject, items: Array) -> Array:
+	var out := {}
+	if skeleton == null or body == null or body.attachable == null:
+		return [out, 0]
 	var by_index := {}
 	for n in skeleton.get_children():
 		if n.has_meta(BODY_MESH_META):
@@ -297,9 +314,6 @@ static func apply_body_hides(skeleton: Skeleton3D, body: BsrReader.ParsedObject,
 			if not by_index.has(idx):
 				by_index[idx] = []
 			(by_index[idx] as Array).append(n)
-			(n as Node3D).visible = true
-	if body == null or body.attachable == null:
-		return 0
 	var hidden := 0
 	for item in items:
 		var block := item as BsrReader.Attachable
@@ -308,14 +322,12 @@ static func apply_body_hides(skeleton: Skeleton3D, body: BsrReader.ParsedObject,
 		for key in block.keys():
 			for idx in body.attachable.values_for(key):
 				var nodes: Array = by_index.get(idx, [])
-				if nodes.is_empty() or not (nodes[0] as Node3D).visible:
+				if nodes.is_empty() or out.has(nodes[0]):
 					continue
-				# One body mesh, counted once: its front-pass twin (and a rigid
-				# piece's attachment) is the same mesh drawn again.
 				for n in nodes:
-					(n as Node3D).visible = false
+					out[n] = true
 				hidden += 1
-	return hidden
+	return [out, hidden]
 
 ## What attaching one item produced, for a caller that wants to report it.
 class AttachedItem:

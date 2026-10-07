@@ -17,6 +17,13 @@ class_name QaCrowdProbe
 ##   OPENSRO_QA_CROWD_DELAY=<s>      wait before the first step (4: the bodies'
 ##                                   2 s appear fade and the build's hitch pass)
 ##
+## Round 756: before the arrival line, `QA CROWD visible` -- the frames and
+## seconds from the first packet until every lineup body was drawn (dressed,
+## or a CrowdGpu ghost), their worst frame and how many were over 100 ms --
+## and with QaLineup's walk-up one `QA CROWD page` line per block's group
+## spawn (until its last body was drawn). The arrival line itself still runs
+## until the last body is dressed.
+##
 ## The switches (each applies to the lineup bodies only, unless said):
 ##   base     nothing off
 ##   pose     no clip posed (World3D's _qa_split_off "pose": the player and the
@@ -105,16 +112,62 @@ var _arriving := true
 var _arrival_last_us := 0
 var _arrival_start_us := 0
 var _arrival_ms: PackedFloat32Array = PackedFloat32Array()
+## Round 756: every lineup id, and when each was first drawn -- dressed, or a
+## ghost (CrowdGpu.add_ghost) -- from the first packet: `visible_s` in the
+## arrival line is the moment the last one was; `QA CROWD page` lines the
+## same per page (QaLineup's walk-up: one group spawn per block).
+var _ids: Array = []
+var _shown := {}
+var _visible_us := -1
+var _visible_frames := 0
+## Each frame until then: "<frame ms>/<bodies drawn by its end>".
+var _visible_trace := PackedStringArray()
+## [ids, start usec, frames, worst ms, done usec (-1 until every id is drawn)]
+var _pages: Array = []
+
+## Round 756 (QaLineup's walk-up): a page of `ids` was just spawned.
+func page_started(ids: Array) -> void:
+	_pages.append([ids, Time.get_ticks_usec(), 0, 0.0, -1])
+
+## Whether lineup body `id` is drawn: dressed (no longer waiting), or a
+## ghost. Read through `get`, so a base without ghosts measures too.
+func _drawn(id: int) -> bool:
+	var node = _bodies_now.get(id)
+	if node == null or not is_instance_valid(node):
+		return false
+	if not _args_now.has(id):
+		return true
+	return _ghosts_now != null and bool(_ghosts_now.call("is_ghost", node))
+
+## The world's maps and its CrowdGpu (when it draws ghosts), read once a frame.
+var _bodies_now: Dictionary = {}
+var _args_now: Dictionary = {}
+var _ghosts_now: Object = null
+
+func _read_world() -> void:
+	_bodies_now = world._other_bodies
+	_args_now = world._other_build_args
+	var crowd = world.get("_crowd_gpu")
+	_ghosts_now = crowd if crowd != null and (crowd as Object).has_method("is_ghost") else null
+
+func _resolve_bodies() -> void:
+	bodies.clear()
+	for id in _ids:
+		var node: Node3D = world._other_bodies.get(id)
+		if node != null:
+			bodies.append({"id": id, "node": node})
+			if not _homes.has(id):
+				_homes[id] = node.position
 
 func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	world = w
 	_arrival_start_us = spawn_usec if spawn_usec > 0 else Time.get_ticks_usec()
 	_arrival_last_us = _arrival_start_us
+	# Round 756: the ids, whose nodes may not exist yet (QaLineup's walk-up
+	# spawns them a page at a time); the nodes are read once all have come.
 	for b in lineup_bodies:
-		var node: Node3D = world._other_bodies.get(b["id"])
-		if node != null:
-			bodies.append({"id": b["id"], "node": node})
-			_homes[b["id"]] = node.position
+		_ids.append(int(b["id"]))
+	_resolve_bodies()
 	steps = OS.get_environment("OPENSRO_QA_CROWD_STEPS").split(",", false)
 	var s := OS.get_environment("OPENSRO_QA_CROWD_SECONDS")
 	if s.is_valid_float():
@@ -147,12 +200,55 @@ func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 ## The arrival's frames (round 739), then the census once every body is dressed.
 func _arrival_frame() -> void:
 	var now := Time.get_ticks_usec()
-	_arrival_ms.append(float(now - _arrival_last_us) / 1000.0)
+	var ms := float(now - _arrival_last_us) / 1000.0
+	_arrival_ms.append(ms)
 	_arrival_last_us = now
+	_read_world()
+	if _visible_us < 0:
+		_visible_frames += 1
+		var all := true
+		for id in _ids:
+			if _shown.has(id):
+				continue
+			if _drawn(id):
+				_shown[id] = true
+			else:
+				all = false
+		_visible_trace.append("%.0f/%d" % [ms, _shown.size()])
+		if all:
+			_visible_us = now
+	for pg in _pages:
+		if int(pg[4]) >= 0:
+			continue
+		pg[2] = int(pg[2]) + 1
+		pg[3] = maxf(float(pg[3]), ms)
+		var done := true
+		for id in pg[0]:
+			if not _shown.has(id) and not _drawn(id):
+				done = false
+				break
+		if done:
+			pg[4] = now
+			print("QA CROWD page %d n=%d visible_ms=%.1f frames=%d worst_ms=%.1f" % [_pages.find(pg), (pg[0] as Array).size(),
+				float(now - int(pg[1])) / 1000.0, int(pg[2]), float(pg[3])])
 	var queue = world.get("_other_builds")
-	if queue != null and not queue.is_empty():
+	if (queue != null and not queue.is_empty()) or _visible_us < 0:
 		return
+	for pg in _pages:
+		if int(pg[4]) < 0:
+			return
 	_arriving = false
+	_resolve_bodies()
+	# Round 756: the frames until every body was drawn, apart.
+	var vis := _arrival_ms.slice(0, _visible_frames)
+	vis.sort()
+	var vover := 0
+	for v in vis:
+		if v > 100.0:
+			vover += 1
+	print("QA CROWD visible n=%d frames=%d seconds=%.3f worst_ms=%.1f over100=%d" % [_ids.size(), vis.size(),
+		float(_visible_us - _arrival_start_us) / 1e6, vis[-1] if not vis.is_empty() else 0.0, vover])
+	print("QA CROWD visible trace (frame ms/drawn): %s" % " ".join(_visible_trace.slice(0, 200)))
 	var sorted := _arrival_ms.duplicate()
 	sorted.sort()
 	var over := 0

@@ -111,6 +111,8 @@ func visit(body: Node3D) -> void:
 		return
 	body.set_meta(META_VALUE, value)
 	set_on(body, value, rescan or not had)
+	if on_value.is_valid():
+		on_value.call(body, value)
 	applied += 1
 	if _qa:
 		var meshes: Array = body.get_meta(META_MESHES, [])
@@ -122,7 +124,11 @@ func visit(body: Node3D) -> void:
 
 ## The object colour at a world position (ObjectLight.character_color).
 func color_at(pos: Vector3) -> float:
-	var pair: Array = lookup.call(pos) if lookup.is_valid() else []
+	return color_at_pair(pos, lookup.call(pos) if lookup.is_valid() else [])
+
+## color_at with the region lookup's answer already in hand (round 756: a
+## ghost asks whether a region is there and its colour with one lookup).
+func color_at_pair(pos: Vector3, pair: Array) -> float:
 	if pair.is_empty():
 		return ObjectLight.character_color(-1, true)
 	var graph: NavGraph = pair[0]
@@ -151,6 +157,11 @@ func describe(pos: Vector3) -> String:
 ## Round 747: called with a body whose meshes set_on gave other materials
 ## (World3D: a far body's instances follow, CrowdGpu.refresh). Unset in tests.
 static var on_changed: Callable = Callable()
+
+## Round 756: called with every body whose colour visit() set, so a body drawn
+## with no meshes of its own (a ghost, CrowdGpu.add_ghost) takes it too.
+## Unset in tests.
+static var on_value: Callable = Callable()
 
 ## Draws every mesh under `body` at object colour `value` (rescanning them
 ## when `rescan`): each object material, override or surface override, swapped

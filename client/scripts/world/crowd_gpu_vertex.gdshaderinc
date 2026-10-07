@@ -52,4 +52,8 @@
 			VERTEX = vec3(0.0);
 		}
 	}
+#ifdef SRR_CG_FADE
+	// Round 756: a fading ghost's alpha, per instance (INSTANCE_CUSTOM.w).
+	appear_alpha = srr_cg_fade(INSTANCE_CUSTOM.w);
+#endif
 }
