@@ -672,6 +672,247 @@ func _resolve_wears(items: Array, woman: bool, warn: bool) -> Array:
 	wears.append_array(avatars)
 	return [wears, weapon_kind]
 
+# --- far recipes (round 756) ------------------------------------------------------
+
+## Round 756 (OURS): what build() would draw for (ref_obj_id, scale, items),
+## read off the cached templates without building a node -- so an arriving
+## body can be drawn far at once (CrowdGpu.add_ghost: its kind's meshes as
+## GPU instances) and dressed later. Each piece is a template's own
+## MeshInstance3D with what build() would leave on that mesh's copy: the
+## material (the glow at the item's plus, EquipGlow.material_for, as
+## _apply_glow puts it), the skin (the shared skin's Volume variant for the
+## scale byte, apply_volume's), and the place it hangs (skinned to the body,
+## or from a body bone through a BoneAttachment3D). The body's own meshes the
+## worn items hide are left out (SkinnedBsrAssembler.hidden_body_nodes, the
+## rule apply_body_hides applies). CrowdGpu turns pieces into instances by the
+## rules it reads a built body with (_part_for), and its test and the
+## `arrival_bench` / crowd probe's parity check hold a recipe's parts to a
+## built body's.
+class FarRecipe:
+	var key := ""
+	var layout_key := ""
+	## The body template's skeleton: the bones and rests the layout is read
+	## from (detached; never in a tree).
+	var skeleton: Skeleton3D
+	var bsr_path := ""
+	var height := 1.0
+	var scale := 0
+	var weapon_kind := 0
+	var weapon_group := "default"
+	var hidden_body_meshes := 0
+	## One per drawn mesh: [MeshInstance3D (a template's), Material, overridden
+	## (the material is the copy's material_override, which CharacterLight
+	## swaps for its level), Skin or null, attach bone name ("" when skinned to
+	## the body), chain (the transforms from the mesh up to its
+	## BoneAttachment3D, or to the skeleton), top node (the template subtree it
+	## came from)].
+	var pieces: Array = []
+
+## key -> FarRecipe, or null for a kind build() would grow (a bone the body
+## template lacks) or cannot build. Dropped with the templates.
+var _far_recipes := {}
+## "shared skin id|scale byte" -> its Volume variant (held: the recipes draw
+## with it).
+var _far_volume := {}
+## Counts (QA, tests): recipes made, cache hits, refusals by reason.
+var far_stats := {"made": 0, "hits": 0, "not_ready": 0, "refused": 0}
+
+## The recipe of (ref_obj_id, scale, items), or null: not ready (a template
+## is still to be made: ask prepare() / templates_ready() first) or refused
+## (build() would add a bone; an unknown body). Main thread only.
+func far_recipe(ref_obj_id: int, scale: int, items: Array) -> FarRecipe:
+	var key := "%d|%d|%s" % [ref_obj_id, scale, str(items)]
+	if _far_recipes.has(key):
+		far_stats["hits"] += 1
+		return _far_recipes[key]
+	if not canonical:
+		return null
+	var bsr_path := body_path(ref_obj_id)
+	if bsr_path == "" or not _body_templates.has(bsr_path) or _prep_tasks.has(bsr_path):
+		far_stats["not_ready"] += 1
+		return null
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = _body_templates[bsr_path]
+	if tmpl == null or tmpl.skeleton == null:
+		_far_recipes[key] = null
+		far_stats["refused"] += 1
+		return null
+	var skel := tmpl.skeleton
+	var woman := is_woman(ref_obj_id)
+	var race := race_of(ref_obj_id)
+	var resolved := _resolve_wears(items, woman, false)
+	var r := FarRecipe.new()
+	r.key = key
+	r.scale = scale
+	r.bsr_path = bsr_path
+	r.skeleton = skel
+	r.weapon_kind = int(resolved[1])
+	r.weapon_group = BodyAnimations.group_for_weapon(r.weapon_kind, race)
+	r.layout_key = "%s|%d" % [tmpl.parsed.skeleton_path if tmpl.parsed != null else bsr_path, skel.get_bone_count()]
+	# What build() hangs, in its order: [template node, glow material by mesh].
+	var hung: Array = []
+	var blocks: Array = []
+	var worn: Array = []
+	for wear in resolved[0]:
+		var nodes: Array = []
+		for path in wear["models"]:
+			var got := _far_item(tmpl, bsr_path, skel, path)
+			if got.is_empty():
+				far_stats["not_ready"] += 1
+				return null
+			if not (got[0] is bool) and got[0] == null and _fallback_of(path) != "":
+				path = _fallback_of(path)
+				got = _far_item(tmpl, bsr_path, skel, path)
+				if got.is_empty():
+					far_stats["not_ready"] += 1
+					return null
+			if got[0] is bool:
+				_far_recipes[key] = null
+				far_stats["refused"] += 1
+				return null
+			if got[0] != null:
+				nodes.append(got[0])
+				blocks.append(_item_attachables.get(String(path).to_lower()))
+		var glow := _far_glow(wear, nodes)
+		for n in nodes:
+			hung.append([n, glow])
+		if int(wear["slot"]) != SLOT_AVATAR and wear.has("type_ids"):
+			worn.append({"slot": wear["slot"], "type_ids": wear["type_ids"]})
+	# The default wear the worn visuals leave uncovered (_refresh_default_wear).
+	if default_wear != null:
+		for d in default_wear.wear_for(race, woman, worn, default_wear_flag):
+			var got := _far_item(tmpl, bsr_path, skel, String(d["path"]))
+			if got.is_empty():
+				far_stats["not_ready"] += 1
+				return null
+			if got[0] is bool:
+				_far_recipes[key] = null
+				far_stats["refused"] += 1
+				return null
+			if got[0] != null:
+				hung.append([got[0], {}])
+				blocks.append(_item_attachables.get(String(d["path"]).to_lower()))
+	var hides := SkinnedBsrAssembler.hidden_body_nodes(skel, tmpl.parsed, blocks)
+	r.hidden_body_meshes = int(hides[1])
+	# apply_scale's Height and Volume (0xFF changes nothing: a new Body's 1.0
+	# and no factors).
+	var scales := {}
+	if scale != 0xff:
+		r.height = height_factor(scale)
+		scales = volume_bone_scales(scale, woman)
+	for c in skel.get_children():
+		if (hides[0] as Dictionary).has(c):
+			continue
+		_far_pieces(c, skel, {}, scales, r)
+	for h in hung:
+		_far_pieces(h[0], skel, h[1], scales, r)
+	far_stats["made"] += 1
+	_far_recipes[key] = r
+	return r
+
+## An item template as _item_instance would hang it: [node], [null] (none:
+## build() skips it, or tries the fallback), [false] (build() would add a
+## bone the body template lacks: no recipe), or [] (not made yet).
+func _far_item(tmpl: SkinnedBsrAssembler.AssembledCharacter, body_bsr: String, skel: Skeleton3D, item_path: String) -> Array:
+	var key := _item_key(tmpl, body_bsr, item_path)
+	if not _item_templates.has(key):
+		return []
+	var t: Node3D = _item_templates[key]
+	if t == null:
+		return [null]
+	if int(t.get_meta("bone_count", skel.get_bone_count())) > skel.get_bone_count():
+		return [false]
+	return [t]
+
+## _apply_glow's materials for a wear's template nodes, without touching
+## them: mesh -> its glow material, {} for no glow.
+func _far_glow(wear: Dictionary, nodes: Array) -> Dictionary:
+	var out := {}
+	var slot := int(wear["slot"])
+	if not glow_enabled or glow_tables == null or (slot != SLOT_WEAPON and slot != SLOT_SHIELD):
+		return out
+	var code := String(wear.get("code", ""))
+	if code == "" or nodes.is_empty():
+		return out
+	var row := glow_tables.glow_row(code, int(wear["plus"]))
+	if row == null:
+		return out
+	var option_tex := EquipGlow.option_texture(_data, row.texture)
+	for node in nodes:
+		for mi in EquipGlow.meshes_of(node):
+			var plain := EquipGlow.plain_of(AppearFade.original_material(mi))
+			if plain != null:
+				out[mi] = EquipGlow.material_for(plain, row, option_tex)
+	return out
+
+## The pieces under `top` (a child build() leaves on the skeleton, or an item
+## template it would hang there), each as FarRecipe.pieces holds them.
+func _far_pieces(top: Node, skel: Skeleton3D, glow: Dictionary, scales: Dictionary, r: FarRecipe) -> void:
+	var stack: Array[Node] = [top]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is EfpEffect:
+			continue
+		for c in n.get_children():
+			stack.append(c)
+		var mi := n as MeshInstance3D
+		if mi == null:
+			continue
+		var mat: Material = glow.get(mi, mi.get_active_material(0))
+		var overridden := glow.has(mi) or mi.material_override != null
+		var skin: Skin = mi.skin
+		var bone_name := ""
+		var chain := Transform3D.IDENTITY
+		var at: Node = mi
+		var to_body := false
+		while at != null:
+			if at is BoneAttachment3D and (at == top or at.get_parent() == skel):
+				bone_name = (at as BoneAttachment3D).bone_name
+				break
+			if at == skel:
+				break
+			if at is Node3D:
+				chain = (at as Node3D).transform * chain
+			if at == top:
+				break
+			at = at.get_parent()
+		if bone_name == "" and skin != null and _far_skinned_to_body(mi, top, skel):
+			to_body = true
+			var base := canonical_base(skin)
+			if base != null:
+				# One variant per shared skin and scale byte (volume_skin
+				# builds its key from every factor: cached here by the byte).
+				var vk := "%d|%d" % [base.get_instance_id(), r.scale]
+				var got = _far_volume.get(vk)
+				if got == null:
+					got = volume_skin(base, skel, scales)
+					_far_volume[vk] = got
+				skin = got
+		r.pieces.append([mi, mat, overridden, skin, bone_name, chain, top, to_body])
+
+## Whether `mi` (under `top`) would be skinned to the body skeleton once `top`
+## hangs on it: its skeleton path, walked from `mi`, leaves `top` upward into
+## the skeleton (a body template's piece already sits under it).
+static func _far_skinned_to_body(mi: MeshInstance3D, top: Node, skel: Skeleton3D) -> bool:
+	var path := mi.skeleton
+	if path.is_empty():
+		return false
+	if top.get_parent() == skel or top == skel:
+		return mi.get_node_or_null(path) == skel
+	var at: Node = mi
+	for i in range(path.get_name_count()):
+		var name := String(path.get_name(i))
+		if name == "..":
+			at = skel if at == top else at.get_parent()
+			if at == null:
+				return false
+		elif at == skel:
+			return false
+		else:
+			at = at.get_node_or_null(name)
+			if at == null:
+				return false
+	return at == skel
+
 ## Hides the body's own pieces under what it wears, as retail does: every
 ## body mesh shown, then each worn item's attachable block with flag 1 hides
 ## the pieces it covers (SkinnedBsrAssembler.apply_body_hides, READ
@@ -803,6 +1044,9 @@ func free_templates() -> void:
 	_item_templates.clear()
 	_item_attachables.clear()
 	_canonical_by_layout.clear()
+	# Round 756: the recipes name the templates' meshes.
+	_far_recipes.clear()
+	_far_volume.clear()
 	# The baked poses shared by path (round 738's review, F3).
 	CrowdAnim.clear_shared_frames()
 	# Round 748: template tasks still running are waited for and what they
@@ -842,6 +1086,9 @@ var _prep_queue: Array = []
 ## archive's lock (MEASURED, round 748: arrival frames of 1.5-2.2 s with every
 ## kind's task started together).
 const PREP_MAX_RUNNING := 2
+## Round 756 (QA only): OPENSRO_QA_PREP_RUNNING=<n> runs n at once instead, to
+## measure what the cap costs a cold crowd's arrival (r756.md).
+var prep_max_running := int(OS.get_environment("OPENSRO_QA_PREP_RUNNING")) if OS.get_environment("OPENSRO_QA_PREP_RUNNING").is_valid_int() else PREP_MAX_RUNNING
 var _prep_running := 0
 ## Tests only: stand-ins for the task's two assemblies, so the async path runs
 ## on synthetic templates without an archive. body_assembler(path) ->
@@ -990,7 +1237,7 @@ static func _bare_skeleton(src: Skeleton3D) -> Skeleton3D:
 ## Starts queued requests while fewer than PREP_MAX_RUNNING run. Low
 ## priority: the world's own cell prepares (high) go first.
 func _start_queued() -> void:
-	while _prep_running < PREP_MAX_RUNNING and not _prep_queue.is_empty():
+	while _prep_running < prep_max_running and not _prep_queue.is_empty():
 		var q: Array = _prep_queue.pop_front()
 		var path: String = q[0]
 		prep_stats["tasks"] += 1

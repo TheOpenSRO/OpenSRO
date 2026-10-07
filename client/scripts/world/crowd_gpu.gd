@@ -64,6 +64,10 @@ const NEAR_HYSTERESIS := 1.25
 ## The near set is re-chosen every this many frames, from a scan spread over
 ## them (OURS, as EquipFx.RESELECT_FRAMES).
 const RESELECT_FRAMES := 10
+## Round 757 (OURS): World3D's near/far scan reads at most this many bodies a
+## frame; past 2,000 bodies a cycle takes longer than RESELECT_FRAMES (7,000:
+## 35 frames, about 0.6 s at 60 fps).
+const SCAN_PER_FRAME_MAX := 200
 ## Bodies switched to the GPU a frame at most, and the time they may take
 ## (OURS): a switch walks the body's parts and adds an instance per part
 ## (docs/rounds/r747.md has what one costs).
@@ -73,8 +77,11 @@ const SWITCH_BUDGET_USEC := 3000
 ## frames bakes over a few frames; a body waiting on its clip stays near.
 const BAKE_BUDGET_USEC := 4000
 ## Every far body's transform is re-read at least every this many frames (OURS),
-## besides the moves World3D reports (moved()).
-const REFRESH_FRAMES := 15
+## besides the moves World3D reports (moved()). Round 757: 15 -> 60. Every
+## path that moves a holder reports it (World3D._other_moved), so the spread
+## re-read is a safety net; at 7,000 far bodies 15 frames was 467 re-reads a
+## frame (part of `g_flush`'s 1.7 ms, MEASURED).
+const REFRESH_FRAMES := 60
 const SLOTS_PER_ROW := 256
 const TEXELS_PER_BODY := 4
 const FLOATS_PER_BODY := TEXELS_PER_BODY * 4
@@ -178,6 +185,21 @@ class Body:
 	## The skeleton's own transform under its holder, kept while it is
 	## top_level (add()).
 	var local := Transform3D()
+	## Round 756: a body drawn from its kind's recipe before it is built
+	## (add_ghost): no skeleton; `key` is its holder node (a built body's is
+	## its skeleton), the key of `_bodies` and of its clip sounds.
+	var ghost := false
+	var key: Object
+	var recipe: CharacterAppearance.FarRecipe
+	## The object colour it is drawn at (-1: the materials as they are), and
+	## the lit materials its parts draw with, held (ObjectLight keeps its
+	## copies weakly).
+	var light := -1.0
+	var mats: Array = []
+	## Its fade on the GPU (round 756): 0 none, FADE_IN, FADE_OUT, and the
+	## clip time (World3D._idle_anim_time) it began at.
+	var fade := 0
+	var fade_start := 0.0
 
 var scenario: RID
 var _layouts := {}            # layout key -> Layout
@@ -187,7 +209,7 @@ var _by_node := {}            # Node3D -> Body
 var _twin_shaders := {}       # Shader -> Shader
 var _twins := {}              # "material id|layout" -> ShaderMaterial
 var _twin_sources := {}       # the same key -> WeakRef to the source material (its id is the key)
-var _twin_users := {}         # the same key -> groups drawing with it
+var _twin_users := {}         # twin ShaderMaterial -> groups drawing with it
 var _rigid := {}              # "mesh id|layout|bone" -> ArrayMesh
 var _free_slots: Array[int] = []
 var _slots := 0
@@ -234,23 +256,46 @@ func _notification(what: int) -> void:
 # --- bodies -----------------------------------------------------------------------
 
 func has(skel: Skeleton3D) -> bool:
-	return _bodies.has(skel)
+	return skel != null and _bodies.has(skel)
+
+## Round 756: whether `node` (another player's holder) is drawn as a ghost.
+func is_ghost(node: Object) -> bool:
+	var b: Body = _bodies.get(node) if node != null else null
+	return b != null and b.ghost
+
+## Every ghost's holder node.
+func ghosts() -> Array:
+	var out: Array = []
+	for k in _bodies:
+		if (_bodies[k] as Body).ghost:
+			out.append(k)
+	return out
+
+## How many bodies are ghosts.
+func ghost_count() -> int:
+	return _ghost_count
+
+var _ghost_count := 0
 
 func body_count() -> int:
 	return _bodies.size()
 
 ## The entry a far skeleton plays ([skeleton, anim, frames, phase, loops, ...]), or [].
-func entry_of(skel: Skeleton3D) -> Array:
+func entry_of(skel: Object) -> Array:
 	var b: Body = _bodies.get(skel)
 	return b.entry if b != null else []
 
 ## Every far skeleton.
 func skeletons() -> Array:
-	return _bodies.keys()
+	var out: Array = []
+	for k in _bodies:
+		if not (_bodies[k] as Body).ghost:
+			out.append(k)
+	return out
 
 ## The far body record of `skel`, or null (World3D's sound step).
-func body_of(skel: Skeleton3D) -> Body:
-	return _bodies.get(skel)
+func body_of(skel: Object) -> Body:
+	return _bodies.get(skel) if skel != null else null
 
 ## The far bodies within hearing (World3D._crowd_sound_step), kept as their
 ## `heard` flags change.
@@ -357,10 +402,15 @@ func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float) -> bool
 ## its clip tick. `push`: its groups are sent to the server now, so a body
 ## brought back between two flushes (a hook in another node's frame) is never
 ## drawn twice; release_all sends once for all.
-func remove(skel: Skeleton3D, push: bool = true) -> Array:
-	var b: Body = _bodies.get(skel)
+func remove(skel: Object, push: bool = true) -> Array:
+	var b: Body = _bodies.get(skel) if skel != null else null
 	if b == null:
 		return []
+	if b.fade != 0:
+		_fading.erase(b)
+		b.fade = 0
+	if b.ghost:
+		_ghost_count -= 1
 	for p in b.parts:
 		_remove_part(p)
 	b.parts.clear()
@@ -372,13 +422,19 @@ func remove(skel: Skeleton3D, push: bool = true) -> Array:
 	if _by_node.get(b.node) == b:
 		_by_node.erase(b.node)
 	_moved.erase(b)
+	# Out of hearing as it leaves (round 757's review F1, round 756's S4):
+	# World3D's sound wheel drops a record that is not heard, or not its
+	# skeleton's (a ghost's: its holder's) current one.
+	b.heard = false
+	b.sound_due = INF
 	_free_slots.append(b.slot)
 	# A freed slot draws nothing: no instance names it.
 	_unhide(b)
-	if is_instance_valid(skel):
-		skel.top_level = false
-		skel.transform = b.local
-		skel.remove_meta(META_FAR)
+	if not b.ghost and is_instance_valid(skel):
+		var sk := skel as Skeleton3D
+		sk.top_level = false
+		sk.transform = b.local
+		sk.remove_meta(META_FAR)
 	stats["removed"] += 1
 	return b.entry
 
@@ -390,8 +446,8 @@ func remove(skel: Skeleton3D, push: bool = true) -> Array:
 ## Cheap, since a walking crowd changes gait in bursts (every body that gets a
 ## new target starts running in the same frame): the clip's frames are looked
 ## up once per body and clip.
-func set_clip(skel: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, idle_time: float) -> bool:
-	var b: Body = _bodies.get(skel)
+func set_clip(skel: Object, anim: BanReader.ParsedAnimation, frames: int, idle_time: float) -> bool:
+	var b: Body = _bodies.get(skel) if skel != null else null
 	if b == null or anim == null:
 		return false
 	if anim == b.entry[1]:
@@ -405,6 +461,8 @@ func set_clip(skel: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, id
 		b.by_clip[anim] = fr
 	if not b.layout.clips.has(fr):
 		_queue_bake(b.layout, fr)
+		if b.ghost:
+			_ghost_waits_bake = true
 		return false
 	b.entry[1] = anim
 	b.entry[2] = frames
@@ -423,7 +481,8 @@ func moved(node: Node3D) -> void:
 ## copy). False when it can no longer be drawn here (the caller brings it near).
 func refresh(node: Node3D) -> bool:
 	var b: Body = _by_node.get(node)
-	if b == null:
+	# A ghost has no meshes to re-read (round 756): its light is ghost_light's.
+	if b == null or b.ghost:
 		return true
 	_unhide(b)
 	var parts = _parts_of(b.skel, b.layout)
@@ -436,6 +495,346 @@ func refresh(node: Node3D) -> bool:
 		_add_part(b, p)
 	_hide(b, parts)
 	return true
+
+# --- ghosts (round 756) -------------------------------------------------------------
+
+## Round 756 (OURS; docs/rounds/r756.md): an arriving body drawn at once,
+## before it is built. Retail creates every character of a group spawn, its
+## meshes loaded, inside the one 0x3018 call, and draws them all from that
+## frame, fading in together (READ, r756.md section 1); this client builds a
+## dressed body in 1.5-3.5 ms (MEASURED), so a page of 1000 dressed at once
+## would be a multi-second frame and was dressed one or a few a frame
+## instead (round 739's pump). A ghost is the body as CrowdGpu would draw it
+## far, made straight from its kind's recipe (CharacterAppearance.far_recipe:
+## the template meshes, the glow and Volume build() would give them) without a
+## node: a body slot, a clip texel, an instance a part. World3D dresses it
+## later, nearest first, and hands the dressed skeleton over in the same
+## frame (remove, then add with the same entry): the same meshes, materials,
+## clip and phase, so the same pixels.
+##
+## The fade (READ: every character fades in over 2.0 s from its spawn, out
+## over 1.5 s on a despawn, AppearFade): a fading ghost's parts draw from
+## groups of their own with the blended fade twin of their material
+## (AppearFade.fade_twin, with the skin), whose alpha the vertex shader works
+## out per instance from the clock and the fade's start in INSTANCE_CUSTOM.w
+## (crowd_gpu.gdshaderinc's srr_cg_fade: AppearFade.alpha_at's truncated byte),
+## so no material changes as fades run and one twin a material serves every
+## fade; they move to the shared groups when it ends. The instances of a fade
+## group are not sorted against each other (one MultiMesh, OURS approximation
+## for the 2 s; the fade twins write depth, as the near ones do).
+
+## Baking budget a frame while a ghost waits on a clip not baked yet (OURS):
+## the arrival of a kind whose stand loop is new waits on its frames.
+const GHOST_BAKE_BUDGET_USEC := 16000
+const FADE_IN := 1
+const FADE_OUT := 2
+
+var _ghost_waits_bake := false
+## Bumped whenever baked clips become drawable (_upload): a ghost that waited
+## on its clip may be drawn now (World3D asks again only then).
+var clip_generation := 0
+var _ghost_waits_upload := false
+## recipe key -> [Layout, [[part, material, overridden], ...]], or null when
+## a piece is not drawable far (the body is dressed instead).
+var _recipe_geo := {}
+## "recipe key|light level" -> the parts with their lit materials (no twins:
+## review F2), and per recipe its levels in the order they were made (F5).
+var _recipe_lit := {}
+var _recipe_lit_order := {}
+const LIT_LEVELS_PER_RECIPE := 4
+const LIT_CACHE_CAP := 4096
+## Lit material id -> [WeakRef to it, its fade twin source] (_fade_src).
+var _fade_srcs := {}
+const FADE_SRC_CAP := 4096
+## Fading ghosts (Body -> true).
+var _fading := {}
+
+## Draws `node` (another player's holder, in the tree) as the body `recipe`
+## names, playing `entry` (World3D._animated's shape, entry[0] the node), its
+## skeleton at `local` under the holder, at object colour `light` (-1: the
+## materials as they are), fading in from nothing when `fade`. False, nothing
+## changed, when it cannot yet (its clip is still baking: queued first) or
+## cannot at all (refusals; the caller dresses it instead: can_ghost).
+func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array, local: Transform3D, light: float,
+		idle_time: float, fade: bool) -> bool:
+	if not enabled or node == null or recipe == null or _bodies.has(node) or not node.is_inside_tree():
+		return false
+	var geo = _recipe_geometry(recipe)
+	if geo == null:
+		return false
+	var l: Layout = geo[0]
+	if entry.size() < 5 or not bool(entry[4]):
+		return false
+	var anim: BanReader.ParsedAnimation = entry[1]
+	if not ghost_clip_ready(recipe, anim):
+		return false
+	if _lit_parts(recipe, l, light).is_empty():
+		return false
+	# A mirrored holder, as add() refuses one (review F9; none is mirrored).
+	if (node.global_transform * local).basis.determinant() < 0.0:
+		_refuse("mirrored")
+		return false
+	var b := Body.new()
+	b.ghost = true
+	b.key = node
+	b.node = node
+	b.layout = l
+	b.entry = entry
+	b.frames = CrowdAnim.frames_for(l.scratch, anim)
+	b.recipe = recipe
+	b.light = light
+	b.slot = _take_slot()
+	b.local = local
+	_bodies[node] = b
+	_by_node[node] = b
+	_keys_dirty = true
+	_ghost_count += 1
+	_write_transform(b)
+	_write_clip(b, idle_time)
+	if fade:
+		b.fade = FADE_IN
+		b.fade_start = idle_time
+		_fading[b] = true
+	_add_ghost_parts(b)
+	_grow_aabb(b.xf.origin)
+	stats["ghosts"] = int(stats.get("ghosts", 0)) + 1
+	return true
+
+## Whether `anim` is drawable on `recipe`'s layout now (baked and up); a clip
+## not baked is queued first. A ghost asks this before anything else.
+func ghost_clip_ready(recipe: CharacterAppearance.FarRecipe, anim: BanReader.ParsedAnimation) -> bool:
+	var geo = _recipe_geometry(recipe)
+	if geo == null or anim == null or anim.duration_ms <= 0 or anim.key_times.is_empty():
+		return false
+	var l: Layout = geo[0]
+	var fr := CrowdAnim.frames_for(l.scratch, anim)
+	if l.clips.has(fr):
+		return true
+	if l.uploading.has(fr):
+		_ghost_waits_upload = true
+	else:
+		_queue_bake(l, fr)
+		_ghost_waits_bake = true
+	return false
+
+## Queues `anim`'s frames on `recipe`'s layout (World3D: a ghost's run, so
+## its first step finds it baked; review F3). Nothing when baked or queued.
+func prebake_recipe(recipe: CharacterAppearance.FarRecipe, anim: BanReader.ParsedAnimation) -> void:
+	var geo = _recipe_geometry(recipe) if recipe != null else null
+	if geo == null or anim == null or anim.duration_ms <= 0 or anim.key_times.is_empty():
+		return
+	var l: Layout = geo[0]
+	_queue_bake(l, CrowdAnim.frames_for(l.scratch, anim), false)
+
+## Whether `recipe` can be drawn far at all (its pieces pass the far path's
+## rules); its parts are worked out once.
+func can_ghost(recipe: CharacterAppearance.FarRecipe) -> bool:
+	return enabled and recipe != null and _recipe_geometry(recipe) != null
+
+## A ghost's object colour changed (CharacterLight): its parts take the
+## level's materials.
+func ghost_light(node: Object, light: float) -> void:
+	var b: Body = _bodies.get(node) if node != null else null
+	if b == null or not b.ghost or roundi(b.light * ObjectLight.VARIANT_STEPS) == roundi(light * ObjectLight.VARIANT_STEPS):
+		return
+	b.light = light
+	_reparts(b)
+
+## A ghost drawn again (a new kind, World3D._ghost_other) goes on with the
+## fade-in it was in, from `start` (a clip time).
+func continue_fade_in(node: Object, start: float) -> void:
+	var b: Body = _bodies.get(node) if node != null else null
+	if b == null or not b.ghost or b.fade != 0:
+		return
+	b.fade = FADE_IN
+	b.fade_start = start
+	_fading[b] = true
+	_reparts(b)
+
+## The ghost's place in its fade-in, seconds (-1: not fading in).
+func fade_elapsed(node: Object) -> float:
+	var b: Body = _bodies.get(node) if node != null else null
+	if b == null or b.fade != FADE_IN:
+		return -1.0
+	return maxf(_last_time - b.fade_start, 0.0)
+
+## A departing ghost fades out over AppearFade.DISAPPEAR_SECONDS from now,
+## then leaves the instances (its holder is freed by the caller's own
+## fade-out, which ends then too). Nothing for a body that is not a ghost.
+## (A ghost still fading in fades out from full, as AppearFade.start_out.)
+func fade_out(node: Object) -> void:
+	var b: Body = _bodies.get(node) if node != null else null
+	if b == null or not b.ghost or b.fade == FADE_OUT:
+		return
+	b.fade = FADE_OUT
+	b.fade_start = _last_time
+	_fading[b] = true
+	_reparts(b)
+
+## The fades that ended by `idle_time` (flush): a fade-in's parts move to the
+## shared groups, a fade-out's body leaves.
+func _step_fades(idle_time: float) -> void:
+	if _fading.is_empty():
+		return
+	for k in _fading.keys():
+		var b: Body = k
+		var e := idle_time - b.fade_start
+		if b.fade == FADE_OUT:
+			if AppearFade.out_done_at(e, AppearFade.DISAPPEAR_SECONDS):
+				remove(b.key, false)
+		elif AppearFade.done_at(e, AppearFade.APPEAR_SECONDS):
+			_fading.erase(b)
+			b.fade = 0
+			_reparts(b)
+			stats["fades_done"] = int(stats.get("fades_done", 0)) + 1
+
+## INSTANCE_CUSTOM.w of a fading part: the clock (ms since the epoch) its fade
+## began at, or -1 - that for a fade-out (srr_cg_fade).
+func _fade_w(b: Body) -> float:
+	var ms := (b.fade_start - _epoch) * 1000.0
+	return ms if b.fade == FADE_IN else -1.0 - ms
+
+## A ghost's parts again (its light or its fade changed): off its groups,
+## then on the ones it draws from now.
+func _reparts(b: Body) -> void:
+	for p in b.parts:
+		_remove_part(p)
+	b.parts.clear()
+	_add_ghost_parts(b)
+
+func _add_ghost_parts(b: Body) -> void:
+	var parts := _lit_parts(b.recipe, b.layout, b.light)
+	b.mats.clear()
+	var w := _fade_w(b) if b.fade != 0 else 0.0
+	var l := b.layout
+	for p in parts:
+		var lit: Material = p["lit"]
+		b.mats.append(lit)
+		# The twin is looked up on every add, never cached with the part
+		# (round 756's review, F2): collect() frees a twin with its last
+		# group, and a cached one would no longer be given the crowd's
+		# textures as they grow.
+		var src := _fade_src(lit) if b.fade != 0 else null
+		var tk := "%d|%s" % [src.get_instance_id(), l.key] if src != null else String(p["tk"])
+		var twin: ShaderMaterial = _live_twin(src, tk, l) if src != null else null
+		if twin == null:
+			src = lit
+			tk = p["tk"]
+			twin = _live_twin(lit, tk, l)
+		if twin == null:
+			continue
+		# The group key, kept per twin by id (never the twin itself, F2).
+		var gk_slot := "gk_fade" if src != lit else "gk"
+		var gk = p.get(gk_slot)
+		if gk == null or int(gk[0]) != twin.get_instance_id():
+			gk = [twin.get_instance_id(), "%d|%d|%d|%.4f" % [(p["mesh"] as Mesh).get_instance_id(), twin.get_instance_id(), int(p["layers"]), float(p["sort"])]]
+			p[gk_slot] = gk
+		var q := {"mesh": p["mesh"], "material": twin, "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"],
+			"twin_key": tk, "gkey": gk[1]}
+		_add_part(b, q, w if src != lit else 0.0)
+
+## `m`'s twin as _twin answers, without re-making its key: the live one in
+## _twins when it is still `m`'s (its source checked by the weak reference),
+## else _twin's.
+func _live_twin(m: Material, tk: String, l: Layout) -> ShaderMaterial:
+	var got: ShaderMaterial = _twins.get(tk)
+	if got != null:
+		var src = _twin_sources.get(tk)
+		if src != null and (src as WeakRef).get_ref() == m:
+			return got
+	return _twin(m as ShaderMaterial, l)
+
+## The blended fade twin of `lit` (AppearFade.fade_twin), or null when it
+## has none (the part pops). Made once a material, held while that material
+## lives (checked by a weak reference, so a new material that takes a freed
+## one's id is not given its fade); the cache is dropped whole past
+## FADE_SRC_CAP entries (they are remade on demand).
+func _fade_src(lit: Material) -> Material:
+	var id := lit.get_instance_id()
+	var got = _fade_srcs.get(id)
+	if got != null and (got[0] as WeakRef).get_ref() == lit:
+		return got[1]
+	if _fade_srcs.size() >= FADE_SRC_CAP:
+		_fade_srcs.clear()
+	var src: Material = AppearFade.fade_twin(lit)
+	_fade_srcs[id] = [weakref(lit), src]
+	return src
+
+## The recipe's parts as the far path reads a built body (_part_for), once
+## per recipe; null when one is not drawable far.
+func _recipe_geometry(recipe: CharacterAppearance.FarRecipe):
+	if _recipe_geo.has(recipe.key):
+		return _recipe_geo[recipe.key]
+	var l := _layout_for(recipe.skeleton, recipe.layout_key)
+	if l == null:
+		_recipe_geo[recipe.key] = null
+		return null
+	var parts: Array = []
+	for piece in recipe.pieces:
+		var mi: MeshInstance3D = piece[0]
+		var top: Node = piece[6]
+		if mi.mesh == null or not _shown_under(mi, top.get_parent()):
+			continue
+		var to_body := bool(piece[7])
+		var identity := true
+		if to_body:
+			var at: Node = mi
+			while at != null and at != top.get_parent():
+				if at is Node3D and not (at as Node3D).transform.is_equal_approx(Transform3D.IDENTITY):
+					identity = false
+					break
+				at = at.get_parent()
+		var p = _part_for(mi, piece[1], piece[3], to_body, identity, String(piece[4]), piece[5], l, false)
+		if p == null:
+			_recipe_geo[recipe.key] = null
+			return null
+		parts.append([p, piece[1], bool(piece[2])])
+	# Nothing to draw (a body with no mesh): it is dressed instead.
+	if parts.is_empty():
+		_recipe_geo[recipe.key] = null
+		return null
+	var got := [l, parts]
+	_recipe_geo[recipe.key] = got
+	return got
+
+## The recipe's parts at object colour `light`: each overridden object
+## material swapped for its level's copy (CharacterLight.set_on's rule) --
+## once per recipe and level, the twins left to each add (F2). Empty when a
+## material has no twin (twin_shader: the body is dressed instead).
+##
+## Bounded (round 756's review, F5): the entries hold their level's material
+## copies, which ObjectLight keeps only weakly, so a recipe keeps its last
+## LIT_LEVELS_PER_RECIPE levels and the whole cache is dropped past
+## LIT_CACHE_CAP entries (a ghost holds its own copies in Body.mats).
+func _lit_parts(recipe: CharacterAppearance.FarRecipe, l: Layout, light: float) -> Array:
+	# By the level ObjectLight draws it at (its copies are per level).
+	var key := "%s|%d" % [recipe.key, roundi(light * ObjectLight.VARIANT_STEPS) if light >= 0.0 else -1]
+	var got = _recipe_lit.get(key)
+	if got != null:
+		return got
+	var out: Array = []
+	for g in (_recipe_geo[recipe.key] as Array)[1]:
+		var p: Dictionary = g[0]
+		var mat: Material = g[1]
+		var lit := mat
+		if light >= 0.0 and bool(g[2]) and ObjectLight.is_object_material(mat):
+			lit = ObjectLight.with_object_color(mat, light)
+		if twin_shader((lit as ShaderMaterial).shader) == null:
+			if lit == mat:
+				return []
+			lit = mat
+		out.append({"mesh": p["mesh"], "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"], "lit": lit,
+			"tk": "%d|%s" % [lit.get_instance_id(), l.key]})
+	if _recipe_lit.size() >= LIT_CACHE_CAP:
+		_recipe_lit.clear()
+		_recipe_lit_order.clear()
+	var order: Array = _recipe_lit_order.get(recipe.key, [])
+	order.append(key)
+	while order.size() > LIT_LEVELS_PER_RECIPE:
+		_recipe_lit.erase(order.pop_front())
+	_recipe_lit_order[recipe.key] = order
+	_recipe_lit[key] = out
+	return out
 
 ## The parts' own meshes hidden while their instances draw them: each mesh,
 ## not the skeleton, so what else hangs from it (EquipFx's particle holders
@@ -495,8 +894,9 @@ func set_range(r: float) -> void:
 func release_all() -> Array:
 	var out: Array = []
 	for skel in _bodies.keys():
+		var ghost := (_bodies[skel] as Body).ghost
 		var e := remove(skel, false)
-		if not e.is_empty():
+		if not e.is_empty() and not ghost:
 			out.append(e)
 	_push_groups()
 	return out
@@ -511,6 +911,7 @@ func flush(idle_time: float) -> void:
 	if idle_time - _epoch > EPOCH_SECONDS or idle_time < _epoch:
 		_rebase(idle_time)
 	RenderingServer.global_shader_parameter_set(&"srr_crowd_clock", float((idle_time - _epoch) * 1000.0))
+	_step_fades(idle_time)
 	for b in _moved:
 		_update_transform(b)
 	_moved.clear()
@@ -525,12 +926,14 @@ func flush(idle_time: float) -> void:
 		var b: Body = _bodies.get(_keys[_ring])
 		if b == null:
 			continue
-		if not is_instance_valid(b.skel) or not is_instance_valid(b.node):
+		if not is_instance_valid(b.node) or (not b.ghost and not is_instance_valid(b.skel)):
 			remove(_keys[_ring])
 			continue
 		_update_transform(b)
-	bake_step(BAKE_BUDGET_USEC)
-	_upload()
+	bake_step(GHOST_BAKE_BUDGET_USEC if _ghost_waits_bake else BAKE_BUDGET_USEC)
+	_ghost_waits_bake = false
+	_upload(_ghost_waits_upload)
+	_ghost_waits_upload = false
 
 ## Bakes queued clips for up to `budget_usec`. Returns the frames composed.
 func bake_step(budget_usec: int) -> int:
@@ -575,6 +978,9 @@ func _rebase(idle_time: float) -> void:
 	_epoch = idle_time
 	for skel in _bodies:
 		_write_clip(_bodies[skel], idle_time)
+	# A fading ghost's start is ms since the epoch (round 756).
+	for b in _fading.keys():
+		_reparts(b)
 
 func _upload(force: bool = false) -> void:
 	if _body_dirty and _slot_cap > 0:
@@ -597,6 +1003,8 @@ func _upload(force: bool = false) -> void:
 			var t0 := Time.get_ticks_usec()
 			l.dirty = false
 			l.last_upload = _frame
+			if not l.uploading.is_empty():
+				clip_generation += 1
 			l.clips.merge(l.uploading, true)
 			l.uploading.clear()
 			if l.tex == null or l.tex_layers != l.pages.size():
@@ -635,6 +1043,10 @@ func _upload(force: bool = false) -> void:
 
 ## Every group whose instances changed, to the server.
 func _push_groups() -> void:
+	if _aabb_dirty:
+		_aabb_dirty = false
+		for k in _groups:
+			RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
 	var instances := 0
 	for k in _groups:
 		var g: Group = _groups[k]
@@ -657,8 +1069,12 @@ func _grow_aabb(at: Vector3) -> void:
 	# Grown with a margin, so a walking crowd does not reset every group often.
 	_aabb = _aabb.grow(16.0)
 	_aabb_set = true
-	for k in _groups:
-		RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
+	# Sent to the groups with their instances (_push_groups), once however
+	# many bodies grew it (round 756: a page of ghosts, nearest first, grew it
+	# body by body, a call per group each time).
+	_aabb_dirty = true
+
+var _aabb_dirty := false
 
 ## Re-measures the bounds from every far body (World3D's cycle end).
 func reset_aabb() -> void:
@@ -670,13 +1086,22 @@ func reset_aabb() -> void:
 		var p: Vector3 = (_bodies[skel] as Body).xf.origin
 		lo = Vector3(minf(lo.x, p.x), minf(lo.y, p.y), minf(lo.z, p.z))
 		hi = Vector3(maxf(hi.x, p.x), maxf(hi.y, p.y), maxf(hi.z, p.z))
+	reset_aabb_to(lo, hi)
+
+## Round 757: the bounds from the far bodies' places as the caller's cycle
+## scanned them (World3D: one cycle's scan reads every body anyway), so the
+## cycle's end does not walk every far body again. A body that moved since is
+## inside the grown margin, or grows the box itself (_grow_aabb).
+func reset_aabb_to(lo: Vector3, hi: Vector3) -> void:
+	if _bodies.is_empty():
+		return
 	var box := AABB(lo - Vector3(12.0, 2.0, 12.0), hi - lo + Vector3(24.0, 26.0, 24.0)).grow(16.0)
 	if _aabb_set and _aabb.encloses(box) and _aabb.get_volume() < box.get_volume() * 4.0:
 		return
 	_aabb = box
 	_aabb_set = true
-	for k in _groups:
-		RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
+	# With the instances (_push_groups), as a grown box is (round 756).
+	_aabb_dirty = true
 
 # --- the body texture --------------------------------------------------------------
 
@@ -736,8 +1161,8 @@ func _write_clip(b: Body, idle_time: float) -> void:
 
 ## What the shader computes for `b` at `idle_time`: the baked frame's index
 ## in its clip (tests: held to CrowdAnim.frame_index).
-func frame_of(skel: Skeleton3D, idle_time: float) -> int:
-	var b: Body = _bodies.get(skel)
+func frame_of(skel: Object, idle_time: float) -> int:
+	var b: Body = _bodies.get(skel) if skel != null else null
 	if b == null:
 		return -1
 	var o := b.slot * FLOATS_PER_BODY + 12
@@ -747,8 +1172,8 @@ func frame_of(skel: Skeleton3D, idle_time: float) -> int:
 
 # --- layouts and baking -----------------------------------------------------------
 
-func _layout_for(skel: Skeleton3D) -> Layout:
-	var key := String(skel.get_meta(MonsterCrowd.META_LAYOUT, ""))
+func _layout_for(skel: Skeleton3D, key_in: String = "") -> Layout:
+	var key := key_in if key_in != "" else String(skel.get_meta(MonsterCrowd.META_LAYOUT, ""))
 	if key == "":
 		return null
 	var l: Layout = _layouts.get(key)
@@ -770,14 +1195,16 @@ func _layout_for(skel: Skeleton3D) -> Layout:
 			return null
 		l.binds.append(base.get_bind_pose(i))
 		l.rests.append(skel.get_bone_global_rest(i))
-	var scratch := skel.duplicate(0) as Skeleton3D
-	for c in scratch.get_children():
-		scratch.remove_child(c)
-		c.free()
-	scratch.visible = true
-	for m in scratch.get_meta_list():
-		if m != MonsterCrowd.META_LAYOUT:
-			scratch.remove_meta(m)
+	# Round 757: the bones alone (CharacterAppearance._bare_skeleton: names,
+	# parents, rests, every pose at rest, the transform), not a duplicate of the
+	# live body. Node.duplicate() copied the body's children too -- among them
+	# its weapons' particle nodes, whose `custom_aabb` it sets before their
+	# `multimesh` (base-class properties first), so the RenderingServer refused
+	# each with "!is_geometry_instance" (renderer_scene_cull.cpp l. 1019, READ):
+	# the 40 engine errors of every crowd boot, 20 a layout (MEASURED: traced
+	# with unbuffered QA prints, round 757).
+	var scratch := CharacterAppearance._bare_skeleton(skel)
+	scratch.set_meta(MonsterCrowd.META_LAYOUT, key)
 	l.scratch = scratch
 	_layouts[key] = l
 	return l
@@ -914,33 +1341,10 @@ func _parts_of(skel: Skeleton3D, l: Layout):
 		var mi := n as MeshInstance3D
 		if not _shown_under(mi, skel) or mi.mesh == null:
 			continue
-		if mi.mesh.get_surface_count() != 1 or mi.transparency > 0.0:
-			_refuse("surfaces")
-			return null
-		var mat := mi.get_active_material(0) as ShaderMaterial
-		if mat == null or mat.shader == null or mat.next_pass != null:
-			_refuse("material")
-			return null
-		# A blended part (an MTRL mod's blend) is not drawn far (round 747's
-		# review, F8): a MultiMesh's instances are not sorted against each
-		# other, and every far group shares one AABB, so blended parts would
-		# sort as one object. The body stays near, drawn as before.
-		if blended(mat.shader):
-			_refuse("blended")
-			return null
 		var target: Node = mi.get_node_or_null(mi.skeleton) if mi.skin != null else null
-		var p := {"layers": mi.layers, "sort": mi.sorting_offset, "mi": mi}
-		if target == skel:
-			var base := CharacterAppearance.canonical_base(mi.skin)
-			if base == null or not _identity_under(mi, skel):
-				_refuse("skin")
-				return null
-			p["mesh"] = mi.mesh
-			p["vol"] = _volume_row(l, mi.skin, base)
-			p["centre"] = mi.mesh.get_aabb().get_center().y
-		else:
-			var att: BoneAttachment3D = null
-			var chain := Transform3D.IDENTITY
+		var att: BoneAttachment3D = null
+		var chain := Transform3D.IDENTITY
+		if target != skel:
 			var at: Node = mi
 			while at != null and at != skel:
 				if at is BoneAttachment3D and at.get_parent() == skel:
@@ -952,24 +1356,71 @@ func _parts_of(skel: Skeleton3D, l: Layout):
 			if att == null:
 				_refuse("hung")
 				return null
-			var bone := skel.find_bone(att.bone_name)
-			if bone < 0:
-				_refuse("hung")
-				return null
-			var made := rigid_mesh(mi, l.key, bone, l.rests[bone] * chain)
-			if made == null:
-				_refuse("rigid")
-				return null
-			p["mesh"] = made
-			p["vol"] = -1
-			p["centre"] = (l.rests[bone] * chain * mi.mesh.get_aabb().get_center()).y
-		p["material"] = _twin(mat, l)
-		p["twin_key"] = "%d|%s" % [mat.get_instance_id(), l.key]
-		if p["material"] == null:
-			_refuse("shader")
+		var p = _part_for(mi, mi.get_active_material(0), mi.skin, target == skel,
+			target == skel and _identity_under(mi, skel), att.bone_name if att != null else "", chain, l)
+		if p == null:
 			return null
 		out.append(p)
 	return out
+
+## One drawn mesh as a part (round 756: split out of _parts_of, so a body
+## that is not built -- CharacterAppearance.far_recipe's pieces -- is read by
+## the same rules): `mat_in` is what it draws with, `skin` its skin, `to_body`
+## whether it is skinned to the body skeleton (then `identity`: every node
+## from it up to the skeleton sits at the identity), else `bone_name` is the
+## body bone its BoneAttachment3D hangs from and `chain` the transforms from
+## the mesh up to that attachment. Null (counted in `refusals`) when it cannot
+## be drawn here.
+func _part_for(mi: MeshInstance3D, mat_in: Material, skin: Skin, to_body: bool, identity: bool, bone_name: String,
+		chain: Transform3D, l: Layout, with_twin: bool = true):
+	if mi.mesh.get_surface_count() != 1 or mi.transparency > 0.0:
+		_refuse("surfaces")
+		return null
+	var mat := mat_in as ShaderMaterial
+	if mat == null or mat.shader == null or mat.next_pass != null:
+		_refuse("material")
+		return null
+	# A blended part (an MTRL mod's blend) is not drawn far (round 747's
+	# review, F8): a MultiMesh's instances are not sorted against each
+	# other, and every far group shares one AABB, so blended parts would
+	# sort as one object. The body stays near, drawn as before.
+	if blended(mat.shader):
+		_refuse("blended")
+		return null
+	var p := {"layers": mi.layers, "sort": mi.sorting_offset, "mi": mi}
+	if to_body:
+		var base := CharacterAppearance.canonical_base(skin)
+		if base == null or not identity:
+			_refuse("skin")
+			return null
+		p["mesh"] = mi.mesh
+		p["vol"] = _volume_row(l, skin, base)
+		p["centre"] = mi.mesh.get_aabb().get_center().y
+	else:
+		var bone := l.scratch.find_bone(bone_name) if bone_name != "" else -1
+		if bone < 0:
+			_refuse("hung")
+			return null
+		var made := rigid_mesh(mi, l.key, bone, l.rests[bone] * chain)
+		if made == null:
+			_refuse("rigid")
+			return null
+		p["mesh"] = made
+		p["vol"] = -1
+		p["centre"] = (l.rests[bone] * chain * mi.mesh.get_aabb().get_center()).y
+	# Round 756: a recipe's parts make their twin only for the material they
+	# are drawn with (_lit_parts: often a light level's copy, not this one).
+	if not with_twin:
+		if twin_shader(mat.shader) == null:
+			_refuse("shader")
+			return null
+		return p
+	p["material"] = _twin(mat, l)
+	p["twin_key"] = "%d|%s" % [mat.get_instance_id(), l.key]
+	if p["material"] == null:
+		_refuse("shader")
+		return null
+	return p
 
 ## Why a body was refused, counted (QA: describe()).
 var refusals := {}
@@ -1002,6 +1453,12 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 		vw = arrays[Mesh.ARRAY_WEIGHTS]
 		if isk == null or vb == null or vw == null or v.is_empty():
 			return null
+		# A template's item skeleton (round 756, a ghost's recipe) is never in a
+		# tree, where a pose change marks nothing dirty (skeleton_3d.cpp:575,
+		# READ): its globals are composed here (at rest, as a built body's
+		# never-posed item skeleton has them).
+		if not isk.is_inside_tree():
+			isk.force_update_all_bone_transforms()
 		for i in range(mi.skin.get_bind_count()):
 			var bb := mi.skin.get_bind_bone(i)
 			if bb < 0:
@@ -1053,10 +1510,10 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 
 # --- groups -------------------------------------------------------------------------
 
-func _add_part(b: Body, p: Dictionary) -> void:
+func _add_part(b: Body, p: Dictionary, fade_w: float = 0.0) -> void:
 	var mesh: Mesh = p["mesh"]
 	var mat: ShaderMaterial = p["material"]
-	var key := "%d|%d|%d|%.4f" % [mesh.get_instance_id(), mat.get_instance_id(), int(p["layers"]), float(p["sort"])]
+	var key: String = p["gkey"] if p.has("gkey") else "%d|%d|%d|%.4f" % [mesh.get_instance_id(), mat.get_instance_id(), int(p["layers"]), float(p["sort"])]
 	var g: Group = _groups.get(key)
 	if g == null:
 		g = Group.new()
@@ -1073,7 +1530,7 @@ func _add_part(b: Body, p: Dictionary) -> void:
 		if _aabb_set:
 			RenderingServer.instance_set_custom_aabb(g.inst, _aabb)
 		g.twin_key = String(p["twin_key"])
-		_twin_users[g.twin_key] = int(_twin_users.get(g.twin_key, 0)) + 1
+		_twin_users[mat] = int(_twin_users.get(mat, 0)) + 1
 		_groups[key] = g
 	if g.count >= g.cap:
 		g.cap = maxi(8, g.cap * 2)
@@ -1087,7 +1544,7 @@ func _add_part(b: Body, p: Dictionary) -> void:
 	g.buf[o + 12] = float(b.slot)
 	g.buf[o + 13] = float(int(p["vol"]))
 	g.buf[o + 14] = float(p["centre"])
-	g.buf[o + 15] = 0.0
+	g.buf[o + 15] = fade_w
 	var rec := [g, idx, b]
 	g.owners.append(rec)
 	b.parts.append(rec)
@@ -1130,8 +1587,14 @@ func _twin(src: ShaderMaterial, l: Layout) -> ShaderMaterial:
 	t.resource_name = src.resource_name
 	t.shader = sh
 	t.render_priority = src.render_priority
-	for u in src.shader.get_shader_uniform_list():
-		var n: String = u["name"]
+	# The uniform names once per shader (round 756: ghosts make twins in bursts,
+	# and the list is built anew on every call).
+	var names: PackedStringArray = _uniform_names.get(src.shader, PackedStringArray())
+	if names.is_empty():
+		for u in src.shader.get_shader_uniform_list():
+			names.append(String(u["name"]))
+		_uniform_names[src.shader] = names
+	for n in names:
 		var val = src.get_shader_parameter(n)
 		if val != null:
 			t.set_shader_parameter(n, val)
@@ -1166,6 +1629,7 @@ func blended(sh: Shader) -> bool:
 	return yes
 
 var _blended := {}
+var _uniform_names := {}   # Shader -> its uniforms' names
 
 ## `src`'s code with CROWD_GPU defined and crowd_gpu.gdshaderinc included
 ## after its render_mode, and crowd_gpu_vertex.gdshaderinc at the top of its
@@ -1201,6 +1665,10 @@ static func twin_code(code: String) -> String:
 				break
 	lines.insert(at + 1, "#define CROWD_GPU\n#include \"%s\"" % HEAD_INCLUDE)
 	var out := "\n".join(lines)
+	# Round 756: a mod shader's fade twin takes its alpha per instance (a
+	# ghost's fade, srr_cg_fade) instead of from its uniform.
+	if out.contains("uniform float appear_alpha = 1.0;"):
+		out = out.replace("uniform float appear_alpha = 1.0;", "varying float appear_alpha;\n#define SRR_CG_FADE")
 	if out.contains("object.gdshaderinc"):
 		return out
 	if out.contains("void vertex() {"):
@@ -1226,17 +1694,20 @@ func collect() -> int:
 		RenderingServer.free_rid(g.mm)
 		_groups.erase(key)
 		freed += 1
-		var users := int(_twin_users.get(g.twin_key, 0)) - 1
+		# Counted by the twin itself, not its key (round 756's review, F2): a
+		# twin re-made for the same material has the same key, and a stale
+		# group's collection must not take the live one's count.
+		var t: ShaderMaterial = g.material
+		var users := int(_twin_users.get(t, 0)) - 1
 		if users > 0:
-			_twin_users[g.twin_key] = users
+			_twin_users[t] = users
 			continue
-		_twin_users.erase(g.twin_key)
-		var t: ShaderMaterial = _twins.get(g.twin_key)
-		_twins.erase(g.twin_key)
-		_twin_sources.erase(g.twin_key)
-		if t != null:
-			for k in _layouts:
-				(_layouts[k] as Layout).twins.erase(t)
+		_twin_users.erase(t)
+		if _twins.get(g.twin_key) == t:
+			_twins.erase(g.twin_key)
+			_twin_sources.erase(g.twin_key)
+		for k in _layouts:
+			(_layouts[k] as Layout).twins.erase(t)
 	stats["groups_freed"] = int(stats.get("groups_freed", 0)) + freed
 	return freed
 
@@ -1248,8 +1719,15 @@ func describe() -> String:
 		var l: Layout = _layouts[k]
 		rows += l.rows
 		clips += l.clips.size()
-	return "far=%d heard=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f upload_ms=%.1f upload_max_ms=%.1f sound_advances=%d groups_freed=%d refused=%s kept_near=%s" % [
-		_bodies.size(), heard_bodies().size(), _groups.size(), int(stats["instances"]), _layouts.size(), clips, rows, _twins.size(), _rigid.size(),
+	# Round 757's merge (QA): ghosts whose place the groups' shared bounds do
+	# not hold (culled with them while the bounds are in view: S3), and the
+	# far sounds the ghosts played (S1).
+	var outside := 0
+	for g in ghosts():
+		if is_instance_valid(g) and _aabb_set and not _aabb.has_point((g as Node3D).global_position + Vector3(0.0, 5.0, 0.0)):
+			outside += 1
+	return ("ghosts_outside_aabb=%d ghost_sound_advances=%d " % [outside, int(stats.get("ghost_sound_advances", 0))]) + "far=%d ghosts=%d heard=%d groups=%d instances=%d layouts=%d clips=%d rows=%d twins=%d rigid=%d added=%d removed=%d switch_ms=%.0f bake_ms=%.0f upload_ms=%.1f upload_max_ms=%.1f sound_advances=%d groups_freed=%d refused=%s kept_near=%s" % [
+		_bodies.size(), _ghost_count, heard_bodies().size(), _groups.size(), int(stats["instances"]), _layouts.size(), clips, rows, _twins.size(), _rigid.size(),
 		int(stats["added"]), int(stats["removed"]), float(stats.get("switch_usec", 0)) / 1000.0, float(stats["bake_usec"]) / 1000.0,
 		float(stats.get("upload_usec", 0)) / 1000.0, float(stats.get("upload_max_usec", 0)) / 1000.0,
 		int(stats.get("sound_advances", 0)), int(stats.get("groups_freed", 0)),

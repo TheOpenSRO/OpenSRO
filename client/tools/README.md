@@ -496,6 +496,44 @@ physics step, EquipFx's `fx_driver` / `fx_effects`, `rs_setup` the draw's scene 
 (`frame_split.gd`'s header has the source lines). `QA DRESS` lines name every body whose dressing
 took over 40 ms, by phase.
 
+**Threads, cores and the GPU (round 757).** `CROWD_SAMPLE=1` also samples, every half second, the
+client's threads' CPU (`/proc/<pid>/task`), the box's cores (`/proc/stat`) and the GPU
+(`gpu_sample`), and prints one `QA THREADS <step>` line per step from the step's own wall-clock
+window (`unix=` on the step line): `main` (the main thread, in cores), `others` (every other
+thread together), `box_busy` (all processes) and `gpu_gfx`. `crowd_threads.py` does the sampling
+and the report. Other switches: `CROWD_GODOT_ARGS` (`--render-thread separate`), `CROWD_TIMEOUT`,
+`CROWD_NOWAIT=1` (an error-count run that need not wait for other lanes). The census adds which
+nodes physics-process or process, by class (round 757 found 18,035 `Skeleton3D`s there).
+
+**The main thread natively (round 757).** The box cannot run `perf` (the host's
+`perf_event_paranoid` is 4). `main_thread_stacks.py sample <client dir> <out> <s>` takes the
+main thread's stack with `eu-stack` four times a second; `report <out> <t0> <t1>` gives each
+function's share. Use it with a Godot built with symbols (round 757: 4.2.2-stable
+`template_release production=yes lto=none debug_symbols=yes`, about 6 minutes on the box at -j10;
+pass it as `GODOT=` to `crowd_run.sh`). GDScript functions show as `GDScriptFunction::call`; the
+probe's `FrameSplit` labels name those.
+
+**An arrival (round 756).** Before the arrival line the probe prints `QA CROWD visible`: the frames
+and seconds from the first packet until every lineup body was drawn (dressed, or a CrowdGpu ghost),
+their worst frame and how many were over 100 ms. `OPENSRO_QA_LINEUP_WALKUP=<s>` brings the lineup
+one 320-unit block at a time, nearest first, each as one group spawn (the 0x3017..0x3018 bracket),
+every `<s>` seconds -- the walk-up toward a crowd -- and the probe prints a `QA CROWD page` line per
+block. `OPENSRO_QA_GHOSTS=0` arrives as before round 756 (dressed, no ghosts);
+`OPENSRO_QA_PREP_RUNNING=<n>` lets n template tasks run at once. Round 756's review hooks:
+`OPENSRO_QA_LINEUP_BUFFS=1` sends one OpBuffStart a body right after its page, as the server does
+(`QA BUFFS`), and `OPENSRO_QA_LINEUP_RUNAT=<s>` starts every lineup body walking s seconds after the
+spawn (`QA RUNAT`, with the ghosts before and after). `crowd_run.sh` counts any lane's
+Godot (`[G]odot_v4|[x]vfb-run`) as an overlap.
+
+`arrival_bench.gd` (a `--script` tool, headless or under the GPU) times what one arriving body
+costs on the main thread, phase by phase, for 300 random kits from the item table (build, the far
+parts, the recipe, a ghost first and again), and checks that the far parts of each kind's recipe
+are those of its built body (`BENCH parity`):
+
+```
+remote_godot.sh script res://tools/arrival_bench.gd -- --pk2=<Data.pk2> --media=<Media.pk2> [--count=300]
+```
+
 ### Release checks (round 668)
 
 - `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that

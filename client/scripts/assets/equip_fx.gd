@@ -398,7 +398,10 @@ static func _holder_for(master: EfpEffect) -> EfpEffect:
 			mmi.multimesh = src.multimesh
 			mmi.material_override = src.material_override
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mmi.custom_aabb = src.custom_aabb
+			# Round 757: EfpEffect gives its nodes their bounds on the server, not
+			# as a stored property (efp_effect.gd's note), and so does the holder.
+			if mmi.multimesh != null:
+				RenderingServer.instance_set_custom_aabb(mmi.get_instance(), EfpEffect.DRAW_AABB)
 			hold.add_child(mmi)
 		elif c is MeshInstance3D:
 			var src := c as MeshInstance3D
@@ -406,7 +409,8 @@ static func _holder_for(master: EfpEffect) -> EfpEffect:
 			mi.mesh = src.mesh
 			mi.material_override = src.material_override
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mi.custom_aabb = src.custom_aabb
+			if mi.mesh != null:
+				RenderingServer.instance_set_custom_aabb(mi.get_instance(), EfpEffect.DRAW_AABB)
 			hold.add_child(mi)
 	return hold
 
@@ -426,7 +430,7 @@ func _process(_delta: float) -> void:
 		_begin_cycle()
 	else:
 		_scan_slice(cam, _per_frame)
-		if _frame - _cycle_frame >= RESELECT_FRAMES:
+		if _frame - _cycle_frame >= _cycle_frames:
 			_scan_slice(cam, _scan.size())
 			_finish_cycle()
 			_begin_cycle()
@@ -592,13 +596,23 @@ func _viewport_paused() -> bool:
 ## F3, OURS): each frame measures a slice of the hosts, and the cycle's last
 ## frame picks the nearest VISIBLE_BUDGET of those found. A host added during a
 ## cycle joins it (add_host).
+## Round 757 (OURS): a cycle reads at most SCAN_PER_FRAME_MAX hosts a frame,
+## so it lasts RESELECT_FRAMES or, with more hosts, longer (MEASURED at 7,000
+## bodies, 9,693 hosts: the 10-frame cycle scanned 970 hosts a frame, 7.7 ms of
+## the driver). There the 64 nearest are chosen again about every 49 frames
+## (0.8 s at 60 fps) instead of every 10.
+const SCAN_PER_FRAME_MAX := 200
+
 func _begin_cycle() -> void:
 	_scan = _hosts.keys()
 	_scan_at = 0
 	_cand.clear()
 	_cand_d.clear()
 	_cycle_frame = _frame
-	_per_frame = ceili(float(_scan.size()) / float(maxi(RESELECT_FRAMES, 1)))
+	_cycle_frames = maxi(RESELECT_FRAMES, ceili(float(_scan.size()) / float(SCAN_PER_FRAME_MAX)))
+	_per_frame = ceili(float(_scan.size()) / float(maxi(_cycle_frames, 1)))
+
+var _cycle_frames := RESELECT_FRAMES
 
 ## Measures up to `count` more hosts of this cycle: a host is a candidate when
 ## valid, drawn, and in the view within MAX_DISTANCE -- or within ALWAYS_NEAR
@@ -606,6 +620,12 @@ func _begin_cycle() -> void:
 func _scan_slice(cam: Camera3D, count: int) -> void:
 	var end := mini(_scan_at + count, _scan.size())
 	var from := cam.global_position if cam != null else Vector3.ZERO
+	# Round 757: the frustum's planes once a slice (Camera3D.is_position_in_frustum
+	# builds them again on every call), and the cheap tests first: the distance
+	# culls most of a big crowd before the walk up the tree is_visible_in_tree
+	# makes.
+	var planes: Array = cam.get_frustum() if cam != null else []
+	var have_planes := planes.size() == 6
 	while _scan_at < end:
 		var id: String = _scan[_scan_at]
 		_scan_at += 1
@@ -615,21 +635,56 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 		if not is_instance_valid(h.skel) or h.skel.is_queued_for_deletion():
 			_drop(id)
 			continue
-		if _paused or not h.skel.is_inside_tree() or not h.skel.is_visible_in_tree():
+		if _paused or not h.skel.is_inside_tree():
 			continue
 		var d := 0.0
 		if cam != null:
-			var p := h.skel.global_position
+			var p: Vector3
 			# A far body's weapon (round 747): its body's place.
-			if far_origin.is_valid():
-				var o = far_origin.call(h.skel)
-				if o != null:
-					p = o
+			var o = far_origin.call(h.skel) if far_origin.is_valid() else null
+			p = o if o != null else h.skel.global_position
 			d = from.distance_to(p)
-			if d > ALWAYS_NEAR and (d > MAX_DISTANCE or not cam.is_position_in_frustum(p)):
-				continue
+			if d > ALWAYS_NEAR:
+				if d > MAX_DISTANCE:
+					continue
+				if have_planes:
+					var inside := true
+					for pl in planes:
+						if (pl as Plane).is_point_over(p):
+							inside = false
+							break
+					if not inside:
+						continue
+				elif not cam.is_position_in_frustum(p):
+					continue
+		if not h.skel.is_visible_in_tree():
+			continue
 		_cand.append(h)
 		_cand_d.append(d)
+		if _cand.size() >= CAND_PRUNE_AT:
+			_prune_candidates()
+
+## Round 757: the candidates a cycle keeps. _finish_cycle shows the nearest
+## whole weapons whose hosts fit VISIBLE_BUDGET, so every host it can show is
+## among the VISIBLE_BUDGET nearest hosts (a weapon's hosts share one
+## distance). The scan keeps the list short: past CAND_PRUNE_AT it drops every
+## host farther than the VISIBLE_BUDGET-th nearest (ties kept, so a weapon is
+## never cut in two). MEASURED at 7,000 bodies: about 9,000 of 9,693 hosts are
+## candidates, and the cycle's end walked all of them.
+const CAND_PRUNE_AT := VISIBLE_BUDGET * 4
+
+func _prune_candidates() -> void:
+	var sorted := _cand_d.duplicate()
+	sorted.sort()
+	var cut := sorted[mini(VISIBLE_BUDGET, sorted.size()) - 1]
+	var keep: Array = []
+	var keep_d := PackedFloat32Array()
+	for i in _cand.size():
+		if _cand_d[i] <= cut:
+			keep.append(_cand[i])
+			keep_d.append(_cand_d[i])
+	_cand = keep
+	_cand_d = keep_d
 
 ## The cycle's choice (round 746, the review's finding 2; OURS, the budget is
 ## not READ): the nearest WHOLE weapons whose effects together fit

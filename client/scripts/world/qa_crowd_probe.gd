@@ -17,6 +17,13 @@ class_name QaCrowdProbe
 ##   OPENSRO_QA_CROWD_DELAY=<s>      wait before the first step (4: the bodies'
 ##                                   2 s appear fade and the build's hitch pass)
 ##
+## Round 756: before the arrival line, `QA CROWD visible` -- the frames and
+## seconds from the first packet until every lineup body was drawn (dressed,
+## or a CrowdGpu ghost), their worst frame and how many were over 100 ms --
+## and with QaLineup's walk-up one `QA CROWD page` line per block's group
+## spawn (until its last body was drawn). The arrival line itself still runs
+## until the last body is dressed.
+##
 ## The switches (each applies to the lineup bodies only, unless said):
 ##   base     nothing off
 ##   pose     no clip posed (World3D's _qa_split_off "pose": the player and the
@@ -56,6 +63,10 @@ class_name QaCrowdProbe
 ##            skins (A2) are the boot's (OPENSRO_QA_CROWD_SKINS=own: per piece)
 
 const SETTLE := 1.5
+## Round 757: with the render on its own thread, the RenderingServer getters are
+## read one frame in this many (FrameSplit.render_threaded).
+const RS_SAMPLE_EVERY := 30
+var _threaded := FrameSplit.render_threaded()
 
 var world: Node
 var bodies: Array = []        # [{id, node}]
@@ -101,16 +112,63 @@ var _arriving := true
 var _arrival_last_us := 0
 var _arrival_start_us := 0
 var _arrival_ms: PackedFloat32Array = PackedFloat32Array()
+var _arrival_n := 0
+## Round 756: every lineup id, and when each was first drawn -- dressed, or a
+## ghost (CrowdGpu.add_ghost) -- from the first packet: `visible_s` in the
+## arrival line is the moment the last one was; `QA CROWD page` lines the
+## same per page (QaLineup's walk-up: one group spawn per block).
+var _ids: Array = []
+var _shown := {}
+var _visible_us := -1
+var _visible_frames := 0
+## Each frame until then: "<frame ms>/<bodies drawn by its end>".
+var _visible_trace := PackedStringArray()
+## [ids, start usec, frames, worst ms, done usec (-1 until every id is drawn)]
+var _pages: Array = []
+
+## Round 756 (QaLineup's walk-up): a page of `ids` was just spawned.
+func page_started(ids: Array) -> void:
+	_pages.append([ids, Time.get_ticks_usec(), 0, 0.0, -1])
+
+## Whether lineup body `id` is drawn: dressed (no longer waiting), or a
+## ghost. Read through `get`, so a base without ghosts measures too.
+func _drawn(id: int) -> bool:
+	var node = _bodies_now.get(id)
+	if node == null or not is_instance_valid(node):
+		return false
+	if not _args_now.has(id):
+		return true
+	return _ghosts_now != null and bool(_ghosts_now.call("is_ghost", node))
+
+## The world's maps and its CrowdGpu (when it draws ghosts), read once a frame.
+var _bodies_now: Dictionary = {}
+var _args_now: Dictionary = {}
+var _ghosts_now: Object = null
+
+func _read_world() -> void:
+	_bodies_now = world._other_bodies
+	_args_now = world._other_build_args
+	var crowd = world.get("_crowd_gpu")
+	_ghosts_now = crowd if crowd != null and (crowd as Object).has_method("is_ghost") else null
+
+func _resolve_bodies() -> void:
+	bodies.clear()
+	for id in _ids:
+		var node: Node3D = world._other_bodies.get(id)
+		if node != null:
+			bodies.append({"id": id, "node": node})
+			if not _homes.has(id):
+				_homes[id] = node.position
 
 func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	world = w
 	_arrival_start_us = spawn_usec if spawn_usec > 0 else Time.get_ticks_usec()
 	_arrival_last_us = _arrival_start_us
+	# Round 756: the ids, whose nodes may not exist yet (QaLineup's walk-up
+	# spawns them a page at a time); the nodes are read once all have come.
 	for b in lineup_bodies:
-		var node: Node3D = world._other_bodies.get(b["id"])
-		if node != null:
-			bodies.append({"id": b["id"], "node": node})
-			_homes[b["id"]] = node.position
+		_ids.append(int(b["id"]))
+	_resolve_bodies()
 	steps = OS.get_environment("OPENSRO_QA_CROWD_STEPS").split(",", false)
 	var s := OS.get_environment("OPENSRO_QA_CROWD_SECONDS")
 	if s.is_valid_float():
@@ -137,17 +195,70 @@ func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	# The pose and sound switches go through the frame split's own (round 664).
 	if world._qa_split == null:
 		world._qa_split = MonsterCrowd.Split.new(1 << 30)
-	print("QA CROWD: %d bodies, steps %s, %.1f s each (%.1f settle), first after %.1f s" % [bodies.size(), ",".join(steps), seconds, SETTLE, delay])
+	print("QA CROWD: %d bodies, steps %s, %.1f s each (%.1f settle), first after %.1f s; render thread %s, physics thread %s" % [bodies.size(), ",".join(steps), seconds, SETTLE, delay,
+		"separate" if _threaded else "main", str(ProjectSettings.get_setting("physics/3d/run_on_separate_thread", false))])
 
 ## The arrival's frames (round 739), then the census once every body is dressed.
 func _arrival_frame() -> void:
 	var now := Time.get_ticks_usec()
-	_arrival_ms.append(float(now - _arrival_last_us) / 1000.0)
+	var ms := float(now - _arrival_last_us) / 1000.0
+	_arrival_ms.append(ms)
 	_arrival_last_us = now
+	_read_world()
+	# Round 757's merge (QA): while ghosts are drawn, every 60 arrival frames,
+	# how many lie outside the far groups' shared bounds (culled with them, S3)
+	# and the far sounds they have played (S1).
+	_arrival_n += 1
+	if _arrival_n % 60 == 0:
+		var cg = world.get("_crowd_gpu")
+		if cg != null and (cg as CrowdGpu).ghost_count() > 0:
+			var d := (cg as CrowdGpu).describe()
+			print("QA CROWD ghostcheck frame=%d %s" % [_arrival_n, d.substr(0, d.find(" far="))] + " ghosts=%d" % (cg as CrowdGpu).ghost_count())
+	if _visible_us < 0:
+		_visible_frames += 1
+		var all := true
+		for id in _ids:
+			if _shown.has(id):
+				continue
+			if _drawn(id):
+				_shown[id] = true
+			else:
+				all = false
+		_visible_trace.append("%.0f/%d" % [ms, _shown.size()])
+		if all:
+			_visible_us = now
+	for pg in _pages:
+		if int(pg[4]) >= 0:
+			continue
+		pg[2] = int(pg[2]) + 1
+		pg[3] = maxf(float(pg[3]), ms)
+		var done := true
+		for id in pg[0]:
+			if not _shown.has(id) and not _drawn(id):
+				done = false
+				break
+		if done:
+			pg[4] = now
+			print("QA CROWD page %d n=%d visible_ms=%.1f frames=%d worst_ms=%.1f" % [_pages.find(pg), (pg[0] as Array).size(),
+				float(now - int(pg[1])) / 1000.0, int(pg[2]), float(pg[3])])
 	var queue = world.get("_other_builds")
-	if queue != null and not queue.is_empty():
+	if (queue != null and not queue.is_empty()) or _visible_us < 0:
 		return
+	for pg in _pages:
+		if int(pg[4]) < 0:
+			return
 	_arriving = false
+	_resolve_bodies()
+	# Round 756: the frames until every body was drawn, apart.
+	var vis := _arrival_ms.slice(0, _visible_frames)
+	vis.sort()
+	var vover := 0
+	for v in vis:
+		if v > 100.0:
+			vover += 1
+	print("QA CROWD visible n=%d frames=%d seconds=%.3f worst_ms=%.1f over100=%d" % [_ids.size(), vis.size(),
+		float(_visible_us - _arrival_start_us) / 1e6, vis[-1] if not vis.is_empty() else 0.0, vover])
+	print("QA CROWD visible trace (frame ms/drawn): %s" % " ".join(_visible_trace.slice(0, 200)))
 	var sorted := _arrival_ms.duplicate()
 	sorted.sort()
 	var over := 0
@@ -254,6 +365,22 @@ func _census() -> void:
 			var kk: EquipFx.Kind = dk._kinds[key]
 			per_kind.append("%s(%d hosts%s)" % [key, kk.hosts, ", own" if kk.own else ""])
 		print("QA CROWD census: equipment effect kinds %d: %s" % [dk._kinds.size(), " ".join(per_kind)])
+	# Round 757: which nodes run a callback in every physics step or every
+	# frame (their own or the engine's internal one), by class, over the whole
+	# tree: the physics callbacks FrameSplit's phys_cb times beyond World3D's.
+	var phys := {}
+	var proc := {}
+	var stack2: Array[Node] = [world.get_tree().root]
+	while not stack2.is_empty():
+		var nd: Node = stack2.pop_back()
+		for ch in nd.get_children():
+			stack2.append(ch)
+		if nd.is_physics_processing() or nd.is_physics_processing_internal():
+			phys[nd.get_class()] = int(phys.get(nd.get_class(), 0)) + 1
+		if nd.is_processing() or nd.is_processing_internal():
+			proc[nd.get_class()] = int(proc.get(nd.get_class(), 0)) + 1
+	print("QA CROWD census: physics-processing nodes by class %s" % str(phys))
+	print("QA CROWD census: processing nodes by class %s" % str(proc))
 	print("QA CROWD census: body skeletons %d, skins registered on them %d (%.1f a body), binds written per pose %d (%.1f a body)" % [
 		posed_skels, regs, float(regs) / maxf(float(posed_skels), 1.0), binds, float(binds) / maxf(float(posed_skels), 1.0)])
 
@@ -269,6 +396,7 @@ func _next() -> void:
 		if quit:
 			world.get_tree().quit()
 		return
+	print("QA CROWD begin %s" % steps[_i])
 	_switch(steps[_i], true)
 
 func _process(delta: float) -> void:
@@ -286,10 +414,18 @@ func _process(delta: float) -> void:
 		return
 	_t += delta
 	var now := Time.get_ticks_usec()
-	if steps[_i].begins_with("net"):
-		_net_step(delta, float(steps[_i].substr(3)) if steps[_i].substr(3).is_valid_float() else net_rate)
-	elif steps[_i].begins_with("dest"):
-		_net_step(delta, float(steps[_i].substr(4)) if steps[_i].substr(4).is_valid_float() else net_rate, true)
+	# Round 757: each part of a combined step ("dest0.02+churn0.01") at its rate.
+	if _pool_busy:
+		_pool_busy_step()
+	for part in steps[_i].split("+", false):
+		if part.begins_with("net"):
+			_net_step(delta, float(part.substr(3)) if part.substr(3).is_valid_float() else net_rate)
+		elif part.begins_with("dest"):
+			_net_step(delta, float(part.substr(4)) if part.substr(4).is_valid_float() else net_rate, true)
+		for kind in ["churn", "redress", "reglow"]:
+			if part.begins_with(kind):
+				var r := part.substr(kind.length())
+				_event_step(kind, delta, float(r) if r.is_valid_float() else 0.02)
 	if steps[_i].split("+")[0] == "move":
 		_move_t += delta
 		if _move_t >= 1.0:
@@ -302,7 +438,8 @@ func _process(delta: float) -> void:
 			"pose_us": world._qa_split.pose_usec, "sound_us": world._qa_split.sound_usec,
 			"idle_us": world._qa_split.idle_usec, "minimap_us": world._qa_split.minimap_usec, "posed": world._qa_split.posed,
 			"crowd_us": world._qa_split.crowd_usec, "others_us": world._qa_split.others_usec,
-			"steps": world._qa_split.steps, "start_us": now, "net_us": _net_us, "net_sent": _net_sent}
+			"steps": world._qa_split.steps, "start_us": now, "net_us": _net_us, "net_sent": _net_sent,
+			"unix0": Time.get_unix_time_from_system()}
 		_split_at = FrameSplit.snapshot()
 		_prof_at = EfpEffect.prof.duplicate()
 		_last_us = now
@@ -312,21 +449,34 @@ func _process(delta: float) -> void:
 		_frame_ms.append(float(now - _last_us) / 1000.0)
 		_last_us = now
 		_acc["frames"] += 1
-		_acc["cpu"] += RenderingServer.viewport_get_measured_render_time_cpu(vp)
-		_acc["gpu"] += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+		# Round 757: with the render on its own thread a getter waits for that
+		# thread to finish its frame, so the render's own numbers are read on
+		# one frame in RS_SAMPLE_EVERY and counted for all of them.
+		var rs_read := not _threaded or int(_acc["frames"]) % RS_SAMPLE_EVERY == 0
+		var rs_w := 1.0 if not _threaded else float(RS_SAMPLE_EVERY)
+		if rs_read:
+			_acc["cpu"] += RenderingServer.viewport_get_measured_render_time_cpu(vp) * rs_w
+			_acc["gpu"] += RenderingServer.viewport_get_measured_render_time_gpu(vp) * rs_w
 		_acc["proc"] += Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 		_acc["phys"] += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
 		_acc["draws"] += int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 		_acc["objects"] += int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))
 		_acc["prims"] += int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
+		# Round 757: the engine's own monitors (the physics server's objects and
+		# pairs, the navigation step).
+		_acc["phys_active"] = int(_acc.get("phys_active", 0)) + int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS))
+		_acc["phys_pairs"] = int(_acc.get("phys_pairs", 0)) + int(Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS))
+		_acc["phys_islands"] = int(_acc.get("phys_islands", 0)) + int(Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT))
+		_acc["nav_ms"] = float(_acc.get("nav_ms", 0.0)) + Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0
 		# Round 748: the draw's scene update and the overlay's own render.
-		FrameSplit.add("rs_setup", int(RenderingServer.get_frame_setup_time_cpu() * 1000.0))
-		var ov = world._overlay_view
-		if ov != null and is_instance_valid(ov) and ov._viewport != null:
-			var orid: RID = (ov._viewport as SubViewport).get_viewport_rid()
-			RenderingServer.viewport_set_measure_render_time(orid, true)
-			FrameSplit.add("rs_overlay_cpu", int(RenderingServer.viewport_get_measured_render_time_cpu(orid) * 1000.0))
-		FrameSplit.add("rs_main_cpu", int(RenderingServer.viewport_get_measured_render_time_cpu(vp) * 1000.0))
+		if rs_read:
+			FrameSplit.add("rs_setup", int(RenderingServer.get_frame_setup_time_cpu() * 1000.0 * rs_w))
+			var ov = world._overlay_view
+			if ov != null and is_instance_valid(ov) and ov._viewport != null:
+				var orid: RID = (ov._viewport as SubViewport).get_viewport_rid()
+				RenderingServer.viewport_set_measure_render_time(orid, true)
+				FrameSplit.add("rs_overlay_cpu", int(RenderingServer.viewport_get_measured_render_time_cpu(orid) * 1000.0 * rs_w))
+			FrameSplit.add("rs_main_cpu", int(RenderingServer.viewport_get_measured_render_time_cpu(vp) * 1000.0 * rs_w))
 	if _t >= seconds:
 		_report()
 		_next()
@@ -342,8 +492,11 @@ func _report() -> void:
 	var cam: Camera3D = world.get_viewport().get_camera_3d()
 	var in_view := 0
 	for b in bodies:
-		var n: Node3D = b["node"]
-		if cam != null and is_instance_valid(n) and n.is_inside_tree() and cam.is_position_in_frustum(n.global_position + Vector3(0, 8, 0)):
+		var raw = b["node"]
+		if not is_instance_valid(raw):
+			continue
+		var n: Node3D = raw
+		if cam != null and n.is_inside_tree() and cam.is_position_in_frustum(n.global_position + Vector3(0, 8, 0)):
 			in_view += 1
 	var fx_line := ""
 	var vp0 := world.get_viewport()
@@ -355,6 +508,13 @@ func _report() -> void:
 	if crowd != null:
 		gpu_line = " gpu: " + (crowd as CrowdGpu).describe() + " gpu_ms=%.2f" % (float(sp.crowd_usec - int(_acc["crowd_us"])) / 1000.0 / f)
 	gpu_line += " others_ms=%.2f" % (float(sp.others_usec - int(_acc["others_us"])) / 1000.0 / f)
+	# Round 757: the step's wall-clock window, so a box-side sampler's
+	# per-thread CPU and GPU lines (tools/crowd_threads.py) can be matched to it.
+	var unix_line := " max_ms=%.2f" % (sorted[-1] if not sorted.is_empty() else 0.0)
+	unix_line += " phys_active=%d phys_pairs=%d phys_islands=%d nav_ms=%.2f objects_total=%d unix=%.3f,%.3f" % [
+		int(_acc.get("phys_active", 0)) / int(f), int(_acc.get("phys_pairs", 0)) / int(f), int(_acc.get("phys_islands", 0)) / int(f),
+		float(_acc.get("nav_ms", 0.0)) / f, int(Performance.get_monitor(Performance.OBJECT_COUNT)),
+		float(_acc.get("unix0", 0.0)), Time.get_unix_time_from_system()]
 	print("QA CROWD step %-8s n=%d in_view=%d frames=%d frame_ms=%.2f p50=%.2f p95=%.2f render_cpu_ms=%.2f render_gpu_ms=%.2f process_ms=%.2f physics_ms=%.2f idle_ms=%.2f pose_ms=%.2f sound_ms=%.2f minimap_ms=%.2f posed_per_frame=%.0f steps_per_frame=%.2f draws=%d objects=%d prims=%d nodes=%d anim=%s baked=%d static_mb=%.1f%s%s" % [
 		steps[_i], bodies.size(), in_view, int(f), wall, p50, p95,
 		_acc["cpu"] / f, _acc["gpu"] / f, _acc["proc"] / f, _acc["phys"] / f,
@@ -366,12 +526,60 @@ func _report() -> void:
 		float(sp.steps - int(_acc["steps"])) / f,
 		int(_acc["draws"] / f), int(_acc["objects"] / f), int(_acc["prims"] / f),
 		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), CrowdAnim.switches(), CrowdAnim.baked_frames,
-		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line, gpu_line])
+		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, fx_line, gpu_line + unix_line])
 	print(split_line(steps[_i], _split_at, FrameSplit.snapshot(), _prof_at, EfpEffect.prof, f))
-	if steps[_i].begins_with("net") or steps[_i].begins_with("dest"):
+	var pb = world.get("_plate_batch")
+	if pb != null:
+		# And the other players' plates drawn as Label3Ds (not batched).
+		var drawn_labels := 0
+		var bodies_with_plate := 0
+		for id in world._other_bodies:
+			var ob = world._other_bodies[id]
+			if ob == null or not is_instance_valid(ob):
+				continue
+			var lab := (ob as Node).get_node_or_null("Name") as Label3D
+			if lab != null:
+				bodies_with_plate += 1
+				if lab.visible:
+					drawn_labels += 1
+		print("QA CROWD plates %-8s %s bodies_with_plate=%d label3d_drawn=%d" % [steps[_i], (pb as NamePlateBatch).describe(), bodies_with_plate, drawn_labels])
+	if OS.get_environment("OPENSRO_QA_CROWD_ATTACH_AUDIT") != "":
+		print("QA CROWD attach %-8s %s" % [steps[_i], attach_audit(world)])
+	if steps[_i].contains("net") or steps[_i].contains("dest"):
 		var sent := _net_sent - int(_acc["net_sent"])
 		print("QA CROWD net: %d packets in %d frames, %.2f ms a frame in NetClient._dispatch, %.1f us a packet" % [
 			sent, int(f), float(_net_us - int(_acc["net_us"])) / 1000.0 / f, float(_net_us - int(_acc["net_us"])) / maxf(float(sent), 1.0)])
+
+## Round 757 (the user's live log: 30,382 engine errors "Attempt to disconnect
+## a nonexistent connection from 'Skeleton:<Skeleton3D#..>'. Signal:
+## 'bone_pose_changed'"): every BoneAttachment3D in the tree is connected to its
+## parent skeleton's bone_pose_changed once while it is bound (Godot 4.2.2
+## bone_attachment_3d.cpp l. 143-183, READ), and errors when it leaves the
+## tree without that connection. This counts, over every other player's body,
+## the attachments in the tree and the skeletons' connections of that signal;
+## a skeleton with fewer connections than attachments is the bug's state.
+static func attach_audit(w: Node) -> String:
+	var attachments := 0
+	var connections := 0
+	var short := 0
+	var extra := 0
+	for id in w._other_bodies:
+		var body = w._other_bodies[id]
+		if body == null or not is_instance_valid(body):
+			continue
+		for sk in (body as Node).find_children("*", "Skeleton3D", true, false):
+			var n_att := 0
+			for c in (sk as Node).get_children():
+				if c is BoneAttachment3D and (c as Node).is_inside_tree():
+					n_att += 1
+			var n_con := (sk as Object).get_signal_connection_list("bone_pose_changed").size()
+			attachments += n_att
+			connections += n_con
+			if n_con < n_att:
+				short += 1
+			elif n_con > n_att:
+				extra += 1
+	return "attachments=%d connections=%d skeletons_short=%d skeletons_extra=%d" % [attachments, connections, short, extra]
 
 ## Round 748: one step's `QA CROWD split` line -- every FrameSplit counter's
 ## change over the step, in ms a frame (the phases first), and EfpEffect's own
@@ -403,6 +611,52 @@ static func split_line(step: String, before: Dictionary, after: Dictionary, prof
 func _meshes(node: Node) -> Array:
 	return node.find_children("*", "MeshInstance3D", true, false)
 
+## Round 757: a live crowd's own events at `rate` of the bodies a second
+## (OURS model), round robin over the lineup -- what the lineup's steady steps
+## never do, and what a swarm of real players does all the time:
+##   churn    the body leaves (0x3016's path, World3D._on_entity_left) and comes
+##            straight back (0x3015's, _spawn_or_update_other) with what it wore
+##   redress  the body is rebuilt in what it wears (0x3038's path, _redress_other)
+##   reglow   its pluses change, every plused slot 13 <-> 12 (_reglow_other)
+var _event_due := 0.0
+var _event_next := 0
+var events := 0
+
+func _event_step(kind: String, delta: float, rate: float) -> void:
+	_event_due += delta * rate * bodies.size()
+	while _event_due >= 1.0 and not bodies.is_empty():
+		_event_due -= 1.0
+		var b: Dictionary = bodies[_event_next % bodies.size()]
+		_event_next += 1
+		var id := int(b["id"])
+		var node = world._other_bodies.get(id)
+		if node == null or not is_instance_valid(node):
+			continue
+		events += 1
+		match kind:
+			"churn":
+				var equipped: Dictionary = (world._other_equipped.get(id, {}) as Dictionary).duplicate()
+				var pluses: Dictionary = (world._other_pluses.get(id, {}) as Dictionary).duplicate()
+				var gait: Dictionary = world._other_gaits.get(id, {})
+				var body_code := String((node as Node).get_meta("body", ""))
+				var who := String((node as Node).get_meta("character_name", ""))
+				var at: Vector3 = (node as Node3D).position
+				var scale := int(gait.get("scale", CharacterAppearance.DEFAULT_SCALE))
+				world._on_entity_left(id)
+				world._spawn_or_update_other(id, who, at, equipped, body_code, NAN, scale, pluses)
+				var fresh = world._other_bodies.get(id)
+				if fresh != null:
+					b["node"] = fresh
+			"redress":
+				world._forget_other_kind(id)
+				world._redress_other(id)
+			"reglow":
+				var pl: Dictionary = (world._other_pluses.get(id, {}) as Dictionary).duplicate()
+				for slot in pl.keys():
+					pl[slot] = 12 if int(pl[slot]) == 13 else 13
+				world._other_pluses[id] = pl
+				world._reglow_other(id, pl)
+
 func _switch(step: String, off: bool) -> void:
 	# Round 747's review: two switches in one step ("net+sound").
 	if step.contains("+"):
@@ -411,10 +665,20 @@ func _switch(step: String, off: bool) -> void:
 		return
 	if step.begins_with("net") or step.begins_with("dest"):
 		step = "net"
+	for kind in ["churn", "redress", "reglow"]:
+		if step.begins_with(kind):
+			step = kind
 	if step.begins_with("anim="):
 		CrowdAnim.set_switches(step.substr(5) if off else _boot_switches)
 		return
 	match step:
+		"minimap":
+			# Round 757: the minimap's signs and its refresh off (the HUD's
+			# MinimapWindow hidden): what the crowd's signs cost.
+			var mm = world._hud_minimap
+			if mm != null and is_instance_valid(mm):
+				(mm as CanvasItem).visible = not off
+			world.set("_qa_minimap_off", off)
 		"pose", "sound", "farsound":
 			var arr: PackedStringArray = world._qa_split_off
 			if off and not arr.has(step):
@@ -442,6 +706,10 @@ func _switch(step: String, off: bool) -> void:
 				var plate := (b["node"] as Node).get_node_or_null("Name") as VisualInstance3D
 				if plate != null:
 					plate.layers = 0 if off else OverlayView.BIT
+			# Round 757: the batched plates (NamePlateBatch) shown within 0.
+			var batch = world.get("_plate_batch")
+			if batch != null:
+				(batch as NamePlateBatch).set_range(0.0 if off else float(world.get("_name_plate_range")))
 		"collide":
 			for b in bodies:
 				var n: Node3D = b["node"]
@@ -506,6 +774,7 @@ func _switch(step: String, off: bool) -> void:
 			else:
 				for b in bodies:
 					world._other_body_targets[b["id"]] = _homes[b["id"]]
+					_wake(b["id"])
 					(b["node"] as Node3D).position = _homes[b["id"]]
 					world._set_other_gait(b["id"], false)
 		"away":
@@ -534,6 +803,35 @@ func _switch(step: String, off: bool) -> void:
 		"ab":
 			if off:
 				_ab.call_deferred()
+		"churn", "redress", "reglow":
+			pass
+		"plateab":
+			if off:
+				_plate_ab.call_deferred()
+		"inlineh":
+			# Round 757: the walkers' heights on the main thread (HeightBatch
+			# inline) for the step, against the pool's.
+			HeightBatch.threaded_min = (1 << 30) if off else HeightBatch.THREADED_MIN
+		"poolbusy":
+			# Round 757's review, F3: the pool kept busy for the step (as a
+			# region crossing's cell prepares keep it), POOL_BUSY tasks of
+			# POOL_BUSY_MS each always queued, high priority.
+			_pool_busy = off
+			if not off:
+				for id in _pool_tasks:
+					WorkerThreadPool.wait_for_task_completion(int(id))
+				_pool_tasks.clear()
+		"leaveall":
+			# Round 757: every lineup body leaves at once (0x3016's path): the
+			# end of a crowd. Not given back; the steps after it have no bodies.
+			if off:
+				for b in bodies:
+					world._on_entity_left(int(b["id"]))
+		"zone":
+			# Round 757: a zone change's arrival list with nobody in it
+			# (_replace_others_for_arrival): every body freed in one frame.
+			if off:
+				world._replace_others_for_arrival([], [])
 		_:
 			push_warning("QA CROWD: unknown step %s" % step)
 
@@ -579,6 +877,48 @@ func _ab() -> void:
 	print("QA CROWD ab %s far=%d near=%d far_box=%s near_box=%s files %s %s" % [tag, int(boxes[0]), int(boxes[1]),
 		_box_arg(boxes[2]), _box_arg(boxes[3]), pa, pb])
 	CrowdGpu.enabled = true
+	_switch("fx", false)
+	tree.process_frame.disconnect(hold)
+	TexAni.hold = false
+	EquipGlow.hold = false
+	world._qa_anim_hold = false
+
+## Round 757's `plateab` step: the same held frame with the other players'
+## plates drawn batched (NamePlateBatch), batched again (the noise floor), and
+## as Label3Ds -- `plates_<n>_batch.png`, `_batch2.png`, `_label.png` in
+## OPENSRO_QA_CROWD_SHOTS, for client/tools/frame_ab.py.
+func _plate_ab() -> void:
+	var dir := OS.get_environment("OPENSRO_QA_CROWD_SHOTS")
+	if dir == "":
+		dir = "/var/tmp/qa_crowd_ab"
+	DirAccess.make_dir_recursive_absolute(dir)
+	_ab_n += 1
+	var tag := "plates_%d" % _ab_n
+	var tree := world.get_tree()
+	var hold := func() -> void: RenderingServer.global_shader_parameter_set(EquipGlow.CLOCK_GLOBAL, EquipGlow.clock)
+	world._qa_anim_hold = true
+	EquipGlow.hold = true
+	TexAni.hold = true
+	tree.process_frame.connect(hold)
+	_switch("fx", true)
+	for i in range(3):
+		await tree.process_frame
+	await RenderingServer.frame_post_draw
+	var pa := dir.path_join(tag + "_batch.png")
+	world.get_viewport().get_texture().get_image().save_png(pa)
+	for i in range(3):
+		await tree.process_frame
+	await RenderingServer.frame_post_draw
+	world.get_viewport().get_texture().get_image().save_png(dir.path_join(tag + "_batch2.png"))
+	world._plate_batch_switch(false)
+	# The sweep shows a plate within NamePlates.SWEEP_FRAMES frames of being added.
+	for i in range(NamePlates.SWEEP_FRAMES + 3):
+		await tree.process_frame
+	await RenderingServer.frame_post_draw
+	var pb := dir.path_join(tag + "_label.png")
+	world.get_viewport().get_texture().get_image().save_png(pb)
+	world._plate_batch_switch(true)
+	print("QA CROWD plateab %s files %s %s" % [tag, pa, pb])
 	_switch("fx", false)
 	tree.process_frame.disconnect(hold)
 	TexAni.hold = false
@@ -653,9 +993,37 @@ func _net_step(delta: float, rate: float, dest := false) -> void:
 		_net_sent += 1
 	_net_us += Time.get_ticks_usec() - t0
 
+## Round 757: World3D's eased walk looks only at awake bodies; a target the
+## probe writes wakes its body (a base build without the set: nothing).
+func _wake(id) -> void:
+	var aw = world.get("_other_awake")
+	if aw is Dictionary:
+		(aw as Dictionary)[id] = true
+
+## The `poolbusy` step's tasks (QA).
+const POOL_BUSY := 8
+const POOL_BUSY_MS := 30
+var _pool_busy := false
+var _pool_tasks: Array = []
+
+static func _pool_busy_task() -> void:
+	OS.delay_msec(POOL_BUSY_MS)
+
+func _pool_busy_step() -> void:
+	var keep: Array = []
+	for id in _pool_tasks:
+		if WorkerThreadPool.is_task_completed(int(id)):
+			WorkerThreadPool.wait_for_task_completion(int(id))
+		else:
+			keep.append(id)
+	_pool_tasks = keep
+	while _pool_tasks.size() < POOL_BUSY:
+		_pool_tasks.append(WorkerThreadPool.add_task(QaCrowdProbe._pool_busy_task, true, "QA pool busy"))
+
 ## Every body to a new spot within 8 units of its home (the interpolation walks
 ## it there with its run loop, as a server's position update does).
 func _scatter() -> void:
 	for b in bodies:
 		var home: Vector3 = _homes[b["id"]]
 		world._other_body_targets[b["id"]] = home + Vector3(_rng.randf_range(-8.0, 8.0), 0.0, _rng.randf_range(-8.0, 8.0))
+		_wake(b["id"])

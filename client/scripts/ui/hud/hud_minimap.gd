@@ -99,10 +99,12 @@ const SIGN_TEXTURES := {
 ## A sign further out is not drawn, rather than left for the frame to cover.
 const SIGN_RADIUS := 105.0 / 2.0 - 8.0
 
-var _signs_root: Control
-var _sign_textures := {}   # kind -> Texture2D
-var _sign_pools := {}      # kind -> Array[TextureRect]
+## Round 757: the signs are one MultiMesh a kind (MinimapSigns), not a
+## TextureRect each.
+var _signs_root: MinimapSigns
 var _last_sign_report := Vector2i(-1, -1)  # (drawn, total), so the log speaks only on change
+var _sign_report_frame := 0
+const SIGN_REPORT_FRAMES := 300
 
 ## The party's marks (round 717): each member is the dot or the rim arrow by
 ## PartyMapMarks.is_arrow, from two pools, both in MapMarks over the frame
@@ -184,16 +186,15 @@ func setup(layout_data: Variant = null) -> void:
 			_tiles.append(tile)
 
 	# Entity signs sit over the map and under the player's own arrow.
-	_signs_root = Control.new()
+	_signs_root = MinimapSigns.new()
 	_signs_root.name = "Signs"
-	_signs_root.mouse_filter = MOUSE_FILTER_IGNORE
+	_signs_root.sign_size = SIGN_SIZE
 	_map_clip.add_child(_signs_root)
 	if _ui_builder != null:
 		for kind in SIGN_TEXTURES:
 			var tex := _ui_builder.load_texture(SIGN_TEXTURES[kind])
 			if tex != null:
-				_sign_textures[kind] = tex
-			_sign_pools[kind] = []
+				_signs_root.set_texture(kind, tex)
 
 	if _ui_builder != null:
 		_party_dot_tex = _ui_builder.load_texture(PartyMapMarks.DOT_DDJ)
@@ -460,55 +461,51 @@ static func sign_offset(player_world: Vector3, entity_world: Vector3, map_size: 
 func update_signs(player_world: Vector3, npcs: Array, monsters: Array, others: Array) -> void:
 	if _signs_root == null:
 		return
-	# Nothing is allocated here once the pools have grown: no per-kind
-	# dictionary, and the log line is only built when the counts change
-	# (round 630 review).
-	var drawn := _place_signs("npc", player_world, npcs) + _place_signs("monster", player_world, monsters) \
-		+ _place_signs("other", player_world, others)
-	var total := npcs.size() + monsters.size() + others.size()
+	# Round 757: lists go up whole (npc, monster: a few dozen); the other
+	# players are keyed (put_other / drop_other) and written only as they
+	# move, unless a caller hands a list (tests, an older caller).
+	_signs_root.set_list("npc", npcs)
+	_signs_root.set_list("monster", monsters)
+	if not others.is_empty():
+		_signs_root.clear_kind("other")
+		var i := 0
+		for p in others:
+			_signs_root.put("other", -1 - i, p)
+			i += 1
+	var centre := APERTURE_RECT.size / 2.0
+	_signs_root.place(player_world, _tile_px, centre, SIGN_RADIUS, REGION_SPAN)
+	# The log line speaks only when the counts change; counting what the rule
+	# draws walks every sign, so it is done every SIGN_REPORT_FRAMES refreshes
+	# (OURS: the log only; the drawing is the shader's, every frame).
+	_sign_report_frame += 1
+	if _sign_report_frame % SIGN_REPORT_FRAMES != 1:
+		return
+	var drawn := 0
+	for kind in SIGN_TEXTURES:
+		drawn += _signs_root.drawn(kind, player_world, _tile_px, SIGN_RADIUS, REGION_SPAN)
+	var keyed := _signs_root.keyed_count("other")
+	var total := npcs.size() + monsters.size() + keyed
 	if drawn != _last_sign_report.x or total != _last_sign_report.y:
 		_last_sign_report = Vector2i(drawn, total)
-		var placed: PackedStringArray = []
-		var centre := APERTURE_RECT.size / 2.0
-		for kind in SIGN_TEXTURES:
-			for sign in _sign_pools.get(kind, []):
-				var node := sign as TextureRect
-				if node.visible:
-					var off := node.position + SIGN_SIZE / 2.0 - centre
-					placed.append("%s@(%d,%d)" % [kind, roundi(off.x), roundi(off.y)])
-		print("HudMinimap: signs drawn %d of %d entities (npc %d, monster %d, other %d): %s" % [
-			drawn, total, npcs.size(), monsters.size(), others.size(), " ".join(placed)])
+		print("HudMinimap: signs drawn %d of %d entities (npc %d, monster %d, other %d)" % [
+			drawn, total, npcs.size(), monsters.size(), keyed])
 
-## Places one kind's signs from its pool; returns how many were drawn.
-func _place_signs(kind: String, player_world: Vector3, positions: Array) -> int:
-	var tex: Texture2D = _sign_textures.get(kind, null)
-	var pool: Array = _sign_pools.get(kind, [])
-	var used := 0
-	if tex != null:
-		var centre := APERTURE_RECT.size / 2.0
-		for pos in positions:
-			var off := sign_offset(player_world, pos, _tile_px)
-			if off.length() >= SIGN_RADIUS:
-				continue
-			var sign: TextureRect
-			if used < pool.size():
-				sign = pool[used]
-			else:
-				sign = TextureRect.new()
-				sign.name = "%s_%d" % [kind, used]
-				sign.texture = tex
-				sign.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-				sign.stretch_mode = TextureRect.STRETCH_SCALE
-				sign.mouse_filter = MOUSE_FILTER_IGNORE
-				sign.size = SIGN_SIZE
-				_signs_root.add_child(sign)
-				pool.append(sign)
-			sign.position = centre + off - SIGN_SIZE / 2.0
-			sign.visible = true
-			used += 1
-	for i in range(used, pool.size()):
-		(pool[i] as TextureRect).visible = false
-	return used
+## Round 757: one other player's sign at `world` (MinimapSigns' keyed kind),
+## written when the body moves; `shown` false hides it (a hidden body).
+func put_other(id: int, world: Vector3, shown: bool = true) -> void:
+	if _signs_root != null:
+		_signs_root.put("other", id, world, shown)
+
+func drop_other(id: int) -> void:
+	if _signs_root != null:
+		_signs_root.drop("other", id)
+
+func clear_others() -> void:
+	if _signs_root != null:
+		_signs_root.clear_kind("other")
+
+func other_ids() -> Array:
+	return _signs_root.keyed_ids("other") if _signs_root != null else []
 
 ## Marks each party member (round 717): `members_local` holds each drawn
 ## member's region-local ground position (x east, y north) in the player's

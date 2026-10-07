@@ -90,6 +90,20 @@ const MIN_BUILDS_PER_FRAME := 1
 ## least) instead of adding its whole budget to a frame already near the
 ## 100 ms hitch line, and once the frame is short it dresses at full budget.
 const HITCH_TARGET_USEC := 90000
+## Round 756 (OURS): the frame the dressing aims to stay under while every
+## body waiting for it is already drawn (a ghost, CrowdGpu.add_ghost): the
+## dressing is then background work -- the weapon's particles, the posed near
+## body, the clip's one-shots -- and is given what a 30 fps frame leaves, not
+## what a 90 ms one does. At least one body a frame still.
+const GHOST_HITCH_TARGET_USEC := 33000
+## Round 756 (OURS): the main-thread time a frame may spend making ghosts
+## (World3D._ghost_other: a recipe looked up, a slot and a texel, an instance
+## a part; about 40-60 us a body, MEASURED in r756.md), so a page of 1000
+## arriving is drawn in one or two frames.
+## The budget follows the frame as the dressing's does (BuildQueue.note_frame,
+## HITCH_TARGET_USEC), so a crowd whose own frame is already long gets fewer
+## ghosts a frame (one at least) rather than a frame over the hitch line.
+const GHOST_BUDGET_USEC := 50000
 
 ## B4: the arrived bodies still to dress, and the frame's budget. The queue
 ## holds ids only; whatever a body is dressed with is read when it is dressed,
@@ -97,6 +111,9 @@ const HITCH_TARGET_USEC := 90000
 ## it shows.
 class BuildQueue:
 	var budget_usec := BUILD_BUDGET_USEC
+	## Round 756: what note_frame aims a frame at (HITCH_TARGET_USEC, or
+	## GHOST_HITCH_TARGET_USEC while every waiting body is drawn).
+	var target_usec := HITCH_TARGET_USEC
 	var _pending: Dictionary = {}   # id -> true, in arrival order
 	var _frame := -1
 	var _spent := 0
@@ -128,12 +145,35 @@ class BuildQueue:
 		_passed_frame = -1
 	const INDEX_BITS := 20
 	const INDEX_MASK := (1 << 20) - 1
-	const DIST_KEY_MAX := 4.0e12
+	## Squared distance x 256, capped (about 98,800 units): three bands of it,
+	## shifted by INDEX_BITS, stay under the int64 range (round 756).
+	const DIST_KEY_MAX := 2.5e12
+
+	## The frame the dressing aims to stay under (HITCH_TARGET_USEC);
+	## OPENSRO_QA_OTHER_BUILD_HITCH_MS overrides it (round 757, QA only: a
+	## 7,000-body lineup otherwise takes about 8 minutes to dress, MEASURED).
+	var hitch_usec := HITCH_TARGET_USEC
+	var hitch_qa := false
 
 	func _init() -> void:
 		var qa := OS.get_environment("OPENSRO_QA_OTHER_BUILD_BUDGET_MS")
 		if qa.is_valid_float():
 			budget_usec = int(float(qa) * 1000.0)
+		var qh := OS.get_environment("OPENSRO_QA_OTHER_BUILD_HITCH_MS")
+		if qh.is_valid_float():
+			hitch_usec = int(float(qh) * 1000.0)
+			hitch_qa = true
+		target_usec = hitch_usec
+
+	## Round 756's review, F1: ids dressed before every other, nearest first
+	## among themselves (a ghost an aura is waiting on).
+	var urgent := {}
+
+	## Puts a queued id first (urgent); nothing for an id not queued.
+	func promote(id: int) -> void:
+		if _pending.has(id) and not urgent.has(id):
+			urgent[id] = true
+			reopen()
 
 	func queue(id: int) -> void:
 		_fresh.append(id)
@@ -151,9 +191,11 @@ class BuildQueue:
 
 	func drop(id: int) -> void:
 		_pending.erase(id)
+		urgent.erase(id)
 
 	func clear() -> void:
 		_pending.clear()
+		urgent.clear()
 
 	func size() -> int:
 		return _pending.size()
@@ -173,7 +215,7 @@ class BuildQueue:
 	## frames' budget becomes HITCH_TARGET_USEC less that frame without its
 	## dressing, within [0, budget_usec].
 	func note_frame(frame_usec: int) -> void:
-		_frame_cap = clampi(HITCH_TARGET_USEC - (frame_usec - last_spent), 0, budget_usec)
+		_frame_cap = clampi(target_usec - (frame_usec - last_spent), 0, budget_usec)
 		last_spent = 0
 
 	## This frame's budget: budget_usec, or less after note_frame.
@@ -204,7 +246,11 @@ class BuildQueue:
 	## body dressed -- with bodies waiting on `ready` that scan was O(n^2) a
 	## frame. Squared distances are kept to 1/256 of a unit squared; ties go
 	## to the earlier arrival, as the scan's did.
-	func pump(frame: int, from: Vector3, bodies: Dictionary, build: Callable, ready: Callable = Callable()) -> int:
+	##
+	## Round 756: an id in `later` (bodies already drawn, ghosts) sorts after
+	## every id not in it, nearest first among themselves: a body nobody sees
+	## yet is dressed before one that is only waiting for its nodes.
+	func pump(frame: int, from: Vector3, bodies: Dictionary, build: Callable, ready: Callable = Callable(), later: Dictionary = {}) -> int:
 		if _pending.is_empty() or not can_build(frame):
 			_fresh.clear()
 			return 0
@@ -217,8 +263,12 @@ class BuildQueue:
 			var n = bodies.get(ids[i])
 			if not is_instance_valid(n):
 				_pending.erase(ids[i])
+				urgent.erase(ids[i])
 				continue
 			var d := minf((n as Node3D).position.distance_squared_to(from) * 256.0, DIST_KEY_MAX)
+			# Three bands, nearest first within each: urgent, unseen, ghosts.
+			if not urgent.has(ids[i]):
+				d += DIST_KEY_MAX * (2.0 if later.has(ids[i]) else 1.0)
 			order.append((int(d) << INDEX_BITS) | i)
 		order.sort()
 		var made := 0
@@ -234,6 +284,7 @@ class BuildQueue:
 				waiting_skips += 1
 				continue
 			_pending.erase(id)
+			urgent.erase(id)
 			var t0 := Time.get_ticks_usec()
 			build.call(id)
 			_spent += Time.get_ticks_usec() - t0

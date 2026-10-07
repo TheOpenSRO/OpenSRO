@@ -181,6 +181,48 @@ static func nearest(nodes: Array, from: Vector3, limit: int, max_distance: float
 			best_d.pop_back()
 	return best
 
+## Round 757: the choice of the nearest spread over RESELECT_FRAMES frames: a
+## share of the casters a frame into a running best, the best taking over when
+## the pass ends. MEASURED at 7,000 standing: the whole pass every sixth frame
+## (every caster's visibility up the tree and its place) was a spike of about
+## 6 ms in one frame of six (`w_blobs` 1.07 ms a frame on average). The choice
+## is the same nearest-ten rule, from places at most RESELECT_FRAMES frames old.
+const SCAN_PER_FRAME_MAX := 300
+var _scan_nodes: Array = []
+var _scan_at := 0
+var _best: Array = []
+var _best_d: Array = []
+
+func _scan_step(from: Vector3, max_distance: float) -> void:
+	if _scan_at >= _scan_nodes.size():
+		if not _scan_nodes.is_empty():
+			_chosen = _best
+		_scan_nodes = get_tree().get_nodes_in_group(GROUP)
+		_scan_at = 0
+		_best = []
+		_best_d = []
+	# At most SCAN_PER_FRAME_MAX a frame (OURS): a 7,000-body crowd chooses its
+	# ten again about every 24 frames instead of every 6.
+	var per := mini(ceili(float(_scan_nodes.size()) / float(RESELECT_FRAMES)), SCAN_PER_FRAME_MAX)
+	var end := mini(_scan_at + per, _scan_nodes.size())
+	var max_d2 := max_distance * max_distance
+	while _scan_at < end:
+		var n = _scan_nodes[_scan_at]
+		_scan_at += 1
+		if not (n is Node3D) or not is_instance_valid(n) or not (n as Node3D).is_visible_in_tree():
+			continue
+		var d2 := (n as Node3D).global_position.distance_squared_to(from)
+		if max_distance > 0.0 and d2 > max_d2:
+			continue
+		if _best.size() >= MAX_BLOBS and d2 >= float(_best_d[-1]):
+			continue
+		var at := _best_d.bsearch(d2)
+		_best_d.insert(at, d2)
+		_best.insert(at, n)
+		if _best.size() > MAX_BLOBS:
+			_best.pop_back()
+			_best_d.pop_back()
+
 ## Places the circles for this frame. `from` is the local player's
 ## position (READ: the original's list is by distance from the player);
 ## `shadow_detail` is the Video tab's
@@ -196,8 +238,12 @@ func update(from: Vector3, shadow_detail: int, ground_y: Callable, max_distance:
 			b.visible = false
 		_chosen.clear()
 		return
-	if _frame % RESELECT_FRAMES == 0 or _chosen.is_empty():
+	if _chosen.is_empty():
 		_chosen = nearest(get_tree().get_nodes_in_group(GROUP), from, MAX_BLOBS, max_distance)
+		_scan_nodes = []
+		_scan_at = 0
+	else:
+		_scan_step(from, max_distance)
 	_frame += 1
 	for i in _blobs.size():
 		var b := _blobs[i]

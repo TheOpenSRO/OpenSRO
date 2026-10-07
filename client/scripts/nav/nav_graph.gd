@@ -565,11 +565,17 @@ func landing_height_at(x: float, z: float) -> float:
 			continue
 		if z < placed.bounds_min.y or z > placed.bounds_max.y:
 			continue
+		# Round 757: the object's arrays read once, not three times a triangle
+		# (each member read takes a reference on the shared array: slower alone,
+		# and contended when HeightBatch runs this on several threads at once).
+		var verts := placed.vertices
+		var cells := placed.cells
+		var last := cells.size() - 1
 		var i := 0
-		while i + 2 <= placed.cells.size() - 1:
-			var a: Vector3 = placed.vertices[placed.cells[i]]
-			var b: Vector3 = placed.vertices[placed.cells[i + 1]]
-			var c: Vector3 = placed.vertices[placed.cells[i + 2]]
+		while i + 2 <= last:
+			var a: Vector3 = verts[cells[i]]
+			var b: Vector3 = verts[cells[i + 1]]
+			var c: Vector3 = verts[cells[i + 2]]
 			i += 3
 			var h := _triangle_height(a, b, c, x, z)
 			if not is_nan(h) and h > best:

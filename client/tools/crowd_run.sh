@@ -11,6 +11,9 @@
 # with another lane and is to be repeated -- then the renderer banner and the probe's lines
 # (LINEUP, QA CROWD arrival / census / step / net, the pump's drain line). Logs go where <log>
 # says: keep them under /var/tmp, never /tmp (tmpfs), and delete them after.
+# Round 757: CROWD_SAMPLE=1 adds per-step thread / core / GPU lines (crowd_threads.py),
+# CROWD_GODOT_ARGS adds Godot arguments (`--render-thread separate`), CROWD_NOWAIT=1 skips the
+# wait for other lanes (error-count runs only), CROWD_TIMEOUT sets the run's limit (1500 s).
 DIR="$1"; LOG="$2"; N="$3"; STEPS="$4"; shift 4
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
@@ -21,14 +24,32 @@ export OPENSRO_QA_LINEUP=all OPENSRO_QA_LINEUP_COUNT=$N OPENSRO_QA_LINEUP_PLUS=1
 export OPENSRO_QA_LINEUP_SPACING=8,10 OPENSRO_QA_LINEUP_PHASE=100000 OPENSRO_QA_DIST=90 OPENSRO_QA_PITCH=-15
 export OPENSRO_QA_CROWD_STEPS="$STEPS" OPENSRO_QA_CROWD_SECONDS=6 OPENSRO_QA_CROWD_QUIT=1
 for kv in "$@"; do export "$kv"; done
-others() { pgrep -af "^$GODOT" | grep -v -- "--path $DIR " | wc -l; }
-for i in $(seq 1 360); do [ "$(others)" = 0 ] && break; sleep 5; done
+# Round 756: any lane's Godot (the 4.7.2 spike's binary too) or xvfb-run counts, not only this
+# binary's -- the box's rule for a measurement run. By process name, not command line: a run
+# waiting on the box lock names the Godot binary in its arguments without running it.
+others() { pgrep -a '^(Godot_v4|xvfb-run)' | grep -v -- "--path $DIR " | wc -l; }
+# CROWD_NOWAIT=1 (round 757): no wait for the other lanes -- a run that counts
+# errors or events, not time.
+[ "${CROWD_NOWAIT:-0}" = 1 ] || for i in $(seq 1 360); do [ "$(others)" = 0 ] && break; sleep 5; done
 rm -f "$LOG.others"
 ( while :; do n=$(others); [ "$n" -gt 0 ] && echo "$n" >> "$LOG.others"; sleep 2; done ) & W=$!
-timeout -k 10 1500 "$DIR/tools/xwl_run.sh" -s 1920x1080 "$GODOT" --rendering-method forward_plus --rendering-driver vulkan \
-  --resolution 1920x1080 --path "$DIR" res://scenes/World3D.tscn --quit-after 400000 --print-fps --disable-vsync > "$LOG" 2>&1
+# Round 757: CROWD_SAMPLE=1 also samples the client's threads, the box's cores (crowd_threads.py)
+# and the GPU (gpu_sample) for the run, and prints one `QA THREADS` line per step.
+if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
+  rm -f "$LOG.threads" "$LOG.gpu"
+  python3 "$DIR/tools/crowd_threads.py" sample "$DIR" "$LOG.threads" 0.5 & SP=$!
+  gpu_sample 3000 > "$LOG.gpu" 2>/dev/null & GP=$!
+fi
+timeout -k 10 "${CROWD_TIMEOUT:-1500}" "$DIR/tools/xwl_run.sh" -s 1920x1080 "$GODOT" --rendering-method forward_plus --rendering-driver vulkan \
+  --resolution 1920x1080 --path "$DIR" res://scenes/World3D.tscn --quit-after 400000 --print-fps --disable-vsync ${CROWD_GODOT_ARGS:-} > "$LOG" 2>&1
 kill $W 2>/dev/null
+if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
+  kill $SP 2>/dev/null; pkill -P $GP 2>/dev/null; kill $GP 2>/dev/null
+fi
 echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0)"
 rm -f "$LOG.others"
 grep -m1 -E "^(Vulkan|OpenGL) API" "$LOG"
-grep -E "LINEUP: |QA CROWD (step|split|arrival|census: all|census: equipment|net)|other player bod|QA DRESS|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -120
+grep -E "LINEUP: |QA CROWD (step|split|arrival|visible|page|plates|ghostcheck|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|QA BUFFS|QA RUNAT|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -160
+if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
+  python3 "$DIR/tools/crowd_threads.py" report "$LOG" "$LOG.threads" "$LOG.gpu"
+fi

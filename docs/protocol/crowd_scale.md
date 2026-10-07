@@ -439,6 +439,13 @@ build: the worst at 1000 470 -> 100-122 ms), EquipFx one master per effect file 
 swap without a scan (walking p95 at 1000 184 -> 143), and the local player's pose and the fades
 once a rendered frame. At 1000 standing went 92-98 -> 85 ms; about 68 ms of it is lane A's.
 
+**Round 756 (`docs/rounds/r756.md`): a crowd appears at once.** Retail creates and draws every
+character of a group spawn inside the one 0x3018 call, models loaded synchronously, all fading in
+together (READ, r756.md section 1). B4's pump showed a crowd one body or a few a frame (13-15 s
+for 1000). An arriving body is now drawn at once as a CrowdGpu ghost from its kind's recipe
+(`CharacterAppearance.far_recipe`), with its name plate and click body, and dressed in the
+background; a kind whose templates are still being made appears whole the frame they are adopted.
+
 ### Lane C: server interest management (server only)
 
 | # | Item | Label | Expected saving |
@@ -486,6 +493,25 @@ Every lane:
 - runs `perf_gate.sh` (the jangan site);
 - runs the probe at 200 and 1000 (`docs/rounds/r736.md`, "How to rerun");
 - puts the before and after `QA CROWD step` lines in its round.
+
+### Round 757: the main thread at 1,000 / 3,000 / 7,000
+
+`docs/rounds/r757.md`. The user's crowd ran on one core with the GPU at 10-13 %. Most of the frame
+was the engine working for us on the main thread, multiplied by the physics step spiral:
+
+- **Every body and item `Skeleton3D` had a physics-step callback** (18,035 at 7,000): Godot
+  4.2.2's `Node.duplicate()` sets `animate_physical_bones`, whose setter turns the skeleton's
+  internal physics process on. Off at build (`Skeleton3DBuilder.no_physics_step`).
+- **Name plates**: one `Label3D` each, with its own materials, 14,000 draws at 7,000. Now batched
+  (`NamePlateBatch`), the 300 rule in the shader.
+- **The minimap**: a `TextureRect` per sign, refilled from every body each frame. Now one
+  MultiMesh a kind (`MinimapSigns`), written as bodies move.
+- Per-frame loops over every body made event-driven or capped; the walkers' landing heights on
+  `WorkerThreadPool` (`HeightBatch`).
+
+7,000 standing (the dense lineup, 1080p, RX 7600): 99-103 -> 16.2-16.5 ms; 3,000: 46 -> 11.9;
+1,000: 17.7 -> 9.7. Rendering on its own thread crashes on 4.2.2 (an `AnimatedTexture` re-enters
+the draw on the render thread): left off, OPEN for the 4.7.2 spike.
 
 ## 6. OPEN
 
