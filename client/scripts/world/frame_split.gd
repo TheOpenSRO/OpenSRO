@@ -65,6 +65,34 @@ static func render_threaded() -> bool:
 static func add(label: String, us: int) -> void:
 	usec[label] = int(usec.get(label, 0)) + us
 
+## Round 759: each received opcode's count and dispatch time
+## (NetClient._process): opcode -> [packets, usec].
+static var ops: Dictionary = {}
+
+static func op(opcode: int, us: int) -> void:
+	var got = ops.get(opcode)
+	if got == null:
+		ops[opcode] = [1, us]
+	else:
+		got[0] += 1
+		got[1] += us
+
+## The `n` opcodes with the most dispatch time since `before` (a duplicate of
+## `ops` taken earlier, deep), as "0xNNNN:packets/ms ..." over `seconds`.
+static func ops_line(before: Dictionary, n: int = 8) -> String:
+	var rows: Array = []
+	for k in ops:
+		var b = before.get(k, [0, 0])
+		var d_n := int(ops[k][0]) - int(b[0])
+		var d_us := int(ops[k][1]) - int(b[1])
+		if d_n > 0:
+			rows.append([k, d_n, d_us])
+	rows.sort_custom(func(a, b) -> bool: return int(a[2]) > int(b[2]))
+	var parts := PackedStringArray()
+	for r in rows.slice(0, n):
+		parts.append("0x%04x:%d/%.1fms" % [int(r[0]), int(r[1]), float(r[2]) / 1000.0])
+	return " ".join(parts)
+
 ## A snapshot of the counters, for a step's deltas.
 static func snapshot() -> Dictionary:
 	return usec.duplicate()

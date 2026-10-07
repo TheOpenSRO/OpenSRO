@@ -23,6 +23,14 @@ export OPENSRO_MAPM_PATH='97\168.m' OPENSRO_QA_AT=1002,1020 OPENSRO_QA_YAW=0 OPE
 export OPENSRO_QA_LINEUP=all OPENSRO_QA_LINEUP_COUNT=$N OPENSRO_QA_LINEUP_PLUS=13 OPENSRO_QA_LINEUP_COLUMNS=40
 export OPENSRO_QA_LINEUP_SPACING=8,10 OPENSRO_QA_LINEUP_PHASE=100000 OPENSRO_QA_DIST=90 OPENSRO_QA_PITCH=-15
 export OPENSRO_QA_CROWD_STEPS="$STEPS" OPENSRO_QA_CROWD_SECONDS=6 OPENSRO_QA_CROWD_QUIT=1
+# Round 759: CROWD_LIVE=<host:port> signs in to a running server instead of the lineup
+# (OPENSRO_QA_LINEUP=none: the probe measures the server's crowd, QaCrowdProbe.live), with
+# OPENSRO_QA_ACCOUNT / OPENSRO_QA_CHARACTER from the caller (never a GM account). No QA_AT and
+# no local NPCs: the player stands where the server put it, the server's NPCs. <n> is ignored.
+if [ -n "${CROWD_LIVE:-}" ]; then
+  export OPENSRO_QA_SERVER="$CROWD_LIVE" OPENSRO_QA_LINEUP=none
+  unset OPENSRO_QA_AT OPENSRO_QA_LOCAL_NPCS OPENSRO_QA_LINEUP_COUNT
+fi
 for kv in "$@"; do export "$kv"; done
 # Round 756: any lane's Godot (the 4.7.2 spike's binary too) or xvfb-run counts, not only this
 # binary's -- the box's rule for a measurement run. By process name, not command line: a run
@@ -50,7 +58,7 @@ fi
 echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0) rc: $RC"
 rm -f "$LOG.others"
 grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$LOG"   # 4.7.2 drops " API"
-grep -E "LINEUP: |QA CROWD (step|split|arrival|visible|page|plates|ghostcheck|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|QA BUFFS|QA RUNAT|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -160
+grep -E "QA sign-in|QA LIVE|LINEUP: |QA CROWD (step|split|arrival|visible|page|plates|ghostcheck|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|QA BUFFS|QA RUNAT|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -400
 if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
   python3 "$DIR/tools/crowd_threads.py" report "$LOG" "$LOG.threads" "$LOG.gpu"
 fi

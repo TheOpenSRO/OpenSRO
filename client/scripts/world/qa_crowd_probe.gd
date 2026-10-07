@@ -63,6 +63,15 @@ class_name QaCrowdProbe
 ##            skins (A2) are the boot's (OPENSRO_QA_CROWD_SKINS=own: per piece)
 ##   rezone   (round 760) a real zone change to OPENSRO_QA_REZONE (Hotan) and
 ##            back at the step's end, the crowd leaving and arriving again
+##
+## Round 759 (the live crowd): with OPENSRO_QA_LINEUP=none QaLineup makes the
+## probe over the SERVER's other players (`live`): it waits
+## OPENSRO_QA_CROWD_LIVE_WAIT seconds (90) for them to arrive and dress, then
+## takes every other player then in the world as its bodies and runs the steps.
+## OPENSRO_QA_CROWD_PERSEC=1 (on in live mode) prints one `QA LIVE` line a
+## second from the start: the frames, their mean / worst ms, the engine's
+## monitors, the frame's phases and the received packets (FrameSplit), the
+## crowd's far groups (CrowdGpu.batch_census), EquipFx and the plates.
 
 const SETTLE := 1.5
 ## Round 757: with the render on its own thread, the RenderingServer getters are
@@ -102,6 +111,20 @@ var _prof_at: Dictionary = {}
 ## The switches the boot started with (CrowdAnim.switches()), given back after
 ## each `anim=` step (round 747: "5" is A5, CrowdGpu).
 var _boot_switches := ""
+
+## Round 759: the server's crowd (QaLineup "none"), not a lineup.
+var live := false
+var _live_wait := 90.0
+var _live_t := 0.0
+var _persec := false
+var _ps_last_us := 0
+var _ps_prev_us := 0
+var _ps_frames := 0
+var _ps_max_ms := 0.0
+var _ps_sum := {}
+var _ps_split := {}
+var _ps_ops := {}
+var _ps_n := 0
 
 static func wanted() -> bool:
 	return OS.get_environment("OPENSRO_QA_CROWD_STEPS") != ""
@@ -182,6 +205,10 @@ func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	var dl := OS.get_environment("OPENSRO_QA_CROWD_DELAY")
 	if dl.is_valid_float():
 		delay = float(dl)
+	var lw := OS.get_environment("OPENSRO_QA_CROWD_LIVE_WAIT")
+	if lw.is_valid_float():
+		_live_wait = float(lw)
+	_persec = live or OS.get_environment("OPENSRO_QA_CROWD_PERSEC") != ""
 	_rng.seed = 736
 	_boot_switches = CrowdAnim.switches()
 	RenderingServer.viewport_set_measure_render_time(world.get_viewport().get_viewport_rid(), true)
@@ -202,6 +229,9 @@ func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 
 ## The arrival's frames (round 739), then the census once every body is dressed.
 func _arrival_frame() -> void:
+	if live:
+		_live_arrival()
+		return
 	var now := Time.get_ticks_usec()
 	var ms := float(now - _arrival_last_us) / 1000.0
 	_arrival_ms.append(ms)
@@ -274,6 +304,95 @@ func _arrival_frame() -> void:
 	# Round 748: where the arrival's frames went (ms a frame over its frames).
 	print(split_line("arrival", _arrival_split_at, FrameSplit.snapshot(), _arrival_prof_at, EfpEffect.prof, float(sorted.size())))
 	_census()
+
+## Round 759 (live): the server's crowd arrives as it will; after
+## `_live_wait` seconds every other player then in the world is a body.
+func _live_arrival() -> void:
+	_live_t += get_process_delta_time()
+	if _live_t < _live_wait:
+		return
+	_arriving = false
+	_ids = world._other_bodies.keys()
+	_resolve_bodies()
+	print("QA CROWD live: %d other players after %.0f s, %d still to dress" % [_ids.size(), _live_t, world._other_builds.size()])
+	var cg = world.get("_crowd_gpu")
+	if cg != null:
+		print("QA CROWD groups split: %s" % (cg as CrowdGpu).split_census())
+	_census()
+
+const PERSEC_PHASES := ["phys_cb", "phys_engine", "proc_cb", "post_flush", "draw", "post_tail", "net_read", "net_dispatch",
+	"p_world", "w_world", "fx_driver", "fx_effects", "w_pump", "ghosts"]
+
+## Round 759: one `QA LIVE` line a second (the header).
+func _persec_frame() -> void:
+	var now := Time.get_ticks_usec()
+	if _ps_last_us == 0:
+		_ps_last_us = now
+		_ps_prev_us = now
+		_ps_split = FrameSplit.snapshot()
+		_ps_ops = FrameSplit.ops.duplicate(true)
+		_ps_sum = {}
+		_ps_frames = 0
+		_ps_max_ms = 0.0
+		return
+	var ms := float(now - _ps_prev_us) / 1000.0
+	_ps_prev_us = now
+	_ps_frames += 1
+	_ps_max_ms = maxf(_ps_max_ms, ms)
+	_ps_sum["draws"] = float(_ps_sum.get("draws", 0.0)) + Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+	_ps_sum["objects"] = float(_ps_sum.get("objects", 0.0)) + Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)
+	_ps_sum["prims"] = float(_ps_sum.get("prims", 0.0)) + Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
+	if not _threaded:
+		var vp := world.get_viewport().get_viewport_rid()
+		_ps_sum["rcpu"] = float(_ps_sum.get("rcpu", 0.0)) + RenderingServer.viewport_get_measured_render_time_cpu(vp)
+		_ps_sum["rgpu"] = float(_ps_sum.get("rgpu", 0.0)) + RenderingServer.viewport_get_measured_render_time_gpu(vp)
+		_ps_sum["rs_setup"] = float(_ps_sum.get("rs_setup", 0.0)) + RenderingServer.get_frame_setup_time_cpu()
+	if now - _ps_last_us < 1000000:
+		return
+	var f := maxf(float(_ps_frames), 1.0)
+	var secs := float(now - _ps_last_us) / 1e6
+	var after := FrameSplit.snapshot()
+	var ph := PackedStringArray()
+	for k in PERSEC_PHASES:
+		ph.append("%s=%.2f" % [k, float(int(after.get(k, 0)) - int(_ps_split.get(k, 0))) / 1000.0 / f])
+	var pk := int(after.get("net_packets_calls", 0)) - int(_ps_split.get("net_packets_calls", 0))
+	var others: int = world._other_bodies.size()
+	var near := others
+	var cg := ""
+	var crowd = world.get("_crowd_gpu")
+	if crowd != null:
+		var c := crowd as CrowdGpu
+		var bc := c.batch_census()
+		near = others - c.body_count()
+		cg = " far=%d ghosts=%d groups=%d live_groups=%d instances=%d g_meshes=%d g_materials=%d g_shaders=%d g_ones=%d g_le3=%d g_most=%d" % [
+			c.body_count() - c.ghost_count(), c.ghost_count(), int(bc["groups"]), int(bc["live"]), int(bc["instances"]), int(bc["meshes"]),
+			int(bc["materials"]), int(bc["shaders"]), int(bc["ones"]), int(bc["le3"]), int(bc["most"])]
+	var fx := ""
+	var vp0 := world.get_viewport()
+	if vp0.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp0.get_meta(EquipFx.DRIVER_META)):
+		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
+		fx = " fx_hosts=%d fx_shown=%d fx_kinds=%d" % [int(d.stats.get("hosts", 0)), int(d.stats.get("shown", 0)), int(d.stats.get("kinds", 0))]
+	var pl := ""
+	var pb = world.get("_plate_batch")
+	if pb != null:
+		pl = " plates=%d" % (pb as NamePlateBatch).size()
+	_ps_n += 1
+	print("QA LIVE sec=%d fps=%.1f frame_ms=%.1f max_ms=%.1f draws=%.0f objects=%.0f prims=%.0f rs_cpu=%.2f rs_gpu=%.2f rs_setup=%.2f time_process=%.1f time_physics=%.1f %s packets=%d packets_per_frame=%.1f others=%d near_or_undressed=%d to_dress=%d%s%s%s nodes=%d" % [
+		_ps_n, f / secs, secs * 1000.0 / f, _ps_max_ms, float(_ps_sum.get("draws", 0.0)) / f, float(_ps_sum.get("objects", 0.0)) / f,
+		float(_ps_sum.get("prims", 0.0)) / f, float(_ps_sum.get("rcpu", 0.0)) / f, float(_ps_sum.get("rgpu", 0.0)) / f,
+		float(_ps_sum.get("rs_setup", 0.0)) / f,
+		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
+		" ".join(ph), pk, float(pk) / f, others, near, world._other_builds.size(), cg, fx, pl, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))])
+	if _ps_n % 60 == 0 and crowd != null:
+		print("QA LIVE groups split sec=%d %s" % [_ps_n, (crowd as CrowdGpu).split_census()])
+	if _ps_n % 5 == 0:
+		print("QA LIVE ops (5 s, by dispatch time): %s" % FrameSplit.ops_line(_ps_ops))
+		_ps_ops = FrameSplit.ops.duplicate(true)
+	_ps_last_us = now
+	_ps_split = after
+	_ps_sum = {}
+	_ps_frames = 0
+	_ps_max_ms = 0.0
 
 ## What one other player is made of, and how much of it is shared: one line
 ## for the first body and one for all of them.
@@ -404,6 +523,8 @@ func _next() -> void:
 func _process(delta: float) -> void:
 	if world == null:
 		return
+	if _persec:
+		_persec_frame()
 	if _arriving:
 		_arrival_frame()
 		return
@@ -767,8 +888,11 @@ func _switch(step: String, off: bool) -> void:
 			if vp.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp.get_meta(EquipFx.DRIVER_META)):
 				var d: EquipFx = vp.get_meta(EquipFx.DRIVER_META)
 				d.process_mode = Node.PROCESS_MODE_DISABLED if off else Node.PROCESS_MODE_INHERIT
+				# Round 759: the masters never process themselves (the driver
+				# steps them, EquipFx._step_masters); turning theirs on here
+				# stepped each twice after the switch.
 				for k in d._kinds.values():
-					(k.master as Node).set_process(not off)
+					(k.master as Node).set_process(false)
 				for h in d._hosts.values():
 					if h.holder != null and is_instance_valid(h.holder):
 						h.holder.visible = false if off else h.holder.visible

@@ -47,6 +47,9 @@ func _initialize() -> void:
 		await _test_parity()
 		_test_frames_and_rebase()
 		_test_review_fixes()
+		_test_light_texel()
+		_test_glow_rows()
+		_test_collect_cap()
 		var world := _make_world()
 		if world != null:
 			await process_frame
@@ -335,6 +338,225 @@ func _test_parity() -> void:
 			c.free()
 	crowd.flush(3.0)
 	await process_frame
+
+## Round 759: a character's light levels share one group per mesh. Each
+## level is ObjectLight's copy of the material near; far, its part draws with
+## the base's twin, flagged (the lit bit of INSTANCE_CUSTOM.y), and the body's
+## level goes in its fifth texel (MEASURED live before: 6,587 groups for 1,678
+## meshes, a group per (mesh, level)).
+func _test_light_texel() -> void:
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	var clip := _clip(900, 4)
+	var levels := [0.45, 0.55, ObjectLight.OBJECT_COLOR]
+	var skels: Array = []
+	for i in range(levels.size()):
+		var skel := _make_body()
+		# One kind: the same meshes, as a template's bodies share them.
+		if not skels.is_empty():
+			for nm in ["Piece", "Item"]:
+				(skel.find_child(nm, true, false) as MeshInstance3D).mesh = ((skels[0] as Node).find_child(nm, true, false) as MeshInstance3D).mesh
+		var holder := Node3D.new()
+		holder.set_meta("character_id", 300 + i)
+		holder.position = Vector3(10.0 * float(i), 0.0, -20.0)
+		holder.add_child(skel)
+		root.add_child(holder)
+		CharacterLight.set_on(holder, float(levels[i]))
+		var entry := [skel, clip, 4, 0.1, true, 0.0, null]
+		crowd.can_draw(skel, entry)
+		crowd.bake_all()
+		_check(crowd.add(holder, skel, entry, 0.0), "light %.2f: drawn far" % levels[i])
+		skels.append(skel)
+	crowd.flush(0.0)
+	var piece0 := (skels[0] as Skeleton3D).get_node("Piece") as MeshInstance3D
+	_check(ObjectLight.base_of(piece0.material_override) == _mat and piece0.material_override != _mat,
+		"near, a body at 0.45 draws with ObjectLight's level copy of the material")
+	var groups := {}
+	var flags_ok := true
+	var texels_ok := true
+	for i in range(skels.size()):
+		var b: CrowdGpu.Body = crowd.body_of(skels[i])
+		var want := float(roundi(float(levels[i]) * ObjectLight.VARIANT_STEPS)) / ObjectLight.VARIANT_STEPS
+		if absf(float(levels[i]) - ObjectLight.OBJECT_COLOR) < 0.001:
+			want = ObjectLight.OBJECT_COLOR
+		if not is_equal_approx(b.objc, want) or not is_equal_approx(crowd._body_data[b.slot * CrowdGpu.FLOATS_PER_BODY + 16], want):
+			texels_ok = false
+		for rec in b.parts:
+			var g: CrowdGpu.Group = rec[0]
+			groups[g] = true
+			var y: float = g.buf[int(rec[1]) * CrowdGpu.INSTANCE_FLOATS + 13]
+			if not bool(CrowdGpu.unpack_y(y)[1]):
+				flags_ok = false
+	_check(texels_ok, "each body's level (0.45, 0.55, 0.6) is its fifth texel, the value its level copy carries")
+	_check(flags_ok, "every lit part's INSTANCE_CUSTOM.y carries the lit bit")
+	_check(groups.size() == 2, "three levels draw from 2 groups (the piece and the item), not 6 (%d)" % groups.size())
+	var twin_ok := true
+	for g in groups:
+		if crowd._twin_sources.get((g as CrowdGpu.Group).twin_key) == null or (crowd._twin_sources[(g as CrowdGpu.Group).twin_key] as WeakRef).get_ref() != _mat:
+			twin_ok = false
+	_check(twin_ok, "... each the base material's twin")
+	# A level change while far: the texel, the same groups.
+	var holder0: Node3D = (skels[0] as Skeleton3D).get_parent()
+	CharacterLight.set_on(holder0, 0.5)
+	crowd.refresh(holder0)
+	var b0: CrowdGpu.Body = crowd.body_of(skels[0])
+	var same := true
+	for rec in b0.parts:
+		if not groups.has(rec[0]):
+			same = false
+	_check(same and is_equal_approx(b0.objc, float(roundi(0.5 * ObjectLight.VARIANT_STEPS)) / ObjectLight.VARIANT_STEPS),
+		"a level change while far rewrites the texel (%.4f) and keeps its groups" % b0.objc)
+	# The shaders: object.gdshaderinc's oD0 and a mod shader's take srr_cg_objc.
+	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
+	_check(inc.contains("srr_cg_objc >= 0.0 ? vec3(srr_cg_objc) : object_color"), "object.gdshaderinc's twin takes the body's colour")
+	var tm := CrowdGpu.twin_code(ObjectLoader._mod_shader("back", "mix", true).code)
+	_check(tm.contains("srr_cg_objc >= 0.0 ? vec3(srr_cg_objc) : object_color") and tm.find(CrowdGpu.VERTEX_INCLUDE) < tm.find("srr_cg_objc >= 0.0"),
+		"a mod shader's twin too, after the skin declares it")
+	for sk in skels:
+		crowd.remove(sk)
+		var h: Node = (sk as Node).get_parent()
+		root.remove_child(h)
+		h.free()
+	crowd.flush(1.0)
+
+## Round 759: an item worn at several pluses draws from one group per mesh,
+## each instance's glow row from the glow table (MEASURED live before: the
+## glow's colours, period and scroll split most of the far groups).
+func _test_glow_rows() -> void:
+	# The packing of INSTANCE_CUSTOM.y.
+	var ok := true
+	for vol in [-1, 0, 7, 510]:
+		for lit in [false, true]:
+			for glow in [-1, 0, 5, 3000]:
+				var u := CrowdGpu.unpack_y(CrowdGpu.pack_y(vol, lit, glow))
+				if int(u[0]) != vol or bool(u[1]) != lit or int(u[2]) != glow:
+					ok = false
+	_check(ok, "INSTANCE_CUSTOM.y packs the Volume row, the lit bit and the glow row exactly")
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	var clip := _clip(900, 4)
+	var rows := [[Color(1, 0.2, 0.1), Color(0.3, 0.3, 1), 2.0, 2.0, 0.0, Vector2(0.1, 0.0)],
+		[Color(0.2, 1, 0.1), Color(1, 1, 1), 1.4, 1.0, 1.0, Vector2(0.0, 0.25)]]
+	var opt := ImageTexture.create_from_image(Image.create(4, 4, false, Image.FORMAT_RGBA8))
+	var opt2 := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	var glows: Array = []
+	for r in rows:
+		var g := ShaderMaterial.new()
+		g.shader = EquipGlow.glow_shader("back", true)
+		g.set_shader_parameter("glow_texture", opt if glows.is_empty() else opt2)
+		g.set_shader_parameter("glow_c1", r[0])
+		g.set_shader_parameter("glow_c2", r[1])
+		g.set_shader_parameter("glow_period", r[2])
+		g.set_shader_parameter("glow_mul0", r[3])
+		g.set_shader_parameter("glow_signed2x", r[4])
+		g.set_shader_parameter("glow_uv_speed", r[5])
+		g.set_shader_parameter("alpha_scissor", 1.0 / 255.0)
+		g.set_meta(EquipGlow.PLAIN_META, _mat)
+		glows.append(g)
+	var skels: Array = []
+	for i in range(3):
+		var skel := _make_body()
+		if not skels.is_empty():
+			for nm in ["Piece", "Item"]:
+				(skel.find_child(nm, true, false) as MeshInstance3D).mesh = ((skels[0] as Node).find_child(nm, true, false) as MeshInstance3D).mesh
+		# The item glows at the body's row (two bodies at the first, one at the second).
+		(skel.find_child("Item", true, false) as MeshInstance3D).material_override = glows[0 if i < 2 else 1]
+		var holder := Node3D.new()
+		holder.set_meta("character_id", 400 + i)
+		holder.position = Vector3(10.0 * float(i), 0.0, -30.0)
+		holder.add_child(skel)
+		root.add_child(holder)
+		var entry := [skel, clip, 4, 0.1, true, 0.0, null]
+		crowd.can_draw(skel, entry)
+		crowd.bake_all()
+		_check(crowd.add(holder, skel, entry, 0.0), "glow body %d: drawn far" % i)
+		skels.append(skel)
+	crowd.flush(0.0)
+	var item_groups := {}
+	var got_rows: Array = []
+	for sk in skels:
+		var b: CrowdGpu.Body = crowd.body_of(sk)
+		for rec in b.parts:
+			var g: CrowdGpu.Group = rec[0]
+			var y: float = g.buf[int(rec[1]) * CrowdGpu.INSTANCE_FLOATS + 13]
+			var glow_row: int = CrowdGpu.unpack_y(y)[2]
+			if glow_row >= 0:
+				item_groups[g] = true
+				got_rows.append(glow_row)
+	_check(item_groups.size() == 1, "the item at two glow rows, two option textures, draws from ONE group (%d)" % item_groups.size())
+	_check(got_rows.size() == 3 and got_rows[0] == got_rows[1] and got_rows[2] != got_rows[0],
+		"each instance carries its own row: %s" % str(got_rows))
+	var table_ok := got_rows.size() == 3
+	if table_ok:
+		for k in range(2):
+			var row: int = got_rows[0] if k == 0 else got_rows[2]
+			var o := row * CrowdGpu.GLOW_TEXELS * 4
+			var r: Array = rows[k]
+			var want := [r[0].r, r[0].g, r[0].b, r[2], r[1].r, r[1].g, r[1].b, r[3], r[5].x, r[5].y, r[4], float(k + 1)]
+			for i in range(want.size()):
+				if not is_equal_approx(crowd._glow_data[o + i], float(want[i])):
+					table_ok = false
+	_check(table_ok, "the glow table holds each row's c1, period, c2, mul0, scroll, signed2x and texture slot + 1")
+	var twin: ShaderMaterial = (item_groups.keys()[0] as CrowdGpu.Group).material if not item_groups.is_empty() else null
+	_check(twin != null and twin.get_shader_parameter("crowd_glow") == crowd._glow_tex and twin.get_shader_parameter("crowd_glow_t0") == opt
+		and twin.get_shader_parameter("crowd_glow_t1") == opt2,
+		"the group's twin reads the glow table and holds both option textures in its slots")
+	# The shader's row arithmetic is srr_glow's, the uniforms read from the row.
+	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
+	var a := inc.find("vec3 srr_glow(vec3 srr_item")
+	var a_body := inc.substr(inc.find("{", a), inc.find("\n}", a) - inc.find("{", a))
+	var bpos := inc.find("vec3 srr_glow_row(")
+	var b_body := inc.substr(inc.find("{", bpos), inc.find("\n}", bpos) - inc.find("{", bpos))
+	var subst := a_body
+	for pair in [["glow_c1", "srr_g1.rgb"], ["glow_period", "srr_g1.a"], ["glow_c2", "srr_g2.rgb"], ["glow_mul0", "srr_g2.a"],
+			["glow_uv_speed", "srr_g3.xy"], ["glow_signed2x", "srr_g3.z"],
+			["texture(glow_texture, srr_uv + fract(srr_g3.xy * srr_time)).rgb", "srr_glow_opt(srr_uv + fract(srr_g3.xy * srr_time), srr_g3.w)"]]:
+		subst = subst.replace(pair[0], pair[1])
+	var strip := func(t: String) -> String:
+		var out := PackedStringArray()
+		for line in t.split("\n"):
+			var ln := String(line).strip_edges()
+			if ln != "" and not ln.begins_with("//"):
+				out.append(ln)
+		return "\n".join(out)
+	_check(a >= 0 and bpos >= 0 and strip.call(subst) == strip.call(b_body), "srr_glow_row is srr_glow with the row's values for the uniforms")
+	var oi := inc.find("vec3 srr_glow_opt(")
+	var o_body := inc.substr(oi, inc.find("\n}", oi) - oi)
+	_check(oi >= 0 and o_body.contains("texture(crowd_glow_t0, srr_at).rgb") and o_body.contains("texture(crowd_glow_t3, srr_at).rgb")
+		and o_body.contains("return texture(glow_texture, srr_at).rgb;")
+		and inc.contains("uniform sampler2D crowd_glow_t0 : hint_default_black, filter_linear_mipmap, repeat_enable;")
+		and inc.contains("uniform sampler2D glow_texture : hint_default_black, filter_linear_mipmap, repeat_enable;"),
+		"the row's option texture is sampled as glow_texture is (the same hints), slot 0 the twin's own")
+	for sk in skels:
+		crowd.remove(sk)
+		var h: Node = (sk as Node).get_parent()
+		root.remove_child(h)
+		h.free()
+	crowd.flush(1.0)
+
+## Round 759: collect() frees at most COLLECT_MAX groups a call (MEASURED
+## before: an arrival's thousands of emptied groups collected together made
+## frames of 400-723 ms), the rest on the next calls.
+func _test_collect_cap() -> void:
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	var b := CrowdGpu.Body.new()
+	b.slot = 0
+	var mesh := BoxMesh.new()
+	var n := CrowdGpu.COLLECT_MAX + 40
+	for i in range(n):
+		var m := ShaderMaterial.new()
+		m.shader = ObjectLoader.OBJECT_SHADER
+		crowd._add_part(b, {"mesh": mesh, "material": m, "layers": 1, "sort": 0.0, "vol": -1, "centre": 0.0, "twin_key": "cap%d" % i})
+	crowd._push_groups()
+	_check(crowd._groups.size() == n and int(crowd.stats["instances"]) == n, "%d one-instance groups made (%d instances)" % [n, int(crowd.stats["instances"])])
+	for rec in b.parts.duplicate():
+		crowd._remove_part(rec)
+	b.parts.clear()
+	crowd._push_groups()
+	for c in range(CrowdGpu.GROUP_EMPTY_CYCLES - 1):
+		crowd.collect()
+	var first := crowd.collect()
+	var second := crowd.collect()
+	_check(first == CrowdGpu.COLLECT_MAX and second == 40 and crowd._groups.is_empty() and int(crowd.stats["instances"]) == 0,
+		"emptied, they are freed %d a call at most (%d, then %d), all of them in the end" % [CrowdGpu.COLLECT_MAX, first, second])
 
 func _test_frames_and_rebase() -> void:
 	var crowd := CrowdGpu.new(root.find_world_3d().scenario)

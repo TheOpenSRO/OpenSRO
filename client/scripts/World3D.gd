@@ -6401,6 +6401,7 @@ func _exit_tree() -> void:
 		_appearance.wait_prepared(false)
 	# Nor a landing-height helper (round 757's review, F3).
 	HeightBatch.reap_all()
+	EfpSimBatch.reap_all()
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
@@ -13060,7 +13061,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 # -- the windows on screen, the keyboard focus, the keys that reached
 # World3D._unhandled_input (the last stage: every HUD handler ran first),
 # and what the key table ran (KeyInput.dispatched, since the action).
-## OPENSRO_QA_WALK_TO="<tick>:<x>,<z>[;<tick>:rel:<dx>,<dz>;<tick>:run:<deg>;<tick>:sit;<tick>:attack...]"
+## OPENSRO_QA_WALK_TO="<tick>:<x>,<z>[;<tick>:rel:<dx>,<dz>;<tick>:deck:<dx>,<dz>;<tick>:run:<deg>;<tick>:sit;<tick>:attack...]"
 ## (round 749): at each tick, a ground click on world (x, z) -- the walk a
 ## click issues (_issue_walk: the click filter, the order, its 0x7021), at
 ## the ground's height there -- a sky click's heading run toward <deg> (0 is
@@ -13091,7 +13092,7 @@ func _qa_walk_to_step() -> void:
 		# "rel:<dx>,<dz>" (round 749's verification): a click that far from
 		# where the player stands, for a walk after an arrival whose point the
 		# run does not know beforehand.
-		var rel := bits[1] == "rel" and bits.size() >= 3
+		var rel := (bits[1] == "rel" or bits[1] == "deck") and bits.size() >= 3
 		var xz := (bits[2] if rel else bits[1]).split(",", false)
 		if xz.size() != 2:
 			continue
@@ -13099,6 +13100,15 @@ func _qa_walk_to_step() -> void:
 		if rel:
 			at += Vector3(player.position.x, 0.0, player.position.z)
 		at.y = _terrain_height_at(at)
+		# Round 759: "deck:" (as "rel:") clicks on the highest walkable surface
+		# there (an object's floor, as a click on Jangan's plaza deck lands),
+		# not the terrain under it.
+		if bits[1] == "deck" and bits.size() >= 3:
+			var pair := _nav_graph_for(at)
+			if not pair.is_empty():
+				var grp: Node3D = pair[1]
+				var lp := grp.to_local(at)
+				at.y = grp.to_global(Vector3(lp.x, (pair[0] as NavGraph).landing_height_at(lp.x, lp.z), lp.z)).y
 		print("QA WALK_TO %d: click at (%.1f, %.1f, %.1f) from (%.1f, %.1f): %s" % [_qa_tick, at.x, at.y, at.z,
 			player.position.x, player.position.z, _issue_walk(at)])
 

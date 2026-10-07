@@ -83,6 +83,7 @@ func _initialize() -> void:
 	_children()
 	_commands()
 	_caps()
+	_batch()
 	_review_rules()
 	_blend()
 	_effect_nodes()
@@ -279,6 +280,72 @@ func _caps() -> void:
 		o.clear()
 	big.clear()
 	_check(S.live_total == 0, "clearing the effects returns their share of the total")
+
+## Round 759 (EfpSimBatch): many effects' steps on WorkerThreadPool. Each
+## effect is stepped once; the global cap holds for the sum (each sim adds at
+## most its share of the room the batch started with) and every spawn and
+## death is counted back in live_total; and with room for all, the threaded
+## steps make the same particles as the main thread's (each sim's own RNG).
+func _batch() -> void:
+	var B: GDScript = load("res://scripts/efp/efp_sim_batch.gd")
+	_check(B != null, "EfpSimBatch exists")
+	if B == null:
+		return
+	S.live_total = 0
+	var fx: Array = []
+	for i in range(8):
+		var e: Node = E.new()
+		e.sim = _sim(_node(100, "NormalTimeLoop", _emit(0, 10, 1, 100000, 1000.0)), 11 + i)
+		fx.append(e)
+	B.run(fx, 0.05)
+	var sum := 0
+	var stepped := true
+	var most := 0
+	for e in fx:
+		sum += (e.sim as EfpSim).particles.size()
+		most = maxi(most, (e.sim as EfpSim).particles.size())
+		if (e.sim as EfpSim).age != 1:
+			stepped = false
+	_check(bool(B.last["threaded"]) and stepped, "8 effects stepped once each, on the pool (threaded %s)" % str(B.last["threaded"]))
+	_check(S.live_total == sum and sum <= S.MAX_TOTAL - S.RESERVE and most <= (S.MAX_TOTAL - S.RESERVE) / 8,
+		"the cap holds for the sum (%d of %d, at most %d each) and live_total counts them (%d)" % [sum, S.MAX_TOTAL - S.RESERVE, most, S.live_total])
+	for e in fx:
+		(e.sim as EfpSim).clear()
+	_check(S.live_total == 0, "... and clearing returns them")
+	# With room for every spawn, the pool's step is the main thread's.
+	var a: Array = []
+	var b: Array = []
+	for i in range(6):
+		var ea: Node = E.new()
+		ea.sim = _sim(_node(30, "NormalTimeExtinct", _emit(0, 10, 1, 5, 5.0), "RenderNone",
+			[_cmd("SetConePos", {"type": "AngleVector1", "a": Vector3(1, 3, 0), "b": Vector3(2, 3, 0)})]), 100 + i)
+		a.append(ea)
+		var eb: Node = E.new()
+		eb.sim = _sim(_node(30, "NormalTimeExtinct", _emit(0, 10, 1, 5, 5.0), "RenderNone",
+			[_cmd("SetConePos", {"type": "AngleVector1", "a": Vector3(1, 3, 0), "b": Vector3(2, 3, 0)})]), 100 + i)
+		b.append(eb)
+	for _k in range(5):
+		B.run(a, 0.05)
+		for eb in b:
+			(eb.sim as EfpSim).advance(0.05)
+	var same := true
+	for i in range(a.size()):
+		var pa: Array = (a[i].sim as EfpSim).particles
+		var pb: Array = (b[i].sim as EfpSim).particles
+		if pa.size() != pb.size():
+			same = false
+			continue
+		for j in range(pa.size()):
+			if not (pa[j] as EfpSim.Particle).pos.is_equal_approx((pb[j] as EfpSim.Particle).pos):
+				same = false
+	_check(same, "with room for all, the pool's steps make the main thread's particles")
+	for e in a + b:
+		(e.sim as EfpSim).clear()
+		(e as Node).free()
+	for e in fx:
+		(e as Node).free()
+	B.reap_all()
+	_check(S.live_total == 0, "... the count back to 0")
 
 func _review_rules() -> void:
 	# NeverExtinct with N == 0 kills the particle (FUN_00c84d80).

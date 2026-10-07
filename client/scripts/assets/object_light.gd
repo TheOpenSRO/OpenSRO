@@ -236,6 +236,21 @@ static func is_object_material(m: Material) -> bool:
 static func base_of(m: Material) -> Material:
 	return m.get_meta(VARIANT_BASE_META, m) if m != null else null
 
+## Round 759: the object colour `m` draws with (its `object_color`'s x; the
+## shader's default, OBJECT_COLOR, when it sets none). CrowdGpu writes it in
+## a far body's texel instead of drawing the level copy.
+static func object_color_of(m: Material) -> float:
+	var v = (m as ShaderMaterial).get_shader_parameter(OBJECT_COLOR_PARAM) if m is ShaderMaterial else null
+	return float((v as Vector3).x) if v is Vector3 else OBJECT_COLOR
+
+## Round 759: the object colour with_object_color(m, value) draws at, without
+## making the copy: the base's own near 0.6, else the level's.
+static func object_color_at(m: Material, value: float) -> float:
+	var base := base_of(m)
+	if base == null or absf(value - OBJECT_COLOR) < 0.5 / VARIANT_STEPS:
+		return object_color_of(base)
+	return float(int(roundf(value * VARIANT_STEPS))) / VARIANT_STEPS
+
 ## `m` (or the material it copies) drawn at object colour `value`: the base
 ## itself at 0.6, else one shared copy per base and level with
 ## `object_color` set (OURS method for the READ value).

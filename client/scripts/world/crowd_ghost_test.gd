@@ -445,9 +445,18 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	var n605 := _ghost(world, 605, Vector3(0, 0, -100), kit)
 	var b605: CrowdGpu.Body = crowd.body_of(n605)
 	var mats_before := b605.mats.duplicate()
+	var groups_before: Array = []
+	for prec in b605.parts:
+		groups_before.append((prec as Array)[0])
 	world.call("_crowd_ghost_light", n605, 0.9)
-	_check(b605.mats.size() == mats_before.size() and b605.mats[0] != mats_before[0] and ObjectLight.base_of(b605.mats[0]) == mats_before[0],
-		"its light takes the level's copy of each material")
+	var groups_after: Array = []
+	for prec in b605.parts:
+		groups_after.append((prec as Array)[0])
+	# Round 759: the level is the body's texel, not a copy of each material.
+	var want_objc := float(roundi(0.9 * ObjectLight.VARIANT_STEPS)) / ObjectLight.VARIANT_STEPS
+	_check(b605.mats == mats_before and groups_after == groups_before and is_equal_approx(b605.objc, want_objc)
+		and is_equal_approx(crowd._body_data[b605.slot * CrowdGpu.FLOATS_PER_BODY + 16], want_objc),
+		"its light is its texel (%.4f), its materials and groups unchanged" % b605.objc)
 	(world.get("_other_equipped") as Dictionary)[605] = {EquipmentNet.SLOT_WEAPON: 5004}
 	world.call("_redress_other", 605)
 	world.call("_ghost_other", 605)

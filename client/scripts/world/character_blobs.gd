@@ -209,10 +209,10 @@ func _scan_step(from: Vector3, max_distance: float) -> void:
 	while _scan_at < end:
 		var n = _scan_nodes[_scan_at]
 		_scan_at += 1
-		# Validity first (round 760): the pass's list is a snapshot, and a
-		# body freed since (a crowd leaving at a zone change) made `is` on it
-		# a SCRIPT ERROR ("Left operand of 'is' is a previously freed
-		# instance"), once per freed body a frame.
+		# Validity before `is` (rounds 759 and 760): the pass's list is a
+		# snapshot, and a body freed since (a live crowd's departures, a zone
+		# change's empty arrival list) made `is` on it a SCRIPT ERROR (132 in one
+		# 12-minute boot among the swarm, MEASURED round 759).
 		if not is_instance_valid(n) or not (n is Node3D) or not (n as Node3D).is_visible_in_tree():
 			continue
 		var d2 := (n as Node3D).global_position.distance_squared_to(from)

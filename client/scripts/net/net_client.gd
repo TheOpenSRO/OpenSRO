@@ -417,11 +417,26 @@ func _process(_delta: float) -> void:
 	# Each poll takes whatever the peer holds into the reader's own buffer
 	# (round 663), so a frame larger than what the socket -- or one TLS
 	# record -- holds at once still comes through.
+	# Round 759 (QA, FrameSplit only): the read and the dispatch timed apart,
+	# and each opcode's count and dispatch time (FrameSplit.op).
+	var fs := FrameSplit.on
 	while true:
+		var t0 := Time.get_ticks_usec() if fs else 0
 		var p := _reader.poll(_peer)
 		if p == null:
+			if fs:
+				FrameSplit.add("net_read", Time.get_ticks_usec() - t0)
 			break
+		if not fs:
+			_dispatch(p)
+			continue
+		var t1 := Time.get_ticks_usec()
 		_dispatch(p)
+		var t2 := Time.get_ticks_usec()
+		FrameSplit.add("net_read", t1 - t0)
+		FrameSplit.add("net_dispatch", t2 - t1)
+		FrameSplit.add("net_packets_calls", 1)
+		FrameSplit.op(p.opcode, t2 - t1)
 
 ## Connects to host:port. If use_tls is true, wraps the connection in TLS
 ## once the underlying TCP handshake completes (see gateway.Server.TLSConfig
