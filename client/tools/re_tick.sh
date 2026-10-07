@@ -37,7 +37,7 @@ fi
 # Never let a tick run while a render holds the GPU; renders are the one thing
 # that must not be disturbed. Match on a pattern this script does not contain,
 # or pgrep finds itself (that trap has cost this project time twice).
-if pgrep -f "[G]odot_v4.2.2" >/dev/null 2>&1; then
+if pgrep -f "[G]odot_v4\." >/dev/null 2>&1; then
   say "a render is running - standing down this tick"
   exit 0
 fi

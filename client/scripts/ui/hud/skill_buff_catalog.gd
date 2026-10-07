@@ -267,6 +267,13 @@ func start_index(shards: Array) -> void:
 		result["rows"] = SkillBuffCatalog.build_index(shards)
 		result["ms"] = Time.get_ticks_msec() - t)
 
+## A catalog freed with its parse still out waits for it (round 754: Godot
+## 4.7 aborts at quit over a task nobody waited for; MusicDirector._exit_tree).
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE and _task_id >= 0:
+		WorkerThreadPool.wait_for_task_completion(_task_id)
+		_task_id = -1
+
 ## Collects a finished index; true once the catalog can answer.
 func poll() -> bool:
 	if _state == State.LOADING and _task_id >= 0 and WorkerThreadPool.is_task_completed(_task_id):

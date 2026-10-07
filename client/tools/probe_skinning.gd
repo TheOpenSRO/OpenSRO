@@ -94,7 +94,7 @@ func _initialize() -> void:
 
 	# --- A. bones: rest, keyframe 0, posed ---
 	skeleton.reset_bone_poses()
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 	var rest_global := {}
 	var rest_local := {}
 	for i in range(skeleton.get_bone_count()):

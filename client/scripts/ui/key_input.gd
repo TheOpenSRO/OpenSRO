@@ -50,6 +50,28 @@ const DISPATCH_LOG_CAP := 64
 func _init(host_callables: Dictionary = {}) -> void:
 	host = host_callables
 
+## A text line that holds the keyboard the way it did under Godot 4.2.2
+## (round 754): Enter submits and the line keeps the keyboard AND its
+## editing; Escape ends the input and gives the keyboard back to the game.
+##
+## Godot 4.4 gave LineEdit an editing state apart from the focus (READ,
+## scene/gui/line_edit.cpp at 4.7.2-stable): Enter submits and then ends the
+## editing unless keep_editing_on_text_submit (so the next Enter only starts
+## editing again and submits nothing), and ui_cancel ends the editing but
+## KEEPS the focus -- under 4.2.2 Escape released it. Without this, the chat
+## line after a send ignored the next Enter, and after Escape the line kept
+## the keyboard, so is_typing (World3D, a focused LineEdit) went on eating
+## the game's keys (MEASURED: hud_keys_after_chat_test.gd, 8 failures under
+## 4.7.2, 0 under 4.2.2). Both are no-ops under 4.2.2, which has neither the
+## property nor the signal.
+static func line_edit_as_42(edit: LineEdit) -> void:
+	if edit == null or not edit.has_signal("editing_toggled"):
+		return
+	edit.set("keep_editing_on_text_submit", true)
+	edit.connect("editing_toggled", func(on: bool) -> void:
+		if not on and is_instance_valid(edit) and edit.has_focus():
+			edit.release_focus())
+
 func is_held(action: String) -> bool:
 	return _held.has(action)
 

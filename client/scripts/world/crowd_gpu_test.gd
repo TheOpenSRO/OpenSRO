@@ -110,7 +110,7 @@ func _body() -> Skeleton3D:
 	s.set_bone_rest(3, Transform3D(Basis(Vector3(0, 0, 1), 0.2), Vector3(0, 6, 0)))
 	for i in range(s.get_bone_count()):
 		s.reset_bone_pose(i)
-	s.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(s)
 	return s
 
 ## A skinned mesh whose palette is [calf, spine], with single, shared and
@@ -206,7 +206,7 @@ func _clip(duration: int, keys: int, salt: float = 0.0) -> BanReader.ParsedAnima
 ## The near path's vertices, in the world: the skinned piece from the body's
 ## own skin at the skeleton's transform, the rigid piece at its own.
 func _near_vertices(skel: Skeleton3D) -> Array:
-	skel.get_bone_global_pose(0)
+	Skeleton3DBuilder.flush_attachments(skel)  # the weapons follow now (round 754)
 	var out: Array = []
 	for n in skel.find_children("*", "MeshInstance3D", true, false):
 		var mi := n as MeshInstance3D

@@ -147,8 +147,11 @@ static func _parse_layer(dec: PackedByteArray, off: int):
 	if tex_result == null:
 		return null
 	# The declared length includes trailing NUL padding in at least one
-	# real file checked -- trim it.
-	l.texture_path = (tex_result[0] as String).rstrip(char(0))
+	# real file checked -- trimmed by the read, which stops at the first NUL.
+	# (Until round 754 also `.rstrip(char(0))`: char(0) was "" under Godot
+	# 4.2.2, so it never stripped anything, and under 4.7 it is U+FFFD with a
+	# "Unicode parsing error" at every compile, MEASURED.)
+	l.texture_path = tex_result[0] as String
 	off = tex_result[1]
 	if off + LAYER_TRAILER_BYTES <= dec.size():
 		l.texture_word = _le_u32(dec, off)

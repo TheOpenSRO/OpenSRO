@@ -106,7 +106,7 @@ func _probe(path: String) -> void:
 			continue
 		player.play(MapAnimation.CLIP_NAME)
 		player.seek(_seconds, true)
-		skeleton.force_update_all_bone_transforms()
+		Skeleton3DBuilder.refresh_global_poses(skeleton)
 		for mi in (h as Node).find_children("*", "MeshInstance3D", true, false):
 			var m := mi as MeshInstance3D
 			if m.skin == null or m.mesh == null:

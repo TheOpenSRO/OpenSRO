@@ -102,7 +102,11 @@ pub fn to_int(s: &str) -> i64 {
     integer.wrapping_mul(sign)
 }
 
-/// `String::is_valid_float()`.
+/// `String::is_valid_float()`. Since round 754 (the 4.7.2 spike: this library is built against
+/// the 4.7 API, compatibility_minimum 4.7) Godot 4.7.2's: an upper-case `E` starts the exponent
+/// too (READ, ustring.cpp 4.7.2-stable: `c == 'e' || c == 'E'`); 4.2.2 took the lower-case `e`
+/// alone, so npcpos.txt's "2.9999999E-2" was no float there and read as 0 (MEASURED,
+/// table_parity.gd: 13 FAIL lines against the 4.7.2 GDScript path before this change).
 pub fn is_valid_float(s: &str) -> bool {
     let b = s.as_bytes();
     if b.is_empty() {
@@ -118,7 +122,7 @@ pub fn is_valid_float(s: &str) -> bool {
             } else {
                 numbers_found = true;
             }
-        } else if numbers_found && !exponent_found && c == b'e' {
+        } else if numbers_found && !exponent_found && (c == b'e' || c == b'E') {
             exponent_found = true;
         } else if !period_found && !exponent_found && c == b'.' {
             period_found = true;
@@ -1138,7 +1142,7 @@ mod tests {
             (".5", true),
             ("1e5", true),
             ("1e", true),
-            ("1E5", false),
+            ("1E5", true), // Godot 4.7.2; 4.2.2 said false (round 754)
             ("e5", false),
             ("1.5.2", false),
             ("1e+5", true),

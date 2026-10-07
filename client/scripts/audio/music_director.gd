@@ -75,6 +75,16 @@ func _ready() -> void:
 	_bgm_player.bus = AudioOptions.BUS_BGM
 	add_child(_bgm_player)
 
+## Every decode task is waited for before this node goes (round 754): Godot
+## 4.7 frees a finished but never-waited task's Callable at its pool's
+## shutdown, after the scripts are gone, and the process aborts at quit
+## (MEASURED, round 754's probe of one never-waited task: rc 134 under 4.7.2, leak lines
+## only under 4.2.2).
+func _exit_tree() -> void:
+	for t in _tasks:
+		WorkerThreadPool.wait_for_task_completion(t["id"])
+	_tasks.clear()
+
 func _process(delta: float) -> void:
 	_poll_tasks()
 	music.advance(delta)

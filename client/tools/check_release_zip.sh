@@ -57,7 +57,7 @@ if [ -f "$dir/THIRD_PARTY_NOTICES.txt" ]; then
   grep -q '^Mozilla Public License Version 2.0' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the MPL-2.0 text"
   grep -q '^FULL LICENCE TEXTS OF THE CRATES' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the crates' licence texts"
   grep -q '^THE RUST STANDARD LIBRARY' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the Rust standard library's texts"
-  grep -q '^GODOT ENGINE 4\.2\.2' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks Godot Engine's licence and notices"
+  grep -q '^GODOT ENGINE 4\.' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks Godot Engine's licence and notices"
 fi
 
 if [ "$run" = "--run" ]; then

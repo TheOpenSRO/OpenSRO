@@ -551,6 +551,9 @@ func _install_input() -> void:
 	if box == null:
 		return
 	_input = LineEdit.new()
+	# Round 754: Enter keeps the line editing, Escape gives the keyboard back,
+	# as under Godot 4.2.2 (KeyInput.line_edit_as_42 has the 4.4+ change).
+	KeyInput.line_edit_as_42(_input)
 	_input.name = "Input"
 	_input.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_input.flat = true

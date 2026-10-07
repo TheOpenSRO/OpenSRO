@@ -171,7 +171,7 @@ func _build_all(app: CharacterAppearance, cat: CharCatalog) -> Array:
 
 ## The head bone's world height, in the built node's frame (the body at the origin).
 func _head_height(b: CharacterAppearance.Body) -> float:
-	b.skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(b.skeleton)
 	var head := b.skeleton.find_bone("Bip01 Head")
 	if head == -1:
 		return 0.0
@@ -203,7 +203,7 @@ func _measure_height(app: CharacterAppearance, cat: CharCatalog) -> void:
 ## skeleton's frame.
 func _skinned_points(skel: Skeleton3D) -> PackedVector3Array:
 	var pts := PackedVector3Array()
-	skel.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skel)
 	for mi in CharacterAppearance._skinned_to(skel):
 		if String(mi.name).ends_with("_front"):
 			continue

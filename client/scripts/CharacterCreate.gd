@@ -375,6 +375,7 @@ func _build_custom_panel() -> void:
 			_panel.add_child(l)
 	var ed := FrontEndFrame.by_id(sec, CharCreateModel.ID_NAME)
 	_name_edit = LineEdit.new()
+	KeyInput.line_edit_as_42(_name_edit)  # round 754
 	_name_edit.name = "NameEdit"
 	_name_edit.max_length = CharCreateModel.NAME_MAX
 	_name_edit.context_menu_enabled = false

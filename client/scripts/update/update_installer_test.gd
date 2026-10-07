@@ -462,6 +462,12 @@ func _test_stage() -> void:
 		packer.close_file()
 	packer.close()
 	var sizes := UpdateStager.zip_entry_sizes(zip)
+	# Godot 4.7's ZIPPacker also records each folder ("opensro-linux/",
+	# "opensro-linux/docs/", size 0; MEASURED round 754) as `zip -r` does;
+	# 4.2.2's wrote the files alone. The files are what is checked.
+	for name in sizes.keys():
+		if String(name).ends_with("/"):
+			sizes.erase(name)
 	_check(sizes.size() == 4 and int(sizes["opensro-linux/OpenSRO.x86_64"]) == 12000, "the central directory gives every entry's size (%s)" % [sizes])
 	var total := 12000 + 9000 + 6000 + 3
 

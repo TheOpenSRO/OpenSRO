@@ -604,7 +604,7 @@ static func _posed(skel: Skeleton3D) -> bool:
 ## world space (the same sum the GPU does: weight x bone pose x bind x vertex,
 ## then the skeleton's global transform).
 static func lowest_point(skel: Skeleton3D) -> float:
-	skel.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skel)
 	var g := skel.global_transform
 	var lo := INF
 	for mi in CharacterAppearance._skinned_to(skel):

@@ -291,6 +291,7 @@ func _gauge(texture: String) -> TextureProgressBar:
 
 func _edit(r: TwoDtReader.Record) -> LineEdit:
 	var edit := LineEdit.new()
+	KeyInput.line_edit_as_42(edit)  # round 754: Godot 4.4+ editing state
 	# The class draws no box of its own that is read here, so Godot's is
 	# removed rather than shown in its place.
 	for style in ["normal", "focus", "read_only"]:

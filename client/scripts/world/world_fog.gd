@@ -103,6 +103,9 @@ render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_dis
 uniform sampler2D srr_depth : hint_depth_texture, filter_nearest, repeat_disable;
 // Compatibility's depth is OpenGL's [-1, 1] NDC; Forward+'s Vulkan [0, 1].
 uniform bool ndc_signed = false;
+// Godot 4.3+ reverses the depth buffer in both renderers (round 754): the far
+// plane, where nothing was drawn, reads 0.0 instead of 1.0. WorldFog.reverse_z.
+uniform bool reverse_z = false;
 // QA only (round 705, OURS): draw the measurement instead of the fog -- red
 // the fog amount, green the view depth / 5000 -- opaque, for a frame read.
 uniform bool qa_probe = false;
@@ -115,7 +118,7 @@ void vertex() {
 void fragment() {
 	float d = textureLod(srr_depth, SCREEN_UV, 0.0).r;
 	// Nothing drawn here: the sky, which fogs itself.
-	if (d >= 1.0) {
+	if (reverse_z ? d <= 0.0 : d >= 1.0) {
 		discard;
 	}
 	vec4 clip = vec4(SCREEN_UV * 2.0 - 1.0, ndc_signed ? d * 2.0 - 1.0 : d, 1.0);
@@ -294,6 +297,16 @@ static func set_pass_tonemap(pass_mi: MeshInstance3D, env: Environment) -> void:
 	mat.set_shader_parameter("tm_white", env.tonemap_white if env != null else 1.0)
 	mat.set_shader_parameter("tm_filmic", env != null and env.tonemap_mode == Environment.TONE_MAPPER_FILMIC)
 
+## Whether the engine draws with a reversed depth buffer: 1.0 at the near
+## plane, 0.0 at the far one, in Forward+ and Compatibility alike, from Godot
+## 4.3 (READ: godotengine.org "Introducing Reverse Z", 2024; the 4.3 migration
+## guide). The two shaders that test raw depth -- this pass's sky test and the
+## cloud layer's far-plane pin (cloud_dome.gdshader) -- read it as a uniform,
+## so one tree runs on 4.2.2 and 4.7.2 (round 754). The unprojection through
+## INV_PROJECTION_MATRIX needs nothing: the engine's matrix is reversed too.
+static func reverse_z() -> bool:
+	return Engine.get_version_info().hex >= 0x040300
+
 ## The pass: a 2 x 2 quad whose vertex shader puts it over the whole view,
 ## parented to the camera so it is never culled (its margin covers the far
 ## plane). `compatibility` picks the depth's NDC range and the blend.
@@ -306,6 +319,7 @@ static func build_pass(compatibility: bool) -> MeshInstance3D:
 	mat.shader = sh
 	mat.render_priority = PASS_PRIORITY
 	mat.set_shader_parameter("ndc_signed", compatibility)
+	mat.set_shader_parameter("reverse_z", reverse_z())
 	var mi := MeshInstance3D.new()
 	mi.name = "WorldFogPass"
 	mi.mesh = quad

@@ -47,7 +47,7 @@ func _build_skeleton() -> Skeleton3D:
 
 	for idx in [root_idx, r_idx, l_idx]:
 		skeleton.reset_bone_pose(idx)
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 	return skeleton
 
 func _init() -> void:
@@ -100,7 +100,7 @@ func _init() -> void:
 	var p_idx := skeleton2.find_bone("Bip01 Pelvis")
 	skeleton2.set_bone_rest(p_idx, Transform3D(Basis.IDENTITY, Vector3(0, 5, 0)))
 	skeleton2.reset_bone_pose(p_idx)
-	skeleton2.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton2)
 
 	CharacterAssembler.assemble(skeleton2, {"man_pelvis": pelvis_mesh, "man_nonsense_part": pelvis_mesh})
 	var attachments2 := 0
@@ -119,7 +119,7 @@ func _init() -> void:
 		var bi := skeleton2b.find_bone(bone_name)
 		skeleton2b.set_bone_rest(bi, Transform3D(Basis.IDENTITY, Vector3.ZERO))
 		skeleton2b.reset_bone_pose(bi)
-	skeleton2b.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton2b)
 	CharacterAssembler.assemble(skeleton2b, {"woman_arm_fore": mesh})
 	var forearm_attachments := 0
 	for child in skeleton2b.get_children():

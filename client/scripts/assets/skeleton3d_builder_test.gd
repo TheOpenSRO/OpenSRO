@@ -220,7 +220,7 @@ func _check_stored_world_binds() -> void:
 	var old_moves := false
 	for deg in [0.0, 90.0, 180.0, 270.0]:
 		skeleton.set_bone_pose_rotation(spin_idx, Quaternion(Vector3.UP, deg_to_rad(deg)))
-		skeleton.force_update_all_bone_transforms()
+		Skeleton3DBuilder.refresh_global_poses(skeleton)
 		var pose := skeleton.get_bone_global_pose(spin_idx)
 		if not (pose * new_skin.get_bind_pose(0) * centre).is_equal_approx(centre):
 			centre_ok = false
@@ -229,7 +229,7 @@ func _check_stored_world_binds() -> void:
 	_check(centre_ok, "bound to the stored world binds, a ring's centre on the spinning bone stays put at every angle")
 	_check(old_moves, "bound to the composed rest, the same centre swings (the bug the stored binds fix)")
 	skeleton.set_bone_pose_rotation(spin_idx, Quaternion(Vector3.UP, deg_to_rad(90.0)))
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 	var rim_posed := skeleton.get_bone_global_pose(spin_idx) * new_skin.get_bind_pose(0) * rim
 	_check(rim_posed.is_equal_approx(Vector3(0, 10, -5)), "a rim vertex turns 90 degrees about the bone (got %s)" % rim_posed)
 	# A chain whose stored binds are its locals scaled (as the willow

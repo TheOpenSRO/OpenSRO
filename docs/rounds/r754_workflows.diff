@@ -1,0 +1,69 @@
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -60,9 +60,11 @@
+     steps:
+       - uses: actions/checkout@v5
+       - name: Set up Godot
++        # Round 754 draft: 4.7.2 (setup-godot v2.4.3 resolves the 4.7.2 assets and
++        # installs the templates under export_templates/4.7.2.stable).
+         uses: chickensoft-games/setup-godot@v2
+         with:
+-          version: 4.2.2
++          version: 4.7.2
+           use-dotnet: false
+       - name: Import & check project
+         working-directory: client
+@@ -108,9 +110,11 @@
+           native/build.sh linux-release
+           bash client/tools/check_native_library.sh client/native_bin/libopensro_native.so linux
+       - name: Set up Godot
++        # Round 754 draft: 4.7.2 (setup-godot v2.4.3 resolves the 4.7.2 assets and
++        # installs the templates under export_templates/4.7.2.stable).
+         uses: chickensoft-games/setup-godot@v2
+         with:
+-          version: 4.2.2
++          version: 4.7.2
+           use-dotnet: false
+       - name: Import the project
+         working-directory: client
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -29,9 +29,11 @@
+       - uses: actions/checkout@v5
+ 
+       - name: Set up Godot (with export templates)
++        # Round 754 draft: 4.7.2 (setup-godot v2.4.3 resolves the 4.7.2 assets and
++        # installs the templates under export_templates/4.7.2.stable).
+         uses: chickensoft-games/setup-godot@v2
+         with:
+-          version: 4.2.2
++          version: 4.7.2
+           use-dotnet: false
+           include-templates: true
+ 
+@@ -109,9 +111,12 @@
+           mkdir -p build/windows dist/opensro-windows/pk2
+           godot --headless --path . --export-release "Windows Desktop" build/windows/OpenSRO.exe
+           cp -r build/windows/. dist/opensro-windows/
+-          # Round 693: Forward+ is the default and Godot 4.2.2 does not fall
++          # Round 693: Forward+ is the default and Godot 4.2.2 did not fall
+           # back to OpenGL when Vulkan fails, so a PC without Vulkan starts
+-          # once through this (RendererChoice remembers it).
++          # once through this (RendererChoice remembers it). Round 754 draft:
++          # 4.4+ falls back by itself (rendering/rendering_device/
++          # fallback_to_opengl3, default true); the launcher stays as the
++          # player's explicit choice.
+           cp launchers/opensro-compatibility.bat dist/opensro-windows/
+           cp ../README.md dist/opensro-windows/README.md || true
+           bash ../native/third_party_notice.sh x86_64-pc-windows-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/opensro-windows/THIRD_PARTY_NOTICES.txt
+@@ -142,8 +147,8 @@
+           cd dist && zip -r opensro-linux.zip opensro-linux
+ 
+       # Both zips must carry their library where the exported game looks for
+-      # it (next to the executable; Godot 4.2.2's OS::open_dynamic_library
+-      # falls back to the executable's folder), and the Linux build must
++      # it (next to the executable; OS::open_dynamic_library falls back to the
++      # executable's folder -- unchanged in 4.7.2), and the Linux build must
+       # actually load it: the exported game is run headless and its own log
+       # line is checked. The Windows build cannot be run here.
+       - name: Check the zips carry the native library, and the Linux build loads it

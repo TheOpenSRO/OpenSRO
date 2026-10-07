@@ -28,7 +28,7 @@
 # anchor never shown; checks 1 to 3 must then FAIL (round 707 review).
 set -u
 D="${1:?client dir}"; O="${2:-/var/tmp/retail-bloom-test.$$}"
-G="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+G="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
 P="${PK2_DIR:-/opt/sro-files/client}"
 mkdir -p "$O"
 fail=0
@@ -38,7 +38,7 @@ gl() { # size log [godot args...]
   ( cd "$D" && timeout -k 10 600 xvfb-run -a -s "-screen 0 ${size}x24" vglrun -d egl0 "$G" --rendering-driver opengl3 \
       --resolution "$size" --path . "$@" > "$log" 2>&1 )
 }
-banner() { grep -m1 -E "^(Vulkan|OpenGL) API" "$1"; }
+banner() { grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$1"; }
 
 gl 1280x720 "$O/measure.log" --script res://tools/measure_retail_bloom.gd
 rc=$?

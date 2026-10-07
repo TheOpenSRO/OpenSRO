@@ -163,6 +163,7 @@ func _build_tools_row() -> HBoxContainer:
 	row.add_child(_free_camera)
 	row.add_child(_label("  Teleport local x,z"))
 	_teleport_edit = LineEdit.new()
+	KeyInput.line_edit_as_42(_teleport_edit)  # round 754
 	_teleport_edit.placeholder_text = "1002,917"
 	_teleport_edit.custom_minimum_size.x = 100.0
 	_teleport_edit.text_submitted.connect(func(_t): _teleport())

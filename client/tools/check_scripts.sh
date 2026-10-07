@@ -18,7 +18,7 @@
 #
 # Run it on the render box, from the client directory.
 set -u
-GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
 DIR="${CLIENT_DIR:-.}"
 
 if [ ! -x "$GODOT" ]; then

@@ -307,7 +307,7 @@ func set_character(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> voi
 	if pose != null:
 		Skeleton3DBuilder.apply_ban_pose_at(skeleton, pose, 0.0, false)
 	else:
-		skeleton.force_update_all_bone_transforms()
+		Skeleton3DBuilder.refresh_global_poses(skeleton)
 	var head := head_position(skeleton) * height
 	# The avatar's own yaw (after the head is read, as FUN_007b7740 does).
 	skeleton.rotation.y = model_rotation_y()

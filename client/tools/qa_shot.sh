@@ -125,7 +125,8 @@ fi
 
 CLIENT_DIR="${CLIENT_DIR:-/opt/opensro-client}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
-GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+# GODOT_BIN (round 754) picks the binary, e.g. the 4.7.2 spike's; unset, 4.2.2.
+GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
@@ -189,7 +190,7 @@ done
 # binary (by its real path, not the wrapper), any prior xvfb-run, every leftover
 # Xvfb, and any stale in-memory QA server.
 if [ "${QA_SHOT_REAP:-1}" != 0 ]; then
-pkill -9 -f "godot-bin/Godot_v4.2.2" 2>/dev/null || true
+pkill -9 -f "godot-bin/Godot_v4\." 2>/dev/null || true   # every 4.x binary (round 754: 4.7.2 sits beside 4.2.2)
 pkill -9 -f "xvfb-run" 2>/dev/null || true   # only prior ones; ours starts below
 pkill -9 -x Xvfb 2>/dev/null || true
 # Forward+ runs (round 693) sit on xwl_run.sh's weston + Xwayland instead.
@@ -404,10 +405,28 @@ else
   LAUNCH=(xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL)
   RFLAGS=(--rendering-driver opengl3)
 fi
+# Godot 4.6+ sizes the movie from the project's window settings, not from --resolution (READ,
+# main/main.cpp 4.7.2: `movie_size = Size2i(GLOBAL_GET("display/window/size/viewport_width"), ...)`,
+# then window_width/height_override; absent before 4.6), so a 4.7.2 run wrote 1152x648 frames for
+# --size 1280x720 (MEASURED, round 754). The override is put in the client copy's override.cfg for
+# the run (which a source run reads; RendererChoice writes none there) and the copy's own file,
+# if any, is put back after.
+MOVIE_OVR=""
+if ! "$GODOT" --version 2>/dev/null | grep -qE '^4\.[0-5]\.'; then
+  MOVIE_OVR="$CLIENT_DIR/override.cfg"
+  rm -f "$OUT/override.cfg.keep"
+  [ -f "$MOVIE_OVR" ] && cp "$MOVIE_OVR" "$OUT/override.cfg.keep"
+  { [ -f "$OUT/override.cfg.keep" ] && cat "$OUT/override.cfg.keep"
+    printf '\n[display]\n\nwindow/size/window_width_override=%s\nwindow/size/window_height_override=%s\n' "${SIZE%x*}" "${SIZE#*x}"
+  } > "$MOVIE_OVR.tmp" && mv "$MOVIE_OVR.tmp" "$MOVIE_OVR"
+fi
 "${LAUNCH[@]}" "$GODOT" \
   "${RFLAGS[@]}" --resolution "$SIZE" --path . "$SCENE" \
   --write-movie "$OUT/f.png" --quit-after "$FRAMES" 2>&1 | tee "$OUT/godot.log"
+if [ -n "$MOVIE_OVR" ]; then
+  if [ -f "$OUT/override.cfg.keep" ]; then mv "$OUT/override.cfg.keep" "$MOVIE_OVR"; else rm -f "$MOVIE_OVR"; fi
+fi
 # What actually ran: Godot's own banner. llvmpipe is the CPU, never the GPU.
-banner=$(grep -m1 -E "^(Vulkan|OpenGL) API" "$OUT/godot.log" || true)
+banner=$(grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$OUT/godot.log" || true)
 echo "qa_shot: ran ${banner:-(no renderer banner in the log)}" >&2
 case "$banner" in *llvmpipe*) echo "qa_shot: WARNING: the run rendered on llvmpipe (the CPU), not the GPU" >&2 ;; esac

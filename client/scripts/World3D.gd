@@ -4271,6 +4271,7 @@ func _build_cloud_dome(cloud_tex: Texture2D) -> void:
 	_sky_dome_material.shader = _cloud_dome_shader
 	_sky_dome_material.set_shader_parameter("cloud_tex", cloud_tex)
 	_sky_dome_material.set_shader_parameter("uv_offset", Vector2.ZERO)
+	_sky_dome_material.set_shader_parameter("reverse_z", WorldFog.reverse_z())  # round 754
 	# Drawn behind everything else transparent (cloud_dome.gdshader).
 	_sky_dome_material.render_priority = -128
 	_sky_dome = MeshInstance3D.new()

@@ -42,7 +42,7 @@ func _build_skeleton() -> Skeleton3D:
 
 	for idx in [root_idx, core_idx, limb_idx]:
 		skeleton.reset_bone_pose(idx)
-	skeleton.force_update_all_bone_transforms()
+	Skeleton3DBuilder.refresh_global_poses(skeleton)
 	return skeleton
 
 func _init() -> void:

@@ -16,7 +16,7 @@
 # wait for other lanes (error-count runs only), CROWD_TIMEOUT sets the run's limit (1500 s).
 DIR="$1"; LOG="$2"; N="$3"; STEPS="$4"; shift 4
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
-GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
+GODOT="${GODOT_BIN:-${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}}"   # GODOT_BIN: round 754
 export OPENSRO_PK2_PATH=$PK2_DIR/Data.pk2 OPENSRO_MAP_PK2_PATH=$PK2_DIR/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export OPENSRO_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 OPENSRO_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export OPENSRO_MAPM_PATH='97\168.m' OPENSRO_QA_AT=1002,1020 OPENSRO_QA_YAW=0 OPENSRO_QA_LOCAL_NPCS=1
@@ -48,7 +48,7 @@ if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
 fi
 echo "== $LOG n=$N overlap: $(sort -n "$LOG.others" 2>/dev/null | tail -1 | grep . || echo 0)"
 rm -f "$LOG.others"
-grep -m1 -E "^(Vulkan|OpenGL) API" "$LOG"
+grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$LOG"   # 4.7.2 drops " API"
 grep -E "LINEUP: |QA CROWD (step|split|arrival|visible|page|plates|ghostcheck|census: all|census: equipment|net)|other player bod|QA DRESS|QA GHOSTS|QA BUFFS|QA RUNAT|ghost\(s\) drawn|QA EQUIPFX master|SCRIPT ERROR" "$LOG" | head -160
 if [ "${CROWD_SAMPLE:-0}" = 1 ]; then
   python3 "$DIR/tools/crowd_threads.py" report "$LOG" "$LOG.threads" "$LOG.gpu"

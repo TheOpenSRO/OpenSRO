@@ -94,7 +94,7 @@ func _process(_delta: float) -> bool:
 	for t in _times:
 		player.play(MapAnimation.CLIP_NAME)
 		player.seek(t, true)
-		skeleton.force_update_all_bone_transforms()
+		Skeleton3DBuilder.refresh_global_poses(skeleton)
 		print("t = %.2f s" % t)
 		# Round 721: every bone's global rest against its global pose, so a
 		# bone whose pose leaves its rest at t = 0 (a track that is not the

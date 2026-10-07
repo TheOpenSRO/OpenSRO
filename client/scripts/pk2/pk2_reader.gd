@@ -116,7 +116,11 @@ static func open(path: String) -> Pk2Reader:
 		push_error("pk2: %s is too small to be a pk2 archive" % path)
 		return null
 
-	var magic := header.slice(0, 30).get_string_from_ascii().rstrip(char(0))
+	# get_string_from_ascii stops at the first NUL. No rstrip(char(0)) (round
+	# 754): char(0) was "" under Godot 4.2.2, so that strip did nothing, and
+	# under 4.7 it is U+FFFD with a "Unicode parsing error" at every compile
+	# (MEASURED on the box).
+	var magic := header.slice(0, 30).get_string_from_ascii()
 	if not magic.begins_with("JoyMax File Manager"):
 		push_error("pk2: %s is not a pk2 archive (bad magic)" % path)
 		return null

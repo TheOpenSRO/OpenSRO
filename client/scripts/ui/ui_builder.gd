@@ -965,6 +965,7 @@ func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false
 ## content margins, as `0x652800` takes it off the rect.
 func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 	var edit := LineEdit.new()
+	KeyInput.line_edit_as_42(edit)  # round 754: Godot 4.4+ editing state
 	if def.text != "":
 		edit.placeholder_text = _resolve_text(def.text)
 	var cr := def.client_rect

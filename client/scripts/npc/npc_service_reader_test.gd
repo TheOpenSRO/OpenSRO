@@ -415,6 +415,11 @@ func _initialize() -> void:
 		quit(1))
 	await process_frame
 	_check(root.is_inside_tree(), "after one frame the root is in the tree")
+	# Round 754: Godot 4.7 drops a pushed mouse event outside the viewport's
+	# rect (MEASURED: a click at (140, 115) on the headless 64x64 root fired a
+	# Button under 4.2.2 and not under 4.7.2), and the start-up resets a size
+	# set in _initialize, so the root is sized like a window here.
+	root.size = Vector2i(1280, 720)
 	if compiled:
 		var live: Node = panels_script.new()
 		root.add_child(live)
