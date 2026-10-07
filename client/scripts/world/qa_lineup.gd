@@ -221,8 +221,17 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		# Spawn nothing: measure the player and the other players a server
 		# put in the world (the live test, round 689).
 		print("LINEUP: measuring the player and the server's other players, actions %s, %.1f s each" % [",".join(actions), phase_seconds])
+		# Round 759: the crowd probe over the server's crowd (QaCrowdProbe.live).
+		if QaCrowdProbe.wanted():
+			_probe = QaCrowdProbe.new()
+			_probe.name = "QaCrowdProbe"
+			_probe.live = true
+			world.add_child(_probe)
+			_probe.setup(world, [], Time.get_ticks_usec())
 		return
-	if spec == "all":
+	if spec == "swarm":
+		_swarm_specs(cat)
+	elif spec == "all":
 		for r in [CharCatalog.RACE_CHINA, CharCatalog.RACE_EUROPE]:
 			for s in [CharCatalog.SEX_MAN, CharCatalog.SEX_WOMAN]:
 				for f in cat.figures(r, s):
@@ -269,7 +278,7 @@ func _spawn(appearance: CharacterAppearance) -> void:
 			cycled.append((specs[i % specs.size()] as Dictionary).duplicate())
 		specs = cycled
 	var plus := OS.get_environment("OPENSRO_QA_LINEUP_PLUS")
-	if plus.is_valid_int() and mode != "kits":
+	if plus.is_valid_int() and mode != "kits" and spec != "swarm":
 		for sp in specs:
 			sp["pluses"] = {EquipmentNet.SLOT_WEAPON: int(plus), EquipmentNet.SLOT_SHIELD: int(plus)}
 	var spawn_t0 := Time.get_ticks_usec()
@@ -308,8 +317,9 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		if not is_nan(gy):
 			at.y = gy
 		var kit_key := "%d:%s:%d" % [int(sp["race"]), str(sp["woman"]), int(sp["weapon"])]
+		# Round 759: a swarm body wears its own gear only, as a bot does.
 		if not kit_cache.has(kit_key):
-			kit_cache[kit_key] = _kit(sp)
+			kit_cache[kit_key] = _kit(sp) if spec != "swarm" else {}
 		var equipped: Dictionary = (kit_cache[kit_key] as Dictionary).duplicate()
 		if sp.has("kit"):
 			equipped.merge(sp["kit"], true)
@@ -364,6 +374,35 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		for b in bodies:
 			all_ids.append(int(b["id"]))
 		_qa_buffs(all_ids)
+
+## Round 759 (OPENSRO_QA_LINEUP=swarm): OPENSRO_QA_LINEUP_COUNT bodies (1,000
+## unless set) dressed as the live swarm dresses its bots (QaSwarmGear: its
+## looks, its gear catalogue from the item table, its pluses).
+## OPENSRO_QA_LINEUP_SWARM_SEED picks another crowd of the same mix.
+func _swarm_specs(cat: CharCatalog) -> void:
+	var gear := QaSwarmGear.new()
+	var sd := OS.get_environment("OPENSRO_QA_LINEUP_SWARM_SEED")
+	if sd.is_valid_int():
+		gear.seed = int(sd)
+	var t0 := Time.get_ticks_usec()
+	gear.build(world._item_rows)
+	var count := OS.get_environment("OPENSRO_QA_LINEUP_COUNT")
+	var n := int(count) if count.is_valid_int() and int(count) > 0 else 1000
+	var figs := {}
+	for i in range(n):
+		var lk := gear.look(i)
+		var key := "%d|%d" % [lk["race"], lk["sex"]]
+		if not figs.has(key):
+			figs[key] = cat.figures(int(lk["race"]), int(lk["sex"]))
+		var fl: Array = figs[key]
+		if fl.is_empty():
+			continue
+		var e: CharCatalog.Entry = fl[int(lk["figure"]) % fl.size()]
+		var lo := gear.loadout(i, int(lk["race"]), int(lk["sex"]))
+		var kit: Dictionary = lo[0]
+		specs.append({"ref": e.id, "scale": int(lk["scale"]), "weapon": int(kit.get(EquipmentNet.SLOT_WEAPON, 0)),
+			"race": int(lk["race"]), "woman": int(lk["sex"]) == QaSwarmGear.SEX_WOMAN, "kit": kit, "pluses": lo[1]})
+	print("LINEUP: swarm gear -- %s; %d bodies in %d ms" % [gear.summary(), specs.size(), (Time.get_ticks_usec() - t0) / 1000])
 
 ## One lineup body through the other-player arrival path, facing `args[5]`.
 func _spawn_one(args: Array) -> void:

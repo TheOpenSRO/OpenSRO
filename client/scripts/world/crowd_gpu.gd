@@ -1711,6 +1711,84 @@ func collect() -> int:
 	stats["groups_freed"] = int(stats.get("groups_freed", 0)) + freed
 	return freed
 
+## Round 759 (QA): what the far groups are made of -- the groups drawing at
+## least one instance (`live`, each one MultiMesh and its draws), the distinct
+## meshes, twin materials and shaders among them, and how thin they are (the
+## groups of 1 and of at most 3 instances, the most in one).
+func batch_census() -> Dictionary:
+	var live := 0
+	var inst := 0
+	var ones := 0
+	var threes := 0
+	var most := 0
+	var meshes := {}
+	var mats := {}
+	var shaders := {}
+	for key in _groups:
+		var g: Group = _groups[key]
+		if g.count <= 0:
+			continue
+		live += 1
+		inst += g.count
+		if g.count == 1:
+			ones += 1
+		if g.count <= 3:
+			threes += 1
+		most = maxi(most, g.count)
+		meshes[g.mesh] = true
+		mats[g.material] = true
+		if g.material != null:
+			shaders[g.material.shader] = true
+	return {"groups": _groups.size(), "live": live, "instances": inst, "meshes": meshes.size(), "materials": mats.size(),
+		"shaders": shaders.size(), "ones": ones, "le3": threes, "most": most}
+
+## Round 759 (QA): why one mesh is drawn by several groups -- how many live
+## groups there would be if a group were keyed by (mesh, layers, sort) and its
+## twin's shader and parameters LESS each set of parameters below, which a
+## batch per mesh would then have to carry per instance:
+##   now        every parameter (the live groups)
+##   no_light   less `object_color` (the light level)
+##   no_glow_v  that and the glow's scalars and colours (c1, c2, period, mul0,
+##              signed2x, uv_speed)
+##   no_glow    that and the glow texture
+##   shader     the shader alone (no parameter: textures per instance)
+##   mesh       the mesh alone (one shader for every part of it)
+const GLOW_SCALARS := ["glow_c1", "glow_c2", "glow_period", "glow_mul0", "glow_signed2x", "glow_uv_speed"]
+func split_census() -> String:
+	var sets := {"now": [], "no_light": ["object_color"], "no_glow_v": ["object_color"] + GLOW_SCALARS,
+		"no_glow": ["object_color", "glow_texture"] + GLOW_SCALARS}
+	var keys := {}
+	for k in sets:
+		keys[k] = {}
+	keys["shader"] = {}
+	keys["mesh"] = {}
+	for key in _groups:
+		var g: Group = _groups[key]
+		if g.count <= 0 or g.material == null:
+			continue
+		var head := "%d|%s" % [g.mesh.get_instance_id(), "|".join(g.key.split("|").slice(2))]
+		var names: PackedStringArray = _uniform_names.get(g.material.shader, PackedStringArray())
+		if names.is_empty():
+			for u in g.material.shader.get_shader_uniform_list():
+				names.append(String(u["name"]))
+		var vals := {}
+		for n in names:
+			if not n.begins_with("crowd_"):
+				vals[n] = g.material.get_shader_parameter(n)
+		for k in sets:
+			var sig := PackedStringArray([head, str(g.material.shader.get_instance_id())])
+			for n in names:
+				if vals.has(n) and not (n in sets[k]):
+					var v = vals[n]
+					sig.append("%s=%s" % [n, str(v.get_instance_id()) if v is Object else str(v)])
+			(keys[k] as Dictionary)["|".join(sig)] = true
+		(keys["shader"] as Dictionary)["%s|%d" % [head, g.material.shader.get_instance_id()]] = true
+		(keys["mesh"] as Dictionary)[head] = true
+	var parts := PackedStringArray()
+	for k in ["now", "no_light", "no_glow_v", "no_glow", "shader", "mesh"]:
+		parts.append("%s=%d" % [k, (keys[k] as Dictionary).size()])
+	return "groups if keyed by: " + " ".join(parts)
+
 ## Census for the QA line.
 func describe() -> String:
 	var rows := 0
