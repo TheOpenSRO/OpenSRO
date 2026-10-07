@@ -216,7 +216,7 @@ func writeState(path string, s stateFile) error {
 // from /proc), so a pid the system has since given to another process is
 // never signalled.
 func alive(pid int) bool {
-	if pid <= 0 || syscall.Kill(pid, 0) != nil {
+	if pid <= 0 || probe(pid) != nil {
 		return false
 	}
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
@@ -469,7 +469,7 @@ func down(cfg config) error {
 	}
 	if st, err := readState(cfg.state); err == nil && alive(st.PID) && !st.Stopped {
 		log.Printf("stopping the running swarm (pid %d)", st.PID)
-		if err := syscall.Kill(st.PID, syscall.SIGTERM); err != nil {
+		if err := terminate(st.PID); err != nil {
 			return fmt.Errorf("signalling pid %d: %w", st.PID, err)
 		}
 		deadline := time.Now().Add(60 * time.Second)
