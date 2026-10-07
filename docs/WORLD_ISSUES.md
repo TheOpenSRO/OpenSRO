@@ -7190,6 +7190,48 @@ The full notes are in `docs/rounds/r738.md`; the review is `r738_review.md`. The
   - box "ran 251 suite(s), 0 failing" on the lane branch;
   - dev integration re-run below.
 
+## Seven-hundred-and-forty-ninth round: moving by destination, as retail does (0x7021 / 0xB021 / 0xB023)
+
+The full notes are in `docs/rounds/r749.md`. There were three reviews in `r749_review.md`: the review,
+the exploit fixes, and an honest-play verification.
+- **Retail (READ, both binaries):**
+  - The client sends one 0x7021 per click: `01|region u16|i16 x,y,z` in a field, three i32 in a
+    dungeon, or `00|cmd|u16 angle` for a sky run.
+  - The server's `GObjPC::FUN_004b0ea0` refuses silently on its gates: the 5.0 gate, the 3x3
+    regions, and the stopping states `0xc1|0x4000`.
+  - An accepted move is answered with one 0xB021 to the 3x3 window, the mover included.
+  - 0xB023 (`FUN_004a9430`: uid, region, f32 xyz, u16 angle) is sent only when a step is
+    blocked.
+  - There is no position stream while walking.
+- **Server (OURS where retail's navmesh is missing):**
+  - Each mover has a leg, and a 250 ms pass refiles block crossings.
+  - Stop reports and placements are bounded by a clock: they are measured from a server-held
+    reference, with 9 units free and up to one second of run as an allowance.
+  - A named point (arrival, gate, GM `/tp`) can be used once, within 2 minutes.
+  - Height is measured from the last height the client gave.
+  - A token bucket on 0x7021 (30/s, burst 60).
+  - Server `/unstuck` 0x00B8/0x00B9 takes the player to the zone landing, on a 60 s cooldown.
+- **Client:** `MoveOrderSync` sends one order per click. A missing echo stops the walk after
+  1.0 s. A correction is never answered twice. Arrivals place themselves on the graph's height.
+  `OtherWalk` walks others from 0xB021.
+- **Bench (MEASURED, server CPU ms per simulated second):**
+
+  | layout | 20 Hz positions | destination moves |
+  |---|---|---|
+  | 1000 town | 87,688 | 5,172 |
+  | 1000 field | 14,332 | 872 |
+  | 10k wide | 19,976 | 1,551 |
+
+  Bytes fall 6-14x. The mover pass at 10k holds the hub lock 1.7 ms, against 53 ms before.
+- **Reviews:** chained stops moved a character 1650 units in 8 ms, and the login spot gave a free
+  recall. The honest-play verification found 60 Hz correction loops after `/goto hotan` under
+  `-single-frame` (6,758 in 112 s), lag-spike snap-backs and `/unstuck` pinning. All are fixed,
+  and the live runs show no loops.
+- **Client crowd:** 1000 walking (`dest` step) is p50 52 / p95 60 ms. The height rays cost
+  5.1 ms a frame (`landing_height_at`), and round 751 takes them on.
+- **Version skew:** client and server ship together. An old client walks in snaps, and new
+  observers see an old client's player move.
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.
