@@ -76,10 +76,14 @@ pub fn override_chooses_compatibility(text: &str) -> bool {
 }
 
 /// The restart's arguments: this start's, plus the Compatibility driver -- before any `--` or
-/// `++`, after which Godot hands the arguments to the game instead of reading them.
+/// `++`, after which Godot hands the arguments to the game instead of reading them. Round 760:
+/// and the default render thread (`--render-thread safe`): the project runs the separate one,
+/// which crashed Compatibility on Godot 4.7.2 (MEASURED, RendererChoice's THREAD_KEY).
 pub fn fallback_args(args: &[OsString]) -> Vec<OsString> {
     let mut out: Vec<OsString> = args.iter().skip(1).cloned().collect();
     let at = out.iter().position(|a| a == "--" || a == "++").unwrap_or(out.len());
+    out.insert(at, OsString::from("safe"));
+    out.insert(at, OsString::from("--render-thread"));
     out.insert(at, OsString::from("opengl3"));
     out.insert(at, OsString::from("--rendering-driver"));
     out
@@ -356,8 +360,8 @@ mod tests {
     fn restarts_with_the_same_arguments_and_the_gl_driver() {
         let raw: Vec<OsString> = ["OpenSRO.exe", "--verbose", "--", "--x=1"].iter().map(OsString::from).collect();
         let out: Vec<String> = fallback_args(&raw).into_iter().map(|o| o.into_string().unwrap()).collect();
-        assert_eq!(out, vec!["--verbose", "--rendering-driver", "opengl3", "--", "--x=1"]);
+        assert_eq!(out, vec!["--verbose", "--rendering-driver", "opengl3", "--render-thread", "safe", "--", "--x=1"]);
         let plain: Vec<OsString> = ["OpenSRO.exe"].iter().map(OsString::from).collect();
-        assert_eq!(fallback_args(&plain), vec![OsString::from("--rendering-driver"), OsString::from("opengl3")]);
+        assert_eq!(fallback_args(&plain), ["--rendering-driver", "opengl3", "--render-thread", "safe"].iter().map(OsString::from).collect::<Vec<_>>());
     }
 }

@@ -37,7 +37,7 @@ fail=0
 check() { if [ "$1" = 0 ]; then echo "PASS $2"; else echo "FAIL $2"; fail=1; fi; }
 gl() { # size log [godot args...]
   local size=$1 log=$2; shift 2
-  ( cd "$D" && timeout -k 10 600 xvfb-run -a -s "-screen 0 ${size}x24" vglrun -d egl0 "$G" --rendering-driver opengl3 \
+  ( cd "$D" && timeout -k 10 600 xvfb-run -a -s "-screen 0 ${size}x24" vglrun -d egl0 "$G" --rendering-driver opengl3 --render-thread safe \
       --resolution "$size" --path . "$@" > "$log" 2>&1 )
 }
 banner() { grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$1"; }

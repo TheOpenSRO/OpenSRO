@@ -283,7 +283,7 @@ rm -f "\$2.others"
 if [ "\${10:-gl_compatibility}" = forward_plus ]; then
   LAUNCH="$box_head/tools/xwl_run.sh -s $size"; RFLAGS="--rendering-method forward_plus --rendering-driver vulkan"
 else
-  LAUNCH="xvfb-run -a -s '-screen 0 ${size}x24' vglrun -d egl0"; RFLAGS="--rendering-driver opengl3"
+  LAUNCH="xvfb-run -a -s '-screen 0 ${size}x24' vglrun -d egl0"; RFLAGS="--rendering-driver opengl3 --render-thread safe"   # round 760: as the Compatibility launcher starts
 fi
 # The binary comes as "base" or "head", never as its path: a run waiting for the locks would
 # otherwise carry "Godot_v4..." on its command line, and every lane's "is another Godot running"

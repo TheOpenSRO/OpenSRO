@@ -403,7 +403,7 @@ if [ "$RENDERER" = forward_plus ]; then
 else
   # shellcheck disable=SC2206
   LAUNCH=(xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL)
-  RFLAGS=(--rendering-driver opengl3)
+  RFLAGS=(--rendering-driver opengl3 --render-thread safe)   # round 760: as the Compatibility launcher starts
 fi
 # Godot 4.6+ sizes the movie from the project's window settings, not from --resolution (READ,
 # main/main.cpp 4.7.2: `movie_size = Size2i(GLOBAL_GET("display/window/size/viewport_width"), ...)`,

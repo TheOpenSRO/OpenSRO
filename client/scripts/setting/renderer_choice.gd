@@ -53,6 +53,15 @@ const FORWARD_PLUS := "forward_plus"
 const COMPATIBILITY := "gl_compatibility"
 const SECTION := "rendering"
 const KEY := "renderer/rendering_method"
+## Round 760: the render thread model a Compatibility install starts with --
+## the default (1), not the project's separate thread (2). MEASURED on 4.7.2
+## (GL Compatibility, the swarm lineup at 3,000): the separate thread crashed 3
+## of 5 crowd boots (`FATAL: Index p_index = 0 is out of bounds` on a pool
+## thread, then signal 4), the default 0 of 2; Forward+'s separate thread ran
+## 15 x 300 s and 20+ crowd boots without one. The thread model is read in
+## Main::setup, before the renderer, so it is chosen here with the renderer.
+const THREAD_KEY := "driver/threads/thread_model"
+const THREAD_SAFE := 1
 ## The project.godot default (client/project.godot, round 693).
 const PROJECT_DEFAULT := FORWARD_PLUS
 
@@ -111,10 +120,13 @@ static func choose(method: String, path: String = "") -> Error:
 		if not had or not cfg.has_section_key(SECTION, KEY):
 			return OK
 		cfg.erase_section_key(SECTION, KEY)
+		if cfg.has_section_key(SECTION, THREAD_KEY) and int(cfg.get_value(SECTION, THREAD_KEY)) == THREAD_SAFE:
+			cfg.erase_section_key(SECTION, THREAD_KEY)
 		if cfg.get_sections().is_empty():
 			return DirAccess.remove_absolute(p)
 	else:
 		cfg.set_value(SECTION, KEY, method)
+		cfg.set_value(SECTION, THREAD_KEY, THREAD_SAFE)
 	var err := cfg.save(p)
 	if err != OK:
 		return err
@@ -126,6 +138,10 @@ static func choose(method: String, path: String = "") -> Error:
 	f.store_string(HEADER + text)
 	f.close()
 	return OK
+
+static func _has_thread_key(path: String) -> bool:
+	var cfg := ConfigFile.new()
+	return cfg.load(path) == OK and cfg.has_section_key(SECTION, THREAD_KEY)
 
 ## What boot should record, given config.yaml's word ("" when unset), the
 ## renderer running (running()) and the current choice: the method to write,
@@ -157,7 +173,12 @@ static func apply_at_boot(config_word: String) -> String:
 		print(line)
 		return line
 	line += " override=%s chosen=%s" % [path, current if current != "" else "(none)"]
+	line += " render_thread=%s" % ("separate" if FrameSplit.render_threaded() else "main")
 	var write := boot_decision(config_word, running(), current)
+	# Round 760: a Compatibility choice recorded before the thread key existed
+	# gets it now (the next start runs the default thread).
+	if write == "" and current == COMPATIBILITY and not _has_thread_key(path):
+		write = COMPATIBILITY
 	if write != "":
 		var err := choose(write, path)
 		if err == OK:

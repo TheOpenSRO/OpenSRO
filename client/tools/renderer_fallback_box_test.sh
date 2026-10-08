@@ -33,9 +33,10 @@ boot() { # name [env...] -- [godot args...]
 banner() { grep -m1 -E "^(Vulkan|OpenGL)( API)? [0-9]" "$O/$1.log"; }
 recorded() { grep -s "renderer/rendering_method=\"gl_compatibility\"" "$O/$1.cfg" >/dev/null; }
 
-boot launcher -- --rendering-driver opengl3
+boot launcher -- --rendering-driver opengl3 --render-thread safe
 banner launcher | grep -q " - Compatibility - "; check $? "1. the launcher's start runs Compatibility ($(banner launcher | cut -c1-60))"
 recorded launcher; check $? "1. ... and records it for the next start ($(grep -m1 -o 'RENDERER: .*' "$O/launcher.log" | grep -o 'chosen=.*' | cut -c1-120))"
+grep -q "render_thread=main" "$O/launcher.log"; check $? "1. ... on the default render thread (round 760)"
 
 boot vulkan --
 banner vulkan | grep -q " - Forward+ - "; check $? "2. a plain start with Vulkan runs Forward+ ($(banner vulkan | cut -c1-60))"
@@ -46,6 +47,8 @@ if [ -d "$D/native_bin" ]; then
   banner novulkan | grep -q " - Compatibility - "; check $? "3. a plain start with no Vulkan driver falls back to Compatibility ($(banner novulkan | cut -c1-60))"
   grep -q "vulkan_probe=\"fallback to OpenGL" "$O/novulkan.log"; check $? "3. ... the native probe says why ($(grep -m1 -o 'vulkan_probe="[^"]*"' "$O/novulkan.log"))"
   recorded novulkan; check $? "3. ... and records Compatibility"
+  grep -q "render_thread=main" "$O/novulkan.log"; check $? "3. ... on the default render thread (round 760: the separate one crashed Compatibility)"
+  grep -q "driver/threads/thread_model=1" "$O/novulkan.cfg"; check $? "3. ... and records the default thread with it"
 else
   echo "SKIP 3. no native_bin/ in $D: without the library there is no automatic fall back"
 fi

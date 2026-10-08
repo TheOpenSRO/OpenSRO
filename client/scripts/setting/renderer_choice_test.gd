@@ -50,6 +50,10 @@ func _file() -> void:
 		"choosing the default with no file writes no file")
 	_check(RendererChoice.choose(RendererChoice.COMPATIBILITY, p) == OK, "Compatibility is recorded")
 	_check(RendererChoice.chosen(p) == RendererChoice.COMPATIBILITY, "and read back")
+	var tc := ConfigFile.new()
+	tc.load(p)
+	_check(int(tc.get_value(RendererChoice.SECTION, RendererChoice.THREAD_KEY, 0)) == RendererChoice.THREAD_SAFE,
+		"round 760: Compatibility is recorded with the default render thread (the separate one crashed it)")
 	var text := FileAccess.get_file_as_string(p)
 	_check(text.begins_with("; Written by OpenSRO"), "the file says whose it is")
 	_check(text.contains("[rendering]") and text.contains("renderer/rendering_method=\"gl_compatibility\""),
