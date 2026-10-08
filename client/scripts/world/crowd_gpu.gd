@@ -1256,7 +1256,9 @@ static var half_custom_override := -1
 static func half_custom() -> bool:
 	if half_custom_override >= 0:
 		return half_custom_override == 1
-	return RenderingServer.get_current_rendering_method() == "gl_compatibility"
+	# A call by name: get_current_rendering_method is 4.3+, and the script
+	# still parses on 4.2.2 (which has no CURRENT_RENDERER for the shader either).
+	return RenderingServer.has_method("get_current_rendering_method") and str(RenderingServer.call("get_current_rendering_method")) == "gl_compatibility"
 
 ## The integers a part's instance carries, as the four floats that differ
 ## from Forward+'s layout: [origin x, origin y, custom x, custom y].
