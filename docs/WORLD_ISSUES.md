@@ -7444,6 +7444,39 @@ installed and pinned everywhere else.
 - **Spike build for the user:** `/root/opensro-g472-spike/` on the render box (Linux and Windows
   zips, own settings folder, no auto-update).
 
+## Seven-hundred-and-sixtieth round: the client on Godot 4.7.2 -- three blockers cleared, the separate render thread, CI switched
+
+The full notes are in `docs/rounds/r760.md`. The spike (round 754) merged onto dev with round 759
+(`d2e61a2a`) and dev `0dd4a583`; 4.7.2 is now the engine for CI, the release and the tools (4.2.2
+stays on the box for older revisions through `GODOT_BIN`).
+- **Compatibility colour (READ, MEASURED):** the cloud layer was pinned at Vulkan's reversed far
+  plane, which under GL's clip space is depth 0.5 (drawn over the far scenery); and GLES3 uploads
+  DXT1 as RGB from 4.6 (cut-out openings black). Pinned per renderer (`WorldFog.far_clip_z`) and
+  decoded as under Forward+. World views within 0.6 luma of 4.2.2 (Samarkand was +11.8).
+  RetailBloom's Compatibility anchor removed (4.7.2 keeps the back buffer's colour; box test PASS).
+  Compatibility Jangan +0.15 ms (+6 %, was +17 %), not attributed (OPEN).
+- **Skeletons:** every 4.7.2 skeleton has an internal PhysicalBoneSimulator3D modifier and an Idle
+  modifier process, a deferred bone backup/restore per skeleton per frame. Manual mode on every
+  built skeleton: 38.7 -> 6.9 ms a frame at 18,035 (MEASURED).
+- **The deadlock (READ):** a pool thread's synchronous RenderingServer call waits for the main
+  thread, which `wait_for_task_completion` blocks. `PoolWait` serves the queue while it polls; every
+  main-thread wait uses it (lint). Probe: plain wait hangs 5 of 5, PoolWait finishes 8 of 8.
+- **Heap corruption (READ):** two 4.7.2 `ustring.cpp` bugs (an unpaired lead surrogate leaves a
+  string's last character uninitialised; encoding it overflows the heap). `TextDecode.utf16`
+  (lint); `table_parity.gd` 3 of 3 PASS (2 of 2 aborts before).
+- **The separate render thread, adopted for Forward+** (`thread_model=2`): 10 x 300 s crowd runs with
+  arrivals, walking and real zone changes, 0 crashes. **Compatibility crashed on it** (3 of 5 swarm
+  boots): every Compatibility route starts the default thread (override.cfg, launchers, the native
+  probe's restart).
+- **Round 759's review:** F2 (GLES3's half-float custom data drew the wrong far bodies past 2,048:
+  37 % of the far box off before, 0 % after) and F3 folded in.
+- **MEASURED against 4.2.2:** perf gate Forward+ Jangan 1.56 -> 0.75 ms, reeds 1.41 -> 0.81, cross
+  1.73 -> 0.87, entries and freezes all shorter; swarm crowd standing 19.3 -> 9.8 (1000), 24.3 ->
+  12.3 (3000), 33.2 -> 18.1 ms (7000). Not better: one spawn frame of a 1000-body arrival
+  (+13-20 %), and the default thread in the swarm (Compatibility only).
+- **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
+  Test build: `/root/opensro-r760/` on the render box.
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.
