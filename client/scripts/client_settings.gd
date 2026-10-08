@@ -144,6 +144,12 @@ static func apply_ui_scale(window: Window, scale: float) -> void:
 		window.set_use_font_oversampling(true)
 	var changed := not is_equal_approx(window.content_scale_factor, factor)
 	window.content_scale_factor = factor
+	# Round 760: Godot 4.7.2's text at this scale as 4.2.2 drew it (the bold
+	# faces' stroke, the 3D labels' raster; FontOversampling).
+	if window.is_inside_tree() and window == window.get_tree().root:
+		FontOversampling.set_ui(factor, window)
+	elif not window.is_inside_tree():
+		FontOversampling.set_ui(factor)
 	if changed and window.is_inside_tree():
 		_refresh_text(window)
 	# The cursor follows the UI scale (round 697, the user's decision).

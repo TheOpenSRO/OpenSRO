@@ -23,6 +23,10 @@ func _ready() -> void:
 	# display.renderer, or records the Compatibility launcher's choice
 	# (round 693, RendererChoice).
 	RendererChoice.apply_at_boot(ClientConfig.load_default().renderer)
+	# Round 760's review, F1: Compatibility on the separate render thread
+	# restarts at once on the default one (RendererChoice).
+	if RendererChoice.restarting:
+		return
 	# The native readers' state, once, at startup (round 668): ON, OFF because
 	# the library is missing or refused, or forced OFF. A tester's log always
 	# says which reader loaded their world.

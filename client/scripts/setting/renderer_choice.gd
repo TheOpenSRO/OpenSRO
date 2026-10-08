@@ -187,5 +187,57 @@ static func apply_at_boot(config_word: String) -> String:
 			# A folder the game cannot write (Program Files): the choice is not
 			# kept, and the next plain start asks the native fall back again.
 			line += " -> could NOT record %s in %s (error %d: is the game's folder writable?); the next start decides again" % [write, path, err]
+	# Round 760's review, F1: Compatibility running on the separate render
+	# thread -- the first start after the update from 4.2.2 (override.cfg had
+	# no thread key yet, and the project's setting is read in Main::setup,
+	# before any script), Godot's own GL fall-back, or a GL start without the
+	# native library's probe. That combination crashed 3 of 5 crowd boots
+	# (round 760). Restart once, now, before any world loads, on the default
+	# thread; the marker in the environment stops a second restart.
+	if gl_restart_needed(running(), FrameSplit.render_threaded(), OS.get_environment(GL_RESTART_ENV)):
+		var args := gl_restart_args(OS.get_cmdline_args(), OS.get_cmdline_user_args())
+		OS.set_environment(GL_RESTART_ENV, "1")
+		OS.set_restart_on_exit(true, args)
+		restarting = true
+		line += " -> Compatibility on the separate render thread: restarting once with %s" % " ".join(args)
+		var loop := Engine.get_main_loop() as SceneTree
+		if loop != null:
+			loop.quit()
+	elif running() == COMPATIBILITY and FrameSplit.render_threaded():
+		line += " -> still on the separate render thread after the restart (%s set): going on" % GL_RESTART_ENV
 	print(line)
 	return line
+
+## Round 760's review, F1: the marker a restart onto the default render thread
+## leaves in the environment (the restarted process inherits it).
+const GL_RESTART_ENV := "OPENSRO_GL_SAFE_RESTART"
+## Set when apply_at_boot has asked for that restart: Boot goes no further.
+static var restarting := false
+
+## Whether this start must restart onto the default render thread: GL
+## Compatibility on the separate one, and not already restarted. Pure.
+static func gl_restart_needed(running_now: String, threaded: bool, marker: String) -> bool:
+	return running_now == COMPATIBILITY and threaded and marker == ""
+
+## The restart's arguments: the GL driver and the default thread, then this
+## start's own, less any renderer or thread flag of its own, and its user
+## arguments after `--`. Pure.
+static func gl_restart_args(args: PackedStringArray, user_args: PackedStringArray) -> PackedStringArray:
+	var out := PackedStringArray(["--rendering-driver", "opengl3", "--render-thread", "safe"])
+	var i := 0
+	while i < args.size():
+		var a := args[i]
+		if a in ["--rendering-driver", "--rendering-method", "--render-thread"]:
+			i += 2
+			continue
+		if a.begins_with("--rendering-driver=") or a.begins_with("--rendering-method=") or a.begins_with("--render-thread="):
+			i += 1
+			continue
+		if a == "--" or a == "++":
+			break
+		out.append(a)
+		i += 1
+	if not user_args.is_empty():
+		out.append("--")
+		out.append_array(user_args)
+	return out

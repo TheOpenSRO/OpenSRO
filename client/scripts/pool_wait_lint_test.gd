@@ -89,9 +89,35 @@ func _test_tree() -> void:
 	var app := FileAccess.get_file_as_string("res://scripts/ui/character_appearance.gd")
 	_check(app.count("PoolWait.task(") == 2, "CharacterAppearance's template tasks wait through PoolWait")
 
+## Round 760's review, F4/F5: a task waited for twice returns (after the
+## limit, through the plain wait), and the separate thread takes the plain wait.
+func _test_waits() -> void:
+	# The polling path whatever this run's render thread (a headless run takes
+	# the project's separate thread).
+	PoolWait._threaded = 0
+	var id := WorkerThreadPool.add_task(func() -> void: pass, true, "poolwait test")
+	PoolWait.task(id)
+	PoolWait.limit_msec = 300
+	var t0 := Time.get_ticks_msec()
+	PoolWait.task(id)
+	var took := Time.get_ticks_msec() - t0
+	_check(took >= 250 and took < 5000, "F4: a second wait on a finished, waited id falls through after the limit (%d ms)" % took)
+	PoolWait.limit_msec = PoolWait.LIMIT_MSEC
+	var g := WorkerThreadPool.add_group_task(func(_i: int) -> void: pass, 4, -1, true, "poolwait test")
+	t0 = Time.get_ticks_msec()
+	PoolWait.group(g)
+	_check(Time.get_ticks_msec() - t0 < 5000, "a group waits through PoolWait too")
+	PoolWait._threaded = 1
+	var id2 := WorkerThreadPool.add_task(func() -> void: OS.delay_msec(20), true, "poolwait test")
+	t0 = Time.get_ticks_msec()
+	PoolWait.task(id2)
+	_check(Time.get_ticks_msec() - t0 >= 15, "F5: with the separate render thread the plain wait (it still waits)")
+	PoolWait._threaded = -1
+
 func _initialize() -> void:
 	_test_detector()
 	_test_tree()
+	_test_waits()
 	if _failures == 0:
 		print("ALL PASS")
 	else:

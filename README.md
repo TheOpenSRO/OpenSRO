@@ -34,6 +34,22 @@ Every tagged release publishes ready-to-run Windows and Linux client builds unde
    `host:port`, defaults to `127.0.0.1:15779`) into the "Server IP[:port]" field — useful for
    connecting to a friend's server on the same LAN instead of your own machine.
 
+**System requirements (from the Godot 4.7.2 client, round 760).** Windows 10 or later (64-bit), or
+a 64-bit Linux with glibc 2.28 or later, and a CPU with SSE4.2: any Intel from Nehalem (Core i3/i5/
+i7, 2008) on and any AMD from Bulldozer (FX, 2011) on -- not an AMD Phenom or Athlon II, nor an
+older Intel Core 2. The 4.2.2 clients (up to v0.1.513) ran on Windows 7/8 and older CPUs; on such a
+machine the new client does not start (Windows: a missing-entry-point or illegal-instruction error;
+Linux: a dialog).
+
+**If the update left a client that does not start** (one of the machines above): the updater moved
+the old files aside before it installed the new ones, and the new client, which would delete them,
+never ran. In the game folder, delete the new `OpenSRO.exe` (`OpenSRO.x86_64` on Linux),
+`OpenSRO.pck` and `opensro_native.dll` (`libopensro_native.so`), then rename
+`OpenSRO.exe.old-update`, `OpenSRO.pck.old-update` and `opensro_native.dll.old-update` back to their
+names without `.old-update`. That is the previous client exactly; it will offer the update again at
+every start (decline it). [docs/NATIVE_ON_WINDOWS.md](docs/NATIVE_ON_WINDOWS.md) has the updater's
+log lines.
+
 **Graphics.** The client draws with Vulkan (Godot's Forward+ renderer) by default. It can also
 draw with OpenGL 3.3 (the Compatibility renderer), which runs on more and older hardware.
 
@@ -53,7 +69,11 @@ draw with OpenGL 3.3 (the Compatibility renderer), which runs on more and older 
 
   It takes effect at the next start.
 - **Going back to Vulkan.** Delete `override.cfg`, or set `renderer: forward_plus`.
-- **Which renderer is running:** the log's `RENDERER: running=...` line.
+- **Which renderer is running:** the log's `RENDERER: running=...` line, with `render_thread=`.
+- **The render thread.** Vulkan draws on a render thread of its own (Godot's separate render thread,
+  which Godot still calls experimental). If the client crashes where it did not before, start it
+  with `--render-thread safe`. OpenGL always runs on the default thread: the launchers ask for it,
+  and a start that finds itself on OpenGL with the separate thread restarts itself once.
 - **A folder the game cannot write to** (for example under `Program Files`): the choice cannot be
   kept. The log says so, and the automatic check runs again at every start, costing a few
   milliseconds. Install it in a folder you own.
@@ -70,9 +90,8 @@ the "Hide UI" button, top-right) to hide the HUD for a clean view, **F1** for th
 region, what every nearby entity resolved to, what failed to load from your archives, frame
 times — with "Copy" and "Save" buttons so a report is one paste. The same panel has the sliders
 for UI scale, chat font size and how near a name plate shows; they are remembered in
-`settings.cfg` next to the log. Whole-number UI scales (1, 2, 3) stay crisp; in-between values
-render text slightly softer (Godot 4.2 drops glyphs under fractional font oversampling, so it is
-off there).
+`settings.cfg` next to the log. Text is rasterised at the UI scale (font oversampling) at every
+scale.
 
 **If something looks wrong**: the client always writes a log file, printed once at startup (look
 for a line like `OpenSRO log file: <path>`) — Windows: `%APPDATA%\Godot\app_userdata\OpenSRO\

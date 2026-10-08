@@ -7563,6 +7563,8 @@ func _name_plate(text: String, above: float, swept: bool = true) -> Label3D:
 	label.modulate = NAME_PLATE_COLOUR
 	label.outline_size = NAME_PLATE_OUTLINE
 	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
+	# Round 760: 4.2.2's oversampled raster at the UI scale (FontOversampling).
+	FontOversampling.label3d(label, label.font_size, NAME_PLATE_OUTLINE, NAME_PLATE_PIXEL_SIZE)
 	# Names read over whatever they stand in front of, which is what makes a
 	# crowd of NPCs legible -- and retail's name is a screen-space draw over
 	# the scene (NamePlates).
@@ -7662,9 +7664,11 @@ func _monster_name_look(label: Label3D) -> void:
 	var font: Font = _ui_builder.font_at(0) if _ui_builder != null else null
 	if font != null:
 		label.font = font
-	label.font_size = UiBuilder.FONT_SIZES[0]
 	label.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	label.pixel_size = _monster_plate_pixel_size()
+	# Round 760: font_size, outline and pixel_size through FontOversampling, so
+	# the name is 4.2.2's oversampled raster at the UI scale, not a 1x one
+	# magnified (Godot 4.7.2's Label3D is not oversampled).
+	FontOversampling.label3d(label, UiBuilder.FONT_SIZES[0], 0, _monster_plate_pixel_size())
 	label.add_to_group(MONSTER_PLATE_GROUP)
 	var box := Sprite3D.new()
 	box.name = "NameBox"
@@ -7688,8 +7692,11 @@ func _fit_monster_name_box(label: Label3D) -> void:
 	if box == null:
 		return
 	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
-	var w := int(ceil(font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x + 2.0 * MONSTER_NAME_BOX_PAD_PX))
-	var h := int(MONSTER_NAME_BOX_HEIGHT_PX)
+	# In the plate's font pixels, which FontOversampling may have multiplied
+	# (round 760): the padding, height and raise follow.
+	var fk := FontOversampling.factor() if label.has_meta(FontOversampling.META) else 1.0
+	var w := int(ceil(font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x + 2.0 * MONSTER_NAME_BOX_PAD_PX * fk))
+	var h := int(roundf(MONSTER_NAME_BOX_HEIGHT_PX * fk))
 	var key := "%dx%d" % [w, h]
 	var tex: Texture2D = _monster_name_box_textures.get(key)
 	if tex == null:
@@ -7703,7 +7710,7 @@ func _fit_monster_name_box(label: Label3D) -> void:
 	# Centred on the plate the box sat one row low against the picture (3 rows
 	# above the cap top and 2 below the descender, MEASURED in round 673's
 	# render, against retail's 4 and 1): one font pixel up.
-	box.offset = Vector2(0.0, MONSTER_NAME_BOX_RAISE_PX)
+	box.offset = Vector2(0.0, MONSTER_NAME_BOX_RAISE_PX * fk)
 var _monster_name_box_textures := {}
 
 ## One font pixel = one screen pixel x the UI scale, for a fixed-size plate
@@ -7735,7 +7742,7 @@ func _step_monster_plate_scale() -> void:
 		var plate := node as Label3D
 		if plate == null:
 			continue
-		plate.pixel_size = size
+		FontOversampling.label3d_pixel_size(plate, size)
 		_fit_monster_name_box(plate)
 
 ## Where a name sits over a model, how large it draws, and in what colour.
@@ -7943,6 +7950,7 @@ func _floating_damage(anchor: Node3D, height: float, amount: int, colour: Color)
 	label.modulate = colour
 	label.outline_size = NAME_PLATE_OUTLINE
 	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
+	FontOversampling.label3d(label, label.font_size, NAME_PLATE_OUTLINE, NAME_PLATE_PIXEL_SIZE * 1.8)
 	label.no_depth_test = true
 	label.render_priority = 3
 	label.layers = OverlayView.BIT

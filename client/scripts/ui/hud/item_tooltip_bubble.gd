@@ -93,10 +93,9 @@ func _init(builder: UiBuilder = null) -> void:
 	_font = builder.font_at(0) if builder != null else null
 	if _font == null:
 		_font = ThemeDB.fallback_font
-	var v := FontVariation.new()
-	v.base_font = _font
-	v.variation_embolden = BOLD_EMBOLDEN
-	_bold = v
+	# Round 760: through FontOversampling, so the stroke is 4.2.2's at every
+	# UI scale (4.7.2 keys embolden by the oversampled size).
+	_bold = FontOversampling.bold(_font, BOLD_EMBOLDEN)
 	_load_frame()
 	_icon = TextureRect.new()
 	_icon.name = "ItemSign"

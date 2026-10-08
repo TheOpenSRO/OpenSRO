@@ -317,12 +317,10 @@ func setup() -> void:
 		_font_size = UiBuilder.FONT_SIZES[0]
 	if _font == null:
 		_font = ThemeDB.fallback_font
-	var bold := FontVariation.new()
-	bold.base_font = _font
 	# The client's bold variant is the same face at weight 600 (UiBuilder's
-	# FONT_SIZES note); Godot's embolden stands in for it (OURS).
-	bold.variation_embolden = 0.6
-	_bold = bold
+	# FONT_SIZES note); Godot's embolden stands in for it (OURS), at 4.2.2's
+	# weight at every UI scale (FontOversampling, round 760).
+	_bold = FontOversampling.bold(_font, 0.6)
 
 	if _builder == null:
 		_apply_mode(mode, false)

@@ -33,24 +33,68 @@ class_name PoolWait
 ## why it cannot meet the RenderingServer (`# pool-wait: resource-free`, a task
 ## that only reads data); pool_wait_lint_test.gd holds that.
 
+## Round 760's review:
+## - F5: with the separate render thread that thread serves the workers'
+##   queued calls itself, and `force_sync` there is a whole round trip through
+##   it (`command_queue.sync()`, a frame's draw included; READ
+##   rendering_server_default.cpp l. 435-441) -- so PoolWait is the plain wait
+##   there, as the engine's own ResourceLoader wait is ("Not needed",
+##   resource_loader.cpp l. 1157-1163). MEASURED round 760: the deadlock
+##   probe's plain wait finished 2 of 2 on the separate thread.
+## - F4: an id already waited for is "Invalid Task ID" to is_task_completed,
+##   which then returns false for ever (READ worker_thread_pool.cpp l.
+##   393-398), so a double wait would spin. After LIMIT_MSEC of polling the
+##   wait logs once and falls through to the plain wait, which returns at once
+##   for an unknown id (ERR_INVALID_PARAMETER) and otherwise waits as before.
+##   The poll slows to POLL_MAX_USEC after a second, so such a wait prints
+##   about 13,000 engine errors, not 300,000 (rare by the lint's audit: every
+##   site resets its id after the wait).
+
 ## The poll interval (OURS): short against a task's length, long enough not to
-## spin a core.
+## spin a core; POLL_MAX_USEC after SLOW_AFTER_MSEC of waiting.
 const POLL_USEC := 100
+const POLL_MAX_USEC := 10000
+const SLOW_AFTER_MSEC := 1000
+## How long a wait polls before it falls through (OURS: far above any task's
+## length -- the longest MEASURED blocking wait is a world entry's cell drain,
+## a few seconds).
+const LIMIT_MSEC := 30000
+## The limit in force (tests shorten it).
+static var limit_msec := LIMIT_MSEC
+
+## Whether the RenderingServer has its own thread (asked once: the model is
+## fixed for the process).
+static var _threaded := -1
+
+static func _serves_main() -> bool:
+	if OS.get_thread_caller_id() != OS.get_main_thread_id():
+		return false
+	if _threaded < 0:
+		_threaded = 1 if FrameSplit.render_threaded() else 0
+	return _threaded == 0
 
 static func task(id: int) -> void:
 	if id < 0:
 		return
-	if OS.get_thread_caller_id() == OS.get_main_thread_id():
+	if _serves_main():
+		var start := Time.get_ticks_msec()
 		while not WorkerThreadPool.is_task_completed(id):
+			if Time.get_ticks_msec() - start > limit_msec:
+				push_warning("PoolWait: task %d not complete after %d ms (or already waited for) -- the plain wait now" % [id, limit_msec])
+				break
 			RenderingServer.force_sync()
-			OS.delay_usec(POLL_USEC)
-	WorkerThreadPool.wait_for_task_completion(id) # pool-wait: completed above
+			OS.delay_usec(POLL_USEC if Time.get_ticks_msec() - start < SLOW_AFTER_MSEC else POLL_MAX_USEC)
+	WorkerThreadPool.wait_for_task_completion(id) # pool-wait: completed above, or the render thread serves the workers
 
 static func group(id: int) -> void:
 	if id < 0:
 		return
-	if OS.get_thread_caller_id() == OS.get_main_thread_id():
+	if _serves_main():
+		var start := Time.get_ticks_msec()
 		while not WorkerThreadPool.is_group_task_completed(id):
+			if Time.get_ticks_msec() - start > limit_msec:
+				push_warning("PoolWait: group %d not complete after %d ms (or already waited for) -- the plain wait now" % [id, limit_msec])
+				break
 			RenderingServer.force_sync()
-			OS.delay_usec(POLL_USEC)
-	WorkerThreadPool.wait_for_group_task_completion(id) # pool-wait: completed above
+			OS.delay_usec(POLL_USEC if Time.get_ticks_msec() - start < SLOW_AFTER_MSEC else POLL_MAX_USEC)
+	WorkerThreadPool.wait_for_group_task_completion(id) # pool-wait: completed above, or the render thread serves the workers

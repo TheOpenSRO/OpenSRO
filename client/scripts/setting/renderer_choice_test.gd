@@ -54,6 +54,14 @@ func _file() -> void:
 	tc.load(p)
 	_check(int(tc.get_value(RendererChoice.SECTION, RendererChoice.THREAD_KEY, 0)) == RendererChoice.THREAD_SAFE,
 		"round 760: Compatibility is recorded with the default render thread (the separate one crashed it)")
+	# Round 760's review, F1: the one restart onto the default thread.
+	_check(RendererChoice.gl_restart_needed(RendererChoice.COMPATIBILITY, true, ""), "F1: Compatibility on the separate thread restarts")
+	_check(not RendererChoice.gl_restart_needed(RendererChoice.COMPATIBILITY, true, "1"), "F1: ... once (the marker set: no loop)")
+	_check(not RendererChoice.gl_restart_needed(RendererChoice.COMPATIBILITY, false, ""), "F1: ... not on the default thread")
+	_check(not RendererChoice.gl_restart_needed(RendererChoice.FORWARD_PLUS, true, ""), "F1: ... and never Forward+")
+	var ra := RendererChoice.gl_restart_args(PackedStringArray(["--rendering-driver", "opengl3", "--verbose", "--render-thread=separate"]), PackedStringArray(["--x=1"]))
+	_check(ra == PackedStringArray(["--rendering-driver", "opengl3", "--render-thread", "safe", "--verbose", "--", "--x=1"]),
+		"F1: the restart's arguments: GL and the default thread, the start's own less its renderer flags, its user arguments (%s)" % str(ra))
 	var text := FileAccess.get_file_as_string(p)
 	_check(text.begins_with("; Written by OpenSRO"), "the file says whose it is")
 	_check(text.contains("[rendering]") and text.contains("renderer/rendering_method=\"gl_compatibility\""),
