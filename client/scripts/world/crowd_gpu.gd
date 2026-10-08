@@ -1237,6 +1237,41 @@ const VOL_SPAN := 512
 static func pack_y(vol: int, lit: bool, glow: int) -> float:
 	return float(((glow + 1) * VOL_SPAN + (vol + 1)) * 2 + (1 if lit else 0))
 
+## Round 760 (round 759's review, F2): GL Compatibility keeps a MultiMesh's
+## custom data (and colour) as HALF floats (READ, 4.2.2 and 4.7.2-stable:
+## drivers/gles3/storage/mesh_storage.cpp `make_half_float` on the buffer,
+## scene.glsl `unpackHalf2x16(instance_color_custom_data...)`). A half holds
+## every integer only up to 2048, so the body's slot was wrong above 2,048 far
+## bodies there, and a glow row (1024 x (row + 1) in y) above 62 overflowed.
+## So under Compatibility the slot and the glow row ride in the instance
+## transform's origin, which GLES3 keeps as full floats (`instance_xform0..2`,
+## highp vec4): x the slot, y the glow row + 1, z 0. The basis stays the
+## identity, and crowd_gpu_vertex.gdshaderinc takes the origin back off VERTEX
+## (`CURRENT_RENDERER == RENDERER_COMPATIBILITY`), so the drawn place is the
+## same; INSTANCE_CUSTOM.y keeps the Volume row and the lit bit (at most 1024,
+## exact). Forward+ keeps everything in INSTANCE_CUSTOM (32-bit floats), as
+## before. `half_custom_override` (tests): -1 asks the renderer.
+static var half_custom_override := -1
+
+static func half_custom() -> bool:
+	if half_custom_override >= 0:
+		return half_custom_override == 1
+	return RenderingServer.get_current_rendering_method() == "gl_compatibility"
+
+## The integers a part's instance carries, as the four floats that differ
+## from Forward+'s layout: [origin x, origin y, custom x, custom y].
+static func instance_ints(slot: int, vol: int, lit: bool, glow: int, half: bool) -> PackedFloat32Array:
+	if half:
+		return PackedFloat32Array([float(slot), float(glow + 1), 0.0, pack_y(vol, lit, -1)])
+	return PackedFloat32Array([0.0, 0.0, float(slot), pack_y(vol, lit, glow)])
+
+## [slot, Volume row, lit, glow row] of an instance's 16 floats at `o`.
+static func instance_read(buf: PackedFloat32Array, o: int) -> Array:
+	var y: Array = unpack_y(buf[o + 13])
+	if buf[o + 3] != 0.0 or buf[o + 7] != 0.0:
+		return [int(buf[o + 3] + 0.5), y[0], y[1], int(buf[o + 7] + 0.5) - 1]
+	return [int(buf[o + 12] + 0.5), y[0], y[1], y[2]]
+
 ## [Volume row, lit, glow row] of a packed INSTANCE_CUSTOM.y.
 static func unpack_y(y: float) -> Array:
 	var v := int(y + 0.5)
@@ -1660,8 +1695,15 @@ func _add_part(b: Body, p: Dictionary, fade_w: float = 0.0) -> void:
 	var o := idx * INSTANCE_FLOATS
 	for i in range(12):
 		g.buf[o + i] = IDENTITY_ROWS[i]
-	g.buf[o + 12] = float(b.slot)
-	g.buf[o + 13] = pack_y(int(p["vol"]), p.has("objc"), int(p.get("glow", -1)))
+	# Round 759's review, F2: a glow part is a hung weapon or shield, never
+	# skinned to the body (Volume row -1) nor lit -- what keeps Forward+'s
+	# packed y exact for every glow row; held here.
+	assert(int(p.get("glow", -1)) < 0 or (int(p["vol"]) < 0 and not p.has("objc")), "CrowdGpu: a glow part with a Volume row or the lit bit")
+	var ints := instance_ints(b.slot, int(p["vol"]), p.has("objc"), int(p.get("glow", -1)), half_custom())
+	g.buf[o + 3] = ints[0]
+	g.buf[o + 7] = ints[1]
+	g.buf[o + 12] = ints[2]
+	g.buf[o + 13] = ints[3]
 	g.buf[o + 14] = float(p["centre"])
 	g.buf[o + 15] = fade_w
 	var rec := [g, idx, b]

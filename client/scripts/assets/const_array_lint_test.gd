@@ -46,6 +46,7 @@ const WORKER_FILES := [
 	"res://scripts/bsr/bsr_reader.gd", "res://scripts/cpd/cpd_reader.gd", "res://scripts/ddj/ddj_reader.gd",
 	"res://scripts/effects/skill_effect_reader.gd", "res://scripts/effects/skill_effects.gd",
 	"res://scripts/efp/efp_effect.gd", "res://scripts/efp/efp_reader.gd", "res://scripts/efp/efp_sim.gd",
+	"res://scripts/efp/efp_sim_batch.gd",  # round 759 review F3: Job.help runs on the pool
 	"res://scripts/frontend/char_catalog.gd", "res://scripts/frontend/intro_camera_path.gd",
 	"res://scripts/frontend/title_cell_plan.gd", "res://scripts/items/item_glow_tables.gd",
 	"res://scripts/mapm/mapm_reader.gd", "res://scripts/mapo/mapo2_reader.gd", "res://scripts/mapt/mapt_reader.gd",

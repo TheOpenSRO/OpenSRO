@@ -14,11 +14,20 @@
 // INSTANCE_CUSTOM: x the body's slot, y (round 759, CrowdGpu.pack_y)
 // ((glow row + 1) x 512 + (Volume row + 1)) x 2 + lit, z the part's rest
 // centre height, for Character Sight Range.
+// Round 760 (round 759's review, F2): under GL Compatibility INSTANCE_CUSTOM is
+// half floats, so the slot and the glow row + 1 come from the instance
+// transform's origin instead (full floats; CrowdGpu.instance_ints), which is
+// taken back off VERTEX at the end; INSTANCE_CUSTOM.y then holds the Volume
+// row and the lit bit only.
 // Round 759: the body's object colour (texel 4) for a lit part, -1 otherwise;
 // object.gdshaderinc's vertex() uses it in place of `object_color`.
 float srr_cg_objc = -1.0;
 {
+#if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+	int srr_cg_slot = int(MODEL_MATRIX[3].x + 0.5);
+#else
 	int srr_cg_slot = int(INSTANCE_CUSTOM.x + 0.5);
+#endif
 	ivec2 srr_cg_at = ivec2((srr_cg_slot % 256) * SRR_CG_TEXELS, srr_cg_slot / 256);
 	int srr_cg_y = int(INSTANCE_CUSTOM.y + 0.5);
 	if ((srr_cg_y & 1) == 1) {
@@ -27,7 +36,11 @@ float srr_cg_objc = -1.0;
 #ifdef EQUIP_GLOW
 	// Round 759: the part's glow row from the glow table, or the material's
 	// own (object.gdshaderinc, srr_glow_row).
+#if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+	int srr_cg_glow = int(MODEL_MATRIX[3].y + 0.5) - 1;
+#else
 	int srr_cg_glow = (srr_cg_y >> 10) - 1;
+#endif
 	if (srr_cg_glow >= 0) {
 		srr_cg_g1 = texelFetch(crowd_glow, ivec2(0, srr_cg_glow), 0);
 		srr_cg_g2 = texelFetch(crowd_glow, ivec2(1, srr_cg_glow), 0);
@@ -64,6 +77,10 @@ float srr_cg_objc = -1.0;
 	vec3 srr_cg_n = normalize(mat3(srr_cg_m) * NORMAL);
 	mat4 srr_cg_body = srr_cg_mat(srr_cg_b0, srr_cg_b1, srr_cg_b2);
 	VERTEX = (srr_cg_body * vec4(srr_cg_v, 1.0)).xyz;
+#if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+	// The origin is data (above); MODEL_MATRIX adds it back.
+	VERTEX -= MODEL_MATRIX[3].xyz;
+#endif
 	NORMAL = mat3(srr_cg_body) * srr_cg_n;
 	// Character Sight Range: Godot cuts a near part by the camera's distance
 	// to its bounds' centre; here to the body's axis at the part's rest centre

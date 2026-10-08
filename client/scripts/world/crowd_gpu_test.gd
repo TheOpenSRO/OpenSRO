@@ -49,6 +49,7 @@ func _initialize() -> void:
 		_test_review_fixes()
 		_test_light_texel()
 		_test_glow_rows()
+		_test_half_custom()
 		_test_collect_cap()
 		var world := _make_world()
 		if world != null:
@@ -421,6 +422,79 @@ func _test_light_texel() -> void:
 ## Round 759: an item worn at several pluses draws from one group per mesh,
 ## each instance's glow row from the glow table (MEASURED live before: the
 ## glow's colours, period and scroll split most of the far groups).
+## A float through a GLES3 half (Compatibility's custom data).
+static func _half(f: float) -> float:
+	var b := PackedByteArray()
+	b.resize(2)
+	b.encode_half(0, f)
+	return b.decode_half(0)
+
+## Round 760 (round 759's review, F2): under Compatibility INSTANCE_CUSTOM is
+## half floats; the slot and the glow row ride in the instance origin (full
+## floats) there, and everything left in the custom data is a half exactly.
+func _test_half_custom() -> void:
+	var exact := true
+	var fwd_lost := 0
+	for slot in [0, 1, 2047, 2048, 2049, 3001, 5001, 7000, 9999, 65001]:
+		for glow in [-1, 0, 62, 63, 3000]:
+			for vl in [[-1, false], [0, false], [510, true]]:
+				if glow >= 0 and (int(vl[0]) >= 0 or bool(vl[1])):
+					continue
+				var h := CrowdGpu.instance_ints(slot, int(vl[0]), bool(vl[1]), glow, true)
+				var buf := PackedFloat32Array()
+				buf.resize(CrowdGpu.INSTANCE_FLOATS)
+				buf[3] = h[0]
+				buf[7] = h[1]
+				buf[12] = _half(h[2])
+				buf[13] = _half(h[3])
+				if CrowdGpu.instance_read(buf, 0) != [slot, int(vl[0]), bool(vl[1]), glow]:
+					exact = false
+				var f := CrowdGpu.instance_ints(slot, int(vl[0]), bool(vl[1]), glow, false)
+				if _half(f[2]) != f[2] or _half(f[3]) != f[3]:
+					fwd_lost += 1
+	_check(exact, "Compatibility's layout: every slot to 65001 and glow row to 3000 survives the half-float custom data exactly")
+	_check(fwd_lost > 0, "probe: Forward+'s layout through half floats loses %d of those (the review's F2)" % fwd_lost)
+	# A crowd past 2,048 bodies, drawn the Compatibility way: each part reads back its own body's slot and row.
+	CrowdGpu.half_custom_override = 1
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	for k in range(3000):
+		crowd._take_slot()
+	var clip := _clip(900, 4)
+	var glow := ShaderMaterial.new()
+	glow.shader = EquipGlow.glow_shader("back", true)
+	glow.set_shader_parameter("glow_texture", ImageTexture.create_from_image(Image.create(4, 4, false, Image.FORMAT_RGBA8)))
+	glow.set_shader_parameter("alpha_scissor", 1.0 / 255.0)
+	glow.set_meta(EquipGlow.PLAIN_META, _mat)
+	var ok := true
+	var n := 0
+	for i in range(3):
+		var skel := _make_body()
+		(skel.find_child("Item", true, false) as MeshInstance3D).material_override = glow
+		var holder := Node3D.new()
+		holder.set_meta("character_id", 700 + i)
+		holder.position = Vector3(10.0 * float(i), 0.0, -30.0)
+		holder.add_child(skel)
+		root.add_child(holder)
+		var entry := [skel, clip, 4, 0.1, true, 0.0, null]
+		crowd.can_draw(skel, entry)
+		crowd.bake_all()
+		if not crowd.add(holder, skel, entry, 0.0):
+			ok = false
+			continue
+		var b: CrowdGpu.Body = crowd.body_of(skel)
+		for rec in b.parts:
+			var g: CrowdGpu.Group = rec[0]
+			var o := int(rec[1]) * CrowdGpu.INSTANCE_FLOATS
+			var got: Array = CrowdGpu.instance_read(g.buf, o)
+			n += 1
+			if int(got[0]) != b.slot or b.slot < 2048 or _half(g.buf[o + 12]) != g.buf[o + 12] or _half(g.buf[o + 13]) != g.buf[o + 13]:
+				ok = false
+	_check(ok and n >= 6, "a crowd past 2,048 bodies (slots 3000+): %d parts carry their body's slot exactly, the half channels exact" % n)
+	var shader_code := FileAccess.get_file_as_string(CrowdGpu.VERTEX_INCLUDE)
+	_check(shader_code.contains("int srr_cg_slot = int(MODEL_MATRIX[3].x + 0.5);") and shader_code.contains("VERTEX -= MODEL_MATRIX[3].xyz;")
+		and shader_code.contains("#if CURRENT_RENDERER == RENDERER_COMPATIBILITY"), "the vertex include reads them from the origin under Compatibility and takes it back off")
+	CrowdGpu.half_custom_override = -1
+
 func _test_glow_rows() -> void:
 	# The packing of INSTANCE_CUSTOM.y.
 	var ok := true
