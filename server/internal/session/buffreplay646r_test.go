@@ -45,8 +45,10 @@ func TestRound646ReviewTheLandingIsOneMoveToANamedPoint(t *testing.T) {
 	}
 	drain(t, w.aria, 200*time.Millisecond)
 
+	// Round 764: a zone change to Jangan lands her at its spawn spot itself
+	// (changeZoneLanding), where her client stands her.
 	relocate(t, w.aria, 900, 0, 900)
-	if x, z := w.ariaAt(t); x != 0 || z != 0 {
+	if x, z := w.ariaAt(t); x != 42 || z != -60 {
 		t.Errorf("a relocation to (900, 900), where no warp sent her, moved the walled Aria to (%g, %g)", x, z)
 	}
 	relocate(t, w.aria, 42, -32.6, -60)

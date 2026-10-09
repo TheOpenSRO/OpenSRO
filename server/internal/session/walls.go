@@ -54,7 +54,6 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
-	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // MotionProtectionWall is MOTIONSTATE_SKILL_PROTECTIONWALL (0x11, the
@@ -152,7 +151,7 @@ func noteWarpLanding(characterID int64, now time.Time, pts ...[2]float64) {
 // spot (worldmap.LandingSpotFor).
 func noteZoneWarpLanding(characterID int64, zone string, pos world.Position, now time.Time) {
 	pts := [][2]float64{{pos.X, pos.Z}}
-	if x, z, ok := worldmap.LandingSpotFor(zone, pos.X, pos.Z); ok {
+	if x, z, ok := zoneLandingSpot(zone); ok && (x != pos.X || z != pos.Z) {
 		pts = append(pts, [2]float64{x, z})
 	}
 	noteWarpLanding(characterID, now, pts...)

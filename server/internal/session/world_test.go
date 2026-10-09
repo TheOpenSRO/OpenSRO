@@ -578,9 +578,13 @@ func TestSingleFramePutsEveryTownInOneFrameAndOneBucket(t *testing.T) {
 
 	// Bram warps to Jangan, beside her: he is spawned Aria, standing at
 	// Jangan's landing, and she hears him arrive there.
+	// Round 764: a zone change to Jangan lands at its spawn spot
+	// (changeZoneLanding: where the client stands the arrival), not the
+	// middle a world entry lands at.
+	spotX, spotZ, _ := worldmap.LandingSpotFor("jangan", janganX, janganZ)
 	czr = changeZone(t, f, connB, rB, "jangan")
-	if !czr.OK || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, janganX, janganZ) || len(czr.Others) != 0 {
-		t.Fatalf("Bram's change to jangan: %+v, want ok in 97/168 at (%g, %g)", czr, janganX, janganZ)
+	if !czr.OK || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, spotX, spotZ) || len(czr.Others) != 0 {
+		t.Fatalf("Bram's change to jangan: %+v, want ok in 97/168 at (%g, %g)", czr, spotX, spotZ)
 	}
 	ownX, ownZ := func() (float64, float64) {
 		r := expectPlayerSpawn(t, connB, rB, 1)[0]
@@ -596,8 +600,8 @@ func TestSingleFramePutsEveryTownInOneFrameAndOneBucket(t *testing.T) {
 	// asking for Jangan again is another warp to its landing. He is taken out
 	// and put back, so Aria drops him and is spawned him again (retail's
 	// block removal and insertion: 0x3016 then 0x3015).
-	if czr = changeZone(t, f, connB, rB, "jangan"); !czr.OK || !near(czr.X, czr.Z, janganX, janganZ) {
-		t.Fatalf("Bram's second change to jangan: %+v, want ok at (%g, %g)", czr, janganX, janganZ)
+	if czr = changeZone(t, f, connB, rB, "jangan"); !czr.OK || !near(czr.X, czr.Z, spotX, spotZ) {
+		t.Fatalf("Bram's second change to jangan: %+v, want ok at (%g, %g)", czr, spotX, spotZ)
 	}
 	expectPlayerDespawn(t, connA, rA, 2)
 	expectPlayerSpawn(t, connA, rA, 2)

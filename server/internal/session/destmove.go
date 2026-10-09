@@ -406,10 +406,19 @@ func noteLandings(characterID int64, now time.Time, replace bool, pts ...[2]floa
 // change, a teleport, a return): the point and the client's spawn spot there.
 func noteArrivalLanding(characterID int64, zone string, pos world.Position) {
 	pts := [][2]float64{{pos.X, pos.Z}}
-	if x, z, ok := worldmap.LandingSpotFor(zone, pos.X, pos.Z); ok {
+	if x, z, ok := zoneLandingSpot(zone); ok && (x != pos.X || z != pos.Z) {
 		pts = append(pts, [2]float64{x, z})
 	}
 	noteLandings(characterID, time.Now(), true, pts...)
+}
+
+// zoneLandingSpot is zone's LandingSpot in the frame arrival names the zone
+// in -- measured from the zone's middle, not from the arrival's point (round
+// 764: a zone change now lands AT the spot, or at a requested one, and the
+// spot measured from there was a point 70 units off it).
+func zoneLandingSpot(zone string) (x, z float64, ok bool) {
+	_, mid, _, _ := arrival(zone)
+	return worldmap.LandingSpotFor(zone, mid.X, mid.Z)
 }
 
 // noteGMLanding names a GM /tp or /goto point.

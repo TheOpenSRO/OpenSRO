@@ -1087,16 +1087,76 @@ func DecodeEntityMoved(data []byte) (*EntityMoved, error) {
 // in which zone label, the same as it always has.
 type ChangeZoneRequest struct {
 	Zone string
+	// Spot (round 764, OURS framing) is an optional point in the zone's
+	// centre region, region-local (x, z in [0, RegionSpan)), where the
+	// client will stand the player -- the zone box's `x/y@lx,lz` (the
+	// developer panel's town buttons). Two trailing f32s, sent only when
+	// set. The server lands the character there (handleChangeZone), so its
+	// view window -- the group spawns its arrival is sent -- is centred on
+	// where the client stands: before, it landed at the region's middle and
+	// refused the client's placement 400-550 units away, and the client was
+	// snapped back with part of the crowd missing meanwhile (r764.md).
+	HasSpot      bool
+	SpotX, SpotZ float32
 }
 
-func (r *ChangeZoneRequest) Encode() []byte { return encodeStrings(r.Zone) }
+func (r *ChangeZoneRequest) Encode() []byte {
+	out := encodeStrings(r.Zone)
+	if r.HasSpot {
+		out = binary.LittleEndian.AppendUint32(out, math.Float32bits(r.SpotX))
+		out = binary.LittleEndian.AppendUint32(out, math.Float32bits(r.SpotZ))
+	}
+	return out
+}
 
 func DecodeChangeZoneRequest(data []byte) (*ChangeZoneRequest, error) {
-	fields, err := decodeStrings(data, 1)
+	fields, rest, err := decodeStringsPrefix(data, 1)
 	if err != nil {
 		return nil, err
 	}
-	return &ChangeZoneRequest{Zone: fields[0]}, nil
+	req := &ChangeZoneRequest{Zone: fields[0]}
+	switch len(rest) {
+	case 0:
+	case 8:
+		req.HasSpot = true
+		req.SpotX = math.Float32frombits(binary.LittleEndian.Uint32(rest))
+		req.SpotZ = math.Float32frombits(binary.LittleEndian.Uint32(rest[4:]))
+	default:
+		return nil, fmt.Errorf("%d unexpected trailing byte(s) after the zone", len(rest))
+	}
+	return req, nil
+}
+
+// changeZoneLanding is where a zone change to req lands, given arrival's
+// point `mid` (the zone's centre region's middle in the frame it is named
+// in): the request's spot, when it names one inside the region, or else the
+// zone's LandingSpot -- the point the client stands an arrival there
+// (World3D's ZONE_SPAWN_LOCAL, worldmap.LandingSpot) -- or else mid.
+//
+// Round 764 (OURS): retail's server places the character and its client goes
+// there; OpenSRO's client picks the spot for a zone change, so the server now
+// lands it where the client will stand. Landing it at the middle, the
+// arrival's view window was the middle's -- its group spawns sent for blocks
+// the client did not stand among -- and the placement that followed was a
+// second batch of group spawns seconds later (a block-line crossing), or,
+// for a spot the server had not named, refused and corrected back to the
+// middle (the user's v0.1.516 log: "MOVE correction: the server has this
+// player at (0.00, 0.00, 0.00)").
+func changeZoneLanding(req *ChangeZoneRequest, mid world.Position) world.Position {
+	if req.HasSpot {
+		x, z := float64(req.SpotX), float64(req.SpotZ)
+		if !math.IsNaN(x) && !math.IsNaN(z) && x >= 0 && x < worldmap.RegionSpan && z >= 0 && z < worldmap.RegionSpan {
+			// Landing is the middle in every frame, and ToWorld is a
+			// translation: the spot is the middle plus its offset from it.
+			mid.X += x - worldmap.RegionSpan/2
+			mid.Z += worldmap.RegionSpan/2 - z
+			return mid
+		}
+	}
+	if x, z, ok := worldmap.LandingSpotFor(req.Zone, mid.X, mid.Z); ok {
+		mid.X, mid.Z = x, z
+	}
+	return mid
 }
 
 // ChangeZoneResult is the OpChangeZoneResult payload, direct ack to whoever
@@ -1622,6 +1682,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if !oneWorld && req.Zone == current.Zone {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
+	pos = changeZoneLanding(req, pos)
 	_, err = warpTo(ctx, sess, eq, chars, hub, zerk, req.Zone, bucket, pos, frame)
 	return err
 }
