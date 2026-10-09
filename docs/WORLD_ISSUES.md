@@ -7477,6 +7477,37 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-sixty-fourth round: the whole crowd on return, seal effects on every host in range (budget 500), no background dressing
+
+The full notes are in `docs/rounds/r764.md`; the reviews are in `r764_review.md`.
+- **#3, part of the crowd missing on return** (the user's logs):
+  - A page was split by *read* time, so one server batch became two reveals seconds apart.
+    Groups now join by socket arrival, within 3 s of the page's last group.
+  - The server landed every zone change at the region's middle, so the AOI window was built around
+    the wrong block. `ChangeZoneRequest` (OURS, 0x0026) carries an optional spot. It is accepted only
+    from a GM, or when it is a known landing or town-button spot; otherwise the old fallback applies.
+- **#4, seal effects changing with the camera:** EquipFx drew only the 64 nearest hosts in view.
+  - `EquipFxBatch` draws the hosts of ghosts and dressed bodies in one MultiMesh per effect and draw
+    node. `SrEfpHosts` (Rust) chooses, culls and places each host once a frame.
+  - Retail (READ `FUN_00c43780`/`FUN_009c4aa0`) has no count limit within 720 units. OURS: a
+    500-nearest budget, the default until the user decides; `OPENSRO_QA_EQUIPFX_HOSTS=0` is unlimited.
+- **#2, reveal delay:** the crowd budget is now 0.85 x aim minus main-thread work, no longer starved
+  by a GPU-bound frame.
+- **#1, FPS:** idle ghosts are no longer dressed in the background (`OPENSRO_QA_DRESS_IDLE=1` restores
+  it). Hits, casts, auras and sitting still dress a body.
+- **MEASURED (box, 4,000 standing, 1080p), v0.1.516 to r764:**
+
+  | | v0.1.516 | r764 |
+  |---|---|---|
+  | frame | 11.1-11.5 ms | 11.0-11.1 ms |
+  | p95 | 16.2-16.3 ms | 14.1-14.2 ms |
+  | warm reveal | 8.45 s | 7.6 s |
+  | cross reveal (slower) | 3.85 s | 4.24 s |
+
+  The cross reveal's cause is per-body ghost cost, which is the Rust port (OPEN). Unlimited hosts
+  cost +1.5 ms GPU.
+- **OPEN:** R7, R8, R10; the Compatibility separate-render-thread crash at world load (also on v0.1.516).
+
 ## Seven-hundred-and-sixty-third round: EquipFx's effect simulation in Rust, with no global particle cap
 
 The full notes are in `docs/rounds/r763.md`; the review is `r763_review.md`, and its fixes are in §9.
