@@ -257,8 +257,10 @@ func _test_cap_and_teardown() -> void:
 	var app := _appearance(bodies, [], calls, body_calls)
 	for ref in bodies:
 		app.prepare(int(ref), [])
-	_check(app._prep_running <= CharacterAppearance.PREP_MAX_RUNNING and app._prep_queue.size() == 5 - app._prep_running,
-		"at most %d run; the rest wait their turn (%d running, %d queued)" % [CharacterAppearance.PREP_MAX_RUNNING, app._prep_running, app._prep_queue.size()])
+	# Round 762: at most PREP_MAX_RUNNING runners, each taking request after
+	# request off the queue (one task a request before).
+	_check(app._runners.size() <= CharacterAppearance.PREP_MAX_RUNNING and app._runners.size() >= 1 and app.preparing(),
+		"at most %d runners; the rest wait their turn (%d running, %d queued)" % [CharacterAppearance.PREP_MAX_RUNNING, app._runners.size(), app._prep_queue.size()])
 	app.wait_prepared()
 	var all := true
 	for ref in bodies:

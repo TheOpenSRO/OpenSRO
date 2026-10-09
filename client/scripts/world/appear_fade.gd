@@ -359,6 +359,9 @@ class Fades:
 	var _started_out := 0
 	var _freed := 0
 	var _unfadable := 0
+	## Round 762: when set, a finished fade-out's model is handed to it
+	## instead of freed at once (World3D frees a frame's share at a time).
+	var free_hook := Callable()
 
 	## Starts `model` fading in from nothing: from now every mesh under it
 	## (instances_of) draws with its material's twin at alpha 0, the deco's
@@ -525,7 +528,10 @@ class Fades:
 			if call.is_valid():
 				call.call(model)
 			if is_instance_valid(model) and not (model as Node).is_queued_for_deletion():
-				(model as Node).queue_free()
+				if free_hook.is_valid():
+					free_hook.call(model)
+				else:
+					(model as Node).queue_free()
 			_freed += 1
 		co.meshes.clear()
 		co.twins.clear()

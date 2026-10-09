@@ -315,6 +315,9 @@ func _test_world_left(world: Node) -> void:
 	var again_mi := _mesh_of(again) if again != null else null
 	_check(again_mi != null and _near(_drawn_alpha(again_mi), 0.0), "the fresh body fades in from 0")
 	_step(world, 0.8)
+	# Round 762: a finished fade-out's model is freed from World3D's departure
+	# free queue in its next frame (a frame's share at a time), not in the step.
+	await process_frame
 	_check(body.is_queued_for_deletion() if is_instance_valid(body) else true, "the old body is freed past 1.5 s")
 	await process_frame
 	_check(not is_instance_valid(body), "and gone")
@@ -379,7 +382,10 @@ func _test_world_player(world: Node) -> void:
 	_check(not others.has(77004) and is_instance_valid(body) and not body.is_queued_for_deletion(),
 		"another player who leaves fades out instead of vanishing")
 	await process_frame
-	_check(is_instance_valid(body) and body.get_node_or_null("PlayerClickBody") == null, "and can no longer be clicked")
+	# Round 762: its click body leaves every layer at once and goes with the
+	# holder (the departure's free queue).
+	var click := body.get_node_or_null("PlayerClickBody") as CollisionObject3D if is_instance_valid(body) else null
+	_check(is_instance_valid(body) and (click == null or click.collision_layer == 0), "and can no longer be clicked")
 	world.call("_spawn_or_update_other", 77004, "Leaver", Vector3(10.0, 0.0, 10.0))
 	var again = others.get(77004)
 	_check(again != null and again != body, "coming back mid-fade is a fresh body")

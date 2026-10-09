@@ -228,6 +228,30 @@ var character_states := {}
 var _spawn_log := OS.get_environment("OPENSRO_QA_SPAWN_LOG") != ""
 var _spawn_types: UserSpawnNet.Types = null
 var _pending_spawns: Array = []
+## Round 762 (QA, counted only while FrameSplit is on): every packet's bytes
+## (its 6-byte header and data) and count since the boot, and each player
+## group spawn's records, bytes and the clock when its 0x3018 was read
+## (`QA NET group` lines), for QaCrowdProbe's arrival timeline.
+## Round 762 (OURS): a player group spawn is read and handed to World3D a
+## frame's GROUP_STEP_USEC at a time (one record at least), and nothing
+## after it is dispatched until it is all read -- the order stays the
+## server's. Retail reads a group's every record in its one 0x3018 call
+## (READ, FUN_008a6d20); here a record is about 20 us of GDScript to read
+## (MEASURED, tools/group_decode_bench.gd: 4,000 in 84 ms) and its arrival
+## more, so a crowd's window in one frame was a frame of hundreds of ms.
+## And a frame's dispatch stops after NET_FRAME_BUDGET_USEC (one packet at
+## least); the rest stays in the socket for the next frame.
+const GROUP_STEP_USEC := 4000
+const NET_FRAME_BUDGET_USEC := 8000
+## The group being read: {r: the reader, count, i: records read, op}, or null.
+var _group_job = null
+## Whether spawn messages are being replayed (set_spawn_item_rows): a group
+## then is read whole, in order with what follows it.
+var _replaying := false
+static var qa_rx_bytes := 0
+static var qa_rx_packets := 0
+static var qa_group_players := 0
+static var qa_groups := 0
 var _spawn_frame := Vector2i(-1, -1)
 ## Every character's berserk body mode (0x30BF kind 4) as this connection was
 ## last told (round 651): character id -> 1 while berserk. Kept, cleared and
@@ -420,7 +444,26 @@ func _process(_delta: float) -> void:
 	# Round 759 (QA, FrameSplit only): the read and the dispatch timed apart,
 	# and each opcode's count and dispatch time (FrameSplit.op).
 	var fs := FrameSplit.on
+	# Round 762: a group being read goes on first; nothing after it is
+	# dispatched until it is done.
+	var frame_t0 := Time.get_ticks_usec()
+	if _group_job != null:
+		var tg := Time.get_ticks_usec()
+		var done := _group_step()
+		if fs:
+			FrameSplit.add("net_dispatch", Time.get_ticks_usec() - tg)
+		if not done:
+			# The socket emptied all the same (PacketReader.drain).
+			_reader.drain(_peer)
+			return
+	var dispatched := 0
 	while true:
+		if _group_job != null or (dispatched > 0 and Time.get_ticks_usec() - frame_t0 >= NET_FRAME_BUDGET_USEC):
+			# What is not dispatched this frame waits in the reader's buffer,
+			# the socket emptied (PacketReader.drain).
+			_reader.drain(_peer)
+			break
+		dispatched += 1
 		var t0 := Time.get_ticks_usec() if fs else 0
 		var p := _reader.poll(_peer)
 		if p == null:
@@ -431,6 +474,8 @@ func _process(_delta: float) -> void:
 			_dispatch(p)
 			continue
 		var t1 := Time.get_ticks_usec()
+		qa_rx_bytes += p.data.size() + 6
+		qa_rx_packets += 1
 		_dispatch(p)
 		var t2 := Time.get_ticks_usec()
 		FrameSplit.add("net_read", t1 - t0)
@@ -456,6 +501,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_zone_arrivals.clear()
 	zone_departures.clear()
 	_pending_spawns.clear()
+	_group_job = null
 	body_modes.clear()
 	party.reset_connection()
 	_unhandled_warned.clear()
@@ -541,6 +587,7 @@ func disconnect_from_server() -> void:
 	_zone_arrivals.clear()
 	zone_departures.clear()
 	_pending_spawns.clear()
+	_group_job = null
 	body_modes.clear()
 	party.reset_connection()
 	_forget_session_lists()
@@ -1086,14 +1133,17 @@ func set_spawn_item_rows(rows: Dictionary) -> void:
 	_spawn_types = UserSpawnNet.Types.new(rows)
 	var waiting := _pending_spawns
 	_pending_spawns = []
+	_replaying = true
 	for m in waiting:
 		_apply_spawn_message(int(m["op"]), m["data"])
+	_replaying = false
 
 ## A world entry or zone change: the players in view start over, and their
 ## records' coordinates are in frame (the result's FrameRegion).
 func _start_user_view(frame: String) -> void:
 	user_roster.clear()
 	_pending_spawns.clear()
+	_group_job = null
 	_zone_arrivals.clear()
 	zone_departures.clear()
 	character_states.clear()
@@ -1167,7 +1217,25 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 			elif gone >= 0 and npc_roster.despawn(gone):
 				npc_despawned.emit(gone)
 		NpcSpawnNet.OP_GROUP_END:
+			# Round 762: a spawn group is read a frame's share at a time.
+			if not _replaying and _spawn_types != null and data.size() >= 3 and data[0] == NpcSpawnNet.GROUP_SPAWN:
+				var jr := NpcSpawnNet.Reader.new(data)
+				jr.u8()
+				_group_job = {"r": jr, "count": jr.u16(), "i": 0, "users": 0, "npcs": 0, "bytes": data.size(),
+					"t0": Time.get_ticks_usec(), "frames": 0}
+				_group_step()
+				return
+			# And a despawn group, its ids a frame's share at a time.
+			if not _replaying and data.size() >= 3 and data[0] == NpcSpawnNet.GROUP_DESPAWN:
+				var dg := UserSpawnNet.read_group(data, _spawn_types)
+				if dg.error == "":
+					_group_job = {"uids": dg.uids, "count": (dg.uids as Array).size(), "i": 0, "users": 0, "npcs": 0,
+						"bytes": data.size(), "t0": Time.get_ticks_usec(), "frames": 0}
+					_group_step()
+					return
+			var qd := Time.get_ticks_usec()
 			var g := UserSpawnNet.read_group(data, _spawn_types)
+			qd = Time.get_ticks_usec() - qd
 			if g.deferred:
 				_pending_spawns.append({"op": op, "data": data})
 				return
@@ -1180,22 +1248,109 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 				for rec in g.npcs:
 					npc_spawned.emit(npc_roster.spawn(rec))
 				if not g.users.is_empty():
+					var qt := Time.get_ticks_usec()
 					user_group_begin.emit()
 					for rec in g.users:
 						_user_spawned(rec)
 					user_group_end.emit()
+					if FrameSplit.on:
+						qa_groups += 1
+						qa_group_players += g.users.size()
+						print("QA NET group %d: %d player(s), %d bytes, at %d ms, decoded in %.1f ms, handled in %.1f ms (rx %d bytes, %d packets)" % [qa_groups,
+							g.users.size(), data.size(), Time.get_ticks_msec(), qd / 1000.0, (Time.get_ticks_usec() - qt) / 1000.0, qa_rx_bytes, qa_rx_packets])
 			else:
 				var players := 0
 				for u in g.uids:
 					if user_roster.has(u):
 						players += 1
 				if players > 0:
-					print("NetClient: group despawn of %d player(s)" % players)
+					print("NetClient: group despawn of %d player(s)%s" % [players,
+						(" at %d ms" % Time.get_ticks_msec()) if FrameSplit.on else ""])
 				for u in g.uids:
 					if user_roster.has(u):
 						_user_left(u)
 					elif npc_roster.despawn(u):
 						npc_despawned.emit(u)
+
+## Round 762: reads the group being read for GROUP_STEP_USEC (one record at
+## least), each player handed over as it is read inside a group bracket
+## (World3D queues them whole, as before); true when the group is done.
+func _group_step() -> bool:
+	if _group_job == null:
+		return true
+	var job: Dictionary = _group_job
+	if job.has("uids"):
+		return _despawn_step(job)
+	var r: NpcSpawnNet.Reader = job["r"]
+	var count: int = job["count"]
+	var t0 := Time.get_ticks_usec()
+	var first := int(job["i"])
+	job["frames"] = int(job["frames"]) + 1
+	var bracket := false
+	while int(job["i"]) < count:
+		if int(job["i"]) > first and Time.get_ticks_usec() - t0 >= GROUP_STEP_USEC:
+			break
+		if UserSpawnNet.is_player_ref(UserSpawnNet.peek_ref(r)):
+			var rec := UserSpawnNet.read_record(r, _spawn_types)
+			if rec == null:
+				push_warning("NetClient: a group spawn that does not read (record %d of %d: %s) -- the rest dropped" % [int(job["i"]), count, r.error])
+				job["i"] = count
+				break
+			if not bracket:
+				bracket = true
+				user_group_begin.emit()
+			_user_spawned(rec)
+			job["users"] = int(job["users"]) + 1
+		else:
+			var npc := NpcSpawnNet.read_record(r)
+			if npc == null:
+				push_warning("NetClient: a group spawn that does not read (record %d of %d: %s) -- the rest dropped" % [int(job["i"]), count, r.error])
+				job["i"] = count
+				break
+			npc_spawned.emit(npc_roster.spawn(npc))
+			job["npcs"] = int(job["npcs"]) + 1
+		job["i"] = int(job["i"]) + 1
+	if bracket:
+		user_group_end.emit()
+	if int(job["i"]) < count:
+		return false
+	_group_job = null
+	if r.error == "" and r.pos != r.data.size():
+		push_warning("NetClient: %d byte(s) left after a group spawn" % (r.data.size() - r.pos))
+	if int(job["users"]) > 0:
+		print("NetClient: group spawn of %d player(s)%s" % [int(job["users"]),
+			(" and %d NPC(s)" % int(job["npcs"])) if int(job["npcs"]) > 0 else ""])
+		if FrameSplit.on:
+			qa_groups += 1
+			qa_group_players += int(job["users"])
+			print("QA NET group %d: %d player(s), %d bytes, at %d ms, read over %d frame(s) in %.1f ms (rx %d bytes, %d packets)" % [qa_groups,
+				int(job["users"]), int(job["bytes"]), Time.get_ticks_msec(), int(job["frames"]), (Time.get_ticks_usec() - int(job["t0"])) / 1000.0,
+				qa_rx_bytes, qa_rx_packets])
+	return true
+
+## Round 762: a despawn group's ids, GROUP_STEP_USEC a frame (one at least).
+func _despawn_step(job: Dictionary) -> bool:
+	var uids: Array = job["uids"]
+	var t0 := Time.get_ticks_usec()
+	var first := int(job["i"])
+	job["frames"] = int(job["frames"]) + 1
+	while int(job["i"]) < uids.size():
+		if int(job["i"]) > first and Time.get_ticks_usec() - t0 >= GROUP_STEP_USEC:
+			break
+		var u: int = uids[int(job["i"])]
+		job["i"] = int(job["i"]) + 1
+		if user_roster.has(u):
+			job["users"] = int(job["users"]) + 1
+			_user_left(u)
+		elif npc_roster.despawn(u):
+			npc_despawned.emit(u)
+	if int(job["i"]) < uids.size():
+		return false
+	_group_job = null
+	if int(job["users"]) > 0:
+		print("NetClient: group despawn of %d player(s)%s" % [int(job["users"]),
+			(" at %d ms, over %d frame(s)" % [Time.get_ticks_msec(), int(job["frames"])]) if FrameSplit.on else ""])
+	return true
 
 ## A player came into view: World3D's snapshot of it, its body mode kept for
 ## its body (_berserk_resync), and its sitting.

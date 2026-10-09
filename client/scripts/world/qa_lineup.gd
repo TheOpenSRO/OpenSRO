@@ -168,6 +168,9 @@ func step(delta: float) -> void:
 		_spawn(appearance)
 		_t = 0.0
 		return
+	if _direct_at < _direct.size():
+		_spawn_direct_step()
+		return
 	# Round 756 (walk-up): the next block's group spawn when it is due.
 	if not _pages.is_empty():
 		_page_wait -= delta
@@ -307,6 +310,7 @@ func _spawn(appearance: CharacterAppearance) -> void:
 		turns.append(float(t))
 	var walkup := OS.get_environment("OPENSRO_QA_LINEUP_WALKUP")
 	var by_block := {}
+	var direct: Array = []
 	for i in range(specs.size()):
 		var sp: Dictionary = specs[i]
 		var qa_t0 := Time.get_ticks_usec()
@@ -337,7 +341,32 @@ func _spawn(appearance: CharacterAppearance) -> void:
 				by_block[bk] = []
 			(by_block[bk] as Array).append(args)
 			continue
-		_spawn_one(args)
+		direct.append(args)
+	# Round 762: the lineup arrives as one group spawn (bracketed as NetClient
+	# brackets a 0x3017..0x3018), as a world entry's window does, not as
+	# 1,000 single arrivals each pumping.
+	# OPENSRO_QA_LINEUP_STEP_MS=<ms>: handed over a frame's share at a time,
+	# as NetClient hands a group over since round 762 (GROUP_STEP_USEC).
+	var step_ms := OS.get_environment("OPENSRO_QA_LINEUP_STEP_MS")
+	if not direct.is_empty() and step_ms.is_valid_float():
+		_direct = direct
+		_direct_step_usec = int(float(step_ms) * 1000.0)
+		_direct_t0 = Time.get_ticks_usec()
+		_spawn_direct_step()
+	elif not direct.is_empty():
+		var g0 := Time.get_ticks_usec()
+		var was_on := FrameSplit.on
+		FrameSplit.on = true
+		var fs0 := FrameSplit.snapshot()
+		world._on_user_group_begin()
+		for args in direct:
+			_spawn_one(args)
+		world._on_user_group_end()
+		var fs1 := FrameSplit.snapshot()
+		FrameSplit.on = was_on
+		print("LINEUP: %d bodies spawned as one group in %.1f ms (books and pluses %.1f, holders %.1f, queues %.1f)" % [direct.size(),
+			(Time.get_ticks_usec() - g0) / 1000.0, (int(fs1.get("sp_pre", 0)) - int(fs0.get("sp_pre", 0))) / 1000.0,
+			(int(fs1.get("sp_node", 0)) - int(fs0.get("sp_node", 0))) / 1000.0, (int(fs1.get("sp_post", 0)) - int(fs0.get("sp_post", 0))) / 1000.0])
 	if walkup.is_valid_float():
 		# Nearest block first, as a walk toward the crowd brings them.
 		var block_keys := by_block.keys()
@@ -438,6 +467,30 @@ func _qa_run_all() -> void:
 		world._set_other_gait(int(b["id"]), true)
 	print("QA RUNAT %d bodies set walking %.1f s after the spawn in %.1f ms; ghosts %d before, %d after" % [bodies.size(), _since_spawn,
 		(Time.get_ticks_usec() - t0) / 1000.0, before, int((crowd as CrowdGpu).ghost_count()) if crowd != null else 0])
+
+## Round 762: the direct group's next share (OPENSRO_QA_LINEUP_STEP_MS), one
+## body at least, bracketed.
+var _direct: Array = []
+var _direct_at := 0
+var _direct_step_usec := 0
+var _direct_t0 := 0
+var _direct_frames := 0
+
+func _spawn_direct_step() -> void:
+	if _direct_at >= _direct.size():
+		return
+	var t0 := Time.get_ticks_usec()
+	var first := _direct_at
+	_direct_frames += 1
+	world._on_user_group_begin()
+	while _direct_at < _direct.size():
+		if _direct_at > first and Time.get_ticks_usec() - t0 >= _direct_step_usec:
+			break
+		_spawn_one(_direct[_direct_at])
+		_direct_at += 1
+	world._on_user_group_end()
+	if _direct_at >= _direct.size():
+		print("LINEUP: %d bodies handed over in %d frame(s), %.1f ms" % [_direct.size(), _direct_frames, (Time.get_ticks_usec() - _direct_t0) / 1000.0])
 
 ## Round 756 (walk-up): one block's bodies as one group spawn, bracketed as
 ## NetClient brackets a 0x3017..0x3018 page (World3D._on_user_group_begin /

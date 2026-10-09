@@ -145,8 +145,12 @@ func _test_ready_and_budget() -> void:
 		"a body whose templates are not ready waits; the ready ones are dressed nearest first (got %s)" % str(order))
 	_check(q.has(103) and q.has(102) and q.size() == 2 and q.waiting_skips == 2, "the two waiting stay queued (%d skips)" % q.waiting_skips)
 	not_ready.clear()
+	# Round 762: a pass that saw every body rests until something changes; the
+	# world reopens the queue when templates are adopted.
+	_check(q.pump(2, Vector3.ZERO, bodies, build, ready) == 0, "round 762: after a full pass the queue rests")
+	q.reopen()
 	_check(q.pump(2, Vector3.ZERO, bodies, build, ready) == 2 and order == [101, 100, 103, 102],
-		"once ready they are dressed, nearest first (got %s)" % str(order))
+		"reopened, once ready they are dressed, nearest first (got %s)" % str(order))
 	_free_all(bodies)
 	# 300 waiting: each is asked once a frame, and nothing is built.
 	var many: Array = []
@@ -181,7 +185,10 @@ func _test_ready_and_budget() -> void:
 		"a later arrival in the frame of a full pass is looked at alone (%d asked)" % asked.size())
 	asked.clear()
 	q2.pump(4, Vector3.ZERO, crowd, build, none)
-	_check(asked.size() == 300, "the next frame looks at the whole queue again (%d asked)" % asked.size())
+	_check(asked.size() == 0, "round 762: the next frame, with nothing changed, asks none (%d asked)" % asked.size())
+	q2.reopen()
+	q2.pump(5, Vector3.ZERO, crowd, build, none)
+	_check(asked.size() == 300, "reopened, the next frame looks at the whole queue again (%d asked)" % asked.size())
 	_free_all(crowd)
 	# The budget follows the frame (HITCH_TARGET_USEC).
 	var q3 := OtherCrowd.BuildQueue.new()

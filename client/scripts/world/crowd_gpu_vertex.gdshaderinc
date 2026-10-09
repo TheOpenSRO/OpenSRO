@@ -30,8 +30,10 @@ float srr_cg_objc = -1.0;
 #endif
 	ivec2 srr_cg_at = ivec2((srr_cg_slot % 256) * SRR_CG_TEXELS, srr_cg_slot / 256);
 	int srr_cg_y = int(INSTANCE_CUSTOM.y + 0.5);
+	// Round 762: texel 4 always (its y is the body's fade, CrowdGpu._write_fade).
+	vec4 srr_cg_t4 = texelFetch(crowd_bodies, srr_cg_at + ivec2(4, 0), 0);
 	if ((srr_cg_y & 1) == 1) {
-		srr_cg_objc = texelFetch(crowd_bodies, srr_cg_at + ivec2(4, 0), 0).x;
+		srr_cg_objc = srr_cg_t4.x;
 	}
 #ifdef EQUIP_GLOW
 	// Round 759: the part's glow row from the glow table, or the material's
@@ -91,8 +93,19 @@ float srr_cg_objc = -1.0;
 			VERTEX = vec3(0.0);
 		}
 	}
+	// Round 762: the fade instance (a fade twin, SRR_CG_FADE) draws only the
+	// fading bodies, at their alpha, and nothing at alpha 0 (a held page, a
+	// fade-out's end: no fragment, no depth); the opaque instance draws only
+	// the others (crowd_fades false: a material with no fade twin draws them
+	// opaque throughout, as AppearFade leaves such a mesh).
 #ifdef SRR_CG_FADE
-	// Round 756: a fading ghost's alpha, per instance (INSTANCE_CUSTOM.w).
-	appear_alpha = srr_cg_fade(INSTANCE_CUSTOM.w);
+	appear_alpha = srr_cg_t4.y != 0.0 ? srr_cg_fade(srr_cg_t4.y) : 0.0;
+	if (appear_alpha <= 0.0) {
+		VERTEX = vec3(0.0);
+	}
+#else
+	if (srr_cg_t4.y != 0.0 && crowd_fades) {
+		VERTEX = vec3(0.0);
+	}
 #endif
 }

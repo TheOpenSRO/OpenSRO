@@ -103,7 +103,27 @@ const GHOST_HITCH_TARGET_USEC := 33000
 ## The budget follows the frame as the dressing's does (BuildQueue.note_frame,
 ## HITCH_TARGET_USEC), so a crowd whose own frame is already long gets fewer
 ## ghosts a frame (one at least) rather than a frame over the hitch line.
-const GHOST_BUDGET_USEC := 50000
+##
+## Round 762: 12 ms at most, following the frame (was 50, aiming at 90 ms). An arriving page is held until it is whole and
+## then revealed in one frame (World3D._hold_step), so its ghosts no longer
+## need to be made in one or two frames; at 50 ms they made frames far over a
+## standing crowd's own (MEASURED r762.md), and the user's rule is that no
+## frame of an arrival is worse than standing in the full crowd.
+const GHOST_BUDGET_USEC := 12000
+## Round 762 (OURS): the frame the ghosts' work aims to stay under: a 60 fps
+## frame. A page is held while its ghosts are made, so the crowd is not drawn
+## yet and the frame is light (1.4 ms at the live crowd's spot, MEASURED):
+## the ghosts take what is left of 16.7 ms, up to GHOST_BUDGET_USEC, one at
+## least; where part of the crowd is drawn already, less.
+const GHOST_FRAME_TARGET_USEC := 16700
+## Round 762 (OURS): the ghosts' least time a frame. MEASURED live: a second
+## block's 1,592 arriving into the 2,400 already drawn (frames of 20-25 ms)
+## got one ghost a frame with no floor, 8 s for the page.
+const GHOST_MIN_BUDGET_USEC := 4000
+## Round 762 (OURS): the dressing's time a frame while every waiting body is
+## drawn (a ghost): background work, kept under a standing crowd's frame
+## (one body a frame at least, as before).
+const GHOST_DRESS_BUDGET_USEC := 4000
 
 ## B4: the arrived bodies still to dress, and the frame's budget. The queue
 ## holds ids only; whatever a body is dressed with is read when it is dressed,
@@ -143,6 +163,14 @@ class BuildQueue:
 	## pump looks at the whole queue again, even in the frame of a full pass.
 	func reopen() -> void:
 		_passed_frame = -1
+		_idle = false
+
+	## Round 762: the last pass went through every queued id with budget to
+	## spare: until something changes (reopen) or arrives (queue), there is
+	## nothing to look at -- a crowd of 4,000 waiting on its templates, or
+	## ghosts beyond the dressing's reach, was a sort and a `ready` call each
+	## a frame for nothing (MEASURED r762.md: 80-100 ms frames).
+	var _idle := false
 	const INDEX_BITS := 20
 	const INDEX_MASK := (1 << 20) - 1
 	## Squared distance x 256, capped (about 98,800 units): three bands of it,
@@ -175,7 +203,14 @@ class BuildQueue:
 			urgent[id] = true
 			reopen()
 
+	var _later_built_frame := -1
+
+	## Round 762: the last pump dressed nothing and stopped at `later_within_sq`:
+	## whatever is still queued is a ghost beyond the dressing's reach.
+	var settled := false
+
 	func queue(id: int) -> void:
+		settled = false
 		_fresh.append(id)
 		if _pending.is_empty():
 			started_usec = Time.get_ticks_usec()
@@ -210,22 +245,38 @@ class BuildQueue:
 	## spent, which note_frame takes out of the frame it is told.
 	var _frame_cap := 1 << 30
 	var last_spent := 0
+	## Round 762: the bodies built by the last pump's frame, and the least
+	## budget a frame keeps however long the frame was (World3D's ghosts:
+	## GHOST_MIN_BUDGET_USEC, so a page arriving into a crowd already drawn
+	## still comes in a few seconds).
+	var last_built := 0
+	var min_budget_usec := 0
 
 	## Round 748: the last frame's wall time, in microseconds; the next
 	## frames' budget becomes HITCH_TARGET_USEC less that frame without its
 	## dressing, within [0, budget_usec].
 	func note_frame(frame_usec: int) -> void:
-		_frame_cap = clampi(target_usec - (frame_usec - last_spent), 0, budget_usec)
+		_frame_cap = clampi(target_usec - (frame_usec - last_spent), mini(min_budget_usec, budget_usec), budget_usec)
 		last_spent = 0
+		last_built = 0
+
+	## Round 762: a cap on the frame's budget (World3D: GHOST_DRESS_BUDGET_USEC
+	## while every waiting body is drawn).
+	var cap_usec := 1 << 30
 
 	## This frame's budget: budget_usec, or less after note_frame.
 	func frame_budget() -> int:
-		return mini(budget_usec, _frame_cap)
+		return mini(mini(budget_usec, _frame_cap), cap_usec)
+
+	## Round 762: the bodies built a frame whatever the budget says
+	## (MIN_BUILDS_PER_FRAME; World3D: 0 for the background dressing, which
+	## waits for a frame with room for it).
+	var min_builds := MIN_BUILDS_PER_FRAME
 
 	## Whether this frame may still dress a body.
 	func can_build(frame: int) -> bool:
 		_roll(frame)
-		return _built_in_frame < MIN_BUILDS_PER_FRAME or _spent < frame_budget()
+		return _built_in_frame < min_builds or _spent < frame_budget()
 
 	func _roll(frame: int) -> void:
 		if frame != _frame:
@@ -250,12 +301,24 @@ class BuildQueue:
 	## Round 756: an id in `later` (bodies already drawn, ghosts) sorts after
 	## every id not in it, nearest first among themselves: a body nobody sees
 	## yet is dressed before one that is only waiting for its nodes.
-	func pump(frame: int, from: Vector3, bodies: Dictionary, build: Callable, ready: Callable = Callable(), later: Dictionary = {}) -> int:
+	##
+	## Round 762: `later_within_sq`, the squared distance past which an id in
+	## `later` is not dressed (World3D: the DRESS_NEAREST nearest); the order
+	## being nearest first, the pass ends at the first such id.
+	##
+	## Round 762: `later_room_usec` (>= 0), the background dressing's room
+	## this frame: an id in `later` is built only when it is above 0, one a
+	## frame at most (World3D: a ghost is drawn already, and is dressed only
+	## in a frame with room for it under the crowd's own frames).
+	func pump(frame: int, from: Vector3, bodies: Dictionary, build: Callable, ready: Callable = Callable(), later: Dictionary = {},
+			later_within_sq: float = INF, later_room_usec: int = -1) -> int:
 		if _pending.is_empty() or not can_build(frame):
 			_fresh.clear()
 			return 0
-		var ids: Array = _fresh if frame == _passed_frame else _pending.keys()
+		var ids: Array = _fresh if frame == _passed_frame or _idle else _pending.keys()
 		_fresh = []
+		if ids.is_empty():
+			return 0
 		var order := PackedInt64Array()
 		for i in ids.size():
 			if not _pending.has(ids[i]):
@@ -273,10 +336,30 @@ class BuildQueue:
 		order.sort()
 		var made := 0
 		var all_seen := true
+		var cut_on := later_within_sq < INF
+		var later_cut := (int(minf(later_within_sq * 256.0, DIST_KEY_MAX) + DIST_KEY_MAX * 2.0) + 1) << INDEX_BITS if cut_on else 0
+		var cut := false
+		# Round 762: the pass's own time (the `ready` asks too, not only the
+		# builds) is held to the frame's budget; the rest of the pass is the
+		# next frame's (a page of thousands of new kinds asked in one frame
+		# was a 786 ms frame, MEASURED r762.md).
+		var pass_t0 := Time.get_ticks_usec()
+		var asked := 0
+		var later_band := int(DIST_KEY_MAX * 2.0) << INDEX_BITS
 		for key in order:
 			if _pending.is_empty() or not can_build(frame):
 				all_seen = false
 				break
+			if asked > 0 and Time.get_ticks_usec() - pass_t0 >= frame_budget():
+				all_seen = false
+				break
+			if cut_on and key >= later_cut:
+				cut = true
+				break
+			if later_room_usec >= 0 and key >= later_band and (later_room_usec == 0 or _later_built_frame == frame):
+				# The rest are ghosts too (nearest first, the last band).
+				break
+			asked += 1
 			var id: int = ids[key & INDEX_MASK]
 			if not _pending.has(id):
 				continue # dropped by an earlier build this frame
@@ -285,6 +368,8 @@ class BuildQueue:
 				continue
 			_pending.erase(id)
 			urgent.erase(id)
+			if key >= later_band:
+				_later_built_frame = frame
 			var t0 := Time.get_ticks_usec()
 			build.call(id)
 			_spent += Time.get_ticks_usec() - t0
@@ -292,8 +377,15 @@ class BuildQueue:
 			made += 1
 		if all_seen:
 			_passed_frame = frame
+			_idle = true
+		else:
+			# The budget ran out: what this pass did not reach is looked at
+			# again whole (a pass over `_fresh` alone would lose it).
+			_idle = false
+		settled = cut and made == 0
 		built += made
 		last_spent = _spent
+		last_built = _built_in_frame
 		if _last_counted_frame != frame:
 			_last_counted_frame = frame
 			frames += 1

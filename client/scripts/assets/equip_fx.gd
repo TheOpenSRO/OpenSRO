@@ -87,6 +87,7 @@ static func _far(skel: Node3D):
 class Host:
 	var id: String
 	var skel: Skeleton3D
+	var skel_id := 0
 	var bone: int
 	var key: String
 	var scale: float
@@ -117,6 +118,8 @@ class Kind:
 
 var particles: Pk2Reader
 var _hosts: Dictionary = {}   # "skel id|bone|efp key" -> Host
+## Round 762: skeleton instance id -> its hosts' ids (remove_skel).
+var _by_skel: Dictionary = {}
 var _kinds: Dictionary = {}   # key -> Kind
 var _frame := 0
 var _shown: Array = []        # the hosts drawing their effect, placed every frame
@@ -241,10 +244,15 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	var h := Host.new()
 	h.id = id
 	h.skel = skel
+	h.skel_id = skel.get_instance_id()
 	h.bone = b
 	h.key = key
 	h.scale = scale
 	_hosts[id] = h
+	var sid := skel.get_instance_id()
+	if not _by_skel.has(sid):
+		_by_skel[sid] = []
+	(_by_skel[sid] as Array).append(id)
 	(_kinds[key] as Kind).hosts += 1
 	# Measured in the cycle under way (its slices are fixed at its start, and
 	# the cycle's last frame scans whatever is left); while the hosts fit the
@@ -271,10 +279,16 @@ static func kind_key(efp: String, _scale: float) -> String:
 	return efp.to_lower()
 
 func remove_skel(skel: Skeleton3D) -> void:
-	var sid := "%d|" % skel.get_instance_id()
-	for id in _hosts.keys():
-		if String(id).begins_with(sid):
+	# Round 762: by the skeleton's own list, not a pass over every host (each
+	# item skeleton of a crowd leaving made one: 4,000 bodies' weapons against
+	# thousands of hosts in one frame).
+	var ids = _by_skel.get(skel.get_instance_id())
+	if ids == null:
+		return
+	for id in (ids as Array).duplicate():
+		if _hosts.has(id):
 			_drop(id)
+	_by_skel.erase(skel.get_instance_id())
 
 func _drop(id: String) -> void:
 	var h: Host = _hosts[id]
@@ -286,6 +300,12 @@ func _drop(id: String) -> void:
 	if _kinds.has(h.key):
 		(_kinds[h.key] as Kind).hosts -= 1
 	_hosts.erase(id)
+	var sid := h.skel.get_instance_id() if is_instance_valid(h.skel) else h.skel_id
+	var list = _by_skel.get(sid)
+	if list != null:
+		(list as Array).erase(id)
+		if (list as Array).is_empty():
+			_by_skel.erase(sid)
 
 ## Round 746's review, findings 4-5 (OURS): the node whose weapons run their
 ## own simulation first (World3D sets the player), the hysteresis margin, how

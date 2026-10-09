@@ -52,6 +52,21 @@ func poll(peer: StreamPeer) -> Packet:
 			return null
 	return _take_frame()
 
+## Round 762: reads everything the peer holds onto the buffer without cutting
+## a frame: while NetClient holds its dispatch back (a group read a frame's
+## share at a time, a frame's dispatch budget spent) the socket is still
+## emptied every frame, so the server's writer never blocks on it -- a session
+## whose writer blocks long enough is closed (gateway.SendBlockBudget, 10 s a
+## minute; MEASURED: the live crowd's arrival closed one before this). The
+## buffer then holds what waits to be dispatched, past MAX_BUFFER. Returns the
+## reads made.
+func drain(peer: StreamPeer) -> int:
+	peer.poll()
+	var n := 0
+	while _read_some(peer):
+		n += 1
+	return n
+
 ## The size of the whole frame at _pos (header + payload), or -1 while the
 ## buffer does not hold it all yet.
 func _frame_size() -> int:

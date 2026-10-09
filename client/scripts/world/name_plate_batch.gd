@@ -232,11 +232,35 @@ func remove(label: Label3D) -> void:
 	if p == null:
 		return
 	_plates.erase(label)
+	_held.erase(label)
 	_by_slot[p.slot] = null
 	_free.append(p.slot)
+	# Round 762: its anchor hidden is enough (the shader draws nothing at a
+	# hidden anchor); its glyphs go when the chunk is next rebuilt -- a
+	# slot taken again marks it -- not a rebuild a frame while a crowd of
+	# thousands leaves (MEASURED r762.md: 2-7 ms a frame).
 	_hide_slot(p.slot)
-	_chunk_of(p.slot).dirty = true
 	stats["plates"] = _plates.size()
+
+## Round 762: a plate made for a body whose page is held: drawn nothing
+## (its anchor hidden) until released at the page's reveal -- the shaping and
+## the slot are done while the page is held, so the reveal is an anchor write.
+var _held := {}
+
+func hold(label: Label3D) -> void:
+	var p: Plate = _plates.get(label)
+	if p == null:
+		return
+	_held[label] = true
+	_hide_slot(p.slot)
+
+func release(label: Label3D) -> void:
+	if not _held.has(label):
+		return
+	_held.erase(label)
+	var p: Plate = _plates.get(label)
+	if p != null:
+		_write_anchor(p)
 
 ## The owner moved, turned, was hidden or shown: its plate's point again.
 func moved(label: Label3D) -> void:
@@ -272,7 +296,7 @@ func _hide_slot(slot: int) -> void:
 
 func _write_anchor(p: Plate) -> void:
 	var o := p.slot * 4
-	if not is_instance_valid(p.owner) or not p.owner.is_inside_tree() or not p.owner.is_visible_in_tree():
+	if not is_instance_valid(p.owner) or not p.owner.is_inside_tree() or not p.owner.is_visible_in_tree() or _held.has(p.label):
 		if _anchors[o + 3] != HIDDEN:
 			_anchors[o + 3] = HIDDEN
 			_anchor_dirty = true

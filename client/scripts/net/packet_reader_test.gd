@@ -117,9 +117,44 @@ func _test_two_frames_in_one_poll() -> void:
 	client_peer.disconnect_from_host()
 	server_peer.disconnect_from_host()
 
+## Round 762: drain() empties the socket into the reader's buffer without
+## cutting frames; the frames come out of the buffer afterwards, in order,
+## with the socket already empty.
+func _test_drain_then_frames() -> void:
+	var pair := _make_loopback_pair()
+	if pair.is_empty():
+		_check(false, "loopback pair connected")
+		return
+	var server_peer: StreamPeerTCP = pair[0]
+	var client_peer: StreamPeerTCP = pair[1]
+	var reader := PacketReader.new()
+	var total := 0
+	for i in range(40):
+		var f := Packet.new(0x0100 + i, PackedByteArray([i, i, i])).encode()
+		total += f.size()
+		server_peer.put_data(f)
+	for i in range(50):
+		client_peer.poll()
+		if client_peer.get_available_bytes() >= total:
+			break
+		OS.delay_msec(2)
+	_check(reader.drain(client_peer) >= 1, "drain reads what the socket holds")
+	client_peer.poll()
+	_check(client_peer.get_available_bytes() == 0, "the socket is empty after drain")
+	var ok := true
+	for i in range(40):
+		var p := reader.poll(client_peer)
+		if p == null or p.opcode != 0x0100 + i:
+			ok = false
+			break
+	_check(ok, "the 40 frames come out of the buffer in order")
+	client_peer.disconnect_from_host()
+	server_peer.disconnect_from_host()
+
 func _init() -> void:
 	_test_split_frame_across_polls()
 	_test_two_frames_in_one_poll()
+	_test_drain_then_frames()
 
 	if _failures == 0:
 		print("ALL PASS")

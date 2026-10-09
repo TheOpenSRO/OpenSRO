@@ -121,6 +121,15 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
   - The client appends any amount (`0x833380`; pages of 4,096 with no cap).
   - The client asserts on a second 0x3017 before the 0x3018 (`0x8abfa0`), so groups must not
     interleave. OpenSRO sends each group in one `SendFrames` batch.
+- **The order** (round 762, READ): a block's records go out in its object maps' order, which is by
+  unique id (`std::map` keyed by `obj+8`, walked by `FUN_0041fee0`; players of the receiver's layer
+  first, then the layer's other objects, then a block-level map), and a full insert (CMsgBlock slot
+  2, `0x534340`) sends the neighbour blocks first and the object's own block last (asm `0x534407`);
+  a walk's crossing sends only the difference blocks. No cap, no pacing: every group of the window
+  is built and sent inside the one call. OpenSRO now sorts a group's records (and a despawn group's
+  ids) by unique id and sends the receiver's own block last (`sortSpawnsByUID`, `ownCellLast`); the
+  neighbours keep its (x, z) order, retail's being the order its blocks were linked at region load
+  (INFERRED).
 
 ## OpenSRO's additions (OURS)
 

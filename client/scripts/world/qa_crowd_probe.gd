@@ -63,6 +63,20 @@ class_name QaCrowdProbe
 ##            skins (A2) are the boot's (OPENSRO_QA_CROWD_SKINS=own: per piece)
 ##   rezone   (round 760) a real zone change to OPENSRO_QA_REZONE (Hotan) and
 ##            back at the step's end, the crowd leaving and arriving again
+##   leave    (round 762) every lineup body leaves in one call, as a group
+##            despawn takes them (World3D._on_entity_left each); kept
+##   back     (round 762) the kept bodies arrive again as one group spawn
+##            (bracketed), and a `QA CROWD back visible` line when every one
+##            is drawn
+##   walk=<dx>/<dz>, deck=<dx>/<dz>  (round 762) a ground (or deck) click that
+##            far from the player at the step's start (World3D._qa_click): the
+##            live walk out of the crowd's blocks and back
+##
+## Round 762: OPENSRO_QA_FRAME_LOG=<path> writes one line a frame from the
+## probe's start (the clock, the frame's ms, the step, the bodies held, not
+## drawn, ghosts, far, to dress, fading, held in a page, departures queued and
+## to free, the bytes and packets received, and the frame's FrameSplit timers
+## in FRAME_LOG_SPLIT): the arrival and the departure frame by frame.
 ##
 ## Round 759 (the live crowd): with OPENSRO_QA_LINEUP=none QaLineup makes the
 ## probe over the SERVER's other players (`live`): it waits
@@ -163,7 +177,9 @@ func _drawn(id: int) -> bool:
 		return false
 	if not _args_now.has(id):
 		return true
-	return _ghosts_now != null and bool(_ghosts_now.call("is_ghost", node))
+	# Round 762: a ghost held with its page (alpha 0) is not drawn yet.
+	return _ghosts_now != null and bool(_ghosts_now.call("is_ghost", node)) \
+		and not (_ghosts_now.has_method("is_held") and bool(_ghosts_now.call("is_held", node)))
 
 ## The world's maps and its CrowdGpu (when it draws ghosts), read once a frame.
 var _bodies_now: Dictionary = {}
@@ -208,7 +224,10 @@ func setup(w: Node, lineup_bodies: Array, spawn_usec: int = 0) -> void:
 	var lw := OS.get_environment("OPENSRO_QA_CROWD_LIVE_WAIT")
 	if lw.is_valid_float():
 		_live_wait = float(lw)
-	_persec = live or OS.get_environment("OPENSRO_QA_CROWD_PERSEC") != ""
+	# Round 762: OPENSRO_QA_LIVE_PERSEC=0 turns the live lines off (their
+	# census is itself a long frame now and then, and the frame log has the rest).
+	_persec = (live and OS.get_environment("OPENSRO_QA_LIVE_PERSEC") != "0") or OS.get_environment("OPENSRO_QA_CROWD_PERSEC") != ""
+	_open_frame_log()
 	_rng.seed = 736
 	_boot_switches = CrowdAnim.switches()
 	RenderingServer.viewport_set_measure_render_time(world.get_viewport().get_viewport_rid(), true)
@@ -274,7 +293,8 @@ func _arrival_frame() -> void:
 			print("QA CROWD page %d n=%d visible_ms=%.1f frames=%d worst_ms=%.1f" % [_pages.find(pg), (pg[0] as Array).size(),
 				float(now - int(pg[1])) / 1000.0, int(pg[2]), float(pg[3])])
 	var queue = world.get("_other_builds")
-	if (queue != null and not queue.is_empty()) or _visible_us < 0:
+	# Round 762: a queue left with only ghosts beyond the dressing's reach is done.
+	if (queue != null and not queue.is_empty() and not (queue.get("settled") == true)) or _visible_us < 0:
 		return
 	for pg in _pages:
 		if int(pg[4]) < 0:
@@ -505,6 +525,160 @@ func _census() -> void:
 	print("QA CROWD census: body skeletons %d, skins registered on them %d (%.1f a body), binds written per pose %d (%.1f a body)" % [
 		posed_skels, regs, float(regs) / maxf(float(posed_skels), 1.0), binds, float(binds) / maxf(float(posed_skels), 1.0)])
 
+## Round 762 (QA): OPENSRO_QA_FRAME_LOG=<path> writes one line a frame from
+## the probe's start: the clock (ms), the frame's wall ms, the step, the other
+## players held, those not drawn yet (waiting, not a ghost), the ghosts, the
+## far bodies, those still to dress, the bodies fading (AppearFade's and
+## CrowdGpu's), the bytes and packets received (NetClient's QA counters) and
+## the frame's packet dispatch ms -- the arrival and departure frame by frame.
+var _frame_log: FileAccess = null
+## The FrameSplit timers each frame-log line carries (ms in the frame).
+const FRAME_LOG_SPLIT := ["proc_cb", "phys_cb", "post_flush", "w_world", "w_pump", "ghosts_ms", "dress", "g_add", "g_activate", "w_depart",
+	"w_depart_free", "w_fades", "w_plates", "fx_driver", "fx_effects", "g_flush", "rs_setup", "tmpl_adopt", "dep_teardown", "dep_fade", "k_new", "k_paths", "k_efps", "p_world", "p_lineup", "p_step", "p_ticks",
+	"p_player", "p_stream", "p_heights", "p_mobpump", "w_others", "w_blobs", "w_light", "w_selfpose", "o_legs", "fx_masters", "draw"]
+var _fl_last_us := 0
+var _fl_start_us := 0
+var _fl_split := {}
+
+func _open_frame_log() -> void:
+	var path := OS.get_environment("OPENSRO_QA_FRAME_LOG")
+	if path == "":
+		return
+	_frame_log = FileAccess.open(path, FileAccess.WRITE)
+	if _frame_log != null:
+		var cols := "t_ms frame_ms step others undrawn ghosts far to_dress fading rx_bytes rx_packets dispatch_ms left_ms held depart_q free_q"
+		for k in FRAME_LOG_SPLIT:
+			cols += " " + k
+		_frame_log.store_line(cols)
+		_fl_start_us = Time.get_ticks_usec()
+		_fl_last_us = _fl_start_us
+
+func _log_frame() -> void:
+	var now := Time.get_ticks_usec()
+	var ms := float(now - _fl_last_us) / 1000.0
+	_fl_last_us = now
+	var cg = world.get("_crowd_gpu")
+	var ghosts := 0
+	var far := 0
+	var fading := 0
+	if cg != null:
+		ghosts = (cg as CrowdGpu).ghost_count()
+		far = (cg as CrowdGpu).body_count() - ghosts
+		fading = (cg as CrowdGpu).fading_count() if (cg as Object).has_method("fading_count") else 0
+	var af = world.get("_appear_fades")
+	if af != null:
+		fading += (af as AppearFade.Fades).running()
+	var snap := FrameSplit.snapshot()
+	var disp := float(int(snap.get("net_dispatch", 0)) - int(_fl_split.get("net_dispatch", 0))) / 1000.0
+	var left := float(int(snap.get("w_left", 0)) - int(_fl_split.get("w_left", 0))) / 1000.0
+	var extra := ""
+	for k in FRAME_LOG_SPLIT:
+		var sk: String = "ghosts" if k == "ghosts_ms" else k
+		extra += " %.2f" % (float(int(snap.get(sk, 0)) - int(_fl_split.get(sk, 0))) / 1000.0)
+	_fl_split = snap
+	var held := 0
+	var hs = world.get("_hold_slot")
+	if hs != null and int(hs) >= 0 and cg != null and (cg as CrowdGpu).hold_pending(int(hs)):
+		held = (world.get("_hold_ids") as Array).size()
+	var undrawn: int = world._other_build_args.size() - world._ghost_ids.size() + held
+	var dq = world.get("_depart_ids")
+	var fq = world.get("_depart_free")
+	_frame_log.store_line("%.1f %.2f %s %d %d %d %d %d %d %d %d %.2f %.2f %d %d %d" % [float(now - _fl_start_us) / 1000.0, ms,
+		steps[_i] if _i >= 0 and _i < steps.size() else ("arrival" if _arriving else "wait"), world._other_bodies.size(), undrawn,
+		ghosts, far, world._other_builds.size(), fading, NetClient.qa_rx_bytes, NetClient.qa_rx_packets, disp, left, held,
+		(dq as Array).size() - int(world.get("_depart_ids_at")) if dq != null else 0, (fq as Array).size() - int(world.get("_depart_free_at")) if fq != null else 0] + extra)
+
+## Round 762 (QA): the `leave` step's kits (every lineup body leaves as a
+## group despawn would take it: _on_entity_left for each in one frame), and
+## the `back` step's arrival (every body back as one group spawn, bracketed
+## as NetClient brackets a 0x3017..0x3018 page) until every body is drawn.
+var _leave_kits: Array = []
+var _back_ids: Array = []
+var _back_us := 0
+var _back_frames := 0
+var _back_worst := 0.0
+var _back_last_us := 0
+
+func _leave_all() -> void:
+	var tk := Time.get_ticks_usec()
+	_leave_kits = []
+	for b in bodies:
+		var id := int(b["id"])
+		var node = world._other_bodies.get(id)
+		if node == null or not is_instance_valid(node):
+			continue
+		var gait: Dictionary = world._other_gaits.get(id, {})
+		var args: Dictionary = world._other_build_args.get(id, {})
+		_leave_kits.append([id, String((node as Node).get_meta("character_name", "")), (node as Node3D).position,
+			(world._other_equipped.get(id, args.get("equipped", {})) as Dictionary).duplicate(), String((node as Node).get_meta("body", "")),
+			int(gait.get("scale", args.get("scale", CharacterAppearance.DEFAULT_SCALE))), (world._other_pluses.get(id, {}) as Dictionary).duplicate(),
+			(node as Node3D).rotation.y])
+	var t0 := Time.get_ticks_usec()
+	for k in _leave_kits:
+		world._on_entity_left(int(k[0]))
+	print("QA CROWD leave: %d bodies left in one call, %.1f ms (and %.1f ms of the probe's own: their kits kept for `back`)" % [
+		_leave_kits.size(), (Time.get_ticks_usec() - t0) / 1000.0, (t0 - tk) / 1000.0])
+
+func _come_back() -> void:
+	if _leave_kits.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+	_back_ids = []
+	for k in _leave_kits:
+		_back_ids.append(int(k[0]))
+	_back_us = t0
+	_back_frames = 0
+	_back_kits = _leave_kits
+	_back_at = 0
+	_leave_kits = []
+	# OPENSRO_QA_LINEUP_STEP_MS: handed over a frame's share at a time, as
+	# NetClient hands a group over since round 762; else in this one call.
+	var sm := OS.get_environment("OPENSRO_QA_LINEUP_STEP_MS")
+	_back_step_usec = int(float(sm) * 1000.0) if sm.is_valid_float() else (1 << 40)
+	_back_hand_over()
+	_back_last_us = Time.get_ticks_usec()
+	_back_worst = float(_back_last_us - t0) / 1000.0
+	print("QA CROWD back: %d bodies arriving as one group, the first share spawned in %.1f ms" % [_back_ids.size(), _back_worst])
+
+var _back_kits: Array = []
+var _back_at := 0
+var _back_step_usec := 0
+
+func _back_hand_over() -> void:
+	if _back_at >= _back_kits.size():
+		return
+	var t0 := Time.get_ticks_usec()
+	var first := _back_at
+	world._on_user_group_begin()
+	while _back_at < _back_kits.size():
+		if _back_at > first and Time.get_ticks_usec() - t0 >= _back_step_usec:
+			break
+		var k: Array = _back_kits[_back_at]
+		_back_at += 1
+		world._spawn_or_update_other(int(k[0]), String(k[1]), k[2], k[3], String(k[4]), NAN, int(k[5]), k[6])
+		var node = world._other_bodies.get(int(k[0]))
+		if node != null:
+			(node as Node3D).rotation.y = float(k[7])
+	world._on_user_group_end()
+	if _back_at >= _back_kits.size():
+		for b in bodies:
+			var fresh = world._other_bodies.get(int(b["id"]))
+			if fresh != null:
+				b["node"] = fresh
+
+func _back_frame() -> void:
+	_back_hand_over()
+	var now := Time.get_ticks_usec()
+	_back_worst = maxf(_back_worst, float(now - _back_last_us) / 1000.0)
+	_back_last_us = now
+	_back_frames += 1
+	_read_world()
+	for id in _back_ids:
+		if not _drawn(id):
+			return
+	print("QA CROWD back visible n=%d ms=%.1f frames=%d worst_ms=%.1f" % [_back_ids.size(), float(now - _back_us) / 1000.0, _back_frames, _back_worst])
+	_back_ids = []
+
 func _next() -> void:
 	if _i >= 0:
 		_switch(steps[_i], false)
@@ -523,6 +697,10 @@ func _next() -> void:
 func _process(delta: float) -> void:
 	if world == null:
 		return
+	if _frame_log != null:
+		_log_frame()
+	if not _back_ids.is_empty():
+		_back_frame()
 	if _persec:
 		_persec_frame()
 	if _arriving:
@@ -828,6 +1006,15 @@ func _switch(step: String, off: bool) -> void:
 	for kind in ["churn", "redress", "reglow"]:
 		if step.begins_with(kind):
 			step = kind
+	# Round 762: `walk=<dx>/<dz>` and `deck=<dx>/<dz>`, a ground (or deck)
+	# click that far from the player at the step's start (World3D._qa_click):
+	# the live walk out of the crowd's blocks and back.
+	if step.begins_with("walk=") or step.begins_with("deck="):
+		if off:
+			var d := step.substr(5).split("/")
+			if d.size() == 2:
+				print("QA CROWD %s: %s" % [step, world._qa_click(float(d[0]), float(d[1]), true, step.begins_with("deck="))])
+		return
 	if step.begins_with("anim="):
 		CrowdAnim.set_switches(step.substr(5) if off else _boot_switches)
 		return
@@ -984,6 +1171,12 @@ func _switch(step: String, off: bool) -> void:
 				for id in _pool_tasks:
 					PoolWait.task(int(id))
 				_pool_tasks.clear()
+		"leave":
+			if off:
+				_leave_all()
+		"back":
+			if off:
+				_come_back()
 		"leaveall":
 			# Round 757: every lineup body leaves at once (0x3016's path): the
 			# end of a crowd. Not given back; the steps after it have no bodies.

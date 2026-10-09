@@ -27,6 +27,9 @@ uniform sampler2D crowd_volume : filter_nearest, repeat_disable;
 uniform sampler2D crowd_glow : filter_nearest, repeat_disable;
 // Character Sight Range (VideoOptions.CHARACTER_RANGE): 0 draws every body.
 uniform float crowd_range = 0.0;
+// Round 762: whether this material's fading bodies are drawn by a fade twin
+// (CrowdGpu: false when the material has none, so they stay opaque).
+uniform bool crowd_fades = true;
 // The clip clock, ms since CrowdGpu's epoch (CrowdGpu.flush).
 global uniform float srr_crowd_clock;
 
@@ -50,17 +53,27 @@ mat4 srr_cg_bone(int srr_bone, int srr_row) {
 		texelFetch(crowd_bones, srr_at + ivec3(2, 0, 0), 0));
 }
 
-// Round 756: a fading ghost's alpha (CrowdGpu's fade groups) from
-// INSTANCE_CUSTOM.w -- the clock (ms) its fade began at, or -1 - that for a
-// fade-out -- as AppearFade sets the model's byte: 255 / 2.0 s x elapsed,
-// truncated, up to 255 (READ, CIDecoAppear); 255 - 255 / 1.5 s x elapsed,
-// truncated, down to 0 (READ, CIDecoDisappear).
-float srr_cg_fade(float srr_w) {
-	if (srr_w >= 0.0) {
-		float srr_e = max(srr_crowd_clock - srr_w, 0.0) / 1000.0;
+// Round 762: a far body's fade, from the fifth texel's y (CrowdGpu._write_fade)
+// -- 0 none; 1e6 + the clock (ms) its fade-in began at; -(1e6 + that) for a
+// fade-out; 4e6 + k for a page held until its reveal, whose clock is
+// srr_crowd_reveal[k] (1e9 while held: alpha 0) -- as AppearFade sets the
+// model's byte: 255 / 2.0 s x elapsed, truncated, up to 255 (READ,
+// CIDecoAppear); 255 - 255 / 1.5 s x elapsed, truncated, down to 0 (READ,
+// CIDecoDisappear). Every part of a far body draws from its mesh's one group;
+// the group's opaque instance leaves out a fading body's vertices and its fade
+// instance (the same MultiMesh with the blended fade twin) draws only them.
+global uniform vec4 srr_crowd_reveal;
+float srr_cg_fade(float srr_f) {
+	if (srr_f >= 3.5e6) {
+		int srr_k = clamp(int(srr_f - 4.0e6 + 0.5), 0, 3);
+		float srr_e = max(srr_crowd_clock - srr_crowd_reveal[srr_k], 0.0) / 1000.0;
 		return min(floor(255.0 / 2.0 * srr_e), 255.0) / 255.0;
 	}
-	float srr_e = max(srr_crowd_clock - (-1.0 - srr_w), 0.0) / 1000.0;
+	if (srr_f > 0.0) {
+		float srr_e = max(srr_crowd_clock - (srr_f - 1.0e6), 0.0) / 1000.0;
+		return min(floor(255.0 / 2.0 * srr_e), 255.0) / 255.0;
+	}
+	float srr_e = max(srr_crowd_clock - (-srr_f - 1.0e6), 0.0) / 1000.0;
 	return max(floor(255.0 - 255.0 / 1.5 * srr_e), 0.0) / 255.0;
 }
 

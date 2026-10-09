@@ -167,6 +167,23 @@ class Group:
 	## Cycles (collect()) it has been empty; its twin's key.
 	var empty_cycles := 0
 	var twin_key := ""
+	## Round 762: the material its twin is of (its fade twin is made from it),
+	## the layout, and the fade instance: the same MultiMesh drawn with the
+	## fade twin, which draws only the fading bodies (crowd_gpu_vertex).
+	var src: Material = null
+	var layout: Layout = null
+	var layers := 1
+	var sort := 0.0
+	var fade_inst := RID()
+	var fade_mat: ShaderMaterial = null
+	var fade_tried := false
+	## Its instances whose body is fading (in, out or held), and of those the
+	## ones held in each hold slot (slot -> count); the two instances' shown
+	## state as last sent.
+	var n_fade := 0
+	var held := {}
+	var shown_o := true
+	var shown_f := false
 
 class Body:
 	var node: Node3D
@@ -207,6 +224,21 @@ class Body:
 	## Round 759: the object colour its lit parts draw at (texel 4; -1 none),
 	## the value its level copy of a material would carry (ObjectLight).
 	var objc := -1.0
+	## Round 762: the hold slot of the page it arrived in (-1 none) until its
+	## fade-in is over, and the fade's cohort (FadeCohort) while it fades.
+	var hold := -1
+	var cohort = null
+
+## Round 762: bodies whose fade began together (one frame, one way), or a held
+## page (a hold slot) until its reveal: their fade ends together, and the
+## work that follows (each body's texel and counts) is spread over frames
+## (FADE_END_BUDGET_USEC).
+class FadeCohort:
+	var kind := 0
+	var start := INF
+	var slot := -1
+	var bodies: Array = []
+	var next := 0
 
 var scenario: RID
 var _layouts := {}            # layout key -> Layout
@@ -255,6 +287,8 @@ func _notification(what: int) -> void:
 		var g: Group = _groups[k]
 		if g.inst.is_valid():
 			RenderingServer.free_rid(g.inst)
+		if g.fade_inst.is_valid():
+			RenderingServer.free_rid(g.fade_inst)
 		if g.mm.is_valid():
 			RenderingServer.free_rid(g.mm)
 	_groups.clear()
@@ -307,6 +341,10 @@ func skeletons() -> Array:
 ## The far body record of `skel`, or null (World3D's sound step).
 func body_of(skel: Object) -> Body:
 	return _bodies.get(skel) if skel != null else null
+
+## Round 762: the far body whose holder is `node` (a ghost's or a built one's).
+func body_by_node(node: Object) -> Body:
+	return _by_node.get(node) if node != null else null
 
 ## The far bodies within hearing (World3D._crowd_sound_step), kept as their
 ## `heard` flags change.
@@ -362,7 +400,10 @@ func prebake(skel: Skeleton3D, anim: BanReader.ParsedAnimation) -> void:
 ## nothing changed, when it cannot: its clip is not baked (it is queued), a
 ## part is not one this path draws (a material that is not a ShaderMaterial,
 ## a piece hung some other way), or no layout.
-func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float) -> bool:
+##
+## Round 762: `fade_from` (a clip time), when given, is a fade-in it goes on
+## with (a ghost's, handed over to its built skeleton).
+func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float, fade_from: float = NAN, hold: int = -1) -> bool:
 	if _bodies.has(skel):
 		return true
 	# The skeleton hangs straight from its holder (World3D._dress_other): its
@@ -395,6 +436,13 @@ func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float) -> bool
 	_write_clip(b, idle_time)
 	b.objc = _parts_objc(parts)
 	_write_light(b)
+	if hold_pending(hold):
+		# Round 762: dressed while its page is held: held with it.
+		_begin_fade(b, FADE_IN, INF, hold)
+	elif not is_nan(fade_from):
+		_begin_fade(b, FADE_IN, fade_from)
+	else:
+		_write_fade(b)
 	for p in parts:
 		_add_part(b, p)
 	_hide(b, parts)
@@ -415,18 +463,24 @@ func add(node: Node3D, skel: Skeleton3D, entry: Array, idle_time: float) -> bool
 ## its clip tick. `push`: its groups are sent to the server now, so a body
 ## brought back between two flushes (a hook in another node's frame) is never
 ## drawn twice; release_all sends once for all.
-func remove(skel: Object, push: bool = true) -> Array:
+##
+## Round 762: `departing`, a body whose holder is about to be freed after its
+## fade-out (World3D's departures): its meshes stay hidden and its skeleton
+## as it is, which nothing will draw again.
+func remove(skel: Object, push: bool = true, departing: bool = false) -> Array:
 	var b: Body = _bodies.get(skel) if skel != null else null
 	if b == null:
 		return []
-	if b.fade != 0:
-		_fading.erase(b)
-		b.fade = 0
 	if b.ghost:
 		_ghost_count -= 1
 	for p in b.parts:
 		_remove_part(p)
 	b.parts.clear()
+	if b.fade != 0:
+		_fade_count -= 1
+		b.fade = 0
+		b.hold = -1
+		b.cohort = null
 	if push:
 		_push_groups()
 	_bodies.erase(skel)
@@ -441,7 +495,14 @@ func remove(skel: Object, push: bool = true) -> Array:
 	b.heard = false
 	b.sound_due = INF
 	_free_slots.append(b.slot)
-	# A freed slot draws nothing: no instance names it.
+	# A freed slot draws nothing: no instance names it. Its fade texel is
+	# cleared for the next body to take it.
+	if b.slot >= 0:
+		_body_data[b.slot * FLOATS_PER_BODY + 17] = 0.0
+	if departing:
+		b.hidden.clear()
+		stats["removed"] += 1
+		return b.entry
 	_unhide(b)
 	if not b.ghost and is_instance_valid(skel):
 		var sk := skel as Skeleton3D
@@ -561,8 +622,18 @@ const LIT_CACHE_CAP := 4096
 ## Lit material id -> [WeakRef to it, its fade twin source] (_fade_src).
 var _fade_srcs := {}
 const FADE_SRC_CAP := 4096
-## Fading ghosts (Body -> true).
-var _fading := {}
+## Round 762: the fade cohorts (FadeCohort), those begun this frame by kind
+## and start, each hold slot's cohort (null: free) and the groups its bodies
+## draw from, the slots' reveal clocks (ms; REVEAL_HELD while held), the
+## groups whose instances' shown state is to be worked out again, and how
+## many bodies fade.
+var _cohorts: Array = []
+var _open_cohorts := {}
+var _slot_cohort: Array = [null, null, null, null]
+var _slot_groups: Array = [{}, {}, {}, {}]
+var _reveal := PackedFloat32Array([REVEAL_HELD, REVEAL_HELD, REVEAL_HELD, REVEAL_HELD])
+var _vis_dirty := {}
+var _fade_count := 0
 
 ## Draws `node` (another player's holder, in the tree) as the body `recipe`
 ## names, playing `entry` (World3D._animated's shape, entry[0] the node), its
@@ -571,7 +642,7 @@ var _fading := {}
 ## changed, when it cannot yet (its clip is still baking: queued first) or
 ## cannot at all (refusals; the caller dresses it instead: can_ghost).
 func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array, local: Transform3D, light: float,
-		idle_time: float, fade: bool) -> bool:
+		idle_time: float, fade: bool, hold: int = -1) -> bool:
 	if not enabled or node == null or recipe == null or _bodies.has(node) or not node.is_inside_tree():
 		return false
 	var geo = _recipe_geometry(recipe)
@@ -606,10 +677,14 @@ func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array
 	_ghost_count += 1
 	_write_transform(b)
 	_write_clip(b, idle_time)
-	if fade:
-		b.fade = FADE_IN
-		b.fade_start = idle_time
-		_fading[b] = true
+	# Round 762: held with its page (`hold`, a slot from hold_open) until the
+	# page is revealed, or fading in from now.
+	if fade and hold_pending(hold):
+		_begin_fade(b, FADE_IN, INF, hold)
+	elif fade:
+		_begin_fade(b, FADE_IN, idle_time)
+	else:
+		_write_fade(b)
 	_add_ghost_parts(b)
 	_grow_aabb(b.xf.origin)
 	stats["ghosts"] = int(stats.get("ghosts", 0)) + 1
@@ -675,70 +750,245 @@ func ghost_light(node: Object, light: float) -> void:
 ## fade-in it was in, from `start` (a clip time).
 func continue_fade_in(node: Object, start: float) -> void:
 	var b: Body = _bodies.get(node) if node != null else null
-	if b == null or not b.ghost or b.fade != 0:
+	if b == null or b.fade != 0:
 		return
-	b.fade = FADE_IN
-	b.fade_start = start
-	_fading[b] = true
-	_reparts(b)
+	_begin_fade(b, FADE_IN, start)
 
-## The ghost's place in its fade-in, seconds (-1: not fading in).
+## The body's place in its fade-in, seconds (-1: not fading in; 0 while its
+## page is held).
 func fade_elapsed(node: Object) -> float:
-	var b: Body = _bodies.get(node) if node != null else null
+	var b: Body = _by_node.get(node) if node != null else null
+	if b == null:
+		b = _bodies.get(node) if node != null else null
 	if b == null or b.fade != FADE_IN:
 		return -1.0
+	if is_inf(b.fade_start):
+		return 0.0
 	return maxf(_last_time - b.fade_start, 0.0)
 
-## A departing ghost fades out over AppearFade.DISAPPEAR_SECONDS from now,
-## then leaves the instances (its holder is freed by the caller's own
-## fade-out, which ends then too). Nothing for a body that is not a ghost.
-## (A ghost still fading in fades out from full, as AppearFade.start_out.)
-func fade_out(node: Object) -> void:
-	var b: Body = _bodies.get(node) if node != null else null
-	if b == null or not b.ghost or b.fade == FADE_OUT:
-		return
-	b.fade = FADE_OUT
-	b.fade_start = _last_time
-	_fading[b] = true
-	_reparts(b)
+## The clip time `node`'s fade-in began at (its page's reveal), NAN when it is
+## not fading in or its page is still held.
+func fade_start_of(node: Object) -> float:
+	var b: Body = _by_node.get(node) if node != null else null
+	if b == null or b.fade != FADE_IN or is_inf(b.fade_start):
+		return NAN
+	return b.fade_start
 
-## The fades that ended by `idle_time` (flush): a fade-in's parts move to the
-## shared groups, a fade-out's body leaves.
+## The hold slot `node`'s body arrived in (-1: none, or its fade is over).
+func hold_of(node: Object) -> int:
+	var b: Body = _by_node.get(node) if node != null else null
+	return b.hold if b != null else -1
+
+## Whether the far body keyed `key` (a skeleton, or a ghost's holder) fades.
+func is_fading(key: Object) -> bool:
+	var b: Body = _bodies.get(key) if key != null else null
+	return b != null and b.fade != 0
+
+## Whether `node`'s body waits in a held page (drawn at alpha 0).
+func is_held(node: Object) -> bool:
+	var b: Body = _by_node.get(node) if node != null else null
+	return b != null and b.fade == FADE_IN and is_inf(b.fade_start)
+
+## A departing far body (a ghost or a built one -- round 762: a built far body
+## too, which before was brought back to the CPU path to fade) fades out over
+## AppearFade.DISAPPEAR_SECONDS from now, drawn by its groups' fade
+## instances, then draws nothing until its owner removes it (remove(...,
+## departing)). A body still fading in fades out from full, as
+## AppearFade.start_out does; one whose page is still held is gone at once
+## (alpha 0). False when `node` holds no far body here.
+func fade_out(node: Object) -> bool:
+	var b: Body = _by_node.get(node) if node != null else null
+	if b == null:
+		return false
+	if b.fade == FADE_OUT:
+		return true
+	var start := _last_time
+	if b.fade == FADE_IN and is_inf(b.fade_start):
+		start = _last_time - AppearFade.DISAPPEAR_SECONDS - 1.0
+	_begin_fade(b, FADE_OUT, start)
+	return true
+
+## Round 762: `b` begins to fade (`kind`) from clip time `start` -- INF and a
+## hold slot for a held page -- in the cohort that began this frame the same
+## way. Its instances move from its groups' opaque instances to their fade
+## instances: counts only, the shader reads the texel.
+func _begin_fade(b: Body, kind: int, start: float, hold: int = -1) -> void:
+	var was := b.fade
+	var was_hold := b.hold
+	if was == 0:
+		_fade_count += 1
+	b.fade = kind
+	b.fade_start = start
+	b.hold = hold
+	var co: FadeCohort = null
+	if hold >= 0:
+		co = _slot_cohort[hold]
+	else:
+		var key := Vector2i(kind, int(start * 1000.0))
+		co = _open_cohorts.get(key)
+		if co == null or co.start != start:
+			co = FadeCohort.new()
+			co.kind = kind
+			co.start = start
+			_cohorts.append(co)
+			_open_cohorts[key] = co
+	b.cohort = co
+	co.bodies.append(b)
+	for rec in b.parts:
+		var g: Group = rec[0]
+		if was == 0:
+			g.n_fade += 1
+		if was_hold >= 0:
+			g.held[was_hold] = int(g.held.get(was_hold, 0)) - 1
+		if hold >= 0:
+			g.held[hold] = int(g.held.get(hold, 0)) + 1
+			(_slot_groups[hold] as Dictionary)[g] = true
+		_vis_dirty[g] = true
+	_write_fade(b)
+
+## Round 762: `b`'s fade-in is over: its instances go back to the opaque ones.
+func _end_fade(b: Body) -> void:
+	if b.fade == 0:
+		return
+	for rec in b.parts:
+		var g: Group = rec[0]
+		g.n_fade -= 1
+		if b.hold >= 0:
+			g.held[b.hold] = int(g.held.get(b.hold, 0)) - 1
+		_vis_dirty[g] = true
+	_fade_count -= 1
+	b.fade = 0
+	b.hold = -1
+	b.cohort = null
+	stats["fades_done"] = int(stats.get("fades_done", 0)) + 1
+	_write_fade(b)
+
+## Texel 4's y: the body's fade as crowd_gpu.gdshaderinc's srr_cg_fade reads it.
+func _write_fade(b: Body) -> void:
+	var v := 0.0
+	if b.fade != 0:
+		if b.hold >= 0:
+			v = HOLD_CODE + float(b.hold)
+		else:
+			var ms := (b.fade_start - _epoch) * 1000.0
+			v = FADE_CODE + ms if b.fade == FADE_IN else -(FADE_CODE + ms)
+	var o := b.slot * FLOATS_PER_BODY + 17
+	if _body_data[o] == v:
+		return
+	_body_data[o] = v
+	_body_dirty = true
+
+## Round 762: how many bodies are fading (in, out, or held).
+func fading_count() -> int:
+	return _fade_count
+
+const FADE_CODE := 1.0e6
+const HOLD_CODE := 4.0e6
+## Hold slots (crowd_gpu.gdshaderinc's srr_crowd_reveal: a vec4).
+const HOLD_SLOTS := 4
+## The fades' end work a frame at most (OURS): a page of 4,000 ends its
+## fade-in together, and each body's end is its texel and a count a part.
+const FADE_END_BUDGET_USEC := 1500
+const REVEAL_HELD := 1.0e9
+
+## Round 762 (OURS; r762.md): a page arriving is held -- its ghosts made over
+## frames at alpha 0 -- and revealed in one frame, every body fading in
+## together, as retail creates a group spawn's characters in one call (READ,
+## r756.md). A free slot for a held page, or -1 when all four are in use (the
+## caller fades its bodies in at once instead).
+func hold_open() -> int:
+	for k in range(HOLD_SLOTS):
+		if _slot_cohort[k] == null:
+			var co := FadeCohort.new()
+			co.kind = FADE_IN
+			co.slot = k
+			_slot_cohort[k] = co
+			_slot_groups[k] = {}
+			_cohorts.append(co)
+			_reveal[k] = REVEAL_HELD
+			_send_reveal()
+			return k
+	return -1
+
+## Whether slot `k` holds a page not revealed yet.
+func hold_pending(k: int) -> bool:
+	return k >= 0 and k < HOLD_SLOTS and _slot_cohort[k] != null and is_inf((_slot_cohort[k] as FadeCohort).start)
+
+## Reveals slot `k`'s page: every body in it begins its fade-in at clip time
+## `idle_time`, in this frame (one shader parameter, and the shown state of
+## the groups it draws from). Returns how many bodies it revealed.
+func reveal(k: int, idle_time: float) -> int:
+	if not hold_pending(k):
+		return 0
+	var co: FadeCohort = _slot_cohort[k]
+	co.start = idle_time
+	_reveal[k] = float((idle_time - _epoch) * 1000.0)
+	_send_reveal()
+	var n := 0
+	for b in co.bodies:
+		if (b as Body).cohort == co:
+			(b as Body).fade_start = idle_time
+			n += 1
+	for g in _slot_groups[k]:
+		_vis_dirty[g] = true
+	return n
+
+func _send_reveal() -> void:
+	RenderingServer.global_shader_parameter_set(&"srr_crowd_reveal", Vector4(_reveal[0], _reveal[1], _reveal[2], _reveal[3]))
+
+## The fades that ended by `idle_time` (flush): a fade-in's bodies go back to
+## the opaque instances, FADE_END_BUDGET_USEC a frame; a fade-out's bodies
+## draw nothing from then (their owner removes them); a held slot is free
+## again once its page's fade-in is over for every body in it.
 func _step_fades(idle_time: float) -> void:
-	if _fading.is_empty():
+	_open_cohorts.clear()
+	if _cohorts.is_empty():
 		return
-	for k in _fading.keys():
-		var b: Body = k
-		var e := idle_time - b.fade_start
-		if b.fade == FADE_OUT:
-			if AppearFade.out_done_at(e, AppearFade.DISAPPEAR_SECONDS):
-				remove(b.key, false)
-		elif AppearFade.done_at(e, AppearFade.APPEAR_SECONDS):
-			_fading.erase(b)
-			b.fade = 0
-			_reparts(b)
-			stats["fades_done"] = int(stats.get("fades_done", 0)) + 1
+	var t0 := Time.get_ticks_usec()
+	var keep: Array = []
+	for c in _cohorts:
+		var co: FadeCohort = c
+		if is_inf(co.start):
+			keep.append(co)
+			continue
+		var e := idle_time - co.start
+		if co.kind == FADE_OUT:
+			if not AppearFade.out_done_at(e, AppearFade.DISAPPEAR_SECONDS):
+				keep.append(co)
+			continue
+		if not AppearFade.done_at(e, AppearFade.APPEAR_SECONDS):
+			keep.append(co)
+			continue
+		while co.next < co.bodies.size() and Time.get_ticks_usec() - t0 < FADE_END_BUDGET_USEC:
+			var b: Body = co.bodies[co.next]
+			co.next += 1
+			if b.cohort == co:
+				_end_fade(b)
+		if co.next < co.bodies.size():
+			keep.append(co)
+			continue
+		if co.slot >= 0 and _slot_cohort[co.slot] == co:
+			_slot_cohort[co.slot] = null
+			(_slot_groups[co.slot] as Dictionary).clear()
+			_reveal[co.slot] = REVEAL_HELD
+			_send_reveal()
+	_cohorts = keep
 
-## INSTANCE_CUSTOM.w of a fading part: the clock (ms since the epoch) its fade
-## began at, or -1 - that for a fade-out (srr_cg_fade).
-func _fade_w(b: Body) -> float:
-	var ms := (b.fade_start - _epoch) * 1000.0
-	return ms if b.fade == FADE_IN else -1.0 - ms
-
-## A ghost's parts again (its light or its fade changed): off its groups,
-## then on the ones it draws from now.
+## A ghost's parts again (its light changed): off its groups, then on the
+## ones it draws from now.
 func _reparts(b: Body) -> void:
 	for p in b.parts:
 		_remove_part(p)
 	b.parts.clear()
 	_add_ghost_parts(b)
 
+## A ghost's parts on its meshes' shared groups (round 762: a fading one's
+## too; its fade is its texel and its groups' fade instances).
 func _add_ghost_parts(b: Body) -> void:
 	var parts := _lit_parts(b.recipe, b.layout, b.light)
 	b.objc = _ghost_objc(b)
 	_write_light(b)
 	b.mats.clear()
-	var w := _fade_w(b) if b.fade != 0 else 0.0
 	var l := b.layout
 	for p in parts:
 		var lit: Material = p["lit"]
@@ -747,37 +997,32 @@ func _add_ghost_parts(b: Body) -> void:
 		# (round 756's review, F2): collect() frees a twin with its last
 		# group, and a cached one would no longer be given the crowd's
 		# textures as they grow.
-		var src := _fade_src(lit) if b.fade != 0 else null
-		var tk := "%d|%s" % [src.get_instance_id(), l.key] if src != null else String(p["tk"])
-		var twin: ShaderMaterial = _live_twin(src, tk, l) if src != null else null
+		var tk: String = p["tk"]
+		var twin: ShaderMaterial = null
 		var glow := -1
-		if twin == null:
-			src = lit
-			tk = p["tk"]
-			# Round 759: a glow material draws from its item's one glow twin,
-			# the row per instance.
-			if EquipGlow.is_glow(lit):
-				var gt := _glow_twin(lit, l)
-				twin = gt[0]
-				tk = gt[1]
-				glow = _glow_row(lit)
-			else:
-				twin = _live_twin(lit, tk, l)
+		# Round 759: a glow material draws from its item's one glow twin,
+		# the row per instance.
+		if EquipGlow.is_glow(lit):
+			var gt := _glow_twin(lit, l)
+			twin = gt[0]
+			tk = gt[1]
+			glow = _glow_row(lit)
+		else:
+			twin = _live_twin(lit, tk, l)
 		if twin == null:
 			continue
 		# The group key, kept per twin by id (never the twin itself, F2).
-		var gk_slot := "gk_fade" if src != lit else "gk"
-		var gk = p.get(gk_slot)
+		var gk = p.get("gk")
 		if gk == null or int(gk[0]) != twin.get_instance_id():
 			gk = [twin.get_instance_id(), "%d|%d|%d|%.4f" % [(p["mesh"] as Mesh).get_instance_id(), twin.get_instance_id(), int(p["layers"]), float(p["sort"])]]
-			p[gk_slot] = gk
+			p["gk"] = gk
 		var q := {"mesh": p["mesh"], "material": twin, "layers": p["layers"], "sort": p["sort"], "vol": p["vol"], "centre": p["centre"],
-			"twin_key": tk, "gkey": gk[1]}
+			"twin_key": tk, "gkey": gk[1], "src": lit}
 		if bool(p.get("lit_on", false)):
 			q["objc"] = b.objc
 		if glow >= 0:
 			q["glow"] = glow
-		_add_part(b, q, w if src != lit else 0.0)
+		_add_part(b, q)
 
 ## `m`'s twin as _twin answers, without re-making its key: the live one in
 ## _twins when it is still `m`'s (its source checked by the weak reference),
@@ -922,6 +1167,11 @@ func item_origin(item_skel: Node3D):
 	if att == null:
 		return null
 	var b: Body = _bodies.get(att.get_parent())
+	if b != null and (b.fade == FADE_OUT or (b.fade == FADE_IN and is_inf(b.fade_start))):
+		# Round 762: a departing body's weapon shows no particles (EquipFx
+		# finds it out of reach: its fade-out is drawn here, not on its
+		# nodes), nor a body whose page is still held.
+		return Vector3(INF, INF, INF)
 	return b.xf.origin if b != null else null
 
 ## Character Sight Range (0: none) for every far part.
@@ -1018,12 +1268,21 @@ func bake_all() -> void:
 		bake_step(1 << 30)
 
 func _rebase(idle_time: float) -> void:
+	var old_epoch := _epoch
 	_epoch = idle_time
 	for skel in _bodies:
 		_write_clip(_bodies[skel], idle_time)
-	# A fading ghost's start is ms since the epoch (round 756).
-	for b in _fading.keys():
-		_reparts(b)
+	# A fading body's start is ms since the epoch (its texel, round 762), and
+	# so is a revealed slot's clock.
+	var shift := (idle_time - old_epoch) * 1000.0
+	for c in _cohorts:
+		for b in (c as FadeCohort).bodies:
+			if (b as Body).cohort == c:
+				_write_fade(b)
+	for k in range(HOLD_SLOTS):
+		if _reveal[k] < REVEAL_HELD:
+			_reveal[k] -= shift
+	_send_reveal()
 
 func _upload(force: bool = false) -> void:
 	if _body_dirty and _slot_cap > 0:
@@ -1091,6 +1350,8 @@ func _push_groups() -> void:
 		stats["aabb_pushes"] = int(stats.get("aabb_pushes", 0)) + 1
 		for k in _groups:
 			RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
+			if (_groups[k] as Group).fade_inst.is_valid():
+				RenderingServer.instance_set_custom_aabb((_groups[k] as Group).fade_inst, _aabb)
 	# Round 759: the groups marked dirty, not a pass over every group a frame
 	# (6,703 live, MEASURED: part of `g_flush`'s 5.9 ms).
 	for g in _dirty_groups:
@@ -1098,7 +1359,59 @@ func _push_groups() -> void:
 		RenderingServer.multimesh_set_buffer((g as Group).mm, (g as Group).buf)
 		RenderingServer.multimesh_set_visible_instances((g as Group).mm, (g as Group).count)
 	_dirty_groups.clear()
+	# Round 762: each group's two instances shown as its bodies fade -- the
+	# opaque one while a body in it does not fade, the fade one while a body
+	# in it fades and is not in a held page.
+	for g in _vis_dirty:
+		_show_group(g as Group)
+	_vis_dirty.clear()
 	stats["instances"] = _instances
+
+func _show_group(g: Group) -> void:
+	var held := 0
+	for k in g.held:
+		if hold_pending(int(k)):
+			held += int(g.held[k])
+	var want_f := g.n_fade - held > 0
+	# Made while its page is still held, not when it is revealed: a cold
+	# crowd's reveal would otherwise make every group's fade twin in one frame.
+	if g.n_fade > 0 and not g.fade_inst.is_valid() and not g.fade_tried:
+		_make_fade_inst(g)
+	var want_o := g.count > g.n_fade or g.fade_mat == null and g.fade_tried
+	if want_o != g.shown_o:
+		g.shown_o = want_o
+		RenderingServer.instance_set_visible(g.inst, want_o)
+	want_f = want_f and g.fade_inst.is_valid()
+	if want_f != g.shown_f:
+		g.shown_f = want_f
+		RenderingServer.instance_set_visible(g.fade_inst, want_f)
+
+## Round 762: the group's fade instance -- its MultiMesh drawn with the fade
+## twin of its material (AppearFade.fade_twin: a glowing weapon fades on its
+## plain material, READ round 734) -- made the first time a body in it fades.
+## None when the material has no fade twin: its twin then draws its fading
+## bodies opaque (`crowd_fades` false), as AppearFade leaves such a mesh.
+func _make_fade_inst(g: Group) -> void:
+	g.fade_tried = true
+	var fsrc: Material = _fade_src(g.src) if g.src != null else null
+	var ft: ShaderMaterial = null
+	if fsrc is ShaderMaterial and g.layout != null:
+		ft = _live_twin(fsrc, "%d|%s" % [fsrc.get_instance_id(), g.layout.key], g.layout)
+	if ft == null:
+		g.material.set_shader_parameter("crowd_fades", false)
+		_vis_dirty[g] = true
+		return
+	g.fade_mat = ft
+	_twin_users[ft] = int(_twin_users.get(ft, 0)) + 1
+	g.fade_inst = RenderingServer.instance_create2(g.mm, scenario)
+	RenderingServer.instance_geometry_set_material_override(g.fade_inst, ft.get_rid())
+	RenderingServer.instance_geometry_set_cast_shadows_setting(g.fade_inst, RenderingServer.SHADOW_CASTING_SETTING_OFF)
+	RenderingServer.instance_set_layer_mask(g.fade_inst, g.layers)
+	RenderingServer.instance_set_pivot_data(g.fade_inst, g.sort, true)
+	if _aabb_set:
+		RenderingServer.instance_set_custom_aabb(g.fade_inst, _aabb)
+	RenderingServer.instance_set_visible(g.fade_inst, false)
+	g.shown_f = false
 
 ## The bounds every far instance is culled by (one for all: a MultiMesh is
 ## drawn or not as a whole). Grown as bodies arrive and move, re-measured by
@@ -1552,6 +1865,8 @@ func _part_for(mi: MeshInstance3D, mat_in: Material, skin: Skin, to_body: bool, 
 	if lit:
 		p["objc"] = ObjectLight.object_color_of(mat)
 		mat = ObjectLight.base_of(mat) as ShaderMaterial
+	# Round 762: the material its twin is of (the group's fade twin's source).
+	p["src"] = mat
 	if EquipGlow.is_glow(mat):
 		# Round 759: every glow row of the item on one twin, the row per
 		# instance (_glow_twin, _glow_row).
@@ -1596,7 +1911,11 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 	var key := "%d|%s|%d" % [mi.mesh.get_instance_id(), layout_key, bone]
 	if _rigid.has(key):
 		return _rigid[key]
-	var arrays := mi.mesh.surface_get_arrays(0)
+	# Round 762: the arrays the mesh was built from, kept on it (BmsReader.
+	# to_array_mesh's `keep`), rather than asked of the RenderingServer (a
+	# wait for the render thread under the separate render thread).
+	var kept = mi.mesh.get_meta(BmsReader.KEPT_ARRAYS_META, null)
+	var arrays: Array = (kept as Array).duplicate() if kept is Array else mi.mesh.surface_get_arrays(0)
 	var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	var nrm = arrays[Mesh.ARRAY_NORMAL]
 	var xf: Array[Transform3D] = []
@@ -1666,7 +1985,7 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 
 # --- groups -------------------------------------------------------------------------
 
-func _add_part(b: Body, p: Dictionary, fade_w: float = 0.0) -> void:
+func _add_part(b: Body, p: Dictionary) -> void:
 	var mesh: Mesh = p["mesh"]
 	var mat: ShaderMaterial = p["material"]
 	var key: String = p["gkey"] if p.has("gkey") else "%d|%d|%d|%.4f" % [mesh.get_instance_id(), mat.get_instance_id(), int(p["layers"]), float(p["sort"])]
@@ -1686,6 +2005,10 @@ func _add_part(b: Body, p: Dictionary, fade_w: float = 0.0) -> void:
 		if _aabb_set:
 			RenderingServer.instance_set_custom_aabb(g.inst, _aabb)
 		g.twin_key = String(p["twin_key"])
+		g.src = p.get("src")
+		g.layout = b.layout
+		g.layers = int(p["layers"])
+		g.sort = float(p["sort"])
 		_twin_users[mat] = int(_twin_users.get(mat, 0)) + 1
 		_groups[key] = g
 	if g.count >= g.cap:
@@ -1707,10 +2030,19 @@ func _add_part(b: Body, p: Dictionary, fade_w: float = 0.0) -> void:
 	g.buf[o + 12] = ints[2]
 	g.buf[o + 13] = ints[3]
 	g.buf[o + 14] = float(p["centre"])
-	g.buf[o + 15] = fade_w
+	g.buf[o + 15] = 0.0
 	var rec := [g, idx, b]
 	g.owners.append(rec)
 	b.parts.append(rec)
+	# Round 762: a fading body's instance is the fade instance's to draw.
+	if b.fade != 0:
+		g.n_fade += 1
+		if b.hold >= 0:
+			g.held[b.hold] = int(g.held.get(b.hold, 0)) + 1
+			(_slot_groups[b.hold] as Dictionary)[g] = true
+		_vis_dirty[g] = true
+	elif not g.shown_o:
+		_vis_dirty[g] = true
 	g.dirty = true
 	_dirty_groups[g] = true
 	_instances += 1
@@ -1729,6 +2061,12 @@ func _remove_part(rec: Array) -> void:
 		g.owners[idx] = moved
 	g.owners.pop_back()
 	g.count = last
+	var ob: Body = rec[2]
+	if ob.fade != 0:
+		g.n_fade -= 1
+		if ob.hold >= 0:
+			g.held[ob.hold] = int(g.held.get(ob.hold, 0)) - 1
+		_vis_dirty[g] = true
 	g.dirty = true
 	_dirty_groups[g] = true
 	_instances -= 1
@@ -1778,6 +2116,7 @@ func _twin(src: ShaderMaterial, l: Layout, key_in: String = "") -> ShaderMateria
 		t.set_shader_parameter("crowd_glow", _glow_tex)
 	TexAni.bind_like(t, src)
 	l.twins[t] = true
+	t.set_meta(&"opensro_twin_key", key)
 	_twins[key] = t
 	_twin_sources[key] = weakref(src)
 	return t
@@ -1992,26 +2331,41 @@ func collect() -> int:
 		if g.empty_cycles < GROUP_EMPTY_CYCLES or freed >= COLLECT_MAX:
 			continue
 		RenderingServer.free_rid(g.inst)
+		if g.fade_inst.is_valid():
+			RenderingServer.free_rid(g.fade_inst)
+			g.fade_inst = RID()
 		RenderingServer.free_rid(g.mm)
 		_groups.erase(key)
 		_dirty_groups.erase(g)
+		_vis_dirty.erase(g)
 		freed += 1
-		# Counted by the twin itself, not its key (round 756's review, F2): a
-		# twin re-made for the same material has the same key, and a stale
-		# group's collection must not take the live one's count.
-		var t: ShaderMaterial = g.material
-		var users := int(_twin_users.get(t, 0)) - 1
-		if users > 0:
-			_twin_users[t] = users
-			continue
-		_twin_users.erase(t)
-		if _twins.get(g.twin_key) == t:
-			_twins.erase(g.twin_key)
-			_twin_sources.erase(g.twin_key)
-		for k in _layouts:
-			(_layouts[k] as Layout).twins.erase(t)
+		if g.fade_mat != null:
+			_drop_twin_user(g.fade_mat)
+			g.fade_mat = null
+		_drop_twin_user(g.material)
 	stats["groups_freed"] = int(stats.get("groups_freed", 0)) + freed
 	return freed
+
+## A group drawing with twin `t` is gone: the twin goes when no group uses it.
+## Counted by the twin itself, not its key (round 756's review, F2): a twin
+## re-made for the same material has the same key, and a stale group's
+## collection must not take the live one's count.
+func _drop_twin_user(t: ShaderMaterial) -> void:
+	var users := int(_twin_users.get(t, 0)) - 1
+	if users > 0:
+		_twin_users[t] = users
+		return
+	_twin_users.erase(t)
+	for key in _twin_keys_of(t):
+		_twins.erase(key)
+		_twin_sources.erase(key)
+	for k in _layouts:
+		(_layouts[k] as Layout).twins.erase(t)
+
+## The keys `t` is filed under in _twins (one; read back by its key meta).
+func _twin_keys_of(t: ShaderMaterial) -> Array:
+	var key := String(t.get_meta(&"opensro_twin_key", ""))
+	return [key] if key != "" and _twins.get(key) == t else []
 
 ## Round 759 (QA): what the far groups are made of -- the groups drawing at
 ## least one instance (`live`, each one MultiMesh and its draws), the distinct

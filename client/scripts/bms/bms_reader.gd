@@ -717,8 +717,20 @@ static func _pp_parse_collision(data: PackedByteArray) -> CollisionMesh:
 
 ## Builds a renderable Godot ArrayMesh from a parsed Mesh: to_arrays, then
 ## mesh_from_arrays.
-static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:
-	return mesh_from_arrays(to_arrays(mesh))
+##
+## Round 762: `keep` keeps the surface's arrays on the mesh (KEPT_ARRAYS_META)
+## for a reader on the CPU side -- CrowdGpu.rigid_mesh -- which otherwise
+## asks the RenderingServer for them (surface_get_arrays), a wait for the
+## render thread's frame each time under the separate render thread (Godot's
+## own warning, MEASURED in the crowd runs: a swarm's hundreds of weapons).
+static func to_array_mesh(mesh: ParsedMesh, keep: bool = false) -> ArrayMesh:
+	var arrays := to_arrays(mesh)
+	var am := mesh_from_arrays(arrays)
+	if keep:
+		am.set_meta(KEPT_ARRAYS_META, arrays)
+	return am
+
+const KEPT_ARRAYS_META := &"opensro_arrays"
 
 ## The one surface to_array_mesh uploads, as the Mesh.ARRAY_MAX-sized arrays
 ## `ArrayMesh.add_surface_from_arrays` takes (round 566). Plain data -- packed

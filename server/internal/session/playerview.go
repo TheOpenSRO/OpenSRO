@@ -338,8 +338,9 @@ func spawnPlayersTo(d viewDeps, viewer world.Entity, others []world.Entity) {
 	}
 	var frames []*gateway.Frame
 	var after []*gateway.Frame
-	for _, c := range playerCellsInOrder(byCell) {
+	for _, c := range ownCellLast(playerCellsInOrder(byCell), viewer.Cell) {
 		group := byCell[c]
+		sortSpawnsByUID(group)
 		var body []byte
 		for _, s := range group {
 			body = append(body, s.record...)
@@ -454,13 +455,15 @@ func despawnPlayersFrom(d viewDeps, viewer world.Entity, others []world.Entity) 
 		byCell[o.Cell] = append(byCell[o.Cell], o.CharacterID)
 	}
 	var frames []*gateway.Frame
-	for _, c := range playerCellsInOrder(byCell) {
+	for _, c := range ownCellLast(playerCellsInOrder(byCell), viewer.Cell) {
 		ids := byCell[c]
 		uids := make([]uint32, len(ids))
 		for i, id := range ids {
 			uids[i] = uint32(id)
 			delete(v.known, id)
 		}
+		// By unique id, as the group spawn (round 762, READ FUN_00533b90).
+		sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
 		gfs, err := npcspawn.DespawnGroup(uids, pcGroupChunk)
 		if err != nil {
 			continue
@@ -622,6 +625,29 @@ func crossPlayer(d viewDeps, r world.MoveResult) {
 	despawnPlayerFromOthers(d, r.Entity, r.Lost)
 	spawnPlayersTo(d, r.Entity, r.Gained)
 	spawnPlayerToOthers(d, r.Entity, r.Gained)
+}
+
+// sortSpawnsByUID puts a block's records in its map's order, which is by
+// unique id (round 762, READ FUN_00533910: the block's player map is a
+// std::map keyed by the object's unique id, obj+8, walked in order).
+func sortSpawnsByUID(group []playerSpawn) {
+	sort.Slice(group, func(i, j int) bool { return uint32(group[i].e.CharacterID) < uint32(group[j].e.CharacterID) })
+}
+
+// ownCellLast moves own, when it is among cells, to the end (round 762, READ:
+// CMsgBlock slot 2 0x534340 sends the neighbours' groups in its neighbour
+// vector's order and the object's own block last, asm 0x534407; a walk's
+// crossing sends the difference blocks only). The neighbours' own order is
+// the vector's -- the order the blocks were linked when the regions loaded
+// (INFERRED, not geometric) -- for which OpenSRO keeps its sorted one (OURS).
+func ownCellLast(cells []combat.Cell, own combat.Cell) []combat.Cell {
+	for i, c := range cells {
+		if c == own {
+			out := append(append(append([]combat.Cell(nil), cells[:i]...), cells[i+1:]...), own)
+			return out
+		}
+	}
+	return cells
 }
 
 func playerCellsInOrder[T any](m map[combat.Cell]T) []combat.Cell {

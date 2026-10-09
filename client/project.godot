@@ -142,3 +142,10 @@ srr_crowd_clock={
 "type": "float",
 "value": 0.0
 }
+
+; Round 762: the far crowd's held pages' reveal clocks (ms, as srr_crowd_clock;
+; CrowdGpu.hold_open / reveal), one a slot; 1e9 while a slot's page is held.
+srr_crowd_reveal={
+"type": "vec4",
+"value": Vector4(1e+09, 1e+09, 1e+09, 1e+09)
+}

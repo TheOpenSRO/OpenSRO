@@ -238,18 +238,22 @@ func _notification(what: int) -> void:
 	# review, F3; READ core/variant/callable.cpp:331-343), so a task may still
 	# be running: wait for each before freeing what they share (the object is
 	# whole during PREDELETE), then free whatever finished unadopted.
-	for path in _prep_tasks:
-		var id := int(_prep_tasks[path])
-		if id >= 0:
-			PoolWait.task(id)
+	# Round 762: the queue emptied first, under the lock, so each runner stops
+	# after the request it is making.
+	_prep_lock.lock()
+	var queued := _prep_queue.duplicate()
+	_prep_queue.clear()
+	_prep_lock.unlock()
+	for id in _runners:
+		PoolWait.task(int(id))
+	_runners.clear()
 	_prep_tasks.clear()
 	for path in _prep_done:
 		_free_prepared(_prep_done[path])
 	_prep_done.clear()
-	for q in _prep_queue:
+	for q in queued:
 		if q[1] != null and is_instance_valid(q[1]):
 			(q[1] as Node).free()
-	_prep_queue.clear()
 	for path in _body_templates:
 		var t: SkinnedBsrAssembler.AssembledCharacter = _body_templates[path]
 		if t != null and is_instance_valid(t.skeleton):
@@ -1075,7 +1079,9 @@ func free_templates() -> void:
 ## new body template on its layout's shared skin (share_template), they are
 ## moved to it too, so a body still writes one skin a pose (round 738, A2).
 ## The glow's particle files are decoded on EfpEffect's own preload task.
-var _prep_tasks := {}   # body .bsr path -> WorkerThreadPool task id, or -1 while queued
+## Round 762: a request's key (a body .bsr path, or an item task's) -> -1 while
+## it is queued or being made (the runners take requests off the queue).
+var _prep_tasks := {}
 var _prep_done := {}    # body .bsr path -> the task's result (under _prep_lock)
 ## Requests waiting for a free slot, in the order they were made (the world
 ## asks nearest body first): [path, scratch, skin, items, group].
@@ -1085,7 +1091,12 @@ var _prep_queue: Array = []
 ## first arrival) took the main thread's share of the CPU and of the
 ## archive's lock (MEASURED, round 748: arrival frames of 1.5-2.2 s with every
 ## kind's task started together).
-const PREP_MAX_RUNNING := 2
+##
+## Round 762: 1 (was 2). MEASURED (the swarm lineup at 1,000, cold): one
+## runner revealed the page at 7.37 s against 7.60 s with two, in 9.5 s of
+## task time against 14.1 (the two contend), and the main thread's worst
+## frame while they ran was 126 ms against 220.
+const PREP_MAX_RUNNING := 1
 ## Round 756 (QA only): OPENSRO_QA_PREP_RUNNING=<n> runs n at once instead, to
 ## measure what the cap costs a cold crowd's arrival (r756.md).
 var prep_max_running := int(OS.get_environment("OPENSRO_QA_PREP_RUNNING")) if OS.get_environment("OPENSRO_QA_PREP_RUNNING").is_valid_int() else PREP_MAX_RUNNING
@@ -1214,9 +1225,222 @@ func _prepare(ref_obj_id: int, items: Array, start: bool) -> bool:
 	var scratch: Skeleton3D = _bare_skeleton(tmpl.skeleton) if tmpl != null else null
 	var canon: Skin = tmpl.canonical_skin if tmpl != null else null
 	_prep_tasks[bsr_path] = -1
-	_prep_queue.append([bsr_path, scratch, canon, missing, String(wanted[2])])
+	_enqueue([bsr_path, scratch, canon, missing, String(wanted[2]), bsr_path, false])
 	_start_queued()
 	return false
+
+# --- round 762: kinds ready by events, items made a layout at a time -----------------
+
+## Round 762 (OURS; docs/rounds/r762.md). A crowd in the swarm's gear is
+## thousands of kinds (body, worn items, pluses) over a few dozen bodies and a
+## few thousand items. Until now each kind was asked again (prepare(): its
+## wears resolved, every path looked up) whenever anything was adopted, which
+## during a cold arrival was every frame: 80-100 ms frames that drew nothing
+## (MEASURED, the swarm lineup at 1,000). And a body's task made the items of
+## the first kind that asked, one task a body at a time, so the items of the
+## other kinds of that body waited for it, and the bodies of one skeleton
+## layout made the same items over again.
+##
+## Now a kind (kind_ready) keeps what it wants and what it still lacks, and is
+## looked at again only when something it can use arrived: its body's template
+## (_bsr_gen), an item on its layout (_layout_gen), a glow's particle file
+## (_efp_gen). A body's template is its own task (no items); items are made
+## by layout -- any body template of the layout serves (_item_key) -- in
+## chunks of ITEM_CHUNK, each item asked once however many kinds and bodies
+## want it (_items_inflight).
+class KindPrep:
+	var bsr := ""
+	var paths := PackedStringArray()
+	var efps := PackedStringArray()
+	var group := ""
+	var missing := PackedStringArray()
+	var seen := Vector3i(-1, -1, -1)
+	var ready := false
+	## Its body template's item layout (_layout_key), once the body is made.
+	var layout := ""
+
+var _kind_preps := {}
+## Body .bsr -> the kinds waiting for its template; the prewarm requests moved
+## up already (once a body).
+var _kinds_on_body := {}
+var _promoted := {}
+var _bsr_gen := {}
+var _layout_gen := {}
+var _efp_gen := 0
+## Item task key -> [the paths it was asked for, its body .bsr]; and the item
+## keys asked for and not adopted yet.
+var _item_tasks := {}
+var _items_inflight := {}
+var _item_task_n := 0
+const ITEM_TASK_PREFIX := "items#"
+## Items a task makes (OURS): small enough that a layout's items spread over
+## the running tasks, big enough that the task's scratch skeleton is worth it.
+const ITEM_CHUNK := 6
+## Adoption's time a call (poll_prepared), one at least (OURS).
+const ADOPT_BUDGET_USEC := 4000
+
+## A body template's item layout key (_item_key without the item).
+static func _layout_key(tmpl: SkinnedBsrAssembler.AssembledCharacter, body_bsr: String) -> String:
+	if tmpl == null:
+		return body_bsr
+	return "%s|%d" % [tmpl.parsed.skeleton_path if tmpl.parsed != null else body_bsr, tmpl.skeleton.get_bone_count()]
+
+## The paths a request asked for (a dropped request: none of them in flight).
+func _forget_asked(paths, body_bsr: String) -> void:
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = _body_templates.get(body_bsr)
+	if tmpl == null:
+		return
+	for p in paths:
+		_items_inflight.erase(_item_key(tmpl, body_bsr, String(p)))
+
+## Whether `kind` (the caller's key for a (body, items) pair) is known here:
+## 1 ready, 0 not yet, -1 never asked (call kind_ready with its spec).
+func kind_state(kind: String) -> int:
+	var kp: KindPrep = _kind_preps.get(kind)
+	if kp == null:
+		return -1
+	if kp.ready:
+		return 1
+	if _kind_gen(kp) == kp.seen:
+		return 0
+	return 1 if _kind_check(kp) else 0
+
+## Whether build(ref_obj_id, _, items) -- or its far recipe -- would make
+## nothing on the main thread, asking for what it lacks when it would.
+## Remembered under `kind`.
+func kind_ready(kind: String, ref_obj_id: int, items: Array) -> bool:
+	var kp: KindPrep = _kind_preps.get(kind)
+	if kp == null:
+		kp = KindPrep.new()
+		_kind_preps[kind] = kp
+		kp.bsr = body_path(ref_obj_id)
+		if not canonical or (_data == null and not body_assembler.is_valid()) or kp.bsr == "":
+			kp.ready = true
+			return true
+		var kt := Time.get_ticks_usec() if FrameSplit.on else 0
+		var wanted := template_paths(ref_obj_id, items)
+		if FrameSplit.on:
+			FrameSplit.add("k_paths", Time.get_ticks_usec() - kt)
+		kp.paths = wanted[0]
+		kp.efps = wanted[1]
+		kp.group = String(wanted[2])
+		kp.missing = kp.paths.duplicate()
+	if kp.ready:
+		return true
+	if _kind_gen(kp) == kp.seen:
+		return false
+	return _kind_check(kp)
+
+func _kind_gen(kp: KindPrep) -> Vector3i:
+	if kp.layout == "":
+		var tmpl = _body_templates.get(kp.bsr)
+		if tmpl != null:
+			kp.layout = _layout_key(tmpl, kp.bsr)
+	return Vector3i(int(_bsr_gen.get(kp.bsr, 0)), int(_layout_gen.get(kp.layout, 0)) if kp.layout != "" else 0, _efp_gen)
+
+func _kind_check(kp: KindPrep) -> bool:
+	kp.seen = _kind_gen(kp)
+	var et := Time.get_ticks_usec() if FrameSplit.on else 0
+	var efp_ok := _efps_ready(kp.efps, true)
+	if FrameSplit.on:
+		FrameSplit.add("k_efps", Time.get_ticks_usec() - et)
+	if not _body_templates.has(kp.bsr):
+		if not _prep_tasks.has(kp.bsr):
+			_prep_tasks[kp.bsr] = -1
+			_enqueue([kp.bsr, null, null, PackedStringArray(), kp.group, kp.bsr, false])
+			_start_queued()
+		elif not _promoted.has(kp.bsr):
+			_promoted[kp.bsr] = true
+			_promote(kp.bsr)
+		# Asked again the moment its body is adopted (_finish_prep), so its
+		# items are asked for in that frame.
+		var waiting: Array = _kinds_on_body.get(kp.bsr, [])
+		if not waiting.has(kp):
+			waiting.append(kp)
+		_kinds_on_body[kp.bsr] = waiting
+		return false
+	if _prep_tasks.has(kp.bsr):
+		return false
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = _body_templates[kp.bsr]
+	if tmpl == null:
+		kp.ready = true
+		return true
+	var still := PackedStringArray()
+	if kp.layout == "":
+		kp.layout = _layout_key(tmpl, kp.bsr)
+	for p in kp.missing:
+		# _item_key's, from the kind's layout.
+		var key := kp.layout + "|" + p.to_lower()
+		if _item_templates.has(key):
+			# A failed template whose fallback has none: that one too.
+			if _item_templates[key] == null:
+				var fb := _fallback_of(p)
+				if fb != "" and not _item_templates.has(kp.layout + "|" + fb.to_lower()) and not still.has(fb):
+					still.append(fb)
+			continue
+		still.append(p)
+	kp.missing = still
+	if still.is_empty():
+		kp.ready = efp_ok
+		return efp_ok
+	_request_items(kp.bsr, tmpl, still)
+	return false
+
+## Asks for `paths` on `tmpl`'s layout: those not made nor asked yet, in
+## chunks of ITEM_CHUNK, each a task on its own scratch copy of the bones.
+func _request_items(body_bsr: String, tmpl: SkinnedBsrAssembler.AssembledCharacter, paths: PackedStringArray) -> void:
+	var todo := PackedStringArray()
+	for p in paths:
+		var key := _item_key(tmpl, body_bsr, p)
+		if _items_inflight.has(key) or _item_templates.has(key):
+			continue
+		_items_inflight[key] = true
+		todo.append(p)
+	var i := 0
+	while i < todo.size():
+		var chunk := todo.slice(i, i + ITEM_CHUNK)
+		i += ITEM_CHUNK
+		_item_task_n += 1
+		var key := "%s%d" % [ITEM_TASK_PREFIX, _item_task_n]
+		_prep_tasks[key] = -1
+		_item_tasks[key] = [chunk, body_bsr]
+		_enqueue([key, _bare_skeleton(tmpl.skeleton), tmpl.canonical_skin, chunk, "", body_bsr, false])
+	if not todo.is_empty():
+		_start_queued()
+
+## A queued request for body `bsr` that a prewarm put at the back moves up
+## (a crowd wants it now).
+func _promote(bsr: String) -> void:
+	_prep_lock.lock()
+	var found: Array = []
+	for i in _prep_queue.size():
+		var q: Array = _prep_queue[i]
+		if String(q[0]) == bsr and bool(q[6]):
+			_prep_queue.remove_at(i)
+			q[6] = false
+			found = q
+			break
+	_prep_lock.unlock()
+	if not found.is_empty():
+		_enqueue(found)
+
+## Round 762 (OURS): every body in `refs` has its template made in the
+## background, after any request a world makes (low priority in the queue),
+## so a crowd that comes later finds its bodies made. Returns how many were
+## asked for.
+func prewarm_bodies(refs: Array) -> int:
+	if not canonical or _data == null:
+		return 0
+	var n := 0
+	for ref in refs:
+		var bsr := body_path(int(ref))
+		if bsr == "" or _body_templates.has(bsr) or _prep_tasks.has(bsr):
+			continue
+		_prep_tasks[bsr] = -1
+		_enqueue([bsr, null, null, PackedStringArray(), "default", bsr, true])
+		n += 1
+	_start_queued()
+	return n
 
 ## A skeleton with `src`'s bones -- names, parents, rests, poses at rest --
 ## and nothing else: what attaching an item reads (bone indices, rests, the
@@ -1236,19 +1460,67 @@ static func _bare_skeleton(src: Skeleton3D) -> Skeleton3D:
 
 ## Starts queued requests while fewer than PREP_MAX_RUNNING run. Low
 ## priority: the world's own cell prepares (high) go first.
+##
+## Round 762: a running task is a runner (_prep_runner) that takes request
+## after request off the queue until it is empty. A task a request was one task
+## a frame a slot, since only the main thread's poll started the next: the
+## crowd's 514 requests took 19 s of wall time for 11 s of work on two
+## threads (MEASURED r762.md).
 func _start_queued() -> void:
-	while _prep_running < prep_max_running and not _prep_queue.is_empty():
+	_prep_lock.lock()
+	var queued := _prep_queue.size()
+	_prep_lock.unlock()
+	while _runners.size() < prep_max_running and queued > 0:
+		_runner_n += 1
+		var id := WorkerThreadPool.add_task(_prep_runner.bind(_runner_n), false, "character templates")
+		_runners[id] = _runner_n
+		queued -= 1
+	_prep_running = _runners.size()
+
+## Runner task ids -> their number; the request each runner is making (by
+## number, under _prep_lock), so one a script error stopped is not waited on.
+var _runners := {}
+var _runner_n := 0
+var _runner_current := {}
+
+func _prep_runner(n: int) -> void:
+	while true:
+		_prep_lock.lock()
+		if _prep_queue.is_empty():
+			_runner_current.erase(n)
+			_prep_lock.unlock()
+			return
 		var q: Array = _prep_queue.pop_front()
-		var path: String = q[0]
-		prep_stats["tasks"] += 1
-		_prep_running += 1
-		_prep_tasks[path] = WorkerThreadPool.add_task(_prep_task.bind(path, q[1], q[2], q[3], q[4]), false,
-			"character template %s" % path.get_file())
+		_runner_current[n] = String(q[0])
+		_prep_lock.unlock()
+		_prep_task(String(q[0]), q[1], q[2], q[3], String(q[4]), String(q[5]))
+		_prep_lock.lock()
+		_runner_current.erase(n)
+		_prep_lock.unlock()
+
+## Round 762: a request in the queue -- before every prewarm request (`low`,
+## q[6]) unless it is one itself.
+func _enqueue(q: Array) -> void:
+	prep_stats["tasks"] += 1
+	_prep_lock.lock()
+	var at := -1
+	if not bool(q[6]):
+		for i in _prep_queue.size():
+			if bool((_prep_queue[i] as Array)[6]):
+				at = i
+				break
+	if at >= 0:
+		_prep_queue.insert(at, q)
+	else:
+		_prep_queue.append(q)
+	_prep_lock.unlock()
 
 ## The task: the body's template if `scratch` is null (none yet), then each of
 ## `items` assembled onto it, each failed `_r` / `_f` model's fallback too.
 ## Plain results only; adopted on the main thread (_finish_prep).
-func _prep_task(bsr_path: String, scratch: Skeleton3D, canon: Skin, items: PackedStringArray, group: String = "") -> void:
+func _prep_task(key: String, scratch: Skeleton3D, canon: Skin, items: PackedStringArray, group: String = "", bsr_path: String = "") -> void:
+	if bsr_path == "":
+		bsr_path = key
 	var sw := Time.get_ticks_usec()
 	var made_body: SkinnedBsrAssembler.AssembledCharacter = null
 	var source := scratch
@@ -1280,9 +1552,9 @@ func _prep_task(bsr_path: String, scratch: Skeleton3D, canon: Skin, items: Packe
 	if scratch != null:
 		scratch.free()
 	var result := {"body": made_body, "assembled": made_body != null or scratch == null, "items": made_items, "canon": canon,
-		"usec": Time.get_ticks_usec() - sw}
+		"usec": Time.get_ticks_usec() - sw, "bsr": bsr_path, "asked": items}
 	_prep_lock.lock()
-	_prep_done[bsr_path] = result
+	_prep_done[key] = result
 	_prep_lock.unlock()
 
 ## Whether the glow's particle files are decoded (EfpEffect's cache), the
@@ -1320,6 +1592,7 @@ func poll_prepared() -> int:
 		if EfpEffect.has_template(e) and not EfpEffect.is_preloading(e):
 			_efp_waiting.erase(e)
 			prep_generation += 1
+			_efp_gen += 1
 			n += 1
 		elif not EfpEffect.is_preloading(e):
 			# Neither decoded nor on its way: evicted before it was seen (the
@@ -1327,47 +1600,112 @@ func poll_prepared() -> int:
 			# ask preloads it again.
 			_efp_waiting.erase(e)
 			prep_generation += 1
-	for path in _prep_tasks.keys():
-		var id: int = _prep_tasks[path]
-		if id >= 0 and WorkerThreadPool.is_task_completed(id):
-			_finish_prep(path, true)
-			n += 1
+			_efp_gen += 1
+	# Round 762: adopted ADOPT_BUDGET_USEC a call at most (one at least): more
+	# requests finish together now that a crowd's items are made in chunks.
+	var t0 := Time.get_ticks_usec()
+	_prep_lock.lock()
+	var done := _prep_done.keys()
+	_prep_lock.unlock()
+	for key in done:
+		if n > 0 and Time.get_ticks_usec() - t0 >= ADOPT_BUDGET_USEC:
+			break
+		_finish_prep(String(key), true)
+		n += 1
+	_reap_runners()
 	_start_queued()
 	return n
+
+## The runners that ended, waited for; a request one was making when a script
+## error stopped it is finished with no result (asked again by its kinds).
+func _reap_runners(wait: bool = false) -> void:
+	for id in _runners.keys():
+		if not wait and not WorkerThreadPool.is_task_completed(int(id)):
+			continue
+		PoolWait.task(int(id))
+		var n: int = _runners[id]
+		_runners.erase(id)
+		_prep_lock.lock()
+		var lost = _runner_current.get(n)
+		_runner_current.erase(n)
+		var has_result := lost != null and _prep_done.has(lost)
+		_prep_lock.unlock()
+		if lost != null and not has_result and _prep_tasks.has(lost):
+			_finish_prep(String(lost), true)
+	_prep_running = _runners.size()
 
 ## Waits for every task (a teardown, the tests); adopts what they made when
 ## `adopt`, else frees it. With `adopt`, queued requests run too, one after
 ## another; without, they are dropped.
 func wait_prepared(adopt: bool = true) -> void:
 	if not adopt:
-		for q in _prep_queue:
+		_prep_lock.lock()
+		var queued := _prep_queue.duplicate()
+		_prep_queue.clear()
+		_prep_lock.unlock()
+		for q in queued:
 			if q[1] != null and is_instance_valid(q[1]):
 				(q[1] as Node).free()
 			_prep_tasks.erase(q[0])
-		_prep_queue.clear()
-	while not _prep_tasks.is_empty():
-		for path in _prep_tasks.keys():
-			if int(_prep_tasks[path]) >= 0:
-				_finish_prep(path, adopt)
+			_forget_asked(q[3], String(q[5]))
+	while true:
+		_reap_runners(true)
+		_prep_lock.lock()
+		var done := _prep_done.keys()
+		_prep_lock.unlock()
+		for key in done:
+			_finish_prep(String(key), adopt)
+		_prep_lock.lock()
+		var left := _prep_queue.size()
+		_prep_lock.unlock()
+		if left == 0 and _runners.is_empty():
+			break
 		_start_queued()
+	# Anything still listed has no request behind it any more.
+	_prep_tasks.clear()
 
 ## Whether a template task is still running.
 func preparing() -> bool:
 	return not _prep_tasks.is_empty()
 
-func _finish_prep(bsr_path: String, adopt: bool) -> void:
-	PoolWait.task(_prep_tasks[bsr_path])
-	_prep_tasks.erase(bsr_path)
-	_prep_running -= 1
+## QA (round 762): the requests' state, and one kind's.
+func prep_debug() -> String:
 	_prep_lock.lock()
-	var r = _prep_done.get(bsr_path)
-	_prep_done.erase(bsr_path)
+	var q := _prep_queue.size()
+	var d := _prep_done.size()
+	_prep_lock.unlock()
+	return "tasks %d queued %d done-unadopted %d runners %d efp_waiting %d inflight %d kinds %d stats %s" % [_prep_tasks.size(), q, d,
+		_runners.size(), _efp_waiting.size(), _items_inflight.size(), _kind_preps.size(), str(prep_stats)]
+
+func kind_debug(kind: String) -> String:
+	var kp: KindPrep = _kind_preps.get(kind)
+	if kp == null:
+		return "-"
+	return "bsr %s built %s task %s missing %s efps %s seen %s gen %s" % [kp.bsr.get_file(), str(_body_templates.has(kp.bsr)),
+		str(_prep_tasks.has(kp.bsr)), str(kp.missing), str(kp.efps), str(kp.seen), str(_kind_gen(kp))]
+
+## Round 762: whether anything is on its way that poll_prepared adopts or
+## notices: a template request, or a glow's particle file being decoded.
+func awaiting() -> bool:
+	return not _prep_tasks.is_empty() or not _efp_waiting.is_empty()
+
+func _finish_prep(key: String, adopt: bool) -> void:
+	_prep_tasks.erase(key)
+	_prep_lock.lock()
+	var r = _prep_done.get(key)
+	_prep_done.erase(key)
 	_prep_lock.unlock()
 	# Every finish, a result or none (a task that hit a script error writes
 	# none), is news to a caller that cached "not ready" (round 748's review,
 	# F4): asked again, the kind gets a new task instead of waiting for an
 	# unrelated adoption.
 	prep_generation += 1
+	var bsr_path := String(r["bsr"]) if r != null else (key if not key.begins_with(ITEM_TASK_PREFIX) else "")
+	_bsr_gen[bsr_path] = int(_bsr_gen.get(bsr_path, 0)) + 1
+	var asked = _item_tasks.get(key)
+	_item_tasks.erase(key)
+	if asked != null:
+		_forget_asked(asked[0], String(asked[1]))
 	if r == null:
 		return
 	if not adopt:
@@ -1388,6 +1726,13 @@ func _finish_prep(bsr_path: String, adopt: bool) -> void:
 			stats["body_assemblies"] += 1
 			prep_stats["bodies"] += 1
 			_body_templates[bsr_path] = made
+		# Round 762: the kinds that waited for it ask for their items now.
+		var waiting = _kinds_on_body.get(bsr_path)
+		_kinds_on_body.erase(bsr_path)
+		if waiting != null:
+			for kp in waiting:
+				if not (kp as KindPrep).ready:
+					_kind_check(kp)
 	var tmpl: SkinnedBsrAssembler.AssembledCharacter = _body_templates.get(bsr_path)
 	var items: Dictionary = res["items"]
 	if tmpl == null:
@@ -1399,18 +1744,20 @@ func _finish_prep(bsr_path: String, adopt: bool) -> void:
 	for lower in items:
 		var pair: Array = items[lower]
 		var node: Node3D = pair[0]
-		var key := _item_key(tmpl, bsr_path, lower)
-		if _item_templates.has(key):
+		var ikey := _item_key(tmpl, bsr_path, lower)
+		if _item_templates.has(ikey):
 			if node != null:
 				node.free()
 			continue
 		if node != null and task_skin != null and tmpl.canonical_skin != null and task_skin != tmpl.canonical_skin:
 			_reskin(node, task_skin, tmpl.canonical_skin)
-		_item_templates[key] = node
+		_item_templates[ikey] = node
 		stats["item_assemblies"] += 1
 		prep_stats["items"] += 1
 		if node != null:
 			_item_attachables[lower] = pair[1]
+	var lk := _layout_key(tmpl, bsr_path)
+	_layout_gen[lk] = int(_layout_gen.get(lk, 0)) + 1
 
 ## Every mesh under `node` on skin `from` moved to `to` (the layout's shared
 ## skin: the same binds, Skeleton3DBuilder.canonical_skin of the same layout).

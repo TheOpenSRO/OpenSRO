@@ -539,6 +539,18 @@ block. `OPENSRO_QA_GHOSTS=0` arrives as before round 756 (dressed, no ghosts);
 spawn (`QA RUNAT`, with the ghosts before and after). `crowd_run.sh` counts any lane's
 Godot (`[G]odot_v4|[x]vfb-run`) as an overlap.
 
+**A whole page, and a crowd leaving (round 762).** An arriving page is held at alpha 0 and revealed
+in one frame (`World3D: <n> arriving bod(ies) revealed together` with the template counts);
+`OPENSRO_QA_HOLD=0` shows each ghost as it is made (as before), `OPENSRO_QA_PREWARM=0` skips the
+player bodies' background templates. The probe's `leave` step makes every lineup body leave in one
+call (a group despawn) and `back` brings them all back as one group (`QA CROWD back visible`);
+`walk=<dx>/<dz>` and `deck=<dx>/<dz>` click that far from the player (the live walk out of the
+crowd's blocks and back). `OPENSRO_QA_FRAME_LOG=<path>` writes a line a frame (the bodies drawn,
+held, fading, departing, the bytes received, and the frame's FrameSplit timers), and
+`OPENSRO_QA_DRESS_REPORT_MS` lowers the `QA DRESS` floor. NetClient prints a `QA NET group` line per
+player group spawn (records, bytes, decode and handling ms) while FrameSplit is on.
+`docs/rounds/r762.md` has the recipes and the analysis.
+
 **The live crowd and the swarm's gear (round 759).** `CROWD_LIVE=<host:port>` makes `crowd_run.sh`
 sign in to a running server (QaSignIn: register if new, log in, create the character if missing,
 enter) as `OPENSRO_QA_ACCOUNT` / `OPENSRO_QA_CHARACTER` -- never a GM account -- with

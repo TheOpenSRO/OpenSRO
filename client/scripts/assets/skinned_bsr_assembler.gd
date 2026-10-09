@@ -212,7 +212,7 @@ static func assemble_from_archive(
 				if result.canonical_skin != null:
 					mi.mesh = Skeleton3DBuilder.canonical_mesh(mesh, skin)
 				else:
-					mi.mesh = BmsReader.to_array_mesh(mesh)
+					mi.mesh = BmsReader.to_array_mesh(mesh, true)
 				if godot_material != null:
 					mi.material_override = godot_material
 				skeleton.add_child(mi)
@@ -227,7 +227,7 @@ static func assemble_from_archive(
 				continue
 		var before := skeleton.get_child_count()
 		CharacterAssembler.attach_rigid(
-			skeleton, BmsReader.to_array_mesh(mesh), bone_name, godot_material
+			skeleton, BmsReader.to_array_mesh(mesh, true), bone_name, godot_material
 		)
 		if skeleton.get_child_count() > before:
 			skeleton.get_child(skeleton.get_child_count() - 1).set_meta(BODY_MESH_META, i)
@@ -517,7 +517,7 @@ static func attach_item_from_archive(
 			# An item mesh with no weights renders at its own origin, which
 			# is the item skeleton's root -- rigid, but in the right place.
 			mi = MeshInstance3D.new()
-			mi.mesh = BmsReader.to_array_mesh(mesh)
+			mi.mesh = BmsReader.to_array_mesh(mesh, true)
 			if pair[1] != null:
 				mi.material_override = pair[1]
 			item_skeleton.add_child(mi)
@@ -553,7 +553,7 @@ static func _skinned_instance(
 		mi.mesh = Skeleton3DBuilder.canonical_mesh(mesh, skin)
 		skin = canonical
 	else:
-		mi.mesh = BmsReader.to_array_mesh(mesh)
+		mi.mesh = BmsReader.to_array_mesh(mesh, true)
 	if material != null:
 		mi.material_override = material
 	mi.skin = skin
