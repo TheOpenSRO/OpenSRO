@@ -68,7 +68,7 @@ fi
 if [ -f "$dir/$lib" ]; then
   bash "$here/check_native_library.sh" "$dir/$lib" "$kind" || fail=1
   # Round 763: the library carries the effect simulation (its classes are registered by name).
-  for cls in SrEfpSim SrEfpTemplate SrEfpBatch; do
+  for cls in SrEfpSim SrEfpTemplate SrEfpBatch SrEfpHosts; do
     LC_ALL=C grep -aq "$cls" "$dir/$lib" || bad "$lib lacks $cls (the effect simulation, round 763)"
   done
   sha256sum "$dir/$lib" | sed "s#$tmp/##"

@@ -17864,6 +17864,8 @@ func _arrival_page() -> ArrivalPage:
 		_page_cur = ArrivalPage.new()
 		_page_cur.opened_ms = now
 		_page_cur.oldest_ms = now
+		# The re-review's R9: its clock from its first arrival, picked or not.
+		_page_cur.rx_ms = rx
 		_pages.append(_page_cur)
 	if _page_pick:
 		_page_cur.rx_ms = maxi(_page_cur.rx_ms, rx)

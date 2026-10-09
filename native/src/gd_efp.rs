@@ -403,10 +403,7 @@ impl SrEfpSim {
     /// float array copied on the way).
     #[func]
     fn draw_rows_bytes(&self, width: i64, rows: i64) -> PackedByteArray {
-        let f = self.draw_rows(width, rows);
-        let s = f.as_slice();
-        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, s.len() * 4) };
-        PackedByteArray::from(bytes)
+        crate::gd_efp_hosts::f32_bytes(self.draw_rows(width, rows).as_slice())
     }
 
     /// Each draw node's particle count after the last build (what its MultiMesh shows).

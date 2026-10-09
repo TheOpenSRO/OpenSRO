@@ -67,6 +67,9 @@ const REBUILD_EVERY := 6
 ## The particle texture's widest row (texels): Godot's and Vulkan's 2-D limit
 ## (the review's F10). 3,276 particles a node; MAX_PARTICLES is 300 an effect.
 const MAX_PARTS_WIDTH := 16384
+## Natively, the layouts a host table can name (efp_hosts.rs LAYOUT_MASK).
+const MAX_NATIVE_LAYOUTS := 16
+
 ## Meta on a batch's draw node.
 const DRAW_META := &"opensro_equipfx_batch"
 ## A frame's margin around the view, units (OURS, EquipFx.ALWAYS_NEAR).
@@ -272,24 +275,35 @@ func step(crowd: Object, kinds: Dictionary, cam: Camera3D = null, own: Node = nu
 	var t0 := Time.get_ticks_usec()
 	_frame += 1
 	if native and bool(_hn.call("broken")):
-		# The library's step panicked: the fallback from now on, every host
-		# placed again.
-		push_warning("EquipFxBatch: the native hosts failed -- the GDScript fallback from now on")
-		var again: Array = _pending.duplicate()
-		for b in _batches.values():
-			again.append_array(b.hosts)
-		native = false
-		clear()
-		_crowd = crowd
-		for h in again:
-			add(h)
+		_go_fallback(crowd)
 	if native:
 		_step_native(crowd, kinds, cam, own, stepped)
+		# A step that panicked: the fallback from now on, this frame already.
+		if bool(_hn.call("broken")):
+			_go_fallback(crowd)
 	else:
 		_step_fallback(crowd, kinds)
 	stats["pending"] = _pending.size()
 	if FrameSplit.on:
 		FrameSplit.add("fx_batch", Time.get_ticks_usec() - t0)
+
+## The library's step panicked: the GDScript fallback from now on, every
+## ghost host placed again and every dressed host back on EquipFx's holders
+## (the re-review's R1).
+func _go_fallback(crowd: Object) -> void:
+	push_warning("EquipFxBatch: the native hosts failed -- the GDScript fallback from now on")
+	var again: Array = _pending.duplicate()
+	for b in _batches.values():
+		again.append_array(b.hosts)
+		for h in b.direct:
+			h.direct = false
+			h.batch = null
+		b.direct.clear()
+	native = false
+	clear()
+	_crowd = crowd
+	for h in again:
+		add(h)
 
 # --- native ------------------------------------------------------------------------
 
@@ -330,6 +344,11 @@ func _step_native(crowd: Object, kinds: Dictionary, cam: Camera3D, own: Node, st
 				continue
 			var gi := _layouts.find(sl[1])
 			if gi < 0:
+				if _layouts.size() >= MAX_NATIVE_LAYOUTS:
+					# The re-review's R5: a host names one of 16 layouts (4
+					# bits); another layout's hosts are not drawn (none seen:
+					# the swarm has 2).
+					continue
 				gi = _layouts.size()
 				_layouts.append(sl[1])
 				_hn.call("set_layout", gi, int(sl[1].get("width")), sl[1].get("pages"))
@@ -442,19 +461,25 @@ func _step_native(crowd: Object, kinds: Dictionary, cam: Camera3D, own: Node, st
 		sx = absf(pr.x.x)
 		sy = absf(pr.y.y)
 		ortho = cam.projection == Camera3D.PROJECTION_ORTHOGONAL
-	if _frames_tex == null:
-		_grow_frames(FRAMES_PER_ROW * 4)
+	# The re-review's R6: room for every host that may be drawn this frame,
+	# before the step (a texture made after it would be drawn empty once).
+	var could := 0
+	for b in _batches.values():
+		could += b.hosts.size() + b.direct.size()
+	if host_budget > 0:
+		could = mini(could, host_budget)
+	could = maxi(could, int(_hn.call("needed_frames")))
+	if _frames_tex == null or could > _frames_rows * FRAMES_PER_ROW:
+		_grow_frames(maxi(could, FRAMES_PER_ROW * 4))
 	var reach := qa_range if qa_range > 0.0 else EquipFx.MAX_DISTANCE
 	var bytes: PackedByteArray = _hn.call("step", crowd.call("body_data"), float(crowd.call("clock_ms")), crowd.call("reveal_clocks"),
-		vp, from, sx, sy, ortho, reach, float(crowd.call("sight_range")), NEAR, host_budget, _frames_rows)
+		vp, from, sx, sy, ortho, reach, float(crowd.call("sight_range")), NEAR, host_budget, _frames_rows,
+		EfpSimNative.threads)
 	if bytes.size() == _frames_rows * FRAMES_PER_ROW * 3 * 16:
 		_frames_img.set_data(FRAMES_PER_ROW * 3, _frames_rows, false, Image.FORMAT_RGBAF, bytes)
 		_frames_tex.update(_frames_img)
 	if FrameSplit.on:
 		FrameSplit.add("fxb_native", Time.get_ticks_usec() - t_rs)
-	var need := int(_hn.call("needed_frames"))
-	if need > _frames_rows * FRAMES_PER_ROW:
-		_grow_frames(need)
 	var tot: PackedInt64Array = _hn.call("totals")
 	stats["in_reach"] = tot[0]
 	stats["chosen"] = tot[1]

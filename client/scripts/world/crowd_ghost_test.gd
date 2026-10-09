@@ -981,6 +981,7 @@ func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Ch
 		"r764: the ghosts gone, their hosts leave the batch and none is chosen (%d)" % bt.selected_count())
 	_advance(world, crowd, 2.1)
 	await _test_reveal_budget(world, crowd, kit, d, isk, cam)
+	_test_native_panic(world, d, cam)
 	EquipFx.ghost_frame = Callable()
 	EquipFx.ghost_origin = Callable()
 	EquipFx.ghost_gpu = Callable()
@@ -993,6 +994,46 @@ static func _count_batch_nodes(d: Node) -> int:
 		if c is MultiMeshInstance3D and c.has_meta(EquipFxBatch.DRAW_META) and not c.is_queued_for_deletion():
 			n += 1
 	return n
+
+## The re-review's R1: a dressed body's host drawn by the native batch; the
+## library's step panics (SrEfpHosts.qa_panic_next_step) -- the batch goes to
+## the GDScript fallback and the dressed host back to EquipFx's holders, shown
+## again within a cycle. Natively only (the fallback has no dressed hosts).
+## NEGATIVE (by hand): dropping `h.direct = false` from the broken branch
+## leaves the host with no batch and no holder ("drawn again by a holder").
+func _test_native_panic(world: Node, d: EquipFx, cam: Camera3D) -> void:
+	var bt: EquipFxBatch = d._batch
+	if bt == null or not bt.native:
+		print("r764 R1: the native batch is not here (no library): skipped")
+		return
+	var vp := world.get_viewport()
+	EquipFx.batch_viewport = vp
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(0, 10, 0))
+	var holder := Node3D.new()
+	world.add_child(holder)
+	holder.global_position = Vector3(0, 0, -40)
+	var sk := Skeleton3D.new()
+	sk.add_bone("ai_end")
+	holder.add_child(sk)
+	d.add_host(sk, "ai_end", FX_EFP, 1.0, null)
+	var hid = d._by_skel.get(sk.get_instance_id(), [""])[0]
+	var h = d._hosts.get(hid)
+	for rep in 3:
+		d._process(1.0 / 60.0)
+	_check(h != null and h.direct and h.batch != null and int(bt.stats["direct"]) == 1 and int(bt.stats["drawn"]) >= 1,
+		"r764 R1: a dressed body's host is drawn by the native batch (direct %d)" % (int(bt.stats["direct"]) if h != null else -1))
+	bt._hn.call("qa_panic_next_step")
+	d._process(1.0 / 60.0)
+	_check(not bt.native and h != null and not h.direct and h.batch == null,
+		"r764 R1: the library's step panicked -- the batch is the fallback and the dressed host is EquipFx's again")
+	for rep in 3:
+		d._hurry = true
+		d._process(1.0 / 60.0)
+	var hf := _fx_holder(sk)
+	_check(hf != null and hf.visible, "r764 R1: ... drawn again by a holder")
+	d.remove_skel(sk)
+	holder.queue_free()
+	EquipFx.batch_viewport = null
 
 ## The review's F2: a page of six ghosts held, then revealed, with a budget of
 ## two hosts -- no frame from the reveal on chooses more than two.

@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::OnceLock;
 
 use godot::classes::RenderingServer;
 use godot::prelude::*;
@@ -19,6 +20,23 @@ const FRAMES_PER_ROW: usize = 64;
 const AABB_SLACK: f32 = 16.0;
 /// Margin around the drawn bodies' places (OURS): an effect reaches past its body.
 const AABB_MARGIN: f32 = 40.0;
+/// Layouts a host table names (efp_hosts: 4 bits of host[3]).
+const MAX_LAYOUTS: i64 = 16;
+
+/// The machine's threads, read once (the re-review's R4: a read is a cgroup file on Linux, ~45 us).
+fn machine_threads() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+}
+
+/// f32s as their bytes (FORMAT_RGBAF / FORMAT_RF: the machine's f32), safely (the re-review's R2).
+pub fn f32_bytes(v: &[f32]) -> PackedByteArray {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for f in v {
+        out.extend_from_slice(&f.to_ne_bytes());
+    }
+    PackedByteArray::from(&out[..])
+}
 
 #[derive(Default)]
 struct Batch {
@@ -42,6 +60,7 @@ pub struct SrEfpHosts {
     broken: bool,
     starts: HashMap<i64, usize>,
     needed: usize,
+    panic_next: bool,
 }
 
 #[godot_api]
@@ -49,7 +68,11 @@ impl SrEfpHosts {
     /// Layout `i`'s bone pages (CrowdGpu.Layout.pages) and its row width in texels.
     #[func]
     fn set_layout(&mut self, i: i64, width: i64, pages: VarArray) {
-        let i = i.max(0) as usize;
+        // The re-review's R5: a host names at most MAX_LAYOUTS layouts; any other index is refused.
+        if !(0..MAX_LAYOUTS).contains(&i) {
+            return;
+        }
+        let i = i as usize;
         if self.layouts.len() <= i {
             self.layouts.resize_with(i + 1, || (Vec::new(), 0));
         }
@@ -115,12 +138,16 @@ impl SrEfpHosts {
         near: f32,
         budget: i64,
         rows: i64,
+        threads: i64,
     ) -> PackedByteArray {
         if self.broken {
             return PackedByteArray::new();
         }
         match catch_unwind(AssertUnwindSafe(|| {
-            self.step_inner(&bodies, clock_ms, &reveal, view, cam_pos, sx, sy, ortho, range, sight, near, budget, rows)
+            if std::mem::take(&mut self.panic_next) {
+                panic!("SrEfpHosts: QA panic (qa_panic_next_step)");
+            }
+            self.step_inner(&bodies, clock_ms, &reveal, view, cam_pos, sx, sy, ortho, range, sight, near, budget, rows, threads)
         })) {
             Ok(v) => v,
             Err(_) => {
@@ -137,6 +164,12 @@ impl SrEfpHosts {
         self.needed as i64
     }
 
+    /// QA (tests): the next step panics, as a broken step would (the re-review's R1).
+    #[func]
+    fn qa_panic_next_step(&mut self) {
+        self.panic_next = true;
+    }
+
     /// Whether a step panicked (EquipFxBatch then draws through its GDScript path).
     #[func]
     fn broken(&self) -> bool {
@@ -147,14 +180,13 @@ impl SrEfpHosts {
     /// bytes (FORMAT_RF).
     #[func]
     fn offsets_bytes(&self, width: i64) -> PackedByteArray {
-        let mut v = vec![0.0f32; width.max(0) as usize];
+        let mut v = vec![0.0f32; width.clamp(0, 1 << 20) as usize];
         for (id, at) in self.starts.iter() {
-            if (*id as usize) < v.len() && *id >= 0 {
+            if *id >= 0 && (*id as usize) < v.len() {
                 v[*id as usize] = *at as f32;
             }
         }
-        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 4) };
-        PackedByteArray::from(bytes)
+        f32_bytes(&v)
     }
 
     /// The batches with a host drawn in the last step (their effects are stepped).
@@ -214,6 +246,7 @@ impl SrEfpHosts {
         near: f32,
         budget: i64,
         rows: i64,
+        threads: i64,
     ) -> PackedByteArray {
         let r = reveal.as_slice();
         let rv = [r.first().copied().unwrap_or(0.0), r.get(1).copied().unwrap_or(0.0), r.get(2).copied().unwrap_or(0.0), r.get(3).copied().unwrap_or(0.0)];
@@ -241,19 +274,15 @@ impl SrEfpHosts {
                 BatchIn { ghosts: b.ghosts.as_slice(), direct: b.direct.as_slice() }
             })
             .collect();
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(4);
+        // The effects' thread setting (EfpSimNative.threads: OPENSRO_EFP_THREADS, Godot's pool, 4
+        // at most), never past the machine's (the re-review's R4).
+        let threads = (threads.max(1) as usize).min(machine_threads());
         let (outs, t) = efp_hosts::step(&ins, bodies.as_slice(), &layouts, clock_ms, &rv, &cam, budget.max(0) as usize, threads);
         self.totals = [t.in_reach as i64, t.chosen as i64, t.drawn as i64, 0, 0];
         // The packed frames: each batch's after the one before (in id order), and a texel row of
         // offsets is the caller's (layout_out names each batch's start).
-        let cap_frames = rows.max(0) as usize * FRAMES_PER_ROW;
-        let mut bytes = PackedByteArray::new();
-        bytes.resize(cap_frames * FRAME_FLOATS * 4);
-        // The texture's floats written straight into its bytes (FORMAT_RGBAF, the machine's f32).
-        let buf: &mut [f32] = {
-            let s = bytes.as_mut_slice();
-            unsafe { std::slice::from_raw_parts_mut(s.as_mut_ptr() as *mut f32, s.len() / 4) }
-        };
+        let cap_frames = rows.clamp(0, 1 << 16) as usize * FRAMES_PER_ROW;
+        let mut buf = vec![0.0f32; cap_frames * FRAME_FLOATS];
         let mut at = 0usize;
         let mut starts: HashMap<i64, usize> = HashMap::new();
         let mut rs = RenderingServer::singleton();
@@ -298,6 +327,6 @@ impl SrEfpHosts {
         }
         self.starts = starts;
         self.needed = at;
-        bytes
+        f32_bytes(&buf)
     }
 }

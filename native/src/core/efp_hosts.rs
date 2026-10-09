@@ -33,6 +33,8 @@ pub const QUANTUM_MS: f32 = 1000.0 / 120.0;
 pub const PAGE_ROWS: usize = 1024;
 /// Floats a frame takes in the output (3 rows).
 pub const FRAME_FLOATS: usize = 12;
+/// The layout index's bits in host[3] (16 layouts; the slot's stamp above them).
+pub const LAYOUT_MASK: u32 = 15;
 
 pub type M34 = [[f32; 4]; 3];
 
@@ -242,14 +244,21 @@ pub fn step(
         if !cam.sees(at) {
             return None;
         }
-        let li = ((h[3] as u32) & 15) as usize;
+        let li = ((h[3] as u32) & LAYOUT_MASK) as usize;
         layouts.get(li).and_then(|(pages, w)| ghost_frame(body, h, clock_ms, pages, *w)).map(|f| (f, at))
     };
     let placed: Vec<Option<(M34, [f32; 3])>> = if threads > 1 && cand.len() >= 2048 {
         let per = cand.len().div_ceil(threads);
         std::thread::scope(|sc| {
             let hs: Vec<_> = cand.chunks(per).map(|ch| sc.spawn(move || ch.iter().map(place).collect::<Vec<_>>())).collect();
-            hs.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+            // A placement thread's panic goes on to the caller (the re-review's R3: dropping its
+            // chunk would shift every later host's frame onto the wrong host).
+            hs.into_iter()
+                .flat_map(|h| match h.join() {
+                    Ok(v) => v,
+                    Err(e) => std::panic::resume_unwind(e),
+                })
+                .collect()
         })
     } else {
         cand.iter().map(place).collect()
