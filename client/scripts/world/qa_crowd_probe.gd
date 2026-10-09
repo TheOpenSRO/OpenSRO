@@ -561,7 +561,7 @@ func _open_frame_log() -> void:
 		var cols := "t_ms frame_ms step others undrawn ghosts far to_dress fading rx_bytes rx_packets dispatch_ms left_ms held depart_q free_q"
 		for k in FRAME_LOG_SPLIT:
 			cols += " " + k
-		cols += " budget_ms budget_own_ms budget_spent_ms"
+		cols += " budget_ms budget_own_ms budget_spent_ms max_op_ms max_opcode"
 		if _fl_rs:
 			cols += " rs_cpu rs_setup_ms pc_mesh pc_surface pc_draw pc_spec"
 		_frame_log.store_line(cols)
@@ -598,6 +598,9 @@ func _log_frame() -> void:
 	var undrawn: int = world._other_build_args.size() - world._ghost_ids.size() + held
 	var bc: Array = world.call("qa_budget_cols") if world.has_method("qa_budget_cols") else [0.0, 0.0, 0.0]
 	extra += " %.2f %.2f %.2f" % bc
+	# The longest single dispatch of the frame and its opcode (round 762).
+	extra += " %.2f %d" % [float(NetClient.qa_max_op_usec) / 1000.0, NetClient.qa_max_opcode]
+	NetClient.qa_max_op_usec = 0
 	if _fl_rs:
 		# QA diagnostics (OPENSRO_QA_FRAME_LOG_RS=1): the render thread's last
 		# frame (its viewport's CPU time and the scene update) and the pipeline

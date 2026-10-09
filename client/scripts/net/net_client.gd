@@ -249,6 +249,10 @@ var _group_job = null
 ## Whether spawn messages are being replayed (set_spawn_item_rows): a group
 ## then is read whole, in order with what follows it.
 var _replaying := false
+## QA (round 762): the longest single dispatch since the frame log last read
+## it, and its opcode (0x3018: a group's share, its bracket's pump included).
+static var qa_max_op_usec := 0
+static var qa_max_opcode := 0
 static var qa_rx_bytes := 0
 static var qa_rx_packets := 0
 static var qa_group_players := 0
@@ -453,6 +457,9 @@ func _process(_delta: float) -> void:
 		var done := _group_step()
 		if fs:
 			FrameSplit.add("net_dispatch", Time.get_ticks_usec() - tg)
+			if Time.get_ticks_usec() - tg > qa_max_op_usec:
+				qa_max_op_usec = Time.get_ticks_usec() - tg
+				qa_max_opcode = 0x3018
 		if not done:
 			# The socket emptied all the same (PacketReader.drain).
 			_reader.drain(_peer)
@@ -483,6 +490,9 @@ func _process(_delta: float) -> void:
 		FrameSplit.add("net_dispatch", t2 - t1)
 		FrameSplit.add("net_packets_calls", 1)
 		FrameSplit.op(p.opcode, t2 - t1)
+		if t2 - t1 > qa_max_op_usec:
+			qa_max_op_usec = t2 - t1
+			qa_max_opcode = p.opcode
 
 ## Connects to host:port. If use_tls is true, wraps the connection in TLS
 ## once the underlying TCP handshake completes (see gateway.Server.TLSConfig
