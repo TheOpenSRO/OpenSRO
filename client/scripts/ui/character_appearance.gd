@@ -1689,6 +1689,12 @@ func kind_debug(kind: String) -> String:
 func awaiting() -> bool:
 	return not _prep_tasks.is_empty() or not _efp_waiting.is_empty()
 
+## Round 762: called with each template adopted on the main thread (a body's
+## skeleton, an item's node): World3D has CrowdGpu make the far twins'
+## shaders of its materials then (CrowdGpu.prewarm_node), not with the first
+## ghost that draws them.
+var adopted_hook := Callable()
+
 func _finish_prep(key: String, adopt: bool) -> void:
 	_prep_tasks.erase(key)
 	_prep_lock.lock()
@@ -1726,6 +1732,8 @@ func _finish_prep(key: String, adopt: bool) -> void:
 			stats["body_assemblies"] += 1
 			prep_stats["bodies"] += 1
 			_body_templates[bsr_path] = made
+			if made != null and adopted_hook.is_valid():
+				adopted_hook.call(made.skeleton)
 		# Round 762: the kinds that waited for it ask for their items now.
 		var waiting = _kinds_on_body.get(bsr_path)
 		_kinds_on_body.erase(bsr_path)
@@ -1754,6 +1762,8 @@ func _finish_prep(key: String, adopt: bool) -> void:
 		_item_templates[ikey] = node
 		stats["item_assemblies"] += 1
 		prep_stats["items"] += 1
+		if node != null and adopted_hook.is_valid():
+			adopted_hook.call(node)
 		if node != null:
 			_item_attachables[lower] = pair[1]
 	var lk := _layout_key(tmpl, bsr_path)

@@ -208,6 +208,9 @@ func _test_plates(world: Node) -> void:
 	world.call("_plate_batch_switch", true)
 	_check(batch.has(label), "and to the batch again")
 	# The review's F4: V hides other players' plates in the same frame.
+	# (Round 762: a new plate is shown once its chunk is rebuilt; flush paces
+	# the rebuilds, flush_all does them now.)
+	batch.flush_all(Vector3.ZERO)
 	world.call("_plate_batch_step")
 	var slot: int = (batch._plates[label] as NamePlateBatch.Plate).slot
 	_check(batch._anchors[slot * 4 + 3] > -1.0e8, "the plate is shown before V")
@@ -256,6 +259,10 @@ func _test_plate_batch_unit() -> void:
 		else:
 			text_verts += n
 	_check(int(batch.stats["glyphs"]) == 6, "three glyphs shaped in an outline pass and a text pass (%d)" % int(batch.stats["glyphs"]))
+	# Round 762: a new plate's anchor stays hidden until its chunk is rebuilt
+	# (its slot may still hold another plate's glyphs).
+	_check(batch._anchors[p.slot * 4 + 3] < -1.0e8, "round 762: a new plate is hidden until its chunk's rebuild")
+	batch.flush_all(Vector3.ZERO)
 	# The headless renderer makes no glyph textures, and a glyph without one
 	# draws nothing (as Label3D's _generate_glyph_surfaces skips it); with
 	# textures each glyph is two triangles.
@@ -276,6 +283,11 @@ func _test_plate_batch_unit() -> void:
 	owner.add_child(other)
 	batch.add(other, owner)
 	_check((batch._plates[other] as NamePlateBatch.Plate).slot == p.slot, "and its slot is used again")
+	_check(batch._anchors[o + 3] < -1.0e8, "round 762: ... hidden until the rebuild (the old plate's glyphs are still in the mesh)")
+	batch.flush(Vector3.ZERO)
+	_check(batch._anchors[o + 3] < -1.0e8, "round 762: ... a chunk added to this frame waits (REBUILD_SETTLE)")
+	batch.flush_all(Vector3.ZERO)
+	_check(batch._anchors[o + 3] == 18.0 or is_equal_approx(batch._anchors[o + 3], other.position.y), "round 762: ... and shown once rebuilt")
 	# The glyph quads and the chunk's join keep what is appended (round 757's
 	# first build grew copies of its packed arrays and drew nothing).
 	var part := [PackedVector3Array(), PackedVector2Array(), PackedColorArray(), PackedVector2Array()]

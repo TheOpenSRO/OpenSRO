@@ -56,11 +56,19 @@ class Plate:
 	## Surface key -> [verts PackedVector3Array, uvs PackedVector2Array,
 	## colors PackedColorArray, uv2s PackedVector2Array]
 	var parts := {}
+	## Round 762: added since its chunk was last rebuilt: its glyphs are not in
+	## the chunk's mesh yet (its slot may still hold another plate's), so its
+	## anchor stays hidden until the rebuild.
+	var pending := false
 
 class Chunk:
 	var mesh := RID()
 	var inst := RID()
 	var dirty := false
+	## Round 762: the frame it was first marked dirty since its last rebuild,
+	## and the last frame it was marked.
+	var dirty_since := -1
+	var touched := -1
 	var keys: Array = []
 
 var ok := false
@@ -222,8 +230,9 @@ func add(label: Label3D, owner: Node3D) -> bool:
 	_plates[label] = p
 	_shape(p)
 	label.visible = false
+	p.pending = true
 	_write_anchor(p)
-	_chunk_of(p.slot).dirty = true
+	_mark(p.slot)
 	stats["plates"] = _plates.size()
 	return true
 
@@ -273,7 +282,16 @@ func reshape(label: Label3D) -> void:
 	var p: Plate = _plates.get(label)
 	if p != null:
 		_shape(p)
-		_chunk_of(p.slot).dirty = true
+		_mark(p.slot)
+
+## Round 762: the chunk holding `slot` is to be rebuilt.
+func _mark(slot: int) -> void:
+	var ch := _chunk_of(slot)
+	var f := Engine.get_process_frames()
+	if not ch.dirty:
+		ch.dirty = true
+		ch.dirty_since = f
+	ch.touched = f
 
 func _take_slot() -> int:
 	if not _free.is_empty():
@@ -296,7 +314,7 @@ func _hide_slot(slot: int) -> void:
 
 func _write_anchor(p: Plate) -> void:
 	var o := p.slot * 4
-	if not is_instance_valid(p.owner) or not p.owner.is_inside_tree() or not p.owner.is_visible_in_tree() or _held.has(p.label):
+	if p.pending or not is_instance_valid(p.owner) or not p.owner.is_inside_tree() or not p.owner.is_visible_in_tree() or _held.has(p.label):
 		if _anchors[o + 3] != HIDDEN:
 			_anchors[o + 3] = HIDDEN
 			_anchor_dirty = true
@@ -500,11 +518,37 @@ func flush(player: Vector3) -> void:
 			var p: Plate = _plates[k]
 			if is_instance_valid(p.label):
 				_shape(p)
-				_chunk_of(p.slot).dirty = true
+				_mark(p.slot)
 	if player != _player:
 		_player = player
 		for k in _materials:
 			RenderingServer.material_set_param(_materials[k], "plate_player", player)
+	# Round 762: one chunk rebuilt a frame at most, and a chunk still being
+	# added to waits until it settles (REBUILD_SETTLE frames without a change)
+	# or has waited REBUILD_WAIT frames: a crowd's plates come a few a frame,
+	# and each rebuilt their whole chunk (256 plates' glyphs) every frame
+	# (MEASURED r762.md: w_plates 5-7 ms a frame while a page was held).
+	var f := Engine.get_process_frames()
+	var pick := -1
+	for ci in range(_chunks.size()):
+		var ch: Chunk = _chunks[ci]
+		if not ch.dirty:
+			continue
+		if f - ch.touched < REBUILD_SETTLE and f - ch.dirty_since < REBUILD_WAIT:
+			continue
+		if pick < 0 or ch.dirty_since < (_chunks[pick] as Chunk).dirty_since:
+			pick = ci
+	if pick >= 0:
+		var ch: Chunk = _chunks[pick]
+		ch.dirty = false
+		ch.dirty_since = -1
+		_rebuild(pick, ch)
+		# Its new plates' glyphs are drawn now: their anchors shown.
+		for sl in range(pick * CHUNK, mini((pick + 1) * CHUNK, _by_slot.size())):
+			var p: Plate = _by_slot[sl]
+			if p != null and p.pending:
+				p.pending = false
+				_write_anchor(p)
 	if _anchor_dirty and _anchor_rows > 0:
 		_anchor_dirty = false
 		var img := Image.create_from_data(ANCHOR_W, _anchor_rows, false, Image.FORMAT_RGBAF, _anchors.to_byte_array())
@@ -515,11 +559,19 @@ func flush(player: Vector3) -> void:
 		else:
 			_anchor_tex.update(img)
 		stats["uploads"] = int(stats["uploads"]) + 1
+
+const REBUILD_SETTLE := 3
+const REBUILD_WAIT := 20
+
+## Round 762 (QA, tests): every dirty chunk rebuilt now (flush's pacing aside).
+func flush_all(player: Vector3) -> void:
 	for ci in range(_chunks.size()):
 		var ch: Chunk = _chunks[ci]
 		if ch.dirty:
-			ch.dirty = false
-			_rebuild(ci, ch)
+			ch.touched = -REBUILD_WAIT
+			ch.dirty_since = -REBUILD_WAIT
+	for i in range(_chunks.size() + 1):
+		flush(player)
 
 func set_range(r: float) -> void:
 	range = r

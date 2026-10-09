@@ -257,6 +257,8 @@ var _rigid := {}              # "mesh id|layout|bone" -> ArrayMesh
 var _free_slots: Array[int] = []
 var _slots := 0
 var _slot_cap := 0
+## Round 762: the body texture's first size, in bodies (_take_slot).
+var first_slot_cap := SLOTS_PER_ROW * 16
 var _body_data := PackedFloat32Array()
 var _body_tex: ImageTexture = null
 var _body_dirty := false
@@ -602,6 +604,7 @@ func refresh(node: Node3D) -> bool:
 ## Baking budget a frame while a ghost waits on a clip not baked yet (OURS):
 ## the arrival of a kind whose stand loop is new waits on its frames.
 const GHOST_BAKE_BUDGET_USEC := 16000
+const BAKE_MIN_USEC := 500
 const FADE_IN := 1
 const FADE_OUT := 2
 
@@ -645,8 +648,9 @@ func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array
 		idle_time: float, fade: bool, hold: int = -1) -> bool:
 	if not enabled or node == null or recipe == null or _bodies.has(node) or not node.is_inside_tree():
 		return false
+	var q0 := Time.get_ticks_usec() if FrameSplit.on else 0
 	var geo = _recipe_geometry(recipe)
-	if geo == null:
+	if geo == null or geo is String:
 		return false
 	var l: Layout = geo[0]
 	if entry.size() < 5 or not bool(entry[4]):
@@ -654,8 +658,14 @@ func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array
 	var anim: BanReader.ParsedAnimation = entry[1]
 	if not ghost_clip_ready(recipe, anim):
 		return false
+	var q1 := Time.get_ticks_usec() if FrameSplit.on else 0
 	if _lit_parts(recipe, l, light).is_empty():
 		return false
+	if FrameSplit.on:
+		# QA (round 762): add_ghost's phases.
+		var q2 := Time.get_ticks_usec()
+		FrameSplit.add("ga_geo", q1 - q0)
+		FrameSplit.add("ga_lit", q2 - q1)
 	# A mirrored holder, as add() refuses one (review F9; none is mirrored).
 	if (node.global_transform * local).basis.determinant() < 0.0:
 		_refuse("mirrored")
@@ -685,7 +695,10 @@ func add_ghost(node: Node3D, recipe: CharacterAppearance.FarRecipe, entry: Array
 		_begin_fade(b, FADE_IN, idle_time)
 	else:
 		_write_fade(b)
+	var q3 := Time.get_ticks_usec() if FrameSplit.on else 0
 	_add_ghost_parts(b)
+	if FrameSplit.on:
+		FrameSplit.add("ga_parts", Time.get_ticks_usec() - q3)
 	_grow_aabb(b.xf.origin)
 	stats["ghosts"] = int(stats.get("ghosts", 0)) + 1
 	return true
@@ -704,7 +717,7 @@ func _ghost_objc(b: Body) -> float:
 ## not baked is queued first. A ghost asks this before anything else.
 func ghost_clip_ready(recipe: CharacterAppearance.FarRecipe, anim: BanReader.ParsedAnimation) -> bool:
 	var geo = _recipe_geometry(recipe)
-	if geo == null or anim == null or anim.duration_ms <= 0 or anim.key_times.is_empty():
+	if geo == null or geo is String or anim == null or anim.duration_ms <= 0 or anim.key_times.is_empty():
 		return false
 	var l: Layout = geo[0]
 	var fr := CrowdAnim.frames_for(l.scratch, anim)
@@ -721,7 +734,7 @@ func ghost_clip_ready(recipe: CharacterAppearance.FarRecipe, anim: BanReader.Par
 ## its first step finds it baked; review F3). Nothing when baked or queued.
 func prebake_recipe(recipe: CharacterAppearance.FarRecipe, anim: BanReader.ParsedAnimation) -> void:
 	var geo = _recipe_geometry(recipe) if recipe != null else null
-	if geo == null or anim == null or anim.duration_ms <= 0 or anim.key_times.is_empty():
+	if geo == null or geo is String or anim == null or anim.duration_ms <= 0 or anim.key_times.is_empty():
 		return
 	var l: Layout = geo[0]
 	_queue_bake(l, CrowdAnim.frames_for(l.scratch, anim), false)
@@ -729,6 +742,7 @@ func prebake_recipe(recipe: CharacterAppearance.FarRecipe, anim: BanReader.Parse
 ## Whether `recipe` can be drawn far at all (its pieces pass the far path's
 ## rules); its parts are worked out once.
 func can_ghost(recipe: CharacterAppearance.FarRecipe) -> bool:
+	# A recipe whose rigid pieces are still being made can (it waits).
 	return enabled and recipe != null and _recipe_geometry(recipe) != null
 
 ## A ghost's object colour changed (CharacterLight): its parts take the
@@ -1000,6 +1014,7 @@ func _add_ghost_parts(b: Body) -> void:
 		var tk: String = p["tk"]
 		var twin: ShaderMaterial = null
 		var glow := -1
+		var tw0 := Time.get_ticks_usec() if FrameSplit.on else 0
 		# Round 759: a glow material draws from its item's one glow twin,
 		# the row per instance.
 		if EquipGlow.is_glow(lit):
@@ -1009,6 +1024,8 @@ func _add_ghost_parts(b: Body) -> void:
 			glow = _glow_row(lit)
 		else:
 			twin = _live_twin(lit, tk, l)
+		if FrameSplit.on:
+			FrameSplit.add("ga_twin", Time.get_ticks_usec() - tw0)
 		if twin == null:
 			continue
 		# The group key, kept per twin by id (never the twin itself, F2).
@@ -1022,7 +1039,10 @@ func _add_ghost_parts(b: Body) -> void:
 			q["objc"] = b.objc
 		if glow >= 0:
 			q["glow"] = glow
+		var ap0 := Time.get_ticks_usec() if FrameSplit.on else 0
 		_add_part(b, q)
+		if FrameSplit.on:
+			FrameSplit.add("ga_addpart", Time.get_ticks_usec() - ap0)
 
 ## `m`'s twin as _twin answers, without re-making its key: the live one in
 ## _twins when it is still `m`'s (its source checked by the weak reference),
@@ -1053,6 +1073,11 @@ func _fade_src(lit: Material) -> Material:
 
 ## The recipe's parts as the far path reads a built body (_part_for), once
 ## per recipe; null when one is not drawable far.
+## Round 762: what _recipe_geometry (and _part_for under it) answer while a
+## rigid piece's mesh is still being made: not a refusal, a wait.
+const RECIPE_PENDING := "pending"
+var _recipe_sliced := false
+
 func _recipe_geometry(recipe: CharacterAppearance.FarRecipe):
 	if _recipe_geo.has(recipe.key):
 		return _recipe_geo[recipe.key]
@@ -1061,6 +1086,7 @@ func _recipe_geometry(recipe: CharacterAppearance.FarRecipe):
 		_recipe_geo[recipe.key] = null
 		return null
 	var parts: Array = []
+	var pending := false
 	for piece in recipe.pieces:
 		var mi: MeshInstance3D = piece[0]
 		var top: Node = piece[6]
@@ -1075,11 +1101,20 @@ func _recipe_geometry(recipe: CharacterAppearance.FarRecipe):
 					identity = false
 					break
 				at = at.get_parent()
+		_recipe_sliced = true
 		var p = _part_for(mi, piece[1], piece[3], to_body, identity, String(piece[4]), piece[5], l, false)
+		_recipe_sliced = false
+		if p is String:
+			# Round 762: a rigid piece still being made (step_rigid_jobs): the
+			# recipe waits, every other piece's mesh started too.
+			pending = true
+			continue
 		if p == null:
 			_recipe_geo[recipe.key] = null
 			return null
 		parts.append([p, piece[1], bool(piece[2])])
+	if pending:
+		return RECIPE_PENDING
 	# Nothing to draw (a body with no mesh): it is dressed instead.
 	if parts.is_empty():
 		_recipe_geo[recipe.key] = null
@@ -1223,10 +1258,22 @@ func flush(idle_time: float) -> void:
 			remove(_keys[_ring])
 			continue
 		_update_transform(b)
-	bake_step(GHOST_BAKE_BUDGET_USEC if _ghost_waits_bake else BAKE_BUDGET_USEC)
+	# Round 762: within what the frame's crowd budget leaves (OtherCrowd.
+	# FrameBudget), BAKE_MIN_USEC at least, so a crowd arriving with new
+	# clips does not add 16 ms of baking to frames it already fills.
+	var bt := Time.get_ticks_usec()
+	bake_step(clampi(OtherCrowd.FrameBudget.left(), BAKE_MIN_USEC, GHOST_BAKE_BUDGET_USEC if _ghost_waits_bake else BAKE_BUDGET_USEC))
+	# Round 762: the rigid pieces a ghost's recipe waits for, in the same share.
+	step_rigid_jobs(clampi(OtherCrowd.FrameBudget.left(), BAKE_MIN_USEC, BAKE_BUDGET_USEC))
+	var bu := Time.get_ticks_usec()
+	OtherCrowd.FrameBudget.spend(bu - bt)
 	_ghost_waits_bake = false
 	_upload(_ghost_waits_upload)
 	_ghost_waits_upload = false
+	if FrameSplit.on:
+		# QA (round 762): the flush's baking and its uploads and pushes.
+		FrameSplit.add("gf_bake", bu - bt)
+		FrameSplit.add("gf_upload", Time.get_ticks_usec() - bu)
 
 ## Bakes queued clips for up to `budget_usec`. Returns the frames composed.
 func bake_step(budget_usec: int) -> int:
@@ -1285,6 +1332,7 @@ func _rebase(idle_time: float) -> void:
 	_send_reveal()
 
 func _upload(force: bool = false) -> void:
+	var u0 := Time.get_ticks_usec() if FrameSplit.on else 0
 	if _body_dirty and _slot_cap > 0:
 		_body_dirty = false
 		var img := Image.create_from_data(SLOTS_PER_ROW * TEXELS_PER_BODY, _slot_cap / SLOTS_PER_ROW, false,
@@ -1339,7 +1387,12 @@ func _upload(force: bool = false) -> void:
 					t.set_shader_parameter("crowd_volume", l.vol_tex)
 			else:
 				l.vol_tex.update(vimg)
+	var u1 := Time.get_ticks_usec() if FrameSplit.on else 0
 	_push_groups()
+	if FrameSplit.on:
+		# QA (round 762): the textures' uploads, and the groups' pushes.
+		FrameSplit.add("gu_tex", u1 - u0)
+		FrameSplit.add("gu_push", Time.get_ticks_usec() - u1)
 	stats["far"] = _bodies.size()
 	stats["groups"] = _groups.size()
 
@@ -1348,10 +1401,31 @@ func _push_groups() -> void:
 	if _aabb_dirty:
 		_aabb_dirty = false
 		stats["aabb_pushes"] = int(stats.get("aabb_pushes", 0)) + 1
-		for k in _groups:
-			RenderingServer.instance_set_custom_aabb((_groups[k] as Group).inst, _aabb)
-			if (_groups[k] as Group).fade_inst.is_valid():
-				RenderingServer.instance_set_custom_aabb((_groups[k] as Group).fade_inst, _aabb)
+		# Round 762: the groups take the new bounds AABB_PUSH_GROUPS a frame,
+		# not all in one: each is a culling-tree update on the render thread
+		# (RendererSceneCull::update_dirty_instances), and a push to some
+		# 2,000 groups and their fade instances was a 50-60 ms scene setup on
+		# the render thread (MEASURED r762.md, rs_setup), which the next
+		# frame's sync waits for (post_flush). A group still on the old bounds
+		# keeps them a few frames: a shrink is safe (larger bounds never cull
+		# wrongly); a growth can leave a part at the new edge culled with its
+		# group for those frames, when the camera sees the new edge but not
+		# the old box (OURS, disclosed).
+		_aabb_push = _groups.values()
+		_aabb_push_at = 0
+	if _aabb_push_at < _aabb_push.size():
+		var end := mini(_aabb_push_at + AABB_PUSH_GROUPS, _aabb_push.size())
+		for i in range(_aabb_push_at, end):
+			var g: Group = _aabb_push[i]
+			if not g.inst.is_valid():
+				continue
+			RenderingServer.instance_set_custom_aabb(g.inst, _aabb)
+			if g.fade_inst.is_valid():
+				RenderingServer.instance_set_custom_aabb(g.fade_inst, _aabb)
+		_aabb_push_at = end
+		if _aabb_push_at >= _aabb_push.size():
+			_aabb_push = []
+			_aabb_push_at = 0
 	# Round 759: the groups marked dirty, not a pass over every group a frame
 	# (6,703 live, MEASURED: part of `g_flush`'s 5.9 ms).
 	for g in _dirty_groups:
@@ -1378,13 +1452,22 @@ func _show_group(g: Group) -> void:
 	if g.n_fade > 0 and not g.fade_inst.is_valid() and not g.fade_tried:
 		_make_fade_inst(g)
 	var want_o := g.count > g.n_fade or g.fade_mat == null and g.fade_tried
+	# Round 762: shown and hidden by the layer mask, not instance_set_visible:
+	# a visibility change takes the instance out of the scenario's culling
+	# tree and puts it back on the render thread (READ, Godot 4.7.2
+	# RendererSceneCull::instance_set_visible -> _unpair_instance /
+	# _instance_queue_update with its AABB), and a page's reveal showed some
+	# 2,000 fade instances at once: a 62-65 ms render-thread frame (MEASURED
+	# r762.md, post_flush). The mask is a field the cull tests (LAYER_CHECK);
+	# Forward+ pairs geometry with VoxelGI only (geometry_instance_get_pair_mask),
+	# so a mask change unpairs nothing.
 	if want_o != g.shown_o:
 		g.shown_o = want_o
-		RenderingServer.instance_set_visible(g.inst, want_o)
+		RenderingServer.instance_set_layer_mask(g.inst, g.layers if want_o else 0)
 	want_f = want_f and g.fade_inst.is_valid()
 	if want_f != g.shown_f:
 		g.shown_f = want_f
-		RenderingServer.instance_set_visible(g.fade_inst, want_f)
+		RenderingServer.instance_set_layer_mask(g.fade_inst, g.layers if want_f else 0)
 
 ## Round 762: the group's fade instance -- its MultiMesh drawn with the fade
 ## twin of its material (AppearFade.fade_twin: a glowing weapon fades on its
@@ -1406,11 +1489,11 @@ func _make_fade_inst(g: Group) -> void:
 	g.fade_inst = RenderingServer.instance_create2(g.mm, scenario)
 	RenderingServer.instance_geometry_set_material_override(g.fade_inst, ft.get_rid())
 	RenderingServer.instance_geometry_set_cast_shadows_setting(g.fade_inst, RenderingServer.SHADOW_CASTING_SETTING_OFF)
-	RenderingServer.instance_set_layer_mask(g.fade_inst, g.layers)
+	# Hidden by its mask (0) until a body in it fades unheld (_show_group).
+	RenderingServer.instance_set_layer_mask(g.fade_inst, 0)
 	RenderingServer.instance_set_pivot_data(g.fade_inst, g.sort, true)
 	if _aabb_set:
 		RenderingServer.instance_set_custom_aabb(g.fade_inst, _aabb)
-	RenderingServer.instance_set_visible(g.fade_inst, false)
 	g.shown_f = false
 
 ## The bounds every far instance is culled by (one for all: a MultiMesh is
@@ -1430,6 +1513,10 @@ func _grow_aabb(at: Vector3) -> void:
 	_aabb_dirty = true
 
 var _aabb_dirty := false
+## Round 762: the groups still to take the current bounds, and how many a frame.
+var _aabb_push: Array = []
+var _aabb_push_at := 0
+const AABB_PUSH_GROUPS := 128
 
 ## Round 759: the bounds snapped outward to AABB_SNAP units, so a crowd that
 ## grows the box by a body's width does not move it (OURS). Every change is a
@@ -1478,7 +1565,11 @@ func _take_slot() -> int:
 	var s := _slots
 	_slots += 1
 	if _slots > _slot_cap:
-		_slot_cap = maxi(SLOTS_PER_ROW, _slot_cap * 2)
+		# Round 762: 4,096 at first (320 KB), doubled past it: each growth is a
+		# new texture bound to every twin (a material update each, on the
+		# render thread), and a crowd of thousands arriving grew it 256 ->
+		# 4,096 in four steps. Tests ask for a smaller first size.
+		_slot_cap = maxi(first_slot_cap, _slot_cap * 2)
 		_body_data.resize(_slot_cap * FLOATS_PER_BODY)
 	return s
 
@@ -1846,7 +1937,14 @@ func _part_for(mi: MeshInstance3D, mat_in: Material, skin: Skin, to_body: bool, 
 		if bone < 0:
 			_refuse("hung")
 			return null
-		var made := rigid_mesh(mi, l.key, bone, l.rests[bone] * chain)
+		var made: ArrayMesh = null
+		if _recipe_sliced:
+			rigid_pending = false
+			made = rigid_mesh_sliced(mi, l.key, bone, l.rests[bone] * chain)
+			if made == null and rigid_pending:
+				return RECIPE_PENDING
+		else:
+			made = rigid_mesh(mi, l.key, bone, l.rests[bone] * chain)
 		if made == null:
 			_refuse("rigid")
 			return null
@@ -1911,10 +2009,86 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 	var key := "%d|%s|%d" % [mi.mesh.get_instance_id(), layout_key, bone]
 	if _rigid.has(key):
 		return _rigid[key]
+	var rt := Time.get_ticks_usec() if FrameSplit.on else 0
+	var job = _rigid_jobs.get(key)
+	_rigid_jobs.erase(key)
+	if job == null:
+		job = _rigid_job_start(mi, bone, to_bone)
+	var am: ArrayMesh = null
+	if not (job as Dictionary).is_empty():
+		_rigid_job_step(job, 1 << 40)
+		am = _rigid_job_finish(job)
+	if FrameSplit.on:
+		# QA (round 762): the per-vertex loop's cost (a Rust candidate, r762.md).
+		FrameSplit.add("g_rigid", Time.get_ticks_usec() - rt)
+		FrameSplit.add("g_rigid_calls", 1)
+	if am != null:
+		_rigid[key] = am
+	return am
+
+## Round 762 (OURS): rigid_mesh for a ghost's recipe -- the mesh when it is
+## made, else null, its vertices worked on a share at a time by
+## step_rigid_jobs (the frame's crowd budget) and RIGID_PENDING set: a swarm
+## shield's or weapon's loop was a 16.5 ms frame on its own (MEASURED
+## r762.md, `g_rigid`). The same code as rigid_mesh, in slices.
+var rigid_pending := false
+const RIGID_SLICE_MIN := 1500
+var _rigid_jobs := {}   # key -> the job (_rigid_job_start)
+
+func rigid_mesh_sliced(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Transform3D) -> ArrayMesh:
+	var key := "%d|%s|%d" % [mi.mesh.get_instance_id(), layout_key, bone]
+	if _rigid.has(key):
+		return _rigid[key]
+	var job = _rigid_jobs.get(key)
+	if job == null:
+		job = _rigid_job_start(mi, bone, to_bone)
+		if (job as Dictionary).is_empty():
+			return null
+		# A small piece (most: about 1-2 us a vertex) is made at once.
+		if int(job["n"]) <= RIGID_SLICE_MIN:
+			_rigid_job_step(job, 1 << 40)
+			var small := _rigid_job_finish(job)
+			if small != null:
+				_rigid[key] = small
+			return small
+		_rigid_jobs[key] = job
+	if int(job["k"]) >= int(job["n"]):
+		_rigid_jobs.erase(key)
+		var am := _rigid_job_finish(job)
+		if am != null:
+			_rigid[key] = am
+		return am
+	rigid_pending = true
+	return null
+
+## The jobs' vertices for up to `budget_usec` (one job's slice at least).
+func step_rigid_jobs(budget_usec: int) -> void:
+	if _rigid_jobs.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+	for key in _rigid_jobs:
+		var job: Dictionary = _rigid_jobs[key]
+		if int(job["k"]) >= int(job["n"]):
+			continue
+		var left := budget_usec - (Time.get_ticks_usec() - t0)
+		_rigid_job_step(job, maxi(left, 1))
+		if int(job["k"]) >= int(job["n"]):
+			# A ghost waiting on it (World3D: as on a clip) is looked at again.
+			clip_generation += 1
+		if Time.get_ticks_usec() - t0 >= budget_usec:
+			break
+	if FrameSplit.on:
+		FrameSplit.add("g_rigid", Time.get_ticks_usec() - t0)
+
+## What a rigid mesh is made from: the kept arrays, the skin's bind matrices
+## (read here, on the main thread: the item skeleton's poses), the outputs.
+## Empty when it cannot be made.
+func _rigid_job_start(mi: MeshInstance3D, bone: int, to_bone: Transform3D) -> Dictionary:
 	# Round 762: the arrays the mesh was built from, kept on it (BmsReader.
 	# to_array_mesh's `keep`), rather than asked of the RenderingServer (a
 	# wait for the render thread under the separate render thread).
-	var kept = mi.mesh.get_meta(BmsReader.KEPT_ARRAYS_META, null)
+	# (has_meta first: get_meta with a null default still errors on a miss.)
+	var kept = mi.mesh.get_meta(BmsReader.KEPT_ARRAYS_META) if mi.mesh.has_meta(BmsReader.KEPT_ARRAYS_META) else null
 	var arrays: Array = (kept as Array).duplicate() if kept is Array else mi.mesh.surface_get_arrays(0)
 	var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	var nrm = arrays[Mesh.ARRAY_NORMAL]
@@ -1927,7 +2101,7 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 		vb = arrays[Mesh.ARRAY_BONES]
 		vw = arrays[Mesh.ARRAY_WEIGHTS]
 		if isk == null or vb == null or vw == null or v.is_empty():
-			return null
+			return {}
 		# A template's item skeleton (round 756, a ghost's recipe) is never in a
 		# tree, where a pose change marks nothing dirty (skeleton_3d.cpp:575,
 		# READ): its globals are composed here (at rest, as a built body's
@@ -1946,7 +2120,28 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 	var has_n: bool = nrm is PackedVector3Array and (nrm as PackedVector3Array).size() == v.size()
 	if has_n:
 		out_n.resize(v.size())
-	for k in range(v.size()):
+	var prim := (mi.mesh as ArrayMesh).surface_get_primitive_type(0) if mi.mesh is ArrayMesh else Mesh.PRIMITIVE_TRIANGLES
+	return {"arrays": arrays, "v": v, "nrm": nrm, "xf": xf, "vb": vb, "vw": vw, "per": per, "has_n": has_n,
+		"out_v": out_v, "out_n": out_n, "to_bone": to_bone, "bone": bone, "prim": prim, "k": 0, "n": v.size()}
+
+## Vertices from job["k"] on, for up to `budget_usec` (checked every 64).
+static func _rigid_job_step(job: Dictionary, budget_usec: int) -> void:
+	var t0 := Time.get_ticks_usec()
+	var v: PackedVector3Array = job["v"]
+	var nrm = job["nrm"]
+	var xf: Array[Transform3D] = job["xf"]
+	var vb = job["vb"]
+	var vw = job["vw"]
+	var per: int = job["per"]
+	var has_n: bool = job["has_n"]
+	var out_v: PackedVector3Array = job["out_v"]
+	var out_n: PackedVector3Array = job["out_n"]
+	var to_bone: Transform3D = job["to_bone"]
+	var k: int = job["k"]
+	var n: int = job["n"]
+	while k < n:
+		if (k & 63) == 0 and k > int(job["k"]) and Time.get_ticks_usec() - t0 >= budget_usec:
+			break
 		var p := v[k]
 		var nn: Vector3 = (nrm as PackedVector3Array)[k] if has_n else Vector3.UP
 		if per > 0:
@@ -1964,23 +2159,31 @@ func rigid_mesh(mi: MeshInstance3D, layout_key: String, bone: int, to_bone: Tran
 		out_v[k] = to_bone * p
 		if has_n:
 			out_n[k] = (to_bone.basis * nn).normalized()
-	arrays[Mesh.ARRAY_VERTEX] = out_v
-	if has_n:
-		arrays[Mesh.ARRAY_NORMAL] = out_n
+		k += 1
+	# Packed arrays are values: the written copies go back into the job.
+	job["out_v"] = out_v
+	job["out_n"] = out_n
+	job["k"] = k
+
+static func _rigid_job_finish(job: Dictionary) -> ArrayMesh:
+	var arrays: Array = job["arrays"]
+	var n: int = job["n"]
+	arrays[Mesh.ARRAY_VERTEX] = job["out_v"]
+	if bool(job["has_n"]):
+		arrays[Mesh.ARRAY_NORMAL] = job["out_n"]
 	arrays[Mesh.ARRAY_TANGENT] = null
 	var bones := PackedInt32Array()
-	bones.resize(v.size() * 4)
+	bones.resize(n * 4)
 	var weights := PackedFloat32Array()
-	weights.resize(v.size() * 4)
-	for k in range(v.size()):
+	weights.resize(n * 4)
+	var bone: int = job["bone"]
+	for k in range(n):
 		bones[k * 4] = bone
 		weights[k * 4] = 1.0
 	arrays[Mesh.ARRAY_BONES] = bones
 	arrays[Mesh.ARRAY_WEIGHTS] = weights
 	var am := ArrayMesh.new()
-	var prim := (mi.mesh as ArrayMesh).surface_get_primitive_type(0) if mi.mesh is ArrayMesh else Mesh.PRIMITIVE_TRIANGLES
-	am.add_surface_from_arrays(prim, arrays)
-	_rigid[key] = am
+	am.add_surface_from_arrays(int(job["prim"]), arrays)
 	return am
 
 # --- groups -------------------------------------------------------------------------
@@ -2085,13 +2288,37 @@ func _twin(src: ShaderMaterial, l: Layout, key_in: String = "") -> ShaderMateria
 	# that took its id.
 	if got != null and _twin_sources.has(key) and (_twin_sources[key] as WeakRef).get_ref() == src:
 		return got
+	var tws := Time.get_ticks_usec() if FrameSplit.on else 0
 	var sh := twin_shader(src.shader)
 	if sh == null:
 		return null
+	var un0 := Time.get_ticks_usec() if FrameSplit.on else 0
+	if FrameSplit.on:
+		FrameSplit.add("tw_shader", un0 - tws)
+	if not _uniform_names.has(src.shader):
+		var names0 := PackedStringArray()
+		for u in src.shader.get_shader_uniform_list():
+			names0.append(String(u["name"]))
+		_uniform_names[src.shader] = names0
+		if FrameSplit.on:
+			# QA (round 762): a source shader's uniform list, asked of the
+			# render server the first time (a wait for its compile).
+			FrameSplit.add("ga_uniforms", Time.get_ticks_usec() - un0)
+	var twa := Time.get_ticks_usec() if FrameSplit.on else 0
 	var t := ShaderMaterial.new()
 	t.resource_name = src.resource_name
+	var twn := Time.get_ticks_usec() if FrameSplit.on else 0
 	t.shader = sh
+	if FrameSplit.on:
+		FrameSplit.add("tw_new", twn - twa)
+		FrameSplit.add("tw_set", Time.get_ticks_usec() - twn)
+		if not _tw_seen.has(sh):
+			_tw_seen[sh] = true
+			FrameSplit.add("tw_first_set_calls", 1)
 	t.render_priority = src.render_priority
+	var twp := Time.get_ticks_usec() if FrameSplit.on else 0
+	if FrameSplit.on:
+		FrameSplit.add("tw_assign", twp - twa)
 	# The uniform names once per shader (round 756: ghosts make twins in bursts,
 	# and the list is built anew on every call).
 	var names: PackedStringArray = _uniform_names.get(src.shader, PackedStringArray())
@@ -2114,7 +2341,11 @@ func _twin(src: ShaderMaterial, l: Layout, key_in: String = "") -> ShaderMateria
 	t.set_shader_parameter("crowd_range", _range)
 	if _glow_tex != null:
 		t.set_shader_parameter("crowd_glow", _glow_tex)
+	var twt := Time.get_ticks_usec() if FrameSplit.on else 0
 	TexAni.bind_like(t, src)
+	if FrameSplit.on:
+		FrameSplit.add("tw_params", twt - twp)
+		FrameSplit.add("tw_texani", Time.get_ticks_usec() - twt)
 	l.twins[t] = true
 	t.set_meta(&"opensro_twin_key", key)
 	_twins[key] = t
@@ -2273,10 +2504,89 @@ func twin_shader(src: Shader) -> Shader:
 	var code := twin_code(src.code)
 	if code == "":
 		return null
+	if FrameSplit.on:
+		# QA (round 762): which shaders' twins are made, and when.
+		print("QA TWIN shader made for %s (%d chars) at %d ms, %d made, prewarm %s" % [src.resource_path if src.resource_path != "" else "shader %d" % src.get_instance_id(),
+			src.code.length(), Time.get_ticks_msec(), _twin_shaders.size() + 1, "seen" if _prewarmed.has(src) else "not seen"])
 	var sh := Shader.new()
 	sh.code = code
 	_twin_shaders[src] = sh
 	return sh
+
+## Round 762 (OURS): the twin shaders (and the fade twins' sources and their
+## twin shaders) of every material under `node` (a template just adopted),
+## made now: a shader's code is compiled on the render thread when it is set,
+## and the first ghost to draw a new one waited for that compile in its frame
+## (MEASURED r762.md: a 33 ms g_add and a 27 ms flush for a page's first
+## ghost). Seen shaders are skipped.
+func prewarm_node(node: Node) -> void:
+	if node == null:
+		return
+	var stack: Array[Node] = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		for c in n.get_children():
+			stack.append(c)
+		var mi := n as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		if mi.material_override != null:
+			_prewarm_material(mi.material_override)
+		for si in range(mi.mesh.get_surface_count()):
+			var m: Material = mi.get_surface_override_material(si)
+			if m == null:
+				m = mi.mesh.surface_get_material(si)
+			_prewarm_material(m)
+
+## Round 762 (OURS): the twins (and fade twins) of the shaders a character's
+## materials are drawn with -- the object shaders, the glow shaders, the MTRL
+## mod shaders made so far -- made on the render server now (the world's
+## load), not in the first ghost's frame: MEASURED r762.md, a page's first
+## ghost made ten twin shaders (`QA TWIN`) and its frame took 66-71 ms, of it
+## 54 ms assigning them (RenderingServerDefault.shader_create_from_code
+## compiles on the calling thread under the RenderingDevice, READ 4.7.2).
+func prewarm_known() -> void:
+	var shaders: Array = [ObjectLoader.OBJECT_SHADER, ObjectLoader.FOLIAGE_SHADER, ObjectLoader.FOLIAGE_SHADER_ONE_SIDED]
+	for cull in ["back", "disabled"]:
+		for alpha_test in [false, true]:
+			shaders.append(EquipGlow.glow_shader(cull, alpha_test))
+	for sh in ObjectLoader.mod_shaders_made():
+		shaders.append(sh)
+	for sh in shaders:
+		_prewarm_shader(sh as Shader)
+
+func _prewarm_shader(sh: Shader) -> void:
+	if sh == null or _prewarmed.has(sh):
+		return
+	_prewarmed[sh] = true
+	_prewarm_rid(twin_shader(sh))
+	var fade := ObjectLoader.appear_fade_shader(sh)
+	if fade != null and not _prewarmed.has(fade):
+		_prewarmed[fade] = true
+		_prewarm_rid(twin_shader(fade))
+	stats["prewarmed_shaders"] = _prewarmed.size()
+
+func _prewarm_material(m: Material) -> void:
+	var sm := m as ShaderMaterial
+	if sm == null or sm.shader == null or _prewarmed.has(sm.shader):
+		return
+	_prewarm_shader(sm.shader)
+	# A glow material fades on its plain material (AppearFade._make_twin).
+	var f := _fade_src(sm) as ShaderMaterial
+	if f != null and f.shader != null and not _prewarmed.has(f.shader):
+		_prewarmed[f.shader] = true
+		_prewarm_rid(twin_shader(f.shader))
+
+## The shader made on the render server now (Shader.get_rid creates it from the
+## preprocessed code on first use): the first ghost's twin assignment waited
+## for it (MEASURED r762.md: `tw_assign` 55 ms for a page's first ghost, 8 ms
+## a new kind after).
+static func _prewarm_rid(sh: Shader) -> void:
+	if sh != null:
+		sh.get_rid()
+
+var _prewarmed := {}
+var _tw_seen := {}
 
 static func twin_code(code: String) -> String:
 	if not code.contains("shader_type spatial"):
@@ -2331,6 +2641,7 @@ func collect() -> int:
 		if g.empty_cycles < GROUP_EMPTY_CYCLES or freed >= COLLECT_MAX:
 			continue
 		RenderingServer.free_rid(g.inst)
+		g.inst = RID()
 		if g.fade_inst.is_valid():
 			RenderingServer.free_rid(g.fade_inst)
 			g.fade_inst = RID()

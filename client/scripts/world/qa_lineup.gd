@@ -138,6 +138,8 @@ static func parse_kits(spec: String) -> Array:
 		out.append(EquipGlow.parse_loadout(part))
 	return out
 
+var _probe_steps := OS.get_environment("OPENSRO_QA_CROWD_STEPS") != ""
+
 ## Called every physics frame by World3D once the player's body is built.
 func step(delta: float) -> void:
 	if _spawned and _run_at >= 0.0:
@@ -177,6 +179,12 @@ func step(delta: float) -> void:
 		if _page_wait <= 0.0:
 			_page_wait = _page_every
 			_spawn_page(_pages.pop_front())
+		return
+	# Round 762 (QA): with QaCrowdProbe measuring (its steps), the lineup's
+	# own phases never start: their first walked every body again in the
+	# frame the dressing queue emptied -- a crowd's leave emptied it (8.9 ms
+	# of p_lineup in a departure frame, MEASURED r762.md).
+	if _probe_steps:
 		return
 	# Round 739: the bodies are dressed over frames (World3D._pump_other_builds);
 	# the first phase starts once every one is.
@@ -475,19 +483,31 @@ var _direct_at := 0
 var _direct_step_usec := 0
 var _direct_t0 := 0
 var _direct_frames := 0
+var _direct_frame_seen := -1
 
 func _spawn_direct_step() -> void:
 	if _direct_at >= _direct.size():
 		return
+	# Once a rendered frame, as NetClient reads a group from its _process: the
+	# lineup steps from the physics tick, which runs several times in a long
+	# frame (round 762's first offline runs handed over 2-4 shares a frame).
+	var f := Engine.get_process_frames()
+	if f == _direct_frame_seen:
+		return
+	_direct_frame_seen = f
 	var t0 := Time.get_ticks_usec()
 	var first := _direct_at
 	_direct_frames += 1
+	# As NetClient._group_step: the share the frame's crowd budget leaves.
+	var step := int(world.call("qa_group_step_usec", _direct_step_usec)) if world.has_method("qa_group_step_usec") else _direct_step_usec
 	world._on_user_group_begin()
 	while _direct_at < _direct.size():
-		if _direct_at > first and Time.get_ticks_usec() - t0 >= _direct_step_usec:
+		if _direct_at > first and Time.get_ticks_usec() - t0 >= step:
 			break
 		_spawn_one(_direct[_direct_at])
 		_direct_at += 1
+	if world.has_method("qa_budget_spend"):
+		world.call("qa_budget_spend", Time.get_ticks_usec() - t0)
 	world._on_user_group_end()
 	if _direct_at >= _direct.size():
 		print("LINEUP: %d bodies handed over in %d frame(s), %.1f ms" % [_direct.size(), _direct_frames, (Time.get_ticks_usec() - _direct_t0) / 1000.0])

@@ -38,6 +38,8 @@ func _check(cond: bool, msg: String) -> void:
 		_failures += 1
 
 func _initialize() -> void:
+	# Round 762: the crowd's frame budget left whole for every call here.
+	OtherCrowd.FrameBudget.unlimited = true
 	var watchdog := create_timer(120.0)
 	watchdog.timeout.connect(func() -> void:
 		print("FAIL the suite never reported (a script error stopped it)")

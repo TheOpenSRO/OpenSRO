@@ -51,6 +51,8 @@ func _initialize() -> void:
 		_test_glow_rows()
 		_test_half_custom()
 		_test_collect_cap()
+		_test_aabb_spread()
+		_test_rigid_slices()
 		var world := _make_world()
 		if world != null:
 			await process_frame
@@ -631,6 +633,74 @@ func _test_collect_cap() -> void:
 	var second := crowd.collect()
 	_check(first == CrowdGpu.COLLECT_MAX and second == 40 and crowd._groups.is_empty() and int(crowd.stats["instances"]) == 0,
 		"emptied, they are freed %d a call at most (%d, then %d), all of them in the end" % [CrowdGpu.COLLECT_MAX, first, second])
+
+## Round 762: new bounds go to the groups AABB_PUSH_GROUPS a flush, not all
+## in one (each is a culling-tree update on the render thread), and a group
+## freed meanwhile is skipped; a group's two instances are shown and hidden by
+## their layer mask, not their visibility.
+## NEGATIVE: a push to every group at once fails "spread over".
+func _test_aabb_spread() -> void:
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	var b := CrowdGpu.Body.new()
+	b.slot = 0
+	var mesh := BoxMesh.new()
+	var n := CrowdGpu.AABB_PUSH_GROUPS * 2 + 10
+	for i in range(n):
+		var m := ShaderMaterial.new()
+		m.shader = ObjectLoader.OBJECT_SHADER
+		crowd._add_part(b, {"mesh": mesh, "material": m, "layers": 1, "sort": 0.0, "vol": -1, "centre": 0.0, "twin_key": "aabb%d" % i})
+	crowd._push_groups()
+	crowd._grow_aabb(Vector3(500, 0, 500))
+	crowd._push_groups()
+	var pushes := 1
+	_check(crowd._aabb_push_at == CrowdGpu.AABB_PUSH_GROUPS, "round 762: new bounds spread over the flushes, %d groups the first (%d)" % [CrowdGpu.AABB_PUSH_GROUPS, crowd._aabb_push_at])
+	# A group freed before its turn is skipped (its instance RID cleared).
+	var victim: CrowdGpu.Group = crowd._aabb_push[crowd._aabb_push.size() - 1]
+	RenderingServer.free_rid(victim.inst)
+	victim.inst = RID()
+	while crowd._aabb_push_at > 0 and pushes < 10:
+		crowd._push_groups()
+		pushes += 1
+	_check(pushes == 3 and crowd._aabb_push.is_empty(), "... all of them in %d flushes (%d)" % [3, pushes])
+	var g: CrowdGpu.Group = crowd._groups.values()[0]
+	_check(g.shown_o and g.inst.is_valid(), "a group's opaque instance is shown (its mask) while a body in it does not fade")
+
+## Round 762: a ghost's rigid piece is made a slice at a time (rigid_mesh_sliced
+## + step_rigid_jobs) -- the same mesh, vertex for vertex, as rigid_mesh in
+## one call; while it is made the recipe waits (RECIPE_PENDING), it is not
+## refused.
+## NEGATIVE: a slice that skips the vertex where the last stopped fails "the
+## same vertices".
+func _test_rigid_slices() -> void:
+	var crowd := CrowdGpu.new(root.find_world_3d().scenario)
+	var mi := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radial_segments = 64
+	sphere.rings = 32
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, sphere.get_mesh_arrays())
+	mi.mesh = am
+	var to_bone := Transform3D(Basis(Vector3(0.3, 1.0, 0.2).normalized(), 0.7), Vector3(1.0, 2.0, 3.0))
+	var whole := crowd.rigid_mesh(mi, "L|whole", 3, to_bone)
+	crowd.rigid_pending = false
+	_check(crowd.rigid_mesh_sliced(mi, "L|sliced", 3, to_bone) == null and crowd.rigid_pending,
+		"round 762: a rigid piece not made yet is pending, not refused")
+	var steps := 0
+	while steps < 100000:
+		crowd.step_rigid_jobs(1)
+		steps += 1
+		var job = crowd._rigid_jobs.values()[0] if not crowd._rigid_jobs.is_empty() else null
+		if job == null or int(job["k"]) >= int(job["n"]):
+			break
+	var sliced := crowd.rigid_mesh_sliced(mi, "L|sliced", 3, to_bone)
+	var a: Array = whole.surface_get_arrays(0) if whole != null else []
+	var b: Array = sliced.surface_get_arrays(0) if sliced != null else []
+	var same: bool = not a.is_empty() and not b.is_empty() and a[Mesh.ARRAY_VERTEX] == b[Mesh.ARRAY_VERTEX] \
+		and a[Mesh.ARRAY_NORMAL] == b[Mesh.ARRAY_NORMAL] and a[Mesh.ARRAY_BONES] == b[Mesh.ARRAY_BONES]
+	_check(same and steps > 1, "... made over %d slices, the same vertices, normals and bones as in one call (%d vertices)" % [steps,
+		(a[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() if not a.is_empty() else 0])
+	_check(crowd.rigid_mesh_sliced(mi, "L|sliced", 3, to_bone) == sliced, "... and kept")
+	mi.free()
 
 func _test_frames_and_rebase() -> void:
 	var crowd := CrowdGpu.new(root.find_world_3d().scenario)

@@ -240,7 +240,8 @@ var _pending_spawns: Array = []
 ## (MEASURED, tools/group_decode_bench.gd: 4,000 in 84 ms) and its arrival
 ## more, so a crowd's window in one frame was a frame of hundreds of ms.
 ## And a frame's dispatch stops after NET_FRAME_BUDGET_USEC (one packet at
-## least); the rest stays in the socket for the next frame.
+## least); the rest stays in the socket for the next frame. A share is at most
+## what the frame's crowd budget leaves it (OtherCrowd.FrameBudget).
 const GROUP_STEP_USEC := 4000
 const NET_FRAME_BUDGET_USEC := 8000
 ## The group being read: {r: the reader, count, i: records read, op}, or null.
@@ -1272,6 +1273,10 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 					elif npc_roster.despawn(u):
 						npc_despawned.emit(u)
 
+## Round 762: whether a group spawn or despawn is still being read.
+func group_reading() -> bool:
+	return _group_job != null
+
 ## Round 762: reads the group being read for GROUP_STEP_USEC (one record at
 ## least), each player handed over as it is read inside a group bracket
 ## (World3D queues them whole, as before); true when the group is done.
@@ -1287,8 +1292,11 @@ func _group_step() -> bool:
 	var first := int(job["i"])
 	job["frames"] = int(job["frames"]) + 1
 	var bracket := false
+	# Round 762: the share the frame's crowd budget leaves (OtherCrowd.FrameBudget),
+	# GROUP_STEP_USEC at most.
+	var step := mini(GROUP_STEP_USEC, OtherCrowd.FrameBudget.group_step_usec())
 	while int(job["i"]) < count:
-		if int(job["i"]) > first and Time.get_ticks_usec() - t0 >= GROUP_STEP_USEC:
+		if int(job["i"]) > first and Time.get_ticks_usec() - t0 >= step:
 			break
 		if UserSpawnNet.is_player_ref(UserSpawnNet.peek_ref(r)):
 			var rec := UserSpawnNet.read_record(r, _spawn_types)
@@ -1310,6 +1318,7 @@ func _group_step() -> bool:
 			npc_spawned.emit(npc_roster.spawn(npc))
 			job["npcs"] = int(job["npcs"]) + 1
 		job["i"] = int(job["i"]) + 1
+	OtherCrowd.FrameBudget.spend(Time.get_ticks_usec() - t0)
 	if bracket:
 		user_group_end.emit()
 	if int(job["i"]) < count:
@@ -1334,8 +1343,9 @@ func _despawn_step(job: Dictionary) -> bool:
 	var t0 := Time.get_ticks_usec()
 	var first := int(job["i"])
 	job["frames"] = int(job["frames"]) + 1
+	var step := mini(GROUP_STEP_USEC, OtherCrowd.FrameBudget.group_step_usec())
 	while int(job["i"]) < uids.size():
-		if int(job["i"]) > first and Time.get_ticks_usec() - t0 >= GROUP_STEP_USEC:
+		if int(job["i"]) > first and Time.get_ticks_usec() - t0 >= step:
 			break
 		var u: int = uids[int(job["i"])]
 		job["i"] = int(job["i"]) + 1
@@ -1344,6 +1354,7 @@ func _despawn_step(job: Dictionary) -> bool:
 			_user_left(u)
 		elif npc_roster.despawn(u):
 			npc_despawned.emit(u)
+	OtherCrowd.FrameBudget.spend(Time.get_ticks_usec() - t0)
 	if int(job["i"]) < uids.size():
 		return false
 	_group_job = null

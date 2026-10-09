@@ -25,6 +25,101 @@ class_name OtherCrowd
 ## - **B7, the uid lookup** (UidIndex): retail's u32 uid to the character id,
 ##   from a map instead of a scan of every body.
 
+## Round 762 (OURS; docs/rounds/r762.md): one budget a rendered frame for
+## everything a crowd arriving or leaving adds to it -- NetClient reading a
+## group spawn or despawn, the arrived bodies' holders, their ghosts, a held
+## page's reveal and activation, the departures and the holders freed -- so
+## that no frame of a walk into or out of a crowd is longer than the crowd's
+## own frames (the user's rule: "It should perform that as in the crowd and
+## only get faster, not worse").
+##
+## The frame is aimed at the scene's own frame: the p90 of the last HISTORY
+## steady frames' time (no crowd arriving or leaving in them) less the work
+## charged here, and at least TARGET_FLOOR_USEC -- a page held before it is
+## drawn is a light scene, and the crowd it becomes is heavier.
+## This frame's budget is that aim less the last frame's own time, within
+## [MIN_USEC, MAX_USEC]: where the scene is already at its aim the work still
+## goes on at MIN_USEC a frame. Each user charges what it spent (spend()).
+class FrameBudget:
+	const TARGET_FLOOR_USEC := 5000
+	const MIN_USEC := 1500
+	const MAX_USEC := 12000
+	const HISTORY := 120
+	static var _frame := -1
+	static var _t0 := 0
+	static var _spent := 0
+	static var _budget := MIN_USEC
+	static var _own := PackedFloat32Array()
+	static var _own_at := 0
+	static var _aim := float(TARGET_FLOOR_USEC)
+	## QA: the last frame's own time and charged work, and the aim (usec).
+	static var last_own := 0
+	static var last_spent := 0
+
+	## The frame rolls on the first call in it.
+	static func _roll() -> void:
+		var f := Engine.get_process_frames()
+		if f == _frame:
+			return
+		var now := Time.get_ticks_usec()
+		if _frame >= 0 and f == _frame + 1:
+			var own := maxi(int(now - _t0) - _spent, 0)
+			last_own = own
+			last_spent = _spent
+			# Only a steady frame (no crowd arriving or leaving, World3D's
+			# steady()) is the scene's own: during an arrival the frames are
+			# also slowed by what the budget does not see (the templates made
+			# on the workers, the render thread's updates), and an aim
+			# learned from them rose to 30-36 ms (MEASURED r762.md).
+			if _steady:
+				if _own.size() < HISTORY:
+					_own.append(float(own))
+				else:
+					_own[_own_at] = float(own)
+					_own_at = (_own_at + 1) % HISTORY
+			if f % 15 == 0 and _own.size() >= 15:
+				var v := _own.duplicate()
+				v.sort()
+				_aim = maxf(float(TARGET_FLOOR_USEC), v[int(0.9 * (v.size() - 1))])
+			_budget = clampi(int(_aim) - own, MIN_USEC, MAX_USEC)
+		else:
+			_budget = MIN_USEC
+		_frame = f
+		_t0 = now
+		_spent = 0
+		_steady = true
+
+	## World3D, each frame: whether a crowd is arriving or leaving in it.
+	static var _steady := true
+	static func note_transition(busy: bool) -> void:
+		_roll()
+		if busy:
+			_steady = false
+
+	## What is left of this frame's budget (usec; may be 0 or less).
+	static func left() -> int:
+		_roll()
+		if unlimited:
+			return MAX_USEC
+		return _budget - _spent
+
+	## Tests: every call has the whole MAX_USEC (a headless suite runs many
+	## arrivals and departures in one frame).
+	static var unlimited := false
+
+	static func spend(usec: int) -> void:
+		_roll()
+		_spent += maxi(usec, 0)
+
+	## The budget a share of a group's reading may take now: half what is
+	## left (the rest is the bodies'), within [300, 4000] usec.
+	static func group_step_usec() -> int:
+		return clampi(left() / 2, 300, 4000)
+
+	static func aim_usec() -> int:
+		_roll()
+		return int(_aim)
+
 ## B1: the physics steps of a rendered frame, folded into one tick that runs
 ## after them (round 739's review, F3: World3D._process, so what it places is
 ## where the frame's last step left things). add() is each physics step's;
@@ -164,6 +259,19 @@ class BuildQueue:
 	func reopen() -> void:
 		_passed_frame = -1
 		_idle = false
+		_rewind = true
+
+	## Round 762 (OURS): arrival order instead of nearest first, walked with a
+	## cursor (World3D's ghosts: a held page is revealed whole, so the order
+	## its ghosts are made in is not seen). The nearest-first pass builds and
+	## sorts a key for every queued id each frame: with a page of 4,000
+	## waiting that was about 6 ms of a 12 ms budget a frame (MEASURED
+	## r762.md). A pass goes on from where the last one stopped; reopen()
+	## starts it again from the oldest.
+	var fifo := false
+	var _fifo: Array = []
+	var _fifo_at := 0
+	var _rewind := false
 
 	## Round 762: the last pass went through every queued id with budget to
 	## spare: until something changes (reopen) or arrives (queue), there is
@@ -211,7 +319,11 @@ class BuildQueue:
 
 	func queue(id: int) -> void:
 		settled = false
-		_fresh.append(id)
+		if fifo:
+			if not _pending.has(id):
+				_fifo.append(id)
+		else:
+			_fresh.append(id)
 		if _pending.is_empty():
 			started_usec = Time.get_ticks_usec()
 			frames = 0
@@ -231,6 +343,8 @@ class BuildQueue:
 	func clear() -> void:
 		_pending.clear()
 		urgent.clear()
+		_fifo.clear()
+		_fifo_at = 0
 
 	func size() -> int:
 		return _pending.size()
@@ -312,6 +426,8 @@ class BuildQueue:
 	## in a frame with room for it under the crowd's own frames).
 	func pump(frame: int, from: Vector3, bodies: Dictionary, build: Callable, ready: Callable = Callable(), later: Dictionary = {},
 			later_within_sq: float = INF, later_room_usec: int = -1) -> int:
+		if fifo:
+			return _pump_fifo(frame, bodies, build, ready)
 		if _pending.is_empty() or not can_build(frame):
 			_fresh.clear()
 			return 0
@@ -383,6 +499,69 @@ class BuildQueue:
 			# again whole (a pass over `_fresh` alone would lose it).
 			_idle = false
 		settled = cut and made == 0
+		built += made
+		last_spent = _spent
+		last_built = _built_in_frame
+		if _last_counted_frame != frame:
+			_last_counted_frame = frame
+			frames += 1
+		longest_usec = maxi(longest_usec, _spent)
+		spent_by_frame[frame] = _spent
+		return made
+
+	## Round 762: pump() in arrival order (`fifo`): from the cursor, while the
+	## frame's budget lasts (one body at least); an id `ready` says no to is
+	## passed and asked again after the next reopen().
+	func _pump_fifo(frame: int, bodies: Dictionary, build: Callable, ready: Callable) -> int:
+		if _pending.is_empty():
+			_fifo.clear()
+			_fifo_at = 0
+			_rewind = false
+			return 0
+		if not can_build(frame):
+			return 0
+		# A pass under way runs to its end before a reopen() starts the next
+		# from the oldest (a rewind every adoption re-asked the oldest waiting
+		# ids frame after frame and never reached the ready ones behind them).
+		if _fifo_at >= _fifo.size():
+			if not _rewind:
+				return 0
+			_rewind = false
+			_fifo = _pending.keys()
+			_fifo_at = 0
+		var made := 0
+		var pass_t0 := Time.get_ticks_usec()
+		var asked := 0
+		while _fifo_at < _fifo.size():
+			if not can_build(frame) or (asked > 0 and Time.get_ticks_usec() - pass_t0 >= frame_budget()):
+				break
+			var id: int = _fifo[_fifo_at]
+			_fifo_at += 1
+			if not _pending.has(id):
+				continue
+			var n = bodies.get(id)
+			if not is_instance_valid(n):
+				_pending.erase(id)
+				urgent.erase(id)
+				continue
+			asked += 1
+			if ready.is_valid() and not bool(ready.call(id)):
+				waiting_skips += 1
+				continue
+			_pending.erase(id)
+			urgent.erase(id)
+			var t0 := Time.get_ticks_usec()
+			build.call(id)
+			_spent += Time.get_ticks_usec() - t0
+			_built_in_frame += 1
+			made += 1
+		if _fifo_at >= _fifo.size():
+			# Every queued id looked at: nothing to do until reopen() or queue().
+			_fifo.clear()
+			_fifo_at = 0
+		elif _fifo_at > 4096:
+			_fifo = _fifo.slice(_fifo_at)
+			_fifo_at = 0
 		built += made
 		last_spent = _spent
 		last_built = _built_in_frame

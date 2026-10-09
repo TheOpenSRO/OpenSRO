@@ -43,6 +43,8 @@ func _initialize() -> void:
 	_test_ready_and_budget()
 	_test_uids()
 	_test_detail()
+	_test_fifo()
+	await _test_frame_budget()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -292,3 +294,80 @@ func _casting(casters: Array) -> Array:
 		if mi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
 			out.append(i)
 	return out
+
+## Round 762: the ghosts' queue in arrival order (BuildQueue.fifo): no sort,
+## a pass goes on from where the last stopped, a refused id is asked again
+## only after reopen(), and a reopen() mid-pass waits for the pass's end.
+## NEGATIVES: a fifo pump sorting by distance fails "arrival order"; a rewind
+## on every reopen() fails "the pass reaches the ready ones behind".
+func _test_fifo() -> void:
+	var bodies := _bodies([Vector3(50, 0, 0), Vector3(5, 0, 0), Vector3(20, 0, 0), Vector3(0, 0, 2)])
+	var order: Array = []
+	var build := func(id: int) -> void: order.append(id)
+	var q := OtherCrowd.BuildQueue.new()
+	q.fifo = true
+	q.budget_usec = 1 << 30
+	for id in [100, 101, 102, 103]:
+		q.queue(id)
+	_check(q.pump(1, Vector3.ZERO, bodies, build) == 4 and order == [100, 101, 102, 103],
+		"round 762: the fifo queue builds in arrival order, not nearest first (got %s)" % str(order))
+	order.clear()
+	var not_ready := {100: true, 101: true}
+	var ready := func(id: int) -> bool: return not not_ready.has(id)
+	for id in [100, 101, 102, 103]:
+		q.queue(id)
+	q.pump(2, Vector3.ZERO, bodies, build, ready)
+	_check(order == [102, 103], "... the refused passed over (got %s)" % str(order))
+	_check(q.pump(3, Vector3.ZERO, bodies, build, ready) == 0, "nothing is asked again until reopen()")
+	not_ready.clear()
+	_check(q.pump(4, Vector3.ZERO, bodies, build, ready) == 0, "... even once ready")
+	q.reopen()
+	q.pump(5, Vector3.ZERO, bodies, build, ready)
+	_check(order == [102, 103, 100, 101] and q.is_empty(), "after reopen() the oldest come (got %s)" % str(order))
+	# With no budget one id is asked a frame: a reopen() mid-pass does not send
+	# the pass back to the oldest, still refused.
+	order.clear()
+	not_ready.clear()
+	not_ready[100] = true
+	for id in [100, 101, 102, 103]:
+		q.queue(id)
+	q.budget_usec = 0
+	q.pump(10, Vector3.ZERO, bodies, build, ready)
+	q.reopen()
+	q.pump(11, Vector3.ZERO, bodies, build, ready)
+	_check(order == [101], "the pass reaches the ready ones behind before a reopen() starts it again (got %s)" % str(order))
+	q.pump(12, Vector3.ZERO, bodies, build, ready)
+	q.pump(13, Vector3.ZERO, bodies, build, ready)
+	_check(order == [101, 102, 103], "... one a frame (got %s)" % str(order))
+	_check(q.pump(14, Vector3.ZERO, bodies, build, ready) == 0 and q.size() == 1, "then the reopen() starts again at the oldest, still refused")
+	_free_all(bodies)
+
+## Round 762: the crowd's frame budget (OtherCrowd.FrameBudget): the aim is
+## the p90 of the steady frames' own time (at least TARGET_FLOOR_USEC), a
+## frame with a crowd arriving or leaving is not learned from, and the budget
+## is the aim less the last frame's own time within [MIN_USEC, MAX_USEC].
+func _test_frame_budget() -> void:
+	var fb := OtherCrowd.FrameBudget
+	await process_frame
+	fb.left()
+	for i in range(40):
+		await process_frame
+		fb.note_transition(false)
+		fb.spend(0)
+	var aim := fb.aim_usec()
+	_check(aim >= fb.TARGET_FLOOR_USEC, "round 762: the aim is at least the floor (%d us)" % aim)
+	var left := fb.left()
+	_check(left >= fb.MIN_USEC and left <= fb.MAX_USEC, "the budget lies within [MIN, MAX] (%d us)" % left)
+	fb.spend(left + 1000)
+	_check(fb.left() < 0, "spending it leaves nothing")
+	# A long frame marked as a transition is not learned from.
+	fb.note_transition(true)
+	OS.delay_usec(30000)
+	await process_frame
+	fb.left()
+	for i in range(16):
+		await process_frame
+		fb.note_transition(false)
+	_check(fb.aim_usec() < 25000, "a 30 ms frame with a crowd arriving does not raise the aim (%d us)" % fb.aim_usec())
+	_check(fb.group_step_usec() >= 300 and fb.group_step_usec() <= 4000, "a group's share is within [300, 4000] us (%d)" % fb.group_step_usec())
+

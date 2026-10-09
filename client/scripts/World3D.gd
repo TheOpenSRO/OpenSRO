@@ -1335,6 +1335,8 @@ static func _ghost_queue() -> OtherCrowd.BuildQueue:
 	q.target_usec = OtherCrowd.GHOST_FRAME_TARGET_USEC
 	q.hitch_usec = OtherCrowd.GHOST_FRAME_TARGET_USEC
 	q.min_budget_usec = OtherCrowd.GHOST_MIN_BUDGET_USEC
+	# Round 762: in arrival order (a held page shows whole; BuildQueue.fifo).
+	q.fifo = true
 	return q
 var _monster_bodies := {} # monster_id -> Node3D
 ## monster_id -> CombatNet.MonsterSnapshot, as last listed -- except x/z, which
@@ -6816,6 +6818,15 @@ var _crowd_pending: Array = []
 ## Meta on a body skeleton: the Callable its tree_exiting runs (_crowd_on_exit).
 const CROWD_EXIT_META := &"opensro_crowd_exit"
 
+## Round 762: CrowdGpu.prewarm_known, once the world is in the tree.
+func _crowd_prewarm_known() -> void:
+	var cg := _crowd_gpu_get() if CrowdGpu.enabled and _ghosts_on else null
+	if cg != null:
+		var t0 := Time.get_ticks_usec()
+		cg.prewarm_known()
+		print("World3D: the far crowd's twin shaders made in %.1f ms (%d shaders)" % [(Time.get_ticks_usec() - t0) / 1000.0,
+			int(cg.stats.get("prewarmed_shaders", 0))])
+
 func _crowd_gpu_get() -> CrowdGpu:
 	if _crowd_gpu == null and is_inside_tree() and get_world_3d() != null:
 		_crowd_gpu = CrowdGpu.new(get_world_3d().scenario)
@@ -9756,6 +9767,13 @@ func _load_character_assets() -> void:
 	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
 	# The weapon glow's particles (round 734) come from the world's own reader.
 	_appearance.particles = _open_particles_pk2_if_set()
+	# Round 762: the far crowd's twin shaders made as templates are adopted.
+	_appearance.adopted_hook = func(node: Node) -> void:
+		var cg := _crowd_gpu_get() if CrowdGpu.enabled and _ghosts_on else null
+		if cg != null:
+			cg.prewarm_node(node)
+	# And the known shaders' twins at once (the world's load).
+	_crowd_prewarm_known.call_deferred()
 	# Round 762: every player Figure's body template made in the background,
 	# behind anything the world asks for, so a crowd arriving later waits only
 	# for its items (OPENSRO_QA_PREWARM=0: not, for the A/B).
@@ -12452,7 +12470,10 @@ func _move_on_nav_graph(delta: float) -> bool:
 	# the next tick by _step_move_order. Only the QA walk (OPENSRO_QA_WALK, a
 	# measurement path with no order) still slides.
 	var slide := _qa_walk != "" and not _has_move_target
+	var nt := Time.get_ticks_usec() if FrameSplit.on else 0
 	var step := graph.step_tracked(local, asked, _nav_footing, slide)
+	if FrameSplit.on:
+		FrameSplit.add("pp_navstep", Time.get_ticks_usec() - nt)
 	if _has_move_target and ClickWalk.blocked_ends(step.blocked):
 		_end_blocked_click_walk(graph, step)
 	if trace and OS.get_environment("OPENSRO_QA_NAVTRACE") == "2":
@@ -12471,8 +12492,11 @@ func _move_on_nav_graph(delta: float) -> bool:
 				_qa_tick, step.position.x, step.position.z, _nav_footing_name(graph, step.standing_on)])
 		_nav_blocked_last_frame = step.blocked
 	_nav_footing = step.standing_on
+	var ns := Time.get_ticks_usec() if FrameSplit.on else 0
 	player.global_position = group.to_global(step.position)
 	_nav_footing_pos = player.global_position
+	if FrameSplit.on:
+		FrameSplit.add("pp_setpos", Time.get_ticks_usec() - ns)
 	player.velocity.y = 0.0
 	return true
 
@@ -16150,6 +16174,8 @@ func _physics_process(delta: float) -> void:
 		_qa_split.on_step(Engine.get_frames_drawn())
 	var fs_t := Time.get_ticks_usec() if FrameSplit.on else 0
 	SkillEffects.tick(delta)
+	if FrameSplit.on:
+		FrameSplit.add("pt_skill", Time.get_ticks_usec() - fs_t)
 	BerserkLook.tick(delta)
 	# Monsters and other players fading into existence (round 676): the
 	# frame's steps' time, stepped once in _process (round 748, item 4: a
@@ -16161,7 +16187,10 @@ func _physics_process(delta: float) -> void:
 	# The teleport gates' glows (round 720).
 	_ambient_step(delta)
 	# Animated texture coordinates, a TEXANI mod per material (round 722).
+	var ta_t := Time.get_ticks_usec() if FrameSplit.on else 0
 	TexAni.tick(delta * 1000.0)
+	if FrameSplit.on:
+		FrameSplit.add("pt_texani", Time.get_ticks_usec() - ta_t)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
 	if FrameSplit.on and fs_t > 0:
@@ -16197,6 +16226,10 @@ func _physics_process(delta: float) -> void:
 func _process(_delta: float) -> void:
 	if title_mode:
 		return
+	# Round 762: the frame's crowd budget rolled every frame, so its history
+	# of the scene's own frames has no gaps (OtherCrowd.FrameBudget), told
+	# whether a crowd arrives or leaves in this frame.
+	OtherCrowd.FrameBudget.note_transition(_crowd_transition())
 	var fs := FrameSplit.on
 	var t := Time.get_ticks_usec() if fs else 0
 	var t_world := t
@@ -16339,6 +16372,7 @@ func _physics_step(delta: float) -> void:
 		_pending_friend_cast = {}
 	# A talk approach's arrival (round 701): the walk ended last tick.
 	_step_talk_approach(locked)
+	var pp := Time.get_ticks_usec() if FrameSplit.on else 0
 	# Round 653's follow-up: an approach whose move a wall ended is re-issued
 	# here on the next tick (_step_move_order).
 	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
@@ -16364,9 +16398,21 @@ func _physics_step(delta: float) -> void:
 	# The camera keeps whatever orbit it was given (see CAMERA_VIEW_FREE).
 	# It used to swing back to the default yaw and pitch whenever the
 	# character moved, and, hanging from the body, turned with every click.
+	if FrameSplit.on:
+		var pq := Time.get_ticks_usec()
+		FrameSplit.add("pp_order", pq - pp)
+		pp = pq
 	_follow_with_camera(delta)
+	if FrameSplit.on:
+		var pq := Time.get_ticks_usec()
+		FrameSplit.add("pp_cam", pq - pp)
+		pp = pq
 
 	_qa_step()
+	if FrameSplit.on:
+		var pq := Time.get_ticks_usec()
+		FrameSplit.add("pp_qa", pq - pp)
+		pp = pq
 	if _teleport_landing != null:
 		# A teleport arrival still waiting for its region (round 576): held,
 		# neither walking nor falling, until _step_teleport_landing lands it.
@@ -16393,6 +16439,10 @@ func _physics_step(delta: float) -> void:
 				player.velocity.x = 0.0
 				player.velocity.z = 0.0
 		_walked_since_send += Vector2(player.position.x - walk_from.x, player.position.z - walk_from.z).length()
+	if FrameSplit.on:
+		var pq := Time.get_ticks_usec()
+		FrameSplit.add("pp_move", pq - pp)
+		pp = pq
 
 	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
 	# false indefinitely for a character resting motionless since spawn, a
@@ -16421,6 +16471,7 @@ func _physics_step(delta: float) -> void:
 
 	_recover_if_below_terrain()
 	if FrameSplit.on:
+		FrameSplit.add("pp_ray", Time.get_ticks_usec() - pp)
 		FrameSplit.add("p_player", Time.get_ticks_usec() - player_sw)
 
 	split_sw = Time.get_ticks_usec()
@@ -17131,6 +17182,8 @@ func _pump_other_builds() -> int:
 			_other_ghosts.reopen()
 		if FrameSplit.on and frame % 600 == 0 and _appearance != null:
 			_qa_ghost_diag()
+		# Round 762: what the frame's crowd budget leaves (one ghost at least).
+		_other_ghosts.cap_usec = maxi(OtherCrowd.FrameBudget.left(), 0)
 		var made_g := _other_ghosts.pump(frame, from, _other_bodies, _ghost_other, _ghost_ready)
 		if FrameSplit.on and Time.get_ticks_usec() - gt > 30000:
 			print("QA GHOSTS slow pump: %d made in %.1f ms (%s)" % [made_g, (Time.get_ticks_usec() - gt) / 1000.0,
@@ -17139,6 +17192,7 @@ func _pump_other_builds() -> int:
 			print("World3D: %d ghost(s) drawn over %d frame(s) in %.0f ms, longest frame %.1f ms" % [_other_ghosts.built,
 				_other_ghosts.frames, (Time.get_ticks_usec() - _other_ghosts.started_usec) / 1000.0, _other_ghosts.longest_usec / 1000.0])
 			_other_ghosts.started_usec = -1
+		OtherCrowd.FrameBudget.spend(Time.get_ticks_usec() - gt)
 		if FrameSplit.on:
 			FrameSplit.add("ghosts", Time.get_ticks_usec() - gt)
 	_retry_ghost_gaits()
@@ -17165,6 +17219,8 @@ func _pump_other_builds() -> int:
 		made = _other_builds.pump(frame, from, _other_bodies, _dress_other,
 			_dress_ready if arriving else (_other_template_ready if _other_async_templates else Callable()), _ghost_ids, _dress_within_sq,
 			_dress_room() if background else -1)
+		if made > 0 and background:
+			_dress_last_frame = frame
 	if _other_builds.is_empty() and _other_builds.started_usec >= 0 and _other_builds.built > 1:
 		var spent: Array = _other_builds.spent_summary()
 		print("World3D: %d other player bod(ies) dressed over %d frame(s) in %.0f ms, longest frame %.1f ms, p50 %.1f, p95 %.1f, %d over 100 ms (budget %.1f ms)" % [
@@ -17211,7 +17267,7 @@ func _note_steady_frame(usec: int) -> void:
 	# Only a frame with no page arriving or crowd leaving in it: the crowd's
 	# own (a live crowd's few arrivals and leaves a second do not count: a
 	# frame is never without them there).
-	if _hold_slot >= 0 or _activate_at < _activate_ids.size() or _depart_ids_at < _depart_ids.size():
+	if _crowd_transition():
 		return
 	if _frame_hist.size() < FRAME_HIST:
 		_frame_hist.append(float(usec))
@@ -17229,11 +17285,56 @@ func _note_steady_frame(usec: int) -> void:
 		var cost := float(b.last_spent) / float(b.last_built)
 		_dress_avg_usec = cost if cost > _dress_avg_usec else lerpf(_dress_avg_usec, cost, 0.05)
 
-## The background dressing's room this frame: the p95 less the last frame,
-## when that leaves room for a dressing; else none.
+## The background dressing's room this frame (round 762, OURS): none while a
+## crowd arrives or leaves -- its work has the frame's crowd budget
+## (OtherCrowd.FrameBudget), and a dressing (3-34 ms of the swarm's kits,
+## MEASURED r762.md) cannot be split to fit beside it -- and otherwise only
+## when the crowd's own p95 less the last frame leaves room for a dressing as
+## long as the longest seen (_dress_avg_usec: up at once, down slowly), one
+## body every DRESS_EVERY frames at most. So a dressing never makes a frame
+## longer than the crowd's own p95; where the frames leave no such room (the
+## render box's ghost crowds: about 7 ms frames, a 10 ms p95) the ghosts stay
+## undressed -- the same pixels (round 756's parity), less their weapons'
+## particles -- unless something needs them dressed (a hit, a cast, an aura,
+## sitting: BuildQueue.promote / _dress_ghost_now). A trickle tried first (one
+## every 30 frames whatever the room) made 30-34 ms frames in the live walk-out.
+const DRESS_EVERY := 30
+var _dress_last_frame := -DRESS_EVERY
 func _dress_room() -> int:
+	if _crowd_transition():
+		return 0
+	var f := Engine.get_process_frames()
+	if f - _dress_last_frame < DRESS_EVERY or _frame_p95_usec <= 0.0:
+		return 0
 	var room := _frame_p95_usec - _frame_last_usec
 	return int(room) if room >= _dress_avg_usec else 0
+
+## QA (round 762): the crowd budget for QaLineup's and QaCrowdProbe's
+## hand-overs (as NetClient reads a group), through the world so the same QA
+## scripts run on a tree without OtherCrowd.FrameBudget (the "before" boots).
+func qa_group_step_usec(cap_usec: int) -> int:
+	return mini(cap_usec, OtherCrowd.FrameBudget.group_step_usec())
+
+func qa_budget_spend(usec: int) -> void:
+	OtherCrowd.FrameBudget.spend(usec)
+
+func qa_budget_cols() -> Array:
+	return [OtherCrowd.FrameBudget.aim_usec() / 1000.0, OtherCrowd.FrameBudget.last_own / 1000.0, OtherCrowd.FrameBudget.last_spent / 1000.0]
+
+## Round 762: whether a crowd is arriving or leaving: a group still being
+## read, ghosts still to make, a page held or its plates still to show, many
+## bodies fading (a page's fade-in, a crowd's fade-out), departures queued or
+## holders waiting to be freed. A live crowd's few single arrivals and leaves
+## a second (a ghost or two queued, a few fading) do not count.
+const TRANSITION_FEW := 16
+func _crowd_transition() -> bool:
+	if _hold_slot >= 0 or _activate_at < _activate_ids.size() or _depart_ids_at < _depart_ids.size():
+		return true
+	if NetClient.group_reading() or _other_ghosts.size() > TRANSITION_FEW:
+		return true
+	if _depart_free.size() - _depart_free_at > TRANSITION_FEW:
+		return true
+	return _crowd_gpu != null and _crowd_gpu.fading_count() > TRANSITION_FEW * 4
 
 ## Round 762: the dressing's `ready` while a page arrives.
 func _dress_ready(character_id: int) -> bool:
@@ -17560,7 +17661,7 @@ const EXTRAS_DUE_META := &"opensro_extras_due"
 ## templates still on their way are not waited for longer; their bodies come
 ## with the next reveal). Their plates, click bodies, circles and
 ## sounds follow, nearest first, ACTIVATE_BUDGET_USEC a frame.
-const HOLD_MAX_MSEC := 10000
+const HOLD_MAX_MSEC := 20000
 const ACTIVATE_BUDGET_USEC := 2000
 var _holds_on := OS.get_environment("OPENSRO_QA_HOLD") != "0"
 var _hold_slot := -1
@@ -17622,9 +17723,13 @@ func _hold_step() -> void:
 			_activate_at = 0
 		return
 	var t0 := Time.get_ticks_usec()
+	# Round 762: within the frame's crowd budget too, one body at least.
+	var act_budget := clampi(OtherCrowd.FrameBudget.left(), 0, ACTIVATE_BUDGET_USEC)
+	var acted := 0
 	while _activate_at < _activate_ids.size():
-		if Time.get_ticks_usec() - t0 >= ACTIVATE_BUDGET_USEC:
+		if acted > 0 and Time.get_ticks_usec() - t0 >= act_budget:
 			break
+		acted += 1
 		var id: int = _activate_ids[_activate_at]
 		_activate_at += 1
 		var node = _other_bodies.get(id)
@@ -17637,6 +17742,7 @@ func _hold_step() -> void:
 		# Dressed from now, nearest first, as any ghost.
 		if _ghost_ids.has(id) and _other_build_args.has(id):
 			_other_builds.queue(id)
+	OtherCrowd.FrameBudget.spend(Time.get_ticks_usec() - t0)
 	if FrameSplit.on:
 		FrameSplit.add("g_activate", Time.get_ticks_usec() - t0)
 
@@ -18543,7 +18649,7 @@ var _other_heights_pending := {}
 ## call). A queued player who comes back first is taken then (_spawn_or_update_other).
 func _on_entity_left(character_id: int) -> void:
 	_depart_roll()
-	if _depart_ids_at < _depart_ids.size() or _depart_spent_usec >= DEPART_BUDGET_USEC:
+	if _depart_ids_at < _depart_ids.size() or _depart_spent_usec >= DEPART_BUDGET_USEC or OtherCrowd.FrameBudget.left() <= 0:
 		if not _depart_pending.has(character_id):
 			_depart_pending[character_id] = true
 			_depart_ids.append(character_id)
@@ -18554,6 +18660,7 @@ func _on_entity_left(character_id: int) -> void:
 	var t := Time.get_ticks_usec()
 	_on_entity_left_now(character_id)
 	_depart_spent_usec += Time.get_ticks_usec() - t
+	OtherCrowd.FrameBudget.spend(Time.get_ticks_usec() - t)
 
 ## The departures' share of this frame: started again each frame.
 func _depart_roll() -> void:
@@ -21575,8 +21682,9 @@ func _depart_step() -> void:
 	_depart_roll()
 	var t0 := Time.get_ticks_usec()
 	var n := 0
+	var dep_budget := clampi(OtherCrowd.FrameBudget.left(), 0, DEPART_BUDGET_USEC - _depart_spent_usec)
 	while _depart_ids_at < _depart_ids.size():
-		if n > 0 and _depart_spent_usec + Time.get_ticks_usec() - t0 >= DEPART_BUDGET_USEC:
+		if n > 0 and Time.get_ticks_usec() - t0 >= dep_budget:
 			break
 		var id: int = _depart_ids[_depart_ids_at]
 		_depart_ids_at += 1
@@ -21586,10 +21694,12 @@ func _depart_step() -> void:
 		n += 1
 		_on_entity_left_now(id)
 	_depart_spent_usec += Time.get_ticks_usec() - t0
+	OtherCrowd.FrameBudget.spend(Time.get_ticks_usec() - t0)
 	if _depart_ids_at >= _depart_ids.size():
 		_depart_ids.clear()
 		_depart_ids_at = 0
 	var t1 := Time.get_ticks_usec()
+	var free_budget := clampi(OtherCrowd.FrameBudget.left(), 0, DEPART_FREE_BUDGET_USEC)
 	if fs:
 		FrameSplit.add("w_depart", t1 - t0)
 	# The holders whose fade is over, freed oldest first (the fades' clock:
@@ -21597,7 +21707,7 @@ func _depart_step() -> void:
 	var freed := 0
 	while _depart_free_at < _depart_free.size():
 		var e: Array = _depart_free[_depart_free_at]
-		if float(e[1]) > _idle_anim_time or (freed > 0 and Time.get_ticks_usec() - t1 >= DEPART_FREE_BUDGET_USEC):
+		if float(e[1]) > _idle_anim_time or (freed > 0 and Time.get_ticks_usec() - t1 >= free_budget):
 			break
 		_depart_free_at += 1
 		freed += 1
@@ -21620,6 +21730,7 @@ func _depart_step() -> void:
 	elif _depart_free_at > 512:
 		_depart_free = _depart_free.slice(_depart_free_at)
 		_depart_free_at = 0
+	OtherCrowd.FrameBudget.spend(Time.get_ticks_usec() - t1)
 	if fs:
 		FrameSplit.add("w_depart_free", Time.get_ticks_usec() - t1)
 

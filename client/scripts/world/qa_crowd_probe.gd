@@ -159,6 +159,7 @@ var _arrival_n := 0
 var _ids: Array = []
 var _shown := {}
 var _visible_us := -1
+var _vis_at := 0
 var _visible_frames := 0
 ## Each frame until then: "<frame ms>/<bodies drawn by its end>".
 var _visible_trace := PackedStringArray()
@@ -267,17 +268,27 @@ func _arrival_frame() -> void:
 			print("QA CROWD ghostcheck frame=%d %s" % [_arrival_n, d.substr(0, d.find(" far="))] + " ghosts=%d" % (cg as CrowdGpu).ghost_count())
 	if _visible_us < 0:
 		_visible_frames += 1
-		var all := true
-		for id in _ids:
-			if _shown.has(id):
-				continue
-			if _drawn(id):
+		# Round 762 (QA): from the first id not yet seen drawn, up to the next
+		# one not drawn -- not every id every frame (4,000 checks a frame were
+		# the probe's own milliseconds in the frames it measures).
+		while _vis_at < _ids.size():
+			var id: int = _ids[_vis_at]
+			if not _shown.has(id):
+				if not _drawn(id):
+					break
 				_shown[id] = true
-			else:
-				all = false
+			_vis_at += 1
 		_visible_trace.append("%.0f/%d" % [ms, _shown.size()])
-		if all:
-			_visible_us = now
+		if _vis_at >= _ids.size():
+			# Every id seen drawn once: all drawn now, unless one went away.
+			var all := true
+			for id in _ids:
+				if not _drawn(id):
+					all = false
+					_vis_at = _ids.find(id)
+					break
+			if all:
+				_visible_us = now
 	for pg in _pages:
 		if int(pg[4]) >= 0:
 			continue
@@ -535,9 +546,10 @@ var _frame_log: FileAccess = null
 ## The FrameSplit timers each frame-log line carries (ms in the frame).
 const FRAME_LOG_SPLIT := ["proc_cb", "phys_cb", "post_flush", "w_world", "w_pump", "ghosts_ms", "dress", "g_add", "g_activate", "w_depart",
 	"w_depart_free", "w_fades", "w_plates", "fx_driver", "fx_effects", "g_flush", "rs_setup", "tmpl_adopt", "dep_teardown", "dep_fade", "k_new", "k_paths", "k_efps", "p_world", "p_lineup", "p_step", "p_ticks",
-	"p_player", "p_stream", "p_heights", "p_mobpump", "w_others", "w_blobs", "w_light", "w_selfpose", "o_legs", "fx_masters", "draw"]
+	"p_player", "p_stream", "p_heights", "p_mobpump", "w_others", "w_blobs", "w_light", "w_selfpose", "o_legs", "fx_masters", "draw", "pp_order", "pp_cam", "pp_qa", "pp_move", "pp_ray", "qa_probe", "pp_navstep", "pp_setpos", "g_rigid", "g_recipe", "g_geo_clip", "g_light", "g_holder", "plate_add", "sp_node", "sp_pre", "sp_post", "pt_skill", "pt_texani", "dress_calls", "ga_geo", "ga_lit", "ga_parts", "gf_bake", "gf_upload", "ga_twin", "ga_uniforms", "ga_addpart", "gu_tex", "gu_push", "tw_shader", "tw_assign", "tw_params", "tw_texani", "tw_new", "tw_set", "tw_first_set_calls"]
 var _fl_last_us := 0
 var _fl_start_us := 0
+var _fl_rs := OS.get_environment("OPENSRO_QA_FRAME_LOG_RS") == "1"
 var _fl_split := {}
 
 func _open_frame_log() -> void:
@@ -549,6 +561,9 @@ func _open_frame_log() -> void:
 		var cols := "t_ms frame_ms step others undrawn ghosts far to_dress fading rx_bytes rx_packets dispatch_ms left_ms held depart_q free_q"
 		for k in FRAME_LOG_SPLIT:
 			cols += " " + k
+		cols += " budget_ms budget_own_ms budget_spent_ms"
+		if _fl_rs:
+			cols += " rs_cpu rs_setup_ms pc_mesh pc_surface pc_draw pc_spec"
 		_frame_log.store_line(cols)
 		_fl_start_us = Time.get_ticks_usec()
 		_fl_last_us = _fl_start_us
@@ -581,6 +596,16 @@ func _log_frame() -> void:
 	if hs != null and int(hs) >= 0 and cg != null and (cg as CrowdGpu).hold_pending(int(hs)):
 		held = (world.get("_hold_ids") as Array).size()
 	var undrawn: int = world._other_build_args.size() - world._ghost_ids.size() + held
+	var bc: Array = world.call("qa_budget_cols") if world.has_method("qa_budget_cols") else [0.0, 0.0, 0.0]
+	extra += " %.2f %.2f %.2f" % bc
+	if _fl_rs:
+		# QA diagnostics (OPENSRO_QA_FRAME_LOG_RS=1): the render thread's last
+		# frame (its viewport's CPU time and the scene update) and the pipeline
+		# compilations so far -- each read waits for the render thread.
+		var vp := world.get_viewport().get_viewport_rid()
+		extra += " %.2f %.2f %d %d %d %d" % [RenderingServer.viewport_get_measured_render_time_cpu(vp), RenderingServer.get_frame_setup_time_cpu(),
+			int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_MESH)), int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SURFACE)),
+			int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW)), int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SPECIALIZATION))]
 	var dq = world.get("_depart_ids")
 	var fq = world.get("_depart_free")
 	_frame_log.store_line("%.1f %.2f %s %d %d %d %d %d %d %d %d %.2f %.2f %d %d %d" % [float(now - _fl_start_us) / 1000.0, ms,
@@ -614,10 +639,54 @@ func _leave_all() -> void:
 			int(gait.get("scale", args.get("scale", CharacterAppearance.DEFAULT_SCALE))), (world._other_pluses.get(id, {}) as Dictionary).duplicate(),
 			(node as Node3D).rotation.y])
 	var t0 := Time.get_ticks_usec()
+	# OPENSRO_QA_LINEUP_STEP_MS: handed over a frame's share at a time, as
+	# NetClient reads a group despawn since round 762 (_despawn_step); else in
+	# this one call, as before.
+	var sm := OS.get_environment("OPENSRO_QA_LINEUP_STEP_MS")
+	if sm.is_valid_float():
+		_leave_step_usec = int(float(sm) * 1000.0)
+		_leave_ids = []
+		for k in _leave_kits:
+			_leave_ids.append(int(k[0]))
+		_leave_at = 0
+		_leave_frames = 0
+		_leave_t0 = t0
+		_leave_hand_over()
+		print("QA CROWD leave: %d bodies leaving as one group despawn, the first share in %.1f ms (and %.1f ms of the probe's own: their kits kept for `back`)" % [
+			_leave_kits.size(), (Time.get_ticks_usec() - t0) / 1000.0, (t0 - tk) / 1000.0])
+		return
 	for k in _leave_kits:
 		world._on_entity_left(int(k[0]))
+	_world_usec += Time.get_ticks_usec() - t0
 	print("QA CROWD leave: %d bodies left in one call, %.1f ms (and %.1f ms of the probe's own: their kits kept for `back`)" % [
 		_leave_kits.size(), (Time.get_ticks_usec() - t0) / 1000.0, (t0 - tk) / 1000.0])
+
+var _leave_ids: Array = []
+var _leave_at := 0
+var _leave_step_usec := 0
+var _leave_frames := 0
+var _leave_t0 := 0
+
+## Round 762 (QA): the leaving group's next share, as NetClient._despawn_step.
+func _leave_hand_over() -> void:
+	if _leave_at >= _leave_ids.size():
+		return
+	var t0 := Time.get_ticks_usec()
+	var first := _leave_at
+	_leave_frames += 1
+	var step := int(world.call("qa_group_step_usec", _leave_step_usec)) if world.has_method("qa_group_step_usec") else _leave_step_usec
+	while _leave_at < _leave_ids.size():
+		if _leave_at > first and Time.get_ticks_usec() - t0 >= step:
+			break
+		world._on_entity_left(int(_leave_ids[_leave_at]))
+		_leave_at += 1
+	if world.has_method("qa_budget_spend"):
+		world.call("qa_budget_spend", Time.get_ticks_usec() - t0)
+	_world_usec += Time.get_ticks_usec() - t0
+	if _leave_at >= _leave_ids.size():
+		print("QA CROWD leave: the group despawn read over %d frame(s), %.1f ms" % [_leave_frames, (Time.get_ticks_usec() - _leave_t0) / 1000.0])
+		_leave_ids = []
+		_leave_at = 0
 
 func _come_back() -> void:
 	if _leave_kits.is_empty():
@@ -649,9 +718,14 @@ func _back_hand_over() -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	var first := _back_at
+	# Round 762: as NetClient._group_step, the share the frame's crowd budget
+	# leaves (when handed over in shares).
+	var step := _back_step_usec
+	if _back_step_usec < (1 << 40) and world.has_method("qa_group_step_usec"):
+		step = int(world.call("qa_group_step_usec", _back_step_usec))
 	world._on_user_group_begin()
 	while _back_at < _back_kits.size():
-		if _back_at > first and Time.get_ticks_usec() - t0 >= _back_step_usec:
+		if _back_at > first and Time.get_ticks_usec() - t0 >= step:
 			break
 		var k: Array = _back_kits[_back_at]
 		_back_at += 1
@@ -659,7 +733,10 @@ func _back_hand_over() -> void:
 		var node = world._other_bodies.get(int(k[0]))
 		if node != null:
 			(node as Node3D).rotation.y = float(k[7])
+	if world.has_method("qa_budget_spend"):
+		world.call("qa_budget_spend", Time.get_ticks_usec() - t0)
 	world._on_user_group_end()
+	_world_usec += Time.get_ticks_usec() - t0
 	if _back_at >= _back_kits.size():
 		for b in bodies:
 			var fresh = world._other_bodies.get(int(b["id"]))
@@ -699,6 +776,21 @@ func _process(delta: float) -> void:
 		return
 	if _frame_log != null:
 		_log_frame()
+	var qt := Time.get_ticks_usec()
+	_world_usec = 0
+	_probe_process(delta)
+	# QA (round 762): the probe's own time in the frame (its checks of every
+	# body, its census lines), less its calls into the world (the leave and
+	# back hand-overs: the client's work, as NetClient's reading of a group
+	# is), so the frame log can tell the client's frame from the probe's.
+	FrameSplit.add("qa_probe", Time.get_ticks_usec() - qt - _world_usec)
+
+## QA (round 762): the probe's calls into the world this frame (usec).
+var _world_usec := 0
+
+func _probe_process(delta: float) -> void:
+	if _leave_at < _leave_ids.size():
+		_leave_hand_over()
 	if not _back_ids.is_empty():
 		_back_frame()
 	if _persec:
