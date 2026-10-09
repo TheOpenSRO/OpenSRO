@@ -17203,7 +17203,7 @@ var _frame_hist := PackedFloat32Array()
 var _frame_hist_at := 0
 var _frame_p95_usec := 0.0
 var _frame_last_usec := 0.0
-## A dressing's time, averaged (usec).
+## A dressing's time: up at once to a longer one, down slowly (usec).
 var _dress_avg_usec := 9000.0
 
 func _note_steady_frame(usec: int) -> void:
@@ -17224,7 +17224,10 @@ func _note_steady_frame(usec: int) -> void:
 		_frame_p95_usec = v[int(0.95 * (v.size() - 1))]
 	var b := _other_builds
 	if b.last_built > 0:
-		_dress_avg_usec = lerpf(_dress_avg_usec, float(b.last_spent) / float(b.last_built), 0.2)
+		# Up at once, down slowly: a dressing runs 6-36 ms (the swarm's kits,
+		# MEASURED), and the room is judged by the long ones.
+		var cost := float(b.last_spent) / float(b.last_built)
+		_dress_avg_usec = cost if cost > _dress_avg_usec else lerpf(_dress_avg_usec, cost, 0.05)
 
 ## The background dressing's room this frame: the p95 less the last frame,
 ## when that leaves room for a dressing; else none.
@@ -21605,7 +21608,12 @@ func _depart_step() -> void:
 			var key = e[2]
 			if key != null and is_instance_valid(key):
 				_crowd_gpu.remove(key, false, true)
-		(holder as Node).queue_free()
+		# Freed now, not queued: a queue_free's deletion runs at the frame's
+		# end, outside this budget (MEASURED live: 8-15 ms of post_flush a
+		# frame while a crowd's holders were freed).
+		if (holder as Node).is_queued_for_deletion():
+			continue
+		(holder as Node).free()
 	if _depart_free_at >= _depart_free.size():
 		_depart_free.clear()
 		_depart_free_at = 0

@@ -485,7 +485,7 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	_check(wo < 0.0, "... its texel marked fading out (%.1f)" % wo)
 	_advance(world, crowd, 1.6)
 	world.call("_depart_step")
-	_check(not crowd.is_ghost(n605), "... and leaves the instances when its fade-out ends")
+	_check(not is_instance_valid(n605) or not crowd.is_ghost(n605), "... and leaves the instances when its fade-out ends")
 	_test_merge757(world, crowd, kit)
 	_test_hold(world, crowd, kit)
 	_test_stale_twins(world, crowd, kit)
@@ -603,7 +603,7 @@ func _test_stale_twins(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
 	world.call("_depart_step")
 	_advance(world, crowd, 1.6)
 	world.call("_depart_step")
-	_check(not crowd.is_ghost(n), "the probe's ghost faded in, left and faded out")
+	_check(not is_instance_valid(n) or not crowd.is_ghost(n), "the probe's ghost faded in, left and faded out")
 	# Every body of that kind gone: the other test bodies' kinds are the
 	# same, so take them off the instances too.
 	for g in crowd.ghosts():
