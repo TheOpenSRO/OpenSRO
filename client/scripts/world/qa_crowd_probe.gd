@@ -1054,7 +1054,7 @@ static func split_line(step: String, before: Dictionary, after: Dictionary, prof
 			parts.append("%s=%.1f" % [k, float(d) / f])
 		else:
 			parts.append("%s=%.2f" % [k, float(d) / 1000.0 / f])
-	for k in ["place", "sim", "draws", "steps", "draw_calls"]:
+	for k in ["place", "sim", "draws", "links", "steps", "draw_calls"]:
 		var d := int(prof_after.get(k, 0)) - int(prof_before.get(k, 0))
 		if k == "steps" or k == "draw_calls":
 			parts.append("efp_%s=%.1f" % [k, float(d) / f])

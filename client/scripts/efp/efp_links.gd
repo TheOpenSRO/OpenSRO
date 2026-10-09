@@ -87,6 +87,10 @@ class_name EfpLinks
 ## mesh nodes). The node's cull (render block +0x1a4: 1 none, 3 ccw) then
 ## applies as for any node. All of a node's chains go into one strip (Out).
 
+## Round 763: native/src/core/efp_links.rs builds the camera-free strips
+## (LinkObj, pipe_turn after spline) of a natively simulated effect the same
+## way, bit for bit; a change here is a change there.
+
 const EPS := 1e-6 ## READ: the float at 0x00e1b848
 const T_STEP := 0.3333333432674408 ## READ: the double at 0x00e0ec60
 const SAMPLES := 3 ## READ: the pipe's literal loop count

@@ -17,6 +17,7 @@ before.
 | `.bsk` skeleton: the announce-then-resolve walk, both record shapes | `BskReader.parse` (round 669) | `src/core/bsk.rs`, binding `src/gd_models.rs` |
 | the UTF-16 text tables (round 671): the decode, the line and tab splits and each reader's row loop for characterdata, npcpos, itemdata, the UI string tables and skilleffect | `NpcTableReader`'s ten parsers, `ItemTableReader.parse`, `UiTextTable.parse`, `SkillEffectReader.parse_all` | `src/core/tables.rs`, binding `src/gd_tables.rs` |
 | the lightmap term's per-byte loop; the `.m` (JMXVMAPM) and `.nvm` (JMXVNVM) decodes, proven but not on the load path (round 670) | `MapmTerrainBuilder.lightmap_term`'s loop; `MapmReader.parse` and `NvmReader.parse` through their `parse_native` | `src/core/terrain.rs`, binding `src/gd_terrain.rs` |
+| the effect simulation (round 763): EfpSim's per-frame stepping, EfpSimBatch's ordered particle cap on a Rust thread pool, and the MultiMesh buffers and Link chains of what it draws | `EfpSim.advance` / `step` / `growth_bounds` and `EfpSimBatch.run` for EquipFx's masters; `EfpEffect._update_draws`' arithmetic and `EfpLinks.gather_from` | `src/core/efp_sim.rs`, `efp_batch.rs`, `efp_out.rs`, `gdmath.rs`, `pool.rs`; binding `src/gd_efp.rs` |
 
 - `src/core/` is plain Rust with no Godot types. It is unit-tested with `cargo test` and can sit
   behind a C ABI and be linked statically into custom export templates later, if antivirus
@@ -94,6 +95,55 @@ returns one Dictionary of packed arrays, or `{error}`.
 - Every offset read from the file is bounds-checked; nothing is allocated before the data is
   shown to hold it (`vec_with`, `try_reserve`). Truncated and randomly corrupted input returns an
   error and never panics (`truncated_and_random_input_never_panics`, in both modules).
+
+## The effect simulation (round 763)
+
+`SrEfpTemplate`, `SrEfpSim` and `SrEfpBatch` (`src/gd_efp.rs`), reached through
+`client/scripts/efp/efp_sim_native.gd` (`EfpSimNative extends EfpSim`). EquipFx's masters use it
+(`EfpEffect.use_native_sim`); every other effect stays GDScript.
+
+- **The GDScript is the reference, bit for bit.** `core/efp_sim.rs` follows `efp_sim.gd` function by
+  function. `core/gdmath.rs` is Godot 4.7.2's own f32 arithmetic in the engine's operand order
+  (`Basis::operator*`'s `tdotx`, `xform`, `invert`'s cofactors, `orthonormalize`, `get_quaternion`,
+  `Vector3::normalize`) with no fused multiply-add, and keeps in f64 what GDScript keeps in a
+  `float` (an emitter's accumulator, the clock, the cone's angles, the scale graph's time). The
+  random stream is Godot's `RandomPCG` (pcg32 with Godot's increment, `randf`'s clz/ldexp form);
+  `sin`/`cos` are the C library's, as the engine's are. Two inputs where the GDScript itself
+  differs between builds are taken as the editor/debug build does them: a singular basis's
+  inverse is returned unchanged (`ERR_FAIL_COND(det == 0)` under MATH_CHECKS; a release template
+  divides by zero).
+- **Dead particles stay readable.** A GDScript particle is RefCounted: a dead parent's frozen
+  position is still its children's parent position. The arena counts a particle's references (the
+  list, its children) and frees it at zero; an emitter whose owner died is dropped, and a stale
+  generation makes any later write to it a no-op (the GDScript writes to an orphaned object).
+- **The batch** (`core/efp_batch.rs`) is round 761's ordered cap: spawn at own change d taken iff
+  `base_i + d < limit_i`, base_i known exactly once the effects before have finished and bounded
+  before that by each effect's published `growth_bounds`; an undecided spawn waits on a condition
+  variable woken by every bound published and every effect finished. Claims are in list order, so
+  the first unfinished effect never waits, at any pool size.
+- **The pool** (`core/pool.rs`): persistent helper threads that sleep between batches; the calling
+  (main) thread always works too, so 0 helpers is one core. `EfpSimNative.configure` sizes it:
+  `min(4, cores, Godot's WorkerThreadPool size)` threads in all by default, `OPENSRO_EFP_THREADS=<n>`
+  to set it, `OPENSRO_QA_EFP_THREADS=0` for the main thread alone.
+- **The outputs** (`core/efp_out.rs`), built on the thread that stepped the effect: one
+  `PackedFloat32Array` a draw node in `RenderingServer.multimesh_set_buffer`'s layout (rows and
+  origin, colour, custom data: 20 floats an instance), sized as `_update_draws` sizes the
+  MultiMesh; and every Link node's chains as `gather_from` gathers them. The main thread hands
+  them over (`EfpEffect._apply_native_draws`, `_update_links(native)`).
+- **Its own interface number** (`SrEfpBatch.efp_api()`, `EfpSimNative.EFP_API`, 1): the classes
+  are additive, so `core::API` is unchanged; a library without them (or with another number)
+  leaves the masters in GDScript. `OPENSRO_EFP_NATIVE=0` forces that (the A/B);
+  `OPENSRO_NATIVE=0` turns off every native piece.
+- **Parity.** `cargo test` (the batch equals sequential stepping at 0-7 helpers with the cap
+  binding; the pool; the PCG stream). `client/scripts/efp/efp_native_test.gd` (synthetic effects:
+  every command family and follow level, one effect and the batch at 8 / 33 / 60 with the cap
+  binding at 1 / 2 / 4 / every core, the draw buffers and chains). On the real files:
+  `client/tools/efp_native_parity.gd` (every particle of every master every frame, prints
+  `PARITY OK|FAIL`; `--time=1` times each mode):
+
+```
+client/tools/remote_godot.sh script res://tools/efp_native_parity.gd -- --n=60 --frames=600 --fps=30
+```
 
 ## The text tables (round 671)
 
@@ -217,6 +267,9 @@ cd native && cargo test --no-default-features          # the core: Blowfish vect
 cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes, text tables
 
 cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes, synthetic .m/.nvm (round 670)
+
+cd native && cargo test --no-default-features          # ... and the effect simulation, its batch and pool (round 763)
+client/tools/remote_godot.sh script res://scripts/efp/efp_native_test.gd       # the effect simulation, both ways, on the box
 client/tools/remote_godot.sh script res://scripts/pk2/native_assets_test.gd   # both paths, synthetic input, on the box
 client/tools/remote_godot.sh script res://scripts/npc/native_tables_test.gd    # the text tables, synthetic, both ways
 ```

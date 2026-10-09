@@ -45,6 +45,13 @@ func _init() -> void:
 	# This process: the line exists once available() has run.
 	NativeAssets.available()
 	_check(NativeAssets.status.begins_with("NativeAssets: native readers "), "available() sets the status line")
+	# Round 763: the effect masters' simulation has its own line (CI's native
+	# job greps it for ON), ON exactly when the readers are and the library
+	# has the effect classes.
+	EfpSimNative.available()
+	var efp_on := EfpSimNative.status.begins_with("EfpSimNative: native effect simulation ON")
+	_check(EfpSimNative.status.begins_with("EfpSimNative: native effect simulation "), "the effect simulation's status line is set")
+	_check(not efp_on or NativeAssets.available(), "the effect simulation is native only with the native readers")
 	if _failures == 0:
 		print("ALL PASS")
 	quit(1 if _failures > 0 else 0)

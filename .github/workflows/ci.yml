@@ -102,7 +102,7 @@ jobs:
       - name: Install the native build toolchain
         run: bash native/ci_toolchain.sh
         timeout-minutes: 15
-      - name: Test the native core (Blowfish, pk2, ddj; no Godot)
+      - name: Test the native core (Blowfish, pk2, ddj, the effect simulation; no Godot)
         working-directory: native
         run: cargo test --locked --no-default-features
       - name: Build the release .so and check it
@@ -127,6 +127,9 @@ jobs:
           # Anchored: the test also prints sample lines, indented, that contain
           # the same words whether or not a library loaded (round 668's review, M1).
           grep -q '^NativeAssets: native readers ON' /tmp/native_status.log || { echo "::error::the library did not load"; exit 1; }
+          # Round 763: the effect simulation in the same library (efp_native_test then holds it
+          # to the GDScript, bit for bit).
+          grep -q '^EfpSimNative: native effect simulation ON' /tmp/native_status.log || { echo "::error::the library has no effect simulation"; exit 1; }
           bash tools/run_gd_tests.sh
 
   no-assets-check:

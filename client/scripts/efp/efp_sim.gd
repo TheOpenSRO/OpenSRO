@@ -6,6 +6,11 @@ class_name EfpSim
 ## returns. Pure data -- no nodes, no textures -- so the headless tests drive
 ## it on synthetic trees. EfpEffect draws what it holds.
 ##
+## Round 763: native/src/core/efp_sim.rs is this file in Rust, rule for rule
+## and bit for bit (EfpSimNative, EquipFx's masters). A change here is a change
+## there: efp_native_test and client/tools/efp_native_parity.gd hold the two
+## together.
+##
 ## Every rule below is labelled. READ = read from sro_client.exe at the
 ## address given (docs/protocol/EFP_FORMAT.md, "Playback"); INFERRED = drawn
 ## from something READ or MEASURED with the reasoning given; OURS = a choice
@@ -310,6 +315,13 @@ class Template:
 	var kids: PackedInt32Array = PackedInt32Array()
 	var fan: PackedInt32Array = PackedInt32Array()
 	var fan_child := 0
+	## Round 763: the template compiled for the native simulation
+	## (EfpSimNative.native_template: an SrEfpTemplate), made on first use;
+	## `native_tried` once it was tried (a null `native` then: this template
+	## stays GDScript, for the reason in `native_error`).
+	var native: Object = null
+	var native_tried := false
+	var native_error := ""
 
 class Particle:
 	var tpl: int
@@ -677,6 +689,21 @@ func growth_bounds(delta: float) -> Vector2i:
 	for _s in range(1, steps):
 		spawns = mini(spawns + every + spawns * template.fan_child, FAN_MAX)
 	return Vector2i(least, mini(most, spawns - dying))
+
+## Round 763: how many particles are alive (EfpSimNative answers from its
+## native state, where `particles` stays empty).
+func count() -> int:
+	return particles.size()
+
+## Round 763: the particles as objects (EfpSimNative builds a snapshot): the
+## QA log and tests.
+func particle_list() -> Array[Particle]:
+	return particles
+
+## Round 762's review (EquipFx): the step clock's phase, so masters made
+## together do not step in the same rendered frame.
+func set_phase(acc: float) -> void:
+	_acc = acc
 
 func _live_add(n: int) -> void:
 	if _deferred:

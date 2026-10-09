@@ -4,6 +4,11 @@ class_name EfpSimBatch
 ## Round 759: many effects' simulations stepped at once, spread over
 ## WorkerThreadPool's threads (EquipFx's masters).
 ##
+## Round 763: when every effect simulates natively (EfpSimNative, EquipFx's
+## masters with the library), run() hands the whole batch to Rust
+## (native/src/core/efp_batch.rs: this ordered cap, on a Rust thread pool);
+## this GDScript Job is the fallback.
+##
 ## **Why.** In the live swarm (7,000 bots in real gear, round 759) the weapons
 ## in view carry about 50 effect files, and EquipFx keeps one simulated master
 ## a file: 33 masters active, each 50 ms step about 0.33 ms of GDScript, so
@@ -209,6 +214,12 @@ static var last := {"n": 0, "threaded": false, "by_helpers": 0, "waits": 0, "wai
 static func run(effects: Array, delta: float) -> void:
 	reap()
 	var n := effects.size()
+	# Round 763: masters simulated in Rust (EfpSimNative) are stepped by one
+	# native batch -- the same ordered cap, on a Rust thread pool, their draws
+	# built there too.
+	if EfpSimNative.all_native(effects):
+		EfpSimNative.run_batch(effects, delta)
+		return
 	last = {"n": n, "threaded": n >= threaded_min, "by_helpers": 0, "waits": 0, "wait_usec": 0, "misses": 0, "bounds_usec": 0, "sim_usec": 0}
 	if n < threaded_min:
 		for e in effects:

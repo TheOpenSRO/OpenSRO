@@ -40,6 +40,14 @@ unsafe impl ExtensionLibrary for SrNativeExtension {
             crate::vk_fallback::run_at_core_init();
         }
     }
+
+    /// Round 763: the effect batch's pool threads end (and are joined) before the library can be
+    /// unloaded, so none is left parked in code that goes away.
+    fn on_stage_deinit(stage: InitStage) {
+        if stage == InitStage::Scene {
+            crate::gd_efp::shutdown_pool();
+        }
+    }
 }
 
 /// One open pk2 archive (Pk2Reader's native half).

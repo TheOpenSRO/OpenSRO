@@ -31,6 +31,9 @@ func _ready() -> void:
 	# the library is missing or refused, or forced OFF. A tester's log always
 	# says which reader loaded their world.
 	NativeAssets.available()
+	# Round 763: whether EquipFx's effect masters simulate in Rust (the same
+	# library), and on how many threads.
+	EfpSimNative.available()
 	# Whether a DXT1's transparent texels need RGBA8 here (round 695: Forward+
 	# drops DXT1's alpha), decided once on the main thread and logged.
 	print("DdjReader: DXT1 with transparent texels %s" % [

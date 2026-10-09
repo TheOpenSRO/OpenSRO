@@ -321,6 +321,8 @@ func _make_master(k: Kind) -> bool:
 	# The holders turn with their bones (round 741); the billboards are
 	# built in the shader so they still face the camera.
 	m.use_shared_turn()
+	# Round 763: simulated in Rust when the library has it (EfpSimNative).
+	m.use_native_sim()
 	if FrameSplit.on:
 		print("QA EQUIPFX master %s: create %.1f ms, shared turn %.1f ms" % [efp, (qa_t1 - qa_t0) / 1000.0, (Time.get_ticks_usec() - qa_t1) / 1000.0])
 	m.name = "master_%d" % _kinds.size()
@@ -338,7 +340,7 @@ func _make_master(k: Kind) -> bool:
 	# on average, 12.4 at its p95, the steps bunched).
 	_masters_made += 1
 	if m.sim != null:
-		m.sim._acc = EfpSim.FRAME_SEC * fposmod(float(_masters_made) * 0.6180339887, 1.0)
+		m.sim.set_phase(EfpSim.FRAME_SEC * fposmod(float(_masters_made) * 0.6180339887, 1.0))
 	k.master = m
 	var tmpl := EfpEffect.template_for(efp, archive)
 	k.own = tmpl != null and world_commands(tmpl) > 0
@@ -779,7 +781,7 @@ static func measure(h: Host, k: Kind) -> Dictionary:
 	var off_sum := 0.0
 	var was_max := 0.0
 	var was_sum := Vector3.ZERO
-	for p in fx.sim.particles:
+	for p in fx.sim.particle_list():
 		if not drawn.has(p.tpl):
 			continue
 		var w := ht * p.pos

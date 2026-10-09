@@ -264,6 +264,8 @@ func diagnostics() -> String:
 		RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_api_version()])
 	# Which asset readers loaded this world (round 668): the startup log line.
 	lines.append(NativeAssets.status.trim_prefix("NativeAssets: ") if NativeAssets.status != "" else "native readers: not checked yet")
+	# Round 763: the effect masters' simulation (Rust or GDScript) and its threads.
+	lines.append(EfpSimNative.status.trim_prefix("EfpSimNative: ") if EfpSimNative.status != "" else "native effect simulation: not checked yet")
 	lines.append("log %s" % ProjectSettings.globalize_path("user://logs/opensro.log"))
 	lines.append("settings %s" % ProjectSettings.globalize_path(ClientSettings.PATH))
 

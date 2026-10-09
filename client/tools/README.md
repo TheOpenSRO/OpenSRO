@@ -407,6 +407,28 @@ OPENSRO_QA_NOUI=1 OPENSRO_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/cas
   --radius 1 --at 1002,1020 --yaw 30 --pitch -12 --dist 70 --frames 860
 ```
 
+**EquipFx's masters in Rust** (round 763, `EfpSimNative`; `native/README.md`, "The effect
+simulation"). Three checks hold the native simulation to the GDScript one, bit for bit:
+- `res://scripts/efp/efp_native_test.gd` (a suite; synthetic effects, both ways);
+- `res://tools/efp_native_parity.gd` on the real EquipFx files: every particle of every master,
+  every frame, against the main thread's order, at `--threads=1,2,4,all`, with the draw buffers,
+  chains and Link strips every `--draw_every` frames; prints `PARITY OK|FAIL`. `--cap=<n>` (0:
+  none), `--time=1` times each mode (GDScript main thread, GDScript pool, native at each thread
+  count) instead;
+- `res://tools/efp_native_draw_check.gd`, under a real renderer (`xwl_run.sh ... --rendering-method
+  forward_plus`): the MultiMeshes read back from the RenderingServer, GDScript-written against
+  natively written.
+
+```
+client/tools/remote_godot.sh script res://tools/efp_native_parity.gd -- --n=60 --frames=600 --fps=30
+su - ghidra -c "flock /var/tmp/godot-lock/lock <dir>/tools/xwl_run.sh -s 640x360 /opt/godot-bin/Godot_v4.7.2-stable_linux.x86_64 \
+  --rendering-method forward_plus --rendering-driver vulkan --path <dir> --script res://tools/efp_native_draw_check.gd -- --n=74"
+```
+
+`OPENSRO_EFP_NATIVE=0` keeps the masters in GDScript (the A/B), `OPENSRO_EFP_THREADS=<n>` sets the
+batch's threads (the main thread included; default min(4, cores, Godot's pool)). The crowd probe's
+`QA CROWD split` has `efp_links` (the Link strips' rebuild) beside `efp_draws`.
+
 ### Performance gate
 
 `perf_gate.sh` is the before/after every world round runs (AGENTS.md, "Performance: every world

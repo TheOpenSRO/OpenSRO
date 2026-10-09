@@ -17,9 +17,11 @@
 # read everything in GDScript; and the notices must name the same Godot release.
 #
 # --run (linux only) also runs the exported game headless, twice:
-#   - as shipped: the log must say "native readers ON" and hold no GDExtension error;
+#   - as shipped: the log must say "native readers ON" and "native effect simulation ON"
+#     (round 763) and hold no GDExtension error;
 #   - with the library renamed to .off (the fallback test): the log must say the library was
-#     not found and that the GDScript readers are used.
+#     not found and that the GDScript readers (and effect simulation) are used.
+# Round 763: the library must also carry the effect simulation's classes (both zips).
 # Exits 1 on any failure.
 set -euo pipefail
 zip="${1:?zip path}"
@@ -65,6 +67,10 @@ if [ -f "$dir/$exe" ]; then
 fi
 if [ -f "$dir/$lib" ]; then
   bash "$here/check_native_library.sh" "$dir/$lib" "$kind" || fail=1
+  # Round 763: the library carries the effect simulation (its classes are registered by name).
+  for cls in SrEfpSim SrEfpTemplate SrEfpBatch; do
+    LC_ALL=C grep -aq "$cls" "$dir/$lib" || bad "$lib lacks $cls (the effect simulation, round 763)"
+  done
   sha256sum "$dir/$lib" | sed "s#$tmp/##"
 fi
 if [ -f "$dir/THIRD_PARTY_NOTICES.txt" ]; then
@@ -87,16 +93,18 @@ if [ "$run" = "--run" ]; then
   }
   run_game "$tmp/on.log"
   echo "--- as shipped:"
-  grep -E 'NativeAssets|GDExtension|extension' "$tmp/on.log" || true
+  grep -E 'NativeAssets|EfpSimNative|GDExtension|extension' "$tmp/on.log" || true
   grep -q 'NativeAssets: native readers ON' "$tmp/on.log" || bad "the exported game did not load $lib (no 'native readers ON' line)"
+  grep -q 'EfpSimNative: native effect simulation ON' "$tmp/on.log" || bad "the exported game does not simulate effects natively (no 'native effect simulation ON' line)"
   if grep -qiE 'ERROR.*(GDExtension|extension)|extension.*ERROR' "$tmp/on.log"; then bad "the exported game logged a GDExtension error with the library present"; fi
 
   mv "$dir/$lib" "$dir/$lib.off"
   run_game "$tmp/off.log"
   echo "--- with $lib renamed to $lib.off:"
-  grep -E 'NativeAssets|GDExtension|extension|ERROR' "$tmp/off.log" || true
+  grep -E 'NativeAssets|EfpSimNative|GDExtension|extension|ERROR' "$tmp/off.log" || true
   grep -q 'NativeAssets: native readers OFF' "$tmp/off.log" || bad "with the library renamed there is no 'native readers OFF' line"
   grep -q 'NativeAssets: native readers ON' "$tmp/off.log" && bad "with the library renamed the game still says ON"
+  grep -q 'EfpSimNative: native effect simulation OFF' "$tmp/off.log" || bad "with the library renamed there is no 'native effect simulation OFF' line"
   mv "$dir/$lib.off" "$dir/$lib"
 fi
 

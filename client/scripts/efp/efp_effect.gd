@@ -599,7 +599,11 @@ func _link_view() -> Array:
 ## Every Link node's strips for this frame (see EfpLinks): one pass over
 ## the particles finds each emitter's oldest live one (link == null) and
 ## walks its chain; each node's chains go into one stitched strip.
-func _update_links() -> void:
+## Round 763: `native` (the effect's EfpSimNative) hands over its strips, built
+## in Rust as the code below builds them (core/efp_links.rs: LinkObj, and the
+## pipes of a shared-turn effect), and for any other node its chains, gathered
+## as gather_from gathers them (core/efp_out.rs).
+func _update_links(native: EfpSimNative = null) -> void:
 	if _links.is_empty():
 		return
 	link_updates += 1
@@ -615,42 +619,87 @@ func _update_links() -> void:
 	var up: Vector3 = view[2]
 	for d in _links:
 		(d[3] as EfpLinks.Out).clear()
-	for p in sim.particles:
-		if p.link != null:
-			continue
-		var di: int = _link_tpls.get(p.tpl, -1)
-		if di < 0:
-			continue
-		var d: Array = _links[di]
-		var out: EfpLinks.Out = d[3]
-		var a: EfpLinks.Buf = d[4]
-		match int(d[6]):
-			2:
-				EfpLinks.gather_from(p, true, a)
-				EfpLinks.obj_ribbon(a, out)
-			1:
-				EfpLinks.gather_from(p, false, a)
-				var b: EfpLinks.Buf = d[5]
-				EfpLinks.spline(a, b)
-				if out.turn:
-					EfpLinks.pipe_turn(b, out)
-				else:
-					EfpLinks.pipe_ribbon(b, vp, right, up, out)
-			_:
-				EfpLinks.gather_from(p, false, a)
-				if out.turn:
-					EfpLinks.pipe_turn(a, out)
-				else:
-					EfpLinks.pipe_ribbon(a, vp, right, up, out)
-	for d in _links:
+	var strips: Array = []
+	if native != null:
+		strips = native.take_strips()
+		var ch := native.take_chains()
+		var meta: PackedInt32Array = ch.get("meta", PackedInt32Array())
+		var pos: PackedVector3Array = ch.get("pos", PackedVector3Array())
+		var col: PackedInt64Array = ch.get("col", PackedInt64Array())
+		var w: PackedFloat32Array = ch.get("w", PackedFloat32Array())
+		var yv: PackedVector3Array = ch.get("y", PackedVector3Array())
+		var off := 0
+		for k in range(0, meta.size(), 2):
+			var cnt: int = meta[k + 1]
+			if meta[k] < strips.size() and strips[meta[k]] != null:
+				off += cnt
+				continue # built natively
+			var d: Array = _links[meta[k]]
+			var a: EfpLinks.Buf = d[4]
+			a.pos = pos.slice(off, off + cnt)
+			a.col = col.slice(off, off + cnt)
+			a.w = w.slice(off, off + cnt)
+			a.y = yv.slice(off, off + cnt)
+			a.n = cnt
+			off += cnt
+			_link_geometry(d, a, vp, right, up)
+	else:
+		for p in sim.particles:
+			if p.link != null:
+				continue
+			var di: int = _link_tpls.get(p.tpl, -1)
+			if di < 0:
+				continue
+			var d: Array = _links[di]
+			var a: EfpLinks.Buf = d[4]
+			EfpLinks.gather_from(p, int(d[6]) == 2, a)
+			_link_geometry(d, a, vp, right, up)
+	for i in _links.size():
 		if _link_budget_left <= 0:
 			return
+		var d: Array = _links[i]
 		var out: EfpLinks.Out = d[3]
 		var am: ArrayMesh = (d[1] as MeshInstance3D).mesh
 		am.clear_surfaces()
+		if i < strips.size() and strips[i] != null:
+			# The native strip: Out.arrays()' layout, already its drawn length.
+			var st: Array = strips[i]
+			var nv: int = st[0]
+			if nv >= 3:
+				var a := []
+				a.resize(Mesh.ARRAY_MAX)
+				a[Mesh.ARRAY_VERTEX] = st[1]
+				a[Mesh.ARRAY_COLOR] = st[2]
+				a[Mesh.ARRAY_TEX_UV] = st[3]
+				if out.turn:
+					a[Mesh.ARRAY_CUSTOM0] = st[4]
+					a[Mesh.ARRAY_CUSTOM1] = st[5]
+				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, a, [], {}, out.format_flags())
+			_link_budget_left -= maxi(nv - 2, 0)
+			continue
 		if out.nv >= 3:
 			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays(), [], {}, out.format_flags())
 		_link_budget_left -= out.triangles()
+
+## One chain's strip (its points gathered into `a`) into its node's Out, by the
+## node's mode.
+static func _link_geometry(d: Array, a: EfpLinks.Buf, vp: Projection, right: Vector3, up: Vector3) -> void:
+	var out: EfpLinks.Out = d[3]
+	match int(d[6]):
+		2:
+			EfpLinks.obj_ribbon(a, out)
+		1:
+			var b: EfpLinks.Buf = d[5]
+			EfpLinks.spline(a, b)
+			if out.turn:
+				EfpLinks.pipe_turn(b, out)
+			else:
+				EfpLinks.pipe_ribbon(b, vp, right, up, out)
+		_:
+			if out.turn:
+				EfpLinks.pipe_turn(a, out)
+			else:
+				EfpLinks.pipe_ribbon(a, vp, right, up, out)
 
 ## Each Link node's live particles, one list per emitter, oldest first:
 ## the chains _update_links draws (each emitter's list from its head,
@@ -883,23 +932,46 @@ func step_post() -> void:
 	# billboarded node, when the camera turned (else it would lag the view).
 	# (Round 621: also when the host moved the effect, whose followers the
 	# placement pass moved this frame, or the space re-centred.)
-	if stepped > 0 or moved or (_has_billboard and _camera_turned()):
-		var t3 := Time.get_ticks_usec() if profile else 0
-		_update_draws()
-		if profile:
-			prof["draws"] += Time.get_ticks_usec() - t3
-			prof["draw_calls"] += 1
+	var need_draws := stepped > 0 or moved or (_has_billboard and _camera_turned())
 	# The Link strips likewise: after a step, or when the camera or the
 	# effect moved for a screen-space pipe (round 621's review follow-up).
-	if not _links.is_empty() and (stepped > 0 or moved or (_has_pipe and _link_camera_moved())):
-		_update_links()
+	var need_links := not _links.is_empty() and (stepped > 0 or moved or (_has_pipe and _link_camera_moved()))
+	if (need_draws or need_links) and sim is EfpSimNative and (sim as EfpSimNative).is_native():
+		# Round 763: the native simulation's buffers and chains -- built by the
+		# batch on the thread that stepped it, or here when nothing stepped
+		# (the camera turned) -- handed over in bulk.
+		var ns := sim as EfpSimNative
+		var t4 := Time.get_ticks_usec() if profile else 0
+		if stepped <= 0 or not ns.fresh():
+			ns.build_outputs(native_cam_rot(true))
+		if need_draws:
+			_apply_native_draws(ns)
+		var t5 := Time.get_ticks_usec() if profile else 0
+		if need_links:
+			_update_links(ns)
+		if profile:
+			prof["draws"] += t5 - t4
+			prof["draw_calls"] += 1
+			prof["links"] += Time.get_ticks_usec() - t5
+	else:
+		if need_draws:
+			var t3 := Time.get_ticks_usec() if profile else 0
+			_update_draws()
+			if profile:
+				prof["draws"] += Time.get_ticks_usec() - t3
+				prof["draw_calls"] += 1
+		if need_links:
+			var t6 := Time.get_ticks_usec() if profile else 0
+			_update_links()
+			if profile:
+				prof["links"] += Time.get_ticks_usec() - t6
 	if stepped > 0 and _qa_log():
-		print("QA FXLOG %s frame %d particles %d drawn %d" % [path, sim.age, sim.particles.size(), drawn_particles()])
+		print("QA FXLOG %s frame %d particles %d drawn %d" % [path, sim.age, sim.count(), drawn_particles()])
 
 ## Round 734: per-part timings of every effect's _process, microseconds,
 ## while `profile` is set (QA and tools only; off by default).
 static var profile := false
-static var prof := {"place": 0, "sim": 0, "draws": 0, "calls": 0, "moved": 0, "steps": 0, "draw_calls": 0}
+static var prof := {"place": 0, "sim": 0, "draws": 0, "calls": 0, "moved": 0, "steps": 0, "draw_calls": 0, "links": 0}
 
 ## OPENSRO_QA_FXLOG=1 (round 623): every effect prints its particle and
 ## drawn counts after each simulation frame, so a render's frames can be
@@ -914,12 +986,21 @@ static func _qa_log() -> bool:
 ## plus the live particles of its Link nodes.
 func drawn_particles() -> int:
 	var n := 0
-	for d in _draws:
-		n += (d[1] as MultiMeshInstance3D).multimesh.visible_instance_count
+	if sim is EfpSimNative and (sim as EfpSimNative).is_native():
+		# Round 763: the native draws set the RenderingServer's visible counts
+		# directly; the counts are the native side's.
+		for c in (sim as EfpSimNative).draw_counts():
+			n += c
+	else:
+		for d in _draws:
+			n += (d[1] as MultiMeshInstance3D).multimesh.visible_instance_count
 	if not _links.is_empty():
-		for p in sim.particles:
-			if _link_tpls.has(p.tpl):
-				n += 1
+		if sim is EfpSimNative and (sim as EfpSimNative).is_native():
+			n += (sim as EfpSimNative).count_tpls(PackedInt32Array(_link_tpls.keys()))
+		else:
+			for p in sim.particles:
+				if _link_tpls.has(p.tpl):
+					n += 1
 	return n
 
 ## The world-space box of the drawn particles' centres (the QA log, round
@@ -1158,6 +1239,83 @@ func _update_draws() -> void:
 			mm.set_instance_transform(i, particle_transform(p, String(d[2]), cam_rot))
 			mm.set_instance_color(i, EfpSim.color_of(p.color))
 			mm.set_instance_custom_data(i, Color(p.uv.x, p.uv.y, p.uv.z, p.uv.w))
+
+## Round 763: the camera's rotation in this effect's space, as _update_draws
+## computes it -- what a billboard node that is not shared-turn draws with.
+## IDENTITY when no node needs it (`always` false) or there is no camera.
+func native_cam_rot(always: bool = false) -> Basis:
+	if not always and not _native_needs_cam:
+		return Basis.IDENTITY
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam == null:
+		return Basis.IDENTITY
+	return global_transform.basis.orthonormalized().inverse() * cam.global_transform.basis.orthonormalized()
+
+var _native_needs_cam := false
+
+## Round 763: simulates this effect in Rust (EfpSimNative) when the library
+## has it: the same template and keep / reserved flags, a new random stream,
+## its draw and Link nodes registered so the native side builds their buffers
+## and chains. Call after use_shared_turn (the turn flags), before the first
+## step. `seed_value` seeds its stream (0: a random one). False, and the
+## GDScript simulation kept, when it cannot.
+func use_native_sim(seed_value: int = 0) -> bool:
+	if sim == null or sim is EfpSimNative:
+		return false
+	var ns := EfpSimNative.from_sim(sim, seed_value)
+	if ns == null:
+		return false
+	var dt := PackedInt32Array()
+	var views := PackedInt32Array()
+	var turns := PackedByteArray()
+	_native_needs_cam = false
+	for d in _draws:
+		dt.append(int(d[0]))
+		var v := String(d[2])
+		var code := 1 if v == "ViewBillboard" else (2 if v == "ViewYBillboard" else (3 if v == "ViewVBillboard" else 0))
+		views.append(code)
+		var turn: bool = d.size() > 3 and bool(d[3])
+		turns.append(1 if turn else 0)
+		if not turn and (code == 1 or code == 2):
+			_native_needs_cam = true
+	var lt := PackedInt32Array()
+	var lk := PackedByteArray()
+	var lturn := PackedByteArray()
+	for l in _links:
+		lt.append(int(l[0]))
+		lk.append(int(l[6]))
+		lturn.append(1 if (l[3] as EfpLinks.Out).turn else 0)
+	ns.set_outputs(dt, views, turns, lt, lk, lturn)
+	var rids: Array = []
+	for d in _draws:
+		var mm := (d[1] as MultiMeshInstance3D).multimesh
+		# A whole buffer makes the RenderingServer re-make the MultiMesh's box
+		# over every allocated instance and tell every instance drawing it --
+		# the master and each of its holders (READ, Godot 4.7.2
+		# renderer_rd/storage_rd/mesh_storage.cpp _multimesh_set_buffer) --
+		# unless the MultiMesh has a box of its own. The instances cull by
+		# their own DRAW_AABB already (from_template, _holder_for), so it gets
+		# the same box: nothing drawn changes.
+		mm.custom_aabb = DRAW_AABB
+		rids.append(mm.get_rid())
+	ns.set_draw_rids(rids)
+	ns.set_phase(sim._acc)
+	sim = ns
+	return true
+
+## Round 763: the native buffers into the MultiMeshes (_update_draws'
+## result): a MultiMesh that must hold more instances grows here, as
+## _update_draws grows it (to max(n, 2 x the old count)); the buffers and the
+## visible counts go to the RenderingServer from Rust, one call a node with
+## particles (SrEfpSim.apply_draws).
+func _apply_native_draws(ns: EfpSimNative) -> void:
+	draw_updates += 1
+	if _draws.is_empty():
+		return
+	var grow := ns.draw_growth()
+	for k in range(0, grow.size(), 2):
+		(_draws[grow[k]][1] as MultiMeshInstance3D).multimesh.instance_count = grow[k + 1]
+	ns.apply_draws()
 
 ## A particle's transform in the effect's space (READ order: scale, shape,
 ## view, then position; see the header).
