@@ -326,6 +326,14 @@ func draw_buffer(i: int) -> PackedFloat32Array:
 		return PackedFloat32Array()
 	return _n.call("draw_buffer", i)
 
+## Round 764 (EquipFxBatch): every draw node's instances as one texture's
+## floats (gd_efp.rs draw_rows): `rows` rows of `width` RGBA texels, texel 0 a
+## node's count. Empty from a library without it.
+func draw_rows(width: int, rows: int) -> PackedFloat32Array:
+	if _n == null or not _n.has_method("draw_rows"):
+		return PackedFloat32Array()
+	return _n.call("draw_rows", width, rows)
+
 ## Each draw node's particle count after the last build.
 func draw_counts() -> PackedInt32Array:
 	return _n.call("draw_counts") if _n != null else PackedInt32Array()

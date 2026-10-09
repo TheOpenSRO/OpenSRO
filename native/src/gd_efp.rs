@@ -378,6 +378,27 @@ impl SrEfpSim {
         .unwrap_or_default()
     }
 
+    /// Round 764 (EquipFxBatch): every draw node's built instances as one texture's floats -- a row
+    /// of `width` RGBA texels a node (`rows` rows, the nodes past the draws' count empty): texel 0
+    /// the node's particle count, then its instances (STRIDE floats, 5 texels, each), zeros to the
+    /// row's end. A node with more instances than the row holds is cut there (the caller sizes
+    /// `width` from draw_counts first).
+    #[func]
+    fn draw_rows(&self, width: i64, rows: i64) -> PackedFloat32Array {
+        let (w, r) = (width.max(1) as usize * 4, rows.max(0) as usize);
+        self.with(|b| {
+            let mut out = vec![0.0f32; w * r];
+            for i in 0..r.min(b.out.bufs.len()).min(b.out.counts.len()) {
+                let row = &mut out[i * w..(i + 1) * w];
+                let n = (b.out.counts[i] * STRIDE).min(b.out.bufs[i].len()).min(w - 4);
+                row[0] = (n / STRIDE) as f32;
+                row[4..4 + n].copy_from_slice(&b.out.bufs[i][..n]);
+            }
+            PackedFloat32Array::from(&out[..])
+        })
+        .unwrap_or_default()
+    }
+
     /// Each draw node's particle count after the last build (what its MultiMesh shows).
     #[func]
     fn draw_counts(&self) -> PackedInt32Array {

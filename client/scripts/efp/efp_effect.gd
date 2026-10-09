@@ -1224,6 +1224,23 @@ func draw_buffer(i: int) -> PackedFloat32Array:
 		return PackedFloat32Array()
 	return _draw_bufs[i]
 
+## Round 764 (EquipFxBatch): each draw node's particle count after the last
+## update.
+func draw_count_list() -> PackedInt32Array:
+	if sim is EfpSimNative and (sim as EfpSimNative).is_native():
+		return (sim as EfpSimNative).draw_counts()
+	var out := PackedInt32Array()
+	for i in _draws.size():
+		out.append((_draw_bufs[i] as PackedFloat32Array).size() / 20 if i < _draw_bufs.size() and _draw_bufs[i] != null else 0)
+	return out
+
+## Round 764 (EquipFxBatch): the draws as one texture's floats, natively
+## (EfpSimNative.draw_rows); empty on the GDScript path or an older library.
+func draw_rows(width: int, rows: int) -> PackedFloat32Array:
+	if sim is EfpSimNative and (sim as EfpSimNative).is_native():
+		return (sim as EfpSimNative).draw_rows(width, rows)
+	return PackedFloat32Array()
+
 ## Round 764: the GDScript path's draw buffers (_update_draws), kept when
 ## keep_draw_buffers is set (a master a batch draws).
 var keep_draw_buffers := false

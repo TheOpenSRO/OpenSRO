@@ -851,7 +851,7 @@ func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Ch
 	var bodies: Dictionary = world.get("_other_bodies")
 	for yaw in range(0, 360, 45):
 		cam.global_transform = Transform3D(Basis(Vector3.UP, deg_to_rad(float(yaw))), cam.global_position)
-		for rep in 3:
+		for rep in EquipFxBatch.REBUILD_EVERY + 2:
 			d._hurry = true
 			d._process(1.0 / 60.0)
 		var all_in := true
@@ -884,7 +884,7 @@ func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Ch
 	EquipFxBatch.host_budget = 2
 	for yaw in [0, 180]:
 		cam.global_transform = Transform3D(Basis(Vector3.UP, deg_to_rad(float(yaw))), cam.global_position)
-		for rep in 3:
+		for rep in EquipFxBatch.REBUILD_EVERY + 2:
 			d._hurry = true
 			d._process(1.0 / 60.0)
 		var nsel := 0
@@ -894,7 +894,7 @@ func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Ch
 				nsel += 1
 		_check(nsel == 2, "r764: a budget of 2 draws 2 hosts at yaw %d (%d; cut %s, budget %d)" % [yaw, nsel, str(d.stats.get("batch_cut")), EquipFxBatch.host_budget])
 	EquipFxBatch.host_budget = EquipFxBatch.HOST_BUDGET
-	for rep in 3:
+	for rep in EquipFxBatch.REBUILD_EVERY + 2:
 		d._hurry = true
 		d._process(1.0 / 60.0)
 	# The frame the shader composes from the table, against the holder's
@@ -940,8 +940,9 @@ func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Ch
 	_leave_all(world, crowd, ids)
 	d._process(1.0 / 60.0)
 	_check(d._ghost_hosts == 0 and (b0 == null or b0.hosts.is_empty()), "r764: the ghosts gone, their hosts leave the batch")
-	d._process(1.0 / 60.0)
-	_check(b0 == null or b0.shown == 0, "r764: ... and its table is emptied (%d)" % (b0.shown if b0 != null else -1))
+	for rep in EquipFxBatch.REBUILD_EVERY + 1:
+		d._process(1.0 / 60.0)
+	_check(b0 == null or b0.shown == 0, "r764: ... and its table is emptied within %d frames (%d)" % [EquipFxBatch.REBUILD_EVERY, b0.shown if b0 != null else -1])
 	_advance(world, crowd, 2.1)
 	EquipFx.ghost_frame = Callable()
 	EquipFx.ghost_origin = Callable()

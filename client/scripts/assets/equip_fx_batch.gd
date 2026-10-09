@@ -81,6 +81,8 @@ class Parts:
 	## draw call for nothing; shown again at its next particle).
 	var zero := PackedInt32Array()
 	var live := PackedByteArray()
+	## The master's draw nodes (batch_nodes), counted once.
+	var nodes := -1
 
 ## One kind's ghosts of up to LAYOUTS_PER_BATCH skeleton layouts: its hosts
 ## and, per master draw node, its draw.
@@ -112,6 +114,10 @@ var _layouts: Array = []
 const LAYOUTS_PER_BATCH := 4
 ## Empty steps before a node's draw is hidden (OURS: 10 steps, half a second).
 const LIVE_STEPS := 10
+## Host tables are rebuilt one frame in this many (OURS).
+const REBUILD_EVERY := 6
+var _frame := 0
+var _dirty_wait := false
 var _by_kind: Dictionary = {}   # kind key -> [Batch]
 var _parts: Dictionary = {}     # kind key -> Parts
 var _kind_seen: Dictionary = {} # kind key -> its master's draw_updates last taken
@@ -152,7 +158,8 @@ var _selected := 0
 ## (CrowdGpu made its body again) is placed again first.
 func select(h, on: bool, crowd: Object = null) -> void:
 	var b: Batch = h.batch
-	if b != null and crowd != null:
+	# Only a drawn host's slot matters (and is checked: a call a host).
+	if b != null and crowd != null and on:
 		var sl: Array = crowd.call("ghost_slot_layout", h.anchor)
 		if sl.is_empty() or int(sl[0]) != h.batch_slot or sl[1] != h.blayout:
 			remove(h)
@@ -231,13 +238,22 @@ func step(crowd: Object, kinds: Dictionary) -> void:
 			if grew:
 				touched[b] = true
 	var rebuilt := 0
-	for b in _dirty.keys():
+	# Round 764 (OURS): the tables a sixth of the frames at most. While a page
+	# arrives its hosts come every frame and every table was rebuilt (and
+	# uploaded) every frame: +0.3 ms of main thread and +0.2 of render thread a
+	# frame of a 4,000 arrival (MEASURED); a held page shows nothing anyway,
+	# and a host chosen waits at most REBUILD_EVERY frames for its particles.
+	_frame += 1
+	if _frame % REBUILD_EVERY != 0:
+		_dirty_wait = true
+	for b in (_dirty.keys() if not _dirty_wait else []):
 		if rebuilt > 0 and Time.get_ticks_usec() - t0 >= REBUILD_BUDGET_USEC:
 			break
 		_dirty.erase(b)
 		_upload_hosts(b)
 		touched[b] = true
 		rebuilt += 1
+	_dirty_wait = false
 	stats["rebuilds"] = int(stats["rebuilds"]) + rebuilt
 	for b in touched:
 		_apply_counts(b)
@@ -372,20 +388,20 @@ func _upload_parts(kind_key: String, master: EfpEffect) -> bool:
 		_parts[kind_key] = pt
 	var before := pt.strides.duplicate()
 	var live_before := pt.live.duplicate()
-	var n := master.batch_nodes().size()
+	if pt.nodes < 0:
+		pt.nodes = master.batch_nodes().size()
+	var n := pt.nodes
 	if pt.zero.size() != n:
 		pt.zero.resize(n)
 		pt.live.resize(n)
-	var bufs: Array = []
-	var counts := PackedInt32Array()
+	# The counts first (natively: no buffer copied yet), the rows after.
+	var counts := master.draw_count_list()
+	counts.resize(n)
 	var widest := 1
 	if pt.strides.size() != n:
 		pt.strides.resize(n)
 	for i in n:
-		var buf := master.draw_buffer(i)
-		bufs.append(buf)
-		var c := buf.size() / 20
-		counts.append(c)
+		var c := counts[i]
 		pt.zero[i] = 0 if c > 0 else pt.zero[i] + 1
 		pt.live[i] = 1 if pt.zero[i] < LIVE_STEPS else 0
 		if pt.strides[i] < c:
@@ -396,16 +412,17 @@ func _upload_parts(kind_key: String, master: EfpEffect) -> bool:
 	var width := pt.width
 	if 1 + widest * 5 > width:
 		width = maxi(1 + widest * 5, width * 2)
-	var data := PackedFloat32Array()
-	data.resize(rows * width * 4)
-	for i in rows:
-		# Texel 0: the particles this step; then 5 texels a particle.
-		var o := i * width * 4
-		data[o] = float(counts[i]) if i < counts.size() else 0.0
-		if i < bufs.size() and not (bufs[i] as PackedFloat32Array).is_empty():
-			var b: PackedFloat32Array = bufs[i]
-			for q in b.size():
-				data[o + 4 + q] = b[q]
+	# Natively in one call (gd_efp.rs draw_rows); else built here: texel 0
+	# the particles this step, then 5 texels a particle, zeros to the row's end.
+	var data := master.draw_rows(width, rows)
+	if data.size() != width * rows * 4:
+		data = PackedFloat32Array()
+		for i in rows:
+			var c := float(counts[i]) if i < counts.size() else 0.0
+			data.append_array(PackedFloat32Array([c, 0.0, 0.0, 0.0]))
+			if i < n:
+				data.append_array(master.draw_buffer(i))
+			data.resize((i + 1) * width * 4)
 	var img := Image.create_from_data(width, rows, false, Image.FORMAT_RGBAF, data.to_byte_array())
 	if pt.tex == null or width != pt.width or rows != pt.rows:
 		pt.tex = ImageTexture.create_from_image(img)

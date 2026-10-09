@@ -904,6 +904,8 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 	# makes.
 	var planes: Array = cam.get_frustum() if cam != null else []
 	var have_planes := planes.size() == 6
+	# Round 764: the batches' CrowdGpu, once a slice.
+	var gpu = ghost_gpu.call() if _batch != null and ghost_gpu.is_valid() else null
 	while _scan_at < end:
 		var id: String = _scan[_scan_at]
 		_scan_at += 1
@@ -940,7 +942,7 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 					_cand_seen += 1
 				if sel:
 					_batch_live[h.key] = _cycle + 1
-				_batch.select(h, sel, ghost_gpu.call() if ghost_gpu.is_valid() else null)
+				_batch.select(h, sel, gpu)
 				continue
 			if cam != null:
 				d = from.distance_to(go)

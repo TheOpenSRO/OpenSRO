@@ -587,6 +587,16 @@ NetClient reads one group after the other). `OPENSRO_QA_GHOST_FX=0` gives ghosts
 holders on ghosts, all within 720 units) and `fx_ghost_far` (the farthest of them). With
 `OPENSRO_QA_LINEUP_STEP_MS` the probe's `leave` and `back` steps hand their group over a frame's share
 at a time, as NetClient reads one; without it, in one call (the before tree).
+Round 764: the ghosts' weapon particles are drawn by EquipFxBatch (`docs/rounds/r764.md` section 2):
+`OPENSRO_QA_EQUIPFX_BATCH=0` puts them back on EquipFx's holders (the 64 nearest in view),
+`OPENSRO_QA_EQUIPFX_HOSTS=<n>` sets how many hosts the batches draw (500; 0: every one within 720),
+`OPENSRO_QA_EQUIPFX_RANGE=<units>` draws only within that distance (the GPU's share by distance).
+The step lines carry `fx_in_view` (ghost hosts within 720) and `fx_batch_hosts` / `fx_batch_draws` /
+`fx_batch_instances` / `fx_batch_live`; the probe's `fxab` step draws one held frame by the batches,
+by holders for the same hosts, with none, and by the batches again (`fxab_<n>_*.png` in
+`OPENSRO_QA_CROWD_SHOTS`), and prints each pair's difference. `OPENSRO_QA_BUDGET_WORK=0` gives the crowd
+budget round 762's rule (the whole frame, not the main thread's work); `OPENSRO_QA_DRESS_IDLE=1`
+dresses idle ghosts in the background again.
 
 **The live crowd and the swarm's gear (round 759).** `CROWD_LIVE=<host:port>` makes `crowd_run.sh`
 sign in to a running server (QaSignIn: register if new, log in, create the character if missing,

@@ -523,6 +523,24 @@ func _draws() -> void:
 					if why != "":
 						break
 					buffers += 1
+			# draw_rows: the same instances, one row a node after its count.
+			if why == "":
+				var widest := 1
+				for di in g._draws.size():
+					widest = maxi(widest, ns.draw_buffer(di).size() / 20)
+				var width := 1 + widest * 5 + 3
+				var rows_n := g._draws.size() + 1
+				var got := ns.draw_rows(width, rows_n)
+				var want := PackedFloat32Array()
+				for di in rows_n:
+					var b := ns.draw_buffer(di) if di < g._draws.size() else PackedFloat32Array()
+					want.append_array(PackedFloat32Array([float(b.size() / 20), 0.0, 0.0, 0.0]))
+					want.append_array(b)
+					want.resize((di + 1) * width * 4)
+				if got != want:
+					why = "draw_rows is not the rows draw_buffer builds (%d floats against %d)" % [got.size(), want.size()]
+				else:
+					buffers += 1
 			# ... and the GDScript path's kept buffers (a shared-turn effect's:
 			# no camera in them).
 			if why == "" and k % 2 == 1:
