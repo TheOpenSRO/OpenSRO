@@ -318,6 +318,14 @@ func draw_growth() -> PackedInt32Array:
 func apply_draws() -> int:
 	return int(_n.call("apply_draws")) if _n != null else 0
 
+## Round 764 (EquipFxBatch): draw node `i`'s built buffer, its instances
+## only (20 floats each) -- what apply_draws sent its MultiMesh. Empty from a
+## library without it (older than round 764).
+func draw_buffer(i: int) -> PackedFloat32Array:
+	if _n == null or not _n.has_method("draw_buffer"):
+		return PackedFloat32Array()
+	return _n.call("draw_buffer", i)
+
 ## Each draw node's particle count after the last build.
 func draw_counts() -> PackedInt32Array:
 	return _n.call("draw_counts") if _n != null else PackedInt32Array()

@@ -1239,6 +1239,24 @@ func ghost_origin(node: Object):
 		return Vector3(INF, INF, INF)
 	return b.xf.origin
 
+## Round 764 (EquipFxBatch): a ghost's body slot and skeleton layout -- where
+## a shader finds its frame (crowd_gpu.gdshaderinc) -- or [] when `node` is
+## not a ghost, or its body has no slot or layout yet.
+func ghost_slot_layout(node: Object) -> Array:
+	var b: Body = _bodies.get(node) if node != null else null
+	if b == null or not b.ghost or b.slot < 0 or b.layout == null:
+		return []
+	return [b.slot, b.layout]
+
+## Round 764 (EquipFxBatch): the far bodies' texture (crowd_bodies), or null
+## before the first upload.
+func body_texture() -> Texture2DArray:
+	return _body_tex
+
+## Round 764 (EquipFxBatch): Character Sight Range as the far parts use it.
+func sight_range() -> float:
+	return _range
+
 ## Row `r` of the body texture (SLOTS_PER_ROW bodies) as its layer's image.
 func _body_row_image(r: int) -> Image:
 	var n := SLOTS_PER_ROW * FLOATS_PER_BODY

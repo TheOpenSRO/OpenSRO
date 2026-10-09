@@ -23,6 +23,7 @@ func _check(cond: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	_test_hold()
+	_test_held_groups()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -83,4 +84,33 @@ func _test_hold() -> void:
 	_check(seen == ["unstuck 1", "stop 7 2", "unstuck 2", "stop 9 1", "stop 9 3", "stop 9 4", "unstuck 3", "unstuck 4"],
 		"once the group is read the held packets go first, in their order (%s)" % str(seen))
 	_check(nc.held_count() == 0 and not nc._held_barrier and nc._held_uids.is_empty(), "nothing is held after")
+	nc.free()
+
+## Round 764: a group end (0x3018) waiting behind the group being read keeps
+## group_reading() true until it is dispatched -- a frame that falls between
+## two groups of one window must not reveal their page -- and a dispatched
+## 0x3018 sets group_rx_msec from its packet's receive time.
+func _test_held_groups() -> void:
+	var nc = load("res://scripts/net/net_client.gd").new()
+	var uids: Array = []
+	for i in range(400000):
+		uids.append(2000000 + i)
+	nc._group_job = {"uids": uids, "count": uids.size(), "i": 0, "users": 0, "npcs": 0, "bytes": 0, "t0": Time.get_ticks_usec(), "frames": 0}
+	var begin := Packet.new(NpcSpawnNet.OP_GROUP_BEGIN, PackedByteArray([2, 1, 0]))
+	var data := PackedByteArray()
+	data.resize(4)
+	data.encode_u32(0, 3000001)
+	var body := Packet.new(NpcSpawnNet.OP_GROUP_DATA, data)
+	var end := Packet.new(NpcSpawnNet.OP_GROUP_END, PackedByteArray())
+	end.rx_msec = 12345
+	var queue: Array = [begin, body, end]
+	var poll := func():
+		return queue.pop_front() if not queue.is_empty() else null
+	nc._net_frame(poll)
+	_check(nc._group_job != null and nc._held_groups == 1, "a group's 0x3018 behind the one being read is counted (%d)" % nc._held_groups)
+	nc._group_job = null
+	_check(nc.group_reading(), "group_reading() is true while a held group waits")
+	nc._net_frame(poll)
+	_check(nc._held_groups == 0, "the count drops when it is dispatched")
+	_check(nc.group_rx_msec == 12345, "group_rx_msec is the 0x3018's receive time (%d)" % nc.group_rx_msec)
 	nc.free()

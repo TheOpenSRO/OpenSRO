@@ -598,12 +598,20 @@ static func decode_entity_left(data: PackedByteArray) -> int:
 ## "100/100", "102/101" -- see docs/protocol/MAPO_FORMAT.md/MAPM_FORMAT.md),
 ## since that's the real convention this project's own zone loading (see
 ## World3D.gd) resolves against.
-static func encode_change_zone(zone: String) -> PackedByteArray:
+static func encode_change_zone(zone: String, spot: Variant = null) -> PackedByteArray:
 	var zone_bytes := zone.to_utf8_buffer()
 	var out := PackedByteArray()
 	out.resize(2)
 	out.encode_u16(0, zone_bytes.size())
 	out.append_array(zone_bytes)
+	# Round 764 (OURS framing, server ChangeZoneRequest.Spot): the region-local
+	# point in the zone's centre region the player will stand at -- the zone
+	# box's `@x,z` -- as two trailing f32s, sent only when there is one.
+	if spot is Vector2:
+		var at := out.size()
+		out.resize(at + 8)
+		out.encode_float(at, (spot as Vector2).x)
+		out.encode_float(at + 4, (spot as Vector2).y)
 	return out
 
 ## Result of decode_change_zone_result(): either an error, or the new

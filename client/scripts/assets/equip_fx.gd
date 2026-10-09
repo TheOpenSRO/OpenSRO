@@ -99,6 +99,9 @@ static func _far(skel: Node3D):
 ## nearest (INF while its page is held or it fades out), or null.
 static var ghost_frame: Callable = Callable()
 static var ghost_origin: Callable = Callable()
+## Round 764 (EquipFxBatch): the CrowdGpu drawing the ghosts (World3D sets
+## it), whose textures the batched particles read their hosts' frames from.
+static var ghost_gpu: Callable = Callable()
 
 class Host:
 	var id: String
@@ -127,6 +130,13 @@ class Host:
 	## The weapon it belongs to (one distance a weapon, _finish_cycle): its
 	## item skeleton's id, or a ghost's "anchor id|wear".
 	var wkey = 0
+	## Round 764: a ghost's host drawn by EquipFxBatch -- its batch and its
+	## ghost's body slot.
+	var batch = null
+	var batch_slot := -1
+	var sel := false
+	var rows := PackedFloat32Array()
+	var blayout: Object = null
 
 	## The node it hangs from: the item skeleton, or a ghost's holder.
 	func node() -> Node3D:
@@ -173,6 +183,15 @@ var _paused := false
 var _hurry := false
 ## Round 762's review, F1: the hosts on ghosts (add_ghost_host).
 var _ghost_hosts := 0
+## Round 764: the ghosts' hosts drawn in batches (EquipFxBatch.enabled), and
+## the kinds a ghost host within MAX_DISTANCE keeps stepping (kind key -> the
+## cycle it was last found in).
+var _batch: EquipFxBatch = null
+var _batch_live := {}
+## Round 764: the distances of this cycle's ghost hosts within reach, and the
+## cut the last cycle found: the host_budget-th nearest (INF while fewer).
+var _batch_d := PackedFloat32Array()
+var _batch_cut := INF
 ## Counts for the QA line and the tests.
 var stats := {"hosts": 0, "shown": 0, "kinds": 0}
 
@@ -321,6 +340,9 @@ func _make_master(k: Kind) -> bool:
 	# The holders turn with their bones (round 741); the billboards are
 	# built in the shader so they still face the camera.
 	m.use_shared_turn()
+	# Round 764: its draw buffers for the batches (the GDScript path keeps
+	# them; the native one has them).
+	m.keep_draw_buffers = EquipFxBatch.enabled
 	# Round 763: simulated in Rust when the library has it (EfpSimNative).
 	m.use_native_sim()
 	if FrameSplit.on:
@@ -347,6 +369,14 @@ func _make_master(k: Kind) -> bool:
 	return true
 
 var _masters_made := 0
+
+## Round 764: whether ghosts' hosts go to batches (made on first use).
+func _batching() -> bool:
+	if not EquipFxBatch.enabled:
+		return false
+	if _batch == null:
+		_batch = EquipFxBatch.new(self)
+	return true
 
 ## Round 762's review, F1 (OURS): the particles of a ghost's weapon (CrowdGpu
 ## draws the body from its kind's recipe; nothing is built). `row` is one of
@@ -387,6 +417,8 @@ func _register(h: Host) -> void:
 	(_kinds[h.key] as Kind).hosts += 1
 	if h.anchor != null:
 		_ghost_hosts += 1
+		if _batching():
+			_batch.add(h)
 	# Measured in the cycle under way (its slices are fixed at its start, and
 	# the cycle's last frame scans whatever is left); while the hosts fit the
 	# budget, a whole cycle runs next frame, so the select screen's and the
@@ -447,6 +479,8 @@ func _drop(id: String) -> void:
 	_own_parked.erase(id)
 	if h.anchor != null:
 		_ghost_hosts -= 1
+		if _batch != null:
+			_batch.remove(h)
 	if _kinds.has(h.key):
 		(_kinds[h.key] as Kind).hosts -= 1
 	_hosts.erase(id)
@@ -633,6 +667,11 @@ func _process(_delta: float) -> void:
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)
 	_step_masters(_delta)
+	if _batch != null:
+		_batch.step(ghost_gpu.call() if ghost_gpu.is_valid() else null, _kinds)
+		stats["batch_hosts"] = int(_batch.stats["hosts"])
+		stats["batch_draws"] = int(_batch.stats["draws"])
+		stats["batch_instances"] = int(_batch.stats["instances"])
 	if EfpEffect.profile:
 		EfpEffect.prof["driver"] = int(EfpEffect.prof.get("driver", 0)) + Time.get_ticks_usec() - t0
 		if FrameSplit.on:
@@ -836,7 +875,13 @@ func _viewport_paused() -> bool:
 ## (0.8 s at 60 fps) instead of every 10.
 const SCAN_PER_FRAME_MAX := 200
 
+## Round 764 (QA): the hosts a cycle found within MAX_DISTANCE and in view
+## (or ALWAYS_NEAR), before the budget's cut -- what retail would draw.
+var _cand_seen := 0
+
 func _begin_cycle() -> void:
+	_cand_seen = 0
+	_batch_d.clear()
 	_scan = _hosts.keys()
 	_scan_at = 0
 	_cand.clear()
@@ -878,6 +923,25 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 			var go = ghost_origin.call(h.anchor) if ghost_origin.is_valid() else null
 			if go == null:
 				continue
+			if _batch != null:
+				# Round 764: drawn by its batch whatever the view: among the
+				# EquipFxBatch.host_budget nearest within reach, in any
+				# direction (the last cycle's distance cut, _batch_cut), so
+				# turning the camera changes nothing; its kind steps while one
+				# is drawn.
+				var gd := from.distance_to(go) if cam != null else 0.0
+				if is_inf(gd) or is_nan(gd):
+					# Held in its page or fading out: the shader draws none
+					# then; kept as chosen, so it shows with its reveal.
+					continue
+				var sel := gd <= MAX_DISTANCE and gd <= _batch_cut
+				if gd <= MAX_DISTANCE:
+					_batch_d.append(gd)
+					_cand_seen += 1
+				if sel:
+					_batch_live[h.key] = _cycle + 1
+				_batch.select(h, sel, ghost_gpu.call() if ghost_gpu.is_valid() else null)
+				continue
 			if cam != null:
 				d = from.distance_to(go)
 				if d > MAX_DISTANCE:
@@ -914,6 +978,7 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 					continue
 		if not n.is_visible_in_tree():
 			continue
+		_cand_seen += 1
 		_cand.append(h)
 		_cand_d.append(d)
 		if _cand.size() >= CAND_PRUNE_AT:
@@ -986,6 +1051,23 @@ func _finish_cycle() -> void:
 			chosen[wsid] = true
 	for k in _kinds.values():
 		(k as Kind).active = 0
+	# Round 764: the next cycle's cut -- the host_budget-th nearest ghost
+	# host within reach, INF while there are fewer (every one is drawn, as
+	# retail draws every character within 720).
+	if _batch != null:
+		var budget := EquipFxBatch.host_budget
+		if budget > 0 and _batch_d.size() > budget:
+			_batch_d.sort()
+			_batch_cut = _batch_d[budget - 1]
+		else:
+			_batch_cut = INF
+		stats["batch_cut"] = _batch_cut
+	# Round 764: a kind a batch draws within reach keeps stepping.
+	for key in _batch_live.keys():
+		if int(_batch_live[key]) < _cycle:
+			_batch_live.erase(key)
+		elif _kinds.has(key):
+			(_kinds[key] as Kind).active += 1
 	var before := _shown
 	_shown = []
 	var world_shown: Array = []
@@ -1084,6 +1166,8 @@ func _finish_cycle() -> void:
 			if k.master != null and is_instance_valid(k.master):
 				k.master.queue_free()
 			_kinds.erase(key)
+	stats["in_view"] = _cand_seen
+	stats["batch_live"] = _batch_live.size()
 	stats["weapons"] = chosen.size()
 	stats["own"] = owns
 	stats["hosts"] = _hosts.size()

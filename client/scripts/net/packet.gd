@@ -22,6 +22,9 @@ const MAX_PAYLOAD := 0x7FFF # top bit of Size is a real reserved flag -- see PAC
 
 var opcode: int
 var data: PackedByteArray
+## Round 764 (OURS): when the frame came off the socket (msec,
+## Time.get_ticks_msec; PacketReader), 0 when not read from one.
+var rx_msec := 0
 
 func _init(p_opcode: int = 0, p_data: PackedByteArray = PackedByteArray()) -> void:
 	opcode = p_opcode

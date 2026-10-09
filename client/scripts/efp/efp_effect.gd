@@ -1203,9 +1203,40 @@ static func turn_shader(sh: Shader, y_billboard: bool) -> Shader:
 	_shaders[key] = out
 	return out
 
+## Round 764 (EquipFxBatch): the draws a batch can share -- [0, the plate
+## node's MultiMeshInstance3D, its draw index] and [1, a Link's
+## MeshInstance3D, its link index].
+func batch_nodes() -> Array:
+	var out: Array = []
+	for i in _draws.size():
+		out.append([0, _draws[i][1], i])
+	for i in _links.size():
+		out.append([1, _links[i][1], i])
+	return out
+
+## Round 764 (EquipFxBatch): draw node `i`'s particles after the last update,
+## 20 floats an instance in Godot's MultiMesh layout (the transform's three
+## rows, the colour, the custom data) -- what its MultiMesh holds.
+func draw_buffer(i: int) -> PackedFloat32Array:
+	if sim is EfpSimNative and (sim as EfpSimNative).is_native():
+		return (sim as EfpSimNative).draw_buffer(i)
+	if i < 0 or i >= _draw_bufs.size():
+		return PackedFloat32Array()
+	return _draw_bufs[i]
+
+## Round 764: the GDScript path's draw buffers (_update_draws), kept when
+## keep_draw_buffers is set (a master a batch draws).
+var keep_draw_buffers := false
+var _draw_bufs: Array = []
+
 ## Writes every drawn node's particles into its MultiMesh.
 func _update_draws() -> void:
 	draw_updates += 1
+	if keep_draw_buffers and _draw_bufs.size() != _draws.size():
+		_draw_bufs.resize(_draws.size())
+		for k in _draws.size():
+			if _draw_bufs[k] == null:
+				_draw_bufs[k] = PackedFloat32Array()
 	if _draws.is_empty():
 		return
 	var cam_rot := Basis.IDENTITY
@@ -1217,28 +1248,63 @@ func _update_draws() -> void:
 		if not by_tpl.has(p.tpl):
 			by_tpl[p.tpl] = []
 		(by_tpl[p.tpl] as Array).append(p)
-	for d in _draws:
+	for di in _draws.size():
+		var d: Array = _draws[di]
 		var mmi: MultiMeshInstance3D = d[1]
 		var mm := mmi.multimesh
 		var ps: Array = by_tpl.get(int(d[0]), [])
 		if ps.size() > mm.instance_count:
 			mm.instance_count = maxi(ps.size(), mm.instance_count * 2)
 		mm.visible_instance_count = ps.size()
+		var kb := PackedFloat32Array()
+		if keep_draw_buffers:
+			kb.resize(ps.size() * 20)
 		if d.size() > 3 and bool(d[3]):
 			# A shared-turn node (use_shared_turn): the shader billboards, so
 			# the instance carries only the particle's scale and position
 			# and, in its custom data, the shape's rotation.
 			for i in range(ps.size()):
 				var p: EfpSim.Particle = ps[i]
-				mm.set_instance_transform(i, Transform3D(Basis.from_scale(p.scale), p.pos))
-				mm.set_instance_color(i, EfpSim.color_of(p.color))
-				mm.set_instance_custom_data(i, turn_custom(p))
+				var t := Transform3D(Basis.from_scale(p.scale), p.pos)
+				var c := EfpSim.color_of(p.color)
+				var q := turn_custom(p)
+				mm.set_instance_transform(i, t)
+				mm.set_instance_color(i, c)
+				mm.set_instance_custom_data(i, q)
+				if keep_draw_buffers:
+					_put_instance(kb, i * 20, t, c, q)
+			if keep_draw_buffers:
+				_draw_bufs[di] = kb
 			continue
 		for i in range(ps.size()):
 			var p: EfpSim.Particle = ps[i]
-			mm.set_instance_transform(i, particle_transform(p, String(d[2]), cam_rot))
-			mm.set_instance_color(i, EfpSim.color_of(p.color))
-			mm.set_instance_custom_data(i, Color(p.uv.x, p.uv.y, p.uv.z, p.uv.w))
+			var t := particle_transform(p, String(d[2]), cam_rot)
+			var c := EfpSim.color_of(p.color)
+			var u := Color(p.uv.x, p.uv.y, p.uv.z, p.uv.w)
+			mm.set_instance_transform(i, t)
+			mm.set_instance_color(i, c)
+			mm.set_instance_custom_data(i, u)
+			if keep_draw_buffers:
+				_put_instance(kb, i * 20, t, c, u)
+		if keep_draw_buffers:
+			_draw_bufs[di] = kb
+
+## Round 764: one instance in Godot's MultiMesh layout at `o` (the transform's
+## three rows, basis row then origin, the colour, the custom data).
+static func _put_instance(out: PackedFloat32Array, o: int, t: Transform3D, c: Color, u: Color) -> void:
+	for r in 3:
+		out[o + r * 4] = t.basis.x[r]
+		out[o + r * 4 + 1] = t.basis.y[r]
+		out[o + r * 4 + 2] = t.basis.z[r]
+		out[o + r * 4 + 3] = t.origin[r]
+	out[o + 12] = c.r
+	out[o + 13] = c.g
+	out[o + 14] = c.b
+	out[o + 15] = c.a
+	out[o + 16] = u.r
+	out[o + 17] = u.g
+	out[o + 18] = u.b
+	out[o + 19] = u.a
 
 ## Round 763: the camera's rotation in this effect's space, as _update_draws
 ## computes it -- what a billboard node that is not shared-turn draws with.

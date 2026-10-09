@@ -172,6 +172,25 @@ func _test_encode_change_zone() -> void:
 	var encoded := WorldNet.encode_change_zone("100/100")
 	_check(encoded.decode_u16(0) == 7, "zone length prefix is 7")
 	_check(encoded.slice(2, 9).get_string_from_utf8() == "100/100", "zone bytes follow prefix")
+	_check(encoded.size() == 9, "no spot, no trailing bytes")
+	# Round 764: the zone box's spot rides as two trailing f32s (the server's
+	# ChangeZoneRequest.Spot), and an older server's refusal of them sends the
+	# request again without it, the refusal not passed on.
+	var spotted := WorldNet.encode_change_zone("97/168", Vector2(969, 1369))
+	_check(spotted.size() == 2 + 6 + 8 and is_equal_approx(spotted.decode_float(8), 969.0) and is_equal_approx(spotted.decode_float(12), 1369.0),
+		"r764: the spot follows the zone as two f32s")
+	var nc = load("res://scripts/net/net_client.gd").new()
+	var results: Array = []
+	nc.set("_zone_spot_retry", "97/168")
+	nc.change_zone_result.connect(func(r): results.append(r))
+	# Unconnected, the resend itself only reports "not connected".
+	var refused := _build_change_zone_result(false, "malformed request", "", 0, 0, 0)
+	nc._dispatch(Packet.new(WorldNet.OP_CHANGE_ZONE_RESULT, refused))
+	_check(results.is_empty() and String(nc.get("_zone_spot_retry")) == "",
+		"r764: an older server's 'malformed request' to a spotted change is not passed on (it is sent again plain)")
+	nc._dispatch(Packet.new(WorldNet.OP_CHANGE_ZONE_RESULT, refused))
+	_check(results.size() == 1, "r764: ... and a refusal with no spot pending is passed on")
+	nc.free()
 
 ## Hand-builds an OpChangeZoneResult payload matching
 ## server/internal/session's encoding.

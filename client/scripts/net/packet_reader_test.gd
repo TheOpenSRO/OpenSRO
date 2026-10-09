@@ -151,10 +151,50 @@ func _test_drain_then_frames() -> void:
 	client_peer.disconnect_from_host()
 	server_peer.disconnect_from_host()
 
+## Round 764: a frame carries when it came off the socket (rx_msec), not when
+## it is cut from the buffer -- frames drained early and cut later keep their
+## early time; a frame read later carries the later time.
+func _test_rx_time() -> void:
+	var pair := _make_loopback_pair()
+	if pair.is_empty():
+		_check(false, "loopback pair connected")
+		return
+	var server_peer: StreamPeerTCP = pair[0]
+	var client_peer: StreamPeerTCP = pair[1]
+	var reader := PacketReader.new()
+	var first := Packet.new(0x3017, PackedByteArray([1, 2, 3])).encode()
+	first.append_array(Packet.new(0x3018, PackedByteArray([1, 0, 0])).encode())
+	server_peer.put_data(first)
+	for i in range(50):
+		client_peer.poll()
+		if client_peer.get_available_bytes() >= first.size():
+			break
+		OS.delay_msec(2)
+	var t_drain := Time.get_ticks_msec()
+	reader.drain(client_peer)
+	OS.delay_msec(60)
+	server_peer.put_data(Packet.new(0x3019, PackedByteArray([9])).encode())
+	OS.delay_msec(20)
+	var a := reader.poll(client_peer)
+	var b := reader.poll(client_peer)
+	var c: Packet = null
+	for i in range(50):
+		c = reader.poll(client_peer)
+		if c != null:
+			break
+		OS.delay_msec(2)
+	_check(a != null and b != null and a.rx_msec >= t_drain and a.rx_msec < t_drain + 30 and b.rx_msec == a.rx_msec,
+		"frames drained together carry the drain's time though cut %d ms later (%s, %s, drain %d)" % [Time.get_ticks_msec() - t_drain,
+			a.rx_msec if a != null else -1, b.rx_msec if b != null else -1, t_drain])
+	_check(c != null and c.rx_msec >= t_drain + 60, "a frame read later carries its own later time (%s)" % (c.rx_msec if c != null else -1))
+	client_peer.disconnect_from_host()
+	server_peer.disconnect_from_host()
+
 func _init() -> void:
 	_test_split_frame_across_polls()
 	_test_two_frames_in_one_poll()
 	_test_drain_then_frames()
+	_test_rx_time()
 
 	if _failures == 0:
 		print("ALL PASS")

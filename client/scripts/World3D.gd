@@ -1704,6 +1704,7 @@ func _ready() -> void:
 	EquipFx.far_origin = _crowd_item_origin
 	EquipFx.ghost_frame = _crowd_ghost_item_frame
 	EquipFx.ghost_origin = _crowd_ghost_origin
+	EquipFx.ghost_gpu = _crowd_gpu_now
 	# Round 762's review, F1: the frame's wait for the background dressing's
 	# room (OtherCrowd.FrameMark).
 	add_child(OtherCrowd.FrameMark.new(true))
@@ -6390,6 +6391,8 @@ func _exit_tree() -> void:
 	if EquipFx.ghost_frame == _crowd_ghost_item_frame:
 		EquipFx.ghost_frame = Callable()
 		EquipFx.ghost_origin = Callable()
+	if EquipFx.ghost_gpu == _crowd_gpu_now:
+		EquipFx.ghost_gpu = Callable()
 	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
 	# world leaving before it asked for its item, character and skill tables
 	# leaves no worker running behind it.
@@ -7415,6 +7418,10 @@ func _crowd_item_origin(item_skel: Node3D):
 ## in the queue, as _crowd_item_origin's).
 func _crowd_ghost_item_frame(node: Node3D, bone: int, chain: Transform3D):
 	return _crowd_gpu.ghost_item_frame(node, bone, chain) if _crowd_gpu != null else null
+
+## Round 764 (EquipFxBatch): the CrowdGpu drawing the ghosts, or null.
+func _crowd_gpu_now():
+	return _crowd_gpu
 
 func _crowd_ghost_origin(node: Node3D):
 	if not _depart_pending.is_empty() and node != null and _depart_pending.has(int(node.get_meta("character_id", -1))):
@@ -17384,7 +17391,20 @@ const DRESS_EVERY := 30
 const DRESS_MIN_EVERY := 600
 const DRESS_FRAME_USEC := 16700.0
 var _dress_last_frame := -DRESS_MIN_EVERY
+## Round 764 (OURS; r764.md section 3): idle ghosts are not dressed in the
+## background. A ghost draws the dressed body's pixels (round 756's parity) and,
+## since this round, every weapon particle within its budget (EquipFxBatch), so
+## a background dressing changed nothing seen -- but a dressed body costs the
+## render thread every frame after: on a fast machine the room rule above (a
+## 60 fps frame less the work) dressed one every 30 frames for minutes
+## (v0.1.515's log: 1,573 dressings), and on the box a step with room dressed
+## enough to add 1,330 draws and 2 ms to the in-crowd frame (MEASURED). What
+## needs a body dressed -- a hit, a cast, an aura, sitting, a buff at
+## arrival -- still promotes it (urgent). OPENSRO_QA_DRESS_IDLE=1: as round 762.
+var _dress_idle := OS.get_environment("OPENSRO_QA_DRESS_IDLE") == "1"
 func _dress_room() -> int:
+	if not _dress_idle:
+		return 0
 	if _crowd_transition():
 		return 0
 	var f := Engine.get_process_frames()
@@ -17789,7 +17809,19 @@ class ArrivalPage:
 	var oldest_ms := 0
 	var waiting := 0
 	var revealed := false
+	## Round 764: when its first group came off the socket (NetClient.group_rx_msec).
+	var rx_ms := 0
 
+## Round 764: measured between the groups' RECEIVE times, not between the
+## frames their first shares were read in. A server window is one batch (the
+## neighbour blocks' groups, then the own block's: playerview.go, retail's
+## CMsgBlock slot 2), all of it on the wire within milliseconds; read a
+## frame's share at a time, a 4,000 crowd's last group starts 3-5 s after its
+## first, and the read-time rule split one window into two pages shown seconds
+## apart -- whole blocks of the crowd missing meanwhile (the user's "only a
+## portion shows up ... in a chunk that isn't a radius", v0.1.515 / v0.1.516
+## logs, r764.md section 1). A run across block lines (a batch every few
+## seconds) still opens a page per batch.
 const PAGE_JOIN_MSEC := 3000
 ## The pages not revealed yet, oldest first; the one arrivals join now; the
 ## NetClient group whose shares it takes; arrivals still to be ghosts -> page.
@@ -17797,6 +17829,8 @@ var _pages: Array = []
 var _page_cur: ArrivalPage = null
 var _page_group_seen := -1
 var _page_pick := false
+## Round 764: the receive time of the group whose first share _page_pick marks.
+var _page_pick_rx := 0
 var _page_wait := {}
 
 ## The page an arrival inside a group bracket joins: the current one, unless
@@ -17804,12 +17838,15 @@ var _page_wait := {}
 ## PAGE_JOIN_MSEC ago (or was revealed).
 func _arrival_page() -> ArrivalPage:
 	var now := Time.get_ticks_msec()
-	if _page_cur == null or _page_cur.revealed or (_page_pick and now - _page_cur.opened_ms > PAGE_JOIN_MSEC):
+	var rx := _page_pick_rx if _page_pick and _page_pick_rx > 0 else now
+	if _page_cur == null or _page_cur.revealed or (_page_pick and rx - _page_cur.rx_ms > PAGE_JOIN_MSEC):
 		_page_cur = ArrivalPage.new()
 		_page_cur.opened_ms = now
 		_page_cur.oldest_ms = now
+		_page_cur.rx_ms = rx
 		_pages.append(_page_cur)
 	_page_pick = false
+	_page_pick_rx = 0
 	_page_cur.waiting += 1
 	return _page_cur
 
@@ -17866,6 +17903,7 @@ func _reset_pages() -> void:
 	_pages.clear()
 	_page_cur = null
 	_page_pick = false
+	_page_pick_rx = 0
 	_page_wait.clear()
 	_activate_ids.clear()
 	_activate_at = 0
@@ -19273,15 +19311,18 @@ func _on_change_zone_pressed() -> void:
 	_last_attack_target = -1
 	if _hud_target != null:
 		_hud_target.clear()
-	_request_zone_change(zone)
+	# Round 764: the spot goes to the server, which lands the character there
+	# (its view window around it); before, it landed at the region's middle,
+	# refused the placement here and snapped the player back (r764.md).
+	_request_zone_change(zone, _pending_zone_local)
 
 ## Sends OpChangeZone and remembers it (round 690): every zone change this
 ## client asks for goes through here, so _on_change_zone_result can tell an
 ## answer to one from a move the server made on its own
 ## (arrival_keeps_server_point).
-func _request_zone_change(zone: String) -> void:
+func _request_zone_change(zone: String, spot: Variant = null) -> void:
 	_note_zone_change_request(zone)
-	NetClient.change_zone(zone)
+	NetClient.change_zone(zone, spot)
 
 ## The zone labels of the OpChangeZone requests sent and not yet answered,
 ## oldest first (_request_zone_change).
@@ -24675,6 +24716,9 @@ func _on_user_group_begin() -> void:
 	if serial != _page_group_seen:
 		_page_group_seen = serial
 		_page_pick = true
+		# Round 764: the group's receive time decides its page, not now.
+		var rx = NetClient.get("group_rx_msec") if NetClient != null else null
+		_page_pick_rx = int(rx) if rx != null and int(rx) > 0 else Time.get_ticks_msec()
 
 func _on_user_group_end() -> void:
 	_other_build_defer = maxi(_other_build_defer - 1, 0)

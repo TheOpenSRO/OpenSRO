@@ -98,6 +98,7 @@ static func release() -> void:
 	EquipFx.far_origin = Callable()
 	EquipFx.ghost_frame = Callable()
 	EquipFx.ghost_origin = Callable()
+	EquipFx.ghost_gpu = Callable()
 	EquipFx.own_factory = Callable()
 	CharacterBlobs.on_cast = Callable()
 	CharacterLight.on_changed = Callable()

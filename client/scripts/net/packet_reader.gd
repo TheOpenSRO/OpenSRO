@@ -38,6 +38,16 @@ const MAX_BUFFER := Packet.HEADER_SIZE + Packet.MAX_PAYLOAD + READ_CHUNK
 var _buf := PackedByteArray()
 ## Where the next frame starts in _buf; the bytes before it are consumed.
 var _pos := 0
+## Round 764 (OURS): when each read's bytes came off the socket. _base is the
+## stream offset of _buf[0]; _mark_end[i] is the stream offset just past read
+## i and _mark_ms[i] the msec it was made (Time.get_ticks_msec), from
+## _mark_at on. A frame's rx_msec is the time of the read that completed it,
+## so a frame left in the buffer while NetClient holds its dispatch back (a
+## group read a frame's share at a time) still carries when it ARRIVED.
+var _base := 0
+var _mark_end := PackedInt64Array()
+var _mark_ms := PackedInt64Array()
+var _mark_at := 0
 
 ## Attempts to read one complete frame from peer without blocking. Returns
 ## the Packet once one is fully buffered, or null if there isn't enough
@@ -106,8 +116,11 @@ func _read_some(peer: StreamPeer) -> bool:
 		# Only an unfinished frame is left before a read: dropping what was
 		# consumed keeps the buffer within MAX_BUFFER.
 		_buf = _buf.slice(_pos)
+		_base += _pos
 		_pos = 0
 	_buf.append_array(got)
+	_mark_end.append(_base + _buf.size())
+	_mark_ms.append(Time.get_ticks_msec())
 	return true
 
 ## Whether peer is still connected: a closed TCP or TLS peer reports an
@@ -130,7 +143,22 @@ func _take_frame() -> Packet:
 	if size > 0:
 		payload = _buf.slice(start, start + size)
 	_pos = start + size
+	var end := _base + _pos
+	var rx := 0
+	while _mark_at < _mark_end.size():
+		if _mark_end[_mark_at] >= end:
+			rx = _mark_ms[_mark_at]
+			break
+		_mark_at += 1
+	if _mark_at >= _mark_end.size() or _mark_at > 256:
+		# Keep the marks short: those before this frame's end are done with.
+		_mark_end = _mark_end.slice(_mark_at)
+		_mark_ms = _mark_ms.slice(_mark_at)
+		_mark_at = 0
 	if _pos >= _buf.size():
 		_buf = PackedByteArray()
+		_base += _pos
 		_pos = 0
-	return Packet.new(opcode, payload)
+	var pk := Packet.new(opcode, payload)
+	pk.rx_msec = rx
+	return pk

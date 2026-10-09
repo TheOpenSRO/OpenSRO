@@ -955,8 +955,10 @@ func _report() -> void:
 	var vp0 := world.get_viewport()
 	if vp0.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp0.get_meta(EquipFx.DRIVER_META)):
 		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
-		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d fx_ghost_hosts=%d fx_ghost_shown=%d fx_ghost_far=%.0f" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"]),
-			int(d.stats.get("ghost_hosts", 0)), int(d.stats.get("ghost_shown", 0)), float(d.stats.get("ghost_shown_far", 0.0))]
+		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d fx_ghost_hosts=%d fx_ghost_shown=%d fx_ghost_far=%.0f fx_in_view=%d" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"]),
+			int(d.stats.get("ghost_hosts", 0)), int(d.stats.get("ghost_shown", 0)), float(d.stats.get("ghost_shown_far", 0.0)), int(d.stats.get("in_view", 0))] \
+			+ " fx_batch_hosts=%d fx_batch_draws=%d fx_batch_instances=%d fx_batch_live=%d" % [int(d.stats.get("batch_hosts", 0)),
+			int(d.stats.get("batch_draws", 0)), int(d.stats.get("batch_instances", 0)), int(d.stats.get("batch_live", 0))]
 	var gpu_line := ""
 	var crowd = world.get("_crowd_gpu")
 	if crowd != null:
@@ -1236,6 +1238,12 @@ func _switch(step: String, off: bool) -> void:
 				for h in d._hosts.values():
 					if h.holder != null and is_instance_valid(h.holder):
 						h.holder.visible = false if off else h.holder.visible
+				# Round 764: the ghosts' batched particles too.
+				if d._batch != null:
+					for b in d._batch._batches.values():
+						for dr in b.draws:
+							if is_instance_valid(dr[0]):
+								(dr[0] as Node3D).visible = false if off else int(dr[4]) > 0
 		"shadow":
 			# Only what was casting, and only that given back (round 739: the
 			# first version turned every mesh's shadow on after, the EquipFx
@@ -1306,6 +1314,9 @@ func _switch(step: String, off: bool) -> void:
 		"ab":
 			if off:
 				_ab.call_deferred()
+		"fxab":
+			if off:
+				_fx_ab.call_deferred()
 		"churn", "redress", "reglow":
 			pass
 		"plateab":
@@ -1402,6 +1413,102 @@ func _ab() -> void:
 		_box_arg(boxes[2]), _box_arg(boxes[3]), pa, pb])
 	CrowdGpu.enabled = true
 	_switch("fx", false)
+	tree.process_frame.disconnect(hold)
+	TexAni.hold = false
+	EquipGlow.hold = false
+	world._qa_anim_hold = false
+
+## Round 764's `fxab` step (EquipFxBatch): the same held frame -- clip,
+## glow and texture clocks held, the effect masters frozen -- drawn four ways:
+## the ghosts' particles by their batches (A), by a holder for each host the
+## batches draw placed where EquipFx placed a ghost's holder (EquipFx.place of
+## its GPU clip frame; B), with none (C), and by the batches again (A2, the
+## noise floor). Prints each pair's mean absolute difference and the pixels
+## differing by more than 8/255: the batches draw the holders' pixels when
+## d(A,B) is near d(A,A2) and far under d(A,C). Frames fxab_<n>_*.png in
+## OPENSRO_QA_CROWD_SHOTS.
+func _fx_ab() -> void:
+	var dir := OS.get_environment("OPENSRO_QA_CROWD_SHOTS")
+	if dir == "":
+		dir = "/var/tmp/qa_crowd_ab"
+	DirAccess.make_dir_recursive_absolute(dir)
+	_ab_n += 1
+	var tag := "fxab_%d" % _ab_n
+	var tree := world.get_tree()
+	var vp := world.get_viewport()
+	if not vp.has_meta(EquipFx.DRIVER_META):
+		print("QA CROWD fxab: no EquipFx driver")
+		return
+	var d: EquipFx = vp.get_meta(EquipFx.DRIVER_META)
+	if d._batch == null:
+		print("QA CROWD fxab: no batches (OPENSRO_QA_EQUIPFX_BATCH=0?)")
+		return
+	var hold := func() -> void: RenderingServer.global_shader_parameter_set(EquipGlow.CLOCK_GLOBAL, EquipGlow.clock)
+	world._qa_anim_hold = true
+	EquipGlow.hold = true
+	TexAni.hold = true
+	tree.process_frame.connect(hold)
+	d.process_mode = Node.PROCESS_MODE_DISABLED
+	for i in range(3):
+		await tree.process_frame
+	var crowd = EquipFx.ghost_gpu.call() if EquipFx.ghost_gpu.is_valid() else null
+	# The holders: one per drawn host, placed from its ghost's clip frame.
+	var holders: Array = []
+	var batch_draws: Array = []
+	for b in d._batch._batches.values():
+		for dr in b.draws:
+			batch_draws.append(dr[0])
+		var k = d._kinds.get(b.kind_key)
+		if k == null or k.master == null:
+			continue
+		for h in b.drawn:
+			var g = crowd.ghost_item_frame(h.anchor, h.att_bone, h.chain) if crowd != null else null
+			if g == null:
+				continue
+			var hd := EquipFx._holder_for(k.master)
+			world.add_child(hd)
+			hd.set_process(false)
+			hd.global_transform = EquipFx.place(g, h.pose, h.scale)
+			hd.visible = false
+			holders.append(hd)
+	var shots := {}
+	for which in ["batch", "holders", "none", "batch2"]:
+		for n in batch_draws:
+			if is_instance_valid(n):
+				(n as Node3D).visible = which.begins_with("batch") and (n as MultiMeshInstance3D).multimesh.visible_instance_count > 0
+		for hd in holders:
+			(hd as Node3D).visible = which == "holders"
+		for i in range(3):
+			await tree.process_frame
+		await RenderingServer.frame_post_draw
+		var img := vp.get_texture().get_image()
+		img.save_png(dir.path_join("%s_%s.png" % [tag, which]))
+		shots[which] = img
+	var diff := func(x: Image, y: Image) -> Array:
+		var n := 0
+		var sum := 0.0
+		var w := x.get_width()
+		var hh := x.get_height()
+		for yy in range(0, hh, 2):
+			for xx in range(0, w, 2):
+				var a := x.get_pixel(xx, yy)
+				var c := y.get_pixel(xx, yy)
+				var m := maxf(absf(a.r - c.r), maxf(absf(a.g - c.g), absf(a.b - c.b)))
+				sum += m
+				if m > 8.0 / 255.0:
+					n += 1
+		return [sum / float((w / 2) * (hh / 2)) * 255.0, n]
+	var ab: Array = diff.call(shots["batch"], shots["holders"])
+	var aa: Array = diff.call(shots["batch"], shots["batch2"])
+	var ac: Array = diff.call(shots["batch"], shots["none"])
+	print("QA CROWD fxab %s hosts=%d holders=%d d(A,B) mean %.4f px %d | d(A,A2) mean %.4f px %d | d(A,C) mean %.4f px %d (every 2nd pixel, /255)" % [
+		tag, int(d._batch.stats["hosts"]), holders.size(), ab[0], ab[1], aa[0], aa[1], ac[0], ac[1]])
+	for hd in holders:
+		(hd as Node).queue_free()
+	for n in batch_draws:
+		if is_instance_valid(n):
+			(n as Node3D).visible = (n as MultiMeshInstance3D).multimesh.visible_instance_count > 0
+	d.process_mode = Node.PROCESS_MODE_INHERIT
 	tree.process_frame.disconnect(hold)
 	TexAni.hold = false
 	EquipGlow.hold = false

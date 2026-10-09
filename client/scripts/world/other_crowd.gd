@@ -55,6 +55,20 @@ class FrameBudget:
 	## QA: the last frame's own time and charged work, and the aim (usec).
 	static var last_own := 0
 	static var last_spent := 0
+	## Round 764: the main thread's wait before this frame (FrameMark), and
+	## whether the budget counts the work alone (OPENSRO_QA_BUDGET_WORK=0: the
+	## whole frame, as round 762 did).
+	static var last_wait := 0
+	static var use_work := OS.get_environment("OPENSRO_QA_BUDGET_WORK") != "0"
+
+	## Round 764: a frame's budget from the aim, the last frame's own time
+	## (wall less what was charged) and the main thread's wait in it. While
+	## the frame keeps to its aim, the aim less the work (own less the wait);
+	## past it, the aim less the whole frame; within [MIN_USEC, MAX_USEC].
+	static func budget_for(aim: int, own: int, wait: int, work: bool) -> int:
+		if work and own <= aim and wait > 0 and wait < own:
+			return clampi(aim - (own - wait), MIN_USEC, MAX_USEC)
+		return clampi(aim - own, MIN_USEC, MAX_USEC)
 
 	## The frame rolls on the first call in it.
 	static func _roll() -> void:
@@ -81,7 +95,18 @@ class FrameBudget:
 				var v := _own.duplicate()
 				v.sort()
 				_aim = maxf(float(TARGET_FLOOR_USEC), v[int(0.9 * (v.size() - 1))])
-			_budget = clampi(int(_aim) - own, MIN_USEC, MAX_USEC)
+			# Round 764 (OURS): while the frame keeps to its aim, the budget is
+			# what the main thread's WORK leaves of it -- its own time less
+			# its wait between frames (FrameMark: the render thread's sync, a
+			# vsync), when the main thread is idle and work there does not
+			# make the frame longer. Before, the budget was the aim less the
+			# whole frame, so on a frame the GPU or the render thread sets (the
+			# user's RTX 5080 at 4K: main-thread work p95 2-3 ms in frames of
+			# about 11, v0.1.516's log) it sat at MIN_USEC with the main thread
+			# idle: a 2,473-body page took 7.2 s to show (r764.md section 2).
+			# A frame over its aim falls back to the old rule.
+			last_wait = FrameMark.wait_usec
+			_budget = budget_for(int(_aim), own, last_wait, use_work)
 		else:
 			_budget = MIN_USEC
 		_frame = f

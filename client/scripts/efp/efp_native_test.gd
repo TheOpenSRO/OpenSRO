@@ -485,6 +485,7 @@ func _draws() -> void:
 	var chains := 0
 	var strips := 0
 	var compared := 0
+	var buffers := 0
 	for k in 4:
 		var t := _rich(k, true)
 		var g := EfpEffect.from_template(t, ld[0], ld[1], 500 + k)
@@ -504,7 +505,34 @@ func _draws() -> void:
 			var ns := n.sim as EfpSimNative
 			ns.advance(1.0 / 20.0)
 			ns.build_outputs(cam)
-			var why := EfpNativeParity.compare_draws(EfpNativeParity.gd_draws(g, g.sim, cam), ns.take_draws())
+			var gdd := EfpNativeParity.gd_draws(g, g.sim, cam)
+			var why := EfpNativeParity.compare_draws(gdd, ns.take_draws())
+			# Round 764 (EquipFxBatch): draw_buffer is each node's built
+			# instances, the floats the GDScript path writes (_put_instance).
+			if why == "":
+				for di in g._draws.size():
+					var nb := ns.draw_buffer(di)
+					var gb: PackedFloat32Array = gdd[di + 1]
+					if nb.size() != gb.size():
+						why = "draw_buffer(%d): %d floats, GDScript %d" % [di, nb.size(), gb.size()]
+						break
+					for q in nb.size():
+						if nb[q] != gb[q]:
+							why = "draw_buffer(%d)[%d]: %s against %s" % [di, q, nb[q], gb[q]]
+							break
+					if why != "":
+						break
+					buffers += 1
+			# ... and the GDScript path's kept buffers (a shared-turn effect's:
+			# no camera in them).
+			if why == "" and k % 2 == 1:
+				g.keep_draw_buffers = true
+				g._update_draws()
+				for di in g._draws.size():
+					if g.draw_buffer(di) != (gdd[di + 1] as PackedFloat32Array):
+						why = "the GDScript draw_buffer(%d) is not gd_draws'" % di
+						break
+					buffers += 1
 			if why == "":
 				var wc := EfpNativeParity.gd_chains(g, g.sim)
 				chains += (wc["meta"] as PackedInt32Array).size() / 2
@@ -523,8 +551,8 @@ func _draws() -> void:
 		g.free()
 		n.free()
 	EfpSim.live_total = 0
-	_check(bad == "", "draw buffers, Link chains and strips: %d nodes over %d frames, %d chains, %d native strips, the same floats bit for bit%s" % [
-		nodes, compared, chains, strips, "" if bad == "" else " -- " + bad])
+	_check(bad == "", "draw buffers, Link chains and strips: %d nodes over %d frames, %d chains, %d native strips, %d draw_buffer reads, the same floats bit for bit%s" % [
+		nodes, compared, chains, strips, buffers, "" if bad == "" else " -- " + bad])
 
 ## The batch builds a stepped effect's outputs on its thread: an EquipFx-like
 ## master's MultiMesh gets them through step_post.

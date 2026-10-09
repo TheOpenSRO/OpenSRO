@@ -361,6 +361,23 @@ impl SrEfpSim {
         sent
     }
 
+    /// Round 764 (EquipFxBatch): draw node `i`'s built buffer, its first `counts[i]` instances
+    /// (STRIDE floats each, Godot's MultiMesh layout) -- what apply_draws sends its MultiMesh. Empty
+    /// for a node out of range or a broken effect.
+    #[func]
+    fn draw_buffer(&self, i: i64) -> PackedFloat32Array {
+        self.with(|b| {
+            let i = i as usize;
+            if i < b.out.bufs.len() && i < b.out.counts.len() {
+                let n = (b.out.counts[i] * STRIDE).min(b.out.bufs[i].len());
+                PackedFloat32Array::from(&b.out.bufs[i][..n])
+            } else {
+                PackedFloat32Array::new()
+            }
+        })
+        .unwrap_or_default()
+    }
+
     /// Each draw node's particle count after the last build (what its MultiMesh shows).
     #[func]
     fn draw_counts(&self) -> PackedInt32Array {

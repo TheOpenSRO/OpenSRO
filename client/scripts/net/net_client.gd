@@ -250,6 +250,15 @@ var _group_job = null
 ## new group's first share from the next share of the one being read (each
 ## share is its own user_group_begin / _end bracket).
 var group_serial := 0
+## Round 764 (OURS): when the group whose 0x3018 bumped group_serial came off
+## the socket (msec, Packet.rx_msec) -- not when it is read, which is a
+## frame's share at a time and seconds later for a crowd. World3D joins the
+## groups that ARRIVED together (one window of the server's, sent in one
+## batch) into one page (r764.md).
+var group_rx_msec := 0
+## The receive time of the packet being dispatched (or of the spawn message
+## being replayed): Packet.rx_msec, or now when it has none.
+var _rx_msec := 0
 ## Whether spawn messages are being replayed (set_spawn_item_rows): a group
 ## then is read whole, in order with what follows it.
 var _replaying := false
@@ -497,9 +506,12 @@ func _net_frame(poll: Callable) -> void:
 		dispatched += 1
 		var hp: Packet = _held_packets[_held_at]
 		_held_at += 1
+		if hp.opcode == NpcSpawnNet.OP_GROUP_END:
+			_held_groups = maxi(_held_groups - 1, 0)
 		_dispatch_timed(hp, fs)
 	if not _held_packets.is_empty():
 		_held_packets.clear()
+		_held_groups = 0
 		_held_at = 0
 		_held_uids.clear()
 		_held_barrier = false
@@ -544,6 +556,10 @@ var _held_packets: Array = []
 var _held_at := 0
 var _held_uids := {}
 var _held_barrier := false
+## Round 764: the group ends (0x3018) among the held packets -- groups of the
+## same window still to be read, so the page they join is not revealed in a
+## frame that falls between two of them (group_reading).
+var _held_groups := 0
 
 ## Reads on while a group is being read, until NET_FRAME_BUDGET_USEC from
 ## `frame_t0`: each packet is dispatched now when it passes (_passes_group),
@@ -560,6 +576,8 @@ func _read_during_group(poll: Callable, frame_t0: int) -> void:
 			var u := _move_uid(p)
 			if u >= 0:
 				_held_uids[u] = true
+			if p.opcode == NpcSpawnNet.OP_GROUP_END:
+				_held_groups += 1
 			_held_packets.append(p)
 			continue
 		_dispatch_timed(p, fs)
@@ -638,6 +656,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_pending_spawns.clear()
 	_group_job = null
 	_held_packets.clear()
+	_held_groups = 0
 	_held_at = 0
 	_held_uids.clear()
 	_held_barrier = false
@@ -728,6 +747,7 @@ func disconnect_from_server() -> void:
 	_pending_spawns.clear()
 	_group_job = null
 	_held_packets.clear()
+	_held_groups = 0
 	_held_at = 0
 	_held_uids.clear()
 	_held_barrier = false
@@ -891,8 +911,15 @@ func move_order_heading(command: int, angle: int) -> void:
 func request_motion(value: int) -> void:
 	_send(WorldNet.OP_MOTION_REQUEST, WorldNet.encode_motion_request(value))
 
-func change_zone(zone: String) -> void:
-	_send(WorldNet.OP_CHANGE_ZONE, WorldNet.encode_change_zone(zone))
+func change_zone(zone: String, spot: Variant = null) -> void:
+	_zone_spot_retry = zone if spot is Vector2 else ""
+	_send(WorldNet.OP_CHANGE_ZONE, WorldNet.encode_change_zone(zone, spot))
+
+## Round 764: the zone of the last OpChangeZone sent with a spot, until its
+## result: a server older than round 764 refuses the trailing spot as a
+## "malformed request", and the request is then sent again without it (the
+## refusal not passed on), landing where that server lands it, as before.
+var _zone_spot_retry := ""
 
 ## Asks to be revived (WorldNet.OP_REVIVE) with retail's option: 1 at the
 ## return point, 2 where the character lies (round 665). Sent by the dead
@@ -1278,6 +1305,7 @@ func set_spawn_item_rows(rows: Dictionary) -> void:
 	_pending_spawns = []
 	_replaying = true
 	for m in waiting:
+		_rx_msec = int(m.get("rx", Time.get_ticks_msec()))
 		_apply_spawn_message(int(m["op"]), m["data"])
 	_replaying = false
 
@@ -1319,7 +1347,7 @@ static func resolve_echo(echo: DestMoveNet.Echo, frame: Vector2i) -> void:
 ## that wait for the item table.
 func _user_spawn_message(op: int, data: PackedByteArray) -> void:
 	if not _pending_spawns.is_empty():
-		_pending_spawns.append({"op": op, "data": data})
+		_pending_spawns.append({"op": op, "data": data, "rx": _rx_msec})
 		return
 	_apply_spawn_message(op, data)
 
@@ -1342,7 +1370,7 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 			entity_move_stop.emit(stop)
 		NpcSpawnNet.OP_SINGLE_SPAWN:
 			if _spawn_types == null:
-				_pending_spawns.append({"op": op, "data": data})
+				_pending_spawns.append({"op": op, "data": data, "rx": _rx_msec})
 				return
 			var rec := UserSpawnNet.decode_single_spawn(data, _spawn_types)
 			if rec == null:
@@ -1361,6 +1389,7 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 				npc_despawned.emit(gone)
 		NpcSpawnNet.OP_GROUP_END:
 			group_serial += 1
+			group_rx_msec = _rx_msec if _rx_msec > 0 else Time.get_ticks_msec()
 			# Round 762: a spawn group is read a frame's share at a time.
 			if not _replaying and _spawn_types != null and data.size() >= 3 and data[0] == NpcSpawnNet.GROUP_SPAWN:
 				var jr := NpcSpawnNet.Reader.new(data)
@@ -1381,7 +1410,7 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 			var g := UserSpawnNet.read_group(data, _spawn_types)
 			qd = Time.get_ticks_usec() - qd
 			if g.deferred:
-				_pending_spawns.append({"op": op, "data": data})
+				_pending_spawns.append({"op": op, "data": data, "rx": _rx_msec})
 				return
 			if g.error != "":
 				push_warning("NetClient: a group spawn that does not read (%s) -- dropped" % g.error)
@@ -1418,7 +1447,7 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 
 ## Round 762: whether a group spawn or despawn is still being read.
 func group_reading() -> bool:
-	return _group_job != null
+	return _group_job != null or _held_groups > 0
 
 ## Round 762: reads the group being read for GROUP_STEP_USEC (one record at
 ## least), each player handed over as it is read inside a group bracket
@@ -1559,6 +1588,7 @@ func _user_left(uid: int) -> void:
 	entity_left.emit(uid)
 
 func _dispatch(p: Packet) -> void:
+	_rx_msec = p.rx_msec if p.rx_msec > 0 else Time.get_ticks_msec()
 	if wire_logging:
 		print("WIRE recv opcode=0x%04x size=%d" % [p.opcode, p.data.size()])
 	match p.opcode:
@@ -1614,6 +1644,11 @@ func _dispatch(p: Packet) -> void:
 			entity_left.emit(left_id)
 		WorldNet.OP_CHANGE_ZONE_RESULT:
 			var zone_result := WorldNet.decode_change_zone_result(p.data)
+			var retry := _zone_spot_retry
+			_zone_spot_retry = ""
+			if retry != "" and not zone_result.ok and zone_result.reason == "malformed request":
+				_send(WorldNet.OP_CHANGE_ZONE, WorldNet.encode_change_zone(retry))
+				return
 			if zone_result.ok:
 				current_zone = zone_result.zone
 				# The new zone's buffs, this player's own included, follow

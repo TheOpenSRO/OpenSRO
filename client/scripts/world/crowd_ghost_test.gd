@@ -496,7 +496,11 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	_check(not is_instance_valid(n605) or not crowd.is_ghost(n605), "... and leaves the instances when its fade-out ends")
 	_test_merge757(world, crowd, kit)
 	_test_hold(world, crowd, kit)
+	# Round 764: the holder path (EquipFxBatch off), then the batches.
+	EquipFxBatch.enabled = false
 	_test_ghost_fx(world, crowd, kit, app)
+	EquipFxBatch.enabled = true
+	_test_ghost_fx_batch(world, crowd, kit, app)
 	_test_arrival_buffs(world, crowd, kit)
 	_test_pages(world, crowd, kit)
 	_test_stale_twins(world, crowd, kit)
@@ -765,6 +769,185 @@ func _test_ghost_fx(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Characte
 	EquipFx.far_frame = Callable()
 	EquipFx.far_origin = Callable()
 
+## Round 764 (EquipFxBatch): every ghost's weapon particles drawn by its
+## kind's batch, whichever way the camera looks -- the user's "the seal
+## effects appear and disappear and it seems like it's based off camera
+## angle" was EquipFx drawing only the 64 nearest hosts in the view, chosen
+## again as the camera turned. Ghosts on every side of the camera, eight
+## yaws: at each, every host is in its batch's table, switched on, and the
+## draw's instances are every host's particles; and each host's frame as the
+## batch's shader composes it (EquipFxBatch.cpu_hold, the same arithmetic
+## from the table's floats) is the holder's (EquipFx.place of the ghost's
+## GPU clip frame). NEGATIVE (by hand): EquipFxBatch.enabled false fails
+## "in its batch" at every yaw; dropping the chain from the table's rest
+## rows fails the frame check.
+func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: CharacterAppearance) -> void:
+	world.set("_holds_on", false)
+	crowd.bake_all()
+	var vp := world.get_viewport()
+	if vp.has_meta(EquipFx.DRIVER_META):
+		var old = vp.get_meta(EquipFx.DRIVER_META)
+		vp.remove_meta(EquipFx.DRIVER_META)
+		if is_instance_valid(old):
+			(old as Node).free()
+	var d := EquipFx.driver_for(vp)
+	d.set_process(false)
+	var key := EquipFx.kind_key(FX_EFP, 1.0)
+	# A master with three particles in one plate node, its buffer as a
+	# simulation leaves it (EfpEffect.draw_buffer).
+	var m := EfpEffect.new()
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = MultiMesh.new()
+	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	mmi.multimesh.use_colors = true
+	mmi.multimesh.use_custom_data = true
+	mmi.multimesh.mesh = QuadMesh.new()
+	mmi.material_override = EfpEffect.material_for(ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8)), null)
+	m.add_child(mmi)
+	m._draws.append([0, mmi, "ViewNone"])
+	m.keep_draw_buffers = true
+	var buf := PackedFloat32Array()
+	buf.resize(3 * 20)
+	for i in 3:
+		EfpEffect._put_instance(buf, i * 20, Transform3D(Basis.IDENTITY, Vector3(0, 0.5 * i, 0)), Color(1, 1, 1, 1), Color(0, 0, 1, 1))
+	m._draw_bufs = [buf]
+	m.draw_updates = 1
+	d.add_child(m)
+	var k := EquipFx.Kind.new()
+	k.key = key
+	k.master = m
+	d._kinds[key] = k
+	EquipFx.ghost_frame = Callable(world, "_crowd_ghost_item_frame")
+	EquipFx.ghost_origin = Callable(world, "_crowd_ghost_origin")
+	EquipFx.ghost_gpu = Callable(world, "_crowd_gpu_now")
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = app._body_templates[BODY]
+	var att: BoneAttachment3D = app._item_templates[CharacterAppearance._item_key(tmpl, BODY, SWORD)]
+	var isk := att.get_child(0) as Skeleton3D
+	isk.force_update_all_bone_transforms()
+	# Ghosts all round the camera: ahead, behind, either side, and one past
+	# 720 units.
+	var spots := [Vector3(0, 0, -50), Vector3(0, 0, 65), Vector3(80, 0, 0), Vector3(-95, 0, 0), Vector3(40, 0, -40), Vector3(0, 0, -750)]
+	var ids: Array = []
+	for i in spots.size():
+		var id := 760 + i
+		var n := _ghost(world, id, spots[i], kit)
+		var b: CrowdGpu.Body = crowd.body_of(n)
+		if b == null:
+			continue
+		var r: CharacterAppearance.FarRecipe = b.recipe
+		var row := {"efp": FX_EFP, "scale": 1.0, "skel": isk, "bone": 0, "pose": isk.get_bone_global_pose(0),
+			"att_bone": r.skeleton.find_bone("Bip01 Spine"), "chain": isk.transform, "wear": EquipmentNet.SLOT_WEAPON}
+		r.fx = [row]
+		world.call("_ghost_fx", n, r)
+		ids.append(id)
+	_check(ids.size() == spots.size() and d._ghost_hosts == spots.size(), "r764: six ghosts carry a host each (%d)" % d._ghost_hosts)
+	# A camera of the test's own, at the middle of the ring.
+	var cam := Camera3D.new()
+	cam.name = "R764Cam"
+	world.add_child(cam)
+	cam.global_position = Vector3(0, 10, 0)
+	cam.current = true
+	_check(vp.get_camera_3d() == cam, "r764: the test's camera draws the viewport")
+	var bodies: Dictionary = world.get("_other_bodies")
+	for yaw in range(0, 360, 45):
+		cam.global_transform = Transform3D(Basis(Vector3.UP, deg_to_rad(float(yaw))), cam.global_position)
+		for rep in 3:
+			d._hurry = true
+			d._process(1.0 / 60.0)
+		var all_in := true
+		var on := true
+		var batch: EquipFxBatch.Batch = null
+		for id in ids:
+			var n: Node3D = bodies.get(id)
+			var h = d._hosts.get(d._by_skel.get(n.get_instance_id(), [""])[0])
+			if h == null or h.batch == null:
+				all_in = false
+				continue
+			batch = h.batch
+			if id == ids[ids.size() - 1]:
+				# 750 units off: past retail's 720, not drawn.
+				if h.sel:
+					on = false
+				continue
+			var at: int = (h.batch as EquipFxBatch.Batch).drawn.find(h)
+			if at < 0 or at >= h.batch.shown or h.batch.host_data[at * EquipFxBatch.HOST_FLOATS + 3] < 1.0:
+				on = false
+		var inst := 0
+		if batch != null:
+			for dr in batch.draws:
+				inst += int(dr[4])
+		# Each host is given its node's stride of instances (3 particles: 4,
+		# the grow-only power of two), the live count read in the shader.
+		_check(all_in and on and batch != null and batch.shown == ids.size() - 1 and inst == (ids.size() - 1) * 4,
+			"r764: yaw %d: every ghost's host within 720 in its batch's table and on, %d instances (%d hosts x 4)" % [yaw, inst, batch.shown if batch != null else -1])
+	# The budget (OURS): two hosts drawn -- the two nearest, whatever the yaw.
+	EquipFxBatch.host_budget = 2
+	for yaw in [0, 180]:
+		cam.global_transform = Transform3D(Basis(Vector3.UP, deg_to_rad(float(yaw))), cam.global_position)
+		for rep in 3:
+			d._hurry = true
+			d._process(1.0 / 60.0)
+		var nsel := 0
+		for id in ids:
+			var h = d._hosts.get(d._by_skel.get((bodies.get(id) as Node).get_instance_id(), [""])[0])
+			if h != null and h.sel:
+				nsel += 1
+		_check(nsel == 2, "r764: a budget of 2 draws 2 hosts at yaw %d (%d; cut %s, budget %d)" % [yaw, nsel, str(d.stats.get("batch_cut")), EquipFxBatch.host_budget])
+	EquipFxBatch.host_budget = EquipFxBatch.HOST_BUDGET
+	for rep in 3:
+		d._hurry = true
+		d._process(1.0 / 60.0)
+	# The frame the shader composes from the table, against the holder's
+	# (the body rows written as a frame's flush writes them).
+	_advance(world, crowd, 0.0)
+	var worst := 0.0
+	var checked := 0
+	var b0: EquipFxBatch.Batch = null
+	for id in ids:
+		var n: Node3D = bodies.get(id)
+		var h = d._hosts.get(d._by_skel.get(n.get_instance_id(), [""])[0])
+		if h == null or h.batch == null:
+			continue
+		b0 = h.batch
+		var at: int = (h.batch as EquipFxBatch.Batch).drawn.find(h)
+		if at < 0:
+			continue
+		checked += 1
+		var cpu = EquipFxBatch.cpu_hold(crowd, h.batch, at)
+		var g = crowd.ghost_item_frame(n, h.att_bone, h.chain)
+		if cpu == null or g == null:
+			worst = INF
+			continue
+		var want := EquipFx.place(g, h.pose, h.scale)
+		var t: Transform3D = cpu
+		if (t.origin - want.origin).length() > 1e-3:
+			print("r764 parity: id %d slot %d (now %s) cpu %s want %s" % [id, h.batch_slot, str(crowd.ghost_slot_layout(n)), str(t.origin), str(want.origin)])
+		worst = maxf(worst, (t.origin - want.origin).length())
+		for c in 3:
+			worst = maxf(worst, (t.basis[c] - want.basis[c]).length())
+	_check(checked == 5 and worst < 1e-4, "r764: each drawn host's frame as the batch composes it is the holder's (%d hosts, worst %.7f)" % [checked, worst])
+	# No holder is made for a batched ghost; the master steps (a host within
+	# reach, any direction).
+	var holders := 0
+	for id in ids:
+		if _fx_holder(bodies.get(id)) != null:
+			holders += 1
+	_check(holders == 0 and k.active > 0, "r764: no holder for a batched ghost (%d), its kind stepped (%d)" % [holders, k.active])
+	for id in ids:
+		var rr = crowd.body_of(bodies.get(id))
+		if rr != null and rr.recipe != null:
+			rr.recipe.fx = []
+	_leave_all(world, crowd, ids)
+	d._process(1.0 / 60.0)
+	_check(d._ghost_hosts == 0 and (b0 == null or b0.hosts.is_empty()), "r764: the ghosts gone, their hosts leave the batch")
+	d._process(1.0 / 60.0)
+	_check(b0 == null or b0.shown == 0, "r764: ... and its table is emptied (%d)" % (b0.shown if b0 != null else -1))
+	_advance(world, crowd, 2.1)
+	EquipFx.ghost_frame = Callable()
+	EquipFx.ghost_origin = Callable()
+	EquipFx.ghost_gpu = Callable()
+	cam.queue_free()
+
 ## F2: a body that arrives with buffs (the book holds them) is dressed first
 ## once its page shows, and so is one whose buff came while it was held or not
 ## a ghost yet; none is dressed before its page shows.
@@ -814,13 +997,25 @@ func _test_pages(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
 	world.call("_spawn_or_update_other", 680, "PageA", Vector3(0, 0, -40), kit, "CHAR_TEST_MAN")
 	world.set("_other_build_defer", 0)
 	var pa = world.get("_page_cur")
+	# Round 764: a page is joined by the groups that ARRIVED (rx) within
+	# PAGE_JOIN_MSEC of its first, however long ago it opened on the clock.
 	pa.opened_ms -= OLD_PAGE_MS
+	world.set("_page_pick", true)
+	world.set("_page_pick_rx", pa.rx_ms + 100)
+	world.set("_other_build_defer", 1)
+	world.call("_spawn_or_update_other", 679, "PageA2", Vector3(-3, 0, -40), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	_check((world.get("_page_wait") as Dictionary).get(679) == pa and (world.get("_pages") as Array).size() == 1,
+		"r764: a group read %d ms after the page opened, but received with its first group, joins it" % OLD_PAGE_MS)
+	world.call("_ghost_other", 679)
+	ghosts.drop(679)
+	pa.rx_ms -= OLD_PAGE_MS
 	world.set("_page_pick", true)
 	world.set("_other_build_defer", 1)
 	world.call("_spawn_or_update_other", 681, "PageB", Vector3(3, 0, -40), kit, "CHAR_TEST_MAN")
 	world.set("_other_build_defer", 0)
 	var pb = (world.get("_page_wait") as Dictionary).get(681)
-	_check(pb != null and pb != pa and (world.get("_pages") as Array).size() == 2, "F6: a group arriving %d ms after the page opened opens its own" % OLD_PAGE_MS)
+	_check(pb != null and pb != pa and (world.get("_pages") as Array).size() == 2, "F6: a group received %d ms after the page's first opens its own" % OLD_PAGE_MS)
 	world.set("_page_pick", true)
 	world.set("_other_build_defer", 1)
 	world.call("_spawn_or_update_other", 682, "PageB2", Vector3(6, 0, -40), kit, "CHAR_TEST_MAN")
@@ -830,7 +1025,7 @@ func _test_pages(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
 	ghosts.drop(680)
 	world.call("_hold_step")
 	var n680: Node3D = bodies.get(680)
-	_check(not crowd.is_held(n680) and (world.get("_pages") as Array).size() == 1, "F6: the first page shows once its own arrivals are ghosts, the second still waiting")
+	_check(not crowd.is_held(n680) and not crowd.is_held(bodies.get(679)) and (world.get("_pages") as Array).size() == 1, "F6: the first page shows once its own arrivals are ghosts, the second still waiting")
 	world.call("_ghost_other", 681)
 	ghosts.drop(681)
 	var n681: Node3D = bodies.get(681)
@@ -847,7 +1042,7 @@ func _test_pages(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
 	_check(not crowd.is_held(n681) and (world.get("_page_wait") as Dictionary).is_empty() and (world.get("_pages") as Array).is_empty(),
 		"F3: a page revealed by its deadline drops a waiting arrival whose body is gone")
 	(world.get("_other_build_args") as Dictionary).erase(682)
-	_leave_all(world, crowd, [680, 681])
+	_leave_all(world, crowd, [679, 680, 681])
 	_advance(world, crowd, 2.1)
 	world.set("_holds_on", false)
 
