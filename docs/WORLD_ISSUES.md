@@ -7477,6 +7477,32 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-sixty-third round: EquipFx's effect simulation in Rust, with no global particle cap
+
+The full notes are in `docs/rounds/r763.md`; the review is `r763_review.md`, and its fixes are in §9.
+- **Rust:** `SrEfpSim` and `SrEfpBatch` (`native/src/core/efp_*.rs`, `gd_efp.rs`) step EquipFx's masters
+  with Godot-exact f32 maths and RNG. They write the MultiMesh buffer and links directly.
+  `EfpSimNative` is the GDScript side.
+  - Without the library, or with an old one, the client falls back to `EfpSim`.
+  - `OPENSRO_EFP_NATIVE=0` turns native off.
+- **Parity (MEASURED):** bit-exact on Linux over 420k sim-frames. The Windows (mingw) build may
+  differ in the last digit of sin/cos. That is cosmetic: never networked, never mixed.
+- **USER DECISION 2026-10-09:** native masters have no global cap. The per-effect 300 remains, so the
+  worst case is files x 300. The GDScript fallback and other effects keep 2,000.
+- **Threads:**
+  - The pool is min(4, cores, setting) and the main thread takes part (`OPENSRO_EFP_THREADS`).
+  - Batches under 4,000 particle-steps run inline (`OPENSRO_EFP_POOL_MIN_WORK`), because helpers
+    preempted on a busy machine cost 1-3.6 ms against a 0.08 ms gain.
+- **Crash safety (review M1):**
+  - Every step runs under `catch_unwind`, and poisoned locks are recovered.
+  - A panic returns an error, and the client drops to GDScript for the session.
+  - The review also fixed duplicate sims, the refusal loop, interval 0, mixed batches and the
+    retained job (L1-L6).
+- **MEASURED:**
+  - EquipFx went from 3.7-4.5 ms to about 1.7 ms a frame.
+  - Swarm 4,000 standing: 2,317 particles uncapped, frame 11.1 ms, p95 15.3-15.6 ms, GPU-bound.
+  - perf_gate jangan: SAME.
+
 ## Seven-hundred-and-forty-eighth round: crowd scale, async templates and the const-array thread race (lane B)
 
 The full notes are in `docs/rounds/r748.md`; the review is `r748_review.md`.
