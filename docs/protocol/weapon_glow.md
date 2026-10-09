@@ -436,8 +436,11 @@ particle loader is called with first (READ, §1).
 - No Option-window setting is consulted anywhere on the attach path (`FUN_00a60a90`, `FUN_00a5f3e0`)
   or in the mod (`vslot_002/004/005`) (READ). The mod's only gates are the full-alpha test and
   `FUN_00c43780`, whose meaning is OPEN 6.
-- Whether "Effect" quality or the particle system's own limits drop the `.efp` is OPEN 11. They
-  would act inside `FUN_00c77ca0` and the efp manager, not here.
+- Whether "Effect" quality or the particle system's own limits drop the `.efp` was OPEN 11;
+  round 761 read the particle system (READ, `docs/rounds/r761.md` section 3): no particle or
+  effect count is limited anywhere, the emission-quality globals are reached only by the `PLOD`
+  console command, and the one thinning is a character's effects frozen past a camera distance
+  (`FUN_00c43780`). What the Options window's "Effect quality" (option 0xd) drops is still OPEN.
 - OURS (proposed): have the glow follow the existing effects switches, if the Video tab has one that
   retail's effects obey. Otherwise always draw it, as retail's attach path does.
 
@@ -451,7 +454,8 @@ particle loader is called with first (READ, §1).
   per-material script work. A material is shared per (type, tier, item texture).
 - Particles start at +8, one `.efp` per item, through the existing `EfpEffect`. In a crowded town, N
   players at +8 or more add N to 2N emitters. Lane A measures them in the gate and may share an
-  instance, but must not cap them (OPEN 11: we do not know whether retail drops them).
+  instance, but must not cap them (retail does not, READ round 761; this client's global
+  particle cap is OURS, `EfpSim.MAX_TOTAL`).
 - This is a world-drawing round, so `perf_gate.sh` runs, and the table goes in the round entry.
 
 ## 8. Gaps (OPEN), with round 734's answers
@@ -522,7 +526,11 @@ particle loader is called with first (READ, §1).
     (`OBJECT_NO_PRESENT`: their SubViewports tone-map Linear), the select screen on the world's. The
     plain layer behind it keeps its own alpha reference. The portrait drops the particle effects (a
     picture rendered once, OURS); the equipment window keeps them, paused while it is closed.
-11. **Particle quality gating** inside the efp manager: OPEN; nothing is capped.
+11. **Particle quality gating** inside the efp manager: READ (round 761), none -- no particle,
+    effect or spawn count is limited; the emission globals (`DAT_01114d54/58`) are set only by
+    the `PLOD` console command and start at full quality; a character's effects are neither
+    stepped nor drawn while its LOD (camera distance / 800) is at or past 0.9 (`FUN_00c43780`).
+    The Options window's "Effect quality" (option 0xd: ALL_OFF / DAMEGE_ON / ALL_ON) is OPEN.
 12. **Item bones: MEASURED (round 734).** The item `.bsk` files carry `ai_end`, `ai_start`,
     `Bone01`..`03`; OpenSRO's item skeleton keeps them.
 

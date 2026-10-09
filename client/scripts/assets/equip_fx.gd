@@ -480,6 +480,14 @@ func _step_masters(delta: float) -> void:
 	if FrameSplit.on:
 		FrameSplit.add("fx_masters", Time.get_ticks_usec() - t0)
 		FrameSplit.add("fx_masters_calls", list.size())
+		# Round 761 (QA): EfpSimBatch's ordered cap -- spawns that waited for
+		# the effects before theirs and the thread time waited, the bounds'
+		# thread time, and the particles alive after the batch.
+		var last: Dictionary = EfpSimBatch.last
+		FrameSplit.add("fx_cap_waits_calls", int(last.get("waits", 0)))
+		FrameSplit.add("fx_cap_wait", int(last.get("wait_usec", 0)))
+		FrameSplit.add("fx_cap_bounds", int(last.get("bounds_usec", 0)))
+		FrameSplit.add("fx_cap_live_calls", EfpSim.live_total)
 
 ## Where a host's holder goes (round 741): the bone's whole frame in the world
 ## -- READ, CRTModParticle::FUN_00c81190 places the effect at the bone's
