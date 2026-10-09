@@ -5586,6 +5586,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 				_build_one_queued_cell()
 		print(_grid_loaded_line(region_started_ms, 0))
 		print(_load_timings.summary())
+		_prewarm_after_entry.call_deferred()
 		_qa_print_entry_probe()
 		_land_restored_return_point()
 		_adopt_char_entry()
@@ -5655,6 +5656,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	# leaves the cells' own sum behind (round 561, _grid_loaded_line).
 	print(_grid_loaded_line(region_started_ms, frames_awaited))
 	print(_load_timings.summary())
+	_prewarm_after_entry.call_deferred()
 	if ParseProfile.enabled:
 		print(ParseProfile.report("entry"))
 		# A fresh window for what loads after the entry -- a species or a
@@ -6818,13 +6820,39 @@ var _crowd_pending: Array = []
 ## Meta on a body skeleton: the Callable its tree_exiting runs (_crowd_on_exit).
 const CROWD_EXIT_META := &"opensro_crowd_exit"
 
-## Round 762: CrowdGpu.prewarm_known, once the world is in the tree.
-func _crowd_prewarm_known() -> void:
-	var cg := _crowd_gpu_get() if CrowdGpu.enabled and _ghosts_on else null
-	if cg != null:
-		var t0 := Time.get_ticks_usec()
-		cg.prewarm_known()
-		print("World3D: the far crowd's twin shaders made in %.1f ms (%d shaders)" % [(Time.get_ticks_usec() - t0) / 1000.0,
+## Round 762: the Figures whose body templates are made once the world has
+## entered, and the call that starts them with the far twins' shaders.
+var _prewarm_figures: Array = []
+var _prewarmed_after_entry := false
+
+func _prewarm_after_entry() -> void:
+	if _prewarmed_after_entry:
+		return
+	_prewarmed_after_entry = true
+	# The far twins' shaders one a frame (_prewarm_step), the bodies on the worker.
+	_prewarm_shaders = CrowdGpu.known_shaders() if CrowdGpu.enabled and _ghosts_on else []
+	if _appearance != null and not _prewarm_figures.is_empty():
+		var asked := _appearance.prewarm_bodies(_prewarm_figures)
+		if asked > 0:
+			print("World3D: %d player bod(ies) prewarmed in the background" % asked)
+
+## Round 762: the known shaders' far twins still to make (_prewarm_after_entry),
+## one a frame.
+var _prewarm_shaders: Array = []
+var _prewarm_usec := 0
+
+func _prewarm_step() -> void:
+	if _prewarm_shaders.is_empty():
+		return
+	var cg := _crowd_gpu_get()
+	if cg == null:
+		_prewarm_shaders.clear()
+		return
+	var t0 := Time.get_ticks_usec()
+	cg.prewarm_one(_prewarm_shaders)
+	_prewarm_usec += Time.get_ticks_usec() - t0
+	if _prewarm_shaders.is_empty():
+		print("World3D: the far crowd's twin shaders made after the entry, %.1f ms over the frames (%d shaders)" % [_prewarm_usec / 1000.0,
 			int(cg.stats.get("prewarmed_shaders", 0))])
 
 func _crowd_gpu_get() -> CrowdGpu:
@@ -9772,20 +9800,18 @@ func _load_character_assets() -> void:
 		var cg := _crowd_gpu_get() if CrowdGpu.enabled and _ghosts_on else null
 		if cg != null:
 			cg.prewarm_node(node)
-	# And the known shaders' twins at once (the world's load).
-	_crowd_prewarm_known.call_deferred()
 	# Round 762: every player Figure's body template made in the background,
 	# behind anything the world asks for, so a crowd arriving later waits only
-	# for its items (OPENSRO_QA_PREWARM=0: not, for the A/B).
+	# for its items (OPENSRO_QA_PREWARM=0: not, for the A/B) -- and the known
+	# shaders' far twins: both once the region grid has loaded
+	# (_prewarm_after_entry), not during it (the perf gate's entry: +1.5 s
+	# with them in the load, MEASURED r762.md).
+	_prewarm_figures = []
 	if OS.get_environment("OPENSRO_QA_PREWARM") != "0":
-		var warm: Array = []
 		for race in [CharCatalog.RACE_CHINA, CharCatalog.RACE_EUROPE]:
 			for sex in [CharCatalog.SEX_WOMAN, CharCatalog.SEX_MAN]:
 				for e in bodies.figures(int(race), int(sex)):
-					warm.append((e as CharCatalog.Entry).id)
-		var asked := _appearance.prewarm_bodies(warm)
-		if asked > 0:
-			print("World3D: %d player bod(ies) prewarmed in the background" % asked)
+					_prewarm_figures.append((e as CharCatalog.Entry).id)
 	_body_anims = BodyAnimations.new(_data_pk2)
 	for id in bodies.entries:
 		var e: CharCatalog.Entry = bodies.entries[id]
@@ -16230,6 +16256,7 @@ func _process(_delta: float) -> void:
 	# of the scene's own frames has no gaps (OtherCrowd.FrameBudget), told
 	# whether a crowd arrives or leaves in this frame.
 	OtherCrowd.FrameBudget.note_transition(_crowd_transition())
+	_prewarm_step()
 	var fs := FrameSplit.on
 	var t := Time.get_ticks_usec() if fs else 0
 	var t_world := t
@@ -18083,6 +18110,11 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 func _note_other_pluses(snapshot: WorldNet.EntitySnapshot) -> void:
 	_other_pluses[snapshot.character_id] = snapshot.pluses.duplicate()
 	_forget_other_kind(snapshot.character_id)
+	# Round 762: not for a group spawn's records -- a crowd's page printed a
+	# line an item, some 10,000 lines for the live walk-in's 1,471 bots,
+	# inside its reading. A single arrival (the two-client check) still logs.
+	if _other_build_defer > 0:
+		return
 	for slot in snapshot.pluses:
 		print("World3D: player %d spawns with slot %d item %d at +%d" % [snapshot.character_id, int(slot),
 			snapshot.item_in(int(slot)), int(snapshot.pluses[slot])])

@@ -2546,14 +2546,28 @@ func prewarm_node(node: Node) -> void:
 ## 54 ms assigning them (RenderingServerDefault.shader_create_from_code
 ## compiles on the calling thread under the RenderingDevice, READ 4.7.2).
 func prewarm_known() -> void:
+	for sh in known_shaders():
+		_prewarm_shader(sh as Shader)
+
+## The shaders prewarm_known makes the twins of.
+static func known_shaders() -> Array:
 	var shaders: Array = [ObjectLoader.OBJECT_SHADER, ObjectLoader.FOLIAGE_SHADER, ObjectLoader.FOLIAGE_SHADER_ONE_SIDED]
 	for cull in ["back", "disabled"]:
 		for alpha_test in [false, true]:
 			shaders.append(EquipGlow.glow_shader(cull, alpha_test))
 	for sh in ObjectLoader.mod_shaders_made():
 		shaders.append(sh)
-	for sh in shaders:
-		_prewarm_shader(sh as Shader)
+	return shaders
+
+## One known shader's twins made (World3D: one a frame after the entry, each
+## about 6 ms -- all twenty in one frame were 116 ms). False when none is left.
+func prewarm_one(queue: Array) -> bool:
+	while not queue.is_empty():
+		var sh: Shader = queue.pop_back()
+		if sh != null and not _prewarmed.has(sh):
+			_prewarm_shader(sh)
+			return true
+	return false
 
 func _prewarm_shader(sh: Shader) -> void:
 	if sh == null or _prewarmed.has(sh):
