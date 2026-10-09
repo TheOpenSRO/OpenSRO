@@ -327,3 +327,218 @@ node.
   no crowd, so they cannot see F2, F5 or F9.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+## Re-review (the fix pass: `8390ed86` server F3, `d29f3b40` client and native)
+
+Independent and adversarial. I read both commits and the code they touch, and re-ran the gates on
+the render box in my own lane (`RENDER_DIR=/opt/opensro-client-r764rr`,
+`GODOT_LOCK=/var/tmp/r764rr/lock`, owned by `ghidra`). Labels: **READ**, **MEASURED**,
+**INFERRED**.
+
+### Verdict
+
+**Ship.** F2, F3, F4, F6 and F8 are fixed. `SrEfpHosts` is crash-safe where it matters: one
+`catch_unwind` covers the whole step, and a panic switches to the GDScript fallback. The new
+native class shares no lock and no pool with `SrEfpBatch`. Without the library, or with an older
+library, the client runs with no script errors. None of the findings below blocks the ship.
+R1-R4 are a few lines each and are worth taking in the next round.
+
+### Findings, most severe first
+
+**R1 (LOW-MEDIUM): after a native panic, the dressed bodies' effects stay dark.**
+
+- Where: `equip_fx_batch.gd:274-285` and `equip_fx.gd:998`.
+- What happens: the broken branch sets `native = false`, calls `clear()` and re-adds the ghost
+  hosts. `clear()` sets each direct host's `batch` to null but leaves `h.direct = true`.
+  `_scan_slice` still skips every host with `h.direct and not _own_host(h)`. So every dressed body
+  that was already registered gets neither a batch nor a holder until it registers again.
+- Untested: `SrEfpHosts` has no QA panic hook like `SrEfpSim.qa_panic_next_step`, so no test runs
+  the switch.
+- Fix: in the broken branch, set `h.direct = false` on each `b.direct` host before `clear()`. Add
+  a QA panic hook and a test.
+
+**R2 (LOW-MEDIUM against round 763's M1 standard): three new `unsafe` blocks.**
+
+- Where: `gd_efp_hosts.rs:156` and `:253-256`, and `gd_efp.rs:408`. These are the crate's only
+  `unsafe` blocks outside the Vulkan FFI in `vk_fallback.rs`.
+- `:255` turns a `PackedByteArray`'s `u8` buffer into a `&mut [f32]`. That needs the pointer to
+  be non-null and 4-aligned:
+  - Godot's allocator provides that alignment, but nothing checks it.
+  - An empty array (`rows <= 0` from any caller) gives the dangling pointer `0x1`, which is
+    undefined behaviour. In a debug build that is a non-unwinding abort, which `catch_unwind`
+    cannot stop.
+  - It cannot happen today, because `_frames_rows >= 4`.
+- The other two blocks (`f32` to `u8`) are sound.
+- Fix: write the bytes safely, either with `chunks_exact_mut(4)` and `to_ne_bytes`, or by building
+  the floats and then the bytes.
+
+**R3 (LOW): a panic on a placement thread is swallowed, and the results misalign.**
+
+- Where: `efp_hosts.rs:251-252`. `h.join().unwrap_or_default()` drops a panicked chunk, so
+  `placed` comes out shorter than `cand`.
+- Effect: the `zip` at `:260` then gives the later chunks' frames to the wrong hosts and batches,
+  every frame, and `broken` is never set.
+- Nothing in `place` can panic today (READ: every index is checked at `:201` or inside
+  `ghost_frame`), so this is latent.
+- Fix: `Err(e) => std::panic::resume_unwind(e)`, so that the outer `catch_unwind` marks the
+  library broken.
+
+**R4 (LOW, MEASURED): `available_parallelism()` runs every frame on the main thread.**
+
+- Where: `gd_efp_hosts.rs:244`.
+- On Linux it reads the cgroup files on every call:
+  - **44.7 µs a call on the box** (2,000 calls, a release build); 41.4 µs locally.
+  - It runs even at budget 500, where the threads are never used: they start only at
+    `cand.len() >= 2048`.
+  - That is about a fifth of the `fxb_native` 0.21-0.22 ms I measured.
+- The threads also ignore the core budget that `EfpSimNative.configure` gives `SrEfpBatch`'s pool.
+- Fix: cache the count in a `OnceLock`, or compute it only past 2,048 hosts and bound it by the
+  pool's size.
+
+**R5 (LOW): the layout index has 4 bits and no guard.**
+
+- Where: `equip_fx_batch.gd:343` (`gi + 16 * stamp`), and `efp_hosts.rs:204` and `:245`.
+- A 17th layout reads as stamp + 1, so its hosts are never drawn, and the `& 15` names the wrong
+  layout. Not reached today: the probe has `layouts=2`.
+- Also, `set_layout` (`gd_efp_hosts.rs:52-55`) does `resize_with(i + 1)` on an unbounded `i64`,
+  so a bad call aborts on the allocation.
+- Fix: keep a host with `gi >= 16` pending, or on the fallback, and clamp `i` in `set_layout`.
+
+**R6 (LOW, INFERRED from the code): growing the frames texture blanks every effect for one
+frame.**
+
+- Where: `equip_fx_batch.gd:445-457`.
+- The step's bytes go into the old image. Then `_grow_frames(need)` binds a new texture, still
+  all zero, to every draw. That frame draws every host with a zero matrix.
+- It happens only when the drawn hosts exceed 1.25x the previous room, for example when a crowd
+  arrives with budget 0.
+- Fix: size the texture before the step (the last `needed` and the current host count), or step
+  again after a growth.
+
+**R7 (LOW, a test gap): dressed bodies through the batch are not checked against the holders.**
+
+- No GDScript test covers `Host.direct`. `fxab` builds holders only for ghost hosts
+  (`qa_crowd_probe.gd:1477-1485`).
+- I exercised the path (MEASURED, `crowd_run.sh` with 300 bodies, `OPENSRO_QA_GHOSTS=0`, steps
+  `base,away,base`):
+
+  | step | dressed hosts | chosen | drawn |
+  |---|---|---|---|
+  | base | 416 | 416 | 416 |
+  | away | 416 | 416 | 156 |
+  | base | 416 | 416 | 416 |
+
+  The choice does not change with the camera, and the run had 0 `SCRIPT ERROR`.
+- Pixel parity is INFERRED: the frame is `holder_transform`'s, as the holders' was, and the
+  shader is the ghost path that `fxab` checked.
+- The player's own weapons stay on holders: `_own_host` (`equip_fx.gd:998`) and
+  `own.is_ancestor_of` in `_step_native`.
+- Fix: extend `fxab` to direct hosts.
+
+**R8 (LOW): F3 closes the hole, but a non-GM's typed spot still snaps back.**
+
+- The server now ignores a player's spot that is not a known one (`world.go:1186-1193`). The
+  client still stands the player at its typed `@x,z` (`World3D.gd:6137-6141`), so the MOVE
+  correction that #3B removed comes back for that case.
+- This matches dev before the round, so it is not a regression. Only GMs and the town buttons get
+  #3B.
+- Fix: when the result's point is more than a unit from the spot, the client keeps the result's
+  point.
+- Test gap: the wiring `AuthenticatedUsername` -> `zoneSpotGM` (`world.go:1732-1733`) has no
+  test. Only `changeZoneLanding` and `zoneSpotGM` are tested.
+
+**R9 (INFO): F8 edge.** A page opened without a group pick keeps `rx_ms = 0`
+(`World3D.gd:17863-17869`), so the next group's first share always opens a new page. That is
+reachable only when a page is revealed by its 20 s deadline in the middle of a group. Fix: set
+`rx_ms = rx` when the page is created as well.
+
+**R10 (INFO): F2 in the fallback only.** While no cut is known, the first cycle fills the budget
+in scan order, not nearest first, and the next cycle swaps far hosts for near ones. There is no
+overshoot.
+
+### The questions asked, answered
+
+**1. `SrEfpHosts`**
+
+- **Crash safety.** `step` is wrapped in `catch_unwind`, and `broken` then sends the client to
+  the fallback (`gd_efp_hosts.rs:119-131`, `equip_fx_batch.gd:274`); R1 is the gap in that
+  switch. There are no locks, so nothing can be poisoned. `unsafe`: R2. Bounds: `bodies.get` at
+  `efp_hosts.rs:201` is reused at `:240`; `ghost_frame` checks the page offset and the bone
+  (`:106-110`); the output copy is limited to `fit` (`gd_efp_hosts.rs:263-265`); the reveal and
+  layout lookups use `get`. A thread panic: R3.
+- **Threads.** It uses its own `std::thread::scope` threads, not `SrEfpBatch`'s pool. That batch
+  is synchronous: the main thread waits for it in `_step_masters`, which runs before `_batch.step`
+  (`equip_fx.gd` `_process`). So there is no nesting, no shared lock and no deadlock. The threads
+  start only past 2,048 chosen hosts, which means budget 0 only. Cost: R4.
+- **Buffers.**
+  - Frames texture: RGBAF, 192 x rows, with rows = max(ceil(1.25 n / 64), 4). The bytes
+    (`rows x 64 x 12 x 4`) match the GDScript size check (`rows x 64 x 3 x 16`), and anything
+    that does not fit is cut, with the instances cut to match.
+  - Offsets texture: RF, a power of two of at least 16 batch ids.
+  - The whole frames texture is uploaded every frame: about 690 KB at budget 0 with 11,500
+    drawn (INFERRED from the sizes), part of the measured 1.43 ms.
+- **0 hosts, freed bodies, a zone change.**
+  - 0 hosts: an empty list, and visible instances 0.
+  - A freed slot: a fade of -1 and a new stamp, tested in `cargo test`.
+  - A zone change (MEASURED, 4,000 bodies, `base,leave,base,back,base`, 0 `SCRIPT ERROR`): the
+    `QA FXBATCH` lines show chosen 500, 500, 500, then 0 throughout `leave` and the empty
+    `base`, then 500 again after `back`. The chosen count never passed 500 in any line.
+
+**2. F3**
+
+- A player can no longer land on an arbitrary point. A spot is taken only within one unit of a
+  `LandingSpot` row or a town button.
+- `knownZoneSpots` matches `debug_panel.gd` `TOWNS` row for row (READ). The six buttons and
+  Jangan's `LandingSpot` (1002, 1020) are reachable.
+- The free warp to any region's middle is unchanged from before the round.
+- The Go tests are meaningful for the decision (an unknown spot is refused in two zones, a GM's is
+  taken, the buttons are taken within a unit, and the gate test follows the gate). They do not
+  cover the handler's wiring (R8).
+
+**3. The other fixes**
+
+- **F2:** exact natively (`select_nth` plus `truncate`), as the measurements above show; the
+  fallback is in R10.
+- **F4:** yes.
+- **F6:** yes; the relog test passes.
+- **F8:** yes, with the R9 edge.
+
+**4. Without the library, and with an older one**
+
+- No library (`native_bin` removed): `crowd_ghost_test` and `other_crowd_test` **ALL PASS**, 0
+  `SCRIPT ERROR`.
+- An older library: the first pass's `libopensro_native.so` from `/opt/opensro-client-r764a`
+  (`strings | grep -c SrEfpHosts` = 0). `crowd_ghost_test` and `efp_native_test` **ALL PASS**, 0
+  `SCRIPT ERROR`. `draw_rows_bytes` falls back to `draw_rows` / `draw_buffer` (READ,
+  `equip_fx_batch.gd:758-778`).
+
+**5. Regressions**
+
+- The player's own weapons: still drawn by holders.
+- Dressed bodies: see R7.
+- The F9 step skip is safe for the enchant effects. Their billboards turn in the shader
+  (`use_shared_turn`); a master that bakes the camera into its billboards (`_has_billboard`)
+  still steps every frame while a holder uses it.
+- GL Compatibility (`--render-thread safe`, 1,000 bodies): 0 `SCRIPT ERROR`, 0 shader errors,
+  500 chosen and 500 drawn.
+- The one `finalize ... render thread` error is also in v0.1.516's logs (`K516`, `A516`,
+  `C516`), so it predates this round.
+
+### Gates re-run
+
+- `cargo test --locked --no-default-features`: **68 passed**.
+- `go vet ./internal/session/` is clean. `go test -count=1 ./internal/session/
+  ./internal/worldmap/ ./internal/gm/`: **ok** (session 178.9 s).
+- `remote_godot.sh check`: **checked 707 scripts and 9 scenes, ALL LOAD**.
+- With the library, each **ALL PASS** with 0 `SCRIPT ERROR`: `crowd_ghost_test`,
+  `other_crowd_test`, `world_test`, `efp_native_test`, `packet_reader_test` and
+  `net_group_hold_test`.
+- Without the library, and with the older library: as in question 4.
+- Crowd boots (`CROWD_NOWAIT=1`, error and choice counts only, not timing):
+  - 4,000 bodies, `base,leave,base,back,base`;
+  - 300 dressed bodies, `base,away,base`;
+  - 1,000 bodies under Compatibility.
+
+  All three: 0 `SCRIPT ERROR`, and no new engine error.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
