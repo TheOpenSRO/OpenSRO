@@ -126,7 +126,7 @@ impl Out {
         let nv = self.nv();
         self.stitch = nv > 0;
         self.prefix = if self.stitch { 1 } else { 0 } + 1;
-        if (nv + self.prefix) % 2 == 0 {
+        if (nv + self.prefix).is_multiple_of(2) {
             self.prefix += 1;
         }
         self.pre = nv;

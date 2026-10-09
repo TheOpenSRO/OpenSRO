@@ -211,15 +211,29 @@ static var last := {"n": 0, "threaded": false, "by_helpers": 0, "waits": 0, "wai
 
 ## Steps every effect of `effects` (EfpEffects whose step_pre returned true)
 ## by `delta`: EfpEffect.step_sim each, on the pool when there are enough.
-static func run(effects: Array, delta: float) -> void:
+static func run(all: Array, delta: float) -> void:
 	reap()
-	var n := effects.size()
 	# Round 763: masters simulated in Rust (EfpSimNative) are stepped by one
 	# native batch -- the same ordered cap, on a Rust thread pool, their draws
-	# built there too.
-	if EfpSimNative.all_native(effects):
-		EfpSimNative.run_batch(effects, delta)
+	# built there too. Its review, L5: a mixed list is split, the native sims
+	# to that batch alone and only the GDScript ones to the Job below (never a
+	# native sim from a WorkerThreadPool thread). The split changes no
+	# decision: the native masters count their particles apart and have no
+	# cap (EfpSimNative.live_native), so the two halves never meet. A failed
+	# native batch has put its sims back on GDScript: they go below.
+	var effects: Array = []
+	var native: Array = []
+	for e in all:
+		var s = (e as EfpEffect).sim
+		if s is EfpSimNative and (s as EfpSimNative).is_native():
+			native.append(e)
+		else:
+			effects.append(e)
+	if not native.is_empty() and not EfpSimNative.run_batch(native, delta):
+		effects = all
+	if effects.is_empty():
 		return
+	var n := effects.size()
 	last = {"n": n, "threaded": n >= threaded_min, "by_helpers": 0, "waits": 0, "wait_usec": 0, "misses": 0, "bounds_usec": 0, "sim_usec": 0}
 	if n < threaded_min:
 		for e in effects:

@@ -37,9 +37,10 @@ const BATCH_CLASS := "SrEfpBatch"
 ## additive, so NativeAssets.NATIVE_API is unchanged.
 const EFP_API := 1
 ## Threads a batch uses at most by default, the main thread included (OURS,
-## round 763's measurement: docs/rounds/r763.md section 3). Bounded further by
-## Godot's WorkerThreadPool size and the machine's cores; OPENSRO_EFP_THREADS
-## sets it (1 = the main thread alone).
+## round 763's measurement: docs/rounds/r763.md sections 3 and 9). Bounded
+## further by Godot's WorkerThreadPool size and the machine's cores;
+## OPENSRO_EFP_THREADS sets it (1 = the main thread alone). The pool is used
+## only for a batch of at least pool_min_work particle-steps (its review, L2).
 const DEFAULT_THREADS := 4
 ## Floats an instance takes in a MultiMesh buffer (TRANSFORM_3D, colours,
 ## custom data).
@@ -78,6 +79,10 @@ static var _batch: Object = null
 ## The batch's threads: the main thread plus `helpers` pool threads.
 static var threads := 1
 static var helpers := 0
+## Round 763's review, L2: below this many particle-steps a batch runs on the
+## main thread alone (core/efp_batch.rs POOL_MIN_WORK; OPENSRO_EFP_POOL_MIN_WORK
+## sets it, 0: the pool whenever there are helpers).
+static var pool_min_work := 4000
 ## The one log line saying whether the masters simulate natively, and why.
 static var status := ""
 
@@ -127,6 +132,11 @@ static func configure(want: int = -1) -> void:
 		n = 1
 	threads = clampi(n, 1, maxi(cores, 1))
 	helpers = threads - 1
+	var mw := OS.get_environment("OPENSRO_EFP_POOL_MIN_WORK")
+	if mw.is_valid_int():
+		pool_min_work = maxi(int(mw), 0)
+	elif _batch != null and _batch.has_method("pool_min_work"):
+		pool_min_work = int(_batch.call("pool_min_work"))
 	if _batch != null:
 		_batch.call("set_helpers", helpers)
 
@@ -213,6 +223,11 @@ func advance(delta: float) -> int:
 	if _n == null:
 		return super.advance(delta)
 	var r: PackedInt64Array = _n.call("advance", delta, live_native, limit_native(reserved), keep, EfpSim.interval_mul, EfpSim.threshold)
+	if r.size() < 2:
+		# Broken (a panic stepped it, round 763's review M1): GDScript from now on.
+		disable("an effect's step failed")
+		_fall_back()
+		return super.advance(delta)
 	live_native += r[1]
 	_pull()
 	return r[0]
@@ -222,6 +237,10 @@ func step() -> void:
 		super.step()
 		return
 	live_native += int(_n.call("step", live_native, limit_native(reserved), keep, EfpSim.interval_mul, EfpSim.threshold))
+	if bool(_n.call("broken")):
+		disable("an effect's step failed")
+		_fall_back()
+		return
 	_pull()
 
 func growth_bounds(delta: float) -> Vector2i:
@@ -409,7 +428,7 @@ static func all_native(effects: Array) -> bool:
 ## built after its step -- then live_native and the counters back here, and
 ## each effect's frames for its step_post. EfpSimBatch.last as the GDScript
 ## batch fills it.
-static func run_batch(effects: Array, delta: float) -> void:
+static func run_batch(effects: Array, delta: float) -> bool:
 	var n := effects.size()
 	var sims: Array = []
 	sims.resize(n)
@@ -429,13 +448,20 @@ static func run_batch(effects: Array, delta: float) -> void:
 		# nine zeros stand for the identity (gd_efp.rs b3_from).
 		if e._native_needs_cam:
 			put_rows(cams, 9 * i, e.native_cam_rot())
-	var r: Dictionary = _batch.call("run", sims, delta, live_native, limits, keeps, cams, EfpSim.interval_mul, EfpSim.threshold, helpers)
-	if r.is_empty():
-		# Not every element was a live native sim (cannot happen past
-		# all_native): step them one by one, in order, as the main thread did.
+	# Untyped on purpose (round 763's review, M1): whatever comes back -- a
+	# Dictionary, {error}, or nothing at all -- is looked at before it is used.
+	var got = _batch.call("run", sims, delta, live_native, limits, keeps, cams, EfpSim.interval_mul, EfpSim.threshold,
+		helpers, pool_min_work)
+	var r: Dictionary = got if got is Dictionary else {}
+	if r.is_empty() or r.has("error") or not r.has("steps"):
+		# A step panicked (the effect is broken), a sim was listed twice, or
+		# the batch could not run: the native simulation goes off for the
+		# session and these effects simulate in GDScript from now on (the
+		# caller steps them this frame, EfpSimBatch.run).
+		disable("the batch failed: %s" % str(r.get("error", "no result")))
 		for e in effects:
-			(e as EfpEffect).step_sim(delta)
-		return
+			((e as EfpEffect).sim as EfpSimNative)._fall_back()
+		return false
 	var steps: PackedInt64Array = r["steps"]
 	var change: PackedInt64Array = r["change"]
 	var counters: PackedInt64Array = r["counters"]
@@ -450,9 +476,37 @@ static func run_batch(effects: Array, delta: float) -> void:
 		s._count = counters[5 * i + 4]
 		e._pending_steps = steps[i]
 		e._pending_sim_usec = 0
-	EfpSimBatch.last = {"n": n, "threaded": helpers > 0 and n > 1, "native": true, "by_helpers": int(r["by_helpers"]),
+	batches += 1
+	EfpSimBatch.last = {"n": n, "threaded": bool(r.get("pooled", false)), "native": true, "by_helpers": int(r["by_helpers"]),
 		"waits": int(r["waits"]), "wait_usec": int(r["wait_usec"]), "misses": int(r["misses"]),
-		"bounds_usec": int(r["bounds_usec"]), "sim_usec": int(r["sim_usec"])}
+		"bounds_usec": int(r["bounds_usec"]), "sim_usec": int(r["sim_usec"]), "work": int(r.get("work", 0))}
+	return true
+
+## Round 763's review, M1: the native simulation off for the rest of the
+## session (a step panicked, or a batch failed), with one log line. Masters
+## made later are EfpSim; one that was native falls back on its own failure
+## (_fall_back) or in the failed batch.
+static func disable(why: String) -> void:
+	if not _available:
+		return
+	_available = false
+	status = "EfpSimNative: native effect simulation OFF (%s) -- EquipFx's masters simulate in GDScript from now on" % why
+	push_warning(status)
+	print(status)
+
+## This sim simulates in GDScript from here on (its native twin failed): an
+## empty EfpSim restarted on the same template, keep and reserved kept, its
+## native particles given back to live_native.
+func _fall_back() -> void:
+	if _n == null:
+		return
+	live_native -= _count
+	_count = 0
+	_n = null
+	super.restart()
+
+## Native batches run (tests).
+static var batches := 0
 
 # ---------------------------------------------------------------- packing
 

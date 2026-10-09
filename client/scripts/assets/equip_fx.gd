@@ -674,6 +674,10 @@ func _step_masters(delta: float) -> void:
 		# Round 763: the particles alive after the batch, GDScript's and the
 		# native masters' (uncapped, counted apart: EfpSimNative.live_native).
 		FrameSplit.add("fx_cap_live_calls", EfpSim.live_total + EfpSimNative.live_native)
+		# Round 763's review, L2: the native batch's work (particle-steps) and
+		# whether it used the pool (EfpSimNative.pool_min_work).
+		FrameSplit.add("fx_batch_work_calls", int(last.get("work", 0)))
+		FrameSplit.add("fx_batch_pooled_calls", 1 if bool(last.get("threaded", false)) else 0)
 
 ## Where a host's holder goes (round 741): the bone's whole frame in the world
 ## -- READ, CRTModParticle::FUN_00c81190 places the effect at the bone's

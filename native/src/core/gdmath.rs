@@ -21,6 +21,9 @@ pub struct V3(pub f32, pub f32, pub f32);
 pub const ZERO: V3 = V3(0.0, 0.0, 0.0);
 pub const ONE: V3 = V3(1.0, 1.0, 1.0);
 
+// add / sub / mul / neg are named methods, not std::ops traits, on purpose: every call site
+// reads as the GDScript operation it mirrors, in its order.
+#[allow(clippy::should_implement_trait)]
 impl V3 {
     #[inline]
     pub fn add(self, o: V3) -> V3 {

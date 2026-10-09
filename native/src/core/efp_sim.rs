@@ -515,6 +515,17 @@ impl Sim {
         n
     }
 
+    /// How many frames advance(delta) will step, from the clock now (advance's own arithmetic).
+    pub fn steps_for(&self, delta: f64) -> i64 {
+        let mut steps = 0;
+        let mut a = self.acc + gmax(delta, 0.0);
+        while a >= FRAME_SEC && steps < MAX_STEPS_PER_ADVANCE {
+            a -= FRAME_SEC;
+            steps += 1;
+        }
+        steps
+    }
+
     /// EfpSim.growth_bounds: (least, most) of the change advance(delta) can make, from the state
     /// now.
     pub fn growth_bounds(&self, delta: f64) -> (i64, i64) {
@@ -561,7 +572,9 @@ impl Sim {
                     interval = m;
                 }
             }
-            if tt % interval != 0 {
+            // Round 763's review, L4: the multiplied interval can wrap to 0 or below; no frame
+            // fires then (efp_sim.gd mirrors it).
+            if interval <= 0 || tt % interval != 0 {
                 continue;
             }
             let mut r = t.rate[e.tpl as usize];
@@ -825,7 +838,18 @@ impl Sim {
         }
         let oage = if owner == ROOT { self.age } else { self.parts[owner as usize].age };
         let n = self.emit_spawns(tp, oage, es);
-        for _ in 0..n {
+        for k in 0..n {
+            // Round 763's review, L3: once the effect holds MAX_PARTICLES every remaining spawn of
+            // this emission is refused for that alone (no death comes in between), each giving
+            // 1.0 back: all of them at once. Exact: acc is an f32 value in an f64, so
+            // max(acc - rest, 0) is the repeated max(acc - 1, 0). efp_sim.gd does the same.
+            if self.list.len() as i64 >= MAX_PARTICLES {
+                let rest = n - k;
+                self.dropped += rest;
+                let e = &mut self.ems[es as usize];
+                e.acc = gmax(e.acc - rest as f64, 0.0);
+                break;
+            }
             self.spawn(tpl, owner, es, tmpl, gate);
         }
     }
@@ -850,7 +874,8 @@ impl Sim {
                 interval = m;
             }
         }
-        if t % interval != 0 {
+        // Round 763's review, L4 (efp_sim.gd mirrors it).
+        if interval <= 0 || t % interval != 0 {
             return 0;
         }
         let mut cap = tp.e_max;

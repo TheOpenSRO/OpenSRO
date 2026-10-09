@@ -681,7 +681,8 @@ func growth_bounds(delta: float) -> Vector2i:
 			var m := ((interval * interval_mul + 0x80000000) & 0xFFFFFFFF) - 0x80000000
 			if m < tp.e_dur:
 				interval = m
-		if t % interval != 0:
+		# Round 763's review, L4: the multiplied interval can wrap to 0 or below.
+		if interval <= 0 or t % interval != 0:
 			continue
 		# What fits under the cap above acc after the flush's give-backs
 		# (each max(acc - 1, 0): max(acc - dying, 0) in all): emit_spawns
@@ -994,7 +995,18 @@ func _emit(e: Emitter) -> void:
 		e.done = true
 		return
 	var n := emit_spawns(tp, _owner_age(e), e)
-	for _k in range(n):
+	for k in range(n):
+		# Round 763's review, L3 (OURS, the same state): once the effect holds
+		# MAX_PARTICLES every remaining spawn of this emission is refused for
+		# that alone (no death comes in between), each giving 1.0 back -- so all
+		# at once, not one by one (a corrupt emission count would otherwise
+		# loop for seconds). Exact: acc holds an f32 value, so maxf(acc - rest,
+		# 0) is the repeated maxf(acc - 1, 0). Mirrored in native efp_sim.rs.
+		if particles.size() >= MAX_PARTICLES:
+			var rest := n - k
+			dropped += rest
+			e.acc = maxf(e.acc - float(rest), 0.0)
+			break
 		_spawn(e.tpl, e.owner, e)
 
 ## One emitter frame: EfpReader.emit_tick's rules (READ, 0x00c84e70) on the
@@ -1015,7 +1027,9 @@ static func emit_spawns(tp: Tpl, owner_age: int, e: Emitter) -> int:
 		var m := EfpReader.i32(interval * interval_mul)
 		if m < tp.e_dur:
 			interval = m
-	if t % interval != 0:
+	# Round 763's review, L4: the multiplied interval can wrap to 0 or below
+	# (a modulo by zero); no frame fires then. Mirrored in efp_sim.rs.
+	if interval <= 0 or t % interval != 0:
 		return 0
 	var cap := tp.e_max
 	if threshold > 0 and float(threshold) < tp.e_per and cap > 0:

@@ -352,6 +352,122 @@ func _apart() -> void:
 	EfpSim.live_total = 0
 	EfpSimNative.live_native = 0
 
+## Round 763's review, L3: an emission far past MAX_PARTICLES is refused all at
+## once, the same on both sides, and fast (one by one it was a loop of half a
+## million a frame).
+func _huge() -> void:
+	var t := EfpSim.compile(_node("huge", 30, "NormalTimeExtinct", _emit(0, 100000, 1, 1000000, 500000.0),
+		[_cmd("SetConePos", _cone(Vector3(1, 2, 0.5)))]))
+	var t0 := Time.get_ticks_msec()
+	_single(t, 41, 60, 0, "an emission of 500,000 a frame (folded refusals)", false)
+	_check(Time.get_ticks_msec() - t0 < 20000, "... in %d ms (both sides)" % (Time.get_ticks_msec() - t0))
+
+## Round 763's review, L5: a list mixing native masters and one the packer
+## refuses (it stays EfpSim) is split: the native ones step in one native batch,
+## the GDScript one in GDScript, each exactly as it steps alone.
+func _mixed() -> void:
+	var refused := _simple(1, 3)
+	# A schedule longer than the node's frames: GDScript steps it as before
+	# (it reads only ages below its length), the packer refuses it.
+	refused.tpls[0].schedule.append([])
+	var fx: Array = []
+	var alone: Array = []
+	var gd_alone := EfpEffect.new()
+	gd_alone.sim = EfpSim.new(refused, 777)
+	gd_alone.sim.keep = true
+	for i in 6:
+		var t := _template(i, 1)
+		var e := EfpEffect.new()
+		e.sim = EfpSim.new(t, 600 + i)
+		e.sim.keep = true
+		_check(e.use_native_sim(600 + i), "mixed: effect %d is native" % i)
+		fx.append(e)
+		var a := EfpEffect.new()
+		a.sim = EfpSimNative.new(t, 600 + i)
+		a.sim.keep = true
+		alone.append(a)
+		if i == 2:
+			var g := EfpEffect.new()
+			g.sim = EfpSim.new(refused, 777)
+			g.sim.keep = true
+			_check(not g.use_native_sim(777) and not (g.sim is EfpSimNative) and refused.native_error != "",
+				"mixed: the packer refuses the tampered template (%s)" % refused.native_error)
+			fx.append(g)
+	var b0 := EfpSimNative.batches
+	var same := true
+	for f in 120:
+		EfpSim.live_total = 0
+		EfpSimNative.live_native = 0
+		EfpSimBatch.run(fx, 1.0 / 25.0)
+		var mixed_gd := EfpSim.live_total
+		var mixed_native := EfpSimNative.live_native
+		EfpSim.live_total = 0
+		EfpSimNative.live_native = 0
+		EfpSimBatch.run(alone, 1.0 / 25.0)
+		gd_alone.step_sim(1.0 / 25.0)
+		if mixed_gd != EfpSim.live_total or mixed_native != EfpSimNative.live_native:
+			same = false
+		var k := 0
+		for e in fx:
+			var s: EfpSim = (e as EfpEffect).sim
+			var want: Dictionary
+			if s is EfpSimNative:
+				want = ((alone[k] as EfpEffect).sim as EfpSimNative).dump()
+				k += 1
+				if EfpNativeParity.compare(want, (s as EfpSimNative).dump()) != "":
+					same = false
+			elif EfpNativeParity.compare(EfpNativeParity.gd_dump(gd_alone.sim), EfpNativeParity.gd_dump(s)) != "":
+				same = false
+	_check(same and EfpSimNative.batches - b0 == 240,
+		"mixed: 120 frames, the native effects through the native batch only (%d batches), the refused one in GDScript, each as it steps alone" % [EfpSimNative.batches - b0])
+	for e in fx + alone + [gd_alone]:
+		(e as EfpEffect).sim.clear()
+		(e as Node).free()
+	EfpSim.live_total = 0
+	EfpSimNative.live_native = 0
+
+## Round 763's review, M1: a step that panics, on the main thread or a pool
+## thread. The batch returns (no hang), the native simulation goes off for the
+## session, every effect of the batch carries on in GDScript, and nothing
+## raises a script error. Last: it leaves the native simulation off.
+func _panic() -> void:
+	EfpSim.live_total = 0
+	EfpSimNative.live_native = 0
+	EfpSimNative.configure(4)
+	EfpSimNative.pool_min_work = 0
+	var fx := _effects(16, -1, true)
+	for f in 20:
+		EfpSimBatch.run(fx, 1.0 / 20.0)
+	((fx[9] as EfpEffect).sim as EfpSimNative)._n.call("qa_panic_next_step")
+	var t0 := Time.get_ticks_msec()
+	EfpSimBatch.run(fx, 1.0 / 20.0)
+	var took := Time.get_ticks_msec() - t0
+	var all_gd := true
+	for e in fx:
+		if ((e as EfpEffect).sim as EfpSimNative).is_native():
+			all_gd = false
+	_check(took < 5000 and not EfpSimNative.available() and all_gd and EfpSimNative.status.contains("panic"),
+		"a step that panics: the batch returned in %d ms, the native simulation is off (%s), every effect in GDScript" % [took, EfpSimNative.status])
+	var before := 0
+	for e in fx:
+		before += (e as EfpEffect).sim.count()
+	for f in 40:
+		EfpSimBatch.run(fx, 1.0 / 20.0)
+	var after := 0
+	for e in fx:
+		after += (e as EfpEffect).sim.particles.size()
+	_check(after > 0 and EfpSim.live_total == after and EfpSimNative.live_native == 0,
+		"... and they carry on in GDScript (%d particles after 40 frames, live_total %d, live_native %d)" % [after, EfpSim.live_total, EfpSimNative.live_native])
+	var e2 := EfpEffect.new()
+	e2.sim = EfpSim.new(_template(1, 1), 5)
+	_check(not e2.use_native_sim(5), "... and a master made after it stays EfpSim")
+	e2.free()
+	for e in fx:
+		(e as EfpEffect).sim.clear()
+		(e as Node).free()
+	EfpSim.live_total = 0
+	EfpSimNative.live_native = 0
+
 # ---------------------------------------------------------------- the draws
 
 func _loaders() -> Array:
@@ -488,8 +604,11 @@ func _initialize() -> void:
 		_batch(60, 30.0, 300, 0, -1, 150, true)
 		EfpSim.cap_total = cap
 		_apart()
+		_huge()
+		_mixed()
 		_draws()
 		_through_step_post()
+		_panic()
 	EfpSimBatch.reap_all()
 	if _failures == 0:
 		print("ALL PASS")

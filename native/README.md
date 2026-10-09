@@ -108,7 +108,9 @@ returns one Dictionary of packed arrays, or `{error}`.
   `Vector3::normalize`) with no fused multiply-add, and keeps in f64 what GDScript keeps in a
   `float` (an emitter's accumulator, the clock, the cone's angles, the scale graph's time). The
   random stream is Godot's `RandomPCG` (pcg32 with Godot's increment, `randf`'s clz/ldexp form);
-  `sin`/`cos` are the C library's, as the engine's are. Two inputs where the GDScript itself
+  `sin`/`cos` are the C library's, as the engine's are -- so the bit-exact parity is Linux's
+  (glibc both sides); the Windows DLL's mingw `sincos` (x87 `fsincos`) may differ in the last digit,
+  which is cosmetic (round 763's review, I2). Two inputs where the GDScript itself
   differs between builds are taken as the editor/debug build does them: a singular basis's
   inverse is returned unchanged (`ERR_FAIL_COND(det == 0)` under MATH_CHECKS; a release template
   divides by zero).
@@ -129,6 +131,14 @@ returns one Dictionary of packed arrays, or `{error}`.
   (main) thread always works too, so 0 helpers is one core. `EfpSimNative.configure` sizes it:
   `min(4, cores, Godot's WorkerThreadPool size)` threads in all by default, `OPENSRO_EFP_THREADS=<n>`
   to set it, `OPENSRO_QA_EFP_THREADS=0` for the main thread alone.
+  Round 763's review: a batch under `POOL_MIN_WORK` (4,000 particle-steps; the swarm's are about
+  520) runs on the main thread alone, so a helper descheduled on a busy machine cannot hold up a
+  small batch; `OPENSRO_EFP_POOL_MIN_WORK=<n>` sets it (0: the pool whenever there are helpers).
+- **Crash safety** (round 763's review, M1): every step runs under `catch_unwind`, on the pool's
+  threads and the main thread. A panicking effect is marked broken and counted finished (nothing
+  waits on it), the batch returns `{error}`, every lock survives a poisoned mutex, and the client
+  turns the native simulation off for the session, its masters carrying on in GDScript. A sim
+  listed twice in one batch is refused (L1). `SrEfpSim.qa_panic_next_step` is the test hook.
 - **The outputs** (`core/efp_out.rs`), built on the thread that stepped the effect: one
   `PackedFloat32Array` a draw node in `RenderingServer.multimesh_set_buffer`'s layout (rows and
   origin, colour, custom data: 20 floats an instance), sized as `_update_draws` sizes the

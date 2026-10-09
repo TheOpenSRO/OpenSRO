@@ -9,15 +9,16 @@
 //! main thread while the main thread waits for it; each effect sits behind its own mutex, held by
 //! one thread at a time.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use godot::prelude::*;
 
 use crate::core::efp_batch::{self, SimBox};
-use crate::core::efp_out::{DrawNode, LinkNode, Outputs, STRIDE};
+use crate::core::efp_out::{DrawNode, LinkNode, STRIDE};
 use crate::core::efp_sim::{self, Cmd, ExactGate, Quality, ScaleGraph, Sim, Template, Tpl};
 use crate::core::gdmath::{B3, V3};
-use crate::core::pool::Pool;
+use crate::core::pool::{lock, Pool};
 
 /// The effect interface's own number (EfpSimNative.EFP_API): additive classes, so the readers'
 /// API number (core::API) is unchanged and an older library keeps them.
@@ -247,8 +248,23 @@ pub struct SrEfpSim {
 }
 
 impl SrEfpSim {
+    /// Runs `f` on the effect. Round 763's review, M1: the lock survives a poisoned mutex, a
+    /// broken effect (one that panicked) is left alone, and a panic in `f` marks it broken instead
+    /// of escaping: None in all three cases, and `broken()` tells GDScript, which then simulates
+    /// the effect in GDScript (EfpSimNative._fall_back).
     fn with<R>(&self, f: impl FnOnce(&mut SimBox) -> R) -> Option<R> {
-        self.b.as_ref().map(|b| f(&mut b.lock().unwrap()))
+        let b = self.b.as_ref()?;
+        let mut g = lock(b);
+        if g.broken {
+            return None;
+        }
+        match catch_unwind(AssertUnwindSafe(|| f(&mut g))) {
+            Ok(r) => Some(r),
+            Err(_) => {
+                g.broken = true;
+                None
+            }
+        }
     }
 }
 
@@ -259,7 +275,7 @@ impl SrEfpSim {
     #[func]
     fn setup(&mut self, tmpl: Gd<SrEfpTemplate>, seed: i64) -> bool {
         let Some(t) = tmpl.bind().t.clone() else { return false };
-        self.b = Some(Arc::new(Mutex::new(SimBox { sim: Sim::new(t, seed as u64), out: Outputs::default() })));
+        self.b = Some(Arc::new(Mutex::new(SimBox::new(Sim::new(t, seed as u64)))));
         true
     }
 
@@ -313,7 +329,10 @@ impl SrEfpSim {
     #[func]
     fn apply_draws(&mut self) -> i64 {
         let Some(b) = self.b.clone() else { return 0 };
-        let mut bx = b.lock().unwrap();
+        let mut bx = lock(&b);
+        if bx.broken {
+            return 0;
+        }
         bx.out.fresh = false;
         let mut rs = godot::classes::RenderingServer::singleton();
         let mut sent = 0;
@@ -407,7 +426,24 @@ impl SrEfpSim {
         self.with(|b| b.sim.finished()).unwrap_or(true)
     }
 
-    /// EfpSim.advance on its own: live_total is `base`, the cap `limit`. [frames stepped, change].
+    /// Whether the effect is broken: a panic stepped it (round 763's review, M1). Every call on it
+    /// then does nothing.
+    #[func]
+    fn broken(&self) -> bool {
+        self.b.as_ref().is_some_and(|b| lock(b).broken)
+    }
+
+    /// QA (efp_native_test): the effect's next batch step panics on purpose, to prove the batch
+    /// returns an error instead of hanging, and that the client falls back to GDScript.
+    #[func]
+    fn qa_panic_next_step(&self) {
+        if let Some(b) = self.b.as_ref() {
+            lock(b).panic_next = true;
+        }
+    }
+
+    /// EfpSim.advance on its own: live_total is `base`, the cap `limit`. [frames stepped, change],
+    /// or empty when the effect is broken.
     #[func]
     fn advance(&self, delta: f64, base: i64, limit: i64, keep: bool, interval_mul: i64, threshold: i64) -> PackedInt64Array {
         let r = self
@@ -418,8 +454,11 @@ impl SrEfpSim {
                 let n = b.sim.advance(delta, &mut ExactGate { below: limit - base });
                 [n, b.sim.live_delta]
             })
-            .unwrap_or([0, 0]);
-        PackedInt64Array::from(&r[..])
+            ;
+        match r {
+            Some(r) => PackedInt64Array::from(&r[..]),
+            None => PackedInt64Array::new(),
+        }
     }
 
     /// EfpSim.step on its own. Returns the change.
@@ -487,7 +526,7 @@ impl SrEfpSim {
     #[func]
     fn build_outputs(&self, cam: Basis) {
         self.with(|b| {
-            let SimBox { sim, out } = b;
+            let SimBox { sim, out, .. } = b;
             out.build(sim, &b3(&cam));
         });
     }
@@ -616,8 +655,11 @@ impl SrEfpBatch {
     /// EfpSimBatch.run natively: every SrEfpSim in `sims` advanced by `delta`, the cap in their
     /// order from live_total `base` with each one's `limits[i]`, `keeps[i]` its kept flag, `cams`
     /// nine floats (rows) a sim for its draws, on up to `helpers` pool threads and this one.
-    /// {steps, change, counters (age, dropped, spawned, revived, count a sim) (PackedInt64Array), waits, wait_usec, misses, by_helpers, bounds_usec,
-    /// sim_usec}; {} when an element is not a set-up SrEfpSim.
+    /// {steps, change, counters (age, dropped, spawned, revived, count a sim) (PackedInt64Array),
+    /// waits, wait_usec, misses, by_helpers, bounds_usec, sim_usec, work, pooled}; the pool is
+    /// used only from `min_work` particle-steps (round 763's review, L2). {error: String} when an
+    /// element is not a set-up SrEfpSim, a sim is listed twice (L1) or a step panicked (M1): the
+    /// client then turns the native simulation off for the session.
     #[func]
     #[allow(clippy::too_many_arguments)]
     fn run(
@@ -631,16 +673,22 @@ impl SrEfpBatch {
         interval_mul: i64,
         threshold: i64,
         helpers: i64,
+        min_work: i64,
     ) -> VarDictionary {
         let mut out = VarDictionary::new();
+        let fail = |why: &str| {
+            let mut d = VarDictionary::new();
+            d.set("error", &GString::from(why));
+            d
+        };
         let n = sims.len();
         if limits.len() < n || keeps.len() < n {
-            return out;
+            return fail("limits or keeps shorter than the sims");
         }
         let mut shared = Vec::with_capacity(n);
         for v in sims.iter_shared() {
-            let Ok(g) = v.try_to::<Gd<SrEfpSim>>() else { return out };
-            let Some(b) = g.bind().b.clone() else { return out };
+            let Ok(g) = v.try_to::<Gd<SrEfpSim>>() else { return fail("an element is not an SrEfpSim") };
+            let Some(b) = g.bind().b.clone() else { return fail("an SrEfpSim that was not set up") };
             shared.push(b);
         }
         let cams_v: Vec<B3> = (0..n).map(|i| b3_from(cams.as_slice().get(9 * i..9 * i + 9).unwrap_or(&[]))).collect();
@@ -654,7 +702,12 @@ impl SrEfpBatch {
             cams_v,
             quality(interval_mul, threshold),
             helpers.max(0) as usize,
+            min_work,
         );
+        let r = match r {
+            Ok(r) => r,
+            Err(e) => return fail(&e),
+        };
         out.set("steps", &PackedInt64Array::from(r.steps));
         out.set("change", &PackedInt64Array::from(r.change));
         out.set("counters", &PackedInt64Array::from(r.counters));
@@ -664,7 +717,15 @@ impl SrEfpBatch {
         out.set("by_helpers", r.by_helpers);
         out.set("bounds_usec", r.bounds_us);
         out.set("sim_usec", r.sim_us);
+        out.set("work", r.work);
+        out.set("pooled", r.pooled);
         out
+    }
+
+    /// The batch's default work threshold for the pool (core::efp_batch::POOL_MIN_WORK).
+    #[func]
+    fn pool_min_work(&self) -> i64 {
+        efp_batch::POOL_MIN_WORK
     }
 
     /// Singular bases inverted so far (returned unchanged, as the editor build's GDScript does).
