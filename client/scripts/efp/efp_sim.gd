@@ -198,7 +198,10 @@ class_name EfpSim
 ## for everyone else's effects and the full MAX_TOTAL for `reserved` ones
 ## (the local player's casts, hits and level-up), so a crowd's auras cannot
 ## starve the player's own effects. A refused spawn is counted in `dropped`
-## and gives its 1.0 back to the emitter.
+## and gives its 1.0 back to the emitter. Retail has none of these (READ,
+## round 761: its particles come from a free list that grows by 8,192 and
+## never refuses, and nothing counts them); its one crowd thinning is per
+## character, effects frozen past a camera distance (docs/rounds/r761.md).
 
 const FRAME_SEC := 0.05 ## READ: 50 ms, see the header
 const MAX_STEPS_PER_ADVANCE := 10 ## OURS: a long hitch catches up at most 0.5 s
@@ -206,6 +209,9 @@ const MAX_PARTICLES := 300 ## OURS
 const MAX_TOTAL := 2000 ## OURS: ~7 us a particle-frame in GDScript (MEASURED), so <= ~14 ms a 50 ms frame
 const RESERVE := 600 ## OURS: of MAX_TOTAL, kept for reserved (own) effects
 const MAX_KEYS := 100000 ## OURS: bound on one command's scheduling loop
+## Round 761: growth_bounds' ceiling on a spawn count (far above MAX_PARTICLES;
+## keeps the products in range).
+const FAN_MAX := 1 << 20
 
 const LIFE_EXTINCT := 0
 const LIFE_LOOP := 1
@@ -213,6 +219,20 @@ const LIFE_NEVER := 2
 
 ## The number of particles alive across every EfpSim (the global cap).
 static var live_total := 0
+## Round 761 (QA): the cap in force, MAX_TOTAL unless OPENSRO_QA_EFP_CAP
+## names another (0: no global cap), for measuring what the cap saves.
+static var cap_total := _qa_cap()
+
+static func _qa_cap() -> int:
+	var v := OS.get_environment("OPENSRO_QA_EFP_CAP")
+	if v == "" or not v.is_valid_int():
+		return MAX_TOTAL
+	return int(v) if int(v) > 0 else 1 << 30
+
+## The global cap an effect's spawn is held to: cap_total for a reserved
+## effect, cap_total - RESERVE for any other.
+static func limit_for(is_reserved: bool) -> int:
+	return cap_total if is_reserved else cap_total - RESERVE
 ## The emission quality globals handed to EfpReader.emit_tick (see above).
 static var interval_mul := 0
 static var threshold := 0
@@ -279,6 +299,17 @@ class Tpl:
 class Template:
 	var tpls: Array[Tpl] = []
 	var unsupported: PackedStringArray = PackedStringArray() ## names no rule covers
+	## Round 761 (growth_bounds), per node: `rate`, at most how many
+	## particles one of its emitters spawns in one frame; `kids`, at most how
+	## many a newborn of it makes spawn in the same frame (its children's
+	## emitters, recursively); `fan` = rate x (1 + kids), one emitter's frame
+	## all told. `fan_child`: the largest `kids`, what a newborn's emitters add
+	## per later frame. Filled by compile(); a Template built otherwise leaves
+	## them empty and gets the loose bound.
+	var rate: PackedInt32Array = PackedInt32Array()
+	var kids: PackedInt32Array = PackedInt32Array()
+	var fan: PackedInt32Array = PackedInt32Array()
+	var fan_child := 0
 
 class Particle:
 	var tpl: int
@@ -323,6 +354,9 @@ class Emitter:
 	var done := false
 	## The newest live particle of this emitter (the list's tail).
 	var tail: Particle = null
+	## Round 761 (growth_bounds): its particles queued to die, each of whose
+	## deaths will give 1.0 back to `acc` at the next flush.
+	var dying := 0
 
 var template: Template
 var particles: Array[Particle] = []
@@ -343,13 +377,21 @@ var _rng := RandomNumberGenerator.new()
 var _scratch := Vector3.ZERO ## the interpreter's stack vector (see SetSpherePos)
 ## Round 759 (EfpSimBatch): while stepped on a pool thread, this sim does not
 ## touch the shared `live_total`: its spawns and deaths go to `_live_delta`,
-## and it may add at most `_allow` particles (net) -- its share of what the
-## global cap left at the batch's start -- so the cap still holds for the sum.
-## end_deferred() hands the delta back on the main thread.
+## and end_deferred() hands the delta back on the main thread. Round 761: the
+## cap is decided as the main thread decides it, `live_total < limit` with
+## live_total what it would be had the effects before this one in the batch
+## all advanced first (EfpSimBatch.Job.admit): a spawn at own delta d is
+## surely taken while d < `_sure_below` and surely refused from
+## `_sure_from` on; between the two the gate (`_gate`, the batch's Job) is
+## asked, and waits for the effects before this one when it must.
 var _deferred := false
-var _allow := 0
+var _gate: Object = null
+var _gate_index := 0
+var _sure_below := 0
+var _sure_from := 0
 var _live_delta := 0
-
+## Round 761: the particles queued to die (growth_bounds).
+var _dying_n := 0
 
 ## Compiles a decoded file (or its root node) into a template. Unsupported
 ## command names are listed, not fatal.
@@ -373,7 +415,40 @@ static func compile(root: EfpReader.EfpNode) -> Template:
 	for tp in t.tpls:
 		tp.keep_pos = tp.keep_pos and tp.pos_read
 		tp.keep_rot = tp.keep_rot and tp.rot_read
+	_compile_fan(t)
 	return t
+
+## Round 761: Template.rate, kids, fan and fan_child (growth_bounds). An
+## emitter spawns ftol(min(per_trigger + acc, cap)) - ftol(acc) a frame
+## (emit_spawns), at least 0: none without StaticEmit or an interval, none
+## with per_trigger <= 0 (acc only falls) or max_live <= 0 (the cap is 0 or
+## below); else acc stays in [0, cap], so at most max_live, and at most
+## ftol(per_trigger) + 2 (the float32 sum can round across one more
+## integer). Out of the plain range (NaN, above 2^24) the bound is FAN_MAX.
+## Each newborn starts its children's emitters, which may spawn in the same
+## frame (the emission loop runs the emitters appended during it). Preorder
+## puts children after parents, so one pass from the end.
+static func _compile_fan(t: Template) -> void:
+	var n := t.tpls.size()
+	t.rate.resize(n)
+	t.kids.resize(n)
+	t.fan.resize(n)
+	t.fan_child = 0
+	for idx in range(n - 1, -1, -1):
+		var tp: Tpl = t.tpls[idx]
+		var kids := 0
+		for k in tp.children:
+			kids = mini(kids + t.fan[k], FAN_MAX)
+		t.fan_child = maxi(t.fan_child, kids)
+		var r := 0
+		if tp.emit != null and tp.e_int > 0:
+			if is_nan(tp.e_per) or tp.e_per > 16777216.0 or tp.e_max > 16777216:
+				r = FAN_MAX
+			elif tp.e_per > 0.0 and tp.e_max > 0:
+				r = mini(int(tp.e_per) + 2, tp.e_max)
+		t.rate[idx] = r
+		t.kids[idx] = kids
+		t.fan[idx] = mini(r * (1 + kids), FAN_MAX)
 
 ## The node `level` levels above node `i` (-1: none, or the effect).
 static func _tpl_ancestor(t: Template, i: int, level: int) -> int:
@@ -517,18 +592,91 @@ func restart() -> void:
 		e.owner = _root
 		emitters.append(e)
 
-## Round 759 (EfpSimBatch): the next advance() runs off the main thread, with
-## `allow` particles (net) its share of the global cap.
-func begin_deferred(allow: int) -> void:
+## Round 759 (EfpSimBatch): the next advance() may run off the main thread.
+## Round 761: `gate` (EfpSimBatch.Job) decides the global cap for it, as
+## effect `index` of the batch's ordered list; nothing is sure until it says.
+func begin_deferred(gate: Object, index: int) -> void:
 	_deferred = true
-	_allow = allow
+	_gate = gate
+	_gate_index = index
 	_live_delta = 0
+	_sure_below = -FAN_MAX
+	_sure_from = FAN_MAX
 
 ## Back on the main thread: its particles counted in `live_total` again.
 func end_deferred() -> void:
 	_deferred = false
+	_gate = null
 	live_total += _live_delta
 	_live_delta = 0
+
+## Round 761 (EfpSimBatch): bounds on how much advance(delta) can change this
+## sim's particle count, Vector2i(least, most), from its state now and
+## without changing it -- so an effect later in a batch knows, before this
+## one has finished, whether the cap can bind for it. Sound by construction
+## (efp_sim_batch_test holds it against the real deltas):
+## - the steps are advance()'s own count (the same float arithmetic);
+## - in one step only the particles queued to die die (the flush at its
+##   start; a death queued in the step goes at the next), in more any of them;
+## - spawns: in the first step, each emitter whose owner survives the flush
+##   and whose timing fires this frame (emit_spawns' tests, the owner's age
+##   unchanged until after the emission) spawns at most its node's `fan`; in
+##   each later step every surviving emitter may, and every particle spawned
+##   so far adds at most `fan_child` more;
+## - the count never passes MAX_PARTICLES.
+func growth_bounds(delta: float) -> Vector2i:
+	var steps := 0
+	var a := _acc + maxf(delta, 0.0)
+	while a >= FRAME_SEC and steps < MAX_STEPS_PER_ADVANCE:
+		a -= FRAME_SEC
+		steps += 1
+	if steps == 0 or template == null or template.tpls.is_empty():
+		return Vector2i.ZERO
+	var c := particles.size()
+	var dying := _dying_n
+	var least := -dying if steps == 1 else -c
+	var most := MAX_PARTICLES - c
+	var fan := template.fan
+	if fan.size() != template.tpls.size():
+		return Vector2i(least, most)
+	var tpls := template.tpls
+	var rate := template.rate
+	var kids := template.kids
+	var first := 0
+	var every := 0
+	for e in emitters:
+		var f: int = fan[e.tpl]
+		if f == 0:
+			continue
+		var owner := e.owner
+		if owner != _root and owner.dying:
+			continue
+		every = mini(every + f, FAN_MAX)
+		# emit_spawns' timing (its tests in its order, EfpReader.i32 inline:
+		# on the pool's threads a GDScript call costs more than the
+		# arithmetic, round 761's bench).
+		var tp: Tpl = tpls[e.tpl]
+		var t := (((age if owner == _root else owner.age) - tp.e_delay + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+		if t >= tp.e_dur or t < 0 or tp.e_int <= 0:
+			continue
+		var interval := tp.e_int
+		if interval_mul > 1:
+			var m := ((interval * interval_mul + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+			if m < tp.e_dur:
+				interval = m
+		if t % interval != 0:
+			continue
+		# What fits under the cap above acc after the flush's give-backs
+		# (each max(acc - 1, 0): max(acc - dying, 0) in all): emit_spawns
+		# returns ftol(nxt) - ftol(acc) with nxt <= cap <= max_live.
+		var r: int = rate[e.tpl]
+		if r < FAN_MAX and e.acc >= 0.0 and e.acc < 16777216.0:
+			r = mini(r, maxi(tp.e_max - int(maxf(e.acc - float(e.dying), 0.0)), 0))
+		first = mini(first + r * (1 + kids[e.tpl]), FAN_MAX)
+	var spawns := first
+	for _s in range(1, steps):
+		spawns = mini(spawns + every + spawns * template.fan_child, FAN_MAX)
+	return Vector2i(least, mini(most, spawns - dying))
 
 func _live_add(n: int) -> void:
 	if _deferred:
@@ -553,6 +701,7 @@ func clear() -> void:
 		e.tail = null
 	particles.clear()
 	emitters.clear()
+	_dying_n = 0
 
 ## True once nothing is alive (a particle queued to die still counts) and
 ## no emitter spawns this frame -- FUN_00ca9ee0's test: every root emitter
@@ -664,6 +813,9 @@ func step() -> void:
 			revived += 1
 		else:
 			p.dying = true
+			_dying_n += 1
+			if p.emitter != null:
+				p.emitter.dying += 1
 	age += 1
 
 ## Removes the particles queued to die last frame (READ: the start of
@@ -688,8 +840,10 @@ func _flush_deaths() -> void:
 	var live_emitters: Array[Emitter] = []
 	for e in emitters:
 		if e.owner == _root or e.owner.alive:
+			e.dying = 0
 			live_emitters.append(e)
 	emitters = live_emitters
+	_dying_n = 0
 
 ## The frame's start for the effect (_root): it holds still during a step
 ## (old = current, not changed), so a u6 follow adds nothing there -- the
@@ -875,9 +1029,15 @@ func can_spawn() -> bool:
 	if particles.size() >= MAX_PARTICLES:
 		return false
 	if _deferred:
-		return _live_delta < _allow
-	var limit := MAX_TOTAL if reserved else MAX_TOTAL - RESERVE
-	return live_total < limit
+		if _live_delta < _sure_below:
+			return true
+		if _live_delta >= _sure_from:
+			return false
+		var sure: Vector2i = _gate.admit(_gate_index, _live_delta)
+		_sure_below = sure.x
+		_sure_from = sure.y
+		return _live_delta < _sure_below
+	return live_total < limit_for(reserved)
 
 func _spawn(tpl_index: int, owner: Particle, from: Emitter = null) -> void:
 	if not can_spawn():

@@ -282,10 +282,12 @@ func _caps() -> void:
 	_check(S.live_total == 0, "clearing the effects returns their share of the total")
 
 ## Round 759 (EfpSimBatch): many effects' steps on WorkerThreadPool. Each
-## effect is stepped once; the global cap holds for the sum (each sim adds at
-## most its share of the room the batch started with) and every spawn and
-## death is counted back in live_total; and with room for all, the threaded
-## steps make the same particles as the main thread's (each sim's own RNG).
+## effect is stepped once; the global cap holds for the sum and every spawn
+## and death is counted back in live_total; and with room for all, the
+## threaded steps make the same particles as the main thread's (each sim's own
+## RNG). Round 761: when the cap binds, the room goes as on the main thread,
+## in the list's order, to the last particle (efp_sim_batch_test has the long
+## runs).
 func _batch() -> void:
 	var B: GDScript = load("res://scripts/efp/efp_sim_batch.gd")
 	_check(B != null, "EfpSimBatch exists")
@@ -307,8 +309,20 @@ func _batch() -> void:
 		if (e.sim as EfpSim).age != 1:
 			stepped = false
 	_check(bool(B.last["threaded"]) and stepped, "8 effects stepped once each, on the pool (threaded %s)" % str(B.last["threaded"]))
-	_check(S.live_total == sum and sum <= S.MAX_TOTAL - S.RESERVE and most <= (S.MAX_TOTAL - S.RESERVE) / 8,
-		"the cap holds for the sum (%d of %d, at most %d each) and live_total counts them (%d)" % [sum, S.MAX_TOTAL - S.RESERVE, most, S.live_total])
+	var counts: Array = []
+	for e in fx:
+		counts.append((e.sim as EfpSim).particles.size())
+	# The main thread's order: the first four fill to MAX_PARTICLES, the
+	# fifth takes the rest of MAX_TOTAL - RESERVE, the last three none.
+	var room: int = S.MAX_TOTAL - S.RESERVE
+	var want: Array = []
+	for i in range(8):
+		var take: int = mini(S.MAX_PARTICLES, room)
+		want.append(take)
+		room -= take
+	_check(S.live_total == sum and sum == S.MAX_TOTAL - S.RESERVE and most <= S.MAX_PARTICLES and counts == want,
+		"the cap binds as on the main thread: %s (want %s), all %d of %d given out, live_total %d" % [str(counts), str(want), sum, S.MAX_TOTAL - S.RESERVE, S.live_total])
+	_check(int(B.last["misses"]) == 0, "every effect's change fell inside the bounds it published (misses %d)" % int(B.last["misses"]))
 	for e in fx:
 		(e.sim as EfpSim).clear()
 	_check(S.live_total == 0, "... and clearing returns them")

@@ -528,7 +528,10 @@ the body's child). It also ends a one-shot after `EfpEffect.ONESHOT_MAX_LIFE` = 
 longest one-shot that ends by itself lasts 238 frames (MEASURED over the 883 ACT_S and SHOT
 files).
 
-**The particle budget and a kept root** (OURS). Retail has no particle budget. When this client's
+**The particle budget and a kept root** (OURS). Retail has no particle budget (READ, round 761:
+the spawn loop `FUN_00c86cd0` takes each particle from the free list `FUN_00c86c30`, which mallocs
+another chunk of 8,192 whenever it is empty and never refuses; nothing counts live particles or
+effects; `docs/rounds/r761.md`). When this client's
 budget refuses a kept effect's root, nothing is left to revive. Such an effect retries its root
 every frame until the budget has room, instead of ending.
 
