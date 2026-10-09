@@ -260,8 +260,13 @@ var _slot_cap := 0
 ## Round 762: the body texture's first size, in bodies (_take_slot).
 var first_slot_cap := SLOTS_PER_ROW * 16
 var _body_data := PackedFloat32Array()
-var _body_tex: ImageTexture = null
+## Round 762's review, F7 (F8): a layer per row of SLOTS_PER_ROW bodies, so a
+## frame uploads only the rows it changed (_dirty_rows), not the whole texture
+## (320 KB at 4,096 bodies, three copies each, for one far body moved).
+## `_body_dirty`: every row (a new texture, a test's forced upload).
+var _body_tex: Texture2DArray = null
 var _body_dirty := false
+var _dirty_rows := {}
 var _moved := {}              # Body -> true
 var _epoch := 0.0
 var _range := 0.0
@@ -890,7 +895,7 @@ func _write_fade(b: Body) -> void:
 	if _body_data[o] == v:
 		return
 	_body_data[o] = v
-	_body_dirty = true
+	_dirty_rows[b.slot / SLOTS_PER_ROW] = true
 
 ## Round 762: how many bodies are fading (in, out, or held).
 func fading_count() -> int:
@@ -1209,6 +1214,37 @@ func item_origin(item_skel: Node3D):
 		return Vector3(INF, INF, INF)
 	return b.xf.origin if b != null else null
 
+## Round 762's review, F1 (OURS): where a ghost's item skeleton is now --
+## item_frame's composition for a body drawn from its recipe: the body's
+## transform times its bone `bone`'s pose this frame (the baked skin matrix
+## times the bone's rest) times `chain`, the item skeleton's transform under
+## its attachment. Null when `node` is not a ghost or the bone is not its
+## layout's. EquipFx places a ghost's weapon particles by it.
+func ghost_item_frame(node: Object, bone: int, chain: Transform3D):
+	var b: Body = _bodies.get(node) if node != null else null
+	if b == null or not b.ghost or bone < 0 or bone >= b.layout.bones:
+		return null
+	var clip: Vector3i = b.layout.clips.get(b.frames, Vector3i(0, 1, 1))
+	var row := clip.x + frame_of(node, _last_time)
+	return b.xf * _bone_xf(b.layout, row, bone) * b.layout.rests[bone] * chain
+
+## A ghost's place for EquipFx's choice of the nearest (item_origin's rule:
+## INF while its page is held or it fades out), or null when `node` is not
+## a ghost.
+func ghost_origin(node: Object):
+	var b: Body = _bodies.get(node) if node != null else null
+	if b == null or not b.ghost:
+		return null
+	if b.fade == FADE_OUT or (b.fade == FADE_IN and is_inf(b.fade_start)):
+		return Vector3(INF, INF, INF)
+	return b.xf.origin
+
+## Row `r` of the body texture (SLOTS_PER_ROW bodies) as its layer's image.
+func _body_row_image(r: int) -> Image:
+	var n := SLOTS_PER_ROW * FLOATS_PER_BODY
+	return Image.create_from_data(SLOTS_PER_ROW * TEXELS_PER_BODY, 1, false, Image.FORMAT_RGBAF,
+		_body_data.slice(r * n, (r + 1) * n).to_byte_array())
+
 ## Character Sight Range (0: none) for every far part.
 func set_range(r: float) -> void:
 	if is_equal_approx(r, _range):
@@ -1333,16 +1369,25 @@ func _rebase(idle_time: float) -> void:
 
 func _upload(force: bool = false) -> void:
 	var u0 := Time.get_ticks_usec() if FrameSplit.on else 0
-	if _body_dirty and _slot_cap > 0:
-		_body_dirty = false
-		var img := Image.create_from_data(SLOTS_PER_ROW * TEXELS_PER_BODY, _slot_cap / SLOTS_PER_ROW, false,
-			Image.FORMAT_RGBAF, _body_data.to_byte_array())
-		if _body_tex == null or _body_tex.get_height() != img.get_height():
-			_body_tex = ImageTexture.create_from_image(img)
+	if (_body_dirty or not _dirty_rows.is_empty()) and _slot_cap > 0:
+		var layers := _slot_cap / SLOTS_PER_ROW
+		if _body_tex == null or _body_tex.get_layers() != layers:
+			var imgs: Array[Image] = []
+			for r in range(layers):
+				imgs.append(_body_row_image(r))
+			_body_tex = Texture2DArray.new()
+			_body_tex.create_from_images(imgs)
 			for k in _twins:
 				(_twins[k] as ShaderMaterial).set_shader_parameter("crowd_bodies", _body_tex)
+			stats["body_rows_up"] = int(stats.get("body_rows_up", 0)) + layers
 		else:
-			_body_tex.update(img)
+			var rows: Array = range(layers) if _body_dirty else _dirty_rows.keys()
+			for r in rows:
+				if int(r) < layers:
+					_body_tex.update_layer(_body_row_image(int(r)), int(r))
+			stats["body_rows_up"] = int(stats.get("body_rows_up", 0)) + rows.size()
+		_body_dirty = false
+		_dirty_rows.clear()
 		stats["uploads"] += 1
 	for k in _layouts:
 		var l: Layout = _layouts[k]
@@ -1473,7 +1518,11 @@ func _show_group(g: Group) -> void:
 ## twin of its material (AppearFade.fade_twin: a glowing weapon fades on its
 ## plain material, READ round 734) -- made the first time a body in it fades.
 ## None when the material has no fade twin: its twin then draws its fading
-## bodies opaque (`crowd_fades` false), as AppearFade leaves such a mesh.
+## bodies opaque (`crowd_fades` false), as AppearFade leaves such a mesh --
+## round 762's review, F7 (F9): but nothing at alpha 0 (a held page, a
+## fade-out's end; crowd_gpu_vertex.gdshaderinc). The flag is on the twin,
+## which every group of the same source material and layout shares: their
+## fade source, and so the want of a fade twin, is the same.
 func _make_fade_inst(g: Group) -> void:
 	g.fade_tried = true
 	var fsrc: Material = _fade_src(g.src) if g.src != null else null
@@ -1600,7 +1649,7 @@ func _write_transform(b: Body) -> void:
 	_body_data[o + 9] = t.basis.y.z
 	_body_data[o + 10] = t.basis.z.z
 	_body_data[o + 11] = t.origin.z
-	_body_dirty = true
+	_dirty_rows[b.slot / SLOTS_PER_ROW] = true
 
 ## The clip texel: (first row, frame count, duration ms, offset ms), the
 ## offset being where the body's clock (`idle_time` + phase) stands in the
@@ -1615,7 +1664,7 @@ func _write_clip(b: Body, idle_time: float) -> void:
 	_body_data[o + 1] = float(clip.y)
 	_body_data[o + 2] = duration
 	_body_data[o + 3] = float(fposmod((_epoch + phase) * 1000.0, duration)) if duration > 0.0 else 0.0
-	_body_dirty = true
+	_dirty_rows[b.slot / SLOTS_PER_ROW] = true
 
 ## Round 759: the body's object colour, texel 4 (x). A part drawn with a
 ## character's object material takes it in the vertex shader instead of the
@@ -1629,7 +1678,7 @@ func _write_light(b: Body) -> void:
 	if _body_data[o] == b.objc:
 		return
 	_body_data[o] = b.objc
-	_body_dirty = true
+	_dirty_rows[b.slot / SLOTS_PER_ROW] = true
 
 ## Round 759: INSTANCE_CUSTOM.y packs three integers, exactly in a float
 ## (below 2^24): ((glow row + 1) x VOL_SPAN + (Volume row + 1)) x 2 + lit --

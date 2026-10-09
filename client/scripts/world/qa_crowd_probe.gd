@@ -68,6 +68,13 @@ class_name QaCrowdProbe
 ##   back     (round 762) the kept bodies arrive again as one group spawn
 ##            (bracketed), and a `QA CROWD back visible` line when every one
 ##            is drawn
+##   half     (round 762's review) the east half of the lineup (x over the
+##            median) leaves as one group despawn; kept for `cross`
+##   cross    (round 762's review, F4) a walk across a block line: the bodies
+##            still here leave as one group despawn and the kept ones arrive as
+##            one group spawn, in one batch (the despawn read first, then the
+##            spawn, as NetClient reads them), and a `QA CROWD back visible`
+##            line when every arrival is drawn
 ##   walk=<dx>/<dz>, deck=<dx>/<dz>  (round 762) a ground (or deck) click that
 ##            far from the player at the step's start (World3D._qa_click): the
 ##            live walk out of the crowd's blocks and back
@@ -304,8 +311,11 @@ func _arrival_frame() -> void:
 			print("QA CROWD page %d n=%d visible_ms=%.1f frames=%d worst_ms=%.1f" % [_pages.find(pg), (pg[0] as Array).size(),
 				float(now - int(pg[1])) / 1000.0, int(pg[2]), float(pg[3])])
 	var queue = world.get("_other_builds")
-	# Round 762: a queue left with only ghosts beyond the dressing's reach is done.
-	if (queue != null and not queue.is_empty() and not (queue.get("settled") == true)) or _visible_us < 0:
+	# Round 762: a queue left with only ghosts beyond the dressing's reach is
+	# done -- and (its review, F11) one of DRESS_NEAREST bodies or fewer left
+	# with only drawn ghosts (their dressing is background work, not the
+	# arrival; the `settled` cut needs more bodies than the dressing's reach).
+	if (queue != null and not queue.is_empty() and not (queue.get("settled") == true) and not _only_ghosts_left(queue)) or _visible_us < 0:
 		return
 	for pg in _pages:
 		if int(pg[4]) < 0:
@@ -338,6 +348,19 @@ func _arrival_frame() -> void:
 
 ## Round 759 (live): the server's crowd arrives as it will; after
 ## `_live_wait` seconds every other player then in the world is a body.
+## Round 762's review, F11: whether every body still queued for the dressing
+## is a drawn ghost (looked at only for a queue of 96 or fewer).
+func _only_ghosts_left(queue) -> bool:
+	if int(queue.size()) > 96:
+		return false
+	var ghosts = world.get("_ghost_ids")
+	if ghosts == null:
+		return false
+	for id in queue.ids():
+		if not (ghosts as Dictionary).has(id):
+			return false
+	return true
+
 func _live_arrival() -> void:
 	_live_t += get_process_delta_time()
 	if _live_t < _live_wait:
@@ -402,7 +425,8 @@ func _persec_frame() -> void:
 	var vp0 := world.get_viewport()
 	if vp0.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp0.get_meta(EquipFx.DRIVER_META)):
 		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
-		fx = " fx_hosts=%d fx_shown=%d fx_kinds=%d" % [int(d.stats.get("hosts", 0)), int(d.stats.get("shown", 0)), int(d.stats.get("kinds", 0))]
+		fx = " fx_hosts=%d fx_shown=%d fx_kinds=%d fx_ghost_hosts=%d fx_ghost_shown=%d fx_ghost_far=%.0f" % [int(d.stats.get("hosts", 0)), int(d.stats.get("shown", 0)), int(d.stats.get("kinds", 0)),
+			int(d.stats.get("ghost_hosts", 0)), int(d.stats.get("ghost_shown", 0)), float(d.stats.get("ghost_shown_far", 0.0))]
 	var pl := ""
 	var pb = world.get("_plate_batch")
 	if pb != null:
@@ -592,9 +616,12 @@ func _log_frame() -> void:
 		extra += " %.2f" % (float(int(snap.get(sk, 0)) - int(_fl_split.get(sk, 0))) / 1000.0)
 	_fl_split = snap
 	var held := 0
-	var hs = world.get("_hold_slot")
-	if hs != null and int(hs) >= 0 and cg != null and (cg as CrowdGpu).hold_pending(int(hs)):
-		held = (world.get("_hold_ids") as Array).size()
+	if world.has_method("qa_held_count"):
+		held = int(world.call("qa_held_count"))
+	else:
+		var hs = world.get("_hold_slot")
+		if hs != null and int(hs) >= 0 and cg != null and (cg as CrowdGpu).hold_pending(int(hs)):
+			held = (world.get("_hold_ids") as Array).size()
 	var undrawn: int = world._other_build_args.size() - world._ghost_ids.size() + held
 	var bc: Array = world.call("qa_budget_cols") if world.has_method("qa_budget_cols") else [0.0, 0.0, 0.0]
 	extra += " %.2f %.2f %.2f" % bc
@@ -627,13 +654,25 @@ var _back_frames := 0
 var _back_worst := 0.0
 var _back_last_us := 0
 
-func _leave_all() -> void:
+func _leave_all(east_half: bool = false) -> void:
 	var tk := Time.get_ticks_usec()
 	_leave_kits = []
+	# Round 762's review (`half`): only the bodies east of the median x.
+	var cut := -INF
+	if east_half:
+		var xs := PackedFloat32Array()
+		for b in bodies:
+			var nd = world._other_bodies.get(int(b["id"]))
+			if nd != null and is_instance_valid(nd):
+				xs.append((nd as Node3D).position.x)
+		xs.sort()
+		cut = xs[xs.size() / 2] if not xs.is_empty() else -INF
 	for b in bodies:
 		var id := int(b["id"])
 		var node = world._other_bodies.get(id)
 		if node == null or not is_instance_valid(node):
+			continue
+		if east_half and (node as Node3D).position.x <= cut:
 			continue
 		var gait: Dictionary = world._other_gaits.get(id, {})
 		var args: Dictionary = world._other_build_args.get(id, {})
@@ -691,6 +730,21 @@ func _leave_hand_over() -> void:
 		_leave_ids = []
 		_leave_at = 0
 
+## Round 762's review, F4 (`cross`): a walk across a block line -- the bodies
+## here leave as one group despawn and the kept (`half`) ones arrive as one
+## group spawn in the same batch; the spawn is handed over once the despawn
+## is read (_back_hand_over waits for it), as NetClient reads one group after
+## the other.
+func _cross() -> void:
+	if _leave_kits.is_empty():
+		return
+	var arriving := _leave_kits
+	_leave_all()
+	var leaving := _leave_kits
+	_leave_kits = arriving
+	_come_back()
+	_leave_kits = leaving
+
 func _come_back() -> void:
 	if _leave_kits.is_empty():
 		return
@@ -718,6 +772,9 @@ var _back_step_usec := 0
 
 func _back_hand_over() -> void:
 	if _back_at >= _back_kits.size():
+		return
+	# `cross`: after the despawn read before it.
+	if _leave_at < _leave_ids.size():
 		return
 	var t0 := Time.get_ticks_usec()
 	var first := _back_at
@@ -898,7 +955,8 @@ func _report() -> void:
 	var vp0 := world.get_viewport()
 	if vp0.has_meta(EquipFx.DRIVER_META) and is_instance_valid(vp0.get_meta(EquipFx.DRIVER_META)):
 		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
-		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"])]
+		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d fx_ghost_hosts=%d fx_ghost_shown=%d fx_ghost_far=%.0f" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"]),
+			int(d.stats.get("ghost_hosts", 0)), int(d.stats.get("ghost_shown", 0)), float(d.stats.get("ghost_shown_far", 0.0))]
 	var gpu_line := ""
 	var crowd = world.get("_crowd_gpu")
 	if crowd != null:
@@ -1269,6 +1327,12 @@ func _switch(step: String, off: bool) -> void:
 		"leave":
 			if off:
 				_leave_all()
+		"half":
+			if off:
+				_leave_all(true)
+		"cross":
+			if off:
+				_cross()
 		"back":
 			if off:
 				_come_back()

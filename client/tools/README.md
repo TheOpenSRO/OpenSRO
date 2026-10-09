@@ -556,7 +556,13 @@ and its opcode (`max_op_ms`, `max_opcode`; 0x3018 is a group's share), the probe
 (`qa_probe`: take it out of `frame_ms` for the client's frame) and the phases of a ghost (`ga_*`,
 `tw_*`), the flush (`gf_*`, `gu_*`), the player's tick (`pp_*`) and the ticks (`pt_*`);
 `OPENSRO_QA_FRAME_LOG_RS=1` adds the render thread's last frame (`rs_cpu`, `rs_setup_ms`) and the
-pipeline compilations (each read waits for the render thread: diagnostics only). With
+pipeline compilations (each read waits for the render thread: diagnostics only).
+Round 762's review fixes: the probe's `half` step makes the east half of the lineup leave as one
+group despawn, and `cross` is a walk across a block line -- the bodies still there leave as one group
+despawn and the kept half arrives as one group spawn in the same batch (the despawn read first, as
+NetClient reads one group after the other). `OPENSRO_QA_GHOST_FX=0` gives ghosts no weapon particles
+(the A/B of their cost); the census and step lines carry `fx_ghost_hosts`, `fx_ghost_shown` (EquipFx
+holders on ghosts, all within 720 units) and `fx_ghost_far` (the farthest of them). With
 `OPENSRO_QA_LINEUP_STEP_MS` the probe's `leave` and `back` steps hand their group over a frame's share
 at a time, as NetClient reads one; without it, in one call (the before tree).
 

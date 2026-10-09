@@ -246,6 +246,10 @@ const GROUP_STEP_USEC := 4000
 const NET_FRAME_BUDGET_USEC := 8000
 ## The group being read: {r: the reader, count, i: records read, op}, or null.
 var _group_job = null
+## Round 762's review, F6: bumped at every group's 0x3018, so World3D tells a
+## new group's first share from the next share of the one being read (each
+## share is its own user_group_begin / _end bracket).
+var group_serial := 0
 ## Whether spawn messages are being replayed (set_spawn_item_rows): a group
 ## then is read whole, in order with what follows it.
 var _replaying := false
@@ -446,11 +450,29 @@ func _process(_delta: float) -> void:
 	# Each poll takes whatever the peer holds into the reader's own buffer
 	# (round 663), so a frame larger than what the socket -- or one TLS
 	# record -- holds at once still comes through.
-	# Round 759 (QA, FrameSplit only): the read and the dispatch timed apart,
-	# and each opcode's count and dispatch time (FrameSplit.op).
+	_net_frame(_poll_peer)
+
+func _poll_peer() -> Packet:
+	return _reader.poll(_peer)
+
+## What is not dispatched this frame waits in the reader's buffer, the socket
+## emptied (PacketReader.drain).
+func _drain() -> void:
+	if _reader != null and _peer != null:
+		_reader.drain(_peer)
+
+## One frame's packets (round 762's review, F5: split out of _process so a
+## test can feed them). `poll` answers the next Packet, or null.
+## Round 759 (QA, FrameSplit only): the read and the dispatch timed apart,
+## and each opcode's count and dispatch time (FrameSplit.op).
+## Round 762: a group being read goes on first. Round 762's review, F5: while
+## it is read, what follows it is read too, and every packet that cannot
+## concern a body of the group (_passes_group) is dispatched at once -- the
+## player's own HP, combat results, chat, the monsters; the rest waits, in
+## order, and goes first once the group is done. Before, nothing after a
+## group was dispatched until all of it was read (1-3 s for a crowd).
+func _net_frame(poll: Callable) -> void:
 	var fs := FrameSplit.on
-	# Round 762: a group being read goes on first; nothing after it is
-	# dispatched until it is done.
 	var frame_t0 := Time.get_ticks_usec()
 	if _group_job != null:
 		var tg := Time.get_ticks_usec()
@@ -461,38 +483,140 @@ func _process(_delta: float) -> void:
 				qa_max_op_usec = Time.get_ticks_usec() - tg
 				qa_max_opcode = 0x3018
 		if not done:
-			# The socket emptied all the same (PacketReader.drain).
-			_reader.drain(_peer)
+			_read_during_group(poll, frame_t0)
 			return
 	var dispatched := 0
+	# What waited behind the group, in its order, first.
+	while _held_at < _held_packets.size():
+		if _group_job != null:
+			_read_during_group(poll, frame_t0)
+			return
+		if dispatched > 0 and Time.get_ticks_usec() - frame_t0 >= NET_FRAME_BUDGET_USEC:
+			_drain()
+			return
+		dispatched += 1
+		var hp: Packet = _held_packets[_held_at]
+		_held_at += 1
+		_dispatch_timed(hp, fs)
+	if not _held_packets.is_empty():
+		_held_packets.clear()
+		_held_at = 0
+		_held_uids.clear()
+		_held_barrier = false
 	while true:
-		if _group_job != null or (dispatched > 0 and Time.get_ticks_usec() - frame_t0 >= NET_FRAME_BUDGET_USEC):
-			# What is not dispatched this frame waits in the reader's buffer,
-			# the socket emptied (PacketReader.drain).
-			_reader.drain(_peer)
+		if _group_job != null:
+			_read_during_group(poll, frame_t0)
+			break
+		if dispatched > 0 and Time.get_ticks_usec() - frame_t0 >= NET_FRAME_BUDGET_USEC:
+			_drain()
 			break
 		dispatched += 1
 		var t0 := Time.get_ticks_usec() if fs else 0
-		var p := _reader.poll(_peer)
+		var p: Packet = poll.call()
+		if fs:
+			FrameSplit.add("net_read", Time.get_ticks_usec() - t0)
 		if p == null:
-			if fs:
-				FrameSplit.add("net_read", Time.get_ticks_usec() - t0)
 			break
-		if not fs:
-			_dispatch(p)
-			continue
-		var t1 := Time.get_ticks_usec()
-		qa_rx_bytes += p.data.size() + 6
-		qa_rx_packets += 1
+		_dispatch_timed(p, fs)
+
+func _dispatch_timed(p: Packet, fs: bool) -> void:
+	if not fs:
 		_dispatch(p)
-		var t2 := Time.get_ticks_usec()
-		FrameSplit.add("net_read", t1 - t0)
-		FrameSplit.add("net_dispatch", t2 - t1)
-		FrameSplit.add("net_packets_calls", 1)
-		FrameSplit.op(p.opcode, t2 - t1)
-		if t2 - t1 > qa_max_op_usec:
-			qa_max_op_usec = t2 - t1
-			qa_max_opcode = p.opcode
+		return
+	var t1 := Time.get_ticks_usec()
+	qa_rx_bytes += p.data.size() + 6
+	qa_rx_packets += 1
+	_dispatch(p)
+	var t2 := Time.get_ticks_usec()
+	FrameSplit.add("net_dispatch", t2 - t1)
+	FrameSplit.add("net_packets_calls", 1)
+	FrameSplit.op(p.opcode, t2 - t1)
+	if t2 - t1 > qa_max_op_usec:
+		qa_max_op_usec = t2 - t1
+		qa_max_opcode = p.opcode
+
+## Round 762's review, F5 (OURS): the packets behind a group being read --
+## held in order, and the uids they name (a movement's: one naming a uid
+## held is held too, so a body's moves keep their order) -- and whether a
+## barrier (a world entry, a zone change, a teleport, a revive) was held:
+## everything after it waits too.
+var _held_packets: Array = []
+var _held_at := 0
+var _held_uids := {}
+var _held_barrier := false
+
+## Reads on while a group is being read, until NET_FRAME_BUDGET_USEC from
+## `frame_t0`: each packet is dispatched now when it passes (_passes_group),
+## or held.
+func _read_during_group(poll: Callable, frame_t0: int) -> void:
+	var fs := FrameSplit.on
+	while Time.get_ticks_usec() - frame_t0 < NET_FRAME_BUDGET_USEC:
+		var p: Packet = poll.call()
+		if p == null:
+			break
+		if _held_barrier or not _passes_group(p):
+			if _is_barrier(p.opcode):
+				_held_barrier = true
+			var u := _move_uid(p)
+			if u >= 0:
+				_held_uids[u] = true
+			_held_packets.append(p)
+			continue
+		_dispatch_timed(p, fs)
+	_drain()
+
+## Tests and QA: how many packets wait behind a group.
+func held_count() -> int:
+	return _held_packets.size() - _held_at
+
+## The opcodes after which nothing is dispatched ahead of what was held: the
+## world itself changes (the views start over).
+static func _is_barrier(op: int) -> bool:
+	return op == WorldNet.OP_ENTER_WORLD_RESULT or op == WorldNet.OP_CHANGE_ZONE_RESULT or op == TeleportNet.OP_RESULT \
+		or op == WorldNet.OP_REVIVE_RESULT
+
+## A movement's uid (0xB021 / 0xB023: u32 at 0), or -1.
+static func _move_uid(p: Packet) -> int:
+	if (p.opcode == DestMoveNet.OP_MOVEMENT_ECHO or p.opcode == DestMoveNet.OP_MOVEMENT_STOP) and p.data.size() >= 4:
+		return p.data.decode_u32(0)
+	return -1
+
+## Whether `p` may be dispatched while a group is read, ahead of what is held
+## (OURS): it cannot concern a body of the group -- this player's own state
+## and results, chat, the social windows, the monsters (never in a player
+## group spawn) and the ground items -- or it names only bodies already in
+## view (a movement of a known player none of whose moves is held; an object
+## status or a monster's blow on this player). Everything else waits.
+func _passes_group(p: Packet) -> bool:
+	match p.opcode:
+		InventoryNet.OP_LIST_RESULT, InventoryNet.OP_MOVE_RESULT, StatsNet.OP_STATS_RESULT, EquipmentNet.OP_RESULT, \
+				EquipmentNet.OP_REPAIR_RESULT, ShopNet.OP_BUY_RESULT, ShopNet.OP_LIST_RESULT, ShopNet.OP_SELL_RESULT, \
+				ItemOpNet.OP_MOVE_RESULT, ItemOpNet.OP_BUYBACK_FAIL, UseItemNet.OP_RESULT, CompositeNet.OP_STATE, \
+				CompositeNet.OP_USE_RESULT, CompositeNet.OP_END, StorageNet.OP_LIST_RESULT, StorageNet.OP_DEPOSIT_RESULT, \
+				StorageNet.OP_WITHDRAW_RESULT, StorageNet.OP_GOLD_RESULT, CombatNet.OP_ATTACK_RESULT, CombatNet.OP_BERSERK_RESULT, \
+				CombatNet.OP_MONSTER_DAMAGED, CombatNet.OP_MONSTER_DIED, CombatNet.OP_LOOT_DROPPED, CombatNet.OP_MONSTER_LEFT, \
+				CombatNet.OP_MONSTER_MOVED, CombatNet.OP_MONSTER_MOTION_LIST, CombatNet.OP_MONSTER_SPAWNED, \
+				CombatNet.OP_MONSTER_LIST_RESULT, CombatNet.OP_LEVEL_UP, GroundItemsNet.OP_LIST_RESULT, GroundItemsNet.OP_SPAWNED, \
+				GroundItemsNet.OP_REMOVED, GroundItemsNet.OP_OWNER_RELEASED, GroundItemsNet.OP_PICK_UP_RESULT, \
+				SkillNet.OP_LEARN_RESULT, SkillNet.OP_LIST_RESULT, SkillNet.OP_STATE_RESULT, SkillNet.OP_RAISE_RESULT, \
+				RewardNoticeNet.OP_EXP_GAIN, RewardNoticeNet.OP_CHAR_INFO, GuildNet.OP_CREATE_RESULT, GuildNet.OP_JOIN_RESULT, \
+				GuildNet.OP_LEAVE_RESULT, GuildNet.OP_INFO_RESULT, GuildNet.OP_POINTS_RESULT, GuildNet.OP_LEVEL_RESULT, \
+				UniqueNoticeNet.OP_UNIQUE_NOTICE, ChatNet.OP_UPDATE, ChatNet.OP_RESULT, QuestNet.OP_LIST_RESULT, \
+				QuestNet.OP_ACCEPT_RESULT, QuestNet.OP_COMPLETED, FriendNet.OP_REQUEST_RESULT, FriendNet.OP_REQUEST_RECEIVED, \
+				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
+				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT:
+			return true
+		CombatNet.OP_MONSTER_ATTACKED:
+			# A monster's blow on this player (the target at 8, s64).
+			return own_character_id >= 0 and p.data.size() >= 16 and p.data.decode_s64(8) == own_character_id
+		StatusNet.OP_OBJECT_STATUS:
+			var st := StatusNet.decode_object_status(p.data)
+			return st.error == "" and st.owner_kind == SkillNet.OWNER_CHARACTER and own_character_id >= 0 \
+				and (st.owner_id == own_character_id or st.owner_id == (own_character_id & 0xffffffff))
+		DestMoveNet.OP_MOVEMENT_ECHO, DestMoveNet.OP_MOVEMENT_STOP:
+			var u := _move_uid(p)
+			return u >= 0 and user_roster.has(u) and not _held_uids.has(u) and _pending_spawns.is_empty()
+	return false
 
 ## Connects to host:port. If use_tls is true, wraps the connection in TLS
 ## once the underlying TCP handshake completes (see gateway.Server.TLSConfig
@@ -513,6 +637,10 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	zone_departures.clear()
 	_pending_spawns.clear()
 	_group_job = null
+	_held_packets.clear()
+	_held_at = 0
+	_held_uids.clear()
+	_held_barrier = false
 	body_modes.clear()
 	party.reset_connection()
 	_unhandled_warned.clear()
@@ -599,6 +727,10 @@ func disconnect_from_server() -> void:
 	zone_departures.clear()
 	_pending_spawns.clear()
 	_group_job = null
+	_held_packets.clear()
+	_held_at = 0
+	_held_uids.clear()
+	_held_barrier = false
 	body_modes.clear()
 	party.reset_connection()
 	_forget_session_lists()
@@ -1228,6 +1360,7 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 			elif gone >= 0 and npc_roster.despawn(gone):
 				npc_despawned.emit(gone)
 		NpcSpawnNet.OP_GROUP_END:
+			group_serial += 1
 			# Round 762: a spawn group is read a frame's share at a time.
 			if not _replaying and _spawn_types != null and data.size() >= 3 and data[0] == NpcSpawnNet.GROUP_SPAWN:
 				var jr := NpcSpawnNet.Reader.new(data)

@@ -28,10 +28,10 @@ float srr_cg_objc = -1.0;
 #else
 	int srr_cg_slot = int(INSTANCE_CUSTOM.x + 0.5);
 #endif
-	ivec2 srr_cg_at = ivec2((srr_cg_slot % 256) * SRR_CG_TEXELS, srr_cg_slot / 256);
+	ivec3 srr_cg_at = ivec3((srr_cg_slot % 256) * SRR_CG_TEXELS, 0, srr_cg_slot / 256);
 	int srr_cg_y = int(INSTANCE_CUSTOM.y + 0.5);
 	// Round 762: texel 4 always (its y is the body's fade, CrowdGpu._write_fade).
-	vec4 srr_cg_t4 = texelFetch(crowd_bodies, srr_cg_at + ivec2(4, 0), 0);
+	vec4 srr_cg_t4 = texelFetch(crowd_bodies, srr_cg_at + ivec3(4, 0, 0), 0);
 	if ((srr_cg_y & 1) == 1) {
 		srr_cg_objc = srr_cg_t4.x;
 	}
@@ -54,9 +54,9 @@ float srr_cg_objc = -1.0;
 	}
 #endif
 	vec4 srr_cg_b0 = texelFetch(crowd_bodies, srr_cg_at, 0);
-	vec4 srr_cg_b1 = texelFetch(crowd_bodies, srr_cg_at + ivec2(1, 0), 0);
-	vec4 srr_cg_b2 = texelFetch(crowd_bodies, srr_cg_at + ivec2(2, 0), 0);
-	vec4 srr_cg_an = texelFetch(crowd_bodies, srr_cg_at + ivec2(3, 0), 0);
+	vec4 srr_cg_b1 = texelFetch(crowd_bodies, srr_cg_at + ivec3(1, 0, 0), 0);
+	vec4 srr_cg_b2 = texelFetch(crowd_bodies, srr_cg_at + ivec3(2, 0, 0), 0);
+	vec4 srr_cg_an = texelFetch(crowd_bodies, srr_cg_at + ivec3(3, 0, 0), 0);
 	// The frame CrowdAnim.frame_index takes: the nearest quantum of the
 	// body's time into its loop.
 	int srr_cg_count = max(int(srr_cg_an.y + 0.5), 1);
@@ -104,7 +104,10 @@ float srr_cg_objc = -1.0;
 		VERTEX = vec3(0.0);
 	}
 #else
-	if (srr_cg_t4.y != 0.0 && crowd_fades) {
+	// Round 762's review, F7 (F9): with no fade twin (crowd_fades false) a
+	// fading body draws opaque, but not at alpha 0: a held page's body and
+	// one whose fade-out is over draw nothing, as with a twin.
+	if (srr_cg_t4.y != 0.0 && (crowd_fades || srr_cg_fade(srr_cg_t4.y) <= 0.0)) {
 		VERTEX = vec3(0.0);
 	}
 #endif

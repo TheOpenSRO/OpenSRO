@@ -8,7 +8,8 @@
 // engine's pixels).
 //
 // Every far body has 5 texels in crowd_bodies (CrowdGpu.TEXELS_PER_BODY, at
-// slot % 256 * 5, slot / 256): the rows of its skeleton's global transform,
+// slot % 256 * 5 of layer slot / 256 -- round 762's review, F7: a layer a row
+// of 256 bodies, so a frame uploads the rows it changed): the rows of its skeleton's global transform,
 // then (row of its clip's frame 0, the clip's frame count, its duration in
 // ms, the body's offset into it in ms), then (round 759) its object colour
 // in x (CrowdGpu._write_light). crowd_bones holds, per skeleton layout,
@@ -17,7 +18,7 @@
 // writes for the shared skin (Skeleton3DBuilder.canonical_skin). crowd_volume
 // holds a Volume variant's per-bone factor matrix (rest x scale(1, f, f) x
 // inverse rest), so its skin is the baked matrix times that.
-uniform sampler2D crowd_bodies : filter_nearest, repeat_disable;
+uniform sampler2DArray crowd_bodies : filter_nearest, repeat_disable;
 // The bone store in pages of SRR_CG_PAGE_ROWS rows, a layer each (round
 // 747's review, F3: a new clip uploads its pages, not the whole store).
 uniform sampler2DArray crowd_bones : filter_nearest, repeat_disable;

@@ -711,6 +711,14 @@ class FarRecipe:
 	## BoneAttachment3D, or to the skeleton), top node (the template subtree it
 	## came from)].
 	var pieces: Array = []
+	## Round 762's review, F1: the particle rows build()'s glow would attach
+	## (EquipGlow.apply -> EquipFx), each {efp, scale, skel (the item's
+	## template skeleton), bone (its index there), pose (its global pose),
+	## att_bone (the body bone the item hangs from), chain (the item
+	## skeleton's transform under that attachment), wear (the wear's slot: a
+## weapon's rows show together)}:
+	## EquipFx.add_ghost_host draws them on a ghost.
+	var fx: Array = []
 
 ## key -> FarRecipe, or null for a kind build() would grow (a bone the body
 ## template lacks) or cannot build. Dropped with the templates.
@@ -777,6 +785,7 @@ func far_recipe(ref_obj_id: int, scale: int, items: Array) -> FarRecipe:
 				nodes.append(got[0])
 				blocks.append(_item_attachables.get(String(path).to_lower()))
 		var glow := _far_glow(wear, nodes)
+		_far_fx(wear, nodes, skel, r, int(wear["slot"]))
 		for n in nodes:
 			hung.append([n, glow])
 		if int(wear["slot"]) != SLOT_AVATAR and wear.has("type_ids"):
@@ -847,6 +856,51 @@ func _far_glow(wear: Dictionary, nodes: Array) -> Dictionary:
 			if plain != null:
 				out[mi] = EquipGlow.material_for(plain, row, option_tex)
 	return out
+
+## Round 762's review, F1 (OURS): the particle rows _apply_glow would attach
+## to a wear's template nodes (EquipGlow.apply's rule: a row whose bone no item
+## skeleton has, or whose effect does not build, makes none), as FarRecipe.fx
+## holds them. A row on an item skeleton not hung through a BoneAttachment3D
+## of a body bone is left out (none is, among the weapons and shields).
+func _far_fx(wear: Dictionary, nodes: Array, skel: Skeleton3D, r: FarRecipe, wear_key: int) -> void:
+	var slot := int(wear["slot"])
+	if not glow_enabled or glow_tables == null or (slot != SLOT_WEAPON and slot != SLOT_SHIELD) or nodes.is_empty():
+		return
+	var code := String(wear.get("code", ""))
+	if code == "":
+		return
+	var rows := glow_tables.particle_rows(code, int(wear["plus"]))
+	if rows.is_empty():
+		return
+	var archive := _particles_archive()
+	if archive == null:
+		return
+	for pr in rows:
+		var row := pr as ItemGlowTables.ParticleRow
+		var isk := EquipGlow._bone_host(nodes, row.bone)
+		if isk == null or EfpEffect.template_for(row.efp, archive) == null:
+			continue
+		var chain := Transform3D.IDENTITY
+		var at: Node = isk
+		var att: BoneAttachment3D = null
+		while at != null:
+			if at is BoneAttachment3D:
+				att = at
+				break
+			if at is Node3D:
+				chain = (at as Node3D).transform * chain
+			at = at.get_parent()
+		var body_bone := skel.find_bone(att.bone_name) if att != null else -1
+		if body_bone < 0:
+			far_stats["fx_unhung"] = int(far_stats.get("fx_unhung", 0)) + 1
+			continue
+		# A template's item skeleton is never in a tree: its globals composed
+		# here, at rest, as a built body's never-posed item skeleton has them.
+		if not isk.is_inside_tree():
+			isk.force_update_all_bone_transforms()
+		var b := isk.find_bone(row.bone)
+		r.fx.append({"efp": row.efp, "scale": row.scale, "skel": isk, "bone": b, "pose": isk.get_bone_global_pose(b),
+			"att_bone": body_bone, "chain": chain, "wear": wear_key})
 
 ## The pieces under `top` (a child build() leaves on the skeleton, or an item
 ## template it would hang there), each as FarRecipe.pieces holds them.

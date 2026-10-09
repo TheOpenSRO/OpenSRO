@@ -44,6 +44,7 @@ func _initialize() -> void:
 	_test_uids()
 	_test_detail()
 	_test_fifo()
+	_test_room_and_promote()
 	await _test_frame_budget()
 	if _failures == 0:
 		print("ALL PASS")
@@ -340,6 +341,45 @@ func _test_fifo() -> void:
 	q.pump(13, Vector3.ZERO, bodies, build, ready)
 	_check(order == [101, 102, 103], "... one a frame (got %s)" % str(order))
 	_check(q.pump(14, Vector3.ZERO, bodies, build, ready) == 0 and q.size() == 1, "then the reopen() starts again at the oldest, still refused")
+	_free_all(bodies)
+
+## Round 762's review, F1: ghosts the background dressing passed for want of
+## room are looked at again in a frame with room (the queue went idle and
+## never came back to them); F2: a promote of an id not queued is remembered
+## and makes it urgent when it is queued.
+## NEGATIVE (by hand): without `room_again` the "a frame with room" case fails.
+func _test_room_and_promote() -> void:
+	var bodies := _bodies([Vector3(5, 0, 0), Vector3(9, 0, 0), Vector3(20, 0, 0)])
+	var order: Array = []
+	var build := func(id: int) -> void: order.append(id)
+	var q := OtherCrowd.BuildQueue.new()
+	for id in [100, 101, 102]:
+		q.queue(id)
+	var later := {100: true, 101: true, 102: true}
+	q.pump(1, Vector3.ZERO, bodies, build, Callable(), later, INF, 0)
+	q.pump(2, Vector3.ZERO, bodies, build, Callable(), later, INF, 0)
+	_check(order.is_empty(), "ghosts wait while the background dressing has no room")
+	q.pump(3, Vector3.ZERO, bodies, build, Callable(), later, INF, 1)
+	_check(order == [100], "a frame with room dresses the nearest ghost, the queue idle before it (got %s)" % str(order))
+	q.pump(4, Vector3.ZERO, bodies, build, Callable(), later, INF, 0)
+	q.pump(5, Vector3.ZERO, bodies, build, Callable(), later, INF, 5000)
+	_check(order == [100, 101], "... and the next frame with room the next (got %s)" % str(order))
+	var p := OtherCrowd.BuildQueue.new()
+	p.promote(7)
+	_check(not p.urgent.has(7), "a promote of an id not queued is not urgent yet")
+	p.queue(7)
+	_check(p.urgent.has(7), "... and urgent once it is queued")
+	p.promote_later(8)
+	p.queue(8)
+	p.queue(9)
+	p.promote_later(9)
+	_check(p.urgent.has(8) and not p.urgent.has(9), "promote_later: urgent when queued after it, not before")
+	p.wake(9)
+	_check(p.urgent.has(9), "... or woken once queued")
+	p.promote(10)
+	p.forget(10)
+	p.queue(10)
+	_check(not p.urgent.has(10), "a departure forgets a remembered promote")
 	_free_all(bodies)
 
 ## Round 762: the crowd's frame budget (OtherCrowd.FrameBudget): the aim is

@@ -23,6 +23,12 @@ extends SceneTree
 ##   its light takes the level's material; an equipment change draws it in
 ##   its new kind;
 ## - OtherCrowd.BuildQueue dresses a body nobody sees before a ghost.
+## - round 762's review: a ghost's weapon particles from its recipe, placed
+##   from its GPU clip frame (the dressed far body's frame), within 720 only
+##   (F1); a body that arrived with buffs, or got one held, is dressed first
+##   once its page shows (F2); a zone change resets the held pages, and a
+##   deadline reveal drops a waiting arrival whose body is gone (F3); a group
+##   a few seconds after the page opened opens its own (F6).
 ##
 ## NEGATIVES (by hand): far_recipe without the hides fails "the chest hides
 ## Body1"; _ghost_handover appending a fresh entry fails "the same phase";
@@ -490,8 +496,12 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	_check(not is_instance_valid(n605) or not crowd.is_ghost(n605), "... and leaves the instances when its fade-out ends")
 	_test_merge757(world, crowd, kit)
 	_test_hold(world, crowd, kit)
+	_test_ghost_fx(world, crowd, kit, app)
+	_test_arrival_buffs(world, crowd, kit)
+	_test_pages(world, crowd, kit)
 	_test_stale_twins(world, crowd, kit)
 	_test_lit_bound(crowd, app)
+	_test_zone_reset(world, crowd, kit)
 	world.set("_appearance", null)
 
 ## Round 762: an arriving page is held -- its ghosts at alpha 0, no plate, click
@@ -651,3 +661,230 @@ func _test_lit_bound(crowd: CrowdGpu, app: CharacterAppearance) -> void:
 static func _fading_rec(crowd: CrowdGpu, rec: Array) -> bool:
 	var b: CrowdGpu.Body = rec[2]
 	return b.fade != 0 and crowd._body_data[b.slot * CrowdGpu.FLOATS_PER_BODY + 17] != 0.0
+
+# --- round 762's review ------------------------------------------------------------
+
+const FX_EFP := "system\\test_fx.efp"
+## A page this old (ms) is past PAGE_JOIN_MSEC (3,000).
+const OLD_PAGE_MS := 4000
+
+## Bodies `ids` leave and their fade-outs run out.
+func _leave_all(world: Node, crowd: CrowdGpu, ids: Array) -> void:
+	var builds: OtherCrowd.BuildQueue = world.get("_other_builds")
+	for id in ids:
+		builds.drop(id)
+		world.call("_on_entity_left", id)
+	world.call("_depart_step")
+	_advance(world, crowd, 1.6)
+	world.call("_depart_step")
+
+static func _fx_holder(n: Node) -> EfpEffect:
+	for c in n.get_children():
+		if c is EfpEffect and String(c.name).contains("EquipFxHolder"):
+			return c
+	return null
+
+## F1: a ghost carries its weapon's particles without being dressed -- its
+## recipe's particle rows as EquipFx hosts on its holder, placed from its GPU
+## clip frame (the same frame a far dressed body's weapon is placed at), within
+## 720 units only, none while its page is held; dressed, the built items' own
+## hosts take over.
+func _test_ghost_fx(world: Node, crowd: CrowdGpu, kit: Dictionary, app: CharacterAppearance) -> void:
+	world.set("_holds_on", false)
+	crowd.bake_all()
+	var d := EquipFx.driver_for(world.get_viewport())
+	d.set_process(false)
+	var key := EquipFx.kind_key(FX_EFP, 1.0)
+	if not d._kinds.has(key):
+		var m := EfpEffect.new()
+		var mm := MultiMeshInstance3D.new()
+		mm.multimesh = MultiMesh.new()
+		m.add_child(mm)
+		d.add_child(m)
+		var k := EquipFx.Kind.new()
+		k.key = key
+		k.master = m
+		d._kinds[key] = k
+	# What World3D._ready hands EquipFx (the quiet subclass skips it).
+	EquipFx.ghost_frame = Callable(world, "_crowd_ghost_item_frame")
+	EquipFx.ghost_origin = Callable(world, "_crowd_ghost_origin")
+	EquipFx.far_frame = Callable(world, "_crowd_item_frame")
+	EquipFx.far_origin = Callable(world, "_crowd_item_origin")
+	var n := _ghost(world, 650, Vector3(4, 0, -70), kit)
+	var b: CrowdGpu.Body = crowd.body_of(n)
+	_check(n != null and crowd.is_ghost(n) and b != null and b.recipe != null, "F1: a ghost to carry its weapon's particles")
+	if b == null:
+		return
+	var r: CharacterAppearance.FarRecipe = b.recipe
+	var tmpl: SkinnedBsrAssembler.AssembledCharacter = app._body_templates[BODY]
+	var att: BoneAttachment3D = app._item_templates[CharacterAppearance._item_key(tmpl, BODY, SWORD)]
+	var isk := att.get_child(0) as Skeleton3D
+	isk.force_update_all_bone_transforms()
+	var row := {"efp": FX_EFP, "scale": 1.0, "skel": isk, "bone": 0, "pose": isk.get_bone_global_pose(0),
+		"att_bone": r.skeleton.find_bone("Bip01 Spine"), "chain": isk.transform, "wear": EquipmentNet.SLOT_WEAPON}
+	r.fx = [row]
+	world.call("_ghost_fx", n, r)
+	_check(d.has_node_hosts(n) and d._ghost_hosts == 1, "F1: its recipe's particle row is a host on its holder (%d)" % d._ghost_hosts)
+	d._hurry = true
+	d._process(1.0 / 60.0)
+	var h := _fx_holder(n)
+	var g = crowd.ghost_item_frame(n, int(row["att_bone"]), row["chain"])
+	var want: Transform3D = EquipFx.place(g, row["pose"], 1.0) if g != null else Transform3D()
+	_check(h != null and h.visible and g != null and h.global_transform.is_equal_approx(want),
+		"F1: shown, placed from the ghost's GPU clip frame (%s)" % (str(h.global_transform.origin) if h != null else "none"))
+	# Two more of the kind (their hosts come with _ghost_other): 700 units off
+	# shows, 750 does not (retail's LOD 0.9: 720).
+	var n700 := _ghost(world, 651, Vector3(0, 0, -700), kit)
+	var n750 := _ghost(world, 652, Vector3(0, 0, -750), kit)
+	d._hurry = true
+	d._process(1.0 / 60.0)
+	var h700 := _fx_holder(n700)
+	var h750 := _fx_holder(n750)
+	_check(d._ghost_hosts == 3 and h700 != null and h700.visible and (h750 == null or not h750.visible) and int(d.stats.get("ghost_shown", 0)) == 2,
+		"F1: within 720 units a ghost's particles show, past it not (shown %d, far %.0f)" % [int(d.stats.get("ghost_shown", 0)), float(d.stats.get("ghost_shown_far", 0.0))])
+	# Dressed far: the same frame as the ghost's, from the built weapon's
+	# item skeleton (CrowdGpu.item_frame); the ghost's hosts gone.
+	world.set("_crowd_come", 10.0)
+	world.call("_dress_ghost_now", 650)
+	var skel: Skeleton3D = ((world.get("_other_gaits") as Dictionary).get(650, {}) as Dictionary).get("skeleton")
+	var built_isk: Skeleton3D = null
+	if skel != null:
+		for c in skel.get_children():
+			if c is BoneAttachment3D and (c as Node).get_child_count() > 0 and (c as Node).get_child(0) is Skeleton3D:
+				built_isk = (c as Node).get_child(0)
+	var f = crowd.item_frame(built_isk) if built_isk != null else null
+	_check(f != null and g != null and (f as Transform3D).is_equal_approx(g),
+		"F1: the ghost's weapon frame is the dressed far body's (item_frame: %s, ghost %s, far %s)" % [str(f), str(g), str(skel != null and crowd.has(skel))])
+	_check(not d.has_node_hosts(n) and d._ghost_hosts == 2, "F1: dressed, the ghost's hosts are gone (%d left)" % d._ghost_hosts)
+	r.fx = []
+	_leave_all(world, crowd, [650, 651, 652])
+	_check(d._ghost_hosts == 0, "F1: a departing ghost's hosts go with it (%d)" % d._ghost_hosts)
+	_advance(world, crowd, 2.1)
+	EquipFx.ghost_frame = Callable()
+	EquipFx.ghost_origin = Callable()
+	EquipFx.far_frame = Callable()
+	EquipFx.far_origin = Callable()
+
+## F2: a body that arrives with buffs (the book holds them) is dressed first
+## once its page shows, and so is one whose buff came while it was held or not
+## a ghost yet; none is dressed before its page shows.
+func _test_arrival_buffs(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
+	world.set("_holds_on", true)
+	crowd.bake_all()
+	var ghosts: OtherCrowd.BuildQueue = world.get("_other_ghosts")
+	var builds: OtherCrowd.BuildQueue = world.get("_other_builds")
+	var bodies: Dictionary = world.get("_other_bodies")
+	var book: HudTargetBuffs.Book = world.get("_target_buff_book")
+	ghosts.clear()
+	world.set("_page_pick", true)
+	world.set("_other_build_defer", 1)
+	for i in range(4):
+		world.call("_spawn_or_update_other", 660 + i, "Buffed%d" % i, Vector3(3.0 * i, 0, -50), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	book.start("character:660", 7601, 1001)
+	world.call("_fx_owner_body", 661, SkillNet.OWNER_CHARACTER)
+	_check(not builds.urgent.has(661), "F2: a buff on a body not a ghost yet does not dress it during its page")
+	for i in range(4):
+		world.call("_ghost_other", 660 + i)
+		ghosts.drop(660 + i)
+	var n660: Node3D = bodies.get(660)
+	_check(crowd.is_held(n660) and not builds.has(660), "F2: the page is held, its ghosts out of the dressing queue")
+	world.call("_fx_owner_body", 662, SkillNet.OWNER_CHARACTER)
+	_check(not builds.urgent.has(662), "F2: a buff on a held ghost does not dress it before its page shows")
+	world.call("_hold_step")
+	_check(not crowd.is_held(n660) and builds.urgent.has(660) and builds.urgent.has(661) and builds.urgent.has(662) and builds.has(663) and not builds.urgent.has(663),
+		"F2: at the reveal the ones that arrived with buffs, or got one meanwhile, are first in the dressing; the others queued")
+	book.drop("character:660")
+	_leave_all(world, crowd, [660, 661, 662, 663])
+	_advance(world, crowd, 2.1)
+	world.set("_holds_on", false)
+
+## F6: a group whose first share comes more than PAGE_JOIN_MSEC after the
+## current page opened opens a page of its own, and the first page is revealed
+## when its own arrivals are ghosts. F3: a page revealed by its deadline drops
+## an arrival whose body is gone.
+func _test_pages(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
+	world.set("_holds_on", true)
+	crowd.bake_all()
+	var ghosts: OtherCrowd.BuildQueue = world.get("_other_ghosts")
+	var bodies: Dictionary = world.get("_other_bodies")
+	ghosts.clear()
+	world.set("_page_pick", true)
+	world.set("_other_build_defer", 1)
+	world.call("_spawn_or_update_other", 680, "PageA", Vector3(0, 0, -40), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	var pa = world.get("_page_cur")
+	pa.opened_ms -= OLD_PAGE_MS
+	world.set("_page_pick", true)
+	world.set("_other_build_defer", 1)
+	world.call("_spawn_or_update_other", 681, "PageB", Vector3(3, 0, -40), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	var pb = (world.get("_page_wait") as Dictionary).get(681)
+	_check(pb != null and pb != pa and (world.get("_pages") as Array).size() == 2, "F6: a group arriving %d ms after the page opened opens its own" % OLD_PAGE_MS)
+	world.set("_page_pick", true)
+	world.set("_other_build_defer", 1)
+	world.call("_spawn_or_update_other", 682, "PageB2", Vector3(6, 0, -40), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	_check((world.get("_page_wait") as Dictionary).get(682) == pb, "F6: a group within a few seconds of it joins it")
+	world.call("_ghost_other", 680)
+	ghosts.drop(680)
+	world.call("_hold_step")
+	var n680: Node3D = bodies.get(680)
+	_check(not crowd.is_held(n680) and (world.get("_pages") as Array).size() == 1, "F6: the first page shows once its own arrivals are ghosts, the second still waiting")
+	world.call("_ghost_other", 681)
+	ghosts.drop(681)
+	var n681: Node3D = bodies.get(681)
+	_check(crowd.is_held(n681), "F6: the second page holds its ghosts")
+	# 682's body goes without a departure (freed under it): the deadline
+	# reveal drops it.
+	var n682: Node3D = bodies.get(682)
+	bodies.erase(682)
+	ghosts.drop(682)
+	if n682 != null:
+		n682.free()
+	pb.opened_ms -= world.HOLD_MAX_MSEC
+	world.call("_hold_step")
+	_check(not crowd.is_held(n681) and (world.get("_page_wait") as Dictionary).is_empty() and (world.get("_pages") as Array).is_empty(),
+		"F3: a page revealed by its deadline drops a waiting arrival whose body is gone")
+	(world.get("_other_build_args") as Dictionary).erase(682)
+	_leave_all(world, crowd, [680, 681])
+	_advance(world, crowd, 2.1)
+	world.set("_holds_on", false)
+
+## F3: a zone change while a page is held resets the hold state (its slot
+## revealed, nothing left waiting), so a later group is shown when its own
+## arrivals are ghosts, not 20 s on.
+func _test_zone_reset(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
+	world.set("_holds_on", true)
+	crowd.bake_all()
+	var ghosts: OtherCrowd.BuildQueue = world.get("_other_ghosts")
+	var bodies: Dictionary = world.get("_other_bodies")
+	ghosts.clear()
+	world.set("_page_pick", true)
+	world.set("_other_build_defer", 1)
+	for i in range(2):
+		world.call("_spawn_or_update_other", 670 + i, "Zone%d" % i, Vector3(3.0 * i, 0, -45), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	world.call("_ghost_other", 670)
+	ghosts.drop(670)
+	var slot := crowd.hold_of(bodies.get(670))
+	_check(slot >= 0 and crowd.hold_pending(slot) and not (world.get("_page_wait") as Dictionary).is_empty(), "F3: a page held, an arrival still waiting")
+	world.call("_replace_others_for_arrival", [], [])
+	_check((world.get("_pages") as Array).is_empty() and (world.get("_page_wait") as Dictionary).is_empty() and not crowd.hold_pending(slot)
+		and (world.get("_activate_ids") as Array).is_empty() and world.get("_page_cur") == null,
+		"F3: a zone change resets every page's hold state and reveals the held slot")
+	_advance(world, crowd, 2.1)
+	ghosts.clear()
+	world.set("_page_pick", true)
+	world.set("_other_build_defer", 1)
+	for i in range(2):
+		world.call("_spawn_or_update_other", 672 + i, "After%d" % i, Vector3(3.0 * i, 0, -45), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	for i in range(2):
+		world.call("_ghost_other", 672 + i)
+		ghosts.drop(672 + i)
+	var n672: Node3D = (world.get("_other_bodies") as Dictionary).get(672)
+	world.call("_hold_step")
+	_check(n672 != null and not crowd.is_held(n672) and crowd.fade_elapsed(n672) == 0.0, "F3: ... and the next group is revealed once its arrivals are ghosts")
+	world.set("_holds_on", false)
+

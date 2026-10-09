@@ -120,6 +120,44 @@ class FrameBudget:
 		_roll()
 		return int(_aim)
 
+## Round 762's review, F1 (OURS): the main thread's wait between frames -- from
+## the last _process callback of a frame (the tail mark, the highest
+## process_priority) to the first callback of the next (the head mark, the
+## lowest process and physics priority): the message flush, the render
+## thread's sync and the draw's queueing, and a vsync wait. With the
+## RenderingServer on its own thread (project.godot's thread_model 2) that gap
+## is time the main thread could spend without making the frame longer; the
+## rest of the frame is its work. World3D's background dressing judges its
+## room by the work, not the wall time, so a vsync-limited frame leaves room.
+class FrameMark extends Node:
+	## The last gap measured (usec), and the tail's clock (-1: none since).
+	static var wait_usec := 0
+	static var _tail_usec := -1
+	var head := true
+
+	func _init(is_head: bool = true) -> void:
+		head = is_head
+		name = "FrameHead" if is_head else "FrameTail"
+		process_priority = -1000000 if is_head else 1000000
+		process_physics_priority = -1000000
+
+	func _ready() -> void:
+		set_physics_process(head)
+
+	func _physics_process(_delta: float) -> void:
+		_head()
+
+	func _process(_delta: float) -> void:
+		if head:
+			_head()
+		else:
+			_tail_usec = Time.get_ticks_usec()
+
+	static func _head() -> void:
+		if _tail_usec >= 0:
+			wait_usec = Time.get_ticks_usec() - _tail_usec
+			_tail_usec = -1
+
 ## B1: the physics steps of a rendered frame, folded into one tick that runs
 ## after them (round 739's review, F3: World3D._process, so what it places is
 ## where the frame's last step left things). add() is each physics step's;
@@ -305,13 +343,44 @@ class BuildQueue:
 	## among themselves (a ghost an aura is waiting on).
 	var urgent := {}
 
-	## Puts a queued id first (urgent); nothing for an id not queued.
+	## Puts a queued id first (urgent). Round 762's review, F2: an id not
+	## queued (a ghost held with its page, a body not a ghost yet) is
+	## remembered, and is urgent when it is queued; forget() drops it (a
+	## departure).
 	func promote(id: int) -> void:
-		if _pending.has(id) and not urgent.has(id):
+		if not _pending.has(id):
+			_promote_later[id] = true
+			return
+		if not urgent.has(id):
 			urgent[id] = true
 			reopen()
 
+	var _promote_later := {}
+
+	## Remembers `id` to be urgent once it is queued again (or wake()), queued
+	## now or not: a body whose page is still arriving is not dressed before
+	## its page shows.
+	func promote_later(id: int) -> void:
+		_promote_later[id] = true
+
+	## A remembered id (promote_later) that is queued now is urgent from now.
+	func wake(id: int) -> void:
+		if _promote_later.has(id) and _pending.has(id):
+			_promote_later.erase(id)
+			urgent[id] = true
+			reopen()
+
+	func remembers(id: int) -> bool:
+		return _promote_later.has(id)
+
+	func forget(id: int) -> void:
+		_promote_later.erase(id)
+		drop(id)
+
 	var _later_built_frame := -1
+	## Round 762's review, F1: the last pass stopped at a ghost for want of the
+	## background dressing's room.
+	var _room_wait := false
 
 	## Round 762: the last pump dressed nothing and stopped at `later_within_sq`:
 	## whatever is still queued is a ghost beyond the dressing's reach.
@@ -319,6 +388,10 @@ class BuildQueue:
 
 	func queue(id: int) -> void:
 		settled = false
+		if _promote_later.has(id):
+			_promote_later.erase(id)
+			urgent[id] = true
+			reopen()
 		if fifo:
 			if not _pending.has(id):
 				_fifo.append(id)
@@ -343,6 +416,7 @@ class BuildQueue:
 	func clear() -> void:
 		_pending.clear()
 		urgent.clear()
+		_promote_later.clear()
 		_fifo.clear()
 		_fifo_at = 0
 
@@ -431,7 +505,13 @@ class BuildQueue:
 		if _pending.is_empty() or not can_build(frame):
 			_fresh.clear()
 			return 0
-		var ids: Array = _fresh if frame == _passed_frame or _idle else _pending.keys()
+		# Round 762's review, F1: a pass that stopped at the ghosts for want of
+		# room is taken again whole in a frame that has room (before, the queue
+		# went idle there and never looked at them again: no ghost was ever
+		# dressed in the background).
+		var room_again := _room_wait and later_room_usec > 0 and _later_built_frame != frame
+		var full := not ((frame == _passed_frame or _idle) and not room_again)
+		var ids: Array = _pending.keys() if full else _fresh
 		_fresh = []
 		if ids.is_empty():
 			return 0
@@ -462,6 +542,7 @@ class BuildQueue:
 		var pass_t0 := Time.get_ticks_usec()
 		var asked := 0
 		var later_band := int(DIST_KEY_MAX * 2.0) << INDEX_BITS
+		var room_wait := false
 		for key in order:
 			if _pending.is_empty() or not can_build(frame):
 				all_seen = false
@@ -474,6 +555,7 @@ class BuildQueue:
 				break
 			if later_room_usec >= 0 and key >= later_band and (later_room_usec == 0 or _later_built_frame == frame):
 				# The rest are ghosts too (nearest first, the last band).
+				room_wait = true
 				break
 			asked += 1
 			var id: int = ids[key & INDEX_MASK]
@@ -499,6 +581,7 @@ class BuildQueue:
 			# again whole (a pass over `_fresh` alone would lose it).
 			_idle = false
 		settled = cut and made == 0
+		_room_wait = room_wait if full else (_room_wait or room_wait)
 		built += made
 		last_spent = _spent
 		last_built = _built_in_frame

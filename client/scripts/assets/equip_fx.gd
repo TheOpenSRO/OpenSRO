@@ -48,7 +48,12 @@ class_name EquipFx
 ##   §8 item 5) is applied by neither path: what it holds is OPEN.
 ## The glow itself is untouched (a material, no per-frame work).
 
-const MAX_DISTANCE := 800.0
+## Round 762's review, F1: 720 units (READ, round 761: retail's
+## CRTModParticle steps and draws a character's effects only while its LOD,
+## the camera distance / 800 (GlobalDataManager::FUN_009c4aa0), is under the
+## particle mod's 0.9 (FUN_00c43780, CRTModParticle::FUN_00c779c0). Before,
+## 800 (OURS, round 734).
+const MAX_DISTANCE := 720.0
 ## The most holders drawn at once (round 746: whole weapons only, see
 ## _finish_cycle). OURS.
 const VISIBLE_BUDGET := 64
@@ -84,6 +89,17 @@ static var far_origin: Callable = Callable()
 static func _far(skel: Node3D):
 	return far_frame.call(skel) if far_frame.is_valid() else null
 
+## Round 762's review, F1 (OURS; World3D sets them): a ghost (CrowdGpu's body
+## drawn from its kind's recipe, no nodes) carries its weapon's particles
+## without being dressed. Its hosts hang from its holder node (`anchor`); the
+## item skeleton's frame in the world is ghost_frame(anchor, body bone, the
+## item skeleton's transform under its attachment) -- the GPU clip frame, as
+## item_frame for a far dressed body (round 747) -- or null when the anchor is
+## no ghost now; ghost_origin(anchor) is its place for the choice of the
+## nearest (INF while its page is held or it fades out), or null.
+static var ghost_frame: Callable = Callable()
+static var ghost_origin: Callable = Callable()
+
 class Host:
 	var id: String
 	var skel: Skeleton3D
@@ -99,6 +115,22 @@ class Host:
 	var dist := 0.0
 	## The cycle that last chose it (_finish_cycle).
 	var shown_cycle := -1
+	## Round 762's review, F1: a ghost's host (add_ghost_host). `anchor` is
+	## the ghost's holder node, `skel` the item's TEMPLATE skeleton (never in
+	## a tree; its bone's pose is `pose`), `att_bone` the body bone the item
+	## hangs from and `chain` the item skeleton's transform under that
+	## attachment. Null anchor: a built item skeleton's host.
+	var anchor: Node3D = null
+	var att_bone := -1
+	var chain := Transform3D()
+	var pose := Transform3D()
+	## The weapon it belongs to (one distance a weapon, _finish_cycle): its
+	## item skeleton's id, or a ghost's "anchor id|wear".
+	var wkey = 0
+
+	## The node it hangs from: the item skeleton, or a ghost's holder.
+	func node() -> Node3D:
+		return anchor if anchor != null else skel
 
 class Kind:
 	var key: String
@@ -115,6 +147,10 @@ class Kind:
 	var idle := 0
 	## Hosts registered with this effect, shown or not.
 	var hosts := 0
+	## Round 762's review, F1: the archive its master is made from (a lazy
+	## kind's master comes later: _make_masters), and whether it failed.
+	var archive: Pk2Reader = null
+	var failed := false
 
 var particles: Pk2Reader
 var _hosts: Dictionary = {}   # "skel id|bone|efp key" -> Host
@@ -135,6 +171,8 @@ var _cycle_frame := 0
 var _per_frame := 0
 var _paused := false
 var _hurry := false
+## Round 762's review, F1: the hosts on ghosts (add_ghost_host).
+var _ghost_hosts := 0
 ## Counts for the QA line and the tests.
 var stats := {"hosts": 0, "shown": 0, "kinds": 0}
 
@@ -210,50 +248,143 @@ func add_host(skel: Skeleton3D, bone: String, efp: String, scale: float, archive
 	var id := "%d|%d|%s|%s" % [skel.get_instance_id(), b, key, str(snappedf(scale, 0.0001))]
 	if _hosts.has(id):
 		return
-	if particles == null:
-		particles = archive
-	if not _kinds.has(key):
-		var qa_t0 := Time.get_ticks_usec() if FrameSplit.on else 0
-		var m := EfpEffect.create(efp, archive)
-		if m == null:
-			return
-		var qa_t1 := Time.get_ticks_usec() if FrameSplit.on else 0
-		m.loop = true
-		m.auto_free = false
-		m.top_level = true
-		# The holders turn with their bones (round 741); the billboards are
-		# built in the shader so they still face the camera.
-		m.use_shared_turn()
-		if FrameSplit.on:
-			print("QA EQUIPFX master %s: create %.1f ms, shared turn %.1f ms" % [efp, (qa_t1 - qa_t0) / 1000.0, (Time.get_ticks_usec() - qa_t1) / 1000.0])
-		m.name = "master_%d" % _kinds.size()
-		for c in m.get_children():
-			if c is GeometryInstance3D:
-				(c as GeometryInstance3D).visible = false
-		add_child(m)
-		m.global_transform = Transform3D.IDENTITY
-		# Round 759: stepped by the driver (_step_masters), not its own _process.
-		m.set_process(false)
-		var k := Kind.new()
-		k.key = key
-		k.master = m
-		k.efp = efp
-		var tmpl := EfpEffect.template_for(efp, archive)
-		k.own = tmpl != null and world_commands(tmpl) > 0
-		_kinds[key] = k
+	if not _kind_for(key, efp, archive):
+		return
 	var h := Host.new()
 	h.id = id
 	h.skel = skel
 	h.skel_id = skel.get_instance_id()
+	h.wkey = h.skel_id
 	h.bone = b
 	h.key = key
 	h.scale = scale
+	_register(h)
+
+## The kind `key` draws through, its master made on first use. False when the
+## effect does not build. Round 762's review, F1: with `lazy` (a ghost's host)
+## the kind is noted and its master made later, a frame's share at a time
+## (_make_masters): a ghost's weapon and shield name up to eight effect files,
+## and a page's first ghosts made their masters in one frame (MEASURED: 28 ms
+## of one ghost pump, 0.1-2.5 ms a master).
+func _kind_for(key: String, efp: String, archive: Pk2Reader, lazy: bool = false) -> bool:
+	if particles == null:
+		particles = archive
+	if not _kinds.has(key):
+		var k := Kind.new()
+		k.key = key
+		k.efp = efp
+		k.archive = archive
+		if lazy:
+			_kinds[key] = k
+			_masters_due.append(key)
+			return true
+		if not _make_master(k):
+			return false
+		_kinds[key] = k
+	return true
+
+## Kinds whose master is still to be made (_kind_for's `lazy`), oldest first.
+var _masters_due: Array = []
+## The masters made a frame (round 762's review, F1, OURS): one at least, then
+## while MASTERS_BUDGET_USEC lasts.
+const MASTERS_BUDGET_USEC := 1000
+
+func _make_masters() -> void:
+	if _masters_due.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+	var made := 0
+	while not _masters_due.is_empty() and (made == 0 or Time.get_ticks_usec() - t0 < MASTERS_BUDGET_USEC):
+		var key: String = _masters_due.pop_front()
+		var k: Kind = _kinds.get(key)
+		if k == null or (k.master != null and is_instance_valid(k.master)) or k.failed:
+			continue
+		made += 1
+		if not _make_master(k):
+			k.failed = true
+	if FrameSplit.on:
+		FrameSplit.add("fx_new_masters", Time.get_ticks_usec() - t0)
+
+## `k`'s master: one EfpEffect simulated at the origin, its own draws hidden
+## (the header). False when the effect does not build.
+func _make_master(k: Kind) -> bool:
+	var efp := k.efp
+	var archive: Pk2Reader = k.archive if k.archive != null else particles
+	var qa_t0 := Time.get_ticks_usec() if FrameSplit.on else 0
+	var m := EfpEffect.create(efp, archive)
+	if m == null:
+		return false
+	var qa_t1 := Time.get_ticks_usec() if FrameSplit.on else 0
+	m.loop = true
+	m.auto_free = false
+	m.top_level = true
+	# The holders turn with their bones (round 741); the billboards are
+	# built in the shader so they still face the camera.
+	m.use_shared_turn()
+	if FrameSplit.on:
+		print("QA EQUIPFX master %s: create %.1f ms, shared turn %.1f ms" % [efp, (qa_t1 - qa_t0) / 1000.0, (Time.get_ticks_usec() - qa_t1) / 1000.0])
+	m.name = "master_%d" % _kinds.size()
+	for c in m.get_children():
+		if c is GeometryInstance3D:
+			(c as GeometryInstance3D).visible = false
+	add_child(m)
+	m.global_transform = Transform3D.IDENTITY
+	# Round 759: stepped by the driver (_step_masters), not its own _process.
+	m.set_process(false)
+	# Round 762's review (OURS): each master's 50 ms frames at its own phase
+	# (the golden-ratio sequence over the masters made), so masters made
+	# together -- a crowd's kinds arrive in one page -- do not all step in the
+	# same rendered frame (MEASURED at 4,000 ghosts: fx_masters 3.2 ms a frame
+	# on average, 12.4 at its p95, the steps bunched).
+	_masters_made += 1
+	if m.sim != null:
+		m.sim._acc = EfpSim.FRAME_SEC * fposmod(float(_masters_made) * 0.6180339887, 1.0)
+	k.master = m
+	var tmpl := EfpEffect.template_for(efp, archive)
+	k.own = tmpl != null and world_commands(tmpl) > 0
+	return true
+
+var _masters_made := 0
+
+## Round 762's review, F1 (OURS): the particles of a ghost's weapon (CrowdGpu
+## draws the body from its kind's recipe; nothing is built). `row` is one of
+## the recipe's particle rows (CharacterAppearance.FarRecipe.fx): its effect
+## file, scale, the item's template skeleton and its bone, the body bone the
+## item hangs from and the item skeleton's transform under that attachment.
+## The holder is placed from ghost_frame every frame, as a far dressed body's
+## from item_frame (round 747), and hangs from `anchor`, the ghost's holder.
+## Taken off by remove_node(anchor) (the ghost dressed, gone or drawn again).
+func add_ghost_host(anchor: Node3D, row: Dictionary, archive: Pk2Reader) -> void:
+	var efp := String(row["efp"])
+	var scale := float(row["scale"])
+	var key := kind_key(efp, scale)
+	var id := "%d|g%d|%d|%s|%s" % [anchor.get_instance_id(), int(row["wear"]), int(row["bone"]), key, str(snappedf(scale, 0.0001))]
+	if _hosts.has(id) or not _kind_for(key, efp, archive, true):
+		return
+	var h := Host.new()
+	h.id = id
+	h.anchor = anchor
+	h.skel = row["skel"]
+	h.skel_id = anchor.get_instance_id()
+	h.wkey = "%d|%d" % [h.skel_id, int(row["wear"])]
+	h.bone = int(row["bone"])
+	h.pose = row["pose"]
+	h.att_bone = int(row["att_bone"])
+	h.chain = row["chain"]
+	h.key = key
+	h.scale = scale
+	_register(h)
+
+func _register(h: Host) -> void:
+	var id := h.id
 	_hosts[id] = h
-	var sid := skel.get_instance_id()
+	var sid := h.skel_id
 	if not _by_skel.has(sid):
 		_by_skel[sid] = []
 	(_by_skel[sid] as Array).append(id)
-	(_kinds[key] as Kind).hosts += 1
+	(_kinds[h.key] as Kind).hosts += 1
+	if h.anchor != null:
+		_ghost_hosts += 1
 	# Measured in the cycle under way (its slices are fixed at its start, and
 	# the cycle's last frame scans whatever is left); while the hosts fit the
 	# budget, a whole cycle runs next frame, so the select screen's and the
@@ -279,28 +410,45 @@ static func kind_key(efp: String, _scale: float) -> String:
 	return efp.to_lower()
 
 func remove_skel(skel: Skeleton3D) -> void:
+	remove_node(skel)
+
+## Every host hanging from `n` (an item skeleton, or a ghost's holder: round
+## 762's review, F1).
+func remove_node(n: Node) -> void:
 	# Round 762: by the skeleton's own list, not a pass over every host (each
 	# item skeleton of a crowd leaving made one: 4,000 bodies' weapons against
 	# thousands of hosts in one frame).
-	var ids = _by_skel.get(skel.get_instance_id())
+	var ids = _by_skel.get(n.get_instance_id())
 	if ids == null:
 		return
 	for id in (ids as Array).duplicate():
 		if _hosts.has(id):
 			_drop(id)
-	_by_skel.erase(skel.get_instance_id())
+	_by_skel.erase(n.get_instance_id())
+
+## Round 762's review, F1: whether `n` (a ghost's holder) has hosts.
+func has_node_hosts(n: Node) -> bool:
+	return n != null and _by_skel.has(n.get_instance_id())
 
 func _drop(id: String) -> void:
 	var h: Host = _hosts[id]
 	if h.holder != null and is_instance_valid(h.holder):
+		# A ghost's holder hangs from the player's holder node, which stays:
+		# taken off it now (round 762's review, F1), so the body dressed in the
+		# same frame is not taken for one carrying an effect
+		# (World3D._crowd_eligible) and kept near.
+		if h.anchor != null and h.holder.get_parent() != null:
+			h.holder.get_parent().remove_child(h.holder)
 		h.holder.queue_free()
 	if h.own_fx != null and is_instance_valid(h.own_fx):
 		h.own_fx.queue_free()
 	_own_parked.erase(id)
+	if h.anchor != null:
+		_ghost_hosts -= 1
 	if _kinds.has(h.key):
 		(_kinds[h.key] as Kind).hosts -= 1
 	_hosts.erase(id)
-	var sid := h.skel.get_instance_id() if is_instance_valid(h.skel) else h.skel_id
+	var sid := h.skel_id
 	var list = _by_skel.get(sid)
 	if list != null:
 		(list as Array).erase(id)
@@ -438,6 +586,7 @@ static func _holder_for(master: EfpEffect) -> EfpEffect:
 
 func _process(_delta: float) -> void:
 	_frame += 1
+	_make_masters()
 	var t0 := Time.get_ticks_usec() if EfpEffect.profile else 0
 	var cam := get_viewport().get_camera_3d()
 	var paused := _viewport_paused()
@@ -456,16 +605,29 @@ func _process(_delta: float) -> void:
 			_scan_slice(cam, _scan.size())
 			_finish_cycle()
 			_begin_cycle()
+	var ghosts_shown := 0
 	for h in _shown:
-		if h.holder == null or not is_instance_valid(h.holder) or not h.holder.visible or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+		var n: Node3D = (h as Host).node()
+		if h.holder == null or not is_instance_valid(h.holder) or not h.holder.visible or not is_instance_valid(n) or not n.is_inside_tree():
 			continue # an own simulation places itself (EfpEffect.follow_host)
 		# A hidden weapon shows nothing until the next cycle chooses again.
-		if not h.skel.is_visible_in_tree():
+		if not n.is_visible_in_tree():
 			h.holder.visible = false
+			continue
+		if h.anchor != null:
+			# A ghost's weapon (round 762's review, F1): the GPU clip frame of
+			# the bone it hangs from, then the item's template bone.
+			var g = ghost_frame.call(h.anchor, h.att_bone, h.chain) if ghost_frame.is_valid() else null
+			if g == null:
+				h.holder.visible = false
+				continue
+			h.holder.global_transform = place(g, h.pose, h.scale)
+			ghosts_shown += 1
 			continue
 		# A weapon on a far body (round 747, CrowdGpu): its skeleton is not
 		# posed, so its frame is the one the GPU draws the body at.
 		h.holder.global_transform = holder_transform(h.skel, h.bone, h.scale, _far(h.skel))
+	stats["ghost_placed"] = ghosts_shown
 	if _qa_log_every > 0 and _frame % _qa_log_every == 0:
 		_qa_log(cam)
 	_step_masters(_delta)
@@ -520,7 +682,12 @@ func _step_masters(delta: float) -> void:
 ## column of sparks beside the spear, lined up with it at one heading only.
 static func holder_transform(skel: Skeleton3D, bone: int, row_scale: float, frame = null) -> Transform3D:
 	var g: Transform3D = frame if frame != null else skel.global_transform
-	var at: Transform3D = g * skel.get_bone_global_pose(bone)
+	return place(g, skel.get_bone_global_pose(bone), row_scale)
+
+## holder_transform from the item skeleton's frame `g` and its bone's global
+## pose `pose` (round 762's review, F1: a ghost's, from its template).
+static func place(g: Transform3D, pose: Transform3D, row_scale: float) -> Transform3D:
+	var at: Transform3D = g * pose
 	var b := at.basis.orthonormalized()
 	return Transform3D(b * (row_scale * _uniform_scale(g.basis)), at.origin)
 
@@ -540,7 +707,7 @@ static var _qa_log_every := int(OS.get_environment("OPENSRO_QA_EQUIPFX_LOG")) if
 
 func _qa_log(cam: Camera3D) -> void:
 	for h in _shown:
-		if not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+		if h.anchor != null or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 			continue
 		var k: Kind = _kinds.get(h.key)
 		if k == null:
@@ -565,7 +732,7 @@ func _qa_log(cam: Camera3D) -> void:
 ## bone's position, the effect's axes along the world's). Empty when nothing
 ## is drawn or the item has no other end bone.
 static func measure(h: Host, k: Kind) -> Dictionary:
-	if not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+	if h.anchor != null or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
 		return {}
 	# The effect whose particles are measured: the shared master, or the
 	# host's own simulation while it runs (its particles in its anchor's space).
@@ -690,13 +857,35 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 		var h: Host = _hosts.get(id)
 		if h == null:
 			continue
-		if not is_instance_valid(h.skel) or h.skel.is_queued_for_deletion():
+		var n := h.node()
+		if not is_instance_valid(n) or n.is_queued_for_deletion():
 			_drop(id)
 			continue
-		if _paused or not h.skel.is_inside_tree():
+		if _paused or not n.is_inside_tree():
 			continue
 		var d := 0.0
-		if cam != null:
+		if h.anchor != null:
+			# A ghost's weapon (round 762's review, F1): its body's place, null
+			# once it is no ghost (World3D takes its hosts off then).
+			var go = ghost_origin.call(h.anchor) if ghost_origin.is_valid() else null
+			if go == null:
+				continue
+			if cam != null:
+				d = from.distance_to(go)
+				if d > MAX_DISTANCE:
+					continue
+				if d > ALWAYS_NEAR:
+					if have_planes:
+						var inside_g := true
+						for pl in planes:
+							if (pl as Plane).is_point_over(go):
+								inside_g = false
+								break
+						if not inside_g:
+							continue
+					elif not cam.is_position_in_frustum(go):
+						continue
+		elif cam != null:
 			var p: Vector3
 			# A far body's weapon (round 747): its body's place.
 			var o = far_origin.call(h.skel) if far_origin.is_valid() else null
@@ -715,7 +904,7 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 						continue
 				elif not cam.is_position_in_frustum(p):
 					continue
-		if not h.skel.is_visible_in_tree():
+		if not n.is_visible_in_tree():
 			continue
 		_cand.append(h)
 		_cand_d.append(d)
@@ -762,9 +951,9 @@ func _finish_cycle() -> void:
 		# A weapon freed since this cycle's scan measured it (a body freed
 		# outright, not queued): skipped here as in the loop below (round
 		# 748, MEASURED in the review's stress: 459-667 SCRIPT ERRORs a run).
-		if not is_instance_valid((_cand[i] as Host).skel):
+		if not is_instance_valid((_cand[i] as Host).node()):
 			continue
-		var wsid := (_cand[i] as Host).skel.get_instance_id()
+		var wsid = (_cand[i] as Host).wkey
 		weapon_d[wsid] = _cand_d[i]
 		weapon_n[wsid] = int(weapon_n.get(wsid, 0)) + 1
 	var chosen := {}
@@ -794,16 +983,22 @@ func _finish_cycle() -> void:
 	var world_shown: Array = []
 	for i in _cand.size():
 		var h: Host = _cand[i]
-		if _hosts.get(h.id) != h or not is_instance_valid(h.skel) or not h.skel.is_inside_tree():
+		if _hosts.get(h.id) != h or not is_instance_valid(h.node()) or not h.node().is_inside_tree():
 			continue
-		if not chosen.has(h.skel.get_instance_id()):
+		if not chosen.has(h.wkey):
+			continue
+		# A kind whose master is still to be made (round 762's review, F1)
+		# shows nothing yet.
+		var hk: Kind = _kinds.get(h.key)
+		if hk == null or hk.master == null or not is_instance_valid(hk.master):
 			continue
 		h.dist = _cand_d[i]
 		h.shown_cycle = _cycle
 		_shown.append(h)
 		# A far body's weapon draws the shared master (round 747): an own
-		# simulation follows the skeleton, which is not posed while far.
-		if (_kinds[h.key] as Kind).own and _far(h.skel) == null:
+		# simulation follows the skeleton, which is not posed while far; nor
+		# has a ghost's (round 762's review, F1) a posed skeleton.
+		if h.anchor == null and (_kinds[h.key] as Kind).own and _far(h.skel) == null:
 			world_shown.append(h)
 	# The OWN_BUDGET weapons with a world-axis effect that run every such
 	# effect on its own simulation (Kind.own), a weapon's effects together.
@@ -851,7 +1046,7 @@ func _finish_cycle() -> void:
 		_park_own(h)
 		if h.holder == null or not is_instance_valid(h.holder):
 			h.holder = _holder_for(k.master)
-			h.skel.add_child(h.holder)
+			h.node().add_child(h.holder)
 			# A holder only draws what its master simulates: no _process of
 			# its own (the review, F3). After add_child, whose ready would
 			# turn it back on.
@@ -878,10 +1073,22 @@ func _finish_cycle() -> void:
 		var k: Kind = _kinds[key]
 		k.idle = 0 if k.active > 0 else k.idle + maxi(_frame - _cycle_frame, 1)
 		if k.idle > IDLE_FRAMES and k.hosts <= 0:
-			k.master.queue_free()
+			if k.master != null and is_instance_valid(k.master):
+				k.master.queue_free()
 			_kinds.erase(key)
 	stats["weapons"] = chosen.size()
 	stats["own"] = owns
 	stats["hosts"] = _hosts.size()
 	stats["shown"] = _shown.size()
 	stats["kinds"] = _kinds.size()
+	# Round 762's review, F1 (QA): the shown holders on ghosts, and the
+	# farthest of them from the camera.
+	var gs := 0
+	var gd := 0.0
+	for h in _shown:
+		if (h as Host).anchor != null:
+			gs += 1
+			gd = maxf(gd, (h as Host).dist)
+	stats["ghost_shown"] = gs
+	stats["ghost_hosts"] = _ghost_hosts
+	stats["ghost_shown_far"] = gd
