@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
@@ -1127,6 +1128,46 @@ func DecodeChangeZoneRequest(data []byte) (*ChangeZoneRequest, error) {
 	return req, nil
 }
 
+// knownZoneSpots are the region-local points, per zone centre region, the
+// client stands a zone change's arrival at (OURS, the client's choices):
+// worldmap.LandingSpot's rows and the developer panel's town buttons
+// (client/scripts/ui/debug_panel.gd TOWNS -- keep the two in step).
+var knownZoneSpots = map[[2]int][][2]float64{
+	{97, 168}:  {{969, 1369}},
+	{102, 153}: {{957, 1508}},
+	{92, 135}:  {{1138, 153}},
+	{105, 79}:  {{950, 1070}},
+	{106, 108}: {{270, 1421}},
+	{90, 48}:   {{663, 526}},
+}
+
+// knownZoneSpot reports whether (x, z) is, within a unit, one of zone's known
+// spots (knownZoneSpots or its LandingSpot).
+func knownZoneSpot(zone string, x, z float64) bool {
+	rx, ry, ok := worldmap.FrameFor(zone)
+	if !ok {
+		return false
+	}
+	pts := append([][2]float64(nil), knownZoneSpots[[2]int{rx, ry}]...)
+	if sp, has := worldmap.LandingSpot[[2]int{rx, ry}]; has {
+		pts = append(pts, sp)
+	}
+	for _, p := range pts {
+		if math.Abs(p[0]-x) <= 1 && math.Abs(p[1]-z) <= 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// zoneSpotGate is the GM gate GMCommandHandler was made with (nil: no GM).
+var zoneSpotGate atomic.Pointer[gm.Gate]
+
+func zoneSpotGM(username string) bool {
+	g := zoneSpotGate.Load()
+	return g != nil && username != "" && g.Allows(username)
+}
+
 // changeZoneLanding is where a zone change to req lands, given arrival's
 // point `mid` (the zone's centre region's middle in the frame it is named
 // in): the request's spot, when it names one inside the region, or else the
@@ -1142,8 +1183,14 @@ func DecodeChangeZoneRequest(data []byte) (*ChangeZoneRequest, error) {
 // for a spot the server had not named, refused and corrected back to the
 // middle (the user's v0.1.516 log: "MOVE correction: the server has this
 // player at (0.00, 0.00, 0.00)").
-func changeZoneLanding(req *ChangeZoneRequest, mid world.Position) world.Position {
-	if req.HasSpot {
+//
+// Round 764's review, F3: a spot is taken only from a GM's session, or when it
+// is one the server knows the client stands players at -- a zone's
+// LandingSpot or a developer panel town button's (knownZoneSpots) -- so the
+// spot is no teleport to an arbitrary point. Any other spot is ignored and the
+// zone lands as without one.
+func changeZoneLanding(req *ChangeZoneRequest, mid world.Position, gm bool) world.Position {
+	if req.HasSpot && (gm || knownZoneSpot(req.Zone, float64(req.SpotX), float64(req.SpotZ))) {
 		x, z := float64(req.SpotX), float64(req.SpotZ)
 		if !math.IsNaN(x) && !math.IsNaN(z) && x >= 0 && x < worldmap.RegionSpan && z >= 0 && z < worldmap.RegionSpan {
 			// Landing is the middle in every frame, and ToWorld is a
@@ -1682,7 +1729,8 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if !oneWorld && req.Zone == current.Zone {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
-	pos = changeZoneLanding(req, pos)
+	username, _ := AuthenticatedUsername(sess)
+	pos = changeZoneLanding(req, pos, zoneSpotGM(username))
 	_, err = warpTo(ctx, sess, eq, chars, hub, zerk, req.Zone, bucket, pos, frame)
 	return err
 }
