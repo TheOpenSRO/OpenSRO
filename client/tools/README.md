@@ -550,6 +550,15 @@ held, fading, departing, the bytes received, and the frame's FrameSplit timers),
 `OPENSRO_QA_DRESS_REPORT_MS` lowers the `QA DRESS` floor. NetClient prints a `QA NET group` line per
 player group spawn (records, bytes, decode and handling ms) while FrameSplit is on.
 `docs/rounds/r762.md` has the recipes and the analysis.
+Round 762's second session: the frame log also carries the crowd budget (`budget_ms` the aim,
+`budget_own_ms` the last frame less the budgeted work, `budget_spent_ms`), the longest single dispatch
+and its opcode (`max_op_ms`, `max_opcode`; 0x3018 is a group's share), the probe's own time
+(`qa_probe`: take it out of `frame_ms` for the client's frame) and the phases of a ghost (`ga_*`,
+`tw_*`), the flush (`gf_*`, `gu_*`), the player's tick (`pp_*`) and the ticks (`pt_*`);
+`OPENSRO_QA_FRAME_LOG_RS=1` adds the render thread's last frame (`rs_cpu`, `rs_setup_ms`) and the
+pipeline compilations (each read waits for the render thread: diagnostics only). With
+`OPENSRO_QA_LINEUP_STEP_MS` the probe's `leave` and `back` steps hand their group over a frame's share
+at a time, as NetClient reads one; without it, in one call (the before tree).
 
 **The live crowd and the swarm's gear (round 759).** `CROWD_LIVE=<host:port>` makes `crowd_run.sh`
 sign in to a running server (QaSignIn: register if new, log in, create the character if missing,
