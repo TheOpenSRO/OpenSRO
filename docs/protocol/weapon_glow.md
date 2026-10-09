@@ -455,7 +455,9 @@ particle loader is called with first (READ, §1).
 - Particles start at +8, one `.efp` per item, through the existing `EfpEffect`. In a crowded town, N
   players at +8 or more add N to 2N emitters. Lane A measures them in the gate and may share an
   instance, but must not cap them (retail does not, READ round 761; this client's global
-  particle cap is OURS, `EfpSim.MAX_TOTAL`).
+  particle cap is OURS, `EfpSim.MAX_TOTAL`). **USER DECISION 2026-10-09 (round 763):** with the
+  native library the equipment particles are uncapped, as retail's; the 2,000 cap stays only for
+  the GDScript fallback and the other effects (`docs/rounds/r763.md` section 4).
 - This is a world-drawing round, so `perf_gate.sh` runs, and the table goes in the round entry.
 
 ## 8. Gaps (OPEN), with round 734's answers
@@ -531,6 +533,9 @@ particle loader is called with first (READ, §1).
     the `PLOD` console command and start at full quality; a character's effects are neither
     stepped nor drawn while its LOD (camera distance / 800) is at or past 0.9 (`FUN_00c43780`).
     The Options window's "Effect quality" (option 0xd: ALL_OFF / DAMEGE_ON / ALL_ON) is OPEN.
+    This client's own cap (OURS, round 620) no longer applies to the equipment particles when they
+    simulate in Rust: USER DECISION 2026-10-09, round 763 (4,000 standing uncapped: 2,277
+    particles, the same frame as the capped GDScript). The GDScript fallback keeps it.
 12. **Item bones: MEASURED (round 734).** The item `.bsk` files carry `ai_end`, `ai_start`,
     `Bone01`..`03`; OpenSRO's item skeleton keeps them.
 

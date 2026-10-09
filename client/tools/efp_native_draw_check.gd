@@ -62,6 +62,7 @@ func _initialize() -> void:
 			root.add_child(e)
 			e.set_process(false) # stepped below, not by its own _process
 	EfpSim.cap_total = 1 << 30 # no cap: each pair steps on its own, the same particles either way
+	EfpSimNative.native_cap = EfpSimNative.UNBOUNDED
 	var nodes := 0
 	var compared := 0
 	var bad := ""

@@ -121,6 +121,10 @@ returns one Dictionary of packed arrays, or `{error}`.
   before that by each effect's published `growth_bounds`; an undecided spawn waits on a condition
   variable woken by every bound published and every effect finished. Claims are in list order, so
   the first unfinished effect never waits, at any pool size.
+- **No cap** (USER DECISION 2026-10-09, round 763): the native masters' limit is unbounded
+  (`EfpSimNative.limit_native`) and they count their particles apart (`live_native`), so
+  `EfpSim`'s 2,000 cap applies to the GDScript effects only. The admission takes an unbounded limit
+  as any other and decides every spawn at once.
 - **The pool** (`core/pool.rs`): persistent helper threads that sleep between batches; the calling
   (main) thread always works too, so 0 helpers is one core. `EfpSimNative.configure` sizes it:
   `min(4, cores, Godot's WorkerThreadPool size)` threads in all by default, `OPENSRO_EFP_THREADS=<n>`

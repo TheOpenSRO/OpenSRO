@@ -207,6 +207,11 @@ class_name EfpSim
 ## round 761: its particles come from a free list that grows by 8,192 and
 ## never refuses, and nothing counts them); its one crowd thinning is per
 ## character, effects frozen past a camera distance (docs/rounds/r761.md).
+## USER DECISION 2026-10-09 (round 763): when EquipFx's masters simulate in
+## Rust (EfpSimNative) they have no global cap, as retail; they count their
+## own particles (EfpSimNative.live_native), so this cap -- kept for every
+## GDScript effect, the masters' fallback included -- neither counts nor
+## refuses them.
 
 const FRAME_SEC := 0.05 ## READ: 50 ms, see the header
 const MAX_STEPS_PER_ADVANCE := 10 ## OURS: a long hitch catches up at most 0.5 s

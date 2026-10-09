@@ -16,7 +16,8 @@ class_name EfpSimNative
 ## the thread that stepped it; the main thread hands them to the
 ## RenderingServer in bulk (EfpEffect._apply_native_*). Every other effect
 ## (skills, auras, the world's ambient effects, a weapon's own simulation) is
-## still EfpSim in GDScript; they share EfpSim.live_total with the masters.
+## still EfpSim in GDScript, under EfpSim's global cap; the native masters
+## have none (USER DECISION 2026-10-09, `native_cap` below).
 ##
 ## **The fallback.** Without the library (or with OPENSRO_NATIVE=0, or
 ## OPENSRO_EFP_NATIVE=0 for this alone, or a template the packer refuses) the
@@ -43,6 +44,33 @@ const DEFAULT_THREADS := 4
 ## Floats an instance takes in a MultiMesh buffer (TRANSFORM_3D, colours,
 ## custom data).
 const STRIDE := 20
+
+## USER DECISION 2026-10-09: no global particle cap while the masters
+## simulate natively, as the original has none (READ, round 761); the
+## GDScript fallback keeps EfpSim's 2,000. So the native masters count their
+## own particles here, not in EfpSim.live_total: the GDScript effects' cap
+## (skills, auras, the world's effects) keeps meaning what it meant, and the
+## masters' particles neither count against it nor are refused by it.
+static var live_native := 0
+## The native masters' cap: none (UNBOUNDED) unless OPENSRO_QA_EFP_CAP names
+## one (QA; the same switch as EfpSim's, round 761), or a test sets it.
+const UNBOUNDED := 1 << 30
+static var native_cap := _native_cap()
+
+static func _native_cap() -> int:
+	var v := OS.get_environment("OPENSRO_QA_EFP_CAP")
+	if v == "" or not v.is_valid_int() or int(v) <= 0:
+		return UNBOUNDED
+	return int(v)
+
+## The limit a native sim's spawn is held to (EfpSim.limit_for's rule on
+## native_cap): unbounded, or with a QA cap RESERVE below it for any effect
+## not reserved. The ordered admission (core/efp_batch.rs) takes it as any
+## limit: with it unbounded every spawn is decided at once and nothing waits.
+static func limit_native(is_reserved: bool) -> int:
+	if native_cap >= UNBOUNDED or is_reserved:
+		return native_cap
+	return native_cap - RESERVE
 
 static var _checked := false
 static var _available := false
@@ -166,14 +194,14 @@ func restart() -> void:
 	if _n == null:
 		super.restart()
 		return
-	EfpSim.live_total -= int(_n.call("restart"))
+	live_native -= int(_n.call("restart"))
 	_pull()
 
 func clear() -> void:
 	if _n == null:
 		super.clear()
 		return
-	EfpSim.live_total -= int(_n.call("clear"))
+	live_native -= int(_n.call("clear"))
 	_pull()
 
 func finished() -> bool:
@@ -184,8 +212,8 @@ func finished() -> bool:
 func advance(delta: float) -> int:
 	if _n == null:
 		return super.advance(delta)
-	var r: PackedInt64Array = _n.call("advance", delta, EfpSim.live_total, EfpSim.limit_for(reserved), keep, EfpSim.interval_mul, EfpSim.threshold)
-	EfpSim.live_total += r[1]
+	var r: PackedInt64Array = _n.call("advance", delta, live_native, limit_native(reserved), keep, EfpSim.interval_mul, EfpSim.threshold)
+	live_native += r[1]
 	_pull()
 	return r[0]
 
@@ -193,7 +221,7 @@ func step() -> void:
 	if _n == null:
 		super.step()
 		return
-	EfpSim.live_total += int(_n.call("step", EfpSim.live_total, EfpSim.limit_for(reserved), keep, EfpSim.interval_mul, EfpSim.threshold))
+	live_native += int(_n.call("step", live_native, limit_native(reserved), keep, EfpSim.interval_mul, EfpSim.threshold))
 	_pull()
 
 func growth_bounds(delta: float) -> Vector2i:
@@ -378,7 +406,7 @@ static func all_native(effects: Array) -> bool:
 
 ## EfpSimBatch.run for native sims: one Rust batch -- every effect advanced in
 ## the list's order of the global cap, on `threads` threads, each one's draws
-## built after its step -- then live_total and the counters back here, and
+## built after its step -- then live_native and the counters back here, and
 ## each effect's frames for its step_post. EfpSimBatch.last as the GDScript
 ## batch fills it.
 static func run_batch(effects: Array, delta: float) -> void:
@@ -395,13 +423,13 @@ static func run_batch(effects: Array, delta: float) -> void:
 		var e: EfpEffect = effects[i]
 		var s: EfpSimNative = e.sim
 		sims[i] = s._n
-		limits[i] = EfpSim.limit_for(s.reserved)
+		limits[i] = limit_native(s.reserved)
 		keeps[i] = 1 if s.keep else 0
 		# Only a billboard node that is not shared-turn draws with the camera;
 		# nine zeros stand for the identity (gd_efp.rs b3_from).
 		if e._native_needs_cam:
 			put_rows(cams, 9 * i, e.native_cam_rot())
-	var r: Dictionary = _batch.call("run", sims, delta, EfpSim.live_total, limits, keeps, cams, EfpSim.interval_mul, EfpSim.threshold, helpers)
+	var r: Dictionary = _batch.call("run", sims, delta, live_native, limits, keeps, cams, EfpSim.interval_mul, EfpSim.threshold, helpers)
 	if r.is_empty():
 		# Not every element was a live native sim (cannot happen past
 		# all_native): step them one by one, in order, as the main thread did.
@@ -414,7 +442,7 @@ static func run_batch(effects: Array, delta: float) -> void:
 	for i in n:
 		var e: EfpEffect = effects[i]
 		var s: EfpSimNative = e.sim
-		EfpSim.live_total += change[i]
+		live_native += change[i]
 		s.age = counters[5 * i]
 		s.dropped = counters[5 * i + 1]
 		s.spawned = counters[5 * i + 2]

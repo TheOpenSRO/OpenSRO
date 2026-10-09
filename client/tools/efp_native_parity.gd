@@ -84,6 +84,10 @@ func _initialize() -> void:
 	var cap := int(_arg("--cap", "-1"))
 	if cap >= 0:
 		EfpSim.cap_total = cap if cap > 0 else 1 << 30
+	# The native masters have no cap of their own (USER DECISION 2026-10-09);
+	# here both sides run under the GDScript one (2,000 unless --cap), so they
+	# are compared under the same rule.
+	EfpSimNative.native_cap = EfpSim.cap_total
 	var tpls: Array = []
 	var nodes := 0
 	var links := 0
@@ -175,9 +179,9 @@ func _parity(tpls: Array, frames: int, fps: float) -> void:
 				want_strips.append(EfpNativeParity.gd_strips(e, (e as EfpEffect).sim))
 		for r in runs.size():
 			EfpSimNative.helpers = int(runs[r]) - 1
-			EfpSim.live_total = nat_live[r]
+			EfpSimNative.live_native = nat_live[r]
 			EfpSimBatch.run(nat[r], d)
-			nat_live[r] = EfpSim.live_total
+			nat_live[r] = EfpSimNative.live_native
 			misses += int(EfpSimBatch.last.get("misses", 0))
 			waits += int(EfpSimBatch.last.get("waits", 0))
 			for i in tpls.size():
@@ -223,6 +227,7 @@ func _time(tpls: Array, frames: int, fps: float) -> void:
 	EfpSimNative.configure(OS.get_processor_count())
 	for mode in modes:
 		EfpSim.live_total = 0
+		EfpSimNative.live_native = 0
 		var native := String(mode).begins_with("native")
 		if native:
 			EfpSimNative.helpers = int(String(mode).get_slice("_", 1)) - 1
@@ -242,7 +247,7 @@ func _time(tpls: Array, frames: int, fps: float) -> void:
 			var dt := Time.get_ticks_usec() - t0
 			usec += dt
 			worst = maxi(worst, dt)
-			tot += EfpSim.live_total
+			tot += EfpSimNative.live_native if native else EfpSim.live_total
 		print("NATIVEPARITY time %s: %.3f ms a frame (worst %.2f), mean particles %.1f" % [
 			mode, usec / 1000.0 / frames, worst / 1000.0, float(tot) / frames])
 		_free(fx)

@@ -194,14 +194,14 @@ func _single(t: EfpSim.Template, seed_value: int, frames: int, held: int, label:
 		var gb := gd.growth_bounds(delta)
 		gd.advance(delta)
 		gd_live = EfpSim.live_total
-		EfpSim.live_total = nat_live
+		EfpSimNative.live_native = nat_live
 		if move and f % 3 == 0:
 			nat.set_origin(pos, rot)
 		if move and f % 50 == 49:
 			nat.shift(Vector3(1.5, 0, -2))
 		var nb := nat.growth_bounds(delta)
 		nat.advance(delta)
-		nat_live = EfpSim.live_total
+		nat_live = EfpSimNative.live_native
 		most = maxi(most, gd.particles.size())
 		var why := EfpNativeParity.compare(EfpNativeParity.gd_dump(gd), nat.dump())
 		if why == "" and gb != nb:
@@ -217,11 +217,12 @@ func _single(t: EfpSim.Template, seed_value: int, frames: int, held: int, label:
 	EfpSim.live_total = gd_live
 	gd.restart()
 	var g1 := EfpSim.live_total
-	EfpSim.live_total = nat_live
+	EfpSimNative.live_native = nat_live
 	nat.restart()
-	_check(EfpSim.live_total == g1 and nat.count() == 0 and EfpNativeParity.compare(EfpNativeParity.gd_dump(gd), nat.dump()) == "",
-		"%s: restart gives every particle back to live_total (%d)" % [label, EfpSim.live_total])
+	_check(EfpSimNative.live_native == g1 and nat.count() == 0 and EfpNativeParity.compare(EfpNativeParity.gd_dump(gd), nat.dump()) == "",
+		"%s: restart gives every particle back to its count (%d)" % [label, EfpSimNative.live_native])
 	EfpSim.live_total = 0
+	EfpSimNative.live_native = 0
 
 func _singles() -> void:
 	for k in 6:
@@ -246,7 +247,7 @@ func _effects(n: int, reserved: int, native: bool) -> Array:
 
 ## The main thread's order (each advanced in turn, the cap first come first
 ## served) against the native batch at `threads`.
-func _batch(n: int, fps: float, frames: int, held: int, reserved: int, hitch: int) -> void:
+func _batch(n: int, fps: float, frames: int, held: int, reserved: int, hitch: int, uncapped: bool = false) -> void:
 	var gd := _effects(n, reserved, false)
 	var cores := OS.get_processor_count()
 	var runs: Array = []
@@ -263,6 +264,7 @@ func _batch(n: int, fps: float, frames: int, held: int, reserved: int, hitch: in
 	var diffs := {}
 	var first := {}
 	var at_cap := 0
+	var most_live := 0
 	var waits := 0
 	var misses := 0
 	var helpers := 0
@@ -272,6 +274,7 @@ func _batch(n: int, fps: float, frames: int, held: int, reserved: int, hitch: in
 		for e in gd:
 			(e as EfpEffect).step_sim(delta)
 		gd_live = EfpSim.live_total
+		most_live = maxi(most_live, gd_live)
 		if gd_live >= EfpSim.limit_for(false) - 2:
 			at_cap += 1
 		var want: Array = []
@@ -280,9 +283,9 @@ func _batch(n: int, fps: float, frames: int, held: int, reserved: int, hitch: in
 		for r in runs.size():
 			# The pool sized once for the most; each run takes its share.
 			EfpSimNative.helpers = int(runs[r]) - 1
-			EfpSim.live_total = nat_live[r]
+			EfpSimNative.live_native = nat_live[r]
 			EfpSimBatch.run(nat[r], delta)
-			nat_live[r] = EfpSim.live_total
+			nat_live[r] = EfpSimNative.live_native
 			waits += int(EfpSimBatch.last.get("waits", 0))
 			misses += int(EfpSimBatch.last.get("misses", 0))
 			helpers += int(EfpSimBatch.last.get("by_helpers", 0))
@@ -300,9 +303,15 @@ func _batch(n: int, fps: float, frames: int, held: int, reserved: int, hitch: in
 	EfpSimNative.configure()
 	for r in runs.size():
 		_check(not diffs.has(runs[r]) and not first.has(runs[r]),
-			"%d effects at %.0f fps, %d thread(s): %d frames, every particle the main thread's%s" % [
-				n, fps, runs[r], frames, "" if not first.has(runs[r]) else " -- %d frames differ, first %s" % [int(diffs.get(runs[r], 0)), first[runs[r]]]])
-	_check(at_cap * 3 >= frames or n <= 8, "%d effects: the cap binds (%d of %d frames at it)" % [n, at_cap, frames])
+			"%d effects at %.0f fps%s, %d thread(s): %d frames, every particle the main thread's%s" % [
+				n, fps, " uncapped" if uncapped else "", runs[r], frames, "" if not first.has(runs[r]) else " -- %d frames differ, first %s" % [int(diffs.get(runs[r], 0)), first[runs[r]]]])
+	if uncapped:
+		# USER DECISION 2026-10-09: natively there is no cap; the run holds far
+		# more than the GDScript cap's 1,400, and with the limit unbounded the
+		# ordered admission decides every spawn at once.
+		_check(most_live > 1400 and waits == 0, "%d effects uncapped: up to %d particles alive (the GDScript cap: 1,400), %d spawns waited" % [n, most_live, waits])
+	else:
+		_check(at_cap * 3 >= frames or n <= 8, "%d effects: the cap binds (%d of %d frames at it)" % [n, at_cap, frames])
 	_check(misses == 0, "%d effects: no change outside its published bounds (%d waits, %d stepped by helpers)" % [n, waits, helpers])
 	for e in gd:
 		(e as EfpEffect).sim.clear()
@@ -312,6 +321,36 @@ func _batch(n: int, fps: float, frames: int, held: int, reserved: int, hitch: in
 			(e as EfpEffect).sim.clear()
 			(e as Node).free()
 	EfpSim.live_total = 0
+	EfpSimNative.live_native = 0
+
+## USER DECISION 2026-10-09: the native masters, uncapped, count apart: a
+## GDScript effect (a skill, an aura) beside thousands of native particles
+## keeps the GDScript cap's whole room, and theirs is not refused.
+func _apart() -> void:
+	var nat := _effects(60, -1, true)
+	for f in 120:
+		EfpSimBatch.run(nat, 1.0 / 20.0)
+	var native_alive := EfpSimNative.live_native
+	var g := EfpSim.new(_simple(1, 3), 9)
+	var alone := EfpSim.new(_simple(1, 3), 9)
+	var with_native := 0
+	var by_itself := 0
+	for f in 120:
+		g.advance(1.0 / 20.0)
+		with_native = g.particles.size()
+	EfpSim.live_total = 0
+	for f in 120:
+		alone.advance(1.0 / 20.0)
+		by_itself = alone.particles.size()
+	_check(native_alive > EfpSim.limit_for(false) and EfpSim.live_total == by_itself and with_native == by_itself and g.dropped == alone.dropped,
+		"%d native particles alive, uncapped; a GDScript effect beside them is the one alone (%d particles, %d dropped)" % [native_alive, with_native, g.dropped])
+	for e in nat:
+		(e as EfpEffect).sim.clear()
+		(e as Node).free()
+	g.clear()
+	alone.clear()
+	EfpSim.live_total = 0
+	EfpSimNative.live_native = 0
 
 # ---------------------------------------------------------------- the draws
 
@@ -433,10 +472,22 @@ func _initialize() -> void:
 	if not EfpSimNative.available():
 		print("skip: the native parity checks need the library (%s)" % EfpSimNative.status)
 	else:
+		# USER DECISION 2026-10-09: no cap natively, by default.
+		_check(EfpSimNative.native_cap == EfpSimNative.UNBOUNDED or OS.get_environment("OPENSRO_QA_EFP_CAP") != "",
+			"the native masters have no particle cap (USER DECISION 2026-10-09): limit %d" % EfpSimNative.limit_native(false))
+		# The parity runs hold both to the GDScript cap, so it binds alike.
+		EfpSimNative.native_cap = EfpSim.cap_total
 		_singles()
 		_batch(8, 37.0, 300, 0, -1, 77)
 		_batch(33, 15.0, 300, 0, 3, -1)
 		_batch(60, 30.0, 300, 250, -1, 150)
+		# Uncapped: the GDScript reference with its cap lifted too.
+		EfpSimNative.native_cap = EfpSimNative.UNBOUNDED
+		var cap := EfpSim.cap_total
+		EfpSim.cap_total = EfpSimNative.UNBOUNDED
+		_batch(60, 30.0, 300, 0, -1, 150, true)
+		EfpSim.cap_total = cap
+		_apart()
 		_draws()
 		_through_step_post()
 	EfpSimBatch.reap_all()
