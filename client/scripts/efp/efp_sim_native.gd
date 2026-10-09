@@ -334,6 +334,12 @@ func draw_rows(width: int, rows: int) -> PackedFloat32Array:
 		return PackedFloat32Array()
 	return _n.call("draw_rows", width, rows)
 
+## Round 764's review, F9: draw_rows as an RGBAF Image's bytes.
+func draw_rows_bytes(width: int, rows: int) -> PackedByteArray:
+	if _n == null or not _n.has_method("draw_rows_bytes"):
+		return PackedByteArray()
+	return _n.call("draw_rows_bytes", width, rows)
+
 ## Each draw node's particle count after the last build.
 func draw_counts() -> PackedInt32Array:
 	return _n.call("draw_counts") if _n != null else PackedInt32Array()

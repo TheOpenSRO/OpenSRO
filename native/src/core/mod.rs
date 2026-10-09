@@ -20,6 +20,7 @@ mod blowfish_constants;
 pub mod ddj;
 pub mod dxt;
 pub mod efp_batch;
+pub mod efp_hosts;
 pub mod efp_links;
 pub mod efp_out;
 pub mod efp_sim;

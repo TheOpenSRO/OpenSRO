@@ -391,12 +391,13 @@ func _test_frame_budget() -> void:
 	# Round 764: a frame the GPU or the render thread sets (the main thread
 	# waits 8 of its 11 ms) leaves the aim less the WORK; a frame over its aim,
 	# or the switch off, the aim less the whole frame, as before.
-	_check(fb.budget_for(11000, 11000, 8000, true) == 8000, "r764: an 11 ms frame with 8 ms of wait leaves 8 ms (%d)" % fb.budget_for(11000, 11000, 8000, true))
+	_check(fb.budget_for(11000, 11000, 8000, true) == 6350, "r764: an 11 ms frame with 8 ms of wait leaves 0.85 x 11 - 3 = 6.35 ms (%d)" % fb.budget_for(11000, 11000, 8000, true))
 	_check(fb.budget_for(11000, 11000, 0, true) == fb.MIN_USEC, "r764: ... no wait, the floor")
 	_check(fb.budget_for(11000, 14000, 8000, true) == fb.MIN_USEC, "r764: a frame over its aim falls back to the whole frame (the floor)")
 	_check(fb.budget_for(11000, 11000, 8000, false) == fb.MIN_USEC, "r764: OPENSRO_QA_BUDGET_WORK=0: the whole frame")
 	_check(fb.budget_for(30000, 20000, 19000, true) == fb.MAX_USEC, "r764: never past MAX_USEC")
 	_check(fb.budget_for(11000, 5000, 9000, true) == 6000, "r764: a wait longer than the frame is not counted (%d)" % fb.budget_for(11000, 5000, 9000, true))
+	_check(fb.budget_for(11000, 11000, 10500, true) == 9350 - 500, "r764: the review's F5 -- the margin is kept back however long the wait (%d)" % fb.budget_for(11000, 11000, 10500, true))
 	await process_frame
 	fb.left()
 	for i in range(40):

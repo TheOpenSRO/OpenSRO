@@ -399,6 +399,16 @@ impl SrEfpSim {
         .unwrap_or_default()
     }
 
+    /// Round 764's review, F9: draw_rows as the texture's bytes (an Image's FORMAT_RGBAF data, no
+    /// float array copied on the way).
+    #[func]
+    fn draw_rows_bytes(&self, width: i64, rows: i64) -> PackedByteArray {
+        let f = self.draw_rows(width, rows);
+        let s = f.as_slice();
+        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, s.len() * 4) };
+        PackedByteArray::from(bytes)
+    }
+
     /// Each draw node's particle count after the last build (what its MultiMesh shows).
     #[func]
     fn draw_counts(&self) -> PackedInt32Array {

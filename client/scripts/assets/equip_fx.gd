@@ -102,6 +102,11 @@ static var ghost_origin: Callable = Callable()
 ## Round 764 (EquipFxBatch): the CrowdGpu drawing the ghosts (World3D sets
 ## it), whose textures the batched particles read their hosts' frames from.
 static var ghost_gpu: Callable = Callable()
+## Round 764's review, F1: the viewport whose driver draws dressed bodies'
+## effects through its batches too (World3D's): nothing within reach comes
+## and goes with the camera. Other viewports (the equipment window's) keep
+## their holders.
+static var batch_viewport: Viewport = null
 
 class Host:
 	var id: String
@@ -137,6 +142,8 @@ class Host:
 	var sel := false
 	var rows := PackedFloat32Array()
 	var blayout: Object = null
+	## Round 764's review, F1: a dressed body's host its batch draws.
+	var direct := false
 
 	## The node it hangs from: the item skeleton, or a ghost's holder.
 	func node() -> Node3D:
@@ -161,6 +168,10 @@ class Kind:
 	## kind's master comes later: _make_masters), and whether it failed.
 	var archive: Pk2Reader = null
 	var failed := false
+	## Round 764's review, F9: the holders drawing its master this cycle, and
+	## its clock (the time into its next 50 ms frame; -1 until read).
+	var holders_shown := 0
+	var acc := -1.0
 
 var particles: Pk2Reader
 var _hosts: Dictionary = {}   # "skel id|bone|efp key" -> Host
@@ -191,6 +202,8 @@ var _batch_live := {}
 ## Round 764: the distances of this cycle's ghost hosts within reach, and the
 ## cut the last cycle found: the host_budget-th nearest (INF while fewer).
 var _batch_d := PackedFloat32Array()
+## Round 764's review, F9: the kinds whose master stepped this frame.
+var _stepped_keys := {}
 var _batch_cut := INF
 ## Counts for the QA line and the tests.
 var stats := {"hosts": 0, "shown": 0, "kinds": 0}
@@ -378,6 +391,26 @@ func _batching() -> bool:
 		_batch = EquipFxBatch.new(self)
 	return true
 
+## Round 764's review, F1: whether dressed bodies' hosts go to the batches
+## too (natively, in the world's viewport); the player's own weapons stay on
+## holders (prefer_root: their world-axis effects simulate on their own).
+func _batching_dressed() -> bool:
+	return batch_viewport != null and is_inside_tree() and get_viewport() == batch_viewport \
+		and EquipFxBatch.native_available() and _batching() and _batch.native
+
+## Round 764's review, F6: the world left -- its ghosts' hosts and every batch
+## go (a world entered again starts over: nothing grows).
+func reset_world() -> void:
+	for id in _hosts.keys():
+		var h: Host = _hosts[id]
+		if h.anchor != null:
+			_drop(id)
+	if _batch != null:
+		_batch.clear()
+	_batch_live.clear()
+	_batch_d.clear()
+	_batch_cut = INF
+
 ## Round 762's review, F1 (OURS): the particles of a ghost's weapon (CrowdGpu
 ## draws the body from its kind's recipe; nothing is built). `row` is one of
 ## the recipe's particle rows (CharacterAppearance.FarRecipe.fx): its effect
@@ -419,6 +452,9 @@ func _register(h: Host) -> void:
 		_ghost_hosts += 1
 		if _batching():
 			_batch.add(h)
+	elif _batching_dressed():
+		h.direct = true
+		_batch.add_direct(h)
 	# Measured in the cycle under way (its slices are fixed at its start, and
 	# the cycle's last frame scans whatever is left); while the hosts fit the
 	# budget, a whole cycle runs next frame, so the select screen's and the
@@ -481,6 +517,8 @@ func _drop(id: String) -> void:
 		_ghost_hosts -= 1
 		if _batch != null:
 			_batch.remove(h)
+	elif h.direct and _batch != null:
+		_batch.remove_direct(h)
 	if _kinds.has(h.key):
 		(_kinds[h.key] as Kind).hosts -= 1
 	_hosts.erase(id)
@@ -496,6 +534,11 @@ func _drop(id: String) -> void:
 ## long a parked own effect is kept, and the pre-roll a new or resumed one
 ## gets so it does not pop in empty.
 var prefer_root: Node = null
+
+## Round 764's review, F1: whether `h` hangs from the player (prefer_root),
+## whose weapons stay on holders.
+func _own_host(h: Host) -> bool:
+	return prefer_root != null and is_instance_valid(prefer_root) and is_instance_valid(h.skel) and prefer_root.is_ancestor_of(h.skel)
 const OWN_KEEP_MARGIN := 0.2
 const OWN_FREE_CYCLES := 30
 const OWN_PREROLL_STEPS := 10
@@ -668,7 +711,11 @@ func _process(_delta: float) -> void:
 		_qa_log(cam)
 	_step_masters(_delta)
 	if _batch != null:
-		_batch.step(ghost_gpu.call() if ghost_gpu.is_valid() else null, _kinds)
+		_batch.step(ghost_gpu.call() if ghost_gpu.is_valid() else null, _kinds, cam, prefer_root, _stepped_keys)
+		if _batch.native:
+			stats["in_view"] = int(_batch.stats["in_reach"])
+		stats["batch_chosen"] = _batch.selected_count()
+		stats["batch_direct"] = int(_batch.stats["direct"])
 		stats["batch_hosts"] = int(_batch.stats["hosts"])
 		stats["batch_draws"] = int(_batch.stats["draws"])
 		stats["batch_instances"] = int(_batch.stats["instances"])
@@ -680,7 +727,7 @@ func _process(_delta: float) -> void:
 ## Round 759: whether `k`'s master is stepped this frame (_step_masters): a
 ## shown weapon draws through it.
 func steps_master(k: Kind) -> bool:
-	return k.active > 0 and is_instance_valid(k.master)
+	return (k.active > 0 or (_batch != null and _batch.native and _batch.live_kinds.has(k.key))) and is_instance_valid(k.master)
 
 ## Round 759: every master a shown weapon draws (Kind.active), stepped here
 ## rather than in its own _process (masters do not process): the placement and
@@ -690,16 +737,41 @@ func steps_master(k: Kind) -> bool:
 func _step_masters(delta: float) -> void:
 	var t0 := Time.get_ticks_usec() if FrameSplit.on else 0
 	var list: Array = []
+	var live: Dictionary = _batch.live_kinds if _batch != null and _batch.native else {}
+	var stepped: Array = []
+	_stepped_keys.clear()
 	for key in _kinds:
 		var k: Kind = _kinds[key]
-		if k.active <= 0 or not is_instance_valid(k.master) or k.master.sim == null or k.master.is_queued_for_deletion():
+		if (k.active <= 0 and not live.has(key)) or not is_instance_valid(k.master) or k.master.sim == null or k.master.is_queued_for_deletion():
 			continue
-		if k.master.step_pre(delta):
-			list.append(k.master)
+		# Round 764's review, F9 (OURS): a master is stepped only in a frame
+		# its next 50 ms frame falls in (the time between is added to its
+		# clock then), unless a holder draws a billboard or pipe of it that
+		# turns with the camera. A master is never moved (it lives at the
+		# origin), so a frame between its steps changes nothing it draws.
+		var m: EfpEffect = k.master
+		var s = m.sim
+		if k.acc < 0.0:
+			k.acc = float(s.clock()) if s is EfpSimNative else float(s._acc)
+		k.acc += delta
+		var cam_bound := m.holders_use and (m._has_billboard or m._has_pipe)
+		if k.acc < EfpSim.FRAME_SEC and not cam_bound:
+			continue
+		if not is_equal_approx(k.acc - delta, float(s.clock()) if s is EfpSimNative else float(s._acc)):
+			s.set_phase(k.acc - delta)
+		if m.step_pre(delta):
+			list.append(m)
+			stepped.append(k)
 	EfpSimBatch.run(list, delta)
 	for m in list:
 		if is_instance_valid(m):
 			(m as EfpEffect).step_post()
+	_stepped_keys.clear()
+	for k in stepped:
+		_stepped_keys[(k as Kind).key] = true
+		var s2 = (k as Kind).master.sim if is_instance_valid((k as Kind).master) else null
+		if s2 != null:
+			(k as Kind).acc = float(s2.clock()) if s2 is EfpSimNative else float(s2._acc)
 	if FrameSplit.on:
 		FrameSplit.add("fx_masters", Time.get_ticks_usec() - t0)
 		FrameSplit.add("fx_masters_calls", list.size())
@@ -919,6 +991,13 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 		if _paused or not n.is_inside_tree():
 			continue
 		var d := 0.0
+		if h.anchor != null and _batch != null and _batch.native:
+			# Round 764's review, F1: chosen, culled and placed by the library
+			# every frame (EquipFxBatch).
+			continue
+		if h.direct and not _own_host(h):
+			# ... and a dressed body's, from the frame EquipFxBatch gives it.
+			continue
 		if h.anchor != null:
 			# A ghost's weapon (round 762's review, F1): its body's place, null
 			# once it is no ghost (World3D takes its hosts off then).
@@ -937,6 +1016,12 @@ func _scan_slice(cam: Camera3D, count: int) -> void:
 					# then; kept as chosen, so it shows with its reveal.
 					continue
 				var sel := gd <= MAX_DISTANCE and gd <= _batch_cut
+				# Round 764's review, F2: while no cut is known (fewer hosts
+				# than the budget last cycle -- a page held until now), the
+				# budget's room decides, so a reveal never draws more.
+				if sel and not h.sel and is_inf(_batch_cut) and EquipFxBatch.host_budget > 0 \
+						and _batch.selected_count() >= EquipFxBatch.host_budget:
+					sel = false
 				if gd <= MAX_DISTANCE:
 					_batch_d.append(gd)
 					_cand_seen += 1
@@ -1053,6 +1138,7 @@ func _finish_cycle() -> void:
 			chosen[wsid] = true
 	for k in _kinds.values():
 		(k as Kind).active = 0
+		(k as Kind).holders_shown = 0
 	# Round 764: the next cycle's cut -- the host_budget-th nearest ghost
 	# host within reach, INF while there are fewer (every one is drawn, as
 	# retail draws every character within 720).
@@ -1135,6 +1221,7 @@ func _finish_cycle() -> void:
 				continue
 		# Drawn through the master: only these keep it stepping (finding 6).
 		k.active += 1
+		k.holders_shown += 1
 		_park_own(h)
 		if h.holder == null or not is_instance_valid(h.holder):
 			h.holder = _holder_for(k.master)
@@ -1150,6 +1237,11 @@ func _finish_cycle() -> void:
 		if h.holder != null and is_instance_valid(h.holder):
 			h.holder.visible = false
 		_park_own(h)
+	# Round 764's review, F9: a master no holder draws sends nothing to its
+	# own MultiMeshes (the batches read its buffers).
+	for k in _kinds.values():
+		if (k as Kind).master != null and is_instance_valid((k as Kind).master):
+			(k as Kind).master.holders_use = (k as Kind).holders_shown > 0
 	# Finding 5: an own effect parked for OWN_FREE_CYCLES cycles is freed.
 	for id in _own_parked.keys():
 		if _cycle - int(_own_parked[id]) < OWN_FREE_CYCLES:

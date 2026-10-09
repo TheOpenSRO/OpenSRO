@@ -67,8 +67,14 @@ class FrameBudget:
 	## past it, the aim less the whole frame; within [MIN_USEC, MAX_USEC].
 	static func budget_for(aim: int, own: int, wait: int, work: bool) -> int:
 		if work and own <= aim and wait > 0 and wait < own:
-			return clampi(aim - (own - wait), MIN_USEC, MAX_USEC)
+			# The review's F5: the wait between frames also holds main-thread
+			# work (the deferred calls and the delete queue's flush, input, the
+			# physics queries), so it is not all room: WORK_MARGIN of the aim
+			# is kept back (OURS).
+			return clampi(int(float(aim) * WORK_MARGIN) - (own - wait), MIN_USEC, MAX_USEC)
 		return clampi(aim - own, MIN_USEC, MAX_USEC)
+
+	const WORK_MARGIN := 0.85
 
 	## The frame rolls on the first call in it.
 	static func _roll() -> void:

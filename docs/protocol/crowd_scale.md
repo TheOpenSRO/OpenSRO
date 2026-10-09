@@ -115,7 +115,13 @@ INFERRED to be "ID".
   is OPEN.
 - An equipment or model particle draws only while its `mod+0x3c` (0.9) is at least the host's LOD
   factor (`FUN_00c43780`):
-  - **every other player's weapon particles draw at every distance** (factor 0);
+  - another player's weapon particles stop at 0.9 x 800 = **720 units, with no count limit**
+    (corrected in round 764's review: READ `GlobalDataManager::FUN_009c4aa0` computes the factor
+    as `vtable+0x44() / 800` (`_DAT_00d83080`) and forces it to 0 only when the option getter `0x17`
+    returns 0, for the exact runtime class at `0xef1b44` (INFERRED: the own `CICPlayer`), and for a
+    `CICMonster` of rarity 3 or 8; `CCompChar::FUN_00c25620` stores it clamped to [0, 1]. This line
+    said "every other player's weapon particles draw at every distance (factor 0)", as r736.md did;
+    the per-object rescale `cfg+0x134 x s + cfg+0x138` stays OPEN);
   - scenery particles stop at 720 (COMPUTED);
   - a monster's particles stop at about 595 when S = 1 (COMPUTED).
 - `CRTModParticle::FUN_00c81450` also needs the effect manager's `+0x1b0`.

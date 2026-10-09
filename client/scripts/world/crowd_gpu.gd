@@ -502,10 +502,13 @@ func remove(skel: Object, push: bool = true, departing: bool = false) -> Array:
 	b.heard = false
 	b.sound_due = INF
 	_free_slots.append(b.slot)
-	# A freed slot draws nothing: no instance names it. Its fade texel is
-	# cleared for the next body to take it.
+	# A freed slot draws nothing: no part instance names it. Round 764's
+	# review, F4: its fade texel says "faded out" (-1) until the next body
+	# takes it (_take_slot clears it), so an EquipFxBatch host still naming it
+	# draws nothing either.
 	if b.slot >= 0:
-		_body_data[b.slot * FLOATS_PER_BODY + 17] = 0.0
+		_body_data[b.slot * FLOATS_PER_BODY + 17] = -1.0
+		_dirty_rows[b.slot / SLOTS_PER_ROW] = true
 	if departing:
 		b.hidden.clear()
 		stats["removed"] += 1
@@ -1246,7 +1249,19 @@ func ghost_slot_layout(node: Object) -> Array:
 	var b: Body = _bodies.get(node) if node != null else null
 	if b == null or not b.ghost or b.slot < 0 or b.layout == null:
 		return []
-	return [b.slot, b.layout]
+	return [b.slot, b.layout, slot_stamp(b.slot)]
+
+## Round 764's review (EquipFxBatch's native hosts): the bodies' data as the
+## shader reads it, the clip clock (ms since the epoch, srr_crowd_clock) and
+## the hold slots' reveal clocks (srr_crowd_reveal).
+func body_data() -> PackedFloat32Array:
+	return _body_data
+
+func clock_ms() -> float:
+	return float((_last_time - _epoch) * 1000.0)
+
+func reveal_clocks() -> PackedFloat32Array:
+	return PackedFloat32Array([_reveal[0], _reveal[1], _reveal[2], _reveal[3]])
 
 ## Round 764 (EquipFxBatch): the far bodies' texture (crowd_bodies), or null
 ## before the first upload.
@@ -1628,7 +1643,10 @@ func reset_aabb_to(lo: Vector3, hi: Vector3) -> void:
 
 func _take_slot() -> int:
 	if not _free_slots.is_empty():
-		return _free_slots.pop_back()
+		var fs: int = _free_slots.pop_back()
+		_body_data[fs * FLOATS_PER_BODY + 17] = 0.0
+		_stamp_slot(fs)
+		return fs
 	var s := _slots
 	_slots += 1
 	if _slots > _slot_cap:
@@ -1638,7 +1656,21 @@ func _take_slot() -> int:
 		# 4,096 in four steps. Tests ask for a smaller first size.
 		_slot_cap = maxi(first_slot_cap, _slot_cap * 2)
 		_body_data.resize(_slot_cap * FLOATS_PER_BODY)
+	_stamp_slot(s)
 	return s
+
+## Round 764's review, F4: each body taking a slot stamps it (texel 4's w, a
+## float no shader reads): an EquipFxBatch host names the stamp of the body it
+## was placed for, and draws nothing on a later body in the same slot.
+var _slot_stamp := 0
+const SLOT_STAMPS := 1 << 19
+func _stamp_slot(s: int) -> void:
+	_slot_stamp = (_slot_stamp + 1) % SLOT_STAMPS
+	_body_data[s * FLOATS_PER_BODY + 19] = float(_slot_stamp)
+	_dirty_rows[s / SLOTS_PER_ROW] = true
+
+func slot_stamp(s: int) -> int:
+	return int(_body_data[s * FLOATS_PER_BODY + 19]) if s >= 0 and s * FLOATS_PER_BODY + 19 < _body_data.size() else -1
 
 func _update_transform(b: Body) -> void:
 	if not is_instance_valid(b.node) or not b.node.is_inside_tree():

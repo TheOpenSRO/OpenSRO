@@ -375,7 +375,7 @@ func _live_arrival() -> void:
 	_census()
 
 const PERSEC_PHASES := ["phys_cb", "phys_engine", "proc_cb", "post_flush", "draw", "post_tail", "net_read", "net_dispatch",
-	"p_world", "w_world", "fx_driver", "fx_effects", "w_pump", "ghosts"]
+	"p_world", "w_world", "fx_driver", "fx_effects", "w_pump", "ghosts", "fx_batch", "fxb_native", "fxb_parts"]
 
 ## Round 759: one `QA LIVE` line a second (the header).
 func _persec_frame() -> void:
@@ -957,8 +957,9 @@ func _report() -> void:
 		var d: EquipFx = vp0.get_meta(EquipFx.DRIVER_META)
 		fx_line = " fx_hosts=%d fx_shown=%d fx_kinds=%d fx_ghost_hosts=%d fx_ghost_shown=%d fx_ghost_far=%.0f fx_in_view=%d" % [int(d.stats["hosts"]), int(d.stats["shown"]), int(d.stats["kinds"]),
 			int(d.stats.get("ghost_hosts", 0)), int(d.stats.get("ghost_shown", 0)), float(d.stats.get("ghost_shown_far", 0.0)), int(d.stats.get("in_view", 0))] \
-			+ " fx_batch_hosts=%d fx_batch_draws=%d fx_batch_instances=%d fx_batch_live=%d" % [int(d.stats.get("batch_hosts", 0)),
-			int(d.stats.get("batch_draws", 0)), int(d.stats.get("batch_instances", 0)), int(d.stats.get("batch_live", 0))]
+			+ " fx_batch_hosts=%d fx_batch_draws=%d fx_batch_instances=%d fx_batch_live=%d fx_batch_chosen=%d fx_batch_direct=%d" % [int(d.stats.get("batch_hosts", 0)),
+			int(d.stats.get("batch_draws", 0)), int(d.stats.get("batch_instances", 0)), int(d.stats.get("batch_live", 0)),
+			int(d.stats.get("batch_chosen", 0)), int(d.stats.get("batch_direct", 0))]
 	var gpu_line := ""
 	var crowd = world.get("_crowd_gpu")
 	if crowd != null:
@@ -1457,11 +1458,31 @@ func _fx_ab() -> void:
 	var batch_draws: Array = []
 	for b in d._batch._batches.values():
 		for dr in b.draws:
-			batch_draws.append(dr[0])
+			# [node, drawn] -- natively the library sets the instances, so
+			# a draw with a stride is one that draws.
+			batch_draws.append([dr[0], int(dr[5]) > 0 if d._batch.native else int(dr[4]) > 0])
 		var k = d._kinds.get(b.kind_key)
 		if k == null or k.master == null:
 			continue
-		for h in b.drawn:
+		# The master's own MultiMeshes as a holder draws them (the round 764
+		# review's F9 leaves them unsent while no holder uses the master).
+		var mst: EfpEffect = k.master
+		mst.holders_use = true
+		if mst.sim is EfpSimNative and (mst.sim as EfpSimNative).is_native():
+			mst._apply_native_draws(mst.sim as EfpSimNative)
+		elif mst.sim != null:
+			mst._update_draws()
+		# Natively the library chooses each frame: the holders are made for
+		# every host within 720 (run fxab with OPENSRO_QA_EQUIPFX_HOSTS=0).
+		var hs: Array = b.drawn
+		if d._batch.native:
+			hs = []
+			var from := vp.get_camera_3d().global_position if vp.get_camera_3d() != null else Vector3.ZERO
+			for h in b.hosts:
+				var go = crowd.ghost_origin(h.anchor) if crowd != null else null
+				if go is Vector3 and (go as Vector3).distance_to(from) <= EquipFx.MAX_DISTANCE:
+					hs.append(h)
+		for h in hs:
 			var g = crowd.ghost_item_frame(h.anchor, h.att_bone, h.chain) if crowd != null else null
 			if g == null:
 				continue
@@ -1473,9 +1494,9 @@ func _fx_ab() -> void:
 			holders.append(hd)
 	var shots := {}
 	for which in ["batch", "holders", "none", "batch2"]:
-		for n in batch_draws:
-			if is_instance_valid(n):
-				(n as Node3D).visible = which.begins_with("batch") and (n as MultiMeshInstance3D).multimesh.visible_instance_count > 0
+		for bd in batch_draws:
+			if is_instance_valid(bd[0]):
+				(bd[0] as Node3D).visible = which.begins_with("batch") and bool(bd[1])
 		for hd in holders:
 			(hd as Node3D).visible = which == "holders"
 		for i in range(3):
@@ -1505,9 +1526,9 @@ func _fx_ab() -> void:
 		tag, int(d._batch.stats["hosts"]), holders.size(), ab[0], ab[1], aa[0], aa[1], ac[0], ac[1]])
 	for hd in holders:
 		(hd as Node).queue_free()
-	for n in batch_draws:
-		if is_instance_valid(n):
-			(n as Node3D).visible = (n as MultiMeshInstance3D).multimesh.visible_instance_count > 0
+	for bd in batch_draws:
+		if is_instance_valid(bd[0]):
+			(bd[0] as Node3D).visible = bool(bd[1])
 	d.process_mode = Node.PROCESS_MODE_INHERIT
 	tree.process_frame.disconnect(hold)
 	TexAni.hold = false

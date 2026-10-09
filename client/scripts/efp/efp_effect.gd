@@ -1241,9 +1241,20 @@ func draw_rows(width: int, rows: int) -> PackedFloat32Array:
 		return (sim as EfpSimNative).draw_rows(width, rows)
 	return PackedFloat32Array()
 
+## Round 764's review, F9: draw_rows as an RGBAF Image's bytes, natively;
+## empty otherwise.
+func draw_rows_bytes(width: int, rows: int) -> PackedByteArray:
+	if sim is EfpSimNative and (sim as EfpSimNative).is_native():
+		return (sim as EfpSimNative).draw_rows_bytes(width, rows)
+	return PackedByteArray()
+
 ## Round 764: the GDScript path's draw buffers (_update_draws), kept when
 ## keep_draw_buffers is set (a master a batch draws).
 var keep_draw_buffers := false
+## Round 764's review, F9: false when nothing draws this effect's own
+## MultiMeshes (an EquipFx master no holder shares: its batches read its
+## buffers), so they are not sent to the RenderingServer.
+var holders_use := true
 var _draw_bufs: Array = []
 
 ## Writes every drawn node's particles into its MultiMesh.
@@ -1270,9 +1281,11 @@ func _update_draws() -> void:
 		var mmi: MultiMeshInstance3D = d[1]
 		var mm := mmi.multimesh
 		var ps: Array = by_tpl.get(int(d[0]), [])
-		if ps.size() > mm.instance_count:
-			mm.instance_count = maxi(ps.size(), mm.instance_count * 2)
-		mm.visible_instance_count = ps.size()
+		var send := holders_use or not keep_draw_buffers
+		if send:
+			if ps.size() > mm.instance_count:
+				mm.instance_count = maxi(ps.size(), mm.instance_count * 2)
+			mm.visible_instance_count = ps.size()
 		var kb := PackedFloat32Array()
 		if keep_draw_buffers:
 			kb.resize(ps.size() * 20)
@@ -1285,9 +1298,10 @@ func _update_draws() -> void:
 				var t := Transform3D(Basis.from_scale(p.scale), p.pos)
 				var c := EfpSim.color_of(p.color)
 				var q := turn_custom(p)
-				mm.set_instance_transform(i, t)
-				mm.set_instance_color(i, c)
-				mm.set_instance_custom_data(i, q)
+				if send:
+					mm.set_instance_transform(i, t)
+					mm.set_instance_color(i, c)
+					mm.set_instance_custom_data(i, q)
 				if keep_draw_buffers:
 					_put_instance(kb, i * 20, t, c, q)
 			if keep_draw_buffers:
@@ -1298,9 +1312,10 @@ func _update_draws() -> void:
 			var t := particle_transform(p, String(d[2]), cam_rot)
 			var c := EfpSim.color_of(p.color)
 			var u := Color(p.uv.x, p.uv.y, p.uv.z, p.uv.w)
-			mm.set_instance_transform(i, t)
-			mm.set_instance_color(i, c)
-			mm.set_instance_custom_data(i, u)
+			if send:
+				mm.set_instance_transform(i, t)
+				mm.set_instance_color(i, c)
+				mm.set_instance_custom_data(i, u)
 			if keep_draw_buffers:
 				_put_instance(kb, i * 20, t, c, u)
 		if keep_draw_buffers:
@@ -1393,7 +1408,7 @@ func use_native_sim(seed_value: int = 0) -> bool:
 ## particles (SrEfpSim.apply_draws).
 func _apply_native_draws(ns: EfpSimNative) -> void:
 	draw_updates += 1
-	if _draws.is_empty():
+	if _draws.is_empty() or not holders_use:
 		return
 	var grow := ns.draw_growth()
 	for k in range(0, grow.size(), 2):

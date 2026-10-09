@@ -1,164 +1,202 @@
 extends RefCounted
 class_name EquipFxBatch
 
-## Round 764 (OURS; docs/rounds/r764.md section 4): the particles of every
-## ghost's weapons, drawn in one MultiMesh draw per (effect, draw node, body
-## skeleton layout) -- every ghost within 720 units, as retail draws them --
-## instead of a holder node per weapon for the 64 nearest in view.
+## Round 764 (OURS; docs/rounds/r764.md sections 2 and 8): the weapon effects of
+## a crowd -- every ghost's and, natively, every dressed body's but the player's
+## own -- drawn in one MultiMesh draw per (effect, master draw node), instead of
+## a holder node per weapon for the 64 nearest in view.
 ##
 ## **Why.** EquipFx drew a weapon's effect through a holder: a node per weapon
 ## sharing its master's MultiMesh, placed on the CPU every frame, a draw call a
-## master draw node. That cost ~1 ms of render thread for 64 holders (1,120 of
-## the frame's draws, MEASURED at 4,000), so only the 64 nearest hosts in the
-## view had one (EquipFx.VISIBLE_BUDGET, OURS), chosen again every cycle by
-## their body's origin in the frustum. In the swarm 10,898 hosts were within
-## 720 units and in view; 64 drew. Which 64 changed as the camera turned: the
+## master draw node. Only the 64 hosts nearest the camera inside the frustum had
+## one, chosen again every cycle: in the swarm 10,898 hosts were within 720
+## units and in view and 64 drew, and which changed as the camera turned (the
 ## user's "the seal effects appear and disappear and it seems like it's based
-## off camera angle" (v0.1.516). Retail steps and draws a character's effects
-## while its LOD -- camera distance / 800 -- is under 0.9, every character
-## (READ, round 761: CRTModParticle::FUN_00c779c0, FUN_00c43780).
+## off camera angle", v0.1.516). Retail steps and draws a character's effects
+## while its LOD -- camera distance / 800 -- is under 0.9: within 720 units,
+## with no count limit (READ: FUN_00c43780, GlobalDataManager::FUN_009c4aa0;
+## the review of round 764).
 ##
-## **How.** A batch's MultiMesh has (hosts x particles) instances and no
-## instance data of its own. Its shader (batch_shader: the node's own shader,
-## its vertex stage replaced) takes instance i as host i / P and particle
-## i % P (P = fxb_per_host); finds the host's ghost in CrowdGpu's textures
-## (crowd_gpu.gdshaderinc: the body's transform, its clip frame's bone, as the
-## ghost's own parts are skinned), composes EquipFx.place's holder frame from
-## it (the bone's frame x the item's rest, chain and pose, orthonormalised,
-## scaled by the row's col3/100 x the body's uniform scale), and the particle's
-## transform, colour and custom data from the master's draw buffer (fxb_parts,
-## the 20 floats an instance of Godot's MultiMesh layout, 5 texels). What a
-## holder drew, then, for every ghost at once, with nothing placed on the CPU.
-## A ghost whose page is held or that fades out, or farther than 720 units
-## (EquipFx.MAX_DISTANCE) or past Character Sight Range, draws none. A Link
-## node's strips: one instance a host (fxb_per_host 1), the strip mesh itself.
+## **How, natively (SrEfpHosts, native/src/core/efp_hosts.rs).** Each frame the
+## library chooses the hosts (their body shown, within 720 units and Character
+## Sight Range, among the host_budget nearest in any direction -- 0: every one,
+## retail's rule), culls them to the view, places each (EquipFx.place's frame:
+## for a ghost from CrowdGpu's own body data and bone pages, for a dressed body
+## from the frame EquipFx gives it) and packs the drawn hosts' frames into one
+## texture (fxb_frames, 3 texels a host), each batch's start in another
+## (fxb_offsets); it sets each draw's visible instances (hosts drawn x the
+## node's stride) and its bounds (the drawn bodies', for the transparent sort).
+## A particle's vertex reads its host's frame and its own transform, colour and
+## custom data (fxb_parts, the master's draw buffer: 5 texels an instance).
 ##
-## A batch's host table (fxb_hosts) changes only when a ghost's weapons come
-## or go: 7 texels a host -- (slot, bone, row scale, on), the item's rest x
-## chain (3), and that x the bone's pose (3).
-##
-## Dressed bodies (the player's own, a body dressed near the camera) keep
-## EquipFx's holders and its budget.
-
-const HOST_TEXELS := 7
-const HOSTS_PER_ROW := 256
-## Bytes a host's texels take.
-const HOST_FLOATS := HOST_TEXELS * 4
-## Batches whose host table is rebuilt a frame (OURS): a page of ghosts arrives
-## in bursts; one table at least, then while this lasts.
-const REBUILD_BUDGET_USEC := 600
-## The batch draws' bounds (OURS): they are never culled as a whole; the shader
-## places every vertex.
-const BATCH_AABB := AABB(Vector3(-1.0e6, -1.0e6, -1.0e6), Vector3(2.0e6, 2.0e6, 2.0e6))
+## **Without the library (the fallback).** The ghosts' hosts are drawn as round
+## 764 first drew them: a batch per (effect, four skeleton layouts), a host
+## table EquipFx's scan chooses (the host_budget nearest), and the shader
+## composing each host's frame from CrowdGpu's textures in every vertex.
+## Dressed bodies keep EquipFx's holders.
 
 ## OPENSRO_QA_EQUIPFX_BATCH=0: ghosts' particles through holders, as before.
 static var enabled := OS.get_environment("OPENSRO_QA_EQUIPFX_BATCH") != "0"
-## Round 764 (OURS): the most ghosts' hosts drawn, the nearest the camera in
-## any direction (EquipFx's cut, chosen each cycle): every ghost within 720
-## units while there are fewer, as retail draws them. MEASURED (r764.md 4.3):
-## drawing all 11,600 hosts of the 4,000 swarm cost 3 ms of the RX 7600's
-## GPU a frame at 1080p. OPENSRO_QA_EQUIPFX_HOSTS=<n> sets it (0: no cap).
-static var host_budget := int(OS.get_environment("OPENSRO_QA_EQUIPFX_HOSTS")) if OS.get_environment("OPENSRO_QA_EQUIPFX_HOSTS").is_valid_int() else HOST_BUDGET
+## OPENSRO_QA_EQUIPFX_NATIVE=0: the fallback even with the library.
+static var native_wanted := OS.get_environment("OPENSRO_QA_EQUIPFX_NATIVE") != "0"
+## The most hosts drawn, the nearest the camera in any direction (OURS). 0:
+## every host within 720 units, as retail draws them (the review's F1: READ,
+## no count limit). OPENSRO_QA_EQUIPFX_HOSTS=<n> sets it. The default stays 500
+## until the user chooses (r764.md section 8).
 const HOST_BUDGET := 500
-## QA: OPENSRO_QA_EQUIPFX_RANGE=<units> draws the batches' particles within
-## that distance only (the GPU's share by distance).
+static var host_budget := int(OS.get_environment("OPENSRO_QA_EQUIPFX_HOSTS")) if OS.get_environment("OPENSRO_QA_EQUIPFX_HOSTS").is_valid_int() else HOST_BUDGET
+## QA: OPENSRO_QA_EQUIPFX_RANGE=<units> draws within that distance only.
 static var qa_range := float(OS.get_environment("OPENSRO_QA_EQUIPFX_RANGE")) if OS.get_environment("OPENSRO_QA_EQUIPFX_RANGE").is_valid_float() else 0.0
 
-## A kind's particles as one texture: a row per master draw node, 5 texels
-## an instance (Godot's MultiMesh layout), shared by every layout's batch of
-## the kind; updated when its master steps.
+const HOST_TEXELS := 7
+const HOSTS_PER_ROW := 256
+const HOST_FLOATS := HOST_TEXELS * 4
+## Native: frames a frames-texture row holds (gd_efp_hosts.rs FRAMES_PER_ROW).
+const FRAMES_PER_ROW := 64
+const DIRECT_FLOATS := 16
+## Fallback: tables rebuilt a frame while this lasts (one at least).
+const REBUILD_BUDGET_USEC := 600
+## The fallback's draws' bounds until their hosts' are known.
+const BATCH_AABB := AABB(Vector3(-1.0e6, -1.0e6, -1.0e6), Vector3(2.0e6, 2.0e6, 2.0e6))
+const LAYOUTS_PER_BATCH := 4
+## Empty steps before a node's draw is hidden (OURS: half a second).
+const LIVE_STEPS := 10
+## Tables taking new hosts are rebuilt one frame in this many (OURS); a host
+## leaving rebuilds its table at once (the review's F4).
+const REBUILD_EVERY := 6
+## The particle texture's widest row (texels): Godot's and Vulkan's 2-D limit
+## (the review's F10). 3,276 particles a node; MAX_PARTICLES is 300 an effect.
+const MAX_PARTS_WIDTH := 16384
+## Meta on a batch's draw node.
+const DRAW_META := &"opensro_equipfx_batch"
+## A frame's margin around the view, units (OURS, EquipFx.ALWAYS_NEAR).
+const NEAR := 30.0
+
+## A kind's particles as one texture: a row per master draw node, texel 0 its
+## count, then 5 texels an instance (Godot's MultiMesh layout); updated when
+## its master steps.
 class Parts:
 	var tex: ImageTexture = null
+	var img: Image = null
 	var width := 0
 	var rows := 0
 	var counts := PackedInt32Array()
-	## Per node, the instances a host is given (grow-only, a power of two):
-	## the draws' fxb_per_host, so a step's new particle count changes no
-	## material and no MultiMesh -- the count rides in the row's texel 0.
+	## Per node, the instances a host is given (grow-only): the draws'
+	## fxb_per_host, so a step's new particle count changes no material and
+	## no MultiMesh.
 	var strides := PackedInt32Array()
-	## Per node, the steps in a row it had no particle, and whether it is
-	## drawn (hidden after LIVE_STEPS empty steps: an idle emitter's draw is a
-	## draw call for nothing; shown again at its next particle).
 	var zero := PackedInt32Array()
 	var live := PackedByteArray()
-	## The master's draw nodes (batch_nodes), counted once.
 	var nodes := -1
 
-## One kind's ghosts of up to LAYOUTS_PER_BATCH skeleton layouts: its hosts
-## and, per master draw node, its draw.
 class Batch:
 	var key: String
 	var kind_key: String
-	## The layout group (CrowdGpu layouts in the order first seen, four a
-	## group): its layouts' bone textures go to crowd_bones, crowd_bones1..3.
+	## Native: its id (fxb_bid), its dressed hosts, the hosts its MultiMeshes
+	## have room for.
+	var id := -1
+	var direct: Array = []
+	var direct_sent := false
+	var cap_hosts := 0
+	## Fallback: the layout group.
 	var group := 0
 	var hosts: Array = []
 	var host_tex: ImageTexture = null
 	var host_rows := 0
-	## The hosts the uploaded table holds (the selected ones, in its order),
-	## and its floats (tests).
 	var shown := 0
 	var drawn: Array = []
 	var host_data := PackedFloat32Array()
+	var bounds_sent := AABB()
 	## [MultiMeshInstance3D, ShaderMaterial, 0 a plate node / 1 a link, the
-	## master draw (or link) index, the instances shown, the particles a host
-	## bound]
+	## master draw (or link) index, the instances shown, the stride bound]
 	var draws: Array = []
 	var bones_texs: Array = [null, null, null, null]
 	var built_for: Object = null
 	var parts_tex: Texture = null
 
-var _batches: Dictionary = {}   # "kind|layout group" -> Batch
-## The CrowdGpu layouts seen, in order (a host's layout index).
+var native := false
+var _hn: Object = null
+var _batches: Dictionary = {}
+var _by_kind: Dictionary = {}
 var _layouts: Array = []
-const LAYOUTS_PER_BATCH := 4
-## Empty steps before a node's draw is hidden (OURS: 10 steps, half a second).
-const LIVE_STEPS := 10
-## Host tables are rebuilt one frame in this many (OURS).
-const REBUILD_EVERY := 6
-var _frame := 0
-var _dirty_wait := false
-var _by_kind: Dictionary = {}   # kind key -> [Batch]
-var _parts: Dictionary = {}     # kind key -> Parts
-var _kind_seen: Dictionary = {} # kind key -> its master's draw_updates last taken
-var _dirty: Dictionary = {}     # Batch -> true: its host table to rebuild
-## Hosts waiting for their ghost's slot and layout (made a ghost later).
+var _parts: Dictionary = {}
+var _kind_seen: Dictionary = {}
+var _dirty: Dictionary = {}
+var _dirty_now := false
+## Native: batches whose hosts may have outgrown their draws' room.
+var _dirty_room := {}
 var _pending: Array = []
 var _parent: Node3D
+var _crowd: Object = null
+var _frame := 0
+var _selected := 0
+var _next_id := 0
+var _clip_gen := -1
 var _bodies_tex: Texture = null
 var _sight := -1.0
-var stats := {"batches": 0, "hosts": 0, "instances": 0, "draws": 0, "pending": 0, "rebuilds": 0}
+## Native: the frames and offsets textures and their Images.
+var _frames_tex: ImageTexture = null
+var _frames_rows := 0
+var _frames_img: Image = null
+var _off_tex: ImageTexture = null
+var _off_w := 0
+var _off_img: Image = null
+## The kinds with a host drawn (natively, each frame; their masters step).
+var live_kinds := {}
+var stats := {"batches": 0, "hosts": 0, "instances": 0, "draws": 0, "pending": 0, "rebuilds": 0,
+	"in_reach": 0, "chosen": 0, "drawn": 0, "direct": 0}
 
 func _init(parent: Node3D) -> void:
 	_parent = parent
+	if native_wanted and ClassDB.class_exists(&"SrEfpHosts"):
+		_hn = ClassDB.instantiate(&"SrEfpHosts")
+		native = _hn != null
 
-## A ghost's host joins its batch (or waits for its ghost's slot).
+## The class of the hosts' choice: whether the library chooses and places them.
+static func native_available() -> bool:
+	return native_wanted and ClassDB.class_exists(&"SrEfpHosts")
+
+## A ghost's host joins its batch (when its ghost has a slot).
 func add(h) -> void:
 	h.batch = null
 	_pending.append(h)
 
-## A host leaves its batch.
+## A host leaves.
 func remove(h) -> void:
 	var b: Batch = h.batch
 	if b != null:
 		b.hosts.erase(h)
+		if native:
+			# Its slot freed says "faded out" and a new body there has another
+			# stamp (CrowdGpu, the review's F4): the table waits its turn.
+			_dirty[b] = true
+		elif h.sel:
+			_dirty[b] = true
+			_dirty_now = true
 		if h.sel:
 			_selected -= 1
-			_dirty[b] = true
 		h.sel = false
 		h.batch = null
 	else:
 		_pending.erase(h)
 
-## The hosts drawn now (selected).
-var _selected := 0
+## Native: a dressed body's host, drawn by its kind's batch from the frame
+## EquipFx gives it each frame (direct_frames).
+func add_direct(h) -> void:
+	var b := _native_batch(h.key)
+	_dirty_room[b] = true
+	b.direct.append(h)
+	h.batch = b
 
-## Whether host `h` is drawn (EquipFx's choice, each cycle): its batch's table
-## is rebuilt when that changes. A host whose ghost has another body slot now
-## (CrowdGpu made its body again) is placed again first.
+func remove_direct(h) -> void:
+	var b: Batch = h.batch
+	if b != null:
+		b.direct.erase(h)
+		h.batch = null
+
+## Fallback: whether host `h` is drawn (EquipFx's choice).
 func select(h, on: bool, crowd: Object = null) -> void:
 	var b: Batch = h.batch
-	# Only a drawn host's slot matters (and is checked: a call a host).
 	if b != null and crowd != null and on:
 		var sl: Array = crowd.call("ghost_slot_layout", h.anchor)
 		if sl.is_empty() or int(sl[0]) != h.batch_slot or sl[1] != h.blayout:
@@ -171,28 +209,326 @@ func select(h, on: bool, crowd: Object = null) -> void:
 	_selected += 1 if on else -1
 	_dirty[b] = true
 
-## Every batch freed (the driver leaves).
+## The hosts chosen now: the fallback's selection, the library's last choice.
+func selected_count() -> int:
+	return int(stats["chosen"]) if native else _selected
+
+## Every batch, layout and texture freed (the world left; the review's F6).
 func clear() -> void:
 	for b in _batches.values():
 		_free_draws(b)
+		for h in b.hosts:
+			h.batch = null
+			h.sel = false
+		for h in b.direct:
+			h.batch = null
 	_batches.clear()
 	_by_kind.clear()
+	_layouts.clear()
 	_parts.clear()
 	_kind_seen.clear()
 	_dirty.clear()
 	_pending.clear()
 	_selected = 0
+	_clip_gen = -1
+	_crowd = null
+	_bodies_tex = null
+	_sight = -1.0
+	_frames_tex = null
+	_frames_rows = 0
+	_off_tex = null
+	_off_w = 0
+	live_kinds.clear()
+	_drawn_ids = PackedInt64Array()
+	_fresh.clear()
+	_dirty_room.clear()
+	if _hn != null:
+		_hn.call("clear")
+	for k in ["batches", "hosts", "instances", "draws", "pending", "in_reach", "chosen", "drawn", "direct"]:
+		stats[k] = 0
 
-## Each frame, after the masters stepped: hosts placed in their batches, then
-## only what changed -- a kind's particles when its master stepped, a host
-## table when its hosts changed, CrowdGpu's textures when they were made
-## again -- and those draws' instance counts. `crowd` is the CrowdGpu (null:
-## nothing drawn), `kinds` EquipFx's.
-func step(crowd: Object, kinds: Dictionary) -> void:
+## Each frame, after the masters stepped. `crowd` is the CrowdGpu, `kinds`
+## EquipFx's, `cam` the viewport's camera, `own` the node whose weapons are not
+## drawn here (the player's: EquipFx.prefer_root).
+func step(crowd: Object, kinds: Dictionary, cam: Camera3D = null, own: Node = null, stepped: Dictionary = {}) -> void:
+	if crowd != _crowd:
+		# Another CrowdGpu (a world entered again): nothing of the old one's.
+		var keep_pending := _pending.duplicate()
+		var keep_direct: Array = []
+		for b in _batches.values():
+			keep_direct.append_array(b.direct)
+			keep_pending.append_array(b.hosts)
+		clear()
+		_crowd = crowd
+		if crowd == null:
+			return
+		for h in keep_pending:
+			add(h)
+		if native:
+			for h in keep_direct:
+				add_direct(h)
 	if crowd == null:
 		return
 	var t0 := Time.get_ticks_usec()
-	_place_pending(crowd)
+	_frame += 1
+	if native and bool(_hn.call("broken")):
+		# The library's step panicked: the fallback from now on, every host
+		# placed again.
+		push_warning("EquipFxBatch: the native hosts failed -- the GDScript fallback from now on")
+		var again: Array = _pending.duplicate()
+		for b in _batches.values():
+			again.append_array(b.hosts)
+		native = false
+		clear()
+		_crowd = crowd
+		for h in again:
+			add(h)
+	if native:
+		_step_native(crowd, kinds, cam, own, stepped)
+	else:
+		_step_fallback(crowd, kinds)
+	stats["pending"] = _pending.size()
+	if FrameSplit.on:
+		FrameSplit.add("fx_batch", Time.get_ticks_usec() - t0)
+
+# --- native ------------------------------------------------------------------------
+
+func _native_batch(kind_key: String) -> Batch:
+	var b: Batch = _batches.get(kind_key)
+	if b == null:
+		b = Batch.new()
+		b.key = kind_key
+		b.kind_key = kind_key
+		b.id = _next_id
+		_next_id += 1
+		_batches[kind_key] = b
+		_by_kind[kind_key] = [b]
+		stats["batches"] = _batches.size()
+		_fresh[b] = true
+	return b
+
+## Batches made, or whose draws are to be made again, since the last frame.
+var _fresh := {}
+
+func _step_native(crowd: Object, kinds: Dictionary, cam: Camera3D, own: Node, stepped: Dictionary) -> void:
+	# The layouts' bone pages, again whenever a clip went up.
+	var gen := int(crowd.get("clip_generation"))
+	if gen != _clip_gen:
+		_clip_gen = gen
+		for i in _layouts.size():
+			var l = _layouts[i]
+			_hn.call("set_layout", i, int(l.get("width")), l.get("pages"))
+	# Hosts whose ghost has a slot join their kind's batch.
+	if not _pending.is_empty():
+		var keep: Array = []
+		for h in _pending:
+			if h.anchor == null or not is_instance_valid(h.anchor):
+				continue
+			var sl: Array = crowd.call("ghost_slot_layout", h.anchor)
+			if sl.is_empty():
+				keep.append(h)
+				continue
+			var gi := _layouts.find(sl[1])
+			if gi < 0:
+				gi = _layouts.size()
+				_layouts.append(sl[1])
+				_hn.call("set_layout", gi, int(sl[1].get("width")), sl[1].get("pages"))
+			var b := _native_batch(h.key)
+			_dirty_room[b] = true
+			h.batch = b
+			h.batch_slot = int(sl[0])
+			h.blayout = sl[1]
+			# Natively the layout and the slot's stamp ride together (layout
+			# + 16 x stamp: CrowdGpu.SLOT_STAMPS keeps it under 2^24).
+			h.rows = _host_rows(h, sl[1], gi + 16 * int(sl[2]), true)
+			b.hosts.append(h)
+			_dirty[b] = true
+		_pending = keep
+	# The tables: at once after a host left (its slot may be another body's
+	# soon), else one frame in REBUILD_EVERY.
+	if not _dirty.is_empty() and (_dirty_now or _frame % REBUILD_EVERY == 0):
+		for b in _dirty.keys():
+			var data := PackedFloat32Array()
+			for h in b.hosts:
+				data.append_array(h.rows)
+			_hn.call("set_ghosts", b.id, data)
+			stats["rebuilds"] = int(stats["rebuilds"]) + 1
+		_dirty.clear()
+		_dirty_now = false
+	# The dressed bodies' frames (EquipFx.place of their item skeleton).
+	var from := cam.global_position if cam != null else Vector3.ZERO
+	var nd := 0
+	for key in _batches:
+		var b: Batch = _batches[key]
+		if b.direct.is_empty():
+			if b.direct_sent:
+				_hn.call("set_direct", b.id, PackedFloat32Array())
+				b.direct_sent = false
+			continue
+		var data := PackedFloat32Array()
+		for h in b.direct:
+			var sk: Skeleton3D = h.skel
+			if not is_instance_valid(sk) or not sk.is_inside_tree() or not sk.is_visible_in_tree():
+				continue
+			if own != null and is_instance_valid(own) and own.is_ancestor_of(sk):
+				continue
+			var o = EquipFx.far_origin.call(sk) if EquipFx.far_origin.is_valid() else null
+			var p: Vector3 = o if o != null else sk.global_position
+			if p.distance_to(from) > EquipFx.MAX_DISTANCE:
+				continue
+			var f := EquipFx.holder_transform(sk, h.bone, h.scale, EquipFx._far(sk))
+			var at := data.size()
+			data.resize(at + DIRECT_FLOATS)
+			_put_rows(data, at, f)
+			data[at + 12] = p.x
+			data[at + 13] = p.y
+			data[at + 14] = p.z
+			nd += 1
+		_hn.call("set_direct", b.id, data)
+		b.direct_sent = true
+	stats["direct"] = nd
+	var t_pt := Time.get_ticks_usec() if FrameSplit.on else 0
+	# The particles, the draws and their room: only the kinds whose master
+	# stepped this frame (EquipFx), the batches made since the last, and those
+	# whose hosts outgrew their room (the review's F9: nothing for the rest).
+	var todo := _fresh.duplicate()
+	_fresh.clear()
+	for key in stepped:
+		var sb: Batch = _batches.get(key)
+		if sb != null:
+			todo[sb] = true
+	for b in _dirty_room:
+		todo[b] = true
+	_dirty_room.clear()
+	for bb in todo:
+		var b: Batch = bb
+		var key := b.key
+		var k = kinds.get(b.kind_key)
+		if k == null or k.master == null or not is_instance_valid(k.master):
+			continue
+		var m: EfpEffect = k.master
+		var grew := false
+		if b.built_for != m:
+			_build_draws(b, m)
+			grew = true
+		if int(_kind_seen.get(key, -1)) != m.draw_updates:
+			_kind_seen[key] = m.draw_updates
+			grew = _upload_parts(key, m) or grew
+		var pt: Parts = _parts.get(key)
+		if pt != null and pt.tex != b.parts_tex:
+			b.parts_tex = pt.tex
+			for d in b.draws:
+				if int(d[2]) == 0:
+					(d[1] as ShaderMaterial).set_shader_parameter("fxb_parts", pt.tex)
+		if b.built_for != m:
+			_fresh[b] = true
+		var n: int = b.hosts.size() + b.direct.size()
+		if n > b.cap_hosts:
+			b.cap_hosts = maxi(n, ceili(b.cap_hosts * 1.5))
+			grew = true
+		if grew:
+			_native_draws(b)
+	if FrameSplit.on:
+		FrameSplit.add("fxb_parts", Time.get_ticks_usec() - t_pt)
+	var t_rs := Time.get_ticks_usec() if FrameSplit.on else 0
+	# Choose, cull, place.
+	var vp := Transform3D()
+	var sx := 1.0
+	var sy := 1.0
+	var ortho := false
+	if cam != null:
+		vp = cam.global_transform.affine_inverse()
+		var pr := cam.get_camera_projection()
+		sx = absf(pr.x.x)
+		sy = absf(pr.y.y)
+		ortho = cam.projection == Camera3D.PROJECTION_ORTHOGONAL
+	if _frames_tex == null:
+		_grow_frames(FRAMES_PER_ROW * 4)
+	var reach := qa_range if qa_range > 0.0 else EquipFx.MAX_DISTANCE
+	var bytes: PackedByteArray = _hn.call("step", crowd.call("body_data"), float(crowd.call("clock_ms")), crowd.call("reveal_clocks"),
+		vp, from, sx, sy, ortho, reach, float(crowd.call("sight_range")), NEAR, host_budget, _frames_rows)
+	if bytes.size() == _frames_rows * FRAMES_PER_ROW * 3 * 16:
+		_frames_img.set_data(FRAMES_PER_ROW * 3, _frames_rows, false, Image.FORMAT_RGBAF, bytes)
+		_frames_tex.update(_frames_img)
+	if FrameSplit.on:
+		FrameSplit.add("fxb_native", Time.get_ticks_usec() - t_rs)
+	var need := int(_hn.call("needed_frames"))
+	if need > _frames_rows * FRAMES_PER_ROW:
+		_grow_frames(need)
+	var tot: PackedInt64Array = _hn.call("totals")
+	stats["in_reach"] = tot[0]
+	stats["chosen"] = tot[1]
+	stats["drawn"] = tot[2]
+	if FrameSplit.on and _frame % 600 == 0:
+		print("QA FXBATCH frame %d: hosts within reach %d, chosen %d (budget %d), drawn %d, direct %d, batches %d, frames rows %d" % [
+			_frame, tot[0], tot[1], host_budget, tot[2], int(stats["direct"]), _batches.size(), _frames_rows])
+	# Each batch's start, and the kinds drawn.
+	if _off_tex == null or _next_id > _off_w:
+		_off_w = maxi(16, nearest_po2(_next_id))
+		_off_img = Image.create_empty(_off_w, 1, false, Image.FORMAT_RF)
+		_off_tex = ImageTexture.create_from_image(_off_img)
+		for b in _batches.values():
+			for d in b.draws:
+				(d[1] as ShaderMaterial).set_shader_parameter("fxb_offsets", _off_tex)
+	_off_img.set_data(_off_w, 1, false, Image.FORMAT_RF, _hn.call("offsets_bytes", _off_w))
+	_off_tex.update(_off_img)
+	var ids: PackedInt64Array = _hn.call("drawn_ids")
+	if ids != _drawn_ids:
+		_drawn_ids = ids
+		live_kinds.clear()
+		var byid := {}
+		for b in _batches.values():
+			byid[b.id] = b
+		for id in ids:
+			var b: Batch = byid.get(int(id))
+			if b != null:
+				live_kinds[b.kind_key] = true
+	stats["hosts"] = int(stats["drawn"])
+	stats["instances"] = tot[3]
+	stats["draws"] = tot[4]
+
+var _drawn_ids := PackedInt64Array()
+
+## A batch's draws' room (its hosts x each node's stride) and their strides,
+## told to the library.
+func _native_draws(b: Batch) -> void:
+	var pt: Parts = _parts.get(b.kind_key)
+	var mms: Array = []
+	var strides := PackedInt32Array()
+	var insts: Array = []
+	for d in b.draws:
+		var mmi: MultiMeshInstance3D = d[0]
+		var per := 1
+		if int(d[2]) == 0:
+			var ni := int(d[3])
+			per = pt.strides[ni] if pt != null and ni < pt.strides.size() and pt.live[ni] == 1 else 0
+			if per > 0 and int(d[5]) != per:
+				(d[1] as ShaderMaterial).set_shader_parameter("fxb_per_host", per)
+		d[5] = per
+		var want: int = b.cap_hosts * per
+		if mmi.multimesh.instance_count < want:
+			mmi.multimesh.instance_count = want
+		mmi.multimesh.visible_instance_count = 0
+		mmi.visible = per > 0
+		mms.append(mmi.multimesh.get_rid())
+		strides.append(per)
+		insts.append(mmi.get_instance())
+	_hn.call("set_draws", b.id, mms, strides, insts)
+
+## The frames texture, room for `frames` hosts (a quarter more), bound again.
+func _grow_frames(frames: int) -> void:
+	_frames_rows = maxi(ceili(frames * 1.25 / FRAMES_PER_ROW), 4)
+	_frames_img = Image.create_empty(FRAMES_PER_ROW * 3, _frames_rows, false, Image.FORMAT_RGBAF)
+	_frames_tex = ImageTexture.create_from_image(_frames_img)
+	for b in _batches.values():
+		for d in b.draws:
+			(d[1] as ShaderMaterial).set_shader_parameter("fxb_frames", _frames_tex)
+
+# --- the fallback --------------------------------------------------------------------
+
+func _step_fallback(crowd: Object, kinds: Dictionary) -> void:
+	var t0 := Time.get_ticks_usec()
+	_place_pending_fallback(crowd)
 	var bodies_tex: Texture = crowd.call("body_texture")
 	var sight: float = crowd.call("sight_range")
 	var crowd_changed := bodies_tex != _bodies_tex or sight != _sight
@@ -204,9 +540,8 @@ func step(crowd: Object, kinds: Dictionary) -> void:
 		if k == null or k.master == null or not is_instance_valid(k.master):
 			continue
 		var m: EfpEffect = k.master
-		var stepped := int(_kind_seen.get(key, -1)) != m.draw_updates
 		var grew := false
-		if stepped:
+		if int(_kind_seen.get(key, -1)) != m.draw_updates:
 			_kind_seen[key] = m.draw_updates
 			grew = _upload_parts(key, m)
 		var pt: Parts = _parts.get(key)
@@ -238,31 +573,20 @@ func step(crowd: Object, kinds: Dictionary) -> void:
 			if grew:
 				touched[b] = true
 	var rebuilt := 0
-	# Round 764 (OURS): the tables a sixth of the frames at most. While a page
-	# arrives its hosts come every frame and every table was rebuilt (and
-	# uploaded) every frame: +0.3 ms of main thread and +0.2 of render thread a
-	# frame of a 4,000 arrival (MEASURED); a held page shows nothing anyway,
-	# and a host chosen waits at most REBUILD_EVERY frames for its particles.
-	_frame += 1
-	if _frame % REBUILD_EVERY != 0:
-		_dirty_wait = true
-	for b in (_dirty.keys() if not _dirty_wait else []):
-		if rebuilt > 0 and Time.get_ticks_usec() - t0 >= REBUILD_BUDGET_USEC:
-			break
-		_dirty.erase(b)
-		_upload_hosts(b)
-		touched[b] = true
-		rebuilt += 1
-	_dirty_wait = false
+	if _dirty_now or _frame % REBUILD_EVERY == 0:
+		for b in _dirty.keys():
+			if rebuilt > 0 and Time.get_ticks_usec() - t0 >= REBUILD_BUDGET_USEC:
+				break
+			_dirty.erase(b)
+			_upload_hosts(b, crowd)
+			touched[b] = true
+			rebuilt += 1
+		_dirty_now = false
 	stats["rebuilds"] = int(stats["rebuilds"]) + rebuilt
 	for b in touched:
 		_apply_counts(b)
-	stats["pending"] = _pending.size()
-	if FrameSplit.on:
-		FrameSplit.add("fx_batch", Time.get_ticks_usec() - t0)
+	stats["chosen"] = _selected
 
-## A batch's draws' instance counts: its table's hosts x its kind's particles
-## on each node (a Link: one a host), and the totals in `stats`.
 func _apply_counts(b: Batch) -> void:
 	var pt: Parts = _parts.get(b.kind_key)
 	for d in b.draws:
@@ -287,8 +611,7 @@ func _apply_counts(b: Batch) -> void:
 		if mmi.visible != (want > 0):
 			mmi.visible = want > 0
 
-## Hosts whose ghost now has a slot and a layout go to their batch.
-func _place_pending(crowd: Object) -> void:
+func _place_pending_fallback(crowd: Object) -> void:
 	if _pending.is_empty():
 		return
 	var keep: Array = []
@@ -320,21 +643,32 @@ func _place_pending(crowd: Object) -> void:
 		h.batch = b
 		h.batch_slot = int(sl[0])
 		h.blayout = layout
-		h.rows = _host_rows(h, layout, gi % LAYOUTS_PER_BATCH)
+		h.rows = _host_rows(h, layout, gi % LAYOUTS_PER_BATCH, false)
 		b.hosts.append(h)
-		# Drawn at once while the budget has room (the next cycle chooses).
+		# Drawn at once while the budget has room (EquipFx's scan chooses).
 		h.sel = host_budget <= 0 or _selected < host_budget
 		if h.sel:
 			_selected += 1
 			_dirty[b] = true
 	_pending = keep
 
-## The host table: HOST_TEXELS texels a host, HOSTS_PER_ROW hosts a row.
-func _upload_hosts(b: Batch) -> void:
+## The fallback's table: the chosen hosts, HOST_TEXELS each; and the draws'
+## bounds, their bodies' (the review's F7).
+func _upload_hosts(b: Batch, crowd: Object) -> void:
 	var drawn: Array = []
+	var bounds := AABB()
+	var first := true
 	for h in b.hosts:
-		if h.sel:
-			drawn.append(h)
+		if not h.sel:
+			continue
+		drawn.append(h)
+		var p = crowd.call("ghost_origin", h.anchor) if crowd != null else null
+		if p is Vector3 and (p as Vector3).is_finite():
+			if first:
+				bounds = AABB(p, Vector3.ZERO)
+				first = false
+			else:
+				bounds = bounds.expand(p)
 	var n := drawn.size()
 	var rows := maxi(ceili(float(n) / HOSTS_PER_ROW), 1)
 	var data := PackedFloat32Array()
@@ -353,26 +687,33 @@ func _upload_hosts(b: Batch) -> void:
 	stats["hosts"] = int(stats["hosts"]) + n - b.shown
 	b.shown = n
 	b.host_data = data
+	if not first:
+		var box := bounds.grow(40.0)
+		if not box.is_equal_approx(b.bounds_sent) and (b.bounds_sent.size == Vector3.ZERO
+				or (box.position - b.bounds_sent.position).length() > 16.0 or (box.end - b.bounds_sent.end).length() > 16.0):
+			b.bounds_sent = box
+			for d in b.draws:
+				if is_instance_valid(d[0]):
+					RenderingServer.instance_set_custom_aabb((d[0] as MultiMeshInstance3D).get_instance(), box)
 
-## A host's texels (HOST_TEXELS): (slot, bone, row scale, 1 + its layout's
-## index in the batch), the item's
-## rest x chain, and that x the bone's pose -- fixed while it is a member.
-static func _host_rows(h, layout: Object, layout_index: int) -> PackedFloat32Array:
+# --- shared ------------------------------------------------------------------------
+
+## A ghost host's texels (HOST_TEXELS): (slot, bone, row scale, its layout --
+## natively its index in the library's list, in the fallback 1 + its index in
+## the batch), the item's rest x chain, and that x the bone's pose.
+static func _host_rows(h, layout: Object, layout_index: int, global: bool) -> PackedFloat32Array:
 	var out := PackedFloat32Array()
 	out.resize(HOST_FLOATS)
 	out[0] = float(h.batch_slot)
 	out[1] = float(h.att_bone)
 	out[2] = h.scale
-	# On, and its layout's place in the batch (1 + index: 0 is off).
-	out[3] = 1.0 + float(layout_index)
+	out[3] = float(layout_index) if global else 1.0 + float(layout_index)
 	var rests: Array = layout.get("rests")
 	var r: Transform3D = rests[h.att_bone] * h.chain if h.att_bone >= 0 and h.att_bone < rests.size() else h.chain
 	_put_rows(out, 4, r)
 	_put_rows(out, 16, r * h.pose)
 	return out
 
-## A Transform3D's three rows (basis row and origin) at `o`: crowd_gpu's
-## srr_cg_mat layout.
 static func _put_rows(data: PackedFloat32Array, o: int, t: Transform3D) -> void:
 	for r in 3:
 		data[o + r * 4] = t.basis.x[r]
@@ -380,7 +721,8 @@ static func _put_rows(data: PackedFloat32Array, o: int, t: Transform3D) -> void:
 		data[o + r * 4 + 2] = t.basis.z[r]
 		data[o + r * 4 + 3] = t.origin[r]
 
-## A kind's particles: every master draw node's buffer, a row each.
+## A kind's particles: every master draw node's buffer, a row each. True when
+## a node's stride or liveness changed.
 func _upload_parts(kind_key: String, master: EfpEffect) -> bool:
 	var pt: Parts = _parts.get(kind_key)
 	if pt == null:
@@ -394,26 +736,38 @@ func _upload_parts(kind_key: String, master: EfpEffect) -> bool:
 	if pt.zero.size() != n:
 		pt.zero.resize(n)
 		pt.live.resize(n)
-	# The counts first (natively: no buffer copied yet), the rows after.
 	var counts := master.draw_count_list()
 	counts.resize(n)
 	var widest := 1
 	if pt.strides.size() != n:
 		pt.strides.resize(n)
+	var max_stride := (MAX_PARTS_WIDTH - 1) / 5
 	for i in n:
-		var c := counts[i]
+		var c := mini(counts[i], max_stride)
+		counts[i] = c
 		pt.zero[i] = 0 if c > 0 else pt.zero[i] + 1
 		pt.live[i] = 1 if pt.zero[i] < LIVE_STEPS else 0
 		if pt.strides[i] < c:
-			# Grow-only, a quarter over (OURS): few changes, little padding.
-			pt.strides[i] = maxi(ceili(c * 1.25 / 4.0) * 4, 4)
+			# Grow-only, a quarter over (OURS); never past the texture's width.
+			pt.strides[i] = mini(maxi(ceili(c * 1.25 / 4.0) * 4, 4), max_stride)
 		widest = maxi(widest, pt.strides[i])
 	var rows := maxi(n, 1)
 	var width := pt.width
 	if 1 + widest * 5 > width:
-		width = maxi(1 + widest * 5, width * 2)
-	# Natively in one call (gd_efp.rs draw_rows); else built here: texel 0
-	# the particles this step, then 5 texels a particle, zeros to the row's end.
+		width = mini(maxi(1 + widest * 5, width * 2), MAX_PARTS_WIDTH)
+	# Natively the texture's bytes in one call (gd_efp.rs draw_rows_bytes).
+	var bytes := master.draw_rows_bytes(width, rows)
+	if bytes.size() == width * rows * 16:
+		if pt.tex == null or width != pt.width or rows != pt.rows:
+			pt.img = Image.create_from_data(width, rows, false, Image.FORMAT_RGBAF, bytes)
+			pt.tex = ImageTexture.create_from_image(pt.img)
+		else:
+			pt.img.set_data(width, rows, false, Image.FORMAT_RGBAF, bytes)
+			pt.tex.update(pt.img)
+		pt.width = width
+		pt.rows = rows
+		pt.counts = counts
+		return pt.strides != before or pt.live != live_before
 	var data := master.draw_rows(width, rows)
 	if data.size() != width * rows * 4:
 		data = PackedFloat32Array()
@@ -421,7 +775,10 @@ func _upload_parts(kind_key: String, master: EfpEffect) -> bool:
 			var c := float(counts[i]) if i < counts.size() else 0.0
 			data.append_array(PackedFloat32Array([c, 0.0, 0.0, 0.0]))
 			if i < n:
-				data.append_array(master.draw_buffer(i))
+				var b := master.draw_buffer(i)
+				if b.size() > (width - 1) * 4:
+					b.resize((width - 1) * 4)
+				data.append_array(b)
 			data.resize((i + 1) * width * 4)
 	var img := Image.create_from_data(width, rows, false, Image.FORMAT_RGBAF, data.to_byte_array())
 	if pt.tex == null or width != pt.width or rows != pt.rows:
@@ -447,14 +804,13 @@ func _build_draws(b: Batch, master: EfpEffect) -> void:
 		# not a duplicate(): ShaderMaterial's copy lists the shader's
 		# parameters, a RenderingServer sync each.
 		var mat := ShaderMaterial.new()
-		mat.shader = batch_shader(src_mat.shader)
+		mat.shader = batch_shader(src_mat.shader, native)
 		for u in ["tex", "c_op", "c_a1", "c_a2", "a_op", "a_a1", "a_a2"]:
 			var v = src_mat.get_shader_parameter(u)
 			if v != null:
 				mat.set_shader_parameter(u, v)
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_2D
-		mm.custom_aabb = BATCH_AABB
 		if e[0] == 0:
 			mm.mesh = ((src as MultiMeshInstance3D).multimesh).mesh
 		else:
@@ -462,6 +818,7 @@ func _build_draws(b: Batch, master: EfpEffect) -> void:
 		mm.instance_count = 0
 		var mmi := MultiMeshInstance3D.new()
 		mmi.name = "EquipFxBatch"
+		mmi.set_meta(DRAW_META, true)
 		mmi.multimesh = mm
 		mmi.material_override = mat
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -469,27 +826,33 @@ func _build_draws(b: Batch, master: EfpEffect) -> void:
 		_parent.add_child(mmi)
 		mmi.global_transform = Transform3D.IDENTITY
 		RenderingServer.instance_set_custom_aabb(mmi.get_instance(), BATCH_AABB)
-		if b.host_tex != null:
-			mat.set_shader_parameter("fxb_hosts", b.host_tex)
 		mat.set_shader_parameter("fxb_per_host", 1)
 		mat.set_shader_parameter("fxb_row", int(e[2]) if e[0] == 0 else 0)
-		mat.set_shader_parameter("fxb_range", qa_range if qa_range > 0.0 else EquipFx.MAX_DISTANCE)
+		if native:
+			mat.set_shader_parameter("fxb_bid", b.id)
+			if _frames_tex != null:
+				mat.set_shader_parameter("fxb_frames", _frames_tex)
+			if _off_tex != null:
+				mat.set_shader_parameter("fxb_offsets", _off_tex)
+		else:
+			if b.host_tex != null:
+				mat.set_shader_parameter("fxb_hosts", b.host_tex)
+			mat.set_shader_parameter("fxb_range", qa_range if qa_range > 0.0 else EquipFx.MAX_DISTANCE)
 		mmi.visible = false
 		b.draws.append([mmi, mat, 0 if e[0] == 0 else 1, int(e[2]), 0, 1])
 	b.parts_tex = null
 	b.bones_texs = [null, null, null, null]
+	b.bounds_sent = AABB()
 
 func _free_draws(b: Batch) -> void:
 	for d in b.draws:
-		stats["instances"] = int(stats["instances"]) - int(d[4])
-		stats["draws"] = int(stats["draws"]) - (1 if int(d[4]) > 0 else 0)
 		if is_instance_valid(d[0]):
 			(d[0] as Node).queue_free()
 	b.draws.clear()
+	b.built_for = null
 
-## Tests: host `i` of batch `b`'s holder frame as the shader composes it, in
-## GDScript from the same data -- its table's floats, the ghost's body
-## transform and clip frame (CrowdGpu's) -- or null when its ghost is gone.
+## Tests (the fallback): host `i` of batch `b`'s holder frame as the shader
+## composes it, in GDScript from the same data, or null.
 static func cpu_hold(crowd: CrowdGpu, b: Batch, i: int):
 	var o := i * HOST_FLOATS
 	if i < 0 or i >= b.drawn.size() or o + HOST_FLOATS > b.host_data.size():
@@ -499,36 +862,62 @@ static func cpu_hold(crowd: CrowdGpu, b: Batch, i: int):
 	var bone := int(hd[o + 1] + 0.5)
 	var body := CrowdGpu._row_xf(crowd._body_data, slot * CrowdGpu.FLOATS_PER_BODY)
 	var h = b.drawn[i]
-	var row := -1
 	var cb: CrowdGpu.Body = crowd._bodies.get(h.anchor)
 	if cb == null:
 		return null
 	var clip: Vector3i = cb.layout.clips.get(cb.frames, Vector3i(0, 1, 1))
-	row = clip.x + crowd.frame_of(h.anchor, crowd._last_time)
+	var row: int = clip.x + crowd.frame_of(h.anchor, crowd._last_time)
 	var k: Transform3D = body * CrowdGpu._bone_xf(h.blayout, row, bone)
 	var g: Transform3D = k * CrowdGpu._row_xf(hd, o + 4)
 	var a: Transform3D = k * CrowdGpu._row_xf(hd, o + 16)
 	var s := hd[o + 2] * pow(absf(g.basis.determinant()), 1.0 / 3.0)
 	return Transform3D(a.basis.orthonormalized() * s, a.origin)
 
-# --- the shader -------------------------------------------------------------------
+## Tests (native): host `h`'s frame as the library places it, or null.
+func native_frame(crowd: CrowdGpu, h):
+	if not native or h.batch == null or h.anchor == null:
+		return null
+	var cb: CrowdGpu.Body = crowd._bodies.get(h.anchor)
+	if cb == null:
+		return null
+	var body := crowd._body_data.slice(cb.slot * CrowdGpu.FLOATS_PER_BODY, (cb.slot + 1) * CrowdGpu.FLOATS_PER_BODY)
+	var f: PackedFloat32Array = _hn.call("qa_ghost_frame", body, h.rows, crowd.clock_ms(), int(h.rows[3]) % 16)
+	if f.size() != 12:
+		return null
+	return CrowdGpu._row_xf(f, 0)
+
+# --- the shaders ---------------------------------------------------------------------
 
 static var _shaders: Dictionary = {}
 
-## The vertex stage's head: the host's holder frame (`fxb_hold`) from its
-## ghost's body and clip frame, whether it draws (`fxb_off`), and the
-## particle's transform, colour and custom data (`fxb_model`, COLOR,
-## `fxb_cus`). EquipFx.place's composition: at = G x pose, G = body x bone x
-## rest x chain; the basis orthonormalised (Basis.orthonormalized's
-## Gram-Schmidt over the columns) and scaled by the row's scale x
-## cbrt(|det G|) (EquipFx._uniform_scale).
+## Natively: the host's frame from fxb_frames (its batch's start in
+## fxb_offsets plus its index); every host drawn is chosen and in view.
+const HEAD_NATIVE := """
+	int fxb_n = max(fxb_per_host, 1);
+	int fxb_h = INSTANCE_ID / fxb_n;
+	int fxb_p = INSTANCE_ID % fxb_n;
+	bool fxb_off = fxb_p >= FXB_COUNT;
+	mat4 fxb_model = mat4(1.0);
+	vec4 fxb_cus = vec4(0.0);
+	if (!fxb_off) {
+		int fxb_g = int(texelFetch(fxb_offsets, ivec2(fxb_bid, 0), 0).x + 0.5) + fxb_h;
+		ivec2 fxb_at = ivec2((fxb_g % 64) * 3, fxb_g / 64);
+		fxb_model = fxb_mat(texelFetch(fxb_frames, fxb_at, 0), texelFetch(fxb_frames, fxb_at + ivec2(1, 0), 0),
+			texelFetch(fxb_frames, fxb_at + ivec2(2, 0), 0));
+		{PARTICLE}
+	}
+"""
+
+## The fallback: the host's frame composed from CrowdGpu's textures (the
+## body's transform and clip frame's bone x the item's rest, chain and pose,
+## orthonormalised, scaled by the row's scale x cbrt(|det G|)), and whether it
+## draws (its page shown, not fading out, within 720 and Character Sight
+## Range, within FXB_NEAR of the frustum).
 const HEAD := """
 	int fxb_n = max(fxb_per_host, 1);
 	int fxb_h = INSTANCE_ID / fxb_n;
 	int fxb_p = INSTANCE_ID % fxb_n;
 	ivec2 fxb_at = ivec2((fxb_h % 256) * 7, fxb_h / 256);
-	// A host's instances past its node's live particles (the stride's
-	// padding) do nothing else.
 	bool fxb_pad = fxb_p >= FXB_COUNT;
 	bool fxb_off = true;
 	vec4 fxb_m = vec4(0.0);
@@ -541,11 +930,6 @@ const HEAD := """
 		fxb_body = srr_cg_mat(texelFetch(crowd_bodies, fxb_b, 0), texelFetch(crowd_bodies, fxb_b + ivec3(1, 0, 0), 0),
 			texelFetch(crowd_bodies, fxb_b + ivec3(2, 0, 0), 0));
 		vec4 fxb_t4 = texelFetch(crowd_bodies, fxb_b + ivec3(4, 0, 0), 0);
-		// Whether this host draws: its page shown and not fading out
-		// (EquipFx's ghost_origin rule), within fxb_range (720: retail's LOD
-		// 0.9 x 800) and Character Sight Range of the camera, and its body
-		// within FXB_NEAR of the view's frustum (a sphere test in view space;
-		// OURS, EquipFx.ALWAYS_NEAR).
 		vec3 fxb_v = (VIEW_MATRIX * vec4(fxb_body[3].xyz, 1.0)).xyz;
 		float fxb_d = length(fxb_v);
 		float fxb_sx = PROJECTION_MATRIX[0][0];
@@ -581,25 +965,38 @@ const HEAD := """
 ## holder frame.
 const PARTICLE := """
 		ivec2 fxb_pa = ivec2(1 + fxb_p * 5, fxb_row);
-		fxb_model = fxb_model * srr_cg_mat(texelFetch(fxb_parts, fxb_pa, 0), texelFetch(fxb_parts, fxb_pa + ivec2(1, 0), 0),
+		fxb_model = fxb_model * fxb_mat(texelFetch(fxb_parts, fxb_pa, 0), texelFetch(fxb_parts, fxb_pa + ivec2(1, 0), 0),
 			texelFetch(fxb_parts, fxb_pa + ivec2(2, 0), 0));
 		COLOR *= texelFetch(fxb_parts, fxb_pa + ivec2(3, 0), 0);
 		fxb_cus = texelFetch(fxb_parts, fxb_pa + ivec2(4, 0), 0);
 """
 
-## A node drawn with Godot's own transform (no shared turn): the vertex by the
-## composed model matrix into view space.
 const PLAIN := """
 	VERTEX = (VIEW_MATRIX * fxb_model * vec4(VERTEX, 1.0)).xyz;
 	NORMAL = vec3(0.0, 0.0, 1.0);
 """
 
-## The tail: a host that draws nothing puts its vertices behind the camera
-## (clipped, no fragment).
+## A host that draws nothing puts its vertices behind the camera.
 const TAIL := """
 	if (fxb_off) {
 		VERTEX = vec3(0.0, 0.0, 1.0);
 	}
+"""
+
+const MAT := """
+// Three row texels as a mat4 (CrowdGpu's layout).
+mat4 fxb_mat(vec4 r0, vec4 r1, vec4 r2) {
+	return mat4(vec4(r0.x, r1.x, r2.x, 0.0), vec4(r0.y, r1.y, r2.y, 0.0), vec4(r0.z, r1.z, r2.z, 0.0), vec4(r0.w, r1.w, r2.w, 1.0));
+}
+"""
+
+const UNIFORMS_NATIVE := """
+uniform sampler2D fxb_frames : filter_nearest, repeat_disable;
+uniform sampler2D fxb_offsets : filter_nearest, repeat_disable;
+uniform sampler2D fxb_parts : filter_nearest, repeat_disable;
+uniform int fxb_bid = 0;
+uniform int fxb_per_host = 1;
+uniform int fxb_row = 0;
 """
 
 const UNIFORMS := """
@@ -610,11 +1007,9 @@ uniform int fxb_per_host = 1;
 uniform int fxb_row = 0;
 uniform float fxb_range = 720.0;
 const float FXB_NEAR = 30.0;
-// The batch's other layouts' bone stores (crowd_bones is the first's).
 uniform sampler2DArray crowd_bones1 : filter_nearest, repeat_disable;
 uniform sampler2DArray crowd_bones2 : filter_nearest, repeat_disable;
 uniform sampler2DArray crowd_bones3 : filter_nearest, repeat_disable;
-// srr_cg_bone from the host's layout's store.
 mat4 fxb_bone(int fxb_l, int fxb_bi, int fxb_r) {
 	ivec3 fxb_q = ivec3(fxb_bi * 3, fxb_r % SRR_CG_PAGE_ROWS, fxb_r / SRR_CG_PAGE_ROWS);
 	if (fxb_l == 1) {
@@ -628,12 +1023,12 @@ mat4 fxb_bone(int fxb_l, int fxb_bi, int fxb_r) {
 }
 """
 
-## `sh` (a master draw node's shader: EfpEffect's template, its shared-turn
-## twin, a Link's or its pipe-turn twin) with its vertex stage replaced by the
-## batch's: the same body as the node's own, its MODEL_MATRIX the host's
-## holder frame times the particle's, its INSTANCE_CUSTOM the particle's.
-static func batch_shader(sh: Shader) -> Shader:
-	var key := sh.get_instance_id()
+## `sh` (a master draw node's shader) with its vertex stage replaced by the
+## batch's (natively or the fallback's): the same body as the node's own, its
+## MODEL_MATRIX the host's frame times the particle's, its INSTANCE_CUSTOM the
+## particle's.
+static func batch_shader(sh: Shader, as_native: bool = false) -> Shader:
+	var key := "%d|%s" % [sh.get_instance_id(), str(as_native)]
 	if _shaders.has(key):
 		return _shaders[key]
 	var code := sh.code
@@ -644,22 +1039,19 @@ static func batch_shader(sh: Shader) -> Shader:
 	var body := code.substr(at + "void vertex() {".length(), end - at - "void vertex() {".length())
 	var link := not code.contains(EfpEffect.UVMAP_INSTANCE) and not body.contains("srr_q = INSTANCE_CUSTOM")
 	var plate := not link
-	# A plate node's live particles: its row's texel 0 (a Link's: one a host).
-	var head := HEAD.replace("FXB_COUNT", "int(texelFetch(fxb_parts, ivec2(0, fxb_row), 0).x + 0.5)" if plate else "1")
+	var head := (HEAD_NATIVE if as_native else HEAD).replace("FXB_COUNT",
+		"int(texelFetch(fxb_parts, ivec2(0, fxb_row), 0).x + 0.5)" if plate else "1")
 	var vtx := "void vertex() {" + head.replace("{PARTICLE}", PARTICLE if plate else "")
 	if body.contains("VIEW_MATRIX"):
-		# A shared-turn plate or a pipe-turn link: its own stage, on the
-		# composed matrix and the particle's custom data.
 		vtx += body.replace("MODEL_MATRIX", "fxb_model").replace("INSTANCE_CUSTOM", "fxb_cus")
 	else:
-		# The template's own stage (the instance UV rectangle, or nothing).
 		vtx += body.replace("INSTANCE_CUSTOM", "fxb_cus") + PLAIN
 	vtx += TAIL + "}"
 	code = code.substr(0, at) + vtx + code.substr(end + 2)
 	if not code.contains("skip_vertex_transform"):
 		code = code.replace("render_mode unshaded,", "render_mode unshaded, skip_vertex_transform,")
 	var nl := code.find("\n", code.find("render_mode"))
-	code = code.substr(0, nl + 1) + UNIFORMS + code.substr(nl + 1)
+	code = code.substr(0, nl + 1) + (UNIFORMS_NATIVE if as_native else UNIFORMS) + MAT + code.substr(nl + 1)
 	var out := Shader.new()
 	out.code = code
 	_shaders[key] = out

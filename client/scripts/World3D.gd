@@ -1705,6 +1705,7 @@ func _ready() -> void:
 	EquipFx.ghost_frame = _crowd_ghost_item_frame
 	EquipFx.ghost_origin = _crowd_ghost_origin
 	EquipFx.ghost_gpu = _crowd_gpu_now
+	EquipFx.batch_viewport = get_viewport()
 	# Round 762's review, F1: the frame's wait for the background dressing's
 	# room (OtherCrowd.FrameMark).
 	add_child(OtherCrowd.FrameMark.new(true))
@@ -6393,6 +6394,15 @@ func _exit_tree() -> void:
 		EquipFx.ghost_origin = Callable()
 	if EquipFx.ghost_gpu == _crowd_gpu_now:
 		EquipFx.ghost_gpu = Callable()
+	# Round 764's review, F6: the ghosts' hosts and the batches go with the
+	# world (a world entered again starts over).
+	var fx_vp := get_viewport()
+	if fx_vp != null and fx_vp.has_meta(EquipFx.DRIVER_META):
+		var fx_d = fx_vp.get_meta(EquipFx.DRIVER_META)
+		if is_instance_valid(fx_d):
+			(fx_d as EquipFx).reset_world()
+	if EquipFx.batch_viewport == fx_vp:
+		EquipFx.batch_viewport = null
 	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
 	# world leaving before it asked for its item, character and skill tables
 	# leaves no worker running behind it.
@@ -17680,7 +17690,13 @@ func _ghost_other_now(character_id: int) -> void:
 		_other_ghosts.queue(character_id)
 		return
 	(args as Dictionary).erase("reghost")
-	_ghost_fx(node, recipe)
+	# Round 764's review, F9: a ghost held in its page gets its weapons'
+	# particles at its activation (_hold_step), not now: no host work for a
+	# page that shows nothing yet.
+	if crowd.is_held(node):
+		node.set_meta(FX_DUE_META, true)
+	else:
+		_ghost_fx(node, recipe)
 	var b := crowd.body_of(node)
 	crowd.set_heard(b, heard)
 	b.sound_due = -INF if heard else INF
@@ -17767,6 +17783,9 @@ func _activate_extras(node: Node3D) -> void:
 
 ## Meta on a held ghost's holder: its sound owner, until the reveal.
 const HELD_EXTRAS_META := &"opensro_held_extras"
+## Round 764's review, F9: meta on a held ghost's holder whose weapons'
+## particles are still to be registered (at its activation).
+const FX_DUE_META := &"opensro_fx_due"
 
 ## Meta on a ghost's holder: its body's top (the plate's and click body's height).
 const GHOST_TOP_META := &"opensro_ghost_top"
@@ -17809,7 +17828,9 @@ class ArrivalPage:
 	var oldest_ms := 0
 	var waiting := 0
 	var revealed := false
-	## Round 764: when its first group came off the socket (NetClient.group_rx_msec).
+	## Round 764: when its LAST group came off the socket (NetClient.group_rx_msec);
+	## the review's F8: a group joins within PAGE_JOIN_MSEC of the one before
+	## it, so a window delivered over a slow link stays one page.
 	var rx_ms := 0
 
 ## Round 764: measured between the groups' RECEIVE times, not between the
@@ -17843,8 +17864,9 @@ func _arrival_page() -> ArrivalPage:
 		_page_cur = ArrivalPage.new()
 		_page_cur.opened_ms = now
 		_page_cur.oldest_ms = now
-		_page_cur.rx_ms = rx
 		_pages.append(_page_cur)
+	if _page_pick:
+		_page_cur.rx_ms = maxi(_page_cur.rx_ms, rx)
 	_page_pick = false
 	_page_pick_rx = 0
 	_page_cur.waiting += 1
@@ -17994,6 +18016,11 @@ func _hold_step() -> void:
 			_activate_extras(node)
 		elif _ghost_ids.has(id):
 			_ghost_extras(id, node)
+		if (node as Node).has_meta(FX_DUE_META):
+			(node as Node).remove_meta(FX_DUE_META)
+			var fb = _crowd_gpu.body_of(node) if _crowd_gpu != null else null
+			if fb != null and fb.ghost and fb.recipe != null:
+				_ghost_fx(node, fb.recipe)
 		# Round 762's review, F7 (F10): dressed while its page was held -- its
 		# plate and click body go over the built body's height now, and its
 		# meshes take the level CharacterLight finds.

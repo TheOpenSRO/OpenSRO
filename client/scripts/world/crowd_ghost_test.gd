@@ -58,7 +58,7 @@ func _initialize() -> void:
 	var world := _make_world()
 	if world != null:
 		await process_frame
-		_test_world(world, app)
+		await _test_world(world, app)
 		root.remove_child(world)
 		world.free()
 	app.free_templates()
@@ -500,7 +500,7 @@ func _test_world(world: Node, app: CharacterAppearance) -> void:
 	EquipFxBatch.enabled = false
 	_test_ghost_fx(world, crowd, kit, app)
 	EquipFxBatch.enabled = true
-	_test_ghost_fx_batch(world, crowd, kit, app)
+	await _test_ghost_fx_batch(world, crowd, kit, app)
 	_test_arrival_buffs(world, crowd, kit)
 	_test_pages(world, crowd, kit)
 	_test_stale_twins(world, crowd, kit)
@@ -849,37 +849,59 @@ func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Ch
 	cam.current = true
 	_check(vp.get_camera_3d() == cam, "r764: the test's camera draws the viewport")
 	var bodies: Dictionary = world.get("_other_bodies")
+	var bt: EquipFxBatch = d._batch
+	var native := bt != null and bt.native
+	print("r764: EquipFxBatch %s" % ("native (SrEfpHosts)" if native else "the GDScript fallback"))
+	var host_of := func(id: int):
+		var n: Node3D = bodies.get(id)
+		return d._hosts.get(d._by_skel.get(n.get_instance_id(), [""])[0]) if n != null else null
 	for yaw in range(0, 360, 45):
 		cam.global_transform = Transform3D(Basis(Vector3.UP, deg_to_rad(float(yaw))), cam.global_position)
 		for rep in EquipFxBatch.REBUILD_EVERY + 2:
 			d._hurry = true
 			d._process(1.0 / 60.0)
 		var all_in := true
-		var on := true
 		var batch: EquipFxBatch.Batch = null
 		for id in ids:
-			var n: Node3D = bodies.get(id)
-			var h = d._hosts.get(d._by_skel.get(n.get_instance_id(), [""])[0])
+			var h = host_of.call(id)
 			if h == null or h.batch == null:
 				all_in = false
 				continue
 			batch = h.batch
-			if id == ids[ids.size() - 1]:
-				# 750 units off: past retail's 720, not drawn.
-				if h.sel:
+		if native:
+			# Chosen in every direction (5: the 750-unit one is past reach),
+			# drawn whatever is within the view, its instances the drawn hosts
+			# x the node's stride, its master stepped.
+			var in_view := 0
+			for id in ids.slice(0, ids.size() - 1):
+				if cam.is_position_in_frustum((bodies.get(id) as Node3D).global_position):
+					in_view += 1
+			# (The headless renderer keeps no instance counts: the counts the
+			# batch gave the library, its drawn hosts x each draw's stride.)
+			var vis := int(bt.stats["instances"])
+			var drawn := int(bt.stats["drawn"])
+			_check(all_in and int(bt.stats["in_reach"]) == 5 and bt.selected_count() == 5 and drawn >= in_view and drawn >= 1
+				and vis == drawn * 4 and bt.live_kinds.has(key),
+				"review F1: yaw %d: 5 hosts chosen in every direction, %d drawn (%d in the frustum), %d instances (drawn x 4), the master stepped" % [yaw, drawn, in_view, vis])
+		else:
+			var on := true
+			for id in ids:
+				var h = host_of.call(id)
+				if h == null or h.batch == null:
+					continue
+				if id == ids[ids.size() - 1]:
+					if h.sel:
+						on = false
+					continue
+				var at: int = (h.batch as EquipFxBatch.Batch).drawn.find(h)
+				if at < 0 or at >= h.batch.shown or h.batch.host_data[at * EquipFxBatch.HOST_FLOATS + 3] < 1.0:
 					on = false
-				continue
-			var at: int = (h.batch as EquipFxBatch.Batch).drawn.find(h)
-			if at < 0 or at >= h.batch.shown or h.batch.host_data[at * EquipFxBatch.HOST_FLOATS + 3] < 1.0:
-				on = false
-		var inst := 0
-		if batch != null:
-			for dr in batch.draws:
-				inst += int(dr[4])
-		# Each host is given its node's stride of instances (3 particles: 4,
-		# the grow-only power of two), the live count read in the shader.
-		_check(all_in and on and batch != null and batch.shown == ids.size() - 1 and inst == (ids.size() - 1) * 4,
-			"r764: yaw %d: every ghost's host within 720 in its batch's table and on, %d instances (%d hosts x 4)" % [yaw, inst, batch.shown if batch != null else -1])
+			var inst := 0
+			if batch != null:
+				for dr in batch.draws:
+					inst += int(dr[4])
+			_check(all_in and on and batch != null and batch.shown == ids.size() - 1 and inst == (ids.size() - 1) * 4,
+				"r764: yaw %d: every ghost's host within 720 in its batch's table and on, %d instances (%d hosts x 4)" % [yaw, inst, batch.shown if batch != null else -1])
 	# The budget (OURS): two hosts drawn -- the two nearest, whatever the yaw.
 	EquipFxBatch.host_budget = 2
 	for yaw in [0, 180]:
@@ -887,67 +909,132 @@ func _test_ghost_fx_batch(world: Node, crowd: CrowdGpu, kit: Dictionary, app: Ch
 		for rep in EquipFxBatch.REBUILD_EVERY + 2:
 			d._hurry = true
 			d._process(1.0 / 60.0)
-		var nsel := 0
-		for id in ids:
-			var h = d._hosts.get(d._by_skel.get((bodies.get(id) as Node).get_instance_id(), [""])[0])
-			if h != null and h.sel:
-				nsel += 1
-		_check(nsel == 2, "r764: a budget of 2 draws 2 hosts at yaw %d (%d; cut %s, budget %d)" % [yaw, nsel, str(d.stats.get("batch_cut")), EquipFxBatch.host_budget])
+		_check(bt.selected_count() == 2, "r764: a budget of 2 chooses 2 hosts at yaw %d (%d)" % [yaw, bt.selected_count()])
+	EquipFxBatch.host_budget = 0
+	for rep in EquipFxBatch.REBUILD_EVERY + 2:
+		d._hurry = true
+		d._process(1.0 / 60.0)
+	_check(bt.selected_count() == 5, "review F1: no budget (retail's rule): every host within 720 chosen (%d)" % bt.selected_count())
 	EquipFxBatch.host_budget = EquipFxBatch.HOST_BUDGET
 	for rep in EquipFxBatch.REBUILD_EVERY + 2:
 		d._hurry = true
 		d._process(1.0 / 60.0)
-	# The frame the shader composes from the table, against the holder's
-	# (the body rows written as a frame's flush writes them).
+	# The frame the batch draws each host at, against the holder's.
 	_advance(world, crowd, 0.0)
 	var worst := 0.0
 	var checked := 0
 	var b0: EquipFxBatch.Batch = null
 	for id in ids:
 		var n: Node3D = bodies.get(id)
-		var h = d._hosts.get(d._by_skel.get(n.get_instance_id(), [""])[0])
+		var h = host_of.call(id)
 		if h == null or h.batch == null:
 			continue
 		b0 = h.batch
-		var at: int = (h.batch as EquipFxBatch.Batch).drawn.find(h)
-		if at < 0:
-			continue
+		var got = null
+		if native:
+			if id == ids[ids.size() - 1]:
+				continue
+			got = bt.native_frame(crowd, h)
+		else:
+			var at: int = (h.batch as EquipFxBatch.Batch).drawn.find(h)
+			if at < 0:
+				continue
+			got = EquipFxBatch.cpu_hold(crowd, h.batch, at)
 		checked += 1
-		var cpu = EquipFxBatch.cpu_hold(crowd, h.batch, at)
 		var g = crowd.ghost_item_frame(n, h.att_bone, h.chain)
-		if cpu == null or g == null:
+		if got == null or g == null:
 			worst = INF
 			continue
 		var want := EquipFx.place(g, h.pose, h.scale)
-		var t: Transform3D = cpu
-		if (t.origin - want.origin).length() > 1e-3:
-			print("r764 parity: id %d slot %d (now %s) cpu %s want %s" % [id, h.batch_slot, str(crowd.ghost_slot_layout(n)), str(t.origin), str(want.origin)])
+		var t: Transform3D = got
 		worst = maxf(worst, (t.origin - want.origin).length())
 		for c in 3:
 			worst = maxf(worst, (t.basis[c] - want.basis[c]).length())
-	_check(checked == 5 and worst < 1e-4, "r764: each drawn host's frame as the batch composes it is the holder's (%d hosts, worst %.7f)" % [checked, worst])
-	# No holder is made for a batched ghost; the master steps (a host within
-	# reach, any direction).
+	_check(checked == 5 and worst < 1e-4, "r764: each drawn host's frame as the batch places it is the holder's (%d hosts, worst %.7f)" % [checked, worst])
 	var holders := 0
 	for id in ids:
 		if _fx_holder(bodies.get(id)) != null:
 			holders += 1
-	_check(holders == 0 and k.active > 0, "r764: no holder for a batched ghost (%d), its kind stepped (%d)" % [holders, k.active])
+	_check(holders == 0 and d.steps_master(k), "r764: no holder for a batched ghost (%d), its kind stepped" % holders)
+	# The review's F6: the world leaves and is entered again -- nothing grows.
+	var before := [bt._batches.size(), bt._layouts.size(), _count_batch_nodes(d)]
+	for cycle in 2:
+		d.reset_world()
+		_check(d._ghost_hosts == 0 and bt._batches.is_empty() and bt._layouts.is_empty(), "review F6: the world left, no ghost host, batch or layout kept")
+		for id in ids:
+			var n: Node3D = bodies.get(id)
+			var rb = crowd.body_of(n)
+			world.call("_ghost_fx", n, rb.recipe)
+		for rep in EquipFxBatch.REBUILD_EVERY + 2:
+			d._process(1.0 / 60.0)
+		await process_frame
+		var after := [bt._batches.size(), bt._layouts.size(), _count_batch_nodes(d)]
+		_check(after == before, "review F6: entered again (%d), the batches, layouts and draw nodes are as many as before (%s against %s)" % [cycle + 1, str(after), str(before)])
 	for id in ids:
 		var rr = crowd.body_of(bodies.get(id))
 		if rr != null and rr.recipe != null:
 			rr.recipe.fx = []
 	_leave_all(world, crowd, ids)
-	d._process(1.0 / 60.0)
-	_check(d._ghost_hosts == 0 and (b0 == null or b0.hosts.is_empty()), "r764: the ghosts gone, their hosts leave the batch")
 	for rep in EquipFxBatch.REBUILD_EVERY + 1:
 		d._process(1.0 / 60.0)
-	_check(b0 == null or b0.shown == 0, "r764: ... and its table is emptied within %d frames (%d)" % [EquipFxBatch.REBUILD_EVERY, b0.shown if b0 != null else -1])
+	_check(d._ghost_hosts == 0 and (b0 == null or b0.hosts.is_empty()) and bt.selected_count() == 0,
+		"r764: the ghosts gone, their hosts leave the batch and none is chosen (%d)" % bt.selected_count())
 	_advance(world, crowd, 2.1)
+	await _test_reveal_budget(world, crowd, kit, d, isk, cam)
 	EquipFx.ghost_frame = Callable()
 	EquipFx.ghost_origin = Callable()
 	EquipFx.ghost_gpu = Callable()
 	cam.queue_free()
+
+## The EquipFxBatch draw nodes under the driver (live ones).
+static func _count_batch_nodes(d: Node) -> int:
+	var n := 0
+	for c in d.get_children():
+		if c is MultiMeshInstance3D and c.has_meta(EquipFxBatch.DRAW_META) and not c.is_queued_for_deletion():
+			n += 1
+	return n
+
+## The review's F2: a page of six ghosts held, then revealed, with a budget of
+## two hosts -- no frame from the reveal on chooses more than two.
+func _test_reveal_budget(world: Node, crowd: CrowdGpu, kit: Dictionary, d: EquipFx, isk: Skeleton3D, cam: Camera3D) -> void:
+	world.set("_holds_on", true)
+	EquipFxBatch.host_budget = 2
+	var ghosts: OtherCrowd.BuildQueue = world.get("_other_ghosts")
+	var bodies: Dictionary = world.get("_other_bodies")
+	ghosts.clear()
+	world.set("_page_pick", true)
+	world.set("_other_build_defer", 1)
+	var ids: Array = []
+	for i in 6:
+		world.call("_spawn_or_update_other", 790 + i, "Rev%d" % i, Vector3(-30 + 12 * i, 0, -60), kit, "CHAR_TEST_MAN")
+		ids.append(790 + i)
+	world.set("_other_build_defer", 0)
+	for id in ids:
+		world.call("_ghost_other", id)
+		ghosts.drop(id)
+		var b = crowd.body_of(bodies.get(id))
+		if b != null and b.recipe != null:
+			b.recipe.fx = [{"efp": FX_EFP, "scale": 1.0, "skel": isk, "bone": 0, "pose": isk.get_bone_global_pose(0),
+				"att_bone": b.recipe.skeleton.find_bone("Bip01 Spine"), "chain": isk.transform, "wear": EquipmentNet.SLOT_WEAPON}]
+	var held_ok := crowd.is_held(bodies.get(ids[0])) and d._ghost_hosts == 0
+	_check(held_ok, "review F9: a held page's ghosts register no host until their activation (%d hosts)" % d._ghost_hosts)
+	var worst := 0
+	for f in 40:
+		world.call("_hold_step")
+		_advance(world, crowd, 1.0 / 60.0)
+		d._hurry = true
+		d._process(1.0 / 60.0)
+		worst = maxi(worst, d._batch.selected_count())
+	_check(d._ghost_hosts == 6 and worst <= 2 and d._batch.selected_count() == 2,
+		"review F2: after the reveal 6 hosts are registered and no frame chose more than the budget of 2 (most %d, now %d)" % [worst, d._batch.selected_count()])
+	for id in ids:
+		var rb = crowd.body_of(bodies.get(id))
+		if rb != null and rb.recipe != null:
+			rb.recipe.fx = []
+	_leave_all(world, crowd, ids)
+	_advance(world, crowd, 2.1)
+	EquipFxBatch.host_budget = EquipFxBatch.HOST_BUDGET
+	world.set("_holds_on", false)
 
 ## F2: a body that arrives with buffs (the book holds them) is dressed first
 ## once its page shows, and so is one whose buff came while it was held or not
@@ -1010,7 +1097,19 @@ func _test_pages(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
 		"r764: a group read %d ms after the page opened, but received with its first group, joins it" % OLD_PAGE_MS)
 	world.call("_ghost_other", 679)
 	ghosts.drop(679)
-	pa.rx_ms -= OLD_PAGE_MS
+	# The review's F8: a group 2,900 ms after the one before it -- 3,000 after
+	# the page's first -- still joins (a window spread over a slow link).
+	var first_rx: int = pa.rx_ms - 100
+	world.set("_page_pick", true)
+	world.set("_page_pick_rx", first_rx + 3000)
+	world.set("_other_build_defer", 1)
+	world.call("_spawn_or_update_other", 678, "PageA3", Vector3(-6, 0, -40), kit, "CHAR_TEST_MAN")
+	world.set("_other_build_defer", 0)
+	_check((world.get("_page_wait") as Dictionary).get(678) == pa and (world.get("_pages") as Array).size() == 1,
+		"review F8: a group 2,900 ms after the one before it (3,000 after the first) joins the page")
+	world.call("_ghost_other", 678)
+	ghosts.drop(678)
+	pa.rx_ms -= OLD_PAGE_MS + 3000
 	world.set("_page_pick", true)
 	world.set("_other_build_defer", 1)
 	world.call("_spawn_or_update_other", 681, "PageB", Vector3(3, 0, -40), kit, "CHAR_TEST_MAN")
@@ -1026,7 +1125,7 @@ func _test_pages(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
 	ghosts.drop(680)
 	world.call("_hold_step")
 	var n680: Node3D = bodies.get(680)
-	_check(not crowd.is_held(n680) and not crowd.is_held(bodies.get(679)) and (world.get("_pages") as Array).size() == 1, "F6: the first page shows once its own arrivals are ghosts, the second still waiting")
+	_check(not crowd.is_held(n680) and not crowd.is_held(bodies.get(679)) and not crowd.is_held(bodies.get(678)) and (world.get("_pages") as Array).size() == 1, "F6: the first page shows once its own arrivals are ghosts, the second still waiting")
 	world.call("_ghost_other", 681)
 	ghosts.drop(681)
 	var n681: Node3D = bodies.get(681)
@@ -1043,7 +1142,7 @@ func _test_pages(world: Node, crowd: CrowdGpu, kit: Dictionary) -> void:
 	_check(not crowd.is_held(n681) and (world.get("_page_wait") as Dictionary).is_empty() and (world.get("_pages") as Array).is_empty(),
 		"F3: a page revealed by its deadline drops a waiting arrival whose body is gone")
 	(world.get("_other_build_args") as Dictionary).erase(682)
-	_leave_all(world, crowd, [679, 680, 681])
+	_leave_all(world, crowd, [678, 679, 680, 681])
 	_advance(world, crowd, 2.1)
 	world.set("_holds_on", false)
 

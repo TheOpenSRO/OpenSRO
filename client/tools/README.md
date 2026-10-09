@@ -597,6 +597,13 @@ by holders for the same hosts, with none, and by the batches again (`fxab_<n>_*.
 `OPENSRO_QA_CROWD_SHOTS`), and prints each pair's difference. `OPENSRO_QA_BUDGET_WORK=0` gives the crowd
 budget round 762's rule (the whole frame, not the main thread's work); `OPENSRO_QA_DRESS_IDLE=1`
 dresses idle ghosts in the background again.
+Round 764's review: with the library, EquipFxBatch's hosts are chosen, culled and placed natively
+(`SrEfpHosts`); `OPENSRO_QA_EQUIPFX_NATIVE=0` forces the GDScript fallback (the shader composes each
+host's frame). `OPENSRO_QA_EQUIPFX_HOSTS=0` is retail's rule (every host within 720, no limit). A frame
+in 600 prints `QA FXBATCH` (hosts within reach, chosen, drawn, dressed hosts batched, batches, the frames
+texture's rows); the step line adds `fx_batch_chosen` and `fx_batch_direct`, the split `fxb_native` and
+`fxb_parts`. For `fxab` with the library, run it with `OPENSRO_QA_EQUIPFX_HOSTS=0` and a small crowd: the
+holders are made for every host within 720.
 
 **The live crowd and the swarm's gear (round 759).** `CROWD_LIVE=<host:port>` makes `crowd_run.sh`
 sign in to a running server (QaSignIn: register if new, log in, create the character if missing,
