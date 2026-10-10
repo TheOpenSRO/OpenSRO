@@ -39,11 +39,11 @@ class_name EquipFxBatch
 static var enabled := OS.get_environment("OPENSRO_QA_EQUIPFX_BATCH") != "0"
 ## OPENSRO_QA_EQUIPFX_NATIVE=0: the fallback even with the library.
 static var native_wanted := OS.get_environment("OPENSRO_QA_EQUIPFX_NATIVE") != "0"
-## The most hosts drawn, the nearest the camera in any direction (OURS). 0:
-## every host within 720 units, as retail draws them (the review's F1: READ,
-## no count limit). OPENSRO_QA_EQUIPFX_HOSTS=<n> sets it. The default stays 500
-## until the user chooses (r764.md section 8).
-const HOST_BUDGET := 500
+## The most hosts drawn, the nearest the camera in any direction. 0 (the
+## default): every host within 720 units, as retail draws them (READ
+## FUN_00c43780/FUN_009c4aa0: no count limit; USER DECISION 2026-10-09 "match
+## the original"). OPENSRO_QA_EQUIPFX_HOSTS=<n> sets a budget for QA (OURS).
+const HOST_BUDGET := 0
 static var host_budget := int(OS.get_environment("OPENSRO_QA_EQUIPFX_HOSTS")) if OS.get_environment("OPENSRO_QA_EQUIPFX_HOSTS").is_valid_int() else HOST_BUDGET
 ## QA: OPENSRO_QA_EQUIPFX_RANGE=<units> draws within that distance only.
 static var qa_range := float(OS.get_environment("OPENSRO_QA_EQUIPFX_RANGE")) if OS.get_environment("OPENSRO_QA_EQUIPFX_RANGE").is_valid_float() else 0.0
