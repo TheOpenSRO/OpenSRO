@@ -7634,7 +7634,18 @@ about 1,000 units.
   draw 1.7, glow pass 2.4 ms). B2 takes about 5 s to build.
 - `check` ALL LOAD; `tests` 276 suites, 0 failing (round 775 merged after: see its entry).
 
-PERF_GATE_TABLE
+**Perf gate** (`--base 100d5837 --head f2317798 --sites jangan,reeds --frames 40000`, 1280x720,
+median of 3; native readers off on both): every row SAME.
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 0.74 -> 0.75 | 8366 -> 8669 (+304) | 2645 -> 2739 (+95) | 5 -> 5 |
+| reeds | 0.81 -> 0.82 | 6082 -> 6195 (+113) | 1416 -> 1424 | 2 -> 2 |
+
+The entry's few hundred ms are the field's light maps (Jangan's ~400). The first gate of the round
+measured the reeds' entry +1.46 s: the DXT1 transparent-texel scan of every light map in GDScript,
+now skipped (`ObjectLoader._decode_lightmap`). The gate's default 3,000 frames ran out at this
+GPU's ~700 fps before 10 FPS samples (round 773's "no numbers"); `--frames 40000` gives a minute.
 
 **Left (OPEN).** The block lights on characters (the PLIGHT term; the tomb's leave only an ambient
 tint); per-block fog for rooms other than the player's; who reads B; the bloom in a dungeon.
