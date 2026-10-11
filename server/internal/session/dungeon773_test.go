@@ -292,8 +292,10 @@ func TestRound773NPCsInADungeon(t *testing.T) {
 // sees only the server's own movers -- while a placement (Relocated) into one
 // does not fire it.
 func TestRound773WalkInFiresOnAReportedWalk(t *testing.T) {
-	SetTrustClientPositions(true)
-	t.Cleanup(func() { SetTrustClientPositions(false) })
+	// The package runs trusted (main_test.go); put back whatever was set.
+	was := trustPositions.Load()
+	trustPositions.Store(true)
+	t.Cleanup(func() { trustPositions.Store(was) })
 	rig := newTeleportRig(t, teleportRigOpts{network: dungeonWalkInFixture(t), level: 30, gold: 10000})
 	if res := rig.use(1, 50); !res.OK {
 		t.Fatalf("teleport refused: %+v", res)
