@@ -7477,6 +7477,33 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-sixty-seventh round: seal effects on the character select screen again
+
+The user: the seal effects are not visible on the character select screen any more.
+- **Reproduced on the box** (RX 7600, Forward+). Three QA characters each carried a seal sword:
+  `OPENSRO_QA_FAKECHARS=3` with the new QA hook `OPENSRO_QA_FAKECHARS_WEAPON=4014`
+  (ITEM_CH_SWORD_01_A_RARE). Their purple `system_raretype_a_step1.efp` particles:
+  - with the native library (the user's client): none;
+  - without it: all three.
+- **The cause** (round 764's review F1, commit d29f3b40):
+  - World3D's `_ready` set `EquipFx.batch_viewport` to its viewport unconditionally.
+  - The select and customize screens' harbour is a World3D in title mode (round 678). It shares
+    the root viewport with the select stage's characters.
+  - So with the native library, every dressed character's effect host there was registered with
+    the batches (`EquipFx._batching_dressed`). The batches step only with a CrowdGpu
+    (`EquipFxBatch.step` returns at once when it has none), and a backdrop has none.
+  - Debug count before the fix: 3 hosts, 0 shown, the master's MultiMeshes empty.
+- **The fix:**
+  - A title backdrop no longer claims the viewport, so the select screen's hosts get holders as
+    they did before round 764.
+  - Its teardown no longer resets the batches or releases the viewport, so it cannot undo a
+    world's claim on the same viewport.
+- **Verified:** the same render with the native library shows all three swords' seal particles.
+- **Test:** `scripts/world/title_backdrop_fx_test.gd`, source checks in the style of
+  `world_post_effects_test.gd`. It fails on the old code.
+- **Gates:** `check` ALL LOAD (711 scripts); `tests` "ran 272 suite(s), 0 failing", both with the
+  native library and without it (`NO_NATIVE=1`).
+
 ## Seven-hundred-and-sixty-sixth round: the seal star on every item slot
 
 The user: "make it available everywhere". Round 765's star now shows on every slot this client

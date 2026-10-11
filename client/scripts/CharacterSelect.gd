@@ -672,7 +672,12 @@ func _qa_sample_characters() -> Array:
 		if pend != "":
 			s.deleting = s.char_name == pend
 			s.minutes_left = 4321 if s.deleting else 0
-		var kit: Array = spec[5]
+		var kit: Array = spec[5].duplicate()
+		# OPENSRO_QA_FAKECHARS_WEAPON=<id> (round 767, QA): that item is each
+		# one's weapon instead, e.g. a seal weapon for its seal effects.
+		var weapon := OS.get_environment("OPENSRO_QA_FAKECHARS_WEAPON")
+		if weapon.is_valid_int():
+			kit[kit.size() - 1] = weapon.to_int()
 		for j in range(kit.size()):
 			s.items.append({"id": kit[j], "plus": weapon_plus if j == kit.size() - 1 else 0})
 		out.append(s)

@@ -548,7 +548,8 @@ and only the `_SET_A/B_RARE_SWITCHnn` variants name `*_set_a_rare_01` / `_set_b_
 (client/scripts/assets/equip_glow.gd) and the `EQUIP_GLOW` path of `object.gdshaderinc`, applied by
 `CharacterAppearance.build` to slots 6 and 7; the particles go through `EquipFx` (client/scripts/assets/equip_fx.gd), one shared simulation per (efp, scale), drawn in each bone's frame (round 741: position and rotation, READ above), nearest 64 in view within 800 units (OURS, r734.md). `OPENSRO_QA_EQUIP` takes `slot=item_id+plus`;
 `OPENSRO_QA_LINEUP_KITS` draws bodies side by side with given pluses; `OPENSRO_QA_FAKECHARS_PLUS`
-gives the select screen's QA characters a weapon plus; `client/tools/measure_equip_glow.gd` measures
+gives the select screen's QA characters a weapon plus, and `OPENSRO_QA_FAKECHARS_WEAPON=<id>`
+(round 767) gives them that weapon (a seal one, for its particles); `client/tools/measure_equip_glow.gd` measures
 the drawn glow against the arithmetic. The lobby list the server sends carries plus 0
 (`server/internal/session/lobbyhandler.go`, the `LobbyItem` without `Plus`): lane B's to fill.
 

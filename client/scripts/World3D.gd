@@ -1705,7 +1705,13 @@ func _ready() -> void:
 	EquipFx.ghost_frame = _crowd_ghost_item_frame
 	EquipFx.ghost_origin = _crowd_ghost_origin
 	EquipFx.ghost_gpu = _crowd_gpu_now
-	EquipFx.batch_viewport = get_viewport()
+	# Round 767: not in title mode. The select and customize screens draw
+	# their characters in this viewport over a title backdrop, which has no
+	# CrowdGpu; the batches step only with one (EquipFxBatch.step), so the
+	# characters' seal and plus particles were handed to batches that never
+	# drew (round 764's review F1 made the claim). They keep their holders.
+	if not title_mode:
+		EquipFx.batch_viewport = get_viewport()
 	# Round 762's review, F1: the frame's wait for the background dressing's
 	# room (OtherCrowd.FrameMark).
 	add_child(OtherCrowd.FrameMark.new(true))
@@ -6396,12 +6402,14 @@ func _exit_tree() -> void:
 		EquipFx.ghost_gpu = Callable()
 	# Round 764's review, F6: the ghosts' hosts and the batches go with the
 	# world (a world entered again starts over).
+	# Round 767: a title backdrop claimed neither (see _ready), so it resets
+	# nothing a world in the same viewport owns.
 	var fx_vp := get_viewport()
-	if fx_vp != null and fx_vp.has_meta(EquipFx.DRIVER_META):
+	if not title_mode and fx_vp != null and fx_vp.has_meta(EquipFx.DRIVER_META):
 		var fx_d = fx_vp.get_meta(EquipFx.DRIVER_META)
 		if is_instance_valid(fx_d):
 			(fx_d as EquipFx).reset_world()
-	if EquipFx.batch_viewport == fx_vp:
+	if not title_mode and EquipFx.batch_viewport == fx_vp:
 		EquipFx.batch_viewport = null
 	# Round 746 (the review's finding 5, and round 746's review, finding 9): a
 	# world leaving before it asked for its item, character and skill tables
