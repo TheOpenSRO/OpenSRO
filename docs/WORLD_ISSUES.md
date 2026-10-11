@@ -7477,6 +7477,91 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventy-sixth round: the world map's names -- every text over every icon, centred, bold and shadowed as the client draws them
+
+The user: "the map changes are great but some names are slightly misaligned or missing entirely.
+Let's make sure the map is 100% accurate" (the private server's unique markers -- the orange-red
+"(CH)" labels, red dots, the checkbox and the footer line -- are a mod and ignored). UI lane, client
+only. Labels: READ (sro_client.exe, md5 2a5794b72c90908d945be8b3f3f2edd4), MEASURED, INFERRED, OURS.
+The reading is `docs/protocol/WORLDMAP_FORMAT.md`, "The text signs (round 776)".
+
+**What the original does (READ).**
+- **Draw order.** The render (vslot_013 0x624380 -> 0x61c360) walks the sign list twice: every
+  picture sign with a texture first, then every text sign with text (0x8b48b0). Round 775 drew
+  them in file order, and the town's name `SN_ZONE_22001` ("Jangan", region (168, 97) + (15, 10))
+  is listed before the icon `city_jangan.ddj` (64 x 64, region (167, 98) + (16, 2)) whose painted
+  plate it lands on -- so the icon covered it: **the empty plate**. (All the world map's text rows
+  come before its picture rows in the file; Jangan's is the one in this view that sits on an icon.)
+- **The text's style (0x6210b0, asm 0x6211d4..0x62126c).** Column 14 is the font index
+  (0xba5460), columns 15..17 the colour (0x8b2b70), then column 18 sets or clears text flag 1,
+  column 19 flag 2, **column 20 flag 1 again** (`push 1; push 5` before 0x8b44b0 / 0x8b4560 at
+  0x621219 and 0x62125d). So the "Blur" byte, not the "Shadow" byte, decides the drop shadow.
+  Flag 2 is the weight-600 face (0x8b39e0, made in 0xbaa110), flag 1 the one-pixel black shadow
+  drawn glyph by glyph before each glyph (0x8b48b0 -> 0x8b2290). Round 775 drew none of it.
+- **Place.** The text is measured after the flags (0x8b3b60 -> 0x8b39e0 -> 0x8b3910: the sum of
+  the glyphs' advances) and put at `origin + anchor.x - width / 2` (int division), `origin +
+  anchor.y`; 0x8b48b0 draws the glyph cells from that top, the baseline at the face's tmAscent
+  below it (GFontChar 0x8b0a00 places each glyph's black box at `tmAscent - gmptGlyphOrigin.y`;
+  0xbaa110 stores GetTextMetrics per variant).
+- **Picture signs** are top-left quads, `w` x `h` (unchanged and right: MEASURED below).
+- Nothing else hides a sign: no zoom levels (one tile grid), every sign of the map shown is built;
+  the map area clips them.
+
+**MEASURED, before and after.** The user's picture of the original (2564 x 1494, the game at 2x)
+and of ours (3818 x 2054, 2x) and two QA renders of the box at Jangan (1280 x 720, 1x,
+`--worldmap sign:1`; base origin/dev 2e057030 and this round) were each fitted to the world map's
+own tiles (map_world_146..174 x 89..109, extracted to scratch, not committed): every picture fits
+one translation to the pixel (median abs difference 0.33 / 0.00 / 0.00 levels for the two PNGs, 4.7
+for the JPEG). In world-map pixels the icons of all four pictures coincide -- the Jangan icon and
+the Exorcist's icon are where the original has them; the "20 px higher" seen against the palace
+was the labels, not the icons. Ink of each label (centre x; top row), anchor from the table:
+
+| Label (anchor) | original | ours, user's picture | base QA | **this round QA** |
+|---|---|---|---|---|
+| Water Ghost Marshland (3887, 425) | 3887.0; 428 | 3856.0; 427 | 3858.0; 427 | **3886.5; 427** |
+| Exorcist's Home (3796, 502) | 3796.5; 505 | 3776.0; 505 | 3777.5; 504 | **3796.5; 504** |
+| China East Ferry (3699, 529) | 3700.0; 532 | 3679.5; 531 | 3681.0; 531 | **3700.0; 531** |
+| Huang He, bold (3613, 500) | 3613.0; 503 | (clipped) | (clipped) | **3614.0; 502** |
+| Tiger Mountain, bold (3692, 622) | 3692.0; 625 | -- | 3672.5; 624 | **3691.5; 624** |
+| Qin-Shi Tomb, bold (4052, 379) | 4052.0; 382 | -- | 4036.5; 381 | **4052.5; 381** |
+| Jangan, bold, on the plate (3919, 522) | 3919.0; 525 | missing | missing | **3919.0; 523** |
+
+Ink widths now match the original to 1-2 px (Tiger Mountain 94 / 95, Huang He 62 / 60; base drew
+it 79 wide, not bold), every label has the black shadow right and down, the five coloured ones are
+bold. The remaining 1 px (ours one row higher) is the face's ascent: ours is FreeType's ascent of
+the box's fallback face (UIC_STT_FONTNAME is 'Tahoma', not on the box, so vplus\vfont.ttf "Arial"),
+the original GDI's tmAscent of its own face (OPEN, below).
+
+**What changed (client).**
+- `HudWorldmap._build_signs`: pictures first, then texts (file order within each); the click list
+  keeps the file order. `_sign_label` + the new inner `SignText`: the font index, the colour at
+  alpha 255, flag 2 (the system's weight-600 file or GDI's simulation, HudNotice.draw_bold's rule)
+  and flag 1 (glyph by glyph: shadow at +1, +1, then the glyph), the advances' sum as the width,
+  `x - trunc(width / 2)`, top at `y`, unfiltered (UiBuilder.crisp_text). The round-775 Label,
+  placed from its own minimum size before it was in the tree, landed about a quarter of its width
+  left of centre (MEASURED above; why that size was off was not traced -- the code is gone).
+- `WorldmapLocalInfoReader.Sign.is_bold()` / `has_shadow()` (Blur decides).
+- Tests: new `worldmap_sign_text_test.gd` (order, flags incl. Shadow-without-Blur, colour, font
+  index, width, placement, decorations, a key with no text); `worldmap_dungeon_reader_test.gd`
+  (the flags from parsed rows); `worldmap_dungeon_test.gd` (the floor's sign is a SignText).
+  Synthetic fixtures only.
+- World3D.gd untouched.
+
+**Checks.** `remote_godot.sh check`: 727 scripts and 9 scenes, ALL LOAD. `remote_godot.sh tests`:
+279 suites, 0 failing. QA renders (Forward+, the box) no SCRIPT ERROR. The perf gate is not run: a
+UI-only round (the signs are built once per map shown, as before).
+
+**Open / ours.**
+- The face: this archive's UIC_STT_FONTNAME is Tahoma; the user's picture of ours (their machine)
+  measures narrower glyphs (Water Ghost Marshland 122 px against the original's 128) and the
+  original's look like Arial. Which face the original client actually used, and GDI's tmAscent for
+  it (the last 1 px), are not established; the face choice is UiBuilder's, shared by every window.
+- Ours draws text at the UI scale's own raster (smooth at 2x); the original rasterises 1-bit at
+  1x and is scaled by the OS. A UI-wide choice (UiBuilder), not this window's.
+- MEASURED in the table: two world-map texts (22004, 22005) are Bold 1 Blur 0 -- bold without a
+  shadow by the rule above; not checked against a picture of the original (they are in the west).
+
+
 ## Seven-hundred-and-seventy-fifth round: the world map's dungeons -- click a dungeon on the world map to open its floors, and M in a dungeon shows the player's floor
 
 The user: "fix the map for dungeons. You should be able to click the dungeon and open up the

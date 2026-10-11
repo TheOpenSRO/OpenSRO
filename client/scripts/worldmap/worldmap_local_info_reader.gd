@@ -26,7 +26,9 @@ class_name WorldmapLocalInfoReader
 ## - any other map: `x`, `y` as written, pixels on that map's image.
 ## A type-2 sign is the picture in column 3, `w` x `h` with its top-left
 ## there (the quad, `+0x31..+0x44`); a type-1 sign is text, centred on `x`
-## (`x - width / 2`, 0x6210b0 / 0x6196d0) with its top at `y`.
+## (`x - width / 2`, 0x6210b0 / 0x6196d0) with its top at `y`. Every text is
+## drawn over every picture (the render 0x61c360 draws all the pictures,
+## then all the texts; round 776).
 ## On the world map a press and a release on the same type-2 sign with a
 ## link opens the linked map (vslot_017 0x623220): a local map below 2001
 ## (0x622b60), a dungeon floor from 2001 (0x6217e0), and never a fortress
@@ -60,6 +62,10 @@ const COL_H := 14           # +0x98: a type-2 sign's height, a type-1 sign's fon
 const COL_R := 15           # +0x9c = 0xff000000 | r << 16 | g << 8 | b
 const COL_G := 16
 const COL_B := 17
+# The three style bytes, named by the header (Font Shadow / Bold / Blur).
+# What the window does with them (0x6210b0, READ; round 776): +0xa0 sets or
+# clears text flag 1, +0xa1 flag 2, +0xa2 flag 1 again -- see is_bold() and
+# has_shadow().
 const COL_SHADOW := 18      # +0xa0 (byte)
 const COL_BOLD := 19        # +0xa1 (byte)
 const COL_BLUR := 20        # +0xa2 (byte)
@@ -97,6 +103,24 @@ class Sign:
 	## `+0x3e = y + h`; READ).
 	func rect(world_left: int, world_top: int) -> Rect2:
 		return Rect2(Vector2(anchor(world_left, world_top)), Vector2(size))
+
+	## A text sign's text flag 2, the face's weight-600 variant (0x6210b0
+	## asm 0x62122d..0x62124a: `+0xa1 != 0` -> 0x8b44b0(5, 2), else
+	## 0x8b4560(5, 2); READ). MEASURED: the archive sets it on the coloured
+	## place names (the 22xxx towns, 23xxx tombs, 24xxx mountains and
+	## rivers) and not on the white ones.
+	func is_bold() -> bool:
+		return bold != 0
+
+	## A text sign's text flag 1, the one-pixel drop shadow (READ, asm
+	## 0x62120b..0x62126c): the header's "Shadow" byte (+0xa0) sets or
+	## clears flag 1, and then its "Blur" byte (+0xa2) sets or clears the
+	## same flag 1 -- `push 1; push 5` before both -- so the last one
+	## decides and the "Shadow" column has no effect. MEASURED: every text
+	## row of the archive's world map has Blur 1 and Shadow 0 (two far-west
+	## rows Shadow 1), and the original draws all of them with the shadow.
+	func has_shadow() -> bool:
+		return blur != 0
 
 	## The press / release hit test (0x623220, READ): strictly inside the
 	## quad on all four sides.

@@ -115,6 +115,17 @@ func _init() -> void:
 		and gate.color == Color8(255, 244, 166) and gate.bold == 1,
 		"a sign on another map is placed as written, with its colour and style bytes")
 	_check(signs.for_map(2001).size() == 1 and signs.for_map(0).size() == 1, "signs are listed by the map they are drawn on")
+	# Round 776: the text flags 0x6210b0 derives from the three style bytes.
+	_check(gate.is_bold() and gate.has_shadow(), "Bold 1 is text flag 2; Blur 1 is text flag 1, the shadow")
+	var styles := WorldmapLocalInfoReader.parse("\n".join([
+		_row([1, 1, 1, "K", "a", "b", "c", 0, 0, 50, 100, 0, 0, 0, 0, 255, 255, 255, 1, 0, 0, "xxx"], 22),
+		_row([1, 2, 1, "K", "a", "b", "c", 0, 0, 50, 100, 0, 0, 0, 0, 255, 255, 255, 0, 0, 1, "xxx"], 22),
+		_row([1, 3, 1, "K", "a", "b", "c", 0, 0, 50, 100, 0, 0, 0, 0, 255, 255, 255, 1, 1, 0, "xxx"], 22),
+	]).to_utf16_buffer()).signs
+	_check(styles.size() == 3 and not styles[0].has_shadow() and not styles[0].is_bold(),
+		"Shadow 1 with Blur 0 draws no shadow: the Blur byte sets flag 1 last (asm 0x621256..0x62126c)")
+	_check(styles[1].has_shadow() and not styles[1].is_bold(), "Shadow 0 with Blur 1 draws the shadow")
+	_check(styles[2].is_bold() and not styles[2].has_shadow(), "Bold alone is the weight-600 face without a shadow")
 
 	# --- worldmap_instanceinfo.txt ------------------------------------------
 	var inst_text := "\n".join([
