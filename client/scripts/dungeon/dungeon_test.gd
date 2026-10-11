@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_block_transform()
 	_zone_labels()
 	_graph()
+	_stitch()
 	_wire()
 	if _failures == 0:
 		print("ALL PASS")
@@ -259,6 +260,46 @@ func _graph() -> void:
 		"an open edge with no room beyond does not drop the mover off the rooms")
 	var lost := g2.step_tracked(Vector3(30000, 42, 30000), Vector2(10, 0), NavGraph.ON_TERRAIN, true)
 	_check(is_equal_approx(lost.position.y, 42.0), "off every room the mover keeps its height (no terrain at 0)")
+
+## Round 778: two rooms whose linked edges do not quite meet -- the next
+## room starts 0.04 past the first's edge (MEASURED: most of the tomb B3
+## seams that stopped the player, tools/dungeon_wall_census.gd) -- and a pair
+## 6 apart, beyond the stitch reach. READ FUN_0043ed30 / FUN_0045ec80: ends
+## within 5.0 pair the edges; the walk hands the mover to the partner's cell.
+func _stitch() -> void:
+	var gap := 0.04
+	var placed: Array[NavGraph.PlacedObject] = []
+	placed.append(NavGraph.place(_room(_square(-5000, 0), [3, 8, 3, 3]), 0, Vector3.ZERO, 0.0))
+	placed.append(NavGraph.place(_room(_square(-4900 + gap, 0), [3, 3, 3, 8]), 1, Vector3.ZERO, 0.0))
+	var g := NavGraph.build_dungeon(placed, {0: PackedInt32Array([1]), 1: PackedInt32Array([0])})
+	_check(g.dungeon_links.get(Vector2i(0, 1)) == Vector2i(1, 3) and g.dungeon_links.get(Vector2i(1, 3)) == Vector2i(0, 1),
+		"each linked edge is stitched to its neighbour's (either way round)")
+	var walk := g.step_tracked(Vector3(-4910, 0, 50), Vector2(20, 0), 0, false)
+	# The hand-off nudges the mover up to 0.2 toward the partner cell's
+	# centre (READ FUN_0045dc60), so the end point moves by at most that.
+	_check(not walk.blocked and walk.standing_on == 1 and Vector2(walk.position.x, walk.position.z).distance_to(Vector2(-4890, 50)) <= 0.21,
+		"a walk over the stitched seam lands on the next room (%s on %d)" % [walk.position, walk.standing_on])
+	var back := g.step_tracked(Vector3(-4890, 0, 50), Vector2(-20, 0), 1, false)
+	_check(not back.blocked and back.standing_on == 0 and Vector2(back.position.x, back.position.z).distance_to(Vector2(-4910, 50)) <= 0.21,
+		"and back (%s on %d)" % [back.position, back.standing_on])
+	# Not a neighbour: no stitch (the list is the client's +0x108).
+	var g_nolist := NavGraph.build_dungeon(placed, {0: PackedInt32Array(), 1: PackedInt32Array()})
+	_check(g_nolist.dungeon_links.is_empty(), "only the block's listed neighbours are stitched")
+	# Ends 6 apart: past the 5.0 reach, unstitched; the floor beyond is
+	# within DUNGEON_SEAM_REACH only when the gap is.
+	var far: Array[NavGraph.PlacedObject] = []
+	far.append(NavGraph.place(_room(_square(-5000, 0), [3, 8, 3, 3]), 0, Vector3.ZERO, 0.0))
+	far.append(NavGraph.place(_room(_square(-4894, 0), [3, 3, 3, 8]), 1, Vector3.ZERO, 0.0))
+	var gf := NavGraph.build_dungeon(far, {0: PackedInt32Array([1]), 1: PackedInt32Array([0])})
+	_check(gf.dungeon_links.is_empty(), "edges whose ends are 6 apart are not stitched")
+	var wall := gf.step_tracked(Vector3(-4910, 0, 50), Vector2(30, 0), 0, false)
+	_check(wall.blocked and wall.standing_on == 0, "and a 6-unit gap stays a wall")
+	var near: Array[NavGraph.PlacedObject] = []
+	near.append(NavGraph.place(_room(_square(-5000, 0), [3, 8, 3, 3]), 0, Vector3.ZERO, 0.0))
+	near.append(NavGraph.place(_room(_square(-4899.5, 0), [3, 3, 3, 8]), 1, Vector3.ZERO, 0.0))
+	var gn := NavGraph.build_dungeon(near)
+	var over := gn.step_tracked(Vector3(-4910, 0, 50), Vector2(20, 0), 0, false)
+	_check(not over.blocked and over.standing_on == 1, "an unstitched linked edge hands over to floor within DUNGEON_SEAM_REACH")
 
 func _wire() -> void:
 	var m := DestMoveNet.encode_dungeon_destination(0x8001, 1011.7, -11.2, -862.9)

@@ -129,7 +129,10 @@ static func build(data: Pk2Reader, rid: int, instance: Callable = Callable(), wi
 					on.scale = ob.scale
 					built.group.add_child(on)
 					built.objects += 1
-	built.graph = NavGraph.build_dungeon(placed)
+	var neighbours := {}
+	for i in dof.blocks.size():
+		neighbours[i] = (dof.blocks[i] as DofReader.Block).neighbours
+	built.graph = NavGraph.build_dungeon(placed, neighbours)
 	return built
 
 ## The block (room) index under a dungeon-space point at about that height,

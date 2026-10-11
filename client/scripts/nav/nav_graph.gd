@@ -286,6 +286,17 @@ var dungeon := false
 ## units across; 20-unit tiles over a 7,000 x 12,000 room would be 210,000
 ## entries for one room).
 const DUNGEON_TILE := 200.0
+## How close, in 3D, both ends of two blocks' linked edges must be for the
+## dungeon's stitching to pair them (round 778, READ: the float 5.0 at
+## 0xe1b86c, compared in `FUN_0045ec80`; `_stitch_dungeon`).
+const DUNGEON_STITCH_REACH := 5.0
+## The stitched pairs (round 778, `_stitch_dungeon`): Vector2i(block, edge)
+## -> Vector2i(neighbour block, its edge). Empty outside a dungeon.
+var dungeon_links: Dictionary = {}
+## How far past an unstitched linked edge the seam hand-off looks for the
+## next room's floor (round 778, OURS: the widest seam gap MEASURED on the
+## tomb's floors behind a linked edge is about 1 unit).
+const DUNGEON_SEAM_REACH := 1.5
 
 ## The Godot Y rotation that turns an object the way the game turns it for a
 ## stored placement yaw (`.o`, `.o2` or `.nvm`), in the region's own un-mirrored
@@ -446,7 +457,13 @@ static func build(
 ## seam hand-off below) -- the dungeon walk stitches flag-8 edges of
 ## neighbouring blocks (READ, FUN_0043ed30); the seam finds the same rooms
 ## without the stitching table.
-static func build_dungeon(placed_objects: Array[PlacedObject]) -> NavGraph:
+##
+## `neighbours` (round 778), by object index, is each block's list of the
+## blocks its linked edges meet (DofReader.Block.neighbours, the navmesh's
+## +0x108): with it every linked outline edge is stitched to its neighbour's
+## edge as the client does (`_stitch_dungeon`), and crossing it hands the
+## mover over to that edge's cell (`step_tracked`).
+static func build_dungeon(placed_objects: Array[PlacedObject], neighbours: Dictionary = {}) -> NavGraph:
 	var graph := NavGraph.new()
 	graph.region = NvmReader.ParsedRegion.new()
 	graph.dungeon = true
@@ -466,7 +483,82 @@ static func build_dungeon(placed_objects: Array[PlacedObject]) -> NavGraph:
 				var bucket: PackedInt32Array = graph._object_tiles[key]
 				bucket.append(placed.object_index)
 				graph._object_tiles[key] = bucket
+	if not neighbours.is_empty():
+		graph._stitch_dungeon(neighbours)
 	return graph
+
+## The dungeon's edge stitching (round 778, READ `FUN_0043ed30`, called from
+## the dungeon walk `CRTNavMeshDungeon::vslot_002` 0x43f390 the first time a
+## block's linked edge is crossed): for each of a block's outline edges with
+## flag 0x08, in edge order, the neighbour blocks (+0x108) in list order and
+## each one's 0x08 edges in edge order; the first edge whose two ends, in
+## dungeon space and in 3D, each lie within DUNGEON_STITCH_REACH of the
+## first's ends (either way round, `FUN_0043e410` -> `FUN_0045ec80`: a
+## distance, sqrt'd by `FUN_00b42de0`, against the float 5.0 at 0xe1b86c) is
+## its partner, recorded as (neighbour block, neighbour edge). An edge with
+## no partner is left out.
+func _stitch_dungeon(neighbours: Dictionary) -> void:
+	for oi in objects:
+		var po: PlacedObject = objects[oi]
+		var list: PackedInt32Array = neighbours.get(oi, PackedInt32Array())
+		for e in po.edge_flags.size():
+			if po.edge_outline[e] == 0 or (po.edge_flags[e] & EDGE_LINKED) == 0:
+				continue
+			var a0: Vector3 = po.vertices[po.edge_v0[e]]
+			var a1: Vector3 = po.vertices[po.edge_v1[e]]
+			var partner := Vector2i(-1, -1)
+			for nb in list:
+				if not objects.has(nb):
+					continue
+				var other: PlacedObject = objects[nb]
+				for f in other.edge_flags.size():
+					if other.edge_outline[f] == 0 or (other.edge_flags[f] & EDGE_LINKED) == 0:
+						continue
+					var b0: Vector3 = other.vertices[other.edge_v0[f]]
+					var b1: Vector3 = other.vertices[other.edge_v1[f]]
+					var same := a0.distance_to(b0) < DUNGEON_STITCH_REACH and a1.distance_to(b1) < DUNGEON_STITCH_REACH
+					var crossed := a0.distance_to(b1) < DUNGEON_STITCH_REACH and a1.distance_to(b0) < DUNGEON_STITCH_REACH
+					if same or crossed:
+						partner = Vector2i(nb, f)
+						break
+				if partner.x >= 0:
+					break
+			if partner.x >= 0:
+				dungeon_links[Vector2i(oi, e)] = partner
+
+## The hand-off over a stitched edge (round 778, READ: the dungeon walk
+## 0x43f390 takes the partner edge's cell, `CRTNavMeshObj::FUN_0044b270`
+## with its slot 0 `CRTNavCellTri::FUN_0045ded0(0)`, and where the point
+## lies outside one of that cell's three edges (`FUN_00447b30` == 2) moves it
+## toward the cell's centre by at most 0.2 (`RTNavMeshObj::FUN_0045dc60`, the
+## double 0.2 at 0xe1b850) -- the same nudge as TERRAIN_BLOCK_NUDGE). Returns
+## [point: Vector2, height: float] in the partner's cell.
+func _dungeon_hand_off(partner: Vector2i, p: Vector2) -> Array:
+	var other: PlacedObject = objects[partner.x]
+	var cell := other.edge_cell_from[partner.y]
+	if cell < 0:
+		cell = other.edge_cell_to[partner.y]
+	var at := p
+	if cell >= 0 and not _in_cell(other, cell, at):
+		var centre := _cell_centroid(other, cell)
+		var to_centre := centre - at
+		if to_centre.length() > TERRAIN_BLOCK_NUDGE:
+			to_centre = to_centre.normalized() * TERRAIN_BLOCK_NUDGE
+		at += to_centre
+		# Still outside: a seam wider than the nudge (MEASURED: 60 of B4's
+		# 23,484 seam crossings). The mover goes to the cell's nearest point,
+		# a hair toward its centre, so it stands on the room it was handed
+		# to -- OURS; what the client's walk does next there is not read.
+		if not _in_cell(other, cell, at):
+			var a := other.vertices[other.cells[cell * 3]]
+			var b := other.vertices[other.cells[cell * 3 + 1]]
+			var c := other.vertices[other.cells[cell * 3 + 2]]
+			var near := _closest_in_triangle(Vector2(a.x, a.z), Vector2(b.x, b.z), Vector2(c.x, c.z), at)
+			at = near + (centre - near).normalized() * minf(CONTACT_PUSH, near.distance_to(centre))
+	var h := NAN
+	if cell >= 0:
+		h = _plane_height(other.vertices[other.cells[cell * 3]], other.vertices[other.cells[cell * 3 + 1]], other.vertices[other.cells[cell * 3 + 2]], at.x, at.y)
+	return [at, h]
 
 ## The real terrain cell covering a region-local point, or -1 outside the
 ## region. Uses the region's own 96x96 tile index -- the real file's own
@@ -765,7 +857,42 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 				# once, and the push lands past the second one unseen. Hand
 				# the footing over when a surface at the mover's own height
 				# is right there.
+				# A dungeon's stitched edge hands the mover to its partner's
+				# cell (round 778, `_dungeon_hand_off`), however the two
+				# rooms' outlines are split or how far apart they lie
+				# (MEASURED, tools/dungeon_wall_census.gd: B3's seams leave
+				# gaps of 0.02-0.06, some up to 1 unit, that the 0.01 push
+				# never crossed -- the invisible walls of round 778).
+				var partner: Vector2i = dungeon_links.get(Vector2i(left, int(hit["edge"])), Vector2i(-1, -1))
+				if dungeon and partner.x >= 0 and objects.has(partner.x):
+					var handed: Array = _dungeon_hand_off(partner, landed)
+					var at: Vector2 = handed[0]
+					pos.x = at.x
+					pos.z = at.y
+					if not is_nan(float(handed[1])):
+						pos.y = float(handed[1])
+					on = partner.x
+					result.entered = partner.x
+					source = at
+					remaining = _onward(to2 - landed, dir)
+					continue
 				var reach := _seam_object_at(pos.x, pos.z, pos.y, left)
+				if dungeon and reach == ON_TERRAIN and ((objects[left] as PlacedObject).edge_flags[int(hit["edge"])] & EDGE_LINKED) != 0:
+					# A linked edge the stitching found no partner for -- the
+					# neighbour's outline split differently, no pair of ends
+					# within DUNGEON_STITCH_REACH (MEASURED: 8 of B3's 1,106
+					# linked edges, 26 of B4's 1,154). The floor beyond, a
+					# little further on along the move, takes the mover --
+					# OURS: the client's walk with no partner is not read.
+					var probe := 0.05
+					while probe <= DUNGEON_SEAM_REACH and reach == ON_TERRAIN:
+						var ahead := contact + dir * probe
+						reach = _seam_object_at(ahead.x, ahead.y, pos.y, left)
+						if reach != ON_TERRAIN:
+							landed = ahead
+							pos.x = ahead.x
+							pos.z = ahead.y
+						probe += 0.05
 				if dungeon and reach == ON_TERRAIN:
 					# No room beyond this outline: in a dungeon that is the
 					# edge of the world, so a wall (OURS, round 773 -- the

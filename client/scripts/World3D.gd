@@ -1846,6 +1846,7 @@ func _ready() -> void:
 		await QaSignIn.run(get_tree())
 
 	character_label.text = "Character: %s" % NetClient.current_character_name
+	WindowTitle.apply_in_world(NetClient.current_character_name)
 
 	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
@@ -6793,6 +6794,7 @@ func _exit_tree() -> void:
 	if ParseProfile.enabled and _initial_load_done:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
+	WindowTitle.apply_default()
 	_leave_ground_pick("the world left the tree")
 	# Round 747: the far crowd's instances go with the world, and its hooks.
 	if _crowd_gpu != null:
