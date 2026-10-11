@@ -5202,6 +5202,14 @@ func _refresh_dungeon_minimap() -> void:
 	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
 	_minimap_others_sync()
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
+	# Round 775 (UI lane): the world map in a dungeon -- the floor the player
+	# is on, the arrow at its dungeon-space position, the room in the caption
+	# (HudWorldmap.update_player_dungeon). Every frame while open, every
+	# tenth while hidden, as the field's update_player in _refresh_minimap.
+	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
+			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
+		_hud_worldmap.update_player_dungeon(_dungeon.rid, p, facing, _dungeon.dof.floor_name(_dungeon_block),
+			HudWorldmap.dof_room_key(_dungeon.dof, _dungeon_block))
 
 ## Removes every previously-loaded region grid node (see
 ## _load_region_neighborhood) so a zone change or a fresh load doesn't leave
@@ -13392,6 +13400,8 @@ func _update_blob_shadow() -> void:
 ##                          rounds 564 and 568, not measured; nothing was
 ##                          moved
 ##   OPENSRO_QA_WORLDMAP=1 open the world map window over the world
+##                          ("world", "both", or round 775's comma list of
+##                          HudWorldmap.qa_apply steps: click:2001,up)
 ##   OPENSRO_QA_BUFFS="<skill>:<ms>[:<left>],..."  put these buffs on the
 ##                          buff bar as if the server had started them
 ##                          (duration ms, -1 for none; ms left), tokens
@@ -14137,6 +14147,10 @@ func _qa_step() -> void:
 				# rendered frames and a 60-frame run never reaches it. A
 				# third of a second is frame 20.
 				get_tree().create_timer(20.0 / 60.0).timeout.connect(_hud_worldmap.show_world)
+			elif qa_worldmap != "1":
+				# Round 775: `click:<map id>`, `dungeon:<id>`, `up`, `down`
+				# steps (HudWorldmap.qa_apply), a third of a second in.
+				get_tree().create_timer(20.0 / 60.0).timeout.connect(_hud_worldmap.qa_apply.bind(qa_worldmap))
 		# Round 693's renderer A/B: the sun's shadows off, so a Forward+ /
 		# Compatibility difference can be put on them or not. QA only.
 		if OS.get_environment("OPENSRO_QA_NOSHADOW") != "" and directional_light != null:

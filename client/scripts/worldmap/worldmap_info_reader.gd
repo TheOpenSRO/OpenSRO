@@ -58,7 +58,14 @@ const COL_ONE_REGION := 21
 ## Section `Dungeonmap`. Column indices are the order
 ## `CWorldMap_DungeonMapInfo` reads the row.
 const DCOL_ID := 0
-# 1 is `Name` and 2 is `layer`; both are read and thrown away.
+## Column 1 (`Name`, the dungeon's own name, the same on every floor of it)
+## and column 2 (`layer`, "F" or "B") are kept: RefParse_worldmap_mapinfo
+## (0x62c170) assigns them to the record's two wide strings at +0x08 and
+## +0x24 (0x62c1eb, 0x62c20b; READ, round 775 -- the round-599 notes called
+## them discarded). The world map groups a dungeon's floors by the first
+## (0x6143b0) and spells a floor with the second (0x612920, 0x60edd0).
+const DCOL_NAME := 1
+const DCOL_LAYER := 2
 const DCOL_LAYERS := 3
 const DCOL_TOTAL_LAYERS := 4
 const DCOL_ZONE_CODE := 5
@@ -196,9 +203,19 @@ class MapInfo:
 		return Vector2((world.x - lo.x) / upp.x, (hi.y - world.y) / upp.y)
 
 
-## One row of `Dungeonmap`: one floor of one dungeon.
+## One row of `Dungeonmap`: one floor of one dungeon. Ids run from 2001
+## (the world map's own loops start there, 0x614280 / 0x6143b0: `0x7d1`).
+## The world map's dungeon branch (NIFWorldMap 0x6217e0, round 775) reads it
+## through `0x62c030`, which hands back the record + 4, so its offsets are
+## the parser's less 4; the ones quoted here are the parser's.
 class DungeonMapInfo:
 	var id: int
+	## Column 1: the dungeon's name -- the key a floor's siblings share
+	## (0x6143b0 compares it whole).
+	var name: String
+	## Column 2: "F" (floors counted up, `1F`) or "B" (basements, `B1`).
+	var layer: String
+	## Column 3, this floor's number (1-based; +0x40).
 	var layers: int
 	var total_layers: int
 	## The zone code this floor sits in; the header points at
@@ -235,6 +252,78 @@ class DungeonMapInfo:
 	func pixels_per_region() -> float:
 		return scale * 256.0
 
+	## One tile's side in pixels: the scale times 256.0 (0x6196d0 lays the
+	## tile quads at `scale * [0xd99a58]`, a double 256.0; READ). MEASURED:
+	## on all 25 rows of the archive, count x side is the draw size exactly.
+	func tile_side() -> float:
+		return scale * 256.0
+
+	## The tile at column `a`, row `b` (0x6217e0's loop, READ: "%s%dx%d.ddj"
+	## with the path, `left + a`, `top - b`).
+	func tile_path(a: int, b: int) -> String:
+		return "%s%dx%d.ddj" % [addr, region_left + a, region_top - b]
+
+	## How the floor is spelled (0x612920 and the spinner's 0x60edd0, READ):
+	## a layer column starting with "F" puts the number first ("%d%c",
+	## `1F`), anything else puts the letter first ("%c%d", `B1`).
+	## `number` is 1-based; it defaults to this row's own floor.
+	func floor_label(number: int = -1) -> String:
+		var n := layers if number < 0 else number
+		var c := layer.substr(0, 1)
+		if c == "F":
+			return "%d%s" % [n, c]
+		# "%c" of an empty column writes a NUL, which ends the wide string
+		# there (an edge no row of the archive has).
+		return "" if c == "" else "%s%d" % [c, n]
+
+	## The spinner's mode (0x6217e0 -> 0x60ef00, READ): 2 for an "F" layer,
+	## 1 otherwise.
+	func spinner_mode() -> int:
+		return 2 if layer.begins_with("F") else 1
+
+	## The floor's box in the world map's units (0x6217e0, READ): the same
+	## 135 / 92 / 192 transform as the field, with `right` and `top` taken
+	## one region further -- `((right - 135) * 3 + 3) * 64` -- so the box
+	## holds the last tile whole. x = min X (+0x97e8), y = min Y (+0x97f4),
+	## z = max X (+0x97f0), w = max Y (+0x97ec).
+	func box() -> Vector4i:
+		return Vector4i(
+			(region_left - REGION_Y_ORIGIN) * REGION_SPAN,
+			(region_bottom - REGION_X_ORIGIN) * REGION_SPAN,
+			((region_right - REGION_Y_ORIGIN) * 3 + 3) * 64,
+			((region_top - REGION_X_ORIGIN) * 3 + 3) * 64)
+
+	## World units per drawn pixel (+0x97f8 / +0x97fc): |max - min| over the
+	## draw size, each axis (READ, 0x6217e0).
+	func units_per_pixel() -> Vector2:
+		var b := box()
+		if draw_size.x <= 0 or draw_size.y <= 0:
+			return Vector2.ZERO
+		return Vector2(absf(float(b.z - b.x)) / draw_size.x, absf(float(b.w - b.y)) / draw_size.y)
+
+	## Where a dungeon-space position lands on this floor, in pixels from
+	## the map's top-left -- CNIFWorldMap 0x60f660 (READ), the player's
+	## marker in the dungeon branch:
+	##
+	##   px = (x / 10 + (count_x / 2) * 192 - (maxX - minX)) / upp_x + draw_x
+	##   py = draw_y - ((high - 92) * 192 + z / 10 - minY) / upp_y
+	##
+	## `x`, `z` are the player's +0x80 / +0x88 (the `.dof`'s own space,
+	## docs/protocol/dungeon.md), `count_x / 2` an integer halving, and
+	## `high` the region id's high byte (0x80 for every dungeon). MEASURED:
+	## on every row of the archive `count_x / 2` is `128 - left`, so a
+	## position's column is the minimap's own `floor(x / 1920) + 0x80`.
+	func pixel_for_dungeon(pos: Vector3, region_high: int = 0x80) -> Vector2:
+		var upp := units_per_pixel()
+		if upp.x <= 0.0 or upp.y <= 0.0:
+			return Vector2.ZERO
+		var b := box()
+		var px := (pos.x / 10.0 + float((texture_count.x / 2) * REGION_SPAN) - float(b.z - b.x)) / upp.x \
+			+ float(draw_size.x)
+		var py := float(draw_size.y) \
+			- (float((region_high - REGION_X_ORIGIN) * REGION_SPAN) + pos.z / 10.0 - float(b.y)) / upp.y
+		return Vector2(px, py)
+
 
 class ParsedTable:
 	var maps: Array[MapInfo] = []
@@ -269,6 +358,53 @@ class ParsedTable:
 				out.append(m)
 		return out
 
+	## The Dungeonmap row with this id, or null.
+	func dungeon_by_id(id: int) -> DungeonMapInfo:
+		for d in dungeons:
+			if d.id == id:
+				return d
+		return null
+
+	## The client's walk over the dungeon rows: id 2001, 2002, ... until an
+	## id has no row (0x614280 / 0x6143b0 both loop from `0x7d1` and stop at
+	## the first miss).
+	func dungeon_walk() -> Array[DungeonMapInfo]:
+		var out: Array[DungeonMapInfo] = []
+		var id := FIRST_DUNGEON_ID
+		while true:
+			var d := dungeon_by_id(id)
+			if d == null:
+				break
+			out.append(d)
+			id += 1
+		return out
+
+	## The floor a dungeon player is on (CNIFWorldMap 0x614280, READ): the
+	## first row whose zone code is the player's region id and whose floor
+	## label (`1F`, `B2`) is the text of the player's floor name
+	## (0x612920: `lstrcmpW` against the text of the region's current floor
+	## name). 0 when none -- the world map is shown then (0x623060).
+	func dungeon_for(region_id: int, floor_text: String) -> int:
+		if floor_text == "":
+			# 0x612920 returns 1 (no match) when the player has no floor.
+			return 0
+		for d in dungeon_walk():
+			if d.zone_code == region_id and d.floor_label() == floor_text:
+				return d.id
+		return 0
+
+	## The spinner's floor change (0x6143b0, READ): the name of row
+	## `current_id`, then the first row with that name whose floor number is
+	## `number`. 0 when there is none.
+	func dungeon_floor(current_id: int, number: int) -> int:
+		var cur := dungeon_by_id(current_id)
+		if cur == null:
+			return 0
+		for d in dungeon_walk():
+			if d.name == cur.name and d.layers == number:
+				return d.id
+		return 0
+
 	## The local map covering a region, if the table has one. Several can
 	## overlap -- Jangan's town map and its fortress map share regions --
 	## so the first match wins, in file order.
@@ -278,6 +414,10 @@ class ParsedTable:
 				return m
 		return null
 
+
+## The first Dungeonmap id (0x614280's `0x7d1`); ids above 2000 are dungeon
+## maps everywhere the window tests a map id (0x623060, 0x6145e0, 0x6196d0).
+const FIRST_DUNGEON_ID := 2001
 
 const SECTION_WORLD_AND_LOCAL := "WLocalmap"
 const SECTION_DUNGEON := "Dungeonmap"
@@ -332,6 +472,8 @@ static func _parse_map(cols: PackedStringArray) -> MapInfo:
 static func _parse_dungeon(cols: PackedStringArray) -> DungeonMapInfo:
 	var info := DungeonMapInfo.new()
 	info.id = _int_at(cols, DCOL_ID)
+	info.name = cols[DCOL_NAME].strip_edges() if cols.size() > DCOL_NAME else ""
+	info.layer = cols[DCOL_LAYER].strip_edges() if cols.size() > DCOL_LAYER else ""
 	info.layers = _int_at(cols, DCOL_LAYERS)
 	info.total_layers = _int_at(cols, DCOL_TOTAL_LAYERS)
 	info.zone_code = _int_at(cols, DCOL_ZONE_CODE)

@@ -43858,8 +43858,8 @@ b79036a's scripts before and this tree after. Both runs printed 0 SCRIPT ERROR.
 - **The guide's contents.** `0x6290d0`'s list (`0x627ec0`, `0x628e10`, `0x6279a0`) is not built.
   The guide frame is built and hidden, and in the client it is hidden at create and at every show
   and its button is 0x0.
-- **The floor spinner** and the dungeon branches (mode 2, `0x6217e0`, `0x6145e0`) are not built.
-  This client draws no dungeon floor.
+- ~~**The floor spinner** and the dungeon branches (mode 2, `0x6217e0`, `0x6145e0`) are not built.~~
+  Built in round 775 (docs/protocol/WORLDMAP_FORMAT.md, "Dungeons on the world map").
 - **The other signs** (party, academy, quest NPC, hunting point) and `icon\strut_effect.ddj`,
   which `0x6160d0` also loads.
 - **The fortress caption's occupying-guild part.** This client does not know the fortress owner.
