@@ -7477,6 +7477,57 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventy-seventh round: the glows back, the portals' layers, the dungeon minimap's room
+
+The user, after v0.1.523: "the teleporter effects inside the dungeon should probably a be a little
+bit brighter", "make sure the minimap locations are correct in the dungeons. It just seems to show
+the general floor you're located on when the locations are more precise than that", and "looks
+like the glow effect for at least the Jangan teleporter stopped working, that needs fixed too.
+Make sure you avoid regression."
+
+**The glows (a round-774 regression, fixed).** Round 774 made `AmbientParticles.update` skip an
+effect that was not `visible`, so a dungeon's culled effects queued no glow. But a glow effect
+hides itself while its glow alpha is 0 and fades in only when the pass sees it
+(`EfpEffect.set_glow_alpha`): no glow anywhere could fade in -- the Jangan gate's, every town gate's,
+the dungeon flames' glow halves. The culling now sets `EfpEffect.culled`, the pass skips only
+that, and `ambient_particles_test` holds both (a hidden glow is queued; a culled one is not).
+Verified: `OPENSRO_QA_AMBIENT=1` at the Jangan gate, `cj_pal_potal_blue.efp a255 vis,
+w_cd_potal_blue_g.efp a255 vis`, and the glow drawn. Tests ran green in v0.1.523 because none
+covered a glow at alpha 0 against the new test.
+
+**The portals (OURS, calibrated).** Measured at the tomb's entry portal, 50 frames each, the
+ring's median / 90th percentile: Forward+ (57,71,160) / (84,100,194); the same frame under
+Compatibility, which blends in display values exactly as Direct3D 9 does, (94,128,247) /
+(161,207,255); the user's retail frame (98,116,200) / (177,231,255). `system_dungeonpotal` is 19
+additive layers drawn over each other, and under Forward+ each layer blends against the opaque
+scene alone (`EfpEffect.display_shader`, round 722), so the linear differences of overlapping
+layers add up to less than the display-value sum (the curve is convex). Now each layer of an
+additive class adds `(lin(d + n s a) - lin(d)) / n`, n = min(the effect's additive layers, 8)
+(`DISPLAY_STACK_DEFAULT`): exact for a one-layer effect, and for n equal layers lying over each
+other. 8 against 4 and 19, MEASURED: the ring (102,129,219) / (156,187,244); the hall's lamps
+516 -> 602 warm pixels a frame (Compatibility 856) at the same brightness. `OPENSRO_QA_FX_STACK=1`
+turns it off. Also MEASURED: the user's retail frames are brighter overall than ours by about the
+game's own Brightness option at "Light" (its gamma ramp, OPTION_VIDEO.md: our floor (29, 30)
+-> (52, 53) against their (54, 58)), so the floor's difference in round 774's entry is most likely
+their setting, not the lighting.
+
+**The dungeon minimap (READ, `UI_SILKMALL::FUN_00661ce0`'s dungeon branch).** The area label is
+the text of `ICPlayer::FUN_009d7830` -- the player's block's room name, the block's room index
+into the `.dof`'s room list -- set only when the block has one (a block without keeps the last);
+the floor badge (child 10, `vslot 0xb4`) takes the text of `FUN_009d7880`, the floor name. Both
+are textzonename rows keyed by name (MEASURED), which `TextZoneNameReader` skipped as not
+numbers; it keeps them now (`text_for`). Rendered at the user's spot: "Audience Chamber" over the
+minimap and "B1" in the badge, as in their retail frames. OURS: the badge's text style (the area
+label's).
+
+**Cost.** Tomb B2 with every glow fading in again: p95 work frame 7 ms (place 0.3, simulate 2.2,
+draw 1.7, glow pass 2.6 ms). `check` ALL LOAD; `tests` 279 suites, 0 failing (round 776 merged).
+
+**Perf gate** (`--base 2e057030 --head 954a3c0a --sites jangan --frames 40000`, 1280x720, median
+of 3): every row SAME -- frame 0.75 -> 0.75 ms, entry 8747 -> 8473 ms, freeze 2735 -> 2719 ms,
+hitches 5 -> 5.
+
+
 ## Seven-hundred-and-seventy-sixth round: the world map's names -- every text over every icon, centred, bold and shadowed as the client draws them
 
 The user: "the map changes are great but some names are slightly misaligned or missing entirely.
