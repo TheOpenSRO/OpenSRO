@@ -198,6 +198,9 @@ var _ghost_hosts := 0
 ## the kinds a ghost host within MAX_DISTANCE keeps stepping (kind key -> the
 ## cycle it was last found in).
 var _batch: EquipFxBatch = null
+## Round 771: V is held (World3D._apply_key_holds): the ghosts' weapon
+## effects are not drawn (EquipFxBatch.set_ghosts_hidden).
+static var ghosts_hidden := false
 var _batch_live := {}
 ## Round 764: the distances of this cycle's ghost hosts within reach, and the
 ## cut the last cycle found: the host_budget-th nearest (INF while fewer).
@@ -711,6 +714,7 @@ func _process(_delta: float) -> void:
 		_qa_log(cam)
 	_step_masters(_delta)
 	if _batch != null:
+		_batch.set_ghosts_hidden(ghosts_hidden)
 		_batch.step(ghost_gpu.call() if ghost_gpu.is_valid() else null, _kinds, cam, prefer_root, _stepped_keys)
 		if _batch.native:
 			stats["in_view"] = int(_batch.stats["in_reach"])

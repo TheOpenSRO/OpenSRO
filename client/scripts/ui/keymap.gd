@@ -320,8 +320,12 @@ static func _digit(keycode: int) -> int:
 ## (CIItem::vslot_010 never reads DAT_00eef5f4); it hides other players
 ## (exactly CICUser), monsters, CICMonsterNPC, CICRide, and every COS but the
 ## one the player rides (+0x2ac; that it is the ridden one is inferred from
-## CICUser::vslot_010's height offset). Kinds this client does not draw
-## (pets, COS, stalls, fortress structures) are listed for when it does.
+## CICUser::vslot_010's height offset). A hidden object's draw (0x9d20d0)
+## skips its body, its attachments and its name, and its vslot 0x50 makes it
+## unpickable; the minimap and the target window ask vslot 0x54 instead,
+## which has no V test, so they keep it (round 771, READ: 0x662bd0, 0x9c75a0).
+## Kinds this client does not draw (pets, COS, stalls, fortress structures)
+## are listed for when it does.
 static func hides_under_v(kind: String) -> bool:
 	return kind in ["other_player", "monster", "monster_npc", "ride", "pet", "stall"]
 

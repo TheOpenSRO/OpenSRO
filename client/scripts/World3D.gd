@@ -17252,6 +17252,9 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	other_entities.add_child(node)
 	var sp2 := Time.get_ticks_usec() if FrameSplit.on else 0
 	_other_bodies[character_id] = node
+	# Round 771: made while V is held, it starts hidden (not one frame shown).
+	if _objects_hidden and KeyMap.hides_under_v("other_player"):
+		node.visible = false
 	_other_body_targets[character_id] = pos
 	_other_awake[character_id] = true
 	_other_uids.add(character_id)
@@ -21777,6 +21780,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		_qa_split_strip(body, monster_skeleton)
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+	# Round 771: made while V is held, it starts hidden.
+	if _objects_hidden and KeyMap.hides_under_v("monster"):
+		body.visible = false
 	# Its round shadow in Circle (round 702, CharacterBlobs).
 	CharacterBlobs.register(body, float(_bc_radius_by_code.get(monster.code_name, 0.0)))
 	# Its object colour before its fade starts, so the fade's twins are made
@@ -22203,6 +22209,14 @@ func _fade_out_body(body: Node3D, free_click: bool = true) -> void:
 	if body == null or not is_instance_valid(body) or body.is_queued_for_deletion():
 		return
 	_drop_click_body(body, free_click)
+	# Round 771: a departing player or monster is still the object it was
+	# until it is freed, and V hides it as it hid it before (the original's
+	# draw keeps its predicate test while the disappear deco runs; READ).
+	if body.has_meta("character_id") or body.has_meta("monster_id"):
+		_departing_bodies[body.get_instance_id()] = body
+		if _objects_hidden and body.visible:
+			body.visible = false
+			body.set_meta(V_HIDDEN, true)
 	# Round 756: a ghost fades out on the GPU over the same 1.5 s. Round 762: a
 	# built far body too, and a near one is put on the GPU to fade there
 	# (AppearFade's material twins for a near body were 7-12 ms each,
@@ -24227,27 +24241,51 @@ func _on_key_held(action: String, _down: bool) -> void:
 		_cursor_last_check_ms = 0
 		_settle_hover_cursor()
 
-## V and Z, while held. V hides what KeyMap.hides_under_v names -- here the
-## other players and the monsters, the only such objects this client draws;
-## NPCs, the player and the dropped items stay. A hidden object also cannot
-## be clicked or hovered (_pick_character, _hover_kind_at): 0x9d11c0,
-## vtable slot 20, returns 0 for it, and 0x9c7620 tests slot 20 before its
-## ray test (read), so that the pick skips it is **inferred**. The minimap
-## still shows them (whether retail's minimap reads the flag was not read).
+## V and Z, while held. V hides what KeyMap.hides_under_v names (round 771,
+## READ: while DAT_00eef5f4 is set, the predicate 0x9d0560 fails other
+## players, monsters, CICMonsterNPC, CICRide and every COS but the ridden
+## one, and the character's draw 0x9d20d0 then draws neither its body
+## (0x9c4aa0), its attachments (+0x288) nor its name (0x9d0a80); its
+## vslot 0x50, 0x9d11c0, returns 0, so it cannot be picked). Here that is
+## every way such a body is drawn:
+##   - the near bodies (Node3D holders), with what hangs under them -- the
+##     name plates (the plate batch re-anchors through _other_moved), the
+##     blob shadows, the attached effects, the dressed weapon effects;
+##   - the far crowd (CrowdGpu.set_hidden: the far bodies, the ghosts and
+##     the departures fading on the GPU), which never read the holders'
+##     visibility -- most of a crowd, which V did not hide before;
+##   - the ghosts' weapon effects (EquipFx.ghosts_hidden);
+##   - a departing player or monster still fading out (_departing_bodies).
+## NPCs, the player and the dropped items stay. The ring on a hidden target
+## goes and does not come back (CIODecal::vslot_009 clears it, READ, round
+## 698); the target window stays (its test, vslot 0x54, has no V check;
+## READ); the minimap keeps the dots (its sign loop asks vslot 0x54 too;
+## READ, 0x662bd0). The client draws no pet, COS, ride or stall yet.
 ## Z shows the dropped items' names within ITEM_NAME_RADIUS; otherwise a
 ## name shows only while the mouse is on the item (GroundItems.update_labels).
 func _apply_key_holds() -> void:
 	var hiding := _key_input != null and _key_input.is_held("hide_objects")
+	var players_hidden := hiding and KeyMap.hides_under_v("other_player")
 	if hiding or hiding != _objects_hidden:
-		var players := _show_bodies(_other_bodies, not (hiding and KeyMap.hides_under_v("other_player")), true)
+		var players := _show_bodies(_other_bodies, not players_hidden, true)
 		var monsters := _show_bodies(_monster_bodies, not (hiding and KeyMap.hides_under_v("monster")))
+		var departing := _show_departing(hiding)
 		if hiding != _objects_hidden:
-			print("KEYS: V %s -- %d other player(s) and %d monster(s) %s; NPCs and dropped items kept" % [
-				"held" if hiding else "released", players, monsters, "hidden" if hiding else "shown"])
+			print("KEYS: V %s -- %d other player(s), %d monster(s), %d departing, the far crowd (%d) and its weapon effects %s; NPCs and dropped items kept" % [
+				"held" if hiding else "released", players, monsters, departing,
+				int(_crowd_gpu.stats.get("far", 0)) if _crowd_gpu != null else 0, "hidden" if hiding else "shown"])
+	elif not _departing_bodies.is_empty() and Engine.get_physics_frames() % 60 == 0:
+		_purge_departing()
+	# Every frame (a CrowdGpu made again keeps no state of ours; both return
+	# at once when nothing changed).
+	if _crowd_gpu != null:
+		_crowd_gpu.set_hidden(players_hidden)
+	EquipFx.ghosts_hidden = players_hidden
 	var changed := hiding != _objects_hidden
 	_objects_hidden = hiding
 	if changed and _qa_input_armed:
 		_qa_probe_hidden_pick()
+		_qa_probe_hidden_render(hiding)
 	if _ground_items != null and player != null:
 		var near := _key_input != null and _key_input.is_held("item_names")
 		var shown := _ground_items.update_labels(player.global_position,
@@ -24257,7 +24295,41 @@ func _apply_key_holds() -> void:
 			print("KEYS: Z %s -- %d of %d dropped item name(s) shown" % [
 				"held" if near else "released", shown, _ground_items.count()])
 
+## Round 771: departing players' and monsters' bodies (fading out, freed when
+## the fade ends), by instance id.
+var _departing_bodies := {}
+
+## Shows or hides the departing bodies, dropping the freed ones; returns how
+## many are left. Only what V hid is shown again (meta V_HIDDEN): a departure
+## that hides its own holder keeps it hidden.
+const V_HIDDEN := "v_hidden"
+func _show_departing(hiding: bool) -> int:
+	var gone: Array = []
+	for k in _departing_bodies:
+		var b = _departing_bodies[k]
+		if not is_instance_valid(b) or (b as Node).is_queued_for_deletion():
+			gone.append(k)
+			continue
+		var node := b as Node3D
+		var hide := hiding and KeyMap.hides_under_v("monster" if node.has_meta("monster_id") else "other_player")
+		if hide and node.visible:
+			node.visible = false
+			node.set_meta(V_HIDDEN, true)
+		elif not hide and node.has_meta(V_HIDDEN):
+			node.remove_meta(V_HIDDEN)
+			node.visible = true
+	for k in gone:
+		_departing_bodies.erase(k)
+	return _departing_bodies.size()
+
 var _item_names_near := false
+
+## Drops the freed departing bodies (no visibility change).
+func _purge_departing() -> void:
+	for k in _departing_bodies.keys():
+		var b = _departing_bodies[k]
+		if not is_instance_valid(b) or (b as Node).is_queued_for_deletion():
+			_departing_bodies.erase(k)
 
 ## QA (OPENSRO_QA_INPUT): at each V change, what the hover ray makes of the
 ## nearest monster's click capsule, and how many monster bodies are drawn --
@@ -24291,6 +24363,28 @@ func _qa_probe_hidden_pick() -> void:
 	print("QA KEYS: V %s -- %d of %d monster bodies drawn; the nearest (#%s, %.1f away) at screen %s hovers as '%s'" % [
 		"held" if _objects_hidden else "released", drawn, _monster_bodies.size(),
 		str(best.get_meta("monster_id", "?")), best_d, screen, kind])
+
+## QA (OPENSRO_QA_INPUT), round 771: five frames after a V change, what the
+## renderer drew (its own counts for the last frame) and the far crowd's
+## groups masked off -- the measurement that V hides the GPU-drawn crowd, not
+## only the holders.
+func _qa_probe_hidden_render(hiding: bool) -> void:
+	for i in range(5):
+		await get_tree().process_frame
+	var masked := 0
+	var groups := 0
+	if _crowd_gpu != null:
+		for g in _crowd_gpu._groups.values():
+			groups += 1
+			if not g.inst.is_valid() or _crowd_gpu._mask(g, g.shown_o) == 0:
+				masked += 1
+	print("QA KEYS: V %s, 5 frames on -- drawn: %d objects, %d primitives, %d draw calls; far crowd %d bodies, %d of %d groups masked off; ghost weapon effects %s" % [
+		"held" if hiding else "released",
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_OBJECTS_IN_FRAME),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
+		int(_crowd_gpu.stats.get("far", 0)) if _crowd_gpu != null else 0, masked, groups,
+		"hidden" if EquipFx.ghosts_hidden else "shown"])
 
 ## Shows or hides every body in an id -> Node3D map; returns how many there are.
 func _show_bodies(bodies: Dictionary, shown: bool, others: bool = false) -> int:

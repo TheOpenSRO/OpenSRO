@@ -324,6 +324,24 @@ func _native_batch(kind_key: String) -> Batch:
 ## Batches made, or whose draws are to be made again, since the last frame.
 var _fresh := {}
 
+## Round 771: V is held. A ghost is another player, whose draw the original
+## skips whole while V is held -- body, attachments and name (0x9d20d0 behind
+## the predicate 0x9d0560; READ) -- so its weapon effects go too: natively its
+## batch's ghost table is sent empty, and the fallback's draws (ghosts only)
+## show no instance. The dressed hosts are not touched: a hidden body's
+## skeleton is not visible in the tree, and they skip it already.
+var ghosts_hidden := false
+
+func set_ghosts_hidden(on: bool) -> void:
+	if on == ghosts_hidden:
+		return
+	ghosts_hidden = on
+	for b in _batches.values():
+		_dirty[b] = true
+		if not native:
+			_apply_counts(b)
+	_dirty_now = true
+
 func _step_native(crowd: Object, kinds: Dictionary, cam: Camera3D, own: Node, stepped: Dictionary) -> void:
 	# The layouts' bone pages, again whenever a clip went up.
 	var gen := int(crowd.get("clip_generation"))
@@ -368,8 +386,9 @@ func _step_native(crowd: Object, kinds: Dictionary, cam: Camera3D, own: Node, st
 	if not _dirty.is_empty() and (_dirty_now or _frame % REBUILD_EVERY == 0):
 		for b in _dirty.keys():
 			var data := PackedFloat32Array()
-			for h in b.hosts:
-				data.append_array(h.rows)
+			if not ghosts_hidden:
+				for h in b.hosts:
+					data.append_array(h.rows)
 			_hn.call("set_ghosts", b.id, data)
 			stats["rebuilds"] = int(stats["rebuilds"]) + 1
 		_dirty.clear()
@@ -623,7 +642,7 @@ func _apply_counts(b: Batch) -> void:
 			if per > 0 and int(d[5]) != per:
 				d[5] = per
 				(d[1] as ShaderMaterial).set_shader_parameter("fxb_per_host", per)
-		var want := b.shown * per
+		var want := 0 if ghosts_hidden else b.shown * per
 		if want == int(d[4]):
 			continue
 		stats["instances"] = int(stats["instances"]) + want - int(d[4])

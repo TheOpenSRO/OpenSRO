@@ -7477,6 +7477,47 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventy-first round: V hides the whole crowd
+
+The user: "When I press "V" almost all characters don't seem to disappear, maybe a few but all of the
+names go away. All characters, pets, transports, and monsters need to disappear. Check the game code
+on what it exactly does and implement it properly."
+- **The original (READ):**
+  - While V is held (`DAT_00eef5f4`, only three readers), the predicate `0x9d0560` fails these
+    objects:
+    - other players (exactly `CICUser`);
+    - monsters, `CICMonsterNPC` and `CICRide`;
+    - every COS but the ridden one.
+  - The character's draw `0x9d20d0` then skips that object's body (`0x9c4aa0`), its attachments
+    (`+0x288`) and its name (`0x9d0a80`).
+  - Its vslot `0x50` (`0x9d11c0`) makes it unpickable. `CICUser::vslot_010` skips the stall booth.
+  - The minimap's sign loop (`0x662bd0`) and the target window ask vslot `0x54` (`0x9c75a0`), which has
+    no V test, so both keep a hidden object. Round 608 left the minimap as OPEN.
+  - The selection ring on a hidden target is cleared for good (`CIODecal::vslot_009`, round 698).
+- **The cause:** round 608 hid the holders of `_other_bodies` and `_monster_bodies`. Since the crowd
+  rounds (737-764) every other player past the 16 nearest is drawn by CrowdGpu's MultiMeshes, which
+  never read a holder's visibility, so they stayed. The ghosts' weapon effects (EquipFxBatch) stayed
+  too. The names went, because the plate batch does read the holder.
+- **The fix:**
+  - `CrowdGpu.set_hidden`: every group's layer mask is set to 0. This covers far bodies, ghosts and
+    departures fading on the GPU.
+  - `EquipFx.ghosts_hidden` / `EquipFxBatch.set_ghosts_hidden`: natively, the ghost tables are sent
+    empty; in the fallback, the draws are zeroed.
+  - Departing players and monsters are hidden too (`_departing_bodies`); only what V hid is shown
+    again.
+  - A body made while V is held starts hidden.
+- **MEASURED** (400 swarm bodies at the Jangan spawn, `OPENSRO_QA_INPUT` holding V; the renderer's
+  own counts five frames on):
+
+  | V | objects | primitives | draw calls | crowd groups masked off |
+  |---|---|---|---|---|
+  | held | 1,254 | 608,920 | 761 | 1,321 of 1,321 |
+  | released | 2,580 | 2,677,188 | 2,087 | 0 |
+
+  The frames show the plaza empty with V held, the NPC stall and the player kept.
+- **Not drawn by this client, so not touched:** pets, COS, rides and stalls.
+- **Test:** `scripts/world/hide_objects_test.gd`.
+
 ## Seven-hundred-and-seventieth round: monster drops carry blue options
 
 A monster's equipment drop now gets blue options the way SR_GameServer.exe's `_AddMagicOptions`

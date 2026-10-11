@@ -243,6 +243,13 @@ class FadeCohort:
 var scenario: RID
 var _layouts := {}            # layout key -> Layout
 var _groups := {}             # group key -> Group
+## Round 771: V is held (World3D._apply_key_holds). Every body here is
+## another player (a far body, a ghost, a departure's fade), which the
+## original hides while V is held (0x9d0560 fails a CICUser, so its draw
+## 0x9d20d0 draws neither the body, its attachments nor its name; READ). The
+## groups' layer masks go to 0 -- the same cheap switch _show_group uses --
+## and come back as each group's own state wants on release.
+var hidden := false
 ## Round 759: the groups whose instances changed since the last push, and the
 ## instances in every group (kept as they come and go).
 var _dirty_groups := {}       # Group -> true
@@ -1541,11 +1548,28 @@ func _show_group(g: Group) -> void:
 	# so a mask change unpairs nothing.
 	if want_o != g.shown_o:
 		g.shown_o = want_o
-		RenderingServer.instance_set_layer_mask(g.inst, g.layers if want_o else 0)
+		RenderingServer.instance_set_layer_mask(g.inst, _mask(g, want_o))
 	want_f = want_f and g.fade_inst.is_valid()
 	if want_f != g.shown_f:
 		g.shown_f = want_f
-		RenderingServer.instance_set_layer_mask(g.fade_inst, g.layers if want_f else 0)
+		RenderingServer.instance_set_layer_mask(g.fade_inst, _mask(g, want_f))
+
+## A group instance's layer mask: its layers when shown and V is not held.
+func _mask(g: Group, shown: bool) -> int:
+	return g.layers if shown and not hidden else 0
+
+## Round 771: V held or released -- every group's instances masked off, or
+## back to what each group's own state wants.
+func set_hidden(on: bool) -> void:
+	if on == hidden:
+		return
+	hidden = on
+	for g in _groups.values():
+		var grp := g as Group
+		if grp.inst.is_valid():
+			RenderingServer.instance_set_layer_mask(grp.inst, _mask(grp, grp.shown_o))
+		if grp.fade_inst.is_valid():
+			RenderingServer.instance_set_layer_mask(grp.fade_inst, _mask(grp, grp.shown_f))
 
 ## Round 762: the group's fade instance -- its MultiMesh drawn with the fade
 ## twin of its material (AppearFade.fade_twin: a glowing weapon fades on its
@@ -2302,7 +2326,7 @@ func _add_part(b: Body, p: Dictionary) -> void:
 		g.inst = RenderingServer.instance_create2(g.mm, scenario)
 		RenderingServer.instance_geometry_set_material_override(g.inst, mat.get_rid())
 		RenderingServer.instance_geometry_set_cast_shadows_setting(g.inst, RenderingServer.SHADOW_CASTING_SETTING_OFF)
-		RenderingServer.instance_set_layer_mask(g.inst, int(p["layers"]))
+		RenderingServer.instance_set_layer_mask(g.inst, 0 if hidden else int(p["layers"]))
 		RenderingServer.instance_set_pivot_data(g.inst, float(p["sort"]), true)
 		if _aabb_set:
 			RenderingServer.instance_set_custom_aabb(g.inst, _aabb)
