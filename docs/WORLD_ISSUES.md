@@ -7477,6 +7477,64 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-sixty-sixth round: the seal star on every item slot
+
+The user: "make it available everywhere". Round 765's star now shows on every slot this client
+has. Each new place is READ (`docs/protocol/item_seal_edge.md` §4):
+- **The NPC store's goods.** The goods setter `0x6d1ff0` sets the good's `SOItem +0x28` to 1, then
+  calls SetItem.
+  - So `+0x28` means "the record holds an item", not round 765's "read off a server message".
+    The spec's §2 is corrected.
+- **The quick slots.** `0x60c430` finds the bag record (`0x6b3e50`), checks its `+0x28`, and calls
+  SetItem with it.
+  - `HudUnderbar.set_slot_seals` does this here. `World3D._refresh_quickslot_seals` calls it on
+    every change to the bar (each one ends in `_save_hotbar`) and after the restore.
+- **The held icon on the cursor.** The original holds the slot itself and draws it at the cursor.
+  The call chain is `0xb9d810` (vslot 24), then `0xb9d7f0` (vslot 16), then `0x685e50`
+  (vslot 13). The entries were read from the slot vtable `0xda18e4` in the exe.
+  - So the star rides along, at the slot's phase. Our held icon is a copy of the slot, so
+    `ItemSealEdge.copy_phase` gives it the slot's counter and timer.
+- **Not added: the store's confirm boxes.** Their item pictures are `CIFStatic`s in the original's
+  layouts, not slots, so the original draws no star there.
+- **Still OPEN:** the slots this client has not built (exchange, guild storage, stall, alchemy),
+  and `+0x64c`.
+- **Gates:** `check` ALL LOAD (710 scripts); `tests` "ran 271 suite(s), 0 failing", without the
+  native library. `inventory_pages_test.gd` adds the store, quick slot and held icon checks;
+  `item_seal_edge_test.gd` adds `copy_phase`.
+
+## Seven-hundred-and-sixty-fifth round: the seal star round an item slot (icon_edge_rare.ddj)
+
+The user asked for the "Seal of *" icon effect, a star running round the slot (their gif
+`UK9786Q.gif`), replicating the original's code. The full notes are in
+`docs/protocol/item_seal_edge.md`.
+- **READ: it is a sprite sheet stepped by a timer, not a moving sprite.**
+  - The art: `CIFSlotWithHelp` loads `icon\item\etc\icon_edge_rare.ddj` (`0x66b460`, +0x63c).
+  - The start: SetItem (`0x6871d0`) calls `0x666610` for an item passing `0x8ba600` (Rarity 2 or
+    6) that came off the wire (SOItem +0x28) or sits in a buy-back slot (kind 0x45).
+    `0x666610` sets the counter to `rand() & 31` and starts timer 3 at 40 ms.
+  - The step: `vslot_005` counts 32 down to 1 and wraps.
+  - The draw: `0x67cfb0` draws cell `32 - counter` (8 x 4 grid; UV doubles 32, 1/256, 1/128)
+    over the slot's own quad, after the icon and before the count.
+- **MEASURED:**
+  - The sheet is a 256 x 128 DXT3. Its per-cell alpha centroids trace the orbit: top-left, down
+    the left, along the bottom, faint up the right and across the top. That matches the gif.
+  - The timer list (`0xb933d0`) fires once a tick when 40 ms have passed, then restarts from that
+    tick. At 60 Hz our client steps every 48-51 ms. The gif's lap is 1,440 ms / 32 = 45 ms a step.
+- **Client:** `ItemSealEdge` is a child of the slot's `ItemIcon`. It is on the bag, worn,
+  warehouse and buy-back slots.
+- **OURS:**
+  - a refill of the same item keeps its phase (HudPanels refills whole windows);
+  - a hidden edge does not tick;
+  - the edge inherits a broken item's grey.
+- **OPEN:**
+  - the NPC store's goods and the quick slots (`+0x28` not read for either);
+  - the slots not yet built (exchange, guild storage, stall, alchemy);
+  - `+0x64c`.
+- **Gates:** `check` ALL LOAD (710 scripts); `tests` "ran 271 suite(s), 0 failing", without the
+  native library. This is a UI-only round, so no perf gate. `tools/seal_edge_frames.gd` drew a
+  real seal sword (ITEM_CH_SWORD_01_A_RARE, id 4014) on the RX 7600 (Forward+) for a human to
+  compare with the gif.
+
 ## Seven-hundred-and-sixty-fourth round: the whole crowd on return, seal effects on every host in range (budget 500), no background dressing
 
 The full notes are in `docs/rounds/r764.md`; the reviews are in `r764_review.md`.

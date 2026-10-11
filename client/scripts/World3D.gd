@@ -10691,7 +10691,9 @@ func _on_quickslot_pick_requested(slot_index: int) -> void:
 	if _hud_panels == null or _hud_underbar == null:
 		return
 	var tex := _hud_underbar.slot_icon(slot_index)
-	_hud_panels.pick_up_icon({"kind": "quickslot", "slot": slot_index, "icon": tex}, tex,
+	var item = _quickslot_items.get(slot_index)
+	var item_id := int(item["item"]) if item != null else -1
+	_hud_panels.pick_up_icon({"kind": "quickslot", "slot": slot_index, "item_id": item_id, "icon": tex}, tex,
 		_hud_underbar.slot_icon_rect(slot_index), get_viewport().get_mouse_position())
 
 ## The held icon was put down off the panels (round 652): onto the quick slot
@@ -10851,6 +10853,7 @@ var _hotbar_restoring := false
 ## change (a skill or item put on it, an item's bag slot followed or its
 ## binding dropped).
 func _save_hotbar() -> void:
+	_refresh_quickslot_seals()
 	if _hotbar_restoring or NetClient.current_character_name == "":
 		return
 	var ok := HotbarStore.save(_hotbar_key(), _quickslot_skills, _quickslot_items)
@@ -10893,6 +10896,20 @@ func _restore_hotbar() -> void:
 	if not _inventory_slots.is_empty():
 		_resync_quickslot_items(_inventory_slots)
 	_hotbar_restoring = false
+	_refresh_quickslot_seals()
+
+## The seal star on the bar's item slots (HudUnderbar.set_slot_seals). Every
+## change to the bar ends in _save_hotbar, which calls this first; the
+## restore calls it once at the end.
+func _refresh_quickslot_seals() -> void:
+	if _hud_underbar == null or _hud_panels == null:
+		return
+	var seals := {}
+	for slot in _quickslot_items:
+		var id := int(_quickslot_items[slot]["item"])
+		if _hud_panels.is_seal_item(id):
+			seals[slot] = id
+	_hud_underbar.set_slot_seals(seals)
 
 ## OPENSRO_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
 ## raises that mastery n times, "<id>" learns that skill; each waits for its

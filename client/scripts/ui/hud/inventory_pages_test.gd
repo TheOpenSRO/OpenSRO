@@ -141,6 +141,7 @@ func _initialize() -> void:
 	_doll_checks()
 	await _doll_pixel_checks(panels)
 	_capacity_checks()
+	await _seal_edge_checks(panels)
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -264,6 +265,143 @@ func _page_checks(panels: Control, builder: UiBuilder) -> void:
 	panels.call("select_bag_page", 2)
 	_check(int(panels.call("bag_page")) == 1, "a page the size does not have cannot be selected")
 	net.set("last_inventory_capacity", 0)
+
+## The seal star (ItemSealEdge): a Rarity 2 or 6 item (0x8ba600) in a bag
+## or worn slot gets the edge on its icon; another item, or an emptied slot,
+## shows none.
+func _seal_edge_checks(panels: Control) -> void:
+	var items := {}
+	for pair in [[501, 2], [502, 6], [503, 0], [504, 3]]:
+		var it := ItemTableReader.Item.new()
+		it.id = pair[0]
+		it.rarity = pair[1]
+		items[it.id] = it
+	panels.call("_load_items")
+	var known: Dictionary = panels.get("_items")
+	known.merge(items, true)
+	var net := root.get_node_or_null("NetClient")
+	if net != null:
+		net.set("last_inventory_capacity", 32)
+	var window: Control = panels.call("open", "inventory")
+	panels.call("select_bag_page", 0)
+	panels.call("_fill_inventory_grid", [_slot(0, 501, 1), _slot(1, 502, 1), _slot(2, 503, 1), _slot(3, 504, 1)])
+	await process_frame
+	var grid := window.call("node", "GDR_INVENTORY_LATTICE") as Control
+	var shown := func(i: int) -> bool:
+		var edge := grid.get_child(i).get_node("ItemIcon").get_node_or_null("SealEdge") as CanvasItem
+		return edge != null and edge.visible
+	_check(shown.call(0) and shown.call(1), "Rarity 2 and 6 items show the seal edge in the bag")
+	_check(not shown.call(2) and not shown.call(3), "Rarity 0 and 3 items do not")
+	var edge0 := grid.get_child(0).get_node("ItemIcon").get_node("SealEdge")
+	var phase := int(edge0.get("counter"))
+	panels.call("_fill_inventory_grid", [_slot(0, 501, 1), _slot(2, 503, 1)])
+	await process_frame
+	_check(shown.call(0) and int(edge0.get("counter")) == phase, "a refill keeps an unchanged seal item's phase")
+	_check(not shown.call(1), "an emptied slot hides its edge")
+	_check(grid.get_child(0).get_node("ItemIcon").get_child(0) == edge0
+		and grid.get_child(0).get_node("CountLabel").get_index() > grid.get_child(0).get_node("ItemIcon").get_index(),
+		"the edge draws after the icon and before the count (vslot_013's order)")
+	panels.call("_fill_equipment_slots", [_worn(6, 501), _worn(7, 503)])
+	var worn := func(i: int) -> bool:
+		var slot := window.call("node", "GDR_EQUIPMENT_SLOT_%d" % (100 + i)) as Control
+		var edge := slot.get_node("ItemIcon").get_node_or_null("SealEdge") as CanvasItem if slot != null else null
+		return edge != null and edge.visible
+	_check(worn.call(6) and not worn.call(7), "a worn seal item shows the edge; a worn normal item does not")
+	panels.call("_fill_equipment_slots", [])
+	_check(not worn.call(6), "an unequipped slot hides it")
+	# The held icon: the original draws the held slot itself (0xb9d810 ->
+	# vslot_013), so the star rides on the cursor, at the slot's phase.
+	panels.call("_fill_inventory_grid", [_slot(0, 501, 1), _slot(2, 503, 1)])
+	await process_frame
+	var icon0 := grid.get_child(0).get_node("ItemIcon") as TextureRect
+	icon0.texture = _texture(32, 32)
+	edge0.set("counter", 17)
+	panels.call("pick_up_icon", {"kind": "bag", "slot": 0, "item_id": 501, "icon": icon0.texture},
+		icon0.texture, icon0, Vector2(100, 100))
+	var held = panels.get("held_icon")
+	var ghost: Control = held.call("ghost") if held != null else null
+	var gedge := ghost.get_node_or_null("SealEdge") as CanvasItem if ghost != null else null
+	_check(gedge != null and gedge.visible and int(gedge.get("counter")) == 17,
+		"a held seal item shows the star on the cursor, at its slot's phase")
+	held.call("cancel")
+	var icon2 := grid.get_child(2).get_node("ItemIcon") as TextureRect
+	icon2.texture = _texture(32, 32)
+	panels.call("pick_up_icon", {"kind": "bag", "slot": 2, "item_id": 503, "icon": icon2.texture},
+		icon2.texture, icon2, Vector2(100, 100))
+	ghost = held.call("ghost")
+	_check(ghost != null and ghost.get_node_or_null("SealEdge") == null, "a held normal item has none")
+	held.call("cancel")
+	panels.call("_fill_inventory_grid", [])
+	if net != null:
+		net.set("last_inventory_capacity", 0)
+	_store_seal_checks(panels, items)
+	_bar_seal_checks()
+
+## The store's goods: 0x6d1ff0 sets a good's +0x28 before its SetItem, so a
+## seal good shows the star (READ).
+func _store_seal_checks(panels: Control, items: Dictionary) -> void:
+	var by_code: Dictionary = panels.get("_items_by_code")
+	for id in items:
+		var it: ItemTableReader.Item = items[id]
+		it.code_name = "ITEM_SEAL_TEST_%d" % id
+		it.icon_path = "icon\\item\\etc\\seal_test_%d.ddj" % id
+		by_code[it.code_name] = it
+	var store := HudWindow.new()
+	store.name = "store"
+	store.panel_root = Control.new()
+	var lat := Control.new()
+	lat.name = "GDR_STORE_LAT"
+	store.panel_root.add_child(lat)
+	store.add_child(store.panel_root)
+	for i in range(4):
+		var cell := Control.new()
+		var icon := TextureRect.new()
+		icon.name = "ItemIcon"
+		cell.add_child(icon)
+		lat.add_child(cell)
+	panels.add_child(store)
+	var windows: Dictionary = panels.get("_windows")
+	var had = windows.get("store")
+	windows["store"] = store
+	panels.call("_fill_shop_grid", PackedStringArray(["ITEM_SEAL_TEST_501", "ITEM_SEAL_TEST_503", "ITEM_SEAL_TEST_502"]))
+	var good := func(i: int) -> bool:
+		var edge := lat.get_child(i).get_node("ItemIcon").get_node_or_null("SealEdge") as CanvasItem
+		return edge != null and edge.visible
+	_check(good.call(0) and good.call(2) and not good.call(1) and not good.call(3),
+		"the store's seal goods show the star; a normal good and an empty cell do not")
+	panels.call("_fill_shop_grid", PackedStringArray(["ITEM_SEAL_TEST_503"]))
+	_check(not good.call(0) and not good.call(2), "a tab without them hides it")
+	if had != null:
+		windows["store"] = had
+	else:
+		windows.erase("store")
+	store.queue_free()
+
+## The quick slots: an item there is set from its bag item (0x60c430 ->
+## 0x6871d0), so a seal item shows the star (READ).
+func _bar_seal_checks() -> void:
+	var Fixture = load("res://scripts/ui/hud/underbar_fixture.gd")
+	var bar := HudUnderbar.new(Fixture.builder(), null, null)
+	root.add_child(bar)
+	bar.set_slot_item(1, _texture(32, 32))
+	bar.set_slot_item(2, _texture(32, 32))
+	bar.set_slot_seals({1: 501})
+	var on_bar := func(i: int) -> bool:
+		var icon := bar.slot_icon_rect(i)
+		var edge := icon.get_node_or_null("SealEdge") as CanvasItem if icon != null else null
+		return edge != null and edge.visible
+	_check(bar.slot_icon_rect(1) != null and on_bar.call(1) and not on_bar.call(2),
+		"a seal item on the quick slot bar shows the star; another slot does not")
+	bar.set_slot_seals({2: 502})
+	_check(not on_bar.call(1) and on_bar.call(2), "it follows the item when the bar changes")
+	bar.queue_free()
+
+## One worn item as the equipment reply decodes it (EquipmentNet.Equipped).
+func _worn(slot: int, item_id: int) -> EquipmentNet.Equipped:
+	var e := EquipmentNet.Equipped.new()
+	e.slot = slot
+	e.item_id = item_id
+	return e
 
 ## One bag slot as the list reply decodes it (InventoryNet.Slot).
 func _slot(index: int, item_id: int, quantity: int) -> InventoryNet.Slot:

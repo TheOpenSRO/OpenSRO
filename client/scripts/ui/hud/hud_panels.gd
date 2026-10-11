@@ -661,6 +661,13 @@ func _ensure_held_icon() -> HeldIcon:
 func pick_up_icon(what: Dictionary, icon: Texture2D, source: CanvasItem, at: Vector2) -> bool:
 	if not _ensure_held_icon().pick_up(what, icon, source, at):
 		return false
+	# The original holds the slot itself and draws it at the cursor with its
+	# own draw (0xb9d810 -> 0xb9d7f0 -> vslot_013 0x685e50), so a seal item's
+	# star rides along, at the slot's phase.
+	var ghost := held_icon.ghost()
+	if ghost != null:
+		_set_item_seal_edge(ghost, int(what.get("item_id", -1)))
+		ItemSealEdge.copy_phase(source as Node, ghost)
 	# Let go when the window the icon came from goes away (closed, or its
 	# tab switched): a drop after that would act on a slot nobody sees. A
 	# quick slot is exempt -- the bar's page arrows hide the slot while its
@@ -2082,6 +2089,7 @@ func _fill_shop_grid(codes: PackedStringArray) -> void:
 		var item: ItemTableReader.Item = _items_by_code.get(codes[ci]) if ci < codes.size() else null
 		if item != null and item.icon_path != "" and _builder != null:
 			icon.texture = _builder.load_texture(item.icon_path)
+			_set_item_seal_edge(icon, item.id)
 			_set_item_tip(icon, item.id, "store", ci, -1, -1, int(_shop_prices.get(item.id, -1)))
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 			icon.set_meta("shop_item_id", item.id)
@@ -2092,6 +2100,7 @@ func _fill_shop_grid(codes: PackedStringArray) -> void:
 				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_shop_cell_input(ev, icon))
 		else:
 			icon.texture = null
+			_set_item_seal_edge(icon, -1)
 			_set_item_tip(icon, -1)
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			if icon.has_meta("shop_item_id"):
@@ -2504,6 +2513,7 @@ func _fill_buyback_row() -> void:
 		if index < 0:
 			icon.texture = null
 			_set_item_tip(icon, -1)
+			_set_item_seal_edge(icon, -1)
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			if icon.has_meta("buyback_index"):
 				icon.remove_meta("buyback_index")
@@ -2514,6 +2524,7 @@ func _fill_buyback_row() -> void:
 		var e: Dictionary = _buyback_book[index]
 		icon.texture = _item_icon(int(e.item_id))
 		_set_item_tip(icon, int(e.item_id), "buyback", index)
+		_set_item_seal_edge(icon, int(e.item_id))
 		icon.mouse_filter = Control.MOUSE_FILTER_STOP
 		icon.set_meta("buyback_index", index)
 		if count != null:
@@ -2713,6 +2724,7 @@ func _fill_storage_grid(slots: Array) -> void:
 		if icon0 != null:
 			icon0.texture = null
 			_set_item_tip(icon0, -1)
+			_set_item_seal_edge(icon0, -1)
 			icon0.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			for m in ["wh_slot", "wh_item_id", "wh_qty"]:
 				if icon0.has_meta(m):
@@ -2742,6 +2754,7 @@ func _fill_storage_grid(slots: Array) -> void:
 		var item: ItemTableReader.Item = _items.get(entry.item_id)
 		icon.texture = _item_icon(entry.item_id)
 		_set_item_tip(icon, entry.item_id, "storage", index)
+		_set_item_seal_edge(icon, entry.item_id)
 		icon.mouse_filter = Control.MOUSE_FILTER_STOP
 		icon.set_meta("wh_slot", index)
 		icon.set_meta("wh_item_id", entry.item_id)
@@ -3705,6 +3718,22 @@ func _item_icon(item_id: int) -> Texture2D:
 		return null
 	return _builder.load_texture(item.icon_path)
 
+## The seal star on an item slot's icon (ItemSealEdge, READ 0x6871d0 /
+## 0x67cfb0): an item whose ref passes 0x8ba600 (Rarity 2 or 6), on every
+## slot that holds one -- the bag, the worn slots, the warehouse, the store's
+## goods (0x6d1ff0 sets their +0x28), the buy-back row and the held icon (the
+## quick slots go through is_seal_item). item_id < 0 clears it.
+func _set_item_seal_edge(icon: Control, item_id: int) -> void:
+	ItemSealEdge.show_on(icon, _builder, is_seal_item(item_id), item_id)
+
+## Whether an item id is a seal item (0x8ba600: Rarity 2 or 6).
+func is_seal_item(item_id: int) -> bool:
+	if item_id < 0:
+		return false
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	return item != null and ItemTooltipLines.is_seal(item)
+
 ## **Item tooltips** (round 731, docs/protocol/item_tooltip.md): every item
 ## icon's hover shows the original's CNIFHelperBubbleWindow (ItemTooltipBubble)
 ## with the lines ItemTooltipLines composes, instead of Godot's tooltip_text
@@ -4136,6 +4165,7 @@ func _draw_bag_page() -> void:
 			_place_bag_icon(icon)
 			icon.texture = null
 			_set_item_tip(icon, -1)
+			_set_item_seal_edge(icon, -1)
 			icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			for m in ["inv_slot", "inv_item_id", "inv_qty"]:
@@ -4167,6 +4197,7 @@ func _draw_bag_page() -> void:
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
+			_set_item_seal_edge(icon, int(item_id))
 			# The hover tooltip (round 731, _set_item_tip). STOP so the
 			# hover registers; the cell behind it still takes clicks.
 			var dur: Array = durability.get(index, [])
@@ -5925,6 +5956,7 @@ func _fill_equipment_slots(items: Array) -> void:
 			if icon != null:
 				icon.texture = null
 				_set_item_tip(icon, -1)
+				_set_item_seal_edge(icon, -1)
 	var durability := _durability_map(NetClient.last_equipment_durabilities)
 	for entry in items:
 		var slot_index = _first_field(entry, ["slot", "slot_index", "index"])
@@ -5937,6 +5969,7 @@ func _fill_equipment_slots(items: Array) -> void:
 		var icon := slot.get_node_or_null("ItemIcon") as TextureRect
 		if icon != null:
 			icon.texture = _item_icon(int(item_id))
+			_set_item_seal_edge(icon, int(item_id))
 			var dur: Array = durability.get(int(slot_index), [])
 			if dur.size() == 2:
 				_set_item_tip(icon, int(item_id), "equipment", int(slot_index), dur[0], dur[1])

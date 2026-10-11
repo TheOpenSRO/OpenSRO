@@ -124,6 +124,10 @@ func retarget_source(node: CanvasItem) -> void:
 		_source_modulate = _source.modulate
 		_source.modulate = Color(1, 1, 1, 0.35)
 
+## The icon drawn at the cursor, or null (nothing held, or no texture).
+func ghost() -> Control:
+	return _ghost
+
 ## Keeps the ghost centred on the cursor.
 func follow(at: Vector2) -> void:
 	if _ghost != null:

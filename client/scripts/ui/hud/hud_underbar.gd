@@ -710,6 +710,16 @@ func set_slot_item(slot_index: int, icon: Texture2D, count: int = 1) -> void:
 func clear_slot(slot_index: int) -> void:
 	set_slot_item(slot_index, null, 0)
 
+## The seal star on the quick slots (ItemSealEdge): `seals` maps a slot index
+## to the seal item it holds; every other slot's star is hidden. READ: an
+## item on the bar is set from its bag item (0x60c430 -> SetItem 0x6871d0),
+## whose +0x28 is set, so a seal item there gets the star as in the bag.
+func set_slot_seals(seals: Dictionary) -> void:
+	for slot_index in _slot_nodes:
+		var icon := slot_icon_rect(int(slot_index))
+		var id := int(seals.get(slot_index, -1))
+		ItemSealEdge.show_on(icon, _ui_builder, id >= 0, id)
+
 func _next_page() -> void:
 	_select_page(_page + 1)
 
