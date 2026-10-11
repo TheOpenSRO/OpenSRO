@@ -484,7 +484,7 @@ func main() {
 	flag.Parse()
 	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
-		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode npcs -out npcs.csv characterdata_*.txt refshopgroup.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
@@ -2339,12 +2339,91 @@ func exportTeleport(outDir string, paths []string) error {
 			return err
 		}
 	}
+	// The reverse return scroll's map points (round 778), when given.
+	if opt, ok := inputs["refoptionalteleport.txt"]; ok {
+		if err := exportOptionalTeleport(outDir, opt); err != nil {
+			return err
+		}
+	} else if err := removeIfExists(filepath.Join(outDir, teleport.OptionalFile)); err != nil {
+		return err
+	}
 	t, err := teleport.Load(outDir)
 	if err != nil {
 		return fmt.Errorf("the exported tables do not load: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "export-refdata: teleport network loads back: %d points, %d links, %d buildings, %d walk-in zones\n",
-		len(t.Points), len(t.Links), len(t.Buildings), len(t.WalkIns))
+	fmt.Fprintf(os.Stderr, "export-refdata: teleport network loads back: %d points, %d links, %d buildings, %d walk-in zones, %d map points\n",
+		len(t.Points), len(t.Links), len(t.Buildings), len(t.WalkIns), len(t.Optional))
+	return nil
+}
+
+// refoptionalteleport.txt's columns (round 778, internal/teleport/optional.go
+// has the reading): 0 service, 1 id, 2 object name, 3 zone name, 4 region,
+// 5..7 x, y, z, 8 world, 9 region group, 10 map point, 11/12 the level range
+// (INFERRED). READ: the client parses a row only when column 0 is non-zero
+// (Client_LoadRefDataFile case 0x4e, FUN_00b9cc80 at 0x956ba0).
+const (
+	otID       = 1
+	otZoneName = 3
+	otRegion   = 4
+	otX        = 5
+	otWorld    = 8
+	otGroup    = 9
+	otMapPoint = 10
+	otLevelMin = 11
+	otLevelMax = 12
+)
+
+// exportOptionalTeleport writes optionalteleport.csv from the client's
+// refoptionalteleport.txt: the service-0 rows skipped as the client skips
+// them, a short row an error (every retail row has 19 fields).
+func exportOptionalTeleport(outDir, path string) error {
+	rows, err := readTable(path)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	f, err := os.Create(filepath.Join(outDir, teleport.OptionalFile))
+	if err != nil {
+		return err
+	}
+	w := csv.NewWriter(f)
+	if err := w.Write(teleport.OptionalCSVColumns); err != nil {
+		f.Close()
+		return err
+	}
+	written, skipped, unserviced := 0, 0, 0
+	for i, cols := range rows {
+		for k := range cols {
+			cols[k] = strings.TrimSpace(cols[k])
+		}
+		if len(cols) <= otLevelMax {
+			f.Close()
+			return fmt.Errorf("%s: row %d has %d fields, fewer than the %d the export reads", path, i+1, len(cols), otLevelMax+1)
+		}
+		if n, err := strconv.Atoi(cols[0]); err == nil && n == 0 {
+			unserviced++
+			continue
+		}
+		if _, err := strconv.Atoi(cols[otID]); err != nil {
+			skipped++
+			continue
+		}
+		rec := []string{cols[otID], cols[otZoneName], cols[otRegion], cols[otX], cols[otX+1], cols[otX+2],
+			cols[otWorld], cols[otGroup], cols[otMapPoint], cols[otLevelMin], cols[otLevelMax]}
+		if err := w.Write(rec); err != nil {
+			f.Close()
+			return err
+		}
+		written++
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d %s rows, skipped %d, %d with service 0\n", written, teleport.OptionalFile, skipped, unserviced)
 	return nil
 }
 

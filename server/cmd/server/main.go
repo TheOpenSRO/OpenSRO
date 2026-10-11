@@ -2183,7 +2183,11 @@ func main() {
 		// Round 728: split, sell, deposit and the buy back on the retail
 		// 0x7034/0xB034 and 0x7168/0xB168 (session/itemop.go).
 		session.ItemOpHandler(session.ItemOpDeps{Hub: hub, Inv: inv, Shop: shopSvc, Storage: storageSvc, Trades: trades}),
-		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper),
+		// Round 778: the return scroll and the reverse return scroll
+		// (session/scroll.go), the map option's points from -teleport-dir's
+		// optionalteleport.csv (SetRecallNetwork's table).
+		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper,
+			session.NewScrollCaster(chars, eq, hub, zerkTracker, logger)),
 		session.CompositeHandler(chars, refItems, compositeKeeper, zerkTracker, gmGate, hub),
 		// Round 768: the alchemy window's elixirs and stones (session/alchemy.go).
 		session.AlchemyHandler(session.AlchemyDeps{Hub: hub, Inv: inv, Items: refItems, Options: magicOptions, Logger: logger}),

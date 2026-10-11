@@ -45,13 +45,33 @@ const (
 )
 
 // UseItemRequest asks to consume one of whatever is in an inventory slot.
+//
+// Round 778: a reverse return scroll's use carries the scroll's option after
+// the slot -- u8 Option, and for the map option a u32 LE Target, the
+// refoptionalteleport id -- as retail's 0x704C carries {u8 option, u32 id}
+// after its slot and type word (the client's SendItem_HandleUseItem
+// 0x796660, `FUN_00508fe0(&local_189,1)` and the id at 0x7977d6; the
+// server's FUN_004a00c0 reads them at 0x4a01b4 / 0x4a01d7). Both are absent
+// on every other use, and a request without them decodes as before.
 type UseItemRequest struct {
 	CharacterName string
 	InventorySlot int32
+	// Option is the reverse return scroll's option (ReverseOption*), 0 when
+	// the request carries none.
+	Option byte
+	// Target is the map option's refoptionalteleport id.
+	Target uint32
 }
 
 func (r *UseItemRequest) Encode() []byte {
-	return append(encodeStrings(r.CharacterName), encodeInt64(int64(r.InventorySlot))...)
+	out := append(encodeStrings(r.CharacterName), encodeInt64(int64(r.InventorySlot))...)
+	if r.Option != 0 {
+		out = append(out, r.Option)
+		if r.Option == ReverseOptionMap {
+			out = binary.LittleEndian.AppendUint32(out, r.Target)
+		}
+	}
+	return out
 }
 
 func DecodeUseItemRequest(data []byte) (*UseItemRequest, error) {
@@ -59,11 +79,18 @@ func DecodeUseItemRequest(data []byte) (*UseItemRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding UseItemRequest: %w", err)
 	}
-	slot, _, err := decodeInt64(rest)
+	slot, rest, err := decodeInt64(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding UseItemRequest: slot: %w", err)
 	}
-	return &UseItemRequest{CharacterName: fields[0], InventorySlot: int32(slot)}, nil
+	req := &UseItemRequest{CharacterName: fields[0], InventorySlot: int32(slot)}
+	if len(rest) >= 1 {
+		req.Option = rest[0]
+		if len(rest) >= 5 {
+			req.Target = binary.LittleEndian.Uint32(rest[1:5])
+		}
+	}
+	return req, nil
 }
 
 // UseItemResult reports what the item did. HP/MP are the values *after* the
@@ -87,6 +114,14 @@ type UseItemResult struct {
 	HasBerserk    bool
 	BerserkGauge  int32
 	BerserkActive bool
+	// Code is the engine's refusal code when it has one (round 778: the
+	// scrolls' codes, which the client shows through its category-1 table,
+	// Item_OnUseItemResult 0x87a7b0 -> FUN_00778190(1, code)); 0 otherwise,
+	// when Error alone says why. CastMs is an accepted scroll's delay before
+	// its move. Both follow the berserk tail, so an older decoder stops
+	// before them.
+	Code   uint16
+	CastMs uint32
 }
 
 func (r *UseItemResult) Encode() []byte {
@@ -108,7 +143,9 @@ func (r *UseItemResult) Encode() []byte {
 	if r.BerserkActive {
 		zerk[5] = 1
 	}
-	return append(out, zerk...)
+	out = append(out, zerk...)
+	out = binary.LittleEndian.AppendUint16(out, r.Code)
+	return binary.LittleEndian.AppendUint32(out, r.CastMs)
 }
 
 func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
@@ -130,6 +167,10 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 		r.HasBerserk = rest[28] != 0
 		r.BerserkGauge = int32(binary.LittleEndian.Uint32(rest[29:33]))
 		r.BerserkActive = rest[33] != 0
+	}
+	if len(rest) >= 40 {
+		r.Code = binary.LittleEndian.Uint16(rest[34:36])
+		r.CastMs = binary.LittleEndian.Uint32(rest[36:40])
 	}
 	return r, nil
 }
@@ -958,7 +999,10 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // the user's request (see useBerserkPotion); nil makes nobody a GM. keeper
 // holds the Energy of life scroll's grants (composite.go); nil refuses the
 // scroll.
-func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue, hub *world.Hub, zerk *berserk.Tracker, gate *gm.Gate, keeper *CompositeKeeper) gateway.Handler {
+//
+// scrolls runs the return scroll and the reverse return scroll (round 778,
+// scroll.go); nil refuses both, as before.
+func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue, hub *world.Hub, zerk *berserk.Tracker, gate *gm.Gate, keeper *CompositeKeeper, scrolls *ScrollCaster) gateway.Handler {
 	// The per-kind potion locks (round 508), keyed by character and
 	// potionReuseBit. The handler is built once per server (cmd/server), so
 	// this is process-wide there, as the item cooldowns are.
@@ -1046,6 +1090,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		if isCompositeScroll(it) {
 			username, _ := AuthenticatedUsername(sess)
 			return useCompositeScroll(ctx, sess, fail, inv, items, keeper, zerk, hub, gate.Allows(username), characterID, it, held, have)
+		}
+		// The return scroll and the reverse return scroll (round 778,
+		// scroll.go): DoJob's TypeID3 3 cases 1 and 3.
+		if scrolls != nil && (IsReturnScroll(it) || IsReverseReturnScroll(it)) {
+			return scrolls.use(ctx, sess, inv, characterID, it, held, have, req)
 		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.

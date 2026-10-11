@@ -142,12 +142,16 @@ type Table struct {
 	// WalkIns are the walk-in zones (round 773, walkin.go), empty when the
 	// export has no walkin.csv.
 	WalkIns []WalkIn
+	// Optional are the reverse return scroll's map points (round 778,
+	// optional.go), empty when the export has no optionalteleport.csv.
+	Optional []OptionalPoint
 
 	pointByID      map[int]int
 	pointByObject  map[int]int
 	buildingByCode map[string]int
 	linksFrom      map[int][]int
 	linkByPair     map[[2]int]int
+	optionalByID   map[int]int
 	// objectPlaces is where each associated NPC stands (round 642's review),
 	// set by the server from its npcpos table (SetObjectPlaces); a building's
 	// place is its own row.
@@ -210,6 +214,9 @@ func Load(dir string) (*Table, error) {
 		return nil, err
 	}
 	if err := t.loadWalkIns(dir); err != nil {
+		return nil, err
+	}
+	if err := t.loadOptional(dir); err != nil {
 		return nil, err
 	}
 	return t, nil
