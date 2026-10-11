@@ -320,3 +320,62 @@ func ToZoneWorld(zone string, rx, ry int, localX, localZ float64) (x, z float64,
 	x, z = ToWorld(rx, ry, localX, localZ, centre[0], centre[1])
 	return x, z, true
 }
+
+// DungeonFlag is a dungeon region id's bit 15 (round 773): the client's
+// dungeon test (SWorld::vslot_001 0x00a178b0, `id & 0x8000`) and the movement
+// packet's (proto.MovementRegionWorldBit). A dungeon's region id is its
+// dungeoninfo.txt row id | 0x8000 (READ, MapLoader::FUN_00426fe0). The
+// tables store it as a signed short, so a dungeon row reads negative
+// (-32767 is 0x8001).
+const DungeonFlag = 0x8000
+
+// dungeonZonePrefix starts a dungeon's zone label (OURS, round 773): the
+// contract the client and server share, docs/protocol/dungeon.md.
+const dungeonZonePrefix = "dungeon/"
+
+// IsDungeonRegion reports whether a region id names a dungeon: bit 15 set,
+// or the same id read as a signed short (negative).
+func IsDungeonRegion(region int) bool {
+	return region < 0 || region&DungeonFlag != 0
+}
+
+// DungeonRID is a region id as the unsigned dungeon id the zone label
+// spells: -32767 and 0x8001 are both 32769.
+func DungeonRID(region int) int {
+	return region & 0xFFFF
+}
+
+// DungeonZone is the zone label of the dungeon whose region id is rid (OURS,
+// round 773): "dungeon/<rid>", the id in decimal with bit 15 set --
+// "dungeon/32769" is the Donwhang cave (0x8001). A dungeon has no frame
+// (FrameFor refuses the label), so it is its own hub bucket, and the label is
+// also the FrameRegion its results name. A world point in a dungeon is
+// (dx, dy, -dz) of the dungeon's own space (the .dof's, teleportdata's,
+// npcpos's): the same single z mirror the field's frames have.
+func DungeonZone(rid int) string {
+	return dungeonZonePrefix + strconv.Itoa(DungeonRID(rid))
+}
+
+// ParseDungeonZone reads a DungeonZone label back into the region id
+// (bit 15 set). ok is false for any other label.
+func ParseDungeonZone(label string) (rid int, ok bool) {
+	rest, found := strings.CutPrefix(label, dungeonZonePrefix)
+	if !found {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < DungeonFlag || n > 0xFFFF {
+		return 0, false
+	}
+	return n, true
+}
+
+// DungeonToWorld is a dungeon-space point as a world point: (x, y, -z).
+func DungeonToWorld(x, y, z float64) (wx, wy, wz float64) {
+	return x, y, -z
+}
+
+// WorldToDungeon is DungeonToWorld's inverse (the mirror is its own inverse).
+func WorldToDungeon(x, y, z float64) (dx, dy, dz float64) {
+	return x, y, -z
+}

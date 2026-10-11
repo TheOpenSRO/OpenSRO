@@ -203,6 +203,11 @@ type realSpawn struct {
 // same FrameFor, where world-frame coordinates would name no place (round
 // 571's review).
 func realSpawnWorld(zone string, s realSpawn) (x, z float64, ok bool) {
+	// A dungeon row has no region grid to convert through; the roster
+	// places none (round 773: -full-map's nests place the served ones).
+	if worldmap.IsDungeonRegion(s.RegionID) {
+		return 0, 0, false
+	}
 	rx, ry := worldmap.RegionXY(s.RegionID)
 	if session.SingleFrame() {
 		if _, _, framed := worldmap.FrameFor(zone); !framed {
@@ -1816,8 +1821,12 @@ func main() {
 			os.Exit(1)
 		}
 		teleportNetwork = network
+		// The dungeons it serves (round 773): before the NPCs and the nests,
+		// which place their dungeon rows only in these.
+		session.InstallDungeonEntries(network)
 		logger.Info("teleport network loaded", "dir", *teleportDir,
-			"points", len(network.Points), "links", len(network.Links), "buildings", len(network.Buildings))
+			"points", len(network.Points), "links", len(network.Links), "buildings", len(network.Buildings),
+			"walk_ins", len(network.WalkIns), "dungeons_served", len(session.ServedDungeons()))
 		if !network.HasWorldIDs() {
 			logger.Warn("teleport network has no WorldID column (exported before round 642): links into " +
 				"instanced areas (fortress, tomb, temple, arena, survival, Roc) are not refused up front -- " +
@@ -2072,7 +2081,7 @@ func main() {
 	gmDeps := &gm.Deps{
 		Chars: chars, Inv: inv, Equip: eq, Items: refItems, Skills: skills,
 		Monsters: monsters, World: hub, Mana: manaTracker, Berserk: zerkTracker, Levels: levelTable,
-		Species: gmSpecies(), Zones: worldmap.ZoneNames(), Logger: logger,
+		Species: gmSpecies(), Zones: gmZones(), Logger: logger,
 		Uniques: gmUniques(), Parties: parties,
 	}
 	if speciesTable != nil {
@@ -2307,4 +2316,15 @@ func main() {
 	// in the world is saved where it stands, before the deferred store Closes.
 	// A no-op with -persist-position off.
 	session.SaveAllPositions(hub, chars)
+}
+
+// gmZones is what /goto accepts: the named zones, then each dungeon the
+// teleport network serves by its label (round 773, "dungeon/32769"), whose
+// zone change lands at the dungeon's entry.
+func gmZones() []string {
+	out := worldmap.ZoneNames()
+	for _, rid := range session.ServedDungeons() {
+		out = append(out, worldmap.DungeonZone(rid))
+	}
+	return out
 }

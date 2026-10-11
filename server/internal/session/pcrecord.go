@@ -265,7 +265,12 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 		} else {
 			region, lx, lz := regionLocalOf(e.Zone, m.Dest)
 			r.HasDest, r.DestRegion = true, region
-			r.DestX, r.DestY, r.DestZ = int16(lx), int16(m.Dest.Y), int16(lz)
+			if region&proto.MovementRegionWorldBit != 0 {
+				// A dungeon's (round 773): three i32 of dungeon space.
+				r.DungeonX, r.DungeonY, r.DungeonZ = int32(lx), int32(m.Dest.Y), int32(lz)
+			} else {
+				r.DestX, r.DestY, r.DestZ = int16(lx), int16(m.Dest.Y), int16(lz)
+			}
 		}
 	}
 	// A character sitting down (the 1.5 s CHANGEMOTION that lands on SIT) is
@@ -284,7 +289,11 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	// The frame's region and the local position in it (worldmap.FromWorld,
 	// as teleport's reach and the party record do). A zone with no frame --
 	// none OpenSRO serves -- sends region 0 and the frame coordinates (OURS).
-	if fx, fy, ok := entityFrame(e.Zone); ok {
+	if _, ok := dungeonOf(e.Zone); ok {
+		// A dungeon's rid and dungeon-space x, z (round 773).
+		region, lx, lz := regionLocalOf(e.Zone, e.Pos)
+		r.Region, r.X, r.Z = region, float32(lx), float32(lz)
+	} else if fx, fy, ok := entityFrame(e.Zone); ok {
 		rx, ry, lx, lz := worldmap.FromWorld(e.Pos.X, e.Pos.Z, fx, fy)
 		r.Region = uint16(worldmap.RegionID(rx, ry))
 		r.X, r.Z = float32(lx), float32(lz)

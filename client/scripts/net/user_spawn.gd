@@ -156,15 +156,17 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 		rec.has_dest = true
 		rec.dest_region = r.u16()
 		if rec.dest_region & 0x8000:
-			r.bytes(12)
-			if r.error == "":
-				r.error = "a dungeon destination in a player record"
-			return null
-		var dx := r.u16()
-		var dy := r.u16()
-		var dz := r.u16()
-		rec.dest_local = Vector3i(dx - 0x10000 if dx >= 0x8000 else dx, dy - 0x10000 if dy >= 0x8000 else dy,
-			dz - 0x10000 if dz >= 0x8000 else dz)
+			# A dungeon's three i32, dungeon space (round 773).
+			var ddx := r.u32()
+			var ddy := r.u32()
+			var ddz := r.u32()
+			rec.dest_local = Vector3i(_s32(ddx), _s32(ddy), _s32(ddz))
+		else:
+			var dx := r.u16()
+			var dy := r.u16()
+			var dz := r.u16()
+			rec.dest_local = Vector3i(dx - 0x10000 if dx >= 0x8000 else dx, dy - 0x10000 if dy >= 0x8000 else dy,
+				dz - 0x10000 if dz >= 0x8000 else dz)
 	else:
 		rec.move_command = r.u8()
 		rec.move_angle = r.u16()
@@ -210,10 +212,19 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 ## World (x, z) of region-local (lx, lz) in the frame centred on region
 ## (fx, fy): the server's worldmap.ToWorld, and World3D.region_local_to_world
 ## (region y drives world X, region x drives world Z, z mirrored).
+##
+## A dungeon region (bit 15, round 773) carries dungeon-space coordinates,
+## whatever the frame: the world point is (x, -z), the one mirror
+## (DungeonWorld).
 static func world_xz(region: int, lx: float, lz: float, frame: Vector2i) -> Vector2:
+	if region & 0x8000:
+		return Vector2(lx, -lz)
 	var rx := (region >> 8) & 0xff
 	var ry := region & 0xff
 	return Vector2(float(ry - frame.y) * 1920.0 + lx - 960.0, float(frame.x - rx) * 1920.0 + 960.0 - lz)
+
+static func _s32(v: int) -> int:
+	return v - 0x100000000 if v >= 0x80000000 else v
 
 ## The record as the snapshot World3D draws other players from: world
 ## coordinates in frame, the worn items by equip slot, the heading the wire

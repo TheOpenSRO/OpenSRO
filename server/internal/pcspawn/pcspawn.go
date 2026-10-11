@@ -74,8 +74,12 @@ type Record struct {
 	HasDest             bool
 	DestRegion          uint16
 	DestX, DestY, DestZ int16
-	MoveCommand         byte
-	MoveAngle           uint16
+	// DungeonX, DungeonY, DungeonZ are the destination in a dungeon (round
+	// 773): DestRegion with bit 15, then three i32 of dungeon space -- the
+	// 0x48bad0 serialiser's dungeon branch (proto.Movement).
+	DungeonX, DungeonY, DungeonZ int32
+	MoveCommand                  byte
+	MoveAngle                    uint16
 	// The stance bytes, chardata[0..3]: the life state, an unread byte, the
 	// motion state (0 STAND, 2 WALK, 3 RUN, 4 SIT) and the body mode.
 	Life, Stance1, Motion, BodyMode byte
@@ -145,8 +149,14 @@ func Append(out []byte, r Record) ([]byte, error) {
 		// and i16 x, y, z (the client's 0x8a5640(.., 1) reads them).
 		out = append(out, 1, r.RunFlag)
 		out = binary.LittleEndian.AppendUint16(out, r.DestRegion)
-		for _, v := range [3]int16{r.DestX, r.DestY, r.DestZ} {
-			out = binary.LittleEndian.AppendUint16(out, uint16(v))
+		if r.DestRegion&0x8000 != 0 {
+			for _, v := range [3]int32{r.DungeonX, r.DungeonY, r.DungeonZ} {
+				out = binary.LittleEndian.AppendUint32(out, uint32(v))
+			}
+		} else {
+			for _, v := range [3]int16{r.DestX, r.DestY, r.DestZ} {
+				out = binary.LittleEndian.AppendUint16(out, uint16(v))
+			}
 		}
 	} else {
 		angle := r.Angle
@@ -272,10 +282,11 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 	d.RunFlag = r.u8()
 	if d.HasDest {
 		d.DestRegion = r.u16()
-		if d.DestRegion&0x8000 != 0 && r.err == nil {
-			return d, nil, fmt.Errorf("pcspawn: a dungeon destination is not OpenSRO's")
+		if d.DestRegion&0x8000 != 0 {
+			d.DungeonX, d.DungeonY, d.DungeonZ = int32(r.u32()), int32(r.u32()), int32(r.u32())
+		} else {
+			d.DestX, d.DestY, d.DestZ = int16(r.u16()), int16(r.u16()), int16(r.u16())
 		}
-		d.DestX, d.DestY, d.DestZ = int16(r.u16()), int16(r.u16()), int16(r.u16())
 	} else {
 		d.MoveCommand = r.u8()
 		a := r.u16()

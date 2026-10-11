@@ -97,8 +97,20 @@ func InstallNPCs(npcs []npcspawn.NPC, logger *slog.Logger) int {
 	sort.Strings(zones)
 	for i := range npcs {
 		n := &npcs[i]
-		if int(n.Region) >= 0x8000 {
-			continue // a dungeon region: no frame names it
+		if worldmap.IsDungeonRegion(int(n.Region)) {
+			// A dungeon's NPC (round 773): filed in its dungeon's bucket at
+			// its dungeon-space point, when OpenSRO serves the dungeon
+			// (InstallDungeonEntries, which cmd/server runs first). The
+			// record keeps the rid and the table's x, y, z, the wire's
+			// dungeon form.
+			if !ServedDungeon(int(n.Region)) {
+				continue
+			}
+			zone := worldmap.DungeonZone(int(n.Region))
+			x, _, z := worldmap.DungeonToWorld(float64(n.X), float64(n.Y), float64(n.Z))
+			w.file(combat.CellOf(zone, x, z), n)
+			w.byUID[n.UID] = append(w.byUID[n.UID], npcPlacement{zone: zone, x: x, z: z, npc: n})
+			continue
 		}
 		rx, ry := worldmap.RegionXY(int(n.Region))
 		if SingleFrame() {

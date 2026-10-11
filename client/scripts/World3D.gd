@@ -652,6 +652,10 @@ func _apply_view_distance(scenery: int) -> void:
 ## is the original's look). Sets the shader globals every fogged shader reads
 ## and shows or hides the pass. OPENSRO_QA_NOFOG turns it off for a run.
 func _apply_fog() -> void:
+	# A dungeon's fog is its block's (round 773).
+	if _dungeon != null:
+		_apply_dungeon_block(maxi(_dungeon_block, 0))
+		return
 	var o := video_options()
 	var view := VideoOptions.view_distance(o.value(VideoOptions.SCENERY))
 	var fog_planes := WorldFog.planes(_fog_channel_near, _fog_channel_far, view)
@@ -3122,6 +3126,9 @@ func _refresh_minimap() -> void:
 		# would have taken are not kept.
 		_minimap_moved.clear()
 		return
+	if _dungeon != null:
+		_refresh_dungeon_minimap()
+		return
 	var pos := player.global_position
 	var local := Vector3.ZERO
 	var inside := false
@@ -3946,6 +3953,9 @@ func _nav_graph_for(world_position: Vector3) -> Array:
 	# rest of the run). The unload now drops the pair as well.
 	for pair in _grid.nav_graph_pairs():
 		var group: Node3D = pair[1]
+		# A dungeon's one graph covers the whole dungeon (round 773).
+		if (pair[0] as NavGraph).dungeon:
+			return pair
 		var local := group.to_local(world_position)
 		if local.x < 0.0 or local.z < 0.0 or local.x > REGION_SPAN or local.z > REGION_SPAN:
 			continue
@@ -4830,6 +4840,190 @@ static func _parse_region_coords(path: String) -> Dictionary:
 		return {}
 	return {"x": int(x_part), "y": int(y_part)}
 
+## The dungeon the world stands in (round 773; DungeonWorld), or null in the
+## field. Its group is named like a region's terrain group,
+## "RealTerrain_<rid high byte>_<rid low byte>" ("RealTerrain_128_1" for
+## 0x8001), and its graph is filed under that region key: the paths keyed by a
+## record's region -- the NPCs' (_try_spawn_region_npcs, _place_npc_record),
+## a region's graph (_grid.nav_graph_for_region) -- find the dungeon with no
+## branch of their own, and _clear_region_grid frees it with the rest.
+var _dungeon: DungeonWorld.Built = null
+## The block the player was last found in (the minimap's floor, the light).
+var _dungeon_block := -1
+## What _apply_dungeon_environment changed, put back by _leave_dungeon.
+var _dungeon_saved := {}
+
+## minimap_d's folder per dungeon (OURS: the folder's source in the client,
+## RegionManagerBody::FUN_00412ef0's table at +0xb8, is not read; these are
+## the six folders Media.pk2 has, MEASURED, matched by the floor names the
+## files and the .dof share).
+const DUNGEON_MINIMAP_FOLDER := {
+	0x8001: "donwhang", 0x8002: "jinsi", 0x8003: "jinsi", 0x8004: "jinsi",
+	0x8005: "jinsi", 0x8006: "jinsi", 0x8007: "jinsi", 0x8009: "donwhang_event",
+	0x800a: "egypt", 0x800b: "egypt", 0x800c: "egypt", 0x800d: "egypt",
+	0x800e: "egypt", 0x8010: "egypt", 0x8011: "fort_dungeon", 0x8012: "flame_dungeon",
+}
+
+## Builds dungeon `rid` (DungeonWorld.build): its rooms and objects under one
+## group, its walkable graph, the indoor light, its NPCs. False when the
+## archive names no dungeon for it (the placeholder ground stays).
+func _load_dungeon(rid: int) -> bool:
+	var sw := Time.get_ticks_msec()
+	var data := _open_pk2_if_set()
+	if _object_templates == null:
+		_object_templates = ObjectTemplateCache.new(_load_object_template)
+	var built := DungeonWorld.build(data, rid, func(path: String) -> Node3D: return _object_templates.instance(path, "dungeon"))
+	if built == null:
+		print("World3D: dungeon 0x%x -- Dungeon\\dungeoninfo.txt names no .dof for it, or it does not parse; nothing built" % rid)
+		return false
+	ground_mesh.visible = false
+	ground_collision.disabled = true
+	var rx := (rid >> 8) & 0xFF
+	var ry := rid & 0xFF
+	built.group.name = "RealTerrain_%d_%d" % [rx, ry]
+	add_child(built.group)
+	# Rooms and their objects cast no shadow, as the field's placed objects
+	# (_load_object_template); the templates already carry it.
+	_grid.add_nav_graph(rx, ry, built.graph, built.group)
+	_dungeon = built
+	_dungeon_block = -1
+	_apply_dungeon_environment()
+	_update_zone_label_for_region(rx, ry)
+	print("World3D: dungeon 0x%x %s built in %d ms -- %d rooms (%d without a navigation mesh), %d objects, %d missing, %d floors" % [
+		rid, built.path, Time.get_ticks_msec() - sw, built.rooms, built.rooms_without_nav, built.objects,
+		built.missing.size(), built.dof.floor_names.size()])
+	if not built.missing.is_empty():
+		var kinds := {}
+		for m in built.missing:
+			kinds[m.get_file().to_lower()] = int(kinds.get(m.get_file().to_lower(), 0)) + 1
+		print("World3D: dungeon 0x%x -- models that built nothing: %s" % [rid, str(kinds)])
+	_try_spawn_region_npcs(rx, ry)
+	return true
+
+## Stands the player at dungeon-space (x, z) on the rooms' graph: the floor
+## nearest `reference_y`, or the highest without one. False outside a
+## dungeon.
+func _place_in_dungeon(x: float, z: float, reference_y: float = NAN) -> bool:
+	if _dungeon == null:
+		return false
+	var h := _dungeon.graph.landing_height_at(x, z, reference_y)
+	player.global_position = DungeonWorld.to_world(Vector3(x, h, z))
+	player.velocity = Vector3.ZERO
+	_relocated_pending = true
+	print("World3D: placed in dungeon 0x%x at (%.1f, %.1f, %.1f), room %d" % [
+		_dungeon.rid, x, h, z, DungeonWorld.block_under(_dungeon, Vector3(x, h, z))])
+	return true
+
+## Out of the dungeon (a zone change; _clear_region_grid): the sky and the
+## field's light come back.
+func _leave_dungeon() -> void:
+	if _dungeon == null:
+		return
+	_dungeon = null
+	_dungeon_block = -1
+	if _sky_dome != null:
+		_sky_dome.visible = true
+	if _sun_glow != null:
+		_sun_glow.visible = video_options().value(VideoOptions.LENS_FLARE) == 1
+	var env: Environment = world_environment.environment if world_environment != null else null
+	if env != null and _dungeon_saved.has("bg"):
+		env.background_mode = int(_dungeon_saved["bg"])
+		env.background_color = _dungeon_saved["bg_color"]
+	if _dungeon_saved.has("sun"):
+		directional_light.visible = bool(_dungeon_saved["sun"])
+	if _dungeon_saved.has("channels"):
+		_object_light_channels = _dungeon_saved["channels"]
+		_apply_object_light()
+	_dungeon_saved.clear()
+	if _hud_minimap != null and is_instance_valid(_hud_minimap):
+		_hud_minimap.set_dungeon_prefix("")
+	_apply_fog()
+
+## The indoor look (READ, the dungeon draw Map::FUN_00a255c0: no sky and no
+## terrain in that path; the current block's light and fog). The light is
+## the block's first colour (+0x6c, CRTDunBlock::vslot_006) as an ambient
+## (_apply_dungeon_block). The fog is the block's +0x70 record (vslot_005):
+## its colour, start, end and density go to D3DRS_FOGCOLOR / FOGSTART /
+## FOGEND / FOGDENSITY and the object shader's fog constants
+## (CObjRendererVS::FUN_00c31450), and the landscape step picks vertex fog
+## LINEAR when the world's region has bit 15 (WorldFog's header, 0xa276fc):
+## so linear from start to end in the fog colour, as WorldFog draws it.
+## Not drawn: the block's point lights (OPEN which reach an object) and the
+## rooms' light maps (Prim\LightMap\Dun, whose loader is OPEN).
+func _apply_dungeon_environment() -> void:
+	var env: Environment = world_environment.environment if world_environment != null else null
+	if _dungeon_saved.is_empty():
+		if env != null:
+			_dungeon_saved["bg"] = env.background_mode
+			_dungeon_saved["bg_color"] = env.background_color
+		_dungeon_saved["sun"] = directional_light.visible
+		_dungeon_saved["channels"] = _object_light_channels.duplicate()
+	if _sky_dome != null:
+		_sky_dome.visible = false
+	if _sun_glow != null:
+		_sun_glow.visible = false
+	if env != null:
+		env.background_mode = Environment.BG_COLOR
+		env.background_color = Color.BLACK
+	# No sun indoors: the block's light only.
+	directional_light.visible = false
+	_apply_dungeon_block(0)
+
+## The light and fog of block `b` (the player's, _dungeon_tick).
+func _apply_dungeon_block(b: int) -> void:
+	if _dungeon == null or b < 0 or b >= _dungeon.dof.blocks.size():
+		return
+	_dungeon_block = b
+	var blk: DofReader.Block = _dungeon.dof.blocks[b]
+	# READ (Map::FUN_00a255c0): a directional light (type 3) whose diffuse
+	# and specular are 0 and whose ambient is the block's colour /255
+	# (CRTDunBlock::vslot_006, block +0x6c: the first of the two words). So
+	# the object light here is that ambient alone.
+	var light := DungeonWorld.block_colour(blk.color_a)
+	_object_light_channels = [Color.BLACK, light]
+	_apply_object_light()
+	var on := video_options().value(VideoOptions.FOG) == 1 and OS.get_environment("OPENSRO_QA_NOFOG") == "" \
+		and blk.fog.y > blk.fog.x
+	var env: Environment = world_environment.environment if world_environment != null else null
+	WorldFog.set_globals(Vector2(blk.fog.x, blk.fog.y), on, WorldFog.pass_color(DungeonWorld.block_colour(blk.color_b), env))
+	if _fog_pass != null:
+		_fog_pass.visible = on
+
+## Each frame in a dungeon: the block under the player sets the light and
+## the fog, and the minimap's floor.
+func _dungeon_tick() -> void:
+	if _dungeon == null or player == null:
+		return
+	var p := DungeonWorld.to_dungeon(player.global_position)
+	var b := DungeonWorld.block_under(_dungeon, p)
+	if b >= 0 and b != _dungeon_block:
+		_apply_dungeon_block(b)
+
+## The minimap in a dungeon (READ, UI_SILKMALL::FUN_00661ce0): the tile
+## column is floor(x / 1920) + 0x80 and the row floor(z / 1920) + 0x80 of the
+## dungeon-space position, the position in the tile what is left, the file
+## `minimap_d\<folder>\<floor>_<column>x<row>.ddj`, and no X/Y readout. The
+## floor is the player's block's floor name lower-cased (INFERRED: the
+## names match the files'); the folder is DUNGEON_MINIMAP_FOLDER's (OURS).
+func _refresh_dungeon_minimap() -> void:
+	var p := DungeonWorld.to_dungeon(player.global_position)
+	var col := int(floorf(p.x / REGION_SPAN)) + 0x80
+	var row := int(floorf(p.z / REGION_SPAN)) + 0x80
+	var local := Vector3(p.x - float(col - 0x80) * REGION_SPAN, p.y, p.z - float(row - 0x80) * REGION_SPAN)
+	var floor_name := _dungeon.dof.floor_name(_dungeon_block).to_lower()
+	var folder := String(DUNGEON_MINIMAP_FOLDER.get(_dungeon.rid, ""))
+	_hud_minimap.set_dungeon_prefix("minimap_d\\%s\\%s_" % [folder, floor_name] if folder != "" and floor_name != "" else "minimap_d\\none_")
+	var facing := minimap_facing(player.global_transform.basis, _dungeon.group.global_transform.basis)
+	# The tile's column is the minimap's region y, its row the region x (the
+	# field's files are minimap\<y>x<x>.ddj the same way round).
+	_hud_minimap.update_player(row, col, local, facing)
+	_hud_minimap.set_area_name(_current_zone_name)
+	var pos := player.global_position
+	var reach := HudMinimap.SIGN_RADIUS / maxf(_hud_minimap.tile_px(), 0.001) * HudMinimap.REGION_SPAN * 1.01
+	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
+	_minimap_others_sync()
+	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
+
 ## Removes every previously-loaded region grid node (see
 ## _load_region_neighborhood) so a zone change or a fresh load doesn't leave
 ## stale terrain/objects from a different region behind.
@@ -4879,6 +5073,7 @@ func _clear_region_grid() -> void:
 	# The town gates' bindings go with them (round 650, _bind_region_gates).
 	_gate_bindings.clear()
 	_map_animations.reset()
+	_leave_dungeon()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
 			remove_child(child)
@@ -5921,6 +6116,13 @@ func _reload_zone_assets(zone: String, frame: String = "") -> void:
 	_cancel_talk_approach("zone change")
 	ground_mesh.visible = true
 	ground_collision.disabled = false
+
+	# A dungeon (round 773): its rooms, not a region grid.
+	var dungeon_rid := DungeonWorld.rid_of_zone(zone)
+	if dungeon_rid >= 0:
+		_grid_has_origin = false
+		_load_dungeon(dungeon_rid)
+		return
 
 	var region := _resolve_zone_region(zone)
 	var coords := _parse_region_coords(region)
@@ -8541,7 +8743,7 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 		# one nearest the mover, and asking from 0 puts anyone standing on a
 		# raised deck underneath it. Jangan's octagonal plaza is a placed
 		# object, so every NPC on the town square came out buried in it.
-		height = npc_graph.landing_height_at(local.x, local.z)
+		height = npc_graph.landing_height_at(local.x, local.z, local.y)
 	holder.position = Vector3(local.x, height, local.z)
 	var facing_usec := 0
 	var facing_source := "none"
@@ -8680,9 +8882,14 @@ func _qa_feed_local_npcs() -> void:
 ##   spawns the structure at its teleportbuilding row (columns 41, 43-45), as
 ##   GObjPC::IsWithinInteractionRange measures from it (round 642).
 ##
-## So for each id-7 gate standing in the region (Point.interaction7 -- round
-## 577's rule: exactly the seven town gates, STORE_CH/WC/KT/EU/CA_GATE and
-## Alexandria's STORE_SD_GATE1/2), a `GatePick_<code>` node at the building's
+## So for each gate standing in the region -- every teleportbuilding row a
+## teleport point names (round 772, READ: the server spawns every structure
+## row of a region as a CITeleportGate, CRgnObject::FUN_00538c10 ->
+## CGObjStruct::EnterWorld 0x52ef10 at the row's RegionID / OffsetX-Z, and
+## the client picks it by its box, CITeleportGate::vslot_033 0x9e9b60; until
+## round 772 only the id-7 rows were bound, round 577's rule, which left the
+## Delta, Storm Desert, King's Valley and Roc gates unclickable) -- a
+## `GatePick_<code>` node at the building's
 ## table position carries the talk tags (`npc_name`, `npc_code`,
 ## `gate_point_id`) and one StaticBody3D with that box, axis-aligned in the
 ## world (its basis undoes the region group's z mirror), on
@@ -8703,7 +8910,7 @@ func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
 	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
 		var building: TeleportReader.Building = building_v
 		var point := _teleport_reader.point_for_building(building.code)
-		if point == null or not point.interaction7:
+		if point == null:
 			continue
 		var pick := _gate_pick_node(building, point, group)
 		if pick == null:
@@ -13728,7 +13935,11 @@ func _qa_step() -> void:
 			var zone: String = target["zone"]
 			_reload_zone_assets(zone)
 			var coords := _parse_region_coords(_resolve_zone_region(zone))
-			if target.has("local") and not coords.is_empty():
+			if target.has("local") and _dungeon != null:
+				# A dungeon's `@x,z` is dungeon space (round 773).
+				var dspot: Vector2 = target["local"]
+				_place_in_dungeon(dspot.x, dspot.y)
+			elif target.has("local") and not coords.is_empty():
 				var spot: Vector2 = target["local"]
 				_place_at_region_local(coords["x"], coords["y"], spot.x, spot.y)
 			_refresh_zone_label_position()
@@ -16599,7 +16810,9 @@ func _physics_step(delta: float) -> void:
 		TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
 	if not ground_hit.is_empty() and player.position.y - ground_hit.position.y < 20.0:
 		_last_grounded_position = player.position
-	elif player.position.y < WORLD_FLOOR_Y:
+	elif player.position.y < WORLD_FLOOR_Y and _dungeon == null:
+		# (Not in a dungeon, round 773: no terrain there at all, and a
+		# floor of Qin-Shi's B1 lies at -1,032.)
 		# Fell into a real gap in the streamed region grid (see
 		# WORLD_FLOOR_Y's doc comment) -- no terrain exists here at all, so
 		# rather than let the player fall through an unbounded void, return
@@ -16628,6 +16841,7 @@ func _physics_step(delta: float) -> void:
 	if _minimap_frame != Engine.get_process_frames():
 		_minimap_frame = Engine.get_process_frames()
 		split_sw = Time.get_ticks_usec()
+		_dungeon_tick()
 		_refresh_minimap()
 		if _qa_split != null:
 			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
@@ -18930,14 +19144,17 @@ func _step_other_legs(delta: float) -> void:
 		var local := Vector3.ZERO
 		for ri in range(regions.size()):
 			local = (regions[ri][2] as Transform3D) * point
-			if local.x >= 0.0 and local.z >= 0.0 and local.x <= REGION_SPAN and local.z <= REGION_SPAN:
+			if (regions[ri][0] as NavGraph).dungeon \
+					or (local.x >= 0.0 and local.z >= 0.0 and local.x <= REGION_SPAN and local.z <= REGION_SPAN):
 				found = ri
 				break
 		if found < 0:
 			ask_index[i] = -1
 			ask_height[i] = _terrain_hit_height(point)
 		else:
-			ask_index[i] = _height_batch.add(regions[found][0], regions[found][1], local.x, local.z)
+			# A dungeon's floors stack: the point's own height picks one.
+			ask_index[i] = _height_batch.add(regions[found][0], regions[found][1], local.x, local.z,
+				local.y if (regions[found][0] as NavGraph).dungeon else NAN)
 	if _height_batch.size() > 0:
 		_height_batch.resolve()
 	for i in range(asks.size()):
@@ -19321,8 +19538,10 @@ func _land_teleport_arrival(x: float, z: float) -> bool:
 		return false
 	var graph: NavGraph = pair[0]
 	var group: Node3D = pair[1]
-	var local := group.to_local(Vector3(x, 0.0, z))
-	player.global_position = group.to_global(Vector3(local.x, graph.landing_height_at(local.x, local.z), local.z))
+	var local := group.to_local(Vector3(x, player.global_position.y, z))
+	# The server's height picks the floor in a dungeon (round 773); the field
+	# ignores it (landing_height_at).
+	player.global_position = group.to_global(Vector3(local.x, graph.landing_height_at(local.x, local.z, local.y), local.z))
 	player.velocity = Vector3.ZERO
 	# Round 749's verification (c): the server has the point at a height it
 	# only guesses (a teleport's 0, a landing's), so the arrival goes out as
@@ -21493,7 +21712,7 @@ func _navmesh_height_at(pos: Vector3) -> float:
 		return NAN
 	var group: Node3D = pair[1]
 	var local := group.to_local(pos)
-	return group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z), local.z)).y
+	return group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z, local.y), local.z)).y
 
 ## A moving monster's height (round 557): the navmesh first, the terrain ray
 ## where no loaded region covers the point. Before this round a walking body

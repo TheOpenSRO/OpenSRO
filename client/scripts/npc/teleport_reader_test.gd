@@ -348,8 +348,11 @@ func _initialize() -> void:
 			scenery.position = Vector3(400.0, 0.0, 400.0)
 			container3.add_child(scenery)
 			world.call("_bind_region_gates", 97, 168, group3)
-			_check(group3.get_node_or_null("GatePick_STORE_CH_FORT_GATE1") == null and not scenery.has_meta("npc_name") and _body_layer(scenery) == 1,
-				"a fortress-gate row (links, no id 7) gets no pick node, and the object on its point no tag")
+			# Round 772: every structure row a point names is a gate the client
+			# picks by its box (CITeleportGate::vslot_033), id 7 or not; the
+			# map object on its point still gets no tag.
+			_check(group3.get_node_or_null("GatePick_STORE_CH_FORT_GATE1") != null and not scenery.has_meta("npc_name") and _body_layer(scenery) == 1,
+				"a gate row without id 7 (the Delta / Storm Desert / King's Valley kind) gets its box too, and the object on its point no tag")
 			_check(group3.get_node_or_null("GatePick_STORE_CH_GATE") != null,
 				"while the town gate in the same region (id 7) gets its box")
 			world.set("_teleport_reader", reader)

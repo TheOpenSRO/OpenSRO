@@ -393,3 +393,30 @@ func TestFromWorldInvertsToWorld(t *testing.T) {
 		}
 	}
 }
+
+func TestRound773DungeonZoneLabels(t *testing.T) {
+	if got := DungeonZone(-32767); got != "dungeon/32769" {
+		t.Fatalf("DungeonZone(-32767) = %q", got)
+	}
+	if got := DungeonZone(0x8007); got != "dungeon/32775" {
+		t.Fatalf("DungeonZone(0x8007) = %q", got)
+	}
+	if rid, ok := ParseDungeonZone("dungeon/32769"); !ok || rid != 0x8001 {
+		t.Fatalf("ParseDungeonZone = %d %v", rid, ok)
+	}
+	for _, bad := range []string{"dungeon/1", "dungeon/x", "97/168", "jangan", "dungeon/70000", ""} {
+		if _, ok := ParseDungeonZone(bad); ok {
+			t.Fatalf("ParseDungeonZone(%q) accepted", bad)
+		}
+	}
+	if _, _, ok := FrameFor("dungeon/32769"); ok {
+		t.Fatal("a dungeon label must have no frame")
+	}
+	if !IsDungeonRegion(-32767) || !IsDungeonRegion(0x8001) || IsDungeonRegion(0x6A93) {
+		t.Fatal("IsDungeonRegion")
+	}
+	x, y, z := DungeonToWorld(1011, 5, -862)
+	if x != 1011 || y != 5 || z != 862 {
+		t.Fatalf("DungeonToWorld = %v %v %v", x, y, z)
+	}
+}

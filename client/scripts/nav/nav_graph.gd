@@ -275,6 +275,17 @@ var _object_tiles: Dictionary = {}
 ## Flat pairs of 2D points: every real blocking edge the terrain itself
 ## carries, in region space.
 var terrain_blocking: PackedVector2Array = PackedVector2Array()
+## A dungeon's graph (round 773, `build_dungeon`): no terrain at all -- the
+## rooms' own navigation meshes are the whole walkable surface, in dungeon
+## space, which runs far outside one region's [0, 1920) (Qin-Shi's floors are
+## ~44,000 wide). The footprint index is then unbounded and coarser
+## (DUNGEON_TILE), and a mover is never put on the (absent) terrain: an exit
+## through a room's outline with no room beyond it is a wall.
+var dungeon := false
+## The footprint index's tile in a dungeon (OURS: the rooms are 200-7,000
+## units across; 20-unit tiles over a 7,000 x 12,000 room would be 210,000
+## entries for one room).
+const DUNGEON_TILE := 200.0
 
 ## The Godot Y rotation that turns an object the way the game turns it for a
 ## stored placement yaw (`.o`, `.o2` or `.nvm`), in the region's own un-mirrored
@@ -427,6 +438,36 @@ static func build(
 			graph.terrain_blocking.append(edge.line_max)
 	return graph
 
+## Builds a dungeon's graph (round 773): `placed` are the rooms (blocks),
+## each placed from its `.bsr`'s navigation mesh at the block's position and
+## yaw (DofReader.Block; the block transform READ in FUN_0043d220 is the same
+## row-vector Y rotation `place` applies). Rooms join where a room's outline
+## edge is crossed onto another room's surface at the mover's height (the
+## seam hand-off below) -- the dungeon walk stitches flag-8 edges of
+## neighbouring blocks (READ, FUN_0043ed30); the seam finds the same rooms
+## without the stitching table.
+static func build_dungeon(placed_objects: Array[PlacedObject]) -> NavGraph:
+	var graph := NavGraph.new()
+	graph.region = NvmReader.ParsedRegion.new()
+	graph.dungeon = true
+	for placed in placed_objects:
+		graph.objects[placed.object_index] = placed
+		if placed.bounds_min.x > placed.bounds_max.x:
+			continue
+		var col0 := int(floorf(placed.bounds_min.x / DUNGEON_TILE))
+		var col1 := int(floorf(placed.bounds_max.x / DUNGEON_TILE))
+		var row0 := int(floorf(placed.bounds_min.y / DUNGEON_TILE))
+		var row1 := int(floorf(placed.bounds_max.y / DUNGEON_TILE))
+		for row in range(row0, row1 + 1):
+			for col in range(col0, col1 + 1):
+				var key := Vector2i(col, row)
+				if not graph._object_tiles.has(key):
+					graph._object_tiles[key] = PackedInt32Array()
+				var bucket: PackedInt32Array = graph._object_tiles[key]
+				bucket.append(placed.object_index)
+				graph._object_tiles[key] = bucket
+	return graph
+
 ## The real terrain cell covering a region-local point, or -1 outside the
 ## region. Uses the region's own 96x96 tile index -- the real file's own
 ## lookup structure.
@@ -449,6 +490,12 @@ func cell_index_at(x: float, z: float) -> int:
 func objects_at(x: float, z: float) -> Array[int]:
 	var out: Array[int] = []
 	var seen := {}
+	if dungeon:
+		var dkey := Vector2i(int(floorf(x / DUNGEON_TILE)), int(floorf(z / DUNGEON_TILE)))
+		if _object_tiles.has(dkey):
+			for oi in (_object_tiles[dkey] as PackedInt32Array):
+				out.append(oi)
+		return out
 	var ci := cell_index_at(x, z)
 	if ci >= 0 and ci < region.cells.size():
 		for oi in region.cells[ci].object_indices:
@@ -471,7 +518,8 @@ func objects_at(x: float, z: float) -> Array[int]:
 ## point: the terrain, plus any real object cell covering it. Heights only.
 func heights_at(x: float, z: float) -> PackedFloat32Array:
 	var out := PackedFloat32Array()
-	out.append(NvmCollision.terrain_height(region, x, z))
+	if not dungeon:
+		out.append(NvmCollision.terrain_height(region, x, z))
 	for oi in objects_at(x, z):
 		var placed: PlacedObject = objects[oi]
 		if x < placed.bounds_min.x or x > placed.bounds_max.x:
@@ -501,7 +549,8 @@ func heights_at(x: float, z: float) -> PackedFloat32Array:
 ## client does and what keeps a wall a wall.
 func surface_at(x: float, z: float, reference_y: float) -> Surface:
 	var best := Surface.new()
-	best.height = NvmCollision.terrain_height(region, x, z)
+	# A dungeon has no terrain: off every room the height stays the mover's.
+	best.height = reference_y if dungeon else NvmCollision.terrain_height(region, x, z)
 	best.is_terrain = true
 	best.object_index = ON_TERRAIN
 	var found := false
@@ -527,7 +576,7 @@ func surface_at(x: float, z: float, reference_y: float) -> Surface:
 				best.height = h
 				best.is_terrain = false
 				best.object_index = oi
-	if not found and best.height > reference_y + SURFACE_REACH_UP:
+	if not found and not dungeon and best.height > reference_y + SURFACE_REACH_UP:
 		# Terrain itself is out of reach above; nothing sensible to stand on.
 		best.height = minf(best.height, reference_y)
 	return best
@@ -557,7 +606,14 @@ func height_at(x: float, z: float, reference_y: float) -> float:
 ## enough not to teleport the player onto a bridge passing overhead"), and
 ## widening it to clear one measured plaza would be fitting a threshold to a
 ## single observation while making every overhead bridge a hazard.
-func landing_height_at(x: float, z: float) -> float:
+##
+## In a dungeon (round 773) there is no terrain, and floors stack: with a
+## `reference_y` (the height the server or the record gives) the room cell
+## nearest it, else the highest; where no room has a cell, `reference_y`, or
+## 0 without one. Never NAN. In the field `reference_y` is not used.
+func landing_height_at(x: float, z: float, reference_y: float = NAN) -> float:
+	if dungeon:
+		return _dungeon_height_at(x, z, reference_y)
 	var best := NvmCollision.terrain_height(region, x, z)
 	for oi in objects_at(x, z):
 		var placed: PlacedObject = objects[oi]
@@ -580,6 +636,24 @@ func landing_height_at(x: float, z: float) -> float:
 			var h := _triangle_height(a, b, c, x, z)
 			if not is_nan(h) and h > best:
 				best = h
+	return best
+
+## landing_height_at in a dungeon (see there).
+func _dungeon_height_at(x: float, z: float, reference_y: float) -> float:
+	var best := NAN
+	for oi in objects_at(x, z):
+		var placed: PlacedObject = objects[oi]
+		if x < placed.bounds_min.x or x > placed.bounds_max.x:
+			continue
+		if z < placed.bounds_min.y or z > placed.bounds_max.y:
+			continue
+		var h := surface_height_of(placed, x, z) if is_nan(reference_y) else _surface_near(placed, x, z, reference_y)
+		if is_nan(h):
+			continue
+		if is_nan(best) or (h > best if is_nan(reference_y) else absf(h - reference_y) < absf(best - reference_y)):
+			best = h
+	if is_nan(best):
+		return 0.0 if is_nan(reference_y) else reference_y
 	return best
 
 ## Advances a position on the graph by one horizontal motion without a
@@ -633,6 +707,10 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 	# is the terrain.
 	if on != ON_TERRAIN and (not objects.has(on) or is_nan(_surface_near(objects[on], pos.x, pos.z, pos.y))):
 		on = ON_TERRAIN
+	# In a dungeon there is no terrain to be on: the room under the mover at
+	# its height (round 773).
+	if dungeon and on == ON_TERRAIN:
+		on = surface_at(pos.x, pos.z, pos.y).object_index
 	var remaining := motion
 	# Where the current walk began, for the no-slide terrain-wall rule: the
 	# start, then each object entered or left.
@@ -688,14 +766,35 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 				# the footing over when a surface at the mover's own height
 				# is right there.
 				var reach := _seam_object_at(pos.x, pos.z, pos.y, left)
-				if reach != ON_TERRAIN:
-					on = reach
-					result.entered = reach
-					pos.y = _surface_near(objects[reach], pos.x, pos.z, pos.y)
+				if dungeon and reach == ON_TERRAIN:
+					# No room beyond this outline: in a dungeon that is the
+					# edge of the world, so a wall (OURS, round 773 -- the
+					# dungeon walk's own exit rule, 0x43f390, is not read).
+					on = left
+					result.exited = -1
+					result.blocked = true
+					var stop_at := from2 + dir * maxf(from2.distance_to(contact) - CONTACT_PUSH, 0.0)
+					pos.x = stop_at.x
+					pos.z = stop_at.y
+					if not slide:
+						remaining = Vector2.ZERO
+						break
+					var wa: Vector2 = hit["a"]
+					var wb: Vector2 = hit["b"]
+					var walong := (wb - wa).normalized()
+					remaining = walong * (to2 - stop_at).dot(walong)
+					if remaining.length() < 1.0e-4:
+						remaining = Vector2.ZERO
+						break
 				else:
-					pos.y = NvmCollision.terrain_height(region, pos.x, pos.z)
-				source = landed
-				remaining = _onward(to2 - landed, dir)
+					if reach != ON_TERRAIN:
+						on = reach
+						result.entered = reach
+						pos.y = _surface_near(objects[reach], pos.x, pos.z, pos.y)
+					else:
+						pos.y = NvmCollision.terrain_height(region, pos.x, pos.z)
+					source = landed
+					remaining = _onward(to2 - landed, dir)
 			"block":
 				result.blocked = true
 				var short := maxf(from2.distance_to(contact) - CONTACT_PUSH, 0.0)
@@ -727,7 +826,7 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 			on = ON_TERRAIN
 		else:
 			pos.y = h
-	if on == ON_TERRAIN:
+	if on == ON_TERRAIN and not dungeon:
 		pos.y = NvmCollision.terrain_height(region, pos.x, pos.z)
 	result.position = pos
 	result.standing_on = on
@@ -1212,7 +1311,7 @@ static func _edge_height_at(placed: PlacedObject, edge: int, at: Vector2) -> flo
 func _candidate_objects(from: Vector2, to: Vector2) -> Array[int]:
 	var seen := {}
 	var out: Array[int] = []
-	var steps := maxi(1, int(ceilf(from.distance_to(to) / TILE_SIZE)) + 1)
+	var steps := maxi(1, int(ceilf(from.distance_to(to) / (DUNGEON_TILE if dungeon else TILE_SIZE))) + 1)
 	for s in range(steps + 1):
 		var p := from.lerp(to, float(s) / float(steps))
 		for oi in objects_at(p.x, p.y):

@@ -51,7 +51,11 @@ type hatchData struct {
 	maxHP, defense, attack int
 	gold                   int64
 	homeX, homeZ           float64
-	tactics, champion      *combat.Tactics
+	// homeY is the hatch height: 0 in the field (the client stands a monster
+	// on its ground), the npcpos row's or nest's own y in a dungeon (round
+	// 773), whose floors stack, so a y of 0 would name another floor.
+	homeY             float64
+	tactics, champion *combat.Tactics
 	// rotation marks a unique's spot (round 661): its window is
 	// -unique-respawn's, not -nest-respawn's, and its hatch faces the nest
 	// row's direction (heading) and is logged.
@@ -184,7 +188,7 @@ func (s *respawnScheduler) hatch(sl *nest.Slot, roll nest.HatchRoll, dx, dz floa
 			sp.Rarity = 0
 		}
 	}
-	m := s.monsters.SpawnHatched(d.spec.Zone, sp, d.homeX+dx, 0, d.homeZ+dz, d.maxHP, d.defense, d.attack, d.gold,
+	m := s.monsters.SpawnHatched(d.spec.Zone, sp, d.homeX+dx, d.homeY, d.homeZ+dz, d.maxHP, d.defense, d.attack, d.gold,
 		combat.Hatch{HomeX: d.homeX, HomeZ: d.homeZ, Party: roll.Class.Party(), Tactics: tac, Heading: d.heading, HasHeading: d.rotation})
 	if d.rotation {
 		n := 0
@@ -334,13 +338,15 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 		}
 	}
 	nest.SortSpots(spots)
-	joined, jr := nest.Join(spots, db, func(id int64) (nest.SpeciesInfo, bool) {
+	// The rows of the dungeons the teleport network serves are placed too
+	// (round 773, session.ServedDungeon; InstallDungeonEntries runs first).
+	joined, jr := nest.JoinDungeons(spots, db, func(id int64) (nest.SpeciesInfo, bool) {
 		row, ok := table.ByID(id)
 		if !ok {
 			return nest.SpeciesInfo{}, false
 		}
 		return nest.SpeciesInfo{Rarity: row.Rarity, CodeName: row.CodeName}, true
-	})
+	}, session.ServedDungeon)
 	rep := fullMapReport{join: jr}
 	specs := map[int64]monsterSpec{}
 	hives := map[int64]*nest.Hive{}
@@ -363,13 +369,28 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 			spec.Zone = worldmap.WorldBucket
 			specs[row.ID] = spec
 		}
-		lx, lz := j.Spot.X, j.Spot.Z
+		lx, ly, lz := j.Spot.X, j.Spot.Y, j.Spot.Z
 		if j.Nest != nil {
 			lx, lz = j.Nest.X, j.Nest.Z // the nest's own position: Attach's home
+			if j.Nest.HasY {
+				ly = j.Nest.Y
+			}
 		}
-		rx, ry := worldmap.RegionXY(j.Spot.Region)
-		spec.X, spec.Z = worldmap.ToWorld(rx, ry, lx, lz, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+		dungeon := worldmap.IsDungeonRegion(j.Spot.Region)
+		if dungeon {
+			// A dungeon's row (round 773): its own bucket, its dungeon-space
+			// point as a world point (session/dungeon.go's contract).
+			spec.Zone = worldmap.DungeonZone(j.Spot.Region)
+			spec.X, _, spec.Z = worldmap.DungeonToWorld(lx, ly, lz)
+		} else {
+			spec.Zone = worldmap.WorldBucket
+			rx, ry := worldmap.RegionXY(j.Spot.Region)
+			spec.X, spec.Z = worldmap.ToWorld(rx, ry, lx, lz, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+		}
 		data := hatchDataOf(spec)
+		if dungeon {
+			data.homeY = ly
+		}
 		// A swapped row runs its own species' row (or the stand-in behaviour)
 		// on its claimed DB nest's numbers (the user's decision, round 660's
 		// review), or on the one-monster stand-in under -nest-swapped-stand-in.

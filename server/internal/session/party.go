@@ -600,6 +600,12 @@ func (d PartyDeps) sample(ctx context.Context, m party.Member, prev *memberSampl
 // out of the mask, rather than a region 0 with world coordinates cut to u16).
 // No zone OpenSRO serves lacks a frame today.
 func partyPosition(e world.Entity) (region uint16, x, y, z int32, ok bool) {
+	// In a dungeon (round 773): the rid and dungeon-space x, y, z, which the
+	// record carries as i32 (internal/party's wire, bit 15).
+	if _, in := dungeonOf(e.Zone); in {
+		region, lx, lz := regionLocalOf(e.Zone, e.Pos)
+		return region, int32(lx), int32(e.Pos.Y), int32(lz), true
+	}
 	fx, fy, ok := entityFrame(e.Zone)
 	if !ok {
 		return 0, 0, 0, 0, false

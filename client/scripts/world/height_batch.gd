@@ -58,6 +58,9 @@ class Job:
 	var xfs: Array = []
 	var lx := PackedFloat32Array()
 	var lz := PackedFloat32Array()
+	## The point's own height, region space, or NAN (a dungeon's floors stack:
+	## NavGraph.landing_height_at's reference, round 773).
+	var ly := PackedFloat32Array()
 	var out: Array = []
 	var n := 0
 	var mutex := Mutex.new()
@@ -113,7 +116,7 @@ class Job:
 		var g: NavGraph = graphs[i]
 		var x := lx[i]
 		var z := lz[i]
-		var h := g.landing_height_at(x, z)
+		var h := g.landing_height_at(x, z, ly[i])
 		var xf: Transform3D = xfs[i]
 		out[i] = (xf * Vector3(x, h, z)).y
 
@@ -135,11 +138,12 @@ func size() -> int:
 
 ## Queues one point: `graph`'s landing height at region-local (`x`, `z`),
 ## returned through `xf` (the region group's global transform) as a world y.
-func add(graph: NavGraph, xf: Transform3D, x: float, z: float) -> int:
+func add(graph: NavGraph, xf: Transform3D, x: float, z: float, y: float = NAN) -> int:
 	_job.graphs.append(graph)
 	_job.xfs.append(xf)
 	_job.lx.append(x)
 	_job.lz.append(z)
+	_job.ly.append(y)
 	return _job.graphs.size() - 1
 
 ## Every queued point's height into `out` (a world y each).

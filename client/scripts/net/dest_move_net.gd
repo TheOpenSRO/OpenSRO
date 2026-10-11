@@ -15,7 +15,8 @@ class_name DestMoveNet
 ##     mover included: `u32 uid | the movement | u8 flag | (flag 1) source
 ##     region u16, x * 10 u16, y f32, z * 10 u16` (NetProcessInNavAndSkill::
 ##     FUN_008a5750 reads it; the x/z width is 4 when the LOCAL player's region
-##     has bit 15, a dungeon, which OpenSRO serves none of).
+##     has bit 15, a dungeon: x and z are then i32, still x 10 -- INFERRED,
+##     and both OpenSRO sides agree on it, round 773).
 ##   - A stop the server sends is 0xB023: `u32 uid, u16 region, f32 x, f32 y,
 ##     f32 z, u16 angle` (FUN_008a4f80 reads 4, 2 and 0xe bytes and snaps the
 ##     object there, FUN_009e00f0 / FUN_009e11e0).
@@ -75,6 +76,19 @@ static func encode_destination(region: int, lx: float, ly: float, lz: float) -> 
 	out.encode_s16(7, clampi(int(lz), -32768, 32767))
 	return out
 
+## The dungeon form of 0x7021 (round 773): the dungeon's region id (bit 15)
+## and three i32, dungeon space, truncated (FUN_009ec080's ftol; the
+## server's proto.Movement reads the same).
+static func encode_dungeon_destination(rid: int, dx: float, dy: float, dz: float) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(15)
+	out[0] = KIND_DESTINATION
+	out.encode_u16(1, (rid | REGION_DUNGEON_BIT) & 0xffff)
+	out.encode_s32(3, int(dx))
+	out.encode_s32(7, int(dy))
+	out.encode_s32(11, int(dz))
+	return out
+
 ## The heading form of 0x7021 (FUN_009ebec0): kind 0, the command byte, the
 ## u16 wire angle (SkyRun.wire_angle).
 static func encode_heading(command: int, angle: int) -> PackedByteArray:
@@ -122,11 +136,21 @@ static func decode_echo(data: PackedByteArray) -> Echo:
 	e.has_source = data[at] == 1
 	at += 1
 	if e.has_source:
-		if data.size() < at + 10:
+		if data.size() < at + 2:
 			e.error = "short source"
 			return e
 		e.source_region = data.decode_u16(at)
-		e.source_local = Vector3(float(data.decode_u16(at + 2)) / 10.0, data.decode_float(at + 4), float(data.decode_u16(at + 8)) / 10.0)
+		if e.source_region & REGION_DUNGEON_BIT:
+			# A dungeon's source: i32 x and z, tenths (see the header).
+			if data.size() < at + 14:
+				e.error = "short dungeon source"
+				return e
+			e.source_local = Vector3(float(data.decode_s32(at + 2)) / 10.0, data.decode_float(at + 6), float(data.decode_s32(at + 10)) / 10.0)
+		else:
+			if data.size() < at + 10:
+				e.error = "short source"
+				return e
+			e.source_local = Vector3(float(data.decode_u16(at + 2)) / 10.0, data.decode_float(at + 4), float(data.decode_u16(at + 8)) / 10.0)
 	return e
 
 ## Reads a 0xB023 payload.

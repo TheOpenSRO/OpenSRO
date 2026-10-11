@@ -379,7 +379,25 @@ static func arrow_rotation(local_facing: Vector2) -> float:
 ##   displayed X = (region_y - 135) * 192 + local_x / 10
 ##   displayed Y = (region_x - 92) * 192 + local_z / 10
 ## formatted "X:%3d" / "Y:%3d" as 0x661ce0 does.
+##
+## In a dungeon (set_dungeon_prefix, round 773) region_x/region_y are the
+## tile's row and column and there is no X/Y readout (READ, 0x661ce0 skips
+## it for a region with bit 15).
 func update_player(region_x: int, region_y: int, local_pos: Vector3, local_facing: Vector2) -> void:
+	if _dungeon_prefix != "":
+		if _lbl_pos_x != null:
+			_lbl_pos_x.text = ""
+		if _lbl_pos_y != null:
+			_lbl_pos_y.text = ""
+		if region_x != _current_region_x or region_y != _current_region_y:
+			_current_region_x = region_x
+			_current_region_y = region_y
+			_load_region_tiles(region_x, region_y)
+		_local = local_pos
+		_layout_tiles()
+		if _player_arrow != null:
+			_player_arrow.rotation = arrow_rotation(local_facing)
+		return
 	var disp_x: int = (region_y - 135) * 192 + int(local_pos.x / 10.0)
 	var disp_y: int = (region_x - 92) * 192 + int(local_pos.z / 10.0)
 
@@ -608,8 +626,23 @@ func _load_region_tiles(rx: int, ry: int) -> void:
 			var r := tile_region(rx, ry, i, j)
 			# minimap\<y>x<x>.ddj (AGENTS.md; 0x661ce0's `%s%dx%d.ddj` with
 			# the region id's low byte first).
-			var tex := _tile_texture("minimap\\%dx%d.ddj" % [r.y, r.x])
+			var tex := _tile_texture(("minimap\\%dx%d.ddj" % [r.y, r.x]) if _dungeon_prefix == "" \
+				else ("%s%dx%d.ddj" % [_dungeon_prefix, r.y, r.x]))
 			tile.texture = tex if tex != null else black_texture()
+
+## A dungeon's tile path up to the column ("minimap_d\\<folder>\\<floor>_"),
+## or "" in the field (round 773; World3D._refresh_dungeon_minimap). A change
+## reloads the tiles.
+var _dungeon_prefix := ""
+
+func set_dungeon_prefix(prefix: String) -> void:
+	if prefix == _dungeon_prefix:
+		return
+	_dungeon_prefix = prefix
+	_current_region_x = -1
+	_current_region_y = -1
+	if _dungeon_floor != null:
+		_dungeon_floor.visible = prefix != ""
 
 func _tile_texture(path: String) -> Texture2D:
 	if _tile_cache.has(path):

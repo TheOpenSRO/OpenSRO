@@ -7477,6 +7477,82 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventy-third round: dungeons and walk-in teleports
+
+The user: "let's get dungeons working and all other teleporters. Town and NPCs already work but
+some teleports you walk over don't yet". The formats, the READ facts and the OURS choices are in
+`docs/protocol/dungeon.md`; this is what was built and measured.
+- **The `.dof` reader** (`client/scripts/dungeon/dof_reader.gd`): all 32 dungeons
+  `Dungeon\dungeoninfo.txt` names parse, every section ending where the next begins
+  (`tools/dof_probe.gd`). The block transform is the field's yaw: the rooms' linked outline edges
+  meet their neighbours' 724/1,154 (B4) and 870/1,106 (B3) times under it, 394 and 478 with the
+  yaw negated (`--stitch`).
+- **The client's dungeon** (`DungeonWorld`, World3D `_load_dungeon`): a zone `dungeon/<rid>` builds
+  the rooms and their objects under one mirrored group, one walkable graph over the rooms'
+  navigation meshes (`NavGraph.build_dungeon`), the block's light (the ambient alone, READ) and
+  linear fog (READ), no sky, the `minimap_d` tiles. The cave builds in 378-489 ms (151 rooms,
+  971 objects), the tomb's B2 in 802 ms (20 rooms, 2,064 objects). Floors stack, so a height
+  lookup in a dungeon takes the reference height it is given (the server's, the record's).
+- **The wire:** 0x7021's dungeon form goes out from a dungeon, 0xB021's dungeon source and a
+  player record's dungeon destination are read (a dungeon destination made the whole record
+  unreadable until now), and a dungeon region's coordinates map to the world as (x, -z) whatever
+  the frame.
+- **The server** (`session/dungeon.go`, a fork of this session): dungeon zones, buckets and
+  frames; teleports into the WorldID-1 dungeons (0x8001..0x8007); 0x7021 in a dungeon; the
+  dungeon's monsters and NPCs at their own height; saved positions, /unstuck and GM
+  `/goto dungeon/<rid>`.
+- **Walk-ins** (`walkin.csv` from eventzonedata + objectstring; `session/walkin.go`): tested on the
+  server's movers and, since this round's review of the fork's work, on every position a client
+  reports (`walkInClaimed`); the walk-in state is keyed by hub and character (one hub's mover pass
+  overwrote another's samples in the test binary).
+- **Verified live on the box** (server r773 + client, GM-placed QA character):
+  - level 1 over the Donwhang entrance: refused, "Cannot transport because your level is too low";
+  - level 60: `walk-in teleport GATE_DUNGEON_DH_IN -> dungeon/32769`, arrival at (1011, 0, -862)
+    on room 75, walking on through three rooms (`onto passent01`, `onto passage01_05`);
+  - inside, east across `GATE_DUNGEON_DH_OUT`: back to the field at 105/147 (1814, 1834);
+  - the tomb: `/goto dungeon/32775`, then over `GATE_JINSI_01x01_12`: B1 -> B2 (0x8006) at
+    (-13674, 0, 5596);
+  - monsters (`-full-map` with the round-664 nest DB): 172 of the cave's npcpos rows are placed in
+    its bucket; 920 units in from the entry the client builds 50 bodies (Soil / Earth Ghost Bugs)
+    standing on the rooms.
+- **Served dungeons:** 0x8001 and 0x8004..0x8007. No teleport link leads into the tomb's B5
+  (0x8003) or B6 (0x8002) in this data, so they are not reachable (their monster rows are not
+  placed).
+- **Gates:** client suites "ran 275 suite(s), 0 failing"; `go vet`, `go test ./...` and gofmt
+  clean. The perf gate (`--sites jangan`) gave no numbers: its BASE run (d217f014, without this
+  round) logged 3 FPS samples, the loading screen having used the run's frames -- a harness
+  problem, recorded; the field's per-frame code gained one bool test (`NavGraph.objects_at`) and
+  one array per height batch.
+- **Not done (recorded):** the rooms' light maps and the block lights (rooms are lit by the
+  block's ambient alone, so they are flatter than the original's); 64 `lamp.bsr` and 2
+  `404_sunbeams.bsr` objects of the cave build nothing; a few distant shapes in the tomb's B1 hall
+  draw unfogged; the instanced dungeons (Job temple and the rest, WorldID != 1); monsters in a
+  dungeon need the shard's nests (`-full-map`); the field triggers have no height test (a
+  character under the cave entrance's deck fires it too).
+- **Tests:** `client/scripts/dungeon/dungeon_test.gd` (a synthetic `.dof`, dungeoninfo, the block
+  transform, the labels, the rooms' graph, the wire forms); the server's `dungeon773_test.go`
+  files (teleport in, the wire, moving, walk-ins by the mover pass and by a reported walk, the
+  nests, the export).
+
+## Seven-hundred-and-seventy-second round: every teleport gate standing in the field
+
+The user: "some that are like town teleporters like around Alexandria but aren't in town".
+- **The original (READ, `docs/protocol/teleport_network.md` and the round's notes):** the server
+  spawns every structure row of a region -- `CRgnObject::FUN_00538c10` ->
+  `CGObjStruct::EnterWorld` (0x52ef10) at the teleportbuilding row's RegionID and Offset -- and
+  the client picks it by its box (`CITeleportGate::vslot_033`, 0x9e9b60). Nothing restricts that
+  to the gates whose teleportdata row sets interaction 7.
+- **The bug:** `_bind_region_gates` still bound only the id-7 rows (round 577's rule, the seven
+  town gates), so the Delta East / West, Storm Desert, King's Valley and Roc gates had no pick box.
+  It now binds every teleportbuilding row a point names; the server already served them
+  (structures measured from their row since round 642).
+- **Verified live on the box** (server r773, QA character at level 95 GM-placed beside the Delta East
+  gate in 92/56): the gate's box is bound (`STORE_DELTA_GATE_E clickable at 92/56 local (459, 1230,
+  1264)`), the click opens its talk box ("1. Teleport to [Storm and cloud Desert]area."), and the
+  server moves the character (`msg=teleport gate=STORE_DELTA_GATE_E dest=GATE_STORMDESERT_GATE`),
+  arriving in 84/65.
+- **Tests:** `teleport_reader_test.gd` (the fortress gate is now bound).
+
 ## Seven-hundred-and-seventy-first round: V hides the whole crowd
 
 The user: "When I press "V" almost all characters don't seem to disappear, maybe a few but all of the

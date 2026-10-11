@@ -16,7 +16,8 @@ type Spot struct {
 
 // DungeonRegion is the first dungeon region id: npcpos rows at or above it
 // stand in a dungeon's own region space (round 653's census: 1,915 monster
-// rows), which this round does not place.
+// rows). Join places none of them; JoinDungeons places those of the dungeons
+// its caller serves (round 773).
 const DungeonRegion = 0x8000
 
 // JoinTolerance is how far, in local units, a DB nest may stand from an
@@ -98,7 +99,7 @@ const FieldWorldID = 1
 type JoinReport struct {
 	Rows       int // npcpos rows handed in
 	NotMonster int // species not in the monster table (NPCs, structures)
-	Dungeon    int // monster rows in dungeon regions (>= DungeonRegion), not placed
+	Dungeon    int // monster rows in dungeon regions (>= DungeonRegion) not served, not placed
 	// Unique is the rarity-3 rows NOT placed: without a DB, or whose spot
 	// joins no nest of their own species in a field-world hive with a total
 	// cap (round 661).
@@ -157,6 +158,16 @@ func IsCustomSpecies(code string) bool {
 // nil: every row a stand-in). species answers for a species id; false leaves
 // the row out as not a monster. The rows come back in the order given.
 func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]Joined, JoinReport) {
+	return JoinDungeons(spots, db, species, nil)
+}
+
+// JoinDungeons is Join that also places the rows of the dungeons served
+// answers true for (round 773; the region as the engine's u16, bit 15 set).
+// A dungeon row joins its DB nest exactly as a field row does -- the nests
+// keep the same region id and the dungeon's own x, z -- and the field world's
+// hive rule applies to it unchanged (a dungeon of the open world hatches from
+// world-1 hives). nil served places none, Join's rule.
+func JoinDungeons(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool), served func(region int) bool) ([]Joined, JoinReport) {
 	rep := JoinReport{Rows: len(spots), SwappedTo: map[int64]int{}, RankEight: map[int64]int{}, UniqueSpots: map[int64]int{}}
 	var byRegion map[int][]int
 	if db != nil {
@@ -178,7 +189,7 @@ func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]J
 		case !ok:
 			rep.NotMonster++
 			continue
-		case s.Region >= DungeonRegion:
+		case s.Region >= DungeonRegion && (served == nil || !served(s.Region)):
 			rep.Dungeon++
 			continue
 		case IsCustomSpecies(sp.CodeName):
@@ -341,7 +352,7 @@ func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]J
 	if db != nil {
 		for k := range db.Nests {
 			n := &db.Nests[k]
-			if used[k] || n.Region >= DungeonRegion {
+			if used[k] || (n.Region >= DungeonRegion && (served == nil || !served(n.Region))) {
 				continue
 			}
 			t := db.Tactics[n.TacticsID]

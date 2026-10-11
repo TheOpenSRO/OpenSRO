@@ -116,6 +116,11 @@ func SetTrustClientPositions(on bool) { trustPositions.Store(on) }
 // no frame -- none OpenSRO serves -- gives region 0 and the frame
 // coordinates, as the record does.
 func regionLocalOf(zone string, pos world.Position) (region uint16, lx, lz float64) {
+	// A dungeon (round 773, dungeon.go): its rid and dungeon-space x, z.
+	if rid, ok := dungeonOf(zone); ok {
+		dx, dz := dungeonLocal(pos)
+		return uint16(rid), dx, dz
+	}
 	if fx, fy, ok := entityFrame(zone); ok {
 		rx, ry, x, z := worldmap.FromWorld(pos.X, pos.Z, fx, fy)
 		return uint16(worldmap.RegionID(rx, ry)), x, z
@@ -125,6 +130,10 @@ func regionLocalOf(zone string, pos world.Position) (region uint16, lx, lz float
 
 // worldOfRegionLocal is regionLocalOf's inverse.
 func worldOfRegionLocal(zone string, region uint16, lx, lz float64) (x, z float64) {
+	if _, ok := dungeonOf(zone); ok {
+		wx, _, wz := worldmap.DungeonToWorld(lx, 0, lz)
+		return wx, wz
+	}
 	if fx, fy, ok := entityFrame(zone); ok {
 		rx, ry := worldmap.RegionXY(int(region))
 		return worldmap.ToWorld(rx, ry, lx, lz, fx, fy)
@@ -142,13 +151,20 @@ func regionsAdjacent(a, b uint16) bool {
 // the movement as asked, flag 1 and the source -- where the server had the
 // character when it took the move. Flag 1 is always safe: the client's reader
 // takes it, and retail's own test for it is a defect (round 737, INFERRED).
-// The source x and z are u16 ftol(x * 10) (0xb45c60); a dungeon's would be
-// i32, which OpenSRO serves none of.
+// The source x and z are u16 ftol(x * 10) (0xb45c60). In a dungeon (source
+// region with bit 15, round 773) they are i32 -- READ, the width -- of the
+// dungeon-space x and z times 10 (the scale INFERRED from the field form's;
+// OURS on both sides, client/scripts/net/dest_move_net.gd).
 func encodeMoveEcho(uid uint32, movement []byte, srcRegion uint16, src world.Position, lx, lz float64) []byte {
 	out := binary.LittleEndian.AppendUint32(nil, uid)
 	out = append(out, movement...)
 	out = append(out, 1)
 	out = binary.LittleEndian.AppendUint16(out, srcRegion)
+	if srcRegion&proto.MovementRegionWorldBit != 0 {
+		out = binary.LittleEndian.AppendUint32(out, uint32(int32(lx*10)))
+		out = binary.LittleEndian.AppendUint32(out, math.Float32bits(float32(src.Y)))
+		return binary.LittleEndian.AppendUint32(out, uint32(int32(lz*10)))
+	}
 	out = binary.LittleEndian.AppendUint16(out, uint16(int32(lx*10)))
 	out = binary.LittleEndian.AppendUint32(out, math.Float32bits(float32(src.Y)))
 	out = binary.LittleEndian.AppendUint16(out, uint16(int32(lz*10)))
@@ -191,12 +207,13 @@ type MoveEcho struct {
 	Angle     uint16 // the heading form's
 	Flag      byte
 	SrcRegion uint16
-	SrcX      uint16 // local x * 10
+	SrcX      int32 // local x * 10 (a u16 on the wire in the field, an i32 in a dungeon)
 	SrcY      float32
-	SrcZ      uint16 // local z * 10
+	SrcZ      int32 // local z * 10
 }
 
-// DecodeMoveEcho reads a 0xB021 payload of a field region.
+// DecodeMoveEcho reads a 0xB021 payload: the field form, or a dungeon's
+// (source region with bit 15: i32 x and z, round 773).
 func DecodeMoveEcho(b []byte) (MoveEcho, bool) {
 	if len(b) < 5 {
 		return MoveEcho{}, false
@@ -213,14 +230,26 @@ func DecodeMoveEcho(b []byte) (MoveEcho, bool) {
 	}
 	e.Flag = b[n]
 	if e.Flag == 1 {
-		if len(b) < n+11 {
+		if len(b) < n+3 {
 			return MoveEcho{}, false
 		}
 		r := b[n+1:]
 		e.SrcRegion = binary.LittleEndian.Uint16(r)
-		e.SrcX = binary.LittleEndian.Uint16(r[2:])
+		if e.SrcRegion&proto.MovementRegionWorldBit != 0 {
+			if len(r) < 14 {
+				return MoveEcho{}, false
+			}
+			e.SrcX = int32(binary.LittleEndian.Uint32(r[2:]))
+			e.SrcY = math.Float32frombits(binary.LittleEndian.Uint32(r[6:]))
+			e.SrcZ = int32(binary.LittleEndian.Uint32(r[10:]))
+			return e, true
+		}
+		if len(r) < 10 {
+			return MoveEcho{}, false
+		}
+		e.SrcX = int32(binary.LittleEndian.Uint16(r[2:]))
 		e.SrcY = math.Float32frombits(binary.LittleEndian.Uint32(r[4:]))
-		e.SrcZ = binary.LittleEndian.Uint16(r[8:])
+		e.SrcZ = int32(binary.LittleEndian.Uint16(r[8:]))
 	}
 	return e, true
 }
@@ -260,19 +289,31 @@ func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hu
 		order.Heading, order.HeadingRadians = true, world.HeadingFromWire(angle)
 		order.Command, order.WireAngle = m.HeadingByte, angle
 	} else {
+		var x, y, z float64
 		if m.Region&proto.MovementRegionWorldBit != 0 {
-			return nil // a dungeon: OpenSRO serves none (OURS)
+			// A dungeon's destination (round 773): taken only in the
+			// dungeon the character is in; three i32 of dungeon space.
+			rid, in := dungeonOf(e.Zone)
+			if !in || uint16(rid) != m.Region {
+				return nil
+			}
+			x, y, z = worldmap.DungeonToWorld(float64(m.X), float64(m.Y), float64(m.Z))
+		} else {
+			if _, in := dungeonOf(e.Zone); in {
+				return nil // a field destination from inside a dungeon
+			}
+			here, _, _ := regionLocalOf(e.Zone, e.Pos)
+			if !regionsAdjacent(here, m.Region) {
+				return nil // outside the 3 x 3 regions (FUN_0048c2d0)
+			}
+			x, z = worldOfRegionLocal(e.Zone, m.Region, float64(m.LocalX), float64(m.LocalZ))
+			y = float64(m.LocalY)
 		}
-		here, _, _ := regionLocalOf(e.Zone, e.Pos)
-		if !regionsAdjacent(here, m.Region) {
-			return nil // outside the 3 x 3 regions (FUN_0048c2d0)
-		}
-		x, z := worldOfRegionLocal(e.Zone, m.Region, float64(m.LocalX), float64(m.LocalZ))
-		order.Dest = world.Position{X: x, Y: float64(m.LocalY), Z: z}
+		order.Dest = world.Position{X: x, Y: y, Z: z}
 		// Round 749's review, F10, and its verification, FP1 (OURS): a
 		// destination's height is bounded as a claim's is, from the last
 		// height the client gave (world.Entity.HeightAllows).
-		if !e.HeightAllows(x, order.Dest.Y, z, claimHeight, claimSanity) {
+		if !e.HeightAllows(x, y, z, claimHeight, claimSanity) {
 			return nil
 		}
 	}
@@ -502,6 +543,8 @@ func ensureMoverPass(hub *world.Hub) {
 // mover the group spawns and despawns, those players its 0x3015 / 0x3016.
 func moverPass(hub *world.Hub) {
 	pass := hub.AdvanceMovers(moverSpeed)
+	// The walk-in zones along each mover's path (round 773, walkin.go).
+	walkInPass(hub, pass.Moved)
 	for _, r := range pass.Crossings {
 		afterRelocate(r.Entity.Session, r, false, nil)
 	}

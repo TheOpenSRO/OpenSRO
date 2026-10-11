@@ -139,6 +139,9 @@ type Table struct {
 	Points    []Point
 	Links     []Link
 	Buildings []Building
+	// WalkIns are the walk-in zones (round 773, walkin.go), empty when the
+	// export has no walkin.csv.
+	WalkIns []WalkIn
 
 	pointByID      map[int]int
 	pointByObject  map[int]int
@@ -202,8 +205,19 @@ func Load(dir string) (*Table, error) {
 			f.Close()
 		}
 	}()
-	return Read(files[0], files[1], files[2])
+	t, err := Read(files[0], files[1], files[2])
+	if err != nil {
+		return nil, err
+	}
+	if err := t.loadWalkIns(dir); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
+
+func errorf(format string, a ...any) error { return fmt.Errorf(format, a...) }
+
+func parseFloat(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
 
 // Read parses the three CSV texts and joins them. It refuses a missing or
 // wrong header, a short row, a non-numeric field, a duplicate point, building

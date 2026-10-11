@@ -349,6 +349,10 @@ const HeadingRunLimit = 60 * time.Second
 type Pass struct {
 	Crossings []MoveResult
 	Ended     []MoveResult
+	// Moved is every character the pass settled, as it stands now -- one
+	// whose leg arrived in this pass included (round 773: the walk-in
+	// zones are tested along each mover's path, session/walkin.go).
+	Moved []Entity
 }
 
 // AdvanceMovers is the periodic pass over the characters with a leg: each
@@ -382,11 +386,14 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 	}
 	var crossed []crossing
 	var ended []*Entity
+	var out Pass
 	h.mu.Lock()
 	held := time.Now()
 	now := h.clock()
+	out.Moved = make([]Entity, 0, len(h.moving))
 	for _, e := range h.moving {
 		h.settleLocked(e, now)
+		out.Moved = append(out.Moved, outLocked(e, now))
 		if m := e.Move; m != nil {
 			if s := speeds[e.CharacterID]; s > 0 {
 				rebaseLocked(e, now, s)
@@ -407,7 +414,6 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 	h.passHold.Store(int64(time.Since(held)))
 	h.mu.Unlock()
 
-	var out Pass
 	if len(crossed) == 0 && len(ended) == 0 {
 		return out
 	}

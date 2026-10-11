@@ -849,6 +849,10 @@ func decodeFrameRegion(rest []byte) (string, []byte, error) {
 // frame the coordinates were already in rather than changing it. arrival
 // names worldmap.WorldOrigin instead when the flag is on.
 func frameFor(zone string) string {
+	// A dungeon's frame is its own label (round 773, dungeon.go).
+	if _, ok := dungeonOf(zone); ok {
+		return zone
+	}
 	rx, ry, ok := worldmap.FrameFor(zone)
 	if !ok {
 		return ""
@@ -911,6 +915,14 @@ func ZoneBucket(zone string) string {
 //     snaps it onto the ground (the heights under the one frame are round
 //     571's table). oneWorld is then true.
 func arrival(zone string) (bucket string, pos world.Position, frame string, oneWorld bool) {
+	// A dungeon (round 773, dungeon.go): its own bucket and frame, at its
+	// entry -- under -single-frame too, since it has no frame to share.
+	if rid, ok := dungeonOf(zone); ok {
+		if at, served := dungeonEntry(rid); served {
+			return zone, at, zone, false
+		}
+		return zone, spawnPos, zone, false
+	}
 	if singleFrame.Load() {
 		if x, z, ok := worldmap.Landing(zone, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1]); ok {
 			frame = fmt.Sprintf("%d/%d", worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
@@ -1190,6 +1202,11 @@ func zoneSpotGM(username string) bool {
 // spot is no teleport to an arbitrary point. Any other spot is ignored and the
 // zone lands as without one.
 func changeZoneLanding(req *ChangeZoneRequest, mid world.Position, gm bool) world.Position {
+	// A dungeon lands at its entry (arrival); a spot is region-local, which a
+	// dungeon has none of (round 773).
+	if _, ok := dungeonOf(req.Zone); ok {
+		return mid
+	}
 	if req.HasSpot && (gm || knownZoneSpot(req.Zone, float64(req.SpotX), float64(req.SpotZ))) {
 		x, z := float64(req.SpotX), float64(req.SpotZ)
 		if !math.IsNaN(x) && !math.IsNaN(z) && x >= 0 && x < worldmap.RegionSpan && z >= 0 && z < worldmap.RegionSpan {
@@ -1451,6 +1468,7 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 			// the server named for it (round 749).
 			forgetWarpLanding(left.CharacterID)
 			forgetLandings(left.CharacterID)
+			forgetWalkIn(hub, left.CharacterID)
 		}
 		// Nor may it save where the stale session last stood, or tell the
 		// zone the character left: the live session's entity is still there,
@@ -1618,6 +1636,7 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// named: the client's placement on its ground is taken there (round 749,
 	// destmove.go relocationAdmits).
 	noteArrivalLanding(owned.ID, zone, pos)
+	noteWalkInArrival(hub, owned.ID, bucket, pos) // round 773, walkin.go
 	// The heading comes back with a restored position (round 637's review
 	// follow-up; character.HeadingStore, OURS): the zone sees the character
 	// facing the way it left, and so does its own client (the result's own
@@ -1774,7 +1793,8 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// A walled caster's landing is its client's to report (round 646,
 	// walls.go noteWarpLanding): the root holds it where it lands.
 	noteZoneWarpLanding(old.CharacterID, zone, pos, time.Now())
-	noteArrivalLanding(old.CharacterID, zone, pos) // round 749, destmove.go
+	noteArrivalLanding(old.CharacterID, zone, pos)       // round 749, destmove.go
+	noteWalkInArrival(hub, old.CharacterID, bucket, pos) // round 773, walkin.go
 	// The new label and frame are what a later save writes under, and the
 	// arrival itself is saved at once under -persist-position (round 573).
 	rememberPlace(sess, zone, frame, time.Now())
@@ -1924,6 +1944,8 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// is already there. A block crossing spawns and despawns both ways, as
 	// before (round 737, playerview.go).
 	stopRelay(sess, moved, false)
+	// A walk-in zone the reported walk crossed (round 773, walkin.go).
+	walkInClaimed(hub, entity, req.Relocated)
 	// Under -persist-position the walk is saved at most once every
 	// positionSaveInterval (round 573), so a crash loses little of it --
 	// after the relay (savePositionEvery).

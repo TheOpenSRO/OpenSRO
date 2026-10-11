@@ -73,6 +73,12 @@ func Reach(from, to Place, limit float64, horizontal bool) int {
 	}
 	var dx, dz float64
 	if fd {
+		// Two different dungeons share no space (OURS, round 773: the region
+		// test FUN_00430ce0 was read for field regions only; a rid spelt
+		// signed and unsigned is one dungeon).
+		if from.Region&0xFFFF != to.Region&0xFFFF {
+			return ErrInteractionTarget
+		}
 		dx, dz = to.X-from.X, to.Z-from.Z
 	} else {
 		fy, ty := from.Region&0xFF, to.Region&0xFF

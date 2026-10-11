@@ -2322,12 +2322,29 @@ func exportTeleport(outDir string, paths []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "export-refdata: wrote %d %s rows, skipped %d, %d with service 0\n", written, tb.out, skipped, unserviced)
 	}
+	// The walk-in zones (round 773), when both of their tables are given.
+	ez, hasEZ := inputs["eventzonedata.txt"]
+	objstr, hasOS := inputs["objectstring.ifo"]
+	switch {
+	case hasEZ && hasOS:
+		if err := exportWalkIns(outDir, tableRows[0], ez, objstr); err != nil {
+			return err
+		}
+	case hasEZ || hasOS:
+		return fmt.Errorf("-mode teleport's walk-in zones need both eventzonedata.txt and objectstring.ifo")
+	default:
+		// An export without them has no walkin.csv; one left from an
+		// earlier export would name points this one may not have.
+		if err := removeIfExists(filepath.Join(outDir, teleport.WalkInsFile)); err != nil {
+			return err
+		}
+	}
 	t, err := teleport.Load(outDir)
 	if err != nil {
 		return fmt.Errorf("the exported tables do not load: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "export-refdata: teleport network loads back: %d points, %d links, %d buildings\n",
-		len(t.Points), len(t.Links), len(t.Buildings))
+	fmt.Fprintf(os.Stderr, "export-refdata: teleport network loads back: %d points, %d links, %d buildings, %d walk-in zones\n",
+		len(t.Points), len(t.Links), len(t.Buildings), len(t.WalkIns))
 	return nil
 }
 

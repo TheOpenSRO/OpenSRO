@@ -166,6 +166,10 @@ func DecodeTeleportResult(data []byte) (*TeleportResult, error) {
 // -teleport-free. logger may be nil.
 func TeleportHandler(chars character.Store, eq equipment.Store, hub *world.Hub, network *teleport.Table, gate *gm.Gate, free bool, logger *slog.Logger, zerk *berserk.Tracker) gateway.Handler {
 	t := &teleporter{chars: chars, eq: eq, hub: hub, network: network, gate: gate, free: free, logger: logger, zerk: zerk}
+	// The dungeons the network serves, and their entries, and the walk-in
+	// zones (round 773).
+	InstallDungeonEntries(network)
+	installWalkIns(t)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpTeleportUse:
@@ -382,12 +386,10 @@ func (t *teleporter) reach(e world.Entity, p teleport.Point) (code int, measured
 	if _, ok := t.network.BuildingByID(p.ObjectID); ok {
 		limit = teleport.RangeStructure
 	}
-	fx, fy, ok := entityFrame(e.Zone)
+	from, ok := placeOfEntity(e)
 	if !ok {
 		return teleport.ErrInteractionTarget, true
 	}
-	rx, ry, lx, lz := worldmap.FromWorld(e.Pos.X, e.Pos.Z, fx, fy)
-	from := teleport.Place{Region: worldmap.RegionID(rx, ry), X: lx, Y: e.Pos.Y, Z: lz}
 	code = teleport.ErrInteractionTarget
 	for _, to := range places {
 		switch c := teleport.Reach(from, to, limit, true); {
@@ -398,6 +400,23 @@ func (t *teleporter) reach(e world.Entity, p teleport.Point) (code int, measured
 		}
 	}
 	return code, true
+}
+
+// placeOfEntity is a hub entity's place as the tables name one: its region
+// and the local x, y, z there -- in a dungeon (round 773) the rid and the
+// dungeon-space point, which teleport.Reach compares as they are. ok is false
+// for a zone with no frame and no dungeon.
+func placeOfEntity(e world.Entity) (teleport.Place, bool) {
+	if rid, ok := dungeonOf(e.Zone); ok {
+		dx, dy, dz := worldmap.WorldToDungeon(e.Pos.X, e.Pos.Y, e.Pos.Z)
+		return teleport.Place{Region: rid, X: dx, Y: dy, Z: dz}, true
+	}
+	fx, fy, ok := entityFrame(e.Zone)
+	if !ok {
+		return teleport.Place{}, false
+	}
+	rx, ry, lx, lz := worldmap.FromWorld(e.Pos.X, e.Pos.Z, fx, fy)
+	return teleport.Place{Region: worldmap.RegionID(rx, ry), X: lx, Y: e.Pos.Y, Z: lz}, true
 }
 
 // entityFrame is the region a hub entity's coordinates are relative to: the
@@ -415,11 +434,23 @@ func entityFrame(zone string) (rx, ry int, ok bool) {
 // -- its own centre, or worldmap.WorldOrigin under -single-frame -- and the
 // point named in that frame by worldmap.ToWorld (region y drives world X,
 // region x drives world Z, Z mirrored: AGENTS.md, worldmap's measured
-// columns), at spawnPos's height. ok is false for a dungeon point (a negative
-// region id: worldmap has no frame for one).
+// columns), at spawnPos's height. A dungeon point (a negative region id) lands
+// in its dungeon since round 773; ok is false for one in an instanced world.
 func teleportArrival(p teleport.Point) (zone, bucket string, pos world.Position, frame string, ok bool) {
-	if p.Region < 0 {
-		return "", "", world.Position{}, "", false
+	if worldmap.IsDungeonRegion(p.Region) {
+		// A dungeon point (round 773, dungeon.go): the dungeon's own label,
+		// bucket and frame, at the point -- its x, y, z are dungeon space,
+		// READ as the field's are (0x407760 copies the record's region word
+		// and x/y/z words). The height is the table's: a dungeon's floors
+		// stack, so 0 could name another floor. Only the open world's
+		// dungeons are served (inOpenWorld); the instanced ones -- the job
+		// temple, the Medusa and Zealot rooms -- stay refused (OURS).
+		if !inOpenWorld(p) {
+			return "", "", world.Position{}, "", false
+		}
+		zone = worldmap.DungeonZone(p.Region)
+		x, y, z := worldmap.DungeonToWorld(float64(p.X), float64(p.Y), float64(p.Z))
+		return zone, zone, world.Position{X: x, Y: y, Z: z}, zone, true
 	}
 	rx, ry := worldmap.RegionXY(p.Region)
 	zone = teleportZoneFor(rx, ry)

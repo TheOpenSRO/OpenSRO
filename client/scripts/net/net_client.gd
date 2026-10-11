@@ -271,6 +271,10 @@ static var qa_rx_packets := 0
 static var qa_group_players := 0
 static var qa_groups := 0
 var _spawn_frame := Vector2i(-1, -1)
+## The dungeon the last result's FrameRegion names ("dungeon/<rid>", round
+## 773; DungeonWorld.rid_of_zone), or -1: positions are then dungeon space and
+## a click goes out in 0x7021's dungeon form.
+var _spawn_dungeon := -1
 ## Every character's berserk body mode (0x30BF kind 4) as this connection was
 ## last told (round 651): character id -> 1 while berserk. Kept, cleared and
 ## dropped with buff_roster, and for the same reason -- the server's in-view
@@ -887,6 +891,10 @@ func report_stop(x: float, y: float, z: float) -> void:
 ## world point the server will walk to -- the truncated one -- or
 ## Vector3.INF when no frame is known (nothing is sent).
 func move_order_destination(at: Vector3) -> Vector3:
+	if _spawn_dungeon >= 0:
+		var d := DungeonWorld.to_dungeon(at)
+		_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_dungeon_destination(_spawn_dungeon, d.x, d.y, d.z))
+		return quantize_destination(at)
 	if _spawn_frame.x < 0:
 		return Vector3.INF
 	var l := DestMoveNet.local_of_world(at.x, at.z, _spawn_frame)
@@ -899,6 +907,9 @@ func move_order_destination(at: Vector3) -> Vector3:
 ## the client's 5.0 rule compares what the server compares. Vector3.INF when
 ## no frame is known.
 func quantize_destination(at: Vector3) -> Vector3:
+	if _spawn_dungeon >= 0:
+		var d := DungeonWorld.to_dungeon(at)
+		return DungeonWorld.to_world(Vector3(float(int(d.x)), float(int(d.y)), float(int(d.z))))
 	if _spawn_frame.x < 0:
 		return Vector3.INF
 	var l := DestMoveNet.local_of_world(at.x, at.z, _spawn_frame)
@@ -1333,6 +1344,7 @@ func _start_user_view(frame: String) -> void:
 	zone_departures.clear()
 	character_states.clear()
 	_spawn_frame = UserSpawnNet.parse_frame(frame)
+	_spawn_dungeon = DungeonWorld.rid_of_zone(frame)
 
 ## OpPlayerZoneNotice (round 737's review, OURS): u8 kind (1 entered, 2
 ## left), u32 uid, u16 + name -- a real arrival in the zone or a leave of

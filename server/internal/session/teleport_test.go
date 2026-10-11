@@ -382,7 +382,8 @@ func TestTeleportRefusals(t *testing.T) {
 		// talks to stands for it. (Until round 642 point 40, a ferry, was
 		// refused here too; round 642's teleport_npc_test.go serves it.)
 		{"a point with no object is not a gate", teleportRigOpts{level: 30, gold: 10000}, 55, 2, false, teleportNoLink},
-		{"a dungeon destination", teleportRigOpts{level: 30, gold: 10000}, 1, 50, false, 0},
+		// A dungeon destination is served since round 773
+		// (dungeon773_test.go); an instanced one is refused there.
 		{"no teleport network loaded", teleportRigOpts{level: 30, gold: 10000}, 1, 2, false, 0},
 		{"dead", teleportRigOpts{level: 30, gold: 10000}, 1, 2, true, 0},
 	}
