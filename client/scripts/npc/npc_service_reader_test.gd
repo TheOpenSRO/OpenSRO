@@ -753,8 +753,10 @@ func _initialize() -> void:
 	no_right.button_mask = 0
 	_check(has_orbit and not orbits.call(no_right, true, view_free),
 		"an orbiting flag left set with no right button down turns nothing")
-	_check(has_orbit and not orbits.call(drag_pane, true, view_third),
-		"the third-person view does not orbit (the camera follows the player)")
+	# Round 778 (READ): the original's third-person view still takes the
+	# drag's pitch (its yaw follows the heading); it took none here before.
+	_check(orbits.call(drag_pane, true, view_third),
+		"the third-person view takes the drag (its pitch; World3D._input keeps its yaw)")
 	_check(has_orbit and not orbits.call(InputEventMouseButton.new(), true, view_free), "a button event is not orbit motion")
 	if w3d != null:
 		var arm := SpringArm3D.new()

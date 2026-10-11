@@ -95,7 +95,7 @@ func _initialize() -> void:
 		"the catcher multiplies by the sun's shadow alone, at its own priority")
 	_check(src.contains("single_patch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF") and src.contains("(g as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF"),
 		"the terrain and placed objects cast no shadow (only characters do, as the original's scenery)")
-	_check(src.contains("const SHADOW_MAP_DISTANCE := 400.0"), "Detail's shadow reach is 400: the READ 300 from the player plus the camera's 90")
+	_check(src.contains("const SHADOW_MAP_DISTANCE := 460.0"), "Detail's shadow reach is 460: the READ 300 from the player plus the camera's READ 150 (round 778)")
 
 func _process(_delta: float) -> bool:
 	if _failures == 0:

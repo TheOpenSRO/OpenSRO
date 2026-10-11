@@ -287,52 +287,30 @@ const STEP_HEIGHT_FRACTION := 0.22
 ## the player (independent of the player's own facing), left-click on the
 ## ground walks the player there, and the scroll wheel zooms. No key moves
 ## the character (round 608: the retail defaults walk by clicking; KeyMap).
-const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of mouse drag
-## Real, empirically-confirmed sign convention (2026-08-26, see
-## docs/WORLD_ISSUES.md): SpringArm3D pushes its child to local *+Z*, not
-## -Z, so a *negative* CameraArm pitch is what lifts the camera above and
-## behind the player -- the previous +42 base pitch (with a compensating
-## 180 yaw and a 180 yaw flip on Camera3D itself) actually pushed the
-## camera down and in *front* of the player, immediately collapsing
-## against the ground via the spring's own collision check. That's the
-## real root cause of the reported "FPS-like camera" bug, confirmed via a
-## headless SpringArm3D probe (spring pushes a child to local (0,0,+L)).
-## -80 (nearly straight overhead) to -10 (nearly flat behind) is the real
-## valid range for a top-down-behind view under this corrected convention.
-const CAMERA_PITCH_MIN_DEGREES := -80.0
-const CAMERA_PITCH_MAX_DEGREES := -10.0
-## How far one scroll notch moves the camera, in world units. Sized against
-## the CAMERA_ZOOM_MIN..MAX range below (20..90) so the full range takes a
-## handful of notches rather than one flick or twenty. **Doc corrected
-## 2026-09-02**: the previous comment here derived this from a ~139-unit
-## character height, which REAL_CHARACTER_NATIVE_HEIGHT has since shown to
-## be wrong by roughly 10x (the real assembled character measures ~14.3
-## units), so that reasoning no longer applies.
-const CAMERA_ZOOM_STEP := 15.0
-## Third-person camera distance range, in world units.
-##
-## **Widened 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-fifth round).
-## These were previously derived from vertical-FOV math -- "the closest
-## distance that still fits the whole character in frame" -- which answers
-## a different question than "where should a third-person MMO camera sit".
-## After REAL_CHARACTER_NATIVE_HEIGHT corrected the character to ~14.3
-## units, that math gave a 12.4-24.8 range, i.e. under two character
-## heights, so the character filled the frame and almost no world was
-## visible around them.
-##
-## Chosen instead from real side-by-side renders of the real Dunhuang ferry
-## region at several distances: ~45 units (about 3 character heights) frames
-## like a real third-person MMO -- the character reads clearly while the
-## surrounding real terrain, buildings and horizon stay visible. The range
-## brackets that so a player can pull in close to inspect their character or
-## pull back for situational awareness.
-##
-## Unlike the terrain and skeleton constants elsewhere in this project, this
-## is an openly-declared **framing choice**, not a value recovered from real
-## game data -- no real camera-distance data has been found. It is stated
-## that way rather than dressed up as a measurement.
-const CAMERA_ZOOM_MIN := 20.0
-const CAMERA_ZOOM_MAX := 90.0
+## Radians of turn per pixel of drag: 0.005 (READ, round 778; RetailCamera
+## has the address), carried here in degrees because the arm is driven in
+## degrees. Was 0.3 (ours) until round 778.
+const CAMERA_ORBIT_SENSITIVITY := RetailCamera.DRAG_DEGREES_PER_PIXEL # degrees of camera rotation per pixel of mouse drag
+## Sign convention (2026-08-26, MEASURED by a headless SpringArm3D probe):
+## the camera sits at the arm's local *+Z*, so a *negative* CameraArm pitch
+## lifts the camera above and behind the player and a positive one drops it
+## below, looking up. The arm's pitch is the negative of the original's.
+## Round 778 (READ, RetailCamera.PITCH_LIMIT): the original turns its pitch
+## between -1.0708 and +1.0708 radians, so the camera looks down at most 61.35
+## degrees and UP at most 61.35 degrees. Until round 778 this was -80..-10
+## (ours): it could look down nearly straight but never up at all.
+const CAMERA_PITCH_MIN_DEGREES := -RetailCamera.PITCH_LIMIT_DEGREES
+const CAMERA_PITCH_MAX_DEGREES := RetailCamera.PITCH_LIMIT_DEGREES
+## One wheel notch: 6 units (READ, round 778: delta 120 / 20.0 in
+## CGInterface::vslot_036). Was 15 (ours).
+const CAMERA_ZOOM_STEP := RetailCamera.ZOOM_STEP
+## The zoom's range, world units: 10..150 (READ, round 778: the floats at
+## 0xd81a88 and 0xdb8d74). Was 20..90 until round 778 -- an openly declared
+## framing choice made when "no real camera-distance data had been found"
+## (the fifty-fifth round); the binary has it. Looking up pulls the camera in
+## further (RetailCamera.look_up_max) and the collision ray can shorten it.
+const CAMERA_ZOOM_MIN := RetailCamera.ZOOM_MIN
+const CAMERA_ZOOM_MAX := RetailCamera.ZOOM_MAX
 ## The camera's vertical field of view (round 706; READ in round 648 and
 ## re-read): the camera's constructor `FUN_00bae0a0` stores 60.0 (0xd89ddc)
 ## at +0x50 and sets +0x44 (perspective); `CGFXVideo3d::FUN_00bae810` passes
@@ -340,18 +318,12 @@ const CAMERA_ZOOM_MAX := 90.0
 ## `FUN_00aa4ef0`, a D3DXMatrixPerspectiveFovLH: m11 = cot(fov / 2), m00 =
 ## m11 / aspect -- so 60 degrees vertical at any aspect, which is Godot's
 ## Camera3D.fov under KEEP_HEIGHT. Godot's default was 75 until then, so the
-## same spot drew everything about 1.3 times smaller than the original. The
-## zoom range above (OURS, a framing choice) was kept.
+## same spot drew everything about 1.3 times smaller than the original.
 const CAMERA_FOV_DEG := 60.0
-## The scene's own authored default CameraArm.rotation_degrees (see
-## World3D.tscn) -- orbit-dragging (right-click) moves the arm's *local*
-## yaw/pitch away from this and nothing ever moved it back, so after any
-## orbit the camera stayed stuck at whatever angle it was last dragged to
-## even as the player kept walking around -- the real cause of "camera
-## isn't centered on my character" (2026-08-27 real user report). Recenters
-## back to this default automatically while the player is moving and not
-## actively orbiting, the same auto-realign behavior most third-person
-## MMO cameras use.
+## The scene's own authored entry pitch (World3D.tscn's CameraArm; OURS --
+## the original keeps whatever camera the scene before left, and its
+## config\cameradata.txt names a pitch and distance for only two spots,
+## round 778). Nothing resets the camera to it any more.
 const DEFAULT_CAMERA_PITCH_DEGREES := -42.0
 ## **Corrected 2026-08-31** (see docs/WORLD_ISSUES.md's thirty-first round):
 ## was 0.0, matching the scene's old CameraArm yaw -- both were real,
@@ -372,34 +344,50 @@ const DEFAULT_CAMERA_YAW_DEGREES := 180.0
 ## gives them. The camera arm hangs from a pivot that follows the player's
 ## *position* only (not the body's turn -- as a child of the body it swung
 ## round every time a click turned the character), and the view decides
-## what else the pivot and the arm do:
+## what else the pivot and the arm do (READ, round 778; RetailCamera's view
+## note has the addresses):
 ##   free          -- follows position; yaw and pitch are the player's to
 ##                    drag, and nothing moves them otherwise (the default)
-##   third_person  -- the pivot turns with the character, so the camera
-##                    sits behind whichever way they face; drags do nothing
-##   quarter       -- pitch locked, yaw free to drag
-## The quarter view's pitch and how fast the third-person view turns are
-## this project's choices; nothing found gives the original's numbers.
+##   third_person  -- the pivot turns with the character, every frame and
+##                    with no easing, so the camera sits straight behind
+##                    whichever way they face; the drag turns the pitch only
+##   quarter       -- the pitch stays where it was; the drag turns the yaw
+## Switching writes no pitch in the original. Until round 778 the quarter
+## view jumped to a pitch of -55 and the third-person view eased round at
+## 360 degrees a second (both ours) and took no pitch drag.
 const CAMERA_VIEW_FREE := "free"
 const CAMERA_VIEW_THIRD_PERSON := "third_person"
 const CAMERA_VIEW_QUARTER := "quarter"
 const CAMERA_VIEWS := [CAMERA_VIEW_FREE, CAMERA_VIEW_THIRD_PERSON, CAMERA_VIEW_QUARTER]
-const QUARTER_VIEW_PITCH_DEGREES := -55.0
-const THIRD_PERSON_TURN_DEGREES_PER_SECOND := 360.0
 var _camera_view := CAMERA_VIEW_FREE
 var _camera_pivot: Node3D = null
+## The zoom (round 778, RetailCamera): the distance asked for (the wheel's,
+## retail +0x3e8), the one in force (+0x3ec; looking up pulls it in), the
+## collision ray's while it cuts the camera short (-1 when it does not), and
+## the arm's spring_length as this code last set it -- a write by anything
+## else (a QA hook) is taken as a new zoom. The arm's own spring and
+## collision are off: the camera is placed here (_place_camera).
+var _camera_wanted := 45.0
+var _camera_current := 45.0
+var _camera_hit := -1.0
+var _camera_spring_seen := NAN
+## The own character's fade when the camera looks up (RetailCamera.Ramp),
+## drawn on the model by RetailCamera.ModelFade.
+var _self_fade := RetailCamera.Ramp.new()
+var _self_fade_model := RetailCamera.ModelFade.new()
 
 func set_camera_view(view: String) -> void:
 	if not CAMERA_VIEWS.has(view):
 		view = CAMERA_VIEW_FREE
+	# The yaw is a world yaw in the original, kept across a switch: fold the
+	# pivot's turn into the arm before the pivot changes hands.
+	if _camera_pivot != null and _camera_view == CAMERA_VIEW_THIRD_PERSON and view != CAMERA_VIEW_THIRD_PERSON:
+		camera_arm.rotation.y += _camera_pivot.rotation.y
+		_camera_pivot.rotation.y = 0.0
 	_camera_view = view
 	match view:
 		CAMERA_VIEW_THIRD_PERSON:
-			camera_arm.rotation_degrees = Vector3(DEFAULT_CAMERA_PITCH_DEGREES, DEFAULT_CAMERA_YAW_DEGREES, 0.0)
-		CAMERA_VIEW_QUARTER:
-			camera_arm.rotation_degrees.x = QUARTER_VIEW_PITCH_DEGREES
-			if _camera_pivot != null:
-				_camera_pivot.rotation.y = 0.0
+			camera_arm.rotation_degrees.y = DEFAULT_CAMERA_YAW_DEGREES
 		_:
 			if _camera_pivot != null:
 				_camera_pivot.rotation.y = 0.0
@@ -416,15 +404,16 @@ var _video: VideoOptions = null
 var _video_applied := false
 ## The sun's shadow-map reach under Shadow Detail "Detail" (round 702), from
 ## the camera. Godot's default, 100, faded every shadow out from 80 units,
-## so zooming the camera out (20..90 units from the player) made the
-## player's own shadow and its surroundings' come and go. The original's
-## projected shadows cover the characters whose key in its list is at most
-## 3000 (SWorld::vslot_025's `3000 < key` break), the key being
+## so zooming the camera out (10..150 units from the player since round 778)
+## made the player's own shadow and its surroundings' come and go. The
+## original's projected shadows cover the characters whose key in its list is
+## at most 3000 (SWorld::vslot_025's `3000 < key` break), the key being
 ## `(int)(|object - player| x 10)` (READ, round 702 review:
 ## CICPlayer::vslot_005 0x9d6f19..0x9d6fad) -- 300 units from the PLAYER.
-## So 400: those 300 plus the camera's farthest 90 from the player, plus a
-## margin (OURS), and no shadow near the player changes with the zoom.
-const SHADOW_MAP_DISTANCE := 400.0
+## So 460: those 300 plus the camera's farthest 150 from the player (READ,
+## RetailCamera.ZOOM_MAX; 90 until round 778, which gave 400), plus a margin
+## (OURS), and no shadow near the player changes with the zoom.
+const SHADOW_MAP_DISTANCE := 460.0
 ## The terrain patches built, for Detail's catcher (ShadowCatcher).
 var _terrain_patches: Array = []
 ## The original's bloom (RetailBloom, round 702 review), the Bloom row.
@@ -762,15 +751,77 @@ func _on_video_options_applied(o: VideoOptions) -> void:
 	apply_video_options(o)
 
 ## Keeps the pivot on the player and, in the third-person view, turned the
-## way they face.
+## way they face (at once: the original sets the yaw from the heading every
+## frame, RetailCamera's view note), then places the camera.
 func _follow_with_camera(delta: float) -> void:
 	if _camera_pivot == null:
 		return
 	_camera_pivot.global_position = player.global_position
 	if _camera_view == CAMERA_VIEW_THIRD_PERSON:
-		_camera_pivot.rotation.y = rotate_toward(
-			_camera_pivot.rotation.y, player.rotation.y,
-			deg_to_rad(THIRD_PERSON_TURN_DEGREES_PER_SECOND) * delta)
+		_camera_pivot.rotation.y = player.rotation.y
+	_place_camera(delta)
+
+## The original's camera placer and collision ray, once a physics step
+## (round 778; READ, RetailCamera has each rule and address):
+## - the distance in force settles against the one asked for and, looking
+##   up, the look-up limit (RetailCamera.settle);
+## - the arm's pivot -- the look-at point -- rises over the feet by
+##   RetailCamera.target_height of the distance (the collided one while the
+##   ray cuts it short, as the original's +0x3f8);
+## - a ray from 5 units out to the distance, on the arm's collision mask (the
+##   terrain and the objects; QA_FREE clears it), puts the camera 5 short of
+##   what it hits;
+## - the own model's fade follows the pitch (RetailCamera.Ramp).
+## The arm's own spring is off (set where the pivot is made); this places the
+## Camera3D at the arm's local +Z itself. The one-frame lag the original has
+## (its +0x37c keeps the collided distance one frame after the ray clears) is
+## not carried.
+func _place_camera(delta: float) -> void:
+	if camera_3d == null or camera_3d.get_parent() != camera_arm:
+		return
+	# SpringArm3D turns its own placer back on when it enters the tree again.
+	if camera_arm.is_physics_processing_internal():
+		camera_arm.set_physics_process_internal(false)
+	if not is_equal_approx(camera_arm.spring_length, _camera_spring_seen):
+		_camera_wanted = camera_arm.spring_length
+		_camera_current = _camera_wanted
+		_camera_spring_seen = camera_arm.spring_length
+	var pitch := RetailCamera.retail_pitch(camera_arm.rotation_degrees.x)
+	_camera_current = RetailCamera.settle(_camera_current, _camera_wanted, pitch)
+	camera_arm.position = Vector3(0.0, RetailCamera.target_height(_camera_hit if _camera_hit >= 0.0 else _camera_current), 0.0)
+	var dist := _camera_current
+	_camera_hit = -1.0
+	if camera_arm.collision_mask != 0 and _camera_current > RetailCamera.COLLISION_SKIP and is_inside_tree():
+		var target := camera_arm.global_position
+		var dir := camera_arm.global_transform.basis.z.normalized()
+		var q := PhysicsRayQueryParameters3D.create(target + dir * RetailCamera.COLLISION_SKIP,
+			target + dir * _camera_current, camera_arm.collision_mask, [player.get_rid()])
+		var hit := get_world_3d().direct_space_state.intersect_ray(q)
+		if not hit.is_empty():
+			_camera_hit = RetailCamera.collided(target.distance_to(hit["position"]))
+			dist = _camera_hit
+	camera_3d.transform = Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, dist))
+	_self_fade.set_hidden(RetailCamera.fades(pitch))
+	_self_fade_model.apply(_player_skeleton, _self_fade.step(delta))
+
+## One `QA CAMERA` line (round 778, at each QA SHOT): the arm's pitch, the
+## zoom asked for and in force, the collision ray's cut, the look-at height,
+## the eye's height over the feet and its distance from the look-at point,
+## and the own model's alpha with how many of its meshes draw on fade twins.
+func _camera_report(shot: String) -> String:
+	var eye := camera_3d.global_position.y - player.global_position.y if camera_3d != null else NAN
+	return "QA CAMERA %s: pitch %.2f deg (retail %.4f), wanted %.2f, current %.2f, hit %.2f, look-at %.3f over the feet, eye %.2f over the feet at %.2f, alpha %d (%d meshes faded)" % [
+		shot, camera_arm.rotation_degrees.x, RetailCamera.retail_pitch(camera_arm.rotation_degrees.x),
+		_camera_wanted, _camera_current, _camera_hit, camera_arm.position.y, eye,
+		camera_3d.position.z if camera_3d != null else NAN, _self_fade.alpha, _self_fade_model.meshes.size()]
+
+## A wheel step of `notches` (positive: forward, in), from the distance in
+## force (CGInterface::vslot_036): both distances take the new one.
+func _camera_wheel(notches: float) -> void:
+	_camera_current = RetailCamera.wheel(_camera_current, notches)
+	_camera_wanted = _camera_current
+	camera_arm.spring_length = _camera_current
+	_camera_spring_seen = _camera_current
 ## How close player must get to a click-to-move target before it's
 ## considered reached and cleared (OURS; the attack approach, CombatNet.
 ## approach_aim, is built on it). It did NOT stop the walk oscillating on its
@@ -2781,6 +2832,14 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	add_child(_camera_pivot)
 	_camera_pivot.global_position = player.global_position
 	camera_arm.reparent(_camera_pivot, false)
+	# The camera is placed by _place_camera (round 778): the arm's own spring
+	# and sphere cast are stopped (the internal physics process is what
+	# re-places its children -- round 685's review), its spring_length and
+	# collision_mask kept as the zoom asked for and the ray's mask.
+	camera_arm.set_physics_process_internal(false)
+	_camera_wanted = camera_arm.spring_length
+	_camera_current = _camera_wanted
+	_camera_spring_seen = camera_arm.spring_length
 	set_camera_view(ClientSettings.camera_view())
 
 ## Pushes the camera's far clipping plane out far enough to actually see
@@ -14994,6 +15053,7 @@ func _qa_advance_shots() -> void:
 			_qa_plates_report(_qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_patches(self, _qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_depth(self, _qa_shots[_qa_shot_index]["name"])
+		print(_camera_report(_qa_shots[_qa_shot_index]["name"]))
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return
@@ -20606,9 +20666,9 @@ func _unhandled_input(event: InputEvent) -> void:
 					(" to (%.1f, %.1f, %.1f)" % [_move_target.x, _move_target.y, _move_target.z]) if took == "walk" and _has_move_target and not _move_heading_run else ""])
 			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+			_camera_wheel(event.factor if event.factor > 0.0 else 1.0)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			camera_arm.spring_length = clampf(camera_arm.spring_length + CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+			_camera_wheel(-(event.factor if event.factor > 0.0 else 1.0))
 		# Only the right button orbits the camera (READ: vslot_017 case 0x200
 		# tests the right byte +0x25a, or the middle +0x259 with the swap
 		# flag; never the left +0x258). A held left button does nothing.
@@ -20633,11 +20693,11 @@ func _unhandled_input(event: InputEvent) -> void:
 ## holds the mouse focus (a left press on a window made while the right button
 ## was held), not to _unhandled_input. The flag then stays set with no button
 ## down, and without this check plain motion would turn the camera everywhere.
-## Static so the suite can drive it without a running world.
-static func orbit_motion_applies(event: InputEvent, orbiting: bool, camera_view: String) -> bool:
+## Static so the suite can drive it without a running world. Every view takes
+## the drag since round 778 (the third-person view turns its pitch; READ,
+## RetailCamera's view note); _input decides which angle each view turns.
+static func orbit_motion_applies(event: InputEvent, orbiting: bool, _view: String) -> bool:
 	if not orbiting or not (event is InputEventMouseMotion):
-		return false
-	if camera_view == CAMERA_VIEW_THIRD_PERSON:
 		return false
 	return ((event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_RIGHT) != 0
 
@@ -20701,9 +20761,13 @@ func _input(event: InputEvent) -> void:
 	# (orbit_motion_applies has why). The event is not marked handled: the
 	# control under the cursor still sees it, as before.
 	if orbit_motion_applies(event, _camera_orbiting, _camera_view):
+		# READ (round 778, RetailCamera): the pitch turns unless the view is
+		# the quarter view, the yaw unless it is the third-person one (whose
+		# yaw the heading sets every frame).
 		var motion := event as InputEventMouseMotion
-		camera_arm.rotation_degrees.y -= motion.relative.x * CAMERA_ORBIT_SENSITIVITY
-		if _camera_view == CAMERA_VIEW_FREE:
+		if _camera_view != CAMERA_VIEW_THIRD_PERSON:
+			camera_arm.rotation_degrees.y -= motion.relative.x * CAMERA_ORBIT_SENSITIVITY
+		if _camera_view != CAMERA_VIEW_QUARTER:
 			camera_arm.rotation_degrees.x = clampf(
 				camera_arm.rotation_degrees.x - motion.relative.y * CAMERA_ORBIT_SENSITIVITY,
 				CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
