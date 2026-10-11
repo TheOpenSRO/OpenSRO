@@ -2541,6 +2541,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_warning.setup(_ui_builder, HudNotice.STYLE_WARNING)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
+	# The reverse return scroll's box and map send the use (round 778).
+	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
 	_setup_console_and_help()
 	# The panels are built after the vitals arrive, so they are seeded from
 	# the same cached result rather than waiting for a signal that already
@@ -11162,6 +11164,11 @@ func _on_quickslot_activated(slot_index: int) -> void:
 	var item = _quickslot_items.get(slot_index)
 	if item != null and NetClient.current_character_name != "":
 		print("World3D: quickslot %d uses item %d at bag slot %d" % [slot_index, int(item["item"]), int(item["slot"])])
+		# A reverse return scroll opens its box (round 778), as the bag's
+		# right-click does.
+		if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.bag_item_types(int(item["slot"]))):
+			_hud_panels.open_reverse_return_box(int(item["slot"]))
+			return
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
@@ -13423,6 +13430,9 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_WORLDMAP=1 open the world map window over the world
 ##                          ("world", "both", or round 775's comma list of
 ##                          HudWorldmap.qa_apply steps: click:2001,up)
+##   OPENSRO_QA_REVERSE="box;map;pick:29"  the reverse return scroll's box,
+##                          its map button, a map point's popup (round 778,
+##                          _qa_reverse_return; send:<option>[:<id>] sends)
 ##   OPENSRO_QA_BUFFS="<skill>:<ms>[:<left>],..."  put these buffs on the
 ##                          buff bar as if the server had started them
 ##                          (duration ms, -1 for none; ms left), tokens
@@ -14172,6 +14182,11 @@ func _qa_step() -> void:
 				# Round 775: `click:<map id>`, `dungeon:<id>`, `up`, `down`
 				# steps (HudWorldmap.qa_apply), a third of a second in.
 				get_tree().create_timer(20.0 / 60.0).timeout.connect(_hud_worldmap.qa_apply.bind(qa_worldmap))
+		# Round 778: the reverse return scroll's box and map (QA only,
+		# _qa_reverse_return), a third of a second in.
+		var qa_reverse := OS.get_environment("OPENSRO_QA_REVERSE")
+		if qa_reverse != "":
+			get_tree().create_timer(20.0 / 60.0).timeout.connect(_qa_reverse_return.bind(qa_reverse))
 		# Round 693's renderer A/B: the sun's shadows off, so a Forward+ /
 		# Compatibility difference can be put on them or not. QA only.
 		if OS.get_environment("OPENSRO_QA_NOSHADOW") != "" and directional_light != null:
@@ -27282,9 +27297,15 @@ func _on_use_item_result(result) -> void:
 	UiSounds.use_replied(result.error == "")
 	if result.error != "":
 		# Logged, so a tester's log shows every refusal (composite review).
-		print("World3D: use item refused: %s" % result.error)
-		_log_system(result.error)
+		print("World3D: use item refused: %s (code 0x%x)" % [result.error, result.code])
+		# A refusal with an engine code (round 778: the scrolls') is the
+		# archive's own category-1 message (ErrorText.scroll_line).
+		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
 		return
+	if result.cast_ms > 0:
+		# An accepted scroll (round 778): the move follows when its delay
+		# runs out, as an OpChangeZoneResult this client did not ask for.
+		print("World3D: scroll accepted -- moving in %d ms" % result.cast_ms)
 	if _hud_player_info != null:
 		if result.max_hp > 0:
 			_hud_player_info.set_hp(result.hp, result.max_hp)
@@ -27306,6 +27327,61 @@ func _on_use_item_result(result) -> void:
 	# The stack shrank, so redraw the bag.
 	if NetClient.current_character_name != "":
 		NetClient.list_inventory(NetClient.current_character_name)
+
+## The reverse return scroll's choice (round 778): the use with its option
+## and, for the map option, the refoptionalteleport id.
+func _on_reverse_return_requested(slot: int, option: int, target: int) -> void:
+	if NetClient.current_character_name == "" or _player_dead:
+		return
+	print("World3D: reverse return scroll at bag slot %d, option %d, point %d" % [slot, option, target])
+	UiSounds.expect_use(_hud_panels.bag_item_types(slot) if _hud_panels != null else PackedInt32Array())
+	NetClient.use_item_option(NetClient.current_character_name, slot, option, target)
+
+## QA only (OPENSRO_QA_REVERSE, round 778): steps on the reverse return
+## scroll's flow, groups separated by `;` running two seconds apart so a
+## render catches each: `box` opens the box for the first reverse scroll in
+## the bag (slot -1 when there is none), `map` presses its map button,
+## `pick:<id>` clicks a map point's icon so its popup shows, `choose` presses
+## the popup's first button (the real send), `recall` / `death` press the
+## box's buttons, `send:<option>[:<id>]` sends a use directly, `wait` does
+## nothing. Each step logs the frame it ran on.
+func _qa_reverse_return(spec: String) -> void:
+	if _hud_panels == null:
+		return
+	var groups := spec.split(";")
+	for i in groups.size():
+		var steps: String = groups[i]
+		var run := func() -> void:
+			var slot := -1
+			for k in 128:
+				if HudPanels.is_reverse_return_scroll(_hud_panels.bag_item_types(k)):
+					slot = k
+					break
+			for step in steps.split(","):
+				var st := step.strip_edges()
+				var box := _hud_panels.reverse_return_box()
+				if st == "box":
+					_hud_panels.open_reverse_return_box(slot)
+				elif st == "map" and box != null:
+					box.member("MapPoint").emit_signal("pressed")
+				elif st == "recall" and box != null:
+					box.member("LastReturn").emit_signal("pressed")
+				elif st == "death" and box != null:
+					box.member("LastDeath").emit_signal("pressed")
+				elif st.begins_with("pick:") and _hud_worldmap != null:
+					_hud_worldmap.qa_pick(int(st.trim_prefix("pick:")))
+				elif st == "choose" and _hud_worldmap != null:
+					var buttons: Array = _hud_worldmap.select_popup_buttons()
+					if not buttons.is_empty():
+						(buttons[0] as BaseButton).emit_signal("pressed")
+				elif st.begins_with("send:"):
+					var parts := st.trim_prefix("send:").split(":")
+					_on_reverse_return_requested(slot, int(parts[0]), int(parts[1]) if parts.size() > 1 else 0)
+				print("QA REVERSE %s at frame %d (scroll slot %d)" % [st, Engine.get_frames_drawn(), slot])
+		if i == 0:
+			run.call()
+		else:
+			get_tree().create_timer(2.0 * i).timeout.connect(run)
 
 ## QA only: uses the first potion found in the bag, once. Driven by
 ## OPENSRO_QA_USEITEM; the ids are the real consumables the loot tables drop.

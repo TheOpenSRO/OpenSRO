@@ -270,3 +270,42 @@ static func alchemy_line(code: int, table: UiTextTable) -> String:
 		3:
 			return "That slot is empty."
 	return "Alchemy refused (code 0x%x)." % code
+
+## The use-item reply's refusals (round 778): the client's handler for 0xb04c,
+## Item_OnUseItemResult (0x87a7b0), reads a u16 code on a result other than 1
+## and calls FUN_00778190(1, code, ...) -- category 1 (READ, 0x87b665..
+## 0x87b689). The names are category 1's cases, decoded through its jump table
+## (code - 0x180b, index bytes 0x7bb6d4, targets 0x7bb438; the first push at
+## each target): 0x185b 0x7b9064, 0x185d 0x7b9038, 0x185e 0x7b906e, 0x185f
+## 0x7b919f, 0x1875 0x7b916f, 0x187a 0x7b8d3e, 0x1885 0x7b924d, 0x1886
+## 0x7b9257, 0x1889 0x7b9275, 0x18e9 0x7b956a, 0x18f2 0x7b95a6, 0x18f5
+## 0x7b95b0, 0x18fd 0x7b95fe. 2, outside the switch (below 0x180b), goes to
+## its default: the real client shows nothing, and this shows the server's
+## own words.
+const SCROLL_UIIT_BY_CODE := {
+	0x185b: "UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY",
+	0x185d: "UIIT_MSG_STRGERR_PREV_TELESCROLL_ALREADY_WORKING",
+	0x185e: "UIIT_MSG_STRGERR_CANT_TELEPORT_WITH_CART",
+	0x185f: "UIIT_MSG_STRGERR_REQUESTED_JOB_BLOCKED_BY_QUEST",
+	0x1875: "UIIT_MSG_STRGERR_MURDERER_CANT_USE_PORTAL_SCROLL",
+	0x187a: "UIIT_MSG_COSPETERR_CANT_USEITEM",
+	0x1885: "UIIT_MSG_STRGERR_CANT_FIND_LAST_TELEPOS",
+	0x1886: "UIIT_MSG_STRGERR_CANT_FIND_LAST_DIEDPOS",
+	0x1889: "UIIT_SKILL_USE_FAIL_CHAR_DEAD",
+	0x18e9: "UIIT_MSG_FORT_PORTALSTONE_FAIL_02",
+	0x18f2: "UIIT_MSG_FORT_ETC_ERROR_WRONGACTION_FORTWAR",
+	0x18f5: "UIIT_MSG_ITEM_USE_REVERSE_PORTAL_RETRUN_TO_INS",
+	0x18fd: "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT",
+}
+
+## A use-item refusal in words: the archive's text for the code's category-1
+## name, else `reason` (the server's own words).
+static func scroll_line(code: int, table: UiTextTable, reason: String) -> String:
+	var key: String = SCROLL_UIIT_BY_CODE.get(code, "")
+	if key != "" and table != null and table.has(key):
+		var text := table.get_text(key).strip_edges()
+		if text != "" and text != key:
+			return text
+	if reason != "":
+		return reason
+	return "That cannot be used (code 0x%x)." % code

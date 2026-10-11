@@ -33,9 +33,25 @@ class Result extends RefCounted:
 	var has_berserk: bool = false
 	var berserk_gauge: int = 0
 	var berserk_active: bool = false
+	## Round 778: the engine's refusal code (the scrolls' -- the client's
+	## category-1 table, ErrorText.scroll_line), 0 when `error` alone says
+	## why; and an accepted scroll's delay before its move, in ms. Both after
+	## the berserk tail; 0 from a server before them.
+	var code: int = 0
+	var cast_ms: int = 0
 
-## Encodes an OpUseItem request: the character's name and the bag slot.
-static func encode_use(character_name: String, inventory_slot: int) -> PackedByteArray:
+## The reverse return scroll's option byte (round 778, READ: the message box
+## kind 0x21's results 1/2/3 send 2/3/7, FUN_00797d90 0x798862..0x7988d8).
+const OPTION_RECALL := 2
+const OPTION_DEATH := 3
+const OPTION_MAP := 7
+
+## Encodes an OpUseItem request: the character's name and the bag slot --
+## and, for a reverse return scroll (round 778), the option byte and, for the
+## map option, the u32 refoptionalteleport id, as retail's 0x704C carries
+## {u8 option, u32 id} (SendItem_HandleUseItem 0x796660). Option 0 sends
+## neither.
+static func encode_use(character_name: String, inventory_slot: int, option: int = 0, target: int = 0) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
 	var out := PackedByteArray()
 	out.resize(2)
@@ -45,6 +61,13 @@ static func encode_use(character_name: String, inventory_slot: int) -> PackedByt
 	tail.resize(8)
 	tail.encode_s64(0, inventory_slot)
 	out.append_array(tail)
+	if option != 0:
+		out.append(option & 0xff)
+		if option == OPTION_MAP:
+			var id := PackedByteArray()
+			id.resize(4)
+			id.encode_u32(0, target)
+			out.append_array(id)
 	return out
 
 static func decode_result(data: PackedByteArray) -> Result:
@@ -72,4 +95,8 @@ static func decode_result(data: PackedByteArray) -> Result:
 	res.has_berserk = data[offset + 28] != 0
 	res.berserk_gauge = data.decode_s32(offset + 29)
 	res.berserk_active = data[offset + 33] != 0
+	if offset + 40 > data.size():
+		return res
+	res.code = data.decode_u16(offset + 34)
+	res.cast_ms = data.decode_u32(offset + 36)
 	return res

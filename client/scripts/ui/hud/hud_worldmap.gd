@@ -255,9 +255,9 @@ var _auto := true
 ## without button 20's look being updated; the next press of 20 then settles
 ## on manual (0x616870, 0x61688d..0x6168a7).
 var _auto_art_stale := false
-## +0x9990: the teleport-selection mode (0x622dd0, entered from the optional
-## teleport path). 0x616870 checks the stale flag only when it is 0. This
-## client never enters that mode, so it stays false.
+## +0x9990: the teleport-selection mode (0x622dd0, entered from the reverse
+## return scroll's box; round 778, enter_select_mode). 0x616870 checks the
+## stale flag only when it is 0.
 var _teleport_select := false
 ## +0x97cc: 0 big, 1 small.
 var _small := false
@@ -330,6 +330,7 @@ func build_worldmap() -> bool:
 	_wire()
 	_show_map(_table.world())
 	_settle()
+	visibility_changed.connect(_on_visibility_changed)
 	return true
 
 ## Reads the map table out of the archive the builder is holding.
@@ -1558,17 +1559,26 @@ func _on_viewport_input(event: InputEvent) -> void:
 		var on_map := mb.position - _canvas.position
 		if mb.pressed:
 			_pressed_link = 0
-			if _mode == MODE_WORLD:
+			if _teleport_select:
+				# 0x6232c0: the popup hidden and every icon's pick cleared.
+				_select_press()
+			elif _mode == MODE_WORLD:
 				var hit := sign_at(on_map)
 				if hit != null and hit.link != 0:
 					_pressed_link = hit.link
 			_mouse_turns_auto_off()
 			move_to_front()
 		else:
-			if _mode == MODE_WORLD:
+			if _teleport_select:
+				# 0x623610..0x6237fb: the selection mode's release is the
+				# icons' alone -- no sign opens a map.
+				_select_release(on_map)
+			elif _mode == MODE_WORLD:
 				_release_on_sign(on_map)
 			_pressed_link = 0
 		_viewport.accept_event()
+	elif event is InputEventMouseMotion and _teleport_select and not _panning:
+		_select_hover((event as InputEventMouseMotion).position - _canvas.position)
 	elif event is InputEventMouseMotion and _panning:
 		var mm := event as InputEventMouseMotion
 		_canvas.position = _clamp_scroll(_canvas.position + mm.position - _pan_from)
@@ -1842,6 +1852,335 @@ func map_mode() -> int:
 func current_dungeon() -> WorldmapInfoReader.DungeonMapInfo:
 	return _dungeon_map if _mode == MODE_DUNGEON else null
 
+# --- The reverse return scroll's selection mode (round 778) ------------------
+#
+# READ (docs/protocol/reverse_return_scroll.md): the box's map button
+# (0x63b9a0) hides the box, shows this window and calls 0x622dd0(1, kind).
+# 0x622dd0 sets +0x9990 and the box's kind (+0x9994), turns auto-move off
+# (0x616b80(0)), shows the world map (0x622b60(0, 0)), returns a small window
+# to the big size (0x61ca20), hides the size button 7, the world button 6,
+# the floor spinner 4 and the auto button 20 (+0x9814 / +0x9818 / +0x999c /
+# +0x981c, OnCreate 0x620f70's GetChild ids), centres the view (0x61cc30) and
+# starts timer 0xd at 500 ms. Leaving (0x622dd0(0)) shows 20, 7 and 6 again,
+# hides the popup (+0x9984) and stops the timer.
+#
+# The icons (+0x985c, built by 0x6192f0 from GlobalDataManager::FUN_00927850:
+# one per refoptionalteleport row whose map-point byte is 1) are drawn by
+# 0x61e270 only in this mode: a 32 x 32 quad (half-side 16.0, the double at
+# 0xe1b8e0) centred on the point -- x = ((rid & 0xff) - 0x87) * 0xc0 + px /
+# 10, y = ((rid >> 8) - 0x5c) * 0xc0 + pz / 10, the player marker's own
+# transform -- less 0.5 (0xe1b7d0). The texture is
+# `interface\worldmap\map\xy_returnicon.ddj`, its `_focus` under the mouse
+# (WM_MOUSEMOVE, +0x38) and its `_press` once picked (+0x3c, +0xc0 = 1); the
+# plain texture is drawn with the UVs at +0x9864, which timer 0xd
+# (vslot_005 0x6191d0) swaps every 500 ms between its left half (u 0..0.5,
+# +0x98c4) and its right half (u 0.5..1, +0x9924) -- a two-frame blink --
+# while the other two are drawn whole.
+#
+# A release on an icon (0x623610..0x6237fb) picks it, clears the popup
+# (CIFButtonPopup 0x631bc0) and fills it: a point with group -1 gives one
+# button, else one per row of its group whose map-point byte is not 1 (the
+# Donwhang cave's floor under its entrance's flag), each 155 x 22
+# (0x631d60: `push 0x16; push 0x9b`) at y 1 + 22 * i, on
+# `interface\worldmap\map\map_return.ddj`, captioned with the row's zone
+# name through the text tables; the popup is shown with its corner at the
+# icon's lower-left vertex (+0xa8 / +0xac, ftol). A release off every icon
+# hides it. A button (0x60f5f0) records the row's id (+0x998c), runs the box's
+# result 3 (FUN_00777dd0 -> 0x797d90: the use with option 7 and the id) and
+# hides the window. Hiding the window in this mode (vslot_023 0x624550)
+# destroys the box -- the use is not sent -- and leaves the mode.
+#
+# OURS: the popup's caption colour and alignment (a created CIFButton's
+# defaults were not read: white, centred).
+
+const SELECT_ICON_DDJ := "interface\\worldmap\\map\\xy_returnicon.ddj"
+const SELECT_ICON_FOCUS_DDJ := "interface\\worldmap\\map\\xy_returnicon_focus.ddj"
+const SELECT_ICON_PRESS_DDJ := "interface\\worldmap\\map\\xy_returnicon_press.ddj"
+const SELECT_ICON_HALF := 16.0
+const SELECT_ICON_NUDGE := 0.5
+const SELECT_BLINK_SECONDS := 0.5
+const SELECT_POPUP_BUTTON_DDJ := "interface\\worldmap\\map\\map_return.ddj"
+const SELECT_POPUP_BUTTON_SIZE := Vector2(155, 22)
+
+## A popup button was clicked: `id` is the refoptionalteleport row (0x60f5f0).
+signal select_point_chosen(id: int)
+## The window was hidden while selecting: the box goes, nothing is sent
+## (vslot_023).
+signal select_cancelled
+
+## The reverse return scroll's table (World3D sets it); null shows no icons.
+var optional_reader: OptionalTeleportReader
+var _select_layer: Control
+## [Point, TextureRect] for each icon, file order.
+var _select_icons: Array = []
+var _select_frames: Array = []   # the plain texture's two halves (AtlasTexture)
+var _select_focus_tex: Texture2D
+var _select_press_tex: Texture2D
+var _select_frame := 0
+var _select_timer: Timer
+var _select_hovered := -1
+var _select_picked := -1
+var _select_popup: Control
+## Set while the window hides itself after a pick, so the hide is not the
+## cancel (0x60f5f0 clears the box first).
+var _select_sent := false
+
+func in_select_mode() -> bool:
+	return _teleport_select
+
+## 0x622dd0(1): the selection mode, as the box's map button enters it.
+func enter_select_mode() -> void:
+	_teleport_select = true
+	_select_sent = false
+	set_auto_move(false)
+	if _small:
+		toggle_size()
+	if _table != null:
+		_show_map(_table.world())
+	for id in [ID_SIZE, ID_WORLD, ID_FLOOR, ID_AUTO]:
+		_set_visible(id, false)
+	_build_select_icons()
+	_centre_on_player()
+	_refresh_tiles()
+	if _select_timer == null:
+		_select_timer = Timer.new()
+		_select_timer.name = "SelectBlink"
+		_select_timer.wait_time = SELECT_BLINK_SECONDS
+		_select_timer.timeout.connect(_select_blink)
+		add_child(_select_timer)
+	if _select_timer.is_inside_tree():
+		_select_timer.start()
+	_qa_note("select mode, %d icons" % _select_icons.size())
+
+## 0x622dd0(0): the mode left, the buttons back, the popup gone.
+func leave_select_mode() -> void:
+	if not _teleport_select:
+		return
+	_teleport_select = false
+	for id in [ID_AUTO, ID_SIZE, ID_WORLD]:
+		_set_visible(id, true)
+	_refresh_world_button()
+	_hide_select_popup()
+	if _select_timer != null:
+		_select_timer.stop()
+	if _select_layer != null:
+		_select_layer.queue_free()
+		_select_layer = null
+	_select_icons.clear()
+
+func _on_visibility_changed() -> void:
+	if visible or not _teleport_select:
+		return
+	var sent := _select_sent
+	leave_select_mode()
+	if not sent:
+		select_cancelled.emit()
+
+func _build_select_icons() -> void:
+	if _select_layer != null:
+		_select_layer.queue_free()
+	_select_icons.clear()
+	_select_hovered = -1
+	_select_picked = -1
+	_select_layer = Control.new()
+	_select_layer.name = "SelectIcons"
+	_select_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.add_child(_select_layer)
+	if optional_reader == null or _current == null:
+		return
+	var plain: Texture2D = _builder.load_texture(SELECT_ICON_DDJ) if _builder != null else null
+	_select_focus_tex = _builder.load_texture(SELECT_ICON_FOCUS_DDJ) if _builder != null else null
+	_select_press_tex = _builder.load_texture(SELECT_ICON_PRESS_DDJ) if _builder != null else null
+	_select_frames.clear()
+	if plain != null:
+		var w := plain.get_width() / 2.0
+		for i in 2:
+			var a := AtlasTexture.new()
+			a.atlas = plain
+			a.region = Rect2(w * i, 0, w, plain.get_height())
+			_select_frames.append(a)
+	_select_frame = 0
+	for p in optional_reader.map_points():
+		var pt: OptionalTeleportReader.Point = p
+		var at: Variant = select_icon_pixel(pt)
+		if at == null:
+			continue
+		var icon := TextureRect.new()
+		icon.name = "SelectIcon%d" % pt.id
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_SCALE
+		icon.size = Vector2(SELECT_ICON_HALF * 2.0, SELECT_ICON_HALF * 2.0)
+		icon.position = (at as Vector2) - Vector2(SELECT_ICON_HALF + SELECT_ICON_NUDGE, SELECT_ICON_HALF + SELECT_ICON_NUDGE)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_select_layer.add_child(icon)
+		_select_icons.append([pt, icon])
+	_refresh_select_textures()
+	_canvas.move_child(_select_layer, -1)
+
+## The canvas pixel a map point's icon is centred on (0x61e270's transform,
+## the player marker's), or null when the world map shown does not cover it
+## or the point is a dungeon's (never a map point in the retail table).
+func select_icon_pixel(p: OptionalTeleportReader.Point) -> Variant:
+	if _current == null or p == null or p.in_dungeon():
+		return null
+	var w := Vector2(
+		(p.region_y() - WorldmapInfoReader.REGION_Y_ORIGIN) * WorldmapInfoReader.REGION_SPAN + p.x / 10.0,
+		(p.region_x() - WorldmapInfoReader.REGION_X_ORIGIN) * WorldmapInfoReader.REGION_SPAN + p.z / 10.0)
+	var px := _current.pixel_for_world(w)
+	if px.x < 0.0 or px.y < 0.0 or px.x > _current.draw_size.x or px.y > _current.draw_size.y:
+		return null
+	return px
+
+func _select_blink() -> void:
+	_select_frame = 1 - _select_frame
+	_refresh_select_textures()
+
+func _refresh_select_textures() -> void:
+	for i in _select_icons.size():
+		var icon: TextureRect = _select_icons[i][1]
+		if i == _select_picked and _select_press_tex != null:
+			icon.texture = _select_press_tex
+		elif i == _select_hovered and _select_focus_tex != null:
+			icon.texture = _select_focus_tex
+		elif not _select_frames.is_empty():
+			icon.texture = _select_frames[_select_frame]
+
+func _select_icon_at(on_map: Vector2) -> int:
+	for i in _select_icons.size():
+		var icon: TextureRect = _select_icons[i][1]
+		var r := Rect2(icon.position, icon.size)
+		# 0x623610: strictly inside the quad.
+		if on_map.x > r.position.x and on_map.x < r.end.x and on_map.y > r.position.y and on_map.y < r.end.y:
+			return i
+	return -1
+
+func _select_hover(on_map: Vector2) -> void:
+	var i := _select_icon_at(on_map)
+	if i != _select_hovered:
+		_select_hovered = i
+		_refresh_select_textures()
+
+func _select_press() -> void:
+	_hide_select_popup()
+	_select_picked = -1
+	_refresh_select_textures()
+
+func _select_release(on_map: Vector2) -> void:
+	var i := _select_icon_at(on_map)
+	if i < 0:
+		_hide_select_popup()
+		return
+	_select_picked = i
+	_refresh_select_textures()
+	_show_select_popup(i)
+
+## The names a click on icon `i` offers, as the popup lists them.
+func select_choices(i: int) -> Array:
+	if optional_reader == null or i < 0 or i >= _select_icons.size():
+		return []
+	return optional_reader.choices_for(_select_icons[i][0])
+
+func _show_select_popup(i: int) -> void:
+	_hide_select_popup()
+	var popup := Control.new()
+	popup.name = "SelectPopup"
+	popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var choices := select_choices(i)
+	var y := 1.0
+	for c in choices:
+		var pt: OptionalTeleportReader.Point = c
+		var btn := _popup_button(pt)
+		btn.position = Vector2(0, y)
+		popup.add_child(btn)
+		y += SELECT_POPUP_BUTTON_SIZE.y
+	popup.size = Vector2(SELECT_POPUP_BUTTON_SIZE.x if not choices.is_empty() else 0.0, y - 1.0)
+	var icon: TextureRect = _select_icons[i][1]
+	# The quad's lower-left vertex (+0xa8 / +0xac), in the window.
+	var corner := _viewport.position + _canvas.position + icon.position + Vector2(0, icon.size.y)
+	popup.position = Vector2(floorf(corner.x), floorf(corner.y))
+	add_child(popup)
+	_select_popup = popup
+
+func _popup_button(pt: OptionalTeleportReader.Point) -> BaseButton:
+	var btn := TextureButton.new()
+	btn.name = "Choice%d" % pt.id
+	btn.ignore_texture_size = true
+	btn.stretch_mode = TextureButton.STRETCH_SCALE
+	btn.size = SELECT_POPUP_BUTTON_SIZE
+	btn.custom_minimum_size = SELECT_POPUP_BUTTON_SIZE
+	if _builder != null:
+		btn.texture_normal = _builder.load_texture(SELECT_POPUP_BUTTON_DDJ)
+		btn.texture_hover = _builder.load_texture(SELECT_POPUP_BUTTON_DDJ.replace(".ddj", "_focus.ddj"))
+		btn.texture_pressed = _builder.load_texture(SELECT_POPUP_BUTTON_DDJ.replace(".ddj", "_press.ddj"))
+	var label := Label.new()
+	label.name = "ButtonLabel"
+	label.text = select_point_name(pt)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	if _builder != null:
+		var font: Font = _builder.font_at(0)
+		if font != null:
+			label.add_theme_font_override("font", font)
+			label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	btn.add_child(label)
+	btn.pressed.connect(_on_select_choice.bind(pt.id))
+	return btn
+
+## A row's name as the popup captions it: its zone key through the text
+## tables (0x8c9c30), the key itself never shown.
+func select_point_name(pt: OptionalTeleportReader.Point) -> String:
+	var t := _text(pt.zone_strid, true)
+	return t if t != "" else pt.zone_strid
+
+func _hide_select_popup() -> void:
+	if _select_popup != null:
+		_select_popup.queue_free()
+		_select_popup = null
+
+## 0x60f5f0: the row recorded, the box's result 3 run (World3D sends the
+## use), then the window hidden -- which leaves the mode.
+func _on_select_choice(id: int) -> void:
+	_select_sent = true
+	select_point_chosen.emit(id)
+	hide()
+	leave_select_mode()
+
+## The icons built (tests, the QA hook): [Point, TextureRect] pairs.
+func select_icons() -> Array:
+	return _select_icons
+
+## The popup's buttons, top to bottom (tests).
+func select_popup_buttons() -> Array:
+	if _select_popup == null:
+		return []
+	return _select_popup.get_children()
+
+## QA: scrolls the icon of row `id` to the middle and clicks it, so the
+## popup shows.
+func qa_pick(id: int) -> void:
+	if not _teleport_select:
+		enter_select_mode()
+	for i in _select_icons.size():
+		if (_select_icons[i][0] as OptionalTeleportReader.Point).id != id:
+			continue
+		var icon: TextureRect = _select_icons[i][1]
+		var centre := icon.position + icon.size / 2.0
+		_canvas.position = _clamp_scroll(_viewport.size / 2.0 - centre)
+		_refresh_tiles()
+		var at := _canvas.position + centre
+		for pressed in [true, false]:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = pressed
+			ev.position = at
+			_on_viewport_input(ev)
+		print("QA WORLDMAP pick %d -> %d choices: %s" % [id, select_popup_buttons().size(),
+			", ".join(select_popup_buttons().map(func(b): return (b.get_node("ButtonLabel") as Label).text))])
+		return
+	print("QA WORLDMAP pick %d: no such icon" % id)
+
 ## The QA hook's steps (OPENSRO_QA_WORLDMAP, World3D): a comma list of
 ## `world`, `sign:<map id>` (the world map scrolled to the first sign linking
 ## to that map), `click:<map id>` (the same, then a real press and release on
@@ -1871,6 +2210,10 @@ func _qa_steps(spec: String) -> void:
 			floor_up()
 		elif s == "down":
 			floor_down()
+		elif s == "select":
+			enter_select_mode()
+		elif s.begins_with("pick:"):
+			qa_pick(int(s.trim_prefix("pick:")))
 		else:
 			continue
 		print("QA WORLDMAP %s -> %s" % [s, qa_report()])

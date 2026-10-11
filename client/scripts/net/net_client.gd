@@ -1020,6 +1020,11 @@ func buyback_retail(npc: int, index: int) -> void:
 func use_item(char_name: String, inventory_slot: int) -> void:
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot))
 
+## A reverse return scroll's use (round 778): the option the box or the map
+## chose, and the map option's refoptionalteleport id.
+func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
+	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot, option, target))
+
 ## Spends one use of a granted item (the fill an Energy of life scroll grants).
 func composite_use(char_name: String, item_id: int) -> void:
 	_send(CompositeNet.OP_USE, CompositeNet.encode_use(char_name, item_id))
