@@ -85,7 +85,7 @@ dungeon space.
 Euler y negated as the field's yaw (INFERRED for objects: their x and z angles are 0 in every file
 MEASURED), builds one walkable graph over the rooms' navigation meshes
 (`NavGraph.build_dungeon`: an unbounded footprint index, no terrain, and an exit through a room's
-outline with no room beyond is a wall -- OURS), hides the sky and sun, and applies the current
+outline with no room beyond is a wall -- OURS; round 778 stitches the linked edges, below), hides the sky and sun, and applies the current
 block's light and fog. The group is named `RealTerrain_<rid high byte>_<rid low byte>` and its
 graph filed under that region key, so the paths keyed by a record's region (NPCs, heights) find
 the dungeon.
@@ -148,6 +148,34 @@ triangle's span), and the pass paints the empty pixels with the fog colour (the 
   4,216 effects and lists no visible blocks), stepped as one native batch.
 
 Not drawn: the block lights on characters, the visible-set culling.
+
+### Walking between rooms (round 778, READ)
+
+The rooms' navigation meshes do not meet exactly: MEASURED (`tools/dungeon_wall_census.gd`), the
+seams behind B3's 1,106 linked (0x08) outline edges leave gaps of 0.02-0.06 (a few up to about 1
+unit), so a geometric hand-off 0.01 past the edge (round 773's rule) stopped 1,172 of B3's 28,935
+seam crossings: invisible walls (B4 927 of 23,484, B5 545 of 5,344, Donwhang 188 of 3,328).
+
+The client does not search geometry; it **stitches** the edges:
+
+- `FUN_0043ed30` (called by the dungeon walk `CRTNavMeshDungeon::vslot_002` 0x43f390 the first
+  time a block's linked edge is crossed): for each of the block's 0x08 edges (0x3c bytes each, in
+  edge order), for each neighbour block in the +0x108 list (the `.dof` list, `Block.neighbours`)
+  and each of its 0x08 edges, `FUN_0043e410` puts both edges' ends in dungeon space (each block's
+  transform at +0x68) and `FUN_0045ec80` pairs them when both ends lie within 5.0 of the other's
+  (3D distance through `FUN_00b42de0`, the float 5.0 at 0xe1b86c), either way round. The first
+  match is stored as (neighbour block, its edge index).
+- Crossing a stitched edge: the mover is placed in the partner edge's cell (`CRTNavMeshObj::
+  FUN_0044b270`, the edge's cell slot 0); where the point lies outside one of that cell's three
+  edges (`FUN_00447b30` == 2) it is moved toward the cell's centre by at most 0.2
+  (`RTNavMeshObj::FUN_0045dc60`, the double at 0xe1b850) -- the terrain's nudge.
+
+OpenSRO (`NavGraph._stitch_dungeon`, `_dungeon_hand_off`) does the same. OURS: a seam wider than
+the nudge puts the mover on the cell's nearest point; a linked edge with no partner (8 of B3's,
+26 of B4's -- the neighbour's outline split differently) hands over to a room found up to 1.5
+past it along the move, else stays a wall. After the change B3 stops 11 crossings, B4 12, B5 1:
+all at seams whose rooms' floors are 3-19 apart or 9 higher. What the client's walk does at an
+unstitched linked edge is OPEN.
 
 ## 4. Walk-in teleports (region events)
 
