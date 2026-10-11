@@ -690,8 +690,15 @@ In order. Each is checked off here when it ships in a release, with its round in
       x pi/180 and width / height to `FUN_00aa4ef0`, a PerspectiveFovLH with m11 = cot(fov / 2) and
       m00 = m11 / aspect), which is Camera3D.fov under KEEP_HEIGHT (`World3D.CAMERA_FOV_DEG`, the
       scene's camera). MEASURED at the user's spot: the dragon is 12.5 % of the frame's height
-      here, 12.4 % in the original. Left: the zoom range (20..90) is still the OURS framing choice
-      of round 55, chosen at 75 degrees.
+      here, 12.4 % in the original. ~~Left: the zoom range (20..90) is still the OURS framing choice
+      of round 55, chosen at 75 degrees.~~ Done in round 778 (below).
+- [x] **The game camera** -- round 778 (READ, `RetailCamera`; WORLD_ISSUES "Round 778 (part): the
+      camera"): pitch +-61.35 degrees (it looks up), zoom 10..150 by 6 a notch, 0.005 rad a pixel,
+      the look-at point 14.2..16.2 over the feet by distance, looking up pulls the camera in
+      (40 + 110 (1 - sin(...))), a ray 5 short of what it hits, the views' drag rules, and the own
+      model fading out over 0.5 s past 51.57 degrees up. Left (OPEN): `config\cameradata.txt`'s
+      two entry cameras, the mounted look-at branch, the camera shake, and whether the shadow and
+      attached effects take the model's alpha.
 - [ ] **The day phase** (round 705 finding, a contradiction to settle): the Day/night item below
       says the in-game phase is a fixed 0.5 and the server clock feeds nothing; CharSelectHandoff's
       header (round 688's review) says `CPSMission::vslot_012` sets SWorld's phase every frame from

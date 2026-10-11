@@ -29,7 +29,9 @@ here), `[?]` investigated, root cause understood, fix not yet possible/safe or n
   confirmed the *uncollided* camera position is now `(0, +11.2, +10.4)` relative to the player
   (above and behind, spring reaches its full configured length with no collapse) looking down and
   forward. Also updated `CAMERA_PITCH_MIN/MAX_DEGREES` (`-80`/`-10`) to match the corrected sign
-  convention for the orbit-drag control.
+  convention for the orbit-drag control. **Superseded (round 778, READ):** the original's pitch
+  runs +-1.0708 rad, so the arm's limits are -61.35/+61.35 -- it looks up as far as it looks down
+  ("Round 778 (part): the camera").
 - [x] **SpringArm3D could also collapse against the player's own capsule.** Gave `Player` a
   dedicated collision layer (2) separate from world geometry (layer 1, unchanged default for
   terrain/objects) so the camera arm's own collision probe (`collision_mask=1`) can never hit the
@@ -2183,6 +2185,10 @@ which still derived its value from the disproved ~139-unit character height, was
 Flagged honestly: unlike this project's terrain and skeleton constants, these are an **openly-declared
 framing choice**, not values recovered from real game data -- no real camera-distance data has been
 found. Stated that way rather than dressed up as a measurement.
+
+**Superseded (round 778, READ):** the binary has the camera's distances after all -- 10..150, 6 units a
+wheel notch (`CGInterface::vslot_036`, the floats at 0xd81a88 / 0xdb8d74), and a look-at point 14.2..16.2
+over the feet by distance, not the fixed 14.34 ("Round 778 (part): the camera").
 
 **Noticed while verifying, not fixed**: with the HUD visible the `ActionTabs` panel sits from roughly
 y=260 to y=480 on a 648px-tall viewport -- the middle third of the screen -- and covers the character
@@ -7476,6 +7482,114 @@ stays on the box for older revisions through `GODOT_BIN`).
   (+13-20 %), and the default thread in the swarm (Compatibility only).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
+
+### Round 778 (part): the camera
+
+The user: "the original camera lets me look up more, you can even get close to the character body
+that makes it even fade away. Please check the original code on how the cameras work so I can
+inspect better."
+
+**What the original does (READ, `sro_client.exe` on the box: the decompile in
+`/var/tmp/decomp_client` and `objdump` of the same bytes; `.rdata` values read from the PE).** The
+game camera is the object at `0x110f7d0`; its CGFXVideo3d sits at +0x33c, so the look-at point is
++0x34c, pitch +0x370, yaw +0x374, distance +0x37c (the CGFXVideo3d fields round 635's portrait read: +0x10, +0x34, +0x38, +0x40).
+The interface (`CGInterface`, `0x110f80c`) holds the zoom: +0x3e8 asked for, +0x3ec in force,
++0x3f8 the collided distance (+0x3f4 set while it applies).
+
+| What | Value | Where |
+|---|---|---|
+| Pitch limit | +-1.0707964 rad = **+-61.35 deg**, looking down AND up | floats 0xdb8d70 / 0xdb8d64; WM_MOUSEMOVE in `CGInterface::vslot_017` 0x77c330..0x77c3fa |
+| Drag | **0.005 rad (0.2865 deg) a pixel**, pitch and yaw; mouse down raises the camera | double 0xd986e8 (`fmul qword` 0x77c351) |
+| Zoom range | **10 .. 150** | floats 0xd81a88, 0xdb8d74 (150 applies while +0x3cf is set: 1 from the constructor `FUN_0078d050`, toggled only by a console command at 0x53a970) |
+| Wheel | distance -= delta / 20: **6 a notch** (WHEEL_DELTA 120), forward zooms in; asked-for = in-force at once | `CGInterface::vslot_036` 0x77b460, reached from `CGWndBase::vslot_017`'s `cmp esi, 0x20a` with the wParam high word; double 0xe1b830 |
+| Smoothing | **none**: zoom, drag and the third-person yaw all apply the same frame | `FUN_0078dc50` writes the camera directly |
+| Look-up limit | below level, distance <= **40 + 110 (1 - sin(1.5708 x (-pitch) / 0.9))**: 150 level, 62.9 at 30 deg up, 40 at 51.57, 44.85 at 61.35; back out to the asked-for distance when level or down | `FUN_0078dc50` 0x78dd21..0x78ddc3; doubles 0xe1b8f8, 0xdb97f8, 0xd83a98, 0xe1b8f0; `FUN_00b44b40` is `fsin` |
+| Look-at point | over the feet, **14.2 + (d - 150)(14.2 - (h - 3.8)) / 140**: 14.2 at 150, 16.2 at 10 (d = the collided distance while it applies) | `FUN_0078dc50` 0x78ddc9..0x78de58; doubles 0xd83068, 0xd83060, 0xd83058, 0xd83078 |
+| h (the character's +0x228) | 20 x size x 0.5 x scale = **20** for a player | `FUN_009c7780` (0xe1b830 x `FUN_009c7740`); size is column 3 of `textdata\skilleffect.txt` `characterInfo`, read by `FUN_00a9ae80` x 0.5 (0xe1b7d0) |
+| Collision | a ray from 5 out to the distance (SWorld::vslot_030: terrain cells and objects' own meshes); on a hit the camera sits at **\|hit - target\| - 5** | `FUN_0078def0` 0x78df10..0x78e09d, double 0xd81950; on while +0x3cc is set (1 in the constructor, 0x78df10) |
+| Own-model fade | each drag calls `FUN_009d54c0(pitch < -0.9)` on the player: a ramp of its alpha from where it is to **0** (looking up past **51.57 deg**) or back to 255, **t += 2.0 x dt** (0.5 s), alpha = start + t x delta, truncated | callers 0x77c39e, 0x7790ed, 0x77b19a (only three); double 0xdb8d68; ramp step `FUN_009d4e80`, rate 0xd86ecc set by `CICPlayer::CICPlayer` 0x9da6d0; applied by `CICPlayer::vslot_009` through the model's slot 5 (the compound alpha the appear fade sets) |
+| Views (+0x3e4) | 0 free: drag turns both; 1 third person: yaw = (1.57 - heading) + 1.5707963 every frame (behind, no easing), drag turns the pitch; 2 quarter: drag turns the yaw only, the pitch stays -- no view writes a pitch | 0x77c31d, `FUN_0078dc50` 0x78dcef..0x78dd1b (doubles 0xdb9800, 0xe1b8f0), `FUN_00780590` / 0x780420 |
+| Keys | none turn the camera: the arrows run and turn the character (`FUN_0077b070`); the arrow/WASD camera of `FUN_0078e0e0` is the developer free camera (+0x3ce, console only) | |
+
+So there is no distance fade: the character fades because looking up past 0.9 rad pulls the camera in
+(the look-up limit, then the ground cuts it to ~14) and the pitch test fades it. Only the player's own
+model fades (all three callers pass `[0xeef5ec]`); monsters, NPCs, other players and the name plate
+keep theirs (the plate draws at full alpha whatever the model's, round 673).
+
+**Contradicted and corrected.** Our `CAMERA_PITCH_MIN/MAX` were -80/-10 (the 2026-08-26 sign fix: no look
+up at all), the zoom 20..90 by 15 (the fifty-fifth round, "an openly-declared framing choice ... no real
+camera-distance data has been found"), the drag 0.3 deg a pixel, the look-at point a fixed 14.34
+(the scene's arm height), the quarter view a fixed -55 pitch and the third-person view an easing of
+360 deg a second (both ours), and the third-person view took no pitch drag. Both old entries now carry
+a "Superseded (round 778)" line. `SHADOW_MAP_DISTANCE` follows its own rule (300 from the player plus
+the farthest camera, round 702): 400 -> **460**.
+
+**Built (`client/scripts/world/retail_camera.gd`, `RetailCamera`; World3D's `_place_camera`,
+`_camera_wheel`, `_input`'s orbit, `set_camera_view`).** The arm's pitch is the negative of the
+retail pitch and its yaw the retail yaw + pi (DERIVED: the arm puts the camera at d (cos a sin w, -sin
+a, cos a cos w), the retail eye is d (-cos p sin y, sin p, -cos p cos y)), so the drag signs are the
+retail ones. The SpringArm3D's own spring and sphere cast are off (`set_physics_process_internal(false)`,
+re-checked each step since the arm turns it back on when it re-enters the tree); `_place_camera` runs
+the placer and the ray once a physics step on the arm's `collision_mask` (QA_FREE still clears it)
+and places the Camera3D at the arm's +Z. A write to `spring_length` by anything else (QA_DIST, a QA
+shot, ground_markers' QA view) is taken as a new zoom, so the QA hooks work unchanged. The fade draws
+the ramp on every mesh under `_player_skeleton` (effects excluded) with `AppearFade`'s blended twins
+(OURS, the same way the appear fade draws), and gives the meshes their own materials back at 255.
+
+**OURS / OPEN.**
+- OURS: the entry pitch -42 and distance 45 (the scene's). The original keeps whatever camera the
+  scene before left; `config\cameradata.txt` (Media.pk2, `FUN_008a85b0`) names pitch 10 deg / distance
+  50 for two spots only (79/107 and 77/105) -- not built.
+- OURS: the fade is drawn with blended twins; the fade target is re-tested every physics step rather
+  than on each drag (the same result: only a drag changes the pitch).
+- Not carried: the mounted look-at branch (0.25 h over mount y + mount h - 13: no mounts here), the
+  camera shake (+0x418/+0x41c), the one-frame lag of the collided distance, and the 0.0008 rad the
+  third-person yaw sits off straight-behind (1.57 against 1.5707963).
+- OPEN: whether the player's shadow and attached effects read the compound alpha (as round 676's
+  appear fade); this client fades the model's meshes only. Whether the original's collision ray
+  meets everything our layer 1 holds (it tests terrain cells and objects' own meshes; ours the
+  terrain and the objects' collision shapes).
+- INFERRED: the object scale +0xc4 is 1.0 for a player (`FUN_009c4860` sets it, only `FUN_009c4510`
+  changes it); `FUN_00b42d10` truncates (the CRT's float-to-int).
+
+**Measured (QA shots, the Jangan spawn 97/168 local (1002, 1020), dressed `1=3637,4=3638,5=3639,
+6=3632`, 1280x720 Forward+; `QA CAMERA` lines).** Frames on the box in `/var/tmp/r778cam/`
+(`default.png`, `close_down.png`, `up30.png`, `up55_fading.png`, `up55.png`, `up61.png`,
+`down_again.png`, `down_again2.png`; `sheet.png` the first six).
+
+| Shot | arm pitch | wanted | in force | ray cut | look-at | eye over feet | alpha |
+|---|---|---|---|---|---|---|---|
+| default | -42 | 45 | 45 | -- | 15.700 | 45.81 | 255 |
+| close_down | -30 | 10 | 10 | -- | 16.200 | 21.20 | 255 (no fade from above) |
+| up30 | +30 | 150 | 62.90 | 26.92 | 15.958 | 2.50 | 255 |
+| up55_fading | +55 | 150 | 40.60 | 14.69 | 16.133 | 4.10 | 144 (13 meshes on twins) |
+| up55 | +55 | 150 | 40.60 | 14.69 | 16.133 | 4.10 | **0** |
+| up61 | +61.35 | 150 | 44.85 | 13.40 | 16.151 | 4.39 | 0 |
+| down_again | -20 | 150 | 150 | 112.89 | 14.730 | 53.34 | 110 (fading back in) |
+| down_again2 | -20 | 150 | 150 | 112.89 | 14.730 | 53.34 | 255 (own materials back) |
+
+**Tests.** `retail_camera_test.gd` (new, 58 checks): every READ constant, the drag / wheel / look-up /
+settle / look-at / collision / fade rules, the alpha ramp (0.125 s -> 191, 0.25 s -> 127, done at 0.5
+s, turned round mid-way from where it was), the model fade's twins and restore, and World3D's own
+camera code over a synthetic flat ground (45 -> 39 -> 10 by the wheel, the look-up limit and the
+ground's cut, the fade out and back in, a QA distance, the views' drags). NEGATIVE against
+53e6ef92: no `RetailCamera`, and World3D's constants fail. `npc_service_reader_test` now expects the
+third-person view to take the drag. `retail_bloom_test` checks 460. `check` ALL LOAD (732 scripts);
+`tests` 280 suites, 0 failing.
+
+**Perf gate** (`--base 53e6ef92 --head <working tree = 1d12651e> --sites jangan --frames 40000`,
+1280x720 Forward+, native readers off on both sides, median of 3):
+
+| Site | Number | Base | Head | Verdict |
+|---|---|---|---|---|
+| jangan | frame ms | 0.76 | 0.77 (+0.0) | SAME |
+| jangan | entry ms | 8707 | 8612 (-95) | SAME |
+| jangan | freeze ms | 2736 | 2740 (+4) | SAME |
+| jangan | hitches | 5 | 4 (-1) | SAME |
+
+The camera's own cost is one ray a physics step (the SpringArm3D cast a sphere before); the fade's
+twins exist only while the player looks up past 51.57 degrees.
+
 
 ## Seven-hundred-and-seventy-seventh round: the glows back, the portals' layers, the dungeon minimap's room
 

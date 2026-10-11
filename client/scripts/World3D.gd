@@ -307,8 +307,8 @@ const CAMERA_ZOOM_STEP := RetailCamera.ZOOM_STEP
 ## The zoom's range, world units: 10..150 (READ, round 778: the floats at
 ## 0xd81a88 and 0xdb8d74). Was 20..90 until round 778 -- an openly declared
 ## framing choice made when "no real camera-distance data had been found"
-## (round 55); the binary has it. Looking up pulls the camera in further
-## (RetailCamera.look_up_max) and the collision ray can shorten it.
+## (the fifty-fifth round); the binary has it. Looking up pulls the camera in
+## further (RetailCamera.look_up_max) and the collision ray can shorten it.
 const CAMERA_ZOOM_MIN := RetailCamera.ZOOM_MIN
 const CAMERA_ZOOM_MAX := RetailCamera.ZOOM_MAX
 ## The camera's vertical field of view (round 706; READ in round 648 and

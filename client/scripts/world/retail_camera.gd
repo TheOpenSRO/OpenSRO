@@ -13,13 +13,13 @@ extends RefCounted
 ## Where the state lives in retail. The game camera is the object at
 ## 0x110f7d0 with a CGFXVideo3d at +0x33c, so its look-at point is +0x34c,
 ## its pitch +0x370, its yaw +0x374 and its distance +0x37c (the
-## CGFXVideo3d's +0x10/+0x34/+0x38/+0x40, round 761's portrait read). The
+## CGFXVideo3d's +0x10/+0x34/+0x38/+0x40, round 635's portrait read). The
 ## interface (CGInterface, 0x110f80c) keeps the zoom: +0x3e8 the distance the
 ## player asked for, +0x3ec the distance in force, +0x3f8 the distance the
 ## collision ray left (+0x3f4 set while it does).
 ##
 ## The eye. CGFXVideo3d's FUN_00bae580 builds R = RotZ(roll) RotX(pitch)
-## RotY(yaw) and puts the eye at `target - (0, 0, d) R` (round 761), so in the
+## RotY(yaw) and puts the eye at `target - (0, 0, d) R` (round 635), so in the
 ## game's coordinates the eye is target + d (-cos p sin y, sin p, -cos p cos y):
 ## a POSITIVE retail pitch puts the eye ABOVE the target (looking down), a
 ## negative one below it (looking up). This client's CameraArm pitch is the
