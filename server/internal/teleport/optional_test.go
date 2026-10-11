@@ -102,3 +102,57 @@ func TestLoadOptionalFile(t *testing.T) {
 		t.Fatalf("with the file: %d map points", len(tab.Optional))
 	}
 }
+
+// Round 779: the tomb's floors under its flag. A synthetic network with the
+// three floor points the rows name (own positions), and a flag with nothing
+// under it.
+func TestSupplementTombFloors(t *testing.T) {
+	points := `ID,Code,ObjectID,ZoneName,Region,X,Y,Z,Radius,Interaction7,Interaction9
+1,GATE_JINSI_02x01_09,0,SN_ZONE_26002,-32762,-100,0,50,70,0,0
+2,GATE_JINSI_03x01,0,SN_ZONE_26003,-32763,30,7,8,70,0,0
+3,GATE_JINSI_04x05,0,SN_ZONE_26004,-32764,-150,-9,190,70,0,0
+`
+	links := `From,To,Fee,Rule1Type,Rule1Data1,Rule1Data2,Rule2Type,Rule2Data1,Rule2Data2,Rule3Type,Rule3Data1,Rule3Data2,Rule4Type,Rule4Data1,Rule4Data2,Rule5Type,Rule5Data1,Rule5Data2
+1,2,0,0,,,0,,,0,,,0,,,0,,
+`
+	tb, err := Read(strings.NewReader(points), strings.NewReader(links), strings.NewReader("ID,Code,NameStrID,Region,X,Y,Z,Fortress\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagOnly := "ID,ZoneName,Region,X,Y,Z,WorldID,Group,MapPoint,LevelMin,LevelMax\n31,xxx,26284,960,111,1662,1,2,1,0,0\n"
+	if err := tb.ReadOptional(strings.NewReader(flagOnly)); err != nil {
+		t.Fatal(err)
+	}
+	if n := tb.SupplementTombFloors(); n != 3 {
+		t.Fatalf("added %d rows, want 3", n)
+	}
+	want := map[int]OptionalPoint{
+		32: {ID: 32, ZoneName: "SN_ZONE_26002", Region: -32762, X: -100, Y: 0, Z: 50, WorldID: 1, Group: 2},
+		33: {ID: 33, ZoneName: "SN_ZONE_26003", Region: -32763, X: 30, Y: 7, Z: 8, WorldID: 1, Group: 2},
+		34: {ID: 34, ZoneName: "SN_ZONE_26004", Region: -32764, X: -150, Y: -9, Z: 190, WorldID: 1, Group: 2},
+	}
+	for id, w := range want {
+		got, ok := tb.OptionalByID(id)
+		if !ok || got != w {
+			t.Errorf("row %d = %+v (%v), want %+v", id, got, ok, w)
+		}
+	}
+	if n := tb.SupplementTombFloors(); n != 0 {
+		t.Errorf("a second call added %d rows; the group is listed now", n)
+	}
+	// A table that lists the group itself is left alone.
+	listed := flagOnly + "32,SN_ZONE_26001,-32761,1,2,3,1,2,0,0,0\n"
+	if err := tb.ReadOptional(strings.NewReader(listed)); err != nil {
+		t.Fatal(err)
+	}
+	if n := tb.SupplementTombFloors(); n != 0 {
+		t.Errorf("added %d rows to a table that lists the group", n)
+	}
+	// No flag: nothing.
+	if err := tb.ReadOptional(strings.NewReader(optionalCSV)); err != nil {
+		t.Fatal(err)
+	}
+	if n := tb.SupplementTombFloors(); n != 0 {
+		t.Errorf("added %d rows with no tomb flag", n)
+	}
+}

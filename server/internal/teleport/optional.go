@@ -162,3 +162,92 @@ func parseOptional(rec []string) (OptionalPoint, error) {
 		WorldID: n[6], Group: n[7], MapPoint: n[8] == 1, LevelMin: n[9], LevelMax: n[10],
 	}, nil
 }
+
+// The Qin-Shi tomb's floors under its map flag (round 779, OURS). In the
+// archive this project reads, the tomb's entrance is a flag row (id 31,
+// "xxx", region 26284, group 2) with no row under it -- ids 32..38 are absent
+// (MEASURED), so a click on the flag listed nothing. The user's own client
+// (another server's archive, a screenshot) lists "Tomb of Qin-Shi Emperor
+// lv.2", "lv.3" and "lv.4" there. TombFloorRows are those three: each the
+// game's own zone name key for the floor (textdata_object SN_ZONE_26002..
+// 26004), at the teleport point the tomb's own bottom-floor gates send a
+// player to on that floor -- GATE_JINSI_06x01-bldg2, -bldg7 and -bldg5 lead
+// to exactly these three floors (MEASURED, teleportlink), to
+// GATE_JINSI_02x01_09, GATE_JINSI_03x01 and GATE_JINSI_04x05; the first two
+// are also where a player walking down from the floor above arrives. The
+// ids fill the gap (32..34); map point 0 (listed under the flag, no icon of
+// their own); no level range. client/scripts/worldmap/
+// optional_teleport_reader.gd adds the same rows.
+type TombFloorRow struct {
+	ID       int
+	ZoneName string
+	Region   int    // the dungeon's rid as the table writes it, negative
+	Point    string // the teleport point the row stands at
+}
+
+// TombFlagRegion and TombFlagGroup identify the tomb's entrance flag.
+const (
+	TombFlagRegion = 26284
+	TombFlagGroup  = 2
+)
+
+var TombFloorRows = []TombFloorRow{
+	{ID: 32, ZoneName: "SN_ZONE_26002", Region: -32762, Point: "GATE_JINSI_02x01_09"}, // 0x8006, lv.2
+	{ID: 33, ZoneName: "SN_ZONE_26003", Region: -32763, Point: "GATE_JINSI_03x01"},    // 0x8005, lv.3
+	{ID: 34, ZoneName: "SN_ZONE_26004", Region: -32764, Point: "GATE_JINSI_04x05"},    // 0x8004, lv.4
+}
+
+// SupplementTombFloors adds TombFloorRows when the table has the tomb's flag
+// and nothing under it; a row whose id the table already has is skipped, as
+// is one whose teleport point the network lacks (or has in another region,
+// or without a position). Returns how many it added.
+func (t *Table) SupplementTombFloors() int {
+	if t == nil {
+		return 0
+	}
+	flag := false
+	for _, p := range t.Optional {
+		if p.Group == TombFlagGroup && p.MapPoint && p.Region == TombFlagRegion {
+			flag = true
+		} else if p.Group == TombFlagGroup && !p.MapPoint {
+			return 0 // the table lists the group itself
+		}
+	}
+	if !flag {
+		return 0
+	}
+	if t.optionalByID == nil {
+		t.optionalByID = map[int]int{}
+	}
+	added := 0
+	for _, row := range TombFloorRows {
+		if _, taken := t.optionalByID[row.ID]; taken {
+			continue
+		}
+		at, ok := t.pointByCode(row.Point)
+		if !ok || at.Region != row.Region || (at.X == 0 && at.Y == 0 && at.Z == 0) {
+			continue
+		}
+		world := at.WorldID
+		if world == 0 {
+			world = 1 // an export from before WorldID: the open world's
+		}
+		t.optionalByID[row.ID] = len(t.Optional)
+		t.Optional = append(t.Optional, OptionalPoint{
+			ID: row.ID, ZoneName: row.ZoneName, Region: row.Region,
+			X: at.X, Y: at.Y, Z: at.Z, WorldID: world,
+			Group: TombFlagGroup,
+		})
+		added++
+	}
+	return added
+}
+
+func (t *Table) pointByCode(code string) (Point, bool) {
+	for _, p := range t.Points {
+		if p.Code == code {
+			return p, true
+		}
+	}
+	return Point{}, false
+}

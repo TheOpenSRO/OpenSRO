@@ -69,7 +69,52 @@ var _by_group: Dictionary = {} # group -> Array[Point], file order
 ## array), as TeleportReader.load does. Returns self.
 func load(read: Callable) -> OptionalTeleportReader:
 	parse(read.call(TABLE))
+	supplement_tomb_floors()
 	return self
+
+## The Qin-Shi tomb's floors under its map flag (round 779, OURS; the
+## server's teleport.TombFloorRows has the reasoning and places them). The
+## archive's flag (region 26284, group 2) lists nothing -- ids 32..38 are
+## absent (MEASURED) -- while the user's own client lists "Tomb of Qin-Shi
+## Emperor lv.2", "lv.3" and "lv.4" there: the game's own zone name keys
+## SN_ZONE_26002..26004. Added only when the flag is there and its group has
+## no rows, never over an id the table has. Returns how many were added.
+const TOMB_FLAG_REGION := 26284
+const TOMB_FLAG_GROUP := 2
+const TOMB_FLOOR_ROWS := [
+	[32, "SN_ZONE_26002", -32762],
+	[33, "SN_ZONE_26003", -32763],
+	[34, "SN_ZONE_26004", -32764],
+]
+
+func supplement_tomb_floors() -> int:
+	var flag := false
+	for p in _points:
+		var pt: Point = p
+		if pt.group == TOMB_FLAG_GROUP and pt.map_point and pt.region == TOMB_FLAG_REGION:
+			flag = true
+		elif pt.group == TOMB_FLAG_GROUP and not pt.map_point:
+			return 0
+	if not flag:
+		return 0
+	var added := 0
+	for row in TOMB_FLOOR_ROWS:
+		if _by_id.has(int(row[0])):
+			continue
+		var p := Point.new()
+		p.id = int(row[0])
+		p.zone_strid = String(row[1])
+		p.region = int(row[2])
+		p.world = 1
+		p.group = TOMB_FLAG_GROUP
+		p.map_point = false
+		_points.append(p)
+		_by_id[p.id] = p
+		if not _by_group.has(p.group):
+			_by_group[p.group] = []
+		_by_group[p.group].append(p)
+		added += 1
+	return added
 
 func parse(data: PackedByteArray) -> void:
 	for cols in TeleportReader._rows(data):

@@ -219,6 +219,7 @@ func Load(dir string) (*Table, error) {
 	if err := t.loadOptional(dir); err != nil {
 		return nil, err
 	}
+	t.SupplementTombFloors()
 	return t, nil
 }
 

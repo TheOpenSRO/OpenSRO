@@ -200,6 +200,23 @@ func _check_reader() -> void:
 		"the flag lists its group's floor (0x6236e2..0x623761)")
 	_check(r.choices_for(town).size() == 1 and r.choices_for(town)[0] == town, "a lone point lists itself")
 	_check(r.choices_for(r.point(31)).is_empty(), "a group with nothing under its flag lists nothing")
+	_check(r.supplement_tomb_floors() == 0, "round 779: no tomb flag (region 26284, group 2), no floors added")
+	# Round 779: the tomb's flag with nothing under it gets lv.2..lv.4 (OURS).
+	var tomb_rows := PackedStringArray([
+		"1\t31\tx\txxx\t26284\t960\t111\t1662\t1\t2\t1\t0\t0\t-1\txxx\t-1\txxx\t-1\txxx",
+	])
+	var tb := PackedByteArray([0xFF, 0xFE])
+	tb.append_array(("\r\n".join(tomb_rows)).to_utf16_buffer())
+	var t := OptionalTeleportReader.new()
+	t.parse(tb)
+	_check(t.supplement_tomb_floors() == 3, "the tomb's empty flag gets three floors")
+	var floors := t.choices_for(t.point(31))
+	_check(floors.size() == 3 and (floors[0] as OptionalTeleportReader.Point).zone_strid == "SN_ZONE_26002"
+		and (floors[1] as OptionalTeleportReader.Point).zone_strid == "SN_ZONE_26003"
+		and (floors[2] as OptionalTeleportReader.Point).zone_strid == "SN_ZONE_26004"
+		and (floors[0] as OptionalTeleportReader.Point).id == 32 and (floors[0] as OptionalTeleportReader.Point).in_dungeon(),
+		"the flag lists Tomb of Qin-Shi Emperor lv.2, lv.3, lv.4 (ids 32..34, dungeon regions)")
+	_check(t.supplement_tomb_floors() == 0, "and only once")
 
 func _check_wire() -> void:
 	var plain := UseItemNet.encode_use("Aria", 9)

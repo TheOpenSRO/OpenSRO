@@ -201,6 +201,14 @@ Donwhang cave's floor and 90 999 on the Arabian rows. Which rows are map points,
   -935), level 50..999, map point 0) is the one row under it -- the floor a click on the flag lists.
   Row 31 (the Qin-Shi tomb's entrance, group 2) is a flag with **no** row under it in this archive
   (ids 32..38 are absent), so its popup is empty, as the client's would be.
+- **Round 779 (OURS):** the user's own client (another server's archive) lists "Tomb of Qin-Shi
+  Emperor lv.2", "lv.3" and "lv.4" under the tomb's flag. OpenSRO adds those three rows when the
+  flag's group is empty and their ids are free (`teleport.TombFloorRows` / `SupplementTombFloors`,
+  `OptionalTeleportReader.supplement_tomb_floors`): ids 32..34, the game's own zone name keys
+  SN_ZONE_26002..26004, map point 0, no level range, each at the teleport point the tomb's
+  bottom-floor gates send a player to on that floor (GATE_JINSI_06x01-bldg2 / -bldg7 / -bldg5 ->
+  GATE_JINSI_02x01_09, GATE_JINSI_03x01, GATE_JINSI_04x05, MEASURED in teleportlink; the first two
+  are also the arrivals from the floor above). A table that lists the group itself is used as is.
 - No row is country-limited in the table (OPEN: whether the server tests a race; this binary's path
   above has no such test. `REVERSE_INVALID_COUNTRY_ERROR` in textuisystem.txt is the add-on's).
 
