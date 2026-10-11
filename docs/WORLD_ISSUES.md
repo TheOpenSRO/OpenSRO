@@ -7526,6 +7526,23 @@ server being the picked server list entry's name (`ClientSettings.server_name`, 
 file's `name`), "OpenSRO" when there is none; back to "OpenSRO" when the world leaves the tree.
 `window_title_test.gd`.
 
+### Round 778: gates and deploy
+
+- Merged tree (dev after both agents' merges): `check` ALL LOAD (735 scripts), `tests` "ran 282
+  suite(s), 0 failing"; server `go test ./...` all pass.
+- Perf gate, `--base 53e6ef92 --sites jangan --frames 40000` (1280x720 Forward+, median of 3):
+
+| Number | Base | Head | Verdict |
+|---|---|---|---|
+| frame ms | 0.76 | 0.75 | SAME |
+| entry ms | 8766 | 8494 | SAME |
+| freeze ms | 2729 | 2731 | SAME |
+| hitches | 5 | 5 | SAME |
+
+- The server (the scroll's handler, the `tel_*` / `died_*` columns added at boot, and
+  `teleport/optionalteleport.csv`, MEASURED identical in source to the live teleport CSVs) was
+  built for the Mac mini but **not deployed this round** -- left to the user.
+
 ### Round 778 (part): the camera
 
 The user: "the original camera lets me look up more, you can even get close to the character body
