@@ -7541,7 +7541,9 @@ file's `name`), "OpenSRO" when there is none; back to "OpenSRO" when the world l
 
 - The server (the scroll's handler, the `tel_*` / `died_*` columns added at boot, and
   `teleport/optionalteleport.csv`, MEASURED identical in source to the live teleport CSVs) was
-  built for the Mac mini but **not deployed this round** -- left to the user.
+  deployed to the Mac mini at the user's request after the release (2026-10-11 19:16 local:
+  `opensro-server.prev` kept; boot clean, 0 `level=ERROR`, teleport network 222/292/77, 68
+  walk-ins, 5 dungeons served).
 
 ### Round 778 (part): the camera
 
