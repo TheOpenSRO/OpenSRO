@@ -246,6 +246,9 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 
 		var arrays := BmsReader.to_arrays(mesh)
 		var piece := {"name": mesh.mesh_name, "arrays": arrays, "faces": _piece_faces(arrays), "material": null}
+		# Round 774: a light-mapped piece (BmsReader.lightmap_path, READ) --
+		# its second texture coordinates and its light map, decoded here.
+		_prepare_lightmap(archive, bms_data, mesh, piece, known, prepared)
 		# A skinned piece's bone palette, for MapAnimation (round 645) to bind
 		# it to the object's skeleton when the object animates.
 		if mesh.is_skinned():
@@ -364,6 +367,8 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 			mesh_instance.add_child(body)
 		if piece["material"] != null:
 			var godot_material := _commit_material(piece["material"], texture_cache)
+			if godot_material != null and piece.has("lightmap_key"):
+				_commit_lightmap(godot_material, texture_cache.get(piece["lightmap_key"], {}).get("texture"))
 			if godot_material != null:
 				mesh_instance.material_override = godot_material
 				if (piece["material"] as Dictionary).has("texani"):
@@ -378,6 +383,59 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 		for pair in bound:
 			add_front_pass(pair[0])
 	return root
+
+## Round 774: a light-mapped mesh's light map (READ, docs/protocol/
+## dungeon.md "Light maps"). CPrimMesh's reader takes the file named after
+## the vertex array (BmsReader.lightmap_path) and the record's second
+## coordinates; the draw (FUN_00bf1250) puts the light map on stage 1. Here:
+## the coordinates as the surface's UV2 and the light map decoded beside the
+## material's texture, under its path lower-cased; the commit
+## (_commit_lightmap) draws the piece with object.gdshader's LIGHTMAP
+## variant. A light map not in the archive is reported and the piece drawn
+## as before.
+## OPENSRO_QA_NOLIGHTMAP=1 (round 774): no light maps, for the A/B.
+static var _qa_no_lightmap := OS.get_environment("OPENSRO_QA_NOLIGHTMAP") != ""
+
+static func _prepare_lightmap(archive: Pk2Reader, bms_data: PackedByteArray, mesh: BmsReader.ParsedMesh,
+		piece: Dictionary, known: Dictionary, prepared: Dictionary) -> void:
+	if _qa_no_lightmap:
+		return
+	var path := BmsReader.lightmap_path(bms_data)
+	if path == "":
+		return
+	var uvs := BmsReader.lightmap_uvs(mesh)
+	var arrays: Array = piece["arrays"]
+	if uvs.size() != (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size():
+		return
+	var key := path.to_lower()
+	var textures: Dictionary = prepared["textures"]
+	if not textures.has(key):
+		if known.has(key):
+			textures[key] = {"image": null, "four_cc": known[key]["four_cc"], "alpha": (known[key]["alpha"] as Dictionary).duplicate()}
+		else:
+			var decoded := _decode_texture(archive, path, mesh.mesh_name, prepared["missing"])
+			if decoded.is_empty():
+				return
+			textures[key] = decoded
+	arrays[Mesh.ARRAY_TEX_UV2] = uvs
+	piece["lightmap_key"] = key
+
+## Puts a light map on an object-shader material (round 774): the LIGHTMAP
+## variant of its kind, READ (FUN_00bf1250): stage 0 MODULATE -- the
+## material's 2X flag 0x1000 cleared (0xbf14a1) -- and stage 1 MODULATE2X
+## (the object's +0x260, 5, set by ResourceMgr::FUN_00c32e50 at 0xc331a1)
+## of the light map, both clamped; with no material texture stage 0 is
+## SELECTARG2 (the lit colour) and stage 1 MODULATE. An MTRL mod's own
+## material is left as it is (OURS: none of the light-mapped pieces
+## MEASURED carries one).
+static func _commit_lightmap(mat: Material, lightmap: Texture2D) -> void:
+	var sm := mat as ShaderMaterial
+	if lightmap == null or sm == null or sm.shader == null or not sm.shader.has_meta(OBJECT_SHADER_KIND_META):
+		return
+	var textured := sm.get_shader_parameter("albedo_texture") != null
+	sm.shader = object_shader(String(sm.shader.get_meta(OBJECT_SHADER_KIND_META)), false, true)
+	sm.set_shader_parameter("lightmap_texture", lightmap)
+	sm.set_shader_parameter("lightmap_textured", textured)
 
 ## The piece's trimesh from the prepared faces -- `create_trimesh_shape()`'s
 ## shape without reading the mesh back (Mesh::create_trimesh_shape, 4.2:
@@ -576,8 +634,8 @@ const OBJECT_SHADER_KIND_META := "opensro_object_shader_kind"
 ## a character fading into existence draws with (AppearFade, round 676):
 ## blended at the fade's alpha, depth_draw_always keeping the model's near
 ## faces in front of its far ones while it is translucent (OURS).
-static func object_shader(kind: String, fade: bool = false) -> Shader:
-	var key := "%s/%s" % [kind, fade]
+static func object_shader(kind: String, fade: bool = false, lightmap: bool = false) -> Shader:
+	var key := "%s/%s%s" % [kind, fade, "/lightmap" if lightmap else ""]
 	_static_lock.lock()
 	var cached: Shader = _object_shaders.get(key)
 	_static_lock.unlock()
@@ -591,9 +649,11 @@ static func object_shader(kind: String, fade: bool = false) -> Shader:
 		defs += "#define OBJECT_SOLID\n"
 	if fade:
 		defs += "#define APPEAR_FADE\n"
+	if lightmap:
+		defs += "#define LIGHTMAP\n"
 	var sh := Shader.new()
-	sh.code = "shader_type spatial;\n// An object layer, kind %s%s (ObjectLoader.object_shader, round 706).\nrender_mode %s;\n%s#include \"res://scripts/assets/object.gdshaderinc\"\n" % [
-		kind, ", fading" if fade else "", modes, defs]
+	sh.code = "shader_type spatial;\n// An object layer, kind %s%s%s (ObjectLoader.object_shader, round 706).\nrender_mode %s;\n%s#include \"res://scripts/assets/object.gdshaderinc\"\n" % [
+		kind, ", fading" if fade else "", ", light-mapped" if lightmap else "", modes, defs]
 	sh.set_meta(OBJECT_SHADER_KIND_META, kind)
 	_static_lock.lock()
 	if _object_shaders.has(key):

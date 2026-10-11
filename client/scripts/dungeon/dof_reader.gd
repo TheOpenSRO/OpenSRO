@@ -65,6 +65,11 @@ class Block:
 	## CObjRendererVS::FUN_00c31450 via vslot_005).
 	var color_b: int
 	var fog := Vector3.ZERO
+	## The record's optional A (u8 + 4 x f32): the height fog (round 774,
+	## READ CObjRendererVS::vslot_015 0xbeec30 -> vertex constant c22):
+	## centre height, half the fog-free band, the falloff distance and the
+	## strength; zero when the block has none.
+	var height_fog := Vector4.ZERO
 	var room_index := -1
 	var floor_index := -1
 	## The blocks whose outline edges join this one's (READ, +0x108).
@@ -220,8 +225,7 @@ static func parse(data: PackedByteArray) -> Dof:
 		k.color_b = r.u32()
 		k.fog = r.v3()
 		if r.u8() != 0:
-			for j in 4:
-				r.f()
+			k.height_fog = Vector4(r.f(), r.f(), r.f(), r.f())
 		if r.u8() != 0:
 			for j in 7:
 				r.f()

@@ -157,6 +157,19 @@ func _initialize() -> void:
 		_check(absf(far_clip.z / far_clip.w - WorldFog.far_clip_z(compat)) < 1e-3,
 			"%s: a point on the far plane has clip z/w %.4f = far_clip_z" % ["Compatibility" if compat else "Forward+", far_clip.z / far_clip.w])
 
+	# Round 774: a dungeon's fog (READ, the object shader's EXP + HEIGHT).
+	var b1 := Vector4(1000.0, 830.0, 135.0, 0.21)
+	for row in [[1000.0, 0.987], [3000.0, 0.885], [5000.0, 0.712], [10000.0, 0.257]]:
+		var kept := 1.0 - WorldFog.dungeon_amount(row[0], 1000.0, 0.00014, b1)
+		_check(absf(kept - row[1]) < 0.0015, "dungeon EXP: 2^-((z x density)^2) at depth %d keeps %.3f (got %.4f)" % [row[0], row[1], kept])
+	var low := 1.0 - WorldFog.dungeon_amount(0.0, 0.0, 0.00014, b1)
+	_check(absf(low - (1.0 - 0.21 * (1000.0 - 830.0) / 135.0)) < 1e-4, "dungeon HEIGHT: y 0 keeps 1 - A3 (|y - A0| - A1) / A2 (got %.4f)" % low)
+	_check(WorldFog.dungeon_amount(0.0, 1000.0, 0.00014, b1) == 0.0, "inside the band and at the eye: no fog")
+	_check(WorldFog.height_constant(Vector4(1.0, 2.0, 0.0, 0.5)) == Vector4(1.0, 2.0, 1.0, 0.5) and WorldFog.height_constant(Vector4(1, 2, 3, 0)) == Vector4.ZERO,
+		"c22: A2 0 taken as 1, A3 not above 0 uploads nothing")
+	_check(WorldFog.SHADER_FN.contains("exp2(") and WorldFog.SHADER_FOG_LINE.contains("INV_VIEW_MATRIX"),
+		"the shaders' dungeon branch is base 2, and a self-fogged shader passes its world height")
+
 	if _failures == 0:
 		print("ALL PASS")
 	else:

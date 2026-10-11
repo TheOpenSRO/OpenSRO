@@ -112,6 +112,7 @@ class Building:
 
 var _points_by_id: Dictionary = {}      # teleport id -> Point
 var _point_by_object: Dictionary = {}   # associated object id -> Point
+var _point_by_code: Dictionary = {}     # codename (upper) -> Point (round 774)
 var _links_by_from: Dictionary = {}     # source teleport id -> Array[Link], file order
 var _buildings: Array = []              # Building, file order
 var _building_by_code: Dictionary = {}  # codename (upper) -> Building
@@ -152,6 +153,7 @@ func parse(data: PackedByteArray, links: PackedByteArray, buildings: PackedByteA
 		p.interaction7 = _int_at(cols, TP_INTERACTION7) != 0
 		p.interaction9 = _int_at(cols, TP_INTERACTION9) != 0
 		_points_by_id[p.id] = p
+		_point_by_code[p.code.to_upper()] = p
 		# No two retail points name one object (round 575, measured over the
 		# 222 rows); 0 is "none" (118 rows) and is not a join key.
 		if p.object_id != 0:
@@ -208,6 +210,11 @@ func buildings_in_region(rx: int, ry: int) -> Array:
 		if b.region > 0 and b.region_x == rx and b.region_y == ry:
 			out.append(b)
 	return out
+
+## The point named `code` (teleportdata's codename, any case), or null
+## (round 774: a walk-in zone names its point this way).
+func point_by_code(code: String) -> Point:
+	return _point_by_code.get(code.strip_edges().to_upper())
 
 ## The gate structure named `code` (teleportbuilding's codename), or null.
 func building_by_code(code: String) -> Building:

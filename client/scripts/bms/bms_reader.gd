@@ -373,6 +373,65 @@ static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 	_parse_vertex_links(data, mesh)
 	return mesh
 
+## Round 774: the light map (READ, CPrimMesh::FUN_00c1bb20 0xc1bc04..): bit
+## 0x400 of the flag word at file offset 0x40 -- the first u32 the mesh body
+## reader takes -- makes the vertex record 52 bytes (0x34) and puts a
+## u32-length string right after the vertex array (read into the mesh's
+## +0x14c, 0xc1bc85): the light map's file, e.g.
+## `prim\lightmap\dun\...\<mesh>lightingmap.ddj` (MEASURED). The record's
+## bytes 0x20..0x27 are its texture coordinates (stage 1's, READ: the
+## lightmap shader's `oT1 = v4.zw` over a FLOAT4 TEXCOORD0 at 0x18).
+## 0x800 makes the record 80 bytes; neither else (44).
+const FLAG_OFFSET := 0x40
+const FLAG_LIGHTMAP := 0x400
+const LIGHTMAP_REC_SIZE := 52
+
+## The light map file a mesh names, or "" when its flag word has no 0x400 or
+## the string is not where it should be.
+static func lightmap_path(data: PackedByteArray) -> String:
+	if data.size() < PREAMBLE_END or (_le_u32(data, FLAG_OFFSET) & FLAG_LIGHTMAP) == 0:
+		return ""
+	var r := _read_len_prefixed_string(data, PREAMBLE_END)
+	if r.is_empty():
+		return ""
+	r = _read_len_prefixed_string(data, r[1])
+	if r.is_empty():
+		return ""
+	var off: int = r[1]
+	if off + 8 > data.size():
+		return ""
+	var count := _le_u32(data, off + 4)
+	off += 8 + count * LIGHTMAP_REC_SIZE
+	r = _read_len_prefixed_string(data, off)
+	if r.is_empty():
+		return ""
+	var path: String = r[0]
+	return path if path.to_lower().ends_with(".ddj") else ""
+
+## The light map coordinates of a 52-byte-record mesh, one per vertex in
+## vertex order (the record's bytes 0x20..0x27, its `extra`'s first eight),
+## or empty for another record size.
+static func lightmap_uvs(mesh: ParsedMesh) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if not mesh._native.is_empty():
+		var size: int = mesh._native["extra_size"]
+		var extra: PackedByteArray = mesh._native["extra"]
+		var n := mesh.vertex_count()
+		if size != LIGHTMAP_REC_SIZE - 0x20 or extra.size() < n * size:
+			return out
+		out.resize(n)
+		for i in n:
+			out[i] = Vector2(extra.decode_float(i * size), extra.decode_float(i * size + 4))
+		return out
+	var verts := mesh.vertices
+	out.resize(verts.size())
+	for i in verts.size():
+		var e: PackedByteArray = verts[i].extra
+		if e.size() != LIGHTMAP_REC_SIZE - 0x20:
+			return PackedVector2Array()
+		out[i] = Vector2(e.decode_float(0), e.decode_float(4))
+	return out
+
 ## A ParsedMesh from the native reader's Dictionary (native/src/gd_models.rs,
 ## bms_parse): every field set from its packed arrays, the vertices kept as
 ## those arrays until something asks for them (ParsedMesh.vertices).

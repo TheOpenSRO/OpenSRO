@@ -873,11 +873,19 @@ var _pending_moved := false
 var _pending_steps := 0
 var _pending_sim_usec := 0
 
+## Round 774: a host that never moves (a dungeon's rooms and objects):
+## once anchored the effect is not placed again each step -- the placement
+## would find it where it was.
+var static_host := false
+
 func step_pre(delta: float) -> bool:
 	_life += delta
 	if max_life > 0.0 and _life >= max_life and loop:
 		stop()
 		return false
+	if static_host and _anchored:
+		_pending_moved = false
+		return true
 	var t0 := Time.get_ticks_usec() if profile else 0
 	_pending_moved = _place()
 	if profile:

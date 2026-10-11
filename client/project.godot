@@ -102,6 +102,10 @@ srr_fog_color={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 1)
 }
+srr_fog_height={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 
 ; The objects' and characters' light (round 706, ObjectLight): the direction
 ; to the light in Godot's world (READ: -normalize(-1, -1, 0)), the light's

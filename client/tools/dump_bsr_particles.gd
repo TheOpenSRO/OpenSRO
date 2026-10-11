@@ -8,6 +8,8 @@ extends SceneTree
 ##       mod set that carries a particle mod and each entry's mode, effect
 ##       file, bone, offset, words and rotation
 ##   --pk2=<Data.pk2> --list=<file>              the same, one path per line
+##   --pk2=<Data.pk2> --ambient-index            every `.bsr` whose
+##       `ambient` set plays an effect: its path and the effect files
 ##   --pk2=<Data.pk2> --census                   every `.bsr` in the
 ##       archive: how many files carry particle mods, by set kind and name,
 ##       the entry modes, and the files whose entries name a bone
@@ -49,7 +51,7 @@ static func describe(pm: BsrReader.ParticleMod) -> String:
 func _initialize() -> void:
 	var pk2_path := _arg("--pk2")
 	if pk2_path == "":
-		printerr("usage: --pk2=<Data.pk2> (--files=a|b | --census)")
+		printerr("usage: --pk2=<Data.pk2> (--files=a|b | --list=<file> | --ambient-index | --census)")
 		quit(2)
 		return
 	var archive := Pk2Reader.open(pk2_path)
@@ -59,6 +61,8 @@ func _initialize() -> void:
 		return
 	if _arg("--census") != "":
 		_census(archive)
+	elif _arg("--ambient-index") != "":
+		_ambient_index(archive)
 	else:
 		var paths := _arg("--files").split("|", false)
 		if _arg("--list") != "":
@@ -87,6 +91,23 @@ func _initialize() -> void:
 			for pm in mods:
 				print(describe(pm))
 	quit(0)
+
+## Round 774: one line per `.bsr` in the archive whose `ambient` set plays
+## anything -- its path, then each entry's effect file -- so a question like
+## "which models carry a portal glow" is a grep.
+func _ambient_index(archive: Pk2Reader) -> void:
+	var files: Array = []
+	_collect(archive, null, "", files)
+	files.sort()
+	var count := 0
+	for f in files:
+		var data: PackedByteArray = archive.read_file(f[1])
+		var efps := AmbientParticles.efp_paths(AmbientParticles.ambient_entries(BsrReader.particle_mods(data)))
+		if efps.is_empty():
+			continue
+		count += 1
+		print("AMBIENT %s\t%s" % [f[0], " ".join(efps)])
+	print("AMBIENT INDEX: %d of %d .bsr play an ambient set" % [count, files.size()])
 
 func _census(archive: Pk2Reader) -> void:
 	var files: Array = []

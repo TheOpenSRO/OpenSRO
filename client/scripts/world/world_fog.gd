@@ -65,6 +65,7 @@ class_name WorldFog
 ## The globals (project.godot [shader_globals]).
 const GLOBAL_PARAMS := &"srr_fog_params"
 const GLOBAL_COLOR := &"srr_fog_color"
+const GLOBAL_HEIGHT := &"srr_fog_height"
 
 ## The pass's place in the transparent sort: after the cloud layer (-128),
 ## the surfaces it must fog (UNDER_PASS_PRIORITY) and Detail's terrain
@@ -84,16 +85,34 @@ const VIEW_DISTANCE_DEFAULT := 2500.0
 ## by FOG.a (scene_forward_clustered.glsl 2371-2374; gles3 scene.glsl
 ## 1580-1588, which needs the environment's fog enabled -- World3D keeps it
 ## enabled at density 0).
+##
+## Round 774: a dungeon's fog (params.w = 1, set_dungeon_globals) is the
+## object shader's EXP fog with its height term (READ, docs/protocol/
+## dungeon.md "Fog"): the share of the colour kept is
+## min(2^-((z x density)^2), 1 - A3 x (|y - A0| - A1) / A2), clamped to 0..1,
+## z the view depth and y the world height; params.x is the density and
+## srr_fog_height (A0, A1, 1 / A2, A3), A3 0 for none.
 const SHADER_FN := """
 global uniform vec4 srr_fog_params;
 global uniform vec4 srr_fog_color;
-vec4 srr_fog(vec3 srr_view_vertex) {
-	float srr_span = max(srr_fog_params.y - srr_fog_params.x, 0.001);
-	float srr_amount = srr_fog_params.z * clamp((-srr_view_vertex.z - srr_fog_params.x) / srr_span, 0.0, 1.0);
+global uniform vec4 srr_fog_height;
+vec4 srr_fog(vec3 srr_view_vertex, float srr_world_y) {
+	float srr_amount;
+	if (srr_fog_params.w > 0.5) {
+		float srr_zd = -srr_view_vertex.z * srr_fog_params.x;
+		float srr_kept = exp2(-(srr_zd * srr_zd));
+		if (srr_fog_height.w > 0.0) {
+			srr_kept = min(srr_kept, 1.0 - srr_fog_height.w * (abs(srr_world_y - srr_fog_height.x) - srr_fog_height.y) * srr_fog_height.z);
+		}
+		srr_amount = srr_fog_params.z * (1.0 - clamp(srr_kept, 0.0, 1.0));
+	} else {
+		float srr_span = max(srr_fog_params.y - srr_fog_params.x, 0.001);
+		srr_amount = srr_fog_params.z * clamp((-srr_view_vertex.z - srr_fog_params.x) / srr_span, 0.0, 1.0);
+	}
 	return vec4(srr_fog_color.rgb, srr_amount);
 }
 """
-const SHADER_FOG_LINE := "FOG = srr_fog(VERTEX);"
+const SHADER_FOG_LINE := "FOG = srr_fog(VERTEX, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y);"
 
 const PASS_SHADER := """
 shader_type spatial;
@@ -117,13 +136,17 @@ void vertex() {
 }
 void fragment() {
 	float d = textureLod(srr_depth, SCREEN_UV, 0.0).r;
-	// Nothing drawn here: the sky, which fogs itself.
-	if (reverse_z ? d <= 0.0 : d >= 1.0) {
+	bool srr_empty = reverse_z ? d <= 0.0 : d >= 1.0;
+	// Nothing drawn here: in the field the sky, which fogs itself; in a
+	// dungeon the frame's clear, which is the fog colour (round 774, READ
+	// Map::FUN_00a255c0 -> CGFXVideo3d::vslot_028 / vslot_025).
+	if (srr_empty && srr_fog_params.w < 0.5) {
 		discard;
 	}
 	vec4 clip = vec4(SCREEN_UV * 2.0 - 1.0, ndc_signed ? d * 2.0 - 1.0 : d, 1.0);
 	vec4 view = INV_PROJECTION_MATRIX * clip;
-	vec4 f = srr_fog(vec3(0.0, 0.0, view.z / view.w));
+	vec3 srr_vp = view.xyz / view.w;
+	vec4 f = srr_empty ? vec4(srr_fog_color.rgb, srr_fog_params.z) : srr_fog(srr_vp, (INV_VIEW_MATRIX * vec4(srr_vp, 1.0)).y);
 	if (qa_probe) {
 		f = vec4(srr_fog_params.z > 0.0 ? f.a : 0.0, clamp(-view.z / view.w / 5000.0, 0.0, 1.0), 0.0, 1.0);
 	} else if (f.a <= 0.0) {
@@ -281,6 +304,33 @@ static func set_globals(fog_planes: Vector2, on: bool, linear_color: Color) -> v
 		Vector4(fog_planes.x, fog_planes.y, 1.0 if on else 0.0, 0.0))
 	RenderingServer.global_shader_parameter_set(GLOBAL_COLOR,
 		Vector4(linear_color.r, linear_color.g, linear_color.b, 1.0))
+	RenderingServer.global_shader_parameter_set(GLOBAL_HEIGHT, Vector4.ZERO)
+
+## A dungeon block's fog (round 774, READ: SHADER_FN's dungeon branch):
+## `density` the record's fourth float, `height` its A record (A0, A1, A2,
+## A3) or zero for none, A0 already in world height.
+static func set_dungeon_globals(density: float, height: Vector4, on: bool, linear_color: Color) -> void:
+	RenderingServer.global_shader_parameter_set(GLOBAL_PARAMS, Vector4(density, 0.0, 1.0 if on else 0.0, 1.0))
+	RenderingServer.global_shader_parameter_set(GLOBAL_COLOR,
+		Vector4(linear_color.r, linear_color.g, linear_color.b, 1.0))
+	RenderingServer.global_shader_parameter_set(GLOBAL_HEIGHT, height_constant(height))
+
+## c22 as CObjRendererVS::vslot_015 (0xbeec30) uploads it: (A0, A1, 1 / A2,
+## A3), A2 0 taken as 1; zero -- no height term -- when A3 is not above 0.
+static func height_constant(a: Vector4) -> Vector4:
+	if not (a.w > 0.0):
+		return Vector4.ZERO
+	return Vector4(a.x, a.y, 1.0 / (a.z if a.z != 0.0 else 1.0), a.w)
+
+## The share of the fog colour SHADER_FN's dungeon branch gives a point at
+## view depth `depth` and world height `y` (the CPU twin, for tests).
+static func dungeon_amount(depth: float, y: float, density: float, height: Vector4) -> float:
+	var zd := depth * density
+	var kept := pow(2.0, -(zd * zd))
+	var c := height_constant(height)
+	if c.w > 0.0:
+		kept = minf(kept, 1.0 - c.w * (absf(y - c.x) - c.y) * c.z)
+	return 1.0 - clampf(kept, 0.0, 1.0)
 
 ## The pass's code: `compatibility` picks the blend (BLEND_COMPATIBILITY,
 ## BLEND_FORWARD).

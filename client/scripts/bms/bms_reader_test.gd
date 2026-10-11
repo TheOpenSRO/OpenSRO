@@ -196,6 +196,46 @@ func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bo
 
 	return buf
 
+## Round 774: a light-mapped mesh (flag 0x400 at 0x40, READ CPrimMesh::
+## FUN_00c1bb20): 52-byte records whose bytes 0x20..0x27 are the light map's
+## coordinates, and the light map's file right after the vertex array.
+func _test_lightmap() -> void:
+	var buf := PackedByteArray()
+	buf.resize(BmsReader.PREAMBLE_END)
+	var magic := BmsReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+	_put_u32(buf, BmsReader.FLAG_OFFSET, BmsReader.FLAG_LIGHTMAP)
+	buf = _append_len_prefixed(buf, "Deck01")
+	buf = _append_len_prefixed(buf, "Mat01")
+	var head := PackedByteArray()
+	head.resize(8)
+	_put_u32(head, 0, 1)
+	_put_u32(head, 4, 2)
+	buf.append_array(head)
+	var verts: Array[BmsReader.Vertex] = []
+	for i in 2:
+		var rec := PackedByteArray()
+		rec.resize(BmsReader.LIGHTMAP_REC_SIZE)
+		_put_f32(rec, 0x20, 0.25 + i * 0.5)
+		_put_f32(rec, 0x24, 0.75)
+		_put_u32(rec, 0x2c, 0xFFFFFFFF)
+		buf.append_array(rec)
+		var v := BmsReader.Vertex.new()
+		v.extra = rec.slice(0x20)
+		verts.append(v)
+	buf = _append_len_prefixed(buf, "prim\\lightmap\\dun\\deck01lightingmap.ddj")
+	_check(BmsReader.lightmap_path(buf) == "prim\\lightmap\\dun\\deck01lightingmap.ddj",
+		"r774: the light map's file follows the vertex array (got '%s')" % BmsReader.lightmap_path(buf))
+	var plain := buf.duplicate()
+	_put_u32(plain, BmsReader.FLAG_OFFSET, 0)
+	_check(BmsReader.lightmap_path(plain) == "", "r774: no 0x400, no light map")
+	var mesh := BmsReader.ParsedMesh.new()
+	mesh.vertices = verts
+	var uvs := BmsReader.lightmap_uvs(mesh)
+	_check(uvs.size() == 2 and uvs[0] == Vector2(0.25, 0.75) and uvs[1] == Vector2(0.75, 0.75),
+		"r774: the record's bytes 0x20..0x27 are the light map coordinates (got %s)" % str(uvs))
+
 func _init() -> void:
 	var data := _build_synthetic_mesh()
 	var mesh := BmsReader.parse(data)
@@ -383,6 +423,8 @@ func _init() -> void:
 	var bad_mesh := BmsReader.parse(bad)
 	_check(bad_mesh != null and bad_mesh.vertex_links.is_empty(),
 		"a link pointing outside the mesh leaves the whole list unread")
+
+	_test_lightmap()
 
 	if _failures == 0:
 		print("ALL PASS")

@@ -526,6 +526,7 @@ func _init() -> void:
 		_check(broken_obj.skeleton_path == "", "fallback: no skeleton path invented (got %s)" % broken_obj.skeleton_path)
 
 	_test_round_625()
+	_test_round_774()
 	_test_attachable()
 
 	if _failures == 0:
@@ -579,6 +580,15 @@ func _test_round_625() -> void:
 		has_trail = has_trail or m["name"] == "mesh_trail_bytes"
 	_check(has_trail and BR.mesh_trail_bytes(unflagged) == 0 and BR.mesh_trail_bytes(tree) == 4,
 		"r625: 4 trailing bytes per mesh only under the flag")
+
+## Round 774: a table with no mesh and no material (the Donwhang cave's
+## `lamp.bsr`, an effect-only object) parses as a mesh-less object instead
+## of failing the material scan.
+func _test_round_774() -> void:
+	var bare := BsrReader.parse(_build_synthetic_character("lamp_synth", [], [], [], [], BsrReader.TYPE_BUILDING))
+	_check(bare != null and bare.mesh_path == "" and bare.sub_mesh_paths.is_empty() and bare.material_path == "",
+		"r774: an effect-only table parses with no mesh and no material")
+	_check(bare != null and bare.object_name == "lamp_synth", "r774: and keeps its name")
 
 ## Round 625 review follow-up (READ): an env-map mod governs every material
 ## of its object; BUMPENV is not one; an MTRL mod applies to the material

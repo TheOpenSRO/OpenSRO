@@ -574,6 +574,16 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 			if obj_type == TYPE_PLAYER_CHARACTER or obj_type == TYPE_ITEM:
 				built.attachable = attachable_block(data)
 			return built
+	# Round 774: a table whose material and mesh lists are both empty is an
+	# effect-only object -- the Donwhang cave's `lamp.bsr` and
+	# `404_sunbeams.bsr` (MEASURED: empty mesh and material lists, an
+	# `ambient` particle set; 66 of the cave's placements). The scan below
+	# needs a `.bmt` and refused them, so the cave's lamps never played.
+	# Their mods are kept (the default type -1 has _pp_parse read them).
+	if _empty_table(data):
+		var bare := ParsedObject.new()
+		bare.object_name = name
+		return bare
 
 	# The exact byte layout between the name and the mesh/material paths
 	# isn't fully understood (a fixed-looking header field that should
@@ -711,6 +721,21 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 ## header table against the forward scan on the same real file -- which is
 ## how the building-category behaviour was checked across the whole archive
 ## before being changed (client/tools/sweep_bsr.gd).
+## Round 774: whether the header's material and mesh sections are two empty
+## lists that chain -- a zero count at the material pointer, the mesh pointer
+## 4 bytes on, a zero count there and the animation pointer 4 bytes on (the
+## cave's `lamp.bsr`, MEASURED). parse_sections refuses an empty list.
+static func _empty_table(data: PackedByteArray) -> bool:
+	if data.size() < PREAMBLE_END:
+		return false
+	var ptr_material := _le_u32(data, OFF_PTR_MATERIAL)
+	var ptr_mesh := _le_u32(data, OFF_PTR_MESH)
+	var ptr_animation := _le_u32(data, OFF_PTR_ANIMATION)
+	if ptr_material < PREAMBLE_END or ptr_animation + 4 > data.size():
+		return false
+	return ptr_mesh == ptr_material + 4 and ptr_animation == ptr_mesh + 4 \
+		and _le_u32(data, ptr_material) == 0 and _le_u32(data, ptr_mesh) == 0
+
 static func parse_sections(data: PackedByteArray):
 	if data.size() < PREAMBLE_END:
 		return null

@@ -112,6 +112,23 @@ vec3 srr_obj_present(vec3 srr_v) {
 	return srr_linear_to_srgb(srr_l / max(srr_obj_tonemap.x, 0.0001));
 }
 
+#ifdef LIGHTMAP
+// A light-mapped piece (round 774; ObjectLoader._commit_lightmap, READ
+// FUN_00bf1250): stage 0 MODULATE (not 2X) of the texture and oD0, stage 1
+// MODULATE2X of that and the light map on the second coordinates, each
+// clamped; with no material texture stage 0 is oD0 alone and stage 1 a plain
+// MODULATE. The light maps are DXT1 with no mip levels (MEASURED).
+uniform sampler2D lightmap_texture : hint_default_white, filter_linear, repeat_disable;
+uniform bool lightmap_textured = true;
+vec3 srr_lightmapped(vec3 srr_tex, vec3 srr_lit, vec2 srr_uv2) {
+	vec3 srr_lm = texture(lightmap_texture, srr_uv2).rgb;
+	if (!lightmap_textured) {
+		return clamp(srr_lit * srr_lm, vec3(0.0), vec3(1.0));
+	}
+	return clamp(2.0 * clamp(srr_tex * srr_lit, vec3(0.0), vec3(1.0)) * srr_lm, vec3(0.0), vec3(1.0));
+}
+#endif
+
 // A TEXANI mod's texture-coordinate matrix, rows c23 and c24 (TexAni, round
 // 722; READ: vertexshader0texani.c's m3x3 oT0, (u, v, 1), c23). The
 // identity for every other material.
@@ -225,7 +242,11 @@ void fragment() {
 #endif
 #endif
 #else
+#ifdef LIGHTMAP
+	ALBEDO = srr_obj_present(srr_lightmapped(tex.rgb, srr_od0, UV2));
+#else
 	ALBEDO = srr_obj_present(clamp(2.0 * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)));
+#endif
 #endif
 #ifdef APPEAR_FADE
 	// The keep-or-discard test made by hand, so the drawn alpha can be the

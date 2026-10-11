@@ -4888,6 +4888,7 @@ func _load_dungeon(rid: int) -> bool:
 	_dungeon = built
 	_dungeon_block = -1
 	_apply_dungeon_environment()
+	_attach_dungeon_effects()
 	_update_zone_label_for_region(rx, ry)
 	print("World3D: dungeon 0x%x %s built in %d ms -- %d rooms (%d without a navigation mesh), %d objects, %d missing, %d floors" % [
 		rid, built.path, Time.get_ticks_msec() - sw, built.rooms, built.rooms_without_nav, built.objects,
@@ -4899,6 +4900,160 @@ func _load_dungeon(rid: int) -> bool:
 		print("World3D: dungeon 0x%x -- models that built nothing: %s" % [rid, str(kinds)])
 	_try_spawn_region_npcs(rx, ry)
 	return true
+
+## The dungeon's own effects (round 774): every room and object of a `.dof`
+## plays its `.bsr`'s `ambient` particle set (AmbientParticles, READ: the set
+## a placed object plays with no clip running). They are the dungeon's
+## portals (`system\\system_dungeonpotal.efp` on the rooms the walk-ins stand
+## in), its flames, lanterns and crystal glows: every `.dof` object of the
+## served dungeons is such a host (MEASURED: the cave's 1,037 are flames,
+## lamps, cobwebs and its sunbeams; the tomb's floors' are burners, flames,
+## lanterns and bowls), and a mesh-less one (the cave's `lamp.bsr`) is
+## kept for them (ObjectLoader).
+##
+## OURS: the original draws the current block and the blocks its list names
+## (Map::FUN_00a255c0); the tomb's B2 lists none for any block (MEASURED) and
+## carries 2,064 hosts, so here the DUNGEON_FX_ACTIVE effects nearest the
+## camera run and draw and the rest wait, re-chosen every
+## DUNGEON_FX_REFRESH_MS.
+const DUNGEON_FX_ACTIVE := 400
+const DUNGEON_FX_REFRESH_MS := 250
+var _dungeon_fx: Array = []
+## Each effect's place, as attached (rooms and objects do not move).
+var _dungeon_fx_at := PackedVector3Array()
+var _dungeon_fx_next_ms := 0
+
+func _attach_dungeon_effects() -> void:
+	_dungeon_fx.clear()
+	_dungeon_fx_on.clear()
+	_dungeon_fx_at = PackedVector3Array()
+	if _dungeon == null or OS.get_environment("OPENSRO_QA_AMBIENT") == "off":
+		return
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return
+	_ambient.set_light_effect(video_options().value(VideoOptions.LIGHT) == 1)
+	var sw := Time.get_ticks_msec()
+	var hosts := 0
+	var native := 0
+	for child in _dungeon.group.get_children():
+		var host := child as Node3D
+		if host == null or not host.has_meta(AmbientParticles.META_ENTRIES):
+			continue
+		hosts += 1
+		for fx_v in _ambient.attach(host, host.get_meta(AmbientParticles.META_ENTRIES), particles):
+			var fx := fx_v as EfpEffect
+			# Stepped by _step_dungeon_effects, not by its own _process; in
+			# Rust when the library is there (EfpSimNative, round 763).
+			fx.process_mode = Node.PROCESS_MODE_DISABLED
+			fx.static_host = true
+			if fx.use_native_sim():
+				native += 1
+			_dungeon_fx.append(fx)
+			_dungeon_fx_at.append(fx.placed_at())
+	_dungeon_fx_next_ms = 0
+	_cull_dungeon_effects()
+	print("World3D: dungeon 0x%x -- %d ambient effect(s) on %d room(s) and object(s) (%d simulated natively), built in %d ms" % [
+		_dungeon.rid, _dungeon_fx.size(), hosts, native, Time.get_ticks_msec() - sw])
+
+## The DUNGEON_FX_ACTIVE effects nearest the camera run; the rest are hidden
+## and paused (OURS, see _attach_dungeon_effects).
+func _cull_dungeon_effects() -> void:
+	if _dungeon_fx.is_empty():
+		return
+	var eye := camera_3d.global_position if camera_3d != null else player.global_position
+	var d2 := PackedFloat32Array()
+	d2.resize(_dungeon_fx.size())
+	for i in _dungeon_fx.size():
+		d2[i] = _dungeon_fx_at[i].distance_squared_to(eye)
+	var limit := INF
+	if _dungeon_fx.size() > DUNGEON_FX_ACTIVE:
+		var sorted := d2.duplicate()
+		sorted.sort()
+		limit = sorted[DUNGEON_FX_ACTIVE - 1]
+	_dungeon_fx_on.clear()
+	for i in _dungeon_fx.size():
+		var fx := _dungeon_fx[i] as EfpEffect
+		if not is_instance_valid(fx):
+			continue
+		var on := d2[i] <= limit
+		fx.visible = on
+		if on:
+			_dungeon_fx_on.append(fx)
+
+## The effects _cull_dungeon_effects keeps, stepped together once a frame
+## (round 774): the placement and the draws on this thread, the simulations
+## as one batch (EfpSimBatch: natively when the library is there, else on
+## WorkerThreadPool), as EquipFx steps its masters. MEASURED, the tomb's B2
+## at the same view (QA run, p95 work frame): 2 ms with no ambient effect,
+## 12 ms with 400 effects each in its own _process.
+var _dungeon_fx_on: Array = []
+
+func _step_dungeon_effects(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	var list: Array = []
+	for fx_v in _dungeon_fx_on:
+		var fx := fx_v as EfpEffect
+		if is_instance_valid(fx) and fx.sim != null and fx.step_pre(delta):
+			list.append(fx)
+	var t1 := Time.get_ticks_usec()
+	EfpSimBatch.run(list, delta)
+	var t2 := Time.get_ticks_usec()
+	for fx_v in list:
+		if is_instance_valid(fx_v):
+			(fx_v as EfpEffect).step_post()
+	var t3 := Time.get_ticks_usec()
+	if not _qa_dungeon_fx:
+		return
+	_dungeon_fx_usec += Vector3(t1 - t0, t2 - t1, t3 - t2)
+	_dungeon_fx_frames += 1
+	if _dungeon_fx_frames >= 300:
+		print("World3D: dungeon effects -- %d stepped, per frame: place %.2f ms, simulate %.2f ms, draw %.2f ms, glow pass %.2f ms (300-frame mean)" % [
+			list.size(), _dungeon_fx_usec.x / 300000.0, _dungeon_fx_usec.y / 300000.0, _dungeon_fx_usec.z / 300000.0,
+			_dungeon_glow_usec / 300000.0])
+		_dungeon_glow_usec = 0
+		_dungeon_fx_frames = 0
+		_dungeon_fx_usec = Vector3.ZERO
+
+var _dungeon_logged_block := -1
+## OPENSRO_QA_DUNGEON_FX=1 (round 774): the dungeon effects' cost, every 300
+## frames -- placement, simulation, draws and the glow pass.
+var _qa_dungeon_fx := OS.get_environment("OPENSRO_QA_DUNGEON_FX") != ""
+var _dungeon_glow_usec := 0
+var _dungeon_fx_usec := Vector3.ZERO
+var _dungeon_fx_frames := 0
+
+## OPENSRO_QA_PIXEL_RAYS="x,y;x,y" (round 774): at tick 300, what the ray
+## from the camera through each viewport pixel meets first -- the mesh, its
+## object, the distance and the material's shader -- for "what is that".
+func _qa_pixel_rays(spec: String) -> void:
+	var space := get_world_3d().direct_space_state
+	for part in spec.split(";", false):
+		var xy := part.split(",")
+		if xy.size() != 2:
+			continue
+		var px := Vector2(float(xy[0]), float(xy[1]))
+		var from := camera_3d.project_ray_origin(px)
+		var to := from + camera_3d.project_ray_normal(px) * 50000.0
+		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(from, to))
+		if hit.is_empty():
+			print("QA PIXEL %s: nothing within 50000" % str(px))
+			continue
+		var n: Node = hit["collider"]
+		var mi: MeshInstance3D = null
+		while n != null and mi == null:
+			mi = n as MeshInstance3D
+			n = n.get_parent()
+		var path := ""
+		var m: Node = mi
+		while m != null and m != self and path.length() < 200:
+			path = String(m.name) + ("/" + path if path != "" else "")
+			m = m.get_parent()
+		var shader := ""
+		if mi != null and mi.material_override is ShaderMaterial:
+			var sm := mi.material_override as ShaderMaterial
+			shader = sm.shader.code.get_slice("\n", 1) if sm.shader != null else "?"
+		print("QA PIXEL %s: %.0f away, %s, shader %s" % [str(px), from.distance_to(hit["position"]), path, shader])
 
 ## Stands the player at dungeon-space (x, z) on the rooms' graph: the floor
 ## nearest `reference_y`, or the highest without one. False outside a
@@ -4921,6 +5076,9 @@ func _leave_dungeon() -> void:
 		return
 	_dungeon = null
 	_dungeon_block = -1
+	_dungeon_fx.clear()
+	_dungeon_fx_on.clear()
+	_dungeon_fx_at = PackedVector3Array()
 	if _sky_dome != null:
 		_sky_dome.visible = true
 	if _sun_glow != null:
@@ -4982,12 +5140,30 @@ func _apply_dungeon_block(b: int) -> void:
 	var light := DungeonWorld.block_colour(blk.color_a)
 	_object_light_channels = [Color.BLACK, light]
 	_apply_object_light()
-	var on := video_options().value(VideoOptions.FOG) == 1 and OS.get_environment("OPENSRO_QA_NOFOG") == "" \
-		and blk.fog.y > blk.fog.x
+	# The fog (round 774, READ -- docs/protocol/dungeon.md "Fog"): a
+	# dungeon's landscape step sets no table fog and the object shader's EXP
+	# variant (Map::FUN_00a26f60 0xa27722), so the record's start and end
+	# are never used: the share kept is 2^-((depth x density)^2), and with
+	# the block's A record the height term too (WorldFog.SHADER_FN). The
+	# frame is cleared to the fog colour (CGFXVideo3d::vslot_028 / vslot_025
+	# from Map::FUN_00a255c0), not black: the pass draws it where nothing
+	# was drawn (WorldFog.PASS_SHADER).
+	# OURS: the original sets each room's and object's own block's record
+	# before it and evaluates per vertex; the pass here fogs every pixel with
+	# the current block's.
+	var on := video_options().value(VideoOptions.FOG) == 1 and OS.get_environment("OPENSRO_QA_NOFOG") == ""
 	var env: Environment = world_environment.environment if world_environment != null else null
-	WorldFog.set_globals(Vector2(blk.fog.x, blk.fog.y), on, WorldFog.pass_color(DungeonWorld.block_colour(blk.color_b), env))
+	var fog_colour := WorldFog.pass_color(DungeonWorld.block_colour(blk.color_b), env)
+	var height := blk.height_fog
+	if _dungeon.group != null and _dungeon.group.is_inside_tree():
+		height.x += _dungeon.group.global_position.y
+	WorldFog.set_dungeon_globals(blk.fog.z, height, on, fog_colour)
 	if _fog_pass != null:
 		_fog_pass.visible = on
+	if b != _dungeon_logged_block:
+		_dungeon_logged_block = b
+		print("World3D: dungeon block %d -- fog density %.5f, height fog %s, colour %s" % [
+			b, blk.fog.z, str(blk.height_fog), str(DungeonWorld.block_colour(blk.color_b))])
 
 ## Each frame in a dungeon: the block under the player sets the light and
 ## the fog, and the minimap's floor.
@@ -4998,6 +5174,9 @@ func _dungeon_tick() -> void:
 	var b := DungeonWorld.block_under(_dungeon, p)
 	if b >= 0 and b != _dungeon_block:
 		_apply_dungeon_block(b)
+	if Time.get_ticks_msec() >= _dungeon_fx_next_ms:
+		_dungeon_fx_next_ms = Time.get_ticks_msec() + DUNGEON_FX_REFRESH_MS
+		_cull_dungeon_effects()
 
 ## The minimap in a dungeon (READ, UI_SILKMALL::FUN_00661ce0): the tile
 ## column is floor(x / 1920) + 0x80 and the row floor(z / 1920) + 0x80 of the
@@ -7886,6 +8065,7 @@ func _load_npc_tables() -> void:
 	_teleport_reader = TeleportReader.new().load(func(archive_path: String) -> PackedByteArray:
 		var e := ObjectLoader.find_file(_media_pk2, archive_path)
 		return _media_pk2.read_file(e) if e != null else PackedByteArray())
+	_load_walk_in_points()
 	# The gate's name resolves through the same textdata_object table
 	# (_object_names); it was just parsed, so it is kept rather than parsed
 	# a second time on the first gate.
@@ -8963,7 +9143,9 @@ func _attach_gate_effects(region_x: int, region_y: int, retries: int = GATE_EFFE
 	# neighbours against the objects of the same nine containers, in this
 	# region's frame -- a gate's model can sit in a neighbour's container.
 	var pairs := _gate_pairs_around(region_x, region_y, group)
-	if pairs.is_empty():
+	# Round 774: the walk-in portals' models, by where their effects stand.
+	var walk_ins := _walk_in_pairs_around(region_x, region_y, group)
+	if pairs.is_empty() and walk_ins.is_empty():
 		return
 	# Effects still decoding on a preload task: come back shortly rather than
 	# decode them on this thread (round 720's review).
@@ -8974,9 +9156,9 @@ func _attach_gate_effects(region_x: int, region_y: int, retries: int = GATE_EFFE
 				if not EfpEffect.has_template(p):
 					_after(0.1, func() -> void: _attach_gate_effects(region_x, region_y, retries - 1))
 					return
-	for pair in pairs:
+	for pair in pairs + walk_ins:
 		var obj: Node3D = pair["node"]
-		var building: TeleportReader.Building = pair["building"]
+		var code: String = pair["code"] if pair.has("code") else (pair["building"] as TeleportReader.Building).code
 		if not is_instance_valid(obj) or obj.has_meta(META_GATE_EFFECTS):
 			continue
 		obj.set_meta(META_GATE_EFFECTS, true)
@@ -8988,8 +9170,9 @@ func _attach_gate_effects(region_x: int, region_y: int, retries: int = GATE_EFFE
 		for entries in mods:
 			total += (entries as Array).size()
 		var holder := String(obj.get_parent().name) if obj.get_parent() != null else "?"
-		print("World3D: gate %s -- %s (in %s) at %.1f from its row plays %d of its %d ambient effect(s), built in %d us" % [
-			building.code, obj.name, holder, float(pair["distance"]), made.size(), total, sw_attach])
+		print("World3D: gate %s -- %s (in %s) at %.1f from its %s plays %d of its %d ambient effect(s), built in %d us" % [
+			code, obj.name, holder, float(pair["distance"]), "walk-in centre (by an effect's own place)" if pair.has("code") else "row",
+			made.size(), total, sw_attach])
 		# The placement, measured: each effect's position in its object's
 		# frame, which should be the entry's offset (AmbientParticles).
 		if _qa_ambient_log:
@@ -9035,6 +9218,73 @@ func _gate_pairs_around(region_x: int, region_y: int, group: Node3D) -> Array:
 	var out: Array = []
 	for pair in GateEffectMatch.pairs(rows, objects, GATE_EFFECT_RADIUS):
 		out.append({"node": nodes[pair["object"]], "building": buildings[pair["row"]], "distance": pair["distance"]})
+	return out
+
+## The walk-in teleports' centres in the field (round 774): objectstring.ifo's
+## points (ObjectStringReader) whose name is a teleportdata codename -- the
+## names a TELEPORT event zone fires (round 773; MEASURED, the two
+## open-world walk-ins). Each [code, region (x, y), region-local x/z].
+var _walk_in_points: Array = []
+
+func _load_walk_in_points() -> void:
+	_walk_in_points.clear()
+	var data := _open_pk2_if_set()
+	if data == null or _teleport_reader == null:
+		return
+	var e := ObjectLoader.find_file(data, "navmesh\\objectstring.ifo")
+	if e == null:
+		print("World3D: navmesh\\objectstring.ifo not in Data.pk2 -- the walk-in portals' glows are not matched")
+		return
+	for entry_v in ObjectStringReader.parse(data.read_file(e)):
+		var entry: ObjectStringReader.Entry = entry_v
+		if entry.is_dungeon() or _teleport_reader.point_by_code(entry.name) == null:
+			continue
+		_walk_in_points.append([entry.name, entry.region_xy(), Vector2(entry.position.x, entry.position.z)])
+	print("World3D: %d walk-in portal(s) in the field (objectstring.ifo)" % _walk_in_points.size())
+
+## The walk-in portals' models around region (region_x, region_y) (round
+## 774), as _gate_pairs_around pairs the gate rows: [{"node", "code",
+## "distance"}]. A walk-in has no teleportbuilding row, and its model's
+## origin can stand far from the zone -- the Donwhang cave's mouth,
+## `w_cd_dondunenter`, places its portal effect 1,056 units from its origin
+## (MEASURED, its ambient entry's offset) -- so an object pairs by the place
+## of each of its ambient entries (its offset in the object's frame, mode !=
+## 0, AmbientParticles), within GATE_EFFECT_RADIUS of the zone's centre.
+func _walk_in_pairs_around(region_x: int, region_y: int, group: Node3D) -> Array:
+	var here := Vector2i(region_x, region_y)
+	var near := GateEffectMatch.around(here)
+	var rows: Array = []
+	for w in _walk_in_points:
+		var at_r: Vector2i = w[1]
+		if near.has(at_r):
+			rows.append({"key": rows.size(), "code": w[0], "at": GateEffectMatch.row_in_frame(w[2], at_r, here)})
+	if rows.is_empty():
+		return []
+	var to_frame := _chain_transform(group).affine_inverse()
+	var objects: Array = []
+	var nodes := {}
+	for r in near:
+		var at_r: Vector2i = r
+		var container := _object_containers.get("_%d_%d" % [at_r.x, at_r.y]) as Node3D
+		if container == null or not is_instance_valid(container) or container.is_queued_for_deletion():
+			continue
+		var to_here := to_frame * _chain_transform(container)
+		for child in container.get_children():
+			var obj := child as Node3D
+			if obj == null or not obj.has_meta(AmbientParticles.META_ENTRIES) or obj.has_meta(META_GATE_EFFECTS):
+				continue
+			var key: int = nodes.size()
+			nodes[key] = obj
+			for entries in obj.get_meta(AmbientParticles.META_ENTRIES):
+				for e_v in entries:
+					var e := e_v as BsrReader.ParticleEntry
+					if e == null or e.mode == 0:
+						continue
+					var p := to_here * obj.transform * e.offset
+					objects.append({"key": key, "at": Vector2(p.x, p.z)})
+	var out: Array = []
+	for pair in GateEffectMatch.pairs(rows, objects, GATE_EFFECT_RADIUS):
+		out.append({"node": nodes[pair["object"]], "code": rows[pair["row"]]["code"], "distance": pair["distance"]})
 	return out
 
 ## The region-local x/z of the teleport rows of the region `node_suffix`
@@ -9122,7 +9372,10 @@ func _ambient_step(delta: float) -> void:
 		print("QA TEXANI tick %d: %s" % [Engine.get_physics_frames(), TexAni.describe()])
 	if _ambient.glow_count() == 0:
 		return
+	var t_glow := Time.get_ticks_usec() if _qa_dungeon_fx else 0
 	_ambient.update(delta * 1000.0, camera_3d, get_world_3d().direct_space_state)
+	if _qa_dungeon_fx:
+		_dungeon_glow_usec += Time.get_ticks_usec() - t_glow
 	# OPENSRO_QA_AMBIENT=1 (round 720): each glow's alpha and visibility,
 	# every 60 ticks.
 	if _qa_ambient_log and Engine.get_physics_frames() % 60 == 0:
@@ -13382,6 +13635,11 @@ func _update_blob_shadow() -> void:
 ##                          contains one of these fragments
 ##   OPENSRO_QA_LOOK=1     print which real placed objects the camera is
 ##                          pointing at (model name, distance, placement)
+##   OPENSRO_QA_PIXEL_RAYS="x,y;.."  (round 774) at tick 300, what the ray
+##                          through each viewport pixel meets: mesh, object,
+##                          distance and shader (_qa_pixel_rays)
+##   OPENSRO_QA_DUNGEON_FX=1 (round 774) the dungeon effects' cost every 300
+##                          frames (_step_dungeon_effects)
 ##   OPENSRO_QA_OBJECTS=a,b at each `--shots` viewpoint, one `QA OBJECT`
 ##                          line per placed map object whose node name
 ##                          contains a fragment: its `.o2` key, the region
@@ -14240,6 +14498,8 @@ func _qa_step() -> void:
 
 	if OS.get_environment("OPENSRO_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
 		_qa_look_report()
+	if OS.get_environment("OPENSRO_QA_PIXEL_RAYS") != "" and _qa_tick == 300:
+		_qa_pixel_rays(OS.get_environment("OPENSRO_QA_PIXEL_RAYS"))
 
 	# Reported from a later tick, not the one-time setup block: the
 	# animation is applied during the movement update, so a report taken on
@@ -16584,6 +16844,8 @@ func _process(_delta: float) -> void:
 	var fs := FrameSplit.on
 	var t := Time.get_ticks_usec() if fs else 0
 	var t_world := t
+	if not _dungeon_fx.is_empty():
+		_step_dungeon_effects(_delta)
 	# Round 748 (item 4): the local player's pose once a rendered frame, at
 	# the clip time the frame's last physics step reached (_player_pose_due),
 	# not once a step -- a slow frame runs up to eight steps and posed (and
