@@ -3748,6 +3748,100 @@ func item_types(item_id: int) -> PackedInt32Array:
 static func is_global_chat_item(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 5
 
+## Whether TypeIDs are a reverse return scroll's, 3/3/3/3 (round 778: the
+## client's own test FUN_0078e870 -- `(tid & 0x780) == 0x180` and
+## `(tid & 0xf800) == 0x1800` over 3/3).
+static func is_reverse_return_scroll(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 3
+
+# --- The reverse return scroll (round 778) -----------------------------------
+#
+# The box (ReverseReturnBox, message box kind 0x21) and the world map's
+# selection mode (HudWorldmap.enter_select_mode). READ: a destination button
+# sends the use with option 2 or 3 (FUN_00797d90 case 0x21); the map button
+# hides the box and puts the map in its selection mode with the box's kind
+# (0x63b9a0 -> 0x622dd0(1, kind)); a popup button there sends option 7 with
+# the row's id and closes the box (0x60f5f0 -> FUN_00777dd0); hiding the map
+# meanwhile destroys the box unsent (vslot_023 0x624550 -> FUN_006ec860).
+# World3D sends the use (NetClient.use_item_option).
+
+## The use to send: the scroll's bag slot, the option (2, 3 or 7) and, for 7,
+## the refoptionalteleport id.
+signal reverse_return_requested(slot: int, option: int, target: int)
+
+var _reverse_box: ReverseReturnBox
+var _optional_teleports: OptionalTeleportReader
+var _optional_teleports_loaded := false
+
+## The box for the reverse return scroll in bag slot `slot`, replacing one
+## already up. Sits on this HUD, centred (ReverseReturnBox.screen_position).
+func open_reverse_return_box(slot: int) -> ReverseReturnBox:
+	close_reverse_return_box()
+	var box := ReverseReturnBox.new()
+	box.build(_builder, slot)
+	box.option_chosen.connect(func(option: int) -> void:
+		reverse_return_requested.emit(slot, option, 0))
+	box.map_requested.connect(_on_reverse_map_requested)
+	add_child(box)
+	if box.is_inside_tree():
+		box.position = box.screen_position(get_viewport_rect().size)
+	_reverse_box = box
+	print("REVERSEBOX opened for bag slot %d: %s" % [slot, ", ".join(
+		["LastReturn", "LastDeath", "MapPoint", "Cancel"].map(func(m): return "'%s'" % box.caption_of(m)))])
+	return box
+
+## The box up, or null.
+func reverse_return_box() -> ReverseReturnBox:
+	if _reverse_box != null and is_instance_valid(_reverse_box) and not _reverse_box.is_queued_for_deletion():
+		return _reverse_box
+	return null
+
+func close_reverse_return_box() -> void:
+	var box := reverse_return_box()
+	if box != null:
+		box.close()
+	_reverse_box = null
+
+## The table the map's icons come from, read from the archive once.
+func optional_teleports() -> OptionalTeleportReader:
+	if not _optional_teleports_loaded:
+		_optional_teleports_loaded = true
+		var archive := _builder.media_archive() if _builder != null else null
+		if archive != null:
+			_optional_teleports = OptionalTeleportReader.new().load(func(path: String) -> PackedByteArray:
+				var entry := ObjectLoader.find_file(archive, path)
+				return archive.read_file(entry) if entry != null else PackedByteArray())
+			print("HudPanels: refoptionalteleport -- %d rows, %d map points" % [
+				_optional_teleports.size(), _optional_teleports.map_points().size()])
+	return _optional_teleports
+
+## The box's map button (0x63b9a0): the box hidden, the map shown in its
+## selection mode.
+func _on_reverse_map_requested() -> void:
+	var box := reverse_return_box()
+	var map := world_map as HudWorldmap
+	if box == null or map == null or not is_instance_valid(map):
+		return
+	box.visible = false
+	map.optional_reader = optional_teleports()
+	if not map.select_point_chosen.is_connected(_on_reverse_point_chosen):
+		map.select_point_chosen.connect(_on_reverse_point_chosen)
+		map.select_cancelled.connect(_on_reverse_select_cancelled)
+	if not map.visible:
+		map.open()
+	map.enter_select_mode()
+
+func _on_reverse_point_chosen(id: int) -> void:
+	var box := reverse_return_box()
+	if box == null:
+		return
+	print("REVERSEBOX map point %d chosen for bag slot %d" % [id, box.slot])
+	reverse_return_requested.emit(box.slot, ReverseReturnBox.OPTION_MAP, id)
+	close_reverse_return_box()
+
+func _on_reverse_select_cancelled() -> void:
+	close_reverse_return_box()
+
 ## The TypeIDs of what lies in a bag slot, or empty.
 func bag_item_types(slot: int) -> PackedInt32Array:
 	var id := _bag_item_id_at_slot(slot)
@@ -4331,6 +4425,11 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			return
 		if is_global_chat_item(item_types(item_id)):
 			global_chat_requested.emit(slot, qty)
+			return
+		# Round 778: a reverse return scroll opens its box instead of being
+		# used (IFSlotWithHelp::FUN_00676570, case 3 -> message box 0x21).
+		if is_reverse_return_scroll(item_types(item_id)):
+			open_reverse_return_box(slot)
 			return
 		if NetClient.current_character_name != "":
 			UiSounds.expect_use(item_types(item_id))

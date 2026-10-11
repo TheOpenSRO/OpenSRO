@@ -275,10 +275,11 @@ order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//'
 /tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\npcpos.txt" -out npcpos.txt
 /tmp/export-refdata  -mode npcpos -out npcpos.csv npcpos.txt                # 12,367 placements; the server reads it with -npcpos-csv
-for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
+for f in teleportdata.txt teleportlink.txt teleportbuilding.txt refoptionalteleport.txt; do
   /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
-/tmp/export-refdata  -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt
-                     # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
+/tmp/export-refdata  -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt refoptionalteleport.txt
+                     # a DIRECTORY of CSVs: 222 points, 292 links, 77 buildings, and (round 778) the reverse
+                     # return scroll's 39 map points (optionalteleport.csv); the server reads it with -teleport-dir
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refregion.txt" -out refregion.txt
 /tmp/export-refdata  -mode regions -out regions.csv refregion.txt         # 3,194 regions, 103 towns; the server reads it with -regions-csv (round 674)
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\magicoption.txt" -out magicoption.txt
@@ -291,7 +292,7 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
 /tmp/export-refdata  -mode npcs -out npcs.csv $(order characterdata.txt) refshopgroup.txt
                      # 313 NPC rows, 84 named by refshopgroup (round 708); REQUIRED with -npcpos-csv since round 727 (-npcs-csv)
 rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt characterdata_* leveldata.txt \
-      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refregion.txt refshopgroup.txt magicoption.txt magicoptionassign.txt
+      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refoptionalteleport.txt refregion.txt refshopgroup.txt magicoption.txt magicoptionassign.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
 # The exporter grows a strict-suffix column now and then (latest: item column 87, Rarity, round 770 --

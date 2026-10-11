@@ -120,7 +120,7 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 	useItemClock = func() time.Time { return f.clock }
 
 	handle := gateway.Chain(LoginHandler(accounts),
-		UseItemHandler(f.hwanStore, f.inv, items, nil, nil, nil, nil, f.zerk, gate, f.keeper),
+		UseItemHandler(f.hwanStore, f.inv, items, nil, nil, nil, nil, f.zerk, gate, f.keeper, nil),
 		CompositeHandler(f.hwanStore, items, f.keeper, f.zerk, gate, nil))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)

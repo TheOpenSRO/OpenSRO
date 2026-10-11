@@ -466,6 +466,11 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 		return monsterStrikeOutcome{dropped: true}, nil
 	}
 	out.died = true
+	// Where she fell is her death point (round 778, scroll.go): the death
+	// path's GObjPC::FUN_004e0330 (from CGObjPC vslot_306, 0x529b10), which
+	// the reverse return scroll's option 3 sends her back to. Before the
+	// flag-off respawn moves her.
+	recordDeathPoint(ctx, chars, deps.hub, characterID)
 	// Her states end with her (round 659, status.go).
 	statusFX.endCharacter(deps.hub, characterID)
 	// Dying costs experience, above level 10. Real: GObjPC_OnDeath

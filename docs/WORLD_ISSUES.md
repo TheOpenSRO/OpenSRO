@@ -7483,6 +7483,49 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventy-eighth round: no invisible walls between dungeon rooms, the reverse return scroll, the retail camera, the window title
+
+The user, on v0.1.524, exploring the Qin-Shi tomb: "I ran into an invisible wall here" (West Snake
+Cave (Lyn), B3); "please get reverse return scrolls fully working including map icons that it
+provides and original gui popup when you use it ... It should even let me select the floor of the
+cave"; then (mid-round) "For the title of the game window please make it [${character_name}]
+${server_name}" and the camera (below). Labels as before: READ, MEASURED, INFERRED, OURS, OPEN.
+Three lanes: the walls and the title (this part), the scroll and the camera (agents, merged; their
+parts follow). The user's client logs were not read this round (no route to their PC was cleared);
+the live server's log gave the walk-in path into B3 (`dungeon/32773`).
+
+### Round 778 (part): the walls between rooms
+
+- **MEASURED** (`client/tools/dungeon_wall_census.gd`, new): for every room's open outline edge,
+  samples every ~5 units, one real `NavGraph.step_tracked` from half a unit inside straight across.
+  Under round 773's rule (a room found 0.01 past the edge) **1,172 of B3's 28,935 crossings
+  stopped**; B4 927 of 23,484, B5 545 of 5,344, Donwhang 188 of 3,328. The rooms' meshes leave seam
+  gaps of 0.02-0.06 (B3: 85 at 0.02, 812 at 0.04, 236 at 0.06), a few up to about 1 unit.
+  West Snake Cave (Lyn) is block label `QT_A01_F03_WROOM_03`: 158 of the stopped samples.
+- **READ** (the client dump, `/var/tmp/decomp_client`): the dungeon stitches its rooms' linked
+  (0x08) edges -- `FUN_0043ed30` pairs a block's edge with the first neighbour (+0x108) edge whose
+  two ends are each within 5.0 in 3D (`FUN_0043e410` -> `FUN_0045ec80`, float 5.0 at 0xe1b86c) --
+  and the walk (`CRTNavMeshDungeon::vslot_002` 0x43f390) hands the mover to the partner edge's
+  cell, nudged at most 0.2 toward its centre (`CRTNavMeshObj::FUN_0044b270`,
+  `RTNavMeshObj::FUN_0045dc60`, double 0.2 at 0xe1b850). `docs/protocol/dungeon.md`, "Walking
+  between rooms".
+- **OpenSRO:** `NavGraph._stitch_dungeon` / `_dungeon_hand_off` (the block neighbour lists passed
+  by `DungeonWorld.build`). OURS: a seam wider than the nudge goes to the cell's nearest point; an
+  unstitched linked edge (8 of B3's 1,106, 26 of B4's) hands over to a room up to 1.5 past it.
+- **After (MEASURED, same census):** B3 11 stopped (all in `QT_A01_F03_CPASS_01`, Central Cave
+  Passage), B4 12, B5 1, Donwhang 122 -- every one at an edge with no partner whose next floor is 3-19
+  away or 9 higher, or an unlinked 0x20 edge, or (Donwhang) a linked edge with no room beyond.
+  West Snake Cave (Lyn): 0. What the client does at an unstitched linked edge is OPEN.
+- Tests: `dungeon_test.gd` `_stitch` (a 0.04 gap crossed both ways, the pairing, the neighbour
+  list, a 6-unit gap stays a wall, an unstitched edge hands over).
+
+### Round 778 (part): the window title
+
+`WindowTitle` (new, OURS -- the user's format): "[<character>] <server>" while in the world, the
+server being the picked server list entry's name (`ClientSettings.server_name`, the setting
+file's `name`), "OpenSRO" when there is none; back to "OpenSRO" when the world leaves the tree.
+`window_title_test.gd`.
+
 ### Round 778 (part): the camera
 
 The user: "the original camera lets me look up more, you can even get close to the character body
@@ -7590,6 +7633,66 @@ third-person view to take the drag. `retail_bloom_test` checks 460. `check` ALL 
 The camera's own cost is one ray a physics step (the SpringArm3D cast a sphere before); the fade's
 twins exist only while the player looks up past 51.57 degrees.
 
+
+
+### Round 778 (part): the reverse return scroll
+
+The user: "please get reverse return scrolls fully working including map icons that it provides and
+original gui popup when you use it. Read how it works with the original code. It should even let me
+select the floor of the cave." `docs/protocol/reverse_return_scroll.md` has every address; this is
+the summary.
+
+**READ.** A right-click on a 3/3/3/3 item (ITEM_MALL_REVERSE_RETURN_SCROLL 3795 and its three
+siblings) does not send the use: `IFSlotWithHelp::FUN_00676570` opens message box kind 0x21, built
+by `UI_SILKMALL::FUN_00644c90` (0x647dff..): 300 x 204, `UIIT_STT_CONFIRM_BOX`, the question, and
+four `com_return_button.ddj` buttons -- "Move to the last recall point." (option 2), "Move to the
+place where you died." (3), "Move to certain location at the map." (control 203, created there) and
+Cancel. The map button (0x63b9a0) puts the world map in its selection mode (`CNIFWorldMap`
+0x622dd0): the refoptionalteleport rows whose map-point byte is 1 drawn as `xy_returnicon.ddj`
+icons (a 64 x 32 two-frame atlas swapped every 500 ms by timer 0xd, `_focus` under the mouse,
+`_press` picked), a click opening a `map_return.ddj` popup that lists the point -- or, for a group's
+flag, the rows of the group that are not map points: the Donwhang cave's floor. A popup button sends
+the use with option 7 and the row's id (0x60f5f0); hiding the map cancels everything (vslot_023).
+On the server `FUN_004a00c0` refuses in a fixed order with category-1 codes (0x18f5, 0x187a,
+0x185f, 0x185d, 0x1875, 0x185e, 0x1885, 0x1886, 2, 0x18fd), starts the scroll state with
+`(float)Param1` as its delay, and the state's job resolves the destination when it expires: the
+recall point (`SaveCurPosAsLastTelPosition`, which the ordinary return scroll calls when used), the
+death point (`FUN_004e0330` on death), or the table row's point exactly.
+
+**The floor of the cave.** Selecting a floor is the popup under the cave's flag, not the floor
+spinner (in selection mode the spinner is hidden and a click never opens a dungeon map). This
+archive's table has one row under the Donwhang flag -- `SN_ZONE_23002` "Donwhang Stone Cave", the
+1F at (1115, 0, -935), level 50+ -- and none under the Qin-Shi tomb's flag (ids 32..38 are absent),
+so the cave offers one floor and the tomb none, exactly as the original client would. A table with
+more rows in a group lists them all.
+
+**OURS / OPEN.** The delay's unit is OPEN (the job counts seconds, which would make Param1 1000 a
+thousand seconds; the tooltips say "immediately"): Param1 is milliseconds here. OpenSRO's wire is
+OpUseItem with retail's {u8 option, u32 id} tail and a {u16 code, u32 cast_ms} reply tail. The
+world, PK, quest, cart and fortress refusals have nothing to refuse in OpenSRO; an unplaceable
+destination answers 0x18f5. The ordinary return scroll now works too (records the recall point,
+returns to the return point after Param1) -- the reverse scroll's option 2 has nothing to read
+without it. Thief-den scrolls stay refused.
+
+**Files.** Server: `session/scroll.go` (+ `scroll778_test.go`), `session/useitem.go` (the request
+and reply tails, the dispatch), `session/monsterstrike.go` (the death point), `character/
+returnpoints.go` (`_CHAR` Tel*/Died*, new `characters` columns), `teleport/optional.go`,
+`cmd/export-refdata` (`refoptionalteleport.txt` -> `optionalteleport.csv`). Client:
+`ui/hud/reverse_return_box.gd`, `ui/hud/hud_worldmap.gd` (selection mode),
+`worldmap/optional_teleport_reader.gd`, `ui/hud/hud_panels.gd` / `World3D.gd` (the hooks,
+`OPENSRO_QA_REVERSE`), `net/useitem.gd`, `net/error_text.gd` (`scroll_line`), and
+`ui/hud/reverse_return778_test.gd`.
+
+**Gates.** `go test -p 1 ./...` all ok; client `check` ALL LOAD (730 scripts), `tests` "ran 280
+suite(s), 0 failing" (lane `/opt/opensro-client-r778-rrs`). UI-only on the client side: no perf gate.
+
+**Live (MEASURED, render box, `/var/tmp/r778-rrs/rrs_shot.sh`).** A level-60 character at Jangan
+opened the box, pressed the map button, picked the Donwhang cave flag (popup "Donwhang Stone
+Cave") and chose it; the server logged `scroll cast ... option=7 point=30 delay=1s` then
+`scroll warp ... zone=dungeon/32769 x=1115 y=0 z=935`, and the client built `Dunhwang_Cv.dof` and
+stood the player at local (1115, -935). Pictures: `/var/tmp/r778-rrs/screenshots/`
+(`r778_reverse_box.png`, `r778_map_select_mode.png`, `r778_map_cave_floor_popup.png`,
+`r778_arrival_donwhang_cave_1f.png`) -- shown to a human, not evidence; the logs above are.
 
 ## Seven-hundred-and-seventy-seventh round: the glows back, the portals' layers, the dungeon minimap's room
 

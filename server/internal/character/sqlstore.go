@@ -85,6 +85,22 @@ CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 -- creation). Every existing row takes the 0, so it returns where its race's
 -- default sends it; ADD COLUMN IF NOT EXISTS makes a second run a no-op.
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS appointed_teleport BIGINT NOT NULL DEFAULT 0;
+-- The reverse return scroll's two points (round 778, ReturnPointStore): the
+-- engine's _CHAR TelRegion/TelPosX/Y/Z/TelWorldID (charData +0xcc..+0xd8,
+-- +0xee), where a return scroll was last used, and DiedRegion/DiedPosX/Y/Z/
+-- DiedWorldID (+0xdc..+0xe8, +0xf0), where the character last died. A region
+-- of 0 is "none recorded" (the scroll refuses it, 0x1885 / 0x1886); the
+-- position is region-local, or dungeon space in a dungeon (a negative region).
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS tel_region INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS tel_x DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS tel_y DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS tel_z DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS tel_world INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_region INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_x DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_y DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_z DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_world INTEGER NOT NULL DEFAULT 0;
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver) — same

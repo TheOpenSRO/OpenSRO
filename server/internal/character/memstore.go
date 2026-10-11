@@ -22,6 +22,10 @@ type MemStore struct {
 	// appointed is each character's designated return gate (RecallStore,
 	// round 686); none is 0, the race's gate.
 	appointed map[int64]int64
+	// points are each character's recall and death points
+	// (ReturnPointStore, round 778), keyed by (id, kind); none is the zero
+	// SavedPoint.
+	points map[[2]int64]SavedPoint
 }
 
 // NewMemStore returns an empty MemStore.

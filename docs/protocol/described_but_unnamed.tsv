@@ -86,7 +86,6 @@
 4	00791d40	VCRefShardContentConfig::V__CChunkAllocatorMT::VCRefShardContentConfig::__CCustomAllocator::FUN_00791d40	196	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 4	004e0b50	FUN_004e0b50	185	docs/protocol/character_state.md,docs/protocol/described_but_unnamed.tsv
 4	005df910	trs_wait_response::FUN_005df910	158	docs/protocol/academy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/recovered_names.tsv
-4	004e0130	FUN_004e0130	139	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 4	005436f0	AI::CTactics::FUN_005436f0	115	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 4	0081c5b0	CGameServer::FUN_0081c5b0	115	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 4	0081e250	CGameServer::FUN_0081e250	109	docs/protocol/client_asserts.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
@@ -214,7 +213,6 @@
 1	004c7e20	FUN_004c7e20	782	docs/protocol/described_but_unnamed.tsv,docs/protocol/event_log.md
 1	0042aae0	GObjPC::FUN_0042aae0	755	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 1	00656cd0	GObjPC::FUN_00656cd0	699	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
-1	004a00c0	FUN_004a00c0	690	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 1	00699080	CGameWorldLayer::FUN_00699080	627	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 1	0072fd40	CGameServer::FUN_0072fd40	542	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 1	005e0a30	CMainProcess::FUN_005e0a30	520	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
@@ -339,7 +337,6 @@
 0	00629590	CSiegeFortress::FUN_00629590	586	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	00629100	CSiegeFortress::FUN_00629100	562	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	0049e3f0	GObjPC::FUN_0049e3f0	560	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
-0	004a0380	FUN_004a0380	554	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv
 0	00653560	FUN_00653560	548	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv
 0	0062e680	CSiegeFortressMgr::FUN_0062e680	544	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	00628ee0	CSiegeFortress::FUN_00628ee0	538	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
