@@ -43,12 +43,13 @@ P0, per block (room):
 | u32 flags | bit 0 an entrance block |
 | 6 x f32 | block-local AABB |
 | u32 colour (block +0x6c) | the dungeon draw's light: a directional D3D light (type 3) with diffuse and specular 0 and this as its ambient /255 (READ `Map::FUN_00a255c0` via `CRTDunBlock::vslot_006`) |
-| u32 colour, 3 x f32 (block +0x70 record) | the fog: D3DRS_FOGCOLOR, FOGSTART, FOGEND, FOGDENSITY and the object shader's fog constants (READ `CObjRendererVS::FUN_00c31450` via `vslot_005`); the landscape step chooses vertex fog LINEAR for a bit-15 region (WorldFog's header, 0xa276fc), so the density is unused |
-| u8 + 4 x f32, u8 + 7 x f32 | optional; the first goes to the object renderer with the fog record (`FUN_00c31450`'s `+0x3c` call), meaning OPEN |
+| u32 colour, 3 x f32 (block +0x70 record) | the fog: colour, start, end, density. Set as D3DRS_FOGCOLOR/START/END/DENSITY and as vertex constant c16 (READ `CObjRendererVS::FUN_00c31450`, `vslot_014` 0xbeeb80); in a dungeon only the colour and the density are used (section 3, "Fog") |
+| u8 + 4 x f32 (A) | optional: the height fog, c22 = (A0, A1, 1/A2, A3) (READ `vslot_015` 0xbeec30, four floats; A3 <= 0 uploads nothing); centre height, half the fog-free band, the falloff distance, the strength |
+| u8 + 7 x f32 (B) | optional: a mode byte, vec3 -> +0x110, vec3 -> +0x120, a u32 period in ms -> +0x11c (2500/3000 MEASURED); mode 2 negates a working vector every period (`FUN_00c67870`); its getter 0xc669e0 has no caller -- consumer OPEN, not light or fog |
 | str label, u32 room, u32 floor | indices into P4's lists (-1 none) |
 | u32 n + n x u32, twice | the blocks whose linked (0x08) outline edges meet this one's (navmesh +0x108); a superset (+0x118, INFERRED the visible set) |
 | u32 objects, u32 obstacles | then per object: str name, str `.bsr`, vec3 position (dungeon space), vec3 Euler rotation, vec3 scale, u32 flags (bit 2: an obstacle cylinder for the navmesh, bit 4: one more u32 follows), u32, f32 radius |
-| u32 lights | then per light: str name, 15 x f32 (position first; the rest INFERRED colours and attenuation) |
+| u32 lights | then per light: str name, 15 x f32 = a D3DLIGHT9 POINT, Range 99999 (READ `RTDunBlock::FUN_00c68640`): position, diffuse, ambient, specular (rgb each), attenuation 0, 1, 2. They light game objects only (section 3) |
 
 P1: u32 block count (asserted equal), then a u32-counted list per block. P4: two u32-counted
 string lists, the room names and the floor names -- textzonename keys (`DH_A01_FLOOR01` "1F",
@@ -96,9 +97,57 @@ floor name lower-cased (INFERRED: the names match the files); the folder's sourc
 (`RegionManagerBody::FUN_00412ef0`, a table at +0xb8) is OPEN and OpenSRO maps rid -> folder from
 the six folders Media.pk2 has (OURS).
 
-Not drawn: the rooms' light maps (`Prim\LightMap\Dun`, loader OPEN), the block lights, 64
-`lamp.bsr` and 2 `404_sunbeams.bsr` objects of the cave that build no mesh (their material path
-is not found), the visible-set culling.
+### Fog (round 774, READ)
+
+`Map::FUN_00a26f60` for a bit-15 region (0xa27722): FOGVERTEXMODE 3, FOGTABLEMODE 0 (no table fog),
+and the object renderer's EXP flag (`vslot_030` 0xc41000, +0xec = 1). So D3D takes the vertex
+shader's `oFog`, from `Shader\vss0.c` / `vss2.c` (Data.pk2, assembly text): the EXP variant, and
+EXP+HEIGHT when the block's A has A3 > 0 (`FUN_00bf05e0`). The shader's `exp` is base 2:
+
+    z    = the vertex's view-space depth (r5 = v0 x c4, World x View; range fog off)
+    kept = 2^-((z x density)^2)
+    kept = min(kept, 1 - A3 x (|y_world - A0| - A1) / A2)      (with A)
+    out  = clamp(kept, 0, 1) x colour + (1 - kept) x fogColour
+
+Start and end are never used in a dungeon, and nothing is scaled. Each room and block object is
+fogged with its own block's record (`CRTDunBlock::vslot_007` / `vslot_008` queue a marker object
+before the room and before the objects); the characters after a last marker with no A
+(0xa25861). The frame is cleared to the current block's fog colour (`CGFXVideo3d::vslot_028` /
+`vslot_025` from `Map::FUN_00a255c0`). MEASURED: tomb B1 density 0.00014, A (1000, 830, 135, 0.21)
+-- kept 0.987 at depth 1000, 0.712 at 5000, 0.257 at 10000; the cave 0.001-0.0023, no A.
+
+OpenSRO (`WorldFog`, dungeon mode, `set_dungeon_globals`): the same formula in the full-screen
+pass, per pixel with the current block's record (OURS: the original evaluates per vertex and
+per block; the difference across one triangle is small, the formula being near-linear over a
+triangle's span), and the pass paints the empty pixels with the fog colour (the clear).
+
+### Light (round 774, READ)
+
+- **Rooms and block objects.** `Map::FUN_00a255c0` (0xa25637) sets a directional light with
+  diffuse 0 and ambient = the block colour /255, so the vertex colour is
+  `oD0 = saturate(0.6 x blockColour)` (0.6: `CCompoundObj`'s colour, ObjectLight; its setter's two
+  callers are neither rooms nor block objects). A non-light-mapped mesh: `saturate(2 x tex x oD0)`.
+- **Light maps.** A `.bms` with flag 0x400 (BMS_FORMAT.md) has 52-byte vertices whose 0x20..0x27 are
+  the light map's coordinates, and names its light map after the vertex array
+  (`prim\lightmap\...\<mesh>lightingmap.ddj`, DXT1 256 or 128 square, no mips, MEASURED).
+  `FUN_00bd2cd0` sends such meshes to `FUN_00bf1250`: stage 0 MODULATE (the 2X flag 0x1000 cleared,
+  0xbf14a1), stage 1 MODULATE2X (the object's +0x260 = 5) of the light map, so
+  `pixel = saturate(2 x saturate(tex x oD0) x lightmap)`; no material texture: stage 0 is oD0,
+  stage 1 MODULATE. This is by the mesh's flag, not the region: 1,133 field building meshes carry
+  light maps too (Jangan, Donwhang, Hotan, ...; MEASURED), and they are light-mapped in the field.
+  The rooms' warm spots are baked here.
+- **Block lights** (the 15-float records): only game objects get one -- each character the nearest
+  light of its block, no range test (`vslot_009` 0xc6ac70) -- through the point-light shader term
+  `c13 + max(0, N.L) / (a0 + a1 d + a2 d^2) x c14`, c13 = Ambient / 1.67. Not drawn here (OPEN):
+  the tomb's attenuations (8-10, 0.008-0.01, 1.5) leave only the ambient tint.
+- **Effects.** Every room and object `.bsr` plays its `ambient` particle set (teleport_effects.md):
+  the portals (`system\system_dungeonpotal.efp` on the rooms the walk-ins stand in), flames,
+  lanterns, crystals, the cave's sunbeams. MEASURED: every one of the served dungeons' objects is
+  such a host; the cave's `lamp.bsr` and `404_sunbeams.bsr` have empty mesh and material lists
+  (BsrReader reads them since round 774). OURS: the 400 nearest the camera run (the tomb's B2 has
+  4,216 effects and lists no visible blocks), stepped as one native batch.
+
+Not drawn: the block lights on characters, the visible-set culling.
 
 ## 4. Walk-in teleports (region events)
 

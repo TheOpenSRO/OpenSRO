@@ -7570,6 +7570,76 @@ worldmap_instanceinfo's parser past the box (INFERRED from the header); what mak
 that table (vslot 0xb8 of +0x4c4 at 0x844cd0).
 
 
+## Seven-hundred-and-seventy-fourth round: dungeon fog, light maps, ambient effects, walk-in glows
+
+The user, with retail and OpenSRO screenshots of the tomb's B1: "Some teleporters have glowing
+effects like Jangan but I can't see it so it makes it hard finding where the teleporter is, fix
+that. Additionally it looks super foggy in the dungeon. ... please check the original code to
+verify and match exactly. Also the original game has a bunch of pretty lighting around, please
+support all of that and fix the lighting and coloring." Then a frame of B1 fogged solid past
+about 1,000 units.
+
+**What was wrong (READ; docs/protocol/dungeon.md section 3 has the addresses).**
+- **The fog.** Round 773 drew the block record's start/end (-200 .. 1000) as linear fog. In a
+  dungeon the landscape step sets no table fog and the object shader's EXP variant
+  (`Map::FUN_00a26f60` 0xa27722); `Shader\vss0.c` (Data.pk2, assembly text) computes
+  `2^-((z x density)^2)` (base-2 `exp`), min'd with the height term
+  `1 - A3 (|y - A0| - A1) / A2` from the block's A record (`vslot_015` 0xbeec30: four floats, c22).
+  Start and end are never used. The frame clears to the fog colour, not black.
+- **The light.** Rooms are light-mapped: `.bms` flag 0x400 at 0x40 = 52-byte vertices with the
+  light map's coordinates at 0x20, and the light map's file after the vertex array
+  (`CPrimMesh::FUN_00c1bb20`); `FUN_00bf1250` draws stage 0 MODULATE, stage 1 MODULATE2X of the
+  light map. Round 773 drew only the flat block ambient (the purple wash).
+- **The glows and lamps.** Every dungeon room and object `.bsr` carries an `ambient` particle set:
+  the portals (`system\system_dungeonpotal.efp`), flames, lanterns, crystals, sunbeams (MEASURED:
+  every object of the served dungeons; `dump_bsr_particles.gd --ambient-index`, new). Only the
+  town gates played theirs. The cave's `lamp.bsr` / `404_sunbeams.bsr` have empty mesh and
+  material lists and BsrReader refused them (the "64 lamp.bsr build nothing" of round 773).
+- **The field walk-ins.** `w_cd_dondunenter.bsr` (the cave's mouth; its portal effect 1,056 from
+  its origin) and `cj_jin_entdoor01_01.bsr` (the tomb's door) carry the portal effect but have no
+  teleportbuilding row, so nothing matched them.
+
+**What changed.**
+- `WorldFog`: a dungeon mode (`set_dungeon_globals`, `srr_fog_height`), the READ formula in the
+  pass and in the self-fogged shaders; the pass paints empty pixels the fog colour in a dungeon.
+  OURS: per pixel with the current block's record (the original: per vertex, per block).
+- `BmsReader.lightmap_path` / `lightmap_uvs`, `ObjectLoader._prepare_lightmap` /
+  `_commit_lightmap`, object.gdshaderinc's `LIGHTMAP` variant. By the mesh's flag, so the field's
+  1,133 light-mapped building meshes (Jangan, Donwhang, Hotan, ...) are light-mapped too, as the
+  draw path READ does it; `OPENSRO_QA_NOLIGHTMAP=1` for the A/B.
+- `World3D._attach_dungeon_effects`: every room's and object's ambient set; OURS: the 400 nearest
+  the camera run, re-chosen every 250 ms, stepped as one batch (`EfpSimBatch`, native sims,
+  `EfpEffect.static_host` skips re-placement); `AmbientParticles.update` skips hidden effects'
+  glows. `BsrReader._empty_table` keeps effect-only objects.
+- `ObjectStringReader` (navmesh\objectstring.ifo) and `World3D._walk_in_pairs_around`: a walk-in
+  centre (an objectstring point named after a teleportdata codename) pairs the object one of whose
+  ambient entries stands within 30 of it. `TeleportReader.point_by_code`.
+- `DofReader.Block.height_fog` (the A record).
+- QA: `OPENSRO_QA_PIXEL_RAYS`, `OPENSRO_QA_DUNGEON_FX`, `OPENSRO_QA_NOLIGHTMAP`.
+
+**Verification (render box).**
+- Tomb B1 at the user's spot by the B1 -> B2 portal (dungeon (-250, 6450)), radius 1: the hall's
+  far end blue and misty with the statue's silhouette, the rows of lamps lit, the portal ring
+  glowing; the near floor reads (29, 30, 74) against the user's retail frame's (54, 58, 93) --
+  OPEN: the original's bloom in a dungeon was not read; their client's own settings unknown.
+- `QA PIXEL` rays: the B1 shapes round 773 drew black are walls 8,800-10,500 away, past the QA
+  run's 7,680 far plane, over the clear colour; they now show the fog colour.
+- Field: `gate GATE_JINSI_OUT -- Obj_cj_jin_entdoor01_01_45 ... at 2.7 from its walk-in centre`,
+  `gate GATE_DUNGEON_DH_IN -- Obj_w_cd_dondunenter_0 ... at 0.8`; both glows render.
+- Jangan with and without light maps: the palace's door recesses and the railings' undersides
+  darken; nothing else changes.
+- Cost, tomb B2 (4,216 effects, the densest): p95 work frame 2 ms with no ambient effect, 12 ms
+  with 400 effects in their own `_process`, 7 ms after the batch, the native sims, the static
+  placement and the glow pass's hidden skip (`OPENSRO_QA_DUNGEON_FX`: place 0.3, simulate 2.1,
+  draw 1.7, glow pass 2.4 ms). B2 takes about 5 s to build.
+- `check` ALL LOAD; `tests` 276 suites, 0 failing (round 775 merged after: see its entry).
+
+PERF_GATE_TABLE
+
+**Left (OPEN).** The block lights on characters (the PLIGHT term; the tomb's leave only an ambient
+tint); per-block fog for rooms other than the player's; who reads B; the bloom in a dungeon.
+
+
 ## Seven-hundred-and-seventy-third round: dungeons and walk-in teleports
 
 The user: "let's get dungeons working and all other teleporters. Town and NPCs already work but

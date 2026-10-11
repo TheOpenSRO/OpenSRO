@@ -29,7 +29,8 @@ matching field-for-field; the GDScript side also builds a real Godot `ArrayMesh`
 | 0x34   | 4    | Reserved (observed 0) |
 | 0x38   | 4    | **Collision section record-size bitfield** (see below). `0` in 449 of 507 real meshes with a collision section; observed values `0, 4, 5, 6, 7, 8, 14` |
 | 0x3C   | 4    | Flag/count of unconfirmed meaning (observed constant 1) |
-| 0x40   | 8    | Reserved (observed 0) |
+| 0x40   | 4    | **Mesh flag word** (round 774, READ `CPrimMesh::FUN_00c1bb20` 0xc1bc04: the first u32 the mesh body reader takes). Bit `0x400`: a light-mapped mesh -- 52-byte vertex records whose bytes 0x20..0x27 are the light map's coordinates, and a u32-length string right after the vertex array naming the light map (`prim\lightmap\...lightingmap.ddj`, into the mesh's +0x14c, 0xc1bc85). Bit `0x800`: 80-byte records. MEASURED: 4,252 of 6,134 dungeon meshes and 1,133 of 8,301 building meshes set 0x400 |
+| 0x44   | 4    | Reserved (observed 0) |
 
 The header's own pointer table (`hdr[1]` for indices, `hdr[4]` for the bounding box) is what our
 reader uses to locate those two sections — not offset arithmetic from the vertex count — since

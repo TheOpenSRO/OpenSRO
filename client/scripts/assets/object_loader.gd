@@ -413,12 +413,36 @@ static func _prepare_lightmap(archive: Pk2Reader, bms_data: PackedByteArray, mes
 		if known.has(key):
 			textures[key] = {"image": null, "four_cc": known[key]["four_cc"], "alpha": (known[key]["alpha"] as Dictionary).duplicate()}
 		else:
-			var decoded := _decode_texture(archive, path, mesh.mesh_name, prepared["missing"])
+			var decoded := _decode_lightmap(archive, path, mesh.mesh_name, prepared["missing"])
 			if decoded.is_empty():
 				return
 			textures[key] = decoded
 	arrays[Mesh.ARRAY_TEX_UV2] = uvs
 	piece["lightmap_key"] = key
+
+## A light map decoded (round 774): as _decode_texture, but a DXT1 one stays
+## DXT1 without the transparent-texel scan (DdjReader._dxt1_with_alpha):
+## stage 1's alpha is disabled (READ, FUN_00bf1250), so only the colour is
+## sampled, and a three-colour block's index 3 is black either way. MEASURED,
+## the perf gate at the Dunhuang reeds without the native readers: the scan
+## of every light map cost the entry about 1.5 s.
+static func _decode_lightmap(archive: Pk2Reader, path: String, mesh_name: String, missing: Array) -> Dictionary:
+	var entry := find_file(archive, path)
+	if entry == null:
+		missing.append("light map %s (of mesh %s) not found in archive" % [path, mesh_name])
+		return {}
+	var parsed := DdjReader.parse(archive.read_file(entry))
+	if parsed == null:
+		return {}
+	var image: Image
+	if parsed.four_cc == "DXT1":
+		image = Image.create_from_data(parsed.width, parsed.height, parsed.mip_map_count > 1, Image.FORMAT_DXT1,
+			parsed.dds.slice(4 + DdjReader.DDS_HEADER_SIZE))
+	else:
+		image = DdjReader.to_image(parsed)
+	if image == null or image.is_empty():
+		return {}
+	return {"image": image, "four_cc": parsed.four_cc, "alpha": {}}
 
 ## Puts a light map on an object-shader material (round 774): the LIGHTMAP
 ## variant of its kind, READ (FUN_00bf1250): stage 0 MODULATE -- the

@@ -188,12 +188,23 @@ mod sections do not parse.
     committed region's frame, on every region's commit (`GateEffectMatch`), so either load order
     finds the pair. The rounds 720-722 renders loaded the gate's region at boot, an order that hid
     this, so "every gate attaches" held only for that order.
+- **Round 774, the walk-in portals.** A walk-in teleport has no teleportbuilding row, and its
+  model's origin can stand far from the zone: the Donwhang cave's mouth, `w_cd_dondunenter.bsr`,
+  places its `system\system_dungeonpotal.efp` 1,056 units from its origin; the Qin-Shi tomb's
+  door is `cj_jin_entdoor01_01.bsr` (MEASURED, `dump_bsr_particles.gd --ambient-index`). The
+  zones' centres are `navmesh\objectstring.ifo`'s points whose name is a teleportdata codename
+  (`ObjectStringReader`; the two open-world walk-ins, MEASURED), and an object pairs by the place
+  of each of its ambient entries -- the entry's offset in the object's frame -- within the same 30
+  units (`World3D._walk_in_pairs_around`). MEASURED on the box: the cave's at 0.8, the door's at 2.7.
+- **Round 774, dungeons.** Every room and object of a dungeon plays its whole `ambient` set
+  (dungeon.md, "Light"): the dungeon portals, flames, lanterns and crystals.
 - The glow pass is `AmbientParticles.update`, once a physics tick: the 500 ms test, the 1.5/ms
   fade, the restart at 0, and the draw without the depth test with the particle alpha scaled
   (`EfpEffect.make_glow` / `glow_shader`), as READ.
 
 **OURS, labelled:**
-- **Only the teleport structures** play their ambient effects. The original plays every placed
+- **Only the teleport structures** (and, from round 774, the walk-in portals' models and every
+  dungeon room and object) play their ambient effects. The original plays every placed
   object's `ambient` set; the other 1,300-odd sets (torches, fountains, banners) are a follow-up
   with its own perf measurement.
 - **"Drawn"** is the object's mesh box against the camera's frustum (the original queues an effect
