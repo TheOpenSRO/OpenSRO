@@ -7477,6 +7477,65 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Round 778 (part): the reverse return scroll
+
+The user: "please get reverse return scrolls fully working including map icons that it provides and
+original gui popup when you use it. Read how it works with the original code. It should even let me
+select the floor of the cave." `docs/protocol/reverse_return_scroll.md` has every address; this is
+the summary.
+
+**READ.** A right-click on a 3/3/3/3 item (ITEM_MALL_REVERSE_RETURN_SCROLL 3795 and its three
+siblings) does not send the use: `IFSlotWithHelp::FUN_00676570` opens message box kind 0x21, built
+by `UI_SILKMALL::FUN_00644c90` (0x647dff..): 300 x 204, `UIIT_STT_CONFIRM_BOX`, the question, and
+four `com_return_button.ddj` buttons -- "Move to the last recall point." (option 2), "Move to the
+place where you died." (3), "Move to certain location at the map." (control 203, created there) and
+Cancel. The map button (0x63b9a0) puts the world map in its selection mode (`CNIFWorldMap`
+0x622dd0): the refoptionalteleport rows whose map-point byte is 1 drawn as `xy_returnicon.ddj`
+icons (a 64 x 32 two-frame atlas swapped every 500 ms by timer 0xd, `_focus` under the mouse,
+`_press` picked), a click opening a `map_return.ddj` popup that lists the point -- or, for a group's
+flag, the rows of the group that are not map points: the Donwhang cave's floor. A popup button sends
+the use with option 7 and the row's id (0x60f5f0); hiding the map cancels everything (vslot_023).
+On the server `FUN_004a00c0` refuses in a fixed order with category-1 codes (0x18f5, 0x187a,
+0x185f, 0x185d, 0x1875, 0x185e, 0x1885, 0x1886, 2, 0x18fd), starts the scroll state with
+`(float)Param1` as its delay, and the state's job resolves the destination when it expires: the
+recall point (`SaveCurPosAsLastTelPosition`, which the ordinary return scroll calls when used), the
+death point (`FUN_004e0330` on death), or the table row's point exactly.
+
+**The floor of the cave.** Selecting a floor is the popup under the cave's flag, not the floor
+spinner (in selection mode the spinner is hidden and a click never opens a dungeon map). This
+archive's table has one row under the Donwhang flag -- `SN_ZONE_23002` "Donwhang Stone Cave", the
+1F at (1115, 0, -935), level 50+ -- and none under the Qin-Shi tomb's flag (ids 32..38 are absent),
+so the cave offers one floor and the tomb none, exactly as the original client would. A table with
+more rows in a group lists them all.
+
+**OURS / OPEN.** The delay's unit is OPEN (the job counts seconds, which would make Param1 1000 a
+thousand seconds; the tooltips say "immediately"): Param1 is milliseconds here. OpenSRO's wire is
+OpUseItem with retail's {u8 option, u32 id} tail and a {u16 code, u32 cast_ms} reply tail. The
+world, PK, quest, cart and fortress refusals have nothing to refuse in OpenSRO; an unplaceable
+destination answers 0x18f5. The ordinary return scroll now works too (records the recall point,
+returns to the return point after Param1) -- the reverse scroll's option 2 has nothing to read
+without it. Thief-den scrolls stay refused.
+
+**Files.** Server: `session/scroll.go` (+ `scroll778_test.go`), `session/useitem.go` (the request
+and reply tails, the dispatch), `session/monsterstrike.go` (the death point), `character/
+returnpoints.go` (`_CHAR` Tel*/Died*, new `characters` columns), `teleport/optional.go`,
+`cmd/export-refdata` (`refoptionalteleport.txt` -> `optionalteleport.csv`). Client:
+`ui/hud/reverse_return_box.gd`, `ui/hud/hud_worldmap.gd` (selection mode),
+`worldmap/optional_teleport_reader.gd`, `ui/hud/hud_panels.gd` / `World3D.gd` (the hooks,
+`OPENSRO_QA_REVERSE`), `net/useitem.gd`, `net/error_text.gd` (`scroll_line`), and
+`ui/hud/reverse_return778_test.gd`.
+
+**Gates.** `go test -p 1 ./...` all ok; client `check` ALL LOAD (730 scripts), `tests` "ran 280
+suite(s), 0 failing" (lane `/opt/opensro-client-r778-rrs`). UI-only on the client side: no perf gate.
+
+**Live (MEASURED, render box, `/var/tmp/r778-rrs/rrs_shot.sh`).** A level-60 character at Jangan
+opened the box, pressed the map button, picked the Donwhang cave flag (popup "Donwhang Stone
+Cave") and chose it; the server logged `scroll cast ... option=7 point=30 delay=1s` then
+`scroll warp ... zone=dungeon/32769 x=1115 y=0 z=935`, and the client built `Dunhwang_Cv.dof` and
+stood the player at local (1115, -935). Pictures: `/var/tmp/r778-rrs/screenshots/`
+(`r778_reverse_box.png`, `r778_map_select_mode.png`, `r778_map_cave_floor_popup.png`,
+`r778_arrival_donwhang_cave_1f.png`) -- shown to a human, not evidence; the logs above are.
+
 ## Seven-hundred-and-seventy-seventh round: the glows back, the portals' layers, the dungeon minimap's room
 
 The user, after v0.1.523: "the teleporter effects inside the dungeon should probably a be a little
