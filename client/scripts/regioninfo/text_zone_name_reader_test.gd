@@ -47,6 +47,17 @@ func _initialize() -> void:
 	_check(TextZoneNameReader.name_for(names, 1, 1) == "", "an unknown region resolves to nothing, never a guess")
 	_check(TextZoneNameReader.parse(PackedByteArray()).is_empty(), "an empty buffer gives an empty table")
 
+	# Round 774: a dungeon's room and floor names are rows keyed by name.
+	var named := TextZoneNameReader.parse(_table([
+		["1", "QT_A01_FLOOR01", "x", "0", "0", "0", "0", "0", "B1", "0"],
+		["1", "QT_A01_F01_ROOM_SYNTH", "x", "0", "0", "0", "0", "0", "Synthetic Chamber", "0"],
+		["1", "25000", "x", "0", "0", "0", "0", "0", "Jangan", "0"],
+	]))
+	_check(TextZoneNameReader.text_for(named, "qt_a01_floor01") == "B1", "r774: a floor name's row, any case")
+	_check(TextZoneNameReader.text_for(named, "QT_A01_F01_ROOM_SYNTH") == "Synthetic Chamber", "r774: a room name's row")
+	_check(TextZoneNameReader.name_for(named, 97, 168) == "Jangan" and TextZoneNameReader.text_for(named, "") == "",
+		"r774: region rows unchanged beside them; no key, no text")
+
 	if _failures > 0:
 		print("%d FAILURE(S)" % _failures)
 		quit(1)

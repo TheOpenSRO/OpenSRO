@@ -292,6 +292,12 @@ func use_display_blend() -> void:
 		nodes.append(d[1])
 	for l in _links:
 		nodes.append(l[1])
+	var adds := 0
+	for n in nodes:
+		var m := (n as GeometryInstance3D).material_override as ShaderMaterial
+		if m != null and m.shader != null and String(m.shader.get_meta(BLEND_CLASS_META, "")).begins_with("add"):
+			adds += 1
+	var stack := float(clampi(adds, 1, display_stack_max)) if display_stack_max > 0 else 1.0
 	for n in nodes:
 		var gi := n as GeometryInstance3D
 		var m := gi.material_override as ShaderMaterial
@@ -299,7 +305,26 @@ func use_display_blend() -> void:
 			continue
 		var c := m.duplicate() as ShaderMaterial
 		c.shader = display_shader(m.shader)
+		c.set_shader_parameter("srr_stack", stack)
 		gi.material_override = c
+
+## Round 774 (OURS, calibrated): the most additive layers an effect's layer
+## is taken to lie over (display_shader's srr_stack). Each layer of an
+## additive class blends against the opaque scene alone, so where an effect's
+## layers overlap their linear differences add up to less than Direct3D's
+## display-value sum (the curve is convex): the tomb's portal ring
+## (system_dungeonpotal, 19 additive layers) drew at about half the
+## brightness of the same frame under Compatibility, which blends in display
+## values exactly as Direct3D 9 does. So a layer adds its share of the sum it
+## would make with min(layers, this) like it laid over each other:
+## (lin(d + n s a) - lin(d)) / n. MEASURED, 50 frames each at the tomb's
+## entry portal, the ring's median / 90th percentile: 1 (57,71,160) /
+## (84,100,194); 8 (102,129,219) / (156,187,244); Compatibility
+## (94,128,247) / (161,207,255); and the hall's lamps 516 -> 602 warm
+## pixels a frame (Compatibility 856) at the same brightness. 0 or 1 turns
+## it off. QA: OPENSRO_QA_FX_STACK=<n>.
+const DISPLAY_STACK_DEFAULT := 8
+static var display_stack_max := int(OS.get_environment("OPENSRO_QA_FX_STACK")) if OS.get_environment("OPENSRO_QA_FX_STACK").is_valid_int() else DISPLAY_STACK_DEFAULT
 
 ## A template shader that blends as Direct3D 9 does, in the framebuffer's
 ## display values (round 722). The original sets no D3DRS_SRGBWRITEENABLE
@@ -329,8 +354,8 @@ static func display_shader(sh: Shader) -> Shader:
 	var rule := "mix(srr_d, srr_s, srr_a)"
 	var out := "ALBEDO = max((srr_t - (1.0 - srr_a) * srr_bg) / max(srr_a, 1.0 / 255.0), vec3(0.0));"
 	if cls == "add" or cls == "add_one":
-		rule = "srr_d + srr_s * srr_a"
-		out = "ALBEDO = max(srr_t - srr_bg, vec3(0.0));\n\t\tALPHA = 1.0;"
+		rule = "srr_d + srr_s * srr_a * srr_stack"
+		out = "ALBEDO = max(srr_t - srr_bg, vec3(0.0)) / srr_stack;\n\t\tALPHA = 1.0;"
 	code = code.replace(DISPLAY_TAIL_FROM, DISPLAY_TAIL_TO.replace("{RULE}", rule).replace("{OUT}", out))
 	var g := Shader.new()
 	g.code = code
@@ -355,6 +380,9 @@ const DISPLAY_TAIL_TO := """	ALPHA = clamp(a, 0.0, 1.0);
 const DISPLAY_FN := """
 uniform sampler2D srr_screen : hint_screen_texture, filter_nearest;
 global uniform vec4 srr_obj_tonemap;
+// Round 774 (OURS): how many of the effect's additive layers this one is
+// taken to lie over (use_display_blend), 1 for the plain per-layer blend.
+uniform float srr_stack = 1.0;
 float srr_fx_filmic_raw(float x) {
 	return (x * (0.88 * x + 0.1 * 0.6) + 0.2 * 0.01) / (x * (0.88 * x + 0.6) + 0.2 * 0.3) - 0.01 / 0.3;
 }
@@ -877,6 +905,11 @@ var _pending_sim_usec := 0
 ## once anchored the effect is not placed again each step -- the placement
 ## would find it where it was.
 var static_host := false
+## Round 774: taken out by its owner's culling (World3D._cull_dungeon_effects:
+## a dungeon's far effects). Not `visible`: a glow effect hides itself while
+## its glow alpha is 0 (set_glow_alpha) and fades in only when the glow pass
+## sees it, so the pass must not take a hidden glow for a culled one.
+var culled := false
 
 func step_pre(delta: float) -> bool:
 	_life += delta

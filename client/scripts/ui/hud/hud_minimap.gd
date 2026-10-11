@@ -644,6 +644,34 @@ func set_dungeon_prefix(prefix: String) -> void:
 	if _dungeon_floor != null:
 		_dungeon_floor.visible = prefix != ""
 
+## The floor badge's text (round 774, READ: 0x661ce0 sets child 10's text,
+## vslot 0xb4, to the text of the player's floor name -- "B1"). The badge is
+## an image; the text is a label over it, in the area name's font and
+## colour, centred (OURS: the control's own text style was not read).
+var _dungeon_floor_label: Label
+
+func set_dungeon_floor_text(text: String) -> void:
+	if _dungeon_floor == null or not (_dungeon_floor is Control):
+		return
+	if _dungeon_floor_label == null or not is_instance_valid(_dungeon_floor_label):
+		_dungeon_floor_label = Label.new()
+		_dungeon_floor_label.name = "FloorText"
+		_dungeon_floor_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_dungeon_floor_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_dungeon_floor_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_dungeon_floor_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+		if _lbl_area != null:
+			_dungeon_floor_label.theme = _lbl_area.theme
+			_dungeon_floor_label.label_settings = _lbl_area.label_settings
+			if _lbl_area.has_theme_font_override("font"):
+				_dungeon_floor_label.add_theme_font_override("font", _lbl_area.get_theme_font("font"))
+			if _lbl_area.has_theme_font_size_override("font_size"):
+				_dungeon_floor_label.add_theme_font_size_override("font_size", _lbl_area.get_theme_font_size("font_size"))
+			if _lbl_area.has_theme_color_override("font_color"):
+				_dungeon_floor_label.add_theme_color_override("font_color", _lbl_area.get_theme_color("font_color"))
+		(_dungeon_floor as Control).add_child(_dungeon_floor_label)
+	_dungeon_floor_label.text = text
+
 func _tile_texture(path: String) -> Texture2D:
 	if _tile_cache.has(path):
 		var hit: Texture2D = _tile_cache[path]

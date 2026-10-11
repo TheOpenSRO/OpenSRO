@@ -73,6 +73,7 @@ func _init() -> void:
 
 func _in_tree() -> void:
 	_test_point_on_screen()
+	_test_hidden_glow_still_queued()
 	_texel_setup()
 	# The bodies take a physics step before a ray meets them.
 	_texel_wait = 4
@@ -259,6 +260,31 @@ func _test_light_effect() -> void:
 	_check(g.alpha == 0 and g.seen_frame == -1, "Light Effect off: the pass steps nothing")
 	fx.free()
 
+## Round 774's regression (v0.1.523): the pass skipped every effect not
+## `visible`, and a glow is hidden until it fades in, so no glow ever did --
+## the Jangan gate's went dark. A hidden glow is still queued; only one its
+## owner culled (EfpEffect.culled) is not.
+func _test_hidden_glow_still_queued() -> void:
+	var made := _fx_with_one_draw()
+	var fx: EfpEffect = made[0]
+	fx.make_glow()
+	var host := Node3D.new()
+	get_root().add_child(host)
+	var ap := AmbientParticles.new()
+	var g := AmbientParticles.Glow.new()
+	g.fx = fx
+	g.host = host
+	g.box = AABB(Vector3.ZERO, Vector3.ONE)
+	host.add_child(fx)
+	ap._glows.append(g)
+	_check(not fx.visible, "a glow at alpha 0 is hidden")
+	ap.update(16.7, null, null)
+	_check(g.seen_frame == ap._frame, "...and still queued by the glow pass, so it can fade in")
+	fx.culled = true
+	ap.update(16.7, null, null)
+	_check(g.seen_frame == ap._frame - 1, "a glow its owner culled is not queued")
+	host.free()
+
 func _test_point_on_screen() -> void:
 	var cam := Camera3D.new()
 	get_root().add_child(cam)
@@ -315,9 +341,17 @@ func _test_glow_shader() -> void:
 func _test_display_shader() -> void:
 	var add := EfpEffect._shader("add", true)
 	var d := EfpEffect.display_shader(add)
-	_check(d.code.contains("hint_screen_texture") and d.code.contains("srr_d + srr_s * srr_a")
-		and d.code.contains("ALBEDO = max(srr_t - srr_bg, vec3(0.0));") and d.code.contains("ALPHA = 1.0;"),
-		"an additive class adds the display sum's difference, alpha 1")
+	_check(d.code.contains("hint_screen_texture") and d.code.contains("srr_d + srr_s * srr_a * srr_stack")
+		and d.code.contains("ALBEDO = max(srr_t - srr_bg, vec3(0.0)) / srr_stack;") and d.code.contains("ALPHA = 1.0;"),
+		"an additive class adds its share of the display sum's difference over srr_stack layers, alpha 1")
+	# Round 774: srr_stack per effect -- min(its additive layers, the cap).
+	var made := _fx_with_one_draw()
+	var one: EfpEffect = made[0]
+	one.use_display_blend()
+	var st = ((made[1] as MultiMeshInstance3D).material_override as ShaderMaterial).get_shader_parameter("srr_stack")
+	_check(not VideoOptions.forward_plus_running() or is_equal_approx(float(st), 1.0),
+		"one additive layer: srr_stack 1, the exact per-layer blend (got %s)" % str(st))
+	one.free()
 	_check(d.code.contains("if (!OUTPUT_IS_SRGB)") and d.code.contains("blend_add"),
 		"only where the output is linear; Godot's own additive blend kept")
 	var mix := EfpEffect.display_shader(EfpEffect._shader("mix", true))

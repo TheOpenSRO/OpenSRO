@@ -306,10 +306,12 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 		return
 	var shown: Array[Glow] = []
 	for g in _glows:
-		# Round 774: an effect its owner has hidden (a dungeon's far ones,
+		# Round 774: an effect its owner has culled (a dungeon's far ones,
 		# World3D._cull_dungeon_effects) draws nothing, so its glow is not
-		# queued -- FUN_00c81450 queues a glow as it draws it.
-		if g.fx.visible and drawn(g.host, g.box, camera):
+		# queued -- FUN_00c81450 queues a glow as it draws it. Not
+		# `visible`: a glow hides itself until it fades in (v0.1.523 tested
+		# that, and no glow anywhere ever faded in -- the Jangan gate's).
+		if not g.fx.culled and drawn(g.host, g.box, camera):
 			shown.append(g)
 	if shown.is_empty():
 		return

@@ -56,13 +56,24 @@ static func parse(data: PackedByteArray) -> Dictionary:
 		if cols[COL_SERVICE].strip_edges() != "1":
 			continue
 		var id_text := cols[COL_REGION_ID].strip_edges()
-		if not id_text.is_valid_int():
+		if id_text == "":
 			continue
 		var name := UiTextTable._pick_language_column(cols, UiTextTable.COL_ENGLISH)
 		if name == "":
 			continue
-		names[id_text.to_int()] = name
+		# Round 774: a key that is not a number is a dungeon's room or floor
+		# name (a .dof's P4 lists: `QT_A01_FLOOR02` "B2"), kept upper-cased
+		# beside the region ids (text_for).
+		if id_text.is_valid_int():
+			names[id_text.to_int()] = name
+		else:
+			names[id_text.to_upper()] = name
 	return names
+
+## The text of a named row (round 774: a dungeon's room or floor name, any
+## case), or "" when the table has none.
+static func text_for(names: Dictionary, key: String) -> String:
+	return String(names.get(key.strip_edges().to_upper(), "")) if key.strip_edges() != "" else ""
 
 ## The display name for a region, or "" when the table has no row for it.
 static func name_for(names: Dictionary, region_x: int, region_y: int) -> String:

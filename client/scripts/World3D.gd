@@ -4853,6 +4853,10 @@ var _dungeon_block := -1
 ## What _apply_dungeon_environment changed, put back by _leave_dungeon.
 var _dungeon_saved := {}
 
+## The minimap's area text in a dungeon: the last room name the player's
+## block had (_refresh_dungeon_minimap).
+var _dungeon_area_text := ""
+
 ## minimap_d's folder per dungeon (OURS: the folder's source in the client,
 ## RegionManagerBody::FUN_00412ef0's table at +0xb8, is not read; these are
 ## the six folders Media.pk2 has, MEASURED, matched by the floor names the
@@ -4977,7 +4981,10 @@ func _cull_dungeon_effects() -> void:
 		if not is_instance_valid(fx):
 			continue
 		var on := d2[i] <= limit
-		fx.visible = on
+		fx.culled = not on
+		# A glow shows by its own fade (EfpEffect.set_glow_alpha): kept
+		# hidden while culled, and left to the glow pass once back.
+		fx.visible = on and (not fx._glow_on or fx._glow_alpha > 0)
 		if on:
 			_dungeon_fx_on.append(fx)
 
@@ -5076,6 +5083,7 @@ func _leave_dungeon() -> void:
 		return
 	_dungeon = null
 	_dungeon_block = -1
+	_dungeon_area_text = ""
 	_dungeon_fx.clear()
 	_dungeon_fx_on.clear()
 	_dungeon_fx_at = PackedVector3Array()
@@ -5196,7 +5204,20 @@ func _refresh_dungeon_minimap() -> void:
 	# The tile's column is the minimap's region y, its row the region x (the
 	# field's files are minimap\<y>x<x>.ddj the same way round).
 	_hud_minimap.update_player(row, col, local, facing)
-	_hud_minimap.set_area_name(_current_zone_name)
+	# Round 774 (READ, 0x661ce0's dungeon branch): the area name is the text
+	# of the player's block's room name (ICPlayer::FUN_009d7830: the block's
+	# room index into the .dof's room list), set only when the block has one
+	# -- a block without keeps the last text; the floor badge (child 10)
+	# takes the text of its floor name (FUN_009d7880), set when it changes.
+	# Both through the text table the zone names are in (MEASURED: the .dof's
+	# names are textzonename keys, `QT_A01_F01_ROOM_..` "Audience Chamber",
+	# `QT_A01_FLOOR01` "B1").
+	var names := _load_text_zone_names()
+	var room_text := TextZoneNameReader.text_for(names, HudWorldmap.dof_room_key(_dungeon.dof, _dungeon_block))
+	if room_text != "":
+		_dungeon_area_text = room_text
+	_hud_minimap.set_area_name(_dungeon_area_text if _dungeon_area_text != "" else _current_zone_name)
+	_hud_minimap.set_dungeon_floor_text(TextZoneNameReader.text_for(names, _dungeon.dof.floor_name(_dungeon_block)))
 	var pos := player.global_position
 	var reach := HudMinimap.SIGN_RADIUS / maxf(_hud_minimap.tile_px(), 0.001) * HudMinimap.REGION_SPAN * 1.01
 	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
