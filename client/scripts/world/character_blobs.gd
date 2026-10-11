@@ -84,8 +84,8 @@ const DETAIL_RANGE := 300.0
 ## since, or all of them when Detail is turned on), at most this many a pass,
 ## so turning Detail on beside a crowd is not one long frame; only those within
 ## ADOPT_RANGE of the player, as farther ones are beyond the shadow map's
-## reach (World3D.SHADOW_MAP_DISTANCE, 400 from the camera, which is at most
-## 90 from the player) and cast nothing into it.
+## reach (World3D.SHADOW_MAP_DISTANCE, 460 from the camera, which is at most
+## 150 from the player) and cast nothing into it.
 const DETAIL_ADOPT_PER_PASS := 64
 const DETAIL_ADOPT_RANGE := 500.0
 ## Whether a caster's meshes cast now (true / false; missing: not set up).
