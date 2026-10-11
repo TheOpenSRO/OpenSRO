@@ -281,6 +281,11 @@ if [ "$SERVER" = "start" ]; then
   # creatable catalogue loaded"), the QA sign-in renders offline and a
   # --reconnect-via-login finds no character to start (round 693).
   CHARGEN_CSV="${OPENSRO_CHARGEN_CSV:-$PK2_DIR/chargen.csv}"
+  # The magic option table (round 768; export-refdata -mode magicoptions):
+  # the alchemy stones' blue options. Without it every magic stone is refused.
+  MAGIC_OPTIONS_CSV="${OPENSRO_MAGIC_OPTIONS_CSV:-$PK2_DIR/magicoptions.csv}"
+  # Round 770: which options each item kind drops with (-mode magicoptassign).
+  MAGIC_OPT_ASSIGN_CSV="${OPENSRO_MAGIC_OPTION_ASSIGN_CSV:-$PK2_DIR/magicoptassign.csv}"
   SERVER_ARGS=(-in-memory -addr "127.0.0.1:$SERVER_PORT")
   # Round 749: the QA hooks place the player anywhere (OPENSRO_QA_AT, the
   # attack and pick-up placements), which a server takes only under
@@ -292,6 +297,8 @@ if [ "$SERVER" = "start" ]; then
   [ -f "$SKILLS_CSV" ]    && SERVER_ARGS+=(-skills-csv "$SKILLS_CSV")
   [ -f "$LEVELDATA_CSV" ] && SERVER_ARGS+=(-leveldata-csv "$LEVELDATA_CSV")
   [ -f "$TELEPORT_DIR/teleportdata.csv" ] && SERVER_ARGS+=(-teleport-dir "$TELEPORT_DIR")
+  [ -f "$MAGIC_OPTIONS_CSV" ] && SERVER_ARGS+=(-magic-options-csv "$MAGIC_OPTIONS_CSV")
+  [ -f "$MAGIC_OPT_ASSIGN_CSV" ] && SERVER_ARGS+=(-magic-option-assign-csv "$MAGIC_OPT_ASSIGN_CSV")
   if [ -f "$CHARGEN_CSV" ]; then SERVER_ARGS+=(-chargen-csv "$CHARGEN_CSV")
   else echo "qa_shot: no chargen CSV at $CHARGEN_CSV (set OPENSRO_CHARGEN_CSV) -- the server can create no character" >&2; fi
   # The NPCs (round 708): the server spawns them from npcpos (an NPC row is

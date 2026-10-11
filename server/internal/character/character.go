@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sync"
 	"time"
 )
 
@@ -496,11 +497,96 @@ type Character struct {
 	StartX, StartY, StartZ float64
 }
 
-// MaxHP is this character's maximum health, from its Str and Level.
-func (c *Character) MaxHP() int { return MaxHPFor(c.Str, c.Level) }
+// MaxHP is this character's maximum health: the Str chain at its TOTAL Str
+// (its own plus its worn items' 'str' options) and level, plus the items'
+// flat 'hp' options (round 769: ParamKeeper slot 0 sums, so param 1 is the
+// character's Str plus each item's, and param 3's base is chain(54) plus each
+// item's 'hp'; the level growth multiplies the item Str but not the item HP.
+// READ, gs EvaluateParam 0x4b3210, FUN_004b2e60, GObjPC_SetLevel 0x4e51d2).
+func (c *Character) MaxHP() int { return MaxHPWith(c.Str, c.Level, BonusOf(c.ID)) }
 
-// MaxMP is this character's maximum mana, from its Int and Level.
-func (c *Character) MaxMP() int { return MaxMPFor(c.Int, c.Level) }
+// MaxMP is MaxHP's twin over Int and the 'mp' options.
+func (c *Character) MaxMP() int { return MaxMPWith(c.Int, c.Level, BonusOf(c.ID)) }
+
+// MaxHPWith is MaxHP for a base Str, a level and a bonus.
+func MaxHPWith(str, level int, b Bonus) int { return MaxHPFor(str+b.Str, level) + b.HP }
+
+// MaxMPWith is MaxMP for a base Int, a level and a bonus.
+func MaxMPWith(intel, level int, b Bonus) int { return MaxMPFor(intel+b.Int, level) + b.MP }
+
+// TotalStr is the character's Str with its worn items' 'str' options: param 1,
+// the number the character panel shows (round 769, READ: the 0x303D builder
+// sends round(GetParam(1)), CIFPlayerInfo prints it with one "%d").
+func (c *Character) TotalStr() int { return c.Str + BonusOf(c.ID).Str }
+
+// TotalInt is TotalStr's twin over Int and the 'int' options.
+func (c *Character) TotalInt() int { return c.Int + BonusOf(c.ID).Int }
+
+// Bonus is what a character's worn items add through their blue options
+// (round 769): the flat 'str', 'int', 'hp' and 'mp' sums
+// (Stat_ApplyTaggedModifier 0x498690 writes each into slot 0 of params 1, 2,
+// 3 and 4 with the item as its context), and the 'evbl' / 'evcr' sums
+// (params 56 / 57, clamped at 100), cached here so a blow does not read the
+// worn items each time (the review's F5).
+type Bonus struct {
+	Str, Int, HP, MP      int
+	EvadeBlock, EvadeCrit int
+}
+
+// The bonus registry. The worn items live in the equipment store, which a
+// Character does not know; session registers the source (SetBonusSource) and
+// clears a character's entry whenever its worn items change
+// (InvalidateBonus), and BonusOf computes it again on the next read.
+var (
+	bonusMu     sync.RWMutex
+	bonusCache  = map[int64]Bonus{}
+	bonusGen    = map[int64]uint64{}
+	bonusEpoch  uint64
+	bonusSource func(characterID int64) (Bonus, bool)
+)
+
+// SetBonusSource registers how a character's bonus is computed (ok false
+// when it could not be read, which is not cached), and forgets every cached
+// one. nil: no character has a bonus.
+func SetBonusSource(f func(characterID int64) (Bonus, bool)) {
+	bonusMu.Lock()
+	defer bonusMu.Unlock()
+	bonusSource = f
+	bonusCache = map[int64]Bonus{}
+	bonusEpoch++
+}
+
+// InvalidateBonus forgets a character's bonus: its worn items changed.
+func InvalidateBonus(characterID int64) {
+	bonusMu.Lock()
+	delete(bonusCache, characterID)
+	bonusGen[characterID]++
+	bonusMu.Unlock()
+}
+
+// BonusOf is a character's bonus, computed by the registered source when it is
+// not cached. The source runs outside the lock (it reads the stores); its
+// result is cached only when it read cleanly and nothing invalidated the
+// character, or replaced the source, meanwhile.
+func BonusOf(characterID int64) Bonus {
+	bonusMu.RLock()
+	b, ok := bonusCache[characterID]
+	src, gen, epoch := bonusSource, bonusGen[characterID], bonusEpoch
+	bonusMu.RUnlock()
+	if ok || src == nil || characterID == 0 {
+		return b
+	}
+	b, good := src(characterID)
+	if !good {
+		return b
+	}
+	bonusMu.Lock()
+	if bonusEpoch == epoch && bonusGen[characterID] == gen {
+		bonusCache[characterID] = b
+	}
+	bonusMu.Unlock()
+	return b
+}
 
 // Store is anything that can list, create, and delete characters for an
 // account.

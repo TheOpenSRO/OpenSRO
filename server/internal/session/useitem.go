@@ -244,9 +244,8 @@ const (
 //     which matches the x87 at the Windows default 53-bit precision control;
 //     this function does not set the control word itself.
 //
-// OpenSRO models no Str/Int bonuses, so the character's own Str and Int are
-// passed for GetParam(1)/(2) -- the same values MaxHP and MaxMP are built
-// from.
+// GetParam(1)/(2) are the TOTAL Str and Int, the worn items' options in
+// (round 769), the same values MaxHP and MaxMP are built from.
 func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, maxMP int) (hp, mp int) {
 	if param1 == 0 && param3 == 0 {
 		percent := func(pct, pool int) int {
@@ -1093,7 +1092,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// The engine's amounts (round 496): scaled by level and Str/Int, the
 		// percentage pair only when both absolutes are zero.
 		healHP, healMP := potionRestore(it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct,
-			owned.Level, owned.Str, owned.Int, maxHP, maxMP)
+			owned.Level, owned.TotalStr(), owned.TotalInt(), maxHP, maxMP)
 		// Slot 308's own refusal: both amounts below 1 answers 2 and the
 		// potion is kept (0x49b8ef..0x49b8fe, before any pool is touched). It
 		// is the answer the all-zero Param block above gets too, so it shares

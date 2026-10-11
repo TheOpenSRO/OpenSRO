@@ -281,16 +281,23 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refregion.txt" -out refregion.txt
 /tmp/export-refdata  -mode regions -out regions.csv refregion.txt         # 3,194 regions, 103 towns; the server reads it with -regions-csv (round 674)
+/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\magicoption.txt" -out magicoption.txt
+/tmp/export-refdata  -mode magicoptions -out magicoptions.csv magicoption.txt  # 402 rows; the server reads it with -magic-options-csv (round 768)
+/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\magicoptionassign.txt" -out magicoptionassign.txt
+/tmp/export-refdata  -mode magicoptassign -out magicoptassign.csv magicoptionassign.txt  # 74 rows; -magic-option-assign-csv (round 770): drops roll blues
 /tmp/export-refdata  -mode chargen -out chargen.csv $(order characterdata.txt) $(order itemdata.txt)
                      # 104 creatable ids (52 bodies, 52 items) and 2 ammunition rows; the server reads it with -chargen-csv (round 682)
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refshopgroup.txt" -out refshopgroup.txt
 /tmp/export-refdata  -mode npcs -out npcs.csv $(order characterdata.txt) refshopgroup.txt
                      # 313 NPC rows, 84 named by refshopgroup (round 708); REQUIRED with -npcpos-csv since round 727 (-npcs-csv)
 rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt characterdata_* leveldata.txt \
-      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refregion.txt refshopgroup.txt
+      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refregion.txt refshopgroup.txt magicoption.txt magicoptionassign.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
-# The exporter grows a strict-suffix column now and then (latest: skill columns 47-61, round 616 -- the buff
+# The exporter grows a strict-suffix column now and then (latest: item column 87, Rarity, round 770 --
+# a Seal item always drops with blue options; before it item columns 79-86, round 769 -- the
+# per-plus increments, so a reinforced item's plus counts; before them item columns 73-78, round 768 -- the
+# alchemy columns CashItem, Param1, Param5, Desc128_1, Desc128_4 and MaxMagicOptCount; before them skill columns 47-61, round 616 -- the buff
 # and self-cast columns; before them 45 CooldownGroup, round 504,
 # and 46 SitGate, round 607 -- the skill-use gate's sitting refusals; before them item columns 61-65 -- the three
 # elixir reinforce-rate dwords and the cooltime group/ms, rounds 262-263, 2026-09-19; and the six skill
@@ -437,6 +444,8 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #         - "-teleport-dir=/data/teleport"       # the teleport network (round 575); the town teleporters use it (round 576)
 #         - "-monsters-csv=/data/monsters.csv"   # the monster species table (round 654); see "Monster species table"
 #         - "-regions-csv=/data/regions.csv"     # the towns (round 674): a monster entering one is removed; see "Towns"
+#         - "-magic-options-csv=/data/magicoptions.csv" # the blue options (round 768): the alchemy stones; see "Alchemy"
+#         - "-magic-option-assign-csv=/data/magicoptassign.csv" # which blues drop (round 770); see "Alchemy"
 #         - "-chargen-csv=/data/chargen.csv"     # the creatable catalogue (round 682): without it every create is refused; see "Character lobby"
 #         - "-chardefaults-dir=/data/chardefaults" # a new character's default masteries/skills/quests (round 692, EXTERNAL); see "Character defaults"
 docker compose up -d
@@ -1473,6 +1482,33 @@ On opensro-01:
    `... -c "SELECT quest_code, status FROM character_default_quests WHERE character_id = <id>;"`.
 
 To undo: remove the variable and `docker compose up -d`; characters already given defaults keep them.
+
+## Alchemy (round 768)
+
+The alchemy window (Y) reinforces with elixirs and lucky powder, and applies magic and attribute
+stones. Two things on the server need refreshing for it:
+
+1. **Re-export and re-import the items.** `items.csv` gained six columns (73-78: `CashItem`, `Param1`,
+   `Param5`, `Desc128_1`, `Desc128_4`, `MaxMagicOptCount`), and round 769 eight more (79-86, the
+   per-plus increments: without them a plus adds nothing to an item's stats). An older export still loads, but with them
+   0 every alchemy attempt is refused: no elixir suits any item (`0x5409`), and no stone matches a degree.
+   Run the `-mode items` line of "Reference data" step 2 and `import-refdata -items-csv` again.
+2. **Export the magic option table** (the `magicoption.txt` and `-mode magicoptions` lines), copy
+   `magicoptions.csv` beside the other CSVs, and add `- "-magic-options-csv=/data/magicoptions.csv"` to
+   the override's `command:` list, then `docker compose up -d`. The boot log says
+   `magic option table loaded: the alchemy stones write blue options and worn options count ...
+   rows=402`. Without it every magic stone is refused, and no worn item's blue option counts toward
+   its stats (round 769); elixirs and attribute stones work without it.
+
+3. **Round 770: drops with blue options.** Export the assign table too (the
+   `magicoptionassign.txt` and `-mode magicoptassign` lines), copy `magicoptassign.csv` beside the others
+   and add `- "-magic-option-assign-csv=/data/magicoptassign.csv"`. The boot log says
+   `magic option assign table loaded: equipment drops roll blue options ... rows=74`. A monster's
+   equipment drop then gets blues as the original server gives them (31 in 101, every Seal item).
+   Re-exporting the items (step 1) brings their Rarity column (87).
+
+Elixirs, powders and stones come from drops or `/give`; a GM can test with
+`/give <item id> [qty]` (the weapon elixir `ITEM_ETC_ARCHEMY_REINFORCE_RECIPE_WEAPON_A` is id 3675 in a retail archive).
 
 ## Towns (round 674)
 

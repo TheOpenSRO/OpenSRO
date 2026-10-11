@@ -4,7 +4,10 @@ How the server runs an alchemy operation, and — for reinforcing — the comple
 success formula, recovered from `SR_GameServer.exe` and corroborated against the
 client.
 
-Implemented in `server/internal/alchemy`.
+Implemented in `server/internal/alchemy` (the rules), `server/internal/session/alchemy.go` (the
+request), `server/internal/magicopt` (the magic option table) and, on the client,
+`client/scripts/ui/hud/alchemy_reinforce.gd` and `alchemy_window.gd` (round 768). **Round 768,
+at the end of this page, corrects §2, §3 and "The result packet" below; read it first.**
 
 ## One interface, eight operations
 
@@ -236,6 +239,10 @@ line of enquiry is closed rather than parked.
 
 ### 2. The second element — `CEnchant_Reinforce::vslot_006`
 
+**CORRECTED in round 768:** the second `LookupPackedRate` call runs on the lucky powder, not the
+elixir (asm 0x506046-0x506055: EAX is the powder item). The second contribution is the POWDER's
+own packed table, not the base rate again. The pseudo-code below is the shape, not the operand.
+
 	rate = base()
 	if (ctx->+0x226a != 0) {           // a second element is loaded
 	    if (rate > 99) return rate;    // already certain, don't bother
@@ -243,6 +250,9 @@ line of enquiry is closed rather than parked.
 	}
 
 ### 3. Lucky adds five — same function
+
+**Round 768:** the test goes through FUN_00505e50, which also SPENDS one charge of the 'luck'
+option (below 2 the option is removed). A bless option's value is a count of charges.
 
 	if (rate < 100) {
 	    if (HasMagicOption(item, 0x6c75636b) == 1) rate += 5;
@@ -321,6 +331,10 @@ an option level and durability, and the function prints both messages.
 
 ## The result packet
 
+**CORRECTED in round 768:** 0x872cd0 is the STONE result's handler (0xB151). The elixir's result
+(0xB150) is handled by 0x8729e0, and has one more byte on failure (destroyed). The handlers are
+registered at 0x871678..0x8716a9. See round 768 below for both layouts.
+
 `FUN_00872cd0` in the client is the handler:
 
 	byte result
@@ -373,6 +387,8 @@ not established here.
 
 ## What is not recovered
 
+(Round 768 answers "What the server sends on failure" below; see its section.)
+
 - ~~**Which ref-record offset holds the packed rates.**~~ **Read** -- §1 of this
   page gives it: the record's `0x2a0..0x520` region is a 20-element strided
   array, `element = base + (tier + 0x15) * 0x20`, so the packed dwords sit at a
@@ -393,3 +409,163 @@ not established here.
   takes the pointer at `+0xcc` — entry 51. Identifying reference table 51 is the
   next step. The other six operations' rates were read the same day, below.
 - **The `CMakeStuff_*` trio** entirely.
+
+## Round 768: the whole operation, server and client
+
+Read 2026-10-11 from `SR_GameServer.exe` (gs) and `sro_client.exe` (c). Labels: READ (addresses),
+MEASURED (the retail tables), INFERRED, OURS, OPEN.
+
+### The request (gs, READ)
+
+- 0x7150 and 0x7151 reach `GObjPC_HandleAlchemyReinforceMsg` (0x506e20 / 0x506ee0, one body).
+  `u8 action`: 2 starts, anything else cancels.
+- A start carries `u8 op, u8 n, n x u8 slot` (FUN_00507cf0). The ops: 3 elixir, 4 magic or bless
+  stone, 5 attribute stone, 7 avatar, 8 advanced elixir. The opcode is not checked against the op.
+- Each slot is 13..111 (the bag after the 13 equipment slots); outside is 0x5414
+  `INVALID_ITEM_SLOT`, an empty one 3. The first must be equipment (0x5408). Each goes to the
+  op's slot-0 loader, which places it by KIND: 0x5410 not this op's stuff, 0x5412 twice.
+- A refusal at the request answers `u8 2, u16 code` on 0xB150 (ops 3/6/8) or 0xB151 (4/5)
+  (jump table 0x507fc8) and spends nothing.
+- The operation then waits for the character's 1-second PeriodicUpdate to count to 3 and runs on
+  the next tick: 3 to 4 s after the request.
+- A cancel before that answers `u8 1, u8 1`; with nothing pending, nothing.
+
+### The reply (gs and c, READ)
+
+```
+u8 2, u16 code                                    a refusal
+u8 1, u8 1                                        cancelled
+u8 1, u8 2, u8 success, u8 slot (13..111),
+   [0xB150, failed: u8 destroyed],
+   [unless destroyed: the item record]            (round 732's record)
+```
+
+- A stone's lost roll is `u8 2, u16 0x5423`. The client shows it as a failure (effect, sound,
+  `REINFORCERR_FAIL`), not through the error line.
+- The server never sends the 0x10/0x20/0x40 byte. The client builds it (0x8729e0) from success,
+  destroyed, and the plus and durability against a snapshot taken at the send (0x57a390).
+- Neither reply carries the spent elixir, powder or stone (OPEN: retail's packet for that was not
+  read). OURS: this client lists the bag again after each reply.
+
+### Reinforce (gs, READ)
+
+- **Loader** (0x505bd0): equipment to slot 0 (refused 0x540f past +249); an elixir (3/3/10/1) to
+  slot 1; a lucky powder (3/3/10/2) to slot 3; a magic cube (3/2/3/1) to slot 1 (not built here).
+- **Slot 4** (0x505cb0): the target's TypeID3 is one of the four bytes of the elixir's Param1 or
+  Param5, else 0x5409. MEASURED: weapon 0x06000000, shield 0x04000000, armour 0x01020300,
+  accessory 0x05000000; the `_B` elixirs add Param5 0x090a0b00 / 0x0c000000.
+- **Slot 5** (0x505db0): a powder's Param1 must be the target's degree, `(ItemClass - 1)/3 + 1`
+  (FUN_004775a0), else 0x540a. MEASURED: PROB_UP_A_01..12 carry 1..12.
+- **The rate:** the elixir's packed rate for the plus; with a powder, unless that already exceeds
+  99, the powder's own packed rate; then, below 100, Lucky +5 and a charge spent; then param 173;
+  floor 10, above 99 is 100; success iff `rand() % 100 < rate`. MEASURED powder tables:
+  A_02..12 give +1..+4 100/100/100/80, +5..+8 65/50/30/19, +9.. 10/4/2/1.
+- **Success** (0x506b20): the plus + 1 (the setter clamps at 250). Nothing else changes.
+- **Failure** (FUN_00506ce0), n the plus before:
+  - from +5, `rand() % 100 < 50` destroys the item (never a cash item, TypeID bit 0); the other
+    half flaws its durability;
+  - an Immortal ('atha') charge cancels the destruction, a Steady ('soli') charge the flaw;
+  - the plus goes to 0, or to 4 when n >= 4 and an Astral ('astr') charge is spent. It never
+    falls by one;
+  - the flaw (FUN_00506b60) adds a fresh MATTR_DEC_MAXDUR value from the LEVEL-3 record (asm
+    0x4906db) to any existing one, clamped to 1..99. MEASURED weapon level 3: 36..50.
+- **Spent:** one elixir and one powder (ReleaseLoadedItems 0x501c00), success or failure, and the
+  target too when destroyed.
+- The 0x5420 test in slot 5 needs slot 4, which this loader never fills: dead here (INFERRED).
+  `STRGERR_ASTRAL` belongs to the magic stone's Astral rule (below), which settles the old
+  "tag and message disagree" note.
+
+### Magic and bless stones (gs, READ)
+
+- **Loader** (0x503ee0): a magic stone 3/3/11/1 or a bless stone 3/3/11/7.
+- **The roll** (0x503680): Param4 (ref +0x300) + round(param 172); floor 5, above 99 is 100; the
+  attempt FAILS iff `rate < rand() % 100`. A lost roll spends the stone and leaves the target:
+  0x5423. MEASURED Param4: magic stones 50, bless stones 100.
+- **The commit** (BlessItem 0x503810), only after a won roll:
+  1. the option count must not exceed the cap (FUN_00491780: itemdata column 158, MEASURED 9 on
+     most equipment, plus one per 'dura' and 'nrep' option, at most 12), else 2;
+  2. the option is the stone's Desc128_1 (MEASURED "MATTR_STR"); no such group in the table: 2;
+  3. the stone's Param1 must be the target's degree, else 0x540f;
+  4. the group's record at that degree must exist and allow the item's kind, else 0x5409;
+  5. 'rep' needs an existing 'rep' option (0x5425); 'astr' needs more 'atha' charges than 'astr'
+     ones (0x5424, STRGERR_ASTRAL);
+  6. the bless tags (atha, luck, soli, astr, ape) add one charge, at most 5; 'rep' at most 6;
+     past it 0x5422 (MAGICSTONE2_MAX);
+  7. every other option takes a FRESH value from the record's generator, clamped to 1..1700. It
+     overwrites the same option in place (so it can go down) or is appended below the cap; at the
+     cap nothing is written (2).
+  - A refusal after a won roll does NOT spend the stone (only the lost roll releases it).
+- **Assimilation** (slots 10/11): after a success, with probability `stone OptLevel / 101`
+  another stat is disturbed, unless an 'ape' charge is spent instead. The draw is over the white
+  groups (weapon 7, armour and shield 6, accessory 2) and the blue options: a white group is
+  re-rolled the attribute stone's way; for a magic stone the blue re-roll is always option 0.
+
+### Attribute stones (gs, READ)
+
+- **Loader** (0x5029a0): 3/3/11/2. **Slot 4** (0x502a40): the stone's Param1 must be the degree
+  and its Desc128_4 class list (MEASURED "weapon", "armor,shield", "shield", "armor",
+  "accessory") must name the target's class, else 0x5421, before the roll.
+- **The roll:** the same as a magic stone's.
+- **Success** (0x503430): the white group named by the stone's NATTR_ position in the class list
+  (FUN_00502c80: weapon DUR, PASTR, MAINT, HR, PA, MA, CRITICAL; armour DUR, PDSTR, MDINT, PD, MD,
+  ER; shield DUR, PDSTR, MDINT, BR, PD, MD; accessory PAR, MAR, which are durability.go's groups)
+  is SET to `{0, 7, 13, 19, 25, 31}[k]`, k the least of four draws of `rand() % 6`
+  (FUN_00501ea0; five for an equip whose ref +0x89 is 2, INFERRED a Seal item; OURS: always four
+  here). Then the same assimilation step.
+
+### The client (c, READ)
+
+- The strengthening tab is `CAlchemyMgrReinforce` (vtable 0xd8bf7c). Its slots are controls 17
+  (the target), 26 (an elixir, magic cube, advanced elixir or stone) and 27 (a lucky powder) of
+  pane 12. Stones and elixirs share the tab, and stones never open the powder slot.
+- An item goes in by **Alt + left click** on the bag (0x681912) or by being put down on the window
+  (0x59dca0). The slot comes from the item's kind (0x5781f0), not from where it was dropped. The
+  check (0x578ac0) writes its refusal through 0x7781b0, type 0: LOAD_EQUIP_FIRST, RECIPE_MISMATCH,
+  NOT_LOAD_INGREDIENT(2), EQUIPCLASS_MISMATCH, CANNOT_BE_USED_TO_TARGET.
+- The action lights when the target and the stuff are loaded (0x578670). The click sends the
+  request at once (no confirm, except for the advanced elixir), sets the caption to Cancel, plays
+  `snd_elixir_use` and starts two 50 ms timers:
+  - the effect: 16 cells of a 256 x 256 sheet drawn in a 96 x 96 window 0x20 up and left of the
+    stuff slot, an 800 ms loop;
+  - the gauge: fills over 3.0 s (0xd8adc4); when full the attempt can no longer be cancelled.
+- **The reply** (0x59eb20): the success or fail effect and `snd_elixir_success` / `_failure`.
+  - The lines: SUCCESS with the new plus (elixirs only); OPTLV_ZERO, or OPTLV_DOWN (new, loss);
+    FAILDOWN_DURABILITY (new, loss); FAIL; BREAKDOWN.
+  - At frame 8 the stuff and powder slots are emptied; at the wrap the effect hides.
+  - A breakdown or a stone's lost roll empties the target slot too.
+- **The effect's blend** (CIFDecoratedStatic +0x388, its draw 0x634640): mode 1 is additive
+  (SRCALPHA, ONE). The click and a success use it; a failure, a breakdown and a lost stone roll set
+  mode 0, the plain alpha blend. MEASURED: the sheets' DXT3 alpha is 15 everywhere, so mode 0
+  shows their black square.
+
+### OURS in this build
+
+- The opcodes: one request 0x0113 for every op, replies 0x0114 (0xB150's body) and 0x0115
+  (0xB151's).
+- The wait: 4 s, the top of the READ window.
+- Params 172 and 173 (the stone and reinforce bonuses) are 0: OpenSRO has no source of either.
+- The magic cube and the advanced elixir are refused (0x5410).
+- A loaded item that changed while the attempt waited cancels it (retail holds the item objects).
+- The bag is listed again after each reply.
+- The client's stone checks use the server's own rule: a stone that would be refused after a won
+  roll is refused before it is sent, because a LOST roll spends even a mismatched stone.
+- A second start while one waits is dropped unanswered; the client locks the window until the
+  reply comes (and ends the attempt after 10 s without one).
+- An attempt whose character left the world in the wait is dropped, nothing spent.
+- A magic stone with no room for its option returns 2 before the assimilation step the binary
+  still runs then.
+- Three attribute-stone edge cases (an empty class list, one naming no known class, a NATTR_ name
+  the class lacks) are refused with 0x5421 before the roll; the binary returns 2 or passes. No
+  retail stone has any of them.
+- FUN_00507fe0's 0x540f test (an item type answering vslot +0x470) and FUN_00502910's expiry test
+  are not made: OpenSRO has neither kind.
+- (Round 770: the export now leaves out Service 0 rows, as the server's loader does -- READ,
+  FUN_00727c00 -- which settles the review's open point.)
+- The client does not build the devil's spirit (Nasrun) refusal, message 0xe.
+
+### OPEN
+
+- Retail's packet for the spent stack counts; whether the server plays an effect on the character.
+- The stone's option-change lines (0x594f40, `ALCHEMY_APPEND_ATTR` and friends).
+- How a dropped stone's OptLevel (its assimilation %) is set.
+- UpperReinforce (table 51), the avatar enchant, sockets, manufacture and decomposition.

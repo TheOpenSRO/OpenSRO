@@ -234,6 +234,13 @@ const COL_DURABILITY := 63
 const COL_RANGE := 94
 ## Param1, itemdata column 118 (the export's fParam1).
 const COL_PARAM1 := 118
+## Round 768, the alchemy window's checks (alchemy_window.gd): Desc128_1 (a
+## magic stone's MATTR_ name, an attribute stone's NATTR_ name), Desc128_4 (an
+## attribute stone's class list, "armor,shield") and Param5 (an elixir's
+## second TypeID3 set, gs CEnchant_Reinforce slot 4 0x505cb0).
+const COL_DESC1 := 119
+const COL_DESC4 := 125
+const COL_PARAM5 := 126
 const COL_PHYS_ATK_MIN := 95
 const COL_PHYS_ATK_MAX := 97
 const COL_MAG_ATK_MIN := 100
@@ -407,6 +414,10 @@ class Item:
 	## of life scroll's) duration in seconds, which retail's item-grant
 	## gauge reads as its total (ref+0x2b4 x 1000). 0 when the row is short.
 	var param1: int = 0
+	## Round 768 (COL_PARAM5, COL_DESC1, COL_DESC4); 0 / "" for a short row.
+	var param5: int = 0
+	var desc1: String = ""
+	var desc4: String = ""
 	## Armour defence, base (+0), min~max (floats). Zero for a non-defensive
 	## item. block is a shield's block ratio.
 	var phys_def := Vector2.ZERO
@@ -571,6 +582,10 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.critical = _int_at(cols, COL_CRITICAL)
 		item.attack_range = _int_at(cols, COL_RANGE)
 		item.param1 = _int_at(cols, COL_PARAM1)
+		item.param5 = _int_at(cols, COL_PARAM5)
+		if cols.size() > COL_DESC4:
+			item.desc1 = cols[COL_DESC1].strip_edges()
+			item.desc4 = cols[COL_DESC4].strip_edges()
 		item.phys_def = Vector2(_float_at(cols, COL_PHYS_DEF_MIN), _float_at(cols, COL_PHYS_DEF_MAX))
 		item.mag_def = Vector2(_float_at(cols, COL_MAG_DEF_MIN), _float_at(cols, COL_MAG_DEF_MAX))
 		item.block = Vector2(_float_at(cols, COL_BLOCK_MIN), _float_at(cols, COL_BLOCK_MAX))
@@ -633,6 +648,11 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	var criticals: PackedInt64Array = rows["criticals"]
 	var ranges: PackedInt64Array = rows["ranges"]
 	var param1s: PackedInt64Array = rows["param1s"]
+	# Round 768: a library from before these columns has none (no elixir or
+	# stone passes the window's checks; the server still decides).
+	var param5s: PackedInt64Array = rows.get("param5s", PackedInt64Array())
+	var desc1s: PackedStringArray = rows.get("desc1s", PackedStringArray())
+	var desc4s: PackedStringArray = rows.get("desc4s", PackedStringArray())
 	var type_ids: PackedInt64Array = rows["type_ids"]
 	# Round 726: a library from before these two columns has neither; such a
 	# library's rows read as 0 (no cash item, not bionic).
@@ -687,6 +707,12 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		item.critical = criticals[i]
 		item.attack_range = ranges[i]
 		item.param1 = param1s[i]
+		if i < param5s.size():
+			item.param5 = param5s[i]
+		if i < desc1s.size():
+			item.desc1 = desc1s[i]
+		if i < desc4s.size():
+			item.desc4 = desc4s[i]
 		var d := i * 6
 		item.phys_def = Vector2(defences[d], defences[d + 1])
 		item.mag_def = Vector2(defences[d + 2], defences[d + 3])

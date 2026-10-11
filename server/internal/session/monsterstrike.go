@@ -370,7 +370,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	if buffBooks.HoldsWall(characterID) {
 		hit, ok := buffBooks.HitWall(characterID, monsterBlowType(ctx, monster, skill), func(w buff.Wall) int {
 			b := resolveBlow(raw, w.DefPct, w.Def,
-				combat.EvadedChance(monster.Critical, playerEvasion), 0,
+				combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq)), 0,
 				monster.Level, playerLevel, monster.ID, characterID)
 			wallCrit = b.Critical
 			return b.Damage
@@ -395,7 +395,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 		}
 	}
 	counter := resolveBlow(raw, playerMitigationPercent, armor,
-		combat.EvadedChance(monster.Critical, playerEvasion),
+		combat.EvadedChance(monster.Critical, playerEvadeCrit(ctx, characterID, eq)),
 		combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
 		monster.Level, playerLevel, monster.ID, characterID)
 	incoming := counter.Damage
@@ -403,10 +403,14 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	out.blocked = counter.Blocked
 	// The counterattack wears the defender's gear: a blocked hit the
 	// shield, any other hit one armour piece.
+	broke := false
 	if counter.Blocked {
-		wearShield(ctx, eq, characterID)
+		broke = wearShield(ctx, eq, characterID)
 	} else if counter.Damage > 0 {
-		wearArmour(ctx, eq, characterID)
+		broke = wearArmour(ctx, eq, characterID)
+	}
+	if broke {
+		clampHP(ctx, deps.chars, characterID) // round 769's review F2
 	}
 	// The store's died flag (the transition from above 0 to 0) is not the
 	// arbiter here -- round 551, killLock's comment: it cannot tell a

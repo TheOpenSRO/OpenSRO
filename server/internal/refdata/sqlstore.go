@@ -103,6 +103,27 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS composite_desc TEXT NOT NULL DEFAULT 
 -- KeepingFee, itemdata column 30 (round 728): the warehouse's per-item
 -- deposit fee. 0 on an import that predates the column.
 ALTER TABLE items ADD COLUMN IF NOT EXISTS keeping_fee BIGINT NOT NULL DEFAULT 0;
+-- The alchemy columns (round 768): CashItem (column 7), Param1/Param5
+-- (118/126), Desc128_1/Desc128_4 (119/125), MaxMagicOptCount (158). Zero /
+-- empty on an import that predates them.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS cash_item BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS param1 BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS param5 BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS desc1 TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN IF NOT EXISTS desc4 TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN IF NOT EXISTS max_magic_options INTEGER NOT NULL DEFAULT 0;
+-- The per-plus increments (round 769), itemdata columns 67, 70, 73, 78, 81,
+-- 99, 104 and 115. Zero on an import that predates them.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_phys_def DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_parry DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_phys_absorb DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_mag_def DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_mag_absorb DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_phys_atk DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_mag_atk DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS plus_inc_attack_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
+-- Rarity, _RefObjCommon column 15 (round 770). 0 on an older import.
+ALTER TABLE items ADD COLUMN IF NOT EXISTS rarity INTEGER NOT NULL DEFAULT 0;
 -- GetItemByCode looks items up by code (composite review).
 CREATE INDEX IF NOT EXISTS items_code_name_idx ON items (code_name);
 -- The potion restore amounts. REAL and exported since the Param block was
@@ -329,8 +350,10 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
 			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
-			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73)
+			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee,
+			cash_item, param1, param5, desc1, desc4, max_magic_options,
+			plus_inc_phys_def, plus_inc_parry, plus_inc_phys_absorb, plus_inc_mag_def, plus_inc_mag_absorb, plus_inc_phys_atk, plus_inc_mag_atk, plus_inc_attack_rate, rarity
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id1=excluded.type_id1, type_id2=excluded.type_id2, type_id3=excluded.type_id3, type_id4=excluded.type_id4,
 			country=excluded.country, req_gender=excluded.req_gender,
@@ -367,7 +390,14 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			cooltime_group=excluded.cooltime_group, cooltime_ms=excluded.cooltime_ms,
 			parry_ratio_min=excluded.parry_ratio_min, parry_ratio_max=excluded.parry_ratio_max,
 			can_use=excluded.can_use, can_pick=excluded.can_pick, code_name=excluded.code_name,
-			composite_desc=excluded.composite_desc, keeping_fee=excluded.keeping_fee
+			composite_desc=excluded.composite_desc, keeping_fee=excluded.keeping_fee,
+			cash_item=excluded.cash_item, param1=excluded.param1, param5=excluded.param5,
+			desc1=excluded.desc1, desc4=excluded.desc4, max_magic_options=excluded.max_magic_options,
+			plus_inc_phys_def=excluded.plus_inc_phys_def, plus_inc_parry=excluded.plus_inc_parry,
+			plus_inc_phys_absorb=excluded.plus_inc_phys_absorb, plus_inc_mag_def=excluded.plus_inc_mag_def,
+			plus_inc_mag_absorb=excluded.plus_inc_mag_absorb, plus_inc_phys_atk=excluded.plus_inc_phys_atk,
+			plus_inc_mag_atk=excluded.plus_inc_mag_atk, plus_inc_attack_rate=excluded.plus_inc_attack_rate,
+			rarity=excluded.rarity
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -391,6 +421,9 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			it.Range, int64(it.ReinforceRate1), int64(it.ReinforceRate2), int64(it.ReinforceRate3),
 			int64(it.CooltimeGroup), it.CooltimeMs,
 			it.ParryRatioMin, it.ParryRatioMax, it.CanUse, it.CanPick, it.CodeName, it.CompositeDesc, it.KeepingFee,
+			it.CashItem, int64(it.Param1), int64(it.Param5), it.Desc1, it.Desc4, it.MaxMagicOptions,
+			it.PlusIncPhysDef, it.PlusIncParry, it.PlusIncPhysAbsorb, it.PlusIncMagDef, it.PlusIncMagAbsorb,
+			it.PlusIncPhysAtk, it.PlusIncMagAtk, it.PlusIncAttackRate, it.Rarity,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting item %d: %w", it.ID, err)
 		}
@@ -433,10 +466,12 @@ func (s *SQLStore) queryItem(ctx context.Context, id int64) (*Item, error) {
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
 			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
-			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee
+			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee,
+			cash_item, param1, param5, desc1, desc4, max_magic_options,
+			plus_inc_phys_def, plus_inc_parry, plus_inc_phys_absorb, plus_inc_mag_def, plus_inc_mag_absorb, plus_inc_phys_atk, plus_inc_mag_atk, plus_inc_attack_rate, rarity
 		FROM items WHERE id = $1`, id)
 	var rr [3]int64
-	var cg int64
+	var cg, p1, p5 int64
 	if err := row.Scan(
 		&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
 		&it.DurabilityMin, &it.DurabilityMax, &it.PhysDefenseMin, &it.PhysDefenseMax,
@@ -452,6 +487,9 @@ func (s *SQLStore) queryItem(ctx context.Context, id int64) (*Item, error) {
 		&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
 		&it.Range, &rr[0], &rr[1], &rr[2], &cg, &it.CooltimeMs,
 		&it.ParryRatioMin, &it.ParryRatioMax, &it.CanUse, &it.CanPick, &it.CodeName, &it.CompositeDesc, &it.KeepingFee,
+		&it.CashItem, &p1, &p5, &it.Desc1, &it.Desc4, &it.MaxMagicOptions,
+		&it.PlusIncPhysDef, &it.PlusIncParry, &it.PlusIncPhysAbsorb, &it.PlusIncMagDef, &it.PlusIncMagAbsorb,
+		&it.PlusIncPhysAtk, &it.PlusIncMagAtk, &it.PlusIncAttackRate, &it.Rarity,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
@@ -460,6 +498,7 @@ func (s *SQLStore) queryItem(ctx context.Context, id int64) (*Item, error) {
 	}
 	it.ReinforceRate1, it.ReinforceRate2, it.ReinforceRate3 = uint32(rr[0]), uint32(rr[1]), uint32(rr[2])
 	it.CooltimeGroup = uint32(cg)
+	it.Param1, it.Param5 = uint32(p1), uint32(p5)
 	return &it, nil
 }
 
@@ -502,7 +541,9 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
 			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
-			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee
+			parry_ratio_min, parry_ratio_max, can_use, can_pick, code_name, composite_desc, keeping_fee,
+			cash_item, param1, param5, desc1, desc4, max_magic_options,
+			plus_inc_phys_def, plus_inc_parry, plus_inc_phys_absorb, plus_inc_mag_def, plus_inc_mag_absorb, plus_inc_phys_atk, plus_inc_mag_atk, plus_inc_attack_rate, rarity
 		FROM items ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing items: %w", err)
@@ -513,7 +554,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 	for rows.Next() {
 		var it Item
 		var rr [3]int64
-		var cg int64
+		var cg, p1, p5 int64
 		if err := rows.Scan(
 			&it.ID, &it.MaxStack, &it.ReqStr, &it.ReqInt, &it.ItemClass, &it.TwoHanded,
 			&it.DurabilityMin, &it.DurabilityMax, &it.PhysDefenseMin, &it.PhysDefenseMax,
@@ -529,11 +570,16 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
 			&it.Range, &rr[0], &rr[1], &rr[2], &cg, &it.CooltimeMs,
 			&it.ParryRatioMin, &it.ParryRatioMax, &it.CanUse, &it.CanPick, &it.CodeName, &it.CompositeDesc, &it.KeepingFee,
+			&it.CashItem, &p1, &p5, &it.Desc1, &it.Desc4, &it.MaxMagicOptions,
+			&it.PlusIncPhysDef, &it.PlusIncParry, &it.PlusIncPhysAbsorb, &it.PlusIncMagDef, &it.PlusIncMagAbsorb,
+			&it.PlusIncPhysAtk, &it.PlusIncMagAtk, &it.PlusIncAttackRate, &it.Rarity,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning item: %w", err)
 		}
 		it.ReinforceRate1, it.ReinforceRate2, it.ReinforceRate3 = uint32(rr[0]), uint32(rr[1]), uint32(rr[2])
 		it.CooltimeGroup = uint32(cg)
+		it.Param1, it.Param5 = uint32(p1), uint32(p5)
+		it.Param1, it.Param5 = uint32(p1), uint32(p5)
 		out = append(out, &it)
 	}
 	return out, rows.Err()

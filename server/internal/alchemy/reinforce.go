@@ -104,58 +104,11 @@ func BaseRate(plusLevel int, tiers [3]uint32) int {
 	return int((tiers[tier-1] >> shift) & 0xff)
 }
 
-// Inputs are everything the four vtable slots read, gathered in one place.
-type Inputs struct {
-	// PlusLevel is the item's current reinforcement level.
-	PlusLevel int
-	// Tiers are the three packed rate fields from the item's ref record.
-	Tiers [3]uint32
-	// SecondElement reports whether the operation's second element slot
-	// (context +0x226a) is filled. When it is, the base rate is added twice.
-	SecondElement bool
-	// Lucky reports whether the item carries TagLuck.
-	Lucky bool
-	// ParamBonus is GetParam(173), already truncated toward zero.
-	ParamBonus int
-}
-
-// Rate assembles the four terms in the order the vtable does, and returns the
-// clamped percentage the roll is made against.
-//
-// Slot 6 (0x00506020):
-//
-//	rate = base()
-//	if (secondElement) { if (rate > 99) return rate; rate += base(); }
-//	if (rate < 100 && lucky) rate += 5;
-//
-// Slot 7 (0x00506df0):
-//
-//	rate = slot6() + (int)GetParam(173)
-//
-// Slot 1 (0x00506090) then clamps. The early return inside the second-element
-// branch matters: when the first contribution already exceeds 99, slot 6
-// returns IMMEDIATELY, so neither the second contribution nor the Lucky bonus
-// is applied -- but the param bonus in slot 7 still is, because that is a
-// different function.
-func Rate(in Inputs) int {
-	base := BaseRate(in.PlusLevel, in.Tiers)
-	rate := base
-	early := false
-	if in.SecondElement {
-		if rate > CeilingTest {
-			early = true
-		} else {
-			rate += base
-		}
-	}
-	if !early {
-		if rate < MaxRate && in.Lucky {
-			rate += LuckyBonus
-		}
-	}
-	rate += in.ParamBonus
-	return ClampRate(rate)
-}
+// The rate itself is ReinforceRate (enchant.go, round 768). An earlier
+// Rate here added the elixir's base rate twice when a second element was
+// loaded; the second LookupPackedRate call runs on the LUCKY POWDER
+// (asm 0x506046-0x506055), so it adds the powder's own table, and the Lucky
+// bonus spends a charge of the option.
 
 // Succeeds performs the roll exactly as CEnchant_Reinforce::vslot_001 does:
 // `rand() % 100 < rate`, where roll is that modulus result in [0, 100).
@@ -269,13 +222,10 @@ const (
 	// ErrRecipeMismatch -- UIIT_MSG_REINFORCERR_RECIPE_MISMATCH.
 	ErrRecipeMismatch = 0x5409
 
-	// ErrEquipClassMismatchProbUp is CEnchant_Reinforce::vslot_005's second
-	// check. UIIT_MSG_REINFORCERR_EQUIPCLASS_MISMATCH_PROB_UP.
-	//
-	// "PROB_UP" independently confirms the rate reading: the optional second
-	// element whose presence makes slot 6 add the base rate twice is a
-	// PROBABILITY-BOOSTING item, which is why it contributes to the rate at
-	// all. That was inferred from the arithmetic; this names it.
+	// ErrEquipClassMismatchProbUp is CEnchant_Reinforce::vslot_005's refusal
+	// of a lucky powder whose degree (its Param1) is not the target's.
+	// UIIT_MSG_REINFORCERR_EQUIPCLASS_MISMATCH_PROB_UP: the powder is the
+	// PROBABILITY-boosting item, which adds its own packed rate (round 768).
 	ErrEquipClassMismatchProbUp = 0x540a
 
 	// ErrTargetCannotBeReinforced -- UIIT_MSG_REINFORCERR_TARGETEQUIP_CANT_BE_REINFORCED.
@@ -289,17 +239,14 @@ const (
 	// UIIT_MSG_REINFORCERR_STUFF_CANT_BE_LOADED_MULTIPLE_TIME.
 	ErrStuffLoadedTwice = 0x5412
 
-	// ErrAstral is CEnchant_Reinforce::vslot_005's third check, which tests the
-	// item for magic-option tag 'atha' (TagAthanasia, MATTR_ATHANASIA) and
-	// raises UIIT_MSG_STRGERR_ASTRAL.
-	//
-	// THE TAG AND THE MESSAGE DISAGREE and this project does not resolve it:
-	// the code tests Athanasia, the message says Astral. Both readings are
-	// solid on their own -- 0x61746861 is 'atha' and magic_options.md maps it
-	// to MATTR_ATHANASIA, and error_codes.md maps 0x5420 to STRGERR_ASTRAL --
-	// so either the message is reused across two stones or one of the two
-	// vocabularies uses a different English word than the other. Recorded as a
-	// conflict rather than decided.
+	// ErrAstral is CEnchant_Reinforce::vslot_005's third check: with slot 4
+	// (+0x2276) loaded, the target must carry 'atha' (MATTR_ATHANASIA), or
+	// UIIT_MSG_STRGERR_ASTRAL. Reinforce's loader never fills slot 4, so the
+	// check is dead there (INFERRED, round 768). The message makes sense from
+	// the magic stone's side, where ErrAstralAlt (0x5424, the same message)
+	// refuses an Astral stone on an item without more Immortal charges than
+	// Astral ones (BlessItem 0x503810, READ) -- which settles the old
+	// "tag and message disagree" note: Astral needs Immortal.
 	ErrAstral = 0x5420
 
 	// ErrEnchantEquipClassMismatch -- UIIT_MSG_ENCHANT_EQUIPCLASS_MISMATCH.

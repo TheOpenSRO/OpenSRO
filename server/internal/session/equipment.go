@@ -394,6 +394,8 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
+	character.InvalidateBonus(characterID) // round 769: the worn options changed
+	clampHP(ctx, chars, characterID)       // a swap can lower the max (review F2)
 	err = sendWornList(ctx, sess, store, items, characterID)
 	// The zone sees it put on (0x3038, round 735). A swap is one 0x3038 of
 	// the incoming item, as retail's: the client's handler replaces the slot.
@@ -424,6 +426,8 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
+	character.InvalidateBonus(characterID) // round 769: the worn options changed
+	clampHP(ctx, chars, characterID)       // taking it off can lower the max (review F2)
 	err = sendWornList(ctx, sess, store, items, characterID)
 	// The zone sees it taken off (0x3039, round 735).
 	broadcastUnworn(hub, characterID, req.Slot, removed)

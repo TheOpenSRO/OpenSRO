@@ -830,6 +830,16 @@ func open_alchemy() -> AlchemyWindow:
 		return null
 	window.place_initial()
 	window.closed.connect(close_alchemy)
+	# Round 768: the strengthening tab's requests and lines.
+	window.start_requested.connect(func(op: int, bag_slots: Array) -> void:
+		if NetClient.is_connected_to_server():
+			print("HudPanels: alchemy op %d slots %s" % [op, bag_slots])
+			NetClient.alchemy_start(op, bag_slots))
+	window.cancel_requested.connect(func() -> void:
+		if NetClient.is_connected_to_server():
+			NetClient.alchemy_cancel())
+	window.message.connect(func(text: String) -> void: system_notice.emit(text))
+	window.options = MagicOptionTable.shared
 	_alchemy = window
 	window.show()
 	window.move_to_front()
@@ -942,6 +952,55 @@ func option_window() -> OptionWindow:
 ## The alchemy window, or null when it is closed (tests, tools).
 func alchemy_window() -> AlchemyWindow:
 	return _alchemy if _alchemy != null and is_instance_valid(_alchemy) else null
+
+## Round 768: whether a global point is over the alchemy window, in front of
+## any panel window that is there too. The window is not one of _windows
+## (it is built at every open), so the topmost test does not see it.
+func _over_alchemy(at: Vector2, _on_bag: bool) -> bool:
+	var w := alchemy_window()
+	if w == null or not w.is_visible_in_tree() or not w.get_global_rect().has_point(at):
+		return false
+	# In front of whatever panel window is under the point too -- the
+	# inventory, the store, the warehouse (round 768's review F12).
+	var top := _topmost_window_at(at)
+	return top == null or _drawn_above(w, top)
+
+## The alchemy window's description of bag `slot` (AlchemyReinforce's item
+## dictionary), or {} when the slot is empty or its item unknown.
+func alchemy_item(slot: int) -> Dictionary:
+	var item_id := _bag_item_id_at_slot(slot)
+	if item_id < 0:
+		return {}
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null:
+		return {}
+	var inst := _item_instance("bag", slot) as ItemInstance
+	return {"bag": slot, "item_id": item_id, "tids": Array(item.type_ids), "item_class": item.item_class,
+		"param1": item.param1, "param5": item.param5, "desc1": item.desc1, "desc4": item.desc4,
+		"code": item.code_name, "plus": inst.opt_level if inst != null else 0,
+		"durability": inst.durability if inst != null else 0, "seal": is_seal_item(item_id)}
+
+## Offers bag `slot` to the alchemy window (Alt+click or a put-down).
+func _alchemy_offer(slot: int) -> void:
+	var w := alchemy_window()
+	if w == null:
+		return
+	var it := alchemy_item(slot)
+	if it.is_empty():
+		return
+	w.offer_item(it, _item_icon(int(it["item_id"])))
+
+## The alchemy reply (round 768): to the window, then the bag again -- the
+## reply carries the target's record but not the spent elixir, powder or
+## stone (retail updates those by a packet not read; OURS: the whole bag).
+func _on_alchemy_result(r: AlchemyNet.Result) -> void:
+	var w := alchemy_window()
+	if w != null:
+		w.apply_result(r)
+	if r.ok and not r.cancelled or (not r.ok and r.code == AlchemyNet.CODE_ENCHANT_FAILED):
+		if NetClient.current_character_name != "":
+			NetClient.list_inventory(NetClient.current_character_name)
 
 ## The underbar's buttons and menu items (HudUnderbar.menu_action). Each
 ## toggles its panel as its key does, except the alchemy item (114), which
@@ -4136,6 +4195,9 @@ func select_bag_page(page: int) -> void:
 ## cell, each with a named "ItemIcon" child.
 func _fill_inventory_grid(slots: Array) -> void:
 	_bag_slots = slots
+	# Round 768: the alchemy window's copies follow the bag.
+	if alchemy_window() != null:
+		_alchemy.bag_changed(alchemy_item)
 	# A held bag item whose slot no longer holds it (spent, moved, sold by
 	# another path): let go rather than drop from a slot that changed.
 	if held_icon != null and held_icon.kind() == "bag" \
@@ -4284,9 +4346,26 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	if _is_shift_click_on(event, icon) and (held_icon == null or not held_icon.is_holding()):
 		_open_split(slot, item_id, qty)
 		return
+	# Round 768: Alt+click puts the item in the alchemy window while it is
+	# open (CIFSlotWithHelp::vslot_029 0x680fa0: GetKeyState(VK_MENU) at
+	# 0x681912, a bag slot -> the alchemy pane's vslot 0x70, READ).
+	if _is_alt_click_on(event, icon) and alchemy_window() != null \
+			and (held_icon == null or not held_icon.is_holding()):
+		_alchemy_offer(slot)
+		return
 	if _is_pick_click_on(event, icon):
 		pick_up_icon({"kind": "bag", "slot": slot, "item_id": item_id, "qty": qty, "icon": icon.texture},
 			icon.texture, icon, mb.global_position)
+
+## Whether an event is a left click released with Alt held (no Ctrl or
+## Shift) over `control` (round 768, 0x681912).
+func _is_alt_click_on(event: InputEvent, control: Control) -> bool:
+	if not (event is InputEventMouseButton):
+		return false
+	var mb := event as InputEventMouseButton
+	return mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed and mb.alt_pressed \
+		and not mb.ctrl_pressed and not mb.shift_pressed and control != null \
+		and (not control.is_inside_tree() or control.get_global_rect().has_point(mb.global_position))
 
 ## Whether an event is a left click released with Shift held (no Ctrl or
 ## Alt) over `control`: the original's Shift+click on a slot (0x681903).
@@ -4443,8 +4522,13 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 	match k:
 		"bag":
 			# CIFInventory::vslot_028 (0x6b5b80) for a bag or doll target,
-			# the store's and the warehouse's for theirs.
-			if on_bag and (_bag_slot_at(at) >= 0 or _equipment_slot_at(at) >= 0):
+			# the store's and the warehouse's for theirs. Round 768: put down
+			# on the alchemy window, it is offered to it (the held slot goes
+			# to the window under the cursor's vslot 28 -> CNIFAlchemyWnd
+			# 0x59dca0, READ); the bag keeps it.
+			if _over_alchemy(at, on_bag):
+				_alchemy_offer(from)
+			elif on_bag and (_bag_slot_at(at) >= 0 or _equipment_slot_at(at) >= 0):
 				_dropping_item_id = item_id
 				_drop_bag_item(from, at)
 				_dropping_item_id = -1
@@ -6002,6 +6086,7 @@ func connect_net() -> void:
 	# client.
 	NetClient.inventory_list_result.connect(func(slots: Array, _e: String) -> void:
 		_fill_inventory_grid(slots))
+	NetClient.alchemy_result.connect(_on_alchemy_result)
 	# A drag's outcome comes back as the whole bag (see _drop_bag_item).
 	NetClient.inventory_move_result.connect(_on_inventory_move_result)
 	NetClient.equipment_result.connect(func(items: Array, error: String) -> void:

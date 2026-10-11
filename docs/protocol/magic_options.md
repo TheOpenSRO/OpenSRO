@@ -279,3 +279,77 @@ being a per-item-instance field rather than a table one, though that was not sep
 The bonus *magnitudes*. Columns 4/5 hold a level and a factor and columns 8–16 further numbers,
 none of which are decoded. OpenSRO grants no magic options and has no system to grant them
 into, so nothing here is wired into gameplay — it is a naming resource.
+
+## The server's reading of the table (round 768)
+
+How SR_GameServer.exe uses `magicoption.txt` (`CGameServer::FUN_0072e2d0` and its callers; READ,
+the column positions INFERRED by matching MEASURED values to the fields read, since the row loader
+reads by position and was not found). Implemented in `server/internal/magicopt`; the export is
+`export-refdata -mode magicoptions`. MEASURED on a retail file: 402 rows of 50 fields.
+
+| column | use | STR level 8 (MEASURED) |
+|---|---|---|
+| 1 | the id an item's MagParam stores | 69 |
+| 2 | the MATTR_ code: the group key, compared without case | MATTR_STR |
+| 3 | not read here | + |
+| 4 | the level a stone's Param1 picks (the reinforce flaw always takes 3) | 8 |
+| 5 | the drop weight (x 1e6) | 1 |
+| 6 | stored, use not read | 0 (all 402 rows) |
+| 7 | the packed tag; it also picks the value generator | 'str' |
+| 8-10 | the generator's parameters | 65538 / 196612 / 327680 |
+| 11 | stored on the generator, use not read | |
+| 12-28 | not read on these paths (OPEN) | |
+| 29, 31 ... 47 | the item kinds, up to ten, ending at "xxx" | weapon, armor, shield, accessory |
+
+**The generators** (READ):
+- `mfunc_6_values` (str, int, hp, mp, hr, er, cri, bri, evbl, evcr, duru, the resists, the bless
+  tags and more): a uniform pick from the non-zero 16-bit halves of columns 8-10, high half first.
+  MEASURED: STR level 1 {1, 2, 3}, level 8 {1..5}.
+- `mfunc_single_range` (dura, hra, era, hpa, mpa, stra, inta and the avatar tags):
+  `float(rand() / 32767) * (max - min) + min`, TRUNCATED (the x87 chop mode set at 0x72fcbb; an earlier reading said round), min column 9, max column 10.
+- `mfunc_single_value` (rein, nrep): column 9. MEASURED nrep 400.
+
+**The kinds** (FUN_0072e960 expands, FUN_0072ff60 compares; READ): weapon 6/any; armor 1, 2, 3,
+9, 10, 11/any; accessory 5, 12/any; sword 6/2 and 6/7; blade, spear, tblade, bow 6/3..6; helm ..
+boots 2/k and 10/k (k 1..6); shield 4/1 and 4/2; earring, necklace, ring 5/k and 12/k (k 1..3);
+trader, thief, hunter 7/1..3; avatar 13/any and 13/1..4 for its parts; avatar_special_armlet 14/1;
+any other string names one item by its code. An entry of TypeID3 2 matches every armour TypeID3
+and 13; any other must be equal; the entry's TypeID4 must be 0 or equal. The ItemClass
+requirement the comparison also tests is written 0 by every insert, so it always passes.
+
+## Drops (round 770)
+
+A monster's equipment drop gets blue options from `_AddMagicOptions` (gs 0x7276a0; READ, asm
+0x7276a0..0x727ba3; implemented as `magicopt.RollDrop`):
+1. Unless the item is a Seal item (equipment with Rarity 2, itemdata column 15), `rand() % 101`
+   above 30 gives none: 31 in 101 drops have options.
+2. The count is the least of four draws of `rand() % 6 + 1`, no more than column 158, at least 1
+   (P(k) = 671/369/175/65/15/1 out of 1296).
+3. The list is the assign row for (Country column 14, TypeID3, TypeID4) in
+   `magicoptionassign.txt` (`_RefMagicOptAssign`: Service, Race, TypeID3, TypeID4, up to 25 names;
+   FUN_00727f30), its '+' options only (column 3 holds a '+': 398 of the 402 rows). MEASURED: the CH
+   sword's row is STR, INT, ATHANASIA, SOLID, LUCK, DUR, HR, EVADE_BLOCK, REPAIR.
+4. Each draw:
+   - a uniform pick of a name; one already given wastes the draw;
+   - the level by a weighted roll over the option's rows in load order, `r = ((rand2 << 15) | rand1)
+     % 1e6` against the running sum of `round(prob * 1e6)` (FUN_0072f410); none hit wastes it;
+   - 'nrep' draws again; an option the kind does not allow wastes the draw;
+   - the value from the record's generator.
+
+**Which level:** every level of STR, INT, HP, MP, HR, ER, DUR, the evasions, CRITICAL, BLOCKRATE and
+the resists has probability 1, so the group's FIRST row always wins. ATHANASIA, SOLID, LUCK and ASTRAL
+(0.3 each) take rows 1-4 at 30/30/30/10 %; REPAIR (0) practically never drops. The server reads the
+rows with `SELECT * FROM _RefMagicOpt` (no ORDER BY), so the first row is the database's physical
+order. **OPEN:** this build uses `magicoptionassign.txt`'s companion `magicoption.txt` row order
+(INFERRED: the client's copy keeps the database's order), which gives MATTR_STR level 7 (values
+1-5); in id order it would be level 1 (values 1-3). The answer is in the shard's database backup,
+which also holds player data and was not read.
+
+**Where and when** (READ): the monster's equipment drop (FUN_00726a70, 0x726d84). A shop, a quest
+and the generic item add (CGObjPC::AddItem_EXT 0x4ee370) roll the white stats only. OURS: OpenSRO
+rolls a fresh drop's options when it is picked up, where its instance is created, not when it falls.
+
+**Not built:** the drop's plus (FUN_00724400 over `_RefDropOptLvlSel`, a server-only table: MEASURED +0
+88.33 %, +1 8.33 %, +2 2.38 %, +3 0.68 %, +4 0.19 %, +5 0.056 %, +6 0.016 %, +7 0.0063 %, capped by a
+per-ItemClass table whose source was not read) and the special drop tables' path (FUN_00725720, a
++1..+5 plus).

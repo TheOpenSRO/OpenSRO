@@ -620,7 +620,7 @@ func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time
 	}
 	rec := LobbyCharacter{
 		RefObjID: uint32(c.RefObjID), Name: c.Name, Scale: uint8(c.Scale), Level: clampU8(c.Level),
-		Exp: uint64(maxI64(c.Exp, 0)), Str: clampU16(c.Str), Int: clampU16(c.Int), StatPoints: clampU16(c.StatPoints),
+		Exp: uint64(maxI64(c.Exp, 0)), Str: clampU16(c.TotalStr()), Int: clampU16(c.TotalInt()), StatPoints: clampU16(c.StatPoints),
 		HP: uint32(maxInt(c.HP, 0)), MP: uint32(maxInt(mp, 0)),
 		Deleting: c.Deleting(), MinutesLeft: c.MinutesLeft(now),
 	}

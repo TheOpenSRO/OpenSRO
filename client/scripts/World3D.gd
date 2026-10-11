@@ -1644,6 +1644,8 @@ func _seed_vitals_from_last_enter_world() -> void:
 		_last_enter_world_hp = entered.hp
 		_last_enter_world_max_hp = entered.max_hp
 var _hud_panels: HudPanels
+## OPENSRO_QA_ALCHEMY has started (QaAlchemy, round 768).
+var _qa_alchemy_started := false
 var _hud_chat: HudChat
 ## GDR_NOTICE (round 634) and the "Chat to all" window, built on first use.
 var _hud_notice: HudNotice
@@ -13141,6 +13143,11 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_PICKUP=1   (needs --server) when a ground item appears, step onto
 ##                          it and pick it up, printing the server's answers:
 ##                          the item's position, the pick result and the bag after
+##   OPENSRO_QA_ALCHEMY="target:stuff[:powder][:attempts]" (needs --server and
+##                          the QA account a GM, OPENSRO_GM_ACCOUNTS; round 768)
+##                          /give the items, open the alchemy window, load them
+##                          and press Strengthening, printing each reply
+##                          (QaAlchemy)
 ##   OPENSRO_QA_MOVE="from,to" (needs --server) unequip the boots into the bag,
 ##                          then move that bag slot onto another and print the
 ##                          bag before and after from the server's own answers
@@ -14062,6 +14069,12 @@ func _qa_step() -> void:
 		_qa_advance_click()
 	if _qa_teleport_stage < 2 and OS.get_environment("OPENSRO_QA_TELEPORT") != "":
 		_qa_advance_teleport()
+	# OPENSRO_QA_ALCHEMY (round 768, QaAlchemy): the alchemy window end to
+	# end, once the entry has loaded. QA only.
+	if not _qa_alchemy_started and _initial_load_done and _hud_panels != null \
+			and OS.get_environment("OPENSRO_QA_ALCHEMY") != "" and NetClient.is_connected_to_server():
+		_qa_alchemy_started = true
+		QaAlchemy.run(get_tree(), _hud_panels, OS.get_environment("OPENSRO_QA_ALCHEMY"))
 
 	# Not before the entry has finished loading: see _initial_load_done.
 	if not _qa_shots.is_empty() and _initial_load_done:

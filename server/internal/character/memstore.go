@@ -213,9 +213,11 @@ func (m *MemStore) Heal(_ context.Context, characterID int64, amount, maxHP int)
 	}
 	if amount > 0 {
 		c.HP += amount
-		if c.HP > maxHP {
-			c.HP = maxHP
-		}
+	}
+	// Never above the max, as the SQL store's LEAST: Heal(0, max) clamps an
+	// HP a lowered max left above it (round 769's review F2).
+	if c.HP > maxHP {
+		c.HP = maxHP
 	}
 	return c.HP, nil
 }

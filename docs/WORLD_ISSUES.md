@@ -7477,6 +7477,123 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventieth round: monster drops carry blue options
+
+A monster's equipment drop now gets blue options the way SR_GameServer.exe's `_AddMagicOptions`
+(0x7276a0) gives them (`docs/protocol/magic_options.md`, "Drops"):
+- **The rules:** 31 in 101 drops, and every Seal item (Rarity 2); the count is the least of four
+  1-6 draws, capped by column 158.
+- **The option list:** the item kind's `magicoptionassign.txt` row, '+' options only.
+- **Each option:** its level by the weighted roll over the option's rows, then its value from the
+  record's generator.
+- **New data:**
+  - `export-refdata -mode magicoptassign` and `-magic-option-assign-csv` (74 rows);
+  - the magic option export gains the Sign column and drops Service 0 rows, as the server's loader
+    does;
+  - items gain Rarity (column 87).
+- **Correction to round 768:** the range generator truncates (the x87 chop mode at 0x72fcbb); it did
+  not round.
+- **OPEN:** which level a STR-type option drops at. Every level has probability 1, so the first
+  row loaded wins, and the server loads in database order. This build takes `magicoption.txt`'s order
+  (level 7 for STR, INFERRED); id order would be level 1. The answer is in the shard backup on the box,
+  which holds player data and was not read without the user's approval.
+- **Not built:** the drop's plus (`_RefDropOptLvlSel`, server-only; its distribution is recorded)
+  and the special drop tables.
+- **OURS:** the options are rolled at pick-up, where OpenSRO creates the drop's instance.
+- **Tests:** `drop_test.go` (the chance, the first row of an equal group, the weighted levels, the
+  wasted draws, '+' only) and `dropoptions770_test.go` (a Seal sword picked up with its STR).
+
+## Seven-hundred-and-sixty-ninth round: a worn item's plus and blue options count
+
+Round 768 made the plus and the blue options something a player can change. Neither moved a stat:
+`OptLevel` reached no formula, and no option was aggregated. Both are wired now, each rule READ
+from SR_GameServer.exe (`docs/protocol/item_magic_options.md`, "Round 769"):
+- **The plus:** `Inc * plus` on each white stat before anything rounds. Itemdata columns 67, 70,
+  73, 78, 81, 99, 104 and 115 are exported as item columns 79-86. Physical and magical attack take
+  it on both ends, and so do the defences. MEASURED: parry and attack rate have no increment in
+  retail data.
+- **The effective plus:** OptLevel, the advanced elixir, and a 'rein' option.
+- **Str and Int:** each is the total, the character's own plus its worn options. It feeds the
+  damage ranges, the panel and max HP/MP; flat 'hp' / 'mp' are added after the level growth
+  (`character.Bonus`, cached and cleared when the worn items change).
+- **Critical and block:** `round(white) + 'cri' / 'bri'`. The weapon's critical now reads its
+  variance group 6, where it used to read the low end.
+- **Hit rate and parry:** 'hr' / 'er' scale them by `(1 + v/100)` after the plus.
+- **Evasion:** 'evcr' / 'evbl' are the player's evasion terms. The four disclosed zeros of round 406
+  are gone, and `TestNoPlayerEvasionSourceExists` retired as its own text asked.
+- **Side finding:** `stat_graph.md`'s params 58/59 come from the worn armour's PDStr/MDInt, not from
+  characterdata.
+- **Tests:** `equipstats769_test.go`:
+  - a +3 sword with STR / crit / attack rate options, a +2 mail with parry / HP options, and a
+    shield with block / evade crit;
+  - the critical through group 6, a 'rein' option, a broken piece, 'int' / 'mp' / 'evbl', and the
+    magical defence's plus;
+  - a failed bonus read is not cached;
+  - the unequip handler clamps the HP.
+- **Review:** `docs/rounds/r769_review.md`. Every finding was taken:
+  - the SQL refills (level-up, respawn) carry the bonus;
+  - the stored HP is clamped when a lower max leaves it above (unequip, swap, break, the GM edits);
+  - a failed read is not cached;
+  - potions, `/level` and the lobby use the totals;
+  - the evasion sums are cached in the bonus, and its lock is read-mostly;
+  - critical and block sum every worn item's option;
+  - the panel shows a broken weapon as bare hands.
+- **Deploy:** re-export and re-import the items (columns 79-86), and keep `-magic-options-csv`
+  set.
+- **Not built:** the absorbs (params 7/8), the regeneration / resist / avatar options, and 'hpna'.
+
+## Seven-hundred-and-sixty-eighth round: alchemy -- elixirs, lucky powder, magic and attribute stones
+
+The user: "Let's work on the missing features, especially alchemy" (after asking whether blue
+options work: they were stored and shown on the tooltip, but nothing could add them and they
+changed no stat). The full specification is `docs/protocol/alchemy.md`, "Round 768".
+- **Read from both binaries** (three research passes on the box's decompilations):
+  - **Server:** the request and its refusals, the 3-4 s wait, the reinforce rules (destroy and
+    flaw from +5, Immortal / Steady / Astral charges, the plus to 0 or 4, never down by one), the
+    magic stone (a fresh value that overwrites, bless charges up to 5, Astral needs more Immortal),
+    the attribute stone (sets one white group to {0, 7, 13, 19, 25, 31}), assimilation, and how
+    `magicoption.txt` drives values and item kinds.
+  - **Client:** the strengthening tab's slots, Alt+click and put-down, the checks and their
+    lines, the 50 ms effect over 16 frames, the 3.0 s gauge, the outcome lines, and the effect's
+    additive blend (CIFDecoratedStatic +0x388).
+- **Corrections to earlier pages:**
+  - the lucky powder adds its OWN table, not the elixir's rate twice;
+  - Lucky spends a charge;
+  - 0x872cd0 is the stone result's handler; the elixir's is 0x8729e0;
+  - `STRGERR_ASTRAL` is the Astral stone's "needs Immortal" refusal.
+- **Server:** `internal/alchemy` (the engine, enchant.go), `internal/magicopt` (the table: export
+  `-mode magicoptions`, flag `-magic-options-csv`), `session/alchemy.go` (opcodes 0x0113 request,
+  0x0114 / 0x0115 replies, OURS), six new item columns (CashItem, Param1, Param5, Desc128_1,
+  Desc128_4, MaxMagicOptCount; export columns 73-78).
+- **Client:** `AlchemyReinforce` (the tab's rules), `AlchemyWindow` (slots, action, effect,
+  gauge, reply), `AlchemyNet`, `HudPanels` (Alt+click, put-down, the bag again after a reply), the
+  native and GDScript item readers (Param5, Desc128_1, Desc128_4), `MagicOptionTable` (kinds).
+- **Verified end to end on the box** (`OPENSRO_QA_ALCHEMY`, the in-memory server with the real
+  exports):
+  - elixir with powder: +0 -> +1, a failure back to +0, a plain failure, +0 -> +1; one elixir and
+    one powder spent each time;
+  - STR stone: lost rolls (0x5423, stone spent), a won roll wrote STR 3, a later one re-rolled it
+    to 1;
+  - attribute stone: won and lost rolls;
+  - frames show the additive prepare and success effects and the locked slots.
+- **Review:** `docs/rounds/r768_review.md` (independent). Every finding was taken, among them: an
+  overwritten option keeps its id; the option cap applies to both stones' re-roll; a logout in the
+  wait spends nothing; a stone over an elixir drops the powder; the window locks until the reply.
+- **Deploy:** re-export and re-import the items, and export `magicoptions.csv`
+  (deploy/README.md, "Alchemy (round 768)").
+- **Still OPEN:**
+  - blues count toward no stat yet (the next round);
+  - drops roll no blues;
+  - the magic cube and advanced elixir;
+  - the stone's option-change lines;
+  - retail's stack-count packet.
+- **Gates:**
+  - server: `go test ./...` passes;
+  - client: `check` ALL LOAD (715 scripts); `tests` "ran 273 suite(s), 0 failing" with the
+    native library and without it;
+  - new suites: `alchemy_reinforce_test.gd`, `enchant_test.go`, `magicopt_test.go`,
+    `alchemy768_test.go`.
+
 ## Seven-hundred-and-sixty-seventh round: seal effects on the character select screen again
 
 The user: the seal effects are not visible on the character select screen any more.

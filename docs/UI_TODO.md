@@ -378,8 +378,11 @@ like the guild window:
    and opens the inventory; the selected tab lives in a process-wide byte that starts at 3 (the
    reinforce tab). The old `CIFAlchemyBox` (`GDR_ALCHEMYBOX`, holding `ifalchemyprocess.txt`) is
    created hidden and never shown. `AlchemyWindow` builds it (`docs/RE_COMPLETION.md`, round
-   601). Still open: the help text in the PML (`<sml2>` markup), the slots' own icons and hover
-   texts, and everything that needs an item placed or the server.
+   601). **Round 768:** the strengthening tab works end to end -- items go in by Alt+click or a
+   put-down, the slots carry their icons, locks and hover texts, the action sends the request and
+   the reply plays its effect, sound and lines (`docs/protocol/alchemy.md`, "Round 768"). Still
+   open: the help text in the PML (`<sml2>` markup), the advanced elixir's confirm box, the stone's
+   option-change lines, and the other three tabs and the socket pane.
 5. ~~**The teleport board's live source**~~ **Done (round 603).** There is no teleport window:
    the client lists a gate's destinations as lines of the NPC talk box itself
    (`UI_TELEPORT::FUN_006fd3e0`, called from the talk box's click handler at `0x702973`), and a

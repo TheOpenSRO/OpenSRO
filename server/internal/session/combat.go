@@ -1208,7 +1208,8 @@ func performAttack(
 	playerLevel, playerStr, playerInt := 0, 0, 0
 	playerHPNow := 0
 	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
-		playerLevel, playerStr, playerInt = c.Level, c.Str, c.Int
+		// Round 769: the TOTAL Str and Int, the worn items' options in.
+		playerLevel, playerStr, playerInt = c.Level, c.TotalStr(), c.TotalInt()
 		playerHPNow = c.HP
 	}
 
@@ -1250,7 +1251,7 @@ func performAttack(
 	monsterDefence := monster.Defense - statusFX.monsterDefenceCut(monster.ID)
 	blow := resolveBlow(raw, monster.DefensePercent, monsterDefence,
 		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
-		combat.EvadedChance(monster.Block, playerEvasion),
+		combat.EvadedChance(monster.Block, playerEvadeBlock(ctx, characterID, eq)),
 		playerLevel, monster.Level, characterID, monster.ID)
 	// A skill's percentage applies HERE, after mitigation and the clamp, not
 	// to the raw roll -- see combat.ApplySkillPercent for the disassembly. A
@@ -1272,7 +1273,7 @@ func performAttack(
 	for i := 1; i < hits; i++ {
 		extra := resolveBlow(raw, monster.DefensePercent, monsterDefence,
 			combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
-			combat.EvadedChance(monster.Block, playerEvasion),
+			combat.EvadedChance(monster.Block, playerEvadeBlock(ctx, characterID, eq)),
 			playerLevel, monster.Level, characterID, monster.ID)
 		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
 		playerCrit = playerCrit || extra.Critical
@@ -1592,8 +1593,11 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 // weaponInstance is the worn weapon's per-instance part for combat.WeaponRange:
 // its variance, and whether it has one at all (an Untracked row never rolled
 // one and reads its lo ends, as every weapon did before round 244).
+//
+// Round 769: with its effective plus and its 'hr' option (equipstats.go).
 func weaponInstance(e equipment.Equipped) combat.Instance {
-	return combat.Instance{Variance: e.Variance, Tracked: e.Durability != durability.Untracked}
+	return combat.Instance{Variance: e.Variance, Tracked: e.Durability != durability.Untracked,
+		Plus: wornPlus(e), HitRatePct: float64(optionSum(optionsOf(e.MagParams), tagHR))}
 }
 
 // defenderArmor sums each worn piece's physical defence -- the six armour
@@ -1665,8 +1669,8 @@ func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
 // item+0x19c (0x496088), and Char_PublishCombatStats publishes +0x19c as
 // param 9 (0x497920..0x49792f). The instance rule is defenderDefence's: a
 // piece that never rolled a variance (Untracked) counts at the top of its
-// range; a row without its hi end reads the lo end. The per-plus increment
-// (column 70) is not added: OpenSRO instances carry no plus level.
+// range; a row without its hi end reads the lo end. Round 769: plus the
+// per-plus increment (column 70) and the piece's 'er' option (armourParry).
 //
 // A broken piece parries for nothing, the same rule defenderDefence uses.
 func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (float64, error) {
@@ -1693,21 +1697,26 @@ func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Stor
 }
 
 // armourParry is one worn armour piece's parry, param 9's item term (see
-// defenderParryRate).
+// defenderParryRate). Round 769: plus the per-plus increment (column 70,
+// 0 on every retail row) times the plus, then scaled by the piece's own 'er'
+// option, (1 + v/100) (ApplyDurabilityAndRateOptions 0x496a70; READ).
 func armourParry(e equipment.Equipped, it *refdata.Item) float64 {
 	lo, hi := it.ParryRatioMin, it.ParryRatioMax
-	if hi <= lo {
-		return lo
+	v := lo
+	switch {
+	case hi <= lo:
+	case e.Durability == durability.Untracked:
+		v = hi
+	default:
+		v = durability.WhiteStat(lo, hi, e.Variance, durability.ArmourParryGroup)
 	}
-	if e.Durability == durability.Untracked {
-		return hi
-	}
-	return durability.WhiteStat(lo, hi, e.Variance, durability.ArmourParryGroup)
+	v += it.PlusIncParry * float64(wornPlus(e))
+	return v * (1 + float64(optionSum(optionsOf(e.MagParams), tagER))/100)
 }
 
 func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
-	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64) {
-		return it.PhysDefenseMin, it.PhysDefenseMax
+	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
+		return it.PhysDefenseMin, it.PhysDefenseMax, it.PlusIncPhysDef
 	}, durability.ArmourPhysDefenseGroup, durability.ShieldPhysDefenseGroup)
 }
 
@@ -1716,7 +1725,11 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 // variance group (armourGroup for the six armour slots, shieldGroup for the
 // shield), summed and rounded once at the end (the engine keeps floats and
 // OpenSRO's wire field is an int32).
-func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64), armourGroup, shieldGroup int) (int, error) {
+//
+// Round 769: each piece also adds its per-plus increment (rangeOf's third
+// value: column 67 physical, 78 magical) times its plus (READ,
+// Char_BuildAggregateStats).
+func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64, float64), armourGroup, shieldGroup int) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1751,7 +1764,8 @@ func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store,
 		if err != nil {
 			return 0, fmt.Errorf("looking up armor stats: %w", err)
 		}
-		lo, hi := rangeOf(item)
+		lo, hi, inc := rangeOf(item)
+		total += inc * float64(wornPlus(e))
 		if e.Durability == durability.Untracked {
 			total += hi
 			continue
@@ -1808,11 +1822,27 @@ func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store
 		if e.Slot != equipment.SlotWeapon {
 			continue
 		}
+		if durability.IsBroken(e.Durability) {
+			return 0 // the publisher zeroes a broken item's params
+		}
 		item, err := items.GetItem(ctx, e.ItemID)
 		if err != nil || item == nil {
 			return 0
 		}
-		return int(item.CriticalMin)
+		// Round 769: the weapon's critical is its instance's white stat,
+		// variance group 6 (durability.WeaponCriticalGroup, `mov esi,6` at
+		// 0x4965ce, into item+0x1dc), and a 'cri' option REPLACES the item's
+		// param-12 entry with round(that) + v (Stat_ApplyTaggedModifier
+		// 0x498690; READ). No per-plus term (its increment is a synthesized
+		// 0). An Untracked row reads the low end, as before.
+		crit := item.CriticalMin
+		if e.Durability != durability.Untracked && item.CriticalMax > item.CriticalMin {
+			crit = durability.WhiteStat(item.CriticalMin, item.CriticalMax, e.Variance, durability.WeaponCriticalGroup)
+		}
+		// The other worn items' 'cri' options are entries of the same param
+		// (review F7).
+		return int(math.Round(crit)) + optionSum(optionsOf(e.MagParams), tagCri) +
+			wornOptionSum(ctx, characterID, eq, tagCri, equipment.SlotWeapon)
 	}
 	return 0
 }
@@ -1870,31 +1900,40 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 		// low end, "so a shield is never overstated" -- a choice made before
 		// instances carried a variance. An Untracked row still reads the low
 		// end. Rounded because RollChance takes whole percent.
+		// Round 769: a 'bri' option replaces the shield's param-10 entry with
+		// round(white) + v (Stat_ApplyTaggedModifier 0x498690; READ).
+		// The other worn items' 'bri' options are entries of the same param
+		// (review F7).
+		bri := optionSum(optionsOf(e.MagParams), tagBri) + wornOptionSum(ctx, characterID, eq, tagBri, equipment.SlotShield)
 		if e.Durability == durability.Untracked {
-			return int(item.BlockRatioMin)
+			return int(math.Round(item.BlockRatioMin)) + bri
 		}
-		return int(math.Round(durability.WhiteStat(item.BlockRatioMin, item.BlockRatioMax, e.Variance, durability.ShieldBlockGroup)))
+		return int(math.Round(durability.WhiteStat(item.BlockRatioMin, item.BlockRatioMax, e.Variance, durability.ShieldBlockGroup))) + bri
 	}
 	return 0
 }
 
-// The two evasion terms that oppose the critical and block rolls. Both are
-// zero, and combat.EvadedChance explains why they are zero for DIFFERENT
-// reasons -- which is the whole point of naming them apart rather than writing
-// a literal 0 six times.
-const (
-	// monsterEvasion is a monster's 'evcr' or 'evbl'. GROUNDED: the engine's
-	// own GObjMob_PublishStats publishes params 0, 3-12, 23, 24, 27-33 and 140,
-	// and neither 56 nor 57 is among them, so a monster has no evasion term to
-	// publish. This is a measured value, not a simplification.
-	monsterEvasion = 0.0
+// monsterEvasion is a monster's 'evcr' or 'evbl'. GROUNDED: the engine's own
+// GObjMob_PublishStats publishes params 0, 3-12, 23, 24, 27-33 and 140, and
+// neither 56 nor 57 is among them, so a monster has no evasion term to
+// publish. This is a measured value, not a simplification.
+//
+// A player's is no longer a constant (round 769): playerEvadeBlock and
+// playerEvadeCrit are the worn items' 'evbl' and 'evcr' options, cached in
+// character.Bonus (equipstats.go).
+const monsterEvasion = 0.0
 
-	// playerEvasion is a player's 'evcr' or 'evbl'. DISCLOSED: both arrive only
-	// as magic options ("blue" stats), and OpenSRO aggregates none, so no
-	// player can carry either. combat.TestNoPlayerEvasionSourceExists fails the
-	// day that stops being true, and the fix is to compute the real term here.
-	playerEvasion = 0.0
-)
+// playerEvadeBlock is the player's param 56, which divides the block chance
+// of whatever it strikes.
+func playerEvadeBlock(_ context.Context, characterID int64, _ equipment.Store) float64 {
+	return float64(character.BonusOf(characterID).EvadeBlock)
+}
+
+// playerEvadeCrit is the player's param 57, which divides the critical
+// chance of whatever strikes it.
+func playerEvadeCrit(_ context.Context, characterID int64, _ equipment.Store) float64 {
+	return float64(character.BonusOf(characterID).EvadeCrit)
+}
 
 // resolveBlow is combat.ResolveBlow under the SAME lock as every other roll in
 // this package -- it takes two chance rolls, and rand.Rand is not safe for

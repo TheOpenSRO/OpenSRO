@@ -119,6 +119,26 @@ const (
 	// KeepingFee, column 30 -- see refdata.Item.KeepingFee for why the column
 	// is INFERRED rather than READ.
 	fKeepingFee = 30
+	// The alchemy columns (round 768; refdata.Item.CashItem): _RefObjCommon's
+	// CashItem (column 7, the TypeID word's bit 0 IsCashItem tests), the
+	// Param block's Param1/Param5 (118/126) and Desc128_1/Desc128_4
+	// (119/125), and MaxMagicOptCount (158, ref +0x53c).
+	fCashItem        = 7
+	fParam5          = 126
+	fDesc1           = 119
+	fDesc4           = 125
+	fMaxMagicOptions = 158
+	// The per-plus increments (round 769; refdata.Item.PlusIncPhysDef).
+	fPlusIncPD  = 67
+	fPlusIncER  = 70
+	fPlusIncPAR = 73
+	fPlusIncMD  = 78
+	fPlusIncMAR = 81
+	fPlusIncPA  = 99
+	fPlusIncMA  = 104
+	fPlusIncHR  = 115
+	// Rarity (round 770; refdata.Item.Rarity).
+	fRarity = 15
 	// The Param block stores a value beside its own label: 118 "HP...",
 	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts --
 	// on the recovery rows (TypeID 3/3/1, TypeID4 not 4..10) only, which is
@@ -460,14 +480,16 @@ const (
 
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
-	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, npcs, regions or chargen")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, npcs, regions, chargen or magicoptions")
 	flag.Parse()
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen") {
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode npcs -out npcs.csv characterdata_*.txt refshopgroup.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptions -out magicoptions.csv magicoption.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptassign -out magicoptassign.csv magicoptionassign.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode chargen -out chargen.csv characterdata_*.txt itemdata_*.txt   (each in its index's order)")
 		os.Exit(2)
 	}
@@ -496,6 +518,24 @@ func main() {
 		// (round 708, internal/npcspawn) -- the code names the NPC spawn
 		// record's interaction list is built from.
 		if err := exportNpcs(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "magicoptassign":
+		// magicoptionassign.txt (_RefMagicOptAssign) in, one CSV out: what
+		// cmd/server's -magic-option-assign-csv loads (round 770) -- which
+		// options each item kind can drop with.
+		if err := exportMagicOptAssign(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "magicoptions":
+		// magicoption.txt (_RefMagicOpt) in, one CSV out: what cmd/server's
+		// -magic-options-csv loads (round 768, internal/magicopt) -- the blue
+		// options the alchemy stones and the reinforce flaw write.
+		if err := exportMagicOptions(*out, flag.Args()); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -653,6 +693,17 @@ func itemRecord(cols []string) ([]string, bool) {
 		}
 		return s
 	}
+	// A dword field that may be printed signed: its bit pattern, unsigned.
+	dword := func(i int) string {
+		if i >= len(cols) {
+			return "0"
+		}
+		v, err := strconv.ParseInt(strings.TrimSpace(cols[i]), 10, 64)
+		if err != nil || v < -(1<<31) || v > 1<<32-1 {
+			return "0"
+		}
+		return strconv.FormatUint(uint64(uint32(v)), 10)
+	}
 	// A string field, trimmed, empty when the row is short.
 	str := func(i int) string {
 		if i >= len(cols) {
@@ -808,6 +859,28 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 72: KeepingFee, itemdata column 30 (round 728, see
 		// refdata.Item.KeepingFee).
 		num(fKeepingFee),
+		// 73-78: the alchemy columns (round 768, see refdata.Item.CashItem).
+		// The two Params are dwords; a negative int32 (the table prints them
+		// signed) goes out as its unsigned bit pattern.
+		nonZero(get(fCashItem)), // 73 CashItem (col 7)
+		dword(fParam1),          // 74 Param1 (col 118)
+		dword(fParam5),          // 75 Param5 (col 126)
+		str(fDesc1),             // 76 Desc128_1 (col 119)
+		str(fDesc4),             // 77 Desc128_4 (col 125)
+		get(fMaxMagicOptions),   // 78 MaxMagicOptCount (col 158)
+		// 79-86: the per-plus increments (round 769, see
+		// refdata.Item.PlusIncPhysDef).
+		num(fPlusIncPD),  // 79 PlusIncPhysDef (col 67)
+		num(fPlusIncER),  // 80 PlusIncParry (col 70)
+		num(fPlusIncPAR), // 81 PlusIncPhysAbsorb (col 73)
+		num(fPlusIncMD),  // 82 PlusIncMagDef (col 78)
+		num(fPlusIncMAR), // 83 PlusIncMagAbsorb (col 81)
+		num(fPlusIncPA),  // 84 PlusIncPhysAtk (col 99)
+		num(fPlusIncMA),  // 85 PlusIncMagAtk (col 104)
+		num(fPlusIncHR),  // 86 PlusIncAttackRate (col 115)
+		// 87: Rarity, _RefObjCommon column 15 (round 770): 2 is a Seal item,
+		// which always drops with blue options (ref +0x89; READ).
+		get(fRarity), // 87 Rarity (col 15)
 	}, true
 }
 
@@ -2552,5 +2625,160 @@ func exportRegions(out string, paths []string) error {
 		return fmt.Errorf("the CSV written does not load back: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %d regions to %s, %d of them towns (IsBattleField 0)\n", t.Len(), out, t.SafeCount())
+	return nil
+}
+
+// magicoption.txt's fields (round 768), as SR_GameServer.exe's
+// CGameServer::FUN_0072e2d0 uses them -- positions INFERRED by matching the
+// MEASURED values against the fields it reads (internal/magicopt): 1 the id,
+// 2 the MATTR_ code, 4 the level, 5 the drop weight, 7 the packed tag, 8..11
+// the generator's parameters, and from 29 every second field an item kind,
+// up to ten, ending at "xxx". MEASURED on a retail file: 402 rows of 50
+// fields.
+const (
+	moService = 0
+	moID      = 1
+	moCode    = 2
+	moSign    = 3
+	moLevel   = 4
+	moProb    = 5
+	moTag     = 7
+	moParam8  = 8
+	moKind0   = 29
+	moKinds   = 10
+)
+
+// exportMagicOptions writes magicopt.CSVColumns' order, the kinds joined by
+// "|".
+func exportMagicOptions(out string, paths []string) error {
+	if len(paths) != 1 || !strings.EqualFold(filepath.Base(paths[0]), "magicoption.txt") {
+		return fmt.Errorf("-mode magicoptions reads one file, magicoption.txt (got %q)", paths)
+	}
+	if out == "-" || out == "" {
+		return fmt.Errorf("-mode magicoptions writes a file: -out must name it")
+	}
+	rows, err := readTable(paths[0])
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", paths[0], err)
+	}
+	recs := make([][]string, 0, len(rows))
+	for i, cols := range rows {
+		if len(cols) <= moKind0 {
+			return fmt.Errorf("%s: row %d has %d fields, fewer than the %d the export reads", paths[0], i+1, len(cols), moKind0+1)
+		}
+		for j := range cols {
+			cols[j] = strings.TrimSpace(cols[j])
+		}
+		// Service 0 rows are skipped, as the server's loader skips them
+		// (FUN_00727c00; READ, round 770).
+		if cols[moService] == "0" {
+			continue
+		}
+		for _, k := range []int{moID, moLevel, moTag} {
+			if _, err := strconv.ParseUint(cols[k], 10, 32); err != nil {
+				return fmt.Errorf("%s: row %d: field %d %q is not a number", paths[0], i+1, k, cols[k])
+			}
+		}
+		if _, err := strconv.ParseFloat(cols[moProb], 64); err != nil {
+			return fmt.Errorf("%s: row %d: Prob %q is not a number", paths[0], i+1, cols[moProb])
+		}
+		rec := []string{cols[moID], cols[moCode], cols[moLevel], cols[moProb], cols[moTag]}
+		for k := 0; k < 4; k++ {
+			v, err := strconv.ParseInt(cols[moParam8+k], 10, 64)
+			if err != nil {
+				return fmt.Errorf("%s: row %d: field %d %q is not a number", paths[0], i+1, moParam8+k, cols[moParam8+k])
+			}
+			rec = append(rec, strconv.FormatUint(uint64(uint32(v)), 10))
+		}
+		var kinds []string
+		for k := 0; k < moKinds; k++ {
+			at := moKind0 + 2*k
+			if at >= len(cols) || cols[at] == "" || strings.EqualFold(cols[at], "xxx") {
+				break
+			}
+			kinds = append(kinds, cols[at])
+		}
+		recs = append(recs, append(rec, strings.Join(kinds, "|"), cols[moSign]))
+	}
+	f, err := os.Create(out)
+	if err != nil {
+		return err
+	}
+	w := csv.NewWriter(f)
+	if err := w.WriteAll(recs); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d magic option rows\n", len(recs))
+	return nil
+}
+
+// magicoptionassign.txt's fields (round 770; READ, FUN_00727f30, case 8 of
+// the reference load): 0 Service (a 0 row is skipped), 1 Race, 2 TypeID3,
+// 3 TypeID4, then up to 25 option names ending at an empty field or "xxx".
+// MEASURED: 74 rows of 30 fields.
+const (
+	maService = 0
+	maRace    = 1
+	maTID3    = 2
+	maTID4    = 3
+	maName0   = 4
+	maNames   = 25
+)
+
+// exportMagicOptAssign writes magicopt.AssignCSVColumns' order.
+func exportMagicOptAssign(out string, paths []string) error {
+	if len(paths) != 1 || !strings.EqualFold(filepath.Base(paths[0]), "magicoptionassign.txt") {
+		return fmt.Errorf("-mode magicoptassign reads one file, magicoptionassign.txt (got %q)", paths)
+	}
+	if out == "-" || out == "" {
+		return fmt.Errorf("-mode magicoptassign writes a file: -out must name it")
+	}
+	rows, err := readTable(paths[0])
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", paths[0], err)
+	}
+	var recs [][]string
+	for i, cols := range rows {
+		if len(cols) <= maName0 {
+			return fmt.Errorf("%s: row %d has %d fields, fewer than the %d the export reads", paths[0], i+1, len(cols), maName0+1)
+		}
+		for j := range cols {
+			cols[j] = strings.TrimSpace(cols[j])
+		}
+		if cols[maService] == "0" {
+			continue
+		}
+		for _, k := range []int{maRace, maTID3, maTID4} {
+			if _, err := strconv.Atoi(cols[k]); err != nil {
+				return fmt.Errorf("%s: row %d: field %d %q is not a number", paths[0], i+1, k, cols[k])
+			}
+		}
+		var names []string
+		for k := 0; k < maNames && maName0+k < len(cols); k++ {
+			n := cols[maName0+k]
+			if n == "" || strings.EqualFold(n, "xxx") {
+				break
+			}
+			names = append(names, n)
+		}
+		recs = append(recs, []string{cols[maRace], cols[maTID3], cols[maTID4], strings.Join(names, "|")})
+	}
+	f, err := os.Create(out)
+	if err != nil {
+		return err
+	}
+	w := csv.NewWriter(f)
+	if err := w.WriteAll(recs); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d magic option assign rows\n", len(recs))
 	return nil
 }

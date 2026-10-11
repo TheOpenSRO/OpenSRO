@@ -435,6 +435,49 @@ type Item struct {
 	// (r728_review.md F11). The server charges it x the whole stack, clamped
 	// to 1..10,000,000 (storage.DepositFee). 0 on an older import.
 	KeepingFee int64
+
+	// The alchemy columns (round 768), which the enchant operations read off
+	// the elixirs, powders and stones and the equipment they work on
+	// (docs/protocol/alchemy.md, "Round 768"). All 0 / empty / false on an
+	// older export, which makes every alchemy attempt refuse rather than
+	// guess.
+	//
+	// CashItem is _RefObjCommon column 7, the TypeID word's bit 0 that
+	// IsCashItem (gs 0x483890) tests: a failed reinforce never destroys a
+	// cash item. Param1 and Param5 (columns 118 and 126, ref +0x2a0/+0x320)
+	// are an elixir's TypeID3 bytes (CEnchant_Reinforce slot 4, 0x505cb0),
+	// a lucky powder's or a stone's degree (Param1). Desc1 and Desc4
+	// (Desc128_1 column 119, Desc128_4 column 125) are a stone's option name
+	// (MATTR_STR, NATTR_PA, ...) and an attribute stone's class list
+	// ("armor,shield"). MaxMagicOptions is column 158 (ref +0x53c), an
+	// equipment's base cap on blue options (FUN_00491780). A stone's success
+	// rate is Param4 -- ReinforceRate3 above (ref +0x300).
+	CashItem        bool
+	Param1, Param5  uint32
+	Desc1, Desc4    string
+	MaxMagicOptions int
+
+	// The per-plus increments (round 769): what each point of the plus adds
+	// to a stat, the fifth float of each stat's group in the item record
+	// (itemdata columns 67 physical defence, 70 parry, 73 physical absorb, 78
+	// magical defence, 81 magical absorb, 99 physical attack, 104 magical
+	// attack, 115 attack rate). READ, gs Char_BuildAggregateStats 0x495d60:
+	// field = L + q*(U-L) + Inc*plus, kept as a float (asm 0x495f26..0x495f97);
+	// the physical attack's increment adds to both ends of its range, the
+	// magical one the same. The block (74/75) and critical (116/117) have
+	// none (their increments are a synthesized 0). MEASURED over 17,935
+	// equipment rows: 67 runs 0.2-12.8, 78 0.3-21.2, 99 2.4-95.4, 104
+	// 3.8-152.7, 73/81 0.2-0.3, and 70 and 115 are 0 on every row. 0 on an
+	// older export.
+	PlusIncPhysDef, PlusIncParry, PlusIncPhysAbsorb  float64
+	PlusIncMagDef, PlusIncMagAbsorb                  float64
+	PlusIncPhysAtk, PlusIncMagAtk, PlusIncAttackRate float64
+
+	// Rarity is _RefObjCommon column 15 (ref +0x89; round 770): 0 normal, 2
+	// a Seal item (`*_RARE`), 3 a set item, 6 a Seal set item (MEASURED). A
+	// Rarity-2 equipment drop always gets blue options (_AddMagicOptions
+	// 0x7276a0; READ). 0 on an older export.
+	Rarity int
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

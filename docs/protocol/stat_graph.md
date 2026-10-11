@@ -79,6 +79,11 @@ slot starts at **100.0** and each contributor composes as `acc = contrib * acc /
 So the absorb is a Strength-derived base multiplied by a percentage `param 50` carries,
 and the magical twin is identical with Intellect and `param 51`.
 
+**Round 769 note:** params 58 and 59 come from the worn ARMOUR's and SHIELD's own PDStr / MDInt
+(itemdata columns 82-85, /1000), published with context 0 by Char_PublishCombatStats (READ,
+0x497ca9 / 0x497cf4) -- not from characterdata, as the paragraph below supposed for a player. With
+context 0 the last piece published wins (INFERRED); OpenSRO still models no flat absorb.
+
 **RETRACTED 2026-09-18: the claim that equipment feeds `param 50`.** It rested on
 `RemoveParamKeeperItemEntry` being one of `param 59`'s two writers. Reading the *value*
 at that site shows `fldz` — it writes **0.0**, twice, to params 58 and 59. It clears the

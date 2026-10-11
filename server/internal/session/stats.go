@@ -230,6 +230,11 @@ func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equ
 		if e.Slot != equipment.SlotWeapon {
 			continue
 		}
+		// A broken weapon swings bare-fisted (attackerDamageOf); the panel
+		// shows that too (round 769's review F7).
+		if durability.IsBroken(e.Durability) {
+			break
+		}
 		item, err := items.GetItem(ctx, e.ItemID)
 		if errors.Is(err, refdata.ErrItemNotFound) {
 			break
@@ -250,8 +255,8 @@ func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equ
 // 0x495fa0 -> item+0x1a8, param 6) and group 5 for the shield (0x4968a4).
 // The same walk, so the two defence rows are built the same way.
 func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
-	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64) {
-		return it.MagDefenseMin, it.MagDefenseMax
+	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
+		return it.MagDefenseMin, it.MagDefenseMax, it.PlusIncMagDef
 	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup)
 }
 
@@ -266,10 +271,10 @@ func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Sto
 // publisher zeroes a broken item's params.
 //
 // DISCLOSED, what retail adds and this does not: params 11 and 9 also take
-// buffs and masteries, and each item's per-plus increment (columns 115 and
-// 70) -- OpenSRO's params carry no buff or mastery term here and its
-// instances no plus level. So a buffed or enhanced character reads lower here
-// than on a retail panel.
+// buffs and masteries, which OpenSRO's params carry no term for here, so a
+// buffed character reads lower than on a retail panel. Each item's per-plus
+// increment (columns 115 and 70) and its 'hr' / 'er' option do count since
+// round 769 (combat.WeaponAttackRate, armourParry).
 func characterRates(ctx context.Context, level int, characterID int64, eq equipment.Store, items combat.ItemLookup) (hit, parry int, err error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
@@ -307,15 +312,21 @@ func buildCharacterStats(ctx context.Context, owned *character.Character, charac
 		curMP = mp.Current(characterID, maxMP)
 	}
 	result := &CharacterStatsResult{
-		Gold:       owned.Gold,
-		HP:         int32(owned.HP),
-		MaxHP:      int32(owned.MaxHP()),
-		Level:      int32(owned.Level),
-		Exp:        owned.Exp,
-		MP:         int32(curMP),
-		MaxMP:      int32(maxMP),
-		Str:        int32(owned.Str),
-		Int:        int32(owned.Int),
+		Gold: owned.Gold,
+		// No more than the max (round 769): taking off, swapping or breaking
+		// a piece with an 'hp' option lowers it, and the handlers clamp the
+		// stored HP then (clampHP); this guards any path that does not.
+		HP:    int32(min(owned.HP, owned.MaxHP())),
+		MaxHP: int32(owned.MaxHP()),
+		Level: int32(owned.Level),
+		Exp:   owned.Exp,
+		MP:    int32(curMP),
+		MaxMP: int32(maxMP),
+		// Round 769: param 1 / 2, the TOTAL -- the character's own and its
+		// worn items' options (the 0x303D builder sends round(GetParam(1));
+		// the panel prints that one number).
+		Str:        int32(owned.TotalStr()),
+		Int:        int32(owned.TotalInt()),
 		StatPoints: int32(owned.StatPoints),
 		HwanCount:  int32(owned.HwanCount),
 	}
@@ -330,7 +341,7 @@ func buildCharacterStats(ctx context.Context, owned *character.Character, charac
 		}
 	}
 	if eq != nil && items != nil {
-		pMin, pMax, mMin, mMax, err := weaponRanges(ctx, characterID, owned.Str, owned.Int, eq, items)
+		pMin, pMax, mMin, mMax, err := weaponRanges(ctx, characterID, owned.TotalStr(), owned.TotalInt(), eq, items)
 		if err != nil {
 			return nil, err
 		}

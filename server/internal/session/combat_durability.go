@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 )
@@ -59,6 +60,9 @@ func wearOneSlot(ctx context.Context, eq equipment.Store, characterID int64, slo
 		if err := eq.SetDurability(ctx, characterID, slot, next); err != nil {
 			return false
 		}
+		if broke {
+			character.InvalidateBonus(characterID) // round 769: a broken piece counts nothing
+		}
 		slog.Info("durability lost", "character", characterID, "slot", int(slot), "durability", next, "broke", broke)
 		return broke
 	}
@@ -79,21 +83,23 @@ func wearWeapon(ctx context.Context, eq equipment.Store, characterID int64, hits
 // wearArmour rolls the defender's armour once per hit (rate 1): slots 0..7
 // except the weapon, in order, the first success losing the point
 // (RollDurabilityLoss kind 1).
-func wearArmour(ctx context.Context, eq equipment.Store, characterID int64) {
+//
+// It reports whether the piece broke (round 769: a broken piece's 'hp'
+// option no longer counts, and the caller clamps the HP to the lower max).
+func wearArmour(ctx context.Context, eq equipment.Store, characterID int64) bool {
 	for _, s := range durability.ArmourSlots {
 		if rollWear(1) {
-			wearOneSlot(ctx, eq, characterID, equipment.Slot(s))
-			return
+			return wearOneSlot(ctx, eq, characterID, equipment.Slot(s))
 		}
 	}
+	return false
 }
 
 // wearShield rolls the defender's shield (slot 7) once per blocked hit
 // (RollDurabilityLoss kind 2).
-func wearShield(ctx context.Context, eq equipment.Store, characterID int64) {
-	if rollWear(1) {
-		wearOneSlot(ctx, eq, characterID, equipment.SlotShield)
-	}
+// It reports whether the shield broke, as wearArmour does.
+func wearShield(ctx context.Context, eq equipment.Store, characterID int64) bool {
+	return rollWear(1) && wearOneSlot(ctx, eq, characterID, equipment.SlotShield)
 }
 
 // wornBroken reports whether the item in slot is worn and broken (durability

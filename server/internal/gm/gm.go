@@ -641,7 +641,21 @@ func (d *Deps) itemWorn(ctx context.Context, actor Actor, args []string) Result 
 	if err := setter.SetInstance(ctx, actor.CharacterID, equipment.Slot(slot), inst); err != nil {
 		return refuse("setting the worn item failed: " + err.Error())
 	}
+	d.wornChanged(ctx, actor.CharacterID)
 	return Result{Text: fmt.Sprintf("worn slot %d: %s", slot, what), RefreshEquipment: true, WornChanged: []int{slot}}
+}
+
+// wornChanged is what a worn item's change does to the character (round
+// 769): its options' bonus is computed again, and an HP above the new max is
+// lowered to it (OURS, the review's F2).
+func (d *Deps) wornChanged(ctx context.Context, characterID int64) {
+	character.InvalidateBonus(characterID)
+	if d.Chars == nil {
+		return
+	}
+	if c, err := d.Chars.GetByID(ctx, characterID); err == nil && c != nil && c.HP > c.MaxHP() {
+		_, _ = d.Chars.Heal(ctx, characterID, 0, c.MaxHP())
+	}
 }
 
 // item edits one bag slot's instance.
@@ -833,12 +847,14 @@ func (d *Deps) level(ctx context.Context, actor Actor, args []string) Result {
 		return refuse("refilling hp failed: " + err.Error())
 	}
 	if d.Mana != nil {
-		d.Mana.Refill(actor.CharacterID, character.MaxMPFor(newInt, want))
+		// Round 769's review F4: with the worn items' bonus.
+		d.Mana.Refill(actor.CharacterID, character.MaxMPWith(newInt, want, character.BonusOf(actor.CharacterID)))
 	}
+	bonus := character.BonusOf(actor.CharacterID)
 	return Result{
 		Text: fmt.Sprintf("level %d -> %d: +%d stat points (%d unspent), Str %d, Int %d, HP %d, MP %d",
-			c.Level, want, gained*leveldata.StatPointsPerLevel, newStatPoints, newStr, newInt,
-			character.MaxHPFor(newStr, want), character.MaxMPFor(newInt, want)),
+			c.Level, want, gained*leveldata.StatPointsPerLevel, newStatPoints, newStr+bonus.Str, newInt+bonus.Int,
+			character.MaxHPWith(newStr, want, bonus), character.MaxMPWith(newInt, want, bonus)),
 		RefreshStats: true,
 		LevelUp:      &LevelUp{NewLevel: want, StatPoints: newStatPoints},
 	}
@@ -1074,6 +1090,7 @@ func (d *Deps) durability(ctx context.Context, actor Actor, args []string) Resul
 		}
 		return refuse("setting durability failed: " + err.Error())
 	}
+	d.wornChanged(ctx, actor.CharacterID)
 	return Result{Text: fmt.Sprintf("slot %d durability set to %d", slot, n), RefreshEquipment: true}
 }
 

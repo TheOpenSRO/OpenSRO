@@ -121,8 +121,8 @@ below is READ from `sro_client.exe` (decomp dump `/var/tmp/decomp_client` on the
 
 ## 5. OPEN
 
-- **The exchange, guild storage, stall and alchemy slots:** not built in this client yet. Each
-  is a `CIFSlotWithHelp`; SetItem's callers include `UI_ALCHEMYBOX`, `CIFAlchemy*`,
-  `CIFStorageRoom` and `CIFStoreForPackage`. When those slots are built, they take the same
-  `_set_item_seal_edge` call.
+- **The exchange, guild storage and stall slots:** not built in this client yet. Each is a
+  `CIFSlotWithHelp`; SetItem's callers include `CIFStorageRoom` and `CIFStoreForPackage`. When
+  those slots are built, they take the same `_set_item_seal_edge` call. The alchemy window's
+  strengthening slots draw it since round 768 (`AlchemyWindow._refresh_slots`).
 - **`+0x64c`**, the flag that skips the whole overlay pass: not read.

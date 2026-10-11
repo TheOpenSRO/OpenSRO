@@ -495,6 +495,14 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 			// process. See applyPickup.
 			runner := txn.For(chars, inv)
 			key := pickupLedgerKey(it)
+			// Round 770: a fresh equipment drop gets its blue options
+			// (dropstats.go), rolled once, before the transaction (which may
+			// run again on a retry).
+			if !it.Gold && it.Instance == nil {
+				if inst, ok := freshDropInstance(ctx, it.ItemID); ok {
+					it.Instance = &inst
+				}
+			}
 			addErr := applyPickup(ctx, runner, chars, inv, it, key, recipient, shares)
 			if addErr != nil && !errors.Is(addErr, txn.ErrAlreadyApplied) && !pickupRefusal(addErr) {
 				// An error that does not say whether the commit happened:

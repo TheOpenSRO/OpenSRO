@@ -376,7 +376,7 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// a store that cannot answer drops the term rather than the attack.
 	attackerStr := 0
 	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
-		attackerStr = c.Str
+		attackerStr = c.TotalStr() // round 769: the worn items' 'str' in
 	}
 	base, err := attackerDamage(ctx, characterID, attackerStr, eq, items)
 	if err != nil {
@@ -405,8 +405,8 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// monster measurement the PvE path cites -- see combat.EvadedChance.
 	blow := resolveBlow(
 		base, playerMitigationPercent, armor,
-		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), playerEvasion),
-		combat.EvadedChance(defenderBlock(ctx, opponent.CharacterID, eq, items), playerEvasion),
+		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), playerEvadeCrit(ctx, opponent.CharacterID, eq)),
+		combat.EvadedChance(defenderBlock(ctx, opponent.CharacterID, eq, items), playerEvadeBlock(ctx, characterID, eq)),
 		atkLevel, defLevel, characterID, opponent.CharacterID)
 	damage := blow.Damage
 

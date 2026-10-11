@@ -167,17 +167,22 @@ func (t AttackType) Known() bool { return t&(AttackPhysical|AttackMagical) != 0 
 // group 3 (durability.WeaponAttackRateGroup, `mov esi,3` at 0x496376) into
 // item+0x1d8, and Char_PublishCombatStats publishes +0x1d8 as param 11
 // (0x497ace..0x497add). The instance rule is WeaponRange's: NoInstance, or a
-// row without its hi end, reads the lo end. The per-plus increment (column
-// 115) is not added: OpenSRO instances carry no plus level.
+// row without its hi end, reads the lo end. Round 769: then the per-plus
+// increment (column 115, 0 on every retail row) times the plus, then the
+// weapon's own 'hr' option scales the whole field by (1 + v/100)
+// (GItemEquip::ApplyDurabilityAndRateOptions 0x496a70, after the builder;
+// READ).
 func WeaponAttackRate(item *refdata.Item, inst Instance) float64 {
 	if item == nil {
 		return 0
 	}
 	lo, hi := item.HitRateMin, item.HitRateMax
-	if !inst.Tracked || hi <= lo {
-		return lo
+	rate := lo
+	if inst.Tracked && hi > lo {
+		rate = durability.WhiteStat(lo, hi, inst.Variance, durability.WeaponAttackRateGroup)
 	}
-	return durability.WhiteStat(lo, hi, inst.Variance, durability.WeaponAttackRateGroup)
+	rate += item.PlusIncAttackRate * float64(inst.Plus)
+	return rate * (1 + inst.HitRatePct/100)
 }
 
 func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackType) (min, max int) {
@@ -190,10 +195,16 @@ func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackTy
 		}
 		return durability.WhiteStat(lo, hi, inst.Variance, group)
 	}
-	physMin := stat(item.PhysAttackMin, item.PhysAttackMinHi, durability.WeaponPhysDamageGroup)
-	physMax := stat(item.PhysAttackMax, item.PhysAttackMaxHi, durability.WeaponPhysDamageGroup)
-	magMin := stat(item.MagAttackMin, item.MagAttackMinHi, durability.WeaponMagDamageGroup)
-	magMax := stat(item.MagAttackMax, item.MagAttackMaxHi, durability.WeaponMagDamageGroup)
+	// Round 769: the plus adds the per-plus increment (columns 99 and 104) to
+	// both ends of each range, before anything is rounded (READ,
+	// Char_BuildAggregateStats 0x495d60: field = L + q*(U-L) + Inc*plus, a
+	// float). The reinforce pairs below take no plus term (their increments
+	// are a synthesized 0).
+	plus := float64(inst.Plus)
+	physMin := stat(item.PhysAttackMin, item.PhysAttackMinHi, durability.WeaponPhysDamageGroup) + item.PlusIncPhysAtk*plus
+	physMax := stat(item.PhysAttackMax, item.PhysAttackMaxHi, durability.WeaponPhysDamageGroup) + item.PlusIncPhysAtk*plus
+	magMin := stat(item.MagAttackMin, item.MagAttackMinHi, durability.WeaponMagDamageGroup) + item.PlusIncMagAtk*plus
+	magMax := stat(item.MagAttackMax, item.MagAttackMaxHi, durability.WeaponMagDamageGroup) + item.PlusIncMagAtk*plus
 	rPhysMin := stat(item.ReinforcePhysMin, item.ReinforcePhysMinHi, durability.WeaponPhysReinforceGroup)
 	rPhysMax := stat(item.ReinforcePhysMax, item.ReinforcePhysMaxHi, durability.WeaponPhysReinforceGroup)
 	rMagMin := stat(item.ReinforceMagMin, item.ReinforceMagMinHi, durability.WeaponMagReinforceGroup)
@@ -264,10 +275,15 @@ func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackTy
 // Instance is the part of a worn weapon WeaponRange needs: its variance and
 // whether it has one. A weapon without an instance (NoInstance -- a row from
 // before durability existed, or a store with no reference data to roll from)
-// reads every stat at its lo end.
+// reads every stat at its lo end. Plus is the effective plus (round 769:
+// OptLevel, the advanced elixir and a 'rein' option, FUN_00459c70), which
+// applies whether or not the variance is tracked; HitRatePct is the
+// weapon's own 'hr' option.
 type Instance struct {
-	Variance uint64
-	Tracked  bool
+	Variance   uint64
+	Tracked    bool
+	Plus       int
+	HitRatePct float64
 }
 
 // NoInstance reads every weapon stat at its lo end.

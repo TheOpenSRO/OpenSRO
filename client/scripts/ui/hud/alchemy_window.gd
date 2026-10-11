@@ -39,15 +39,20 @@ class_name AlchemyWindow
 ##
 ## **Not built** (and why): the help text the mode puts in the PML (id 18;
 ## the text is `<sml2>` markup that CIFPMLEx renders, and that renderer was
-## not read); the slots' own icons and hover texts (the inner CIF slots at
-## +0x348 of each CIFSlotWithHelpEx, whose drawing was not read); the two
-## hidden effect sprites the OnCreates create in code (+0x7a0 of the alchemy
-## pane, `alcm_effect_prepare.ddj`, and +0x7dc of the socket pane), both
-## hidden at creation. Nothing that needs the server is wired: no item can
-## be placed, so every action button stays disabled, as the client leaves it
-## with empty slots.
+## not read); the socket pane's effect sprite (+0x7dc); the other three tabs'
+## managers. The strengthening tab works since round 768 -- see the section
+## at the end of this file and AlchemyReinforce.
 
 const TwoDtBuilder = preload("res://scripts/ui/twodt_builder.gd")
+const ErrorText = preload("res://scripts/net/error_text.gd")
+
+## Round 768: the strengthening tab works (AlchemyReinforce holds its rules).
+## A bag item goes in by Alt+click or by being put down on the window; the
+## action sends the request (start_requested -> AlchemyNet), and the reply
+## (apply_result) plays the outcome. The lines go out through `message`.
+signal start_requested(op: int, bag_slots: Array)
+signal cancel_requested
+signal message(text: String)
 
 const ENCHANT_2DT := "res_ui\\nifenchantwnd.2dt"
 const CONFIRM_2DT := "res_ui\\nifenchantalchemymsgbox.2dt"
@@ -242,6 +247,7 @@ func _activate_mode(mode: int) -> void:
 		gauge.value = 0
 
 func _wire() -> void:
+	_wire_reinforce()
 	for mode in MODE_TABS.size():
 		var tab := _at([ID_ALCHEMY, MODE_TABS[mode]]) as BaseButton
 		if tab != null:
@@ -379,3 +385,456 @@ func _tooltips(root: Control, table: Dictionary) -> void:
 		node.tooltip_text = _builder.resolve_text(table[id])
 		if node.mouse_filter == Control.MOUSE_FILTER_IGNORE:
 			node.mouse_filter = Control.MOUSE_FILTER_PASS
+
+
+# --- The strengthening tab (round 768) -----------------------------------------
+#
+# CAlchemyMgrReinforce (vtable 0xd8bf7c) and the alchemy pane's timers, READ
+# (docs/protocol/alchemy.md, "Round 768", "The client"):
+#   - the slots: controls 17 (the target), 26 (the elixir or stone) and 27
+#     (the lucky powder) of pane 12; the reset (0x5757a0) gives every slot the
+#     `skl_mastery_nothing.ddj` art, not pickable, then opens 17; equipment
+#     opens 26, an elixir (not a stone) opens 27 (0x578500);
+#   - the action (0x59f910): the request at the click, then the caption
+#     UIO_COMMON_CTL_CANCEL, the prepare effect and snd_elixir_use; timer 10
+#     steps the effect every 50 ms over 16 frames (an 800 ms loop, the sound
+#     again at each wrap), timer 0xb fills the gauge over 3.0 s (0xd8adc4) and
+#     then clears the busy flag and disables the button;
+#   - the reply (0x59eb20): the success or fail effect and sound, the lines,
+#     the target copied again from the bag; at frame 8 the elixir and powder
+#     slots are cleared and the caption is back, at the wrap the effect hides.
+# Not built: the devil's spirit (Nasrun) refusal, message 0xe (its ref +0x2b8
+# column is not mapped); the advanced elixir's confirm box (the server refuses op 8), the
+# stone's option-change lines (0x594f40, 29 KB, not read), the effect on a
+# drag back onto the bag (Alt+click takes an item out).
+
+const NOTHING_ART := "interface\\skill\\skl_mastery_nothing.ddj"
+const EFFECT_PREPARE := "interface\\alchemy\\alcm_effect_prepare.ddj"
+const EFFECT_SUCCESS := "interface\\alchemy\\alcm_effect_success.ddj"
+const EFFECT_FAIL := "interface\\alchemy\\alcm_effect_fail_1.ddj"
+## The pane's other two slots (keys 3 and 4 of 0x59cc80), unused by this tab:
+## the reset leaves them on the `nothing` art, not pickable.
+const UNUSED_SLOTS := [28, 29]
+const SLOT_TIPS := ["UIIT_STT_ALCHEMYBOX_TIP_STRENGTHENING_EQUIPMENT_SLOT",
+	"UIIT_STT_ALCHEMYBOX_TIP_STRENGTHENING_ITEM_SLOT", "UIIT_STT_ALCHEMYBOX_TIP_STRENGTHENING_ITEM_SLOT2"]
+const CAPTION_CANCEL := "UIO_COMMON_CTL_CANCEL"
+const MSG_CANCELLED := "UIIT_MSG_ALCHEMY_CANCELED_COMPOUND"
+const SND_USE := "UI:snd_elixir_use:-:-:-:-"
+const SND_SUCCESS := "UI:snd_elixir_success:-:-:-:-"
+const SND_FAIL := "UI:snd_elixir_failure:-:-:-:-"
+## The timers (READ, 0xb93320 pushes 0x32): 50 ms each.
+const TICK_MS := 50
+## The effect sheet: 4 x 4 cells of 64 x 64 (MEASURED, 256 x 256 sheets),
+## drawn in a 96 x 96 window (READ, 0x59d797..0x59d7e8) 0x20 up and left of
+## the stuff slot (vslot 47, 0x578190).
+const EFFECT_FRAMES := 16
+const EFFECT_CELL := 64
+const EFFECT_SIZE := 96
+const EFFECT_OFFSET := 32
+## The frame at which a shown result clears the stuff and powder slots.
+const CLEAR_FRAME := 8
+const GAUGE_SECONDS := 3.0
+
+## The magic option table the stone checks read (MagicOptionTable.shared).
+var options: MagicOptionTable = null
+## The three slots: AlchemyReinforce item dictionaries, or null.
+var _slots: Array = [null, null, null]
+## Which slots are open (pickable).
+var _open: Array = [true, false, false]
+## +0x7ac: an attempt is out. +0x7af: its outcome is playing.
+var _busy := false
+var _showing := false
+## The snapshot at the send (0x57a390): the plus and the durability.
+var _sent_plus := 0
+var _sent_durability := 0
+var _sent_elixir := true
+## A request is out and its reply has not come (OURS, round 768's review F7):
+## the slots and the action stay locked until it does -- this server answers
+## 4 s after the request, a second after the gauge frees the window.
+var _awaiting := false
+var _await_ms := 0.0
+## OURS (review F6): a reply that never comes (no server, a dropped request)
+## ends the attempt after this long instead of looping the prepare effect.
+const REPLY_TIMEOUT_MS := 10000.0
+var _effect: TextureRect = null
+var _effect_atlas := AtlasTexture.new()
+var _effect_sheet := ""
+var _frame := 0
+var _effect_ms := 0.0
+var _effect_on := false
+var _gauge_ms := 0.0
+var _gauge_on := false
+
+func _slot_control(i: int) -> Control:
+	return _at([ID_ALCHEMY, ID_PANE_TYPE1, AlchemyReinforce.SLOT_CONTROLS[i]])
+
+func _wire_reinforce() -> void:
+	var action := _at([ID_ALCHEMY, ID_ACTION]) as BaseButton
+	if action != null:
+		action.pressed.connect(press_action)
+	for i in 3:
+		var c := _slot_control(i)
+		if c == null:
+			continue
+		c.mouse_filter = Control.MOUSE_FILTER_STOP
+		var icon := TextureRect.new()
+		icon.name = "ItemIcon"
+		icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		c.add_child(icon)
+		var k: int = i
+		c.gui_input.connect(func(e: InputEvent) -> void: _on_slot_input(k, e))
+	var pane := _at([ID_ALCHEMY, ID_PANE_TYPE1])
+	if pane != null:
+		_effect = TextureRect.new()
+		_effect.name = "AlchemyEffect"
+		_effect.size = Vector2(EFFECT_SIZE, EFFECT_SIZE)
+		_effect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_effect.stretch_mode = TextureRect.STRETCH_SCALE
+		_effect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_effect.visible = false
+		pane.add_child(_effect)
+	reset_slots()
+
+## 0x5757a0: every slot emptied and closed, then the target's opened.
+func reset_slots() -> void:
+	_slots = [null, null, null]
+	_open = [true, false, false]
+	_refresh_slots()
+
+func _refresh_slots() -> void:
+	for i in 3:
+		var c := _slot_control(i)
+		if c == null:
+			continue
+		var icon := c.get_node_or_null("ItemIcon") as TextureRect
+		var it: Variant = _slots[i]
+		if icon != null:
+			if it != null:
+				icon.texture = (it as Dictionary).get("_icon", null)
+			elif not _open[i] and _builder != null:
+				icon.texture = _builder.load_texture(NOTHING_ART)
+			else:
+				icon.texture = null
+			if _builder != null:
+				ItemSealEdge.show_on(icon, _builder, it != null and bool((it as Dictionary).get("seal", false)),
+					int((it as Dictionary).get("item_id", -1)) if it != null else -1)
+		c.tooltip_text = _builder.resolve_text(SLOT_TIPS[i]) if (_open[i] and _builder != null) else ""
+	for id in UNUSED_SLOTS:
+		var c := _at([ID_ALCHEMY, ID_PANE_TYPE1, id])
+		if c == null or _builder == null:
+			continue
+		var icon := c.get_node_or_null("ItemIcon") as TextureRect
+		if icon == null:
+			icon = TextureRect.new()
+			icon.name = "ItemIcon"
+			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			c.add_child(icon)
+		icon.texture = _builder.load_texture(NOTHING_ART)
+	var action := _at([ID_ALCHEMY, ID_ACTION]) as BaseButton
+	if action != null and not _busy and not _showing:
+		action.disabled = not AlchemyReinforce.action_enabled(_slots)
+
+## Whether the tab is the one showing (the strengthening tab, mode 3).
+func _reinforce_mode() -> bool:
+	return tab_mode == 3 and not _socket_view
+
+## A bag item offered (Alt+click or a put-down; CNIFAlchemyWnd vslot 28,
+## 0x59dca0 -> 0x57a490): refused while busy; the slot is picked from the
+## item's kind; a refusal writes its line. True when it went in.
+func offer_item(it: Dictionary, icon: Texture2D) -> bool:
+	if _busy or _showing or _awaiting or not _reinforce_mode():
+		return false
+	return _place(it, icon)
+
+## 0x57a490: the slot from the kind, the check, then the copy (and, for a
+## target, every slot reset first). The reply's re-offer of the target after
+## a lost stone roll comes here directly, as the client hands it to slot
+## 17's own drop handler (0x59ef2d..0x59ef83).
+func _place(it: Dictionary, icon: Texture2D) -> bool:
+	var slot := AlchemyReinforce.pick_slot(it, _slots)
+	if slot < 0:
+		return false
+	var err := AlchemyReinforce.validate(slot, it, _slots, options)
+	if err != 0:
+		_say(String(AlchemyReinforce.MESSAGES.get(err, "")), [])
+		return false
+	var copy := it.duplicate()
+	copy["_icon"] = icon
+	if slot == AlchemyReinforce.SLOT_TARGET:
+		reset_slots()
+	_slots[slot] = copy
+	# vslot 43 (0x578500): the next slot opens.
+	if slot == AlchemyReinforce.SLOT_TARGET:
+		_open[AlchemyReinforce.SLOT_STUFF] = true
+	elif slot == AlchemyReinforce.SLOT_STUFF:
+		_open[AlchemyReinforce.SLOT_POWDER] = AlchemyReinforce.is_elixir(copy) or AlchemyReinforce.is_magic_cube(copy) \
+			or AlchemyReinforce.is_upper_elixir(copy)
+		# A stone over an elixir closes the powder slot and takes its powder
+		# out (review F5: the request names only open slots, as the client's
+		# skips the slots on the `nothing` art).
+		if not _open[AlchemyReinforce.SLOT_POWDER]:
+			_slots[AlchemyReinforce.SLOT_POWDER] = null
+	_refresh_slots()
+	return true
+
+## Alt+click on a loaded slot takes its item out (case 0xa8 of 0x680fa0 ->
+## 0x59e130 -> vslot 39, 0x577f20): the target resets every slot, the
+## elixir takes the powder with it. Refused while busy.
+func _on_slot_input(i: int, e: InputEvent) -> void:
+	var mb := e as InputEventMouseButton
+	if mb == null or mb.button_index != MOUSE_BUTTON_LEFT or mb.pressed or not mb.alt_pressed:
+		return
+	take_out(i)
+
+func take_out(i: int) -> void:
+	if _busy or _showing or _awaiting or _slots[i] == null:
+		return
+	if i == AlchemyReinforce.SLOT_TARGET:
+		reset_slots()
+		return
+	_slots[i] = null
+	if i == AlchemyReinforce.SLOT_STUFF:
+		_slots[AlchemyReinforce.SLOT_POWDER] = null
+		_open[AlchemyReinforce.SLOT_POWDER] = false
+	_refresh_slots()
+
+func loaded(i: int) -> Variant:
+	return _slots[i]
+
+func is_busy() -> bool:
+	return _busy
+
+## A request is out with no reply yet.
+func is_awaiting() -> bool:
+	return _awaiting
+
+## The bag changed: each slot's copy follows its bag slot (`lookup(bag)`
+## gives the item there, {} when empty); a slot whose item left is emptied
+## (OURS: retail locks the bag slot while it is loaded).
+func bag_changed(lookup: Callable) -> void:
+	var changed := false
+	for i in 3:
+		var it: Variant = _slots[i]
+		if it == null:
+			continue
+		var now: Dictionary = lookup.call(int(it["bag"]))
+		if now.is_empty() or int(now["item_id"]) != int(it["item_id"]):
+			if i == AlchemyReinforce.SLOT_TARGET:
+				reset_slots()
+				return
+			_slots[i] = null
+			changed = true
+			continue
+		var icon: Variant = (it as Dictionary).get("_icon", null)
+		now["_icon"] = icon
+		_slots[i] = now
+	if changed:
+		_refresh_slots()
+
+## The action button (0x59f910).
+func press_action() -> void:
+	if not _reinforce_mode():
+		return
+	var action := _at([ID_ALCHEMY, ID_ACTION]) as BaseButton
+	if _busy:
+		# "Cancel": the request to stop the attempt (vslot 40).
+		if action != null:
+			action.disabled = true
+		cancel_requested.emit()
+		return
+	if _showing or _awaiting or not AlchemyReinforce.action_enabled(_slots):
+		return
+	var target: Dictionary = _slots[AlchemyReinforce.SLOT_TARGET]
+	var stuff: Dictionary = _slots[AlchemyReinforce.SLOT_STUFF]
+	_busy = true
+	_sent_plus = int(target.get("plus", 0))
+	_sent_durability = int(target.get("durability", 0))
+	var op := AlchemyReinforce.op_for(stuff)
+	_sent_elixir = op == AlchemyNet.OP_REINFORCE or op == AlchemyNet.OP_UPPER
+	var sent: Array = []
+	for i in 3:
+		sent.append(_slots[i] if _open[i] else null)
+	_awaiting = true
+	_await_ms = 0.0
+	start_requested.emit(op, AlchemyReinforce.request_slots(sent))
+	_set_text([ID_ALCHEMY, ID_ACTION], _builder.resolve_text(CAPTION_CANCEL) if _builder != null else "Cancel")
+	if action != null:
+		action.disabled = false
+	_set_gauge(0.0)
+	_gauge_ms = 0.0
+	_gauge_on = true
+	_start_effect(EFFECT_PREPARE)
+	UiSounds.play(SND_USE, "alchemy: the attempt starts (0x59f910)")
+
+func _set_gauge(ratio: float) -> void:
+	var gauge := _at([ID_ALCHEMY, ID_PANE_TYPE1, 21]) as Range
+	if gauge != null:
+		gauge.value = clampf(ratio, 0.0, 1.0) * gauge.max_value
+
+## The sprite's draw mode, CIFDecoratedStatic +0x388 (its draw, slot 13
+## 0x634640, READ): 1 draws additively (D3DRS_SRCBLEND 5 SRCALPHA,
+## D3DRS_DESTBLEND 2 ONE, restored to INVSRCALPHA after), 0 with the plain
+## alpha blend. The click sets 1 for the prepare effect (0x59fcb1); the
+## outcome (0x59eb20) sets 1, keeps it for a success and sets 0 again for a
+## failure, a breakdown and a stone's lost roll. The sheets are opaque
+## (MEASURED: every DXT3 alpha of the three is 15), so mode 0 shows their
+## black and mode 1 drops it.
+func _set_effect_additive(on: bool) -> void:
+	if _effect == null:
+		return
+	var m := CanvasItemMaterial.new()
+	m.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD if on else CanvasItemMaterial.BLEND_MODE_MIX
+	_effect.material = m
+
+func _start_effect(sheet: String, additive: bool = true) -> void:
+	_set_effect_additive(additive)
+	_effect_sheet = sheet
+	_frame = 0
+	_effect_ms = 0.0
+	_effect_on = true
+	if _effect == null:
+		return
+	var stuff := _slot_control(AlchemyReinforce.SLOT_STUFF)
+	if stuff != null:
+		_effect.position = stuff.position - Vector2(EFFECT_OFFSET, EFFECT_OFFSET)
+	_effect.visible = true
+	_draw_frame()
+
+func _draw_frame() -> void:
+	if _effect == null or _builder == null:
+		return
+	var tex := _builder.load_texture(_effect_sheet)
+	if tex == null:
+		_effect.texture = null
+		return
+	# One atlas, its sheet and cell changed (review F11: not a new texture
+	# every 50 ms).
+	_effect_atlas.atlas = tex
+	var per_row := maxi(1, int(tex.get_width()) / EFFECT_CELL)
+	_effect_atlas.region = Rect2((_frame % per_row) * EFFECT_CELL, (_frame / per_row) * EFFECT_CELL, EFFECT_CELL, EFFECT_CELL)
+	if _effect.texture != _effect_atlas:
+		_effect.texture = _effect_atlas
+
+func _process(delta: float) -> void:
+	tick(delta * 1000.0)
+
+## Advances the two timers by `ms` (tests drive it directly). Fractions are
+## kept (review F11).
+func tick(ms: float) -> void:
+	if _awaiting:
+		_await_ms += ms
+		if _await_ms >= REPLY_TIMEOUT_MS:
+			print("AlchemyWindow: no reply in %d ms -- the attempt is ended (OURS)" % int(REPLY_TIMEOUT_MS))
+			_stop_attempt()
+			return
+	if _gauge_on:
+		_gauge_ms += ms
+		_set_gauge(_gauge_ms / 1000.0 / GAUGE_SECONDS)
+		if _gauge_ms >= GAUGE_SECONDS * 1000.0:
+			# 0x59deec: the attempt can no longer be cancelled.
+			_gauge_on = false
+			_busy = false
+			var action := _at([ID_ALCHEMY, ID_ACTION]) as BaseButton
+			if action != null:
+				action.disabled = true
+	if not _effect_on:
+		return
+	_effect_ms += ms
+	while _effect_ms >= TICK_MS and _effect_on:
+		_effect_ms -= TICK_MS
+		_frame += 1
+		if _showing and _frame == CLEAR_FRAME:
+			_clear_after_result()
+		if _frame >= EFFECT_FRAMES:
+			_frame = 0
+			if _showing:
+				_effect_on = false
+				_showing = false
+				if _effect != null:
+					_effect.visible = false
+				_refresh_slots()
+				return
+			UiSounds.play(SND_USE, "alchemy: the prepare effect loops (0x59df8e)")
+		_draw_frame()
+
+## 0x59c8e0 at frame 8: the stuff and powder slots emptied, the caption
+## back, the button off.
+func _clear_after_result() -> void:
+	_slots[AlchemyReinforce.SLOT_STUFF] = null
+	_slots[AlchemyReinforce.SLOT_POWDER] = null
+	_open[AlchemyReinforce.SLOT_POWDER] = false
+	_busy = false
+	_set_text([ID_ALCHEMY, ID_ACTION], _builder.resolve_text(MODE_ACTION_TEXT[3]) if _builder != null else "")
+	var action := _at([ID_ALCHEMY, ID_ACTION]) as BaseButton
+	if action != null:
+		action.disabled = true
+	_refresh_slots()
+
+## Back to idle without an outcome: a refusal or a cancel (OURS: what
+## 0x59c5d0 resets on a cancel was not read; the loaded slots stay).
+func _stop_attempt() -> void:
+	_busy = false
+	_awaiting = false
+	_showing = false
+	_gauge_on = false
+	_effect_on = false
+	if _effect != null:
+		_effect.visible = false
+	_set_gauge(0.0)
+	_set_text([ID_ALCHEMY, ID_ACTION], _builder.resolve_text(MODE_ACTION_TEXT[3]) if _builder != null else "")
+	_refresh_slots()
+
+## The server's reply (0x8729e0 / 0x872cd0, then 0x59eb20).
+func apply_result(r: AlchemyNet.Result) -> void:
+	_awaiting = false
+	if r.ok and r.cancelled:
+		_stop_attempt()
+		_say(MSG_CANCELLED, [])
+		return
+	var bits := AlchemyReinforce.outcome(r, _sent_plus, _sent_durability)
+	if bits < 0:
+		# A refusal: its line (0x778190, category 0x12).
+		_stop_attempt()
+		message.emit(ErrorText.alchemy_line(r.code, _builder.text_table() if _builder != null else null))
+		return
+	var new_plus := _sent_plus
+	var new_dur := _sent_durability
+	if r.record != null:
+		new_plus = r.record.opt_level
+		new_dur = r.record.durability
+		var target: Variant = _slots[AlchemyReinforce.SLOT_TARGET]
+		if target != null:
+			(target as Dictionary)["plus"] = new_plus
+			(target as Dictionary)["durability"] = new_dur
+	_showing = true
+	var action := _at([ID_ALCHEMY, ID_ACTION]) as BaseButton
+	if action != null:
+		action.disabled = true
+	if bits & AlchemyReinforce.OUT_SUCCESS:
+		_start_effect(EFFECT_SUCCESS)
+		UiSounds.play(SND_SUCCESS, "alchemy: success (0x59eb20)")
+	else:
+		_start_effect(EFFECT_FAIL, false)
+		UiSounds.play(SND_FAIL, "alchemy: failure (0x59eb20)")
+	for line in AlchemyReinforce.outcome_lines(bits, _sent_elixir, new_plus, _sent_plus, new_dur, _sent_durability):
+		_say(String(line[0]), line[1])
+	if bits & (AlchemyReinforce.OUT_BREAKDOWN | AlchemyReinforce.OUT_STONE_FAIL):
+		# Slot 17 emptied (0x67ece0). After a breakdown the client then offers
+		# the bag's item at the target's slot to slot 17 again (0x59ef2d..
+		# 0x59ef83) -- the slot the item was destroyed out of, so nothing
+		# comes back; this client's bag has not been re-read yet at this
+		# point and would still show the item, so the re-offer is left out.
+		# A stone's lost roll (0x80) only empties it.
+		reset_slots()
+	_refresh_slots()
+
+## A line from the archive's text, its %d's filled.
+func _say(key: String, args: Array) -> void:
+	if key == "":
+		return
+	var text := _builder.resolve_text(key) if _builder != null else key
+	message.emit(AlchemyReinforce.fill(text, args))

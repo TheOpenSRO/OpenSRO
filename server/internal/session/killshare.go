@@ -282,9 +282,11 @@ func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) 
 		if err := d.chars.ResetHP(ctx, a.characterID); err != nil {
 			return out, fmt.Errorf("combat: refilling hp on level up: %w", err)
 		}
-		out.hp = character.MaxHPFor(newStr, newLevel)
+		// Round 769: with the worn items' options (character.MaxHP's rule).
+		bonus := character.BonusOf(a.characterID)
+		out.hp = character.MaxHPFor(newStr+bonus.Str, newLevel) + bonus.HP
 		if d.mp != nil {
-			d.mp.Refill(a.characterID, character.MaxMPFor(newInt, newLevel))
+			d.mp.Refill(a.characterID, character.MaxMPFor(newInt+bonus.Int, newLevel)+bonus.MP)
 		}
 		out.levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
 	}

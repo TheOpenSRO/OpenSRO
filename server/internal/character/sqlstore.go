@@ -363,9 +363,12 @@ func (s *SQLStore) Heal(ctx context.Context, characterID int64, amount, maxHP in
 // RespawnHP implements Store: back from death at RespawnFraction of maximum,
 // floored at 1 so a character never respawns dead.
 func (s *SQLStore) RespawnHP(ctx context.Context, characterID int64) error {
+	// Round 769's review F1: the maximum with the worn items' bonus
+	// (MaxHPWith), as the memory store's MaxHP has it.
+	b := BonusOf(characterID)
 	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		`UPDATE characters SET hp = GREATEST(1, FLOOR(ROUND(str * $1 * POWER($2, level - 1)) * $3)) WHERE id = $4`,
-		HPPerStr, StatGrowth, RespawnFraction, characterID)
+		`UPDATE characters SET hp = GREATEST(1, FLOOR((ROUND((str + $5) * $1 * POWER($2, level - 1)) + $6) * $3)) WHERE id = $4`,
+		HPPerStr, StatGrowth, RespawnFraction, characterID, b.Str, b.HP)
 	if err != nil {
 		return fmt.Errorf("character: respawning hp: %w", err)
 	}
@@ -382,9 +385,11 @@ func (s *SQLStore) RespawnHP(ctx context.Context, characterID int64) error {
 func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 	// Max HP scales with the row's own level (base + per-level), so a reset
 	// heals to the level-appropriate maximum.
+	// With the worn items' bonus (round 769's review F1; MaxHPWith).
+	b := BonusOf(characterID)
 	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		`UPDATE characters SET hp = ROUND(str * $1 * POWER($2, level - 1)) WHERE id = $3`,
-		HPPerStr, StatGrowth, characterID)
+		`UPDATE characters SET hp = ROUND((str + $4) * $1 * POWER($2, level - 1)) + $5 WHERE id = $3`,
+		HPPerStr, StatGrowth, characterID, b.Str, b.HP)
 	if err != nil {
 		return fmt.Errorf("character: resetting hp: %w", err)
 	}

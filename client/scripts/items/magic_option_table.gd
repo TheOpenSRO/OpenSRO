@@ -29,6 +29,11 @@ const COL_ID := 1
 const COL_CODE := 2
 const COL_DEGREE := 4
 const COL_RANGE0 := 8
+## Round 768: the item kinds an option may sit on, every second column from
+## 29, up to ten, ending at "xxx" (gs CGameServer::FUN_0072e2d0 reads the
+## strings only; MEASURED: 402 rows of 50 columns).
+const COL_KIND0 := 29
+const KIND_COLUMNS := 10
 
 class Row:
 	var id: int
@@ -36,6 +41,8 @@ class Row:
 	var degree: int
 	## The three packed range words, cols 8..10.
 	var ranges := PackedInt64Array()
+	## The kind strings (COL_KIND0), "weapon", "armor", "helm", ...
+	var kinds := PackedStringArray()
 
 	## The lowest value: the first word's high u16 (`movzx edx, WORD PTR
 	## [edi+0x2]`, 0x670f20).
@@ -88,12 +95,98 @@ func load(data: PackedByteArray) -> MagicOptionTable:
 		for k in 3:
 			var s := cols[COL_RANGE0 + k].strip_edges()
 			r.ranges.append(int(s) if s.is_valid_int() else 0)
+		for k in KIND_COLUMNS:
+			var at := COL_KIND0 + 2 * k
+			if at >= cols.size():
+				break
+			var kind := cols[at].strip_edges()
+			if kind == "" or kind.to_lower() == "xxx":
+				break
+			r.kinds.append(kind)
 		_rows[r.id] = r
 		_by_code_degree["%s/%d" % [r.code, r.degree]] = r
 	return self
 
 func size() -> int:
 	return _rows.size()
+
+## The row of option `code` at `degree`, or null (gs FUN_00492730's lookup;
+## the code compared without regard to case).
+func record(code: String, degree: int) -> Row:
+	var want := code.strip_edges().to_upper()
+	var hit: Row = _by_code_degree.get("%s/%d" % [want, degree], null)
+	if hit != null:
+		return hit
+	for r in _rows.values():
+		if (r as Row).degree == degree and (r as Row).code.to_upper() == want:
+			return r
+	return null
+
+## Whether option row `r` may sit on an item of TypeID3/TypeID4 `tid3`/`tid4`
+## named `code` (round 768, the server's rule: gs FUN_0072e960 expands each
+## kind string, FUN_0072ff60 compares; server/internal/magicopt). An entry of
+## TypeID3 2 matches every armour TypeID3 and 13; any other must be equal;
+## the entry's TypeID4 must be 0 or equal. A string the expansion does not
+## know names one item by its code.
+static func allowed_on(r: Row, tid3: int, tid4: int, code: String) -> bool:
+	if r == null:
+		return false
+	for kind in r.kinds:
+		for e in kind_entries(kind):
+			if e is String:
+				if String(e).to_lower() == code.to_lower():
+					return true
+				continue
+			var et3: int = e[0]
+			var et4: int = e[1]
+			var t3_ok := et3 == tid3
+			if et3 == 2:
+				t3_ok = ARMOUR_TID3.has(tid3) or tid3 == 13
+			if t3_ok and (et4 == 0 or et4 == tid4):
+				return true
+	return false
+
+const ARMOUR_TID3 := [1, 2, 3, 9, 10, 11]
+
+## One kind string's [TypeID3, TypeID4] pairs (TypeID4 0: any), or the
+## string itself for an item code (READ, gs FUN_0072e960).
+static func kind_entries(kind: String) -> Array:
+	var pairs := func(t3s: Array, t4s: Array) -> Array:
+		var out: Array = []
+		for a in t3s:
+			for b in t4s:
+				out.append([a, b])
+		return out
+	match kind.to_lower():
+		"weapon": return pairs.call([6], [0])
+		"armor": return pairs.call(ARMOUR_TID3, [0])
+		"accessory": return pairs.call([5, 12], [0])
+		"sword": return pairs.call([6], [2, 7])
+		"blade": return pairs.call([6], [3])
+		"spear": return pairs.call([6], [4])
+		"tblade": return pairs.call([6], [5])
+		"bow": return pairs.call([6], [6])
+		"helm": return pairs.call([2, 10], [1])
+		"shoulderguard": return pairs.call([2, 10], [2])
+		"mail": return pairs.call([2, 10], [3])
+		"pants": return pairs.call([2, 10], [4])
+		"gauntlet": return pairs.call([2, 10], [5])
+		"boots": return pairs.call([2, 10], [6])
+		"shield": return pairs.call([4], [1, 2])
+		"earring": return pairs.call([5, 12], [1])
+		"necklace": return pairs.call([5, 12], [2])
+		"ring": return pairs.call([5, 12], [3])
+		"trader": return pairs.call([7], [1])
+		"thief": return pairs.call([7], [2])
+		"hunter": return pairs.call([7], [3])
+		"event": return pairs.call([13], [4])
+		"avatar": return pairs.call([13], [0])
+		"avatar_helm": return pairs.call([13], [1])
+		"avatar_mail": return pairs.call([13], [2])
+		"avatar_mail_addon": return pairs.call([13], [3])
+		"avatar_extra": return pairs.call([13], [4])
+		"avatar_special_armlet": return pairs.call([14], [1])
+	return [kind]
 
 func row(id: int) -> Row:
 	return _rows.get(id, null)

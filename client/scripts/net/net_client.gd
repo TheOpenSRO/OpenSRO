@@ -365,6 +365,10 @@ signal teleport_result(result: TeleportNet.Result)
 ## A town gate's "Designate as return/recall point" answered (RecallNet.Result,
 ## round 686): ok, or the refusal's code.
 signal recall_designate_result(result: RecallNet.Result)
+## The alchemy window's reply (AlchemyNet.Result, round 768): a refusal, a
+## cancel, or the attempt with the target's new record. result.reinforce says
+## which reply (an elixir's 0xB150 shape, or a stone's 0xB151).
+signal alchemy_result(result: AlchemyNet.Result)
 
 var _tcp_peer: StreamPeerTCP  # the real socket, always present once connecting starts
 var _peer: StreamPeer         # what packets are actually read/written through -- _tcp_peer directly, or a StreamPeerTLS wrapping it once connected with use_tls
@@ -622,7 +626,8 @@ func _passes_group(p: Packet) -> bool:
 				UniqueNoticeNet.OP_UNIQUE_NOTICE, ChatNet.OP_UPDATE, ChatNet.OP_RESULT, QuestNet.OP_LIST_RESULT, \
 				QuestNet.OP_ACCEPT_RESULT, QuestNet.OP_COMPLETED, FriendNet.OP_REQUEST_RESULT, FriendNet.OP_REQUEST_RECEIVED, \
 				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
-				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT:
+				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
+				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -1198,6 +1203,15 @@ func gm_command(char_name: String, line: String, selected_monster: int) -> void:
 ## the move itself is change_zone_result.
 func teleport_use(gate_id: int, dest_id: int) -> void:
 	_send(TeleportNet.OP_USE, TeleportNet.encode_use(gate_id, dest_id))
+
+## The alchemy window's start (AlchemyNet, round 768): `op` and the bag
+## indices, target first. The reply is alchemy_result, 3-4 s later.
+func alchemy_start(op: int, bag_slots: Array) -> void:
+	_send(AlchemyNet.OP_REQUEST, AlchemyNet.encode_start(op, bag_slots))
+
+## The alchemy window's cancel, while an attempt waits.
+func alchemy_cancel() -> void:
+	_send(AlchemyNet.OP_REQUEST, AlchemyNet.encode_cancel())
 
 ## Asks to make the gate the player is talking to (a teleportdata id) its
 ## return point (RecallNet.OP_DESIGNATE, round 686). The reply is
@@ -2062,6 +2076,10 @@ func _dispatch(p: Packet) -> void:
 			var r := RecallNet.decode_result(p.data)
 			if r != null:
 				recall_designate_result.emit(r)
+		AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT:
+			var r := AlchemyNet.decode_result(p.data, p.opcode == AlchemyNet.OP_REINFORCE_RESULT)
+			if r != null:
+				alchemy_result.emit(r)
 		ItemInstance.OP_MORE:
 			# The rest of a list's item instances (round 732 review F8).
 			if p.data.size() >= 1:

@@ -148,6 +148,8 @@ func RepairHandler(chars character.Store, eq equipment.Store, items ItemLookup, 
 				chars.AddGold(ctx, characterID, cost) // put the money back
 				return fail(int32(repair.ErrCannotBeRepaired))
 			}
+			// Round 769: a broken piece mended counts again.
+			character.InvalidateBonus(characterID)
 			gold -= cost
 			spent += cost
 			repairedAny = true

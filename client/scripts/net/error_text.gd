@@ -231,3 +231,42 @@ static func teleport_line(code: int, table: UiTextTable, reason: String) -> Stri
 	if reason != "":
 		return resolve(code, table, reason)
 	return resolve(code, table, "Teleport refused (code 0x%x)." % code)
+
+## The alchemy window's refusals (round 768). The client's replies 0xB150 /
+## 0xB151 (0x8729e0 / 0x872cd0) hand a refusal's code to FUN_00778190 under
+## category 0x12 (READ), and the dispatcher's alchemy cases give these names
+## (docs/protocol/error_codes.md's rows, decoded from the same 643-case
+## switch). 0x5423, a stone's lost roll, never comes here: the window shows
+## it as a failure (AlchemyWindow). The codes without a row -- 2 (the magic
+## option table has no such option, or the item is full), 3 (an empty slot)
+## and 0x5406 -- keep our own wording.
+const ALCHEMY_UIIT_BY_CODE := {
+	0x5407: "UIIT_MSG_REINFORCERR_RECIPE_NOT_LOADED",
+	0x5408: "UIIT_MSG_REINFORCERR_ONLY_EQUIPITEM_CAN_BE_REINFORCED",
+	0x5409: "UIIT_MSG_REINFORCERR_RECIPE_MISMATCH",
+	0x540a: "UIIT_MSG_REINFORCERR_EQUIPCLASS_MISMATCH_PROB_UP",
+	0x540f: "UIIT_MSG_REINFORCERR_TARGETEQUIP_CANT_BE_REINFORCED",
+	0x5410: "UIIT_MSG_REINFORCERR_IS_NOT_REINFORCE_STUFF",
+	0x5412: "UIIT_MSG_REINFORCERR_STUFF_CANT_BE_LOADED_MULTIPLE_TIME",
+	0x5414: "UIIT_MSG_REINFORCERR_INVALID_ITEM_SLOT",
+	0x5420: "UIIT_MSG_STRGERR_ASTRAL",
+	0x5421: "UIIT_MSG_ENCHANT_EQUIPCLASS_MISMATCH",
+	0x5422: "UIIT_MSG_STRGERR_MAGICSTONE2_MAX",
+	0x5423: "UIIT_MSG_ENCHANT_FAILED",
+	0x5424: "UIIT_MSG_STRGERR_ASTRAL",
+	0x5425: "UIIT_MSG_TC_ERROR_ENCHANT_HONOR_ITEM",
+	0x5426: "UIIT_MSG_REINFORCERR_ALREADY_DONE",
+}
+
+static func alchemy_line(code: int, table: UiTextTable) -> String:
+	var key: String = ALCHEMY_UIIT_BY_CODE.get(code, "")
+	if key != "" and table != null and table.has(key):
+		var text := table.get_text(key).strip_edges()
+		if text != "" and text != key:
+			return text
+	match code:
+		2:
+			return "The stone's option cannot be added to this item."
+		3:
+			return "That slot is empty."
+	return "Alchemy refused (code 0x%x)." % code

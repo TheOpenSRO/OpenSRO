@@ -31,6 +31,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/guild"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/nest"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
@@ -906,6 +907,18 @@ func main() {
 			"teleportdata.txt, teleportlink.txt and teleportbuilding.txt). Loaded, checked and counted "+
 			"at boot; the town teleporters' OpTeleportUse 0x00F3 charges and moves by it (round 576), "+
 			"and without it every teleport is refused. A configured directory that does not load is fatal.")
+	magicOptionsCSV := flag.String("magic-options-csv", os.Getenv("OPENSRO_MAGIC_OPTIONS_CSV"),
+		"path to the game's magic option table as CSV (env OPENSRO_MAGIC_OPTIONS_CSV; from cmd/export-refdata "+
+			"-mode magicoptions on a client's own server_dep\\silkroad\\textdata\\magicoption.txt, round 768). The "+
+			"alchemy window's magic stones write their blue options from it, and a failed reinforce its durability "+
+			"flaw. Without it every magic stone is refused and a flaw writes nothing; elixirs and attribute stones "+
+			"still work. A configured path that does not load is fatal.")
+	magicOptAssignCSV := flag.String("magic-option-assign-csv", os.Getenv("OPENSRO_MAGIC_OPTION_ASSIGN_CSV"),
+		"path to the game's magic option assign table as CSV (env OPENSRO_MAGIC_OPTION_ASSIGN_CSV; from "+
+			"cmd/export-refdata -mode magicoptassign on a client's own server_dep\\silkroad\\textdata\\"+
+			"magicoptionassign.txt, round 770): which blue options each kind of item can drop with. With it and "+
+			"-magic-options-csv a monster's equipment drop gets blue options as the original server gives them; "+
+			"without either, drops carry none. A configured path that does not load is fatal.")
 	regionsCSV := flag.String("regions-csv", os.Getenv("OPENSRO_REGIONS_CSV"),
 		"path to the game's region table as CSV (env OPENSRO_REGIONS_CSV; from cmd/export-refdata -mode regions "+
 			"on a client's own server_dep\\silkroad\\textdata\\refregion.txt, round 674). Its IsBattleField 0 regions "+
@@ -1694,6 +1707,37 @@ func main() {
 	} else {
 		logger.Info("no region table (-regions-csv / OPENSRO_REGIONS_CSV): no region is a town, and a monster follows a player into one")
 	}
+	// The magic option table (round 768): the alchemy stones' blue options.
+	var magicOptions *magicopt.Table
+	if *magicOptionsCSV != "" {
+		t, err := magicopt.LoadCSVFile(*magicOptionsCSV)
+		if err != nil {
+			logger.Error("loading the magic option table", "path", *magicOptionsCSV, "err", err)
+			os.Exit(1)
+		}
+		magicOptions = t
+		// Round 769: the worn items' options count toward their stats.
+		session.SetMagicOptions(t)
+		logger.Info("magic option table loaded: the alchemy stones write blue options and worn options count", "path", *magicOptionsCSV, "rows", t.Len())
+	} else {
+		logger.Info("no magic option table (-magic-options-csv / OPENSRO_MAGIC_OPTIONS_CSV): every magic stone is refused")
+	}
+	// The magic option assign table (round 770): what equipment drops roll.
+	if *magicOptAssignCSV != "" {
+		a, err := magicopt.LoadAssignCSVFile(*magicOptAssignCSV)
+		if err != nil {
+			logger.Error("loading the magic option assign table", "path", *magicOptAssignCSV, "err", err)
+			os.Exit(1)
+		}
+		session.SetDropOptions(refItems, a)
+		if magicOptions == nil {
+			logger.Warn("magic option assign table loaded, but no magic option table (-magic-options-csv): drops carry no blue options")
+		} else {
+			logger.Info("magic option assign table loaded: equipment drops roll blue options", "path", *magicOptAssignCSV, "rows", a.Len())
+		}
+	} else {
+		logger.Info("no magic option assign table (-magic-option-assign-csv / OPENSRO_MAGIC_OPTION_ASSIGN_CSV): drops carry no blue options")
+	}
 	// The creatable catalogue (round 682): what the lobby's create checks
 	// bodies and items against (session.LobbyDeps.Catalogue).
 	var chargen *refdata.CreatableSet
@@ -2067,6 +2111,9 @@ func main() {
 	// (session/partymatch.go, party/match.go).
 	partyMatchDeps := session.PartyMatchDeps{PartyDeps: partyDeps, Match: party.NewMatcher(parties)}
 	go session.RunPartyMatchSweep(ctx, partyMatchDeps)
+	// Round 769: a character's Str, Int and max HP/MP count its worn items'
+	// blue options (character.BonusOf), read from the equipment store.
+	session.SetEquipBonusSource(eq)
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
@@ -2129,6 +2176,8 @@ func main() {
 		session.ItemOpHandler(session.ItemOpDeps{Hub: hub, Inv: inv, Shop: shopSvc, Storage: storageSvc, Trades: trades}),
 		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub, zerkTracker, gmGate, compositeKeeper),
 		session.CompositeHandler(chars, refItems, compositeKeeper, zerkTracker, gmGate, hub),
+		// Round 768: the alchemy window's elixirs and stones (session/alchemy.go).
+		session.AlchemyHandler(session.AlchemyDeps{Hub: hub, Inv: inv, Items: refItems, Options: magicOptions, Logger: logger}),
 		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, gpSkills, zerkTracker, manaTracker, parties, ground, dropSrc, potions),
 		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),

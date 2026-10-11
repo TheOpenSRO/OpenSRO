@@ -43,6 +43,9 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	"Messages": "round 768: the client's outcome decode (UI_REINFORCERR FUN_00592650). The server never sends that byte -- " +
+		"its reply carries success and destroyed, and the client builds the byte from the old and new item " +
+		"(docs/protocol/alchemy.md, \"Round 768\") -- so it is the client half's specification, kept beside the codes it names; tested.",
 	// Round 749: the hub's clock, swapped only by the session tests and the
 	// crowd bench (a simulated second); production keeps time.Now.
 	"SetClock": "round 749: world.Hub's clock for the mover tests and crowd736_bench_test.go's simulated seconds; production uses time.Now.",
@@ -56,7 +59,6 @@ var knownOrphans = map[string]string{
 	"QualityRangeFloat": "round 732: a reinforce range line's (+x%) (c:0x66dc12), the GD mirror's test anchor; quality_test.go.",
 	"QualityRangeInt":   "round 732: an attack range line's (+x%) (c:0x66c5b0), the GD mirror's test anchor; quality_test.go.",
 	"QualitySingle":     "round 732: a one-value line's (+x%) (c:0x66cd4a), the GD mirror's test anchor; quality_test.go.",
-	"MagParamValue":     "round 732: a blue option's value half (c:0x8bcdf0); combat does not apply blue options yet (OPEN, docs/rounds/r732.md); tested.",
 	// Round 710: the party API published for the next party lanes (the round-709
 	// plan in docs/protocol/party_protocol.md, "Implementation lanes"). Each is
 	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.
@@ -180,7 +182,6 @@ var baseline = map[string]string{
 	"DeriveSeed":          "internal/proto/security.go",
 	"EquipmentHandler":    "internal/session/equipment.go",
 	"EquippedIn":          "internal/session/world.go",
-	"Has":                 "internal/guild/guild.go",
 	"IntForMaxRatio":      "internal/combat/statratio.go",
 	"IntLevelDamageRatio": "internal/combat/statratio.go",
 	"IsPhysical":          "internal/combat/attacktype.go",
@@ -188,8 +189,6 @@ var baseline = map[string]string{
 	"NewPacketChecksum":   "internal/proto/security.go",
 	"NewRollingByte":      "internal/proto/security.go",
 	"NewTestSession":      "internal/gateway/gateway.go",
-	"PackTag":             "internal/combat/paramtags.go",
-	"ReinforceRates":      "internal/refdata/item.go",
 	"ReplyOpcode":         "internal/proto/opcodes.go",
 	"SessionOf":           "internal/trade/trade.go",
 	"SetBlocked":          "internal/account/memstore.go",

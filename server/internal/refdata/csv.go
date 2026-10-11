@@ -111,6 +111,20 @@ var itemCSVColumns = []string{
 	// warehouse's per-item deposit fee (see Item.KeepingFee). 0 on an older
 	// export.
 	"KeepingFee",
+	// Appended later still (round 768): the alchemy columns -- CashItem
+	// (column 7), Param1/Param5 (118/126), Desc128_1/Desc128_4 (119/125) and
+	// MaxMagicOptCount (158); see Item.CashItem. A strict suffix; an older
+	// export reads zeros and empty strings, and every alchemy attempt then
+	// refuses.
+	"CashItem", "Param1", "Param5", "Desc1", "Desc4", "MaxMagicOptions",
+	// Appended later still (round 769): the per-plus increments, itemdata
+	// columns 67, 70, 73, 78, 81, 99, 104 and 115 (see Item.PlusIncPhysDef).
+	// A strict suffix; an older export reads zeros, and a plus adds nothing.
+	"PlusIncPhysDef", "PlusIncParry", "PlusIncPhysAbsorb", "PlusIncMagDef", "PlusIncMagAbsorb",
+	"PlusIncPhysAtk", "PlusIncMagAtk", "PlusIncAttackRate",
+	// Appended later still (round 770): Rarity, _RefObjCommon column 15 (see
+	// Item.Rarity). A strict suffix; an older export reads 0, no Seal item.
+	"Rarity",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -380,6 +394,35 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 72 {
 		it.KeepingFee = int64(parseInt(f[72]))
+	}
+	if len(f) > 78 {
+		it.CashItem = parseBool(f[73])
+		// Dwords, read unsigned and leniently, as ReinforceRate1..3 are.
+		u32 := func(s string) uint32 {
+			v, e := strconv.ParseUint(strings.TrimSpace(s), 10, 32)
+			if e != nil {
+				return 0
+			}
+			return uint32(v)
+		}
+		it.Param1 = u32(f[74])
+		it.Param5 = u32(f[75])
+		it.Desc1 = strings.TrimSpace(f[76])
+		it.Desc4 = strings.TrimSpace(f[77])
+		it.MaxMagicOptions = parseInt(f[78])
+	}
+	if len(f) > 86 {
+		it.PlusIncPhysDef = parseFloat(f[79])
+		it.PlusIncParry = parseFloat(f[80])
+		it.PlusIncPhysAbsorb = parseFloat(f[81])
+		it.PlusIncMagDef = parseFloat(f[82])
+		it.PlusIncMagAbsorb = parseFloat(f[83])
+		it.PlusIncPhysAtk = parseFloat(f[84])
+		it.PlusIncMagAtk = parseFloat(f[85])
+		it.PlusIncAttackRate = parseFloat(f[86])
+	}
+	if len(f) > 87 {
+		it.Rarity = parseInt(f[87])
 	}
 
 	if err != nil {

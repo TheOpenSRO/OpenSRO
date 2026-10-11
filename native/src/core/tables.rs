@@ -740,6 +740,11 @@ const ITEM_COL_REQ_GENDER: usize = 58;
 const ITEM_COL_DURABILITY: usize = 63;
 const ITEM_COL_RANGE: usize = 94;
 const ITEM_COL_PARAM1: usize = 118;
+/// Round 768, the alchemy window's checks: Desc128_1 (119, a stone's option name), Desc128_4 (125,
+/// an attribute stone's class list) and Param5 (126, an elixir's second TypeID3 set).
+const ITEM_COL_DESC1: usize = 119;
+const ITEM_COL_DESC4: usize = 125;
+const ITEM_COL_PARAM5: usize = 126;
 const ITEM_REQ_LEVEL_PAIRS: usize = 4;
 /// The weapon int pairs, in the order `items` stores them: phys atk, mag atk, phys reinforce,
 /// mag reinforce, each (min, max).
@@ -791,6 +796,10 @@ pub struct Items {
     pub criticals: Vec<i64>,
     pub ranges: Vec<i64>,
     pub param1s: Vec<i64>,
+    /// Round 768: Param5, Desc128_1 and Desc128_4 ("" for a short row).
+    pub param5s: Vec<i64>,
+    pub desc1s: Vec<String>,
+    pub desc4s: Vec<String>,
     /// 4 a row: TypeID1..4.
     pub type_ids: Vec<i64>,
     pub cash_items: Vec<i64>,
@@ -903,6 +912,9 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.criticals.push(int_at(cols, ITEM_COL_CRITICAL));
         o.ranges.push(int_at(cols, ITEM_COL_RANGE));
         o.param1s.push(int_at(cols, ITEM_COL_PARAM1));
+        o.param5s.push(int_at(cols, ITEM_COL_PARAM5));
+        o.desc1s.push(cols.get(ITEM_COL_DESC1).map_or("", |c| strip(c)).to_owned());
+        o.desc4s.push(cols.get(ITEM_COL_DESC4).map_or("", |c| strip(c)).to_owned());
         o.defences.extend_from_slice(&defences);
         o.ext_ints.extend(ITEM_EXT_INT_COLS.iter().map(|&c| int_at(cols, c)));
         o.ext_floats.extend_from_slice(&ext_floats);
@@ -1302,6 +1314,9 @@ mod tests {
         cols[54] = "item\\a.ddj".into();
         cols[57] = "0".into();
         cols[7] = "1".into();
+        cols[119] = "MATTR_STR".into();
+        cols[125] = "armor,shield".into();
+        cols[126] = "-1".into();
         cols[65] = "2.5".into();
         cols[66] = "3".into();
         cols[95] = "15".into();
@@ -1323,6 +1338,9 @@ mod tests {
         assert_eq!(it.keeping_fees, vec![3, 0]);
         assert_eq!(&it.type_ids[..4], &[1, 0, 0, 3]);
         assert_eq!(it.cash_items, vec![1, 0]);
+        assert_eq!(it.param5s, vec![-1, 0]);
+        assert_eq!(it.desc1s, vec!["MATTR_STR", ""]);
+        assert_eq!(it.desc4s, vec!["armor,shield", ""]);
         assert_eq!(it.bionics, vec![0, 0]);
         assert_eq!(&it.req_types[..4], &[1, 0, 0, 0]);
         assert_eq!(&it.req_levels[..4], &[5, 0, 0, 0]);

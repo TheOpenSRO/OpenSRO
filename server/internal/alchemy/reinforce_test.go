@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 )
 
 // The clamp's asymmetry is the thing most likely to be "fixed" by a later
@@ -72,80 +74,62 @@ func TestBaseRateSaturatesAtTwelve(t *testing.T) {
 	}
 }
 
-func TestRateAssemblesTheFourTerms(t *testing.T) {
-	// A tier-1 field whose top byte is 30.
-	tiers := [3]uint32{0x1E000000, 0, 0}
-	base := 30
-
+func TestReinforceRateAssemblesTheFourTerms(t *testing.T) {
+	// A tier-1 field whose top byte is 30, and a powder whose top byte is 20.
+	elixir := [3]uint32{0x1E000000, 0, 0}
+	powder := [3]uint32{0x14000000, 0, 0}
+	luck := Option{ID: 1, Tag: combat.PackTag("luck"), Value: 3}
 	for _, c := range []struct {
-		name string
-		in   Inputs
-		want int
+		name   string
+		powder *[3]uint32
+		lucky  bool
+		bonus  int
+		want   int
 	}{
-		{
-			"base alone",
-			Inputs{PlusLevel: 0, Tiers: tiers},
-			base,
-		},
-		{
-			"second element doubles the base",
-			Inputs{PlusLevel: 0, Tiers: tiers, SecondElement: true},
-			base * 2,
-		},
-		{
-			"lucky adds a flat five",
-			Inputs{PlusLevel: 0, Tiers: tiers, Lucky: true},
-			base + LuckyBonus,
-		},
-		{
-			"param 173 adds percentage points",
-			Inputs{PlusLevel: 0, Tiers: tiers, ParamBonus: 25},
-			base + 25,
-		},
-		{
-			"all four together",
-			Inputs{PlusLevel: 0, Tiers: tiers, SecondElement: true, Lucky: true, ParamBonus: 25},
-			base*2 + LuckyBonus + 25,
-		},
-		{
-			"a zero base still floors at ten",
-			Inputs{PlusLevel: 0, Tiers: [3]uint32{0, 0, 0}},
-			MinRate,
-		},
+		{"the elixir alone", nil, false, 0, 30},
+		{"the powder adds its OWN rate, not the elixir's again", &powder, false, 0, 50},
+		{"lucky adds a flat five", nil, true, 0, 30 + LuckyBonus},
+		{"param 173 adds percentage points", nil, false, 25, 55},
+		{"all four together", &powder, true, 25, 30 + 20 + LuckyBonus + 25},
 	} {
-		if got := Rate(c.in); got != c.want {
-			t.Errorf("%s: Rate = %d, want %d", c.name, got, c.want)
+		tg := &Target{}
+		if c.lucky {
+			tg.Options = []Option{luck}
 		}
+		if got := ReinforceRate(tg, elixir, c.powder, c.bonus); got != c.want {
+			t.Errorf("%s: rate = %d, want %d", c.name, got, c.want)
+		}
+		if c.lucky && (len(tg.Options) != 1 || tg.Options[0].Value != 2) {
+			t.Errorf("%s: the Lucky option is %+v, want one charge spent (3 -> 2)", c.name, tg.Options)
+		}
+	}
+	if got := ReinforceRate(&Target{}, [3]uint32{}, nil, 0); got != MinRate {
+		t.Errorf("a zero base: rate = %d, want the floor %d", got, MinRate)
 	}
 }
 
-// Slot 6 returns EARLY when the first contribution already exceeds 99 and a
-// second element is loaded -- skipping both the second contribution and the
-// Lucky bonus. Slot 7's param bonus is a different function and still applies.
-//
-// This is the one branch in the formula that is easy to miss and impossible to
-// guess, so it gets its own test.
-func TestSecondElementEarlyReturnSkipsLuckyButNotTheParam(t *testing.T) {
-	tiers := [3]uint32{0xFF000000, 0, 0} // base 255, well over 99
-	got := Rate(Inputs{PlusLevel: 0, Tiers: tiers, SecondElement: true, Lucky: true})
-	if got != MaxRate {
-		t.Errorf("Rate = %d, want %d", got, MaxRate)
+// Slot 6 returns EARLY when the elixir's rate already exceeds 99 and a powder
+// is loaded -- skipping both the powder and the Lucky bonus (whose charge is
+// then not spent). Slot 7's param bonus is a different function and still
+// applies.
+func TestPowderEarlyReturnSkipsLuckyButNotTheParam(t *testing.T) {
+	luck := func() *Target { return &Target{Options: []Option{{Tag: combat.PackTag("luck"), Value: 1}}} }
+	powder := [3]uint32{0x14000000, 0, 0}
+	tg := luck()
+	if got := ReinforceRate(tg, [3]uint32{0x64000000, 0, 0}, &powder, 0); got != MaxRate {
+		t.Errorf("rate = %d, want %d", got, MaxRate)
 	}
-
-	// Observable through the pre-clamp arithmetic: with a base of 100 the
-	// early return fires, so Lucky must NOT contribute.
-	tiers = [3]uint32{0x64000000, 0, 0} // base 100
-	withLucky := Rate(Inputs{PlusLevel: 0, Tiers: tiers, SecondElement: true, Lucky: true})
-	withoutLucky := Rate(Inputs{PlusLevel: 0, Tiers: tiers, SecondElement: true})
-	if withLucky != withoutLucky {
-		t.Errorf("Lucky changed the rate (%d vs %d) after the early return", withLucky, withoutLucky)
+	if len(tg.Options) != 1 {
+		t.Errorf("the early return spent the Lucky charge: %+v", tg.Options)
 	}
-
-	// Without a second element there is no early return, so Lucky applies --
-	// which is what makes the case above a real branch rather than a clamp.
-	tiers = [3]uint32{0x5A000000, 0, 0} // base 90
-	if got := Rate(Inputs{PlusLevel: 0, Tiers: tiers, Lucky: true}); got != 95 {
-		t.Errorf("Rate = %d, want 95 -- Lucky applies when no second element is loaded", got)
+	// Without a powder there is no early return: at 90 Lucky applies and
+	// its last charge goes.
+	tg = luck()
+	if got := ReinforceRate(tg, [3]uint32{0x5A000000, 0, 0}, nil, 0); got != 95 {
+		t.Errorf("rate = %d, want 95", got)
+	}
+	if len(tg.Options) != 0 {
+		t.Errorf("a one-charge Lucky option should be gone: %+v", tg.Options)
 	}
 }
 

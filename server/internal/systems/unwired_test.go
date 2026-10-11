@@ -54,7 +54,6 @@ var parked = map[string]string{
 	// Recovered rule sets with no system in OpenSRO to attach to. Each one
 	// says so in its own package doc; this is the index of them.
 	"academy":     "recovered training-camp rules; OpenSRO has no training camp",
-	"alchemy":     "recovered reinforce success model; OpenSRO has no reinforcement",
 	"arena":       "recovered battle-arena shape; its own doc opens 'OpenSRO has no arena'",
 	"cos":         "recovered summon rules for pets/carts/mercenaries; OpenSRO summons nothing",
 	"jobs":        "recovered trade-route job rules; OpenSRO has no job system",

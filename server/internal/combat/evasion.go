@@ -18,35 +18,22 @@ import "math"
 // MATTR_EVADE_CRITICAL on a shield, MATTR_BLOCKRATE on a shield against
 // MATTR_EVADE_BLOCK on a weapon.
 //
-// THIS FUNCTION IS CALLED WITH ZERO EVERYWHERE TODAY, and it exists precisely
-// so that stays visible. Round 406 censused the six divisors OpenSRO's three
-// attack directions need and found only TWO justified by the measurement the
-// code cited for all of them:
+// Who opposes what, in OpenSRO's three attack directions:
 //
 //	player -> monster   crit   opposed by the MONSTER's 'evcr'   grounded zero
-//	player -> monster   block  opposed by the PLAYER's  'evbl'   disclosed zero
-//	monster -> player   crit   opposed by the PLAYER's  'evcr'   disclosed zero
+//	player -> monster   block  opposed by the PLAYER's  'evbl'   the worn options
+//	monster -> player   crit   opposed by the PLAYER's  'evcr'   the worn options
 //	monster -> player   block  opposed by the MONSTER's 'evbl'   grounded zero
-//	duel                crit   opposed by the PLAYER's  'evcr'   disclosed zero
-//	duel                block  opposed by the PLAYER's  'evbl'   disclosed zero
+//	duel                crit   opposed by the PLAYER's  'evcr'   the worn options
+//	duel                block  opposed by the PLAYER's  'evbl'   the worn options
 //
 // A GROUNDED zero is measured: GObjMob_PublishStats publishes params 0, 3-12,
 // 23, 24, 27-33 and 140, and neither 56 nor 57 is among them, so a monster
-// genuinely has no evasion term.
-//
-// A DISCLOSED zero is a simplification: OpenSRO has no magic-option ("blue"
-// stat) aggregation at all, so no player can carry 'evcr' or 'evbl' either.
-// That was measured four ways in round 406 -- the TagEvadeCri/TagEvadeBlock
-// constants have no consumer outside the vocabulary table, the raw strings
-// appear only in a PackTag unit test, no function turns an item's magic
-// options into combat stats, and the client never mentions them. It is a real
-// absence, not a missing grep. See TestNoPlayerEvasionSourceExists, which fails
-// the day one appears.
-//
-// The distinction matters because the code previously carried the grounded
-// reason in three comments that covered all six sites. If blues are ever added,
-// four of these call sites become silently wrong; passing the term explicitly
-// makes each one an argument to change rather than a division to remember.
+// genuinely has no evasion term. A player's is the sum of its worn items'
+// 'evbl' / 'evcr' options (Stat_ApplyTaggedModifier 0x498690 writes them into
+// params 56 / 57, clamped at 100), wired in round 769 (session/equipstats.go)
+// -- until then those four were a disclosed zero, because nothing aggregated
+// an item's options.
 func EvadedChance(chance int, evadePercent float64) int {
 	if chance <= 0 {
 		return 0
