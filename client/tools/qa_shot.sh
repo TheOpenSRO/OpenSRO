@@ -26,7 +26,11 @@
 #   --panels "a,b,c"  open these HUD windows (ids from HudPanels.PANELS)
 #   --panels-in-place leave them where they place themselves (the main
 #                     popup's tab side) instead of centring/tiling them
-#   --worldmap [mode] open the world map window; mode "world" or "both"
+#   --worldmap [mode] open the world map window; mode "world" or "both", or
+#                     (round 775) HudWorldmap.qa_apply steps, e.g.
+#                     "sign:2001;click:2001,up" (groups split by ; run a
+#                     second apart; click the world map's sign for map
+#                     2001, the Donwhang cave, then the floor spinner's up)
 #   --gender g        the gender a character created for --server is given
 #                     (china_man or china_woman)
 #   --attack          attack the nearest monster every second (needs --server)

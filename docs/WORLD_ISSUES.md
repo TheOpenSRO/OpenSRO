@@ -7477,6 +7477,99 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventy-fifth round: the world map's dungeons -- click a dungeon on the world map to open its floors, and M in a dungeon shows the player's floor
+
+The user: "fix the map for dungeons. You should be able to click the dungeon and open up the
+dungeon maps, etc." UI lane, client only. Labels: READ (sro_client.exe, md5
+2a5794b72c90908d945be8b3f3f2edd4), MEASURED (the retail archive on the render box, nothing
+committed), INFERRED, OURS. The full reading is `docs/protocol/WORLDMAP_FORMAT.md`, "Dungeons on the
+world map"; `docs/protocol/dungeon.md` section 6 points there.
+
+- **How a dungeon appears on the field map (READ).** CNIFWorldMap draws the signs of
+  `worldmap_localinfo.txt` (refdata type 4, parser 0x96f280; the loader skips service-0 rows,
+  0x9534c4) on every map: `0x6210b0(id)` lists the rows whose parent column is the map shown and
+  places a world-map sign at `x + (region - left) * 32`, `y + (top - region) * 32`. MEASURED: two of
+  the world map's 58 picture signs are the dungeons' `xy_dungeon.ddj` -- link 2001 (the Donwhang
+  cave's 1F) and 2005 (the Qin-Shi tomb's B1) -- beside the city, fortress, ferry and shaman icons
+  and 136 place-name texts (two more signs, in the far west, link 2017, the Egyptian temple's
+  floor). A press records the link of the first picture sign under the mouse
+  (+0x9800, 0x6232e4), the release opens it if the first picture sign under the mouse has the same
+  link: up to 2000 a local map (0x622b60(1, id)), above 2000 a dungeon floor (0x6217e0), never a
+  fortress (0x6238e2); then the view centres (0x61cc30).
+- **A floor (READ, 0x6217e0).** Mode 2; the `Dungeonmap` row's tiles `<path><left+a>x<top-b>.ddj`,
+  `scale * 256` a side (0x6196d0); the box `(left-135)*192 .. ((right-135)*3+3)*64` by
+  `(bottom-92)*192 .. ((top-92)*3+3)*64`; the floor spinner (record 4) set to the row's floor and
+  shown when the dungeon has more than one; the floor's own signs; the caption 0x6145e0 -- the zone
+  code's text and, with the player in a dungeon, " - " and the room's text; the world button
+  shown, which goes back (0x6231e0). Columns 1 and 2 of the `Dungeonmap` row (the dungeon's name and
+  its F/B letter) are read after all (0x62c1eb, 0x62c20b; the round-599 notes called them
+  discarded): the spinner (0x60f080 up = button 22, 0x60efc0 down = 24, label 27) steps between
+  the rows of the same name (0x621ca0 -> 0x6143b0), spelled `1F` / `B2` (0x60edd0).
+- **In a dungeon (READ).** With auto-move on, M shows the row whose zone code is the region id and
+  whose floor label is the text of the player's floor name (0x623060 -> 0x614280 -> 0x612920). The
+  arrow is `px = (x/10 + (count_x/2)*192 - (maxX-minX)) / upp_x + draw_x`,
+  `py = draw_y - ((0x80-92)*192 + z/10 - minY) / upp_y` of the `.dof`-space position (0x60f660),
+  drawn only on the player's own floor (0x614890); on a field map it is drawn at the dungeon's
+  field point from `worldmap_instanceinfo.txt` (0x60fa90; loader 0x9536a0 expands each row's
+  region box).
+- **A quirk kept (READ):** 0x6217e0 sets the spinner through its own step functions, and a step
+  turns auto-move off with the stale flag -- so showing any floor turns auto-move off, and the map
+  stays on that floor until button 20 is pressed twice. OpenSRO does the same; it follows only
+  while the window is shown (the client's follow is its render's and ShowWindow's), so entering a
+  dungeon with the map closed does not use the follow up.
+- **MEASURED data oddity:** textzonename names zone 32769 -- the cave's four floors -- "Job Temple",
+  so the cave's caption reads "Job Temple" (as the original's would with this archive).
+
+**What changed (client).**
+- `WorldmapInfoReader`: the Dungeonmap row's name and layer; `box()`, `units_per_pixel()`,
+  `tile_side()`, `tile_path()`, `floor_label()`, `pixel_for_dungeon()`; the table's
+  `dungeon_by_id`, `dungeon_walk` (2001 up to the first missing id), `dungeon_for` (0x614280),
+  `dungeon_floor` (0x6143b0).
+- New `WorldmapLocalInfoReader` (worldmap_localinfo.txt) and `WorldmapInstanceInfoReader`
+  (worldmap_instanceinfo.txt, with the two fallback constants of 0x610c5e).
+- `HudWorldmap`: the three modes; the signs on every map (pictures, and texts in their font
+  index and colour); the click on a world-map sign; `show_dungeon`; the floor spinner with
+  `str_slot_02.ddj` behind it; the dungeon caption; 0x616870's dungeon branches;
+  `update_player_dungeon(region id, dungeon pos, facing, floor key, room key)`; `player_pixel()`;
+  the text lookups (textzonename and textdata_object, read on first use, "" on a miss as
+  0x8c9b20); `qa_apply` steps for `OPENSRO_QA_WORLDMAP` (`sign:`, `click:`, `dungeon:`, `up`,
+  `down`, groups split by `;` a second apart). With the sign table the world map no longer draws
+  the round-599 name plates (OURS stand-ins for these icons); without it they stay.
+- `World3D.gd` (UI wiring only): `_refresh_dungeon_minimap` calls `update_player_dungeon` on the
+  field's beat (every frame open, every tenth hidden), and `OPENSRO_QA_WORLDMAP`'s other values go
+  to `qa_apply`.
+- MEASURED cost: worldmap_localinfo 8 ms to parse, textzonename 11 ms, textdata_object 49 ms
+  (GDScript, no native library), all once, when the window is built.
+
+**Checks.**
+- `remote_godot.sh check`: 724 scripts and 9 scenes, ALL LOAD. `remote_godot.sh tests`: 277
+  suites, 0 failing -- including the new `worldmap_dungeon_reader_test.gd` (the row columns, labels,
+  box, scale, tiles, the 0x60f660 pixel, the walks, both new readers) and
+  `worldmap_dungeon_test.gd` (the window: signs, the click and the clicks that are not one, the
+  floor shown, the spinner to 4F and back, the world button, a one-floor dungeon, auto-move turned
+  off, the player's floor, arrow and room, the field point). Synthetic fixtures only.
+- MEASURED with a throwaway probe of the box's archive through the new readers: 25 Dungeonmap
+  rows, the walk from 2001 has no gap; on all 25 count x side is the draw size and `count_x / 2`
+  is `128 - left`; textzonename gives every `.dof` floor key the label of its row, so
+  `dungeon_for(0x8001, "3F")` is 2003, `(0x8006, "B2")` 2006, `(0x8002, "B6")` 2010; the
+  spinner's `dungeon_floor(2005, 6)` is 2010; the instance points of 0x8001 and 0x8002..0x8007
+  land inside the two dungeon icons.
+- QA renders on the box (Forward+, RX 7600), for a human only: in the cave
+  (`OPENSRO_QA_ZONE=dungeon/32769@1011,862`, M open) the log reads `shows dungeon 2001: mode=2
+  map=2001 caption='Job Temple - 1F-Path' floor=shown '1F' auto=false marker=(391,141)` -- the
+  pixel the formula gives for (1011, 862); from Jangan
+  (`--worldmap 'sign:2001;click:2001;up;sign:2005'`) the world map with the cave's icon, the cave's
+  1F with its "DonWhang cave Exit" sign, 2F after up, and the tomb's icon. No SCRIPT ERROR.
+- The perf gate is not run: a UI round (the world's per-frame code gained one call, made only in
+  a dungeon).
+
+**Open.** The party's marks on a floor (0x61eec0 matches members by the row's dungeon id and, in
+the cave, by height bands 70 / 210 / 350, 0x610ed0); the signs' tooltips (0x614950, 0x613260); the
+text signs' style bytes; the spinner label's 0x4774f0(5, 2); the column order of
+worldmap_instanceinfo's parser past the box (INFERRED from the header); what makes the client load
+that table (vslot 0xb8 of +0x4c4 at 0x844cd0).
+
+
 ## Seven-hundred-and-seventy-third round: dungeons and walk-in teleports
 
 The user: "let's get dungeons working and all other teleporters. Town and NPCs already work but

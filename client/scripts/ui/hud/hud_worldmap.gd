@@ -71,6 +71,36 @@ class_name HudWorldmap
 ## which region, the box each map covers and so the scale, and the player
 ## marker `interface\minimap\mm_sign_character.ddj` -- one of the textures
 ## CNIFWorldMap::vslot_040 (0x6160d0) loads.
+##
+## **Dungeons (round 775, every item READ unless marked).** The window has
+## three modes (+0x97d0): 0 the world map, 1 a local map, 2 a dungeon floor
+## (a `Dungeonmap` row, ids from 2001, +0x99a0).
+## - The world map carries signs from `worldmap_localinfo.txt`
+##   (WorldmapLocalInfoReader; 0x6210b0 lists the signs of the map shown),
+##   among them the two dungeon icons `xy_dungeon.ddj`. A press and a release
+##   on the same sign with a link (vslot_017 0x623220, WM_LBUTTONDOWN records
+##   it at +0x9800, WM_LBUTTONUP compares) opens that map: below 2001 a local
+##   map (0x622b60), from 2001 a dungeon floor (0x6217e0); a fortress
+##   (1001..1999) opens nothing. Then the view is centred (0x61cc30).
+## - A floor (0x6217e0): its tiles `<path><left + a>x<top - b>.ddj`, a side
+##   of `scale * 256` each (0x6196d0); its box and scale from its region
+##   bounds; the floor spinner 4 set to the row's floor and shown when the
+##   dungeon has more than one; the caption 0x6145e0; the floor's own signs.
+## - The spinner (0x60f210, 0x60f080 up = button 22, 0x60efc0 down = 24,
+##   label 27 by 0x60edd0): a press turns auto-move off with the stale flag
+##   (as a press on the map does), steps the floor and greys the button at
+##   its end; the render's tail (0x621ca0) then shows the row of the same
+##   dungeon name with that floor (0x621c60 -> 0x6143b0). **0x6217e0 steps
+##   the spinner through the same two functions, so showing any floor turns
+##   auto-move off** -- the map then stays on that floor until button 20 is
+##   pressed twice (0x616870's stale flag takes the first press back).
+## - In a dungeon (bit 15 of the player's region), auto-move picks the floor
+##   (0x623060 -> 0x614280): the row whose zone code is the region id and
+##   whose floor label (`1F`, `B2`) is the text of the player's floor name.
+##   The arrow (0x60f660) is drawn on a floor only when that floor is the
+##   player's (0x614890 -> 0x612920); on a field map it is drawn at the
+##   dungeon's field point from `worldmap_instanceinfo.txt` (0x60fa90,
+##   WorldmapInstanceInfoReader).
 
 const TwoDtBuilder = preload("res://scripts/ui/twodt_builder.gd")
 
@@ -91,6 +121,33 @@ const ID_SIDE_TAB := 13
 const ID_SIDE_BUTTON := 15
 const ID_SIZE := 7
 const ID_FLOOR := 4
+## The spinner's children (0x60f210: GetChild 0x1b, 0x18, 0x16; the message
+## map at 0xeb5468 sends 0x18 to 0x60efc0 and 0x16 to 0x60f080, READ).
+const ID_FLOOR_UP := 22
+const ID_FLOOR_DOWN := 24
+const ID_FLOOR_LABEL := 27
+## 0x60f210 gives the spinner this picture (0xe19b90, vslot 0x34 of its own
+## texture object at +0x84). That it fills the spinner's rect is INFERRED.
+const FLOOR_BACK_DDJ := "interface\\store\\str_slot_02.ddj"
+
+## The three modes (+0x97d0).
+const MODE_WORLD := 0
+const MODE_LOCAL := 1
+const MODE_DUNGEON := 2
+
+## The caption's join before a room name (0x6145e0 -> " - " at 0xd99114).
+const ROOM_JOIN := " - "
+## A type-1 sign's decorations by its link column (0x6210b0: 1 -> "<-" at
+## 0xd99c90 before the text, 2 -> "->" at 0xd99c88 after it; which side each
+## goes is INFERRED from the two concatenations' argument order).
+const SIGN_PREFIX_1 := "<-"
+const SIGN_SUFFIX_2 := "->"
+
+## The text tables a dungeon caption and a sign's name are looked up in:
+## the client's TextStringManager holds them all in one map (0x8cac30), and
+## a miss gives an empty string (0x8c9b20 -> 0xec3b70; READ).
+const TEXT_ZONE_PATH := "server_dep\\silkroad\\textdata\\textzonename.txt"
+const TEXT_OBJECT_PATH := "server_dep\\silkroad\\textdata\\textdata_object.txt"
 
 ## The map area (0x60f4d0): the window's own position plus (6, 0x22), 0x280 x
 ## 0x180 in the big size (+0x97cc = 0) and 0x100 x 0x100 in the small one.
@@ -160,6 +217,14 @@ const TILE_MARGIN := 128.0
 
 ## A table to use instead of the archive's (tests; set before build_worldmap).
 var map_table: WorldmapInfoReader.ParsedTable
+## The signs and the instance points to use instead of the archive's (tests;
+## set before build_worldmap). Left null with no archive, the world map has
+## no signs and keeps the round-599 name plates (OURS).
+var local_table: WorldmapLocalInfoReader.Table
+var instance_table: WorldmapInstanceInfoReader.Table
+## Text tables to look keys up in instead of the archive's textzonename and
+## textdata_object (tests). A key the builder's own table has is found too.
+var text_tables: Array = []
 
 var _twodt: TwoDtBuilder
 var _file: TwoDtReader.TwoDtFile
@@ -199,6 +264,35 @@ var _small := false
 ## +0x7b0: the first ShowWindow(1) centres the map (0x6246c8).
 var _shown_once := false
 
+## +0x97d0: which kind of map is shown.
+var _mode := MODE_WORLD
+## +0x99a0: the floor shown in MODE_DUNGEON.
+var _dungeon_map: WorldmapInfoReader.DungeonMapInfo
+## The spinner (0x60ee90..0x60ef00): its value +0x35c (0-based floor), its
+## top +0x354 (floors - 1), its bottom +0x358 (0), its letter +0x360 and its
+## spelling +0x364 (2 "%d%c", 1 "%c%d").
+var _floor_index := 0
+var _floor_max := 0
+var _floor_letter := ""
+var _floor_mode := 0
+## +0x9800: the link of the sign a left press landed on (0 none).
+var _pressed_link := 0
+## The signs of the map shown, as built: [Sign, Control] pairs, in file order.
+var _signs: Array = []
+var _sign_layer: Control
+var _signs_loaded := false
+var _instances_loaded := false
+## The player in a dungeon: its region id (bit 15 set), its `.dof`-space
+## position, and its block's floor and room name keys. -1 in the field.
+var _player_rid := -1
+var _player_dungeon_pos := Vector3.ZERO
+var _player_floor_key := ""
+var _player_room_key := ""
+var _zone_texts: UiTextTable
+var _object_texts: UiTextTable
+var _zone_texts_loaded := false
+var _object_texts_loaded := false
+
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
 
@@ -215,6 +309,8 @@ func build_worldmap() -> bool:
 	if _table == null or _table.world() == null:
 		return false
 
+	_load_signs()
+	_load_instances()
 	_twodt = TwoDtBuilder.new(_builder)
 	panel_root = _twodt.build(_file, WORLDMAP_2DT)
 	var window_size := Vector2(_file.root().rect.size)
@@ -223,6 +319,7 @@ func build_worldmap() -> bool:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(panel_root)
 	_build_map_area()
+	_build_floor_spinner()
 
 	_apply_create_state()
 	_add_title_bar("")
@@ -244,6 +341,64 @@ func _load_table() -> WorldmapInfoReader.ParsedTable:
 	if entry == null:
 		return null
 	return WorldmapInfoReader.parse(archive.read_file(entry))
+
+## `worldmap_localinfo.txt` (WorldmapLocalInfoReader), unless a test set
+## `local_table`. Missing, the world map shows no signs.
+func _load_signs() -> void:
+	if _signs_loaded:
+		return
+	_signs_loaded = true
+	if local_table != null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	var entry := ObjectLoader.find_file(archive, WorldmapLocalInfoReader.TABLE_PATH)
+	if entry != null:
+		local_table = WorldmapLocalInfoReader.parse(archive.read_file(entry))
+
+## `worldmap_instanceinfo.txt` (WorldmapInstanceInfoReader), unless a test
+## set `instance_table`. The client loads it only when vslot 0xb8 of
+## +0x4c4 returns 0 (Client_LoadAllRefData 0x844cd0; what that asks is not
+## traced); missing, the two constants of 0x610c5e stand in (READ).
+func _load_instances() -> void:
+	if _instances_loaded:
+		return
+	_instances_loaded = true
+	if instance_table != null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	var entry := ObjectLoader.find_file(archive, WorldmapInstanceInfoReader.TABLE_PATH)
+	if entry != null:
+		instance_table = WorldmapInstanceInfoReader.parse(archive.read_file(entry))
+
+## The floor spinner (record 4) as 0x60f210 sets it up: its picture behind
+## its children, the label 27, and the two buttons wired to 0x60f080 (22)
+## and 0x60efc0 (24).
+func _build_floor_spinner() -> void:
+	var spinner := _at(ID_FLOOR)
+	if spinner == null:
+		return
+	var back_tex := _builder.load_texture(FLOOR_BACK_DDJ)
+	if back_tex != null:
+		var back := TextureRect.new()
+		back.name = "FloorBack"
+		back.texture = back_tex
+		back.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		back.stretch_mode = TextureRect.STRETCH_SCALE
+		back.size = spinner.size
+		back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		spinner.add_child(back)
+		spinner.move_child(back, 0)
+	var up := TwoDtBuilder.child(spinner, ID_FLOOR_UP) as BaseButton
+	if up != null:
+		up.pressed.connect(floor_up)
+	var down := TwoDtBuilder.child(spinner, ID_FLOOR_DOWN) as BaseButton
+	if down != null:
+		down.pressed.connect(floor_down)
+	_refresh_floor_label()
 
 ## The map area and its corner pieces, over the frame and under the file's
 ## own controls: the class's render (vslot_013, 0x624380) draws the frame
@@ -270,6 +425,12 @@ func _build_map_area() -> void:
 		_marker.size = _marker.texture.get_size()
 		_marker.pivot_offset = _marker.size / 2.0
 	_marker.visible = false
+	# The signs (round 775), under the party's marks and the marker: the
+	# render (0x61eec0) draws the map's signs before them.
+	_sign_layer = Control.new()
+	_sign_layer.name = "Signs"
+	_sign_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.add_child(_sign_layer)
 	# The party's marks (round 717) go under the player's marker, as
 	# FUN_0061eec0 draws them first.
 	make_party_layer(_canvas, _builder.load_texture(PartyMapMarks.WORLD_DOT_DDJ))
@@ -351,14 +512,16 @@ func set_auto_move(on: bool) -> void:
 func is_auto_move() -> bool:
 	return _auto
 
-## 0x616870. The spinner is hidden first; outside the teleport-selection mode
-## (+0x9990 == 0), a stale flag with auto-move on turns auto-move off and
-## clears the flag (the press that set it is taken back), and with auto-move
-## already off the flag is left set (0x61689b jumps past the clear); then
-## button 20 gets
-## the look and hover text of the state. In manual on a local map the world
-## button is shown, and on a fortress map it is hidden. (Its dungeon branches
-## are not built: this client draws no dungeon floor.)
+## 0x616870 (asm 0x616870..0x616a16). The spinner is hidden first; outside
+## the teleport-selection mode (+0x9990 == 0), a stale flag with auto-move on
+## turns auto-move off and clears the flag (the press that set it is taken
+## back), and with auto-move already off the flag is left set (0x61689b
+## jumps past the clear); then button 20 gets the look and hover text of the
+## state. Auto-move on a dungeon floor shows the spinner when the dungeon has
+## more than one floor. Manual: a local map shows the world button; a
+## dungeon floor in the big size shows it and the spinner (more than one
+## floor), in the small size hides both. A fortress map hides the world
+## button.
 func _refresh_auto_button() -> void:
 	_set_visible(ID_FLOOR, false)
 	if not _teleport_select and _auto_art_stale and _auto:
@@ -369,8 +532,14 @@ func _refresh_auto_button() -> void:
 		btn.tooltip_text = _builder.resolve_text(AUTO_TIP if _auto else MANUAL_TIP)
 		if btn is TextureButton:
 			_set_button_art(btn as TextureButton, AUTO_DDJ if _auto else MANUAL_DDJ)
-	if not _auto and _current != null and not _is_world(_current):
+	if _auto:
+		if _mode == MODE_DUNGEON and _dungeon_map != null:
+			_set_visible(ID_FLOOR, _dungeon_map.total_layers > 1)
+	elif _mode == MODE_LOCAL:
 		_set_visible(ID_WORLD, true)
+	elif _mode == MODE_DUNGEON:
+		_set_visible(ID_WORLD, not _small)
+		_set_visible(ID_FLOOR, not _small and _dungeon_map != null and _dungeon_map.total_layers > 1)
 	if _current != null and _is_fort(_current):
 		_set_visible(ID_WORLD, false)
 
@@ -402,7 +571,8 @@ func _on_auto_pressed() -> void:
 ## The world button (id 6 -> 0x6231e0), and the QA hook's "world" mode: with
 ## auto-move on, it is turned off and the stale flag set (button 20 keeps its
 ## look); then the whole-world map (0x622b60(0, 0)), centred on the player
-## (0x61cc30), and the floor spinner hidden.
+## (0x61cc30), and the floor spinner hidden. From a dungeon floor this is the
+## way back to the world map.
 func show_world() -> void:
 	if _auto:
 		_auto_art_stale = true
@@ -454,7 +624,9 @@ func toggle_size() -> void:
 	var close := get_node_or_null("CloseButton") as Control
 	if close != null:
 		close.position = _close_position()
-	if not _small:
+	# 0x616a20: the big size refreshes any caption, the small one a dungeon
+	# floor's (id above 2000 -> 0x6145e0).
+	if not _small or _mode == MODE_DUNGEON:
 		_refresh_caption()
 	if _auto:
 		_centre_on_player()
@@ -501,25 +673,42 @@ func _on_show() -> void:
 	_set_guide_open(false)
 
 ## The render's auto-move step (0x6243f8..0x62452a): the player's map, then
-## the view centred on the player.
+## the view centred on the player. In a dungeon the player's map is the
+## floor 0x614280 picks (the region id and the floor's text), or the world
+## map when no row is that floor (0x623060).
 func _follow_player() -> void:
-	if _table != null and _player_region.x >= 0:
+	if _table != null and in_dungeon():
+		var id := _table.dungeon_for(_player_rid, _text(_player_floor_key))
+		if id >= WorldmapInfoReader.FIRST_DUNGEON_ID:
+			if _mode != MODE_DUNGEON or _dungeon_map == null or _dungeon_map.id != id:
+				show_dungeon(id)
+		else:
+			_show_map(_table.world())
+	elif _table != null and _player_region.x >= 0:
 		var local := _table.local_for_region(_player_region.x, _player_region.y)
 		_show_map(local if local != null else _table.world())
 	_centre_on_player()
 	_refresh_tiles()
 	_place_marker()
 
-## Switches the interior to a map: the world grid, or a single image.
+## Throws the tiles of the map shown away and sizes the canvas for the next.
+func _clear_map(draw_size: Vector2i) -> void:
+	for node in _tiles.values():
+		node.queue_free()
+	_tiles.clear()
+	_canvas.size = Vector2(draw_size)
+	_canvas.position = Vector2.ZERO
+
+## Switches the interior to a map: the world grid, or a single image
+## (0x622b60: the mode, the map, the caption, the box and scale, the signs,
+## and the spinner hidden at its end).
 func _show_map(info: WorldmapInfoReader.MapInfo) -> void:
 	if info == null or info == _current:
 		return
 	_current = info
-	for node in _tiles.values():
-		node.queue_free()
-	_tiles.clear()
-	_canvas.size = Vector2(info.draw_size)
-	_canvas.position = Vector2.ZERO
+	_mode = MODE_WORLD if _is_world(info) else MODE_LOCAL
+	_dungeon_map = null
+	_clear_map(info.draw_size)
 
 	if not info.is_tiled():
 		var tex := _map_texture(_builder.load_texture(info.addr), info)
@@ -535,12 +724,53 @@ func _show_map(info: WorldmapInfoReader.MapInfo) -> void:
 			_canvas.move_child(whole, 0)
 			_tiles[info.addr] = whole
 
+	_build_signs(info.id)
 	_build_place_labels(info)
 	_refresh_caption()
 	_refresh_world_button()
+	_set_visible(ID_FLOOR, false)
 	_centre_on_player()
 	_refresh_tiles()
 	_place_marker()
+	_qa_note("map %d" % info.id)
+
+## NIFWorldMap 0x6217e0: dungeon floor `id` (a Dungeonmap row) shown in mode
+## 2 -- the caption (0x6145e0), the tiles, the box and scale, the spinner
+## set to the row's floor through its own step functions (which turn
+## auto-move off, see the header), the tile quads (0x6196d0), the floor's
+## signs (0x6210b0) and the spinner shown when the dungeon has more than one
+## floor. Returns false for an id with no row (the client asserts "Illigal
+## Dungeon Map Index" there and shows nothing).
+func show_dungeon(id: int) -> bool:
+	var d := _table.dungeon_by_id(id) if _table != null else null
+	if d == null:
+		return false
+	_mode = MODE_DUNGEON
+	_dungeon_map = d
+	_current = null
+	_clear_map(d.draw_size)
+	_refresh_caption()
+	# 0x60ee90 (top = floors - 1), 0x60eef0 (the letter), 0x60ef00 (the
+	# spelling), 0x60eed0(0), then one step up, one down, and up until the
+	# row's own floor.
+	_floor_max = d.total_layers - 1
+	_floor_letter = d.layer.substr(0, 1)
+	_floor_mode = d.spinner_mode()
+	_floor_index = 0
+	_floor_step(1)
+	_floor_step(-1)
+	var n := _floor_index + 1
+	while n < d.layers:
+		_floor_step(1)
+		n += 1
+	_build_signs(id)
+	_build_place_labels(null)
+	_set_visible(ID_FLOOR, d.total_layers > 1)
+	_centre_on_player()
+	_refresh_tiles()
+	_place_marker()
+	_qa_note("dungeon %d" % id)
+	return true
 
 func _is_world(info: WorldmapInfoReader.MapInfo) -> bool:
 	return _table != null and info == _table.world()
@@ -549,8 +779,12 @@ static func _is_fort(info: WorldmapInfoReader.MapInfo) -> bool:
 	return info != null and info.id >= FORT_FIRST and info.id <= FORT_LAST
 
 ## 0x612fd0: the world map hides the world button; a local map shows it,
-## except a fortress map, which hides it.
+## except a fortress map, which hides it. A dungeon floor shows it
+## (0x6145e0's ShowWindow(1) on +0x9818, 0x614840).
 func _refresh_world_button() -> void:
+	if _mode == MODE_DUNGEON:
+		_set_visible(ID_WORLD, true)
+		return
 	if _current == null:
 		return
 	_set_visible(ID_WORLD, not _is_world(_current) and not _is_fort(_current))
@@ -563,12 +797,124 @@ func _refresh_world_button() -> void:
 ## caption goes on to name the occupying guild (0x61312c..0x6131c9); this
 ## client does not know it, so that part is not drawn.
 func _refresh_caption() -> void:
+	if _mode == MODE_DUNGEON:
+		_refresh_dungeon_caption()
+		return
 	if _current == null:
 		return
 	var name_text := _builder.resolve_text(_current.name_key)
 	if not _is_world(_current):
 		name_text = _builder.resolve_text(LOCAL_CAPTION) + CAPTION_JOIN + name_text
 	set_title(name_text)
+
+## CNIFWorldMap 0x6145e0 (asm 0x6145e0..0x614886), a dungeon floor's
+## caption: the zone code as "%d" looked up in the text tables (0x8c9c30),
+## that text written with "%s" and looked up again, and the caption the
+## second lookup followed by the first -- a miss gives "", so it reads as the
+## zone's name. Then, with the player in a dungeon, and either auto-move on
+## or this floor the player's (0x612920), " - " and the text of the player's
+## room name (0x9d7830). The world button is shown.
+##
+## MEASURED: the archive's textzonename names zone 32769 (the Donwhang cave,
+## floors 2001..2004) "Job Temple"; the client shows what the table says.
+func _refresh_dungeon_caption() -> void:
+	if _dungeon_map == null:
+		return
+	var first := _text(str(_dungeon_map.zone_code))
+	var caption := _text(first) + first
+	if _dungeon_map.id > 2000 and in_dungeon():
+		if _auto or _dungeon_map.floor_label() == _text(_player_floor_key):
+			if _player_room_key != "":
+				caption += ROOM_JOIN + _text(_player_room_key)
+	set_title(caption)
+	_refresh_world_button()
+
+## The signs of map `id` (NIFWorldMap 0x6210b0, READ; WorldmapLocalInfoReader
+## has the columns): a type-2 sign is its picture at its quad, a type-1 sign
+## its text centred on its anchor, in the table's order. Each is kept with
+## its sign for the click test.
+func _build_signs(id: int) -> void:
+	_signs.clear()
+	if _sign_layer == null:
+		return
+	for c in _sign_layer.get_children():
+		_sign_layer.remove_child(c)
+		c.queue_free()
+	if local_table == null or _table == null or _table.world() == null:
+		return
+	var world := _table.world()
+	for sign: WorldmapLocalInfoReader.Sign in local_table.for_map(id):
+		var node: Control = null
+		var at := Vector2(sign.anchor(world.region_left, world.region_top))
+		if sign.type == WorldmapLocalInfoReader.TYPE_PICTURE:
+			var tex := _builder.load_texture(sign.text.replace("/", "\\"))
+			if tex == null:
+				continue
+			var pic := TextureRect.new()
+			pic.texture = tex
+			pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			pic.stretch_mode = TextureRect.STRETCH_SCALE
+			pic.position = at
+			pic.size = Vector2(sign.size)
+			node = pic
+		elif sign.type == WorldmapLocalInfoReader.TYPE_TEXT:
+			node = _sign_label(sign, at)
+		if node == null:
+			continue
+		node.name = "Sign%d" % sign.id
+		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_sign_layer.add_child(node)
+		_signs.append([sign, node])
+	_canvas.move_child(_sign_layer, -1)
+	if _party_layer != null:
+		_canvas.move_child(_party_layer, -1)
+	if _marker != null:
+		_canvas.move_child(_marker, -1)
+
+## A type-1 sign: its key's text (with "<-" before it for link 1 and "->"
+## after for link 2), in the font its `h` column indexes (0x6210b0 passes
+## +0x94 to the font table 0xba5460; INFERRED the same index as a .2dt
+## record's font), its colour, centred on the anchor's x with its top at the
+## anchor's y. Its shadow / bold / blur bytes (0x8b44b0 / 0x8b4560 style
+## bits) are not drawn (OPEN).
+func _sign_label(sign: WorldmapLocalInfoReader.Sign, at: Vector2) -> Control:
+	var text := _text(sign.text, true)
+	if text == "":
+		return null
+	if sign.link == 1:
+		text = SIGN_PREFIX_1 + text
+	elif sign.link == 2:
+		text = text + SIGN_SUFFIX_2
+	var label := Label.new()
+	label.text = text
+	var index := clampi(sign.size.y, 0, UiBuilder.FONT_SIZES.size() - 1)
+	var font := _builder.font_at(index)
+	if font != null:
+		label.add_theme_font_override("font", font)
+	label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[index])
+	label.add_theme_color_override("font_color", sign.color)
+	label.size = label.get_minimum_size()
+	label.position = Vector2(at.x - floorf(label.size.x / 2.0), at.y)
+	return label
+
+## The first type-2 sign whose quad holds `at` (canvas pixels), or null --
+## the press and release tests of 0x623220 stop at the first hit.
+func sign_at(at: Vector2) -> WorldmapLocalInfoReader.Sign:
+	if _table == null or _table.world() == null:
+		return null
+	var world := _table.world()
+	for pair in _signs:
+		var sign: WorldmapLocalInfoReader.Sign = pair[0]
+		if sign.type == WorldmapLocalInfoReader.TYPE_PICTURE and sign.hit(world.region_left, world.region_top, at):
+			return sign
+	return null
+
+## The signs built for the map shown (tests, the QA hook).
+func signs() -> Array:
+	var out: Array = []
+	for pair in _signs:
+		out.append(pair[0])
+	return out
 
 ## On the whole-world view, a clickable name plate for every local map the
 ## table carries that falls inside it -- the cities, the fortresses, the
@@ -590,6 +936,12 @@ func _build_place_labels(info: WorldmapInfoReader.MapInfo) -> void:
 		_canvas.remove_child(old)
 		old.queue_free()
 	if _table == null or info != _table.world():
+		return
+	if local_table != null:
+		# Round 775: the world map has its authored signs -- the city,
+		# fortress and dungeon icons of worldmap_localinfo.txt, clickable as
+		# the client's are -- so the plates, which stood in for them, are not
+		# drawn. They stay for an archive without the table.
 		return
 	var layer := Control.new()
 	layer.name = "PlaceLabels"
@@ -697,6 +1049,9 @@ func _on_plate_input(event: InputEvent, info: WorldmapInfoReader.MapInfo) -> voi
 ## map is 363 tiles; at 128x128 apiece that is a lot of texture to hold for
 ## a window whose viewport shows about fifteen of them.
 func _refresh_tiles() -> void:
+	if _mode == MODE_DUNGEON:
+		_refresh_dungeon_tiles()
+		return
 	if _current == null or not _current.is_tiled():
 		return
 	var tile := Vector2(_current.texture_size)
@@ -730,6 +1085,47 @@ func _refresh_tiles() -> void:
 			_canvas.add_child(tr)
 			_canvas.move_child(tr, 0)
 			_tiles[path] = tr
+
+## A dungeon floor's tiles that overlap what can be seen: column `a`, row
+## `b` is `<path><left + a>x<top - b>.ddj` at `(a, b) * side`, `side` the
+## scale times 256 (0x6217e0's names, 0x6196d0's quads; READ), each drawn
+## whole (the quads' UVs are 0..1, 0x6217e0).
+func _refresh_dungeon_tiles() -> void:
+	if _dungeon_map == null:
+		return
+	var side := _dungeon_map.tile_side()
+	if side <= 0.0:
+		return
+	var tile := Vector2(side, side)
+	var span := visible_tile_range(_canvas.position, _viewport.size, tile,
+		_dungeon_map.texture_count.x, _dungeon_map.texture_count.y)
+	for a in range(span.position.x, span.end.x):
+		for b in range(span.position.y, span.end.y):
+			var path := _dungeon_map.tile_path(a, b)
+			if _tiles.has(path):
+				continue
+			var tex := _builder.load_texture(path)
+			if tex == null:
+				_tiles[path] = _placeholder(Vector2(a, b) * tile, tile)
+				continue
+			var tr := TextureRect.new()
+			tr.name = "Tile_%d_%d" % [a, b]
+			tr.texture = tex
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_SCALE
+			tr.position = Vector2(a, b) * tile
+			tr.size = tile
+			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_canvas.add_child(tr)
+			_canvas.move_child(tr, 0)
+			_tiles[path] = tr
+
+## The tile paths built so far (tests).
+func tile_paths() -> PackedStringArray:
+	var out := PackedStringArray()
+	for k in _tiles:
+		out.append(String(k))
+	return out
 
 ## The part of a map image that is actually map.
 ##
@@ -798,6 +1194,9 @@ func _placeholder(at: Vector2, tile: Vector2) -> Control:
 ## arrow_rotation has the reading. It was never turned before (round 630).
 func update_player(region_x: int, region_y: int, local_pos: Vector3,
 		local_facing: Vector2 = Vector2.ZERO) -> void:
+	_player_rid = -1
+	_player_floor_key = ""
+	_player_room_key = ""
 	if _marker != null and not local_facing.is_zero_approx():
 		_marker.rotation = HudMinimap.arrow_rotation(local_facing)
 	_player_world = Vector2(
@@ -810,6 +1209,47 @@ func update_player(region_x: int, region_y: int, local_pos: Vector3,
 		_follow_player()
 	else:
 		_place_marker()
+
+## The player in a dungeon (round 775; World3D's dungeon minimap step calls
+## this instead of update_player): `region_id` the dungeon's region id (bit
+## 15 set, 0x8001 the Donwhang cave), `dungeon_pos` the player's position in
+## the `.dof`'s own space (DungeonWorld.to_dungeon -- the client's +0x80 /
+## +0x84 / +0x88), `facing` as update_player's, and the player's block's
+## floor and room name keys (DofReader: `DH_A01_FLOOR01`,
+## `DH_A01_F01_ROOM_01`; the client's 0x9d7880 / 0x9d7830 ask the region's
+## current floor and room names, INFERRED the same lists). With auto-move on
+## the map follows (0x623060): the floor 0x614280 picks.
+func update_player_dungeon(region_id: int, dungeon_pos: Vector3, facing: Vector2,
+		floor_key: String, room_key: String) -> void:
+	if _marker != null and not facing.is_zero_approx():
+		_marker.rotation = HudMinimap.arrow_rotation(facing)
+	var changed := region_id != _player_rid or floor_key != _player_floor_key or room_key != _player_room_key
+	_player_rid = region_id
+	_player_dungeon_pos = dungeon_pos
+	_player_floor_key = floor_key
+	_player_room_key = room_key
+	# The field's own region is not where the player is.
+	_player_region = Vector2i(-1, -1)
+	# The party's marks are not placed in a dungeon (OPEN, see
+	# docs/protocol/WORLDMAP_FORMAT.md's dungeon section).
+	if _party_layer != null and not _party_dots.is_empty():
+		place_party_dots(PackedVector2Array(), PackedStringArray(), false, Vector2(-1e9, -1e9))
+	# Only a shown window follows (OURS for the field's update_player, which
+	# follows hidden too): the client's follow is its render's (0x6243f8)
+	# and ShowWindow's (0x623060), and a floor shown turns auto-move off
+	# (0x6217e0), so following while hidden would leave the map on the
+	# floor the player was on when the window was last updated.
+	if _auto and is_visible_in_tree():
+		_follow_player()
+	else:
+		_place_marker()
+	if changed and _mode == MODE_DUNGEON:
+		# The caption names the player's room (0x6145e0).
+		_refresh_dungeon_caption()
+
+## Whether the player is in a dungeon (bit 15 of its region id).
+func in_dungeon() -> bool:
+	return _player_rid >= 0 and (_player_rid & 0x8000) != 0
 
 ## The party's layer, its dots' art and the hover label, under `parent`
 ## (the map canvas; a test passes its own).
@@ -925,24 +1365,64 @@ func party_hover_text() -> String:
 	return _party_label.text if _party_label != null and _party_label.visible else ""
 
 func _place_marker() -> void:
-	if _marker == null or _current == null:
+	if _marker == null:
 		return
+	var at: Variant = player_pixel()
+	_marker.visible = at != null
+	if at != null:
+		_marker.position = (at as Vector2) - _marker.size / 2.0
+
+## Where the player's arrow goes on the map shown, in canvas pixels, or null
+## when it is not drawn:
+## - a dungeon floor: 0x60f660's pixel, drawn only when the floor is the
+##   player's (0x614890 -> 0x612920: the floor's label against the text of
+##   the player's floor name; no floor, no arrow);
+## - a field map, the player in a dungeon: the dungeon's field point
+##   (0x60fa90, worldmap_instanceinfo.txt), when the map covers it (OURS, as
+##   the field's own test below);
+## - a field map: the player's world position, when the map covers its
+##   region.
+func player_pixel() -> Variant:
+	if _mode == MODE_DUNGEON:
+		if _dungeon_map == null or not in_dungeon():
+			return null
+		if _dungeon_map.floor_label() != _text(_player_floor_key):
+			return null
+		return _dungeon_map.pixel_for_dungeon(_player_dungeon_pos, (_player_rid >> 8) & 0xff)
+	if _current == null:
+		return null
+	if in_dungeon():
+		var point: Variant = WorldmapInstanceInfoReader.field_point(instance_table, _player_rid)
+		if point == null:
+			return null
+		var px := _current.pixel_for_world(point as Vector2)
+		if px.x < 0.0 or px.y < 0.0 or px.x > _current.draw_size.x or px.y > _current.draw_size.y:
+			return null
+		return px
 	if _player_region.x < 0 or not _current.covers_region(_player_region.x, _player_region.y):
-		_marker.visible = false
-		return
-	_marker.visible = true
-	_marker.position = _current.pixel_for_world(_player_world) - _marker.size / 2.0
+		return null
+	return _current.pixel_for_world(_player_world)
 
 ## Puts the player under the middle of the map area (0x61cc30: the scroll
 ## set from the player's pixel less half the area, through 0x61c5a0),
 ## clamped to the map. A player who is not on this map leaves the map's
 ## middle there instead (ours).
+##
+## On a dungeon floor the scroll goes to the player's pixel too (0x61cc30,
+## mode 2: +0x97ac), drawn or not; on a field map with the player in a
+## dungeon, to the dungeon's field point (+0x97b4).
 func _centre_on_player() -> void:
-	if _current == null or _viewport == null:
+	if _viewport == null or (_current == null and _mode != MODE_DUNGEON):
 		return
 	var target := _viewport.size / 2.0
-	if _player_region.x >= 0 and _current.covers_region(_player_region.x, _player_region.y):
-		target -= _current.pixel_for_world(_player_world)
+	var at: Variant = null
+	if _mode == MODE_DUNGEON:
+		if _dungeon_map != null and in_dungeon():
+			at = _dungeon_map.pixel_for_dungeon(_player_dungeon_pos, (_player_rid >> 8) & 0xff)
+	else:
+		at = player_pixel()
+	if at != null:
+		target -= at as Vector2
 	else:
 		target -= _canvas.size / 2.0
 	_canvas.position = _clamp_scroll(target)
@@ -965,14 +1445,32 @@ static func clamp_scroll(at: Vector2, canvas: Vector2, viewport: Vector2) -> Vec
 ## 0x46e030); anywhere on the window it then turns auto-move off with the
 ## stale flag set (0x6235ad..0x6235bd). WM_MOUSEMOVE (0x200) scrolls by the
 ## motion (0x61c5a0 at 0x623c45).
+##
+## Round 775, the signs (0x6232e4..0x623580 and 0x623819..0x6238fd): on the
+## world map a press records the link of the first picture sign under the
+## mouse (+0x9800, cleared by every press); the release takes the first
+## picture sign under the mouse and, when its link is that one and not a
+## fortress (1001..1999), opens it -- a local map below 2001, a dungeon floor
+## from it -- and centres the view (0x61cc30). The press and the release
+## both stay the viewport's, so neither walks the player.
 func _on_viewport_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var mb := event as InputEventMouseButton
 		_panning = mb.pressed
 		_pan_from = mb.position
+		var on_map := mb.position - _canvas.position
 		if mb.pressed:
+			_pressed_link = 0
+			if _mode == MODE_WORLD:
+				var hit := sign_at(on_map)
+				if hit != null and hit.link != 0:
+					_pressed_link = hit.link
 			_mouse_turns_auto_off()
 			move_to_front()
+		else:
+			if _mode == MODE_WORLD:
+				_release_on_sign(on_map)
+			_pressed_link = 0
 		_viewport.accept_event()
 	elif event is InputEventMouseMotion and _panning:
 		var mm := event as InputEventMouseMotion
@@ -980,6 +1478,163 @@ func _on_viewport_input(event: InputEvent) -> void:
 		_pan_from = mm.position
 		_refresh_tiles()
 		_viewport.accept_event()
+
+## The release half of a sign click (0x623819..0x62393b, READ): the picture
+## signs under the mouse in order; the first one decides -- no link, or not
+## the pressed one, and nothing opens -- except that a pressed fortress
+## (1001..1999, 0x6238e2..0x6238ee) passes on to the next sign under the
+## mouse. A link up to 2000 opens as a local map (0x622b60(1, id)), above it
+## as a dungeon floor (0x6217e0); both then centre (0x61cc30).
+func _release_on_sign(on_map: Vector2) -> void:
+	if _table == null or _table.world() == null:
+		return
+	var world := _table.world()
+	for pair in _signs:
+		var sign: WorldmapLocalInfoReader.Sign = pair[0]
+		if sign.type != WorldmapLocalInfoReader.TYPE_PICTURE or not sign.hit(world.region_left, world.region_top, on_map):
+			continue
+		if sign.link == 0 or sign.link != _pressed_link:
+			return
+		if _pressed_link >= FORT_FIRST and _pressed_link <= FORT_LAST:
+			continue
+		open_link(sign.link)
+		return
+
+## Opens a sign's linked map, as its click does: below 2001 a local map
+## (0x622b60), from 2001 a dungeon floor (0x6217e0), then the view centred
+## on the player (0x61cc30).
+func open_link(link: int) -> void:
+	if _table == null:
+		return
+	if link < WorldmapInfoReader.FIRST_DUNGEON_ID:
+		var info := _table.by_id(link)
+		if info == null:
+			return
+		_show_map(info)
+	elif not show_dungeon(link):
+		return
+	_centre_on_player()
+	_refresh_tiles()
+
+## The floor spinner's up button (22 -> 0x60f080), then the render's floor
+## check (0x621ca0), which this client runs at once rather than on the next
+## frame (OURS).
+func floor_up() -> void:
+	_floor_step(1)
+	_poll_floor()
+
+## The down button (24 -> 0x60efc0), then the floor check.
+func floor_down() -> void:
+	_floor_step(-1)
+	_poll_floor()
+
+## 0x60f080 / 0x60efc0: auto-move turned off with the stale flag when on
+## (the window's +0x229ac = 1, +0x7b1 = 0, through 0x799920 -> window 28),
+## then, within the spinner's bounds, the floor stepped, the label redrawn
+## (0x60edd0), and the two buttons enabled by whether a further step is
+## possible (0x471dc0).
+func _floor_step(delta: int) -> void:
+	if _auto:
+		_auto_art_stale = true
+		_auto = false
+	var next := _floor_index + delta
+	if next < 0 or next > _floor_max:
+		return
+	_floor_index = next
+	_refresh_floor_label()
+	var spinner := _at(ID_FLOOR)
+	if spinner == null:
+		return
+	var up := TwoDtBuilder.child(spinner, ID_FLOOR_UP) as BaseButton
+	if up != null:
+		up.disabled = _floor_index >= _floor_max
+	var down := TwoDtBuilder.child(spinner, ID_FLOOR_DOWN) as BaseButton
+	if down != null:
+		down.disabled = _floor_index <= 0
+
+## 0x60edd0: "%c%d" (letter, floor) for spelling 1, "%d%c" for 2, "%d"
+## otherwise, on the label 27.
+func _refresh_floor_label() -> void:
+	var spinner := _at(ID_FLOOR)
+	var label := TwoDtBuilder.child(spinner, ID_FLOOR_LABEL) if spinner != null else null
+	if label == null or _twodt == null:
+		return
+	_twodt.set_text(label, floor_text())
+
+## The spinner's text (0x60edd0).
+func floor_text() -> String:
+	var n := _floor_index + 1
+	if _floor_mode == 1:
+		return "" if _floor_letter == "" else "%s%d" % [_floor_letter, n]
+	if _floor_mode == 2:
+		return "%d%s" % [n, _floor_letter]
+	return "%d" % n
+
+## CNIFWorldMap 0x621ca0 (READ), on a dungeon floor: with auto-move on the
+## spinner is brought to the floor shown; off, a spinner on another floor
+## shows that floor of the same dungeon (0x621c60: 0x6143b0 by name and
+## number, 0x6217e0, then the arrow, 0x610980).
+func _poll_floor() -> void:
+	if _mode != MODE_DUNGEON or _dungeon_map == null:
+		return
+	var want := _dungeon_map.layers - 1
+	if _auto:
+		while _floor_index > want and _floor_index > 0:
+			_floor_step(-1)
+		while _floor_index < want and _floor_index < _floor_max:
+			_floor_step(1)
+		return
+	if _floor_index == want:
+		return
+	var id := _table.dungeon_floor(_dungeon_map.id, _floor_index + 1)
+	if id != 0:
+		show_dungeon(id)
+	_place_marker()
+
+## A key looked up as the client's TextStringManager does for the world map
+## (0x8c9c30): one map of every text table, "" on a miss (0x8c9b20). This
+## client looks in textzonename (zone codes, floor and room names), then the
+## builder's own textuisystem, then -- for a sign's name only, as it is a
+## large table -- textdata_object (the signs' `SN_ZONE_` / `STORE_` keys).
+## Each archive table is read the first time it is wanted.
+func _text(key: String, with_objects: bool = false) -> String:
+	if key == "":
+		return ""
+	if not text_tables.is_empty():
+		for t in text_tables:
+			if t != null and (t as UiTextTable).has(key):
+				return (t as UiTextTable).get_text(key)
+		return ""
+	var zone := _zone_table()
+	if zone != null and zone.has(key):
+		return zone.get_text(key)
+	var ui = _builder.get("_text_table")
+	if ui is UiTextTable and (ui as UiTextTable).has(key):
+		return (ui as UiTextTable).get_text(key)
+	if with_objects:
+		var objects := _object_table()
+		if objects != null and objects.has(key):
+			return objects.get_text(key)
+	return ""
+
+func _zone_table() -> UiTextTable:
+	if not _zone_texts_loaded:
+		_zone_texts_loaded = true
+		_zone_texts = _read_text_table(TEXT_ZONE_PATH)
+	return _zone_texts
+
+func _object_table() -> UiTextTable:
+	if not _object_texts_loaded:
+		_object_texts_loaded = true
+		_object_texts = _read_text_table(TEXT_OBJECT_PATH)
+	return _object_texts
+
+func _read_text_table(path: String) -> UiTextTable:
+	var archive := _builder.media_archive() if _builder != null else null
+	if archive == null:
+		return null
+	var entry := ObjectLoader.find_file(archive, path)
+	return UiTextTable.parse(archive.read_file(entry)) if entry != null else null
 
 ## A left press on the window itself -- not on a child, and so not on the
 ## drag area, which is CNIFMainFrame's own child (0x479a50) -- turns
@@ -1081,3 +1736,94 @@ static func _place(node: Control, at: Vector2) -> void:
 ## The map currently drawn (tests, tools).
 func current_map() -> WorldmapInfoReader.MapInfo:
 	return _current
+
+## Which kind of map is shown: MODE_WORLD, MODE_LOCAL or MODE_DUNGEON.
+func map_mode() -> int:
+	return _mode
+
+## The dungeon floor shown, or null (tests, tools).
+func current_dungeon() -> WorldmapInfoReader.DungeonMapInfo:
+	return _dungeon_map if _mode == MODE_DUNGEON else null
+
+## The QA hook's steps (OPENSRO_QA_WORLDMAP, World3D): a comma list of
+## `world`, `sign:<map id>` (the world map scrolled to the first sign linking
+## to that map), `click:<map id>` (the same, then a real press and release on
+## it through the viewport's own input), `dungeon:<id>`, `up`, `down`. Groups
+## separated by `;` run a second apart, so a render catches each. Each step
+## logs the window's state.
+func qa_apply(spec: String) -> void:
+	var groups := spec.split(";")
+	_qa_steps(groups[0])
+	for i in range(1, groups.size()):
+		get_tree().create_timer(float(i)).timeout.connect(_qa_steps.bind(groups[i]))
+
+func _qa_steps(spec: String) -> void:
+	for step in spec.split(","):
+		var s := step.strip_edges()
+		if s == "world":
+			show_world()
+		elif s.begins_with("sign:"):
+			show_world()
+			_qa_click_link(int(s.trim_prefix("sign:")), false)
+		elif s.begins_with("click:"):
+			show_world()
+			_qa_click_link(int(s.trim_prefix("click:")))
+		elif s.begins_with("dungeon:"):
+			show_dungeon(int(s.trim_prefix("dungeon:")))
+		elif s == "up":
+			floor_up()
+		elif s == "down":
+			floor_down()
+		else:
+			continue
+		print("QA WORLDMAP %s -> %s" % [s, qa_report()])
+
+## Scrolls the sign linking to `link` into the middle of the map area and
+## (`click`) clicks it the way a mouse does.
+func _qa_click_link(link: int, click: bool = true) -> void:
+	if _table == null or _table.world() == null:
+		return
+	var world := _table.world()
+	for sign: WorldmapLocalInfoReader.Sign in signs():
+		if sign.link != link or sign.type != WorldmapLocalInfoReader.TYPE_PICTURE:
+			continue
+		var r := sign.rect(world.region_left, world.region_top)
+		_canvas.position = _clamp_scroll(_viewport.size / 2.0 - r.get_center())
+		_refresh_tiles()
+		var at := _canvas.position + r.get_center()
+		_place_marker()
+		if not click:
+			return
+		for pressed in [true, false]:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = pressed
+			ev.position = at
+			_on_viewport_input(ev)
+		return
+	print("QA WORLDMAP no sign links to %d" % link)
+
+## The window's state in one line, for the QA log and the tests.
+func qa_report() -> String:
+	var bar := get_node_or_null("TitleBar") as Label
+	var floor_node := _at(ID_FLOOR)
+	var at: Variant = player_pixel()
+	return "mode=%d map=%d caption='%s' floor=%s'%s' auto=%s marker=%s signs=%d tiles=%d" % [
+		_mode, _dungeon_map.id if _mode == MODE_DUNGEON and _dungeon_map != null else (_current.id if _current != null else -1),
+		bar.text if bar != null else "",
+		"shown " if floor_node != null and floor_node.visible else "hidden ", floor_text(),
+		_auto, "(%.0f,%.0f)" % [(at as Vector2).x, (at as Vector2).y] if at != null else "none",
+		_signs.size(), _tiles.size()]
+
+## A map switch logged during a QA run (OPENSRO_QA_WORLDMAP set).
+func _qa_note(what: String) -> void:
+	if OS.get_environment("OPENSRO_QA_WORLDMAP") != "":
+		print("QA WORLDMAP shows %s: %s" % [what, qa_report()])
+
+## A `.dof` block's room name key (P4's first list by the block's room
+## index; DofReader), or "" -- the room 0x6145e0's caption names.
+static func dof_room_key(dof: DofReader.Dof, block: int) -> String:
+	if dof == null or block < 0 or block >= dof.blocks.size():
+		return ""
+	var r: int = (dof.blocks[block] as DofReader.Block).room_index
+	return dof.room_names[r] if r >= 0 and r < dof.room_names.size() else ""

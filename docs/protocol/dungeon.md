@@ -139,3 +139,22 @@ in the dungeon's bucket; monster AI wanders in x/z at that height (OURS).
 
 The server has no navigation mesh in the field or in a dungeon: a move is bounded by speed and
 height as in the field (round 749).
+
+## 6. The world map (round 775)
+
+The full reading is in [WORLDMAP_FORMAT.md](WORLDMAP_FORMAT.md), "Dungeons on the world map". In
+short (READ, sro_client.exe's NIFWorldMap.cpp):
+- the field world map draws `worldmap_localinfo.txt`'s signs; two are the dungeon icons
+  (`xy_dungeon.ddj`), linking to Dungeonmap rows 2001 (the cave's 1F) and 2005 (the tomb's B1); a
+  press and release on one opens that floor (0x623220 -> 0x6217e0);
+- a floor is the `Dungeonmap` row's tiles, a floor spinner over the rows sharing its Name column
+  (0x6143b0), its caption the zone code's text plus the player's room (0x6145e0), and a world
+  button back;
+- in a dungeon, M shows the row whose zone code is the region id and whose floor label (`1F`,
+  `B2`) is the text of the player's block's floor name (0x614280 -- the P4 floor names above);
+  the arrow sits at `(x / 10 + (count_x / 2) * 192 - (maxX - minX)) / upp_x + draw_x`,
+  `draw_y - ((0x80 - 92) * 192 + z / 10 - minY) / upp_y` of the `.dof`-space position (0x60f660),
+  drawn only on the player's own floor; on a field map it sits at the dungeon's field point from
+  `worldmap_instanceinfo.txt` (0x60fa90).
+- OpenSRO: `HudWorldmap.update_player_dungeon(region id, DungeonWorld.to_dungeon(position),
+  facing, floor key, room key)`, called from World3D's dungeon minimap step.

@@ -368,8 +368,11 @@ like the guild window:
    on every show. M and the minimap's button both reach `0x79abe0`. The older `CIFWorldMap`
    (`ifworldmap.txt`) is never shown. `HudWorldmap` is built from the `.2dt` now, with the map
    area, corners, buttons, auto-move and both sizes read (`docs/RE_COMPLETION.md`, round 599).
-   Escape closes it in the client's order (round 600). Still open: the guide's list, the floor
-   spinner and the dungeon maps, the other signs, and the fortress caption's guild.
+   Escape closes it in the client's order (round 600). The floor spinner, the dungeon maps and
+   the world map's signs (worldmap_localinfo.txt: the city, fortress and dungeon icons, a
+   dungeon icon's click opening its floor) are built (round 775; docs/protocol/WORLDMAP_FORMAT.md).
+   Still open: the guide's list, the other signs (party, quest NPC ...), the signs' tooltips, the
+   party's marks on a dungeon floor, and the fortress caption's guild.
 4. ~~**Y -> `nifenchantwnd.2dt`**~~ **Done (round 604).** Y reaches `0x780a65`, which destroys
    window 0xa8 if it exists and otherwise loads `res_ui\nifenchantwnd.2dt` (`0x798e20`); the
    underbar menu's item 114 only opens it. Record 0 is `CNIFEnchantWnd`, a CNIFMainFrame 389x421
@@ -587,8 +590,10 @@ the seven textures the client's own world map loads. Tiles are built only as the
   `0x61ca20`.
 - ~~`GDR_WM_BTN_AUTO_MOVE`~~ **Done**: `CNIFWorldMap`'s button 20 is auto-move, which makes the
   map follow the player (`0x616870`, `0x6243f8`). There is no path to a point.
-- The **guide** (`CNIFWorldMapGuide`, `0x6290d0`'s list) and the **floor spinner** with the
-  dungeon maps: not built.
+- The **guide** (`CNIFWorldMapGuide`, `0x6290d0`'s list): not built. ~~The **floor spinner**
+  with the dungeon maps~~ **Done (round 775)**: `0x6217e0`, the spinner `0x60f080` / `0x60efc0`,
+  the click on a world-map dungeon icon (`0x623220`), the player's floor and arrow in a dungeon
+  (`0x614280`, `0x60f660`).
 - The **other signs**. The client's world map loads `wmap_sign_party`,
   `wmap_sign_apprenticeship`, `wmap_sign_questnpc` and `wmap_sign_huntingpoint` beside the
   player marker, and each wants a list the client already receives.
