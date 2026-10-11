@@ -270,7 +270,7 @@ the row when it is 0 -- the `service` column, which also skips `//` rows. RefPar
 | 11, 12 | int | `+0x8c`, `+0x90` | x, y |
 | 13, 14 | int | `+0x94`, `+0x98` | w, h (a text's font index is 14) |
 | 15..17 | int x3 | `+0x9c` | colour `0xff000000 \| r << 16 \| g << 8 \| b` |
-| 18..20 | byte x3 | `+0xa0..+0xa2` | text style bytes (shadow, bold, blur by the header) |
+| 18..20 | byte x3 | `+0xa0..+0xa2` | text style bytes (Shadow, Bold, Blur by the header): Bold is text flag 2, Blur flag 1 (the shadow), Shadow nothing -- see "The text signs" |
 | 21 | wide string | `+0xc4` | a picture's hover key (`SN_NPC_*` or `xxx`) |
 
 `+0xa4` is set to 1.0 (the quads' UV extent). `0x6210b0(id)` (called by both `0x622b60` and
@@ -279,7 +279,8 @@ the row when it is 0 -- the `service` column, which also skips `//` rows. RefPar
 world map's own scale), any other parent at `x, y` on that map's image. A picture is its texture on
 a `w` x `h` quad with that top-left (0x6196d0 / 0x61b510 re-lay it as the map scrolls); a text is
 centred on `x` (`x - width / 2`) with its top at `y`, in the font of index column 14 and the
-colour. Which side `<-` and `->` go is INFERRED from the two concatenations' argument order.
+colour, and drawn over every picture (below). Which side `<-` and `->` go is INFERRED from the two
+concatenations' argument order.
 
 **The click (vslot_017 0x623220).** On the world map (mode 0) only:
 - WM_LBUTTONDOWN (0x6232e4): `+0x9800 = 0`, then the first type-2 sign whose quad strictly holds
@@ -308,7 +309,49 @@ tomb's 2006 and 2009 room names; their texts are in `textdata_object.txt`.
 
 OpenSRO draws the signs of every map shown and, with the table present, no longer draws the
 round-599 name plates on the world map (they were OURS, standing in for these icons); an archive
-without the table keeps the plates. The text signs' style bytes are not drawn (OPEN).
+without the table keeps the plates. The text signs are drawn as the next section says (round 776).
+
+### The text signs (round 776)
+
+READ unless marked; the code is `HudWorldmap._sign_label` and its `SignText`.
+
+- **Set-up (0x6210b0, asm 0x6211d4..0x621444).** The sign object (0x160 bytes, 0x6125e0) holds a
+  text object at +0x34. In order: the font `0xba5460(+0x94)` -- column 14, the same index table as a
+  `.2dt` record's FontIndex (INFERRED from the shared getter; MEASURED every world-map text row has
+  0, the 12 px face) -- through 0x8b2b50; the colour (columns 15..17) through 0x8b2b70; then the text
+  flags: `+0xa0 ? 0x8b44b0(5, 1) : 0x8b4560(5, 1)`, `+0xa1 ? ...(5, 2)`, `+0xa2 ? ...(5, 1)` --
+  0x8b44b0 ORs the bits into every state, 0x8b4560 clears them. **Column 20 (Blur) sets or clears
+  flag 1 after column 18 (Shadow) did, so Blur decides the shadow and Shadow has no effect;**
+  column 19 (Bold) is flag 2. Flag 2 picks the face's weight-600 variant (0x8b39e0 -> glyph mode
+  2, made in 0xbaa110), flag 1 is the drop shadow (0x8b48b0 passes `flags & 1` to 0x8b2290, which
+  draws the glyph at `x + 1, y + 1` in black at the text's alpha, then at `x, y` in its colour --
+  glyph by glyph). Then the text (the key through 0x8c9bb0, with the link's `<-` / `->`) is set
+  (0x8b3b60 -> 0x8b39e0), which lays the glyphs out in the flags' face and measures it (0x8b3910:
+  width = the sum of the glyphs' advances, height = line spacing + the font's height).
+- **Place.** `+0xac = origin.x - width / 2 + anchor.x` (an int division: `cdq; sub; sar 1`),
+  `+0xb0 = origin.y + anchor.y`; 0x6196d0 and 0x61c5a0 keep it as the map moves. 0x8b48b0 draws the
+  glyph cells from that point, the cell's top at `y`.
+- **Draw order (vslot_013 0x624380 -> 0x61c360).** One walk of the sign list draws every picture
+  sign with a texture (`*sign == 2 && +0x9c != 0`, a DrawPrimitiveUP of its quad), a second walk
+  every text sign with text (`*sign == 1 && +0x7c != 0`, `0x8b48b0(+0xac, +0xb0, 0xff)`). **Every
+  text is over every picture**, whatever the file order. A town's name is a text row of its own
+  that falls on the plate painted into its icon: Jangan's is `SN_ZONE_22001` ("Jangan", region
+  (168, 97) + (15, 10), bold, (255, 247, 182)), listed before `city_jangan.ddj` (region (167, 98)
+  + (16, 2), 64 x 64) -- drawn in file order, the icon covers it. Signs are not clipped by
+  themselves; the map area's viewport (0x46d920 with +0x97d8) clips them with the map.
+- **MEASURED (the archive):** the world map has 136 text rows (service != 0, parent 0). Shadow /
+  Bold / Blur: 98 are 0/0/1 (the white 21xxx and 25xxx places: plain, shadowed), 34 are 0/1/1 (the
+  22xxx towns in (255, 247, 182), 23xxx tombs in (196, 231, 255), 24xxx mountains and rivers in
+  (217, 240, 152): bold, shadowed), 2 are 1/0/1 (the far-west 27000 names: shadowed -- by Blur), and
+  2 are 0/1/0 (22004 and 22005: bold, and by the rule above **without** a shadow). All 136 have font
+  index 0.
+- **MEASURED (the user's picture of the original at Jangan, 2x, fitted to the map's own tiles to
+  the pixel):** the ink of Water Ghost Marshland, Exorcist's Home, China East Ferry, Huang He and
+  Jangan is centred on its anchor's x to half a pixel, its capitals start 3 px below the anchor's
+  y, every one has a one-pixel black shadow right and down, and the five coloured ones are bold.
+- OURS: without a weight-600 file of the face on the system the bold is GDI's simulation (each
+  glyph at x and x + 1, its advance one wider; HudNotice.draw_bold, round 703). Without an archive
+  face (tests) the text is Godot's fallback font.
 
 ### A floor: `0x6217e0`
 
@@ -397,8 +440,8 @@ the table (`0xeedf08 + 0x1ec` zero) two constants stand in (0x610c5e..0x610cab):
   (column 16) and, for dungeon 1 (the cave), only those whose height falls in the floor's band
   (0x610ed0: y < 70, 70..210, 210..350, 350 up -- floats at 0xd990a8 / 0xd990a0 / 0xd9909c). OpenSRO
   shows no party marks in a dungeon (World3D sends no dungeon party positions).
-- The tooltips of 0x614950 / 0x613260, the text signs' style bytes, the spinner label's style
-  (0x4774f0(5, 2) on its text).
+- The tooltips of 0x614950 / 0x613260, the spinner label's style (0x4774f0(5, 2) on its text).
+  (The text signs' style bytes are read: round 776, above.)
 
 ## The player's marker turns (round 630)
 

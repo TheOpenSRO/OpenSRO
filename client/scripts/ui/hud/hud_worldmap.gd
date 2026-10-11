@@ -831,8 +831,18 @@ func _refresh_dungeon_caption() -> void:
 
 ## The signs of map `id` (NIFWorldMap 0x6210b0, READ; WorldmapLocalInfoReader
 ## has the columns): a type-2 sign is its picture at its quad, a type-1 sign
-## its text centred on its anchor, in the table's order. Each is kept with
-## its sign for the click test.
+## its text centred on its anchor. Each is kept with its sign for the click
+## test, in the table's order (the list at +0x982c, which the press and
+## release walk).
+##
+## **Draw order (READ, round 776).** The render (vslot_013 0x624380 ->
+## 0x61c360) walks the list twice: first every picture sign with a texture
+## (`*sign == 2 && +0x9c`, a DrawPrimitiveUP of the quad at +0xc4), then
+## every text sign with text (`*sign == 1 && +0x7c`, 0x8b48b0 at
+## +0xac / +0xb0). So every text is over every picture, whatever the file
+## order -- a town's name (Jangan's `SN_ZONE_22001`, listed before its
+## `city_jangan.ddj` icon) lands on the icon's name plate. The children here
+## are added in that order: the pictures in file order, then the texts.
 func _build_signs(id: int) -> void:
 	_signs.clear()
 	if _sign_layer == null:
@@ -863,20 +873,37 @@ func _build_signs(id: int) -> void:
 			continue
 		node.name = "Sign%d" % sign.id
 		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_sign_layer.add_child(node)
 		_signs.append([sign, node])
+	for pass_type in [WorldmapLocalInfoReader.TYPE_PICTURE, WorldmapLocalInfoReader.TYPE_TEXT]:
+		for pair in _signs:
+			if (pair[0] as WorldmapLocalInfoReader.Sign).type == pass_type:
+				_sign_layer.add_child(pair[1])
 	_canvas.move_child(_sign_layer, -1)
 	if _party_layer != null:
 		_canvas.move_child(_party_layer, -1)
 	if _marker != null:
 		_canvas.move_child(_marker, -1)
 
-## A type-1 sign: its key's text (with "<-" before it for link 1 and "->"
-## after for link 2), in the font its `h` column indexes (0x6210b0 passes
-## +0x94 to the font table 0xba5460; INFERRED the same index as a .2dt
-## record's font), its colour, centred on the anchor's x with its top at the
-## anchor's y. Its shadow / bold / blur bytes (0x8b44b0 / 0x8b4560 style
-## bits) are not drawn (OPEN).
+## A type-1 sign (0x6210b0, READ, asm 0x6211d4..0x621444): the text object
+## at sign + 0x34 gets
+## - the font of index `h` (column 14, +0x94 -> 0xba5460(index) ->
+##   0x8b2b50; INFERRED the same index table as a .2dt record's FontIndex,
+##   UiBuilder.FONT_SIZES);
+## - the colour (columns 15..17, 0x8b2b70; 0x8b48b0 draws it at alpha 0xff);
+## - its text flags, in this order: column 18 sets or clears flag 1, column
+##   19 flag 2, column 20 flag 1 again (0x8b44b0 / 0x8b4560 with (5, 1),
+##   (5, 2), (5, 1)) -- so **column 20 decides the drop shadow and column 18
+##   has no effect**; flag 2 is the face's weight-600 variant (0x8b39e0),
+##   flag 1 the one-pixel black shadow (0x8b48b0 -> 0x8b2290);
+## - the text: the key's text (0x8c9bb0), "<-" before it for link 1, "->"
+##   after it for link 2.
+## The text is measured after the flags (0x8b3b60 -> 0x8b39e0 -> 0x8b3910:
+## the sum of the glyphs' advances, in the bold face when flag 2 is set) and
+## placed at `origin + anchor.x - width / 2` (an int division, `cdq; sub;
+## sar 1`), `origin + anchor.y` -- the glyph cells' top (0x8b2290 draws each
+## cell from that y down). MEASURED on the original's picture at Jangan
+## (round 776): the ink of all five labels measured is centred on the anchor
+## to half a pixel and its capitals start 3 px below it.
 func _sign_label(sign: WorldmapLocalInfoReader.Sign, at: Vector2) -> Control:
 	var text := _text(sign.text, true)
 	if text == "":
@@ -885,17 +912,87 @@ func _sign_label(sign: WorldmapLocalInfoReader.Sign, at: Vector2) -> Control:
 		text = SIGN_PREFIX_1 + text
 	elif sign.link == 2:
 		text = text + SIGN_SUFFIX_2
-	var label := Label.new()
-	label.text = text
 	var index := clampi(sign.size.y, 0, UiBuilder.FONT_SIZES.size() - 1)
-	var font := _builder.font_at(index)
-	if font != null:
-		label.add_theme_font_override("font", font)
-	label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[index])
-	label.add_theme_color_override("font_color", sign.color)
-	label.size = label.get_minimum_size()
-	label.position = Vector2(at.x - floorf(label.size.x / 2.0), at.y)
+	var font: Font = _builder.font_at(index) if _builder != null else null
+	if font == null:
+		# No archive face (tests): Godot's own, so the text still measures.
+		font = ThemeDB.fallback_font
+	var label := SignText.new()
+	label.setup(text, font, UiBuilder.FONT_SIZES[index], sign.color, sign.is_bold(), sign.has_shadow())
+	label.position = Vector2(at.x - floorf(floorf(label.text_width) / 2.0), at.y)
 	return label
+
+## A world-map text sign as the client's text object draws it (0x8b48b0,
+## READ): glyph by glyph from the left, each glyph's cell top at the node's
+## top, the pen moving by the glyph's advance (no kerning: 0x8b3910 / 0x8b48b0
+## sum the glyph records' advances). With flag 1 each glyph is drawn first one
+## pixel right and down in black at the text's alpha, then in its colour
+## (0x8b2290: `x + 1, y + 1`, colour `& 0xff000000`) -- glyph by glyph, so a
+## glyph's shadow lands over the glyph before it. With flag 2 the glyphs are
+## the face's weight-600 variant (0x8b39e0 -> glyph mode 2, created in
+## 0xbaa110 with lfWeight 600): the system's bold file, or, without one,
+## GDI's simulation -- each glyph drawn at x and x + 1, its advance one wider
+## (HudNotice.draw_bold, round 703; OURS as code). The glyphs are sampled
+## unfiltered (UiBuilder.crisp_text), as every other UI text.
+class SignText extends Control:
+	var text := ""
+	var font: Font
+	## The weight-600 file, or null for the simulation.
+	var bold_face: Font
+	var px := 12
+	var color := Color.WHITE
+	var bold := false
+	var shadow := false
+	## 0x8b3910's width: the advances' sum (the shadow is not counted).
+	var text_width := 0.0
+
+	func setup(s: String, f: Font, size_px: int, c: Color, is_bold: bool, has_shadow: bool) -> void:
+		text = s
+		font = f
+		px = size_px
+		color = Color(c, 1.0)
+		bold = is_bold
+		shadow = has_shadow
+		bold_face = HudNotice.bold_file(f) if bold else null
+		text_width = 0.0
+		for ch in text:
+			text_width += advance(ch)
+		var h := font.get_height(px) if font != null else float(px)
+		var pad := 1.0 if shadow else 0.0
+		size = Vector2(text_width + pad, h + pad)
+		UiBuilder.crisp_text(self)
+		queue_redraw()
+
+	## The pen's step after `ch`.
+	func advance(ch: String) -> float:
+		if font == null:
+			return 0.0
+		var code := ch.unicode_at(0)
+		if bold and bold_face != null:
+			return bold_face.get_char_size(code, px).x
+		return font.get_char_size(code, px).x + (1.0 if bold else 0.0)
+
+	func _draw() -> void:
+		if font == null or text == "":
+			return
+		var face: Font = bold_face if bold and bold_face != null else font
+		var y := face.get_ascent(px)
+		var x := 0.0
+		var black := Color(0, 0, 0, color.a)
+		for ch in text:
+			if shadow:
+				_glyph(ch, Vector2(x + 1.0, y + 1.0), black)
+			_glyph(ch, Vector2(x, y), color)
+			x += advance(ch)
+
+	func _glyph(ch: String, at: Vector2, c: Color) -> void:
+		if bold and bold_face != null:
+			draw_char(bold_face, at, ch, px, c)
+		elif bold:
+			draw_char(font, at, ch, px, c)
+			draw_char(font, at + Vector2(1, 0), ch, px, c)
+		else:
+			draw_char(font, at, ch, px, c)
 
 ## The first type-2 sign whose quad holds `at` (canvas pixels), or null --
 ## the press and release tests of 0x623220 stop at the first hit.

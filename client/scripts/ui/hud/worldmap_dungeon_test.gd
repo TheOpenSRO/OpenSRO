@@ -326,9 +326,9 @@ func _run() -> void:
 	_check(tile != null and tile.position == Vector2(512, 256) and tile.size == Vector2(256, 256),
 		"tile (2, 1) is at (512, 256), 256 a side (0x6196d0; got %s)" % (Rect2(tile.position, tile.size) if tile else null))
 	var floor_signs := window.call("signs") as Array
-	var exit := sign_layer.get_node_or_null("Sign4") as Label
-	_check(floor_signs.size() == 1 and exit != null and exit.text == "Exit"
-		and is_equal_approx(exit.position.x + floorf(exit.size.x / 2.0), 405.0) and exit.position.y == 394.0,
+	var exit := sign_layer.get_node_or_null("Sign4") as Control
+	_check(floor_signs.size() == 1 and exit != null and String(exit.get("text")) == "Exit"
+		and exit.position.x + floorf(floorf(float(exit.get("text_width"))) / 2.0) == 405.0 and exit.position.y == 394.0,
 		"the floor's text sign, centred on its x (got %s)" % (exit.position if exit else null))
 	var marker := window.find_child("PlayerMarker", true, false) as Control
 	_check(not marker.visible, "with the player in the field, no arrow on a floor (0x614890)")
