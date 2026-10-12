@@ -76,6 +76,12 @@ func _bar_fill() -> void:
 	one.set_process(false)
 	one.advance(16)
 	_check(one.remaining_ms == 984, "a 1 s cast (the reverse scroll's Param1 1000) counts down by frames")
+	# Round 781: the fill moves every frame, not by whole percents, and a
+	# frame's fraction of a millisecond counts.
+	one.advance(16.6667)
+	_check(is_equal_approx(one.remaining_ms, 984.0 - 16.6667) and one.gauge().step == 0.0
+		and is_equal_approx(one.gauge().value, (16.0 + 16.6667) / 1000.0 * 100.0),
+		"the gauge's value is continuous (step 0) and keeps fractional milliseconds: %s" % one.gauge().value)
 	bar.free()
 	one.free()
 

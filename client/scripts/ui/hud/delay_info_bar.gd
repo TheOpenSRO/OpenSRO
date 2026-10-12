@@ -94,7 +94,9 @@ var kind := KIND_RETURN
 var item_id := 0
 ## The total and what is left of it, in milliseconds (+0x370 / +0x36c).
 var total_ms := 0
-var remaining_ms := 0
+## Float milliseconds (round 781): the frame's delta is not whole
+## milliseconds, and truncating it (16.67 -> 16) ran a 30 s bar ~4 % slow.
+var remaining_ms := 0.0
 var _gauge: Range
 var _name_label: Label
 var _cancel: BaseButton
@@ -133,6 +135,10 @@ func build(builder: UiBuilder, item_name: String, param1_ms: int, ref_id: int = 
 		_name_label = _plain_name()
 		_name_label.text = item_name
 	_set_gauge_art()
+	# The fill is continuous, as CIFGauge's float value is (round 781): a
+	# Range's default step of 1 snapped it to whole percents -- on the 30 s
+	# scroll a jump every 0.3 s, whatever node the layout built.
+	_gauge.step = 0.0
 	_cancel.pressed.connect(func() -> void: cancel_pressed.emit())
 	start(param1_ms)
 	if _builder != null:
@@ -143,7 +149,7 @@ func build(builder: UiBuilder, item_name: String, param1_ms: int, ref_id: int = 
 ## `+0x36c = +0x370`), the gauge empty.
 func start(ms: int) -> void:
 	total_ms = maxi(ms, 0)
-	remaining_ms = total_ms
+	remaining_ms = float(total_ms)
 	_show_value()
 
 func _add_window() -> void:
@@ -200,22 +206,22 @@ func _plain_name() -> Label:
 	return l
 
 func _process(delta: float) -> void:
-	advance(int(delta * 1000.0))
+	advance(delta * 1000.0)
 
 ## One frame of vslot_012: `ms` (capped at 3000) off the remaining, the
 ## gauge at (total - remaining) / total. At 0 it stops, full.
-func advance(ms: int) -> void:
-	if remaining_ms <= 0:
+func advance(ms: float) -> void:
+	if remaining_ms <= 0.0:
 		return
-	var step := clampi(ms, 0, FRAME_MS_CAP)
-	remaining_ms = maxi(remaining_ms - step, 0)
+	var step := clampf(ms, 0.0, float(FRAME_MS_CAP))
+	remaining_ms = maxf(remaining_ms - step, 0.0)
 	_show_value()
 
 ## The fill, 0..1: (total - remaining) / total.
 func fraction() -> float:
 	if total_ms <= 0:
 		return 1.0
-	return float(total_ms - remaining_ms) / float(total_ms)
+	return (float(total_ms) - remaining_ms) / float(total_ms)
 
 func _show_value() -> void:
 	if _gauge != null:
