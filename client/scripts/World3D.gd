@@ -13718,6 +13718,11 @@ func _update_blob_shadow() -> void:
 ##                          (GroundMarkers); OPENSRO_QA_MARKER_VIEW="<pitch>,
 ##                          <length>" turns the camera arm there at each one
 ##                          so the frame shows the ring
+##   OPENSRO_QA_FRAMELOG=1 (round 785) one `QA FRAMELOG` line a frame: the
+##                          frame, the wall clock (unix seconds, to line up
+##                          with tools/xcapture.sh's grabs), the time since
+##                          the last frame and whether the loading screen is
+##                          up (_qa_framelog_step)
 ##   OPENSRO_QA_ARRIVAL_PROBE=1 (round 690) after the entry, every zone change
 ##                          and every GM move: `QA ARRIVAL` (the feet against the
 ##                          terrain and the walkable graph's landing) and, per
@@ -17055,6 +17060,8 @@ func _process(_delta: float) -> void:
 	# whether a crowd arrives or leaves in this frame.
 	OtherCrowd.FrameBudget.note_transition(_crowd_transition())
 	_prewarm_step()
+	if _qa_framelog_on:
+		_qa_framelog_step()
 	var fs := FrameSplit.on
 	var t := Time.get_ticks_usec() if fs else 0
 	var t_world := t
@@ -27958,6 +27965,21 @@ func _on_teleport_state(change: WorldNet.StateChange) -> void:
 	if _hud_panels.close_cast_bar():
 		var text := _ui_text_table.get_text("UIIT_MSG_TRANSITION_CANCEL_RESULT", "") if _ui_text_table != null else ""
 		_log_system(text if text != "" else "The teleportation has been cancelled.")
+
+## QA only (OPENSRO_QA_FRAMELOG=1, round 785): a line a frame, so a real-time
+## run's frames can be laid against what the window showed (tools/xcapture.sh
+## stamps its grabs with the same wall clock). `screen` is whether the loading
+## screen is in the tree as this frame's process runs -- what the frame draws,
+## since it is put up and lifted only from coroutines resumed at the frame's
+## start (process_frame) or from the network poll before this node's _process.
+var _qa_framelog_on := OS.get_environment("OPENSRO_QA_FRAMELOG") != ""
+var _qa_framelog_last_us := 0
+func _qa_framelog_step() -> void:
+	var now := Time.get_ticks_usec()
+	print("QA FRAMELOG frame %d unix %.3f dt %.1f ms screen %s" % [Engine.get_frames_drawn(),
+		Time.get_unix_time_from_system(), (now - _qa_framelog_last_us) / 1000.0,
+		"up" if _loading_screen != null else "none"])
+	_qa_framelog_last_us = now
 
 ## QA only (OPENSRO_QA_REVERSE, round 778): steps on the reverse return
 ## scroll's flow, groups separated by `;` running two seconds apart so a

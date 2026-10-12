@@ -431,9 +431,18 @@ if ! "$GODOT" --version 2>/dev/null | grep -qE '^4\.[0-5]\.'; then
     printf '\n[display]\n\nwindow/size/window_width_override=%s\nwindow/size/window_height_override=%s\n' "${SIZE%x*}" "${SIZE#*x}"
   } > "$MOVIE_OVR.tmp" && mv "$MOVIE_OVR.tmp" "$MOVIE_OVR"
 fi
-"${LAUNCH[@]}" "$GODOT" \
+# QA_SHOT_REALTIME=1 (round 785) runs in real time: no movie writer, so
+# nothing reads a frame back and the separate render thread presents as it
+# does for a player; --frames still ends the run (--quit-after counts frames).
+# QA_SHOT_XCAPTURE=<dir> (round 785) then samples the presented window with
+# tools/xcapture.sh (xwd, timestamped grabs) -- what a player saw, and when.
+MOVIE=(--write-movie "$OUT/f.png")
+[ "${QA_SHOT_REALTIME:-0}" = 1 ] && MOVIE=()
+WRAP=()
+[ -n "${QA_SHOT_XCAPTURE:-}" ] && WRAP=("$CLIENT_DIR/tools/xcapture.sh" "$QA_SHOT_XCAPTURE")
+"${LAUNCH[@]}" "${WRAP[@]}" "$GODOT" \
   "${RFLAGS[@]}" --resolution "$SIZE" --path . "$SCENE" \
-  --write-movie "$OUT/f.png" --quit-after "$FRAMES" 2>&1 | tee "$OUT/godot.log"
+  "${MOVIE[@]}" --quit-after "$FRAMES" 2>&1 | tee "$OUT/godot.log"
 if [ -n "$MOVIE_OVR" ]; then
   if [ -f "$OUT/override.cfg.keep" ]; then mv "$OUT/override.cfg.keep" "$MOVIE_OVR"; else rm -f "$MOVIE_OVR"; fi
 fi
