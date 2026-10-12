@@ -11631,11 +11631,11 @@ func _auto_potion_slot_usable(slot: int) -> bool:
 ## 0x60b850: the quick slot fired as its key fires it.
 func _auto_potion_use_slot(slot: int) -> void:
 	var item = _quickslot_items.get(slot)
-	print("AUTOPOT use quickslot %d (%s): item %d at bag slot %d, HP %d/%d (row at %d), MP %d/%d (row at %d), mask 0x%x, t=%d ms" % [
+	print("AUTOPOT use quickslot %d (%s): item %d at bag slot %d, HP %d/%d (row at %d), MP %d/%d (row at %d), mask 0x%x, t=%d ms, timer clock %d" % [
 		slot, HudUnderbar.slot_label(slot), int(item["item"]) if item != null else -1, int(item["slot"]) if item != null else -1,
 		_auto_potion.hp, _auto_potion.max_hp, (_auto_potion.rows[0] as AutoPotion.Row).threshold,
 		_auto_potion.mp, _auto_potion.max_mp, (_auto_potion.rows[1] as AutoPotion.Row).threshold,
-		_auto_potion.status_mask, Time.get_ticks_msec()])
+		_auto_potion.status_mask, Time.get_ticks_msec(), _auto_potion.now_ms])
 	_on_quickslot_activated(slot)
 
 func _on_auto_potion_pool(kind: int, current: int, maximum: int) -> void:

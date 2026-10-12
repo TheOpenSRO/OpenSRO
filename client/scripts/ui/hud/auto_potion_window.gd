@@ -44,7 +44,7 @@ class_name AutoPotionWindow
 ##
 ## **Open, Confirm, Cancel.** The window is destroyed when it closes and
 ## built again on the next open (0x79c750), so every open shows the saved
-## settings (0x741880); here the window is kept and load() refills it on each
+## settings (0x741880); here the window is kept and fill() refills it on each
 ## open (OURS, the same picture). Confirm (0x741590) hands the values to
 ## AutoPotion.apply, which saves only when something changed, and closes;
 ## Cancel and the close button close (0x7417c0).
