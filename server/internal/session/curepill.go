@@ -144,8 +144,14 @@ func (s *statusRuntime) characterMask(id int64) uint32 {
 
 // gmAfflict is /afflict's hook (round 786, OURS: a test tool): one status run
 // landed on the character without a roll, as applyToCharacter lands a
-// monster's, and the view told.
-type gmAfflict struct{ hub *world.Hub }
+// monster's, and the view told. deps are the stores the status pass reads a
+// character's life and deals its ticks through (applyToCharacter binds a
+// monster's; with none bound yet the pass would take the character for gone
+// and drop its states).
+type gmAfflict struct {
+	hub  *world.Hub
+	deps strikeDeps
+}
 
 func (g gmAfflict) Afflict(characterID int64, code string, values []int) (uint32, error) {
 	now := statusFX.ms(time.Now())
@@ -155,6 +161,9 @@ func (g gmAfflict) Afflict(characterID int64, code string, values []int) (uint32
 		return 0, fmt.Errorf("%q with %v lands no state", code, values)
 	}
 	statusFX.mu.Lock()
+	if statusFX.sdeps.chars == nil {
+		statusFX.sdeps = g.deps
+	}
 	h := statusFX.pcs[characterID]
 	if h == nil {
 		h = &statuseffect.Holder{}
