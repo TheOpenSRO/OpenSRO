@@ -7608,8 +7608,8 @@ boxes, combos, sliders and the spin as empty controls, and nothing drank. Cure p
   `FUN_004a56c0(holder, 0, 0, curl={Param1 mask, Param3 chance, Param2 level cap}, rcur={1})` -- one
   random held state of mask 0x17fafc0 (sleep, root, slow, fear, myopia, bleeding, dark, disease,
   confusion, the six curses -- decay, weakness, powerless, dissociation, panic, combustion --,
-  incubation; not stun, not the elemental six), at
-  100 %, or 100 / (level - cap) above the cap; any other TypeID4, the **universal pills**, hand
+  incubation; not stun, not the elemental six), at 100 %, or 100 / (level - cap) above the cap;
+  any other TypeID4, the **universal pills**, hand
   Param1..6 as `FUN_004a56c0`'s second argument: each held elemental state (slots 0..5) wound back
   by its own Param x the slot's unit, ending when past its duration -- no level cap. The kind lock
   (`FUN_004eb410`): bit 0x40 (universal, 1.1 s) and 0x100 (purification, 20.1 s) -- read from a
@@ -7625,7 +7625,40 @@ boxes, combos, sliders and the spin as empty controls, and nothing drank. Cure p
   6 refused, OPEN (ITEM_COS_P_CURE_ALL_01/02, the pets'; ITEM_MALL_CURE_SUPERSET_1..4_BAG, bags).
   `TestRound786EveryCurePillRow` runs each through the handler: all as expected.
 - **QA tools (OURS):** GM `/hurt <hp> [mp]` (never kills) and `/afflict <code> <values...>`;
-  client `OPENSRO_QA_AUTOPOT` (bind, open, cfg, confirm, cmd, log).
+  client `OPENSRO_QA_AUTOPOT` (bind, open, cfg, confirm, cmd, log). `/afflict` binds the status
+  pass's stores itself: the pass reads a character's life through the ones a monster's blow binds,
+  and with none bound it dropped the state at the next pass (`TestRound786AfflictedStateSurvives
+  TheStatusPass` failed before).
+- **Live (render box, `/var/tmp/r786-pot/live.sh`, `live3.sh`, `live4.sh`; Jangan, 1280x720,
+  Forward+, the round's server and items export):**
+  - The window as a fresh character opens it (`keep/window_defaults.png`) is the reference picture:
+    rows unchecked with the disabled bars, 50 / 50, F1 1 / 2 / 3, the delay box checked at 1.0;
+    `window_filled.png` with every row on; `run2_reopened.png` the saved settings on a reopen.
+  - Run 2 (HP and MP at 50 %, abnormal on, delay 1.0 s; potions 4 and 11 on keys 1 / 2, universal
+    pill 55 on 3): `/hurt 9999 9999` -> HP 1/200, MP 0/200 -> both drunk at once (50 -> 49 each,
+    HP 1 -> 26, MP 0 -> 25), the timer's next pass refused by the server's 1.1 s potion lock
+    ("Still have time to reuse the item."), the one after drunk (48 left), HP 102 / MP 101 and on
+    to 200 / 200, then the timers killed. `/afflict bu 30 100 5` -> mask 0x8 -> the abnormal row
+    drinks the universal pill at once -> mask 0x0, 9 left. A purification pill on key 3 and
+    `/afflict se 20000 100 2` (a level-2 sleep) -> mask 0x40 -> pill -> 0x0, 9 left.
+  - Run 3 (level 30, HP 870, threshold 435; delay 3.0 s): uses at timer clock 117269 (armed),
+    120319, 123373 -- 3050 and 3054 ms apart, the frame-quantised 3000 -- HP 1 -> 430, 50 -> 47.
+    Delay box off: uses every pass at 500 ms or more (212396, 213000, 213614 ...), every other one
+    refused by the 1.1 s lock. A poison with the abnormal row off, then key 4 pressed by hand: the
+    universal pill spent (10 -> 9) -- but the poison stayed, which is what found the `/afflict` bug
+    above (the state had been dropped before the press).
+  - Run 4 (the fix; every row off, the pills pressed by hand): `/afflict ps 34 100 16` -> mask 0x10
+    and the green poison pulse (`keep/run4_poisoned.png`, HP ticking 200 -> 123), key 4 sixty
+    ticks later -> the universal pill, 10 -> 9, mask 0x0, the pulse gone (`run4_cured.png`);
+    `/afflict se 20000 100 2` -> 0x40, key 5 -> the purification pill, 10 -> 9, 0x0; key 5 again
+    thirty ticks later -> refused inside its COOLTIME (group 0xC8, 20 s).
+  - Frames and logs on the box under `/var/tmp/r786-pot/keep/` (the frame dumps deleted).
+- **Gates:** client `check` ALL LOAD (780 scripts, 9 scenes); `tests` "ran 300 suite(s), 0
+  failing" (`RENDER_DIR=/opt/opensro-client-r786-pot`, `GODOT_LOCK=/var/tmp/r786-pot/lock`; new:
+  `auto_potion_test.gd`, `auto_potion_window_test.gd`); server `go test ./...` passes (new:
+  `statuseffect/cure786_test.go`, `session/curepill786_test.go`, `session/autopotion786_test.go`,
+  `session/afflict786_test.go`, `character/autopotion_test.go`, `gm/hurt786_test.go`,
+  `refdata` Param6); gofmt clean on the touched files. UI and server only: no perf gate.
 - **OPEN:** CIFPML's own alignment and scroll; the pets' pills and the cure bags; the server's
   zombie HP potion (`0x49b912` hurts a zombie, OpenSRO heals); the curl roll's chance-memory dice
   (moot at chance 100). **Deploy:** re-export items (export-refdata) and re-import so `param6` is
