@@ -62,27 +62,51 @@ READ 0x5946c1..0x5949b8; the offer through `trs_wait_response` (0x46c8e0 / 0x46c
   `resu[1]/100` (rounded up) back, `ApplyHPMPDelta(hp, mp, 8)` with `hp = v0 + trunc(MaxHP x v1/100)`,
   `mp = v2 + trunc(MaxMP x v3/100)`; with `rmut`, the buff skill `rmut[0]` engages.
 
+The wait (READ, round 785 review): `trs_wait_response`'s constructor (0x46c7e0 / base 0x46c6c0)
+stores f32 **30.0** (0xb45b48) at +0x1c, and `CMainProcess::FUN_0046f1e0` times it out in seconds;
+on lapse a kind 4/8 sends nothing (`OnTimeout` 0x46ce20). There is one pending request per
+receiver, whatever the kind: a second is refused (0x46f420), and a refused resurrection offer is
+dropped silently. The answer (handler 0x80 -> 0x5157f0 -> 0x46f2d0) is matched by the receiver's
+uid. The "yes" re-tests that the PC is dead. Only the answer and the timeout remove a request; a
+revive or a logout does not.
+
 OpenSRO: a `resu` row's friendly target must be DEAD (every other friendly row's alive); the
-offer is retail's 0x3080 kind 4/8 (the party lane's opcode: a 0x3080 answer with no party
-invitation pending answers the offer); "yes" revives in place with the row's amounts
-(`reviveWith` + the row's heal, `sendRevived`). **OPEN**: the EXP return (OpenSRO keeps no
+offer is retail's 0x3080 kind 4/8 (the party lane's opcode); "yes" revives in place with the row's
+amounts (`reviveWith` + the row's heal, `sendRevived`). OpenSRO keeps the offer and the party
+invitation in separate tables, so an answer is the **invitation's first** and the offer's only
+when no invitation is pending (the client ignores kinds 4/8, so an answer must never be taken by
+an offer it never drew). An offer lives 30 s (READ above); an expired one is absent. It is also
+cleared when its target revives by any path or logs out. That early clear is OURS and has
+retail's effect: a late "yes" there finds the PC alive and does nothing. **OPEN**: the EXP return (OpenSRO keeps no
 per-death EXP record), the `rmut` buff, the 0.5 factor (`[target+0x30]+0xc == 2`).
 
 ## Debuffs on monsters (action kind 3, Target_Required 1, hostile groups)
 
 SkillAction_Buff registers the record on each target; `ApplySkillParamsToChar` writes its stats
 into the target's ParamKeeper -- a monster has one (GObjMob +0x1ec). OpenSRO keeps monster books
-apart (`monsterBooks`; ids overlap with characters), sends `OpBuffStart` / `OpBuffEnd` with
+apart (`monsterBooks`, keyed `^id` so that no monster key equals a character id, its casters'
+and links' key space; round 785 review), sends `OpBuffStart` / `OpBuffEnd` with
 ownerKind 1 to the monster's watchers, ends a timed record at its `dura`, and reads the books in
 a skill's blow: params 5 / 7 (defence, `monsterDefence`) and 174..177 (damage taken,
 `applyMonsterTaken`). The cast's answer carries a block whose hits are kind 0, hitFlags 0x10
-("effect only", READ) and the states that landed.
+("effect only", READ) and the states that landed. A plain swing reads the same books (round 785
+review: it is resolved by the cast's per-hit path).
+
+Which rows take this path (round 785 review, OURS): the action kind, Target_Required and groups
+above, **and** a Param block that is present, with no `att`, or an `att` whose `lnks` link deals
+it pulse by pulse. A hostile kind-3 row with an `att` and no `lnks` strikes like any attack row,
+and so does every row of a database whose Param block was never imported. MEASURED on the
+round-785 export: 202 such rows, 190 of them debuffs (142 `att`+`lnks`, 48 with no `att`), 12
+monster rows that strike, and 0 without a block.
 
 **Linked blows** (the Warlock DOTs, 142 rows: `nbuf bbuf lnks [9 0 2 0] lks2 dura 12000 puls
 2000 att [8 37 ..] mc [2 1]` + a state): each `puls` the caster's link resolves a full blow of the
 row's `att`/`mc` on the linked monster, its states rolled again (sab.c ~1095..1165). The link ends
 when `lnks[1]` is set and the caster is farther, or the object is gone. OpenSRO: `linkedBlowTick`,
 announced as an `OpSkillCast` act with the block to the monster's watchers (the caster included).
+A broken link ends **its own record** (by token), not every caster's record of the skill. A
+pulse's kill sends the caster OpLevelUp and then its 0x3056, as a cast's kill does (round 785
+review).
 
 ## Per-hit link effects on a defender (`dmgr` 21, `lkdr` 26, `lkdd` 20, `lkag` 12, `abnb` 9, `lkdh` 18)
 

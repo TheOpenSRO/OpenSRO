@@ -8047,6 +8047,106 @@ exp, items, gold, etc", and (later) the quest icon under the minimap. Spec: `doc
 - **Tests:** server `go test ./...` (quest, luabc, session socket flow, compiled-setup parser); client
   `remote_godot.sh tests` 291 suites, 0 failing.
 
+### Round 785 (part): the server review's fixes
+
+A review of round 785's merged server code found 15 defects. Each fix has a test that fails on the
+pre-fix tree (dev 05425433, checked by running the new tests against `git archive dev`) and passes
+after. Tests are in `server/internal/session/review785_{quest,combat}_test.go` unless named otherwise.
+Server only; no perf gate.
+
+1. **The quest kill credit could panic or double-pay** (`questOnKill`). The drop is now given
+   first, and the mission is stepped only once it is in the bag, against the log as it is then
+   (`quest.KillCredits` / `quest.Credit` re-test the quest and mission under `ql.mu`; every unlock
+   is deferred). A drop whose quest was given up meanwhile is taken back.
+   Tests: `TestReview785AbandonBetweenCreditAndDrop` (a panic before) and
+   `TestReview785DropAfterAbandonIsTakenBack`.
+2. **A full bag no longer completes a gather quest.** A refused drop counts nothing.
+   `TestReview785FullBagDoesNotFinishTheQuest`: status 2 with gather 0/1 before.
+3. **The resurrection offer no longer takes a party answer.** `handlePartyAnswer` takes the
+   invitation first, and an expired offer counts as absent. Offers are cleared on revive
+   (`reviveWith`), at logout, and by a 30 s timer. The 30 s is READ: GS `trs_wait_response`
+   +0x1c = f32 30.0 at 0xb45b48, ticked by 0x46f1e0. Retail keeps one pending request per receiver
+   and never clears it early; a late "yes" there finds the player alive and does nothing (READ,
+   0x5157f0 -> 0x46f2d0). Clearing early is OURS and has the same effect.
+   Tests: `TestReview785ExpiredOfferDoesNotTakeThePartyAnswer`,
+   `TestReview785InvitationAnsweredBeforeALiveOffer` and `TestReview785OfferEndsWithLogoutAndRevive`.
+4. **Plain swings now take the cast's per-hit path.** `performAttack` resolves its hits with
+   `castContext.strike` / `apply` on the weapon's base attack row. That covers the monster's
+   debuffs (`monsterDefence`, block and parry through `monsterStat`, `applyMonsterTaken`), the
+   buffs, the passives' `getv`, berserk per hit, and the imbue's add, states and extra targets
+   (role 1, paid by `payKills`, announced to the others). There is still one apply, one result and
+   one push per watcher. A magical swing no longer crits (READ: magic never crits).
+   `plainSwingExtras` and `skillswing.go` are gone (dead), and `quest.OnKill` is now a test helper
+   (the orphans test). `TestReview785PlainSwingReadsTheMonstersDebuffs`: 24 before, 36 after.
+5. **Chains now stop.** `cancelActions` (the keep-up plus `cancelChain`) replaces `keepUp.Cancel`
+   for a move, a dest-move, a sit, death (both paths), a zone change, unstuck, an older client's
+   walk and the logout. A new `OpAttack` ends the chain.
+   - **Retail (READ, 0x4ae590):** a link posts in phase 2, which has no reach test and no walk, so
+     it fires out of reach. It stops when the target is dead, gone or more than a cell away
+     (0x3006 in `FUN_0058cc70`). Death (vslot 306/307 -> `FUN_004ad320`) and a sit (`FUN_004b1480`)
+     clear the queue. A move does not, but the retail client sends no move while an action runs.
+   - **OpenSRO (OURS):** `playLink` measures the skill band (`chainLinkInReach`) and ends the chain
+     out of reach, and a move ends it, because OpenSRO's client can move mid-chain.
+   - Generations come from one sequence, so an entry can be deleted.
+   - Tests: `TestReview785MoveEndsTheChain` and `TestReview785ChainLinkOutOfReachDoesNotStrike`.
+6. **A DoT pulse's kill now sends OpLevelUp**, before the 0x3056. `TestReview785DotKillSendsTheLevelUp`.
+7. **The debuff gate now reads the Param block.** `startsMonsterDebuff` needs the block present,
+   and the row must have no `att`, or an `att` with `lnks`; any other row strikes.
+   - MEASURED on `/var/tmp/r785-deploy/skills.csv`: 202 hostile kind-3 Target_Required rows
+     (177 `SKILL_*`), all with a Param block.
+   - 190 stay debuffs: 142 `att`+`lnks` and 48 with no `att`.
+   - **12 change** and strike again, all monster rows (`MSKILL_TQ_WHITESNAKE_ATTACK03`,
+     `MSKILL_SD_SETH_ATTACK13`, 8 `MSKILL_GOD_GHOST_UNDINE_*_ATTACK03`,
+     `MSKILL_ARABIA_VENEFICA_ATTACK06` and `MSKILL_ARABIA_VENEFICA_DEMON_ATTACK04`); no player row
+     changes.
+   - On a database not re-imported (no `param_words`), all 202 strike as before round 785.
+   - Test: `TestReview785HostileKind3RowsWithDamageStrike`.
+8. **The quest reward is paid only once the paid state is saved.** Each write takes the per-character
+   `ql.wmu` and reads the state at its own turn, so writes no longer land out of order.
+   `takeReward` claims and writes under that lock; if the write fails, it restores the unpaid state
+   and answers {2, 2}. `TestReview785RewardRefusedWhenThePaidStateIsNotSaved`: paid before.
+9. **A broken link ends its own record only.** `endMonsterRecord(token)` replaces the skill-id match.
+   `TestReview785BrokenLinkEndsOnlyItsCastersRecord` uses an `lks2` row so that two casters'
+   records coexist.
+10. **Monster books have their own key space.** Monsters are keyed `^id` (`monsterBookSet`), so a
+    character id never collides with a monster id. `TestReview785MonsterOwnerIsNotItsCasterNamesake`.
+11. **The SQL `ResetHP` / `RespawnHP` now apply `Bonus.HPPct`.** The SQL uses the same
+    factor as `scalePct`. Test: `character/hppct785_test.go`.
+12. **The cast's counter now names its skill**: `strike.SkillID = strikeSkillID(...)`.
+    `TestReview785CastCounterNamesThePrimarySkill`.
+13. **A knock's cell crossing is now delivered.** `placeMonster` -> `monsterAOI.place` runs
+    `Hub.Place` and `crossingsLocked` under the view lock, as `step` does, then
+    `deliverViewEvents`. `TestReview785KnockCrossingIsDelivered`.
+14. **A quest talk is now bound to its character and to the NPC's reach.**
+    - The talk records its character, and `talkOf` refuses another character or a player beyond
+      the NPC select's reach (`npcTarget`, 300). It is cleared on a teleport (`warpTo`), on a
+      character's entry (`questAfterEnter`) and on 0x704B.
+    - On 0x704B a talk waiting at the reward window is kept, because OpenSRO's client keeps that
+      window open (OURS).
+    - Retail (READ): 0x70D4 and 0x7515 have no distance test of their own. They need the PC's
+      selection of the NPC, which breaks beyond 320 on a cell change (0x433270). 0x7515 also needs
+      talk mode 5 and always ends the interaction. 0x70D8 involves no NPC.
+    - Tests: `TestReview785QuestTalkNotAnsweredFarFromTheNPC`, `...EndsWithTheNPCTalk` and
+      `...EndsWithATeleport`.
+15. **Per-character state is freed at logout.** `forgetCharacterSkillState` clears the chain entry,
+    the rows, the passives, the resurrection offer and the quest log (after its writes in flight).
+    `addSkillHate` no longer re-creates a threat entry for a monster that is gone or at 0 HP.
+    `QuestHandler` checks the opcode before the hub lookup.
+    Tests: `TestReview785LogoutFreesTheCharactersState` and `TestReview785NoThreatForAGoneMonster`.
+
+16. **OpAttackResult now names its skill** (from the client review). A u32 skill id follows the
+    action block's leading-kind byte (0 = plain swing). It is written whenever the block is, set by
+    `echoed` from the request (`AttackResult.SkillID`). A client that stops at the kind byte is
+    unaffected. The layout is in `skill_hit_block.md`. Tests:
+    `TestReview785AttackResultCarriesTheSkillID` and `TestReview785CastAndSwingResultsNameTheirSkill`
+    (new behaviour, no pre-fix failure to show).
+
+`go vet ./...` and `go test ./...` pass. `go test -race -timeout 60m` on session, quest, buff and
+combat passes with no race reported; session takes about 21 minutes under the race detector, more
+than the default 10-minute timeout. One race run failed `TestPartyInviteeDisconnectFreesIt`. The
+test checked the party state as soon as the hub had dropped the invitee, but the harness runs the
+party hook after the world hook. The test now waits up to 1 s for the detach; 3 race runs pass.
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

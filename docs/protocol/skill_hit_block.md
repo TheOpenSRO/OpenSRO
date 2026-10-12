@@ -112,6 +112,14 @@ uses for its floats, here as i32 because retail writes i32.
 | `OpSkillCast` (0x00FA) phase 1 (act) | after the 43 bytes | every announced act whose cast resolved a blow or moved its caster |
 | `OpSkillCast` phase 0 (start) | after the 43 bytes, **only the move** (flags 8, no damage block) | a Ghost Walk / Teleport, as retail's 0xB070 carries the move at the start |
 
+**The skill id (OpAttackResult only, OURS, round 785 review).** After the trailer's leading-kind
+byte: **u32 skillId (0 = plain swing)**. It is written whenever the ActionBlock is written in an
+`OpAttackResult` and names the skill the result answers: the cast's skill id, or 0 for a plain
+swing (the weapon's base attack). Chain links have no `OpAttackResult`; their `OpSkillCast`
+already carries the link's id in its header. Without it, a keep-up swing's result that arrived
+while a cast was pending was drawn as the cast's answer, and the cast's own result as a plain
+swing. `OpSkillCast` does not append it.
+
 A decoder that stops before the suffix decodes what it did before: an `OpAttackResult` of 59
 bytes (no wall) or 72 (a wall) is unchanged; an ActionBlock is present when byte 72 is 0xAB. An
 `OpSkillCast` longer than 43 bytes with byte 43 = 0xAB carries one.
@@ -125,7 +133,9 @@ damage, so an older client keeps working.
 hit; hitFlags 1 or 2, `|4` while the caster is in HWAN, 0x10 on a debuff's effect-only hit;
 statusBits from `statuseffect`. 7 (the walls) rides the wall suffix as before (a monster blow on
 a player's wall); 0x86 (`ck`'s instant kill) is not emitted -- no player row carries `ck`.
-**A plain swing carries the block too** (one target, its base attack's hits).
+**A plain swing carries the block too**: its target and its base attack's hits, plus the
+running imbue's extra targets (role 1) since the round 785 review. The hits carry their kill bit,
+void hits and status bits as a cast's do (`castContext.strike` / `apply`).
 
 ## Ghost Walk, Teleport and Sprint: the caster's move
 

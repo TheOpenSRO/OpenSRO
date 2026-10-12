@@ -277,18 +277,6 @@ func Credit(l Log, k KillCredit) (Progress, bool) {
 	return step(k.Quest, s, k.Mission, k.Item), true
 }
 
-// OnKill credits a kill of the species code with every drop granted.
-// roll(rate) decides a gather mission's drop; rate is in percent.
-func (c *Catalog) OnKill(l Log, code string, roll func(rate float64) bool) []Progress {
-	var out []Progress
-	for _, k := range c.KillCredits(l, code, roll) {
-		if p, ok := Credit(l, k); ok {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 // OnTalk settles the deliveries and dialogues p's open quests have at npc.
 // has reports how many of an item the player holds.
 func (c *Catalog) OnTalk(l Log, npc string, has func(code string) int) (out []Progress, take []ItemCount) {

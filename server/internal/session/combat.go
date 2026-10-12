@@ -425,6 +425,13 @@ type AttackResult struct {
 	// caster's move. When set, the wall suffix is always written (13 bytes,
 	// zero for no wall) and the block follows it at offset 72.
 	Action *ActionBlock
+	// SkillID is the skill the result answers, 0 for a plain swing (the base
+	// attack). It is written as a u32 right after the action block's
+	// leading-target kind byte, and only when the block is (round 785
+	// review, OURS): a keep-up swing's result arriving while a cast is
+	// pending was otherwise drawn as the cast's answer. A client that stops
+	// reading at the kind byte is unaffected.
+	SkillID int64
 }
 
 // expAdded is the experience a character gained going from (level, exp) to
@@ -494,6 +501,8 @@ func (r *AttackResult) Encode() []byte {
 	// that is then always present.
 	if r.Action != nil {
 		buf = r.Action.encode(buf)
+		// And the skill id after it (round 785 review): 0 = a plain swing.
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(r.SkillID))
 	}
 	return append(out, buf...)
 }
@@ -546,8 +555,11 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 		r.Wall = w
 	}
 	if len(rest) > 72 && rest[72] == actionBlockMarker {
-		if b, _, err := DecodeActionBlock(rest[72:]); err == nil {
+		if b, after, err := DecodeActionBlock(rest[72:]); err == nil {
 			r.Action = b
+			if len(after) >= 4 {
+				r.SkillID = int64(binary.LittleEndian.Uint32(after))
+			}
 		}
 	}
 	return r, nil
