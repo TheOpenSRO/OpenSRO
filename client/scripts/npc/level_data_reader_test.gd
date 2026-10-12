@@ -119,8 +119,9 @@ func _initialize() -> void:
 		var broke: String = gate.call(1, 30, 1, 330, 0, 0)
 		_check(broke == "Not enough skill points.", "a level-1 mastery with 0 SP is refused (got '%s')" % broke)
 
-		# The board reads the cost from the loaded table: LEVEL UP greys
-		# with 5 SP at Bicheon 20 and lights with 53.
+		# The board reads the cost from the loaded table (round 781: retail
+		# HIDES LEVEL UP when the points fall short, 0x69c5f0 -- it used to
+		# grey it): hidden with 5 SP at Bicheon 20, shown with 53.
 		panels.set("_level_mastery_costs", {20: 53})
 		panels.set("_level_data_loaded", true)
 		panels.set("_skill_char_level", 30)
@@ -129,18 +130,13 @@ func _initialize() -> void:
 		mastery.id = 257
 		for sp in [5, 53]:
 			panels.set("_skill_points", sp)
-			var board := Control.new()
-			panels.call("_build_mastery_board", board, mastery)
-			var btn := board.find_child("SkillMasteryLevelUp", true, false) as Button
-			_check(btn != null, "the board has its LEVEL UP button (%d SP)" % sp)
-			if btn != null:
-				if sp == 5:
-					_check(btn.disabled and btn.tooltip_text.contains("53") and btn.tooltip_text.contains("(you have 5)"),
-						"with 5 SP the button is greyed with the 53 cost (disabled %s, '%s')" % [btn.disabled, btn.tooltip_text])
-				else:
-					_check(not btn.disabled and btn.tooltip_text.contains("costs 53 skill points"),
-						"with 53 SP the button is live and shows its cost (disabled %s, '%s')" % [btn.disabled, btn.tooltip_text])
-			board.free()
+			var header: Dictionary = panels.call("_skill_header_model", mastery)
+			if sp == 5:
+				_check(not bool(header.get("levelup", true)),
+					"with 5 SP against the 53 cost LEVEL UP is hidden (%s)" % str(header.get("levelup")))
+			else:
+				_check(bool(header.get("levelup", false)) and str(header.get("levelup_tooltip", "")).contains("53"),
+					"with 53 SP LEVEL UP shows, naming its cost (%s, '%s')" % [str(header.get("levelup")), str(header.get("levelup_tooltip"))])
 
 		# A server refusal reaches chat through system_notice; a success says
 		# nothing. No character is signed in, so neither sends a request.

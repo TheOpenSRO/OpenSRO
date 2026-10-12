@@ -177,6 +177,15 @@ const S_REQ_WEAPON_1 := 50
 const S_REQ_WEAPON_2 := 51
 const S_CONSUME_MP := 53
 const S_GROUP_ROW := 59
+## Column 60: the skill's place in its group's row (round 781). READ: the
+## board puts a skill in group record+0xf8 at slot record+0xfc (0x69bbe1..
+## 0x69bc12), and SetGroup lays a slot at x = that * 0x24 + 0x25 (0x69f15c);
+## the group index is the column-59 value this reader keys rows by (0x944956
+## indexes the mastery's groups with +0xf8), so +0xfc is the next column, 60
+## (INFERRED from the layout). MEASURED on the box's tables: 107 rows, 529
+## skills, every value 0..7 and unique within its row; base-id order put 166
+## of them in another column.
+const S_UI_COLUMN := 60
 const S_ICON := 61
 const S_NAME := 62
 const S_TOOLTIP_DESC := 64        # SN_..._TT_DESC, resolved via the UI text table
@@ -196,8 +205,11 @@ class BaseSkill:
 	var base_id: int
 	var mastery_id: int
 	var group_row: int
-	## 0-based position in the row, assigned by base-id order within the group.
+	## 0-based position in the row: skilldata column 60 (S_UI_COLUMN), or the
+	## first free column in base-id order when that is missing or taken.
 	var column: int
+	## Column 60 as the rows give it (-1 until seen).
+	var ui_column: int = -1
 	var icon_path: String
 	var name_code: String
 	## The mastery level at which level 1 of this skill becomes learnable -- the
@@ -344,7 +356,7 @@ static func parse_groups(data: PackedByteArray) -> Dictionary:
 	return by_mastery
 
 ## Parses the skilldata files into "<mastery>:<row>" -> Array[BaseSkill], each
-## array ordered by base id and given sequential column indices. `mastery_ids`
+## array ordered by column (assign_columns: skilldata column 60). `mastery_ids`
 ## limits the scan to the player's masteries; rows for other owners (monsters,
 ## NPCs) and the ungrouped basic attack (row 255) are dropped.
 static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Dictionary:
@@ -400,6 +412,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				s.base_id = base_id
 				s.mastery_id = mastery
 				s.group_row = row
+				s.ui_column = _int_at(cols, S_UI_COLUMN) if cols.size() > S_UI_COLUMN else -1
 				s.icon_path = cols[S_ICON].strip_edges().replace("/", "\\")
 				s.name_code = cols[S_NAME].strip_edges()
 				s.min_req_mastery_level = req
@@ -425,7 +438,9 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				bs.desc_code = cols[S_TOOLTIP_DESC].strip_edges() if cols.size() > S_TOOLTIP_DESC else ""
 				bs.basic_code = cols[S_BASIC_CODE].strip_edges() if cols.size() > S_BASIC_CODE else ""
 
-	# Group by mastery:row, order by base id, assign columns.
+	# Group by mastery:row in base-id order, then place each skill at its own
+	# column (S_UI_COLUMN) when that is 0..COLUMNS-1 and free, else at the
+	# first free one; each row's array ends up ordered by column.
 	var grid: Dictionary = {}
 	var bases: Array = by_base.values()
 	bases.sort_custom(func(a, b): return a.base_id < b.base_id)
@@ -435,9 +450,31 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 		var key := "%d:%d" % [s.mastery_id, s.group_row]
 		if not grid.has(key):
 			grid[key] = []
-		s.column = grid[key].size()
 		grid[key].append(s)
+	for key in grid:
+		assign_columns(grid[key])
 	return grid
+
+## Gives each skill of one row its column (see S_UI_COLUMN) and sorts the row
+## by it. `row` is in base-id order.
+static func assign_columns(row: Array) -> void:
+	var taken: Dictionary = {}
+	var later: Array = []
+	for entry in row:
+		var s: BaseSkill = entry
+		if s.ui_column >= 0 and s.ui_column < COLUMNS and not taken.has(s.ui_column):
+			s.column = s.ui_column
+			taken[s.column] = true
+		else:
+			later.append(s)
+	var next := 0
+	for entry in later:
+		var s: BaseSkill = entry
+		while taken.has(next):
+			next += 1
+		s.column = next
+		taken[next] = true
+	row.sort_custom(func(a, b): return a.column < b.column)
 
 ## Folds a skill's per-level accumulator into level_ids/level_reqs, indexed
 ## by level-1 (index 0 = level 1). Levels the archive is missing stay 0.

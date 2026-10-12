@@ -13,6 +13,9 @@ class_name MasteryReader
 ## | 0 | Mastery id |
 ## | 2 | MasteryNameCode (a `UIIT_` token, resolved through the UI text table) |
 ## | 3 | GroupNum -- how many skill-group rows the mastery's board has |
+## | 4 | Mastery Description ID (UIIT_STT_MASTERY_VI_EXPLANATION ...), round 781 |
+## | 4 | Mastery Description ID (UIIT_STT_MASTERY_VI_EXPLANATION ...) -- the
+##       practice box's text (round 781: the record's string at +0x24, 0x7066e2) |
 ## | 5 | Tab Name Code (UIIT_CTL_WEAPON_SKILL, UIIT_CTL_EU_SKILLWND_PHYSICAL, ...) |
 ## | 6 | Tab: China 0 Weapon, 1 Force; Europe 0 Physical, 1 Magical, 2 Assist |
 ## | 8, 9, 10 | the weapon TypeID4s this mastery trains (2/3 sword+blade, ...) |
@@ -57,6 +60,10 @@ const TABLE_PATH := "server_dep\\silkroad\\textdata\\skillmasterydata.txt"
 
 const COL_ID := 0
 const COL_NAME_CODE := 2
+## Column 4: the mastery's explanation, which the skill practice box shows
+## (round 781; READ that the box reads the record's +0x24 string, INFERRED
+## that +0x24 is this column from the record's layout above).
+const COL_DESC_CODE := 4
 ## Column 5 is the tab's own name code (UIIT_CTL_WEAPON_SKILL /
 ## UIIT_CTL_FORCE_SKILL) -- what the skill window titles each tab with.
 const COL_TAB_CODE := 5
@@ -95,6 +102,8 @@ const WEAPON_LABEL := {
 class Mastery:
 	var id: int
 	var name_code: String
+	## The UIIT_ token of the mastery's explanation (column 4).
+	var desc_code: String
 	var tab: int
 	## The UIIT_ token titling this mastery's tab (Weapon / Force skill).
 	var tab_name_code: String
@@ -154,6 +163,7 @@ static func parse_all(data: PackedByteArray) -> Array:
 		var m := Mastery.new()
 		m.id = int(id_text)
 		m.name_code = cols[COL_NAME_CODE].strip_edges()
+		m.desc_code = cols[COL_DESC_CODE].strip_edges()
 		m.tab = _int_at(cols, COL_TAB)
 		if COL_TAB_CODE < cols.size():
 			m.tab_name_code = cols[COL_TAB_CODE].strip_edges()
