@@ -7597,7 +7597,15 @@ the native simulation matches GDScript bit for bit, the new orphan templates inc
   triangle budget (20,000 a frame, OURS) keeping last frame's strips when spent; the global
   2,000-particle cap in a crowd (the user's log has no line on it: not measured there).
 
-**Perf gate** (`--base c7b2dcd0 --sites jangan`, 1280x720, median of 3): PERF_TABLE
+**Perf gate** (`--base c7b2dcd0 --sites jangan --frames 40000`, 1280x720, Forward+ on the RX 7600,
+median of 3; the default 3,000 frames now end in about 4 s at ~760 fps, too few samples):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.79 | 0.77 | SAME |
+| entry ms | 8800 | 8658 | SAME |
+| freeze ms | 2755 | 2775 | SAME |
+| hitches | 5 | 4 | SAME |
 
 **Gates:** `check` ALL LOAD (753 scripts, 9 scenes); `tests` 290 suites, 0 failing (with the native
 library); `cargo test --locked` and `--no-default-features` 68 passed; `efp_native_test` bit for
