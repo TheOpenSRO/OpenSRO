@@ -248,27 +248,30 @@ func DecodePickUpResult(data []byte) (*PickUpResult, error) {
 		Quantity: int32(binary.LittleEndian.Uint32(rest[0:4])), Gold: rest[4] == 1}, nil
 }
 
-// DropScatter is how far from the corpse a dropped stack lands, in world
-// units, on a uniform disc. Own design, disclosed: the engine's spread was
-// not read (the drop position is set in the spawn path, not in CGItem).
-// Two units keeps a kill's several stacks apart without hiding one under
-// the corpse.
-const DropScatter = 2.0
-
 // dropKillLoot turns a kill's rewards into ground items near the corpse --
 // the gold pile (ITEM_ETC_GOLD_03, the item FUN_009348f0 spawns) and whatever
 // combat.LootTables rolled -- owned by the killer for the 30 s window, and
 // tells everyone in the zone. Returns what was dropped.
+//
+// Each stack is placed the way the engine places it (round 785,
+// grounditem.Scatter, READ FUN_0048fdf0): on a ring 8 to 20 units from the
+// corpse at a random angle, every stack drawn on its own, with no test against
+// the stacks already there. Until round 785 OpenSRO used its own 2-unit disc,
+// which put a kill's stacks on top of one another (the user's log: 52 Gold and
+// an HP herb 1.95 units apart). The y stays the corpse's: OpenSRO's server has
+// no navmesh height (the engine's ResolveCellAndHeight), and the client grounds
+// the stack under its x, z.
 func dropKillLoot(ground *grounditem.Hub, hub *world.Hub, monster combat.Monster, killerID int64, gold int64, drops []LootDrop) []grounditem.Item {
 	if ground == nil {
 		return nil
 	}
 	var out []grounditem.Item
 	place := func(itemID int64, qty int32, isGold bool) {
-		angle := rand.Float64() * 2 * math.Pi
-		dist := math.Sqrt(rand.Float64()) * DropScatter
-		it := ground.Drop(monster.Zone, itemID, qty, isGold,
-			float32(monster.X+math.Cos(angle)*dist), float32(monster.Y), float32(monster.Z+math.Sin(angle)*dist), killerID)
+		x, z := grounditem.Scatter(monster.X, monster.Z, grounditem.ScatterDraw(rand.Intn), grounditem.ScatterDraw(rand.Intn))
+		it := ground.Drop(monster.Zone, itemID, qty, isGold, float32(x), float32(monster.Y), float32(z), killerID)
+		// The corpse and the stack, so a QA run's server.log measures the ring.
+		slog.Info("ground drop", "ground_item", it.ID, "monster", monster.ID, "corpse_x", monster.X, "corpse_z", monster.Z,
+			"x", it.X, "z", it.Z, "from_corpse", math.Hypot(x-monster.X, z-monster.Z))
 		out = append(out, it)
 	}
 	if gold > 0 {
@@ -570,10 +573,88 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 				sendItemNotice(hub, sharing, recipient, party.ItemNotice{RecipientJID: party.JIDOf(recipient),
 					RefItemID: uint32(it.ItemID), Class: class, Amount: amount})
 			}
+			// The pick-up clip, for everyone in the zone (0x3036, round 785).
+			broadcastPickUpMotion(hub, entity.Zone, characterID, entity.Pos.X, entity.Pos.Z, it)
 			broadcastGroundRemoval(hub, it, characterID)
 			return nil
 		}
 		return nil
+	}
+}
+
+// OpPickUpMotion is retail's 0x3036 (round 785): a character has just picked
+// something up -- turn it toward the item and play its pick-up clip. READ in
+// SR_GameServer.exe: the player's pick (FUN_00526090, whose CGStorage add at
+// 0x526335 succeeds, 0x526341 -> 0x5263b5) builds it at 0x52643c and
+// broadcasts it to the picker's region (GObjPC::FUN_00484d90, 0x5264aa) --
+// for an item and for gold alike (the IsGold answer at 0x5262a1 only skips
+// the party notice, 0x5263c8); the pet's pick (GObjPC::FUN_004d4f60,
+// 0x4d51de) sends the same with the pet's id. Nothing is sent for a refused
+// pick. The payload, u32 the picker's unique id (+0x8, 0x52648c) and u8 the
+// angle, is the client handler's (sro_client.exe FUN_008a78b0, registered for
+// 0x3036 at 0x87065b): it reads the two, turns the object to face byte / 255
+// * 360 degrees (plus the quarter turn every wire angle gets, FUN_009c40b0),
+// and enters character state 10, whose enter (0xa59a00, the state table at
+// 0xec5fb8 + 10 * 0x28) plays action type 38 -- the body's `_pickup` clip --
+// once, and whose event handler (0xa59a60) leaves it when the clip ends.
+//
+// OURS: the order. The engine sends it after the add; OpenSRO sends the
+// picker's PickUpResult, then this, then the zone's OpGroundItemRemoved (the
+// engine's despawn of the picked item was not traced).
+const OpPickUpMotion uint16 = 0x3036
+
+// PickUpMotion is the 0x3036 payload.
+type PickUpMotion struct {
+	ObjectID uint32
+	Angle    byte
+}
+
+func (m *PickUpMotion) Encode() []byte {
+	out := make([]byte, 5)
+	binary.LittleEndian.PutUint32(out[0:4], m.ObjectID)
+	out[4] = m.Angle
+	return out
+}
+
+func DecodePickUpMotion(data []byte) (*PickUpMotion, error) {
+	if len(data) < 5 {
+		return nil, errors.New("session: decoding PickUpMotion: truncated")
+	}
+	return &PickUpMotion{ObjectID: binary.LittleEndian.Uint32(data[0:4]), Angle: data[4]}, nil
+}
+
+// PickUpMotionAngle is 0x3036's angle byte for a picker at (px, pz) and an
+// item at (ix, iz), in OpenSRO's frame. READ, the engine's (0x526422 ..
+// 0x526473): atan2 of the vector between the two positions, in degrees
+// (* 57.29578, .rdata 0xb45c38), / 360.0 (0xb45c30) * 255.0 (0xb460e8),
+// truncated toward zero (the control word's 0xc00) and stored as its low byte,
+// so a negative angle wraps. The engine's atan2 is taken in its region frame,
+// x east and z north; OpenSRO's z runs the other way (the client's region
+// group mirrors z, RemoteFacing's note), so the engine's angle is
+// world.WireAngle of the heading OpenSRO computes toward the item -- the
+// mapping every other wire angle this server sends uses -- taken into
+// (-180, 180] degrees as atan2 answers. That the vector runs from the picker
+// to the item (not back) is INFERRED: the item's position is copied at
+// 0x52626a and the picker's at 0x5263e2, and the client turns its character to
+// the angle as it bends.
+func PickUpMotionAngle(px, pz, ix, iz float64) byte {
+	a := world.WireAngle(world.HeadingToward(0, ix-px, iz-pz))
+	if a > math.Pi {
+		a -= 2 * math.Pi
+	}
+	deg := a * 57.295780181884766
+	return byte(int32(deg / 360.0 * 255.0))
+}
+
+// broadcastPickUpMotion sends 0x3036 for the picker to its zone, the picker
+// included (INFERRED: the engine's region broadcast, GObjPC::FUN_00484d90,
+// was not traced to its receivers; the picker is in its own region).
+func broadcastPickUpMotion(hub *world.Hub, zone string, pickerID int64, px, pz float64, it grounditem.Item) {
+	m := &PickUpMotion{ObjectID: uint32(pickerID), Angle: PickUpMotionAngle(px, pz, float64(it.X), float64(it.Z))}
+	pkt := &proto.Packet{Opcode: OpPickUpMotion, Data: m.Encode()}
+	slog.Info("pick-up motion", "character_id", pickerID, "ground_item", it.ID, "angle", m.Angle)
+	for _, e := range hub.EntitiesInZone(zone) {
+		e.Session.Send(pkt)
 	}
 }
 

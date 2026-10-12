@@ -225,8 +225,115 @@ DecayTime only its owner may pick it, party or not -- as in the engine.
   DecayTime"): the item's own `DecayTime`, itemdata column 13, in ms, counted by
   `CGObj::Update` (`0x484d10`). The 3 minutes OpenSRO used before is now only
   `grounditem.FallbackLifetime`, for an export without the column.
-- **The drop's scatter around the corpse.** Set in the spawn path, not in
-  `CGItem`; OpenSRO uses a 2-unit disc, own design.
+- ~~**The drop's scatter around the corpse.**~~ **Read in round 785**: "Where
+  a drop lands" below. OpenSRO's 2-unit disc (own design) is gone.
+
+## Where a drop lands (round 785)
+
+READ in SR_GameServer.exe. Every drop goes through the new item's vtable
+slot 311, `FUN_0048fdf0`, with the DROPPER'S OWN position (its `+0x7c..+0x90`:
+region word, x, y, z): a monster's (`CGObjChar::ForceDropItem` `0x004aa680`,
+the dropper's slot 149, called e.g. from `CGObjMob_DropRank7GoldPiles`
+`0x009348f0`; the struct copy at `0x4aaa8d..0x4aaac8`, the call at
+`0x4aaadd`), a player's item (`CGStorage::DropItem` `0x004b2ab0`) and a
+player's gold (`FUN_00526b00`, up to 100,000,000). `FUN_0048fdf0`:
+
+```
+angle  = rand() / 32767.0 * 6.2831854820251465 + 0.0   (0xb45af8, 0xb45c18, 0xb45ab0; 0x48fecb..0x48fef2)
+radius = min + (max - min) * rand() / 32767.0          (0x48fef6..0x48ff22)
+x += f1(angle) * radius;  z += f2(angle) * radius      (0x48ff2d..0x48ff70; f1 0x489490, f2 0x4894b0: the CRT's cos/sin)
+heading = rand() / 32767.0 * 2 pi                      (a third rand: the item's own yaw)
+```
+
+`[min, max]` is `[8.0, 20.0]` (`.rdata 0xb45e14`, `0xb45b20`). So a stack lands
+on a ring 8 to 20 units from the dropper, the radius uniform over the band
+(not over the ring's area), each stack drawn on its own. Nothing looks at the
+items already lying there: two stacks of one kill can land on one spot, as
+often as two random points of the ring coincide (about 1 % of pairs within 2
+units, MEASURED by `grounditem.TestScatterDistribution`).
+
+The item is then entered at that point (slot 172, `0x0048fa30` ->
+`CGObj::EnterWorld` `0x00485360`, with the cell pointer `+0x7c` zeroed at
+`0x48fe4a`), which resolves the navmesh cell and its height ("CGObj::EnterWorld
+Failed!!! at ResolveCellAndHeight()", `.rdata` string at file offset
+`0x6e7688`). When that fails -- the point is off the walkable mesh --
+`FUN_0048fdf0` enters the item again at the dropper's own position,
+unscattered.
+
+**A wider band, apparently unreached.** When the object at the item's `+0x14c`
+is a monster (slot 10, `IsMonster`), its class (`CGObjMob::GetMonsterClass`
+`0x004c1c60`: `+0x1cd8 & 0xf`; jump table `0x49018c`) picks the band: 3 and 8
+`[10, 30]`, 4 `[10, 40]`, 5 `[20, 100]`, the rest the default. But `+0x14c` is
+written only by the constructor (`0x48f8b2`, zero) and the setter
+`FUN_0048f990` (slot 321), which is reached only through `[vtable+0x504]`
+calls -- the pick (`0x48fd7e`), this scatter's own clear (`0x48fff3`), the
+inventory moves (`0x4b798c`, `0x4b9c19`, `0x4b9d12`) and the market
+(`0x47b5a6`, `0x47b77f`) -- none on the drop path. So a monster's drop takes
+the default band. **OPEN:** what path, if any, reaches the class bands.
+
+**OpenSRO (`grounditem.Scatter`, `session.dropKillLoot`):** the engine's ring
+with the engine's 15-bit draws. Not modelled: the off-mesh retry and the
+height (the server has no navmesh; a stack carries the corpse's y, which for
+OpenSRO's monsters is their listed y, often 0), the item's random heading (the
+snapshot carries none; every stack is drawn at the model's own yaw), and the
+class bands. The client stands each stack on the terrain under its x, z
+(`GroundItems.spawn`, `World3D._terrain_hit_height`: the terrain-only ray, as
+the monsters are placed), so the y on the wire does not matter to the picture.
+OpenSRO has no player drop to the ground (no `CGStorage::DropItem`).
+
+MEASURED (round 785, `partybot -mode pickup` against a server from this
+branch, `/var/tmp/r785-drops/bot` on the box): 40 Mangyang kills, 80 stacks,
+every one 8.01 to 19.68 from its corpse (mean 13.78); the 40 same-kill pairs
+1.47 to 37.07 apart, mean 18.79 (median 20.55), one within 2 units. Before (the user's log, the
+2-unit disc): 52 Gold and 2 HP Recovery Herbs 1.95 apart.
+
+## The pick-up motion: 0x3036 (round 785)
+
+READ. The server's player pick (`FUN_00526090`) adds the item to the bag
+(`0x4b29a0` at `0x526335`); on success (`0x526341` -> `0x5263b5`) it builds
+**0x3036** at `0x52643c` -- u32 the picker's unique id (`+0x8`, `0x52648c`),
+u8 the angle -- and broadcasts it to the picker's region (`GObjPC::FUN_00484d90`,
+`0x5264aa`). Gold too: the `IsGold` answer (`0x5262a1`) only skips the party
+notice (`0x5263c8`). The pet's pick (`GObjPC::FUN_004d4f60`) sends the same
+from `0x4d51de` with the pet's id. A refused pick sends nothing. The angle:
+atan2 of the vector between item (`+0x7c`, copied at `0x52626a`) and picker
+(`+0x88..+0x90`, `0x5263e2`) in degrees (`* 57.29578`, `0xb45c38`), `/ 360.0`
+(`0xb45c30`) `* 255.0` (`0xb460e8`), truncated toward zero (control word
+`| 0xc00`) into its low byte -- so a negative angle wraps at 256 while the
+client scales by 255 (up to two 1.41-degree steps off). That it runs picker ->
+item is INFERRED (the client turns its character to it).
+
+The retail server walks the character to the item first: the auto-command's
+pick-up tick (`0x4ae0c0`, kind 2) checks the pick (`vslot 0x60c`), sets the
+range to 10.0 (`0xb45b44`), `MoveTowardObject` while beyond it, stops
+(`0x4ad780` -> `0x4b03f0`) once inside, then posts the 0x7034 pick. OpenSRO's
+client walks itself (the arrival asks again, `_ask_pickup_after_walk`).
+
+The client (`sro_client.exe`): `FUN_008a78b0`, registered for 0x3036 at
+`0x87065b`, reads the id and the byte, finds the object (`0x9c3220`), skips it
+when `FUN_009ce930` answers non-zero (its `+0x2ac`: a ridden transport,
+INFERRED), turns it to `byte / 255 * 360` degrees (`0xd83108`, `0xdde7a8`,
+`0xe1b8d8`) through `FUN_009c40b0` (the quarter turn every wire angle gets) and
+`FUN_009c4260` (at once, no turn), and enters character state 10
+(`FUN_009c9920(10, 0)`). The state table at `0xec5fb8`, `0x28` bytes a state,
+filled at `0xd774a1..0xd774c1`: state 10's enter `0xa59a00` plays action type
+`0x26` = 38 (the body's `_pickup` clip, `BSR_FORMAT.md`) through vtable `+0xbc`
+with two 0xc8 (200) arguments -- blend times in ms, INFERRED -- and two 1.0 floats, and leaves the state at once when no
+clip is found; its event handler `0xa59a60` leaves it when the clip's end
+event (100) names that clip, or on event 2 (which was not read); its leave
+`0xa59aa0` stops the clip (0xc8 again) unless event 2 ended it. The
+state's prerequisite and exclusion words (`0xec6168..0xec616c`) are zero: the
+pick-up blocks nothing. The clip's sound track carries `snd_pickup`
+(`SOUND_FORMAT.md`).
+
+**OpenSRO:** `session.OpPickUpMotion` = 0x3036 with the retail payload, sent to
+the zone (the picker included) after a successful pick -- after the picker's
+`OpPickUpResult`, before the zone's `OpGroundItemRemoved` (that order OURS).
+The client (`GroundItemsNet.OP_PICK_UP_MOTION`, `World3D._on_pick_up_motion`)
+faces the body and plays its type-38 clip once, for this player
+(`_play_player_once`) and for another player's drawn body (`_play_once`); a
+move cuts this player's clip short (OURS, standing in for event 2). There is
+no pet pick-up in OpenSRO, so the pet's 0x3036 is not sent.
 
 ## OpenSRO's protocol (own, additive)
 
@@ -241,6 +348,7 @@ Server `internal/session/grounditem.go`, client `scripts/net/ground_items.gd`:
 | `OpGroundItemOwnerReleased 0x006e` | s→zone | s64 id (the real 0x304D) |
 | `OpPickUp 0x006f` | c→s | name string, s64 ground id |
 | `OpPickUpResult 0x0079` | s→c | s64 code (0 or an Err*), s64 ground id, s64 item id, u32 qty, u8 gold |
+| `OpPickUpMotion 0x3036` | s→zone | u32 the picker's id, u8 angle -- **retail's own** (round 785, "The pick-up motion") |
 
 A snapshot is: s64 id, s64 item id, u32 quantity, u8 gold, f32 x/y/z, s64 owner
 (0 = free). The refusal codes are the engine's (`3`, `4`, `0x1812`, `0x1813`,

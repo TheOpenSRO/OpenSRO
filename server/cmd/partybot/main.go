@@ -40,6 +40,14 @@
 //	    from 5 up an exp-share member also earns the party gap bonus
 //	    (leveldata.ExpDiffPartyBonus), which the solo baseline does not.
 //
+//	partybot -mode pickup -addr HOST:PORT [-prefix r785] [-monster NAME] [-kills N]
+//	         [-pick] [-at "x y z"] [-wait D]
+//	    The round-785 drop run (pickup.go): one character kills N monsters
+//	    beside itself and prints where each kill's stacks landed and how far
+//	    apart; with -pick it walks up to each and picks it, checking the 0x3036
+//	    pick-up motion the zone is sent. -at and -wait stand it beside a QA
+//	    client first, which then draws its pick-ups as another player's.
+//
 //	partybot -mode bot -addr HOST:PORT -name Bram [-accept=true] [-invite NAME]
 //	         [-register] [-request NAME]
 //	    One character that stays online: answers every invitation and every
@@ -78,8 +86,11 @@ type bot struct {
 	in   chan *proto.Packet
 	// other carries the replies the share mode waits on (attack, GM, stats).
 	other chan *proto.Packet
-	mu    sync.Mutex
-	seen  map[string]int64 // character name -> id, from the world messages
+	// ground carries the ground-item traffic the pickup mode waits on
+	// (round 785, isGround).
+	ground chan *proto.Packet
+	mu     sync.Mutex
+	seen   map[string]int64 // character name -> id, from the world messages
 	// group is the group spawn being received (round 737).
 	group []npcspawn.GroupFrame
 	// zone and x, y, z are where the character entered the world.
@@ -326,6 +337,12 @@ func (b *bot) run() {
 			default:
 			}
 		}
+		if isGround(p.Opcode) {
+			select {
+			case b.ground <- p:
+			default:
+			}
+		}
 	}
 }
 
@@ -363,7 +380,7 @@ func connect(addr, user, name string, level int) (*bot, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &bot{name: name, conn: conn, r: bufio.NewReader(conn), in: make(chan *proto.Packet, 256), other: make(chan *proto.Packet, 64), seen: map[string]int64{}}
+	b := &bot{name: name, conn: conn, r: bufio.NewReader(conn), in: make(chan *proto.Packet, 256), other: make(chan *proto.Packet, 64), ground: make(chan *proto.Packet, 256), seen: map[string]int64{}}
 	const pw = "partybot-pw"
 	b.send(session.OpRegister, (&session.RegisterRequest{Username: user, Password: pw}).Encode())
 	if _, err := b.readSync(session.OpRegisterResult); err != nil {
@@ -796,7 +813,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:15779", "the server's gateway address")
-	mode := flag.String("mode", "scenario", "scenario (the round-710 acceptance run), match (the round-713 party-match run) or bot (one character that stays online)")
+	mode := flag.String("mode", "scenario", "scenario (the round-710 acceptance run), match (the round-713 party-match run), share (round 712), pickup (round 785: drops and pick-ups) or bot (one character that stays online)")
 	prefix := flag.String("prefix", "pb", "scenario: a prefix for the five characters' names and accounts")
 	name := flag.String("name", "PartyBot", "bot: the character's name (and lower-cased, the account)")
 	level := flag.Int("level", 10, "the level the bot raises itself to with /level (needs -gm-accounts on the server)")
@@ -817,6 +834,10 @@ func main() {
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")
+	flag.IntVar(&pickupOpts.kills, "kills", 10, "pickup: how many monsters to kill")
+	flag.BoolVar(&pickupOpts.pick, "pick", false, "pickup: walk up to each stack and pick it up")
+	flag.DurationVar(&pickupOpts.wait, "wait", 0, "pickup: wait this long in the world before the first kill")
+	flag.StringVar(&pickupOpts.at, "at", "", "pickup: \"x y z\" -- stand there (a relocation) before the first kill")
 	flag.Parse()
 	var err error
 	switch *mode {
@@ -831,6 +852,8 @@ func main() {
 		err = botMode(*addr, *name, *level, *accept, *invite, *register, *requestEntry, *tp, *tp2, *tp2After)
 	case "share":
 		err = shareScenario(*addr, *prefix, *monster, *level)
+	case "pickup":
+		err = pickupScenario(*addr, *prefix, *monster, *level, pickupOpts)
 	default:
 		err = fmt.Errorf("unknown -mode %q", *mode)
 	}

@@ -106,6 +106,10 @@ class AnimationEntry:
 	const TYPE_STAND_UP := 15
 	const TYPE_WALK_BACKWARD := 23
 	const TYPE_DIE_LOOP := 36
+	## The pick-up (round 785): character state 10's enter (sro_client.exe
+	## 0xa59a00) plays type 0x26 once (two 0xc8 arguments, blends INFERRED), through the same lookup
+	## as every other type; the server's 0x3036 starts it.
+	const TYPE_PICKUP := 38
 
 	## Event types seen in real entries: 1 on every attack (once or twice
 	## per swing -- the moment the blow lands), 2 on every walk and run
