@@ -915,8 +915,8 @@ Round 630 rebuilt it on `CIFMinimap`'s own draw ([protocol/minimap.md](protocol/
 the world map's marker, which never turned), 8x8 signs culled at 44.5 px, the 140x184 window flush
 with the screen's top-right corner, and the dungeon-floor ring hidden. Still open:
 
-- [ ] Unique, animal and quest-NPC signs, and the quest arrows at 47.0 -- `HudMinimap` draws only
-      monster, NPC and other-player signs (no data for the rest yet). A unique's sign is `+0x3b0`
+- [ ] Unique and animal signs -- `HudMinimap` draws monster, NPC and other-player signs, and (round
+      785) the tracked quest's NPC signs and arrows at 47.0. A unique's sign is `+0x3b0`
       when the monster's `+0x7ac` is 3 or 8. **The party's dots and arrows are drawn (round 717,
       `party_gui.md` section 9)**; the quest marks go between the party's arrows and the player's
       arrow in `MapMarks`.
