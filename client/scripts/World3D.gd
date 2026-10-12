@@ -6141,7 +6141,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	# both routes). Out of the tree there is nothing left to load for.
 	var frames_awaited := frames_already_awaited
 	if _loading_screen == null:
-		_loading_screen = LoadingScreen.new(LoadingScreen.DEFAULT_BACKDROP, _open_media_pk2_if_set())
+		_loading_screen = LoadingScreen.new(_loading_backdrop(-1), _open_media_pk2_if_set())
 		ui_control.add_child(_loading_screen)
 	# The gauge counts the centre cell the caller built before this drain
 	# (the + 1), and one frame is drawn before the first batch, so the centre
@@ -6210,6 +6210,8 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	_loading_screen.queue_free()
 	_loading_screen = null
 	print("LoadingScreen: lifted at frame %d" % Engine.get_frames_drawn())
+	# A finished load leaves the mode at 2 (FUN_0084c060's end, READ).
+	_loading_mode = LoadingBackdrop.MODE_ZONE
 	_land_restored_return_point()
 	_adopt_char_entry()
 	_initial_load_done = true
@@ -6335,13 +6337,65 @@ func _grid_loaded_line(region_started_ms: int, frames_awaited: int) -> String:
 ## own -- until round 562 every screen, every login and every teleport,
 ## opened the 1.5 GB archive again (FrontEndUi.open_media); the screen's own
 ## `LoadingScreen: up at frame` line says which it did and what it cost.
-func _show_loading_screen() -> int:
+##
+## Its art is the client's choice (round 785's follow-up, LoadingBackdrop):
+## by _loading_mode, and for a zone change by the region it arrives in
+## (`region_id`, -1 when unknown: the default zone art).
+func _show_loading_screen(region_id: int = -1) -> int:
 	if _loading_screen != null or not _should_show_loading_screen():
 		return 0
-	_loading_screen = LoadingScreen.new(LoadingScreen.DEFAULT_BACKDROP, _open_media_pk2_if_set())
+	_loading_screen = LoadingScreen.new(_loading_backdrop(region_id), _open_media_pk2_if_set())
 	ui_control.add_child(_loading_screen)
 	await get_tree().process_frame
 	return 1
+
+## CPSMission+0xe0, the loading screen's mode (READ, LoadingBackdrop): 0 for
+## the world's first entry (OnCreate sets it), 1 once this player has died
+## (_enter_dead_state), 2 after every finished load (FUN_0084c060's end, here
+## the lift in _drain_initial_load).
+var _loading_mode := LoadingBackdrop.MODE_FIRST
+## The art the last screen showed: a mode that changes no art keeps it.
+var _loading_backdrop_last := LoadingScreen.DEFAULT_BACKDROP
+
+## The art the next screen shows (LoadingBackdrop.path; mode 0's draw is
+## the engine's randi(), the client's rand()).
+func _loading_backdrop(region_id: int) -> String:
+	var art := LoadingBackdrop.path(_loading_mode, region_id, randi())
+	if art == "":
+		art = _loading_backdrop_last
+	_loading_backdrop_last = art
+	print("LoadingScreen: mode %d, region %d (0x%x) -> %s" % [_loading_mode, region_id, maxi(region_id, 0), art.get_file()])
+	return art
+
+## The region id (LoadingBackdrop.region_id) a zone change arrives in: the
+## dungeon's id, or the region of the server's arrival point in the zone's
+## frame; -1 when neither is known. The client's comes in the 0x34B5 packet
+## (the character's position record, READ); ours from OpChangeZoneResult.
+func _arrival_region_id(result: WorldNet.ChangeZoneResult) -> int:
+	if result == null:
+		return -1
+	var rid := DungeonWorld.rid_of_zone(result.zone)
+	if rid >= 0:
+		return rid
+	var frame := _zone_frame_coords(result.zone, result.frame)
+	if frame.is_empty():
+		return -1
+	var r := region_at_world(result.x, result.z, int(frame["x"]), int(frame["y"]))
+	return LoadingBackdrop.region_id(r.x, r.y)
+
+## The region (x, y) whose ground holds world (x, z) in a grid built in frame
+## (fx, fy): the inverse of region_local_to_world, read off three of its
+## points (the frame's corner, one region over each way) so it follows that
+## transform rather than restating it.
+static func region_at_world(wx: float, wz: float, fx: int, fy: int) -> Vector2i:
+	var o := region_local_to_world(fx, fy, 0.0, 0.0, fx, fy)
+	var step_x := region_local_to_world(fx + 1, fy, 0.0, 0.0, fx, fy) - o
+	var step_y := region_local_to_world(fx, fy + 1, 0.0, 0.0, fx, fy) - o
+	var d := Vector2(wx, wz) - o
+	# Each region step moves one world axis only (MEASURED by the test).
+	var dx := floori(d.y / step_x.y) if absf(step_x.y) > absf(step_x.x) else floori(d.x / step_x.x)
+	var dy := floori(d.x / step_y.x) if absf(step_y.x) > absf(step_y.y) else floori(d.y / step_y.y)
+	return Vector2i(fx + dx, fy + dy)
 
 ## Builds the next queued cell, if it is still wanted, prepare and commit on
 ## the main thread -- the OPENSRO_SYNC_LOAD=1 path of the entry-time drain
@@ -6592,8 +6646,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# neighbours then pump behind it in _drain_initial_load below. The zone
 	# drain's clock starts after this frame (below), so the frame it returns
 	# is not this drain's to count; the entry's clock in _ready runs from
-	# before its screen and does count it (round 562).
-	await _show_loading_screen()
+	# before its screen and does count it (round 562). Its art is by the
+	# region it arrives in (round 785's follow-up).
+	await _show_loading_screen(_arrival_region_id(result))
 	# The same guard as the drain's: a drop during that frame leaves nothing
 	# to rebuild for (round 560).
 	if not is_inside_tree():
@@ -24314,6 +24369,9 @@ func _enter_dead_state(exp_lost: int) -> void:
 	if _player_dead:
 		return
 	_player_dead = true
+	# The next loading screen is the rebirth one (FUN_008a80a0: this player's
+	# life state 2 -> FUN_0084ab10(1), then the death; READ).
+	_loading_mode = LoadingBackdrop.MODE_REBIRTH
 	_sit.reset()
 	# The body stops turning where it fell (round 637's review follow-up; OURS).
 	_player_turn_target = NAN

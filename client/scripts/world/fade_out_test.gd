@@ -227,7 +227,7 @@ func _make_world() -> Node:
 		"\tpass",
 		"func _exit_tree() -> void:",
 		"\tpass",
-		"func _show_loading_screen() -> int:",
+		"func _show_loading_screen(_region_id: int = -1) -> int:",
 		"\treturn 0",
 		"func _reload_zone_assets(_zone: String, _frame: String = \"\") -> void:",
 		"\tpass",

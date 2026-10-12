@@ -87,7 +87,7 @@ func _make_world() -> Node:
 		"\treturn clips[action_type]",
 		"func _body_animation_path(_gender: String, action_type: int, _group: String) -> String:",
 		"\treturn \"type%d\" % action_type",
-		"func _show_loading_screen() -> int:",
+		"func _show_loading_screen(_region_id: int = -1) -> int:",
 		"\treturn 0",
 		"func _reload_zone_assets(_zone: String, _frame: String = \"\") -> void:",
 		"\tpass",
