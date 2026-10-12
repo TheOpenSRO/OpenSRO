@@ -37,8 +37,8 @@ func checkGrantDefaultQuests(t *testing.T, s granter) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("grants %+v, want %+v", got, want)
 	}
-	if p, _ := s.ListProgress(ctx, 9); len(p) != 0 {
-		t.Errorf("progress %+v, want none: a grant is not an accepted catalogue quest", p)
+	if p, _ := s.States(ctx, 9); len(p) != 0 {
+		t.Errorf("states %+v, want none: a grant is not a quest log entry", p)
 	}
 	if other, _ := s.DefaultQuests(ctx, 10); len(other) != 0 {
 		t.Errorf("another character has grants %+v", other)

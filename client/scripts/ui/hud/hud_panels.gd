@@ -116,10 +116,11 @@ const GUILD_WINDOW_KEY := "guild"
 var _friends: Array = []
 ## The last guild reply without an error (null: none yet).
 var _guild_result: GuildNet.Result = null
-## The last quest list the server sent without an error, kept so the quest
-## window draws it when it is built after the reply (the client builds its
-## window at game start and fills it from the quests it already holds).
-var _quests: Array = []
+## The quest windows besides the list (round 785, QuestHud): the NPC's quest
+## pages, the detail, the reward window, the guide icon under the minimap and
+## the quest information list. The list itself (QuestWindow) draws
+## NetClient.quest, the client's quest log.
+var quest_hud: QuestHud = null
 ## The last panel id _populate was asked for (a test hook).
 var last_populated := ""
 
@@ -1209,20 +1210,68 @@ func _quest_window() -> QuestWindow:
 		window.queue_free()
 		_unavailable[QUEST_ID] = true
 		return null
-	window.fill_quests(_quests)
+	window.tables = _quest_hud().tables if _quest_hud().tables != null else QuestTables.shared(_builder.media_archive() if _builder != null else null)
+	window.player_level = _party_match_level()
+	window.quest_selected.connect(func(id: int) -> void: NetClient.quest.set_tracked(id))
+	window.detail_requested.connect(func(id: int) -> void: _quest_hud().open_detail(id))
+	window.fill_log(NetClient.quest.entries())
 	_windows[QUEST_ID] = window
 	return window
 
-## A quest list from the server: kept, and drawn on the quest window's rows
-## if it is built. A reply with an error keeps the last list.
-func _on_quest_list_result(entries: Array, error: String) -> void:
-	if error != "":
-		push_warning("HudPanels: quest list: %s" % error)
-		return
-	_quests = entries.duplicate()
+## The quest log changed (NetClient.quest, round 785): the list redraws.
+func _on_quest_log_changed() -> void:
 	var window := _windows.get(QUEST_ID) as QuestWindow
 	if window != null:
-		window.fill_quests(_quests)
+		window.player_level = _party_match_level()
+		window.fill_log(NetClient.quest.entries())
+	var hud := _quest_hud()
+	if hud.detail != null and is_instance_valid(hud.detail) and hud.detail.visible:
+		if NetClient.quest.active.has(hud.detail_quest):
+			hud.open_detail(hud.detail_quest)
+		else:
+			hud.detail.hide()
+
+## The QuestHud, made on first use.
+func _quest_hud() -> QuestHud:
+	if quest_hud == null:
+		quest_hud = QuestHud.new(self, _builder, NetClient.quest)
+		add_child(quest_hud)
+		quest_hud.tables = QuestTables.shared(_builder.media_archive() if _builder != null else null)
+	quest_hud.country = _skill_race
+	if quest_hud.player_level == 0:
+		quest_hud.player_level = _party_match_level()
+	return quest_hud
+
+## A level-up (World3D._on_level_up): the guide icon's count (QuestHud).
+func quest_level_up(level: int) -> void:
+	_quest_hud().on_level_up(level)
+
+## The progress notice's text for an objective (GDR_UPDATE_QUEST_INFO): its
+## SN_CON_ text with the count put in.
+func quest_progress_text(m: QuestNet.Mission) -> String:
+	var t := _quest_hud().tables
+	var fmt := t.resolve(m.text, m.text) if t != null else m.text
+	return QuestNet.format_objective(fmt, m.values)
+
+## An NPC's quest page (0x30D4, QuestHud.page_lines): the talk box's lines
+## replaced by the page's. False when the talk box is not open.
+func show_quest_page(page: QuestNet.TalkPage) -> bool:
+	var window := _windows.get("npctalk") as HudWindow
+	if window == null or not window.visible:
+		window = open("npctalk")
+	if window == null:
+		return false
+	var body := _talk_body(window)
+	if body == null:
+		return false
+	var hud := _quest_hud()
+	hud.player_level = _party_match_level()
+	var lines := hud.page_lines(page)
+	NpcTalkView.show_lines(window, lines)
+	window.set_meta(TELEPORT_LIST_META, false)
+	print("HudPanels: quest page type %d '%s', %d line(s)" % [page.type, page.text, page.lines.size()])
+	_qa_print_talk_lines.call_deferred(body)
+	return true
 
 ## Opens the NPC dialogue for an NPC of the given name: the authored paper
 ## window (if_npctalk) titled with the name, greeting and the choices the
@@ -1298,6 +1347,12 @@ func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, servi
 
 func _on_npc_talk_choice(meta: Variant) -> void:
 	var key := str(meta)
+	# A quest page's line (round 785): its response id goes as 0x70D4.
+	var response := QuestHud.response_of(key)
+	if response >= 0:
+		print("HudPanels: quest answer %d" % response)
+		NetClient.quest.answer(response)
+		return
 	if key == "end":
 		close("npctalk")
 		# Inferred: the talk menu's end line closes the NPC window the way its
@@ -6257,9 +6312,25 @@ func connect_net() -> void:
 	# The skill window shows the masteries (client data, _fill_skill_masteries),
 	# not the server's small skill catalogue, so its list result is not drawn
 	# here -- it would overlap the mastery rows.
-	# The quest list fills the quest window's rows (QuestWindow.fill_quests,
-	# the client's own row fill), as it filled the old window's list.
-	NetClient.quest_list_result.connect(_on_quest_list_result)
+	# The quest log fills the quest window's rows (QuestWindow.fill_log), and
+	# the quest messages drive the talk pages, the reward window and the
+	# detail (round 785, QuestHud).
+	NetClient.quest.log_changed.connect(_on_quest_log_changed)
+	NetClient.quest.talk_page.connect(func(page: QuestNet.TalkPage) -> void: show_quest_page(page))
+	NetClient.quest.reward_window.connect(func(id: int, text: String) -> void: _quest_hud().open_reward(id, text))
+	NetClient.quest.reward_result.connect(func(ok: bool, error: int) -> void:
+		_quest_hud().on_reward_result(ok, error)
+		# The reward taken, the talk ends as the NPC window's close ends it
+		# (0x704B through npc_window_hidden; READ that closing
+		# CNIFQuestReward sends the close, FUN_0078fc20).
+		if ok and is_open("npctalk"):
+			close("npctalk"))
+	NetClient.quest.abandon_result.connect(func(ok: bool, id: int, error: int) -> void:
+		print("HudPanels: give up quest %d: %s" % [id, "ok" if ok else "refused %d" % error])
+		if ok and quest_hud != null and quest_hud.detail != null and is_instance_valid(quest_hud.detail):
+			quest_hud.detail.hide())
+	NetClient.quest.claim_result.connect(func(ok: bool, id: int, error: int) -> void:
+		print("HudPanels: claim quest %d: %s" % [id, "ok" if ok else "refused %d" % error]))
 	# The friend list fills the community view's friend rows (GuildWindow.
 	# fill_friends, the client's own row fill), as it filled the old
 	# window's list overlay.
@@ -6277,8 +6348,8 @@ func connect_net() -> void:
 		_on_guild_info_result(NetClient.last_guild_result)
 	if NetClient.has_friend_list:
 		_on_friend_list_result(NetClient.last_friend_list, "")
-	if NetClient.has_quest_list:
-		_on_quest_list_result(NetClient.last_quest_list, "")
+	if NetClient.quest.has_log:
+		_on_quest_log_changed()
 	# The race the skill tables are read for, from the body the server put
 	# in the world (round 691's review): known at world entry, before the
 	# first skill state, so the hotbar restore and the first cast look up the
@@ -6591,7 +6662,9 @@ func _populate(panel_id: String) -> void:
 			_fill_equipment_slots(_equipped_items)
 			NetClient.list_equipment(who)
 		"quest":
-			NetClient.list_quests(who)
+			# The log is the server's to send (the login section and 0x30D5):
+			# nothing to ask (round 785).
+			pass
 		"skill":
 			NetClient.skill_state(who)
 		"community":

@@ -1288,7 +1288,6 @@ const ARMOR_SLOT_LABELS := {
 # structured data per row on its own, so track what each row actually is.
 var _monsters: Array[CombatNet.MonsterSnapshot] = []
 var _inventory_slots: Array[InventoryNet.Slot] = []
-var _quests: Array[QuestNet.Entry] = []
 var _skills: Array[SkillNet.SkillSnapshot] = []
 var _shop_entries: Array[ShopNet.CatalogEntry] = []
 
@@ -2113,9 +2112,14 @@ func _ready() -> void:
 	# a stat-point spend and a kill already bring a stats packet, which
 	# _on_world_stats applies.
 	NetClient.equipment_result.connect(_stat_panel_on_equipment)
-	NetClient.quest_list_result.connect(_on_quest_list_result)
-	NetClient.quest_accept_result.connect(_on_quest_accept_result)
-	NetClient.quest_completed.connect(_on_quest_completed)
+	# Round 785: the quest log (QuestState) -- the dev tab's list, the bag
+	# after a quest moved items, the progress notice, the marks.
+	NetClient.quest.log_changed.connect(_on_quest_log_changed)
+	NetClient.quest.bag_may_have_changed.connect(func() -> void:
+		if NetClient.is_connected_to_server():
+			NetClient.list_inventory(NetClient.current_character_name))
+	NetClient.quest.mission_progress.connect(_on_quest_progress)
+	NetClient.quest.marks_changed.connect(_apply_quest_marks)
 	NetClient.skill_list_result.connect(_on_skill_list_result)
 	NetClient.learn_skill_result.connect(_on_learn_skill_result)
 	NetClient.learn_skill_done.connect(_on_skill_learned_for_hotbar)
@@ -2172,8 +2176,9 @@ func _ready() -> void:
 	equipment_refresh_button.pressed.connect(func(): NetClient.list_equipment(NetClient.current_character_name))
 	unequip_weapon_button.pressed.connect(func(): _on_unequip_pressed(EquipmentNet.SLOT_WEAPON))
 	unequip_armor_button.pressed.connect(func(): _on_unequip_pressed(unequip_armor_slot_option.get_selected_id()))
-	quest_refresh_button.pressed.connect(func(): NetClient.list_quests(NetClient.current_character_name))
-	quest_accept_button.pressed.connect(_on_quest_accept_pressed)
+	quest_refresh_button.pressed.connect(_on_quest_log_changed)
+	# Round 785: quests are taken from their NPCs (0x30D4), not this tab.
+	quest_accept_button.disabled = true
 	skill_refresh_button.pressed.connect(func(): NetClient.list_skills(NetClient.current_character_name))
 	skill_learn_button.pressed.connect(_on_skill_learn_pressed)
 	skill_use_button.pressed.connect(_on_skill_use_pressed)
@@ -2212,7 +2217,6 @@ func _ready() -> void:
 		NetClient.list_ground_items()
 		NetClient.list_inventory(NetClient.current_character_name)
 		NetClient.list_equipment(NetClient.current_character_name)
-		NetClient.list_quests(NetClient.current_character_name)
 		NetClient.list_skills(NetClient.current_character_name)
 		NetClient.list_shop()
 		NetClient.guild_info(NetClient.current_character_name)
@@ -3350,6 +3354,7 @@ func _refresh_minimap() -> void:
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
 	_fill_party_marks(_minimap_region)
 	_hud_minimap.update_party(Vector2(local.x, local.z), _party_marks_mini)
+	_update_quest_signs(_minimap_region, Vector2(local.x, local.z))
 	# The world map every frame only while it is open; hidden, on the old
 	# tenth-frame beat, so it is current when it opens.
 	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
@@ -9251,6 +9256,9 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	_light_character(holder)
 	_animate_skeleton(skeleton, idle_anim)
 	_npc_holders[rec.uid] = holder
+	# A quest mark that came before its NPC (round 785, QuestMarks).
+	if NetClient.quest.marks.has(rec.uid):
+		QuestMarks.apply_one(holder, NetClient.quest.marks[rec.uid], _quest_mark_models, _quest_mark_model)
 	# One line per NPC: which source turned it, and the way it faces as a
 	# compass bearing in the region-local frame (0 north, 90 east) -- read
 	# off the holder's own basis (its body's front is local -Z), so the line
@@ -14819,6 +14827,42 @@ func _qa_step() -> void:
 				print("QA TALK_PICK closed the NPC windows at tick %d" % _qa_tick)
 				continue
 			print("QA TALK_PICK line %s at tick %d: %s" % [parts[0], _qa_tick, str(_hud_panels.qa_press_talk_line(int(parts[0])))])
+
+	# OPENSRO_QA_QUEST_STEPS="<step>@<tick>;..." (round 785): `window` opens
+	# the quest window (Q), `detail:<id>` a quest's detail, `track:<id>`
+	# tracks a quest (the minimap's signs), `guide:<level>` runs the level-up
+	# count of the guide icon, `info` clicks the guide icon, `log` prints the
+	# quest log. QA only.
+	var qa_quest := OS.get_environment("OPENSRO_QA_QUEST_STEPS")
+	if qa_quest != "" and _hud_panels != null:
+		for step in qa_quest.split(";", false):
+			var qparts := step.split("@")
+			if qparts.size() != 2 or int(qparts[1]) != _qa_tick:
+				continue
+			var what := qparts[0].split(":")
+			match what[0]:
+				"window":
+					_hud_panels.open("quest")
+				"detail":
+					_hud_panels.call("_quest_hud").open_detail(int(what[1]))
+				"track":
+					NetClient.quest.set_tracked(int(what[1]))
+				"guide":
+					_hud_panels.quest_level_up(int(what[1]))
+				"info":
+					var qh: QuestHud = _hud_panels.quest_hud
+					if qh != null and qh.guide != null:
+						qh.guide.clicked.emit()
+				"log":
+					_on_quest_log_changed()
+			print("QA QUEST %s at tick %d: %d active, %d completed, tracked %d, %d mark(s)" % [qparts[0], _qa_tick,
+				NetClient.quest.active.size(), NetClient.quest.completed.size(), NetClient.quest.tracked, NetClient.quest.marks.size()])
+			for qpair in NetClient.quest.entries():
+				var qv := qpair[1] as QuestNet.View
+				var counts := PackedStringArray()
+				for m in qv.missions:
+					counts.append("%s=%s%s" % [(m as QuestNet.Mission).text, str(Array((m as QuestNet.Mission).values)), "" if (m as QuestNet.Mission).open else " done"])
+				print("QA QUEST   quest %d status %d %s" % [int(qpair[0]), qv.status, ", ".join(counts)])
 
 	# OPENSRO_QA_SHOP_STEPS="tab:<i>@<tick>;buy:<cell>@<tick>;..." (round 783)
 	# selects the open store's tab i, or buys one of the current tab's cell
@@ -20749,7 +20793,10 @@ func _refresh_command_tooltip() -> void:
 ## original uses for it (HudNotice.style_for_kind: GDR_NOTICE for the GM
 ## notice, GDR_WARNING_WND for the rest; round 703).
 func _show_banner(kind: String, text: String) -> void:
-	var on := _hud_notice if HudNotice.style_for_kind(kind)["name"] == "GDR_NOTICE" else _hud_warning
+	var style_name := String(HudNotice.style_for_kind(kind)["name"])
+	var on := _hud_notice if style_name == "GDR_NOTICE" else _hud_warning
+	if style_name == "GDR_UPDATE_QUEST_INFO":
+		on = _hud_quest_notice
 	if on != null:
 		on.show_notice(text)
 
@@ -24303,10 +24350,8 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d%s -- it died!" % [
 			result.monster_damage, " CRITICAL!" if result.player_critical else ""]
-		# A kill may have progressed a quest's kill count even without
-		# completing it (OpQuestCompleted only fires on completion), so
-		# refresh here rather than only on _on_quest_completed.
-		NetClient.list_quests(NetClient.current_character_name)
+		# A kill's quest progress arrives as 0x30D5 (round 785): nothing to
+		# ask.
 	else:
 		monster_status_label.text = _exchange_line(result)
 		# Dying was silent until now: the server has reported it since the
@@ -26857,6 +26902,9 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 	# 0x3054's handler 0x8a7020: snd_levup, 2-D (read; UiSounds.level_up).
 	UiSounds.level_up("level up to %d" % new_level)
 	_play_level_up_effect()
+	# The quest guide icon's count (round 785, QuestHud.on_level_up).
+	if _hud_panels != null:
+		_hud_panels.quest_level_up(new_level)
 	# Refresh the HUD to the new level: the HP bar's higher maximum, the level
 	# label, the reset EXP gauge and any new SP all come from the stats packet.
 	_request_world_stats()
@@ -27331,35 +27379,56 @@ func _on_unequip_pressed(slot: int) -> void:
 
 # --- Quests tab --------------------------------------------------------
 
-func _on_quest_list_result(entries: Array, error: String) -> void:
-	if error != "":
-		quest_status_label.text = "Error: %s" % error
-		return
-	_quests.assign(entries)
+## The dev tab's list (round 785): the quest log as the server keeps it.
+func _on_quest_log_changed() -> void:
 	quest_list.clear()
-	for q in _quests:
-		var state := "completed" if q.completed else ("accepted" if q.accepted else "available")
-		quest_list.add_item("%s: kill %s (%d/%d) for %dg [%s]" % [
-			q.quest_name, q.monster_name, q.kills, q.target_kills, q.gold_reward, state
-		])
+	for pair in NetClient.quest.entries():
+		var v := pair[1] as QuestNet.View
+		var counts := PackedStringArray()
+		for m in v.missions:
+			counts.append(str(Array((m as QuestNet.Mission).values)))
+		quest_list.add_item("quest %d status %d %s" % [int(pair[0]), v.status, " ".join(counts)])
+	quest_status_label.text = "%d active, %d completed" % [NetClient.quest.active.size(), NetClient.quest.completed.size()]
 
-func _on_quest_accept_pressed() -> void:
-	var selected := quest_list.get_selected_items()
-	if selected.is_empty():
-		quest_status_label.text = "Select a quest first."
+## A mission's count changed (0x30D5): the progress line in
+## GDR_UPDATE_QUEST_INFO (HudNotice.STYLE_QUEST_INFO), and the system log.
+func _on_quest_progress(quest_id: int, m: QuestNet.Mission) -> void:
+	var text := _hud_panels.quest_progress_text(m) if _hud_panels != null else m.text
+	print("QUEST PROGRESS quest %d mission %d %s: %s" % [quest_id, m.index, "open" if m.open else "done", text])
+	if _hud_quest_notice == null and ui_control != null:
+		_hud_quest_notice = HudNotice.new()
+		_hud_quest_notice.name = "HudQuestInfo"
+		ui_control.add_child(_hud_quest_notice)
+		_hud_quest_notice.setup(_ui_builder, HudNotice.STYLE_QUEST_INFO)
+	_show_banner("quest_info", text)
+
+var _hud_quest_notice: HudNotice = null
+## Loaded quest-mark models by path, and the npcpos index for the minimap's
+## quest signs (QuestMarks), built on first use.
+var _quest_mark_models: Dictionary = {}
+var _quest_npcpos: Dictionary = {}
+var _quest_npcpos_loaded := false
+
+## 0x30D6 / 0x30D7 changed the marks (QuestMarks.apply), or an NPC came.
+func _apply_quest_marks() -> void:
+	var shown := QuestMarks.apply(_npc_holders, NetClient.quest.marks, _quest_mark_models, _quest_mark_model)
+	print("QUEST MARKS %d mark(s), %d drawn over spawned NPCs" % [NetClient.quest.marks.size(), shown])
+
+func _quest_mark_model(path: String) -> Node3D:
+	return ObjectLoader.load_object(_data_pk2, path) if _data_pk2 != null else null
+
+## The tracked quest's NPCs on the minimap (QuestMarks.targets_local).
+func _update_quest_signs(here_region: Vector2i, player_local: Vector2) -> void:
+	var ids := NetClient.quest.tracked_npcs()
+	if ids.is_empty():
+		_hud_minimap.update_quest(player_local, PackedVector2Array())
 		return
-	var chosen: QuestNet.Entry = _quests[selected[0]]
-	NetClient.accept_quest(NetClient.current_character_name, chosen.quest_id)
-
-func _on_quest_accept_result(ok: bool, reason: String) -> void:
-	quest_status_label.text = "Quest accepted." if ok else "Accept failed: %s" % reason
-	NetClient.list_quests(NetClient.current_character_name)
-
-func _on_quest_completed(completed: QuestNet.Completed) -> void:
-	if completed == null:
-		return
-	_log_system("Quest complete! +%dg" % completed.gold_reward)
-	NetClient.list_quests(NetClient.current_character_name)
+	if not _quest_npcpos_loaded and _media_pk2 != null:
+		_quest_npcpos_loaded = true
+		var e := ObjectLoader.find_file(_media_pk2, NpcTableReader.POSITION_TABLE_PATH)
+		if e != null:
+			_quest_npcpos = QuestMarks.index_positions(NpcTableReader.parse_positions(_media_pk2.read_file(e)))
+	_hud_minimap.update_quest(player_local, QuestMarks.targets_local(ids, here_region, _quest_npcpos))
 
 # --- Skills tab ------------------------------------------------------------
 

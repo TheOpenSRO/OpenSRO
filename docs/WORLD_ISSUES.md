@@ -7969,6 +7969,53 @@ stays with the host (worst 196.181 units)".
 and has the old `set_origin`, so the client refuses it and keeps EquipFx's masters in GDScript; the
 release builds (`release.yml`) build the library with the client.
 
+### Round 785 (part): quests
+
+The user: "add full support for quests including race, levels, and the proper NPCs, rewards like
+exp, items, gold, etc", and (later) the quest icon under the minimap. Spec: `docs/protocol/quests.md`.
+
+- **The objectives were in the operator's server files all along (READ, MEASURED).** The server pack's
+  `Script/VIETNAM/Quest.sct` is Lua 5.1 bytecode; each classless quest is a function of host-function
+  calls (registered at 0x8706b0..0x870d2a; argument orders READ in each body, 0x869f90..0x86c4b0)
+  naming its start/complete NPCs, level, race, prerequisites, limit, missions (mob code names,
+  counts, drop rates, delivery items) and every dialogue text id. `internal/quest/luabc` reads the
+  bytecode and runs the setups against recorders at export time. 149 of the 154 compiled `CQNO_*`
+  classes are read from their `DeclareQuestContent` in the decompilation (mission classes by
+  allocation size, the menu keys by the builder's block order READ in 0x86c4b0).
+- **Rewards**: `refqusetreward.txt` cols 10/11/12 = gold/EXP/skill EXP (MEASURED against the
+  `SN_PAYCON_` texts; the client RE reads the same columns); the table is paid. 8 quests' script
+  rewards differ from the table (the private server's `QNO_AA_*`, and QNO_CA_HUNTER_1's swapped
+  gold/skill EXP).
+- **Coverage (MEASURED on the user's data):** 696 quests, 618 playable, 564 reachable. Early game:
+  Jangan's quests reachable except QNO_CH_GENARAL_1..3 (GENARAL_1 is never listed in QuestList);
+  Constantinople QNO_EU_CONS_1..12 reachable; East Europe to 18 except EASTEU_1/2/3/5 and three `_1`s.
+  The tutorials (`QTUTORIAL_*`, `QNO_EU_TUTORIAL_*`) have no setup anywhere (OPEN).
+- **Server**: talk pages 0x30D4/0x70D4, updates 0x30D5, the log at entry (0x00B1, OURS opcode for
+  retail's character-data section), marks 0x30D6/0x30D7, reward 0x3514/0x7515/0xB515, give-up
+  0x70D9, 0x70D8; id 2 on an NPC select is now per player; the killer's kill counts and gather drops
+  (announceKill hook); `character_quest_state`; `-quests-dir`.
+- **Client** (the client fork's report): QuestState, QuestTables, CNIFQuest rows with objective lines,
+  the detail on ifquestreward (Abandon / Reward), the talk pages as numbered lines, the reward window,
+  the GDR_UPDATE_QUEST_INFO notice, ex_mark_*.bsr marks, minimap signs for the tracked quest.
+- **The icon under the minimap (READ, the user's memory corrected):** `CIFQuestInfoGuide` (40x40,
+  `qstinfoic_1/2.ddj` alternating every 500 ms) in the alarm-guide column at (screen width - 6, 180).
+  It appears only on a level-up that unlocks quests (questdata level == the new level, not taken,
+  the race's or both at level 40 and below; `FUN_00940210`), with no server message. Clicking it opens
+  the CIFQuestInfo list of those quests (title, NPC, condition) -- not the quest journal -- and removes
+  it. Implemented so.
+- **Verified on the box (MEASURED):** `partybot -mode quest` against this branch's server: a China
+  character took QNO_CH_SOLDIER_EA1_1 (14 Gyo kills, paid 1000 gold / 2752 EXP), QNO_CH_CHEF_1
+  (gather, 475 gold / 375 EXP) and QNO_CH_SMITH_1 (delivery to Jingyo, 205 / 270); a Europe character
+  QNO_EU_CONS_1 (15 Grassps, 1410 EXP / 100 skill EXP / the Nun's Prayer item, level-up) and the
+  compiled QNO_EU_CONS_2 (delivery to the merchant, 300 skill EXP). A client render
+  (`/var/tmp/r785-quest/shot.sh`) took QNO_CH_SMITH_1 from Blacksmith Chulsan on the talk page; the
+  quest window and the detail were drawn from it.
+- **Perf gate** (client fork, `--sites jangan --frames 30000`): frame 0.78 -> 0.79 ms, entry 8753 ->
+  8941 ms, freeze 2775 -> 2726 ms, hitches 5 -> 5: SAME on all four. The default frame count gives
+  too few samples at ~600 fps (MEASURED twice).
+- **Tests:** server `go test ./...` (quest, luabc, session socket flow, compiled-setup parser); client
+  `remote_godot.sh tests` 291 suites, 0 failing.
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

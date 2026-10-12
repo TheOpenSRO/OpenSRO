@@ -1705,6 +1705,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	if inWorld {
 		sendOwnBuffs(arrived, time.Now())
 	}
+	// Its quest log and the quest NPCs' marks (round 785, quest.go): the
+	// section retail carries in its character data.
+	questAfterEnter(ctx, sess, owned)
 	return nil
 }
 

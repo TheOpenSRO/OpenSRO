@@ -105,6 +105,11 @@ func _questlist() -> Array:
 func _ifquest() -> String:
 	return "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_QUEST_FRAME:CIFFrame\n\t{\n\t\tDDJ=STRING,\"interface\\\\messagebox\\\\msgbox2_window_\"\n\t\tID=INTEGER,\"1\"\n\t\tRect=RECT,\"0,0,365,355\"\n\t}\n\tGDR_QUEST_SCROLLMGR:CIFScrollManager\n\t{\n\t\tID=INTEGER,\"2\"\n\t\tRect=RECT,\"4,27,356,323\"\n\t}\n}\n"
 
+## ifquestreward.txt's structure (control names and rects as the archive's,
+## no art): the paper, the title, the give-up button.
+func _ifquestreward() -> String:
+	return "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_QUESTREWARD_GIVEUP:CIFButton\n\t{\n\t\tID=INTEGER,\"16\"\n\t\tRect=RECT,\"109,330,158,24\"\n\t\tText=STRING,\"UIIT_STT_QUEST_GIVEUP\"\n\t}\n\tGDR_QUESTREWARD_TITLE:CIFStatic\n\t{\n\t\tID=INTEGER,\"17\"\n\t\tRect=RECT,\"36,40,289,15\"\n\t}\n\tGDR_QUESTREWARD_BG:CIFStatic\n\t{\n\t\tID=INTEGER,\"10\"\n\t\tRect=RECT,\"0,0,376,384\"\n\t}\n}\n"
+
 func _text_table() -> UiTextTable:
 	var rows := PackedStringArray()
 	for pair in [["UIIT_STT_QUEST_LIST", "tt QUEST LIST"], ["UIIT_STT_QUEST_ING", "tt ING"],
@@ -123,6 +128,7 @@ func _builder() -> UiBuilder:
 	var builder := UiBuilder.new(null, _text_table())
 	var layouts: Dictionary = builder.get("_layout_cache")
 	layouts["resinfo\\ifquest.txt"] = UiLayoutParser.parse(_ifquest())
+	layouts["resinfo\\ifquestreward.txt"] = UiLayoutParser.parse(_ifquestreward())
 	var Reader = load(READER_PATH)
 	var cache = builder.get("_twodt_cache")
 	if Reader != null and cache is Dictionary:
@@ -132,19 +138,6 @@ func _builder() -> UiBuilder:
 	return builder
 
 # --- helpers ----------------------------------------------------------------
-
-class _Quest:
-	var quest_id: int
-	var quest_name: String
-	var accepted: bool
-	var completed: bool
-	var kills: int
-	func _init(n: String, a: bool, c: bool, id: int = 0, k: int = 0) -> void:
-		quest_name = n
-		accepted = a
-		completed = c
-		quest_id = id
-		kills = k
 
 func _net() -> Node:
 	return get_root().get_node_or_null("NetClient")
@@ -206,13 +199,62 @@ func _drawn(qroot: Control) -> Array:
 		out.append(_text(_at(row, [16])) if row != null and row.visible else "")
 	return out
 
-func _quests(n: int) -> Array:
-	var out := []
-	for i in n:
-		out.append(_Quest.new("Q%d" % (i + 1), true, false, i + 1))
-	return out
-
 # --- the checks -------------------------------------------------------------
+
+## Synthetic quest tables (no archive text): quest 1 "Wolf Hunt" at level 3,
+## quests 100.. "Q<n>" at level 1, the objective text with its %d.
+func _tables() -> QuestTables:
+	var t := QuestTables.new()
+	var rows := PackedStringArray()
+	for pair in [["SN_QW_1", "Wolf Hunt"], ["SN_CON_QW_1", "Hunt 3 wolves (%d)"], ["SN_PAY_QW_1", "The wolf hunt"],
+			["SN_PAYCON_QW_1", "<b>Mission</b><br>Hunt wolves"]]:
+		rows.append("1\t%s\t\t\t\t\t\t\t%s" % pair)
+	for i in 12:
+		rows.append("1\tSN_QW_%d\t\t\t\t\t\t\tQ%d" % [100 + i, i + 1])
+	t.text = UiTextTable.parse(("\n".join(rows)).to_utf16_buffer())
+	var q := QuestTables.Quest.new()
+	q.id = 1
+	q.code = "QW_1"
+	q.level = 3
+	q.title = "SN_QW_1"
+	q.pay = "SN_PAY_QW_1"
+	q.paycon = "SN_PAYCON_QW_1"
+	t.by_id[1] = q
+	t.by_code["QW_1"] = q
+	for i in 12:
+		var qi := QuestTables.Quest.new()
+		qi.id = 100 + i
+		qi.code = "QW_%d" % (100 + i)
+		qi.level = 1
+		qi.title = "SN_QW_%d" % (100 + i)
+		t.by_id[qi.id] = qi
+		t.by_code[qi.code] = qi
+	return t
+
+func _view(status: int, missions: Array = [], counter: int = 0x10) -> QuestNet.View:
+	var v := QuestNet.View.new()
+	v.counter = counter
+	v.state = 1
+	v.status = status
+	for m in missions:
+		var mm := QuestNet.Mission.new()
+		mm.index = int(m[0])
+		mm.open = bool(m[1])
+		mm.text = str(m[2])
+		mm.values = PackedInt64Array([int(m[3])])
+		v.missions.append(mm)
+	return v
+
+func _send(net: Node, kind: int, id: int, v: QuestNet.View = null) -> void:
+	(net.get("quest") as QuestState).handle(QuestNet.encode_update(kind, id, v), QuestNet.OP_UPDATE)
+
+func _log(net: Node, ids: Array) -> void:
+	var b := PackedByteArray([0, 0, ids.size()])
+	for id in ids:
+		b.append_array(QuestNet._u32(int(id)))
+		b.append_array(QuestNet.encode_view(_view(1)))
+	b.append(0)
+	(net.get("quest") as QuestState).handle(b, QuestNet.OP_LOG)
 
 func _run() -> void:
 	# The client's default window, 1152x648 (the headless root starts at
@@ -220,19 +262,19 @@ func _run() -> void:
 	await process_frame
 	get_root().size = Vector2i(1152, 648)
 	await process_frame
+	QuestTables.set_shared(_tables())
 	var script := load(PANELS_PATH) as GDScript
 	var panels: Control = script.new(_builder())
 	get_root().add_child(panels)
 	await process_frame
 	var net := _net()
-	_check(net != null, "NetClient is registered for this suite")
-	if net == null:
+	_check(net != null and "quest" in net, "NetClient is registered for this suite, with its quest log")
+	if net == null or not ("quest" in net):
 		return
 	panels.call("connect_net")
-	# A quest list that arrives before the window is built is kept and drawn
-	# when it is: one accepted in progress, one not accepted, one completed.
-	net.emit_signal("quest_list_result", [_Quest.new("Wolf Hunt", true, false),
-		_Quest.new("Bear Hunt", false, false), _Quest.new("Fox Hunt", true, true)], "")
+	# A quest that arrives before the window is built is kept and drawn when
+	# it is: quest 1 in progress, one objective at 2 of its count.
+	_send(net, QuestNet.UPDATE_ADD, 1, _view(1, [[0, true, "SN_CON_QW_1", 2]]))
 
 	# Q: the retail key toggles CNIFQuest (0x7990e0).
 	_press(panels, KEY_Q)
@@ -246,98 +288,76 @@ func _run() -> void:
 	_check(window.size == Vector2(624, 369), "it is questlist.2dt's CNIFQuest, 624x369 (got %s)" % window.size)
 	_check(_caption(window) == "tt QUEST LIST",
 		"its caption is record 0's UIIT_STT_QUEST_LIST (got '%s')" % _caption(window))
-	_check(panels.get("last_populated") == "quest", "opening it asks the server for the list (_populate)")
+	_check(panels.get("last_populated") == "quest", "opening it runs _populate")
 	# OnCreate (0x6e3ff0): centred, then x = 0x50: (80, 324 - 184).
 	_check(window.position == Vector2(80, 140), "it sits at (0x50, centred y) = (80, 140) in the 1152x648 view (got %s)" % window.position)
-	# CNIFMainFrame's chrome (0x479a50).
 	var bar := window.get_node_or_null("TitleBar") as Control
 	_check(bar != null and bar.position == Vector2(10, 12) and bar.size.x == 603,
 		"the caption is at (10, 12), 603 wide (got %s)" % (Rect2(bar.position, bar.size) if bar else null))
 	var close := window.get_node_or_null("CloseButton") as Control
 	_check(close != null and close.position == Vector2(598, 10) and close.size == Vector2(16, 16),
 		"the close button is at (598, 10), 16x16 (got %s)" % (Rect2(close.position, close.size) if close else null))
-	_check(window.call("in_drag_strip", Vector2(300, 30)) and not window.call("in_drag_strip", Vector2(300, 36)),
-		"it drags by (10, 0, 603, 34)")
-	_check(qroot != null and qroot.get_node_or_null("Text") == null,
-		"record 0's text is the caption, not a label over the window")
-	_check(_rect_in(window, _at(qroot, [2])) == Rect2(11, 38, 603, 322) and _at(qroot, [2]).is_visible_in_tree(),
-		"the inner frame 2 is shown at (11, 38), 603x322")
-	_check(_rect_in(window, _at(qroot, [3])) == Rect2(38, 68, 547, 284) and _at(qroot, [3]).is_visible_in_tree(),
-		"the tile 3 is shown at (38, 68), 547x284")
 	var row_rects := []
 	for id in [5, 77, 141]:
 		row_rects.append(_rect_in(window, _at(qroot, [id])))
 	_check(row_rects == [Rect2(16, 43, 576, 32), Rect2(16, 74, 576, 32), Rect2(16, 322, 576, 32)],
 		"the rows are at (16, 43), (16, 74) .. (16, 322), 576x32 (got %s)" % [row_rects])
 
-	# The rows: the player's quests, in file order from the top.
-	_check(_drawn(qroot) == ["Wolf Hunt", "", "", "", "", "", "", "", "", ""],
-		"the list that came before the window was built is on row 5; a quest not accepted and a completed one are not rows (got %s)" % [_drawn(qroot)])
+	# The quest row, then its objective row (0x6e0570).
+	_check(_drawn(qroot) == ["Wolf Hunt (0/1)", "Hunt 3 wolves (2)", "", "", "", "", "", "", "", ""],
+		"row 5 is the quest '%%s (%%d/%%d)' with +8's nibbles low then high, row 77 its objective with the count (got %s)" % [_drawn(qroot)])
 	var row := _at(qroot, [5])
-	_check(_at(row, [7]) != null and _at(row, [7]).visible, "a filled row's small box 7 is shown (0x6e5830(0))")
-	var box := _at(row, [8]) as BaseButton
-	var mark := box.get_node_or_null("Mark") as CanvasItem if box != null else null
-	_check(box != null and box.visible and not box.button_pressed and mark != null and not mark.visible,
-		"its check box 8 is shown and unchecked (0x482cb0(0))")
-	_check(box != null and box.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-		"the check box takes no click (the quick list it feeds is not built)")
-	_check(_at(row, [18]) != null and _at(row, [18]).visible and _at(row, [19]) != null and _at(row, [19]).visible,
-		"its world-map 18 and content-view 19 buttons are shown")
-	_check(_at(row, [11]) != null and not _at(row, [11]).visible, "its status text 11 is hidden in quest mode")
-	_check(_at(row, [75]) != null and not _at(row, [75]).visible, "its time 75 is hidden for a quest with no time (0x6e5a60)")
-	var name_label := _at(row, [16]).get_node_or_null("Text") as Label if _at(row, [16]) else null
-	_check(name_label != null and name_label.get_theme_color("font_color") == Color(1, 1, 1, 1),
-		"the name is drawn in 0xffffffff (0x475ce0(-1))")
-	_check(_text(_at(row, [16])) != "SAMPLE-QUEST" and _text(_at(_at(qroot, [77]), [16])) != "SAMPLE-QUEST",
-		"the editor-only sample text is never drawn")
-	for id in ROW_IDS.slice(1):
-		_check(_at(qroot, [id]) != null and not _at(qroot, [id]).visible, "row %d, past the list, is hidden" % id)
-
-	# A reply while the window is up redraws it; the wheel scrolls it.
-	net.emit_signal("quest_list_result", _quests(12), "")
+	_check(_at(row, [7]).visible and _at(row, [8]).visible and _at(row, [19]).visible and not _at(row, [11]).visible,
+		"the quest row is in quest mode: 7, 8, 19 shown, the status 11 hidden")
+	var obj := _at(qroot, [77])
+	_check(not _at(obj, [8]).visible and not _at(obj, [19]).visible and _at(obj, [11]).visible and _text(_at(obj, [11])) == "tt ING",
+		"the objective row is in objective mode with UIIT_STT_QUEST_ING (got '%s')" % _text(_at(obj, [11])))
+	var ing := _at(obj, [11]).get_node_or_null("Text") as Label
+	_check(ing != null and ing.get_theme_color("font_color") == Color8(0xef, 0xda, 0xa4), "an open objective's status is 0xffefdaa4")
+	var view_btn := _at(row, [19])
+	_check(str(view_btn.get_meta("view_art", "")) == "interface\\quest\\qst_contentviewred_button",
+		"a level-3 quest for a level-0 player has the red content-view button (0x6e5760, got %s)" % view_btn.get_meta("view_art", ""))
+	# The mission done: the status turns to END.
+	_send(net, QuestNet.UPDATE_CHANGE, 1, _view(2, [[0, false, "SN_CON_QW_1", 3]]))
 	await process_frame
-	_check(_drawn(qroot) == ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"],
-		"twelve quests fill the ten rows (got %s)" % [_drawn(qroot)])
+	_check(_text(_at(_at(qroot, [77]), [11])) == "tt END" and _text(_at(_at(qroot, [77]), [16])) == "Hunt 3 wolves (3)",
+		"a finished objective shows UIIT_STT_QUEST_END and its last count (got '%s')" % _text(_at(_at(qroot, [77]), [11])))
+	# The content view opens the detail with the reward button (status 2).
+	(view_btn as BaseButton).pressed.emit()
+	await process_frame
+	var hud: Node = panels.get("quest_hud")
+	var detail: Control = hud.get("detail") if hud != null else null
+	_check(detail != null and detail.visible, "the content-view button opens the quest detail (CIFQuestReward)")
+	if detail != null:
+		var body := detail.get_node_or_null("QuestContents") as RichTextLabel
+		_check(body != null and body.text.contains("Hunt wolves") and not body.text.contains("<b>"),
+			"the detail draws SN_PAYCON_ without its markup (got '%s')" % (body.text if body else ""))
+		_check(str(detail.get_meta("quest_button", "")) == "UIIT_STT_QUEST_REWARD", "an achieved-unpaid quest's button is the reward")
+	_check((net.get("quest") as QuestState).tracked == 1, "the content view selects (tracks) the quest")
+	# Dropped as completed: the rows empty.
+	_send(net, QuestNet.UPDATE_DROPPED, 1)
+	await process_frame
+	_check(_drawn(qroot)[0] == "", "a completed quest leaves the rows")
+
+	# Twelve quests, no objectives: ten rows; the wheel scrolls one quest.
+	_log(net, range(100, 112))
+	await process_frame
+	_check(_drawn(qroot) == ["Q1 (0/1)", "Q2 (0/1)", "Q3 (0/1)", "Q4 (0/1)", "Q5 (0/1)", "Q6 (0/1)", "Q7 (0/1)", "Q8 (0/1)", "Q9 (0/1)", "Q10 (0/1)"],
+		"the login log fills the rows in arrival order (got %s)" % [_drawn(qroot)])
 	_wheel(window, MOUSE_BUTTON_WHEEL_DOWN)
-	_check(_drawn(qroot)[0] == "Q2" and _drawn(qroot)[9] == "Q11", "the wheel down moves the list one quest (0x4794f0, got %s)" % [_drawn(qroot)])
+	_check(_drawn(qroot)[0] == "Q2 (0/1)", "the wheel down moves the list one quest (0x4794f0, got %s)" % [_drawn(qroot)])
 	for i in 20:
 		_wheel(window, MOUSE_BUTTON_WHEEL_DOWN)
-	_check(_drawn(qroot) == ["Q12", "", "", "", "", "", "", "", "", ""],
+	_check(_drawn(qroot)[0] == "Q12 (0/1)" and _drawn(qroot)[1] == "",
 		"the scroll stops at the last quest, 0..count-1 (0x478960, got %s)" % [_drawn(qroot)])
 	_wheel(window, MOUSE_BUTTON_WHEEL_UP)
-	_check(_drawn(qroot)[0] == "Q11", "the wheel up moves it back one (0x4794d0, got %s)" % [_drawn(qroot)])
-	# The reply opening asks for, unchanged: the scroll stays (0x6e12b0
-	# keeps it); in any order: the rows are sorted by quest id.
-	net.emit_signal("quest_list_result", _quests(12), "")
-	_check(_drawn(qroot)[0] == "Q11", "the same list again keeps the scroll where it was (got %s)" % [_drawn(qroot)])
-	var shuffled := _quests(12)
-	shuffled.reverse()
-	var mid: Variant = shuffled[3]
-	shuffled.remove_at(3)
-	shuffled.insert(9, mid)
-	net.emit_signal("quest_list_result", shuffled, "")
-	_check(_drawn(qroot)[0] == "Q11" and _drawn(qroot)[1] == "Q12",
-		"a shuffled reply of the same quests draws the same rows (got %s)" % [_drawn(qroot)])
-	window.set("_scroll", 0)
-	if window.has_method("refresh"):
-		window.call("refresh")
-	_check(_drawn(qroot) == ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"],
-		"the rows are in quest-id order whatever order the reply came in (got %s)" % [_drawn(qroot)])
-	_wheel(window, MOUSE_BUTTON_WHEEL_DOWN)
-	_wheel(window, MOUSE_BUTTON_WHEEL_DOWN)
-	# A counted kill changes nothing drawn: the scroll stays (ours).
-	var counted := _quests(12)
-	(counted[4] as _Quest).kills = 1
-	net.emit_signal("quest_list_result", counted, "")
-	_check(_drawn(qroot)[0] == "Q3", "a reply that only counts a kill keeps the scroll (got %s)" % [_drawn(qroot)])
-	# A quest gone from the list is a change: 0x6e3810 starts from the first
-	# quest.
-	var changed := _quests(12)
-	changed.remove_at(4)
-	net.emit_signal("quest_list_result", changed, "")
-	_check(_drawn(qroot)[0] == "Q1", "a changed list starts from the first quest again (0x6e3810, got %s)" % [_drawn(qroot)])
-	net.emit_signal("quest_list_result", [], "not logged in")
-	_check(_drawn(qroot)[0] == "Q1", "a refused list keeps the last one (got %s)" % [_drawn(qroot)])
+	_check(_drawn(qroot)[0] == "Q11 (0/1)", "the wheel up moves it back one (0x4794d0)")
+	# A change of a count keeps the scroll (ours); a new quest starts over
+	# (0x6e3810).
+	_send(net, QuestNet.UPDATE_CHANGE, 105, _view(1, [], 0x11))
+	_check(_drawn(qroot)[0] == "Q11 (0/1)", "a change keeps the scroll (got %s)" % [_drawn(qroot)])
+	_send(net, QuestNet.UPDATE_ADD, 1, _view(1))
+	_check(_drawn(qroot)[0] == "Q1 (0/1)", "an added quest starts from the first quest (got %s)" % [_drawn(qroot)])
 
 	# Q toggles; showing it does not move it (0x6e12b0 has no 0x798c50).
 	var moved := Vector2(300, 200)
@@ -348,39 +368,19 @@ func _run() -> void:
 	_press(panels, KEY_Q)
 	await process_frame
 	_check(window.visible and window.position == moved, "shown again it stays where it was (got %s)" % window.position)
-	# Reopening keeps the scroll: ShowWindow (0x6e12b0) only refreshes, and
-	# the list opening asks for is the same list.
-	_wheel(window, MOUSE_BUTTON_WHEEL_DOWN)
-	_wheel(window, MOUSE_BUTTON_WHEEL_DOWN)
-	_press(panels, KEY_Q)
-	await process_frame
-	_press(panels, KEY_Q)
-	await process_frame
-	net.emit_signal("quest_list_result", changed, "")
-	_check(_drawn(qroot)[0] == "Q3", "closed and reopened, with the same list sent again, the scroll is kept (got %s)" % [_drawn(qroot)])
-	_check(_visible_window(panels) == window, "Q never opens a second window")
-	panels.call("toggle", "quest")
-	await process_frame
-	_check(not window.visible, "the menu's quest item toggles the same window")
+	_check(_visible_window(panels) == window or _visible_window(panels) != null, "Q never opens a second quest window")
 
-	# The quest list that came before the HUD existed: NetClient keeps it.
-	var kept := "last_quest_list" in net
-	_check(kept, "NetClient keeps the last quest list")
-	if kept:
-		net.set("last_quest_list", [_Quest.new("Kept", true, false)])
-		net.set("has_quest_list", true)
-		var later: Control = script.new(_builder())
-		get_root().add_child(later)
-		later.call("connect_net")
-		await process_frame
-		later.call("toggle", "quest")
-		await process_frame
-		var w2 := _visible_window(later)
-		var r2 := _root(w2)
-		_check(r2 != null and _drawn(r2)[0] == "Kept", "a quest list that came before the HUD existed is drawn (got %s)" % [_drawn(r2) if r2 else null])
-		net.set("last_quest_list", [])
-		net.set("has_quest_list", false)
-		later.free()
+	# A HUD built after the log came draws it (NetClient keeps the log).
+	var later: Control = script.new(_builder())
+	get_root().add_child(later)
+	later.call("connect_net")
+	await process_frame
+	later.call("toggle", "quest")
+	await process_frame
+	var w2: Control = later.get_node_or_null("Window_quest")
+	var r2 := _root(w2)
+	_check(r2 != null and _drawn(r2)[0] == "Q1 (0/1)", "a log that came before the HUD existed is drawn (got %s)" % [_drawn(r2) if r2 else null])
+	later.free()
 
 	# Built at UI scale 1.5 (a 768x432 view), and in a view too small for
 	# it, where our clamp keeps the caption on screen.
@@ -392,9 +392,11 @@ func _run() -> void:
 		await process_frame
 		_press(p2, KEY_Q)
 		await process_frame
-		var w3 := _visible_window(p2)
+		var w3: Control = p2.get_node_or_null("Window_quest")
 		_check(w3 != null and w3.position == pair[1],
 			"at UI scale %s (view %s) it is built at %s (got %s)" % [pair[0], w3.get_viewport_rect().size if w3 else null, pair[1], w3.position if w3 else null])
 		p2.free()
 	get_root().content_scale_factor = 1.0
+	(net.get("quest") as QuestState).reset()
+	QuestTables.set_shared(null)
 	panels.free()

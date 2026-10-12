@@ -221,6 +221,7 @@ var cleanupRefs = []ownerRef{
 	{"character_mastery_levels", "character_id", false},
 	{"character_quests", "character_id", false},
 	{"character_default_quests", "character_id", false},
+	{"character_quest_state", "character_id", false}, // round 785
 	{"guild_members", "character_id", false},
 	{"friendships", "character_id", false},
 	{"friendships", "friend_id", false},

@@ -4,17 +4,31 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )
 
+// The schema. character_quests is the table the invented catalogue used
+// before round 785; it is left in place (additive migrations only) and no
+// longer read. character_quest_state is the quest log: one row per
+// character and quest, the _CharQuest shape plus the mission counts.
 const schema = `
 CREATE TABLE IF NOT EXISTS character_quests (
 	character_id BIGINT NOT NULL,
 	quest_id     BIGINT NOT NULL,
 	kills        INTEGER NOT NULL DEFAULT 0,
 	completed_at TIMESTAMPTZ,
+	PRIMARY KEY (character_id, quest_id)
+);
+CREATE TABLE IF NOT EXISTS character_quest_state (
+	character_id BIGINT NOT NULL,
+	quest_id     BIGINT NOT NULL,
+	status       SMALLINT NOT NULL,
+	counts       TEXT NOT NULL DEFAULT '',
+	achieved     INTEGER NOT NULL DEFAULT 0,
+	updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
 	PRIMARY KEY (character_id, quest_id)
 );
 `
@@ -65,85 +79,74 @@ func (s *SQLStore) Close() error {
 	return s.db.Close()
 }
 
-// TruncateForTest clears all quest progress, for other packages' tests
-// sharing this Postgres instance. Not for production use.
+// TruncateForTest clears all quest state, for other packages' tests sharing
+// this Postgres instance. Not for production use.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE character_quests, character_default_quests`)
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE character_quests, character_quest_state, character_default_quests`)
 	return err
 }
 
-// Accept implements Store.
-func (s *SQLStore) Accept(ctx context.Context, characterID, questID int64) error {
-	if _, ok := Catalog[questID]; !ok {
-		return ErrUnknownQuest
+func encodeCounts(c []int) string {
+	parts := make([]string, len(c))
+	for i, v := range c {
+		parts[i] = strconv.Itoa(v)
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO character_quests (character_id, quest_id) VALUES ($1, $2)`, characterID, questID)
-	if err != nil {
-		if isUniqueConstraintErr(err) {
-			return ErrAlreadyAccepted
-		}
-		return fmt.Errorf("quest: accepting quest: %w", err)
-	}
-	return nil
+	return strings.Join(parts, ",")
 }
 
-// ListProgress implements Store.
-func (s *SQLStore) ListProgress(ctx context.Context, characterID int64) ([]Progress, error) {
+func decodeCounts(s string) []int {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]int, len(parts))
+	for i, p := range parts {
+		out[i], _ = strconv.Atoi(p)
+	}
+	return out
+}
+
+// States implements Store.
+func (s *SQLStore) States(ctx context.Context, characterID int64) ([]State, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT quest_id, kills, completed_at IS NOT NULL FROM character_quests WHERE character_id = $1 ORDER BY quest_id`,
+		`SELECT quest_id, status, counts, achieved FROM character_quest_state WHERE character_id = $1 ORDER BY quest_id`,
 		characterID)
 	if err != nil {
-		return nil, fmt.Errorf("quest: listing progress: %w", err)
+		return nil, fmt.Errorf("quest: listing states: %w", err)
 	}
 	defer rows.Close()
-
-	var out []Progress
+	var out []State
 	for rows.Next() {
-		var p Progress
-		if err := rows.Scan(&p.QuestID, &p.Kills, &p.Completed); err != nil {
-			return nil, fmt.Errorf("quest: scanning row: %w", err)
+		var st State
+		var counts string
+		if err := rows.Scan(&st.QuestID, &st.Status, &counts, &st.Achieved); err != nil {
+			return nil, fmt.Errorf("quest: scanning state: %w", err)
 		}
-		out = append(out, p)
+		st.Counts = decodeCounts(counts)
+		out = append(out, st)
 	}
 	return out, rows.Err()
 }
 
-// RecordKill implements Store.
-func (s *SQLStore) RecordKill(ctx context.Context, characterID int64, monsterName string) ([]Quest, error) {
-	var completed []Quest
-	for _, q := range Catalog {
-		if q.MonsterName != monsterName {
-			continue
-		}
-
-		var kills int
-		err := s.db.QueryRowContext(ctx,
-			`UPDATE character_quests SET kills = kills + 1
-			 WHERE character_id = $1 AND quest_id = $2 AND completed_at IS NULL
-			 RETURNING kills`,
-			characterID, q.ID).Scan(&kills)
-		if err == sql.ErrNoRows {
-			// Not accepted, or already completed -- nothing to do for this
-			// quest.
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("quest: recording kill: %w", err)
-		}
-
-		if kills >= q.TargetKills {
-			if _, err := s.db.ExecContext(ctx,
-				`UPDATE character_quests SET completed_at = now() WHERE character_id = $1 AND quest_id = $2`,
-				characterID, q.ID); err != nil {
-				return nil, fmt.Errorf("quest: marking complete: %w", err)
-			}
-			completed = append(completed, q)
-		}
+// Put implements Store.
+func (s *SQLStore) Put(ctx context.Context, characterID int64, st State) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO character_quest_state (character_id, quest_id, status, counts, achieved, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, now())
+		 ON CONFLICT (character_id, quest_id) DO UPDATE
+		 SET status = EXCLUDED.status, counts = EXCLUDED.counts, achieved = EXCLUDED.achieved, updated_at = now()`,
+		characterID, st.QuestID, st.Status, encodeCounts(st.Counts), st.Achieved)
+	if err != nil {
+		return fmt.Errorf("quest: writing state: %w", err)
 	}
-	return completed, nil
+	return nil
 }
 
-func isUniqueConstraintErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "duplicate key value violates unique constraint")
+// Delete implements Store.
+func (s *SQLStore) Delete(ctx context.Context, characterID, questID int64) error {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM character_quest_state WHERE character_id = $1 AND quest_id = $2`, characterID, questID); err != nil {
+		return fmt.Errorf("quest: deleting state: %w", err)
+	}
+	return nil
 }

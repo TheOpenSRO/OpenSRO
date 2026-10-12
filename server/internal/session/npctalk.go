@@ -138,13 +138,34 @@ func npcTarget(e world.Entity, entity uint32) (npcPlacement, uint16) {
 	return pl, 0
 }
 
-// selectIDs is the set a select by a player of level sends for npc: its own
-// set (+0x130 copied to +0x1c78) and, at the herbalists from level 20, id 10
-// (the quest's event-0xb handler, npcspawn.WithdrawSkill). Id 2 stays as the
-// NPC's static stand-in (npcspawn/questtalk.go; the per-player filter
-// 0x4c9310 is not modelled). Ascending, as the set is ordered.
-func selectIDs(npc *npcspawn.NPC, level int) []byte {
+// selectIDsFor is the set a select by characterID of level sends for npc: its
+// own set (+0x130 copied to +0x1c78) and, at the herbalists from level 20, id
+// 10 (the quest's event-0xb handler, npcspawn.WithdrawSkill). Without the quest
+// runtime id 2 stays as the NPC's static stand-in (npcspawn/questtalk.go); with
+// it (round 785) id 2 is the player's own -- offered when the NPC has
+// quest business with the character (0x4c9310's per-player filter, now with
+// real quests), taken away when it has none and the static stand-in listed it.
+func selectIDsFor(ctx context.Context, npc *npcspawn.NPC, level int, characterID int64) []byte {
 	ids := append([]byte(nil), npc.Interact...)
+	if questRT.Load() != nil && characterID != 0 {
+		talk := questTalkAvailable(ctx, characterID, level, npc.Code)
+		kept := ids[:0]
+		has := false
+		for _, b := range ids {
+			if b == npctalk.IDTalk {
+				if !talk {
+					continue
+				}
+				has = true
+			}
+			kept = append(kept, b)
+		}
+		ids = kept
+		if talk && !has {
+			ids = append(ids, npctalk.IDTalk)
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		}
+	}
 	if npcspawn.WithdrawSkill(npc.Code, level) {
 		has := false
 		for _, b := range ids {
@@ -184,7 +205,7 @@ func handleNPCSelect(sess *gateway.Session, data []byte, hub *world.Hub, trades 
 		sendNPCTalk(sess, npctalk.OpSelectResult, npctalk.EncodeFail(code))
 		return
 	}
-	ids := selectIDs(pl.npc, e.Level)
+	ids := selectIDsFor(context.Background(), pl.npc, e.Level, e.CharacterID)
 	npcInteractions.mu.Lock()
 	st.entity = entity
 	st.selected = true
@@ -230,7 +251,7 @@ func handleNPCOpen(sess *gateway.Session, data []byte, hub *world.Hub, trades *t
 	// would give now (OURS: the engine's +0x1c78 is whatever the last select
 	// left).
 	if offeredSet == nil {
-		offeredSet = selectIDs(pl.npc, e.Level)
+		offeredSet = selectIDsFor(context.Background(), pl.npc, e.Level, e.CharacterID)
 	}
 	offered := false
 	for _, b := range offeredSet {
@@ -280,6 +301,11 @@ func handleNPCOpen(sess *gateway.Session, data []byte, hub *world.Hub, trades *t
 		st.mode = 6
 	}
 	npcInteractions.mu.Unlock()
+	// The talk opens the NPC's quest page (round 785, quest.go): the menu
+	// ShowFirstTalkMenu sends as 0x30D4 when the player has talk items here.
+	if id == npctalk.IDTalk {
+		questTalkOpen(context.Background(), sess, e, entity, pl.npc.Code)
+	}
 }
 
 // handleNPCEnd is GObjPC_HandleEndInteractionMsg_04b -> EndInteraction

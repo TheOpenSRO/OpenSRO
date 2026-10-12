@@ -1543,6 +1543,58 @@ On opensro-01:
 
 To undo: remove the variable and `docker compose up -d`; characters already given defaults keep them.
 
+## Quests (round 785)
+
+NPCs offer their real quests (talk page, accept, kill/gather/deliver/talk, reward window, gold/EXP/
+skill EXP/SP/items, give up), from a catalogue exported from the operator's own data
+(`docs/protocol/quests.md`). The server reads it from the directory `-quests-dir` (env
+`OPENSRO_QUESTS_DIR`) names: `quests.csv`, `quest_missions.csv`, `quest_menus.csv`,
+`quest_reward_items.csv`, written by `export-refdata -mode quests`. **Game data: never in this repo.**
+
+- **Unset** (the default): the boot log warns `no quest catalogue (-quests-dir / OPENSRO_QUESTS_DIR): no
+  quest is offered`; NPCs keep their static talk stand-in, kills credit nothing.
+- **Set**: `quest catalogue loaded: NPCs offer their quests ... quests=696 playable=618 scripted=529
+  compiled_not_extracted=154 questdata_only=13` (the user's data, MEASURED; `compiled_not_extracted` counts
+  the compiled quests, 149 of which the decompilation filled). A directory that does not load is fatal.
+- **The schema** grows one table, `character_quest_state` (character, quest, status, mission counts,
+  completions), created at boot if absent (`quest.NewSQLStore`). The old `character_quests` table is left
+  in place and no longer read. Additive and idempotent.
+- **Needs** the item table (`import-refdata`, for quest items and item rewards by code name), the NPC
+  table and placements (`-npcs-csv`, `-npcpos-csv`: the quest NPCs), the monster table (`-monsters-csv`:
+  kills are matched by code name) and the level table (`-leveldata-csv`: EXP rewards level up).
+
+The export runs where the inputs are -- the render box holds all of them (the client archive, the server
+pack's `Script/VIETNAM/` and `SR_GameServer.exe`, and the project's decompilation of it):
+```
+cd server && CGO_ENABLED=0 GOOS=linux go build -o /tmp/export-refdata ./cmd/export-refdata && \
+  go build -o /tmp/pk2list ./cmd/pk2list && scp /tmp/export-refdata /tmp/pk2list root@192.168.10.78:/var/tmp/
+ssh root@192.168.10.78 'set -e; mkdir -p /var/tmp/questexport && cd /var/tmp/questexport
+  for f in questdata.txt refqusetreward.txt refquestrewarditems.txt; do
+    /var/tmp/pk2list -pk2 /opt/sro-files/client/Media.pk2 -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
+  SRV=/opt/sro-files/server/y0gi_Easy_vPLUS/Blitzkrieq_Bin_Data/Blitzkrieq_Bin_Data
+  /var/tmp/export-refdata -mode quests -out quests -decomp-dir /var/tmp/decomp_server -quest-report coverage.csv \
+    questdata.txt refqusetreward.txt refquestrewarditems.txt \
+    $SRV/Script/VIETNAM/define.sct $SRV/Script/VIETNAM/QuestList.sct $SRV/Script/VIETNAM/Quest.sct $SRV/SR_GameServer.exe
+  rm -f questdata.txt refqusetreward.txt refquestrewarditems.txt'
+# prints: wrote 696 quests to quests: 529 scripted, 154 compiled (149 read from the decompilation),
+#         13 questdata-only; 618 playable, 564 of them reachable ...
+```
+`-decomp-dir` is optional: without it the 154 compiled quests (half of Europe's Constantinople and
+East Europe chains among them) are catalogued but not offered (`playable=520`).
+
+On opensro-01:
+1. **Stage the directory**:
+   `ssh root@192.168.10.78 'tar cf - -C /var/tmp/questexport quests' | ssh opensro@<server-host> 'tar xf - -C ~/opensro-data && chmod 755 ~/opensro-data/quests && chmod 644 ~/opensro-data/quests/*.csv'`
+2. **Check** `ssh opensro@<server-host> 'head -1 ~/opensro-data/quests/quests.csv'` prints the header
+   starting `ID,Code,Level,LevelArg2,Source`.
+3. **Set it** in the untracked override, under the server's `environment:`: `OPENSRO_QUESTS_DIR: /data/quests`.
+4. **Merge to dev**; the update timer deploys it.
+5. **Check** `docker compose logs server | grep -E 'quest catalogue loaded|quest:'`, then take
+   `QNO_CH_SMITH_1` from the Jangan blacksmith (China) or `QNO_EU_CONS_1` from Constantinople's nun
+   (Europe) and look: `docker compose exec -T postgres psql -U postgres opensro -c "SELECT * FROM character_quest_state;"`.
+
+To undo: remove the variable and `docker compose up -d`; the table stays, unread.
+
 ## Alchemy (round 768)
 
 The alchemy window (Y) reinforces with elixirs and lucky powder, and applies magic and attribute

@@ -116,7 +116,7 @@ func TestLobbyCreateGivesTheRaceDefaults692(t *testing.T) {
 		}
 		// The invented quest catalogue is untouched: a recorded default is not
 		// an accepted catalogue quest.
-		if p, _ := quests.ListProgress(ctx, ch.ID); len(p) != 0 {
+		if p, _ := quests.States(ctx, ch.ID); len(p) != 0 {
 			t.Errorf("%s: quest progress %+v, want none", c.name, p)
 		}
 	}

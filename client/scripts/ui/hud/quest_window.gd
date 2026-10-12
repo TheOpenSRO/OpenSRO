@@ -67,9 +67,6 @@ const CAPTION := "UIIT_STT_QUEST_LIST"
 ## OnCreate's x (0x6e403a `push 0x50`).
 const LEFT := 0x50
 
-## The quests the rows are drawn from: the last list the server sent,
-## narrowed to the ones the player has (see fill_quests).
-var _quests: Array = []
 ## The scroll's position (+0x380): the first quest drawn in row 0.
 var _scroll := 0
 var quest_root: Control
@@ -137,6 +134,15 @@ func _apply_create_state() -> void:
 			box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_quest_mode(row)
 		row.visible = false
+		# A left press on a row selects its quest (OURS wiring of the READ
+		# selection, FUN_006e51e0); PASS so the wheel still reaches the window.
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
+		row.gui_input.connect(func(ev: InputEvent) -> void:
+			var mb := ev as InputEventMouseButton
+			if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+				var id := int(row.get_meta("quest_id", 0))
+				if id != 0:
+					select_quest(id))
 	place_on_create()
 	_rebuild()
 
@@ -145,8 +151,8 @@ func _apply_create_state() -> void:
 ## the content-view button 19 and the small box 7 shown, and the row's art
 ## set to ROW_ART (+0x84 vslot 0x34). Its other mode, 0x6e5830(1), is an
 ## objective line under a quest (0x6e0570): the check box, 18, 19 and 7
-## hidden, 11 shown, no art. This client has no objective text to put there
-## (see refresh), so rows are only ever in quest mode.
+## hidden, 11 shown, no art (_objective_mode; round 785 draws the objectives
+## the server's 0x30D5 carries).
 func _quest_mode(row: Control) -> void:
 	for pair in [[ROW_CHECK, true], [ROW_STATUS, false], [ROW_WORLD_MAP, true],
 			[ROW_CONTENT_VIEW, true], [ROW_SMALL_BOX, true]]:
@@ -186,132 +192,183 @@ func rows() -> Array[Control]:
 func control(path: Array) -> Control:
 	return TwoDtBuilder.find_path(quest_root, path)
 
-## The quests the player has, from a quest list reply: each entry an object
-## with `quest_id`, `quest_name`, `accepted` and `completed`
-## (QuestNet.Entry).
+## The player's live quests (round 785): the client's quest manager list
+## (QuestState.entries(), [quest_id, QuestNet.View] pairs in arrival order),
+## fed by the login section and 0x30D5.
 ##
-## **Which quests (read, one step inferred).** The client's rows are the
-## quest manager's list (+0x20d0 +0x28), which holds only live quests: at
-## login finished ids go to +0x38 and the live ones are pushed to the back
-## of +0x28 (0x8ba1f0, from ICPlayer 0x9d9830); the 0x30d5 handler 0x8812b0
-## adds on case 1 (0x778c70), changes on case 2 (0x778cb0) and deletes on
-## cases 3 and 4 (both 0x8813fa: 0x778d10 -> 0x8b91b0, the id then kept at
-## +0x38); the server sends case 3 for statuses 4, 5 and 6 (GObjPC
-## 0x5709c0). This server's reply is its whole catalogue with the
-## character's progress folded in, so a row is drawn for a quest the
-## character has accepted and not completed. **Inferred:** that our
-## `completed` is the client's delete (our server pays the reward on
-## completion, OpQuestCompleted, so nothing is left to hand in).
+## **Which quests (READ).** The rows are the manager's list +0x28, which holds
+## only live quests: at login the finished ids go to +0x38 and the live ones
+## are pushed to the back of +0x28 (0x8ba1f0, from ICPlayer 0x9d9830); the
+## 0x30d5 handler 0x8812b0 adds on case 1 (0x778c70), changes on case 2
+## (0x778cb0) and deletes on cases 3 and 4 (0x778d10). Arrival order is kept
+## (0x8ba1f0 pushes to the back).
 ##
-## **Order (ours).** The client keeps the order the quests arrive in
-## (0x8ba1f0 pushes to the back). This server builds its reply from a Go
-## map (`handleQuestList` walks `quest.Catalog`), so the reply's order
-## changes from one reply to the next; the rows are sorted by quest id so
-## the same quests always sit on the same rows.
-##
-## **The scroll (read, then ours).** 0x6e3810 puts the scroll back on the
-## first quest, and it runs when the client's list changes (an add, a
-## change or a delete); ShowWindow (0x6e12b0) only refreshes, keeping the
-## scroll. **Ours:** this client asks for the whole list again every time
-## the window opens and after every kill (World3D), so a reply that draws
-## the same quests (the same ids and names -- what the rows show) keeps the
-## scroll where it was, clamped to the new count, and one that draws
-## different quests starts from the first quest. Retail's change message
-## (0x778cb0 -> 0x6e3810) resets too, so it may reset on progress; whether
-## the server sends a change per kill is not read.
-func fill_quests(entries: Array) -> void:
-	var pairs: Array = []
-	for e in entries:
-		if e is Object and "accepted" in e and bool(e.get("accepted")) \
-				and not ("completed" in e and bool(e.get("completed"))):
-			pairs.append([_id_of(e), e])
-	pairs.sort_custom(func(x: Array, y: Array) -> bool: return int(x[0]) < int(y[0]))
-	var kept: Array = pairs.map(func(pair: Array) -> Object: return pair[1])
-	var same := _signature(kept) == _signature(_quests)
-	_quests = kept
+## **The scroll (READ).** 0x6e3810 runs on every add, change and delete and
+## puts the scroll back on the first quest (0x478960); ShowWindow (0x6e12b0)
+## only refreshes. So a fill whose quests (ids) are the same keeps the scroll
+## clamped (OURS: a change of counts redraws in place -- retail's 0x778cb0 ->
+## 0x6e3810 resets; keeping it is kinder to a player reading a long list), and
+## one that adds or removes a quest starts from the first.
+signal quest_selected(quest_id: int)
+signal detail_requested(quest_id: int)
+
+## [quest_id, View] pairs.
+var _views: Array = []
+## The quest tables names, levels and objective texts come from (QuestTables).
+var tables: QuestTables = null
+## The player's level, for the content-view button's colour (0x6e5760).
+var player_level := 0
+## The quest the player last selected (tracked; the minimap's signs).
+var selected_quest := 0
+
+func fill_log(entries: Array) -> void:
+	var same := _ids(entries) == _ids(_views)
+	_views = entries.duplicate()
 	if same:
 		set_scroll(_scroll)
 	else:
 		_rebuild()
 
-static func _id_of(e: Object) -> int:
-	return int(e.get("quest_id")) if "quest_id" in e else 0
-
-## What a row list draws (ids and names), to tell the reply opening asks
-## for from a change (ours).
-static func _signature(list: Array) -> Array:
-	var out := []
-	for e in list:
-		out.append([_id_of(e), str(e.get("quest_name")) if "quest_name" in e else ""])
-	return out
+static func _ids(list: Array) -> Array:
+	return list.map(func(pair: Array) -> int: return int(pair[0]))
 
 func quest_count() -> int:
-	return _quests.size()
+	return _views.size()
 
 ## 0x6e3810's tail: range 0..count-1, position 0, then the refresh.
 func _rebuild() -> void:
 	_scroll = 0
 	refresh()
 
-## The refresh, 0x6e03c0 (also the scroll's notification, map entry 0xeb96e8:
-## message 2 from id 6, and CNIFQuest's ShowWindow, 0x6e12b0). Row i gets
-## 0x6e5830(0) and then 0x6e5bf0(quest scroll + i); a row past the list gets
-## 0x6e5bf0(0), which hides it (0x6e5c35..0x6e5c3d).
-##
-## A filled row, 0x6e5bf0 (read) against what this client has:
-## - 19's art: first a colour bar by the quest's state byte +9 (1
-##   `qst_colorbar_green`, 2 `_red`, 3 `_lightgreen`, 0x6e5c5d..0x6e5cf4),
-##   then, unconditionally, 0x6e5760 sets it again by the player's level
-##   (`[0xeef5ec]+0x868`) less the quest's (RefQuest +0x20): above 9
-##   `qst_contentviewblue_button`, below 0 `qst_contentviewred_button`,
-##   else `qst_contentview_button`. Our reply carries no quest level, so the
-##   record's own `qst_contentview_button` stays. **Not the level colour.**
-## - 16, the name: colour 0xffffffff (0x475ce0(-1)) and
-##   `%s (%d/%d)` (UTF-16 at 0xd95a80) with the quest's name
-##   (RefQuest +0x24 through the text table) and the two nibbles of the
-##   packet's byte +8, low then high. The server packs that byte as
-##   (the quest object's vslot 0x28 << 4) | CGObjPC::GetQuestCounter
-##   (SR_GameServer 0x5705be..0x5705d6); what the two numbers mean is not
-##   established, and our reply carries neither, so the name is drawn
-##   alone rather than with a guessed pair.
-## - 8 unchecked (0x482cb0(0)), then checked if the quick list (0xad) holds
-##   the quest (0x5c7b90); there is no quick list here.
-## - The quest's objectives (its list at +0x14) fill the following rows in
-##   objective mode (0x6e0570: UIIT_STT_QUEST_ING in 0xffefdaa4 or
-##   UIIT_STT_QUEST_END in 0xffff9c68 on 11, the objective's text on 16),
-##   while rows remain (0x6dcd50). Our quests carry no objective text (the
-##   objectives are this server's own design), so none are drawn.
-## - The row shown (vslot 0x5c, 1, 0x6e600d).
-## - 75, the time left: the row's update (vslot 0x30, 0x6e5a60) hides it
-##   unless the quest is timed (+0xc != -1: read from the packet when
-##   `flags & 4`, and turned from -1 to 0 when the quest's RefQuest
-##   +0xb2 is non-zero, 0x8b94d0); ours are not, so it is hidden.
+## A quest's row name: its SN_ title through the quest text, then the two
+## nibbles of +8, low then high, as "%s (%d/%d)" (UTF-16 at 0xd95a80, READ).
+func row_name(quest_id: int, v: QuestNet.View) -> String:
+	var title := tables.title_of(quest_id) if tables != null else "Quest %d" % quest_id
+	return "%s (%d/%d)" % [title, v.counter & 0x0f, (v.counter >> 4) & 0x0f]
+
+## An objective line: its SN_CON_ text with the count put in (QuestNet.
+## format_objective, the client's swprintf with one value).
+func objective_text(m: QuestNet.Mission) -> String:
+	var fmt := tables.resolve(m.text, m.text) if tables != null else m.text
+	return QuestNet.format_objective(fmt, m.values)
+
+## The content-view button's art by the player's level less the quest's
+## (0x6e5760, READ): above 9 the blue button, below 0 the red one, else the
+## plain one.
+static func content_view_art(level_diff: int) -> String:
+	if level_diff > 9:
+		return "interface\\quest\\qst_contentviewblue_button"
+	if level_diff < 0:
+		return "interface\\quest\\qst_contentviewred_button"
+	return "interface\\quest\\qst_contentview_button"
+
+## The colours of an objective's status (UI_QUEST::FUN_006e8360, READ).
+const STATUS_ING := "UIIT_STT_QUEST_ING"
+const STATUS_END := "UIIT_STT_QUEST_END"
+const COLOUR_ING := 0xffefdaa4
+const COLOUR_END := 0xffff9c68
+
+## The rows to draw from the scroll on: [kind, quest_id, View, Mission] with
+## kind "quest" or "mission"; a quest's objectives follow it (0x6e0570 per
+## objective, while rows remain, 0x6dcd50).
+func display_rows() -> Array:
+	var out: Array = []
+	for qi in range(_scroll, _views.size()):
+		var pair: Array = _views[qi]
+		out.append(["quest", int(pair[0]), pair[1], null])
+		for m in (pair[1] as QuestNet.View).missions:
+			out.append(["mission", int(pair[0]), pair[1], m])
+	return out
+
+## 0x6e5830(1), a row's objective mode: the check box, 18, 19 and 7 hidden,
+## the status 11 shown, no art.
+func _objective_mode(row: Control) -> void:
+	for pair in [[ROW_CHECK, false], [ROW_STATUS, true], [ROW_WORLD_MAP, false],
+			[ROW_CONTENT_VIEW, false], [ROW_SMALL_BOX, false]]:
+		var part := TwoDtBuilder.child(row, int(pair[0]))
+		if part != null:
+			part.visible = bool(pair[1])
+	if row is TextureRect:
+		(row as TextureRect).texture = null
+
+## The refresh, 0x6e03c0 (also the scroll's notification and ShowWindow).
+## Row i gets the i-th display row: a quest in quest mode (0x6e5bf0: its name
+## in 0xffffffff, the content-view button's level colour, the check box
+## unchecked), or one of its objectives in objective mode (the objective
+## text on 16, the status on 11). Rows past the list are hidden. The time 75
+## stays hidden: no timed quest is sent (flags & 4 never set).
 func refresh() -> void:
 	var list := rows()
+	var shown := display_rows()
 	for i in list.size():
 		var row := list[i]
-		var q := _scroll + i
-		if q >= _quests.size():
+		row.set_meta("quest_id", 0)
+		if i >= shown.size():
 			row.visible = false
 			continue
-		_quest_mode(row)
-		var entry: Variant = _quests[q]
+		var d: Array = shown[i]
+		var quest_id := int(d[1])
+		var v := d[2] as QuestNet.View
+		row.set_meta("quest_id", quest_id)
 		var name_node := TwoDtBuilder.child(row, ROW_NAME)
-		if name_node != null:
-			var label := _twodt.set_text(name_node, str(entry.get("quest_name")) if entry is Object and "quest_name" in entry else str(entry))
-			if label != null:
-				label.add_theme_color_override("font_color", TwoDtBuilder.argb(0xffffffff))
-		var box := TwoDtBuilder.child(row, ROW_CHECK) as BaseButton
-		if box != null:
-			box.set_pressed_no_signal(false)
-			var mark := box.get_node_or_null(TwoDtBuilder.MARK_NODE) as CanvasItem
-			if mark != null:
-				mark.visible = false
 		var time := TwoDtBuilder.child(row, ROW_TIME)
 		if time != null:
 			time.visible = false
+		if str(d[0]) == "quest":
+			_quest_mode(row)
+			if name_node != null:
+				var label := _twodt.set_text(name_node, row_name(quest_id, v))
+				if label != null:
+					label.add_theme_color_override("font_color", TwoDtBuilder.argb(0xffffffff))
+			var box := TwoDtBuilder.child(row, ROW_CHECK) as BaseButton
+			if box != null:
+				box.set_pressed_no_signal(false)
+				var mark := box.get_node_or_null(TwoDtBuilder.MARK_NODE) as CanvasItem
+				if mark != null:
+					mark.visible = false
+			_set_view_art(row, quest_id)
+		else:
+			_objective_mode(row)
+			var m := d[3] as QuestNet.Mission
+			if name_node != null:
+				var label := _twodt.set_text(name_node, objective_text(m))
+				if label != null:
+					label.add_theme_color_override("font_color", TwoDtBuilder.argb(0xffffffff))
+			var status := TwoDtBuilder.child(row, ROW_STATUS)
+			if status != null:
+				var key := STATUS_ING if m.open else STATUS_END
+				var label := _twodt.set_text(status, _builder.resolve_text(key) if _builder != null else key)
+				if label != null:
+					label.add_theme_color_override("font_color", TwoDtBuilder.argb(COLOUR_ING if m.open else COLOUR_END))
 		row.visible = true
 
+func _set_view_art(row: Control, quest_id: int) -> void:
+	var button := TwoDtBuilder.child(row, ROW_CONTENT_VIEW) as TextureButton
+	if button == null:
+		return
+	if not button.has_meta("quest_wired"):
+		button.set_meta("quest_wired", true)
+		button.pressed.connect(func() -> void:
+			var id := int(row.get_meta("quest_id", 0))
+			if id != 0:
+				select_quest(id)
+				detail_requested.emit(id))
+	var q := tables.quest(quest_id) if tables != null else null
+	if q == null or _builder == null:
+		return
+	var base := content_view_art(player_level - q.level)
+	var tex := _builder.load_texture(base + ".ddj")
+	if tex != null:
+		button.texture_normal = tex
+		button.texture_hover = _builder.load_texture(base + "_focus.ddj")
+		button.texture_pressed = _builder.load_texture(base + "_press.ddj")
+	button.set_meta("view_art", base)
+
+## The tracked quest (DAT_00eeae70; set by a selection in this window,
+## FUN_006e51e0 -- INFERRED the row click).
+func select_quest(quest_id: int) -> void:
+	selected_quest = quest_id
+	quest_selected.emit(quest_id)
 ## The first quest row 0 shows.
 func scroll_position() -> int:
 	return _scroll
@@ -320,7 +377,7 @@ func scroll_position() -> int:
 ## [+0x370, +0x374], here 0..count-1), then the window told (0xb8f150),
 ## whose map sends it to the refresh.
 func set_scroll(to: int) -> void:
-	_scroll = clampi(to, 0, maxi(0, _quests.size() - 1))
+	_scroll = clampi(to, 0, maxi(0, _views.size() - 1))
 	refresh()
 
 ## CNIFQuest's wheel slot (vslot 0x90, 0x6dbe00): a positive delta steps the

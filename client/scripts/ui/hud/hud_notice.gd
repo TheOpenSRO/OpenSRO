@@ -140,6 +140,8 @@ const KIND_STYLES := {
 	"unique": "warning",
 	"recall_point": "warning",
 	"system": "warning",
+	# Round 785: a quest's progress line, GDR_UPDATE_QUEST_INFO.
+	"quest_info": "quest",
 }
 
 ## The frame pieces' sizes when no texture is loaded (MEASURED from
@@ -196,8 +198,23 @@ func setup(builder: UiBuilder, style: Dictionary = STYLE_NOTICE) -> void:
 
 ## The style a line of `kind` (KIND_STYLES) is shown in; an unknown kind is
 ## a warning, the instance nearly every caller uses.
+## GDR_UPDATE_QUEST_INFO (round 785), ginterface id 42, the third CIFNotify:
+## a quest's progress line (READ: shown through 0x77b5b0 -> control 0x2a when
+## an open mission's text changes on 0x30D5). Its y, fill and frame, which
+## CGInterface's setup gives it, are NOT read: OURS -- the warning's frame and
+## fill, at y 160 so it does not cover the warning band at 130.
+const STYLE_QUEST_INFO := {
+	"name": "GDR_UPDATE_QUEST_INFO", "y": 160, "fill": Color(0.0, 52.0 / 255.0, 92.0 / 255.0),
+	"edge": "interface\\ifcommon\\com_warning_edge.ddj",
+	"edge2": "interface\\ifcommon\\com_warning_edge2.ddj",
+	"corner": "interface\\ifcommon\\com_warning_corner.ddj",
+}
+
 static func style_for_kind(kind: String) -> Dictionary:
-	return STYLE_NOTICE if String(KIND_STYLES.get(kind, "warning")) == "notice" else STYLE_WARNING
+	var style := String(KIND_STYLES.get(kind, "warning"))
+	if style == "quest":
+		return STYLE_QUEST_INFO
+	return STYLE_NOTICE if style == "notice" else STYLE_WARNING
 
 ## The instance's layout name (GDR_NOTICE / GDR_WARNING_WND).
 func style_name() -> String:
