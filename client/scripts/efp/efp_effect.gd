@@ -824,7 +824,10 @@ func _skeleton() -> Skeleton3D:
 ## host is ANCHOR_RECENTRE away; a jump past ANCHOR_JUMP in one frame (a
 ## teleport, or the world re-based on a zone change) carries the whole
 ## effect along instead (OURS both).
-func _place() -> bool:
+##
+## Round 785: `step_due` -- this frame's advance will step -- leaves the
+## placement to that step (EfpSim.set_origin), one follow a frame as retail.
+func _place(step_due: bool = false) -> bool:
 	if _follow_host == null or not is_instance_valid(_follow_host):
 		return false
 	if not is_inside_tree():
@@ -865,7 +868,7 @@ func _place() -> bool:
 	global_transform = _anchor
 	if sim == null:
 		return redraw
-	return sim.set_origin(e.origin, e.basis.orthonormalized()) or redraw
+	return sim.set_origin(e.origin, e.basis.orthonormalized(), step_due) or redraw
 
 ## A basis's scale alone, its handedness kept (a mirrored basis keeps a
 ## negative Z), its rotation dropped.
@@ -920,7 +923,7 @@ func step_pre(delta: float) -> bool:
 		_pending_moved = false
 		return true
 	var t0 := Time.get_ticks_usec() if profile else 0
-	_pending_moved = _place()
+	_pending_moved = _place(sim != null and sim.step_due(delta))
 	if profile:
 		prof["place"] += Time.get_ticks_usec() - t0
 	return true
@@ -973,6 +976,10 @@ func step_post() -> void:
 	# billboarded node, when the camera turned (else it would lag the view).
 	# (Round 621: also when the host moved the effect, whose followers the
 	# placement pass moved this frame, or the space re-centred.)
+	# (Round 785: also when a frame without a step ran the follow pass for a
+	# particle following a dead ancestor, EfpSim.take_pass_moved.)
+	if sim.take_pass_moved():
+		moved = true
 	var need_draws := stepped > 0 or moved or (_has_billboard and _camera_turned())
 	# The Link strips likewise: after a step, or when the camera or the
 	# effect moved for a screen-space pipe (round 621's review follow-up).
