@@ -122,6 +122,13 @@ type UseItemResult struct {
 	// before them.
 	Code   uint16
 	CastMs uint32
+	// ItemID is the used item's ref id (round 779, OURS): retail's 0xB04C
+	// names the slot and the item's type word and the client finds the ref
+	// through the slot (Item_OnUseItemResult's FUN_008ba470); OpenSRO's
+	// reply names the ref, so the casting bar can read the item's name and
+	// Param1 from the client's own item table. Set on an accepted scroll; 0
+	// otherwise. After CastMs, so an older decoder stops before it.
+	ItemID uint32
 }
 
 func (r *UseItemResult) Encode() []byte {
@@ -145,7 +152,8 @@ func (r *UseItemResult) Encode() []byte {
 	}
 	out = append(out, zerk...)
 	out = binary.LittleEndian.AppendUint16(out, r.Code)
-	return binary.LittleEndian.AppendUint32(out, r.CastMs)
+	out = binary.LittleEndian.AppendUint32(out, r.CastMs)
+	return binary.LittleEndian.AppendUint32(out, r.ItemID)
 }
 
 func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
@@ -171,6 +179,9 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 	if len(rest) >= 40 {
 		r.Code = binary.LittleEndian.Uint16(rest[34:36])
 		r.CastMs = binary.LittleEndian.Uint32(rest[36:40])
+	}
+	if len(rest) >= 44 {
+		r.ItemID = binary.LittleEndian.Uint32(rest[40:44])
 	}
 	return r, nil
 }
@@ -1011,6 +1022,10 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		potions = NewPotionQueue()
 	}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		// The casting bar's cancel (round 779, scroll.go): retail's 0x705B.
+		if p.Opcode == OpScrollCancel && scrolls != nil {
+			return scrolls.cancelRequest(sess)
+		}
 		if p.Opcode != OpUseItem {
 			return nil
 		}

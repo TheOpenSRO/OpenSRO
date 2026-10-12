@@ -471,6 +471,9 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 	// the reverse return scroll's option 3 sends her back to. Before the
 	// flag-off respawn moves her.
 	recordDeathPoint(ctx, chars, deps.hub, characterID)
+	// A death ends a scroll's cast (round 779, scroll.go): CGObjPC
+	// vslot_306 / vslot_307 run the 0x705B handler when the state is set.
+	cancelScrollForDeath(deps.hub, characterID)
 	// Her states end with her (round 659, status.go).
 	statusFX.endCharacter(deps.hub, characterID)
 	// Dying costs experience, above level 10. Real: GObjPC_OnDeath

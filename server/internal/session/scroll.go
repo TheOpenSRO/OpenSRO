@@ -33,7 +33,8 @@ package session
 //     world wants a job mode (0x18e9) outside a siege (0x18f2). Then the
 //     scroll state starts with the option and, for 7, the record
 //     (FUN_004e0b50 at 0x4a0351: the state value (Param2 == 0) + 1, sub-kind
-//     3, the delay (float)Param1, the option), and the use answers 1.
+//     3, the delay (float)Param1 -- whole seconds by then, round 779 --, the
+//     option), and the use answers 1.
 //   - The state's job (AJStateChanger::vslot_002 case 0xb) resolves the
 //     destination when it expires, not when the scroll is used: option 2 and
 //     3 read the stored point again (FUN_004e0130 / FUN_004e01c0, abandoning
@@ -51,14 +52,8 @@ package session
 //
 // OURS, disclosed:
 //
-//   - The delay's unit. The value handed to the job is Param1 -- 1000 on all
-//     four reverse return scrolls and on the high-speed return scroll, whose
-//     own tooltip says it returns "immediately", 30000 on the beginner return
-//     scroll ("time consuming") -- and the PC's job manager counts it down by
-//     the elapsed GetTickCount milliseconds divided by 1000.0 (0x406605),
-//     which read literally makes it 1000 seconds. The tooltips settle the
-//     intent, not the arithmetic: OPEN. OpenSRO counts Param1 in
-//     milliseconds (one second for the reverse return scroll).
+//   - (Round 779 settled what round 778 left OPEN, the delay's unit: it is
+//     READ now, below -- Param1 / 1000 whole seconds.)
 //   - OpenSRO has one game world and no PK, quest blocks, trade carts or
 //     fortresses, so the world, murderer, quest, cart and fortress refusals
 //     have nothing to refuse; a destination OpenSRO cannot place (another
@@ -66,18 +61,68 @@ package session
 //     test's own code.
 //   - A cast whose character died, left the world or came back on another
 //     session meanwhile is dropped (the engine's job has no life test).
-//   - The thief-den return scrolls (ITEM_ETC_SCROLL_RETURN_THIEFDEN_*), which
-//     FUN_004a0380 sends down a job-mode path not modelled here, are refused
-//     as before.
-//   - No 0x30bf state broadcast: OpenSRO's clients learn of the move from the
-//     zone change.
-
+//   - The thief-den return scrolls (ITEM_ETC_SCROLL_RETURN_THIEFDEN_*):
+//     FUN_004a0380 tells them by Param3's descriptor ("THIEFDEN" against
+//     "RESURRECT", 0xaeb2a0 / 0xaeb294; any other answers 2) and lets only a
+//     character in job state 2 (vslot 0x11c, chardata +0xf) use one, else
+//     0x186a UIIT_MSG_STRGERR_ONLY_ROBBER_CAN_USE_THIS_ITEM (READ, 0x4a04e6).
+//     OpenSRO has no job system, so every character is refused with that
+//     code (round 779). The export carries no descriptor column, so the
+//     row is told by its code name, which holds the same word (OURS).
+//
+// Round 779, the cast (docs/protocol/return_scroll_cast.md has the client's
+// half and every address):
+//
+//   - The delay (READ). The server's item loader, RefObjItem::ExtractData
+//     (0x6a3d50), divides Param1 of a 3/3/3/1 or 3/3/3/3 row whose first
+//     descriptor is not "xxx" and holds no "cooltime" by 1000 -- an integer
+//     division (`+0x2a0 = +0x2a0 / 1000`) -- so the job gets whole seconds,
+//     and the PC's job manager counts them down in seconds (elapsed
+//     GetTickCount ms / 1000.0, 0x406605). The client's own tooltip says the
+//     same: "PARAM_RECALL_TIME %d PARAM_SECOND" with Param1 / 1000
+//     (0x677796). So 30000 is 30 s, 15000 15 s, 5000 5 s, 1000 1 s.
+//   - The stop (READ). Both FUN_004a0380 and FUN_004a00c0 call vtable slot
+//     300 (0x4b0, GObjPC::FUN_004a9430) with its send argument 1 before the
+//     state starts: a moving character's leg ends and 0xB023 goes to the
+//     window, the user included.
+//   - The state (READ). FUN_004e0b50 broadcasts 0x30bf {id, kind 0xb,
+//     value} (GObjPC::BroadcastStateChange) as it sets chardata +0x10; the
+//     value is (Param2 == 0) + 1 -- 1 for every RESURRECT row, 2 for the
+//     thief-den rows -- and the end, or a cancel, broadcasts value 0
+//     (FUN_004e0b50(0, 0xff, 0, 0)). The client's handler (0x8a80a0 case
+//     0xb) removes its own casting bar on 0 and, when one was up, says
+//     UIIT_MSG_TRANSITION_CANCEL_RESULT. A spawn record carries the state
+//     too (field 26, slot 72).
+//   - The cancel (READ). The client's bar button sends 0x705B with no body
+//     (UI_SILKMALL::FUN_0081ee60 case 0); its handler GObjPC::FUN_00513ea0
+//     answers 0xB05B {2, u16 6} when no scroll works, else drops job 0xb
+//     (FUN_004066c0(0xb, 0xb)) and sets the state 0 -- no reply, the 0x30bf
+//     is the answer. The scroll stays spent (it went at the use).
+//   - Death cancels (READ). CGObjPC vslot_306 and vslot_307 (the deaths)
+//     build a 0x705B and run that handler when the state is set (0x529be9,
+//     0x52ce59).
+//   - What the state refuses (READ, every caller of vslot 0x120): another
+//     scroll (0x185d), an NPC teleport (GObjPC::HandleTeleportUse, 0x1c14
+//     UIIT_MSG_INTERACTION_FAIL_TELESCROLL_ALREADY_WORKING, before the range
+//     test), a walk-in teleport (vslot_309), a pet summon (CGItemExpendable
+//     slot 307 TypeID4 2 and CGItemCOSSummoner::CheckCanUse, 0x1869), a
+//     logout (FUN_0050eff0 answers 0x802; that the client's text for it is
+//     UIIT_MSG_LOGOUT_ERR_CANT_LOGOUT_WHILE_TELEPORT_WORKING is INFERRED),
+//     a guild summon, a thief's pick-up of a special
+//     good (0x186e) and some quest scripts. NOT movement: the 0x7021
+//     handler (0x4b0ea0) never asks; nor a skill or an attack (the 0x7074
+//     handler and Skill_CheckUseConditions never ask, and the client's busy
+//     flag, the delay board's +0x36c, is not set for a return scroll's bar).
+//     So a character may walk on after the stop, and the cast still moves it
+//     when it runs out. OpenSRO models the scroll, the NPC teleport and the
+//     walk-in refusals; it has no pets, logout, guild summon or thieves.
 import (
 	"context"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
@@ -135,14 +180,91 @@ func IsReverseReturnScroll(it *refdata.Item) bool { return isScroll(it, reverseR
 func IsReturnScroll(it *refdata.Item) bool { return isScroll(it, returnScrollKind) }
 
 // scrollDelay is the scroll state's delay: Param1 (itemdata column 118, the
-// export's RestoreHP), in milliseconds (OURS, the header), with FUN_004e0b50's
-// floor.
+// export's RestoreHP) / 1000 whole seconds -- RefObjItem::ExtractData's
+// integer division, counted down in seconds by the PC's job manager (READ,
+// the header) -- with FUN_004e0b50's floor: a delay <= 1e-6 (0xb45c84)
+// becomes 0.1 s (0xb45eb8), so a Param1 under 1000 casts for 0.1 s.
 func scrollDelay(it *refdata.Item) time.Duration {
-	ms := it.RestoreHP
-	if ms <= 0 {
-		ms = scrollFallbackDelayMilli
+	sec := it.RestoreHP / 1000
+	if sec <= 0 {
+		return scrollFallbackDelayMilli * time.Millisecond
 	}
-	return time.Duration(ms) * time.Millisecond
+	return time.Duration(sec) * time.Second
+}
+
+// scrollStateValue is the value the scroll state is set to and broadcast
+// with: (Param2 == 0) + 1 (READ, FUN_004a0380 0x4a0459 and FUN_004a00c0's
+// own) -- 1 for every RESURRECT row, whose Param2 is 1, 2 for the thief-den
+// rows (Param2 0). Param2 is itemdata column 120, the export's
+// ReinforceRate1 on every row.
+func scrollStateValue(it *refdata.Item) byte {
+	if it.ReinforceRate1 == 0 {
+		return 2
+	}
+	return 1
+}
+
+// The scroll state's wire (READ, the header): the 0x30bf kind, the cancel
+// request and its refusal.
+const (
+	// StateKindTeleport is 0x30bf's kind for the scroll state: FUN_004e0b50
+	// passes 0xb to GObjPC::BroadcastStateChange.
+	StateKindTeleport byte = 0xb
+	// OpScrollCancel is retail's 0x705B, sent with no body by the casting
+	// bar's cancel button (UI_SILKMALL::FUN_0081ee60 case 0, logging
+	// "Teleport Casting Cancel").
+	OpScrollCancel uint16 = 0x705B
+	// OpScrollCancelResult is retail's 0xB05B: GObjPC::FUN_00513ea0 sends it
+	// only to refuse, {u8 2, u16 code}; the client's FUN_008727a0 reads the
+	// code and shows nothing.
+	OpScrollCancelResult uint16 = 0xB05B
+	// ScrollCancelErrNotCasting is the refusal's code: no scroll works
+	// (`push 0x6` at 0x513eba).
+	ScrollCancelErrNotCasting uint16 = 6
+	// ScrollErrOnlyRobber is the thief-den scroll's refusal for a character
+	// not in job state 2: UIIT_MSG_STRGERR_ONLY_ROBBER_CAN_USE_THIS_ITEM
+	// (0x4a04e6; the name through category 1's jump table, index 0x3f ->
+	// 0x7b90c7).
+	ScrollErrOnlyRobber uint16 = 0x186a
+)
+
+// activeScrolls is the server's ScrollCaster (the last NewScrollCaster), for
+// the paths outside the use-item handler the scroll state reaches: the death
+// that cancels it, the NPC teleport and the walk-in that it refuses. nil
+// when there is none.
+var activeScrolls atomic.Pointer[ScrollCaster]
+
+// scrollCastingOn reports whether sess's character has a scroll working, by
+// the session that cast it (so a test's rig or a character that came back on
+// another session is never mistaken for it).
+func scrollCastingOn(sess *gateway.Session) bool {
+	s := activeScrolls.Load()
+	if s == nil || sess == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.casting {
+		if c.sess == sess {
+			return true
+		}
+	}
+	return false
+}
+
+// cancelScrollForDeath is the deaths' cancel (CGObjPC vslot_306 / vslot_307
+// run the 0x705B handler when the state is set, READ): characterID's cast,
+// if its session is the one in the world, ends with the state's 0.
+func cancelScrollForDeath(hub *world.Hub, characterID int64) {
+	s := activeScrolls.Load()
+	if s == nil || hub == nil {
+		return
+	}
+	e, ok := hub.EntityByCharacterID(characterID)
+	if !ok {
+		return
+	}
+	s.cancel(characterID, e.Session, "death")
 }
 
 // ScrollCaster runs the scrolls' state: who is casting, and the move each
@@ -169,13 +291,81 @@ type scrollCast struct {
 	sess   *gateway.Session
 	option byte // 0 the return scroll, else the reverse scroll's option
 	point  teleport.OptionalPoint
+	// value is the state's value, (Param2 == 0) + 1 (round 779).
+	value byte
 }
 
-// NewScrollCaster builds the casts' state. logger may be nil.
+// NewScrollCaster builds the casts' state and makes it the server's
+// (activeScrolls). logger may be nil.
 func NewScrollCaster(chars character.Store, eq equipment.Store, hub *world.Hub, zerk *berserk.Tracker, logger *slog.Logger) *ScrollCaster {
-	return &ScrollCaster{chars: chars, eq: eq, hub: hub, zerk: zerk, logger: logger,
+	s := &ScrollCaster{chars: chars, eq: eq, hub: hub, zerk: zerk, logger: logger,
 		after:   func(d time.Duration, f func()) { time.AfterFunc(d, f) },
 		casting: map[int64]*scrollCast{}}
+	activeScrolls.Store(s)
+	return s
+}
+
+// broadcastScrollState sends 0x30bf {id, kind 0xb, value} about characterID
+// to the players in view that hold it, the character included --
+// FUN_004e0b50's GObjPC::BroadcastStateChange (READ, the header). A
+// character not in the hub hears nothing.
+func broadcastScrollState(hub *world.Hub, characterID int64, value byte) {
+	if hub == nil {
+		return
+	}
+	msg := (&StateChange{ObjectID: uint32(characterID), Kind: StateKindTeleport, Value: value}).Encode()
+	bumpPlayerState(characterID)
+	sendAboutPlayerPacket(hub, characterID, true, OpStateChange, msg)
+}
+
+// scrollStateOf is the scroll state's value for characterID's spawn record
+// (pcspawn field 26, slot 72): its cast's value, else 0.
+func scrollStateOf(characterID int64) byte {
+	s := activeScrolls.Load()
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c := s.casting[characterID]; c != nil {
+		return c.value
+	}
+	return 0
+}
+
+// cancel ends characterID's cast made on sess, if there is one: the job
+// dropped, the state set to 0 and broadcast (GObjPC::FUN_00513ea0's success
+// path, READ). It reports whether there was one.
+func (s *ScrollCaster) cancel(characterID int64, sess *gateway.Session, why string) bool {
+	s.mu.Lock()
+	c := s.casting[characterID]
+	if c == nil || (sess != nil && c.sess != sess) {
+		s.mu.Unlock()
+		return false
+	}
+	delete(s.casting, characterID)
+	s.mu.Unlock()
+	if s.logger != nil {
+		s.logger.Info("scroll cast cancelled", "character_id", characterID, "why", why)
+	}
+	broadcastScrollState(s.hub, characterID, 0)
+	return true
+}
+
+// cancelRequest is the 0x705B handler (GObjPC::FUN_00513ea0, READ): with no
+// scroll working, 0xB05B {2, 6}; else the cast ends, and the 0x30bf value 0
+// is the only answer.
+func (s *ScrollCaster) cancelRequest(sess *gateway.Session) error {
+	var characterID int64 = -1
+	if s.hub != nil {
+		if e, ok := s.hub.EntityBySession(sess.ID()); ok {
+			characterID = e.CharacterID
+		}
+	}
+	if characterID < 0 || !s.cancel(characterID, sess, "the cancel button") {
+		return sess.Send(&proto.Packet{Opcode: OpScrollCancelResult, Data: []byte{2, byte(ScrollCancelErrNotCasting), byte(ScrollCancelErrNotCasting >> 8)}})
+	}
+	return nil
 }
 
 func (s *ScrollCaster) table() *teleport.Table {
@@ -289,7 +479,9 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 	}
 	reverse := IsReverseReturnScroll(it)
 	if !reverse && strings.Contains(strings.ToUpper(it.CodeName), "THIEFDEN") {
-		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Error: "that cannot be used"}).Encode()})
+		// FUN_004a0380's THIEFDEN branch: job state 2 or 0x186a (round 779,
+		// the header); OpenSRO has no thieves.
+		return refuse(ScrollErrOnlyRobber)
 	}
 	if s.hub == nil {
 		return refuse(ScrollErrArea)
@@ -307,7 +499,7 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 	if it.CooltimeMs > 0 && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
 		return refuse(ScrollErrWaitReuseDelay)
 	}
-	cast := &scrollCast{sess: sess}
+	cast := &scrollCast{sess: sess, value: scrollStateValue(it)}
 	if reverse {
 		cast.option = req.Option
 		switch req.Option {
@@ -366,14 +558,22 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 	if it.CooltimeMs > 0 {
 		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
 	}
+	// The stop (slot 300 with its send argument, READ): a leg still running
+	// ends where the server has it, and the window -- the user included --
+	// hears 0xB023. Then the state and its 0x30bf (FUN_004e0b50).
+	if r, moved, ok := s.hub.Halt(sess); ok && moved {
+		motions.walking(characterID, time.Now())
+		stopRelay(sess, r, true)
+	}
+	broadcastScrollState(s.hub, characterID, cast.value)
 	delay := scrollDelay(it)
 	if s.logger != nil {
 		s.logger.Info("scroll cast", "character_id", characterID, "item", it.CodeName, "option", cast.option,
-			"point", cast.point.ID, "delay", delay)
+			"point", cast.point.ID, "delay", delay, "state", cast.value)
 	}
 	s.after(delay, func() { s.complete(characterID, cast) })
 	return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
-		Remaining: int32(have - 1), CastMs: uint32(delay / time.Millisecond),
+		Remaining: int32(have - 1), CastMs: uint32(delay / time.Millisecond), ItemID: uint32(it.ID),
 	}).Encode()})
 }
 
@@ -410,6 +610,12 @@ func (s *ScrollCaster) complete(characterID int64, cast *scrollCast) {
 		return
 	}
 	ctx := context.Background()
+	// After the move the state returns to 0 (AJStateChanger::vslot_002 case
+	// 0xb: vslot 0x378, then FUN_004e0b50(0, ...), READ) and is broadcast
+	// where the character now stands. OURS: also when the stored point has
+	// gone meanwhile -- the job's `return 0` there leaves the state set until
+	// a cancel, which OpenSRO does not copy.
+	defer broadcastScrollState(s.hub, characterID, 0)
 	if cast.option == 0 {
 		_, _ = warpHome(ctx, cast.sess, s.eq, s.chars, s.hub, s.zerk)
 		return

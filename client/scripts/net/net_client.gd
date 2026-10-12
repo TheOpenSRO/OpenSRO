@@ -1025,6 +1025,10 @@ func use_item(char_name: String, inventory_slot: int) -> void:
 func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot, option, target))
 
+## The casting bar's cancel (round 779): retail's 0x705B, no body.
+func scroll_cancel() -> void:
+	_send(UseItemNet.OP_SCROLL_CANCEL, PackedByteArray())
+
 ## Spends one use of a granted item (the fill an Energy of life scroll grants).
 func composite_use(char_name: String, item_id: int) -> void:
 	_send(CompositeNet.OP_USE, CompositeNet.encode_use(char_name, item_id))
@@ -1696,6 +1700,9 @@ func _dispatch(p: Packet) -> void:
 			if change != null:
 				WorldNet.note_body_mode(body_modes, change)
 				state_changed.emit(change)
+		UseItemNet.OP_SCROLL_CANCEL_RESULT:
+			# READ: FUN_008727a0 shows nothing for a refusal (round 779).
+			print("NetClient: scroll cancel refused (code %d)" % UseItemNet.decode_cancel_result(p.data))
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities

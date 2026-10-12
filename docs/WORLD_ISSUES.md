@@ -7483,6 +7483,89 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 779 (part): the return scroll's cast bar
+
+The user: "if you cast the reverse return scroll it should stop you and show a progress bar above
+the hotbar that you can cancel. During that progress bar you can't move or cast anything unless you
+cancel. It has different speeds of progression depending on the type of return scroll too ...
+reference the code like usual and make it faithful to the original." (A screenshot from another
+private server's client: the bar over the hotbar, a cancel icon at its left, the item's name, a thin
+green fill.) `docs/protocol/return_scroll_cast.md` has every address; this is the summary.
+
+**READ, the bar.** Retail's `CIFDelayGaugeBoard` with one `CIFDelayInfo` of kind 0, opened by
+`Item_OnUseItemResult` (0x87a7b0) for every accepted 3/3/3/1 and 3/3/3/3 use. A 192 x 36 window on
+`com_casting_window.ddj` built from `resinfo\ifdelayinfo.txt`: the item's name centred at (0, 7)
+167 x 12, the cancel button `com_casting_cancel.ddj` at (171, 4) 20 x 20 -- **on the right**, not
+the left as in the user's screenshot (the private server's client moved it; its own
+ifdelayinfo.txt has the same rect) -- and a 184 x 8 gauge at (6, 27) filled with
+`com_casting_gauge_return.ddj` (MEASURED: green, 182 x 5 opaque). Placed at ((w - 192) / 2,
+h - 89) -- just over the hotbar (x 0x195 at 800 wide). It fills empty to full, left to right, by
+the frame's ms over the item's **Param1 read as ms** (the client's own item row, ref +0x2b4); at
+full it waits. The cancel sends **0x705B** with no body; there is no confirmation box. The 0x30BF
+kind 0xb value 0 for this player closes it with `UIIT_MSG_TRANSITION_CANCEL_RESULT` ("The
+teleportation has been cancelled."); the zone reset and death clear it silently.
+
+**READ, the length -- round 778's OPEN settled.** The server's item loader
+(`RefObjItem::ExtractData` 0x6a3d50) divides a 3/3/3/1 or 3/3/3/3 row's Param1 by 1000 (integer)
+before the use reads it, and the job counts seconds; the client's tooltip prints Param1 / 1000 as
+"Return time ... Second". So: `ITEM_ETC_SCROLL_RETURN_01` and `_NEWBIE_01` **30 s**, `_02` **15 s**,
+`_03` and `SANTA_WINGS` **5 s**, the two `RETURN_SCROLL_HIGH_SPEED` rows and all four reverse
+return scrolls **1 s**, the thief-den rows 300 s / 165 s (MEASURED: the box's itemdata). Round
+778's "Param1 ms" gave the same numbers for every retail row.
+
+**READ, the rules.** The use stops a walking character (slot 300 with send: 0xB023 to the window,
+the user included), then the state starts with 0x30BF {id, 0xb, (Param2 == 0) + 1}; the end warps
+and broadcasts value 0. 0x705B (`GObjPC::FUN_00513ea0`) refuses with 0xB05B {2, 6} when nothing
+casts, else drops the job and broadcasts 0 (no reply, **no refund** -- the scroll went at the use).
+A death runs the same cancel (vslot_306 / vslot_307). The state refuses: another scroll (0x185d),
+the NPC teleport (0x1c14 `UIIT_MSG_INTERACTION_FAIL_TELESCROLL_ALREADY_WORKING`, before the
+range), the walk-in zones, pet summons, logout, guild summon, a thief's special goods.
+
+**READ, a negative, against the user's description.** Retail does **not** lock movement, skills or
+attacks during a return scroll's cast. The server's 0x7021 handler (0x4b0ea0), the action handler
+(0x4acc40) and `Skill_CheckUseConditions` never ask the teleport state (every caller of vslot 0x120
+was listed); the client's busy byte that the action and key senders ask (the board's +0x36c,
+`FUN_0077c8e0`) is set for kinds 1, 3 and 4 (gathering, a fixed 5 s item cast, a skill's) but not
+for kind 0 (0x7b16d4..0x7b171b). Being hit does not cancel it either. So the original stops you
+once at the use and lets you walk or fight on; the cast still moves you when it runs out.
+INFERRED from the user's description: the private server's client in the screenshot locks input,
+its own addition like the moved button. This round implements retail; a lock would be an OURS
+switch on top (not built -- the user's call).
+
+**OpenSRO.** Server (`session/scroll.go`): whole-second delays, the stop, the 0x30BF kind 0xb start /
+end / cancel, 0x705B / 0xB05B, the death's cancel (`monsterstrike.go`), field 26 of the spawn record
+(`pcrecord.go`), the NPC teleport's 0x1c14 (`teleport.go`) and the walk-in's refusal (`walkin.go`),
+the thief-den rows refused with their own 0x186a (no thieves). OURS: OpUseItemResult gains the
+item's ref id after `cast_ms` (retail's client finds it through the slot). Client:
+`ui/hud/delay_info_bar.gd` (the bar), `hud_panels.gd` (`open_cast_bar` / `close_cast_bar`),
+`World3D.gd` (open on the reply, close on the state's 0 with the message, on the zone change and
+on death; the cancel sends 0x705B), `net/useitem.gd`, `net/world.gd`, `net/net_client.gd`,
+`net/error_text.gd` (0x1c14, 0x186a). Not modelled: pets, logout, guild summon, thieves' goods.
+
+**Verification.**
+
+- Server: `go test ./...` all pass; `scroll779_test.go` (the per-row delays, the state value, the
+  0x30BF before the reply and after the move, the spawn record's value, the cancel with no reply
+  and nothing moved and the scroll still spent, 0xB05B {2, 6} when idle, a death's cancel, a walker
+  stopped by 0xB023 before the 0x30BF, the NPC teleport's 0x1c14 ahead of the range, the thief-den
+  0x186a, the reply's item id); round 778's tests unchanged but for reading past the new frames.
+- Client: `scripts/ui/hud/return_scroll_cast779_test.gd` 32/32 (the window and its rects, the
+  fill and its 3000 ms cap, staying full, the cancel signal, the position at three sizes, the
+  wire, the two codes); `remote_godot.sh check` ALL LOAD; `tests` "ran 283 suite(s), 0 failing".
+- Live (MEASURED, render box, `/var/tmp/r779-cast/cast_shot.sh`: this branch's server in memory on
+  port 15979, the client in `/opt/opensro-client-r779-cast`, `/give 61 5`): at 1280 x 720 the
+  server logged `scroll cast ... item=ITEM_ETC_SCROLL_RETURN_01 ... delay=30s state=1`, the client
+  `CASTBAR opened: 'Return Scroll' item 61, 30000 ms, at (544, 631)` and drew the bar over the
+  hotbar; 30 s later the zone change closed it with no message. At 800 x 600 the bar sat at
+  (405, 511) (the 800-wide rule); its cancel, 18 s into the cast, logged `scroll cast cancelled
+  ... why="the cancel button"` on the server, then the 0x30BF 0 and "The teleportation has been
+  cancelled." in the chat, no move. The movie writer's clock runs about ten times slower than the
+  server's (120 frames took about 19 s), so the frames show only the start of the fill.
+  Screenshots: `/var/tmp/r779-cast/screenshots/` (`r779_return_scroll_bar_midcast.png`,
+  `r779_return_scroll_bar_crop_4x.png`, `r779_bar_800x600_before_cancel.png`,
+  `r779_bar_800x600_after_cancel.png`, `r779_after_return.png`, and the two runs' logs).
+- No perf gate: a UI and server change (no world drawing).
+
 ## Seven-hundred-and-seventy-eighth round: no invisible walls between dungeon rooms, the reverse return scroll, the retail camera, the window title
 
 The user, on v0.1.524, exploring the Qin-Shi tomb: "I ran into an invisible wall here" (West Snake
