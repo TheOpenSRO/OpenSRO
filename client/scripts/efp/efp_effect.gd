@@ -1082,6 +1082,15 @@ static func scale_basis(b: Basis) -> Basis:
 ## +61.3 with one moved on 60 Hz ticks, +14.4 placed on those ticks.
 ## OURS: the tick is this client's stand-in for the original's frame; a
 ## frame with no tick only redraws for the camera (a billboard's turn).
+## Round 786 (third report), corrected: the dead ancestor is NOT frozen. A
+## death unlinks a particle from the draw, executor and emitter lists only;
+## it stays in its node's motion list (updater +0xb0) until released, and
+## the motion passes walk that list with no dead test, so a held dead
+## particle keeps following its own ancestors (READ, EfpSim "Dead
+## ancestors"). Its followers therefore carry the body's motion, not a
+## frozen move, and a frame with no move carries them nothing: with the
+## corrected rule the gate no longer changes where orphans are drawn (it
+## stays, OURS: fewer placements).
 var _tick_frame := -1
 var _tick_delta := 0.0
 ## On while a world moves its bodies on physics ticks (World3D sets it; off
@@ -1218,7 +1227,8 @@ func step_post() -> void:
 	# (Round 621: also when the host moved the effect, whose followers the
 	# placement pass moved this frame, or the space re-centred.)
 	# (Round 785: also when a frame without a step ran the follow pass for a
-	# particle following a dead ancestor, EfpSim.take_pass_moved.)
+	# particle following a dead ancestor, EfpSim.take_pass_moved; round 786:
+	# never -- a still frame's pass moves nothing now.)
 	if sim.take_pass_moved():
 		moved = true
 	var need_draws := stepped > 0 or moved or (_has_billboard and _camera_turned())

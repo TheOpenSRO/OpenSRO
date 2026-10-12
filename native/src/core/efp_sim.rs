@@ -161,8 +161,6 @@ pub struct Particle {
     f_move: u32,
     /// References: 1 while in the list, plus one per particle naming it as parent.
     rc: u32,
-    /// Round 785: the last shift() that moved it while it was dead and still followed.
-    shift_stamp: u32,
 }
 
 impl Particle {
@@ -197,7 +195,6 @@ impl Particle {
             f_vel: NONE,
             f_move: NONE,
             rc: 0,
-            shift_stamp: 0,
         }
     }
 }
@@ -321,14 +318,10 @@ pub struct Sim {
     sure_from: i64,
     /// This advance's change of the particle count.
     pub live_delta: i64,
-    /// Round 785 (EfpSim): a live particle follows a dead ancestor that still moves it; the last
-    /// pass since the last step was a still one; a pass ran this frame; a pass on a frame without
-    /// a step moved something (taken by take_pass_moved).
-    zombie_follow: bool,
-    still_pass: bool,
-    passed: bool,
-    pass_moved: bool,
-    shift_stamp: u32,
+    /// Round 786 (EfpSim._order): every particle still in memory in spawn order -- the list's and
+    /// the dead ones a live descendant holds (rc > 0) -- which the motion walks (retail's node
+    /// motion list, updater +0xb0).
+    order: Vec<u32>,
 }
 
 impl Sim {
@@ -359,11 +352,7 @@ impl Sim {
             sure_below: -FAN_MAX,
             sure_from: FAN_MAX,
             live_delta: 0,
-            zombie_follow: false,
-            still_pass: false,
-            passed: false,
-            pass_moved: false,
-            shift_stamp: 0,
+            order: Vec::new(),
         };
         s.restart();
         s
@@ -490,6 +479,7 @@ impl Sim {
         self.parts.push(root);
         self.free_parts.clear();
         self.list.clear();
+        self.order.clear();
         for e in self.ems.iter_mut() {
             e.live = false;
         }
@@ -497,8 +487,6 @@ impl Sim {
         self.free_ems = (0..self.ems.len() as u32).rev().collect();
         self.elist.clear();
         self.dying_n = 0;
-        self.zombie_follow = false;
-        self.still_pass = false;
         removed
     }
 
@@ -530,17 +518,6 @@ impl Sim {
         if n == MAX_STEPS_PER_ADVANCE {
             self.acc = gmin(self.acc, FRAME_SEC);
         }
-        if n == 0 && !self.passed {
-            // Round 785: a frame without a step or a placement pass (EfpSim.advance).
-            if self.zombie_follow {
-                if self.pass() {
-                    self.pass_moved = true;
-                }
-            } else {
-                self.still_pass = true;
-            }
-        }
-        self.passed = false;
         n
     }
 
@@ -549,11 +526,9 @@ impl Sim {
         self.acc + gmax(delta, 0.0) >= FRAME_SEC
     }
 
-    /// EfpSim.take_pass_moved.
+    /// EfpSim.take_pass_moved: round 786, always false (a still frame's pass moves nothing).
     pub fn take_pass_moved(&mut self) -> bool {
-        let m = self.pass_moved;
-        self.pass_moved = false;
-        m
+        false
     }
 
     /// How many frames advance(delta) will step, from the clock now (advance's own arithmetic).
@@ -640,9 +615,10 @@ impl Sim {
         self.flush_deaths();
         // Round 785: the effect is not reset here: a placement left to this step is followed in it
         // (EfpSim.step); end_root stores it as old at the end.
-        // 1-2 motion, follows, commands, the turn -- in spawn order
-        for idx in 0..self.list.len() {
-            let s = self.list[idx] as usize;
+        // 1-2 motion, follows, commands, the turn -- in spawn order; round 786: the held dead move
+        // too, without commands (EfpSim.step)
+        for idx in 0..self.order.len() {
+            let s = self.order[idx] as usize;
             let tp = &tmpl.tpls[self.parts[s].tpl as usize];
             {
                 let p = &mut self.parts[s];
@@ -678,7 +654,7 @@ impl Sim {
                 }
             }
             let age = self.parts[s].age;
-            if age >= 0 && (age as usize) < tp.schedule.len() {
+            if self.parts[s].alive && age >= 0 && (age as usize) < tp.schedule.len() {
                 let cmds = &tp.schedule[age as usize];
                 if !cmds.is_empty() {
                     self.run_list(s, tp, cmds);
@@ -697,13 +673,9 @@ impl Sim {
             i += 1;
         }
         // 4 ages advance; a particle whose life is over is queued to die
-        let mut zombie = false;
         for idx in 0..self.list.len() {
             let s = self.list[idx] as usize;
             let tp = &tmpl.tpls[self.parts[s].tpl as usize];
-            if tp.follows_any && !zombie {
-                zombie = self.follows_moving_dead(s);
-            }
             let mut dies = false;
             {
                 let p = &mut self.parts[s];
@@ -747,7 +719,6 @@ impl Sim {
             }
         }
         self.age += 1;
-        self.zombie_follow = zombie;
         self.end_root();
     }
 
@@ -757,25 +728,6 @@ impl Sim {
         r.old_pos = r.pos;
         r.old_rot = r.rot;
         r.changed = false;
-        self.still_pass = false;
-    }
-
-    /// EfpSim.follows_moving_dead.
-    fn follows_moving_dead(&self, s: usize) -> bool {
-        let p = &self.parts[s];
-        let dead = |f: u32| f != NONE && !self.parts[f as usize].alive;
-        if dead(p.f_move) {
-            let a = &self.parts[p.f_move as usize];
-            if a.pos != a.old_pos {
-                return true;
-            }
-        }
-        for f in [p.f_orbit, p.f_rot, p.f_vel] {
-            if dead(f) && self.parts[f as usize].changed {
-                return true;
-            }
-        }
-        false
     }
 
     /// EfpSim._flush_deaths.
@@ -786,21 +738,8 @@ impl Sim {
         let old = std::mem::take(&mut self.list);
         let mut kept = Vec::with_capacity(old.len());
         let mut gone = Vec::new();
-        let tmpl = self.tmpl.clone();
         for &s in &old {
             if self.parts[s as usize].dying {
-                if self.still_pass {
-                    // Round 785 (EfpSim._flush_deaths): its last pass was a still one.
-                    let tp = &tmpl.tpls[self.parts[s as usize].tpl as usize];
-                    let p = &mut self.parts[s as usize];
-                    if tp.keep_rot {
-                        p.old_rot = p.rot;
-                    }
-                    if tp.keep_pos {
-                        p.old_pos = p.pos;
-                    }
-                    p.changed = false;
-                }
                 self.parts[s as usize].alive = false;
                 self.on_death(s);
                 gone.push(s);
@@ -827,6 +766,10 @@ impl Sim {
         for s in gone {
             self.release(s);
         }
+        // Round 786 (EfpSim._flush_deaths): the motion keeps what is still held (rc > 0: a live
+        // descendant); a freed slot has rc 0 and is not reused before this.
+        let parts = &self.parts;
+        self.order.retain(|&s| parts[s as usize].rc > 0);
     }
 
     /// EfpSim._on_death: the count drops, the emitter gives back 1.0, the particle unlinks.
@@ -882,8 +825,8 @@ impl Sim {
         }
     }
 
-    /// An ancestor's (delta, old position) when it changed -- alive or dead (round 785: a dead one
-    /// is followed by its frozen state, READ).
+    /// An ancestor's (delta, old position) when it changed -- alive or dead (round 786: a dead one
+    /// still held keeps moving with its own ancestors, READ, EfpSim "Dead ancestors").
     #[inline]
     fn changed_of(&self, f: u32) -> Option<(B3, V3)> {
         if f == NONE {
@@ -1046,6 +989,7 @@ impl Sim {
         }
         self.ems[from as usize].tail = s;
         self.list.push(s);
+        self.order.push(s);
         self.live_delta += 1;
         self.spawned += 1;
         if let Some(first) = tp.schedule.first() {
@@ -1270,25 +1214,21 @@ impl Sim {
                 r.delta = rot.mul(&r.old_rot.inverse());
             }
         }
-        if step_due {
+        if step_due || !moved {
             return moved;
         }
-        if !moved && !self.zombie_follow {
-            return false;
-        }
-        let ran = self.pass();
-        self.passed = true;
-        moved || ran
+        self.pass();
+        true
     }
 
-    /// EfpSim._pass.
+    /// EfpSim._pass (round 786: the held dead too).
     fn pass(&mut self) -> bool {
         let mut ran = false;
-        if !self.list.is_empty() {
+        if !self.order.is_empty() {
             ran = true;
             let tmpl = self.tmpl.clone();
-            for idx in 0..self.list.len() {
-                let s = self.list[idx] as usize;
+            for idx in 0..self.order.len() {
+                let s = self.order[idx] as usize;
                 let tp = &tmpl.tpls[self.parts[s].tpl as usize];
                 {
                     let p = &mut self.parts[s];
@@ -1314,36 +1254,16 @@ impl Sim {
         r.old_pos = r.pos;
         r.old_rot = r.rot;
         r.changed = false;
-        self.still_pass = false;
         ran
     }
 
-    /// EfpSim.shift: the live particles, then each dead ancestor a live one follows by position
-    /// (u2 / u6) once (round 785), then the effect.
+    /// EfpSim.shift: every particle in memory (round 786: the held dead too, READ FUN_00c865a0),
+    /// then the effect.
     pub fn shift(&mut self, v: V3) {
-        self.shift_stamp = self.shift_stamp.wrapping_add(1);
-        let stamp = self.shift_stamp;
-        for idx in 0..self.list.len() {
-            let p = &mut self.parts[self.list[idx] as usize];
+        for idx in 0..self.order.len() {
+            let p = &mut self.parts[self.order[idx] as usize];
             p.pos = p.pos.sub(v);
             p.old_pos = p.old_pos.sub(v);
-        }
-        for idx in 0..self.list.len() {
-            let (fo, fm) = {
-                let p = &self.parts[self.list[idx] as usize];
-                (p.f_orbit, p.f_move)
-            };
-            for z in [fo, fm] {
-                if z == NONE {
-                    continue;
-                }
-                let d = &mut self.parts[z as usize];
-                if !d.alive && d.shift_stamp != stamp {
-                    d.shift_stamp = stamp;
-                    d.pos = d.pos.sub(v);
-                    d.old_pos = d.old_pos.sub(v);
-                }
-            }
         }
         let r = &mut self.parts[ROOT as usize];
         r.pos = r.pos.sub(v);
@@ -1454,6 +1374,57 @@ mod tests {
         }
         assert!(a.dropped > 0);
         assert!(a.count() <= 50);
+    }
+
+    /// Round 786: a holder living 4 frames (u6 = 1, b1) with one child living 12 that follows it.
+    /// The dead holder stays in the motion (it still follows the effect), so when the effect stops
+    /// its child stops too, and it is released with the child.
+    #[test]
+    fn dead_holder_still_moves() {
+        let mut holder = Tpl {
+            parent: -1,
+            children: vec![1],
+            frames: 4,
+            life: LIFE_EXTINCT,
+            has_emit: true,
+            e_dur: 1,
+            e_int: 1,
+            e_max: 1,
+            e_per: 1.0,
+            lv_move: 1,
+            follows_any: true,
+            keep_pos: true,
+            ..Default::default()
+        };
+        holder.schedule = vec![Vec::new(); 4];
+        let mut kid = holder.clone();
+        kid.parent = 0;
+        kid.children = Vec::new();
+        kid.frames = 12;
+        kid.schedule = vec![Vec::new(); 12];
+        let t = Arc::new(Template { tpls: vec![holder, kid], ..Default::default() });
+        let mut s = Sim::new(t, 3);
+        let mut g = ExactGate { below: 1 << 30 };
+        for f in 0..8 {
+            s.set_origin(V3(2.0 * f as f32, 0.0, 0.0), IDENTITY, true);
+            s.step(&mut g);
+        }
+        let kid_of = |s: &Sim| s.particles().find(|p| p.tpl == 1).map(|p| p.pos);
+        let k0 = kid_of(&s).expect("the child lives");
+        assert_eq!(s.count(), 1, "the holder died");
+        assert_eq!(s.order.len(), 2, "the dead holder is still in the motion");
+        assert!((k0.0 - 14.0).abs() < 1e-5, "the child is at the effect ({k0:?})");
+        // The effect stops: the child stops (round 785's frozen move went on +2 a frame).
+        s.set_origin(V3(14.0, 0.0, 0.0), IDENTITY, true);
+        s.step(&mut g);
+        let k1 = kid_of(&s).unwrap();
+        assert!((k1.0 - k0.0).abs() < 1e-5, "the child stopped with the effect ({k1:?})");
+        for _ in 0..12 {
+            s.step(&mut g);
+        }
+        assert_eq!(s.count(), 0);
+        assert!(s.order.is_empty(), "the holder is released with its last child");
+        assert_eq!(s.arena_in_use(), 1, "only the root slot is left");
     }
 
     #[test]

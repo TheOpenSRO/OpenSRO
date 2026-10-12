@@ -201,9 +201,9 @@ func _run(dir: String, skills: PackedStringArray, files: PackedStringArray) -> v
 	if _drift:
 		for mode in _modes:
 			var d: Dictionary = _dt.get(mode, {"runs": 0, "off": 0, "worst": 0.0, "pframes": 0, "worst_path": ""})
-			print("CENSUS DRIFT %s jump %s frame %s speed %.0f turn %.0f: %d runs, %d with drawn particles past their still spread + %.0f (worst +%.1f, %s), %d particle-frames past it; in sight (under %.0f units) %d runs, %d particle-frames" % [
+			print("CENSUS DRIFT %s jump %s frame %s speed %.0f turn %.0f: %d runs, %d with drawn particles past their still spread + %.0f (worst +%.1f, %s), %d particle-frames past it (%d following a dead ancestor, %d of nodes with u6 = 0); in sight (under %.0f units) %d runs, %d particle-frames" % [
 				mode, _jump, _frame, _speed if _speed > 0.0 else 50.0, _turn, d["runs"], d["off"], DRIFT_TOL,
-				d["worst"], d["worst_path"], d["pframes"], DRIFT_NEAR, d.get("near_runs", 0), d.get("near", 0)])
+				d["worst"], d["worst_path"], d["pframes"], d.get("orphans", 0), d.get("trails", 0), DRIFT_NEAR, d.get("near_runs", 0), d.get("near", 0)])
 		media.close()
 		particles.close()
 		quit(0)
@@ -399,6 +399,11 @@ func _probe_drift(path: String, kept: bool, label: String, particles: Pk2Reader,
 	var past := 0
 	var past_frames := 0
 	var near := 0
+	# Round 786 (third report): of the particle-frames past the spread, those
+	# following a dead ancestor (u6, "orphans") and those of nodes that follow
+	# nothing (u6 = 0, "trails").
+	var orphans := 0
+	var trails := 0
 	var last_past := -1
 	var sim_frames := 0
 	for i in range(total):
@@ -456,6 +461,10 @@ func _probe_drift(path: String, kept: bool, label: String, particles: Pk2Reader,
 				n_past += 1
 				if dist < DRIFT_NEAR:
 					near += 1
+				if p.f_move != null and not p.f_move.alive:
+					orphans += 1
+				elif (fx.sim.template.tpls[p.tpl] as EfpSim.Tpl).lv_move == 0:
+					trails += 1
 		if i < lead:
 			still = maxf(still, mx)
 		else:
@@ -468,6 +477,8 @@ func _probe_drift(path: String, kept: bool, label: String, particles: Pk2Reader,
 	d["runs"] += 1
 	d["near_runs"] = int(d.get("near_runs", 0)) + (1 if near > 0 else 0)
 	d["near"] = int(d.get("near", 0)) + near
+	d["orphans"] = int(d.get("orphans", 0)) + orphans
+	d["trails"] = int(d.get("trails", 0)) + trails
 	if past > 0:
 		d["off"] += 1
 		d["pframes"] += past
@@ -476,7 +487,7 @@ func _probe_drift(path: String, kept: bool, label: String, particles: Pk2Reader,
 			d["worst_path"] = path
 	_dt[mode] = d
 	if not _quiet:
-		print("DRIFT %s %s kept %s: still %.1f after %.1f (+%.1f) past %d particle-frames in %d frames (near %d), last at frame %d of %d (%s)" % [
-			mode, path, kept, still, after, maxf(after - still, 0.0), past, past_frames, near, last_past, sim_frames, label])
+		print("DRIFT %s %s kept %s: still %.1f after %.1f (+%.1f) past %d particle-frames in %d frames (near %d), orphans %d trails %d, last at frame %d of %d (%s)" % [
+			mode, path, kept, still, after, maxf(after - still, 0.0), past, past_frames, near, orphans, trails, last_past, sim_frames, label])
 	fx.stop()
 	host.free()

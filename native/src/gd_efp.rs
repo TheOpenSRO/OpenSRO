@@ -23,8 +23,9 @@ use crate::core::pool::{lock, Pool};
 /// The effect interface's own number (EfpSimNative.EFP_API): additive classes, so the readers'
 /// API number (core::API) is unchanged and an older library keeps them. 2 from round 785: a dead
 /// ancestor is followed, the placement may be left to the step (set_origin's third argument);
-/// a client of either number refuses a library of the other, and keeps GDScript.
-const EFP_API: i64 = 2;
+/// a client of either number refuses a library of the other, and keeps GDScript. 3 from round 786:
+/// a dead ancestor still held keeps moving with its own ancestors (EfpSim "Dead ancestors").
+const EFP_API: i64 = 3;
 
 static POOL: OnceLock<Pool> = OnceLock::new();
 
@@ -553,7 +554,7 @@ impl SrEfpSim {
         self.with(|b| b.sim.step_due(delta)).unwrap_or(false)
     }
 
-    /// Round 785: EfpSim.take_pass_moved.
+    /// Round 785: EfpSim.take_pass_moved (round 786: always false).
     #[func]
     fn take_pass_moved(&self) -> bool {
         self.with(|b| b.sim.take_pass_moved()).unwrap_or(false)
