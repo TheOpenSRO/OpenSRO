@@ -437,6 +437,21 @@ client/tools/remote_godot.sh script res://tools/efp_probe.gd -- --pk2dir=/opt/sr
 
 `--files=` takes `/` for `\` (a backslash does not survive the ssh and su layers).
 
+**Effects that drift off their host** (round 786). `--drift` puts each job through scenarios --
+`stand`, `jump` (moved `--jump=x,y,z` in one frame, as motion), `zone` (a zone change as the
+original plays it: the effect moved whole by the frames' offset `--frame=x,y,z`,
+`EfpEffect.shift_effects`, then the host by `--jump`), `walk`, `turn` -- and prints how far the
+drawn particles stand from the placement point against the effect's own still spread, and how
+many of those are still in sight of the body (`DRIFT` / `CENSUS DRIFT` lines); `--equip` adds
+the seal and enchant glows. In the live client, `OPENSRO_QA_FXDRIFT`
+(World3D's header; `FxDriftProbe`) does the same on the player's real effects over a scripted
+stand, walk, turn and gate teleport; `/var/tmp/r786-fx/drift.sh` on the box is the round's recipe.
+
+```
+client/tools/remote_godot.sh script res://tools/efp_probe.gd -- --pk2dir=/opt/sro-files/client \
+    --census --equip --drift --modes=jump,zone --fps=20 --quiet
+```
+
 **EquipFx's masters in Rust** (round 763, `EfpSimNative`; `native/README.md`, "The effect
 simulation"). Three checks hold the native simulation to the GDScript one, bit for bit:
 - `res://scripts/efp/efp_native_test.gd` (a suite; synthetic effects, both ways);
