@@ -21,8 +21,10 @@ use crate::core::gdmath::{B3, V3};
 use crate::core::pool::{lock, Pool};
 
 /// The effect interface's own number (EfpSimNative.EFP_API): additive classes, so the readers'
-/// API number (core::API) is unchanged and an older library keeps them.
-const EFP_API: i64 = 1;
+/// API number (core::API) is unchanged and an older library keeps them. 2 from round 785: a dead
+/// ancestor is followed, the placement may be left to the step (set_origin's third argument);
+/// a client of either number refuses a library of the other, and keeps GDScript.
+const EFP_API: i64 = 2;
 
 static POOL: OnceLock<Pool> = OnceLock::new();
 
@@ -529,9 +531,22 @@ impl SrEfpSim {
         .unwrap_or(Vector2i::ZERO)
     }
 
+    /// Round 785 (EFP_API 2): `step_due` leaves the placement to the step that follows.
     #[func]
-    fn set_origin(&self, pos: Vector3, rot: Basis) -> bool {
-        self.with(|b| b.sim.set_origin(v3(pos), b3(&rot))).unwrap_or(false)
+    fn set_origin(&self, pos: Vector3, rot: Basis, step_due: bool) -> bool {
+        self.with(|b| b.sim.set_origin(v3(pos), b3(&rot), step_due)).unwrap_or(false)
+    }
+
+    /// Round 785: EfpSim.step_due.
+    #[func]
+    fn step_due(&self, delta: f64) -> bool {
+        self.with(|b| b.sim.step_due(delta)).unwrap_or(false)
+    }
+
+    /// Round 785: EfpSim.take_pass_moved.
+    #[func]
+    fn take_pass_moved(&self) -> bool {
+        self.with(|b| b.sim.take_pass_moved()).unwrap_or(false)
     }
 
     #[func]

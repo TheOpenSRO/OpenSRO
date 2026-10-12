@@ -34,8 +34,10 @@ const SIM_CLASS := "SrEfpSim"
 const TEMPLATE_CLASS := "SrEfpTemplate"
 const BATCH_CLASS := "SrEfpBatch"
 ## The effect interface's own number (gd_efp.rs EFP_API): its classes are
-## additive, so NativeAssets.NATIVE_API is unchanged.
-const EFP_API := 1
+## additive, so NativeAssets.NATIVE_API is unchanged. 2 from round 785 (a
+## dead ancestor is followed; set_origin's step_due): a library of 1 steps
+## by the old rules, so it is refused and EfpSim (GDScript) runs instead.
+const EFP_API := 2
 ## Threads a batch uses at most by default, the main thread included (OURS,
 ## round 763's measurement: docs/rounds/r763.md sections 3 and 9). Bounded
 ## further by Godot's WorkerThreadPool size and the machine's cores;
@@ -248,10 +250,20 @@ func growth_bounds(delta: float) -> Vector2i:
 		return super.growth_bounds(delta)
 	return _n.call("growth_bounds", delta, EfpSim.interval_mul, EfpSim.threshold)
 
-func set_origin(pos: Vector3, rot: Basis = Basis.IDENTITY) -> bool:
+func set_origin(pos: Vector3, rot: Basis = Basis.IDENTITY, step_due: bool = false) -> bool:
 	if _n == null:
-		return super.set_origin(pos, rot)
-	return bool(_n.call("set_origin", pos, rot))
+		return super.set_origin(pos, rot, step_due)
+	return bool(_n.call("set_origin", pos, rot, step_due))
+
+func step_due(delta: float) -> bool:
+	if _n == null:
+		return super.step_due(delta)
+	return bool(_n.call("step_due", delta))
+
+func take_pass_moved() -> bool:
+	if _n == null:
+		return super.take_pass_moved()
+	return bool(_n.call("take_pass_moved"))
 
 func shift(v: Vector3) -> void:
 	if _n == null:

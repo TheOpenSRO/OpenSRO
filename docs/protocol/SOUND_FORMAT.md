@@ -356,6 +356,12 @@ WAIT 1, SHOT 2, ACT_OS 3, ACT_OL 4, ACT_OE 5, ACT_S 6, ACT_L 7, DEACT 8, S_RETUR
   READY 190, ACT_L 59, DEACT 23, S_RETURN 13, WAIT 12, ACT_OS 8, ACT_OL 6.
 - `FUN_00a53850` (the activation) triggers the rows of AniType 3+s and 4+s, s = 3 (ACT_S/ACT_L)
   or 0 (ACT_OS/ACT_OL), then `snd_activate` (READ).
+- **ActType** (READ, round 785): the column is looked up in the (name, value) table at
+  `0x00ec7280` (made a map by `FUN_00a9ac70`, read at `0x00a9d679`) into the row's +0xe:
+  **AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2, AT_TARGET 3, AT_TARGET_F 4, AT_SOURCE 5, AT_DMG_POS 6,
+  AT_MOV_1TAR 7, AT_MOV_OPTION 8, AT_MOV_APIECE 9, AT_MOV_SPLASH 10, AT_MOV_PIERCE 11**. What
+  each does to the effect, and the StartBone / StartOffset / Rotate columns: EFP_FORMAT.md,
+  "Where a skill row places its effect".
 
 **When this client fires a phase** (INFERRED / OURS: retail runs them off the server's
 skill-action messages and the clip's events, which OpenSRO does not have):

@@ -171,6 +171,21 @@ func _made_named(name: String) -> Array:
 			out.append(m[1])
 	return out
 
+## Round 785: ended the way retail's decoration ends an effect (READ,
+## IDecoSkill::FUN_00a4db00: slot 4 with 0) -- let go, no longer kept, and
+## gone once its last cycle has played out (EfpEffect.release).
+func _let_go(fx) -> bool:
+	if fx == null or not is_instance_valid(fx) or (fx as Node).is_queued_for_deletion():
+		return true
+	var e := fx as EfpEffect
+	if e.loop:
+		return false
+	for i in 400:
+		e._process(0.05)
+		if not is_instance_valid(e) or e.is_queued_for_deletion():
+			return true
+	return false
+
 func _live(fx) -> bool:
 	return fx != null and is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion()
 
@@ -304,7 +319,7 @@ func _test_buff(world: Node) -> void:
 	_check(_made_named("motion.efp").size() == 1 and _made_named("keep.efp").size() == 1,
 		"the accepted reply after the start adds nothing (ACT once per cast)")
 	_buff_end(OWN, [61], 0)
-	_check(SkillEffects.aura_count() == 0 and keep.size() == 1 and not _live(keep[0]), "its OpBuffEnd ends the aura at once")
+	_check(SkillEffects.aura_count() == 0 and keep.size() == 1 and _let_go(keep[0]), "its OpBuffEnd lets the aura go (round 785: its last cycle plays out, READ)")
 
 func _test_non_buff(world: Node) -> void:
 	_made.clear()
@@ -329,7 +344,7 @@ func _test_ghost_walk(world: Node) -> void:
 		"1 s on (skilldata's prep + cast is 0) it still holds")
 	_skill_move(OWN, 114, POINT)
 	_check(SkillEffects.cast_phase(player) == -1, "OpSkillMove ends the cast (SHOT)")
-	_check(waits.size() == 1 and not _live(waits[0]), "and stops the WAIT loop")
+	_check(waits.size() == 1 and _let_go(waits[0]), "and lets the WAIT loop go")
 	_reply("", 2)
 	# 2. Refused.
 	_made.clear()
@@ -337,8 +352,8 @@ func _test_ghost_walk(world: Node) -> void:
 	world.call("_send_self_cast", 114, "TEST_GHOST_A_01", 2, POINT)
 	waits = _made_named("move_wait.efp")
 	_reply("not enough mana", 2)
-	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and not _live(waits[0]),
-		"a refusal stops the WAIT loop")
+	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and _let_go(waits[0]),
+		"a refusal lets the WAIT loop go")
 	# 3. No answer: the WAIT clip's length (1.5 s) ends it.
 	_made.clear()
 	_fresh_socket()
@@ -347,7 +362,7 @@ func _test_ghost_walk(world: Node) -> void:
 	SkillEffects.process(SkillEffects._now() + 1400)
 	_check(SkillEffects.cast_phase(player) == SkillAudio.WAIT, "with no answer it holds through the WAIT clip")
 	SkillEffects.process(SkillEffects._now() + 1600)
-	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and not _live(waits[0]),
+	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and _let_go(waits[0]),
 		"and ends after the clip's length (the fallback)")
 	_check((world.get("body_clips") as Array).count("TEST_GHOST_A_01") == 3, "each cast played the body clip")
 	_reply("", 2)
@@ -364,7 +379,7 @@ func _test_other_owners(world: Node) -> void:
 		"another player's buff aura goes on that player's body")
 	_check(_made_named("motion.efp").is_empty(), "with no ACT_S (no cast of ours answered)")
 	_buff_end(5151, [71], 0)
-	_check(keep.size() == 1 and not _live(keep[0]), "and its OpBuffEnd ends it")
+	_check(keep.size() == 1 and _let_go(keep[0]), "and its OpBuffEnd lets it go")
 	# A monster whose id is this player's: ownerKind 1 is the monster.
 	var mob := Node3D.new()
 	world.add_child(mob)
@@ -376,7 +391,7 @@ func _test_other_owners(world: Node) -> void:
 		"a monster's buff (ownerKind 1) goes on the monster even when its id is this player's")
 	_check(not keep.is_empty() and keep[0].get_parent() != player, "not on the player")
 	_buff_end(OWN, [72], 1)
-	_check(keep.size() == 1 and not _live(keep[0]), "and the monster's end ends it")
+	_check(keep.size() == 1 and _let_go(keep[0]), "and the monster's end lets it go")
 	(world.get("_other_bodies") as Dictionary).erase(5151)
 	(world.get("_monster_bodies") as Dictionary).erase(OWN)
 	other.free()

@@ -67,7 +67,7 @@ class_name EfpSim
 ## at 0x00c86367, the program list at 0x00c86311); the emission (+0xb4 list,
 ## 0x00c84e70) and the program (+0x130 list, 0x00c84f90) run before them.
 ## A KEPT effect (the keep flag +0x49, set by IEasyFxEffect slot 4 with 1:
-## AT_LOOP and AT_STOP) never lets its ROOT node's particles die: after each
+## AT_LOOP; round 785: not AT_STOP) never lets its ROOT node's particles die: after each
 ## update, CEFEffect::vslot_000 (0x00caf5ec-0x00caf622) walks the ROOT
 ## updater's death queue only, clears each particle's dying flag, sets its
 ## age to 0 and empties the queue. The particle lives on; its child
@@ -170,13 +170,47 @@ class_name EfpSim
 ## with a SetRVelocity command and b7 on the 31,138 with SetShapeRotVel.
 ## The effect (_root) is placed by set_origin() (READ: CEFEffect::vslot_008
 ## stores the position -- divided by the effect's scale -- and flags +0x28b;
-## vslot_007 stores the matrix too and flags +0x60 and +0x28b). As retail's
-## draw FUN_00cabda0 does whenever either flag is set, set_origin runs the
-## follow pass FUN_00c863a0 at once, with the placement's turn as the
-## effect's delta, then stores the placement as old: so the effect's
-## followers move every render frame, and during a step the effect holds
-## still. It is "changed" only when the placement actually moved or turned
-## (OURS: retail flags every placement; the same result, cheaper).
+## vslot_007 stores the matrix too and flags +0x60 and +0x28b). Its owner
+## places it every frame, before the update (READ, round 785:
+## CRTModParticle::FUN_00c81450 calls FUN_00c81190 -> vslot_007, then
+## FUN_00c80ff0 -> the update, then the draw; a skill's decoration
+## CIDecoSkill::vslot_014 places a following effect through
+## IDecoSkill::FUN_00a4ddc0 -> vslot_007, then updates it). So in a frame
+## with an update the update's follows carry the placement and
+## CEFEffect::vslot_000 then stores it as old and clears both flags, and the
+## draw runs no pass; in a frame without one the draw FUN_00cabda0 runs the
+## follow pass FUN_00c863a0 with the placement's turn as the effect's delta,
+## then stores the placement as old. One pass a frame either way: set_origin
+## runs it at once, or leaves it to the step when one is due (`step_due`,
+## round 785; round 621 ran both, so a frame with a step followed twice).
+## It is "changed" only when the placement actually moved or turned (OURS:
+## retail flags every placement; the same result, cheaper) -- except that a
+## pass also runs on a still frame while a particle follows a dead ancestor
+## that still moves it (below).
+## == Dead ancestors (READ, round 785) ==
+## A particle is reference-counted: its emitter holds its owner
+## (CEFGroup::vslot_002 releases it) and a particle holds its emitter
+## (CEFElement::vslot_002). A death (CEFElement::vslot_001) unlinks the
+## particle from its node's list and kills its child emitters, but frees it
+## only when nothing holds it -- so while its children's emitters still have
+## particles it stays in memory, out of every list, its state frozen as its
+## last pass left it. The emitter init (CEFGroup::vslot_004) resolved the
+## follow levels to ancestor POINTERS once, and the pass reads them with no
+## test of the dying or dead flags (CEFUpdater::vslot_002, FUN_00c863a0:
+## only `ancestor != 0` and its +0x60). So a follower of a dead ancestor
+## keeps adding its frozen move (position - old position) on every pass, and
+## its frozen turn while its "changed" stays set. With retail's one pass a
+## frame, that is the move of the last frame the ancestor saw: a particle
+## that outlives its parent goes on with the host's motion of that frame --
+## a running caster's aura children keep pace with the caster instead of
+## being dropped in a line behind it. Round 621 stopped following a dead
+## ancestor (OURS), which left exactly that line: the trail the user
+## reported (lightning_gyeonggong_keep_c's 50-frame wind under a 20-frame
+## parent, MEASURED round 785). Which pass is a dying particle's last: the
+## pass of the frame before the step that flushes it -- a still frame's pass
+## leaves it with its old state equal to its state and unchanged, which
+## _flush_deaths gives it when the last frame since the step was still
+## (_still_pass).
 ## Retail updates node by node (a node's particles move, then its commands
 ## run, then its child nodes); this client runs each particle's motion,
 ## commands and turn in spawn order, which also finishes every ancestor
@@ -361,6 +395,9 @@ class Particle:
 	var f_rot: Particle = null
 	var f_vel: Particle = null
 	var f_move: Particle = null
+	## Round 785: the last shift() that moved this particle while it was dead
+	## and still followed (see shift).
+	var shift_stamp := 0
 
 class Emitter:
 	var tpl: int
@@ -383,7 +420,7 @@ var dropped := 0 ## spawns refused by a cap
 var spawned := 0
 ## The local player's own effect: may use the RESERVE share of MAX_TOTAL.
 var reserved := false
-## The kept flag (+0x49; AT_LOOP / AT_STOP): the root node's particles are
+## The kept flag (+0x49; AT_LOOP): the root node's particles are
 ## revived at age 0 instead of dying (READ, see "Dying, and the kept effect").
 var keep := false
 ## How many times a kept effect revived a root particle (tests, census).
@@ -409,6 +446,19 @@ var _sure_from := 0
 var _live_delta := 0
 ## Round 761: the particles queued to die (growth_bounds).
 var _dying_n := 0
+## Round 785 (READ, see "Dead ancestors and the draw pass" in the header):
+## some live particle follows a dead ancestor whose frozen state still moves
+## or turns it, so the follow pass must run on every frame, as retail's
+## draw does (`_zombie_follow`); the last pass since the last step was a
+## still one (`_still_pass`: nothing moved, so every particle kept its old
+## state and nothing changed); a pass ran this frame (`_passed`); and a pass
+## on a frame without a step moved something, so the draw must be refreshed
+## (`_pass_moved`, taken by take_pass_moved()).
+var _zombie_follow := false
+var _still_pass := false
+var _passed := false
+var _pass_moved := false
+var _shift_stamp := 0
 
 ## Compiles a decoded file (or its root node) into a template. Unsupported
 ## command names are listed, not fatal.
@@ -735,6 +785,8 @@ func clear() -> void:
 	particles.clear()
 	emitters.clear()
 	_dying_n = 0
+	_zombie_follow = false
+	_still_pass = false
 
 ## True once nothing is alive (a particle queued to die still counts) and
 ## no emitter spawns this frame -- FUN_00ca9ee0's test: every root emitter
@@ -758,7 +810,34 @@ func advance(delta: float) -> int:
 		n += 1
 	if n == MAX_STEPS_PER_ADVANCE:
 		_acc = minf(_acc, FRAME_SEC)
+	if n == 0 and not _passed:
+		# Round 785: a frame without a step and without a placement pass.
+		# Retail's draw runs the follow pass on every such frame (the owner
+		# places the effect every frame; READ, see the header): only a
+		# follower of a dead ancestor can move in it, so it runs when one
+		# exists, and otherwise it is noted (_still_pass) for the particles
+		# that die before the next pass.
+		if _zombie_follow:
+			if _pass():
+				_pass_moved = true
+		else:
+			_still_pass = true
+	_passed = false
 	return n
+
+## Round 785: whether advance(delta) will step at least one frame (its own
+## arithmetic): the placement is then left to the step (set_origin's
+## `step_due`), as retail's update follows the effect's placement in the
+## same frame and its draw does not.
+func step_due(delta: float) -> bool:
+	return _acc + maxf(delta, 0.0) >= FRAME_SEC
+
+## Round 785: true once after a pass on a frame without a step moved a
+## follower of a dead ancestor (the draw must be refreshed).
+func take_pass_moved() -> bool:
+	var m := _pass_moved
+	_pass_moved = false
+	return m
 
 ## One 50 ms frame.
 func step() -> void:
@@ -768,7 +847,12 @@ func step() -> void:
 	# 0 last frame's queued deaths go now (READ: the updater flushes its
 	# death queue first), and the emitters of the dead with them.
 	_flush_deaths()
-	_place_root()
+	# Round 785: the effect is not reset here. A placement made for this
+	# frame (set_origin with step_due) is still pending -- the effect's
+	# position against its old one, its turn as its delta -- and this step's
+	# follows carry it, as retail's update follows the placement its owner
+	# made before it in the same frame (READ, see the header); the effect's
+	# old state is stored at the end of the step (_end_root).
 	# 1-2 each particle moves and follows, runs its commands, then notes this
 	# frame's turn -- in spawn order, so every ancestor (spawned earlier)
 	# has finished its frame before a particle follows it, as retail's
@@ -785,19 +869,19 @@ func step() -> void:
 			# then u6 (READ, see the header).
 			if tp.follows_any:
 				var f := p.f_orbit
-				if f != null and f.changed and f.alive:
+				if f != null and f.changed:
 					p.pos = f.delta * (p.pos - f.old_pos) + f.old_pos
 				f = p.f_rot
-				if f != null and f.changed and f.alive:
+				if f != null and f.changed:
 					p.rot = f.delta * p.rot
 					p.changed = true
 				f = p.f_vel
-				if f != null and f.changed and f.alive:
+				if f != null and f.changed:
 					p.vel = f.delta * p.vel
 			p.rot = p.rvel * p.rot
 			p.changed = true
 			var m := p.f_move
-			if m != null and m.alive:
+			if m != null:
 				p.pos += m.pos - m.old_pos
 		elif tp.follows_any:
 			_follow(p)
@@ -819,8 +903,11 @@ func step() -> void:
 	# 4 ages advance (newborns included: their frame 0 has run); a particle
 	# whose life is over is queued to die (READ, see "Dying"): it is still
 	# drawn this frame and goes at the next step's start.
+	var zombie := false
 	for p in particles:
 		var tp: Tpl = tpls[p.tpl]
+		if tp.follows_any and not zombie:
+			zombie = follows_moving_dead(p)
 		var dies := false
 		match tp.life:
 			LIFE_EXTINCT:
@@ -850,6 +937,8 @@ func step() -> void:
 			if p.emitter != null:
 				p.emitter.dying += 1
 	age += 1
+	_zombie_follow = zombie
+	_end_root()
 
 ## Removes the particles queued to die last frame (READ: the start of
 ## CEFUpdater::vslot_002) and the emitters their deaths kill (READ:
@@ -863,8 +952,20 @@ func _flush_deaths() -> void:
 	if not any:
 		return
 	var kept: Array[Particle] = []
+	var tpls := template.tpls
 	for p in particles:
 		if p.dying:
+			if _still_pass:
+				# Round 785: the last pass this particle had was a still one
+				# (a frame without a step on which nothing moved): it kept its
+				# old state and nothing changed it. That is the state it is
+				# followed by from now on (READ, see the header).
+				var tp: Tpl = tpls[p.tpl]
+				if tp.keep_rot:
+					p.old_rot = p.rot
+				if tp.keep_pos:
+					p.old_pos = p.pos
+				p.changed = false
 			p.alive = false
 			_on_death(p)
 		else:
@@ -878,35 +979,56 @@ func _flush_deaths() -> void:
 	emitters = live_emitters
 	_dying_n = 0
 
-## The frame's start for the effect (_root): it holds still during a step
-## (old = current, not changed), so a u6 follow adds nothing there -- the
-## host's motion arrives through set_origin's pass instead.
-func _place_root() -> void:
+## The end of a step for the effect (_root): its placement is now its old
+## one and it has not changed (READ: CEFEffect::vslot_000, after the
+## update, copies the effect's rotation and position to their old slots and
+## clears its flags, so the draw that follows the update runs no pass). A
+## step is also the last pass the particles had (_still_pass cleared).
+func _end_root() -> void:
 	_root.old_pos = _root.pos
 	_root.old_rot = _root.rot
 	_root.changed = false
+	_still_pass = false
 
 ## Places the effect in its own simulation space -- where its host (or
-## bone) is now, and how it is turned -- and, when that moved or turned it,
-## runs the follow pass at once, as retail's draw does whenever the effect
-## was placed (READ: FUN_00cabda0 -> FUN_00c863a0; round 621's review of
-## the follow levels): each particle keeps its old state, clears "changed",
-## and takes its u2 / u3 / u4 follows (if the ancestor changed) and its u6
-## translation, in spawn order; no velocity, no rotation velocity, no
-## commands. So a particle following the effect moves with its host every
-## render frame, not only on 50 ms steps. Returns whether anything moved.
-func set_origin(pos: Vector3, rot: Basis = Basis.IDENTITY) -> bool:
-	# Changed only when it really moved or turned (review: cheap on a
-	# still host; retail flags every placement).
-	if pos.is_equal_approx(_root.pos) and rot.is_equal_approx(_root.rot):
-		return false
-	_root.old_pos = _root.pos
-	_root.old_rot = _root.rot
+## bone) is now, and how it is turned. Retail's owner places the effect on
+## every frame (CEFEffect::vslot_007 / vslot_008 flag it), and in that frame
+## either the update follows the placement (CEFEffect::vslot_000 runs the
+## tree with the effect's new position against its old one, then stores it
+## as old and clears the flags) or, on a frame without an update, the draw
+## runs the follow pass (READ: FUN_00cabda0 -> FUN_00c863a0): each particle
+## keeps its old state, clears "changed", and takes its u2 / u3 / u4 follows
+## (if the ancestor changed) and its u6 translation, in spawn order; no
+## velocity, no rotation velocity, no commands. So a particle following the
+## effect moves with its host every render frame, once.
+## Round 785: `step_due` (EfpEffect: the advance that follows in this frame
+## will step) leaves the placement to that step, as retail's update takes it
+## and its draw then runs no pass; without it the pass runs now. A placement
+## that neither moved nor turned the effect needs no pass (the same result:
+## OURS, retail flags every placement) unless some particle follows a dead
+## ancestor (_zombie_follow), whose frozen state moves it on every pass.
+## Returns whether anything moved.
+func set_origin(pos: Vector3, rot: Basis = Basis.IDENTITY, step_due: bool = false) -> bool:
+	var moved := not (pos.is_equal_approx(_root.old_pos) and rot.is_equal_approx(_root.old_rot))
 	_root.pos = pos
 	_root.rot = rot
-	_root.changed = true
-	_root.delta = rot * _root.old_rot.inverse()
+	_root.changed = moved
+	if moved:
+		_root.delta = rot * _root.old_rot.inverse()
+	if step_due:
+		return moved
+	if not moved and not _zombie_follow:
+		return false
+	var ran := _pass()
+	_passed = true
+	return moved or ran
+
+## The follow pass on a frame without a step (see set_origin), and the end
+## of it for the effect. False when there was nothing to move.
+func _pass() -> bool:
+	var ran := false
 	if template != null and not particles.is_empty():
+		ran = true
 		var tpls := template.tpls
 		for p in particles:
 			var tp: Tpl = tpls[p.tpl]
@@ -923,23 +1045,40 @@ func set_origin(pos: Vector3, rot: Basis = Basis.IDENTITY) -> bool:
 	_root.old_pos = _root.pos
 	_root.old_rot = _root.rot
 	_root.changed = false
-	return true
+	_still_pass = false
+	return ran
+
+## Round 785: whether `p` follows a dead ancestor whose frozen state still
+## moves or turns it on a pass -- a translation left in it (u6), or a turn it
+## had (u2 / u3 / u4 gated on its "changed").
+static func follows_moving_dead(p: Particle) -> bool:
+	var f := p.f_move
+	if f != null and not f.alive and f.pos != f.old_pos:
+		return true
+	f = p.f_orbit
+	if f != null and not f.alive and f.changed:
+		return true
+	f = p.f_rot
+	if f != null and not f.alive and f.changed:
+		return true
+	f = p.f_vel
+	return f != null and not f.alive and f.changed
 
 ## A particle's four follows (READ, see the header): u2, u3, u4 gated on
 ## the ancestor having changed, u6 every time.
 static func _follow(p: Particle) -> void:
 	var f := p.f_orbit
-	if f != null and f.changed and f.alive:
+	if f != null and f.changed:
 		p.pos = f.delta * (p.pos - f.old_pos) + f.old_pos
 	f = p.f_rot
-	if f != null and f.changed and f.alive:
+	if f != null and f.changed:
 		p.rot = f.delta * p.rot
 		p.changed = true
 	f = p.f_vel
-	if f != null and f.changed and f.alive:
+	if f != null and f.changed:
 		p.vel = f.delta * p.vel
 	f = p.f_move
-	if f != null and f.alive:
+	if f != null:
 		p.pos += f.pos - f.old_pos
 
 ## Moves everything by -v: every particle's position and old position, and
@@ -947,10 +1086,23 @@ static func _follow(p: Particle) -> void:
 ## without anything moving in the world (the same shift as retail's
 ## CEFEffect::FUN_00c865a0, which adds one vector to every particle's
 ## position and old position).
+##
+## Round 785: a dead ancestor a live particle still follows by position (u2
+## orbits round its old position, u6 adds its frozen move) is moved too,
+## once, so a re-centre stays invisible (OURS: retail's shift, used only for
+## a scale change, walks the live particles alone).
 func shift(v: Vector3) -> void:
+	_shift_stamp += 1
 	for p in particles:
 		p.pos -= v
 		p.old_pos -= v
+	for p in particles:
+		for z in [p.f_orbit, p.f_move]:
+			var d := z as Particle
+			if d != null and not d.alive and d.shift_stamp != _shift_stamp:
+				d.shift_stamp = _shift_stamp
+				d.pos -= v
+				d.old_pos -= v
 	_root.pos -= v
 	_root.old_pos -= v
 

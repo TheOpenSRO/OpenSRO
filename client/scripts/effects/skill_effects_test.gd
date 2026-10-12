@@ -79,6 +79,7 @@ func _run() -> void:
 		return
 	var sd := _skill_row(90, "TEST_IMBUE_A_01", "TEST_IMBUE_A", 0)
 	sd += _skill_row(3, "TEST_SMASH_A_01", "TEST_SMASH_A", 0)
+	sd += _skill_row(4, "TEST_STUN_A_01", "TEST_STUN_A", 0)
 	skills = SkillAudio.parse_skills(_utf16(sd))
 	var header := "//SkillName11\tSkillEffectID\tAniType\tStartEvent\tDMG Event\tDamageType\tScale\tID\tAttach\tTrade\tKill\tCreateCnt\tFade\tActType\tMovTypeSpeed\tParam\tAct Option\tObj Path\tObjName\tStartBone\tStartOffset\tTargetBone\tTargetOffset\tObjName2\tRotate\tScript\tSndBegin\tSndEnd\r\n"
 	var text := "#section characterInfo\r\n" + _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "x\\", "wrong.efp", "none", "0,0,0")
@@ -89,6 +90,7 @@ func _run() -> void:
 	text += _row("TEST_IMBUE_A", "SHOT", 1, "AT_ONE_FOLLOW", "none", "none", "none", "0,0,0")
 	text += _row("TEST_SMASH_A", "SHOT", 1, "AT_DMG_POS", "hiteffect\\", "hit.efp", "none", "0,10,-13")
 	text += _row("TEST_IMBUE_A", "WAIT", 0, "AT_LOOP", "skill\\china\\", "wait.efp", "none", "0,0,0")
+	text += _row("TEST_STUN_A", "SHOT", 1, "AT_STOP", "monster\\", "stun.efp", "none", "0,0,0")
 	rows = se.parse_rows(_utf16(text))
 	_check(rows.has("TEST_IMBUE_A") and (rows["TEST_IMBUE_A"] as Array).size() == 4,
 		"only skilleffectset rows that name an .efp are kept (4 for the imbue)")
@@ -122,6 +124,36 @@ func _run() -> void:
 	_check(fx.size() == 1 and (fx[0] as EfpEffect).placed_at().is_equal_approx(Vector3(3, 4, 5)),
 		"... placed at the StartBone (%s)" % (str((fx[0] as EfpEffect).placed_at()) if fx.size() == 1 else "none"))
 	_check(fx.size() == 1 and not (fx[0] as EfpEffect).loop, "AT_ONE_FOLLOW plays once")
+
+	# Round 785: the ActType values are retail's (READ: the name table at
+	# 0x00ec7280 the row parser maps the column through), and only AT_LOOP is
+	# kept; AT_STOP plays once where it was cast (IDecoSkill::FUN_00a513a0).
+	_check(se.ACT_TYPES.find("AT_STOP") == 0 and se.ACT_TYPES.find("AT_ONE_FOLLOW") == 1
+		and se.ACT_TYPES.find("AT_LOOP") == 2 and se.ACT_TYPES.find("AT_TARGET") == 3
+		and se.ACT_TYPES.find("AT_DMG_POS") == 6 and se.ACT_TYPES.find("AT_MOV_PIERCE") == 11
+		and se.AT_STOP == 0 and se.AT_ONE_FOLLOW == 1 and se.AT_LOOP == 2,
+		"ActType values: AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2, AT_TARGET 3 ... AT_MOV_PIERCE 11")
+	_check(se.kept_act(se.AT_LOOP) and not se.kept_act(se.AT_STOP) and not se.kept_act(se.AT_ONE_FOLLOW),
+		"only AT_LOOP is kept")
+	var stop: Array = se.hit(caster, null, 4)
+	_check(stop.size() == 1 and not (stop[0] as EfpEffect).loop and (stop[0] as EfpEffect).static_host,
+		"AT_STOP plays once and is placed once")
+	if stop.size() == 1:
+		var at0: Vector3 = (stop[0] as EfpEffect).placed_at()
+		var at_follow: Vector3 = (fx[0] as EfpEffect).placed_at()
+		caster.position += Vector3(30, 0, 0)
+		(stop[0] as EfpEffect)._process(0.05)
+		(fx[0] as EfpEffect)._process(0.05)
+		_check((stop[0] as EfpEffect).placed_at().is_equal_approx(at0) and (fx[0] as EfpEffect).placed_at().is_equal_approx(at_follow + Vector3(30, 0, 0)),
+			"... the AT_STOP effect stays where it was cast while the AT_ONE_FOLLOW one follows the body")
+		caster.position -= Vector3(30, 0, 0)
+		(stop[0] as EfpEffect).stop()
+
+	# Round 785 (READ: GlobalEffectManager::FUN_00a9d0f0's placement flags,
+	# IDecoSkill::FUN_00a4a680 / FUN_00a4ddc0): a plain StartBone turns the
+	# effect with the bone; '@' puts it at the bone along the world's axes;
+	# "none" turns it with the body; Rotate turns it in its own frame after.
+	_bone_turns()
 
 	# An equipment change frees the skeleton: the aura stays and moves to the new one.
 	var aura0: Array = se.attach_aura("character:1", 5, 90, caster)
@@ -158,8 +190,8 @@ func _run() -> void:
 	_check(se.cast_phase(caster) == SkillAudio.WAIT and is_instance_valid(c0[0]) and not (c0[0] as Node).is_queued_for_deletion(),
 		"... WAIT starts at prep; a skill with WAIT rows holds there, READY's loop still up")
 	se.shot(caster, 1700)
-	_check(se.cast_phase(caster) == -1 and (c0[0] as Node).is_queued_for_deletion(),
-		"shot(): SHOT starts at the server's answer and the phase loops end then")
+	_check(se.cast_phase(caster) == -1 and _let_go(c0[0]),
+		"shot(): SHOT starts at the server's answer and the phase loops are let go then")
 	se.cast(90, caster, target, {"now_ms": 5000})
 	se.process(6600)
 	_check(se.cast_phase(caster) == -1, "without an answer SHOT starts at prep + cast (OURS fallback)")
@@ -171,7 +203,7 @@ func _run() -> void:
 	# cancel_cast: a refused cast ends its loops and fires nothing more.
 	var c1: Array = se.cast(90, caster, target, {"now_ms": 9000})
 	se.cancel_cast(caster)
-	_check(se.cast_phase(caster) == -1 and (c1[0] as Node).is_queued_for_deletion(), "cancel_cast ends the cast and its READY loop")
+	_check(se.cast_phase(caster) == -1 and _let_go(c1[0]), "cancel_cast ends the cast and lets its READY loop go")
 	se.process(20000)
 	_check(se.cast_phase(caster) == -1, "... and nothing fires later")
 	var acted: Array = se.act(90, caster, caster)
@@ -190,12 +222,14 @@ func _run() -> void:
 	_check(aura.size() == 1 and (aura[0] as EfpEffect).loop and se.aura_count() == 1,
 		"attach_aura keeps the ACT_L AT_LOOP effect for the token")
 	var again: Array = se.attach_aura("character:7", 41, 90, caster)
-	_check((aura[0] as Node).is_queued_for_deletion() and se.aura_count() == 1, "a second start of the same token replaces the first")
+	_check(not (aura[0] as EfpEffect).loop and se.aura_count() == 1 and _let_go(aura[0]), "a second start of the same token replaces the first (the first let go)")
 	se.attach_aura("character:7", 42, 90, caster)
 	se.attach_aura("monster:9", 41, 90, target)
 	_check(se.aura_count() == 3, "tokens and owners are kept apart (3 auras)")
-	_check(se.detach_aura("character:7", 41) == 1 and (again[0] as Node).is_queued_for_deletion(),
-		"detach_aura ends the token's aura at once")
+	var detached: int = se.detach_aura("character:7", 41)
+	_check(detached == 1 and not (again[0] as Node).is_queued_for_deletion() and not (again[0] as EfpEffect).loop,
+		"detach_aura lets the token's aura go: it is no longer kept, and still drawn this frame (round 785, READ)")
+	_check(_let_go(again[0]), "... and it ends once its last cycle has played out")
 	_check(se.detach_aura("character:7", 41) == 0, "a token that already ended stops nothing")
 	_check(se.detach_owner("character:7") == 1 and se.aura_count() == 1, "detach_owner ends the rest of that owner's auras")
 	_check(se.attach_aura("character:8", 1, 3, caster).is_empty(), "a skill with no ACT_L rows makes no aura")
@@ -204,7 +238,7 @@ func _run() -> void:
 	se.process(1000 + se.AURA_GRACE_MS - 1)
 	_check(not (timed[0] as Node).is_queued_for_deletion(), "an aura outlives its time by up to the grace period")
 	se.process(1000 + se.AURA_GRACE_MS)
-	_check((timed[0] as Node).is_queued_for_deletion(), "... and then ends even if no buff end arrived")
+	_check(_let_go(timed[0]), "... and then is let go even if no buff end arrived")
 	# Freed bodies are forgotten.
 	var gone := Node3D.new()
 	get_root().add_child(gone)
@@ -225,6 +259,57 @@ func _run() -> void:
 	target.queue_free()
 	bare.queue_free()
 	_finish()
+
+## Round 785: ended the way retail's decoration ends an effect (READ,
+## IDecoSkill::FUN_00a4db00: slot 4 with 0) -- let go, no longer kept, and
+## gone once its last cycle has played out (EfpEffect.release).
+func _let_go(fx) -> bool:
+	if fx == null or not is_instance_valid(fx) or (fx as Node).is_queued_for_deletion():
+		return true
+	var e := fx as EfpEffect
+	if e.loop:
+		return false
+	for i in 400:
+		e._process(0.05)
+		if not is_instance_valid(e) or e.is_queued_for_deletion():
+			return true
+	return false
+
+func _bone_turns() -> void:
+	var body := Node3D.new()
+	body.rotation.y = 0.5 # the body faces somewhere else than the bone
+	get_root().add_child(body)
+	var sk := Skeleton3D.new()
+	sk.add_bone("Bip01")
+	sk.add_bone("Bip01 R Finger2")
+	sk.set_bone_parent(1, 0)
+	var bone_turn := Basis(Vector3(0, 0, 1), PI / 2)
+	sk.set_bone_rest(1, Transform3D(bone_turn, Vector3(1, 2, 3)))
+	sk.reset_bone_poses()
+	body.add_child(sk)
+	var body_turn := body.global_transform.basis
+	var cases := [["Bip01 R Finger2", 0, body_turn * bone_turn, "a plain StartBone: the bone's turn"],
+		["@Bip01 R Finger2", 0, Basis.IDENTITY, "'@': the world's axes at the bone"],
+		["none", 0, body_turn, "\"none\": the body's turn"],
+		["Bip01 R Finger2", 450, body_turn * bone_turn * Basis(Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(0, -1, 0)),
+			"Rotate 450: the bone's turn, then 90 degrees about X in the effect's frame"]]
+	for c in cases:
+		var fx := _effect("x.efp")
+		se.attach(fx, body, String(c[0]), Vector3(0, 0, 1), int(c[1]))
+		fx._process(0.0)
+		var want: Basis = c[2]
+		var at_ok := true
+		if String(c[0]) != "none":
+			# the bone's position plus the offset turned by the body, not the bone
+			at_ok = fx.placed_at().is_equal_approx(body.global_transform * (Vector3(1, 2, 3) + Vector3(0, 0, 1)))
+		_check(fx.sim._root.rot.is_equal_approx(want) and at_ok,
+			"%s (%s, at %s)" % [String(c[3]), str(fx.sim._root.rot), str(fx.placed_at())])
+		fx.stop()
+	_check(se.rotate_basis(990).is_equal_approx(Basis(Vector3(0, -1, 0), Vector3(1, 0, 0), Vector3(0, 0, 1)))
+		and se.rotate_basis(180).is_equal_approx(Basis(Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, -1)))
+		and se.rotate_basis(0) == Basis.IDENTITY,
+		"Rotate 990 is 270 degrees about Z, 180 is 180 about Y, 0 none")
+	body.free()
 
 func _skeleton(at: Vector3) -> Skeleton3D:
 	var sk := Skeleton3D.new()

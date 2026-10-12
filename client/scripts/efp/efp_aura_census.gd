@@ -1,6 +1,6 @@
 extends SceneTree
 
-## Round 623: does every kept (AT_LOOP / AT_STOP) effect stay on screen?
+## Round 623: does every kept (AT_LOOP; round 785: AT_STOP is not kept) effect stay on screen?
 ## Runs each .efp that skilleffect.txt's skilleffectset names with a kept
 ## ActType through a real EfpEffect (the node's own _process, so the loop and
 ## restart logic under test is the shipped one) for --seconds of 50 ms frames
@@ -17,7 +17,7 @@ extends SceneTree
 ## lit" (lit: drawn particles whose colour is not fully transparent black).
 ## Exits 0 when no file gaps, 1 otherwise.
 ##
-## --oneshot takes the rows with a one-shot ActType (not AT_LOOP / AT_STOP)
+## --oneshot takes the rows with a one-shot ActType (not AT_LOOP)
 ## of the phase instead, plays each once (not kept) and reports how many
 ## frames each lasts: the regression check for hits and ACT_S bursts.
 
@@ -59,7 +59,7 @@ func _init() -> void:
 	for id in rows:
 		for r in rows[id]:
 			var act := int(r["act"])
-			var kept := act == SkillEffects.AT_LOOP or act == SkillEffects.AT_STOP
+			var kept := SkillEffects.kept_act(act)
 			if kept == _oneshot:
 				continue
 			var ani := int(r["ani"])

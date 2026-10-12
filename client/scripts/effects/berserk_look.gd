@@ -275,7 +275,8 @@ static func _play(ani: int, host: Node3D, own: bool, sounds: bool) -> Array:
 			print("BERSERK look: %s did not load (%s)" % [r["path"], EfpEffect.last_error])
 			continue
 		var act := int(r["act"])
-		fx.loop = act == SkillEffects.AT_LOOP or act == SkillEffects.AT_STOP
+		fx.loop = SkillEffects.kept_act(act) # round 785: AT_LOOP alone (READ)
+		fx.static_host = act == SkillEffects.AT_STOP
 		fx.reserved = own
 		SkillEffects.attach(fx, host, String(r["bone"]), r["offset"])
 		started.append(fx)

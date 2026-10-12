@@ -49,36 +49,63 @@ class_name SkillEffects
 ## The sequencer runs on scene time: World3D calls tick(delta) every physics
 ## frame (a movie render runs slower than the wall clock).
 ##
-## ON WHOM (ActType, the row's +0xe byte, READ in IDecoSkill::FUN_00a51bc0:
-## 0 AT_ONE_FOLLOW, 1 AT_LOOP, 2 AT_STOP are the vocabulary's first three):
-## - AT_ONE_FOLLOW plays once and follows the body (READ: the decoration is
-##   created with its keep flag 0 and handed to the one-shot list,
-##   FUN_00a4ddc0).
-## - AT_LOOP and AT_STOP are created with the keep flag 1 (READ), which sets
-##   the effect's keep flag (+0x49, CEFEffect::vslot_004): its root
-##   particles are revived at age 0 instead of dying (CEFEffect::vslot_000,
-##   READ in round 623), so the children cycle on and the aura never blinks
-##   out, until its owner ends it (EfpEffect.stop, which drops every particle
-##   at once, READ). EfpEffect.loop is that flag.
+## ON WHOM (ActType, the row's +0xe byte). Its values are READ (round 785)
+## from the name table the row parser looks the column up in: the (name,
+## value) pairs at 0x00ec7280 -- AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2,
+## AT_TARGET 3, AT_TARGET_F 4, AT_SOURCE 5, AT_DMG_POS 6, AT_MOV_1TAR 7 ...
+## AT_MOV_PIERCE 11 -- made a map by FUN_00a9ac70 (the static initialiser at
+## 0x00d785a0) and read by GlobalEffectManager::FUN_00a9d0f0 at 0x00a9d679.
+## Rounds 620-784 had 0 AT_ONE_FOLLOW, 1 AT_LOOP, 2 AT_STOP (the strings'
+## order in memory), so AT_STOP was played as AT_LOOP. What each does is
+## READ in IDecoSkill::FUN_00a513a0 (the phase's rows played) and
+## CIDecoSkill::vslot_014 (the decoration's frame):
+## - AT_LOOP (2): created with the keep flag 1 (slot 4 with 1 for +0xe == 2
+##   alone), which sets the effect's keep flag (+0x49, CEFEffect::vslot_004):
+##   its root particles are revived at age 0 instead of dying
+##   (CEFEffect::vslot_000, READ in round 623), so the children cycle on and
+##   the aura never blinks out, until its owner ends it (EfpEffect.stop,
+##   which drops every particle at once, READ). EfpEffect.loop is that flag.
+##   Placed on the body every frame (the entry's follow flag 1: vslot_014
+##   calls FUN_00a4ddc0 for it each frame).
+## - AT_ONE_FOLLOW (1): plays once (keep flag 0) and is placed on the body
+##   every frame, as AT_LOOP.
+## - AT_STOP (0): plays once and is placed ONCE, when it is made (its entry's
+##   follow flag is 0 and FUN_00a513a0 places it then): it stays where it was
+##   cast (EfpEffect.static_host). 35 effect rows (MEASURED): monster dust and
+##   stuns, and the fireworks.
 ## - AT_TARGET, AT_TARGET_F and AT_DMG_POS play on the target (INFERRED from
-##   the names); everything else on the caster.
+##   the names); everything else on the caster, placed every frame (OURS for
+##   the ActTypes past AT_LOOP: FUN_00a513a0 plays them on other paths).
 ## - AT_MOV_* (projectiles) play at the caster without the flight (OURS; the
 ##   flight is OPEN).
 ##
 ## HOW LONG:
 ## - ACT_L / AT_LOOP is the buff's aura: attach_aura keeps it per (owner,
 ##   token) until detach_aura -- World3D drives these from NetClient's
-##   buff_started / buff_ended (rounds 616-618). With the buff's remaining
+##   buff_started / buff_ended (rounds 616-618). Round 785 (READ): the end lets
+##   the aura go as retail's decoration does (EfpEffect.release: the keep flag
+##   cleared, its last cycle plays out; FUN_00a53120 -> FUN_00a4ffe0 ->
+##   FUN_00a4db00), and so does a cast's end or cancel; a world teardown
+##   frees them at once (EfpEffect.stop). With the buff's remaining
 ##   time it also ends by itself AURA_GRACE_MS after that time runs out, in
 ##   case the end never arrives (OURS).
 ## - READY / WAIT AT_LOOP: until the cast's SHOT starts, cancel_cast, or
 ##   READY_LOOP_MAX (OURS guard).
 ##
-## WHERE (StartBone, StartOffset): at the named bone of the body's current
-## skeleton, turned with the body (OURS: the bone's own rotation is not
-## applied); "none", "*" and "#..." (OPEN) and a missing bone put it at the
-## skeleton's origin. StartOffset is added in the body's native units
-## (INFERRED). The effect is a child of the body and re-finds its skeleton
+## WHERE (StartBone, StartOffset, Rotate; READ round 785 -- the row parser
+## GlobalEffectManager::FUN_00a9d0f0, the placement IDecoSkill::FUN_00a4a680
+## and FUN_00a4ddc0): at the named bone of the body's current skeleton,
+## turned with the BONE (a plain name gets the placement flags 2, which keep
+## the bone's rotation; rounds 620-784 turned it with the body); '@name' at
+## the bone along the world's axes (flags 0); "none" at the body, turned with
+## it. StartOffset is turned by the body (not the bone) and added to the
+## bone's position (the post-pass at 0x00a95310 points the row at it when it
+## is not zero). Rotate turns the effect in its own frame after the
+## placement: 1-360 about Y by that many degrees (FUN_0043cda0), 361-720
+## about X by value - 360 (FUN_009ecc10), above 720 about Z by value - 720
+## (FUN_00a4d820) -- 284 effect rows (MEASURED). "*" (flags 3: the body's
+## turn and a height) and "#..." (flags 6: another object's bone) and a
+## missing bone put it at the skeleton's origin, turned with the body (OPEN). The effect is a child of the body and re-finds its skeleton
 ## each frame (EfpEffect.follow_host), so a skeleton rebuilt by an equipment
 ## change keeps its auras, and an aura attached before the skeleton exists
 ## finds it when it comes.
@@ -96,13 +123,14 @@ const AURA_GRACE_MS := 2000 ## OURS: an aura outlives its buff's time by this mu
 const C_PREP := 11 ## skilldata Action_PreparingTime (ms)
 const C_CAST := 12 ## skilldata Action_CastingTime (ms)
 
-## ActType vocabulary (the client's own UTF-16 strings, spec §1.1).
-static var ACT_TYPES := ["AT_ONE_FOLLOW", "AT_LOOP", "AT_STOP", "AT_TARGET", "AT_TARGET_F",
+## ActType vocabulary (the client's own UTF-16 strings, spec §1.1), each at
+## its value: READ, round 785, the name table at 0x00ec7280 (see the header).
+static var ACT_TYPES := ["AT_STOP", "AT_ONE_FOLLOW", "AT_LOOP", "AT_TARGET", "AT_TARGET_F",
 	"AT_SOURCE", "AT_DMG_POS", "AT_MOV_1TAR", "AT_MOV_OPTION", "AT_MOV_APIECE",
 	"AT_MOV_SPLASH", "AT_MOV_PIERCE"]
-const AT_ONE_FOLLOW := 0
-const AT_LOOP := 1
-const AT_STOP := 2
+const AT_STOP := 0
+const AT_ONE_FOLLOW := 1
+const AT_LOOP := 2
 const AT_TARGET := 3
 const AT_TARGET_F := 4
 const AT_DMG_POS := 6
@@ -116,6 +144,7 @@ const C_PATH := 17
 const C_NAME := 18
 const C_BONE := 19
 const C_OFFSET := 20
+const C_ROTATE := 24 ## round 785: "Rotate" (the header's own name is looked for first)
 
 ## The Effect Quality option (round 694, VideoOptions.EFFECT): 0 "Turn Off
 ## All Effects", 1 "See Hit Effects", 2 "See All Effects" (the default).
@@ -155,7 +184,7 @@ static var effect_factory: Callable = Callable()
 static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	var in_section := false
-	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET}
+	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET, "rotate": C_ROTATE}
 	for raw in SkillAudio._utf16_lines(bytes):
 		var line: String = raw
 		if line.begins_with("#section"):
@@ -167,7 +196,7 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 		if line.begins_with("//"):
 			var header := line.substr(2).split("\t")
 			var names := {"ActType": "act", "Obj Path": "path", "ObjName": "name",
-				"StartBone": "bone", "StartOffset": "offset"}
+				"StartBone": "bone", "StartOffset": "offset", "Rotate": "rotate"}
 			for h in names:
 				var at := header.find(h)
 				if at >= 0:
@@ -195,6 +224,7 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			"path": dir + obj,
 			"bone": cols[int(col["bone"])].strip_edges() if cols.size() > int(col["bone"]) else "none",
 			"offset": parse_offset(cols[int(col["offset"])] if cols.size() > int(col["offset"]) else ""),
+			"rotate": int(cols[int(col["rotate"])].strip_edges()) if cols.size() > int(col["rotate"]) and cols[int(col["rotate"])].strip_edges().is_valid_int() else 0,
 		}
 		if not out.has(id):
 			out[id] = []
@@ -220,6 +250,11 @@ static func rows_in(skills: Dictionary, rows: Dictionary, skill_id: int, ani_typ
 		if int(r["ani"]) == ani_type and (start_event < 0 or int(r["event"]) == start_event):
 			out.append(r)
 	return out
+
+## Whether a row's effect is kept (retail's keep flag: AT_LOOP alone, READ,
+## see the header).
+static func kept_act(act: int) -> bool:
+	return act == AT_LOOP
 
 ## Whom a row plays on (see the header).
 static func host_for(act: int, caster: Node3D, target: Node3D) -> Node3D:
@@ -355,11 +390,42 @@ static func skeleton_of(host: Node) -> Skeleton3D:
 			return n as Skeleton3D
 	return null
 
-## Puts `fx` on `host` at `bone` + `offset` (see the header): a child of the
-## body, placed each frame in its current skeleton's frame.
-static func attach(fx: EfpEffect, host: Node3D, bone: String, offset: Vector3) -> void:
+## Puts `fx` on `host` at `bone` + `offset`, turned by the row's `rotate`
+## (see the header): a child of the body, placed each frame in its current
+## skeleton's frame.
+static func attach(fx: EfpEffect, host: Node3D, bone: String, offset: Vector3, rotate: int = 0) -> void:
 	host.add_child(fx)
+	var b := bone.strip_edges()
+	var named := b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#")
+	fx.follow_bone_turn = named and not b.begins_with("@")
+	fx.follow_world_turn = named and b.begins_with("@")
+	fx.follow_basis = rotate_basis(rotate)
 	fx.follow_host(host, bone, offset)
+
+## The row's Rotate as the turn it gives the effect (READ, see the header):
+## the client's row-vector matrices read as bases whose columns are their
+## rows (EfpSim.basis_of), so a D3D `v * M` is `basis * v` here.
+static func rotate_basis(rotate: int) -> Basis:
+	if rotate == 0:
+		return Basis.IDENTITY
+	var axis := 0
+	var deg := rotate
+	if rotate > 720:
+		axis = 2
+		deg = rotate - 720
+	elif rotate > 360:
+		axis = 1
+		deg = rotate - 360
+	var a := float(deg) / 360.0 * TAU
+	var c := cos(a)
+	var sn := sin(a)
+	match axis:
+		1: # FUN_009ecc10: rows (1,0,0) (0,c,s) (0,-s,c)
+			return Basis(Vector3(1, 0, 0), Vector3(0, c, sn), Vector3(0, -sn, c))
+		2: # FUN_00a4d820: rows (c,s,0) (-s,c,0) (0,0,1)
+			return Basis(Vector3(c, sn, 0), Vector3(-sn, c, 0), Vector3(0, 0, 1))
+	# FUN_0043cda0: rows (c,0,s) (0,1,0) (-s,0,c)
+	return Basis(Vector3(c, 0, sn), Vector3(0, 1, 0), Vector3(-sn, 0, c))
 
 ## Plays `skill_id`'s effects of one phase now. Returns the effects started.
 ## (Round 620's play_phase stopped the caster's READY loops on any later
@@ -386,13 +452,15 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 			fx.free()
 			continue
 		fx.reserved = own_body != null and (host == own_body or caster == own_body)
-		var looping := act == AT_LOOP or act == AT_STOP
+		var looping := kept_act(act)
+		# Round 785: AT_STOP is placed once, where it is cast (READ, see the header).
+		fx.static_host = act == AT_STOP
 		if looping and (ani_type == SkillAudio.READY or ani_type == SkillAudio.WAIT):
 			fx.loop = true
 			fx.max_life = READY_LOOP_MAX
 			if caster != null and _casts.has(caster.get_instance_id()):
 				(_casts[caster.get_instance_id()]["loops"] as Array).append(fx)
-		attach(fx, host, String(r["bone"]), r["offset"])
+		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
 		print("EFFECTS skill %d %s/%d: %s %s at %s (%d nodes drawn%s) %s" % [skill_id,
 			SkillAudio._phase_name(ani_type), start_event, ACT_TYPES[act] if act >= 0 else "?",
@@ -480,7 +548,7 @@ static func cancel_cast(caster: Node3D) -> void:
 	var key := caster.get_instance_id()
 	if not _casts.has(key):
 		return
-	_stop_all(_casts[key]["loops"])
+	_release_all(_casts[key]["loops"]) # round 785: FUN_00a50a00 -> FUN_00a4ffe0 (READ)
 	_casts.erase(key)
 
 ## The phase the caster's cast is in (-1: none). Tests and logs.
@@ -499,7 +567,7 @@ static func _events_from(skill_id: int, ani: int, first: int) -> Array:
 	return evs
 
 static func _start_shot(c: Dictionary) -> void:
-	_stop_all(c["loops"])
+	_release_all(c["loops"]) # round 785: let go, not cut (EfpEffect.release)
 	c["loops"] = []
 	c["phase"] = SkillAudio.SHOT
 	var caster = c["caster"]
@@ -510,6 +578,13 @@ static func _stop_all(fxs: Array) -> void:
 	for fx in fxs:
 		if is_instance_valid(fx):
 			(fx as EfpEffect).stop()
+
+## Round 785: lets the effects go (EfpEffect.release, READ: retail's
+## decoration ends its effects through slot 4 with 0, not at once).
+static func _release_all(fxs: Array) -> void:
+	for fx in fxs:
+		if is_instance_valid(fx):
+			(fx as EfpEffect).release()
 
 ## Runs the due phases of every cast, ends expired auras, and forgets freed
 ## bodies. World3D calls it every frame.
@@ -547,7 +622,7 @@ static func process(now_ms: int = -1) -> void:
 			_auras.erase(key)
 		elif int(a["expires"]) >= 0 and now >= int(a["expires"]):
 			print("EFFECTS aura %s: no end arrived %d ms after its time -- ending it" % [key, AURA_GRACE_MS])
-			_stop_all(alive)
+			_release_all(alive)
 			_auras.erase(key)
 		else:
 			a["fx"] = alive
@@ -572,9 +647,10 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		if fx.draw_count() == 0 and _draws_nothing(fx):
 			fx.free()
 			continue
-		fx.loop = int(r["act"]) == AT_LOOP or int(r["act"]) == AT_STOP
+		fx.loop = kept_act(int(r["act"]))
+		fx.static_host = int(r["act"]) == AT_STOP
 		fx.reserved = own_body != null and host == own_body
-		attach(fx, host, String(r["bone"]), r["offset"])
+		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
 	if not started.is_empty():
 		var now := now_ms if now_ms >= 0 else _now()
@@ -614,7 +690,9 @@ static func detach_aura(owner_key: String, token: int) -> int:
 	if _auras.has(key):
 		for fx in _auras[key]["fx"]:
 			if is_instance_valid(fx):
-				(fx as EfpEffect).stop()
+				# Round 785 (READ, FUN_00a53120 -> FUN_00a4ffe0 -> FUN_00a4db00):
+				# the buff's end lets its aura go; it fades over its last cycle.
+				(fx as EfpEffect).release()
 				n += 1
 	_auras.erase(key)
 	return n
