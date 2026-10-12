@@ -97,6 +97,9 @@ const UIIT_BY_CODE := {
 	0x1c07: "UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY",
 	0x1c0b: "UIIT_MSG_INTERACTION_FAIL_IM_BUSY",
 	0x1c10: "UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_TRADECART",
+	# Round 779: a scroll's cast refuses the NPC teleport (HandleTeleportUse
+	# 0x513634); category 0xd's entry 13 -> 0x7ba0d7 push 0xdc2380.
+	0x1c14: "UIIT_MSG_INTERACTION_FAIL_TELESCROLL_ALREADY_WORKING",
 	0x1c11: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED",
 	0x1c12: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED",
 	0x1c15: "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT",
@@ -210,6 +213,8 @@ static func teleport_line(code: int, table: UiTextTable, reason: String) -> Stri
 			return resolve(code, table, "Not enough gold.")
 		0x1c10:
 			return resolve(code, table, "You cannot teleport with a trade cart.")
+		0x1c14:
+			return resolve(code, table, "A teleport scroll is already working.")
 		0x1c15:
 			return resolve(code, table, "Your level does not allow that destination.")
 		2:
@@ -287,6 +292,9 @@ const SCROLL_UIIT_BY_CODE := {
 	0x185d: "UIIT_MSG_STRGERR_PREV_TELESCROLL_ALREADY_WORKING",
 	0x185e: "UIIT_MSG_STRGERR_CANT_TELEPORT_WITH_CART",
 	0x185f: "UIIT_MSG_STRGERR_REQUESTED_JOB_BLOCKED_BY_QUEST",
+	# Round 779: the thief-den scroll for one not in job state 2 (FUN_004a0380
+	# 0x4a04e6); the table's index 0x3f -> 0x7b90c7.
+	0x186a: "UIIT_MSG_STRGERR_ONLY_ROBBER_CAN_USE_THIS_ITEM",
 	0x1875: "UIIT_MSG_STRGERR_MURDERER_CANT_USE_PORTAL_SCROLL",
 	0x187a: "UIIT_MSG_COSPETERR_CANT_USEITEM",
 	0x1885: "UIIT_MSG_STRGERR_CANT_FIND_LAST_TELEPOS",

@@ -3842,6 +3842,57 @@ func _on_reverse_point_chosen(id: int) -> void:
 func _on_reverse_select_cancelled() -> void:
 	close_reverse_return_box()
 
+# --- The return scrolls' casting bar (round 779) -----------------------------
+#
+# Retail's CIFDelayGaugeBoard holding one CIFDelayInfo of kind 0
+# (DelayInfoBar has every address). READ: Item_OnUseItemResult opens it for
+# an accepted 3/3/3/1 or 3/3/3/3 use with the item's name and Param1 (ms);
+# its cancel sends 0x705B; the 0x30BF kind 0xb value 0 for this player ends
+# it with UIIT_MSG_TRANSITION_CANCEL_RESULT when one was up; the zone reset
+# and this player's death clear it silently. World3D drives the three.
+
+## The bar's cancel button was pressed: World3D sends 0x705B.
+signal cast_cancel_requested
+
+var _cast_bar: DelayInfoBar
+
+## Opens the bar for the item `item_id`: its name and its Param1 as the
+## total in ms (READ: FUN_007b1bf0 case 0 reads the client's own row, the
+## ref's +0x60 and +0x2b4). `fallback_ms` is the server's cast length, used
+## when this client's table lacks the row (OURS). A bar already up is
+## replaced (retail removes the kind's entry first, FUN_007b15a0's loop).
+func open_cast_bar(item_id: int, fallback_ms: int, fallback_name: String = "") -> DelayInfoBar:
+	close_cast_bar()
+	var ms := item_param1(item_id) if item_id > 0 else 0
+	if ms <= 0:
+		ms = fallback_ms
+	var title := item_name(item_id) if item_id > 0 else ""
+	if title == "":
+		title = fallback_name
+	var bar := DelayInfoBar.new()
+	add_child(bar)
+	bar.build(_builder, title, ms, item_id)
+	bar.position = DelayInfoBar.screen_position(get_viewport_rect().size)
+	bar.cancel_pressed.connect(func() -> void: cast_cancel_requested.emit())
+	_cast_bar = bar
+	print("CASTBAR opened: '%s' item %d, %d ms, at %s" % [bar.caption(), item_id, bar.total_ms, str(bar.position)])
+	return bar
+
+## The bar up, or null.
+func cast_bar() -> DelayInfoBar:
+	if _cast_bar != null and is_instance_valid(_cast_bar) and not _cast_bar.is_queued_for_deletion():
+		return _cast_bar
+	return null
+
+## Closes the bar; reports whether one was up.
+func close_cast_bar() -> bool:
+	var bar := cast_bar()
+	_cast_bar = null
+	if bar == null:
+		return false
+	bar.close()
+	return true
+
 ## The TypeIDs of what lies in a bag slot, or empty.
 func bag_item_types(slot: int) -> PackedInt32Array:
 	var id := _bag_item_id_at_slot(slot)

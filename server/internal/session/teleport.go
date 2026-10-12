@@ -43,10 +43,12 @@ package session
 //     teleport.Reach: GObjPC::IsWithinInteractionRange, 0x4a8e10; NPC 300,
 //     structure 800, the requester's region or a neighbour). OURS within it:
 //     the height term is dropped, and an NPC the server has no npcpos row for
-//     is not measured. Still no "already teleporting" state (0x1c14,
-//     IGObj::GetTeleportState): an OpenSRO teleport completes inside one
-//     request, so there is no state to be in -- and a second request from
-//     the old gate is now refused by the range (the player has moved).
+//     is not measured. An OpenSRO teleport completes inside one request, so
+//     its own "already teleporting" state is never seen; a return scroll's
+//     cast is (round 779): HandleTeleportUse asks GetTeleportState (vslot
+//     0x120) right after the gate resolves and refuses 0x1c14,
+//     UIIT_MSG_INTERACTION_FAIL_TELESCROLL_ALREADY_WORKING (READ, 0x513634;
+//     category 0xd's table entry 13 -> 0x7ba0d7), before the range.
 //   - A point with no associated object is refused with code 2 as well; the
 //     engine answers nothing when its gate lookup (FUN_00485d90) fails -- a
 //     bare `return` -- and OpenSRO does not leave a client waiting.
@@ -81,6 +83,10 @@ const (
 	OpTeleportUse    uint16 = 0x00F3 // client -> server
 	OpTeleportResult uint16 = 0x00F4 // server -> the requester
 )
+
+// teleportScrollWorking is HandleTeleportUse's refusal while a scroll's cast
+// is working (round 779, READ above).
+const teleportScrollWorking uint16 = 0x1c14
 
 // teleportNoLink is the engine's refusal for a link that does not exist:
 // GObjPC::HandleTeleportUse sets `uStack_2c = 2` when Gate_LinkForTeleportUse
@@ -235,6 +241,11 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	gateCode, ok := gateObject(t.network, gatePoint)
 	if !ok {
 		return refuse(teleportNoLink, "no such gate", "gate", gatePoint.Code)
+	}
+	// A scroll's cast refuses the gate (round 779): 0x1c14, before the
+	// range test, as HandleTeleportUse asks.
+	if scrollCastingOn(sess) {
+		return refuse(teleportScrollWorking, teleportRefusalReason(teleportScrollWorking), "gate", gateCode)
 	}
 	// A gate in another game world -- a fortress, tomb, temple or arena
 	// point -- is refused as its destinations are (OURS, round 642's review:
@@ -513,6 +524,8 @@ func teleportRefusalReason(code uint16) string {
 		return "you are too far away"
 	case teleport.ErrInteractionTarget:
 		return "you are not near that gate"
+	case teleportScrollWorking:
+		return "a teleport scroll is already working"
 	}
 	return fmt.Sprintf("teleport refused (code 0x%x)", code)
 }

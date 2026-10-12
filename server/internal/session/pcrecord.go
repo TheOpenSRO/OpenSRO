@@ -284,6 +284,9 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	if d.zerk != nil && d.zerk.Active(e.CharacterID) {
 		r.BodyMode = bodyModeBerserk
 	}
+	// A scroll's cast (round 779, scroll.go): field 26, the teleport state
+	// (slot 72, chardata +0x10), its value while it works.
+	r.TeleportState = scrollStateOf(e.CharacterID)
 	lk := lookOf(ctx, d, e.CharacterID)
 	r.RefObjID, r.Scale, r.Items, r.JobState = lk.ref, lk.scale, lk.items, lk.jobState
 	// The frame's region and the local position in it (worldmap.FromWorld,

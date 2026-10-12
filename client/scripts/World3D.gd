@@ -2595,6 +2595,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
+	# The return scrolls' casting bar's cancel (round 779): 0x705B.
+	_hud_panels.cast_cancel_requested.connect(_on_cast_cancel_requested)
 	_setup_console_and_help()
 	# The panels are built after the vitals arrive, so they are seeded from
 	# the same cached result rather than waiting for a signal that already
@@ -6498,6 +6500,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		# berserk display fades out (round 629's review).
 		if _hud_player_info != null:
 			_hud_player_info.reset_hwan_display()
+		# ... and FUN_007b1300: the delay board (the casting bar) is cleared,
+		# with no message (round 779).
+		if _hud_panels != null and _hud_panels.close_cast_bar():
+			print("CASTBAR closed by the zone change")
 	if not result.ok:
 		# An accepted teleport whose move failed (warpTo's "not in the world";
 		# the server refunds the fee): the request is over, so a destination
@@ -13493,7 +13499,10 @@ func _update_blob_shadow() -> void:
 ##                          HudWorldmap.qa_apply steps: click:2001,up)
 ##   OPENSRO_QA_REVERSE="box;map;pick:29"  the reverse return scroll's box,
 ##                          its map button, a map point's popup (round 778,
-##                          _qa_reverse_return; send:<option>[:<id>] sends)
+##                          _qa_reverse_return; send:<option>[:<id>] sends;
+##                          round 779: `return` uses the first return scroll,
+##                          `cancel` presses the casting bar's cancel, `bar`
+##                          logs the bar)
 ##   OPENSRO_QA_BUFFS="<skill>:<ms>[:<left>],..."  put these buffs on the
 ##                          buff bar as if the server had started them
 ##                          (duration ms, -1 for none; ms left), tokens
@@ -24001,6 +24010,9 @@ func _enter_dead_state(exp_lost: int) -> void:
 	if _hud_player_info != null:
 		_hud_player_info.reset_hwan_display()
 		print("World3D: death -- berserk display reset (active now %s)" % str(_hud_player_info.hwan_display_active()))
+	# ... and FUN_007b1300: the casting bar goes, silently (round 779).
+	if _hud_panels != null and _hud_panels.close_cast_bar():
+		print("CASTBAR closed by the death")
 	_drop_pending_attack()
 	_cancel_talk_approach("death")
 	_has_move_target = false
@@ -25239,6 +25251,9 @@ func _on_state_changed(change: WorldNet.StateChange) -> void:
 	_sync_own_id()
 	if change != null and change.kind == WorldNet.STATE_KIND_BODY_MODE:
 		_on_body_mode(change)
+		return
+	if change != null and change.kind == WorldNet.STATE_KIND_TELEPORT:
+		_on_teleport_state(change)
 		return
 	if change == null or change.kind != WorldNet.STATE_KIND_MOTION:
 		return
@@ -27372,6 +27387,10 @@ func _on_use_item_result(result) -> void:
 		# An accepted scroll (round 778): the move follows when its delay
 		# runs out, as an OpChangeZoneResult this client did not ask for.
 		print("World3D: scroll accepted -- moving in %d ms" % result.cast_ms)
+		# Round 779: the casting bar, kind 0 (Item_OnUseItemResult's cases 1
+		# and 3 -> FUN_007b15a0(0, ref)), from the item's own row.
+		if _hud_panels != null:
+			_hud_panels.open_cast_bar(result.item_id, result.cast_ms)
 	if _hud_player_info != null:
 		if result.max_hp > 0:
 			_hud_player_info.set_hp(result.hp, result.max_hp)
@@ -27402,6 +27421,27 @@ func _on_reverse_return_requested(slot: int, option: int, target: int) -> void:
 	print("World3D: reverse return scroll at bag slot %d, option %d, point %d" % [slot, option, target])
 	UiSounds.expect_use(_hud_panels.bag_item_types(slot) if _hud_panels != null else PackedInt32Array())
 	NetClient.use_item_option(NetClient.current_character_name, slot, option, target)
+
+## The casting bar's cancel button (round 779, READ: 0x7b1a10 ->
+## FUN_0081ee60 case 0): 0x705B. The bar stays until the state's 0x30BF.
+func _on_cast_cancel_requested() -> void:
+	print("CASTBAR cancel pressed -- sending 0x705B")
+	NetClient.scroll_cancel()
+
+## 0x30BF kind 0xb (round 779, READ 0x8a80a0 case 0xb): another player's
+## value is only stored by the real client (+0x7c0, read by nothing found);
+## this player's 0 ends the casting bar, saying
+## UIIT_MSG_TRANSITION_CANCEL_RESULT when one was up (the board's +0x378).
+func _on_teleport_state(change: WorldNet.StateChange) -> void:
+	var own := _own_id()
+	if own < 0 or change.object_id != (own & 0xffffffff):
+		return
+	print("CASTBAR teleport state %d" % change.value)
+	if change.value != 0 or _hud_panels == null:
+		return
+	if _hud_panels.close_cast_bar():
+		var text := _ui_text_table.get_text("UIIT_MSG_TRANSITION_CANCEL_RESULT", "") if _ui_text_table != null else ""
+		_log_system(text if text != "" else "The teleportation has been cancelled.")
 
 ## QA only (OPENSRO_QA_REVERSE, round 778): steps on the reverse return
 ## scroll's flow, groups separated by `;` running two seconds apart so a
@@ -27443,6 +27483,22 @@ func _qa_reverse_return(spec: String) -> void:
 				elif st.begins_with("send:"):
 					var parts := st.trim_prefix("send:").split(":")
 					_on_reverse_return_requested(slot, int(parts[0]), int(parts[1]) if parts.size() > 1 else 0)
+				elif st == "return":
+					# Round 779: the first ordinary return scroll (3/3/3/1)
+					# in the bag, used as a right-click uses it.
+					for k in 128:
+						var t := _hud_panels.bag_item_types(k)
+						if t.size() >= 4 and t[0] == 3 and t[1] == 3 and t[2] == 3 and t[3] == 1:
+							NetClient.use_item(NetClient.current_character_name, k)
+							print("QA REVERSE return scroll at bag slot %d" % k)
+							break
+				elif st == "cancel":
+					var bar := _hud_panels.cast_bar()
+					if bar != null:
+						bar.cancel_button().emit_signal("pressed")
+				elif st == "bar":
+					var bar := _hud_panels.cast_bar()
+					print("QA REVERSE bar: %s" % ("none" if bar == null else "'%s' %d/%d ms at %s" % [bar.caption(), bar.total_ms - bar.remaining_ms, bar.total_ms, str(bar.position)]))
 				print("QA REVERSE %s at frame %d (scroll slot %d)" % [st, Engine.get_frames_drawn(), slot])
 		if i == 0:
 			run.call()

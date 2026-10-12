@@ -286,6 +286,11 @@ func (t *teleporter) walkIn(ctx context.Context, hub *world.Hub, characterID int
 		return
 	}
 	sess := e.Session
+	// A scroll's cast (round 779, scroll.go): vslot_309 refuses a character
+	// already teleporting (the READ above), silently.
+	if scrollCastingOn(sess) {
+		return
+	}
 	username, _ := AuthenticatedUsername(sess)
 	logRefusal := func(code uint16, reason string, attrs ...any) {
 		if t.logger != nil {

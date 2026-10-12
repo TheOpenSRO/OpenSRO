@@ -47,6 +47,11 @@ const STATE_KIND_MOTION := 1
 ## 0x30BF kind 4: the body mode, 1 = berserk (CGObjChar::SetBodyMode). A value-1
 ## change carries one more byte (chardata+5), read only then (0x8a80a0).
 const STATE_KIND_BODY_MODE := 4
+## 0x30BF kind 0xb: a scroll's teleport state (round 779, FUN_004e0b50) --
+## (Param2 == 0) + 1 while a return scroll casts, 0 when it ends or is
+## cancelled. The client's 0x8a80a0 case 0xb stores it (+0x7c0) and, for its
+## own player and value 0, ends the casting bar (DelayInfoBar).
+const STATE_KIND_TELEPORT := 0xb
 ## MOTIONSTATE values, named by the server's own table at .rdata 0x00c63f90.
 const MOTION_STAND := 0
 const MOTION_SIT := 4

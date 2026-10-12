@@ -39,6 +39,11 @@ class Result extends RefCounted:
 	## the berserk tail; 0 from a server before them.
 	var code: int = 0
 	var cast_ms: int = 0
+	## Round 779: the used item's ref id on an accepted scroll (OURS: retail's
+	## 0xB04C names the slot and the type word and the client finds the ref
+	## through the slot), so the casting bar reads the item's name and Param1
+	## from the client's own table. 0 from a server before it.
+	var item_id: int = 0
 
 ## The reverse return scroll's option byte (round 778, READ: the message box
 ## kind 0x21's results 1/2/3 send 2/3/7, FUN_00797d90 0x798862..0x7988d8).
@@ -99,4 +104,22 @@ static func decode_result(data: PackedByteArray) -> Result:
 		return res
 	res.code = data.decode_u16(offset + 34)
 	res.cast_ms = data.decode_u32(offset + 36)
+	if offset + 44 > data.size():
+		return res
+	res.item_id = data.decode_u32(offset + 40)
 	return res
+
+## The casting bar's cancel (round 779, READ): retail's 0x705B with no body
+## (UI_SILKMALL::FUN_0081ee60 case 0). The server answers only a refusal,
+## 0xB05B {u8 2, u16 code} (GObjPC::FUN_00513ea0: 6, no scroll working),
+## which the client's FUN_008727a0 reads and shows nothing for; a cancel that
+## works is answered by the 0x30BF kind 0xb value 0.
+const OP_SCROLL_CANCEL := 0x705B
+const OP_SCROLL_CANCEL_RESULT := 0xB05B
+
+## 0xB05B's code, or -1 when it is not a refusal (result 1 would show
+## UIIT_MSG_TRANSITION_CANCEL_RESULT, which this server never sends).
+static func decode_cancel_result(data: PackedByteArray) -> int:
+	if data.size() >= 3 and data[0] == 2:
+		return data.decode_u16(1)
+	return -1

@@ -166,12 +166,13 @@ last return scroll was read. The reverse scroll does not set it.
 **The death point (READ).** `GObjPC::FUN_004e0330` copies the same fields into +0xdc..+0xe8 and
 +0xf0, called from CGObjPC vslot_306 (0x529b10) on death when the world's vslot 0x78 is 0.
 
-**The delay's unit: OPEN.** The PC's job manager (pc+0x1d8, `0x4a6990 -> 0x4065d0`) counts a job
-down by the elapsed GetTickCount milliseconds divided by 1000.0 (`fdiv` 0x406605) -- seconds, as
-berserk's 60.0 and a GM warp's 5.0 (0xb45b28) are. Read literally, Param1 1000 is 1000 seconds; but
-the high-speed return scroll's tooltip (also Param1 1000) says it "returns to the town immediately"
-and the beginner scroll's (30000) "time consuming". **OURS:** Param1 is milliseconds -- one second
-for every reverse return scroll.
+**The delay's unit: READ since round 779** (`return_scroll_cast.md`, section 2). Round 778 left it
+OPEN because the job manager counts seconds while Param1 reads like milliseconds; both are true. The
+server's item loader `RefObjItem::ExtractData` (0x6a3d50) divides a 3/3/3/1 or 3/3/3/3 row's Param1
+by 1000 (an integer division) before the use ever reads it, so the job gets whole seconds -- 1 s for
+every reverse return scroll, 30 s for `ITEM_ETC_SCROLL_RETURN_01` -- and the client's tooltip
+prints the same Param1 / 1000 as "Return time ... Second". Round 778's OURS "Param1 is
+milliseconds" gave the same lengths for every retail row (all are whole thousands).
 
 ## 6. The table (READ, `server_dep\silkroad\textdata\refoptionalteleport.txt`)
 
@@ -214,9 +215,10 @@ OpenSRO exports it as the teleport directory's optional fifth CSV, `optionaltele
   refused with 0x18f5, the world test's own code.
 - A cast whose character died, left the world or came back on another session is dropped.
 - The return scroll is modelled to the extent the reverse scroll needs: its use records the recall
-  point and its cast takes the character to its return point (`returnPointFor`). The thief-den
-  scrolls stay refused.
-- No 0x30bf broadcast of the scroll state; clients learn of the move from the zone change.
+  point and its cast takes the character to its return point (`returnPointFor`).
+- Round 779 (`return_scroll_cast.md`): the cast's stop, its 0x30bf kind 0xb, the casting bar, the
+  0x705B cancel, a death's cancel and the refusals the state makes are now modelled; the thief-den
+  scrolls are refused with their own code, 0x186a (no character is a thief).
 
 ## 8. Verification (MEASURED, round 778)
 

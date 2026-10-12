@@ -35,6 +35,9 @@ import (
 const (
 	fixtureReverseScroll = 3795
 	fixtureReturnScroll  = 61
+	// Round 779: ITEM_ETC_SCROLL_RETURN_THIEFDEN_01, 3/3/3/1, Param1 300000,
+	// Param2 0.
+	fixtureThiefDenScroll = 2128
 )
 
 // The map points: a field point in Donwhang's region (26265 = 102/153), a
@@ -60,6 +63,9 @@ type scrollRig struct {
 
 	mu      sync.Mutex
 	pending []func()
+	// seen is what came before a use's reply (round 779: the stop and the
+	// state's 0x30bf).
+	seen []*proto.Packet
 }
 
 func newScrollRig(t *testing.T, level int) *scrollRig {
@@ -74,9 +80,11 @@ func newScrollRig(t *testing.T, level int) *scrollRig {
 	items := refdata.NewMemStore()
 	if err := items.ImportItems(ctx, []refdata.Item{
 		{ID: fixtureReverseScroll, CodeName: "ITEM_MALL_REVERSE_RETURN_SCROLL", MaxStack: 50,
-			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 3, RestoreHP: 1000, RestoreHPPct: 1, CanUse: true},
+			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 3, RestoreHP: 1000, RestoreHPPct: 1, ReinforceRate1: 1, CanUse: true},
 		{ID: fixtureReturnScroll, CodeName: "ITEM_ETC_SCROLL_RETURN_01", MaxStack: 50,
-			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 1, RestoreHP: 30000, RestoreHPPct: 1, CanUse: true},
+			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 1, RestoreHP: 30000, RestoreHPPct: 1, ReinforceRate1: 1, CanUse: true},
+		{ID: fixtureThiefDenScroll, CodeName: "ITEM_ETC_SCROLL_RETURN_THIEFDEN_01", MaxStack: 50,
+			TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 1, RestoreHP: 300000, CanUse: true},
 	}); err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -94,13 +102,14 @@ func newScrollRig(t *testing.T, level int) *scrollRig {
 		t.Fatal(err)
 	}
 	rig.charID = c.ID
-	for _, id := range []int64{fixtureReverseScroll, fixtureReturnScroll} {
+	for _, id := range []int64{fixtureReverseScroll, fixtureReturnScroll, fixtureThiefDenScroll} {
 		if err := rig.inv.AddItem(ctx, c.ID, id, 5); err != nil {
 			t.Fatalf("add %d: %v", id, err)
 		}
 	}
 	eq := equipment.NewMemStore(inventory.NewMemStore(nil))
 	rig.caster = NewScrollCaster(rig.chars, eq, rig.hub, nil, nil)
+	t.Cleanup(func() { activeScrolls.CompareAndSwap(rig.caster, nil) })
 	rig.caster.after = func(_ time.Duration, f func()) {
 		rig.mu.Lock()
 		rig.pending = append(rig.pending, f)
@@ -184,8 +193,14 @@ func (rig *scrollRig) use(id int64, option byte, target uint32) *UseItemResult {
 		rig.t.Fatalf("no item %d in the bag", id)
 	}
 	p := rig.roundTrip(OpUseItem, clientUse("Aria", slot, option, target))
-	if p.Opcode != OpUseItemResult {
-		rig.t.Fatalf("reply op 0x%04x, want OpUseItemResult", p.Opcode)
+	// Round 779: an accepted scroll's 0xB023 and 0x30bf come before the
+	// reply, as retail's stop and state precede DoJob's answer.
+	for p != nil && p.Opcode != OpUseItemResult {
+		rig.seen = append(rig.seen, p)
+		p = rig.read(2 * time.Second)
+	}
+	if p == nil {
+		rig.t.Fatal("no OpUseItemResult")
 	}
 	res, err := DecodeUseItemResult(p.Data)
 	if err != nil {
