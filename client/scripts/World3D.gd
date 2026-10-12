@@ -8535,6 +8535,22 @@ func _apply_state_look(key: String, body: Node3D, old_mask: int, new_mask: int) 
 	StateLook.set_tint(body, w["tint"])
 	_set_body_clip_speed(body, StateLook.clip_speed(look))
 
+## An owner's body was (re)built: its abnormal states' looks go on it, as
+## when they came on (their effects, pulse and clip speed).
+func _state_look_resync(key: String) -> void:
+	var st: Dictionary = _abnormal_states.get(key, {})
+	if st.is_empty():
+		return
+	var parts := key.split(":")
+	if parts.size() != 2 or not parts[1].is_valid_int():
+		return
+	var kind := SkillNet.OWNER_MONSTER if parts[0] == "monster" else SkillNet.OWNER_CHARACTER
+	var body := _fx_owner_body(int(parts[1]), kind)
+	if body == null:
+		return
+	_state_looks.erase(key)
+	_apply_state_look(key, body, 0, int(st["mask"]))
+
 ## The clip speed abnormal states give bodies: skeleton instance id -> speed
 ## (only bodies not at 1.0), and this player's own.
 var _clip_speeds: Dictionary = {}
@@ -12177,7 +12193,28 @@ func _deco_body_of(caster: Node3D) -> Dictionary:
 				return {}
 			return {"body": String(gait["body"]), "group": String(gait["group"]), "own": false,
 				"skel": gait["skeleton"], "character": int(id)}
+	# A monster's cast (an MSKILL row): its own assembled body.
+	for id in _monster_bodies:
+		if _monster_bodies[id] == caster:
+			var a: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(id)
+			if a == null or a.skeleton == null or a.parsed == null:
+				return {}
+			return {"body": "", "group": "default", "own": false, "skel": a.skeleton, "assembled": a,
+				"monster": int(id)}
 	return {}
+
+## A monster's clip of `action_type` in `group`, as _deco_clip_info gives it.
+func _deco_monster_clip_info(a: SkinnedBsrAssembler.AssembledCharacter, group: String, action_type: int) -> Dictionary:
+	var anim := SkinnedBsrAssembler.animation_for(_data_pk2, a, action_type, group) if _data_pk2 != null else null
+	if anim == null:
+		return {}
+	var events: Array = []
+	var entry := a.parsed.animation_entry_for(action_type, group)
+	if entry != null:
+		for ev in entry.events:
+			if (ev as PackedInt32Array).size() >= 2 and (ev as PackedInt32Array)[1] == BsrReader.AnimationEntry.EVENT_HIT:
+				events.append(int((ev as PackedInt32Array)[0]))
+	return {"ms": anim.duration_ms, "events": events}
 
 ## The clip of `action_type` the decoration's body plays in `group`, as
 ## SkillDeco's clip_info wants it: {"ms", "events" (the clip's type-1 hit
@@ -12231,7 +12268,10 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 	if group == "":
 		group = String(b.get("group", "default"))
 	var body_code := String(b.get("body", ""))
+	var monster_body = b.get("assembled")
 	var info := func(t: int) -> Dictionary:
+		if monster_body != null:
+			return _deco_monster_clip_info(monster_body, group, t)
 		return _deco_clip_info(body_code, group, t) if body_code != "" else {}
 	var now := int(_deco_clock_ms)
 	var due := -1
@@ -12244,6 +12284,7 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 	var deco := SkillDeco.new(skill_id, plan, info, now, due)
 	var entry := {"deco": deco, "skill": skill_id, "code": code, "caster": caster, "target": target,
 		"body": body_code, "group": group, "own": bool(b.get("own", false)), "skel": b.get("skel"),
+		"assembled": monster_body,
 		"loops": [], "hits_done": 0, "hits": int(opts.get("hits", 1)), "on_hit": on_hit,
 		"on_end": opts.get("on_end", Callable()), "what": what}
 	_decos[caster.get_instance_id()] = entry
@@ -12356,6 +12397,16 @@ func _deco_land_hit(e: Dictionary, h: int) -> void:
 ## (the WAIT hold).
 func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) -> void:
 	var body := String(e["body"])
+	var monster_body = e.get("assembled")
+	if monster_body != null:
+		var manim: BanReader.ParsedAnimation = SkinnedBsrAssembler.animation_for(_data_pk2, monster_body,
+			action_type, String(e["group"])) if _data_pk2 != null else null
+		if manim != null and is_instance_valid(e["skel"]):
+			print("CAST ANIM: %s %s action type %d on a monster%s" % [e["code"], SkillAudio._phase_name(phase),
+				action_type, " looping" if loop else ""])
+			_play_once(e["skel"], manim)
+			_mark_one_shot_loop(e["skel"], loop)
+		return
 	if body == "":
 		return
 	var anim := _body_animation_for(body, action_type, String(e["group"]))
@@ -24258,6 +24309,15 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		_pending_skill_hit_code = ""
 		_own_skill_result(result, cast_id, cast_code)
 		return
+	# A self cast that dealt damage (a Target_Required 0 attack row, the spear
+	# spin): its answer is a blow, drawn by the cast's decoration as well.
+	if not _fx_self_cast.is_empty() and not bool(_fx_self_cast.get("begun", false)) \
+			and result.target_type_echoed and result.target_type != SkillNet.TARGET_ENTITY:
+		var self_id := int(_fx_self_cast["skill"])
+		var self_code := String(_fx_self_cast.get("code", ""))
+		_fx_self_cast = {}
+		_own_skill_result(result, self_id, self_code)
+		return
 	_released_attack = {}
 	# One line per exchange, so a render's log says what the fight did
 	# without reading it off a label. t is the animation clock the death
@@ -24961,6 +25021,8 @@ func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 ## new body with the start effect skipped (FUN_009cf270 -> FUN_00a54020 with
 ## arg4 1, READ): only the ACT_L aura is put back here, no cast or act.
 func _fx_resync_owner(key: String, why: String) -> int:
+	# Round 785: the owner's abnormal states on its (new) body too.
+	_state_look_resync(key)
 	var roster: BuffRoster = NetClient.get("buff_roster") as BuffRoster
 	if roster == null:
 		return 0
@@ -26162,7 +26224,7 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 		_face_toward(body, to)
 		if _deco_on(body).is_empty():
 			_start_deco(body, moved.skill_id, null, "player %d's move" % moved.character_id, {"due_ms": -1})
-		_start_skill_slide(body, to, SKILL_MOVE_SPEED, SKILL_MOVE_IMAGE_STEP, "skill %d" % moved.skill_id,
+		_start_skill_slide(body, to, _skill_move_speed(moved.skill_id), SKILL_MOVE_IMAGE_STEP, "skill %d" % moved.skill_id,
 			_other_skill_move_arrived.bind(moved.character_id, body, to))
 		print("SKILL move handled: player %d slides from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d" % [
 			moved.character_id, from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id])
@@ -26198,7 +26260,7 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	# The server already has the player there, with no leg (round 749: its
 	# Relocate ended one); do not send it back.
 	_note_position_sent()
-	_start_skill_slide(player, to, SKILL_MOVE_SPEED, SKILL_MOVE_IMAGE_STEP, "skill %d" % moved.skill_id,
+	_start_skill_slide(player, to, _skill_move_speed(moved.skill_id), SKILL_MOVE_IMAGE_STEP, "skill %d" % moved.skill_id,
 		_own_skill_move_arrived.bind(to, moved.skill_id))
 	print("SKILL move handled: this player slides from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units at %.0f u/s, by skill %d" % [
 		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), SKILL_MOVE_SPEED, moved.skill_id])
@@ -26206,6 +26268,19 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 ## READ: the move's speed and the afterimage spacing (0xdcc19c, 0xd88108).
 const SKILL_MOVE_SPEED := 500.0
 const SKILL_MOVE_IMAGE_STEP := 20.0
+
+## How a skill's move goes: SKILL_MOVE_SPEED for a 'tele' row (the 0xB070
+## move flag 8, the slide), 0 -- put there at once -- for a 'tel2' row (READ:
+## FUN_00a54be0's flag 2 sets the point and puts the caster there,
+## GlobalDataManager::FUN_009e0d50; the server lane: tel2 sets 2). A row the
+## catalog does not know slides (OURS).
+func _skill_move_speed(skill_id: int) -> float:
+	if _hud_buff_board == null or _hud_buff_board.catalog == null:
+		return SKILL_MOVE_SPEED
+	var row: Dictionary = _hud_buff_board.catalog.info(skill_id)
+	if (row.get("tele", []) as Array).is_empty() and not (row.get("tel2", []) as Array).is_empty():
+		return 0.0
+	return SKILL_MOVE_SPEED
 
 ## This player's Ghost Walk reached its point: it stands there, on the
 ## landing's footing, and the cast ends.
@@ -26253,8 +26328,12 @@ func _start_skill_slide(body: Node3D, to: Vector3, speed: float, image_step: flo
 			if _monster_bodies[id] == body:
 				_stop_monster_motion(int(id))
 				break
-	_skill_slides[key] = {"body": body, "from": body.global_position, "to": to, "speed": maxf(speed, 1.0),
+	var s := {"body": body, "from": body.global_position, "to": to, "speed": maxf(speed, 1.0),
 		"image_step": image_step, "since_image": 0.0, "why": why, "on_arrive": on_arrive}
+	_skill_slides[key] = s
+	if speed <= 0.0:
+		# A put: there at once.
+		_finish_skill_slide(s, true)
 
 ## Whether this player is being slid by a skill (its own walk waits).
 func _own_slide_active() -> bool:

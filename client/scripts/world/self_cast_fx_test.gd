@@ -67,6 +67,7 @@ func _initialize() -> void:
 			_test_ghost_walk(world)
 			_test_other_owners(world)
 			_test_sit_id(world)
+			_test_states(world)
 			for sig in handlers:
 				_net.disconnect(sig, Callable(world, handlers[sig]))
 			SkillEffects.reset()
@@ -109,6 +110,9 @@ func _tables() -> void:
 	text += _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "keep.efp")
 	text += _row("TEST_GHOST_A", "WAIT", 0, "AT_LOOP", "move_wait.efp")
 	text += _row("TEST_SELFHEAL_A", "ACT_S", 0, "AT_ONE_FOLLOW", "heal_burst.efp")
+	text += _row("PARAM_BU", "ACT_L", 0, "AT_LOOP", "status_burn.efp")
+	text += _row("PARAM_FZ", "ACT_L", 0, "AT_LOOP", "icing_on.efp")
+	text += _row("PARAM_FZ", "DEACT", 0, "AT_ONE_FOLLOW", "icing_off.efp")
 	SkillEffects.reset()
 	# skilldata timings: the Ghost Walk row's prep/cast are 0 (skills_spec
 	# §1.5), so without the clip's hold its WAIT would end at once.
@@ -371,3 +375,43 @@ func _test_sit_id(world: Node) -> void:
 		"with only the sit answer's id, this player's buff aura is on the player (the board's check)")
 	_buff_end(3131, [81], 0)
 	_net.set("own_character_id", OWN)
+
+## Round 785 (StateLook): a monster's abnormal states on its body -- the
+## PARAM_ decoration's loop while the state holds, its DEACT when it goes,
+## and the clip speed.
+func _test_states(world: Node) -> void:
+	var mob := Node3D.new()
+	world.add_child(mob)
+	var skel := Skeleton3D.new()
+	skel.add_bone("Bip01")
+	mob.add_child(skel)
+	(world.get("_monster_bodies") as Dictionary)[777] = mob
+	_made.clear()
+	var st := StatusNet.ObjectStatus.new()
+	st.owner_kind = 1
+	st.owner_id = 777
+	st.mask = 0x8 | 0x1
+	world.call("_on_object_status", st)
+	var burn := _made_named("status_burn.efp")
+	var ice := _made_named("icing_on.efp")
+	_check(burn.size() == 1 and _live(burn[0]) and burn[0].get_parent() == mob and bool(burn[0].loop),
+		"burn on: PARAM_BU's loop on the monster")
+	_check(ice.size() == 1 and _live(ice[0]), "freeze on: PARAM_FZ's loop")
+	_check(is_zero_approx(float((world.get("_clip_speeds") as Dictionary).get(skel.get_instance_id(), 1.0))),
+		"frozen: the monster's clips hold (clip speed 0)")
+	st = StatusNet.ObjectStatus.new()
+	st.owner_kind = 1
+	st.owner_id = 777
+	st.mask = 0x8
+	world.call("_on_object_status", st)
+	_check(not _live(ice[0]) and _made_named("icing_off.efp").size() == 1, "freeze off: its loop ends and DEACT plays")
+	_check(_live(burn[0]), "the burn stays")
+	_check(not (world.get("_clip_speeds") as Dictionary).has(skel.get_instance_id()), "and the clips run again")
+	st = StatusNet.ObjectStatus.new()
+	st.owner_kind = 1
+	st.owner_id = 777
+	st.mask = 0
+	world.call("_on_object_status", st)
+	_check(not _live(burn[0]), "burn off: its loop ends")
+	(world.get("_monster_bodies") as Dictionary).erase(777)
+	mob.free()

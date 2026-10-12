@@ -454,7 +454,12 @@ In order. Each is checked off here when it ships in a release, with its round in
       type 0), so the departure costs the hand-off on the 463 type-1 true heads. (Round 502's "1,012 chain heads"
       was the type-1 rows with a non-zero column 9: 463 heads and 549 intermediate links.) Next:
       resolve each link's blow on its own timing, then apply the last link's hand-off rule.
-- [x] **Self-cast and ground-cast skills (client) -- round 617.** Grass Walk, the imbues and every
+- [x] **Self-cast and ground-cast skills (client) -- round 617; round 785 replaced the ground pick.**
+      Round 785 (READ, `FUN_0081ba10`): a `tele` / `tel2` row casts at once at the point under the
+      cursor -- retail has no pick mode, so the cross-cursor pick below is gone -- and OpSkillMove
+      slides the caster there at 500 u/s with its WAIT clip, effect and afterimages
+      (`FUN_00a51320` / `FUN_00a50f70`) instead of snapping it. Round 617's note follows.
+      Grass Walk, the imbues and every
       Target_Required 0 row cast with nothing selected (OpUseSkill targetType 0); Ghost Walk picks a
       ground point (targetType 2; right click / Escape cancels); OpBuffStart/End/OpSkillMove are
       decoded (`NetClient.buff_started` / `buff_ended` / `skill_moved`, `send_buff_cancel`), the
@@ -2814,10 +2819,14 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       client's walked point within its clamp; what retail does when truncation carries the landing
       over the edge it stopped at (ours keeps the walked stop); which packet tells the clients of the
       move; `tele` value[0] (500) is unread; the move's duration (a snap).
-- [ ] **Skill body animations from skillaniset2 for targeted casts** (round 616-618 integration found
-      the link, `docs/protocol/BSR_FORMAT.md`): self/ground casts use it; targeted casts still use the
-      clip-name route and the swing. Needs the READY/SHOT phase timing (`FUN_00a54f00`'s later
-      phases) and the per-deco pick among several entries (`+0xe4` byte).
+- [x] **Skill body animations from skillaniset2 for every cast -- round 785.** `SkillDeco` runs
+      retail's decoration (`FUN_00a54f00` / `FUN_00a534d0` / `FUN_00a52fe0`): the record's READY,
+      WAIT and SHOT clips in its AniGroup, the per-cast pick (`+0xe4` = rand()), effect groups on the
+      clips' hit events, hits at the DMG groups. The clip-name route and the weapon-swing stand-in
+      are gone. MEASURED: every clip the China (464) and Europe (399) records ask for resolves in
+      the bodies (`tools/probe_skill_deco_coverage.gd`). Still OPEN: the order READY and WAIT show
+      in (retail starts WAIT first, READY over it -- here READY then the WAIT loop); the Hide
+      Weapon column; the skill window's re-use sweep (slot type 0x49, READ in `FUN_0067cfb0`).
 - [x] **The recast rule's other branches** (round 636): all of FUN_0059d870 read and built -- the
       `dttp` and `efr` kind-2 (`+0x290`) branches, and the book's state bit set that Action_Overlap
       and `ovl2` fill (`SkillBook::SetGroupBits` 0x59dc00 / `FUN_0059db10`). Fire Protection no longer
@@ -2969,9 +2978,13 @@ Still open, by the files each would add:
 - **Link details**: the LinkMode controller (none of the three Link routines reads it), and
   whether the reversed-winding inference that decides which face of a Link strip is culled
   (cull 3: 17 LinkObj and 4 LinkPipe nodes) matches a retail render.
-- **The flight of AT_MOV_\* rows** (projectiles). They play at the caster for now. MovType and
-  the Act Option columns are unread.
-- **The skill phase clips.** Retail advances READY → WAIT → SHOT on each phase clip's end, and
+- **The flight of AT_MOV_\* rows** (projectiles): round 785 flies them from the caster's StartBone
+  to the target's TargetBone at the mean of MovTypeSpeed's last two values (INFERRED), the DMG
+  row's hit landing on arrival. Still OPEN: the mover itself (MOV_UPR's arc, MOV_ROUND,
+  MOV_PIERCE, the first value), and the Act Option column (Ghost Walk's READY row carries
+  `true,0,0,10,1000,false`; the afterimages' look and life are OURS).
+- **The skill phase clips -- DONE (round 785, SkillDeco).** The note below is round 620's.
+  Retail advances READY → WAIT → SHOT on each phase clip's end, and
   fires StartEvent ≥ 1 on the clip's animation events (IDecoSkill `FUN_00a534d0` and
   `FUN_00a59970`). The client has no per-phase clips. `SkillEffects.cast` times the phases from
   skilldata's Action_PreparingTime and Action_CastingTime (INFERRED) for targeted casts. Self and
