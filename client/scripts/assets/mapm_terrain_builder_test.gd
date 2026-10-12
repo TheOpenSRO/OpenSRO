@@ -258,7 +258,7 @@ func _test_base_drawn_first() -> void:
 				var mat := m.surface_get_material(i) as StandardMaterial3D
 				if mat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
 					overlays += 1
-					overlay_default = overlay_default and mat.render_priority == WorldFog.UNDER_PASS_PRIORITY
+					overlay_default = overlay_default and mat.render_priority == WorldFog.GROUND_OVERLAY_PRIORITY
 				else:
 					passes += 1
 					lowest_pass = mini(lowest_pass, mat.render_priority)
@@ -266,7 +266,7 @@ func _test_base_drawn_first() -> void:
 				"case %d, %s: the base's render priority (%d) is below every one of its %d opaque passes' (lowest %d)" % [
 					n, pair[0], base.render_priority if base != null else 999, passes, lowest_pass])
 			_check(overlays == 0 or overlay_default,
-				"case %d, %s: the %d overlays are drawn before the fog pass (render priority %d, round 702)" % [n, pair[0], overlays, WorldFog.UNDER_PASS_PRIORITY])
+				"case %d, %s: the %d overlays are drawn before the water and the fog pass (render priority %d, rounds 702 and 780)" % [n, pair[0], overlays, WorldFog.GROUND_OVERLAY_PRIORITY])
 	# The data carries which surface is the base: only surface 0.
 	var marked: Array[int] = []
 	var surfaces := MapmTerrainBuilder.build_full_region_surfaces_textured(region, cases[0][0])

@@ -57,10 +57,11 @@ func _initialize() -> void:
 	_check(absf(WorldFog.linear_to_srgb(lin.g) - jangan.g) < 0.002, "under the linear tone map it is the decoded colour")
 
 	# The transparent order: cloud layer, then what lies on opaque ground, then the pass, then the rest.
-	_check(-128 < WorldFog.UNDER_PASS_PRIORITY and WorldFog.UNDER_PASS_PRIORITY < ShadowCatcher.PRIORITY
+	_check(-128 < WorldFog.GROUND_OVERLAY_PRIORITY and WorldFog.GROUND_OVERLAY_PRIORITY < WorldFog.UNDER_PASS_PRIORITY
+		and WorldFog.UNDER_PASS_PRIORITY < ShadowCatcher.PRIORITY
 		and ShadowCatcher.PRIORITY < WorldFog.PASS_PRIORITY and WorldFog.PASS_PRIORITY < 0,
-		"the transparent order: cloud layer (-128), the ground's overlays and water (%d), Detail's catcher (%d), the fog pass (%d), every default transparent (0)" % [
-			WorldFog.UNDER_PASS_PRIORITY, ShadowCatcher.PRIORITY, WorldFog.PASS_PRIORITY])
+		"the transparent order: cloud layer (-128), the ground's overlays (%d), the water (%d), Detail's catcher (%d), the fog pass (%d), every default transparent (0)" % [
+			WorldFog.GROUND_OVERLAY_PRIORITY, WorldFog.UNDER_PASS_PRIORITY, ShadowCatcher.PRIORITY, WorldFog.PASS_PRIORITY])
 	var pass_mi := WorldFog.build_pass(false)
 	var pmat := pass_mi.material_override as ShaderMaterial
 	_check(pmat != null and pmat.render_priority == WorldFog.PASS_PRIORITY and pass_mi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
@@ -121,6 +122,11 @@ func _initialize() -> void:
 	var still := MapmWater.still_material(null)
 	_check(water.render_priority == WorldFog.UNDER_PASS_PRIORITY and still.render_priority == WorldFog.UNDER_PASS_PRIORITY,
 		"both water surfaces are drawn before the pass, so it fogs them with the ground below")
+	# Round 780: after every terrain overlay, whatever the depth sort says
+	# (retail draws the terrain's passes, then the water: Map::FUN_00a24e30).
+	_check(water.render_priority > WorldFog.GROUND_OVERLAY_PRIORITY and still.render_priority > WorldFog.GROUND_OVERLAY_PRIORITY,
+		"both water surfaces are drawn after the terrain's overlays (priority %d over %d), so a lake bed's overlays never paint over its water" % [
+			water.render_priority, WorldFog.GROUND_OVERLAY_PRIORITY])
 	# A blended MTRL mod fogs itself; an opaque one is left to the pass.
 	var blended := ObjectLoader._mod_shader("back", "mix", false)
 	var opaque := ObjectLoader._mod_shader("back", "opaque", true)

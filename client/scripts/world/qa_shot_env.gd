@@ -187,3 +187,83 @@ static func report_patches(world: Node, shot: String) -> void:
 			hi = Vector2(maxf(hi.x, s.x), maxf(hi.y, s.y))
 		print("QA PATCH %s %s %.0f %.0f %.0f %.0f dist %.1f%s" % [shot, parts[0], lo.x, lo.y, hi.x, hi.y,
 			cam.global_position.distance_to(c), " behind" if behind else ""])
+
+## OPENSRO_QA_WATER_SORT=1 (round 780): at every `QA SHOT`, the order the
+## transparent pass draws each region's terrain overlays and water in. Godot
+## sorts its alpha list by render priority, then far to near by the distance
+## from the camera to each instance's AABB centre, less its sorting offset
+## (READ, Godot 4.7.2 render_forward_clustered.cpp `_fill_render_list` and
+## `SortByReverseDepthAndPriority`; the Compatibility renderer the same). One
+## line per terrain patch and water surface in view:
+## `QA WATER SORT <shot> <kind> <region> priority <p> depth <d>`, then
+## `QA WATER ORDER <shot> water <region> drawn before N overlay patch(es)
+## [...]` -- each patch whose overlays share or follow the water's place in
+## the list, i.e. paint over it where they lie under it.
+static func report_water_sort(world: Node, shot: String) -> void:
+	if OS.get_environment("OPENSRO_QA_WATER_SORT") == "":
+		return
+	var cam: Camera3D = world.get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var eye := cam.global_position
+	var frustum := cam.get_frustum()
+	var waters: Array = []
+	var patches: Array = []
+	for group in (world as Node).get_children():
+		if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+			continue
+		var region := String(group.name).trim_prefix("RealTerrain_")
+		for child in (group as Node).get_children():
+			var mi := child as MeshInstance3D
+			if mi == null or mi.mesh == null or not mi.is_visible_in_tree():
+				continue
+			var kind := String(mi.name)
+			if kind != "SubPatch" and not kind.begins_with("Water"):
+				continue
+			var aabb := mi.global_transform * mi.get_aabb()
+			if not _aabb_in_frustum(aabb, frustum):
+				continue
+			var depth := eye.distance_to(aabb.get_center()) - mi.sorting_offset
+			var priority := 0
+			var overlays := 0
+			if kind == "SubPatch":
+				# The overlays' priority: the lowest transparent surface's.
+				priority = 1 << 30
+				for s in range(mi.mesh.get_surface_count()):
+					var m := mi.get_active_material(s) as BaseMaterial3D
+					if m != null and m.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+						overlays += 1
+						priority = mini(priority, m.render_priority)
+				if overlays == 0:
+					continue
+				patches.append([region, priority, depth])
+			else:
+				var mat := mi.get_active_material(0)
+				priority = mat.render_priority if mat != null else 0
+				waters.append([region, priority, depth, kind])
+			print("QA WATER SORT %s %s %s priority %d depth %.1f centre (%.1f, %.1f, %.1f)%s" % [
+				shot, kind, region, priority, depth, aabb.get_center().x, aabb.get_center().y, aabb.get_center().z,
+				(" overlays %d" % overlays) if kind == "SubPatch" else ""])
+	for w in waters:
+		var after := PackedStringArray()
+		for p in patches:
+			# Drawn after the water: a higher priority, or the same priority
+			# and nearer (ties are the unstable sort's to break).
+			if p[1] > w[1] or (p[1] == w[1] and p[2] <= w[2]):
+				after.append("%s (%+.1f)" % [p[0], p[2] - w[2]])
+		print("QA WATER ORDER %s %s %s drawn before %d overlay patch(es)%s" % [
+			shot, w[3], w[0], after.size(), (": " + ", ".join(after)) if not after.is_empty() else ""])
+
+## Whether an AABB can touch the frustum: no plane has all eight corners
+## outside it (a region's box usually has every corner off screen while
+## its middle is in view).
+static func _aabb_in_frustum(aabb: AABB, frustum: Array[Plane]) -> bool:
+	for pl in frustum:
+		var outside := true
+		for corner in range(8):
+			if not pl.is_point_over(aabb.get_endpoint(corner)):
+				outside = false
+				break
+		if outside:
+			return false
+	return true

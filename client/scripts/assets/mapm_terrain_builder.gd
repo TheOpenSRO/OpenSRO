@@ -268,8 +268,11 @@ static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, l
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 		# Drawn before the fog pass, which then fogs it with the opaque pass
-		# under it -- the same depth (round 702, WorldFog).
-		mat.render_priority = WorldFog.UNDER_PASS_PRIORITY
+		# under it -- the same depth (round 702, WorldFog) -- and before the
+		# water, as retail draws every terrain pass before it (round 780,
+		# WorldFog.GROUND_OVERLAY_PRIORITY): at the water's own priority the
+		# depth sort put a lake bed's overlays over its water.
+		mat.render_priority = WorldFog.GROUND_OVERLAY_PRIORITY
 	if lightmap != null:
 		# Retail's lightmap pass multiplies the drawn ground by the
 		# lightmap term (lightmap_term). A detail layer in MUL mode multiplies
