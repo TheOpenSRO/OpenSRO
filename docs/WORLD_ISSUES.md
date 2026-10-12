@@ -7532,10 +7532,11 @@ retail), MEASURED, INFERRED, OURS, OPEN.
   record `r8001 x1011 z-862` against the player's dungeon position; the cave's corridors ended
   the walk at 836. MEASURED disc centre (10x10 at 32,152): (156,122,91) at level 0 (the face),
   (83,109,175) at 1, (68,106,193) at 2, (55,104,207) at 3 -- the face under the (14,96,255) art
-  at alpha 130, 158 and 181 (computed 84/109/175, 68/106/192, 55/104/207). Screenshots:
-  `/var/tmp/r780party/dg_steps.png` (the box at levels 0-3, frames 450/1600/1780/2200, x3),
-  `dg_level3_full.png`, `dg_before_620.png`; the field's `/var/tmp/r780party/cmp.png` (level 0
-  and 3).
+  at alpha 130, 158 and 181 (computed 84/109/175, 68/106/192, 55/104/207). Screenshots on
+  the box: `/var/tmp/r780party/dg_steps.png` (the box at levels 0-3, x3), `dg_level3_full.png`,
+  `dg_before_620.png` (the base at level 5, x3), the field's `cmp.png` (levels 0 and 3, x3), and
+  the full frames in `keep/` (`after_f450/1600/1780/2200`, `before_f560/620`,
+  `field_f300/1500`); the logs are `dg.out`, `dg_before.out` and `live.out` there.
 - **QA aids (OURS):** `partybot -zone <label>` sends the zone box's 0x0026 on entry, so a bot can
   stand in a dungeon; `HudQuickParty.describe()` (the `qplog` line) prints each member's
   distance, whether it came from the body or the record, and the player's region and position.
