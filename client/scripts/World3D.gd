@@ -1866,7 +1866,12 @@ func _ready() -> void:
 	# state arrives, so a first cast does not (round 620 review).
 	NetClient.skill_state_result.connect(func(state) -> void:
 		if state != null and state.error == "":
-			SkillEffects.preload_skills(state.known_skills.keys()))
+			SkillEffects.preload_skills(state.known_skills.keys())
+			# Round 781: learning or raising spends SP; the underbar showed
+			# the last stats' total until the next stats update (MEASURED:
+			# 9,000,000 there, 8,996,066 in the Skill window).
+			if _hud_underbar != null:
+				_hud_underbar.set_sp(state.skill_points))
 	# The auras follow OpBuffStart / OpBuffEnd through _on_buff_started /
 	# _on_buff_ended (connected below), after the owner is settled
 	# (round 616-620 integration).
