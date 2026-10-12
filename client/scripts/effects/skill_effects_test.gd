@@ -79,6 +79,7 @@ func _run() -> void:
 		return
 	var sd := _skill_row(90, "TEST_IMBUE_A_01", "TEST_IMBUE_A", 0)
 	sd += _skill_row(3, "TEST_SMASH_A_01", "TEST_SMASH_A", 0)
+	sd += _skill_row(4, "TEST_STUN_A_01", "TEST_STUN_A", 0)
 	skills = SkillAudio.parse_skills(_utf16(sd))
 	var header := "//SkillName11\tSkillEffectID\tAniType\tStartEvent\tDMG Event\tDamageType\tScale\tID\tAttach\tTrade\tKill\tCreateCnt\tFade\tActType\tMovTypeSpeed\tParam\tAct Option\tObj Path\tObjName\tStartBone\tStartOffset\tTargetBone\tTargetOffset\tObjName2\tRotate\tScript\tSndBegin\tSndEnd\r\n"
 	var text := "#section characterInfo\r\n" + _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "x\\", "wrong.efp", "none", "0,0,0")
@@ -89,6 +90,7 @@ func _run() -> void:
 	text += _row("TEST_IMBUE_A", "SHOT", 1, "AT_ONE_FOLLOW", "none", "none", "none", "0,0,0")
 	text += _row("TEST_SMASH_A", "SHOT", 1, "AT_DMG_POS", "hiteffect\\", "hit.efp", "none", "0,10,-13")
 	text += _row("TEST_IMBUE_A", "WAIT", 0, "AT_LOOP", "skill\\china\\", "wait.efp", "none", "0,0,0")
+	text += _row("TEST_STUN_A", "SHOT", 1, "AT_STOP", "monster\\", "stun.efp", "none", "0,0,0")
 	rows = se.parse_rows(_utf16(text))
 	_check(rows.has("TEST_IMBUE_A") and (rows["TEST_IMBUE_A"] as Array).size() == 4,
 		"only skilleffectset rows that name an .efp are kept (4 for the imbue)")
@@ -122,6 +124,30 @@ func _run() -> void:
 	_check(fx.size() == 1 and (fx[0] as EfpEffect).placed_at().is_equal_approx(Vector3(3, 4, 5)),
 		"... placed at the StartBone (%s)" % (str((fx[0] as EfpEffect).placed_at()) if fx.size() == 1 else "none"))
 	_check(fx.size() == 1 and not (fx[0] as EfpEffect).loop, "AT_ONE_FOLLOW plays once")
+
+	# Round 785: the ActType values are retail's (READ: the name table at
+	# 0x00ec7280 the row parser maps the column through), and only AT_LOOP is
+	# kept; AT_STOP plays once where it was cast (IDecoSkill::FUN_00a513a0).
+	_check(se.ACT_TYPES.find("AT_STOP") == 0 and se.ACT_TYPES.find("AT_ONE_FOLLOW") == 1
+		and se.ACT_TYPES.find("AT_LOOP") == 2 and se.ACT_TYPES.find("AT_TARGET") == 3
+		and se.ACT_TYPES.find("AT_DMG_POS") == 6 and se.ACT_TYPES.find("AT_MOV_PIERCE") == 11
+		and se.AT_STOP == 0 and se.AT_ONE_FOLLOW == 1 and se.AT_LOOP == 2,
+		"ActType values: AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2, AT_TARGET 3 ... AT_MOV_PIERCE 11")
+	_check(se.kept_act(se.AT_LOOP) and not se.kept_act(se.AT_STOP) and not se.kept_act(se.AT_ONE_FOLLOW),
+		"only AT_LOOP is kept")
+	var stop: Array = se.hit(caster, null, 4)
+	_check(stop.size() == 1 and not (stop[0] as EfpEffect).loop and (stop[0] as EfpEffect).static_host,
+		"AT_STOP plays once and is placed once")
+	if stop.size() == 1:
+		var at0: Vector3 = (stop[0] as EfpEffect).placed_at()
+		var at_follow: Vector3 = (fx[0] as EfpEffect).placed_at()
+		caster.position += Vector3(30, 0, 0)
+		(stop[0] as EfpEffect)._process(0.05)
+		(fx[0] as EfpEffect)._process(0.05)
+		_check((stop[0] as EfpEffect).placed_at().is_equal_approx(at0) and (fx[0] as EfpEffect).placed_at().is_equal_approx(at_follow + Vector3(30, 0, 0)),
+			"... the AT_STOP effect stays where it was cast while the AT_ONE_FOLLOW one follows the body")
+		caster.position -= Vector3(30, 0, 0)
+		(stop[0] as EfpEffect).stop()
 
 	# An equipment change frees the skeleton: the aura stays and moves to the new one.
 	var aura0: Array = se.attach_aura("character:1", 5, 90, caster)

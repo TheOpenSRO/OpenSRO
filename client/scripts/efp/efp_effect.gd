@@ -69,7 +69,7 @@ class_name EfpEffect
 
 signal effect_finished
 
-## AT_LOOP / AT_STOP: the effect is KEPT (retail's keep flag +0x49): its
+## AT_LOOP (round 785: not AT_STOP, READ): the effect is KEPT (retail's keep flag +0x49): its
 ## root particles are revived at age 0 instead of dying, so their child
 ## emitters cycle on while the older particles finish -- one continuous
 ## effect, never a restart (READ, round 623; EfpSim "Dying, and the kept

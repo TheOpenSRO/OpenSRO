@@ -67,7 +67,7 @@ class_name EfpSim
 ## at 0x00c86367, the program list at 0x00c86311); the emission (+0xb4 list,
 ## 0x00c84e70) and the program (+0x130 list, 0x00c84f90) run before them.
 ## A KEPT effect (the keep flag +0x49, set by IEasyFxEffect slot 4 with 1:
-## AT_LOOP and AT_STOP) never lets its ROOT node's particles die: after each
+## AT_LOOP; round 785: not AT_STOP) never lets its ROOT node's particles die: after each
 ## update, CEFEffect::vslot_000 (0x00caf5ec-0x00caf622) walks the ROOT
 ## updater's death queue only, clears each particle's dying flag, sets its
 ## age to 0 and empties the queue. The particle lives on; its child
@@ -420,7 +420,7 @@ var dropped := 0 ## spawns refused by a cap
 var spawned := 0
 ## The local player's own effect: may use the RESERVE share of MAX_TOTAL.
 var reserved := false
-## The kept flag (+0x49; AT_LOOP / AT_STOP): the root node's particles are
+## The kept flag (+0x49; AT_LOOP): the root node's particles are
 ## revived at age 0 instead of dying (READ, see "Dying, and the kept effect").
 var keep := false
 ## How many times a kept effect revived a root particle (tests, census).

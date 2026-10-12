@@ -17,6 +17,10 @@ extends SceneTree
 ## second along +x; the world is in native units (World3D's run speed 50).
 ## --native simulates through EfpSimNative where the library is loaded.
 ##
+## --census plays every .efp the skilleffectset rows name (once per path and
+## kept-or-not; --only=<substring> narrows it) and prints one SUMMARY line
+## each, then CENSUS totals; with --quiet only the totals.
+##
 ## Each run prints a SUMMARY line: frames until the first drawn particle,
 ## frames it lasted (or "running"), the peak and the per-frame minimum of
 ## drawn particles once started, gap frames (nothing drawn after it started),
@@ -30,6 +34,16 @@ var _tree := false
 var _trace := false
 var _keep := -1
 var _native := false
+var _census := false
+var _quiet := false
+var _only := ""
+## Census totals: files, those whose drawn particles ever went past FAR_TRAIL
+## from the host, the worst such distance, drawn particles following a dead
+## ancestor (summed over frames), pops, and frames with particles outside the
+## draw box.
+var _t := {"files": 0, "trail_files": 0, "far_max": 0.0, "orphan_frames": 0, "pop_files": 0,
+	"outside_files": 0, "loadfail": 0, "never_drawn": 0}
+const FAR_TRAIL := 100.0
 
 func _init() -> void:
 	var dir := OS.get_environment("OPENSRO_PK2_DIR")
@@ -57,6 +71,12 @@ func _init() -> void:
 			_trace = true
 		elif a == "--native":
 			_native = true
+		elif a == "--census":
+			_census = true
+		elif a == "--quiet":
+			_quiet = true
+		elif a.begins_with("--only="):
+			_only = a.substr(7).to_lower()
 	call_deferred("_run", dir, skills, files)
 
 func _run(dir: String, skills: PackedStringArray, files: PackedStringArray) -> void:
@@ -75,15 +95,33 @@ func _run(dir: String, skills: PackedStringArray, files: PackedStringArray) -> v
 		for s in skills:
 			for r in SkillAudio.effect_rows_in(SkillAudio._skills, rows, int(s)):
 				var act := int(r["act"])
-				var kept := act == SkillEffects.AT_LOOP or act == SkillEffects.AT_STOP
+				var kept := _kept(act)
 				var label := "skill %s %s/%d %s bone %s offset %s" % [s, SkillAudio._phase_name(int(r["ani"])),
 					int(r["event"]), SkillEffects.ACT_TYPES[act] if act >= 0 else "?", r["bone"], r["offset"]]
 				print("ROW " + label + " " + String(r["path"]))
 				jobs.append([String(r["path"]), kept, label])
 	for f in files:
 		jobs.append([f, _keep == 1, "file"])
+	if _census:
+		var entry := ObjectLoader.find_file(media, SkillEffects.SKILLEFFECT_PATH)
+		var rows := SkillEffects.parse_rows(media.read_file(entry))
+		var seen := {}
+		for id in rows:
+			for r in rows[id]:
+				var kept := _kept(int(r["act"]))
+				var path := String(r["path"])
+				var key := "%s|%s" % [path.to_lower(), kept]
+				if seen.has(key) or (_only != "" and path.to_lower().find(_only) < 0):
+					continue
+				seen[key] = true
+				jobs.append([path, kept, "census"])
+		jobs.sort_custom(func(a, b): return String(a[0]) < String(b[0]))
 	for j in jobs:
 		_probe(String(j[0]), bool(j[1]) if _keep < 0 else _keep == 1, String(j[2]), particles)
+	if _census:
+		print("CENSUS fps %.0f speed %.0f seconds %.1f: %d runs, %d did not load, %d never drew; drawn past %.0f units from the host in %d (worst %.1f); %d drawn particle-frames following a dead ancestor; %d with a pop; %d with drawn particles outside the draw box" % [
+			_fps, _speed, _seconds, _t["files"], _t["loadfail"], _t["never_drawn"], FAR_TRAIL, _t["trail_files"],
+			_t["far_max"], _t["orphan_frames"], _t["pop_files"], _t["outside_files"]])
 	media.close()
 	particles.close()
 	quit(0)
@@ -91,7 +129,9 @@ func _run(dir: String, skills: PackedStringArray, files: PackedStringArray) -> v
 func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> void:
 	var fx := EfpEffect.create(path, particles)
 	if fx == null:
-		print("LOADFAIL %s (%s)" % [path, EfpEffect.last_error])
+		_t["loadfail"] += 1
+		if not _quiet:
+			print("LOADFAIL %s (%s)" % [path, EfpEffect.last_error])
 		return
 	var drawn := {}
 	for d in fx._draws:
@@ -139,6 +179,9 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 	var revived0 := fx.sim.revived
 	var sim_frames := 0
 	var lasted := -1
+	var orphans := 0
+	var pops := 0
+	var last_dn := 0
 	for i in range(render_frames):
 		host.position.x += _speed * dt
 		fx._process(dt)
@@ -167,8 +210,16 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 			mx = maxf(mx, (p.pos - origin).length())
 			if not EfpEffect.DRAW_AABB.has_point(p.pos):
 				out_n += 1
+			for a in [p.f_move, p.f_orbit, p.f_rot, p.f_vel]:
+				if a != null and not a.alive:
+					orphans += 1
+					break
 		if started < 0 and dn > 0:
 			started = sim_frames
+		# A pop: the drawn count falls below half of the frame before's.
+		if last_dn >= 4 and dn * 2 < last_dn:
+			pops += 1
+		last_dn = dn
 		if started >= 0:
 			peak = maxi(peak, dn)
 			min_after = mini(min_after, dn)
@@ -182,9 +233,30 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 			print("  F %d live %d drawn %d lit %d far %.1f out %d revived %d nodes %s" % [sim_frames, live, dn, lit, mx,
 				out_n, fx.sim.revived - revived0, per_node])
 	var secs := float(sim_frames) * EfpSim.FRAME_SEC
-	print("SUMMARY %s kept %s fps %.0f speed %.0f: first_draw %d lasted %s peak %d min_after %s gap_frames %d far %.1f outside_aabb max %d in %d frames revivals/s %.2f sim_frames %d (%s)" % [
+	_t["files"] += 1
+	if started < 0:
+		_t["never_drawn"] += 1
+	if far > FAR_TRAIL:
+		_t["trail_files"] += 1
+	_t["far_max"] = maxf(float(_t["far_max"]), far)
+	_t["orphan_frames"] += orphans
+	if pops > 0:
+		_t["pop_files"] += 1
+	if outside > 0:
+		_t["outside_files"] += 1
+	if _quiet:
+		fx.stop()
+		host.free()
+		return
+	print("SUMMARY %s kept %s fps %.0f speed %.0f: first_draw %d lasted %s peak %d min_after %s gap_frames %d far %.1f outside_aabb max %d in %d frames revivals/s %.2f sim_frames %d orphan_frames %d pops %d (%s)" % [
 		path, kept, _fps, _speed, started, str(lasted) if lasted >= 0 else "running", peak,
 		str(min_after) if started >= 0 else "-", gap, far, outside, outside_frames,
-		float(fx.sim.revived - revived0) / maxf(secs, 0.001), sim_frames, label])
+		float(fx.sim.revived - revived0) / maxf(secs, 0.001), sim_frames, orphans, pops, label])
 	fx.stop()
 	host.free()
+
+## Kept (retail's keep flag, READ round 785: IDecoSkill::FUN_00a513a0 sets
+## it for ActType 2, AT_LOOP, alone), by the ActType's name so the probe
+## reads the same under either client's ACT_TYPES order.
+func _kept(act: int) -> bool:
+	return act >= 0 and act < SkillEffects.ACT_TYPES.size() and SkillEffects.ACT_TYPES[act] == "AT_LOOP"

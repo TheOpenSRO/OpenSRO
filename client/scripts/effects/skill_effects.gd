@@ -49,19 +49,33 @@ class_name SkillEffects
 ## The sequencer runs on scene time: World3D calls tick(delta) every physics
 ## frame (a movie render runs slower than the wall clock).
 ##
-## ON WHOM (ActType, the row's +0xe byte, READ in IDecoSkill::FUN_00a51bc0:
-## 0 AT_ONE_FOLLOW, 1 AT_LOOP, 2 AT_STOP are the vocabulary's first three):
-## - AT_ONE_FOLLOW plays once and follows the body (READ: the decoration is
-##   created with its keep flag 0 and handed to the one-shot list,
-##   FUN_00a4ddc0).
-## - AT_LOOP and AT_STOP are created with the keep flag 1 (READ), which sets
-##   the effect's keep flag (+0x49, CEFEffect::vslot_004): its root
-##   particles are revived at age 0 instead of dying (CEFEffect::vslot_000,
-##   READ in round 623), so the children cycle on and the aura never blinks
-##   out, until its owner ends it (EfpEffect.stop, which drops every particle
-##   at once, READ). EfpEffect.loop is that flag.
+## ON WHOM (ActType, the row's +0xe byte). Its values are READ (round 785)
+## from the name table the row parser looks the column up in: the (name,
+## value) pairs at 0x00ec7280 -- AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2,
+## AT_TARGET 3, AT_TARGET_F 4, AT_SOURCE 5, AT_DMG_POS 6, AT_MOV_1TAR 7 ...
+## AT_MOV_PIERCE 11 -- made a map by FUN_00a9ac70 (the static initialiser at
+## 0x00d785a0) and read by GlobalEffectManager::FUN_00a9d0f0 at 0x00a9d679.
+## Rounds 620-784 had 0 AT_ONE_FOLLOW, 1 AT_LOOP, 2 AT_STOP (the strings'
+## order in memory), so AT_STOP was played as AT_LOOP. What each does is
+## READ in IDecoSkill::FUN_00a513a0 (the phase's rows played) and
+## CIDecoSkill::vslot_014 (the decoration's frame):
+## - AT_LOOP (2): created with the keep flag 1 (slot 4 with 1 for +0xe == 2
+##   alone), which sets the effect's keep flag (+0x49, CEFEffect::vslot_004):
+##   its root particles are revived at age 0 instead of dying
+##   (CEFEffect::vslot_000, READ in round 623), so the children cycle on and
+##   the aura never blinks out, until its owner ends it (EfpEffect.stop,
+##   which drops every particle at once, READ). EfpEffect.loop is that flag.
+##   Placed on the body every frame (the entry's follow flag 1: vslot_014
+##   calls FUN_00a4ddc0 for it each frame).
+## - AT_ONE_FOLLOW (1): plays once (keep flag 0) and is placed on the body
+##   every frame, as AT_LOOP.
+## - AT_STOP (0): plays once and is placed ONCE, when it is made (its entry's
+##   follow flag is 0 and FUN_00a513a0 places it then): it stays where it was
+##   cast (EfpEffect.static_host). 35 effect rows (MEASURED): monster dust and
+##   stuns, and the fireworks.
 ## - AT_TARGET, AT_TARGET_F and AT_DMG_POS play on the target (INFERRED from
-##   the names); everything else on the caster.
+##   the names); everything else on the caster, placed every frame (OURS for
+##   the ActTypes past AT_LOOP: FUN_00a513a0 plays them on other paths).
 ## - AT_MOV_* (projectiles) play at the caster without the flight (OURS; the
 ##   flight is OPEN).
 ##
@@ -96,13 +110,14 @@ const AURA_GRACE_MS := 2000 ## OURS: an aura outlives its buff's time by this mu
 const C_PREP := 11 ## skilldata Action_PreparingTime (ms)
 const C_CAST := 12 ## skilldata Action_CastingTime (ms)
 
-## ActType vocabulary (the client's own UTF-16 strings, spec §1.1).
-static var ACT_TYPES := ["AT_ONE_FOLLOW", "AT_LOOP", "AT_STOP", "AT_TARGET", "AT_TARGET_F",
+## ActType vocabulary (the client's own UTF-16 strings, spec §1.1), each at
+## its value: READ, round 785, the name table at 0x00ec7280 (see the header).
+static var ACT_TYPES := ["AT_STOP", "AT_ONE_FOLLOW", "AT_LOOP", "AT_TARGET", "AT_TARGET_F",
 	"AT_SOURCE", "AT_DMG_POS", "AT_MOV_1TAR", "AT_MOV_OPTION", "AT_MOV_APIECE",
 	"AT_MOV_SPLASH", "AT_MOV_PIERCE"]
-const AT_ONE_FOLLOW := 0
-const AT_LOOP := 1
-const AT_STOP := 2
+const AT_STOP := 0
+const AT_ONE_FOLLOW := 1
+const AT_LOOP := 2
 const AT_TARGET := 3
 const AT_TARGET_F := 4
 const AT_DMG_POS := 6
@@ -220,6 +235,11 @@ static func rows_in(skills: Dictionary, rows: Dictionary, skill_id: int, ani_typ
 		if int(r["ani"]) == ani_type and (start_event < 0 or int(r["event"]) == start_event):
 			out.append(r)
 	return out
+
+## Whether a row's effect is kept (retail's keep flag: AT_LOOP alone, READ,
+## see the header).
+static func kept_act(act: int) -> bool:
+	return act == AT_LOOP
 
 ## Whom a row plays on (see the header).
 static func host_for(act: int, caster: Node3D, target: Node3D) -> Node3D:
@@ -386,7 +406,9 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 			fx.free()
 			continue
 		fx.reserved = own_body != null and (host == own_body or caster == own_body)
-		var looping := act == AT_LOOP or act == AT_STOP
+		var looping := kept_act(act)
+		# Round 785: AT_STOP is placed once, where it is cast (READ, see the header).
+		fx.static_host = act == AT_STOP
 		if looping and (ani_type == SkillAudio.READY or ani_type == SkillAudio.WAIT):
 			fx.loop = true
 			fx.max_life = READY_LOOP_MAX
@@ -572,7 +594,8 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		if fx.draw_count() == 0 and _draws_nothing(fx):
 			fx.free()
 			continue
-		fx.loop = int(r["act"]) == AT_LOOP or int(r["act"]) == AT_STOP
+		fx.loop = kept_act(int(r["act"]))
+		fx.static_host = int(r["act"]) == AT_STOP
 		fx.reserved = own_body != null and host == own_body
 		attach(fx, host, String(r["bone"]), r["offset"])
 		started.append(fx)
