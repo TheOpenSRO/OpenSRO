@@ -58,7 +58,8 @@ func _initialize() -> void:
 		var world := _make_world()
 		if world != null:
 			var handlers := {"buff_started": "_on_buff_started", "buff_ended": "_on_buff_ended",
-				"skill_moved": "_on_skill_moved", "attack_result": "_on_attack_result"}
+				"skill_moved": "_on_skill_moved", "attack_result": "_on_attack_result",
+				"skill_cast": "_on_skill_cast"}
 			for sig in handlers:
 				_net.connect(sig, Callable(world, handlers[sig]))
 			_net.set("own_character_id", OWN)
@@ -68,6 +69,7 @@ func _initialize() -> void:
 			_test_other_owners(world)
 			_test_sit_id(world)
 			_test_states(world)
+			_test_hit_block(world)
 			for sig in handlers:
 				_net.disconnect(sig, Callable(world, handlers[sig]))
 			SkillEffects.reset()
@@ -103,6 +105,7 @@ func _tables() -> void:
 	var sd := _skill_row(90, "TEST_IMBUE_A_01", "TEST_IMBUE_A")
 	sd += _skill_row(114, "TEST_GHOST_A_01", "TEST_GHOST_A")
 	sd += _skill_row(150, "TEST_SELFHEAL_A_01", "TEST_SELFHEAL_A")
+	sd += _skill_row(160, "TEST_BOLT_A_01", "TEST_BOLT_A")
 	SkillAudio.set_tables(SkillAudio.parse_skills(_utf16(sd)), {})
 	var text := "#section skilleffectset\r\n"
 	text += _row("TEST_IMBUE_A", "READY", 0, "AT_LOOP", "charge.efp")
@@ -174,7 +177,8 @@ func _make_world() -> Node:
 		"func _skill_anisets() -> Dictionary:",
 		"\treturn {\"TEST_IMBUE_A\": {\"ready\": [], \"wait\": [], \"shot\": []},",
 		"\t\t\"TEST_SELFHEAL_A\": {\"ready\": [], \"wait\": [], \"shot\": []},",
-		"\t\t\"TEST_GHOST_A\": {\"ready\": [], \"wait\": [32], \"shot\": [], \"group\": \"DEFAULT\"}}",
+		"\t\t\"TEST_GHOST_A\": {\"ready\": [], \"wait\": [32], \"shot\": [], \"group\": \"DEFAULT\"},",
+		"\t\t\"TEST_BOLT_A\": {\"ready\": [], \"wait\": [], \"shot\": [26], \"group\": \"default\"}}",
 		"func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) -> void:",
 		"\tbody_clips.append([String(e[\"code\"]), phase, action_type, loop])",
 		""]))
@@ -414,4 +418,102 @@ func _test_states(world: Node) -> void:
 	world.call("_on_object_status", st)
 	_check(not _live(burn[0]), "burn off: its loop ends")
 	(world.get("_monster_bodies") as Dictionary).erase(777)
+	mob.free()
+
+## Round 785: a cast's hit block (SkillHits, the server lane's 0xAB tail)
+## lands hit by hit on its targets -- the damage numbers split as the hits
+## are -- and a knockback slides its target; with no hit block the whole
+## result lands once. A chain link that names this player draws too.
+func _labels(n: Node) -> Array:
+	var out: Array = []
+	for c in n.get_children():
+		if c is Label3D:
+			out.append((c as Label3D).text)
+	return out
+
+func _attack_reply(monster: int, damage: int, tail: PackedByteArray) -> PackedByteArray:
+	var out := PackedByteArray([0, 0])
+	out.append_array(_u32(damage))
+	out.append_array(_u32(500))
+	out.append(0)
+	out.append_array(_u32(0))
+	out.append_array(_u32(100))
+	out.append(0)
+	out.append_array(_u32(0))
+	out.append(0)
+	out.append_array(_u64(0))
+	out.append_array(PackedByteArray([0, 0, 0]))
+	out.append_array(_u64(monster))
+	out.append(1)
+	out.append_array(_u64(0))
+	out.append_array(_u64(0))
+	if not tail.is_empty():
+		var wall := PackedByteArray()
+		wall.resize(13)
+		out.append_array(wall)
+		out.append_array(tail)
+	return out
+
+func _tail(target: int, hits: Array) -> PackedByteArray:
+	var t := PackedByteArray([0xAB])
+	t.append_array(_u32(target))
+	t.append(1)
+	t.append(hits.size())
+	t.append(1)
+	t.append_array(_u32(target))
+	for h in hits:
+		t.append(int(h[0]))
+		t.append_array(_u32((int(h[1]) << 8) | int(h[2])))
+		t.append_array(_u32(0))
+		if (int(h[0]) & 0x7f) == 5:
+			t.append_array(PackedByteArray([0xA8, 0x61]))
+			t.append_array(_u32(100))
+			t.append_array(_u32(0))
+			t.append_array(_u32(100))
+	t.append(1)
+	t.append(1)
+	return t
+
+func _test_hit_block(world: Node) -> void:
+	var mob := Node3D.new()
+	world.add_child(mob)
+	(world.get("_monster_bodies") as Dictionary)[555] = mob
+	world.set("_last_attack_target", 555)
+	world.set("_pending_skill_id", 160)
+	world.set("_pending_skill_hit_code", "TEST_BOLT_A_01")
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT,
+		_attack_reply(555, 1200, _tail(555, [[0, 700, 1], [5, 500, 2]]))))
+	_check(_labels(mob) == ["700", "500"], "two hits on the target: two numbers, 700 then 500 (got %s)" % str(_labels(mob)))
+	_check((world.get("_skill_slides") as Dictionary).has(mob.get_instance_id()), "the knockback (kind 5) slides the target")
+	_check(int(world.get("_pending_skill_id")) == 0, "the cast's answer is consumed")
+	world.call("_tick_skill_slides", 10.0)
+	for c in mob.get_children():
+		c.free()
+	# No hit block: the whole result lands once.
+	world.set("_pending_skill_id", 160)
+	world.set("_pending_skill_hit_code", "TEST_BOLT_A_01")
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT, _attack_reply(555, 1200, PackedByteArray())))
+	_check(_labels(mob) == ["1200"], "without a hit block the result lands once (got %s)" % str(_labels(mob)))
+	for c in mob.get_children():
+		c.free()
+	# A chain link naming this player (an OpSkillCast to itself): drawn.
+	world.call("_sync_own_id")
+	var start := _u64(OWN)
+	start.append(0)
+	start.append_array(_u64(160))
+	start.append_array(_u32(9))
+	start.append(0)
+	start.append(1)
+	start.append_array(_u64(555))
+	start.append_array(_f32(0))
+	start.append_array(_f32(0))
+	start.append_array(_f32(0))
+	_net.call("_dispatch", Packet.new(0x00FA, start))
+	var act := start.duplicate()
+	act[21] = 1
+	act.append_array(_tail(555, [[0, 300, 1]]))
+	_net.call("_dispatch", Packet.new(0x00FA, act))
+	_check(_labels(mob) == ["300"], "a chain link to this player lands its hit (got %s)" % str(_labels(mob)))
+	(world.get("_monster_bodies") as Dictionary).erase(555)
+	world.set("_last_attack_target", -1)
 	mob.free()

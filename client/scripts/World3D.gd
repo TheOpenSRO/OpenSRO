@@ -12915,11 +12915,13 @@ func _land_skill_hit(t: SkillHits.Target, hit: SkillHits.Hit, h: int, hits: Skil
 	if body == null:
 		return
 	if t.id_kind == SkillNet.OWNER_MONSTER:
-		if hit.hurts():
-			# The bar falls hit by hit: what is left after this one is the
-			# final HP plus every later hit's damage.
+		if hit.hurts() and not blow.is_empty() and id == hits.target_id:
+			# This player's own target: the bar falls hit by hit -- what is
+			# left after this one is the result's final HP (recorded by
+			# _own_skill_result) plus every later hit's damage. Another
+			# target's bar follows the zone's OpMonsterDamaged.
 			var snap = _monster_snapshots.get(id)
-			if snap != null and hits.target(id, t.id_kind) != null:
+			if snap != null:
 				_paint_monster_hp(id, int(snap.hp) + hits.damage_from(id, t.id_kind, h + 1))
 		if hit.died:
 			_begin_monster_death(id)
@@ -12935,7 +12937,8 @@ func _land_skill_hit(t: SkillHits.Target, hit: SkillHits.Hit, h: int, hits: Skil
 		if hit.kind == SkillHits.KIND_KNOCKBACK:
 			# READ: the SYSTEM_KNOCKBACK decoration slides it at 250 u/s
 			# (FUN_00a49290: IDecoSkill::FUN_00a51320(.., 250.0, -1.0)).
-			_start_skill_slide(body, to, KNOCKBACK_SPEED, 0.0, "knockback")
+			_start_skill_slide(body, to, KNOCKBACK_SPEED, 0.0, "knockback",
+				_settle_pushed_player.bind(to) if body == player else Callable())
 		else:
 			# READ: a knockdown is PUT at its point (FUN_009e0550).
 			_put_body(body, to)
@@ -12957,6 +12960,17 @@ const KNOCKDOWN_ACTION := 62
 ## READ: the knockback slide's speed (0xde5668).
 const KNOCKBACK_SPEED := 250.0
 
+## This player was put or pushed to `to` by a blow (a knockdown, a
+## knockback's end): it stands there on the walk's footing, and the server,
+## which moved it, is not told again.
+func _settle_pushed_player(to: Vector3) -> void:
+	_drop_pending_attack()
+	_has_move_target = false
+	player.velocity = Vector3.ZERO
+	var settled := _settle_skill_move_footing(to)
+	player.position = settled["to"]
+	_note_position_sent()
+
 ## World position of a region-local point (a hit block's knockback point).
 ## (NetClient's spawn frame, as a 0xB023 stop is placed; the local height is
 ## the world height there too.)
@@ -12967,6 +12981,9 @@ func _region_point_world(region: int, local: Vector3, _fallback_y: float) -> Vec
 
 ## Puts a body at a point at once (a knockdown's point).
 func _put_body(body: Node3D, to: Vector3) -> void:
+	if body == player:
+		_settle_pushed_player(to)
+		return
 	for id in _monster_bodies:
 		if _monster_bodies[id] == body:
 			_stop_monster_motion(int(id))

@@ -7647,13 +7647,29 @@ and shot, no clips, SkillHits byte by byte and through OpAttackResult, SkillCool
 `skill_effects_test.gd` (the DMG groups, the projectile's flight and landing, a state's named
 aura); `self_cast_fx_test`, `friend_cast_test`, `self_cast_test`, `ghost_walk_test`,
 `ghost_walk_review_test`, `combat_audio_test` updated to the new behaviour (nothing at the send,
-the cursor cast, the slide). GATES
+the cursor cast, the slide); `self_cast_fx_test` also lands an OpAttackResult's 0xAB tail hit by hit
+(two hits on one target -> the numbers 700 then 500, the kind-5 hit's knockback slide; no tail ->
+the result once) and a chain link to this player, and puts a monster's burn and freeze on and off
+its body (PARAM_BU / PARAM_FZ loops, FZ's DEACT, the clip speed held and released).
+**Gates:** client `check` ALL LOAD (758 scripts, 9 scenes); `tests` "ran 291 suite(s), 0 failing". Perf gate (`perf_gate.sh --sites jangan --frames
+40000`; the default 3000 frames ran out of `--print-fps` samples on the box's RX 7600 at ~900 fps --
+"missing numbers" on the base side twice -- so the run was lengthened):
+
+| jangan, base c7b2dcd0 vs head, Forward+, 1280x720, median of 3 | base | head | verdict |
+|---|---|---|---|
+| frame ms | 0.77 | 0.77 | SAME |
+| entry ms | 8725 | 8671 | SAME |
+| freeze ms | 2758 | 2727 | SAME |
+| hitches | 4 | 4 | SAME |
+
+No server change: the server lane's branch carries the packets' server side.
 
 **Decisions (OURS), with why:** the WAIT hold's due time from the row's PreparingTime +
 CastingTime (OpenSRO's server answers a cast at once; this is the time retail's 0xB071 would come);
 READY before the WAIT loop (the order is unread; this one shows both); the whole result at the
 first DMG group when no hit block came (dev's server; nothing is lost and nothing is shown twice);
-own casts turned to their target as the cast starts (as others' since round 622); the afterimage's
+own casts turned to their target as the cast starts (as others' since round 622); a knockdown or
+knockback of this player settles its walk's footing there and does not send the move back; the afterimage's
 look (a half-alpha still copy fading over 0.5 s); a projectile whose target is gone lands at once;
 another caster's hits play no hit sound (the attacker's sound needs its weapon); one colour pulse a
 body, the berserk pulse winning; a `tele`-less, `tel2`-less unknown row slides.
