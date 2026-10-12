@@ -76,7 +76,14 @@ static func dof_path(data: Pk2Reader, rid: int) -> String:
 ## `.dof` for it or the file does not parse. `instance` makes one placed copy
 ## of a `.bsr` (World3D's ObjectTemplateCache); an invalid Callable builds
 ## the walkable graph only (tests, probes).
-static func build(data: Pk2Reader, rid: int, instance: Callable = Callable(), with_objects: bool = true) -> Built:
+##
+## `progress` (round 785), when valid, is called with the fraction of the
+## build done (0..1) after each step -- the loading screen's gauge through a
+## build that holds the main thread (World3D._load_dungeon; the client
+## reports its dungeon load's parts the same way, SWorld::vslot_000 0xa2acd0,
+## READ). The steps, each one unit, are OURS: a room's walkable mesh, its
+## model, each of its objects, and the walkable graph at the end.
+static func build(data: Pk2Reader, rid: int, instance: Callable = Callable(), with_objects: bool = true, progress: Callable = Callable()) -> Built:
 	var path := dof_path(data, rid)
 	if path == "":
 		return null
@@ -95,6 +102,15 @@ static func build(data: Pk2Reader, rid: int, instance: Callable = Callable(), wi
 	built.group.scale.z = -1.0
 	var placed: Array[NavGraph.PlacedObject] = []
 	var nav_cache := {}
+	# The steps the progress counts (above): a walkable mesh per room, the
+	# graph, and -- when models are built -- a model per room and its objects.
+	var total := dof.blocks.size() + 1
+	if instance.is_valid():
+		total += dof.blocks.size()
+		if with_objects:
+			for b_v in dof.blocks:
+				total += (b_v as DofReader.Block).objects.size()
+	var done := 0
 	for i in dof.blocks.size():
 		var b: DofReader.Block = dof.blocks[i]
 		var key := b.path.to_lower()
@@ -107,6 +123,9 @@ static func build(data: Pk2Reader, rid: int, instance: Callable = Callable(), wi
 			placed.append(po)
 		else:
 			built.rooms_without_nav += 1
+		done += 1
+		if progress.is_valid():
+			progress.call(float(done) / float(total))
 		if instance.is_valid():
 			var node: Node3D = instance.call(b.path)
 			if node == null:
@@ -117,22 +136,30 @@ static func build(data: Pk2Reader, rid: int, instance: Callable = Callable(), wi
 				node.rotation.y = NavGraph.godot_yaw(b.yaw)
 				built.group.add_child(node)
 				built.rooms += 1
+			done += 1
+			if progress.is_valid():
+				progress.call(float(done) / float(total))
 			if with_objects:
 				for o in b.objects:
 					var ob: DofReader.Obj = o
 					var on: Node3D = instance.call(ob.path)
+					done += 1
 					if on == null:
 						built.missing.append(ob.path)
-						continue
-					on.position = ob.position
-					on.rotation = Vector3(ob.rotation.x, NavGraph.godot_yaw(ob.rotation.y), ob.rotation.z)
-					on.scale = ob.scale
-					built.group.add_child(on)
-					built.objects += 1
+					else:
+						on.position = ob.position
+						on.rotation = Vector3(ob.rotation.x, NavGraph.godot_yaw(ob.rotation.y), ob.rotation.z)
+						on.scale = ob.scale
+						built.group.add_child(on)
+						built.objects += 1
+					if progress.is_valid():
+						progress.call(float(done) / float(total))
 	var neighbours := {}
 	for i in dof.blocks.size():
 		neighbours[i] = (dof.blocks[i] as DofReader.Block).neighbours
 	built.graph = NavGraph.build_dungeon(placed, neighbours)
+	if progress.is_valid():
+		progress.call(1.0)
 	return built
 
 ## The block (room) index under a dungeon-space point at about that height,

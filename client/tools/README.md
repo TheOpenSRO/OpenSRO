@@ -56,6 +56,18 @@ The client runs the separate render thread from round 760 (`project.godot`); `CR
 "--render-thread safe"` gives a crowd boot the default one. `docs/rounds/r754.md` has the spike,
 `docs/rounds/r760.md` the switch.
 
+**What a player saw, and for how long** (round 785). The movie writer reads every frame back
+before the next one starts, so its frames say what each frame drew, never how long the screen
+showed it -- and under the separate render thread presentation is the render thread's.
+`QA_SHOT_REALTIME=1` runs `qa_shot.sh` in real time (no `--write-movie`; `--frames` still ends
+it), and `QA_SHOT_XCAPTURE=<dir>` grabs the window as the X server shows it (`xcapture.sh`: xwd,
+each grab named by its unix ns; `QA_XCAPTURE_START` / `_SECONDS` / `_SLEEP` bound it, ~4 ms a grab
+at 640x360, ~0.9 MB each -- delete the directory after). `OPENSRO_QA_FRAMELOG=1` prints a
+`QA FRAMELOG frame <n> unix <s> dt <ms> screen up|none` line a frame on the same clock, and
+`xcapture_series.py <dir> <ref> [--from s --to s]` classifies each grab against a reference image
+of the loading screen (`LS` = fraction of pixels within 8 of it; screen, world or black).
+`/var/tmp/r785-load/rt*.sh` on the box are the round's recipes.
+
 `OPENSRO_QA_WATER_SORT=1` (round 780) prints, at every `QA SHOT`, the transparent pass's order
 for each region's terrain overlays and water as Godot computes it (`QA WATER SORT` / `QA WATER
 ORDER` lines): a water surface "drawn before" an overlay patch is one that patch paints over.
