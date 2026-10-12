@@ -176,30 +176,34 @@ func statusRoller(casterID int64) statuseffect.Roller {
 
 // applyToMonster lands castRow's status runs on monsterID, cast by
 // characterID, and tells the zone when the mask changed.
-func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow *refdata.Skill, monsterID int64, now time.Time) {
+// applyToMonster lands castRow's status runs on monsterID, cast by
+// characterID, and tells the zone when the mask changed. It returns the bits
+// of the states that landed (round 785: the hit record's statusBits,
+// Combat_ApplyStatusEffects' return OR'd into hit+8, READ 0x58f72d).
+func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow *refdata.Skill, monsterID int64, now time.Time) uint32 {
 	if castRow == nil || castRow.StatusParams == "" || d.monsters == nil {
-		return
+		return 0
 	}
 	runs := statuseffect.ParseRuns(castRow.StatusParams)
 	if len(runs) == 0 {
-		return
+		return 0
 	}
 	m, ok := d.monsters.Get(monsterID)
 	if !ok || m.HP <= 0 {
-		return
+		return 0
 	}
 	// Only in the caster's own zone (round 659's review, H2): the cast paths
 	// test reach and zone before here; this is the last guard.
 	if d.hub != nil {
 		if e, in := d.hub.EntityByCharacterID(characterID); !in || e.Zone != m.Zone {
-			return
+			return 0
 		}
 	}
 	// A monster resists nothing: characterdata cols 61-66 read 0 on every
 	// row (MEASURED), so the resist arrays stay zero.
 	recs := statuseffect.ResolveAll(runs, statuseffect.Target{Level: m.Level}, s.ms(now), statusRoller(characterID))
 	if len(recs) == 0 {
-		return
+		return 0
 	}
 	s.mu.Lock()
 	s.cdeps, s.mons = d, d.monsters
@@ -209,9 +213,11 @@ func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow 
 		s.mobs[monsterID] = h
 	}
 	before := h.Mask()
+	var applied uint32
 	for _, r := range recs {
 		r.SourceID = characterID
 		h.Put(r)
+		applied |= statuseffect.MaskForSlot(r.Slot)
 	}
 	msg := &ObjectStatus{OwnerKind: OwnerMonster, OwnerID: monsterID, Mask: h.Mask(), Levels: h.Levels()}
 	stops := !h.CanMove() || !h.CanAct()
@@ -228,6 +234,7 @@ func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow 
 		d.monsters.StopMotion(monsterID)
 	}
 	pushMonsterStatus(d.hub, d.monsters, m, msg)
+	return applied
 }
 
 // statusCastAtMonster reports whether a cast lands states on a monster
@@ -338,6 +345,11 @@ func monsterMayAct(id int64) bool {
 // monsterState reports what monsterID's states allow: moving, acting, and the
 // speed percent of its next leg.
 func (s *statusRuntime) monsterState(id int64) (move, act bool, speed int) {
+	// Round 785 (skillknock.go): a knocked-down or knocked-back monster is
+	// held for the motion state's time.
+	if _, knocked := knockOf(id, time.Now()); knocked {
+		return false, false, 100
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := s.mobs[id]
@@ -345,6 +357,17 @@ func (s *statusRuntime) monsterState(id int64) (move, act bool, speed int) {
 		return true, true, 100
 	}
 	return h.CanMove(), h.CanActAt(s.ms(time.Now())), h.SpeedPercent()
+}
+
+// monsterMask is monsterID's abnormal-state mask (round 785: 'atca' tests
+// it, target+0xd34, READ).
+func (s *statusRuntime) monsterMask(id int64) uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h := s.mobs[id]; h != nil {
+		return h.Mask()
+	}
+	return 0
 }
 
 // addHeld adds to insistent every monster with a brain whose states stop it
@@ -363,6 +386,13 @@ func (s *statusRuntime) addHeld(insistent map[int64]struct{}, hasBrain func(id i
 			insistent[id] = struct{}{}
 		}
 	}
+	knocks.Lock()
+	for id := range knocks.m {
+		if hasBrain(id) {
+			insistent[id] = struct{}{}
+		}
+	}
+	knocks.Unlock()
 }
 
 // monsterDefenceCut is the flat defence bleeding takes off monsterID.
@@ -383,6 +413,9 @@ func (s *statusRuntime) forgetMonster(id int64) {
 	delete(s.mobs, id)
 	delete(s.legPct, id)
 	s.mu.Unlock()
+	// Round 785: its knock, its debuffs and their rows go with it.
+	forgetKnock(id)
+	forgetMonsterBuffs(id)
 }
 
 // monsterTick is one damage tick on a monster, computed under the runtime's

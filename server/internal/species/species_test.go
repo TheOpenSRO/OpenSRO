@@ -69,10 +69,12 @@ func TestColumnIndicesAgainstASyntheticLine(t *testing.T) {
 	}
 	// Neighbours of every read column carry a different sentinel, so a
 	// reader shifted by one picks it up.
-	for _, c := range []int{14, 16, 45, 48, 49, 51, 56, 58, 60, 70, 80, 82, 93} {
+	for _, c := range []int{14, 16, 45, 48, 49, 51, 56, 58, 60, 70, 80, 93} {
 		cols[c] = "-999"
 	}
 	cols[ColExpToGive] = "79" // round 712: col 79 is read now; 78 and 80 are its neighbours
+	cols[ColKnockdown] = "81" // round 785: cols 81 and 82, with 80 and 83 their neighbours
+	cols[ColKORecover] = "82"
 	ex := NewExporter()
 	if !ex.Add(cols) {
 		t.Fatal("the row was refused")
@@ -84,7 +86,8 @@ func TestColumnIndicesAgainstASyntheticLine(t *testing.T) {
 	}
 	want := Row{ID: 90001, CodeName: "MOB_TEST_SENTINEL", NameKey: "SN_MOB_TEST_SENTINEL", Name: "Sentinel",
 		TypeID4: 7, Rarity: 15, Level: 57, MaxHP: 59, WalkSpeed: 46, RunSpeed: 47, BCRadius: 50,
-		Model: "mob\\test\\sentinel.bsr", GoldMin: 1057, GoldMax: 2057, ExpToGive: 79, HasExpToGive: true}
+		Model: "mob\\test\\sentinel.bsr", GoldMin: 1057, GoldMax: 2057, ExpToGive: 79, HasExpToGive: true,
+		Knockdown: 81, KORecoverMs: 82, HasKnockdown: true}
 	for i := 0; i < NumParams; i++ {
 		want.Params[i] = 71 + i
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
@@ -255,9 +256,11 @@ func weaponRanges(ctx context.Context, characterID int64, str, intel int, eq equ
 // 0x495fa0 -> item+0x1a8, param 6) and group 5 for the shield (0x4968a4).
 // The same walk, so the two defence rows are built the same way.
 func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
-	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
+	v, err := defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
 		return it.MagDefenseMin, it.MagDefenseMax, it.PlusIncMagDef
 	}, durability.ArmourMagDefenseGroup, durability.ShieldMagDefenseGroup)
+	// Round 785: the buffs' param-6 entries (buffstats.go).
+	return buffStatInt(characterID, buff.ParamMagDefFlat, v), err
 }
 
 // characterRates is the character's attack rate and parry rate as combat uses

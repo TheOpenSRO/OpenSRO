@@ -441,7 +441,9 @@ const (
 	skConsumeHP     = 52
 	skConsumeMP     = 53
 	skMastery1      = 34 // ReqCommon_Mastery1
+	skMastery2      = 35 // ReqCommon_Mastery2 (CRefSkill+0xa4)
 	skMasteryLevel1 = 36 // ReqCommon_MasteryLevel1 (required mastery level)
+	skMasteryLevel2 = 37 // ReqCommon_MasteryLevel2 (+0xa9)
 	// The two required-weapon bytes. The engine names them itself: the
 	// skilldata row loader SkillGlobal::FUN_005893e0 refuses a row whose
 	// CRefSkill+199/+200 are zero with "ReqWeapon Error [RefSkill ID: %d]",
@@ -481,7 +483,16 @@ const (
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
 	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, npcs, regions, chargen or magicoptions")
+	encExe := flag.String("enc-exe", "", "the operator's own sro_client.exe: its key tables decrypt the ENC skill tables (SkillData_<n>ENC.txt, the files retail's skilldataenc.txt names; round 785, enc.go)")
 	flag.Parse()
+	if *encExe != "" {
+		k, err := loadEncKeys(*encExe)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: -enc-exe: %v\n", err)
+			os.Exit(1)
+		}
+		loadedEncKeys = k
+	}
 	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")
@@ -1084,7 +1095,41 @@ func skillRecord(cols []string) ([]string, bool) {
 	// ai.PickSkill). Round 654: the species loader builds every monster's
 	// attack list from this export (internal/species).
 	// 90: every status run of the Param block (round 659), statusParams.
-	return append(rec, get(skAIAttackChance), statusParams(cols)), true
+	// 91: the whole raw Param block (round 785), rawParams; 92/93: the
+	// second mastery slot ReqCommon_Mastery2 / MasteryLevel2 (+0xa4/+0xa9),
+	// which Skill_GetRequiredMasteryLevel (0x59e770) weighs with the first.
+	return append(rec, get(skAIAttackChance), statusParams(cols), rawParams(cols), get(skMastery2), get(skMasteryLevel2)), true
+}
+
+// rawParams is skill CSV column 91 (round 785): the row's 50 raw Param words,
+// CRefSkill+0x168 onward -- the action kind (Param1) followed by the code
+// runs SkillGlobal::RefSkill_ParseParams (0x587630) walks -- as decimal int32s
+// separated by spaces, trailing zeros dropped. The server walks them itself
+// (refdata.Skill.ParamWords, skillparam.Walk), so a mechanic that needs a
+// field no earlier column carried needs no new export column.
+func rawParams(cols []string) string {
+	if len(cols) <= skActionKind {
+		return ""
+	}
+	var words []string
+	for _, v := range cols[skActionKind:] {
+		s := strings.TrimSpace(v)
+		if s == "" {
+			s = "0"
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return ""
+		}
+		words = append(words, strconv.FormatInt(int64(int32(n)), 10))
+		if len(words) == 50 {
+			break
+		}
+	}
+	for len(words) > 0 && words[len(words)-1] == "0" {
+		words = words[:len(words)-1]
+	}
+	return strings.Join(words, " ")
 }
 
 // statusParams is skill CSV column 90 (round 659): every run of the row's
@@ -2058,7 +2103,7 @@ func hitCountParam(cols []string) string {
 // without a BOM) or UTF-8, and returns each non-empty, non-comment line
 // split on tabs.
 func readTable(path string) ([][]string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readRaw(path)
 	if err != nil {
 		return nil, err
 	}

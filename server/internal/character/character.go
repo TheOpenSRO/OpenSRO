@@ -509,10 +509,29 @@ func (c *Character) MaxHP() int { return MaxHPWith(c.Str, c.Level, BonusOf(c.ID)
 func (c *Character) MaxMP() int { return MaxMPWith(c.Int, c.Level, BonusOf(c.ID)) }
 
 // MaxHPWith is MaxHP for a base Str, a level and a bonus.
-func MaxHPWith(str, level int, b Bonus) int { return MaxHPFor(str+b.Str, level) + b.HP }
+//
+// Round 785: a buff's percent (param 3 slot 1, 'hpi' value[1]) scales the
+// whole: EvaluateParam's S0 x (1 + S1/100), READ 0x4b3740.
+func MaxHPWith(str, level int, b Bonus) int {
+	return scalePct(MaxHPFor(str+b.Str, level)+b.HP, b.HPPct)
+}
 
 // MaxMPWith is MaxMP for a base Int, a level and a bonus.
-func MaxMPWith(intel, level int, b Bonus) int { return MaxMPFor(intel+b.Int, level) + b.MP }
+func MaxMPWith(intel, level int, b Bonus) int {
+	return scalePct(MaxMPFor(intel+b.Int, level)+b.MP, b.MPPct)
+}
+
+// scalePct is v x (1 + pct/100), truncated; v itself for no percent.
+func scalePct(v int, pct float64) int {
+	if pct == 0 {
+		return v
+	}
+	out := int(float64(v) * (1 + pct/100))
+	if out < 1 {
+		out = 1
+	}
+	return out
+}
 
 // TotalStr is the character's Str with its worn items' 'str' options: param 1,
 // the number the character panel shows (round 769, READ: the 0x303D builder
@@ -531,6 +550,34 @@ func (c *Character) TotalInt() int { return c.Int + BonusOf(c.ID).Int }
 type Bonus struct {
 	Str, Int, HP, MP      int
 	EvadeBlock, EvadeCrit int
+	// HPPct and MPPct are the buffs' percent entries of params 3 and 4
+	// (round 785); the gear writes none.
+	HPPct, MPPct float64
+}
+
+// add is b with o's entries summed in.
+func (b Bonus) add(o Bonus) Bonus {
+	b.Str += o.Str
+	b.Int += o.Int
+	b.HP += o.HP
+	b.MP += o.MP
+	b.EvadeBlock += o.EvadeBlock
+	b.EvadeCrit += o.EvadeCrit
+	b.HPPct += o.HPPct
+	b.MPPct += o.MPPct
+	return b
+}
+
+// liveBonus is the part of a character's bonus that changes with no event
+// the cache could hear (round 785: its buffs, which start and expire on
+// their own clocks), added to the cached gear bonus on every read.
+var liveBonus func(characterID int64) Bonus
+
+// SetLiveBonusSource registers the uncached part of BonusOf (nil: none).
+func SetLiveBonusSource(f func(characterID int64) Bonus) {
+	bonusMu.Lock()
+	liveBonus = f
+	bonusMu.Unlock()
 }
 
 // The bonus registry. The worn items live in the equipment store, which a
@@ -569,6 +616,18 @@ func InvalidateBonus(characterID int64) {
 // result is cached only when it read cleanly and nothing invalidated the
 // character, or replaced the source, meanwhile.
 func BonusOf(characterID int64) Bonus {
+	bonusMu.RLock()
+	live := liveBonus
+	bonusMu.RUnlock()
+	b := gearBonusOf(characterID)
+	if live != nil && characterID != 0 {
+		b = b.add(live(characterID))
+	}
+	return b
+}
+
+// gearBonusOf is the cached part of BonusOf.
+func gearBonusOf(characterID int64) Bonus {
 	bonusMu.RLock()
 	b, ok := bonusCache[characterID]
 	src, gen, epoch := bonusSource, bonusGen[characterID], bonusEpoch

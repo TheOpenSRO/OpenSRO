@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
@@ -301,7 +302,8 @@ func equippedWeaponRange(ctx context.Context, characterID int64, eq equipment.St
 			continue
 		}
 		if item, err := items.GetItem(ctx, e.ItemID); err == nil && item != nil {
-			return item.Range
+			// Round 785: the buffs' param-33 entries ('ru').
+			return buffStatInt(characterID, buff.ParamRange, item.Range)
 		}
 	}
 	return 0

@@ -134,6 +134,9 @@ type Spec struct {
 	OnffMs, OnffMP int
 	HasWall        bool
 	Wall           Wall
+	// Stats are the row's ParamKeeper writes (round 785, stats.go
+	// StatContributions), copied to the record and summed by ParamTotals.
+	Stats []Contribution
 }
 
 // Record is one active buff.
@@ -155,6 +158,8 @@ type Record struct {
 	Hste          int
 	HasHst2       bool
 	Contributions []Contribution
+	// Stats are the record's stat writes (round 785; Spec.Stats).
+	Stats []Contribution
 	// The row's recast-rule fields (round 636), copied from its Spec: what
 	// FUN_0059d870 reads off an ACTIVE record's skill, and what
 	// SkillAction_BuffEnd clears from the book's bit set.
@@ -415,6 +420,10 @@ type Books struct {
 	gmSpeed map[int64]float64
 	// links are each caster's link records (linkEntry), by caster.
 	links map[int64][]linkEntry
+	// stats is each owner's stat sums (round 785, stats.go), a snapshot
+	// refreshed under mu whenever its records change and read without mu:
+	// a stat is read inside callbacks that run under mu (HitWall's).
+	stats sync.Map
 }
 
 // NewBooks returns an empty set of books whose owners run at baseRunSpeed.
@@ -939,6 +948,7 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 	if spec.DuraMs > 0 {
 		rec.Dura = time.Duration(spec.DuraMs) * time.Millisecond
 	}
+	rec.Stats = append([]Contribution(nil), spec.Stats...)
 	// EngageSkill (0x593540, READ): an 'onff' row's drain clock starts at the
 	// engage; a 'pw' row builds the wall object with 'pw' value[1] as its HP
 	// and becomes the owner's wall (`in_EAX[0x303] = record`, overwriting any
@@ -971,6 +981,7 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 		rec.Contributions = append(rec.Contributions, speedPair(spec.Hst3)...)
 	}
 	bk.records = append(bk.records, rec)
+	b.refreshStatsLocked(ownerID, bk)
 	if rec.LinkSource {
 		b.links[spec.CasterID] = append(b.links[spec.CasterID], linkEntry{SkillID: spec.SkillID,
 			LnksGroup: spec.LnksGroup, Lks2: spec.Lks2, Activity: spec.Activity, Object: ownerID,
@@ -1085,6 +1096,7 @@ func (b *Books) endWhere(ownerID int64, end func(Record) bool) ([]Record, Speed)
 		i++
 	}
 	after := b.speedLocked(ownerID, bk)
+	b.refreshStatsLocked(ownerID, bk)
 	if len(bk.records) == 0 && bk.speedHolder == 0 {
 		delete(b.books, ownerID)
 	}
@@ -1145,6 +1157,7 @@ func (b *Books) EndAll(ownerID int64) ([]Record, Speed) {
 	}
 	before := b.speedLocked(ownerID, bk)
 	delete(b.books, ownerID)
+	b.stats.Delete(ownerID)
 	for _, r := range bk.records {
 		b.unlinkLocked(r)
 	}

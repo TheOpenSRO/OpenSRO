@@ -317,6 +317,11 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 	if !ok {
 		return
 	}
+	// Round 785: the same box answers a resurrection offer (kind 4/8,
+	// skillsupport.go); a dead character's answer is the revive's.
+	if takeResurrection(ctx, sess, me.CharacterID, accept) {
+		return
+	}
 	inv, ok := d.Parties.TakeInvite(me.CharacterID)
 	if !ok {
 		return

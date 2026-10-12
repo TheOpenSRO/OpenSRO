@@ -282,6 +282,7 @@ func expless(specs []monsterSpec) []monsterSpec {
 	out := append([]monsterSpec(nil), specs...)
 	for i := range out {
 		out[i].ExpToGive, out[i].HasExpToGive = 0, false
+		out[i].Knockdown, out[i].KORecoverMs, out[i].HasKnockdown = 0, 0, false // round 785: the table supplies them
 	}
 	return out
 }

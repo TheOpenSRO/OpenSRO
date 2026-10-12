@@ -7483,6 +7483,56 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 785 (part): the skills (server)
+
+The user: "fully implement all skills and make sure they behave exactly as the original game
+including effects" (lane r785-skill-srv: the server side of every player skill). Five read-only
+forks READ the retail GameServer for the efr collectors, the stat writes, knockdown/knockback/
+hate, chains/imbues/ammunition/MAAT and the support skills; the specs are in docs/protocol
+(`skill_census`, `skill_hit_block`, `skill_targets`, `skill_attack`, `skill_stats`,
+`skill_support`).
+
+- **The data (DECIDED, MEASURED):** `skills.csv` now comes from the ENC tables retail's client
+  loads (`export-refdata -enc-exe`, the key tables from the player's own `sro_client.exe`,
+  verified byte-identical to a plain twin). The 33,632 ENC ids equal the user's restored shard
+  `_RefSkill` on every exported column (the 26 conflicting ENC duplicates resolve last-wins, as
+  the shard has them); the shard's 2,512 extra ids are a private server's additions the client
+  cannot show. The CSV carries the raw Param block (col 91) and the second mastery slot (92/93),
+  so no further mechanic needs an export column.
+- **The census** (`cmd/skillcensus`): 2,944 China and 3,171 Europe player rows (learnable rows,
+  base attacks, chain links); `att` 3,529, `getv` 4,043, `efr` 1,880, `mc` 1,580, `dura` 1,257 ...
+  The by-mechanic before/after table is skill_census.md.
+- **The action block (READ both binaries):** retail's 0xB070/0xB071 tail -- u32 target, u8 flags,
+  `[u8 hits, u8 targets, per target {u32 uid, per hit {u8 kind, ...}}]`, the move -- rides
+  OpAttackResult (after an always-present wall suffix, offset 72) and OpSkillCast, 0xAB-marked,
+  with an OURS kinds array. Kind 4 is the knockdown (`ko`, +0x23c) and 5 the knockback (`kb`,
+  +0x254) -- the relayed note had them swapped. Plain swings carry it too.
+- **Ghost Walk (the user's report):** READ FUN_005862e0: `tele` value[1] is the limit in world
+  units (no x10), a nearer point is the landing (no push to the limit), the landing is truncated
+  region-local, value[0] (500) is never read by the server. Teleport (`tel2`) and Sprint (`tel3`,
+  to the target, short by the two radii) added.
+- **Implemented** (READ addresses in the code and docs): the efr collectors 1/2/3/4/6 with cap and
+  falloff; per-target per-hit blows (magic never crits, the row's `cr`, `da` on a downed target,
+  `atca`, the area share, the void hit after a fall); knockdown/knockback with the monster moved
+  and held (monster CSV cols 81/82); the imbue's add on skills and plain swings, its states and its
+  chain targets; chains link by link with the 500 ms budget; MAAT; buff and passive stat writes
+  into defence, parry, block, crit, hit rate, weapon bounds, range, max HP/MP and damage %, passive
+  `setv` variables for `getv` damage keys; debuffs on monsters (ownerKind 1) with their stats and
+  the Warlock's linked blow per `puls`; heal over time; `efr` party and chain heals; cures; the
+  resurrection offer (0x3080 kind 4/8) and revive; hate onto a threat table; the `lfst` drain.
+- **Fixed on the way:** a self-deadlock (a stat read inside HitWall's callback took the book's
+  lock: the stats are now a lock-free snapshot, `TestRound640CrystalWallTakesAPhysicalBlow` hung
+  10 minutes before the fix).
+- **OPEN** (TODO.md "Round 785 follow-ups"): ammunition, the AI's retarget by hate, monster
+  skills' areas and knocks on players, stealth/detection/transforms/summons/traps, defensive
+  links, weapon-scaled heals, the resurrection's EXP return, the plain swing's MAAT (combat lane).
+- **Tests:** `go test ./...` passes; per-mechanic unit tests (`skill785_test`,
+  `skill785_mech_test`, `buff/stats_test`, `export-refdata/enc_test`); end-to-end over the real
+  handlers (`skill785_e2e_test`: area multi-hit, knockback, Ghost Walk, Teleport, a chain link, a
+  monster debuff's pulse); and `TestR785EveryPlayerAttackRow` on the RE box with the real export:
+  all 1,923 player attack rows cast, 1,923 accepted, 792 struck more than one target, 160 more
+  than one hit, 252 knocked, every block consistent.
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

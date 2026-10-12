@@ -1,6 +1,7 @@
 package refdata
 
 import (
+	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
 	"strconv"
 	"strings"
 )
@@ -381,6 +382,17 @@ type Skill struct {
 	// these fields; statuseffect.ParseRuns reads the string. "" is no status,
 	// which is also what an export predating the column loads.
 	StatusParams string
+	// ParamWords is the row's raw Param block (CSV 91, round 785): the 50
+	// words from CRefSkill+0x168 -- ParamWords[0] the action kind (Param1),
+	// then the code runs SkillGlobal::RefSkill_ParseParams (0x587630) walks
+	// (skillparam.Walk over ParamWords[1:]), trailing zeros dropped. nil on an
+	// export or a database that predates the column: every mechanic that
+	// reads it then falls back to what the older columns say.
+	ParamWords []int32
+	// Mastery2 and MasteryLevel2 are ReqCommon_Mastery2 (+0xa4) and
+	// ReqCommon_MasteryLevel2 (+0xa9), CSV 92/93 (round 785).
+	Mastery2      int64
+	MasteryLevel2 int
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
@@ -454,3 +466,52 @@ const (
 	SitGateActionOff = 1
 	SitGateTransform = 2
 )
+
+// ParseParamWords reads the CSV's Params column: decimal int32 words separated
+// by spaces. A word that does not parse ends the list there (a damaged cell
+// yields the words before it, never a shifted block).
+func ParseParamWords(s string) []int32 {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make([]int32, 0, len(fields))
+	for _, f := range fields {
+		n, err := strconv.ParseInt(f, 10, 64)
+		if err != nil {
+			break
+		}
+		out = append(out, int32(n))
+	}
+	return out
+}
+
+// FormatParamWords is ParseParamWords' inverse (the store's text column).
+func FormatParamWords(w []int32) string {
+	var b strings.Builder
+	for i, v := range w {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(strconv.FormatInt(int64(v), 10))
+	}
+	return b.String()
+}
+
+// Block is the walkable Param block: the words after the action kind.
+func (s *Skill) Block() []int32 {
+	if s == nil || len(s.ParamWords) < 2 {
+		return nil
+	}
+	return s.ParamWords[1:]
+}
+
+// Runs walks the row's Param block (round 785). A row from an export that
+// predates the Params column walks to nothing: every Has answers false, and
+// callers keep their older-column fallbacks.
+func (s *Skill) Runs() skillparam.Runs {
+	return skillparam.WalkRuns(s.Block())
+}
+
+// HasParams reports whether the row carries its raw Param block (CSV 91).
+func (s *Skill) HasParams() bool { return s != nil && len(s.ParamWords) > 0 }

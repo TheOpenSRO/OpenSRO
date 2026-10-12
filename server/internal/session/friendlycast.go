@@ -71,6 +71,9 @@ type SkillCast struct {
 	TargetType uint8
 	TargetID   int64
 	X, Y, Z    float32
+	// Action is the act's (or, for a move, the start's) action block (round
+	// 785, docs/protocol/skill_hit_block.md), appended after the 43 bytes.
+	Action *ActionBlock
 }
 
 const skillCastSize = 43
@@ -88,6 +91,9 @@ func (r *SkillCast) Encode() []byte {
 	le.PutUint32(b[31:], math.Float32bits(r.X))
 	le.PutUint32(b[35:], math.Float32bits(r.Y))
 	le.PutUint32(b[39:], math.Float32bits(r.Z))
+	if r.Action != nil {
+		b = r.Action.encode(b)
+	}
 	return b
 }
 
@@ -107,7 +113,20 @@ func DecodeSkillCast(data []byte) (*SkillCast, error) {
 		X:          math.Float32frombits(le.Uint32(data[31:])),
 		Y:          math.Float32frombits(le.Uint32(data[35:])),
 		Z:          math.Float32frombits(le.Uint32(data[39:])),
+		Action:     castAction(data[skillCastSize:]),
 	}, nil
+}
+
+// castAction decodes an OpSkillCast's trailing action block, nil for none.
+func castAction(b []byte) *ActionBlock {
+	if len(b) == 0 || b[0] != actionBlockMarker {
+		return nil
+	}
+	a, _, err := DecodeActionBlock(b)
+	if err != nil {
+		return nil
+	}
+	return a
 }
 
 var castIDs atomic.Uint32
@@ -176,12 +195,10 @@ func castAfter(d time.Duration, f func()) {
 	h(d, f)
 }
 
-// announceCast tells the caster's zone, the caster excepted, that a cast of
-// ref started, and then that it acted after castActDelay. Called once the
-// cast is accepted and paid for (a refused cast is never announced: retail
-// sends 0xB070 result 1 only from a posted action). The act's audience is
-// the zone at that moment.
-func announceCast(hub *world.Hub, casterID int64, req *UseSkillRequest, ref *refdata.Skill) {
+// announceCastWith is announceCast carrying the cast's action block (round
+// 785): the act carries all of it; the start carries only a move (retail's
+// 0xB070 carries the move block at the start, FUN_0059e8f0).
+func announceCastWith(hub *world.Hub, casterID int64, req *UseSkillRequest, ref *refdata.Skill, action *ActionBlock) {
 	if hub == nil {
 		return
 	}
@@ -197,9 +214,16 @@ func announceCast(hub *world.Hub, casterID int64, req *UseSkillRequest, ref *ref
 	if !inWorld {
 		return
 	}
+	if action != nil && action.Flags&actionFlagMoveMask != 0 {
+		move := *action
+		move.Targets, move.HitCount = nil, 0
+		move.Flags &^= ActionFlagDamage
+		msg.Action = &move
+	}
 	sendAboutOwner(othersInZone(hub, casterID), casterID, OpSkillCast, msg.Encode())
 	act := msg
 	act.Phase = CastPhaseAct
+	act.Action = action
 	send := func() {
 		// Round 622's review: the act is dropped when the caster died, left
 		// or arrived anew (a zone change or a teleport, world.Entity.Arrival)
@@ -301,7 +325,9 @@ func friendlyTargetRefusal(hub *world.Hub, parties *party.Hub, ref *refdata.Skil
 		}
 		target = t
 	}
-	if target.Life != world.LifeAlive {
+	// Round 785: a resurrection ('resu', TargetEtc_SelectDeadBody) names a
+	// dead character; every other friendly row a living one.
+	if wantDead := rowHasResu(ref); (wantDead && target.Life != world.LifeDead) || (!wantDead && target.Life != world.LifeAlive) {
 		return world.Entity{}, invalidTargetRefusal
 	}
 	if !ref.TargetSelf && target.CharacterID == caster.CharacterID {

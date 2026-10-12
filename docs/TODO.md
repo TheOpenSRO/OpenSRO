@@ -24,9 +24,42 @@ where it stopped, the tools for it, the traps — and points back here for every
       review measured play-everywhere at Jangan: 112 objects, 135 effects, 113 glows, frame 1.53 ->
       2.97 ms (+94 %). For the user to decide; prerequisites in docs/rounds/r720_review.md.
 
+## Round 785 follow-ups (the skills, server side; docs/protocol/skill_census.md)
+
+- [ ] **Ammunition (`cnsm`, 386 player rows)**: READ (skill_attack.md "Ammunition"): the worn
+      slot-7 item's TypeID3/4 and count, 0x300e, spent `cnsm[2] x mc[1]` after the blow, 0x3201.
+      OpenSRO keeps no count on a worn item (the kit puts arrows in the bag). Needs a quantity on
+      the worn ammo slot, then the gate and the spend.
+- [ ] **Hate retarget**: the threat table is credited (`session/skillhate.go`, `tant`/`tnt2`/
+      p187), but the monster AI faces its first attacker; wiring `ai.ThreatTable.Resolve` into the
+      BATTLE tick is the AI lane's `mob-threat-retarget`.
+- [ ] **Monster skills on players**: an AI-cast row's `efr` area, `ko`/`kb` on a player and the
+      action block on `OpMonsterAttacked` (the AI lane's `monsterStrike`); READ shapes in
+      skill_targets.md / skill_attack.md.
+- [ ] **Stealth, detection, transforms, summons, traps** (`hide` 47, `dttp` 36, `msch` 12, `summ`
+      24, `trap` 25): body modes 6/7 on the wire, spawned objects. skill_support.md has the reads.
+- [ ] **Defensive links** (`dmgr`, `lkdr`, `lkdd`, `lkag`, `abnb`, `lkdh`): act on blows a
+      character takes (FUN_005a0b80); need the monster-strike path's hook.
+- [ ] **Weapon-scaled heals** (`mwhh`/`mwmh`/`mwhs`, Formula_WeaponAvgDamagePercent), the `eshp`
+      group aura, the resurrection's EXP return and `rmut` buff, the `defp` cap, `pdmg`.
+- [ ] **The plain swing's blocked hit with a percentage** (below) is fixed for skills
+      (skillhit.go: a blocked hit is kind 2, 0 damage); `performAttack` (the combat lane) keeps it.
+- [ ] **Client (r785-skill-cli)**: draw the 0xAB action block (skill_hit_block.md): per-target
+      hits, knockdown/knockback positions, the chain links' OpSkillCast, debuff icons on monsters
+      (OpBuffStart ownerKind 1), the 0x3080 kind 4/8 resurrection box.
+
 ## Round 746 follow-ups (the review: the skill rows are skilldataenc's)
 
-- [ ] **The server's `skills.csv` comes from the plain skilldata index, not retail's
+- [x] **DECIDED in round 785: `skills.csv` comes from the ENC tables, as retail's own data does.**
+      `export-refdata -mode skills -enc-exe <the player's sro_client.exe>` decrypts the files
+      `skilldataenc.txt` names (the key tables read from the player's own executable, never
+      copied). MEASURED: the 33,632 ENC ids (last-wins over the 26 conflicting duplicates) equal
+      the user's shard `_RefSkill` on EVERY exported column, raw Params included; the shard holds
+      2,512 more ids (a private server's additions -- 400 SKILL_CH_, 512 SKILL_EU_ among them) that
+      the client cannot display, so they are left out. The retail GameServer reads `_REFSKILL`
+      from its database (READ: no skilldata file name in its strings), and that database is the
+      ENC set. 35004/35005 are gone and 36791 is at 110. deploy/README.md has the steps.
+      ~~**The server's `skills.csv` comes from the plain skilldata index, not retail's
       `skilldataenc.txt`** (the review of round 746, finding 8; MEASURED). It carries 66 ids
       retail lacks, among them 35004/35005 (`SKILL_CH_WATER_BATTLEA_OVERHEAL_A/B_01`, a Europe
       cleric's leftovers in the plain `skilldata_36000`). It also has 36791
@@ -35,7 +68,7 @@ where it stopped, the tools for it, the traps — and points back here for every
       reads the old cover, which matches the ENC rows, so the board does not show them. This
       predates round 746. The options: export from the decrypted ENC rows (the key tables are in
       the player's own `sro_client.exe`, `docs/protocol/magic_state_board.md`), or drop the 66 ids
-      and take 36791 from `skilldata_35000`. **For the user to decide.**
+      and take 36791 from `skilldata_35000`. **For the user to decide.**~~
 - [ ] **characterdata duplicates** (the review of round 746, finding 7): the by-name monster
       fallback changes its winner for `"large gate phase i"` and a junk key `"0"`. `NPC_SOSUN`
       (61183) is the one code-keyed id whose parts disagree (`chinaman_spidey.bsr` first,
@@ -438,7 +471,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       player rows with no chain, 1,034 pass: 571 standalone castable rows and 463 final links
       of a chain, which the engine plays as the last step of their heads' chains (round 507).
       Needs a re-export of the skill CSV to take effect.
-- [ ] **Chain skills, link by link.** The skill tick (`0x4ae590`) plays a row with a non-zero
+- [x] **Chain skills, link by link -- done in round 785** (`session/skillchain.go`): the server
+      walks Basic_ChainCode itself (READ: the tick is the SERVER's CGCharAutoCommandActor), each
+      link its own blow, gate and 0xB070-shaped OpSkillCast at its own time (the 500 ms budget
+      rule), the last link's AutoAttackType decides the hand-off. ~~The skill tick (`0x4ae590`) plays a row with a non-zero
       `Basic_ChainCode` (col 9, `+0x68`, exported since round 502) as a sequence. Phase 2 makes it
       the current link with its ActionDuration as the remaining time, less what is left of
       `+0x28`. The action's release (`FUN_004ac920`, `sAutoCommand::ReleaseAndClear` `0x4ac980`)
@@ -453,7 +489,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       links. A head's `AutoAttackType` always equals its final link's (463 type 1, 49 type 2, 70
       type 0), so the departure costs the hand-off on the 463 type-1 true heads. (Round 502's "1,012 chain heads"
       was the type-1 rows with a non-zero column 9: 463 heads and 549 intermediate links.) Next:
-      resolve each link's blow on its own timing, then apply the last link's hand-off rule.
+      resolve each link's blow on its own timing, then apply the last link's hand-off rule.~~
 - [x] **Self-cast and ground-cast skills (client) -- round 617.** Grass Walk, the imbues and every
       Target_Required 0 row cast with nothing selected (OpUseSkill targetType 0); Ghost Walk picks a
       ground point (targetType 2; right click / Escape cancels); OpBuffStart/End/OpSkillMove are
@@ -484,7 +520,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       nothing reaches it -- though since round 654 the species table carries col 76 for every species
       (938 species read 20, one 40), so wiring it is one field once this is fixed. Next: skip `ApplySkillPercent` for a blocked blow, with a test, before
       monster block is wired.
-- [ ] **Mastery on the real rows: export `getv MAAT`.** Stage 1 of the damage pipeline scales
+- [x] **Mastery on the real rows -- casts done in round 785** (`session/skillmastery.go`, the
+      Params column carries `getv MAAT`; both mastery slots). LEFT for the combat lane: the plain
+      swing still passes mastery 0 (`plainSwingOf`/`performAttack`); `skillMasteryPercent(ctx,
+      skills, id, baseRow)` is the call. ~~**Mastery on the real rows: export `getv MAAT`.** Stage 1 of the damage pipeline scales
       the roll by the caster's mastery level, but `Skill_GetRequiredMasteryLevel` (`0x59e770`)
       returns 0 unless the row's `CRefSkill+0x574` is non-zero, and the only writer of `+0x574`
       is the row's own `getv MAAT` parameter (`SkillGlobal::RefSkill_ParseParams` `0x587630`).
@@ -499,7 +538,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         leaves alone (1,478 of the 1,502 EU rows carrying `att` lack MAAT).
       Next: export a MAAT flag in the skill CSV (a new trailing column, the round-504 pattern),
       then gate both paths on it (`combat.MasteryDamagePercent`'s `hasSkill` becomes "has a row
-      with MAAT"), and give the plain swing the caster's level in the base row's mastery.
+      with MAAT"), and give the plain swing the caster's level in the base row's mastery.~~
 - [x] **Attack distance -- v0.1.431 (round 519); v0.1.432 (round 522: a cast ends the walk, a hotbar click no longer replaces it).** BUILT for the player: the server refuses a first swing or
       cast out of reach ("too far away", `session.firstSwingInReach`/`skillInReach`), and the client
       walks into reach before it sends (`World3D._attack_monster`, below). The monster's own approach
