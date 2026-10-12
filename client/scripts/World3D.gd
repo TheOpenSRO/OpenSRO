@@ -26496,7 +26496,10 @@ func _paint_monster_hp(monster_id: int, hp: int = -1) -> void:
 
 ## Runs `what` after `seconds` of scene time -- at once when zero.
 func _after(seconds: float, what: Callable) -> void:
-	if seconds <= 0.0:
+	# Out of the tree (a headless test's bare World3D) there is no timer to
+	# wait on: it runs at once (round 785: the 100 ms hit-sound delay made
+	# such a call non-zero where it had been 0).
+	if seconds <= 0.0 or not is_inside_tree():
 		what.call()
 		return
 	get_tree().create_timer(seconds).timeout.connect(what)

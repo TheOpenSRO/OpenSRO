@@ -7550,6 +7550,20 @@ spear's four base clips are 1733-1833 ms against its 1166 ms cadence (MEASURED, 
 each swing starts its clip before the last ended -- INFERRED the same in retail (every 0xB070 a new
 deco at the authored speed, param 140 = 100); not changed.
 
+Perf gate (`perf_gate.sh --sites jangan --frames 30000`, base c7b2dcd0, median of 3, 1280x720,
+Forward+; the default 3000 frames gave no frame samples on 4.7.2's faster load):
+
+| jangan | base | head | verdict |
+|---|---|---|---|
+| frame ms | 0.77 | 0.77 | SAME |
+| entry ms | 8743 | 8722 | SAME |
+| freeze ms | 2778 | 2795 | SAME |
+| hitches | 5 | 5 | SAME |
+
+Tests: server `go test ./...` 72 packages ok; client `remote_godot.sh tests` 292 suites, 0 failing;
+new `combat785_test.gd` (red without the clip-tick fix), `combat_facing_test.gd`, Go
+`combat785_test.go` / `combat785_fight_test.go`.
+
 OPEN: the +0x78 field of the turn's condition; whether retail's hit reaction cuts a swing; the
 hitcount ddj damage text with its critical/blocking labels (OpenSRO draws a number); what paces a
 monster's swings in the engine (its cooldown arm is PC-only, READ `0x586c03`); the player's own
