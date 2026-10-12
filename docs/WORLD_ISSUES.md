@@ -7792,6 +7792,124 @@ Forward+ on the RX 7600, median of 3, native readers off on both sides):
 | cross freeze ms | 2757 | 2751 | SAME |
 | cross hitches | 5 | 5 | SAME |
 
+### Round 786 (part): effects that drift off the body in ordinary play
+
+The user, on v0.1.534 (the part above merged): "it does it all the time". Their picture (16:15:41):
+deadass3 standing in an open field, the ground ring under the feet, and a full copy of the large
+pale blue/green ring several body heights away, a purple swirl to the right. The prod server's log
+for those 20 s: only 0x7021 moves every 250-500 ms (click-walking) and a few buff casts -- no zone
+change. Asked: re-derive what keeps a particle on its body from sro_client.exe, measure ordinary
+play, fix it.
+
+**Ordinary play, MEASURED** (`OPENSRO_QA_FXDRIFT`, the live client, auras 8150 / 8214 / 8239 /
+8253 and the +9 seal glaive, a click every 500 ms in a zigzag, 60 frames and 60 ticks a second;
+farthest drawn particle past its effect's still spread, and why):
+
+| phase | worst | what |
+|---|---|---|
+| standing, recasting the four buffs | 0 | -- |
+| walking 50 a second | +164 | `fire_gigongta_keep_e` #13 (smoke, followed holder dead), `lightning_gyeonggong_keep_c` #12 (the wind ring, same) |
+| stopped | +78 | the wind ring's orphans; `fire_hwabyeok_keep_c`'s sparks (nodes with u6 = 0) |
+| turning in place, 360 degrees a second | +60 | the wind ring's orphans |
+| walking 150 / stopped | +278 / +372 | the same, three times as far |
+| walking 300 / stopped | +496 / +876 | the same |
+| walking 50 with three server corrections (40-unit snaps) | +570 | the same |
+
+Attacking was not measured (no monster in a server-less QA run; OPEN). So the parts that leave
+the body are (a) particles whose followed ancestor has died ("orphans"), carrying that ancestor's
+last move, and (b) nodes that follow nothing (u6 = 0). The ring in the picture is
+`lightning_gyeonggong_keep_c` #12 "wind-master" (a mesh living 50 frames under a holder #11
+living 20): its orphans; the purple swirl is not identified (OPEN; no seal file the client draws
+for this glaive runs its own simulation in these runs).
+
+**What the original does (READ, sro_client.exe), re-derived:**
+- *Which nodes follow what.* `CEFCLinkMode::vslot_003` (0x00cbb0f0) reads a node's LinkMode
+  controller (four u32), and `CEFCLinkMode::vslot_005` (0x00cb9370) writes them as the levels u6
+  (+0x168), u2 (+0x158), u3 (+0x15c), u4 (+0x160) -- each clamped to the levels the node has above
+  it, u3 = -1 kept -- and sets b1 (+0x155) on the node u6 names, b0 (+0x154) on the ones u2/u3/u4
+  name; the body's own block is read by `FUN_00cc3500`. MEASURED (`tools/efp_linkmode_census.gd`,
+  1,369 files, 33,015 nodes, 28,640 with a LinkMode): the levels the client reads from the body
+  block equal what the controllers give in every node. The loader is right.
+- *Follow pass.* `CEFUpdater::vslot_002` (0x00c85f20, the update) and `EFEffect::FUN_00c863a0`
+  (the draw's, from `FUN_00cabda0` when the placement flag +0x28b or +0x60 is set): per particle,
+  u2 orbit about the ancestor's old position, u3/u4 turns, then `pos += A.pos - A.old` for the u6
+  ancestor A, with no test of A's dead flag. A is resolved once into the emitter
+  (`CEFGroup::vslot_004`, 0x00c86db0).
+- *A dead ancestor stays in memory and is still followed.* A death (`CEFElement::vslot_001`,
+  0x00c87a20) unlinks the particle and kills its child emitters (`CEFGroup::vslot_001`, 0x00c879b0),
+  which do not kill their particles; an emitter holds its owner (+1 at 0x00c86d54) and each
+  particle holds its emitter (+1 at 0x00c8875e); both are released only at count 0
+  (`CEFGroup::vslot_002` 0x00c879f0, `CEFElement::vslot_002` 0x00c87aa0). The extinct executor
+  (`FUN_00c84e20`) reads the life through the emitter and kills nothing else. So round 785's
+  reading holds: an orphan goes on with its dead ancestor's last per-pass move and turn.
+- *A kept effect* (`CEFEffect::vslot_000`, 0x00caf550) revives the root updater's queued deaths
+  only; a child holder like the wind ring's #11 dies every cycle.
+- *One placement and one pass per frame.* `CIDecoSkill::vslot_014` (0x00a503f0) places each
+  following entry every frame (`IDecoSkill::FUN_00a4ddc0` -> `FUN_00a4a680`, the animated bone,
+  -> `CEFEffect::vslot_007` 0x00caa020), then updates it; the draw runs the pass on a frame without
+  an update. The character moves every one of those frames.
+
+**The cause found (MEASURED).** This client moves the player in `_physics_process` (60 ticks a
+second) and placed its effects in `_process`, every rendered frame. At 144 or 240 frames a second
+most frames see no move and one in 2.4 or 4 sees a whole tick's, so a holder that died on a quiet
+frame left its orphans still (a trail), and one that died on a tick frame left them adding a whole
+tick's move every frame -- 2.4 or 4 times the body's speed. Headless, `efp_probe.gd --drift`, 50
+a second, the body moved on 60 Hz ticks:
+
+| effect, scenario | 144 fps before | after | 240 fps before | after |
+|---|---|---|---|---|
+| lightning_gyeonggong_keep_c, walk then stop | +83.0 | +49.2 | +378.3 | +48.4 |
+| lightning_gyeonggong_keep_c, zigzag | +22.1 | +98.7 | +428.3 | +97.9 |
+| fire_gigongta_keep_e, walk then stop | +63.2 | +15.6 | +192.3 | +15.9 |
+| fire_gigongta_keep_e, zigzag | +31.8 | +64.5 | +254.5 | +59.3 |
+
+The "after" column equals the body moved every frame (+49.2 / +14.6 at 144 fps with no ticks):
+what the original's rules give. (At 144 fps the zigzag's "before" is smaller only by chance --
+there its holders happened to die on quiet frames and their orphans stood still, left behind.)
+Census, every skill file and the 74 equipment files, kept as their rows say, walk then stop at 144
+fps over 60 Hz ticks: drawn particles past their spread in 413 runs (410,641 particle-frames)
+before, 316 (218,675) after; equipment files 52 -> 38.
+
+**The fix.** `EfpEffect` places an effect on a host -- and runs its follow pass and steps --
+once per physics tick (`tick_gate`, which World3D holds through `gate_ticks`; `tick_of` lets a tool
+count its own ticks); a frame with no tick only redraws for the camera. The tick is this client's
+stand-in for the original's frame (OURS; the per-frame placement and pass are READ above).
+QA: `OPENSRO_QA_FX_NOGATE=1` (before), `OPENSRO_QA_PHYSICS_TICKS=<n>` (physics slower than the
+movie writer, so a render shows a fast screen's case).
+
+**Not changed, READ.** What stays: an orphan carries its holder's last move after the body stops
+or turns (the wind ring up to 50 frames, `fire_gigongta_keep_e`'s smoke up to 30), and nodes with
+u6 = 0 (`fire_hwabyeok_keep_c`'s sparks) stay where they were born. Both follow from the addresses
+above; with the body moving every frame the in-client numbers above are those rules. The user
+reports retail does not leave rings behind; the binary as read says these particles keep their
+last motion. If the user's retail sight still disagrees after this fix, the difference is not in
+any function read here (OPEN, for the user to decide on an OURS departure).
+
+**Screenshots** (render box, 1280 x 720, Forward+, `OPENSRO_QA_PHYSICS_TICKS=24`, the zigzag
+walk): `/var/tmp/r786-fx/keep/walk_before_f480.png` / `walk_after_f480.png` (walking) and
+`walk_before_f560.png` / `walk_after_f560.png` (after the stop). In that run (2.5 frames a tick)
+the particles past their spread fell from 1,545 to 1,168 while walking and from 3,481 to 2,787
+after the stop; its worst single particle is noise (+43.5 -> +153.5: which frame a hand-bone holder
+dies on).
+
+**Gates:** `check` ALL LOAD (785 scripts, 9 scenes); `tests` "ran 302 suite(s), 0 failing"; new
+`efp/efp_tick_gate_test.gd` (orphans keep pace placed once a tick at 144 and 240 fps, leave the
+body without it; no tick, no placement or step; World3D holds the gate).
+
+**Perf gate** (`--base 56ca06cd --head 84638d47 --sites jangan,cross --frames 40000`, 1280x720,
+Forward+ on the RX 7600, median of 3):
+
+| | base | head | |
+|---|---|---|---|
+| jangan frame ms | 0.77 | 0.76 | SAME |
+| jangan entry ms | 8692 | 8690 | SAME |
+| jangan freeze ms | 2725 | 2726 | SAME |
+| jangan hitches | 4 | 4 | SAME |
+| cross frame ms | 0.87 | 0.87 | SAME |
+| cross entry ms | 9304 | 9358 | SAME |
+| cross freeze ms | 2743 | 2719 | SAME |
+| cross hitches | 5 | 5 | SAME |
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the
