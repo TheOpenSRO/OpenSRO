@@ -1448,7 +1448,7 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// id the same way).
 		_, stillLive := hub.EntityByCharacterID(left.CharacterID)
 		if !stillLive {
-			keepUp.Cancel(left.CharacterID)
+			cancelActions(left.CharacterID)
 			motions.clear(left.CharacterID)
 		}
 		// The book goes with the character (round 616): the object's
@@ -1469,6 +1469,9 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 			forgetWarpLanding(left.CharacterID)
 			forgetLandings(left.CharacterID)
 			forgetWalkIn(hub, left.CharacterID)
+			// The skill and quest runtimes' per-character state (round 785
+			// review).
+			forgetCharacterSkillState(left.CharacterID)
 		}
 		// Nor may it save where the stale session last stood, or tell the
 		// zone the character left: the live session's entity is still there,
@@ -1788,7 +1791,10 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		}).EncodeFitting()
 		return true, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: data})
 	}
-	keepUp.Cancel(old.CharacterID)
+	cancelActions(old.CharacterID)
+	// A quest talk opened before the warp answers nothing after it (round
+	// 785 review).
+	forgetQuestTalk(sess.ID(), false)
 	// A character arrives standing (round 607, motion.go; ours: the retail
 	// object's re-creation is inferred). The client drops its own sit on the
 	// zone change too.
@@ -1941,7 +1947,7 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// a running auto-attack as it did (keepup.go); a stop report or a
 	// placement is not a move the player asked for.
 	if !req.Relocated && !req.Stopped {
-		keepUp.Cancel(entity.CharacterID)
+		cancelActions(entity.CharacterID)
 	}
 	// Round 749: relayed as retail's 0xB023 (the stop/position message,
 	// FUN_008a4f80, which snaps the body there and ends its turn) to the

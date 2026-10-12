@@ -120,7 +120,10 @@ Server (`session/combat.go`, `keepup.go`, `monsterstrike.go`):
   to its leg's end (a stop where it stands when it stands). OURS: retail's
   server walks the player itself; OpenSRO's client walks.
 - `OpMonsterAttacked` carries the swung skill's id (a u32 after the wall block;
-  the counter names the species' primary skill, characterdata col 83).
+  the counter names the species' primary skill, characterdata col 83). The counter
+  to a skill cast names it too; before the round 785 review it sent 0.
+- A knocked monster's cell crossing reaches the watchers at the window's edge
+  (enter / leave, as a step's crossing does; round 785 review).
 - The AI trace logs both ends of a refused reach (`reach: ... refused`).
 
 Client (`World3D.gd`, `audio_anim/anim_sounds.gd`, `world/combat_facing.gd`):

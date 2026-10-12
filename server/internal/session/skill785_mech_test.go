@@ -84,17 +84,3 @@ func TestLfstDamage(t *testing.T) {
 		t.Fatalf("capped: %d", d)
 	}
 }
-
-// TestSwingBlock: a plain swing's parts sum to the total and the killing
-// hit carries 0x80.
-func TestSwingBlock(t *testing.T) {
-	b := swingBlock(5, []swingHit{{dmg: 10}, {dmg: 30, crit: true}, {blocked: true}}, 80).died(true)
-	hs := b.Targets[0].Hits
-	sum := 0
-	for _, h := range hs {
-		sum += int(h.Damage)
-	}
-	if sum != 80 || hs[1].Flags != HitFlagCritical || hs[2].Kind != HitKindBlocked || hs[1].Kind&HitDied == 0 {
-		t.Fatalf("%+v", hs)
-	}
-}

@@ -573,7 +573,7 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 	}
 	// Death ends the action queue with everything else: no repeat
 	// fires for a character who has just been put back on their feet.
-	keepUp.Cancel(characterID)
+	cancelActions(characterID)
 	// A death ends every buff on this path too (the rounds 636-640
 	// integration review), as markDead's does on the dead-state path (round
 	// 616's rule, OURS) -- the protection wall and its root with it: before,

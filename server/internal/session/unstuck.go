@@ -103,7 +103,7 @@ func handleUnstuck(sess *gateway.Session, hub *world.Hub, chars character.Store)
 		return answer(UnstuckResult{})
 	}
 	unstuckLast.Store(e.CharacterID, now)
-	keepUp.Cancel(e.CharacterID)
+	cancelActions(e.CharacterID)
 	motions.walking(e.CharacterID, now)
 	savePosition(chars, sess, r.Entity)
 	// The window and the character itself: its client is put there (the

@@ -451,6 +451,12 @@ func TestPartyInviteeDisconnectFreesIt(t *testing.T) {
 	w.c["Eli"].next(party.OpInvitation)
 	w.c["Eli"].conn.Close()
 	waitGone(t, w, "Eli")
+	// The party hook runs after the world's (the harness's OnDisconnect
+	// order), so the hub's removal is seen a moment before the detach; wait
+	// for it (under -race the gap was measured long enough to fail).
+	for deadline := time.Now().Add(time.Second); w.parties.State(w.ids["Eli"]) != party.StateFree && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if st := w.parties.State(w.ids["Eli"]); st != party.StateFree {
 		t.Fatalf("a departed invitee's state %d, want 0", st)
 	}

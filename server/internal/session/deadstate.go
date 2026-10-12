@@ -383,7 +383,7 @@ func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 	if deps.potions != nil {
 		deps.potions.drop(characterID)
 	}
-	keepUp.Cancel(characterID)
+	cancelActions(characterID)
 	// A death ends every buff (round 616). OURS, disclosed: the retail
 	// death path was not traced to a book clear -- GObjPC_OnDeath (0x4e6980)
 	// holds none, and CGObjChar::SetLifeState (0x4a9c80) on state 2 calls an
@@ -465,6 +465,9 @@ func reviveWith(ctx context.Context, chars character.Store, mp *mana.Tracker, hu
 	if !hub.SetLifeState(characterID, world.LifeDead, world.LifeAlive, time.Time{}) {
 		return nil, 0, errNotDead
 	}
+	// A revive by any path ends a resurrection offer still waiting (round
+	// 785 review).
+	dropResurrectOffer(characterID)
 	stillDead := func(err error) (*character.Character, int, error) {
 		hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, e.DiedAt)
 		return nil, 0, fmt.Errorf("session: reviving %d: %w", characterID, err)

@@ -144,16 +144,16 @@ func TestKillProgressClaimAndLimit(t *testing.T) {
 		t.Fatalf("start %+v %+v", st, give)
 	}
 	always := func(float64) bool { return true }
-	if p := c.OnKill(l, "MOB_Z", always); len(p) != 0 {
+	if p := onKill(c, l, "MOB_Z", always); len(p) != 0 {
 		t.Fatalf("an unrelated kill counted %+v", p)
 	}
 	for i := 1; i <= 3; i++ {
-		p := c.OnKill(l, "MOB_X_CLON", always)
+		p := onKill(c, l, "MOB_X_CLON", always)
 		if len(p) != 1 || p[0].Count != i || p[0].Finished != (i == 3) {
 			t.Fatalf("kill %d: %+v", i, p)
 		}
 	}
-	if p := c.OnKill(l, "MOB_X", always); len(p) != 0 {
+	if p := onKill(c, l, "MOB_X", always); len(p) != 0 {
 		t.Fatalf("a kill after the count counted %+v", p)
 	}
 	if ok, _ := Claim(l, q, "NPC_Z"); ok {
@@ -180,15 +180,15 @@ func TestGatherDeliverDialog(t *testing.T) {
 	Start(l, g)
 	var rolled []float64
 	miss := func(r float64) bool { rolled = append(rolled, r); return false }
-	if p := c.OnKill(l, "MOB_Y", miss); len(p) != 0 || len(rolled) != 1 || rolled[0] != 50 {
+	if p := onKill(c, l, "MOB_Y", miss); len(p) != 0 || len(rolled) != 1 || rolled[0] != 50 {
 		t.Fatalf("a missed roll %+v %v", p, rolled)
 	}
 	hit := func(float64) bool { return true }
-	p := c.OnKill(l, "MOB_Y_CLON", hit)
+	p := onKill(c, l, "MOB_Y_CLON", hit)
 	if len(p) != 1 || p[0].Item != "ITEM_QT_GATHER" || p[0].Finished {
 		t.Fatalf("a drop %+v", p)
 	}
-	p = c.OnKill(l, "MOB_Y", hit)
+	p = onKill(c, l, "MOB_Y", hit)
 	if len(p) != 1 || !p[0].Finished {
 		t.Fatalf("the last drop %+v", p)
 	}
@@ -300,4 +300,16 @@ func TestBuildFromTables(t *testing.T) {
 		len(q.Reward.Items) != 1 || q.Reward.Items[0].Code != "ITEM_Q" || q.Source != SourceCompiled {
 		t.Fatalf("%+v", q)
 	}
+}
+
+// onKill credits a kill with every drop granted: KillCredits then Credit,
+// as the session's questOnKill does when the bag takes every drop.
+func onKill(c *Catalog, l Log, code string, roll func(rate float64) bool) []Progress {
+	var out []Progress
+	for _, k := range c.KillCredits(l, code, roll) {
+		if p, ok := Credit(l, k); ok {
+			out = append(out, p)
+		}
+	}
+	return out
 }

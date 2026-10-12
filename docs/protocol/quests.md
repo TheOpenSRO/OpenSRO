@@ -170,7 +170,20 @@ when it has quest business with the character.
 - **Kill credit goes to the killer** (`announceKill`); whether party members
   share it is OPEN (`LuaSetDivideType`, 125 quests, is unread).
 - **Gather drops** go straight into the bag at the mission's rate; a full bag
-  neither drops nor counts.
+  neither drops nor counts. The drop is given first, and the mission is stepped
+  against the log as it is then (`quest.KillCredits` / `quest.Credit`, round 785
+  review). A drop whose quest was given up or finished meanwhile is taken back.
+- **Saving**: a character's quest writes are serialised, and each writes the
+  state as it is at its turn. The reward is paid only after the paid state is
+  saved; a failed save refuses with {2, 2} and the quest stays unpaid.
+- **The talk** is bound to its character and to the NPC's reach (the select's
+  300, `npcTarget`). It ends on 0x704B, except at the reward window, which
+  OpenSRO's client keeps open. It also ends on a teleport and on a character's
+  entry. Retail (READ, round 785 review): 0x70D4 (0x516670) and 0x7515
+  (0x51b370) test no distance themselves. They need the PC's selection of the
+  NPC (`FUN_005165f0`), which breaks beyond 320 on a cell change (0x433270).
+  0x7515 also needs talk mode 5 and always ends the interaction. 0x70D8
+  (0x516780) involves no NPC.
 - **Deliveries**: the items a delivery names are handed over at acceptance and
   taken at the target NPC (the script's two item lists are not told apart).
 - **Dialogues** complete at the quest's complete NPC.
