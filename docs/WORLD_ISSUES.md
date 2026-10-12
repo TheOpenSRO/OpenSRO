@@ -7483,6 +7483,26 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
+
+The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the
+original ("check the code", the character faces monsters, animations and audio don't loop too fast);
+fully implement all skills including their effects; fix the effects that don't fully show or cycle and
+leave a trail; drops should not stack, add the pick-up animation; Ghost Walk casts toward the mouse
+with no pick cursor; full quest support (race, levels, NPCs, rewards) and the quest icon under the
+minimap. Seven lanes ran in parallel (the parts below), then a review of the merged server and of the
+merged client, each followed by a fix lane (the last two parts).
+
+- **Gates (merged tree 23f4d1f5):** `check` ALL LOAD (773 scripts, 9 scenes); `tests` "ran 297
+  suite(s), 0 failing"; server `go test ./...` passes. Perf gate `--base c7b2dcd0 --head d8b43cf7
+  --sites jangan,cross --frames 40000`: all eight numbers SAME (jangan frame 0.78 -> 0.88 ms, entry
+  8794 -> 9146 ms; cross unchanged); the client fixes' gate `--base d8b43cf7` SAME on all four.
+- **Deployed (the Mac mini):** the server at 6c3c0ffb; skills re-imported from the ENC export (33,632
+  rows, param_words on all of them; the pre-round table dumped first); monsters.csv with
+  Knockdown/KORecoverTime; the quest catalogue (696 quests, 618 playable) under
+  `OPENSRO_QUESTS_DIR`. The 66 plain-index skill ids retail lacks are still in the skills table (held
+  by no character; their removal is left to the user).
+
 ### Round 785 (part): the skills (server)
 
 The user: "fully implement all skills and make sure they behave exactly as the original game
