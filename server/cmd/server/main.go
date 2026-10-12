@@ -943,6 +943,11 @@ func main() {
 			"quests recorded, as the shard's _AddNewChar gives them. A _RefCharGen.csv beside them is compared with "+
 			"the creatable catalogue at boot. Without it new characters get no defaults. A configured directory "+
 			"that does not load is fatal. See deploy/README.md, \"Character defaults\".")
+	questsDir := flag.String("quests-dir", os.Getenv("OPENSRO_QUESTS_DIR"),
+		"a directory holding the quest catalogue cmd/export-refdata -mode quests wrote from the operator's own "+
+			"questdata.txt, refqusetreward.txt, refquestrewarditems.txt and the game server's Script/VIETNAM/*.sct "+
+			"(env OPENSRO_QUESTS_DIR; round 785): NPCs offer their quests, kills and drops count, rewards are paid. "+
+			"Without it no quest is offered. A configured directory that does not load is fatal. See deploy/README.md, \"Quests\".")
 	itemsCSV := flag.String("items-csv", os.Getenv("OPENSRO_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
@@ -2139,6 +2144,28 @@ func main() {
 	// Round 769: a character's Str, Int and max HP/MP count its worn items'
 	// blue options (character.BonusOf), read from the equipment store.
 	session.SetEquipBonusSource(eq)
+	// The quest catalogue (round 785, internal/quest): exported from the
+	// operator's own archives and game server scripts; without it no quest is
+	// offered and the NPCs keep their static talk stand-in.
+	if *questsDir != "" {
+		cat, err := quest.LoadDir(*questsDir)
+		if err != nil {
+			logger.Error("loading the quest catalogue", "dir", *questsDir, "err", err)
+			os.Exit(1)
+		}
+		items, _ := refItems.(session.QuestItems)
+		if items == nil {
+			logger.Warn("the item store cannot look items up by code name: quest items and item rewards are not given")
+		}
+		session.InstallQuests(cat, session.QuestDeps{Store: quests, Chars: chars, Inv: inv, Items: items,
+			Skills: skills, Hub: hub, MP: manaTracker, Logger: logger})
+		cv := cat.Coverage()
+		logger.Info("quest catalogue loaded: NPCs offer their quests", "dir", *questsDir, "quests", cv.Total,
+			"playable", cv.Playable, "scripted", cv.Script, "compiled_not_extracted", cv.Compiled, "questdata_only", cv.None)
+	} else {
+		logger.Warn("no quest catalogue (-quests-dir / OPENSRO_QUESTS_DIR): no quest is offered -- see deploy/README.md \"Quests\"")
+	}
+
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
@@ -2226,7 +2253,9 @@ func main() {
 		// Chat (round 634): the five channels, whispers, the global
 		// chatting item and the GM's type-3 line.
 		session.ChatHandler(session.ChatDeps{Hub: hub, Parties: parties, Guilds: guilds, Inv: inv, Items: refItems, Gate: gmGate}),
-		session.QuestHandler(chars, quests),
+		// The quests (round 785, session/quest.go): the talk pages' answers,
+		// the reward, the give-up and the window's reward button.
+		session.QuestHandler(),
 		session.DuelHandler(chars, eq, refItems, hub, duels),
 		session.TradeHandler(chars, inv, refItems, hub, trades),
 		session.FriendHandler(chars, friends, hub),
@@ -2300,6 +2329,7 @@ func main() {
 			step("duel", func() { duelDisconnect(sess) })
 			step("trade", func() { tradeDisconnect(sess) })
 			step("npc", func() { session.ForgetNPCInteraction(sess.ID()) })
+			step("quest", func() { session.ForgetQuestSession(sess.ID()) })
 			step("guild points", func() { guildPointsDisconnect(sess) })
 			step("berserk", func() { berserkDisconnect(sess) })
 			// The party removal first, then the match entry, as the

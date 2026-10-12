@@ -2098,7 +2098,7 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 // is sent to them. performAttack's announcement moved here unchanged in round
 // 659.
 func announceKill(ctx context.Context, d combatDeps, sess *gateway.Session, others []world.Entity, characterID int64, monster combat.Monster, killGold int64, updated combat.Monster, killHits []combat.Hit) error {
-	chars, quests, hub, ground, inv, dropSrc, parties := d.chars, d.quests, d.hub, d.ground, d.inv, d.dropSrc, d.parties
+	hub, ground, inv, dropSrc, parties := d.hub, d.ground, d.inv, d.dropSrc, d.parties
 	// The kill reward itself was already granted above, before the
 	// result packet went out -- see the comment there.
 	msg := &MonsterDied{MonsterID: monster.ID}
@@ -2111,19 +2111,8 @@ func announceKill(ctx context.Context, d combatDeps, sess *gateway.Session, othe
 	// (damageMonsterWatched).
 	AnnounceUniqueKill(hub, parties, updated, killHits)
 
-	completedQuests, err := quests.RecordKill(ctx, characterID, monster.Name)
-	if err != nil {
-		return fmt.Errorf("combat: recording quest kill: %w", err)
-	}
-	for _, q := range completedQuests {
-		if err := chars.AddGold(ctx, characterID, q.GoldReward); err != nil {
-			return fmt.Errorf("combat: granting quest reward: %w", err)
-		}
-		completedMsg := &QuestCompleted{QuestID: q.ID, GoldReward: q.GoldReward}
-		if err := sess.Send(&proto.Packet{Opcode: OpQuestCompleted, Data: completedMsg.Encode()}); err != nil {
-			return err
-		}
-	}
+	// The killer's quests (round 785, quest.go): kill counts and gather drops.
+	questOnKill(ctx, sess, characterID, monster)
 
 	if ground != nil {
 		// The kill's gold and loot lie on the ground near the corpse,

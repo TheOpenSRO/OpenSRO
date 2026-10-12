@@ -478,10 +478,27 @@ const (
 	skMax = 62
 )
 
+// questReport is -quest-report and questDecompDir -decomp-dir (round 785).
+var questReport, questDecompDir *string
+
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
+	questReport = flag.String("quest-report", "", "with -mode quests: also write a per-quest coverage CSV here (id, code, level, source, playable, reachable, blocking prerequisite)")
+	questDecompDir = flag.String("decomp-dir", "", "with -mode quests: a decompilation of SR_GameServer.exe (funcs_*.c, the project's Ghidra dump) to read the compiled CQNO_* quests' setup from")
 	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, npcs, regions, chargen or magicoptions")
 	flag.Parse()
+	if *mode == "quests" {
+		// The quest catalogue (round 785): Media.pk2's questdata.txt,
+		// refqusetreward.txt and refquestrewarditems.txt, plus the operator's
+		// game server files Script/VIETNAM/{define,QuestList,Quest}.sct and
+		// (optional) SR_GameServer.exe, into the directory -out names: what
+		// cmd/server's -quests-dir loads (internal/quest).
+		if err := exportQuests(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")

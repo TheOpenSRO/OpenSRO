@@ -6,71 +6,46 @@ import (
 	"sync"
 )
 
-// MemStore is an in-memory Store, for tests and for running the server
-// without a database (see cmd/server's -in-memory). Nothing is persisted.
-//
-// Quest progress is the one thing this package's doc comment calls out as
-// worth surviving a restart, so an in-memory store is explicitly the
-// development-and-test option, not a deployment one.
+// MemStore is an in-memory Store, for tests and -in-memory servers. Nothing
+// is persisted.
 type MemStore struct {
 	mu       sync.RWMutex
-	progress map[int64]map[int64]*Progress // characterID -> questID -> progress
+	states   map[int64]map[int64]State     // characterID -> questID -> state
 	defaults map[int64]map[string]memGrant // characterID -> quest code -> default grant (round 692, defaults.go)
 }
 
 // NewMemStore returns an empty MemStore.
 func NewMemStore() *MemStore {
-	return &MemStore{progress: make(map[int64]map[int64]*Progress)}
+	return &MemStore{states: make(map[int64]map[int64]State)}
 }
 
-// Accept implements Store.
-func (m *MemStore) Accept(_ context.Context, characterID, questID int64) error {
-	if _, ok := Catalog[questID]; !ok {
-		return ErrUnknownQuest
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.progress[characterID][questID] != nil {
-		return ErrAlreadyAccepted
-	}
-	if m.progress[characterID] == nil {
-		m.progress[characterID] = make(map[int64]*Progress)
-	}
-	m.progress[characterID][questID] = &Progress{QuestID: questID}
-	return nil
-}
-
-// ListProgress implements Store.
-func (m *MemStore) ListProgress(_ context.Context, characterID int64) ([]Progress, error) {
+// States implements Store, by quest id.
+func (m *MemStore) States(_ context.Context, characterID int64) ([]State, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
-	var out []Progress
-	for _, p := range m.progress[characterID] {
-		out = append(out, *p)
+	var out []State
+	for _, s := range m.states[characterID] {
+		out = append(out, s.Clone())
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].QuestID < out[j].QuestID })
 	return out, nil
 }
 
-// RecordKill implements Store.
-func (m *MemStore) RecordKill(_ context.Context, characterID int64, monsterName string) ([]Quest, error) {
+// Put implements Store.
+func (m *MemStore) Put(_ context.Context, characterID int64, s State) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	var completed []Quest
-	for questID, p := range m.progress[characterID] {
-		q, ok := Catalog[questID]
-		if !ok || p.Completed || q.MonsterName != monsterName {
-			continue
-		}
-		p.Kills++
-		if p.Kills >= q.TargetKills {
-			p.Completed = true
-			completed = append(completed, q)
-		}
+	if m.states[characterID] == nil {
+		m.states[characterID] = map[int64]State{}
 	}
-	sort.Slice(completed, func(i, j int) bool { return completed[i].ID < completed[j].ID })
-	return completed, nil
+	m.states[characterID][s.QuestID] = s.Clone()
+	return nil
+}
+
+// Delete implements Store.
+func (m *MemStore) Delete(_ context.Context, characterID, questID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.states[characterID], questID)
+	return nil
 }

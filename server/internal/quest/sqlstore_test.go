@@ -2,7 +2,6 @@ package quest
 
 import (
 	"context"
-	"errors"
 	"os"
 	"testing"
 )
@@ -21,111 +20,38 @@ func openTestSQLStore(t *testing.T) *SQLStore {
 		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
 	}
 	if err := s.TruncateForTest(context.Background()); err != nil {
-		t.Fatalf("truncating character_quests: %v", err)
+		t.Fatalf("truncating: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
 }
 
-func TestAcceptAndListProgress(t *testing.T) {
+func TestSQLStoreStates(t *testing.T) {
 	store := openTestSQLStore(t)
 	ctx := context.Background()
-
-	if err := store.Accept(ctx, 1, 1); err != nil {
-		t.Fatalf("Accept: %v", err)
+	if err := store.Put(ctx, 1, State{QuestID: 5, Status: StatusAchieving, Counts: []int{3, 0, 1}}); err != nil {
+		t.Fatal(err)
 	}
-
-	progress, err := store.ListProgress(ctx, 1)
+	if err := store.Put(ctx, 1, State{QuestID: 5, Status: StatusAchievedButNotPaid, Counts: []int{14, 1, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, 1, State{QuestID: 4, Status: StatusAchieved, Achieved: 2}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.States(ctx, 1)
 	if err != nil {
-		t.Fatalf("ListProgress: %v", err)
+		t.Fatal(err)
 	}
-	if len(progress) != 1 || progress[0].QuestID != 1 || progress[0].Kills != 0 || progress[0].Completed {
-		t.Fatalf("unexpected progress: %+v", progress)
+	if len(got) != 2 || got[0].QuestID != 4 || got[0].Achieved != 2 || got[0].Counts != nil {
+		t.Fatalf("states %+v", got)
 	}
-}
-
-func TestAcceptUnknownQuest(t *testing.T) {
-	store := openTestSQLStore(t)
-	ctx := context.Background()
-
-	if err := store.Accept(ctx, 1, 999); !errors.Is(err, ErrUnknownQuest) {
-		t.Fatalf("Accept unknown quest: got %v, want ErrUnknownQuest", err)
+	if got[1].Status != StatusAchievedButNotPaid || len(got[1].Counts) != 3 || got[1].Counts[0] != 14 {
+		t.Fatalf("the replaced state %+v", got[1])
 	}
-}
-
-func TestAcceptAlreadyAccepted(t *testing.T) {
-	store := openTestSQLStore(t)
-	ctx := context.Background()
-
-	if err := store.Accept(ctx, 1, 1); err != nil {
-		t.Fatalf("Accept: %v", err)
+	if err := store.Delete(ctx, 1, 5); err != nil {
+		t.Fatal(err)
 	}
-	if err := store.Accept(ctx, 1, 1); !errors.Is(err, ErrAlreadyAccepted) {
-		t.Fatalf("second Accept: got %v, want ErrAlreadyAccepted", err)
-	}
-}
-
-func TestRecordKillProgressesAndCompletes(t *testing.T) {
-	store := openTestSQLStore(t)
-	ctx := context.Background()
-
-	if err := store.Accept(ctx, 1, 1); err != nil {
-		t.Fatalf("Accept: %v", err)
-	}
-
-	// Quest 1 targets 3 kills of "Mangyang".
-	for i := 0; i < 2; i++ {
-		completed, err := store.RecordKill(ctx, 1, "Mangyang")
-		if err != nil {
-			t.Fatalf("RecordKill: %v", err)
-		}
-		if len(completed) != 0 {
-			t.Fatalf("kill %d: expected not yet completed, got %+v", i+1, completed)
-		}
-	}
-
-	completed, err := store.RecordKill(ctx, 1, "Mangyang")
-	if err != nil {
-		t.Fatalf("RecordKill: %v", err)
-	}
-	if len(completed) != 1 || completed[0].ID != 1 {
-		t.Fatalf("expected quest 1 completed on 3rd kill, got %+v", completed)
-	}
-
-	progress, err := store.ListProgress(ctx, 1)
-	if err != nil {
-		t.Fatalf("ListProgress: %v", err)
-	}
-	if len(progress) != 1 || progress[0].Kills != 3 || !progress[0].Completed {
-		t.Fatalf("unexpected final progress: %+v", progress)
-	}
-
-	// A kill after completion shouldn't increment further or re-complete.
-	completed, err = store.RecordKill(ctx, 1, "Mangyang")
-	if err != nil {
-		t.Fatalf("RecordKill after completion: %v", err)
-	}
-	if len(completed) != 0 {
-		t.Fatalf("expected no re-completion, got %+v", completed)
-	}
-	progress, err = store.ListProgress(ctx, 1)
-	if err != nil {
-		t.Fatalf("ListProgress: %v", err)
-	}
-	if progress[0].Kills != 3 {
-		t.Fatalf("expected kills to stay at 3, got %d", progress[0].Kills)
-	}
-}
-
-func TestRecordKillIgnoresUnacceptedQuests(t *testing.T) {
-	store := openTestSQLStore(t)
-	ctx := context.Background()
-
-	completed, err := store.RecordKill(ctx, 1, "Mangyang")
-	if err != nil {
-		t.Fatalf("RecordKill: %v", err)
-	}
-	if len(completed) != 0 {
-		t.Fatalf("expected no progress for unaccepted quest, got %+v", completed)
+	if got, _ := store.States(ctx, 1); len(got) != 1 {
+		t.Fatalf("after delete %+v", got)
 	}
 }
