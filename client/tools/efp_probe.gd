@@ -61,6 +61,12 @@ var _drift := false
 var _equip := false
 var _jump := Vector3(150, -30, -120)
 var _turn := 180.0
+## Round 786: the body's physics rate (--physics=60; 0 moves it every frame)
+## and whether the effect is processed on those ticks (--physics-effects).
+var _physics := 0
+var _phys_acc := 0.0
+var _physics_effects := false
+var _ticks_done := 0
 var _frame := Vector3(-28800, 0, -9600)
 ## The drift scenarios to run (--modes=jump,walk; all four by default).
 var _modes := PackedStringArray(["stand", "jump", "walk", "turn"])
@@ -120,6 +126,10 @@ func _init() -> void:
 			var v := a.substr(7).split(",")
 			if v.size() == 3:
 				_jump = Vector3(float(v[0]), float(v[1]), float(v[2]))
+		elif a.begins_with("--physics="):
+			_physics = int(a.substr(10))
+		elif a == "--physics-effects":
+			_physics_effects = true
 		elif a.begins_with("--frame="):
 			var fv := a.substr(8).split(",")
 			if fv.size() == 3:
@@ -350,7 +360,7 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 func _kept(act: int) -> bool:
 	return act >= 0 and act < SkillEffects.ACT_TYPES.size() and SkillEffects.ACT_TYPES[act] == "AT_LOOP"
 
-const DRIFT_MODES := ["stand", "jump", "walk", "turn"]
+const DRIFT_MODES := ["stand", "jump", "walk", "zigzag", "turn"]
 const DRIFT_LEAD := 4.0 ## seconds still before the event (OURS)
 const DRIFT_EVENT := 2.0 ## seconds of running or turning (OURS)
 const DRIFT_TAIL := 4.0 ## seconds still after it (OURS)
@@ -377,6 +387,9 @@ func _probe_drift(path: String, kept: bool, label: String, particles: Pk2Reader,
 	host.add_child(fx)
 	fx.follow_host(host, "", Vector3.ZERO)
 	var dt := 1.0 / _fps
+	_phys_acc = 0.0
+	EfpEffect.tick_gate = _physics_effects and _physics > 0
+	EfpEffect.tick_of = func(): return _ticks_done
 	var speed := _speed if _speed > 0.0 else 50.0
 	var lead := int(round(DRIFT_LEAD * _fps))
 	var event := 0 if mode == "stand" or mode == "jump" or mode == "zone" else int(round(DRIFT_EVENT * _fps))
@@ -395,10 +408,33 @@ func _probe_drift(path: String, kept: bool, label: String, particles: Pk2Reader,
 			if mode == "zone":
 				EfpEffect.shift_effects([fx], _frame)
 			host.position += _jump
-		elif mode == "walk" and i >= lead and i < lead + event:
-			host.position.x += speed * dt
-		elif mode == "turn" and i >= lead and i < lead + event:
-			host.rotation.y += deg_to_rad(_turn) * dt
+		# Round 786: the body moves on the game's physics ticks (--physics=N a
+		# second; 0: every rendered frame), as World3D moves the player in
+		# _physics_process; `zigzag` turns the walk 90 degrees every 0.5 s,
+		# as a player's clicks do.
+		var moving := (mode == "walk" or mode == "zigzag" or mode == "turn") and i >= lead and i < lead + event
+		var ticks := 1
+		var tick_dt := dt
+		if _physics > 0:
+			_phys_acc += dt
+			tick_dt = 1.0 / float(_physics)
+			ticks = int(floor(_phys_acc / tick_dt))
+			_phys_acc -= float(ticks) * tick_dt
+		for k in range(ticks):
+			if not moving:
+				break
+			if mode == "walk":
+				host.position.x += speed * tick_dt
+			elif mode == "zigzag":
+				var leg := int(floor(float(i - lead) * dt / 0.5)) % 4
+				var dir := [Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0), Vector3(0, 0, -1)][leg] as Vector3
+				host.position += dir * speed * tick_dt
+				host.rotation.y = atan2(dir.x, dir.z)
+			elif mode == "turn":
+				host.rotation.y += deg_to_rad(_turn) * tick_dt
+		# --physics-effects: the game's tick gate (EfpEffect.tick_gate), the
+		# effect placed once per physics tick, on this run's own tick count.
+		_ticks_done += ticks
 		fx._process(dt)
 		if ended[0]:
 			break

@@ -43,6 +43,29 @@ var phase := "stand"
 var _stats: Dictionary = {}
 var _last_body := Vector3.INF
 var verbose := true
+## track(): the body's place at the last tick, and per phase the largest
+## move it made in one tick.
+var _tick_body := Vector3.INF
+
+## Every tick: the largest one-tick move of the body this phase (a snap --
+## a correction, a re-placement -- against the walk's steady step).
+func track(body: Node3D) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var at := body.global_position
+	if _tick_body != Vector3.INF:
+		var st := _phase_stats()
+		st["max_step"] = maxf(float(st["max_step"]), at.distance_to(_tick_body))
+	_tick_body = at
+
+func _phase_stats() -> Dictionary:
+	var st: Dictionary = _stats.get(phase, {})
+	if st.is_empty():
+		st = {"effects": {}, "samples": 0, "past_samples": 0, "past_particles": 0, "worst": 0.0,
+			"worst_path": "-", "worst_far": 0.0, "worst_bound": 0.0, "near_samples": 0, "near_particles": 0,
+			"max_step": 0.0, "why": {}}
+		_stats[phase] = st
+	return st
 
 func set_phase(p: String, tick: int) -> void:
 	if p == phase:
@@ -59,9 +82,10 @@ func _report_phase(p: String) -> void:
 	if s.is_empty():
 		print("QA FXDRIFT PHASE %s: no samples" % p)
 		return
-	print("QA FXDRIFT PHASE %s effects %d samples %d past_samples %d past_particles %d near_samples %d near_particles %d worst +%.1f %s (far %.1f bound %.1f)" % [
+	print("QA FXDRIFT PHASE %s effects %d samples %d past_samples %d past_particles %d near_samples %d near_particles %d worst +%.1f %s (far %.1f bound %.1f) max_tick_step %.1f why %s" % [
 		p, (s["effects"] as Dictionary).size(), s["samples"], s["past_samples"], s["past_particles"],
-		s["near_samples"], s["near_particles"], s["worst"], s["worst_path"], s["worst_far"], s["worst_bound"]])
+		s["near_samples"], s["near_particles"], s["worst"], s["worst_path"], s["worst_far"], s["worst_bound"],
+		s.get("max_step", 0.0), str(s.get("why", {}))])
 
 ## One sample of every effect under `body`.
 func sample(body: Node3D, tick: int) -> void:
@@ -71,11 +95,7 @@ func sample(body: Node3D, tick: int) -> void:
 	if _last_body != Vector3.INF and at.distance_to(_last_body) > MOVE_LOG:
 		print("QA FXDRIFT MOVE tick %d from %s to %s (%.1f units)" % [tick, _last_body, at, at.distance_to(_last_body)])
 	_last_body = at
-	var s: Dictionary = _stats.get(phase, {})
-	if s.is_empty():
-		s = {"effects": {}, "samples": 0, "past_samples": 0, "past_particles": 0, "worst": 0.0,
-			"worst_path": "-", "worst_far": 0.0, "worst_bound": 0.0, "near_samples": 0, "near_particles": 0}
-		_stats[phase] = s
+	var s := _phase_stats()
 	for n in body.find_children("*", "EfpEffect", true, false):
 		var fx := n as EfpEffect
 		if fx == null or fx.sim == null or fx.is_queued_for_deletion() or not fx.is_visible_in_tree():
@@ -101,6 +121,9 @@ func sample(body: Node3D, tick: int) -> void:
 		if past > 0:
 			s["past_samples"] += 1
 			s["past_particles"] += past
+			var why: Dictionary = s["why"]
+			for k in past_reasons(fx, bound + TOL):
+				why[k] = int(why.get(k, 0)) + 1
 			if far - bound > float(s["worst"]):
 				s["worst"] = far - bound
 				s["worst_path"] = fx.path
@@ -137,6 +160,23 @@ static func measure(fx: EfpEffect) -> Dictionary:
 		n += 1
 		far = maxf(far, world_of(fx, p).distance_to(ref))
 	return {"far": far, "drawn": n}
+
+## Why each drawn particle past `limit` is there, "<file>#<node> <kind>":
+## `trail` -- its node follows nothing (u6 = 0); `orphan` -- the ancestor it
+## follows is dead (round 785's frozen move); `follows` -- it follows a live
+## one.
+static func past_reasons(fx: EfpEffect, limit: float) -> Array:
+	var out: Array = []
+	var drawn := drawn_tpls(fx)
+	var ref := fx.placed_at()
+	var t: EfpSim.Template = fx.sim.template
+	for p in fx.sim.particle_list():
+		if not drawn.has(p.tpl) or world_of(fx, p).distance_to(ref) <= limit:
+			continue
+		var tp: EfpSim.Tpl = t.tpls[p.tpl]
+		var kind := "trail" if tp.lv_move == 0 else ("orphan" if p.f_move != null and not p.f_move.alive else "follows")
+		out.append("%s#%d %s" % [fx.path.get_file(), p.tpl, kind])
+	return out
 
 ## The drawn particles farther than `limit` from the placement point (and
 ## nearer than `within`).

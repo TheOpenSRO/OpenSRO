@@ -1057,10 +1057,69 @@ static func scale_basis(b: Basis) -> Basis:
 		sc.z = -sc.z
 	return Basis.from_scale(sc)
 
+## Round 786 (the second report): an effect on a host is placed -- and its
+## follow pass run -- once per physics tick, the frame its body moves on.
+##
+## READ: the original places a following effect once a frame and runs one
+## follow pass a frame (round 785: CIDecoSkill::vslot_014 0x00a503f0 ->
+## IDecoSkill::FUN_00a4ddc0 -> CEFEffect::vslot_007 0x00caa020 each frame;
+## the update's pass, CEFUpdater::vslot_002 0x00c85f20, or the draw's,
+## EFEffect::FUN_00c863a0 from FUN_00cabda0, gated on the placement flag
+## +0x28b), and its body moves every one of those frames. A particle that
+## follows a dead ancestor adds that ancestor's last per-pass move on every
+## later pass (0x00c85f20: `pos += A.pos - A.old`, no alive test; the dead
+## particle is kept by the reference its child emitters hold: owner +1 at
+## 0x00c86d54, emitter +1 per particle at 0x00c8875e, both released only by
+## CEFGroup::vslot_002 0x00c879f0 / CEFElement::vslot_002 0x00c87aa0), so it
+## goes on at the body's speed when its ancestor died.
+## This client moves the player on its physics ticks (World3D._physics_process,
+## 60 a second) and placed its effects every rendered frame: at 144 frames a
+## second most frames saw no move, a few saw a whole tick's, so a dead
+## ancestor's last move was 0 (its followers stopped: a trail) or a tick's
+## move added every frame (2.4 times the body's speed: flying ahead).
+## MEASURED (efp_probe.gd --drift, 144 fps, 50 a second straight on):
+## fire_gigongta_keep_e +14.6 past its spread with a body moved every frame,
+## +61.3 with one moved on 60 Hz ticks, +14.4 placed on those ticks.
+## OURS: the tick is this client's stand-in for the original's frame; a
+## frame with no tick only redraws for the camera (a billboard's turn).
+var _tick_frame := -1
+var _tick_delta := 0.0
+## On while a world moves its bodies on physics ticks (World3D sets it; off
+## for a tool or a test that drives _process by hand, which places on every
+## call as before).
+static var tick_gate := false
+## The tick counter (Engine.get_physics_frames unless a tool sets its own).
+static var tick_of: Callable = Callable()
+
+## A world taking (true) or giving up (false) the tick gate; on while any
+## world holds it (a reconnect's two worlds overlap).
+static var _tick_gate_users := 0
+## QA (OPENSRO_QA_FX_NOGATE=1): no tick gate in the world -- an effect placed
+## every rendered frame, as before round 786 -- for a before measurement.
+static var gate_off := OS.get_environment("OPENSRO_QA_FX_NOGATE") != ""
+static func gate_ticks(on: bool) -> void:
+	_tick_gate_users = maxi(_tick_gate_users + (1 if on else -1), 0)
+	tick_gate = _tick_gate_users > 0 and not gate_off
+
+static func _tick_now() -> int:
+	return int(tick_of.call()) if tick_of.is_valid() else Engine.get_physics_frames()
+
 func _process(delta: float) -> void:
 	if sim == null or world_paused:
 		# Round 786 (READ): nothing is updated while a zone loads (pause_world).
 		return
+	if tick_gate and _follow_host != null and not static_host:
+		_tick_delta += delta
+		var tick := _tick_now()
+		if tick == _tick_frame and _anchored:
+			# No body frame since the last placement: the camera's redraw only.
+			_pending_moved = false
+			_pending_steps = 0
+			step_post()
+			return
+		_tick_frame = tick
+		delta = _tick_delta
+		_tick_delta = 0.0
 	if profile and FrameSplit.on:
 		var t := Time.get_ticks_usec()
 		_process_effect(delta)
