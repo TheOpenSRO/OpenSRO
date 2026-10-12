@@ -7483,6 +7483,27 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-eighty-first round: the skill window and the action window from the client's own data, the cast bar's smooth fill
+
+The user, on v0.1.527: "the progress bar should be a smoother movement than jumping to the next
+length, check the original code"; "let's fix this skills interface" and "let's get the action
+menu working ... make sure all of the buttons that can work actually work" (screenshots from
+another server's client; its Extra tab, Custom Buttons and Pet Buffs are that server's). Two
+agents' parts (below), and two of the main lane's:
+
+- **The cast bar (MEASURED cause, READ rule):** the gauge's Range kept Godot's default step of 1,
+  so the fill snapped to whole percents -- a jump every 0.3 s on the 30 s Return Scroll -- and the
+  frame delta was truncated to whole milliseconds (16.67 -> 16, the bar ~4 % slow). CIFGauge's
+  value is a float set every frame (CIFDelayInfo::vslot_012 0x7b1960): step 0 and float
+  milliseconds now (`return_scroll_cast779_test.gd`).
+- **The underbar's skill points** stayed at the last stats total after learning or raising
+  (MEASURED in the skill part's own shot: 9,000,000 there, 8,996,066 in the window); they follow
+  every skill state now.
+- **global.loginScreen** (the user: "the game doesn't seem to be honoring" it): not reproduced --
+  on the box a config.yaml with `loginScreen: constantinople` and then `roc` resolved
+  `intro=... [setting]` and flew that intro under Forward+ (the live server serves "client
+  defaults"); the user's own log lines (SETTING / FrontEnd / TITLE) were asked for. OPEN.
+
 ### Round 781 (part): the skill window
 
 The user: "let's fix this skills interface, this is how it should roughly look" with a screenshot
