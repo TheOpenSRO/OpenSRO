@@ -243,19 +243,30 @@ func _init() -> void:
 	sounds.advance(skel, swing, 5.0, 0.0, false)
 	sounds.advance(skel, swing, 5.0, 250.0, false)
 	sounds.advance(skel, swing, 5.0, 900.0, false)
-	_check(stub.keys() == ["PLAYER:snd_swing1:-:SWORD:-:-"],
-		"swing fires SWORD once; voc_shout1 (skill-keyed), voc_emo (no-op), snd_stand5 (no handler) stay silent (%s)" % str(stub.keys()))
+	# Round 785: voc_shout1 is built -- a player character's shout keys by its
+	# own sound object with no skill token (0xa72260, READ).
+	_check(stub.keys() == ["PLAYER:snd_swing1:-:SWORD:-:-", "PCM_FIGHTER:voc_shout1:-:-:-:-"],
+		"swing fires SWORD once and the shout by the body's sound object; voc_emo (no-op), snd_stand5 (no handler) stay silent (%s)" % str(stub.keys()))
 	owner.hwan = true
 	sounds.advance(skel, swing, 6.0, 250.0, false)
-	_check(stub.keys()[-1] == "PLAYER:snd_swing3:-:HWAN:SWORD:-", "berserk plays the hwan swing3 key")
+	_check(stub.keys()[-2] == "PLAYER:snd_swing3:-:HWAN:SWORD:-", "berserk plays the hwan swing3 key")
 	owner.hwan = false
 	owner.weapon_kind = AnimSoundsScript.WEAPON_NONE
 	sounds.advance(skel, swing, 7.0, 250.0, false)
-	_check(stub.keys()[-1] == "PLAYER:snd_swing1:-:PUNCH:-:-", "an empty hand swings PUNCH")
+	_check(stub.keys()[-2] == "PLAYER:snd_swing1:-:PUNCH:-:-", "an empty hand swings PUNCH")
 	owner.weapon_kind = AnimSoundsScript.WEAPON_UNKNOWN
 	before = stub.keys().size()
 	sounds.advance(skel, swing, 8.0, 250.0, false)
-	_check(stub.keys().size() == before, "an unknown weapon swings silently")
+	_check(stub.keys().size() == before + 1 and stub.keys()[-1] == "PCM_FIGHTER:voc_shout1:-:-:-:-",
+		"an unknown weapon swings silently (the shout still sounds)")
+	# The skill swings key a player character by PLAYER and the current
+	# skill's Basic_Group (0xa718d0, READ).
+	owner.skill_ctx = func() -> Dictionary: return {"code": "SKILL_CH_SPEAR_PIERCE_A_01", "group": "SKILL_CH_SPEAR_PIERCE_A"}
+	_check(AnimSoundsScript.key_for(owner, "snd_swing_s2")["key"] == "PLAYER:snd_swing_s2:SKILL_CH_SPEAR_PIERCE_A:-:-:-",
+		"a player's skill swing keys by the Basic_Group (%s)" % AnimSoundsScript.key_for(owner, "snd_swing_s2")["key"])
+	_check(AnimSoundsScript.key_for(owner, "voc_shout2")["key"] == "PCM_FIGHTER:voc_shout2:-:-:-:-",
+		"a player's shout carries no skill token")
+	owner.skill_ctx = Callable()
 
 	# Hurt and death voices, with the player's own sound object.
 	sounds.advance(skel, _anim(500, 3, "default"), 9.0, 10.0, false)
@@ -281,9 +292,20 @@ func _init() -> void:
 	var die := _anim(2000, 4, "default")
 	sounds.advance(mob_skel, die, 2.0, 0.0, false)
 	sounds.advance(mob_skel, die, 2.0, 1600.0, false)
-	_check(stub.keys() == ["MOB_MANGNYANG:snd_run1:-:-:-:-", "MOB_MANGNYANG:voc_death:-:-:-:-", "MOB_MANGNYANG:snd_death:-:-:-:-"],
-		"monster: material-less footstep, no swing (no skill code), voc_death at 0, snd_death at 1500 (%s)" % str(stub.keys()))
-	_check(AnimSoundsScript.key_for(mob, "snd_swing1")["key"] == "", "a monster's swing is not keyed without its skill")
+	# Round 785: a monster's swing and shout key by its sound object and its
+	# current skill's Basic_Code (0xa71510 / 0xa72260, READ) -- "-" with no
+	# current skill, as retail's L"-".
+	_check(stub.keys() == ["MOB_MANGNYANG:snd_run1:-:-:-:-", "MOB_MANGNYANG:snd_swing1:-:-:-:-",
+			"MOB_MANGNYANG:voc_shout1:-:-:-:-", "MOB_MANGNYANG:voc_death:-:-:-:-", "MOB_MANGNYANG:snd_death:-:-:-:-"],
+		"monster: material-less footstep, swing and shout with no skill, voc_death at 0, snd_death at 1500 (%s)" % str(stub.keys()))
+	mob.skill_ctx = func() -> Dictionary: return {"code": "MSKILL_CH_MANGNYANG_ATTACK01", "group": "-"}
+	_check(AnimSoundsScript.key_for(mob, "snd_swing1")["key"] == "MOB_MANGNYANG:snd_swing1:MSKILL_CH_MANGNYANG_ATTACK01:-:-:-",
+		"a monster's swing keys by its skill's Basic_Code (%s)" % AnimSoundsScript.key_for(mob, "snd_swing1")["key"])
+	_check(AnimSoundsScript.key_for(mob, "voc_shout1")["key"] == "MOB_MANGNYANG:voc_shout1:MSKILL_CH_MANGNYANG_ATTACK01:-:-:-",
+		"a monster's shout keys by its skill's Basic_Code")
+	_check(AnimSoundsScript.key_for(mob, "snd_swing_s1")["key"] == "MOB_MANGNYANG:snd_swing_s1:MSKILL_CH_MANGNYANG_ATTACK01:-:-:-",
+		"a monster's skill swing keys by its skill's Basic_Code")
+	mob.skill_ctx = Callable()
 	# No navmesh cell under the monster: no footstep (0xa6ffc0 returns early
 	# for every object when obj+0x74 is null).
 	mob_cell[0] = -1

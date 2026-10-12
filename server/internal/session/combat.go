@@ -1106,12 +1106,26 @@ func combatHandler(
 			// player into range the way the engine does, so it refuses and
 			// says why -- the same stated departure the keep-up carries.
 			if !firstSwingInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "too far away"}).Encode()})
+				// Round 785: the refusal names its monster, and the requester
+				// is told where the server has that monster (resyncMonster),
+				// so its walk into reach aims at the server's position.
+				resyncMonster(sess, monsters, req.TargetMonsterID)
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusedTooFar, MonsterID: req.TargetMonsterID}).Encode()})
 			}
 			// A plain swing is the weapon's base attack skill, on that skill's
-			// own re-use delay (round 255). A click inside the delay is the
-			// engine's "action already running": nothing happens, no reply.
-			if !swingReady(ctx, characterID, eq, items, skills, time.Now()) {
+			// own re-use delay (round 255). A click inside the delay is not
+			// dropped (round 785): the engine queues the action and its phase
+			// 1 waits on the cooldown gate (mask 0x81) before it swings
+			// (auto_command.md), so the swing is armed for the moment the
+			// delay ends -- the keep-up's own first swing. A click on the
+			// target the keep-up already swings at changes nothing (the
+			// 0x7074 handler refuses a duplicate of the running attack,
+			// 0x4004).
+			if wait := swingWait(ctx, characterID, eq, items, skills, time.Now()); wait > 0 {
+				if cur, running := keepUp.Target(characterID); !running || cur != req.TargetMonsterID {
+					deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
+					armKeepUp(sess, deps, characterID, req.TargetMonsterID, wait)
+				}
 				return nil
 			}
 			// The swing IS the weapon's base attack skill (PrepareAction
@@ -1460,6 +1474,9 @@ func performAttack(
 			result.DeathExpLost = out.deathExpLost
 			result.Wall = out.wall
 			strike = out.message(monster.ID, characterID)
+			// Round 785: the counter rolls the primary range, so it names
+			// the primary attack skill (strikeSkillID).
+			strike.SkillID = strikeSkillID(monster, combat.MonsterSkill{})
 		}
 	}
 
@@ -1531,27 +1548,32 @@ func attackerDamage(ctx context.Context, characterID int64, str int, eq equipmen
 	return attackerDamageOf(ctx, characterID, str, 0, eq, items, combat.AttackPhysical, 0, 0, 0)
 }
 
-// swingReady is the plain attack's cadence gate: the equipped weapon type's
+// swingWait is the plain attack's cadence gate: the equipped weapon type's
 // base attack skill (combat.BaseAttackSkillFor -- SKILL_CH_SWORD_BASE_01 for
 // a sword, SKILL_PUNCH_01 bare-handed) has a ReuseDelay in the imported skill
-// table, and a swing inside it is dropped, exactly as the engine's action
-// machine ignores a second use while the first runs. When it passes, the
-// swing is recorded against that skill id. Without reference data for the
-// skill (or a store that cannot look skills up) there is no gate, as before.
-func swingReady(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, skills skill.Store, now time.Time) bool {
+// table, and a swing inside it must wait out the rest of it. It returns that
+// rest, or 0 when the swing may go now -- and then records the swing against
+// that skill id. Without reference data for the skill (or a store that cannot
+// look skills up) there is no gate, as before. Round 785: the wait used to be
+// a refusal (swingReady) that dropped the click with no reply, and the player
+// stood still; the caller now arms the swing for when the delay ends, as the
+// engine's phase 1 waits on its cooldown gate.
+func swingWait(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, skills skill.Store, now time.Time) time.Duration {
 	if skills == nil {
-		return true
+		return 0
 	}
 	ref, ok := baseAttackOf(ctx, characterID, eq, items)
 	if !ok || ref.ReuseDelayMs <= 0 {
-		return true
+		return 0
 	}
 	last, ever, err := skills.LastUsed(ctx, characterID, ref.ID)
-	if err == nil && ever && now.Sub(last) < time.Duration(ref.ReuseDelayMs)*time.Millisecond {
-		return false
+	if err == nil && ever {
+		if left := time.Duration(ref.ReuseDelayMs)*time.Millisecond - now.Sub(last); left > 0 {
+			return left
+		}
 	}
 	_ = skills.RecordUse(ctx, characterID, ref.ID, now)
-	return true
+	return 0
 }
 
 // attackerDamageOf is attackerDamage for a blow whose damage-type mask is

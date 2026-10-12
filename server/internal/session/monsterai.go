@@ -1662,8 +1662,11 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		}
 		a.mu.Unlock()
 	}
+	msg := out.message(id, job.target)
+	// Round 785: the blow names the skill it swung (strikeSkillID).
+	msg.SkillID = strikeSkillID(job.m, job.skill)
 	a.emit(monsterPush{zone: job.m.Zone, cell: combat.CellOf(job.m.Zone, job.m.X, job.m.Z), id: id,
-		packet: &proto.Packet{Opcode: OpMonsterAttacked, Data: out.message(id, job.target).Encode()}}, nil)
+		packet: &proto.Packet{Opcode: OpMonsterAttacked, Data: msg.Encode()}}, nil)
 	// Round 640: a blow that broke the target's wall ends it now, after the
 	// push that reports the blow (walls.go endBrokenWall).
 	if out.wall.Broke {

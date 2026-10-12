@@ -7744,6 +7744,93 @@ NEGATIVE (run on the base copy): the suite does not even parse there (`Cannot fi
 no progress callable. `remote_godot.sh check`: 752 scripts and 9 scenes, ALL LOAD;
 `remote_godot.sh tests`: "ran 290 suite(s), 0 failing". No server change.
 
+### Round 785 (part): combat
+
+The user (asleep; their v0.1.529-531 logs against the live server, a level-140 spear GM): "let's
+fix combat. Make it play like the original and check the code to verify ... Make sure the
+character faces monsters, make sure animations and audio don't loop too fast." The reads are in
+`docs/protocol/combat_presentation.md` (both binaries, with addresses); this entry is what was
+wrong and what changed. Measured with a new real-time QA fight (`OPENSRO_QA_FIGHT=1`, one click per
+target as a player makes; `QA_SHOT_REALTIME=1` runs the client on the wall clock so the server and
+client keep one time, `QA_SHOT_MAX_FPS=144` the user's rate; `OPENSRO_COMBAT_TRACE=1` the `COMBAT`
+lines) against an in-memory server from this tree with the monster AI, battle, strike and spawn
+pushes and the dead state on (`/var/tmp/r785-combat/r785_fight.sh` on the box).
+
+- **A click inside the base attack's re-use delay was dropped** (MEASURED: the second Mangyang of a
+  fight, clicked 0.5 s after the first died, was never struck -- the server answered nothing and the
+  player stood beside it). READ: the engine queues the action and phase 1 waits on its cooldown gate
+  (mask 0x81). Now the swing is armed for when the delay ends (`session.swingWait`, the keep-up's
+  first swing); a click on the monster the keep-up already swings at changes nothing (0x4004).
+- **A keep-up that lost its target out of reach ended in silence** (the engine walks back,
+  `MoveTowardObject` / `0x4b0490`, READ). Now the server says "too far away" naming the monster,
+  after the monster's own position (`resyncMonster`, an `OpMonsterMoved`; OURS), and the client walks
+  back into reach and clicks again (`_rewalk_after_keepup_refusal`, at most 3 times without a blow).
+- **The "too far away" loop** (the user's log: 24 refusals, `in reach at 19.6 (reach 28 +2)`, three
+  walks, give up). Reproduced on the box (`in reach at 13.8 (reach 16 +2)` refused three times): a
+  monster on a long leg drawn a few units off the server's position, which `MonsterMotion.begin`
+  never closes below its 32-unit resync distance. Now every reach refusal names its monster, comes
+  behind the server's position of it, and the client puts the body there before it walks again
+  (`_snap_to_server_pos`, OURS). The live server's exact cause in the user's session is OPEN (no
+  server log); the AI trace now logs both ends of a refused reach (`reach: N refused on monster M:
+  attacker (x,z) monster (x,z) dist d reach r+2`) and the client a `COMBAT refusal` line.
+- **Monster swings and hits were silent.** The server sent no skill with a blow. READ: retail's
+  0xB070 names the monster's AI-picked skill (`0x5411a0` posts it as a 0x7070). `OpMonsterAttacked`
+  now carries it (u32 after the wall block). The client keys the swing and shout tracks (`<obj>:
+  snd_swing1:<Basic_Code>`, READ `0xa71510`, `0xa72260`; `snd_swing_s*`/`voc_shout*` built for every
+  body) and the hit (`MOB_MANGNYANG:snd_dmg:MSKILL_CH_MANGNYANG_ATTACK01`, rows MEASURED in
+  effectsound.txt), and plays the skill's own clip (skillaniset2 SHOT: ATTACK01 type 2, ATTACK02
+  type 5; the reader now keeps `MSKILL_` rows).
+- **A monster's blow moved the HP bar when the push arrived.** READ: `FUN_00a49290` lowers the HP,
+  starts the reaction or the death and draws the number together at the swing clip's hit event.
+  Now the HUD's HP and the dead state wait for the landing. MEASURED: landings within -86..+8 ms of
+  the clip's hit event on the wall clock (24 blows over two runs; the clip and the timer both run
+  on the engine's smoothed frame delta).
+- **Sounds and one-shots repeated every frame.** The clip tick (`_tick_idle_animations`) kept its
+  old list when a one-shot handed back to its loop (the count was unchanged), so the ended one-shot
+  "ended" again each frame and fired its keys: MEASURED 20 voc_moans a second from a struck Mangyang
+  on the box; the user's log shows it (`... clip 2:default ... (+59 since the last line)`). Fixed
+  (`handed_back`); `combat785_test.gd` is red without it.
+- **The plain swing's clip** cycled four types in OpenSRO's own order. READ: a random entry of the
+  base skill's skillaniset2 SHOT list (`FUN_00a54be0`), ANI_ATTACK1..4 = types 2, 5, 16, 17
+  (`FUN_009e5240`). Now so.
+- **Facing.** Nothing turned the player to a monster it struck from where it stood, and a monster
+  snapped. READ: the skill deco turns its caster at 10 rad/s every frame (`CIDecoSkill::vslot_014`,
+  `FUN_00a56cd0`, `0xe1b840`). Now both turn so while the swing plays (`CombatFacing`, frame-rate
+  independent: a half turn takes 0.314 s at 30, 60 and 144 steps a second, `combat_facing_test.gd`).
+  OURS: every swing turns (the deco's +0x78 condition is OPEN).
+- **Smaller:** the hit sound 100 ms after the landing (READ, `CIDecoDamageEffect::vslot_014`); no
+  number and no hit reaction for a blow that dealt nothing (READ); a hit reaction no longer replaces
+  the struck body's own swing (OURS on an inference -- retail draws a blow at its SHOT clip's
+  events, so the clip plays out; MEASURED before: 5 swing sounds for 14 monster swings).
+
+Measured (box, fix runs, sword, level 1-20 against Mangyang and Yeoha): player swings every 1179-1285
+ms (median 1209; the sword's ReuseDelay is 1200), each clip 1.133 s, one swing track set per swing;
+monster swings 2.5-2.6 s apart; each monster swing sounds its own swing tracks (12 swing sounds for
+10 swings in the last run, ATTACK02 has two); 0 refusals over the last two runs' 51 hits. The CH
+spear's four base clips are 1733-1833 ms against its 1166 ms cadence (MEASURED, the .ban headers):
+each swing starts its clip before the last ended -- INFERRED the same in retail (every 0xB070 a new
+deco at the authored speed, param 140 = 100); not changed.
+
+Perf gate (`perf_gate.sh --sites jangan --frames 30000`, base c7b2dcd0, median of 3, 1280x720,
+Forward+; the default 3000 frames gave no frame samples on 4.7.2's faster load):
+
+| jangan | base | head | verdict |
+|---|---|---|---|
+| frame ms | 0.77 | 0.77 | SAME |
+| entry ms | 8743 | 8722 | SAME |
+| freeze ms | 2778 | 2795 | SAME |
+| hitches | 5 | 5 | SAME |
+
+Tests: server `go test ./...` 72 packages ok; client `remote_godot.sh tests` 292 suites, 0 failing;
+new `combat785_test.gd` (red without the clip-tick fix), `combat_facing_test.gd`, Go
+`combat785_test.go` / `combat785_fight_test.go`.
+
+OPEN: the +0x78 field of the turn's condition; whether retail's hit reaction cuts a swing; the
+hitcount ddj damage text with its critical/blocking labels (OpenSRO draws a number); what paces a
+monster's swings in the engine (its cooldown arm is PC-only, READ `0x586c03`); the player's own
+server position as a refusal's cause (a refused stop shows as `MOVE correction`, none in the user's
+log). For the skill lanes: `_on_attack_result` still plays a weapon swing over a cast's own clip.
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

@@ -430,6 +430,20 @@ func _test_decode_monster_attacked() -> void:
 	var longer := data.duplicate()
 	longer.append(0xff)
 	_check(CombatNet.decode_monster_attacked(longer) != null, "a byte past the 33rd is ignored")
+	# Round 785: the skill id after a zero wall block -- no wall, skill 161
+	# (session.MonsterAttacked{SkillID: 161}'s 50 bytes).
+	var skilled := data.duplicate()
+	var zero_wall := PackedByteArray()
+	zero_wall.resize(13)
+	skilled.append_array(zero_wall)
+	var skill_bytes := PackedByteArray()
+	skill_bytes.resize(4)
+	skill_bytes.encode_u32(0, 161)
+	skilled.append_array(skill_bytes)
+	var s := CombatNet.decode_monster_attacked(skilled)
+	_check(s != null and s.skill_id == 161 and s.wall == null and s.damage == 200,
+		"a 50-byte OpMonsterAttacked names skill 161, with no wall")
+	_check(m != null and m.skill_id == 0, "a 33-byte OpMonsterAttacked names no skill")
 
 ## Round 640: the wall suffix on OpMonsterAttacked (after 33 bytes) and on
 ## OpAttackResult (after the echoed targetType), and its absence.

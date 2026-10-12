@@ -2959,7 +2959,8 @@ func TestWaterGhostZeroDamageSkillLandsNothing(t *testing.T) {
 		t.Fatalf("no OpMonsterAttacked within 2 s (%d pushed)", len(f.rec.strikesOf(m.ID)))
 	}
 	got := f.rec.strikesOf(m.ID)[0]
-	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: f.aria, Damage: 0, TargetHP: int32(character.StartingMaxHP)}
+	// Round 785: the blow names the skill it swung (ATTACK02, 169).
+	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: f.aria, Damage: 0, TargetHP: int32(character.StartingMaxHP), SkillID: 169}
 	if got != want {
 		t.Fatalf("the zero-damage skill's blow %+v, want %+v (nothing landed, nothing blocked)", got, want)
 	}

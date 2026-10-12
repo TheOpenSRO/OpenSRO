@@ -68,8 +68,9 @@ is **overwritten with the weapon's default attack**
 (`SkillBook::DefaultAttackSkillID`, below) every pass, so a weapon swap between
 swings takes effect on the next one; the target check `0x58cc70` follows. Then
 `Skill_CheckUseConditions` mask `0x24` (weapon requirement + ammunition). Out
-of reach: `GObjPC::MoveTowardObject(target, round(stop))`. In reach: face the
-target, gate mask `0x81` (the cooldown, with the action-duration window), and
+of reach: `GObjPC::MoveTowardObject(target, round(stop))`. In reach: drop the
+walk (`0x4ad780 -> 0x4b03f0(0)`; round 785 corrected "face the target": that
+call only ends the follow, `combat_presentation.md`), gate mask `0x81` (the cooldown, with the action-duration window), and
 phase 2.
 
 **Phase 2** serialises the context into a **0x7070 command** (`0x5aa630`:

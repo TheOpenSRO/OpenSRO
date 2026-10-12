@@ -1615,9 +1615,107 @@ var _skill_hit_efp_loaded := false
 ## behaviour** -- it just plays each in turn so repeated attacks vary. If the
 ## real combo order is ever recovered from the client, correct it here (see
 ## docs/GROUNDING_AUDIT.md).
+## Round 785: recovered, and it is not a cycle -- see _plain_swing_type; this
+## sequence is only the fallback for a weapon whose base attack has no
+## skillaniset2 row (or no skill table at all).
 const ATTACK_SEQUENCE := [
 	BsrReader.AnimationEntry.TYPE_ATTACK, BsrReader.AnimationEntry.TYPE_ATTACK_2, 16, 17]
 var _attack_step := 0
+## Round 785: the hit sound's delay after the blow lands, in seconds (READ:
+## CIDecoDamageEffect::vslot_014 sounds once its accumulated frame
+## milliseconds pass the immediate 100).
+const HIT_SOUND_DELAY := 0.1
+## OPENSRO_COMBAT_TRACE=1 (round 785): one `COMBAT ...` line per swing,
+## monster swing, landing and refusal, with the wall clock in ms, so a log
+## measures the swing interval against the clip and the sounds.
+var _combat_trace := OS.get_environment("OPENSRO_COMBAT_TRACE") != ""
+## How many times running the keep-up's "too far away" sent the player back
+## into reach without a blow landing in between (_rewalk_after_keepup_refusal).
+var _keepup_rewalks := 0
+## Bodies turning to face what they strike (round 785, CombatFacing): body
+## instance id -> {"node", "front" (yaw of the model's front), "target" (a
+## Callable giving the target's world position, or null when it is gone),
+## "until" (msec), "monster" (the body's own monster id, -1 for a player)}.
+var _combat_faces: Dictionary = {}
+
+## The plain swing's clip type (round 785): one entry of the weapon's base
+## attack skill's skilleffect.txt `skillaniset2` SHOT list, at random. READ:
+## the 0xB070 reader FUN_00a54be0 stores (u8)rand() at deco+0xe4 and the SHOT
+## phase plays list[byte % count]; the list for SKILL_CH_SPEAR_BASE is
+## ANI_ATTACK1..4 (action types 2, 5, 16, 17 by FUN_009e5240's map,
+## SkillEffectReader.ANI_TYPES), SKILL_EU_SWORD_BASE's ANI_ATTACK1..2, a bow's
+## ANI_ATTACK1 alone (MEASURED in the box's table). -1 when there is no row.
+func _plain_swing_type() -> int:
+	var skill := CombatAudio.base_attack_skill(maxi(_player_weapon_type_id4(), 0))
+	if skill == 0:
+		return -1
+	return _shot_clip_type(String(SkillAudio.context_for(skill)["code"]))
+
+## One of a skill's skillaniset2 SHOT clips at random (READ, as above), or
+## -1 when the row names none. `basic_code` may carry its level suffix.
+func _shot_clip_type(basic_code: String) -> int:
+	if basic_code == "" or basic_code == "-":
+		return -1
+	var row := SkillEffectReader.aniset_for(_skill_anisets(), basic_code)
+	var shot: Array = row.get("shot", [])
+	if shot.is_empty():
+		return -1
+	return int(shot[(randi() & 0xff) % shot.size()])
+
+## A body's world position; its own position when it is not in the tree (a
+## headless test's bodies).
+static func _world_pos(n: Node3D) -> Vector3:
+	return n.global_position if n.is_inside_tree() else n.position
+
+## Where a monster's body is (world), or null when it is gone -- the target a
+## swing turns toward.
+func _monster_position_of(monster_id: int) -> Variant:
+	var body = _monster_bodies.get(monster_id)
+	if body == null or not is_instance_valid(body):
+		return null
+	return _world_pos(body)
+
+## Turns `node` toward `target` (a Callable -> world position or null) for
+## `seconds` (at least a quarter second), at CombatFacing's rate. `front` is
+## the yaw of the model's front from the node's +Z (0 for a player, PI for a
+## -Z-front monster). A monster on a leg is not turned (its leg faces it).
+func _face_while_striking(node: Node3D, front: float, target: Callable, seconds: float, own_monster: int = -1) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	_combat_faces[node.get_instance_id()] = {"node": node, "front": front, "target": target,
+		"until": Time.get_ticks_msec() + int(maxf(seconds, 0.25) * 1000.0),
+		"monster": own_monster if node != player else -1}
+	_remote_turns.erase(node.get_instance_id())
+
+## One physics step of every striking body's turn (CombatFacing.step: radians
+## a second, so the same at any frame rate). The player stops turning to its
+## target when it walks (a click, an approach) or is dead.
+func _step_combat_faces(delta: float) -> void:
+	if _combat_faces.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	for id in _combat_faces.keys():
+		var f: Dictionary = _combat_faces[id]
+		var node = f["node"]
+		if node == null or not is_instance_valid(node) or now >= int(f["until"]):
+			_combat_faces.erase(id)
+			continue
+		var n: Node3D = node
+		if n == player:
+			if _has_move_target or _player_dead:
+				_combat_faces.erase(id)
+				continue
+			_player_turn_target = NAN
+		elif int(f["monster"]) != -1 and (_monster_is_moving(int(f["monster"])) or _dying_until.has(int(f["monster"]))):
+			continue
+		var at = (f["target"] as Callable).call()
+		if at == null:
+			_combat_faces.erase(id)
+			continue
+		var front := float(f["front"])
+		var cur := RemoteFacing.heading_of_yaw(n.rotation.y, front)
+		var want := RemoteFacing.heading_toward(cur, (at as Vector3) - _world_pos(n))
+		n.rotation.y = RemoteFacing.yaw_of(CombatFacing.step(cur, want, delta), front)
 
 var _real_skeleton: Skeleton3D
 var _real_skeleton_track: BanReader.Bone
@@ -7094,14 +7192,27 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 	# draws loops only): back now, posed where its loop is.
 	_crowd_wake(skeleton)
 	var resume = null
-	for i in range(_animated.size()):
+	# Round 785: EVERY entry the skeleton has goes, not the first found. A
+	# skeleton left with a second entry (MEASURED on the box: a monster's
+	# stand loop beside its hit one-shot) had the clip tick advance both each
+	# frame, so AnimSounds saw the one-shot "start" every frame and fired its
+	# key at 0 again and again -- a struck monster's voc_moan 20 times in a
+	# second -- and the two clips fought over the pose.
+	var found := 0
+	var i := 0
+	while i < _animated.size():
 		var entry: Array = _animated[i]
 		if entry[0] == skeleton:
+			found += 1
 			# Resume the idle it was on, not a one-shot it was in the
 			# middle of.
-			resume = entry if entry[4] else entry[6]
+			if resume == null:
+				resume = entry if entry[4] else entry[6]
 			_animated.remove_at(i)
-			break
+			continue
+		i += 1
+	if found > 1 and _combat_trace:
+		print("COMBAT a skeleton had %d clip entries when a one-shot started -- all replaced" % found)
 	# entry[7] marks the hold itself (round 534): a one-shot with no resume is
 	# not necessarily a death -- a body whose idle was never registered (a
 	# clip of one frame, OPENSRO_NO_IDLE_ANIM) has nothing to resume after a
@@ -7161,6 +7272,14 @@ func _tick_idle_animations(delta: float) -> void:
 	var t0 := 0
 	var culled := 0
 	var alive: Array = []
+	# Round 785: a one-shot handed back to its loop swaps one entry for
+	# another, which leaves the count as it was -- and the count alone used to
+	# decide whether the tick kept its new list. The ended one-shot then stayed
+	# in the list, "ended" again every frame: its sounds fired every frame (a
+	# struck monster's voc_moan, a monster's swing: MEASURED 20-60 a second on
+	# the box and in the user's log, "+59 since the last line") while it was
+	# posed in its loop.
+	var handed_back := false
 	for entry in _animated:
 		# A zone change frees every region's skeletons while their entries
 		# are still listed here, and Godot raises "Trying to assign invalid
@@ -7292,6 +7411,7 @@ func _tick_idle_animations(delta: float) -> void:
 					_anim_sounds.advance(skeleton, anim, float(entry[5]), float(anim.duration_ms), false)
 					if timing: _qa_split.sound_usec += Time.get_ticks_usec() - t0
 				var resume: Array = entry[6]
+				handed_back = true
 				resume[5] = _idle_anim_time
 				alive.append(resume)
 				if pose:
@@ -7313,7 +7433,7 @@ func _tick_idle_animations(delta: float) -> void:
 				_anim_sounds.advance(skeleton, anim, float(entry[5]), elapsed * 1000.0, false)
 				if timing: _qa_split.sound_usec += Time.get_ticks_usec() - t0
 		alive.append(entry)
-	if alive.size() != _animated.size():
+	if handed_back or alive.size() != _animated.size():
 		_animated = alive
 		_rehint_other_loops()
 	_anim_posed_last = posed
@@ -10686,6 +10806,8 @@ func _audio_pc_owner(label: String, body: String, equipped: Dictionary, node: No
 	owner.parsed = assets.get("parsed")
 	owner.node = node
 	owner.weapon_kind = _audio_weapon_kind(equipped)
+	# Round 785: the skill swings and shouts key by the body's current skill.
+	owner.skill_ctx = func() -> Dictionary: return SkillAudio.context_of(node)
 	return owner
 
 ## The TypeID4 of the weapon in slot 6 (AnimSounds.WEAPON_TOKENS), or
@@ -12493,6 +12615,72 @@ func _rewalk_after_refusal(result: CombatNet.AttackResult) -> bool:
 	_step_pending_attack()
 	return true
 
+## Round 785: monster id -> [the server's position its last OpMonsterMoved
+## carried (Vector2 x, z), the msec it came].
+var _monster_server_pos: Dictionary = {}
+## A resync this old or newer counts as the one a refusal came behind.
+const SERVER_POS_FRESH_MS := 1000
+
+## A reach refusal names its monster and comes right behind the server's own
+## position of it (session/keepup.go resyncMonster, OURS): the body is put
+## there, its leg kept, and its snapshot with it, so the walk that follows
+## aims at what the server measures. MonsterMotion.begin keeps a drawn body
+## on its own path unless it is RESYNC_DISTANCE (32) off -- more than a whole
+## melee reach -- so a body drawn a few units ahead along a long leg (MEASURED
+## on the box: a refusal at 13.8 against a reach of 16 + 2, three walks in a
+## row) never closed the gap by itself. OURS. True when it moved the body.
+func _snap_to_server_pos(monster_id: int) -> bool:
+	var told = _monster_server_pos.get(monster_id)
+	if told == null or Time.get_ticks_msec() - int(told[1]) > SERVER_POS_FRESH_MS:
+		return false
+	var body = _monster_bodies.get(monster_id)
+	if body == null or not is_instance_valid(body):
+		return false
+	var at: Vector2 = told[0]
+	var was := Vector2((body as Node3D).position.x, (body as Node3D).position.z)
+	(body as Node3D).position.x = at.x
+	(body as Node3D).position.z = at.y
+	var state = _monster_motion.get(monster_id)
+	if state != null:
+		state["pos"] = at
+	var snap = _monster_snapshots.get(monster_id)
+	if snap != null:
+		snap.x = at.x
+		snap.z = at.y
+	if _combat_trace or _mob_logging():
+		print("COMBAT monster %d put where the server has it: (%.1f,%.1f), %.1f from where it was drawn" % [
+			monster_id, at.x, at.y, was.distance_to(at)])
+	return true
+
+## The keep-up's own "too far away" (round 785): the server's repeat found its
+## target out of reach -- it walked off, or was knocked back -- and said so
+## (session/keepup.go) after sending where it has the monster (its
+## OpMonsterMoved resync). The engine's phase 1 walks the attacker back into
+## reach and swings on (MoveTowardObject, READ: auto_command.md); OpenSRO's
+## walk is the client's, so the player walks again and clicks again
+## (_attack_monster), for the monster it was fighting, alive, with no other
+## attack or walk of its own under way. At most CombatNet.APPROACH_RETRY_CAP
+## (OpenSRO's own 3) times running without a blow landing in between, so a
+## distance the two sides keep measuring differently cannot loop. True when
+## it walks again.
+func _rewalk_after_keepup_refusal(result: CombatNet.AttackResult) -> bool:
+	var monster_id := result.monster_id
+	if result.error != CombatNet.REFUSED_TOO_FAR or monster_id == 0 or _player_dead:
+		return false
+	if monster_id != _last_attack_target or not _pending_attack.is_empty() or _has_move_target:
+		return false
+	if not _monster_snapshots.has(monster_id) or not _monster_bodies.has(monster_id) or _dying_until.has(monster_id):
+		return false
+	if _keepup_rewalks >= CombatNet.APPROACH_RETRY_CAP:
+		print("World3D: monster %d out of reach again after %d walk(s) back -- not following it further" % [
+			monster_id, _keepup_rewalks])
+		return false
+	_keepup_rewalks += 1
+	print("World3D: the keep-up lost monster %d out of reach -- walking back into reach (%d/%d)" % [
+		monster_id, _keepup_rewalks, CombatNet.APPROACH_RETRY_CAP])
+	_attack_monster(monster_id)
+	return true
+
 ## Tells the server where the player stands now, if that is not what it was
 ## last told, so the request that follows is measured from here. The physics
 ## tick sends the same update only every MIN_SEND_INTERVAL and
@@ -13613,6 +13801,13 @@ func _update_blob_shadow() -> void:
 ##                          hit reaction and a death can be rendered
 ##   OPENSRO_QA_ATTACK_UNTIL=t  with QA_ATTACK: stop the attack loop at tick t
 ##                          (round 607: take damage, then sit and measure)
+##   OPENSRO_QA_FIGHT=1     (round 785) fight as a player does: one click on
+##                          the nearest monster (OPENSRO_QA_ATTACK_NAME
+##                          narrows it) whenever the last target is dead or
+##                          gone, checked every 500 ms of wall time, the
+##                          server's keep-up swinging in between
+##                          (_qa_fight_step); with QA_SHOT_REALTIME=1 the
+##                          client keeps the server's clock
 ##   OPENSRO_QA_STATS_LOG=1  print every stats update's HP and MP with the
 ##                          time and whether the player sits (`QA STATS:`),
 ##                          so regeneration is measured from the log
@@ -14773,6 +14968,8 @@ func _qa_step() -> void:
 		print("QA ATTACK: stopped at tick %d (OPENSRO_QA_ATTACK_UNTIL)" % _qa_tick)
 	if _qa_attacking and _qa_tick % _qa_attack_interval == 0 and NetClient.is_connected_to_server():
 		_qa_attack_nearest()
+	if _qa_fight and NetClient.is_connected_to_server():
+		_qa_fight_step()
 	# OPENSRO_QA_REVIVE_AFTER=n: n physics frames after a killing blow left
 	# the player dead (_enter_dead_state), send OpRevive, as the Revive button
 	# would (round 548). Once per death; never fires in real play.
@@ -15318,6 +15515,50 @@ func _qa_retreat(monster: int) -> void:
 	_move_heading_run = false
 	print("QA ATTACK: retreating %.0f from monster %d to %.1f,%.1f,%.1f; no more swings" % [
 		units, monster, spot.x, spot.y, spot.z])
+
+## OPENSRO_QA_FIGHT (round 785): a player's fight, one click per target.
+var _qa_fight := OS.get_environment("OPENSRO_QA_FIGHT") != ""
+var _qa_fight_next_ms := 0
+var _qa_fight_target := -1
+
+## Every 500 ms of wall time: while the last target lives (listed, drawn, not
+## dying), nothing -- the keep-up swings, or the approach walk walks; once it
+## is dead or gone, one click on the nearest monster (within 300 units), as a
+## player picks the next one. The clicks are the real path (_attack_monster).
+func _qa_fight_step() -> void:
+	var now := Time.get_ticks_msec()
+	if now < _qa_fight_next_ms or _player_dead:
+		return
+	_qa_fight_next_ms = now + 500
+	if _qa_fight_target != -1 and _monster_snapshots.has(_qa_fight_target) \
+			and _monster_bodies.has(_qa_fight_target) and not _dying_until.has(_qa_fight_target):
+		return
+	var wanted := OS.get_environment("OPENSRO_QA_ATTACK_NAME")
+	var best := -1
+	var best_d := 300.0
+	for monster_id in _monster_bodies:
+		if _dying_until.has(monster_id) or not _monster_snapshots.has(monster_id):
+			continue
+		var body: Node3D = _monster_bodies[monster_id]
+		if not is_instance_valid(body):
+			continue
+		if wanted != "":
+			var plate: Label3D = body.get_node_or_null("Label")
+			if plate == null or not plate.text.contains(wanted):
+				continue
+		var d := Vector2(body.global_position.x, body.global_position.z).distance_to(
+			Vector2(player.global_position.x, player.global_position.z))
+		if d < best_d:
+			best_d = d
+			best = monster_id
+	if best == -1:
+		return
+	_qa_fight_target = best
+	print("QA FIGHT: click on monster %d at %.1f ms=%d" % [best, best_d, now])
+	_last_attack_target = best
+	_show_target(best)
+	_ring_on_monster(best)
+	_attack_monster(best)
 
 ## Attacks whichever live monster is nearest the player -- the same
 ## request the Attack button sends -- so the combat animations can be
@@ -17264,6 +17505,8 @@ func _physics_step(delta: float) -> void:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
 	_step_local_turn(delta)
+	# Round 785: fighters turn to face what they strike.
+	_step_combat_faces(delta)
 
 	var is_moving := _has_move_target or (_qa_walk != "" and not _player_dead)
 	if is_moving and (_sit.sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
@@ -22662,6 +22905,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		# Only whether it stands on a navmesh cell matters for a monster's
 		# footstep (0xa6ffc0 returns early without one); its key has no material.
 		sound_owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
+		# Round 785: its swing and shout key by the attack skill it swings
+		# (OpMonsterAttacked's skill id; _draw_monster_strike sets it).
+		sound_owner.skill_ctx = func() -> Dictionary: return SkillAudio.context_of(body)
 		_anim_sounds.register(monster_skeleton, sound_owner)
 
 # --- Many monsters (round 655) ------------------------------------------------
@@ -22873,6 +23119,8 @@ func _forget_monster(monster_id: int, fade: bool = false) -> void:
 	_monster_snapshots.erase(monster_id)
 	_monster_deferred.erase(monster_id)
 	_monster_build_queued.erase(monster_id)
+	_monster_server_pos.erase(monster_id)
+	_monster_swing_until.erase(monster_id)
 
 ## A body leaving the world fades out (round 677, AppearFade.Fades.start_out;
 ## READ: a despawn makes a 1.5 s CIDecoDisappear, docs/protocol/appear_fade.md)
@@ -23574,6 +23822,9 @@ func _monster_is_moving(monster_id: int) -> bool:
 func _on_monster_moved(moved: CombatNet.MonsterMoved) -> void:
 	if moved == null:
 		return
+	# Round 785: where the server had it when it sent this, and when; a reach
+	# refusal right behind a resync puts the body there (_snap_to_server_pos).
+	_monster_server_pos[moved.monster_id] = [Vector2(moved.x, moved.z), Time.get_ticks_msec()]
 	# Listed but not drawn (round 655): queued, or waiting for its region. Its
 	# snapshot takes the leg's destination -- where the server will have it
 	# (OURS: the body is built standing there, not mid-leg) -- and it is
@@ -23877,11 +24128,25 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result.error != "":
 		monster_status_label.text = "Attack failed: %s" % result.error
 		print("World3D: attack refused: %s" % result.error)
+		if _combat_trace and result.monster_id != 0:
+			var rs = _monster_snapshots.get(result.monster_id)
+			var rb = _monster_bodies.get(result.monster_id)
+			print("COMBAT refusal ms=%d monster %d: player (%.1f,%.1f) snapshot %s body %s%s" % [
+				Time.get_ticks_msec(), result.monster_id, player.position.x, player.position.z,
+				"(%.1f,%.1f)" % [rs.x, rs.z] if rs != null else "none",
+				"(%.1f,%.1f)" % [(rb as Node3D).position.x, (rb as Node3D).position.z] if rb != null and is_instance_valid(rb) else "none",
+				" walking" if _monster_is_moving(result.monster_id) else ""])
 		# The server's target test (round 622): a friendly skill at a monster.
 		if result.error == SelfCast.INVALID_TARGET_TEXT or result.error == SelfCast.NO_TARGET_TEXT:
 			_log_system(result.error)
 		SkillEffects.cancel_cast(player)
-		_rewalk_after_refusal(result)
+		# A refusal of a request the approach walk released is that walk's
+		# (_rewalk_after_refusal); any other is the keep-up's own (round 785).
+		var answers_release := not _released_attack.is_empty()
+		if result.error == CombatNet.REFUSED_TOO_FAR and result.monster_id != 0:
+			_snap_to_server_pos(result.monster_id)
+		if not _rewalk_after_refusal(result) and not answers_release:
+			_rewalk_after_keepup_refusal(result)
 		return
 	_released_attack = {}
 	# One line per exchange, so a render's log says what the fight did
@@ -23898,21 +24163,30 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		_idle_anim_time])
 	# A combat exchange keeps the player in the battle stance while idle.
 	_last_combat_time = _player_anim_time
-	# The player's swing: the next plain attack in the weapon group's
-	# chain, once. Its hit event says when the blow lands, and that is
-	# when the monster's own hit reaction plays.
-	var swing_type: int = ATTACK_SEQUENCE[_attack_step % ATTACK_SEQUENCE.size()]
-	_attack_step += 1
+	# The player's swing, once. Its hit event says when the blow lands, and
+	# that is when the monster's own hit reaction plays. Round 785: for a
+	# plain swing the clip is one of the base attack's skillaniset2 SHOT list
+	# at random, as retail picks it (_plain_swing_type).
+	var swing_type := _plain_swing_type() if _pending_skill_id == 0 else -1
+	if swing_type < 0:
+		swing_type = ATTACK_SEQUENCE[_attack_step % ATTACK_SEQUENCE.size()]
+		_attack_step += 1
 	var swing_entry := _body_animation_entry(_player_body, swing_type, _player_weapon_group)
 	if swing_entry == null:
 		swing_entry = _body_animation_entry(_player_body, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
 	var lands_after := 0.0
+	var swing_seconds := 0.0
 	if swing_entry != null:
 		var swing := _body_animation_for(_player_body, swing_entry.action_type, _player_weapon_group)
 		if swing != null:
-			_play_player_once(swing)
+			swing_seconds = _play_player_once(swing)
+			_player_swing_until = Time.get_ticks_msec() + int(swing_seconds * 1000.0)
 		var hit_ms := swing_entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
 		lands_after = float(hit_ms) / 1000.0 if hit_ms > 0 else 0.0
+	if _combat_trace:
+		print("COMBAT swing ms=%d type %d (%s) %.3f s, lands at %.3f s" % [Time.get_ticks_msec(), swing_type,
+			_body_animation_path(_player_body, swing_entry.action_type, _player_weapon_group) if swing_entry != null else "none",
+			swing_seconds, lands_after])
 	# The monster this result is about. The server names it (AttackResult.
 	# MonsterID; NetClient fills it from the target the attack was sent at
 	# when a server predates the field). It is NOT _last_attack_target: the
@@ -23928,6 +24202,12 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		print("World3D: attack result for monster %d -> animating %d" % [monster, monster])
 	if _qa_retreat_pending and monster != -1 and result.monster_damage > 0 and not result.monster_died:
 		_qa_retreat(monster)
+	# Round 785: the player turns to face what it strikes while the swing
+	# plays (CombatFacing: retail's skill deco turns its caster every frame).
+	# A blow resets the walk-back count of the keep-up's refusals.
+	if monster != -1:
+		_face_while_striking(player, 0.0, _monster_position_of.bind(monster), swing_seconds, monster)
+		_keepup_rewalks = 0
 	# A skill cast (not a plain attack) plays that skill's own hit effect on the
 	# target when the blow lands. Consumed here so the next plain attack doesn't
 	# inherit it.
@@ -23990,15 +24270,27 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 				_paint_monster_hp(monster)
 			if died:
 				_begin_monster_death(monster)
-			else:
+			elif dealt > 0 and not _swing_runs(int(_monster_swing_until.get(monster, 0))):
+				# Round 785: the hit reaction only for a blow that dealt
+				# something (READ: FUN_00a49290 enters state 0xb only when the
+				# record's damage is non-zero and its kind is not 2 or 7), and
+				# not over the monster's own swing (_swing_runs).
 				var hit_assembled = _monster_assembled.get(monster)
 				if hit_assembled != null:
 					_audio_mark_hit(hit_assembled.skeleton, result.player_critical)
 				_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_HIT)
-			_audio_blow_lands(blow_audio, dealt, monster)
+			# Round 785: the hit sound follows the landing by the damage
+			# decoration's 100 ms (READ: CIDecoDamageEffect::vslot_014 adds
+			# the frame milliseconds to +0x3c and fires FUN_00a49780's
+			# snd_dmg / snd_cridmg once the sum passes the immediate 100).
+			_after(HIT_SOUND_DELAY, _audio_blow_lands.bind(blow_audio, dealt, monster))
 			var hit_body = _monster_bodies.get(monster)
 			if hit_body != null and is_instance_valid(hit_body):
-				_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
+				# A blow that dealt nothing shows no number (round 785, READ:
+				# the damage text FUN_00a47720 has digits, critical, blocking
+				# and resist labels, and no "miss" or zero).
+				if dealt > 0:
+					_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
 				if skill_hit_code != "":
 					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), skill_hit_code))
 	# The monster strikes back as the player's blow lands -- from the zone's
@@ -24080,11 +24372,11 @@ func _exchange_line(result: CombatNet.AttackResult) -> String:
 ## inferred from the key times, not read from the client's use of them
 ## (docs/protocol/BSR_FORMAT.md, "Events and walk points"). 0 when the monster
 ## has no assembled body or no such event.
-func _monster_strike_seconds(monster_id: int) -> float:
+func _monster_strike_seconds(monster_id: int, action_type: int = BsrReader.AnimationEntry.TYPE_ATTACK) -> float:
 	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
 	if assembled == null or assembled.parsed == null:
 		return 0.0
-	var strike := assembled.parsed.animation_entry_for(BsrReader.AnimationEntry.TYPE_ATTACK)
+	var strike := assembled.parsed.animation_entry_for(action_type)
 	if strike == null:
 		return 0.0
 	var ms := strike.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
@@ -24192,7 +24484,7 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 			how = "own counter, already drawn from the result"
 		_:
 			if own_unpaired:
-				how = "own blow, no result to pair with (the monster's own swing), drawn at once"
+				how = "own blow, no result to pair with (the monster's own swing): its swing now, the blow at the clip's hit event"
 			elif not _other_bodies.has(attacked.target_character_id):
 				how = "target not drawn here"
 	# One line per push: a live run counts them against the counter results.
@@ -24208,9 +24500,12 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 		return
 	if own_unpaired:
 		# The push is the only report of this blow: the HUD's HP and the
-		# death line come from it, and it is drawn now, on this player.
-		_show_own_strike(attacked)
-		_draw_monster_strike(attacked, true)
+		# death line come from it, and it is drawn now, on this player --
+		# the HP and the death as the blow LANDS (round 785: retail lowers
+		# the HP, starts the hit reaction or the death and draws the number
+		# together, at the swing clip's hit event -- IDecoSkill::FUN_00a4f720
+		# -> FUN_00a49290, READ), not when the push arrives.
+		_draw_monster_strike(attacked, true, true)
 		return
 	_draw_monster_strike(attacked, false)
 
@@ -24285,9 +24580,29 @@ func _play_player_struck() -> void:
 	if _player_dead:
 		_play_player_death_pose()
 		return
+	# Round 785: a hit does not cut the player's own swing (_swing_runs).
+	if _swing_runs(_player_swing_until):
+		return
 	var hit := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
 	if hit != null:
 		_play_player_once(hit)
+
+## Round 785: the msec the player's swing clip ends (_on_attack_result), and
+## each monster's (monster id -> msec, _draw_monster_strike).
+var _player_swing_until := 0
+var _monster_swing_until: Dictionary = {}
+
+## Whether a swing clip ending at `until` (msec) still plays. A hit reaction
+## does not replace it (OURS on an INFERENCE: retail shows a blow's number and
+## reaction at its SHOT clip's own hit events -- FUN_00a59970 counts an event
+## only while the deco's clip is the one playing -- so a swing cut by the
+## attacker's own hit reaction would never show its blow, and in retail every
+## blow of an exchange shows; the hit state 0xb itself enters from any state,
+## its masks at 0xec6190 are 0, READ). Before round 785 the reaction replaced
+## the swing: a monster struck as it swung lost its swing and shout sounds
+## (MEASURED: 5 swing sounds for 14 Mangyang and Yeoha swings on the box).
+func _swing_runs(until: int) -> bool:
+	return Time.get_ticks_msec() < until
 
 ## Plays the die clip once and holds its last frame (_player_one_shot_hold).
 ## A body with no such clip keeps whatever it plays.
@@ -24404,7 +24719,7 @@ func _on_revive_result(result: WorldNet.ReviveResult) -> void:
 ## player's body or another player's) and the red number over it. A blocked
 ## blow is the swing alone: it dealt nothing. A target this client has not drawn
 ## gets the swing alone, unturned.
-func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) -> void:
+func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, report_own: bool = false) -> void:
 	var monster := attacked.monster_id
 	var target_id := attacked.target_character_id
 	var target: Node3D = null
@@ -24415,12 +24730,38 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 	var strike_after := 0.0
 	var body = _monster_bodies.get(monster)
 	if body != null and is_instance_valid(body) and not _dying_until.has(monster):
+		# Round 785: the swing is the skill the server names -- its clip one
+		# of the skill's skillaniset2 SHOT list (MSKILL_CH_MANGNYANG_ATTACK01:
+		# ANI_ATTACK1, type 2; _ATTACK02: ANI_ATTACK2, type 5), the body's
+		# current skill set for the clip's swing and shout sounds
+		# (AnimSounds' SWING and SKILL handlers key by its Basic_Code). A
+		# server that names none plays the attack clip as before.
+		SkillAudio.set_current(body, attacked.skill_id)
+		var code := String(SkillAudio.context_for(attacked.skill_id)["code"]) if attacked.skill_id != 0 else ""
+		var clip_type := _shot_clip_type(code)
+		if clip_type < 0 or _monster_action_seconds(monster, clip_type) <= 0.0:
+			clip_type = BsrReader.AnimationEntry.TYPE_ATTACK
+		var clip_seconds := _play_monster_action(monster, clip_type)
+		_monster_swing_until[monster] = Time.get_ticks_msec() + int(clip_seconds * 1000.0)
+		strike_after = _monster_strike_seconds(monster, clip_type)
 		if target != null:
-			_face_monster_toward(monster, Vector2(target.position.x, target.position.z))
+			# Turned toward its target while it swings (CombatFacing), not
+			# snapped.
+			var front := MonsterMotion.front_of(String((body as Node3D).get_meta("model", "")))
+			if front != "":
+				var target_ref: WeakRef = weakref(target)
+				_face_while_striking(body, MonsterMotion.front_yaw(front), func() -> Variant:
+					var t = target_ref.get_ref()
+					return _world_pos(t) if t != null and is_instance_valid(t) else null,
+					clip_seconds, monster)
 			if OS.get_environment("OPENSRO_QA_FACING_LOG") != "":
 				_qa_strike_facing(monster, target)
-		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
-		strike_after = _monster_strike_seconds(monster)
+		if _combat_trace:
+			print("COMBAT monster %d swing ms=%d skill %d (%s) clip type %d %.3f s, lands at %.3f s" % [
+				monster, Time.get_ticks_msec(), attacked.skill_id, code, clip_type, clip_seconds, strike_after])
+	if report_own:
+		# The HUD's HP, the death line and the dead state, as the blow lands.
+		_after(strike_after, _show_own_strike.bind(attacked))
 	if target != null and attacked.blocked:
 		# The block's sound at the blocker, a player character (round 614).
 		_after(strike_after, func() -> void:
@@ -24428,8 +24769,8 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 			if blocker != null and is_instance_valid(blocker):
 				_audio_block(blocker, attacked.critical, "monster %d's blow on %s" % [
 					monster, "the player" if on_self else "character %d" % target_id])
-				_audio_monster_blow(monster, attacked.critical, "blocked blow on %s" % [
-					"the player" if on_self else "character %d" % target_id]))
+				_after(HIT_SOUND_DELAY, _audio_monster_blow.bind(monster, attacked.critical, "blocked blow on %s" % [
+					"the player" if on_self else "character %d" % target_id], attacked.skill_id)))
 	if target == null or attacked.blocked:
 		return
 	var target_key := _fx_owner_key(_own_id() if on_self else target_id, SkillNet.OWNER_CHARACTER)
@@ -24450,18 +24791,28 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 		var landed_efp := _defense_efp_on(target_key)
 		if landed_efp != "":
 			_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, landed_efp)
-		if on_self:
+		# The hit reaction only for a blow that dealt something, or killed
+		# (round 785, READ: FUN_00a49290 enters state 0xb only for non-zero
+		# damage, state 1 for the death bit).
+		if on_self and (attacked.damage > 0 or _player_dead):
 			# The hit reaction -- or the held die clip when this blow left
 			# the player dead (round 548).
 			_audio_mark_hit(_player_skeleton, attacked.critical)
 			_play_player_struck()
-		else:
+		elif not on_self and (attacked.damage > 0 or attacked.target_died):
 			_audio_mark_hit(_other_gaits.get(target_id, {}).get("skeleton"), attacked.critical)
 			_play_other_hit(target_id)
-		_audio_monster_blow(monster, attacked.critical, "blow on %s" % [
-			"the player" if on_self else "character %d" % target_id])
-		# Over the head, at the height the player's own number uses.
-		_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, attacked.damage, DAMAGE_TAKEN_COLOUR))
+		# Its hit sound 100 ms after the landing, keyed by the skill it swung
+		# (round 785).
+		_after(HIT_SOUND_DELAY, _audio_monster_blow.bind(monster, attacked.critical, "blow on %s" % [
+			"the player" if on_self else "character %d" % target_id], attacked.skill_id))
+		if _combat_trace:
+			print("COMBAT monster %d blow lands ms=%d on %s for %d" % [monster, Time.get_ticks_msec(),
+				"the player" if on_self else "character %d" % target_id, attacked.damage])
+		# Over the head, at the height the player's own number uses; none for
+		# a blow that dealt nothing (round 785, READ: no zero or "miss" text).
+		if attacked.damage > 0:
+			_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, attacked.damage, DAMAGE_TAKEN_COLOUR))
 
 ## Turns a monster's body to face `at` (world x, z) by its model's front
 ## (MonsterMotion.front_of / facing_yaw). The capsule (no model), and a target
@@ -24952,13 +25303,17 @@ func _audio_blow_lands(blow: Dictionary, dealt: int, monster: int) -> void:
 ## server names no monster skill, so the skill token is "-" -- and every
 ## monster row names one (MEASURED), so this is logged and silent until the
 ## server sends the skill (OPEN).
-func _audio_monster_blow(monster: int, critical: bool, what: String) -> void:
+func _audio_monster_blow(monster: int, critical: bool, what: String, skill_id: int = 0) -> void:
 	var body = _monster_bodies.get(monster)
 	var snap = _monster_snapshots.get(monster)
 	var obj := SoundTable.sound_object(String(snap.code_name)) if snap != null else ""
 	if body == null or not is_instance_valid(body):
 		body = null
-	CombatAudio.play_hit(critical, obj, false, CombatAudio.NONE, CombatAudio.NONE, "", body,
+	# Round 785: keyed by the skill the blow names (OpMonsterAttacked's skill
+	# id, its Basic_Code after Basic_Original: MOB_MANGNYANG:snd_dmg:
+	# MSKILL_CH_MANGNYANG_ATTACK01); "-" when the server names none.
+	var ctx := SkillAudio.context_for(skill_id) if skill_id != 0 else {"code": CombatAudio.NONE, "group": CombatAudio.NONE}
+	CombatAudio.play_hit(critical, obj, false, String(ctx["group"]), String(ctx["code"]), "", body,
 		"monster %d (%s) %s" % [monster, obj if obj != "" else "no sound object", what])
 
 ## A shield block on a player character, at the blocker. The blocked record
@@ -26252,7 +26607,10 @@ func _paint_monster_hp(monster_id: int, hp: int = -1) -> void:
 
 ## Runs `what` after `seconds` of scene time -- at once when zero.
 func _after(seconds: float, what: Callable) -> void:
-	if seconds <= 0.0:
+	# Out of the tree (a headless test's bare World3D) there is no timer to
+	# wait on: it runs at once (round 785: the 100 ms hit-sound delay made
+	# such a call non-zero where it had been 0).
+	if seconds <= 0.0 or not is_inside_tree():
 		what.call()
 		return
 	get_tree().create_timer(seconds).timeout.connect(what)
