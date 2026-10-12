@@ -121,8 +121,11 @@ The legacy single-target fields of `OpAttackResult` (`MonsterDamage`, `MonsterRe
 damage, so an older client keeps working.
 
 **Kinds OpenSRO emits** (OURS which, READ shapes): 0, 2 (a block), 4 (knockdown), 5 (knockback),
-7 and 8 (the walls), with 0x80 on the killing hit; hitFlags 1 or 2; statusBits from
-`statuseffect`. 0x86 is not emitted (meaning OPEN).
+8 (a void hit after the target fell in the same cast, READ 0x5905ef), with 0x80 on the killing
+hit; hitFlags 1 or 2, `|4` while the caster is in HWAN, 0x10 on a debuff's effect-only hit;
+statusBits from `statuseffect`. 7 (the walls) rides the wall suffix as before (a monster blow on
+a player's wall); 0x86 (`ck`'s instant kill) is not emitted -- no player row carries `ck`.
+**A plain swing carries the block too** (one target, its base attack's hits).
 
 ## Ghost Walk, Teleport and Sprint: the caster's move
 
@@ -150,9 +153,10 @@ READ, `FUN_005862e0` (asm 0x5862e0..0x5866ea), called from both context builders
   CastingTime; every Ghost Walk and Teleport row has CastingTime 0 (MEASURED), so at once.
 - The broadcast is the 0xB070 move block above (`flags & 8`), sent at the cast.
 
-**OpenSRO (round 785):** `session.teleportDestination` is the clamp for all three; the landing is
-truncated in its region's coordinates; the move is applied after the row's PreparingTime +
-CastingTime (0 on every shipped row); `OpSkillMove` (0x00F8, unchanged:
+**OpenSRO (round 785):** `session.teleportDestination` is the clamp for `tele`/`tel2`,
+`sprintDestination` for `tel3`; the landing is truncated in its region's coordinates; the move is
+applied at the cast (every shipped row's PreparingTime and CastingTime are 0, MEASURED; a row with
+a casting time would move at once too -- OURS); `OpSkillMove` (0x00F8, unchanged:
 `{i64 characterId, i64 skillId, f32 x, f32 y, f32 z}`, world coordinates of the truncated landing)
 goes to the zone with the caster, and the ActionBlock with `flags 8` rides the caster's
 `OpAttackResult` and the zone's `OpSkillCast` start. OpenSRO's server has no navmesh: the client

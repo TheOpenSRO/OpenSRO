@@ -1277,6 +1277,8 @@ func performAttack(
 	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
 	playerCrit := blow.Critical
 	allBlocked := blow.Blocked
+	// Round 785: each hit's own part, for the action block (skillhit.go).
+	swing := []swingHit{{dmg: net, crit: blow.Critical, blocked: blow.Blocked}}
 
 	// A multi-hit skill strikes again, and each strike is INDEPENDENT: the
 	// engine runs its whole damage resolution inside
@@ -1294,6 +1296,7 @@ func performAttack(
 		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
 		playerCrit = playerCrit || extra.Critical
 		allBlocked = allBlocked && extra.Blocked
+		swing = append(swing, swingHit{dmg: combat.ApplySkillPercent(extra.Damage, damagePercent), crit: extra.Critical, blocked: extra.Blocked})
 	}
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
@@ -1340,7 +1343,13 @@ func performAttack(
 			n = 1
 		}
 		net = perHit * n
+	} else {
+		// Round 785 (skillhit.go): the buffs' damage percent and the running
+		// imbue's add on every hit of the swing (an imbue reaches plain swings,
+		// 0x59b480, READ).
+		net = plainSwingExtras(ctx, skills, eq, items, characterID, monster, swing, net, playerStr, playerInt, playerLevel)
 	}
+	swingAction := swingBlock(monster.ID, swing, net)
 
 	// The blow, with the players watching the monster before it and after it
 	// (damageMonsterWatched, round 656's review), booked to the attacker on
@@ -1381,7 +1390,7 @@ func performAttack(
 	//
 	// Every branch that changes the player's HP overwrites this afterwards.
 	result := &AttackResult{MonsterID: targetMonsterID, MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP),
-		MonsterDied: monsterDied, PlayerCritical: playerCrit, PlayerHP: int32(playerHPNow)}
+		MonsterDied: monsterDied, PlayerCritical: playerCrit, PlayerHP: int32(playerHPNow), Action: swingAction.died(monsterDied)}
 	// The berserk orbs ride along on every attack result so the HUD tracks
 	// them -- but a blow that does not kill earns nothing: the engine adds
 	// hwan only on the killing blow (see berserk.EarnOnKill), which is

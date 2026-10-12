@@ -416,6 +416,10 @@ func speedField(sp buff.Speed) uint32 {
 func broadcastBuffEnd(to []world.Entity, ownerID int64, ended []buff.Record, sp buff.Speed) {
 	// A wall's end stands its owner (round 640, walls.go).
 	wallsEnded(ownerID, ended)
+	// Round 785: a record whose stats end moves the owner's stats.
+	if statsEnded(ended) {
+		defer pushOwnerStats(ownerID)
+	}
 	speed := speedField(sp)
 	// The count is a byte on the wire; a book this large does not occur,
 	// but a split keeps the packet honest if it ever does.
@@ -462,6 +466,9 @@ func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerI
 	// the periodic effects.
 	rememberRow(false, ownerID, ref)
 	startPeriodic(false, ownerID, casterID, ref, rec, now)
+	if len(rec.Stats) > 0 || statsEnded(ended) {
+		pushOwnerStats(ownerID)
+	}
 	return startDone
 }
 

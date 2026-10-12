@@ -112,6 +112,8 @@ rows (China bows (4,1,1), Europe crossbows (4,2,1) and (4,2,3)).
 | `da`, `atca` | implemented |
 | the imbue's add, its states, its extra chain targets | implemented (skill casts and plain swings) |
 | chains, link by link | implemented: every link resolved at its own time offset |
-| hate (`tant`, `tnt2`, p187) | implemented on the monster AI's threat (monsterai's OnAttacked weight) |
-| `lfst` HP drain | OPEN |
+| hate (`tant`, `tnt2`, p187) | computed and credited to a per-monster `ai.ThreatTable`; the AI's retarget by hate is OPEN (the AI lane's `mob-threat-retarget`) |
+| `lfst` HP drain | implemented (`lfstDamage`; the `mwhs` term OPEN) |
+| hitFlags | 1 / 2 (critical), `|4` in HWAN; 0x10 on a debuff's effect-only hit |
+| void hits | kind 8 after the target fell in the cast |
 | ammunition | OPEN: OpenSRO keeps no count on the worn slot-7 item (docs/TODO.md) |

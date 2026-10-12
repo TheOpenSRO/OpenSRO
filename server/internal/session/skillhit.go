@@ -49,6 +49,7 @@ type targetOutcome struct {
 	updated  combat.Monster
 	died     bool
 	blocked  bool // every hit blocked: no state lands (0x5906c0)
+	drained  int  // what an 'lfst' row's hits heal its caster
 	total    int
 	watchers []world.Entity
 	killHits []combat.Hit
@@ -130,7 +131,10 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 	out := targetOutcome{before: m, blocked: true, ok: true}
 	bonus := combat.SkillLevelPenalty(c.terms.damageBonus, c.level, m.Level)
 	def, defPct := monsterDefence(m)
-	blockChance := combat.EvadedChance(m.Block, playerEvadeBlock(c.ctx, c.casterID, d.eq))
+	// The monster's own block and parry through its debuffs (p10, p9 on its
+	// book: Water Cancel's 'terd', ...).
+	blockChance := combat.EvadedChance(monsterStat(m.ID, buff.ParamBlock, m.Block), playerEvadeBlock(c.ctx, c.casterID, d.eq))
+	parry := float64(monsterStat(m.ID, buff.ParamParry, int(combat.MonsterRate(m.Level))))
 	c.kindIn.TargetCodeName = m.CodeName
 	perHitFixed, fixed := combat.FixedDamagePerHit(combat.SelectDamageKind(c.kindIn), m.CodeName)
 	magical := c.terms.attackType.IsMagical() && !c.terms.attackType.IsPhysical()
@@ -149,7 +153,7 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 		if c.d.zerk != nil && c.d.zerk.Active(c.casterID) {
 			h.Flags |= 4 // the attacker in HWAN (body mode 1), READ
 		}
-		base, err := attackerDamageOf(c.ctx, c.casterID, c.str, c.int, d.eq, d.items, c.terms.attackType, c.level, m.Level, combat.MonsterRate(m.Level))
+		base, err := attackerDamageOf(c.ctx, c.casterID, c.str, c.int, d.eq, d.items, c.terms.attackType, c.level, m.Level, parry)
 		if err != nil {
 			return targetOutcome{}, err
 		}
@@ -196,6 +200,12 @@ func (c *castContext) strike(tg skillTarget) (targetOutcome, error) {
 			dmg = areaShare(dmg, tg.Share)
 			if dmg < 1 {
 				dmg = 1 // the floor of a damaging row (READ)
+			}
+			// 'lfst', the HP drain, replaces the whole computation
+			// (Formula_SkillDamageCappedByHP 0x40f750, READ).
+			if d, ok := c.lfstDamage(m, cum, tg.Share); ok {
+				dmg = d
+				out.drained += d
 			}
 		}
 		h.Damage = uint32(dmg)
@@ -362,6 +372,11 @@ func performSkillAttack(ctx context.Context, d combatDeps, sess *gateway.Session
 	}
 	wearWeapon(ctx, eq, characterID, cc.terms.hits)
 	addSkillHate(cc, outcomes)
+	if drained := drainedBy(outcomes); drained > 0 {
+		if e, ok := hub.EntityByCharacterID(characterID); ok {
+			healCharacter(ctx, hub, chars, eq, items, d.skills, d.mp, e, drained, 0)
+		}
+	}
 
 	// The caster's answer: the legacy single-target fields describe the
 	// primary (the first outcome), the action block everything.
@@ -543,4 +558,49 @@ func applyMonsterTaken(id int64, magical bool, dmg int) int {
 		out = 1
 	}
 	return out
+}
+
+// lfstDamage is Formula_SkillDamageCappedByHP (0x40f750, READ): D =
+// lfst[0] + the caster's getv BSHP variable (+ the 'mwhs' weapon term, OPEN:
+// not added); when the target out-levels the caster D loses 2.5 % a level
+// (0xb45e50), floored at trunc(D x 0.1); then trunc(share x D / 100), or
+// what HP the target has left when D reaches it. The caster heals by it.
+func (c *castContext) lfstDamage(m combat.Monster, taken, share int) (int, bool) {
+	v, ok := c.rowValue("lfst", 0)
+	if !ok {
+		return 0, false
+	}
+	d0 := v + passiveVar(c.casterID, "BSHP")
+	d := d0
+	if diff := m.Level - c.level; diff > 0 {
+		d = int(float64(d) * (1 - 2.5*float64(diff)/100))
+		if floor := int(float64(d0) * 0.1); d < floor {
+			d = floor
+		}
+	}
+	left := m.HP - taken
+	if d >= left {
+		return max(left, 0), true
+	}
+	return d * share / 100, true
+}
+
+// drainedBy sums what a cast's 'lfst' hits took.
+func drainedBy(outcomes []targetOutcome) int {
+	n := 0
+	for _, o := range outcomes {
+		if o.ok {
+			n += o.drained
+		}
+	}
+	return n
+}
+
+// monsterStat is a monster's stat base through its book's entries.
+func monsterStat(id int64, param int, base int) int {
+	t, ok := monsterBooks.ParamTotals(id)[param]
+	if !ok {
+		return base
+	}
+	return int(math.Round(t.Apply(float64(base))))
 }

@@ -7,11 +7,13 @@ package session
 // (buff/stats.go). docs/protocol/skill_stats.md has the table.
 
 import (
+	"context"
 	"math"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // buffTotal is one param's sums for characterID: its active records and
@@ -166,4 +168,38 @@ func buffedWeaponRange(characterID int64, atk combat.AttackType, min, max int) (
 		lo, hi = buff.ParamMagAtkMin, buff.ParamMagAtkMax
 	}
 	return buffStatInt(characterID, lo, min), buffStatInt(characterID, hi, max)
+}
+
+// statsEnded reports whether any of recs wrote a stat.
+func statsEnded(recs []buff.Record) bool {
+	for _, r := range recs {
+		if len(r.Stats) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// pushOwnerStats sends a character its stats after a buff that wrote some
+// started or ended (round 785; retail pushes the changed params, 0x303D --
+// OpenSRO's stats result carries them all), clamping its HP and MP to a
+// lowered maximum first.
+func pushOwnerStats(ownerID int64) {
+	d, ok := skillDeps()
+	if !ok {
+		return
+	}
+	e, in := d.hub.EntityByCharacterID(ownerID)
+	if !in || e.Session == nil {
+		return
+	}
+	ctx := context.Background()
+	clampHP(ctx, d.chars, ownerID)
+	c, err := d.chars.GetByID(ctx, ownerID)
+	if err != nil || c == nil {
+		return
+	}
+	if result, err := buildCharacterStats(ctx, c, c.ID, d.eq, d.items, d.skills, d.mp); err == nil {
+		_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
+	}
 }

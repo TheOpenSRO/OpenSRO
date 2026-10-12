@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
@@ -23,6 +24,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/quest"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
@@ -36,6 +38,7 @@ const (
 	r785Link     = 950005
 	r785Dot      = 950006 // a debuff: kind 3, TR 1, lnks + att + puls 50 + dura 1000
 	r785Teleport = 950007 // tel2 [500 125]
+	r785Passive  = 950008 // Activity 0: defp [50 0 0], setv E1SA 10
 )
 
 func r785Rows() map[int64]*refdata.Skill {
@@ -63,6 +66,9 @@ func r785Rows() map[int64]*refdata.Skill {
 	dot := base(r785Dot, "SKILL_TEST_DOT_01", words(3, run("lnks", 9, 0, 2, 0), run("dura", 1000), run("puls", 50), att))
 	dot.ActionKind, dot.DuraMs, dot.Lnks = 3, 1000, true
 	rows[r785Dot] = dot
+	pas := base(r785Passive, "SKILL_TEST_PASSIVE_01", words(4, run("defp", 50, 0, 0), run("setv", int(skillparamWord("E1SA")), 10, 0)))
+	pas.ActionKind, pas.Activity, pas.TargetRequired = 4, 0, false
+	rows[r785Passive] = pas
 	return rows
 }
 
@@ -301,3 +307,22 @@ func TestR785Debuff(t *testing.T) {
 
 // Ensure the proto import is used by a helper.
 var _ = proto.Packet{}
+
+func skillparamWord(c string) int32 { return skillparam.WordOf(skillparam.Code(c)) }
+
+// TestR785Passive: a known passive's stat writes count in the character's
+// stats and its 'setv' variable answers a 'getv' key (passives.go).
+func TestR785Passive(t *testing.T) {
+	w := startR785World(t)
+	invalidatePassives(w.aria)
+	if tot, ok := buffTotal(w.aria, buff.ParamPhysDefFlat); !ok || tot.Flat != 50 {
+		t.Fatalf("defp: %+v %v", tot, ok)
+	}
+	if v := passiveVar(w.aria, "E1SA"); v != 10 {
+		t.Fatalf("E1SA = %d", v)
+	}
+	row := &refdata.Skill{ParamWords: []int32{0, skillparamWord("getv"), skillparamWord("E1SA")}}
+	if got := applyGetvDamage(w.aria, row, 100); got != 110 {
+		t.Fatalf("getv E1SA: %d", got)
+	}
+}

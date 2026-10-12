@@ -680,6 +680,7 @@ func useSkillHandler(
 	potions *PotionQueue,
 ) gateway.Handler {
 	setPassiveSource(skills, skillRef)
+	noteSkillDeps(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions})
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
 			return nil
