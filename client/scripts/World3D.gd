@@ -12826,6 +12826,11 @@ func _own_skill_result(result: CombatNet.AttackResult, skill: int, code: String)
 			if (t as SkillHits.Target).id_kind == SkillNet.OWNER_MONSTER:
 				_own_hit_until[int((t as SkillHits.Target).id)] = Time.get_ticks_msec() + OWN_CAST_HIT_GUARD_MS
 	var target := _fx_monster_body(monster)
+	# The caster turns to its target as the cast starts (OURS, as another
+	# player's cast is turned since round 622: retail's angle comes in the
+	# message and was not read).
+	if target != null:
+		_face_toward(player, target.global_position)
 	var blow := {"skill": skill, "cast": true, "critical": result.player_critical, "hwan": result.berserk_active}
 	_start_deco(player, skill, target, "own cast at monster %d" % monster,
 		{"code": code, "hits": n_hits, "on_hit": _own_skill_hit.bind(result, skill, code, monster, blow)})

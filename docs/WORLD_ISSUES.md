@@ -7483,6 +7483,191 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 785 (part): the skills (client)
+
+The user (asleep, "make no mistakes"): "fully implement all skills and make sure they behave exactly
+as the original game including effects." Their own logs (v0.1.529-531, a Chinese spear player) showed
+the shape of it: `no cast animation at Prim\Ani\Char\China\man\skill_ch_fire_gigongsul_e.ban --
+falling back to the weapon swing`, the spear's plain swing playing after a Flame Wave, `skill on
+cooldown` refusals while the key was held, and (a later report) "Ghost Walk ... we don't need a
+separate cursor then click ... it has no animations and doesn't fully teleport you". This is the
+client half; lane r785-skill-srv builds the server mechanics and the packets' server side. Labels:
+READ (sro_client.exe on the box; addresses), MEASURED, INFERRED, OURS, OPEN.
+
+**1. A cast is retail's decoration (SkillDeco, new).** READ, the client's IDecoSkill:
+- the start, `FUN_00a54f00` (0xB070's cast) / `GlobalDataManager::FUN_00a53610`: the skill's
+  skillaniset2 record (`FUN_00a95dc0`); **no record ends the decoration -- nothing is drawn**; the
+  record's AniGroup (+4) is the group every clip plays in; one entry of each list READY (+0xe), WAIT
+  (+0x20), SHOT (+0x32) at `byte % count`, the byte (+0xe4) `rand()` from the cast's reader
+  (`FUN_00a54be0`); **READY, WAIT and SHOT all empty (and no system id) ends the decoration (vslot
+  8): no clip, no effect**; a WAIT entry is played at the start (vslot 0xb4);
+- the phases, `FUN_00a534d0` / `FUN_00a53480` / `FUN_00a52fe0`: entering a phase plays its clip
+  (WAIT excepted) and fires its effect group 0; each type-1 event of the playing clip
+  (`FUN_00a59970`) fires the next group; the clip's end runs the machine on; a phase whose record
+  list is empty advances at once; WAIT holds until the server's skill action (0xB071 kind 1,
+  `FUN_00a56680` -> `FUN_00a53090`) forces SHOT; past SHOT the decoration ends (`FUN_00a4ffe0`) and
+  every hit not yet shown is applied (`FUN_00a50a00`);
+- the groups are the rows' StartEvent: `GlobalEffectManager::FUN_00a9d0f0` files each skilleffectset
+  row in a vector at its StartEvent (null slots skipped); a group whose DMG flag is set takes the
+  cast's next hit (`IDecoSkill::FUN_00a4efc0`, counter +0xba).
+
+So **the body clip is NOT named after the skill**: Flame Wave E's record is `DEFAULT
+ANI_READY02 / ANI_WAIT02 / ANI_SKILL_2`, which the China body's .bsr files as
+`skill_china_gigong_ready_b / _wait_b / _shoot_b.ban`. The old client derived
+`skill_ch_fire_gigongsul_e.ban` (round 315, MEASURED there: 59 of 338 names exist) and fell back to
+the weapon's swing (round ~400, OURS) -- both gone. **MEASURED** (`tools/probe_skill_deco_coverage.gd`
+on the box's archives): every clip the 287 China records ask for resolves in `chinaman_fighter` and
+`chinawoman_fighter` (464 of 464; 38 records draw nothing), and every clip the 242 Europe records
+ask for in `europeman_warrior` (399 of 399; 7 draw nothing) -- the spear's Pierce in `spear`
+(`skill_ch_spear_pierce_a.ban`, 1 hit event), Ghost Walk's WAIT in `default`
+(`skill_china_lightning_bobeop.ban`), the Europe fire point in `twohand_staff` (6 hit events).
+
+HERE (`effects/skill_deco.gd`, `World3D._start_deco` and friends): the READY clip once, then the
+WAIT clip looping (INFERRED: retail starts WAIT first and READY over it with the same vslot; the
+order the body shows them in was not read); the effect groups and their sounds on the phase starts
+and clip events; READY/WAIT AT_LOOP effects end at SHOT (INFERRED, as since round 620); a WAIT hold
+forced to SHOT at the row's PreparingTime + CastingTime when no act comes (OURS emulation of the
+retail server's 0xB071 time, skill_buffs.md; OpenSRO's server answers at once), held for the act
+for another player's cast (bounded +5 s, OURS) and for the move for Ghost Walk.
+
+**When:** retail draws its own cast only when the server answers (READ: the decoration is built
+in the 0xB070 handler `NetProcessInNavAndSkill::FUN_008a5fd0` for ANY caster; the 0x7074 send
+draws nothing). The client now does the same: nothing at the send; the accepted OpAttackResult (a
+cast at a monster), OpBuffStart, OpSkillMove or the accepted self-cast reply starts it. **The plain
+swing no longer plays for a skill's answer** (`_own_skill_result`); a Target_Required 0 row that
+deals damage (the spear spin) is drawn the same way.
+
+**2. Hits land at the decoration's DMG groups.** The damage number, the struck body's flinch or
+death, the skill's DamageEfp and the hit sounds come when the group fires -- the SHOT clip's hit
+event, or a projectile's arrival -- not when the reply arrives. READ, the hit apply
+(`IDecoSkill::FUN_00a4f720` -> `FUN_00a49290`): HP falls by the hit's damage, a death enters the die
+state, any other hit with damage the hit state; kind 4 (KNOCKDOWN) puts the body at its point
+(`FUN_009e0550`) and enters state 4; kind 5 (KNOCKBACK) starts the system decoration 0x8000001d
+(SYSTEM_KNOCKBACK, READ: the client's name table at 0x00ec73f8) and slides the body there at 250 u/s
+(0xde5668); kind 2 plays snd_blocking (`FUN_00a47bf0`); kind 7 (a wall) moves no HP. The number's
+display kind (`FUN_00a47720`): flags & 2 critical, kind 2 a block. Multi-hit and AoE come from the
+hit block (3., below): each hit index on every target. Without one (dev's server) the whole result
+lands at the first DMG group (OURS). The knockdown clip is ANI_DOWN (62), INFERRED from the name
+(state 4's clip is chosen through a run-time-filled state table, not read; OPEN).
+
+**3. The packets (built to retail's layout, as agreed with the server lane, whose
+`docs/protocol/skill_hit_block.md` is the layout's home).** `net/skill_hits.gd` (SkillHits):
+- READ, the client's reader: 0xB070 result 1 / 0xB071 kind 1 -> `FUN_00a54be0`: u32 target, u8 flags
+  (1 the damage block, 8 a tele move, 2 a tel2 put); `FUN_00a548e0`: u8 hitCount, u8 targetCount,
+  then per target {u32 id, hitCount x entry}; `FUN_00a55e00`, an entry: u8 kind (0x80 killed; 0
+  hit, 4 knockdown, 5 knockback: u32 damage<<8|flags + u32 statusBits [+ u16 region, 3 x i32
+  for 4/5]; 7 wall: u32 + u16 HP + u16 max; 2 blocked, 8 absorbed, others: nothing); the move
+  (flags & 0x0A): u16 region + 3 x i32;
+- OpenSRO's framing (the server lane's, OURS): tag 0xAB, the retail tail, then targetCount x u8
+  target kind (0 character, 1 monster) and a u8 for the leading target. On OpAttackResult after the
+  (then always present) wall suffix -- payload offset 72 past the error string; an all-zero wall
+  suffix reads as no wall -- and on OpSkillCast after its 43 bytes (the act carries the hits, the
+  start the move only). A packet without it decodes as before.
+- **Chain links** (agreed): each link after the first comes to the caster as an OpSkillCast naming
+  the caster itself; the client draws one only when its skill is not the one it sent
+  (`_own_cast_echo`) and arms its re-use time, as retail arms every own 0xB070.
+
+**4. Ghost Walk and Teleport cast at the cursor (READ, `FUN_0081ba10` 0x81bf26..0x81c561).** A
+row whose client ref has `tele` (+0xc8) or `tel2` (+0xcc; the parser `FUN_009bbca0`) -- MEASURED:
+19 China Ghost Walk rows (tele), 7 Europe Teleport rows (tel2) -- takes the point under the cursor
+on the key press: the cursor ray is 5000 long (`FUN_00a5ade0`, 0xde5188); with no ground under it,
+the player + the ray's horizontal direction x 500 (0xdd24b8); the walk from the player stops at the
+first wall (`FUN_009ed390`, 5.0 steps); 0x7074 goes out with target type 2 (0x9ec080). **There is
+no pick mode** -- round 617's cross-cursor pick (OURS) is removed. The client clamps nothing; the
+server clamps to tele value[1] in 3-D (`FUN_005862e0`; the server lane confirmed: a nearer point
+lands on the point). GhostWalk.resolve still runs that clamp and the walk on the client's navmesh
+(the server has none). **The move is a slide, not a snap (READ):** the 0xB070 move (flags & 8)
+runs `IDecoSkill::FUN_00a51320(region, point, 500.0 @0xdcc19c, 20.0 @0xd88108)`, ticked by
+`FUN_00a50f70`: the caster faces the point, slides there at 500 u/s measuring only the horizontal
+distance (`FUN_009ed850`), leaves an afterimage every 20 units (`FUN_00a55ac0`), and its arrival ends
+the cast (`FUN_00a50a00`: the WAIT clip and its loop effect stop). The body plays its WAIT clip
+(ANI_SKILL_7) the whole way with `lightning_bobeop_move_a.efp`. The afterimage's look and life were
+not read (OPEN): here a still copy of the posed body at half alpha, fading over 0.5 s (OURS).
+
+**5. Grass Walk and the imbues play no body animation -- READ, and the user's memory checked against
+it.** Their records (`SKILL_CH_LIGHTNING_GYEONGGONG_A..E`, `..._GIGONGTA_*`) name `none` in all
+three lists; `FUN_00a54f00` ends such a decoration before any clip or effect. What retail shows is
+the buff's own start effect (0xB0BD -> `FUN_00a53850`: ACT_S, e.g. `lightning_gyeonggong_keep_c.efp`,
+the fire imbue's `fire_gigongta_motion_c.efp` at Bip01 R Finger2) and its ACT_S sound -- both drawn
+(the sound was not played before this round).
+
+**6. Re-use (SkillCooldowns, new).** READ: `FUN_0081ba10` asks
+`SkillCoolTimeManager::FUN_009bba90` before anything else; a record of the skill or of its cooldown
+group still counting refuses with 0x3005 UIIT_SKILL_USE_FAIL_TIMEDELAY_COOL_TIME ("Still have time to
+reuse the skill.", MEASURED) and nothing is sent. Armed at the player's own 0xB070
+(`FUN_00778910` -> `FUN_009bb470`: total = remaining = ref +0x78, a 500 ms tail; `FUN_009ba460` the
+group, ref +0x8b). The client ref sits 4 below the server's record (+0x8b = Action_Overlap's high
+byte +0x8f), so +0x78 is skilldata's Action_ReuseDelay (col 14) and the group col 18 >> 24 (MEASURED:
+CoolTime col 15 is 0 on every player row; each skill line's levels share a group). Counted down per
+frame (`FUN_009bb870`). The quick slot draws it (`UI_SILKMALL::FUN_0067cfb0`): one 32-pixel cell of
+`interface\skill\skill_delay.ddj` (16 x 16 on 512 x 512) at `ftol(239 - r * 239)`, r = left/total;
+then for 500 ms one 16-pixel cell of `interface\skill\skill_charge.ddj` (4 x 4 on 64 x 64) at
+`ftol(15 - f * 15)`. The skill window's slots draw the same in retail (slot type 0x49); not built
+here (OPEN, the skill window is the UI lane's).
+
+**7. Abnormal states on the body (StateLook, new).** READ, the mask setter `FUN_009cd5e0` (0x3057):
+a state bit coming on starts the system decoration `PARAM_<label>` (skilleffect.txt's own rows,
+MEASURED: `battle\status_bad_burn.efp`, `..._stun.efp`, `..._icing_on.efp` ...), going off ends it
+(its DEACT rows: `status_bad_icing_off.efp`); burn, poison, shock, frostbite, zombie, dark and stun
+pulse the body's colour (vtable +0x48, BerserkLook's SCT_MAT pulse, 1000 ms; the colours READ at
+0xde2488..0xde24c4); frostbite sets the clip speed 0.5 (0xe1b7e0), slow 0.75 (0xdd8eec); freeze
+enters motion state 9 (here: the clips hold -- INFERRED).
+
+**8. Projectiles.** AT_MOV_* rows fly from the caster's StartBone + StartOffset to the target's
+TargetBone + TargetOffset; a DMG row's hit lands on arrival. MovTypeSpeed `MOV_x,a,b,c` (MEASURED: b
+and c 100..800) read as start and end speed, flown at their mean in a straight line (INFERRED; the
+mover was not read -- MOV_UPR's arc, MOV_ROUND, MOV_PIERCE OPEN).
+
+**Live (box, a server built from dev in memory on port 16785, `/var/tmp/r785-skill-cli/qa_skills.sh`,
+the box's skills CSV with the param columns; new QA hooks `OPENSRO_QA_SKILLS="tick:skill;..."` -- the
+player's own `_cast_skill` at the nearest monster -- and `OPENSRO_QA_CURSOR="x,y"`):**
+- China, spear kit (`runA`/`runB`): Grass Walk 113 -- `CAST ANIM ... READY, WAIT and SHOT all none:
+  no body animation, no cast effects`, ACT_S `lightning_gyeonggong_keep_a.efp`; Glaive Pierce 41 --
+  `group spear: SHOT 26 (skill_ch_spear_pierce_a.ban)`, SHOT/1 `spear_pierce_shoot_a.efp`, the hit
+  at the clip's event, no spear swing; Fire bolt A 138 -- `READY 41 (skill_china_gigong_ready_b.ban)`,
+  `WAIT 92 (skill_china_gigong_wait_b.ban) looping`, `WAIT held 1500 ms` (prep 1000 + cast 500),
+  `SHOT 27 (skill_china_gigong_shoot_b.ban)`, `fire_gigongsul_fire_a.efp ... flies to the target`,
+  the hit on arrival; a second press 40 ticks later -- `Still have time to reuse the skill.`, nothing
+  sent; FRONTAREA 47 and STUN 50 in `spear`; Ghost Walk 114 twice -- `CURSOR CAST ... the ground
+  under the cursor`, the clamped walked point sent, `OpSkillMove` before the reply, `WAIT action
+  type 32 (skill_china_lightning_bobeop.ban) looping`, `lightning_bobeop_move_a.efp`, `this player
+  slides ... at 500 u/s`, `decoration ends (the move arrived)`, `arrived ... footing terrain`.
+- Europe, two-hand staff kit (`runD`): Fire Point A 10238 -- `group twohand_staff: READY 40, WAIT 91,
+  SHOT 26`, `WAIT held 1000 ms` (166 + 834), `skill_cast_foot_fire_a.efp` (48 nodes), the bolt
+  `wizard_fire_bolt_a.efp` from Bip01 L Hand flying, the re-use refusal 40 ticks later. A cleric
+  staff (`runC`): the server's own `wrong weapon for this skill`; Teleport 10619 -- `CURSOR CAST`
+  sent, refused by dev's server (`select a location on the ground`: it moves only `tele` rows;
+  the server lane's branch adds `tel2`).
+- Frames for a human: `/var/tmp/r785-skill-cli/runD/f00000460.png` (the fire point's READY/WAIT
+  circle and staff pose), `runB` (the Ghost Walk slide). No hit block came from dev's server, so
+  every cast here landed "the whole result" at its first DMG group; the per-hit path is the suite's.
+
+**Tests:** `effects/skill_deco_test.gd` (new: the plan, the timeline on clip events, the WAIT hold
+and shot, no clips, SkillHits byte by byte and through OpAttackResult, SkillCooldowns, StateLook);
+`skill_effects_test.gd` (the DMG groups, the projectile's flight and landing, a state's named
+aura); `self_cast_fx_test`, `friend_cast_test`, `self_cast_test`, `ghost_walk_test`,
+`ghost_walk_review_test`, `combat_audio_test` updated to the new behaviour (nothing at the send,
+the cursor cast, the slide). GATES
+
+**Decisions (OURS), with why:** the WAIT hold's due time from the row's PreparingTime +
+CastingTime (OpenSRO's server answers a cast at once; this is the time retail's 0xB071 would come);
+READY before the WAIT loop (the order is unread; this one shows both); the whole result at the
+first DMG group when no hit block came (dev's server; nothing is lost and nothing is shown twice);
+own casts turned to their target as the cast starts (as others' since round 622); the afterimage's
+look (a half-alpha still copy fading over 0.5 s); a projectile whose target is gone lands at once;
+another caster's hits play no hit sound (the attacker's sound needs its weapon); one colour pulse a
+body, the berserk pulse winning; a `tele`-less, `tel2`-less unknown row slides.
+
+**OPEN:** the order READY and WAIT show in; the Hide Weapon column; the afterimage's look and life;
+the projectile mover (MOV_UPR's arc, MOV_ROUND, MOV_PIERCE, the first value) and the Act Option
+column; the knockdown clip (ANI_DOWN, INFERRED) and the knockback's motion state 4 / 16; freeze as
+held clips (state 9, INFERRED); the stun's own motion (the mask setter plays only its effect and
+pulse); the skill window's re-use sweep (slot type 0x49, the UI lane's window); retail's damage
+number art per display kind (FUN_00a47720; this client draws plain numbers, as before); monster
+casts need the server to announce them (the client draws an MSKILL record on the monster's own
+body when it does); the per-hit path and the chain links run in the suite only until the server
+lane's branch sends them.
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion
