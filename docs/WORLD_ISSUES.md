@@ -7483,6 +7483,70 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 780 (part): the party member's far-away portrait
+
+The user: "the player box while in a party. When I walk away from the party member the profile
+picture of the party member does not slowly fade blue when it should." Labels: READ (decompiled
+retail), MEASURED, INFERRED, OURS, OPEN.
+
+- **What the original does (READ, re-read this round; round 715 built it).**
+  `CIFQuickPartyWnd::vslot_012` (`0x6db380`) every frame, for each member: the squared distance
+  `0x9ed1e0` from the player (`+0x7c` region, `+0x80..+0x88` position) to the member's spawned
+  object, else to the record's last position (`+0x5a` region, `+0x5c` x, `+0x64` z, y left 0);
+  then, only while the party manager's exp mode is 1 (`mov ecx,0xeeebd8; call 0x986f50;
+  cmp [eax],1` at `0x6db4e1..0x6db4eb`; `0x986f60` stores the exp mode at that `+0x20`), level 5
+  from 1e6, 4 from 810000, 3 from 640000, 2 from 490000, 1 from 360000 (600..1000 units, every
+  test `>=`), and `0x6d86e0` puts `qpt_face_faraway_60/70/80/90/100.ddj` on GDR_QPS_STATUS
+  over the portrait (level 0 clears it). The "slow fade" is these five steps as the distance
+  grows: nothing in `0x6d86e0`, the slot's `vslot_012` (`0x6d90e0`) or its render (`0x6d8bf0`)
+  animates in time, and walking back steps it down the same way. No server message beyond the
+  member record's position (0x3864 kind 6, mask 0x20, which OpenSRO sends once a second on a
+  change) is involved.
+- **New READ: the region part of the distance.** `0x9ed1e0` asks the world object
+  `0x1101950` (`SWorld`, vtable `0xde4fb4`, slot 7) for the offset between the two regions:
+  `SWorld::vslot_007` (`0x9fc110`) gives `((a & 0xff) - (b & 0xff)) x 1920` on X and
+  `((a >> 8) - (b >> 8)) x 1920` on Z (the double at `0xe1b800`, read: 1920.0) for two field
+  regions, and **zero when either region has bit 15 set** -- in a dungeon the positions are the
+  dungeon's own space and are compared as they are. `docs/protocol/party_gui.md` section 7 has it.
+- **The bug (MEASURED, live on the box): in a dungeon the overlay jumped from nothing to the
+  full blue.** The board took the player's region from the minimap's field region group, which
+  a dungeon does not have, so once the member's body left the player's view (the 3x3 window of
+  320-unit blocks) the record distance was "unknown" and the board drew level 5. Run
+  `/var/tmp/r780party/dg_before` (the base `35af4a1a` client, Aria and the partybot Cara in the
+  Donwhang cave, `dungeon/32769`, Aria walking away): `far=0` to tick 560, then `far=5` from tick
+  590, when the same walk in the fixed run is 91 units from Cara (frame 620's disc centre
+  (22,97,246), the alpha-241 art).
+  In the field the board already stepped: run `/var/tmp/r780party/live` gives `far=1` at 610
+  units, 2 at 708, 3 at 813 by the record distance, the body having left view near 100 (that
+  run's early leave is a QA artifact: the movie clock is slower than the server's, so the
+  server's copy of the walking player is far ahead -- a heading run's first correction put it
+  2,813 units ahead of the client's).
+- **Fixed (client):** `HudQuickParty` takes the player's region as the u16 id the wire uses and
+  `region_offset` / `record_distance_sq` follow `0x9fc110`; World3D feeds it the minimap's
+  region `(x << 8) | y` and region-local position in the field, and the dungeon's rid with its
+  dungeon-space position (`DungeonWorld.to_dungeon`, the frame the server's dungeon records use,
+  `party.partyPosition`) in a dungeon. **OURS:** a frame where the player's own place is unknown
+  keeps each slot's level instead of drawing level 5 (retail always knows its player's place).
+- **Verified live** (`/var/tmp/r780party/dg_after`, the same cave run with three walking legs):
+  `far=0` to 595 units, `far=1` from 605 (tick 1460), 2 from 700 (1700), 3 from 810 (1850),
+  record `r8001 x1011 z-862` against the player's dungeon position; the cave's corridors ended
+  the walk at 836. MEASURED disc centre (10x10 at 32,152): (156,122,91) at level 0 (the face),
+  (83,109,175) at 1, (68,106,193) at 2, (55,104,207) at 3 -- the face under the (14,96,255) art
+  at alpha 130, 158 and 181 (computed 84/109/175, 68/106/192, 55/104/207). Screenshots:
+  `/var/tmp/r780party/dg_steps.png` (the box at levels 0-3, frames 450/1600/1780/2200, x3),
+  `dg_level3_full.png`, `dg_before_620.png`; the field's `/var/tmp/r780party/cmp.png` (level 0
+  and 3).
+- **QA aids (OURS):** `partybot -zone <label>` sends the zone box's 0x0026 on entry, so a bot can
+  stand in a dungeon; `HudQuickParty.describe()` (the `qplog` line) prints each member's
+  distance, whether it came from the body or the record, and the player's region and position.
+- **Tests:** `hud_quick_party_test.gd`: the dungeon rule (`0x9fc110`'s zero offset with either
+  id a dungeon, the field offsets), a walk away in a dungeon stepping 0,0,1,2,3,4,5,5, an unknown
+  player position keeping the level, the walk back clearing it.
+- **Not changed:** an "Exp Free-For-All" party shows no overlay at any distance, as the original
+  (READ above); if the user's party was one, that is the original's behaviour. **OPEN:** whether
+  the user's report came from a dungeon (the round's evidence says only that the field already
+  stepped and the dungeon did not).
+
 ## Seven-hundred-and-seventy-ninth round: the tomb's floors under the map flag, the return scroll's cast bar, the game's icon
 
 The user, on v0.1.525 with the server deployed: "it needs to show cave floors for cave reverse

@@ -26535,7 +26535,7 @@ func _build_quick_party() -> void:
 	_hud_quick_party.own_name = func() -> String: return NetClient.current_character_name
 	_hud_quick_party.player_position = func() -> Vector3:
 		return player.global_position if player != null else Vector3.ZERO
-	_hud_quick_party.player_region = func() -> Vector2i: return _party_here_region
+	_hud_quick_party.player_region = func() -> int: return _party_here_region
 	_hud_quick_party.player_local = func() -> Vector3: return _party_here_local
 	_hud_quick_party.member_body = func(jid: int) -> Node3D:
 		return _party_body_for_board(jid) as Node3D
@@ -26551,19 +26551,30 @@ func _build_quick_party() -> void:
 	if not NetClient.party.changed.is_connected(_refresh_own_leader_flag):
 		NetClient.party.changed.connect(_refresh_own_leader_flag)
 
-## The player's region and region-local position this frame (the minimap's
-## own lookup, _refresh_minimap, which runs just before _tick_party_hud), for
-## the board's record distances; region x < 0 when unknown. Kept in fields so
-## the board's per-frame reads allocate nothing.
-var _party_here_region := Vector2i(-1, -1)
+## The player's region id and position in it this frame, for the board's
+## record distances, as the client's own +0x7c / +0x80 carry them: in the
+## field the minimap's region ((x << 8) | y, _refresh_minimap, which runs just
+## before _tick_party_hud) and the region-local position; in a dungeon (round
+## 780) the dungeon's rid, bit 15 set, and the dungeon-space position -- the
+## frame the server's records use there (party.partyPosition) and in which
+## SWorld::vslot_007 (0x9fc110) compares a dungeon's positions with no region
+## offset. -1 when unknown. Kept in fields so the board's per-frame reads
+## allocate nothing.
+var _party_here_region := -1
 var _party_here_local := Vector3.ZERO
 
 func _update_party_here() -> void:
-	_party_here_region = Vector2i(-1, -1)
-	if player == null or _minimap_group == null or not is_instance_valid(_minimap_group) \
+	_party_here_region = -1
+	if player == null:
+		return
+	if _dungeon != null:
+		_party_here_region = _dungeon.rid
+		_party_here_local = DungeonWorld.to_dungeon(player.global_position)
+		return
+	if _minimap_group == null or not is_instance_valid(_minimap_group) \
 			or not _minimap_group.is_inside_tree() or _minimap_group.name != _minimap_group_name:
 		return
-	_party_here_region = _minimap_region
+	_party_here_region = ((_minimap_region.x & 0xFF) << 8) | (_minimap_region.y & 0xFF)
 	_party_here_local = _minimap_group.to_local(player.global_position)
 
 ## The selected object's JID when it is a spawned player other than this one

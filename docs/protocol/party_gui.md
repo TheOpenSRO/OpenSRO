@@ -510,6 +510,14 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
 - It uses the member's live object position when spawned, else the record's last position
   (`+0x5a` region, `+0x5c` x, `+0x64` z) **at y = 0** -- the record's y is not read (round 715:
   `local_8` stays 0 in `0x6db380`).
+- The region part (READ, round 780): `0x9ed1e0` asks the world object `0x1101950` (`SWorld`,
+  vtable `0xde4fb4`) slot 7, `SWorld::vslot_007` (`0x9fc110`), for the offset between the
+  player's region (`+0x7c`) and the member's. Two field regions: `((a & 0xff) - (b & 0xff)) x
+  1920` on X and `((a >> 8) - (b >> 8)) x 1920` on Z (the double at `0xe1b800`, 1920.0), 0 on Y.
+  **If either region has bit 15 set (a dungeon) the offset is zero**: a dungeon's positions are
+  its own space, so the record's x/z and the player's dungeon position are compared directly.
+  OpenSRO's server sends the dungeon's rid and dungeon-space x, y, z in a dungeon record
+  (`session/party.go` `partyPosition`, round 773).
 - **Only in an exp-sharing party (exp mode = 1)** it maps the distance to a level. In a
   free-for-all party the level is always 0.
 

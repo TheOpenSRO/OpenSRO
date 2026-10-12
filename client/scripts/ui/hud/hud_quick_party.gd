@@ -71,7 +71,11 @@ class_name HudQuickParty
 ##   player to the member's object when it is spawned in this client
 ##   (0x9c35e0: its +0x7c region, +0x80/+0x84/+0x88 position), else to the
 ##   record's last position (+0x5a region, +0x5c x, +0x64 z) at y = 0 -- the
-##   record's y is not used (local_8 stays 0);
+##   record's y is not used (local_8 stays 0). The region part is
+##   SWorld::vslot_007 (0x9fc110, round 780): field regions 1920 a byte step,
+##   and no offset at all when either region is a dungeon (bit 15), whose
+##   positions are dungeon space -- so in a dungeon the record's x/z and the
+##   player's dungeon-space position are compared directly;
 ## - only in an exp-sharing party (the manager's +0x00 == 1) is it stepped:
 ##   level 5 from 1e6 (a double, 0xda9910), 4 from 810000 (a float,
 ##   0xda990c), 3 from 640000 (0xda9908), 2 from 490000 (a double, 0xda9900),
@@ -197,9 +201,11 @@ var mp_caution := false
 var own_name: Callable
 ## the player's world position (Vector3);
 var player_position: Callable
-## the player's region (Vector2i(x, y); x < 0 when unknown) and region-local
-## position (Vector3), for the record distances -- two value returns, so a
-## frame allocates nothing;
+## the player's region id as the wire and the client's +0x7c carry it (u16:
+## (x << 8) | y in the field, the dungeon's rid with bit 15 in a dungeon; < 0
+## when unknown) and position in it (Vector3: region-local in the field,
+## dungeon space in a dungeon), for the record distances -- two value
+## returns, so a frame allocates nothing;
 var player_region: Callable
 var player_local: Callable
 ## a member's spawned body (Node3D) by JID, or null;
@@ -664,27 +670,40 @@ static func faraway_level(d2: float, exp_share: bool) -> int:
 		return 1
 	return 0
 
-## The squared distance from the player at (region, local) to a record's
-## (region, x, z) at y = 0 (0x9ed1e0 with the record's position): region y
-## steps world X and region x world Z, 1920 a region (the axes AGENTS.md
-## records); the record's y is not used.
-static func record_distance_sq(player_region: Vector2i, player_local: Vector3, region: int, x: float, z: float) -> float:
-	var rx := (region >> 8) & 0xFF
-	var ry := region & 0xFF
-	var dx := float(ry - player_region.y) * RegionGridState.REGION_SPAN + (x - player_local.x)
-	var dz := float(rx - player_region.x) * RegionGridState.REGION_SPAN + (z - player_local.z)
-	var dy := 0.0 - player_local.y
-	return dx * dx + dy * dy + dz * dz
+## The offset between two regions, SWorld::vslot_007 (0x9fc110, READ; the
+## world object 0x1101950 that 0x9ed1e0 asks): two field regions are
+## ((a & 0xFF) - (b & 0xFF)) x 1920 on X and ((a >> 8) - (b >> 8)) x 1920 on
+## Z (the double at 0xe1b800, 1920.0), 0 on Y; when EITHER has bit 15 set (a
+## dungeon) the offset is zero and the two positions are compared as they are
+## -- a dungeon's positions are the dungeon's own space, one frame for all of
+## its floors.
+const DUNGEON_BIT := 0x8000
 
-## The member's squared distance from the player now, or INF when nothing is
-## known of the player's position.
+static func region_offset(a: int, b: int) -> Vector3:
+	if (a & DUNGEON_BIT) != 0 or (b & DUNGEON_BIT) != 0:
+		return Vector3.ZERO
+	return Vector3(float((a & 0xFF) - (b & 0xFF)) * RegionGridState.REGION_SPAN, 0.0,
+		float(((a >> 8) & 0xFF) - ((b >> 8) & 0xFF)) * RegionGridState.REGION_SPAN)
+
+## The squared distance from the player at (region id, position) to a
+## record's (region, x, z) at y = 0 (0x9ed1e0 with the record's position,
+## READ): the region offset (region_offset) plus the difference of the two
+## positions; the record's y is not used (0x6db380 leaves it 0).
+static func record_distance_sq(player_region: int, player_local: Vector3, region: int, x: float, z: float) -> float:
+	var d := region_offset(player_region, region) + player_local - Vector3(x, 0.0, z)
+	return d.length_squared()
+
+## The member's squared distance from the player now, or -1 when nothing is
+## known of the player's position (the slot then keeps its level: OURS --
+## retail always knows where its player is; a frame here can come before the
+## world does, and must not flash the full blue).
 func member_distance_sq(m: PartyNet.Member) -> float:
 	var body: Node3D = member_body.call(m.jid) if member_body.is_valid() else null
 	if body != null and is_instance_valid(body) and body.is_inside_tree() and player_position.is_valid():
 		var p: Vector3 = player_position.call()
 		return p.distance_squared_to(body.global_position)
-	if _here_region.x < 0:
-		return INF
+	if _here_region < 0:
+		return -1.0
 	return record_distance_sq(_here_region, _here_local, m.region, float(m.x), float(m.z))
 
 func set_faraway(s: QuickSlot, level: int) -> void:
@@ -709,7 +728,7 @@ func _process(_delta: float) -> void:
 	tick(Time.get_ticks_msec())
 
 ## The player's region / local position for this frame's record distances.
-var _here_region := Vector2i(-1, -1)
+var _here_region := -1
 var _here_local := Vector3.ZERO
 
 ## One frame of vslot_012 (the board's and each slot's): selection, the
@@ -718,7 +737,7 @@ var _here_local := Vector3.ZERO
 ## the frame allocates nothing.
 func tick(now_ms: int) -> void:
 	var sel: int = int(selected_jid.call()) if selected_jid.is_valid() else 0
-	_here_region = player_region.call() if player_region.is_valid() else Vector2i(-1, -1)
+	_here_region = int(player_region.call()) if player_region.is_valid() else -1
 	_here_local = player_local.call() if player_local.is_valid() else Vector3.ZERO
 	for s in _slots:
 		var m := state.member(s.jid)
@@ -729,7 +748,9 @@ func tick(now_ms: int) -> void:
 			if glow != s.select_glow.visible:
 				s.select_glow.visible = glow
 				print("HudQuickParty: %s's box %s" % [s.member_name, "selected (glow on)" if glow else "deselected"])
-		set_faraway(s, faraway_level(member_distance_sq(m), state.exp_share == 1))
+		var d2 := member_distance_sq(m)
+		if d2 >= 0.0:
+			set_faraway(s, faraway_level(d2, state.exp_share == 1))
 		_caution(s, now_ms)
 	if now_ms - _last_buff_ms >= BUFF_REFRESH_MS:
 		_last_buff_ms = now_ms
@@ -816,8 +837,17 @@ func lock_button() -> TextureButton:
 func describe() -> String:
 	var parts := PackedStringArray()
 	for s in _slots:
-		parts.append("%s jid=%d at %s far=%d glow=%s leader=%s buffs=%d" % [s.member_name, s.jid,
-			str(s.get_global_rect()), s.faraway, s.select_glow != null and s.select_glow.visible,
+		var m := state.member(s.jid) if state != null else null
+		var dist := "?"
+		if m != null:
+			var body: Node3D = member_body.call(m.jid) if member_body.is_valid() else null
+			var src := "body" if body != null and is_instance_valid(body) and body.is_inside_tree() else "record r%04x x%d z%d" % [
+				m.region, m.x, m.z]
+			dist = "%.0f (%s; here r%04x %.0f,%.0f)" % [sqrt(maxf(member_distance_sq(m), 0.0)), src,
+				_here_region,
+				_here_local.x, _here_local.z]
+		parts.append("%s jid=%d at %s far=%d dist=%s glow=%s leader=%s buffs=%d" % [s.member_name, s.jid,
+			str(s.get_global_rect()), s.faraway, dist, s.select_glow != null and s.select_glow.visible,
 			s.leader_flag != null and s.leader_flag.visible,
 			s.buffs.count(true) + s.buffs.count(false) if s.buffs != null else 0])
 	return "%d slot(s), lock %s: %s" % [_slots.size(), _lock != null and _lock.visible, "; ".join(parts)]

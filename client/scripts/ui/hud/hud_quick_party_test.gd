@@ -81,6 +81,7 @@ func _initialize() -> void:
 	_test_positions()
 	_test_faraway_steps()
 	_test_record_distance()
+	_test_dungeon_steps()
 	_test_rebuild()
 	_test_lock()
 	_test_selection_glow()
@@ -117,7 +118,7 @@ func _test_faraway_steps() -> void:
 	_check(HudQuickParty.faraway_level(4.0e6, false) == 0, "no overlay in a party that does not share EXP")
 
 func _test_record_distance() -> void:
-	var here := Vector2i(97, 168)
+	var here := (97 << 8) | 168
 	var d := HudQuickParty.record_distance_sq(here, Vector3(100, 0, 100), (97 << 8) | 168, 400.0, 500.0)
 	_check(is_equal_approx(d, 300.0 * 300.0 + 400.0 * 400.0), "same region: plain dx, dz")
 	d = HudQuickParty.record_distance_sq(here, Vector3(1900, 0, 100), (97 << 8) | 169, 20.0, 100.0)
@@ -126,6 +127,49 @@ func _test_record_distance() -> void:
 	_check(is_equal_approx(d, 40.0 * 40.0), "region x + 1 steps world Z by 1920")
 	d = HudQuickParty.record_distance_sq(here, Vector3(100, 30, 100), (97 << 8) | 168, 100.0, 100.0)
 	_check(is_equal_approx(d, 900.0), "the record is taken at y 0: only the player's height counts")
+	# Round 780: SWorld::vslot_007 (0x9fc110) -- a dungeon on either side, no
+	# region offset: the two positions are compared as they are.
+	var cave := 0x8001
+	d = HudQuickParty.record_distance_sq(cave, Vector3(1011, 0, 862), cave, 1011.0 + 650.0, 862.0)
+	_check(is_equal_approx(d, 650.0 * 650.0), "in a dungeon: dungeon-space x/z compared directly (650 apart)")
+	d = HudQuickParty.record_distance_sq(cave, Vector3(-13000, 20, 5000), 0x8006, -13000.0, 5000.0 + 800.0)
+	_check(is_equal_approx(d, 800.0 * 800.0 + 400.0), "two dungeon rids: still no offset; the player's y counts, the record's not")
+	d = HudQuickParty.record_distance_sq(here, Vector3(100, 0, 100), cave, 100.0, 100.0)
+	_check(is_zero_approx(d), "field player, dungeon record: no offset either (0x9fc110 tests both ids)")
+	_check(HudQuickParty.region_offset((97 << 8) | 169, (97 << 8) | 168) == Vector3(1920, 0, 0)
+		and HudQuickParty.region_offset((98 << 8) | 168, (97 << 8) | 168) == Vector3(0, 0, 1920),
+		"field offsets: the low byte steps X by 1920, the high byte Z")
+	_check(HudQuickParty.region_offset(0x8001, (97 << 8) | 168) == Vector3.ZERO, "a dungeon id: zero offset")
+
+## Round 780: in a dungeon a member who is not spawned here is placed by the
+## record's dungeon-space x/z (the server's party.partyPosition), and the
+## steps follow the walk as in the field; an unknown player position keeps
+## the level the slot had instead of jumping to the full blue.
+func _test_dungeon_steps() -> void:
+	var party := _party(2)
+	var far := party.members[0]
+	far.region = 0x8001
+	far.x = 1011
+	far.z = 862
+	var b := _board(party)
+	var here := [0x8001, Vector3(1011, 0, 862)]
+	b.player_region = func() -> int: return int(here[0])
+	b.player_local = func() -> Vector3: return here[1]
+	var levels := []
+	for step in [0, 300, 610, 710, 810, 910, 1010, 1500]:
+		here[1] = Vector3(1011 + step, 0, 862)
+		b.tick(step)
+		levels.append(b.slot(0).faraway)
+	_check(levels == [0, 0, 1, 2, 3, 4, 5, 5], "walking away in a dungeon: 0,0,1,2,3,4,5,5 (got %s)" % str(levels))
+	here[0] = -1
+	b.tick(2000)
+	_check(b.slot(0).faraway == 5, "the player's place unknown: the level stays (5)")
+	here[0] = 0x8001
+	for step in [910, 610, 100]:
+		here[1] = Vector3(1011 + step, 0, 862)
+		b.tick(3000 + step)
+	_check(b.slot(0).faraway == 0, "walking back: the overlay clears below 600")
+	b.queue_free()
 
 func _test_rebuild() -> void:
 	var party := _party(4)
@@ -212,7 +256,7 @@ func _test_overlay_and_caution() -> void:
 	party.members[2].x = 100 + 650
 	party.members[2].z = 100
 	var b := _board(party)
-	b.player_region = func() -> Vector2i: return Vector2i(97, 168)
+	b.player_region = func() -> int: return (97 << 8) | 168
 	b.player_local = func() -> Vector3: return Vector3(100, 0, 100)
 	b.tick(0)
 	_check(b.slot(0).faraway == 0 and b.slot(1).faraway == 1, "a member 650 away: level 1; one beside the player: 0")
@@ -315,7 +359,7 @@ func _time_tick() -> void:
 		party.members[i].x = 100 + 150 * i
 		party.members[i].z = 100
 	var b := _board(party)
-	b.player_region = func() -> Vector2i: return Vector2i(97, 168)
+	b.player_region = func() -> int: return (97 << 8) | 168
 	b.player_local = func() -> Vector3: return Vector3(100, 0, 100)
 	b.selected_jid = func() -> int: return 3
 	var n := 2000

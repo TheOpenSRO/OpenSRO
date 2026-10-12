@@ -661,6 +661,11 @@ var botEntry struct {
 // joining window stays up until the backstop).
 var botSilent bool
 
+// botZone (round 780, OURS, a QA aid): a zone label the bot asks for on entry
+// (0x0026, the zone box's request), e.g. "dungeon/32769", so a live run can
+// stand a party member in a dungeon beside a client sent there by /goto.
+var botZone string
+
 // botKill makes a bot, once it is in a party, wait and then kill one monster
 // of a species with a real blow (round 716: a live 0x3056 run, where the
 // rendered client is the party member who never hits).
@@ -687,6 +692,10 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 			b.moveTo(x, b.y, z)
 		}
 		fmt.Printf("[%s] -> /tp %s and a relocated move there\n", name, at)
+	}
+	if botZone != "" {
+		b.send(session.OpChangeZone, (&session.ChangeZoneRequest{Zone: botZone}).Encode())
+		fmt.Printf("[%s] -> 0x0026 change zone to %s\n", name, botZone)
 	}
 	if tp != "" {
 		gmTP(tp)
@@ -804,6 +813,7 @@ func main() {
 	flag.DurationVar(&botKill.after, "kill-after", 10*time.Second, "bot -kill: how long after joining the party")
 	flag.BoolVar(&botSilent, "silent", false, "bot: leave party-match join requests unanswered (the server's 15 s backstop answers)")
 	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
+	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026), e.g. dungeon/32769")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")
