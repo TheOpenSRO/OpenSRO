@@ -7483,6 +7483,42 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-seventy-ninth round: the tomb's floors under the map flag, the return scroll's cast bar, the game's icon
+
+The user, on v0.1.525 with the server deployed: "it needs to show cave floors for cave reverse
+locations" (a screenshot from another server's client: "Tomb of Qin-Shi Emperor lv.2 / lv.3 /
+lv.4" under the tomb's flag); "if you cast the reverse return scroll it should stop you and show
+a progress bar above the hotbar that you can cancel. During that progress bar you can't move or
+cast anything unless you cancel. It has different speeds of progression depending on the type of
+return scroll"; and the game's exe icon on the window, not shipped. Labels as before.
+
+### Round 779 (part): the tomb's floors
+
+MEASURED: the archive's refoptionalteleport has the tomb's flag (id 31, region 26284, group 2) and
+no row under it (ids 32..38 absent). OURS: three rows when the group is empty -- ids 32..34, the
+game's own SN_ZONE_26002..26004 ("Tomb of Qin-Shi Emperor lv.2..lv.4", textdata_object), each
+at the destination of the tomb's own bottom-floor gates (GATE_JINSI_06x01-bldg2/-bldg7/-bldg5 ->
+GATE_JINSI_02x01_09, GATE_JINSI_03x01, GATE_JINSI_04x05, MEASURED in teleportlink -- exactly the
+three floors the user's client lists; the first two are also the arrivals from the floor above).
+Server `teleport.SupplementTombFloors` (at load), client `OptionalTeleportReader.
+supplement_tomb_floors`; tests both sides. QA on the box (`/var/tmp/r779-floor/`): the flag's
+popup lists the three; choosing lv.2 casts (`scroll cast option=7 point=32`) and lands on 0x8006
+(`zone=dungeon/32774 x=-13674 z=-5596`), Military Camp 1, B2.
+
+### Round 779 (part): the window icon
+
+`GameIcon` (round-780 commit, shipped here): the one RT_GROUP_ICON of the player's own
+sro_client.exe (MEASURED on the box's: group 132, one 32x32 8-bit RT_ICON) decoded in memory
+(CursorSet's DIB reader) and set with `DisplayServer.set_icon` at boot; nothing shipped.
+`game_icon_test.gd`. Not checked on Windows here.
+
+**The input lock (a finding against the request):** the cast-bar part below READ that the original
+does not refuse movement, skills or attacks during a return scroll's cast (its "busy" flag is
+set for other bar kinds, never the return scroll's), and being hit does not cancel it. Built as
+read; the lock in the user's screenshot's client is INFERRED to be that server's addition, as is
+its cancel button on the left (the original's own `ifdelayinfo.txt` puts it on the right). Taken
+to the user.
+
 ### Round 779 (part): the return scroll's cast bar
 
 The user: "if you cast the reverse return scroll it should stop you and show a progress bar above
