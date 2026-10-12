@@ -15,39 +15,12 @@ class_name SkillEffects
 ## spec's 0-based 13, 17, 18, 19, 20 as the fallback. The effect is Obj Path +
 ## ObjName (READ, spec §1.1); "none" names no effect.
 ##
-## WHEN A PHASE FIRES (round 620 review follow-up) -- the client's own phase
-## machine, READ in IDecoSkill (funcs_015):
-## - A cast starts (GlobalDataManager::FUN_00a53610) at phase 0 and runs
-##   FUN_00a534d0, which plays the phase's clip, moves +0xbe to the next
-##   phase and (FUN_00a53480) fires that phase's StartEvent 0 rows at once
-##   (FUN_00a52fe0: the row list at +0xbc + AniType*4, next event counter).
-## - Each animation event of the clip (FUN_00a59970, event type 1 on the
-##   current clip) fires the phase's next StartEvent; the clip's end (event
-##   100) runs FUN_00a534d0 again: READY -> WAIT -> SHOT.
-## - A phase with no clip of its own advances at once (FUN_00a53480: the
-##   skill record's per-phase clip count at +8 + phase). WAIT plays no clip
-##   and holds only while the skill has WAIT clips, until the server's
-##   skill-action message (FUN_00a56680 kind 1 -> FUN_00a53090) forces SHOT.
-## - ACT_S / ACT_L fire when the skill acts on its object (FUN_00a53850,
-##   from the server's result; round 614).
-## This client has no per-phase clips or clip events, so SkillEffects.cast
-## schedules the phases from the skilldata timing columns (INFERRED: the
-## READY clip spans Action_PreparingTime, col 11; the WAIT charge spans
-## Action_CastingTime, col 12):
-##   t0            READY rows (every StartEvent: the clip events' times are
-##                 unknown here, OURS)
-##   t0 + prep     WAIT rows; then SHOT at once when the skill has no WAIT
-##                 row, else at shot(caster) -- the server's answer -- or
-##                 t0 + prep + cast, whichever comes first (OURS fallback)
-##   SHOT start    SHOT/0 rows; the cast's READY/WAIT loops end here
-##                 (INFERRED: a kept phase effect belongs to its phase)
-##   hit(caster)   SHOT/1 and later -- the blow's animation event, which the
-##                 caller knows (World3D: the blow lands)
-##   act(...)      ACT_S (and ACT_L one cycle when no buff token will come)
-## cancel_cast(caster) ends a cast that was refused or interrupted: nothing
-## more fires and its loops end.
-## The sequencer runs on scene time: World3D calls tick(delta) every physics
-## frame (a movie render runs slower than the wall clock).
+## WHEN A PHASE FIRES (round 785): SkillDeco runs the cast's phases from the
+## body's own clips, as the client's decoration does (its header has the
+## READ), and fires each phase's effect groups -- StartEvent 0 when the phase
+## starts, StartEvent n at the clip's n-th hit event -- through play_phase.
+## ACT_S / ACT_L fire when the skill acts on its object (act, FUN_00a53850,
+## from the server's result; round 614).
 ##
 ## ON WHOM (ActType, the row's +0xe byte). Its values are READ (round 785)
 ## from the name table the row parser looks the column up in: the (name,
@@ -76,8 +49,13 @@ class_name SkillEffects
 ## - AT_TARGET, AT_TARGET_F and AT_DMG_POS play on the target (INFERRED from
 ##   the names); everything else on the caster, placed every frame (OURS for
 ##   the ActTypes past AT_LOOP: FUN_00a513a0 plays them on other paths).
-## - AT_MOV_* (projectiles) play at the caster without the flight (OURS; the
-##   flight is OPEN).
+## - AT_MOV_* (projectiles, round 785): the effect leaves the caster at its
+##   StartBone + StartOffset and flies to the target's TargetBone +
+##   TargetOffset; the hit it carries lands when it arrives (`on_arrive`).
+##   MovTypeSpeed `MOV_x,a,b,c` (MEASURED: b and c are 100..800 on every
+##   row) is read as the start and end speed in units a second, the flight
+##   at their mean, in a straight line for every MOV_ kind (INFERRED; the
+##   mover was not read, OPEN: MOV_UPR's arc, MOV_ROUND, MOV_PIERCE).
 ##
 ## HOW LONG:
 ## - ACT_L / AT_LOOP is the buff's aura: attach_aura keeps it per (owner,
@@ -89,8 +67,13 @@ class_name SkillEffects
 ##   frees them at once (EfpEffect.stop). With the buff's remaining
 ##   time it also ends by itself AURA_GRACE_MS after that time runs out, in
 ##   case the end never arrives (OURS).
-## - READY / WAIT AT_LOOP: until the cast's SHOT starts, cancel_cast, or
-##   READY_LOOP_MAX (OURS guard).
+## - A cast's AT_LOOP rows of ANY phase (READY, WAIT, SHOT -- 260 SHOT and 12
+##   ACT_S rows, the effects lane's MEASURED count): kept until the cast's
+##   phases are done (READ: FUN_00a534d0 past phase 2 ends the decoration;
+##   SkillDeco "stop_loops" at its end) or it is cancelled, then let go; a
+##   kept row played outside a decoration is bounded by READY_LOOP_MAX (OURS).
+##   The release when a later row's group matches (FUN_00a4fe10) is not
+##   modelled (OPEN).
 ##
 ## WHERE (StartBone, StartOffset, Rotate; READ round 785 -- the row parser
 ## GlobalEffectManager::FUN_00a9d0f0, the placement IDecoSkill::FUN_00a4a680
@@ -134,6 +117,7 @@ const AT_LOOP := 2
 const AT_TARGET := 3
 const AT_TARGET_F := 4
 const AT_DMG_POS := 6
+const AT_MOV_1TAR := 7
 
 # Fallback column indices (0-based, spec §1.1).
 const C_ID := 1
@@ -145,6 +129,10 @@ const C_NAME := 18
 const C_BONE := 19
 const C_OFFSET := 20
 const C_ROTATE := 24 ## round 785: "Rotate" (the header's own name is looked for first)
+const C_DMG := 4
+const C_MOV := 14
+const C_TBONE := 21
+const C_TOFFSET := 22
 
 ## The Effect Quality option (round 694, VideoOptions.EFFECT): 0 "Turn Off
 ## All Effects", 1 "See Hit Effects", 2 "See All Effects" (the default).
@@ -184,7 +172,8 @@ static var effect_factory: Callable = Callable()
 static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	var in_section := false
-	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET, "rotate": C_ROTATE}
+	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET,
+		"dmg": C_DMG, "mov": C_MOV, "tbone": C_TBONE, "toffset": C_TOFFSET, "rotate": C_ROTATE}
 	for raw in SkillAudio._utf16_lines(bytes):
 		var line: String = raw
 		if line.begins_with("#section"):
@@ -196,7 +185,8 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 		if line.begins_with("//"):
 			var header := line.substr(2).split("\t")
 			var names := {"ActType": "act", "Obj Path": "path", "ObjName": "name",
-				"StartBone": "bone", "StartOffset": "offset", "Rotate": "rotate"}
+				"StartBone": "bone", "StartOffset": "offset", "DMG Event": "dmg",
+				"MovTypeSpeed": "mov", "TargetBone": "tbone", "TargetOffset": "toffset", "Rotate": "rotate"}
 			for h in names:
 				var at := header.find(h)
 				if at >= 0:
@@ -224,12 +214,30 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			"path": dir + obj,
 			"bone": cols[int(col["bone"])].strip_edges() if cols.size() > int(col["bone"]) else "none",
 			"offset": parse_offset(cols[int(col["offset"])] if cols.size() > int(col["offset"]) else ""),
-			"rotate": int(cols[int(col["rotate"])].strip_edges()) if cols.size() > int(col["rotate"]) and cols[int(col["rotate"])].strip_edges().is_valid_int() else 0,
+			"dmg": _cell(cols, int(col["dmg"])).to_upper() == "TRUE",
+			"mov": parse_mov(_cell(cols, int(col["mov"]))),
+			"tbone": _cell(cols, int(col["tbone"])),
+			"toffset": parse_offset(_cell(cols, int(col["toffset"]))),
+			"rotate": int(_cell(cols, int(col["rotate"]))) if _cell(cols, int(col["rotate"])).is_valid_int() else 0,
 		}
 		if not out.has(id):
 			out[id] = []
 		(out[id] as Array).append(row)
 	return out
+
+static func _cell(cols: PackedStringArray, i: int) -> String:
+	return cols[i].strip_edges() if i >= 0 and i < cols.size() else ""
+
+## MovTypeSpeed `MOV_x,a,b,c` -> [kind, a, b, c] ([] for MOV_NONE or
+## anything else).
+static func parse_mov(cell: String) -> Array:
+	var p := cell.strip_edges().split(",")
+	if p.size() != 4 or not p[0].begins_with("MOV_") or p[0] == "MOV_NONE":
+		return []
+	for k in range(1, 4):
+		if not String(p[k]).strip_edges().is_valid_int():
+			return []
+	return [p[0], int(p[1]), int(p[2]), int(p[3])]
 
 ## "x,y,z" -> Vector3 (zero for anything else).
 static func parse_offset(cell: String) -> Vector3:
@@ -268,9 +276,6 @@ static func host_for(act: int, caster: Node3D, target: Node3D) -> Node3D:
 static var _timings: Dictionary = {}
 ## The local player's body: effects on it or cast by it are reserved.
 static var own_body: Node3D = null
-## caster instance id -> the running cast {skill, caster, target, t0, prep,
-## cast, phase, shot_at, loops}.
-static var _casts: Dictionary = {}
 
 ## skilldata bytes -> id -> [prep_ms, cast_ms].
 static func parse_timings(bytes: PackedByteArray, into: Dictionary = {}) -> Dictionary:
@@ -428,11 +433,15 @@ static func rotate_basis(rotate: int) -> Basis:
 	return Basis(Vector3(c, 0, sn), Vector3(0, 1, 0), Vector3(-sn, 0, c))
 
 ## Plays `skill_id`'s effects of one phase now. Returns the effects started.
-## (Round 620's play_phase stopped the caster's READY loops on any later
-## phase; the cast sequencer does that at SHOT's start instead.)
+## READY / WAIT AT_LOOP rows loop (EfpEffect.loop) until the caller stops
+## them -- SkillDeco's "stop_loops" at SHOT -- or READY_LOOP_MAX (OURS
+## guard). An AT_MOV_* row flies to `target` (see the header) and, when the
+## row carries the DMG event, calls `on_arrive` once it lands (the first such
+## row of the group only).
 static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: Node3D,
-		target: Node3D = null, what: String = "") -> Array:
+		target: Node3D = null, what: String = "", on_arrive: Callable = Callable()) -> Array:
 	var started: Array = []
+	var arrive := on_arrive
 	for r in rows_for(skill_id, ani_type, start_event):
 		var act := int(r["act"])
 		var host := host_for(act, caster, target)
@@ -452,86 +461,168 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 			fx.free()
 			continue
 		fx.reserved = own_body != null and (host == own_body or caster == own_body)
-		var looping := kept_act(act)
-		# Round 785: AT_STOP is placed once, where it is cast (READ, see the header).
+		# Round 785: AT_LOOP of any phase is kept (the caller lets it go --
+		# SkillDeco's end); AT_STOP is placed once, where it is cast (READ).
 		fx.static_host = act == AT_STOP
-		if looping and (ani_type == SkillAudio.READY or ani_type == SkillAudio.WAIT):
+		if kept_act(act):
 			fx.loop = true
 			fx.max_life = READY_LOOP_MAX
-			if caster != null and _casts.has(caster.get_instance_id()):
-				(_casts[caster.get_instance_id()]["loops"] as Array).append(fx)
-		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
+		var flies := act >= AT_MOV_1TAR and _valid(target) and target != caster and _valid(caster)
+		if flies:
+			var carries: Callable = arrive if bool(r.get("dmg", false)) else Callable()
+			if carries.is_valid():
+				arrive = Callable()
+			_fly(fx, caster, target, r, carries)
+		else:
+			attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
-		print("EFFECTS skill %d %s/%d: %s %s at %s (%d nodes drawn%s) %s" % [skill_id,
+		print("EFFECTS skill %d %s/%d: %s %s at %s (%d nodes drawn%s) %s%s" % [skill_id,
 			SkillAudio._phase_name(ani_type), start_event, ACT_TYPES[act] if act >= 0 else "?",
 			r["path"], r["bone"], fx.draw_count(),
-			", skipped: " + ", ".join(fx.skipped) if not fx.skipped.is_empty() else "", what])
+			", skipped: " + ", ".join(fx.skipped) if not fx.skipped.is_empty() else "", what,
+			" -- flies to the target" if flies else ""])
 	return started
+
+## Whether effect group `start_event` of a phase carries the DMG event (a
+## row with DMG Event TRUE): the group that shows the cast's next hit (READ,
+## FUN_00a52fe0: a group whose flag is set takes the next hit entry,
+## IDecoSkill::FUN_00a4efc0, the counter +0xba). Rows are filed by
+## StartEvent (GlobalEffectManager::FUN_00a9d0f0), so a group's flag is set
+## by any of its rows (INFERRED from the shape: the per-row flag is read,
+## the per-group byte is what the fire tests).
+static func group_dmg(skill_id: int, ani_type: int, start_event: int) -> bool:
+	for r in rows_for(skill_id, ani_type, start_event):
+		if bool(r.get("dmg", false)):
+			return true
+	return false
+
+## Whether the group's DMG row is a projectile (its hit lands on arrival).
+static func group_dmg_flies(skill_id: int, ani_type: int, start_event: int) -> bool:
+	for r in rows_for(skill_id, ani_type, start_event):
+		if bool(r.get("dmg", false)) and int(r["act"]) >= AT_MOV_1TAR:
+			return true
+	return false
+
+## The highest StartEvent among a phase's rows (0 when none): how many
+## groups the phase can fire.
+static func last_event(skill_id: int, ani_type: int) -> int:
+	var n := 0
+	for r in rows_for(skill_id, ani_type, -1):
+		n = maxi(n, int(r["event"]))
+	return n
 
 ## An effect with no drawn node is still worth running only if a child file
 ## could draw -- never, here: every node is either drawn or skipped.
 static func _draws_nothing(fx: EfpEffect) -> bool:
 	return fx.draw_count() == 0
 
-# --- the cast sequencer ----------------------------------------------------------
+# --- projectiles (round 785) -----------------------------------------------------
 
-## The sequencer's clock: scene time, the same time the effects simulate in
-## (a movie render runs slower than the wall clock; so may a hitch).
+## The flights in the air: {carrier, fx, target, tbone, toffset, speed,
+## on_arrive, age}.
+static var _flights: Array = []
+## OURS: a flight still in the air after this long lands where it is.
+const FLIGHT_MAX_S := 5.0
+
+## The world point of `body`'s `bone` + `offset` (the effect attachment's own
+## rule, EfpEffect._place: the skeleton's frame, the bone's origin).
+static func bone_point(body: Node3D, bone: String, offset: Vector3) -> Vector3:
+	var skel := skeleton_of(body)
+	if skel == null or not skel.is_inside_tree():
+		return body.global_transform * offset
+	var at := offset
+	var b := bone.strip_edges()
+	if b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#"):
+		var i := skel.find_bone(b)
+		if i >= 0:
+			at += skel.get_bone_global_pose(i).origin
+	return skel.global_transform * at
+
+static func _fly(fx: EfpEffect, caster: Node3D, target: Node3D, row: Dictionary, on_arrive: Callable) -> void:
+	var carrier := Node3D.new()
+	carrier.name = "SkillFlight"
+	var parent := caster.get_parent() if caster.get_parent() != null else caster
+	parent.add_child(carrier)
+	carrier.global_position = bone_point(caster, String(row["bone"]), row["offset"])
+	var mov: Array = row.get("mov", [])
+	var speed := (float(mov[2]) + float(mov[3])) * 0.5 if mov.size() == 4 else 0.0
+	carrier.add_child(fx)
+	fx.follow_host(carrier, "none", Vector3.ZERO)
+	var f := {"carrier": carrier, "fx": fx, "target": target, "tbone": String(row.get("tbone", "none")),
+		"toffset": row.get("toffset", Vector3.ZERO), "speed": maxf(speed, 1.0), "on_arrive": on_arrive,
+		"age": 0.0}
+	_flights.append(f)
+	_aim(carrier, _flight_goal(f))
+
+static func _flight_goal(f: Dictionary) -> Vector3:
+	var t = f["target"]
+	if _valid(t):
+		f["last_goal"] = bone_point(t, String(f["tbone"]), f["toffset"])
+	var carrier = f["carrier"]
+	return f.get("last_goal", (carrier as Node3D).global_position if _valid(carrier) else Vector3.ZERO)
+
+static func _aim(carrier: Node3D, goal: Vector3) -> void:
+	var d := goal - carrier.global_position
+	if d.length_squared() > 1e-6 and not d.normalized().cross(Vector3.UP).is_zero_approx():
+		carrier.look_at(goal, Vector3.UP)
+
+## Moves every flight by `delta` seconds; a flight that reaches its target
+## (or outlives FLIGHT_MAX_S, OURS) lands: its effect ends and its hit lands.
+static func step_flights(delta: float) -> void:
+	if _flights.is_empty():
+		return
+	var flights := _flights
+	_flights = []
+	var keep: Array = []
+	for f in flights:
+		var carrier = f["carrier"]
+		# OURS: a flight whose carrier or target is gone lands where it is.
+		if not _valid(carrier) or not _valid(f["target"]):
+			_land(f)
+			continue
+		var c: Node3D = carrier
+		var goal := _flight_goal(f)
+		var step := float(f["speed"]) * delta
+		f["age"] = float(f["age"]) + delta
+		var d := goal - c.global_position
+		if d.length() <= step or float(f["age"]) >= FLIGHT_MAX_S:
+			c.global_position = goal
+			_land(f)
+			continue
+		c.global_position += d.normalized() * step
+		_aim(c, goal)
+		keep.append(f)
+	keep.append_array(_flights)
+	_flights = keep
+
+static func _land(f: Dictionary) -> void:
+	var cb: Callable = f["on_arrive"]
+	if is_instance_valid(f["fx"]):
+		(f["fx"] as EfpEffect).stop()
+	var carrier = f["carrier"]
+	if _valid(carrier):
+		(carrier as Node).queue_free()
+	if cb.is_valid():
+		cb.call()
+
+static func flight_count() -> int:
+	return _flights.size()
+
+# --- the clock -------------------------------------------------------------------
+
+## The clock: scene time, the same time the effects simulate in (a movie
+## render runs slower than the wall clock; so may a hitch).
 static var _clock_ms := 0.0
 
 static func _now() -> int:
 	return int(_clock_ms)
 
-## Advances the clock by a frame's `delta` seconds and runs `process`.
-## World3D calls it every physics frame.
+## Advances the clock by a frame's `delta` seconds, moves the projectiles and
+## runs `process`. World3D calls it every physics frame.
 static func tick(delta: float) -> void:
 	_clock_ms += maxf(delta, 0.0) * 1000.0
+	step_flights(maxf(delta, 0.0))
 	process()
-
-## Starts a cast's effect phases (see the header). `timings` may carry
-## "prep_ms" and "cast_ms" (default: the skilldata columns) and "now_ms" (the
-## clock, for tests). A cast already running on the caster is cancelled.
-## Returns the READY effects started.
-static func cast(skill_id: int, caster: Node3D, target: Node3D = null, timings: Dictionary = {}) -> Array:
-	if caster == null:
-		return []
-	warm()
-	cancel_cast(caster)
-	var t: Array = _timings.get(skill_id, [0, 0])
-	var now := int(timings.get("now_ms", _now()))
-	var c := {"skill": skill_id, "caster": caster, "target": target, "t0": now,
-		"prep": maxi(int(timings.get("prep_ms", t[0])), 0),
-		"cast": maxi(int(timings.get("cast_ms", t[1])), 0),
-		"phase": SkillAudio.READY, "shot_at": -1, "loops": []}
-	_casts[caster.get_instance_id()] = c
-	var fx := play_phase(skill_id, SkillAudio.READY, -1, caster, target, "cast")
-	process(now)
-	return fx
-
-## The server answered: a cast held in WAIT goes to SHOT now.
-static func shot(caster: Node3D, now_ms: int = -1) -> void:
-	if caster == null or not _casts.has(caster.get_instance_id()):
-		return
-	var c: Dictionary = _casts[caster.get_instance_id()]
-	c["shot_at"] = now_ms if now_ms >= 0 else _now()
-	process(int(c["shot_at"]))
-
-## The blow's hit event: SHOT/1 and later rows, now (SHOT starts first if it
-## has not). Without a running cast, `skill_id` names the skill.
-static func hit(caster: Node3D, target: Node3D = null, skill_id: int = 0, now_ms: int = -1) -> Array:
-	if caster != null and _casts.has(caster.get_instance_id()):
-		var c: Dictionary = _casts[caster.get_instance_id()]
-		if int(c["phase"]) < SkillAudio.SHOT:
-			_start_shot(c)
-		skill_id = int(c["skill"])
-		if target == null:
-			target = c["target"]
-	if skill_id == 0:
-		return []
-	var out: Array = []
-	for ev in _events_from(skill_id, SkillAudio.SHOT, 1):
-		out.append_array(play_phase(skill_id, SkillAudio.SHOT, ev, caster, target, "hit"))
-	return out
 
 ## The skill acts on `target` (for a buff: it is applied): ACT_S now, and
 ## ACT_L one cycle when `with_aura` (no buff token will hold it).
@@ -541,43 +632,9 @@ static func act(skill_id: int, caster: Node3D, target: Node3D, with_aura: bool =
 		out.append_array(play_phase(skill_id, SkillAudio.ACT_L, -1, caster, target, "act"))
 	return out
 
-## Ends the caster's running cast: nothing more fires; its loops end.
-static func cancel_cast(caster: Node3D) -> void:
-	if caster == null:
-		return
-	var key := caster.get_instance_id()
-	if not _casts.has(key):
-		return
-	_release_all(_casts[key]["loops"]) # round 785: FUN_00a50a00 -> FUN_00a4ffe0 (READ)
-	_casts.erase(key)
-
-## The phase the caster's cast is in (-1: none). Tests and logs.
-static func cast_phase(caster: Node3D) -> int:
-	if caster == null or not _casts.has(caster.get_instance_id()):
-		return -1
-	return int(_casts[caster.get_instance_id()]["phase"])
-
-static func _events_from(skill_id: int, ani: int, first: int) -> Array:
-	var evs: Array = []
-	for r in rows_for(skill_id, ani, -1):
-		var ev := int(r["event"])
-		if ev >= first and not evs.has(ev):
-			evs.append(ev)
-	evs.sort()
-	return evs
-
-static func _start_shot(c: Dictionary) -> void:
-	_release_all(c["loops"]) # round 785: let go, not cut (EfpEffect.release)
-	c["loops"] = []
-	c["phase"] = SkillAudio.SHOT
-	var caster = c["caster"]
-	if _valid(caster):
-		play_phase(int(c["skill"]), SkillAudio.SHOT, 0, caster, c["target"] if _valid(c["target"]) else null, "shot")
-
-static func _stop_all(fxs: Array) -> void:
-	for fx in fxs:
-		if is_instance_valid(fx):
-			(fx as EfpEffect).stop()
+## Lets the effects in `fxs` go (a cast's kept loops at its end).
+static func stop_all(fxs: Array) -> void:
+	_release_all(fxs)
 
 ## Round 785: lets the effects go (EfpEffect.release, READ: retail's
 ## decoration ends its effects through slot 4 with 0, not at once).
@@ -586,32 +643,15 @@ static func _release_all(fxs: Array) -> void:
 		if is_instance_valid(fx):
 			(fx as EfpEffect).release()
 
-## Runs the due phases of every cast, ends expired auras, and forgets freed
-## bodies. World3D calls it every frame.
+static func _stop_all(fxs: Array) -> void:
+	for fx in fxs:
+		if is_instance_valid(fx):
+			(fx as EfpEffect).stop()
+
+## Ends expired auras and forgets freed bodies. World3D calls it every frame
+## (through tick).
 static func process(now_ms: int = -1) -> void:
 	var now := now_ms if now_ms >= 0 else _now()
-	for key in _casts.keys():
-		var c: Dictionary = _casts[key]
-		if not _valid(c["caster"]):
-			_stop_all(c["loops"])
-			_casts.erase(key)
-			continue
-		var skill := int(c["skill"])
-		var t_wait := int(c["t0"]) + int(c["prep"])
-		if int(c["phase"]) == SkillAudio.READY and now >= t_wait:
-			c["phase"] = SkillAudio.WAIT
-			var started := play_phase(skill, SkillAudio.WAIT, -1, c["caster"], c["target"] if _valid(c["target"]) else null, "wait")
-			if rows_for(skill, SkillAudio.WAIT).is_empty():
-				_start_shot(c)
-			else:
-				var _unused := started
-		if int(c["phase"]) == SkillAudio.WAIT:
-			var due := t_wait + int(c["cast"])
-			if (int(c["shot_at"]) >= 0 and now >= int(c["shot_at"])) or now >= due:
-				_start_shot(c)
-		if int(c["phase"]) >= SkillAudio.SHOT:
-			# The cast's own phases are done; hit/act come from the caller.
-			_casts.erase(key)
 	for key in _auras.keys():
 		var a: Dictionary = _auras[key]
 		var alive: Array = []
@@ -657,6 +697,47 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		_auras[_aura_key(owner_key, token)] = {"fx": started, "host": host, "skill": skill_id,
 			"expires": now + remaining_ms + AURA_GRACE_MS if remaining_ms > 0 else -1}
 		print("EFFECTS aura on %s token %d: skill %d, %d effect(s)" % [owner_key, token, skill_id, started.size()])
+	return started
+
+## The rows of an effect id that is no skill's (a SYSTEM_ or PARAM_ decoration,
+## StateLook) for one phase.
+static func rows_named(effect_id: String, ani_type: int) -> Array:
+	warm()
+	var out: Array = []
+	for r in _rows.get(effect_id, []):
+		if int(r["ani"]) == ani_type:
+			out.append(r)
+	return out
+
+## Plays an effect id's rows of one phase on `host` (each at its own bone):
+## its AT_LOOP rows loop and are kept as the aura of (owner_key, token) when
+## `owner_key` is given; the rest play once. Returns the effects started.
+static func play_named(effect_id: String, ani_type: int, host: Node3D, owner_key: String = "",
+		token: int = 0) -> Array:
+	var started: Array = []
+	if not _valid(host) or not wants_effect(null, null, host):
+		return started
+	var kept: Array = []
+	for r in rows_named(effect_id, ani_type):
+		var fx := _make(String(r["path"]))
+		if fx == null:
+			continue
+		if fx.draw_count() == 0 and _draws_nothing(fx):
+			fx.free()
+			continue
+		fx.loop = kept_act(int(r["act"]))
+		fx.static_host = int(r["act"]) == AT_STOP
+		fx.reserved = own_body != null and host == own_body
+		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
+		started.append(fx)
+		if fx.loop:
+			kept.append(fx)
+	if owner_key != "" and not kept.is_empty():
+		detach_aura(owner_key, token)
+		_auras[_aura_key(owner_key, token)] = {"fx": kept, "host": host, "skill": -1, "expires": -1}
+	if not started.is_empty():
+		print("EFFECTS %s %s on %s: %d effect(s)" % [effect_id, SkillAudio._phase_name(ani_type),
+			owner_key if owner_key != "" else str(host.name), started.size()])
 	return started
 
 ## Whether buff `token`'s aura is live on `host`: held, of `skill_id`, with at
@@ -709,9 +790,9 @@ static func detach_owner(owner_key: String) -> int:
 static func aura_count() -> int:
 	return _auras.size()
 
-## How many casts and phase loops are tracked (tests: pruning).
+## How many auras and flights are tracked (tests: pruning).
 static func tracked_count() -> int:
-	return _casts.size() + _auras.size()
+	return _auras.size() + _flights.size()
 
 ## Ends every live effect this class tracks and forgets every body (a world
 ## teardown or relog); the tables stay loaded.
@@ -719,9 +800,12 @@ static func clear_live() -> void:
 	for key in _auras.keys():
 		_stop_all(_auras[key]["fx"])
 	_auras.clear()
-	for key in _casts.keys():
-		_stop_all(_casts[key]["loops"])
-	_casts.clear()
+	for f in _flights:
+		if is_instance_valid(f["fx"]):
+			(f["fx"] as EfpEffect).stop()
+		if _valid(f["carrier"]):
+			(f["carrier"] as Node).queue_free()
+	_flights.clear()
 	own_body = null
 
 ## Clears every table and live reference (tests, a world reload).

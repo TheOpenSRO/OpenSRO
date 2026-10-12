@@ -14,9 +14,13 @@ extends SceneTree
 ## socket, so the bytes checked are the bytes the client would send.
 ##
 ## Review follow-up: the attack result's targetType echo and the reply queue
-## out of step (_test_interleaved_replies), OpSelfId and ownerKind
-## (_test_own_id), and the pick's cursor leaving with the world
-## (_test_leave_world).
+## out of step (_test_interleaved_replies) and OpSelfId and ownerKind
+## (_test_own_id).
+##
+## Round 785: Ghost Walk casts at once at the point under the cursor (READ,
+## FUN_0081ba10: no pick mode; _test_cursor_cast), nothing is drawn at the
+## send, and OpSkillMove slides the player there at 500 u/s instead of
+## snapping it.
 ##
 ## NEGATIVE (round 617): against dev b50a7b9 the Grass Walk key with nothing
 ## selected sends nothing ("Select a target first"), and the Ghost Walk key
@@ -55,13 +59,11 @@ func _initialize() -> void:
 		var world := _make_world()
 		if world != null:
 			_test_self_cast(world)
-			_test_ground_pick(world)
-			_test_cancel(world)
+			_test_cursor_cast(world)
 			_test_buffs_and_move(world)
 			_test_self_reply(world)
 			_test_interleaved_replies(world)
 			_test_own_id(world)
-			_test_leave_world(world)
 			root.remove_child(world)
 			world.free()
 		_net.set("_connected", false)
@@ -294,7 +296,7 @@ func _make_world() -> Node:
 		"\treturn 1.0",
 		"func _audio_cast_start(_skill_id: int, _monster_id: int = -1, _fx_timings: Dictionary = {}) -> void:",
 		"\tpass",
-		"func _ground_point_at(_screen_pos: Vector2) -> Variant:",
+		"func _ground_point_at(_screen_pos: Vector2, _length: float = 2000.0) -> Variant:",
 		"\treturn ground_point",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
@@ -355,8 +357,8 @@ func _test_self_cast(world: Node) -> void:
 	if uses.size() == 1:
 		_check(uses[0][1] == _use_bytes("Aria", 113, 0, 0),
 			"and it is targetType 0 with no monster (got %s)" % str(uses[0][1]))
-	_check((world.get("cast_clips") as Array).has("skill_ch_lightning_gyeonggong_a"),
-		"the cast clip plays on the player (got %s)" % str(world.get("cast_clips")))
+	_check((world.get("_decos") as Dictionary).is_empty(),
+		"nothing is drawn at the send (round 785: the cast is drawn when the server answers)")
 	var types: Array = _net.get("_attack_types_in_flight") if "_attack_types_in_flight" in _net else []
 	_check(types == [0], "the reply is expected as a self cast's (got %s)" % str(types))
 	_net.set("_attack_targets_in_flight", [] as Array[int])
@@ -383,50 +385,26 @@ func _test_self_cast(world: Node) -> void:
 	world.call("_cast_skill", 3, "SKILL_CH_SWORD_SMASH_A_01")
 	_check(_uses(buf).is_empty(), "Smash with nothing selected sends nothing")
 
-func _test_ground_pick(world: Node) -> void:
+## Round 785 (READ, FUN_0081ba10): a 'tele' row casts at once at the point
+## under the cursor -- no pick mode.
+func _test_cursor_cast(world: Node) -> void:
 	world.set("_last_attack_target", -1)
 	var buf := _fresh_socket()
 	world.call("_cast_skill", 114, "SKILL_CH_LIGHTNING_GYEONGGONG_B_01")
-	_check(_uses(buf).is_empty(), "Ghost Walk's key sends nothing yet")
-	var sc = world.get("_self_cast")
-	_check(sc != null and sc.picking(), "it enters ground-pick mode")
-	var what: String = world.call("_dispatch_left_click", Vector2(300, 200))
 	var uses := _uses(buf)
-	_check(what == "ground_pick", "the left click is the ground pick, not a walk (got %s)" % what)
-	_check(uses.size() == 1, "the click sends one OpUseSkill (got %d)" % uses.size())
+	_check(uses.size() == 1, "Ghost Walk's key sends one OpUseSkill at once (got %d)" % uses.size())
 	if uses.size() == 1:
 		_check(uses[0][1] == _use_bytes("Aria", 114, 0, 2, GROUND_POINT),
-			"targetType 2 with the clicked point (got %s)" % str(uses[0][1]))
-	_check(sc == null or not sc.picking(), "and the mode ends")
+			"targetType 2 with the point under the cursor (got %s)" % str(uses[0][1]))
 	_check(not bool(world.get("_has_move_target")), "and the player does not walk there")
+	_check(not world.get("_self_cast").has_method("picking") and not world.has_method("_leave_ground_pick"),
+		"there is no ground-pick mode any more")
+	var what: String = world.call("_dispatch_left_click", Vector2(300, 200))
+	_check(what == "walk" and _uses(buf).size() == 1, "the next click walks and casts nothing (got %s)" % what)
+	world.set("_has_move_target", false)
 	_net.set("_attack_targets_in_flight", [] as Array[int])
 	if "_attack_types_in_flight" in _net:
 		_net.set("_attack_types_in_flight", [] as Array[int])
-
-func _test_cancel(world: Node) -> void:
-	var sc = world.get("_self_cast")
-	if sc == null:
-		_check(false, "World3D has _self_cast")
-		return
-	var buf := _fresh_socket()
-	world.call("_cast_skill", 114, "SKILL_CH_LIGHTNING_GYEONGGONG_B_01")
-	var esc := InputEventKey.new()
-	esc.keycode = KEY_ESCAPE
-	esc.pressed = true
-	world.call("_input", esc)
-	_check(not sc.picking(), "Escape cancels the pick")
-	world.call("_cast_skill", 114, "SKILL_CH_LIGHTNING_GYEONGGONG_B_01")
-	var right := InputEventMouseButton.new()
-	right.button_index = MOUSE_BUTTON_RIGHT
-	right.pressed = true
-	world.call("_unhandled_input", right)
-	_check(not sc.picking(), "a right click cancels the pick")
-	right.pressed = false
-	world.call("_unhandled_input", right)
-	# A cancelled pick's click walks.
-	var what: String = world.call("_dispatch_left_click", Vector2(300, 200))
-	_check(what == "walk" and _uses(buf).is_empty(), "after a cancel the click walks and casts nothing (got %s)" % what)
-	world.set("_has_move_target", false)
 
 func _test_buffs_and_move(world: Node) -> void:
 	var now := Time.get_ticks_msec()
@@ -452,14 +430,17 @@ func _test_buffs_and_move(world: Node) -> void:
 	var player: Node3D = world.get("player")
 	player.position = Vector3(1200, 67, -880)
 	world.call("_on_skill_moved", _S.call("decode_skill_move", _skill_move_bytes(4242, 114, GROUND_POINT)))
-	_check(player.position == GROUND_POINT, "OpSkillMove snaps this player to the point (got %s)" % str(player.position))
+	_check(player.position != GROUND_POINT, "OpSkillMove does not snap this player (round 785: it slides)")
+	world.call("_tick_skill_slides", 10.0)
+	_check(player.position == GROUND_POINT, "it arrives at the point (got %s)" % str(player.position))
 	_check(world.get("_last_sent_pos") == GROUND_POINT, "and does not send the move back")
 	# Another player's body moves, and this player does not.
 	var other := Node3D.new()
 	world.add_child(other)
 	(world.get("_other_bodies") as Dictionary)[5151] = other
 	world.call("_on_skill_moved", _S.call("decode_skill_move", _skill_move_bytes(5151, 114, Vector3(1, 2, 3))))
-	_check(other.position == Vector3(1, 2, 3), "another player's body is put at its point")
+	world.call("_tick_skill_slides", 10.0)
+	_check(other.position == Vector3(1, 2, 3), "another player's body slides to its point")
 	_check(player.position == GROUND_POINT, "and this player stays")
 	(world.get("_other_bodies") as Dictionary).erase(5151)
 	other.free()
@@ -570,23 +551,3 @@ func _test_own_id(world: Node) -> void:
 	_check(is_equal_approx(float(world.get("_move_speed")), 50.0) and sc.own_id == -1,
 		"with no OpSelfId, a monster's buff after our cast is neither applied nor learned")
 	world.set("_move_speed", 50.0)
-
-## Round 617's review: a pick left on leaves with the world, cursor and all.
-func _test_leave_world(world: Node) -> void:
-	var sc = world.get("_self_cast")
-	if sc == null or not world.has_method("_leave_ground_pick"):
-		_check(false, "World3D has _leave_ground_pick")
-		return
-	world.call("_cast_skill", 114, "SKILL_CH_LIGHTNING_GYEONGGONG_B_01")
-	_check(sc.picking() and int(world.get("_default_cursor_shape")) == Input.CURSOR_CROSS,
-		"a pick shows the cross (got shape %d)" % int(world.get("_default_cursor_shape")))
-	world.call("_leave_ground_pick", "test")
-	_check(not sc.picking() and int(world.get("_default_cursor_shape")) == Input.CURSOR_ARROW,
-		"leaving ends the pick and puts the arrow back (got shape %d)" % int(world.get("_default_cursor_shape")))
-	var src := (load("res://scripts/World3D.gd") as GDScript).source_code
-	var exit_at := src.find("func _exit_tree() -> void:")
-	var disc_at := src.find("func _on_disconnected() -> void:")
-	_check(exit_at >= 0 and src.find("_leave_ground_pick(", exit_at) - exit_at < 400,
-		"_exit_tree ends the pick first thing")
-	_check(disc_at >= 0 and src.find("_leave_ground_pick(", disc_at) - disc_at < 400,
-		"_on_disconnected (Restart, Exit, a dropped peer) ends it too")

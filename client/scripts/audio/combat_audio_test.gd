@@ -98,7 +98,9 @@ func _initialize() -> void:
 func _wiring() -> void:
 	var f := FileAccess.open("res://scripts/World3D.gd", FileAccess.READ)
 	var src := f.get_as_text() if f != null else ""
-	for needle in ["SkillAudio.warm_async()", "_audio_cast_start(skill_id, monster_id)", "_audio_blow_lands.bind(blow_audio, dealt, monster)",
+	# Round 785: a cast's sounds are its decoration's groups (SkillAudio.play_phase
+	# in _run_deco), not a cast-start call.
+	for needle in ["SkillAudio.warm_async()", "SkillAudio.play_phase(skill, phase, ev, caster, what)", "_audio_blow_lands.bind(blow_audio, dealt, monster)",
 			"_audio_block(player, result.monster_critical", "_audio_monster_blow.bind(monster, attacked.critical",
 			"_audio_monster_blow(monster, result.monster_critical, \"blocked counter",
 			"if dealt > 0 or not bool(blow[\"cast\"]):"]:

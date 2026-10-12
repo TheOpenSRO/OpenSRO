@@ -13,21 +13,20 @@ extends SceneTree
 ## order, and every effect is a tiny synthetic EfpEffect -- never game data.
 ## The sequencer's clock is driven by SkillEffects.process(now_ms) here.
 ##
-## Checked:
-## - a self-cast buff runs READY at the send, ACT_S and its ACT_L aura on its
-##   own OpBuffStart, nothing more on the accepted reply, and the aura goes on
-##   its OpBuffEnd;
+## Checked (round 785: the cast is drawn when the server answers, by its
+## decoration, SkillDeco):
+## - a self-cast buff whose record names no clip (the imbues) draws nothing
+##   at the send and no READY effect at all (READ, FUN_00a54f00 ends such a
+##   decoration); its own OpBuffStart plays ACT_S and its ACT_L aura, the
+##   accepted reply adds nothing, and the aura goes on its OpBuffEnd;
 ## - a non-buff self cast acts on its accepted reply;
-## - a Ghost Walk's WAIT loop holds past its skilldata time and stops on
-##   OpSkillMove, on a refusal, or (fallback) after the WAIT clip's length;
+## - Ghost Walk draws nothing at the send; the answer starts its WAIT clip and
+##   loop effect, which hold through the move (OpSkillMove slides the player
+##   at 500 u/s) and stop when it arrives; a refusal draws nothing;
 ## - another player's buff aura goes on that player's body, a monster's
 ##   (ownerKind 1) on the monster even when its id is this player's, and this
 ##   player is decided by the buff board's own check (the sit answer's id
 ##   when no OpSelfId came).
-##
-## NEGATIVE: against the merge of feat/efprender into int/skills without this
-## wiring, the ACT-on-OpBuffStart, WAIT-held, stop-on-OpSkillMove and
-## refusal checks FAIL (docs/WORLD_ISSUES.md, the 616-620 integration note).
 
 var _failures := 0
 var _net: Node
@@ -52,7 +51,6 @@ func _initialize() -> void:
 		quit(1))
 	await process_frame
 	_S = load("res://scripts/net/skill.gd")
-	_test_timings()
 	_net = root.get_node_or_null("NetClient")
 	_check(_net != null, "the NetClient autoload is there")
 	if _net != null:
@@ -60,7 +58,8 @@ func _initialize() -> void:
 		var world := _make_world()
 		if world != null:
 			var handlers := {"buff_started": "_on_buff_started", "buff_ended": "_on_buff_ended",
-				"skill_moved": "_on_skill_moved", "attack_result": "_on_attack_result"}
+				"skill_moved": "_on_skill_moved", "attack_result": "_on_attack_result",
+				"skill_cast": "_on_skill_cast"}
 			for sig in handlers:
 				_net.connect(sig, Callable(world, handlers[sig]))
 			_net.set("own_character_id", OWN)
@@ -69,6 +68,8 @@ func _initialize() -> void:
 			_test_ghost_walk(world)
 			_test_other_owners(world)
 			_test_sit_id(world)
+			_test_states(world)
+			_test_hit_block(world)
 			for sig in handlers:
 				_net.disconnect(sig, Callable(world, handlers[sig]))
 			SkillEffects.reset()
@@ -83,26 +84,6 @@ func _initialize() -> void:
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
-
-# --- SelfCast.effect_timings (pure) ---------------------------------------------
-
-func _test_timings() -> void:
-	var sc: GDScript = load("res://scripts/world/self_cast.gd")
-	var ok: bool = sc != null and sc.has_method("effect_timings")
-	_check(ok, "SelfCast.effect_timings exists")
-	if not ok:
-		return
-	var none := {"ready": [], "wait": [], "shot": []}
-	var wait := {"ready": [], "wait": [32], "shot": [], "group": "DEFAULT"}
-	var ready_only := {"ready": [5], "wait": [], "shot": []}
-	_check(sc.call("effect_timings", none, 0.0) == {"prep_ms": 0, "cast_ms": 0},
-		"no body clip (Grass Walk, the imbues): the phases advance at once")
-	_check(sc.call("effect_timings", wait, 1.5) == {"prep_ms": 0, "cast_ms": 1500},
-		"a WAIT clip: WAIT from the send, its fallback end the clip's length")
-	_check(sc.call("effect_timings", wait, 0.0) == {"prep_ms": 0, "cast_ms": int(SkillEffects.READY_LOOP_MAX * 1000.0)},
-		"a WAIT with no clip in the body: the loop guard")
-	_check(sc.call("effect_timings", ready_only, 2.0) == {}, "only a READY (timing unread): skilldata's columns")
-	_check(sc.call("effect_timings", {}, 0.0) == {}, "no row: skilldata's columns")
 
 # --- synthetic tables ---------------------------------------------------------
 
@@ -124,6 +105,7 @@ func _tables() -> void:
 	var sd := _skill_row(90, "TEST_IMBUE_A_01", "TEST_IMBUE_A")
 	sd += _skill_row(114, "TEST_GHOST_A_01", "TEST_GHOST_A")
 	sd += _skill_row(150, "TEST_SELFHEAL_A_01", "TEST_SELFHEAL_A")
+	sd += _skill_row(160, "TEST_BOLT_A_01", "TEST_BOLT_A")
 	SkillAudio.set_tables(SkillAudio.parse_skills(_utf16(sd)), {})
 	var text := "#section skilleffectset\r\n"
 	text += _row("TEST_IMBUE_A", "READY", 0, "AT_LOOP", "charge.efp")
@@ -131,6 +113,9 @@ func _tables() -> void:
 	text += _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "keep.efp")
 	text += _row("TEST_GHOST_A", "WAIT", 0, "AT_LOOP", "move_wait.efp")
 	text += _row("TEST_SELFHEAL_A", "ACT_S", 0, "AT_ONE_FOLLOW", "heal_burst.efp")
+	text += _row("PARAM_BU", "ACT_L", 0, "AT_LOOP", "status_burn.efp")
+	text += _row("PARAM_FZ", "ACT_L", 0, "AT_LOOP", "icing_on.efp")
+	text += _row("PARAM_FZ", "DEACT", 0, "AT_ONE_FOLLOW", "icing_off.efp")
 	SkillEffects.reset()
 	# skilldata timings: the Ghost Walk row's prep/cast are 0 (skills_spec
 	# §1.5), so without the clip's hold its WAIT would end at once.
@@ -207,10 +192,10 @@ func _make_world() -> Node:
 		"func _skill_anisets() -> Dictionary:",
 		"\treturn {\"TEST_IMBUE_A\": {\"ready\": [], \"wait\": [], \"shot\": []},",
 		"\t\t\"TEST_SELFHEAL_A\": {\"ready\": [], \"wait\": [], \"shot\": []},",
-		"\t\t\"TEST_GHOST_A\": {\"ready\": [], \"wait\": [32], \"shot\": [], \"group\": \"DEFAULT\"}}",
-		"func _play_self_cast_anim(basic_code: String, _anim_base: String) -> float:",
-		"\tbody_clips.append(basic_code)",
-		"\treturn 1.5 if basic_code.begins_with(\"TEST_GHOST\") else 0.0",
+		"\t\t\"TEST_GHOST_A\": {\"ready\": [], \"wait\": [32], \"shot\": [], \"group\": \"DEFAULT\"},",
+		"\t\t\"TEST_BOLT_A\": {\"ready\": [], \"wait\": [], \"shot\": [26], \"group\": \"default\"}}",
+		"func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) -> void:",
+		"\tbody_clips.append([String(e[\"code\"]), phase, action_type, loop])",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
 	var scene := load("res://scenes/World3D.tscn") as PackedScene
@@ -302,19 +287,19 @@ func _test_buff(world: Node) -> void:
 	_made.clear()
 	_fresh_socket()
 	world.call("_send_self_cast", 90, "TEST_IMBUE_A_01", 0, Vector3.ZERO)
-	_check(_made_named("charge.efp").size() == 1, "the imbue's READY effect plays at the send")
-	_check(_made_named("motion.efp").is_empty() and _made_named("keep.efp").is_empty(),
-		"and nothing acts before the server answers")
+	_check(_made.is_empty(), "nothing is drawn at the send (retail draws a cast on 0xB070)")
 	_buff_start(OWN, 90, 61, 0)
 	var motion := _made_named("motion.efp")
 	var keep := _made_named("keep.efp")
+	_check(_made_named("charge.efp").is_empty(),
+		"a record naming no clip draws no READY effect (READ: FUN_00a54f00 ends the decoration)")
 	_check(motion.size() == 1 and _live(motion[0]) and motion[0].get_parent() == player,
 		"its own OpBuffStart plays ACT_S on the player (got %d)" % motion.size())
 	_check(keep.size() == 1 and _live(keep[0]) and keep[0].get_parent() == player and bool(keep[0].loop),
 		"and attaches the ACT_L aura, looping, on the player")
 	_check(SkillEffects.aura_count() == 1, "one aura is held (got %d)" % SkillEffects.aura_count())
 	var order: Array = _made.map(func(m): return m[0])
-	_check(order == ["charge.efp", "motion.efp", "keep.efp"], "READY -> ACT_S -> ACT_L, in that order (got %s)" % str(order))
+	_check(order == ["motion.efp", "keep.efp"], "ACT_S -> ACT_L, in that order (got %s)" % str(order))
 	_reply("", 0)
 	_check(_made_named("motion.efp").size() == 1 and _made_named("keep.efp").size() == 1,
 		"the accepted reply after the start adds nothing (ACT once per cast)")
@@ -331,41 +316,40 @@ func _test_non_buff(world: Node) -> void:
 
 func _test_ghost_walk(world: Node) -> void:
 	var player: Node3D = world.get("player")
-	# 1. Held, then stopped by OpSkillMove.
+	var clips: Array = world.get("body_clips")
+	clips.clear()
+	# 1. Answered: the WAIT clip and loop hold through the move.
 	_made.clear()
 	_fresh_socket()
+	player.position = Vector3.ZERO
 	world.call("_send_self_cast", 114, "TEST_GHOST_A_01", 2, POINT)
+	_check(_made_named("move_wait.efp").is_empty() and clips.is_empty(), "nothing is drawn at the send")
+	_reply("", 2)
 	var waits := _made_named("move_wait.efp")
 	_check(waits.size() == 1 and _live(waits[0]) and waits[0].get_parent() == player and bool(waits[0].loop),
-		"Ghost Walk's WAIT loop plays on the player at the send")
-	_check(SkillEffects.cast_phase(player) == SkillAudio.WAIT, "the cast is in WAIT (got %d)" % SkillEffects.cast_phase(player))
-	SkillEffects.process(SkillEffects._now() + 1000)
-	_check(SkillEffects.cast_phase(player) == SkillAudio.WAIT and waits.size() == 1 and _live(waits[0]),
-		"1 s on (skilldata's prep + cast is 0) it still holds")
+		"the answer starts Ghost Walk's WAIT loop effect on the player")
+	_check(clips.size() == 1 and clips[0] == ["TEST_GHOST_A_01", 1, 32, true],
+		"and its WAIT clip, ANI_SKILL_7, looping (got %s)" % str(clips))
 	_skill_move(OWN, 114, POINT)
-	_check(SkillEffects.cast_phase(player) == -1, "OpSkillMove ends the cast (SHOT)")
-	_check(waits.size() == 1 and _let_go(waits[0]), "and lets the WAIT loop go")
-	_reply("", 2)
-	# 2. Refused.
+	_check(waits.size() == 1 and _live(waits[0]), "OpSkillMove: the loop holds while the player slides")
+	_check(player.position.distance_to(POINT) > 1.0, "the player does not snap")
+	world.call("_tick_skill_slides", 1.0)
+	var flat := Vector2(player.position.x, player.position.z).length()
+	_check(absf(flat - 500.0) < 0.5, "it slides 500 units a second (READ, 0xdcc19c; got %.1f)" % flat)
+	_check(world.call("_own_slide_active"), "and its own walk waits")
+	world.call("_tick_skill_slides", 10.0)
+	_check(Vector2(player.position.x, player.position.z).distance_to(Vector2(POINT.x, POINT.z)) < 0.01,
+		"it arrives at the point")
+	_check(_let_go(waits[0]), "the arrival ends the cast: the WAIT loop is let go")
+	_check(not world.call("_own_slide_active"), "and the walk is free again")
+	# 2. Refused: nothing was drawn.
 	_made.clear()
+	clips.clear()
 	_fresh_socket()
 	world.call("_send_self_cast", 114, "TEST_GHOST_A_01", 2, POINT)
-	waits = _made_named("move_wait.efp")
 	_reply("not enough mana", 2)
-	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and _let_go(waits[0]),
-		"a refusal lets the WAIT loop go")
-	# 3. No answer: the WAIT clip's length (1.5 s) ends it.
-	_made.clear()
-	_fresh_socket()
-	world.call("_send_self_cast", 114, "TEST_GHOST_A_01", 2, POINT)
-	waits = _made_named("move_wait.efp")
-	SkillEffects.process(SkillEffects._now() + 1400)
-	_check(SkillEffects.cast_phase(player) == SkillAudio.WAIT, "with no answer it holds through the WAIT clip")
-	SkillEffects.process(SkillEffects._now() + 1600)
-	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and _let_go(waits[0]),
-		"and ends after the clip's length (the fallback)")
-	_check((world.get("body_clips") as Array).count("TEST_GHOST_A_01") == 3, "each cast played the body clip")
-	_reply("", 2)
+	_check(_made_named("move_wait.efp").is_empty() and clips.is_empty(), "a refusal draws nothing")
+	player.position = Vector3.ZERO
 
 func _test_other_owners(world: Node) -> void:
 	var player: Node3D = world.get("player")
@@ -410,3 +394,141 @@ func _test_sit_id(world: Node) -> void:
 		"with only the sit answer's id, this player's buff aura is on the player (the board's check)")
 	_buff_end(3131, [81], 0)
 	_net.set("own_character_id", OWN)
+
+## Round 785 (StateLook): a monster's abnormal states on its body -- the
+## PARAM_ decoration's loop while the state holds, its DEACT when it goes,
+## and the clip speed.
+func _test_states(world: Node) -> void:
+	var mob := Node3D.new()
+	world.add_child(mob)
+	var skel := Skeleton3D.new()
+	skel.add_bone("Bip01")
+	mob.add_child(skel)
+	(world.get("_monster_bodies") as Dictionary)[777] = mob
+	_made.clear()
+	var st := StatusNet.ObjectStatus.new()
+	st.owner_kind = 1
+	st.owner_id = 777
+	st.mask = 0x8 | 0x1
+	world.call("_on_object_status", st)
+	var burn := _made_named("status_burn.efp")
+	var ice := _made_named("icing_on.efp")
+	_check(burn.size() == 1 and _live(burn[0]) and burn[0].get_parent() == mob and bool(burn[0].loop),
+		"burn on: PARAM_BU's loop on the monster")
+	_check(ice.size() == 1 and _live(ice[0]), "freeze on: PARAM_FZ's loop")
+	_check(is_zero_approx(float((world.get("_clip_speeds") as Dictionary).get(skel.get_instance_id(), 1.0))),
+		"frozen: the monster's clips hold (clip speed 0)")
+	st = StatusNet.ObjectStatus.new()
+	st.owner_kind = 1
+	st.owner_id = 777
+	st.mask = 0x8
+	world.call("_on_object_status", st)
+	_check(_let_go(ice[0]) and _made_named("icing_off.efp").size() == 1, "freeze off: its loop ends and DEACT plays")
+	_check(_live(burn[0]), "the burn stays")
+	_check(not (world.get("_clip_speeds") as Dictionary).has(skel.get_instance_id()), "and the clips run again")
+	st = StatusNet.ObjectStatus.new()
+	st.owner_kind = 1
+	st.owner_id = 777
+	st.mask = 0
+	world.call("_on_object_status", st)
+	_check(_let_go(burn[0]), "burn off: its loop ends")
+	(world.get("_monster_bodies") as Dictionary).erase(777)
+	mob.free()
+
+## Round 785: a cast's hit block (SkillHits, the server lane's 0xAB tail)
+## lands hit by hit on its targets -- the damage numbers split as the hits
+## are -- and a knockback slides its target; with no hit block the whole
+## result lands once. A chain link that names this player draws too.
+func _labels(n: Node) -> Array:
+	var out: Array = []
+	for c in n.get_children():
+		if c is Label3D:
+			out.append((c as Label3D).text)
+	return out
+
+func _attack_reply(monster: int, damage: int, tail: PackedByteArray) -> PackedByteArray:
+	var out := PackedByteArray([0, 0])
+	out.append_array(_u32(damage))
+	out.append_array(_u32(500))
+	out.append(0)
+	out.append_array(_u32(0))
+	out.append_array(_u32(100))
+	out.append(0)
+	out.append_array(_u32(0))
+	out.append(0)
+	out.append_array(_u64(0))
+	out.append_array(PackedByteArray([0, 0, 0]))
+	out.append_array(_u64(monster))
+	out.append(1)
+	out.append_array(_u64(0))
+	out.append_array(_u64(0))
+	if not tail.is_empty():
+		var wall := PackedByteArray()
+		wall.resize(13)
+		out.append_array(wall)
+		out.append_array(tail)
+	return out
+
+func _tail(target: int, hits: Array) -> PackedByteArray:
+	var t := PackedByteArray([0xAB])
+	t.append_array(_u32(target))
+	t.append(1)
+	t.append(hits.size())
+	t.append(1)
+	t.append_array(_u32(target))
+	for h in hits:
+		t.append(int(h[0]))
+		t.append_array(_u32((int(h[1]) << 8) | int(h[2])))
+		t.append_array(_u32(0))
+		if (int(h[0]) & 0x7f) == 5:
+			t.append_array(PackedByteArray([0xA8, 0x61]))
+			t.append_array(_u32(100))
+			t.append_array(_u32(0))
+			t.append_array(_u32(100))
+	t.append(1)
+	t.append(1)
+	return t
+
+func _test_hit_block(world: Node) -> void:
+	var mob := Node3D.new()
+	world.add_child(mob)
+	(world.get("_monster_bodies") as Dictionary)[555] = mob
+	world.set("_last_attack_target", 555)
+	world.set("_pending_skill_id", 160)
+	world.set("_pending_skill_hit_code", "TEST_BOLT_A_01")
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT,
+		_attack_reply(555, 1200, _tail(555, [[0, 700, 1], [5, 500, 2]]))))
+	_check(_labels(mob) == ["700", "500"], "two hits on the target: two numbers, 700 then 500 (got %s)" % str(_labels(mob)))
+	_check((world.get("_skill_slides") as Dictionary).has(mob.get_instance_id()), "the knockback (kind 5) slides the target")
+	_check(int(world.get("_pending_skill_id")) == 0, "the cast's answer is consumed")
+	world.call("_tick_skill_slides", 10.0)
+	for c in mob.get_children():
+		c.free()
+	# No hit block: the whole result lands once.
+	world.set("_pending_skill_id", 160)
+	world.set("_pending_skill_hit_code", "TEST_BOLT_A_01")
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT, _attack_reply(555, 1200, PackedByteArray())))
+	_check(_labels(mob) == ["1200"], "without a hit block the result lands once (got %s)" % str(_labels(mob)))
+	for c in mob.get_children():
+		c.free()
+	# A chain link naming this player (an OpSkillCast to itself): drawn.
+	world.call("_sync_own_id")
+	var start := _u64(OWN)
+	start.append(0)
+	start.append_array(_u64(160))
+	start.append_array(_u32(9))
+	start.append(0)
+	start.append(1)
+	start.append_array(_u64(555))
+	start.append_array(_f32(0))
+	start.append_array(_f32(0))
+	start.append_array(_f32(0))
+	_net.call("_dispatch", Packet.new(0x00FA, start))
+	var act := start.duplicate()
+	act[21] = 1
+	act.append_array(_tail(555, [[0, 300, 1]]))
+	_net.call("_dispatch", Packet.new(0x00FA, act))
+	_check(_labels(mob) == ["300"], "a chain link to this player lands its hit (got %s)" % str(_labels(mob)))
+	(world.get("_monster_bodies") as Dictionary).erase(555)
+	world.set("_last_attack_target", -1)
+	mob.free()

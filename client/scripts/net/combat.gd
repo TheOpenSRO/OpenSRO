@@ -212,6 +212,10 @@ class AttackResult:
 	## The counter's meeting with the player's protection wall, or the
 	## toggle-off marker (round 640); null when neither.
 	var wall: WallHit = null
+	## A skill's per-target, per-hit results and caster move (round 785,
+	## SkillHits), or null when the server sent none: the blow is then the one
+	## monster_damage.
+	var hits: SkillHits = null
 
 ## Result of decode_monster_damaged().
 class MonsterDamaged:
@@ -511,8 +515,16 @@ static func decode_attack_result(data: PackedByteArray) -> AttackResult:
 		result.exp_gained = data.decode_s64(offset + 43)
 		result.skill_exp_gained = data.decode_s64(offset + 51)
 	# Round 640: the wall suffix, after round 639's EXP tail, only when there
-	# is one.
+	# is one. Round 785: a skill's hit block (SkillHits, tagged 0xAB) follows
+	# it, and the wall suffix is then always sent (the server lane's
+	# docs/protocol/skill_hit_block.md: the block at payload offset 72 past
+	# the error string).
 	result.wall = decode_wall_suffix(data, offset + 59)
+	result.hits = SkillHits.decode(data, offset + 59 + WALL_SUFFIX_SIZE)
+	if result.hits != null and result.wall != null and result.wall.damage == 0 and result.wall.hp == 0 \
+			and result.wall.max_hp == 0 and not result.wall.toggled_off and not result.wall.absorbed:
+		# The always-present wall suffix of a blow that met no wall: all zero.
+		result.wall = null
 
 	return result
 

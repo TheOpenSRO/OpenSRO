@@ -24,6 +24,7 @@ extends SceneTree
 ##   player it sends targetType 3 naming them; its ACT_S plays on that
 ##   player's body when the server accepts; at a monster it goes out as a
 ##   plain entity request with no cast drawn;
+## - (round 785) this player's cast is drawn when the server answers;
 ## - another player's OpSkillCast plays the cast's READY on their body, and
 ##   its act plays ACT_S on the body it names -- this player's, for a heal on
 ##   this player -- and an act whose buff already started plays no ACT_L.
@@ -278,11 +279,10 @@ func _make_world() -> Node:
 		"func _exit_tree() -> void:",
 		"\tpass",
 		"func _skill_anisets() -> Dictionary:",
-		"\treturn {}",
-		"func _play_self_cast_anim(basic_code: String, _anim_base: String) -> float:",
-		"\tbody_clips.append(basic_code)",
-		"\treturn 0.0",
-		"func _ground_point_at(_screen_pos: Vector2) -> Variant:",
+		"\treturn {\"TEST_HEAL_A\": {\"group\": \"default\", \"ready\": [19], \"wait\": [], \"shot\": [20]}}",
+		"func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) -> void:",
+		"\tbody_clips.append([String(e[\"code\"]), phase, action_type, loop])",
+		"func _ground_point_at(_screen_pos: Vector2, _length: float = 2000.0) -> Variant:",
 		"\treturn Vector3(1, 0, 1)",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
@@ -385,9 +385,11 @@ func _test_heal_on_player(world: Node) -> void:
 	var uses := _uses(buf)
 	_check(uses.size() == 1 and uses[0] == _use_bytes("Aria", HEAL, BRAM, 3),
 		"Heal at the selected player sends targetType 3 naming them (got %s)" % str(uses))
-	_check(_made_named("heal_ready.efp").size() == 1, "its READY plays on the caster at the send")
+	_check(_made_named("heal_ready.efp").is_empty(), "nothing is drawn at the send (round 785: retail draws on 0xB070)")
 	_check(_made_named("heal_burst.efp").is_empty(), "nothing acts before the server answers")
 	_reply("", 3)
+	var ready := _made_named("heal_ready.efp")
+	_check(ready.size() == 1 and ready[0].get_parent() == world.get("player"), "the answer runs the cast: its READY on the caster")
 	var burst := _made_named("heal_burst.efp")
 	_check(burst.size() == 1 and burst[0].get_parent() == _bram,
 		"accepted, its ACT_S plays on the healed player's body (got %d, parent %s)" % [burst.size(),
@@ -407,8 +409,8 @@ func _test_heal_on_player(world: Node) -> void:
 	_made.clear()
 	world.call("_cast_skill", HEAL, "TEST_HEAL_A_01")
 	_reply("too far away", 3)
-	_check(_made_named("heal_burst.efp").is_empty() and SkillEffects.cast_phase(world.get("player")) == -1,
-		"a refused Heal at a player acts nowhere and its cast ends")
+	_check(_made_named("heal_burst.efp").is_empty() and _made_named("heal_ready.efp").is_empty()
+		and (world.get("_decos") as Dictionary).is_empty(), "a refused Heal at a player draws nothing and acts nowhere")
 	# A hostile row at the player: nothing sent, and nothing said (retail
 	# drops it silently when the player is not attackable).
 	var b2 := _fresh_socket()

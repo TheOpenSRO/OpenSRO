@@ -706,6 +706,69 @@ func set_slot_item(slot_index: int, icon: Texture2D, count: int = 1) -> void:
 	var count_lbl := node.get_node_or_null(COUNT_NODE) as Label
 	if count_lbl != null:
 		count_lbl.text = str(count) if count > 1 else ""
+	# An emptied slot drops its re-use display (round 785).
+	if icon == null:
+		var over := node.get_node_or_null(DELAY_NODE) as Control
+		if over != null:
+			over.visible = false
+
+## Round 785: a quick slot's re-use display, as retail's slot draws it (READ,
+## UI_SILKMALL::FUN_0067cfb0): while a skill's re-use time runs, one cell of
+## interface\skill\skill_delay.ddj (a 16 x 16 sheet of 32-pixel cells on
+## 512 x 512) over the icon, the cell SkillCooldowns.delay_frame picks; for
+## 500 ms after it ends, one cell of interface\skill\skill_charge.ddj (a
+## 4 x 4 sheet of 16-pixel cells on 64 x 64), SkillCooldowns.charge_frame.
+## -1 hides either. Drawn over the icon in the slot's 32 x 32 (the slot's own
+## rect, as the icon is).
+const DELAY_NODE := "Delay"
+const DELAY_DDJ := "interface\\skill\\skill_delay.ddj"
+const CHARGE_DDJ := "interface\\skill\\skill_charge.ddj"
+const DELAY_CELL := 32
+const CHARGE_CELL := 16
+
+func set_slot_cooldown(slot_index: int, delay_frame: int, charge_frame: int) -> void:
+	if not _slot_nodes.has(slot_index):
+		return
+	var node: Control = _slot_nodes[slot_index]
+	var over := node.get_node_or_null(DELAY_NODE) as TextureRect
+	if delay_frame < 0 and charge_frame < 0:
+		if over != null:
+			over.visible = false
+		return
+	if over == null:
+		over = TextureRect.new()
+		over.name = DELAY_NODE
+		over.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		over.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		over.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		node.add_child(over)
+	var sheet := DELAY_DDJ if delay_frame >= 0 else CHARGE_DDJ
+	var cell := DELAY_CELL if delay_frame >= 0 else CHARGE_CELL
+	var frame := delay_frame if delay_frame >= 0 else charge_frame
+	var tex: Texture2D = _ui_builder.load_texture(sheet) if _ui_builder != null else null
+	if tex == null:
+		over.visible = false
+		return
+	var atlas := over.texture as AtlasTexture
+	if atlas == null:
+		atlas = AtlasTexture.new()
+	atlas.atlas = tex
+	var per_row := maxi(int(tex.get_width()) / cell, 1)
+	atlas.region = Rect2((frame % per_row) * cell, (frame / per_row) * cell, cell, cell)
+	over.texture = atlas
+	over.visible = true
+
+## The cell a slot's re-use display shows, for tests: [sheet, frame] or [].
+func slot_cooldown_cell(slot_index: int) -> Array:
+	if not _slot_nodes.has(slot_index):
+		return []
+	var over := (_slot_nodes[slot_index] as Control).get_node_or_null(DELAY_NODE) as TextureRect
+	if over == null or not over.visible or not (over.texture is AtlasTexture):
+		return []
+	var a := over.texture as AtlasTexture
+	var cell := int(a.region.size.x)
+	var per_row := maxi(int(a.atlas.get_width()) / cell, 1)
+	return ["delay" if cell == DELAY_CELL else "charge", int(a.region.position.y) / cell * per_row + int(a.region.position.x) / cell]
 
 func clear_slot(slot_index: int) -> void:
 	set_slot_item(slot_index, null, 0)

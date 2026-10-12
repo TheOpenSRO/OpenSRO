@@ -728,7 +728,14 @@ OpenSRO resolves a cast at once, so its broadcast is its own message, **OpSkillC
   skill has already started, in which case the buff's token holds the aura. A client before round
   622 drops the unknown opcode.
 - **The caster's own client** acts a cast at a character the same way: on the accepted reply, after
-  the row's PreparingTime + CastingTime from the send, or at once on the buff's own OpBuffStart.
+  the row's PreparingTime + CastingTime from the answer, or at once on the buff's own OpBuffStart.
+- **Round 785 (client):** every cast -- the caster's own and everyone else's -- is drawn by the
+  decoration (`SkillDeco`, docs/WORLD_ISSUES.md "Round 785 (part): the skills (client)"), and the
+  caster's own only from the server's answer, as retail's 0xB070 draws it. The act's trailing
+  skill-action tail (tag 0xAB, `SkillHits`; the server lane's `skill_hit_block.md`) lands its
+  hits target by target at the decoration's DMG groups. A **chain link** after the first comes to
+  the caster as an OpSkillCast naming the caster itself; the client draws one only when its skill
+  is not the one it sent, and arms its re-use time.
 
 ## The toggles (round 640, READ)
 

@@ -81,7 +81,7 @@ static func release() -> void:
 	AmbientParticles._image_cache.clear()
 	CrowdAnim._shared.clear()
 	SkillEffects._auras.clear()
-	SkillEffects._casts.clear()
+	SkillEffects._flights.clear()
 	SkillEffects.effect_factory = Callable()
 	SkillEffects.own_body = null
 	FrontEndBackdrop._world_script = null

@@ -32,9 +32,9 @@ func _skill_row(id: int, code: String, group: String, original: int) -> String:
 
 ## A skilleffectset-shaped row in the file's own column order.
 func _row(id: String, ani: String, ev: int, act: String, dir: String, obj: String, bone: String,
-		offset: String) -> String:
-	var cols: Array = ["label", id, ani, str(ev), "FALSE", "none", "none", "0", "0", "0", "0", "1",
-		"0,0", act, "MOV_NONE,0,0,0", "0,0,0", "false,0,0,0,0,false", dir, obj, bone, offset,
+		offset: String, dmg: bool = false, mov: String = "MOV_NONE,0,0,0") -> String:
+	var cols: Array = ["label", id, ani, str(ev), "TRUE" if dmg else "FALSE", "none", "none", "0", "0", "0", "0", "1",
+		"0,0", act, mov, "0,0,0", "false,0,0,0,0,false", dir, obj, bone, offset,
 		"none", "0,0,0", "none", "0", "none", "none", "none"]
 	return "\t".join(PackedStringArray(cols)) + "\r\n"
 
@@ -79,7 +79,8 @@ func _run() -> void:
 		return
 	var sd := _skill_row(90, "TEST_IMBUE_A_01", "TEST_IMBUE_A", 0)
 	sd += _skill_row(3, "TEST_SMASH_A_01", "TEST_SMASH_A", 0)
-	sd += _skill_row(4, "TEST_STUN_A_01", "TEST_STUN_A", 0)
+	sd += _skill_row(4, "TEST_BOLT_A_01", "TEST_BOLT_A", 0)
+	sd += _skill_row(5, "TEST_STUN_A_01", "TEST_STUN_A", 0)
 	skills = SkillAudio.parse_skills(_utf16(sd))
 	var header := "//SkillName11\tSkillEffectID\tAniType\tStartEvent\tDMG Event\tDamageType\tScale\tID\tAttach\tTrade\tKill\tCreateCnt\tFade\tActType\tMovTypeSpeed\tParam\tAct Option\tObj Path\tObjName\tStartBone\tStartOffset\tTargetBone\tTargetOffset\tObjName2\tRotate\tScript\tSndBegin\tSndEnd\r\n"
 	var text := "#section characterInfo\r\n" + _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "x\\", "wrong.efp", "none", "0,0,0")
@@ -88,8 +89,10 @@ func _run() -> void:
 	text += _row("TEST_IMBUE_A", "ACT_L", 0, "AT_LOOP", "skill\\china\\", "keep.efp", "Bip01 R Finger2", "0,0,0")
 	text += _row("TEST_IMBUE_A", "READY", 0, "AT_LOOP", "skill\\china\\", "charge.efp", "none", "0,0,4")
 	text += _row("TEST_IMBUE_A", "SHOT", 1, "AT_ONE_FOLLOW", "none", "none", "none", "0,0,0")
-	text += _row("TEST_SMASH_A", "SHOT", 1, "AT_DMG_POS", "hiteffect\\", "hit.efp", "none", "0,10,-13")
+	text += _row("TEST_SMASH_A", "SHOT", 1, "AT_DMG_POS", "hiteffect\\", "hit.efp", "none", "0,10,-13", true)
 	text += _row("TEST_IMBUE_A", "WAIT", 0, "AT_LOOP", "skill\\china\\", "wait.efp", "none", "0,0,0")
+	text += _row("TEST_BOLT_A", "SHOT", 1, "AT_MOV_1TAR", "skill\\china\\", "bolt.efp", "none", "0,9,-14", true, "MOV_STRAIGHT,0,200,200")
+	text += _row("PARAM_TEST", "ACT_L", 0, "AT_LOOP", "battle\\", "status.efp", "Bip01", "0,0,0")
 	text += _row("TEST_STUN_A", "SHOT", 1, "AT_STOP", "monster\\", "stun.efp", "none", "0,0,0")
 	rows = se.parse_rows(_utf16(text))
 	_check(rows.has("TEST_IMBUE_A") and (rows["TEST_IMBUE_A"] as Array).size() == 4,
@@ -135,7 +138,7 @@ func _run() -> void:
 		"ActType values: AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2, AT_TARGET 3 ... AT_MOV_PIERCE 11")
 	_check(se.kept_act(se.AT_LOOP) and not se.kept_act(se.AT_STOP) and not se.kept_act(se.AT_ONE_FOLLOW),
 		"only AT_LOOP is kept")
-	var stop: Array = se.hit(caster, null, 4)
+	var stop: Array = se.play_phase(5, SkillAudio.SHOT, 1, caster, null, "test")
 	_check(stop.size() == 1 and not (stop[0] as EfpEffect).loop and (stop[0] as EfpEffect).static_host,
 		"AT_STOP plays once and is placed once")
 	if stop.size() == 1:
@@ -180,32 +183,27 @@ func _run() -> void:
 	_check((early[0] as EfpEffect).placed_at().is_equal_approx(Vector3(0, 6, 0)), "an aura attached before the skeleton finds its bone later")
 	se.detach_aura("character:2", 1)
 
-	# The cast sequencer: READY now, WAIT after prep, SHOT at the server's answer.
-	var c0: Array = se.cast(90, caster, target, {"now_ms": 1000})
-	_check(c0.size() == 1 and (c0[0] as EfpEffect).loop and se.cast_phase(caster) == SkillAudio.READY,
-		"cast: the READY AT_LOOP glow starts at once and loops")
-	se.process(1499)
-	_check(se.cast_phase(caster) == SkillAudio.READY, "... READY holds for the preparing time (500 ms)")
-	se.process(1500)
-	_check(se.cast_phase(caster) == SkillAudio.WAIT and is_instance_valid(c0[0]) and not (c0[0] as Node).is_queued_for_deletion(),
-		"... WAIT starts at prep; a skill with WAIT rows holds there, READY's loop still up")
-	se.shot(caster, 1700)
-	_check(se.cast_phase(caster) == -1 and _let_go(c0[0]),
-		"shot(): SHOT starts at the server's answer and the phase loops are let go then")
-	se.cast(90, caster, target, {"now_ms": 5000})
-	se.process(6600)
-	_check(se.cast_phase(caster) == -1, "without an answer SHOT starts at prep + cast (OURS fallback)")
-	# A skill without WAIT rows goes READY -> SHOT at prep; prep 0 = at once.
-	se.cast(3, caster, target, {"now_ms": 100})
-	_check(se.cast_phase(caster) == -1, "prep 0 and no WAIT rows: SHOT at the cast's start")
-	var hits: Array = se.hit(caster, target, 3)
-	_check(hits.size() == 1 and (hits[0] as Node).get_parent() == target, "hit(): SHOT/1 rows on the struck body")
-	# cancel_cast: a refused cast ends its loops and fires nothing more.
-	var c1: Array = se.cast(90, caster, target, {"now_ms": 9000})
-	se.cancel_cast(caster)
-	_check(se.cast_phase(caster) == -1 and _let_go(c1[0]), "cancel_cast ends the cast and lets its READY loop go")
-	se.process(20000)
-	_check(se.cast_phase(caster) == -1, "... and nothing fires later")
+	# Round 785: the DMG groups and the projectile flight.
+	_check(se.group_dmg(3, SkillAudio.SHOT, 1) and not se.group_dmg(3, SkillAudio.SHOT, 0),
+		"group_dmg: the smash's SHOT/1 carries the DMG event")
+	_check(se.group_dmg_flies(4, SkillAudio.SHOT, 1), "group_dmg_flies: the bolt's DMG row is a projectile")
+	_check(se.last_event(3, SkillAudio.SHOT) == 1, "last_event: the smash's SHOT groups run to 1")
+	var arrived := [false]
+	target.position = Vector3(100, 0, 0)
+	var shot: Array = se.play_phase(4, SkillAudio.SHOT, 1, caster, target, "test", func() -> void: arrived[0] = true)
+	_check(shot.size() == 1 and se.flight_count() == 1 and not arrived[0], "the projectile leaves the caster, its hit in the air")
+	se.step_flights(0.1)
+	_check(se.flight_count() == 1 and not arrived[0], "... 200 u/s: 20 units after 0.1 s")
+	se.step_flights(1.0)
+	_check(se.flight_count() == 0 and arrived[0], "... and lands its hit on arrival")
+	var gone_target := Node3D.new()
+	get_root().add_child(gone_target)
+	var landed := [false]
+	se.play_phase(4, SkillAudio.SHOT, 1, caster, gone_target, "test", func() -> void: landed[0] = true)
+	gone_target.free()
+	se.step_flights(0.016)
+	_check(se.flight_count() == 0 and landed[0], "a projectile whose target is gone lands where it is")
+	target.position = Vector3.ZERO
 	var acted: Array = se.act(90, caster, caster)
 	_check(acted.size() == 1 and not (acted[0] as EfpEffect).loop, "act(): ACT_S now")
 	_check(se.act(90, caster, caster, true).size() == 2, "act(..., true): ACT_S and one ACT_L cycle when no token will come")
@@ -243,11 +241,15 @@ func _run() -> void:
 	var gone := Node3D.new()
 	get_root().add_child(gone)
 	se.attach_aura("monster:5", 3, 90, gone)
-	se.cast(90, gone, null, {"now_ms": 0})
 	var before: int = se.tracked_count()
 	gone.free()
 	se.process(1)
-	_check(se.tracked_count() == before - 2, "a freed body's cast and auras are pruned (%d -> %d)" % [before, se.tracked_count()])
+	_check(se.tracked_count() == before - 1, "a freed body's auras are pruned (%d -> %d)" % [before, se.tracked_count()])
+	# Round 785: an effect id's own rows (a PARAM_ state).
+	var st: Array = se.play_named("PARAM_TEST", SkillAudio.ACT_L, caster, "character:4", -1003)
+	_check(st.size() == 1 and (st[0] as EfpEffect).loop and se.has_aura_on("character:4", -1003, -1, caster),
+		"play_named: a state's ACT_L loop kept as the owner's aura")
+	_check(se.detach_aura("character:4", -1003) == 1, "... and ended by its token")
 	# The effect caches are bounded (LRU, OURS).
 	for i in range(300):
 		EfpEffect.template_for("nowhere\\f%d.efp" % i, null)
