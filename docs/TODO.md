@@ -549,7 +549,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       live: a Yeoha clicked from 40 units is approached and struck ("in reach at 23.3 (reach 21.0
       +2)"), where the same run before the change logged "attack refused: too far away". Still
       open:
-      - a keep-up repeat that finds the target out of reach ends the run (the engine walks again);
+      - ~~a keep-up repeat that finds the target out of reach ends the run (the engine walks again)~~
+        -- **round 785**: the repeat now says so ("too far away" naming the monster, after the
+        monster's server position as an `OpMonsterMoved` resync) and the client walks back into reach
+        and clicks again, at most 3 times running without a blow; a click inside the base attack's
+        re-use delay is armed for when it ends instead of dropped (`combat_presentation.md`);
       - **a filed server departure**: OpenSRO's server reach-gates the `Target_Required` 0 rows
         that deal damage (the exporter's `ZeroDamage` 0, run over the box's skilldata tables):
         147 China board rows, every level of the

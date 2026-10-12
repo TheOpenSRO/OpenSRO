@@ -319,9 +319,10 @@ review of round 614).
   keys say it is in retail.
 - **A monster's blow on a character** (`_audio_monster_blow`, when its strike lands, blocked or
   not): the
-  monster's sound object (`SoundTable.sound_object`) at the monster, with skill `-`, because the
-  server names no monster attack skill. Every monster hit row names one (MEASURED), so this is
-  **silent and logged** until the server sends the skill (OPEN).
+  monster's sound object (`SoundTable.sound_object`) at the monster, keyed by the skill the blow
+  names (round 785: `OpMonsterAttacked`'s skill id, e.g. `MOB_MANGNYANG:snd_dmg:MSKILL_CH_MANGNYANG_ATTACK01`,
+  a row the table has, MEASURED), 100 ms after the landing (READ, `combat_presentation.md`). A
+  counter drawn from the attacker's result (no push) still names none and stays silent.
 - **A block** (`_audio_block`): the player's shield stopped the counter (`player_blocked`, or
   OpMonsterAttacked's blocked flag for any character), at the blocker, when the monster's blow
   would land; CRITYCAL from the blow's critical flag (READ, above).
@@ -383,7 +384,9 @@ SkillAudio.context_of(obj: Object) -> the same for the current skill
 CombatAudio.weapon_token(type_id4, has_weapon) / CombatAudio.base_attack_skill(type_id4)
 ```
 
-Monsters have no current skill here (the server names none), so their context is `-`.
+A monster's current skill is the one its last swing named (round 785, `_draw_monster_strike`);
+its swing and shout tracks key by that skill's Basic_Code (`<obj>:snd_swing1:MSKILL_...`), and
+`snd_swing_s*` / `voc_shout*` are built for every body (`combat_presentation.md`, "Sounds").
 
 **Pairing a cast with its result** (OURS, a limit): OpAttackResult names no skill, so a cast is
 paired with the first result after its OpUseSkill -- the rule the skill hit effect already used.

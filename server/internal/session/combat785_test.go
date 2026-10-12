@@ -73,4 +73,3 @@ func TestCounterPushNamesThePrimarySkill(t *testing.T) {
 		t.Fatalf("Aria's push %+v, want one naming skill 160", got)
 	}
 }
-

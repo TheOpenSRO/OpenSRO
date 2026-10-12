@@ -171,8 +171,10 @@ A weapon group only lists what differs: `sword` has its own attacks and run
 exactly that lookup with that fallback.
 
 The four plain attacks are types 2, 5, 16, 17 — `sword_base_01` to `_04` in the sword group, and
-bare-handed straight-left, straight-right, hook-left, hook-right in `default` — the chain the game
-plays on successive hits.
+bare-handed straight-left, straight-right, hook-left, hook-right in `default`. **Not a chain**
+(round 785, READ): the swing plays one entry of its base skill's skilleffect.txt `skillaniset2` SHOT
+list at random (`FUN_00a54be0`'s `(u8)rand()`; ANI_ATTACK1..4 = 2, 5, 16, 17 by `FUN_009e5240`) --
+`combat_presentation.md`.
 
 ### Events and walk points
 

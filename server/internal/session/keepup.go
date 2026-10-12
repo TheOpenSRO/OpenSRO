@@ -538,7 +538,21 @@ func firstSwingInReach(
 		// answer than "too far away".
 		return true
 	}
-	return keepUpInReach(attacker.Pos, m, equippedWeaponRange(ctx, characterID, eq, items))
+	weaponRange := equippedWeaponRange(ctx, characterID, eq, items)
+	if keepUpInReach(attacker.Pos, m, weaponRange) {
+		return true
+	}
+	// Round 785: the AI trace names both ends of a refused reach, so a log
+	// can tell a monster the client drew elsewhere from a player the server
+	// holds elsewhere.
+	if rt := monsterAIRuntime.Load(); rt != nil {
+		_, reach := combat.ApproachBand(combat.PlayerBCRadius, m.BCRadius, combat.EffectiveRange(0, weaponRange))
+		rt.tracef("reach: %d refused on monster %d: attacker (%.1f,%.1f) monster (%.1f,%.1f)%s dist %.1f reach %d+%d",
+			characterID, target, attacker.Pos.X, attacker.Pos.Z, m.X, m.Z,
+			map[bool]string{true: " walking", false: ""}[m.Moving],
+			math.Hypot(attacker.Pos.X-m.X, attacker.Pos.Z-m.Z), int(reach), combat.ReachSlack)
+	}
+	return false
 }
 
 // skillInReach is firstSwingInReach for a cast: the same recovered test with
