@@ -107,6 +107,14 @@ url: http://example.com:15779/path#frag
 	_check(d.get("url") == "http://example.com:15779/path#frag", "':' and '#' without a space are text: %s" % d.get("url"))
 	_check(YamlLite.parse("").get("data") == {}, "an empty file is an empty map")
 	_check(YamlLite.parse("\ufeffa: 1\r\nb: 2\r\n").get("data") == {"a": 1, "b": 2}, "a BOM and CRLF line ends")
+	# Round 781: a file WITHOUT a BOM keeps its first character (the user's
+	# config.yaml read as "lobal:").
+	_check(YamlLite.parse("global:\r\n  loginScreen: china_wharf\r\n").get("data") == {"global": {"loginScreen": "china_wharf"}},
+		"no BOM: the first key is whole")
+	# And no shipped script holds a literal BOM (U+FEFF) any more: a release
+	# build reads one in a string as "" (MEASURED, v0.1.528's export).
+	var with_bom := _scripts_with_bom("res://scripts")
+	_check(with_bom.is_empty(), "no non-test script holds a literal U+FEFF: %s" % str(with_bom))
 
 func _err_line(text: String) -> int:
 	var r := YamlLite.parse(text)
@@ -264,3 +272,21 @@ func _precedence() -> void:
 	_check(r.intro == "jupiter_login", "the preview variable before everything")
 	r = FrontEndTheme.resolve(null, null, null, null, null)
 	_check(r.intro == "", "nothing set: retail's default")
+
+
+## Every non-test .gd under `dir` whose text holds U+FEFF past its first
+## character (round 781).
+func _scripts_with_bom(dir: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var d := DirAccess.open(dir)
+	if d == null:
+		return out
+	for sub in d.get_directories():
+		out.append_array(_scripts_with_bom(dir.path_join(sub)))
+	for f in d.get_files():
+		if not f.ends_with(".gd") or f.ends_with("_test.gd"):
+			continue
+		var text := FileAccess.get_file_as_string(dir.path_join(f))
+		if text.find(char(0xFEFF), 1) >= 0:
+			out.append(dir.path_join(f))
+	return out

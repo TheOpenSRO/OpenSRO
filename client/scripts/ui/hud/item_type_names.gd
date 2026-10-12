@@ -45,7 +45,8 @@ static func decode(data: PackedByteArray) -> String:
 	if data.size() >= 2 and data[0] == 0xFF and data[1] == 0xFE:
 		return TextDecode.utf16(data)
 	var s := data.get_string_from_utf8()
-	return s.substr(1) if s.begins_with("﻿") else s
+	# By code point (round 781): a literal BOM reads as "" in a release build.
+	return s.substr(1) if not s.is_empty() and s.unicode_at(0) == 0xFEFF else s
 
 static func _rows(data: PackedByteArray) -> Array:
 	var out: Array = []

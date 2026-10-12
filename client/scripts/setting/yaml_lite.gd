@@ -38,7 +38,11 @@ class _Line:
 static func parse(text: String) -> Dictionary:
 	if text.length() > MAX_BYTES:
 		return _error(0, "the file is larger than %d bytes" % MAX_BYTES)
-	if text.begins_with("﻿"):
+	# A UTF-8 BOM, by its code point (round 781): the old test held the BOM
+	# as a literal in a string, which Godot 4.7 reads as "" -- every file
+	# "began with" it, and a file without one lost its first character
+	# (MEASURED on the user's PC: "unknown top-level key 'lobal'").
+	if not text.is_empty() and text.unicode_at(0) == 0xFEFF:
 		text = text.substr(1)
 	var lines: Array = []
 	var raw := text.replace("\r\n", "\n").replace("\r", "\n").split("\n")

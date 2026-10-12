@@ -7499,10 +7499,16 @@ agents' parts (below), and two of the main lane's:
 - **The underbar's skill points** stayed at the last stats total after learning or raising
   (MEASURED in the skill part's own shot: 9,000,000 there, 8,996,066 in the window); they follow
   every skill state now.
-- **global.loginScreen** (the user: "the game doesn't seem to be honoring" it): not reproduced --
-  on the box a config.yaml with `loginScreen: constantinople` and then `roc` resolved
-  `intro=... [setting]` and flew that intro under Forward+ (the live server serves "client
-  defaults"); the user's own log lines (SETTING / FrontEnd / TITLE) were asked for. OPEN.
+- **global.loginScreen** (the user: "the game doesn't seem to be honoring" it). MEASURED on the
+  user's PC (their log, read-only): `config.yaml: unknown top-level key 'lobal' -- ignored`, the
+  file itself starting `67 6c 6f 62 61 6c 3a` ("global:", no BOM). Cause: YamlLite stripped a
+  BOM with `text.begins_with("<literal U+FEFF>")`; a RELEASE build reads that literal as "" (the
+  box ran the shipped v0.1.528 Linux export against a BOM-less file: the same 'lobal' line; from
+  source the literal is one character and the test passed -- so the box's own runs never saw it).
+  Every BOM-less config.yaml lost its first character. Fixed by code point (`unicode_at(0) ==
+  0xFEFF`) here and at the two other non-test sites (`action_wnd_data.gd`, `item_type_names.gd`);
+  `client_config_test.gd` now checks a BOM-less file and that no non-test script holds a literal
+  U+FEFF.
 
 - **Gates (merged tree):** `check` ALL LOAD (748), `tests` "ran 288 suite(s), 0 failing", server
   `go test ./...` passes. Perf gate `--base v0.1.527 --sites jangan --frames 40000`: frame 0.75 ->

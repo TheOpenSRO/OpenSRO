@@ -58,7 +58,10 @@ static func parse_text(text: String) -> Array:
 	var out: Array = []
 	for raw in text.split("\n"):
 		var line := raw.strip_edges(false, true).trim_suffix("\r")
-		if line.begins_with("﻿"):
+		# By code point (round 781): a release build reads a literal BOM in a
+		# string as "" (MEASURED, v0.1.528's export), so begins_with would
+		# hold for every line and cut its first character.
+		if not line.is_empty() and line.unicode_at(0) == 0xFEFF:
 			line = line.substr(1)
 		if line.strip_edges() == "" or line.strip_edges().begins_with("//"):
 			continue
