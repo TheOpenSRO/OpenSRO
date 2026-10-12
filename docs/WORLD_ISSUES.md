@@ -7533,6 +7533,81 @@ hate, chains/imbues/ammunition/MAAT and the support skills; the specs are in doc
   all 1,923 player attack rows cast, 1,923 accepted, 792 struck more than one target, 160 more
   than one hit, 252 knocked, every block consistent.
 
+### Round 785 (part): drops and the pickup
+
+The user: "Also fix drops, I don't think drops can stack on top of each other but double check.
+Also add a pickup animation for when you grab items, check the code." The whole reading is in
+`docs/protocol/ground_items.md`, "Where a drop lands" and "The pick-up motion: 0x3036".
+
+- **Where retail puts a drop (READ, SR_GameServer.exe):** every drop -- a monster's
+  (`CGObjChar::ForceDropItem` 0x004aa680), a player's item (`CGStorage::DropItem` 0x004b2ab0) or
+  gold (`FUN_00526b00`) -- hands the new item the dropper's own position and calls its slot 311,
+  `FUN_0048fdf0`: angle `rand()/32767 * 2 pi`, radius `8 + 12 * rand()/32767` (`.rdata 0xb45e14` =
+  8.0, `0xb45b20` = 20.0), a third rand for the item's own heading. Then `CGObj::EnterWorld`
+  resolves the navmesh cell and height ("Failed!!! at ResolveCellAndHeight()"); off the mesh, the
+  item is entered unscattered at the dropper's position. **No test against items already lying
+  there**: "stacking" is chance, two random points of an 8-20 ring (about 1 % of pairs within 2
+  units). A class-based wider band (3/8 [10, 30], 4 [10, 40], 5 [20, 100]) keys on the item's
+  `+0x14c` being a monster, which nothing on the drop path writes (READ: its only writers, the
+  constructor and slot 321's setter, and the setter's seven `[vtable+0x504]` call sites) -- so not
+  used; OPEN what reaches it.
+- **What ours did (MEASURED):** a uniform 2-unit disc (`DropScatter`, own design): every stack of a
+  kill within 4 units of every other. The user's log: 52 Gold and 2 HP Recovery Herbs 1.95 apart,
+  both at the server's y 0.0 (OpenSRO's monsters carry their listed y; the client stood both on the
+  terrain under them, `GroundItems.spawn`).
+- **Fixed:** `grounditem.Scatter` is `FUN_0048fdf0` with the CRT's 15-bit draws, used by
+  `session.dropKillLoot`. MEASURED live (`partybot -mode pickup`, new; 40 Mangyang kills against a
+  server from this branch, `/var/tmp/r785-drops/bot`): 80 stacks 8.01 to 19.68 from their corpse
+  (mean 13.78, the server's "ground drop" lines); the 40 same-kill pairs 1.47 to 37.07 apart (median
+  20.55), one within 2 units. `TestScatterDistribution` (20,000 draws): every radius in [8, 20],
+  mean 13.97, quadrants even, 1.03 % of pairs within 2. Not modelled (OPEN): the off-mesh retry and
+  the height (no server navmesh), the item's random heading (not on the wire), player drops (none
+  in OpenSRO).
+- **Height (MEASURED, client):** the stacks of the G-key run lie at the server's y 42.50 and are
+  drawn at 42.89, the terrain under them (`_terrain_hit_height`, +0.05 x the scale ratio, as the
+  monsters) -- the log line now prints the drawn y. The x, z are the server's, untouched.
+- **The pick-up (READ):** the retail server walks the picker into 10 units (`0x4ae0c0`, kind 2 of
+  the auto-command), adds the item (`FUN_00526090`), and on success broadcasts **0x3036** [u32 the
+  picker, u8 angle toward the item] to its region (`0x52643c`, `0x5264aa`) -- gold too; a pet's
+  pick sends it with the pet's id (`0x4d51de`). The client's handler `FUN_008a78b0` turns the body
+  to `byte/255*360` degrees at once and enters character state 10 (table `0xec5fb8`), whose enter
+  `0xa59a00` plays action type 38 -- `chinaman_pickup.ban` for the China man -- once; it ends with
+  the clip (`0xa59a60`); it blocks nothing (masks 0). The clip's track fires `snd_pickup`.
+- **Built:** `session.OpPickUpMotion` 0x3036 with the retail payload, sent to the zone after the
+  picker's result (`PickUpMotionAngle`: the engine's atan2 / 360 * 255, truncated into a byte);
+  client `GroundItemsNet.OP_PICK_UP_MOTION`, `World3D._on_pick_up_motion` (this player:
+  `_play_player_once`; another player's drawn body: `_play_once`; both faced at once). OURS: a move
+  cuts this player's clip (retail's event 2 was not read); the order result -> 0x3036 -> removal.
+  Click, the G key and the action window's pick all reach the same `_pick_up_ground_item`, so all
+  three play it. No pet pick-up exists in OpenSRO.
+- **Live (box, `/var/tmp/r785-drops/r785_shot.sh`, the lane's server in memory, port 15986; the
+  QA items CSV `items_qa.csv` gives gold and the herb a 600 s DecayTime -- box-only, uncommitted --
+  because a movie-mode run's game clock runs slower than the server's real 10 s):** three Mangyangs
+  killed, six G presses (`OPENSRO_QA_INPUT`): five walks ("out of reach (10 units) -- walking to
+  it", the server's "pick-up refused ... code=0x4" while it walks), then six "picked up" lines,
+  each followed by "PICKUP MOTION: self ... clip chinaman_pickup.ban, 0.533 s", the
+  `AUDIO ITEM:snd_pickup ... clip 38:default player` line and "the clip ended"; the server log has
+  the six "pick-up motion" lines with the angles the client turned to. A second run (`gkey2`, with
+  the game clock in the log): each clip starts on the frame the result and 0x3036 arrive (the bot
+  measured the two leaving the server 2 us apart) and ends 0.534 s of game time later (t=2.683 ->
+  3.217, 4.067 -> 4.600, 5.017 -> 5.550, 6.733 -> 7.267; the clip is 0.533 s). **Seen by another
+  player:** `partybot -mode pickup -at "30 42.5 -1990" -wait 100s -kills 3 -pick` beside an idle QA
+  client (`/var/tmp/r785-drops/other`): six "PICKUP MOTION: player 1 ... angle 127 heading 4.700 --
+  clip chinaman_pickup.ban, 0.533 s" lines, each just before "ground item N gone (picked by 1)"; the
+  bot stood 3 units +x of each stack, and 127 is the byte for -x, heading 3 pi/2.
+- **Tests:** server `grounditem.TestScatterRingEdges`, `TestScatterDistribution`,
+  `session.TestPickUpMotionAngle`, the pick test now reading 0x3036 before the removal and the
+  ring around the corpse (`TestGroundDropAndPickUpFlow`); client `ground_items_test.gd` (0x3036's bytes, the
+  angle's read-back, type 38). Gates: server `go test ./...` all ok; client `check` ALL LOAD (752 scripts), `tests` 290 suites, 0 failing. Perf gate (`--sites jangan --frames 40000`; the default 3000 and 12000 frames ended in under 10
+  s at this box's 0.8 ms a frame uncontended, too few `--print-fps` samples, "missing numbers"):
+
+  | jangan, median of 3, Forward+ 1280x720 | base c7b2dcd0 | head | |
+  |---|---|---|---|
+  | frame ms | 0.78 | 0.77 | SAME |
+  | entry ms | 8693 | 8771 | SAME |
+  | freeze ms | 2760 | 2757 | SAME |
+  | hitches | 4 | 4 | SAME |
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

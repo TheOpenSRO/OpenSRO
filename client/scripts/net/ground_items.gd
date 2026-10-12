@@ -13,6 +13,13 @@ const OP_REMOVED := 0x006d         # server -> zone: one item is gone
 const OP_OWNER_RELEASED := 0x006e  # server -> zone: its 30 s window passed
 const OP_PICK_UP := 0x006f         # client -> server
 const OP_PICK_UP_RESULT := 0x0079  # server -> client
+## Retail's own opcode and payload (round 785): u32 the picker's id, u8 the
+## angle toward the item. sro_client.exe's handler FUN_008a78b0 (registered for
+## 0x3036 at 0x87065b) turns the object to it and enters character state 10,
+## which plays action type 38 (the body's `_pickup` clip) once. The server
+## sends it to the zone after every successful pick, the picker's own client
+## included (SR_GameServer.exe FUN_00526090, 0x52643c).
+const OP_PICK_UP_MOTION := 0x3036  # server -> zone
 
 ## Why an item left the ground (Removed.reason).
 const REMOVED_PICKED := 0
@@ -50,6 +57,32 @@ class Removed:
 	var id: int
 	var reason: int
 	var picker_id: int
+
+## 0x3036: who picked something up, and which way it faces as it does.
+class PickUpMotion:
+	var object_id: int  # u32: a character id's low 32 bits
+	var angle: int      # u8
+
+## 0x3036 is exactly 5 bytes; a shorter payload is null.
+static func decode_pick_up_motion(data: PackedByteArray) -> PickUpMotion:
+	if data.size() < 5:
+		return null
+	var m := PickUpMotion.new()
+	m.object_id = data.decode_u32(0)
+	m.angle = data.decode_u8(4)
+	return m
+
+## The heading (the client's own, RemoteFacing's [0, 2 pi)) a 0x3036 angle
+## byte faces. READ, FUN_008a78b0 (0x8a78f0..0x8a792d): the byte / 255.0
+## (0xd83108) * 360.0 (0xdde7a8) * 0.01745329238474369 (0xe1b8d8), through
+## FUN_009c40b0 -- the quarter turn and the wrap every wire angle gets
+## (RemoteFacing.from_wire_angle) -- into FUN_009c4260, which sets the heading
+## at once (no turn).
+static func heading_of_pickup_angle(angle: int) -> float:
+	var h := (float(angle & 0xff) / 255.0) * 360.0 * 0.01745329238474369 + RemoteFacing.WIRE_QUARTER_TURN
+	while h >= RemoteFacing.WIRE_FULL_TURN:
+		h -= RemoteFacing.WIRE_FULL_TURN
+	return h
 
 class PickUpResult:
 	var code: int       # 0 = picked; else one of ERR_*

@@ -1545,6 +1545,9 @@ var _other_seated: Dictionary = {}
 ## The sit-down or stand-up clip playing as _player_one_shot, or null; a move
 ## cuts it short (_leave_sit_by_moving).
 var _player_sit_clip: BanReader.ParsedAnimation = null
+## The pick-up clip playing as _player_one_shot, or null (round 785,
+## _on_pick_up_motion); a move cuts it short, as a move does the sit clips.
+var _player_pickup_clip: BanReader.ParsedAnimation = null
 ## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
@@ -1997,6 +2000,7 @@ func _ready() -> void:
 	NetClient.ground_item_removed.connect(_on_ground_item_removed)
 	NetClient.ground_item_owner_released.connect(_on_ground_item_owner_released)
 	NetClient.pick_up_result.connect(_on_pick_up_result)
+	NetClient.pick_up_motion.connect(_on_pick_up_motion)
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
 	# A bag move answers with the whole bag: the bar's items follow it, as
 	# retail's 0x60c430 re-binds them on its move and item results (round
@@ -17225,6 +17229,8 @@ func _physics_step(delta: float) -> void:
 	var is_moving := _has_move_target or (_qa_walk != "" and not _player_dead)
 	if is_moving and (_sit.sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
 		_leave_sit_by_moving()
+	if is_moving and _player_pickup_clip != null:
+		_leave_pickup_by_moving()
 	# The camera keeps whatever orbit it was given (see CAMERA_VIEW_FREE).
 	# It used to swing back to the default yaw and pitch whenever the
 	# character moved, and, hanging from the body, turned with every click.
@@ -17456,6 +17462,10 @@ func _physics_step(delta: float) -> void:
 				# Its last tracks, on the frame that ends it.
 				_anim_sounds.advance(_player_skeleton, _player_one_shot, _player_one_shot_start,
 					float(_player_one_shot.duration_ms), false)
+				if _player_one_shot == _player_pickup_clip:
+					# State 10 ends with its clip (0xa59a60, round 785).
+					_player_pickup_clip = null
+					print("PICKUP MOTION: self ms=%d t=%.3f -- the clip ended" % [Time.get_ticks_msec(), _player_anim_time])
 				_player_one_shot = null
 			else:
 				# A held one-shot (the die clip, round 548) keeps its last
@@ -23174,9 +23184,14 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 	# this signal is retail's fresh drop (its +0xec == 0) is inferred.
 	if _hud_panels != null:
 		UiSounds.item_dropped(_hud_panels.item_types(snap.item_id), snap.gold, "ground item %d dropped" % snap.id)
-	print("World3D: ground item %d (%s) at %.1f,%.1f,%.1f owner %d (%.1f from the player)" % [
+	# The server's x, y, z, then the y it is drawn at: the server has no ground
+	# height (a monster's drop carries the corpse's listed y), so the stack
+	# stands on the terrain under its x, z, or waits for it (round 785).
+	var drawn := _ground_items.position_of(snap.id)
+	print("World3D: ground item %d (%s) at %.1f,%.1f,%.1f owner %d (%.1f from the player) drawn at y %.2f%s" % [
 		snap.id, _ground_items.label_text(snap), snap.x, snap.y, snap.z, snap.owner_id,
-		_ground_items.position_of(snap.id).distance_to(player.global_position)])
+		drawn.distance_to(player.global_position), drawn.y,
+		" (no ground under it yet)" if _ground_items.is_pending(snap.id) else ""])
 	# QA: step onto the drop and pick it, so a render's log carries the
 	# server's own verdict and the bag after (see the hook list above).
 	if OS.get_environment("OPENSRO_QA_PICKUP") != "" and NetClient.is_connected_to_server():
@@ -23262,6 +23277,63 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			_log_system(_pick_up_refusal_line(result.code))
 			if OS.get_environment("OPENSRO_QA_PICKUP") != "":
 				print("QA PICKUP: result 0x%x" % result.code)
+
+## Retail 0x3036 (round 785): `motion.object_id` picked something up. READ,
+## sro_client.exe FUN_008a78b0: the object is found by its id; it is set to
+## face the angle at once (FUN_009c4260, no turn) and put in character state
+## 10, whose enter (0xa59a00) plays the body's action type 38 once
+## (BsrReader.AnimationEntry.TYPE_PICKUP, the `_pickup` clip of the body's own
+## table, through the lookup every type uses; its two 0xc8 arguments read as
+## 200 ms blends, INFERRED -- OpenSRO's one-shots cut in and out) and leaves
+## the state when no clip is found; its event handler (0xa59a60) leaves it when
+## the clip ends. The state's prerequisite and exclusion masks (0xec6168 ..
+## 0xec616c) are zero: it blocks nothing. The clip's own sound track carries
+## `snd_pickup` (SOUND_FORMAT.md), which AnimSounds fires as for any one-shot.
+## Not modelled: the handler skips an object for which FUN_009ce930 answers
+## non-zero (its +0x2ac, looked up in 0x110f7d8 -- a ridden transport,
+## INFERRED; OpenSRO draws none), and state 10's other exit, event 2.
+func _on_pick_up_motion(motion: GroundItemsNet.PickUpMotion) -> void:
+	_sync_own_id()
+	var h := GroundItemsNet.heading_of_pickup_angle(motion.angle)
+	var own := _own_id()
+	if own >= 0 and motion.object_id == (own & 0xffffffff):
+		player.rotation.y = RemoteFacing.yaw_of(h, 0.0)
+		_player_turn_target = NAN
+		if _player_skeleton == null:
+			print("PICKUP MOTION: self ms=%d angle %d -- no body to animate" % [Time.get_ticks_msec(), motion.angle])
+			return
+		var clip := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_PICKUP, _player_weapon_group)
+		var secs := _play_player_once(clip)
+		_player_pickup_clip = clip if secs > 0.0 else null
+		print("PICKUP MOTION: self ms=%d t=%.3f angle %d heading %.3f -- clip %s, %.3f s" % [Time.get_ticks_msec(), _player_anim_time,
+			motion.angle, h, _body_animation_path(_player_body, BsrReader.AnimationEntry.TYPE_PICKUP, _player_weapon_group), secs])
+		return
+	var id := _other_by_uid(motion.object_id)
+	if id < 0 or not _other_bodies.has(id):
+		print("PICKUP MOTION: id %d not drawn -- ignored" % motion.object_id)
+		return
+	var body: Node3D = _other_bodies[id]
+	body.rotation.y = RemoteFacing.yaw_of(h, 0.0)
+	_remote_turns.erase(body.get_instance_id())
+	# A far body drawn as a ghost is dressed for a one-shot (round 756).
+	_dress_ghost_now(id)
+	var gait: Dictionary = _other_gaits.get(id, {})
+	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
+		print("PICKUP MOTION: player %d ms=%d angle %d -- no assembled body" % [id, Time.get_ticks_msec(), motion.angle])
+		return
+	var once := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_PICKUP, gait["group"])
+	var secs := _play_once(gait["skeleton"], once) if once != null else 0.0
+	print("PICKUP MOTION: player %d ms=%d angle %d heading %.3f -- clip %s, %.3f s" % [id, Time.get_ticks_msec(), motion.angle, h,
+		_body_animation_path(gait["body"], BsrReader.AnimationEntry.TYPE_PICKUP, gait["group"]), secs])
+
+## A move while the pick-up clip plays: the run takes over at once (OURS --
+## retail's state 10 leaves on its event 2 without stopping the clip,
+## 0xa59a87, and the next motion replaces it; which event 2 is was not read).
+func _leave_pickup_by_moving() -> void:
+	if not _player_one_shot_hold and _player_one_shot == _player_pickup_clip:
+		_player_one_shot = null
+		print("PICKUP MOTION: self ms=%d t=%.3f -- a move ends the clip" % [Time.get_ticks_msec(), _player_anim_time])
+	_player_pickup_clip = null
 
 ## A server refusal code in words.
 const ErrorText = preload("res://scripts/net/error_text.gd")
