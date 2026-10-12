@@ -95,16 +95,6 @@ func _builder() -> UiBuilder:
 		twodt["res_ui\\questlist.2dt"] = Reader.parse(_questlist())
 	return builder
 
-class _Quest:
-	var quest_id: int
-	var quest_name: String
-	var accepted := true
-	var completed := false
-	var kills := 0
-	func _init(id: int) -> void:
-		quest_id = id
-		quest_name = "Q%d" % id
-
 func _mouse(at: Vector2, button: MouseButton, pressed: bool) -> void:
 	var motion := InputEventMouseMotion.new()
 	motion.position = at
@@ -167,8 +157,8 @@ func _run() -> void:
 		return
 	var quests := []
 	for i in 12:
-		quests.append(_Quest.new(i + 1))
-	window.call("fill_quests", quests)
+		quests.append([i + 1, QuestNet.View.new()])
+	window.call("fill_log", quests)
 	var got := {"window": 0, "chat": 0}
 	window.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed:

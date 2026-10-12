@@ -122,8 +122,6 @@ func _stub_net() -> void:
 		"\tmonster_lists += 1",
 		"func list_skills(_n: String) -> void:",
 		"\tpass",
-		"func list_quests(_n: String) -> void:",
-		"\tpass",
 		""]))
 	_net_stub.reload()
 	net.set_script(_net_stub)

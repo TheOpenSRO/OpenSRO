@@ -298,6 +298,9 @@ signal skill_cast(cast: SkillNet.SkillCast)
 ## messages (PartyNet, PartyState). Windows read it and listen to its signals;
 ## it lives here so a message that arrives before World3D listens is kept.
 var party := PartyState.new()
+## The quest log and its messages (round 785, QuestState; the opcodes are
+## routed through register_handler at _init).
+var quest := QuestState.new()
 ## Opcodes another module answers (round 711's hook for the party-match
 ## lane): opcode -> Callable(data: PackedByteArray). Checked before the
 ## "unhandled" warning, after every opcode this file routes itself.
@@ -322,9 +325,6 @@ signal unique_notice(notice: UniqueNoticeNet.Notice)
 ## The server's answer to a line this client sent (0xB025's fields).
 signal chat_result(result: ChatNet.Result)
 
-signal quest_list_result(entries: Array, error: String)
-signal quest_accept_result(ok: bool, reason: String)
-signal quest_completed(completed: QuestNet.Completed)
 
 signal duel_challenge_result(ok: bool, reason: String)
 signal duel_invite(invite: DuelNet.Invite)
@@ -630,8 +630,9 @@ func _passes_group(p: Packet) -> bool:
 				SkillNet.OP_LEARN_RESULT, SkillNet.OP_LIST_RESULT, SkillNet.OP_STATE_RESULT, SkillNet.OP_RAISE_RESULT, \
 				RewardNoticeNet.OP_EXP_GAIN, RewardNoticeNet.OP_CHAR_INFO, GuildNet.OP_CREATE_RESULT, GuildNet.OP_JOIN_RESULT, \
 				GuildNet.OP_LEAVE_RESULT, GuildNet.OP_INFO_RESULT, GuildNet.OP_POINTS_RESULT, GuildNet.OP_LEVEL_RESULT, \
-				UniqueNoticeNet.OP_UNIQUE_NOTICE, ChatNet.OP_UPDATE, ChatNet.OP_RESULT, QuestNet.OP_LIST_RESULT, \
-				QuestNet.OP_ACCEPT_RESULT, QuestNet.OP_COMPLETED, FriendNet.OP_REQUEST_RESULT, FriendNet.OP_REQUEST_RECEIVED, \
+				UniqueNoticeNet.OP_UNIQUE_NOTICE, ChatNet.OP_UPDATE, ChatNet.OP_RESULT, QuestNet.OP_UPDATE, QuestNet.OP_LOG, \
+				QuestNet.OP_TALK_PAGE, QuestNet.OP_REWARD_WINDOW, QuestNet.OP_TAKE_REWARD_RESULT, QuestNet.OP_ABANDON_RESULT, \
+				QuestNet.OP_CLAIM_RESULT, QuestNet.OP_UNMARK, FriendNet.OP_REQUEST_RESULT, FriendNet.OP_REQUEST_RECEIVED, \
 				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
 				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT:
@@ -844,18 +845,12 @@ var last_enter_world_result: WorldNet.EnterWorldResult
 var last_guild_result: GuildNet.Result = null
 var last_friend_list: Array = []
 var has_friend_list := false
-## The last quest list reply without an error, kept for the same reason:
-## World3D asks for it before the loading screen, and the quest window is
-## built after it. Cleared with the others.
-var last_quest_list: Array = []
-var has_quest_list := false
 
 func _forget_session_lists() -> void:
 	last_guild_result = null
 	last_friend_list = []
 	has_friend_list = false
-	last_quest_list = []
-	has_quest_list = false
+	quest.reset()
 
 ## The current zone label, updated from last_enter_world_result.zone on
 ## entering the world and again from a successful change_zone_result --
@@ -1150,6 +1145,9 @@ func _init() -> void:
 	# The invitation's auto-decline (PartyState._on_request) answers without
 	# the player.
 	party.send_answer.connect(func(payload: PackedByteArray) -> void: _send(PartyNet.OP_REQUEST, payload))
+	# The quest messages (round 785).
+	quest.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
+	quest.register_with(self)
 
 ## Registers `handler` (Callable(data: PackedByteArray)) for `opcode`, for a
 ## module this file does not route itself (round 711; the party-match lane
@@ -1247,11 +1245,6 @@ func alchemy_cancel() -> void:
 func recall_designate(gate_id: int) -> void:
 	_send(RecallNet.OP_DESIGNATE, RecallNet.encode_designate(gate_id))
 
-func list_quests(char_name: String) -> void:
-	_send(QuestNet.OP_LIST, QuestNet.encode_list_request(char_name))
-
-func accept_quest(char_name: String, quest_id: int) -> void:
-	_send(QuestNet.OP_ACCEPT, QuestNet.encode_accept(char_name, quest_id))
 
 func duel_challenge(char_name: String, target_name: String) -> void:
 	_send(DuelNet.OP_CHALLENGE, DuelNet.encode_challenge(char_name, target_name))
@@ -2022,17 +2015,6 @@ func _dispatch(p: Packet) -> void:
 			var r := ChatNet.decode_result(p.data)
 			if r != null:
 				chat_result.emit(r)
-		QuestNet.OP_LIST_RESULT:
-			var r := QuestNet.decode_list_result(p.data)
-			if r.error == "":
-				last_quest_list = r.entries.duplicate()
-				has_quest_list = true
-			quest_list_result.emit(r.entries, r.error)
-		QuestNet.OP_ACCEPT_RESULT:
-			var r := Auth.decode_result(p.data)
-			quest_accept_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		QuestNet.OP_COMPLETED:
-			quest_completed.emit(QuestNet.decode_completed(p.data))
 		DuelNet.OP_CHALLENGE_RESULT:
 			var r := Auth.decode_result(p.data)
 			duel_challenge_result.emit(r.ok, r.reason if r.error == "" else r.error)

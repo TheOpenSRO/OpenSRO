@@ -116,6 +116,13 @@ var _party_dot_tex: Texture2D
 var _party_arrow_tex: Texture2D
 var _party_dots: Array[TextureRect] = []
 var _party_arrows: Array[TextureRect] = []
+## The tracked quest's NPC signs (round 785, QuestMarks): between the
+## party's arrows and the player's arrow in MapMarks (docs/TODO.md's order).
+var _quest_root: Control
+var _quest_npc_tex: Texture2D
+var _quest_arrow_tex: Texture2D
+var _quest_signs: Array[TextureRect] = []
+var _quest_arrows: Array[TextureRect] = []
 
 func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_ui_builder = builder
@@ -199,6 +206,8 @@ func setup(layout_data: Variant = null) -> void:
 	if _ui_builder != null:
 		_party_dot_tex = _ui_builder.load_texture(PartyMapMarks.DOT_DDJ)
 		_party_arrow_tex = _ui_builder.load_texture(PartyMapMarks.ARROW_DDJ)
+		_quest_npc_tex = _ui_builder.load_texture(QuestMarks.NPC_SIGN_DDJ)
+		_quest_arrow_tex = _ui_builder.load_texture(QuestMarks.ARROW_DDJ)
 
 	# The player's arrow (mm_sign_character.ddj, CIFMinimap +0x374): a 16x16
 	# quad about the aperture's centre, turned by arrow_rotation. It sits in
@@ -250,6 +259,10 @@ func setup(layout_data: Variant = null) -> void:
 	_party_arrow_root.name = "PartyArrows"
 	_party_arrow_root.mouse_filter = MOUSE_FILTER_IGNORE
 	_marks_root.add_child(_party_arrow_root)
+	_quest_root = Control.new()
+	_quest_root.name = "QuestMarks"
+	_quest_root.mouse_filter = MOUSE_FILTER_IGNORE
+	_marks_root.add_child(_quest_root)
 	_marks_root.add_child(_player_arrow)
 
 	# 3. Layout root (buttons and text labels authored in resinfo\ifminimap.txt)
@@ -576,6 +589,47 @@ func _party_mark(pool: Array[TextureRect], parent: Control, index: int, kind: St
 		mark.texture = tex
 	mark.visible = tex != null
 	return mark
+
+## The tracked quest's NPCs (round 785, QuestMarks): `targets_local` holds
+## each NPC's region-local ground position in the player's region. Within
+## 47.0 map pixels (PartyMapMarks.ARROW_RADIUS, the same 47.0 READ for both)
+## the NPC sign at its offset, else the quest arrow on the rim, turned
+## toward it. Each mark is its texture's own size (OURS: the draw size is not
+## read; the party's are 8x8 and 16x16).
+func update_quest(player_local: Vector2, targets_local: PackedVector2Array) -> void:
+	if _quest_root == null:
+		return
+	var centre := APERTURE_RECT.size / 2.0
+	var signs := 0
+	var arrows := 0
+	for t in targets_local:
+		var off := PartyMapMarks.minimap_offset(player_local, t, _tile_px)
+		if PartyMapMarks.is_arrow(off):
+			var size_a := _quest_arrow_tex.get_size() if _quest_arrow_tex != null else PartyMapMarks.ARROW_SIZE
+			var mark := _party_mark(_quest_arrows, _quest_root, arrows, "questarrow", _quest_arrow_tex, size_a)
+			arrows += 1
+			mark.rotation = PartyMapMarks.arrow_rotation(off) + PartyMapMarks.TRANSPOSE_TURN
+			mark.position = centre + PartyMapMarks.arrow_centre(off) - size_a / 2.0
+		else:
+			var size_s := _quest_npc_tex.get_size() if _quest_npc_tex != null else PartyMapMarks.DOT_SIZE
+			var mark := _party_mark(_quest_signs, _quest_root, signs, "questnpc", _quest_npc_tex, size_s)
+			signs += 1
+			mark.rotation = PartyMapMarks.TRANSPOSE_TURN
+			mark.position = centre + off - size_s / 2.0
+	for i in range(signs, _quest_signs.size()):
+		_quest_signs[i].visible = false
+	for i in range(arrows, _quest_arrows.size()):
+		_quest_arrows[i].visible = false
+
+## How many quest signs and arrows are shown (tests, the QA log).
+func quest_marks_shown() -> Vector2i:
+	var s := 0
+	var a := 0
+	for m in _quest_signs:
+		s += 1 if m.visible else 0
+	for m in _quest_arrows:
+		a += 1 if m.visible else 0
+	return Vector2i(s, a)
 
 ## Each shown party mark as "dot@(x,y)" or "arrow@(x,y)r<deg>" (the turn the
 ## original gives, without the transpose's), its centre in aperture pixels

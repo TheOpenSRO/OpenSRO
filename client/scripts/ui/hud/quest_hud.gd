@@ -1,0 +1,343 @@
+extends Node
+class_name QuestHud
+
+## The quest windows that are not the quest list (round 785), owned by
+## HudPanels and driven by NetClient.quest (QuestState):
+##
+## - **The NPC's quest pages** (0x30D4, FUN_006fc1c0, READ): drawn in the
+##   NPC talk box (NpcTalkView) as the page's text and its numbered lines --
+##   type 1 one line "1. UIIT_STT_CONFIRM" (response 1), type 3 "1.
+##   UIIT_STT_YES" (2) and "2. UIIT_STT_NO" (3), type 4 one line per string
+##   "%d. <text>" (5 + i). A list string that names a quest (SN_<CODE>) is
+##   coloured by the player's level less the quest's (FUN_006f84d0): below 0
+##   0xFFFF4A4A, above 9 0xFF65AFA2, else 0xFFEFDAA4. A click sends 0x70D4.
+## - **The quest detail** (CIFQuestReward, resinfo\ifquestreward.txt, READ:
+##   UI_QUEST::FUN_006e4c00): the title SN_PAY_<Q>, the contents
+##   SN_PAYCON_<Q> (sml2 markup; drawn as plain text, OURS -- the client's PML
+##   renderer is not built), the button UIIT_STT_QUEST_GIVEUP for statuses
+##   1/7/8 (0x70D9 after an agreement box) or UIIT_STT_QUEST_REWARD for 2
+##   (0x70D8).
+## - **The reward window** (0x3514 -> CNIFQuestReward, READ that it opens and
+##   draws the basic rewards and the items, FUN_00605250 / FUN_006071d0).
+##   OURS: CNIFQuestReward's own 2dt layout is not read, so it is drawn on the
+##   same paper as the detail: the page text, then the reward lines (gold,
+##   EXP, SP EXP, SP from refqusetreward; the items from
+##   refquestrewarditems), and the button sends 0x7515 with nothing chosen
+##   (the server pays every item; choice rewards are OPEN).
+## - **The quest-information guide icon** (GDR_QUESTINFO_GUIDE,
+##   CIFQuestInfoGuide, READ): see QuestInfoGuide.
+## - **The quest information list** (GDR_QUESTINFO, CIFQuestInfo, id 45,
+##   315x142, `mframe_wnd_`; ifquestinfo.txt's scroll area 9,37,298,96 and
+##   one ifquestinfoslot.txt slot per quest, 280x96: title SN_<Q>,
+##   UIIT_STT_NPC + SN_NN_<Q>, UIIT_STT_QUEST_CONDITION + SN_NC_<Q>; READ
+##   FUN_007314f0).
+
+const DETAIL_LAYOUT := "resinfo\\ifquestreward.txt"
+const INFO_LAYOUT := "resinfo\\ifquestinfo.txt"
+const INFO_SLOT_LAYOUT := "resinfo\\ifquestinfoslot.txt"
+const INFO_REGISTRY := {"name": "GDR_QUESTINFO"}
+const RESPONSE_KEY := "qresp:"
+
+const COLOUR_LOW := 0xffff4a4a
+const COLOUR_HIGH := 0xff65afa2
+const COLOUR_EVEN := 0xffefdaa4
+
+var panels: Control
+var builder: UiBuilder
+var tables: QuestTables
+var detail: HudWindow = null
+var reward: HudWindow = null
+var info: HudWindow = null
+var guide: QuestInfoGuide = null
+## The quest the detail / reward window shows.
+var detail_quest := 0
+var reward_quest := 0
+## The quests the guide counted at the last level-up.
+var unlocked: Array = []
+## The player's level and country (0 China, 1 Europe), for the colours and
+## the guide's count.
+var player_level := 0
+var country := 0
+## How the reward window's response leaves (tests replace it).
+var state: QuestState
+
+func _init(p: Control = null, b: UiBuilder = null, s: QuestState = null) -> void:
+	panels = p
+	builder = b
+	state = s
+	name = "QuestHud"
+
+func _tables() -> QuestTables:
+	if tables == null:
+		tables = QuestTables.shared(builder.media_archive() if builder != null else null)
+	return tables
+
+func _ui(key: String, fallback: String) -> String:
+	if builder == null:
+		return fallback
+	var v := builder.resolve_text(key)
+	return v if v != "" and v != key else fallback
+
+static func _hex(argb: int) -> String:
+	return "%02x%02x%02x" % [(argb >> 16) & 0xff, (argb >> 8) & 0xff, argb & 0xff]
+
+## The colour of a list line naming quest `q` (FUN_006f84d0, READ).
+static func line_colour(player_lv: int, quest_lv: int) -> int:
+	var d := player_lv - quest_lv
+	if d < 0:
+		return COLOUR_LOW
+	if d > 9:
+		return COLOUR_HIGH
+	return COLOUR_EVEN
+
+## A page's lines as the talk box draws them: the text, a blank line, then
+## the numbered response lines as `[url=qresp:<id>]n. text[/url]`.
+func page_lines(page: QuestNet.TalkPage) -> PackedStringArray:
+	var t := _tables()
+	var out := PackedStringArray()
+	out.append(TeleportBoard.escape(t.resolve(page.text, page.text)))
+	out.append("")
+	match page.type:
+		QuestNet.PAGE_CONFIRM:
+			out.append("[url=%s%d]1. %s[/url]" % [RESPONSE_KEY, QuestNet.RESP_CONFIRM, _ui("UIIT_STT_CONFIRM", "Confirm")])
+		QuestNet.PAGE_YES_NO:
+			out.append("[url=%s%d]1. %s[/url]" % [RESPONSE_KEY, QuestNet.RESP_YES, _ui("UIIT_STT_YES", "Yes")])
+			out.append("[url=%s%d]2. %s[/url]" % [RESPONSE_KEY, QuestNet.RESP_NO, _ui("UIIT_STT_NO", "No")])
+		QuestNet.PAGE_LIST, QuestNet.PAGE_LIST_ITEM:
+			for i in page.lines.size():
+				var token: String = page.lines[i]
+				var text := TeleportBoard.escape(t.resolve(token, token))
+				var q := t.quest_for_title_id(token)
+				if q != null:
+					text = "[color=#%s]%s[/color]" % [_hex(line_colour(player_level, q.level)), text]
+				out.append("[url=%s%d]%d. %s[/url]" % [RESPONSE_KEY, QuestNet.RESP_LIST_BASE + i, i + 1, text])
+		_:
+			# Type 2 (a placeholder line in the client, response 4): nothing
+			# the server sends.
+			pass
+	return out
+
+## The response id of a talk line's key, or -1.
+static func response_of(key: String) -> int:
+	if key.begins_with(RESPONSE_KEY) and key.substr(RESPONSE_KEY.length()).is_valid_int():
+		return int(key.substr(RESPONSE_KEY.length()))
+	return -1
+
+# --- The detail and reward windows ---------------------------------------------
+
+func _paper(existing: HudWindow, window_name: String) -> HudWindow:
+	if existing != null and is_instance_valid(existing):
+		return existing
+	var w := HudWindow.new()
+	w.name = window_name
+	panels.add_child(w)
+	if not w.build(builder, DETAIL_LAYOUT, ""):
+		print("QuestHud: %s did not build" % DETAIL_LAYOUT)
+		w.queue_free()
+		return null
+	# The contents box (GDR_QUESTREWARD_CONTENTS, a CIFPML at 30,74,290,247):
+	# a label in its rect (OURS: plain text, see the header).
+	var body := RichTextLabel.new()
+	body.name = "QuestContents"
+	body.bbcode_enabled = true
+	body.scroll_active = true
+	body.position = Vector2(30, 74)
+	body.size = Vector2(290, 247)
+	body.mouse_filter = Control.MOUSE_FILTER_PASS
+	if builder != null and builder.font_at(0) != null:
+		body.add_theme_font_override("normal_font", builder.font_at(0))
+		body.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
+	w.add_child(body)
+	w.centre()
+	return w
+
+static func _set_label(w: HudWindow, control: String, text: String) -> void:
+	var n := w.node(control) as Control
+	if n == null:
+		return
+	var l := n.get_node_or_null("Text") as Label
+	if l == null:
+		l = Label.new()
+		l.name = "Text"
+		l.size = n.size
+		n.add_child(l)
+	l.text = text
+
+static func _button(w: HudWindow) -> BaseButton:
+	return w.node("GDR_QUESTREWARD_GIVEUP") as BaseButton
+
+## The detail of quest `id` (the content-view button).
+func open_detail(id: int) -> HudWindow:
+	detail = _paper(detail, "Window_questdetail")
+	if detail == null:
+		return null
+	detail_quest = id
+	var t := _tables()
+	var q := t.quest(id)
+	var v := state.view_of(id) if state != null else null
+	_set_label(detail, "GDR_QUESTREWARD_TITLE", t.resolve(q.pay, t.title_of(id)) if q != null else t.title_of(id))
+	var body := detail.get_node("QuestContents") as RichTextLabel
+	body.text = TeleportBoard.escape(QuestTables.plain(t.resolve(q.paycon, ""))) if q != null else ""
+	var b := _button(detail)
+	var status := v.status if v != null else 0
+	var key := "UIIT_STT_QUEST_REWARD" if status == QuestNet.STATUS_ACHIEVED_NOT_PAID else "UIIT_STT_QUEST_GIVEUP"
+	if b != null:
+		_set_button_text(b, _ui(key, "Reward" if key.ends_with("REWARD") else "Give up"))
+		b.visible = status != 0
+		if not b.has_meta("quest_wired"):
+			b.set_meta("quest_wired", true)
+			b.pressed.connect(_on_detail_button)
+	detail.set_meta("quest_button", key)
+	detail.show()
+	detail.move_to_front()
+	return detail
+
+func _set_button_text(b: BaseButton, text: String) -> void:
+	if builder != null:
+		builder.set_button_text(b, text)
+
+## The detail's button: the reward (0x70D8) for an achieved quest, else the
+## give-up after the agreement box (UIIT_STT_AGREEMENT_BOX; READ that it
+## asks first). OURS: the agreement box is a ConfirmationDialog.
+func _on_detail_button() -> void:
+	if state == null or detail_quest == 0:
+		return
+	var v := state.view_of(detail_quest)
+	if v == null:
+		return
+	if v.status == QuestNet.STATUS_ACHIEVED_NOT_PAID:
+		state.claim(detail_quest)
+		return
+	var box := ConfirmationDialog.new()
+	box.dialog_text = _ui("UIIT_STT_QUEST_GIVEUP", "Give up this quest?")
+	var id := detail_quest
+	box.confirmed.connect(func() -> void:
+		state.abandon(id)
+		box.queue_free())
+	box.canceled.connect(func() -> void: box.queue_free())
+	panels.add_child(box)
+	box.popup_centered()
+
+## The reward lines of quest `id` (refqusetreward / refquestrewarditems).
+func reward_lines(id: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	var q := _tables().quest(id)
+	if q == null:
+		return out
+	if q.exp > 0:
+		out.append("%s %d" % [_ui("UIIT_STT_EXP", "EXP"), q.exp])
+	if q.sp_exp > 0:
+		out.append("%s %d" % [_ui("UIIT_STT_SKILL_EXP", "SP EXP"), q.sp_exp])
+	if q.gold > 0:
+		out.append("%s %d" % [_ui("UIIT_STT_GOLD", "Gold"), q.gold])
+	if q.sp > 0:
+		out.append("%s %d" % [_ui("UIIT_STT_SP", "SP"), q.sp])
+	for it in q.items:
+		out.append("%s x%d" % [str(it[0]), int(it[1])])
+	return out
+
+## 0x3514: the reward window.
+func open_reward(id: int, text: String) -> HudWindow:
+	reward = _paper(reward, "Window_questreward")
+	if reward == null:
+		return null
+	reward_quest = id
+	var t := _tables()
+	_set_label(reward, "GDR_QUESTREWARD_TITLE", t.title_of(id))
+	var lines := PackedStringArray([TeleportBoard.escape(t.resolve(text, text)), ""])
+	for l in reward_lines(id):
+		lines.append(TeleportBoard.escape(l))
+	(reward.get_node("QuestContents") as RichTextLabel).text = "\n".join(lines)
+	var b := _button(reward)
+	if b != null:
+		_set_button_text(b, _ui("UIIT_STT_QUEST_REWARD", "Reward"))
+		b.visible = true
+		if not b.has_meta("quest_wired"):
+			b.set_meta("quest_wired", true)
+			b.pressed.connect(func() -> void:
+				if state != null and reward_quest != 0:
+					state.take_reward(reward_quest))
+	reward.show()
+	reward.move_to_front()
+	print("QuestHud: reward window for quest %d (%s): %s" % [id, t.title_of(id), ", ".join(reward_lines(id))])
+	return reward
+
+func on_reward_result(ok: bool, error: int) -> void:
+	if ok:
+		if reward != null and is_instance_valid(reward):
+			reward.hide()
+		reward_quest = 0
+	else:
+		print("QuestHud: reward refused, error %d (%s)" % [error, _ui("UIIT_STT_QUESTREWARD_ERROR", "")])
+
+# --- The guide icon and the information list ---------------------------------
+
+## Client_ApplyExpAndLevelUp -> FUN_00798f60(1) (READ): count the quests the
+## new level unlocks for this country that the player does not have; show
+## the icon when there are any, remove it when there are none.
+func on_level_up(new_level: int) -> void:
+	player_level = new_level
+	var t := _tables()
+	unlocked = t.unlocked_at(new_level, country, func(id: int) -> bool:
+		return state != null and (state.active.has(id) or state.completed.has(id)))
+	if guide == null or not is_instance_valid(guide):
+		guide = QuestInfoGuide.new(builder)
+		panels.add_child(guide)
+		guide.clicked.connect(_on_guide_clicked)
+	guide.place(panels.get_viewport_rect().size if panels.is_inside_tree() else Vector2(1152, 648))
+	guide.visible = not unlocked.is_empty()
+	print("QuestHud: level %d unlocks %d quest(s) for country %d -- guide icon %s" % [
+		new_level, unlocked.size(), country, "shown" if guide.visible else "hidden"])
+
+## The icon's click (vslot_029, READ): the information list opens with the
+## counted quests, and the icon hides and leaves the column.
+func _on_guide_clicked() -> void:
+	open_info(unlocked)
+	guide.visible = false
+
+func open_info(quests: Array) -> HudWindow:
+	if info == null or not is_instance_valid(info):
+		info = HudWindow.new()
+		info.name = "Window_questinfo"
+		panels.add_child(info)
+		if not info.build(builder, INFO_LAYOUT, "", PackedStringArray(), PackedStringArray(), false, INFO_REGISTRY):
+			info.queue_free()
+			info = null
+			return null
+		info.centre()
+	var area := info.get_node_or_null("QuestInfoSlots") as Control
+	if area == null:
+		area = Control.new()
+		area.name = "QuestInfoSlots"
+		area.position = Vector2(9, 37)
+		area.size = Vector2(298, 96)
+		area.clip_contents = true
+		info.add_child(area)
+	for c in area.get_children():
+		c.queue_free()
+	var layout := builder.load_layout(INFO_SLOT_LAYOUT) if builder != null else null
+	var t := _tables()
+	var y := 0.0
+	for qv in quests:
+		var q := qv as QuestTables.Quest
+		var slot := builder.build_section(layout, "Create") if layout != null else Control.new()
+		if slot == null:
+			continue
+		slot.position = Vector2(0, y)
+		area.add_child(slot)
+		UiBuilder.settle_authored_rects(slot)
+		_slot_text(slot, "GDR_QUESTINFO_SLOT_TITLE", t.resolve(q.title, q.code))
+		_slot_text(slot, "GDR_QUESTINFO_SLOT_NPC", t.resolve(q.npc_line, ""))
+		_slot_text(slot, "GDR_QUESTINFO_SLOT_CONDITION", t.resolve(q.condition, ""))
+		y += 96.0
+	area.set_meta("slots", quests.size())
+	info.show()
+	info.move_to_front()
+	return info
+
+func _slot_text(slot: Control, control: String, text: String) -> void:
+	var n := slot.find_child(control, true, false) as Control
+	if n == null:
+		return
+	if builder != null:
+		builder.set_static_text(n, text)
