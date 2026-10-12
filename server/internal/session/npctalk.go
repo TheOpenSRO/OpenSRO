@@ -138,17 +138,11 @@ func npcTarget(e world.Entity, entity uint32) (npcPlacement, uint16) {
 	return pl, 0
 }
 
-// selectIDs is the set a select by a player of level sends for npc: its own
-// set (+0x130 copied to +0x1c78) and, at the herbalists from level 20, id 10
-// (the quest's event-0xb handler, npcspawn.WithdrawSkill). Id 2 stays as the
-// NPC's static stand-in (npcspawn/questtalk.go; the per-player filter
-// 0x4c9310 is not modelled). Ascending, as the set is ordered.
-func selectIDs(npc *npcspawn.NPC, level int) []byte {
-	return selectIDsFor(context.Background(), npc, level, 0)
-}
-
-// selectIDsFor is selectIDs for one character: with the quest runtime
-// installed (round 785), id 2 is the player's own -- offered when the NPC has
+// selectIDsFor is the set a select by characterID of level sends for npc: its
+// own set (+0x130 copied to +0x1c78) and, at the herbalists from level 20, id
+// 10 (the quest's event-0xb handler, npcspawn.WithdrawSkill). Without the quest
+// runtime id 2 stays as the NPC's static stand-in (npcspawn/questtalk.go); with
+// it (round 785) id 2 is the player's own -- offered when the NPC has
 // quest business with the character (0x4c9310's per-player filter, now with
 // real quests), taken away when it has none and the static stand-in listed it.
 func selectIDsFor(ctx context.Context, npc *npcspawn.NPC, level int, characterID int64) []byte {

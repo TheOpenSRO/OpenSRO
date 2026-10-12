@@ -65,10 +65,7 @@ var knownOrphans = map[string]string{
 	"SetAfterCommitHookForTest": "round 743: txn's fault hook, an error answered after a successful commit; the pick-up and trade tests drive the commit-then-error path through it.",
 	"PartyByID":                 "round 710: lane S3 finds the party behind a match entry; party_test.go.",
 	"DecodeItemNotice":          "round 712: the 0x3068 reader as c:0x873990 reads it (the class from the item's TypeIDs), for the client lane's tests; golden-tested.",
-	"DecodeGold":                "round 716: the 0x304E kind-1 reader, the Go mirror of c:0x8a70d0 for the codec tests; the Godot client consumes the message over the socket.",
 	"KillExp":                   "round 712: Formula_MonsterExpReward (0x4105d0), whose only callers are the PC death dispatch; the kill path pays through KillBase and ContributorExp instead. Kept as the recovered formula and its tests' anchor.",
-	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
-		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
 		"world before any player, so a player always meets them in a group spawn and the server never sends this " +
 		"(docs/protocol/npc_spawn.md); kept with its golden test so both sides hold the layout.",
@@ -83,10 +80,6 @@ var knownOrphans = map[string]string{
 	"WireAngleOf": "round 708: FUN_00488050's radians-to-u16; as NestRadians -- the round trip is the identity, " +
 		"held by TestWireAngleRoundTrip, so the server sends wInitialDir as it is.",
 	"NPCsInWindow": "round 708: how many NPC placements a window holds, for tests of the single-frame filing.",
-	"DefaultQuests": "round 692: the reader of character_default_quests, the default quests a new " +
-		"character is given (quest/defaults.go). The quest system has no real quests yet (its catalogue is " +
-		"invented and its ids 1/2 collide with QEVENT_GUIDE/QTUTORIAL_CH), so nothing starts them; this is " +
-		"what the real quest import will read, and the tests read it now. docs/TODO.md, the character lobby.",
 	"DeathPenaltyFactorFor": "the per-cause EXP death penalty. Triaged out of the baseline in " +
 		"round 351: cause 5 (the lesser, 20x branch) requires BOTH parties to be guilded -- " +
 		"GObjPC::IsKilledByPlayer tests victim+0x1cbc and killer[0x72f], which are PARTY and " +
@@ -139,12 +132,6 @@ var knownOrphans = map[string]string{
 	// return point resolves a race's gate by its code (session.returnPointFor).
 	// Round 727: LinksFrom left the list -- the server gives a teleport NPC
 	// id 8 when links leave its point (cmd/server/npcs.go).
-	"EncodeEntity": "the client's half of 0x7045 / 0x704B {u32 entity}; the Godot client writes it " +
-		"(NpcTalkNet.encode_entity) and the golden-bytes and socket tests use this one (round 727).",
-	"EncodeOpen": "the client's half of 0x7046 {u32 entity, u8 id}; the Godot client writes it " +
-		"(NpcTalkNet.encode_open) and the tests use this one (round 727).",
-	"DecodeSelectNPC": "reads 0xB045 as the client does (NpcTalkNet.decode_select); the socket test " +
-		"checks the server's reply with it (round 727).",
 }
 
 // baseline is the set of orphans that existed when this detector was written.

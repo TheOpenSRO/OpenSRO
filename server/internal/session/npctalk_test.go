@@ -160,10 +160,10 @@ func TestNPCTalkSelectOpenEnd(t *testing.T) {
 func TestNPCTalkSelectIDs(t *testing.T) {
 	herb := &npcspawn.NPC{Code: "NPC_CH_POTION"}
 	herb.Interact = []byte{1, 2}
-	if got := selectIDs(herb, 19); !bytes.Equal(got, []byte{1, 2}) {
+	if got := selectIDsFor(context.Background(), herb, 19, 0); !bytes.Equal(got, []byte{1, 2}) {
 		t.Fatalf("level 19: % x", got)
 	}
-	if got := selectIDs(herb, 20); !bytes.Equal(got, []byte{1, 2, 10}) {
+	if got := selectIDsFor(context.Background(), herb, 20, 0); !bytes.Equal(got, []byte{1, 2, 10}) {
 		t.Fatalf("level 20: % x", got)
 	}
 	if !bytes.Equal(herb.Interact, []byte{1, 2}) {
@@ -171,7 +171,7 @@ func TestNPCTalkSelectIDs(t *testing.T) {
 	}
 	other := &npcspawn.NPC{Code: "NPC_CH_POTION2"}
 	other.Interact = []byte{1}
-	if got := selectIDs(other, 99); !bytes.Equal(got, []byte{1}) {
+	if got := selectIDsFor(context.Background(), other, 99, 0); !bytes.Equal(got, []byte{1}) {
 		t.Fatalf("a non-herbalist at 99: % x", got)
 	}
 }

@@ -296,17 +296,6 @@ func (c *Catalog) OnTalk(l Log, npc string, has func(code string) int) (out []Pr
 	return out, take
 }
 
-// GatherItems lists q's gather missions' quest items.
-func GatherItems(q *Quest) []string {
-	var out []string
-	for _, m := range q.Missions {
-		if m.Type == MissionGatherFromMonster && m.Item != "" {
-			out = append(out, m.Item)
-		}
-	}
-	return out
-}
-
 // Claim pays q at npc: the quest must be done and unpaid, and npc its complete
 // NPC. It marks the state paid (or removes it for the next round of a
 // repeatable quest -- OURS: the log keeps the achievement count) and returns

@@ -123,14 +123,6 @@ func InstallQuests(cat *quest.Catalog, d QuestDeps) {
 		marks: map[uint64]map[uint32]byte{}, markLevel: map[uint64]int{}})
 }
 
-// QuestCatalog is the installed catalogue (nil without one).
-func QuestCatalog() *quest.Catalog {
-	if rt := questRT.Load(); rt != nil {
-		return rt.cat
-	}
-	return nil
-}
-
 func (rt *questRuntime) roll(rate float64) bool {
 	if rt.deps.Roll != nil {
 		return rt.deps.Roll(rate)

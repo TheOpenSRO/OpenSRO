@@ -264,6 +264,7 @@ func TestCSVRoundTrip(t *testing.T) {
 		if q.Menus == nil {
 			q.Menus = map[string][]MenuText{}
 		}
+		q.scriptReward = nil // not exported
 		if !reflect.DeepEqual(q, b) {
 			t.Fatalf("%s:\n got %+v\nwant %+v", code, b, q)
 		}
