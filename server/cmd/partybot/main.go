@@ -87,6 +87,10 @@ type bot struct {
 	x, y, z float32
 	// gains are the 0x3056 EXP gains this character was sent (round 716).
 	gains []charmsg.ExpGain
+	// quest carries the quest-side messages (round 785, quest.go), and
+	// uidByRef the NPCs spawned, by reference id.
+	quest    chan *proto.Packet
+	uidByRef map[uint32]uint32
 }
 
 // lastGain is the newest 0x3056 b was sent, and how many it has had.
@@ -122,6 +126,12 @@ func (b *bot) readSync(op uint16) (*proto.Packet, error) {
 			return nil, fmt.Errorf("%s waiting for 0x%04x: %w", b.name, op, err)
 		}
 		b.note(p)
+		if isQuestOp(p.Opcode) && b.quest != nil {
+			select {
+			case b.quest <- p:
+			default:
+			}
+		}
 		if p.Opcode == op {
 			return p, nil
 		}
@@ -164,6 +174,9 @@ func (b *bot) note(p *proto.Packet) {
 		b.group = append(b.group, npcspawn.GroupFrame{Opcode: p.Opcode, Data: p.Data})
 		frames := b.group
 		b.mu.Unlock()
+		if p.Opcode == npcspawn.OpGroupEnd {
+			b.noteNPCs(frames)
+		}
 		if p.Opcode == npcspawn.OpGroupEnd && len(frames) >= 2 && len(frames[0].Data) == 3 && frames[0].Data[0] == npcspawn.GroupSpawn {
 			var body []byte
 			for _, f := range frames[1 : len(frames)-1] {
@@ -303,16 +316,28 @@ func (b *bot) run() {
 		b.conn.SetReadDeadline(time.Time{})
 		p, err := proto.Read(b.r, nil, nil)
 		if err != nil {
+			if os.Getenv("PARTYBOT_TRACE") != "" {
+				fmt.Printf("[%s] read ended: %v\n", b.name, err)
+			}
 			close(b.in)
 			return
 		}
 		b.note(p)
+		if os.Getenv("PARTYBOT_TRACE") != "" {
+			fmt.Printf("[%s] trace 0x%04x %d bytes\n", b.name, p.Opcode, len(p.Data))
+		}
 		if p.Opcode == charmsg.OpExpGain {
 			if g, err := charmsg.DecodeExpGain(p.Data); err == nil {
 				fmt.Printf("[%s] <- 0x3056 source %d EXP %d skill EXP %d level-up %v\n", b.name, g.Source, g.Exp, g.SkillExp, g.LevelUp)
 				b.mu.Lock()
 				b.gains = append(b.gains, g)
 				b.mu.Unlock()
+			}
+		}
+		if isQuestOp(p.Opcode) {
+			select {
+			case b.quest <- p:
+			default:
 			}
 		}
 		if isParty(p.Opcode) || p.Opcode == session.OpChatUpdate || p.Opcode == party.OpItemNotice {
@@ -359,11 +384,18 @@ func (b *bot) quiet() error {
 }
 
 func connect(addr, user, name string, level int) (*bot, error) {
+	return connectAs(addr, user, name, level, chinaKit)
+}
+
+// connectAs is connect with the character made from kit (round 785: a
+// European for the quest run).
+func connectAs(addr, user, name string, level int, kit session.LobbyRequest) (*bot, error) {
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	b := &bot{name: name, conn: conn, r: bufio.NewReader(conn), in: make(chan *proto.Packet, 256), other: make(chan *proto.Packet, 64), seen: map[string]int64{}}
+	b := &bot{name: name, conn: conn, r: bufio.NewReader(conn), in: make(chan *proto.Packet, 256), other: make(chan *proto.Packet, 64), seen: map[string]int64{},
+		quest: make(chan *proto.Packet, 4096), uidByRef: map[uint32]uint32{}}
 	const pw = "partybot-pw"
 	b.send(session.OpRegister, (&session.RegisterRequest{Username: user, Password: pw}).Encode())
 	if _, err := b.readSync(session.OpRegisterResult); err != nil {
@@ -377,10 +409,10 @@ func connect(addr, user, name string, level int) (*bot, error) {
 	if lr, err := session.DecodeLoginResult(p.Data); err != nil || !lr.OK {
 		return nil, fmt.Errorf("%s: login refused: %+v %v", name, lr, err)
 	}
-	// A China man in the starting kit (the same ids lobby tests use); an
+	// A character in the starting kit (the same ids lobby tests use); an
 	// existing character of that name is simply started.
-	b.send(session.OpLobby, (&session.LobbyRequest{Action: session.LobbyCreate, Name: name, RefObjID: 1909, Scale: 0x22,
-		Chest: 3643, Legs: 3644, Feet: 3645, Weapon: 3632}).Encode())
+	kit.Name = name
+	b.send(session.OpLobby, kit.Encode())
 	if _, err := b.readSync(session.OpLobbyResult); err != nil {
 		return nil, err
 	}
@@ -817,6 +849,10 @@ func main() {
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")
+	questRace := flag.String("race", "china", "quest: the character's race, china or europe")
+	questsDir := flag.String("quests-dir", "", "quest: the catalogue directory (export-refdata -mode quests)")
+	npcsCSV := flag.String("npcs-csv", "", "quest: the NPC table (export-refdata -mode npcs)")
+	npcposCSV := flag.String("npcpos-csv", "", "quest: the NPC placements (export-refdata -mode npcpos)")
 	flag.Parse()
 	var err error
 	switch *mode {
@@ -831,6 +867,8 @@ func main() {
 		err = botMode(*addr, *name, *level, *accept, *invite, *register, *requestEntry, *tp, *tp2, *tp2After)
 	case "share":
 		err = shareScenario(*addr, *prefix, *monster, *level)
+	case "quest":
+		err = questScenario(*addr, *name, *questRace, *level, *questsDir, *npcsCSV, *npcposCSV, flag.Args())
 	default:
 		err = fmt.Errorf("unknown -mode %q", *mode)
 	}
