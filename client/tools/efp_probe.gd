@@ -21,6 +21,25 @@ extends SceneTree
 ## kept-or-not; --only=<substring> narrows it) and prints one SUMMARY line
 ## each, then CENSUS totals; with --quiet only the totals.
 ##
+## --drift (round 786) runs each job through four host scenarios instead and
+## prints one DRIFT line per scenario: `stand` (the host still), `jump` (still,
+## then moved --jump=x,y,z native units in one frame -- a zone change, whose
+## grid is built in the new zone's own frame, round 570 -- then still again),
+## `walk` (still, then running at --speed, default 50, then still) and `turn`
+## (still, then turning --turn degrees a second, default 180, then still).
+## Each scenario's numbers are the farthest drawn particle from the effect's
+## placement point (the host's origin) in its still lead-in (`still`, the
+## effect's own spread on a still host: its authored bound) and from the
+## scenario's event on (`after`), how many drawn particles stood past
+## still + DRIFT_TOL, and the last frame one did. CENSUS DRIFT lines total
+## them per scenario (`--census --drift`). A fifth, `zone`, is a zone change
+## as round 786 plays it (READ, EfpEffect.shift_effects): the effect moved by
+## the frames' offset (--frame=x,y,z, default Donwhang's frame to Jangan's),
+## the host by --jump in the new frame. `near` counts the particles past the
+## spread but within DRIFT_NEAR -- in sight of the body. --modes=jump,zone
+## picks scenarios. --equip adds every equipment effect (the seal and enchant
+## glows, kept) to the jobs.
+##
 ## Each run prints a SUMMARY line: frames until the first drawn particle,
 ## frames it lasted (or "running"), the peak and the per-frame minimum of
 ## drawn particles once started, gap frames (nothing drawn after it started),
@@ -37,6 +56,24 @@ var _native := false
 var _census := false
 var _quiet := false
 var _only := ""
+var _drift := false
+## --equip (round 786): the equipment effects (seal and enchant glows) too.
+var _equip := false
+var _jump := Vector3(150, -30, -120)
+var _turn := 180.0
+var _frame := Vector3(-28800, 0, -9600)
+## The drift scenarios to run (--modes=jump,walk; all four by default).
+var _modes := PackedStringArray(["stand", "jump", "walk", "turn"])
+## A drawn particle farther than its still spread plus this (native units)
+## from the placement point counts as off the host (DRIFT lines). OURS.
+const DRIFT_TOL := 10.0
+## Past the spread but nearer than this (native units): in sight of the body
+## (OURS; the original draws a character's particle mods only within 720 of
+## the camera, READ round 761).
+const DRIFT_NEAR := 2000.0
+## Per drift scenario: runs, runs with a particle past still + DRIFT_TOL, the
+## worst excess and its file, particle-frames past it.
+var _dt := {}
 ## Census totals: files, those whose drawn particles ever went past FAR_TRAIL
 ## from the host, the worst such distance, drawn particles following a dead
 ## ancestor (summed over frames), pops, and frames with particles outside the
@@ -75,6 +112,22 @@ func _init() -> void:
 			_census = true
 		elif a == "--quiet":
 			_quiet = true
+		elif a == "--drift":
+			_drift = true
+		elif a == "--equip":
+			_equip = true
+		elif a.begins_with("--jump="):
+			var v := a.substr(7).split(",")
+			if v.size() == 3:
+				_jump = Vector3(float(v[0]), float(v[1]), float(v[2]))
+		elif a.begins_with("--frame="):
+			var fv := a.substr(8).split(",")
+			if fv.size() == 3:
+				_frame = Vector3(float(fv[0]), float(fv[1]), float(fv[2]))
+		elif a.begins_with("--turn="):
+			_turn = float(a.substr(7))
+		elif a.begins_with("--modes="):
+			_modes = a.substr(8).split(",", false)
 		elif a.begins_with("--only="):
 			_only = a.substr(7).to_lower()
 	call_deferred("_run", dir, skills, files)
@@ -102,6 +155,19 @@ func _run(dir: String, skills: PackedStringArray, files: PackedStringArray) -> v
 				jobs.append([String(r["path"]), kept, label])
 	for f in files:
 		jobs.append([f, _keep == 1, "file"])
+	if _equip:
+		# Round 786: every equipment effect (the seal and enchant glows the two
+		# tables name, ItemGlowTables -- census_equip_world.gd's list), kept as
+		# EquipFx keeps them.
+		var gt := ItemGlowTables.for_archive(media)
+		var eq := {}
+		for call in gt._particle_calls:
+			for pair in call:
+				eq[(pair[1] as ItemGlowTables.ParticleRow).efp.to_lower()] = true
+		var names := eq.keys()
+		names.sort()
+		for f in names:
+			jobs.append([String(f), true, "equip"])
 	if _census:
 		var entry := ObjectLoader.find_file(media, SkillEffects.SKILLEFFECT_PATH)
 		var rows := SkillEffects.parse_rows(media.read_file(entry))
@@ -117,7 +183,21 @@ func _run(dir: String, skills: PackedStringArray, files: PackedStringArray) -> v
 				jobs.append([path, kept, "census"])
 		jobs.sort_custom(func(a, b): return String(a[0]) < String(b[0]))
 	for j in jobs:
+		if _drift:
+			for mode in _modes:
+				_probe_drift(String(j[0]), bool(j[1]) if _keep < 0 else _keep == 1, String(j[2]), particles, mode)
+			continue
 		_probe(String(j[0]), bool(j[1]) if _keep < 0 else _keep == 1, String(j[2]), particles)
+	if _drift:
+		for mode in _modes:
+			var d: Dictionary = _dt.get(mode, {"runs": 0, "off": 0, "worst": 0.0, "pframes": 0, "worst_path": ""})
+			print("CENSUS DRIFT %s jump %s frame %s speed %.0f turn %.0f: %d runs, %d with drawn particles past their still spread + %.0f (worst +%.1f, %s), %d particle-frames past it; in sight (under %.0f units) %d runs, %d particle-frames" % [
+				mode, _jump, _frame, _speed if _speed > 0.0 else 50.0, _turn, d["runs"], d["off"], DRIFT_TOL,
+				d["worst"], d["worst_path"], d["pframes"], DRIFT_NEAR, d.get("near_runs", 0), d.get("near", 0)])
+		media.close()
+		particles.close()
+		quit(0)
+		return
 	if _census:
 		print("CENSUS fps %.0f speed %.0f seconds %.1f: %d runs, %d did not load, %d never drew; drawn past %.0f units from the host in %d (worst %.1f); %d drawn particle-frames following a dead ancestor; %d with a pop; %d with drawn particles outside the draw box; %d whose draws lagged their particles; %d with spawns refused (the 300 cap)" % [
 			_fps, _speed, _seconds, _t["files"], _t["loadfail"], _t["never_drawn"], FAR_TRAIL, _t["trail_files"],
@@ -269,3 +349,98 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 ## reads the same under either client's ACT_TYPES order.
 func _kept(act: int) -> bool:
 	return act >= 0 and act < SkillEffects.ACT_TYPES.size() and SkillEffects.ACT_TYPES[act] == "AT_LOOP"
+
+const DRIFT_MODES := ["stand", "jump", "walk", "turn"]
+const DRIFT_LEAD := 4.0 ## seconds still before the event (OURS)
+const DRIFT_EVENT := 2.0 ## seconds of running or turning (OURS)
+const DRIFT_TAIL := 4.0 ## seconds still after it (OURS)
+
+## Round 786: one drift scenario of one effect (see --drift in the header).
+func _probe_drift(path: String, kept: bool, label: String, particles: Pk2Reader, mode: String) -> void:
+	var fx := EfpEffect.create(path, particles)
+	if fx == null:
+		return
+	var drawn := {}
+	for d in fx._draws:
+		drawn[int(d[0])] = true
+	for d in fx._links:
+		drawn[int(d[0])] = true
+	var host := Node3D.new()
+	var skel := Skeleton3D.new()
+	host.add_child(skel)
+	get_root().add_child(host)
+	fx.loop = kept
+	fx.reserved = true
+	fx.auto_free = false
+	var ended := [false]
+	fx.effect_finished.connect(func(): ended[0] = true)
+	host.add_child(fx)
+	fx.follow_host(host, "", Vector3.ZERO)
+	var dt := 1.0 / _fps
+	var speed := _speed if _speed > 0.0 else 50.0
+	var lead := int(round(DRIFT_LEAD * _fps))
+	var event := 0 if mode == "stand" or mode == "jump" or mode == "zone" else int(round(DRIFT_EVENT * _fps))
+	var total := lead + event + int(round(DRIFT_TAIL * _fps))
+	var still := 0.0
+	var after := 0.0
+	var past := 0
+	var past_frames := 0
+	var near := 0
+	var last_past := -1
+	var sim_frames := 0
+	for i in range(total):
+		if (mode == "jump" or mode == "zone") and i == lead:
+			# `zone` (round 786): the frame's offset moves the effect whole
+			# first (EfpEffect.shift_effects, READ CEFEffect::vslot_006).
+			if mode == "zone":
+				EfpEffect.shift_effects([fx], _frame)
+			host.position += _jump
+		elif mode == "walk" and i >= lead and i < lead + event:
+			host.position.x += speed * dt
+		elif mode == "turn" and i >= lead and i < lead + event:
+			host.rotation.y += deg_to_rad(_turn) * dt
+		fx._process(dt)
+		if ended[0]:
+			break
+		if fx._pending_steps <= 0:
+			continue
+		sim_frames += fx._pending_steps
+		# Where the drawn particles are in the world against where the
+		# effect is placed now (the host's origin: no bone, no offset).
+		var at := host.global_position
+		var anchor := fx.global_transform
+		var mx := 0.0
+		var n_past := 0
+		for p in fx.sim.particle_list():
+			if not drawn.has(p.tpl):
+				continue
+			var dist := (anchor * p.pos - at).length()
+			mx = maxf(mx, dist)
+			if i >= lead and dist > still + DRIFT_TOL:
+				n_past += 1
+				if dist < DRIFT_NEAR:
+					near += 1
+		if i < lead:
+			still = maxf(still, mx)
+		else:
+			after = maxf(after, mx)
+			if n_past > 0:
+				past += n_past
+				past_frames += 1
+				last_past = sim_frames
+	var d: Dictionary = _dt.get(mode, {"runs": 0, "off": 0, "worst": 0.0, "pframes": 0, "worst_path": ""})
+	d["runs"] += 1
+	d["near_runs"] = int(d.get("near_runs", 0)) + (1 if near > 0 else 0)
+	d["near"] = int(d.get("near", 0)) + near
+	if past > 0:
+		d["off"] += 1
+		d["pframes"] += past
+		if after - still > float(d["worst"]):
+			d["worst"] = after - still
+			d["worst_path"] = path
+	_dt[mode] = d
+	if not _quiet:
+		print("DRIFT %s %s kept %s: still %.1f after %.1f (+%.1f) past %d particle-frames in %d frames (near %d), last at frame %d of %d (%s)" % [
+			mode, path, kept, still, after, maxf(after - still, 0.0), past, past_frames, near, last_past, sim_frames, label])
+	fx.stop()
+	host.free()

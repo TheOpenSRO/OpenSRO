@@ -6394,6 +6394,20 @@ func _zone_frame_coords(zone: String, frame: String) -> Dictionary:
 	var centre := _parse_region_coords(_resolve_zone_region(zone)) if zone != "" else {}
 	return _frame_coords(centre, frame)
 
+## Round 786: where a point of a grid built in frame `old_frame` (region
+## x/y) on `old_anchor` (its height anchor, _grid_shared_anchor_height; NAN
+## is 0, as _frame_corner reads it) is in a grid built in `new_frame` on
+## `new_anchor`, as the offset to add: the same placement every cell gets
+## (_group_position of its _cell_offset), so the two frames agree on every
+## region. The original's map hands its objects this offset when the
+## player's region changes (CICPlayer slot 37, 0x009d5900, READ; EfpEffect
+## shift_effects).
+static func zone_frame_shift(old_frame: Vector2i, old_anchor: float, new_frame: Vector2i, new_anchor: float) -> Vector3:
+	var a0 := 0.0 if is_nan(old_anchor) else old_anchor
+	var a1 := 0.0 if is_nan(new_anchor) else new_anchor
+	return _group_position(_cell_offset(old_frame.x - new_frame.x, old_frame.y - new_frame.y), a1) \
+		- _group_position(Vector3.ZERO, a0)
+
 ## Where region (rx, ry)'s local (lx, lz) is in the world, in a grid built in
 ## frame (fx, fy) (round 690): the transform TerrainCollision.place_group gives
 ## that region's group (_cell_offset of its cell in the frame, the z mirror),
@@ -6745,6 +6759,16 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		if teleport_arrival:
 			_teleport_request_pending = false
 		return
+	# Round 786 (READ, EfpEffect "shift_effects"): nothing is updated while
+	# the zone loads (CPSMission::vslot_012, 0x0084c300), and the change of
+	# frame moves every effect whole (CICPlayer slot 37, 0x009d5900 ->
+	# CEFEffect::vslot_006, 0x00ca9f20) -- the effects placed now, in the old
+	# frame, are moved once the new frame is built (below).
+	var fx_old_frame := EfpEffect.placed_under(self)
+	var old_frame := _grid_origin_region
+	var old_anchor := _grid_shared_anchor_height
+	var old_field := _grid_has_origin and _dungeon == null
+	EfpEffect.pause_world(true)
 	# No gate UI survives a zone change (round 578): its gate is behind. The
 	# talk box and the destinations it lists go, and so does the NPC it
 	# names -- a talk box left up here would list the old gate's destinations
@@ -6774,6 +6798,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# The same guard as the drain's: a drop during that frame leaves nothing
 	# to rebuild for (round 560).
 	if not is_inside_tree():
+		EfpEffect.pause_world(false)
 		return
 	zone_label.text = "Zone: %s" % result.zone
 	# In the server's frame (result.frame, round 570). That frame is the
@@ -6830,6 +6855,14 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var zone_started_ms := Time.get_ticks_msec()
 	_load_timings.begin_drain()
 	_reload_zone_assets(result.zone, result.frame)
+	# Round 786 (READ, CICPlayer slot 37, 0x009d5900): field to field, the
+	# old frame's effects move by the offset between the two frames; into a
+	# dungeon the original moves nothing (its region's bit 0x8000), and out
+	# of one what it does is OPEN (nothing moved here).
+	if old_field and _grid_has_origin and _dungeon == null:
+		var by := zone_frame_shift(old_frame, old_anchor, _grid_origin_region, _grid_shared_anchor_height)
+		var moved := EfpEffect.shift_effects(fx_old_frame, by)
+		print("EFFECTS zone change: %d effect(s) moved %s from frame %s to %s" % [moved, by, old_frame, _grid_origin_region])
 
 	# Only now, with the new region's terrain and walkable graph actually
 	# built, can an `@x,z` from the zone box be honoured -- see
@@ -6895,6 +6928,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 			print("World3D: no walkable graph under the teleport point (%.1f, %.1f) after the zone loaded -- released to the ground snap" % [
 				unlanded.x, unlanded.y])
 			_teleport_landing = null
+	# Round 786: the arrival is laid out; the effects take it as one
+	# placement, as retail's do once its loading screen goes.
+	EfpEffect.pause_world(false)
 
 ## A zone change is loading: OpEntityEntered / OpEntityLeft are kept for its
 ## arrival list (round 646's review) -- id -> snapshot, and the ids that left.
@@ -7170,6 +7206,9 @@ func _exit_tree() -> void:
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
+	# Round 786: a zone change left mid-way (the world freed during its
+	# load) must not hold the next world's effects.
+	EfpEffect.pause_world(false)
 	BerserkLook.clear()
 	StateLook.clear()
 	_fx_owner_buffs.clear()
@@ -14748,6 +14787,15 @@ func _update_blob_shadow() -> void:
 ##                          phase -- posed or T-posed, feet against the
 ##                          ground -- as `LINEUP` lines (QaLineup has the
 ##                          companion variables; round 689)
+##   OPENSRO_QA_FXDRIFT="<tick>:<action>;..."  (round 786) auras on the
+##                          player, a turn, a GM-style jump or a gate
+##                          teleport's arrival, and every _EVERY ticks (5)
+##                          where each effect on the player draws against
+##                          where it is placed (`QA FXDRIFT` lines,
+##                          FxDriftProbe; _qa_fx_drift_step has the actions);
+##                          OPENSRO_QA_FX_BEFORE786=1 runs the effects as
+##                          rounds 621-785 did (EfpEffect.before_786), for a
+##                          before render
 ##   OPENSRO_QA_EQUIPFX_LOG=<frames>  (round 741) every that many frames a
 ##                          `QA EQUIPFX` line per shown weapon effect: where
 ##                          its drawn particles are along and off the weapon's
@@ -15481,6 +15529,9 @@ func _qa_step() -> void:
 	var qa_cast := OS.get_environment("OPENSRO_QA_CAST")
 	if qa_cast != "" and _qa_tick >= 20 and player != null:
 		_qa_cast_step(qa_cast)
+	# OPENSRO_QA_FXDRIFT (round 786): see _qa_fx_drift_step.
+	if _qa_fx_drift_spec != "" and player != null:
+		_qa_fx_drift_step()
 	# OPENSRO_QA_SKILLS="<tick>:<skill id>[;...]" (round 785) casts each skill
 	# at its tick through the player's own path (_cast_skill: the re-use
 	# gate, the plan, the walk into reach, the send), the nearest live
@@ -26245,6 +26296,78 @@ func _qa_play_effects(spec: String) -> void:
 		var bone := OS.get_environment("OPENSRO_QA_EFFECT_BONE")
 		SkillEffects.attach(fx, player, bone if bone != "" else "none", Vector3(x, 0, 0))
 		print("QA EFFECT %s at x %.0f: %d node(s) drawn, skipped %s" % [path, x, fx.draw_count(), str(fx.skipped)])
+
+## OPENSRO_QA_FXDRIFT="<tick>:<action>;..." (round 786, FxDriftProbe): where
+## the effects on the player draw against where each is placed, sampled every
+## OPENSRO_QA_FXDRIFT_EVERY ticks (default 5) from the first action on, over a
+## script of actions:
+##   auras:<id>,<id>   start those skills' ACT_L auras on the player (tokens
+##                     from 1, owner "qa:fxdrift"), as OpBuffStart does
+##   phase:<name>      the phase the next samples count under ("stand", the
+##                     first, measures each effect's still bound)
+##   turn:<deg>        turn the body that many degrees a tick (0 stops)
+##   jump:<dx>,<dz>    move the body that far in one tick (a GM move)
+##   zone:<zone>@<x>,<z>[,<frame>]  a gate teleport's arrival as the server
+##                     sends it (OpChangeZoneResult: that zone at (x, 0, z) in
+##                     its frame, the gate's receipt first), through
+##                     _on_change_zone_result -- the user's Donwhang -> Jangan
+##   end               print the phase totals
+## A walk is OPENSRO_QA_WALK_TO's (a ground click). QA only.
+var _qa_fx_drift_spec := OS.get_environment("OPENSRO_QA_FXDRIFT")
+var _qa_fx_drift: FxDriftProbe = null
+var _qa_fx_drift_turn := 0.0
+
+func _qa_fx_drift_step() -> void:
+	for part in _qa_fx_drift_spec.split(";", false):
+		var bits := String(part).split(":", true, 1)
+		if bits.size() < 2 or not bits[0].is_valid_int() or int(bits[0]) != _qa_tick:
+			continue
+		if _qa_fx_drift == null:
+			_qa_fx_drift = FxDriftProbe.new()
+			_qa_fx_drift.verbose = OS.get_environment("OPENSRO_QA_FXDRIFT_QUIET") == ""
+		var act := String(bits[1])
+		var arg := act.get_slice(":", 1) if act.contains(":") else ""
+		var verb := act.get_slice(":", 0)
+		match verb:
+			"auras":
+				var token := 1
+				for sid in arg.split(",", false):
+					var n := SkillEffects.attach_aura("qa:fxdrift", token, int(sid), player).size()
+					print("QA FXDRIFT tick %d aura %d skill %s: %d effect(s)" % [_qa_tick, token, sid, n])
+					token += 1
+			"phase":
+				_qa_fx_drift.set_phase(arg, _qa_tick)
+			"turn":
+				_qa_fx_drift_turn = float(arg)
+				print("QA FXDRIFT tick %d turn %.1f degrees a tick" % [_qa_tick, _qa_fx_drift_turn])
+			"jump":
+				var d := arg.split(",")
+				var by := Vector3(float(d[0]), 0.0, float(d[1]))
+				print("QA FXDRIFT tick %d jump by %s" % [_qa_tick, by])
+				player.global_position += by
+			"zone":
+				var at := arg.get_slice("@", 1).split(",")
+				var r := WorldNet.ChangeZoneResult.new()
+				r.ok = true
+				r.zone = arg.get_slice("@", 0)
+				r.x = float(at[0])
+				r.y = 0.0
+				r.z = float(at[1])
+				r.frame = at[2] if at.size() > 2 else ""
+				print("QA FXDRIFT tick %d zone change to %s at (%.1f, 0, %.1f) frame '%s' from %s" % [
+					_qa_tick, r.zone, r.x, r.z, r.frame, player.global_position])
+				_teleport_arrival_pending = true
+				_on_change_zone_result(r)
+			"end":
+				_qa_fx_drift.finish()
+	if _qa_fx_drift == null:
+		return
+	if _qa_fx_drift_turn != 0.0:
+		player.rotation.y += deg_to_rad(_qa_fx_drift_turn)
+	var every_text := OS.get_environment("OPENSRO_QA_FXDRIFT_EVERY")
+	var every := maxi(int(every_text), 1) if every_text.is_valid_int() else 5
+	if _qa_tick % every == 0:
+		_qa_fx_drift.sample(player, _qa_tick)
 
 ## OPENSRO_QA_CAST's schedule (see the hook): each listed skill's decoration
 ## runs on the player (round 785, _start_deco) at the start of its period, its

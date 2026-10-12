@@ -464,10 +464,11 @@ func _render_frames() -> void:
 		"a re-centre redraws on its frame, step or not")
 	_check(world_after.is_equal_approx(Vector3(0, 0, 73)) and not world_before.is_equal_approx(world_after),
 		"after the re-centre the follower is drawn at the host (%s)" % str(world_after))
-	# A jump carries the whole effect along.
+	# Round 786 (READ, CEFEffect::vslot_007: a placement has no distance
+	# test): a 5,000-unit move is motion, and the follower goes with it.
 	host.position = Vector3(5000, 0, 0)
 	fx._process(0.001)
-	_check((fx.global_transform * q.pos).is_equal_approx(Vector3(5000, 0, 0)), "a jump carries the effect with it")
+	_check((fx.global_transform * q.pos).is_equal_approx(Vector3(5000, 0, 0)), "a 5,000-unit move is motion: the follower goes with the host")
 	fx.sim.clear()
 	host.free()
 	# No skeleton: the host's own frame, not a bare world position.

@@ -121,9 +121,6 @@ var _anchor := Transform3D()
 ## OURS: how far (native units) the host may move from the anchor before
 ## the simulation space re-centres on it.
 const ANCHOR_RECENTRE := 60.0
-## OURS: a placement this far (native units) from the anchor in one frame is
-## a jump (teleport, world re-base), not motion: the effect moves with it.
-const ANCHOR_JUMP := 400.0
 
 # Shared caches: one decode and one compiled template per file, one texture
 # and mesh per asset path, one material per (texture, state). Bounded by
@@ -897,9 +894,9 @@ func _skeleton() -> Skeleton3D:
 ## facing not), so space-0 commands point along world axes and the facing
 ## arrives as the effect's rotation, as retail's SetMatrix hands it
 ## (CEFEffect::vslot_007). The anchor re-centres (EfpSim.shift) once the
-## host is ANCHOR_RECENTRE away; a jump past ANCHOR_JUMP in one frame (a
-## teleport, or the world re-based on a zone change) carries the whole
-## effect along instead (OURS both).
+## host is ANCHOR_RECENTRE away (OURS; invisible). A move of any size is
+## motion (round 786, READ: see shift_effects); a zone change's frame is
+## moved by shift_effects, not here.
 ##
 ## Round 785: `step_due` -- this frame's advance will step -- leaves the
 ## placement to that step (EfpSim.set_origin), one follow a frame as retail.
@@ -939,7 +936,9 @@ func _place(step_due: bool = false) -> bool:
 		_anchor = Transform3D(scale_basis(placed.basis) * effect_scale, placed.origin)
 		top_level = true
 	var e := _anchor.affine_inverse() * placed
-	if e.origin.length() > ANCHOR_JUMP and sim != null:
+	if before_786 and e.origin.length() > ANCHOR_JUMP and sim != null:
+		# QA only (OPENSRO_QA_FX_BEFORE786): rounds 621-785's jump, a move of
+		# more than ANCHOR_JUMP in one frame carried the whole effect along.
 		sim.shift(sim.origin())
 		_anchor.origin = placed.origin
 		e = _anchor.affine_inverse() * placed
@@ -954,6 +953,102 @@ func _place(step_due: bool = false) -> bool:
 		return redraw
 	return sim.set_origin(e.origin, e.basis.orthonormalized(), step_due) or redraw
 
+## Round 786 (READ): what the original does to its effects when the world's
+## coordinate frame moves, and while a zone loads. The user's report: after a
+## gate teleport from Donwhang to Jangan the auras' particles floated off the
+## body and some flew away.
+##
+## - Retail's world is drawn in a frame centred on the player's region, as
+##   this client's grid is built in its zone's frame (round 570). When the
+##   player's position update puts it in another region (CICPlayer slot 37,
+##   0x009d5900), the map works out the offset between the old region and
+##   the new (its slot 7, +0x1c, into a vector), makes the new region the
+##   centre (slot 1), and hands that vector to EVERY object in the object
+##   list (DAT_00ec4b84) through the object's slot 14 (+0x38): CIObject's
+##   (GlobalDataManager::FUN_009c4230) passes it to the object's renderer
+##   (+0x9c -> +4, slot 11: CCompChar::FUN_00c2a980, which hands it to each
+##   particle mod's effect, CRTModParticle::FUN_00c81150), and CICharactor's
+##   (GlobalDataManager::FUN_009cd390) also to each skill decoration it holds
+##   (+0x288; CIDecoSkill::vslot_016, 0x00a4fdb0, each effect of its list).
+##   Each effect takes it through IEasyFxEffect slot 6 (CEFEffect::vslot_006,
+##   0x00ca9f20): the vector is ADDED to the effect's placement (-0x90) and
+##   its old placement (-0x19c), and CEFEffect::FUN_00c865a0 adds it to every
+##   particle's position (+0x1b0) and old position (+0xa4), node by node. So
+##   a change of frame moves every effect whole: no particle sees it as
+##   motion. Into a dungeon (the new region's bit 0x8000) the offset stays
+##   zero (READ, the same function); out of one, what slot 7 gives is OPEN.
+##   shift_effects is that shift; World3D._on_change_zone_result hands it the
+##   offset between the old zone's frame and the new one's.
+## - While the loading screen is up the world is neither updated nor drawn
+##   (READ, round 785: CPSMission::vslot_012, 0x0084c300, returns while
+##   +0xe4 is set), so the arrival reaches an effect as ONE placement, the
+##   first after the screen goes. `world_paused` holds the effects that place
+##   themselves (their _process) for the zone change's whole arrival
+##   (OURS in scope: EquipFx's masters and a dungeon's ambient effects,
+##   stepped in batches and placed rigidly or not at all, keep stepping).
+## - A placement is stored as given (CEFEffect::vslot_007, 0x00caa020, and
+##   vslot_008, 0x00ca9460: no distance test), so a move of any size is
+##   motion. Rounds 621-785 carried a move of more than ANCHOR_JUMP (400,
+##   OURS) whole instead; this client's zone frames made a gate teleport a
+##   move of 141 units (Donwhang's gate point to Jangan's, MEASURED), under
+##   it, so every particle that does not follow (u6 = 0) was left where the
+##   body had stood, and a follower of an ancestor that died on that frame
+##   carried the whole move on (round 785's frozen move): the user's report.
+##   With the frame's shift the arrival is the true move, about 30,000 units
+##   from Donwhang's gate to Jangan's; what does not follow is left there,
+##   as in retail.
+##
+## What differs (OURS): the shift moves the effect's node, so a dead
+## ancestor a live particle still follows moves with it; retail's walk
+## (FUN_00c865a0) reaches only the particles in the nodes' lists.
+
+## Rounds 621-785's carry of a large one-frame move (QA before-renders only,
+## OPENSRO_QA_FX_BEFORE786).
+const ANCHOR_JUMP := 400.0
+## QA (OPENSRO_QA_FX_BEFORE786=1): this client as rounds 621-785 left it --
+## no frame shift, no pause while a zone loads, a jump past ANCHOR_JUMP
+## carried -- for a before/after render from one build.
+static var before_786 := OS.get_environment("OPENSRO_QA_FX_BEFORE786") != ""
+## Held while a zone change's arrival is laid out (see above).
+static var world_paused := false
+
+## The effects under `root` placed in the world now (anchored): the ones a
+## change of frame must move (shift_effects). Taken before the change, so
+## effects made in the new frame are not moved.
+static func placed_under(root: Node) -> Array:
+	var out: Array = []
+	if root == null or not is_instance_valid(root):
+		return out
+	for n in root.find_children("*", "EfpEffect", true, false):
+		var fx := n as EfpEffect
+		if fx != null and fx._anchored and not fx.is_queued_for_deletion():
+			out.append(fx)
+	return out
+
+## Moves each effect of `effects` whole by `by` (world units): its anchor --
+## and so every particle, which lives in the anchor's space -- and its last
+## placement (READ: CEFEffect::vslot_006, see above). Returns how many moved.
+static func shift_effects(effects: Array, by: Vector3) -> int:
+	if before_786 or by == Vector3.ZERO:
+		return 0
+	var n := 0
+	for v in effects:
+		if not is_instance_valid(v):
+			continue
+		var fx := v as EfpEffect
+		if fx == null or not fx._anchored or fx.is_queued_for_deletion():
+			continue
+		fx._anchor.origin += by
+		fx._placed.origin += by
+		fx.global_transform = fx._anchor
+		n += 1
+	return n
+
+## Holds (true) or releases the effects that place themselves while a zone
+## loads (see above).
+static func pause_world(on: bool) -> void:
+	world_paused = on and not before_786
+
 ## A basis's scale alone, its handedness kept (a mirrored basis keeps a
 ## negative Z), its rotation dropped.
 static func scale_basis(b: Basis) -> Basis:
@@ -963,7 +1058,8 @@ static func scale_basis(b: Basis) -> Basis:
 	return Basis.from_scale(sc)
 
 func _process(delta: float) -> void:
-	if sim == null:
+	if sim == null or world_paused:
+		# Round 786 (READ): nothing is updated while a zone loads (pause_world).
 		return
 	if profile and FrameSplit.on:
 		var t := Time.get_ticks_usec()
