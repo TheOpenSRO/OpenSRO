@@ -88,11 +88,20 @@ class_name SkillEffects
 ## - READY / WAIT AT_LOOP: until the cast's SHOT starts, cancel_cast, or
 ##   READY_LOOP_MAX (OURS guard).
 ##
-## WHERE (StartBone, StartOffset): at the named bone of the body's current
-## skeleton, turned with the body (OURS: the bone's own rotation is not
-## applied); "none", "*" and "#..." (OPEN) and a missing bone put it at the
-## skeleton's origin. StartOffset is added in the body's native units
-## (INFERRED). The effect is a child of the body and re-finds its skeleton
+## WHERE (StartBone, StartOffset, Rotate; READ round 785 -- the row parser
+## GlobalEffectManager::FUN_00a9d0f0, the placement IDecoSkill::FUN_00a4a680
+## and FUN_00a4ddc0): at the named bone of the body's current skeleton,
+## turned with the BONE (a plain name gets the placement flags 2, which keep
+## the bone's rotation; rounds 620-784 turned it with the body); '@name' at
+## the bone along the world's axes (flags 0); "none" at the body, turned with
+## it. StartOffset is turned by the body (not the bone) and added to the
+## bone's position (the post-pass at 0x00a95310 points the row at it when it
+## is not zero). Rotate turns the effect in its own frame after the
+## placement: 1-360 about Y by that many degrees (FUN_0043cda0), 361-720
+## about X by value - 360 (FUN_009ecc10), above 720 about Z by value - 720
+## (FUN_00a4d820) -- 284 effect rows (MEASURED). "*" (flags 3: the body's
+## turn and a height) and "#..." (flags 6: another object's bone) and a
+## missing bone put it at the skeleton's origin, turned with the body (OPEN). The effect is a child of the body and re-finds its skeleton
 ## each frame (EfpEffect.follow_host), so a skeleton rebuilt by an equipment
 ## change keeps its auras, and an aura attached before the skeleton exists
 ## finds it when it comes.
@@ -131,6 +140,7 @@ const C_PATH := 17
 const C_NAME := 18
 const C_BONE := 19
 const C_OFFSET := 20
+const C_ROTATE := 24 ## round 785: "Rotate" (the header's own name is looked for first)
 
 ## The Effect Quality option (round 694, VideoOptions.EFFECT): 0 "Turn Off
 ## All Effects", 1 "See Hit Effects", 2 "See All Effects" (the default).
@@ -170,7 +180,7 @@ static var effect_factory: Callable = Callable()
 static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	var in_section := false
-	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET}
+	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET, "rotate": C_ROTATE}
 	for raw in SkillAudio._utf16_lines(bytes):
 		var line: String = raw
 		if line.begins_with("#section"):
@@ -182,7 +192,7 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 		if line.begins_with("//"):
 			var header := line.substr(2).split("\t")
 			var names := {"ActType": "act", "Obj Path": "path", "ObjName": "name",
-				"StartBone": "bone", "StartOffset": "offset"}
+				"StartBone": "bone", "StartOffset": "offset", "Rotate": "rotate"}
 			for h in names:
 				var at := header.find(h)
 				if at >= 0:
@@ -210,6 +220,7 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			"path": dir + obj,
 			"bone": cols[int(col["bone"])].strip_edges() if cols.size() > int(col["bone"]) else "none",
 			"offset": parse_offset(cols[int(col["offset"])] if cols.size() > int(col["offset"]) else ""),
+			"rotate": int(cols[int(col["rotate"])].strip_edges()) if cols.size() > int(col["rotate"]) and cols[int(col["rotate"])].strip_edges().is_valid_int() else 0,
 		}
 		if not out.has(id):
 			out[id] = []
@@ -375,11 +386,42 @@ static func skeleton_of(host: Node) -> Skeleton3D:
 			return n as Skeleton3D
 	return null
 
-## Puts `fx` on `host` at `bone` + `offset` (see the header): a child of the
-## body, placed each frame in its current skeleton's frame.
-static func attach(fx: EfpEffect, host: Node3D, bone: String, offset: Vector3) -> void:
+## Puts `fx` on `host` at `bone` + `offset`, turned by the row's `rotate`
+## (see the header): a child of the body, placed each frame in its current
+## skeleton's frame.
+static func attach(fx: EfpEffect, host: Node3D, bone: String, offset: Vector3, rotate: int = 0) -> void:
 	host.add_child(fx)
+	var b := bone.strip_edges()
+	var named := b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#")
+	fx.follow_bone_turn = named and not b.begins_with("@")
+	fx.follow_world_turn = named and b.begins_with("@")
+	fx.follow_basis = rotate_basis(rotate)
 	fx.follow_host(host, bone, offset)
+
+## The row's Rotate as the turn it gives the effect (READ, see the header):
+## the client's row-vector matrices read as bases whose columns are their
+## rows (EfpSim.basis_of), so a D3D `v * M` is `basis * v` here.
+static func rotate_basis(rotate: int) -> Basis:
+	if rotate == 0:
+		return Basis.IDENTITY
+	var axis := 0
+	var deg := rotate
+	if rotate > 720:
+		axis = 2
+		deg = rotate - 720
+	elif rotate > 360:
+		axis = 1
+		deg = rotate - 360
+	var a := float(deg) / 360.0 * TAU
+	var c := cos(a)
+	var sn := sin(a)
+	match axis:
+		1: # FUN_009ecc10: rows (1,0,0) (0,c,s) (0,-s,c)
+			return Basis(Vector3(1, 0, 0), Vector3(0, c, sn), Vector3(0, -sn, c))
+		2: # FUN_00a4d820: rows (c,s,0) (-s,c,0) (0,0,1)
+			return Basis(Vector3(c, sn, 0), Vector3(-sn, c, 0), Vector3(0, 0, 1))
+	# FUN_0043cda0: rows (c,0,s) (0,1,0) (-s,0,c)
+	return Basis(Vector3(c, 0, sn), Vector3(0, 1, 0), Vector3(-sn, 0, c))
 
 ## Plays `skill_id`'s effects of one phase now. Returns the effects started.
 ## (Round 620's play_phase stopped the caster's READY loops on any later
@@ -414,7 +456,7 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 			fx.max_life = READY_LOOP_MAX
 			if caster != null and _casts.has(caster.get_instance_id()):
 				(_casts[caster.get_instance_id()]["loops"] as Array).append(fx)
-		attach(fx, host, String(r["bone"]), r["offset"])
+		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
 		print("EFFECTS skill %d %s/%d: %s %s at %s (%d nodes drawn%s) %s" % [skill_id,
 			SkillAudio._phase_name(ani_type), start_event, ACT_TYPES[act] if act >= 0 else "?",
@@ -597,7 +639,7 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		fx.loop = kept_act(int(r["act"]))
 		fx.static_host = int(r["act"]) == AT_STOP
 		fx.reserved = own_body != null and host == own_body
-		attach(fx, host, String(r["bone"]), r["offset"])
+		attach(fx, host, String(r["bone"]), r["offset"], int(r.get("rotate", 0)))
 		started.append(fx)
 	if not started.is_empty():
 		var now := now_ms if now_ms >= 0 else _now()

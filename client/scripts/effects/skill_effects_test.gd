@@ -149,6 +149,12 @@ func _run() -> void:
 		caster.position -= Vector3(30, 0, 0)
 		(stop[0] as EfpEffect).stop()
 
+	# Round 785 (READ: GlobalEffectManager::FUN_00a9d0f0's placement flags,
+	# IDecoSkill::FUN_00a4a680 / FUN_00a4ddc0): a plain StartBone turns the
+	# effect with the bone; '@' puts it at the bone along the world's axes;
+	# "none" turns it with the body; Rotate turns it in its own frame after.
+	_bone_turns()
+
 	# An equipment change frees the skeleton: the aura stays and moves to the new one.
 	var aura0: Array = se.attach_aura("character:1", 5, 90, caster)
 	skel.free()
@@ -251,6 +257,42 @@ func _run() -> void:
 	target.queue_free()
 	bare.queue_free()
 	_finish()
+
+func _bone_turns() -> void:
+	var body := Node3D.new()
+	body.rotation.y = 0.5 # the body faces somewhere else than the bone
+	get_root().add_child(body)
+	var sk := Skeleton3D.new()
+	sk.add_bone("Bip01")
+	sk.add_bone("Bip01 R Finger2")
+	sk.set_bone_parent(1, 0)
+	var bone_turn := Basis(Vector3(0, 0, 1), PI / 2)
+	sk.set_bone_rest(1, Transform3D(bone_turn, Vector3(1, 2, 3)))
+	sk.reset_bone_poses()
+	body.add_child(sk)
+	var body_turn := body.global_transform.basis
+	var cases := [["Bip01 R Finger2", 0, body_turn * bone_turn, "a plain StartBone: the bone's turn"],
+		["@Bip01 R Finger2", 0, Basis.IDENTITY, "'@': the world's axes at the bone"],
+		["none", 0, body_turn, "\"none\": the body's turn"],
+		["Bip01 R Finger2", 450, body_turn * bone_turn * Basis(Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(0, -1, 0)),
+			"Rotate 450: the bone's turn, then 90 degrees about X in the effect's frame"]]
+	for c in cases:
+		var fx := _effect("x.efp")
+		se.attach(fx, body, String(c[0]), Vector3(0, 0, 1), int(c[1]))
+		fx._process(0.0)
+		var want: Basis = c[2]
+		var at_ok := true
+		if String(c[0]) != "none":
+			# the bone's position plus the offset turned by the body, not the bone
+			at_ok = fx.placed_at().is_equal_approx(body.global_transform * (Vector3(1, 2, 3) + Vector3(0, 0, 1)))
+		_check(fx.sim._root.rot.is_equal_approx(want) and at_ok,
+			"%s (%s, at %s)" % [String(c[3]), str(fx.sim._root.rot), str(fx.placed_at())])
+		fx.stop()
+	_check(se.rotate_basis(990).is_equal_approx(Basis(Vector3(0, -1, 0), Vector3(1, 0, 0), Vector3(0, 0, 1)))
+		and se.rotate_basis(180).is_equal_approx(Basis(Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, -1)))
+		and se.rotate_basis(0) == Basis.IDENTITY,
+		"Rotate 990 is 270 degrees about Z, 180 is 180 about Y, 0 none")
+	body.free()
 
 func _skeleton(at: Vector3) -> Skeleton3D:
 	var sk := Skeleton3D.new()

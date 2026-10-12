@@ -823,6 +823,19 @@ var follow_basis := Basis.IDENTITY
 ## review: an object's mode-0 particle entry, CRTModParticle::FUN_00c81190
 ## 0xc811c5..0xc811e0 multiplies the bone's matrix by the world's).
 var follow_bone_full := false
+## Round 785: a skill row's effect at a named bone (READ: the row parser
+## GlobalEffectManager::FUN_00a9d0f0 gives a plain StartBone the placement
+## flags 2, '@' 0, '#' 6, '*' 3; IDecoSkill::FUN_00a4a680 keeps the bone's
+## rotation -- its matrix times the body's, the model scale taken out -- only
+## with flag 2, and resets it to identity without). So `follow_bone_turn`:
+## the effect turns with the bone (its offset is still in the body's frame,
+## READ: the offset is turned by the body's matrix before the bone's is
+## applied, and added to the bone's position); `follow_world_turn` ('@'):
+## at the bone, along the world's axes. Neither: the body's turn (no bone,
+## 'none', READ: the body's matrix), as before. follow_basis is applied in
+## the effect's frame after it (the row's Rotate, FUN_00a4ddc0).
+var follow_bone_turn := false
+var follow_world_turn := false
 ## The effect's own uniform scale on top of its host's (round 734): an
 ## equipment glow's particle row asks for col 3 / 100 (READ: CRTModParticle
 ## +0xc0, handed each placement to CEFEffect::vslot_010, which sets the
@@ -844,6 +857,8 @@ func _skeleton() -> Skeleton3D:
 	_follow_skel = SkillEffects.skeleton_of(_follow_host)
 	_follow_bone = -1
 	var b := _follow_bone_name.strip_edges()
+	if b.begins_with("@"):
+		b = b.substr(1) # round 785: '@' names the bone, at the world's axes (READ)
 	if _follow_skel != null and b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#"):
 		_follow_bone = _follow_skel.find_bone(b)
 	return _follow_skel
@@ -878,6 +893,14 @@ func _place(step_due: bool = false) -> bool:
 		var at := _follow_offset
 		if follow_bone_full and _follow_bone >= 0:
 			placed = skel.global_transform * skel.get_bone_global_pose(_follow_bone) * Transform3D(follow_basis, at)
+		elif (follow_bone_turn or follow_world_turn) and _follow_bone >= 0:
+			# Round 785 (READ, see follow_bone_turn): the bone's position plus
+			# the offset in the body's frame; the bone's turn (or the world's)
+			# at the body's scale, then the row's own turn.
+			var g := skel.global_transform
+			var pose := skel.get_bone_global_pose(_follow_bone)
+			var b := g.basis * pose.basis.orthonormalized() if follow_bone_turn else scale_basis(g.basis)
+			placed = Transform3D(b * follow_basis, g * (pose.origin + at))
 		else:
 			if _follow_bone >= 0:
 				at += skel.get_bone_global_pose(_follow_bone).origin
