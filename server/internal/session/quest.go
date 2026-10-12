@@ -69,6 +69,11 @@ type QuestDeps struct {
 type questLog struct {
 	mu  sync.Mutex
 	log quest.Log
+	// wmu serialises the character's store writes (round 785 review): each
+	// write takes it, then reads the state as it is at that moment, so a
+	// slow earlier write never lands over a newer one. Lock order: wmu
+	// before mu, never the other way.
+	wmu sync.Mutex
 }
 
 type talkEntry struct {
@@ -84,11 +89,14 @@ const (
 )
 
 type questTalk struct {
-	npc     string
-	entity  uint32
-	stage   int
-	list    []talkEntry
-	pending int64
+	// characterID is the character the talk was opened for: a talk is never
+	// answered for another (a character switch on the session).
+	characterID int64
+	npc         string
+	entity      uint32
+	stage       int
+	list        []talkEntry
+	pending     int64
 }
 
 type questRuntime struct {
@@ -163,6 +171,49 @@ func ForgetQuestSession(sessionID uint64) {
 	delete(rt.marks, sessionID)
 	delete(rt.markLevel, sessionID)
 	rt.mu.Unlock()
+}
+
+// forgetQuestTalk drops the session's open quest talk (round 785 review): a
+// teleport, a character entering the world on the session, or the NPC
+// talk's end (0x704B). keepReward keeps a talk at its reward window, which
+// the client keeps open past the talk box's close (OURS; the reward is
+// still measured against the NPC when it is taken).
+func forgetQuestTalk(sessionID uint64, keepReward bool) {
+	rt := questRT.Load()
+	if rt == nil {
+		return
+	}
+	rt.mu.Lock()
+	if t := rt.talks[sessionID]; t != nil && !(keepReward && t.stage == talkReward) {
+		delete(rt.talks, sessionID)
+	}
+	rt.mu.Unlock()
+}
+
+// forgetQuestLog drops a character's cached log once it is out of the world
+// (round 785 review: rt.logs grew by one entry per character ever seen). A
+// write still running holds the log's own pointer and finishes; the next
+// login reads the store again.
+func forgetQuestLog(characterID int64) {
+	rt := questRT.Load()
+	if rt == nil {
+		return
+	}
+	rt.mu.Lock()
+	ql := rt.logs[characterID]
+	rt.mu.Unlock()
+	if ql == nil {
+		return
+	}
+	// The writes in flight land first, so a login that reads the store
+	// next finds them.
+	ql.wmu.Lock()
+	rt.mu.Lock()
+	if rt.logs[characterID] == ql {
+		delete(rt.logs, characterID)
+	}
+	rt.mu.Unlock()
+	ql.wmu.Unlock()
 }
 
 // npcs returns the NPC records of code (all placements' unique ids).
@@ -268,10 +319,38 @@ func (rt *questRuntime) sendUpdate(sess *gateway.Session, kind byte, q *quest.Qu
 	sess.Send(&proto.Packet{Opcode: quest.OpUpdate, Data: quest.EncodeUpdate(kind, uint32(q.ID), v)})
 }
 
-func (rt *questRuntime) persist(ctx context.Context, characterID int64, s *quest.State) {
-	if err := rt.deps.Store.Put(ctx, characterID, s.Clone()); err != nil {
-		rt.deps.Logger.Warn("quest: saving state failed", "character", characterID, "quest", s.QuestID, "err", err)
+// persist writes quest id's state for the character as it is now (or its
+// removal, when the log no longer holds it) and returns what it wrote.
+// Writes are serialised per character under ql.wmu, and each reads the state
+// at its own turn, so the store ends at the newest state whatever order the
+// callers reach here in (round 785 review: snapshots taken outside the lock
+// could land out of order).
+func (rt *questRuntime) persist(ctx context.Context, characterID int64, ql *questLog, id int64) (quest.State, error) {
+	ql.wmu.Lock()
+	defer ql.wmu.Unlock()
+	return rt.persistLocked(ctx, characterID, ql, id)
+}
+
+// persistLocked is persist with ql.wmu held.
+func (rt *questRuntime) persistLocked(ctx context.Context, characterID int64, ql *questLog, id int64) (quest.State, error) {
+	ql.mu.Lock()
+	s := ql.log[id]
+	st := quest.State{QuestID: id}
+	present := s != nil
+	if present {
+		st = s.Clone()
 	}
+	ql.mu.Unlock()
+	var err error
+	if present {
+		err = rt.deps.Store.Put(ctx, characterID, st)
+	} else {
+		err = rt.deps.Store.Delete(ctx, characterID, id)
+	}
+	if err != nil {
+		rt.deps.Logger.Warn("quest: saving state failed", "character", characterID, "quest", id, "err", err)
+	}
+	return st, err
 }
 
 // questAfterEnter sends the arriving character its quest log and marks.
@@ -310,6 +389,9 @@ func questAfterEnter(ctx context.Context, sess *gateway.Session, owned *characte
 	sess.Send(&proto.Packet{Opcode: quest.OpLog, Data: quest.EncodeLog(completed, active)})
 	rt.mu.Lock()
 	delete(rt.marks, sess.ID())
+	// A character entering on this session (a character switch) answers
+	// no talk opened for another (round 785 review).
+	delete(rt.talks, sess.ID())
 	rt.mu.Unlock()
 	rt.refreshMarks(ctx, sess, owned.ID, owned.Level)
 }
@@ -451,7 +533,7 @@ func questTalkOpen(ctx context.Context, sess *gateway.Session, e world.Entity, e
 		greeting = "SN_" + npc + "_QS"
 	}
 	rt.mu.Lock()
-	rt.talks[sess.ID()] = &questTalk{npc: npc, entity: entity, stage: talkList, list: list}
+	rt.talks[sess.ID()] = &questTalk{characterID: e.CharacterID, npc: npc, entity: entity, stage: talkList, list: list}
 	rt.mu.Unlock()
 	sess.Send(&proto.Packet{Opcode: quest.OpTalkPage, Data: quest.EncodeTalkPage(quest.PageList, greeting, lines)})
 	return true
@@ -467,6 +549,11 @@ func QuestHandler() gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		rt := questRT.Load()
 		if rt == nil {
+			return nil
+		}
+		switch p.Opcode {
+		case quest.OpTalkAnswer, quest.OpTalkAnswerAlt, quest.OpTakeReward, quest.OpAbandon, quest.OpClaim:
+		default:
 			return nil
 		}
 		e, ok := rt.deps.Hub.EntityBySession(sess.ID())
@@ -502,14 +589,34 @@ func QuestHandler() gateway.Handler {
 	}
 }
 
-func (rt *questRuntime) talkOf(sess *gateway.Session) *questTalk {
+// talkOf is the session's open talk for e's character: nil when there is
+// none, when it was opened for another character, or when e no longer
+// stands within the talk's reach of its NPC (round 785 review;
+// questTalkInReach).
+func (rt *questRuntime) talkOf(sess *gateway.Session, e world.Entity) *questTalk {
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.talks[sess.ID()]
+	t := rt.talks[sess.ID()]
+	rt.mu.Unlock()
+	if t == nil || t.characterID != e.CharacterID || !questTalkInReach(e, t) {
+		return nil
+	}
+	return t
+}
+
+// questTalkInReach reports whether e stands within the NPC select's reach
+// (npcTarget: the same zone, npcInteractRange) of t's NPC. A talk with no
+// NPC entity (the quest window's own reward button, 0x70D8) has nothing to
+// measure.
+func questTalkInReach(e world.Entity, t *questTalk) bool {
+	if t.entity == 0 {
+		return true
+	}
+	_, code := npcTarget(e, t.entity)
+	return code == 0
 }
 
 func (rt *questRuntime) answer(ctx context.Context, sess *gateway.Session, e world.Entity, resp int) {
-	t := rt.talkOf(sess)
+	t := rt.talkOf(sess, e)
 	if t == nil {
 		return
 	}
@@ -561,7 +668,7 @@ func (rt *questRuntime) accept(ctx context.Context, sess *gateway.Session, e wor
 	for _, it := range give {
 		rt.addItem(ctx, e.CharacterID, it.Code, max(it.Count, 1))
 	}
-	rt.persist(ctx, e.CharacterID, &st)
+	_, _ = rt.persist(ctx, e.CharacterID, ql, q.ID)
 	rt.deps.Logger.Info("quest: accepted", "character", e.CharacterID, "quest", q.Code, "id", q.ID, "npc", t.npc)
 	rt.sendUpdate(sess, quest.UpdateAdd, q, &st)
 	questPage(sess, quest.PageConfirm, q.MenuText(t.npc, "BASIC_MENUSTRING_AT_ACCEPT"))
@@ -586,8 +693,7 @@ func (rt *questRuntime) atNPC(ctx context.Context, sess *gateway.Session, e worl
 	}
 	talked := ""
 	for _, pr := range progress {
-		ps := ql.snapshot(pr.Quest.ID)
-		rt.persist(ctx, e.CharacterID, &ps)
+		ps, _ := rt.persist(ctx, e.CharacterID, ql, pr.Quest.ID)
 		rt.sendUpdate(sess, quest.UpdateChange, pr.Quest, &ps)
 		if pr.Quest.ID == q.ID {
 			m := q.Missions[pr.Mission]
@@ -652,7 +758,7 @@ func (rt *questRuntime) claimFromWindow(ctx context.Context, sess *gateway.Sessi
 	}
 	sess.Send(&proto.Packet{Opcode: quest.OpClaimResult, Data: quest.EncodeOKID(uint32(id))})
 	rt.mu.Lock()
-	rt.talks[sess.ID()] = &questTalk{stage: talkReward, pending: id}
+	rt.talks[sess.ID()] = &questTalk{characterID: e.CharacterID, stage: talkReward, pending: id}
 	rt.mu.Unlock()
 	sess.Send(&proto.Packet{Opcode: quest.OpRewardWindow, Data: quest.EncodeRewardWindow(uint32(id), q.TextPayCon)})
 }
@@ -663,7 +769,7 @@ func (rt *questRuntime) takeReward(ctx context.Context, sess *gateway.Session, e
 	fail := func() {
 		sess.Send(&proto.Packet{Opcode: quest.OpTakeRewardResult, Data: quest.EncodeFailByte(quest.RewardError)})
 	}
-	t := rt.talkOf(sess)
+	t := rt.talkOf(sess, e)
 	q := rt.cat.ByID[id]
 	if t == nil || t.stage != talkReward || t.pending != id || q == nil {
 		fail()
@@ -684,22 +790,39 @@ func (rt *questRuntime) takeReward(ctx context.Context, sess *gateway.Session, e
 		fail()
 		return
 	}
+	// The claim and its write under the character's write lock: the paid
+	// state reaches the store before anything is paid (round 785 review). A
+	// write that fails puts the quest back to unpaid and refuses (0xB515
+	// {2, 2}); nothing is taken or paid.
+	ql.wmu.Lock()
 	ql.mu.Lock()
-	ok, take := quest.Claim(ql.log, q, t.npc)
-	var st quest.State
-	if ok {
-		st = ql.log[q.ID].Clone()
+	var prev quest.State
+	if s := ql.log[q.ID]; s != nil {
+		prev = s.Clone()
 	}
+	ok, take := quest.Claim(ql.log, q, t.npc)
 	ql.mu.Unlock()
 	if !ok {
+		ql.wmu.Unlock()
 		fail()
 		return
 	}
+	if _, err := rt.persistLocked(ctx, e.CharacterID, ql, q.ID); err != nil {
+		ql.mu.Lock()
+		ql.log[q.ID] = &prev
+		ql.mu.Unlock()
+		ql.wmu.Unlock()
+		rt.deps.Logger.Warn("quest: reward refused, the paid state was not saved", "character", e.CharacterID, "quest", q.Code)
+		fail()
+		return
+	}
+	ql.wmu.Unlock()
+	rt.mu.Lock()
 	t.stage = talkDone
+	rt.mu.Unlock()
 	for _, it := range take {
 		rt.takeItem(ctx, e.CharacterID, it.Code, -1)
 	}
-	rt.persist(ctx, e.CharacterID, &st)
 	rt.pay(ctx, sess, e, q, items)
 	rt.sendUpdate(sess, quest.UpdateDropped, q, nil)
 	sess.Send(&proto.Packet{Opcode: quest.OpTakeRewardResult, Data: []byte{1}})
@@ -825,11 +948,6 @@ func (rt *questRuntime) abandon(ctx context.Context, sess *gateway.Session, e wo
 	if active {
 		take = quest.Abandon(ql.log, q)
 	}
-	s := ql.log[id]
-	var st quest.State
-	if s != nil {
-		st = s.Clone()
-	}
 	ql.mu.Unlock()
 	if !active {
 		sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeFailByte(quest.AbandonNotAllowed)})
@@ -838,11 +956,7 @@ func (rt *questRuntime) abandon(ctx context.Context, sess *gateway.Session, e wo
 	for _, it := range take {
 		rt.takeItem(ctx, e.CharacterID, it.Code, -1)
 	}
-	if s == nil {
-		rt.deps.Store.Delete(ctx, e.CharacterID, id)
-	} else {
-		rt.persist(ctx, e.CharacterID, &st)
-	}
+	_, _ = rt.persist(ctx, e.CharacterID, ql, id)
 	rt.deps.Logger.Info("quest: given up", "character", e.CharacterID, "quest", q.Code)
 	sess.Send(&proto.Packet{Opcode: quest.OpAbandonResult, Data: quest.EncodeOKID(uint32(id))})
 	rt.sendUpdate(sess, quest.UpdateRemove, q, nil)
@@ -852,6 +966,13 @@ func (rt *questRuntime) abandon(ctx context.Context, sess *gateway.Session, e wo
 // questOnKill credits characterID's kill of monster: kill counts and
 // gather drops (the drop goes into the bag; a full bag drops nothing and
 // counts nothing -- OURS).
+//
+// Round 785 review: the drop is granted FIRST and its mission stepped only
+// when it was given, against the log as it is then (quest.Credit re-tests
+// the quest and the mission under ql.mu). A credit the log no longer takes
+// -- the quest given up, paid or finished meanwhile -- takes its drop back.
+// Nothing indexes a state read before the bag was touched, and every lock
+// here is released by defer.
 func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, monster combat.Monster) {
 	rt := questRT.Load()
 	if rt == nil || monster.CodeName == "" {
@@ -861,10 +982,8 @@ func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, 
 	if err != nil {
 		return
 	}
-	ql.mu.Lock()
-	progress := rt.cat.OnKill(ql.log, monster.CodeName, rt.roll)
-	ql.mu.Unlock()
-	if len(progress) == 0 {
+	credits := ql.killCredits(rt.cat, monster.CodeName, rt.roll)
+	if len(credits) == 0 {
 		// A level-up by this kill opens quests: the marks follow (OURS).
 		if sess != nil && rt.deps.Hub != nil {
 			if e, ok := entityOf(rt.deps.Hub, characterID); ok {
@@ -880,16 +999,15 @@ func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, 
 	}
 	changed := map[int64]*quest.Quest{}
 	finished := false
-	for _, pr := range progress {
-		if pr.Item != "" && !rt.addItem(ctx, characterID, pr.Item, 1) {
-			ql.mu.Lock()
-			if s := ql.log[pr.Quest.ID]; s != nil {
-				s.Counts[pr.Mission]--
-				if pr.Finished {
-					s.Status = quest.StatusAchieving
-				}
+	for _, k := range credits {
+		if k.Item != "" && !rt.addItem(ctx, characterID, k.Item, 1) {
+			continue // the bag refused the drop: nothing counts
+		}
+		pr, ok := ql.credit(k)
+		if !ok {
+			if k.Item != "" {
+				rt.takeItem(ctx, characterID, k.Item, 1)
 			}
-			ql.mu.Unlock()
 			continue
 		}
 		changed[pr.Quest.ID] = pr.Quest
@@ -903,8 +1021,7 @@ func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, 
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for _, id := range ids {
-		st := ql.snapshot(id)
-		rt.persist(ctx, characterID, &st)
+		st, _ := rt.persist(ctx, characterID, ql, id)
 		rt.sendUpdate(sess, quest.UpdateChange, changed[id], &st)
 	}
 	if finished {
@@ -916,6 +1033,21 @@ func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, 
 		}
 		rt.refreshMarks(ctx, sess, characterID, level)
 	}
+}
+
+// killCredits lists the missions a kill of code advances, without changing
+// the log, under ql.mu.
+func (ql *questLog) killCredits(cat *quest.Catalog, code string, roll func(float64) bool) []quest.KillCredit {
+	ql.mu.Lock()
+	defer ql.mu.Unlock()
+	return cat.KillCredits(ql.log, code, roll)
+}
+
+// credit applies one kill credit to the log as it is now, under ql.mu.
+func (ql *questLog) credit(k quest.KillCredit) (quest.Progress, bool) {
+	ql.mu.Lock()
+	defer ql.mu.Unlock()
+	return quest.Credit(ql.log, k)
 }
 
 func (rt *questRuntime) itemID(ctx context.Context, code string) int64 {

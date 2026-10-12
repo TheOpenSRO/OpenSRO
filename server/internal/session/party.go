@@ -318,12 +318,13 @@ func handlePartyAnswer(ctx context.Context, sess *gateway.Session, data []byte, 
 		return
 	}
 	// Round 785: the same box answers a resurrection offer (kind 4/8,
-	// skillsupport.go); a dead character's answer is the revive's.
-	if takeResurrection(ctx, sess, me.CharacterID, accept) {
-		return
-	}
+	// skillsupport.go). The invitation is asked first (skill_support.md;
+	// round 785 review: the client ignores kinds 4/8, so an offer must never
+	// take an answer an invitation is waiting for); with none pending the
+	// answer is the offer's.
 	inv, ok := d.Parties.TakeInvite(me.CharacterID)
 	if !ok {
+		takeResurrection(ctx, sess, me.CharacterID, accept)
 		return
 	}
 	inv.Target.Session = sess

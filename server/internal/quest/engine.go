@@ -209,10 +209,21 @@ func step(q *Quest, s *State, i int, item string) Progress {
 	return p
 }
 
-// OnKill credits a kill of the species code. roll(rate) decides a gather
-// mission's drop; rate is in percent.
-func (c *Catalog) OnKill(l Log, code string, roll func(rate float64) bool) []Progress {
-	var out []Progress
+// KillCredit is one mission a kill would advance: Item is the quest item a
+// gather mission's drop puts in the bag ("" for a kill mission).
+type KillCredit struct {
+	Quest   *Quest
+	Mission int
+	Item    string
+}
+
+// KillCredits lists the missions a kill of the species code advances,
+// rolling each gather mission's drop (roll(rate), rate in percent), without
+// changing l. The caller grants the drops it can and then applies each
+// credit with Credit (round 785 review: a drop the bag refuses must not be
+// counted, and the log can change between the two).
+func (c *Catalog) KillCredits(l Log, code string, roll func(rate float64) bool) []KillCredit {
+	var out []KillCredit
 	ids := make([]int64, 0, len(l))
 	for id := range l {
 		ids = append(ids, id)
@@ -231,7 +242,7 @@ func (c *Catalog) OnKill(l Log, code string, roll func(rate float64) bool) []Pro
 			switch m.Type {
 			case MissionKillMonster:
 				if hasString(m.Targets, code) {
-					out = append(out, step(q, s, i, ""))
+					out = append(out, KillCredit{Quest: q, Mission: i})
 				}
 			case MissionGatherFromMonster:
 				for t, target := range m.Targets {
@@ -243,14 +254,36 @@ func (c *Catalog) OnKill(l Log, code string, roll func(rate float64) bool) []Pro
 						rate = m.Rates[t]
 					}
 					if roll(rate) {
-						out = append(out, step(q, s, i, m.Item))
+						out = append(out, KillCredit{Quest: q, Mission: i, Item: m.Item})
 					}
 					break
 				}
 			}
-			if s.Status != StatusAchieving {
-				break
-			}
+		}
+	}
+	return out
+}
+
+// Credit applies k to l when it still holds: the quest open and achieving,
+// the mission in range and not yet done. false leaves l unchanged.
+func Credit(l Log, k KillCredit) (Progress, bool) {
+	s := l[k.Quest.ID]
+	if s == nil || s.Status != StatusAchieving || k.Mission < 0 || k.Mission >= len(k.Quest.Missions) {
+		return Progress{}, false
+	}
+	if k.Mission < len(s.Counts) && s.Counts[k.Mission] >= Required(k.Quest.Missions[k.Mission]) {
+		return Progress{}, false
+	}
+	return step(k.Quest, s, k.Mission, k.Item), true
+}
+
+// OnKill credits a kill of the species code with every drop granted.
+// roll(rate) decides a gather mission's drop; rate is in percent.
+func (c *Catalog) OnKill(l Log, code string, roll func(rate float64) bool) []Progress {
+	var out []Progress
+	for _, k := range c.KillCredits(l, code, roll) {
+		if p, ok := Credit(l, k); ok {
+			out = append(out, p)
 		}
 	}
 	return out

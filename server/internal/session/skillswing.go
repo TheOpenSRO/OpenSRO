@@ -3,46 +3,16 @@ package session
 // The plain swing's share of round 785: a swing is its weapon's base attack
 // skill (PrepareAction 0x4ad030, round 505), so it takes the running imbue's
 // add (0x59b480 copies the imbue's row into every action, READ), the buffs'
-// damage percent, and answers with the action block as a cast does.
-
-import (
-	"context"
-
-	"github.com/OpenSRO/OpenSRO/server/internal/combat"
-	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
-	"github.com/OpenSRO/OpenSRO/server/internal/skill"
-)
+// damage percent, and answers with the action block as a cast does. From
+// the round 785 review its hits are resolved by the cast's own per-hit
+// path (performAttack -> castContext.strike / apply, skillhit.go); what is
+// left here is the older block builder for a list of summed hits.
 
 // swingHit is one hit of a plain swing, as performAttack resolved it.
 type swingHit struct {
 	dmg     int
 	crit    bool
 	blocked bool
-}
-
-// plainSwingExtras adds the buffs' damage percent and the imbue to a
-// swing's hits and returns the new total (berserk already in net).
-func plainSwingExtras(ctx context.Context, skills skill.Store, eq equipment.Store, items combat.ItemLookup,
-	characterID int64, m combat.Monster, hits []swingHit, net, str, intel, level int) int {
-	total := applyBuffDamage(characterID, false, net)
-	base, ok := baseAttackOf(ctx, characterID, eq, items)
-	if !ok {
-		return total
-	}
-	it := imbueFor(ctx, skills, characterID, base)
-	if it == nil {
-		return total
-	}
-	d := combatDeps{eq: eq, items: items, skills: skills}
-	for i := range hits {
-		if hits[i].blocked {
-			continue
-		}
-		add := imbueHit(ctx, d, characterID, it, m, str, intel, level)
-		hits[i].dmg += add
-		total += add
-	}
-	return total
 }
 
 // swingAction is a plain swing's action block, waiting for the kill bit.

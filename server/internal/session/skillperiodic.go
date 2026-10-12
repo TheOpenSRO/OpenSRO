@@ -77,8 +77,9 @@ func startPeriodic(monster bool, ownerID, casterID int64, ref *refdata.Skill, re
 		})
 	case monster && r.Has("lnks") && r.Has("att"):
 		reach := float64(r.Value("lnks", 1))
+		token := rec.Token
 		schedulePeriodic(monster, ownerID, rec.Token, interval, func(d combatDeps) bool {
-			return linkedBlowTick(d, casterID, ownerID, ref, reach)
+			return linkedBlowTick(d, casterID, ownerID, token, ref, reach)
 		})
 	}
 }
@@ -87,12 +88,12 @@ func startPeriodic(monster bool, ownerID, casterID int64, ref *refdata.Skill, re
 func schedulePeriodic(monster bool, ownerID int64, token uint32, interval int, act func(combatDeps) bool) {
 	var tick func()
 	tick = func() {
-		books := buffBooks
+		active := buffBooks.Active
 		if monster {
-			books = monsterBooks
+			active = monsterBooks.Active
 		}
 		alive := false
-		for _, r := range books.Active(ownerID) {
+		for _, r := range active(ownerID) {
 			if r.Token == token && !r.Expired(time.Now()) {
 				alive = true
 			}
@@ -145,8 +146,8 @@ func hotTick(d combatDeps, ownerID int64, hp, mp int) bool {
 }
 
 // linkedBlowTick is one pulse of a linked blow from casterID to monster
-// ownerID; false ends the schedule.
-func linkedBlowTick(d combatDeps, casterID, monsterID int64, ref *refdata.Skill, reach float64) bool {
+// ownerID, the record token's; false ends the schedule.
+func linkedBlowTick(d combatDeps, casterID, monsterID int64, token uint32, ref *refdata.Skill, reach float64) bool {
 	ctx := context.Background()
 	m, ok := d.monsters.Get(monsterID)
 	if !ok || m.HP <= 0 {
@@ -154,11 +155,11 @@ func linkedBlowTick(d combatDeps, casterID, monsterID int64, ref *refdata.Skill,
 	}
 	caster, in := d.hub.EntityByCharacterID(casterID)
 	if !in || caster.Zone != m.Zone || caster.Life != world.LifeAlive {
-		endMonsterRecordOf(d, m, ref.ID)
+		endMonsterRecord(d, m, token)
 		return false
 	}
 	if reach > 0 && math.Hypot(caster.Pos.X-m.X, caster.Pos.Z-m.Z) > reach {
-		endMonsterRecordOf(d, m, ref.ID)
+		endMonsterRecord(d, m, token)
 		return false
 	}
 	flat, pct := skillDamageBonus(ref)
@@ -174,7 +175,7 @@ func linkedBlowTick(d combatDeps, casterID, monsterID int64, ref *refdata.Skill,
 	cc.apply(outcomes, action)
 	addSkillHate(cc, outcomes)
 	sess := caster.Session
-	_, kills, err := payKills(ctx, d, casterID, outcomes, nil)
+	levelUps, kills, err := payKills(ctx, d, casterID, outcomes, nil)
 	if err != nil {
 		return false
 	}
@@ -188,6 +189,13 @@ func linkedBlowTick(d combatDeps, casterID, monsterID int64, ref *refdata.Skill,
 			sendMonsterPush(e.Session, p)
 		}
 	}
+	// A pulse's kill levels its caster as a link's does (round 785 review:
+	// the level-ups were dropped): OpLevelUp, then the 0x3056.
+	if sess != nil {
+		for _, lu := range levelUps {
+			_ = sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()})
+		}
+	}
 	for _, k := range kills {
 		if k.exp != nil && sess != nil {
 			sendExpGainTo(sess, *k.exp)
@@ -197,15 +205,11 @@ func linkedBlowTick(d combatDeps, casterID, monsterID int64, ref *refdata.Skill,
 	return !outcomes[0].died
 }
 
-// endMonsterRecordOf ends m's records of skillID (a broken link).
-func endMonsterRecordOf(d combatDeps, m combat.Monster, skillID int64) {
-	var ended []buff.Record
-	for _, r := range monsterBooks.Active(m.ID) {
-		if r.SkillID == skillID {
-			recs, _ := monsterBooks.EndToken(m.ID, r.Token)
-			ended = append(ended, recs...)
-		}
-	}
+// endMonsterRecord ends m's record of token: the one link that broke
+// (round 785 review: matching the skill id ended every caster's record of
+// that skill on m).
+func endMonsterRecord(d combatDeps, m combat.Monster, token uint32) {
+	ended, _ := monsterBooks.EndToken(m.ID, token)
 	if len(ended) > 0 {
 		pushMonsterBuffEnd(d, m, ended)
 	}

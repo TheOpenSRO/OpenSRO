@@ -21,14 +21,56 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
-// monsterBooks is every monster's book.
-var monsterBooks = buff.NewBooks(0)
+// monsterBooks is every monster's book. Its owners live in a key space of
+// their own (monsterKey), apart from the character ids its casters and
+// links use (round 785 review: character 7 casting on monster 7 read as a
+// self-cast, and the caster's link entries shared a key with monster 7).
+var monsterBooks = monsterBookSet{buff.NewBooks(0)}
+
+// monsterKey is monster id's owner key in monsterBooks: ^id, never a
+// character id (those are >= 0).
+func monsterKey(id int64) int64 { return ^id }
+
+// monsterBookSet is buff.Books keyed by monster id.
+type monsterBookSet struct{ b *buff.Books }
+
+func (s monsterBookSet) Start(id int64, spec buff.Spec, now time.Time) (buff.Record, []buff.Record, buff.Refusal, buff.Speed) {
+	return s.b.Start(monsterKey(id), spec, now)
+}
+
+func (s monsterBookSet) Active(id int64) []buff.Record { return s.b.Active(monsterKey(id)) }
+
+func (s monsterBookSet) ExpireOwner(id int64, now time.Time) ([]buff.Record, buff.Speed) {
+	return s.b.ExpireOwner(monsterKey(id), now)
+}
+
+func (s monsterBookSet) EndAll(id int64) ([]buff.Record, buff.Speed) { return s.b.EndAll(monsterKey(id)) }
+
+func (s monsterBookSet) EndToken(id int64, token uint32) ([]buff.Record, buff.Speed) {
+	return s.b.EndToken(monsterKey(id), token)
+}
+
+func (s monsterBookSet) ParamTotals(id int64) map[int]buff.Totals {
+	return s.b.ParamTotals(monsterKey(id))
+}
 
 // startsMonsterDebuff reports whether a cast of ref is a debuff on a
-// monster: action kind 3, Target_Required 1, no friendly group.
+// monster: action kind 3, Target_Required 1, no friendly group -- and,
+// from the round 785 review, a row whose Param block says so: the block
+// is there (a database imported before round 785 has none, and its rows
+// strike as they always did), and the row deals no damage at the cast
+// (no 'att', or an 'att' its 'lnks' link deals pulse by pulse). A hostile
+// kind-3 row with an 'att' and no 'lnks' strikes (performSkillAttack).
 func startsMonsterDebuff(ref *refdata.Skill) bool {
-	return ref != nil && ref.ActionKind == 3 && ref.TargetRequired &&
-		!ref.TargetSelf && !ref.TargetAlly && !ref.TargetParty && !ref.TargetLand
+	if ref == nil || ref.ActionKind != 3 || !ref.TargetRequired ||
+		ref.TargetSelf || ref.TargetAlly || ref.TargetParty || ref.TargetLand {
+		return false
+	}
+	if !ref.HasParams() {
+		return false
+	}
+	r := ref.Runs()
+	return !r.Has("att") || r.Has("lnks")
 }
 
 // startMonsterDebuff starts ref, cast by casterID, on monster m's book and

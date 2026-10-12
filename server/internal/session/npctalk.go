@@ -328,6 +328,9 @@ func handleNPCEnd(sess *gateway.Session, data []byte) {
 		st.mode = 0
 	}
 	npcInteractions.mu.Unlock()
+	// The quest talk ends with the NPC talk (round 785 review), all but a
+	// reward window the client keeps open past it (forgetQuestTalk).
+	forgetQuestTalk(sess.ID(), true)
 	if !open {
 		sendNPCTalk(sess, npctalk.OpEndResult, npctalk.EncodeFail(npctalk.CodeNoInteraction))
 		return
