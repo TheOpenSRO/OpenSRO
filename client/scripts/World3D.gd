@@ -4959,7 +4959,9 @@ func _load_dungeon(rid: int) -> bool:
 	var data := _open_pk2_if_set()
 	if _object_templates == null:
 		_object_templates = ObjectTemplateCache.new(_load_object_template)
-	var built := DungeonWorld.build(data, rid, func(path: String) -> Node3D: return _object_templates.instance(path, "dungeon"))
+	var paints_before := _loading_screen.paints if _loading_screen != null else 0
+	var built := DungeonWorld.build(data, rid, func(path: String) -> Node3D: return _object_templates.instance(path, "dungeon"),
+		true, func(f: float) -> void: _loading_paint(f * DUNGEON_BUILD_SHARE))
 	if built == null:
 		print("World3D: dungeon 0x%x -- Dungeon\\dungeoninfo.txt names no .dof for it, or it does not parse; nothing built" % rid)
 		return false
@@ -4986,7 +4988,33 @@ func _load_dungeon(rid: int) -> bool:
 			kinds[m.get_file().to_lower()] = int(kinds.get(m.get_file().to_lower(), 0)) + 1
 		print("World3D: dungeon 0x%x -- models that built nothing: %s" % [rid, str(kinds)])
 	_try_spawn_region_npcs(rx, ry)
+	# The build's end: a forced repaint at 100 % (the client's
+	# FUN_00ba3fc0(1000, 1)), so the gauge the drain's frames keep is the one
+	# already on screen.
+	if _loading_screen != null:
+		_loading_paint(1.0, true)
+		print("LoadingScreen: %d repaint(s) through the dungeon's build, the last at 100 %%, at frame %d" % [
+			_loading_screen.paints - paints_before, Engine.get_frames_drawn()])
 	return true
+
+## How much of the loading screen's gauge a dungeon's rooms and objects fill
+## (round 785; OURS): the effects' attach (_attach_dungeon_effects) is the
+## rest, and the build's end paints 100 %. The user's lv.1 of the tomb took
+## 131 ms for the one and 146 ms for the other (their log: `built in 146 ms`,
+## `built in 277 ms` in all). The attach repaints nothing: a repaint during it
+## made the tomb's lv.2 attach (4,216 effects) ~1 s slower on the box however
+## few there were -- 2.4-2.8 s against 1.4-1.6 s with repaints every 50 ms,
+## every 250 ms, or with no present (MEASURED, round 785) -- while the rooms'
+## and objects' repaints cost nothing measurable.
+const DUNGEON_BUILD_SHARE := 0.5
+
+## The loading screen's gauge at `fraction` from inside a load that holds the
+## main thread (round 785): LoadingScreen.paint, which repaints at most every
+## 50 ms unless forced (the client's FUN_00ba3fc0, READ). Nothing without a
+## screen (a QA render's synchronous load).
+func _loading_paint(fraction: float, force: bool = false) -> void:
+	if _loading_screen != null:
+		_loading_screen.paint(fraction, force)
 
 ## The dungeon's own effects (round 774): every room and object of a `.dof`
 ## plays its `.bsr`'s `ambient` particle set (AmbientParticles, READ: the set
@@ -6166,8 +6194,12 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		# (round 670) -- so the next `window` table counts none of the entry.
 		ParseProfile.reset()
 	_qa_print_entry_probe()
+	# The gauge at 100 % for one frame, then the screen goes: the client's
+	# forced last repaint, FUN_00ba3fc0(1000, 1), and the next update's close
+	# (FUN_0084c060, round 785, READ). The caption stays: until round 785 it
+	# turned to "Entering the world..." for this one frame alone, a flicker
+	# of its own.
 	_loading_screen.set_progress(1.0)
-	_loading_screen.set_caption("Entering the world...")
 	await get_tree().process_frame
 	if not is_inside_tree():
 		return
