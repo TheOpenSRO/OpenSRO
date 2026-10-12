@@ -7483,6 +7483,141 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 781 (part): the skill window
+
+The user: "let's fix this skills interface, this is how it should roughly look" with a screenshot
+of another private server's client (window "Skill"; Melee / Caster / Extra tabs, Warrior / Rogue
+under them; a header with the weapon icon, "Max Mastery" / "Max Skill" checkboxes and "Lv 100";
+rows of skills with a level number at each icon's lower right and MAX under it; diamond empty
+slots; a scroll bar; "Skill point 8452266", "Mastery level total 100/200"). "The extra tab is
+private server exclusive." The window before this round drew Godot text buttons for both tab
+rows inside the board, a plain label header with a text LEVEL UP button, 56-px rows in a
+ScrollContainer, a Label for the level and "ADD" under every learnable skill. Rebuilt from a
+fresh reading of the retail client. Labels: READ (sro_client.exe, objdump of 0x69b000-0x6ab800
+and the named functions; the Ghidra dump's C was too lossy to use), MEASURED, INFERRED, OURS,
+OPEN.
+
+**The window, piece by piece (READ).**
+- *Category tabs* -- FUN_006aacf0: per TabID among the character's masteries (skillmasterydata
+  col 6, ascending), a button on `ifcommon\com_tab_off.ddj` / `com_tab_on.ddj` at
+  (i * 0x3e + 4, -0x17) 0x3c x 0x18 -- 60x24, pitch 62, 23 px above the pane (ifmainpopup puts
+  GDR_SKILL at y 63, 25 below the other panes, for them) -- titled with the record's tab name
+  (col 5: "Weapon" / "Force", "Melee" / "Caster" / "Buff"); the first selected.
+- *Mastery tabs* -- one CIFSkillMasteryWndManager per tab at (12, 4) 330x28 (0x6aaf55);
+  AddMastery 0x6a0400 makes a 68x28 CIFSkillMastery per mastery at x + i * 0x44; each loads
+  `ifskill_mastery.txt` (one centred title at 0,9) with the mastery's name (0x69f860), on
+  `skl_mastery_tab_on.ddj` when selected, `_off` otherwise (0x69f940). Selecting one
+  (0x6a04e0) rebuilds the board for it (0x6a5260).
+- *Header* -- CIFSkillBoard::Create 0x69c4e0 loads `ifskillboard.txt` and keeps IDs 10 (the
+  scroll manager), 11 icon, 12 name, 13 level, 14 LEVEL UP. 0x69c5f0: name "%s %s" (the
+  mastery's name, PARAM_MASTERY -> "Bicheon Mastery"), level "%s %d" (UIIT_STT_LEVEL_LV, the
+  level -> "Lv 100" in the black box), the icon's help is the mastery. LEVEL UP shows at level 0,
+  otherwise only while level + 1 <= the character's level (+0x868), level < 0x78 and the
+  leveldata cost at the level (+0x10 of 0x937f20's record) <= the skill points (+0x880) --
+  **hidden**, not greyed, when not.
+- *Rows* -- 0x69d7b0: one CIFSkillGroup 328x60 per group (GroupNum) on `skl_mastery_bar.ddj`,
+  into the scroll manager (4,41,342,225), which 0x69c544..0x69c57c set to show 4 (0x8123f0)
+  pitched 0x37 = 55 (0x8124c0); its layout (0x81287c) hides the rows outside the window and
+  steps whole rows; its bar (0x812420) is 16 wide at the right, up arrow 3 down, track h - 48.
+  SetGroup 0x69ef80: the group icon at 7,8,20,20 with its `_focus.ddj` twin (the path less 4
+  chars + "_focus.ddj") and the group's name as help; a 36x56 CIFSkillSlot per skill at
+  x = col * 0x24 + 0x25, y 3; `skl_mastery_nothing.ddj` in every column AFTER the last used one.
+  The board places a skill at group record+0xf8, slot record+0xfc (0x69bba0).
+- *A slot* -- SetSkill 0x6a15f0 (`ifskill_slot.txt`): learned (0x9c0b90) or mastery level
+  >= the skill's requirement (0x9c0c80) -> its own icon, else `skl_mastery_disable.ddj`. The
+  board fills learned skills in state 0 and every other group's level 1 in state 8 (0x69d380).
+  Button 0x6a0f20: state 0 with no next level -> `skl_level_max.ddj`, not pressable; with one ->
+  `skl_button_up.ddj` when the mastery has the next level's requirement, its ReqLearn skills are
+  known and the points cover its cost, else hidden; state 8 -> `skl_button_add.ddj` under the
+  same three tests for level 1, and the icon drawn at 0x80. Level 0x6a0a50: state 8 shows none;
+  else `skl_level_tab.ddj` at 19,17 and `skl_lv_number_%d.ddj` digits, one at 26,24 below 10,
+  else tens at 24,24 and units at 29,24.
+- *Footer* -- FUN_006aa3e0: the points "%d", the total "%d/%d" (no spaces; it was "140 / 330")
+  against 240 / 2 x level (Europe) or 330 (China).
+- *The practice box* -- ADD / UP (0x6a0700) and LEVEL UP (0x69bca0) open CIFSkillPracticeBox
+  (GDR_PRACTICEPOPUP, `msgbox2_window_` 320x310, `ifskillpracticebox.txt`). Show 0x7063d0 /
+  mode 0x706290: skill mode shows icon, name, the level learned, the description, "Learn
+  [%s]skill." at level 1 else "reinforce [%s]skill upto level [%d].", and the cost; mastery mode
+  the mastery's name box, its explanation (record +0x24), "Learn [%s]skill." and the leveldata
+  cost (0 at level 0). Confirm 0x706a20 (and Enter): points below the cost -> a system message,
+  nothing sent; else 0x70A1 (u32 skill id, 0x81dc60) / 0x70A2 (u32 mastery, u8 1, 0x81dd20).
+  Our server's OpLearnSkill / OpRaiseMastery already do both (session/skill.go); no server
+  change.
+
+**MEASURED.**
+- skilldata col 60 is the in-row place: across all 13 masteries' 107 rows (529 skills, the box's
+  plain skilldata_*.txt) every value is 0..7 and unique in its row; base-id order, which the
+  board used, put 166 of them elsewhere (round 691's "167 of 530"). E.g. Bicheon's passive row
+  is 194 / 2011 / 1064, not 194 / 1064 / 2011; Warrior's first row has group 537 at column 5.
+- Skill group names (UIIT_STT_MASTERY_GROUP_VI_0 ...) have no English text in this archive's
+  textdata_equip&skill.txt (Korean placeholder only), so the group icons' help is empty.
+- The art: com_tab 60x24, skl_mastery_tab 68x28, skl_mastery_subject 352x44, skl_mastery_bar
+  328x60 (a group frame plus 8 slot frames), skl_button_add / _up / skl_level_max 32x20,
+  skl_level_tab 16x16, skl_lv_number_* 8x8, skl_mastery_nothing / _disable 32x32.
+- Live (below): ADD -> box -> Confirm learned Strike Smash Lv 1 and Illusion Chain Lv 1; UP took
+  Strike Smash to 2 and 3; LEVEL UP -> box (cost 280 at Lv 40) -> Bicheon 41.
+
+**INFERRED.** record+0xfc is skilldata column 60 (the group index +0xf8 is column 59, the one
+the board's rows already key by -- 0x944956 indexes the mastery's groups with it -- and the
+data above is unique per row); the 0x80 the unlearned icon is drawn with is an alpha (drawn as
+alpha); the mastery explanation is column 4 (record +0x24 after the name code and GroupNum).
+
+**OURS.** The practice box's caption placement and its centring on screen (registry rect
+100,100); its "Not enough skill points." text; the description is the skill's tooltip text
+(col 64), not its study text (+0x178, not parsed); the skill icons' tooltips and LEVEL UP's
+cost tooltip (retail's were not read); the wheel scrolling rows; a 0-cost level offers no button
+(the server's 0x3409, round 691); the category tab's title centred in the tab.
+
+**Differs from the user's screenshot, and why.** "Extra" is that server's (the user said so).
+"Max Mastery" / "Max Skill" are not retail: ifskillboard.txt has the mastery name, LEVEL UP and
+the level box there, and none of the 205 constants the skill window's code (0x69b000-0x6ab800)
+pushes names check-box art or a check control (READ, a negative check) -- so the header reads
+"Bicheon Mastery [LEVEL UP] Lv N". The screenshot's MAX under every skill is that server's
+level cap; retail shows MAX only on a skill at its last level, UP where the next level is
+learnable now, and nothing otherwise. Its rows are pitched ~52.5 px (measured from the picture,
+scaled 762/364); retail's are 55.
+
+**OPEN.** The skill tooltip's retail layout (CIFSlotWithHelp's help for a skill); the
+ReqCommon_Str/Int test in 0x6a0f20 (not parsed; 0 on player skills); the practice box's
+system-message text (0x778b90 kind 9); whether a mastery tab's title dims when not selected
+(0x8b4750 with 0 / 3 on the title, not traced).
+
+**Files.** New `client/scripts/ui/hud/skill_board.gd` (SkillBoard: the rules as static
+functions and the view) and `skill_practice_box.gd` (SkillPracticeBox); `hud_panels.gd`'s skill
+block rebuilt on them (state, model, practice box, `OPENSRO_QA_SKILL_PRESS`); `skill_data_reader.gd`
+places a skill at column 60 (`assign_columns`); `mastery_reader.gd` reads column 4.
+Tests: new `ui/hud/skill_board_test.gd`; `skill_window_race_test.gd` and
+`level_data_reader_test.gd` follow the new view (and the hidden LEVEL UP).
+
+**QA hook.** `OPENSRO_QA_SKILL_PRESS="wait:5,add,confirm,up,confirm,levelup,confirm,mastery:1,
+tab:1"` presses the window's own buttons a second apart and prints `QA SKILL PRESS <step>: done
+(frame n)`; with it or `OPENSRO_QA_SKILL_STATE`, every fill prints `QA SKILL BOARD` and one
+`QA SKILL ROW` per row (`A`dd / `U`p / `M`ax / `-`, `L` for the locked book, the level).
+
+**Live (MEASURED, render box, RX 7600 / Vulkan Forward+, own lock and client copy
+`/opt/opensro-client-r781-skill`).** `/var/tmp/r781-skill/live.sh china|europe`: this worktree's
+server in memory (`-skills-csv /var/tmp/euroskill691/skills.csv`, final664's leveldata, r768's
+items, lobby682's chargen), GM account `qa781`, `/level 100;/sp 9000000`, masteries raised by
+`OPENSRO_QA_LEARN`, then `OPENSRO_QA_SKILL_PRESS` on the window's own buttons:
+- China (Qa781Ch; Bicheon 40, Heuksal 12, Cold 8): ADD -> box "Learn [Strike Smash]skill.",
+  cost 2 -> Confirm -> learned; ADD Illusion Chain (cost 5); UP -> "reinforce [Strike
+  Smash]skill upto level [2]." (5) and [3] (7); LEVEL UP -> "Mastery Window" (Bicheon, its
+  explanation, cost 280) -> Bicheon 41. Final board: Strike Smash 3 with UP, Illusion Chain 1,
+  "Lv 41", "61/330".
+- Europe (Qa781Eu, body 14875, one-hand sword 10888; Warrior 40, Rogue 20, Wizard 6): tabs
+  Melee / Caster / Buff, Warrior / Rogue; ADD Taunting Target (9), ADD Vital Increase (53), UP
+  Taunting Target 2 (30), LEVEL UP Warrior 40 -> 41 (280); then the Rogue tab and the Caster tab
+  (Wizard / Warlock). Footer "67/200" -- 2 x level 100, the user's screenshot's cap.
+- Shots (box): `/var/tmp/r781-skill/live_china/f00000500.png` (the skill practice box),
+  `f00000960.png` (the mastery practice box), `f00001095.png` (the board after);
+  `/var/tmp/r781-skill/live_europe/f00001040.png` (Warrior), `f00001220.png` (Rogue),
+  `f00001298.png` (Caster); offline (`off.sh`, no server, `OPENSRO_QA_LEARNED=5`):
+  `/var/tmp/r781-skill/off_ch/f00000100.png` (Weapon / Bicheon at Lv 100) and `f00000400.png`
+  (Force / Fire at 0, LEVEL UP shown); before this round: `/var/tmp/r781-skill/base/f00000130.png`.
+
+**Gates.** `remote_godot.sh check`: 742 scripts and 9 scenes, ALL LOAD; `tests`: "ran 285
+suite(s), 0 failing". No server change (`go test` not needed); UI-only, so no perf gate.
+
 ## Seven-hundred-and-eightieth round: the party portrait's far-away steps in a dungeon, the lake bed over the water
 
 The user, on v0.1.526: "When I walk away from the party member the profile picture of the party

@@ -424,7 +424,13 @@ authored presentation instead:
   `docs/protocol/party_gui.md` §1: a leader row above seven member rows, each with the member's
   3D portrait, race mark (from the model id), name, `Lv`, level, HP and MP bars, guild, and a
   Banish/Leave button; party lanes C1 (window) and C3 (HUD boxes) build them.
-- **Skill** — *done (window + economy + per-skill learning, v0.1.121)*: the real `CIFSkillBoard`
+- **Skill** — **round 781 rebuilt it from a fresh reading of CIFSkill / CIFSkillBoard /
+  CIFSkillGroup / CIFSkillSlot / CIFSkillPracticeBox** (`SkillBoard`, `SkillPracticeBox`;
+  WORLD_ISSUES "Round 781 (part): the skill window"): `com_tab` category tabs above the pane,
+  `skl_mastery_tab` mastery tabs, `ifskillboard.txt`'s header, 55-pitched rows four at a time,
+  digit-image levels, ADD / UP / MAX, the practice box before every learn and raise, and skills
+  at skilldata column 60. The history below predates it.
+  *done (window + economy + per-skill learning, v0.1.121)*: the real `CIFSkillBoard`
   rebuilt from the client's own resinfo and a decompile of `CIFSkillBoard`/`CIFSkillGroup`/
   `CIFSkillSlot` — Weapon/Force tabs, the mastery tabs (Bicheon/Heuksal/Pacheon…), and per mastery
   a scrolling grid of one row per skill group (`skillgroup.txt`), each holding that group's skills

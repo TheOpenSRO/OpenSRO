@@ -63,14 +63,20 @@ func _window() -> HudWindow:
 		w.panel_root.add_child(l)
 	return w
 
+## The titles of one of the view's tab strips (round 781: SkillBoard draws the
+## tabs as art buttons with a Title label, beside the board in the pane).
 func _tabs(w: HudWindow, strip: String) -> PackedStringArray:
 	var out := PackedStringArray()
-	var node := w.node("GDR_SKILL_BOARD").find_child(strip, true, false)
+	var view := w.find_child("SkillBoardView", true, false)
+	if view == null:
+		return out
+	var node := view.find_child(strip, true, false)
 	if node == null:
 		return out
 	for c in node.get_children():
-		if c is Button and not c.is_queued_for_deletion():
-			out.append((c as Button).text)
+		var title := (c as Node).get_node_or_null("Title") as Label
+		if title != null and not c.is_queued_for_deletion():
+			out.append(title.text)
 	return out
 
 func _ids(masteries: Array) -> Array:
@@ -120,15 +126,16 @@ func _initialize() -> void:
 	p.call("_fill_skill_masteries", w)
 	_check(_ids(p.get("_masteries")) == [513, 515, 514, 516, 517, 518],
 		"a Europe character's window holds the six Europe masteries (got %s)" % str(_ids(p.get("_masteries"))))
-	var top := _tabs(w, "SkillTopTabs")
+	var top := _tabs(w, "SkillCategoryTabs")
 	_check(top == PackedStringArray(["Melee", "Caster", "Buff"]), "three top tabs, Physical/Magical/Assist (got %s)" % str(top))
 	var sub := _tabs(w, "SkillMasteryTabs")
 	_check(sub.size() == 2, "the first tab holds two masteries, Warrior and Rogue (got %s)" % str(sub))
 	var total := (w.node("GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM") as Label).text
-	_check(total == "3 / 40", "the total reads against min(240, 2 x 20) (got '%s')" % total)
+	_check(total == "3/40", "the total reads against min(240, 2 x 20), \"%%d/%%d\" (got '%s')" % total)
 	p.call("_on_skill_tab", 2)
 	p.call("_fill_skill_masteries", w)
-	var board := w.node("GDR_SKILL_BOARD").find_child("SkillMasteryBoard", true, false)
+	var view := w.find_child("SkillBoardView", true, false)
+	var board: Node = view.find_child("SkillHeader", true, false) if view != null else null
 	_check(board != null, "the Assist tab lays out a mastery board")
 	var shown: Array = []
 	for m in p.get("_masteries"):
@@ -149,10 +156,12 @@ func _initialize() -> void:
 	q.call("_fill_skill_masteries", w2)
 	_check(_ids(q.get("_masteries")) == [257, 258, 259, 273, 274, 275, 276],
 		"a China character's window holds China's seven (got %s)" % str(_ids(q.get("_masteries"))))
-	var top2 := _tabs(w2, "SkillTopTabs")
-	_check(top2 == PackedStringArray(["Weapon Skill", "Force Skill"]), "China has two top tabs (got %s)" % str(top2))
+	var top2 := _tabs(w2, "SkillCategoryTabs")
+	_check(top2 == PackedStringArray(["Weapon", "Force"]), "China has two top tabs (got %s)" % str(top2))
+	var sub2 := _tabs(w2, "SkillMasteryTabs")
+	_check(sub2.size() == 3, "China's Weapon tab holds its three weapon masteries (got %s)" % str(sub2))
 	var total2 := (w2.node("GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM") as Label).text
-	_check(total2 == "4 / 330", "China's total reads against 330 (got '%s')" % total2)
+	_check(total2 == "4/330", "China's total reads against 330 (got '%s')" % total2)
 
 	# Before any state the window is China's (the default race), and a QA
 	# override can lay out Europe's.

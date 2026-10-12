@@ -5143,14 +5143,6 @@ var _skill_char_level: int = 0
 ## a learned skill shows its level badge instead of a "+" learn button.
 var _skill_known: Dictionary = {}
 
-## How an unlearned skill's icon is dimmed. The locked tint is the darker of
-## the two -- it stands in for the authored "locked book" art when the archive
-## has none; the unlearned tint keeps a met-but-unlearned skill legible.
-## Neither is read out of the client: they are ours, and are a display choice
-## rather than a recovered value.
-const SKILL_UNLEARNED_TINT := Color(0.62, 0.62, 0.62, 0.9)
-const SKILL_LOCKED_TINT := Color(0.45, 0.45, 0.45, 0.85)
-
 ## Whether the server has told us this exact skill id is learned. World3D asks
 ## before putting a skill on a quickslot, so no path can shortcut a skill onto
 ## the hotbar that the character does not have (playtest 2026-09-20, item 3).
@@ -5209,26 +5201,6 @@ static func mastery_levelup_block_reason(real_level: int, char_level: int, total
 	if cost > 0 and skill_points < cost:
 		return "Needs %d skill points to raise this mastery (you have %d)." % [cost, skill_points]
 	return ""
-
-## Skill-board geometry inside the CIFSkillBoard area (GDR_SKILL_BOARD). The grid
-## metrics are the real client's, decompiled from CIFSkillGroup::SetGroup: eight
-## columns pitched 36px from x=37, 32px cells in a 56px-tall row bar. The tab and
-## header bands are chrome the EXE draws, sized to match the original's window.
-const SKILL_TAB_H := 21.0
-const SKILL_HEADER_Y := 46.0
-const SKILL_HEADER_H := 30.0
-const SKILL_ROW_H := 56.0
-const SKILL_CELL := 32.0
-const SKILL_COL_X0 := 37.0
-const SKILL_COL_PITCH := 36.0
-const SKILL_BOARD_H := 270.0
-# The skill cell's own parts, from ifskill_slot.txt (relative to the cell):
-# the 32x32 icon (GDR_STMS_SLOT_SKILL "0,0,32,32"), the 32x20 "+" level-up
-# button beneath it (GDR_STMS_BTN_LEVELUP "0,32,32,20"), and the level badge
-# over the icon's lower-right (GDR_STMS_LEVEL_BOARD at 19,17 -> skl_level_tab).
-const SKILL_LEVELUP_H := 20.0
-const SKILL_CELL_CONTENT_H := 52.0   # icon (32) + "+" strip (20)
-const SKILL_BADGE_POS := Vector2(19, 17)
 
 ## Reads the skill tree once: the groups (skillgroup.txt) and the skills in each
 ## (skilldata_*.txt), kept to the player's own masteries. Lazy -- the first time
@@ -5436,14 +5408,13 @@ func _mastery_level(mastery_id: int) -> int:
 		lvl = maxi(lvl, int(OS.get_environment("OPENSRO_QA_MASTERY")))
 	return lvl
 
-## Builds the skill window's board the way the real client's CIFSkillBoard does:
-## the Weapon/Force tabs, then the masteries within the active tab
-## (Bicheon/Heuksal/Pacheon...), then the selected mastery's own board -- its
-## icon, name and level and a scrolling grid of one row per skill group, each
-## holding that group's skills as cells. Structure and metrics are recovered
-## (resinfo + decompiled CIFSkillBoard/Group/Slot); levels are the server's to
-## fill, so at mastery level 0 the skills show greyed (skl_mastery_disable),
-## exactly as a fresh character's window does.
+## The skill window's live contents, laid out the way the retail client lays
+## them (round 781; SkillBoard has the reading): the category tabs (Weapon /
+## Force, Melee / Caster / Buff) above the pane, the selected category's
+## mastery tabs, the selected mastery's header (icon, "<name> Mastery",
+## LEVEL UP, "Lv N") and its rows of skills, four at a time, each slot with
+## its level digits and its ADD / UP / MAX button. This gathers the model from
+## the state the server reported and hands it to SkillBoard.
 func _fill_skill_masteries(window: HudWindow) -> void:
 	_load_masteries()
 	_load_level_data()
@@ -5467,10 +5438,13 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	var board := window.node("GDR_SKILL_BOARD") as Control
 	if board == null:
 		return
-	board.clip_contents = true
+	var pane := board.get_parent() as Control
+	if pane == null:
+		return
 
-	# Group the masteries by their tab (China Weapon/Force; Europe Melee/
-	# Caster/Buff), in tab order (_masteries is sorted by tab, then id).
+	# Group the masteries by their tab, in tab order (_masteries is sorted by
+	# tab, then id: FUN_006aacf0 walks the id-keyed mastery map and files each
+	# under its TabID, READ).
 	var tab_keys: Array = []
 	var tabs: Dictionary = {}
 	for entry in _masteries:
@@ -5484,310 +5458,297 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	_skill_active_tab = clampi(_skill_active_tab, 0, tab_keys.size() - 1)
 	var masteries: Array = tabs[tab_keys[_skill_active_tab]]["masteries"]
 	_skill_active_mastery = clampi(_skill_active_mastery, 0, maxi(masteries.size() - 1, 0))
+	var mastery: MasteryReader.Mastery = masteries[_skill_active_mastery] if _skill_active_mastery < masteries.size() else null
 
-	# Rebuild the board fresh each fill (the selected tab/mastery may change).
-	for child in board.get_children():
-		if str(child.name).begins_with("Skill"):
-			child.queue_free()
-
-	_add_skill_board_bg(board)
-
-	# Two rows of tabs: Weapon/Force, then the masteries within the active one.
-	var top := _skill_tab_strip(board, 2.0, "SkillTopTabs")
+	var categories: Array = []
 	for i in range(tab_keys.size()):
-		var group: Dictionary = tabs[tab_keys[i]]
-		_add_skill_tab(top, _resolve_ui(group["code"], _skill_tab_fallback(int(tab_keys[i]))),
-			i == _skill_active_tab, _on_skill_tab.bind(i))
+		categories.append(_resolve_ui(tabs[tab_keys[i]]["code"], _skill_tab_fallback(int(tab_keys[i]))))
+	var mastery_names: Array = []
+	for mm in masteries:
+		mastery_names.append((mm as MasteryReader.Mastery).display_name(_text_table(), _skill_text_table()))
 
-	var sub := _skill_tab_strip(board, 2.0 + SKILL_TAB_H + 2.0, "SkillMasteryTabs")
-	for i in range(masteries.size()):
-		var mm: MasteryReader.Mastery = masteries[i]
-		_add_skill_tab(sub, mm.display_name(_text_table(), _skill_text_table()), i == _skill_active_mastery,
-			_on_skill_mastery_tab.bind(i))
+	var model := {"categories": categories, "category": _skill_active_tab,
+		"masteries": mastery_names, "mastery": _skill_active_mastery, "rows": [], "first_row": 0}
+	if mastery != null:
+		if _skill_first_row_mastery != mastery.id:
+			_skill_first_row_mastery = mastery.id
+			_skill_first_row = 0
+		model["first_row"] = _skill_first_row
+		model["header"] = _skill_header_model(mastery)
+		model["rows"] = _skill_rows_model(mastery)
 
-	# The selected mastery's board -- header + grid of group rows.
-	if _skill_active_mastery < masteries.size():
-		_build_mastery_board(board, masteries[_skill_active_mastery] as MasteryReader.Mastery)
+	# The old view out (renamed first, so a lookup this frame finds the new).
+	for child in pane.get_children():
+		if str(child.name).begins_with("SkillBoardView"):
+			child.name = "SkillBoardView_old"
+			child.queue_free()
+	var view := SkillBoard.new()
+	view.builder = _builder
+	view.build(model, _on_skill_icon_input)
+	# The view draws in the pane's coordinates; the board sits at its own
+	# authored place in the pane (6,29), so the pane's origin is found from it.
+	view.position = board.position - SkillBoard.BOARD_RECT.position
+	pane.add_child(view)
+	view.category_selected.connect(_on_skill_tab)
+	view.mastery_selected.connect(_on_skill_mastery_tab)
+	view.scrolled.connect(func(first: int) -> void: _skill_first_row = first)
+	if mastery != null:
+		var mid := mastery.id
+		view.levelup_pressed.connect(func() -> void: _open_skill_practice(SkillPracticeBox.Mode.MASTERY, mid))
+	view.learn_pressed.connect(func(target: int) -> void: _open_skill_practice(SkillPracticeBox.Mode.SKILL, target))
 
-	# Skill points and total mastery level against the race's total cap
-	# (mastery_total_cap), from the server's state.
-	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", str(_skill_points))
+	# The footer (READ, FUN_006aa3e0): the skill points "%d", and the mastery
+	# total "%d/%d" against the race's cap (mastery_total_cap).
+	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", "%d" % _skill_points)
 	# The real server total (a QA lighting override must not pollute it).
 	var total := 0
 	for lvl in _skill_mastery_levels.values():
 		total += int(lvl)
-	var total_text := "%d / %d" % [total, mastery_total_cap(_skill_race, _skill_char_level)]
-	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", total_text)
+	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM",
+		SkillBoard.total_text(total, mastery_total_cap(_skill_race, _skill_char_level)))
+	if OS.has_environment("OPENSRO_QA_SKILL_STATE") or OS.has_environment("OPENSRO_QA_SKILL_PRESS"):
+		_qa_skill_board_report(model)
+	if OS.has_environment("OPENSRO_QA_SKILL_PRESS") and not _qa_skill_press_started:
+		_qa_skill_press_started = true
+		_qa_skill_press(OS.get_environment("OPENSRO_QA_SKILL_PRESS"))
 
-## A dark backing so the world does not show through the board (the layout names
-## no tile for the CIFSkillBoard area -- the EXE draws its own).
-func _add_skill_board_bg(board: Control) -> void:
-	var bg := TextureRect.new()
-	bg.name = "SkillBoardBg"
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_TILE
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if _builder != null:
-		bg.texture = _builder.load_texture("interface\\ifcommon\\bg_tile\\com_bg_tile_d.ddj")
-	if bg.texture == null:
-		bg.queue_free()
-		var flat := ColorRect.new()
-		flat.name = "SkillBoardBg"
-		flat.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		flat.color = Color(0.05, 0.05, 0.06, 1.0)
-		flat.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		board.add_child(flat)
-	else:
-		board.add_child(bg)
+## The first visible row and the mastery it belongs to, so a refill (after a
+## learn) keeps the rows where they were and a new mastery starts at the top.
+var _skill_first_row := 0
+var _skill_first_row_mastery := -1
+## The practice box (one at a time: retail's is one object, 0x782620).
+var _skill_practice_box: SkillPracticeBox = null
 
-func _skill_tab_strip(board: Control, y: float, strip_name: String) -> HBoxContainer:
-	var strip := HBoxContainer.new()
-	strip.name = strip_name
-	strip.position = Vector2(6, y)
-	strip.add_theme_constant_override("separation", 3)
-	board.add_child(strip)
-	return strip
-
-func _add_skill_tab(strip: HBoxContainer, text: String, active: bool, on_press: Callable) -> void:
-	var btn := Button.new()
-	btn.text = text
-	btn.toggle_mode = true
-	btn.button_pressed = active
-	btn.focus_mode = Control.FOCUS_NONE
-	btn.custom_minimum_size = Vector2(80, SKILL_TAB_H)
-	_style_skill_tab(btn)
-	btn.pressed.connect(on_press)
-	strip.add_child(btn)
-
-## The selected mastery's board: its icon and name and level at the top, then a
-## scrolling grid of one row per skill group.
-func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> void:
-	var host := Control.new()
-	host.name = "SkillMasteryBoard"
-	host.position = Vector2(0, SKILL_HEADER_Y)
-	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	board.add_child(host)
-
-	# Header: mastery icon (left), name, and mastery level.
-	var icon := TextureRect.new()
-	icon.position = Vector2(9, 0)
-	icon.size = Vector2(32, 32)
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if _builder != null:
-		icon.texture = _builder.load_texture(mastery.icon_path)
-	host.add_child(icon)
-
-	var name_lbl := Label.new()
-	name_lbl.text = mastery.display_name(_text_table(), _skill_text_table())
-	name_lbl.position = Vector2(48, 6)
-	name_lbl.size = Vector2(100, 20)
-	_style_skill_label(name_lbl)
-	host.add_child(name_lbl)
-
-	# The mastery LEVEL UP button (skl_mastery_levelup in ifskillboard): spends
-	# skill points to raise this mastery a level, which unlocks more skills.
-	var levelup := Button.new()
-	levelup.name = "SkillMasteryLevelUp"
-	levelup.text = _resolve_ui("UIIT_CTL_SKILL_MASTERY_LEVELUP", "LEVEL UP")
-	levelup.position = Vector2(150, 3)
-	levelup.custom_minimum_size = Vector2(80, 22)
-	levelup.focus_mode = Control.FOCUS_NONE
-	_style_skill_tab(levelup)
-	levelup.pressed.connect(_on_mastery_levelup.bind(mastery.id))
-	# Grey it and say why when the mastery can't be raised: the flat 330 total,
-	# the character's level, and the skill points against the raise's real cost
-	# (leveldata column 2 at the current level) -- all server-enforced; this just
-	# explains it before the click. See mastery_levelup_block_reason for the
-	# order and the grounding.
+## The header's model (READ, 0x69c5f0; SkillBoard).
+func _skill_header_model(mastery: MasteryReader.Mastery) -> Dictionary:
 	var real_level := int(_skill_mastery_levels.get(mastery.id, 0))
-	var total_now := 0
-	for lvl in _skill_mastery_levels.values():
-		total_now += int(lvl)
 	var cost := LevelDataReader.mastery_up_cost(_level_mastery_costs, real_level)
-	var total_cap := mastery_total_cap(_skill_race, _skill_char_level)
-	var reason := mastery_levelup_block_reason(real_level, _skill_char_level, total_now,
-		total_cap, _skill_points, cost)
-	if reason != "":
-		levelup.disabled = true
-		levelup.tooltip_text = reason
-	elif cost > 0:
-		levelup.tooltip_text = "Raising this mastery to Lv %d costs %d skill points (you have %d)." % [
-			real_level + 1, cost, _skill_points]
-	elif real_level == 0 or real_level > MASTERY_COST_LEVEL_CEILING:
-		# The two raises the engine never charges (LevelDataReader.mastery_up_cost).
-		levelup.tooltip_text = "Raising this mastery to Lv %d costs no skill points." % (real_level + 1)
+	var show_up := SkillBoard.levelup_visible(real_level, _skill_char_level, _skill_points, cost)
+	var nm := mastery.display_name(_text_table(), _skill_text_table())
+	var tip := nm
+	var explanation := _resolve_any(mastery.desc_code)
+	if explanation != "":
+		tip += "\n" + explanation
+	var up_tip := ""
+	if show_up:
+		# OURS: retail's LEVEL UP carries no help that was read.
+		up_tip = "Raise %s to Lv %d (%d skill points)." % [nm, real_level + 1, cost]
 	if OS.has_environment("OPENSRO_QA_SKILL_STATE"):
-		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, total %d/%d, cost %d -> LEVEL UP %s%s" % [
-			mastery.display_name(_text_table(), _skill_text_table()), real_level, _skill_points, _skill_char_level, total_now,
-			total_cap, cost, "disabled: " if reason != "" else "enabled", reason])
-	host.add_child(levelup)
+		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, cost %d -> LEVEL UP %s" % [
+			nm, real_level, _skill_points, _skill_char_level, cost, "shown" if show_up else "hidden"])
+	return {"icon": _builder.load_texture(mastery.icon_path) if _builder != null else null,
+		"name": SkillBoard.header_name(nm, _resolve_ui("PARAM_MASTERY", "Mastery")),
+		"level": SkillBoard.level_text(_resolve_ui("UIIT_STT_LEVEL_LV", "Lv"), _mastery_level(mastery.id)),
+		"levelup": show_up, "tooltip": tip, "levelup_tooltip": up_tip}
 
-	var lvl_lbl := Label.new()
-	lvl_lbl.text = "Lv %d" % _mastery_level(mastery.id)
-	lvl_lbl.position = Vector2(238, 6)
-	lvl_lbl.size = Vector2(100, 20)
-	lvl_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_style_skill_label(lvl_lbl)
-	host.add_child(lvl_lbl)
-
-	# The scrolling grid of group rows.
-	var board_h: float = board.size.y if board.size.y > 0.0 else SKILL_BOARD_H
-	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(4, SKILL_HEADER_H)
-	scroll.size = Vector2(343, maxf(board_h - SKILL_HEADER_Y - SKILL_HEADER_H, SKILL_ROW_H))
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	host.add_child(scroll)
-	var rows := VBoxContainer.new()
-	rows.add_theme_constant_override("separation", 0)
-	rows.custom_minimum_size = Vector2(325, 0)
-	scroll.add_child(rows)
-
-	var groups: Array = _skill_groups.get(mastery.id, [])
-	if groups.is_empty():
-		var none := Label.new()
-		none.text = "No skills for this mastery in the archive."
-		_style_skill_label(none)
-		rows.add_child(none)
-		return
-	for g in groups:
-		_build_group_row(rows, mastery, g as SkillDataReader.SkillGroup)
-
-## One group's row: the bar background, the group's pack icon at the left, and
-## its skills in columns -- an unavailable skill greyed (skl_mastery_disable),
-## empty columns filled (skl_mastery_nothing), exactly as CIFSkillGroup lays it.
-## The mastery level is 0 until the server tracks it, so every skill is greyed.
-func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: SkillDataReader.SkillGroup) -> void:
-	var row := Control.new()
-	row.custom_minimum_size = Vector2(325, SKILL_ROW_H)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	host.add_child(row)
-
-	var bar := TextureRect.new()
-	bar.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bar.stretch_mode = TextureRect.STRETCH_SCALE
-	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if _builder != null:
-		bar.texture = _builder.load_texture("interface\\skill\\skl_mastery_bar.ddj")
-	row.add_child(bar)
-
-	var pack := TextureRect.new()
-	pack.position = Vector2(6, 8)
-	pack.size = Vector2(24, 24)
-	pack.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	pack.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	pack.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pack.texture = _load_skill_icon(group.icon_path)
-	pack.tooltip_text = _resolve_ui(group.name_code, "")
-	row.add_child(pack)
-
-	var skills: Array = _skill_grid.get("%d:%d" % [mastery.id, group.row], [])
-	var by_col: Dictionary = {}
-	for s in skills:
-		by_col[(s as SkillDataReader.BaseSkill).column] = s
+## The rows' model: one per group of the mastery (skillgroup.txt, ordered by
+## row), each skill at its own column (skilldata col 60, SkillDataReader).
+func _skill_rows_model(mastery: MasteryReader.Mastery) -> Array:
+	var rows: Array = []
 	var mastery_level := _mastery_level(mastery.id)
-	var disable_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_disable.ddj") if _builder != null else null
-	var nothing_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_mastery_nothing.ddj") if _builder != null else null
-	var levelup_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_button_add.ddj") if _builder != null else null
-	var badge_tex: Texture2D = _builder.load_texture("interface\\skill\\skl_level_tab.ddj") if _builder != null else null
-	for col in range(SkillDataReader.COLUMNS):
-		# The cell is the 32x32 icon with the 32x20 "+" strip beneath it, centred
-		# in the bar row (ifskill_slot.txt geometry).
-		var cell := Control.new()
-		cell.position = Vector2(SKILL_COL_X0 + col * SKILL_COL_PITCH, (SKILL_ROW_H - SKILL_CELL_CONTENT_H) / 2.0)
-		cell.size = Vector2(SKILL_CELL, SKILL_CELL_CONTENT_H)
-		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(cell)
+	for g in _skill_groups.get(mastery.id, []):
+		var group: SkillDataReader.SkillGroup = g
+		var slots: Array = []
+		slots.resize(SkillBoard.COLUMNS)
+		for entry in _skill_grid.get("%d:%d" % [mastery.id, group.row], []):
+			var s: SkillDataReader.BaseSkill = entry
+			if s.column < 0 or s.column >= SkillBoard.COLUMNS:
+				continue
+			var learned := _skill_learned_level(s)
+			var missing := _missing_prerequisites(s, learned + 1)
+			var view := SkillBoard.slot_view(learned, s.max_level, mastery_level, s.level_ids,
+				s.level_reqs, s.level_sp, missing.is_empty(), _skill_points)
+			var tip := _skill_cell_tooltip(s, learned, mastery)
+			if not missing.is_empty():
+				tip += "\nRequires: " + ", ".join(missing)
+			var meta := {}
+			if learned > 0:
+				var cast_id: int = s.level_ids[learned - 1]
+				meta = {"qa_skill_id": cast_id, "skill_id": cast_id, "code": s.basic_code}
+			slots[s.column] = {"icon": _load_skill_icon(s.icon_path), "view": view, "tooltip": tip,
+				"button_tooltip": _skill_button_tooltip(s, int(view["target_id"]), int(view["button"])),
+				"meta": meta}
+		var focus := ""
+		if group.icon_path.length() > 4:
+			# The hover twin (READ, 0x69f04d: the path less its last four
+			# characters, plus "_focus.ddj").
+			focus = group.icon_path.substr(0, group.icon_path.length() - 4) + "_focus.ddj"
+		rows.append({"icon": _load_skill_icon(group.icon_path), "focus": _load_skill_icon(focus),
+			"name": _resolve_any(group.name_code), "slots": slots})
+	return rows
 
-		var icon := TextureRect.new()
-		icon.position = Vector2.ZERO
-		icon.size = Vector2(SKILL_CELL, SKILL_CELL)
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		cell.add_child(icon)
+## The ADD / UP button's help: retail fills it with the target level's
+## PARAM_REQ_HP / PARAM_REQ_MP lines when they are not 0 (READ, 0x6a12ba..
+## 0x6a147e); the HP costs are not parsed here, so only the MP line is.
+func _skill_button_tooltip(s: SkillDataReader.BaseSkill, target_id: int, which: int) -> String:
+	if which != SkillBoard.Btn.ADD and which != SkillBoard.Btn.UP:
+		return ""
+	var i := s.level_ids.find(target_id)
+	if i < 0 or i >= s.level_mp.size() or s.level_mp[i] <= 0:
+		return ""
+	return SkillPracticeBox._format(_resolve_ui("PARAM_REQ_MP", "Consumed MP: %d"), [s.level_mp[i]])
 
-		if not by_col.has(col):
-			icon.texture = nothing_tex
-			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+## A name code through the UI table, then the skill table; "" when neither
+## knows it.
+func _resolve_any(code: String) -> String:
+	var t := _resolve_ui(code, "")
+	if t != "":
+		return t
+	var st := _skill_text_table()
+	if st != null and code != "" and code != "xxx":
+		var r := st.get_text(code)
+		if r != "" and r != code:
+			return r
+	return ""
+
+## A slot icon's mouse input: a learned skill picks up on a left click (the
+## next click puts it on a quick slot, HeldIcon, round 652; the bar's drop
+## handler CIFUnderBar::vslot_028 takes kind 0x19, the skill window) and
+## casts on a right click (vslot 33 -> 0x682040, case 0x19 -> 0x81ba10, READ).
+func _on_skill_icon_input(ev: InputEvent, icon: TextureRect, meta: Dictionary) -> void:
+	if not meta.has("skill_id"):
+		return
+	var cast_id := int(meta["skill_id"])
+	var cast_code := String(meta.get("code", ""))
+	if _is_pick_click_on(ev, icon):
+		pick_up_icon({"kind": "skill", "skill_id": cast_id, "code": cast_code, "icon": icon.texture},
+			icon.texture, icon, (ev as InputEventMouseButton).global_position)
+	elif ev is InputEventMouseButton and not ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT \
+			and icon.get_global_rect().has_point((ev as InputEventMouseButton).global_position):
+		skill_use_requested.emit(cast_id, cast_code)
+
+## Opens the practice box (READ: a slot's ADD / UP, 0x6a0700, and LEVEL UP,
+## 0x69bca0, both show CIFSkillPracticeBox): for a skill level `id` is that
+## level's skill id, for a mastery the mastery id.
+func _open_skill_practice(mode: int, id: int) -> SkillPracticeBox:
+	if _skill_practice_box != null and is_instance_valid(_skill_practice_box):
+		_skill_practice_box.close()
+	_skill_practice_box = null
+	var opts := {"sp": _skill_points}
+	if mode == SkillPracticeBox.Mode.SKILL:
+		var s := _board_skill_with_level_id(id)
+		if s == null:
+			return null
+		var level := s.level_ids.find(id) + 1
+		opts["name"] = s.display_name(_skill_text_table())
+		opts["level"] = level
+		opts["icon"] = _load_skill_icon(s.icon_path)
+		# INFERRED: retail shows the level's study text (its record +0x178);
+		# the reader keeps the tooltip description (col 64), shown here.
+		opts["description"] = s.description(_skill_text_table())
+		opts["cost"] = s.level_sp[level - 1] if level - 1 < s.level_sp.size() else 0
+	else:
+		var m: MasteryReader.Mastery = null
+		for entry in _masteries:
+			if (entry as MasteryReader.Mastery).id == id:
+				m = entry
+		if m == null:
+			return null
+		var lvl := int(_skill_mastery_levels.get(id, 0))
+		opts["name"] = m.display_name(_text_table(), _skill_text_table())
+		opts["level"] = lvl
+		opts["description"] = _resolve_any(m.desc_code)
+		# The leveldata cost at the current level, 0 at level 0 (READ,
+		# 0x7067ab..0x706817).
+		opts["cost"] = int(_level_mastery_costs.get(lvl, 0)) if lvl > 0 else 0
+	var box := SkillPracticeBox.new()
+	if not box.build(_builder, mode, id, opts):
+		push_warning("HudPanels: the practice box could not be built (%s missing)" % SkillPracticeBox.LAYOUT)
+		box.free()
+		return null
+	box.confirmed.connect(_on_skill_practice_confirmed)
+	box.refused.connect(func(text: String) -> void: system_notice.emit(text))
+	add_child(box)
+	box.position = ((get_viewport_rect().size - box.size) / 2.0).floor()
+	_skill_practice_box = box
+	# The box goes with the skill window.
+	var window: HudWindow = _windows.get("skill")
+	if window != null:
+		var close_with := func() -> void:
+			if is_instance_valid(box) and (not is_instance_valid(window) or not window.visible):
+				box.close()
+		if not window.visibility_changed.is_connected(close_with):
+			window.visibility_changed.connect(close_with, CONNECT_ONE_SHOT)
+	_message_box_sounds(box)
+	print("HudPanels: practice box %s %d: '%s' Lv %s, cost %d, SP %d" % [
+		"skill" if mode == SkillPracticeBox.Mode.SKILL else "mastery", id, opts.get("name", ""),
+		str(opts.get("level", 0)), int(opts.get("cost", 0)), _skill_points])
+	return box
+
+## The practice box's Confirm with enough points: send the learn (a skill
+## level) or the raise (a mastery). The results re-read the state.
+func _on_skill_practice_confirmed(mode: int, id: int) -> void:
+	print("HudPanels: practice box confirmed (%s %d)" % ["skill" if mode == SkillPracticeBox.Mode.SKILL else "mastery", id])
+	if mode == SkillPracticeBox.Mode.SKILL:
+		_on_skill_learn(id)
+	else:
+		_on_mastery_levelup(id)
+
+## QA: one line per row of the board as the model has it -- each column's
+## button (A add, U up, M max, - none), lock (L) and level -- so a render's
+## log says what the picture should show.
+var _qa_skill_press_started := false
+func _qa_skill_board_report(model: Dictionary) -> void:
+	print("QA SKILL BOARD: tabs %s [%d], masteries %s [%d], header %s, %d rows from %d" % [
+		str(model.get("categories")), int(model.get("category")), str(model.get("masteries")),
+		int(model.get("mastery")), str((model.get("header", {}) as Dictionary).get("name", "")) + " / " +
+		str((model.get("header", {}) as Dictionary).get("level", "")) + " / LEVEL UP " +
+		str((model.get("header", {}) as Dictionary).get("levelup", false)),
+		(model.get("rows", []) as Array).size(), int(model.get("first_row"))])
+	var i := 0
+	for r in model.get("rows", []):
+		var cells := PackedStringArray()
+		for s in (r as Dictionary).get("slots", []):
+			if s == null:
+				cells.append(".")
+				continue
+			var v: Dictionary = (s as Dictionary)["view"]
+			cells.append("%s%s%d" % ["-AUM"[int(v["button"])], "L" if v["locked"] else "", int(v["level"])])
+		print("QA SKILL ROW %d %s: %s" % [i, str((r as Dictionary).get("name", "")), " ".join(cells)])
+		i += 1
+
+## QA: OPENSRO_QA_SKILL_PRESS="<step>[,<step>...]" presses the window's own
+## buttons one second apart, the way a player would: "add" / "up" the first
+## slot button of that kind, "levelup" the header's LEVEL UP, "confirm" /
+## "cancel" the practice box's buttons, "tab:<i>" / "mastery:<i>" the tabs,
+## "wait:<s>" a further pause. Each step prints the frame it ran on.
+func _qa_skill_press(spec: String) -> void:
+	var steps := spec.split(",", false)
+	for step in steps:
+		await get_tree().create_timer(1.0).timeout
+		if String(step).begins_with("wait:"):
+			await get_tree().create_timer(float(String(step).substr(5))).timeout
 			continue
-
-		var s: SkillDataReader.BaseSkill = by_col[col]
-		var learned := _skill_learned_level(s)
-		var available := s.min_req_mastery_level > 0 and mastery_level >= s.min_req_mastery_level
-		if learned > 0 or available:
-			icon.texture = _load_skill_icon(s.icon_path)
-			# A skill whose mastery requirement is met but which has NOT been
-			# learned drew in full colour, identical to a learned one bar the
-			# level badge (playtest 2026-09-20, item 4). Dim it: the icon is
-			# still readable, and "you do not have this yet" is visible at a
-			# glance rather than inferred from a missing badge.
-			if learned == 0:
-				icon.modulate = SKILL_UNLEARNED_TINT
-		elif disable_tex != null:
-			icon.texture = disable_tex   # the real "locked" book
-		else:
-			icon.texture = _load_skill_icon(s.icon_path)
-			icon.modulate = SKILL_LOCKED_TINT
-		icon.mouse_filter = Control.MOUSE_FILTER_PASS
-		icon.tooltip_text = _skill_cell_tooltip(s, learned, mastery)
-		if OS.has_environment("OPENSRO_QA_SKILL_STATE") and group.row == 0 and col == 0:
-			print("QA SKILL: first cell (%s) state: learned=%d available=%s; tooltip:\n%s" % [
-				s.basic_code, learned, str(available), icon.tooltip_text])
-
-		# A learned skill shows its level badge over the icon's lower-right, and
-		# clicking it casts that skill (World3D picks the target and animates).
-		if learned > 0 and badge_tex != null:
-			_add_level_badge(cell, badge_tex, learned)
-		if learned > 0:
-			var cast_id: int = s.level_ids[learned - 1]
-			var cast_code: String = s.basic_code
-			var cast_icon: Texture2D = icon.texture
-			# A left click picks the skill up onto the cursor and the next
-			# click puts it on a quick slot (HeldIcon, round 652; the bar's
-			# drop handler CIFUnderBar::vslot_028 takes kind 0x19, the skill
-			# window). A right click casts it (vslot 33 -> 0x682040, case
-			# 0x19 -> 0x81ba10, READ). The old "click puts it on the next
-			# free slot" shortcut was ours and is gone: retail has none.
-			icon.set_meta("qa_skill_id", cast_id)
-			icon.gui_input.connect(func(ev: InputEvent) -> void:
-				if _is_pick_click_on(ev, icon):
-					pick_up_icon({"kind": "skill", "skill_id": cast_id, "code": cast_code, "icon": cast_icon},
-						cast_icon, icon, (ev as InputEventMouseButton).global_position)
-				elif ev is InputEventMouseButton and not ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT \
-						and icon.get_global_rect().has_point((ev as InputEventMouseButton).global_position):
-					skill_use_requested.emit(cast_id, cast_code))
-
-		# The "+" appears when the next level is within the current mastery level;
-		# the server enforces the SP cost (refdata ReqLearnSP) and refunds on fail.
-		var next_level := learned + 1
-		var can_learn := next_level <= s.max_level and next_level <= s.level_reqs.size() \
-			and mastery_level >= s.level_reqs[next_level - 1] and s.level_ids[next_level - 1] > 0
-		# A level with no learn cost is never learnable (FUN_0059e450's 0x3409,
-		# READ; the round 691 review): the 205 chain links on the class boards.
-		if can_learn and next_level <= s.level_sp.size() and s.level_sp[next_level - 1] <= 0:
-			can_learn = false
-		# The real prerequisites too (skilldata ReqLearn_Skill1..3): another
-		# skill group known at a level. The server refuses these as well; the
-		# window simply doesn't offer the "+" and says so in the tooltip.
-		var missing := _missing_prerequisites(s, next_level)
-		if not missing.is_empty():
-			can_learn = false
-			icon.tooltip_text += "\nRequires: " + ", ".join(missing)
-		if can_learn and levelup_tex != null:
-			var add_btn := TextureButton.new()
-			add_btn.texture_normal = levelup_tex
-			add_btn.position = Vector2(0, SKILL_CELL)
-			add_btn.size = Vector2(SKILL_CELL, SKILL_LEVELUP_H)
-			add_btn.ignore_texture_size = true
-			add_btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
-			add_btn.mouse_filter = Control.MOUSE_FILTER_STOP
-			var target_id: int = s.level_ids[next_level - 1]
-			add_btn.pressed.connect(func(): _on_skill_learn(target_id))
-			add_btn.tooltip_text = "Learn %s Lv %d" % [s.display_name(_skill_text_table()), next_level]
-			cell.add_child(add_btn)
+		var window: HudWindow = _windows.get("skill")
+		var view: SkillBoard = null
+		if window != null:
+			view = window.find_child("SkillBoardView", true, false) as SkillBoard
+		var st := String(step).strip_edges()
+		var done := false
+		if st == "add" or st == "up" or st == "levelup":
+			if view != null:
+				for b in view.find_children("*", "BaseButton", true, false):
+					var btn := b as BaseButton
+					var is_lv := st == "levelup" and str(btn.name) == "GDR_SKILLBOARD_BTNLEVUP"
+					var is_slot := String(btn.get_meta("kind", "")).to_lower() == st
+					if (is_lv or is_slot) and btn.is_visible_in_tree() and not btn.disabled:
+						btn.pressed.emit()
+						done = true
+						break
+		elif st == "confirm" or st == "cancel":
+			if _skill_practice_box != null and is_instance_valid(_skill_practice_box):
+				if st == "confirm":
+					_skill_practice_box.confirm()
+				else:
+					_skill_practice_box.cancel_box()
+				done = true
+		elif st.begins_with("tab:") and view != null:
+			view.category_selected.emit(int(st.substr(4)))
+			done = true
+		elif st.begins_with("mastery:") and view != null:
+			view.mastery_selected.emit(int(st.substr(8)))
+			done = true
+		print("QA SKILL PRESS %s: %s (frame %d)" % [st, "done" if done else "nothing to press", Engine.get_frames_drawn()])
 
 ## The highest contiguous level of a skill the character has learned (0 = not
 ## learned). Learning is sequential, so this is how many of the skill's levels
@@ -5922,29 +5883,9 @@ func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int, mastery: Ma
 				lines.append("Raise %s to Lv %d (LEVEL UP) first." % [mname, req])
 	return "\n".join(lines)
 
-## Draws the learned-level badge (skl_level_tab) over the icon's lower-right,
-## with the level number on it (ifskill_slot.txt GDR_STMS_LEVEL_BOARD at 19,17).
-func _add_level_badge(cell: Control, badge_tex: Texture2D, learned: int) -> void:
-	var badge := TextureRect.new()
-	badge.texture = badge_tex
-	badge.position = SKILL_BADGE_POS
-	badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	cell.add_child(badge)
-	var num := Label.new()
-	num.text = str(learned)
-	num.position = SKILL_BADGE_POS
-	num.size = Vector2(13, 12)
-	num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	num.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	num.add_theme_font_size_override("font_size", 9)
-	num.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	cell.add_child(num)
-
-## The "+" on a skill cell was pressed -- learn (or level up) that skill. The
-## server validates the mastery requirement and SP cost; learn_skill_result
-## comes back and we re-read the state to repaint the board.
+## Learn (or level up) a skill: sent from the practice box's Confirm (round
+## 781). The server validates the mastery requirement and SP cost;
+## learn_skill_result comes back and we re-read the state to repaint the board.
 func _on_skill_learn(skill_id: int) -> void:
 	var who := NetClient.current_character_name
 	if who != "":
@@ -5972,19 +5913,19 @@ func _on_skill_tab(index: int) -> void:
 	if index != _skill_active_tab:
 		_skill_active_tab = index
 		_skill_active_mastery = 0
-	_refill_skill()
+	_refill_skill.call_deferred()
 
 func _on_skill_mastery_tab(index: int) -> void:
 	_skill_active_mastery = index
-	_refill_skill()
+	_refill_skill.call_deferred()
 
 func _refill_skill() -> void:
 	var window: HudWindow = _windows.get("skill")
 	if window != null:
 		_fill_skill_masteries(window)
 
-## The mastery LEVEL UP button was pressed -- ask the server to spend skill
-## points raising it. The result comes back as raise_mastery_result, which
+## Raise a mastery: sent from the practice box's Confirm (round 781; LEVEL UP
+## opens the box). The result comes back as raise_mastery_result, which
 ## re-reads the state and refreshes the window.
 func _on_mastery_levelup(mastery_id: int) -> void:
 	var who := NetClient.current_character_name
@@ -6000,38 +5941,19 @@ func _on_attack_refresh_skill(_result) -> void:
 	if who != "":
 		NetClient.skill_state(who)
 
-## Titles a tab from its own name code, falling back to the plain English when
-## the archive has no text for the token.
 ## A tab's label when the UI table cannot resolve its token: China's two tabs,
-## Europe's three (the English the archive's own tokens carry -- Melee, Caster,
-## Buff -- written here as OURS fallbacks).
+## Europe's three (the English textuisystem.txt gives the tokens -- Weapon,
+## Force, Melee, Caster, Buff -- written here as fallbacks).
 func _skill_tab_fallback(tab: int) -> String:
 	if _skill_race == MasteryReader.RACE_EUROPE:
 		return ["Melee", "Caster", "Buff"][clampi(tab, 0, 2)]
-	return "Weapon Skill" if tab == MasteryReader.TAB_WEAPON else "Force Skill"
+	return "Weapon" if tab == MasteryReader.TAB_WEAPON else "Force"
 
 func _resolve_ui(token: String, fallback: String) -> String:
 	if token == "" or token == "xxx" or _text_table() == null:
 		return fallback
 	var resolved := _text_table().get_text(token)
 	return resolved if resolved != "" and resolved != token else fallback
-
-func _style_skill_label(label: Label) -> void:
-	label.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
-	if _builder != null:
-		var font := _builder.font_at(0)
-		if font != null:
-			label.add_theme_font_override("font", font)
-		label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-
-func _style_skill_tab(btn: Button) -> void:
-	btn.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
-	btn.add_theme_color_override("font_pressed_color", Color(1, 0.95, 0.75))
-	if _builder != null:
-		var font := _builder.font_at(0)
-		if font != null:
-			btn.add_theme_font_override("font", font)
-		btn.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 
 ## The UI text table, for resolving a mastery's own name where the archive
 ## has it. The builder holds it.
