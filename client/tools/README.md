@@ -56,6 +56,10 @@ The client runs the separate render thread from round 760 (`project.godot`); `CR
 "--render-thread safe"` gives a crowd boot the default one. `docs/rounds/r754.md` has the spike,
 `docs/rounds/r760.md` the switch.
 
+`OPENSRO_QA_WATER_SORT=1` (round 780) prints, at every `QA SHOT`, the transparent pass's order
+for each region's terrain overlays and water as Godot computes it (`QA WATER SORT` / `QA WATER
+ORDER` lines): a water surface "drawn before" an overlay patch is one that patch paints over.
+
 `QA_SHOT_REAP=0` skips qa_shot's start-up kill of every Godot, Xvfb and weston on the box. Use it
 with your own `GODOT_LOCK` in a lane, so another lane's runs survive. `frame_ab.py a.png b.png
 [--box x,y,w,h]` (numpy + ImageMagick, on the box) prints how two frames differ: mean colour, luma

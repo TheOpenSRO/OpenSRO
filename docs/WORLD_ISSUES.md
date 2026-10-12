@@ -7483,6 +7483,83 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 780 (part): the water
+
+**The report.** "Some textures appear to glitch through water" -- the Lake Forest pond (minimap
+X:6611 Y:398 = region 94/169, local (830, 140), `wherecoord`), seen from a steep camera: blocky,
+tile-sized patches of darker ground showing on the water in a stair-step pattern. "If you change
+the camera angle lower it goes away."
+
+**The place (MEASURED, `waterat -region 94/169`).** 20 PlaneType-0 blocks at plane -80 over a bed
+reaching -100.7: at most 20 deep, so the shoreline nibble tops out at 10 and the whole lake is
+drawn at alpha <= 10/15 (READ rule, `Map::FUN_009fb280`). The bed is meant to show through it.
+
+**The cause (MEASURED).** The patches are the lake bed's terrain *overlays* (the feathered
+neighbour-texture passes, `MapmTerrainBuilder._surface_material`, alpha-blended) drawn **after**
+the water instead of before it. Round 702 gave both the same render priority
+(`WorldFog.UNDER_PASS_PRIORITY`, -3, so the fog pass fogs both), which leaves their order to
+Godot's transparent sort: priority, then far to near by the distance from the camera to each
+instance's AABB centre (READ, Godot 4.7.2 `render_forward_clustered.cpp` `_fill_render_list` and
+`SortByReverseDepthAndPriority`). A region is one terrain instance and one water instance with the
+same x/z centre; the terrain's centre is at its mid-height (-40.2 in the world here) and the water's
+at its plane (-118.1), so from **any camera above the halfway height (-79.2, 39 units above the
+water)** the terrain is the nearer, is drawn later, and its overlays paint over the water wherever
+they cover the bed (they test against the opaque bed's depth, which the water does not write).
+`OPENSRO_QA_WATER_SORT=1` (new, `QaShotEnv.report_water_sort`) prints the sort as the engine
+computes it; at all six viewpoints (pitch -55 to -5) the base puts 94/169's overlays after its
+water (by 4.7 to 12.1 units of sort distance), the fix puts none after it.
+
+Pixels (same viewpoints, base vs fix, the water mask taken against an `OPENSRO_QA_NOWATER` run,
+bump frozen with `OPENSRO_QA_WATER_NOBUMP`): with the reflection on, 11.6-19.1 % of the water's
+pixels change by more than 24 (mean 8.3-11.8), and **0.0 %** of the pixels off the water at every
+viewpoint; with the reflection off 2.9-5.2 % (its frames animate between runs, so this one
+includes that). Steeper views change more (steep -42: 19.1 %, graze -5: 11.6 %): the patches are
+foreshortened at a grazing angle, not gone -- at this spot the order does not flip with pitch
+(above). The user's "lower makes it go away" is not reproduced as a flip (OPEN: a different
+camera height, or foreshortening plus the reflection's brightness at grazing angles, INFERRED).
+
+**What retail does (READ).** `Map::FUN_00a24e30` draws the terrain (`Map::FUN_00a1fdb0`: every
+tile pass, each blended SRCALPHA/INVSRCALPHA, then the lightmap pass -- RE_COMPLETION.md), then the
+objects (`Map::FUN_00a1e530`), then the water: `Map::FUN_00a220b0`, or `Map::FUN_00a2df70` when the
+reflection option world+0x2e68 and world+0x68df are set. The water's states (`FUN_00a220b0`):
+ALPHABLENDENABLE 1, CULLMODE 1 (none), SRCBLEND 5 / DESTBLEND 6 (SRCALPHA / INVSRCALPHA), and
+ZWRITEENABLE set back to 1 at its end. So the water is always blended over a finished lake bed;
+no order depends on the camera.
+
+**The fix (OURS method, READ order).** `WorldFog.GROUND_OVERLAY_PRIORITY` = -4 for the terrain's
+overlays (`MapmTerrainBuilder`), below the water's -3: overlays, water, Detail's shadow catcher
+(-2), the fog pass (-1). Both stay under the fog pass, as round 702 needs. The mirror terrain of
+the reflection copies the priority (no water is drawn there). Tests: `world_fog_test` (the order
+-128 < overlays < water < catcher < fog pass < 0; both water materials above the overlays),
+`mapm_terrain_builder_test` (every overlay at the new priority).
+
+**OPEN.** Detail's shadow catcher (-2) multiplies the frame after the water, so a character's
+shadow on a lake bed darkens the water above it; retail draws its shadows in `SWorld::vslot_024`,
+whose place relative to the water was not read. A placed object's *blended* surfaces (priority 0)
+under water are drawn after it too; retail draws objects before the water (`FUN_00a1e530`), but
+whether any blended object part is deferred past it was not read.
+
+**Perf gate** (`perf_gate.sh --sites jangan --frames 40000`):
+
+```
+perf gate: base 35af4a1a (forward_plus) vs head working tree (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.83  head 0.81  (-0.0)  SAME
+jangan  entry ms   base 8951  head 8951  (+0.0)  SAME
+jangan  freeze ms  base 2868  head 2849  (-19.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+**Gates.** `remote_godot.sh check`: 735 scripts and 9 scenes, ALL LOAD. `remote_godot.sh tests`:
+282 suites, 1 failing -- `buff_persist_test.gd` ("a body built after its owner's buff arrived
+takes the aura at once (got 0)"), which this round does not touch; run alone it is ALL PASS both
+with and without the fix. A second full run: 282 suites, 1 failing -- `buff_persist_test` passed,
+`ui_builder_test.gd` aborted (exit 134, no FAIL line); run alone it is ALL PASS. Neither suite
+touches the terrain, the water or the fog (OPEN: two different one-off failures under a loaded box).
+
+**Pictures (for a human, not evidence)**, base | fix side by side, on the box under
+`/var/tmp/r780-water/`: `before_after_{steep,user,graze2}_{refl_on,refl_off}.jpg`; frames
+`b2`/`f2` (reflection on), `b3`/`f3` (off), `nw` (no water).
+
 ## Seven-hundred-and-seventy-eighth round: no invisible walls between dungeon rooms, the reverse return scroll, the retail camera, the window title
 
 The user, on v0.1.524, exploring the Qin-Shi tomb: "I ran into an invisible wall here" (West Snake
