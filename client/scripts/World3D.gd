@@ -24373,7 +24373,7 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 			how = "own counter, already drawn from the result"
 		_:
 			if own_unpaired:
-				how = "own blow, no result to pair with (the monster's own swing), drawn at once"
+				how = "own blow, no result to pair with (the monster's own swing): its swing now, the blow at the clip's hit event"
 			elif not _other_bodies.has(attacked.target_character_id):
 				how = "target not drawn here"
 	# One line per push: a live run counts them against the counter results.
