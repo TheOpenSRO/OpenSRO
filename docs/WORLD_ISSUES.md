@@ -7910,6 +7910,151 @@ Forward+ on the RX 7600, median of 3):
 | cross freeze ms | 2743 | 2719 | SAME |
 | cross hitches | 5 | 5 | SAME |
 
+### Round 786 (part): a dead holder is not frozen -- the orphans stay on the body
+
+The user, who knows retail well, on the part above: seal glows and buff auras (Grass Walk's
+`lightning_gyeonggong_keep_c`, `fire_gigongta_keep_e`, `fire_hwabyeok_keep_c`) leave copies of the
+ground ring and swirls several body lengths away "all the time"; retail never does. The part above
+had concluded that this is the original's behaviour. An independent re-read of the same functions
+(decompiled and disassembled from `sro_client.exe` on the box) found one reading wrong.
+
+**The departure (READ).** A particle is linked into four lists at its init (`FUN_00c88490`,
+0x00c8874c-0x00c8878d): its node updater's **motion list** (updater +0xb0: head +0xd8, next offset
+at +0xc8), its emitter's list (+0x30), the updater's **executor list** (+0x48: head +0x70, next
+offset at +0x60) and the effect's **draw list** (+0x258). Its death (`CEFElement::vslot_001`,
+0x00c87a20) unlinks it from three of them -- the draw list (0x00c87a3c), the executor list
+(0x00c87a4e) and the emitter's (0x00c87a5a) -- kills its child emitters and sets its dead flag (+4).
+It leaves the motion list only when it is **released** (`CEFElement::vslot_002`, 0x00c87aa0: the
+unlink at 0x00c87aaa with ECX = updater +0xb0), at reference count 0 -- while any child emitter of it
+still has a particle. Both follow passes walk the motion list with no dead or dying test
+(`CEFUpdater::vslot_002` 0x00c85fa0-0x00c862ff, the draw's `FUN_00c863a0`), as does the shift
+`FUN_00c865a0`. So a dead holder still held keeps running the motion: `old = pos` (b1, 0x00c85fe3),
+its own u2/u3/u4 follows, `pos += A.pos - A.old` for its own ancestor (0x00c86217), its rotation
+velocity, `pos += velocity` (0x00c86294-0x00c862bb, the last velocity: no command reaches it), and
+its turn (0x00c86316). What it loses: drawing, aging (the life executors 0x00c84e20 / 0x00c84d80
+walk +0x70) and commands (the program runner 0x00c84f90 walks +0x70). Its followers' `A.pos - A.old`
+is therefore what the holder does now -- the body's motion through the holder's own follow -- not
+the frozen last move. Round 785 read the death as "out of every list, its state frozen"; rounds 785
+and the part above built on that.
+
+**The seven questions, each checked in the binary:**
+1. *Order, and old on dead particles* (READ): each `vslot_002` flushes the death queue first
+   (0x00c85f28-0x00c85f5a), runs the executors at node +0x90 / +0xb4 / +0xd8, then the motion loop
+   over the motion list -- `old = pos` for every member including dying and held dead -- and the
+   life test runs last (node +0x12c, 0x00c8638b). The draw pass does the same `old = pos` per member.
+   So a held dead particle's old is refreshed on every later pass; it stops only at release.
+2. *What A is* (READ): `CEFGroup::vslot_004` (0x00c86db0) sets emitter +0x64 to its owner particle
+   (+0x28) and walks up `[[A+0x14]+0x28]` (the owner's emitter's owner) u6 - 1 times: a particle
+   record (+0xa4 old position, +0x1b0 position, the layout `FUN_00c88490` writes), or the effect
+   itself at the top (CEFEffect has the same layout: `vslot_007` writes +0x1b0, `vslot_000` +0xa4).
+   Not a node frame and not the placement matrix.
+3. *Dead as a follow target* (READ): no test of +4 or +0x30 on A in either pass (A's +0x60 is
+   tested for u2/u3/u4 only); A is not removed from the list the passes walk until released (above).
+   No pointer is cleared on death. **This is where the earlier reading was wrong.**
+4. *One pass a frame* (READ): `+0x28b` is the placement flag -- set by `vslot_007` (0x00caa020) and
+   `vslot_008` (0x00ca9460) with +0x60, cleared by `CEFEffect::vslot_000` after the update
+   (0x00caf550: this is the IEasyFxEffect sub-object at +0x240, so its +0x4b / -0x1e0 are +0x28b / +0x60) and by the draw after its pass (`FUN_00cabda0`). So a
+   frame runs either the update's pass or the draw's, never both; ours runs one (set_origin's
+   `step_due`). The draw sets the world transform to the effect's scale only (the diagonal from +0x1c8 at
+   0x00cabe1d, SetTransform(D3DTS_WORLD 0x100) at 0x00cabe52-0x00cabe7e; the pass gate +0x28b at 0x00cabe80): particle positions are world positions over the scale.
+5. *u6 = 0* (READ): emitter +0x64 = 0 (0x00c86217 skips the translation follow), and the newborn
+   copies its owner's position (`FUN_00c88490`); with the draw in world space (4.), such a particle
+   stays where it was born while the body moves: a trail in the world, not local to the effect.
+   Unchanged (`fire_hwabyeok_keep_c`'s 17 spark nodes are u6 = 0).
+6. *Kept effects* (READ): `CEFEffect::vslot_000` revives only the ROOT updater's death queue
+   (+0x254 -> +0xa0: dying flag and age cleared); a child holder (the wind ring's #11) dies every
+   cycle. Unchanged -- and harmless now: its orphans follow it while it is held.
+7. *Server corrections* (READ): 0xB021's source position goes to `FUN_009e11e0`, which places the
+   object at once (a snap, no interpolation): either through the object's slot 37 (`FUN_009e0d50` ->
+   `+0x94`; the region-change shift of `CICPlayer::vslot_037` only when the region differs) or by
+   writing the mover's position (+0x4c..). No effect is shifted inside a region; the next frame's
+   placement of each effect carries the snap as motion, which the followers -- and now the orphans
+   -- follow; u6 = 0 particles stay.
+
+**The fix.** `EfpSim` keeps every particle still in memory in `_order` (live, dying, and dead with
+a live descendant, in spawn order: retail's motion list); the step's and the pass's motion and the
+shift walk it, commands only the live ones; `_flush_deaths` drops a dead particle once no live
+descendant holds it. The native `Sim` does the same with its reference counts (`order`, kept while
+`rc > 0`). Round 785's zombie machinery (`_zombie_follow`, `_still_pass`, the frozen shift) goes: a
+still frame's pass now moves nothing, so `take_pass_moved` is always false. `EFP_API` 3 (an older
+library steps by the frozen rule and is refused). The tick gate stays (OURS, fewer placements); it
+no longer changes where orphans are drawn.
+
+**MEASURED, `efp_probe.gd --drift --physics=60 --physics-effects`, 50 a second** (the farthest drawn
+particle past its still spread; `walk` runs 2 s then stands 4 s, `zigzag` turns 90 degrees every
+0.5 s; the probe now splits the particle-frames past the spread into orphans and u6 = 0 trails):
+
+| effect | mode | 144 fps before | after | 240 fps before | after |
+|---|---|---|---|---|---|
+| lightning_gyeonggong_keep_c | walk + stop | +49.2 (72 orphan) | +0.0 (0) | +48.4 (70) | +0.0 (0) |
+| lightning_gyeonggong_keep_c | zigzag | +98.7 (208 orphan) | +0.0 (0) | +97.9 (203) | +0.0 (0) |
+| fire_gigongta_keep_e | walk + stop | +14.9 (2 orphan) | +0.0 (0) | +13.8 (2) | +0.3 (0) |
+| fire_gigongta_keep_e | zigzag | +63.3 (44 orphan) | +0.1 (0) | +61.9 (44) | +0.0 (0) |
+| fire_hwabyeok_keep_c | walk + stop | +66.2 (2,007 trail) | +66.1 (1,994 trail) | +65.1 | +66.6 |
+| fire_hwabyeok_keep_c | zigzag | +29.7 (80 trail) | +14.3 (23 trail) | +24.7 | +13.3 |
+
+Census (every skilleffectset file kept or not and the 74 equipment files, 1,433 runs a mode):
+
+| | 144 fps before | after | 240 fps before | after |
+|---|---|---|---|---|
+| walk: runs past the spread | 318 | 158 | 319 | 157 |
+| walk: particle-frames (orphan / u6 = 0) | 219,694 (44,340 / 113,667) | 177,254 (7,521 / 113,292) | 218,354 (42,289 / 113,804) | 178,394 (7,809 / 113,483) |
+| zigzag: runs past the spread | 381 | 141 | 376 | 146 |
+| zigzag: particle-frames (orphan / u6 = 0) | 199,028 (150,368 / 35,680) | 45,707 (1,095 / 35,770) | 193,018 (143,939 / 36,034) | 45,676 (1,057 / 35,826) |
+| equipment files past the spread (walk / zigzag) | 38 / 49 | 0 / 0 | 38 / 49 | 0 / 0 |
+
+The orphans left after are the children of holders that are themselves u6 = 0 trails (e.g.
+`skill_cast_foot_heal_a`: nodes #0-#3 follow nothing; 2,308 before, 2,297 after): trails by rule 5.
+
+**MEASURED, the live client** (`OPENSRO_QA_FXDRIFT`, auras 8150 / 8214 / 8239 / 8253 and the +9 seal
+glaive, `/var/tmp/r786-ver/play.sh`, the part above's scenario; worst particle past its spread,
+particle-samples past it and what they were):
+
+| phase | before | after |
+|---|---|---|
+| walk 50, clicks every 500 ms | +163.5 (gigongta), 622: 597 orphan, 22 trail | +13.9 (hwabyeok), 10: all trail |
+| stopped | +78.0 (wind ring), 1,721: 220 orphan, 1,501 trail | +58.0 (hwabyeok), 1,484: all trail |
+| turning | +59.9 (wind ring), 151: 34 orphan | +36.9 (hwabyeok), 121: all trail |
+| walk 150 / stopped | +277.3 / +372.3 (gigongta), 1,027 / 310 orphan | +76.4 / +247.5 (hwabyeok), all trail |
+| walk 300 / stopped | +500.8 / +876.2, 834 / 237 orphan | +174.4 / +560.1 (hwabyeok), all trail |
+| three 40-unit corrections | +570.3 (wind ring), 464 orphan | +478.9 (hwabyeok), all trail |
+| after the corrections | +39.1, 80 orphan | +26.5, all trail |
+| standing, recasting | 0 | 0 |
+
+No orphan is drawn off the body in any phase after. What stays is `fire_hwabyeok_keep_c`'s u6 = 0
+sparks, which the binary leaves where they were born (rule 5); at 300 a second they reach 560
+units behind. If the user's retail sight disagrees about those, the difference is not in the
+functions read here (OPEN).
+
+**Pictures** (render box, 1280 x 720, Forward+, `OPENSRO_QA_PHYSICS_TICKS=24`, the zigzag walk,
+`/var/tmp/r786-ver/walkshot.sh`): `/var/tmp/r786-ver/keep/walk_before_f480.png` /
+`walk_after_f480.png` (walking) and `walk_before_f560.png` / `walk_after_f560.png` (after the
+stop). That run's numbers: walking +154.3 (1,068 orphan samples) -> +13.2 (15, all trail); stopped
++79.3 (445 orphan) -> +64.4 (all trail). The pictures look alike at this distance; the numbers
+decide (AGENTS.md).
+
+**Gates:** `check` ALL LOAD (784 scripts, 9 scenes); `tests` "ran 302 suite(s), 0 failing" (with the
+native library built from this tree, EFP_API 3, `efp_native_test` bit for bit); `cargo test
+--locked` 70 passed (new `dead_holder_still_moves`). Changed checks: `efp_follow_test` (the effect
+stops: the dead holder and its child stop; a move back carries them; the holder is released with
+its last descendant; a holder that died on the run: its orphan stops with the host),
+`efp_tick_gate_test` (placed every frame at 144 fps, the orphans keep pace too),
+`efp_frame_shift_test` (without the frame's shift the orphans go with the body too).
+
+**Perf gate** (`--base 835cce9c --head 75576ab7 --sites jangan,cross --frames 40000`, 1280x720,
+Forward+ on the RX 7600, median of 3, native readers off on both sides):
+
+| | base | head | |
+|---|---|---|---|
+| jangan frame ms | 0.76 | 0.76 | SAME |
+| jangan entry ms | 8758 | 8605 | SAME |
+| jangan freeze ms | 2722 | 2721 | SAME |
+| jangan hitches | 5 | 4 | SAME |
+| cross frame ms | 0.87 | 0.87 | SAME |
+| cross entry ms | 9260 | 9318 | SAME |
+| cross freeze ms | 2720 | 2754 | SAME |
+| cross hitches | 4 | 5 | SAME |
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

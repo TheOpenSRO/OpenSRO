@@ -221,10 +221,10 @@ func _zone_change() -> void:
 	fx.sim.clear()
 	host.free()
 
-## Round 785's frozen move on the arrival's frame: the orphan of a holder
-## that died on it is never in sight of the body -- it carries 30,000 units a
-## frame (or stays with the body), where without the shift it went on 140
-## units a frame past the body.
+## The orphan of a holder that died on the arrival's frame is never in sight
+## off the body. Round 785 froze the dead holder, so without the shift the
+## orphan went on 140 units a frame past the body; round 786 (READ) has the
+## dead holder follow the effect, so it goes with the body either way.
 func _frozen_move() -> void:
 	for shifted in [false, true]:
 		var near := 0
@@ -243,10 +243,13 @@ func _frozen_move() -> void:
 				near += _near_off(fx, host, 1.0)
 			fx.sim.clear()
 			host.free()
+		# Round 786: the dead holder still follows the effect (READ), so its
+		# orphans ride the jump with the body either way; round 785's frozen
+		# move flew them past it without the shift.
 		if shifted:
 			_check(near == 0, "with the frame's shift no orphan is ever in sight off the body")
 		else:
-			_check(near > 0, "without it an orphan flies past the body (%d particle-frames in sight)" % near)
+			_check(near == 0, "without it the orphans go with the body too (%d particle-frames in sight off it)" % near)
 
 ## pause_world: nothing places or steps while held; released, the arrival
 ## is one placement.

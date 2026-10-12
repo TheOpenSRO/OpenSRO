@@ -264,7 +264,7 @@ func _kid(sim) -> Variant:
 ## The effect moves +2 a frame, its placement left to the step (one follow a
 ## frame): the orphan keeps pace.
 func _dead_ancestors() -> void:
-	var sim = S.new(S.compile(_orphans_tree()), 3)
+	var sim = S.new(S.compile(_orphans_tree(20)), 3)
 	var trail := []
 	for f in range(10):
 		sim.set_origin(Vector3(2.0 * f, 0, 0), Basis.IDENTITY, true)
@@ -282,21 +282,34 @@ func _dead_ancestors() -> void:
 	sim.set_origin(Vector3(20, 0, 0), Basis.IDENTITY, true)
 	sim.step()
 	_check(is_equal_approx(k.pos.x - x0, 2.0), "a frame with a step follows once (+%.2f)" % (k.pos.x - x0))
-	# The frozen move goes on when the effect stops (retail's rule: nothing
-	# updates a dead particle).
+	# Round 786 (READ: a dead particle leaves its node's motion list only
+	# when released, 0x00c87aa0, so the motion pass still runs on it): the
+	# holder keeps following the effect, so when the effect stops its child
+	# stops with it -- no frozen move.
 	x0 = k.pos.x
+	var h0: Vector3 = k.f_move.pos
 	sim.set_origin(Vector3(20, 0, 0), Basis.IDENTITY, true)
 	sim.step()
-	_check(is_equal_approx(k.pos.x - x0, 2.0), "the dead holder's last move keeps moving its child after the effect stops (+%.2f)" % (k.pos.x - x0))
+	_check(is_equal_approx(k.pos.x - x0, 0.0) and k.f_move.pos.is_equal_approx(h0),
+		"the effect stopped: the dead holder (still moved) and its child stop with it (+%.2f)" % (k.pos.x - x0))
+	x0 = k.pos.x
+	sim.set_origin(Vector3(15, 0, 0), Basis.IDENTITY, true)
+	sim.step()
+	_check(is_equal_approx(k.pos.x - x0, -5.0), "... and a move back carries them back (%.2f)" % (k.pos.x - x0))
+	# The dead holder goes once its last descendant dies (released at count 0).
+	var held_while: bool = sim._order.size() == sim.particles.size() + 1
+	for f in range(20):
+		sim.step()
+	_check(held_while and sim.particles.is_empty() and sim._order.is_empty(),
+		"a dead holder is kept while a descendant lives and released with the last one")
 	sim.clear()
 
-## Round 785: the last pass a dying particle has is the one it is followed
-## by. Moving at 144 frames a second, then standing: a holder that dies after
-## the host stopped froze still, so its orphan stands too; one that dies on
-## the run carries its orphan on at the host's pace (a pass a render frame,
-## READ: FUN_00cabda0 on every frame without an update).
+## Round 785, revised in round 786: moving at 144 frames a second, then
+## standing. The dead holder still moves with the effect (READ: the motion
+## list keeps it), so its orphan is at the host whether the holder died on
+## the run or after the stop, and stays there once the host stops.
 func _still_death() -> void:
-	for stop_frame in [10, 1000]:
+	for stop_frame in [10, 300, 1000]:
 		var sim = S.new(S.compile(_orphans_tree(200)), 3)
 		var dt := 1.0 / 144.0
 		var x := 0.0
@@ -313,6 +326,13 @@ func _still_death() -> void:
 		if stop_frame == 10:
 			_check(k != null and not k.f_move.alive and absf(k.pos.x - x) < 0.01,
 				"a holder that died after the host stopped leaves its orphan standing at the host (%.3f)" % (k.pos.x - x if k != null else -1.0))
+		elif stop_frame == 300:
+			# Round 786: the holder died on the run (frame ~29); the host
+			# stopped at frame 300. Round 785's frozen move carried the
+			# orphan on at 50 a second after the stop (~100 units by frame
+			# 600); retail's dead holder stops with the host.
+			_check(k != null and not k.f_move.alive and absf(k.pos.x - x) < 0.01 and off < 0.5,
+				"a holder that died on the run: its orphan stops with the host (%.3f, worst %.3f)" % [k.pos.x - x if k != null else -1.0, off])
 		else:
 			_check(k != null and not k.f_move.alive and off < 0.5,
 				"on the run at 144 frames a second the orphan stays with the host (worst %.3f units)" % off)

@@ -64,7 +64,8 @@ func _node(frames: int, flags: Dictionary, emit_dur: int, emit_max: int) -> EfpR
 	return n
 
 ## A holder living 4 frames (u6 = 1) whose children live 200 and follow it
-## (u6 = 1): the children outlive it and follow its frozen move.
+## (u6 = 1): the children outlive it and follow it (round 786: the dead
+## holder still moves with the effect, so they follow the body).
 func _orphans_tree() -> EfpReader.EfpNode:
 	var holder := _node(4, {"u6": 1, "b1": 1}, 1, 1)
 	holder.children.append(_node(200, {"u6": 1, "b1": 1}, 4, 4))
@@ -115,7 +116,10 @@ func _initialize() -> void:
 	var smooth := _run(false, 60.0, 50.0)
 	_check(smooth < 1.0, "a body moved every frame (60 fps, 60 Hz): the orphans keep pace (%.2f)" % smooth)
 	var off := _run(false, 144.0, 50.0)
-	_check(off > 20.0, "placed every frame at 144 fps over 60 Hz ticks: the orphans leave the body (%.1f)" % off)
+	# Round 786: the orphans left the body only because round 785 froze
+	# their dead holder; it moves with the effect now (READ), so a frame
+	# with no tick carries them nothing and they keep pace without the gate.
+	_check(off < 1.0, "placed every frame at 144 fps over 60 Hz ticks: the orphans keep pace too (%.2f)" % off)
 	var on := _run(true, 144.0, 50.0)
 	_check(on < 1.0, "placed once a tick: they keep pace again (%.2f)" % on)
 	var on2 := _run(true, 240.0, 300.0)

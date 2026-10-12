@@ -257,8 +257,8 @@ func _singles() -> void:
 	_single(_rich(7), 207, 400, EfpSim.limit_for(false) - 40, "rich effect, the cap binding", true)
 	for k in 6:
 		_single(_simple(k, 3), 300 + k, 300, EfpSim.limit_for(false) - 150 if k % 2 == 0 else 0, "simple kind %d" % k, false)
-	# Round 785: particles that outlive the ancestor they follow (a dead
-	# ancestor is followed by its frozen state), placed every frame with the
+	# Round 785: particles that outlive the ancestor they follow (round 786:
+	# the dead ancestor still moves while held), placed every frame with the
 	# placement left to a due step, and re-centred now and then.
 	for k in 4:
 		_single(_orphans(k), 400 + k, 400, 0, "orphans %d, placed every frame" % k, true, true)

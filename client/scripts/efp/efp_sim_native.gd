@@ -37,7 +37,8 @@ const BATCH_CLASS := "SrEfpBatch"
 ## additive, so NativeAssets.NATIVE_API is unchanged. 2 from round 785 (a
 ## dead ancestor is followed; set_origin's step_due): a library of 1 steps
 ## by the old rules, so it is refused and EfpSim (GDScript) runs instead.
-const EFP_API := 2
+## 3 from round 786 (a dead ancestor still held keeps moving).
+const EFP_API := 3
 ## Threads a batch uses at most by default, the main thread included (OURS,
 ## round 763's measurement: docs/rounds/r763.md sections 3 and 9). Bounded
 ## further by Godot's WorkerThreadPool size and the machine's cores;
