@@ -82,7 +82,11 @@ class_name SkillEffects
 ## HOW LONG:
 ## - ACT_L / AT_LOOP is the buff's aura: attach_aura keeps it per (owner,
 ##   token) until detach_aura -- World3D drives these from NetClient's
-##   buff_started / buff_ended (rounds 616-618). With the buff's remaining
+##   buff_started / buff_ended (rounds 616-618). Round 785 (READ): the end lets
+##   the aura go as retail's decoration does (EfpEffect.release: the keep flag
+##   cleared, its last cycle plays out; FUN_00a53120 -> FUN_00a4ffe0 ->
+##   FUN_00a4db00), and so does a cast's end or cancel; a world teardown
+##   frees them at once (EfpEffect.stop). With the buff's remaining
 ##   time it also ends by itself AURA_GRACE_MS after that time runs out, in
 ##   case the end never arrives (OURS).
 ## - READY / WAIT AT_LOOP: until the cast's SHOT starts, cancel_cast, or
@@ -544,7 +548,7 @@ static func cancel_cast(caster: Node3D) -> void:
 	var key := caster.get_instance_id()
 	if not _casts.has(key):
 		return
-	_stop_all(_casts[key]["loops"])
+	_release_all(_casts[key]["loops"]) # round 785: FUN_00a50a00 -> FUN_00a4ffe0 (READ)
 	_casts.erase(key)
 
 ## The phase the caster's cast is in (-1: none). Tests and logs.
@@ -563,7 +567,7 @@ static func _events_from(skill_id: int, ani: int, first: int) -> Array:
 	return evs
 
 static func _start_shot(c: Dictionary) -> void:
-	_stop_all(c["loops"])
+	_release_all(c["loops"]) # round 785: let go, not cut (EfpEffect.release)
 	c["loops"] = []
 	c["phase"] = SkillAudio.SHOT
 	var caster = c["caster"]
@@ -574,6 +578,13 @@ static func _stop_all(fxs: Array) -> void:
 	for fx in fxs:
 		if is_instance_valid(fx):
 			(fx as EfpEffect).stop()
+
+## Round 785: lets the effects go (EfpEffect.release, READ: retail's
+## decoration ends its effects through slot 4 with 0, not at once).
+static func _release_all(fxs: Array) -> void:
+	for fx in fxs:
+		if is_instance_valid(fx):
+			(fx as EfpEffect).release()
 
 ## Runs the due phases of every cast, ends expired auras, and forgets freed
 ## bodies. World3D calls it every frame.
@@ -611,7 +622,7 @@ static func process(now_ms: int = -1) -> void:
 			_auras.erase(key)
 		elif int(a["expires"]) >= 0 and now >= int(a["expires"]):
 			print("EFFECTS aura %s: no end arrived %d ms after its time -- ending it" % [key, AURA_GRACE_MS])
-			_stop_all(alive)
+			_release_all(alive)
 			_auras.erase(key)
 		else:
 			a["fx"] = alive
@@ -679,7 +690,9 @@ static func detach_aura(owner_key: String, token: int) -> int:
 	if _auras.has(key):
 		for fx in _auras[key]["fx"]:
 			if is_instance_valid(fx):
-				(fx as EfpEffect).stop()
+				# Round 785 (READ, FUN_00a53120 -> FUN_00a4ffe0 -> FUN_00a4db00):
+				# the buff's end lets its aura go; it fades over its last cycle.
+				(fx as EfpEffect).release()
 				n += 1
 	_auras.erase(key)
 	return n

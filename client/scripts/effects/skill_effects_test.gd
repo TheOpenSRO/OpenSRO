@@ -190,8 +190,8 @@ func _run() -> void:
 	_check(se.cast_phase(caster) == SkillAudio.WAIT and is_instance_valid(c0[0]) and not (c0[0] as Node).is_queued_for_deletion(),
 		"... WAIT starts at prep; a skill with WAIT rows holds there, READY's loop still up")
 	se.shot(caster, 1700)
-	_check(se.cast_phase(caster) == -1 and (c0[0] as Node).is_queued_for_deletion(),
-		"shot(): SHOT starts at the server's answer and the phase loops end then")
+	_check(se.cast_phase(caster) == -1 and _let_go(c0[0]),
+		"shot(): SHOT starts at the server's answer and the phase loops are let go then")
 	se.cast(90, caster, target, {"now_ms": 5000})
 	se.process(6600)
 	_check(se.cast_phase(caster) == -1, "without an answer SHOT starts at prep + cast (OURS fallback)")
@@ -203,7 +203,7 @@ func _run() -> void:
 	# cancel_cast: a refused cast ends its loops and fires nothing more.
 	var c1: Array = se.cast(90, caster, target, {"now_ms": 9000})
 	se.cancel_cast(caster)
-	_check(se.cast_phase(caster) == -1 and (c1[0] as Node).is_queued_for_deletion(), "cancel_cast ends the cast and its READY loop")
+	_check(se.cast_phase(caster) == -1 and _let_go(c1[0]), "cancel_cast ends the cast and lets its READY loop go")
 	se.process(20000)
 	_check(se.cast_phase(caster) == -1, "... and nothing fires later")
 	var acted: Array = se.act(90, caster, caster)
@@ -222,12 +222,14 @@ func _run() -> void:
 	_check(aura.size() == 1 and (aura[0] as EfpEffect).loop and se.aura_count() == 1,
 		"attach_aura keeps the ACT_L AT_LOOP effect for the token")
 	var again: Array = se.attach_aura("character:7", 41, 90, caster)
-	_check((aura[0] as Node).is_queued_for_deletion() and se.aura_count() == 1, "a second start of the same token replaces the first")
+	_check(not (aura[0] as EfpEffect).loop and se.aura_count() == 1 and _let_go(aura[0]), "a second start of the same token replaces the first (the first let go)")
 	se.attach_aura("character:7", 42, 90, caster)
 	se.attach_aura("monster:9", 41, 90, target)
 	_check(se.aura_count() == 3, "tokens and owners are kept apart (3 auras)")
-	_check(se.detach_aura("character:7", 41) == 1 and (again[0] as Node).is_queued_for_deletion(),
-		"detach_aura ends the token's aura at once")
+	var detached: int = se.detach_aura("character:7", 41)
+	_check(detached == 1 and not (again[0] as Node).is_queued_for_deletion() and not (again[0] as EfpEffect).loop,
+		"detach_aura lets the token's aura go: it is no longer kept, and still drawn this frame (round 785, READ)")
+	_check(_let_go(again[0]), "... and it ends once its last cycle has played out")
 	_check(se.detach_aura("character:7", 41) == 0, "a token that already ended stops nothing")
 	_check(se.detach_owner("character:7") == 1 and se.aura_count() == 1, "detach_owner ends the rest of that owner's auras")
 	_check(se.attach_aura("character:8", 1, 3, caster).is_empty(), "a skill with no ACT_L rows makes no aura")
@@ -236,7 +238,7 @@ func _run() -> void:
 	se.process(1000 + se.AURA_GRACE_MS - 1)
 	_check(not (timed[0] as Node).is_queued_for_deletion(), "an aura outlives its time by up to the grace period")
 	se.process(1000 + se.AURA_GRACE_MS)
-	_check((timed[0] as Node).is_queued_for_deletion(), "... and then ends even if no buff end arrived")
+	_check(_let_go(timed[0]), "... and then is let go even if no buff end arrived")
 	# Freed bodies are forgotten.
 	var gone := Node3D.new()
 	get_root().add_child(gone)
@@ -257,6 +259,21 @@ func _run() -> void:
 	target.queue_free()
 	bare.queue_free()
 	_finish()
+
+## Round 785: ended the way retail's decoration ends an effect (READ,
+## IDecoSkill::FUN_00a4db00: slot 4 with 0) -- let go, no longer kept, and
+## gone once its last cycle has played out (EfpEffect.release).
+func _let_go(fx) -> bool:
+	if fx == null or not is_instance_valid(fx) or (fx as Node).is_queued_for_deletion():
+		return true
+	var e := fx as EfpEffect
+	if e.loop:
+		return false
+	for i in 400:
+		e._process(0.05)
+		if not is_instance_valid(e) or e.is_queued_for_deletion():
+			return true
+	return false
 
 func _bone_turns() -> void:
 	var body := Node3D.new()

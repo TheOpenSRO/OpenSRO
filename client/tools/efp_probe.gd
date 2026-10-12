@@ -42,7 +42,7 @@ var _only := ""
 ## ancestor (summed over frames), pops, and frames with particles outside the
 ## draw box.
 var _t := {"files": 0, "trail_files": 0, "far_max": 0.0, "orphan_frames": 0, "pop_files": 0,
-	"outside_files": 0, "loadfail": 0, "never_drawn": 0}
+	"outside_files": 0, "loadfail": 0, "never_drawn": 0, "mismatch_files": 0, "dropped_files": 0}
 const FAR_TRAIL := 100.0
 
 func _init() -> void:
@@ -119,9 +119,9 @@ func _run(dir: String, skills: PackedStringArray, files: PackedStringArray) -> v
 	for j in jobs:
 		_probe(String(j[0]), bool(j[1]) if _keep < 0 else _keep == 1, String(j[2]), particles)
 	if _census:
-		print("CENSUS fps %.0f speed %.0f seconds %.1f: %d runs, %d did not load, %d never drew; drawn past %.0f units from the host in %d (worst %.1f); %d drawn particle-frames following a dead ancestor; %d with a pop; %d with drawn particles outside the draw box" % [
+		print("CENSUS fps %.0f speed %.0f seconds %.1f: %d runs, %d did not load, %d never drew; drawn past %.0f units from the host in %d (worst %.1f); %d drawn particle-frames following a dead ancestor; %d with a pop; %d with drawn particles outside the draw box; %d whose draws lagged their particles; %d with spawns refused (the 300 cap)" % [
 			_fps, _speed, _seconds, _t["files"], _t["loadfail"], _t["never_drawn"], FAR_TRAIL, _t["trail_files"],
-			_t["far_max"], _t["orphan_frames"], _t["pop_files"], _t["outside_files"]])
+			_t["far_max"], _t["orphan_frames"], _t["pop_files"], _t["outside_files"], _t["mismatch_files"], _t["dropped_files"]])
 	media.close()
 	particles.close()
 	quit(0)
@@ -182,6 +182,7 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 	var orphans := 0
 	var pops := 0
 	var last_dn := 0
+	var mismatch := 0
 	for i in range(render_frames):
 		host.position.x += _speed * dt
 		fx._process(dt)
@@ -216,6 +217,10 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 					break
 		if started < 0 and dn > 0:
 			started = sim_frames
+		# What the draws hold after this frame's update against the particles
+		# of the drawn nodes (a node whose draw lags its particles).
+		if fx.drawn_particles() != dn:
+			mismatch += 1
 		# A pop: the drawn count falls below half of the frame before's.
 		if last_dn >= 4 and dn * 2 < last_dn:
 			pops += 1
@@ -244,14 +249,18 @@ func _probe(path: String, kept: bool, label: String, particles: Pk2Reader) -> vo
 		_t["pop_files"] += 1
 	if outside > 0:
 		_t["outside_files"] += 1
+	if mismatch > 0:
+		_t["mismatch_files"] += 1
+	if fx.sim.dropped > 0:
+		_t["dropped_files"] += 1
 	if _quiet:
 		fx.stop()
 		host.free()
 		return
-	print("SUMMARY %s kept %s fps %.0f speed %.0f: first_draw %d lasted %s peak %d min_after %s gap_frames %d far %.1f outside_aabb max %d in %d frames revivals/s %.2f sim_frames %d orphan_frames %d pops %d (%s)" % [
+	print("SUMMARY %s kept %s fps %.0f speed %.0f: first_draw %d lasted %s peak %d min_after %s gap_frames %d far %.1f outside_aabb max %d in %d frames revivals/s %.2f sim_frames %d orphan_frames %d pops %d draw_mismatch %d dropped %d (%s)" % [
 		path, kept, _fps, _speed, started, str(lasted) if lasted >= 0 else "running", peak,
 		str(min_after) if started >= 0 else "-", gap, far, outside, outside_frames,
-		float(fx.sim.revived - revived0) / maxf(secs, 0.001), sim_frames, orphans, pops, label])
+		float(fx.sim.revived - revived0) / maxf(secs, 0.001), sim_frames, orphans, pops, mismatch, fx.sim.dropped, label])
 	fx.stop()
 	host.free()
 

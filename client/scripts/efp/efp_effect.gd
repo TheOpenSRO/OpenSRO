@@ -796,6 +796,27 @@ func stop() -> void:
 		sim.clear()
 	_end()
 
+## Round 785 (READ): the owner lets the effect go the way a skill's
+## decoration does -- IDecoSkill::FUN_00a4db00 calls slot 4 with 0
+## (CEFEffect::vslot_004: the keep flag +0x49 cleared), and
+## CIDecoSkill::vslot_014 goes on updating the effect until slot 0 returns 0,
+## then frees it. So a kept effect stops reviving its root particles: they die
+## at the end of their life, their children play out, and the effect ends when
+## nothing is left -- the aura fades out over its last cycle instead of
+## vanishing. FUN_00a4db00 runs for every effect of the decoration from
+## FUN_00a4ffe0: a buff's end (FUN_00a53120), a cast cancelled
+## (FUN_00a50a00), a cast whose phases are done (FUN_00a534d0). stop() is
+## slot 2 (freed at once): the body going.
+func release() -> void:
+	if is_queued_for_deletion():
+		return
+	loop = false
+	max_life = 0.0
+	# The one-shot guard (ONESHOT_MAX_LIFE) counts from here.
+	_life = 0.0
+	if sim == null or sim.finished():
+		_end()
+
 func _end() -> void:
 	if is_queued_for_deletion():
 		return
@@ -980,8 +1001,10 @@ var culled := false
 func step_pre(delta: float) -> bool:
 	_life += delta
 	if max_life > 0.0 and _life >= max_life and loop:
-		stop()
-		return false
+		# OURS guard (a loop nobody ended): let go as its owner would (round 785).
+		release()
+		if is_queued_for_deletion():
+			return false
 	if static_host and _anchored:
 		_pending_moved = false
 		return true

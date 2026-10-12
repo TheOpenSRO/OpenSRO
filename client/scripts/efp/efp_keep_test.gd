@@ -92,6 +92,7 @@ func _initialize() -> void:
 	_death_is_drawn_then_flushed()
 	_kept_that_cannot_keep_ends()
 	_stop_ends_kept()
+	_release_plays_out()
 	# Round 623's review follow-up.
 	_kept_retries_a_refused_root()
 	_kept_children_still_die()
@@ -206,6 +207,31 @@ func _stop_ends_kept() -> void:
 	fx.stop()
 	_check(fx.is_queued_for_deletion() and fx.sim.particles.is_empty() and S.live_total == live_before - held,
 		"stop() ends a kept aura at once: every particle goes")
+
+## Round 785 (READ: IDecoSkill::FUN_00a4db00 lets a decoration's effect go
+## through slot 4 with 0 -- the keep flag cleared -- and CIDecoSkill::
+## vslot_014 updates it until it finishes): a released aura draws on through
+## its last cycle, revives nothing more, and ends when that cycle is over
+## (within the root's 20 frames plus a child's 20).
+func _release_plays_out() -> void:
+	var fx = _effect(_aura_tree(), true)
+	for _f in range(30):
+		fx._process(0.05)
+	var revived0: int = fx.sim.revived
+	fx.release()
+	var drawn_after := 0
+	var frames := 0
+	for f in range(60):
+		fx._process(0.05)
+		if fx.is_queued_for_deletion():
+			break
+		frames += 1
+		if f < 5:
+			drawn_after = mini(drawn_after if f > 0 else 1 << 30, _drawn(fx))
+	_check(not fx.loop and drawn_after >= 4 and fx.sim.revived == revived0,
+		"a released aura is no longer kept and draws on (at least %d particles over the next 5 frames), reviving nothing" % drawn_after)
+	_check(fx.is_queued_for_deletion() and frames <= 40,
+		"... and ends once its last cycle has played out (%d frames)" % frames)
 
 ## OURS, the review's first finding: the particle budget (retail has none)
 ## refused a kept aura's root -- say a crowd's auras filled it. The aura
