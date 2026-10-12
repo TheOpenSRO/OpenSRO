@@ -52,7 +52,11 @@ class_name SkillDeco
 ##   ["group", phase, event]             fire effect group `event` of `phase`
 ##                                       (SkillEffects.play_phase,
 ##                                       SkillAudio.play_phase)
-##   ["stop_loops"]                      the READY/WAIT loops end (SHOT starts)
+##   ["stop_loops"]                      the cast's kept (AT_LOOP) effects are let
+##                                       go: READ, when its phases are done
+##                                       (FUN_00a534d0 past phase 2), not at
+##                                       SHOT's start (the effects lane, round
+##                                       785)
 ##   ["end"]                             the decoration is over
 ## The caller resolves a clip's length and event times through `clip_info`:
 ## Callable(action_type: int) -> {"ms": int, "events": Array of int ms} or
@@ -192,8 +196,6 @@ func _enter(p: int, now_ms: int) -> void:
 		_pending.append(["stop_loops"])
 		_pending.append(["end"])
 		return
-	if p == SHOT:
-		_pending.append(["stop_loops"])
 	var t: int = types[p]
 	if t >= 0 and p != WAIT:
 		var info: Dictionary = clip_info.call(t) if clip_info.is_valid() else {}

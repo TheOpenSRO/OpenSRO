@@ -572,6 +572,12 @@ footing at once on `OpSkillMove`. The refusal cases above are not modelled (the 
 its graph ends instead). `tele` value[0] (500 on every
 Ghost Walk row) is not read there — **OPEN** (a delay or a duration in ms, perhaps).
 
+**Round 785 (READ, `skill_hit_block.md` "Ghost Walk, Teleport and Sprint"):** the server never
+reads `tele` value[0]; its limit is value[1] in world units, a nearer point is the landing, the
+landing is truncated region-local, and `tel2` (Teleport) and `tel3` (Sprint) go through the same
+function. The client lane (r785-skill-cli) READ that the retail client casts toward the cursor
+with no clamp of its own and animates the move from the 0xB070 flags-8 block.
+
 ## Friendly targets (round 622)
 
 A Target_Required 1 row with TargetGroup_Self, _Ally or _Party and no land target -- Heal, the party

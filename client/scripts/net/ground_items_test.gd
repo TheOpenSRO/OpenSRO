@@ -79,6 +79,25 @@ func _initialize() -> void:
 	var req := GroundItemsNet.encode_pick_up("Aria", 7)
 	_check(req.size() == 2 + 4 + 8 and req.decode_u16(0) == 4 and req.decode_s64(6) == 7, "pick-up request is name then s64 id")
 
+	# Round 785: retail 0x3036, u32 the picker, u8 the angle (the server's
+	# session.PickUpMotion; 193 is its byte for an item due +z of the picker).
+	_check(GroundItemsNet.OP_PICK_UP_MOTION == 0x3036, "the pick-up motion is retail's 0x3036")
+	var pm := PackedByteArray([0x04, 0x03, 0x02, 0x01, 193])
+	var motion := GroundItemsNet.decode_pick_up_motion(pm)
+	_check(motion != null and motion.object_id == 0x01020304 and motion.angle == 193, "pick-up motion decodes id and angle")
+	_check(GroundItemsNet.decode_pick_up_motion(PackedByteArray([1, 2, 3, 4])) == null, "a 4-byte pick-up motion is null")
+	# FUN_008a78b0: byte / 255 * 360 degrees, plus FUN_009c40b0's quarter turn.
+	# The server's bytes for an item due +x (0), -z (63), -x (127) and +z (193)
+	# read back as the headings toward them -- pi/2, pi, 3 pi/2 and 0 -- to the
+	# byte's steps (session.TestPickUpMotionAngle holds the server's side).
+	var want := {0: PI / 2.0, 63: PI, 127: 1.5 * PI, 193: 0.0}
+	for b in want:
+		var got := GroundItemsNet.heading_of_pickup_angle(int(b))
+		var off: float = absf(wrapf(got - float(want[b]), -PI, PI))
+		_check(off <= 2.0 * TAU / 255.0 + 1e-5, "angle byte %d reads as heading %.3f (want %.3f)" % [int(b), got, float(want[b])])
+	_check(is_equal_approx(GroundItemsNet.heading_of_pickup_angle(0), RemoteFacing.WIRE_QUARTER_TURN), "byte 0 is the quarter turn exactly")
+	_check(BsrReader.AnimationEntry.TYPE_PICKUP == 38, "the pick-up clip is action type 38")
+
 	if _failures == 0:
 		print("ALL PASS")
 	else:

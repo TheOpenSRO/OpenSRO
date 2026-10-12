@@ -79,6 +79,9 @@ class MonsterAttacked:
 	## The blow's meeting with the target's protection wall (round 640), or
 	## null when it met none -- see WallHit.
 	var wall: WallHit = null
+	## The attack skill the monster swung (round 785; retail's 0xB070 names
+	## it): a u32 after the wall block, 0 from a server that sends none.
+	var skill_id: int = 0
 
 ## A monster's blow on a protection wall (round 640, the server's
 ## session/walls.go WallInfo): a strict suffix on OpAttackResult (after the
@@ -718,7 +721,17 @@ static func decode_monster_attacked(data: PackedByteArray) -> MonsterAttacked:
 	m.death_exp_lost = data.decode_s64(25)
 	# Round 640: the wall suffix, only when the blow met one.
 	m.wall = decode_wall_suffix(data, MONSTER_ATTACKED_SIZE)
+	# Round 785: the skill id after the wall block, which a server writes as
+	# 13 zero bytes when the blow met no wall but names a skill -- no wall.
+	if m.wall != null and data.slice(MONSTER_ATTACKED_SIZE, MONSTER_ATTACKED_SIZE + WALL_SUFFIX_SIZE).count(0) == WALL_SUFFIX_SIZE:
+		m.wall = null
+	if data.size() >= MONSTER_ATTACKED_SKILL_OFFSET + 4:
+		m.skill_id = data.decode_u32(MONSTER_ATTACKED_SKILL_OFFSET)
 	return m
+
+## Where OpMonsterAttacked's skill id sits: after the 33 bytes and the 13-byte
+## wall block (round 785; session.MonsterAttackedSkillOffset).
+const MONSTER_ATTACKED_SKILL_OFFSET := 46
 
 ## Decodes an OpMonsterSpawned payload: one record in OpMonsterListResult's
 ## own encoding (_decode_monster_snapshot), then an f32 heading. null when

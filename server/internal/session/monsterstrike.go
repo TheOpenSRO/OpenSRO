@@ -77,8 +77,17 @@ type MonsterAttacked struct {
 	DeathExpLost int64
 	// Wall is the blow's meeting with the target's protection wall (round
 	// 640, walls.go): a strict suffix after the 33 bytes, present only when
-	// the blow met a wall.
+	// the blow met a wall -- or when SkillID follows it.
 	Wall WallInfo
+	// SkillID is the attack skill the monster swung (round 785): retail's
+	// 0xB070 names it (u32 skillId, the AI-picked row's CRefSkill+4 that
+	// 0x5411a0 posts as a 0x7070 to the monster's own command source; READ),
+	// and the client keys the swing's clip (skilleffect.txt skillaniset2),
+	// its swing and shout sounds and the blow's hit sound by it. A u32 after
+	// the wall block, which is then always written (13 zero bytes when the
+	// blow met no wall); 0 writes neither, so a blow without one is byte for
+	// byte what it was.
+	SkillID int64
 }
 
 func (m *MonsterAttacked) Encode() []byte {
@@ -102,12 +111,42 @@ func (m *MonsterAttacked) Encode() []byte {
 	out[20] = flags
 	binary.LittleEndian.PutUint32(out[21:25], uint32(m.TargetHP))
 	binary.LittleEndian.PutUint64(out[25:33], uint64(m.DeathExpLost))
-	if m.Wall == (WallInfo{}) {
+	if m.Wall == (WallInfo{}) && m.SkillID == 0 {
 		// No wall: the 33 bytes as they were (round 640's suffix is only
 		// there when the blow met one).
 		return out
 	}
-	return append(out, m.Wall.encode()...)
+	out = append(out, m.Wall.encode()...)
+	if m.SkillID == 0 {
+		return out
+	}
+	return binary.LittleEndian.AppendUint32(out, uint32(m.SkillID))
+}
+
+// MonsterAttackedSkillOffset is where OpMonsterAttacked's skill id sits:
+// after the 33 bytes and the 13-byte wall block (round 785).
+const MonsterAttackedSkillOffset = MonsterAttackedSize + wallInfoSize
+
+// skillFrom decodes the round-785 skill id, 0 when a payload predates it.
+func skillFrom(data []byte) int64 {
+	if len(data) < MonsterAttackedSkillOffset+4 {
+		return 0
+	}
+	return int64(binary.LittleEndian.Uint32(data[MonsterAttackedSkillOffset:]))
+}
+
+// strikeSkillID is the skill a monster's blow names (round 785): the swing's
+// drawn skill, or -- for the counter and a swing with none drawn, which roll
+// the primary range (monsterStrike) -- the species' primary attack skill,
+// characterdata col 83, first in Monster.Skills. 0 when it has no list.
+func strikeSkillID(m combat.Monster, skill combat.MonsterSkill) int64 {
+	if skill.ID != 0 {
+		return skill.ID
+	}
+	if len(m.Skills) > 0 {
+		return m.Skills[0].ID
+	}
+	return 0
 }
 
 // DecodeMonsterAttacked refuses a payload shorter than 33 bytes and ignores
@@ -129,6 +168,7 @@ func DecodeMonsterAttacked(data []byte) (*MonsterAttacked, error) {
 		TargetHP:          int32(binary.LittleEndian.Uint32(data[21:25])),
 		DeathExpLost:      int64(binary.LittleEndian.Uint64(data[25:33])),
 		Wall:              wallFrom(data[33:]),
+		SkillID:           skillFrom(data),
 	}, nil
 }
 

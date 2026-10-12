@@ -130,6 +130,15 @@ const (
 	// own level (95.3 % of MOB rows, MEASURED 2026-09-14); uniques carry
 	// their own, larger value.
 	ColExpToGive = 79
+	// ColKnockdown and ColKORecover are cols 81 and 82, _RefObjChar's
+	// Knockdown and KO_RecoverTime (round 785; the shard's column names,
+	// MEASURED, at the offsets the anchors give: col 79 ExpToGive at +0x250,
+	// col 82 at +0x25c). READ: Combat_ResolveDamage's knockdown test
+	// (FUN_0058e540) reads Knockdown (+0x258) bit 0, the knockback test bit
+	// 1, and the knockdown's time adds KO_RecoverTime; RefObjChar's loader
+	// (0x6a58f0) turns a Knockdown with KO_RecoverTime 0 into 3000.
+	ColKnockdown = 81
+	ColKORecover = 82
 )
 
 // minFields is the shortest characterdata row the exporter maps: every column
@@ -153,6 +162,8 @@ var CSVColumns = []string{
 	"Model", "ModelFromOrg", "GoldMin", "GoldMax",
 	// Round 712, appended (optional on read): col 79.
 	"ExpToGive",
+	// Round 785, appended (optional on read): cols 81 and 82.
+	"Knockdown", "KORecoverTime",
 }
 
 // RequiredCSVColumns is the prefix every monsters CSV must carry: the 35
@@ -184,7 +195,9 @@ const (
 	cGoldMin      = cModel + 2
 	cGoldMax      = cModel + 3
 	cExpToGive    = cModel + 4
-	numCSVColumns = cModel + 5
+	cKnockdown    = cModel + 5
+	cKORecover    = cModel + 6
+	numCSVColumns = cModel + 7
 )
 
 // IsMonster reports whether a tab-split characterdata row is a monster:
@@ -372,6 +385,8 @@ func (e *Exporter) Records(gold LevelGold, names ObjectNames) ([][]string, Expor
 			st.NoModel++
 		}
 		rec[cExpToGive] = num(cols, ColExpToGive)
+		rec[cKnockdown] = num(cols, ColKnockdown)
+		rec[cKORecover] = num(cols, ColKORecover)
 		rec[cGoldMin], rec[cGoldMax] = "0", "0"
 		if lvl, err := strconv.Atoi(rec[cLevel]); err == nil {
 			if g, ok := gold[lvl]; ok {
@@ -531,6 +546,11 @@ type Row struct {
 	// HasExpToGive is false for a CSV exported before round 712.
 	ExpToGive    int64
 	HasExpToGive bool
+	// Knockdown and KORecoverMs are cols 81/82 (round 785, ColKnockdown);
+	// HasKnockdown is false for a CSV exported before them.
+	Knockdown    int
+	KORecoverMs  int
+	HasKnockdown bool
 }
 
 // Defense is col 71, the flat physical absorption (param 5, READ).
@@ -697,6 +717,9 @@ func parseRecord(rec []string) (Row, error) {
 	}
 	if len(rec) > cExpToGive {
 		r.ExpToGive, r.HasExpToGive = i64(cExpToGive), true
+	}
+	if len(rec) > cKORecover {
+		r.Knockdown, r.KORecoverMs, r.HasKnockdown = i(cKnockdown), i(cKORecover), true
 	}
 	if firstErr != nil {
 		return Row{}, firstErr

@@ -142,6 +142,27 @@ func _rich(k: int, render: bool = false) -> EfpSim.Template:
 		"RenderMesh" if render else "RenderNone", "ViewNone")
 	return EfpSim.compile(root)
 
+## Round 785: a holder whose turning, short-lived children have long-lived
+## children following them on every level (u2 orbit, u3, u4, u6), so most of
+## those live on after the ancestor they follow has died; kind 1 and 3 are
+## kept (the holder's particles revive), 2 and 3 add a velocity follower.
+func _orphans(k: int) -> EfpSim.Template:
+	var kid_flags := {"b0": 1, "b1": 1, "u2": 1, "u3": 1, "u4": 1 if k >= 2 else 0, "u6": 1}
+	var leaf := _node("leaf", 30 + k, "NormalTimeExtinct", _emit(0, 6, 1, 6, 1.0), [
+		_cmd("SetPosition", _v(Vector3(0.5, 0.1 * k, 0)), 7),
+		_cmd("SetVelocity", _v(Vector3(0, 0.02, 0.05)), 2),
+	], [], kid_flags)
+	var deep := _node("deep", 25, "NormalTimeExtinct", _emit(1, 4, 1, 3, 1.0), [
+		_cmd("SetPosition", _v(Vector3(0, 0.3, 0)), 7),
+	], [], {"b1": 1, "u2": 2, "u3": 2, "u6": 2})
+	var mid := _node("mid", 6, "NormalTimeExtinct", _emit(0, 8, 3, 2, 1.0), [
+		_cmd("SetRotation", _matv(_mat(Vector3(0, 1, 0), 0.4)), 1, 0.0, 1.0, 5.0),
+		_cmd("SetVelocity", _v(Vector3(0.1, 0, 0)), 0),
+	], [leaf, deep], {"b0": 1, "b1": 1, "u3": 1, "u6": 1})
+	var holder := _node("holder", 10, "NormalTimeExtinct" if k % 2 == 0 else "NormalTimeLoop", _emit(0, 1, 1, 1, 1.0), [],
+		[mid], {"b0": 1, "b1": 1, "u2": 1, "u3": 1, "u6": 1})
+	return EfpSim.compile(holder)
+
 ## The batch suite's simpler kinds (efp_sim_batch_test's), for volume.
 func _simple(k: int, w: int) -> EfpSim.Template:
 	var cone := _cmd("SetConePos", _cone(Vector3(2, 4, 1.0)))
@@ -172,7 +193,7 @@ func _template(k: int, w: int) -> EfpSim.Template:
 ## steps 10 frames and clips the clock), the effect is placed and turned now
 ## and then (the follow pass) and re-centred; `held` particles of others are
 ## alive throughout (so the cap binds when it is high).
-func _single(t: EfpSim.Template, seed_value: int, frames: int, held: int, label: String, move: bool) -> void:
+func _single(t: EfpSim.Template, seed_value: int, frames: int, held: int, label: String, move: bool, due: bool = false) -> void:
 	var gd := EfpSim.new(t, seed_value)
 	var nat := EfpSimNative.new(t, seed_value)
 	gd.keep = seed_value % 2 == 0
@@ -187,16 +208,20 @@ func _single(t: EfpSim.Template, seed_value: int, frames: int, held: int, label:
 		var pos := Vector3(sin(f * 0.1) * 5.0, 0.2 * float(f % 7), cos(f * 0.13) * 3.0)
 		var rot := Basis(Vector3(0, 1, 0), 0.05 * f) * Basis(Vector3(1, 0, 0), 0.02 * (f % 11))
 		EfpSim.live_total = gd_live
-		if move and f % 3 == 0:
-			gd.set_origin(pos, rot)
+		# Round 785 (`due`): placed every frame, the placement left to the
+		# step when one is due (EfpEffect's way), as both sides decide it.
+		var gd_due := due and gd.step_due(delta)
+		if move and (due or f % 3 == 0):
+			gd.set_origin(pos, rot, gd_due)
 		if move and f % 50 == 49:
 			gd.shift(Vector3(1.5, 0, -2))
 		var gb := gd.growth_bounds(delta)
 		gd.advance(delta)
 		gd_live = EfpSim.live_total
 		EfpSimNative.live_native = nat_live
-		if move and f % 3 == 0:
-			nat.set_origin(pos, rot)
+		var nat_due := due and nat.step_due(delta)
+		if move and (due or f % 3 == 0):
+			nat.set_origin(pos, rot, nat_due)
 		if move and f % 50 == 49:
 			nat.shift(Vector3(1.5, 0, -2))
 		var nb := nat.growth_bounds(delta)
@@ -208,6 +233,8 @@ func _single(t: EfpSim.Template, seed_value: int, frames: int, held: int, label:
 			why = "growth_bounds %s against %s" % [str(nb), str(gb)]
 		if why == "" and gd_live != nat_live:
 			why = "live_total %d against %d" % [nat_live, gd_live]
+		if why == "" and gd_due != nat_due:
+			why = "step_due %s against %s" % [str(nat_due), str(gd_due)]
 		if why != "" and first == "":
 			first = why
 			at = f
@@ -230,6 +257,13 @@ func _singles() -> void:
 	_single(_rich(7), 207, 400, EfpSim.limit_for(false) - 40, "rich effect, the cap binding", true)
 	for k in 6:
 		_single(_simple(k, 3), 300 + k, 300, EfpSim.limit_for(false) - 150 if k % 2 == 0 else 0, "simple kind %d" % k, false)
+	# Round 785: particles that outlive the ancestor they follow (a dead
+	# ancestor is followed by its frozen state), placed every frame with the
+	# placement left to a due step, and re-centred now and then.
+	for k in 4:
+		_single(_orphans(k), 400 + k, 400, 0, "orphans %d, placed every frame" % k, true, true)
+	_single(_simple(5, 1), 410, 300, 0, "simple kind 5 (orphaned sparks), placed every frame", true, true)
+	_single(_rich(2), 411, 300, 0, "rich effect, placed every frame", true, true)
 
 # ---------------------------------------------------------------- the batch
 

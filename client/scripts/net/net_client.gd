@@ -151,6 +151,9 @@ signal ground_item_spawned(item: GroundItemsNet.Snapshot)
 signal ground_item_removed(removed: GroundItemsNet.Removed)
 signal ground_item_owner_released(ground_id: int)
 signal pick_up_result(result: GroundItemsNet.PickUpResult)
+## Retail 0x3036 (round 785): a character in the zone -- this player too --
+## just picked something up; play its pick-up clip, facing the item.
+signal pick_up_motion(motion: GroundItemsNet.PickUpMotion)
 ## The player's character just advanced a level: its new level and its total
 ## unspent stat points. Sent only to the character that levelled.
 signal level_up(new_level: int, stat_points: int)
@@ -1913,6 +1916,10 @@ func _dispatch(p: Packet) -> void:
 			var pr := GroundItemsNet.decode_pick_up_result(p.data)
 			if pr != null:
 				pick_up_result.emit(pr)
+		GroundItemsNet.OP_PICK_UP_MOTION:
+			var pm := GroundItemsNet.decode_pick_up_motion(p.data)
+			if pm != null:
+				pick_up_motion.emit(pm)
 		CombatNet.OP_LEVEL_UP:
 			var lu := CombatNet.decode_level_up(p.data)
 			level_up.emit(lu.new_level, lu.stat_points)

@@ -76,7 +76,7 @@ static func _parse_all_native(data: PackedByteArray, hit: Dictionary, sets: Dict
 				if ANI_TYPES.has(ani):
 					lists[k].append(int(ANI_TYPES[ani]))
 			n += counts[i * 3 + k]
-		if not code.begins_with("SKILL_") and not code.begins_with("SYSTEM_"):
+		if not code.begins_with("SKILL_") and not code.begins_with("SYSTEM_") and not code.begins_with("MSKILL_"):
 			continue
 		var row: Dictionary = sets.get(code, {"group": "", "ready": [], "wait": [], "shot": []})
 		row["group"] = groups[i].to_lower()
@@ -221,6 +221,10 @@ static func parse_aniset(data: PackedByteArray) -> Dictionary:
 ##   that section and 0 for `skillaniset` by FUN_00a9eb60) makes it read a
 ##   leading int first, and a 0 there skips the row (FUN_00a997e0); a plain
 ##   `skillaniset` row has no such column, so its fields sit one column left;
+## - a monster's attack skill has its row too (round 785: MSKILL_ rows, e.g.
+##   MSKILL_CH_MANGNYANG_ATTACK01 -> SHOT ANI_ATTACK1, _ATTACK02 -> ANI_ATTACK2,
+##   MEASURED in the box's skilleffect.txt), kept so a monster's swing plays
+##   its skill's clip; the loader keys every row the same way (READ);
 ## - a SkillID seen before is the SAME record: the scalars (AniGroup here)
 ##   are overwritten and each list's names are APPENDED after the ones it
 ##   already holds (the per-list count is not reset).
@@ -233,7 +237,7 @@ static func _aniset_row(cols: PackedStringArray, section: String, sets: Dictiona
 		if not service.is_valid_int() or int(service) == 0:
 			return
 	var code := cols[E_CODE + shift].strip_edges().to_upper()
-	if not code.begins_with("SKILL_") and not code.begins_with("SYSTEM_"):
+	if not code.begins_with("SKILL_") and not code.begins_with("SYSTEM_") and not code.begins_with("MSKILL_"):
 		return
 	var row: Dictionary = sets.get(code, {"group": "", "ready": [], "wait": [], "shot": []})
 	row["group"] = cols[A_GROUP + shift].strip_edges().to_lower()

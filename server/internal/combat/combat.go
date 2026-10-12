@@ -141,6 +141,13 @@ type Monster struct {
 	// predates the column, and the kill path falls back (leveldata.KillBase).
 	ExpToGive    int64
 	HasExpToGive bool
+	// Knockdown and KORecoverMs are characterdata cols 81/82 (round 785):
+	// bit 0 of Knockdown lets a skill's 'ko' knock the monster down, bit 1
+	// lets 'kb' knock it back (Combat_ResolveDamage, READ), KORecoverMs adds
+	// to the knockdown's time. HasKnockdown is false without the data.
+	Knockdown    int
+	KORecoverMs  int
+	HasKnockdown bool
 	// Critical is this monster's critical-hit chance, rolled by RollChance
 	// against 0..100. REAL: characterdata _RefObjChar col 78.
 	//
@@ -887,6 +894,13 @@ type Species struct {
 	// predates the column, and the kill path falls back (leveldata.KillBase).
 	ExpToGive    int64
 	HasExpToGive bool
+	// Knockdown and KORecoverMs are characterdata cols 81/82 (round 785):
+	// bit 0 of Knockdown lets a skill's 'ko' knock the monster down, bit 1
+	// lets 'kb' knock it back (Combat_ResolveDamage, READ), KORecoverMs adds
+	// to the knockdown's time. HasKnockdown is false without the data.
+	Knockdown    int
+	KORecoverMs  int
+	HasKnockdown bool
 	// BCRadius is the species' collision radius, characterdata _RefObjChar
 	// col 50 (the common record's word at +0xee, IGObj slot 344) -- one of the
 	// two radii the attack-distance rule adds to a range (see ApproachBand).
@@ -1105,7 +1119,7 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 
 	id := h.nextID.Add(1)
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
-		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP), ExpToGive: species.ExpToGive, HasExpToGive: species.HasExpToGive,
+		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP), ExpToGive: species.ExpToGive, HasExpToGive: species.HasExpToGive, Knockdown: species.Knockdown, KORecoverMs: species.KORecoverMs, HasKnockdown: species.HasKnockdown,
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: hatch.HomeX, HomeZ: hatch.HomeZ, DestX: x, DestZ: z,
 		Party: hatch.Party, Tactics: hatch.Tactics, Summon: species.Summon, Triggers: species.Triggers, Leader: hatch.Leader}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for

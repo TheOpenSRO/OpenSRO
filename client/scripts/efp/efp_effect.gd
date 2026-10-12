@@ -69,7 +69,7 @@ class_name EfpEffect
 
 signal effect_finished
 
-## AT_LOOP / AT_STOP: the effect is KEPT (retail's keep flag +0x49): its
+## AT_LOOP (round 785: not AT_STOP, READ): the effect is KEPT (retail's keep flag +0x49): its
 ## root particles are revived at age 0 instead of dying, so their child
 ## emitters cycle on while the older particles finish -- one continuous
 ## effect, never a restart (READ, round 623; EfpSim "Dying, and the kept
@@ -103,6 +103,11 @@ var draw_updates := 0
 var _has_billboard := false
 var _last_cam := Basis()
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
+## Round 785: per draw node, how far its shape reaches from a particle's
+## position at scale 1 (the plate's or mesh's farthest corner), and the box
+## its instance culls by now (DRAW_AABB, grown to hold its particles).
+var _draw_reach := PackedFloat32Array()
+var _draw_boxes: Array[AABB] = []
 var _links: Array = [] # of [tpl index, MeshInstance3D (ArrayMesh), render mode, EfpLinks.Out, EfpLinks.Buf, EfpLinks.Buf, kind 0 DPipe / 1 Pipe / 2 Obj]
 var _life := 0.0
 var _follow_host: Node3D = null
@@ -149,6 +154,12 @@ const PLATE := "RenderPlate"
 const MESH := "RenderMesh"
 const LINK_MODES := ["RenderLinkDPipe", "RenderLinkPipe", "RenderLinkObj"]
 ## OURS: particles move; a fixed box keeps a MultiMesh from being culled.
+## Round 785: the least box. A GDScript draw node whose particles reach past
+## it is given a box that holds them (_update_draws), so a big effect -- a
+## long beam, a trail left on the ground -- is not culled whole while part of
+## it is on screen (MEASURED: 46 of the 1,359 skill-effect runs reach past
+## it on a still host, efp_probe.gd --census). Retail culls no effect by a
+## box of this kind (OURS throughout; its own limits: round 761).
 const DRAW_AABB := AABB(Vector3(-200, -200, -200), Vector3(400, 400, 400))
 
 ## The compiled template of a file in Particles.pk2, decoded once.
@@ -270,6 +281,12 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		mmi.name = "node_%d" % tp.index
 		fx.add_child(mmi)
 		fx._draws.append([tp.index, mmi, view])
+		var reach := 0.7072 # the unit plate's corner, sqrt(0.5) rounded up
+		if mode == MESH:
+			var mb := mesh.get_aabb()
+			reach = maxf(mb.position.abs().max(mb.end.abs()).length(), 0.0) * 1.0001
+		fx._draw_reach.append(reach)
+		fx._draw_boxes.append(DRAW_AABB)
 		if billboard:
 			fx._has_billboard = true
 	return fx
@@ -574,6 +591,7 @@ static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture:
 	var kind := 2 if mode == "RenderLinkObj" else (1 if mode == "RenderLinkPipe" else 0)
 	fx._link_tpls[tp.index] = fx._links.size()
 	fx._links.append([tp.index, mi, mode, EfpLinks.Out.new(), EfpLinks.Buf.new(), EfpLinks.Buf.new(), kind])
+	fx._link_boxes.append(DRAW_AABB)
 	if mode != "RenderLinkObj":
 		fx._has_pipe = true
 
@@ -583,6 +601,8 @@ const LINK_TRIS_PER_FRAME := 20000
 static var _link_budget_frame := -1
 static var _link_budget_left := 0
 var _link_tpls: Dictionary = {} # tpl index -> index into _links
+## Round 785: each Link node's cull box now (DRAW_AABB, grown to its strip).
+var _link_boxes: Array[AABB] = []
 var _has_pipe := false
 var _link_cam := Transform3D()
 var _link_self := Transform3D()
@@ -704,10 +724,30 @@ func _update_links(native: EfpSimNative = null) -> void:
 					a[Mesh.ARRAY_CUSTOM1] = st[5]
 				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, a, [], {}, out.format_flags())
 			_link_budget_left -= maxi(nv - 2, 0)
+			_fit_link_box(i, out.turn)
 			continue
 		if out.nv >= 3:
 			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays(), [], {}, out.format_flags())
 		_link_budget_left -= out.triangles()
+		_fit_link_box(i, out.turn)
+
+## Round 785: Link node `i`'s cull box: DRAW_AABB, grown to its strip's own
+## box (its vertices are where they are drawn, the width included), so a trail
+## left far behind is not culled while it shows. A shared-turn pipe widens in
+## its vertex shader: it keeps DRAW_AABB. Set only when it changes.
+func _fit_link_box(i: int, turn: bool) -> void:
+	if i >= _link_boxes.size():
+		return
+	var mi := _links[i][1] as MeshInstance3D
+	var box := DRAW_AABB
+	var am := mi.mesh as ArrayMesh
+	if not turn and am != null and am.get_surface_count() > 0:
+		var mb := am.get_aabb()
+		if not DRAW_AABB.encloses(mb) and is_finite(mb.position.x + mb.position.y + mb.position.z + mb.size.x + mb.size.y + mb.size.z):
+			box = DRAW_AABB.merge(mb)
+	if box != _link_boxes[i]:
+		_link_boxes[i] = box
+		RenderingServer.instance_set_custom_aabb(mi.get_instance(), box)
 
 ## One chain's strip (its points gathered into `a`) into its node's Out, by the
 ## node's mode.
@@ -756,6 +796,27 @@ func stop() -> void:
 		sim.clear()
 	_end()
 
+## Round 785 (READ): the owner lets the effect go the way a skill's
+## decoration does -- IDecoSkill::FUN_00a4db00 calls slot 4 with 0
+## (CEFEffect::vslot_004: the keep flag +0x49 cleared), and
+## CIDecoSkill::vslot_014 goes on updating the effect until slot 0 returns 0,
+## then frees it. So a kept effect stops reviving its root particles: they die
+## at the end of their life, their children play out, and the effect ends when
+## nothing is left -- the aura fades out over its last cycle instead of
+## vanishing. FUN_00a4db00 runs for every effect of the decoration from
+## FUN_00a4ffe0: a buff's end (FUN_00a53120), a cast cancelled
+## (FUN_00a50a00), a cast whose phases are done (FUN_00a534d0). stop() is
+## slot 2 (freed at once): the body going.
+func release() -> void:
+	if is_queued_for_deletion():
+		return
+	loop = false
+	max_life = 0.0
+	# The one-shot guard (ONESHOT_MAX_LIFE) counts from here.
+	_life = 0.0
+	if sim == null or sim.finished():
+		_end()
+
 func _end() -> void:
 	if is_queued_for_deletion():
 		return
@@ -783,6 +844,19 @@ var follow_basis := Basis.IDENTITY
 ## review: an object's mode-0 particle entry, CRTModParticle::FUN_00c81190
 ## 0xc811c5..0xc811e0 multiplies the bone's matrix by the world's).
 var follow_bone_full := false
+## Round 785: a skill row's effect at a named bone (READ: the row parser
+## GlobalEffectManager::FUN_00a9d0f0 gives a plain StartBone the placement
+## flags 2, '@' 0, '#' 6, '*' 3; IDecoSkill::FUN_00a4a680 keeps the bone's
+## rotation -- its matrix times the body's, the model scale taken out -- only
+## with flag 2, and resets it to identity without). So `follow_bone_turn`:
+## the effect turns with the bone (its offset is still in the body's frame,
+## READ: the offset is turned by the body's matrix before the bone's is
+## applied, and added to the bone's position); `follow_world_turn` ('@'):
+## at the bone, along the world's axes. Neither: the body's turn (no bone,
+## 'none', READ: the body's matrix), as before. follow_basis is applied in
+## the effect's frame after it (the row's Rotate, FUN_00a4ddc0).
+var follow_bone_turn := false
+var follow_world_turn := false
 ## The effect's own uniform scale on top of its host's (round 734): an
 ## equipment glow's particle row asks for col 3 / 100 (READ: CRTModParticle
 ## +0xc0, handed each placement to CEFEffect::vslot_010, which sets the
@@ -804,6 +878,8 @@ func _skeleton() -> Skeleton3D:
 	_follow_skel = SkillEffects.skeleton_of(_follow_host)
 	_follow_bone = -1
 	var b := _follow_bone_name.strip_edges()
+	if b.begins_with("@"):
+		b = b.substr(1) # round 785: '@' names the bone, at the world's axes (READ)
 	if _follow_skel != null and b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#"):
 		_follow_bone = _follow_skel.find_bone(b)
 	return _follow_skel
@@ -824,7 +900,10 @@ func _skeleton() -> Skeleton3D:
 ## host is ANCHOR_RECENTRE away; a jump past ANCHOR_JUMP in one frame (a
 ## teleport, or the world re-based on a zone change) carries the whole
 ## effect along instead (OURS both).
-func _place() -> bool:
+##
+## Round 785: `step_due` -- this frame's advance will step -- leaves the
+## placement to that step (EfpSim.set_origin), one follow a frame as retail.
+func _place(step_due: bool = false) -> bool:
 	if _follow_host == null or not is_instance_valid(_follow_host):
 		return false
 	if not is_inside_tree():
@@ -835,6 +914,14 @@ func _place() -> bool:
 		var at := _follow_offset
 		if follow_bone_full and _follow_bone >= 0:
 			placed = skel.global_transform * skel.get_bone_global_pose(_follow_bone) * Transform3D(follow_basis, at)
+		elif (follow_bone_turn or follow_world_turn) and _follow_bone >= 0:
+			# Round 785 (READ, see follow_bone_turn): the bone's position plus
+			# the offset in the body's frame; the bone's turn (or the world's)
+			# at the body's scale, then the row's own turn.
+			var g := skel.global_transform
+			var pose := skel.get_bone_global_pose(_follow_bone)
+			var b := g.basis * pose.basis.orthonormalized() if follow_bone_turn else scale_basis(g.basis)
+			placed = Transform3D(b * follow_basis, g * (pose.origin + at))
 		else:
 			if _follow_bone >= 0:
 				at += skel.get_bone_global_pose(_follow_bone).origin
@@ -865,7 +952,7 @@ func _place() -> bool:
 	global_transform = _anchor
 	if sim == null:
 		return redraw
-	return sim.set_origin(e.origin, e.basis.orthonormalized()) or redraw
+	return sim.set_origin(e.origin, e.basis.orthonormalized(), step_due) or redraw
 
 ## A basis's scale alone, its handedness kept (a mirrored basis keeps a
 ## negative Z), its rotation dropped.
@@ -914,13 +1001,15 @@ var culled := false
 func step_pre(delta: float) -> bool:
 	_life += delta
 	if max_life > 0.0 and _life >= max_life and loop:
-		stop()
-		return false
+		# OURS guard (a loop nobody ended): let go as its owner would (round 785).
+		release()
+		if is_queued_for_deletion():
+			return false
 	if static_host and _anchored:
 		_pending_moved = false
 		return true
 	var t0 := Time.get_ticks_usec() if profile else 0
-	_pending_moved = _place()
+	_pending_moved = _place(sim != null and sim.step_due(delta))
 	if profile:
 		prof["place"] += Time.get_ticks_usec() - t0
 	return true
@@ -973,6 +1062,10 @@ func step_post() -> void:
 	# billboarded node, when the camera turned (else it would lag the view).
 	# (Round 621: also when the host moved the effect, whose followers the
 	# placement pass moved this frame, or the space re-centred.)
+	# (Round 785: also when a frame without a step ran the follow pass for a
+	# particle following a dead ancestor, EfpSim.take_pass_moved.)
+	if sim.take_pass_moved():
+		moved = true
 	var need_draws := stepped > 0 or moved or (_has_billboard and _camera_turned())
 	# The Link strips likewise: after a step, or when the camera or the
 	# effect moved for a screen-space pipe (round 621's review follow-up).
@@ -1330,6 +1423,8 @@ func _update_draws() -> void:
 		var kb := PackedFloat32Array()
 		if keep_draw_buffers:
 			kb.resize(ps.size() * 20)
+		if send and di < _draw_boxes.size():
+			_fit_box(di, mmi, ps)
 		if d.size() > 3 and bool(d[3]):
 			# A shared-turn node (use_shared_turn): the shader billboards, so
 			# the instance carries only the particle's scale and position
@@ -1361,6 +1456,30 @@ func _update_draws() -> void:
 				_put_instance(kb, i * 20, t, c, u)
 		if keep_draw_buffers:
 			_draw_bufs[di] = kb
+
+## Round 785: draw node `di`'s cull box: DRAW_AABB, grown to hold every
+## particle's position plus its shape's reach at its largest scale (the
+## shape turned any way). Set on the RenderingServer only when it changes.
+func _fit_box(di: int, mmi: MultiMeshInstance3D, ps: Array) -> void:
+	var box := DRAW_AABB
+	if not ps.is_empty():
+		var lo := Vector3(INF, INF, INF)
+		var hi := -lo
+		var s := 0.0
+		for p in ps:
+			var q: EfpSim.Particle = p
+			lo = lo.min(q.pos)
+			hi = hi.max(q.pos)
+			s = maxf(s, maxf(absf(q.scale.x), maxf(absf(q.scale.y), absf(q.scale.z))))
+		var r := s * _draw_reach[di] # the shape's bounding sphere, turned any way
+		if not (lo.x >= -200.0 + r and lo.y >= -200.0 + r and lo.z >= -200.0 + r
+				and hi.x <= 200.0 - r and hi.y <= 200.0 - r and hi.z <= 200.0 - r):
+			var ext := AABB(lo - Vector3.ONE * r, hi - lo + Vector3.ONE * (2.0 * r))
+			if is_finite(ext.position.x + ext.position.y + ext.position.z + ext.size.x + ext.size.y + ext.size.z):
+				box = DRAW_AABB.merge(ext)
+	if box != _draw_boxes[di]:
+		_draw_boxes[di] = box
+		RenderingServer.instance_set_custom_aabb(mmi.get_instance(), box)
 
 ## Round 764: one instance in Godot's MultiMesh layout at `o` (the transform's
 ## three rows, basis row then origin, the colour, the custom data).

@@ -144,9 +144,10 @@ returns one Dictionary of packed arrays, or `{error}`.
   origin, colour, custom data: 20 floats an instance), sized as `_update_draws` sizes the
   MultiMesh; and every Link node's chains as `gather_from` gathers them. The main thread hands
   them over (`EfpEffect._apply_native_draws`, `_update_links(native)`).
-- **Its own interface number** (`SrEfpBatch.efp_api()`, `EfpSimNative.EFP_API`, 1): the classes
-  are additive, so `core::API` is unchanged; a library without them (or with another number)
-  leaves the masters in GDScript. `OPENSRO_EFP_NATIVE=0` forces that (the A/B);
+- **Its own interface number** (`SrEfpBatch.efp_api()`, `EfpSimNative.EFP_API`, 2 from round 785:
+  a dead ancestor followed by its frozen state, `set_origin`'s `step_due`, `step_due`,
+  `take_pass_moved`; 1 before): the classes are additive, so `core::API` is unchanged; a library
+  without them (or with another number) leaves the masters in GDScript. `OPENSRO_EFP_NATIVE=0` forces that (the A/B);
   `OPENSRO_NATIVE=0` turns off every native piece.
 - **Parity.** `cargo test` (the batch equals sequential stepping at 0-7 helpers with the cap
   binding; the pool; the PCG stream). `client/scripts/efp/efp_native_test.gd` (synthetic effects:

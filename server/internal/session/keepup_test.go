@@ -348,9 +348,18 @@ func TestFirstSwingIsGatedByReach(t *testing.T) {
 	}
 
 	write(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: monster.ID}).Encode())
+	// Round 785: the refusal is preceded by the monster's position as the
+	// server has it (resyncMonster), and names the monster.
+	first := read()
+	if first.Opcode != OpMonsterMoved {
+		t.Fatalf("first reply to an out-of-reach swing: opcode %#x, want the resync OpMonsterMoved", first.Opcode)
+	}
+	if mv, err := DecodeMonsterMoved(first.Data); err != nil || mv.MonsterID != monster.ID || mv.X != farX || mv.DestX != farX || mv.Speed != 0 {
+		t.Fatalf("resync %+v (err %v), want monster %d standing at x %g", mv, err, monster.ID, farX)
+	}
 	ar, err := DecodeAttackResult(read().Data)
-	if err != nil || ar.Error != "too far away" {
-		t.Fatalf("swing from %g units: %+v (err %v), want a refusal", farX, ar, err)
+	if err != nil || ar.Error != "too far away" || ar.MonsterID != monster.ID {
+		t.Fatalf("swing from %g units: %+v (err %v), want a refusal naming monster %d", farX, ar, err, monster.ID)
 	}
 	if m, _ := monsters.Get(monster.ID); m.HP != 200 {
 		t.Fatalf("the monster took %d damage from out of reach", 200-m.HP)

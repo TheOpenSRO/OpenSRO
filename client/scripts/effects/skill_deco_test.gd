@@ -80,7 +80,7 @@ func _test_timeline() -> void:
 	_check(a2 == ["clip:1:92:loop", "group:1:0"], "READY's end: the WAIT loop and its group 0 (got %s)" % str(a2))
 	_check(_kinds(d.tick(2999)).is_empty() and d.phase == D.WAIT, "WAIT holds until the act or its due time")
 	var a3: Array = _kinds(d.tick(3000))
-	_check(a3 == ["stop_loops", "clip:2:27", "group:2:0"], "due: SHOT -- the loops stop, its clip, group 0 (got %s)" % str(a3))
+	_check(a3 == ["clip:2:27", "group:2:0"], "due: SHOT -- its clip, group 0; the loops are kept (got %s)" % str(a3))
 	var a4: Array = _kinds(d.tick(3300))
 	_check(a4 == ["group:2:1"], "the SHOT clip's first hit event fires group 1 (got %s)" % str(a4))
 	var a5: Array = _kinds(d.tick(4000))
@@ -100,7 +100,7 @@ func _test_wait_hold() -> void:
 	_check(_kinds(d.tick(60000)).is_empty() and d.phase == D.WAIT, "with no due time the hold lasts")
 	d.shot()
 	var a1: Array = _kinds(d.tick(60001))
-	_check(a1 == ["stop_loops", "group:2:0", "stop_loops", "end"], "shot(): SHOT (no clip) and the end (got %s)" % str(a1))
+	_check(a1 == ["group:2:0", "stop_loops", "end"], "shot(): SHOT (no clip) and the end (got %s)" % str(a1))
 	var e = D.new(114, ghost, func(_t): return {}, 0, -1)
 	e.tick(0)
 	_check(_kinds(e.cancel()) == ["stop_loops", "end"] and e.is_done(), "cancel() ends a held decoration")
@@ -109,7 +109,7 @@ func _test_wait_hold() -> void:
 		func(_t): return {"ms": 500, "events": [200]}, 0, -1)
 	f.shot()
 	var a2: Array = _kinds(f.tick(0))
-	_check(a2 == ["group:0:0", "group:1:0", "stop_loops", "clip:2:26", "group:2:0"],
+	_check(a2 == ["group:0:0", "group:1:0", "clip:2:26", "group:2:0"],
 		"a SHOT-only skill goes to SHOT at once, READY's and WAIT's group 0 on the way (got %s)" % str(a2))
 
 ## A body with none of the clips: the phases advance at once.
@@ -120,7 +120,7 @@ func _test_no_clips() -> void:
 	var p: Dictionary = D.plan({"group": "default", "ready": [41], "wait": [], "shot": [27]}, 0)
 	var d = D.new(1, p, func(_t): return {}, 0, -1)
 	var a: Array = _kinds(d.tick(0))
-	_check(a == ["group:0:0", "group:1:0", "stop_loops", "group:2:0", "stop_loops", "end"],
+	_check(a == ["group:0:0", "group:1:0", "group:2:0", "stop_loops", "end"],
 		"no clips: every group 0 fires and the decoration ends (got %s)" % str(a))
 
 ## SkillHits: the server lane's framing around retail's tail.

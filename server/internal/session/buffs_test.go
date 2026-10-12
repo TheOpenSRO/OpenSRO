@@ -478,16 +478,16 @@ func TestBuffOpcodes(t *testing.T) {
 
 func TestGhostWalkDestination3D(t *testing.T) {
 	from := world.Position{X: 10, Y: 0, Z: 10}
-	got := ghostWalkDestination(from, world.Position{X: 10, Y: 0, Z: 160}, 100)
+	got := teleportDestination(from, world.Position{X: 10, Y: 0, Z: 160}, 100)
 	if got != (world.Position{X: 10, Y: 0, Z: 110}) {
 		t.Fatalf("got %+v", got)
 	}
-	got = ghostWalkDestination(from, world.Position{X: 10, Y: 0, Z: 90}, 100)
+	got = teleportDestination(from, world.Position{X: 10, Y: 0, Z: 90}, 100)
 	if got != (world.Position{X: 10, Y: 0, Z: 90}) {
 		t.Fatalf("got %+v", got)
 	}
 	// The height counts: 60 up and 80 across is 100.
-	got = ghostWalkDestination(from, world.Position{X: 10, Y: 120, Z: 170}, 100)
+	got = teleportDestination(from, world.Position{X: 10, Y: 120, Z: 170}, 100)
 	if math.Abs(got.Y-60) > 1e-9 || math.Abs(got.Z-90) > 1e-9 {
 		t.Fatalf("got %+v", got)
 	}

@@ -541,10 +541,27 @@ The owner ends an effect through one of two slots:
 - **Slot 4 with 0** (`vslot_004`) clears the restart flag (+0x49). It releases the effect when its
   keep count reaches 0.
 
-Slot 4 with 1 sets the flag. That is AT_LOOP and AT_STOP: the effect is kept as above.
+Slot 4 with 1 sets the flag. That is AT_LOOP alone (round 785: AT_STOP is ActType 0 and is not
+kept; see "Where a skill row places its effect"): the effect is kept as above.
 
-`EfpEffect.stop()` therefore drops every particle at once. This covers loop and never-extinct
-particles, which the review found in 18 files that never end by themselves.
+**How a skill's decoration ends its effects** (READ, round 785). `IDecoSkill::FUN_00a4db00` calls
+slot 4 **with 0** on the effect (the keep flag cleared) and stops the entry's sound; it runs for
+every entry of the decoration from `IDecoSkill::FUN_00a4ffe0`, which a buff's end
+(`FUN_00a53120`), a cancelled cast ("Skill Auto Cancel", `FUN_00a50a00`) and a cast whose phases
+are done (`FUN_00a534d0`, phase index past 2) call. The decoration then goes on updating its
+effects (`CIDecoSkill::vslot_014`: an ended decoration, +0xd0 set, with entries left keeps its
+per-entry loop -- when its +0x184 callback is unset; one with the callback returns 0 at once, and
+which decorations set it (`IDecoSkill::FUN_00a4d370`) is OPEN) and frees each one with slot 2 only
+when its slot 0 returns 0, that is, when it has finished. So
+a kept aura revives nothing more, its root particles die at the end of their life, its children
+play out, and it ends: it fades over its last cycle.
+- `EfpEffect.release()` does that (round 785): `SkillEffects.detach_aura` (the buff's end),
+  `cancel_cast`, the cast's own loops at SHOT (the moment is the cast sequencer's, INFERRED) and
+  the OURS guards. Rounds 620-784 cut them with `stop()`, so a recast's old aura vanished and the
+  new one popped in at frame 0.
+- `EfpEffect.stop()` is slot 2: every particle at once. It is kept for a teardown (a world
+  unload, a body freed). This covers loop and never-extinct particles, which the review found in
+  18 files that never end by themselves.
 
 ### Colour (MEASURED, round 620 review)
 
@@ -573,6 +590,17 @@ SetBANPos and SetBANRot keys, which are implemented.
   emitters (`CEFElement::vslot_001`).
 - There is a cap of 300 particles per effect and 2,000 in all. 600 of the 2,000 are reserved for
   the local player's own effects: its casts, hits and level-up.
+  - MEASURED round 785 (`efp_probe.gd --census`, every effect the skilleffectset rows name, alone,
+    still, 3 s): 76 of 1,359 runs have spawns refused by the 300, among them every Berserk wing
+    (`hwanlook*`, 393 wanted), the fireworks (about 1,600-1,800) and a few monster skills; none
+    of the China fire or lightning skills. Retail has no cap (round 761); the 300 is kept by the
+    user's decision of 2026-10-09 (round 763), so it stays: OPEN for the user.
+- **The cull box** (round 785). A draw node culls by `EfpEffect.DRAW_AABB` (±200 native units,
+  OURS) grown to hold its particles plus its shape's reach (`_fit_box`), and a Link node by that
+  box grown to its strip's own box (`_fit_link_box`); set on the RenderingServer only when it
+  changes. Before, the fixed box culled a big effect whole while part of it showed: 46 of the
+  1,359 runs reach past it on a still host (MEASURED). A native draw (EquipFx, the dungeons) keeps
+  the fixed box.
   - GDScript costs about 7 µs a particle-frame (MEASURED), so the cap bounds a 50 ms frame at
     about 14 ms.
 - Decoded templates, textures and meshes are kept by least-recent use: 256, 384 and 256 entries.
@@ -668,6 +696,35 @@ node at depth d, level d + 1 is the effect.
     with the effect's turn, then stores the placement as old.
 - The draw's world matrix is only that scale (`FUN_00cabda0`). So **retail simulates in world
   space over the effect's scale**, and only what follows the effect moves with the host.
+- **The owner places the effect every frame, before its update** (READ, round 785):
+  `CRTModParticle::FUN_00c81450` calls `FUN_00c81190` (vslot_010, then vslot_007), then
+  `FUN_00c80ff0` (the update, when the effect clock gave frames), then the draw; a skill's
+  decoration `CIDecoSkill::vslot_014` places a following effect through `IDecoSkill::FUN_00a4ddc0`
+  (vslot_007) and then updates it. In a frame with an update, the update follows the placement
+  and `CEFEffect::vslot_000` then stores the placement as old and clears +0x60 and +0x28b, so
+  the draw runs no pass; in a frame without one the draw runs it. **One follow a frame.**
+
+**Dead ancestors** (READ, round 785).
+- A particle is reference-counted. Its emitter holds its owner (`CEFGroup::vslot_002` releases
+  it), and a particle holds its emitter (`CEFElement::vslot_002`). A death
+  (`CEFElement::vslot_001`) unlinks the particle from its node's list and kills its child
+  emitters, and frees it only when its count is 0. So while a child emitter still has particles,
+  the dead particle stays in memory, out of every list, its state as its last pass left it.
+- The emitter init resolved each level to an ancestor **pointer** once (`CEFGroup::vslot_004`),
+  and both passes read it with no test of the dying or dead flags (`CEFUpdater::vslot_002`,
+  `FUN_00c863a0`: only `ancestor != 0`, and +0x60 for u2/u3/u4).
+- So a follower of a dead ancestor keeps adding its frozen move (position − old position) on
+  every pass, and its frozen turn while its +0x60 stays set. With one pass a frame, that move is
+  the last frame's: a particle that outlives the one it follows goes on at the host's pace
+  instead of being dropped where it was.
+- Which pass is a dying particle's last: the pass of the frame before the update that flushes it.
+  On a frame where the host did not move that pass leaves the particle's old state equal to its
+  state and +0x60 clear, so a particle that dies after its host stopped freezes still.
+- MEASURED (`efp_probe.gd --census`, 1,359 runs, 3 s at 144 frames a second, host at 50 native
+  units a second): 733 runs draw particles that follow a dead ancestor (352,913 particle-frames).
+  Their farthest drawn particle from the host: median 62.3 → 29.2 units. The user's
+  `lightning_gyeonggong_keep_c` (a 50-frame wind under a 20-frame holder, every node u6 = 1):
+  110.6 → 15.2 at 50 units a second, 1,155 → 15.2 at 525 (its still spread is 15.2).
 
 **Each frame, per particle** (`CEFUpdater::vslot_002`):
 1. with b0, keep the rotation as the old rotation (+0x64); with b1, keep the position as the old
@@ -712,8 +769,18 @@ scale change `vslot_010` uses it.
 **This client** (`EfpSim`, `EfpEffect`):
 - all four levels, the ancestor walk to the effect, the changed gate, b0/b1/b5/b7, and the spawn
   rules above (READ);
-- **The effect is the sim's root particle.** `EfpSim.set_origin` places it and, when it moved or
-  turned, runs the draw's follow pass at once.
+- **The effect is the sim's root particle.** `EfpSim.set_origin` places it. With `step_due`
+  (round 785: `EfpEffect` asks `EfpSim.step_due(delta)`) the step that follows in the same frame
+  takes the placement, as retail's update does; otherwise, when it moved or turned the effect (or
+  a follower of a moving dead ancestor exists), it runs the draw's follow pass at once. Round 621
+  ran the pass and then the step, two follows in a frame with a step.
+- **A dead ancestor is followed by its frozen state** (round 785, READ above): the four follows
+  test no `alive`. A pass runs on a still frame while a live particle follows a dead ancestor
+  that still moves it (`EfpSim._zombie_follow`); otherwise a still frame is noted
+  (`_still_pass`) and a particle flushed after it gets the still pass's state. `EfpSim.shift`
+  moves a followed dead ancestor too (OURS: retail's shift, for a scale change, walks the live
+  particles; this client's re-centre must be invisible). Mirrored in `native/src/core/efp_sim.rs`
+  (`EFP_API` 2).
   - Every render frame: each particle keeps its old state, clears changed, and takes u2/u3/u4
     (gated) and u6. There is no velocity, rotation velocity or command in this pass.
   - So the effect's followers move with the host every frame, and during a 50 ms step the effect
@@ -735,14 +802,46 @@ scale change `vslot_010` uses it.
   retail's offset intends;
 - particles are processed in spawn order, which finishes every ancestor before its followers as
   retail's node order does;
-- a dead ancestor is no longer followed;
+- ~~a dead ancestor is no longer followed~~ (round 785: READ, followed by its frozen state; this
+  OURS rule dropped the children of a part that died in a line behind a moving host -- the
+  trails the user reported);
+- below 20 frames a second this client steps two or more 50 ms frames in one rendered frame, each
+  a full update; retail runs one update with the frames added to every age (round 620), so a
+  follower of a dead ancestor moves once per update there and once per step here (OPEN; the
+  user plays at 144);
 - a synthetic node without the block follows its parent's translation (u6 = 1, b1), round 620's
   behaviour.
-- The host's turn reaches the effect as its rotation. The bone's own rotation is not used (the
-  effect "turns with the body", round 620) -- except where the placement READ says otherwise: an
-  object's mode-0 entry (round 720, `follow_bone_full`) and an equipment row (round 741,
-  `CRTModParticle::FUN_00c81190`: the bone's matrix times the world's; `EquipFx.holder_transform`)
-  take the bone's whole frame.
+- The host's turn reaches the effect as its rotation. Where the placement is READ the effect
+  takes it: an object's mode-0 entry (round 720, `follow_bone_full`), an equipment row (round 741,
+  `CRTModParticle::FUN_00c81190`: the bone's matrix times the world's;
+  `EquipFx.holder_transform`), and a skill row (round 785, below: the bone's turn for a plain
+  StartBone, `follow_bone_turn`).
+
+**Where a skill row places its effect** (READ, round 785; the row parser
+`GlobalEffectManager::FUN_00a9d0f0`, `IDecoSkill::FUN_00a4a680`, `FUN_00a4ddc0`):
+- **ActType** is looked up in the (name, value) table at `0x00ec7280`: AT_STOP 0, AT_ONE_FOLLOW 1,
+  AT_LOOP 2, AT_TARGET 3, AT_TARGET_F 4, AT_SOURCE 5, AT_DMG_POS 6, AT_MOV_1TAR 7 ...
+  AT_MOV_PIERCE 11. `IDecoSkill::FUN_00a513a0` keeps (slot 4 with 1) ActType 2 alone, places 0
+  once when it is made, and gives 1 and 2 the per-frame placement. Rounds 620-784 had AT_STOP at
+  2 (kept, following). 35 effect rows are AT_STOP (MEASURED: monster dust and stuns, the
+  fireworks).
+- **StartBone** sets the placement flags at row +0x44: a plain name 2, `@name` 0, `#name` 6, `*` 3,
+  `none` 0 with no bone. `FUN_00a4a680` takes the body's matrix, multiplies the bone's (its
+  model scale taken out) onto it, and keeps that rotation only with bit 1 (2); bit 0 adds a
+  height; bit 2 names another object's bone. So a plain bone turns the effect with the bone
+  (1,603 effect rows, MEASURED), `@` puts it at the bone along the world's axes, `none` at the
+  body turned with it.
+- **StartOffset** (row +0x48, pointed at from +0x40 by the post-pass at `0x00a95310` when it is not
+  zero) is turned by the body's matrix, scaled by the body's scale, and added to the bone's
+  position.
+- **Rotate** (its own column) is parsed as degrees: 1-360 about Y (`FUN_0043cda0`), 361-720 about
+  X by value - 360 (`FUN_009ecc10`), above 720 about Z by value - 720 (`FUN_00a4d820`); the
+  constants are the doubles 360.0 at `0x00dde7a8` and 2π at `0x00d81930`. `FUN_00a4ddc0` applies
+  it in the effect's frame, `R × placement` (`UI_SILKMALL::FUN_0055ebd0` is `this × m`). 284 effect
+  rows carry one (MEASURED), e.g. 450 (90° about X) on the spear's pierce at `Bip01 R Hand`.
+- This client: `SkillEffects.attach` sets `EfpEffect.follow_bone_turn` / `follow_world_turn` and
+  `follow_basis` (`SkillEffects.rotate_basis`); `*` and `#` stay at the skeleton's origin turned
+  with the body (OPEN).
 - **A shared simulation drawn turned** (round 741, OURS: `EfpEffect.use_shared_turn`). `EquipFx`
   simulates one effect and draws it at many bones, each turned. A billboard must still face the
   camera and a pipe's side is the camera's, so those nodes build their geometry in the vertex

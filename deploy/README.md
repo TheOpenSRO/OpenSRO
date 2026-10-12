@@ -304,7 +304,12 @@ for f in itemdata.txt skilldata.txt characterdata.txt leveldata.txt levelgold.tx
 order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//' | grep -v '^$' \
           | tr 'A-Z' 'a-z' | while read -r n; do [ -f "$n" ] && echo "$n"; done; }
 /tmp/export-refdata  -mode items  -out items.csv  $(order itemdata.txt)     # 15,338 rows from a retail archive
-/tmp/export-refdata  -mode skills -out skills.csv $(order skilldata.txt)    # 33,698 rows
+for f in skilldataenc.txt; do /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
+/tmp/pk2list -pk2 "$MEDIA" -filter 'textdata\' | awk '{print $2}' | grep -iE 'textdata\\skilldata_[0-9]+enc\.txt$' \
+  | while IFS= read -r p; do /tmp/pk2list -pk2 "$MEDIA" -extract "$p" -out "$(basename "$(echo "$p" | tr '\\' /)" | tr A-Z a-z)"; done
+/tmp/export-refdata  -mode skills -enc-exe /path/to/your/sro_client.exe -out skills.csv $(order skilldataenc.txt)
+                     # 33,632 rows (round 785: the ENC tables retail's client loads, decrypted with your
+                     # own client's key tables; the plain skilldata.txt index gives 33,698, 66 of them ids retail lacks)
 /tmp/export-refdata  -mode monsters -out monsters.csv $(order characterdata.txt) levelgold.txt textdata_object.txt
                      # 7,604 monster species (round 654); the server reads it with -monsters-csv
 /tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
@@ -326,7 +331,7 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt refoptionaltelep
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refshopgroup.txt" -out refshopgroup.txt
 /tmp/export-refdata  -mode npcs -out npcs.csv $(order characterdata.txt) refshopgroup.txt
                      # 313 NPC rows, 84 named by refshopgroup (round 708); REQUIRED with -npcpos-csv since round 727 (-npcs-csv)
-rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt characterdata_* leveldata.txt \
+rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* skilldataenc.txt characterdata.txt characterdata_* leveldata.txt \
       levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refoptionalteleport.txt refregion.txt refshopgroup.txt magicoption.txt magicoptionassign.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
@@ -417,6 +422,25 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #   654's count on a retail archive).
 # Since round 666 the server also WARNs at every boot while no skill carries status params:
 # `skills store has NO status params (N skills, 0 with status_params) ... RE-EXPORT skills.csv`.
+# ROUND 785 (the skills, server side) NEEDS THE SKILLS AND MONSTERS RE-EXPORTED AND RE-IMPORTED:
+#   a. skills.csv now comes from the files the RETAIL CLIENT loads, the ENC tables its
+#      skilldataenc.txt names (SkillData_1000ENC.txt .. 47000ENC.txt), decrypted with the key
+#      tables of YOUR OWN sro_client.exe (never copied into the repo). Extract them beside the
+#      others (the `grep -iE 'textdata\\(itemdata|skilldata|characterdata)_[0-9]+\.txt$'` filter in
+#      step 2 does not match the `enc` names -- extract `textdata\skilldataenc.txt` and every
+#      `textdata\skilldata_<n>enc.txt`), then:
+#        /tmp/export-refdata -mode skills -enc-exe /path/to/sro_client.exe -out skills.csv $(order skilldataenc.txt)
+#      It writes 33,632 rows on a retail archive (the plain index wrote 33,698: 66 ids retail lacks,
+#      and 36791 at mastery level 10 where retail says 110). The CSV is 94 columns: 91 Params (the
+#      raw Param block), 92/93 Mastery2/MasteryLevel2. Then the NEW import-refdata (its store adds
+#      skills.param_words, mastery2, mastery_level2) and restart. Check:
+#      `SELECT count(*) FROM skills WHERE param_words <> '';` answers 33632. Until then every
+#      round-785 mechanic that reads the Param block (area targets, knockdown/knockback, imbues,
+#      chains, buff and passive stats, debuffs, cures, resurrection, the MAAT gate) is off and
+#      skills behave as before (one target, hits summed).
+#   b. re-run `export-refdata -mode monsters` (step 2): monsters.csv grows two columns,
+#      Knockdown and KORecoverTime (characterdata cols 81/82). Without them every monster is
+#      knockable (3) with a 3000 ms recovery -- the table's commonest values.
 # ROUND 728 (the warehouse deposit fee) NEEDS THE ITEMS RE-EXPORT ON opensro-01: re-run
 # `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 73 columns, the new
 # column 72 KeepingFee, itemdata column 30), then the NEW `import-refdata` (step 3) -- its store adds

@@ -7483,6 +7483,492 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 785 (part): the skills (server)
+
+The user: "fully implement all skills and make sure they behave exactly as the original game
+including effects" (lane r785-skill-srv: the server side of every player skill). Five read-only
+forks READ the retail GameServer for the efr collectors, the stat writes, knockdown/knockback/
+hate, chains/imbues/ammunition/MAAT and the support skills; the specs are in docs/protocol
+(`skill_census`, `skill_hit_block`, `skill_targets`, `skill_attack`, `skill_stats`,
+`skill_support`).
+
+- **The data (DECIDED, MEASURED):** `skills.csv` now comes from the ENC tables retail's client
+  loads (`export-refdata -enc-exe`, the key tables from the player's own `sro_client.exe`,
+  verified byte-identical to a plain twin). The 33,632 ENC ids equal the user's restored shard
+  `_RefSkill` on every exported column (the 26 conflicting ENC duplicates resolve last-wins, as
+  the shard has them); the shard's 2,512 extra ids are a private server's additions the client
+  cannot show. The CSV carries the raw Param block (col 91) and the second mastery slot (92/93),
+  so no further mechanic needs an export column.
+- **The census** (`cmd/skillcensus`): 2,944 China and 3,171 Europe player rows (learnable rows,
+  base attacks, chain links); `att` 3,529, `getv` 4,043, `efr` 1,880, `mc` 1,580, `dura` 1,257 ...
+  The by-mechanic before/after table is skill_census.md.
+- **The action block (READ both binaries):** retail's 0xB070/0xB071 tail -- u32 target, u8 flags,
+  `[u8 hits, u8 targets, per target {u32 uid, per hit {u8 kind, ...}}]`, the move -- rides
+  OpAttackResult (after an always-present wall suffix, offset 72) and OpSkillCast, 0xAB-marked,
+  with an OURS kinds array. Kind 4 is the knockdown (`ko`, +0x23c) and 5 the knockback (`kb`,
+  +0x254) -- the relayed note had them swapped. Plain swings carry it too.
+- **Ghost Walk (the user's report):** READ FUN_005862e0: `tele` value[1] is the limit in world
+  units (no x10), a nearer point is the landing (no push to the limit), the landing is truncated
+  region-local, value[0] (500) is never read by the server. Teleport (`tel2`) and Sprint (`tel3`,
+  to the target, short by the two radii) added.
+- **Implemented** (READ addresses in the code and docs): the efr collectors 1/2/3/4/6 with cap and
+  falloff; per-target per-hit blows (magic never crits, the row's `cr`, `da` on a downed target,
+  `atca`, the area share, the void hit after a fall); knockdown/knockback with the monster moved
+  and held (monster CSV cols 81/82); the imbue's add on skills and plain swings, its states and its
+  chain targets; chains link by link with the 500 ms budget; MAAT; buff and passive stat writes
+  into defence, parry, block, crit, hit rate, weapon bounds, range, max HP/MP and damage %, passive
+  `setv` variables for `getv` damage keys; debuffs on monsters (ownerKind 1) with their stats and
+  the Warlock's linked blow per `puls`; heal over time; `efr` party and chain heals; cures; the
+  resurrection offer (0x3080 kind 4/8) and revive; hate onto a threat table; the `lfst` drain.
+- **Fixed on the way:** a self-deadlock (a stat read inside HitWall's callback took the book's
+  lock: the stats are now a lock-free snapshot, `TestRound640CrystalWallTakesAPhysicalBlow` hung
+  10 minutes before the fix).
+- **OPEN** (TODO.md "Round 785 follow-ups"): ammunition, the AI's retarget by hate, monster
+  skills' areas and knocks on players, stealth/detection/transforms/summons/traps, defensive
+  links, weapon-scaled heals, the resurrection's EXP return, the plain swing's MAAT (combat lane).
+- **Tests:** `go test ./...` passes; per-mechanic unit tests (`skill785_test`,
+  `skill785_mech_test`, `buff/stats_test`, `export-refdata/enc_test`); end-to-end over the real
+  handlers (`skill785_e2e_test`: area multi-hit, knockback, Ghost Walk, Teleport, a chain link, a
+  monster debuff's pulse); and `TestR785EveryPlayerAttackRow` on the RE box with the real export:
+  all 1,923 player attack rows cast, 1,923 accepted, 792 struck more than one target, 160 more
+  than one hit, 252 knocked, every block consistent.
+
+### Round 785 (part): drops and the pickup
+
+The user: "Also fix drops, I don't think drops can stack on top of each other but double check.
+Also add a pickup animation for when you grab items, check the code." The whole reading is in
+`docs/protocol/ground_items.md`, "Where a drop lands" and "The pick-up motion: 0x3036".
+
+- **Where retail puts a drop (READ, SR_GameServer.exe):** every drop -- a monster's
+  (`CGObjChar::ForceDropItem` 0x004aa680), a player's item (`CGStorage::DropItem` 0x004b2ab0) or
+  gold (`FUN_00526b00`) -- hands the new item the dropper's own position and calls its slot 311,
+  `FUN_0048fdf0`: angle `rand()/32767 * 2 pi`, radius `8 + 12 * rand()/32767` (`.rdata 0xb45e14` =
+  8.0, `0xb45b20` = 20.0), a third rand for the item's own heading. Then `CGObj::EnterWorld`
+  resolves the navmesh cell and height ("Failed!!! at ResolveCellAndHeight()"); off the mesh, the
+  item is entered unscattered at the dropper's position. **No test against items already lying
+  there**: "stacking" is chance, two random points of an 8-20 ring (about 1 % of pairs within 2
+  units). A class-based wider band (3/8 [10, 30], 4 [10, 40], 5 [20, 100]) keys on the item's
+  `+0x14c` being a monster, which nothing on the drop path writes (READ: its only writers, the
+  constructor and slot 321's setter, and the setter's seven `[vtable+0x504]` call sites) -- so not
+  used; OPEN what reaches it.
+- **What ours did (MEASURED):** a uniform 2-unit disc (`DropScatter`, own design): every stack of a
+  kill within 4 units of every other. The user's log: 52 Gold and 2 HP Recovery Herbs 1.95 apart,
+  both at the server's y 0.0 (OpenSRO's monsters carry their listed y; the client stood both on the
+  terrain under them, `GroundItems.spawn`).
+- **Fixed:** `grounditem.Scatter` is `FUN_0048fdf0` with the CRT's 15-bit draws, used by
+  `session.dropKillLoot`. MEASURED live (`partybot -mode pickup`, new; 40 Mangyang kills against a
+  server from this branch, `/var/tmp/r785-drops/bot`): 80 stacks 8.01 to 19.68 from their corpse
+  (mean 13.78, the server's "ground drop" lines); the 40 same-kill pairs 1.47 to 37.07 apart (median
+  20.55), one within 2 units. `TestScatterDistribution` (20,000 draws): every radius in [8, 20],
+  mean 13.97, quadrants even, 1.03 % of pairs within 2. Not modelled (OPEN): the off-mesh retry and
+  the height (no server navmesh), the item's random heading (not on the wire), player drops (none
+  in OpenSRO).
+- **Height (MEASURED, client):** the stacks of the G-key run lie at the server's y 42.50 and are
+  drawn at 42.89, the terrain under them (`_terrain_hit_height`, +0.05 x the scale ratio, as the
+  monsters) -- the log line now prints the drawn y. The x, z are the server's, untouched.
+- **The pick-up (READ):** the retail server walks the picker into 10 units (`0x4ae0c0`, kind 2 of
+  the auto-command), adds the item (`FUN_00526090`), and on success broadcasts **0x3036** [u32 the
+  picker, u8 angle toward the item] to its region (`0x52643c`, `0x5264aa`) -- gold too; a pet's
+  pick sends it with the pet's id (`0x4d51de`). The client's handler `FUN_008a78b0` turns the body
+  to `byte/255*360` degrees at once and enters character state 10 (table `0xec5fb8`), whose enter
+  `0xa59a00` plays action type 38 -- `chinaman_pickup.ban` for the China man -- once; it ends with
+  the clip (`0xa59a60`); it blocks nothing (masks 0). The clip's track fires `snd_pickup`.
+- **Built:** `session.OpPickUpMotion` 0x3036 with the retail payload, sent to the zone after the
+  picker's result (`PickUpMotionAngle`: the engine's atan2 / 360 * 255, truncated into a byte);
+  client `GroundItemsNet.OP_PICK_UP_MOTION`, `World3D._on_pick_up_motion` (this player:
+  `_play_player_once`; another player's drawn body: `_play_once`; both faced at once). OURS: a move
+  cuts this player's clip (retail's event 2 was not read); the order result -> 0x3036 -> removal.
+  Click, the G key and the action window's pick all reach the same `_pick_up_ground_item`, so all
+  three play it. No pet pick-up exists in OpenSRO.
+- **Live (box, `/var/tmp/r785-drops/r785_shot.sh`, the lane's server in memory, port 15986; the
+  QA items CSV `items_qa.csv` gives gold and the herb a 600 s DecayTime -- box-only, uncommitted --
+  because a movie-mode run's game clock runs slower than the server's real 10 s):** three Mangyangs
+  killed, six G presses (`OPENSRO_QA_INPUT`): five walks ("out of reach (10 units) -- walking to
+  it", the server's "pick-up refused ... code=0x4" while it walks), then six "picked up" lines,
+  each followed by "PICKUP MOTION: self ... clip chinaman_pickup.ban, 0.533 s", the
+  `AUDIO ITEM:snd_pickup ... clip 38:default player` line and "the clip ended"; the server log has
+  the six "pick-up motion" lines with the angles the client turned to. A second run (`gkey2`, with
+  the game clock in the log): each clip starts on the frame the result and 0x3036 arrive (the bot
+  measured the two leaving the server 2 us apart) and ends 0.534 s of game time later (t=2.683 ->
+  3.217, 4.067 -> 4.600, 5.017 -> 5.550, 6.733 -> 7.267; the clip is 0.533 s). **Seen by another
+  player:** `partybot -mode pickup -at "30 42.5 -1990" -wait 100s -kills 3 -pick` beside an idle QA
+  client (`/var/tmp/r785-drops/other`): six "PICKUP MOTION: player 1 ... angle 127 heading 4.700 --
+  clip chinaman_pickup.ban, 0.533 s" lines, each just before "ground item N gone (picked by 1)"; the
+  bot stood 3 units +x of each stack, and 127 is the byte for -x, heading 3 pi/2.
+- **Tests:** server `grounditem.TestScatterRingEdges`, `TestScatterDistribution`,
+  `session.TestPickUpMotionAngle`, the pick test now reading 0x3036 before the removal and the
+  ring around the corpse (`TestGroundDropAndPickUpFlow`); client `ground_items_test.gd` (0x3036's bytes, the
+  angle's read-back, type 38). Gates: server `go test ./...` all ok; client `check` ALL LOAD (752 scripts), `tests` 290 suites, 0 failing. Perf gate (`--sites jangan --frames 40000`; the default 3000 and 12000 frames ended in under 10
+  s at this box's 0.8 ms a frame uncontended, too few `--print-fps` samples, "missing numbers"):
+
+  | jangan, median of 3, Forward+ 1280x720 | base c7b2dcd0 | head | |
+  |---|---|---|---|
+  | frame ms | 0.78 | 0.77 | SAME |
+  | entry ms | 8693 | 8771 | SAME |
+  | freeze ms | 2760 | 2757 | SAME |
+  | hitches | 4 | 4 | SAME |
+
+### Round 785 (part): the teleport loading screen
+
+**The report.** "Interesting new bug possibly but the loading screen between teleportations
+flickers now a little, please fix." The user's log (v0.1.531, Windows, RTX 5080, Vulkan Forward+,
+separate render thread, window 3814 x 1993 at UI scale 2): a walk into the Qin-Shi tomb's door
+(GATE_JINSI_OUT -> SN_ZONE_26001, the tomb's lv.1) -- `LoadingScreen: up at frame 620190`,
+`dungeon 0x8007 ... built in 277 ms` (146 ms of it the 342 ambient effects), `region grid loaded
+in 550 ms ... at frame 620192`, `longest wall gap 547 ms at frame 620192`, `LoadingScreen: lifted
+at frame 620193`. The same three-frame shape is in v0.1.529 (`fight.log`, lv.1: 356638 -> 356641,
+544 ms) and v0.1.530 (lv.1 19404 -> 19407, 574 ms; lv.2 25165 -> 25168, 2001 ms), so it is not
+new in .531; a field teleport's screen is up ~200 frames (the drain), e.g. 9288 -> 9492, 1957 ms.
+
+**What the screen showed (MEASURED, real time).** New tooling: `qa_shot.sh` runs in real time
+(`QA_SHOT_REALTIME=1`, no movie writer -- it reads every frame back, so its frames cannot say how
+long anything was shown) and grabs the window as the X server shows it (`QA_SHOT_XCAPTURE`,
+`tools/xcapture.sh`: xwd every ~10 ms, unix-ns stamped), the client prints a `QA FRAMELOG` line a
+frame on the same clock (`OPENSRO_QA_FRAMELOG=1`), and `xcapture_series.py` classifies each grab
+against a grab of the screen (`LS`, the fraction of pixels within 8; screen at LS >= 0.85, the
+gauge moves luma 57.2 empty -> 65.6 full, the caption swap 65.6 -> 65.7). Box (RX 7600, Forward+,
+separate render thread, 640 x 360, ~25-40 fps), recipes `/var/tmp/r785-load/rt{A,B,C,D}.sh`,
+before = dev + the log line, after = this round:
+
+| path | before | after |
+|---|---|---|
+| `/goto donwhang` (field -> field) | 20 gauge states; full 222 ms, the last 15 ms with the caption swapped | 16 states; full 423 ms; caption unchanged |
+| `/goto jangan` (field -> field) | 14 states; full 239 ms incl. the caption frame | 13 states; full 266 ms; no swap |
+| Dimensional Gate Jangan -> Donwhang (field -> field) | 16 states; full 226 ms, then the caption frame | 14 states; full 246 ms; no swap |
+| `/goto dungeon/32775` (field -> tomb lv.1) | **empty 1,591 ms, full 269 ms, caption 46 ms** (3 states) | empty 1,662 ms, full 475 ms (2 states) |
+| walk-in GATE_JINSI_OUT (field -> tomb lv.1, the user's path) | **empty 1,501 ms, full 279 ms, caption 53 ms** | empty 1,501 ms, full 393 ms |
+| reverse return scroll -> tomb lv.2 (field -> dungeon) | **empty 7,922 ms, full 201 ms, caption 27 ms** | empty 989 ms, then 18 states over the build (22 repaints), full 330 ms |
+| return scroll, tomb lv.1 -> Jangan (dungeon -> field) | 14 states; full 234 ms incl. the caption frame | 17 states; full 433 ms; no swap |
+
+Every transition, before and after: exactly two screen/world toggles -- the screen came up over
+the old world in one step and went in one step, with no world (old or new) and no black frame
+between (LS 1.000 the whole time a dungeon built; the screen presented through the one-frame
+build on this box). (The gate path's screen reads 0.3 luma low: the game's cursor, an icon at the
+QA click, is in the grabs over the screen and the world alike.)
+
+**The cause.** A dungeon builds in one frame (`_load_dungeon`, inside `_on_change_zone_result`'s
+`_reload_zone_assets`), so the frame drawn just before it -- the screen with an **empty** gauge --
+is what stays up through the build; the drain (`_drain_initial_load`) then set the gauge to full
+(`1.0 / total`, total 1 with no cells queued) and, a frame later, the caption to "Entering the
+world...", and lifted the screen the frame after: a full bright bar (760 x 26 UI units, 1520 x 52
+px at the user's UI scale) and a changed caption for the last two frames only. On the user's PC
+those are a few ms each (their log after the lift: p95 work frame 4-5 ms, longest wall gap 18
+ms); on a field teleport only the caption frame. INFERRED that this end-blink is the flicker the
+user saw: the box shows no other change of what is on screen, and its presentation through the
+build is the box's (Mesa RADV under Xwayland), not the user's Windows/NVIDIA swap chain, which
+cannot be measured here (OPEN). Nothing in rounds 777-784 touched the screen (`git log -L` of
+`_on_change_zone_result`, `_drain_initial_load`, `loading_screen.gd`); the dungeon teleports that
+show it arrived with rounds 773-779.
+
+**What the client does (READ, sro_client.exe).**
+- The screen is CPSMission's loading state (+0xe4), raised by `UI_ALCHEMYBOX::FUN_0084b6e0` --
+  from `OnResetClient` (0x86dab0, the teleport's reset: `FUN_00787860` zone reset, then the
+  screen) and from `CPSMission::OnCreate` (0x84c9df): the zone's backdrop art on a window it has
+  (in mode +0xe0 = 2 or 3 a switch picks `loading_<zone>.ddj`: `loading_zangan.ddj` for 25000,
+  `loading_royalmausoleum.ddj` for 0x8002-0x8007, `loading_dungeons_donwhang.ddj` for 0x8001,
+  `loading_china_1.ddj` by default, ...; that the switch's value is the region id is INFERRED from
+  its cases -- 25000 is 97/168, 0x8001-0x8007 the dungeons -- the decompiler names a stack slot),
+  and three windows it creates: 0x65
+  `loading_form.ddj`, 0x64 `gauge_loading.ddj`, 0x66 `nowloading.ddj`.
+- While it is up the world is neither updated nor drawn: `CPSMission::vslot_012` (0x84c300) runs
+  `FUN_0084c060` and returns while +0xe4 is set; `vslot_013` (0x84ac70) draws the world only when
+  it is clear.
+- The world load (`SWorld::vslot_000`, 0xa2acd0) holds the thread and reports progress in
+  thousandths after each part -- a field's 31 x 31 = 961 cells (`i * 1000 / 0x3c1`) or a
+  dungeon's parts (`i * 1000 / count`) -- to `FUN_00ba3fc0`, which stores it (+0x44 of
+  DAT_0110f7d0; `FUN_0084c060` puts it / 1000.0 into gauge 0x64) and calls that object's slot
+  0x24 only when `GetTickCount() - last > 0x32` (50 ms) or when forced; the load ends with
+  `FUN_00ba3fc0(1000, 1)`. That slot 0x24 is a repaint of the screen is INFERRED from that gate.
+- +0xe5 is set by 0x84ab50 (called from `FUN_008ab0e0`, which builds the player: the character
+  data's handler, INFERRED); the next update's `FUN_0084c060` destroys windows 0x64, 0x65 and 0x66
+  and clears +0xe4, so the world updates and draws from that frame. No timer, no fade, no
+  minimum time anywhere on this path.
+
+**The fix (OURS method, READ rule).**
+- `LoadingScreen.paint(fraction, force)` is `FUN_00ba3fc0`: it sets the gauge every call and
+  repaints only when more than `PAINT_INTERVAL_MS` = 50 have passed since its last repaint, or
+  when forced -- `RenderingServer.force_draw`, queued to the render thread, with the root
+  viewport's 3D off for that draw (the client draws no world under the screen) and back as it was
+  after. The gauge's fill is now its own RenderingServer canvas item under the trough, so a fill
+  set inside a load reaches the server at once (a Control's size waits for its deferred redraw).
+- `DungeonWorld.build` takes a `progress` callable (steps OURS: a room's walkable mesh, its model,
+  each object, the graph); `_load_dungeon` paints it into the first half of the gauge
+  (`DUNGEON_BUILD_SHARE`, OURS) and forces a repaint at 100 % at its end. The effects' attach
+  repaints nothing: any repaint during it made the tomb's lv.2 attach (4,216 effects) ~1 s slower
+  on the box -- 2.45-2.82 s against 1.44-1.60 s without, with repaints every 50 ms (3 runs), every 250 ms
+  (2), or with no present at all (`force_draw(false)`, 2), and with the SubViewports' updates off
+  too (2) -- while the rooms' and objects' repaints cost nothing measurable (MEASURED, `exp*.sh`;
+  why the attach waits on the render thread then is OPEN).
+- The drain's end keeps the caption ("NOW LOADING..." throughout) and lifts the screen one frame
+  after the gauge is full: the client's forced 100 % repaint and next-update close.
+- Not changed: the field (centre cell, then the drain's per-frame batches) -- the gauge already
+  moves there; no minimum display time (the client has none).
+
+**Cost (MEASURED, the lv.2 reverse-scroll arrival, 3 runs a side, real time).** Build 3,866 /
+3,923 / 5,830 ms base (the last overlapped another lane: its backdrop decode took 705 ms, not
+~460) against 3,831 / 4,044 / 3,959 ms with the fix; screen up 7,941 / 8,110 / 10,532 ms against
+7,985 / 8,054 / 8,082 ms. lv.1: build 1,263-1,290 ms base, 1,250-1,416 ms fix (single runs; the
+lane's variance).
+
+**Perf gate** (`perf_gate.sh --sites jangan --frames 40000`; the entry is the real loading drain,
+whose last frame no longer changes the caption):
+
+```
+perf gate: base c7b2dcd0 (forward_plus) vs head working tree (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.78  head 0.76  (-0.0)  SAME
+jangan  entry ms   base 8992  head 8643  (-349.0)  SAME
+jangan  freeze ms  base 2772  head 2768  (-4.0)  SAME
+jangan  hitches    base 4  head 4  (+0.0)  SAME
+```
+
+**What is left (OPEN).**
+- The tomb's lv.1 is one room: its model is one step, so on the box the gauge stays at ~1 % until
+  the build's end and then shows full for 393-475 ms (was 279-315 ms full plus the caption frame).
+  How long the full gauge stays on the user's PC (the backlog the render thread works off after
+  the build, plus two frames) is not measured here; the client's own rule allows a one-frame
+  100 % too, so an OURS minimum hold was not added.
+- The zone's own backdrop (`FUN_0084b6e0`'s table above) -- the screen still shows
+  `loading_default.ddj` everywhere.
+- The world is still drawn under the screen during the field drain (the client draws none).
+- `ERROR: Condition "!is_inside_tree()"` from `character_blobs.gd` during zone changes (64 and 84
+  lines in the two /goto runs, base and fix alike): not this round's.
+
+**Tests.** `loading_screen_test.gd` (run headless): `paint` is the 50 ms rule (the first paint
+repaints, one within 50 ms sets the gauge but does not, a forced one does, one after 50 ms does,
+the viewport's 3D is as it was after, a screen out of the tree never repaints), the gauge clamps;
+World3D's source: no `set_caption(` anywhere, `_load_dungeon` hands `DungeonWorld.build` a
+painting progress callable and ends with `_loading_paint(1.0, true)`, the effects' attach makes
+no repaint, the drain's end is full -> one frame -> lift; `DungeonWorld.build` takes `progress`.
+NEGATIVE (run on the base copy): the suite does not even parse there (`Cannot find member
+"PAINT_INTERVAL_MS" in base "LoadingScreen"`), and its World3D checks read a `set_caption(` and
+no progress callable. `remote_godot.sh check`: 752 scripts and 9 scenes, ALL LOAD;
+`remote_godot.sh tests`: "ran 290 suite(s), 0 failing". No server change.
+
+### Round 785 (part): combat
+
+The user (asleep; their v0.1.529-531 logs against the live server, a level-140 spear GM): "let's
+fix combat. Make it play like the original and check the code to verify ... Make sure the
+character faces monsters, make sure animations and audio don't loop too fast." The reads are in
+`docs/protocol/combat_presentation.md` (both binaries, with addresses); this entry is what was
+wrong and what changed. Measured with a new real-time QA fight (`OPENSRO_QA_FIGHT=1`, one click per
+target as a player makes; `QA_SHOT_REALTIME=1` runs the client on the wall clock so the server and
+client keep one time, `QA_SHOT_MAX_FPS=144` the user's rate; `OPENSRO_COMBAT_TRACE=1` the `COMBAT`
+lines) against an in-memory server from this tree with the monster AI, battle, strike and spawn
+pushes and the dead state on (`/var/tmp/r785-combat/r785_fight.sh` on the box).
+
+- **A click inside the base attack's re-use delay was dropped** (MEASURED: the second Mangyang of a
+  fight, clicked 0.5 s after the first died, was never struck -- the server answered nothing and the
+  player stood beside it). READ: the engine queues the action and phase 1 waits on its cooldown gate
+  (mask 0x81). Now the swing is armed for when the delay ends (`session.swingWait`, the keep-up's
+  first swing); a click on the monster the keep-up already swings at changes nothing (0x4004).
+- **A keep-up that lost its target out of reach ended in silence** (the engine walks back,
+  `MoveTowardObject` / `0x4b0490`, READ). Now the server says "too far away" naming the monster,
+  after the monster's own position (`resyncMonster`, an `OpMonsterMoved`; OURS), and the client walks
+  back into reach and clicks again (`_rewalk_after_keepup_refusal`, at most 3 times without a blow).
+- **The "too far away" loop** (the user's log: 24 refusals, `in reach at 19.6 (reach 28 +2)`, three
+  walks, give up). Reproduced on the box (`in reach at 13.8 (reach 16 +2)` refused three times): a
+  monster on a long leg drawn a few units off the server's position, which `MonsterMotion.begin`
+  never closes below its 32-unit resync distance. Now every reach refusal names its monster, comes
+  behind the server's position of it, and the client puts the body there before it walks again
+  (`_snap_to_server_pos`, OURS). The live server's exact cause in the user's session is OPEN (no
+  server log); the AI trace now logs both ends of a refused reach (`reach: N refused on monster M:
+  attacker (x,z) monster (x,z) dist d reach r+2`) and the client a `COMBAT refusal` line.
+- **Monster swings and hits were silent.** The server sent no skill with a blow. READ: retail's
+  0xB070 names the monster's AI-picked skill (`0x5411a0` posts it as a 0x7070). `OpMonsterAttacked`
+  now carries it (u32 after the wall block). The client keys the swing and shout tracks (`<obj>:
+  snd_swing1:<Basic_Code>`, READ `0xa71510`, `0xa72260`; `snd_swing_s*`/`voc_shout*` built for every
+  body) and the hit (`MOB_MANGNYANG:snd_dmg:MSKILL_CH_MANGNYANG_ATTACK01`, rows MEASURED in
+  effectsound.txt), and plays the skill's own clip (skillaniset2 SHOT: ATTACK01 type 2, ATTACK02
+  type 5; the reader now keeps `MSKILL_` rows).
+- **A monster's blow moved the HP bar when the push arrived.** READ: `FUN_00a49290` lowers the HP,
+  starts the reaction or the death and draws the number together at the swing clip's hit event.
+  Now the HUD's HP and the dead state wait for the landing. MEASURED: landings within -86..+8 ms of
+  the clip's hit event on the wall clock (24 blows over two runs; the clip and the timer both run
+  on the engine's smoothed frame delta).
+- **Sounds and one-shots repeated every frame.** The clip tick (`_tick_idle_animations`) kept its
+  old list when a one-shot handed back to its loop (the count was unchanged), so the ended one-shot
+  "ended" again each frame and fired its keys: MEASURED 20 voc_moans a second from a struck Mangyang
+  on the box; the user's log shows it (`... clip 2:default ... (+59 since the last line)`). Fixed
+  (`handed_back`); `combat785_test.gd` is red without it.
+- **The plain swing's clip** cycled four types in OpenSRO's own order. READ: a random entry of the
+  base skill's skillaniset2 SHOT list (`FUN_00a54be0`), ANI_ATTACK1..4 = types 2, 5, 16, 17
+  (`FUN_009e5240`). Now so.
+- **Facing.** Nothing turned the player to a monster it struck from where it stood, and a monster
+  snapped. READ: the skill deco turns its caster at 10 rad/s every frame (`CIDecoSkill::vslot_014`,
+  `FUN_00a56cd0`, `0xe1b840`). Now both turn so while the swing plays (`CombatFacing`, frame-rate
+  independent: a half turn takes 0.314 s at 30, 60 and 144 steps a second, `combat_facing_test.gd`).
+  OURS: every swing turns (the deco's +0x78 condition is OPEN).
+- **Smaller:** the hit sound 100 ms after the landing (READ, `CIDecoDamageEffect::vslot_014`); no
+  number and no hit reaction for a blow that dealt nothing (READ); a hit reaction no longer replaces
+  the struck body's own swing (OURS on an inference -- retail draws a blow at its SHOT clip's
+  events, so the clip plays out; MEASURED before: 5 swing sounds for 14 monster swings).
+
+Measured (box, fix runs, sword, level 1-20 against Mangyang and Yeoha): player swings every 1179-1285
+ms (median 1209; the sword's ReuseDelay is 1200), each clip 1.133 s, one swing track set per swing;
+monster swings 2.5-2.6 s apart; each monster swing sounds its own swing tracks (12 swing sounds for
+10 swings in the last run, ATTACK02 has two); 0 refusals over the last two runs' 51 hits. The CH
+spear's four base clips are 1733-1833 ms against its 1166 ms cadence (MEASURED, the .ban headers):
+each swing starts its clip before the last ended -- INFERRED the same in retail (every 0xB070 a new
+deco at the authored speed, param 140 = 100); not changed.
+
+Perf gate (`perf_gate.sh --sites jangan --frames 30000`, base c7b2dcd0, median of 3, 1280x720,
+Forward+; the default 3000 frames gave no frame samples on 4.7.2's faster load):
+
+| jangan | base | head | verdict |
+|---|---|---|---|
+| frame ms | 0.77 | 0.77 | SAME |
+| entry ms | 8743 | 8722 | SAME |
+| freeze ms | 2778 | 2795 | SAME |
+| hitches | 5 | 5 | SAME |
+
+Tests: server `go test ./...` 72 packages ok; client `remote_godot.sh tests` 292 suites, 0 failing;
+new `combat785_test.gd` (red without the clip-tick fix), `combat_facing_test.gd`, Go
+`combat785_test.go` / `combat785_fight_test.go`.
+
+OPEN: the +0x78 field of the turn's condition; whether retail's hit reaction cuts a swing; the
+hitcount ddj damage text with its critical/blocking labels (OpenSRO draws a number); what paces a
+monster's swings in the engine (its cooldown arm is PC-only, READ `0x586c03`); the player's own
+server position as a refusal's cause (a refused stop shows as `MOVE correction`, none in the user's
+log). For the skill lanes: `_on_attack_result` still plays a weapon swing over a cast's own clip.
+
+### Round 785 (part): the effects
+
+The user: "Make sure the effects are working as expected too because it still does that bug where
+they don't fully show or they cycle and leave a trail behind." Their character: a Chinese spear
+user with `lightning_gyeonggong_keep_c` (skill 8150: ACT_S AT_ONE_FOLLOW and ACT_L AT_LOOP, the
+same file), `fire_gigongta_motion_c` / `_keep_e` at `Bip01 R Finger2` (8214), `fire_motion_keep`
+at both hands (8291 READY), at 144+ frames a second and, in their log, a run speed of 525.
+
+**The instrument** (`client/tools/efp_probe.gd`, new): a file, a skill's rows, or `--census` (every
+effect the skilleffectset rows name, once per path and kept-or-not: 1,359 runs) on a host standing
+or running at a given speed and render rate; per 50 ms frame it counts live and drawn particles,
+the farthest drawn particle from the host, drawn particles following a dead ancestor, particles
+outside the cull box, draws that lag their particles, pops and refused spawns. The base
+(`c7b2dcd0`) ran the same probe from its own copy on the box.
+
+**1. The trail: a dead ancestor is followed by its frozen state** (READ; the fix in `EfpSim`,
+`native/src/core/efp_sim.rs`).
+- A particle is reference-counted: its emitter holds its owner (`CEFGroup::vslot_002`), a particle
+  holds its emitter (`CEFElement::vslot_002`). A death (`CEFElement::vslot_001`) unlinks it and
+  kills its child emitters but frees it only at count 0, so it stays in memory while its
+  children's emitters have particles, its state as its last pass left it.
+- The follow levels are ancestor pointers resolved once (`CEFGroup::vslot_004`); both passes
+  (`CEFUpdater::vslot_002`, `FUN_00c863a0`) test only `ancestor != 0` (and +0x60 for u2/u3/u4).
+  So a follower keeps adding the dead ancestor's frozen move -- the host's motion of its last
+  frame -- and keeps pace with a running host.
+- Round 621 stopped following a dead ancestor (OURS). Every child outliving the part it follows
+  was dropped where that part died, once a cycle: the line of puffs behind a running caster.
+  `lightning_gyeonggong_keep_c` is exactly that: a 20-frame `wind-master` holder whose 50-frame
+  `wind-master` children follow it (every node u6 = 1).
+- MEASURED, the farthest drawn particle from the host (3 s at 144 frames a second; the still
+  spread in brackets):
+
+  | effect (kept) | 50 u/s base -> now | 525 u/s base -> now |
+  |---|---|---|
+  | lightning_gyeonggong_keep_c (yes) [15.2] | 97.9 -> 15.2 | 1,020.9 -> 15.2 |
+  | lightning_gyeonggong_keep_c (no, the ACT_S) | 97.9 -> 15.2 | 1,020.9 -> 15.2 |
+  | lightning_gyeonggong_keep_a (no) | 22.2 -> 15.2 | 233.3 -> 15.2 |
+  | fire_gigongta_keep_e (yes) [3.0] | 64.6 -> 2.7 | 681.1 -> 3.5 |
+  | fire_gigongta_motion_c (no) | 72.2 -> 72.2 | 758.3 -> 758.3 |
+  | fire_motion_keep (yes) | 49.7 -> 50.7 | 502.0 -> 501.3 |
+
+  `fire_gigongta_motion_c`'s burst and `fire_motion_keep`'s hand streaks have u6 = 0 nodes: they
+  stay where they were born in retail too (round 621), unchanged. Over the census: 733 of 1,359
+  runs draw particles following a dead ancestor (352,913 particle-frames in 3 s); their farthest
+  particle, median 62.3 -> 29.2 at 50 u/s and 525.0 -> 100.9 at 525 u/s; files drawn past 100
+  units 256 -> 237 and 1,150 -> 827 (the rest are u6 = 0 trails and flights).
+
+**2. One follow a frame** (READ). The owner places the effect every frame before its update
+(`CRTModParticle::FUN_00c81450`: `FUN_00c81190` -> vslot_007, `FUN_00c80ff0`, the draw;
+`CIDecoSkill::vslot_014`: `IDecoSkill::FUN_00a4ddc0` -> vslot_007, then the update), and
+`CEFEffect::vslot_000` clears the placement flags after an update, so the draw's pass runs only
+on frames without one. Round 621 ran the pass and then the step: two follows on a frame with a
+step, invisible until a follower of a dead ancestor moved by its frozen move twice.
+`EfpSim.set_origin(pos, rot, step_due)` leaves the placement to the step when one is due
+(`EfpEffect` asks `EfpSim.step_due`); a pass runs on a still frame while a follower of a moving
+dead ancestor exists; a particle that dies after a still frame freezes with a still frame's state
+(`_still_pass`), as retail's last draw pass leaves it. `shift` (the 60-unit re-centre) moves a
+followed dead ancestor too (OURS, so the re-centre stays invisible).
+
+**3. ActType values** (READ: the name table at `0x00ec7280`, `FUN_00a9ac70`, read at `0x00a9d679`
+in `GlobalEffectManager::FUN_00a9d0f0`): AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2, then AT_TARGET 3
+... AT_MOV_PIERCE 11. Rounds 620-784 had AT_ONE_FOLLOW 0, AT_LOOP 1, AT_STOP 2 (the strings'
+order in memory) and kept AT_STOP. `IDecoSkill::FUN_00a513a0` keeps ActType 2 alone and places 0
+once, when it is made; `SkillEffects.kept_act`, `EfpEffect.static_host` for AT_STOP. 35 effect
+rows (MEASURED: monster dust and stuns, the fireworks).
+
+**4. A skill effect at a named bone turns with the bone; the Rotate column** (READ:
+`FUN_00a9d0f0` gives a plain StartBone the placement flags 2, `@` 0, `#` 6, `*` 3;
+`IDecoSkill::FUN_00a4a680` keeps the bone's rotation only with bit 1, turns StartOffset by the
+body's matrix and adds it to the bone's position, the post-pass at `0x00a95310` pointing the row
+at a non-zero offset; `FUN_00a4ddc0` applies Rotate in the effect's frame: 1-360 about Y, 361-720
+about X, above 720 about Z, in degrees: the doubles 360.0 at `0x00dde7a8`, 2π at `0x00d81930`).
+Rounds 620-784 turned every bone effect with the body and ignored Rotate: 1,603 effect rows name a
+plain bone and 284 carry a Rotate (MEASURED), e.g. the spear pierce's 450 (90° about X) at
+`Bip01 R Hand`. `EfpEffect.follow_bone_turn` / `follow_world_turn`, `SkillEffects.rotate_basis`.
+
+**5. The end of a buff or a cast lets its effects go; it does not cut them** (READ:
+`IDecoSkill::FUN_00a4db00` calls slot 4 with 0 -- the keep flag cleared -- for every entry from
+`FUN_00a4ffe0`, which the buff's end `FUN_00a53120`, the cancel `FUN_00a50a00` and the cast's end
+`FUN_00a534d0` call; `CIDecoSkill::vslot_014` updates the effects until each finishes). So the old
+aura of a recast fades over its last cycle while the new one starts; this client cut it at once
+and the new one popped in at frame 0, a visible restart every recast (the user's fight log
+starts 8150's aura ten times). `EfpEffect.release()`; `detach_aura`, `cancel_cast`, the cast's
+loops at SHOT and the OURS guards use it; `stop()` (slot 2) stays for a teardown. MEASURED
+(`efp_keep_test`): a released 20-frame aura draws on and ends 20 frames later, reviving nothing.
+
+**6. The cull box** (OURS, `EfpEffect.DRAW_AABB`, ±200 units): a big effect was culled whole while
+part of it showed (46 of the 1,359 runs reach past the box on a still host, MEASURED). A GDScript
+draw node now culls by the box grown to its particles plus its shape's reach, a Link node by the
+box grown to its strip.
+
+**Checked, no defect** (MEASURED with the probe): the draws hold exactly the drawn nodes'
+particles every frame (0 of 1,359 runs lag); 60 and 144 frames a second give the same spreads
+(one step per 50 ms, as retail's clock, READ round 620); no run's lifetime, gaps or pops changed;
+the native simulation matches GDScript bit for bit, the new orphan templates included.
+
+**OPEN / for others:**
+- **The 300-particle cap** (OURS, kept by the user's decision of 2026-10-09) refuses spawns in 76
+  of the 1,359 runs alone: every Berserk wing (`hwanlook*`, 393 wanted), the fireworks (1,600-1,800)
+  and a few monster skills -- they do not fully show. None of the China fire or lightning skills.
+  Retail has no cap (round 761). For the user to decide.
+- **For the cast lane (r785-skill-cli):** retail releases a cast's phase loops when the cast's
+  phases are done (`FUN_00a534d0`, phase index past 2) or when a later row's group matches
+  (`IDecoSkill::FUN_00a4fe10`: an entry whose row +5 equals the new row's +8), not at SHOT's start
+  (this client's INFERRED moment); and it keeps an AT_LOOP row of any phase (260 SHOT and 12 ACT_S
+  effect rows, MEASURED), where `play_phase` keeps only READY and WAIT ones.
+- Below 20 frames a second this client steps each 50 ms frame fully; retail runs one update with
+  the frames added to the ages (round 620). Not the user's case.
+- StartBone `*` (flags 3: the body's turn plus a height, `FUN_009c7730`) and `#` (another object's
+  bone); a newborn's first-frame motion (retail emits before the motion pass); a follower of an
+  ancestor without b1 reads a stale old position every pass (66 pairs, round 621); the Link
+  triangle budget (20,000 a frame, OURS) keeping last frame's strips when spent; the global
+  2,000-particle cap in a crowd (the user's log has no line on it: not measured there).
+
+**Perf gate** (`--base c7b2dcd0 --sites jangan --frames 40000`, 1280x720, Forward+ on the RX 7600,
+median of 3; the default 3,000 frames now end in about 4 s at ~760 fps, too few samples):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.79 | 0.77 | SAME |
+| entry ms | 8800 | 8658 | SAME |
+| freeze ms | 2755 | 2775 | SAME |
+| hitches | 5 | 4 | SAME |
+
+**Gates:** `check` ALL LOAD (753 scripts, 9 scenes); `tests` 290 suites, 0 failing (with the native
+library); `cargo test --locked` and `--no-default-features` 68 passed; `efp_native_test` bit for
+bit on the orphan templates placed every frame. New checks: `efp_follow_test` (a dead holder's
+child keeps pace, one follow a frame, a still death freezes, a re-centre with a dead orbit centre,
+525 u/s on a host at 144 frames a second, the cull boxes), `efp_keep_test` (release),
+`skill_effects_test` (ActType values, AT_STOP placed once, bone and world turns, Rotate),
+`self_cast_fx_test` (the buff's end lets its aura go). Against the old rule (the dead-ancestor
+tests run with `alive` tested again): 5 FAIL, e.g. "on the run at 144 frames a second the orphan
+stays with the host (worst 196.181 units)".
+
+**The native library's effect interface is 2** (`EFP_API`): a library of 1 steps by the old rules
+and has the old `set_origin`, so the client refuses it and keeps EquipFx's masters in GDScript; the
+release builds (`release.yml`) build the library with the client.
+
 ### Round 785 (part): the skills (client)
 
 The user (asleep, "make no mistakes"): "fully implement all skills and make sure they behave exactly

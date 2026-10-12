@@ -115,6 +115,14 @@
 # QA_SHOT_REAP=0 (round 693) skips the start-up reap below: for a lane that
 # runs under its own GODOT_LOCK, where killing every Godot on the box would
 # kill other lanes' runs.
+#
+# Round 785 (combat): QA_SHOT_REALTIME=1 runs the client on the wall clock
+# (no --write-movie, so no frames are written and no time dilation: a
+# --server run's client and server keep the same time, which a timing
+# measurement against the server needs); QA_SHOT_MAX_FPS=n caps its frame
+# rate (e.g. 144, the rate a player's monitor gives). QA_SHOT_NO_TRUST=1 starts
+# the --server without -trust-client-positions, so the player's own stops are
+# judged by the real claim bound (the QA placements are then refused).
 set -euo pipefail
 
 # One run at a time on this box. The startup below kills every running
@@ -294,7 +302,7 @@ if [ "$SERVER" = "start" ]; then
   # Round 749: the QA hooks place the player anywhere (OPENSRO_QA_AT, the
   # attack and pick-up placements), which a server takes only under
   # -trust-client-positions; a binary from before round 749 has no such flag.
-  if "$SERVER_BIN" -h 2>&1 | grep -q -- "-trust-client-positions"; then
+  if [ "${QA_SHOT_NO_TRUST:-0}" != 1 ] && "$SERVER_BIN" -h 2>&1 | grep -q -- "-trust-client-positions"; then
     SERVER_ARGS+=(-trust-client-positions)
   fi
   [ -f "$ITEMS_CSV" ]     && SERVER_ARGS+=(-items-csv "$ITEMS_CSV")
@@ -431,9 +439,23 @@ if ! "$GODOT" --version 2>/dev/null | grep -qE '^4\.[0-5]\.'; then
     printf '\n[display]\n\nwindow/size/window_width_override=%s\nwindow/size/window_height_override=%s\n' "${SIZE%x*}" "${SIZE#*x}"
   } > "$MOVIE_OVR.tmp" && mv "$MOVIE_OVR.tmp" "$MOVIE_OVR"
 fi
-"${LAUNCH[@]}" "$GODOT" \
+# QA_SHOT_REALTIME=1 (round 785) runs in real time: no movie writer, so
+# nothing reads a frame back and the separate render thread presents as it
+# does for a player; --frames still ends the run (--quit-after counts frames).
+# QA_SHOT_MAX_FPS=<n> (round 785, combat) caps a real-time run's frame rate.
+# QA_SHOT_XCAPTURE=<dir> (round 785) then samples the presented window with
+# tools/xcapture.sh (xwd, timestamped grabs) -- what a player saw, and when.
+MOVIE=(--write-movie "$OUT/f.png")
+if [ "${QA_SHOT_REALTIME:-0}" = 1 ]; then
+  MOVIE=()
+  [ -n "${QA_SHOT_MAX_FPS:-}" ] && MOVIE=(--max-fps "$QA_SHOT_MAX_FPS")
+  echo "qa_shot: real time (QA_SHOT_REALTIME=1), no frames written; ${MOVIE[*]:-uncapped}" >&2
+fi
+WRAP=()
+[ -n "${QA_SHOT_XCAPTURE:-}" ] && WRAP=("$CLIENT_DIR/tools/xcapture.sh" "$QA_SHOT_XCAPTURE")
+"${LAUNCH[@]}" "${WRAP[@]}" "$GODOT" \
   "${RFLAGS[@]}" --resolution "$SIZE" --path . "$SCENE" \
-  --write-movie "$OUT/f.png" --quit-after "$FRAMES" 2>&1 | tee "$OUT/godot.log"
+  "${MOVIE[@]}" --quit-after "$FRAMES" 2>&1 | tee "$OUT/godot.log"
 if [ -n "$MOVIE_OVR" ]; then
   if [ -f "$OUT/override.cfg.keep" ]; then mv "$OUT/override.cfg.keep" "$MOVIE_OVR"; else rm -f "$MOVIE_OVR"; fi
 fi

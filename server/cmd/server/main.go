@@ -127,6 +127,11 @@ type monsterSpec struct {
 	// species.ColExpToGive); HasExpToGive is false without the column.
 	ExpToGive    int64
 	HasExpToGive bool
+	// Knockdown / KORecoverMs are characterdata cols 81/82 (round 785,
+	// species.ColKnockdown); HasKnockdown is false without them.
+	Knockdown    int
+	KORecoverMs  int
+	HasKnockdown bool
 	// Critical is the species' real critical-hit chance, characterdata col 78.
 	// The game reads 2 on 7,493 of its 7,495 monster rows, so it is effectively
 	// a constant -- but it is carried per-species rather than hardcoded,
@@ -623,7 +628,8 @@ func combatSpeciesOf(spec monsterSpec) combat.Species {
 		AttackMin: spec.AttackMin, AttackMax: spec.AttackMax, Skills: spec.Skills,
 		GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
 		WalkSpeed: spec.WalkSpeed, RunSpeed: spec.RunSpeed,
-		ExpToGive: spec.ExpToGive, HasExpToGive: spec.HasExpToGive}
+		ExpToGive: spec.ExpToGive, HasExpToGive: spec.HasExpToGive,
+		Knockdown: spec.Knockdown, KORecoverMs: spec.KORecoverMs, HasKnockdown: spec.HasKnockdown}
 }
 
 // refItemStore is the slice of reference data the running server needs:

@@ -3,6 +3,7 @@ package refdata
 import (
 	"context"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -146,7 +147,7 @@ func TestImportAndGetSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSkill: %v", err)
 	}
-	if *got != skills[0] {
+	if !reflect.DeepEqual(*got, skills[0]) {
 		t.Fatalf("got %+v, want %+v", got, skills[0])
 	}
 
@@ -162,7 +163,7 @@ func TestImportAndGetSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAllSkills: %v", err)
 	}
-	if len(all) != 1 || *all[0] != skills[0] {
+	if len(all) != 1 || !reflect.DeepEqual(*all[0], skills[0]) {
 		t.Fatalf("got %+v, want one skill matching %+v", all, skills[0])
 	}
 }

@@ -156,6 +156,21 @@ func _made_named(name: String) -> Array:
 			out.append(m[1])
 	return out
 
+## Round 785: ended the way retail's decoration ends an effect (READ,
+## IDecoSkill::FUN_00a4db00: slot 4 with 0) -- let go, no longer kept, and
+## gone once its last cycle has played out (EfpEffect.release).
+func _let_go(fx) -> bool:
+	if fx == null or not is_instance_valid(fx) or (fx as Node).is_queued_for_deletion():
+		return true
+	var e := fx as EfpEffect
+	if e.loop:
+		return false
+	for i in 400:
+		e._process(0.05)
+		if not is_instance_valid(e) or e.is_queued_for_deletion():
+			return true
+	return false
+
 func _live(fx) -> bool:
 	return fx != null and is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion()
 
@@ -289,7 +304,7 @@ func _test_buff(world: Node) -> void:
 	_check(_made_named("motion.efp").size() == 1 and _made_named("keep.efp").size() == 1,
 		"the accepted reply after the start adds nothing (ACT once per cast)")
 	_buff_end(OWN, [61], 0)
-	_check(SkillEffects.aura_count() == 0 and keep.size() == 1 and not _live(keep[0]), "its OpBuffEnd ends the aura at once")
+	_check(SkillEffects.aura_count() == 0 and keep.size() == 1 and _let_go(keep[0]), "its OpBuffEnd lets the aura go (round 785: its last cycle plays out, READ)")
 
 func _test_non_buff(world: Node) -> void:
 	_made.clear()
@@ -325,7 +340,7 @@ func _test_ghost_walk(world: Node) -> void:
 	world.call("_tick_skill_slides", 10.0)
 	_check(Vector2(player.position.x, player.position.z).distance_to(Vector2(POINT.x, POINT.z)) < 0.01,
 		"it arrives at the point")
-	_check(not _live(waits[0]), "the arrival ends the cast: the WAIT loop stops")
+	_check(_let_go(waits[0]), "the arrival ends the cast: the WAIT loop is let go")
 	_check(not world.call("_own_slide_active"), "and the walk is free again")
 	# 2. Refused: nothing was drawn.
 	_made.clear()
@@ -348,7 +363,7 @@ func _test_other_owners(world: Node) -> void:
 		"another player's buff aura goes on that player's body")
 	_check(_made_named("motion.efp").is_empty(), "with no ACT_S (no cast of ours answered)")
 	_buff_end(5151, [71], 0)
-	_check(keep.size() == 1 and not _live(keep[0]), "and its OpBuffEnd ends it")
+	_check(keep.size() == 1 and _let_go(keep[0]), "and its OpBuffEnd lets it go")
 	# A monster whose id is this player's: ownerKind 1 is the monster.
 	var mob := Node3D.new()
 	world.add_child(mob)
@@ -360,7 +375,7 @@ func _test_other_owners(world: Node) -> void:
 		"a monster's buff (ownerKind 1) goes on the monster even when its id is this player's")
 	_check(not keep.is_empty() and keep[0].get_parent() != player, "not on the player")
 	_buff_end(OWN, [72], 1)
-	_check(keep.size() == 1 and not _live(keep[0]), "and the monster's end ends it")
+	_check(keep.size() == 1 and _let_go(keep[0]), "and the monster's end lets it go")
 	(world.get("_other_bodies") as Dictionary).erase(5151)
 	(world.get("_monster_bodies") as Dictionary).erase(OWN)
 	other.free()
@@ -408,7 +423,7 @@ func _test_states(world: Node) -> void:
 	st.owner_id = 777
 	st.mask = 0x8
 	world.call("_on_object_status", st)
-	_check(not _live(ice[0]) and _made_named("icing_off.efp").size() == 1, "freeze off: its loop ends and DEACT plays")
+	_check(_let_go(ice[0]) and _made_named("icing_off.efp").size() == 1, "freeze off: its loop ends and DEACT plays")
 	_check(_live(burn[0]), "the burn stays")
 	_check(not (world.get("_clip_speeds") as Dictionary).has(skel.get_instance_id()), "and the clips run again")
 	st = StatusNet.ObjectStatus.new()
@@ -416,7 +431,7 @@ func _test_states(world: Node) -> void:
 	st.owner_id = 777
 	st.mask = 0
 	world.call("_on_object_status", st)
-	_check(not _live(burn[0]), "burn off: its loop ends")
+	_check(_let_go(burn[0]), "burn off: its loop ends")
 	(world.get("_monster_bodies") as Dictionary).erase(777)
 	mob.free()
 

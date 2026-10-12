@@ -319,9 +319,10 @@ review of round 614).
   keys say it is in retail.
 - **A monster's blow on a character** (`_audio_monster_blow`, when its strike lands, blocked or
   not): the
-  monster's sound object (`SoundTable.sound_object`) at the monster, with skill `-`, because the
-  server names no monster attack skill. Every monster hit row names one (MEASURED), so this is
-  **silent and logged** until the server sends the skill (OPEN).
+  monster's sound object (`SoundTable.sound_object`) at the monster, keyed by the skill the blow
+  names (round 785: `OpMonsterAttacked`'s skill id, e.g. `MOB_MANGNYANG:snd_dmg:MSKILL_CH_MANGNYANG_ATTACK01`,
+  a row the table has, MEASURED), 100 ms after the landing (READ, `combat_presentation.md`). A
+  counter drawn from the attacker's result (no push) still names none and stays silent.
 - **A block** (`_audio_block`): the player's shield stopped the counter (`player_blocked`, or
   OpMonsterAttacked's blocked flag for any character), at the blocker, when the monster's blow
   would land; CRITYCAL from the blow's critical flag (READ, above).
@@ -355,6 +356,12 @@ WAIT 1, SHOT 2, ACT_OS 3, ACT_OL 4, ACT_OE 5, ACT_S 6, ACT_L 7, DEACT 8, S_RETUR
   READY 190, ACT_L 59, DEACT 23, S_RETURN 13, WAIT 12, ACT_OS 8, ACT_OL 6.
 - `FUN_00a53850` (the activation) triggers the rows of AniType 3+s and 4+s, s = 3 (ACT_S/ACT_L)
   or 0 (ACT_OS/ACT_OL), then `snd_activate` (READ).
+- **ActType** (READ, round 785): the column is looked up in the (name, value) table at
+  `0x00ec7280` (made a map by `FUN_00a9ac70`, read at `0x00a9d679`) into the row's +0xe:
+  **AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2, AT_TARGET 3, AT_TARGET_F 4, AT_SOURCE 5, AT_DMG_POS 6,
+  AT_MOV_1TAR 7, AT_MOV_OPTION 8, AT_MOV_APIECE 9, AT_MOV_SPLASH 10, AT_MOV_PIERCE 11**. What
+  each does to the effect, and the StartBone / StartOffset / Rotate columns: EFP_FORMAT.md,
+  "Where a skill row places its effect".
 
 **When this client fires a phase** (INFERRED / OURS: retail runs them off the server's
 skill-action messages and the clip's events, which OpenSRO does not have):
@@ -383,7 +390,9 @@ SkillAudio.context_of(obj: Object) -> the same for the current skill
 CombatAudio.weapon_token(type_id4, has_weapon) / CombatAudio.base_attack_skill(type_id4)
 ```
 
-Monsters have no current skill here (the server names none), so their context is `-`.
+A monster's current skill is the one its last swing named (round 785, `_draw_monster_strike`);
+its swing and shout tracks key by that skill's Basic_Code (`<obj>:snd_swing1:MSKILL_...`), and
+`snd_swing_s*` / `voc_shout*` are built for every body (`combat_presentation.md`, "Sounds").
 
 **Pairing a cast with its result** (OURS, a limit): OpAttackResult names no skill, so a cast is
 paired with the first result after its OpUseSkill -- the rule the skill hit effect already used.

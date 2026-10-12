@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
@@ -419,6 +420,11 @@ type AttackResult struct {
 	// suffix after round 639's EXP tail (ExpGained, SkillExpGained), sent
 	// only when non-zero.
 	Wall WallInfo
+	// Action is the cast's retail action block (round 785, actionblock.go,
+	// docs/protocol/skill_hit_block.md): every target, every hit, the
+	// caster's move. When set, the wall suffix is always written (13 bytes,
+	// zero for no wall) and the block follows it at offset 72.
+	Action *ActionBlock
 }
 
 // expAdded is the experience a character gained going from (level, exp) to
@@ -481,8 +487,13 @@ func (r *AttackResult) Encode() []byte {
 	buf = append(buf, encodeInt64(r.SkillExpGained)...)
 	// Trailing again (round 640): the wall suffix, only when there is one,
 	// so every result without a wall is byte for byte what it was.
-	if r.Wall != (WallInfo{}) {
+	if r.Wall != (WallInfo{}) || r.Action != nil {
 		buf = append(buf, r.Wall.encode()...)
+	}
+	// Trailing again (round 785): the action block, after a wall suffix
+	// that is then always present.
+	if r.Action != nil {
+		buf = r.Action.encode(buf)
 	}
 	return append(out, buf...)
 }
@@ -533,6 +544,11 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if w, ok := decodeWallInfo(rest[min(len(rest), 59):]); ok {
 		r.Wall = w
+	}
+	if len(rest) > 72 && rest[72] == actionBlockMarker {
+		if b, _, err := DecodeActionBlock(rest[72:]); err == nil {
+			r.Action = b
+		}
 	}
 	return r, nil
 }
@@ -1090,12 +1106,26 @@ func combatHandler(
 			// player into range the way the engine does, so it refuses and
 			// says why -- the same stated departure the keep-up carries.
 			if !firstSwingInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "too far away"}).Encode()})
+				// Round 785: the refusal names its monster, and the requester
+				// is told where the server has that monster (resyncMonster),
+				// so its walk into reach aims at the server's position.
+				resyncMonster(sess, monsters, req.TargetMonsterID)
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusedTooFar, MonsterID: req.TargetMonsterID}).Encode()})
 			}
 			// A plain swing is the weapon's base attack skill, on that skill's
-			// own re-use delay (round 255). A click inside the delay is the
-			// engine's "action already running": nothing happens, no reply.
-			if !swingReady(ctx, characterID, eq, items, skills, time.Now()) {
+			// own re-use delay (round 255). A click inside the delay is not
+			// dropped (round 785): the engine queues the action and its phase
+			// 1 waits on the cooldown gate (mask 0x81) before it swings
+			// (auto_command.md), so the swing is armed for the moment the
+			// delay ends -- the keep-up's own first swing. A click on the
+			// target the keep-up already swings at changes nothing (the
+			// 0x7074 handler refuses a duplicate of the running attack,
+			// 0x4004).
+			if wait := swingWait(ctx, characterID, eq, items, skills, time.Now()); wait > 0 {
+				if cur, running := keepUp.Target(characterID); !running || cur != req.TargetMonsterID {
+					deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
+					armKeepUp(sess, deps, characterID, req.TargetMonsterID, wait)
+				}
 				return nil
 			}
 			// The swing IS the weapon's base attack skill (PrepareAction
@@ -1261,6 +1291,8 @@ func performAttack(
 	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
 	playerCrit := blow.Critical
 	allBlocked := blow.Blocked
+	// Round 785: each hit's own part, for the action block (skillhit.go).
+	swing := []swingHit{{dmg: net, crit: blow.Critical, blocked: blow.Blocked}}
 
 	// A multi-hit skill strikes again, and each strike is INDEPENDENT: the
 	// engine runs its whole damage resolution inside
@@ -1278,6 +1310,7 @@ func performAttack(
 		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
 		playerCrit = playerCrit || extra.Critical
 		allBlocked = allBlocked && extra.Blocked
+		swing = append(swing, swingHit{dmg: combat.ApplySkillPercent(extra.Damage, damagePercent), crit: extra.Critical, blocked: extra.Blocked})
 	}
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
@@ -1324,7 +1357,13 @@ func performAttack(
 			n = 1
 		}
 		net = perHit * n
+	} else {
+		// Round 785 (skillhit.go): the buffs' damage percent and the running
+		// imbue's add on every hit of the swing (an imbue reaches plain swings,
+		// 0x59b480, READ).
+		net = plainSwingExtras(ctx, skills, eq, items, characterID, monster, swing, net, playerStr, playerInt, playerLevel)
 	}
+	swingAction := swingBlock(monster.ID, swing, net)
 
 	// The blow, with the players watching the monster before it and after it
 	// (damageMonsterWatched, round 656's review), booked to the attacker on
@@ -1365,7 +1404,7 @@ func performAttack(
 	//
 	// Every branch that changes the player's HP overwrites this afterwards.
 	result := &AttackResult{MonsterID: targetMonsterID, MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP),
-		MonsterDied: monsterDied, PlayerCritical: playerCrit, PlayerHP: int32(playerHPNow)}
+		MonsterDied: monsterDied, PlayerCritical: playerCrit, PlayerHP: int32(playerHPNow), Action: swingAction.died(monsterDied)}
 	// The berserk orbs ride along on every attack result so the HUD tracks
 	// them -- but a blow that does not kill earns nothing: the engine adds
 	// hwan only on the killing blow (see berserk.EarnOnKill), which is
@@ -1435,6 +1474,9 @@ func performAttack(
 			result.DeathExpLost = out.deathExpLost
 			result.Wall = out.wall
 			strike = out.message(monster.ID, characterID)
+			// Round 785: the counter rolls the primary range, so it names
+			// the primary attack skill (strikeSkillID).
+			strike.SkillID = strikeSkillID(monster, combat.MonsterSkill{})
 		}
 	}
 
@@ -1506,27 +1548,32 @@ func attackerDamage(ctx context.Context, characterID int64, str int, eq equipmen
 	return attackerDamageOf(ctx, characterID, str, 0, eq, items, combat.AttackPhysical, 0, 0, 0)
 }
 
-// swingReady is the plain attack's cadence gate: the equipped weapon type's
+// swingWait is the plain attack's cadence gate: the equipped weapon type's
 // base attack skill (combat.BaseAttackSkillFor -- SKILL_CH_SWORD_BASE_01 for
 // a sword, SKILL_PUNCH_01 bare-handed) has a ReuseDelay in the imported skill
-// table, and a swing inside it is dropped, exactly as the engine's action
-// machine ignores a second use while the first runs. When it passes, the
-// swing is recorded against that skill id. Without reference data for the
-// skill (or a store that cannot look skills up) there is no gate, as before.
-func swingReady(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, skills skill.Store, now time.Time) bool {
+// table, and a swing inside it must wait out the rest of it. It returns that
+// rest, or 0 when the swing may go now -- and then records the swing against
+// that skill id. Without reference data for the skill (or a store that cannot
+// look skills up) there is no gate, as before. Round 785: the wait used to be
+// a refusal (swingReady) that dropped the click with no reply, and the player
+// stood still; the caller now arms the swing for when the delay ends, as the
+// engine's phase 1 waits on its cooldown gate.
+func swingWait(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, skills skill.Store, now time.Time) time.Duration {
 	if skills == nil {
-		return true
+		return 0
 	}
 	ref, ok := baseAttackOf(ctx, characterID, eq, items)
 	if !ok || ref.ReuseDelayMs <= 0 {
-		return true
+		return 0
 	}
 	last, ever, err := skills.LastUsed(ctx, characterID, ref.ID)
-	if err == nil && ever && now.Sub(last) < time.Duration(ref.ReuseDelayMs)*time.Millisecond {
-		return false
+	if err == nil && ever {
+		if left := time.Duration(ref.ReuseDelayMs)*time.Millisecond - now.Sub(last); left > 0 {
+			return left
+		}
 	}
 	_ = skills.RecordUse(ctx, characterID, ref.ID, now)
-	return true
+	return 0
 }
 
 // attackerDamageOf is attackerDamage for a blow whose damage-type mask is
@@ -1562,6 +1609,8 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		// recovered there from the engine's own parameter graph, together with
 		// what is deliberately not done and why.
 		min, max := combat.WeaponRange(item, weaponInstance(e), str, intel, atk)
+		// Round 785: the buffs' weapon-bound entries ('apau', 'apru', 'tpad').
+		min, max = buffedWeaponRange(characterID, atk, min, max)
 		// WHERE in that range the blow lands is the engine's centre-biased
 		// roll: the attacker's attack rate against the defender's parry rate,
 		// plus the level term, clamped to [10 %, 90 %] and then given a
@@ -1581,7 +1630,8 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		if defenderParry > 0 && item.HitRateMin > 0 {
 			// The instance's own attack rate (combat.WeaponAttackRate: its
 			// variance group 3, as the engine publishes param 11).
-			hra := combat.CharacterRate(attackerLevel, combat.WeaponAttackRate(item, weaponInstance(e)))
+			// Round 785: the buffs' param-11 entries ('hr', 'thrd').
+			hra := combat.CharacterRate(attackerLevel, buffStat(characterID, buff.ParamHitRate, combat.WeaponAttackRate(item, weaponInstance(e))))
 			centre := combat.DamageCentrePercent(hra, defenderParry, attackerLevel, defenderLevel)
 			return rollCentred(min, max, centre), nil
 		}
@@ -1693,7 +1743,8 @@ func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Stor
 		}
 		total += armourParry(e, it)
 	}
-	return total, nil
+	// Round 785: the buffs' param-9 entries ('er', 'terd'; buffstats.go).
+	return buffStat(characterID, buff.ParamParry, total), nil
 }
 
 // armourParry is one worn armour piece's parry, param 9's item term (see
@@ -1715,9 +1766,11 @@ func armourParry(e equipment.Equipped, it *refdata.Item) float64 {
 }
 
 func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
-	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
+	v, err := defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
 		return it.PhysDefenseMin, it.PhysDefenseMax, it.PlusIncPhysDef
 	}, durability.ArmourPhysDefenseGroup, durability.ShieldPhysDefenseGroup)
+	// Round 785: the buffs' param-5 entries ('defp', 'defr', ...; buffstats.go).
+	return buffStatInt(characterID, buff.ParamPhysDefFlat, v), err
 }
 
 // defenderDefence is the shared walk behind defenderArmor and its magical
@@ -1841,8 +1894,9 @@ func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store
 		}
 		// The other worn items' 'cri' options are entries of the same param
 		// (review F7).
-		return int(math.Round(crit)) + optionSum(optionsOf(e.MagParams), tagCri) +
-			wornOptionSum(ctx, characterID, eq, tagCri, equipment.SlotWeapon)
+		// Round 785: the buffs' param-12 entries (a passive's 'cr').
+		return buffStatInt(characterID, buff.ParamCritical, int(math.Round(crit))+optionSum(optionsOf(e.MagParams), tagCri)+
+			wornOptionSum(ctx, characterID, eq, tagCri, equipment.SlotWeapon))
 	}
 	return 0
 }
@@ -1905,10 +1959,13 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 		// The other worn items' 'bri' options are entries of the same param
 		// (review F7).
 		bri := optionSum(optionsOf(e.MagParams), tagBri) + wornOptionSum(ctx, characterID, eq, tagBri, equipment.SlotShield)
+		// Round 785: the buffs' param-10 entries and the physical 'br' bonus
+		// (p136; the block test adds p136..139 by the blow's type, READ --
+		// a monster's blow is physical).
 		if e.Durability == durability.Untracked {
-			return int(math.Round(item.BlockRatioMin)) + bri
+			return buffedBlock(characterID, int(math.Round(item.BlockRatioMin))+bri)
 		}
-		return int(math.Round(durability.WhiteStat(item.BlockRatioMin, item.BlockRatioMax, e.Variance, durability.ShieldBlockGroup))) + bri
+		return buffedBlock(characterID, int(math.Round(durability.WhiteStat(item.BlockRatioMin, item.BlockRatioMax, e.Variance, durability.ShieldBlockGroup)))+bri)
 	}
 	return 0
 }

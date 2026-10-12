@@ -117,6 +117,7 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | `export-leveldata` | leveldata → CSV (the EXP curve) |
 | `import-refdata` | CSVs → PostgreSQL reference tables |
 | `pk2list` | list paths inside a pk2 archive; `-extract` one file |
+| `skillcensus` | round 785: over an exported `skills.csv` (its Params column), how many player skill rows (China and Europe apart: learnable rows, the base attacks and every chain link they reach) carry each Param code, beside the server's status for it; `-code X` lists the rows carrying one code. Statistics of the operator's own data |
 | `efpcensus` | decode every `.efp` in a Particles.pk2 and report coverage by feature; `-show` prints one file's tree |
 | `heightat` | the raw terrain height a real `.m` heightmap gives at a spot |
 | `wherecoord` | convert the position the real client displays to region/local/world coordinates |

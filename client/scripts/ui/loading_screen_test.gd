@@ -98,13 +98,41 @@ func _test_reused_handle() -> void:
 	# The stub has no art, so the screen builds without a backdrop and still
 	# works as a gauge.
 	screen.set_progress(0.5)
-	_check(screen._fill != null and absf(screen._fill.size.x - 0.5 * screen._bar_width) < 0.01,
+	_check(screen.progress == 0.5 and absf(screen.fill_width() - 0.5 * screen._bar_width) < 0.01,
 		"the gauge fills without a backdrop")
-	screen.set_caption("Entering the world...")
-	_check(screen._caption != null and screen._caption.text == "Entering the world...",
+	screen.set_progress(1.7)
+	_check(screen.progress == 1.0, "the gauge clamps at full (%.2f)" % screen.progress)
+	screen.set_caption("Loading")
+	_check(screen._caption != null and screen._caption.text == "Loading",
 		"the caption is settable without a backdrop")
+	_test_paint(screen)
 	root.remove_child(screen)
 	screen.free()
+
+## Round 785: `paint` is the client's FUN_00ba3fc0 -- it sets the gauge every
+## time and repaints only when more than PAINT_INTERVAL_MS have passed since
+## the last repaint, or when forced. (The repaint itself is RenderingServer.
+## force_draw, a no-op under --headless; what is checked is when it is asked
+## for.)
+func _test_paint(screen: LoadingScreen) -> void:
+	_check(LoadingScreen.PAINT_INTERVAL_MS == 50, "the repaint interval is the client's 50 ms (0x32)")
+	var before := screen.paints
+	var first := screen.paint(0.25)
+	_check(first and screen.paints == before + 1, "the first paint repaints (%s, %d)" % [str(first), screen.paints - before])
+	_check(screen.progress == 0.25, "a paint sets the gauge (%.2f)" % screen.progress)
+	var second := screen.paint(0.5)
+	_check(not second and screen.paints == before + 1,
+		"a paint within 50 ms of the last sets the gauge but does not repaint (%s)" % str(second))
+	_check(screen.progress == 0.5, "the skipped paint still set the gauge (%.2f)" % screen.progress)
+	var forced := screen.paint(1.0, true)
+	_check(forced and screen.paints == before + 2, "a forced paint repaints at once (%s)" % str(forced))
+	OS.delay_msec(LoadingScreen.PAINT_INTERVAL_MS + 5)
+	_check(screen.paint(1.0), "a paint more than 50 ms after the last repaints")
+	_check(not root.disable_3d, "the viewport's 3D is as it was after a paint")
+	var loose := LoadingScreen.new()
+	_check(not loose.paint(0.5, true) and loose.progress == 0.5,
+		"a screen out of the tree sets its gauge and never repaints")
+	loose.free()
 
 func _test_no_handle() -> void:
 	# The pre-562 path, kept for a caller without a handle: the screen opens
@@ -187,6 +215,45 @@ func _test_world3d_order() -> void:
 		at = src.find("LoadingScreen.new(", at + 1)
 	_check(builds >= 2 and with_handle == builds,
 		"every LoadingScreen World3D builds is given _open_media_pk2_if_set() (%d of %d)" % [with_handle, builds])
+	_test_world3d_round785(src)
+
+## Round 785, read from World3D.gd's source (the scene cannot run here): the
+## caption never changes (until then the drain's last frame turned it to
+## "Entering the world..." for one frame), a dungeon's build reports its
+## progress to the screen and ends with a forced repaint, and the drain's end
+## keeps the gauge full for one frame before the lift.
+## NEGATIVE (fails before round 785): World3D called set_caption("Entering the
+## world...") in _drain_initial_load, DungeonWorld.build took no progress
+## callable and _load_dungeon never painted.
+func _test_world3d_round785(src: String) -> void:
+	_check(src.find("set_caption(") < 0, "World3D never changes the loading screen's caption")
+	var load_at := src.find("\nfunc _load_dungeon(")
+	_check(load_at >= 0, "World3D.gd has _load_dungeon")
+	if load_at < 0:
+		return
+	var body := src.substr(load_at, src.find("\nfunc ", load_at + 1) - load_at)
+	_check(body.find("_loading_paint(f * DUNGEON_BUILD_SHARE)") >= 0,
+		"_load_dungeon hands DungeonWorld.build a progress callable that paints the gauge")
+	_check(body.find("_loading_paint(1.0, true)") >= 0, "_load_dungeon ends with a forced repaint at 100 %")
+	# The effects' attach repaints nothing (a repaint there cost the tomb's
+	# lv.2 ~1 s on the box, MEASURED); the build's end paints 100 %.
+	var attach_at := src.find("\nfunc _attach_dungeon_effects(")
+	var attach := src.substr(attach_at, src.find("\nfunc ", attach_at + 1) - attach_at)
+	_check(attach_at >= 0 and attach.find("_loading_paint(") < 0 and attach.find(".paint(") < 0,
+		"the effects' attach makes no repaint")
+	var drain_at := src.find("\nfunc _drain_initial_load(")
+	var drain := src.substr(drain_at, src.find("\nfunc ", drain_at + 1) - drain_at)
+	var full := drain.rfind("_loading_screen.set_progress(1.0)")
+	var lift := drain.find("_loading_screen.queue_free()")
+	_check(full >= 0 and lift > full and drain.substr(full, lift - full).count("await get_tree().process_frame") == 1,
+		"the drain's end: the gauge full, one frame, then the lift")
+	var takes_progress := false
+	for m in (load("res://scripts/dungeon/dungeon_world.gd") as GDScript).get_script_method_list():
+		if m.name == "build":
+			for a in m.args:
+				if a.name == "progress":
+					takes_progress = true
+	_check(takes_progress, "DungeonWorld.build takes a progress callable")
 
 func _finish() -> void:
 	if _failures == 0:

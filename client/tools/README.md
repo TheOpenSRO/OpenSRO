@@ -56,6 +56,18 @@ The client runs the separate render thread from round 760 (`project.godot`); `CR
 "--render-thread safe"` gives a crowd boot the default one. `docs/rounds/r754.md` has the spike,
 `docs/rounds/r760.md` the switch.
 
+**What a player saw, and for how long** (round 785). The movie writer reads every frame back
+before the next one starts, so its frames say what each frame drew, never how long the screen
+showed it -- and under the separate render thread presentation is the render thread's.
+`QA_SHOT_REALTIME=1` runs `qa_shot.sh` in real time (no `--write-movie`; `--frames` still ends
+it), and `QA_SHOT_XCAPTURE=<dir>` grabs the window as the X server shows it (`xcapture.sh`: xwd,
+each grab named by its unix ns; `QA_XCAPTURE_START` / `_SECONDS` / `_SLEEP` bound it, ~4 ms a grab
+at 640x360, ~0.9 MB each -- delete the directory after). `OPENSRO_QA_FRAMELOG=1` prints a
+`QA FRAMELOG frame <n> unix <s> dt <ms> screen up|none` line a frame on the same clock, and
+`xcapture_series.py <dir> <ref> [--from s --to s]` classifies each grab against a reference image
+of the loading screen (`LS` = fraction of pixels within 8 of it; screen, world or black).
+`/var/tmp/r785-load/rt*.sh` on the box are the round's recipes.
+
 `OPENSRO_QA_WATER_SORT=1` (round 780) prints, at every `QA SHOT`, the transparent pass's order
 for each region's terrain overlays and water as Godot computes it (`QA WATER SORT` / `QA WATER
 ORDER` lines): a water surface "drawn before" an overlay patch is one that patch paints over.
@@ -410,6 +422,20 @@ they prove nothing about retail.
 OPENSRO_QA_NOUI=1 OPENSRO_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/cast --region '97\168.m' \
   --radius 1 --at 1002,1020 --yaw 30 --pitch -12 --dist 70 --frames 860
 ```
+
+**Measuring how effects play** (round 785, `efp_probe.gd`). It plays a file, a skill's rows or every
+effect the skilleffectset rows name on a host that stands or runs, at a given render rate, and
+counts per 50 ms frame what is alive and drawn, how far from the host, what follows a dead
+ancestor, what lies outside the cull box, draws that lag, pops and refused spawns:
+
+```
+client/tools/remote_godot.sh script res://tools/efp_probe.gd -- --pk2dir=/opt/sro-files/client \
+    --skills=8150,8214 --fps=144 --speed=525 --seconds=4 [--tree] [--trace]
+client/tools/remote_godot.sh script res://tools/efp_probe.gd -- --pk2dir=/opt/sro-files/client \
+    --census --quiet --fps=144 --speed=50 --seconds=3          # 1,359 runs, about 100 s
+```
+
+`--files=` takes `/` for `\` (a backslash does not survive the ssh and su layers).
 
 **EquipFx's masters in Rust** (round 763, `EfpSimNative`; `native/README.md`, "The effect
 simulation"). Three checks hold the native simulation to the GDScript one, bit for bit:

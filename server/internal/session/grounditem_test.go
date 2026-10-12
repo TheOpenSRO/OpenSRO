@@ -175,9 +175,12 @@ func TestGroundDropAndPickUpFlow(t *testing.T) {
 		t.Fatalf("gold pile = %+v, want 10 of item %d owned by %d", goldItem, grounditem.GoldItemID, c.ID)
 	}
 	for _, s := range []*GroundItemSnapshot{goldItem, potion} {
+		// The engine's ring (round 785, grounditem.Scatter): 8 to 20 units
+		// from the corpse, at the corpse's y.
 		d := math.Hypot(float64(s.X)-monsterX, float64(s.Z))
-		if d > DropScatter+1e-3 || s.Y != 0 {
-			t.Fatalf("item %+v landed %.2f from the corpse, want within %.1f on the corpse's plane", s, d, DropScatter)
+		if d < grounditem.ScatterMinRadius-1e-3 || d > grounditem.ScatterMaxRadius+1e-3 || s.Y != 0 {
+			t.Fatalf("item %+v landed %.2f from the corpse, want %.0f..%.0f on the corpse's plane", s, d,
+				grounditem.ScatterMinRadius, grounditem.ScatterMaxRadius)
 		}
 	}
 
@@ -200,6 +203,12 @@ func TestGroundDropAndPickUpFlow(t *testing.T) {
 	pr, err = DecodePickUpResult(send(OpPickUp, (&PickUpRequest{CharacterName: "Aria", GroundItemID: potion.ID}).Encode()).Data)
 	if err != nil || pr.Code != 0 || pr.ItemID != combat.ItemHPPotion || pr.Quantity != potion.Quantity || pr.Gold {
 		t.Fatalf("pick in range: %+v (err %v), want the potion", pr, err)
+	}
+	// The pick-up clip's 0x3036 reaches the zone, the picker included, before
+	// the removal (round 785): the picker's id and the angle toward the item.
+	pm, err := DecodePickUpMotion(readUntil(OpPickUpMotion).Data)
+	if err != nil || pm.ObjectID != uint32(c.ID) || pm.Angle != PickUpMotionAngle(float64(potion.X), float64(potion.Z-3), float64(potion.X), float64(potion.Z)) {
+		t.Fatalf("pick-up motion: %+v (err %v)", pm, err)
 	}
 	rm, err := DecodeGroundItemRemoved(readUntil(OpGroundItemRemoved).Data)
 	if err != nil || rm.ID != potion.ID || rm.Reason != GroundItemRemovedPicked || rm.PickerID != c.ID {
@@ -264,5 +273,50 @@ func TestGroundItemSnapshotKeepsBoundOwner(t *testing.T) {
 	}
 	if got := snapshotOf(twin, at).OwnerID; got != 0 {
 		t.Fatalf("unbound snapshot at +31 s: owner %d, want 0", got)
+	}
+}
+
+// 0x3036's angle byte (round 785): the engine's atan2 in degrees / 360 * 255,
+// truncated toward zero and wrapped into a byte, in its x-east z-north frame
+// -- OpenSRO's z runs the other way, so an item due +z in OpenSRO is due south
+// (-90 degrees) to the engine: -63.75 truncates to -63, byte 193. And the
+// client's reading of the byte (FUN_008a78b0: byte / 255 * 360 degrees, then
+// FUN_009c40b0's quarter turn) gives back the heading toward the item to two
+// of the byte's 1.41-degree steps: one for the truncation, and, for an angle
+// the engine's atan2 gives as negative, one more because the byte wraps at 256
+// while the client scales it by 255 -- the engine's own pair of formulas.
+func TestPickUpMotionAngle(t *testing.T) {
+	cases := []struct {
+		dx, dz float64
+		want   byte
+	}{
+		{1, 0, 0},    // +x: the engine's 0 degrees
+		{0, -1, 63},  // -z: the engine's +90 (north), 63.75 -> 63
+		{-1, 0, 127}, // -x: 180, 127.5 -> 127
+		{0, 1, 193},  // +z: the engine's -90, -63.75 -> -63 -> 0xc1
+		{1, 1, 225},  // -45: -31.875 -> -31 -> 0xe1
+		{-1, -1, 95}, // +135: 95.625 -> 95
+	}
+	for _, c := range cases {
+		if got := PickUpMotionAngle(10, 20, 10+c.dx, 20+c.dz); got != c.want {
+			t.Errorf("toward (%+.0f, %+.0f): byte %d, want %d", c.dx, c.dz, got, c.want)
+		}
+	}
+	for deg := 0; deg < 360; deg += 7 {
+		h := float64(deg) * math.Pi / 180
+		b := PickUpMotionAngle(0, 0, math.Sin(h), math.Cos(h))
+		back := math.Mod(float64(b)/255*360*0.01745329238474369+1.5707963705062866, 2*math.Pi)
+		d := math.Abs(math.Remainder(back-h, 2*math.Pi))
+		if d > 2*2*math.Pi/255+1e-6 {
+			t.Errorf("heading %d deg: byte %d reads back as %.2f deg", deg, b, back*180/math.Pi)
+		}
+	}
+	m := &PickUpMotion{ObjectID: 0x01020304, Angle: 193}
+	got, err := DecodePickUpMotion(m.Encode())
+	if err != nil || *got != *m || len(m.Encode()) != 5 {
+		t.Fatalf("round trip: %+v (err %v), %d bytes", got, err, len(m.Encode()))
+	}
+	if _, err := DecodePickUpMotion([]byte{1, 2, 3, 4}); err == nil {
+		t.Fatalf("a 4-byte payload decoded")
 	}
 }
