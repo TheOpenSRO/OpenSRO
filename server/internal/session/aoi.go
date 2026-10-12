@@ -408,6 +408,20 @@ func (v *monsterAOI) step(dt float64, awake func(int64, combat.Cell) bool, dst [
 	return dst, v.crossingsLocked(dst)
 }
 
+// place moves a monster as Hub.Place does (a knock) and returns what its
+// cell crossing owes each watcher, under the view lock held for reading as
+// step's crossings are, so no view moves between the move and the
+// difference.
+func (v *monsterAOI) place(id int64, x, z float64) ([]viewEvents, bool) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	_, ch, crossed, ok := v.monsters.Place(id, x, z)
+	if !ok || !crossed {
+		return nil, ok
+	}
+	return v.crossingsLocked([]combat.CellChange{ch}), true
+}
+
 // aoiStepHook, when set, runs inside step between the hub's step and the
 // crossings, with the view lock held: a test's window into the one ordering
 // the lock exists to exclude (TestAOIReconcileWaitsForTheStep). nil in

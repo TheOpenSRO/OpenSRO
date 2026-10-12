@@ -425,6 +425,13 @@ type AttackResult struct {
 	// caster's move. When set, the wall suffix is always written (13 bytes,
 	// zero for no wall) and the block follows it at offset 72.
 	Action *ActionBlock
+	// SkillID is the skill the result answers, 0 for a plain swing (the base
+	// attack). It is written as a u32 right after the action block's
+	// leading-target kind byte, and only when the block is (round 785
+	// review, OURS): a keep-up swing's result arriving while a cast is
+	// pending was otherwise drawn as the cast's answer. A client that stops
+	// reading at the kind byte is unaffected.
+	SkillID int64
 }
 
 // expAdded is the experience a character gained going from (level, exp) to
@@ -494,6 +501,8 @@ func (r *AttackResult) Encode() []byte {
 	// that is then always present.
 	if r.Action != nil {
 		buf = r.Action.encode(buf)
+		// And the skill id after it (round 785 review): 0 = a plain swing.
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(r.SkillID))
 	}
 	return append(out, buf...)
 }
@@ -546,8 +555,11 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 		r.Wall = w
 	}
 	if len(rest) > 72 && rest[72] == actionBlockMarker {
-		if b, _, err := DecodeActionBlock(rest[72:]); err == nil {
+		if b, after, err := DecodeActionBlock(rest[72:]); err == nil {
 			r.Action = b
+			if len(after) >= 4 {
+				r.SkillID = int64(binary.LittleEndian.Uint32(after))
+			}
 		}
 	}
 	return r, nil
@@ -1112,6 +1124,10 @@ func combatHandler(
 				resyncMonster(sess, monsters, req.TargetMonsterID)
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusedTooFar, MonsterID: req.TargetMonsterID}).Encode()})
 			}
+			// A new attack ends a chain still posting links (round 785
+			// review, skillchain.go cancelChain; OURS: retail queues it
+			// behind the chain, OpenSRO resolves at once, as a new cast does).
+			cancelChain(characterID)
 			// A plain swing is the weapon's base attack skill, on that skill's
 			// own re-use delay (round 255). A click inside the delay is not
 			// dropped (round 785): the engine queues the action and its phase
@@ -1229,166 +1245,87 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
 
-	// Both sides' levels, for the level-advantage term below and for the
-	// monster's counterattack, and the attacker's Strength, which contributes
-	// to both ends of its damage range. A store that cannot answer leaves
-	// playerLevel at zero and the term is simply skipped -- it only ever
-	// scales damage up, so missing it costs nobody anything -- and leaves
-	// playerStr at zero, which drops the Strength term the same way.
-	playerLevel, playerStr, playerInt := 0, 0, 0
+	// The attacker's level, for the monster's counterattack, and its HP now
+	// (the result's seed). The blow's own terms (its level, the TOTAL Str
+	// and Int, round 769) are newCastContext's, read the same way.
+	playerLevel := 0
 	playerHPNow := 0
 	if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
-		// Round 769: the TOTAL Str and Int, the worn items' options in.
-		playerLevel, playerStr, playerInt = c.Level, c.TotalStr(), c.TotalInt()
+		playerLevel = c.Level
 		playerHPNow = c.HP
 	}
 
-	// The defender's parry rate: a monster's 'era' is characterdata col 75,
-	// which holds 2*level + 25 on every monster row (combat.MonsterRate).
-	base, err := attackerDamageOf(ctx, characterID, playerStr, playerInt, eq, items, attackType,
-		playerLevel, monster.Level, combat.MonsterRate(monster.Level))
-	if err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed", MonsterID: targetMonsterID}).Encode()})
-	}
-
-	// Stage 1: the roll is scaled by the caster's mastery before anything else
-	// touches it. Recovered 2026-09-17 -- docs/protocol/damage_pipeline.md had
-	// this stage's argument recorded as "damage" when it is a mastery percent.
-	base = combat.ApplyMasteryScale(base, masteryPercent)
-
-	// A skill's own flat damage is scaled DOWN when the monster out-levels the
-	// attacker -- 2.5% per level, floored at 10%. This is the opposite term to
-	// the level ADVANTAGE resolveBlow applies below, it has a different rate,
-	// and the engine applies it to the skill's damage bucket alone rather than
-	// to the weapon blow. See combat.SkillLevelPenalty for the disassembly and
-	// for how the attacker was told from the target.
-	damageBonus = combat.SkillLevelPenalty(damageBonus, playerLevel, monster.Level)
-
-	// A skill's FLAT damage joins the roll here, before mitigation -- the
-	// engine adds it to the rolled bound itself (FUN_0040db50 reads the attack
-	// descriptor's +0x8 for the minimum and +0xc for the maximum). Its
-	// PERCENTAGE does not; that lands after mitigation, below.
-	raw := base + damageBonus
-	// The game's own mitigation shape: a percentage reduction plus a flat
-	// term, not the flat subtraction this used to do. The percentage is REAL
-	// (characterdata cols 73/74 = the monster's level); the flat Defense is
-	// still the disclosed curve. See combat.MitigateDamage.
-	// One pipeline for every blow in the game -- see combat.ResolveBlow. The
-	// monster's own block chance is characterdata col 76, which reads 0 for
-	// every species on the Jangan ladder (938 monsters elsewhere carry 20), so
-	// it is a real zero rather than an unmodelled one.
-	// Bleeding takes its flat defence off (round 659, status.go).
-	monsterDefence := monster.Defense - statusFX.monsterDefenceCut(monster.ID)
-	blow := resolveBlow(raw, monster.DefensePercent, monsterDefence,
-		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
-		combat.EvadedChance(monster.Block, playerEvadeBlock(ctx, characterID, eq)),
-		playerLevel, monster.Level, characterID, monster.ID)
-	// A skill's percentage applies HERE, after mitigation and the clamp, not
-	// to the raw roll -- see combat.ApplySkillPercent for the disassembly. A
-	// plain attack passes its base attack skill's share (60 for a CH sword's
-	// SKILL_CH_SWORD_BASE_01, 150 bare-handed), or 0 -- unchanged -- with no
-	// base row (plainSwingOf).
-	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
-	playerCrit := blow.Critical
-	allBlocked := blow.Blocked
-	// Round 785: each hit's own part, for the action block (skillhit.go).
-	swing := []swingHit{{dmg: net, crit: blow.Critical, blocked: blow.Blocked}}
-
-	// A multi-hit skill strikes again, and each strike is INDEPENDENT: the
-	// engine runs its whole damage resolution inside
-	// `do { ... } while (i < record[5])`, with the damage-kind switch and the
-	// mitigation calls inside the loop body, so every hit rolls its own
-	// damage, critical and block. Multiplying one blow would be a different
-	// distribution -- see refdata.Skill.HitCount.
+	// THE HITS (round 785 review): a plain swing is its weapon's base attack
+	// skill (PrepareAction 0x4ad030), and Combat_ResolveDamage resolves it
+	// as it resolves any cast (skill_attack.md "One hit"), so its hits run
+	// through the cast's own per-hit resolution (castContext.strike, with the
+	// base attack row): the monster's debuffs (monsterDefence, its block and
+	// parry through monsterStat, applyMonsterTaken), the attacker's buffs and
+	// passives (applyBuffDamage, applyGetvDamage on the row's getv keys),
+	// berserk on each hit, the fixed damage kinds, and the running imbue's
+	// add, its states (castContext.apply) and its extra targets (role 1,
+	// 'efr' collected again, 0x586b33). Every term the swing had before is
+	// one of strike's: the level penalty on the skill's flat damage, the
+	// mastery scale (0 for a swing, see masteryPercent), the share
+	// percentage after mitigation, the multi-hit loop with each hit rolled on
+	// its own. One difference is the engine's and now OpenSRO's: a magical
+	// swing (a staff's) no longer crits (magic never crits, READ).
 	//
-	// The first strike is the blow already resolved above; this adds the rest.
-	for i := 1; i < hits; i++ {
-		extra := resolveBlow(raw, monster.DefensePercent, monsterDefence,
-			combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
-			combat.EvadedChance(monster.Block, playerEvadeBlock(ctx, characterID, eq)),
-			playerLevel, monster.Level, characterID, monster.ID)
-		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
-		playerCrit = playerCrit || extra.Critical
-		allBlocked = allBlocked && extra.Blocked
-		swing = append(swing, swingHit{dmg: combat.ApplySkillPercent(extra.Damage, damagePercent), crit: extra.Critical, blocked: extra.Blocked})
-	}
-	// Berserk multiplies the blow AFTER mitigation, which is the order
-	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
-	// subtracts the flat term, clamps at zero, and only then multiplies by
-	// GetParam(189) + 2.0. This code boosted the raw roll instead until
-	// 2026-09-15, with a comment claiming that was "the order the real
-	// formula implies" -- it is not, and the two differ whenever the flat
-	// term is non-zero: 2*(d/(1+p) - f) against (2d)/(1+p) - f, the second
-	// of which quietly scales the defence away and over-pays berserk.
-	// ...except a floor blow. Berserk's multiplier is a term INSIDE the
-	// mitigation formula, so when a zero percentage has already made that
-	// formula's result zero, berserk multiplies zero, and the floor of 1 is
-	// applied after it. Boosting the floored 1 here would double a blow the
-	// engine leaves at exactly 1. See combat.SkillPercentZero.
-	if zerk != nil && damagePercent != combat.SkillPercentZero {
-		net = zerk.Boost(characterID, net)
-	}
-
-	// THE DAMAGE KIND. Everything above is the engine's ORDINARY kind, and
-	// Combat_ResolveDamage switches away from it in four cases -- see
-	// combat.SelectDamageKind for the selector and how each condition was
-	// grounded. Two of the four replace the blow with a constant and are
-	// applied here: a fortress weapon deals exactly 1 to anything that is not a
-	// structure, and the hard-coded event monster takes its listed damage
-	// whatever hits it. Both assign the total directly inside the engine's
-	// per-hit loop, past every formula, so nothing computed above survives --
-	// not the skill percentage, not berserk -- and a multi-hit skill lands the
-	// constant once per hit.
-	//
-	// Neither is reachable with the content this server spawns today; they are
-	// here because the rule is fully read and cheap, and so that a fortress
-	// weapon or the winter event cannot arrive ahead of it. The other two kinds
-	// (the monster transform, fortress structures) are identified but NOT
-	// modelled -- the first needs a transform system and the second's formula
-	// is unread -- and an OpenSRO monster carries no TypeID, so a target is
-	// never taken for a structure.
-	kindIn := combat.KindInput{AttackerIsPC: true, TargetCodeName: monster.CodeName}
-	if _, t4, known := equippedWeaponType(ctx, characterID, eq, items); known {
-		kindIn.WeaponTypeID4 = t4
-	}
-	if perHit, fixed := combat.FixedDamagePerHit(combat.SelectDamageKind(kindIn), monster.CodeName); fixed {
-		n := hits
-		if n < 1 {
-			n = 1
+	// The guarantees of the combat lane hold: the blow is applied once
+	// (castContext.apply), the attacker hears it once (the OpAttackResult
+	// below, the block carrying every target), and the other watchers once
+	// each (the primary's OpMonsterDamaged or kill below, the extra targets'
+	// through announceOutcomes, the attacker excluded).
+	deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
+	baseRow, _ := baseAttackOf(ctx, characterID, eq, items)
+	cc := newCastContext(ctx, deps, characterID, attacker, baseRow, skillBlowTerms{damageBonus: damageBonus, damagePercent: damagePercent,
+		masteryPercent: masteryPercent, hits: hits, attackType: attackType})
+	targets := []skillTarget{{ID: monster.ID, Share: 100}}
+	if cc.imbue != nil {
+		for _, t := range collectSkillTargets(cc.imbue.row, attacker, monster, monsters, 0)[1:] {
+			if t.ID != monster.ID {
+				t.Role = 1
+				targets = append(targets, t)
+			}
 		}
-		net = perHit * n
-	} else {
-		// Round 785 (skillhit.go): the buffs' damage percent and the running
-		// imbue's add on every hit of the swing (an imbue reaches plain swings,
-		// 0x59b480, READ).
-		net = plainSwingExtras(ctx, skills, eq, items, characterID, monster, swing, net, playerStr, playerInt, playerLevel)
 	}
-	swingAction := swingBlock(monster.ID, swing, net)
-
+	var outcomes []targetOutcome
+	for _, tg := range targets {
+		o, err := cc.strike(tg)
+		if err != nil {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed", MonsterID: targetMonsterID}).Encode()})
+		}
+		if o.ok {
+			outcomes = append(outcomes, o)
+		}
+	}
+	if len(outcomes) == 0 || outcomes[0].before.ID != monster.ID {
+		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
+	}
+	swingAction := &ActionBlock{Target: uint32(monster.ID), TargetKind: ActionTargetMonster, HitCount: uint8(cc.terms.hits)}
 	// The blow, with the players watching the monster before it and after it
 	// (damageMonsterWatched, round 656's review), booked to the attacker on
 	// the monster's damage list, which the killing blow hands back: the unique
 	// kill notice names its killer from it (round 657, AnnounceUniqueKill).
-	updated, monsterDied, ok, watchers, killHits := damageMonsterWatched(hub, monsters, targetMonsterID, characterID, net)
-	if !ok {
+	// apply also tells the nests of a kill (round 660), the AI of a struck
+	// survivor (round 537), and lands the imbue's states.
+	cc.apply(outcomes, swingAction)
+	primary := outcomes[0]
+	if !primary.ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
+	net, updated, monsterDied, watchers, killHits := primary.total, primary.updated, primary.died, primary.watchers, primary.killHits
+	playerCrit := false
+	for _, h := range primary.hits {
+		playerCrit = playerCrit || h.Flags&HitFlagCritical != 0
+	}
 	if landed != nil {
-		landed.Landed, landed.Blocked = true, allBlocked
+		landed.Landed, landed.Blocked = true, primary.blocked
 	}
-	// The kill's word to the nests (round 660, nestkill.go): the killer's
-	// party near the monster may arm its nest for a party monster.
-	if monsterDied {
-		noteMonsterKilled(hub, parties, killHits, updated)
-	}
-	// The monster AI's struck event (round 537, monsterai.go): a surviving
-	// monster is attacked (CAIState::OnAttacked 0x558ea0) and stopped at the
-	// blow. A no-op while -monster-ai is off; nothing is sent from here.
-	if !monsterDied {
-		noteStruck(monsters, targetMonsterID, characterID)
-	}
+	addSkillHate(cc, outcomes)
 	// A landed blow wears the weapon: one roll at rate = hits (2% a hit).
 	wearWeapon(ctx, eq, characterID, hits)
+	extras := outcomes[1:]
 
 	// PlayerHP is SEEDED with the truth before any branch runs.
 	//
@@ -1404,7 +1341,7 @@ func performAttack(
 	//
 	// Every branch that changes the player's HP overwrites this afterwards.
 	result := &AttackResult{MonsterID: targetMonsterID, MonsterDamage: int32(net), MonsterRemainingHP: int32(updated.HP),
-		MonsterDied: monsterDied, PlayerCritical: playerCrit, PlayerHP: int32(playerHPNow), Action: swingAction.died(monsterDied)}
+		MonsterDied: monsterDied, PlayerCritical: playerCrit, PlayerHP: int32(playerHPNow), Action: swingAction}
 	// The berserk orbs ride along on every attack result so the HUD tracks
 	// them -- but a blow that does not kill earns nothing: the engine adds
 	// hwan only on the killing blow (see berserk.EarnOnKill), which is
@@ -1424,7 +1361,7 @@ func performAttack(
 	if monsterDied {
 		// The kill reward (round 659: one function, grantKill, that the
 		// damage-over-time kill in status.go pays through too).
-		lu, kg, kerr := grantKill(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, monster, result, killHits)
+		lu, kg, kerr := grantKill(ctx, deps, characterID, monster, result, killHits)
 		if kerr != nil {
 			return kerr
 		}
@@ -1480,6 +1417,13 @@ func performAttack(
 		}
 	}
 
+	// The imbue's extra targets' kills pay as a cast's do (payKills), their
+	// EXP summed into the result.
+	extraLevelUps, extraKills, err := payKills(ctx, deps, characterID, extras, result)
+	if err != nil {
+		return err
+	}
+
 	if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {
 		return err
 	}
@@ -1492,9 +1436,26 @@ func performAttack(
 			return err
 		}
 	}
+	for _, lu := range extraLevelUps {
+		if err := sess.Send(&proto.Packet{Opcode: OpLevelUp, Data: lu.Encode()}); err != nil {
+			return err
+		}
+	}
 	// Then the killer's 0x3056, last (round 716; see distributeKill).
 	if result.expGain != nil {
 		sendExpGainTo(sess, *result.expGain)
+	}
+	for _, k := range extraKills {
+		if k.exp != nil {
+			sendExpGainTo(sess, *k.exp)
+		}
+	}
+	// The extra targets to their watchers (the attacker excluded: the block
+	// told it).
+	if len(extras) > 0 {
+		if err := announceOutcomes(ctx, deps, sess, characterID, extras, extraKills, true); err != nil {
+			return err
+		}
 	}
 
 	// The attacker already got the richer OpAttackResult above; only
@@ -1509,7 +1470,7 @@ func performAttack(
 	}
 
 	if monsterDied {
-		return announceKill(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, sess, others, characterID, monster, killGold, updated, killHits)
+		return announceKill(ctx, deps, sess, others, characterID, monster, killGold, updated, killHits)
 	}
 
 	msg := &MonsterDamaged{MonsterID: targetMonsterID, Damage: int32(net), RemainingHP: int32(updated.HP)}

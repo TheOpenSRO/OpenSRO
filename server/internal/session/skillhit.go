@@ -255,9 +255,27 @@ func (c *castContext) place(h *ActionHit, m combat.Monster, kind uint8, dist flo
 	landing, region, ix, iy, iz := truncatedLanding(m.Zone, dest)
 	h.Kind = h.Kind&HitDied | kind
 	h.Region, h.X, h.Y, h.Z = region, ix, iy, iz
-	if _, _, _, ok := c.d.monsters.Place(m.ID, landing.X, landing.Z); ok {
+	if placeMonster(c.d.monsters, m.ID, landing.X, landing.Z) {
 		setKnock(m.ID, k)
 	}
+}
+
+// placeMonster puts monster id at x, z (a knock) and delivers the cell
+// crossing the move made, as a step's are (round 785 review: Hub.Place's
+// crossing was dropped, so a watcher at the window's edge missed the
+// monster entering or leaving it). It reports whether the monster was
+// there to move.
+func placeMonster(monsters *combat.Hub, id int64, x, z float64) bool {
+	v := aoiFor(monsters)
+	if v == nil {
+		_, _, _, ok := monsters.Place(id, x, z)
+		return ok
+	}
+	evs, ok := v.place(id, x, z)
+	for _, ev := range evs {
+		v.deliverViewEvents(ev)
+	}
+	return ok
 }
 
 // apply lands each outcome's damage and states and files its target entry.
@@ -417,6 +435,10 @@ func performSkillAttack(ctx context.Context, d combatDeps, sess *gateway.Session
 			result.DeathExpLost = out.deathExpLost
 			result.Wall = out.wall
 			strike = out.message(first.before.ID, characterID)
+			// The counter rolls the primary range, so it names the primary
+			// attack skill, as performAttack's does (round 785 review: the
+			// client had no skill id for the clip and the sounds).
+			strike.SkillID = strikeSkillID(first.updated, combat.MonsterSkill{})
 		}
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {

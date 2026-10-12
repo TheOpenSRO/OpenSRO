@@ -545,7 +545,7 @@ func MotionHandler(hub *world.Hub) gateway.Handler {
 		// (moverSpeed re-bases it on the next pass).
 		if value != MotionWalk && value != MotionRun {
 			haltForSit(sess, hub)
-			keepUp.Cancel(e.CharacterID)
+			cancelActions(e.CharacterID)
 		}
 		broadcastMotion(hub, e, value)
 		return nil

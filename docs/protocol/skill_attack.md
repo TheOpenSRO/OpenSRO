@@ -90,6 +90,19 @@ own 0x7070 command: each link runs the gate (mask 0x91: cooldown, HP/MP, the dur
 own context builder, its own `att`, `mc`, `efr` and states, its own Consume_HP/MP and ReuseDelay.
 MEASURED: no link costs MP or has a Preparing/CastingTime; 97 links have their own ReuseDelay.
 
+What ends a chain (READ, round 785 review): a link posts in phase 2 (0x4aecfd), which has no
+reach test and no `MoveTowardObject`, so retail fires a link out of reach. `PrepareAction` ->
+`FUN_0058cc70` refuses a dead or gone target, or one more than a cell away (0x3006, silent past
+phase 0), and the action ends (`FinishFront`). Death (vslot 306/307 -> `FUN_004ad320(1)`), a sit
+(`FUN_004b1480`) and crowd control (slot 348) clear the queue. Neither a move (`FUN_004b0ea0`) nor
+a new action does: `Push` queues the new action behind the chain. The retail client sends no move
+while an action runs.
+
+OpenSRO (OURS): its client can move mid-chain, so a chain ends on everything that ends the keep-up
+(`cancelActions`: a move, a sit, death, a zone change, the logout), on a new `OpAttack`, and on a
+new cast. Each link measures the skill band from where the caster stands (`chainLinkInReach`) and
+ends the chain when it is out of reach.
+
 Timing: a 500 ms budget B starts with the action; a non-final link waits its ActionDuration less
 what is left of B (B is spent first); the next link posts after `max(CastingTime, wait)`; the
 final link waits CastingTime + ActionDuration (+ the carried B when it hands off) and applies the
@@ -111,7 +124,8 @@ rows (China bows (4,1,1), Europe crossbows (4,2,1) and (4,2,3)).
 | knockdown / knockback (kind 4 / 5, the move, the monster held for the time) | implemented; the monster data needs the round-785 monsters CSV (cols 81/82), otherwise 3 / 3000 (the table's own commonest values, OURS fallback) |
 | `da`, `atca` | implemented |
 | the imbue's add, its states, its extra chain targets | implemented (skill casts and plain swings) |
-| chains, link by link | implemented: every link resolved at its own time offset |
+| chains, link by link | implemented: every link resolved at its own time offset, reach-tested (OURS) and cancelled with the keep-up |
+| plain swings | resolved per hit by the same path (`castContext.strike` / `apply` on the base attack row, round 785 review): the monster's debuffs, the buffs, `getv`, berserk, the imbue; a magical swing does not crit |
 | hate (`tant`, `tnt2`, p187) | computed and credited to a per-monster `ai.ThreatTable`; the AI's retarget by hate is OPEN (the AI lane's `mob-threat-retarget`) |
 | `lfst` HP drain | implemented (`lfstDamage`; the `mwhs` term OPEN) |
 | hitFlags | 1 / 2 (critical), `|4` in HWAN; 0x10 on a debuff's effect-only hit |

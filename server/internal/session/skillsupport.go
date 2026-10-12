@@ -278,6 +278,12 @@ func rowHasResu(row *refdata.Skill) bool {
 // resu[1]/100) back (OPEN: OpenSRO keeps no per-death EXP record; not
 // returned). The offer waits 30 s (the transaction's timeout, party
 // invitations' 0xb45b48, INFERRED the same box).
+//
+// Round 785 review: an offer lives until its answer, its 30 s, the target's
+// revive by any path, or its logout -- whichever comes first -- and an
+// expired one is absent. The 0x3080 answer is the party invitation's first
+// (handlePartyAnswer; the client ignores kinds 4/8, so a leftover offer must
+// never take an answer meant for an invitation).
 
 // resurrectOfferTimeout is how long an offer waits for its answer.
 const resurrectOfferTimeout = 30 * time.Second
@@ -286,12 +292,22 @@ type resurrectOffer struct {
 	casterID int64
 	row      *refdata.Skill
 	expires  time.Time
+	seq      uint64
 }
 
 var resurrectOffers = struct {
 	sync.Mutex
-	m map[int64]resurrectOffer
+	seq uint64
+	m   map[int64]resurrectOffer
 }{m: map[int64]resurrectOffer{}}
+
+// dropResurrectOffer forgets the offer pending for characterID, if any (its
+// revive by another path, its logout).
+func dropResurrectOffer(characterID int64) {
+	resurrectOffers.Lock()
+	delete(resurrectOffers.m, characterID)
+	resurrectOffers.Unlock()
+}
 
 // offerResurrection sends target the offer; false when the row's level cap
 // refuses the target.
@@ -308,16 +324,26 @@ func offerResurrection(ctx context.Context, d combatDeps, casterID int64, row *r
 		kind = 8
 	}
 	resurrectOffers.Lock()
-	resurrectOffers.m[target.CharacterID] = resurrectOffer{casterID: casterID, row: row, expires: time.Now().Add(resurrectOfferTimeout)}
+	resurrectOffers.seq++
+	seq, id := resurrectOffers.seq, target.CharacterID
+	resurrectOffers.m[id] = resurrectOffer{casterID: casterID, row: row, expires: time.Now().Add(resurrectOfferTimeout), seq: seq}
 	resurrectOffers.Unlock()
+	// The timeout frees the entry (a newer offer is left alone).
+	time.AfterFunc(resurrectOfferTimeout, func() {
+		resurrectOffers.Lock()
+		if o, ok := resurrectOffers.m[id]; ok && o.seq == seq {
+			delete(resurrectOffers.m, id)
+		}
+		resurrectOffers.Unlock()
+	})
 	data := []byte{kind, byte(casterID), byte(casterID >> 8), byte(casterID >> 16), byte(casterID >> 24)}
 	_ = target.Session.Send(&proto.Packet{Opcode: party.OpInvitation, Data: data})
 	return true
 }
 
 // takeResurrection answers a pending offer to the session's character: it
-// reports whether there was one (the 0x3080 answer belongs to it). A "yes"
-// revives.
+// reports whether there was one (the 0x3080 answer belongs to it). An
+// expired offer is no offer (round 785 review). A "yes" revives.
 func takeResurrection(ctx context.Context, sess *gateway.Session, characterID int64, accept bool) bool {
 	resurrectOffers.Lock()
 	o, ok := resurrectOffers.m[characterID]
@@ -326,7 +352,7 @@ func takeResurrection(ctx context.Context, sess *gateway.Session, characterID in
 	}
 	resurrectOffers.Unlock()
 	if !ok || time.Now().After(o.expires) {
-		return ok
+		return false
 	}
 	if !accept {
 		return true

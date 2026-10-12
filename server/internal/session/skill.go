@@ -1546,6 +1546,11 @@ func echoed(req *UseSkillRequest, res *AttackResult) *AttackResult {
 	if req != nil && req.Target() != TargetEntity {
 		res.TargetType, res.HasTargetType = req.Target(), true
 	}
+	// The skill the result answers (round 785 review; written after the
+	// action block, AttackResult.SkillID).
+	if req != nil {
+		res.SkillID = req.SkillID
+	}
 	return res
 }
 

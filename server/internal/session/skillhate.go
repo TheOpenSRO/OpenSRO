@@ -52,6 +52,14 @@ func addSkillHate(c *castContext, outcomes []targetOutcome) {
 		if !o.ok || o.died {
 			continue
 		}
+		// A monster that fell meanwhile (another's blow) is forgotten, or
+		// about to be, by forgetThreat, which takes this lock: no entry is
+		// made for it again (round 785 review).
+		if c.d.monsters != nil {
+			if m, alive := c.d.monsters.Get(o.before.ID); !alive || m.HP <= 0 {
+				continue
+			}
+		}
 		t := threats.m[o.before.ID]
 		if t == nil {
 			t = &ai.ThreatTable{}

@@ -21,6 +21,7 @@ package session
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -88,23 +89,57 @@ func chainTiming(rows []*refdata.Skill) (posts []int, handOff int) {
 
 // chainGen is each caster's chain generation: a new cast ends a chain still
 // playing (OURS: retail queues the new action behind it, Push 0x4ad630;
-// OpenSRO resolves every cast at once, so the older chain yields).
+// OpenSRO resolves every cast at once, so the older chain yields). The
+// generations come from one process-wide sequence, so a caster's entry can
+// be deleted (cancelChain) without a later chain reusing an old number.
 var chainGen = struct {
 	sync.Mutex
-	m map[int64]uint64
+	seq uint64
+	m   map[int64]uint64
 }{m: map[int64]uint64{}}
 
 func nextChain(casterID int64) uint64 {
 	chainGen.Lock()
 	defer chainGen.Unlock()
-	chainGen.m[casterID]++
-	return chainGen.m[casterID]
+	chainGen.seq++
+	chainGen.m[casterID] = chainGen.seq
+	return chainGen.seq
+}
+
+// cancelChain ends the caster's chain, if one plays, and frees its entry.
+func cancelChain(casterID int64) {
+	chainGen.Lock()
+	delete(chainGen.m, casterID)
+	chainGen.Unlock()
 }
 
 func chainCurrent(casterID int64, gen uint64) bool {
 	chainGen.Lock()
 	defer chainGen.Unlock()
-	return chainGen.m[casterID] == gen
+	g, ok := chainGen.m[casterID]
+	return ok && g == gen
+}
+
+// forgetCharacterSkillState frees what the skill and quest runtimes keep per
+// character once it has left the world (round 785 review: these maps only
+// grew): its chain entry, its record rows, its passive set, a resurrection
+// offer still waiting, and its cached quest log.
+func forgetCharacterSkillState(characterID int64) {
+	cancelChain(characterID)
+	forgetRows(false, characterID)
+	invalidatePassives(characterID)
+	dropResurrectOffer(characterID)
+	forgetQuestLog(characterID)
+}
+
+// cancelActions ends everything the server plays for the character on its
+// own: the keep-up and a chain still posting links (round 785 review: the
+// chain was cancelled only by a new cast). Every place the player's own
+// action ends the keep-up -- a move, a sit, a new attack, death, a zone
+// change, the logout -- calls this.
+func cancelActions(characterID int64) {
+	keepUp.Cancel(characterID)
+	cancelChain(characterID)
 }
 
 // playChain schedules head's links against target. sess is the caster's.
@@ -125,7 +160,7 @@ func playChain(sess *gateway.Session, d combatDeps, casterID, target int64, head
 				return
 			}
 			if !playLink(sess, d, casterID, target, link, started) {
-				nextChain(casterID) // the gate refused: the action ends (0x4aeb1c)
+				cancelChain(casterID) // the gate refused: the action ends (0x4aeb1c)
 				return
 			}
 			if last && link.AutoAttackType == 1 {
@@ -135,6 +170,16 @@ func playChain(sess *gateway.Session, d combatDeps, casterID, target int64, head
 			}
 		})
 	}
+}
+
+// chainLinkInReach is the reach test a link runs before its blow:
+// skillInReach's approach band (combat.ApproachBand on the link's Range, or
+// the weapon's) from where the caster stands now to where the monster is.
+func chainLinkInReach(ctx context.Context, d combatDeps, casterID int64, caster world.Entity, m combat.Monster, link *refdata.Skill) bool {
+	dist := math.Hypot(caster.Pos.X-m.X, caster.Pos.Z-m.Z)
+	_, reach := combat.ApproachBand(combat.PlayerBCRadius, m.BCRadius,
+		combat.EffectiveRange(link.Range, equippedWeaponRange(ctx, casterID, d.eq, d.items)))
+	return combat.InReach(dist, reach)
 }
 
 // playLink resolves one link (its gate, its blow, its messages); false ends
@@ -147,6 +192,12 @@ func playLink(sess *gateway.Session, d combatDeps, casterID, target int64, link 
 	}
 	m, ok := d.monsters.Get(target)
 	if !ok || m.HP <= 0 || m.Zone != caster.Zone {
+		return false
+	}
+	// The link's reach (round 785 review): measured as the head's was
+	// (skillInReach's band on the link's own range, the weapon's without
+	// one). Out of reach the chain ends -- see chainLinkInReach.
+	if !chainLinkInReach(ctx, d, casterID, caster, m, link) {
 		return false
 	}
 	// The link's own gate (mask 0x91): its re-use timer, its costs. No link
