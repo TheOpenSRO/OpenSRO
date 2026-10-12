@@ -60,11 +60,8 @@ extends Control
 ##     time.
 ## So: the gauge fills as the load goes, rests at 100 % for a repaint, and the
 ## screen goes on the next frame. `paint` is FUN_00ba3fc0 (the 50 ms rule,
-## the forced last repaint); the screen's caption never changes. OPEN: the
-## zone's own backdrop art (FUN_0084b6e0 picks loading_<zone>.ddj, e.g.
-## loading_royalmausoleum.ddj for 0x8002-0x8007 -- by the region id,
-## INFERRED from the switch's cases) -- this screen still shows
-## loading_default.ddj everywhere.
+## the forced last repaint); the screen's caption never changes. The art is
+## FUN_0084b6e0's choice (LoadingBackdrop, round 785's follow-up).
 
 const DEFAULT_BACKDROP := "interface\\loading\\loading_default.ddj"
 
@@ -76,6 +73,8 @@ const PAINT_INTERVAL_MS := 50
 ## gauge_loading.ddj, not drawn here).
 const FILL_COLOR := Color(0.86, 0.66, 0.20)
 
+## The art this screen shows (LoadingBackdrop picks it; DEFAULT_BACKDROP when
+## the caller names none, or the named one is not in the archive).
 var _backdrop_path: String
 ## The Media.pk2 handed in by the caller, or null to open one in _ready.
 var _media: Pk2Reader
@@ -86,6 +85,10 @@ var _media: Pk2Reader
 var _fill_item := RID()
 var _bar_width := 0.0
 var _caption: Label
+## The art this screen shows (after any fallback).
+func backdrop_path() -> String:
+	return _backdrop_path
+
 ## The gauge's fill, 0..1, as last set.
 var progress := 0.0
 ## Repaints `paint` made (round 785), and the last one's time (ms ticks).
@@ -127,6 +130,12 @@ func _ready() -> void:
 		media_source = "opened" if media != null else "none"
 	var t_backdrop := Time.get_ticks_msec()
 	var bg := FrontEndUi.backdrop(media, _backdrop_path)
+	# An archive without the zone's art (LoadingBackdrop's choice) falls back
+	# to the default (OURS), so the screen is never bare.
+	if bg == null and _backdrop_path != DEFAULT_BACKDROP and media != null:
+		print("LoadingScreen: %s not in Media.pk2 -- %s instead" % [_backdrop_path, DEFAULT_BACKDROP])
+		_backdrop_path = DEFAULT_BACKDROP
+		bg = FrontEndUi.backdrop(media, _backdrop_path)
 	var backdrop_ms := Time.get_ticks_msec() - t_backdrop
 	if bg != null:
 		add_child(bg)
@@ -152,8 +161,8 @@ func _ready() -> void:
 	# on), how its archive was come by, and what the screen itself cost --
 	# the line a load log is read by (client/tools/README.md, "Load
 	# benchmark").
-	print("LoadingScreen: up at frame %d (media %s, %d ms; backdrop %s, %d ms; built in %d ms)" % [
-		Engine.get_frames_drawn(), media_source, media_open_ms,
+	print("LoadingScreen: up at frame %d (media %s, %d ms; backdrop %s %s, %d ms; built in %d ms)" % [
+		Engine.get_frames_drawn(), media_source, media_open_ms, _backdrop_path.get_file(),
 		"decoded" if bg != null else "missing", backdrop_ms, Time.get_ticks_msec() - t_start])
 
 ## Puts this screen over every sibling added after it. CanvasItem draw order

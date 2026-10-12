@@ -7727,11 +7727,42 @@ jangan  hitches    base 4  head 4  (+0.0)  SAME
   How long the full gauge stays on the user's PC (the backlog the render thread works off after
   the build, plus two frames) is not measured here; the client's own rule allows a one-frame
   100 % too, so an OURS minimum hold was not added.
-- The zone's own backdrop (`FUN_0084b6e0`'s table above) -- the screen still shows
-  `loading_default.ddj` everywhere.
+- ~~The zone's own backdrop~~ -- done in the follow-up below.
 - The world is still drawn under the screen during the field drain (the client draws none).
 - `ERROR: Condition "!is_inside_tree()"` from `character_blobs.gd` during zone changes (64 and 84
   lines in the two /goto runs, base and fix alike): not this round's.
+
+**Follow-up: the zone's own backdrop (READ, settled).** `FUN_0084b6e0` is a `__thiscall` with one
+stack argument (`ret 4`); its callers push `0` (`CPSMission::OnCreate`, 0x84c9dd) or the WORD
+`OnResetClient` read from the 0x34B5 packet and logged (0x86dafc, `push edi`). The game server
+fills that WORD from the character's position record (`CharDataSavingCompleted` appends
+`chardata + 0x94`; the record's readers take +0x94 as a WORD beside x/y/z at +0x98..+0xa0 and the
+heading at +0xec, `CGObjPC::FUN_004e08a0`): the arrival's **region id**, high byte region x, low
+byte region y. The art is chosen by CPSMission+0xe0: 0 `loading_europe_%d.ddj` (rand() % 2 + 1;
+OnCreate sets 0, so the world's first entry), 1 `loading_rebirth.ddj` (set when this player dies,
+`FUN_008a80a0` -> `FUN_0084ab10(1)` before the death `FUN_0077b000`), 2/3 by region, 4 thief2,
+5 character select, > 5 no change; teleport requests and every finished load set 2
+(`FUN_0084c060`'s end). The region branch (cmp/jg/je/sub/add/ja and two byte-indexed jump
+tables, 0x84b896-0x84bb97) was **run** for every WORD 0..65535 by a small emulator of those
+instructions over the image (`/var/tmp/r785-load/bgemu.py` on the box): 45 ids have their own art
+(`LoadingBackdrop.REGION_ART`: 25000 Jangan -> `loading_zangan.ddj`, 26265 Donwhang ->
+`loading_dunwhang.ddj`, 23687 Hotan, 26959 Constantinople, 27244 Samarkand, 23088 Alexandria,
+the river/loksan/port/desert regions, 0x8001 the cave, 0x8002-0x8007 the tomb ->
+`loading_royalmausoleum.ddj`), every other id `loading_china_1.ddj`. It matches the decompiler's
+case list; its switch variable was the misnamed stack slot. OURS: the arrival's region is taken
+from OpChangeZoneResult's point in the zone's frame (`World3D.region_at_world`, the inverse of
+`region_local_to_world`, 250 of 250 round-trip points); an art missing from an archive falls back
+to `loading_default.ddj`. MEASURED (a movie run, `/var/tmp/r785-load/bd1`, 960 x 540): entry
+`mode 0 ... -> loading_europe_2.ddj`, `/goto dungeon/32775` `region 32775 (0x8007) ->
+loading_royalmausoleum.ddj`, `/goto jangan` `region 25000 (0x61a8) -> loading_zangan.ddj`,
+`/goto donwhang` `region 26265 (0x6699) -> loading_dunwhang.ddj`; the screens' upper 400 rows
+differ by more than 8 in 72-82 % of pixels pairwise (tomb/Jangan 74 %, Jangan/Donwhang 72 %,
+entry/tomb 82 %; `frame_ab.py`), a screen against its own next frame 0 %. Pictures for a human:
+`/var/tmp/r785-load/backdrops.jpg`. `loading_backdrop_test.gd`: the table (sample, edges,
+default, the 45), the modes, the inverse, and World3D's wiring read from its source. No perf gate
+(only the texture choice changes). `check` ALL LOAD (754 scripts); `tests` "ran 291 suite(s), 0 failing"
+(`fade_out_test` and `seated_spawn_test` stub `_show_loading_screen`: their stubs take the new
+`region_id` argument).
 
 **Tests.** `loading_screen_test.gd` (run headless): `paint` is the 50 ms rule (the first paint
 repaints, one within 50 ms sets the gauge but does not, a forced one does, one after 50 ms does,
