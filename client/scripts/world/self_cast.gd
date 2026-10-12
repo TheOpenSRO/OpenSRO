@@ -13,11 +13,11 @@ class_name SelfCast
 ##   (669 kind-3 and 80 kind-0 China rows, skills_spec §1.5, MEASURED): the
 ##   tick goes straight to the cast with no target, so the cast goes out with
 ##   nothing selected, as OpUseSkill targetType 0 (PLAN_SELF).
-## - **Target_Required 1 with TargetType_Land 1** -- the 19 Ghost Walk rows:
-##   the player picks a point on the ground, sent as targetType 2 with the
-##   point (PLAN_GROUND). Retail's ground-cast sender is 0x9ec080 (READ); its
-##   cursor and ground decal are not read (OPEN), so the mode's cursor is
-##   OURS.
+## - **Target_Required 1 with TargetType_Land 1** -- the 19 Ghost Walk and
+##   7 Europe Teleport rows: cast at once at the point under the mouse cursor,
+##   sent as targetType 2 with the point (PLAN_GROUND; round 785, READ --
+##   retail's skill use FUN_0081ba10 takes the cursor's point for a row with
+##   'tele' or 'tel2' and has no pick mode: World3D._cast_at_cursor).
 ## - **Target_Required 1 aimed at a friend** (TargetGroup_Self, _Ally or
 ##   _Party set: Heal, the party buffs; round 622), as the retail client's
 ##   skill use FUN_0081ba10 decides it (READ):
@@ -127,63 +127,6 @@ static func is_self_reply(target_type: int, echoed: bool, monster_damage: int, m
 	if monster_damage > 0 or monster_died or player_died:
 		return false
 	return echoed or error == ""
-
-## The phase timing SkillEffects.cast gets for a self or ground cast, so the
-## effects' phases agree with the body clip World3D._play_self_cast_anim
-## plays for the same skillaniset2 row (round 616-620 integration):
-## - READY, WAIT and SHOT all "none" (Grass Walk, the imbues): no body clip,
-##   and a phase with no clip of its own advances at once (READ,
-##   IDecoSkill FUN_00a53480: the per-phase clip count at +8 + phase), so
-##   prep 0 and cast 0 -- READY's rows at the send, then WAIT, then SHOT.
-## - a WAIT clip (Ghost Walk): the body plays it at once, so READY spans 0
-##   (a READY clip retail would play first is not played here, OPEN) and the
-##   WAIT loop holds -- READ, until the server's skill-action message forces
-##   SHOT (FUN_00a56680 -> FUN_00a53090), which is World3D's
-##   SkillEffects.shot on OpSkillMove or cancel_cast on a refusal. cast_ms is
-##   only the fallback end if no answer comes: the WAIT clip's length
-##   (`clip_seconds`, OURS), or SkillEffects.READY_LOOP_MAX without a clip.
-## - otherwise (no row, or only READY/SHOT, whose timing is unread): {} --
-##   SkillEffects times the phases from skilldata (its header, INFERRED).
-static func effect_timings(aniset_row: Dictionary, clip_seconds: float) -> Dictionary:
-	var plan := SkillEffectReader.cast_body_anim(aniset_row)
-	match String(plan["kind"]):
-		"none":
-			return {"prep_ms": 0, "cast_ms": 0}
-		"wait":
-			var hold := int(round(clip_seconds * 1000.0)) if clip_seconds > 0.0 \
-				else int(SkillEffects.READY_LOOP_MAX * 1000.0)
-			return {"prep_ms": 0, "cast_ms": hold}
-	return {}
-
-# --- Ground-pick mode (Ghost Walk) --------------------------------------------
-
-## The skill waiting for a ground click; 0 when the mode is off.
-var pick_skill_id := 0
-var pick_code := ""
-
-func picking() -> bool:
-	return pick_skill_id != 0
-
-## Turns the mode on for a skill (replacing one already waiting).
-func begin_pick(skill_id: int, basic_code: String) -> void:
-	pick_skill_id = skill_id
-	pick_code = basic_code
-
-## Turns the mode off; true when it was on.
-func cancel_pick() -> bool:
-	var was := picking()
-	pick_skill_id = 0
-	pick_code = ""
-	return was
-
-## Takes the waiting skill for a click that found ground -- {"id", "code"} --
-## and turns the mode off. Empty when the mode was off.
-func take_pick() -> Dictionary:
-	if not picking():
-		return {}
-	var out := {"id": pick_skill_id, "code": pick_code}
-	cancel_pick()
-	return out
 
 # --- Whose buff or move is it ---------------------------------------------------
 #

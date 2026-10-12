@@ -6883,7 +6883,6 @@ func _exit_tree() -> void:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
 	WindowTitle.apply_default()
-	_leave_ground_pick("the world left the tree")
 	# Round 747: the far crowd's instances go with the world, and its hooks.
 	if _crowd_gpu != null:
 		_crowd_gpu.release_all()
@@ -6955,6 +6954,7 @@ func _exit_tree() -> void:
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
 	BerserkLook.clear()
+	StateLook.clear()
 	_fx_owner_buffs.clear()
 	var exit_music := _audio_music()
 	if exit_music != null:
@@ -7248,6 +7248,11 @@ func _tick_idle_animations(delta: float) -> void:
 			# and holds its last keyframe; once there, hand back to what it
 			# interrupted.
 			var elapsed := _idle_anim_time - float(entry[5])
+			# A decoration's WAIT hold repeats its clip (round 785, entry[8]).
+			if entry.size() > 8 and entry[8] == true and anim.duration_seconds() > 0.0 \
+					and elapsed >= anim.duration_seconds():
+				entry[5] = float(entry[5]) + floorf(elapsed / anim.duration_seconds()) * anim.duration_seconds()
+				elapsed = _idle_anim_time - float(entry[5])
 			if elapsed >= anim.duration_seconds() and entry[6] != null:
 				# Its last tracks first: the frame that ends it is the frame
 				# that would pass them.
@@ -8489,6 +8494,7 @@ func _replay_character_states() -> void:
 
 func _on_object_status(st: StatusNet.ObjectStatus) -> void:
 	var key := _fx_owner_key(st.owner_id, st.owner_kind)
+	var old_mask := int((_abnormal_states.get(key, {}) as Dictionary).get("mask", 0))
 	if st.mask == 0:
 		_abnormal_states.erase(key)
 	else:
@@ -8497,6 +8503,73 @@ func _on_object_status(st: StatusNet.ObjectStatus) -> void:
 	for bit in StatusNet.drawn_bits(st.mask):
 		labels.append(StatusNet.label(bit))
 	print("World3D: %s abnormal mask 0x%x [%s]" % [key, st.mask, ", ".join(labels)])
+	_apply_state_look(key, _fx_owner_body(st.owner_id, st.owner_kind), old_mask, st.mask)
+
+## owner key -> its StateLook look ({"tint", "speed", "frozen"}).
+var _state_looks: Dictionary = {}
+
+## An owner's abnormal states changed from `old_mask` to `new_mask`: each
+## state's effect comes on or goes, and its colour pulse and clip speed
+## follow (StateLook's header has the READ).
+func _apply_state_look(key: String, body: Node3D, old_mask: int, new_mask: int) -> void:
+	var look: Dictionary = _state_looks.get(key, {})
+	var w := StateLook.walk(old_mask, new_mask, look)
+	look = {"tint": w["tint"], "speed": w["speed"], "frozen": w["frozen"]}
+	if new_mask == 0 and (w["tint"] as Array).is_empty() and float(w["speed"]) == 1.0 and not bool(w["frozen"]):
+		_state_looks.erase(key)
+	else:
+		_state_looks[key] = look
+	for bit in w["off"]:
+		SkillEffects.detach_aura(key, StateLook.STATE_TOKEN - int(bit))
+		var id := StateLook.effect_id(int(bit))
+		if id != "" and body != null:
+			SkillEffects.play_named(id, SkillAudio.DEACT, body)
+	if body == null:
+		return
+	for bit in w["on"]:
+		var id := StateLook.effect_id(int(bit))
+		if id == "":
+			continue
+		SkillEffects.play_named(id, SkillAudio.ACT_S, body)
+		SkillEffects.play_named(id, SkillAudio.ACT_L, body, key, StateLook.STATE_TOKEN - int(bit))
+	StateLook.set_tint(body, w["tint"])
+	_set_body_clip_speed(body, StateLook.clip_speed(look))
+
+## The clip speed abnormal states give bodies: skeleton instance id -> speed
+## (only bodies not at 1.0), and this player's own.
+var _clip_speeds: Dictionary = {}
+var _player_clip_speed := 1.0
+
+func _set_body_clip_speed(body: Node3D, speed: float) -> void:
+	if body == player:
+		_player_clip_speed = speed
+		return
+	var skel := SkillEffects.skeleton_of(body)
+	if skel == null:
+		return
+	if is_equal_approx(speed, 1.0):
+		_clip_speeds.erase(skel.get_instance_id())
+	else:
+		_clip_speeds[skel.get_instance_id()] = speed
+
+## Holds back the clips of slowed or frozen bodies by the part of `delta`
+## they do not run (a loop's phase, a one-shot's start), before the clip
+## tick poses them.
+func _step_clip_speeds(delta: float) -> void:
+	if _clip_speeds.is_empty():
+		return
+	var lag := delta
+	for entry in _animated:
+		if not is_instance_valid(entry[0]):
+			continue
+		var id: int = (entry[0] as Object).get_instance_id()
+		if not _clip_speeds.has(id):
+			continue
+		var held: float = lag * (1.0 - float(_clip_speeds[id]))
+		if entry[4]:
+			entry[3] = float(entry[3]) - held
+		else:
+			entry[5] = float(entry[5]) + held
 
 func _build_target_window() -> void:
 	_hud_target = HudTarget.new(_ui_builder)
@@ -11074,71 +11147,6 @@ func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 	_player_one_shot_start = _player_anim_time
 	return anim.duration_seconds()
 
-## Plays a skill's cast animation as a one-shot. The clip is named after the
-## skill's Basic_Code (anim_base, e.g. "skill_ch_sword_smash_a") and lives at
-## Prim\Ani\Char\China\<man|woman>\<anim_base>.ban in Data.pk2 -- a grounded
-## name-based mapping (see the skill-animations note). Returns the clip length
-## in seconds, or 0 if it could not be found/parsed (caller falls back).
-func _play_skill_cast_anim(anim_base: String) -> float:
-	if _player_skeleton == null:
-		# No assembled body at all: there is nothing to animate, and the
-		# placeholder capsule has no clips.
-		return 0.0
-	if anim_base == "" or _data_pk2 == null:
-		# No archive to read a cast clip from -- still show the weapon swing,
-		# which comes from the already-parsed body assets rather than from a
-		# fresh archive read. Returning 0 here left a cast with no animation
-		# whatsoever, which is the shape the playtest reported.
-		print("World3D: no archive for a cast clip -- falling back to the weapon swing")
-		return _play_weapon_swing_anim()
-	# The body's race and sex folder (round 691's cast_clip_path over round
-	# 689's body): a Europe body's clips are under Prim\Ani\Char\Europe.
-	var path := SkillDataReader.cast_clip_path(_body_gender(_player_body), anim_base)
-	var bytes := AssetSource.read_bytes(path, _data_pk2)
-	if bytes.is_empty():
-		print("World3D: no cast animation at %s -- falling back to the weapon swing" % path)
-		return _play_weapon_swing_anim()
-	var anim := BanReader.parse(bytes)
-	if anim == null or anim.bones.is_empty():
-		print("World3D: could not parse cast animation %s -- falling back to the weapon swing" % path)
-		return _play_weapon_swing_anim()
-	return _play_player_once(anim)
-
-## The body animation of a self or ground cast (round 616-618 integration):
-## what the skill's skilleffect.txt skillaniset2 row says retail's deco start
-## plays (SkillEffectReader.cast_body_anim, READ at FUN_00a54f00):
-## - READY, WAIT and SHOT all "none" (Grass Walk, the imbues): nothing -- the
-##   weapon swing stand-in is NOT played;
-## - a WAIT (Ghost Walk: ANI_SKILL_7, action type 32): that entry of the body
-##   .bsr in the ROW's AniGroup (DEFAULT for Ghost Walk: the default group's
-##   skill_china_lightning_bobeop, not the sword group's downattack), played
-##   once (whether retail loops it for the move is OPEN). The AniGroup name is
-##   matched to the body's group name lower-cased (INFERRED); a row without one
-##   uses the held weapon's group;
-## - otherwise (no row, or only READY/SHOT, whose timing is unread): the path
-##   targeted casts take, _play_skill_cast_anim. Returns the clip's length.
-func _play_self_cast_anim(basic_code: String, anim_base: String) -> float:
-	var row := SkillEffectReader.aniset_for(_skill_anisets(), basic_code)
-	var plan := SkillEffectReader.cast_body_anim(row)
-	match String(plan["kind"]):
-		"none":
-			print("CAST ANIM: %s -- skillaniset2 names no READY, WAIT or SHOT: no body animation (retail ends the deco, FUN_00a54f00)" % basic_code)
-			return 0.0
-		"wait":
-			var t: int = int(plan["type"])
-			var group: String = String(plan.get("group", ""))
-			if group == "":
-				group = _player_weapon_group
-			var anim := _body_animation_for(_player_body, t, group)
-			if anim == null:
-				print("CAST ANIM: %s -- WAIT action type %d has no entry in the body for group '%s': nothing played" % [
-					basic_code, t, group])
-				return 0.0
-			print("CAST ANIM: %s -- WAIT action type %d, group %s (%s)" % [basic_code, t, group,
-				_body_animation_path(_player_body, t, group)])
-			return _play_player_once(anim)
-	return _play_skill_cast_anim(anim_base)
-
 ## skilleffect.txt's skillaniset rows, from the one shared parse.
 func _skill_anisets() -> Dictionary:
 	if _skill_anisets_loaded:
@@ -11149,44 +11157,6 @@ func _skill_anisets() -> Dictionary:
 
 var _skill_anisets_cache: Dictionary = {}
 var _skill_anisets_loaded := false
-
-## The weapon's ordinary attack clip, played when a skill has no cast clip of
-## its own.
-##
-## MEASURED, and it is why this exists: of the 338 distinct cast-clip names the
-## China skill rows derive (Basic_Code lowercased, level suffix dropped), only
-## **59 exist** in `Prim\Ani\Char\China\man\`. The other 82 % have no clip
-## under that name, under the un-prefixed name (which gains exactly one), or in
-## any skilldata column -- column 5 looked promising at 1,482 of 2,944 rows
-## until it turned out to hold the base code itself, which is the same string
-## the derivation already produces.
-##
-## So most skills genuinely ship no dedicated cast animation here, and casting
-## one played nothing at all: "i used a skill, no animation" (playtest
-## 2026-09-20). Showing the weapon's own swing is a DISCLOSED stand-in, not a
-## recovered behaviour -- what the original plays for those skills is not known,
-## and the effect layer (.efp) is the obvious place still unread.
-func _play_weapon_swing_anim() -> float:
-	# Try the SAME entries the ordinary swing uses, in the same order, rather
-	# than a simplified version of it: the combo types first and TYPE_ATTACK
-	# last. A group whose TYPE_ATTACK entry is missing but whose combo entries
-	# are present would otherwise play nothing here while swinging normally
-	# elsewhere, which is exactly the "no animations" symptom.
-	var types: Array = ATTACK_SEQUENCE.duplicate()
-	types.append(BsrReader.AnimationEntry.TYPE_ATTACK)
-	for t in types:
-		var action_type: int = int(t)
-		var entry := _body_animation_entry(_player_body, action_type, _player_weapon_group)
-		if entry == null:
-			continue
-		var swing := _body_animation_for(_player_body, entry.action_type, _player_weapon_group)
-		if swing == null:
-			continue
-		var played := _play_player_once(swing)
-		if played > 0.0:
-			return played
-	print("World3D: no swing animation for group '%s' either -- nothing to play" % _player_weapon_group)
-	return 0.0
 
 ## A learned skill in the window was clicked: assign it to the next free
 ## underbar quickslot (its icon shown there). Activating that quickslot is what
@@ -11555,39 +11525,41 @@ func _qa_learn(spec: String) -> void:
 	print("QA LEARN: skill state re-read (skill 3 known: %s)" % str(_hud_panels != null and _hud_panels.is_skill_known(3)))
 
 ## Casts a skill. How depends on the skill's own Target_Required and
-## TargetType_Land (SelfCast.plan, round 617):
+## TargetType_Land (SelfCast.plan, round 617) -- after the client's own re-use
+## gate (round 785, READ: FUN_0081ba10 asks
+## SkillCoolTimeManager::FUN_009bba90 first; a skill, or one of its cooldown
+## group, still counting is refused with 0x3005 and nothing is sent):
 ## - Target_Required 0 (Grass Walk, the imbues, the shields): cast at once
 ##   where the player stands, selected monster or not, as OpUseSkill
 ##   targetType 0 (_send_self_cast). The selection is left alone.
-## - Target_Required 1 with TargetType_Land 1 (Ghost Walk): ground-pick mode
-##   -- the next left click on the ground casts it there (targetType 2);
-##   right click or Escape cancels.
+## - a row with 'tele' or 'tel2' (Ghost Walk, the Europe Teleports): cast at
+##   once at the point under the mouse cursor (_cast_at_cursor; READ, round
+##   785 -- retail has no pick mode).
 ## - Any other skill at the current target: walks into its reach first when
-##   the target is out of it (_attack_monster), then plays its real cast
-##   animation (from basic_code) and sends the use-skill request -- the
-##   animation goes with the request, in _send_attack, so it does not play at
-##   the start of a walk. With nothing selected it is refused, as before.
+##   the target is out of it (_attack_monster), then sends the use-skill
+##   request; the cast is drawn when the server answers (_own_skill_result,
+##   retail's decoration starting on 0xB070). With nothing selected it is
+##   refused, as before.
 ## The server applies the skill's real cooldown and damage.
 func _cast_skill(skill_id: int, basic_code: String) -> void:
+	var left := _skill_cooldown_left(skill_id)
+	if left > 0:
+		print("World3D: skill %d is still re-using for %d ms -- refused here (0x3005), nothing sent" % [skill_id, left])
+		_log_system(_resolve_any_text(COOLDOWN_TEXT_KEY, COOLDOWN_TEXT_FALLBACK))
+		return
 	var reach: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
 	var character_selected := _selected_character != -1 and (_other_bodies.has(_selected_character)
 		or _selected_character == _own_id())
 	var how := SelfCast.plan(reach, _last_attack_target != -1 and not character_selected, character_selected)
-	# Any cast replaces a ground pick still waiting for its click.
-	if how != SelfCast.PLAN_GROUND and _self_cast.cancel_pick():
-		_end_ground_pick_cursor()
-		print("GROUND PICK: off (another skill, %d, was cast)" % skill_id)
+	if _skill_casts_at_cursor(skill_id):
+		how = SelfCast.PLAN_GROUND
 	match how:
 		SelfCast.PLAN_SELF:
 			print("World3D: skill %d: Target_Required 0 -- cast on the player, no target needed (selection %d kept)" % [
 				skill_id, _last_attack_target])
 			_send_self_cast(skill_id, basic_code, SkillNet.TARGET_NONE, Vector3.ZERO)
 		SelfCast.PLAN_GROUND:
-			_self_cast.begin_pick(skill_id, basic_code)
-			_begin_ground_pick_cursor()
-			print("GROUND PICK: on for skill %d (%s) -- left click the ground to cast, right click or Escape cancels" % [
-				skill_id, basic_code])
-			_log_system("Click on the ground to use the skill (right click or Esc cancels).")
+			_cast_at_cursor(skill_id, basic_code)
 		SelfCast.PLAN_TARGET:
 			_show_target(_last_attack_target)
 			_attack_monster(_last_attack_target, skill_id, basic_code)
@@ -11624,12 +11596,12 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 			_log_system("Select a target first (click a monster), then use the skill.")
 
 ## Sends a self cast (targetType 0) or a ground cast (targetType 2, at
-## `point`) from where the player stands, with the cast animation and sounds
-## on the player -- the send-at-once path of _attack_monster, without a
-## monster. The current selection is kept and nothing about this cast is
-## pinned to it: _pending_skill_hit_code / _pending_skill_id stay with the
-## monster's own cast, and the reply is recognised as this cast's
-## (SelfCast.is_self_reply) rather than a blow on the target.
+## `point`) from where the player stands -- the send-at-once path of
+## _attack_monster, without a monster. The current selection is kept and
+## nothing about this cast is pinned to it: _pending_skill_hit_code /
+## _pending_skill_id stay with the monster's own cast, and the reply is
+## recognised as this cast's (SelfCast.is_self_reply) rather than a blow on
+## the target.
 ##
 ## The monster field of a self cast carries the selection when there is one.
 ## A server that reads targetType ignores it for type 0 (§4.0); one that
@@ -11649,28 +11621,77 @@ func _send_self_cast(skill_id: int, basic_code: String, target_type: int, point:
 		print("TOGGLE: skill %d is running -- the recast switches it off (Tick_UseSkill phase 0); no cast drawn" % skill_id)
 		NetClient.use_skill(NetClient.current_character_name, skill_id, 0, target_type, point)
 		return
-	var anim_base := basic_code.to_lower()
-	var us := anim_base.rfind("_")
-	if us > 0 and anim_base.substr(us + 1).is_valid_int():
-		anim_base = anim_base.substr(0, us)
-	_last_combat_time = _player_anim_time
-	var clip := _play_self_cast_anim(basic_code, anim_base)
-	# The effects' cast (round 616-620 integration): READY now, timed so the
-	# phases agree with the body clip just played (SelfCast.effect_timings);
-	# SHOT and ACT come with the server's answer -- OpBuffStart for a buff,
-	# OpSkillMove for Ghost Walk, the accepted reply otherwise -- and a
-	# refusal cancels it (_fx_self_cast_*).
-	var fx_timings := SelfCast.effect_timings(SkillEffectReader.aniset_for(_skill_anisets(), basic_code), clip)
-	_audio_cast_start(skill_id, -1, fx_timings)
-	_fx_self_cast = {"skill": skill_id, "ground": target_type == SkillNet.TARGET_GROUND, "acted": false}
-	print("EFFECTS self cast: skill %d %s, phase timing %s" % [skill_id,
-		"ground cast (WAIT held for OpSkillMove)" if target_type == SkillNet.TARGET_GROUND else "self cast",
-		str(fx_timings) if not fx_timings.is_empty() else "from skilldata"])
+	# Round 785: nothing is drawn yet. Retail's caster plays its cast when the
+	# server answers (the decoration starts on 0xB070, FUN_008a5fd0 ->
+	# FUN_00a54f00, READ); here that is the first of the accepted reply,
+	# OpBuffStart and OpSkillMove (_fx_self_cast_begin).
+	_fx_self_cast = {"skill": skill_id, "code": basic_code, "ground": target_type == SkillNet.TARGET_GROUND,
+		"acted": false, "begun": false, "sent_ms": Time.get_ticks_msec()}
+	print("EFFECTS self cast: skill %d %s sent -- drawn when the server answers" % [skill_id,
+		"ground cast" if target_type == SkillNet.TARGET_GROUND else "self cast"])
 	_self_cast.note_cast(skill_id, Time.get_ticks_msec())
 	var monster_field := 0
 	if target_type == SkillNet.TARGET_NONE and _last_attack_target > 0:
 		monster_field = _last_attack_target
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_field, target_type, point)
+
+## Casts a 'tele' / 'tel2' row (Ghost Walk, the Europe Teleports) at the point
+## under the mouse cursor, as retail's skill use does (round 785, READ,
+## FUN_0081ba10 0x81bf26..0x81c561): no pick mode -- on the key press the
+## cursor's ray (FUN_00a5ade0, 5000 units, 0xde5188) is cast at the ground;
+## with no ground under it the point is the player plus the ray's horizontal
+## direction x 500.0 (0xdd24b8); the walk from the player toward it stops at
+## the first wall (FUN_009ed390, 5.0 steps); and 0x7074 goes out with target
+## type 2 and the point (SendMagicStateMsg_074 0x9ec080). The retail client
+## clamps nothing: the server clamps to tele value[1] (FUN_005862e0). Here
+## GhostWalk.resolve runs the server's clamp and walk on the client's
+## navmesh, as before (the server has none), and the point it settles on is
+## sent.
+func _cast_at_cursor(skill_id: int, basic_code: String) -> void:
+	if _player_dead:
+		print("World3D: skill %d while dead -- not sent" % skill_id)
+		return
+	var screen := _cursor_cast_screen_pos()
+	var aim = _ground_point_at(screen, CURSOR_CAST_RAY)
+	var how := "the ground under the cursor"
+	if aim == null:
+		var dir := camera_3d.project_ray_normal(screen)
+		var flat := Vector3(dir.x, 0.0, dir.z)
+		if flat.length_squared() < 1e-8:
+			flat = -player.global_transform.basis.z
+		aim = player.global_position + flat.normalized() * CURSOR_CAST_FAR
+		how = "no ground under the cursor: %.0f along its heading" % CURSOR_CAST_FAR
+	var at: Vector3 = aim
+	print("CURSOR CAST: skill %d at (%.1f, %.1f, %.1f), %.1f from the player (%s)" % [skill_id, at.x, at.y, at.z,
+		Vector2(at.x, at.z).distance_to(Vector2(player.position.x, player.position.z)), how])
+	var landing := _resolve_ground_landing(skill_id, at)
+	if landing.refused:
+		_log_system("The skill's data is still loading -- try again in a moment.")
+		return
+	_send_self_cast(skill_id, basic_code, SkillNet.TARGET_GROUND, landing.sent)
+
+## READ: the cursor ray is 5000 long (FUN_00a5ade0, 0xde5188) and a ray that
+## meets no ground puts the point 500.0 out (0xdd24b8).
+const CURSOR_CAST_RAY := 5000.0
+const CURSOR_CAST_FAR := 500.0
+
+## Where the mouse is over the 3D view (a QA run may name a point:
+## OPENSRO_QA_CURSOR="x,y").
+func _cursor_cast_screen_pos() -> Vector2:
+	var qa := OS.get_environment("OPENSRO_QA_CURSOR")
+	if qa != "":
+		var p := qa.split(",")
+		if p.size() == 2 and p[0].is_valid_float() and p[1].is_valid_float():
+			return Vector2(float(p[0]), float(p[1]))
+	return get_viewport().get_mouse_position()
+
+## Whether a skill casts at the cursor (a 'tele' / 'tel2' row; the catalog's
+## index); false until the index is ready, when SelfCast's Target_Required 1
+## + TargetType_Land 1 test (the same 26 rows, MEASURED) decides.
+func _skill_casts_at_cursor(skill_id: int) -> bool:
+	if _hud_buff_board == null or _hud_buff_board.catalog == null:
+		return false
+	return _hud_buff_board.catalog.casts_at_cursor(skill_id)
 
 # --- Friendly targets and other players' casts (round 622) ---------------------
 
@@ -11943,15 +11964,15 @@ func _release_friend_cast() -> void:
 	_send_character_cast(int(c["skill"]), String(c["code"]), character_id)
 
 ## Sends a friendly cast at a player (OpUseSkill targetType 3, round 622),
-## facing them, with the cast clip, sounds and READY effects on the player.
-## The reply is recognised as this cast's (SelfCast.is_self_reply: not an
-## entity reply); its SHOT and ACT play on the target's body
+## facing them. The reply is recognised as this cast's (SelfCast.is_self_reply:
+## not an entity reply); the cast is drawn when the server answers
+## (_fx_self_cast_begin), and its ACT plays on the target's body
 ## (_fx_self_cast_acts) -- when its buff starts (OpBuffStart), or for any
 ## other row once the server accepts, after the row's own PreparingTime +
-## CastingTime from the send (READ: the retail caster's cast is SHOT by the
-## server's action message 0xB071, which the server sends when the context
-## builder engages the cast after CastingTime; the server here resolves at
-## once, so the wait is the client's).
+## CastingTime (READ: the retail caster's cast is SHOT by the server's action
+## message 0xB071, which the server sends when the context builder engages
+## the cast after CastingTime; the server here resolves at once, so the wait
+## is the client's).
 func _send_character_cast(skill_id: int, basic_code: String, character_id: int) -> void:
 	if _player_dead:
 		return
@@ -11959,18 +11980,13 @@ func _send_character_cast(skill_id: int, basic_code: String, character_id: int) 
 	var dir := there - Vector2(player.position.x, player.position.z)
 	if not dir.is_zero_approx():
 		player.rotation.y = atan2(dir.x, dir.y)
-	var anim_base := basic_code.to_lower()
-	var us := anim_base.rfind("_")
-	if us > 0 and anim_base.substr(us + 1).is_valid_int():
-		anim_base = anim_base.substr(0, us)
-	_last_combat_time = _player_anim_time
-	var clip := _play_self_cast_anim(basic_code, anim_base)
-	var fx_timings := SelfCast.effect_timings(SkillEffectReader.aniset_for(_skill_anisets(), basic_code), clip)
-	_audio_cast_start(skill_id, -1, fx_timings)
+	# Round 785: drawn when the server answers (_fx_self_cast_begin), as a
+	# self cast is; its WAIT hold ends after the row's PreparingTime +
+	# CastingTime (the retail server's 0xB071 time), and the act follows then.
 	var t: Array = SkillEffects._timings.get(skill_id, [0, 0])
-	_fx_self_cast = {"skill": skill_id, "ground": false, "acted": false, "character": character_id,
-		"sent_ms": Time.get_ticks_msec(), "act_after_ms": int(t[0]) + int(t[1])}
-	print("EFFECTS friendly cast: skill %d at player %d, acts %d ms after the send (prep + cast)" % [
+	_fx_self_cast = {"skill": skill_id, "code": basic_code, "ground": false, "acted": false, "begun": false,
+		"character": character_id, "sent_ms": Time.get_ticks_msec(), "act_after_ms": int(t[0]) + int(t[1])}
+	print("EFFECTS friendly cast: skill %d at player %d, acts %d ms after the answer (prep + cast)" % [
 		skill_id, character_id, int(t[0]) + int(t[1])])
 	_self_cast.note_cast(skill_id, Time.get_ticks_msec())
 	NetClient.use_skill(NetClient.current_character_name, skill_id, character_id, SkillNet.TARGET_CHARACTER)
@@ -11981,14 +11997,16 @@ var _recent_buff_starts: Dictionary = {}
 const RECENT_BUFF_START_MS := 8000
 
 ## Someone else cast a skill (OpSkillCast, round 622; the retail analogues
-## 0xB070 result 1 and 0xB071, NetProcessInNavAndSkill FUN_008a5fd0 and
-## FUN_008a4960). The start plays the cast on the caster's body -- its body
-## clip (as this player's own cast picks it, _play_other_cast_anim), its
-## READY/SHOT-0 sounds and SkillEffects.cast with the skilldata phase timing;
-## the act forces SHOT (READ: FUN_00a56680 kind 1 -> FUN_00a53090), fires
-## SHOT/1 at the target and ACT_S on the body the skill acts on: the named
-## character or monster, else the caster. An act whose start never arrived
-## (a player who came into view mid-cast) plays the act alone.
+## 0xB070 result 1 and 0xB071 kind 1, NetProcessInNavAndSkill FUN_008a5fd0 and
+## FUN_008a4960). Round 785: the start runs the caster's decoration as this
+## player's own runs (_start_deco: its clips, effect groups and sounds), its
+## WAIT hold kept until the act; the act forces SHOT (READ: FUN_00a56680 kind
+## 1 -> FUN_00a53090), plays ACT_S on the body the skill acts on (the named
+## character or monster, else the caster) and hands the decoration the act's
+## hit block, whose hits land at its DMG groups -- or at once, for groups
+## already past (READ: FUN_00a548e0's last loop applies a hit whose index the
+## counter +0xba has passed). An act whose start never arrived plays its SHOT
+## and ACT on the body it lands on.
 func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 	_sync_own_id()
 	# A cast plays on a ghost's skeleton this frame: dressed now (round 756's
@@ -12005,41 +12023,49 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 		SkillNet.TARGET_CHARACTER:
 			target = _fx_owner_body(sc.target_id, SkillNet.OWNER_CHARACTER)
 	if body == player:
-		print("SKILL cast handled: caster %s is this player -- its own client drew it" % _fx_owner_key(sc.caster_id, sc.caster_kind))
-		return
+		if _own_cast_echo(sc.skill_id):
+			print("SKILL cast handled: caster %s is this player -- its own client drew it" % _fx_owner_key(sc.caster_id, sc.caster_kind))
+			return
+		# A chain link the server engaged after this player's cast (round
+		# 785, Basic_ChainCode): drawn as another caster's is, and armed as
+		# this player's own cast is (READ: 0xB070 for the player's own id
+		# runs FUN_00778910 for every cast).
+		if sc.phase == SkillNet.CAST_START:
+			_arm_skill_cooldown(sc.skill_id)
+	var what := "%s's cast" % _fx_owner_key(sc.caster_id, sc.caster_kind)
 	if body == null:
 		# A caster out of view (round 622's review): its act still lands on a
 		# body this client draws -- a heal on this player plays SHOT/1 and
-		# ACT_S here.
+		# ACT_S here, and its hits land.
 		if sc.phase == SkillNet.CAST_ACT and target != null:
-			SkillEffects.hit(null, target, sc.skill_id)
+			for ev in range(1, SkillEffects.last_event(sc.skill_id, SkillAudio.SHOT) + 1):
+				SkillEffects.play_phase(sc.skill_id, SkillAudio.SHOT, ev, null, target, what)
 			var n0 := SkillEffects.act(sc.skill_id, target, target, false).size()
+			_land_other_hits(sc, 0, 255, what)
 			print("SKILL cast handled: %s (not in view) of skill %d acts on %s (%d ACT effect(s))" % [
 				_fx_owner_key(sc.caster_id, sc.caster_kind), sc.skill_id, _describe_fx_target(sc), n0])
 		else:
 			print("SKILL cast handled: caster %s is not in view -- nothing drawn" % _fx_owner_key(sc.caster_id, sc.caster_kind))
 		return
-	var what := "%s's cast" % _fx_owner_key(sc.caster_id, sc.caster_kind)
 	if sc.phase == SkillNet.CAST_START:
-		if target != null and target != body:
-			var d := Vector2(target.global_position.x - body.global_position.x, target.global_position.z - body.global_position.z)
-			if not d.is_zero_approx() and sc.caster_kind == SkillNet.OWNER_CHARACTER:
-				# A snap that leaves any turn in progress running, as the skill
-				# action reader's bare FUN_009c4260 does (FUN_00a54be0, round
-				# 637's review follow-up). OURS: the angle is toward the target;
-				# retail's comes in the message.
-				body.rotation.y = atan2(d.x, d.y)
-				# A far body's place is re-read at the frame's flush (round
-				# 747's review, F5).
-				_other_moved(body)
-		var clip := 0.0
-		if sc.caster_kind == SkillNet.OWNER_CHARACTER:
-			clip = _play_other_cast_anim(sc.caster_id, sc.skill_id)
-		SkillAudio.play_phase(sc.skill_id, SkillAudio.READY, -1, body, what)
-		SkillAudio.play_phase(sc.skill_id, SkillAudio.SHOT, 0, body, what)
-		var n := SkillEffects.cast(sc.skill_id, body, target).size()
-		print("SKILL cast handled: %s of skill %d started on its body (clip %.2fs, %d READY effect(s)), target %s" % [
-			what, sc.skill_id, clip, n, _describe_fx_target(sc)])
+		if target != null and target != body and sc.caster_kind == SkillNet.OWNER_CHARACTER:
+			# A snap that leaves any turn in progress running, as the skill
+			# action reader's bare FUN_009c4260 does (FUN_00a54be0, round
+			# 637's review follow-up). OURS: the angle is toward the target;
+			# retail's comes in the message.
+			_face_toward(body, target.global_position)
+		# The act ends the WAIT hold; with no act, the row's PreparingTime +
+		# CastingTime and OTHER_CAST_ACT_GRACE_MS more (OURS bound: the
+		# server sends the act after them, bounded at 5 s, skill_buffs.md).
+		var t: Array = SkillEffects._timings.get(sc.skill_id, [0, 0])
+		var holder := {"sc": null, "landed": {}, "what": what}
+		var e := _start_deco(body, sc.skill_id, target, what,
+			{"due_ms": maxi(int(t[0]) + int(t[1]), 0) + OTHER_CAST_ACT_GRACE_MS, "hits": 0,
+			"on_hit": _other_cast_hit.bind(holder)})
+		if not e.is_empty():
+			e["holder"] = holder
+		print("SKILL cast handled: %s of skill %d started on its body, target %s" % [what, sc.skill_id,
+			_describe_fx_target(sc)])
 		return
 	var on: Node3D = target if target != null else body
 	# The owner its buff (if it is one) went to: the named character or
@@ -12051,13 +12077,59 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 		owner_key = _fx_owner_key(sc.target_id, SkillNet.OWNER_MONSTER)
 	var aura_key := "%s|%d" % [owner_key, sc.skill_id]
 	var buff_held := _recent_buff_starts.has(aura_key) and Time.get_ticks_msec() - int(_recent_buff_starts[aura_key]) < RECENT_BUFF_START_MS
-	SkillEffects.shot(body)
-	SkillEffects.hit(body, on, sc.skill_id)
-	SkillAudio.play_phase(sc.skill_id, SkillAudio.SHOT, 1, body, what)
+	var e := _deco_on(body)
+	if not e.is_empty() and int(e["skill"]) == sc.skill_id and e.has("holder"):
+		var holder: Dictionary = e["holder"]
+		holder["sc"] = sc
+		var n_hits := sc.hits.hit_count if sc.hits != null else 0
+		e["hits"] = maxi(int(e["hits"]), n_hits)
+		# Hits whose groups already fired land now.
+		for h in int(e["hits_done"]):
+			_other_cast_hit(h, holder)
+		_shot_deco(body)
+	elif sc.hits != null:
+		_land_other_hits(sc, 0, 255, what)
 	SkillAudio.play_phase(sc.skill_id, SkillAudio.ACT_S, -1, body, what)
 	var n := SkillEffects.act(sc.skill_id, on, on, not buff_held).size()
-	print("SKILL cast handled: %s of skill %d acts on %s (%d ACT effect(s)%s)" % [what, sc.skill_id,
-		_describe_fx_target(sc), n, ", its aura held by the buff's token" if buff_held else ""])
+	print("SKILL cast handled: %s of skill %d acts on %s (%d ACT effect(s)%s%s)" % [what, sc.skill_id,
+		_describe_fx_target(sc), n, ", its aura held by the buff's token" if buff_held else "",
+		", %d hit(s) on %d target(s)" % [sc.hits.hit_count, sc.hits.targets.size()] if sc.hits != null else ""])
+
+## Whether an OpSkillCast naming this player echoes a cast this client sent
+## and draws itself (its decoration, a cast waiting for its answer); a skill
+## it did not send is a chain link (round 785).
+func _own_cast_echo(skill_id: int) -> bool:
+	var e := _deco_on(player)
+	if not e.is_empty() and int(e["skill"]) == skill_id:
+		return true
+	if _pending_skill_id == skill_id:
+		return true
+	return not _fx_self_cast.is_empty() and int(_fx_self_cast.get("skill", 0)) == skill_id
+
+## OURS: how long past its timing another player's cast holds WAIT for its act.
+const OTHER_CAST_ACT_GRACE_MS := 5000
+
+## Hit `h` of another player's cast: lands from the act's hit block once the
+## act has come (until then the index waits; the act lands it).
+func _other_cast_hit(h: int, holder: Dictionary) -> void:
+	var sc = holder.get("sc")
+	if sc == null or (holder["landed"] as Dictionary).has(h):
+		return
+	(holder["landed"] as Dictionary)[h] = true
+	_land_other_hits(sc, h, h, String(holder["what"]))
+
+## Lands hits `first`..`last` of another player's act (its hit block), as
+## this player's own land (_land_skill_hit).
+func _land_other_hits(sc: SkillNet.SkillCast, first: int, last: int, what: String) -> void:
+	if sc.hits == null:
+		return
+	var code := String(SkillAudio.context_for(sc.skill_id)["code"])
+	# This player's own chain link sounds its hits as its own cast does.
+	var own := sc.caster_kind == SkillNet.OWNER_CHARACTER and _buff_owner_is_self(sc.caster_id, sc.caster_kind)
+	var blow := {"skill": sc.skill_id, "cast": true, "critical": false, "hwan": false} if own else {}
+	for h in range(first, mini(last, sc.hits.hit_count - 1) + 1):
+		for pair in sc.hits.hits_at(h):
+			_land_skill_hit(pair[0], pair[1], h, sc.hits, sc.skill_id, code, blow, what)
 
 func _describe_fx_target(sc: SkillNet.SkillCast) -> String:
 	match sc.target_type:
@@ -12069,113 +12141,265 @@ func _describe_fx_target(sc: SkillNet.SkillCast) -> String:
 			return "the ground at (%.1f, %.1f, %.1f)" % [sc.x, sc.y, sc.z]
 	return "its caster"
 
-## Another player's cast body clip (round 622), picked as this player's own
-## is (_play_self_cast_anim, SkillEffectReader.cast_body_anim): nothing for a
-## row with no READY/WAIT/SHOT animation; the WAIT entry of their body in the
-## row's group; otherwise the clip named after the skill's Basic_Code in
-## their gender's folder, falling back to their weapon group's swing, as the
-## player's own cast falls back (a DISCLOSED stand-in). Returns its length.
-func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
-	_dress_ghost_now(character_id)
-	var gait: Dictionary = _other_gaits.get(character_id, {})
-	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
-		return 0.0
-	var code := String(SkillAudio.context_for(skill_id)["code"])
-	if code == "" or code == SkillAudio.NONE:
-		return 0.0
-	var skel: Skeleton3D = gait["skeleton"]
-	var body := String(gait["body"])
-	var group := String(gait["group"])
-	var plan := SkillEffectReader.cast_body_anim(SkillEffectReader.aniset_for(_skill_anisets(), code))
-	match String(plan["kind"]):
-		"none":
-			return 0.0
-		"wait":
-			var g := String(plan.get("group", ""))
-			var wait := _body_animation_for(body, int(plan["type"]), g if g != "" else group)
-			return _play_once(skel, wait) if wait != null else 0.0
-	var anim_base := code.to_lower()
-	var us := anim_base.rfind("_")
-	if us > 0 and anim_base.substr(us + 1).is_valid_int():
-		anim_base = anim_base.substr(0, us)
-	var anim: BanReader.ParsedAnimation = null
-	if _data_pk2 != null:
-		var path := SkillDataReader.cast_clip_path(_body_gender(body), anim_base)
-		var bytes := AssetSource.read_bytes(path, _data_pk2)
-		if not bytes.is_empty():
-			anim = BanReader.parse(bytes)
-			if anim != null and anim.bones.is_empty():
-				anim = null
+# --- The skill decoration (round 785, SkillDeco) ---------------------------------
+#
+# Every cast this client draws -- its own and everyone else's -- runs one
+# SkillDeco: the body plays the skill's own READY / WAIT / SHOT clips of its
+# skillaniset2 record in the record's AniGroup, the effect groups fire on the
+# phase starts and on the clips' hit events, and each DMG group lands the
+# cast's next hit. SkillDeco's header carries the READ. A record naming no
+# clip, or no record at all, draws nothing (READ: FUN_00a54f00) -- the
+# name-based clip lookup and the weapon-swing stand-in of rounds 315-617 are
+# gone.
+
+## caster instance id -> the running decoration: {deco, skill, code, caster,
+## target, body, group, own, skel, loops, hits_done, on_hit, on_end, what}.
+var _decos: Dictionary = {}
+## The decorations' clock (ms), on scene time as SkillEffects' is.
+var _deco_clock_ms := 0.0
+
+## What a caster's body is for the decoration: {"body": the characterdata
+## code, "group": the weapon group a record without AniGroup falls back to,
+## "own": this player, "skel": the skeleton a clip plays on}. {} when the body
+## has no assembled skeleton (nothing to animate).
+func _deco_body_of(caster: Node3D) -> Dictionary:
+	if caster == null or not is_instance_valid(caster):
+		return {}
+	if caster == player:
+		if _player_skeleton == null:
+			return {}
+		return {"body": _player_body, "group": _player_weapon_group, "own": true, "skel": _player_skeleton}
+	for id in _other_bodies:
+		if _other_bodies[id] == caster:
+			_dress_ghost_now(int(id))
+			var gait: Dictionary = _other_gaits.get(id, {})
+			if gait.is_empty() or not is_instance_valid(gait.get("skeleton")):
+				return {}
+			return {"body": String(gait["body"]), "group": String(gait["group"]), "own": false,
+				"skel": gait["skeleton"], "character": int(id)}
+	return {}
+
+## The clip of `action_type` the decoration's body plays in `group`, as
+## SkillDeco's clip_info wants it: {"ms", "events" (the clip's type-1 hit
+## events, ms)}; {} when the body has none (BsrReader.animation_entry_for:
+## the group, else `default`).
+func _deco_clip_info(body: String, group: String, action_type: int) -> Dictionary:
+	var anim := _body_animation_for(body, action_type, group)
 	if anim == null:
-		anim = _body_animation_for(body, BsrReader.AnimationEntry.TYPE_ATTACK, group)
-	return _play_once(skel, anim) if anim != null else 0.0
+		return {}
+	var events: Array = []
+	var entry := _body_animation_entry(body, action_type, group)
+	if entry != null:
+		for e in entry.events:
+			var ev: PackedInt32Array = e
+			if ev.size() >= 2 and ev[1] == BsrReader.AnimationEntry.EVENT_HIT:
+				events.append(int(ev[0]))
+	return {"ms": anim.duration_ms, "events": events}
 
-## The ground-pick mode's cursor. OURS: the mode shows the system cross in
-## place of the game's arrow, and the hover cursor is not settled while it
-## lasts (_settle_hover_cursor). Round 697 read every caller of the client's
-## cursor manager: none sets a cursor for a ground-targeted skill (the
-## forced cursors are the store's repair, an item applied to a slot and the
-## socket window's two modes), so retail keeps its hover cursor here -- the
-## cross is ours, kept until the user decides (docs/TODO.md).
-## The default cursor shape this world last set -- kept because a headless
-## display server reports none back (Input.get_current_cursor_shape), so the
-## suite reads this.
-var _default_cursor_shape := Input.CURSOR_ARROW
+## Starts `skill_id`'s decoration on `caster` aimed at `target`. `opts`:
+## "code" -- the skill's Basic_Code when the caller has it; "due_ms" -- when a WAIT hold is forced to SHOT (ms from now; -1 holds
+## until shot; default the row's PreparingTime + CastingTime, the time the
+## retail server's 0xB071 follows its 0xB070, skill_buffs.md); "on_hit" --
+## Callable(hit_index) for each DMG group (and the hits still due at the end);
+## "on_end" -- Callable(); "hits" -- how many hits to land at least by the end.
+## Returns the decoration's entry, or {} when nothing is drawn (the record
+## names no clip -- then "on_hit" is called once at once, so the result shows).
+func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, opts: Dictionary = {}) -> Dictionary:
+	if caster == null or not is_instance_valid(caster):
+		return {}
+	_end_deco(caster, "a new cast", true)
+	# The skill's Basic_Code: the caller's (the quick slot's), else the skill
+	# table's.
+	var code := String(opts.get("code", ""))
+	if code == "":
+		code = String(SkillAudio.context_for(skill_id)["code"])
+	var row := SkillEffectReader.aniset_for(_skill_anisets(), code) if code != "" and code != SkillAudio.NONE else {}
+	var pick := randi() & 0xff
+	var plan := SkillDeco.plan(row, pick)
+	var on_hit: Callable = opts.get("on_hit", Callable())
+	if String(plan["kind"]) == "none":
+		print("CAST ANIM: %s (skill %d, %s) -- %s: no body animation, no cast effects" % [code, skill_id, what, plan.get("why", "")])
+		if on_hit.is_valid():
+			for h in maxi(int(opts.get("hits", 1)), 1):
+				on_hit.call(h)
+		var on_end0: Callable = opts.get("on_end", Callable())
+		if on_end0.is_valid():
+			on_end0.call()
+		return {}
+	var b := _deco_body_of(caster)
+	var group := String(plan["group"])
+	if group == "":
+		group = String(b.get("group", "default"))
+	var body_code := String(b.get("body", ""))
+	var info := func(t: int) -> Dictionary:
+		return _deco_clip_info(body_code, group, t) if body_code != "" else {}
+	var now := int(_deco_clock_ms)
+	var due := -1
+	if int(plan["wait"]) >= 0:
+		if opts.has("due_ms"):
+			due = now + int(opts["due_ms"]) if int(opts["due_ms"]) >= 0 else -1
+		else:
+			var t: Array = SkillEffects._timings.get(skill_id, [0, 0])
+			due = now + maxi(int(t[0]) + int(t[1]), 0)
+	var deco := SkillDeco.new(skill_id, plan, info, now, due)
+	var entry := {"deco": deco, "skill": skill_id, "code": code, "caster": caster, "target": target,
+		"body": body_code, "group": group, "own": bool(b.get("own", false)), "skel": b.get("skel"),
+		"loops": [], "hits_done": 0, "hits": int(opts.get("hits", 1)), "on_hit": on_hit,
+		"on_end": opts.get("on_end", Callable()), "what": what}
+	_decos[caster.get_instance_id()] = entry
+	if bool(entry["own"]):
+		SkillAudio.set_current(player, skill_id)
+	print("CAST ANIM: %s (skill %d, %s) -- group %s: READY %d, WAIT %d, SHOT %d (pick %d)%s" % [code, skill_id, what,
+		group, int(plan["ready"]), int(plan["wait"]), int(plan["shot"]), pick,
+		", WAIT held %s" % ("until the act" if due < 0 else "%d ms" % (due - now)) if int(plan["wait"]) >= 0 else ""])
+	_run_deco(entry, deco.tick(now))
+	return entry
 
-func _set_default_cursor(shape: Input.CursorShape) -> void:
-	Input.set_default_cursor_shape(shape)
-	_default_cursor_shape = shape
+## The decoration running on `caster`, or {}.
+func _deco_on(caster: Node3D) -> Dictionary:
+	if caster == null or not is_instance_valid(caster):
+		return {}
+	return _decos.get(caster.get_instance_id(), {})
 
-func _begin_ground_pick_cursor() -> void:
-	GameCursor.suspend()
-	_set_default_cursor(Input.CURSOR_CROSS)
-	print("GROUND PICK: cursor -> cross (ours)")
+## The server's skill action for `caster`'s cast (0xB071's analogue): its
+## WAIT hold goes to SHOT now.
+func _shot_deco(caster: Node3D) -> void:
+	var e := _deco_on(caster)
+	if not e.is_empty():
+		(e["deco"] as SkillDeco).shot()
+		_run_deco(e, (e["deco"] as SkillDeco).tick(int(_deco_clock_ms)))
 
-func _end_ground_pick_cursor() -> void:
-	_set_default_cursor(Input.CURSOR_ARROW)
-	# Force the game's arrow back on (it is only re-applied on a change).
-	_cursor_kind = "normal"
-	if GameCursor.is_suspended():
-		GameCursor.resume(get_window())
+## Ends `caster`'s decoration at once (a refusal, a new cast, the end of a
+## Ghost Walk's move): its loops and its looping clip stop. `land` lands the
+## hits not yet shown (retail's end, FUN_00a50a00); a refusal does not.
+func _end_deco(caster: Node3D, why: String, land: bool = false) -> void:
+	var e := _deco_on(caster)
+	if e.is_empty():
+		return
+	var acts := (e["deco"] as SkillDeco).cancel()
+	if not land:
+		e["on_hit"] = Callable()
+	print("CAST ANIM: %s's decoration ends (%s)" % [e["code"], why])
+	_run_deco(e, acts)
 
-## Ends ground-pick mode, if it is on, saying why in the log.
-func _cancel_ground_pick(why: String) -> bool:
-	if not _self_cast.cancel_pick():
-		return false
-	_end_ground_pick_cursor()
-	print("GROUND PICK: cancelled (%s)" % why)
-	return true
+## Runs every decoration to now. World3D's physics step calls it.
+func _tick_decos(delta: float) -> void:
+	_deco_clock_ms += maxf(delta, 0.0) * 1000.0
+	if _decos.is_empty():
+		return
+	var now := int(_deco_clock_ms)
+	for key in _decos.keys():
+		var e: Dictionary = _decos.get(key, {})
+		if e.is_empty():
+			continue
+		if not is_instance_valid(e["caster"]):
+			SkillEffects.stop_all(e["loops"])
+			_decos.erase(key)
+			continue
+		_run_deco(e, (e["deco"] as SkillDeco).tick(now))
 
-## The world is going (_exit_tree) or the session ended (_on_disconnected,
-## which the System menu's Restart and Exit reach): a pick left on would keep
-## its cross cursor over the login screen (round 617's review). The pick ends
-## and the default shape goes back whether or not one was on.
-func _leave_ground_pick(why: String) -> void:
-	_cancel_ground_pick(why)
-	_set_default_cursor(Input.CURSOR_ARROW)
+## Carries out a decoration's actions (SkillDeco.tick's list).
+func _run_deco(e: Dictionary, actions: Array) -> void:
+	var caster: Node3D = e["caster"]
+	var target = e["target"]
+	if target != null and not is_instance_valid(target):
+		target = null
+		e["target"] = null
+	var skill := int(e["skill"])
+	for a in actions:
+		match String(a[0]):
+			"clip":
+				_deco_play_clip(e, int(a[1]), int(a[2]), bool(a[3]))
+			"group":
+				var phase := int(a[1])
+				var ev := int(a[2])
+				var what := "%s %s/%d" % [e["what"], SkillAudio._phase_name(phase), ev]
+				SkillAudio.play_phase(skill, phase, ev, caster, what)
+				var dmg := SkillEffects.group_dmg(skill, phase, ev)
+				var arrive := Callable()
+				var h := -1
+				if dmg:
+					h = int(e["hits_done"])
+					e["hits_done"] = h + 1
+					var flies: bool = SkillEffects.group_dmg_flies(skill, phase, ev) and target != null and target != caster
+					if flies:
+						arrive = _deco_land_hit.bind(e, h)
+				var fx := SkillEffects.play_phase(skill, phase, ev, caster, target, e["what"], arrive)
+				if phase == SkillDeco.READY or phase == SkillDeco.WAIT:
+					(e["loops"] as Array).append_array(fx)
+				if dmg and not arrive.is_valid():
+					_deco_land_hit(e, h)
+			"stop_loops":
+				SkillEffects.stop_all(e["loops"])
+				e["loops"] = []
+			"end":
+				# Retail's end lands every hit not yet shown (FUN_00a50a00).
+				while int(e["hits_done"]) < int(e["hits"]):
+					var h2 := int(e["hits_done"])
+					e["hits_done"] = h2 + 1
+					_deco_land_hit(e, h2)
+				_deco_stop_clip(e)
+				if is_instance_valid(caster) and is_same(_decos.get(caster.get_instance_id()), e):
+					_decos.erase(caster.get_instance_id())
+				var on_end: Callable = e["on_end"]
+				e["on_end"] = Callable()
+				if on_end.is_valid():
+					on_end.call()
 
-## A left click on the world while ground-pick mode is on: the point on the
-## ground under it (the walk's own ray, _ground_point_at) is where the skill
-## is cast. A click that finds no ground leaves the mode on.
-func _ground_pick_click(screen_pos: Vector2) -> String:
-	if _player_dead:
-		_cancel_ground_pick("dead")
-		return "dead"
-	var point = _ground_point_at(screen_pos)
-	if point == null:
-		print("GROUND PICK: no ground under the click at %s -- still waiting" % str(screen_pos))
-		return "ground_pick_miss"
-	var pick := _self_cast.take_pick()
-	_end_ground_pick_cursor()
-	var at: Vector3 = point
-	print("GROUND PICK: skill %d at (%.1f, %.1f, %.1f), %.1f from the player" % [
-		int(pick["id"]), at.x, at.y, at.z, Vector2(at.x, at.z).distance_to(Vector2(player.position.x, player.position.z))])
-	var landing := _resolve_ground_landing(int(pick["id"]), at)
-	if landing.refused:
-		_log_system("The skill's data is still loading -- try again in a moment.")
-		return "ground_pick_refused"
-	_send_self_cast(int(pick["id"]), String(pick["code"]), SkillNet.TARGET_GROUND, landing.sent)
-	return "ground_pick"
+func _deco_land_hit(e: Dictionary, h: int) -> void:
+	var cb: Callable = e["on_hit"]
+	if cb.is_valid():
+		cb.call(h)
+
+## Plays a decoration's clip on its body: the player's one-shot slot, or
+## another player's clip entry; `loop` repeats it until the decoration ends
+## (the WAIT hold).
+func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) -> void:
+	var body := String(e["body"])
+	if body == "":
+		return
+	var anim := _body_animation_for(body, action_type, String(e["group"]))
+	if anim == null:
+		print("CAST ANIM: %s %s action type %d has no clip in the body for group '%s' -- nothing played" % [
+			e["code"], SkillAudio._phase_name(phase), action_type, e["group"]])
+		return
+	print("CAST ANIM: %s %s action type %d, group %s (%s)%s" % [e["code"], SkillAudio._phase_name(phase),
+		action_type, e["group"], _body_animation_path(body, action_type, String(e["group"])), " looping" if loop else ""])
+	if bool(e["own"]):
+		_last_combat_time = _player_anim_time
+		_play_player_once(anim)
+		_player_one_shot_loop = loop
+	else:
+		var skel = e["skel"]
+		if skel != null and is_instance_valid(skel):
+			_play_once(skel, anim)
+			_mark_one_shot_loop(skel, loop)
+
+## The decoration ended: a looping clip of its own stops (retail's end stops
+## the WAIT and SHOT clips, vslot 0xb8 in FUN_00a50a00).
+func _deco_stop_clip(e: Dictionary) -> void:
+	if bool(e["own"]):
+		if _player_one_shot_loop:
+			_player_one_shot_loop = false
+			_player_one_shot = null
+	else:
+		var skel = e["skel"]
+		if skel != null and is_instance_valid(skel):
+			_mark_one_shot_loop(skel, false)
+
+## Whether the player's one-shot clip repeats (a decoration's WAIT hold).
+var _player_one_shot_loop := false
+
+## Marks the clip entry of `skel` that is a one-shot as repeating (or not):
+## the clip tick wraps its start instead of handing back to its loop
+## (entry[8], round 785).
+func _mark_one_shot_loop(skel: Skeleton3D, loop: bool) -> void:
+	for entry in _animated:
+		if entry[0] == skel and not entry[4]:
+			if entry.size() < 9:
+				entry.resize(9)
+			entry[8] = loop
+			return
 
 ## The landing a ground cast from here to `point` sends (GhostWalk, round
 ## 616-618 integration and its review): clamped to the row's tele value[1] in
@@ -12497,20 +12721,253 @@ func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	if skill_id == 0:
 		NetClient.attack(NetClient.current_character_name, monster_id)
 		return
-	# basic_code carries the level suffix; derive the clip name the same way the
-	# reader's BaseSkill.cast_anim_name does (lowercase, drop trailing _NN).
-	var anim_base := basic_code.to_lower()
-	var us := anim_base.rfind("_")
-	if us > 0 and anim_base.substr(us + 1).is_valid_int():
-		anim_base = anim_base.substr(0, us)
+	# Round 785: nothing is drawn at the send. Retail's caster plays its cast
+	# when the server answers (the decoration starts on 0xB070, READ:
+	# FUN_008a5fd0 -> FUN_00a54f00): _own_skill_result.
 	_last_combat_time = _player_anim_time
-	_play_skill_cast_anim(anim_base)
 	_pending_skill_hit_code = basic_code
 	_pending_skill_id = skill_id
-	_audio_cast_start(skill_id, monster_id)
+	SkillAudio.set_current(player, skill_id)
+	_fx_self_cast = {}
 	if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 		print("QA CAST: use_skill %d (%s) on monster %d" % [skill_id, basic_code, monster_id])
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
+
+## The server answered this player's cast at a monster (round 785): the
+## cast is drawn now -- retail's caster starts its decoration on 0xB070
+## (READ, FUN_008a5fd0 -> FUN_00a54f00) -- its re-use time is armed
+## (FUN_00778910), and each DMG group of the decoration lands the cast's next
+## hit (_own_skill_hit): the damage number, the struck body's reaction or
+## death, the DamageEfp and the hit sounds. Nothing of the plain swing plays.
+func _own_skill_result(result: CombatNet.AttackResult, skill: int, code: String) -> void:
+	_released_attack = {}
+	var monster: int = result.monster_id if result.monster_id != 0 else _last_attack_target
+	_arm_skill_cooldown(skill)
+	var hits := result.hits
+	var n_hits := hits.hit_count if hits != null and hits.hit_count > 0 else 1
+	print("CAST reply: skill %d at monster %d accepted: %d damage%s (%d left%s), %d hit(s)%s, took %d (HP %d)" % [
+		skill, monster, result.monster_damage, " CRIT" if result.player_critical else "",
+		result.monster_remaining_hp, ", died" if result.monster_died else "", n_hits,
+		" over %d target(s)" % hits.targets.size() if hits != null else " (no hit block: one blow)",
+		result.player_damage_taken, result.player_hp])
+	if monster != -1 and (result.monster_damage > 0 or result.monster_died):
+		_record_monster_hp(monster, result.monster_remaining_hp)
+	if monster != -1 and result.monster_died:
+		# Held until its death plays at the landing hit (OURS bound: 8 s; the
+		# hold restarts at the death, _begin_monster_death).
+		MonsterBodies.hold_for_kill(_dying_until, monster, _idle_anim_time, 8.0,
+			_monster_action_seconds(monster, BsrReader.AnimationEntry.TYPE_DIE))
+		_stop_monster_motion(monster)
+	if hits != null:
+		for t in hits.targets:
+			var tt: SkillHits.Target = t
+			if tt.id_kind == SkillNet.OWNER_MONSTER and int(tt.id) != monster:
+				var last: SkillHits.Hit = tt.hits[-1] if not tt.hits.is_empty() else null
+				if last != null and _target_dies(tt):
+					MonsterBodies.hold_for_kill(_dying_until, int(tt.id), _idle_anim_time, 8.0,
+						_monster_action_seconds(int(tt.id), BsrReader.AnimationEntry.TYPE_DIE))
+					_stop_monster_motion(int(tt.id))
+	# The zone's OpMonsterDamaged for these targets plays no flinch of its own
+	# for a while: the hits land at the decoration's events (OURS bound).
+	_own_hit_until[monster] = Time.get_ticks_msec() + OWN_CAST_HIT_GUARD_MS
+	if hits != null:
+		for t in hits.targets:
+			if (t as SkillHits.Target).id_kind == SkillNet.OWNER_MONSTER:
+				_own_hit_until[int((t as SkillHits.Target).id)] = Time.get_ticks_msec() + OWN_CAST_HIT_GUARD_MS
+	var target := _fx_monster_body(monster)
+	var blow := {"skill": skill, "cast": true, "critical": result.player_critical, "hwan": result.berserk_active}
+	_start_deco(player, skill, target, "own cast at monster %d" % monster,
+		{"code": code, "hits": n_hits, "on_hit": _own_skill_hit.bind(result, skill, code, monster, blow)})
+	if result.monster_died:
+		monster_status_label.text = "Hit for %d%s -- it died!" % [
+			result.monster_damage, " CRITICAL!" if result.player_critical else ""]
+		NetClient.list_quests(NetClient.current_character_name)
+	else:
+		monster_status_label.text = _exchange_line(result)
+		if result.player_died:
+			monster_status_label.text = _death_line(result.death_exp_lost)
+			if MonsterStrikes.leaves_dead(result.player_died, result.player_hp):
+				_enter_dead_state(result.death_exp_lost)
+	NetClient.list_skills(NetClient.current_character_name)
+
+## OURS: how long a cast's targets ignore the zone's flinch push.
+const OWN_CAST_HIT_GUARD_MS := 4000
+
+## Whether any hit of a target's list killed it.
+static func _target_dies(t: SkillHits.Target) -> bool:
+	for h in t.hits:
+		if (h as SkillHits.Hit).died:
+			return true
+	return false
+
+## Hit `h` of this player's cast lands (a DMG group of its decoration, or its
+## end): every target's entry of that hit from the server's hit block, or --
+## from a server that sends none -- the whole result at the first hit. READ
+## (IDecoSkill::FUN_00a4f720 -> FUN_00a49290): the HP falls by the hit's
+## damage, a death plays the die state, any other hit with damage the hit
+## state (a flinch), a knockdown (kind 4) puts the body down at its point, a
+## knockback (kind 5) slides it there at 250 u/s, a block plays
+## snd_blocking; the number is drawn (FUN_00a47bf0).
+func _own_skill_hit(h: int, result: CombatNet.AttackResult, skill: int, code: String, monster: int, blow: Dictionary) -> void:
+	var hits := result.hits
+	if h == 0:
+		# The monster strikes back as the first hit lands (as a plain swing's
+		# counter is drawn at its landing, _draw_counter_at_landing).
+		_draw_counter_at_landing(monster, result, 0.0)
+	if hits == null or hits.targets.is_empty():
+		if h != 0 or monster == -1:
+			return
+		var dealt := result.monster_damage
+		var died := result.monster_died
+		if dealt > 0 or died:
+			_paint_monster_hp(monster)
+		if died:
+			_begin_monster_death(monster)
+		elif dealt > 0:
+			var hit_assembled = _monster_assembled.get(monster)
+			if hit_assembled != null:
+				_audio_mark_hit(hit_assembled.skeleton, result.player_critical)
+			_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_HIT)
+		_audio_blow_lands(blow, dealt, monster)
+		var hit_body = _monster_bodies.get(monster)
+		if hit_body != null and is_instance_valid(hit_body):
+			_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
+			_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), code)
+		print("CAST hit 0 of skill %d on monster %d: %d%s (the whole result; no hit block)" % [skill, monster, dealt,
+			", died" if died else ""])
+		return
+	for pair in hits.hits_at(h):
+		var t: SkillHits.Target = pair[0]
+		var hit: SkillHits.Hit = pair[1]
+		_land_skill_hit(t, hit, h, hits, skill, code, blow, "this player's skill %d" % skill)
+
+## One entry of a skill's hit block lands on its target (FUN_00a49290, READ;
+## see _own_skill_hit). `who` names the cast for the log.
+func _land_skill_hit(t: SkillHits.Target, hit: SkillHits.Hit, h: int, hits: SkillHits, skill: int, code: String,
+		blow: Dictionary, who: String) -> void:
+	var id := int(t.id)
+	var body: Node3D = null
+	var height := 2.0 * PLAYER_SCALE_RATIO
+	if t.id_kind == SkillNet.OWNER_MONSTER:
+		body = _fx_monster_body(id)
+		height = _monster_text_height(id)
+	else:
+		body = _fx_owner_body(id, SkillNet.OWNER_CHARACTER)
+	print("CAST hit %d of %s on %s: kind %d, %d damage%s%s%s" % [h, who, _fx_owner_key(id, t.id_kind), hit.kind,
+		hit.damage, " CRIT" if hit.critical() else "", ", died" if hit.died else "",
+		", states 0x%x" % hit.status_bits if hit.status_bits != 0 else ""])
+	if body == null:
+		return
+	if t.id_kind == SkillNet.OWNER_MONSTER:
+		if hit.hurts():
+			# The bar falls hit by hit: what is left after this one is the
+			# final HP plus every later hit's damage.
+			var snap = _monster_snapshots.get(id)
+			if snap != null and hits.target(id, t.id_kind) != null:
+				_paint_monster_hp(id, int(snap.hp) + hits.damage_from(id, t.id_kind, h + 1))
+		if hit.died:
+			_begin_monster_death(id)
+		elif hit.kind == SkillHits.KIND_KNOCKDOWN:
+			_play_monster_action(id, KNOCKDOWN_ACTION)
+		elif hit.hurts() and hit.damage > 0:
+			var assembled = _monster_assembled.get(id)
+			if assembled != null:
+				_audio_mark_hit(assembled.skeleton, hit.critical())
+			_play_monster_action(id, BsrReader.AnimationEntry.TYPE_HIT)
+	if hit.kind == SkillHits.KIND_KNOCKDOWN or hit.kind == SkillHits.KIND_KNOCKBACK:
+		var to := _region_point_world(hit.region, hit.point, body.global_position.y)
+		if hit.kind == SkillHits.KIND_KNOCKBACK:
+			# READ: the SYSTEM_KNOCKBACK decoration slides it at 250 u/s
+			# (FUN_00a49290: IDecoSkill::FUN_00a51320(.., 250.0, -1.0)).
+			_start_skill_slide(body, to, KNOCKBACK_SPEED, 0.0, "knockback")
+		else:
+			# READ: a knockdown is PUT at its point (FUN_009e0550).
+			_put_body(body, to)
+	if hit.blocked():
+		_audio_block(body, false, "%s blocked" % who)
+	if hit.hurts() or hit.kind == SkillHits.KIND_WALL:
+		_floating_damage(body, height, hit.damage, DAMAGE_DEALT_COLOUR if body != player else DAMAGE_TAKEN_COLOUR)
+		_play_skill_hit_effect_on(body, height, code)
+		# The hit sound at the attacker (CombatAudio's header) -- this
+		# player's blows only (OURS: another caster's hit sound is not played).
+		if t.id_kind == SkillNet.OWNER_MONSTER and not blow.is_empty():
+			_audio_blow_lands({"skill": skill, "cast": true, "critical": hit.critical(), "hwan": bool(blow.get("hwan", false))},
+				hit.damage, id)
+
+## The motion a knockdown plays: ANI_DOWN (62). INFERRED from the name: the
+## state 4 the retail apply enters (FUN_009c9920(4)) picks its clip through
+## a state table filled at run time, which was not read.
+const KNOCKDOWN_ACTION := 62
+## READ: the knockback slide's speed (0xde5668).
+const KNOCKBACK_SPEED := 250.0
+
+## World position of a region-local point (a hit block's knockback point).
+## (NetClient's spawn frame, as a 0xB023 stop is placed; the local height is
+## the world height there too.)
+func _region_point_world(region: int, local: Vector3, _fallback_y: float) -> Vector3:
+	var frame: Vector2i = NetClient.get("_spawn_frame")
+	var w := DestMoveNet.world_of_local(region, local.x, local.z, frame)
+	return Vector3(w.x, local.y, w.y)
+
+## Puts a body at a point at once (a knockdown's point).
+func _put_body(body: Node3D, to: Vector3) -> void:
+	for id in _monster_bodies:
+		if _monster_bodies[id] == body:
+			_stop_monster_motion(int(id))
+			break
+	body.global_position = to
+
+# --- Skill re-use (round 785, SkillCooldowns) ------------------------------------
+
+## This player's own re-use timers (SkillCooldowns' header has the READ).
+var _skill_cooldowns := SkillCooldowns.new()
+## Milliseconds the cooldown tick has not counted yet (a frame's fraction).
+var _skill_cooldown_carry := 0.0
+## Whether the bar showed any re-use last tick (so a cleared one is redrawn).
+var _skill_cooldown_shown := false
+## 0x3005 UIIT_SKILL_USE_FAIL_TIMEDELAY_COOL_TIME (READ, FUN_0081ba10); the
+## text is the player's own textuisystem.txt, the fallback its English
+## (MEASURED).
+const COOLDOWN_TEXT_KEY := "UIIT_SKILL_USE_FAIL_TIMEDELAY_COOL_TIME"
+const COOLDOWN_TEXT_FALLBACK := "Still have time to reuse the skill."
+
+## A skill row's re-use time and cooldown group (SkillBuffCatalog), or
+## [0, 0] while the index is not ready.
+func _skill_reuse(skill_id: int) -> Array:
+	if _hud_buff_board == null or _hud_buff_board.catalog == null:
+		return [0, 0]
+	var row: Dictionary = _hud_buff_board.catalog.info(skill_id)
+	return [int(row.get("reuse", 0)), int(row.get("cooldown_group", 0))]
+
+## The re-use time left on `skill_id` (itself or its group), ms.
+func _skill_cooldown_left(skill_id: int) -> int:
+	var r := _skill_reuse(skill_id)
+	return _skill_cooldowns.remaining_ms(skill_id, int(r[1]))
+
+## Arms `skill_id`'s re-use time: this player's cast of it began.
+func _arm_skill_cooldown(skill_id: int) -> void:
+	var r := _skill_reuse(skill_id)
+	if int(r[0]) <= 0:
+		return
+	_skill_cooldowns.arm(skill_id, int(r[1]), int(r[0]))
+	print("COOLDOWN: skill %d re-usable in %d ms (group %d)" % [skill_id, int(r[0]), int(r[1])])
+
+## Counts the timers down and draws each bar slot's sweep or charged flash.
+func _tick_skill_cooldowns(delta: float) -> void:
+	_skill_cooldown_carry += maxf(delta, 0.0) * 1000.0
+	var ms := int(_skill_cooldown_carry)
+	_skill_cooldown_carry -= float(ms)
+	_skill_cooldowns.tick(ms)
+	if _hud_underbar == null:
+		return
+	if _skill_cooldowns.count() == 0 and not _skill_cooldown_shown:
+		return
+	_skill_cooldown_shown = _skill_cooldowns.count() > 0
+	for slot in _quickslot_skills:
+		var id := int(_quickslot_skills[slot]["id"])
+		var g := int(_skill_reuse(id)[1])
+		_hud_underbar.set_slot_cooldown(int(slot), SkillCooldowns.delay_frame(_skill_cooldowns.ratio(id, g)),
+			SkillCooldowns.charge_frame(_skill_cooldowns.flash(id, g)))
 
 ## The group entry behind _body_animation_for, for its events.
 func _body_animation_entry(body: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
@@ -14403,11 +14860,14 @@ func _qa_step() -> void:
 		_qa_mob_heights_report()
 		_qa_terrain_slope_report()
 
-	# OPENSRO_QA_CASTANIM="<anim_base>" plays a skill's cast animation on the
-	# player at tick 90 (and replays it), so a render can verify the grounded
-	# Basic_Code -> .ban mapping. QA only, no target/server needed.
-	if OS.get_environment("OPENSRO_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
-		_play_skill_cast_anim(OS.get_environment("OPENSRO_QA_CASTANIM"))
+	# OPENSRO_QA_CASTANIM="<skill id>" runs the skill's decoration on the
+	# player at tick 90 (and every 90 after), its WAIT hold forced to SHOT 30
+	# ticks in (round 785, SkillDeco). QA only, no target/server needed.
+	var qa_castanim := OS.get_environment("OPENSRO_QA_CASTANIM")
+	if qa_castanim.is_valid_int() and _qa_tick % 90 == 0 and _qa_tick > 0:
+		_start_deco(player, int(qa_castanim), _fx_monster_body(_last_attack_target), "QA CASTANIM", {"due_ms": -1})
+	if qa_castanim.is_valid_int() and _qa_tick % 90 == 30 and _qa_tick > 90:
+		_shot_deco(player)
 	# ... and measures the pose it drives (round 691's merge): at eight ticks
 	# of each 90 the angle of each upper arm from its bind (rest) rotation --
 	# a T-pose reads ~0 on both -- and the clip playing. QA only.
@@ -14448,17 +14908,45 @@ func _qa_step() -> void:
 	# effects on the player at tick 20, looping, spaced OPENSRO_QA_EFFECT_SPACING
 	# (default 40) native units apart along the body's X -- a render shows
 	# EfpEffect drawing them. OPENSRO_QA_CAST="<skill id>[,<id>...]" plays each
-	# skill's effect phases on the player in turn, every
-	# OPENSRO_QA_CAST_PERIOD ticks (default 160) through SkillEffects' cast
-	# sequencer: cast at +0 (READY now, WAIT and SHOT by the skill's timing
-	# columns), shot + hit (SHOT/1) at +30, act (ACT_S) at +40 and the ACT_L
-	# aura (token 1) from +41 to the next skill. Each step prints a `QA CAST` line with its tick.
+	# skill's decoration on the player in turn, every
+	# OPENSRO_QA_CAST_PERIOD ticks (default 160) (round 785, _start_deco):
+	# its clips and effect groups from +0 with its WAIT held, the act (WAIT ->
+	# SHOT) at +30, ACT_S at +40 and the ACT_L aura (token 1) from +41 to the
+	# next skill. Each step prints a `QA CAST` line with its tick.
 	var qa_fx := OS.get_environment("OPENSRO_QA_EFFECT")
 	if qa_fx != "" and _qa_tick == 20 and player != null:
 		_qa_play_effects(qa_fx)
 	var qa_cast := OS.get_environment("OPENSRO_QA_CAST")
 	if qa_cast != "" and _qa_tick >= 20 and player != null:
 		_qa_cast_step(qa_cast)
+	# OPENSRO_QA_SKILLS="<tick>:<skill id>[;...]" (round 785) casts each skill
+	# at its tick through the player's own path (_cast_skill: the re-use
+	# gate, the plan, the walk into reach, the send), the nearest live
+	# monster selected first. A tele row casts at the cursor
+	# (OPENSRO_QA_CURSOR="x,y" names it). QA only.
+	var qa_skills := OS.get_environment("OPENSRO_QA_SKILLS")
+	if qa_skills != "" and player != null:
+		for part in qa_skills.split(";", false):
+			var ts := String(part).split(":")
+			if ts.size() == 2 and ts[0].is_valid_int() and int(ts[0]) == _qa_tick and ts[1].is_valid_int():
+				var sid := int(ts[1])
+				var near := -1
+				var best := INF
+				for mid in _monster_bodies:
+					var mb = _monster_bodies[mid]
+					if _dying_until.has(mid) or mb == null or not is_instance_valid(mb):
+						continue
+					var dd := (mb as Node3D).global_position.distance_to(player.global_position)
+					if dd < best:
+						best = dd
+						near = int(mid)
+				if near >= 0:
+					_last_attack_target = near
+					_selected_character = -1
+					_show_target(near)
+				print("QA SKILLS tick %d: skill %d (%s), monster %d at %.1f" % [_qa_tick, sid,
+					String(SkillAudio.context_for(sid)["code"]), near, best])
+				_cast_skill(sid, String(SkillAudio.context_for(sid)["code"]))
 
 	# OPENSRO_QA_HOTBAR=1 assigns two real skills to the hotbar (the same path a
 	# window click takes) so a render can show their icons in the quickslots.
@@ -16998,9 +17486,13 @@ func _physics_process(delta: float) -> void:
 		_qa_split.on_step(Engine.get_frames_drawn())
 	var fs_t := Time.get_ticks_usec() if FrameSplit.on else 0
 	SkillEffects.tick(delta)
+	_tick_decos(delta)
+	_tick_skill_slides(delta)
+	_tick_skill_cooldowns(delta)
 	if FrameSplit.on:
 		FrameSplit.add("pt_skill", Time.get_ticks_usec() - fs_t)
 	BerserkLook.tick(delta)
+	StateLook.tick(delta)
 	# Monsters and other players fading into existence (round 676): the
 	# frame's steps' time, stepped once in _process (round 748, item 4: a
 	# crowd's arrival keeps dozens of fades running, each setting its
@@ -17194,7 +17686,8 @@ func _physics_step(delta: float) -> void:
 	# Rooted by the player's own wall (round 640, OURS -- _wall_root): a walk
 	# already under way when the wall went up stops, as the server drops its
 	# moves.
-	var locked := typing or _player_dead or _motion_locked() or (_has_move_target and _wall_root() != 0)
+	var locked := typing or _player_dead or _motion_locked() or (_has_move_target and _wall_root() != 0) \
+		or _own_slide_active()
 	if locked:
 		_has_move_target = false
 		_pending_attack = {}
@@ -17419,6 +17912,7 @@ func _physics_step(delta: float) -> void:
 		if FrameSplit.on:
 			FrameSplit.add("p_plates", Time.get_ticks_usec() - split_sw)
 		split_sw = Time.get_ticks_usec()
+		_step_clip_speeds(idle_delta)
 		_tick_idle_animations(idle_delta)
 		if _qa_split != null:
 			_qa_split.idle_usec += Time.get_ticks_usec() - split_sw
@@ -17449,9 +17943,15 @@ func _physics_step(delta: float) -> void:
 		else:
 			action = BsrReader.AnimationEntry.TYPE_STAND
 		var anim := _body_animation_for(_player_body, action, _player_weapon_group)
-		_player_anim_time += delta
+		# An abnormal state's clip speed (round 785, StateLook).
+		_player_anim_time += delta * _player_clip_speed
 		if _player_one_shot != null:
 			var elapsed := _player_anim_time - _player_one_shot_start
+			# A decoration's WAIT hold repeats its clip (round 785).
+			while _player_one_shot_loop and _player_one_shot.duration_seconds() > 0.0 \
+					and elapsed >= _player_one_shot.duration_seconds():
+				_player_one_shot_start += _player_one_shot.duration_seconds()
+				elapsed = _player_anim_time - _player_one_shot_start
 			if elapsed >= _player_one_shot.duration_seconds() and not _player_one_shot_hold:
 				# Its last tracks, on the frame that ends it.
 				_anim_sounds.advance(_player_skeleton, _player_one_shot, _player_one_shot_start,
@@ -20765,10 +21265,6 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
-			# A right click cancels a ground pick (round 617); the press still
-			# starts an orbit as any right press does.
-			if event.pressed:
-				_cancel_ground_pick("right click")
 			_right_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			# The press is the click (round 701; READ): retail's WM_LBUTTONDOWN
@@ -20875,16 +21371,6 @@ var _hover_reached_world := false
 func _input(event: InputEvent) -> void:
 	if title_mode:
 		return
-	# Escape cancels a ground pick (round 617) before anything else sees it --
-	# HudPanels would otherwise close a window or open the System menu with
-	# the same press. Read here, before the GUI (the real-input rule of round
-	# 609: a key left to the unhandled stage can be eaten by a focused
-	# control).
-	if _self_cast.picking() and event is InputEventKey and (event as InputEventKey).pressed \
-			and not (event as InputEventKey).echo and (event as InputEventKey).keycode == KEY_ESCAPE:
-		_cancel_ground_pick("Escape")
-		get_viewport().set_input_as_handled()
-		return
 	# The orbit turns the camera here, before the GUI can consume the motion
 	# (orbit_motion_applies has why). The event is not marked handled: the
 	# control under the cursor still sees it, as before.
@@ -20915,9 +21401,6 @@ func _hover_tick() -> void:
 
 func _settle_hover_cursor() -> void:
 	_cursor_last_check_ms = Time.get_ticks_msec()
-	# Ground-pick mode keeps its own cursor (round 617).
-	if _self_cast.picking():
-		return
 	GameCursor.refresh(get_window())
 	# Also when the game's cursors are not there: the item under the mouse
 	# shows its name (_hovered_ground_item).
@@ -21072,7 +21555,7 @@ func _apply_cursor(kind: String) -> void:
 ## rolled again. Another player's case (0x7074 when vslot 0xa8 allows) is not
 ## built: nothing here (OURS).
 func _dispatch_double_click(screen_pos: Vector2) -> String:
-	if _player_dead or _self_cast.picking():
+	if _player_dead:
 		return "ignore"
 	if not NetClient.is_connected_to_server() or _objects_hidden:
 		return "ignore"
@@ -21109,10 +21592,6 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 	# part: retail's ground click clears it, FUN_009ec570 writing +0x20 = 0,
 	# and a new object click replaces it; a monster's select is not read to).
 	_cancel_talk_approach("a new click")
-	# Ground-pick mode (round 617): the click is the skill's point, not a
-	# pick-up, an attack, a talk or a walk.
-	if _self_cast.picking():
-		return _ground_pick_click(screen_pos)
 	# An item lying on the ground first: it sits at a monster's feet inside
 	# the monster's tall click capsule, so testing the monster first would
 	# make a drop unpickable while its killer's next target stands over it.
@@ -22080,10 +22559,10 @@ func _start_heading_run(dir: Vector3) -> String:
 ## The point on the ground or a placed object's walkable surface under a
 ## screen point, or null: the click-to-move pick, shared with the ground-pick
 ## cast (round 617; round 781: GroundPick's terrain-and-cells rule).
-func _ground_point_at(screen_pos: Vector2) -> Variant:
+func _ground_point_at(screen_pos: Vector2, length: float = 2000.0) -> Variant:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
-	var hit := _walk_pick(from, dir, get_world_3d().direct_space_state, 2000.0)
+	var hit := _walk_pick(from, dir, get_world_3d().direct_space_state, length)
 	if hit.is_empty():
 		return null
 	return hit["position"]
@@ -22221,9 +22700,6 @@ func _on_unstuck_result(ok: bool, wait_seconds: int) -> void:
 	print("World3D: /unstuck answered ok=%s wait=%d" % [str(ok), wait_seconds])
 
 func _on_disconnected() -> void:
-	# Restart / Exit from the System menu and a dropped peer all come here
-	# before the scene changes: no ground pick outlives the session.
-	_leave_ground_pick("disconnected")
 	get_tree().change_scene_to_file("res://scenes/Login.tscn")
 
 # --- Monsters tab ---------------------------------------------------------
@@ -23769,8 +24245,18 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		# The server's target test (round 622): a friendly skill at a monster.
 		if result.error == SelfCast.INVALID_TARGET_TEXT or result.error == SelfCast.NO_TARGET_TEXT:
 			_log_system(result.error)
-		SkillEffects.cancel_cast(player)
+		_pending_skill_id = 0
+		_pending_skill_hit_code = ""
 		_rewalk_after_refusal(result)
+		return
+	# Round 785: this player's cast at a monster is drawn by its decoration,
+	# with no plain swing.
+	if _pending_skill_id != 0:
+		var cast_id := _pending_skill_id
+		var cast_code := _pending_skill_hit_code
+		_pending_skill_id = 0
+		_pending_skill_hit_code = ""
+		_own_skill_result(result, cast_id, cast_code)
 		return
 	_released_attack = {}
 	# One line per exchange, so a render's log says what the fight did
@@ -24647,22 +25133,45 @@ func _draw_wall_blow(anchor: Node3D, owner_key: String, wall: CombatNet.WallHit,
 	_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, efp)
 	_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, wall.damage, DAMAGE_TAKEN_COLOUR)
 
-## This player's self or ground cast whose effects wait for the server's
-## answer (_send_self_cast): {skill, ground, acted}; empty when none.
+## This player's self, ground or friendly cast waiting for the server's
+## answer (_send_self_cast, _send_character_cast): {skill, code, ground,
+## acted, begun, sent_ms, [character, act_after_ms]}; empty when none.
 var _fx_self_cast: Dictionary = {}
+
+## The server answered this player's own pending cast (the accepted reply,
+## OpBuffStart or OpSkillMove, whichever comes first): its decoration starts
+## -- retail's caster starts its on 0xB070 (READ, FUN_008a5fd0 ->
+## FUN_00a54f00) -- and its re-use time is armed (FUN_00778910). Once a cast.
+func _fx_self_cast_begin(why: String) -> void:
+	if _fx_self_cast.is_empty() or bool(_fx_self_cast.get("begun", false)):
+		return
+	_fx_self_cast["begun"] = true
+	var skill_id := int(_fx_self_cast["skill"])
+	_arm_skill_cooldown(skill_id)
+	var on: Node3D = player
+	var target_id := int(_fx_self_cast.get("character", -1))
+	if target_id >= 0:
+		var body = _other_bodies.get(target_id)
+		if body != null and is_instance_valid(body):
+			on = body
+	var opts := {"code": String(_fx_self_cast.get("code", ""))}
+	if bool(_fx_self_cast["ground"]):
+		# Ghost Walk's WAIT holds through the move; the move's arrival ends
+		# the decoration (READ, FUN_00a50f70 -> FUN_00a50a00).
+		opts["due_ms"] = -1
+	_start_deco(player, skill_id, on, "own cast (%s)" % why, opts)
 
 ## The server answered this player's self or ground cast of `skill_id`
 ## (OpBuffStart for a buff, OpSkillMove for a ground cast, the accepted reply
-## otherwise): the cast leaves WAIT for SHOT (SkillEffects.shot -- READ, the
-## server's skill-action message forces SHOT, FUN_00a56680 -> FUN_00a53090),
-## its SHOT/1 rows fire (the blow's hit in the monster path; a self cast has
-## no clip events here, INFERRED) and ACT_S plays on the player (the object a
-## self cast acts on). `with_aura` plays ACT_L one cycle, for a cast no buff
-## token will hold. Once per cast: the accepted reply after a buff's start
-## adds nothing.
+## otherwise): ACT_S plays on the body the skill acts on, and with
+## `with_aura` ACT_L one cycle, for a cast no buff token will hold. Once per
+## cast. The WAIT hold of a skill that has one goes to SHOT here (the
+## server's act, 0xB071's analogue) -- except a ground cast's, which its
+## move ends.
 func _fx_self_cast_acts(skill_id: int, why: String, with_aura: bool) -> void:
 	if _fx_self_cast.is_empty() or int(_fx_self_cast["skill"]) != skill_id or bool(_fx_self_cast["acted"]):
 		return
+	_fx_self_cast_begin(why)
 	_fx_self_cast["acted"] = true
 	# A cast at a player (round 622) acts on that player's body: the object
 	# the skill acts on (Heal's ACT_S water_hpheal_effect_a.efp at Bip01).
@@ -24672,41 +25181,47 @@ func _fx_self_cast_acts(skill_id: int, why: String, with_aura: bool) -> void:
 		var body = _other_bodies.get(target_id)
 		if body != null and is_instance_valid(body):
 			on = body
-	SkillEffects.shot(player)
-	SkillEffects.hit(player, on, skill_id)
+	if not bool(_fx_self_cast["ground"]):
+		_shot_deco(player)
 	# ACT plays on the object the skill acts on (skills_spec §1.2, INFERRED
 	# from the rows: Heal's ACT_S at the healed body's Bip01), so that body is
 	# both host arguments: an AT_ONE_FOLLOW row would otherwise go on the
 	# caster (SkillEffects.host_for).
+	SkillAudio.play_phase(skill_id, SkillAudio.ACT_S, -1, on, "act (%s)" % why)
 	var n := SkillEffects.act(skill_id, on, on, with_aura).size()
 	print("EFFECTS self cast: skill %d acts on %s (%d ACT effect(s)%s)" % [skill_id, why, n,
 		", on player %d" % target_id if on != player else ""])
 
-## The accepted reply to a self or ground cast: a skill no OpBuffStart or
-## OpSkillMove answered (a self-heal, a zero-damage self row) acts now, with
-## its ACT_L one cycle.
+## The accepted reply to a self or ground cast: the cast is drawn now if
+## nothing drew it yet, and a skill no OpBuffStart or OpSkillMove answered (a
+## self-heal, a zero-damage self row) acts now, with its ACT_L one cycle.
 func _fx_self_cast_accepted() -> void:
-	if not _fx_self_cast.is_empty() and _fx_self_cast.has("character") and not bool(_fx_self_cast["acted"]):
-		# A cast at a player (round 622) acts after its own prep + cast from
-		# the send (_send_character_cast).
+	if _fx_self_cast.is_empty():
+		return
+	_fx_self_cast_begin("the accepted reply")
+	if _fx_self_cast.has("character") and not bool(_fx_self_cast["acted"]):
+		# A cast at a player (round 622) acts after its own prep + cast.
 		var fx := _fx_self_cast
-		var left := int(fx["act_after_ms"]) - (Time.get_ticks_msec() - int(fx["sent_ms"]))
-		_after(maxf(float(left), 0.0) / 1000.0, func() -> void:
+		_after(maxf(float(int(fx["act_after_ms"])), 0.0) / 1000.0, func() -> void:
 			var keep := _fx_self_cast
 			_fx_self_cast = fx
-			_fx_self_cast_acts(int(fx["skill"]), "the accepted reply, %d ms after the send" % int(fx["act_after_ms"]), true)
+			_fx_self_cast_acts(int(fx["skill"]), "the accepted reply, %d ms after it" % int(fx["act_after_ms"]), true)
 			_fx_self_cast = keep)
 		_fx_self_cast = {}
 		return
-	if not _fx_self_cast.is_empty():
-		_fx_self_cast_acts(int(_fx_self_cast["skill"]), "the accepted reply", true)
+	if bool(_fx_self_cast["ground"]):
+		# Its move (OpSkillMove) acts; the reply may come first.
+		return
+	_fx_self_cast_acts(int(_fx_self_cast["skill"]), "the accepted reply", true)
 	_fx_self_cast = {}
 
-## A refused self or ground cast: its READY / WAIT loops end, nothing more fires.
+## A refused self or ground cast: a decoration already drawn ends, nothing
+## more fires.
 func _fx_self_cast_refused() -> void:
 	if not _fx_self_cast.is_empty():
-		print("EFFECTS self cast: skill %d refused -- its cast effects end" % int(_fx_self_cast["skill"]))
-	SkillEffects.cancel_cast(player)
+		print("EFFECTS self cast: skill %d refused -- nothing more is drawn" % int(_fx_self_cast["skill"]))
+		if bool(_fx_self_cast.get("begun", false)):
+			_end_deco(player, "refused")
 	_fx_self_cast = {}
 
 ## OPENSRO_QA_EFFECT's plays (see the hook).
@@ -24729,7 +25244,10 @@ func _qa_play_effects(spec: String) -> void:
 		SkillEffects.attach(fx, player, bone if bone != "" else "none", Vector3(x, 0, 0))
 		print("QA EFFECT %s at x %.0f: %d node(s) drawn, skipped %s" % [path, x, fx.draw_count(), str(fx.skipped)])
 
-## OPENSRO_QA_CAST's schedule (see the hook).
+## OPENSRO_QA_CAST's schedule (see the hook): each listed skill's decoration
+## runs on the player (round 785, _start_deco) at the start of its period, its
+## WAIT hold forced to SHOT 30 ticks in, its ACT 40 ticks in and its ACT_L
+## aura 41 ticks in.
 func _qa_cast_step(spec: String) -> void:
 	var ids := spec.split(",", false)
 	var period_text := OS.get_environment("OPENSRO_QA_CAST_PERIOD")
@@ -24742,17 +25260,15 @@ func _qa_cast_step(spec: String) -> void:
 			SkillEffects.detach_aura("qa:player", 1)
 		return
 	var skill := int(String(ids[idx]).strip_edges())
-	var what := "QA cast"
 	match at:
 		0:
 			SkillEffects.detach_aura("qa:player", 1)
-			print("QA CAST tick %d skill %d cast (READY now, WAIT/SHOT by its timing %s)" % [_qa_tick, skill,
+			print("QA CAST tick %d skill %d: its decoration starts (timing %s)" % [_qa_tick, skill,
 				str(SkillEffects._timings.get(skill, "none"))])
-			SkillEffects.cast(skill, player, player)
+			_start_deco(player, skill, _fx_monster_body(_last_attack_target), "QA cast", {"due_ms": -1})
 		30:
-			print("QA CAST tick %d skill %d shot + hit (SHOT/1)" % [_qa_tick, skill])
-			SkillEffects.shot(player)
-			SkillEffects.hit(player, player, skill)
+			print("QA CAST tick %d skill %d: the act (WAIT -> SHOT)" % [_qa_tick, skill])
+			_shot_deco(player)
 		40:
 			print("QA CAST tick %d skill %d act (ACT_S)" % [_qa_tick, skill])
 			SkillEffects.act(skill, player, player)
@@ -24781,32 +25297,10 @@ func _player_weapon_token() -> String:
 	var tid4 := _player_weapon_type_id4()
 	return CombatAudio.weapon_token(tid4, tid4 != 0)
 
-## A cast starts (its clip starts and OpUseSkill goes out): the skill becomes
-## the player's current one, and its READY and first SHOT rows sound
-## (SkillAudio's header: the phase timing is INFERRED). `fx_timings` goes to
-## SkillEffects.cast (a self or ground cast's phase timing from its body clip,
-## SelfCast.effect_timings; empty: the skilldata columns).
-func _audio_cast_start(skill_id: int, monster_id: int = -1, fx_timings: Dictionary = {}) -> void:
-	# A new cast supersedes a self cast still waiting for its answer
-	# (_send_self_cast sets it again after this call).
-	_fx_self_cast = {}
-	SkillAudio.set_current(player, skill_id)
-	var what := "cast start"
-	SkillAudio.play_phase(skill_id, SkillAudio.READY, -1, player, what)
-	SkillAudio.play_phase(skill_id, SkillAudio.SHOT, 0, player, what)
-	# The effects run on SkillEffects' cast sequencer (round 620 review): READY
-	# now, WAIT and SHOT by the skill's timing columns, SHOT/1 when the blow
-	# lands (_audio_blow_lands), and a refusal cancels it (_on_attack_result).
-	# The target is the monster this request names, not the last selection.
-	SkillEffects.cast(skill_id, player, _fx_monster_body(monster_id), fx_timings)
-	var left := SkillAudio.unplayed_rows(skill_id)
-	if not left.is_empty():
-		AudioLog.line("cast-unplayed:%d" % skill_id, "AUDIO cast: skill %d rows this client does not fire: %s" % [
-			skill_id, ", ".join(PackedStringArray(left))])
-
 ## The player's blow lands on `monster`: the hit sound at the player (the
-## attacker, CombatAudio's header), and for a cast its second SHOT rows, its
-## activation (snd_activate) and its ACT_S / ACT_L rows.
+## attacker, CombatAudio's header), and for a cast its activation
+## (snd_activate). A cast's SHOT and ACT rows are its decoration's (round
+## 785, _start_deco), not this landing's.
 ## Retail makes the damage decoration, and so the hit sound, for EVERY damage
 ## record whose caster and target resolve -- no damage or kind check
 ## (IDecoSkill::FUN_00a4bdd0 / FUN_00a4f720, READ; review of round 614) -- so
@@ -24823,18 +25317,7 @@ func _audio_blow_lands(blow: Dictionary, dealt: int, monster: int) -> void:
 			String(ctx["group"]), String(ctx["code"]), _player_weapon_token(), player, what)
 	if not bool(blow["cast"]):
 		return
-	SkillAudio.play_phase(skill, SkillAudio.SHOT, 1, player, what)
 	CombatAudio.play_activate(CombatAudio.PLAYER, String(ctx["group"]), player, what)
-	SkillAudio.play_phase(skill, SkillAudio.ACT_S, -1, player, what)
-	SkillAudio.play_phase(skill, SkillAudio.ACT_L, -1, player, what)
-	# The effects of the same phases (round 620): SHOT/1 on the struck body
-	# where its row says so, ACT_S where the sound plays. ACT_L is the buff's
-	# aura, held by token from OpBuffStart (_fx_on_buff_started), so it is
-	# not played here (the 616-620 integration: NetClient always has the
-	# signal now).
-	var fx_target := _fx_monster_body(monster)
-	SkillEffects.hit(player, fx_target, skill)
-	SkillEffects.act(skill, player, player, false)
 
 ## A monster's blow lands on a character: its hit sound at the monster (the
 ## attacker), keyed by its sound object and its attack skill. OpenSRO's
@@ -25655,23 +26138,34 @@ func _apply_buff_run_speed(run_speed: int, why: String) -> void:
 	_server_run_speed = run_speed
 
 ## A skill moved a character (OpSkillMove, round 617: Ghost Walk's landing).
-## This player is put at the point at once. The move's duration is OPEN
-## (skills_spec §2.3: tele value[0] = 500 is unread by the server's clamp,
-## perhaps milliseconds), so it is a SNAP, not a tween -- ours, until that is
-## read. Another player's body is put there and its walk target with it.
+## Round 785, READ: retail does not snap. The 0xB070 move (flags & 8)
+## starts IDecoSkill::FUN_00a51320(region, point, 500.0 @0xdcc19c,
+## 20.0 @0xd88108): the caster turns to face the point (FUN_009c4260) and
+## FUN_00a50f70 slides it there each frame at 500 units a second, on the
+## ground, measuring only the horizontal distance (FUN_009ed850), leaving an
+## afterimage of the body every 20 units (FUN_00a55ac0); its arrival ends the
+## cast (FUN_00a50a00: the WAIT clip and its effect stop). The body plays
+## the skill's WAIT clip the whole way (ANI_SKILL_7 in DEFAULT for Ghost
+## Walk) with its WAIT effect (lightning_bobeop_move_a.efp).
 func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	_sync_own_id()
 	var to := Vector3(moved.x, moved.y, moved.z)
 	if _other_bodies.has(moved.character_id):
 		var body: Node3D = _other_bodies[moved.character_id]
-		body.position = to
-		_other_body_targets[moved.character_id] = to
+		# Its walk target follows at the arrival (_other_skill_move_arrived),
+		# so the walk does not pull against the slide.
+		_other_body_targets[moved.character_id] = body.global_position
 		_other_awake[moved.character_id] = true
 		# The server's Relocate ended any leg it walked (round 749).
 		_other_legs.erase(moved.character_id)
-		_other_moved(body)
-		print("SKILL move handled: player %d snapped to (%.1f, %.1f, %.1f) by skill %d" % [
-			moved.character_id, to.x, to.y, to.z, moved.skill_id])
+		var from := body.global_position
+		_face_toward(body, to)
+		if _deco_on(body).is_empty():
+			_start_deco(body, moved.skill_id, null, "player %d's move" % moved.character_id, {"due_ms": -1})
+		_start_skill_slide(body, to, SKILL_MOVE_SPEED, SKILL_MOVE_IMAGE_STEP, "skill %d" % moved.skill_id,
+			_other_skill_move_arrived.bind(moved.character_id, body, to))
+		print("SKILL move handled: player %d slides from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d" % [
+			moved.character_id, from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id])
 		return
 	# Round 640, OURS: the server dropped a move its wall's root refused and
 	# answered with the position it holds -- this player stays there.
@@ -25688,10 +26182,11 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	if not _self_cast.claims_move(moved.character_id, moved.skill_id, _other_bodies, Time.get_ticks_msec()):
 		print("SKILL move handled: character %d is neither drawn here nor this player's cast -- ignored" % moved.character_id)
 		return
-	# The ground cast's answer: its WAIT loop ends and SHOT/ACT play
-	# (round 616-620 integration; skills_spec §1.5 -- Ghost Walk's rows are a
-	# READY with no effect and the WAIT loop lightning_bobeop_move_a.efp).
+	# The ground cast's answer: drawn now if the reply has not drawn it, and
+	# it acts (ACT_S; the WAIT hold stays until the move ends it).
+	_fx_self_cast_begin("OpSkillMove")
 	_fx_self_cast_acts(moved.skill_id, "OpSkillMove", true)
+	_fx_self_cast = {}
 	# The skill's move ends the movement order (_player_move_order; INFERRED
 	# from the skill paths' FUN_009e0150).
 	_player_move_order = false
@@ -25699,15 +26194,163 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	_drop_pending_attack()
 	_has_move_target = false
 	player.velocity = Vector3.ZERO
-	var settled := _settle_skill_move_footing(to)
-	to = settled["to"]
-	var footing: String = settled["footing"]
-	player.position = to
+	_face_toward(player, to)
 	# The server already has the player there, with no leg (round 749: its
 	# Relocate ended one); do not send it back.
 	_note_position_sent()
-	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d, footing %s" % [
-		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id, footing])
+	_start_skill_slide(player, to, SKILL_MOVE_SPEED, SKILL_MOVE_IMAGE_STEP, "skill %d" % moved.skill_id,
+		_own_skill_move_arrived.bind(to, moved.skill_id))
+	print("SKILL move handled: this player slides from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units at %.0f u/s, by skill %d" % [
+		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), SKILL_MOVE_SPEED, moved.skill_id])
+
+## READ: the move's speed and the afterimage spacing (0xdcc19c, 0xd88108).
+const SKILL_MOVE_SPEED := 500.0
+const SKILL_MOVE_IMAGE_STEP := 20.0
+
+## This player's Ghost Walk reached its point: it stands there, on the
+## landing's footing, and the cast ends.
+func _own_skill_move_arrived(to: Vector3, skill_id: int) -> void:
+	var settled := _settle_skill_move_footing(to)
+	player.position = settled["to"]
+	player.velocity = Vector3.ZERO
+	_note_position_sent()
+	_end_deco(player, "the move arrived", true)
+	print("SKILL move: this player arrived at (%.1f, %.1f, %.1f) by skill %d, footing %s" % [
+		player.position.x, player.position.y, player.position.z, skill_id, settled["footing"]])
+
+## Another player's skill move reached its point.
+func _other_skill_move_arrived(character_id: int, body: Node3D, to: Vector3) -> void:
+	if _other_bodies.get(character_id) == body:
+		_other_body_targets[character_id] = to
+	_end_deco(body, "the move arrived", true)
+
+## Turns a body to face a point (FUN_009c4260 with the move's heading).
+func _face_toward(body: Node3D, to: Vector3) -> void:
+	var d := Vector2(to.x - body.global_position.x, to.z - body.global_position.z)
+	if not d.is_zero_approx():
+		body.rotation.y = atan2(d.x, d.y)
+		if body != player:
+			_other_moved(body)
+
+# --- Skill slides (round 785): Ghost Walk's move and a knockback ---------------
+
+## body instance id -> {body, from, to, speed, image_step, since_image,
+## why, on_arrive}.
+var _skill_slides: Dictionary = {}
+
+## Slides `body` to `to` at `speed` units a second (horizontally, the
+## height following the ground), leaving an afterimage every `image_step`
+## units (0: none); `on_arrive` runs when it gets there.
+func _start_skill_slide(body: Node3D, to: Vector3, speed: float, image_step: float, why: String,
+		on_arrive: Callable = Callable()) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var key := body.get_instance_id()
+	if _skill_slides.has(key):
+		_finish_skill_slide(_skill_slides[key], false)
+	if body != player:
+		for id in _monster_bodies:
+			if _monster_bodies[id] == body:
+				_stop_monster_motion(int(id))
+				break
+	_skill_slides[key] = {"body": body, "from": body.global_position, "to": to, "speed": maxf(speed, 1.0),
+		"image_step": image_step, "since_image": 0.0, "why": why, "on_arrive": on_arrive}
+
+## Whether this player is being slid by a skill (its own walk waits).
+func _own_slide_active() -> bool:
+	return player != null and _skill_slides.has(player.get_instance_id())
+
+func _tick_skill_slides(delta: float) -> void:
+	if _skill_slides.is_empty():
+		return
+	for key in _skill_slides.keys():
+		var s: Dictionary = _skill_slides.get(key, {})
+		if s.is_empty():
+			continue
+		var body = s["body"]
+		if body == null or not is_instance_valid(body):
+			_skill_slides.erase(key)
+			continue
+		var b: Node3D = body
+		var to: Vector3 = s["to"]
+		var here := b.global_position
+		var flat := Vector2(to.x - here.x, to.z - here.z)
+		var step := float(s["speed"]) * delta
+		if flat.length() <= step:
+			_finish_skill_slide(s, true)
+			continue
+		var move := flat.normalized() * step
+		var next := Vector3(here.x + move.x, here.y, here.z + move.y)
+		var y = _ground_y_at(next)
+		next.y = float(y) if y != null else lerpf(here.y, to.y, step / maxf(flat.length(), 0.001))
+		b.global_position = next
+		if b == player:
+			player.velocity = Vector3.ZERO
+			_has_move_target = false
+		else:
+			_other_moved(b)
+		if float(s["image_step"]) > 0.0:
+			s["since_image"] = float(s["since_image"]) + step
+			while float(s["since_image"]) >= float(s["image_step"]):
+				s["since_image"] = float(s["since_image"]) - float(s["image_step"])
+				_skill_afterimage(b)
+
+func _finish_skill_slide(s: Dictionary, arrived: bool) -> void:
+	var body = s["body"]
+	if body != null and is_instance_valid(body):
+		_skill_slides.erase((body as Node3D).get_instance_id())
+		if arrived:
+			(body as Node3D).global_position = s["to"]
+			if body != player:
+				_other_moved(body)
+	var cb: Callable = s["on_arrive"]
+	if arrived and cb.is_valid():
+		cb.call()
+
+## The ground's height under a world point (the walk's graph), or null.
+func _ground_y_at(at: Vector3) -> Variant:
+	var pair := _nav_graph_for(at)
+	if pair.is_empty():
+		return null
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	var local := group.to_local(at)
+	var surface := graph.surface_at(local.x, local.z, local.y)
+	return group.to_global(Vector3(local.x, surface.height, local.z)).y
+
+## An afterimage of `body` where it stands (READ: FUN_00a50f70 makes one every
+## 20 units of a skill move, FUN_00a55ac0 posing a new object as the body
+## stands). How long it stays and how it fades were not read (OPEN): here a
+## still copy of the posed skeleton and its meshes, half transparent, fading
+## out over AFTERIMAGE_SECONDS (OURS).
+const AFTERIMAGE_SECONDS := 0.5
+const AFTERIMAGE_START_ALPHA := 0.5
+func _skill_afterimage(body: Node3D) -> void:
+	var skel := SkillEffects.skeleton_of(body)
+	if skel == null or not skel.is_inside_tree():
+		return
+	var copy := skel.duplicate(0) as Skeleton3D
+	if copy == null:
+		return
+	for i in skel.get_bone_count():
+		copy.set_bone_pose_position(i, skel.get_bone_pose_position(i))
+		copy.set_bone_pose_rotation(i, skel.get_bone_pose_rotation(i))
+		copy.set_bone_pose_scale(i, skel.get_bone_pose_scale(i))
+	var parent := body.get_parent()
+	if parent == null:
+		copy.free()
+		return
+	parent.add_child(copy)
+	copy.global_transform = skel.global_transform
+	var geoms: Array = copy.find_children("*", "GeometryInstance3D", true, false)
+	for g in geoms:
+		(g as GeometryInstance3D).transparency = 1.0 - AFTERIMAGE_START_ALPHA
+		(g as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var tween := create_tween()
+	tween.set_parallel(true)
+	for g in geoms:
+		tween.tween_property(g, "transparency", 1.0, AFTERIMAGE_SECONDS)
+	tween.chain().tween_callback(copy.queue_free)
 
 ## Puts the walk's footing (_nav_footing) at a skill-move landing at once, so
 ## the player stands on the graph there rather than at the packet's height

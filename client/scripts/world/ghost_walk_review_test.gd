@@ -332,7 +332,7 @@ func _make_world() -> Node:
 		"\treturn null",
 		"func _audio_cast_start(_skill_id: int, _monster_id: int = -1, _fx_timings: Dictionary = {}) -> void:",
 		"\tpass",
-		"func _ground_point_at(_screen_pos: Vector2) -> Variant:",
+		"func _ground_point_at(_screen_pos: Vector2, _length: float = 2000.0) -> Variant:",
 		"\treturn ground_point",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
@@ -397,8 +397,8 @@ func _ghost_cast(world: Node, from: Vector3, point: Vector3) -> Array:
 	world.set("_last_attack_target", -1)
 	world.set("ground_point", point)
 	var buf := _fresh_socket()
+	# Round 785: the key casts at once at the cursor's point (no pick mode).
 	world.call("_cast_skill", 114, "SKILL_CH_LIGHTNING_GYEONGGONG_B_01")
-	world.call("_dispatch_left_click", Vector2(300, 200))
 	var sends := _ground_sends(buf)
 	_clear_in_flight()
 	return sends
@@ -439,6 +439,7 @@ func _test_matched_settle(world: Node) -> void:
 	out.encode_float(20, sends[0].y)
 	out.encode_float(24, sends[0].z)
 	world.call("_on_skill_moved", skill_net.call("decode_skill_move", out))
+	world.call("_tick_skill_slides", 10.0)
 	var player: Node3D = world.get("player")
 	_check(is_equal_approx(player.position.y, TERRAIN_Y) and int(world.get("_nav_footing")) == NavGraph.ON_TERRAIN,
 		"the echoed landing takes the walk's own footing: the ground at 10.5, not the roof (y %s, footing %s)" % [

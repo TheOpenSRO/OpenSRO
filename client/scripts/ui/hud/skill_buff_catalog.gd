@@ -203,7 +203,27 @@ static func parse_row(cols: PackedStringArray) -> Dictionary:
 	# value[0] is not read there (OPEN). [] when the row has no 'tele'.
 	var tele: PackedInt64Array = w["values"].get("tele", PackedInt64Array())
 	info["tele"] = [int(tele[0]), int(tele[1])] if tele.size() >= 2 else []
+	# Round 785: 'tel2' (the Europe Teleport rows) -- READ, the client's
+	# parser FUN_009bbca0 files 'tele' at ref +0xc8 and 'tel2' at +0xcc, and
+	# the skill use FUN_0081ba10 (0x81bf26..0x81bf38) takes the cursor's
+	# point for a row with either (SkillCursorCast).
+	var tel2: PackedInt64Array = w["values"].get("tel2", PackedInt64Array())
+	info["tel2"] = [int(tel2[0]), int(tel2[1])] if tel2.size() >= 2 else []
+	# Round 785: the timing and re-use columns (skilldata's own, 0-based):
+	# 11 Action_PreparingTime, 12 Action_CastingTime, 14 Action_ReuseDelay
+	# and 18 Action_Overlap, whose high byte is the cooldown group
+	# (SkillCooldowns' header).
+	info["prep"] = _int_col(cols, 11)
+	info["cast"] = _int_col(cols, 12)
+	info["reuse"] = _int_col(cols, 14)
+	info["cooldown_group"] = (_int_col(cols, 18) >> 24) & 0xff
 	return info
+
+static func _int_col(cols: PackedStringArray, i: int) -> int:
+	if i >= cols.size():
+		return 0
+	var t := cols[i].strip_edges()
+	return int(t) if t.is_valid_int() else 0
 
 ## The shard file names a list names, in its order: "SkillData_1000ENC.txt"
 ## -> "skilldata_1000.txt" (the plain twin).
@@ -312,7 +332,16 @@ func info(skill_id: int) -> Dictionary:
 ## row has none or the index does not know the id (yet).
 func tele_reach(skill_id: int) -> float:
 	var tele: Array = info(skill_id).get("tele", [])
+	if tele.size() < 2:
+		tele = info(skill_id).get("tel2", [])
 	return float(tele[1]) if tele.size() >= 2 else 0.0
+
+## Round 785: whether the row casts at the cursor's point -- it carries
+## 'tele' or 'tel2' (READ, FUN_0081ba10's ref +0xc8 / +0xcc test). False
+## while the index is not ready.
+func casts_at_cursor(skill_id: int) -> bool:
+	var row := info(skill_id)
+	return not (row.get("tele", []) as Array).is_empty() or not (row.get("tel2", []) as Array).is_empty()
 
 ## The skill-name table: the provider's (HudPanels'), else read here.
 func names() -> UiTextTable:

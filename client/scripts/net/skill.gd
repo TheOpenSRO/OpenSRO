@@ -210,6 +210,10 @@ class SkillCast:
 	var x: float
 	var y: float
 	var z: float
+	## Round 785: the skill-action tail (SkillHits: the act's per-target,
+	## per-hit results and the caster's move; the start carries the move
+	## only), a trailing suffix tagged 0xAB, or null when none came.
+	var hits: SkillHits = null
 
 const SKILL_CAST_SIZE := 43
 
@@ -228,6 +232,7 @@ static func decode_skill_cast(data: PackedByteArray) -> SkillCast:
 	c.x = data.decode_float(31)
 	c.y = data.decode_float(35)
 	c.z = data.decode_float(39)
+	c.hits = SkillHits.decode(data, SKILL_CAST_SIZE)
 	return c
 
 ## Result of decode_learn_result().

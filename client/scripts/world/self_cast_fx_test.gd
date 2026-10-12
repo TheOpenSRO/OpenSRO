@@ -13,21 +13,20 @@ extends SceneTree
 ## order, and every effect is a tiny synthetic EfpEffect -- never game data.
 ## The sequencer's clock is driven by SkillEffects.process(now_ms) here.
 ##
-## Checked:
-## - a self-cast buff runs READY at the send, ACT_S and its ACT_L aura on its
-##   own OpBuffStart, nothing more on the accepted reply, and the aura goes on
-##   its OpBuffEnd;
+## Checked (round 785: the cast is drawn when the server answers, by its
+## decoration, SkillDeco):
+## - a self-cast buff whose record names no clip (the imbues) draws nothing
+##   at the send and no READY effect at all (READ, FUN_00a54f00 ends such a
+##   decoration); its own OpBuffStart plays ACT_S and its ACT_L aura, the
+##   accepted reply adds nothing, and the aura goes on its OpBuffEnd;
 ## - a non-buff self cast acts on its accepted reply;
-## - a Ghost Walk's WAIT loop holds past its skilldata time and stops on
-##   OpSkillMove, on a refusal, or (fallback) after the WAIT clip's length;
+## - Ghost Walk draws nothing at the send; the answer starts its WAIT clip and
+##   loop effect, which hold through the move (OpSkillMove slides the player
+##   at 500 u/s) and stop when it arrives; a refusal draws nothing;
 ## - another player's buff aura goes on that player's body, a monster's
 ##   (ownerKind 1) on the monster even when its id is this player's, and this
 ##   player is decided by the buff board's own check (the sit answer's id
 ##   when no OpSelfId came).
-##
-## NEGATIVE: against the merge of feat/efprender into int/skills without this
-## wiring, the ACT-on-OpBuffStart, WAIT-held, stop-on-OpSkillMove and
-## refusal checks FAIL (docs/WORLD_ISSUES.md, the 616-620 integration note).
 
 var _failures := 0
 var _net: Node
@@ -52,7 +51,6 @@ func _initialize() -> void:
 		quit(1))
 	await process_frame
 	_S = load("res://scripts/net/skill.gd")
-	_test_timings()
 	_net = root.get_node_or_null("NetClient")
 	_check(_net != null, "the NetClient autoload is there")
 	if _net != null:
@@ -83,26 +81,6 @@ func _initialize() -> void:
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
-
-# --- SelfCast.effect_timings (pure) ---------------------------------------------
-
-func _test_timings() -> void:
-	var sc: GDScript = load("res://scripts/world/self_cast.gd")
-	var ok: bool = sc != null and sc.has_method("effect_timings")
-	_check(ok, "SelfCast.effect_timings exists")
-	if not ok:
-		return
-	var none := {"ready": [], "wait": [], "shot": []}
-	var wait := {"ready": [], "wait": [32], "shot": [], "group": "DEFAULT"}
-	var ready_only := {"ready": [5], "wait": [], "shot": []}
-	_check(sc.call("effect_timings", none, 0.0) == {"prep_ms": 0, "cast_ms": 0},
-		"no body clip (Grass Walk, the imbues): the phases advance at once")
-	_check(sc.call("effect_timings", wait, 1.5) == {"prep_ms": 0, "cast_ms": 1500},
-		"a WAIT clip: WAIT from the send, its fallback end the clip's length")
-	_check(sc.call("effect_timings", wait, 0.0) == {"prep_ms": 0, "cast_ms": int(SkillEffects.READY_LOOP_MAX * 1000.0)},
-		"a WAIT with no clip in the body: the loop guard")
-	_check(sc.call("effect_timings", ready_only, 2.0) == {}, "only a READY (timing unread): skilldata's columns")
-	_check(sc.call("effect_timings", {}, 0.0) == {}, "no row: skilldata's columns")
 
 # --- synthetic tables ---------------------------------------------------------
 
@@ -193,9 +171,8 @@ func _make_world() -> Node:
 		"\treturn {\"TEST_IMBUE_A\": {\"ready\": [], \"wait\": [], \"shot\": []},",
 		"\t\t\"TEST_SELFHEAL_A\": {\"ready\": [], \"wait\": [], \"shot\": []},",
 		"\t\t\"TEST_GHOST_A\": {\"ready\": [], \"wait\": [32], \"shot\": [], \"group\": \"DEFAULT\"}}",
-		"func _play_self_cast_anim(basic_code: String, _anim_base: String) -> float:",
-		"\tbody_clips.append(basic_code)",
-		"\treturn 1.5 if basic_code.begins_with(\"TEST_GHOST\") else 0.0",
+		"func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) -> void:",
+		"\tbody_clips.append([String(e[\"code\"]), phase, action_type, loop])",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
 	var scene := load("res://scenes/World3D.tscn") as PackedScene
@@ -287,19 +264,19 @@ func _test_buff(world: Node) -> void:
 	_made.clear()
 	_fresh_socket()
 	world.call("_send_self_cast", 90, "TEST_IMBUE_A_01", 0, Vector3.ZERO)
-	_check(_made_named("charge.efp").size() == 1, "the imbue's READY effect plays at the send")
-	_check(_made_named("motion.efp").is_empty() and _made_named("keep.efp").is_empty(),
-		"and nothing acts before the server answers")
+	_check(_made.is_empty(), "nothing is drawn at the send (retail draws a cast on 0xB070)")
 	_buff_start(OWN, 90, 61, 0)
 	var motion := _made_named("motion.efp")
 	var keep := _made_named("keep.efp")
+	_check(_made_named("charge.efp").is_empty(),
+		"a record naming no clip draws no READY effect (READ: FUN_00a54f00 ends the decoration)")
 	_check(motion.size() == 1 and _live(motion[0]) and motion[0].get_parent() == player,
 		"its own OpBuffStart plays ACT_S on the player (got %d)" % motion.size())
 	_check(keep.size() == 1 and _live(keep[0]) and keep[0].get_parent() == player and bool(keep[0].loop),
 		"and attaches the ACT_L aura, looping, on the player")
 	_check(SkillEffects.aura_count() == 1, "one aura is held (got %d)" % SkillEffects.aura_count())
 	var order: Array = _made.map(func(m): return m[0])
-	_check(order == ["charge.efp", "motion.efp", "keep.efp"], "READY -> ACT_S -> ACT_L, in that order (got %s)" % str(order))
+	_check(order == ["motion.efp", "keep.efp"], "ACT_S -> ACT_L, in that order (got %s)" % str(order))
 	_reply("", 0)
 	_check(_made_named("motion.efp").size() == 1 and _made_named("keep.efp").size() == 1,
 		"the accepted reply after the start adds nothing (ACT once per cast)")
@@ -316,41 +293,40 @@ func _test_non_buff(world: Node) -> void:
 
 func _test_ghost_walk(world: Node) -> void:
 	var player: Node3D = world.get("player")
-	# 1. Held, then stopped by OpSkillMove.
+	var clips: Array = world.get("body_clips")
+	clips.clear()
+	# 1. Answered: the WAIT clip and loop hold through the move.
 	_made.clear()
 	_fresh_socket()
+	player.position = Vector3.ZERO
 	world.call("_send_self_cast", 114, "TEST_GHOST_A_01", 2, POINT)
+	_check(_made_named("move_wait.efp").is_empty() and clips.is_empty(), "nothing is drawn at the send")
+	_reply("", 2)
 	var waits := _made_named("move_wait.efp")
 	_check(waits.size() == 1 and _live(waits[0]) and waits[0].get_parent() == player and bool(waits[0].loop),
-		"Ghost Walk's WAIT loop plays on the player at the send")
-	_check(SkillEffects.cast_phase(player) == SkillAudio.WAIT, "the cast is in WAIT (got %d)" % SkillEffects.cast_phase(player))
-	SkillEffects.process(SkillEffects._now() + 1000)
-	_check(SkillEffects.cast_phase(player) == SkillAudio.WAIT and waits.size() == 1 and _live(waits[0]),
-		"1 s on (skilldata's prep + cast is 0) it still holds")
+		"the answer starts Ghost Walk's WAIT loop effect on the player")
+	_check(clips.size() == 1 and clips[0] == ["TEST_GHOST_A_01", 1, 32, true],
+		"and its WAIT clip, ANI_SKILL_7, looping (got %s)" % str(clips))
 	_skill_move(OWN, 114, POINT)
-	_check(SkillEffects.cast_phase(player) == -1, "OpSkillMove ends the cast (SHOT)")
-	_check(waits.size() == 1 and not _live(waits[0]), "and stops the WAIT loop")
-	_reply("", 2)
-	# 2. Refused.
+	_check(waits.size() == 1 and _live(waits[0]), "OpSkillMove: the loop holds while the player slides")
+	_check(player.position.distance_to(POINT) > 1.0, "the player does not snap")
+	world.call("_tick_skill_slides", 1.0)
+	var flat := Vector2(player.position.x, player.position.z).length()
+	_check(absf(flat - 500.0) < 0.5, "it slides 500 units a second (READ, 0xdcc19c; got %.1f)" % flat)
+	_check(world.call("_own_slide_active"), "and its own walk waits")
+	world.call("_tick_skill_slides", 10.0)
+	_check(Vector2(player.position.x, player.position.z).distance_to(Vector2(POINT.x, POINT.z)) < 0.01,
+		"it arrives at the point")
+	_check(not _live(waits[0]), "the arrival ends the cast: the WAIT loop stops")
+	_check(not world.call("_own_slide_active"), "and the walk is free again")
+	# 2. Refused: nothing was drawn.
 	_made.clear()
+	clips.clear()
 	_fresh_socket()
 	world.call("_send_self_cast", 114, "TEST_GHOST_A_01", 2, POINT)
-	waits = _made_named("move_wait.efp")
 	_reply("not enough mana", 2)
-	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and not _live(waits[0]),
-		"a refusal stops the WAIT loop")
-	# 3. No answer: the WAIT clip's length (1.5 s) ends it.
-	_made.clear()
-	_fresh_socket()
-	world.call("_send_self_cast", 114, "TEST_GHOST_A_01", 2, POINT)
-	waits = _made_named("move_wait.efp")
-	SkillEffects.process(SkillEffects._now() + 1400)
-	_check(SkillEffects.cast_phase(player) == SkillAudio.WAIT, "with no answer it holds through the WAIT clip")
-	SkillEffects.process(SkillEffects._now() + 1600)
-	_check(SkillEffects.cast_phase(player) == -1 and waits.size() == 1 and not _live(waits[0]),
-		"and ends after the clip's length (the fallback)")
-	_check((world.get("body_clips") as Array).count("TEST_GHOST_A_01") == 3, "each cast played the body clip")
-	_reply("", 2)
+	_check(_made_named("move_wait.efp").is_empty() and clips.is_empty(), "a refusal draws nothing")
+	player.position = Vector3.ZERO
 
 func _test_other_owners(world: Node) -> void:
 	var player: Node3D = world.get("player")

@@ -7,7 +7,8 @@ extends SceneTree
 ##    value[1], as the retail server's FUN_005862e0 clamps, then walked on the
 ##    navmesh and stopped at the first wall (no slide), at the ground's height;
 ##    the OpSkillMove answering it settles the player's footing at once.
-## 2. A self cast's body animation from skilleffect.txt's skillaniset2 row:
+## 2. A self cast's body animation from skilleffect.txt's skillaniset2 row
+##    (round 785: its decoration, started when the server answers):
 ##    nothing when READY, WAIT and SHOT are all "none" (Grass Walk, the
 ##    imbues), the WAIT action type when there is one (Ghost Walk's
 ##    ANI_SKILL_7, type 32) -- never the weapon swing stand-in.
@@ -183,9 +184,12 @@ func _test_aniset_parse() -> void:
 		"lists split on commas, ANI_READY04 43, ANI_WAIT04 94, and ANI_SHOT (not in the map) is dropped (got %s)" % str(sets.get("SKILL_TEST_LIST", {})))
 	_check(not sets.has("SKILL_TEST_OTHER"), "rows of other sections are not animation rows")
 	_check(ser.call("aniset_for", sets, "SKILL_TEST_WAIT_03") == sets.get("SKILL_TEST_WAIT", {}), "a level suffix is tolerated")
-	_check(ser.call("cast_body_anim", sets["SKILL_TEST_NONE"]) == {"kind": "none"}, "all-none plays nothing")
-	_check(ser.call("cast_body_anim", sets["SKILL_TEST_WAIT"]) == {"kind": "wait", "type": 32, "group": "default"}, "a WAIT plays its type in the row's group")
-	_check(ser.call("cast_body_anim", {}) == {"kind": "unread"}, "no row keeps the old path")
+	# Round 785: the decoration's plan (SkillDeco.plan, FUN_00a54f00).
+	var deco := load("res://scripts/effects/skill_deco.gd") as GDScript
+	_check(String(deco.call("plan", sets["SKILL_TEST_NONE"], 0)["kind"]) == "none", "all-none plays nothing")
+	var w: Dictionary = deco.call("plan", sets["SKILL_TEST_WAIT"], 0)
+	_check(int(w["wait"]) == 32 and String(w["group"]) == "default", "a WAIT plays its type in the row's group")
+	_check(String(deco.call("plan", {}, 0)["kind"]) == "none", "no row plays nothing (no stand-in)")
 
 # --- the world ---------------------------------------------------------------
 
@@ -213,12 +217,13 @@ func _make_world() -> Node:
 		"\tswings += 1",
 		"\treturn 1.0",
 		"func _body_animation_for(_gender: String, action_type: int, _group: String = \"default\") -> BanReader.ParsedAnimation:",
-		"\tbody_types.append(action_type)",
-		"\tbody_groups.append(_group)",
 		"\treturn null",
+		"func _deco_play_clip(e: Dictionary, _phase: int, action_type: int, _loop: bool) -> void:",
+		"\tbody_types.append(action_type)",
+		"\tbody_groups.append(String(e[\"group\"]))",
 		"func _audio_cast_start(_skill_id: int, _monster_id: int = -1, _fx_timings: Dictionary = {}) -> void:",
 		"\tpass",
-		"func _ground_point_at(_screen_pos: Vector2) -> Variant:",
+		"func _ground_point_at(_screen_pos: Vector2, _length: float = 2000.0) -> Variant:",
 		"\treturn ground_point",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
@@ -288,8 +293,8 @@ func _ghost_cast(world: Node, from: Vector3, point: Vector3) -> Variant:
 	world.set("_last_attack_target", -1)
 	world.set("ground_point", point)
 	var buf := _fresh_socket()
+	# Round 785: the key casts at once at the cursor's point (no pick mode).
 	world.call("_cast_skill", 114, "SKILL_CH_LIGHTNING_GYEONGGONG_B_01")
-	world.call("_dispatch_left_click", Vector2(300, 200))
 	var sends := _ground_sends(buf)
 	_clear_in_flight()
 	return sends[0] if sends.size() == 1 else null
@@ -333,8 +338,10 @@ func _test_skill_move_footing(world: Node) -> void:
 	# clamp): the footing is settled at once and the player stands on it.
 	world.set("_ground_landing", null)
 	world.call("_on_skill_moved", skill_net.call("decode_skill_move", _move_bytes(4242, 114, Vector3(60, 25, 200))))
+	# Round 785: the move slides at 500 u/s; it is settled on arrival.
+	world.call("_tick_skill_slides", 10.0)
 	_check(player.position.distance_to(Vector3(60, TERRAIN_Y, 200)) < 0.01,
-		"an OpSkillMove off the ground puts the player on it at once (got %s)" % str(player.position))
+		"an OpSkillMove off the ground puts the player on it when it arrives (got %s)" % str(player.position))
 	var graph = world.get("_nav_footing_graph")
 	_check(graph != null and int(world.get("_nav_footing")) == NavGraph.ON_TERRAIN,
 		"and the walk's footing is settled there (graph %s, footing %s)" % [str(graph), str(world.get("_nav_footing"))])
@@ -355,6 +362,8 @@ func _test_cast_anim(world: Node) -> void:
 	world.set("cast_clips", [])
 	world.set("_player_weapon_group", "sword")
 	_ghost_cast(world, Vector3(50, TERRAIN_Y, 200), Vector3(50, TERRAIN_Y, 150))
+	_check((world.get("body_types") as Array).is_empty(), "nothing plays at the send (round 785)")
+	world.call("_fx_self_cast_accepted")
 	_check((world.get("body_types") as Array) == [32] and (world.get("cast_clips") as Array).is_empty(),
 		"Ghost Walk plays its WAIT, action type 32 (types %s, clips %s)" % [str(world.get("body_types")), str(world.get("cast_clips"))])
 	_check((world.get("body_groups") as Array) == ["default"],

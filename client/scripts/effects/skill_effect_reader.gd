@@ -287,24 +287,6 @@ static func defense_efp_for(sets: Dictionary, basic_codes: Array) -> String:
 			best = String(row["defense"])
 	return best
 
-## What the body plays when the skill's deco starts, from its aniset row
-## (FUN_00a54f00, READ): {"kind": "none"} when READY, WAIT and SHOT are all
-## empty (retail plays nothing); {"kind": "wait", "type": t, "group": g} when
-## WAIT names one (played at once in the row's AniGroup g; the entry among
-## several is picked by a per-deco byte, OPEN -- the first is taken); {"kind": "unread"} when only READY or SHOT
-## name one (their timing was not read) or there is no row.
-static func cast_body_anim(row: Dictionary) -> Dictionary:
-	if row.is_empty():
-		return {"kind": "unread"}
-	var ready: Array = row.get("ready", [])
-	var wait: Array = row.get("wait", [])
-	var shot: Array = row.get("shot", [])
-	if ready.is_empty() and wait.is_empty() and shot.is_empty():
-		return {"kind": "none"}
-	if not wait.is_empty():
-		return {"kind": "wait", "type": int(wait[0]), "group": String(row.get("group", ""))}
-	return {"kind": "unread"}
-
 static func _lines(data: PackedByteArray) -> PackedStringArray:
 	if data.is_empty():
 		return PackedStringArray()
