@@ -16,6 +16,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/quest"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/skill"
@@ -318,6 +319,37 @@ func keepUpInReach(attacker world.Position, m combat.Monster, weaponRange int) b
 	return combat.InReach(dist, reach)
 }
 
+// refusedTooFar is the reach refusal's text (the client's
+// CombatNet.REFUSED_TOO_FAR).
+const refusedTooFar = "too far away"
+
+// resyncMonster sends sess monster id's leg as the server has it now -- an
+// OpMonsterMoved from its current position to its destination, or a stop
+// where it stands (speed 0 for a monster that never walked: the client
+// places it at once) -- ahead of a reach refusal (round 785, OURS). The
+// refusal means the client measured a distance the server did not; the
+// client walks again toward the position this gives it, rather than toward
+// the one it drew. Read and written under the session's motion-wire lock, so
+// it cannot overtake a newer leg the AI tick is writing (monsterWireLock).
+func resyncMonster(sess *gateway.Session, monsters *combat.Hub, id int64) {
+	if sess == nil || monsters == nil || id == 0 {
+		return
+	}
+	l := monsterWireLock(sess)
+	l.Lock()
+	defer l.Unlock()
+	m, ok := monsters.Get(id)
+	if !ok || m.HP <= 0 {
+		return
+	}
+	msg := &MonsterMoved{MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
+		DestX: float32(m.X), DestZ: float32(m.Z), Speed: float32(m.MoveSpeed), Mode: m.MoveMode}
+	if m.Moving {
+		msg.DestX, msg.DestZ = float32(m.DestX), float32(m.DestZ)
+	}
+	_ = sess.Send(&proto.Packet{Opcode: OpMonsterMoved, Data: msg.Encode()})
+}
+
 // combatDeps is everything a swing needs, bundled so a repeat can fire from
 // outside a packet handler.
 type combatDeps struct {
@@ -378,6 +410,14 @@ func armKeepUp(
 			if rt := monsterAIRuntime.Load(); rt != nil {
 				rt.tracef("ai: keep-up of %d on monster %d ended out of reach", characterID, target)
 			}
+			// Round 785: the client is told, so it walks back into reach
+			// and swings again -- the walk the engine's phase 1 makes
+			// (MoveTowardObject), done where OpenSRO walks the player. The
+			// run used to end in silence and the player stood idle beside
+			// a monster still fighting it. The refusal names the monster,
+			// and the monster's own position goes first (resyncMonster).
+			resyncMonster(sess, deps.monsters, target)
+			_ = sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusedTooFar, MonsterID: target}).Encode()})
 			return 0, false
 		}
 		now := time.Now()

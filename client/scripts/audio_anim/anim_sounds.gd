@@ -38,9 +38,11 @@ const MOAN := "moan"            ## 0xa720b0
 const NOOP := "noop"            ## `mov eax,1; ret 0xc`: silent in retail
 const PICKUP := "pickup"        ## 0xa6fec0: `ITEM:<name>:-:-:-:-`, no position
 const BLOCK := "block"          ## 0xa70280: PC only, `PLAYER:<name>:-:-:<NORMAL|CRITYCAL>:-`
-## Handlers in the table that this round does not build: they need a skill's
-## Basic_Code or Basic_Group (swing_s, shout), are fired by code rather than
-## by an animation (hits, items, UI), or were not traced (struct).
+## SKILL (snd_swing_s*, voc_shout*) keys by the body's current skill -- built
+## in round 785, with a monster's plain swing (SWING), once the server named
+## a monster's attack skill (Owner.skill_ctx). Handlers in the table that are
+## not built: fired by code rather than by an animation (hits, items, UI), or
+## not traced (struct).
 ## snd_pickup and snd_blocking are fired by animation tracks in retail (66
 ## and 67 type-keyed tracks in the archive's character files), so they are
 ## built here; code may fire snd_blocking too, but the track path is the
@@ -120,6 +122,24 @@ class Owner:
 	## A monster's is asked too, only for whether it has a cell; with no
 	## callable the body counts as having none.
 	var material: Callable = Callable()
+	## () -> {"code", "group"}: the body's CURRENT skill (round 785) -- the
+	## skill of its running skill action, which the handlers key a monster's
+	## swing and every skill swing and shout by. READ: an animation track
+	## passes skill 0 to CGEffSoundBody::vslot_009, which substitutes
+	## FUN_009ce0d0(obj): the first IDecoSkill in obj+0x284 with +0xc6 set,
+	## its skill id (deco+0x5c); the code is the Basic_Code (and the group the
+	## Basic_Group) after following Basic_Original to its root
+	## (GEffSound::FUN_00a65180). SkillAudio.context_of answers it. With no
+	## callable, or no current skill, both are "-" (DAT_00d81ea0, L"-").
+	var skill_ctx: Callable = Callable()
+
+	## The current skill's {"code", "group"}, "-" for none.
+	func skill_context() -> Dictionary:
+		if skill_ctx.is_valid():
+			var got = skill_ctx.call()
+			if got is Dictionary:
+				return got
+		return {"code": "-", "group": "-"}
 
 var _owners: Dictionary = {}   # skeleton instance id -> [skeleton, Owner]
 var _state: Dictionary = {}    # skeleton instance id -> [anim, instance start, clip ms]
@@ -339,7 +359,11 @@ static func key_for(owner: Owner, handle: String) -> Dictionary:
 			return {"key": SoundTable.make_key(owner.token, handle), "why": ""}
 		SWING:
 			if not owner.is_pc:
-				return {"key": "", "why": "a monster's swing is keyed by its skill's Basic_Code, which it is not sent"}
+				# Round 785 (READ, 0xa71510's non-player branch): the sound
+				# object, the handle and the current skill's Basic_Code.
+				if owner.token == "":
+					return {"key": "", "why": "no sound object"}
+				return {"key": SoundTable.make_key(owner.token, handle, _code_token(owner.skill_context(), "code")), "why": ""}
 			var weapon := weapon_token(owner.weapon_kind)
 			if weapon == "":
 				return {"key": "", "why": "weapon kind %d has no token" % owner.weapon_kind}
@@ -362,7 +386,32 @@ static func key_for(owner: Owner, handle: String) -> Dictionary:
 			if owner.token == "":
 				return {"key": "", "why": "no sound object"}
 			return {"key": SoundTable.make_key(owner.token, handle), "why": ""}
+		SKILL:
+			# Round 785 (READ): snd_swing_s1..4 (0xa718d0; s2-s4 jump to it)
+			# key a player character as PLAYER with the current skill's
+			# Basic_Group, anything else by its sound object with the
+			# Basic_Code; voc_shout1/2 (0xa72260; shout2 0xa72570 jumps to
+			# it) key a player character by its OWN sound object with no
+			# skill token, anything else by its sound object with the
+			# Basic_Code.
+			var ctx := owner.skill_context()
+			if handle.begins_with("voc_shout"):
+				if owner.token == "":
+					return {"key": "", "why": "no sound object"}
+				if owner.is_pc:
+					return {"key": SoundTable.make_key(owner.token, handle), "why": ""}
+				return {"key": SoundTable.make_key(owner.token, handle, _code_token(ctx, "code")), "why": ""}
+			if owner.is_pc:
+				return {"key": SoundTable.make_key("PLAYER", handle, _code_token(ctx, "group")), "why": ""}
+			if owner.token == "":
+				return {"key": "", "why": "no sound object"}
+			return {"key": SoundTable.make_key(owner.token, handle, _code_token(ctx, "code")), "why": ""}
 	return {"key": "", "why": "%s handler not built yet" % kind}
+
+## A skill context's code or group, "-" when it has none.
+static func _code_token(ctx: Dictionary, field: String) -> String:
+	var v := String(ctx.get(field, "-"))
+	return v if v != "" else "-"
 
 ## The footstep material id (MATERIALS) of the cell a body stands in, or
 ## -1 when there is none. `footing` is NavGraph.ON_TERRAIN or an object

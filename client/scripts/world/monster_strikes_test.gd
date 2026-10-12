@@ -242,6 +242,8 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	world.call("_on_monster_attacked", _push_for(r1, 42))
 	_check(body.rotation.y == 0.0, "the attacker's own push is not drawn on receipt")
 	world.call("_settle_counter", 7, r1, w1)
+	# Round 785: the monster turns over its swing (CombatFacing), not in a snap.
+	world.call("_step_combat_faces", 1.0)
 	_check(_front(body).is_equal_approx(Vector3(1, 0, 0)),
 		"as the blow lands the push draws it: the monster turns to the player, +X (front %s)" % str(_front(body)))
 	_check(not waits.has(7), "and the wait is done")
@@ -259,6 +261,7 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	var r3 := _result(9, 140)
 	var w3 := MonsterStrikes.expect(waits, 7, r3)
 	world.call("_on_monster_attacked", _push_for(r3, 55))
+	world.call("_step_combat_faces", 1.0)
 	_check(_front(body).is_equal_approx(Vector3(0, 0, 1)),
 		"a blow on another player is drawn at once, the monster turned to that body, +Z (front %s)" % str(_front(body)))
 	_check(w3["push"] == null, "and does not claim this client's own counter")
@@ -303,6 +306,7 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	body.rotation.y = 0.0
 	label.text = ""
 	world.call("_on_monster_attacked", _push_for(_result(200, 76, false, true, true), 77))
+	world.call("_step_combat_faces", 1.0)
 	_check(_front(body).is_equal_approx(Vector3(1, 0, 0)),
 		"an unpaired blow on an undrawn target is drawn on this player: the monster turns to +X (front %s)" % str(_front(body)))
 	_check(label.text == "You were killed. Lost 25900 experience.",
