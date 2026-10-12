@@ -452,6 +452,15 @@ client/tools/remote_godot.sh script res://tools/efp_probe.gd -- --pk2dir=/opt/sr
     --census --equip --drift --modes=jump,zone --fps=20 --quiet
 ```
 
+Round 786's second part: `zigzag` turns the walk 90 degrees every half second (a player's clicks);
+`--physics=60` moves the host on 60 Hz ticks, as World3D moves the player, and `--physics-effects`
+places the effect through the game's tick gate (`EfpEffect.tick_gate`), so `--fps=240 --physics=60`
+with and without it is the gate's A/B. `efp_linkmode_census.gd` holds every node's LinkMode
+controller against its body's follow block (CEFCLinkMode::vslot_005, 0x00cb9370). In the client,
+`OPENSRO_QA_FX_NOGATE=1` turns the gate off and `OPENSRO_QA_PHYSICS_TICKS=24` runs the physics
+slower than the movie writer's 60 frames, so a render shows a fast screen's case;
+`/var/tmp/r786-fx/play.sh` and `walkshot.sh` on the box are the round's ordinary-play recipes.
+
 **EquipFx's masters in Rust** (round 763, `EfpSimNative`; `native/README.md`, "The effect
 simulation"). Three checks hold the native simulation to the GDScript one, bit for bit:
 - `res://scripts/efp/efp_native_test.gd` (a suite; synthetic effects, both ways);

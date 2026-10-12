@@ -1844,6 +1844,17 @@ var _wire_logging := false
 const CHAT_LEFT := 2.0
 
 func _ready() -> void:
+	# Round 786: the bodies here move on physics ticks, so the effects on them
+	# are placed once a tick (EfpEffect.tick_gate, its _process).
+	EfpEffect.gate_ticks(true)
+	# QA (round 786): OPENSRO_QA_PHYSICS_TICKS=<n> runs the physics at n a
+	# second, so a movie render (60 frames a second) shows what a player
+	# rendering faster than the physics sees (e.g. 24: 2.5 frames a tick, as
+	# 144 fps over 60 ticks).
+	var qa_ticks := OS.get_environment("OPENSRO_QA_PHYSICS_TICKS")
+	if qa_ticks.is_valid_int() and int(qa_ticks) > 0:
+		Engine.physics_ticks_per_second = int(qa_ticks)
+		print("QA: physics at %d ticks a second" % int(qa_ticks))
 	# SSAO and glow (round 693): off, the look the project verified under the
 	# Compatibility renderer, which has neither; the Options window may pass
 	# its own choice (WorldPostEffects). Before the title branch: the title's
@@ -7211,6 +7222,7 @@ func _exit_tree() -> void:
 	# Round 786: a zone change left mid-way (the world freed during its
 	# load) must not hold the next world's effects.
 	EfpEffect.pause_world(false)
+	EfpEffect.gate_ticks(false)
 	BerserkLook.clear()
 	StateLook.clear()
 	_fx_owner_buffs.clear()
@@ -26463,11 +26475,15 @@ func _qa_play_effects(spec: String) -> void:
 ##                     first, measures each effect's still bound)
 ##   turn:<deg>        turn the body that many degrees a tick (0 stops)
 ##   jump:<dx>,<dz>    move the body that far in one tick (a GM move)
+##   speed:<v>         run at v units a second (_apply_buff_run_speed)
+##   corr:<dx>,<dz>    the server's correction that far away (a snap,
+##                     _apply_own_correction)
 ##   zone:<zone>@<x>,<z>[,<frame>]  a gate teleport's arrival as the server
 ##                     sends it (OpChangeZoneResult: that zone at (x, 0, z) in
 ##                     its frame, the gate's receipt first), through
 ##                     _on_change_zone_result -- the user's Donwhang -> Jangan
 ##   end               print the phase totals
+##   quit              end the run (a real-time run, QA_SHOT_REALTIME=1)
 ## A walk is OPENSRO_QA_WALK_TO's (a ground click). QA only.
 var _qa_fx_drift_spec := OS.get_environment("OPENSRO_QA_FXDRIFT")
 var _qa_fx_drift: FxDriftProbe = null
@@ -26514,10 +26530,23 @@ func _qa_fx_drift_step() -> void:
 					_qa_tick, r.zone, r.x, r.z, r.frame, player.global_position])
 				_teleport_arrival_pending = true
 				_on_change_zone_result(r)
+			"speed":
+				# Round 786: a run speed as a buff or /speed sets it.
+				_apply_buff_run_speed(int(arg), "QA FXDRIFT")
+			"corr":
+				# Round 786: the server's correction of this player that far
+				# from where it stands (_apply_own_correction, a snap).
+				var c := arg.split(",")
+				print("QA FXDRIFT tick %d correction by (%s, %s)" % [_qa_tick, c[0], c[1]])
+				_apply_own_correction(player.position + Vector3(float(c[0]), 0.0, float(c[1])), 0.0)
 			"end":
 				_qa_fx_drift.finish()
+				print("QA FXDRIFT tick %d: %d frames drawn so far" % [_qa_tick, Engine.get_frames_drawn()])
+			"quit":
+				get_tree().quit()
 	if _qa_fx_drift == null:
 		return
+	_qa_fx_drift.track(player)
 	if _qa_fx_drift_turn != 0.0:
 		player.rotation.y += deg_to_rad(_qa_fx_drift_turn)
 	var every_text := OS.get_environment("OPENSRO_QA_FXDRIFT_EVERY")
