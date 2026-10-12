@@ -25000,6 +25000,10 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# (or its chain link's) answer. A result that does not say (an older
 	# server) keeps the old rule: any answer while a cast is pending is its.
 	var told := result.hits != null and result.hits.has_skill_id()
+	if _combat_trace:
+		print("COMBAT result ms=%d names %s, cast pending %d" % [Time.get_ticks_msec(),
+			("skill %d" % result.hits.skill_id if result.hits.skill_id != 0 else "a plain swing") if told else "nothing (an older server)",
+			_pending_skill_id])
 	if told and result.hits.skill_id != 0:
 		var answered := result.hits.skill_id
 		var answered_code := _pending_skill_hit_code if answered == _pending_skill_id else ""
