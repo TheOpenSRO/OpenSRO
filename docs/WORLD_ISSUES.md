@@ -7732,13 +7732,16 @@ port 27781; logs in `/var/tmp/r781-action/live2/`, `live3/`):
   2: 4000, 3: 1000, 4: 1001 }`) and its sit/walk icons followed the motion.
 - Screenshots on the box, `/var/tmp/r781-action/shots/`: `seated_window_hotbar.png` (seated and
   walking: the window's stand and run buttons, quick slots 2-4), `window_seated_walking_x2.png`,
-  `hotbar_actions_x2.png`, `emote_rush.png`, `walking_beside_second.png`, `autoselect_attack.png`.
+  `hotbar_actions_x2.png`, `emote_rush.png`, `walking_beside_second.png`, `autoselect_attack.png`,
+  `rebased_no_emote_while_seated.png`.
   Screenshots show what happened; the claims above are the logs'.
 
 **Tests.** Client: `action_commands_test.gd` (the table, the emote bytes, Walk/Run's byte, Auto
 Select's strict 70, the reader, the `0x3091` codec), `hud_action_pane_test.gd` (Create's fill and
 hiding, the key tooltips, the four swaps, right / left click), `hotbar_actions_test.gd`;
-`remote_godot.sh check` ALL LOAD (745 scripts), `tests` "ran 287 suite(s), 0 failing". Server:
+on this branch rebased onto dev `f715921a` (after the skill window), `remote_godot.sh check` ALL
+LOAD (748 scripts), `tests` "ran 288 suite(s), 0 failing", and a short live run there (`live4.sh`:
+the pane filled, Hi, Walk, Sit, No; the second client saw all four). Server:
 `TestEmoteLayout`, `TestEmoteBroadcasts`, `TestWalkRunRequest`, `TestWalkRunBroadcastsAndRecord`
 (`TestMotionRequestsTheEngineRefuses` no longer lists 2 and 3); `go test ./...` ok. A UI and
 server round: no perf gate.
@@ -7747,6 +7750,8 @@ server round: no perf gate.
 retail's Auto Run does nothing. The emote's state-7 path; a ghost's walk clip; walk-speed buffs;
 1015's `0x652d60(0x80)` tooltip style; the right click's other gates in `0x682040` for kind `0x4a`
 (`0x4f9c50`, `0x666820`) are not modelled; sections 2 and 3 stay empty as retail's rows leave them.
+An emote while seated plays its standing clip over the sit here (ours): whether retail's state
+table (`0x9c9920`'s masks at `0xec5fd8`) lets state 7 in from the sit is not read.
 
 ## Seven-hundred-and-eightieth round: the party portrait's far-away steps in a dungeon, the lake bed over the water
 
