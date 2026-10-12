@@ -680,3 +680,32 @@ func TestSkillCSVStatusParamsIsAStrictSuffix(t *testing.T) {
 		t.Fatalf("column 90: StatusParams %q (err %v)", sk.StatusParams, err)
 	}
 }
+
+// Round 786: Param6 (itemdata column 128, ref +0x340), a universal pill's
+// zombie strength, is CSV column 88 -- a strict suffix: an 88-column export
+// loads with 0.
+func TestParam6IsAnOptionalSuffix(t *testing.T) {
+	row := make([]string, 88)
+	for i := range row {
+		row[i] = "0"
+	}
+	row[0] = "55"
+	row[70] = "ITEM_ETC_CURE_ALL_01"
+	load := func(r []string) Item {
+		t.Helper()
+		items, err := LoadItemsCSV(strings.NewReader(strings.Join(r, ",") + "\n"))
+		if err != nil || len(items) != 1 {
+			t.Fatalf("LoadItemsCSV (%d columns): %v (%d items)", len(r), err, len(items))
+		}
+		return items[0]
+	}
+	if got := load(row).Param6; got != 0 {
+		t.Errorf("an 88-column export loaded Param6 %d, want 0", got)
+	}
+	if got := load(append(append([]string(nil), row...), "36")).Param6; got != 36 {
+		t.Errorf("column 88 loaded Param6 %d, want 36", got)
+	}
+	if ItemCSVColumnCount != 89 {
+		t.Errorf("ItemCSVColumnCount %d, want 89", ItemCSVColumnCount)
+	}
+}

@@ -46,7 +46,9 @@ target of the vector, or the caster when it is empty and TargetGroup_Self is set
 - `curl [mask, chance, level]`: chance `curl[1]` when the state's level <= `curl[2]`, else
   `curl[1] / (level - curl[2])`; a roll that comes up ends the state;
 - `curt [mask, strength]` (the elemental six): the start moves back `strength x unit(slot)`
-  (`DurationUnitMs`), ending the state when that passes its duration;
+  (`DurationUnitMs`), ending the state when that passes its duration -- strictly past it
+  (`0x4a590e jbe` keeps a state at exactly its duration; round 786 corrected the `>=`, see
+  cure_pills.md, which also covers the function's second argument, the universal pill's);
 - the mask is rebuilt and, changed, broadcast (INFERRED: 0x4a5c60 is the state broadcast).
 
 Rows: CH Water CURE A..F, CUREAREA A..C; EU Bard RECOVERA_ABNORMAL A/B; Cleric SAINTA_INNOCENT

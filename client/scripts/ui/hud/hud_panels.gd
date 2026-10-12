@@ -822,7 +822,32 @@ func open(panel_id: String) -> HudWindow:
 	_populate(panel_id)
 	if panel_id == "partymatch":
 		_party_match_opened(window, was_shown)
+	if panel_id == AUTO_POTION_ID and not was_shown:
+		_auto_potion_opened(window)
 	return window
+
+## The Auto potion window (round 786, AutoPotionWindow): its controls built
+## into the registry frame once, refilled from the settings at every open
+## (the client builds it at every open, 0x79c750 -> 0x741880), and its Confirm
+## handed out (auto_potion_confirmed: World3D applies and saves).
+const AUTO_POTION_ID := "autopotion"
+signal auto_potion_confirmed(values: Dictionary)
+## The settings the window shows (World3D's AutoPotion); null shows the
+## controls as built.
+var auto_potion: AutoPotion = null
+
+func _auto_potion_opened(window: HudWindow) -> void:
+	var c := AutoPotionWindow.compose(window, _builder)
+	if c == null:
+		return
+	if not c.on_confirm.is_valid():
+		c.on_confirm = func(values: Dictionary) -> void: auto_potion_confirmed.emit(values)
+	if auto_potion != null:
+		c.fill(auto_potion.values())
+
+## The open window's controller, or null (tests, QA).
+func auto_potion_window() -> AutoPotionWindow:
+	return AutoPotionWindow.of(_windows.get(AUTO_POTION_ID) as HudWindow)
 
 ## The alchemy window (AlchemyWindow), while it exists. The client builds it
 ## at every open and destroys it at every close (0x798e20), so this is null

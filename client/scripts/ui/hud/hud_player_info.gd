@@ -208,8 +208,15 @@ func set_character(character_name: String, level: int) -> void:
 	if _level_label != null:
 		_level_label.text = "Lv %d" % level
 
+## A pool told to the bars (round 786): kind 0 HP, 1 MP, with the value and
+## maximum as given. The auto potion's checks read the player's pools here --
+## every message that moves this player's HP or MP sets its bar.
+signal pool_set(kind: int, current: int, maximum: int)
+
 func set_hp(current: int, maximum: int) -> void:
 	_set_bar(_hp_gauge, _hp_text, current, maximum)
+	if maximum > 0:
+		pool_set.emit(0, current, maximum)
 
 ## Draws the MP bar full with no readout.
 ##
@@ -226,6 +233,8 @@ func set_mp_unknown() -> void:
 
 func set_mp(current: int, maximum: int) -> void:
 	_set_bar(_mp_gauge, _mp_text, current, maximum)
+	if maximum > 0:
+		pool_set.emit(1, current, maximum)
 
 ## The two bars as drawn, [hp, hp_max, mp, mp_max] in the gauges' own units
 ## (round 711): the party window's own row draws the player's live values,

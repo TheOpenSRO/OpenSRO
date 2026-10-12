@@ -225,6 +225,18 @@ type Deps struct {
 	// layer fills it in (session.GMCommandHandler) when the server leaves it
 	// nil.
 	Speed SpeedControl
+	// Afflict is what /afflict drives (round 786, a test tool); nil refuses
+	// it. The session layer fills it in when the server leaves it nil.
+	Afflict AfflictControl
+}
+
+// AfflictControl is /afflict's hook into the character's abnormal states
+// (round 786, OURS: a test tool with no retail counterpart).
+type AfflictControl interface {
+	// Afflict lands one status run -- a skilldata code and its values, as a
+	// monster skill carries them -- on characterID, as if it had landed
+	// (no roll), tells the character's view, and returns the new mask.
+	Afflict(characterID int64, code string, values []int) (mask uint32, err error)
 }
 
 // SpeedControl is /speed's hook into the run speed the server tells a
@@ -243,7 +255,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off]"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -294,6 +306,10 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.invsize(ctx, actor, args)
 	case "speed":
 		res = d.speed(actor, args)
+	case "hurt":
+		res = d.hurt(ctx, actor, args)
+	case "afflict":
+		res = d.afflict(actor, args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -1150,4 +1166,80 @@ func (d *Deps) rosterNames() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// hurt takes hp (and mp) off the GM's own character (round 786, OURS: a test
+// tool with no retail counterpart, for the auto potion's QA). It never kills:
+// at most HP-1 is taken. The client's bars follow the stats refresh.
+func (d *Deps) hurt(ctx context.Context, actor Actor, args []string) Result {
+	if len(args) < 1 || len(args) > 2 {
+		return refuse("usage: /hurt <hp> [mp] -- take hp (and mp) off yourself, never below 1 HP")
+	}
+	hp, err := strconv.Atoi(args[0])
+	if err != nil || hp < 0 {
+		return refuse("hp must be a whole number, 0 or more")
+	}
+	mpLoss := 0
+	if len(args) == 2 {
+		if mpLoss, err = strconv.Atoi(args[1]); err != nil || mpLoss < 0 {
+			return refuse("mp must be a whole number, 0 or more")
+		}
+	}
+	if d.Chars == nil {
+		return refuse("no character store")
+	}
+	c, err := d.Chars.GetByID(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("reading the character failed: " + err.Error())
+	}
+	if hp > c.HP-1 {
+		hp = c.HP - 1
+	}
+	if hp > 0 {
+		if _, _, err := d.Chars.ApplyDamage(ctx, actor.CharacterID, hp); err != nil {
+			return refuse("hurting failed: " + err.Error())
+		}
+	}
+	mp := 0
+	if d.Mana != nil {
+		cur := d.Mana.Current(actor.CharacterID, c.MaxMP())
+		if mpLoss > cur {
+			mpLoss = cur
+		}
+		if mpLoss > 0 {
+			d.Mana.Spend(actor.CharacterID, c.MaxMP(), mpLoss)
+		}
+		mp = d.Mana.Current(actor.CharacterID, c.MaxMP())
+	}
+	after, err := d.Chars.GetByID(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("reading the character failed: " + err.Error())
+	}
+	return Result{Text: fmt.Sprintf("hurt: HP %d/%d, MP %d/%d", after.HP, after.MaxHP(), mp, after.MaxMP()), RefreshStats: true}
+}
+
+// afflict lands a status run on the GM's own character (round 786, OURS: a
+// test tool, for the cure pills' QA): /afflict ps 34 100 16 is a poison of
+// strength 34 dealing 16 a tick, /afflict se 9000 100 3 a level-3 sleep of
+// 9 s -- the skilldata codes and values (statuseffect.States).
+func (d *Deps) afflict(actor Actor, args []string) Result {
+	if len(args) < 2 {
+		return refuse("usage: /afflict <code> <values...> -- e.g. /afflict ps 34 100 16, /afflict se 9000 100 3")
+	}
+	if d.Afflict == nil {
+		return refuse("states are not available here")
+	}
+	var values []int
+	for _, a := range args[1:] {
+		v, err := strconv.Atoi(a)
+		if err != nil {
+			return refuse("values must be whole numbers")
+		}
+		values = append(values, v)
+	}
+	mask, err := d.Afflict.Afflict(actor.CharacterID, strings.ToLower(args[0]), values)
+	if err != nil {
+		return refuse("afflict: " + err.Error())
+	}
+	return Result{Text: fmt.Sprintf("afflicted: %s %v, mask %#x", args[0], values, mask)}
 }

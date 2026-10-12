@@ -7564,6 +7564,106 @@ original game. Check the code to be accurate as possible." Round 149's numbers w
   `go test ./...` passes; gofmt clean on the touched Go files. The perf gate was not run: the
   change draws only while numbers are up (none in the gate's views).
 
+### Round 786 (part): auto potion
+
+The user: "Can you get auto potions fully working? I believe this is the interface that are in the
+provided files" (a picture of retail's Auto potion window), then "make sure all universal and
+purification pills work as expected", and "derive the behaviour from the original code". Before
+this the window was only its frame (round 586): the two rows were built as item slots, the check
+boxes, combos, sliders and the spin as empty controls, and nothing drank. Cure pills were refused
+("that cannot be used"). The whole reading is `docs/protocol/auto_potion.md` and
+`docs/protocol/cure_pills.md`.
+
+- **Storage (READ):** retail keeps the settings on the SERVER. Confirm (`0x741590`) sends 0x7158
+  `{u8 2, u16 HP, u16 MP, u16 abnormal, u8 delay}` only when something changed
+  (`CAutoPotion::Send` 0x82d2e0); the game server's `FUN_00518c20` stores type 2 unchecked in the
+  character's `_ClientConfig` record (`FUN_00407ee0`, no reply); the character data gives them back
+  (`0x8a7bd0`, which turns a zero delay byte into the defaults HP 0x3211, MP 0x3212, abnormal 0x13,
+  delay 0x8a: off/50 %/F1 "1", off/50 %/F1 "2", off/F1 "3", on/1.0 s -- the reference picture).
+  OpenSRO: `characters.auto_potion` (BYTEA, `character.AutoPotionStore`), 0x7158 type 2 as retail
+  sends it, and -- its character data not being retail's -- a load request 0x0117 answered by
+  0x0116 (both OURS; a request so nothing new lands after OpEnterWorldResult).
+- **The checks (READ, `0x82d0e0` / `0x82d160` / `0x82d1d0`):** run by the HP / MP / state-mask
+  update for this player when the row is enabled and its timer not armed (`0x8aa0f0`), and by the
+  row's interface timer (0xe / 0xf / 0x10, `CGInterface::vslot_005`). Fires when the player can act
+  (player+0x65c bit 0, INFERRED "alive, not loading") and `HP <= trunc(maxHP x float32(pct/100))`
+  (`cmp; ja`; recomputed when the max changes, `0x9d4b60` / `0x9d4b90` -> `0x82cdb0`), `MP <=` its
+  threshold, or the mask is non-zero; it then fires the quick slot -- except HP while zombie (0x20)
+  and the abnormal row while stunned (0x4000) -- and arms the periodic timer, if not armed, for the
+  delay (box checked) or **500 ms** (box unchecked, `0x82d126`). Above the threshold the timer is
+  killed. A timer already registered keeps its interval (`0xb93320`).
+- **The use (READ, `0x82ce90`):** `0x60b1d0` -- the quick slot holds a bag item whose TID is 3/3/1
+  or 3/3/2 (`0x60ae50`) -- then `0x60b850`, the key press's own function. Here
+  `World3D._on_quickslot_activated(slot)`, so the server's reuse locks, the count and the reply apply
+  as to a press. Which potion is not checked: an MP potion in the HP row is drunk for HP.
+- **The window (READ):** every control from `ifautopotion.txt` / `ifautopotionslot.txt` /
+  `ifcheckbox.txt`: the rows' check boxes (a row's box enables its slider and puts it back on the
+  SAVED percent, `0x741460`), the belt (F1..F4) and quick-slot ("1".."9","0") combos, the slider
+  (1..100, arrows / thumb / travel 276 from `0x6596f0` / `0x659840` / `0x6598a0`; disabled: arrows
+  and thumb hidden, `re_selectbar_disable.ddj`), the percent static, the delay box and spin
+  (500..9500 ms, step 500, `%0.1f` of ms/1000), the description PML, Confirm / Cancel.
+  `client/scripts/ui/hud/auto_potion_window.gd`, `client/scripts/world/auto_potion.gd`.
+- **Cure pills (READ, SR_GameServer.exe):** DoJob (`0x49aca0`) case 2 sends TypeID4 7 (pets) to
+  slot 327 and the rest to slot 308 (`0x49b710`): TypeID4 1, the **purification pills**, run
+  `FUN_004a56c0(holder, 0, 0, curl={Param1 mask, Param3 chance, Param2 level cap}, rcur={1})` -- one
+  random held state of mask 0x17fafc0 (sleep, root, slow, fear, myopia, bleeding, dark, disease,
+  confusion, the six curses -- decay, weakness, powerless, dissociation, panic, combustion --,
+  incubation; not stun, not the elemental six), at 100 %, or 100 / (level - cap) above the cap;
+  any other TypeID4, the **universal pills**, hand
+  Param1..6 as `FUN_004a56c0`'s second argument: each held elemental state (slots 0..5) wound back
+  by its own Param x the slot's unit, ending when past its duration -- no level cap. The kind lock
+  (`FUN_004eb410`): bit 0x40 (universal, 1.1 s) and 0x100 (purification, 20.1 s) -- read from a
+  BYTE, so the 0x100 lock never refuses (an engine quirk); the purification pill's reuse is its
+  COOLTIME (group 0xC8, 20000 ms). The pill is spent whatever it cured. `session/curepill.go`.
+- **Fixed on the way (the binary wins):** the cure's end test was `>=`; `0x4a590e jbe` keeps a state
+  at exactly its duration (`statuseffect.Cure`, also the skills' `curt`). A nil dice source made
+  the shuffle panic under a held mutex (tests only). Param6 (itemdata column 128) is now exported,
+  loaded and stored (`refdata.Item.Param6`, CSV column 88, `items.param6`) -- the zombie strength.
+- **Census (MEASURED, the box's 63 itemdata files):** 18 TypeID 3/3/2 rows: 6 universal
+  (ITEM_ETC_CURE_ALL_01..05, _05_EVENT: 36/68/108/172/228/228), 6 purification
+  (ITEM_ETC_CURE_RANDOM_01..04, _04_EVENT: caps 3/6/9/12/12; ITEM_QNO_TQ_MAGICPOWDER_3_02: cap 9),
+  6 refused, OPEN (ITEM_COS_P_CURE_ALL_01/02, the pets'; ITEM_MALL_CURE_SUPERSET_1..4_BAG, bags).
+  `TestRound786EveryCurePillRow` runs each through the handler: all as expected.
+- **QA tools (OURS):** GM `/hurt <hp> [mp]` (never kills) and `/afflict <code> <values...>`;
+  client `OPENSRO_QA_AUTOPOT` (bind, open, cfg, confirm, cmd, log). `/afflict` binds the status
+  pass's stores itself: the pass reads a character's life through the ones a monster's blow binds,
+  and with none bound it dropped the state at the next pass (`TestRound786AfflictedStateSurvives
+  TheStatusPass` failed before).
+- **Live (render box, `/var/tmp/r786-pot/live.sh`, `live3.sh`, `live4.sh`; Jangan, 1280x720,
+  Forward+, the round's server and items export):**
+  - The window as a fresh character opens it (`keep/window_defaults.png`) is the reference picture:
+    rows unchecked with the disabled bars, 50 / 50, F1 1 / 2 / 3, the delay box checked at 1.0;
+    `window_filled.png` with every row on; `run2_reopened.png` the saved settings on a reopen.
+  - Run 2 (HP and MP at 50 %, abnormal on, delay 1.0 s; potions 4 and 11 on keys 1 / 2, universal
+    pill 55 on 3): `/hurt 9999 9999` -> HP 1/200, MP 0/200 -> both drunk at once (50 -> 49 each,
+    HP 1 -> 26, MP 0 -> 25), the timer's next pass refused by the server's 1.1 s potion lock
+    ("Still have time to reuse the item."), the one after drunk (48 left), HP 102 / MP 101 and on
+    to 200 / 200, then the timers killed. `/afflict bu 30 100 5` -> mask 0x8 -> the abnormal row
+    drinks the universal pill at once -> mask 0x0, 9 left. A purification pill on key 3 and
+    `/afflict se 20000 100 2` (a level-2 sleep) -> mask 0x40 -> pill -> 0x0, 9 left.
+  - Run 3 (level 30, HP 870, threshold 435; delay 3.0 s): uses at timer clock 117269 (armed),
+    120319, 123373 -- 3050 and 3054 ms apart, the frame-quantised 3000 -- HP 1 -> 430, 50 -> 47.
+    Delay box off: uses every pass at 500 ms or more (212396, 213000, 213614 ...), every other one
+    refused by the 1.1 s lock. A poison with the abnormal row off, then key 4 pressed by hand: the
+    universal pill spent (10 -> 9) -- but the poison stayed, which is what found the `/afflict` bug
+    above (the state had been dropped before the press).
+  - Run 4 (the fix; every row off, the pills pressed by hand): `/afflict ps 34 100 16` -> mask 0x10
+    and the green poison pulse (`keep/run4_poisoned.png`, HP ticking 200 -> 123), key 4 sixty
+    ticks later -> the universal pill, 10 -> 9, mask 0x0, the pulse gone (`run4_cured.png`);
+    `/afflict se 20000 100 2` -> 0x40, key 5 -> the purification pill, 10 -> 9, 0x0; key 5 again
+    thirty ticks later -> refused inside its COOLTIME (group 0xC8, 20 s).
+  - Frames and logs on the box under `/var/tmp/r786-pot/keep/` (the frame dumps deleted).
+- **Gates:** client `check` ALL LOAD (780 scripts, 9 scenes); `tests` "ran 300 suite(s), 0
+  failing" (`RENDER_DIR=/opt/opensro-client-r786-pot`, `GODOT_LOCK=/var/tmp/r786-pot/lock`; new:
+  `auto_potion_test.gd`, `auto_potion_window_test.gd`); server `go test ./...` passes (new:
+  `statuseffect/cure786_test.go`, `session/curepill786_test.go`, `session/autopotion786_test.go`,
+  `session/afflict786_test.go`, `character/autopotion_test.go`, `gm/hurt786_test.go`,
+  `refdata` Param6); gofmt clean on the touched files. UI and server only: no perf gate.
+- **OPEN:** CIFPML's own alignment and scroll; the pets' pills and the cure bags; the server's
+  zombie HP potion (`0x49b912` hurts a zombie, OpenSRO heals); the curl roll's chance-memory dice
+  (moot at chance 100). **Deploy:** re-export items (export-refdata) and re-import so `param6` is
+  filled; until then a universal pill cures no zombie.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

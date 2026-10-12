@@ -150,6 +150,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 	if deps.Speed == nil {
 		deps.Speed = gmSpeed{hub: hub}
 	}
+	if deps.Afflict == nil {
+		deps.Afflict = gmAfflict{hub: hub, deps: strikeDeps{chars: chars, eq: deps.Equip, items: deps.Items, mp: deps.Mana, hub: hub}}
+	}
 	// Round 764's review, F3: a GM's zone change may name any spot.
 	zoneSpotGate.Store(gate)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
