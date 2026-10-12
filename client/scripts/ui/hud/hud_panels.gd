@@ -1994,6 +1994,13 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	# The buy-back row is the client's own list (round 728 review; c:0x78d900).
 	_fill_buyback_row()
 
+## The code name of item `id` in the player's own item table, "" when it has
+## none (round 783: the Test Items NPC's goods come as ids, NpcShopDefNet).
+func item_code_for_id(id: int) -> String:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(id)
+	return item.code_name if item != null else ""
+
 ## The item ids of every good this NPC sells, across all its tabs -- what to
 ## ask the server to price.
 func _shop_item_ids() -> Array:
@@ -2345,6 +2352,7 @@ func _on_shop_list_result(entries: Array, error: String) -> void:
 		_fill_shop_grid((_shop_tabs[_shop_selected] as ShopReader.Tab).item_codes)
 
 func _on_shop_buy_result(ok: bool, reason: String) -> void:
+	print("HudPanels: buy result ok=%s %s" % [ok, reason])
 	if not _windows.has("store"):
 		return
 	if ok:
@@ -2675,6 +2683,33 @@ func _qa_buy_item_id() -> int:
 				stack_price = price
 				stack_id = item.id
 	return stack_id if stack_id >= 0 else first_id
+
+## QA only (round 783): selects the open store's tab `index`; says which
+## tab and how many goods it shows.
+func qa_select_shop_tab(index: int) -> String:
+	if not _windows.has("store") or index < 0 or index >= _shop_tabs.size():
+		return "no such tab (%d tab(s))" % _shop_tabs.size()
+	_select_shop_tab(index)
+	var tab: ShopReader.Tab = _shop_tabs[index]
+	var label := _builder.resolve_text(tab.name_strid) if _builder != null else tab.name_strid
+	return "tab %d '%s', %d good(s): %s" % [index, label, tab.item_codes.size(), ", ".join(tab.item_codes)]
+
+## QA only (round 783): buys one of the current tab's cell `cell` (the
+## lattice's order), the send a confirmed buy box makes; says what and at
+## what listed price.
+func qa_buy_shop_cell(cell: int) -> String:
+	if not _windows.has("store") or _shop_selected < 0 or _shop_selected >= _shop_tabs.size():
+		return "no store open"
+	var codes: PackedStringArray = (_shop_tabs[_shop_selected] as ShopReader.Tab).item_codes
+	if cell < 0 or cell >= codes.size():
+		return "no good in cell %d" % cell
+	_load_items()
+	var item: ItemTableReader.Item = _items_by_code.get(codes[cell])
+	if item == null:
+		return "cell %d: %s not in the item table" % [cell, codes[cell]]
+	_do_buy(item.id, 1)
+	return "item %d %s '%s' at listed price %d" % [item.id, item.code_name, item.display_name(_object_names),
+		int(_shop_prices.get(item.id, -1))]
 
 func qa_confirm_first_item() -> void:
 	var id := _qa_buy_item_id()

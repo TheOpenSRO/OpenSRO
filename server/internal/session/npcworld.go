@@ -258,7 +258,9 @@ func (w *npcWorld) frames(gained, lost []combat.Cell) (out []*proto.Packet, spaw
 		var unfaced []uint32
 		for i, n := range list {
 			recs[i] = n.Record
-			if n.Source != npcspawn.FromNest {
+			// Only an npcpos row has no angle of its own: a nest's is its
+			// wInitialDir, a definition's (round 783) its own.
+			if n.Source == npcspawn.FromNpcpos {
 				unfaced = append(unfaced, n.UID)
 			}
 		}

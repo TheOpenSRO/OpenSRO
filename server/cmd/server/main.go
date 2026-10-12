@@ -1065,6 +1065,14 @@ func main() {
 			"(own design, round 576). Default OFF: off, a teleport charges its link's fee from the table, "+
 			"waived below level 21 (the engine's rule) and for GM accounts (-gm-accounts, own design). "+
 			"See deploy/README.md, \"Town teleporters\".")
+	testItemsNPCEnv, testItemsNPCEnvErr := envBool("OPENSRO_TEST_ITEMS_NPC")
+	testItemsNPC := flag.Bool("test-items-npc", testItemsNPCEnv,
+		"spawn the Test Items NPC (env OPENSRO_TEST_ITEMS_NPC, round 783; OURS): an NPC of OpenSRO's own in "+
+			"Jangan's square, between the Storage-Keeper and So-Ok, wearing Alexandria's Potion Merchant "+
+			"Thiara's body, selling every 11th degree alchemy item and every Seal of Nova item at the items' "+
+			"own prices. Its goods are rules (server/internal/testnpc/test_items.json) resolved at boot "+
+			"against the loaded item reference data; needs -npcpos-csv and -npcs-csv (the NPC table names the "+
+			"body). Default OFF. See docs/protocol/test_items_npc.md.")
 	persistPositionEnv, persistPositionEnvErr := envBool("OPENSRO_PERSIST_POSITION")
 	persistPosition := flag.Bool("persist-position", persistPositionEnv,
 		"a character logs back in where it left off (env OPENSRO_PERSIST_POSITION): its zone label, "+
@@ -1158,6 +1166,10 @@ func main() {
 	if teleportFreeEnvErr != nil {
 		logger.Warn("OPENSRO_TELEPORT_FREE is not a boolean; teleports stay charged unless -teleport-free is given",
 			"err", teleportFreeEnvErr)
+	}
+	if testItemsNPCEnvErr != nil {
+		logger.Warn("OPENSRO_TEST_ITEMS_NPC is not a boolean; the Test Items NPC stays off unless -test-items-npc is given",
+			"err", testItemsNPCEnvErr)
 	}
 	if persistPositionEnvErr != nil {
 		logger.Warn("OPENSRO_PERSIST_POSITION is not a boolean; the saved position stays off unless -persist-position is given",
@@ -1919,7 +1931,11 @@ func main() {
 	// The NPCs (round 708): the server spawns them, as retail does, and the
 	// client builds none of its own. Installed after SetSingleFrame (their
 	// frame) and before the area of interest's first tick.
-	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV)
+	var testItems *testItemsNPCSpec
+	if *testItemsNPC {
+		testItems = resolveTestItemsNPC(ctx, logger, refItems)
+	}
+	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems)
 	// The monsters' area of interest (round 656): each player hears about the
 	// monsters of the 3x3 message blocks around it (retail's, READ in round
 	// 664: 320-unit blocks and their 8 neighbours), and is told as they come

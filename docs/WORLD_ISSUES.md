@@ -7483,6 +7483,69 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-eighty-third round: the Test Items NPC
+
+The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion
+Merchant Thiara" in Alexandria. Allow me to buy all alchemy items (11d only), seal of nova items,
+all genders, races, and classes. ... Make sure you put them in different options in the first
+window then different tabs like the weapon, grocery, and armor vendors." Later the same day: its
+in-game name is exactly "Test Items", and everything it sells is free. The whole design is
+`docs/protocol/test_items_npc.md`; deploying it is deploy/README.md, "The Test Items NPC".
+
+- **READ (the box's Media.pk2, extracted under /var/tmp/r783-npc on the box, never committed):**
+  Thiara is `NPC_SD_T_AREA_POTION` (characterdata 26823, `npc\sd\sd_t_area_potion.bsr`); the
+  Storage-Keeper Wangu (`NPC_CH_WAREHOUSE_M`, npcpos 980.80, -32.43, 989.13) and Event So-Ok
+  (`NPC_CH_EVENT_KISAENG1`, 1101.68, -32.28, 854.30) stand in 97/168. "Seal of Nova" is
+  `PARAM_RARE_FIRST2`, a Seal item of ItemClass 31 (round 731's tooltip rule). The retail vendors'
+  tab names and splits (refshoptab.txt): the smiths Weapon / Shield, the armour vendors one line per
+  gender with Armor / Protector / Garment, the grocers Accessory / Alchemy; at most four tabs a
+  store (READ, round 725) and 30 goods a tab (the lattice; no page spin in OpenSRO).
+- **The NPC (OURS):** one embedded definition of RULES (`server/internal/testnpc/test_items.json`:
+  CodeName128 prefix / suffix / pattern, TypeID, ItemClass), resolved by the server at boot against
+  the item data it loaded -- no item row is in the repository. Eight store lines (two alchemy, two
+  Seal of Nova weapon-and-accessory lines by race, four protector lines by race and gender), three
+  tabs each; 189 goods on the box's archive (MEASURED: Elixir 26, Magic 19, Attribute 14, Jade 18,
+  Ruby 14, Element 4; CH Weapon 5 / Shield 1 / Accessory 3; EU 9 / 1 / 3; 6 a protector tab). Left
+  out, OURS: the Seal of Nova `_SWITCHnn` / `_ACTIVE` / `ITEM_EVENT_` copies, the Asue / Azus
+  `_SET_` rows, the speed potion tablet, monster materials. Kept, OURS: the eight degree-free
+  elixirs.
+- **The wire:** the spawn record is retail's (Thiara's RefObjID, the name in the record's own name
+  field -- flag bit 0, READ in round 708 -- interactions {1}); the lines, tabs and goods ride
+  **OpNpcShopDef 0x00BA** (OURS), sent just before the 0xB045 select reply. The client keeps it by
+  uid (`NpcShopDefNet`) and builds the talk lines and store tabs from it instead of its archive's
+  shop tables. Chosen over a second resolver on the client: one definition, resolved once.
+- **Free (OURS, the user's):** `OpShopList` answers 0 and `OpShopBuy` takes and tests no gold for one
+  of the NPC's goods while the session's open interaction is its store (INTERACTMODE 6). The same
+  item anywhere else keeps its own price (`TestTestItemsNPCSelectOpenBuyFree`: no store open ->
+  250,000 and "insufficient gold"; a retail store -> 250,000; the Test Items store -> 0, and a
+  character with 0 gold buys a magic stone, a sword and a helm and keeps 0; after the store closes,
+  250,000 again). **OPEN, a risk for the user:** a free good sells at its own SellPrice anywhere
+  (250,000 a Seal of Nova piece, 15,000,000 a Magic stone of luck (Lvl.11)), so the NPC is a gold
+  source wherever it is switched on. It is off by default (`-test-items-npc` /
+  `OPENSRO_TEST_ITEMS_NPC=1`).
+- **The spot, MEASURED (the walkable graph, `OPENSRO_QA_SHOP_STEPS=cols:...`):** the straight
+  midpoint of Wangu and So-Ok, (1041.2, 921.7), is inside the dragon fountain's basin (only the
+  basin floor, -54.39); the first build stood the NPC there, 22 under the square (its placement
+  line said so). Moved to (1070.0, -32.61, 950.0) on the deck (-32.61; 97 from Wangu, 101 from
+  So-Ok, east of the fountain), facing the town's spawn (wInitialDir 24424, compass 315.8 as the
+  client's own placement line reads it back). The client then measures "height -32.61 (record
+  -32.61)".
+- **Live (box, `/var/tmp/r783-npc/r783_shot.sh`, a server built from this branch, in memory on port
+  15983, the box's own CSVs exported by this branch, `-test-items-npc`):** the boot log "Test Items
+  NPC resolved ... goods=189" and "spawned ... ref=26823 free=true"; the talk window titled "Test
+  Items" with the eight lines; line 3 opens Weapon / Shield / Accessory, and cell 0 (Reaper Ghost
+  Sword, 4044) is bought at listed price 0; line 8's Protector tab, the Drako War God Morion
+  (14185); line 1's Magic tab, the Magic stone of Str (Lvl.11) (6689). The server log has three
+  "Test Items NPC: free buy ... ok=true" lines, the server's bag reads 0:4044 1:14185 2:6689 and
+  its purse 0 throughout (the character's 1,000 taken by `/gold -1000` first). Screenshots: the
+  report's paths on the box (`/var/tmp/r783-npc/screens/`).
+- **Tests:** `internal/testnpc` (the rules, the tab cap, the bytes of 0x00BA, the record, the
+  real-archive counts behind `OPENSRO_TEST_ITEMS_CSV`), `session.TestTestItemsNPCSelectOpenBuyFree`;
+  client `npc_shop_def_test.gd` (the same golden bytes, the menu through `services_from_ids`, the
+  tabs). New QA hook `OPENSRO_QA_SHOP_STEPS` (tab / buy / bag / cols at a tick). Gates: server
+  `go test ./...` all ok; client `check` ALL LOAD (752 scripts), `tests` 290 suites 0 failing. A UI
+  and server round: no perf gate.
+
 ## Seven-hundred-and-eighty-second round: the walk's click passes through grass (retail's pick)
 
 The user: "if grass or other objects get in the way it clicks those instead of the ground when it's

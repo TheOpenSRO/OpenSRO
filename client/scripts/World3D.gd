@@ -9072,6 +9072,12 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	skeleton.set_meta(MonsterDraw.META_RADIUS, MonsterDraw.cull_radius(skeleton, maxf(bounds.x, bounds.y)))
 	holder.add_child(_npc_collider(bounds))
 	var npc_name: String = _npc_names.get(rec.ref_id, "")
+	# The record's own name (flag bit 0: CGObjNPC::SetCharName 0x4c3f20 on
+	# the server, the client's FUN_004f7a70 reads it -- READ): an NPC the
+	# server names, as round 783's Test Items NPC, wears that name over its
+	# body's. No town NPC of the archive's is named this way.
+	if rec.name != "":
+		npc_name = rec.name
 	# Tagged so a click on the collider can name the NPC it talks to
 	# (see _try_talk_to_npc) -- the plate is a Label3D, no use for that.
 	holder.set_meta("npc_id", rec.ref_id)
@@ -9095,8 +9101,9 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	# is a measurement of what was drawn, not of what was asked.
 	var front := holder.basis * Vector3(0, 0, -1)
 	var bearing := fposmod(rad_to_deg(atan2(front.x, front.z)), 360.0)
-	print("World3D: NPC %s uid=%d ref=%d region %d/%d at %.1f,%.1f angle=%d facing %s bearing %.1f" % [
-		code, rec.uid, rec.ref_id, rec.region_x, rec.region_y, local.x, local.z, rec.angle, facing_source, bearing])
+	print("World3D: NPC %s uid=%d ref=%d region %d/%d at %.1f,%.1f angle=%d facing %s bearing %.1f%s" % [
+		code, rec.uid, rec.ref_id, rec.region_x, rec.region_y, local.x, local.z, rec.angle, facing_source, bearing,
+		(" name '%s' height %.2f (record %.2f)" % [rec.name, height, local.y]) if rec.name != "" else ""])
 	# OPENSRO_QA_NPC_FACING_AUDIT=1 (round 708, measurement only): for an NPC
 	# turned by the server's angle, the open side the navigation graph names
 	# (NpcFacing's walk, the pre-708 stand-in, here only as an independent
@@ -13768,6 +13775,12 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_SCAN=n     sweep the region on an n x n grid and report
 ##                          where the walkable graph sits below the solid
 ##                          geometry (i.e. where a player walks underneath)
+##   OPENSRO_QA_SHOP_STEPS="tab:<i>@<tick>;buy:<cell>@<tick>;bag:0@<tick>;
+##                          cols:x,z|x,z@<tick>" (round 783) at those ticks:
+##                          select the open store's tab i, buy one of the
+##                          current tab's cell, print the server's bag and
+##                          purse, or run OPENSRO_QA_COLUMNS' report once the
+##                          regions are in (`QA SHOP_STEPS` lines)
 ##   OPENSRO_QA_COLUMNS="x,z;rx/ry@x,z"  what the walkable graph knows at
 ##                          these region-local columns: every surface, the
 ##                          objects it considers, and any it does not index.
@@ -14570,6 +14583,41 @@ func _qa_step() -> void:
 				print("QA TALK_PICK closed the NPC windows at tick %d" % _qa_tick)
 				continue
 			print("QA TALK_PICK line %s at tick %d: %s" % [parts[0], _qa_tick, str(_hud_panels.qa_press_talk_line(int(parts[0])))])
+
+	# OPENSRO_QA_SHOP_STEPS="tab:<i>@<tick>;buy:<cell>@<tick>;..." (round 783)
+	# selects the open store's tab i, or buys one of the current tab's cell
+	# (0-based, the lattice's order) through the same send a confirmed buy
+	# box makes -- the Test Items NPC's render. QA only.
+	var qa_shop_steps := OS.get_environment("OPENSRO_QA_SHOP_STEPS")
+	if qa_shop_steps != "" and _hud_panels != null:
+		for step in qa_shop_steps.split(";", false):
+			var at_tick := step.split("@")
+			if at_tick.size() != 2 or int(at_tick[1]) != _qa_tick:
+				continue
+			var what := at_tick[0].split(":")
+			if what.size() != 2:
+				continue
+			match what[0]:
+				"tab":
+					print("QA SHOP_STEPS tab %s at tick %d: %s" % [what[1], _qa_tick, _hud_panels.qa_select_shop_tab(int(what[1]))])
+				"buy":
+					print("QA SHOP_STEPS buy cell %s at tick %d: %s" % [what[1], _qa_tick, _hud_panels.qa_buy_shop_cell(int(what[1]))])
+				"cols":
+					# OPENSRO_QA_COLUMNS' report at this tick, once the
+					# regions are in: "cols:x,z|x,z@tick".
+					_qa_columns_report(what[1].replace("|", ";"))
+				"bag":
+					# The server's own bag and purse, printed as they arrive.
+					var who := NetClient.current_character_name
+					NetClient.inventory_list_result.connect(func(slots: Array, err: String) -> void:
+						var parts: Array = []
+						for sl in slots:
+							parts.append("%d:%dx%d" % [int(sl.slot_index), int(sl.item_id), int(sl.quantity)])
+						print("QA SHOP_STEPS bag (server): %s %s" % [" ".join(parts), err]), CONNECT_ONE_SHOT)
+					NetClient.character_stats_result.connect(func(st: StatsNet.Stats) -> void:
+						print("QA SHOP_STEPS gold (server): %d" % int(st.gold)), CONNECT_ONE_SHOT)
+					NetClient.list_inventory(who)
+					NetClient.character_stats(who)
 
 	# OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..." (round 731) shows
 	# those items' tooltips side by side for a render, each line logged
@@ -21187,6 +21235,13 @@ var _talk_ids := PackedByteArray()
 var _talk_server := false
 ## The tab group of the store line whose 0x7046 is out ("" for all tabs).
 var _talk_pending_tabgroup := ""
+## OpNpcShopDef (round 783, OURS; NpcShopDefNet): the store lines, tabs and
+## goods of the NPCs the archives do not describe (the Test Items NPC), by
+## uid, as the server sent them before their select reply.
+var _npc_shop_defs: Dictionary = {}
+## The open talk's definition ({} for a retail NPC, whose lines and tabs are
+## its archive's -- ShopReader).
+var _talk_shop_def: Dictionary = {}
 
 func _npc_talk_net() -> NpcTalkNet:
 	if _npc_talk != null:
@@ -21196,6 +21251,8 @@ func _npc_talk_net() -> NpcTalkNet:
 		if NetClient.is_connected_to_server():
 			NetClient._send(op, payload)
 	_npc_talk.register_with(NetClient)
+	# Round 783: an NPC of OpenSRO's own sends its lines and tabs first.
+	NetClient.register_handler(NpcShopDefNet.OP_SHOP_DEF, _on_npc_shop_def)
 	_npc_talk.selected.connect(_on_npc_selected)
 	_npc_talk.opened.connect(_on_npc_opened)
 	# The refusals: the client shows nothing for a refused select (round
@@ -21222,6 +21279,21 @@ func _on_npc_selected(entity: int, ids: PackedByteArray) -> void:
 	_talk_server = true
 	_show_talk(node, ids)
 
+## OpNpcShopDef (round 783): kept by uid for the select reply that follows.
+func _on_npc_shop_def(data: PackedByteArray) -> void:
+	var def := NpcShopDefNet.decode(data)
+	if def.is_empty():
+		print("NPC shop definition: malformed (%d bytes)" % data.size())
+		return
+	_npc_shop_defs[int(def["uid"])] = def
+	var counts: Array = []
+	for line in def["lines"]:
+		var tabs: Array = []
+		for tab in (line as Dictionary)["tabs"]:
+			tabs.append((tab["ids"] as PackedInt32Array).size())
+		counts.append(tabs)
+	print("NPC shop definition: uid %d, %d line(s), goods per tab %s" % [int(def["uid"]), (def["lines"] as Array).size(), str(counts)])
+
 ## The 0xB046 reply: the store (id 1) or the storage (3) opens; the talk
 ## line (2) keeps the talk window (INTERACTMODE 5; what the original then
 ## shows, CGObjPC::ShowFirstTalkMenu's message, is OPEN).
@@ -21229,7 +21301,18 @@ func _on_npc_opened(id: int) -> void:
 	print("NPC open: id %d" % id)
 	match id:
 		1:
-			if _shop_reader != null and _talk_npc_code != "":
+			# Round 783: a line of an NPC of OpenSRO's own -- its tabs and
+			# goods are the server's definition, each id named through the
+			# client's own item table.
+			var custom_line := NpcShopDefNet.line_of(_talk_pending_tabgroup)
+			if not _talk_shop_def.is_empty() and custom_line >= 0:
+				var tabs := NpcShopDefNet.tabs(_talk_shop_def, custom_line, _hud_panels.item_code_for_id)
+				var goods := 0
+				for t in tabs:
+					goods += (t as ShopReader.Tab).item_codes.size()
+				print("NPC store: definition line %d, %d tab(s), %d good(s)" % [custom_line, tabs.size(), goods])
+				_hud_panels.open_shop(_talk_npc_name, tabs, _talk_npc_code)
+			elif _shop_reader != null and _talk_npc_code != "":
 				_hud_panels.open_shop(_talk_npc_name, _shop_reader.tabs_for(_talk_npc_code, _talk_pending_tabgroup),
 					_talk_npc_code)
 		3:
@@ -21250,6 +21333,7 @@ func _on_npc_window_hidden(panel_id: String) -> void:
 ## NPC.
 func _open_talk(node: Node) -> void:
 	_talk_server = false
+	_talk_shop_def = {}
 	# Talking supersedes an attack still walking into reach: the attack would
 	# otherwise go out behind the talk window.
 	_drop_pending_attack()
@@ -21277,10 +21361,16 @@ func _show_talk(node: Node, ids: PackedByteArray) -> void:
 	_talk_npc_code = code
 	_talk_node = node as Node3D
 	_talk_ids = ids
+	# Round 783: the definition the server sent for this uid, if any.
+	_talk_shop_def = _npc_shop_defs.get(int(node.get_meta("npc_uid", 0)), {}) if _talk_server else {}
 	# The ring under an NPC (round 698; the 0xB045 reply selects a CICharactor,
 	# texture 1); a teleport gate is not one and gets none.
 	if not node.has_meta("gate_point_id") and node is Node3D:
 		_markers().attach("npc:%d" % node.get_instance_id(), GroundMarkers.Kind.NPC)
+	if not _talk_shop_def.is_empty():
+		# OURS (round 783): its own greeting; no fortress tax line.
+		_hud_panels.open_npc_talk(npc_name, str(_talk_shop_def.get("greeting", "")), _npc_services(code), "")
+		return
 	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code), _npc_tax_text(code))
 
 ## Whether a talk with `node` goes through the server (round 727): an NPC the
@@ -21499,10 +21589,16 @@ func _npc_services(code: String, ids: Variant = null) -> Array:
 	# where its own UI table has no SN_STORE_* row; so are the SN_ tokens of
 	# the builder's last lines (textdata_object / the NPC text table).
 	var store_lines: Array = _shop_reader.store_lines_for(code) if _shop_reader != null and code != "" else []
+	# Round 783: an NPC of OpenSRO's own words its lines by its definition
+	# (the label is a text key or the text itself).
+	if not _talk_shop_def.is_empty():
+		store_lines = NpcShopDefNet.store_lines(_talk_shop_def)
 	var out := NpcServiceReader.services_from_ids(id_set, store_lines, _guild_id, _guild_master, 0, _player_level)
 	for svc_v in out:
 		var svc: NpcServiceReader.Service = svc_v
-		if svc.key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX) or svc.strid.begins_with("SN_"):
+		if NpcShopDefNet.line_of(NpcServiceReader.tabgroup_of(svc.key)) >= 0:
+			svc.label = _resolve_any_text(svc.strid, svc.strid)
+		elif svc.key.begins_with(NpcServiceReader.SHOP_KEY_PREFIX) or svc.strid.begins_with("SN_"):
 			svc.label = _resolve_any_text(svc.strid, svc.label)
 	return out
 

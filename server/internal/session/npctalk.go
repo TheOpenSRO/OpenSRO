@@ -190,6 +190,9 @@ func handleNPCSelect(sess *gateway.Session, data []byte, hub *world.Hub, trades 
 	st.selected = true
 	st.ids = ids
 	npcInteractions.mu.Unlock()
+	// An NPC of OpenSRO's own (round 783): its store lines and tabs first,
+	// so the talk window the reply opens has them (OpNpcShopDef, OURS).
+	sendNPCShopDef(sess, entity)
 	sendNPCTalk(sess, npctalk.OpSelectResult, npctalk.EncodeSelectNPC(npctalk.SelectNPC{Entity: entity, IDs: ids}))
 }
 

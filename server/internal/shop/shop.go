@@ -141,11 +141,26 @@ func (s *Service) Buy(ctx context.Context, characterID, itemID int64, quantity i
 	if err != nil {
 		return ErrItemNotFound
 	}
+	return s.buy(ctx, characterID, itemID, quantity, Price(item)*int64(quantity))
+}
 
-	cost := Price(item) * int64(quantity)
+// BuyFree is Buy at no cost (round 783, OURS): the Test Items NPC's goods,
+// which its definition gives away (internal/testnpc). No gold is deducted or
+// even tested, so a character with none still gets the item; the item must
+// exist and fit, as any buy's.
+func (s *Service) BuyFree(ctx context.Context, characterID, itemID int64, quantity int) error {
+	if _, err := s.Items.GetItem(ctx, itemID); err != nil {
+		return ErrItemNotFound
+	}
+	return s.buy(ctx, characterID, itemID, quantity, 0)
+}
+
+func (s *Service) buy(ctx context.Context, characterID, itemID int64, quantity int, cost int64) error {
 	return txn.For(s.Gold, s.Inv).Run(ctx, func(ctx context.Context) error {
-		if err := s.Gold.DeductGold(ctx, characterID, cost); err != nil {
-			return fmt.Errorf("shop: %w", err)
+		if cost > 0 {
+			if err := s.Gold.DeductGold(ctx, characterID, cost); err != nil {
+				return fmt.Errorf("shop: %w", err)
+			}
 		}
 		if err := s.Inv.AddItem(ctx, characterID, itemID, quantity); err != nil {
 			return fmt.Errorf("shop: adding item to inventory: %w", err)

@@ -41,7 +41,7 @@ func npcRows(placements spawn.Table, monsters *species.Table, table npcspawn.Tab
 // installNPCs builds and installs the NPCs (session.InstallNPCs). Without
 // placements -- or without a way to tell an NPC row from a monster's -- there
 // are none, and the boot log says so.
-func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.Table, db *nest.DB, tp *teleport.Table, npcsCSV string) {
+func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.Table, db *nest.DB, tp *teleport.Table, npcsCSV string, testItems *testItemsNPCSpec) {
 	var table npcspawn.Table
 	if npcsCSV != "" {
 		t, err := npcspawn.LoadCSV(npcsCSV)
@@ -53,6 +53,9 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 		logger.Info("NPC table loaded", "path", npcsCSV, "rows", len(t))
 	}
 	if placements == nil {
+		if testItems != nil {
+			logger.Warn("-test-items-npc: no NPC is spawned without -npcpos-csv, so neither is the Test Items NPC")
+		}
 		logger.Warn("no NPCs: the server spawns the NPCs from -npcpos-csv, and none is configured -- the client shows no NPC")
 		session.InstallNPCs(nil, logger)
 		return
@@ -94,6 +97,7 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 			OwnsShop: table[id].Shop})
 	}
 	npcs, rep := npcspawn.Place(npcRows(placements, monsters, table), db, info, interactions)
+	npcs = appendTestItemsNPC(logger, npcs, table, testItems)
 	filed := session.InstallNPCs(npcs, logger)
 	byArea := map[string][2]int{}
 	for _, n := range npcs {

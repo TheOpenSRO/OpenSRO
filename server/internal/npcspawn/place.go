@@ -26,11 +26,17 @@ const (
 	// the npcpos position and no angle (OURS, the stand-in the client faces
 	// by its own heuristic; OpNpcFacingUnknown).
 	FromNpcpos
+	// FromDefinition: an NPC of OpenSRO's own (round 783, internal/testnpc;
+	// OURS) -- not in npcpos, its position and angle its definition's.
+	FromDefinition
 )
 
 func (s Source) String() string {
-	if s == FromNest {
+	switch s {
+	case FromNest:
 		return "nest"
+	case FromDefinition:
+		return "definition"
 	}
 	return "npcpos"
 }

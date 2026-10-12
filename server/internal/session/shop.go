@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
@@ -315,7 +316,13 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	}
 
 	result := &ShopBuyResult{OK: true}
-	if err := svc.Buy(ctx, characterID, req.ItemID, int(req.Quantity)); err != nil {
+	buy := svc.Buy
+	free := freeAtOpenStore(sess.ID(), req.ItemID)
+	if free {
+		// The Test Items NPC's goods (round 783, OURS): free, no gold test.
+		buy = svc.BuyFree
+	}
+	if err := buy(ctx, characterID, req.ItemID, int(req.Quantity)); err != nil {
 		result.OK = false
 		switch {
 		case errors.Is(err, shop.ErrItemNotFound):
@@ -325,6 +332,10 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		default:
 			result.Reason = "purchase failed"
 		}
+	}
+	if free {
+		slog.Info("Test Items NPC: free buy (round 783)", "character", characterID, "item", req.ItemID,
+			"quantity", req.Quantity, "ok", result.OK, "reason", result.Reason)
 	}
 	return sess.Send(&proto.Packet{Opcode: OpShopBuyResult, Data: result.Encode()})
 }
@@ -376,8 +387,12 @@ func handleShopList(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 	}
 	entries := make([]ShopCatalogEntry, len(catalog))
 	for i, c := range catalog {
+		price := c.Price
+		if freeAtOpenStore(sess.ID(), c.ItemID) {
+			price = 0 // the Test Items NPC's goods (round 783, OURS)
+		}
 		entries[i] = ShopCatalogEntry{
-			ItemID: c.ItemID, Price: c.Price, ItemClass: int32(c.ItemClass),
+			ItemID: c.ItemID, Price: price, ItemClass: int32(c.ItemClass),
 			PhysAttackMax: float32(c.PhysAttackMax), PhysDefenseMax: float32(c.PhysDefenseMax),
 		}
 	}

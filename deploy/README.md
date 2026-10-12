@@ -104,6 +104,41 @@ process that shares the database under Postgres's `max_connections` (100 by defa
 older server's inserts take the column's default, so nothing breaks; it simply does not use them.
 A `pg_dump` first is the usual precaution.
 
+## The Test Items NPC (round 783)
+
+An NPC of OpenSRO's own -- "Test Items", in Jangan's square between the Storage-Keeper and So-Ok,
+wearing Alexandria's Potion Merchant Thiara -- selling every 11th degree alchemy item and every Seal
+of Nova item, **for free** (docs/protocol/test_items_npc.md). **Off by default.** It needs no new
+export and no new file: its goods are rules in the server binary
+(`server/internal/testnpc/test_items.json`) resolved at boot against the item reference data the
+server already loads (the refdata database, or `-items-csv`), and its body is the NPC table's
+`NPC_SD_T_AREA_POTION` row (`-npcs-csv`, which every `-npcpos-csv` server already has). To switch it
+on, add one line to the server service in the untracked `docker-compose.override.yml`:
+
+```
+services:
+  server:
+    environment:
+      OPENSRO_TEST_ITEMS_NPC: "1"
+```
+
+then `docker compose up -d` (or let the updater restart it). The boot log says what it built:
+
+```
+msg="Test Items NPC resolved (round 783, OURS): line/tab label=goods" items=15338 goods=189 tabs="1/1:Elixir=26 1/2:Magic=19 ..."
+msg="Test Items NPC spawned (round 783, OURS)" name="Test Items" uid=... body=NPC_SD_T_AREA_POTION ref=26823 region=25000 ... free=true
+```
+
+(the counts are the box's archive's, MEASURED; yours are your archive's). An ERROR line instead names
+what is missing: no NPC rows (`-npcpos-csv` / `-npcs-csv`), an item import without code names (older
+than round 497: re-run `export-refdata -mode items` and `import-refdata`), or an NPC table without
+Thiara's row. The players' clients need this round's release (the NPC's lines and tabs arrive in
+OpenSRO's own message 0x00BA; an older client draws the NPC and its name but shows no store line).
+
+**Its goods are free and sell at their own price** at any NPC (a Seal of Nova piece 250,000, a Magic
+stone of luck (Lvl.11) 15,000,000 on the box's archive): with it on, a player can make gold. Switch it
+off (remove the line) to close that.
+
 ## Moving an install from srrevamp to OpenSRO (round 704)
 
 The project was called srrevamp until 2026-10-03. The rename changed every name a deployed

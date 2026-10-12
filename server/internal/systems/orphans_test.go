@@ -145,9 +145,6 @@ var knownOrphans = map[string]string{
 		"(NpcTalkNet.encode_open) and the tests use this one (round 727).",
 	"DecodeSelectNPC": "reads 0xB045 as the client does (NpcTalkNet.decode_select); the socket test " +
 		"checks the server's reply with it (round 727).",
-	"NPCInteractionMode": "the session's INTERACTMODE (5 or 6) after a 0x7046; the store's and " +
-		"warehouse's item handlers are to test it as the engine's do (lane 728's messages), and the " +
-		"socket test reads it (round 727).",
 }
 
 // baseline is the set of orphans that existed when this detector was written.
