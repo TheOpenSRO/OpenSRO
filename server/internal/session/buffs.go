@@ -332,6 +332,11 @@ func buffSpec(ref *refdata.Skill, casterID int64) buff.Spec {
 	}
 	// Round 640: the toggle's drain and the protection wall (walls.go).
 	wallSpec(&s, ref)
+	// Round 785: the row's stat writes (buff/stats.go), from its raw Param
+	// block; an export before the Params column carries none.
+	if ref.HasParams() {
+		s.Stats = buff.StatContributions(ref.Runs(), ref.ActionKind, ref.Activity)
+	}
 	return s
 }
 
@@ -453,6 +458,10 @@ func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerI
 	broadcastBuffEnd(zone, ownerID, ended, sp)
 	sendAboutOwner(zone, ownerID, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
 	wallStarted(ownerID, rec, now)
+	// Round 785: the row behind the record (skillrows.go), for the imbue and
+	// the periodic effects.
+	rememberRow(false, ownerID, ref)
+	startPeriodic(false, ownerID, casterID, ref, rec, now)
 	return startDone
 }
 
@@ -616,20 +625,6 @@ func BuffHandler(chars character.Store, hub *world.Hub) gateway.Handler {
 		broadcastBuffEnd(zoneOf(hub, characterID), characterID, []buff.Record{rec}, sp)
 		return nil
 	}
-}
-
-// ghostWalkDestination is FUN_005862e0's 'tele' clamp: the requested point
-// when it lies within d world units of from, otherwise the point d units
-// from from along the line to it. The distance is the full three-component
-// length (the function squares and sums all three offsets, READ).
-func ghostWalkDestination(from, to world.Position, d float64) world.Position {
-	dx, dy, dz := to.X-from.X, to.Y-from.Y, to.Z-from.Z
-	dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
-	if dist <= d || dist == 0 {
-		return to
-	}
-	k := d / dist
-	return world.Position{X: from.X + dx*k, Y: from.Y + dy*k, Z: from.Z + dz*k}
 }
 
 // finitePosition reports whether all three coordinates are finite numbers:

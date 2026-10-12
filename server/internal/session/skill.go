@@ -336,6 +336,7 @@ type SkillRefStore interface {
 // skill's required mastery level, and it costs the skill's ReqLearnSP (grounded
 // _RefSkill data). On success the points are spent and the skill recorded known.
 func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef SkillRefStore) gateway.Handler {
+	setPassiveSource(skills, skillRef)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpLearnSkill {
 			return nil
@@ -450,6 +451,9 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 			}
 			return fail("learn failed")
 		}
+		// Round 785: a learned passive acts at once (passives.go).
+		invalidatePassives(characterID)
+		character.InvalidateBonus(characterID)
 		return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: (&LearnSkillResult{OK: true}).Encode()})
 	}
 }
@@ -675,6 +679,7 @@ func useSkillHandler(
 	dropSrc DropSource,
 	potions *PotionQueue,
 ) gateway.Handler {
+	setPassiveSource(skills, skillRef)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
 			return nil
@@ -832,16 +837,14 @@ func useSkillHandler(
 			// the second is reported as unoccupied and contributes the engine's
 			// default of 1. That is a faithful reading of a table this project
 			// has half of, not a simplification of the formula.
-			if ref.Mastery1 != 0 {
-				trained := 0
-				if levels, err := skills.MasteryLevels(ctx, characterID); err == nil {
-					trained = levels[ref.Mastery1]
-				}
-				pct := combat.MasteryDamagePercent(true, true, false, trained, 0)
-				// OpenSRO has one attack record, so the engine's two-record
-				// clamp collapses to a cap at 90. See ClampMasteryPercent.
-				masteryPercent = combat.ClampMasteryPercent(pct, pct)
-			}
+			//
+			// ROUND 785 (skillmastery.go): gated on the row's own 'getv MAAT',
+			// the only writer of +0x574, and both mastery slots weighed --
+			// Skill_GetRequiredMasteryLevel (0x59e770). Until now every row
+			// with a mastery slot was scaled, among them the 1,478 Europe
+			// attack rows that carry no MAAT (MEASURED, docs/TODO.md). The
+			// main blow takes the percentage unclamped (0x58f148, READ).
+			masteryPercent = skillMasteryPercent(ctx, skills, characterID, ref)
 		} else if sk, inCatalog := skill.Catalog[req.SkillID]; inCatalog {
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
@@ -1056,10 +1059,14 @@ func useSkillHandler(
 		//     point is the request's ground target; anything else asking for
 		//     a ground cast has no ground move here and is refused.
 		isBuff := startsCasterBuff(castRow)
-		isGround := req.Target() == TargetGround || castRow.HasTele()
+		// Round 785: 'tel2' (the Europe Teleport) moves its caster the same
+		// way, with its own limit and the snap flag (skillmove.go groundMove).
+		moveLimit, moveFlag, movesCaster := groundMove(castRow)
+		isGround := req.Target() == TargetGround || movesCaster
 		var groundDest world.Position
+		var groundAction *ActionBlock
 		if isGround {
-			if req.Target() != TargetGround || !castRow.HasTele() || !castRow.TargetLand {
+			if req.Target() != TargetGround || !movesCaster || !castRow.TargetLand {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: groundRefusal}).Encode()})
 			}
 			e, inWorld := hub.EntityBySession(sess.ID())
@@ -1076,8 +1083,15 @@ func useSkillHandler(
 			if motions.state(characterID, now) == MotionChangeMotion {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: seatedRefusal}).Encode()})
 			}
-			groundDest = ghostWalkDestination(e.Pos,
-				world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}, float64(castRow.Tele1))
+			// FUN_005862e0 (round 785, READ): the 3-D clamp to the row's
+			// limit, then the landing kept as truncated region-local
+			// integers -- the point the character is put at.
+			clamped := teleportDestination(e.Pos,
+				world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}, moveLimit)
+			var region uint16
+			var ix, iy, iz int32
+			groundDest, region, ix, iy, iz = truncatedLanding(e.Zone, clamped)
+			groundAction = moveAction(0, moveFlag, region, ix, iy, iz)
 		}
 		// A TARGETTYPE 0 CAST (round 616) applies to its caster, and the
 		// monster field is ignored. Retail's skill tick clears the action
@@ -1164,13 +1178,24 @@ func useSkillHandler(
 		// 659's review, H2: it landed from any distance and in any zone).
 		// INFERRED that retail measures it the same: the gate's reach test is
 		// not read to exempt a zero-damage row.
+		// A DEBUFF ON A MONSTER (round 785, monsterbuffs.go): a hostile
+		// Target_Required 1 action-kind-3 row starts its record on the target
+		// and resolves no blow at the cast (SkillAction_Buff); it is measured
+		// as a status cast is.
+		debuff := startsMonsterDebuff(castRow) && req.Target() == TargetEntity && !isBuff && !friendly
+		if debuff {
+			if refusal := statusCastRefusal(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange); refusal != "" {
+				keepUp.Cancel(characterID)
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: refusal}).Encode()})
+			}
+		}
 		if statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) && (noCombat || zeroDmg) {
 			if refusal := statusCastRefusal(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange); refusal != "" {
 				keepUp.Cancel(characterID)
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: refusal}).Encode()})
 			}
 		}
-		if !isBuff && !isGround && !selfTarget && !friendly && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
+		if !isBuff && !isGround && !selfTarget && !friendly && !debuff && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
 			keepUp.Cancel(characterID)
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"})
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
@@ -1273,6 +1298,8 @@ func useSkillHandler(
 		// retail skilldata). Whether the retail CLIENT re-sends an attack
 		// after such a cast is its own business (round 617).
 		keepUp.Cancel(characterID)
+		// Round 785 (skillchain.go): a chain still playing yields to it.
+		nextChain(characterID)
 
 		// NO DAMAGE, and this is the engine's own answer rather than a choice.
 		// Combat_ResolveDamage (0x0058e5f0) reaches it two ways, and OpenSRO
@@ -1360,6 +1387,9 @@ func useSkillHandler(
 		// character, never a monster to strike. Its buff starts on the target
 		// (startBuffOnLocked) and its heal lands on the target
 		// (healCharacter, the TargetHealHP/MP columns).
+		if debuff {
+			return castMonsterDebuff(ctx, sess, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, req, castRow, now)
+		}
 		if isBuff || isGround || selfTarget || friendly || noCombat || zeroDmg {
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID})
 			if selfTarget || friendly {
@@ -1400,10 +1430,27 @@ func useSkillHandler(
 			}
 			if isGround && done {
 				done = moveBySkill(sess, hub, chars, req.SkillID, groundDest, now)
+				res.Action = groundAction
 			}
 			if !done {
 				refundSkillCosts(ctx, chars, mp, characterID, hpCost, mpCost)
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: castFailedRefusal}).Encode()})
+			}
+			// Round 785 (skillsupport.go): a resurrection offers the revive;
+			// an 'efr' heal spreads over its characters; cures run on them.
+			if friendly && rowHasResu(castRow) {
+				if !offerResurrection(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, skills: skills, mp: mp, parties: parties}, characterID, castRow, friendTarget) {
+					res.Error = invalidTargetRefusal
+				}
+			} else if selfTarget || friendly {
+				var named *world.Entity
+				if friendly {
+					named = &friendTarget
+				}
+				noteSkillDeps(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions})
+				if hp := applySupport(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, skills: skills, mp: mp, parties: parties}, characterID, castRow, named); hp >= 0 {
+					res.PlayerHP = int32(hp)
+				}
 			}
 			if friendly && (castRow.TargetHealHP > 0 || castRow.TargetHealMP > 0) {
 				if hp := healCharacter(ctx, hub, chars, eq, items, skills, mp, friendTarget, castRow.TargetHealHP, castRow.TargetHealMP); hp >= 0 && friendTarget.CharacterID == characterID {
@@ -1413,8 +1460,9 @@ func useSkillHandler(
 			if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()}); err != nil {
 				return err
 			}
-			// The zone sees the cast (round 622, OpSkillCast).
-			announceCast(hub, characterID, req, castRow)
+			// The zone sees the cast (round 622, OpSkillCast), with its move
+			// (round 785) on the start and the act.
+			announceCastWith(hub, characterID, req, castRow, res.Action)
 			// A cast at a monster that resolves no blow -- a zero-damage stun,
 			// a debuff -- still lands its states (round 659, status.go).
 			if statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) {
@@ -1436,23 +1484,29 @@ func useSkillHandler(
 		// (Action_Range, refdata.Skill.Range). Nothing there is new
 		// arithmetic; the skill path simply never called it.
 
+		// Round 785 (skillhit.go): the cast strikes every target its 'efr'
+		// collector names, each hit its own blow, and answers with the
+		// retail action block; its states land per target inside the
+		// resolution (the hit record's bits), and the zone hears the cast
+		// (OpSkillCast, round 622) with the block -- only when the blow
+		// landed (round 622's review: a refusal after the costs is the
+		// requester's alone, as retail's 0xB070 result 2 is).
 		var blow blowReport
-		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType, &blow); err != nil {
+		deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
+		if err := performSkillAttack(ctx, deps, sess, characterID, castRow, req,
+			skillBlowTerms{damageBonus: damageBonus, damagePercent: damagePercent, masteryPercent: masteryPercent, hits: hits, attackType: attackType}, &blow); err != nil {
 			return err
 		}
-		// The zone sees the cast (round 622, OpSkillCast) -- only when its
-		// blow landed (round 622's review): a cast performAttack refused
-		// after the costs ("target not found") is the requester's refusal
-		// alone, as retail's 0xB070 result 2 is.
-		if blow.Landed {
-			announceCast(hub, characterID, req, castRow)
-		}
-		// The blow's states (round 659, status.go): on the monster it landed
-		// on, if it lives -- and not when the monster blocked it (round 659's
-		// review, M3: 0x5906c0 tests the hit record's blocked flag; OURS: one
-		// application for the cast, when any of its hits got through).
-		if blow.Landed && !blow.Blocked {
-			statusFX.applyToMonster(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, castRow, req.TargetMonsterID, now)
+		// CHAINS (round 785, skillchain.go): the server walks the head's
+		// Basic_ChainCode itself and plays every link at its own time.
+		if blow.Landed && castRow != nil && castRow.BasicChainCode != 0 {
+			links := chainLinks(castRow, func(id int64) *refdata.Skill {
+				if r, err := skillRef.GetSkill(ctx, id); err == nil {
+					return r
+				}
+				return nil
+			})
+			playChain(sess, deps, characterID, req.TargetMonsterID, castRow, links)
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
 		// AutoAttackType 1 and no Basic_ChainCode leaves a plain attack

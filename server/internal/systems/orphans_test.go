@@ -109,8 +109,6 @@ var knownOrphans = map[string]string{
 		"the interval is only ever armed on a first-table timer, which fires at once (ArmTimer " +
 		"0x53d6c7), so the swing cadence is the action machine's ReuseDelay (round 254) and this " +
 		"range is the threat table's idle window only -- wired by mob-threat-retarget.",
-	"Credit": "the threat table's attacker accounting (AITactics_CreditAttacker 0x5473c0, round 259); " +
-		"the interim hold keeps the first attacker without it -- wired by mob-threat-retarget.",
 	"FaceAfterHit": "the threat table's retarget rules, col 9 = 0/1/2 (Handler_0fc 0x548090, round " +
 		"259) -- wired by mob-threat-retarget.",
 	"Clear": "the threat table's SetTarget(0) reset (round 259) -- wired by mob-threat-retarget.",
@@ -174,14 +172,12 @@ var baseline = map[string]string{
 	"CanRequestAlliance":  "internal/guild/alliance.go",
 	"CapDamage":           "internal/combat/combat.go",
 	"CombatHandler":       "internal/session/combat.go",
-	"Complete":            "internal/equipment/itemset.go",
 	"DefaultWearFamily":   "internal/equipment/defaultwear.go",
 	"DeriveSeed":          "internal/proto/security.go",
 	"EquipmentHandler":    "internal/session/equipment.go",
 	"EquippedIn":          "internal/session/world.go",
 	"IntForMaxRatio":      "internal/combat/statratio.go",
 	"IntLevelDamageRatio": "internal/combat/statratio.go",
-	"IsPhysical":          "internal/combat/attacktype.go",
 	"ListAllSkills":       "internal/refdata/memstore.go",
 	"NewPacketChecksum":   "internal/proto/security.go",
 	"NewRollingByte":      "internal/proto/security.go",

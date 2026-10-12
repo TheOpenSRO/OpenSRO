@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
@@ -419,6 +420,11 @@ type AttackResult struct {
 	// suffix after round 639's EXP tail (ExpGained, SkillExpGained), sent
 	// only when non-zero.
 	Wall WallInfo
+	// Action is the cast's retail action block (round 785, actionblock.go,
+	// docs/protocol/skill_hit_block.md): every target, every hit, the
+	// caster's move. When set, the wall suffix is always written (13 bytes,
+	// zero for no wall) and the block follows it at offset 72.
+	Action *ActionBlock
 }
 
 // expAdded is the experience a character gained going from (level, exp) to
@@ -481,8 +487,13 @@ func (r *AttackResult) Encode() []byte {
 	buf = append(buf, encodeInt64(r.SkillExpGained)...)
 	// Trailing again (round 640): the wall suffix, only when there is one,
 	// so every result without a wall is byte for byte what it was.
-	if r.Wall != (WallInfo{}) {
+	if r.Wall != (WallInfo{}) || r.Action != nil {
 		buf = append(buf, r.Wall.encode()...)
+	}
+	// Trailing again (round 785): the action block, after a wall suffix
+	// that is then always present.
+	if r.Action != nil {
+		buf = r.Action.encode(buf)
 	}
 	return append(out, buf...)
 }
@@ -533,6 +544,11 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if w, ok := decodeWallInfo(rest[min(len(rest), 59):]); ok {
 		r.Wall = w
+	}
+	if len(rest) > 72 && rest[72] == actionBlockMarker {
+		if b, _, err := DecodeActionBlock(rest[72:]); err == nil {
+			r.Action = b
+		}
 	}
 	return r, nil
 }
@@ -1562,6 +1578,8 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		// recovered there from the engine's own parameter graph, together with
 		// what is deliberately not done and why.
 		min, max := combat.WeaponRange(item, weaponInstance(e), str, intel, atk)
+		// Round 785: the buffs' weapon-bound entries ('apau', 'apru', 'tpad').
+		min, max = buffedWeaponRange(characterID, atk, min, max)
 		// WHERE in that range the blow lands is the engine's centre-biased
 		// roll: the attacker's attack rate against the defender's parry rate,
 		// plus the level term, clamped to [10 %, 90 %] and then given a
@@ -1581,7 +1599,8 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		if defenderParry > 0 && item.HitRateMin > 0 {
 			// The instance's own attack rate (combat.WeaponAttackRate: its
 			// variance group 3, as the engine publishes param 11).
-			hra := combat.CharacterRate(attackerLevel, combat.WeaponAttackRate(item, weaponInstance(e)))
+			// Round 785: the buffs' param-11 entries ('hr', 'thrd').
+			hra := combat.CharacterRate(attackerLevel, buffStat(characterID, buff.ParamHitRate, combat.WeaponAttackRate(item, weaponInstance(e))))
 			centre := combat.DamageCentrePercent(hra, defenderParry, attackerLevel, defenderLevel)
 			return rollCentred(min, max, centre), nil
 		}
@@ -1693,7 +1712,8 @@ func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Stor
 		}
 		total += armourParry(e, it)
 	}
-	return total, nil
+	// Round 785: the buffs' param-9 entries ('er', 'terd'; buffstats.go).
+	return buffStat(characterID, buff.ParamParry, total), nil
 }
 
 // armourParry is one worn armour piece's parry, param 9's item term (see
@@ -1715,9 +1735,11 @@ func armourParry(e equipment.Equipped, it *refdata.Item) float64 {
 }
 
 func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
-	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
+	v, err := defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64, float64) {
 		return it.PhysDefenseMin, it.PhysDefenseMax, it.PlusIncPhysDef
 	}, durability.ArmourPhysDefenseGroup, durability.ShieldPhysDefenseGroup)
+	// Round 785: the buffs' param-5 entries ('defp', 'defr', ...; buffstats.go).
+	return buffStatInt(characterID, buff.ParamPhysDefFlat, v), err
 }
 
 // defenderDefence is the shared walk behind defenderArmor and its magical
@@ -1841,8 +1863,9 @@ func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store
 		}
 		// The other worn items' 'cri' options are entries of the same param
 		// (review F7).
-		return int(math.Round(crit)) + optionSum(optionsOf(e.MagParams), tagCri) +
-			wornOptionSum(ctx, characterID, eq, tagCri, equipment.SlotWeapon)
+		// Round 785: the buffs' param-12 entries (a passive's 'cr').
+		return buffStatInt(characterID, buff.ParamCritical, int(math.Round(crit))+optionSum(optionsOf(e.MagParams), tagCri)+
+			wornOptionSum(ctx, characterID, eq, tagCri, equipment.SlotWeapon))
 	}
 	return 0
 }
@@ -1905,10 +1928,13 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 		// The other worn items' 'bri' options are entries of the same param
 		// (review F7).
 		bri := optionSum(optionsOf(e.MagParams), tagBri) + wornOptionSum(ctx, characterID, eq, tagBri, equipment.SlotShield)
+		// Round 785: the buffs' param-10 entries and the physical 'br' bonus
+		// (p136; the block test adds p136..139 by the blow's type, READ --
+		// a monster's blow is physical).
 		if e.Durability == durability.Untracked {
-			return int(math.Round(item.BlockRatioMin)) + bri
+			return buffedBlock(characterID, int(math.Round(item.BlockRatioMin))+bri)
 		}
-		return int(math.Round(durability.WhiteStat(item.BlockRatioMin, item.BlockRatioMax, e.Variance, durability.ShieldBlockGroup))) + bri
+		return buffedBlock(characterID, int(math.Round(durability.WhiteStat(item.BlockRatioMin, item.BlockRatioMax, e.Variance, durability.ShieldBlockGroup)))+bri)
 	}
 	return 0
 }

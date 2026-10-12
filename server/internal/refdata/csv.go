@@ -529,6 +529,10 @@ var skillCSVColumns = []string{
 	// (Skill.StatusParams, statuseffect.ParseRuns). A strict suffix: an older
 	// export loads "", no status.
 	"StatusParams",
+	// Appended in round 785: the whole raw Param block (Skill.ParamWords) and
+	// the second mastery slot (Skill.Mastery2 / MasteryLevel2). A strict
+	// suffix: an older export loads no words and no second mastery.
+	"Params", "Mastery2", "MasteryLevel2",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -769,6 +773,11 @@ func parseSkillRow(f []string) (Skill, error) {
 	if len(f) > 90 {
 		sk.StatusParams = strings.TrimSpace(f[90])
 	}
+	if len(f) > 91 {
+		sk.ParamWords = ParseParamWords(f[91])
+	}
+	int64At(92, &sk.Mastery2)
+	intAt(93, &sk.MasteryLevel2)
 
 	if err != nil {
 		return Skill{}, err
