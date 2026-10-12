@@ -17,7 +17,7 @@ resolved by the server at boot.
 | Name (name plate, talk and store window titles) | `Test Items` | OURS (the user's) |
 | Body | `NPC_SD_T_AREA_POTION`, characterdata id 26823, `npc\sd\sd_t_area_potion.bsr` -- "Potion Merchant Thiara" (`SN_NPC_SD_T_AREA_POTION`, textdata_object) | READ (the box's Media.pk2) |
 | Where | region 25000 (97/168, Jangan), local (1070.0, -32.61, 950.0), on the square's deck east of the dragon fountain, 97 from the Storage-Keeper Wangu (`NPC_CH_WAREHOUSE_M`, npcpos row 2013 at 980.80, -32.43, 989.13) and 101 from Event So-Ok (`NPC_CH_EVENT_KISAENG1`, row 3861 at 1101.68, -32.28, 854.30) | the two NPCs READ (npcpos.txt); the spot OURS; its ground MEASURED (below) |
-| Facing | wInitialDir 24424 (134.2°, compass 315.8: toward the town's spawn, local (1002, 1020)) | OURS |
+| Facing | wInitialDir 8192 (45°, compass 45: north-east -- the user, round 784: "rotate the npc 90 degrees to the right so it's facing north east"; it faced 24424, compass 315.8, toward the town's spawn, before) | OURS |
 | Offers | interaction 1 (the store) only | OURS |
 | Prices | 0 gold for its goods, at its store only | OURS (the user's) |
 | Switch | `-test-items-npc` / `OPENSRO_TEST_ITEMS_NPC=1`, default off | OURS |
