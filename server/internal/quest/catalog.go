@@ -171,6 +171,9 @@ type Quest struct {
 	Reward      Reward
 	// Unhandled counts setup calls this catalogue does not model.
 	Unhandled []string
+	// scriptReward is the script's own LuaSetAchievedItem values, kept for
+	// the exporter's comparison with the reward table (not exported).
+	scriptReward *Reward
 }
 
 // Playable reports whether OpenSRO can run the quest end to end: a scripted

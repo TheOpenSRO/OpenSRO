@@ -99,6 +99,10 @@ type questRuntime struct {
 	logs  map[int64]*questLog
 	talks map[uint64]*questTalk
 	marks map[uint64]map[uint32]byte // session -> NPC uid -> mark sent
+	// markLevel is the level the session's marks were last worked out for:
+	// a level-up opens new quests, so a kill by a character whose level
+	// moved refreshes them.
+	markLevel map[uint64]int
 
 	npcOnce  sync.Once
 	npcByCod map[string][]npcspawn.Record
@@ -115,7 +119,8 @@ func InstallQuests(cat *quest.Catalog, d QuestDeps) {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
-	questRT.Store(&questRuntime{cat: cat, deps: d, logs: map[int64]*questLog{}, talks: map[uint64]*questTalk{}, marks: map[uint64]map[uint32]byte{}})
+	questRT.Store(&questRuntime{cat: cat, deps: d, logs: map[int64]*questLog{}, talks: map[uint64]*questTalk{},
+		marks: map[uint64]map[uint32]byte{}, markLevel: map[uint64]int{}})
 }
 
 // QuestCatalog is the installed catalogue (nil without one).
@@ -164,6 +169,7 @@ func ForgetQuestSession(sessionID uint64) {
 	rt.mu.Lock()
 	delete(rt.talks, sessionID)
 	delete(rt.marks, sessionID)
+	delete(rt.markLevel, sessionID)
 	rt.mu.Unlock()
 }
 
@@ -358,6 +364,7 @@ func (rt *questRuntime) refreshMarks(ctx context.Context, sess *gateway.Session,
 	}
 	ql.mu.Unlock()
 	rt.mu.Lock()
+	rt.markLevel[sess.ID()] = p.Level
 	sent := rt.marks[sess.ID()]
 	if sent == nil {
 		sent = map[uint32]byte{}
@@ -866,6 +873,17 @@ func questOnKill(ctx context.Context, sess *gateway.Session, characterID int64, 
 	progress := rt.cat.OnKill(ql.log, monster.CodeName, rt.roll)
 	ql.mu.Unlock()
 	if len(progress) == 0 {
+		// A level-up by this kill opens quests: the marks follow (OURS).
+		if sess != nil && rt.deps.Hub != nil {
+			if e, ok := entityOf(rt.deps.Hub, characterID); ok {
+				rt.mu.Lock()
+				lv, had := rt.markLevel[sess.ID()]
+				rt.mu.Unlock()
+				if had && lv != e.Level {
+					rt.refreshMarks(ctx, sess, characterID, e.Level)
+				}
+			}
+		}
 		return
 	}
 	changed := map[int64]*quest.Quest{}

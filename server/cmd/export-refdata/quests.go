@@ -100,6 +100,10 @@ func exportQuests(out string, args []string) error {
 	if len(rep.NotInQuestData) > 0 {
 		fmt.Fprintf(os.Stderr, "export-refdata: %d scripted quests not in questdata: %s\n", len(rep.NotInQuestData), strings.Join(rep.NotInQuestData, " "))
 	}
+	if len(rep.RewardDiffers) > 0 {
+		fmt.Fprintf(os.Stderr, "export-refdata: %d quests whose script reward differs from the reward table (gold/EXP/skill EXP; the table is paid): %s\n",
+			len(rep.RewardDiffers), strings.Join(rep.RewardDiffers, " "))
+	}
 	if len(parts) > 0 {
 		fmt.Fprintf(os.Stderr, "export-refdata: setup calls not modelled (calls): %s\n", strings.Join(parts, " "))
 	}

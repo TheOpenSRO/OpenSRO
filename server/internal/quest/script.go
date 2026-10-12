@@ -273,6 +273,9 @@ func Apply(q *Quest, calls []Call) {
 			q.Missions = append(q.Missions, *m)
 		}
 	}
+	if luaReward {
+		q.scriptReward = &lua
+	}
 	if !q.Reward.FromTable && luaReward {
 		sp := q.Reward.SkillPoint
 		q.Reward = lua

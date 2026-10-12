@@ -26,9 +26,11 @@ scripts themselves.
 from `_RefQuestReward` (`FUN_009287c0`, "Can not find QuestRewardData :
 QuestID [%d]", READ), which is the table the client shows; the scripts also
 call `LuaSetAchievedItem(n, exp, spexp, gold, ...)` (0x86c2e0: +0x8c4,
-+0x8c8, +0x8c0, READ). The two agree on retail quests (QNO_CH_SMITH_1: 270 EXP
-and 205 gold in both) and differ on this private server's own `QNO_AA_*`
-quests (script EXP 7200, table 1337: MEASURED, a private-server modification).
++0x8c8, +0x8c0, READ). The two differ in gold, EXP or skill EXP on 8 quests only
+(MEASURED by the exporter, which lists them): this private server's
+own `QNO_AA_*` quests (script EXP 7200, table 1337 -- a private-server
+modification) and QNO_CA_HUNTER_1, whose script has gold and skill EXP the
+other way round (table 6000 gold / 2700 skill EXP, script 2700 / 6000).
 OpenSRO pays the table row and falls back to the script's values only when a
 quest has no row (OURS).
 

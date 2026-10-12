@@ -31,7 +31,10 @@ type BuildReport struct {
 	QuestData, Scripted, Compiled, CompiledRead, Rewards, RewardItems int
 	ScriptFailed                                                      []string
 	NotInQuestData                                                    []string
-	Coverage                                                          Coverage
+	// RewardDiffers names the quests whose script reward (LuaSetAchievedItem)
+	// differs from their reward-table row in gold, EXP or skill EXP.
+	RewardDiffers []string
+	Coverage      Coverage
 }
 
 var rttiQuest = regexp.MustCompile(`\.\?AVC(Q[A-Z0-9_]+)@@`)
@@ -145,6 +148,13 @@ func Build(in Inputs) ([]*Quest, BuildReport, error) {
 			rep.Scripted++
 		case SourceCompiled:
 			rep.Compiled++
+		}
+	}
+	for _, q := range quests {
+		if sr := q.scriptReward; sr != nil && q.Reward.FromTable &&
+			(sr.Gold != q.Reward.Gold || sr.Exp != q.Reward.Exp || sr.SPExp != q.Reward.SPExp) {
+			rep.RewardDiffers = append(rep.RewardDiffers, fmt.Sprintf("%s(table %d/%d/%d script %d/%d/%d)",
+				q.Code, q.Reward.Gold, q.Reward.Exp, q.Reward.SPExp, sr.Gold, sr.Exp, sr.SPExp))
 		}
 	}
 	rep.Coverage = NewCatalog(quests).Coverage()
