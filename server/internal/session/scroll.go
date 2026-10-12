@@ -33,7 +33,8 @@ package session
 //     world wants a job mode (0x18e9) outside a siege (0x18f2). Then the
 //     scroll state starts with the option and, for 7, the record
 //     (FUN_004e0b50 at 0x4a0351: the state value (Param2 == 0) + 1, sub-kind
-//     3, the delay (float)Param1, the option), and the use answers 1.
+//     3, the delay (float)Param1 -- whole seconds by then, round 779 --, the
+//     option), and the use answers 1.
 //   - The state's job (AJStateChanger::vslot_002 case 0xb) resolves the
 //     destination when it expires, not when the scroll is used: option 2 and
 //     3 read the stored point again (FUN_004e0130 / FUN_004e01c0, abandoning

@@ -27,7 +27,8 @@ package session
 //     (OpTeleportResult, the 0xb05a's stand-in for the NPC teleport too), and
 //     a success is told with the receipt the client already takes as "the
 //     zone change that follows is a teleport's arrival" -- no 0x30bf kind
-//     0xb, which OpenSRO's client does not read;
+//     0xb (OpenSRO's client acts on its own 0 only to end a scroll's
+//     casting bar, round 779, which a walk-in never opens);
 //   - a dead character, or one in a zone change, does not fire one.
 
 import (
