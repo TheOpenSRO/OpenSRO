@@ -7483,6 +7483,142 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 785 (part): the teleport loading screen
+
+**The report.** "Interesting new bug possibly but the loading screen between teleportations
+flickers now a little, please fix." The user's log (v0.1.531, Windows, RTX 5080, Vulkan Forward+,
+separate render thread, window 3814 x 1993 at UI scale 2): a walk into the Qin-Shi tomb's door
+(GATE_JINSI_OUT -> SN_ZONE_26001, the tomb's lv.1) -- `LoadingScreen: up at frame 620190`,
+`dungeon 0x8007 ... built in 277 ms` (146 ms of it the 342 ambient effects), `region grid loaded
+in 550 ms ... at frame 620192`, `longest wall gap 547 ms at frame 620192`, `LoadingScreen: lifted
+at frame 620193`. The same three-frame shape is in v0.1.529 (`fight.log`, lv.1: 356638 -> 356641,
+544 ms) and v0.1.530 (lv.1 19404 -> 19407, 574 ms; lv.2 25165 -> 25168, 2001 ms), so it is not
+new in .531; a field teleport's screen is up ~200 frames (the drain), e.g. 9288 -> 9492, 1957 ms.
+
+**What the screen showed (MEASURED, real time).** New tooling: `qa_shot.sh` runs in real time
+(`QA_SHOT_REALTIME=1`, no movie writer -- it reads every frame back, so its frames cannot say how
+long anything was shown) and grabs the window as the X server shows it (`QA_SHOT_XCAPTURE`,
+`tools/xcapture.sh`: xwd every ~10 ms, unix-ns stamped), the client prints a `QA FRAMELOG` line a
+frame on the same clock (`OPENSRO_QA_FRAMELOG=1`), and `xcapture_series.py` classifies each grab
+against a grab of the screen (`LS`, the fraction of pixels within 8; screen at LS >= 0.85, the
+gauge moves luma 57.2 empty -> 65.6 full, the caption swap 65.6 -> 65.7). Box (RX 7600, Forward+,
+separate render thread, 640 x 360, ~25-40 fps), recipes `/var/tmp/r785-load/rt{A,B,C,D}.sh`,
+before = dev + the log line, after = this round:
+
+| path | before | after |
+|---|---|---|
+| `/goto donwhang` (field -> field) | 20 gauge states; full 222 ms, the last 15 ms with the caption swapped | 16 states; full 423 ms; caption unchanged |
+| `/goto jangan` (field -> field) | 14 states; full 239 ms incl. the caption frame | 13 states; full 266 ms; no swap |
+| Dimensional Gate Jangan -> Donwhang (field -> field) | 16 states; full 226 ms, then the caption frame | 14 states; full 246 ms; no swap |
+| `/goto dungeon/32775` (field -> tomb lv.1) | **empty 1,591 ms, full 269 ms, caption 46 ms** (3 states) | empty 1,662 ms, full 475 ms (2 states) |
+| walk-in GATE_JINSI_OUT (field -> tomb lv.1, the user's path) | **empty 1,501 ms, full 279 ms, caption 53 ms** | empty 1,501 ms, full 393 ms |
+| reverse return scroll -> tomb lv.2 (field -> dungeon) | **empty 7,922 ms, full 201 ms, caption 27 ms** | empty 989 ms, then 18 states over the build (22 repaints), full 330 ms |
+| return scroll, tomb lv.1 -> Jangan (dungeon -> field) | 14 states; full 234 ms incl. the caption frame | 17 states; full 433 ms; no swap |
+
+Every transition, before and after: exactly two screen/world toggles -- the screen came up over
+the old world in one step and went in one step, with no world (old or new) and no black frame
+between (LS 1.000 the whole time a dungeon built; the screen presented through the one-frame
+build on this box). (The gate path's screen reads 0.3 luma low: the game's cursor, an icon at the
+QA click, is in the grabs over the screen and the world alike.)
+
+**The cause.** A dungeon builds in one frame (`_load_dungeon`, inside `_on_change_zone_result`'s
+`_reload_zone_assets`), so the frame drawn just before it -- the screen with an **empty** gauge --
+is what stays up through the build; the drain (`_drain_initial_load`) then set the gauge to full
+(`1.0 / total`, total 1 with no cells queued) and, a frame later, the caption to "Entering the
+world...", and lifted the screen the frame after: a full bright bar (760 x 26 UI units, 1520 x 52
+px at the user's UI scale) and a changed caption for the last two frames only. On the user's PC
+those are a few ms each (their log after the lift: p95 work frame 4-5 ms, longest wall gap 18
+ms); on a field teleport only the caption frame. INFERRED that this end-blink is the flicker the
+user saw: the box shows no other change of what is on screen, and its presentation through the
+build is the box's (Mesa RADV under Xwayland), not the user's Windows/NVIDIA swap chain, which
+cannot be measured here (OPEN). Nothing in rounds 777-784 touched the screen (`git log -L` of
+`_on_change_zone_result`, `_drain_initial_load`, `loading_screen.gd`); the dungeon teleports that
+show it arrived with rounds 773-779.
+
+**What the client does (READ, sro_client.exe).**
+- The screen is CPSMission's loading state (+0xe4), raised by `UI_ALCHEMYBOX::FUN_0084b6e0` --
+  from `OnResetClient` (0x86dab0, the teleport's reset: `FUN_00787860` zone reset, then the
+  screen) and from `CPSMission::OnCreate` (0x84c9df): the zone's backdrop art on a window it has
+  (in mode +0xe0 = 2 or 3 a switch picks `loading_<zone>.ddj`: `loading_zangan.ddj` for 25000,
+  `loading_royalmausoleum.ddj` for 0x8002-0x8007, `loading_dungeons_donwhang.ddj` for 0x8001,
+  `loading_china_1.ddj` by default, ...; that the switch's value is the region id is INFERRED from
+  its cases -- 25000 is 97/168, 0x8001-0x8007 the dungeons -- the decompiler names a stack slot),
+  and three windows it creates: 0x65
+  `loading_form.ddj`, 0x64 `gauge_loading.ddj`, 0x66 `nowloading.ddj`.
+- While it is up the world is neither updated nor drawn: `CPSMission::vslot_012` (0x84c300) runs
+  `FUN_0084c060` and returns while +0xe4 is set; `vslot_013` (0x84ac70) draws the world only when
+  it is clear.
+- The world load (`SWorld::vslot_000`, 0xa2acd0) holds the thread and reports progress in
+  thousandths after each part -- a field's 31 x 31 = 961 cells (`i * 1000 / 0x3c1`) or a
+  dungeon's parts (`i * 1000 / count`) -- to `FUN_00ba3fc0`, which stores it (+0x44 of
+  DAT_0110f7d0; `FUN_0084c060` puts it / 1000.0 into gauge 0x64) and calls that object's slot
+  0x24 only when `GetTickCount() - last > 0x32` (50 ms) or when forced; the load ends with
+  `FUN_00ba3fc0(1000, 1)`. That slot 0x24 is a repaint of the screen is INFERRED from that gate.
+- +0xe5 is set by 0x84ab50 (called from `FUN_008ab0e0`, which builds the player: the character
+  data's handler, INFERRED); the next update's `FUN_0084c060` destroys windows 0x64, 0x65 and 0x66
+  and clears +0xe4, so the world updates and draws from that frame. No timer, no fade, no
+  minimum time anywhere on this path.
+
+**The fix (OURS method, READ rule).**
+- `LoadingScreen.paint(fraction, force)` is `FUN_00ba3fc0`: it sets the gauge every call and
+  repaints only when more than `PAINT_INTERVAL_MS` = 50 have passed since its last repaint, or
+  when forced -- `RenderingServer.force_draw`, queued to the render thread, with the root
+  viewport's 3D off for that draw (the client draws no world under the screen) and back as it was
+  after. The gauge's fill is now its own RenderingServer canvas item under the trough, so a fill
+  set inside a load reaches the server at once (a Control's size waits for its deferred redraw).
+- `DungeonWorld.build` takes a `progress` callable (steps OURS: a room's walkable mesh, its model,
+  each object, the graph); `_load_dungeon` paints it into the first half of the gauge
+  (`DUNGEON_BUILD_SHARE`, OURS) and forces a repaint at 100 % at its end. The effects' attach
+  repaints nothing: any repaint during it made the tomb's lv.2 attach (4,216 effects) ~1 s slower
+  on the box -- 2.45-2.82 s against 1.44-1.60 s without, with repaints every 50 ms (3 runs), every 250 ms
+  (2), or with no present at all (`force_draw(false)`, 2), and with the SubViewports' updates off
+  too (2) -- while the rooms' and objects' repaints cost nothing measurable (MEASURED, `exp*.sh`;
+  why the attach waits on the render thread then is OPEN).
+- The drain's end keeps the caption ("NOW LOADING..." throughout) and lifts the screen one frame
+  after the gauge is full: the client's forced 100 % repaint and next-update close.
+- Not changed: the field (centre cell, then the drain's per-frame batches) -- the gauge already
+  moves there; no minimum display time (the client has none).
+
+**Cost (MEASURED, the lv.2 reverse-scroll arrival, 3 runs a side, real time).** Build 3,866 /
+3,923 / 5,830 ms base (the last overlapped another lane: its backdrop decode took 705 ms, not
+~460) against 3,831 / 4,044 / 3,959 ms with the fix; screen up 7,941 / 8,110 / 10,532 ms against
+7,985 / 8,054 / 8,082 ms. lv.1: build 1,263-1,290 ms base, 1,250-1,416 ms fix (single runs; the
+lane's variance).
+
+**Perf gate** (`perf_gate.sh --sites jangan --frames 40000`; the entry is the real loading drain,
+whose last frame no longer changes the caption):
+
+```
+perf gate: base c7b2dcd0 (forward_plus) vs head working tree (forward_plus) (1280x720, median of 3 run(s))
+jangan  frame ms   base 0.78  head 0.76  (-0.0)  SAME
+jangan  entry ms   base 8992  head 8643  (-349.0)  SAME
+jangan  freeze ms  base 2772  head 2768  (-4.0)  SAME
+jangan  hitches    base 4  head 4  (+0.0)  SAME
+```
+
+**What is left (OPEN).**
+- The tomb's lv.1 is one room: its model is one step, so on the box the gauge stays at ~1 % until
+  the build's end and then shows full for 393-475 ms (was 279-315 ms full plus the caption frame).
+  How long the full gauge stays on the user's PC (the backlog the render thread works off after
+  the build, plus two frames) is not measured here; the client's own rule allows a one-frame
+  100 % too, so an OURS minimum hold was not added.
+- The zone's own backdrop (`FUN_0084b6e0`'s table above) -- the screen still shows
+  `loading_default.ddj` everywhere.
+- The world is still drawn under the screen during the field drain (the client draws none).
+- `ERROR: Condition "!is_inside_tree()"` from `character_blobs.gd` during zone changes (64 and 84
+  lines in the two /goto runs, base and fix alike): not this round's.
+
+**Tests.** `loading_screen_test.gd` (run headless): `paint` is the 50 ms rule (the first paint
+repaints, one within 50 ms sets the gauge but does not, a forced one does, one after 50 ms does,
+the viewport's 3D is as it was after, a screen out of the tree never repaints), the gauge clamps;
+World3D's source: no `set_caption(` anywhere, `_load_dungeon` hands `DungeonWorld.build` a
+painting progress callable and ends with `_loading_paint(1.0, true)`, the effects' attach makes
+no repaint, the drain's end is full -> one frame -> lift; `DungeonWorld.build` takes `progress`.
+NEGATIVE (run on the base copy): the suite does not even parse there (`Cannot find member
+"PAINT_INTERVAL_MS" in base "LoadingScreen"`), and its World3D checks read a `set_caption(` and
+no progress callable. `remote_godot.sh check`: 752 scripts and 9 scenes, ALL LOAD;
+`remote_godot.sh tests`: "ran 290 suite(s), 0 failing". No server change.
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

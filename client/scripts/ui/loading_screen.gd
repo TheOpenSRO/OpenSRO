@@ -61,9 +61,10 @@ extends Control
 ## So: the gauge fills as the load goes, rests at 100 % for a repaint, and the
 ## screen goes on the next frame. `paint` is FUN_00ba3fc0 (the 50 ms rule,
 ## the forced last repaint); the screen's caption never changes. OPEN: the
-## zone's own backdrop art (FUN_0084b6e0 picks loading_<zone>.ddj by region,
-## e.g. loading_royalmausoleum.ddj for 0x8002-0x8007) -- this screen still
-## shows loading_default.ddj everywhere.
+## zone's own backdrop art (FUN_0084b6e0 picks loading_<zone>.ddj, e.g.
+## loading_royalmausoleum.ddj for 0x8002-0x8007 -- by the region id,
+## INFERRED from the switch's cases) -- this screen still shows
+## loading_default.ddj everywhere.
 
 const DEFAULT_BACKDROP := "interface\\loading\\loading_default.ddj"
 
