@@ -1627,12 +1627,20 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 - [ ] **Deploy round 692 on opensro-01**: stage the three `_RefCharDefault_*` CSVs and `_RefCharGen.csv`
       and set `OPENSRO_CHARDEFAULTS_DIR` (deploy/README.md, "Character defaults"). Until then new
       characters get no defaults; the server says so at boot.
-- [ ] **Default quests are recorded, not given** (round 692): `character_default_quests` holds each new
-      character's level-1 default quests by code at Status 1 (China 3, Europe 2). The quest package is
-      an invented catalogue whose ids 1 and 2 collide with real quests; when the real quest graph is
-      imported, start these from the table. The higher-level default rows (RequiredLevel 5..60) are
-      not given at create and when they are is OPEN; whether each code is in the shard's `_RefQuest`
-      (the procedure's join) is OPEN.
+- [ ] **Default quests are recorded, not given** (round 692; round 785 update): `character_default_quests`
+      holds each new character's level-1 default quests by code at Status 1 (China 3, Europe 2). The
+      real catalogue exists since round 785 (`docs/protocol/quests.md`), but none of the default codes
+      (`QTUTORIAL_CH`, `QEVENT_GUIDE`, ...) has a setup in the server's scripts or a class OpenSRO can
+      read, so there is nothing to open (MEASURED, the exporter's `-quest-report`). The higher-level
+      default rows (RequiredLevel 5..60) are not given at create and when they are is OPEN.
+- [ ] **Quests, round 785 OPEN items** (`docs/protocol/quests.md` section 7): party kill credit
+      (`LuaSetDivideType`, 125 quests), time-limited quests (`LuaSetRealTime`, 58), job quests
+      (`LuaSetJobTypeStartCondition`, 33), `LuaSetAchievedPoint` (30), the change-item mission class
+      (blocks QNO_EU_EASTEU_1/2/3), 5 compiled classes missing from the decompilation, the reward
+      choice block (refqusetreward cols 5-9), and the second level value (`LuaSetStartCodition`'s last
+      argument). Coverage today: 618 of 696 playable, 564 reachable.
+- [ ] **Deploy round 785 on opensro-01**: export the quest catalogue on the render box and set
+      `OPENSRO_QUESTS_DIR` (deploy/README.md, "Quests").
 - [ ] **Characters created before round 692** have no default masteries or skills (the procedure runs
       only at create). A one-off backfill is possible (OURS); not done.
 - [ ] **Decisions 10-12 in charselect.md section 8**: the procedure's 2,000,000 gold and 5,000,000 SP
@@ -1672,11 +1680,10 @@ The user (2026-10-02): "euros probably have their own quests too, make sure you 
       `QTUTORIAL_EU_2` (225), `QTUTORIAL2_EU_1..7`, `QNO_EU_TUTORIAL_1..7` and the `QNO_EU_CONS_*`
       chain (MEASURED, questdata / questcontentsdata). Whether retail gave `QTUTORIAL_EU` at create
       is OPEN (charselect.md decision 12).
-- [ ] **Europe's quest content.** No quest is real yet for either race (quest/quest.go): the
-      objectives' targets are server-side and not in the archive. For Europe specifically, the
-      Constantinople quest NPCs' quest lists (who gives `QTUTORIAL_EU`, `QNO_EU_TUTORIAL_*`,
-      `QNO_EU_CONS_*`) have never been loaded or exercised; Europe's NPCs and shops are unexercised
-      too (see "Europe in the world" in the character lobby section).
+- [x] **Europe's quest content** (round 785): the Constantinople chain QNO_EU_CONS_1..12 is real and
+      reachable end to end (CONS_1 and the compiled CONS_2 played by `partybot -mode quest` on the
+      box); East Europe to EASTEU_18 except EASTEU_1/2/3/5 and the `_1` variants. `QTUTORIAL_EU`,
+      `QTUTORIAL_EU_2` and `QNO_EU_TUTORIAL_1..7` have no setup anywhere (OPEN: the client tutorial).
 - [ ] **Europe's default masteries and skills** are given at create (round 692: masteries 513-518 at
       level 0, and 10 skills: the bare-hand attack and a basic attack per weapon family). Their use -- Europe's mastery
       rules and skill window -- is lane euroskill691's.

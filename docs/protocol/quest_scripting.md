@@ -600,3 +600,28 @@ The convention is now known: for each of the 542, a Lua function per event named
 `Handler<Event>_<QUESTNAME>`. OpenSRO has no Lua and no quest system, so nothing
 is wired — but if quests are ever built, this is the shape the retail data
 expects, and `questdata.txt` column 2 supplies the `<QUESTNAME>`.
+## The scripts themselves, and the system built on them (round 785)
+
+Round 434's caveat -- the server's `./Script/VIETNAM/` "is in none of the
+archives this project holds" -- no longer holds: the user's server pack
+(`/opt/sro-files/server/.../Blitzkrieq_Bin_Data/Script/VIETNAM/`) has it, five
+Lua 5.1 bytecode chunks (MEASURED): `define.sct`, `QuestList.sct`,
+`Quest.sct`, `EventList.sct`, `Event.sct`. `Quest.sct` defines a function per
+classless quest, and its body is the quest's whole setup -- start and complete
+NPCs, level, race, prerequisites, achievement limit, every mission with its
+monster code names, counts and drop rates, and the dialogue text ids -- as
+calls to host functions the server registers (0x8706b0..0x870d2a, READ).
+
+So "objectives are code" was right and is now usable: the code is data-shaped.
+The 529 scripted quests are read by running each setup against recorders
+(`internal/quest/luabc`), and 149 of the 154 compiled classes by reading their
+`DeclareQuestContent` (slot 55) from the decompilation. No function named
+`Handler*` -- round 434's `Handler<Event>_<Q>` -- is defined in this
+`Quest.sct` (MEASURED over its decompiled function names, unluac 2023-12-24 on
+the box only): besides the setups it defines `Start/End/Abort/RestartQuest_SD_MA_*`
+helpers, `QNO_UNIQUE_DEAD_MA_*`, and a few quest functions QuestList never
+lists (`QNO_CH_GENARAL_1`, `QNO_AA_BAGHDAD`, six `QNO_SD_GU_*`,
+`QNO_RM_FLYSHIP1_1`), which this server therefore never sets up.
+
+**`docs/protocol/quests.md` is now the spec** for the quest data, the
+messages and OpenSRO's quest system; this file stays as the RE trail.
