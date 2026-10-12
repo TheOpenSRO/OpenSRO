@@ -7504,6 +7504,11 @@ agents' parts (below), and two of the main lane's:
   `intro=... [setting]` and flew that intro under Forward+ (the live server serves "client
   defaults"); the user's own log lines (SETTING / FrontEnd / TITLE) were asked for. OPEN.
 
+- **Gates (merged tree):** `check` ALL LOAD (748), `tests` "ran 288 suite(s), 0 failing", server
+  `go test ./...` passes. Perf gate `--base v0.1.527 --sites jangan --frames 40000`: frame 0.75 ->
+  0.75 ms, entry 8548 -> 8752, freeze 2708 -> 2734, hitches 4 -> 5 -- all SAME. The server
+  (emotes 0x3091, walk/run 0x704f 2/3) deployed to the Mac mini with the release.
+
 ### Round 781 (part): the skill window
 
 The user: "let's fix this skills interface, this is how it should roughly look" with a screenshot
