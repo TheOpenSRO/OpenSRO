@@ -32,7 +32,10 @@ const ANCHOR_Y := 180.0
 const STEP_X := 42.0
 
 var _frames: Array = []
-var _ms := 0
+## Seconds into the current frame (round 785's client review, finding 13: a
+## float, so a frame's delta is never truncated -- whole milliseconds ran
+## the flip ~4 % slow at 60 fps and never at 1000+ fps).
+var _s := 0.0
 var frame := 0
 
 func _init(builder: UiBuilder = null) -> void:
@@ -61,12 +64,20 @@ func place(view: Vector2) -> void:
 func _process(delta: float) -> void:
 	if not visible or _frames.size() < 2:
 		return
-	advance(int(delta * 1000.0))
+	advance_seconds(delta)
 
+## `ms` milliseconds on (advance_seconds in whole milliseconds).
 func advance(ms: int) -> void:
-	_ms += ms
-	while _ms >= FRAME_MS:
-		_ms -= FRAME_MS
+	advance_seconds(float(ms) / 1000.0)
+
+## `seconds` on: the frames flip every FRAME_MS.
+func advance_seconds(seconds: float) -> void:
+	_s += maxf(seconds, 0.0)
+	var period := float(FRAME_MS) / 1000.0
+	# A part in a billion short still flips: 499 ms then 1 ms is the frame's
+	# whole 500 ms, whatever the sum rounds to.
+	while _s >= period - 1e-9:
+		_s = maxf(_s - period, 0.0)
 		frame = (frame + 1) % 2
 		if frame < _frames.size():
 			texture = _frames[frame]

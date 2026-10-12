@@ -1700,12 +1700,22 @@ func _step_combat_faces(delta: float) -> void:
 			_combat_faces.erase(id)
 			continue
 		var n: Node3D = node
+		# A skill slide owns the body's heading (round 785's client review,
+		# finding 11).
+		if not _skill_slides.is_empty() and _skill_slides.has(int(id)):
+			_combat_faces.erase(id)
+			continue
 		if n == player:
 			if _has_move_target or _player_dead:
 				_combat_faces.erase(id)
 				continue
 			_player_turn_target = NAN
 		elif int(f["monster"]) != -1 and (_monster_is_moving(int(f["monster"])) or _dying_until.has(int(f["monster"]))):
+			continue
+		elif int(f["monster"]) == -1 and n.has_meta("character_id") and _other_legs.has(int(n.get_meta("character_id"))):
+			# Another player walking a leg faces the way it walks (finding 11):
+			# the turn would fight the walk's heading.
+			_combat_faces.erase(id)
 			continue
 		var at = (f["target"] as Callable).call()
 		if at == null:
@@ -2429,6 +2439,9 @@ func _try_initialize_pk2_ui() -> void:
 				_hud_buff_board.clear()
 			# And every other owner's (round 638): the zone re-sends them.
 			_target_buff_book.clear()
+			# Each state's look undone first (round 785's client review,
+			# finding 5): the server does not re-send this player's own mask.
+			_clear_state_looks("the world entry")
 			_abnormal_states.clear()
 			# And no target carries over (round 638 review): whatever was
 			# selected belonged to the entry that ended.
@@ -2438,6 +2451,7 @@ func _try_initialize_pk2_ui() -> void:
 		if result != null and result.ok and result.max_hp > 0:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
+			_own_hp_told()
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.hp, result.max_hp)
 			if _hud_panels != null:
@@ -2476,6 +2490,7 @@ func _try_initialize_pk2_ui() -> void:
 			# gets; the result's own EXP tail (round 639) is no longer read
 			# for it, so the killer's line is not printed twice.
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
+			_own_hp_told()
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
 				# The count only (round 629's review): an AttackResult is not a
@@ -3316,6 +3331,10 @@ func _refresh_minimap() -> void:
 		_minimap_moved.clear()
 		return
 	if _dungeon != null:
+		# The tracked quest's signs are the field's (npcpos); a dungeon's
+		# minimap draws none (round 785's client review, finding 14, OURS:
+		# before, the field's last signs stayed frozen on it).
+		_hud_minimap.update_quest(Vector2.ZERO, PackedVector2Array())
 		_refresh_dungeon_minimap()
 		return
 	var pos := player.global_position
@@ -6947,6 +6966,10 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	# zone (BuffRoster, started over at the result), and each body built
 	# below, and this player's, takes its auras from it.
 	_target_buff_book.clear()
+	# Each state's look undone first (round 785's client review, finding 5):
+	# its aura, its pulse and its clip speed outlived the zone change, and the
+	# server never re-sends this player's own mask.
+	_clear_state_looks("the zone change")
 	_abnormal_states.clear()
 	# The new zone's players' states, told during the load (round 737's
 	# review: a spawn's states follow it), from what NetClient holds.
@@ -8724,6 +8747,51 @@ func _on_object_status(st: StatusNet.ObjectStatus) -> void:
 ## owner key -> its StateLook look ({"tint", "speed", "frozen"}).
 var _state_looks: Dictionary = {}
 
+## Every owner's abnormal-state look undone (a zone change, a world entry;
+## round 785's client review, finding 5): each state goes off on its body as
+## its mask going to 0 takes it off (_apply_state_look: the PARAM_ aura
+## let go, its DEACT, the pulse and the clip speed), then the books are
+## empty and this player's clip speed is 1 again.
+func _clear_state_looks(why: String) -> void:
+	var keys := {}
+	for k in _abnormal_states:
+		keys[k] = true
+	for k in _state_looks:
+		keys[k] = true
+	for key in keys:
+		var mask := int((_abnormal_states.get(key, {}) as Dictionary).get("mask", 0))
+		_apply_state_look(String(key), _state_body_of(String(key)), mask, 0)
+	if not keys.is_empty():
+		print("World3D: %d abnormal-state look(s) undone (%s)" % [keys.size(), why])
+	_state_looks.clear()
+	# This player's own pulse and clip speed, whoever its key named.
+	if player != null and is_instance_valid(player):
+		StateLook.set_tint(player, [])
+	_player_clip_speed = 1.0
+	_prune_clip_speeds(true)
+
+## The body an owner key names, or null.
+func _state_body_of(key: String) -> Node3D:
+	var parts := key.split(":")
+	if parts.size() != 2 or not parts[1].is_valid_int():
+		return null
+	var kind := SkillNet.OWNER_MONSTER if parts[0] == "monster" else SkillNet.OWNER_CHARACTER
+	return _fx_owner_body(int(parts[1]), kind)
+
+## A body's state look dropped at once, without its DEACT effects (a death,
+## a body freed; round 785's client review, finding 6): its PARAM_ auras let
+## go, its pulse and clip speed back to plain, its look forgotten. The mask
+## itself is the caller's to keep or drop.
+func _drop_state_look(key: String, body: Node3D) -> void:
+	var mask := int((_abnormal_states.get(key, {}) as Dictionary).get("mask", 0))
+	for bit in 32:
+		if mask & (1 << bit) != 0:
+			SkillEffects.detach_aura(key, StateLook.STATE_TOKEN - bit)
+	_state_looks.erase(key)
+	if body != null and is_instance_valid(body):
+		StateLook.set_tint(body, [])
+		_set_body_clip_speed(body, 1.0)
+
 ## An owner's abnormal states changed from `old_mask` to `new_mask`: each
 ## state's effect comes on or goes, and its colour pulse and clip speed
 ## follow (StateLook's header has the READ).
@@ -8784,10 +8852,23 @@ func _set_body_clip_speed(body: Node3D, speed: float) -> void:
 	else:
 		_clip_speeds[skel.get_instance_id()] = speed
 
+## Drops the clip speeds of skeletons that are gone (round 785's client
+## review, finding 6: the map was never pruned), or every one with `all`.
+func _prune_clip_speeds(all: bool = false) -> void:
+	if all:
+		_clip_speeds.clear()
+		return
+	for id in _clip_speeds.keys():
+		if not is_instance_id_valid(int(id)):
+			_clip_speeds.erase(id)
+
 ## Holds back the clips of slowed or frozen bodies by the part of `delta`
 ## they do not run (a loop's phase, a one-shot's start), before the clip
 ## tick poses them.
 func _step_clip_speeds(delta: float) -> void:
+	if _clip_speeds.is_empty():
+		return
+	_prune_clip_speeds()
 	if _clip_speeds.is_empty():
 		return
 	var lag := delta
@@ -9391,6 +9472,8 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	holder.set_meta("npc_code", code)
 	holder.set_meta("npc_interactions", rec.interactions)
 	holder.set_meta("npc_facing_source", facing_source)
+	# The body's height a quest mark stands over (QuestMarks.height_of).
+	holder.set_meta(QuestMarks.HEIGHT_META, bounds.y)
 	# Its round shadow in Circle (round 702, CharacterBlobs: every
 	# CICharactor casts one in the original, NPCs included).
 	CharacterBlobs.register(holder, float(_bc_radius_by_code.get(code, 0.0)))
@@ -9402,7 +9485,7 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	_npc_holders[rec.uid] = holder
 	# A quest mark that came before its NPC (round 785, QuestMarks).
 	if NetClient.quest.marks.has(rec.uid):
-		QuestMarks.apply_one(holder, NetClient.quest.marks[rec.uid], _quest_mark_models, _quest_mark_model)
+		QuestMarks.apply_one(holder, NetClient.quest.marks[rec.uid], _quest_mark_models, _quest_mark_model, _quest_mark_fx)
 	# One line per NPC: which source turned it, and the way it faces as a
 	# compass bearing in the region-local frame (0 north, 90 east) -- read
 	# off the holder's own basis (its body's front is local -Z), so the line
@@ -11374,6 +11457,12 @@ func _retry_ghost_gaits() -> void:
 ## killing swing) started over the held clip and was itself held, a dead
 ## body frozen mid-swing. Nothing plays over a held pose; _leave_dead_state
 ## releases it. Returns 0 for a refused or a one-frame clip, and sets nothing.
+##
+## Round 785's client review, finding 4: a clip started here plays ONCE --
+## the WAIT hold's repeat (_player_one_shot_loop) is cleared, and only the
+## decoration's own WAIT clip sets it again (_deco_play_clip). Until then
+## the flag stuck, and every one-shot started during a hold -- a hit
+## reaction, the pick-up, a keep-up swing, the die clip -- looped.
 func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 	if _player_one_shot_hold:
 		return 0.0
@@ -11382,6 +11471,7 @@ func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
 		return 0.0
 	_player_one_shot = anim
 	_player_one_shot_start = _player_anim_time
+	_player_one_shot_loop = false
 	return anim.duration_seconds()
 
 ## skilleffect.txt's skillaniset rows, from the one shared parse.
@@ -12672,7 +12762,11 @@ func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) ->
 	if bool(e["own"]):
 		_last_combat_time = _player_anim_time
 		_play_player_once(anim)
-		_player_one_shot_loop = loop
+		# Only the clip the decoration started repeats (finding 4): a refused
+		# start (a held die pose) leaves the held clip alone.
+		if _player_one_shot == anim:
+			_player_one_shot_loop = loop
+			e["own_clip"] = anim
 	else:
 		var skel = e["skel"]
 		if skel != null and is_instance_valid(skel):
@@ -12681,9 +12775,14 @@ func _deco_play_clip(e: Dictionary, phase: int, action_type: int, loop: bool) ->
 
 ## The decoration ended: a looping clip of its own stops (retail's end stops
 ## the WAIT and SHOT clips, vslot 0xb8 in FUN_00a50a00).
+##
+## Round 785's client review, finding 4: only the decoration's own clip, and
+## never a held one-shot -- before, a row with WAIT and no SHOT ending under
+## the die clip nulled it, and a dead player stood idle.
 func _deco_stop_clip(e: Dictionary) -> void:
 	if bool(e["own"]):
-		if _player_one_shot_loop:
+		if _player_one_shot_loop and not _player_one_shot_hold and _player_one_shot != null \
+				and _player_one_shot == e.get("own_clip"):
 			_player_one_shot_loop = false
 			_player_one_shot = null
 	else:
@@ -12693,6 +12792,20 @@ func _deco_stop_clip(e: Dictionary) -> void:
 
 ## Whether the player's one-shot clip repeats (a decoration's WAIT hold).
 var _player_one_shot_loop := false
+
+## A move order of this player's own (a ground click, a heading run) ends the
+## cast it is casting (round 785's client review, finding 4). READ
+## (auto_command.md): the retail client cancels its action on a move click
+## (0x7074 command 2, `0x4ad320` clears the queue and stops the walk);
+## OpenSRO's protocol has no cancel message -- its server ends the action on
+## the move's position update, which this order sends (session/keepup.go) --
+## so nothing more is sent. Its hits land, as retail's end lands them
+## (FUN_00a50a00). A Ghost Walk's slide is not a move order (its own walk
+## waits, _own_slide_active) and is left alone.
+func _end_own_cast_for_move(why: String) -> void:
+	if _deco_on(player).is_empty() or _own_slide_active():
+		return
+	_end_deco(player, why, true)
 
 ## Marks the clip entry of `skel` that is a one-shot as repeating (or not):
 ## the clip tick wraps its start instead of handing back to its loop
@@ -13159,7 +13272,9 @@ func _own_skill_result(result: CombatNet.AttackResult, skill: int, code: String)
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d%s -- it died!" % [
 			result.monster_damage, " CRITICAL!" if result.player_critical else ""]
-		NetClient.list_quests(NetClient.current_character_name)
+		# No quest list is asked for (round 785's client review, finding 2:
+		# NetClient.list_quests went with the quest lane; a kill's progress
+		# comes as 0x30D5, QuestNet).
 	else:
 		monster_status_label.text = _exchange_line(result)
 		if result.player_died:
@@ -15272,6 +15387,25 @@ func _qa_step() -> void:
 	if mob_heights != "" and mob_heights.split(",").has(str(_qa_tick)):
 		_qa_mob_heights_report()
 		_qa_terrain_slope_report()
+
+	# OPENSRO_QA_QUEST_MARKS="<kind>[,<tick>]" (round 785's client review,
+	# finding 3): every placed NPC gets a quest mark of that kind at the tick
+	# (default 120), as 0x30D6 would give it, and 40 ticks later each mark's
+	# effects are counted -- live particles and drawn instances -- in a
+	# `QA QUEST MARKS` line. QA only; no server needed.
+	var qa_marks := OS.get_environment("OPENSRO_QA_QUEST_MARKS")
+	if qa_marks != "":
+		var qm := qa_marks.split(",")
+		var qm_tick := int(qm[1]) if qm.size() > 1 and qm[1].is_valid_int() else 120
+		if _qa_tick == qm_tick:
+			for uid in _npc_holders:
+				var mk := QuestNet.Mark.new()
+				mk.object_id = int(uid)
+				mk.mark_type = int(qm[0])
+				NetClient.quest.marks[int(uid)] = mk
+			_apply_quest_marks()
+		elif _qa_tick == qm_tick + 40:
+			_qa_quest_marks_report()
 
 	# OPENSRO_QA_CASTANIM="<skill id>" runs the skill's decoration on the
 	# player at tick 90 (and every 90 after), its WAIT hold forced to SHOT 30
@@ -18815,6 +18949,11 @@ func _step_other_bodies(delta: float, steps: int) -> void:
 		if body == null or _other_legs.has(character_id) or not _other_body_targets.has(character_id):
 			_other_awake.erase(character_id)
 			continue
+		# A skill slide moves it (round 785's client review, finding 1); its
+		# arrival wakes it again.
+		if not _skill_slides.is_empty() and _skill_slides.has((body as Node3D).get_instance_id()):
+			_other_awake.erase(character_id)
+			continue
 		var target: Vector3 = _other_body_targets[character_id]
 		var at: Vector3 = (body as Node3D).position
 		# Round 748: on its target and already standing (settled below): the
@@ -18866,6 +19005,8 @@ func _other_wake_scan() -> void:
 			continue
 		var body = _other_bodies.get(id)
 		if body == null or not is_instance_valid(body) or not _other_body_targets.has(id):
+			continue
+		if not _skill_slides.is_empty() and _skill_slides.has((body as Node3D).get_instance_id()):
 			continue
 		if not _other_settled.has(id) or (body as Node3D).position != _other_body_targets[id]:
 			_other_awake[id] = true
@@ -23001,6 +23142,7 @@ func _issue_walk(point: Vector3) -> String:
 	_move_target = point
 	_has_move_target = true
 	_move_heading_run = false
+	_end_own_cast_for_move("a walk order")
 	return "walk"
 
 ## The abnormal states that refuse a move: freeze, sleep, root (0xc1) and stun
@@ -23056,6 +23198,7 @@ func _start_heading_run(dir: Vector3) -> String:
 	# heading move is not read.
 	_move_target = player.position + Vector3(flat.x, 0.0, flat.y) * SkyRun.PICK_LENGTH
 	_has_move_target = true
+	_end_own_cast_for_move("a heading run")
 	_aim_local_player(Vector3(flat.x, 0.0, flat.y))
 	# A heading move hides the ring (round 698; retail on its 0xB021 echo).
 	if _ground_markers != null:
@@ -23776,6 +23919,11 @@ func _monster_cells_changed() -> void:
 ## itself, no longer this monster's body.
 func _free_monster_body(monster_id: int, keep_buffs: bool = false, fade: bool = false) -> void:
 	var body = _monster_bodies.get(monster_id)
+	# Its look (round 785's client review, finding 6): the pulse, the clip
+	# speed (keyed by its skeleton, which goes) and the look's book; a body
+	# rebuilt later takes its states again (_state_look_resync).
+	_drop_state_look(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER),
+		body as Node3D if body != null and is_instance_valid(body) else null)
 	if body != null and is_instance_valid(body):
 		if fade:
 			if monster_id == _last_attack_target:
@@ -24278,6 +24426,8 @@ func _on_pick_up_motion(motion: GroundItemsNet.PickUpMotion) -> void:
 	if own >= 0 and motion.object_id == (own & 0xffffffff):
 		player.rotation.y = RemoteFacing.yaw_of(h, 0.0)
 		_player_turn_target = NAN
+		# The pick-up's heading stays (round 785's client review, finding 11).
+		_combat_faces.erase(player.get_instance_id())
 		if _player_skeleton == null:
 			print("PICKUP MOTION: self ms=%d angle %d -- no body to animate" % [Time.get_ticks_msec(), motion.angle])
 			return
@@ -24294,6 +24444,7 @@ func _on_pick_up_motion(motion: GroundItemsNet.PickUpMotion) -> void:
 	var body: Node3D = _other_bodies[id]
 	body.rotation.y = RemoteFacing.yaw_of(h, 0.0)
 	_remote_turns.erase(body.get_instance_id())
+	_combat_faces.erase(body.get_instance_id())
 	# A far body drawn as a ghost is dressed for a one-shot (round 756).
 	_dress_ghost_now(id)
 	var gait: Dictionary = _other_gaits.get(id, {})
@@ -24842,8 +24993,29 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			_rewalk_after_keepup_refusal(result)
 		return
 	# Round 785: this player's cast at a monster is drawn by its decoration,
-	# with no plain swing.
-	if _pending_skill_id != 0:
+	# with no plain swing. Round 785's client review, finding 7: a result
+	# that names the skill it answers (SkillHits.skill_id, the server lane's
+	# u32) is routed by it -- 0 is a plain swing (a keep-up's, in flight while
+	# a cast was sent) and leaves the cast pending; a skill id is the cast's
+	# (or its chain link's) answer. A result that does not say (an older
+	# server) keeps the old rule: any answer while a cast is pending is its.
+	var told := result.hits != null and result.hits.has_skill_id()
+	if _combat_trace:
+		print("COMBAT result ms=%d names %s, cast pending %d" % [Time.get_ticks_msec(),
+			("skill %d" % result.hits.skill_id if result.hits.skill_id != 0 else "a plain swing") if told else "nothing (an older server)",
+			_pending_skill_id])
+	if told and result.hits.skill_id != 0:
+		var answered := result.hits.skill_id
+		var answered_code := _pending_skill_hit_code if answered == _pending_skill_id else ""
+		if answered_code == "" and not _fx_self_cast.is_empty() and int(_fx_self_cast["skill"]) == answered:
+			answered_code = String(_fx_self_cast.get("code", ""))
+			_fx_self_cast = {}
+		if answered == _pending_skill_id:
+			_pending_skill_id = 0
+			_pending_skill_hit_code = ""
+		_own_skill_result(result, answered, answered_code)
+		return
+	if not told and _pending_skill_id != 0:
 		var cast_id := _pending_skill_id
 		var cast_code := _pending_skill_hit_code
 		_pending_skill_id = 0
@@ -24851,8 +25023,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		_own_skill_result(result, cast_id, cast_code)
 		return
 	# A self cast that dealt damage (a Target_Required 0 attack row, the spear
-	# spin): its answer is a blow, drawn by the cast's decoration as well.
-	if not _fx_self_cast.is_empty() and not bool(_fx_self_cast.get("begun", false)) \
+	# spin): its answer is a blow, drawn by the cast's decoration as well. (A
+	# result that names a plain swing is not.)
+	if not told and not _fx_self_cast.is_empty() and not bool(_fx_self_cast.get("begun", false)) \
 			and result.target_type_echoed and result.target_type != SkillNet.TARGET_ENTITY:
 		var self_id := int(_fx_self_cast["skill"])
 		var self_code := String(_fx_self_cast.get("code", ""))
@@ -24878,7 +25051,7 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# that is when the monster's own hit reaction plays. Round 785: for a
 	# plain swing the clip is one of the base attack's skillaniset2 SHOT list
 	# at random, as retail picks it (_plain_swing_type).
-	var swing_type := _plain_swing_type() if _pending_skill_id == 0 else -1
+	var swing_type := _plain_swing_type()
 	if swing_type < 0:
 		swing_type = ATTACK_SEQUENCE[_attack_step % ATTACK_SEQUENCE.size()]
 		_attack_step += 1
@@ -24922,10 +25095,13 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# A skill cast (not a plain attack) plays that skill's own hit effect on the
 	# target when the blow lands. Consumed here so the next plain attack doesn't
 	# inherit it.
-	var skill_hit_code := _pending_skill_hit_code
-	_pending_skill_hit_code = ""
-	var cast_skill := _pending_skill_id
-	_pending_skill_id = 0
+	# A result naming a plain swing (finding 7) leaves a cast still pending
+	# to its own answer.
+	var skill_hit_code := "" if told else _pending_skill_hit_code
+	var cast_skill := 0 if told else _pending_skill_id
+	if not told:
+		_pending_skill_hit_code = ""
+		_pending_skill_id = 0
 	# The skill this blow carries, for its sounds: the cast's, or the weapon's
 	# base attack for a plain swing (CombatAudio.base_attack_skill), recorded
 	# as the player's current skill for the animation-fired sounds.
@@ -25241,8 +25417,9 @@ func _on_status_tick_strike(attacked: CombatNet.MonsterAttacked) -> void:
 ## from the result, and a newer result -- a kill's level-up heal, the next
 ## counter -- may have moved the HP since, so repainting from it put a stale
 ## number on the bar until the next result (round 544).
-func _show_own_strike(attacked: CombatNet.MonsterAttacked) -> void:
-	if _last_enter_world_max_hp > 0:
+func _show_own_strike(attacked: CombatNet.MonsterAttacked, write_hp: bool = true) -> void:
+	if write_hp and _last_enter_world_max_hp > 0:
+		_own_hp_told()
 		if _hud_player_info != null:
 			_hud_player_info.set_hp(attacked.target_hp, _last_enter_world_max_hp)
 		if _hud_panels != null:
@@ -25254,6 +25431,24 @@ func _show_own_strike(attacked: CombatNet.MonsterAttacked) -> void:
 		# -monster-battle reports a kill here alone, with no result before it.
 		if MonsterStrikes.leaves_dead(attacked.target_died, attacked.target_hp):
 			_enter_dead_state(attacked.death_exp_lost)
+
+## How many times the server has told this player's HP (round 785's client
+## review, finding 12): a blow drawn later than its push (_draw_monster_strike,
+## up to its clip's hit event) writes its HP only if no newer report -- a
+## potion, a stats update, a result, a revive -- came since its push.
+var _own_hp_seq := 0
+
+func _own_hp_told() -> void:
+	_own_hp_seq += 1
+
+## A blow whose push came when _own_hp_seq was `seq` lands: its HP only when
+## nothing newer has told it; its death line and dead state whatever came.
+func _show_own_strike_landed(attacked: CombatNet.MonsterAttacked, seq: int) -> void:
+	var current := seq == _own_hp_seq
+	if not current:
+		print("World3D: the blow of monster %d lands -- its HP %d is older than the HP shown, kept" % [
+			attacked.monster_id, attacked.target_hp])
+	_show_own_strike(attacked, current)
 
 # --- The player's dead state (round 548) --------------------------------------
 #
@@ -25354,6 +25549,11 @@ func _enter_dead_state(exp_lost: int) -> void:
 		print("CASTBAR closed by the death")
 	_drop_pending_attack()
 	_cancel_talk_approach("death")
+	# A cast running on this player ends (round 785's client review, finding
+	# 4, OURS: the die clip is not to be looped or replaced by its WAIT; its
+	# hits land, as retail's end lands them, FUN_00a50a00).
+	_end_deco(player, "the player died", true)
+	_player_one_shot_loop = false
 	_has_move_target = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
@@ -25414,6 +25614,7 @@ func _on_revive_result(result: WorldNet.ReviveResult) -> void:
 		print("World3D: revive refused: %s" % result.error)
 		return
 	_leave_dead_state()
+	_own_hp_told()
 	if _last_enter_world_max_hp > 0:
 		_last_enter_world_hp = result.hp
 		if _hud_player_info != null:
@@ -25472,8 +25673,10 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, re
 			print("COMBAT monster %d swing ms=%d skill %d (%s) clip type %d %.3f s, lands at %.3f s" % [
 				monster, Time.get_ticks_msec(), attacked.skill_id, code, clip_type, clip_seconds, strike_after])
 	if report_own:
-		# The HUD's HP, the death line and the dead state, as the blow lands.
-		_after(strike_after, _show_own_strike.bind(attacked))
+		# The HUD's HP, the death line and the dead state, as the blow lands --
+		# the HP only if nothing newer told it meanwhile (round 785's client
+		# review, finding 12: _own_hp_seq).
+		_after(strike_after, _show_own_strike_landed.bind(attacked, _own_hp_seq))
 	if target != null and attacked.blocked:
 		# The block's sound at the blocker, a player character (round 614).
 		_after(strike_after, func() -> void:
@@ -25871,7 +26074,9 @@ func _fx_self_cast_acts(skill_id: int, why: String, with_aura: bool) -> void:
 		var body = _other_bodies.get(target_id)
 		if body != null and is_instance_valid(body):
 			on = body
-	if not bool(_fx_self_cast["ground"]):
+	# Only this cast's own WAIT goes to SHOT (round 785's client review,
+	# finding 10): another cast still running on the player is not its act.
+	if not bool(_fx_self_cast["ground"]) and int(_deco_on(player).get("skill", 0)) == skill_id:
 		_shot_deco(player)
 	# ACT plays on the object the skill acts on (skills_spec §1.2, INFERRED
 	# from the rows: Heal's ACT_S at the healed body's Bip01), so that body is
@@ -26846,12 +27051,18 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	var to := Vector3(moved.x, moved.y, moved.z)
 	if _other_bodies.has(moved.character_id):
 		var body: Node3D = _other_bodies[moved.character_id]
-		# Its walk target follows at the arrival (_other_skill_move_arrived),
-		# so the walk does not pull against the slide.
-		_other_body_targets[moved.character_id] = body.global_position
-		_other_awake[moved.character_id] = true
+		# Round 785's client review, finding 1: the walk's target is the
+		# slide's end, and the eased walk (_step_other_bodies) leaves the body
+		# to the slide until it arrives -- until then the walk pulled it back
+		# toward its start every frame against the slide (MEASURED: a 100-unit
+		# slide settled 25.00 short for 570 frames and never arrived).
+		_other_body_targets[moved.character_id] = to
+		_other_settled.erase(moved.character_id)
 		# The server's Relocate ended any leg it walked (round 749).
 		_other_legs.erase(moved.character_id)
+		# Standing under the cast's WAIT clip, not running (the walk's gait).
+		_set_other_gait(moved.character_id, false)
+		_other_awake.erase(moved.character_id)
 		var from := body.global_position
 		_face_toward(body, to)
 		if _deco_on(body).is_empty():
@@ -26926,10 +27137,12 @@ func _own_skill_move_arrived(to: Vector3, skill_id: int) -> void:
 	print("SKILL move: this player arrived at (%.1f, %.1f, %.1f) by skill %d, footing %s" % [
 		player.position.x, player.position.y, player.position.z, skill_id, settled["footing"]])
 
-## Another player's skill move reached its point.
+## Another player's skill move reached its point: the walk takes the body
+## again there (it settles on its target, _step_other_bodies).
 func _other_skill_move_arrived(character_id: int, body: Node3D, to: Vector3) -> void:
 	if _other_bodies.get(character_id) == body:
 		_other_body_targets[character_id] = to
+		_other_awake[character_id] = true
 	_end_deco(body, "the move arrived", true)
 
 ## Turns a body to face a point (FUN_009c4260 with the move's heading).
@@ -26942,9 +27155,16 @@ func _face_toward(body: Node3D, to: Vector3) -> void:
 
 # --- Skill slides (round 785): Ghost Walk's move and a knockback ---------------
 
-## body instance id -> {body, from, to, speed, image_step, since_image,
-## why, on_arrive}.
+## body instance id -> {body, from, to, speed, image_step, images (the
+## afterimages left so far), t (seconds slid), limit (seconds), why,
+## on_arrive}.
 var _skill_slides: Dictionary = {}
+
+## OURS (round 785's client review, finding 1): a slide ends at its point by
+## this many seconds past the time its distance takes at its speed, wherever
+## the body is -- so nothing can hold a slide open (and its cast's WAIT loop
+## and afterimages) for ever.
+const SKILL_SLIDE_GRACE_S := 1.0
 
 ## Slides `body` to `to` at `speed` units a second (horizontally, the
 ## height following the ground), leaving an afterimage every `image_step`
@@ -26961,9 +27181,15 @@ func _start_skill_slide(body: Node3D, to: Vector3, speed: float, image_step: flo
 			if _monster_bodies[id] == body:
 				_stop_monster_motion(int(id))
 				break
-	var s := {"body": body, "from": body.global_position, "to": to, "speed": maxf(speed, 1.0),
-		"image_step": image_step, "since_image": 0.0, "why": why, "on_arrive": on_arrive}
+	var from := body.global_position
+	var flat_len := Vector2(to.x - from.x, to.z - from.z).length()
+	var s := {"body": body, "from": from, "to": to, "speed": maxf(speed, 1.0),
+		"image_step": image_step, "images": 0, "t": 0.0,
+		"limit": flat_len / maxf(speed, 1.0) + SKILL_SLIDE_GRACE_S, "why": why, "on_arrive": on_arrive}
 	_skill_slides[key] = s
+	# A turn still running from a swing would fight the slide's heading
+	# (round 785's client review, finding 11).
+	_combat_faces.erase(key)
 	if speed <= 0.0:
 		# A put: there at once.
 		_finish_skill_slide(s, true)
@@ -26988,7 +27214,13 @@ func _tick_skill_slides(delta: float) -> void:
 		var here := b.global_position
 		var flat := Vector2(to.x - here.x, to.z - here.z)
 		var step := float(s["speed"]) * delta
+		s["t"] = float(s["t"]) + delta
 		if flat.length() <= step:
+			_finish_skill_slide(s, true)
+			continue
+		if float(s["t"]) > float(s["limit"]):
+			print("SKILL slide (%s): not there %.2f s after it began, %.1f units short -- ended at its point" % [
+				s["why"], float(s["t"]), flat.length()])
 			_finish_skill_slide(s, true)
 			continue
 		var move := flat.normalized() * step
@@ -27002,9 +27234,14 @@ func _tick_skill_slides(delta: float) -> void:
 		else:
 			_other_moved(b)
 		if float(s["image_step"]) > 0.0:
-			s["since_image"] = float(s["since_image"]) + step
-			while float(s["since_image"]) >= float(s["image_step"]):
-				s["since_image"] = float(s["since_image"]) - float(s["image_step"])
+			# Every image_step units of the way actually covered from the start
+			# (READ, FUN_00a50f70: every 20 units), not of the steps taken: a
+			# body held back leaves none.
+			var from: Vector3 = s["from"]
+			var covered := Vector2(next.x - from.x, next.z - from.z).length()
+			var due := int(floorf(covered / float(s["image_step"])))
+			while int(s["images"]) < due:
+				s["images"] = int(s["images"]) + 1
 				_skill_afterimage(b)
 
 func _finish_skill_slide(s: Dictionary, arrived: bool) -> void:
@@ -27532,6 +27769,11 @@ func _begin_monster_death(monster_id: int) -> void:
 		_clear_target()
 		_last_attack_target = -1
 	_target_buff_book.drop(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
+	# Its states' look goes before the die clip (round 785's client review,
+	# finding 6): a frozen monster's clips held at speed 0 and its corpse
+	# stood; a frostbitten one fell at half speed, half way.
+	_drop_state_look(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER),
+		dbody as Node3D if dbody != null and is_instance_valid(dbody) else null)
 	_abnormal_states.erase(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
 	# A kill of the monster this player was walking to: no attack to send,
 	# and no reason to keep walking.
@@ -27868,6 +28110,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	# the post-revive stats follow). The rest of the reply still applies.
 	var take_hp := stats.max_hp > 0 and not _player_dead
 	if take_hp:
+		_own_hp_told()
 		_last_enter_world_hp = stats.hp
 		_last_enter_world_max_hp = stats.max_hp
 	if _hud_target != null:
@@ -28267,11 +28510,68 @@ var _quest_npcpos_loaded := false
 
 ## 0x30D6 / 0x30D7 changed the marks (QuestMarks.apply), or an NPC came.
 func _apply_quest_marks() -> void:
-	var shown := QuestMarks.apply(_npc_holders, NetClient.quest.marks, _quest_mark_models, _quest_mark_model)
+	var shown := QuestMarks.apply(_npc_holders, NetClient.quest.marks, _quest_mark_models, _quest_mark_model, _quest_mark_fx)
 	print("QUEST MARKS %d mark(s), %d drawn over spawned NPCs" % [NetClient.quest.marks.size(), shown])
 
-func _quest_mark_model(path: String) -> Node3D:
-	return ObjectLoader.load_object(_data_pk2, path) if _data_pk2 != null else null
+## OPENSRO_QA_QUEST_MARKS' measurement: per marked NPC holder, its mark's
+## effects, their live particles and drawn instances, and the mark's height
+## over the holder.
+func _qa_quest_marks_report() -> void:
+	var holders := 0
+	var drawing := 0
+	var live_total := 0
+	var shown_total := 0
+	var sample := ""
+	for uid in _npc_holders:
+		var holder = _npc_holders[uid]
+		if holder == null or not is_instance_valid(holder):
+			continue
+		var node := (holder as Node3D).get_node_or_null(QuestMarks.MARK_NODE) as Node3D
+		if node == null:
+			continue
+		holders += 1
+		var live := 0
+		var shown := 0
+		for c in node.get_children():
+			var fx := c as EfpEffect
+			if fx == null:
+				continue
+			live += fx.sim.particles.size() if fx.sim != null else 0
+			for d in fx.get_children():
+				if d is MultiMeshInstance3D and (d as MultiMeshInstance3D).multimesh != null:
+					shown += maxi((d as MultiMeshInstance3D).multimesh.visible_instance_count, 0)
+		live_total += live
+		shown_total += shown
+		if shown > 0:
+			drawing += 1
+		if sample == "":
+			sample = "%s: body height %.1f, mark at %.1f, %d live, %d drawn" % [str((holder as Node).get_meta("npc_code", "?")),
+				float((holder as Node).get_meta(QuestMarks.HEIGHT_META, 0.0)), node.position.y, live, shown]
+	print("QA QUEST MARKS tick %d: %d marked NPC(s), %d drawing particles, %d live and %d drawn in all; e.g. %s" % [
+		_qa_tick, holders, drawing, live_total, shown_total, sample])
+
+## A mark .bsr's effects (QuestMarks.entries_of; round 785's client review,
+## finding 3: the file has no mesh, its mark is its ambient effect).
+func _quest_mark_model(path: String) -> Array:
+	if _data_pk2 == null:
+		return []
+	var e := ObjectLoader.find_file(_data_pk2, path)
+	if e == null:
+		print("QUEST MARKS: %s not in Data.pk2" % path)
+		return []
+	var out := QuestMarks.entries_of(_data_pk2.read_file(e))
+	print("QUEST MARKS: %s plays %s" % [path, str(out.map(func(x): return "%s at %s" % [x[0], str(x[1])]))])
+	return out
+
+## One mark effect, from Particles.pk2.
+func _quest_mark_fx(efp: String) -> EfpEffect:
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return null
+	var fx := EfpEffect.create(efp, particles)
+	if fx == null:
+		print("QUEST MARKS: %s did not build (%s)" % [efp, EfpEffect.last_error])
+	return fx
 
 ## The tracked quest's NPCs on the minimap (QuestMarks.targets_local).
 func _update_quest_signs(here_region: Vector2i, player_local: Vector2) -> void:
@@ -29301,6 +29601,8 @@ func _on_use_item_result(result) -> void:
 		# and 3 -> FUN_007b15a0(0, ref)), from the item's own row.
 		if _hud_panels != null:
 			_hud_panels.open_cast_bar(result.item_id, result.cast_ms)
+	if result.max_hp > 0:
+		_own_hp_told()
 	if _hud_player_info != null:
 		if result.max_hp > 0:
 			_hud_player_info.set_hp(result.hp, result.max_hp)

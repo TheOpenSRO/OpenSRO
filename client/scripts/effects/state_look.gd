@@ -143,13 +143,20 @@ static func tick(delta: float) -> void:
 			continue
 		_paint(p)
 
+## Round 785's client review, finding 8: a mesh the berserk look holds now
+## (its own copy on it, BerserkLook.ORIGINAL_META) is left to it -- only this
+## pulse's mark goes; berserk's end puts the real material back. Before, the
+## state's end put the shared original under berserk's pulse, which then
+## painted every body sharing it, and berserk's end put the state's stale
+## copy back.
 static func _end(key: int) -> void:
 	var p: Dictionary = _pulses.get(key, {})
 	_pulses.erase(key)
 	for id in (p.get("meshes", {}) as Dictionary).keys():
 		var mi = instance_from_id(id)
 		if mi != null and is_instance_valid(mi) and (mi as Node).has_meta(ORIGINAL_META):
-			(mi as MeshInstance3D).material_override = (mi as Node).get_meta(ORIGINAL_META)
+			if not (mi as Node).has_meta(BerserkLook.ORIGINAL_META):
+				(mi as MeshInstance3D).material_override = (mi as Node).get_meta(ORIGINAL_META)
 			(mi as Node).remove_meta(ORIGINAL_META)
 
 static func _paint(p: Dictionary) -> void:

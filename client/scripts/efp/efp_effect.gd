@@ -1461,16 +1461,24 @@ func _update_draws() -> void:
 ## particle's position plus its shape's reach at its largest scale (the
 ## shape turned any way). Set on the RenderingServer only when it changes.
 func _fit_box(di: int, mmi: MultiMeshInstance3D, ps: Array) -> void:
+	var lo := Vector3(INF, INF, INF)
+	var hi := -lo
+	var s := 0.0
+	for p in ps:
+		var q: EfpSim.Particle = p
+		lo = lo.min(q.pos)
+		hi = hi.max(q.pos)
+		s = maxf(s, maxf(absf(q.scale.x), maxf(absf(q.scale.y), absf(q.scale.z))))
+	_fit_box_to(di, mmi, not ps.is_empty(), lo, hi, s)
+
+## _fit_box's box from the particles' bounds (`any`: the node has particles;
+## `lo` / `hi` their least and greatest position, `s` the largest |scale|
+## component) -- measured in GDScript by _fit_box, or natively
+## (SrEfpSim.draw_bounds, _apply_native_draws; round 785's client review,
+## finding 9: until then the native draw kept DRAW_AABB).
+func _fit_box_to(di: int, mmi: MultiMeshInstance3D, any: bool, lo: Vector3, hi: Vector3, s: float) -> void:
 	var box := DRAW_AABB
-	if not ps.is_empty():
-		var lo := Vector3(INF, INF, INF)
-		var hi := -lo
-		var s := 0.0
-		for p in ps:
-			var q: EfpSim.Particle = p
-			lo = lo.min(q.pos)
-			hi = hi.max(q.pos)
-			s = maxf(s, maxf(absf(q.scale.x), maxf(absf(q.scale.y), absf(q.scale.z))))
+	if any:
 		var r := s * _draw_reach[di] # the shape's bounding sphere, turned any way
 		if not (lo.x >= -200.0 + r and lo.y >= -200.0 + r and lo.z >= -200.0 + r
 				and hi.x <= 200.0 - r and hi.y <= 200.0 - r and hi.z <= 200.0 - r):
@@ -1574,6 +1582,17 @@ func _apply_native_draws(ns: EfpSimNative) -> void:
 	for k in range(0, grow.size(), 2):
 		(_draws[grow[k]][1] as MultiMeshInstance3D).multimesh.instance_count = grow[k + 1]
 	ns.apply_draws()
+	# Round 785's client review, finding 9: each node's cull box grown to its
+	# particles, as the GDScript draw grows it (_fit_box) -- from the bounds
+	# the library kept while it built the buffers (a library without
+	# draw_bounds keeps DRAW_AABB, as before).
+	var nb := ns.draw_bounds()
+	if nb.size() >= _draws.size() * 7:
+		for di in mini(_draws.size(), _draw_boxes.size()):
+			var o := di * 7
+			# s is -1 for a node with no particle (gd_efp.rs EMPTY_BOUNDS).
+			_fit_box_to(di, _draws[di][1], nb[o + 6] >= 0.0,
+				Vector3(nb[o], nb[o + 1], nb[o + 2]), Vector3(nb[o + 3], nb[o + 4], nb[o + 5]), nb[o + 6])
 
 ## A particle's transform in the effect's space (READ order: scale, shape,
 ## view, then position; see the header).

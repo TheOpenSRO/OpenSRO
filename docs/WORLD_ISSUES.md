@@ -8384,6 +8384,88 @@ than the default 10-minute timeout. One race run failed `TestPartyInviteeDisconn
 test checked the party state as soon as the hub had dropped the invitee, but the harness runs the
 party hook after the world hook. The test now waits up to 1 s for the detach; 3 race runs pass.
 
+### Round 785 (part): the client review's fixes
+
+A review of round 785's merged client (d8b43cf7) found 14 defects. Client only (plus one additive
+native method). Each fix has a check that FAILs on d8b43cf7 (MEASURED: the new and changed suites
+run against `git archive d8b43cf7` on the box -- 32 FAIL lines in `world/client_review785_test.gd`,
+2 in `effects/state_berserk_test.gd`, 2 in `efp/efp_follow_test.gd`, and `quest/quest_ui_test.gd`
+does not parse there) and passes after.
+
+1. **Another player's Ghost Walk slide never arrived** (MEASURED on the base: a 100-unit slide held
+   at 24.99 and made 50 afterimages; a held-back slide never ended and made 75). The slide sets the
+   walk's target to its end and drops the body from the eased walk (`_step_other_bodies` and its
+   wake scan skip a sliding body; the arrival wakes it); afterimages count the distance covered from
+   the start (READ, every 20 units: 4 for 100); every slide ends at its point by distance / speed +
+   1 s (`SKILL_SLIDE_GRACE_S`, OURS). Test: `client_review785_test` (arrives in 11 frames at 500 u/s).
+2. **`NetClient.list_quests` (removed by the quest lane) on every skill kill**: gone (progress is
+   0x30D5). The suite scans all 629 scripts for `NetClient.<name>` against the autoload's methods,
+   signals, properties and constants; this was the only one.
+3. **Quest marks were invisible.** READ (data): skilleffect.txt's `SYSTEM_EXCLAMATION_START/_GOING/
+   _END` and `SYSTEM_QUEST_MARK2` rows play `res\etc\ex_mark_*.bsr` ACT_L AT_LOOP at StartBone `*`,
+   StartOffset 0,5,0; MEASURED (`dump_bsr_particles.gd`): each .bsr is one `ambient` mode-1 entry,
+   `system\system_questmark_<kind>.efp` at (0, 1.208, 0), no mesh. READ: `*` is the body's height
+   (+0x228; for a character FUN_009c7740 x 20.0, 0x9c7780) -- INFERRED the model's bounds height.
+   QuestMarks now plays the entry's effect, looping, at body height + 5 + the offset. MEASURED: the
+   new `tools/quest_mark_probe.gd` on the real archives -- every kind builds its effect and draws
+   (1-2 instances, 2-3 live particles); and a Jangan world run (`OPENSRO_QA_QUEST_MARKS=3`, new QA
+   hook): 41 marked NPCs, 41 drawing particles (123 live, 82 drawn), e.g. NPC_CH_SOLDIER_EM1 body
+   24.7, mark at 29.7. Test: `quest_ui_test`.
+4. **One-shots looped under a cast's WAIT hold** and a held die clip was nulled.
+   `_play_player_once` clears the repeat; only the deco's own WAIT clip sets it; `_deco_stop_clip`
+   stops only that clip and never a held one; death ends this player's cast; a move order (ground
+   click, heading run) ends it too -- READ (auto_command.md): retail's client cancels its action on
+   a move click (0x7074 command 2); OpenSRO has no cancel message and its server ends the action on
+   the move's position update, which the order sends, so nothing more is sent. Test: suite.
+5. **Abnormal-state looks survived a zone change**: `_clear_state_looks` undoes each state
+   (`_apply_state_look(key, body, mask, 0)`), the player's pulse and clip speed, before the books
+   clear (zone change and world entry). Test: suite, through `_replace_others_for_arrival`.
+6. **A frozen or slowed monster never finished dying**: its look and clip speed go at the death and
+   when its body is freed; gone skeletons are pruned from `_clip_speeds`. Test: suite.
+7. **A keep-up swing in flight was drawn as the cast's answer.** SkillHits reads the server's new
+   trailing u32 skill id (bounds-checked; -1 when absent) and `_on_attack_result` routes by it; an
+   older server keeps the old rule. Test: suite (bytes and routing). **End to end** against a server
+   built from dev 6c3c0ffb (`/var/tmp/r785-cfix/f7.sh`: China spear, `--attack` keep-up, stun 50 and
+   front area 47 pressed mid-fight, `OPENSRO_COMBAT_TRACE=1`): every plain swing named 0; skill 47
+   sent while a swing was in flight -- `names a plain swing, cast pending 47`, drawn as the swing, no
+   cooldown armed; later presses `names skill 47` -> its decoration (SHOT 28) and re-use time, the
+   swing behind it drawn as a swing; 0 SCRIPT ERRORs.
+8. **StateLook and BerserkLook corrupted each other's snapshot** (on the base, state on -> berserk
+   on -> state off painted the shared material). Berserk takes StateLook's original when a state
+   holds the mesh and gives the state a fresh copy at its end; StateLook leaves a mesh berserk holds.
+   Test: `state_berserk_test`, the four orders (it also resets the static hooks: left set, the
+   exit aborted -- rc 134, `corrupted size vs. prev_size in fastbins`, on the base too).
+9. **Native library**: rebuilt (`native/build.sh`); the client loads it (`NativeAssets: native
+   readers ON ... API 5`, `EfpSimNative: native effect simulation ON`). The native draw path now grows
+   its cull box: `SrEfpSim.draw_bounds` (additive, behind `has_method`; EFP_API stays 2) returns each
+   node's particle bounds kept while the buffers are built, and `_fit_box_to` sets the same box as
+   the GDScript draw. MEASURED cost (100 native effects of 200 particles): +1.6 us an effect a drawn
+   frame on the main thread. Tests: cargo `draw_bounds_hold_the_particles`; `efp_follow_test` (the
+   native box equals the GDScript one for a plate 600 out). `cargo test` 69 passed both ways.
+10. **A self cast's act shot whatever cast ran**: only its own decoration now. Test: suite.
+11. **The swing's turn fought walks and slides**: dropped for another player on a leg, any slide
+    (and at its start), and at a pick-up. Test: suite.
+12. **A late blow overwrote a newer HP**: `_own_hp_seq` counts the server's HP reports; a blow drawn
+    later writes its HP only when nothing newer came (the death line and state still apply). Test:
+    suite.
+13. **The guide icon's flip** runs on float seconds (30 frames at 60 fps and 600 at 1200 fps each
+    flip once). Test: `quest_ui_test`.
+14. **Quest signs froze in dungeons**: the dungeon minimap clears them (OURS). Test: suite.
+
+**Gates:** `check` ALL LOAD (773 scripts, 9 scenes); `tests` 297 suites, 0 failing (on the merge
+with dev 6c3c0ffb, native library loaded).
+
+Perf gate (`perf_gate.sh --base d8b43cf7 --sites jangan --frames 40000`, head = this branch merged
+with dev, 1280x720, Forward+ on the RX 7600, median of 3; the gate ships no native library to
+either side, so the native box growth is measured by the bench in 9 above):
+
+| jangan | base | head | verdict |
+|---|---|---|---|
+| frame ms | 0.77 | 0.76 | SAME |
+| entry ms | 8657 | 8680 | SAME |
+| freeze ms | 2744 | 2750 | SAME |
+| hitches | 4 | 5 | SAME |
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

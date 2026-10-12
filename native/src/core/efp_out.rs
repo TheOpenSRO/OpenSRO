@@ -77,6 +77,10 @@ pub struct Outputs {
     /// Per draw node: cap x STRIDE floats, the first `counts[i]` instances filled.
     pub bufs: Vec<Vec<f32>>,
     pub counts: Vec<usize>,
+    /// Round 785 (the client review, finding 9): per draw node its particles' bounds, as
+    /// EfpEffect._fit_box measures them: [lo.x, lo.y, lo.z, hi.x, hi.y, hi.z, s] with s the
+    /// largest |scale| component; [0, 0, 0, 0, 0, 0, -1] for a node with no particle.
+    pub bounds: Vec<[f32; 7]>,
     pub chains: Chains,
     /// Per Link node its strip, when built here (LinkNode::native).
     pub strips: Vec<efp_links::Out>,
@@ -119,6 +123,20 @@ fn put_transform(o: &mut [f32], b: &B3, at: V3) {
     o[9] = b.r[2][1];
     o[10] = b.r[2][2];
     o[11] = at.2;
+}
+
+/// A draw node's bounds with no particle (its s, never negative otherwise, is -1).
+pub const EMPTY_BOUNDS: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0];
+
+/// Godot's `MIN(a, b)` / `MAX(a, b)` (`a < b ? a : b`), as Vector3.min / max and maxf take them:
+/// a NaN on either side gives what the comparison leaves (bit for bit with the GDScript).
+#[inline]
+fn min_gd(a: f32, b: f32) -> f32 {
+    if a < b { a } else { b }
+}
+#[inline]
+fn max_gd(a: f32, b: f32) -> f32 {
+    if a > b { a } else { b }
 }
 
 /// EfpSim.color_of -> EfpReader.d3dcolor -> Color8: each byte / 255 in f32 (Color::from_rgba8).
@@ -164,6 +182,8 @@ impl Outputs {
             }
         }
         let mut fill = vec![0usize; nd];
+        self.bounds.clear();
+        self.bounds.resize(nd, EMPTY_BOUNDS);
         for p in sim.particles() {
             let k = node_of.get(p.tpl as usize).copied().unwrap_or(usize::MAX);
             if k == usize::MAX {
@@ -172,6 +192,21 @@ impl Outputs {
             let d = &self.draws[k];
             let at = fill[k];
             fill[k] += 1;
+            // EfpEffect._fit_box's walk: Vector3.min / max of the positions and the largest
+            // |scale| component (maxf of absf, f32 values).
+            let bx = &mut self.bounds[k];
+            let sc = max_gd(p.scale.0.abs(), max_gd(p.scale.1.abs(), p.scale.2.abs()));
+            if at == 0 {
+                *bx = [p.pos.0, p.pos.1, p.pos.2, p.pos.0, p.pos.1, p.pos.2, sc];
+            } else {
+                bx[0] = min_gd(bx[0], p.pos.0);
+                bx[1] = min_gd(bx[1], p.pos.1);
+                bx[2] = min_gd(bx[2], p.pos.2);
+                bx[3] = max_gd(bx[3], p.pos.0);
+                bx[4] = max_gd(bx[4], p.pos.1);
+                bx[5] = max_gd(bx[5], p.pos.2);
+                bx[6] = max_gd(bx[6], sc);
+            }
             let o = &mut self.bufs[k][at * STRIDE..(at + 1) * STRIDE];
             if d.turn {
                 put_transform(o, &B3::from_scale(p.scale), p.pos);
@@ -284,5 +319,54 @@ impl Outputs {
             self.build_chains(sim);
         }
         self.fresh = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::efp_sim::{Cmd, ExactGate, Template, Tpl, K_CONEPOS, LIFE_EXTINCT};
+    use super::*;
+    use std::sync::Arc;
+
+    /// Round 785 (the client review, finding 9): the bounds build_draws keeps for a node are its
+    /// particles' -- the least and greatest position and the largest |scale| component -- and a
+    /// node with no particle keeps EMPTY_BOUNDS.
+    #[test]
+    fn draw_bounds_hold_the_particles() {
+        let cone = Cmd { kind: K_CONEPOS, space: 0, v: [40.0, 300.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], f: 0.0, color: 0 };
+        let mut root = Tpl { parent: -1, frames: 30, life: LIFE_EXTINCT, has_emit: true, e_dur: 100000, e_int: 1, e_max: 50, e_per: 4.0, ..Default::default() };
+        root.schedule = vec![Vec::new(); 30];
+        root.schedule[0].push(cone);
+        let t = Arc::new(Template { tpls: vec![root], rate: vec![6], kids: vec![0], fan: vec![6], fan_child: 0, has_fan: true });
+        let mut sim = Sim::new(t, 7);
+        for _ in 0..6 {
+            sim.begin();
+            sim.step(&mut ExactGate { below: 1 << 30 });
+        }
+        assert!(sim.count() > 4, "the stream should have particles: {}", sim.count());
+        let mut out = Outputs::default();
+        out.draws = vec![
+            DrawNode { tpl: 0, view: VIEW_NONE, turn: false, cap: 0 },
+            DrawNode { tpl: 5, view: VIEW_NONE, turn: false, cap: 0 },
+        ];
+        out.build_draws(&sim, &super::super::gdmath::IDENTITY);
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        let mut s = 0.0f32;
+        for p in sim.particles() {
+            let q = [p.pos.0, p.pos.1, p.pos.2];
+            for k in 0..3 {
+                lo[k] = lo[k].min(q[k]);
+                hi[k] = hi[k].max(q[k]);
+            }
+            s = s.max(p.scale.0.abs()).max(p.scale.1.abs()).max(p.scale.2.abs());
+        }
+        let b = out.bounds[0];
+        assert_eq!([b[0], b[1], b[2]], lo);
+        assert_eq!([b[3], b[4], b[5]], hi);
+        assert_eq!(b[6], s);
+        assert!(hi[0] - lo[0] > 1.0 || hi[2] - lo[2] > 1.0, "the cone spreads them: {lo:?} {hi:?}");
+        assert_eq!(out.bounds[1], EMPTY_BOUNDS);
+        assert_eq!(out.counts[1], 0);
     }
 }
