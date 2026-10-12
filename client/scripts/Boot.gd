@@ -50,6 +50,9 @@ func _ready() -> void:
 	# every path tried).
 	GameCursor.load_once()
 	GameCursor.show(CursorSet.ID_NORMAL, get_window())
+	# Round 780: the game's own icon on the window and the taskbar, from the
+	# same exe, in memory only (GameIcon).
+	GameIcon.apply_once()
 	# The Option window's Video tab (round 694): the window mode and size and
 	# the brightness pass from the start, the login screen included; the
 	# world applies the rest when it loads.
