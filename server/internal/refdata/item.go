@@ -452,8 +452,15 @@ type Item struct {
 	// ("armor,shield"). MaxMagicOptions is column 158 (ref +0x53c), an
 	// equipment's base cap on blue options (FUN_00491780). A stone's success
 	// rate is Param4 -- ReinforceRate3 above (ref +0x300).
-	CashItem        bool
-	Param1, Param5  uint32
+	CashItem       bool
+	Param1, Param5 uint32
+	// Param6 is the Param block's sixth value, itemdata column 128 (ref
+	// +0x340; round 786). A universal pill (TypeID 3/3/2/6) hands Param1..6
+	// to its cure as the strengths of the elemental slots 0..5 --
+	// CGItemExpendable slot 308 reads them through FUN_0049ac50 (+0x2a0,
+	// +0x2c0, +0x2e0, +0x300, +0x320, +0x340, READ) -- so Param6 is the
+	// zombie slot's. Param1..4 are RestoreHP..RestoreMPPct above.
+	Param6          uint32
 	Desc1, Desc4    string
 	MaxMagicOptions int
 

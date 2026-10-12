@@ -123,8 +123,10 @@ const (
 	// CashItem (column 7, the TypeID word's bit 0 IsCashItem tests), the
 	// Param block's Param1/Param5 (118/126) and Desc128_1/Desc128_4
 	// (119/125), and MaxMagicOptCount (158, ref +0x53c).
-	fCashItem        = 7
-	fParam5          = 126
+	fCashItem = 7
+	fParam5   = 126
+	// fParam6 is the Param block's sixth value (round 786; refdata.Item.Param6).
+	fParam6          = 128
 	fDesc1           = 119
 	fDesc4           = 125
 	fMaxMagicOptions = 158
@@ -909,6 +911,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 87: Rarity, _RefObjCommon column 15 (round 770): 2 is a Seal item,
 		// which always drops with blue options (ref +0x89; READ).
 		get(fRarity), // 87 Rarity (col 15)
+		// 88: Param6, the Param block's column 128 (round 786): a universal
+		// pill's zombie strength (refdata.Item.Param6).
+		dword(fParam6), // 88 Param6 (col 128)
 	}, true
 }
 

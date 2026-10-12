@@ -255,6 +255,11 @@ func (s *statusRuntime) cureCharacter(hub *world.Hub, id int64, rule statuseffec
 	}, func(c []int) {
 		damageRollMu.Lock()
 		defer damageRollMu.Unlock()
+		// A nil source is the tests' fixed dice (combat.RollChance's own
+		// convention): the candidates keep their slot order.
+		if damageRollNG == nil {
+			return
+		}
 		rand.New(rand.NewSource(damageRollNG.Int63())).Shuffle(len(c), func(i, j int) { c[i], c[j] = c[j], c[i] })
 	})
 	msg := &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}

@@ -26,6 +26,9 @@ type MemStore struct {
 	// (ReturnPointStore, round 778), keyed by (id, kind); none is the zero
 	// SavedPoint.
 	points map[[2]int64]SavedPoint
+	// autoPotion is each character's auto potion settings (AutoPotionStore,
+	// round 786); none is nil.
+	autoPotion map[int64][]byte
 }
 
 // NewMemStore returns an empty MemStore.

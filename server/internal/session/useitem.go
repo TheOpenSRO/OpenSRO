@@ -955,7 +955,8 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 //   - A zombie (status bit 0x20 at pc+0xd34, the status manager at pc+0xd30;
 //     slot 5 in docs/protocol/status_effects.md) is HURT by the HP amount:
 //     0x49b912 sends it to vtable +0x308 (slot 194, IGObj::ConsumeHpMp) and
-//     applies the MP amount directly. OpenSRO has no status effects.
+//     applies the MP amount directly. Characters carry states since round
+//     659, but this path does not read the zombie bit yet (OPEN, round 786).
 //   - Panic and combustion, the next paragraph.
 //
 // ApplyHPMPDelta's own step is a no-op ONLY while neither panic nor combustion
@@ -988,12 +989,13 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // An item that restores nothing is refused rather than silently eaten -- the
 // bag is full of equipment and quest items that have no use yet, and quietly
 // destroying one would be the worst possible answer. That includes every
-// CanUse item that is not a recovery kind (round 491): a return scroll, a cure
-// pill, a pet potion, a resurrection scroll. The engine USES those -- each has
-// its own DoJob branch -- and OpenSRO models none of their effects, so it
-// refuses them with the restores-nothing reason and keeps the item. That
-// refusal is OpenSRO's DISCLOSED GAP, not an engine refusal. The berserk
-// potion is modelled since round 632 (useBerserkPotion).
+// CanUse item that is not a recovery kind (round 491): a pet potion, a
+// resurrection scroll. The engine USES those -- each has its own DoJob branch
+// -- and OpenSRO models none of their effects, so it refuses them with the
+// restores-nothing reason and keeps the item. That refusal is OpenSRO's
+// DISCLOSED GAP, not an engine refusal. The berserk potion is modelled since
+// round 632 (useBerserkPotion), the return scrolls since round 778, and the
+// universal and purification pills since round 786 (curepill.go).
 //
 // The one non-recovery kind OpenSRO does model is the container expansion
 // (round 498, useExpansion): the warehouse item grows the account's
@@ -1110,6 +1112,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// scroll.go): DoJob's TypeID3 3 cases 1 and 3.
 		if scrolls != nil && (IsReturnScroll(it) || IsReverseReturnScroll(it)) {
 			return scrolls.use(ctx, sess, inv, characterID, it, held, have, req)
+		}
+		// The cure pills (round 786, curepill.go): DoJob's case 2, slot 308's
+		// TypeID3-2 branch -- the universal and purification pills.
+		if isCurePill(it) {
+			return useCurePill(ctx, sess, fail, inv, hub, potionLocks, characterID, it, held, have, useItemClock())
 		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.

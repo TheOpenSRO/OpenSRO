@@ -2758,6 +2758,8 @@ func _try_initialize_pk2_ui() -> void:
 
 	# The Energy of life scroll's grants (round 632 review).
 	_wire_composite_items()
+	# The auto potion (round 786).
+	_wire_auto_potion()
 	print("World3D: authentic Silkroad UI initialized from Media.pk2 (minimap, underbar, player info, %d panels)" % HudPanels.PANELS.size())
 
 ## The buff bar (HudBuffBoard, round 618): built, told who this player is,
@@ -8742,6 +8744,7 @@ func _on_object_status(st: StatusNet.ObjectStatus) -> void:
 	for bit in StatusNet.drawn_bits(st.mask):
 		labels.append(StatusNet.label(bit))
 	print("World3D: %s abnormal mask 0x%x [%s]" % [key, st.mask, ", ".join(labels)])
+	_auto_potion_status(st)
 	_apply_state_look(key, _fx_owner_body(st.owner_id, st.owner_kind), old_mask, st.mask)
 
 ## owner key -> its StateLook look ({"tint", "speed", "frozen"}).
@@ -11582,6 +11585,150 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
+
+# --- The auto potion (round 786: AutoPotion, AutoPotionWindow) ---------------
+#
+# retail's CAutoPotion, fed the way the original feeds it: every HP / MP this
+# player is told (the bars' pool_set), its own state mask (OpObjectStatus)
+# and the interface timers (_process). A row that fires uses its quick slot
+# through _on_quickslot_activated -- the key press's own path, so the server's
+# reuse locks, the count and the reply apply as to a press. The settings are
+# the server's (0x7158 type 2): asked for at entry, saved on a Confirm that
+# changed something.
+
+var _auto_potion := AutoPotion.new()
+
+func _wire_auto_potion() -> void:
+	_auto_potion.can_act = _auto_potion_can_act
+	_auto_potion.slot_usable = _auto_potion_slot_usable
+	_auto_potion.use_slot = _auto_potion_use_slot
+	if _hud_panels != null:
+		_hud_panels.auto_potion = _auto_potion
+		if not _hud_panels.auto_potion_confirmed.is_connected(_on_auto_potion_confirmed):
+			_hud_panels.auto_potion_confirmed.connect(_on_auto_potion_confirmed)
+	if _hud_player_info != null and not _hud_player_info.pool_set.is_connected(_on_auto_potion_pool):
+		_hud_player_info.pool_set.connect(_on_auto_potion_pool)
+	if NetClient.has_signal("auto_potion_config") and not NetClient.auto_potion_config.is_connected(_on_auto_potion_config):
+		NetClient.auto_potion_config.connect(_on_auto_potion_config)
+	if NetClient.current_character_name != "" and NetClient.is_connected_to_server():
+		NetClient.load_auto_potion()
+
+## player+0x65c bit 0, the gate every check and the item use itself read
+## (0x82d0f2, 0x796d37): INFERRED as "in the world and able to act" -- alive,
+## and not behind a loading screen.
+func _auto_potion_can_act() -> bool:
+	return not _player_dead and _loading_screen == null and NetClient.current_character_name != ""
+
+## 0x60b1d0: the slot holds a bag item (kind 0x46) whose TID is a recovery
+## potion (3/3/1) or a cure (3/3/2) (0x60ae50).
+func _auto_potion_slot_usable(slot: int) -> bool:
+	var item = _quickslot_items.get(slot)
+	if item == null or _hud_panels == null:
+		return false
+	var t := _hud_panels.bag_item_types(int(item["slot"]))
+	return t.size() >= 3 and t[0] == 3 and t[1] == 3 and (t[2] == 1 or t[2] == 2)
+
+## 0x60b850: the quick slot fired as its key fires it.
+func _auto_potion_use_slot(slot: int) -> void:
+	var item = _quickslot_items.get(slot)
+	print("AUTOPOT use quickslot %d (%s): item %d at bag slot %d, HP %d/%d (row at %d), MP %d/%d (row at %d), mask 0x%x, t=%d ms" % [
+		slot, HudUnderbar.slot_label(slot), int(item["item"]) if item != null else -1, int(item["slot"]) if item != null else -1,
+		_auto_potion.hp, _auto_potion.max_hp, (_auto_potion.rows[0] as AutoPotion.Row).threshold,
+		_auto_potion.mp, _auto_potion.max_mp, (_auto_potion.rows[1] as AutoPotion.Row).threshold,
+		_auto_potion.status_mask, Time.get_ticks_msec()])
+	_on_quickslot_activated(slot)
+
+func _on_auto_potion_pool(kind: int, current: int, maximum: int) -> void:
+	if kind == 0:
+		_auto_potion.on_hp(current, maximum)
+	elif kind == 1:
+		_auto_potion.on_mp(current, maximum)
+
+func _on_auto_potion_config(settings: PackedByteArray) -> void:
+	_auto_potion.load_bytes(settings)
+	print("AUTOPOT settings %s -> %s" % [settings.hex_encode(), str(_auto_potion.values())])
+
+## Confirm (0x741590): applied, and sent only when something changed.
+func _on_auto_potion_confirmed(values: Dictionary) -> void:
+	var changed := _auto_potion.apply(values)
+	print("AUTOPOT confirm %s: %s" % ["changed, saving" if changed else "unchanged", str(_auto_potion.values())])
+	if changed:
+		NetClient.save_auto_potion(_auto_potion.encode())
+
+## This player's own mask from an OpObjectStatus.
+func _auto_potion_status(st: StatusNet.ObjectStatus) -> void:
+	var own := _own_id()
+	if own < 0 or st.owner_kind != SkillNet.OWNER_CHARACTER:
+		return
+	if st.owner_id != own and st.owner_id != (own & 0xffffffff):
+		return
+	_auto_potion.on_status(st.mask)
+
+## QA only (OPENSRO_QA_AUTOPOT="<tick>:<step>;...", round 786): the auto
+## potion's live run. Steps: bind:<quick slot>:<item id> (the first bag stack
+## of that item onto the slot, as a drag puts it there), open (the window),
+## cfg:<hp on>,<hp %>,<hp slot>,<mp on>,<mp %>,<mp slot>,<abn on>,<abn slot>,
+## <delay on>,<delay ms> (the window's controls set), confirm (its Confirm
+## pressed), cancel, cmd:<line> (a chat-console line, e.g. a GM /hurt), log
+## (the settings, the timers and the slots' stacks). Each prints `QA AUTOPOT`.
+func _qa_autopot_step(tick: int) -> void:
+	var spec := OS.get_environment("OPENSRO_QA_AUTOPOT")
+	if spec == "":
+		return
+	for part in spec.split(";", false):
+		var colon := String(part).find(":")
+		if colon < 0 or not String(part).substr(0, colon).is_valid_int() or int(String(part).substr(0, colon)) != tick:
+			continue
+		var step := String(part).substr(colon + 1)
+		print("QA AUTOPOT tick %d frame %d: %s" % [tick, Engine.get_frames_drawn(), step])
+		if step.begins_with("bind:"):
+			var a := step.trim_prefix("bind:").split(":")
+			var slot := int(a[0])
+			var item_id := int(a[1])
+			for s in _inventory_slots:
+				if s.item_id == item_id:
+					_quickslot_skills.erase(slot)
+					_quickslot_actions.erase(slot)
+					_quickslot_items[slot] = {"item": item_id, "slot": s.slot_index}
+					var icon: Texture2D = null
+					if _hud_panels != null and _ui_builder != null:
+						icon = _ui_builder.load_texture(_hud_panels.item_icon_path(item_id))
+					if _hud_underbar != null:
+						_hud_underbar.set_slot_item(slot, icon)
+					print("QA AUTOPOT bound quickslot %d <- item %d (bag slot %d, %d of them)" % [slot, item_id, s.slot_index, s.quantity])
+					break
+		elif step == "open" and _hud_panels != null:
+			_hud_panels.open(HudPanels.AUTO_POTION_ID)
+		elif step.begins_with("cfg:") and _hud_panels != null:
+			var w := _hud_panels.auto_potion_window()
+			var v := step.trim_prefix("cfg:").split(",")
+			if w != null and v.size() >= 10:
+				w.fill({"rows": [
+					{"enabled": v[0] == "1", "percent": int(v[1]), "slot": int(v[2])},
+					{"enabled": v[3] == "1", "percent": int(v[4]), "slot": int(v[5])},
+					{"enabled": v[6] == "1", "percent": 0, "slot": int(v[7])}],
+					"delay_enabled": v[8] == "1", "delay_ms": int(v[9])})
+		elif step == "confirm" and _hud_panels != null:
+			var w := _hud_panels.auto_potion_window()
+			var ok := w.window.node("GDR_AUTO_POTION_OK_BTN") as BaseButton if w != null else null
+			if ok != null:
+				ok.emit_signal("pressed")
+		elif step == "cancel" and _hud_panels != null:
+			var w := _hud_panels.auto_potion_window()
+			if w != null:
+				w.cancel_window()
+		elif step.begins_with("cmd:"):
+			_run_qa_commands(step.trim_prefix("cmd:"))
+		elif step == "log":
+			var stacks := []
+			for slot in _quickslot_items:
+				var it = _quickslot_items[slot]
+				for s in _inventory_slots:
+					if s.slot_index == int(it["slot"]):
+						stacks.append("q%d=item %d x%d" % [slot, s.item_id, s.quantity])
+			print("QA AUTOPOT state %s hp %d/%d mp %d/%d mask 0x%x timers %s stacks %s" % [str(_auto_potion.values()),
+				_auto_potion.hp, _auto_potion.max_hp, _auto_potion.mp, _auto_potion.max_mp, _auto_potion.status_mask,
+				str(_auto_potion._timers), ", ".join(stacks)])
 
 ## A bag item was dragged onto the quickslot bar: remember which bag slot it
 ## came from and show its icon there. Activating that quickslot uses the item.
@@ -14650,6 +14797,11 @@ func _update_blob_shadow() -> void:
 ##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
+##   OPENSRO_QA_AUTOPOT="<tick>:<step>;..."  (round 786) the auto potion's
+##                          live run: bind:<quick slot>:<item id>, open,
+##                          cfg:<hp on>,<%>,<slot>,<mp on>,<%>,<slot>,<abn on>,
+##                          <slot>,<delay on>,<ms>, confirm, cancel,
+##                          cmd:<chat line>, log (_qa_autopot_step)
 ##   OPENSRO_QA_HELP=1     open the in-client Help window 2 s after boot
 ##   OPENSRO_QA_NOTICES="<tick>:<what>;.." raise the notice banners and the
 ##                          area banner at those ticks (round 703; see
@@ -15517,6 +15669,8 @@ func _qa_step() -> void:
 	# server has not said the character knows.
 	# OPENSRO_QA_ACTIONS (round 781): the action window's buttons, one a second.
 	_qa_step_actions(_qa_tick)
+	# OPENSRO_QA_AUTOPOT (round 786): the auto potion's live run.
+	_qa_autopot_step(_qa_tick)
 	var qa_hotbar := OS.get_environment("OPENSRO_QA_HOTBAR")
 	var qa_hotbar_tick := int(qa_hotbar) if qa_hotbar.is_valid_int() and int(qa_hotbar) > 1 else 60
 	if qa_hotbar != "" and _qa_tick == qa_hotbar_tick and _ui_builder != null:
@@ -18220,6 +18374,8 @@ func _physics_process(delta: float) -> void:
 func _process(_delta: float) -> void:
 	if title_mode:
 		return
+	# The auto potion's interface timers (round 786, 0xb933d0's pass).
+	_auto_potion.step(Time.get_ticks_msec())
 	# Round 762: the frame's crowd budget rolled every frame, so its history
 	# of the scene's own frames has no gaps (OtherCrowd.FrameBudget), told
 	# whether a crowd arrives or leaves in this frame.
@@ -29700,6 +29856,10 @@ func _on_use_item_result(result) -> void:
 		# archive's own category-1 message (ErrorText.scroll_line).
 		_log_system(ErrorText.scroll_line(result.code, _ui_text_table, result.error) if result.code != 0 else result.error)
 		return
+	# Round 786: every accepted use is logged with what it left, so a run
+	# (the auto potion's QA) reads the count and the pools from the log.
+	print("World3D: use item ok: %d left, HP %d/%d, MP %d/%d, restored %d HP %d MP" % [result.remaining,
+		result.hp, result.max_hp, result.mp, result.max_mp, result.restored_hp, result.restored_mp])
 	if result.cast_ms > 0:
 		# An accepted scroll (round 778): the move follows when its delay
 		# runs out, as an OpChangeZoneResult this client did not ask for.

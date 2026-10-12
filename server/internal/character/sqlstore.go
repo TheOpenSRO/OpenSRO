@@ -101,6 +101,10 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_x DOUBLE PRECISION NOT NULL
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_y DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_z DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS died_world INTEGER NOT NULL DEFAULT 0;
+-- The auto potion settings (round 786, AutoPotionStore): the seven bytes the
+-- client's 0x7158 type 2 carries -- u16 HP, u16 MP, u16 abnormal, u8 delay --
+-- which retail keeps in its _ClientConfig record. Empty is "never set".
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS auto_potion BYTEA NOT NULL DEFAULT '';
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver) — same

@@ -359,6 +359,9 @@ signal friend_remove_result(ok: bool, reason: String)
 signal friend_pending_list_result(requests: Array, error: String)
 ## Using a consumable: what it restored, and how many are left.
 signal use_item_result(result: UseItemNet.Result)
+## The Auto potion window's saved settings (round 786, AutoPotionNet): the
+## seven bytes retail's character data carries.
+signal auto_potion_config(settings: PackedByteArray)
 ## The Energy of life scroll's grants (round 632 review, CompositeNet).
 signal composite_state(state: CompositeNet.State)
 signal composite_use_result(result: CompositeNet.UseResult)
@@ -638,7 +641,7 @@ func _passes_group(p: Packet) -> bool:
 				QuestNet.OP_CLAIM_RESULT, QuestNet.OP_UNMARK, FriendNet.OP_REQUEST_RESULT, FriendNet.OP_REQUEST_RECEIVED, \
 				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
 				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
-				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT:
+				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -1030,6 +1033,14 @@ func use_item(char_name: String, inventory_slot: int) -> void:
 ## chose, and the map option's refoptionalteleport id.
 func use_item_option(char_name: String, inventory_slot: int, option: int, target: int = 0) -> void:
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot, option, target))
+
+## The Auto potion window's settings (round 786): retail's 0x7158 type 2.
+func save_auto_potion(settings: PackedByteArray) -> void:
+	_send(AutoPotionNet.OP_SAVE, AutoPotionNet.encode_save(settings))
+
+## Asks for the saved Auto potion settings (answered by auto_potion_config).
+func load_auto_potion() -> void:
+	_send(AutoPotionNet.OP_LOAD, PackedByteArray())
 
 ## The casting bar's cancel (round 779): retail's 0x705B, no body.
 func scroll_cancel() -> void:
@@ -1763,6 +1774,8 @@ func _dispatch(p: Packet) -> void:
 			buyback_failed.emit(int(f.get("code", 0)))
 		UseItemNet.OP_RESULT:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
+		AutoPotionNet.OP_CONFIG:
+			auto_potion_config.emit(p.data)
 		CompositeNet.OP_STATE:
 			composite_state.emit(CompositeNet.decode_state(p.data))
 		CompositeNet.OP_USE_RESULT:

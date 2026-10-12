@@ -125,6 +125,11 @@ var itemCSVColumns = []string{
 	// Appended later still (round 770): Rarity, _RefObjCommon column 15 (see
 	// Item.Rarity). A strict suffix; an older export reads 0, no Seal item.
 	"Rarity",
+	// Appended later still (round 786): Param6, itemdata column 128 (ref
+	// +0x340), the sixth Param a universal pill hands its cure as the zombie
+	// slot's strength (FUN_0049ac50 reads +0x2a0..+0x340, see Item.Param6). A
+	// strict suffix; an older export reads 0, and that slot is not cured.
+	"Param6",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -423,6 +428,11 @@ func parseItemRow(f []string) (Item, error) {
 	}
 	if len(f) > 87 {
 		it.Rarity = parseInt(f[87])
+	}
+	if len(f) > 88 {
+		if v, e := strconv.ParseInt(strings.TrimSpace(f[88]), 10, 64); e == nil {
+			it.Param6 = uint32(v)
+		}
 	}
 
 	if err != nil {

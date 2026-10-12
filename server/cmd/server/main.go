@@ -2274,6 +2274,9 @@ func main() {
 		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
 		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
 		session.NPCTalkHandler(hub, trades),
+		// The Auto potion window's settings (round 786): retail's 0x7158 type
+		// 2, stored per character and sent back after the world entry.
+		session.AutoPotionHandler(autoPotionStoreOf(chars), hub, logger),
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
@@ -2386,4 +2389,13 @@ func gmZones() []string {
 		out = append(out, worldmap.DungeonZone(rid))
 	}
 	return out
+}
+
+// autoPotionStoreOf is chars' AutoPotionStore, or nil when the store keeps
+// none (round 786).
+func autoPotionStoreOf(chars character.Store) character.AutoPotionStore {
+	if s, ok := chars.(character.AutoPotionStore); ok {
+		return s
+	}
+	return nil
 }
