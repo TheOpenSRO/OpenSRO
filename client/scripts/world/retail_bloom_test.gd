@@ -79,7 +79,10 @@ func _initialize() -> void:
 		"World3D.tscn has none of round 693's guessed glow values")
 	var src := FileAccess.get_file_as_string("res://scripts/World3D.gd")
 	_check(src.contains("_retail_bloom.visible = o.value(VideoOptions.BLOOM) == 1"), "the Bloom row shows and hides the pass")
-	_check(src.count("layers = OverlayView.BIT") >= 4 and src.contains("_overlay_view.follow(camera_3d)"),
+	# Round 786: the damage numbers are DamageText nodes put on the overlay's
+	# CanvasLayer itself (retail's CIDamageText, a screen-space billboard).
+	_check(src.count("layers = OverlayView.BIT") >= 3 and src.contains("_overlay_view.follow(camera_3d)")
+		and src.contains("_overlay_view.add_child(number)"),
 		"name plates, party marks, name boxes and damage numbers are drawn after the bloom (OverlayView)")
 	_check(OverlayView.LAYER_INDEX > RetailBloom.LAYER_INDEX and OverlayView.LAYER_INDEX < 1, "the overlays' layer sits over the bloom and under the world's UI")
 

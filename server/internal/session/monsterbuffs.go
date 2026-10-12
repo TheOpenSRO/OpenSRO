@@ -44,7 +44,9 @@ func (s monsterBookSet) ExpireOwner(id int64, now time.Time) ([]buff.Record, buf
 	return s.b.ExpireOwner(monsterKey(id), now)
 }
 
-func (s monsterBookSet) EndAll(id int64) ([]buff.Record, buff.Speed) { return s.b.EndAll(monsterKey(id)) }
+func (s monsterBookSet) EndAll(id int64) ([]buff.Record, buff.Speed) {
+	return s.b.EndAll(monsterKey(id))
+}
 
 func (s monsterBookSet) EndToken(id int64, token uint32) ([]buff.Record, buff.Speed) {
 	return s.b.EndToken(monsterKey(id), token)
@@ -166,7 +168,7 @@ func castMonsterDebuff(ctx context.Context, sess *gateway.Session, d combatDeps,
 		}
 		noteStruck(d.monsters, mm.ID, characterID)
 		action.Targets = append(action.Targets, ActionTarget{UID: uint32(mm.ID), Kind: ActionTargetMonster,
-			Hits: []ActionHit{{Kind: HitKindDamage, Flags: 0x10, Status: bits}}}) // 0x10: effect only (READ)
+			Hits: []ActionHit{debuffEntryHit(castRow, linked, bits)}})
 	}
 	res.MonsterRemainingHP = int32(m.HP)
 	if c, err := d.chars.GetByID(ctx, characterID); err == nil && c != nil {
@@ -182,4 +184,23 @@ func castMonsterDebuff(ctx context.Context, sess *gateway.Session, d combatDeps,
 	}
 	announceCastWith(d.hub, characterID, req, castRow, action)
 	return nil
+}
+
+// debuffEntryHit is a debuff cast's hit-block entry for one target: kind 0,
+// no damage.
+//
+// The effect-only flag 0x10 is retail's (SR_GameServer Combat_ResolveDamage
+// 0x58fd9f: a blow of no damage whose row passes FUN_00589f10, a test of the
+// row's state fields, READ; that those fields are the row's state runs is
+// INFERRED). Round 786: the client draws the "Resist" word for 0x10 with
+// statusBits 0 (sro_client.exe FUN_00a47720, READ), so it is set only when
+// the cast itself rolls states -- a row with state runs (StatusParams) that is
+// not linked. A linked debuff lands its states with its pulses' blows (OURS),
+// and a row with no state runs has nothing to resist: their entries carry the
+// plain flag 1 (OURS), which the client draws as nothing (a plain 0).
+func debuffEntryHit(castRow *refdata.Skill, linked bool, bits uint32) ActionHit {
+	if !linked && castRow != nil && castRow.StatusParams != "" {
+		return ActionHit{Kind: HitKindDamage, Flags: 0x10, Status: bits}
+	}
+	return ActionHit{Kind: HitKindDamage, Flags: HitFlagNormal, Status: bits}
 }

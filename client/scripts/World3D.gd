@@ -8990,53 +8990,63 @@ func _clear_target() -> void:
 	if _hud_target != null:
 		_hud_target.clear()
 
-# How far the number climbs while it fades, in world units. Scaled by
-# PLAYER_SCALE_RATIO like every other height here (a character is about
-# 2 * PLAYER_SCALE_RATIO tall, not 1.8), or the rise would be imperceptible
-# in this world's real scale. About three-quarters of a character height.
-const FLOAT_TEXT_RISE := 1.5 * PLAYER_SCALE_RATIO
-const FLOAT_TEXT_SECONDS := 1.1
-const DAMAGE_DEALT_COLOUR := Color(1.0, 1.0, 0.95)
-const DAMAGE_TAKEN_COLOUR := Color(1.0, 0.45, 0.35)
-
-## A damage number that rises and fades over the thing it was dealt to, the
-## way the original shows combat damage. White for damage the player deals,
-## a warm red for damage the player takes. Fixed-size and billboarded like
-## the name plates so it reads at any distance; it frees itself when done.
-func _floating_damage(anchor: Node3D, height: float, amount: int, colour: Color) -> void:
+## The combat number over a body for one hit (round 786): retail's
+## CIDamageText, READ -- the art, colour, layout and motion are DamageText's
+## (its header and docs/protocol/damage_text.md). `art` is a DamageText.Art,
+## `on_player` the target is a player character (this one or another),
+## `by_me` the blow is this player's own (retail draws another's only within
+## DamageText.SHOW_RANGE of this player, 0xa49697), `by_character` the hit
+## has a character attacker (false: a state's tick, the other colours). The
+## number hangs from the body's position when the hit lands, fixed in the
+## world (READ).
+func _damage_text(body: Node3D, art: int, amount: int, on_player: bool, by_me: bool, by_character: bool = true) -> void:
 	# Not in the scene (a body being freed, or a headless test's bare node):
-	# nothing would show, and the tween below needs this node in the tree.
-	if anchor == null or not is_instance_valid(anchor) or not anchor.is_inside_tree():
+	# nothing would show.
+	if body == null or not is_instance_valid(body) or not body.is_inside_tree():
 		return
-	var label := Label3D.new()
-	label.text = str(amount)
-	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.fixed_size = true
-	label.pixel_size = NAME_PLATE_PIXEL_SIZE * 1.8
-	label.modulate = colour
-	label.outline_size = NAME_PLATE_OUTLINE
-	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
-	FontOversampling.label3d(label, label.font_size, NAME_PLATE_OUTLINE, NAME_PLATE_PIXEL_SIZE * 1.8)
-	label.no_depth_test = true
-	label.render_priority = 3
-	label.layers = OverlayView.BIT
-	label.position = Vector3(0.0, height, 0.0)
-	anchor.add_child(label)
-	# During a QA attack render, log where the number landed on screen, so a
-	# frame crop can be aimed at it rather than hunted for. Off in real play.
-	if _qa_attacking:
-		var cam := get_viewport().get_camera_3d()
-		if cam != null:
-			var sp := cam.unproject_position(anchor.global_position + Vector3(0.0, height, 0.0))
-			print("World3D: FLOAT %d over %s at screen %.0f,%.0f" % [amount, anchor.name, sp.x, sp.y])
-	var tween := create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(label, "position:y", height + FLOAT_TEXT_RISE, FLOAT_TEXT_SECONDS)
-	tween.tween_property(label, "modulate:a", 0.0, FLOAT_TEXT_SECONDS)
-	# The outline carries its own alpha, so fade it with the fill or a black
-	# ghost of the number lingers after the text has gone.
-	tween.tween_property(label, "outline_modulate:a", 0.0, FLOAT_TEXT_SECONDS)
-	tween.finished.connect(label.queue_free)
+	var feet := body.global_position
+	var near := 0.0
+	if player != null and is_instance_valid(player) and body != player:
+		near = feet.distance_to(player.global_position)
+	if not DamageText.shows(near, by_me):
+		return
+	_load_damage_art()
+	var number := DamageText.create(feet, art, amount, DamageText.colour_of(on_player, by_character))
+	if number == null:
+		return
+	number.camera = camera_3d
+	# Over the bloomed frame and under the windows, as retail draws its
+	# billboards before the UI (OverlayView: layer 0, the UI is 1).
+	if _overlay_view != null and is_instance_valid(_overlay_view):
+		_overlay_view.add_child(number)
+	else:
+		add_child(number)
+	# During a QA attack or damage render, log where the number landed on
+	# screen, so a frame crop can be aimed at it. Off in real play.
+	if _qa_attacking or _qa_damage_text:
+		var sp = number.screen_point()
+		print("World3D: FLOAT %d art %d over %s at screen %s" % [amount, art, body.name,
+			"%.0f,%.0f" % [(sp as Vector2).x, (sp as Vector2).y] if sp != null else "off-screen"])
+
+## The number of one hit-block entry (SkillHits.Hit) on `body`.
+func _damage_text_of_hit(body: Node3D, hit: SkillHits.Hit, on_player: bool, by_me: bool) -> void:
+	_damage_text(body, DamageText.art_of(hit.kind, hit.flags, hit.status_bits), hit.damage, on_player, by_me)
+
+## The plain number or the critical one.
+static func _number_art(critical: bool) -> int:
+	return DamageText.Art.CRITICAL if critical else DamageText.Art.NUMBER
+
+## Media.pk2's interface\hitcount art, once (DamageText.load_art).
+func _load_damage_art() -> void:
+	if _media_pk2 == null:
+		return
+	DamageText.load_art(func(path: String) -> Texture2D:
+		var entry := ObjectLoader.find_file(_media_pk2, path)
+		if entry == null:
+			print("World3D: %s not in Media.pk2 -- the damage number draws in the default font" % path)
+			return null
+		var parsed := DdjReader.parse(_media_pk2.read_file(entry))
+		return DdjReader.to_texture(parsed) if parsed != null else null)
 
 ## The height a floating number starts at over a monster: just under its
 ## name, where its HP bar sat until round 673 (MONSTER_TEXT_UNDER_NAME of the
@@ -13324,7 +13334,7 @@ func _own_skill_hit(h: int, result: CombatNet.AttackResult, skill: int, code: St
 		_audio_blow_lands(blow, dealt, monster)
 		var hit_body = _monster_bodies.get(monster)
 		if hit_body != null and is_instance_valid(hit_body):
-			_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
+			_damage_text(hit_body, _number_art(result.player_critical), dealt, false, true)
 			_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), code)
 		print("CAST hit 0 of skill %d on monster %d: %d%s (the whole result; no hit block)" % [skill, monster, dealt,
 			", died" if died else ""])
@@ -13381,8 +13391,13 @@ func _land_skill_hit(t: SkillHits.Target, hit: SkillHits.Hit, h: int, hits: Skil
 			_put_body(body, to)
 	if hit.blocked():
 		_audio_block(body, false, "%s blocked" % who)
+	# Every entry draws its number (FUN_00a49290 -> FUN_00a47bf0, READ):
+	# the digits, the critical, the block or the resist word; a void or a
+	# zero hit draws nothing (DamageText.art_of / sprites_of). White on a
+	# monster, red on a player; another's cast only within 200 units of this
+	# player (`blow` is set for this player's own casts and chain links).
+	_damage_text_of_hit(body, hit, t.id_kind != SkillNet.OWNER_MONSTER, not blow.is_empty())
 	if hit.hurts() or hit.kind == SkillHits.KIND_WALL:
-		_floating_damage(body, height, hit.damage, DAMAGE_DEALT_COLOUR if body != player else DAMAGE_TAKEN_COLOUR)
 		_play_skill_hit_effect_on(body, height, code)
 		# The hit sound at the attacker (CombatAudio's header) -- this
 		# player's blows only (OURS: another caster's hit sound is not played).
@@ -15803,6 +15818,10 @@ func _qa_step() -> void:
 		print("QA ATTACK: stopped at tick %d (OPENSRO_QA_ATTACK_UNTIL)" % _qa_tick)
 	if _qa_attacking and _qa_tick % _qa_attack_interval == 0 and NetClient.is_connected_to_server():
 		_qa_attack_nearest()
+	# OPENSRO_QA_DAMAGE (round 786): the damage numbers alone, no server --
+	# every 70 ticks from tick 240 (_qa_damage_round).
+	if _qa_damage_text and _qa_tick >= 240 and (_qa_tick - 240) % 70 == 0:
+		_qa_damage_round((_qa_tick - 240) / 70)
 	if _qa_fight and NetClient.is_connected_to_server():
 		_qa_fight_step()
 	# OPENSRO_QA_REVIVE_AFTER=n: n physics frames after a killing blow left
@@ -16315,6 +16334,36 @@ func _qa_plates_report(shot: String) -> void:
 ## reasoning about it: for every piece, where the bone is, where the piece
 ## ended up, and how far apart they are.
 var _qa_attacking := false
+## OPENSRO_QA_DAMAGE (round 786): spawn the combat numbers for a render.
+var _qa_damage_text := OS.get_environment("OPENSRO_QA_DAMAGE") != ""
+## The stand-in targets the QA numbers hang from (OPENSRO_QA_DAMAGE).
+var _qa_damage_marks: Array = []
+
+## One round of OPENSRO_QA_DAMAGE: stand-in targets on the ground ahead of the
+## player (left to right: a block, a plain number, a critical, a resist) take
+## this player's blows (white, DamageText's art), and the player takes one
+## (red; a critical every other round). QA only: real hits come from the
+## server's hit blocks.
+func _qa_damage_round(n: int) -> void:
+	if player == null or camera_3d == null:
+		return
+	if _qa_damage_marks.is_empty():
+		var fwd := -camera_3d.global_transform.basis.z
+		fwd.y = 0.0
+		fwd = fwd.normalized() if fwd.length() > 0.001 else Vector3(0, 0, -1)
+		var right := fwd.cross(Vector3.UP).normalized()
+		for i in 4:
+			var mark := Node3D.new()
+			mark.name = "QADamageMark%d" % i
+			add_child(mark)
+			mark.global_position = player.global_position + fwd * 45.0 + right * (float(i) - 1.5) * 26.0
+			_qa_damage_marks.append(mark)
+	_damage_text(_qa_damage_marks[0], DamageText.Art.BLOCK, 0, false, true)
+	_damage_text(_qa_damage_marks[1], DamageText.Art.NUMBER, 1234, false, true)
+	_damage_text(_qa_damage_marks[2], DamageText.Art.CRITICAL, 5678, false, true)
+	_damage_text(_qa_damage_marks[3], DamageText.Art.RESIST, 0, false, true)
+	_damage_text(player, _number_art(n % 2 == 1), 321 if n % 2 == 0 else 642, true, false)
+	print("QA DAMAGE: round %d at tick %d" % [n, _qa_tick])
 var _qa_alternate_flip := false
 ## OPENSRO_QA_ATTACK_RETREAT: the first landed blow is still to come.
 var _qa_retreat_pending := OS.get_environment("OPENSRO_QA_ATTACK_RETREAT") != ""
@@ -25067,6 +25116,10 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			_player_swing_until = Time.get_ticks_msec() + int(swing_seconds * 1000.0)
 		var hit_ms := swing_entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
 		lands_after = float(hit_ms) / 1000.0 if hit_ms > 0 else 0.0
+	# Round 786: each hit of the swing draws its own number at its own hit
+	# event (FUN_00a49290 per entry, READ); the later hits' offsets from the
+	# first.
+	var swing_hit_offsets := _hit_event_offsets(swing_entry)
 	if _combat_trace:
 		print("COMBAT swing ms=%d type %d (%s) %.3f s, lands at %.3f s" % [Time.get_ticks_msec(), swing_type,
 			_body_animation_path(_player_body, swing_entry.action_type, _player_weapon_group) if swing_entry != null else "none",
@@ -25173,11 +25226,11 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			_after(HIT_SOUND_DELAY, _audio_blow_lands.bind(blow_audio, dealt, monster))
 			var hit_body = _monster_bodies.get(monster)
 			if hit_body != null and is_instance_valid(hit_body):
-				# A blow that dealt nothing shows no number (round 785, READ:
-				# the damage text FUN_00a47720 has digits, critical, blocking
-				# and resist labels, and no "miss" or zero).
-				if dealt > 0:
-					_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
+				# Round 786: one number per entry of the swing's hit block, at
+				# its hit event -- the digits, the critical or the block word
+				# (DamageText, READ: no "miss" and no zero). From a server
+				# that sends no block, the result's sum as one number.
+				_swing_numbers(hit_body, monster, result, swing_hit_offsets)
 				if skill_hit_code != "":
 					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), skill_hit_code))
 	# The monster strikes back as the player's blow lands -- from the zone's
@@ -25303,6 +25356,9 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 		# when the monster's blow would land.
 		var block_after := _monster_strike_seconds(monster) if monster != -1 else 0.0
 		_after(block_after, func() -> void:
+			# Round 786: the block word over the player, red (DamageText,
+			# READ: kind 2 draws "blocking" alone).
+			_damage_text(player, DamageText.Art.BLOCK, 0, true, false)
 			_audio_block(player, result.monster_critical, "monster %d's counter, from the result" % monster)
 			_audio_monster_blow(monster, result.monster_critical, "blocked counter on the player, from the result"))
 	if result.wall != null and result.wall.absorbed:
@@ -25333,10 +25389,9 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 		var own_efp := _defense_efp_on(_fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER))
 		if own_efp != "":
 			_play_hit_efp_on(player, 2.0 * PLAYER_SCALE_RATIO, own_efp)
-		# The damage the player took, over the player's own head (human
-		# head height from the same PLAYER_SCALE_RATIO calibration the
-		# monster fallback uses), timed to when the counter-blow lands.
-		_floating_damage(player, 2.0 * PLAYER_SCALE_RATIO, result.player_damage_taken, DAMAGE_TAKEN_COLOUR))
+		# The damage the player took, timed to when the counter-blow lands:
+		# red, the critical's art for a critical (round 786, DamageText).
+		_damage_text(player, _number_art(result.monster_critical), result.player_damage_taken, true, false))
 
 ## One monster's blow (OpMonsterAttacked), for everyone in the zone. A blow on
 ## this player repeats a counter its own result reported (MonsterStrikes.claim):
@@ -25402,6 +25457,11 @@ func _on_status_tick_strike(attacked: CombatNet.MonsterAttacked) -> void:
 	print("World3D: a state's tick on %d for %d (HP %d)%s -- %s" % [
 		attacked.target_character_id, attacked.damage, attacked.target_hp,
 		", died" if attacked.target_died else "", "this player" if own else "another player"])
+	# Round 786: a state's tick has no attacker -- retail's FUN_008a4b00
+	# case 1 -> FUN_00a56230 draws it in the attacker-less gold (DamageText).
+	var tick_body = player if own else _other_bodies.get(attacked.target_character_id)
+	if tick_body != null and is_instance_valid(tick_body):
+		_damage_text(tick_body, DamageText.Art.NUMBER, attacked.damage, true, false, false)
 	if own:
 		_show_own_strike(attacked)
 		_play_player_struck()
@@ -25682,6 +25742,8 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, re
 		_after(strike_after, func() -> void:
 			var blocker = player if on_self else _other_bodies.get(target_id)
 			if blocker != null and is_instance_valid(blocker):
+				# Round 786: the block word over the blocker, red (DamageText).
+				_damage_text(blocker, DamageText.Art.BLOCK, 0, true, false)
 				_audio_block(blocker, attacked.critical, "monster %d's blow on %s" % [
 					monster, "the player" if on_self else "character %d" % target_id])
 				_after(HIT_SOUND_DELAY, _audio_monster_blow.bind(monster, attacked.critical, "blocked blow on %s" % [
@@ -25724,10 +25786,51 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, re
 		if _combat_trace:
 			print("COMBAT monster %d blow lands ms=%d on %s for %d" % [monster, Time.get_ticks_msec(),
 				"the player" if on_self else "character %d" % target_id, attacked.damage])
-		# Over the head, at the height the player's own number uses; none for
-		# a blow that dealt nothing (round 785, READ: no zero or "miss" text).
-		if attacked.damage > 0:
-			_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, attacked.damage, DAMAGE_TAKEN_COLOUR))
+		# Red over a player, the critical's art for a critical; none for a
+		# blow that dealt nothing (READ: no zero or "miss" text); another
+		# player's only within 200 units of this one (round 786, DamageText).
+		_damage_text(anchor, _number_art(attacked.critical), attacked.damage, true, false))
+
+## The numbers of this player's plain swing on `monster` (round 786): one per
+## hit of the monster's entry in the result's hit block, hit i drawn
+## `offsets[i]` seconds after the first (the swing's hit events); without a
+## block, the result's damage as one number, critical by PlayerCritical.
+func _swing_numbers(body: Node3D, monster: int, result: CombatNet.AttackResult, offsets: Array) -> void:
+	var t: SkillHits.Target = null
+	if result.hits != null:
+		t = result.hits.target(monster, SkillNet.OWNER_MONSTER)
+	if t == null:
+		if result.monster_damage > 0:
+			_damage_text(body, _number_art(result.player_critical), result.monster_damage, false, true)
+		return
+	for i in t.hits.size():
+		var hit: SkillHits.Hit = t.hits[i]
+		var later: float = float(offsets[i]) if i < offsets.size() else 0.0
+		if later <= 0.0:
+			_damage_text_of_hit(body, hit, false, true)
+		else:
+			var body_ref: WeakRef = weakref(body)
+			_after(later, func() -> void:
+				var b = body_ref.get_ref()
+				if b != null and is_instance_valid(b):
+					_damage_text_of_hit(b, hit, false, true))
+
+## The offsets, in seconds, of a clip entry's hit events from its first (the
+## BSR key times read as milliseconds, BsrReader.AnimationEntry.events); [0.0]
+## for an entry with one, [] for none.
+static func _hit_event_offsets(entry: BsrReader.AnimationEntry) -> Array:
+	var out: Array = []
+	if entry == null:
+		return out
+	var first := -1
+	for e in entry.events:
+		var ev := e as PackedInt32Array
+		if ev[1] != BsrReader.AnimationEntry.EVENT_HIT:
+			continue
+		if first < 0:
+			first = ev[0]
+		out.append(float(ev[0] - first) / 1000.0)
+	return out
 
 ## Turns a monster's body to face `at` (world x, z) by its model's front
 ## (MonsterMotion.front_of / facing_yaw). The capsule (no model), and a target
@@ -26024,7 +26127,11 @@ func _draw_wall_blow(anchor: Node3D, owner_key: String, wall: CombatNet.WallHit,
 	# monster's skill is not on OpenSRO's wire, so HitEffect's default
 	# layers stand in for it (OURS).
 	_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, efp)
-	_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, wall.damage, DAMAGE_TAKEN_COLOUR)
+	# Kind 7 draws the plain number whatever its flags (FUN_00a47720, READ).
+	# Retail's entry names the wall's own object, whose class -- so whether
+	# it is tinted as a player's -- was not read (OPEN); drawn over the
+	# player in the player's red (OURS; round 786, DamageText).
+	_damage_text(anchor, DamageText.Art.NUMBER, wall.damage, true, false)
 
 ## This player's self, ground or friendly cast waiting for the server's
 ## answer (_send_self_cast, _send_character_cast): {skill, code, ground,
