@@ -254,3 +254,24 @@ every body.
   regenerating at 8% of the maximum every 4 s. That is what the server binary
   says. What the retail CLIENT does -- whether it lets a seated player attack
   at all -- was not read, and would decide whether retail players could do it.
+
+## Round 781: walk / run, and the emotes `0x3091`
+
+From the action window (`docs/WORLD_ISSUES.md`, "Round 781 (part): the action window").
+
+	request   0x704f   u8          2 = walk, 3 = run (client 0x9d4a00: 2 while +0x25d, the run flag, is set)
+	success   0x30bf   u32 id, u8 kind = 1, u8 value     the same broadcast, no transition
+
+	request   0x3091   u8          the emote byte (0x793b00: 4000 00, 4001 06, 4002 01, 4003 05,
+	                               4004 02, 4005 03, 4006 04)
+	broadcast 0x3091   u32 id, u8 emote                   the client plays type 0x32 + emote (0xa59bc0)
+
+- **Walk / run (READ, `FUN_004b1480`):** refused in CHANGEMOTION, refused when equal to the state,
+  refused unless the state is STAND, WALK or RUN; otherwise slot `0x4bc` (`CGObjPC::vslot_303` ->
+  `GObjPC::FUN_004aa3c0` -> `CGObjMobile::vslot_303`) sets the run flag to `value != 2`, a mover's
+  state becomes WALK or RUN (`SetMotionState(2 + run, 0xff, 0)` while slot `0x4c0` answers 1), and
+  the broadcast goes out. No stop, no 1.5 s. OpenSRO: `motionTracker.walkRunLocked`, the legs at
+  `PlayerWalkSpeed` (`motionSpeed`), the spawn record's run flag 0; a zone change runs again (OURS).
+- **Emote (READ, `GObjPC::FUN_004b1630`, handler index `0x091` through `0x4b23d0` and CGObjPC's
+  vtable `+0x600`):** one u8 read, `0x3091 {+8 the unique id, the byte}` sent through
+  `FUN_00484d90`; no test of state or byte. OpenSRO: `session.EmoteHandler`.

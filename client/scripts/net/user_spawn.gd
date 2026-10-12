@@ -49,6 +49,8 @@ class Record:
 	var body_mode: int
 	var walk: float
 	var run: float
+	## The mover's run flag (+0x155; round 781): 0 while the character walks.
+	var run_flag := 1
 	var name: String
 	var job_state: int = JOB_STATE_NONE
 	## The 0x3015's spawn-type byte (-1 in a group).
@@ -151,7 +153,7 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 	# i16, or a dungeon's three i32 -- or the command byte and the mover's
 	# angle (+0x168, +0x164: a heading run while the command's bit 0 is set).
 	var has_dest := r.u8()
-	r.u8() # run flag
+	rec.run_flag = r.u8()
 	if has_dest != 0:
 		rec.has_dest = true
 		rec.dest_region = r.u16()
@@ -243,6 +245,8 @@ static func to_snapshot(rec: Record, types: Types, frame: Vector2i) -> WorldNet.
 	s.scale = rec.scale
 	s.has_model = true
 	s.run_speed = rec.run
+	# A walker (round 781): its walk speed, else 0 (it runs).
+	s.walk_speed = rec.walk if rec.run_flag == 0 and rec.walk > 0.0 else 0.0
 	if rec.has_dest:
 		var d := world_xz(rec.dest_region, float(rec.dest_local.x), float(rec.dest_local.z), frame)
 		s.has_dest = true

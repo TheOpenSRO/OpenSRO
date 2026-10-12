@@ -1975,6 +1975,7 @@ func _ready() -> void:
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.revive_result.connect(_on_revive_result)
 	NetClient.state_changed.connect(_on_state_changed)
+	NetClient.emote_received.connect(_on_emote_received)
 	NetClient.buff_started.connect(_on_buff_started)
 	NetClient.buff_ended.connect(_on_buff_ended)
 	NetClient.skill_moved.connect(_on_skill_moved)
@@ -2310,6 +2311,8 @@ func _try_initialize_pk2_ui() -> void:
 			# than the last one this client played (round 607).
 			_sit.own_id = -1
 			_sit.reset()
+			# And runs (round 781: the mover's default; the server's enter).
+			_reset_walk_for_entry()
 			# And whose buffs are whose (round 617): OpSelfId for this entry,
 			# when it has come, is taken again by _sync_own_id.
 			_self_cast.forget_owner()
@@ -2489,6 +2492,17 @@ func _try_initialize_pk2_ui() -> void:
 	# (a quick slot, the world) comes back here.
 	_hud_panels.held_dropped_outside.connect(_on_held_dropped_outside)
 	_hud_panels.skill_use_requested.connect(_on_skill_use_requested)
+	# The action window's buttons (round 781).
+	_hud_panels.action_use_requested.connect(func(id: int) -> void: _run_action(id))
+	# Only what differs from Create's own icons (a fresh pane shows the rows'
+	# sit and walk, with their Create tooltips).
+	_hud_panels.action_motion_now = func() -> Array:
+		var now: Array = []
+		if _sit.sitting:
+			now.append(WorldNet.MOTION_SIT)
+		if _walk_mode:
+			now.append(WorldNet.MOTION_WALK)
+		return now
 	if _hud_underbar != null:
 		_hud_underbar.quickslot_pick_requested.connect(_on_quickslot_pick_requested)
 		# The bar's own buttons take a click while an icon is held (READ,
@@ -6501,6 +6515,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_end_move_order_for_arrival()
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
+		# And runs it again (round 781, the server's runAgain; OURS).
+		_reset_walk_for_entry()
 		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
 		# berserk display fades out (round 629's review).
 		if _hud_player_info != null:
@@ -10966,6 +10982,9 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 		gait["sitting"] = false
 		_other_seated.erase(character_id)
 	var action := BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND
+	# A walker walks (round 781): type 1, its body's walk.
+	if moving and _other_walking.has(character_id):
+		action = BsrReader.AnimationEntry.TYPE_WALK
 	var anim := _body_animation_for(gait["body"], action, gait["group"])
 	var frames := _frame_count(anim)
 	if frames <= 1:
@@ -11171,7 +11190,7 @@ func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture
 	SkillEffects.preload_skill(skill_id)
 	for k in range(HudUnderbar.SLOTS_PER_PAGE):
 		var slot := HudUnderbar.slot_index(1, k)
-		if not _quickslot_skills.has(slot) and not _quickslot_items.has(slot):
+		if not _quickslot_skills.has(slot) and not _quickslot_items.has(slot) and not _quickslot_actions.has(slot):
 			_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 			_hud_underbar.set_slot_item(slot, icon)
 			# Retail writes no line when a slot is filled (CNIFUnderMenuBar's
@@ -11192,6 +11211,7 @@ func _on_skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, ic
 	if slot < 0:
 		return
 	_quickslot_items.erase(slot)
+	_quickslot_actions.erase(slot)
 	_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 	_hud_underbar.set_slot_item(slot, icon)
 	print("World3D: quickslot %d <- skill %d (%s), dropped" % [slot, skill_id, basic_code])
@@ -11225,6 +11245,10 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		print("QA QUICKSLOT %d (%s): %s, target %d" % [slot_index, HudUnderbar.slot_label(slot_index),
 			("skill %d" % int(entry["id"])) if entry != null else ("item" if _quickslot_items.has(slot_index) else "empty"),
 			_last_attack_target])
+	# An action (round 781, kind 0x4a -> 0x793b00).
+	if _quickslot_actions.has(slot_index):
+		_run_action(int(_quickslot_actions[slot_index]))
+		return
 	if entry != null:
 		print("World3D: quickslot %d casts skill %d" % [slot_index, int(entry["id"])])
 		_cast_skill(int(entry["id"]), String(entry["code"]))
@@ -11258,6 +11282,7 @@ func _on_item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, ico
 	if slot < 0:
 		return
 	_quickslot_skills.erase(slot)
+	_quickslot_actions.erase(slot)
 	_quickslot_items[slot] = {"item": item_id, "slot": inventory_slot}
 	_hud_underbar.set_slot_item(slot, icon)
 	print("World3D: quickslot %d <- item %d from bag slot %d" % [slot, item_id, inventory_slot])
@@ -11283,6 +11308,8 @@ func _on_held_dropped_outside(what: Dictionary, at: Vector2) -> void:
 			_on_skill_drop_requested(at, int(what.get("skill_id", 0)), String(what.get("code", "")), tex)
 		"bag":
 			_on_item_drop_requested(at, int(what.get("item_id", -1)), int(what.get("slot", -1)), tex)
+		"action":
+			_on_action_drop_requested(at, int(what.get("action_id", 0)), tex)
 		"quickslot":
 			_on_quickslot_drop_requested(at, int(what.get("slot", -1)))
 		"worn":
@@ -11308,13 +11335,14 @@ func _on_quickslot_drop_requested(at: Vector2, from: int) -> void:
 	if to < 0:
 		_quickslot_skills.erase(from)
 		_quickslot_items.erase(from)
+		_quickslot_actions.erase(from)
 		_hud_underbar.clear_slot(from)
 		print("World3D: quickslot %d removed (put down off the bar)" % from)
 		_save_hotbar()
 		return
 	var from_tex := _hud_underbar.slot_icon(from)
 	var to_tex := _hud_underbar.slot_icon(to)
-	for table in [_quickslot_skills, _quickslot_items]:
+	for table in [_quickslot_skills, _quickslot_items, _quickslot_actions]:
 		var a = table.get(from)
 		var b = table.get(to)
 		table.erase(from)
@@ -11434,9 +11462,9 @@ func _save_hotbar() -> void:
 	_refresh_quickslot_seals()
 	if _hotbar_restoring or NetClient.current_character_name == "":
 		return
-	var ok := HotbarStore.save(_hotbar_key(), _quickslot_skills, _quickslot_items)
-	print("World3D: hotbar saved (%d skills, %d items) for %s: %s" % [_quickslot_skills.size(),
-		_quickslot_items.size(), _hotbar_key(), "ok" if ok else "FAILED"])
+	var ok := HotbarStore.save(_hotbar_key(), _quickslot_skills, _quickslot_items, HotbarStore.PATH, _quickslot_actions)
+	print("World3D: hotbar saved (%d skills, %d items, %d actions) for %s: %s" % [_quickslot_skills.size(),
+		_quickslot_items.size(), _quickslot_actions.size(), _hotbar_key(), "ok" if ok else "FAILED"])
 
 ## Fills the bar from the file: skills with their icons from the skill
 ## tables, items with theirs from the item table, bound to the bag slot they
@@ -11470,7 +11498,14 @@ func _restore_hotbar() -> void:
 			if path != "":
 				icon = _ui_builder.load_texture(path)
 		_hud_underbar.set_slot_item(int(slot), icon)
-	print("World3D: hotbar restored for %s: skills %s, items %s" % [_hotbar_key(), str(skills), str(items)])
+	# The action buttons (round 781).
+	var actions: Dictionary = bar.get("actions", {})
+	for slot in actions:
+		_quickslot_skills.erase(slot)
+		_quickslot_items.erase(slot)
+		_quickslot_actions[slot] = int(actions[slot])
+		_hud_underbar.set_slot_item(int(slot), _action_icon(int(actions[slot])))
+	print("World3D: hotbar restored for %s: skills %s, items %s, actions %s" % [_hotbar_key(), str(skills), str(items), str(actions)])
 	if not _inventory_slots.is_empty():
 		_resync_quickslot_items(_inventory_slots)
 	_hotbar_restoring = false
@@ -13293,12 +13328,12 @@ func _step_click_walk(delta: float) -> bool:
 		# tick's destination test is for +0x80 == 1 only). A wall ends it
 		# (_move_on_nav_graph); the turn toward the heading was started with
 		# the run and goes on in _step_local_turn.
-		var rv := SkyRun.velocity(_move_heading, _move_speed)
+		var rv := SkyRun.velocity(_move_heading, _gait_speed())
 		player.velocity.x = rv.x
 		player.velocity.z = rv.y
 		return false
 	var to_target := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z)
-	var r := ClickWalk.step(to_target, _move_speed, delta, MOVE_TARGET_STOP_DISTANCE)
+	var r := ClickWalk.step(to_target, _gait_speed(), delta, MOVE_TARGET_STOP_DISTANCE)
 	if bool(r["arrived"]):
 		_has_move_target = false
 		player.velocity.x = 0.0
@@ -14417,6 +14452,8 @@ func _qa_step() -> void:
 	# A value above 1 is the tick to do it at (default 60), for a run that
 	# learns the skill first (OPENSRO_QA_LEARN). The path refuses a skill the
 	# server has not said the character knows.
+	# OPENSRO_QA_ACTIONS (round 781): the action window's buttons, one a second.
+	_qa_step_actions(_qa_tick)
 	var qa_hotbar := OS.get_environment("OPENSRO_QA_HOTBAR")
 	var qa_hotbar_tick := int(qa_hotbar) if qa_hotbar.is_valid_int() and int(qa_hotbar) > 1 else 60
 	if qa_hotbar != "" and _qa_tick == qa_hotbar_tick and _ui_builder != null:
@@ -17125,8 +17162,8 @@ func _physics_step(delta: float) -> void:
 		# key moves the character since round 608), so a render shows the
 		# run and the log the path.
 		var ang := deg_to_rad(float(_qa_walk))
-		player.velocity.x = sin(ang) * _move_speed
-		player.velocity.z = cos(ang) * _move_speed
+		player.velocity.x = sin(ang) * _gait_speed()
+		player.velocity.z = cos(ang) * _gait_speed()
 		# QA only: faces the fixed heading at once, as before.
 		player.rotation.y = ang
 		_player_turn_target = NAN
@@ -17351,7 +17388,8 @@ func _physics_step(delta: float) -> void:
 		# weapon's group and standing plays its town idle.
 		var action: int
 		if is_moving:
-			action = BsrReader.AnimationEntry.TYPE_RUN
+			# The walk (type 1) while this player walks (round 781).
+			action = BsrReader.AnimationEntry.TYPE_WALK if _walk_mode else BsrReader.AnimationEntry.TYPE_RUN
 		elif _sit.sitting:
 			# The sitting loop, under the sit-down one-shot while that runs.
 			action = BsrReader.AnimationEntry.TYPE_SITTING
@@ -17592,8 +17630,9 @@ func _qa_move_report() -> void:
 	# the locomotion the body plays (run while an order is in effect).
 	print("MOVE self t=%d ms=%d pos=(%.3f,%.3f) dest=(%.3f,%.3f) order=%s speed=%.1f left=%.3f run=%s facing=%.3f gait=%s" % [
 		_qa_move_tick, ms, player.position.x, player.position.z, _move_target.x, _move_target.z,
-		str(_has_move_target), _move_speed, left, str(_has_move_target and _move_heading_run),
-		RemoteFacing.heading_of_yaw(player.rotation.y, 0.0), "run" if _has_move_target else "stand"])
+		str(_has_move_target), _gait_speed(), left, str(_has_move_target and _move_heading_run),
+		RemoteFacing.heading_of_yaw(player.rotation.y, 0.0),
+		("walk" if _walk_mode else "run") if _has_move_target else "stand"])
 	for id in _other_bodies:
 		var body: Node3D = _other_bodies[id]
 		if not is_instance_valid(body) or not _other_body_targets.has(id):
@@ -19273,6 +19312,9 @@ func _note_other_speed(character_id: int, run_speed: int) -> void:
 		leg["speed"] = float(run_speed)
 
 func _other_speed(character_id: int) -> float:
+	# A walker's legs at its walk speed (round 781, _apply_other_walk_mode).
+	if _other_walking.has(character_id):
+		return float(_other_walking[character_id])
 	return float(_other_speeds.get(character_id, OtherWalk.DEFAULT_SPEED))
 
 ## Round 749: retail's 0xB021 (NetProcessInNavAndSkill::FUN_008a5750), an
@@ -19347,6 +19389,11 @@ func _resume_other_leg(snapshot: WorldNet.EntitySnapshot) -> void:
 	var id := snapshot.character_id
 	if snapshot.run_speed > 0.0:
 		_other_speeds[id] = snapshot.run_speed
+	# Its run flag (round 781): 0 walks, at the record's walk speed.
+	if snapshot.walk_speed > 0.0:
+		_other_walking[id] = snapshot.walk_speed
+	else:
+		_other_walking.erase(id)
 	if not _other_bodies.has(id):
 		return
 	if snapshot.has_dest:
@@ -19650,6 +19697,7 @@ func _on_entity_left_now(character_id: int) -> void:
 	_other_legs.erase(character_id)
 	_other_heights_pending.erase(character_id)
 	_other_speeds.erase(character_id)
+	_other_walking.erase(character_id)
 	if _arrival_pending:
 		_arrival_entries.erase(character_id)
 		_arrival_left[character_id] = true
@@ -24706,6 +24754,300 @@ func _request_sit_toggle() -> String:
 func _motion_locked() -> bool:
 	return _sit.locked(_player_anim_time)
 
+# --- The action window (round 781) ----------------------------------------------
+#
+# ActionCommands has the retail dispatcher's table (0x793b00); HudActionPane
+# fills the window. This is what each button does in this world. The window's
+# right click and a quick slot holding an action both come here.
+
+## Whether this player walks (the mover's run flag cleared): set by the
+## server's answer to Walk/Run, 0x30BF kind 1 value 2 (walk) / 3 (run). A new
+## entry and a zone change run again (the server's runAgain; OURS).
+var _walk_mode := false
+## Other players who walk: character id -> their walk speed (characterdata
+## column 46 of their body), from their 0x30BF value 2 or a spawn record whose
+## run flag is 0.
+var _other_walking := {}
+## The quick slots holding an action (round 781): slot -> action id. Retail's
+## slot kind 0x4a, whose use is 0x793b00(owner, id) (0x60bace, READ).
+var _quickslot_actions := {}
+
+## The speed this player's legs move at: the run speed, or the walk speed of
+## its body (characterdata column 46, the server's PlayerWalkSpeed) while it
+## walks.
+func _gait_speed() -> float:
+	if not _walk_mode:
+		return _move_speed
+	var row: Array = _speeds_by_code.get(_player_body, [])
+	if row.size() == 2 and float(row[0]) > 0.0:
+		return float(row[0])
+	return WALK_SPEED_FALLBACK
+
+## A walker's speed when its body has no characterdata row: the server's
+## PlayerWalkSpeed (16, characterdata column 46 on all 52 creatable bodies,
+## MEASURED round 737).
+const WALK_SPEED_FALLBACK := 16.0
+
+## A world entry or a zone change: this player runs again and stands (the
+## server's enter / runAgain and stand), so the window's buttons that show
+## otherwise swap back; nobody else is known to walk until told.
+func _reset_walk_for_entry() -> void:
+	var was_walking := _walk_mode
+	_walk_mode = false
+	_other_walking.clear()
+	if was_walking:
+		_action_motion_shown(WorldNet.MOTION_RUN)
+	if _hud_panels != null and _hud_panels.action_pane != null \
+			and String(_hud_panels.action_pane.icon_paths.get(ActionCommands.SIT, "")).ends_with("icon_cha_stand.ddj"):
+		_action_motion_shown(WorldNet.MOTION_STAND)
+
+## Runs an action-window button (ActionCommands.plan). Returns a line for the
+## log saying what it did.
+func _run_action(action_id: int) -> String:
+	var plan := ActionCommands.plan(action_id)
+	var kind := String(plan["kind"])
+	var what := ""
+	if _player_dead and kind != "panel" and kind != "unsupported":
+		_log_system(DEAD_INPUT_LINE)
+		what = "not run: dead"
+	else:
+		match kind:
+			"sit":
+				what = _request_sit_toggle()
+			"walk_run":
+				what = _request_walk_run()
+			"emote":
+				what = _request_emote(int(plan["emote"]))
+			"auto_attack":
+				what = _action_auto_attack()
+			"auto_select":
+				what = _action_auto_select()
+			"exchange":
+				what = _action_exchange()
+			"party":
+				what = _action_party()
+			"auto_get":
+				what = _key_pick_up_nearest()
+			"panel":
+				what = _run_panel_key("panel:" + String(plan["panel"]))
+			"unsupported":
+				_log_system(String(plan["line"]))
+				what = "not available: " + String(plan["line"])
+			_:
+				what = "no such action"
+	print("ACTION %d (%s): %s" % [action_id, kind, what])
+	return what
+
+## Walk/Run (0x9d4a00, READ): 0x704f [02] while running, [03] while walking.
+## Nothing changes until the server answers (0x30BF kind 1, _apply_walk_mode).
+## Not while sitting or in a sit transition: the server refuses both
+## (FUN_004b1480's case 2/3 needs STAND, WALK or RUN).
+func _request_walk_run() -> String:
+	if not NetClient.is_connected_to_server():
+		return "not sent (not connected)"
+	if _sit.sitting or _motion_locked():
+		return "not sent (%s)" % ("seated" if _sit.sitting else "a motion change is in flight")
+	var value := ActionCommands.walk_run_request(not _walk_mode)
+	NetClient.request_motion(value)
+	return "0x704f [%02x] sent (%s)" % [value, "walk" if value == ActionCommands.MOTION_WALK else "run"]
+
+## An emote (0x793b00's 4000..4006, READ): 0x3091 [byte]. The body plays it on
+## the server's answer (_on_emote_received), as retail's does.
+func _request_emote(emote: int) -> String:
+	if not NetClient.is_connected_to_server():
+		return "not sent (not connected)"
+	NetClient.request_emote(emote)
+	return "0x3091 [%02x] sent" % emote
+
+## Auto Attack (0x793b00 case 0x3ea, READ): the object click 0x792f00 on the
+## selection. A selected monster is attacked; anything else does nothing, as
+## the click on a player does nothing more than select.
+func _action_auto_attack() -> String:
+	var id := _last_attack_target
+	if id < 0 or not _monster_bodies.has(id) or _dying_until.has(id):
+		return "no monster selected"
+	_attack_monster(id)
+	return "attacks monster %d" % id
+
+## Auto Select (0x9d3340, READ): the nearest monster strictly within 70.0
+## (3-D), selected as a click selects it (the ring, the target window). That
+## the engine's list 0xec4d50 is the monsters is INFERRED (the selection the
+## click would make; its entries' flag bit is not read).
+func _action_auto_select() -> String:
+	if player == null:
+		return "no player"
+	var candidates := {}
+	for id in _monster_bodies:
+		var body = _monster_bodies[id]
+		if body == null or not is_instance_valid(body) or _dying_until.has(int(id)):
+			continue
+		candidates[int(id)] = (body as Node3D).global_position
+	var pick := ActionCommands.nearest_within(player.global_position, candidates)
+	if pick < 0:
+		return "no monster within %.0f" % ActionCommands.AUTO_SELECT_RANGE
+	_last_attack_target = pick
+	_show_target(pick)
+	_ring_on_monster(pick)
+	return "selected monster %d (%.1f away)" % [pick, player.global_position.distance_to(candidates[pick])]
+
+## Exchange (SendTradeMsg_081(0), READ): with another player selected, the
+## system line UIIT_MSG_DEAL_ASKING ("Applying for a trade to [%s].") and the
+## request; nothing without one. OpenSRO's trade request names the player.
+func _action_exchange() -> String:
+	if _selected_character < 0 or _selected_character == _own_id() or not _other_bodies.has(_selected_character):
+		return "no player selected"
+	var body = _other_bodies[_selected_character]
+	var who := String((body as Node).get_meta("character_name", "")) if body != null and is_instance_valid(body) else ""
+	if who == "":
+		return "the selected player has no name yet"
+	var fmt := _ui_text_table.get_text("UIIT_MSG_DEAL_ASKING", "") if _ui_text_table != null else ""
+	if fmt != "":
+		_log_system(fmt.replace("%s", who), HudSystemMessage.TYPE_GAME)
+	NetClient.trade_request(NetClient.current_character_name, who)
+	return "trade requested with %s" % who
+
+## Party (0x793b00 case 0x3ef, READ): the main popup's party tab, then the
+## party window's Invite (0x6d5970) -- create-and-invite out of a party,
+## invite in one -- for the selected player.
+func _action_party() -> String:
+	if _hud_panels == null:
+		return "no HUD"
+	if not _hud_panels.is_open("party"):
+		_hud_panels.toggle("party")
+	if _hud_panels.party_pane != null:
+		_hud_panels.party_pane.press_invite()
+	return "party tab shown; invite %s" % ("sent for %d" % _party_selected_target() if _party_selected_target() != 0 else "skipped (no player selected)")
+
+## The server's answer to Walk/Run for this player: the gait and the speed
+## follow, and the window's button and any quick slot holding it swap
+## (FUN_006a3fb0 and 0x60c600, READ).
+func _apply_walk_mode(walking: bool) -> void:
+	var was := _walk_mode
+	_walk_mode = walking
+	print("WALK: this player %s -- %.1f units/s (run %.1f)%s" % ["walks" if walking else "runs", _gait_speed(),
+		_move_speed, "" if was != walking else " (unchanged)"])
+	_action_motion_shown(ActionCommands.MOTION_WALK if walking else ActionCommands.MOTION_RUN)
+
+## The action window's sit or walk button follows this player's motion
+## (FUN_006a3fb0), and so does a quick slot holding that action (0x60c600).
+func _action_motion_shown(value: int) -> void:
+	if _hud_panels == null or _hud_panels.action_pane == null:
+		return
+	var id := _hud_panels.action_pane.set_motion(value)
+	if id < 0 or _hud_underbar == null:
+		return
+	for slot in _quickslot_actions:
+		if int(_quickslot_actions[slot]) == id:
+			_hud_underbar.set_slot_item(int(slot), _hud_panels.action_pane.icon_of(id))
+
+## Another player's Walk/Run: their legs move at their walk speed and their
+## dressed body walks (a ghost keeps its run clip, OPEN).
+func _apply_other_walk_mode(character_id: int, walking: bool) -> void:
+	if walking:
+		var walk := WALK_SPEED_FALLBACK
+		var gait: Dictionary = _other_gaits.get(character_id, {})
+		var row: Array = _speeds_by_code.get(String(gait.get("body", "")), [])
+		if row.size() == 2 and float(row[0]) > 0.0:
+			walk = float(row[0])
+		_other_walking[character_id] = walk
+	else:
+		_other_walking.erase(character_id)
+	var leg = _other_legs.get(character_id)
+	if leg != null:
+		leg["speed"] = _other_speed(character_id)
+	print("WALK: player %d %s" % [character_id, "walks" if walking else "runs"])
+
+## An emote someone played (0x3091, FUN_008a7950 READ): their body plays
+## action type 0x32 + the byte (ANI_EMOTION01..) once, from its own .bsr.
+func _on_emote_received(object_id: int, emote: int) -> void:
+	_sync_own_id()
+	var own := _own_id()
+	var action_type := ActionCommands.emote_animation(emote)
+	if own >= 0 and object_id == own:
+		var anim := _body_animation_for(_player_body, action_type, _player_weapon_group)
+		var played := _play_player_once(anim) if anim != null else 0.0
+		print("EMOTE: this player plays emote %d -- action type %d, %s (%.2f s)" % [emote, action_type,
+			_body_animation_path(_player_body, action_type, _player_weapon_group), played])
+		return
+	if not _other_bodies.has(object_id):
+		print("EMOTE: emote %d for unknown id %d ignored" % [emote, object_id])
+		return
+	_dress_ghost_now(object_id)
+	var gait: Dictionary = _other_gaits.get(object_id, {})
+	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
+		return
+	var once := _body_animation_for(gait["body"], action_type, gait["group"])
+	var t := _play_once(gait["skeleton"], once) if once != null else 0.0
+	print("EMOTE: player %d plays emote %d -- action type %d (%.2f s)" % [object_id, emote, action_type, t])
+
+## An action's icon was put down on the quick slot bar (CIFUnderBar::vslot_028
+## takes kind 0x4a, READ): the slot holds the action from now on.
+func _on_action_drop_requested(at: Vector2, action_id: int, icon: Texture2D) -> void:
+	if _hud_underbar == null or action_id <= 0:
+		return
+	var slot := _hud_underbar.slot_index_at(at)
+	if slot < 0:
+		return
+	_quickslot_skills.erase(slot)
+	_quickslot_items.erase(slot)
+	_quickslot_actions[slot] = action_id
+	_hud_underbar.set_slot_item(slot, icon)
+	print("World3D: quickslot %d <- action %d" % [slot, action_id])
+	_save_hotbar()
+
+## The icon an action shows on the bar: the window's, or the row's own when
+## the window is not built yet.
+func _action_icon(action_id: int) -> Texture2D:
+	if _hud_panels != null and _hud_panels.action_pane != null:
+		var t := _hud_panels.action_pane.icon_of(action_id)
+		if t != null:
+			return t
+	if _ui_builder == null:
+		return null
+	var e := ActionWndData.find(ActionWndData.load_from(_ui_builder.media_archive()), action_id)
+	return _ui_builder.load_texture(e.icon) if e != null else null
+
+## OPENSRO_QA_ACTIONS="<tick>:<id>,<id>,..." runs those action buttons one a
+## second from that tick, as the window's right click would, and prints each
+## (QA only). E.g. "200:1005,4000,1001,1000".
+var _qa_actions := OS.get_environment("OPENSRO_QA_ACTIONS")
+var _qa_actions_next := -1
+
+func _qa_step_actions(tick: int) -> void:
+	if _qa_actions == "" or not _qa_actions.contains(":"):
+		return
+	var parts := _qa_actions.split(":")
+	var start := int(parts[0])
+	var ids := parts[1].split(",", false)
+	if tick < start:
+		return
+	var k := (tick - start) / 60
+	if (tick - start) % 60 != 0 or k >= ids.size() or k == _qa_actions_next:
+		return
+	_qa_actions_next = k
+	if k == 0 and _hud_panels != null and not _hud_panels.is_open("action"):
+		_hud_panels.toggle("action")
+	var step := String(ids[k])
+	# "q<slot>=<id>": the action put on quick slot <slot>, as a drop there
+	# does; "u<slot>": that quick slot used, as its key or click does.
+	if step.begins_with("q") and step.contains("="):
+		var slot := int(step.substr(1, step.find("=") - 1))
+		var aid := int(step.substr(step.find("=") + 1))
+		if _hud_underbar != null:
+			_quickslot_skills.erase(slot)
+			_quickslot_items.erase(slot)
+			_quickslot_actions[slot] = aid
+			_hud_underbar.set_slot_item(slot, _action_icon(aid))
+			_save_hotbar()
+		print("QA ACTION quick slot %d <- action %d at tick %d" % [slot, aid, tick])
+		return
+	if step.begins_with("u"):
+		print("QA ACTION quick slot %d used at tick %d" % [int(step.substr(1)), tick])
+		_on_quickslot_activated(int(step.substr(1)))
+		return
+	var id := int(step)
+	print("QA ACTION %d at tick %d: %s" % [id, tick, _run_action(id)])
+
 # --- The keyboard (round 608) ---------------------------------------------------
 #
 # KeyMap is the retail client's key table and KeyInput runs it; this is what
@@ -25417,7 +25759,14 @@ func _berserk_flash_step(delta: float) -> void:
 ## The server's answer for this player: sit (4) or stand (0), through the 1.5 s
 ## transition in which it refuses a move.
 func _apply_player_motion(value: int) -> void:
+	# Walk/Run's answer (round 781): no transition, nothing to play.
+	if value == WorldNet.MOTION_WALK or value == WorldNet.MOTION_RUN:
+		_apply_walk_mode(value == WorldNet.MOTION_WALK)
+		return
 	var what := _sit.answer(value, _player_anim_time)
+	# The action window's sit button follows (FUN_006a3fb0, round 781).
+	if value == WorldNet.MOTION_SIT or value == WorldNet.MOTION_STAND:
+		_action_motion_shown(value)
 	match what:
 		"sit_down", "sit":
 			var loop := _body_animation_path(_player_body, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)
@@ -25524,6 +25873,9 @@ func _seat_result_others(seated: Array) -> void:
 ## Another player's answer: the sitting loop under the sit-down clip, or the
 ## stand loop under the stand-up clip, from their own body's table.
 func _apply_other_motion(character_id: int, value: int) -> void:
+	if value == WorldNet.MOTION_WALK or value == WorldNet.MOTION_RUN:
+		_apply_other_walk_mode(character_id, value == WorldNet.MOTION_WALK)
+		return
 	# Round 756: a ghost sitting down or getting up plays a one-shot: dressed.
 	if value == WorldNet.MOTION_SIT or _other_seated.has(character_id):
 		_dress_ghost_now(character_id)

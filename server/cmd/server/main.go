@@ -2217,6 +2217,9 @@ func main() {
 		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
 		session.MotionHandler(hub),
+		// The action window's emotes (round 781): the retail 0x3091, the
+		// byte echoed to the character's watchers.
+		session.EmoteHandler(hub),
 		// The retail NPC interaction (round 727): select 0x7045 -> 0xB045
 		// with the NPC's interaction ids, open 0x7046 -> 0xB046, end 0x704B.
 		session.NPCTalkHandler(hub, trades),

@@ -1790,6 +1790,8 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// object's re-creation is inferred). The client drops its own sit on the
 	// zone change too.
 	motions.stand(old.CharacterID, time.Now())
+	// And runs again (round 781, OURS: motionTracker.runAgain).
+	motions.runAgain(old.CharacterID)
 	// A walled caster's landing is its client's to report (round 646,
 	// walls.go noteWarpLanding): the root holds it where it lands.
 	noteZoneWarpLanding(old.CharacterID, zone, pos, time.Now())

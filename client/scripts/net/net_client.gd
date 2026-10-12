@@ -52,6 +52,9 @@ signal change_zone_result(result: WorldNet.ChangeZoneResult)
 ## A character's state changed (WorldNet.OP_STATE_CHANGE, round 607): kind 1 is
 ## the motion state -- someone sat down or stood up, this player included.
 signal state_changed(change: WorldNet.StateChange)
+## An emote someone played (WorldNet.OP_EMOTE, round 781), this player's own
+## included: the client plays its own emote on this answer, not on the press.
+signal emote_received(object_id: int, emote: int)
 
 signal inventory_list_result(slots: Array, error: String)
 ## The most recent inventory/equipment list's per-slot durability
@@ -923,9 +926,14 @@ func quantize_destination(at: Vector3) -> Vector3:
 func move_order_heading(command: int, angle: int) -> void:
 	_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_heading(command, angle))
 
-## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key).
+## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key),
+## or to walk or run ([2] / [3], the action window's Walk/Run, round 781).
 func request_motion(value: int) -> void:
 	_send(WorldNet.OP_MOTION_REQUEST, WorldNet.encode_motion_request(value))
+
+## Plays an emote (WorldNet.OP_EMOTE [byte], the action window, round 781).
+func request_emote(emote: int) -> void:
+	_send(WorldNet.OP_EMOTE, WorldNet.encode_emote(emote))
 
 func change_zone(zone: String, spot: Variant = null) -> void:
 	_zone_spot_retry = zone if spot is Vector2 else ""
@@ -1700,6 +1708,10 @@ func _dispatch(p: Packet) -> void:
 			if change != null:
 				WorldNet.note_body_mode(body_modes, change)
 				state_changed.emit(change)
+		WorldNet.OP_EMOTE:
+			var em := WorldNet.decode_emote(p.data)
+			if not em.is_empty():
+				emote_received.emit(int(em[0]), int(em[1]))
 		UseItemNet.OP_SCROLL_CANCEL_RESULT:
 			# READ: FUN_008727a0 shows nothing for a refusal (round 779).
 			print("NetClient: scroll cancel refused (code %d)" % UseItemNet.decode_cancel_result(p.data))

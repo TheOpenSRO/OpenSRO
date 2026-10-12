@@ -478,7 +478,13 @@ the left scroll bar and the channel marks (docs/protocol/chat.md; what is left i
 "Chat (round 634)").
 
 ### 4. Panels with no server behind them
-`action`, `partymatch`, `academy`, `autopotion` and `alchemy` open and draw, but there is nothing
+**`action` is done (round 781):** CIFAction filled from the player's own
+`server_dep\silkroad\textdata\actionwnddata.txt` (`ActionWndData`, `HudActionPane`), each button
+run as retail's dispatcher `0x793b00` runs it (`ActionCommands`); sit, walk/run, the seven emotes
+(retail `0x3091`, new on the server), auto attack, auto select, exchange, party, auto grab and
+four window buttons work, the rest say why in the system window; buttons go on the quick slot bar.
+The list is in `docs/WORLD_ISSUES.md`, "Round 781 (part): the action window".
+`partymatch`, `academy`, `autopotion` and `alchemy` open and draw, but there is nothing
 to fill them with — no server side exists. Either build it (server lane, see
 [HANDOFF_OPENSRO.md](HANDOFF_OPENSRO.md)) or make them client-side where they legitimately are
 (Auto Potion is a client setting; System is Option/Help/Restart/Exit).

@@ -54,7 +54,16 @@ const STATE_KIND_BODY_MODE := 4
 const STATE_KIND_TELEPORT := 0xb
 ## MOTIONSTATE values, named by the server's own table at .rdata 0x00c63f90.
 const MOTION_STAND := 0
+## Round 781: the action window's Walk/Run sends 2 (walk) or 3 (run) on the
+## same request (0x9d4a00, READ); the answer is the same 0x30BF kind 1 with
+## that value, and no transition (FUN_004b1480 case 2/3, READ).
+const MOTION_WALK := 2
+const MOTION_RUN := 3
 const MOTION_SIT := 4
+## Round 781: the emotes, on the retail 0x3091 both ways (READ: the client's
+## 0x793b00 sends u8; the server's GObjPC::FUN_004b1630 answers {u32 id, u8},
+## which the client's FUN_008a7950 plays).
+const OP_EMOTE := 0x3091
 ## The server's sit/stand transition, .rdata 0x00b45c10 = 1.5 s: it refuses a
 ## move or another request for that long after it accepts one.
 const MOTION_CHANGE_SECONDS := 1.5
@@ -112,6 +121,9 @@ class EntitySnapshot:
 	var dest := Vector3.ZERO
 	var run_wire: int = -1
 	var run_speed: float = 0.0
+	## Round 781: the walk speed of a character whose run flag is 0 (it
+	## walks, the action window's Walk); 0 when it runs.
+	var walk_speed: float = 0.0
 
 	func item_in(slot: int) -> int:
 		return int(equipped.get(slot, 0))
@@ -555,6 +567,19 @@ class StateChange:
 	## fifth argument (the flag granting param 189's 0.3), which the berserk
 	## activation passes as 0 (0x515cc6).
 	var extra: int = 0
+
+## Encodes an OP_EMOTE request: the one emote byte (round 781).
+static func encode_emote(emote: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(1)
+	out.encode_u8(0, emote & 0xff)
+	return out
+
+## Decodes an OP_EMOTE broadcast as [object id, emote byte], or [] when short.
+static func decode_emote(data: PackedByteArray) -> Array:
+	if data.size() < 5:
+		return []
+	return [data.decode_u32(0), data.decode_u8(4)]
 
 ## Encodes an OP_MOTION_REQUEST: the one requested byte (4 toggles sitting).
 static func encode_motion_request(value: int) -> PackedByteArray:

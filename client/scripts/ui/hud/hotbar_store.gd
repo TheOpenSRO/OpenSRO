@@ -33,8 +33,10 @@ const VERSION := 1
 static func key_for(server: String, character: String) -> String:
 	return "%s/%s" % [server.uri_encode(), character.uri_encode()]
 
-## The bar as a list of plain dictionaries, sorted by slot.
-static func encode(skills: Dictionary, items: Dictionary) -> Array:
+## The bar as a list of plain dictionaries, sorted by slot. `actions` (round
+## 781) is the action-window buttons on the bar, {slot: action id} -- retail's
+## slot kind 0x4a, whose u32 is the action id (0x60bace, READ).
+static func encode(skills: Dictionary, items: Dictionary, actions: Dictionary = {}) -> Array:
 	var out: Array = []
 	var slots: Array = []
 	for s in skills:
@@ -42,23 +44,29 @@ static func encode(skills: Dictionary, items: Dictionary) -> Array:
 	for s in items:
 		if not skills.has(s):
 			slots.append(int(s))
+	for s in actions:
+		if not skills.has(s) and not items.has(s):
+			slots.append(int(s))
 	slots.sort()
 	for s in slots:
 		if skills.has(s):
 			var e: Dictionary = skills[s]
 			out.append({"slot": s, "kind": "skill", "id": int(e.get("id", 0)), "code": String(e.get("code", ""))})
-		else:
+		elif items.has(s):
 			var e: Dictionary = items[s]
 			out.append({"slot": s, "kind": "item", "item": int(e.get("item", -1)), "bag": int(e.get("slot", -1))})
+		else:
+			out.append({"slot": s, "kind": "action", "id": int(actions[s])})
 	return out
 
 ## The bar back from encode's list: {"skills": {slot: {id, code}}, "items":
-## {slot: {item, slot}}}. Every field is type-checked; an entry with a field
+## {slot: {item, slot}}, "actions": {slot: action id}}. Every field is type-checked; an entry with a field
 ## of the wrong type, out of range or of an unknown kind is skipped, and the
 ## rest still load (round 639's review).
 static func decode(entries: Array) -> Dictionary:
 	var skills := {}
 	var items := {}
+	var actions := {}
 	for raw in entries:
 		if not (raw is Dictionary):
 			continue
@@ -75,7 +83,10 @@ static func decode(entries: Array) -> Dictionary:
 			"item":
 				if _is_int(e.get("item")) and _is_int(e.get("bag")) and int(e["item"]) >= 0 and int(e["bag"]) >= 0:
 					items[slot] = {"item": int(e["item"]), "slot": int(e["bag"])}
-	return {"skills": skills, "items": items}
+			"action":
+				if _is_int(e.get("id")) and int(e["id"]) > 0:
+					actions[slot] = int(e["id"])
+	return {"skills": skills, "items": items, "actions": actions}
 
 static func _is_int(v: Variant) -> bool:
 	return typeof(v) == TYPE_INT
@@ -87,7 +98,7 @@ static func _is_int(v: Variant) -> bool:
 ## other character's entry (round 639's review). The write goes to a
 ## temporary file that is then renamed over the old one, so a crash mid-write
 ## leaves the previous file whole.
-static func save(key: String, skills: Dictionary, items: Dictionary, path: String = PATH) -> bool:
+static func save(key: String, skills: Dictionary, items: Dictionary, path: String = PATH, actions: Dictionary = {}) -> bool:
 	var file := ConfigFile.new()
 	if FileAccess.file_exists(path):
 		var err := file.load(path)
@@ -95,7 +106,7 @@ static func save(key: String, skills: Dictionary, items: Dictionary, path: Strin
 			push_warning("HotbarStore: %s does not load (error %d) -- not overwriting it" % [path, err])
 			print("HotbarStore: %s does not load (error %d) -- the bar is not saved" % [path, err])
 			return false
-	file.set_value(SECTION, key, {"version": VERSION, "slots": encode(skills, items)})
+	file.set_value(SECTION, key, {"version": VERSION, "slots": encode(skills, items, actions)})
 	var tmp := path + ".tmp"
 	if file.save(tmp) != OK:
 		return false
@@ -112,13 +123,13 @@ static func save(key: String, skills: Dictionary, items: Dictionary, path: Strin
 static func load_bar(key: String, path: String = PATH) -> Dictionary:
 	var file := ConfigFile.new()
 	if file.load(path) != OK:
-		return {"skills": {}, "items": {}}
+		return {"skills": {}, "items": {}, "actions": {}}
 	if not file.has_section_key(SECTION, key):
-		return {"skills": {}, "items": {}}
+		return {"skills": {}, "items": {}, "actions": {}}
 	var v: Variant = file.get_value(SECTION, key, {})
 	if not (v is Dictionary) or not _is_int((v as Dictionary).get("version")) \
 			or int((v as Dictionary)["version"]) != VERSION:
-		return {"skills": {}, "items": {}}
+		return {"skills": {}, "items": {}, "actions": {}}
 	var slots: Variant = (v as Dictionary).get("slots", [])
 	return decode(slots if slots is Array else [])
 

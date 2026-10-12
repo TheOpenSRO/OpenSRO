@@ -71,7 +71,7 @@ func TestMotionRequestsTheEngineRefuses(t *testing.T) {
 	t.Cleanup(func() { motions.clear(id) })
 	t0 := time.Now()
 	motions.enter(id, t0)
-	for _, req := range []byte{MotionStand, MotionWalk, MotionRun, 0x0c, 0x07} {
+	for _, req := range []byte{MotionStand, 0x0c, 0x07} {
 		if v, ok := motions.request(id, req, t0); ok {
 			t.Errorf("request %#x while standing was accepted with value %d", req, v)
 		}

@@ -591,6 +591,34 @@ signal global_chat_requested(slot: int, count: int)
 ## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
 ## with the gate the list was opened at (NetClient.teleport_use).
 signal teleport_requested(dest_id: int)
+## An action-window button was used (round 781): a right click on its slot
+## (CIFSlotWithHelp vslot 33 -> 0x682040, kind 0x4a -> 0x793b00). World3D runs
+## it (ActionCommands).
+signal action_use_requested(action_id: int)
+
+## The main popup's action pane (round 781, HudActionPane), built with the
+## popup; null until then.
+var action_pane: HudActionPane = null
+
+## Fills GDR_ACTION from the player's actionwnddata.txt (CIFAction::Create).
+func _wire_action_pane(pane: Control) -> void:
+	if pane == null or action_pane != null or _builder == null:
+		return
+	var rows := ActionWndData.load_from(_builder.media_archive())
+	action_pane = HudActionPane.new(_builder, pane, rows)
+	action_pane.use_requested.connect(func(id: int) -> void: action_use_requested.emit(id))
+	action_pane.pick_requested.connect(func(what: Dictionary, icon: Texture2D, source: Control, at: Vector2) -> void:
+		pick_up_icon(what, icon, source, at))
+	# The player's motion as the world knows it now (sit / walk), so a pane
+	# built while seated or walking shows the swapped buttons.
+	if action_motion_now.is_valid():
+		for v in action_motion_now.call():
+			action_pane.set_motion(int(v))
+	print("HudPanels: action pane filled from %s: %d buttons" % [ActionWndData.PATH, action_pane.slots.size()])
+
+## World3D's hook: the motion values the action pane should show now
+## ([sit 4 / stand 0, walk 2 / run 3]).
+var action_motion_now: Callable = Callable()
 
 ## Sections beyond "Create" that a panel's window builds.
 ##
@@ -1062,6 +1090,7 @@ func _open_main_popup(panel_id: String) -> HudWindow:
 		_apply_equipment_slot_backgrounds()
 		_place_paper_doll_docked()
 		_wire_party_pane(popup.pane_control("GDR_PARTY"))
+		_wire_action_pane(popup.pane_control("GDR_ACTION"))
 		_fill_equipment_slots(_equipped_items)
 		# The bag's page tabs and its shown page (0x6b6620 builds them with
 		# the bag; 0x6b3d00(0) selects the first).
@@ -4708,7 +4737,9 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 			# bag: CIFInventory::vslot_028 0x6b5b80 -> 0x6b0520 (READ).
 			if on_bag and _window_shown("store"):
 				_confirm_buyback(int(what.get("index", -1)), item_id)
-		"skill":
+		"skill", "action":
+			# An action's icon goes where a skill's does: the quick slot bar
+			# takes kind 0x4a (CIFUnderBar::vslot_028, round 781).
 			if not _over_any_window(at):
 				held_dropped_outside.emit(what, at)
 		"quickslot":

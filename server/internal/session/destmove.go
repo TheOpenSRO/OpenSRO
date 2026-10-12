@@ -277,7 +277,8 @@ func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hu
 	if !statusFX.characterCanMove(e.CharacterID) || tradeEstablishedOn(hub, e.CharacterID) {
 		return nil
 	}
-	order := world.MoveOrder{Speed: float64(buffBooks.RunSpeed(e.CharacterID))}
+	// The walk speed while the run flag is cleared (round 781, motionSpeed).
+	order := world.MoveOrder{Speed: motionSpeed(e.CharacterID)}
 	if m.Kind == proto.MovementKindHeading {
 		// The heading form steps only while the command's bit 0 is set
 		// (READ, CGObjMoverByCmd::vslot_004); the arrow keys' turn-only
@@ -556,10 +557,11 @@ func moverPass(hub *world.Hub) {
 	}
 }
 
-// moverSpeed is a mover's run speed now (the buff book's, a GM's /speed
-// included): the pass re-bases a leg whose speed a buff changed.
+// moverSpeed is a mover's speed now (the buff book's run speed, a GM's
+// /speed included, or the walk speed while its run flag is cleared, round
+// 781): the pass re-bases a leg whose speed a buff or a Walk/Run changed.
 func moverSpeed(characterID int64) float64 {
-	return float64(buffBooks.RunSpeed(characterID))
+	return motionSpeed(characterID)
 }
 
 // The 0x7021 bucket (round 749's review, F8; OURS -- retail's handler has

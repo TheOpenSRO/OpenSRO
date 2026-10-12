@@ -7618,6 +7618,136 @@ items, lobby682's chargen), GM account `qa781`, `/level 100;/sp 9000000`, master
 **Gates.** `remote_godot.sh check`: 742 scripts and 9 scenes, ALL LOAD; `tests`: "ran 285
 suite(s), 0 failing". No server change (`go test` not needed); UI-only, so no perf gate.
 
+### Round 781 (part): the action window
+
+The user: "let's get the action menu working. Again it should roughly look like this [a private
+server's Action window] but some of these icons are private server only. Check what the code has
+and match that and make sure all of the buttons that can work actually work." Labels: READ
+(decompiled retail, `sro_client.exe` / `SR_GameServer.exe`), MEASURED, INFERRED, OURS, OPEN.
+
+**What the window is (READ).** `CIFAction` (the main popup's `GDR_ACTION` pane, `ifaction.txt`)
+carries no buttons of its own: the layout's 52 `CIFSlotWithHelp` have stale `CommandID`s, and
+`CIFAction::Create` (`0x6a4870`) fills them from `server_dep\silkroad\textdata\actionwnddata.txt`
+in Media.pk2. Its row parser (`GlobalDataManager::RefParse_actionwnddata`, `0x976e60`) reads id,
+service, Korean name, text key, icon, section, slot. Create keeps four slot arrays, 18 / 8 / 8 /
+18, whose controls are the layout ids `100+i`, `200+i`, `300+i`, `400+i` (`0x6a48f5`,
+`0x6a4955`, `0x6a49b8`, `0x6a4a22`); every slot is made hidden with slot kind `0x4a`, then each
+row with a non-zero service puts its icon, tooltip (its text key; id 1015 takes `0x652d60(0x80)`
+instead) and action id on its section's slot and shows it. `IFAction::FUN_006a4320`, at the end of
+Create, rewrites four tooltips with the bound key ("Sit ( N )", "Auto Pick up ( G )", "Academy ( L
+)", "Party Match ( E )"). `IFAction::FUN_006a3fb0`, called from the `0x30bf` handler (`0x8a8201`)
+for the player's own motion, swaps the sit button (0 `icon_cha_sit` + `UIIT_CTL_SIT`, 4
+`icon_cha_stand` + `UIIT_CTL_STAND`) and the walk button (2 `icon_cha_run` + `UIIT_CTL_RUN`, 3
+`icon_cha_walk` + `UIIT_CTL_WALK`); `0x60c600` then does the same on the quick slot bar.
+
+**The archive's rows (MEASURED, 27 lines, one commented out).** Section 1, Character Control:
+1000 sit/stand, 1001 walk/run, 1002 auto attack, 1003 trace, 1004 auto run, 1006 exchange, 1007
+party, 1008 auto grab, 1009 stall, 1010 alchemy, 1011 helper, 1012 auto potion, (`//1013` the
+stall network, commented out), 1014 academy, 1015 fortress return, 1016 party matching, 1017 free
+PvP (slot 15), 1005 auto select (slot 17); slot 16 empty. Section 4, Action Emoticon: 4000 Hi,
+4001 Smile, 4002 Greeting, 4003 Yes, 4004 Rush, 4005 Joy, 4006 No, and 5000 the COS "Charming
+action" (slot 7, the blue orb). **Sections 2 and 3 have no rows**: their subframes are titled
+`UIIT_STT_CONTROL_CREATED_MONSTER` / `UIIT_STT_CONTROL_SUMMONED_MONSTER` ("Control created
+monster" / "Control summoned monster") and stay empty. **So the screenshot's Character Control and
+Action Emoticon are retail's, slot for slot; "Custom Buttons" and "Pet Buffs" are that private
+server's re-titled sections 2 and 3 with its own contents** (the camel and eight buff orbs), not
+built here.
+
+**What each button does (READ, the dispatcher `GInterfaceSend::FUN_00793b00(owner, id)`).** It is
+reached from the window's right click (`CIFSlotWithHelp` vslot 33 -> `0x682040`, kind `0x4a`) and
+from a quick slot holding an action (`0x60b850`, kind `0x4a` -> `0x60bace`); a left click picks
+the icon up, and the bar takes kind `0x4a` (`CIFUnderBar::vslot_028`). Retail has no left-click
+use (`0x682040`'s only other caller is the extended quick slot, `0x65fc56`).
+
+| id | button | retail (READ) | OpenSRO now |
+|---|---|---|---|
+| 1000 | Sit/Stand | `0x9d4a20`: `0x704f [04]` | **works** (round 607's N path) |
+| 1001 | Walk/Run | `0x9d4a00`: `0x704f [02]` while running (`+0x25d`), else `[03]`; server `FUN_004b1480` case 2/3 sets the run flag (slot `0x4bc` -> `0x4aa3c0`), no transition, then `0x30bf {id,1,value}` | **works, new on both sides** |
+| 1002 | Auto Attack | `0x792f00`, the object click, on the selection | **works**: attacks the selected monster |
+| 1003 | Trace | `0x7074 [01 03 01 <u32 id>]` | system line (OPEN: no follow on the server) |
+| 1004 | Auto Run | **no case** (the switch's exit is case `0x3ec`) | system line (OURS; retail does nothing) |
+| 1005 | Auto Select | `0x9d3340`: nearest of list `0xec4d50` strictly within 70.0 (`.rdata 0xd990a8`, 3-D) -> select | **works** (the list being the monsters is INFERRED) |
+| 1006 | Exchange | `SendTradeMsg_081(0)`: the selection; `UIIT_MSG_DEAL_ASKING` line, `0x7081` | **works** with a player selected (OpenSRO's trade request names the player) |
+| 1007 | Party | the popup's party tab, then `0x6d5970` (Invite: create out of a party, invite in one) | **works** (HudPartyPane.press_invite) |
+| 1008 | Auto Grab | `0x9e18f0`, the G key | **works** (round 608's G path) |
+| 1009 | Stall | the stall window after its gates | system line (OPEN: no stalls) |
+| 1010 | Alchemy | `0x798e20` | **works** (opens the alchemy window) |
+| 1011 | Helper | flag bit 2 of `0x9db080`, `0x7402 [flags]` | system line (OPEN) |
+| 1012 | Auto potion | `0x79c750(1)` | **works** (the auto-potion window) |
+| 1014 | Academy | `0x79af70` | **works** (the academy tab) |
+| 1015 | Fortress return | guild fortress return, messages `0x7c07`/`0x7c08` | system line (OPEN: no fortress war) |
+| 1016 | Party matching | `0x79c170` | **works** (the matching window) |
+| 1017 | Free PvP | `0x9d7100`, the free battle PvP window; icon on/off `0x54`/`0x55` | system line (OPEN) |
+| 4000-4006 | emotes | `0x3091 [byte]`: 4000 `00`, 4001 `06`, 4002 `01`, 4003 `05`, 4004 `02`, 4005 `03`, 4006 `04` | **works, new on both sides** |
+| 5000 | Charming action | COS `0x70c5 [cos, 0x0b]` | system line (OPEN: no pets) |
+
+The system lines are OURS (the user's request: a clear message rather than nothing).
+
+**The emote (READ).** Server: `0x3091` is handler index `0x091` (`0x4b0cfc` stores the thunk
+`0x4b23d0`, `jmp [eax+0x600]`; CGObjPC's vtable `0xaf59fc` +`0x600` = `0x4b1630`, read from the
+exe), which reads a u8 and sends `0x3091 {u32 unique id, u8}` through `FUN_00484d90`, testing
+nothing. Client: `FUN_008a7950` puts the object in state 7 with the byte (state `0xd` under the
+flag `DAT_00ef1bc0`); state `0xd`'s entry `0xa59bc0` plays animation `0x32 + byte`
+(`ANI_EMOTION01..`). How state 7 reaches its clip is not read; that it is the same type is
+INFERRED. OpenSRO: `session.EmoteHandler` echoes the byte to the watchers and the requester
+(INFERRED that the requester is among them: the client animates nothing on the press); a dead
+character's is dropped (OURS).
+
+**Walk (READ + OURS).** Server: request 2/3 is refused in CHANGEMOTION, from SIT, and when equal
+to the state (a mover is WALK or RUN by its flag); accepted otherwise, no stop, no transition.
+`motionSpeed` moves a walker's legs at `PlayerWalkSpeed` 16 (characterdata column 46, MEASURED
+round 737; walk-speed buffs are not modelled, OURS); the spawn record's run flag is 0 and a moving
+walker's motion byte 2. A world entry and a zone change run again on both sides (OURS: the
+re-creation of the object on a teleport is INFERRED). Client: the walk speed is the body's column
+46, the player plays its walk clip (type 1); another player's legs and dressed body follow their
+`0x30bf` value 2/3 or record (a ghost keeps its run clip: OPEN).
+
+**Built.** `ActionWndData` (the file's reader), `HudActionPane` (Create's fill, the key tooltips,
+the motion swaps, right click / left click), `ActionCommands` (the table above), World3D's
+`_run_action` and its pieces, `NetClient.request_emote` / `emote_received`, the quick slot bar's
+action kind (`HotbarStore` "action" entries, OURS as the rest of the file: retail saves the bar on
+the server, `0x7158`), the bar's icons following the motion (`0x60c600`). Server: `emote.go`,
+`motion.go`'s walk/run, `pcrecord.go`'s run flag, `destmove.go`'s speed. Shared files touched only
+locally: `hud_panels.gd` (the pane's wiring, one signal, the held "action" drop),
+`hotbar_store.gd` (an optional `actions` argument), `World3D.gd` (one section plus hooks).
+
+**Verified on the box** (`/var/tmp/r781-action/live2.sh`, `live3.sh`; this worktree's server on
+port 27781; logs in `/var/tmp/r781-action/live2/`, `live3/`):
+
+- `HudPanels: action pane filled from server_dep\silkroad\textdata\actionwnddata.txt: 25 buttons`
+  (the archive's 25 live rows: 17 Character Control, 7 emotes, the charm). The rendered window
+  matches the screenshot's two retail sections slot for slot.
+- Walk: `0x704f [02] sent` -> `WALK: this player walks -- 16.0 units/s`; on the walk that followed
+  the move log's x went 51.333 -> 54.000 from tick 420 to 430, 0.2667 a tick at 60 ticks a
+  second, 16.0 units/s (MEASURED, live3), with no move refused in the server's log;
+  `0x704f [03]` -> `runs -- 50.0`.
+- Sit / stand through the window and through quick slot 3; emotes 0, 1, 2, 3, 5, 6 played
+  (`cm_emot_act_greeting.ban` 2.33 s, `_pokun` 1.67, `_rush` 3.13, `_joy` 1.50, `_yes_tattoo`
+  3.33, `_laugh` 3.67 -- the clip names the archive's, MEASURED); a Smile while seated plays.
+- The second client, moved beside the first (live3), logged `EMOTE: player 2 plays emote 0 / 1 /
+  6 / 5 / 3`, `WALK: player 2 walks` / `runs`, `SIT: player 2 sits` / `stands`.
+- Auto Select `selected monster 414 (6.6 away)`, Auto Attack `attacks monster 414` (three hits, the
+  kill); Stall `Stalls are not available yet on this server.` in the system window; a quick slot's
+  Hi played the emote; the bar's actions came back on the next run (`hotbar restored ... actions {
+  2: 4000, 3: 1000, 4: 1001 }`) and its sit/walk icons followed the motion.
+- Screenshots on the box, `/var/tmp/r781-action/shots/`: `seated_window_hotbar.png` (seated and
+  walking: the window's stand and run buttons, quick slots 2-4), `window_seated_walking_x2.png`,
+  `hotbar_actions_x2.png`, `emote_rush.png`, `walking_beside_second.png`, `autoselect_attack.png`.
+  Screenshots show what happened; the claims above are the logs'.
+
+**Tests.** Client: `action_commands_test.gd` (the table, the emote bytes, Walk/Run's byte, Auto
+Select's strict 70, the reader, the `0x3091` codec), `hud_action_pane_test.gd` (Create's fill and
+hiding, the key tooltips, the four swaps, right / left click), `hotbar_actions_test.gd`;
+`remote_godot.sh check` ALL LOAD (745 scripts), `tests` "ran 287 suite(s), 0 failing". Server:
+`TestEmoteLayout`, `TestEmoteBroadcasts`, `TestWalkRunRequest`, `TestWalkRunBroadcastsAndRecord`
+(`TestMotionRequestsTheEngineRefuses` no longer lists 2 and 3); `go test ./...` ok. A UI and
+server round: no perf gate.
+
+**OPEN.** Trace, stall, helper, fortress return, free PvP and the COS charm need their systems;
+retail's Auto Run does nothing. The emote's state-7 path; a ghost's walk clip; walk-speed buffs;
+1015's `0x652d60(0x80)` tooltip style; the right click's other gates in `0x682040` for kind `0x4a`
+(`0x4f9c50`, `0x666820`) are not modelled; sections 2 and 3 stay empty as retail's rows leave them.
+
 ## Seven-hundred-and-eightieth round: the party portrait's far-away steps in a dungeon, the lake bed over the water
 
 The user, on v0.1.526: "When I walk away from the party member the profile picture of the party

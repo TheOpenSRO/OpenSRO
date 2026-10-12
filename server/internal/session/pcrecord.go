@@ -56,6 +56,15 @@ const PlayerWalkSpeed = 16
 // double at 0xb45e10, 100.0).
 const pcParam140 = 100
 
+// runFlagOf is the record's run flag for characterID: 0 while the action
+// window's Walk is in effect (round 781, motionTracker.walkingMode), else 1.
+func runFlagOf(characterID int64) byte {
+	if motions.walkingMode(characterID) {
+		return 0
+	}
+	return 1
+}
+
 // bodyModeBerserk is the body mode a berserk character's record carries: the
 // value OpenSRO's 0x30bf kind 4 broadcasts (round 651, broadcastBodyMode,
 // READ from the client's handler).
@@ -242,7 +251,7 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 		UID:           uint32(e.CharacterID), // the low 32 bits of the character id, as every retail message OpenSRO sends (round 710)
 		Y:             float32(e.Pos.Y),
 		Angle:         proto.EncodeMovementAngle(world.WireAngle(e.Heading)),
-		RunFlag:       1, // INFERRED: the mover's constructor default
+		RunFlag:       runFlagOf(e.CharacterID), // 1 the mover's constructor default (INFERRED); 0 after a Walk (round 781)
 		Life:          byte(e.Life),
 		Motion:        motions.state(e.CharacterID, now),
 		Walk:          PlayerWalkSpeed,
@@ -260,6 +269,9 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	// 1 (READ, 0x4b11b6) -- so the viewer's client walks it on.
 	if m := e.Move; m != nil {
 		r.Motion = MotionRun
+		if r.RunFlag == 0 {
+			r.Motion = MotionWalk // 2 + (+0x155 != 0) with the flag cleared (round 781)
+		}
 		if m.Heading {
 			r.MoveCommand, r.MoveAngle = m.Command, m.WireAngle
 		} else {

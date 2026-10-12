@@ -37,6 +37,9 @@ package session
 //   - OpenSRO has no WALK or RUN state on the server: its client streams
 //     positions (OpMove) rather than a destination. A character is counted
 //     as walking while an accepted OpMove is younger than movingWindow.
+//     Round 781: the run flag the Walk/Run request sets is kept
+//     (motionEntry.walkMode), and a request of 2 or 3 is judged against the
+//     WALK or RUN that flag makes of a mover (walkRunLocked).
 //   - The request gates this server does not have the state for are not
 //     modelled: vtable slot 0x5a0 (0x4ef880, unread), a running action at
 //     +0xc20 and chardata+0xe == 1 (both unread).
@@ -159,6 +162,11 @@ type motionEntry struct {
 	// legEnd is when the character's leg arrives (round 749, destmove.go):
 	// it walks until then, as retail's WALK/RUN motion state lasts the move.
 	legEnd time.Time
+	// walkMode is the mover's run flag cleared (round 781): the action
+	// window's Walk/Run request 0x704f [02] set it, [03] cleared it. READ:
+	// FUN_004b1480 case 2/3 calls slot 0x4bc (CGObjPC::vslot_303 ->
+	// GObjPC::FUN_004aa3c0 -> CGObjMobile::vslot_303) with (value != 2).
+	walkMode bool
 }
 
 type motionTracker struct {
@@ -227,6 +235,9 @@ func (t *motionTracker) request(characterID int64, req byte, now time.Time) (byt
 	if cur == MotionChangeMotion {
 		return 0, false
 	}
+	if req == MotionWalk || req == MotionRun {
+		return t.walkRunLocked(e, req, now)
+	}
 	if req == MotionSit {
 		switch cur {
 		case MotionSit:
@@ -248,13 +259,77 @@ func (t *motionTracker) request(characterID int64, req byte, now time.Time) (byt
 			return 0, false
 		}
 	default:
-		// 2/3 (walk/run mode) and 0xc (REQ_HELP) have no OpenSRO state.
+		// 0xc (REQ_HELP) has no OpenSRO state.
 		return 0, false
 	}
 	e.state = MotionChangeMotion
 	e.target = req
 	e.until = now.Add(MotionChangeDuration)
 	return req, true
+}
+
+// walkRunLocked is FUN_004b1480 for a request of 2 (walk) or 3 (run), READ
+// (0x4b155d, the case 2/3 at the switch): refused when the state equals the
+// request, refused unless the state is STAND, WALK or RUN; otherwise slot
+// 0x4bc sets the run flag to (value != 2) -- a mover's state becoming WALK or
+// RUN with it (GObjPC::FUN_004aa3c0's SetMotionState(2 + run) while slot
+// 0x4c0 answers 1), no transition -- and 0x30bf {id, 1, value} goes out.
+// OpenSRO counts a mover as STAND (motionEntry.lastMove / legEnd), so its
+// WALK or RUN is computed here from the leg and the flag.
+func (t *motionTracker) walkRunLocked(e *motionEntry, req byte, now time.Time) (byte, bool) {
+	cur := e.state
+	if cur == MotionStand && e.moving(now) {
+		cur = MotionRun
+		if e.walkMode {
+			cur = MotionWalk
+		}
+	}
+	if cur == req {
+		return 0, false
+	}
+	if cur != MotionStand && cur != MotionWalk && cur != MotionRun {
+		return 0, false
+	}
+	e.walkMode = req == MotionWalk
+	return req, true
+}
+
+// moving reports whether the character is on a leg now: an accepted move
+// inside movingWindow, or a leg still running (round 749).
+func (e *motionEntry) moving(now time.Time) bool {
+	return (!e.lastMove.IsZero() && now.Sub(e.lastMove) < movingWindow) || now.Before(e.legEnd)
+}
+
+// walking reports whether characterID's run flag is cleared: it moves at its
+// walk speed (motionSpeed) and its spawn record says so.
+func (t *motionTracker) walkingMode(characterID int64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e := t.m[characterID]
+	return e != nil && e.walkMode
+}
+
+// runAgain sets characterID's run flag back (a zone change, OURS: the retail
+// object is re-created by a teleport, INFERRED, and its mover's constructor
+// default is the run, pcrecord.go's RunFlag 1; the client resets its own on
+// the same change).
+func (t *motionTracker) runAgain(characterID int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if e := t.m[characterID]; e != nil {
+		e.walkMode = false
+	}
+}
+
+// motionSpeed is the speed characterID's legs move at now: the walk speed
+// while its run flag is cleared, else its run speed (the buff book's, a GM's
+// /speed included). OURS, disclosed: the walk is the base PlayerWalkSpeed
+// (param 23, characterdata column 46); no buff OpenSRO models changes it.
+func motionSpeed(characterID int64) float64 {
+	if motions.walkingMode(characterID) {
+		return PlayerWalkSpeed
+	}
+	return float64(buffBooks.RunSpeed(characterID))
 }
 
 // setWall is EngageSkill's SetMotionState(0x11, 0xff, 0) for a 'pw' row
@@ -438,7 +513,8 @@ func (t *motionTracker) sittingOrSittingDown(characterID int64, now time.Time) b
 	return e.state == MotionSit || (e.state == MotionChangeMotion && e.target == MotionSit)
 }
 
-// MotionHandler answers OpMotionRequest: the N key.
+// MotionHandler answers OpMotionRequest: the N key (4), and the action
+// window's Walk/Run (2 / 3, round 781).
 func MotionHandler(hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpMotionRequest {
@@ -464,8 +540,13 @@ func MotionHandler(hub *world.Hub) gateway.Handler {
 		// hears that 0xB023 (round 749, destmove.go). A running auto-attack
 		// ends: the client does not send N while an action runs (its state-2
 		// gate), so a sitter has none.
-		haltForSit(sess, hub)
-		keepUp.Cancel(e.CharacterID)
+		// Walk and run (round 781) stop nothing: the engine's case 2/3 only
+		// sets the run flag, and a leg in progress goes on at the new speed
+		// (moverSpeed re-bases it on the next pass).
+		if value != MotionWalk && value != MotionRun {
+			haltForSit(sess, hub)
+			keepUp.Cancel(e.CharacterID)
+		}
 		broadcastMotion(hub, e, value)
 		return nil
 	}
