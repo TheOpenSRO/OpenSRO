@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/npctalk"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
@@ -39,13 +41,29 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	const sword, swordSwitch, stone, helm = 901, 902, 903, 904
 	refs := refdata.NewMemStore()
 	if err := refs.ImportItems(ctx, []refdata.Item{
-		{ID: sword, CodeName: "ITEM_CH_SWORD_11_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000},
+		{ID: sword, CodeName: "ITEM_CH_SWORD_11_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
 		{ID: swordSwitch, CodeName: "ITEM_CH_SWORD_11_A_RARE_SWITCH01", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000},
 		{ID: stone, CodeName: "ITEM_ETC_ARCHEMY_MAGICSTONE_STR_11", TypeID1: 3, TypeID2: 3, TypeID3: 11, TypeID4: 1, MaxStack: 500, Price: 432095, SellPrice: 1000},
-		{ID: helm, CodeName: "ITEM_CH_M_HEAVY_11_HA_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 3, TypeID4: 1, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000},
+		{ID: helm, CodeName: "ITEM_CH_M_HEAVY_11_HA_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 3, TypeID4: 1, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Round 786: the goods' blue options come from these (OURS fixture rows;
+	// STR level 11's pool tops at 7, DUR's at 160%).
+	optTable, err := magicopt.LoadCSV(strings.NewReader(
+		"72,MATTR_STR,11,1,7566450,65538,196612,393223,0,weapon|armor,+\n" +
+			"90,MATTR_DUR,11,1,1685418613,655380,1966140,6553760,0,weapon|armor,+\n" +
+			"30,MATTR_LUCK,11,0.3,1819632491,65538,196612,327686,0,weapon|armor,+\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assign, err := magicopt.LoadAssignCSV(strings.NewReader("0,6,2,MATTR_STR|MATTR_DUR|MATTR_LUCK\n0,3,1,MATTR_STR|MATTR_DUR\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetMagicOptions(optTable)
+	SetDropOptions(refs, assign)
+	t.Cleanup(func() { SetMagicOptions(nil); SetDropOptions(nil, nil) })
 	all, _ := refs.ListAll(ctx)
 	def, err := testnpc.Builtin()
 	if err != nil {
@@ -198,6 +216,23 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	if have[stone] != 1 || have[sword] != 1 || have[helm] != 1 || have[swordSwitch] != 0 {
 		t.Fatalf("bag %v, want one stone, one sword, one helm", have)
 	}
+	// Round 786: the equipment is +12, every variance group at 31, and full
+	// blue (STR 7, DUR 160%; never the Lucky stone); the stone is plain.
+	for _, s := range slots {
+		switch s.ItemID {
+		case sword, helm:
+			if s.OptLevel != TestShopPlus || s.Variance != fullVariance || len(s.MagParams) != 2 ||
+				inventory.MagParamOption(s.MagParams[0]) != 72 || inventory.MagParamValue(s.MagParams[0]) != 7 ||
+				inventory.MagParamOption(s.MagParams[1]) != 90 || inventory.MagParamValue(s.MagParams[1]) != 160 {
+				t.Fatalf("Test Items NPC's %d: plus %d variance %#x options %v, want +12, %#x, [STR 7, DUR 160]",
+					s.ItemID, s.OptLevel, s.Variance, s.MagParams, fullVariance)
+			}
+		case stone:
+			if s.OptLevel != 0 || len(s.MagParams) != 0 {
+				t.Fatalf("the stone came with plus %d options %v", s.OptLevel, s.MagParams)
+			}
+		}
+	}
 
 	// The store closed: the goods are priced again.
 	c.send(npctalk.OpEnd, npctalk.EncodeEntity(test.UID))
@@ -207,5 +242,22 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	}
 	if br := buy(sword); br.OK {
 		t.Fatal("a buy after the Test Items store closed was free")
+	}
+	// Bought with gold anywhere else, the sword is an ordinary one.
+	if err := chars.AddGold(ctx, e.CharacterID, 250000); err != nil {
+		t.Fatal(err)
+	}
+	if br := buy(sword); !br.OK {
+		t.Fatalf("a paid sword: %+v", br)
+	}
+	slots, _ = inv.List(ctx, e.CharacterID)
+	plain := 0
+	for _, s := range slots {
+		if s.ItemID == sword && s.OptLevel == 0 && len(s.MagParams) == 0 {
+			plain++
+		}
+	}
+	if plain != 1 {
+		t.Fatalf("the paid sword is not a plain one: %+v", slots)
 	}
 }

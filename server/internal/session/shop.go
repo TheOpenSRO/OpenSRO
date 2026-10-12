@@ -319,8 +319,14 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	buy := svc.Buy
 	free := freeAtOpenStore(sess.ID(), req.ItemID)
 	if free {
-		// The Test Items NPC's goods (round 783, OURS): free, no gold test.
+		// The Test Items NPC's goods (round 783, OURS): free, no gold test;
+		// its equipment +12, full blue, at 100% (round 786, testshopgear.go).
 		buy = svc.BuyFree
+		if inst, ok := testShopInstance(ctx, req.ItemID); ok {
+			buy = func(ctx context.Context, characterID, itemID int64, quantity int) error {
+				return svc.BuyFreeInstance(ctx, characterID, itemID, quantity, inst)
+			}
+		}
 	}
 	if err := buy(ctx, characterID, req.ItemID, int(req.Quantity)); err != nil {
 		result.OK = false

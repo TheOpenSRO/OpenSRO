@@ -7485,6 +7485,35 @@ stays on the box for older revisions through `GODOT_BIN`).
 
 ## Seven-hundred-and-eighty-sixth round
 
+### Round 786 (part): the Test Items NPC's gear is +12, full blue, 100%
+
+The user: "can you make the Item NPC shop gear all +12 full blue at 100% stats?" (OURS throughout:
+retail has no such item; the rules below build the best item the operator's own tables allow.)
+
+- **Where**: the Test Items NPC's free buy (round 783) of an equipment item (TypeID 3/1) now
+  creates it with a made instance (`session/testshopgear.go`, `shop.Service.BuyFreeInstance`)
+  instead of a fresh roll. The same item bought from any other NPC, or with gold, is ordinary;
+  stackables (stones, elixirs, potions) are unchanged.
+- **+12**: OptLevel 12.
+- **100%**: every one of the twelve 5-bit variance groups at 31 (`durability.GroupMax`), so each
+  white stat sits at the top of its range.
+- **Full blue** (`magicopt.FullBlue`): every option the item kind's assign row lists that can drop
+  (a '+' row, as `RollDrop`'s pool) and whose row allows the item, at the item's degree
+  ((ItemClass-1)/3+1; the highest level below it when the degree has no row), at the row's
+  highest value (the six-value pool's largest, the range's max, the single value), in the assign
+  order, no more than column 158 (MaxMagicOptions). Left out: Immortal, Steady, Lucky and Astral
+  (special stones that guard reinforcing, not stats) and MATTR_REPAIR (drop weight 0).
+- **Durability**: the max the full variance gives, raised by the item's DUR option
+  (`alchemy.MaxDurability`, READ in round 768).
+- **MEASURED** over the 94 equipment goods with the Mac mini's tables (degree-11 Seal of Nova):
+  4..7 options each, none capped (cap 9). Weapons STR 7, INT 7, DUR 200%, HR 60%, EVADE_BLOCK
+  100; armour STR 7, INT 7, DUR 200%, ER 60%, plus HP 1300 / MP 1300 on helm, chest and legs;
+  shields STR 7, INT 7, DUR 200%, EVADE_CRITICAL 100; accessories STR 7, INT 7, the five
+  resists 20.
+- Tests: `magicopt/full_test.go`; `TestTestItemsNPCSelectOpenBuyFree` now also checks the bought
+  sword and helm (+12, full variance, STR 7, DUR 160 from its fixture), the plain stone, and a
+  paid sword that stays plain.
+
 ### Round 786 (part): damage numbers
 
 The user: "Fix the combat numbers that pop up, they're a certain size and font and different color

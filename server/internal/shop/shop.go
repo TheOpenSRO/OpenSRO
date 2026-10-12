@@ -155,6 +155,21 @@ func (s *Service) BuyFree(ctx context.Context, characterID, itemID int64, quanti
 	return s.buy(ctx, characterID, itemID, quantity, 0)
 }
 
+// BuyFreeInstance is BuyFree with the instance the item is made with (round
+// 786, OURS: the Test Items NPC's +12 full-blue equipment) instead of a
+// fresh roll.
+func (s *Service) BuyFreeInstance(ctx context.Context, characterID, itemID int64, quantity int, inst inventory.Instance) error {
+	if _, err := s.Items.GetItem(ctx, itemID); err != nil {
+		return ErrItemNotFound
+	}
+	return txn.For(s.Gold, s.Inv).Run(ctx, func(ctx context.Context) error {
+		if err := s.Inv.AddItemInstance(ctx, characterID, itemID, quantity, inst); err != nil {
+			return fmt.Errorf("shop: adding item to inventory: %w", err)
+		}
+		return nil
+	})
+}
+
 func (s *Service) buy(ctx context.Context, characterID, itemID int64, quantity int, cost int64) error {
 	return txn.For(s.Gold, s.Inv).Run(ctx, func(ctx context.Context) error {
 		if cost > 0 {
