@@ -7535,6 +7535,134 @@ original game. Check the code to be accurate as possible." Round 149's numbers w
   `go test ./...` passes; gofmt clean on the touched Go files. The perf gate was not run: the
   change draws only while numbers are up (none in the gate's views).
 
+### Round 786 (part): effects that drift off the body
+
+The user: "Seal and skill effects will float or fly off from that character and they shouldn't.
+Please fix and make no mistakes." Their screenshot: a level-140 Chinese character just after
+"Teleport to [Jangan] area" (from Donwhang), the ground ring under the feet, pink sparkles on the
+ground about 3 m to its left, a pale swirl far off to the upper left, a yellow streak across the
+body. Then: every rule changed must come from the binary.
+
+**The cause (MEASURED).** This client builds each zone's grid in that zone's own frame (round 570:
+(0, 0, 0) is the zone centre region's middle). A gate teleport from Donwhang's gate point
+(teleportdata GATE_WC, 102/153 (957, 1508)) to Jangan's (GATE_CH, 97/168 (969, 1369)) therefore
+moved the body by **141.3 units** in Godot (`QA FXDRIFT MOVE`), under EfpEffect's `ANCHOR_JUMP`
+(400, OURS since round 621), so the effects took it as one frame of motion: every particle that
+does not follow (u6 = 0) stayed where the body had stood, 140 units beside it, and a follower of an
+ancestor that died on that frame carried the whole move on every frame after (round 785's frozen
+move, READ) -- flying off. The way back (Jangan -> Donwhang, 555 units) was over 400 and carried,
+which is why it showed going to Jangan. That the screenshot's ground sparkles are
+the left-behind particles and its far swirl a flying orphan is INFERRED from these numbers.
+
+**What the original does (READ, sro_client.exe).**
+- A change of the player's region moves every effect whole. `CICPlayer` slot 37 (0x009d5900):
+  when the new position's region differs, the map's slot 7 (+0x1c) gives the offset between the
+  old region and the new into a vector, slot 1 makes the new one the centre, and every object of
+  the object list (DAT_00ec4b84) gets it through its slot 14 (+0x38): `CIObject`'s
+  (`GlobalDataManager::FUN_009c4230`) passes it to its renderer (+0x9c -> +4, slot 11,
+  `CCompChar::FUN_00c2a980`, each particle mod: `CRTModParticle::FUN_00c81150`), `CICharactor`'s
+  (`FUN_009cd390`) also to each skill decoration it holds (+0x288, `CIDecoSkill::vslot_016`
+  0x00a4fdb0, each effect of its list). The effect takes it through IEasyFxEffect slot 6
+  (`CEFEffect::vslot_006`, 0x00ca9f20): added to its placement (-0x90) and old placement (-0x19c),
+  and `CEFEffect::FUN_00c865a0` adds it to every particle's position (+0x1b0) and old position
+  (+0xa4), node by node. The flag it tests (+0x48) is set by the effect's update (vslot_000), so
+  every running effect moves. Into a dungeon (the new region's bit 0x8000) the offset stays 0.
+- Nothing is updated while the loading screen is up (`CPSMission::vslot_012`, 0x0084c300, returns
+  while +0xe4 is set; round 785), so the arrival reaches an effect as one placement.
+- A placement has no distance test (`CEFEffect::vslot_007` 0x00caa020, `vslot_008` 0x00ca9460):
+  a move of any size is motion. Rounds 621-785's `ANCHOR_JUMP` disagreed with the binary.
+- Checked, unchanged: a newborn's velocity is its owner's minus its u6 ancestor's and its position
+  its owner's (`FUN_00c88490`, round 621's reading holds); effects simulate in world space over
+  the effect's scale (round 621).
+
+**The fix.**
+- `EfpEffect.shift_effects(effects, by)` (the slot-6 shift: the effect's anchor and last placement
+  move, so every particle does) and `placed_under(root)` (the effects placed in the old frame);
+  `World3D.zone_frame_shift(old frame, old anchor, new frame, new anchor)`, the offset every cell
+  of the grid moves by between two frames (`_group_position` of `_cell_offset`; 102/153 -> 97/168 is
+  (-28800, -96.6, -9600) with the two height anchors). `_on_change_zone_result` takes the old
+  frame's effects before it places the player and moves them once the new grid is built, field to
+  field; into a dungeon nothing (READ); out of one OPEN (nothing moved).
+- `EfpEffect.pause_world` holds the effects that place themselves (`_process`) from the zone
+  change's start until its arrival is laid out (READ, the loading screen). OURS in scope: EquipFx's
+  masters (placed rigidly, at the origin) and a dungeon's ambient effects (static) keep stepping;
+  a world torn down mid-load releases the hold.
+- `ANCHOR_JUMP` removed: a move of any size is motion (the 60-unit re-centre, invisible, stays).
+  So a GM move, `/unstuck` and the other re-placements inside a zone are motion, as in the
+  original. `OPENSRO_QA_FX_BEFORE786=1` runs the old rules for a before render (QA only).
+- With the shift the arrival is the true move -- about 30,000 units from Donwhang's gate to
+  Jangan's -- so what does not follow is left there, out of sight, as in the original.
+- OURS: the shift moves the effect's node, so a dead ancestor a particle still follows moves too;
+  `FUN_00c865a0` walks only the nodes' live lists.
+
+**The instruments.** `efp_probe.gd --drift` (scenarios `stand`, `jump` -- one frame's move as
+motion --, `zone` -- the frames' offset first, `--frame`, then `--jump` --, `walk`, `turn`;
+`--equip` adds the 74 equipment glow files; a particle is PAST beyond its still spread + 10 and
+NEAR when also within 2,000 units) and, in the live client, `OPENSRO_QA_FXDRIFT` (`FxDriftProbe`:
+the player's real auras and seal glaive, sampled every 5 ticks over stand, walk, stop, turn and the
+real `_on_change_zone_result` of two gate arrivals; `/var/tmp/r786-fx/drift.sh` on the box).
+
+**MEASURED, the live client** (auras 8150 `lightning_gyeonggong_keep_c`, 8214
+`fire_gigongta_keep_e` at Bip01 R Finger2, 8239 `fire_ganggi_keep_e` at Bip01, 8253
+`fire_hwabyeok_keep_c`; ITEM_CH_TBLADE_11_C_RARE +9; 640x360 movie run):
+
+| phase | before (rules of 785) | after |
+|---|---|---|
+| arrival in Jangan (141.3-unit re-placement) | 57 samples, 2,009 particles beside the body, farthest 142.7 (gigongta, still spread 3.7) | 0 in sight; the old ones 30,415.7 away |
+| arrival in Donwhang (555 units) | 0 (carried by the old 400 rule) | 0 in sight; the old ones 30,766 away |
+| standing after each arrival | 0 | 0 |
+| walking / stopping / turning | worst +77.4 / +57.9 / +19.7 | +79.0 / +54.2 / +19.6 (unchanged) |
+
+**MEASURED, the census** (1,433 runs: every skilleffectset file, kept or not, and the 74
+equipment files; a 194.4-unit move; 20 frames a second): `jump` -- 440 runs leave particles past
+their spread and in sight (290,769 particle-frames), 55 of the 74 equipment files among them;
+`zone` -- 10 runs (3,335 particle-frames), no equipment file. 8 of the 10 also pass their spread
+standing still (`stand`, 12 runs: effects still growing after the 4 s lead-in); the other two are
+monster effects (`skill_jupiter_at05_ground`, `skill_jupiter_authority_crown_amb`, 24 and 33
+particle-frames; OPEN). Before the round's code the same `jump` census gave 385 of the 1,359 skill
+runs (the equipment files were not in it).
+
+**Not changed, measured.** Walking leaves u6 = 0 trails (`fire_hwabyeok_keep_c`'s ring +77) and a stop lets
+orphans run on with the last frame's move (+54): both READ in rounds 621 and 785. Turning at
+180 degrees a second, 21 of the 1,433 runs pass their spread (worst
+`water_resurrection_effect_a` +117, also one of the growing ones): the bone and follow rules of
+rounds 621 and 785, not changed here.
+
+**The yellow streak (INFERRED).** In the render the +9 seal glaive's glow runs along the glaive
+held across the body, and EquipFx places its holders at the weapon's bone every frame (MEASURED
+round 741: 0.005 off the blade). The user's yellow streak with a pink end is taken to be their
+weapon's enchant and seal glow; it cannot be measured from their picture.
+
+**OPEN:** out of a dungeon, the original's offset (its map slot 7 with a dungeon region) was not
+read -- nothing is moved; whether the original rebuilds the player object on a teleport (its
+effects would then restart rather than move) was not read -- the position change's rule is the one
+followed; the two Jupiter files above; the vertical part of the offset is this client's height
+anchors' difference (its frames' own calibration, round 570), which the original's frames do not
+have.
+
+**Pictures** (render box, Forward+ RX 7600, 1280 x 720, the frame after the Jangan arrival):
+`/var/tmp/r786-fx/keep/before_f406_jangan_arrival.png` (the aura's swirl left on the stairs below
+the body) and `after_f406_jangan_arrival.png` (none); `before_f402.png` / `after_f402.png`.
+
+**Gates:** `check` ALL LOAD (778 scripts, 9 scenes); `tests` "ran 299 suite(s), 0 failing" (with
+the native library, built from unchanged native sources; EFP_API stays 2). New suite
+`efp/efp_frame_shift_test.gd` (the frames' offset, no jump rule, the old bug, the zone change,
+the frozen move, the hold, World3D's calls); `efp_follow_test` reworded for the jump.
+
+**Perf gate** (`--base 66620983 --head 1b5dc5ba --sites jangan,cross --frames 40000`, 1280x720,
+Forward+ on the RX 7600, median of 3, native readers off on both sides):
+
+| | base | head | |
+|---|---|---|---|
+| jangan frame ms | 0.77 | 0.76 | SAME |
+| jangan entry ms | 8709 | 8612 | SAME |
+| jangan freeze ms | 2740 | 2742 | SAME |
+| jangan hitches | 5 | 4 | SAME |
+| cross frame ms | 0.91 | 0.87 | SAME |
+| cross entry ms | 9498 | 9361 | SAME |
+| cross freeze ms | 2757 | 2751 | SAME |
+| cross hitches | 5 | 5 | SAME |
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the
