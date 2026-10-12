@@ -93,6 +93,11 @@ const FLASH_OUT_S := 0.5
 const RESCAN_S := 0.25
 ## The meta a tinted mesh keeps its own material under.
 const ORIGINAL_META := "berserk_original_material"
+## StateLook.ORIGINAL_META (round 785's client review, finding 8; spelled out
+## here, as StateLook preloads this script): a mesh an abnormal state's pulse
+## holds keeps its real material there, and its material_override is the
+## pulse's copy.
+const STATE_ORIGINAL_META := "state_original_material"
 const SCALE_META := "berserk_base_scale"
 
 # Fallback column indices (0-based, the skilleffectset header's own order).
@@ -454,7 +459,10 @@ static func _take_meshes(look: Dictionary, skel: Skeleton3D) -> void:
 			continue
 		# A body fading into existence (AppearFade, round 676) draws with a
 		# blended twin for two seconds; its own material is the one to copy.
-		var orig := AppearFade.original_material(mi)
+		# Round 785's client review, finding 8: under a state's pulse the real
+		# material is StateLook's original, not the pulse's copy now on it.
+		var orig: Material = mi.get_meta(STATE_ORIGINAL_META) if mi.has_meta(STATE_ORIGINAL_META) \
+			else AppearFade.original_material(mi)
 		if orig == null or not (orig is StandardMaterial3D or orig is ShaderMaterial):
 			continue
 		mi.set_meta(ORIGINAL_META, orig)
@@ -494,7 +502,13 @@ static func _restore_materials(look: Dictionary) -> void:
 	for id in (look["meshes"] as Dictionary).keys():
 		var mi = instance_from_id(id)
 		if mi != null and is_instance_valid(mi) and (mi as Node).has_meta(ORIGINAL_META):
-			(mi as MeshInstance3D).material_override = (mi as Node).get_meta(ORIGINAL_META)
+			var orig: Material = (mi as Node).get_meta(ORIGINAL_META)
+			# A state's pulse still holding the mesh (finding 8) paints its own
+			# copy again, never the shared original.
+			if (mi as Node).has_meta(STATE_ORIGINAL_META) and orig != null:
+				(mi as MeshInstance3D).material_override = orig.duplicate()
+			else:
+				(mi as MeshInstance3D).material_override = orig
 			(mi as Node).remove_meta(ORIGINAL_META)
 	(look["meshes"] as Dictionary).clear()
 

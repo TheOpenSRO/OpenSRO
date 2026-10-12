@@ -100,6 +100,19 @@ func _test_guide() -> void:
 	_check(g.frame == 1, "the second frame at 500 ms")
 	g.advance(500)
 	_check(g.frame == 0, "and back")
+	# Round 785's client review, finding 13: the frame's own delta, not whole
+	# milliseconds -- the flip runs on time at 60 fps and at 1200 fps (whole
+	# milliseconds ran it at 480 ms of 500 and never at 1000+ fps).
+	var t2 := ImageTexture.create_from_image(Image.create(1, 1, false, Image.FORMAT_RGBA8))
+	g.set("_frames", [t2, t2])
+	g.visible = true
+	for i in 30:
+		g._process(1.0 / 60.0)
+	_check(g.frame == 1, "30 frames at 60 fps are 500 ms: the frame flips (got %d)" % g.frame)
+	for i in 600:
+		g._process(1.0 / 1200.0)
+	_check(g.frame == 0, "600 frames at 1200 fps are 500 ms: it flips again (got %d)" % g.frame)
+	g.visible = false
 	var got := [0]
 	g.clicked.connect(func() -> void: got[0] += 1)
 	var ev := InputEventMouseButton.new()
@@ -113,29 +126,56 @@ func _test_marks() -> void:
 	_check(QuestMarks.mark_path(1) == "res\\etc\\ex_mark_start.bsr" and QuestMarks.mark_path(2) == "res\\etc\\ex_mark_going.bsr"
 		and QuestMarks.mark_path(3) == "res\\etc\\ex_mark_end.bsr" and QuestMarks.mark_path(0) == "res\\etc\\ex_mark_start.bsr", "the mark files by type")
 	var holder := Node3D.new()
+	get_root().add_child(holder)
+	# In the tree (the effect places itself on its host from there).
+	await process_frame
 	var plate := Node3D.new()
 	plate.name = "Name"
 	plate.position = Vector3(0, 10, 0)
 	holder.add_child(plate)
+	holder.set_meta(QuestMarks.HEIGHT_META, 9.0)
+	# Round 785's client review, finding 3: a mark .bsr has no mesh; its mark
+	# is its ambient effect (MEASURED: one mode-1 entry at (0, 1.208, 0)).
 	var loads := [0]
-	var loader := func(_p: String) -> Node3D:
+	var loader := func(p: String) -> Array:
 		loads[0] += 1
-		return Node3D.new()
+		return [["fx_" + p.get_file().get_basename() + ".efp", Vector3(0, 1.208, 0)]]
+	var made: Array = []
+	var make_fx := func(path: String) -> EfpEffect:
+		var fx := _tiny_effect()
+		fx.set_meta("efp", path)
+		made.append(fx)
+		return fx
 	var models := {}
 	var m := QuestNet.Mark.new()
 	m.object_id = 9
 	m.mark_type = QuestNet.MARK_END
-	_check(QuestMarks.apply({9: holder}, {9: m}, models, loader) == 1, "a mark over its NPC")
+	_check(QuestMarks.apply({9: holder}, {9: m}, models, loader, make_fx) == 1, "a mark over its NPC")
 	var node := holder.get_node_or_null(QuestMarks.MARK_NODE) as Node3D
-	_check(node != null and str(node.get_meta("mark_path")) == "res\\etc\\ex_mark_end.bsr" and is_equal_approx(node.position.y, 11.2), "the end mark above the plate")
-	QuestMarks.apply({9: holder}, {9: m}, models, loader)
-	_check(loads[0] == 1, "a model is loaded once")
-	QuestMarks.apply({9: holder}, {}, models, loader)
+	_check(node != null and str(node.get_meta("mark_path")) == "res\\etc\\ex_mark_end.bsr" and is_equal_approx(node.position.y, 14.0),
+		"the end mark at the body's height + 5 (READ, the row's StartOffset; got %s)" % (str(node.position) if node != null else "none"))
+	var fxs: Array = node.get_children().filter(func(c): return c is EfpEffect) if node != null else []
+	_check(fxs.size() == 1 and str((fxs[0] as Node).get_meta("efp")) == "fx_ex_mark_end.efp"
+		and bool((fxs[0] as EfpEffect).loop), "it plays the .bsr's ambient effect, looping (got %d)" % fxs.size())
+	if fxs.size() == 1:
+		var fx := fxs[0] as EfpEffect
+		for i in 6:
+			fx._process(0.05)
+		_check(fx.sim != null and fx.sim.particles.size() > 0 and is_equal_approx((fx.placed_at() - node.global_position).y, 1.208),
+			"and it draws particles at the entry's offset (%d live, at %s)" % [fx.sim.particles.size() if fx.sim != null else -1,
+			str(fx.placed_at() - node.global_position)])
+	QuestMarks.apply({9: holder}, {9: m}, models, loader, make_fx)
+	_check(loads[0] == 1 and made.size() == 1, "a mark's file is read once, and a mark kept is not rebuilt")
+	m.mark_type = QuestNet.MARK_GOING
+	QuestMarks.apply({9: holder}, {9: m}, models, loader, make_fx)
+	await process_frame
+	var node2 := holder.get_node_or_null(QuestMarks.MARK_NODE) as Node3D
+	_check(node2 != null and node2 != node and str(node2.get_meta("mark_path")) == "res\\etc\\ex_mark_going.bsr" and made.size() == 2,
+		"a changed mark replaces the effect")
+	QuestMarks.apply({9: holder}, {}, models, loader, make_fx)
 	await process_frame
 	_check(holder.get_node_or_null(QuestMarks.MARK_NODE) == null, "an unmarked NPC loses its mark")
 	holder.free()
-	for v in models.values():
-		(v as Node).free()
 	var sp := NpcTableReader.Spawn.new()
 	sp.npc_id = 1000
 	sp.region_x = 97
@@ -144,6 +184,32 @@ func _test_marks() -> void:
 	var index := QuestMarks.index_positions([sp])
 	var at := QuestMarks.targets_local(PackedInt64Array([1000, 5]), Vector2i(97, 168), index)
 	_check(at.size() == 1 and at[0] == Vector2(100, 200), "an NPC's spot from npcpos in the player's region (got %s)" % at)
+
+## A tiny synthetic effect: one 3-frame plate particle (never game data).
+func _tiny_effect() -> EfpEffect:
+	var n := EfpReader.EfpNode.new()
+	n.frames = 3
+	var ex := EfpReader.EfpCommand.new()
+	ex.name = "NormalTimeExtinct"
+	n.extinct = ex
+	var em := EfpReader.EfpCommand.new()
+	em.name = "StaticEmit"
+	em.value = {"type": "SEFStaticEmit", "delay": 0, "duration": 1, "interval": 1, "max_live": 1, "per_trigger": 1.0}
+	n.emit.append(em)
+	var rd := EfpReader.EfpCommand.new()
+	rd.name = "RenderPlate"
+	n.render = rd
+	var vw := EfpReader.EfpCommand.new()
+	vw.name = "ViewNone"
+	n.view = vw
+	n.state = EfpReader.EfpRenderState.new()
+	n.state.src_blend = 5
+	n.state.dest_blend = 2
+	var ref := EfpReader.EfpMeshRef.new()
+	ref.textures = PackedStringArray(["t.ddj"])
+	n.meshes.append(ref)
+	var tex := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+	return EfpEffect.from_template(EfpSim.compile(n), func(p): return tex if p == "t.ddj" else null, func(_p): return null, 5)
 
 func _test_minimap() -> void:
 	var mm := HudMinimap.new(null, null, null)

@@ -352,6 +352,20 @@ func draw_rows_bytes(width: int, rows: int) -> PackedByteArray:
 		return PackedByteArray()
 	return _n.call("draw_rows_bytes", width, rows)
 
+## Round 785's client review, finding 9: each draw node's particle bounds
+## after the last build, 7 floats a node (lo x/y/z, hi x/y/z, the largest
+## |scale| component, -1 for a node with no particle; gd_efp.rs draw_bounds).
+## Empty from a library without it
+## (an additive method: EFP_API stays 2); the node then keeps DRAW_AABB.
+func draw_bounds() -> PackedFloat32Array:
+	if _n == null:
+		return PackedFloat32Array()
+	if _has_bounds < 0:
+		_has_bounds = 1 if _n.has_method("draw_bounds") else 0
+	return _n.call("draw_bounds") if _has_bounds == 1 else PackedFloat32Array()
+
+var _has_bounds := -1
+
 ## Each draw node's particle count after the last build.
 func draw_counts() -> PackedInt32Array:
 	return _n.call("draw_counts") if _n != null else PackedInt32Array()

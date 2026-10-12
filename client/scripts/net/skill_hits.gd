@@ -38,6 +38,13 @@ class_name SkillHits
 ## round-640 wall suffix, which is then always present (payload offset 72
 ## past the error string); on OpSkillCast it follows the 43 bytes (the act
 ## carries the whole tail, the start the move only).
+##
+## Round 785's client review, finding 7 (the server lane's fix, OURS framing):
+## on OpAttackResult the section ends with a u32 skill id after the leading
+## target's kind -- 0 a plain swing, otherwise the skill or chain link the
+## result answers -- so a keep-up swing in flight is not taken for a cast's
+## answer. Bounds-checked: a section without it (an older server) leaves
+## `skill_id` at -1, and the client keeps its old rule.
 
 const TAG := 0xAB
 const FLAG_DAMAGE := 0x01
@@ -92,6 +99,12 @@ var move_region := -1
 var move_point := Vector3.ZERO
 ## Bytes the suffix took on the wire, its tag included.
 var size := 0
+## The skill the result answers (0 a plain swing), or -1 when the section
+## does not say (an older server).
+var skill_id := -1
+
+func has_skill_id() -> bool:
+	return skill_id >= 0
 
 func has_move() -> bool:
 	return (flags & (FLAG_PUT | FLAG_SLIDE)) != 0 and move_region >= 0
@@ -199,6 +212,11 @@ static func decode(data: PackedByteArray, offset: int) -> SkillHits:
 	if at < data.size():
 		out.target_kind = data[at]
 		at += 1
+		# The answered skill (finding 7): only after the leading kind, and only
+		# when all four bytes are there.
+		if at + 4 <= data.size():
+			out.skill_id = data.decode_u32(at)
+			at += 4
 	out.size = at - offset
 	return out
 
@@ -239,6 +257,11 @@ static func encode(hits: SkillHits) -> PackedByteArray:
 	for t in hits.targets:
 		out.append((t as Target).id_kind & 0xff)
 	out.append(hits.target_kind & 0xff)
+	if hits.skill_id >= 0:
+		var b := PackedByteArray()
+		b.resize(4)
+		b.encode_u32(0, hits.skill_id & 0xffffffff)
+		out.append_array(b)
 	return out
 
 static func _point(region: int, p: Vector3) -> PackedByteArray:

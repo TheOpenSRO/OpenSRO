@@ -396,6 +396,26 @@ func _cull_box() -> void:
 			_check(box == E.DRAW_AABB, "a plate near the effect keeps the least box")
 		fx.sim.clear()
 		fx.free()
+	# Round 785's client review, finding 9: the native draw grows its node's
+	# box too (SrEfpSim.draw_bounds), to the GDScript draw's box.
+	if not EfpSimNative.available():
+		print("skip: the native cull box needs the library (%s)" % EfpSimNative.status)
+	else:
+		var boxes: Array = []
+		for native in [false, true]:
+			var nn := _node(10, {"u6": 1}, "RenderPlate", [_cmd("SetPosition", {"value": Vector3(600.0, 0, 0)}, 0)])
+			var nfx = E.from_template(S.compile(nn), func(_p): return PlaceholderTexture2D.new(), func(_p): return null, 5)
+			get_root().add_child(nfx)
+			if native:
+				_check(nfx.use_native_sim(5), "the plate's effect simulates natively")
+			for f in range(3):
+				nfx._process(0.05)
+			boxes.append(nfx._draw_boxes[0])
+			nfx.sim.clear()
+			nfx.free()
+		_check((boxes[1] as AABB).has_point(Vector3(600.7, 0, 0)) and (boxes[1] as AABB).encloses(E.DRAW_AABB),
+			"natively drawn, a plate 600 units out is inside its node's cull box (%s)" % str(boxes[1]))
+		_check(boxes[0] == boxes[1], "the native box is the GDScript draw's (%s against %s)" % [str(boxes[1]), str(boxes[0])])
 	# A trail left 420 units long: the Link node's box holds the strip.
 	var ln := _node(10, {"u6": 0}, "RenderLinkDPipe")
 	var lfx = E.from_template(S.compile(ln), func(_p): return PlaceholderTexture2D.new(), func(_p): return null, 5)

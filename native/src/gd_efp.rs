@@ -408,6 +408,16 @@ impl SrEfpSim {
         crate::gd_efp_hosts::f32_bytes(self.draw_rows(width, rows).as_slice())
     }
 
+    /// Round 785 (the client review, finding 9): each draw node's particle bounds after the last
+    /// build, 7 floats a node -- lo x/y/z, hi x/y/z and the largest |scale| component, as
+    /// EfpEffect._fit_box measures them (s -1 for a node with no particle). Additive: the client
+    /// calls it behind `has_method`, so EFP_API stays 2.
+    #[func]
+    fn draw_bounds(&self) -> PackedFloat32Array {
+        let v: Vec<f32> = self.with(|b| b.out.bounds.iter().flat_map(|x| x.iter().copied()).collect()).unwrap_or_default();
+        PackedFloat32Array::from(v)
+    }
+
     /// Each draw node's particle count after the last build (what its MultiMesh shows).
     #[func]
     fn draw_counts(&self) -> PackedInt32Array {
