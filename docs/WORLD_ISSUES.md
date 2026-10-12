@@ -7483,6 +7483,136 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+### Round 785 (part): the effects
+
+The user: "Make sure the effects are working as expected too because it still does that bug where
+they don't fully show or they cycle and leave a trail behind." Their character: a Chinese spear
+user with `lightning_gyeonggong_keep_c` (skill 8150: ACT_S AT_ONE_FOLLOW and ACT_L AT_LOOP, the
+same file), `fire_gigongta_motion_c` / `_keep_e` at `Bip01 R Finger2` (8214), `fire_motion_keep`
+at both hands (8291 READY), at 144+ frames a second and, in their log, a run speed of 525.
+
+**The instrument** (`client/tools/efp_probe.gd`, new): a file, a skill's rows, or `--census` (every
+effect the skilleffectset rows name, once per path and kept-or-not: 1,359 runs) on a host standing
+or running at a given speed and render rate; per 50 ms frame it counts live and drawn particles,
+the farthest drawn particle from the host, drawn particles following a dead ancestor, particles
+outside the cull box, draws that lag their particles, pops and refused spawns. The base
+(`c7b2dcd0`) ran the same probe from its own copy on the box.
+
+**1. The trail: a dead ancestor is followed by its frozen state** (READ; the fix in `EfpSim`,
+`native/src/core/efp_sim.rs`).
+- A particle is reference-counted: its emitter holds its owner (`CEFGroup::vslot_002`), a particle
+  holds its emitter (`CEFElement::vslot_002`). A death (`CEFElement::vslot_001`) unlinks it and
+  kills its child emitters but frees it only at count 0, so it stays in memory while its
+  children's emitters have particles, its state as its last pass left it.
+- The follow levels are ancestor pointers resolved once (`CEFGroup::vslot_004`); both passes
+  (`CEFUpdater::vslot_002`, `FUN_00c863a0`) test only `ancestor != 0` (and +0x60 for u2/u3/u4).
+  So a follower keeps adding the dead ancestor's frozen move -- the host's motion of its last
+  frame -- and keeps pace with a running host.
+- Round 621 stopped following a dead ancestor (OURS). Every child outliving the part it follows
+  was dropped where that part died, once a cycle: the line of puffs behind a running caster.
+  `lightning_gyeonggong_keep_c` is exactly that: a 20-frame `wind-master` holder whose 50-frame
+  `wind-master` children follow it (every node u6 = 1).
+- MEASURED, the farthest drawn particle from the host (3 s at 144 frames a second; the still
+  spread in brackets):
+
+  | effect (kept) | 50 u/s base -> now | 525 u/s base -> now |
+  |---|---|---|
+  | lightning_gyeonggong_keep_c (yes) [15.2] | 97.9 -> 15.2 | 1,020.9 -> 15.2 |
+  | lightning_gyeonggong_keep_c (no, the ACT_S) | 97.9 -> 15.2 | 1,020.9 -> 15.2 |
+  | lightning_gyeonggong_keep_a (no) | 22.2 -> 15.2 | 233.3 -> 15.2 |
+  | fire_gigongta_keep_e (yes) [3.0] | 64.6 -> 2.7 | 681.1 -> 3.5 |
+  | fire_gigongta_motion_c (no) | 72.2 -> 72.2 | 758.3 -> 758.3 |
+  | fire_motion_keep (yes) | 49.7 -> 50.7 | 502.0 -> 501.3 |
+
+  `fire_gigongta_motion_c`'s burst and `fire_motion_keep`'s hand streaks have u6 = 0 nodes: they
+  stay where they were born in retail too (round 621), unchanged. Over the census: 733 of 1,359
+  runs draw particles following a dead ancestor (352,913 particle-frames in 3 s); their farthest
+  particle, median 62.3 -> 29.2 at 50 u/s and 525.0 -> 100.9 at 525 u/s; files drawn past 100
+  units 256 -> 237 and 1,150 -> 827 (the rest are u6 = 0 trails and flights).
+
+**2. One follow a frame** (READ). The owner places the effect every frame before its update
+(`CRTModParticle::FUN_00c81450`: `FUN_00c81190` -> vslot_007, `FUN_00c80ff0`, the draw;
+`CIDecoSkill::vslot_014`: `IDecoSkill::FUN_00a4ddc0` -> vslot_007, then the update), and
+`CEFEffect::vslot_000` clears the placement flags after an update, so the draw's pass runs only
+on frames without one. Round 621 ran the pass and then the step: two follows on a frame with a
+step, invisible until a follower of a dead ancestor moved by its frozen move twice.
+`EfpSim.set_origin(pos, rot, step_due)` leaves the placement to the step when one is due
+(`EfpEffect` asks `EfpSim.step_due`); a pass runs on a still frame while a follower of a moving
+dead ancestor exists; a particle that dies after a still frame freezes with a still frame's state
+(`_still_pass`), as retail's last draw pass leaves it. `shift` (the 60-unit re-centre) moves a
+followed dead ancestor too (OURS, so the re-centre stays invisible).
+
+**3. ActType values** (READ: the name table at `0x00ec7280`, `FUN_00a9ac70`, read at `0x00a9d679`
+in `GlobalEffectManager::FUN_00a9d0f0`): AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2, then AT_TARGET 3
+... AT_MOV_PIERCE 11. Rounds 620-784 had AT_ONE_FOLLOW 0, AT_LOOP 1, AT_STOP 2 (the strings'
+order in memory) and kept AT_STOP. `IDecoSkill::FUN_00a513a0` keeps ActType 2 alone and places 0
+once, when it is made; `SkillEffects.kept_act`, `EfpEffect.static_host` for AT_STOP. 35 effect
+rows (MEASURED: monster dust and stuns, the fireworks).
+
+**4. A skill effect at a named bone turns with the bone; the Rotate column** (READ:
+`FUN_00a9d0f0` gives a plain StartBone the placement flags 2, `@` 0, `#` 6, `*` 3;
+`IDecoSkill::FUN_00a4a680` keeps the bone's rotation only with bit 1, turns StartOffset by the
+body's matrix and adds it to the bone's position, the post-pass at `0x00a95310` pointing the row
+at a non-zero offset; `FUN_00a4ddc0` applies Rotate in the effect's frame: 1-360 about Y, 361-720
+about X, above 720 about Z, in degrees: the doubles 360.0 at `0x00dde7a8`, 2π at `0x00d81930`).
+Rounds 620-784 turned every bone effect with the body and ignored Rotate: 1,603 effect rows name a
+plain bone and 284 carry a Rotate (MEASURED), e.g. the spear pierce's 450 (90° about X) at
+`Bip01 R Hand`. `EfpEffect.follow_bone_turn` / `follow_world_turn`, `SkillEffects.rotate_basis`.
+
+**5. The end of a buff or a cast lets its effects go; it does not cut them** (READ:
+`IDecoSkill::FUN_00a4db00` calls slot 4 with 0 -- the keep flag cleared -- for every entry from
+`FUN_00a4ffe0`, which the buff's end `FUN_00a53120`, the cancel `FUN_00a50a00` and the cast's end
+`FUN_00a534d0` call; `CIDecoSkill::vslot_014` updates the effects until each finishes). So the old
+aura of a recast fades over its last cycle while the new one starts; this client cut it at once
+and the new one popped in at frame 0, a visible restart every recast (the user's fight log
+starts 8150's aura ten times). `EfpEffect.release()`; `detach_aura`, `cancel_cast`, the cast's
+loops at SHOT and the OURS guards use it; `stop()` (slot 2) stays for a teardown. MEASURED
+(`efp_keep_test`): a released 20-frame aura draws on and ends 20 frames later, reviving nothing.
+
+**6. The cull box** (OURS, `EfpEffect.DRAW_AABB`, ±200 units): a big effect was culled whole while
+part of it showed (46 of the 1,359 runs reach past the box on a still host, MEASURED). A GDScript
+draw node now culls by the box grown to its particles plus its shape's reach, a Link node by the
+box grown to its strip.
+
+**Checked, no defect** (MEASURED with the probe): the draws hold exactly the drawn nodes'
+particles every frame (0 of 1,359 runs lag); 60 and 144 frames a second give the same spreads
+(one step per 50 ms, as retail's clock, READ round 620); no run's lifetime, gaps or pops changed;
+the native simulation matches GDScript bit for bit, the new orphan templates included.
+
+**OPEN / for others:**
+- **The 300-particle cap** (OURS, kept by the user's decision of 2026-10-09) refuses spawns in 76
+  of the 1,359 runs alone: every Berserk wing (`hwanlook*`, 393 wanted), the fireworks (1,600-1,800)
+  and a few monster skills -- they do not fully show. None of the China fire or lightning skills.
+  Retail has no cap (round 761). For the user to decide.
+- **For the cast lane (r785-skill-cli):** retail releases a cast's phase loops when the cast's
+  phases are done (`FUN_00a534d0`, phase index past 2) or when a later row's group matches
+  (`IDecoSkill::FUN_00a4fe10`: an entry whose row +5 equals the new row's +8), not at SHOT's start
+  (this client's INFERRED moment); and it keeps an AT_LOOP row of any phase (260 SHOT and 12 ACT_S
+  effect rows, MEASURED), where `play_phase` keeps only READY and WAIT ones.
+- Below 20 frames a second this client steps each 50 ms frame fully; retail runs one update with
+  the frames added to the ages (round 620). Not the user's case.
+- StartBone `*` (flags 3: the body's turn plus a height, `FUN_009c7730`) and `#` (another object's
+  bone); a newborn's first-frame motion (retail emits before the motion pass); a follower of an
+  ancestor without b1 reads a stale old position every pass (66 pairs, round 621); the Link
+  triangle budget (20,000 a frame, OURS) keeping last frame's strips when spent; the global
+  2,000-particle cap in a crowd (the user's log has no line on it: not measured there).
+
+**Perf gate** (`--base c7b2dcd0 --sites jangan`, 1280x720, median of 3): PERF_TABLE
+
+**Gates:** `check` ALL LOAD (753 scripts, 9 scenes); `tests` 290 suites, 0 failing (with the native
+library); `cargo test --locked` and `--no-default-features` 68 passed; `efp_native_test` bit for
+bit on the orphan templates placed every frame. New checks: `efp_follow_test` (a dead holder's
+child keeps pace, one follow a frame, a still death freezes, a re-centre with a dead orbit centre,
+525 u/s on a host at 144 frames a second, the cull boxes), `efp_keep_test` (release),
+`skill_effects_test` (ActType values, AT_STOP placed once, bone and world turns, Rotate),
+`self_cast_fx_test` (the buff's end lets its aura go). Against the old rule (the dead-ancestor
+tests run with `alive` tested again): 5 FAIL, e.g. "on the run at 144 frames a second the orphan
+stays with the host (worst 196.181 units)".
+
+**The native library's effect interface is 2** (`EFP_API`): a library of 1 steps by the old rules
+and has the old `set_origin`, so the client refuses it and keeps EquipFx's masters in GDScript; the
+release builds (`release.yml`) build the library with the client.
+
 ## Seven-hundred-and-eighty-third round: the Test Items NPC
 
 The user: "can you put a test npc in Jangan between storage and so-ok? Use the model "Potion

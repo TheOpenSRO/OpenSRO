@@ -411,6 +411,20 @@ OPENSRO_QA_NOUI=1 OPENSRO_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/cas
   --radius 1 --at 1002,1020 --yaw 30 --pitch -12 --dist 70 --frames 860
 ```
 
+**Measuring how effects play** (round 785, `efp_probe.gd`). It plays a file, a skill's rows or every
+effect the skilleffectset rows name on a host that stands or runs, at a given render rate, and
+counts per 50 ms frame what is alive and drawn, how far from the host, what follows a dead
+ancestor, what lies outside the cull box, draws that lag, pops and refused spawns:
+
+```
+client/tools/remote_godot.sh script res://tools/efp_probe.gd -- --pk2dir=/opt/sro-files/client \
+    --skills=8150,8214 --fps=144 --speed=525 --seconds=4 [--tree] [--trace]
+client/tools/remote_godot.sh script res://tools/efp_probe.gd -- --pk2dir=/opt/sro-files/client \
+    --census --quiet --fps=144 --speed=50 --seconds=3          # 1,359 runs, about 100 s
+```
+
+`--files=` takes `/` for `\` (a backslash does not survive the ssh and su layers).
+
 **EquipFx's masters in Rust** (round 763, `EfpSimNative`; `native/README.md`, "The effect
 simulation"). Three checks hold the native simulation to the GDScript one, bit for bit:
 - `res://scripts/efp/efp_native_test.gd` (a suite; synthetic effects, both ways);
