@@ -7483,6 +7483,33 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-eighty-second round: the walk's click passes through grass (retail's pick)
+
+The user: "if grass or other objects get in the way it clicks those instead of the ground when it's
+supposed to click the ground. See how the client does it and copy it ... in a grassy area ... I can
+no longer click away from it unless I do some insane camera angles."
+
+- **Cause (READ, ours):** the click ray (`_move_by_pick_ray`, `_ground_point_at`) took
+  TERRAIN_COLLISION_LAYER, which holds every placed object's drawn-mesh collision (the trimesh
+  `ObjectLoader._commit_node` gives every piece) -- grass clumps included.
+- **Retail's pick (READ, `SWorld::vslot_034` 0xa01310):** for each loaded region (ten slots at
+  +0x2783) the terrain's height grid, two triangles a tile (`FUN_0045c420` / `FUN_0045c750`), and
+  the region's water plane where it has one (+0x7ed/+0x7ee, height +0x7ef); then the region
+  manager's navigation pick (DAT_0111a02c slot 0x3c) -- the placed objects' walkable cells; the
+  nearest wins. Drawn meshes are never tested.
+- **OpenSRO (`GroundPick`):** the terrain alone by physics (TERRAIN_ONLY mask) and each loaded
+  NavGraph's object cells by a segment test (a dungeon's rooms included), the nearer within
+  SkyRun.PICK_LENGTH. The water plane is not tested (OPEN: no pick body for water).
+- **MEASURED** (`OPENSRO_QA_PICK_SWEEP=1`, a 32 x 18 grid of clicks per QA shot, region 94/169's
+  meadows, 1280x720): the old rule stopped 124, 150, 105 and 50 of 576 clicks on drawn objects
+  (mostly `grs_weed07` clumps); the new pick sends 122, 149, 104 and 32 of them to the ground or a
+  walkable cell. The 18 left in the last view are a tree bank (`tre_bank02`) with walkable cells of
+  its own, which retail's pick meets too.
+- Tests: `ground_pick_test.gd` (cells, stacking, a mirrored group, the nearer of terrain and
+  cells); `ground_markers_test.gd`'s deck now has walkable cells for its click. `check` ALL LOAD,
+  `tests` 289 suites 0 failing (one earlier run crashed one suite with 139 and passed on re-run, as
+  round 780's water part saw on the loaded box). A click-path change: no perf gate.
+
 ## Seven-hundred-and-eighty-first round: the skill window and the action window from the client's own data, the cast bar's smooth fill
 
 The user, on v0.1.527: "the progress bar should be a smoother movement than jumping to the next

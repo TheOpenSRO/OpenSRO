@@ -481,9 +481,31 @@ func _test_world_floor(world: Node, group: Node3D, space: PhysicsDirectSpaceStat
 	var top := terrain + 5.0
 	var deck := _box(world, 0b1, Vector3(10, 1, 10), Vector3(2100, top - 0.5, -300))
 	var roof := _box(world, 0b1, Vector3(30, 1, 30), Vector3(2100, top + 4.5, -300))
+	# Round 781: the click lands on a placed object by its walkable cells
+	# (GroundPick, retail's SWorld::vslot_034), not its drawn shape -- the
+	# deck's navigation cells, in a graph the world's grid holds, at its top.
+	var holder := Node3D.new()
+	world.add_child(holder)
+	var cm := BmsReader.CollisionMesh.new()
+	for p in [Vector3(2095, top, -305), Vector3(2105, top, -305), Vector3(2105, top, -295), Vector3(2095, top, -295)]:
+		var v := BmsReader.CollisionVertex.new()
+		v.position = p
+		cm.vertices.append(v)
+	for tri in [[0, 1, 2], [0, 2, 3]]:
+		var c := BmsReader.CollisionCell.new()
+		c.a = tri[0]
+		c.b = tri[1]
+		c.c = tri[2]
+		cm.cells.append(c)
+	var placed_deck: Array[NavGraph.PlacedObject] = [NavGraph.place(cm, 0, Vector3.ZERO, 0.0)]
+	var grid_state = world.get("_grid")
+	grid_state.nav_graphs["r781_deck"] = [NavGraph.build_dungeon(placed_deck), holder]
 	await physics_frame
 	await physics_frame
 	var took: String = world.call("_move_by_pick_ray", Vector3(2100, top + 3.0, -300), Vector3(0, -1, 0), space)
+	# Only for the click: a dungeon-shaped graph answers for every point.
+	grid_state.nav_graphs.erase("r781_deck")
+	holder.queue_free()
 	_check(took == "walk" and absf(gm.center.y - top) < 0.01, "a click under the roof lands on the deck (took %s, y %.2f)" % [took, gm.center.y])
 	gm.step()
 	var drape: Dictionary = gm.last_drape

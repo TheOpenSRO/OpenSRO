@@ -15120,6 +15120,8 @@ func _qa_advance_shots() -> void:
 		QaShotEnv.report_patches(self, _qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_depth(self, _qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_water_sort(self, _qa_shots[_qa_shot_index]["name"])
+		if OS.get_environment("OPENSRO_QA_PICK_SWEEP") != "":
+			_qa_pick_sweep(_qa_shots[_qa_shot_index]["name"])
 		print(_camera_report(_qa_shots[_qa_shot_index]["name"]))
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
@@ -21866,7 +21868,10 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 	# navmesh walls (NAVMESH_WALL_COLLISION_LAYER) and NPC capsules, and a
 	# click across the plaza landed on the nearest of those instead -- "the
 	# character does not move to the direction you click".
-	var hit := space.intersect_ray(SkyRun.pick_query(from, dir, TERRAIN_COLLISION_LAYER, [player.get_rid()]))
+	# Round 781: the terrain and the walkable cells only, as retail's pick
+	# (GroundPick, SWorld::vslot_034) -- the drawn meshes' collision put grass,
+	# flowers and lamps in the way of every click in a grassy field.
+	var hit := _walk_pick(from, dir, space)
 	if hit.is_empty():
 		return _start_heading_run(dir)
 	var point: Vector3 = hit["position"]
@@ -21976,24 +21981,70 @@ func _start_heading_run(dir: Vector3) -> String:
 		print("MOVE run t=%d ms=%d heading=%.4f wire=%d dir=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), h, SkyRun.wire_angle(h), flat.x, flat.y])
 	return "run"
 
-## The point on the ground or a placed object under a screen point, or null:
-## the click-to-move ray, shared with the ground-pick cast (round 617).
+## The point on the ground or a placed object's walkable surface under a
+## screen point, or null: the click-to-move pick, shared with the ground-pick
+## cast (round 617; round 781: GroundPick's terrain-and-cells rule).
 func _ground_point_at(screen_pos: Vector2) -> Variant:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
-	var space_state := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
-	# Only the ground and placed objects can be a destination. Left to the
-	# default mask the ray also hit the player's own capsule, the invisible
-	# navmesh walls (NAVMESH_WALL_COLLISION_LAYER) and NPC capsules, and a
-	# click across the plaza landed on the nearest of those instead -- "the
-	# character does not move to the direction you click".
-	query.exclude = [player.get_rid()]
-	query.collision_mask = TERRAIN_COLLISION_LAYER
-	var hit := space_state.intersect_ray(query)
+	var hit := _walk_pick(from, dir, get_world_3d().direct_space_state, 2000.0)
 	if hit.is_empty():
 		return null
 	return hit["position"]
+
+## QA only (OPENSRO_QA_PICK_SWEEP, round 781): a 32 x 18 grid of clicks over
+## the screen, picked by the round-653 rule (every drawn mesh's collision,
+## TERRAIN_COLLISION_LAYER) and by GroundPick's: how many the old rule stopped
+## on a placed object's drawn mesh, how many of those the new one sends to
+## the ground or a walkable cell instead, and the objects most in the way.
+func _qa_pick_sweep(shot: String) -> void:
+	var space := get_world_3d().direct_space_state
+	var vp := get_viewport().get_visible_rect().size
+	var total := 0
+	var old_object := 0
+	var moved := 0
+	var by_name := {}
+	for row in 18:
+		for col in 32:
+			var sp := Vector2((col + 0.5) / 32.0 * vp.x, (row + 0.5) / 18.0 * vp.y)
+			var from := camera_3d.project_ray_origin(sp)
+			var dir := camera_3d.project_ray_normal(sp)
+			var old := space.intersect_ray(SkyRun.pick_query(from, dir, TERRAIN_COLLISION_LAYER, [player.get_rid()]))
+			var new_hit := _walk_pick(from, dir, space)
+			if old.is_empty():
+				continue
+			total += 1
+			var collider = old.get("collider")
+			var layer: int = (collider as CollisionObject3D).collision_layer if collider is CollisionObject3D else 0
+			if layer & TERRAIN_ONLY_COLLISION_MASK:
+				continue
+			old_object += 1
+			var n: Node = collider as Node
+			var label := "?"
+			while n != null and n != self:
+				if n.get_parent() != null and (n.get_parent().name.begins_with("RealMapObjects") or n.get_parent().name.begins_with("Dungeon")):
+					label = String(n.name)
+					break
+				n = n.get_parent()
+			by_name[label] = int(by_name.get(label, 0)) + 1
+			if not new_hit.is_empty() and (new_hit["position"] as Vector3).distance_to(old["position"]) > 0.5:
+				moved += 1
+	var names := by_name.keys()
+	names.sort_custom(func(a, b): return int(by_name[a]) > int(by_name[b]))
+	var top := PackedStringArray()
+	for k in names.slice(0, 8):
+		top.append("%s x%d" % [k, by_name[k]])
+	print("QA PICK SWEEP %s: %d clicks hit something; the old rule stopped %d on a drawn object, %d of them land elsewhere now; in the way: %s" % [
+		shot, total, old_object, moved, ", ".join(top)])
+
+## Retail's pick (GroundPick, round 781): the terrain alone by physics, the
+## placed objects by their walkable cells; the nearer within `length`.
+func _walk_pick(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceState3D, length: float = SkyRun.PICK_LENGTH) -> Dictionary:
+	var q := SkyRun.pick_query(from, dir, TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
+	q.to = from + dir.normalized() * length
+	var terrain := space.intersect_ray(q)
+	var cells := GroundPick.object_cells_hit(_grid.nav_graph_pairs(), from, dir, length)
+	return GroundPick.nearest(from, terrain, cells)
 
 func _on_send_pressed() -> void:
 	var text := chat_input.text.strip_edges()
