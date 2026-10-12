@@ -82,6 +82,7 @@ func _initialize() -> void:
 	_host()
 	_render_frames()
 	_orphan_on_host()
+	_cull_box()
 	_finish()
 
 ## The host moves +2 in x a frame. A root node following the effect (u6 = 1)
@@ -377,6 +378,37 @@ func _orphan_on_host() -> void:
 		"a child outliving its holder on a host running 525 units a second is drawn at the host (worst %.2f units)" % worst)
 	fx.sim.clear()
 	host.free()
+
+## Round 785: a draw node's cull box holds its particles: a plate 600 units
+## out gets a box reaching it; one near the effect keeps DRAW_AABB.
+func _cull_box() -> void:
+	for x in [600.0, 5.0]:
+		var n := _node(10, {"u6": 1}, "RenderPlate", [_cmd("SetPosition", {"value": Vector3(x, 0, 0)}, 0)])
+		var fx = E.from_template(S.compile(n), func(_p): return PlaceholderTexture2D.new(), func(_p): return null, 5)
+		get_root().add_child(fx)
+		fx.sim.step()
+		fx._update_draws()
+		var box: AABB = fx._draw_boxes[0]
+		if x > 200.0:
+			_check(box.has_point(Vector3(x + 0.7, 0, 0)) and box.encloses(E.DRAW_AABB),
+				"a plate 600 units out is inside its node's cull box (%s)" % str(box))
+		else:
+			_check(box == E.DRAW_AABB, "a plate near the effect keeps the least box")
+		fx.sim.clear()
+		fx.free()
+	# A trail left 420 units long: the Link node's box holds the strip.
+	var ln := _node(10, {"u6": 0}, "RenderLinkDPipe")
+	var lfx = E.from_template(S.compile(ln), func(_p): return PlaceholderTexture2D.new(), func(_p): return null, 5)
+	get_root().add_child(lfx)
+	for f in range(8):
+		lfx.sim.set_origin(Vector3(60.0 * f, 0, 0))
+		lfx.sim.step()
+	lfx.reset_link_budget()
+	lfx._update_links()
+	var lb: AABB = lfx._link_boxes[0]
+	_check(lb.has_point(Vector3(410, 0, 0)) and lb.encloses(E.DRAW_AABB), "a 420-unit trail is inside its Link node's cull box (%s)" % str(lb))
+	lfx.sim.clear()
+	lfx.free()
 
 ## Every render frame, not only on steps (review of the follow levels).
 func _render_frames() -> void:

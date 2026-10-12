@@ -103,6 +103,11 @@ var draw_updates := 0
 var _has_billboard := false
 var _last_cam := Basis()
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
+## Round 785: per draw node, how far its shape reaches from a particle's
+## position at scale 1 (the plate's or mesh's farthest corner), and the box
+## its instance culls by now (DRAW_AABB, grown to hold its particles).
+var _draw_reach := PackedFloat32Array()
+var _draw_boxes: Array[AABB] = []
 var _links: Array = [] # of [tpl index, MeshInstance3D (ArrayMesh), render mode, EfpLinks.Out, EfpLinks.Buf, EfpLinks.Buf, kind 0 DPipe / 1 Pipe / 2 Obj]
 var _life := 0.0
 var _follow_host: Node3D = null
@@ -149,6 +154,12 @@ const PLATE := "RenderPlate"
 const MESH := "RenderMesh"
 const LINK_MODES := ["RenderLinkDPipe", "RenderLinkPipe", "RenderLinkObj"]
 ## OURS: particles move; a fixed box keeps a MultiMesh from being culled.
+## Round 785: the least box. A GDScript draw node whose particles reach past
+## it is given a box that holds them (_update_draws), so a big effect -- a
+## long beam, a trail left on the ground -- is not culled whole while part of
+## it is on screen (MEASURED: 46 of the 1,359 skill-effect runs reach past
+## it on a still host, efp_probe.gd --census). Retail culls no effect by a
+## box of this kind (OURS throughout; its own limits: round 761).
 const DRAW_AABB := AABB(Vector3(-200, -200, -200), Vector3(400, 400, 400))
 
 ## The compiled template of a file in Particles.pk2, decoded once.
@@ -270,6 +281,12 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		mmi.name = "node_%d" % tp.index
 		fx.add_child(mmi)
 		fx._draws.append([tp.index, mmi, view])
+		var reach := 0.7072 # the unit plate's corner, sqrt(0.5) rounded up
+		if mode == MESH:
+			var mb := mesh.get_aabb()
+			reach = maxf(mb.position.abs().max(mb.end.abs()).length(), 0.0) * 1.0001
+		fx._draw_reach.append(reach)
+		fx._draw_boxes.append(DRAW_AABB)
 		if billboard:
 			fx._has_billboard = true
 	return fx
@@ -574,6 +591,7 @@ static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture:
 	var kind := 2 if mode == "RenderLinkObj" else (1 if mode == "RenderLinkPipe" else 0)
 	fx._link_tpls[tp.index] = fx._links.size()
 	fx._links.append([tp.index, mi, mode, EfpLinks.Out.new(), EfpLinks.Buf.new(), EfpLinks.Buf.new(), kind])
+	fx._link_boxes.append(DRAW_AABB)
 	if mode != "RenderLinkObj":
 		fx._has_pipe = true
 
@@ -583,6 +601,8 @@ const LINK_TRIS_PER_FRAME := 20000
 static var _link_budget_frame := -1
 static var _link_budget_left := 0
 var _link_tpls: Dictionary = {} # tpl index -> index into _links
+## Round 785: each Link node's cull box now (DRAW_AABB, grown to its strip).
+var _link_boxes: Array[AABB] = []
 var _has_pipe := false
 var _link_cam := Transform3D()
 var _link_self := Transform3D()
@@ -704,10 +724,30 @@ func _update_links(native: EfpSimNative = null) -> void:
 					a[Mesh.ARRAY_CUSTOM1] = st[5]
 				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, a, [], {}, out.format_flags())
 			_link_budget_left -= maxi(nv - 2, 0)
+			_fit_link_box(i, out.turn)
 			continue
 		if out.nv >= 3:
 			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays(), [], {}, out.format_flags())
 		_link_budget_left -= out.triangles()
+		_fit_link_box(i, out.turn)
+
+## Round 785: Link node `i`'s cull box: DRAW_AABB, grown to its strip's own
+## box (its vertices are where they are drawn, the width included), so a trail
+## left far behind is not culled while it shows. A shared-turn pipe widens in
+## its vertex shader: it keeps DRAW_AABB. Set only when it changes.
+func _fit_link_box(i: int, turn: bool) -> void:
+	if i >= _link_boxes.size():
+		return
+	var mi := _links[i][1] as MeshInstance3D
+	var box := DRAW_AABB
+	var am := mi.mesh as ArrayMesh
+	if not turn and am != null and am.get_surface_count() > 0:
+		var mb := am.get_aabb()
+		if not DRAW_AABB.encloses(mb) and is_finite(mb.position.x + mb.position.y + mb.position.z + mb.size.x + mb.size.y + mb.size.z):
+			box = DRAW_AABB.merge(mb)
+	if box != _link_boxes[i]:
+		_link_boxes[i] = box
+		RenderingServer.instance_set_custom_aabb(mi.get_instance(), box)
 
 ## One chain's strip (its points gathered into `a`) into its node's Out, by the
 ## node's mode.
@@ -1337,6 +1377,8 @@ func _update_draws() -> void:
 		var kb := PackedFloat32Array()
 		if keep_draw_buffers:
 			kb.resize(ps.size() * 20)
+		if send and di < _draw_boxes.size():
+			_fit_box(di, mmi, ps)
 		if d.size() > 3 and bool(d[3]):
 			# A shared-turn node (use_shared_turn): the shader billboards, so
 			# the instance carries only the particle's scale and position
@@ -1368,6 +1410,30 @@ func _update_draws() -> void:
 				_put_instance(kb, i * 20, t, c, u)
 		if keep_draw_buffers:
 			_draw_bufs[di] = kb
+
+## Round 785: draw node `di`'s cull box: DRAW_AABB, grown to hold every
+## particle's position plus its shape's reach at its largest scale (the
+## shape turned any way). Set on the RenderingServer only when it changes.
+func _fit_box(di: int, mmi: MultiMeshInstance3D, ps: Array) -> void:
+	var box := DRAW_AABB
+	if not ps.is_empty():
+		var lo := Vector3(INF, INF, INF)
+		var hi := -lo
+		var s := 0.0
+		for p in ps:
+			var q: EfpSim.Particle = p
+			lo = lo.min(q.pos)
+			hi = hi.max(q.pos)
+			s = maxf(s, maxf(absf(q.scale.x), maxf(absf(q.scale.y), absf(q.scale.z))))
+		var r := s * _draw_reach[di] # the shape's bounding sphere, turned any way
+		if not (lo.x >= -200.0 + r and lo.y >= -200.0 + r and lo.z >= -200.0 + r
+				and hi.x <= 200.0 - r and hi.y <= 200.0 - r and hi.z <= 200.0 - r):
+			var ext := AABB(lo - Vector3.ONE * r, hi - lo + Vector3.ONE * (2.0 * r))
+			if is_finite(ext.position.x + ext.position.y + ext.position.z + ext.size.x + ext.size.y + ext.size.z):
+				box = DRAW_AABB.merge(ext)
+	if box != _draw_boxes[di]:
+		_draw_boxes[di] = box
+		RenderingServer.instance_set_custom_aabb(mmi.get_instance(), box)
 
 ## Round 764: one instance in Godot's MultiMesh layout at `o` (the transform's
 ## three rows, basis row then origin, the colour, the custom data).
