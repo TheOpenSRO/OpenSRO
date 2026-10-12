@@ -12411,7 +12411,7 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 	var code := String(opts.get("code", ""))
 	if code == "":
 		code = String(SkillAudio.context_for(skill_id)["code"])
-	var row := SkillEffectReader.aniset_for(_skill_anisets(), code) if code != "" and code != SkillAudio.NONE else {}
+	var row := _aniset_row_for(skill_id, code)
 	var pick := randi() & 0xff
 	var plan := SkillDeco.plan(row, pick)
 	var on_hit: Callable = opts.get("on_hit", Callable())
@@ -12456,6 +12456,30 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 		", WAIT held %s" % ("until the act" if due < 0 else "%d ms" % (due - now)) if int(plan["wait"]) >= 0 else ""])
 	_run_deco(entry, deco.tick(now))
 	return entry
+
+## A skill's skillaniset2 record, found as retail finds it (READ,
+## FUN_00a95dc0: the skill id goes to its client ref's Basic_Original, +0x5c,
+## when that is set, then to the record) and as the skill's effect rows are
+## found (SkillAudio.effect_rows_in: Basic_Group, else Basic_Code) -- a chain
+## link's record is its Basic_Group's (SKILL_CH_SPEAR_CHAIN_A for
+## ..._CHAIN_A_1S_01 / _2S_01, MEASURED: no record carries the link's own
+## code). {} when there is none.
+func _aniset_row_for(skill_id: int, code: String) -> Dictionary:
+	var sets := _skill_anisets()
+	var skills: Dictionary = SkillAudio._skills
+	if skills.has(skill_id):
+		var id := skill_id
+		var link_text: String = (skills[id] as PackedStringArray)[2]
+		if link_text.is_valid_int() and int(link_text) != 0 and skills.has(int(link_text)):
+			id = int(link_text)
+		var r: PackedStringArray = skills[id]
+		for key in [r[1], r[0]]:
+			var row := SkillEffectReader.aniset_for(sets, String(key))
+			if not row.is_empty():
+				return row
+	if code == "" or code == SkillAudio.NONE:
+		return {}
+	return SkillEffectReader.aniset_for(sets, code)
 
 ## The decoration running on `caster`, or {}.
 func _deco_on(caster: Node3D) -> Dictionary:
@@ -12628,7 +12652,7 @@ func _resolve_ground_landing(skill_id: int, point: Vector3) -> GhostWalk.Landing
 	if _hud_buff_board != null and _hud_buff_board.catalog != null:
 		reach = _hud_buff_board.catalog.tele_reach(skill_id)
 	if reach <= 0.0:
-		print("GROUND PICK: skill %d's tele reach is not known here (index not ready, or no 'tele') -- refused, nothing sent" % skill_id)
+		print("CURSOR CAST: skill %d's tele reach is not known here (index not ready, or no 'tele') -- refused, nothing sent" % skill_id)
 	var footing := _nav_footing
 	var footing_graph := _nav_footing_graph
 	if player.global_position.distance_to(_nav_footing_pos) > NAV_FOOTING_RESETTLE_DISTANCE:
@@ -13260,6 +13284,12 @@ func _arm_skill_cooldown(skill_id: int) -> void:
 
 ## Counts the timers down and draws each bar slot's sweep or charged flash.
 func _tick_skill_cooldowns(delta: float) -> void:
+	# The skill index is finished here as soon as its worker is done (round
+	# 785): the re-use gate, the cursor cast and the tele reach read it, and
+	# until now only the buff board or the target window finished it -- a
+	# Teleport cast before either had needed it was refused as "not known".
+	if _hud_buff_board != null and _hud_buff_board.catalog != null and not _hud_buff_board.catalog.is_ready():
+		_hud_buff_board.catalog.poll()
 	_skill_cooldown_carry += maxf(delta, 0.0) * 1000.0
 	var ms := int(_skill_cooldown_carry)
 	_skill_cooldown_carry -= float(ms)
@@ -26759,8 +26789,9 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	_note_position_sent()
 	_start_skill_slide(player, to, _skill_move_speed(moved.skill_id), SKILL_MOVE_IMAGE_STEP, "skill %d" % moved.skill_id,
 		_own_skill_move_arrived.bind(to, moved.skill_id))
-	print("SKILL move handled: this player slides from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units at %.0f u/s, by skill %d" % [
-		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), SKILL_MOVE_SPEED, moved.skill_id])
+	print("SKILL move handled: this player %s from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d" % [
+		"slides at %.0f u/s" % _skill_move_speed(moved.skill_id) if _skill_move_speed(moved.skill_id) > 0.0 else "is put (tel2)",
+		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id])
 
 ## READ: the move's speed and the afterimage spacing (0xdcc19c, 0xd88108).
 const SKILL_MOVE_SPEED := 500.0
@@ -27987,6 +28018,10 @@ func _player_world_height() -> float:
 func _play_monster_action(monster_id: int, action_type: int, hold: bool = false) -> float:
 	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
 	if assembled == null or _data_pk2 == null:
+		return 0.0
+	# A body freed between a blow's send and its landing (round 785, a live
+	# fight's SCRIPT ERROR): nothing to pose.
+	if assembled.skeleton == null or not is_instance_valid(assembled.skeleton):
 		return 0.0
 	var anim := SkinnedBsrAssembler.animation_for(_data_pk2, assembled, action_type)
 	if anim == null:

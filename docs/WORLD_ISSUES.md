@@ -8137,7 +8137,7 @@ the cursor cast, the slide); `self_cast_fx_test` also lands an OpAttackResult's 
 (two hits on one target -> the numbers 700 then 500, the kind-5 hit's knockback slide; no tail ->
 the result once) and a chain link to this player, and puts a monster's burn and freeze on and off
 its body (PARAM_BU / PARAM_FZ loops, FZ's DEACT, the clip speed held and released).
-**Gates:** client `check` ALL LOAD (758 scripts, 9 scenes); `tests` "ran 291 suite(s), 0 failing". Perf gate (`perf_gate.sh --sites jangan --frames
+**Gates:** client `check` ALL LOAD (762 scripts, 9 scenes after the merge with dev); `tests` "ran 293 suite(s), 0 failing". Perf gate (`perf_gate.sh --sites jangan --frames
 40000`; the default 3000 frames ran out of `--print-fps` samples on the box's RX 7600 at ~900 fps --
 "missing numbers" on the base side twice -- so the run was lengthened):
 
@@ -8149,6 +8149,40 @@ its body (PARAM_BU / PARAM_FZ loops, FZ's DEACT, the clip speed held and release
 | hitches | 4 | 4 | SAME |
 
 No server change: the server lane's branch carries the packets' server side.
+
+**After the merge with dev (b55694b6) -- the merged server, end to end.** Conflicts, both lanes kept:
+`skill_effects.gd` takes the effects lane's ActType values (AT_STOP 0, AT_ONE_FOLLOW 1, AT_LOOP 2),
+`kept_act`, `rotate_basis` and `EfpEffect.release()` on this round's SkillDeco-driven `play_phase`
+(the old timing sequencer stays removed); per the effects lane's READ (FUN_00a534d0), a cast's kept
+AT_LOOP effects of ANY phase now stay until the decoration ends and are then let go -- no longer
+cut at SHOT. World3D: the combat lane's refusal path (snap, re-walks) with this round's skill
+bookkeeping; a skill's result returns before the plain swing; own and others' casts turn with
+CombatFacing (`_face_while_striking`, 10 rad/s) instead of a snap; a monster's die clip begins once
+(a chain link's OpMonsterDied and its killing hit both reach the caster). Two fixes the live runs
+found:
+- **A skill's record is found by its Basic_Group (MEASURED: 1,396 of the 6,189 player rows -- every
+  chain link and more -- have a record only under their Basic_Group, e.g.
+  `SKILL_CH_SPEAR_CHAIN_A_1S_01` -> `SKILL_CH_SPEAR_CHAIN_A`).** READ: `FUN_00a95dc0` takes the
+  skill id to its client ref's Basic_Original (+0x5c) and looks the record up from there; the
+  client now resolves as the effect rows do (Basic_Group, else Basic_Code). Before, a chain link
+  drew no body animation ("no skillaniset2 record").
+- **The skill index is finished every frame until ready** (`SkillBuffCatalog.poll`): only the buff
+  board and the target window finished it, so a Teleport cast before either needed it was refused
+  ("tele reach not known") and the re-use gate could not see the reuse time.
+Live, a server built from the merged branch (in memory, the server lane's ENC `skills.csv`):
+the 0xAB block arrives ("1 hit(s) over 3 target(s)"); the spear area hit lands on three targets
+with their own numbers (132, 172 CRIT, 51); the Europe Dash's kind-5 knockback hit lands and slides
+its target (the keep-up's next swing then walks after it); the spear chain head 55 is answered and
+its links 56 and 57 come as OpSkillCasts naming this player, each drawn and landing its hit (77,
+then 189 and the death); the Rising's `ko` did not roll in the run (kind 0 every time; a chance);
+every cast in the runs carried one hit a target (the multi-hit split is the suite's). The Europe Teleport (tel2) casts at the cursor, the server answers with
+OpSkillMove, and the client PUTS the wizard there (`tel2` = flags 2, READ: FUN_00a54be0 sets the
+point, no slide) with the Teleport's SHOT clip (`skill_eu_wizard_twohand_target_ready.ban`); the
+fire point's READY 40 / WAIT 91 looping / SHOT 26 with the bolt flying, landing 399 and the death.
+A plain spear fight under the combat lane's code: 75 blows, 75 swings (types 2 / 16 / 17 of
+`skill_ch_spear_base_*`, one per blow, CombatFacing on), 0 refusals; it showed 7 SCRIPT ERRORs from
+a blow landing on a monster body freed meanwhile (`_play_monster_action` on a freed skeleton),
+now guarded.
 
 **Decisions (OURS), with why:** the WAIT hold's due time from the row's PreparingTime +
 CastingTime (OpenSRO's server answers a cast at once; this is the time retail's 0xB071 would come);
