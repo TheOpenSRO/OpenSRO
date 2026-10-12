@@ -439,12 +439,20 @@ func _test_states(world: Node) -> void:
 ## lands hit by hit on its targets -- the damage numbers split as the hits
 ## are -- and a knockback slides its target; with no hit block the whole
 ## result lands once. A chain link that names this player draws too.
+## Round 786: the numbers are DamageText nodes (retail's CIDamageText) on the
+## world's overlay -- here the bare world itself -- not Label3Ds on the body.
 func _labels(n: Node) -> Array:
 	var out: Array = []
 	for c in n.get_children():
-		if c is Label3D:
-			out.append((c as Label3D).text)
+		if c is DamageText:
+			out.append(str((c as DamageText).damage()))
 	return out
+
+func _clear_numbers(n: Node) -> void:
+	for c in n.get_children():
+		if c is DamageText:
+			n.remove_child(c)
+			c.free()
 
 func _attack_reply(monster: int, damage: int, tail: PackedByteArray) -> PackedByteArray:
 	var out := PackedByteArray([0, 0])
@@ -498,19 +506,21 @@ func _test_hit_block(world: Node) -> void:
 	world.set("_pending_skill_hit_code", "TEST_BOLT_A_01")
 	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT,
 		_attack_reply(555, 1200, _tail(555, [[0, 700, 1], [5, 500, 2]]))))
-	_check(_labels(mob) == ["700", "500"], "two hits on the target: two numbers, 700 then 500 (got %s)" % str(_labels(mob)))
+	_check(_labels(world) == ["700", "500"], "two hits on the target: two numbers, 700 then 500 (got %s)" % str(_labels(world)))
 	_check((world.get("_skill_slides") as Dictionary).has(mob.get_instance_id()), "the knockback (kind 5) slides the target")
 	_check(int(world.get("_pending_skill_id")) == 0, "the cast's answer is consumed")
 	world.call("_tick_skill_slides", 10.0)
 	for c in mob.get_children():
 		c.free()
+	_clear_numbers(world)
 	# No hit block: the whole result lands once.
 	world.set("_pending_skill_id", 160)
 	world.set("_pending_skill_hit_code", "TEST_BOLT_A_01")
 	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT, _attack_reply(555, 1200, PackedByteArray())))
-	_check(_labels(mob) == ["1200"], "without a hit block the result lands once (got %s)" % str(_labels(mob)))
+	_check(_labels(world) == ["1200"], "without a hit block the result lands once (got %s)" % str(_labels(world)))
 	for c in mob.get_children():
 		c.free()
+	_clear_numbers(world)
 	# A chain link naming this player (an OpSkillCast to itself): drawn.
 	world.call("_sync_own_id")
 	var start := _u64(OWN)
@@ -528,7 +538,8 @@ func _test_hit_block(world: Node) -> void:
 	act[21] = 1
 	act.append_array(_tail(555, [[0, 300, 1]]))
 	_net.call("_dispatch", Packet.new(0x00FA, act))
-	_check(_labels(mob) == ["300"], "a chain link to this player lands its hit (got %s)" % str(_labels(mob)))
+	_check(_labels(world) == ["300"], "a chain link to this player lands its hit (got %s)" % str(_labels(world)))
+	_clear_numbers(world)
 	(world.get("_monster_bodies") as Dictionary).erase(555)
 	world.set("_last_attack_target", -1)
 	mob.free()

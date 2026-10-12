@@ -72,10 +72,10 @@ first, then `& 2` -- a row sets only one of them (FUN_005862e0), so the two agre
 | kind 0x86 | a second roll after the first hit of the cast (`cStack_e5` set by a kill, knockback or knockdown) -- meaning OPEN | READ shape, OPEN meaning |
 | bit 0x80 | **this hit killed the target** (the accumulated damage reached its HP, 0x590591) or broke the wall | READ |
 | hitFlags 1 | an ordinary hit | READ |
-| hitFlags 2 | **critical** (the first roll, 0x58f00c area) | READ (the client's crit text keys off it, INFERRED) |
+| hitFlags 2 | **critical** (the first roll, 0x58f00c area) | READ; the client's number takes the critical art for it on kinds 0 and 4 only (FUN_00a47720, round 786, damage_text.md) |
 | hitFlags \|4 | the attacker's vslot 0x100 answered 1 (an attacker state, not identified) | READ, OPEN |
 | hitFlags \|8 | the action's `[+0xc] & 0x10` | READ, OPEN |
-| hitFlags \|0x10 | set on one magical path (0x58fe..) | READ, OPEN |
+| hitFlags \|0x10 | a blow of no damage whose row passes FUN_00589f10 (its state fields), 0x58fd9f -- an effect-only hit | READ; the client draws the "Resist" word when it comes with statusBits 0 (FUN_00a47720, round 786) |
 | hitFlags \|0x20 | the ignore-defence chance (param 188, `msid`) rolled | READ |
 | statusBits | `Combat_ApplyStatusEffects`' return, OR'd per hit: the abnormal-state bits this hit inflicted (`statuseffect.MaskForSlot`) | READ |
 | damage | `hit+0x20`, the blow's total (both halves summed) | READ |
@@ -130,7 +130,9 @@ damage, so an older client keeps working.
 
 **Kinds OpenSRO emits** (OURS which, READ shapes): 0, 2 (a block), 4 (knockdown), 5 (knockback),
 8 (a void hit after the target fell in the same cast, READ 0x5905ef), with 0x80 on the killing
-hit; hitFlags 1 or 2, `|4` while the caster is in HWAN, 0x10 on a debuff's effect-only hit;
+hit; hitFlags 1 or 2, `|4` while the caster is in HWAN, 0x10 on a debuff's effect-only hit (round 786: only
+when the cast itself rolls states -- a row with state runs, not linked -- else 1, so the client draws no
+false "Resist"; `debuffEntryHit`);
 statusBits from `statuseffect`. 7 (the walls) rides the wall suffix as before (a monster blow on
 a player's wall); 0x86 (`ck`'s instant kill) is not emitted -- no player row carries `ck`.
 **A plain swing carries the block too**: its target and its base attack's hits, plus the

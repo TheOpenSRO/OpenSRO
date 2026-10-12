@@ -7483,6 +7483,58 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-eighty-sixth round
+
+### Round 786 (part): damage numbers
+
+The user: "Fix the combat numbers that pop up, they're a certain size and font and different color
+depending if it's me attacking them or attacking me. Also show if it's a critical or not like the
+original game. Check the code to be accurate as possible." Round 149's numbers were a guessed
+`Label3D` (white / warm red, 1.1 s). They are now retail's **CIDamageText**, READ from
+`sro_client.exe`; the whole reading is `docs/protocol/damage_text.md`, the code
+`client/scripts/effects/damage_text.gd` (`DamageText`).
+
+- **The art (READ, FUN_00a92f70):** `Media.pk2` `interface\hitcount\hitcount_0..9.ddj` plus the
+  words `critical`, `blocking`, `resist`, each drawn over its `_shadow` twin (black at the number's
+  alpha), the white fill tinted by `D3DRS_TEXTUREFACTOR`. One digit set for everyone: the
+  archive's `hitcount_enemy_*`, `_player_*` and `miss_*` are never named by this client
+  (MEASURED). Loaded at runtime from the player's archive (nothing committed).
+- **Colours (READ, FUN_00a47720):** a character's hit (monsters included) on a player -- this one
+  or another -- `0xFF3A3A`; on a monster white; a state's tick (no attacker) `0xFFD33A` on a
+  player, `0xFF713A` on a monster. So "I hit it" is white and "it hits me" is red.
+- **Critical (READ):** kinds 0 and 4 with hitFlags & 2: bigger digits (36 x 60, advance 33,
+  against 24 x 40, advance 22) and the "Critical" word (96 x 24) 45 below them; same colour.
+  **Block** (kind 2): the "Block" word alone at scale 2.0. **Resist** (hitFlags & 0x10 with no
+  state landed): the "Resist" word. **No "miss" and no zero.**
+- **Motion (READ):** fixed at the target's position + 20 world units when the hit lands; rises 50
+  reference pixels (of a 1600 x 1200 screen; x scales by width/1600, y by height/1200) linearly
+  over 1.0 s; opaque for 0.5 s, then a linear fade to 0 at 1.0 s; no pop. No stacking offsets:
+  every hit is its own number, separated only by when it lands.
+- **Whose (READ, FUN_00a49290):** this player's own blows at any distance; any other fight within
+  200 units of this player (`+0x24c`, the distance NamePlates reads).
+- **Client:** every hit-block entry (skills, plain swings -- now per hit at the swing clip's own hit
+  events, blocks included), the monster's counter and `OpMonsterAttacked` (critical art, the block
+  word), walls (kind 7: the plain number), a state's killing tick (gold). On the OverlayView layer
+  (after the bloom, under the windows).
+- **Server (failing first):** a debuff cast's entry carried 0x10 always, which the client now reads
+  as "Resist" when no state landed -- a linked debuff (states with its pulses) would have shown it
+  every cast. `debuffEntryHit`: 0x10 only when the cast itself rolls states
+  (`TestRound786LinkedDebuffEntryIsNoResist` failed before, `TestRound786DebuffEntryFlags`). The
+  crit already reached the client on every path (`resolveBlow`'s READ roll, `HitFlagCritical` in the
+  swing's and skills' blocks, `Critical` on OpMonsterAttacked): no change there.
+- **OPEN:** another player's plain swing draws no number (watchers get only `OpMonsterDamaged`, a
+  total also sent for skills); the imbue's extra targets of an own swing; a wall entry's colour;
+  the camera shake retail adds to the local player's own blows (0xa49602, INFERRED); `+0x65c`,
+  `+0xbc`, `0xec4b58`.
+- **QA:** `OPENSRO_QA_DAMAGE=1` spawns a block, a plain 1234, a critical 5678 and a resist on
+  stand-in targets ahead of the player and a number taken over the player (a critical every other
+  round). Render box `/var/tmp/r786-dmg/shot/f00000262.png` (plain dealt, critical dealt, taken)
+  and `f00000328.png` (critical taken), Jangan, 1280 x 720, Forward+.
+- **Gates:** `check` ALL LOAD (775 scripts, 9 scenes); `tests` "ran 298 suite(s), 0 failing"
+  (`RENDER_DIR=/opt/opensro-client-r786-dmg`, `GODOT_LOCK=/var/tmp/r786-dmg/lock`); server
+  `go test ./...` passes; gofmt clean on the touched Go files. The perf gate was not run: the
+  change draws only while numbers are up (none in the gate's views).
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the
@@ -48606,6 +48658,9 @@ until the round-145 refdata is imported) drifts up off the monster and the
 red "8" off the player. `_floating_damage` logs each number's unprojected
 screen position under the QA hook, so the frame crop was aimed at 640,347
 rather than hunted for.
+
+**Superseded (round 786, "Round 786 (part): damage numbers"):** the guessed `Label3D` is gone;
+the numbers are retail's CIDamageText, READ (its art, colours, layout and motion).
 
 ## Hundred-and-forty-eighth round: the target window
 
