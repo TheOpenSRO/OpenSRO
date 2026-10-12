@@ -8174,7 +8174,9 @@ the 0xAB block arrives ("1 hit(s) over 3 target(s)"); the spear area hit lands o
 with their own numbers (132, 172 CRIT, 51); the Europe Dash's kind-5 knockback hit lands and slides
 its target (the keep-up's next swing then walks after it); the spear chain head 55 is answered and
 its links 56 and 57 come as OpSkillCasts naming this player, each drawn and landing its hit (77,
-then 189 and the death); the Rising's `ko` did not roll in the run (kind 0 every time; a chance);
+then 189 and the death); after the Basic_Group fix every link plays `skill_ch_spear_chain_a.ban`
+(SHOT ANI_SKILL_7 in `spear`), and a link's act is no longer mistaken for the echo of this
+player's own cast (its decoration, started by the link's own start, is not an echo); the Rising's `ko` did not roll in the run (kind 0 every time; a chance);
 every cast in the runs carried one hit a target (the multi-hit split is the suite's). The Europe Teleport (tel2) casts at the cursor, the server answers with
 OpSkillMove, and the client PUTS the wizard there (`tel2` = flags 2, READ: FUN_00a54be0 sets the
 point, no slide) with the Teleport's SHOT clip (`skill_eu_wizard_twohand_target_ready.ban`); the

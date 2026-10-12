@@ -12277,7 +12277,9 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 ## it did not send is a chain link (round 785).
 func _own_cast_echo(skill_id: int) -> bool:
 	var e := _deco_on(player)
-	if not e.is_empty() and int(e["skill"]) == skill_id:
+	# A link's own decoration (started by its OpSkillCast, "holder") is no
+	# echo: its act lands its hits.
+	if not e.is_empty() and int(e["skill"]) == skill_id and not e.has("holder"):
 		return true
 	if _pending_skill_id == skill_id:
 		return true
