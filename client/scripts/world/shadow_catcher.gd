@@ -39,8 +39,9 @@ class_name ShadowCatcher
 ## where a multiplying material cannot work (World3D leaves the catcher off
 ## there).
 ##
-## The order (render priority, transparent pass): the terrain's overlays and
-## the water (WorldFog.UNDER_PASS_PRIORITY), then this, then the fog pass.
+## The order (render priority, transparent pass): the terrain's overlays
+## (WorldFog.GROUND_OVERLAY_PRIORITY), the water (WorldFog.UNDER_PASS_PRIORITY),
+## then this, then the fog pass.
 
 const K_DISPLAY := 1.0 - 150.0 / 255.0
 const PRIORITY := -2

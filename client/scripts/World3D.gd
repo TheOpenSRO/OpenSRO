@@ -15068,6 +15068,7 @@ func _qa_advance_shots() -> void:
 			_qa_plates_report(_qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_patches(self, _qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_depth(self, _qa_shots[_qa_shot_index]["name"])
+		QaShotEnv.report_water_sort(self, _qa_shots[_qa_shot_index]["name"])
 		print(_camera_report(_qa_shots[_qa_shot_index]["name"]))
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:

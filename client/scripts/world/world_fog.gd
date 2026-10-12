@@ -68,13 +68,25 @@ const GLOBAL_COLOR := &"srr_fog_color"
 const GLOBAL_HEIGHT := &"srr_fog_height"
 
 ## The pass's place in the transparent sort: after the cloud layer (-128),
-## the surfaces it must fog (UNDER_PASS_PRIORITY) and Detail's terrain
+## the surfaces it must fog (GROUND_OVERLAY_PRIORITY, then
+## UNDER_PASS_PRIORITY) and Detail's terrain
 ## shadow catcher (ShadowCatcher.PRIORITY, -2), before every other
 ## transparent surface (priority 0 and up). Godot sorts the transparent list
 ## by priority before depth in both renderers (render_list
 ## sort_by_reverse_depth_and_priority).
 const PASS_PRIORITY := -1
 const UNDER_PASS_PRIORITY := -3
+## The terrain's feathered overlays (round 780): under the pass like the
+## water, and BEFORE the water. Retail draws every terrain pass
+## (`Map::FUN_00a1fdb0`) before the water (`Map::FUN_00a220b0`, or
+## `Map::FUN_00a2df70` with the reflection on), both from
+## `Map::FUN_00a24e30` (READ). At one priority the two were ordered by
+## Godot's far-to-near sort on their regions' AABB centres -- the terrain's
+## mid-height centre sits above the water's plane, so from any camera higher
+## than halfway between them the lake bed's overlays were drawn over the
+## water: the blocky patches through the Lake Forest pond (MEASURED,
+## OPENSRO_QA_WATER_SORT).
+const GROUND_OVERLAY_PRIORITY := -4
 
 ## The view distance the planes scale by when no row says otherwise
 ## (READ, 0xec54b0 = 2500.0).
