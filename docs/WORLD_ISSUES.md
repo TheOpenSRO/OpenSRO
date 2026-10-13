@@ -8279,6 +8279,83 @@ the flash reuses the berserk flash's step): no perf gate.
   type's link to the entry reason; who plays `SYSTEM_UNTOUCHABLE`; the 1000 ms timer 0xd after the
   load; 0x3014; the siege and data-driven worlds' times (no such worlds here).
 
+### Round 786 (part): Skill cooldown overlay covers the whole icon, and shows in the skill window too
+
+The user (a GIF of the hotbar): a skill's cooldown overlay showed as a 2 x 2 tiling inside the slot
+-- four small sweeps, each over a quarter of the icon -- where it should be one sweep over the whole
+icon. Then: the skill window (the skill menu) showed no cooldown at all. The whole reading is
+`docs/protocol/skill_reuse_display.md`; the code `client/scripts/ui/skill_delay_overlay.gd`
+(`SkillDelayOverlay`, new).
+
+**Retail (READ, `UI_SILKMALL::FUN_0067cfb0`, from `CIFSlotWithHelp::vslot_013` `0x685e50`; the
+doubles read at their addresses in `sro_client.exe`):**
+- The sweep: `frame = ftol(239.0 - r * 239.0)` (0xda3760), r = `FUN_009bb9c0` (left / total),
+  column `frame & 15`, row `frame >> 4`; UVs `column * 32.0 (0xd99a60) * 0.001953125 (0xda3768)`,
+  the same for the row -- each cell **1/16 of the sheet**, drawn over the slot's whole quad with
+  +0x620 (`skill_delay.ddj`, loaded by `vslot_010` `0x66b460`).
+- The flash: `frame = ftol(15.0 - f * 15.0)` (0xd878a0), f = `FUN_009bbb60`, column `& 3`, row `>> 2`,
+  UVs `* 16.0 (0xe1b8e0) * 0.015625 (0xda3758)` -- 1/4 of the sheet, +0x624 (`skill_charge.ddj`).
+- MEASURED (Media.pk2, the JMXVDDJ's DDS header and payload size): `skill_delay.ddj` is
+  **256 x 256** A8R8G8B8, no mips -- 16 x 16 cells of **16 pixels**, 240 used (row 15 empty), black at
+  alpha 185 where time is left, the clear part growing clockwise from 12 o'clock; `skill_charge.ddj`
+  64 x 64 A8R8G8B8, 4 x 4 cells of 16 pixels.
+- **The skill window has it.** `ifskill_slot.txt` ID 1 is `GDR_STMS_SLOT_SKILL:CIFSlotWithHelp`
+  (MEASURED); `CIFSkillSlot::Create` (`0x6a0980`) keeps it at +0x3ac and sets its kind to 0x49
+  (`push 0x49; call 0x6666f0`, `0x6a09e5`); SetSkill `0x6a15f0` gives it the skill id
+  (`0x66c3c0` at `0x6a179b`, +0x65c). `0x67cfb0`'s skill branch (`0x67d68d..0x67d6ad`) takes kind
+  0x49, or a quick slot (kind 0x0c) of sub-kind 0x49 / 0x19 (the hotbar's skills): the skill window
+  and the bar share the one routine, sweep and flash alike. +0x64c, which would skip it, is 0 from
+  the constructor (`0x673c80`, stored at `0x673e1d`).
+
+**The cause (OURS, round 785):** `hud_underbar.gd` read `32 * 1/512` as "a 16 x 16 sheet of 32-pixel
+cells on 512 x 512" and cut a 32-pixel region; on the real 256 sheet that is 2 x 2 cells -- the
+GIF's four small sweeps. The charge sheet's 16-pixel cut happened to be right. The skill window
+(`SkillBoard`, round 781) drew no overlay.
+
+**The fix:**
+- `SkillDelayOverlay.cell_region` takes the cell as 1/16 (1/4) of the loaded sheet, as the UVs do;
+  `apply` stretches one cell over the icon. `HudUnderbar.set_slot_cooldown` uses it (still under the
+  count); `SkillCooldowns`' comments corrected.
+- `SkillBoard.set_cooldowns` puts it on every learned slot (meta `skill_id`) over the 32 x 32 icon;
+  `HudPanels.apply_skill_cooldowns` keeps the board's callable so a refilled board draws the running
+  sweeps at once; World3D's `_tick_skill_cooldowns` feeds the bar and the window from the one
+  `SkillCooldowns` (`_skill_cooldown_frames`: the skill's own record or its group's).
+- INFERRED: in the skill window the overlay sits over the icon and under the level badge and button
+  (the slot child's order against `ifskill_slot.txt`'s other children was not traced).
+- QA (OURS): `OPENSRO_QA_AUTOPOT` gains `cool:<skill id>:<ms>` (arms the re-use time, no cast) and
+  `coolboard:<ms>` (every learned skill on the open skill window, staggered).
+
+**Tests (failing first):** `hud_underbar_test.gd` seeds the builder's cache with 256 x 256 and 64 x 64
+sheets: delay frame 17 is `Rect2(16, 16, 16, 16)`, frame 0 `(0, 0, 16, 16)`, the overlay's rect is
+the slot's, charge frame 6 `(32, 16, 16, 16)` -- on round 785's code "2 FAILURES" (`(32, 64, 32,
+32)` and `(0, 0, 32, 32)`). `skill_delay_overlay_test.gd` (new): the cell arithmetic at the measured
+sizes, every frame `SkillCooldowns` can pick inside its sheet, the node's place and life.
+`skill_board_test.gd`: only learned slots are asked, one 16-pixel cell over the icon's 32 x 32 (not
+the 36 x 56 slot), right over the icon and under the badge, the flash, none on an unlearned slot,
+nothing once the tail is over.
+
+**Live (render box, `/var/tmp/cooldown/shot.sh`, no server, Jangan, 1280 x 720, Forward+,
+`OPENSRO_QA_LEARNED=1`, `--panels skill`; kept in `/var/tmp/cooldown/keep/`, frames deleted):** skills
+3, 143 and 41 on slots 1-3 armed 30 / 6 / 12 s at tick 110, then `coolboard:20000` over the window's
+45 learned skills at tick 140. `slot3_seq.png` (slot 3, frames 112..320): one dark sweep over the
+whole icon, clearing clockwise from 12 o'clock, about a quarter gone at frame 320 (3.5 s of 12 s);
+`crop_board.png` (frame 300): the skill window's slots each under one whole-icon sweep at its own
+phase.
+
+**Gates:** client `check` ALL LOAD (788 scripts, 9 scenes); `tests` "ran 304 suite(s), 0 failing"
+(`RENDER_DIR=/opt/opensro-client-cooldown`, `GODOT_LOCK=/var/tmp/cooldown/lock`). UI only: no perf
+gate.
+
+**OPEN:**
+- A quick slot (kind 0x0c, sub-kind 0x49 / 0x19) also prints the time left over the sweep
+  (`0x67c920` with `FUN_009bba90`'s ms: seconds under 61, minutes under 3601, a third draw beyond);
+  not built. The skill window's kind-0x49 slot does not print it.
+- `0x67cfb0` draws the same sweep for item slots (kinds 0x46, 0x47, 0x33, 0x45, 0x13, 0x91, 0x21,
+  0x1a, quick slots of sub-kind 0x46 / 0x47) from the item cool-time functions `0x9b94d0` /
+  `0x9ba560` / `0x9ba680`, and for kind 0x0c sub-kind 0x4a from `IFMainPopup` `0x6a2b70`. OpenSRO
+  has no item re-use display anywhere (bar, bag): not built.
+- The buff board's icons were not checked against `0x67cfb0` (a different class); not changed.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the
@@ -8983,7 +9060,10 @@ frame (`FUN_009bb870`). The quick slot draws it (`UI_SILKMALL::FUN_0067cfb0`): o
 `interface\skill\skill_delay.ddj` (16 x 16 on 512 x 512) at `ftol(239 - r * 239)`, r = left/total;
 then for 500 ms one 16-pixel cell of `interface\skill\skill_charge.ddj` (4 x 4 on 64 x 64) at
 `ftol(15 - f * 15)`. The skill window's slots draw the same in retail (slot type 0x49); not built
-here (OPEN, the skill window is the UI lane's).
+here (OPEN, the skill window is the UI lane's). **Corrected in round 786** ("Skill cooldown overlay
+covers the whole icon"): the sheet is 256 x 256 (MEASURED), so a cell is 16 pixels -- the `32 * 1/512`
+of the UVs is a fraction (1/16), not a 512 sheet of 32-pixel cells -- and the 32-pixel cut drew 2 x 2
+cells; the skill window's display is built there.
 
 **7. Abnormal states on the body (StateLook, new).** READ, the mask setter `FUN_009cd5e0` (0x3057):
 a state bit coming on starts the system decoration `PARAM_<label>` (skilleffect.txt's own rows,
