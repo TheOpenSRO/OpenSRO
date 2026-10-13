@@ -53,6 +53,24 @@ func _init() -> void:
 		var names := UiTextTable.parse("1\tUIIT_STT_MASTERY_VI\t승\t\t\t\t\t\tBicheon\n".to_utf16_buffer())
 		_check(masteries[0].display_name(names) == "Bicheon",
 			"a resolvable name is used (got %s)" % masteries[0].display_name(names))
+		# Round 786, REGRESSION GUARD ("sorcery -> cold force"): in a joined
+		# textuisystem (a first table, then a stock table restarting the same
+		# keys) mastery 273 is named by the first row, as the client's
+		# keep-first manager names its tab (0x69f860 -> 0x8c9bb0); the stock
+		# row "Sorcery" belongs to a merged mastery this game does not have.
+		var joined := PackedStringArray()
+		for block in [["Bicheon", "Heuksal", "Pacheon", "Cold", "Lightning", "Fire", "Force"],
+				["Bicheon", "Heuksal", "Pacheon", "Sorcery", "Lightning", "Fire", "Force"]]:
+			for i in 8:
+				joined.append("1\tUIIT_K%d\tፕ\t0\t0\t0\t0\t0\tK%d" % [i, i])
+			var keys := ["VI", "HEUK", "PA", "HAN", "PUNG", "HWA", "GI"]
+			for k in keys.size():
+				joined.append("1\tUIIT_STT_MASTERY_%s\tፕ\t0\t0\t0\t0\t0\t%s" % [keys[k], block[k]])
+		var jt := UiTextTable.parse(("\n".join(joined) + "\n").to_utf16_buffer())
+		_check(masteries[3].id == 273 and masteries[3].display_name(jt) == "Cold",
+			"REGRESSION: mastery 273 (UIIT_STT_MASTERY_HAN) reads 'Cold' from a joined table, not 'Sorcery' (got %s)" % masteries[3].display_name(jt))
+		_check(masteries[0].display_name(jt) == "Bicheon" and masteries[1].display_name(jt) == "Heuksal"
+			and masteries[2].display_name(jt) == "Pacheon", "the weapon masteries read the same in both tables")
 
 	# Round 691: the same table read for a Europe character.
 	var eu_rows := PackedStringArray([

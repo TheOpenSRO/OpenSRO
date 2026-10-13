@@ -22,6 +22,7 @@ func _init() -> void:
 	_test_columns()
 	_test_practice_box()
 	_test_cooldowns()
+	_test_tips()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -239,3 +240,41 @@ func _test_cooldowns() -> void:
 	view.set_cooldowns(frames_for, sheet_for)
 	_check(view.cooldown_shown(102) == [] and view.cooldown_shown(303) == [], "the time and the tail over: nothing drawn")
 	view.free()
+
+## Round 786 (the user: "when hovering over skills you should see the blue
+## windows but it shows the native game gui instead"): no control of the
+## board carries Godot's tooltip_text; every help goes to tip_wirer (HudPanels
+## routes it to the original's bubble), a skill's as its rows' Callable.
+func _test_tips() -> void:
+	var model := _model(2)
+	var rows_fn := func() -> Array: return [{"text": "Strike Smash Lv 1", "color": Color.WHITE, "bold": true, "icon": true}]
+	(model["rows"][0]["slots"][1] as Dictionary)["tip"] = rows_fn
+	model["header"]["tooltip"] = "Bicheon"
+	(model["rows"][0]["slots"][0] as Dictionary)["button_tooltip"] = "Consumed MP: 7"
+	var wired: Dictionary = {}
+	var wirer := func(c: Control, src: Variant) -> void: wired[c] = src
+	var view := SkillBoard.new()
+	view.tip_wirer = wirer
+	view.build(model)
+	var natives := 0
+	for n in view.find_children("*", "Control", true, false):
+		if (n as Control).tooltip_text != "":
+			natives += 1
+	_check(natives == 0, "NEGATIVE: no control on the board has a native tooltip_text (got %d)" % natives)
+	var rows := view.find_child("SkillRows", true, false)
+	var icon := rows.get_child(0).get_node("Slot1/Icon") as Control
+	_check(wired.has(icon) and wired[icon] is Callable and String(((wired[icon] as Callable).call() as Array)[0]["text"]) == "Strike Smash Lv 1",
+		"a skill slot's help is its rows' Callable, handed to tip_wirer")
+	var plain := rows.get_child(0).get_node("Slot3/Icon") as Control
+	_check(wired.has(plain) and String(wired[plain]) == "t", "a slot with only a tooltip string hands that string over")
+	var btn := rows.get_child(0).get_node("Slot0/Button") as Control
+	_check(wired.has(btn) and String(wired[btn]) == "Consumed MP: 7", "the ADD button's help goes the same way")
+	var group := rows.get_child(0).get_node("GroupIcon") as Control
+	_check(wired.has(group) and String(wired[group]) == "Group 0", "the group icon's help (its name, 0x69effd) too")
+	view.free()
+	# Without a wirer (a test or tool), the help stays on the meta, still not native.
+	var bare := SkillBoard.new()
+	bare.build(model)
+	var bicon := bare.find_child("SkillRows", true, false).get_child(0).get_node("Slot1/Icon") as Control
+	_check(bicon.tooltip_text == "" and bicon.get_meta("tip") is Callable, "no wirer: the rows wait on the meta, no tooltip_text")
+	bare.free()

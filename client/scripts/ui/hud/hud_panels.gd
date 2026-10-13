@@ -4138,6 +4138,66 @@ func _hide_item_tip(icon: Control) -> void:
 func item_tip_shown() -> Array:
 	return _tip_bubble.shown_lines() if _tip_bubble != null else []
 
+## **Any control's hover help in the original's window** (round 786, the
+## user: "when hovering over skills you should see the blue windows but it
+## shows the native game gui instead"). The item tips' mechanism above,
+## for every other help: `source` is the rows (ItemTooltipLines' shape), a
+## Callable returning them at hover time (so a skill's tooltip reads the
+## points and levels of that moment), or a plain String drawn as white rows.
+## Empty clears the help. tooltip_text is emptied, so Godot's own popup -- a
+## grey sub-window in its default face -- never shows on these controls.
+## `wrap` > 0 breaks long rows (ItemTooltipBubble.wrapped).
+const BUBBLE_TIP_META := &"bubble_tip"
+const BUBBLE_TIP_WIRED_META := &"bubble_tip_wired"
+func set_bubble_tip(control: Control, source: Variant, wrap: float = 0.0) -> void:
+	if control == null:
+		return
+	control.tooltip_text = ""
+	var empty: bool = source == null or (source is String and String(source) == "") \
+		or (source is Array and (source as Array).is_empty())
+	if empty:
+		if control.has_meta(BUBBLE_TIP_META):
+			control.remove_meta(BUBBLE_TIP_META)
+		if _tip_bubble != null and _tip_bubble.source == control:
+			_tip_bubble.hide_bubble()
+		return
+	control.set_meta(BUBBLE_TIP_META, {"source": source, "wrap": wrap})
+	if control.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+		control.mouse_filter = Control.MOUSE_FILTER_PASS
+	if not control.has_meta(BUBBLE_TIP_WIRED_META):
+		control.set_meta(BUBBLE_TIP_WIRED_META, true)
+		control.mouse_entered.connect(func() -> void: show_bubble_tip(control))
+		control.mouse_exited.connect(func() -> void:
+			if _tip_bubble != null and _tip_bubble.source == control:
+				_tip_bubble.hide_bubble())
+
+## The rows `control`'s help shows now ([] for none).
+func bubble_tip_lines(control: Control) -> Array:
+	if not is_instance_valid(control) or not control.has_meta(BUBBLE_TIP_META):
+		return []
+	var src: Variant = (control.get_meta(BUBBLE_TIP_META) as Dictionary)["source"]
+	if src is Callable:
+		src = (src as Callable).call()
+	if src is String:
+		var rows: Array = []
+		for line in String(src).split("\n"):
+			rows.append({"text": line, "color": ItemTooltipLines.WHITE, "bold": false, "icon": false})
+		return rows
+	return src if src is Array else []
+
+## Shows `control`'s help beside it (the hover; tests and QA call it too).
+func show_bubble_tip(control: Control) -> void:
+	var lines := bubble_tip_lines(control)
+	if lines.is_empty():
+		if _tip_bubble != null and _tip_bubble.source == control:
+			_tip_bubble.hide_bubble()
+		return
+	if _tip_bubble == null:
+		_tip_bubble = ItemTooltipBubble.new(_builder)
+		add_child(_tip_bubble)
+	_tip_bubble.show_lines(lines, control.get_global_rect(), control,
+		float((control.get_meta(BUBBLE_TIP_META) as Dictionary).get("wrap", 0.0)))
+
 func item_tip_bubble() -> ItemTooltipBubble:
 	return _tip_bubble
 
@@ -5650,6 +5710,8 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 			child.queue_free()
 	var view := SkillBoard.new()
 	view.builder = _builder
+	# Round 786: every help on the board in the original's bubble.
+	view.tip_wirer = func(c: Control, src: Variant) -> void: set_bubble_tip(c, src, SkillTooltipLines.WRAP_WIDTH)
 	view.build(model, _on_skill_icon_input)
 	_skill_board_view = view
 	if _skill_cooldown_frames.is_valid():
@@ -5749,14 +5811,15 @@ func _skill_rows_model(mastery: MasteryReader.Mastery) -> Array:
 			var missing := _missing_prerequisites(s, learned + 1)
 			var view := SkillBoard.slot_view(learned, s.max_level, mastery_level, s.level_ids,
 				s.level_reqs, s.level_sp, missing.is_empty(), _skill_points)
-			var tip := _skill_cell_tooltip(s, learned, mastery)
-			if not missing.is_empty():
-				tip += "\nRequires: " + ", ".join(missing)
+			# Round 786: the retail skill tooltip (SkillTooltipLines, 0x67a970),
+			# composed when hovered, in the original's window.
+			var bs := s
+			var tip := func() -> Array: return skill_tip_lines(bs, _skill_learned_level(bs), true)
 			var meta := {}
 			if learned > 0:
 				var cast_id: int = s.level_ids[learned - 1]
 				meta = {"qa_skill_id": cast_id, "skill_id": cast_id, "code": s.basic_code}
-			slots[s.column] = {"icon": _load_skill_icon(s.icon_path), "view": view, "tooltip": tip,
+			slots[s.column] = {"icon": _load_skill_icon(s.icon_path), "view": view, "tip": tip,
 				"button_tooltip": _skill_button_tooltip(s, int(view["target_id"]), int(view["button"])),
 				"meta": meta}
 		var focus := ""
@@ -5939,6 +6002,27 @@ func _qa_skill_press(spec: String) -> void:
 		elif st.begins_with("mastery:") and view != null:
 			view.mastery_selected.emit(int(st.substr(8)))
 			done = true
+		elif st.begins_with("tip:") and view != null:
+			# Round 786: "tip:<shown row>:<column>" hovers that slot's icon
+			# (its bubble, as the mouse would show it).
+			var f := st.split(":")
+			var rows := view.find_child("SkillRows", true, false)
+			var shown: Array = rows.get_children().filter(func(r): return (r as Control).visible) if rows != null else []
+			var r := int(f[1]) if f.size() > 1 else 0
+			var icon: Control = (shown[r] as Node).get_node_or_null("Slot%d/Icon" % (int(f[2]) if f.size() > 2 else 0)) if r < shown.size() else null
+			if icon != null:
+				show_bubble_tip(icon)
+				done = not item_tip_shown().is_empty()
+				print("QA SKILL TIP %s: %s" % [st, ItemTooltipLines.as_text(item_tip_shown()).replace("\n", " | ")])
+		elif st.begins_with("bartip:"):
+			# Round 786: "bartip:<quick slot>" hovers that slot of the bar
+			# (QA only; the bar is the panels' sibling, World3D's HudUnderbar).
+			var bar := get_parent().get_node_or_null("HudUnderbar") if get_parent() != null else null
+			var node: Control = bar.call("slot_node", int(st.substr(7))) if bar != null else null
+			if node != null:
+				show_bubble_tip(node)
+				done = not item_tip_shown().is_empty()
+				print("QA SKILL TIP %s: %s" % [st, ItemTooltipLines.as_text(item_tip_shown()).replace("\n", " | ")])
 		print("QA SKILL PRESS %s: %s (frame %d)" % [st, "done" if done else "nothing to press", Engine.get_frames_drawn()])
 
 ## The highest contiguous level of a skill the character has learned (0 = not
@@ -6014,65 +6098,53 @@ func _skill_learned_level(s: SkillDataReader.BaseSkill) -> int:
 			break
 	return lvl
 
-## The cell hover text -- an authentic skill tooltip built from the client's own
-## skilldata: name + level, the description, real cast stats (MP, cast time,
-## cooldown, range), and the next level's SP/mastery requirement. All grounded
-## (see the skilldata-columns note); no invented numbers.
-func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int, mastery: MasteryReader.Mastery = null) -> String:
-	var names := _skill_text_table()
-	var nm := s.display_name(names)
-	var lines := PackedStringArray()
-	if learned >= s.max_level and s.max_level > 0:
-		lines.append("%s (Lv %d, mastered)" % [nm, learned])
-	elif learned > 0:
-		lines.append("%s (Lv %d/%d)" % [nm, learned, s.max_level])
-	else:
-		lines.append(nm)
-	var desc := s.description(names)
-	if desc != "":
-		lines.append(desc)
-	# Real cast stats for the shown level (learned level, else level 1).
-	var shown: int = learned if learned > 0 else 1
-	var stats := PackedStringArray()
-	var mp: int = s.level_mp[shown - 1] if shown - 1 < s.level_mp.size() else 0
-	if mp > 0:
-		stats.append("MP %d" % mp)
-	if s.cast_time_ms > 0:
-		stats.append("Cast %.2fs" % (s.cast_time_ms / 1000.0))
-	if s.cooldown_ms > 0:
-		stats.append("Cooldown %.1fs" % (s.cooldown_ms / 1000.0))
-	var rng: String = "Melee" if s.range_val == 0 else ("Range %d" % s.range_val)
-	stats.append(rng)
-	if not stats.is_empty():
-		lines.append(" · ".join(stats))
-	# The weapon the cast needs (ReqCast_Weapon1/2, round 691) -- what the
-	# server refuses a cast without ("wrong weapon for this skill", 0x300d).
-	var weapon := s.weapon_requirement()
-	if weapon != "":
-		lines.append("Weapon: %s" % weapon)
-	# The next level's real learn gate, stated against what the player HAS --
-	# so a locked skill says why it is locked instead of only what it costs.
-	# The numbers are skilldata's own (ReqCommon_MasteryLevel1 col 36,
-	# ReqLearn_SP col 46); the SP label is the client's own UIIT_STT_NEED_SP.
-	# A level-3 fighter asked why Bicheon 3 offered nothing: its first skill,
-	# SKILL_CH_SWORD_SMASH_A_01, needs Bicheon 5, and a mastery cannot pass the
-	# character's level (Mastery_LevelUp refuses with 0x3804) -- both were true
-	# and neither was on screen.
-	if learned < s.max_level:
-		var nxt: int = learned + 1
-		var sp: int = s.level_sp[nxt - 1] if nxt - 1 < s.level_sp.size() else 0
-		var req: int = s.level_reqs[nxt - 1] if nxt - 1 < s.level_reqs.size() else s.min_req_mastery_level
-		var mname: String = mastery.display_name(_text_table(), _skill_text_table()) if mastery != null else "mastery"
-		var have: int = _mastery_level(mastery.id) if mastery != null else 0
-		lines.append("Learn Lv %d: %s Lv %d required (yours: Lv %d)" % [nxt, mname, req, have])
-		lines.append("%s: %d" % [_resolve_ui("UIIT_STT_NEED_SP", "Skill point needed"), sp])
-		if req > have:
-			if _skill_char_level > 0 and req > _skill_char_level:
-				lines.append("A mastery cannot pass your character level (Lv %d). Reach character level %d, then raise %s to Lv %d." % [
-					_skill_char_level, req, mname, req])
-			else:
-				lines.append("Raise %s to Lv %d (LEVEL UP) first." % [mname, req])
-	return "\n".join(lines)
+## **A skill's tooltip rows** (round 786; SkillTooltipLines has the reading,
+## docs/protocol/skill_tooltip.md): the record a slot holds -- the learned
+## level, or level 1 for a skill not learned -- composed as UI_SILKMALL
+## 0x67a970 composes it. `in_window` is the skill window's slot (kind 0x49),
+## which adds the learn / next-level conditions; a quick slot (kind 0x0c with
+## content 0x19) stops before them (READ, 0x67adb4..0x67adce). This replaces
+## round 691's string tooltip ("Learn Lv %d: ... (yours: Lv %d)", "Cast
+## %.2fs", "Requires: ...") -- OUR wording, shown in Godot's native popup.
+func skill_tip_lines(s: SkillDataReader.BaseSkill, learned: int, in_window: bool) -> Array:
+	if s == null:
+		return []
+	_load_masteries()
+	var mastery: MasteryReader.Mastery = null
+	for entry in _mastery_table:
+		if (entry as MasteryReader.Mastery).id == s.mastery_id:
+			mastery = entry
+	var text := func(k: String, f: String) -> String:
+		var r := _resolve_any(k)
+		return r if r != "" else f
+	var name_of := func(g: int) -> String:
+		var other := _skill_by_base_id(g)
+		return SkillTooltipLines.name_of(other, _skill_text_table()) if other != null else "%d" % g
+	var level_of := func(g: int) -> int:
+		var other := _skill_by_base_id(g)
+		return _skill_learned_level(other) if other != null else 0
+	var ctx := {
+		"text": text,
+		"names": _skill_text_table(),
+		"conditions": in_window,
+		"learned": learned,
+		"mastery_name": mastery.display_name(_text_table(), _skill_text_table()) if mastery != null else "",
+		"mastery_level": _mastery_level(s.mastery_id),
+		"mastery_held": _skill_mastery_levels.is_empty() or _skill_mastery_levels.has(s.mastery_id),
+		"sp": _skill_points,
+		"skill_name_of": name_of,
+		"skill_level_of": level_of,
+	}
+	return SkillTooltipLines.compose(s, maxi(learned, 1), ctx)
+
+## A quick slot's skill tooltip (the bar's slot holding per-level skill id
+## `skill_id`): that level's record, no conditions (READ, 0x67adb4: a
+## content kind of 0x19 ends the help there). [] for an id the tables lack.
+func quickslot_skill_tip_lines(skill_id: int) -> Array:
+	var bs := _board_skill_with_level_id(skill_id)
+	if bs == null:
+		return []
+	return skill_tip_lines(bs, bs.level_ids.find(skill_id) + 1, false)
 
 ## Learn (or level up) a skill: sent from the practice box's Confirm (round
 ## 781). The server validates the mastery requirement and SP cost;

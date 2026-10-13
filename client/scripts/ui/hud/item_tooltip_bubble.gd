@@ -76,6 +76,10 @@ var _fill := FILL_FALLBACK
 var _lines: Array = []
 var _labels: Array[Label] = []
 var _icon: TextureRect
+## Round 786: a sign on more than one row (the skill tooltip's condition
+## headers, SkillTooltipLines) -- the first is _icon, the rest pooled here.
+var _icons: Array[TextureRect] = []
+var _sign: Texture2D = null
 var _line_height := LINE_HEIGHT
 ## The control the bubble describes; it closes when that one leaves the screen.
 var source: Control = null
@@ -97,13 +101,18 @@ func _init(builder: UiBuilder = null) -> void:
 	# UI scale (4.7.2 keys embolden by the oversampled size).
 	_bold = FontOversampling.bold(_font, BOLD_EMBOLDEN)
 	_load_frame()
-	_icon = TextureRect.new()
-	_icon.name = "ItemSign"
-	_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_icon.stretch_mode = TextureRect.STRETCH_KEEP
-	_icon.texture = builder.load_texture(ITEM_SIGN_DDJ) if builder != null else null
-	_icon.visible = false
-	add_child(_icon)
+	_sign = builder.load_texture(ITEM_SIGN_DDJ) if builder != null else null
+	_icon = _new_icon("ItemSign")
+
+func _new_icon(n: String) -> TextureRect:
+	var r := TextureRect.new()
+	r.name = n
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.stretch_mode = TextureRect.STRETCH_KEEP
+	r.texture = _sign
+	r.visible = false
+	add_child(r)
+	return r
 
 func _load_frame() -> void:
 	if _builder == null:
@@ -148,7 +157,12 @@ func icon_indent() -> float:
 
 ## Shows `lines` (ItemTooltipLines.compose) beside `anchor`, a rect in this
 ## canvas's coordinates (the hovered slot's), for `from`.
-func show_lines(lines: Array, anchor: Rect2, from: Control = null) -> void:
+## `wrap_width` > 0 breaks a row wider than it at its spaces (wrapped(); the
+## skill tooltip's description, round 786); 0 keeps every row whole, as the
+## item tooltip has always drawn them.
+func show_lines(lines: Array, anchor: Rect2, from: Control = null, wrap_width: float = 0.0) -> void:
+	if wrap_width > 0.0:
+		lines = wrapped(lines, wrap_width)
 	_lines = lines
 	source = from
 	if lines.is_empty():
@@ -156,6 +170,7 @@ func show_lines(lines: Array, anchor: Rect2, from: Control = null) -> void:
 		return
 	_line_height = LINE_HEIGHT if lines.size() != 1 else LINE_HEIGHT_SINGLE
 	var width := 0.0
+	var signs := 0
 	for i in lines.size():
 		var l: Dictionary = lines[i]
 		var w := text_width(l) + (icon_indent() if l.get("icon", false) else 0.0)
@@ -185,17 +200,65 @@ func show_lines(lines: Array, anchor: Rect2, from: Control = null) -> void:
 		label.position = Vector2(x, FRAME + i * _line_height + BASELINE - roundf(face.get_ascent(_size)))
 		label.size = Vector2(maxf(text_width(l), 1.0) + 2.0, _line_height)
 		if l.get("icon", false):
-			_icon.visible = _icon.texture != null
-			_icon.position = Vector2(FRAME, FRAME + i * _line_height)
-			_icon.size = Vector2(ICON_SIZE, ICON_SIZE)
+			var sign := _sign_for(signs)
+			signs += 1
+			sign.visible = sign.texture != null
+			sign.position = Vector2(FRAME, FRAME + i * _line_height)
+			sign.size = Vector2(ICON_SIZE, ICON_SIZE)
 	for j in range(lines.size(), _labels.size()):
 		_labels[j].visible = false
-	if not lines.any(func(l): return l.get("icon", false)):
-		_icon.visible = false
+	_icon.visible = _icon.visible and signs > 0
+	for k in range(maxi(signs - 1, 0), _icons.size()):
+		_icons[k].visible = false
 	size = Vector2(ceilf(width) + FRAME * 2, lines.size() * _line_height + FRAME * 2)
 	position = place(anchor, size, _view_rect())
 	visible = true
 	queue_redraw()
+
+## The n-th row sign: _icon, then the pool.
+func _sign_for(n: int) -> TextureRect:
+	if n == 0:
+		return _icon
+	while _icons.size() < n:
+		_icons.append(_new_icon("RowSign%d" % (_icons.size() + 1)))
+	return _icons[n - 1]
+
+## `lines` with every row wider than `width` (its text, plus the sign's
+## indent) broken at spaces into rows that fit, each continuation in the row's
+## own colour and face, without the sign. A single word wider than `width`
+## stays whole. (Round 786: the help box's text box is given 200 before every
+## help is built -- CIFSlotWithHelp::vslot_048 0x686db0 calls its slot
+## 0x54(200, 1), READ -- INFERRED to be a wrap width; a skill's description is
+## one long row in the archive.)
+func wrapped(lines: Array, width: float) -> Array:
+	var out: Array = []
+	for line in lines:
+		var l: Dictionary = line
+		var indent := icon_indent() if l.get("icon", false) else 0.0
+		if text_width(l) + indent <= width or not String(l["text"]).contains(" "):
+			out.append(l)
+			continue
+		var words := String(l["text"]).split(" ")
+		var row := ""
+		var first := true
+		for w in words:
+			var trial := w if row == "" else row + " " + w
+			var probe := l.duplicate()
+			probe["text"] = trial
+			if row != "" and text_width(probe) + (indent if first else 0.0) > width:
+				var done := l.duplicate()
+				done["text"] = row
+				done["icon"] = l.get("icon", false) and first
+				out.append(done)
+				first = false
+				row = w
+			else:
+				row = trial
+		var tail := l.duplicate()
+		tail["text"] = row
+		tail["icon"] = l.get("icon", false) and first
+		out.append(tail)
+	return out
 
 func hide_bubble() -> void:
 	visible = false

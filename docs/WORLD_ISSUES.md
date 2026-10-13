@@ -8413,6 +8413,101 @@ gate.
   has no item re-use display anywhere (bar, bag): not built.
 - The buff board's icons were not checked against `0x67cfb0` (a different class); not changed.
 
+### Round 786 (part): the mastery 273 is "Cold" again, not "Sorcery"
+
+The user: "the previous round of skills fixed the sorcery -> cold force name. Please fix it again."
+The skill window's Force tab read Sorcery, Lightning, Fire, Force; the header "Sorcery Mastery".
+Spec and labels: `docs/protocol/skill_tooltip.md` §1.
+
+- **Retail (READ):** the tab's title is the text of the mastery record's name code
+  (`skillmasterydata.txt` col 2) through the text manager -- `CIFSkillMastery` SetMasteryData
+  `0x69f860` calls `0x8c9bb0(record + 4)`, the hash lookup `0x8c9b20`, then SetText (vslot `0xb4`).
+  The manager keeps a key's FIRST row (`0x8ca120`, round 634). The skill tooltip's mastery
+  condition (`0x96d0e0`) and the item requirement lines (`0x67eec0`) name masteries the same way.
+- **The archive (MEASURED, the box's `textuisystem.txt`, also the user's):** two joined tables
+  (round 725). Of the seven China mastery keys only `UIIT_STT_MASTERY_HAN` (273) differs: "Cold"
+  in the first table, "Sorcery" in the stock one -- a server that merged the three elemental
+  masteries (its `_HAN_EXPLANATION` "uses the energy of ice, lightning & fire", its
+  `UIIT_CTL_SORCERY_SKILL`). `_HAN_EXPLANATION` differs too; the other six names and explanations
+  are the same in both. The Europe six (`UIIT_STT_WARRIOR` ...) are single rows in
+  `textdata_equip&skill.txt`. No mastery key says "Cold Force": that text is only a skill-group
+  description ("Cold Force Series").
+- **Root cause (rule changes MEASURED with `git log -S`; the names INFERRED from the rules except
+  where a log says so):** before round 634 the parser kept the LAST row (round 143's note lists
+  "Sorcery"); round 634's review (`7e962d07`) made it keep the first, the client's rule, so 273
+  read "Cold" through round 691's skill work -- that rule is the "fix" the user remembers; no commit
+  ever named "Cold". Round 725 (`3f1f8abb`, USER DECISION: the stock English) made the stock row
+  win in a joined table, which took 273 back to "Sorcery". Round 781's window shipped with it (its
+  offline log on the box: `masteries ["Sorcery", "Lightning", "Fire", "Force"]`). No test named a
+  mastery.
+- **Fix:** `UiTextTable.FIRST_ROW_PREFIX` (`UIIT_STT_MASTERY_`): those keys keep their first row
+  in a joined table, as the client does (OURS rule on READ evidence); every other key keeps round
+  725's decision. One place, so the tab, the header, the practice box, the item requirement lines
+  and the new skill tooltip all read "Cold".
+- **Regression tests (each FAILS with the rule switched off -- measured on the box,
+  `mastery_reader_test.gd`: "got Sorcery"):** `ui_text_table_test.gd` (273's name and explanation
+  keep the first row, a mastery key only in the stock table and a non-mastery key keep theirs);
+  `mastery_reader_test.gd` (273 from a joined table reads Cold, the weapon three unchanged);
+  `skill_window_race_test.gd` (a China window with the real codes and a joined table: the Force tab
+  reads Cold, Lightning, Fire, Force; 273's header "Cold Mastery").
+
+### Round 786 (part): skill tooltips in the original's blue window
+
+The user: "when hovering over skills you should [see] the sml2 blue windows but it shows the native
+game gui instead". The skill window's slots, buttons and icons used `tooltip_text` -- Godot's grey
+popup, in its own face, with round 691's wording ("Learn Lv %d: ... (yours: Lv %d)", "Cast %.2fs",
+"Requires: ..."); a quick slot holding a skill showed nothing. Spec and labels:
+`docs/protocol/skill_tooltip.md` §2.
+
+- **Retail (READ):** `CIFSlotWithHelp::vslot_048` (`0x686db0`) builds a skill's help in the same
+  `CNIFHelperBubbleWindow` items use (round 731), for a skill window slot (kind `0x49`, set at
+  `0x6a09e5`) and a quick slot holding a skill (kind `0x0c`, content `0x19`, set at `0x60ec5d`):
+  `UI_SILKMALL 0x67a970`. Its rows: `"%s %s %d\n "` (name, `UIIT_STT_LEVEL_LV`, level; white, bold,
+  the sign), `PARAM_ACTIVE_SKILL` / `PARAM_PASSIVE_SKILL` (record `+0x61`), the requirement text of
+  `0x96d7e0` (`PARAM_REQ_MP`, `"%s: %s, %s"` of `PARAM_REQ_WEAPON_TYPE` and the weapons), the
+  required item, the description, `" "`, the effect text of `0x96e480`; then, only off the quick
+  slot (`0x67adb4`), `PARAM_CONDITION_OF_LEARN` for a skill not learned or `"\n "` and
+  `PARAM_CONDITION_OF_NEXT_LEVEL` for a learned one below its last level, and the conditions of
+  `0x96d0e0` -- `"%s : %s Lv %d"` (mastery), `"%s%d : %s %s %d"` (prerequisite skills, its own
+  group skipped), `"%s : %d"` (SP) -- beige when met, red (`0xffff4a4a`) when not.
+- **Built (OURS code on that reading):** `SkillTooltipLines` (new) composes those rows from
+  SkillDataReader's skill (which now keeps skilldata col 8, Basic_Activity: MEASURED 0 on every
+  `*_PASSIVE_A_01`); the description's `<sml2>` markup becomes rows (`ItemTooltipLines.sml2_rows`).
+  `ItemTooltipBubble` gains a sign on any row and a wrap width (200, INFERRED from `0x686db0`'s
+  `0x54(200, 1)`); items are unchanged. `HudPanels.set_bubble_tip` gives any control its help in the
+  bubble and empties its `tooltip_text`; `SkillBoard.tip_wirer` sends every help of the board
+  through it (slots, ADD / UP, group icons, the mastery icon, LEVEL UP); World3D wires every quick
+  slot to `quickslot_skill_tip_lines`, read at hover time.
+- **Tests:** `skill_tooltip_lines_test.gd` (new: the rows, the colours, the next-level block, the
+  quick slot stopping, passive, the weapon rows, the wrap, the two signs, `set_bubble_tip` leaving no
+  `tooltip_text`); `skill_board_test.gd` (no control of the board has a `tooltip_text`; every help
+  reaches `tip_wirer`, a skill's as its rows' Callable); `skill_window_race_test.gd` (a real fill has
+  no `tooltip_text` anywhere; the mastery icon's help is in the bubble).
+- **QA (render box, `/var/tmp/skilltip/shot.sh`, offline, Jangan, 1280x720, Forward+):**
+  `OPENSRO_QA_SKILL_STATE` (Bicheon 20, Cold 8, 500 SP, level 30) and
+  `OPENSRO_QA_AUTOPOT` putting skills 3 and 90 on quick slots 1 and 2. Every learned at 1
+  (`learned`): Strike Smash's bubble beside its slot reads "Strike Smash Lv 1 | | Active | Consumed
+  MP: 19 | Used weapon: Sword, Blade | Swing your sword to inflict great | damage to the enemy. | |
+  | | Next level condition | Mastery level : Bicheon Lv 7 | Required skillpoint : 5"; on the Force
+  tab the mastery tabs read **Cold** Lightning Fire Force, the header "Cold Mastery", and Ice River
+  Force's condition "Mastery level : Cold Lv 7". Nothing learned (`fresh`): "Acquisition
+  condition | Mastery level : Bicheon Lv 5 | Required skillpoint : 2"; quick slot 2's bubble stops
+  after the description. Frames `/var/tmp/skilltip/learned/f00000400.png` (Bicheon),
+  `f00000895.png` (Cold), `/var/tmp/skilltip/fresh/f00000420.png` (the bar); logs beside them.
+- **QA hooks (OURS):** `OPENSRO_QA_SKILL_PRESS` gains `tip:<shown row>:<column>` (hovers a skill
+  slot) and `bartip:<quick slot>` (hovers the bar), each printing `QA SKILL TIP` with the rows.
+
+**Gates:** client `check` ALL LOAD (788 scripts, 9 scenes); `tests` "ran 304 suite(s), 0
+failing" (`RENDER_DIR=/opt/opensro-client-skilltip`, `GODOT_LOCK=/var/tmp/skilltip/lock`). The first
+run caught `const_array_lint_test.gd` flagging a const Array loop in the new prefix rule; it is a
+single const String now. UI only, nothing per frame: no perf gate.
+
+**OPEN:** the required-item row and the effect text (attack power, reach, the params of
+`0x960b50`); the HP and ratio costs and the Str / Int conditions; the condition header's sign art
+(`+0x7e8`); whether `"\n "` is two rows (drawn so); the mastery icon's and LEVEL UP's retail help
+(round 781's text kept); the buff bar's and target window's buff icons still use Godot's tooltip; a
+quick slot holding an item shows no help yet (retail `0x686c50`).
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the
