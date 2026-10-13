@@ -60,6 +60,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -156,6 +157,14 @@ func (b *bot) note(p *proto.Packet) {
 		if s, err := session.DecodeSelfID(p.Data); err == nil {
 			b.id = s.CharacterID
 		}
+	case npcspawn.OpSingleDespawn:
+		if watchViews && len(p.Data) == 4 {
+			fmt.Printf("%s [%s] WATCH despawn uid %d\n", time.Now().Format("15:04:05.000"), b.name, binary.LittleEndian.Uint32(p.Data))
+		}
+	case session.OpStateChange:
+		if s, ok := session.DecodeStateChange(p.Data); ok && watchViews && s.Kind == session.StateKindBodyMode {
+			fmt.Printf("%s [%s] WATCH body mode uid %d = %d\n", time.Now().Format("15:04:05.000"), b.name, s.ObjectID, s.Value)
+		}
 	case session.OpEnterWorldResult:
 		if r, err := session.DecodeEnterWorldResult(p.Data); err == nil {
 			b.mu.Lock()
@@ -163,6 +172,17 @@ func (b *bot) note(p *proto.Packet) {
 				b.seen[o.Name] = o.CharacterID
 			}
 			b.mu.Unlock()
+			// Round 786: a bot loads nothing, so its loading is done at
+			// once: the server holds it out of the world until this 0x3012
+			// (session/arrival.go).
+			if r.OK {
+				_ = b.send(session.OpReadyToPlay, nil)
+			}
+		}
+	case session.OpChangeZoneResult:
+		if r, err := session.DecodeChangeZoneResult(p.Data); err == nil && r.OK {
+			fmt.Printf("[%s] arrived in %s at %.0f, %.0f (0x3012 sent)\n", b.name, r.Zone, r.X, r.Z)
+			_ = b.send(session.OpReadyToPlay, nil)
 		}
 	case session.OpEntityEntered:
 		if e, err := session.DecodeEntityEntered(p.Data); err == nil {
@@ -212,7 +232,15 @@ func (b *bot) saw(rec pcspawn.Record) {
 	b.mu.Lock()
 	b.seen[rec.Name] = int64(rec.UID)
 	b.mu.Unlock()
+	if watchViews {
+		fmt.Printf("%s [%s] WATCH spawn %s uid %d body mode %d\n", time.Now().Format("15:04:05.000"), b.name, rec.Name, rec.UID, rec.BodyMode)
+	}
 }
+
+// watchViews is -watch (round 786): print every player spawn, despawn and
+// body mode this bot is sent, with the time -- the other side of a live
+// test of the arrival hold (session/arrival.go).
+var watchViews bool
 
 func (b *bot) idOf(name string) (int64, bool) {
 	b.mu.Lock()
@@ -864,6 +892,7 @@ func main() {
 	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
 	flag.StringVar(&botZone, "zone", "", "bot: a zone label to change to once in the world (0x0026), e.g. dungeon/32769")
 	tp := flag.String("tp", "", "bot: \"x z\" -- /tp there once in the world (a GM account)")
+	flag.BoolVar(&watchViews, "watch", false, "print every player spawn, despawn and body mode the bots are sent, timed (round 786)")
 	tp2 := flag.String("tp2", "", "bot: \"x z\" -- /tp there again after -tp2-after")
 	tp2After := flag.Duration("tp2-after", 30*time.Second, "bot: how long after joining a party -tp2 happens")
 	flag.IntVar(&pickupOpts.kills, "kills", 10, "pickup: how many monsters to kill")

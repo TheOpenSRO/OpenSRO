@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
@@ -288,6 +289,20 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		if out.RefreshEquipment {
 			result.Refresh |= gmRefreshEquipment
 		}
+		// Round 786 (arrival.go): with the arrival guard on, a /tp or a
+		// /goto to a monster is the server's own warp -- out of the world
+		// behind the loading screen until the client's 0x3012, then the
+		// protection -- not the client's placement; the reply then names no
+		// move of its own. A /goto to a zone alone stays the client's
+		// OpChangeZone, which warps the same way.
+		if out.HasPos && !out.Refused && arrivalGuardOn.Load() && hub != nil {
+			if zone, bucket, pos, frame, ok := gmWarpTarget(sess, hub, out.Zone, out.X, out.Z); ok {
+				result.HasPos, result.Zone = false, ""
+				defer func() {
+					_, _ = warpVia(ctx, sess, deps.Equip, chars, hub, deps.Berserk, zone, bucket, pos, frame, "gm "+gmVerb(req.Line))
+				}()
+			}
+		}
 		err = sess.Send(&proto.Packet{Opcode: OpGMCommandResult, Data: result.Encode()})
 		// A GM /notice (round 634) reaches every character, the GM included,
 		// after the GM's own reply.
@@ -347,3 +362,34 @@ func boolByte(b bool) byte {
 // its announcements: a test's window between a /kill and its death broadcast
 // (TestGMKillReachesTheWatchersBeforeIt). nil in production.
 var gmAfterRunHook func()
+
+// gmWarpTarget is where a GM /tp or /goto to a monster puts the GM as a
+// server warp (round 786): zone "" is a point in the GM's own place (its
+// label, frame and bucket now, at its height now -- the client stands it on
+// its ground at the arrival); a zone names the species' zone label, whose
+// bucket and frame arrival gives. ok is false when the GM is not in the world
+// or has no place yet.
+func gmWarpTarget(sess *gateway.Session, hub *world.Hub, zone string, x, z float64) (label, bucket string, pos world.Position, frame string, ok bool) {
+	cur, in := hub.EntityBySession(sess.ID())
+	if !in {
+		return "", "", world.Position{}, "", false
+	}
+	if zone == "" {
+		p, known := placeOf(sess)
+		if !known {
+			return "", "", world.Position{}, "", false
+		}
+		return p.zone, cur.Zone, world.Position{X: x, Y: cur.Pos.Y, Z: z}, p.frame, true
+	}
+	b, _, f, _ := arrival(zone)
+	return zone, b, world.Position{X: x, Z: z}, f, true
+}
+
+// gmVerb is a command line's first word, for the warp's log.
+func gmVerb(line string) string {
+	f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "/"))
+	if len(f) == 0 {
+		return ""
+	}
+	return "/" + strings.ToLower(f[0])
+}

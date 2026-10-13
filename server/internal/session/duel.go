@@ -371,6 +371,13 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if deadCharacter(hub, opponent.CharacterID) {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "your opponent is dead"}).Encode()})
 	}
+	// Round 786 (arrival.go): neither side may be untouchable --
+	// GObjPC::FUN_005291d0 refuses 0x3020 for an attacker in body mode 2
+	// (0x529240) and a target in 2, 3 or 4 (0x529254..0x52927c), before the
+	// PK rules (READ).
+	if attackerUntouchable(hub, characterID) || attackerUntouchable(hub, opponent.CharacterID) {
+		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: untouchableRefusal}).Encode()})
+	}
 
 	// The attacker's Strength contributes to both ends of its damage range;
 	// a store that cannot answer drops the term rather than the attack.

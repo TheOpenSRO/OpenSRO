@@ -107,6 +107,15 @@ type Entity struct {
 	// from it (or from the leg), never from the client's previous claim, so
 	// claims cannot creep. While a leg runs, the leg is the reference.
 	Trusted Position
+	// Held is true while the character is out of the world between an
+	// arrival and its client's loading-done report (round 786, OURS
+	// mechanism for retail's re-entry: SR_GameServer's teleport takes the PC
+	// out of the world and CGObj::EnterWorld puts it back only on the
+	// client's 0x3012; session/arrival.go). A held entity is in every index
+	// but the message blocks (byCell), so no other player's window holds it,
+	// no crossing spawns it, and Sees is false; the monster AI skips it.
+	// EnterHeld and ChangeZoneHeld set it, Release clears it.
+	Held bool
 	// The movement allowance (claim.go): units of run banked while standing,
 	// at most AllowanceSeconds' worth, that a claim beyond the free slack
 	// draws from. allowAt is when it was last brought up to date, allowLeg
@@ -194,15 +203,44 @@ func NewHub() *Hub {
 // is a parameter rather than a later SetLevel so no entity ever exists
 // without one (Entity.Level).
 func (h *Hub) Enter(sess *gateway.Session, characterID int64, name string, level int, zone string, pos Position) []Entity {
+	return h.enter(sess, characterID, name, level, zone, pos, false)
+}
+
+// EnterHeld is Enter with the character held out of the world (Entity.Held)
+// until Release: the world entry before the client's loading-done report
+// (round 786, session/arrival.go).
+func (h *Hub) EnterHeld(sess *gateway.Session, characterID int64, name string, level int, zone string, pos Position) []Entity {
+	return h.enter(sess, characterID, name, level, zone, pos, true)
+}
+
+func (h *Hub) enter(sess *gateway.Session, characterID int64, name string, level int, zone string, pos Position, held bool) []Entity {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	h.removeLocked(sess.ID())
 
 	h.arrivals++
-	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: h.arrivals, Trusted: pos, allowAt: h.clock()}
+	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: h.arrivals, Trusted: pos, allowAt: h.clock(), Held: held}
 	h.insertLocked(e)
 	return h.viewOthersLocked(e)
+}
+
+// Release puts a held character (EnterHeld, ChangeZoneHeld) back into the
+// world: filed under its block, so the players of its window see it from
+// now on. It returns the entity as released and the other players in view
+// of it (for its spawns, session.arrivePlayer); ok is false when the
+// session is not in the world or was not held.
+func (h *Hub) Release(sess *gateway.Session) (released Entity, others []Entity, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	e, exists := h.bySession[sess.ID()]
+	if !exists || !e.Held {
+		return Entity{}, nil, false
+	}
+	e.Held = false
+	e.Cell = CellOf(e.Zone, e.Pos)
+	h.cellLocked(e)
+	return outLocked(e, h.clock()), h.viewOthersLocked(e), true
 }
 
 // Leave removes sess's character from the world, if present. Returns the
@@ -232,6 +270,9 @@ func (h *Hub) Leave(sess *gateway.Session) (left Entity, remaining []Watcher, ok
 // watchersLocked is who is in view of e's position, except e's own session.
 // Caller must hold h.mu.
 func (h *Hub) watchersLocked(e *Entity) []Watcher {
+	if e.Held {
+		return nil // nobody holds a held character (Entity.Held)
+	}
 	cell := CellOf(e.Zone, e.Pos)
 	out := make([]Watcher, 0, h.windowCountLocked(cell))
 	h.forWindowLocked(cell, func(o *Entity) {
@@ -305,6 +346,17 @@ func (h *Hub) Relocate(sess *gateway.Session, pos Position, kind MoveKind, headi
 // it, so those players are in both lists: they hear it leave and then arrive
 // at pos.
 func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
+	return h.changeZone(sess, newZone, pos, false)
+}
+
+// ChangeZoneHeld is ChangeZone with the character held out of the world
+// (Entity.Held) at its arrival until Release (round 786, session/arrival.go):
+// the old window loses it at once, the new one gains it only on Release.
+func (h *Hub) ChangeZoneHeld(sess *gateway.Session, newZone string, pos Position) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
+	return h.changeZone(sess, newZone, pos, true)
+}
+
+func (h *Hub) changeZone(sess *gateway.Session, newZone string, pos Position, held bool) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -328,7 +380,7 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	// return point moves a dead character before it revives it (round 665,
 	// session.ReviveHandler), and a state is never reset by a move.
 	h.arrivals++
-	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading, Trusted: pos, allowAt: h.clock(), allowSpeed: old.allowSpeed}
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading, Trusted: pos, allowAt: h.clock(), allowSpeed: old.allowSpeed, Held: held}
 	h.insertLocked(next)
 	if stale {
 		if live != nil {
@@ -453,6 +505,9 @@ func (h *Hub) Sees(a, b uint64) bool {
 	if !ok {
 		return false
 	}
+	if ea.Held || eb.Held {
+		return false
+	}
 	return InView(ea.Cell, eb.Cell)
 }
 
@@ -562,6 +617,9 @@ func (h *Hub) removeLocked(sessionID uint64) {
 }
 
 func (h *Hub) cellLocked(e *Entity) {
+	if e.Held {
+		return // out of the world until Release (Entity.Held)
+	}
 	m := h.byCell[e.Cell]
 	if m == nil {
 		m = make(map[uint64]*Entity)

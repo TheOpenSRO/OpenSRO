@@ -53,7 +53,7 @@ and changes nothing.
 
 | Command | What it does |
 |---|---|
-| `/tp <x> <z>` | Teleports you to world coordinates in the current zone. |
+| `/tp <x> <z>` | Teleports you to world coordinates in the current zone (behind the loading screen, then 6 s untouchable, as every teleport). |
 | `/goto <zone\|monster>` | Travels to a named zone's entry, or to where a monster species is kept. |
 | `/give <item id> [qty]` | Puts an item in your bag by its numeric id (unknown ids are refused). |
 | `/gold <n>` | Adds gold (a negative number takes it away). |

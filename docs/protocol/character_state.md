@@ -373,11 +373,11 @@ option and the level. OpenSRO's dead state only ever follows a monster's kill (c
 arm is not reached; OpenSRO's empty request is the pre-665 client's and is read as the level's one
 choice, not as a disconnect (OURS).
 
-**Protection after the revive (READ; not modelled).** `Revive(1)` sets body mode 2
+**Protection after the revive (READ; modelled since round 786, `arrival_guard.md`).** `Revive(1)` sets body mode 2
 (`BODYMODE_INVINCIBLE`) for 6.0 s (`0xb45b78`; 11.0 s, `0xb45bb8`, in the other world kind). A
 return to the return point is a world re-entry, and `CGObjPC::vslot_391` (`0x4df9e0`) sets body
-mode 2 there for the world's own time (its slot `0x70`, not read; 6.0 s when no world is found).
-OpenSRO has no body mode 2.
+mode 2 there for the world's own time (its slot `0x70`: 6.0 s in the open world, `CGameWorld`
+`0x5eb2d0`; 6.0 s when no world is found). Round 786 models both (`arrival_guard.md`).
 
 **What OpenSRO does, and what is OURS.**
 

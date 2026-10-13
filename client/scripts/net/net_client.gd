@@ -291,6 +291,14 @@ signal self_id_received(character_id: int)
 ## This client's own character id from OpSelfId; -1 until one arrives on this
 ## connection (and from a server that does not send it).
 var own_character_id := -1
+## Round 786: this player's own body mode as the server last said (0x30BF
+## kind 4 with its own id), 0 again at every arrival; 2 is the protection
+## after one (ArrivalGuard), in which the client refuses its own skills and
+## its attacks on players (READ, 0x81ba58 / 0x791fda).
+var own_body_mode := 0
+## A skill or an attack this client refused itself for the protection
+## (ArrivalGuard.refuses_skill): nothing went out.
+signal untouchable_refused(what: String)
 signal buff_ended(ended: SkillNet.BuffEnd)
 signal skill_moved(moved: SkillNet.SkillMove)
 ## OpSkillCast 0x00FA (round 622): another player (or a monster) in the zone
@@ -1116,6 +1124,12 @@ func learn_skill(char_name: String, skill_id: int) -> void:
 ## shows what went out.
 func use_skill(char_name: String, skill_id: int, target_monster_id: int,
 		target_type: int = SkillNet.TARGET_ENTITY, point: Vector3 = Vector3.ZERO) -> void:
+	# Round 786: no skill in the protection after an arrival (READ,
+	# FUN_0081ba10 at 0x81ba58): refused here, nothing sent.
+	if ArrivalGuard.refuses_skill(own_body_mode):
+		print("CAST refused locally: untouchable (body mode 2), skill %d" % skill_id)
+		untouchable_refused.emit("skill")
+		return
 	if not is_connected_to_server():
 		print("CAST send skipped (not connected): skill %d targetType %d" % [skill_id, target_type])
 		return
@@ -1267,7 +1281,19 @@ func duel_respond(char_name: String, challenger_name: String, accept: bool) -> v
 	_send(DuelNet.OP_RESPOND, DuelNet.encode_respond(char_name, challenger_name, accept))
 
 func duel_attack(char_name: String) -> void:
+	# Round 786: no attack on a player in the protection (READ, 0x791fda).
+	if ArrivalGuard.refuses_attack_on_player(own_body_mode):
+		print("DUEL attack refused locally: untouchable (body mode 2)")
+		untouchable_refused.emit("duel")
+		return
 	_send(DuelNet.OP_ATTACK, DuelNet.encode_attack(char_name))
+
+## Round 786: the loading-done report, 0x3012 (ArrivalGuard.ReadyReport).
+func report_ready_to_play() -> void:
+	if not is_connected_to_server():
+		return
+	_send(WorldNet.OP_READY_TO_PLAY)
+	print("NetClient: ready to play sent (0x3012)")
 
 func trade_request(char_name: String, target_name: String) -> void:
 	_send(TradeNet.OP_REQUEST, TradeNet.encode_request(char_name, target_name))
@@ -1674,6 +1700,7 @@ func _dispatch(p: Packet) -> void:
 				# starts over from them.
 				buff_roster.clear()
 				body_modes.clear()
+				own_body_mode = 0
 				# So does the NPC window: the server forgets what it sent this
 				# session at the entry (session.forgetNPCWindow) and spawns
 				# the whole window again.
@@ -1705,6 +1732,7 @@ func _dispatch(p: Packet) -> void:
 				# this result (round 646; sendBuffsInView).
 				buff_roster.clear()
 				body_modes.clear()
+				own_body_mode = 0
 				# And its players, as spawns (round 737).
 				_start_user_view(zone_result.frame)
 			change_zone_result.emit(zone_result)
@@ -1714,6 +1742,9 @@ func _dispatch(p: Packet) -> void:
 			var change := WorldNet.decode_state_change(p.data)
 			if change != null:
 				WorldNet.note_body_mode(body_modes, change)
+				if change.kind == WorldNet.STATE_KIND_BODY_MODE and own_character_id >= 0 \
+						and change.object_id == own_character_id:
+					own_body_mode = change.value
 				state_changed.emit(change)
 		WorldNet.OP_EMOTE:
 			var em := WorldNet.decode_emote(p.data)

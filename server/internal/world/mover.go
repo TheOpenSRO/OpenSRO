@@ -221,8 +221,12 @@ func (h *Hub) refileLocked(e *Entity, now time.Time, r *MoveResult) {
 		h.uncellLocked(e)
 		e.Cell = cell
 		h.cellLocked(e)
-		r.Crossed = true
-		h.crossingLocked(e, old, cell, now, r)
+		// A held character (Entity.Held) is in no window: its move gains
+		// and loses nobody.
+		if !e.Held {
+			r.Crossed = true
+			h.crossingLocked(e, old, cell, now, r)
+		}
 	}
 	r.Watchers = make([]Watcher, 0, h.windowCountLocked(cell))
 	h.forWindowLocked(cell, func(o *Entity) {
@@ -408,7 +412,9 @@ func (h *Hub) AdvanceMovers(speedOf func(characterID int64) float64) Pass {
 			h.uncellLocked(e)
 			e.Cell = cell
 			h.cellLocked(e)
-			crossed = append(crossed, crossing{e, old, cell})
+			if !e.Held {
+				crossed = append(crossed, crossing{e, old, cell})
+			}
 		}
 	}
 	h.passHold.Store(int64(time.Since(held)))

@@ -84,6 +84,11 @@ func startWorld(c *conn, name string) (*session.EnterWorldResult, uint32, error)
 	if !er.OK {
 		return nil, 0, fmt.Errorf("enter world refused: %s", er.Reason)
 	}
+	// Round 786: a bot's loading is done at once; the server holds it out of
+	// the world until its 0x3012 (session/arrival.go).
+	if err := c.send(session.OpReadyToPlay, nil); err != nil {
+		return nil, 0, err
+	}
 	data, err = c.await(session.OpSelfID, 15*time.Second)
 	if err != nil {
 		return nil, 0, err

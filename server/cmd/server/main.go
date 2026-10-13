@@ -1058,6 +1058,13 @@ func main() {
 			"arrival, a GM /tp or /goto), and anything else is answered with the server's own position "+
 			"(0xB023). For QA runs, which place their players anywhere (OPENSRO_QA_AT and its kin); "+
 			"never on a public server.")
+	arrivalGuard := flag.Bool("arrival-guard", true,
+		"round 786: a character that arrives anywhere -- world entry, gate, walk-in portal, scroll, "+
+			"return point, zone change, GM /tp and /goto, /unstuck -- is held out of the world (no "+
+			"other player sees it, no monster targets it) until its client reports its loading done "+
+			"(0x3012), then untouchable for 6.0 s (body mode 2), as retail's re-entry does "+
+			"(docs/protocol/arrival_guard.md). A client that never reports is disconnected after 300 s. "+
+			"Off: the arrival is immediate, as before round 786 (clients older than round 786 never send 0x3012).")
 	singleFrameEnv, singleFrameEnvErr := envBool("OPENSRO_SINGLE_FRAME")
 	singleFrame := flag.Bool("single-frame", singleFrameEnv,
 		"put the whole world in ONE coordinate frame (env OPENSRO_SINGLE_FRAME): every zone with a "+
@@ -1912,6 +1919,11 @@ func main() {
 	session.SetSingleFrame(*singleFrame)
 	// Round 749: the move by destination's placement bound (destmove.go).
 	session.SetTrustClientPositions(*trustPositions)
+	// Round 786: the hold until the client's 0x3012 and the protection after
+	// it (session/arrival.go).
+	session.SetArrivalGuard(*arrivalGuard)
+	session.SetArrivalLogger(logger)
+	logger.Info("arrival guard", "on", *arrivalGuard)
 	if *trustPositions {
 		logger.Warn("trust-client-positions on: every position a client reports is taken (QA only)")
 	}

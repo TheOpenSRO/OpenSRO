@@ -617,7 +617,7 @@ func (s *ScrollCaster) complete(characterID int64, cast *scrollCast) {
 	// a cancel, which OpenSRO does not copy.
 	defer broadcastScrollState(s.hub, characterID, 0)
 	if cast.option == 0 {
-		_, _ = warpHome(ctx, cast.sess, s.eq, s.chars, s.hub, s.zerk)
+		_, _ = warpHome(ctx, cast.sess, s.eq, s.chars, s.hub, s.zerk, "return scroll")
 		return
 	}
 	var (
@@ -647,7 +647,7 @@ func (s *ScrollCaster) complete(characterID int64, cast *scrollCast) {
 		s.logger.Info("scroll warp", "character_id", characterID, "option", cast.option, "zone", zone, "x", pos.X, "y", pos.Y, "z", pos.Z)
 	}
 	armReturnGuard(cast.sess, zone, pos, time.Now())
-	moved, _ := warpTo(ctx, cast.sess, s.eq, s.chars, s.hub, s.zerk, zone, bucket, pos, frame)
+	moved, _ := warpVia(ctx, cast.sess, s.eq, s.chars, s.hub, s.zerk, zone, bucket, pos, frame, "reverse return scroll")
 	if arrived, in := s.hub.EntityBySession(cast.sess.ID()); moved && in {
 		bindReturnGuard(cast.sess, arrived.Arrival)
 	} else {

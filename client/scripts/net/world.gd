@@ -43,6 +43,11 @@ const OP_REVIVE_RESULT := 0x0029       # server -> client
 ## The id is the server's character id in the retail u32 field (ours).
 const OP_MOTION_REQUEST := 0x704F      # client -> server, u8
 const OP_STATE_CHANGE := 0x30BF        # server -> client, broadcast
+## Round 786: the loading-done report, retail's 0x3012 SR_READY_TO_PLAY (no
+## payload; FUN_0084c060 sends it as the loading screen comes down, READ).
+## The server holds the character out of the world until it
+## (server/internal/session/arrival.go; ArrivalGuard).
+const OP_READY_TO_PLAY := 0x3012       # client -> server, empty
 const STATE_KIND_MOTION := 1
 ## 0x30BF kind 4: the body mode, 1 = berserk (CGObjChar::SetBodyMode). A value-1
 ## change carries one more byte (chardata+5), read only then (0x8a80a0).
