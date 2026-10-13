@@ -137,6 +137,12 @@ const LEVELUP_LAST_LEVEL := 120
 enum Btn { NONE, ADD, UP, MAX }
 
 var builder: UiBuilder
+## Round 786: how a control's hover help is shown -- Callable(control, source)
+## with source the rows, a Callable returning them, or a String
+## (HudPanels.set_bubble_tip: the original's blue CNIFHelperBubbleWindow).
+## Unset (a test), the help is kept on the control's meta `tip` and no
+## native tooltip is set either way.
+var tip_wirer := Callable()
 ## The first visible row.
 var first_row := 0
 var _rows: Array = []
@@ -245,7 +251,8 @@ static func max_first_row(row_count: int) -> int:
 ##            tooltip: String}            (null/absent: no mastery)
 ##   rows: Array of {icon: Texture2D, focus: Texture2D, name: String,
 ##        slots: Array (COLUMNS entries, null = no skill) of
-##        {icon: Texture2D, view: slot_view(...), tooltip: String,
+##        {icon: Texture2D, view: slot_view(...), tip: Callable -> rows
+##         (SkillTooltipLines) or tooltip: String,
 ##         button_tooltip: String, meta: Dictionary}}
 ##   first_row: int
 ## `on_icon_input(event, icon, meta)` handles a slot icon's mouse input
@@ -365,17 +372,25 @@ func _build_header(board: Control, header: Dictionary) -> void:
 			it.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			icon.add_child(it)
 		it.texture = header.get("icon")
-		icon.tooltip_text = String(header.get("tooltip", ""))
 		icon.mouse_filter = Control.MOUSE_FILTER_PASS
+		_tip(icon, String(header.get("tooltip", "")))
 	_set_text(root.get_node_or_null("GDR_SKILLBOARD_MASTERYNAME"), String(header.get("name", "")))
 	_set_text(root.get_node_or_null("GDR_SKILLBOARD_MASTERYLEV"), String(header.get("level", "")))
 	var lv_btn := root.get_node_or_null("GDR_SKILLBOARD_BTNLEVUP") as BaseButton
 	if lv_btn != null:
 		lv_btn.visible = bool(header.get("levelup", false))
 		lv_btn.focus_mode = Control.FOCUS_NONE
-		lv_btn.tooltip_text = String(header.get("levelup_tooltip", ""))
+		_tip(lv_btn, String(header.get("levelup_tooltip", "")))
 		lv_btn.pressed.connect(func() -> void: levelup_pressed.emit())
 	UiBuilder.settle_authored_rects(root)
+
+## A control's hover help, through tip_wirer (round 786) -- never Godot's
+## tooltip_text, whose popup is the native grey box.
+func _tip(control: Control, source: Variant) -> void:
+	control.tooltip_text = ""
+	control.set_meta("tip", source)
+	if tip_wirer.is_valid():
+		tip_wirer.call(control, source)
 
 func _set_text(node: Node, text: String) -> void:
 	if node == null:
@@ -473,7 +488,7 @@ func _build_row(r: Dictionary, on_icon_input: Callable) -> Control:
 	gi.texture_hover = r.get("focus")
 	gi.position = GROUP_ICON_RECT.position
 	gi.size = GROUP_ICON_RECT.size
-	gi.tooltip_text = String(r.get("name", ""))
+	_tip(gi, String(r.get("name", "")))
 	row.add_child(gi)
 	var slots: Array = r.get("slots", [])
 	var last := -1
@@ -510,8 +525,8 @@ func _build_slot(column: int, s: Dictionary, on_icon_input: Callable) -> Control
 	icon.texture = _tex(LOCKED) if bool(view.get("locked", false)) else s.get("icon")
 	if bool(view.get("dim", false)):
 		icon.modulate = Color(1, 1, 1, UNLEARNED_ALPHA)
-	icon.tooltip_text = String(s.get("tooltip", ""))
 	icon.mouse_filter = Control.MOUSE_FILTER_PASS
+	_tip(icon, s.get("tip", String(s.get("tooltip", ""))))
 	var meta: Dictionary = s.get("meta", {})
 	for k in meta:
 		icon.set_meta(String(k), meta[k])
@@ -557,7 +572,7 @@ func _build_slot(column: int, s: Dictionary, on_icon_input: Callable) -> Control
 			btn.texture_disabled = btn.texture_normal
 		btn.position = BUTTON_RECT.position
 		btn.size = BUTTON_RECT.size
-		btn.tooltip_text = String(s.get("button_tooltip", ""))
+		_tip(btn, String(s.get("button_tooltip", "")))
 		btn.set_meta("kind", ["", "ADD", "UP", "MAX"][which])
 		slot.add_child(btn)
 	return slot

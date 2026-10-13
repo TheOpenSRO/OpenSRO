@@ -171,7 +171,64 @@ func _initialize() -> void:
 	r.call("_fill_skill_masteries", w3)
 	_check(_ids(r.get("_masteries")).size() == 6 and int(r.get("_skill_race")) == MasteryReader.RACE_EUROPE,
 		"set_skill_race(Europe) lays out the six Europe masteries")
+
+	_mastery_name_checks(script)
 	_finish()
+
+## Round 786, REGRESSION GUARD ("sorcery -> cold force"): the China window's
+## mastery tabs and header, with the real mastery name codes and a joined
+## textuisystem shaped like the archive's (a first table, then a stock table
+## naming 273 "Sorcery"): the Force tab reads Cold, Lightning, Fire, Force and
+## 273's header "Cold Mastery" -- the client's first row (0x69f860 ->
+## 0x8c9bb0, keep-first 0x8ca120). And no control of the window carries a
+## native tooltip_text (the hover goes to the original's bubble).
+func _mastery_name_checks(script: GDScript) -> void:
+	var codes := {257: "VI", 258: "HEUK", 259: "PA", 273: "HAN", 274: "PUNG", 275: "HWA", 276: "GI"}
+	var rows := PackedStringArray(["//Mastery ID\tthe header row"])
+	for id in codes:
+		var tab := 0 if int(id) < 270 else 1
+		rows.append(_row(int(id), "UIIT_STT_MASTERY_%s" % codes[id], "UIIT_CTL_FORCE_SKILL" if tab == 1 else "UIIT_CTL_WEAPON_SKILL",
+			tab, "icon\\skillmastery\\china\\m%d.ddj" % int(id)))
+	var table := MasteryReader.parse_all(("\n".join(rows) + "\n").to_utf16_buffer())
+	var text := PackedStringArray()
+	var english := [["Bicheon", "Heuksal", "Pacheon", "Cold", "Lightning", "Fire", "Force"],
+		["Bicheon", "Heuksal", "Pacheon", "Sorcery", "Lightning", "Fire", "Force"]]
+	for block in english:
+		for i in 8:
+			text.append("1\tUIIT_K%d\tፕ\t0\t0\t0\t0\t0\tK%d" % [i, i])
+		var k := 0
+		for id in codes:
+			text.append("1\tUIIT_STT_MASTERY_%s\tፕ\t0\t0\t0\t0\t0\t%s" % [codes[id], block[k]])
+			k += 1
+		text.append("1\tUIIT_CTL_FORCE_SKILL\tፕ\t0\t0\t0\t0\t0\tForce")
+		text.append("1\tPARAM_MASTERY\tፕ\t0\t0\t0\t0\t0\tMastery")
+	var tt := UiTextTable.parse(("\n".join(text) + "\n").to_utf16_buffer())
+	var z: Node = script.new()
+	z.set("_builder", UiBuilder.new(null, tt))
+	z.set("_mastery_table", table)
+	z.set("_masteries_loaded", true)
+	z.set("_skill_catalog_loaded", true)
+	z.call("set_skill_state", 0, {257: 0, 258: 0, 259: 0, 273: 3, 274: 0, 275: 0, 276: 0}, 20, {})
+	z.set("_skill_active_tab", 1)
+	var w := _window()
+	z.call("_fill_skill_masteries", w)
+	var force := _tabs(w, "SkillMasteryTabs")
+	_check(force == PackedStringArray(["Cold", "Lightning", "Fire", "Force"]),
+		"REGRESSION: the Force tab's masteries read Cold, Lightning, Fire, Force -- not Sorcery (got %s)" % str(force))
+	var view := w.find_child("SkillBoardView", true, false)
+	var name_node: Node = view.find_child("GDR_SKILLBOARD_MASTERYNAME", true, false) if view != null else null
+	var header := (name_node as Label).text if name_node is Label else ""
+	_check(header == "Cold Mastery", "273's header reads \"%%s %%s\" = 'Cold Mastery' (got '%s')" % header)
+	var natives := 0
+	if view != null:
+		for n in view.find_children("*", "Control", true, false):
+			if (n as Control).tooltip_text != "":
+				natives += 1
+	_check(view != null and natives == 0, "NEGATIVE: no control of the skill window keeps a native tooltip_text (got %d)" % natives)
+	var icon: Node = view.find_child("GDR_SKILLBOARD_ICON", true, false) if view != null else null
+	var tip: Array = z.call("bubble_tip_lines", icon) if icon is Control else []
+	_check(not tip.is_empty() and String(tip[0]["text"]) == "Cold", "the mastery icon's help is in the bubble, its first row the name (got %s)" % str(tip))
+	z.free()
 
 func _finish() -> void:
 	if _failures == 0:

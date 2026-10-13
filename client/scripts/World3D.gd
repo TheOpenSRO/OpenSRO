@@ -2634,6 +2634,19 @@ func _try_initialize_pk2_ui() -> void:
 	# (a quick slot, the world) comes back here.
 	_hud_panels.held_dropped_outside.connect(_on_held_dropped_outside)
 	_hud_panels.skill_use_requested.connect(_on_skill_use_requested)
+	# Round 786: a quick slot holding a skill shows the retail skill tooltip
+	# in the original's blue window (CIFSlotWithHelp::vslot_048 0x686db0:
+	# kind 0x0c, content 0x19 -> 0x67a970), read at hover time from what the
+	# slot holds; any other slot shows nothing (as before).
+	if _hud_underbar != null:
+		for qs in HudUnderbar.MAX_QUICKSLOT:
+			var slot_node := _hud_underbar.slot_node(qs)
+			if slot_node != null:
+				var q: int = qs
+				var rows := func() -> Array:
+					var bound: Dictionary = _quickslot_skills.get(q, {})
+					return _hud_panels.quickslot_skill_tip_lines(int(bound.get("id", 0))) if not bound.is_empty() else []
+				_hud_panels.set_bubble_tip(slot_node, rows, SkillTooltipLines.WRAP_WIDTH)
 	# The action window's buttons (round 781).
 	_hud_panels.action_use_requested.connect(func(id: int) -> void: _run_action(id))
 	# Only what differs from Create's own icons (a fresh pane shows the rows'

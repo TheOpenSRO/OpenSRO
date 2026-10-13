@@ -118,6 +118,12 @@ const S_UNIQUE_ID := 1
 const S_BASE_ID := 2
 const S_BASIC_CODE := 3          # SKILL_CH_..._NN -- names the cast .ban clip
 const S_LEVEL := 7
+## Basic_Activity: 0 a passive skill, 1 a buff, 2 an attack (MEASURED, round
+## 786: the seven China *_PASSIVE_A_01 rows read 0, the force buffs 1, the
+## swings 2). The skill tooltip reads "Passive" for 0, else "Active" (READ,
+## 0x67a970 tests the record's byte +0x61 -- the byte after the level at
+## +0x60, INFERRED to be this column).
+const S_ACTIVITY := 8
 # Cast timing / cost / range, verified against SMASH_A (see the skilldata-columns
 # note): all in ms except Range. CastTime/ReuseDelay are constant per skill;
 # ReqSP and ConsumeMP rise per level. Range varies by level in five skills
@@ -243,6 +249,8 @@ class BaseSkill:
 	## TypeID4s the skill is cast with; 255 or 0 = no requirement in that slot.
 	var req_weapon_1: int = 255
 	var req_weapon_2: int = 255
+	## Basic_Activity of level 1 (S_ACTIVITY): 0 passive, else active.
+	var activity: int = -1
 	## Each level's Target_Required (S_TARGET_REQUIRED) and TargetType_Land
 	## (S_TARGET_LAND), aligned with level_ids: whether the skill tick walks
 	## into reach before the cast (CombatNet.skill_tick_approaches).
@@ -430,6 +438,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				bs.desc_code = cols[S_TOOLTIP_DESC].strip_edges() if cols.size() > S_TOOLTIP_DESC else ""
 				bs.basic_code = cols[S_BASIC_CODE].strip_edges() if cols.size() > S_BASIC_CODE else ""
 			if level == 1:
+				bs.activity = _int_at(cols, S_ACTIVITY)
 				bs.req_weapon_1 = _int_at(cols, S_REQ_WEAPON_1)
 				bs.req_weapon_2 = _int_at(cols, S_REQ_WEAPON_2)
 				bs.cast_time_ms = _int_at(cols, S_CAST_TIME)

@@ -198,3 +198,14 @@ Lane A first. Lane B can run in parallel; A consumes B's fields when they land.
 - Font arg 3 is the same face bold (same 9-row cap height, 2-px stems, MEASURED), not FontIndex 3.
 - Implementation and measurements: `docs/rounds/r731.md`.
 - Round 731's review fixes: armour/shield reinforce from columns 82-85 (single-value line when the weapon pair is zero); a store's goods print `"%s : %I64d%s"` (`UIIT_STT_PRICE`, `UIIT_STT_GOLD`, no blank before, `0x678cf2`); all four requirement pairs (level, masteries 0x101-0x114 / 0x201-0x206 as `"%s: %s %s %d"`) in one colour, white if any is met; the mastery names resolve in `textdata_equip&skill.txt`; "Max. no. of magic options" always.
+
+## Round 786: the same window for skills, and the mastery names
+
+- The bubble is not the items' alone: `CIFSlotWithHelp::vslot_048` (`0x686db0`) builds a skill's help
+  in it too (`UI_SILKMALL 0x67a970`, for a skill window slot and a quick slot holding a skill).
+  OpenSRO's `ItemTooltipBubble` now draws skills as well (`SkillTooltipLines`), with a sign on more
+  than one row and an optional wrap width; `HudPanels.set_bubble_tip` gives any control its help
+  there instead of `tooltip_text`. See `docs/protocol/skill_tooltip.md`.
+- The requirement lines' mastery names (`UIIT_STT_MASTERY_*`, `0x67eec0`) keep the text manager's
+  first row in a joined `textuisystem.txt` (READ `0x8ca120`): 273 is "Cold", not the stock table's
+  "Sorcery" (`skill_tooltip.md` §1).
