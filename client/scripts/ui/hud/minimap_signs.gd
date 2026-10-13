@@ -24,8 +24,13 @@ class_name MinimapSigns
 ## OURS: the kinds are drawn in a fixed order (npc, monster, other), where the
 ## TextureRects drew in the order their pools grew; two signs of different
 ## kinds that overlap may stack the other way round.
-
-static var KINDS: Array = ["npc", "monster", "other"]
+##
+## Round 786, OURS: "unique" (mm_sign_unique, a monster whose rarity is 3 or
+## 8) is drawn last, over every other sign. READ, vslot_013 walks one entity
+## list (0xec4cec, next at +0xc; 0x6636d2..0x6639af) and draws each entity's
+## sign as it reaches it, so retail stacks a unique by its place in that
+## list, not by its kind.
+static var KINDS: Array = ["npc", "monster", "other", "unique"]
 const FLOATS := 12  # a 2D transform (8) and the custom data (4)
 
 const SHADER_CODE := "shader_type canvas_item;

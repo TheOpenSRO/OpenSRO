@@ -3281,6 +3281,12 @@ var _minimap_region := Vector2i(-1, -1)
 var _minimap_group_name := StringName()
 var _minimap_monsters: Array = []
 var _minimap_others: Array = []
+## Round 786: the monsters whose minimap sign is the unique's (rarity 3 or 8,
+## HudMinimap.monster_sign_kind), id -> body, a subset of _monster_bodies
+## kept with it (_build_monster_body, _free_monster_body, the zone change);
+## and the frame's list of their positions.
+var _minimap_unique_bodies := {}
+var _minimap_uniques: Array = []
 ## The rendered frame the minimap was last refreshed in (round 664).
 var _minimap_frame := -1
 
@@ -3389,11 +3395,11 @@ func _refresh_minimap() -> void:
 	# the drawn zoom is this many world units (a hair over, so the circle's
 	# own test still decides the edge).
 	var reach := HudMinimap.SIGN_RADIUS / maxf(_hud_minimap.tile_px(), 0.001) * HudMinimap.REGION_SPAN * 1.01
-	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
+	_minimap_fill_monsters(pos, reach)
 	# Round 757: the other players' signs are kept by the minimap and written
 	# as bodies move (_other_moved), not refilled from every body each frame.
 	_minimap_others_sync()
-	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
+	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others, _minimap_uniques)
 	_fill_party_marks(_minimap_region)
 	_hud_minimap.update_party(Vector2(local.x, local.z), _party_marks_mini)
 	_update_quest_signs(_minimap_region, Vector2(local.x, local.z))
@@ -3463,9 +3469,12 @@ func _minimap_put_other(body: Node3D) -> void:
 ## other players), skipping ones that are gone or hidden (a dead monster).
 ## A body held V hides still counts: whether the retail minimap reads V's
 ## flag was not read, so the minimap is left as it was.
-func _minimap_fill_positions(bodies: Dictionary, out: Array, centre: Vector3 = Vector3.ZERO, reach: float = INF) -> void:
+## `skip` (round 786): ids left out (the uniques, which take their own sign),
+## looked up only for a body inside the reach and only while it holds any.
+func _minimap_fill_positions(bodies: Dictionary, out: Array, centre: Vector3 = Vector3.ZERO, reach: float = INF, skip: Dictionary = {}) -> void:
 	out.clear()
 	var reach_sq := reach * reach
+	var skipping := not skip.is_empty()
 	for id in bodies:
 		var body: Node3D = bodies[id] as Node3D
 		if body != null and is_instance_valid(body) and (body.visible or _objects_hidden):
@@ -3473,7 +3482,19 @@ func _minimap_fill_positions(bodies: Dictionary, out: Array, centre: Vector3 = V
 			var dx := at.x - centre.x
 			var dz := at.z - centre.z
 			if dx * dx + dz * dz < reach_sq:
+				if skipping and skip.has(id):
+					continue
 				out.append(at)
+
+## Round 786: the monsters' signs, split by the sign each takes
+## (HudMinimap.monster_sign_kind, READ vslot_013): the uniques, kept apart at
+## spawn in _minimap_unique_bodies, into _minimap_uniques; every other
+## monster into _minimap_monsters. OURS: the split is made once a body, at
+## spawn, so the per-frame walk over up to 7,000 bodies (round 757) adds a
+## lookup only for a body in the sign circle while a unique is loaded.
+func _minimap_fill_monsters(centre: Vector3, reach: float) -> void:
+	_minimap_fill_positions(_monster_bodies, _minimap_monsters, centre, reach, _minimap_unique_bodies)
+	_minimap_fill_positions(_minimap_unique_bodies, _minimap_uniques, centre, reach)
 
 ## The way the player faces as a region-local ground vector (x east, z
 ## north), for the minimap's and world map's arrow. The player's front is its
@@ -5480,9 +5501,9 @@ func _refresh_dungeon_minimap() -> void:
 	_hud_minimap.set_dungeon_floor_text(TextZoneNameReader.text_for(names, _dungeon.dof.floor_name(_dungeon_block)))
 	var pos := player.global_position
 	var reach := HudMinimap.SIGN_RADIUS / maxf(_hud_minimap.tile_px(), 0.001) * HudMinimap.REGION_SPAN * 1.01
-	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
+	_minimap_fill_monsters(pos, reach)
 	_minimap_others_sync()
-	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
+	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others, _minimap_uniques)
 	# Round 775 (UI lane): the world map in a dungeon -- the floor the player
 	# is on, the arrow at its dungeon-space position, the room in the caption
 	# (HudWorldmap.update_player_dungeon). Every frame while open, every
@@ -6879,6 +6900,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	for monster_id in _monster_bodies.keys():
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
+	_minimap_unique_bodies.clear()
 	# And any body still fading out of the old zone (round 677): gone now,
 	# not left fading at its old-zone spot. And the old zone's corpse holds
 	# (round 677's review): their timers find no body of theirs and do
@@ -24068,6 +24090,11 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		_qa_split_strip(body, monster_skeleton)
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+	# Its minimap sign, decided once here (round 786, HudMinimap.monster_sign_kind).
+	if HudMinimap.monster_sign_kind(monster.rarity) == "unique":
+		_minimap_unique_bodies[monster.monster_id] = body
+	else:
+		_minimap_unique_bodies.erase(monster.monster_id)
 	# Round 771: made while V is held, it starts hidden.
 	if _objects_hidden and KeyMap.hides_under_v("monster"):
 		body.visible = false
@@ -24297,6 +24324,7 @@ func _free_monster_body(monster_id: int, keep_buffs: bool = false, fade: bool = 
 		else:
 			(body as Node).queue_free()
 	_monster_bodies.erase(monster_id)
+	_minimap_unique_bodies.erase(monster_id)
 	SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
 	if not keep_buffs:
 		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))

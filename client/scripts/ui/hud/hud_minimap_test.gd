@@ -119,6 +119,22 @@ Section = Create,"0,0,150,180","0"
 	_check(signs != null and signs.get_child_count() == 0,
 		"no artwork, no sign nodes (got %d)" % (signs.get_child_count() if signs != null else -1))
 
+	# --- round 786: a unique's sign ----------------------------------------
+	# READ, vslot_013 (0x663790..0x6637ac): a CICMonster whose +0x7ac is 3 or
+	# 8 takes +0x3b0 (mm_sign_unique, CIFMinimap::Create 0x6610d7), any other
+	# monster +0x3ac (mm_sign_monster).
+	_check(HudMinimap.monster_sign_kind(3) == "unique",
+		"a rarity-3 monster (Lord Yarkan, MOB_TK_BONELORD) takes the unique sign (%s)" % HudMinimap.monster_sign_kind(3))
+	_check(HudMinimap.monster_sign_kind(8) == "unique",
+		"a rarity-8 monster takes the unique sign too (%s)" % HudMinimap.monster_sign_kind(8))
+	for r: int in [0, 1, 4, 5, 6, 7]:
+		_check(HudMinimap.monster_sign_kind(r) == "monster",
+			"a rarity-%d monster keeps the monster sign (%s)" % [r, HudMinimap.monster_sign_kind(r)])
+	_check(String(HudMinimap.SIGN_TEXTURES.get("unique", "")) == "interface\\minimap\\mm_sign_unique.ddj",
+		"the unique sign's art is interface\\minimap\\mm_sign_unique.ddj")
+	_check(String(HudMinimap.SIGN_TEXTURES.get("monster", "")) == "interface\\minimap\\mm_sign_monster.ddj",
+		"the monster sign's art is unchanged")
+
 	# --- round 630 -------------------------------------------------------
 	# The window is mm_window.ddj's own 140x184 (ginterface.txt's
 	# GDR_MINIMAP), not 136x175: the stretch slid every circle of the art
