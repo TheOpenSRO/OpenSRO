@@ -84,15 +84,31 @@ var _tile_px: float = TILE_PX_START
 var _tile_px_target: float = TILE_PX_START
 
 ## The client's own sign artwork for what stands around the player, from
-## `interface\minimap\`. The quest-NPC sign also exists there
-## (mm_sign_questnpc) but nothing the client receives yet says which NPC
-## carries a quest, so it is not drawn. The party's signs are update_party's
-## (round 717).
+## `interface\minimap\`. READ: CIFMinimap::Create (0x660f70) loads each
+## through 0x5008f0 and keeps it -- mm_sign_monster at +0x3ac (0x661082),
+## mm_sign_unique at +0x3b0 (0x6610d7), mm_sign_npc at +0x3b4 (0x66112c),
+## mm_sign_otherplayer at +0x3b8 (0x661181). The tracked quest's NPC signs
+## are update_quest's (round 785), the party's update_party's (round 717).
+## mm_sign_animal (+0x3c8, 0x66137f) is drawn for a CICCos (a pet, horse or
+## transport); this client builds no such body, so it is not drawn (OPEN).
 const SIGN_TEXTURES := {
 	"npc": "interface\\minimap\\mm_sign_npc.ddj",
 	"monster": "interface\\minimap\\mm_sign_monster.ddj",
 	"other": "interface\\minimap\\mm_sign_otherplayer.ddj",
+	"unique": "interface\\minimap\\mm_sign_unique.ddj",
 }
+
+## Round 786: the sign a monster takes, by its rarity (CombatNet's
+## MonsterSnapshot.rarity, characterdata column 15). READ, vslot_013's class
+## checks (0x663780..0x6637ac): a CICMonster (IsKindOf 0xef1a84) whose byte
+## +0x7ac is 3 or 8 is drawn with +0x3b0 (mm_sign_unique), any other with
+## +0x3ac (mm_sign_monster). +0x7ac is the low nibble of the class byte the
+## monster's spawn carries (CICMonster::vslot_025: read at 0x9d38c4, stored
+## `and cl,0xf` at 0x9d38e1; the high nibble is +0x7ad, the party flag).
+## MEASURED: the art is 12x12; it is drawn on the same +-4 quad as every
+## other sign (0x66382f.., one quad for every kind).
+static func monster_sign_kind(rarity: int) -> String:
+	return "unique" if rarity == 3 or rarity == 8 else "monster"
 ## vslot_013 draws a monster, NPC or player sign only when its distance from
 ## the centre, in map pixels, is under half the aperture width less 8
 ## (0x663759..0x66377a: the distance against [w * 0.5] - 8.0): 44.5 here.
@@ -489,7 +505,11 @@ static func sign_offset(player_world: Vector3, entity_world: Vector3, map_size: 
 ## sign artwork, at their real positions. Each list holds world positions;
 ## a sign further out than SIGN_RADIUS is not drawn. Pools the TextureRects
 ## so a frame's update allocates nothing once the counts have settled.
-func update_signs(player_world: Vector3, npcs: Array, monsters: Array, others: Array) -> void:
+##
+## Round 786: `uniques` are the monsters monster_sign_kind gives the unique
+## sign (World3D keeps them apart at spawn). A unique is in that list and not
+## in `monsters`: vslot_013 draws a monster with the one art or the other.
+func update_signs(player_world: Vector3, npcs: Array, monsters: Array, others: Array, uniques: Array = []) -> void:
 	if _signs_root == null:
 		return
 	# Round 757: lists go up whole (npc, monster: a few dozen); the other
@@ -497,6 +517,7 @@ func update_signs(player_world: Vector3, npcs: Array, monsters: Array, others: A
 	# move, unless a caller hands a list (tests, an older caller).
 	_signs_root.set_list("npc", npcs)
 	_signs_root.set_list("monster", monsters)
+	_signs_root.set_list("unique", uniques)
 	if not others.is_empty():
 		_signs_root.clear_kind("other")
 		var i := 0
@@ -515,11 +536,11 @@ func update_signs(player_world: Vector3, npcs: Array, monsters: Array, others: A
 	for kind in SIGN_TEXTURES:
 		drawn += _signs_root.drawn(kind, player_world, _tile_px, SIGN_RADIUS, REGION_SPAN)
 	var keyed := _signs_root.keyed_count("other")
-	var total := npcs.size() + monsters.size() + keyed
+	var total := npcs.size() + monsters.size() + uniques.size() + keyed
 	if drawn != _last_sign_report.x or total != _last_sign_report.y:
 		_last_sign_report = Vector2i(drawn, total)
-		print("HudMinimap: signs drawn %d of %d entities (npc %d, monster %d, other %d)" % [
-			drawn, total, npcs.size(), monsters.size(), keyed])
+		print("HudMinimap: signs drawn %d of %d entities (npc %d, monster %d, unique %d, other %d)" % [
+			drawn, total, npcs.size(), monsters.size(), uniques.size(), keyed])
 
 ## Round 757: one other player's sign at `world` (MinimapSigns' keyed kind),
 ## written when the body moves; `shown` false hides it (a hidden body).

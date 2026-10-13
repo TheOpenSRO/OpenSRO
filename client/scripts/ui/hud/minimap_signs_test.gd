@@ -103,4 +103,53 @@ func _test_minimap() -> void:
 	mm.put_other(5, p + Vector3(10, 0, 0))
 	mm.drop_other(5)
 	_check(mm.other_ids().is_empty(), "with no artwork nothing is held (the kind draws nothing)")
+	_test_unique(mm, signs as MinimapSigns, p)
 	mm.queue_free()
+
+## Round 786: a unique (rarity 3 or 8) is drawn with its own sign
+## (mm_sign_unique, CIFMinimap +0x3b0) and not the monster's; a normal
+## monster keeps the monster sign. Two textures of different colours stand
+## for the two arts.
+func _test_unique(mm: HudMinimap, signs: MinimapSigns, p: Vector3) -> void:
+	if signs == null:
+		return
+	var red := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	red.fill(Color.RED)
+	var purple := Image.create(12, 12, false, Image.FORMAT_RGBA8)
+	purple.fill(Color.PURPLE)
+	var monster_tex := ImageTexture.create_from_image(red)
+	var unique_tex := ImageTexture.create_from_image(purple)
+	signs.set_texture("monster", monster_tex)
+	signs.set_texture("unique", unique_tex)
+	var px := mm.tile_px()
+	var span := HudMinimap.REGION_SPAN
+	var radius := HudMinimap.SIGN_RADIUS
+	var normal_at := p + Vector3(0, 0, 50)
+	var unique_at := p + Vector3(60, 0, 0)
+	var rarity8_at := p + Vector3(-40, 0, 30)
+	# World3D's split: a body goes to the list its rarity's kind names.
+	var monsters: Array = []
+	var uniques: Array = []
+	for pair: Array in [[0, normal_at], [3, unique_at], [8, rarity8_at]]:
+		(uniques if HudMinimap.monster_sign_kind(int(pair[0])) == "unique" else monsters).append(pair[1])
+	mm.update_signs(p, [], monsters, [], uniques)
+	_check(signs.drawn("unique", p, px, radius, span) == 2,
+		"the rarity-3 and rarity-8 monsters are drawn with the unique sign (%d)" % signs.drawn("unique", p, px, radius, span))
+	_check(signs.drawn("monster", p, px, radius, span) == 1,
+		"the normal monster keeps the monster sign, and the uniques are not drawn with it too (%d)" % signs.drawn("monster", p, px, radius, span))
+	var mk: MinimapSigns.Kind = signs._kinds["monster"]
+	var uk: MinimapSigns.Kind = signs._kinds["unique"]
+	_check(mk.texture == monster_tex and uk.texture == unique_tex, "each kind draws its own art")
+	_check(is_equal_approx(mk.buf[8], normal_at.x) and is_equal_approx(mk.buf[9], normal_at.z),
+		"the monster sign sits at the normal monster")
+	_check(is_equal_approx(uk.buf[8], unique_at.x) and is_equal_approx(uk.buf[9], unique_at.z),
+		"the unique sign sits at the unique")
+	_check(MinimapSigns.KINDS.back() == "unique", "OURS: the unique kind is drawn last, over the rest")
+	# Out of the sign circle (44.5 px; 534 units at 160 px a region) it is
+	# not drawn, as every sign.
+	mm.update_signs(p, [], monsters, [], [p + Vector3(600, 0, 0)])
+	_check(signs.drawn("unique", p, px, radius, span) == 0, "a unique past the sign radius is not drawn")
+	# No unique list (an older caller): the kind is emptied.
+	mm.update_signs(p, [], monsters, [])
+	_check(signs.drawn("unique", p, px, radius, span) == 0 and signs.drawn("monster", p, px, radius, span) == 1,
+		"with no uniques handed, none is drawn and the monster sign stays")

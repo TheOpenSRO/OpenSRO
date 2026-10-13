@@ -8279,6 +8279,63 @@ the flash reuses the berserk flash's step): no perf gate.
   type's link to the entry reason; who plays `SYSTEM_UNTOUCHABLE`; the 1000 ms timer 0xd after the
   load; 0x3014; the siege and data-driven worlds' times (no such worlds here).
 
+### Round 786 (part): Uniques show their own minimap sign
+
+The user: "uniques should show a special icon on the minimap so it's easier to find them" -- they
+found Lord Yarkan only by searching by hand. Every monster had the one red monster sign. The
+reading is `docs/protocol/minimap.md` ("The signs and the arrow").
+
+**Retail (READ, `sro_client.exe`, the decompile and the asm on the box):**
+- **The art.** `CIFMinimap::Create` (`0x660f70`) loads `interface\minimap\mm_sign_unique.ddj`
+  (string `0xda0e20`, pushed at `0x6610ab`, loaded by `0x5008f0`) and stores it at `+0x3b0`
+  (`0x6610d7`), between the monster sign (`+0x3ac`, `0x661082`) and the NPC sign (`+0x3b4`,
+  `0x66112c`). MEASURED (`Pk2Reader` + `DdjReader` over the box's Media.pk2): the file is there,
+  12x12, its opaque pixels a purple (mean 130, 37, 178) where the monster sign's are red.
+- **Which monsters.** vslot_013's sign loop (`0x6636d2..0x6639af`) tests each entity with
+  `IsKindOf` (`0xb94b90`): a CICMonster (`0xef1a84`) whose byte `+0x7ac` is 3 or 8 takes `+0x3b0`
+  (`0x663790..0x6637a6`), any other CICMonster `+0x3ac`. The quad is the same +-4 for every kind
+  (all branches join at `0x66382f`; `0xe1b860`), so the 12x12 art is drawn at 8x8.
+- **`+0x7ac`.** `CICMonster::vslot_025` (`0x9d3850`), the monster's spawn reader, reads one byte
+  (`0x9d38c4`) and stores its low nibble at `+0x7ac` (`and cl,0xf`, `0x9d38e1`), its high nibble
+  at `+0x7ad` (the party flag, round 660). INFERRED: that byte is characterdata's Rarity
+  (column 15), which is what our server sends; MEASURED over the box's characterdata's 6,850
+  monster rows, rarity 3 is on 605 of them, the uniques among them (`MOB_TK_BONELORD`, "Lord
+  Yarkan", is 3), and rarity 8 on 18 boss rows of `TQ` / `RM` (`MOB_TQ_TOMBGENERAL`,
+  `MOB_RM_DEVILSAYTAN`, ...).
+
+**Client:**
+- `HudMinimap.SIGN_TEXTURES` gains `"unique"` -> `mm_sign_unique.ddj`, and
+  `HudMinimap.monster_sign_kind(rarity)` is the rule (`"unique"` for 3 or 8).
+- `World3D._build_monster_body` decides a body's sign once, from the snapshot's rarity, into
+  `_minimap_unique_bodies` (id -> body, a subset of `_monster_bodies`, dropped in
+  `_free_monster_body` and at the zone change). `_minimap_fill_monsters` (both the field's and the
+  dungeon's refresh) fills `_minimap_monsters` without the uniques and `_minimap_uniques` from the
+  subset; `update_signs` takes the second list as a new `uniques` argument (default empty).
+- OURS: the cost. The skip is looked up only for a body already inside the sign reach, and only
+  while a unique is loaded; with none, the per-frame walk over the monsters (up to 7,000 bodies,
+  round 757) adds one bool test a body in reach.
+- OURS: `MinimapSigns` draws a kind at a time (round 757); the `unique` kind is drawn last, over
+  every other sign. Retail draws each entity's sign in the order of its one entity list
+  (`0xec4cec`, next at `+0xc`), so a unique can be under a neighbour's sign there.
+
+**Tests:** `hud_minimap_test.gd` (rarity 3 and 8 -> unique, 0, 1, 4, 5, 6, 7 -> monster; the art
+paths), `minimap_signs_test.gd` (the rarity-3 and rarity-8 monsters drawn with the unique art and
+not the monster art, the normal monster unchanged, the radius, an older caller without the list),
+new `world/minimap_unique_test.gd` (World3D: three monsters of rarity 0, 3, 8 built through
+`_spawn_or_update_monster`; the set at spawn, the split, the reach, a unique leaving). NEGATIVE: the
+world suite against dev `710d7e97`'s World3D prints `FAIL World3D._minimap_fill_monsters exists`.
+
+**Gates:** `check` ALL LOAD (788 scripts, 9 scenes); `tests` "ran 304 suite(s), 0 failing"
+(`RENDER_DIR=/opt/opensro-client-unique`, `GODOT_LOCK=/var/tmp/unique/lock`; no native library
+shipped, so the GDScript readers ran). Perf gate `--sites crowd` (2,500 monsters within 1,920
+of the player, none of them a unique; base dev `710d7e97`, head `7ca9ecd3`, 1280x720, Forward+,
+median of 3): frame 5.75 -> 5.45 ms, entry 11,301 -> 11,168 ms, freeze 3,453 -> 3,634 ms,
+hitches 5 -> 5, all SAME.
+
+**OPEN:** the animal sign (`+0x3c8`, `mm_sign_animal.ddj`, `0x66137f`) is drawn for a CICCos
+(`0xeef6f0`, `0x6637ae..0x6637c4`: a pet, horse or transport); this client builds no such body.
+The signs still sit under the frame (docs/TODO.md, the round 717 review's finding 1).
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

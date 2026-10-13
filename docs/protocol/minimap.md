@@ -91,9 +91,52 @@ position every frame. OURS: `World3D._refresh_minimap` refreshes every physics f
   distance from the centre is less than `w * 0.5 - 8.0` (`0x663759..0x66377a`) -- 44.5 here. The
   quad is +-4 (`0xe1b860`) whatever the art's size. Which art: monster `+0x3ac`, or unique `+0x3b0`
   when the monster's `+0x7ac` is 3 or 8; animal `+0x3c8`; NPC `+0x3b4`; other player `+0x3b8`
-  (the class checks at `0x663787..0x66380f`). OPEN: unique, animal, party, quest-NPC and the party
-  and quest arrows (a 32x32 quad, +-16, `0xda0ef8` / `0xe1b8e0`, drawn instead of the sign when the distance vslot_013 computes for it is 47.0 (`0xda0ef0`) or more; its unit was not traced) are not drawn by
-  `HudMinimap`, which has no data for them.
+  (the class checks at `0x663787..0x66380f`). The party's signs and arrows (round 717,
+  `party_gui.md` section 9) and the tracked quest's NPC signs and arrows (round 785; a 32x32
+  quad, +-16, `0xda0ef8` / `0xe1b8e0`, drawn instead of the sign when the distance vslot_013
+  computes for it is 47.0 (`0xda0ef0`) or more; its unit was not traced) are drawn in `MapMarks`.
+- READ, the sign art (`CIFMinimap::Create`, `0x660f70`; each path built by `0x425ae0` and
+  loaded by `0x5008f0`, then stored):
+
+  | Slot | File (`interface\minimap\`) | String | Store | MEASURED size |
+  |---|---|---|---|---|
+  | `+0x3ac` | `mm_sign_monster.ddj` | `0xda0e48` | `0x661082` | 8x8 |
+  | `+0x3b0` | `mm_sign_unique.ddj` | `0xda0e20` | `0x6610d7` | 12x12 |
+  | `+0x3b4` | `mm_sign_npc.ddj` | `0xda0dfc` | `0x66112c` | 8x8 |
+  | `+0x3b8` | `mm_sign_otherplayer.ddj` | `0xda0dd0` | `0x661181` | 8x8 |
+  | `+0x3c8` | `mm_sign_animal.ddj` | `0xda0ccc` | `0x66137f` | 8x8 |
+
+  MEASURED (round 786, `Pk2Reader` and `DdjReader` over the box's Media.pk2): all five are in
+  `interface\minimap\`; the unique's opaque pixels average (130, 37, 178), a purple, against the
+  monster sign's red (176, 19, 19). All are drawn on the same +-4 quad: every class branch
+  sets its texture and joins at `0x66382f`, which builds the quad from `0xe1b860`.
+- READ, the class checks (`0x663780..0x66381c`), in this order, each `IsKindOf` (`0xb94b90`):
+  CICMonster (`0xef1a84`): `+0x7ac` 3 or 8 -> `+0x3b0`, otherwise `+0x3ac`; else CICCos
+  (`0xeef6f0`) -> `+0x3c8`; else CICNPC (`0xef1ac4`) -> `+0x3b4`; else CICUser (`0xef1bc0`) ->
+  `+0x3b8`; else no sign. The loop (`0x6636d2..0x6639af`) walks one entity list (head
+  `0xec4cec`, next at `+0xc`) and draws each entity's sign as it reaches it.
+- READ, `+0x7ac`: CICMonster's spawn reader `CICMonster::vslot_025` (`0x9d3850`) reads one byte
+  (`0x9d38c4`, `MsgStreamBuffer::Read`, 1), stores its low nibble at `+0x7ac` (`0x9d38de`
+  `and cl,0xf`, `0x9d38e1`) and its high nibble at `+0x7ad` (`0x9d38e7`, the party flag, round
+  660). The same function uses the low nibble to scale the model (rarity 1, 4, 6; round 660).
+  INFERRED that the byte the server sends is characterdata's Rarity (`_RefObjCommon` column 15),
+  which is what this project's server sends (`MonsterSnapshot.Rarity`, the species' column 15,
+  `server/internal/nest/hatch.go`) and the client reads (`CombatNet.MonsterSnapshot.rarity`, the
+  party bit 8 stripped). The byte's server-side source in retail was not read. MEASURED over the
+  box's characterdata (13,297 rows), the 6,850 monster rows (TypeID 1/2/1) have Rarity 0 (6,123),
+  1 (10), 3 (605), 4 (1), 6 (2), 7 (91) and 8 (18); the rarity-3 rows are the uniques
+  (`MOB_TK_BONELORD`, "Lord Yarkan"; `MOB_CH_TIGERWOMAN`, `MOB_OA_URUCHI`, `MOB_KK_ISYUTARU`), the
+  rarity-8 rows bosses of `TQ` and `RM` (`MOB_TQ_TOMBGENERAL`, `MOB_TQ_SNAKEGENERAL`,
+  `MOB_TQ_BLACKSNAKE`, `MOB_RM_SPIRITS`, `MOB_RM_DEVILSAYTAN`, `MOB_RM_TAHOMET_ROC`,
+  `MOB_RM_WINGTRIBEKNIGHT`, and their `_CLON` / `_L2` / `_L3` rows).
+- Round 786: `HudMinimap.monster_sign_kind` is that rule (`"unique"` for rarity 3 or 8), and
+  `World3D._build_monster_body` decides it once a body (`_minimap_unique_bodies`); the frame's
+  `_minimap_fill_monsters` hands a unique to the `unique` kind of `MinimapSigns` and not to the
+  monster list. OURS: `MinimapSigns` draws a kind at a time, the unique kind last, so a unique's
+  sign is always over the rest; retail stacks signs by the entity list's order.
+- OPEN: the animal sign (`+0x3c8`) is drawn for a CICCos, a pet, horse or transport (the class
+  `CIFTargetWindow` also tells apart, `hud_target.gd`); this client builds no such body, so it has
+  nothing to draw it for.
 - READ: the arrow is a 16x16 quad (+-8, `0xd99a70` / `0xd89240`) about the aperture's centre,
   turned by `-(+0x3ec)` (`0x665366`: `fmul` by -1.0, `0xe1b8e8`) through `0x8b5c50`, which computes
   `(x cos - y sin, x sin + y cos)` with `0xb44a10` the cos (`fcos`) and `0xb44b40` the sin (`fsin`):
