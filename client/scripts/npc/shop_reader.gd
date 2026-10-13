@@ -30,6 +30,14 @@ const T_TABGROUP := "server_dep\\silkroad\\textdata\\refshoptabgroup.txt"
 class Tab:
 	var name_strid: String
 	var item_codes: PackedStringArray = PackedStringArray()
+	## Beside item_codes: the ItemInstance each good is listed as, null for
+	## the reference item. Only an NPC of OpenSRO's own fills it (round 786,
+	## NpcShopDefNet.OP_SHOP_GOODS); a retail tab leaves it empty.
+	var instances: Array = []
+
+	## The instance good `i` is listed as, or null.
+	func instance_at(i: int) -> Object:
+		return instances[i] as Object if i >= 0 and i < instances.size() else null
 
 ## The parsed shop tables. Build once, then query with tabs_for(npc_code).
 var _group_by_npc: Dictionary = {}     # NPC code (upper) -> group code

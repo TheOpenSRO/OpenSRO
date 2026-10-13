@@ -75,12 +75,16 @@ const OpNpcShopDef uint16 = 0x00ba
 // whole store; an unknown opcode it only logs and drops. So either side can
 // update first.
 //
-// The retail client gets the same thing from its own archive: a store's
-// good is a package (refshopgoods -> refscrapofpackageitem), whose scrap
-// row carries OptLevel, Variance, Data, MagParamNum and MagParam1..12
-// (READ, GlobalDataManager::RefParse_refscrapofpackageitem c:0x9824e0), and
-// the client builds each package's SOItem from them (c:0x8bf3a0) for the
-// store to copy into its slots. docs/protocol/test_items_npc.md.
+// The retail client gets a good's plus and blue options from its own
+// archive: a store's good is a package (refshopgoods ->
+// refscrapofpackageitem), whose scrap row carries OptLevel, Variance, Data,
+// MagParamNum and MagParam1..12 (READ, GlobalDataManager::
+// RefParse_refscrapofpackageitem c:0x9824e0). c:0x8bf3a0 builds each
+// package's SOItem from the OptLevel and the MagParams (READ) for the store
+// to copy into its slots (c:0x6d2310 -> 0x6d1ff0); it never applies the
+// Variance column, so a retail good reads as variance 0. This NPC's listing
+// carries the variance its piece is bought with (OURS: the user's "100%
+// white stats"). docs/protocol/test_items_npc.md.
 const OpNpcShopGoods uint16 = 0x00bb
 
 // MaxTabs is the store window's tab count (READ: CIFStoreForPackage builds
