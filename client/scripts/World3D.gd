@@ -11782,7 +11782,8 @@ func _auto_potion_status(st: StatusNet.ObjectStatus) -> void:
 ## pressed), cancel, cmd:<line> (a chat-console line, e.g. a GM /hurt), log
 ## (the settings, the timers and the slots' stacks). Each prints `QA AUTOPOT`.
 ## Round 786 (hotbar labels) adds skill:<quick slot>:<skill id> (a skill's
-## icon on any slot) and counts (each filled slot's drawn count, `QA HOTBAR`).
+## icon on any slot) and counts (each filled slot's drawn count, `QA HOTBAR`);
+## the cooldown overlay round adds cool:<skill id>:<ms> (its re-use time armed).
 func _qa_autopot_step(tick: int) -> void:
 	var spec := OS.get_environment("OPENSRO_QA_AUTOPOT")
 	if spec == "":
@@ -11827,6 +11828,25 @@ func _qa_autopot_step(tick: int) -> void:
 				_hud_underbar.set_slot_item(slot, _ui_builder.load_texture(path) if path != "" and _ui_builder != null else null)
 			_save_hotbar()
 			print("QA AUTOPOT skill on quickslot %d <- %d (icon %s)" % [slot, sid, path])
+		elif step.begins_with("cool:"):
+			# Round 786 (cooldown overlay): cool:<skill id>:<ms> arms the
+			# skill's re-use time as a cast would (no cast, no server), so a
+			# render shows the bar's and the skill window's sweep.
+			var a := step.trim_prefix("cool:").split(":")
+			var sid := int(a[0])
+			_skill_cooldowns.arm(sid, int(_skill_reuse(sid)[1]), int(a[1]) if a.size() > 1 else 10000)
+			print("QA AUTOPOT cooldown armed: skill %d, %s ms" % [sid, a[1] if a.size() > 1 else "10000"])
+		elif step.begins_with("coolboard:"):
+			# coolboard:<ms>: every learned skill the skill window shows, the
+			# i-th of n for ms * (i + 1) / n, so the sweeps stand at different
+			# phases in one picture.
+			var view: SkillBoard = _hud_panels.skill_board_view() if _hud_panels != null else null
+			var ids: Array = view.cooldown_ids() if view != null else []
+			var total := int(step.trim_prefix("coolboard:"))
+			for i in range(ids.size()):
+				var sid := int(ids[i])
+				_skill_cooldowns.arm(sid, int(_skill_reuse(sid)[1]), int(float(total) * (i + 1) / maxi(ids.size(), 1)))
+			print("QA AUTOPOT cooldown armed on the skill window: %s" % str(ids))
 		elif step == "counts" and _hud_underbar != null:
 			# Round 786: every filled quick slot's drawn count, all pages.
 			var drawn := []
@@ -13783,7 +13803,8 @@ func _arm_skill_cooldown(skill_id: int) -> void:
 	_skill_cooldowns.arm(skill_id, int(r[1]), int(r[0]))
 	print("COOLDOWN: skill %d re-usable in %d ms (group %d)" % [skill_id, int(r[0]), int(r[1])])
 
-## Counts the timers down and draws each bar slot's sweep or charged flash.
+## Counts the timers down and draws each bar slot's sweep or charged flash,
+## and the skill window's (round 786).
 func _tick_skill_cooldowns(delta: float) -> void:
 	# The skill index is finished here as soon as its worker is done (round
 	# 785): the re-use gate, the cursor cast and the tele reach read it, and
@@ -13795,16 +13816,25 @@ func _tick_skill_cooldowns(delta: float) -> void:
 	var ms := int(_skill_cooldown_carry)
 	_skill_cooldown_carry -= float(ms)
 	_skill_cooldowns.tick(ms)
-	if _hud_underbar == null:
-		return
 	if _skill_cooldowns.count() == 0 and not _skill_cooldown_shown:
 		return
 	_skill_cooldown_shown = _skill_cooldowns.count() > 0
-	for slot in _quickslot_skills:
-		var id := int(_quickslot_skills[slot]["id"])
-		var g := int(_skill_reuse(id)[1])
-		_hud_underbar.set_slot_cooldown(int(slot), SkillCooldowns.delay_frame(_skill_cooldowns.ratio(id, g)),
-			SkillCooldowns.charge_frame(_skill_cooldowns.flash(id, g)))
+	if _hud_underbar != null:
+		for slot in _quickslot_skills:
+			var f := _skill_cooldown_frames(int(_quickslot_skills[slot]["id"]))
+			_hud_underbar.set_slot_cooldown(int(slot), f[0], f[1])
+	# The skill window's learned slots draw the same (round 786, READ: its
+	# slot is a CIFSlotWithHelp of the skill kind 0x49, drawn by the
+	# same 0x67cfb0 -- SkillBoard's header).
+	if _hud_panels != null:
+		_hud_panels.apply_skill_cooldowns(_skill_cooldown_frames)
+
+## A skill's [delay_frame, charge_frame] now (SkillCooldowns), -1 for none:
+## the record of the skill itself or of its cooldown group.
+func _skill_cooldown_frames(skill_id: int) -> PackedInt32Array:
+	var g := int(_skill_reuse(skill_id)[1])
+	return PackedInt32Array([SkillCooldowns.delay_frame(_skill_cooldowns.ratio(skill_id, g)),
+		SkillCooldowns.charge_frame(_skill_cooldowns.flash(skill_id, g))])
 
 ## The group entry behind _body_animation_for, for its events.
 func _body_animation_entry(body: String, action_type: int, group: String) -> BsrReader.AnimationEntry:

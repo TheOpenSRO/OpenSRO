@@ -2880,7 +2880,8 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       are gone. MEASURED: every clip the China (464) and Europe (399) records ask for resolves in
       the bodies (`tools/probe_skill_deco_coverage.gd`). Still OPEN: the order READY and WAIT show
       in (retail starts WAIT first, READY over it -- here READY then the WAIT loop); the Hide
-      Weapon column; the skill window's re-use sweep (slot type 0x49, READ in `FUN_0067cfb0`).
+      Weapon column. (The skill window's re-use sweep, slot kind 0x49, was built in round 786 --
+      `docs/protocol/skill_reuse_display.md`.)
 - [x] **The recast rule's other branches** (round 636): all of FUN_0059d870 read and built -- the
       `dttp` and `efr` kind-2 (`+0x290`) branches, and the book's state bit set that Action_Overlap
       and `ovl2` fill (`SkillBook::SetGroupBits` 0x59dc00 / `FUN_0059db10`). Fire Protection no longer

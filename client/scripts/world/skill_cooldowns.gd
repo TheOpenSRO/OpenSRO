@@ -94,18 +94,20 @@ func count() -> int:
 func clear() -> void:
 	_records.clear()
 
-## The frame of a 16 x 16 sheet of 32-pixel cells (skill_delay.ddj, 512 x
-## 512) for a sweep at `r` (READ, UI_SILKMALL::FUN_0067cfb0: frame =
-## ftol(239 - r * 239), column = frame & 15, row = frame >> 4, UV step
-## 32 / 512). -1 when r is 0 (nothing drawn).
+## The frame of skill_delay.ddj's 16 x 16 grid for a sweep at `r` (READ,
+## UI_SILKMALL::FUN_0067cfb0: frame = ftol(239.0 - r * 239.0), column =
+## frame & 15, row = frame >> 4, each cell 32/512 = 1/16 of the sheet in UV;
+## MEASURED the sheet is 256 x 256, so 16-pixel cells -- SkillDelayOverlay).
+## -1 when r is 0 (nothing drawn).
 static func delay_frame(r: float) -> int:
 	if r <= 0.0:
 		return -1
 	return clampi(int(239.0 - r * 239.0), 0, 239)
 
-## The frame of the charged flash (skill_charge.ddj, 64 x 64, a 4 x 4 sheet
-## of 16-pixel cells): ftol(15 - f * 15) (READ, the same function). -1 when f
-## is 0.
+## The frame of the charged flash (skill_charge.ddj, MEASURED 64 x 64, a
+## 4 x 4 grid of 16-pixel cells, each 16/64 = 1/4 of the sheet in UV):
+## ftol(15.0 - f * 15.0), column = frame & 3, row = frame >> 2 (READ, the
+## same function). -1 when f is 0.
 static func charge_frame(f: float) -> int:
 	if f <= 0.0:
 		return -1
