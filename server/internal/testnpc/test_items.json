@@ -1,5 +1,5 @@
 {
-  "_comment": "OURS (round 783): the Test Items NPC. Every value here is OpenSRO's own choice: the NPC is not in the retail archives. Goods are RULES over the player's own item table (CodeName128 prefix/suffix or pattern, TypeID, ItemClass), resolved by the server at boot against the reference data it loaded; no item row is listed here. Tab labels that start SN_/UIIT_ are the client's own text keys (the retail vendors' tab names, refshoptab.txt column 5); other text is ours. Every good is free at this NPC (free: the user's choice); the same items keep their own price at any other store. docs/protocol/test_items_npc.md.",
+  "_comment": "OURS (round 783): the Test Items NPC. Every value here is OpenSRO's own choice: the NPC is not in the retail archives. Goods are RULES over the player's own item table (CodeName128 prefix/suffix or pattern, TypeID, ItemClass), resolved by the server at boot against the reference data it loaded; no item row is listed here. Tab labels that start SN_/UIIT_ are the client's own text keys (the retail vendors' tab names, refshoptab.txt column 5); other text is ours. Every good is free at this NPC (free: the user's choice); the same items keep their own price at any other store. The Seal of Nova rules take the UNLOCKED rows, _A_RARE_ACTIVE (round 786: required level 101, SN_ITEM_UNLOCKED_TT_DESC), not the locked _A_RARE ones (level 111); the anchored $ leaves the _A_RARE_SWITCHnn_ACTIVE variants out. docs/protocol/test_items_npc.md.",
   "name": "Test Items",
   "model": "NPC_SD_T_AREA_POTION",
   "greeting": "Every 11th degree alchemy item and every Seal of Nova item, for testing.",
@@ -44,13 +44,13 @@
       "label": "Purchase Chinese Seal of Nova Weapons and Accessories",
       "tabs": [
         {"label": "SN_TAB_WEAPON", "rules": [
-          {"code": "^ITEM_CH_[A-Z]+_11_A_RARE$", "type": "3/1/6/*", "item_class": 31}
+          {"code": "^ITEM_CH_[A-Z]+_11_A_RARE_ACTIVE$", "type": "3/1/6/*", "item_class": 31}
         ]},
         {"label": "SN_TAB_SHIELD", "rules": [
-          {"code": "^ITEM_CH_[A-Z]+_11_A_RARE$", "type": "3/1/4/*", "item_class": 31}
+          {"code": "^ITEM_CH_[A-Z]+_11_A_RARE_ACTIVE$", "type": "3/1/4/*", "item_class": 31}
         ]},
         {"label": "SN_TAB_ACCESSORY", "rules": [
-          {"code": "^ITEM_CH_[A-Z]+_11_A_RARE$", "type": "3/1/5/*", "item_class": 31}
+          {"code": "^ITEM_CH_[A-Z]+_11_A_RARE_ACTIVE$", "type": "3/1/5/*", "item_class": 31}
         ]}
       ]
     },
@@ -58,46 +58,46 @@
       "label": "Purchase European Seal of Nova Weapons and Accessories",
       "tabs": [
         {"label": "SN_TAB_WEAPON", "rules": [
-          {"code": "^ITEM_EU_[A-Z]+_11_A_RARE$", "type": "3/1/6/*", "item_class": 31}
+          {"code": "^ITEM_EU_[A-Z]+_11_A_RARE_ACTIVE$", "type": "3/1/6/*", "item_class": 31}
         ]},
         {"label": "SN_TAB_SHIELD", "rules": [
-          {"code": "^ITEM_EU_[A-Z]+_11_A_RARE$", "type": "3/1/4/*", "item_class": 31}
+          {"code": "^ITEM_EU_[A-Z]+_11_A_RARE_ACTIVE$", "type": "3/1/4/*", "item_class": 31}
         ]},
         {"label": "SN_TAB_ACCESSORY", "rules": [
-          {"code": "^ITEM_EU_[A-Z]+_11_A_RARE$", "type": "3/1/12/*", "item_class": 31}
+          {"code": "^ITEM_EU_[A-Z]+_11_A_RARE_ACTIVE$", "type": "3/1/12/*", "item_class": 31}
         ]}
       ]
     },
     {
       "label": "Purchase Chinese Male Seal of Nova Protector",
       "tabs": [
-        {"label": "SN_TAB_HEAVYARMOR", "rules": [{"code": "^ITEM_CH_M_HEAVY_11_[A-Z]{2}_A_RARE$", "type": "3/1/3/*", "item_class": 31}]},
-        {"label": "SN_TAB_LIGHTARMOR", "rules": [{"code": "^ITEM_CH_M_LIGHT_11_[A-Z]{2}_A_RARE$", "type": "3/1/2/*", "item_class": 31}]},
-        {"label": "SN_TAB_CLOTHES", "rules": [{"code": "^ITEM_CH_M_CLOTHES_11_[A-Z]{2}_A_RARE$", "type": "3/1/1/*", "item_class": 31}]}
+        {"label": "SN_TAB_HEAVYARMOR", "rules": [{"code": "^ITEM_CH_M_HEAVY_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/3/*", "item_class": 31}]},
+        {"label": "SN_TAB_LIGHTARMOR", "rules": [{"code": "^ITEM_CH_M_LIGHT_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/2/*", "item_class": 31}]},
+        {"label": "SN_TAB_CLOTHES", "rules": [{"code": "^ITEM_CH_M_CLOTHES_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/1/*", "item_class": 31}]}
       ]
     },
     {
       "label": "Purchase Chinese Female Seal of Nova Protector",
       "tabs": [
-        {"label": "SN_TAB_HEAVYARMOR", "rules": [{"code": "^ITEM_CH_W_HEAVY_11_[A-Z]{2}_A_RARE$", "type": "3/1/3/*", "item_class": 31}]},
-        {"label": "SN_TAB_LIGHTARMOR", "rules": [{"code": "^ITEM_CH_W_LIGHT_11_[A-Z]{2}_A_RARE$", "type": "3/1/2/*", "item_class": 31}]},
-        {"label": "SN_TAB_CLOTHES", "rules": [{"code": "^ITEM_CH_W_CLOTHES_11_[A-Z]{2}_A_RARE$", "type": "3/1/1/*", "item_class": 31}]}
+        {"label": "SN_TAB_HEAVYARMOR", "rules": [{"code": "^ITEM_CH_W_HEAVY_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/3/*", "item_class": 31}]},
+        {"label": "SN_TAB_LIGHTARMOR", "rules": [{"code": "^ITEM_CH_W_LIGHT_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/2/*", "item_class": 31}]},
+        {"label": "SN_TAB_CLOTHES", "rules": [{"code": "^ITEM_CH_W_CLOTHES_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/1/*", "item_class": 31}]}
       ]
     },
     {
       "label": "Purchase European Male Seal of Nova Protector",
       "tabs": [
-        {"label": "SN_TAB_HEAVYARMOR_EU", "rules": [{"code": "^ITEM_EU_M_HEAVY_11_[A-Z]{2}_A_RARE$", "type": "3/1/11/*", "item_class": 31}]},
-        {"label": "SN_TAB_LIGHTARMOR_EU", "rules": [{"code": "^ITEM_EU_M_LIGHT_11_[A-Z]{2}_A_RARE$", "type": "3/1/10/*", "item_class": 31}]},
-        {"label": "SN_TAB_CLOTHES_EU", "rules": [{"code": "^ITEM_EU_M_CLOTHES_11_[A-Z]{2}_A_RARE$", "type": "3/1/9/*", "item_class": 31}]}
+        {"label": "SN_TAB_HEAVYARMOR_EU", "rules": [{"code": "^ITEM_EU_M_HEAVY_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/11/*", "item_class": 31}]},
+        {"label": "SN_TAB_LIGHTARMOR_EU", "rules": [{"code": "^ITEM_EU_M_LIGHT_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/10/*", "item_class": 31}]},
+        {"label": "SN_TAB_CLOTHES_EU", "rules": [{"code": "^ITEM_EU_M_CLOTHES_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/9/*", "item_class": 31}]}
       ]
     },
     {
       "label": "Purchase European Female Seal of Nova Protector",
       "tabs": [
-        {"label": "SN_TAB_HEAVYARMOR_EU", "rules": [{"code": "^ITEM_EU_W_HEAVY_11_[A-Z]{2}_A_RARE$", "type": "3/1/11/*", "item_class": 31}]},
-        {"label": "SN_TAB_LIGHTARMOR_EU", "rules": [{"code": "^ITEM_EU_W_LIGHT_11_[A-Z]{2}_A_RARE$", "type": "3/1/10/*", "item_class": 31}]},
-        {"label": "SN_TAB_CLOTHES_EU", "rules": [{"code": "^ITEM_EU_W_CLOTHES_11_[A-Z]{2}_A_RARE$", "type": "3/1/9/*", "item_class": 31}]}
+        {"label": "SN_TAB_HEAVYARMOR_EU", "rules": [{"code": "^ITEM_EU_W_HEAVY_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/11/*", "item_class": 31}]},
+        {"label": "SN_TAB_LIGHTARMOR_EU", "rules": [{"code": "^ITEM_EU_W_LIGHT_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/10/*", "item_class": 31}]},
+        {"label": "SN_TAB_CLOTHES_EU", "rules": [{"code": "^ITEM_EU_W_CLOTHES_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/9/*", "item_class": 31}]}
       ]
     }
   ]

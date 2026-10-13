@@ -36,15 +36,16 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	if _, err := chars.Create(ctx, 1, "Aria"); err != nil {
 		t.Fatal(err)
 	}
-	// Synthetic items (OURS fixture): a Seal of Nova sword and helm, the
-	// sword's look-alike switch variant, and an 11th degree magic stone.
+	// Synthetic items (OURS fixture): an unlocked Seal of Nova sword and helm
+	// (the _ACTIVE rows, round 786), the sword's look-alike switch variant,
+	// and an 11th degree magic stone.
 	const sword, swordSwitch, stone, helm = 901, 902, 903, 904
 	refs := refdata.NewMemStore()
 	if err := refs.ImportItems(ctx, []refdata.Item{
-		{ID: sword, CodeName: "ITEM_CH_SWORD_11_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
-		{ID: swordSwitch, CodeName: "ITEM_CH_SWORD_11_A_RARE_SWITCH01", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000},
+		{ID: sword, CodeName: "ITEM_CH_SWORD_11_A_RARE_ACTIVE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
+		{ID: swordSwitch, CodeName: "ITEM_CH_SWORD_11_A_RARE_SWITCH01_ACTIVE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000},
 		{ID: stone, CodeName: "ITEM_ETC_ARCHEMY_MAGICSTONE_STR_11", TypeID1: 3, TypeID2: 3, TypeID3: 11, TypeID4: 1, MaxStack: 500, Price: 432095, SellPrice: 1000},
-		{ID: helm, CodeName: "ITEM_CH_M_HEAVY_11_HA_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 3, TypeID4: 1, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
+		{ID: helm, CodeName: "ITEM_CH_M_HEAVY_11_HA_A_RARE_ACTIVE", TypeID1: 3, TypeID2: 1, TypeID3: 3, TypeID4: 1, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
 	}); err != nil {
 		t.Fatal(err)
 	}
