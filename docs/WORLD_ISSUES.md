@@ -8565,6 +8565,122 @@ single const String now. UI only, nothing per frame: no perf gate.
 (round 781's text kept); the buff bar's and target window's buff icons still use Godot's tooltip; a
 quick slot holding an item shows no help yet (retail `0x686c50`).
 
+### Round 786 (part): Party members on the minimap in dungeons, and on the world map
+
+The user: "While in a party and dungeon the minimap is broken for party member dots", and "I don't
+think I can track party members on the map anymore." Two client bugs; the server was right. The
+reading is `docs/protocol/party_gui.md` section 9 and `docs/protocol/minimap.md` ("The signs and
+the arrow").
+
+**Root causes (MEASURED on dev `2f0f01c8`):**
+- **The dungeon minimap never placed the party's marks.** `World3D._refresh_dungeon_minimap`
+  (round 773) did the tiles, the player, the signs and the world map, but never called
+  `HudMinimap.update_party`, so the marks stayed as the last field frame left them: frozen at old
+  offsets after a teleport in, or none when the party formed inside. Live on the box (Aria and three
+  partybots in the Donwhang cave, Cara beside her, Eve 191 south, Dex 662 away): `map marks minimap
+  [] world map []` at every `maplog` (`/var/tmp/partymap/base_dg.out`). The new world suite on the
+  base prints `got 'dot@(8.0,0.0)'` -- the field's mark, frozen.
+- **The world map lost the party for the session once a dungeon floor was shown.** Round 775's
+  `show_dungeon` (`449ec093`) sets `_current` null; round 717's `update_party` then sent every dot
+  to (-1e9, -1e9). A Control's offsets are 32-bit floats, which cannot hold -1e9 and -1e9 + 16
+  apart, so each pooled dot's size became 0x0, and nothing ever set it back. On the base: the dot
+  is at (365, 256) on the world map, a floor is shown, and back on the world map it reports
+  `(357,248) dot size (0.0, 0.0) visible true` -- drawn at nothing. Any floor does it: M in a
+  dungeon (auto-move follows to the floor) or a click on a dungeon icon. The field path itself was
+  intact (live, `MODE=field`: Dex's and Eve's dots at (4047,548) and (4027,532), round 717's place).
+- **Not the server.** Since round 773 the records carry the dungeon's rid and its own-space x, y, z
+  (`party.partyPosition`, `dungeon773_test.go`); live, Dex's record read `r128/1 x654 z-1420`
+  after his `/tp 654 1420`. No server change, no deploy.
+
+**Retail (READ, `sro_client.exe`, the decompile and the asm on the box):**
+- **The minimap** has one party loop for the field and a dungeon (`CIFMinimap::vslot_013`,
+  `0x6643a0..0x664ad1`). Each record goes to `UI_SILKMALL::FUN_009d5520(record region, &record
+  x/y/z)` (`0x6643de..0x664419`): 1 for a field region while the player is in the field; else 1
+  only for the player's own dungeon region (`cmp di, [ecx+0x7c]`) when the block under the record's
+  position (region manager `[0x111a02c]` slot `0x2c`) has the floor of the player's block (`+0x74`
+  slot `0x14` of `+0x78`), both through `[0x1103cc6]` slot 1 and the block's slot 2 -- the chain
+  `ICPlayer::FUN_009d7880` reads the floor name with. The offset is the position less the player's
+  `+0x80`/`+0x88` (`0x66448f..0x6644ba`), both the dungeon's own space in a dungeon.
+- **The world map** (`CNIFWorldMap::FUN_0061eec0`, `0x61f8c0..0x61ffce`; `0x61f9e7..0x61fd48` the
+  branches): on a field map a dungeon member is drawn at its dungeon's field point
+  (`0x60fa90(member region)`, offset zeroed, `0x61fa44..0x61fa6d`); a field member from the
+  player's marker by its offset (`0x61f94d..0x61f9b7`), or with the player in a dungeon from the
+  dungeon's field point by the record's offset from the instance entry (`0x61fa8e..0x61fbfb`; the
+  entry's `+0x30` is its field region, loader `0x953777..0x9537a3`) -- either way its own field
+  position. On a floor's map (`+0x97d0 == 2`, `0x61fc00..0x61fd42`) a field member is not drawn,
+  a dungeon member only with the floor row's region id (`[0x62c030() + 0x84]`, row `+0x88`), and
+  in the cave (region 1, four floors in one region) only in the floor's height band:
+  `CNIFWorldMap::FUN_00610ed0` puts the record's y under 70.0 (`0xd990a8`), 210.0 (the double
+  `0xd990a0`) or 350.0 (`0xd9909c`) into levels 0..3 and wants `floor (+0x40) - 1`.
+
+**Client:**
+- `PartyMapMarks.region_visible` is `0x9d5520`; `minimap_draws` takes the player's region and the
+  floor answer; `worldmap_draws` no longer drops dungeon records; `cave_level` and
+  `floor_map_draws` are `0x610ed0` and the floor test.
+- `World3D._fill_party_marks` fills the minimap's list in the player's own frame (region-local in
+  the field, dungeon space in a dungeon: a spawned body through `DungeonWorld.to_dungeon`, else the
+  record) and hands the world map each member's region word and position, y the record's.
+  `_party_minimap_draws` asks the floor of the block under the record (`DungeonWorld.block_under`,
+  cached per member until the record moves) against `_dungeon_block`'s. INFERRED: the block's
+  slot 2 is `DofReader`'s floor index (as the floor name, round 774).
+- `_refresh_dungeon_minimap` now fills and places the marks, and gives the world map its party.
+- `HudWorldmap.update_party(regions, positions, names, job)` places each by `party_pixel` (the
+  branches above); `update_player_dungeon` no longer clears the dots. `place_party_dots` leaves a
+  dot it hides where it is and sets the size whenever it shows one.
+- OURS: on a field map, a dungeon member whose region has no instanceinfo point has no dot; the
+  world map's "less 0.5" stays out (round 717); a floor shown with the player in the field marks no
+  one (OPEN below).
+
+**Live** (`/var/tmp/partymap/live.sh`, `MODE=dungeon`: server and partybot from this branch; Aria
+rendered at the cave's entry, dungeon (1011, -862); Cara beside her; Eve `/tp 1011 1053`, dungeon
+(1011, -1053); Dex `/tp 654 1420`, dungeon (654, -1420)):
+- `map marks minimap [dot@(0.0,0.0) dot@(0.0,15.9) arrow@(-25.3,39.6)r-57]`: Cara under the arrow,
+  Eve 191 / 1920 x 160 = 15.9 px south, Dex on the 47 px rim toward (-357, +558).
+- After `wmap` the map follows Aria to the cave's 1F and draws `(390,370) (343,445) (390,396)`:
+  Cara under the arrow, Dex south-west, Eve below.
+- MEASURED on frame `/var/tmp/partymap/fix_dg/f00000690.png`: Eve's green dot centroid at (1217.5,
+  124.5), Dex's arrow gem at (1192.2, 147.1); with the aperture centre at Eve's less (0, 15.9), the
+  arrow's centre is predicted at (1192.2, 148.2). The world map is `f00000820.png`.
+
+**Tests** (fail on the base, pass here):
+- new `world/party_map_dungeon_test.gd` (World3D, a synthetic two-floor cave): through
+  `_refresh_minimap`, a member on the player's floor 191 south is `dot@(0.0,15.9)` and one 1500
+  east the east rim arrow; one on the other floor, one in the field and one in the tomb unmarked;
+  the field's last mark gone; the upper floor; a member who moves; no party; the field's frames.
+  The base: `FAIL ... (got 'dot@(8.0,0.0)')` and three more.
+- `party_map_marks_test.gd`: `0x9d5520`'s cases, the cave bands at each edge, `floor_map_draws`,
+  the dungeon offset, and a dot hidden at -1e9 shown again at 16x16 (the base: parse errors on the
+  new rules).
+- `worldmap_dungeon_test.gd`: on 1F Cara under the arrow and Dex at (384, 384), Eve (2F's band),
+  the field member and the tomb's unmarked; on 2F only Eve; on the world map, the player in the
+  cave or the field, the cave's three at its field point (512, 256) and the field member at her own
+  field position, under the player's arrow when he stands there; a floor shown from the field marks
+  no one. The base: `FAIL HudWorldmap.party_pixel exists`.
+
+**Gates:** client `check` ALL LOAD (793 scripts, 9 scenes); `tests` "ran 308 suite(s), 0 failing"
+(`RENDER_DIR=/opt/opensro-client-partymap`, `GODOT_LOCK=/var/tmp/partymap/lock`; no native library
+shipped). Server `go test ./...` passes (partybot: a zone change now records the bot's position, so a
+later `-tp2` in a dungeon keeps the dungeon's height; QA only).
+
+Perf gate `--sites jangan --frames 40000` (base dev `2f0f01c8`, head `e2c3c64b`, 1280x720, Forward+,
+median of 3; the view has no party, so it measures the no-party path, one `in_party` test a frame):
+
+| jangan | base | head | |
+|---|---|---|---|
+| frame ms | 0.81 | 0.77 | SAME |
+| entry ms | 8939 | 8764 | SAME |
+| freeze ms | 2859 | 2743 | SAME |
+| hitches | 4 | 4 | SAME |
+
+In a dungeon party the frame adds the round-717 fill over at most 7 members; the floor of the block
+under a record is looked up once per record move (cached), so a settled party asks the walkable
+graph nothing a frame. (The gate's default frame count gave too few FPS samples on this box, about
+700 fps; 40,000 frames gave the 15 it needs.)
+
+**OPEN:** a floor's map shown while the player is in the field (`0x61fc42..0x61fcdd` takes the y
+base from a table at `+0x679f0`); the academy's marks (`mm_sign_apprenticeship[arrow]`, no
+academy); the hover name was not exercised live (no mouse in the QA run).
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

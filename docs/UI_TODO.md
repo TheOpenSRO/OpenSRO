@@ -371,8 +371,9 @@ like the guild window:
    Escape closes it in the client's order (round 600). The floor spinner, the dungeon maps and
    the world map's signs (worldmap_localinfo.txt: the city, fortress and dungeon icons, a
    dungeon icon's click opening its floor) are built (round 775; docs/protocol/WORLDMAP_FORMAT.md).
-   Still open: the guide's list, the other signs (party, quest NPC ...), the signs' tooltips, the
-   party's marks on a dungeon floor, and the fortress caption's guild.
+   Still open: the guide's list, the other signs (quest NPC ...), the signs' tooltips, the
+   party's marks on a floor shown while the player is in the field (the marks on the player's own
+   floor and on the field maps are built, round 786), and the fortress caption's guild.
 4. ~~**Y -> `nifenchantwnd.2dt`**~~ **Done (round 604).** Y reaches `0x780a65`, which destroys
    window 0xa8 if it exists and otherwise loads `res_ui\nifenchantwnd.2dt` (`0x798e20`); the
    underbar menu's item 114 only opens it. Record 0 is `CNIFEnchantWnd`, a CNIFMainFrame 389x421

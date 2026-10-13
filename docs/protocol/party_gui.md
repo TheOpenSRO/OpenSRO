@@ -648,7 +648,7 @@ English abridged:
 Server-reply messages (`UIIT_MSG_PARTYERR_*`, `UIIT_MSG_PARTYMATCH_JOIN_*`, `UIIT_MSG_PARTY_JOIN` …)
 are party709a's to map to codes.
 
-## 9. Party members on the minimap and the world map (round 717)
+## 9. Party members on the minimap and the world map (round 717; dungeons, round 786)
 
 The user (2026-10-04): "a greenish big dot on the map ... the minimap will show an arrow on the edge
 of the minimap in the general direction of where each party member is ... they get their own arrow
@@ -676,10 +676,17 @@ drawn by the same rule from the academy list; not built, no academy.)
   (`+0x68`, the member record's u32 world id) equals the player's (`player +0x20e4` through
   `0x9d4d90`, `0x6643ca..0x6643d8`), and whose region the player can see: `0x9d5520(region, pos)`
   is 1 for a field region (`region >= 0` as a short) while the player is in the field (`player +0x7c`
-  without `0x8000`), and for a dungeon region only when it is the player's own dungeon.
+  without `0x8000`), and for a dungeon region only when it is the player's own dungeon **and the
+  record's position is on the player's floor** (round 786, asm `0x9d5520..0x9d561d`: the block
+  under the position, found through the region manager `[0x111a02c]` slot `0x2c`, and the
+  player's block, `+0x74` slot `0x14` of `+0x78`, each through `[0x1103cc6]` slot 1 and then the
+  block's slot 2 -- the floor index `ICPlayer::FUN_009d7880` reads the floor name with; no block
+  found, 0). It is given the **record's** region and x, y, z (`0x6643de..0x664412`), even for a
+  spawned member.
 - **Where.** The member's spawned object's position (`+0x90..+0x98`) when `0x9c35e0` finds one
   (`0x66441f`), else the record's (`+0x5c` x, 0, `+0x64` z) in its region `+0x5a`, through
-  `0x9ecfd0` (`0x66444c`). Less the player's position (`player +0x80..+0x88`).
+  `0x9ecfd0` (`0x66444c`). Less the player's position (`player +0x80..+0x88`). In a dungeon both
+  are the dungeon's own space (round 786).
 - **Dot or arrow.** The offset in map pixels is `(dx / 1920 x S, -dz / 1920 x S)` with `S` the
   drawn tile size (`+0x3fc`, the zoom), and its length `sqrt` (`0xb42de0` is `fsqrt`, `0x6644f6`).
   If `47.0 <= length` (the float at `0xda0ef0`, `fcomp` at `0x664505`, `jne 0x6646f0` on C0|C3)
@@ -720,12 +727,31 @@ drawn by the same rule from the academy list; not built, no academy.)
 **The world map** (READ, `CNIFWorldMap::FUN_0061eec0`, the party loop `0x61f8c0..0x61ffce`):
 
 - **Who.** Every member but the player (`node +0x44` against `manager +0x18`, `0x61f8db..0x61f8e1`);
-  **no world-id test** here. In the dungeon-floor map (`+0x97d0 == 2`) only members in that dungeon.
-  With the player in the field (`0x61fa72..0x61fa88`, `je 0x61fd4e`) a field member is placed
-  from the player's marker pixel (`+0x97ac`, `+0x97b0`) plus its offset from the player
-  (`pos - +0x97bc..`, less 0.5) over the map scale (`+0x97f8`/`+0x97fc` times `[0xe1b840]`,
-  `0x61f94d..0x61f9b7`), y subtracted -- the marker's own transform. `0x60fbd0` / `0x60fa90` are
-  used only when the player (`0x61fa8e..`) or the member (`0x61fa44..0x61fa5e`) is in a dungeon.
+  **no world-id test** here. Every member's pixel starts as the player's marker pixel (`+0x97ac`,
+  `+0x97b0`) plus its offset from the player (`pos - +0x97bc..`, less 0.5, `0xe1b7d0`) over the map
+  scale (`+0x97f8`/`+0x97fc` times 10.0, `[0xe1b840]`), y subtracted (`0x61f94d..0x61f9b7`,
+  `0x61fd4e..0x61fd86`) -- the marker's own transform. Then by the map shown (round 786, asm
+  `0x61f9e7..0x61fd48`):
+  - **a field map** (`+0x97d0 != 2`):
+    - a member in a dungeon (`+0x5a & 0x8000`, `0x61fa44`): `0x60fa90(member region, &x, &y)` --
+      its dungeon's field point from `worldmap_instanceinfo.txt` -- with the offset zeroed
+      (`0x61fa63..0x61fa6d`). The cave's members are drawn where the player's own arrow stands
+      when the player is in the cave;
+    - a field member, the player in the field (`0x61fa88`): the transform above;
+    - a field member, the player in a dungeon (`0x61fa8e..0x61fbfb`): the base is the dungeon's
+      field point (`0x60fa90` on the player's region, `0x61fb74`) and the offset the member's
+      **record** position moved to the instance entry's field region (`+0x30`; region steps of
+      1920.0, `0xe1b800`) less the entry's x (`+0x08`) and z (`+0x10`). The entry's `+0x30` is its
+      field region (the loader, `0x953777..0x9537a3`), so this is the member's own field position;
+  - **a dungeon floor's map** (`+0x97d0 == 2`, `0x61fc00..0x61fd42`): a field member is not drawn
+    (`je 0x61ffce`). A dungeon member is drawn only when its region `& 0x7fff` is the floor row's
+    region id (`[0x62c030(+0x99a0) + 0x84]`: row `+0x88`, column 16; `0x61fce5..0x61fcf0`), and,
+    for region 1 (the cave, whose four floors share one region), only when
+    `CNIFWorldMap::FUN_00610ed0(1, row floor +0x40, region, &record x/y/z)` holds: the **record's**
+    height against the floats 70.0 (`0xd990a8`), 210.0 (the double `0xd990a0`) and 350.0
+    (`0xd9909c`) gives level 0, 1, 2 or 3, and the floor number less one must equal it. With the
+    player in the field (`0x61fc3c`) the y base is taken from a table at `+0x679f0` and the record's
+    z less `(0x80 - region high byte) * 1920` (`0x61fc42..0x61fcdd`): not built (OPEN).
 - **Where.** As the minimap: the spawned object's position (`0x9c35e0`, `0x61f8eb`) or the
   record's `(x, 0, z)` through `0x9ecfd0`.
 - **The dot**: a 16x16 quad (+-8.0, `0xd89240`) centred on the member's map pixel, each corner
@@ -749,7 +775,19 @@ drawn by the same rule from the academy list; not built, no academy.)
 
 **OpenSRO** (OURS, labelled in the code):
 
-- A dungeon record (`region & 0x8000`) is not marked: OpenSRO sends no dungeon positions.
+- Round 786: a dungeon record is marked by the rules above. The server has sent dungeon positions
+  since round 773 (the rid and the dungeon-space x, y, z, `party.partyPosition`); the client left
+  them out until round 786 (`World3D._refresh_dungeon_minimap` placed no party marks at all, and
+  `HudWorldmap.update_player_dungeon` cleared the world map's).
+- On a field map, a dungeon member whose region has no `worldmap_instanceinfo.txt` point has no
+  dot (OURS; the client keeps the marker's pixel then, `0x60fa90` writing nothing).
+- The "less 0.5" on each world-map offset is left out (OURS, as in round 717): 0.05 / units per
+  pixel of a pixel.
+- A floor's map shown while the player is in the field marks no one (OPEN, above).
+- A world-map dot the map does not draw is hidden where it is (round 786): the round-717 code moved
+  it to -1e9, where a Control's float offsets cannot hold 16 apart, so a reused dot stayed 0x0
+  for good (MEASURED: after one dungeon floor was shown, `_current` null sent every dot there, and
+  the world map never showed a party member again that session).
 - Without the player's own record (no world id to compare) the minimap marks every member.
 - A world-map dot off the current map lands off the canvas and is clipped by the map area (the
   original's clipping was not traced).
