@@ -8,7 +8,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 
 | Area | ✅ | 🟡 | 🔧 | ❌ | Total |
 |---|--:|--:|--:|--:|--:|
-| [Account & login](#account--login) | 9 | 3 |  |  | 12 |
+| [Account & login](#account--login) | 9 | 3 |  | 1 | 13 |
 | [World & movement](#world--movement) | 13 | 4 |  | 3 | 20 |
 | [NPCs](#npcs) | 7 | 4 |  |  | 11 |
 | [Monsters](#monsters) | 14 | 3 |  |  | 17 |
@@ -25,7 +25,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 6 |  | 1 | 1 | 8 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **125** | **35** | **3** | **39** | **202** |
+| **All** | **125** | **35** | **3** | **40** | **203** |
 
 ## Biggest gaps
 
@@ -61,6 +61,7 @@ Own gateway protocol, retail-style lobby, both races and every creatable body.
 | Name checks | 🟡 Partial | Length and character rules enforced; no forbidden-word list |
 | Retail client compatibility | 🟡 Partial | Retail gateway handshake and shard list only; retail login not supported |
 | Account bans | 🟡 Partial | Blocked accounts refused at login; no GM command to ban |
+| Multi-factor / Account PIN | ❌ Not yet | No secondary password (retail PIN keypad) or other second factor |
 
 ## World & movement
 
