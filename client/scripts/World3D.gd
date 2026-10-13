@@ -15203,6 +15203,10 @@ func _update_blob_shadow() -> void:
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
 ##                          for the China-man heavy set plus the starter sword),
 ##                          resolved through the real item table
+##   OPENSRO_QA_EQUIP_BAG="<tick>:<slot>=<id>,.."  (round 786; needs a server)
+##                          at each tick put the first bag item of that id on
+##                          in that slot through the real equip message (with
+##                          OPENSRO_QA_COMMANDS' "/give <id> 1 <plus>")
 ##   OPENSRO_QA_PICKUP=1   (needs --server) when a ground item appears, step onto
 ##                          it and pick it up, printing the server's answers:
 ##                          the item's position, the pick result and the bag after
@@ -15467,6 +15471,39 @@ func _qa_reequip_step() -> void:
 				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, s.slot_index)
 				return
 		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
+
+## OPENSRO_QA_EQUIP_BAG="<tick>:<slot>=<item_id>,..." (round 786): at each
+## tick, puts the first bag item with that id on in that equipment slot,
+## through the real equip message (the bag is listed again 20 ticks before),
+## so a --server run can wear what OPENSRO_QA_COMMANDS' /give made, at its
+## plus, and a second client sees the server's 0x3038. QA only; never set in
+## real play.
+var _qa_equip_bag_spec := OS.get_environment("OPENSRO_QA_EQUIP_BAG")
+
+func _qa_equip_bag_step() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	for entry in _qa_equip_bag_spec.split(",", false):
+		var at := String(entry).split(":")
+		var pair := at[1].split("=") if at.size() == 2 else PackedStringArray()
+		if pair.size() != 2:
+			continue
+		var tick := int(at[0])
+		if _qa_tick == tick - 20:
+			NetClient.list_inventory(NetClient.current_character_name)
+		elif _qa_tick == tick:
+			var slot := int(pair[0])
+			var item_id := int(pair[1])
+			var found := false
+			for s in _inventory_slots:
+				if s.item_id == item_id:
+					print("QA EQUIP BAG: tick %d putting item %d on in slot %d from bag slot %d" % [_qa_tick, item_id, slot, s.slot_index])
+					_awaiting_equip_ack = true
+					NetClient.equip(NetClient.current_character_name, slot, s.slot_index)
+					found = true
+					break
+			if not found:
+				print("QA EQUIP BAG: tick %d item %d not in the bag" % [_qa_tick, item_id])
 
 func _qa_pmi_click(control_name: String) -> void:
 	var c := _hud_player_info.find_child(control_name, true, false) as Control
@@ -16359,6 +16396,8 @@ func _qa_step() -> void:
 		_qa_pmi_step()
 	if _qa_reequip_spec != "":
 		_qa_reequip_step()
+	if _qa_equip_bag_spec != "":
+		_qa_equip_bag_step()
 	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
