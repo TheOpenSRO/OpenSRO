@@ -1888,6 +1888,9 @@ func _item_instance(body_bsr: String, tmpl: SkinnedBsrAssembler.AssembledCharact
 	skel.add_child(node)
 	return node
 
+## The reinforced items already logged as drawn plain (round 786), "code+plus".
+static var _plain_logged := {}
+
 ## Round 734: the weapon or shield's glow and particles at its plus
 ## (EquipGlow), on the nodes just hung. Sets wear["glow"] to the row's plus
 ## (0: none) and wear["glow_fx"] to the effects attached.
@@ -1904,6 +1907,12 @@ func _apply_glow(wear: Dictionary) -> void:
 	var row := glow_tables.glow_row(code, plus)
 	var rows := glow_tables.particle_rows(code, plus)
 	if row == null and rows.is_empty():
+		# Round 786: say why a reinforced weapon or shield is drawn plain, once
+		# per item and plus (the user's +12 Test Items gear was the archive's
+		# locked Seal of Nova rows, which no table lists).
+		if plus != 0 and not _plain_logged.has("%s+%d" % [code, plus]):
+			_plain_logged["%s+%d" % [code, plus]] = true
+			print("CharacterAppearance: " + glow_tables.describe(code, plus))
 		return
 	var made := EquipGlow.apply(wear["nodes"], row, rows, _data, _particles_archive() if not rows.is_empty() else null, code)
 	wear["glow"] = row.plus if row != null else 0

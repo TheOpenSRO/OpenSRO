@@ -94,6 +94,9 @@ class ParticleRow:
 	var offset := Vector3.ZERO
 	var min_plus: int = 0
 	var max_plus: int = 0xFF
+	## The file the row came from (round 786): RARE_PATH for a seal's own
+	## effect, EFP_PATH for the +8 sparkle, "" when the caller named none.
+	var from_file: String = ""
 
 ## The tables the world loaded (World3D, CharacterAppearance); null before.
 static var shared: ItemGlowTables = null
@@ -143,7 +146,7 @@ static func for_archive(media: Pk2Reader) -> ItemGlowTables:
 		match p:
 			OPTION_PATH: t.load_options(bytes)
 			TYPE_PATH: t.load_types(bytes)
-			RARE_PATH, EFP_PATH: t.load_particles(bytes)
+			RARE_PATH, EFP_PATH: t.load_particles(bytes, p)
 	if found == 0:
 		return null
 	shared = t
@@ -224,7 +227,8 @@ func load_types(bytes: PackedByteArray) -> ItemGlowTables:
 
 ## One particle file, one call of the client's loader: its rows go after
 ## those of the files loaded before it (itemrare.txt, then itemoptionefp.txt).
-func load_particles(bytes: PackedByteArray) -> ItemGlowTables:
+## `path` names the file (RARE_PATH, EFP_PATH) on each row it adds.
+func load_particles(bytes: PackedByteArray, path: String = "") -> ItemGlowTables:
 	var file_rows: Array = []
 	for line in _lines(bytes):
 		var c := _cols(line)
@@ -242,6 +246,7 @@ func load_particles(bytes: PackedByteArray) -> ItemGlowTables:
 		# column is never read (the loop takes seven tokens).
 		p.min_plus = (int(c[5]) & 0xFF) if c.size() > 5 and c[5].is_valid_int() else 0
 		p.max_plus = (int(c[6]) & 0xFF) if c.size() > 6 and c[6].is_valid_int() else 0xFF
+		p.from_file = path
 		file_rows.append([c[0].to_upper(), p])
 	_particle_calls.append(file_rows)
 	_rebuild_particles()
@@ -387,6 +392,36 @@ func particle_rows(code_name: String, plus: int) -> Array:
 		if r.min_plus <= plus and plus <= r.max_plus:
 			out.append(r)
 	return out
+
+## The seal's own effect rows for `code_name` at `plus` (round 786): the
+## particle rows itemrare.txt gave it, at every plus (READ: the file has no
+## plus columns, so min 0 and max 0xFF). This is the whole of "is this piece
+## sealed" as far as the drawing goes: FUN_00a5f3e0's only inputs are the
+## RefID and the plus, and no code path reads the Rarity or the ItemClass
+## (READ, weapon_glow.md §3). A Seal item with no itemrare.txt row -- the
+## archive's locked Seal of Nova rows, `SN_ITEM_LOCKED_TT_DESC` (MEASURED,
+## equip_glow_seal.md) -- shows no seal effect, and each piece counts on its
+## own: no set or piece count is read.
+func seal_rows(code_name: String, plus: int) -> Array:
+	var out: Array = []
+	for r in particle_rows(code_name, plus):
+		if (r as ParticleRow).from_file == RARE_PATH:
+			out.append(r)
+	return out
+
+## One line on what the original draws for `code_name` at `plus` (round 786),
+## for the build's log: the glow row, and the particle rows by file.
+func describe(code_name: String, plus: int) -> String:
+	var row := glow_row(code_name, plus)
+	var rows := particle_rows(code_name, plus)
+	var seal := seal_rows(code_name, plus).size()
+	if row == null and rows.is_empty():
+		var why := "no glow type in itemoption.txt" if type_of(code_name) == 0 else "+0 or below its type's lowest row"
+		return "%s +%d: no glow (%s) and no particle row (itemrare.txt, itemoptionefp.txt) -- the original draws nothing for it" % [
+			code_name, plus & 0xFF, why]
+	return "%s +%d: glow %s, %d seal effect(s) (itemrare.txt), %d plus effect(s) (itemoptionefp.txt)" % [
+		code_name, plus & 0xFF, ("type %d row +%d" % [row.type_number, row.plus]) if row != null else "none",
+		seal, rows.size() - seal]
 
 func row_count() -> int:
 	var n := 0

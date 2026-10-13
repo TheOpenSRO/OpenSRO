@@ -8681,6 +8681,123 @@ graph nothing a frame. (The gate's default frame count gave too few FPS samples 
 base from a table at `+0x679f0`); the academy's marks (`mm_sign_apprenticeship[arrow]`, no
 academy); the hover name was not exercised live (no mouse in the QA run).
 
+### Round 786 (part): Plus glows and seal effects on equipment
+
+The user, wearing the Test Items NPC's gear (Seal of Nova, +12, full blue): "I don't see any Seal
+effects or + glows". The reading is `docs/protocol/equip_glow_seal.md`. The mechanism itself is
+rounds 733-746 and 764 (`weapon_glow.md`).
+
+**Why nothing showed: the gear was the LOCKED Nova rows (MEASURED, the box's Media.pk2).**
+- Round 783's goods were the plain `ITEM_(CH|EU)_*_11_A_RARE` rows. Every one carries
+  `SN_ITEM_LOCKED_TT_DESC` ("Locked Item") and asks level 111.
+- None of the 94 is in `itemoption.txt` (the glow type), `itemrare.txt` (the seal effects) or
+  `itemoptionefp.txt` (the +8 sparkle).
+- The 16 weapons' and shields' `_A_RARE_ACTIVE` twins ("Unlocked Item", level 101) each have:
+  - a glow type, 1 to 4;
+  - three Nova effects: `eternity_11_nova_01/02/03`, `_bow_`, `_shield_`;
+  - the +8..+100 sparkle.
+- The client draws only what those tables give a RefID at a plus (READ, `CObjCharacter::FUN_00a5f3e0`
+  0xa5f3e0). A locked sword at +12 is a plain sword in the original too. OpenSRO matched it.
+- The Test Items lane has since switched the goods to the unlocked rows (the part above, merged to
+  `dev`). This part did not touch the goods. A piece bought before that stays a locked row and stays
+  plain.
+
+**The other questions (READ unless marked):**
+- **Plus to glow.** `FUN_00a93900` (0xa93900) gives the highest row ≤ plus, none at +0. The tiers
+  are +3, +5..+14, and +12 is yellow to gold on `option_texture20.ddj` (256 × 256 DXT3, MEASURED).
+- **Which parts.** The weapon and the shield only: `FUN_00a60a90` (0xa60a90) acts on attachments of
+  kind 1. No armour or accessory code is in any of the three tables (MEASURED).
+  - Round 786 re-traced the glow mod's only maker: kind `0x70000`, built by `FUN_00c0b460(0x70000)`
+    in `CCompChar::FUN_00c350a0`. The kind's factory case is `FxModManager::FUN_00c797f0` case 7, then
+    `FUN_00c793b0`, then the `CRTModProgEquipPow` constructor `FUN_00c847f0`.
+- **Piece to seal.** No Rarity, ItemClass, set or piece count is read: a piece shows the effects its
+  own code name has in `itemrare.txt`, at every plus.
+  - The set effect (`ITEM_SETITEM_ACTIVE` in the `0x3038` handler `FUN_008a9260`) is separate and
+    not traced (OPEN).
+- **Other players' plus.**
+  - `0x3015`'s PC reader `GlobalDataManager::FUN_009de2f0` (0x9de2f0) reads u8 plus after each
+    equipment RefItemID; `0x3038` carries it too.
+  - OpenSRO's spawn and arrival snapshots carry a pluses tail, and the equip broadcasts are retail
+    `0x3038`/`0x3039` (round 735). Your own gear's plus is in the equipment list.
+  - Checked in the code, the tests and the live run below. **No server change.**
+
+**Built:**
+- `ItemGlowTables` records each particle row's file (`ParticleRow.from_file`):
+  - `seal_rows(code, plus)` is the piece's `itemrare.txt` rows;
+  - `describe(code, plus)` says what the original draws.
+- `CharacterAppearance._apply_glow` logs, once per item and plus, a reinforced weapon or shield the
+  tables give nothing (`CharacterAppearance: ITEM_CH_SHIELD_11_A_RARE +12: no glow (no glow type in
+  itemoption.txt) and no particle row ... -- the original draws nothing for it`).
+- `OPENSRO_QA_EQUIP_BAG="<tick>:<slot>=<id>,..."` (QA only, OURS) wears bag items through the real
+  equip message, after `OPENSRO_QA_COMMANDS`' `/give <id> 1 <plus>`.
+- **A bug found and fixed (MEASURED):**
+  - What happened: the offline +12 render showed the glow and no particle. `EquipFx.driver_for`'s
+    `add_child` failed ("Parent node is busy setting up children") because QA runs boot World3D as
+    the main scene and dress the player in its `_ready`. The driver, kept in the viewport's meta,
+    never entered the tree, so the run had no weapon or shield particle, the lineup's bodies
+    included.
+  - The fix: a viewport still readying its children now takes the driver deferred.
+  - Who it hit: real play (scene changes, and the server's equipment reply after `_ready`) is
+    INFERRED not to have. Earlier offline renders and `--env OPENSRO_QA_EQUIP=<seal weapon>` gate
+    runs did, and drew no particles (OPEN: which earlier numbers that touches).
+
+**Tests (on the box):**
+- `client/scripts/items/item_glow_seal786_test.gd` (new):
+  - plus to glow row (+0, +1, +2 none; +4 → +3; +12; +20, +255 → +14; a u8);
+  - the seal rows at every plus and the +8 sparkle only from +8 to +100, in the client's order;
+  - the locked row and an armour piece: nothing at any plus;
+  - event copies of the locked and the unlocked row;
+  - the slot rule (only 6 and 7 glow);
+  - OptLevel + elixir as the plus;
+  - the driver while the viewport readies: fails on the old `driver_for` ("FAILURES: 1"), passes
+    on the new.
+- `check` ALL LOAD (794 scripts, 9 scenes). `tests` "ran 309 suite(s), 0 failing"
+  (`RENDER_DIR=/opt/opensro-client-glow`, `GODOT_LOCK=/var/tmp/glow/lock`, native library built; on
+  the tree rebased on f3db9e11).
+- `cd server && go test ./...` passes (no server change).
+
+**Live (render box, `/var/tmp/glow/live.sh`, the in-memory server from this tree; two clients at the
+Test Items spot, zone (110, 10) = 97/168 local (1070, 950)):**
+- QaTester `/give`s himself the unlocked CH set +12 and wears it through `0x3038 ... plus 12`. The
+  build logs `glow: ITEM_CH_SWORD_11_A_RARE_ACTIVE +12 (row +12, 4 effect(s)),
+  ITEM_CH_SHIELD_11_A_RARE_ACTIVE +12 (row +12, 4 effect(s))`.
+- GlowTwo (headless) wears the unlocked blade +12 and the locked shield and armour +12. He is refused
+  the locked pieces at level 110 and takes them at 120: ReqLevel 111.
+- QaTester's frames show GlowTwo's blade with the +12 glow and the Nova effects, and his locked
+  shield plain. The plus came in the arrival list's pluses tail.
+- After `--reconnect` the entry's build has the same glow and effects.
+- Offline at the Test Items spot, after the fix: the player in the unlocked set +12 (glow and Nova
+  effects); a lineup body in the unlocked set at +0 (Nova effects, no glow); one in the locked set at
+  +12 (neither).
+- Kept in `/var/tmp/glow/keep/` (`offline_unlocked_nova_plus12_f590.png`, `live_two_players_f690.png`,
+  `live_after_reentry_f1290.png`, the before-fix offline frame, the scripts); frame dumps deleted.
+
+**Perf:** `perf_gate.sh` on the box (1280 x 720, Forward+, no native library, medians of 3, interleaved),
+head = this branch:
+
+| Gate | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| `--base a35c3632 --sites jangan --frames 40000` | 0.80 → 0.77 SAME | 8869 → 8684 SAME | 2830 → 2753 SAME | 4 → 5 SAME |
+| `--base f3db9e11 --sites crowd` (2,500 monsters) | 7.80 → 9.00 SAME | 11387 → 11269 SAME | 3610 → 3548 SAME | 5 → 5 SAME |
+| `--base f3db9e11 --sites jangan --frames 40000`, both sides `OPENSRO_QA_LINEUP_KITS` of 200 other players, 100 in the locked Nova sword and shield +12 and 100 in the unlocked +12 | 1.58 → 1.58 SAME | 9148 → 9040 SAME | 2883 → 2909 SAME | 5 → 5 SAME |
+
+- The crowd site's runs are noisy: base 7.80 / 7.34 / 8.82, head 7.69 / 9.76 / 9.00 ms. A head run
+  beats a base run, so the verdict is SAME. Nothing on the monster path changed.
+- The first two gates' bases were `dev` when each started. `dev` moved during the round: the crowd
+  and lineup gates' base, f3db9e11, has another lane's minimap change that the head, then on
+  a35c3632, did not. The branch is rebased on f3db9e11.
+- Nothing this part adds runs per frame. The log line runs once per item and plus, at a build. The
+  driver change runs once per viewport.
+
+**OPEN:**
+- The set effect (`ITEM_SETITEM_ACTIVE`).
+- Whether the operator's `vsroplus_lib.dll` changes how locked rows are drawn (its strings name
+  none of the tables; packed?).
+- `weapon_glow.md` §8's OPEN 4, 6, 8 and 11.
+
+Not open: the crowd's ghosts already carry the glow and the effects (rounds 762-764), so nothing is
+limited to fully built bodies.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the
