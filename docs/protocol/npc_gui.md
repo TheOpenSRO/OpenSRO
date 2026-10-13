@@ -282,6 +282,33 @@ Ids → line kinds → text keys, in the builder's order:
     Repair). **OPEN:** the code that hides it.
 - **Not part of the store:** the small two-column box at the left of `3Gw7Ene.png`. No window is
   registered with the store; INFERRED to be the private server's own add-on.
+- **A good is a whole item, plus and blue options included (READ, round 786).** A store good is a
+  package (refshopgoods → refscrapofpackageitem), and the scrap row is more than an item code:
+  - `GlobalDataManager::RefParse_refscrapofpackageitem` (`0x9824e0`) reads, in order, into the
+    0xa8-byte scrap object: +0x0c the package, +0x10 the item, **+0x14 u8 OptLevel, +0x18 u64
+    Variance, +0x20 u32 Data, +0x24 u8 MagParamNum, +0x28 12 x u64 MagParam1..12**. The loader
+    (`0x9543bb`) keys it by item (map +0x338) and hangs it on its package (map +0x344, `0x981b00`).
+  - `0x8bf3a0` builds each package's `SOItem` (0x1d0 bytes, `0x8bef90`) from its scraps:
+    SetRefID `0x8ba4c0` (+0x34) the item; **SetOptLevel `0x8ba4e0` (+0x8c) the OptLevel**; the
+    durability `0x8ba480` (+0x98) 0 for equipment (the Data column for anything else); +0x9c
+    `0x8ba490`; MagParamNum `0x8ba720` (+0xa4); and **each MagParam through
+    `SOItem::0x8bd760`** (the assert "m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM", SOItem.cpp).
+    It never reads the Variance column: no read of the scrap's +0x18 there, and SetVariance
+    `0x8ba4f0` has only four callers (`0x57a41d`, `0x72e45a`, `0x88c305`, `0x88c356`), none of
+    them this. So a retail good shows its plus and blue lines but reads variance 0.
+  - The store fills a tab (`0x6d2310`) by copying that SOItem into its cell (`0x6d1ff0` → the
+    SOItem copy `0x579da0`), and the cell's slot takes it through the slot SetItem `0x6871d0`,
+    the one the bag (`IFInventory`) and the worn slots (`CIFEquipment::Create`) use. So its
+    hover reads the same item fields an owned item's does: the name's "(+N)", the blue lines.
+  - **The slot itself draws no plus or blue mark.** `0x6871d0` reads neither +0x8c nor +0xa4;
+    its one test of the item is the seal check `0x8ba600` (the seal edge, ItemSealEdge). READ;
+    whether a callee further down draws anything else is not traced.
+  - The retail archive uses it: refscrapofpackageitem has 476 rows with a plus, a variance or
+    magic params (MEASURED, the box's archive), e.g. `PACKAGE_EYBETA_ITEM_CH_W_HEAVY_11_HA_A` at
+    OptLevel 8 with 6 MagParams.
+  - OpenSRO's own NPCs say the same in OpNpcShopGoods 0x00BB (round 786, OURS; carrying the
+    variance too): test_items_npc.md. This client's ShopReader still reads only the item code of a
+    retail package (OPEN: its plus and MagParams are not shown yet).
 
 ## 3. The storage (warehouse)
 

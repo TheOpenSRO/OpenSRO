@@ -39,11 +39,23 @@ ItemClass. Nothing else is listed. The vocabulary is READ:
 - **Seal of Nova** is the client's `PARAM_RARE_FIRST2` (textuisystem.txt "Seal of Nova"), shown for a
   Seal item (Rarity 2 or 6) whose ItemClass is 31 or more with tier `(ItemClass − 1) mod 3 = 0`
   (docs/protocol/item_tooltip.md, round 731). The 11th degree is ItemClass 31..33
-  (`(ItemClass − 1)/3 + 1`, alchemy.md). The sold rows are the plain `ITEM_CH_*_11_A_RARE` /
-  `ITEM_EU_*_11_A_RARE` / `ITEM_(CH|EU)_(M|W)_(HEAVY|LIGHT|CLOTHES)_11_xx_A_RARE` rows of ItemClass 31.
-- **Left out, OURS:** the `_SWITCHnn` and `_ACTIVE` variants (16 + 17 per weapon; same names as the
-  plain row), the `ITEM_EVENT_*` copies, and the Rarity-6 `_11_SET_A_RARE` / `_SET_B_RARE` rows
-  (the "Asue" / "Azus" sets -- set items, not Seal of Nova by name).
+  (`(ItemClass − 1)/3 + 1`, alchemy.md). The sold rows are the **unlocked** ones (round 786, the
+  user: "Make all the items level 101, not 111"): `ITEM_CH_*_11_A_RARE_ACTIVE` /
+  `ITEM_EU_*_11_A_RARE_ACTIVE` / `ITEM_(CH|EU)_(M|W)_(HEAVY|LIGHT|CLOTHES)_11_xx_A_RARE_ACTIVE` of
+  ItemClass 31, each pattern anchored with `$`.
+- **Locked and unlocked, READ** (the box's itemdata and the prod refdata database, 2026-10-13):
+  every 11th degree Seal of Nova piece has two rows with the same name. The plain `_A_RARE` row is
+  the LOCKED one -- `ITEM_CH_SWORD_11_A_RARE` (id 4044, "Reaper Ghost Sword") asks level **111**
+  and its description key is `SN_ITEM_LOCKED_TT_DESC`. The `_A_RARE_ACTIVE` row is the UNLOCKED
+  one -- `ITEM_CH_SWORD_11_A_RARE_ACTIVE` (id 62605, the same name) asks level **101**, with
+  `SN_ITEM_UNLOCKED_TT_DESC`. MEASURED: all 94 `_A_RARE_ACTIVE` rows the rules take ask 101, and
+  have ItemClass 31 and the TypeIDs of the tab they land in (3/1/6, 4, 5 or 12, and 3/1/1..3,
+  9..11), so the per-tab counts are the locked rows' (the table below).
+- **Left out, OURS:** the locked `_A_RARE` rows (level 111); the `_SWITCHnn` and
+  `_SWITCHnn_ACTIVE` variants (the `$` after `_ACTIVE` keeps them out: `[A-Z]+` matches no digit
+  or underscore; same names as the plain row); the `ITEM_EVENT_*` copies; and the Rarity-6
+  `_11_SET_A_RARE` / `_SET_B_RARE` rows (the "Asue" / "Azus" sets -- set items, not Seal of Nova
+  by name).
 - **Alchemy, 11th degree:** the items whose code ends `_11` in the families
   `ITEM_ETC_ARCHEMY_UPPER_REINFORCE_RECIPE_` (Advanced Elixir (lv 11)), `_REINFORCE_PROB_UP_`
   (Lucky Powder (11th) and Lucky Magic Powder), `_MAGICSTONE_` (incl. luck, steady, immortal, astral
@@ -109,8 +121,62 @@ The buy is OpenSRO's `OpShopBuy` (item id, quantity), as at every store. **Free 
 buys -- for an item that is one of the NPC's goods **while the session's open interaction is that
 NPC's store** (INTERACTMODE 6 from its `0x7046 {1}`). The same item with no store open, or at any
 retail store, keeps its own price; no other store's price changes (`TestTestItemsNPCSelectOpenBuyFree`).
-The bought item is an ordinary instance (its own stats, durability, a Seal item's lack of blues on a
-buy as from any shop).
+**Its equipment comes perfect (round 786, OURS, the user's):** a piece of equipment (TypeID 3/1)
+bought here is +12, every white-stat variance group at 31 (100 %), and full blue -- every standard
+blue option its kind can carry, at its degree and highest value -- with the durability those make
+(`session/testshopgear.go` `testShopInstance`; docs/WORLD_ISSUES.md round 786). Stackables, and the
+same item bought anywhere else, are ordinary.
+
+## The listing: OpNpcShopGoods 0x00BB (OURS, round 786)
+
+The user: "The items in the shop don't reflect full blue or +12 status." The store showed each
+good as its reference item; it now shows the piece the buy gives.
+
+**How retail does it (READ, docs/protocol/npc_gui.md §2):** a store good is a package whose scrap
+row (refscrapofpackageitem) carries OptLevel, Variance, Data, MagParamNum and MagParam1..12
+(`0x9824e0`). The client builds each package's `SOItem` from it (`0x8bf3a0`: the OptLevel and each
+MagParam, not the Variance) and copies that whole item into the store's slot (`0x6d2310` →
+`0x6d1ff0`), whose hover then reads it as any owned item: "(+N)" in the name and the blue lines.
+The slot draws no plus or blue mark of its own (`0x6871d0` tests only the seal).
+
+**Ours:** the server sends each equipment good's instance right after OpNpcShopDef:
+
+```
+S->C 0x00BB, after 0x00BA, once or more (each adds to the last; each fits one frame):
+  u32 NPC unique id
+  u16 n
+    n x (u32 item id, the retail item record)
+```
+
+- The record is the one the bag, warehouse and worn lists carry (`session.AppendItemRecord`;
+  item_tooltip.md, "The item instance on the wire"); the u32 before it is the good's item id where
+  those lists put a slot, so the client reads the block with its own decoder
+  (`ItemInstance.decode_block`). Only equipment goods are listed.
+- The instance is `testShopInstance`'s -- the very one the buy creates -- built once at boot
+  (`session.TestShopGoodsPayloads`, after the magic option tables are installed), so the listing and
+  the bought piece are identical record for record (`TestTestItemsNPCSelectOpenBuyFree`). With no
+  item table for the options (no `-magic-option-assign-csv`) there is no instance at the buy and
+  no listing either.
+- **Variance:** retail's store never applies a package's Variance (above), so a retail good reads 0 %.
+  This listing carries the variance the piece is bought with, so it reads 100 % (OURS: the user's
+  "100% white stats"). The durability line reads "(+99%)", the client's own `trunc(31 / 0.31)`
+  (item_tooltip.md, round 732), as on the bought piece.
+- **Compatibility:** a message of its own, not more bytes on 0x00BA, because a client from before
+  round 786 refuses a 0x00BA with trailing bytes (its decoder wants the payload exactly) and would
+  lose the whole store, while an unknown opcode it only logs and drops. So the server and the client
+  can be updated in either order: an old client shows the reference items as before; a new client
+  against an old server too. 0x00BB was free in `server/` and `client/scripts` (grep, 2026-10-13).
+- **The client:** `NpcShopDefNet.decode_goods` and `merge_goods` add the instances to the uid's
+  definition (World3D `_on_npc_shop_goods`); `NpcShopDefNet.tabs` puts each beside its good
+  (`ShopReader.Tab.instances`, null for a reference good, empty on a retail tab); the store's tooltip
+  (`HudPanels.item_tip_lines`, site "store") reads it through `ItemTooltipInstance.fields`, as an owned
+  item's. The slot is unchanged (the seal edge only, as retail).
+- Prices are untouched: `OpShopList` still answers 0 here and each item's own price elsewhere.
+- Tests: `session/testshopgoods_test.go` (the bytes pinned, the split across frames, no listing
+  without an item table), `TestTestItemsNPCSelectOpenBuyFree` (0x00BB after 0x00BA, none from a
+  retail NPC, listing = bought piece), `client/scripts/ui/hud/store_listed_tip_test.gd` (the same
+  bytes decoded; the tooltip's "(+12)", two blue lines, every white stat "(+100%)"; an unlisted or a
+  retail good stays the reference item).
 
 **OPEN (a risk the user should weigh):** a free good still SELLS at its own SellPrice at any NPC
 (MEASURED on the box's archive: 250,000 for a Seal of Nova piece, 15,000,000 for a Magic stone of
