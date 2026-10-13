@@ -11,7 +11,9 @@ extends RefCounted
 ##   than the player (`member +0x44 != manager +0x18`, 0x6643bb) whose world id
 ##   equals the player's (`record +0x68` against `player +0x20e4`, 0x6643ca),
 ##   and whose region the player can see (0x9d5520: a field region while the
-##   player is in the field, or the player's own dungeon), READ.
+##   player is in the field, or the player's own dungeon on the player's
+##   floor; region_visible), READ. In a dungeon the positions are the
+##   dungeon's own space, the player's +0x80 as the record's (round 786).
 ## - The position is the member's spawned object's (+0x90..+0x98) when one
 ##   exists (0x9c35e0, 0x66441f), else the record's (x, 0, z) in its region
 ##   (0x9ecfd0, 0x66444c), READ.
@@ -30,7 +32,10 @@ extends RefCounted
 ##
 ## **The world map** (CNIFWorldMap::FUN_0061eec0, 0x61f8c0..0x61ffce): every
 ## member but the player (no world-id test there), at the same position
-## source, as the 16x16 `wmap_sign_party.ddj` (+0x7ec) centred on its map
+## source, placed by the map shown (round 786, HudWorldmap.party_pixel: a
+## field member at its field position, a dungeon member at its dungeon's
+## field point on a field map, or on its floor on that floor's map), as the
+## 16x16 `wmap_sign_party.ddj` (+0x7ec) centred on its map
 ## pixel (corners +-8.0, 0xd89240, each truncated through 0xb42d10, _ftol2),
 ## drawn before the player's marker. The first member whose quad holds the
 ## mouse (each is tested until one hits, 0x61fec0; the quad less its half pixel
@@ -98,23 +103,72 @@ static func record_local(player_region: Vector2i, region: int, x: float, z: floa
 	var ry := region & 0xFF
 	return Vector2(float(ry - player_region.y) * REGION_SPAN + x, float(rx - player_region.x) * REGION_SPAN + z)
 
-## Whether the minimap draws `m`: not the player, the same world id, and a
-## field region (the player's own dungeon is the other case 0x9d5520 allows;
-## OpenSRO sends no dungeon positions, so a dungeon record is not drawn: OURS).
-static func minimap_draws(m: PartyNet.Member, own_jid: int, own_world_id: int) -> bool:
+## Whether the minimap draws `m` (0x6643bb..0x664419): not the player, the
+## same world id, and a region the player can see (`region_visible`, the
+## record's region and position as 0x9d5520 is given them). `player_region`
+## is the player's region word (+0x7c: a field region id, or the dungeon's
+## with bit 15), `same_floor` whether the record's position lies on the
+## player's floor (World3D works it out; only asked for a dungeon record).
+static func minimap_draws(m: PartyNet.Member, own_jid: int, own_world_id: int,
+		player_region: int = 0, same_floor: bool = false) -> bool:
 	if m == null or m.jid == own_jid:
 		return false
 	if m.world_id != own_world_id:
 		return false
-	return (m.region & DUNGEON_BIT) == 0
+	return region_visible(m.region, player_region, same_floor)
 
-## Whether the world map draws `m`: every member but the player (no world-id
-## test, 0x61f8d3..0x61f8e0); a dungeon record is left out here too (OURS, as
-## above).
-static func worldmap_draws(m: PartyNet.Member, own_jid: int) -> bool:
-	if m == null or m.jid == own_jid:
+## UI_SILKMALL::FUN_009d5520(region, pos) on the player (READ, asm
+## 0x9d5520..0x9d561d): 1 for a field region (bit 15 clear) while the player
+## is in the field (`+0x7c` without 0x8000); otherwise 1 only for the
+## player's own dungeon region (`cmp di, [ecx+0x7c]`) when the block under
+## the position (the region manager 0x111a02c, slot 0x2c) has the floor of
+## the player's block (+0x74 slot 0x14 of +0x78): both through
+## `[0x1103cc6]` slot 1, then the block's slot 2 -- the floor index
+## ICPlayer::FUN_009d7880 reads the floor name with. A field member is never
+## shown from a dungeon, nor a dungeon member from the field.
+static func region_visible(member_region: int, player_region: int, same_floor: bool) -> bool:
+	var member_dungeon := (member_region & DUNGEON_BIT) != 0
+	var player_dungeon := (player_region & DUNGEON_BIT) != 0
+	if not member_dungeon and not player_dungeon:
+		return true
+	if not member_dungeon or (member_region & 0xFFFF) != (player_region & 0xFFFF):
 		return false
-	return (m.region & DUNGEON_BIT) == 0
+	return same_floor
+
+## Whether the world map draws `m` at all: every member but the player (no
+## world-id test, 0x61f8d3..0x61f8e4). Where, and whether the map shown
+## takes it, is HudWorldmap.party_pixel's (round 786).
+static func worldmap_draws(m: PartyNet.Member, own_jid: int) -> bool:
+	return m != null and m.jid != own_jid
+
+## The Donwhang cave's floor bands (CNIFWorldMap::FUN_00610ed0, READ, asm
+## 0x610ed0..0x610f77): a height under 70.0 (the float at 0xd990a8) is
+## level 0, under 210.0 (the double at 0xd990a0) level 1, under 350.0 (the
+## float at 0xd9909c) level 2, else level 3.
+const CAVE_BANDS := [70.0, 210.0, 350.0]
+
+static func cave_level(y: float) -> int:
+	for i in CAVE_BANDS.size():
+		if y < CAVE_BANDS[i]:
+			return i
+	return CAVE_BANDS.size()
+
+## Whether a dungeon floor's map (+0x97d0 == 2) draws a member whose record
+## has `region` and height `y` (FUN_0061eec0, READ, asm 0x61fc00..0x61fd42):
+## only a dungeon record (0x61fc00; a field member is not drawn on a floor),
+## of the floor row's region id (column 16, row +0x88: `[0x62c030() +
+## 0x84]` against `region & 0x7fff`, 0x61fce5..0x61fcf0), and for region 1,
+## the cave, whose four floors share one region, only when the record's
+## height falls in the floor's band: 0x610ed0(1, the row's floor number
+## (+0x40, 1-based), region, &(x, y, z)) is `floor - 1 == cave_level(y)`.
+static func floor_map_draws(map_region_id: int, map_floor: int, region: int, y: float) -> bool:
+	if (region & DUNGEON_BIT) == 0:
+		return false
+	if map_region_id != (region & 0x7FFF):
+		return false
+	if map_region_id != 1:
+		return true
+	return map_floor - 1 == cave_level(y)
 
 ## Whether the mouse is on a world-map dot whose (truncated) quad is `quad`:
 ## the corners less the half pixel (0x61fe11..0x61fe88), then

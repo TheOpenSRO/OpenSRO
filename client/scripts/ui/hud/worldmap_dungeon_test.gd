@@ -217,6 +217,8 @@ func _builder() -> UiBuilder:
 		_tex(builder, p, Vector2i(32, 32))
 	for p in [UP_DDJ, DOWN_DDJ]:
 		_tex(builder, p, Vector2i(28, 12))
+	# The party's dot (round 786; PartyMapMarks.WORLD_DOT_DDJ), 16x16.
+	_tex(builder, "interface\\worldmap\\wmap_sign_party.ddj", Vector2i(16, 16))
 	for n in 2:
 		for a in 3:
 			for b in 3:
@@ -256,6 +258,56 @@ func _floor_label(spinner: Control) -> String:
 func _dungeon_id(window: Control) -> int:
 	var d = window.call("current_dungeon")
 	return d.id if d != null else -1
+
+# --- the party (round 786) --------------------------------------------------
+
+## Five members, as World3D hands them over: Cara in the cave at dungeon (0,
+## 10, 0) -- the player's spot on 1F; Dex in the cave at (960, 5, -960); Eve
+## in the cave at height 100, which is the cave's second band (0x610ed0: 70
+## up to 210); Fay in the field one region y west of the cave's field point;
+## Gus in the tomb (0x8007), which the synthetic instance table has no point
+## for.
+func _party_regions() -> PackedInt32Array:
+	return PackedInt32Array([0x8001, 0x8001, 0x8001, (99 << 8) | 102, 0x8007])
+
+func _party_pos() -> PackedVector3Array:
+	return PackedVector3Array([Vector3(0, 10, 0), Vector3(960, 5, -960), Vector3(0, 100, 0),
+		Vector3(960, 0, 960), Vector3(0, 0, 0)])
+
+func _party_names() -> PackedStringArray:
+	return PackedStringArray(["Cara", "Dex", "Eve", "Fay", "Gus"])
+
+## The player in the cave with floor `n` shown (FUN_0061eec0, mode 2): only
+## the cave's members, and of them only those in that floor's height band.
+func _party_on_floor(window: Control, n: int) -> void:
+	if not window.has_method("party_pixel"):
+		_check(false, "HudWorldmap.party_pixel exists (round 786)")
+		return
+	window.call("update_party", _party_regions(), _party_pos(), _party_names(), false)
+	var got := String(window.call("party_dots_report"))
+	if n == 1:
+		_check(got == "(256,256) (384,384)",
+			"on 1F: Cara under the player's arrow, Dex 960 east and south at (384, 384); Eve (2F's band), Fay (the field) and Gus (the tomb) unmarked (got '%s')" % got)
+	else:
+		_check(got == "(256,256)", "on 2F: only Eve, whose height is 2F's band (got '%s')" % got)
+
+## A field map (FUN_0061eec0, mode 0): the cave's members at the cave's field
+## point (0x60fa90 on the member's region, no offset), the field member at its
+## own field position, the tomb's member nowhere (no point for it here).
+func _party_on_field_map(window: Control, when: String) -> void:
+	if not window.has_method("party_pixel"):
+		_check(false, "HudWorldmap.party_pixel exists (round 786)")
+		return
+	window.call("update_party", _party_regions(), _party_pos(), _party_names(), false)
+	var got := String(window.call("party_dots_report"))
+	# Fay's own field position, by the player's marker's transform: where
+	# the player's arrow stands at region (99, 102), local (960, 960).
+	var map = window.call("current_map")
+	var fay: Vector2 = (map.pixel_for_world(HudWorldmap.party_world(99, 102, Vector2(960, 960))) as Vector2).floor() \
+		if map != null else Vector2(-1, -1)
+	var want := "(512,256) (512,256) (512,256) (%d,%d)" % [int(fay.x), int(fay.y)]
+	_check(fay.x < 512.0 and got == want,
+		"on the world map %s: the cave's three at its field point (512, 256), Fay at her own field position %s, west of it (got '%s')" % [when, str(fay), got])
 
 # --- the checks --------------------------------------------------------------
 
@@ -383,6 +435,7 @@ func _run() -> void:
 		"the arrow is at dungeon (0, 0)'s pixel, (256, 256) (0x60f660; got %s)" % px)
 	_check(_caption(window) == "Test Cave - Room A", "the caption names the player's room (got '%s')" % _caption(window))
 	_check(not bool(window.call("is_auto_move")), "and auto-move is off now: the floor turned it off")
+	_party_on_floor(window, 1)
 	window.call("update_player_dungeon", 0x8001, Vector3(1920, 10, 1920), Vector2(0, 1), "TEST_F2", "TEST_ROOM")
 	_check(_dungeon_id(window) == 2001 and not marker.visible,
 		"with auto-move off the map stays; the player on 2F has no arrow on 1F (0x612920)")
@@ -391,12 +444,26 @@ func _run() -> void:
 	_check(_dungeon_id(window) == 2002 and marker.visible
 		and (window.call("player_pixel") as Vector2).is_equal_approx(Vector2(512, 0)),
 		"on 2F the arrow is at (1920, 1920)'s pixel, (512, 0) (got %s)" % window.call("player_pixel"))
+	_party_on_floor(window, 2)
 	window.call("show_world")
 	px = window.call("player_pixel")
 	_check(marker.visible and px is Vector2 and (px as Vector2).is_equal_approx(Vector2(512, 256)),
 		"on the world map the arrow is at the dungeon's field point (worldmap_instanceinfo, 0x60fa90; got %s)" % px)
+	_party_on_field_map(window, "with the player in the cave")
 	window.call("update_player", 99, 102, Vector3(960, 0, 960), Vector2(0, 1))
 	_check(not bool(window.call("in_dungeon")), "a field update leaves the dungeon")
+	_party_on_field_map(window, "with the player in the field")
+	var fay_dot := window.find_child("party_3", true, false) as Control
+	var arrow_at: Variant = window.call("player_pixel")
+	_check(fay_dot != null and arrow_at is Vector2 and fay_dot.position + fay_dot.size / 2.0 == (arrow_at as Vector2).floor(),
+		"Fay, standing where the player now stands, is drawn under the player's arrow (got %s, arrow %s)"
+			% [str(fay_dot.position + fay_dot.size / 2.0) if fay_dot != null else "null", str(arrow_at)])
+	window.call("show_dungeon", 2001)
+	window.call("update_party", _party_regions(), _party_pos(), _party_names(), false)
+	_check(String(window.call("party_dots_report")) == "",
+		"a floor shown with the player in the field marks no one (OPEN: the client's own placement there, 0x61fc42, is not built; got '%s')"
+			% window.call("party_dots_report"))
+	window.call("show_world")
 
 	window.queue_free()
 	await process_frame

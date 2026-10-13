@@ -1328,10 +1328,8 @@ func update_player_dungeon(region_id: int, dungeon_pos: Vector3, facing: Vector2
 	_player_room_key = room_key
 	# The field's own region is not where the player is.
 	_player_region = Vector2i(-1, -1)
-	# The party's marks are not placed in a dungeon (OPEN, see
-	# docs/protocol/WORLDMAP_FORMAT.md's dungeon section).
-	if _party_layer != null and not _party_dots.is_empty():
-		place_party_dots(PackedVector2Array(), PackedStringArray(), false, Vector2(-1e9, -1e9))
+	# The party's marks follow in update_party (round 786: World3D's dungeon
+	# step sends them too; round 775 cleared them here, as nothing did).
 	# Only a shown window follows (OURS for the field's update_player, which
 	# follows hidden too): the client's follow is its render's (0x6243f8)
 	# and ShowWindow's (0x623060), and a floor shown turns auto-move off
@@ -1363,23 +1361,69 @@ func make_party_layer(parent: Control, tex: Texture2D) -> void:
 	_party_label.visible = false
 	_party_layer.add_child(_party_label)
 
-## Marks each party member (round 717): `members_local` holds each drawn
-## member's region-local ground position (x east, y north) in the player's
-## region (`region_x`, `region_y`), `names` their names in the same order,
-## `job_party` whether the party is a job party (its names show with a `*`).
-## A mark off this map lands off the canvas and is clipped by the map area
-## (OURS: the original's own clipping was not traced).
-func update_party(region_x: int, region_y: int, members_local: PackedVector2Array,
+## Marks each party member (round 717; round 786 for dungeons): `regions`
+## holds each drawn member's region word and `positions` its position in
+## that region -- region-local (x east, z north) for a field region, the
+## dungeon's own space for a dungeon (bit 15), the frame the record and the
+## player's +0x80 use there -- with y the record's height (the cave's floor
+## test reads it). `names` are their names in the same order, `job_party`
+## whether the party is a job party (its names show with a `*`). Where each
+## lands is party_pixel's; a mark off this map lands off the canvas and is
+## clipped by the map area (OURS: the original's own clipping was not
+## traced).
+func update_party(regions: PackedInt32Array, positions: PackedVector3Array,
 		names: PackedStringArray, job_party := false) -> void:
 	if _party_layer == null:
 		return
-	_party_pixels.resize(members_local.size())
-	for i in members_local.size():
-		_party_pixels[i] = _current.pixel_for_world(party_world(region_x, region_y, members_local[i])) \
-			if _current != null else Vector2(-1e9, -1e9)
+	var n := mini(regions.size(), positions.size())
+	_party_pixels.resize(n)
+	for i in n:
+		var at: Variant = party_pixel(regions[i], positions[i])
+		_party_pixels[i] = at as Vector2 if at != null else Vector2(-1e9, -1e9)
 	var mouse := _canvas.get_local_mouse_position() if _canvas != null and _canvas.is_inside_tree() \
 		else Vector2(-1e9, -1e9)
 	place_party_dots(_party_pixels, names, job_party, mouse)
+
+## Where a member with record region `region` at `pos` (as update_party's)
+## is drawn on the map shown, in canvas pixels, or null when this map does
+## not draw it (CNIFWorldMap::FUN_0061eec0's party loop, READ, asm
+## 0x61f8c0..0x61fd4e):
+## - **a dungeon floor** (+0x97d0 == 2): a dungeon member of the floor's
+##   region, and in the cave on the floor's height band
+##   (PartyMapMarks.floor_map_draws), at its offset from the player over the
+##   floor's scale, from the player's marker pixel (+0x97ac/+0x97b0, which
+##   0x60f660 sets from the player's dungeon position): pixel_for_dungeon's
+##   own transform. With the player in the field the client places such a
+##   member from the player's field offset and a table at +0x679f0
+##   (0x61fc42..0x61fcdd): not drawn here (OPEN).
+## - **a field map**, a dungeon member: at its dungeon's field point,
+##   0x60fa90(member region) with no offset (0x61fa44..0x61fa6d) -- the
+##   point the player's own marker takes in a dungeon
+##   (worldmap_instanceinfo.txt; no point, no dot, OURS).
+## - **a field map**, a field member: from the player's marker by the
+##   member's offset from the player over the map scale, y subtracted
+##   (0x61f94d..0x61f9b7) -- the marker's own transform, so its own field
+##   position (party_world). With the player in a dungeon (0x61fa72..
+##   0x61fbfb) the base is the dungeon's field point (0x60fa90 on the
+##   player's region) and the offset the member's record position less that
+##   entry's (its field region +0x30 to region steps of 1920, then its x
+##   +0x08 and z +0x10): again the member's own field position.
+## The original's "less 0.5" on each offset (0xe1b7d0, before the scale) is
+## left out, as the field's was in round 717: 0.05 / units-per-pixel of a
+## pixel (OURS).
+func party_pixel(region: int, pos: Vector3) -> Variant:
+	if _mode == MODE_DUNGEON:
+		if _dungeon_map == null or not in_dungeon():
+			return null
+		if not PartyMapMarks.floor_map_draws(_dungeon_map.region_id, _dungeon_map.layers, region, pos.y):
+			return null
+		return _dungeon_map.pixel_for_dungeon(pos, (region >> 8) & 0xff)
+	if _current == null:
+		return null
+	if (region & PartyMapMarks.DUNGEON_BIT) != 0:
+		var point: Variant = WorldmapInstanceInfoReader.field_point(instance_table, region)
+		return _current.pixel_for_world(point as Vector2) if point != null else null
+	return _current.pixel_for_world(party_world((region >> 8) & 0xff, region & 0xff, Vector2(pos.x, pos.z)))
 
 var _party_pixels := PackedVector2Array()
 ## The hovered member's index and the name the label was given for it, so the
@@ -1417,8 +1461,14 @@ func place_party_dots(pixels: PackedVector2Array, names: PackedStringArray, job_
 	var hovered := -1
 	for i in n:
 		var dot := _party_dots[i]
-		dot.position = (pixels[i] - PartyMapMarks.WORLD_DOT_SIZE / 2.0).floor()
+		# A member this map does not draw (-1e9) is hidden where it is: a
+		# Control moved to -1e9 loses its size (float offsets that far out
+		# cannot hold 16 apart: round 786 measured a reused dot drawn 0x0).
 		dot.visible = dot.texture != null and pixels[i].x > -1e8
+		if not dot.visible:
+			continue
+		dot.size = PartyMapMarks.WORLD_DOT_SIZE
+		dot.position = (pixels[i] - PartyMapMarks.WORLD_DOT_SIZE / 2.0).floor()
 		if hovered < 0 and dot.visible and PartyMapMarks.hover_hit(Rect2(dot.position, dot.size), mouse):
 			hovered = i
 	for i in range(n, _party_dots.size()):
