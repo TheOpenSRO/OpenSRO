@@ -1,0 +1,365 @@
+# Current Features Supported
+
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.539** plus what is merged on `dev`; updated 2026-10-13.
+
+**Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
+
+## Summary
+
+| Area | ✅ | 🟡 | 🔧 | ❌ | Total |
+|---|--:|--:|--:|--:|--:|
+| [Account & login](#account--login) | 9 | 3 |  |  | 12 |
+| [World & movement](#world--movement) | 13 | 4 |  | 3 | 20 |
+| [NPCs](#npcs) | 7 | 4 |  |  | 11 |
+| [Monsters](#monsters) | 14 | 3 |  |  | 17 |
+| [Combat](#combat) | 11 | 4 |  | 3 | 18 |
+| [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
+| [Items](#items) | 13 | 3 | 2 | 4 | 22 |
+| [Economy](#economy) | 2 | 1 |  | 4 | 7 |
+| [Social](#social) | 9 | 4 |  | 5 | 18 |
+| [Job / trade](#job--trade) |  |  |  | 3 | 3 |
+| [Pets & mounts](#pets--mounts) |  |  |  | 4 | 4 |
+| [Events / special](#events--special) |  | 1 |  | 9 | 10 |
+| [UI / HUD](#ui--hud) | 13 | 4 |  | 1 | 18 |
+| [Graphics & effects](#graphics--effects) | 10 | 2 |  |  | 12 |
+| [Audio](#audio) | 5 |  |  |  | 5 |
+| [Server / ops](#server--ops) | 6 |  | 1 | 1 | 8 |
+| [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
+| **All** | **125** | **35** | **3** | **39** | **202** |
+
+## Biggest gaps
+
+- No pets, horses or transports (COS)
+- No trader/hunter/thief jobs or trade runs
+- No player stalls, consignment or item mall
+- No open-world PvP, fortress war or arena events
+- Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
+- Guilds are basic: no ranks, invites, storage or unions
+- Exchange window not yet retail; players cannot drop items
+- No keyboard movement or key rebinding
+
+## Notes
+
+- Monster AI, aggro, battle and player death are server options (default off); the public server runs them on.
+- The Test Items NPC is a server option (OPENSRO_TEST_ITEMS_NPC), off by default.
+
+## Account & login
+
+Own gateway protocol, retail-style lobby, both races and every creatable body.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Login server | ✅ Supported | Single Go gateway on port 15779; optional TLS |
+| Server list | ✅ Supported | Named servers from setting/config.yaml with live population and state |
+| Account registration | ✅ Supported | Register button on the login screen; no auto-create on first login |
+| 3D title screen and intro | ✅ Supported | Retail intro flown over the world; operator can set logo, music, intro |
+| Character select | ✅ Supported | Retail select screen on a 3D stage; four characters per account |
+| Character create: China | ✅ Supported | All Chinese bodies with height and volume sliders |
+| Character create: Europe | ✅ Supported | All European bodies and customisation controls |
+| All 52 creatable bodies | ✅ Supported | Checked against the game's own character-creation table |
+| Character delete and restore | ✅ Supported | 7-day delete delay, restore, automatic purge |
+| Name checks | 🟡 Partial | Length and character rules enforced; no forbidden-word list |
+| Retail client compatibility | 🟡 Partial | Retail gateway handshake and shard list only; retail login not supported |
+| Account bans | 🟡 Partial | Blocked accounts refused at login; no GM command to ban |
+
+## World & movement
+
+The whole retail world streamed from your own Map.pk2, with click-to-walk travel.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Terrain, objects and region streaming | ✅ Supported | Seamless world from Map.pk2; regions load off the main thread |
+| Click-to-walk | ✅ Supported | Click the ground to walk; arrival lands exactly on the point |
+| Sky-click run | ✅ Supported | Clicking sky or far ground runs on that heading until blocked |
+| Keyboard (WASD) movement | ❌ Not yet | Removed to match retail's key table; click-to-walk only |
+| Walk/run toggle and sitting | ✅ Supported | Walk/run, sit and stand through the action window and keys |
+| Collision | 🟡 Partial | Client navmesh for terrain and buildings; server checks speed and height only |
+| Dungeons: Donwhang Cave and Qin-Shi Tomb | ✅ Supported | All Qin-Shi floors and Donwhang Cave load, with dungeon minimaps |
+| Instanced dungeons | ❌ Not yet | Job Temple, Pharaoh's tomb, Medusa rooms refused at the gate |
+| Town teleport gates | ✅ Supported | Destinations listed in the gate's talk box; fee charged |
+| Teleport NPCs (ferries, tunnels) | ✅ Supported | Ferry, boat and tunnel routes through NPC talk lines |
+| Return scroll | ✅ Supported | Cast bar, then back to the recall point designated at a town NPC |
+| Reverse return scroll | ✅ Supported | Last recall point, death point, or a point picked on the world map |
+| Arrival guard | ✅ Supported | Hidden while loading after a teleport, then 6 s of protection |
+| Saved position on logout | ✅ Supported | Server option, on for the public server; recall and death points always saved |
+| Minimap | ✅ Supported | NPC, monster, player, party, quest NPC and unique signs; no pet sign |
+| World map | 🟡 Partial | Map, dungeon floors and city icons; guide list and sign tooltips missing |
+| Time of day | 🟡 Partial | Fixed daytime lighting as retail draws it; server clock not sent |
+| Weather (rain, snow) | ❌ Not yet | No weather system yet |
+| Fog and water | ✅ Supported | Retail fog planes; animated water with reflection option |
+| Seasonal decorations | 🟡 Partial | Christmas, Halloween and others available but off by default |
+
+## NPCs
+
+Retail NPCs in their retail spots, with talk menus, shops, storage and quests.
+
+| Feature | Status | Notes |
+|---|---|---|
+| NPC spawns and models | ✅ Supported | Every retail NPC position spawned with its own model |
+| NPC facing | 🟡 Partial | 230 of 257 NPCs face their retail direction; 27 use a fallback |
+| NPC talk window | ✅ Supported | Retail talk box titled with the NPC's name and service lines |
+| NPC shops | ✅ Supported | Retail goods and prices; buy, sell, buyback, Ctrl+click quick-sell |
+| Storage (warehouse) | ✅ Supported | Per-account items and gold with deposit fee |
+| Repair NPCs | 🟡 Partial | Repair and Repair All cover worn gear only, not bag items |
+| Quests | 🟡 Partial | 564 of 696 quests reachable, NPC quest marks; party/timed/job quests missing |
+| Guild manager NPC | 🟡 Partial | Create and leave a guild; other guild lines not done |
+| Test Items NPC | ✅ Supported | Jangan NPC; free +12 full-blue gear, elixirs, stones; server option |
+| Test Items NPC: level-101 Nova 🆕 | ✅ Supported | Sells the unlocked level-101 Seal of Nova instead of level 111 |
+| Test Items NPC: +12 full-blue listing 🆕 | ✅ Supported | Store slots and tooltips show the +12 full-blue piece you get |
+
+## Monsters
+
+Every field nest of the game populated, with retail AI, uniques and drops.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Field spawns from nests | ✅ Supported | About 10,000 field spawn points placed from the game's nest data |
+| Respawn timing | ✅ Supported | Each nest's own retail respawn window |
+| Monster models and animations | ✅ Supported | Retail models with idle, walk, attack and death clips |
+| Wander, chase and leash | ✅ Supported | Idle wander, battle chase, return home when pulled too far |
+| Aggro on sight | ✅ Supported | Aggressive monsters notice nearby players; detection radius is an estimate |
+| Linked aggro | ✅ Supported | Nearby monsters join when a party member attacks, as retail |
+| Threat / hate retarget | 🟡 Partial | Threat is tracked but monsters stay on their first attacker |
+| Monster skills | 🟡 Partial | Monsters cast skills and statuses; area hits and knockback on players missing |
+| Field uniques | ✅ Supported | Tiger Girl, Uruchi, Isyutaru, Yarkan, Shaitan, Cerberus, Ivy, with summons |
+| Unique rotation | ✅ Supported | Uniques respawn on retail windows across their retail spawn spots |
+| Unique notices | ✅ Supported | Server-wide 'appeared' and 'killed by' notices |
+| Unique minimap sign | ✅ Supported | Uniques show their own sign on the minimap |
+| Champions, giants, elites | ✅ Supported | Retail rank roll and HP multipliers; rank shown in target window |
+| Party monsters | ✅ Supported | Party-only monsters with x10 HP and party label |
+| Dungeon monsters | 🟡 Partial | Served dungeons partly populated; many dungeon spawns not placed yet |
+| Item and gold drops | ✅ Supported | Retail drop tables if imported; killer owns loot for 30 s |
+| EXP and SP rewards | ✅ Supported | Retail damage-share formulas with level-difference scaling |
+
+## Combat
+
+Retail auto-attack, skills, statuses and berserk; PvP limited to duels.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Auto-attack | ✅ Supported | One click fights to the death; server-checked weapon reach |
+| Skill attacks | ✅ Supported | Retail skill damage and cast animations; chains play link by link |
+| Self and party buffs | ✅ Supported | Buff bar with timers, right-click cancel; debuffs shown on monsters |
+| Status effects | ✅ Supported | Freeze, burn, poison, shock, stun, sleep, root, fear, bleed, curses and more |
+| Imbues and passives | ✅ Supported | Imbues add elemental damage; passive skills apply their stats |
+| Passive skills | ✅ Supported | Passives apply their stats |
+| Heals | 🟡 Partial | Flat, percent and area heals; weapon-scaled cleric heals missing |
+| Critical, block, evade | 🟡 Partial | Player rolls retail; monster hit and evade rates are estimates |
+| Damage numbers | ✅ Supported | Retail damage text art, colours, critical/block/resist and motion |
+| Knockdown and knockback | 🟡 Partial | Players can knock monsters down/back; monsters cannot do it to players |
+| Death and resurrection | ✅ Supported | Dead state; revive in town, or on the spot up to level 10 |
+| Resurrection skill | 🟡 Partial | Server supports it; client has no accept box yet |
+| Resurrection scroll | ❌ Not yet | Scroll item refused |
+| Duels | ✅ Supported | Challenge, accept and fight 1v1 |
+| PK / murder / PvP cape | ❌ Not yet | No open-world PvP yet |
+| Berserk (Hwan) | ✅ Supported | Hwan orbs fill from kills; berserk mode with its look and sounds |
+| Berserk potions | ✅ Supported | Berserk potion and Energy of Life work |
+| Stealth, detection, transforms, traps | ❌ Not yet | These skill types do nothing yet |
+
+## Skills & masteries
+
+Retail skill window and mastery economy for both races.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Skill window | ✅ Supported | Retail layout with weapon/force tabs, mastery tabs and practice box |
+| Mastery leveling | ✅ Supported | Spend SP to raise masteries; China 330 total, Europe 2x level |
+| Learning skills | ✅ Supported | Learn and level skills with SP earned from kills |
+| Chinese masteries | ✅ Supported | All seven Chinese masteries learnable and castable |
+| European masteries | 🟡 Partial | Learn and cast; stances, stealth and weapon-scaled heals incomplete |
+| Skill tooltips | ✅ Supported | Retail blue tooltip window |
+| Skill cooldowns | ✅ Supported | Server-enforced, including shared cooldown groups |
+| Cooldown overlay | ✅ Supported | Full-icon sweep on hotbar and skill window |
+| Buffs kept over relog | ❌ Not yet | Buffs end on logout |
+| Skill withdraw | ❌ Not yet | Lowering masteries and forgetting skills not available |
+
+## Items
+
+Retail items with real stats, blues, alchemy and potions.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Inventory window | ✅ Supported | 96-slot bag over pages; drag, move and swap |
+| Stacking, merging, splitting | ✅ Supported | Retail stack sizes; Shift+click opens the split box |
+| Equipment and paper doll | ✅ Supported | 13 worn slots with live 3D preview; others see your gear |
+| Item requirements | ✅ Supported | Level, race, gender and mastery checked; unmet shown in red |
+| Item tooltips | ✅ Supported | Retail tooltip with white stats %, blues, plus, durability, requirements |
+| Pick up drops | ✅ Supported | Click items or gold on the ground to pick up |
+| Drop items on the ground | ❌ Not yet | Players cannot drop items or gold yet |
+| Durability and broken items | ✅ Supported | Gear wears in combat; broken gear gives no stats |
+| Alchemy +N (elixirs) | ✅ Supported | Retail success rates, lucky powder, failure and destroy rules |
+| Alchemy window | 🟡 Partial | Reinforce and stones work; advanced elixir, other tabs, sockets missing |
+| Magic options (blues) | ✅ Supported | Drop with blues, apply when worn, shown in tooltips |
+| Sockets | ❌ Not yet | No socket system yet |
+| Seal of Star/Moon/Sun/Nova items | ✅ Supported | Seal items usable; retail seal edge drawn on icons |
+| Seal effects | 🔧 In progress | Seal particle effects on worn gear being reworked on a branch |
+| Plus glows | 🔧 In progress | Weapon and shield glows by plus level being reworked on a branch |
+| HP/MP potions and vigors | ✅ Supported | Retail recovery amounts and reuse locks |
+| Cure pills | ✅ Supported | Universal and purification pills cure statuses |
+| Auto potion | ✅ Supported | HP, MP and cure thresholds; settings saved on the server |
+| Item cooldowns | 🟡 Partial | Server-enforced; cooldown sweep not drawn on potion slots |
+| Speed scrolls and drugs | ❌ Not yet | Refused as unusable |
+| Composite items | 🟡 Partial | Only the Energy of Life scroll kind works |
+| Avatars and Devil's Spirit | ❌ Not yet | No avatar slots or avatar items yet |
+
+## Economy
+
+Gold, NPC trade and storage work; player markets are not built yet.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Buy and sell at NPCs | ✅ Supported | Retail prices, buyback and quick-sell |
+| Storage gold | ✅ Supported | Deposit and withdraw gold in the warehouse |
+| Exchange (player trade) | 🟡 Partial | Server works; one item stack plus gold; retail exchange window not opened |
+| Player stalls | ❌ Not yet | No stall system yet |
+| Consignment | ❌ Not yet | No consignment trading yet |
+| Item mall (silk) | ❌ Not yet | No item mall or silk yet |
+| Guild storage | ❌ Not yet | No guild warehouse yet |
+
+## Social
+
+Chat, full party system, party matching and basic guilds.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Chat channels | ✅ Supported | All, whisper, party, guild and global chat |
+| GM notices | ✅ Supported | Notice banners from GMs |
+| Chat window | ✅ Supported | Retail chat window with five tabs and the whole-chat window |
+| Party | ✅ Supported | Invite, leave, kick; survives disconnects |
+| Party EXP and item sharing | ✅ Supported | Retail share modes and formulas |
+| Party HUD | ✅ Supported | Live member HP/MP boxes, party window, minimap and world map marks |
+| Party matching | ✅ Supported | Register, browse, request to join and answer |
+| Guild creation | ✅ Supported | Create a guild at the guild manager |
+| Guild invites | 🟡 Partial | No retail invite flow yet |
+| Guild ranks and permissions | ❌ Not yet | Command buttons shown but disabled |
+| Guild window | 🟡 Partial | Name and master only; member list and notice blank |
+| Guild points and levels | 🟡 Partial | Points earned, guild levels up; spending points not done |
+| Union | ❌ Not yet | No guild alliances yet |
+| Friends list | 🟡 Partial | Server complete; adding friends only from a developer tab |
+| Mail / letters | ❌ Not yet | Letter pane drawn, no backend |
+| Block list | ❌ Not yet | Block pane drawn, no backend |
+| Academy | ❌ Not yet | Not yet |
+| Emotes | ✅ Supported | Seven retail emotes from the action window |
+
+## Job / trade
+
+The trader, hunter and thief system is not built yet.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Trader, hunter, thief jobs | ❌ Not yet | Job NPC says not available yet; no thieves' town |
+| Job suits | ❌ Not yet | Not yet |
+| Trade goods and specialty runs | ❌ Not yet | Not yet |
+
+## Pets & mounts
+
+No COS (pet, horse, transport) system yet.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Grab pet | ❌ Not yet | No pets; pet items refused |
+| Attack pet | ❌ Not yet | Not yet |
+| Horses | ❌ Not yet | Not yet |
+| Trade transports | ❌ Not yet | Not yet |
+
+## Events / special
+
+Large-scale events and instanced content are still to come.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Fortress war | ❌ Not yet | Rules recovered, not playable |
+| Capture the flag | ❌ Not yet | Not yet |
+| Battle arena | ❌ Not yet | Rules recovered, not playable |
+| Survival arena | ❌ Not yet | Not yet |
+| Jupiter temple | ❌ Not yet | Not yet |
+| Job temple | ❌ Not yet | Instanced; refused at the gate |
+| Pharaoh's tomb (King's Valley) | ❌ Not yet | Instanced; gates not usable |
+| Holy Water Temple (Medusa) | ❌ Not yet | Instanced; refused at the gate |
+| Alexandria | 🟡 Partial | Town region loads; content beyond NPCs and shops unverified |
+| Forgotten World | ❌ Not yet | Not yet |
+
+## UI / HUD
+
+Retail windows rebuilt from the game's own layout files.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page |
+| Drag to hotbar | ✅ Supported | Skills, items and actions; swap and clear slots |
+| Saved hotbar | 🟡 Partial | Saved on your PC per character, not on the server |
+| Character window | ✅ Supported | Stats, attack/defence ranges, balance; spend STR/INT points |
+| Player info (HP/MP/Hwan) | ✅ Supported | Live HP/MP bars and Hwan orbs |
+| Buff bar | ✅ Supported | Icons with timers; right-click cancel |
+| Target window with buffs | ✅ Supported | Target's HP, rank and buff/debuff icons |
+| Quest window | 🟡 Partial | Quest list and objectives; counts and timers partly missing |
+| System message window and banners | ✅ Supported | System messages, notice banners and area names |
+| Action window | ✅ Supported | Sit, walk/run, emotes, auto attack, exchange, party, auto grab |
+| NPC talk and message boxes | 🟡 Partial | Retail talk box; some dialogs not yet retail layouts |
+| Option window: Video | ✅ Supported | Retail rows, presets, brightness, sight range |
+| Option window: Audio | ✅ Supported | Volume sliders |
+| Option window: Input and Game tabs | ❌ Not yet | Drawn but not wired |
+| Keybinds | 🟡 Partial | Retail default key table; no rebinding |
+| Escape menu and Help window | ✅ Supported | Option, Help, Restart, Exit; in-client help |
+| Game cursors | ✅ Supported | Retail cursors read from your own sro_client.exe |
+| Debug panel and tester console | ✅ Supported | Shift+F3 panel and /help chat commands for bug reports |
+
+## Graphics & effects
+
+Retail models, particles and lighting re-created in Godot.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Character models | ✅ Supported | Retail bodies dressed from the item table's models |
+| Equipment visuals | ✅ Supported | Worn weapons and armour drawn on every character |
+| Particle effects (EFP) | ✅ Supported | Retail particle effects for skill casts, projectiles, hits and level-up |
+| Effects stay on moving bodies | ✅ Supported | Effects follow their holder at any frame rate |
+| Lighting and shadows | ✅ Supported | Sun, character light, shadow detail options |
+| Bloom and ambient occlusion | ✅ Supported | Retail-style bloom and SSAO options |
+| Trees, foliage and map objects | ✅ Supported | Retail materials; animated map objects |
+| Placed object effects | 🟡 Partial | Teleport structures play theirs; other objects' ambient effects off |
+| Fade-in of characters | ✅ Supported | Monsters and players fade in over 2 s, as retail |
+| Berserk look | ✅ Supported | Berserk aura, colour and sounds |
+| Crowd rendering | ✅ Supported | GPU skinning for large crowds |
+| Level of detail and culling | 🟡 Partial | Frustum and sight-range culling; no mesh LOD |
+
+## Audio
+
+Retail music, ambience and sound effects from your own archives.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Zone music | ✅ Supported | Music changes by region |
+| Ambient sounds | ✅ Supported | Region ambient beds |
+| Combat and skill sounds | ✅ Supported | Swings, hits and skill sounds |
+| Footsteps and voices | ✅ Supported | Footsteps by ground type; hurt and death voices |
+| Volume controls | ✅ Supported | Per-channel volume in the Audio tab |
+
+## Server / ops
+
+Go server with Postgres persistence and operator tooling.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Postgres persistence | ✅ Supported | Characters, items, storage, skills, quests, guilds, friends saved |
+| Docker Compose setup | ✅ Supported | Server and Postgres in one command |
+| Server auto-update | ✅ Supported | Timer pulls, rebuilds, health-checks and rolls back on failure |
+| Max players | ✅ Supported | Configurable cap, default 1000 |
+| Rates | ✅ Supported | EXP, party EXP, drop, gold and Hwan rates, capped at 2.5x |
+| GM commands | ✅ Supported | Teleport, give items, level, spawn, notices and more |
+| GM kick and ban commands | ❌ Not yet | Not yet |
+| Crowd performance | 🔧 In progress | Interest management done; 1000-player target not met yet |
+
+## Client platforms
+
+Windows and Linux builds; bring your own retail game files.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Windows | ✅ Supported | Windows 10+ 64-bit; prebuilt zip each release |
+| Linux | ✅ Supported | 64-bit, glibc 2.28+; prebuilt zip each release |
+| macOS | 🟡 Partial | Windows build reported working under CrossOver; no native build |
+| Vulkan renderer (Forward+) | ✅ Supported | Default renderer |
+| OpenGL renderer (Compatibility) | ✅ Supported | Launcher or config option; automatic fallback without Vulkan |
+| Auto-updater | ✅ Supported | Offers new releases at start; never applies silently |
+| Bring your own game files | ✅ Supported | Reads Data, Map and Media.pk2 from a pk2 folder |
