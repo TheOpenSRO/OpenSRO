@@ -1416,9 +1416,12 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 			return handleMovementRequest(sess, p, hub, chars)
 		case OpUnstuck:
 			// Round 749's verification, FP6: the server's /unstuck (unstuck.go).
-			return handleUnstuck(sess, hub, chars)
+			return handleUnstuck(ctx, sess, hub, chars, eq, zerk)
 		case OpChangeZone:
 			return handleChangeZone(ctx, sess, p, eq, chars, hub, zerk)
+		case OpReadyToPlay:
+			// Round 786: the client's loading is done (arrival.go).
+			return handleReadyToPlay(sess)
 		default:
 			return nil
 		}
@@ -1467,6 +1470,7 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 			// And a pending warp landing (round 646's review), and the points
 			// the server named for it (round 749).
 			forgetWarpLanding(left.CharacterID)
+			forgetArrival(left.CharacterID) // round 786, arrival.go
 			forgetLandings(left.CharacterID)
 			forgetWalkIn(hub, left.CharacterID)
 			// The skill and quest runtimes' per-character state (round 785
@@ -1634,7 +1638,14 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// spawns whoever is in view when it opens.
 	closePlayerView(owned.ID, sess, viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk})
 	invalidateLook(owned.ID) // what it wears is read afresh at each entry
-	hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	// Held out of the world until the client's loading-done report (round
+	// 786, arrival.go): retail's PC enters its block only on the 0x3012.
+	guard := arrivalGuardOn.Load()
+	if guard {
+		hub.EnterHeld(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	} else {
+		hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	}
 	// The arrival and the client's spawn spot there are points the server
 	// named: the client's placement on its ground is taken there (round 749,
 	// destmove.go relocationAdmits).
@@ -1695,7 +1706,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// are sent its 0x3015 -- the record carries the heading, the model, the
 	// worn items with their pluses, the motion and the body mode.
 	arrived, inWorld := hub.EntityBySession(sess.ID())
-	if inWorld {
+	if inWorld && guard {
+		holdArrival(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived, "enter world", nil)
+	} else if inWorld {
 		arrivePlayer(viewDeps{ctx: ctx, hub: hub, eq: eq, chars: chars, zerk: zerk}, arrived)
 	}
 	// The client's own character id (round 616, OpSelfID), after the
@@ -1770,7 +1783,21 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // the session is not in the world: the mover is then sent the "not in the
 // world" refusal, as handleChangeZone always did, and nothing moved.
 func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame string) (moved bool, err error) {
-	old, remainingOld, _, ok := hub.ChangeZone(sess, bucket, pos)
+	return warpVia(ctx, sess, eq, chars, hub, zerk, zone, bucket, pos, frame, "zone change")
+}
+
+// warpVia is warpTo naming the path (round 786, arrival.go): with the
+// arrival guard on, the character is filed held at its arrival -- in no
+// window until its client's 0x3012 -- and its spawns both ways and the
+// protection come with the release (holdArrival); off, it arrives at once
+// as before.
+func warpVia(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame, via string) (moved bool, err error) {
+	guard := arrivalGuardOn.Load()
+	change := hub.ChangeZone
+	if guard {
+		change = hub.ChangeZoneHeld
+	}
+	old, remainingOld, _, ok := change(sess, bucket, pos)
 	if !ok {
 		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
@@ -1849,7 +1876,13 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// 0, and the players where it lands spawn it with 0 (round 737: before
 	// the spawns, so their records carry it).
 	endBerserk(hub, zerk, old.CharacterID)
-	arrivePlayer(d, arrived)
+	if guard {
+		// Out of the world until its client's loading is done (round 786):
+		// the spawns both ways and the protection follow the 0x3012.
+		holdArrival(d, arrived, via, nil)
+	} else {
+		arrivePlayer(d, arrived)
+	}
 	sendOwnBuffs(arrived, time.Now())
 	return true, nil
 }

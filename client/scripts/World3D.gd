@@ -2096,6 +2096,11 @@ func _ready() -> void:
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.revive_result.connect(_on_revive_result)
 	NetClient.state_changed.connect(_on_state_changed)
+	# Round 786: a skill or a duel blow the client refused itself in the
+	# protection after an arrival (ArrivalGuard), in the archive's words.
+	NetClient.untouchable_refused.connect(func(what: String) -> void:
+		print("World3D: %s refused: untouchable" % what)
+		_log_system(ArrivalGuard.refusal_text(_ui_text_table)))
 	NetClient.emote_received.connect(_on_emote_received)
 	NetClient.buff_started.connect(_on_buff_started)
 	NetClient.buff_ended.connect(_on_buff_ended)
@@ -2278,6 +2283,9 @@ func _ready() -> void:
 	# draw order is child order: back over it before the drain shows it.
 	if _loading_screen != null:
 		_loading_screen.cover_siblings()
+	# Round 786: the world entry's loading-done report goes when this drain
+	# is over (ArrivalGuard; the server holds the character until it).
+	_ready_report.arm("world entry")
 	await _drain_initial_load(_t_region, screen_frames)
 
 ## Where the minimap sits: flush with the screen's top-right corner, as the
@@ -2491,7 +2499,9 @@ func _try_initialize_pk2_ui() -> void:
 			# all, so "no distance checking" and "nothing happened" looked the
 			# same from the outside. (A cast retail ends without a text --
 			# SelfCast.SILENT_END_TEXT, round 636's review -- stays silent.)
-			_log_system(result.error)
+			# The protection's refusal is shown in the archive's own words
+			# (round 786, ArrivalGuard.error_line).
+			_log_system(ArrivalGuard.error_line(result.error, _ui_text_table))
 			if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "":
@@ -6260,6 +6270,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		_land_restored_return_point()
 		_adopt_char_entry()
 		_initial_load_done = true
+		_report_loading_done()
 		return
 	# Reuse the screen the caller put up (_ready and _on_change_zone_result
 	# both do, ahead of their centre cell, since round 562), else make one
@@ -6350,6 +6361,28 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	_land_restored_return_point()
 	_adopt_char_entry()
 	_initial_load_done = true
+	# Round 786: the screen is down and the cells are in -- the loading-done
+	# report, as FUN_0084c060 sends 0x3012 right after removing the screen's
+	# windows (READ, 0x84c0e5..0x84c208).
+	_report_loading_done()
+
+## Round 786 (part): the loading-done report's gate (ArrivalGuard.ReadyReport):
+## armed by the world entry and by each zone change's result, sent once from
+## the drain's end. The server keeps the character out of every other
+## player's view, and untargetable, until it arrives.
+var _ready_report := ArrivalGuard.ReadyReport.new(func() -> void: NetClient.report_ready_to_play())
+
+## Sends the armed report if the load is really over: no screen up, no cell
+## queued or preparing.
+func _report_loading_done() -> void:
+	var left := _load_queue.size() + _cell_jobs.size()
+	var why := _ready_report.why
+	if _ready_report.loading_done(_loading_screen != null, left):
+		print("World3D: loading done (%s) -- 0x3012 sent at frame %d, %d ms" % [
+			why, Engine.get_frames_drawn(), Time.get_ticks_msec()])
+	elif _ready_report.armed:
+		print("World3D: loading-done report held (%s): screen %s, %d cell(s) left" % [
+			why, "up" if _loading_screen != null else "down", left])
 
 ## Round 746: BCRadius and DecayTime from every characterdata part (CharTables'
 ## entry task, a worker), taken once -- by the NPC or monster loaders or, at
@@ -6772,6 +6805,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		if teleport_arrival:
 			_teleport_request_pending = false
 		return
+	# Round 786 (part): this arrival's loading-done report (0x3012) goes when
+	# its load is over (_drain_initial_load); until then the server keeps the
+	# character out of the world (ArrivalGuard).
+	_ready_report.arm("teleport" if teleport_arrival else "zone change")
 	# Round 786 (READ, EfpEffect "shift_effects"): nothing is updated while
 	# the zone loads (CPSMission::vslot_012, 0x0084c300), and the change of
 	# frame moves every effect whole (CICPlayer slot 37, 0x009d5900 ->
@@ -27826,6 +27863,12 @@ func _on_body_mode(change: WorldNet.StateChange) -> void:
 	var mine := own >= 0 and change.object_id == own
 	print("World3D: body mode %d for %d (%s)" % [change.value, change.object_id, "this player" if mine else "someone else"])
 	_berserk_apply(change.object_id, change.value, false)
+	# Round 786: the protection's body mode 2 has no look of its own (READ,
+	# SetBodyMode 0x9cf880), but this player's screen flashes for any
+	# non-zero mode (0x8a826f; berserk's 1 flashes in _berserk_apply).
+	if change.value != 1 and ArrivalGuard.flashes(mine, change.value):
+		_berserk_flash_t = 0.0
+		print("World3D: untouchable (body mode %d) -- screen flash" % change.value)
 	if mine and change.value == 1 and _hud_player_info != null:
 		var was_running := _hud_player_info.hwan_display_active()
 		_hud_player_info.set_hwan(0, true)

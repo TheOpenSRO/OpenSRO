@@ -330,5 +330,5 @@ func (t *teleporter) walkIn(ctx context.Context, hub *world.Hub, characterID int
 	if err := sess.Send(&proto.Packet{Opcode: OpTeleportResult, Data: (&TeleportResult{OK: true, Destination: dest.ZoneName}).Encode()}); err != nil {
 		return
 	}
-	_, _ = warpTo(ctx, sess, t.eq, t.chars, hub, t.zerk, zone, bucket, pos, frame)
+	_, _ = warpVia(ctx, sess, t.eq, t.chars, hub, t.zerk, zone, bucket, pos, frame, "walk-in teleport")
 }

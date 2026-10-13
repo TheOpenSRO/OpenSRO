@@ -216,13 +216,12 @@ import (
 //     `bVar3 < 0xb` test at 0x51017f falls out of the handler), and its
 //     client never sends it (FUN_00797d90 sends nothing for that button above
 //     level 10); OpenSRO answers so a stray request does not hang.
-//   - The protection after a revive is not modelled (OPEN). Retail's
-//     Revive(1) sets body mode 2, BODYMODE_INVINCIBLE, for 6.0 s (0xb45b78;
-//     11.0 s, 0xb45bb8, in the other world kind), and a return to the return
-//     point is a world re-entry, whose CGObjPC::vslot_391 (0x4df9e0) sets body
-//     mode 2 for the world's own time (its slot 0x70, not read; 6.0 s when no
-//     world is found). OpenSRO has no body mode 2 (berserk.go, combat.go
-//     endBerserk).
+//   - The protection after a revive is modelled since round 786
+//     (arrival.go): Revive(1) sets body mode 2 for 6.0 s (0xb45b78; 11.0 s,
+//     0xb45bb8, in a siege world) -- ReviveHandler's startProtection in
+//     place -- and a return to the return point is a world re-entry, whose
+//     CGObjPC::vslot_391 (0x4df9e0) sets body mode 2 for the world's time
+//     (CGameWorld 0x5eb2d0: 6.0 s) at the client's 0x3012 (releaseArrival).
 //   - The refusal strings (deadRefusal, "not dead") and the pick-up, duel,
 //     zone-change and GM-teleport refusals, whose retail handlers were not
 //     read for a life-state test (the pick-up handler 0x034 is a vtable
@@ -589,6 +588,13 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 		}
 		// GObjPC::Revive's SetBodyMode(2, 0, t, 0) ends a berserk (endBerserk).
 		endBerserk(hub, deps.Berserk, e.CharacterID)
+		// Round 786 (arrival.go): and that SetBodyMode IS the protection --
+		// body mode 2 for 6.0 s (0x4df463..0x4df496, 0xb45b78, READ). In
+		// place it starts now; at the return point the arrival's release
+		// starts it (CGObjPC::vslot_391), the character being held.
+		if arrivalGuardOn.Load() && !arrivalHeld(e.CharacterID) {
+			startProtection(hub, e.CharacterID, sess, "revive in place")
+		}
 		return sendRevived(ctx, sess, c, mpNow, deps)
 	}
 }
@@ -600,7 +606,7 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 // state travels with it (world.Hub.ChangeZone), so a dead character arrives
 // dead and a living one alive. It reports whether anything moved.
 func returnToPoint(ctx context.Context, sess *gateway.Session, chars character.Store, hub *world.Hub, deps RegenDeps) (bool, error) {
-	return warpHome(ctx, sess, deps.Equipment, chars, hub, deps.Berserk)
+	return warpHome(ctx, sess, deps.Equipment, chars, hub, deps.Berserk, "death: return point")
 }
 
 // warpHome is the move to the return point both paths make (option 1 and
@@ -609,14 +615,14 @@ func returnToPoint(ctx context.Context, sess *gateway.Session, chars character.S
 //
 // The point is the character's own since round 686 (returnPointFor,
 // recall.go): its designated gate, else its race's.
-func warpHome(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker) (bool, error) {
+func warpHome(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, via string) (bool, error) {
 	var characterID int64
 	if e, ok := hub.EntityBySession(sess.ID()); ok {
 		characterID = e.CharacterID
 	}
 	zone, bucket, pos, frame := returnPointFor(ctx, chars, characterID)
 	armReturnGuard(sess, zone, pos, time.Now())
-	moved, err := warpTo(ctx, sess, eq, chars, hub, zerk, zone, bucket, pos, frame)
+	moved, err := warpVia(ctx, sess, eq, chars, hub, zerk, zone, bucket, pos, frame, via)
 	if arrived, in := hub.EntityBySession(sess.ID()); moved && in {
 		bindReturnGuard(sess, arrived.Arrival)
 	} else {
@@ -727,7 +733,7 @@ func returnAfterKill(ctx context.Context, chars character.Store, eq equipment.St
 	if !ok || e.Session == nil || e.Life != world.LifeAlive {
 		return
 	}
-	_, _ = warpHome(ctx, e.Session, eq, chars, hub, nil)
+	_, _ = warpHome(ctx, e.Session, eq, chars, hub, nil, "death: respawn after a kill")
 }
 
 // savedPlace is e as a leaving session saves it (-persist-position): a

@@ -369,8 +369,8 @@ In order. Each is checked off here when it ships in a release, with its round in
         point" sets `_CHAR.AppointedTeleport` (`GObjPC_HandleDesignateRecallMsg_059`, READ), the return point is that
         gate's point, else the race's gate (`STORE_CH_GATE` / `STORE_EU_GATE`, SR_ShardManager
         `FUN_0042bb20`, READ) -- see "Town teleporters" below for what is left;
-        (2) body mode 2 after a revive, 6.0 s invincible (`0xb45b78`) and the world entry's own
-        time (world slot `0x70`, unread) -- OpenSRO has no body mode 2; (3) resurrection by
+        (2) ~~body mode 2 after a revive and the world entry~~ -- DONE in round 786 (6.0 s, the
+        world's slot `0x70` = `0x5eb2d0`; held until 0x3012 first; `protocol/arrival_guard.md`); (3) resurrection by
         another player and by scroll (`trs_wait_response::vslot_002`, `FUN_0049ff20`), which the
         "Waiting for other player's help." button stands for -- shown disabled today, while
         retail's click closes the box; (4) the retail message box art

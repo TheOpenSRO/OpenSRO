@@ -89,7 +89,8 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
   and leaves the display to timer 2. OpenSRO's server sends both (round 629's review): on at
   activation, off when the tracker's activation runs out (`scheduleBerserkEnd`), and off when a
   revive or a zone change ends the berserk (`endBerserk`: the engine's revive and world entry set
-  body mode 2, broadcast as value 2; OpenSRO has no body mode 2 and sends 0, OURS).
+  body mode 2, broadcast as value 2; OpenSRO sends 0 there and, since round 786, body mode 2 itself
+  at the arrival's release or the revive and 0 six seconds later -- `docs/protocol/arrival_guard.md`).
 - **Hwan level art**, `FUN_007b5f40` (READ): when the byte at `player+0x764` is not 0 the orbs,
   flames, button, face and glow swap to `pmi_jahwan_02*.ddj` (blue). INFERRED: that byte is
   `_CHAR.HwanLevel` -- its setter 0x009ca930 builds the Hwan title through `hwanleveldata`.

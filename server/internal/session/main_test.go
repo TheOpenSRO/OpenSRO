@@ -29,9 +29,17 @@ import (
 // on those positions (a stop on the server's own leg, a placement at a point
 // it named) has its own tests in destmove749_test.go, each of which turns the
 // trust off for itself (strictPositions).
+//
+// Round 786: likewise the arrival guard, off for the suite and on for
+// arrival786_test.go's tests (guardOn).
 func TestMain(m *testing.M) {
 	damageRollNG = nil
 	trustPositions.Store(true)
+	// Round 786: the arrival guard (arrival.go) holds every arrival until
+	// its client's 0x3012; the suite's older tests expect the arrival at
+	// once, so it is off here, and arrival786_test.go turns it on
+	// (guardOn).
+	arrivalGuardOn.Store(false)
 	release := testdb.Lock(inventoryTestDSN())
 	code := m.Run()
 	release()

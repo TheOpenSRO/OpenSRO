@@ -296,6 +296,12 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	if d.zerk != nil && d.zerk.Active(e.CharacterID) {
 		r.BodyMode = bodyModeBerserk
 	}
+	// Round 786: the arrival's protection is body mode 2 in the record, the
+	// live chardata[3] the engine's record writer reads (0x4a9b70): a player
+	// who comes into view during it is spawned untouchable.
+	if protectedNow(e.CharacterID, now) {
+		r.BodyMode = bodyModeInvincible
+	}
 	// A scroll's cast (round 779, scroll.go): field 26, the teleport state
 	// (slot 72, chardata +0x10), its value while it works.
 	r.TeleportState = scrollStateOf(e.CharacterID)

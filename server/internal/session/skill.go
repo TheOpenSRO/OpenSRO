@@ -709,6 +709,15 @@ func useSkillHandler(
 		if deadBySession(hub, sess) {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: deadRefusal}).Encode()})
 		}
+		// Round 786 (arrival.go): no skill while untouchable. READ on the
+		// client (FUN_0081ba10 refuses every skill in body mode 2 with
+		// 0x3020, 0x81ba58) and for the server's attack check
+		// (Skill_CheckUseConditions -> CanAttack, 0x58cf14 -> 0x529240);
+		// the server refusing a non-attack skill too is INFERRED from the
+		// client, which never sends one.
+		if attackerUntouchable(hub, characterID) {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: untouchableRefusal}).Encode()})
+		}
 
 		// Resolve the skill's cooldown and damage bonus. A real learned skill
 		// (refdata) uses its real ReuseDelay cooldown; its extra damage is a

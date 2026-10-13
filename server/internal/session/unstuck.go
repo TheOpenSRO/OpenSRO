@@ -1,12 +1,15 @@
 package session
 
 import (
+	"context"
 	"encoding/binary"
 	"math"
 	"sync"
 	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
@@ -80,7 +83,7 @@ func unstuckTarget(sess *gateway.Session, e world.Entity) (zone string, pos worl
 	return p.zone, at, true
 }
 
-func handleUnstuck(sess *gateway.Session, hub *world.Hub, chars character.Store) error {
+func handleUnstuck(ctx context.Context, sess *gateway.Session, hub *world.Hub, chars character.Store, eq equipment.Store, zerk *berserk.Tracker) error {
 	answer := func(r UnstuckResult) error {
 		return sess.Send(&proto.Packet{Opcode: OpUnstuckResult, Data: r.Encode()})
 	}
@@ -94,9 +97,21 @@ func handleUnstuck(sess *gateway.Session, hub *world.Hub, chars character.Store)
 			return answer(UnstuckResult{Wait: uint16(math.Ceil(left.Seconds()))})
 		}
 	}
-	_, target, ok := unstuckTarget(sess, e)
+	zone, target, ok := unstuckTarget(sess, e)
 	if !ok {
 		return answer(UnstuckResult{})
+	}
+	// Round 786 (arrival.go): with the arrival guard on, /unstuck is a warp
+	// like every other relocation -- behind the loading screen, out of the
+	// world until the client's 0x3012, then the protection.
+	if arrivalGuardOn.Load() {
+		p, _ := placeOf(sess)
+		unstuckLast.Store(e.CharacterID, now)
+		if err := answer(UnstuckResult{OK: true, Wait: uint16(unstuckCooldown / time.Second)}); err != nil {
+			return err
+		}
+		_, err := warpVia(ctx, sess, eq, chars, hub, zerk, zone, e.Zone, target, p.frame, "/unstuck")
+		return err
 	}
 	r, ok := hub.Relocate(sess, target, world.MoveRelocate, 0)
 	if !ok {

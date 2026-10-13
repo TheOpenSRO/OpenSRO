@@ -8155,6 +8155,130 @@ per frame (the counts are set on bag and bar events): no perf gate.
   the general CIFSlotWithHelp SetItem (122 call sites), so the bag very likely has it too; the
   bag's own path to it was not traced, so the bag is left as it was.
 
+### Round 786 (part): protection after a teleport
+
+The user: "Also, you need to add an invulnerability of 5 seconds I think after you teleport. This
+includes ANY form of teleportation. Also don't let the character spawn in the new location until
+the loading is done." Then: "Check the original code of course to make sure this accurate and
+replicate the best you can", and "see how the original game has the character appear. Before or
+after loading or something in between." The whole sequence with every address is
+`docs/protocol/arrival_guard.md`; the opcodes `docs/protocol/opcodes/arrival.md`.
+
+**Retail (READ, `SR_GameServer.exe` and `sro_client.exe` on the box):**
+- **Held until the load is done.** Every warp goes through vtable +0x378 (`CGObjPC::vslot_222`
+  0x4df590 -> `FUN_004df050`: life state 3 GONE at 0x4df22c), the save, 0x34B5 (0x437de0), the
+  client's immediate 0x34B6, a re-login and the character data; the PC enters its block only on the
+  client's **0x3012** (`Game__EnterWorld` 0x403350 -> `CGame::EnterWorld` 0x417240 ->
+  `CGObj::EnterWorld` at 0x417574: the watchers' 0x3015), and then `vslot_391` (at 0x417600) sets
+  body mode 2. The client sends 0x3012 from `FUN_0084c060` right after removing the loading
+  screen's windows, once the 0x34A6 handler has built the own player and loaded its region and the
+  3x3 around it (+0xe5, 0x8ab272) -- no timer, no minimum time. The own player does not exist from
+  0x34B5 until 0x34A6 and is first drawn in the tick that drops the screen. Others first see the
+  character at its 0x3012, then body mode 2.
+- **6.0 s, not 5.** `SetBodyMode(2, 0, world slot 28, 0)`; the open world's slot is `CGameWorld`
+  0x5eb2d0 -> `.rdata 0xb45b78` = 6.0f (11.0 in a siege world, a data-driven world's own value,
+  6.0 with none). The 5 is the client's authored text for the refusal
+  (`UIIT_MSG_SKILL_USE_FAIL_CANT_ATTACK_TEMPORARILY`: "... for 5 seconds during untouchable
+  status", MEASURED) -- **differs from the user's guess; the code is followed.**
+- **What it does:** the attack check `FUN_005291d0` refuses 0x3020 for an attacker in mode 2
+  (0x529240) and a target in 2-4 (0x529254..0x52927c), before the PK rules -- monsters, players,
+  PvP; the AI's validator `FUN_00540de0` drops a mode 2-4 or non-alive target (0x540e2f, 0x540e33);
+  berserk is refused with error 4 (0x515b69). **Nothing ends it early** (all 28 SetBodyMode call
+  sites read: none on a move, an attack, a cast, an item use or a pick-up) -- **differs from the
+  request's "what ends it early": nothing does; the attack is refused instead.**
+- **Shown:** 0x30BF kind 4 = 2, then 0; nothing on the body (SetBodyMode 0x9cf880 changes no alpha
+  or effect for 2); this player's screen flashes for any non-zero mode (0x8a826f); the client
+  refuses its own skills (0x81ba58) and attacks on players (0x791fda) in mode 2.
+- **Paths:** gate/NPC, both scrolls, the return point, the GM warps (`DispatchCommand` "MoveTo",
+  "MoveToPlayer", ...), fortress, siege, Forgotten World, arena, quests, and the first login (the
+  same 0x3012 path); a revive in place sets mode 2 itself (0x4df496). Not Ghost Walk or the other
+  `tele` skills (an in-world MoveTo, no +0x378) -- **differs from "ANY form".** GMs arrive in mode 4
+  (invisible) instead (INFERRED that +0x53c is the GM test). A client that never sends 0x3012 is
+  cleared after **300.0 s** (`CLobby_RemoveStalePlayers` 0x437a50, 0xb45c40).
+
+**The census (server/internal/session), one door: `warpVia`:**
+
+| Path | Handler | Hold label |
+|---|---|---|
+| World entry | `enterOwned` | enter world (`hub.EnterHeld`) |
+| Gate / NPC teleport | `teleporter.use` | gate teleport |
+| Walk-in portal, dungeon entry/exit | `teleporter.walkIn` | walk-in teleport |
+| Return scroll | `ScrollCaster.complete` -> `warpHome` | return scroll |
+| Reverse return scroll | `ScrollCaster.complete` | reverse return scroll |
+| Death, return point (option 1) | `ReviveHandler` -> `returnToPoint` | death: return point |
+| Death, flag-off respawn | `returnAfterKill` | death: respawn after a kill |
+| Zone change, GM `/goto <zone>`, dev zone box | `handleChangeZone` | zone change |
+| GM `/tp`, `/goto <monster>` | `GMCommandHandler` (now a server warp) | gm /tp, gm /goto |
+| `/unstuck` | `handleUnstuck` (now a warp) | /unstuck |
+| Revive in place | `ReviveHandler` | protection only (READ: not a re-entry) |
+| Ghost Walk / blink | `moveBySkill` | none (READ) |
+| Job, guild, quest, fortress, event, instance worlds | -- | none exist (`inOpenWorld` refuses them) |
+
+**What changed:**
+- `world.Entity.Held` (OURS mechanism): `EnterHeld` / `ChangeZoneHeld` file the character in every
+  index but the message blocks -- no window holds it, no crossing spawns it, `Sees` is false --
+  and `Release` puts it back. `session/arrival.go`, `arrival_hold.go`: `warpVia` holds
+  (`holdArrival`); 0x3012 (`OpReadyToPlay`, retail's number, empty) releases (`releaseArrival`: the
+  spawns both ways, then `startProtection`: body mode 2 for 6.0 s, 0 at the end, 2 in a spawn
+  record meanwhile). Attacks, skills and duel blows are refused (`untouchableRefusal`), berserk is
+  refused, the AI skips the player, releases it in BATTLE ("target untouchable") and drops a swing
+  in flight. 300 s without 0x3012 closes the session (READ value). `-arrival-guard`, default on.
+- The GM `/tp` and `/goto <monster>` and `/unstuck` are server warps now (the GM reply carries no
+  move), so they load behind the screen like the rest. `partybot` and `swarm` send 0x3012;
+  `partybot -watch` prints the spawns, despawns and body modes it is sent, timed.
+- Client: `ArrivalGuard` (scripts/net/arrival_guard.gd): the report is armed by the world entry and
+  each zone change's result and sent from `_drain_initial_load`'s end (cells built, screen lifted);
+  `NetClient.own_body_mode` and its local refusals of skills and duel blows in mode 2, in the
+  archive's own text; the own screen flash on any non-zero body mode; no look on the body.
+
+**Tests (failing first):** Go `arrival786_test.go` -- the entry held until ready; a gate held, Bram
+at the destination sent nothing until the 0x3012, then the spawn and mode 2; the protection 6.0 s,
+an attack refused, a move not ending it, 0 at the end, the attack then landing; a spawn during it
+carries 2; the 300 s stale clear closes the session; every path (gate, zone change, GM /tp,
+/unstuck, the return point, the flag-off respawn, both scrolls) held with its label and protected
+after; a revive in place protected; monsters neither notice a held or protected player nor keep
+one; and the census pinned by parsing the package (`TestRound786EveryRelocationGoesThroughWarpVia`).
+Against the tree before the round (the tests over a stub of the new names): 10 tests, 17 cases
+FAIL; `world/held786_test.go` does not build there (no `EnterHeld`/`Release`/`Held`). GD
+`scripts/net/arrival_guard_test.gd` (the report's timing, the own mode, the refusals, the flash,
+the text): 20 ok; before the round a parse error (no `OP_READY_TO_PLAY`).
+
+**Live (render box, `/var/tmp/r786-tp/live.sh`; Jangan, 1280x720, Forward+, real time, the lane's
+in-memory server with the monster AI, battle, aggro and dead state; logs in
+`/var/tmp/r786-tp/run/<gmtp|gate|scroll|death>/`, server excerpts in `run/`):**
+- **GM /tp**, three Mangyangs striking (last blow 03:33:01.593): held 03:33:02.252; all three
+  "released (target untouchable)" at .292; released at the client's 0x3012 03:33:04.162 (held
+  1,909 ms, `players_in_view=1`); protected to 03:33:10.162. A Watcher bot at the destination
+  (`partybot -watch`) was sent the spawn at **03:33:04.162**, body mode 2 at .162 and 0 at
+  03:33:10.162 -- nothing before the report. No strike after 03:33:01.593. At the world entry the
+  same Mangyangs stood beside the player through its 6 s and noticed it 0.29 s after the end
+  (03:32:51.407 -> 51.693).
+- **Gate** (Jangan -> Donwhang), struck until 03:42:12.864: held 03:42:15.500, the three monsters
+  released at .564, released 03:42:17.880 (2,379 ms), protected to 03:42:23.881; no strike after.
+- **Return scroll** (its 30 s cast while struck): held 03:45:19.897, the monsters released at .932,
+  released 03:45:21.759 (1,862 ms); no strike after 03:45:19.031.
+- **Death**: killed 03:47:58.063, revived to the return point: held 03:48:02.745, released
+  03:48:04.505 (1,759 ms), protected to 03:48:10.506; no strike after the kill.
+- Pictures (`run/*/montage.png`, copies in the session scratchpad's `tp/`): struck, NOW LOADING,
+  arrived (the /tp's frame shows the white flash), protected -- illustration only; the claims are
+  the logs'.
+
+**Gates:** `go test ./...` passes; gofmt clean on the touched files. Client `check` ALL LOAD (786
+scripts, 9 scenes); `tests` "ran 303 suite(s), 0 failing" (`RENDER_DIR=/opt/opensro-client-r786-tp`,
+`GODOT_LOCK=/var/tmp/r786-tp/lock`). No per-frame client code changed (the report is once per load;
+the flash reuses the berserk flash's step): no perf gate.
+
+**OURS / OPEN:**
+- OURS: the hold's mechanism (the hub's `Held`, OpenSRO's own arrival messages instead of
+  0x34B5/0x34A6), the refusal's server wording, the session close on the stale clear, the
+  `-arrival-guard` switch, the GM `/tp` and `/unstuck` as server warps.
+- GMs get mode 2 like everyone (retail: mode 4, invisible -- INFERRED test; OURS choice).
+- OPEN: damage over time from a state applied before the teleport is not stopped during the hold
+  or the protection (unread); the held client's monster spawns are not held (retail sends them after
+  EnterWorld, INFERRED); the despawn's exact instruction on the teleport path; the 0x3015 spawn
+  type's link to the entry reason; who plays `SYSTEM_UNTOUCHABLE`; the 1000 ms timer 0xd after the
+  load; 0x3014; the siege and data-driven worlds' times (no such worlds here).
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

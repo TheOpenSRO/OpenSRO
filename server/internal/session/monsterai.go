@@ -261,17 +261,22 @@ type monsterAI struct {
 	awake map[combat.Cell]struct{}
 	// insistent is, with sleep on, the monsters in BATTLE or HOMING this
 	// pass: they run wherever they are (round 656's review).
-	insistent  map[int64]struct{}
-	players    map[combat.Cell][]world.Entity
-	crossed    []combat.CellChange
-	cellBuf    []combat.Cell
-	candBuf    []ai.Candidate
-	sessBuf    []*gateway.Session
-	logger     *slog.Logger
-	trace      bool
-	roamRadius float64
-	last, now  time.Time
-	tickN      uint64
+	insistent map[int64]struct{}
+	players   map[combat.Cell][]world.Entity
+	// untouchable is the players held or protected this pass (round 786,
+	// arrival.go), which no monster may take as a target: the AI's target
+	// validator FUN_00540de0 refuses body modes 2-4 (0x540e2f, 0x540e33) and
+	// a life state other than 1 (a held PC is GONE, 3; READ).
+	untouchable map[int64]struct{}
+	crossed     []combat.CellChange
+	cellBuf     []combat.Cell
+	candBuf     []ai.Candidate
+	sessBuf     []*gateway.Session
+	logger      *slog.Logger
+	trace       bool
+	roamRadius  float64
+	last, now   time.Time
+	tickN       uint64
 	// battle is -monster-battle as this pass read it (monsterBattle), once,
 	// so one pass runs one BATTLE or the other throughout; aggro is
 	// -monster-aggro the same way (monsterAggro).
@@ -880,10 +885,17 @@ func (a *monsterAI) indexPlayers() {
 		a.players[c] = list[:0]
 	}
 	clear(a.awake)
+	a.untouchable = untouchableSet(a.untouchable, a.now)
 	if a.world == nil {
 		return
 	}
 	for _, e := range a.world.AllEntities() {
+		if e.Held {
+			// Out of the world (round 786): no target, and no window kept
+			// awake on its account.
+			a.untouchable[e.CharacterID] = struct{}{}
+			continue
+		}
 		c := combat.CellOf(e.Zone, e.Pos.X, e.Pos.Z)
 		a.players[c] = append(a.players[c], e)
 		if !a.sleep {
@@ -1192,10 +1204,13 @@ func (a *monsterAI) update(b *brain) {
 		// next blow holds it again. In between, IDLE's roam check sends one
 		// strayed past the radius home. Disclosed (round 539): the engine's
 		// retarget is the threat table's (mob-threat-retarget).
-		if !ok || e.Zone != b.m.Zone || e.Life == world.LifeDead {
+		_, protected := a.untouchable[b.target]
+		if !ok || e.Zone != b.m.Zone || e.Life == world.LifeDead || e.Held || protected {
 			why := "target gone"
 			if ok && e.Life == world.LifeDead {
 				why = "target dead" // the word battleTick's line uses (round 550)
+			} else if ok && (e.Held || protected) {
+				why = "target untouchable" // round 786, arrival.go
 			}
 			a.tracef("ai: monster %d released (%s)", b.id, why)
 			a.dispatch(b, ai.MsgCombatEnded)
@@ -1304,6 +1319,10 @@ func (a *monsterAI) acquire(b *brain) bool {
 				if e.Life != world.LifeAlive {
 					continue
 				}
+				// Round 786: not an untouchable player (FUN_00540de0, READ).
+				if _, no := a.untouchable[e.CharacterID]; no {
+					continue
+				}
 				cands = append(cands, ai.Candidate{ID: e.CharacterID, X: e.Pos.X, Z: e.Pos.Z})
 			}
 		}
@@ -1360,12 +1379,18 @@ func (a *monsterAI) battleTick(b *brain) {
 	}
 	_, killed := a.kills[b.id]
 	delete(a.kills, b.id)
-	if !ok || e.Zone != b.m.Zone || killed || e.Life == world.LifeDead {
+	// Round 786 (arrival.go): an untouchable target -- held out of the world
+	// or in body mode 2 -- fails AITactics_IsValidTarget (0x540e2f, READ) and
+	// takes the same 0x23 exit.
+	_, protected := a.untouchable[b.target]
+	if !ok || e.Zone != b.m.Zone || killed || e.Life == world.LifeDead || e.Held || protected {
 		why := "target gone"
 		if killed {
 			why = "target killed"
 		} else if ok && e.Life == world.LifeDead {
 			why = "target dead"
+		} else if ok && (e.Held || protected) {
+			why = "target untouchable"
 		}
 		a.tracef("ai: monster %d released (%s)", b.id, why)
 		a.dispatch(b, ai.MsgCombatEnded)
@@ -1623,6 +1648,15 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		if e, ok := a.world.EntityByCharacterID(job.target); ok {
 			if e.Life == world.LifeDead {
 				a.tracef("ai: monster %d swing at %d dropped: the target is dead", id, job.target)
+				return
+			}
+			// Round 786 (arrival.go): a swing handed over before its target
+			// became untouchable lands nothing -- the engine's CanAttack
+			// refuses a target in body mode 2 (0x529254) and a PC out of
+			// the world has no object to hit (READ).
+			if e.Held || untouchable(a.world, job.target, time.Now()) {
+				a.tracef("ai: monster %d swing at %d dropped: the target is untouchable", id, job.target)
+				arrivalInfo("monster swing dropped: target untouchable", "monster", id, "character_id", job.target)
 				return
 			}
 			level, inWorld = e.Level, true

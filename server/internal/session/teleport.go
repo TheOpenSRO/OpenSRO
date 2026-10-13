@@ -315,7 +315,7 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	}).Encode()}); err != nil {
 		return err
 	}
-	moved, err := warpTo(ctx, sess, t.eq, t.chars, t.hub, t.zerk, zone, bucket, pos, frame)
+	moved, err := warpVia(ctx, sess, t.eq, t.chars, t.hub, t.zerk, zone, bucket, pos, frame, "gate teleport")
 	if !moved && fee > 0 {
 		// The session left the world between the check above and the move;
 		// nothing moved, so nothing is owed.

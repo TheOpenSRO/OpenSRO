@@ -133,6 +133,13 @@ func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if c, err := chars.GetByID(ctx, characterID); err == nil {
 		zerk.EnsureSeeded(characterID, c.HwanCount)
 	}
+	// Round 786: not in the arrival's body mode 2 -- GObjPC_HandleBerserkMsg
+	// refuses with its error 4 then (0x515b69, READ); the gauge is kept.
+	if protectedNow(characterID, time.Now()) {
+		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{
+			Gauge: int32(zerk.Gauge(characterID)), Active: zerk.Active(characterID),
+		}).Encode()})
+	}
 	activated := zerk.Activate(characterID)
 	if activated {
 		// Activation spends orbs; the count lives on the character row.
@@ -209,9 +216,9 @@ func scheduleBerserkEnd(hub *world.Hub, zerk *berserk.Tracker, characterID int64
 //     change (FUN_00787860, READ), and ending the server's berserk there
 //     keeps the two consistent.
 //
-// OURS: the broadcast value is 0, not the engine's 2. OpenSRO has no body
-// mode 2 -- neither the invincibility nor its timer -- so the character's
-// body mode after the end is 0 here; the client's 0x30BF kind-4 handler
+// OURS: the broadcast value is 0 here; the engine's 2 follows from the
+// arrival's release or the revive (round 786, arrival.go startProtection),
+// which broadcasts body mode 2 and its end on its own; the client's 0x30BF kind-4 handler
 // starts the display only on value 1 and does nothing else to the orbs on
 // either value (0x8a80a0, READ). A character with no running berserk hears
 // nothing. The turn orders it against an activation of the same character.
@@ -1093,6 +1100,13 @@ func combatHandler(
 			// before the reach test so a dead click is not told "too far".
 			if deadBySession(hub, sess) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
+			}
+			// Round 786 (arrival.go): an untouchable attacker -- held, or in
+			// the arrival's body mode 2 -- is refused 0x3020 (GObjPC::
+			// FUN_005291d0, attacker mode 2 at 0x529240, READ). Nothing
+			// ends the protection early.
+			if attackerUntouchable(hub, characterID) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: untouchableRefusal, MonsterID: req.TargetMonsterID}).Encode()})
 			}
 			// A seated character's swing is NOT refused (round 607,
 			// motion.go): the retail plain attack is the basic-attack skill
