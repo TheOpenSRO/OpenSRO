@@ -172,9 +172,37 @@ static func select_rows(tokens: PackedStringArray, values: PackedStringArray, ke
 		if seen_later.has(token):
 			continue
 		seen_later[token] = true
+		if keeps_first_row(token):
+			continue
 		if _is_usable(values[i]) and _has_latin_letter(values[i]):
 			out[token] = values[i]
 	return out
+
+## **The mastery keys keep the client's own first row, even in a joined
+## table (round 786, the user's report "sorcery -> cold force").** The
+## skill window titles each mastery tab with the text of the mastery
+## record's name code, through the same TextStringManager every key goes
+## through (READ: CIFSkillMastery SetMasteryData 0x69f860 calls
+## 0x8c9bb0(record + 4), the hash lookup 0x8c9b20, then the title's SetText,
+## vslot 0xb4), and that manager keeps the FIRST row of a key (READ, 0x8ca120
+## above). The box's (and the user's) textuisystem.txt has two rows per
+## mastery key (MEASURED, 2026-10-13): the first table's and the stock
+## table's agree on six of the seven China masteries, and differ on one --
+## UIIT_STT_MASTERY_HAN, 273, is "Cold" in the first and "Sorcery" in the
+## stock table, whose UIIT_STT_MASTERY_HAN_EXPLANATION reads "uses the
+## energy of ice, lightning & fire" and which adds UIIT_CTL_SORCERY_SKILL:
+## a server whose three elemental masteries were merged into one. This game
+## keeps all three (skillmasterydata 273-275, RACE_MASTERIES), so the stock
+## rows describe a mastery it does not have. The user decision of round 725
+## (the stock English) stays for every other key; the mastery's own text
+## (its name, its explanation) follows the client's READ rule. Round 725's
+## joined-table rule is what turned 273 from "Cold" to "Sorcery" in the skill
+## window, the mastery requirement lines and the practice box.
+const FIRST_ROW_PREFIX := "UIIT_STT_MASTERY_"
+
+## Whether a key keeps its first row in a joined table (FIRST_ROW_PREFIX).
+static func keeps_first_row(token: String) -> bool:
+	return token.begins_with(FIRST_ROW_PREFIX)
 
 ## Of the keys before a restart, at least this share must come back after it
 ## for the file to count as two joined tables (OURS thresholds, round 725:

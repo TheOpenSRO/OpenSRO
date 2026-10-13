@@ -152,6 +152,30 @@ func _joined_checks() -> void:
 	for i in 10:
 		toks.append("K%d" % i)
 	_check(UiTextTable.joined_table_start(toks) == 11, "the second table starts where the opening keys restart in order (got %d)" % UiTextTable.joined_table_start(toks))
+	# Round 786 (REGRESSION GUARD, "sorcery -> cold force"): the mastery keys
+	# keep the client's first row (READ, 0x69f860 -> 0x8c9bb0 -> 0x8ca120's
+	# keep-first) in a joined table, so 273 reads "Cold" and not the merged
+	# mastery's "Sorcery"; its explanation the same; every other key keeps
+	# the stock row. Shaped like the archive's two blocks (synthetic text).
+	var m_first := first.duplicate()
+	m_first.append(_row16("UIIT_STT_MASTERY_HAN", "Cold"))
+	m_first.append(_row16("UIIT_STT_MASTERY_HAN_EXPLANATION", "uses the energy of ice"))
+	m_first.append(_row16("UIIT_STT_MASTERY_PUNG", "Lightning"))
+	var m_second := second.duplicate()
+	m_second.append(_row19("UIIT_STT_MASTERY_HAN", "Sorcery"))
+	m_second.append(_row19("UIIT_STT_MASTERY_HAN_EXPLANATION", "uses the energy of ice, lightning & fire"))
+	m_second.append(_row19("UIIT_STT_MASTERY_PUNG", "Lightning"))
+	m_second.append(_row19("UIIT_STT_MASTERY_JOB", "Job"))
+	var mt := UiTextTable.parse(("\n".join(m_first + m_second)).to_utf16_buffer())
+	_check(mt.get_text("UIIT_STT_MASTERY_HAN") == "Cold",
+		"REGRESSION: mastery 273's name keeps the first row, 'Cold', not the stock 'Sorcery' (got %s)" % mt.get_text("UIIT_STT_MASTERY_HAN"))
+	_check(mt.get_text("UIIT_STT_MASTERY_HAN_EXPLANATION") == "uses the energy of ice",
+		"its explanation keeps the first row too (got %s)" % mt.get_text("UIIT_STT_MASTERY_HAN_EXPLANATION"))
+	_check(mt.get_text("UIIT_STT_MASTERY_PUNG") == "Lightning" and mt.get_text("UIIT_STT_MASTERY_JOB") == "Job",
+		"a mastery key in both tables alike, and one only in the stock table, read as before")
+	_check(mt.get_text("UIIT_K1") == "Stock 1", "NEGATIVE: a non-mastery key still takes the stock row (got %s)" % mt.get_text("UIIT_K1"))
+	_check(UiTextTable.keeps_first_row("UIIT_STT_MASTERY_VI") and not UiTextTable.keeps_first_row("UIIT_CTL_FORCE_SKILL"),
+		"keeps_first_row names the mastery keys only")
 	var last := UiTextTable.parse(("\n".join(first + second)).to_utf16_buffer(), 8, false)
 	_check(last.get_text("UIIT_K5") == "", "keep_first false still keeps the last row, whatever it holds (got %s)" % last.get_text("UIIT_K5"))
 
