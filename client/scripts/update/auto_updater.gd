@@ -27,7 +27,7 @@ signal check_failed(reason: String)
 signal download_progress(fraction: float)
 signal update_failed(reason: String)
 
-const RELEASES_API_URL := "https://api.github.com/repos/OpenSRO/OpenSRO/releases/latest"
+const RELEASES_API_URL := "https://api.github.com/repos/TheOpenSRO/OpenSRO/releases/latest"
 ## QA hook (round 668): a different "latest release" endpoint, so the whole
 ## update can be run against a local server. OURS.
 const QA_URL_ENV := "OPENSRO_QA_UPDATE_URL"

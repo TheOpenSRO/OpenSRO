@@ -35,7 +35,7 @@ func _init() -> void:
 	_check(UpdateChecker.asset_name_for_os("macOS") == "", "no real asset name for a platform this project doesn't build for")
 	# Round 704: the project and its repository are OpenSRO; old installs look
 	# for the old names and are not updated (the user's decision, 2026-10-03).
-	_check(AutoUpdater.RELEASES_API_URL == "https://api.github.com/repos/OpenSRO/OpenSRO/releases/latest",
+	_check(AutoUpdater.RELEASES_API_URL == "https://api.github.com/repos/TheOpenSRO/OpenSRO/releases/latest",
 		"the releases API is the OpenSRO repository's (got %s)" % AutoUpdater.RELEASES_API_URL)
 	_check(AutoUpdater.windows_relaunch_script(1, "C:/G/jogo-a\u00e7\u00e3o.exe").contains("%~dp0OpenSRO.exe"),
 		"a non-ASCII executable name falls back to OpenSRO.exe, release.yml's name")

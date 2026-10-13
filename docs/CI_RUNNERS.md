@@ -16,8 +16,12 @@ Every OpenSRO workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
     in `/home/runner/actions-runner` as user `runner`. That user is in the `docker` group and
     has passwordless sudo, because `native/ci_toolchain.sh` installs mingw-w64 with
     `sudo -n apt-get`.
-  - The runner runs as a systemd service (`svc.sh install runner`), registered to
-    `OpenSRO/OpenSRO` with the label `opensro-pve`.
+  - The runner runs as a systemd service (`svc.sh install runner`) with the labels `opensro-pve`
+    and `srrevamp-pve`.
+  - **Where each is registered (2026-10-13, the move to TheOpenSRO):** `pve-runner-1` is an
+    organization runner of `TheOpenSRO` (Default group), so it serves `TheOpenSRO/OpenSRO`.
+    `pve-runner-2` stays on the old repo `OpenSRO/OpenSRO` for now (the user's call), registered
+    there under its earlier name `OpenSRO/srrevamp`.
 - **Why.** The old runner, the `kakariko-runner` ARC scale set in the kakariko cluster, ran
   one ephemeral pod at a time. Every job re-downloaded Godot, Rust, zig and mingw. On
   2026-10-01 slow downloads (zig 4.5 min, Godot setup 4 min 17 s) held that single runner
@@ -35,10 +39,15 @@ Every OpenSRO workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
   `/home/runner/_work`, attempt 2 passed all four jobs. `--work /home/runner/_work` when
   re-registering.
 - **Re-registering one** (e.g. after rebuilding the container): on a machine logged into `gh`
-  as a repo admin, run
-  `tok=$(gh api -X POST repos/OpenSRO/OpenSRO/actions/runners/registration-token --jq .token)`.
+  with a token that has the organization's "Self-hosted runners: read and write", run
+  `tok=$(gh api -X POST orgs/TheOpenSRO/actions/runners/registration-token --jq .token)`.
   Then, as `runner` in `~/actions-runner`, run
-  `./config.sh --url https://github.com/OpenSRO/OpenSRO --token "$tok" --name pve-runner-N --labels opensro-pve --work /home/runner/_work --unattended --replace`,
+  `./config.sh --url https://github.com/TheOpenSRO --token "$tok" --name pve-runner-N --labels opensro-pve,srrevamp-pve --work /home/runner/_work --unattended --replace`,
   and as root `./svc.sh install runner && ./svc.sh start`. The token expires after an hour;
   don't commit or log it.
-- **Checking them:** `gh api repos/OpenSRO/OpenSRO/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`.
+- **Moving one off a repo:** `./config.sh remove` fails with a 404 when the repo was renamed
+  since the runner registered (it posts the old name). Delete the runner's record through the API
+  instead (`gh api -X DELETE repos/<owner>/<repo>/actions/runners/<id>`), stop and uninstall the
+  service, move `.runner`, `.credentials`, `.credentials_rsaparams`, `.service` and
+  `.runner_migrated` out of `~/actions-runner`, then register as above.
+- **Checking them:** `gh api orgs/TheOpenSRO/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`.
