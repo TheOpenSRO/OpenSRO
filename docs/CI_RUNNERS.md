@@ -18,10 +18,10 @@ Every OpenSRO workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
     `sudo -n apt-get`.
   - The runner runs as a systemd service (`svc.sh install runner`) with the labels `opensro-pve`
     and `srrevamp-pve`.
-  - **Where each is registered (2026-10-13, the move to TheOpenSRO):** `pve-runner-1` is an
-    organization runner of `TheOpenSRO` (Default group), so it serves `TheOpenSRO/OpenSRO`.
-    `pve-runner-2` stays on the old repo `OpenSRO/OpenSRO` for now (the user's call), registered
-    there under its earlier name `OpenSRO/srrevamp`.
+  - **Where they are registered (2026-10-13, the move to TheOpenSRO):** both are organization
+    runners of `TheOpenSRO` (Default group), so they serve `TheOpenSRO/OpenSRO`. The old repo
+    `OpenSRO/OpenSRO` has no runner, and its release workflow is disabled; v0.1.541 was mirrored
+    there by hand so clients that check the old repo update across to the new one.
 - **Why.** The old runner, the `kakariko-runner` ARC scale set in the kakariko cluster, ran
   one ephemeral pod at a time. Every job re-downloaded Godot, Rust, zig and mingw. On
   2026-10-01 slow downloads (zig 4.5 min, Godot setup 4 min 17 s) held that single runner
