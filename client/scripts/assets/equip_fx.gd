@@ -264,7 +264,17 @@ static func driver_for(vp: Viewport) -> EquipFx:
 	# the select screen sits before the world in tree order, so it placed the
 	# player's holders from the last frame's pose.
 	nd.process_priority = PROCESS_PRIORITY
-	vp.add_child(nd)
+	# Round 786: a viewport in the tree but not yet ready is still readying
+	# its children -- a scene that dresses a body in its own _ready while it is
+	# the main scene (every QA run boots World3D so). Its add_child fails
+	# ("Parent node is busy setting up children"), and the driver kept in the
+	# meta below never entered the tree: no weapon or shield particle for the
+	# rest of the run (MEASURED, the offline +12 Nova shots). Joined at the end
+	# of the frame instead; the hosts it is given meanwhile wait in it.
+	if vp.is_inside_tree() and not vp.is_node_ready():
+		vp.add_child.call_deferred(nd)
+	else:
+		vp.add_child(nd)
 	vp.set_meta(DRIVER_META, nd)
 	return nd
 

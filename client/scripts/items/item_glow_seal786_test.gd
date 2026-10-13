@@ -55,6 +55,7 @@ func _initialize() -> void:
 	_test_inherited_copies()
 	_test_appearance()
 	_test_effective_plus()
+	await _test_driver_while_readying()
 	print("FAILURES: %d" % _failures if _failures > 0 else "all passed")
 	quit(1 if _failures > 0 else 0)
 
@@ -158,6 +159,37 @@ func _test_appearance() -> void:
 		_check(int(w["glow"]) == 12 and EquipGlow.is_glow(mi.material_override), "slot %d: the +12 row" % slot)
 		EquipGlow.clear(node)
 	node.free()
+
+## A node that asks for the viewport's EquipFx driver in its own _ready while
+## the viewport readies its children -- the dressed player built in World3D's
+## _ready when World3D is the main scene, every QA run (MEASURED: the offline
+## +12 Nova shots had the glow and no particle; the log's "Parent node is busy
+## setting up children, add_child() failed" from driver_for).
+class AsksInReady extends Node:
+	var got: EquipFx = null
+	func _ready() -> void:
+		got = EquipFx.driver_for(get_viewport())
+
+func _test_driver_while_readying() -> void:
+	# The tree is live from the first frame (before it, nothing is readied).
+	await process_frame
+	var vp := SubViewport.new()
+	var asker := AsksInReady.new()
+	vp.add_child(asker)
+	root.add_child(vp)
+	_check(asker.got != null and vp.get_meta(EquipFx.DRIVER_META) == asker.got, "the driver is made and kept while the viewport readies")
+	await process_frame
+	_check(is_instance_valid(asker.got) and asker.got.get_parent() == vp and asker.got.is_inside_tree(),
+		"... and joins the viewport once it is free (before round 786 it never did: no particle for the run)")
+	_check(EquipFx.driver_for(vp) == asker.got, "the same driver is returned after")
+	var vp2 := SubViewport.new()
+	root.add_child(vp2)
+	await process_frame
+	var d2 := EquipFx.driver_for(vp2)
+	_check(d2.get_parent() == vp2, "a ready viewport takes its driver at once, as before")
+	vp.queue_free()
+	vp2.queue_free()
+	await process_frame
 
 ## The plus the glow is chosen by: OptLevel + the advanced elixir, a u8 (READ,
 ## round 734: the item's +0x8c byte), as World3D._player_pluses takes it.
