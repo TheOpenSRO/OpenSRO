@@ -21,6 +21,8 @@ const BAR_AT := Vector2i(107, 438)
 const PAGE_SLOTS := [[40, 368, 456], [41, 405, 456], [42, 440, 456], [43, 476, 456], [44, 512, 456],
 	[45, 548, 456], [46, 584, 456], [47, 620, 456], [48, 656, 456], [49, 692, 456]]
 const MOUSE_SLOT := [50, 316, 455]
+## The key numbers' x, 92..101 (MEASURED, the real file's records 96..105).
+const NUMBER_X := [392, 428, 464, 500, 536, 572, 608, 644, 680, 716]
 
 ## The menu items under 59, in file order, with their caption's text id.
 const MENU_ITEMS := [[83, 60, "UIIT_STT_TOGGLE_PARTY"], [93, 85, "UIIT_STT_TOGGLE_PARTYMATCH"],
@@ -122,6 +124,11 @@ static func records() -> Array:
 			"textid": m[2], "sample": "SAMPLE"})
 	for pair in [[70, 186], [79, 345], [98, 404]]:
 		recs.append({"type": 5, "id": pair[0], "parent": 59, "gp": 175, "rect": Rect2i(767, pair[1], 120, 4)})
+	# The key numbers 92..101 (ub_number_1.._0 in the real file, MEASURED
+	# round 786: 8x12 at each slot's bottom-right, x 392 + 36k, y 478), after
+	# the slots in file order as there; no art here.
+	for k in 10:
+		recs.append({"type": 5, "id": 92 + k, "parent": 175, "rect": Rect2i(NUMBER_X[k], 478, 8, 12)})
 	recs.append({"type": 5, "id": 102, "parent": 175, "rect": Rect2i(340, 478, 8, 12)})
 	recs.append({"type": 4, "id": 4, "parent": 175, "rect": Rect2i(788, 439, 78, 24)})
 	recs.append({"type": 18, "id": 103, "parent": 175, "rect": Rect2i(364, 452, 40, 40)})

@@ -203,6 +203,94 @@ func _run() -> void:
 	var count := s1.get_node_or_null("CountLabel") as Label if s1 != null else null
 	_check(bar.call("slot_has_item", 1) and count != null and count.text == "3",
 		"an item on slot 1 shows its icon and count")
+	bar.call("clear_slot", 1)
+
+	# --- round 786: the labels on every page ---
+	# The key numbers are the bar's own statics 92..101 (ub_number_1.._0),
+	# after the slots in its child list, so they draw over whatever a slot
+	# holds; the slots 11..50 the OnCreate makes are sent to the FRONT of the
+	# list (0xb90c30 -> CGWndBase::vslot_012 0xb92070's mode 2, READ), so on
+	# F2..F4 too. 0xba0300 draws the list first to last (READ).
+	var under_ok := true
+	var under_bad := []
+	for page in range(1, 5):
+		for k in 10:
+			var s: Control = slot_node.call((page - 1) * 10 + k + 1)
+			var num := _at(broot, [92 + k])
+			if s == null or num == null or s.get_parent() != num.get_parent() or s.get_index() >= num.get_index():
+				under_ok = false
+				under_bad.append([page, k + 1])
+	_check(under_ok, "every page's slots draw under the key numbers 92..101 (bad: %s)" % [under_bad])
+	_check(_at(broot, [96]) != null and _at(broot, [96]).visible and _at(broot, [96]).mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"the key number 96 ('5') is shown and takes no clicks")
+	# The count is the original's digit images (ItemCountLabel), unclipped.
+	var c23: Control = slot_node.call(23)
+	var lbl23 = c23.get_node_or_null("CountLabel") if c23 != null else null
+	_check(lbl23 is ItemCountLabel and not c23.clip_contents,
+		"a bar slot's count is an ItemCountLabel on an unclipped slot (got %s, clip %s)" % [lbl23, c23.clip_contents if c23 else null])
+	# The counts come from the bag slot each item slot is bound to, live
+	# (0x6871d0 keeps the bag's own SOItem at +0x390; 0x685e50 draws its
+	# +0x9c when 0x680da0 holds: kind 0x0c/0x46, an expendable, non-zero).
+	var potion_tex := ImageTexture.create_from_image(Image.create(4, 4, false, Image.FORMAT_RGBA8))
+	var quick_items := {1: {"item": 501, "slot": 13}, 23: {"item": 501, "slot": 13},
+		38: {"item": 502, "slot": 14}, 5: {"item": 503, "slot": 15}, 31: {"item": 504, "slot": 16}}
+	for qs in quick_items:
+		bar.call("set_slot_item", qs, potion_tex)
+	bar.call("set_slot_item", 2, potion_tex) # a skill: no count
+	var bag_slots := [{"slot_index": 13, "item_id": 501, "quantity": 7}, {"slot_index": 14, "item_id": 502, "quantity": 1},
+		{"slot_index": 15, "item_id": 503, "quantity": 4}]
+	var shows := func(item_id: int, qty: int) -> bool: return item_id != 503 and qty >= 1
+	var counts: Dictionary = bar.call("item_counts", quick_items, bag_slots, shows) if bar.has_method("item_counts") else {}
+	_check(counts == {1: 7, 23: 7, 38: 1, 5: 0, 31: 0},
+		"item_counts: each item slot its bag stack, a 1 too, none for a non-expendable or a missing slot (got %s)" % [counts])
+	# The rule HudPanels.bar_shows_count applies (READ 0x680da0 and the
+	# SetItem's max-stack flag 0x6875cd): a stackable expendable, a 1 too.
+	var on_bar := func(t: Array, bionic: bool, max_stack: int, qty: int) -> bool:
+		return ItemCountLabel.shows_on_bar(t, bionic, max_stack, qty)
+	_check(on_bar.call([3, 3, 1, 1], false, 50, 1) and on_bar.call([3, 3, 3, 1], false, 10, 7)
+		and not on_bar.call([3, 3, 1, 1], false, 1, 1) and not on_bar.call([3, 3, 1, 1], true, 50, 5)
+		and not on_bar.call([1, 6, 1, 1], false, 1, 1) and not on_bar.call([3, 3, 1, 1], false, 50, 0),
+		"the bar's rule: a stackable 3/3 non-bionic item with a count, 1 included; not max stack 1, bionic, gear or 0")
+	if bar.has_method("apply_item_counts"):
+		bar.call("apply_item_counts", quick_items, bag_slots, shows)
+	var count_on := func(qs: int) -> String:
+		var n: Control = slot_node.call(qs)
+		var l := n.get_node_or_null("CountLabel") as Label if n != null else null
+		return l.text if l != null else "<none>"
+	var shown_counts := []
+	for page in [3, 4, 1]:
+		bar.call("set_page", page)
+		for qs in [1, 2, 5, 23, 38]:
+			var n: Control = slot_node.call(qs)
+			if n != null and n.is_visible_in_tree():
+				shown_counts.append([page, qs, count_on.call(qs)])
+	_check(shown_counts == [[3, 23, "7"], [4, 38, "1"], [1, 1, "7"], [1, 2, ""], [1, 5, ""]],
+		"after F3, F4 and F1 each shown slot draws its count (got %s)" % [shown_counts])
+	bag_slots[0]["quantity"] = 6
+	bar.call("set_page", 3)
+	if bar.has_method("apply_item_counts"):
+		bar.call("apply_item_counts", quick_items, bag_slots, shows)
+	_check(count_on.call(23) == "6" and count_on.call(1) == "6",
+		"a use takes both slots bound to the stack to 6, the shown F3 one and the hidden F1 one (got %s, %s)" % [count_on.call(23), count_on.call(1)])
+	bar.call("set_slot_item", 2, potion_tex, 9)
+	if bar.has_method("apply_item_counts"):
+		bar.call("apply_item_counts", quick_items, bag_slots, shows)
+	_check(count_on.call(2) == "", "a slot no item is bound to loses a stale count (got '%s')" % count_on.call(2))
+	bar.call("clear_slot", 23)
+	_check(count_on.call(23) == "", "an emptied slot draws no count (got '%s')" % count_on.call(23))
+	# The count draws after the re-use display (0x685e50: 0x67cfb0, then the
+	# count 0x67bd70), so a cooling potion still shows its stack.
+	bar.call("set_slot_cooldown", 1, 3, -1)
+	var n1: Control = slot_node.call(1)
+	var over := n1.get_node_or_null("Delay") if n1 != null else null
+	var cl := n1.get_node_or_null("CountLabel") if n1 != null else null
+	_check(over != null and cl != null and over.get_index() < cl.get_index(),
+		"the re-use display sits under the count (indices %s, %s)" % [over.get_index() if over else -1, cl.get_index() if cl else -1])
+	for qs in quick_items:
+		bar.call("clear_slot", qs)
+	bar.call("clear_slot", 2)
+	bar.call("set_slot_cooldown", 1, -1, -1)
+	bar.call("set_page", 1)
 
 	# --- the readouts (vslot 12, 0x60b440) ---
 	bar.call("set_exp", 23.456)

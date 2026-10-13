@@ -8055,6 +8055,106 @@ Forward+ on the RX 7600, median of 3, native readers off on both sides):
 | cross freeze ms | 2720 | 2754 | SAME |
 | cross hitches | 4 | 5 | SAME |
 
+### Round 786 (part): hotbar slot numbers and quantities
+
+The user, on v0.1.536 (Windows and Mac): "The hotbar is supposed to show the slot number at times
+and show the item quantity when applicable." Their F4 bar showed the number only on the empty slot
+5, none on a skill or item, and no quantity on the potions; then "Seems like it kind of works on
+F1, but still not item quantity. Make sure it's working for all of them." An earlier render on
+v0.1.534's code showed F1's filled slots 1-3 drawing "1", "2", "3". Nothing in the bar changed
+between the two releases (`git log v0.1.534..v0.1.536 -- hud_underbar.gd` is empty): it depends
+on the page.
+
+**Retail (READ, `sro_client.exe`, the decompile and the asm on the box):**
+- **The key numbers are the bar's own pictures, not the slot's.** `nifundermenubar.2dt`'s records
+  96..105 are CNIFStatics 92..101 on `ub_number_1`..`_0` (and 102 `ub_number_m`), 8x12 at each
+  slot's bottom-right corner, x = slot + 24, y = slot + 22, hanging 2 px below it (MEASURED, the
+  real file on the box). They come after the slots (records 33..42) in the file, children are
+  appended in load order (`0xb90a80`), and `0xba0300` (CGWnd slot 14) draws the child list first
+  to last. So the number is drawn over the slot whatever it holds, on every page.
+- **The pages' other slots go under them.** The OnCreate (`0x60df30`) makes quick slots 11..50
+  (`0x60e0d0..0x60e17a`) and calls `0xb90c30` on each (`0x60e159`): mode 2 at +0x28, order at
+  +0x29. The main frame's tick (`CGFXMainFrame::vslot_011` -> `CGWndBase::vslot_012` `0xb92070`,
+  recursing into every shown child at `0xb923f0`) moves a mode-2 child to the FRONT of its parent's
+  list (`0xb92228` -> map `0x110f650`, inserted before the first node at `0xb92373..`); mode 1
+  (`0xb90bd0`) goes to the back (`0xb92261` -> `0x110f65c`, `0xb922f7..`). Every page's slots
+  therefore sit under the key numbers.
+- **The quantity is the slot's own draw.** `CIFSlotWithHelp::vslot_013` (`0x685e50`): the icon
+  (`0x6550c0`), the overlays (`0x67cfb0`: seal edge, re-use display, ...), then, when `0x680da0`
+  holds, the count with `0x67bd70`: `item_number_0..9.ddj` digit pictures (loaded at +0x5a0 by
+  `vslot_010` `0x66b460`) at the slot's TOP LEFT, as round 728 read for the bag (ItemCountLabel).
+  No font, no colour of its own. `0x680da0`'s quick-slot case (kind 0x0c, sub-kind 0x46 an item):
+  `0x538410` on the item's type word -- not bionic, TypeID1 3, TypeID2 3 -- and a non-zero count
+  (+0x9c, `0x8ba460`; a count of 1 is drawn); a zero count clears the slot (`0x67ece0`).
+  `0x67bd70` also needs the slot's +0x679: 1 from the constructor (`0x673c80`), then set by the
+  SetItem every bar item goes through (`0x60c430` -> `0x6871d0`) to `max stack > 1` (`cmp
+  [ref+0x1c0], 1; setg` at `0x6875cd..0x6875d7`; +0x1c0 the max stack, round 726's reading of
+  `0x68a6c0`). So: a STACKABLE expendable with a count, a 1 included.
+- **The count is the bag's, live.** `0x60c430` (called on bag moves and item results) finds every
+  quick slot bound to the bag slot and sets it from the bag's item (`0x6871d0` stores the bag's own
+  SOItem at +0x390), so the bar draws that bag slot's stack each frame -- not a total over the bag.
+- **The two never collide:** the count is top-left, the number bottom-right.
+
+**The cause (OURS, `hud_underbar.gd`, `World3D.gd`):**
+- The made slots 11..50 were added at the END of the bar's children, after the number pictures,
+  so on F2..F4 an icon covered its number (the empty slot showed it). F1's authored slots come
+  before the numbers in file order, so F1 "kind of worked".
+- No caller ever passed a count: every `set_slot_item` call in World3D gave only an icon, and the
+  slot's count was a font Label at the bottom right (under the number) shown only above 1.
+
+**The fix:**
+- `_build_slots` sends each made slot to the front of the bar's children (`move_child(node, 0)`),
+  as `0xb90c30` does: under every other child, over the bar's own art.
+- The slot's count is an `ItemCountLabel` (the digit pictures, top left); the slot is unclipped (the
+  original clips nothing; four digits start 1 px left of the slot); the re-use display is kept
+  under the count (`0x67cfb0` before `0x67bd70`).
+- `HudUnderbar.item_counts` / `apply_item_counts`: every item slot on every page draws its bound
+  bag slot's stack when `HudPanels.bar_shows_count` (`ItemCountLabel.shows_on_bar`: max stack
+  > 1, 3/3, not bionic, a count) says so, every other slot none. World3D calls it (`_refresh_quickslot_counts`) on every bag list (after a use --
+  manual or auto potion --, a pick-up, a drop, a trade, a quest), every bag move, every bar change
+  (`_save_hotbar`) and the login restore. `set_slot_item`'s count defaults to 0.
+- QA (OURS): `OPENSRO_QA_AUTOPOT` gains `skill:<slot>:<id>` (a skill's icon on any slot) and
+  `counts` (each filled slot's drawn count, `QA HOTBAR`); its `bind` now saves the bar as a drop
+  does.
+
+**Tests (failing first, 7 FAILURES before the fix):** `hud_underbar_test.gd` -- every page's slots
+under the key numbers 92..101 (the fixture gains the ten number records, structure only); the count
+an `ItemCountLabel` on an unclipped slot; the bar's rule (`shows_on_bar`: a 1 drawn, not for max
+stack 1, bionic, gear or 0); `item_counts` (7, 7, a 1 drawn, 0 for a non-expendable and
+for a missing bag slot); after F3, F4 and F1 each shown slot draws its count; a use takes the shown
+F3 slot and the hidden F1 slot bound to the same stack to 6; a stale count goes from a slot no item
+is bound to; the re-use display under the count.
+
+**Live (render box, `/var/tmp/r786-hb/{live,pair,login_ext,live_ext,auto}.sh`; Jangan, 1280x720,
+Forward+, the in-memory server; logs in `/var/tmp/r786-hb/keep/`, frames deleted):**
+- Run 1: skills 3 and 143, HP potions (item 4, 50), MP potions (11, 50), universal pills (55, 10),
+  purification pills (10374, 10) and a return scroll (61, 1) on all four pages. `QA HOTBAR`: every
+  item slot its stack (`q3=50 q4=50 q8=10 q9=1 q13=50 ... q36=1 q38=50 q39=50 q40=10`), skills 0.
+  Key 3 on F2 (quick slot 13): `49 left` -> q3, q13, q38 49; key 4 on F3 (24): MP 49 on q4, q24,
+  q39; keys 8 and 0 on F4 (38, 40): 48 and 9 everywhere. Pictures: each page before and after.
+- Run 2, a second boot on the same server: the bar comes back from the hotbar file at login with
+  every count (`q3=48 q4=49 q8=9 q9=1 ...`), F2's key 3 takes it to 47.
+- Run 3, the auto potion (HP row on slot 3 at 50 %) after `/hurt 160 0`, with F2 shown: it drinks
+  from F1's slot 3 and F2's slot 13 reads 49.
+- In a fresh in-memory server the restore at login clears the item slots (the new character's bag
+  is empty until the QA's `/give`), as the resync does for any item gone from the bag.
+
+**Gates:** client `check` ALL LOAD (784 scripts, 9 scenes); `tests` "ran 302 suite(s), 0 failing"
+(`RENDER_DIR=/opt/opensro-client-r786-hb`, `GODOT_LOCK=/var/tmp/r786-hb/lock`). UI only, nothing
+per frame (the counts are set on bag and bar events): no perf gate.
+
+**OPEN:**
+- `0x67c2d0` draws a second number at a skill quick slot's TOP RIGHT from +0x598, set every second
+  (`vslot_005` case 0x0c, `0x66c3a0`) from a SkillRunTimeManager record (`0x778bd0` ->
+  `0x9bfcb0` + 8) or the skill's data +0x194 + 8 for sub-kinds 0x19 / 0x49. What it counts was not
+  identified; OpenSRO draws nothing there.
+- `0x67bd70` skips the count when the item's ref has +0x2c8 bit 2 and `0x5dd780()` holds (not
+  identified; `0x6871d0` reads +0x1c0 as minutes for those items); `0x67c010` (slot +0x67a) draws
+  an `alcm_cha_%02d` badge for some item kinds. Neither is modelled, as in the bag (round 728).
+- The bag's rule (round 728's `ItemCountLabel.shows_count`) has no max-stack test. `0x6871d0` is
+  the general CIFSlotWithHelp SetItem (122 call sites), so the bag very likely has it too; the
+  bag's own path to it was not traced, so the bag is left as it was.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

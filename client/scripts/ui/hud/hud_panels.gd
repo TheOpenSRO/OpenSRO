@@ -4581,6 +4581,26 @@ func _draw_bag_page() -> void:
 ## READ FUN_00680da0). An item the table does not know falls back to the old
 ## rule, a stack of two or more (OURS).
 func _shows_count(item_id: int, qty: int) -> bool:
+	return shows_count(item_id, qty)
+
+## Whether a quick slot on the bar draws this stack's count (round 786,
+## HudUnderbar.item_counts), READ: 0x680da0's quick-slot case (kind 0x0c,
+## an item 0x46) tests the same type word as the bag, `0x538410` (not
+## bionic, TypeID1 3, TypeID2 3), and a non-zero stack; and the slot's
+## +0x679, which `vslot_013` (0x685e50 -> 0x67bd70) needs too, is set by
+## the SetItem every bar item goes through (0x60c430 -> 0x6871d0) to
+## `max stack > 1` (`cmp [ref+0x1c0], 1; setg` at 0x6875cd..0x6875d7; ref
+## +0x1c0 the max stack, round 726's reading of 0x68a6c0). An item the table
+## does not know falls back to a stack of two or more (OURS).
+func bar_shows_count(item_id: int, qty: int) -> bool:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null:
+		return qty > 1
+	return ItemCountLabel.shows_on_bar(Array(item.type_ids), item.bionic != 0, item.max_stack, qty)
+
+## The bag's rule (round 728), public.
+func shows_count(item_id: int, qty: int) -> bool:
 	_load_items()
 	var item: ItemTableReader.Item = _items.get(item_id)
 	if item == null:

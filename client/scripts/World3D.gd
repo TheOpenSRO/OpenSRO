@@ -11722,6 +11722,8 @@ func _auto_potion_status(st: StatusNet.ObjectStatus) -> void:
 ## <delay on>,<delay ms> (the window's controls set), confirm (its Confirm
 ## pressed), cancel, cmd:<line> (a chat-console line, e.g. a GM /hurt), log
 ## (the settings, the timers and the slots' stacks). Each prints `QA AUTOPOT`.
+## Round 786 (hotbar labels) adds skill:<quick slot>:<skill id> (a skill's
+## icon on any slot) and counts (each filled slot's drawn count, `QA HOTBAR`).
 func _qa_autopot_step(tick: int) -> void:
 	var spec := OS.get_environment("OPENSRO_QA_AUTOPOT")
 	if spec == "":
@@ -11746,8 +11748,33 @@ func _qa_autopot_step(tick: int) -> void:
 						icon = _ui_builder.load_texture(_hud_panels.item_icon_path(item_id))
 					if _hud_underbar != null:
 						_hud_underbar.set_slot_item(slot, icon)
+					# Saved as a drop saves (round 786: so a later boot's login
+					# restore can be checked); the save refreshes the counts.
+					_save_hotbar()
 					print("QA AUTOPOT bound quickslot %d <- item %d (bag slot %d, %d of them)" % [slot, item_id, s.slot_index, s.quantity])
 					break
+		elif step.begins_with("skill:"):
+			# Round 786 (hotbar labels): skill:<quick slot>:<skill id> puts a
+			# skill's icon on any slot of any page, as a drop does (no
+			# known-skill gate: the run shows the bar, it casts nothing).
+			var a := step.trim_prefix("skill:").split(":")
+			var slot := int(a[0])
+			var sid := int(a[1])
+			_quickslot_items.erase(slot)
+			_quickslot_actions.erase(slot)
+			_quickslot_skills[slot] = {"id": sid, "code": String(SkillAudio.context_for(sid)["code"])}
+			var path := _hud_panels.skill_icon_path(sid) if _hud_panels != null else ""
+			if _hud_underbar != null:
+				_hud_underbar.set_slot_item(slot, _ui_builder.load_texture(path) if path != "" and _ui_builder != null else null)
+			_save_hotbar()
+			print("QA AUTOPOT skill on quickslot %d <- %d (icon %s)" % [slot, sid, path])
+		elif step == "counts" and _hud_underbar != null:
+			# Round 786: every filled quick slot's drawn count, all pages.
+			var drawn := []
+			for qs in range(1, HudUnderbar.MAX_QUICKSLOT):
+				if _hud_underbar.slot_has_item(qs):
+					drawn.append("q%d=%d" % [qs, _hud_underbar.slot_count(qs)])
+			print("QA HOTBAR page F%d counts %s" % [_hud_underbar.current_page(), " ".join(drawn)])
 		elif step == "open" and _hud_panels != null:
 			_hud_panels.open(HudPanels.AUTO_POTION_ID)
 		elif step.begins_with("cfg:") and _hud_panels != null:
@@ -11905,6 +11932,10 @@ func _resync_quickslot_items(slots: Array) -> void:
 			print("World3D: quickslot %d cleared: item %d is no longer in the bag" % [qs, want])
 	if changed:
 		_save_hotbar()
+	# The counts follow the bag (round 786): a use, a pick-up, a move or a
+	# sale changes a stack, and the bar shows it at once. `slots` is the
+	# list both callers have just stored in _inventory_slots.
+	_refresh_quickslot_counts()
 
 ## A skill was learned (NetClient.learn_skill_done): every bar slot holding
 ## its previous level takes the new one, as retail's 0x60c230 does after
@@ -11972,6 +12003,7 @@ var _hotbar_restoring := false
 ## binding dropped).
 func _save_hotbar() -> void:
 	_refresh_quickslot_seals()
+	_refresh_quickslot_counts()
 	if _hotbar_restoring or NetClient.current_character_name == "":
 		return
 	var ok := HotbarStore.save(_hotbar_key(), _quickslot_skills, _quickslot_items, HotbarStore.PATH, _quickslot_actions)
@@ -12022,10 +12054,27 @@ func _restore_hotbar() -> void:
 		_resync_quickslot_items(_inventory_slots)
 	_hotbar_restoring = false
 	_refresh_quickslot_seals()
+	_refresh_quickslot_counts()
 
 ## The seal star on the bar's item slots (HudUnderbar.set_slot_seals). Every
 ## change to the bar ends in _save_hotbar, which calls this first; the
 ## restore calls it once at the end.
+## The stack counts on the bar's item slots, every page (round 786,
+## HudUnderbar.apply_item_counts): each item slot draws its bag slot's
+## stack when the original would (HudPanels.bar_shows_count, READ 0x680da0
+## and the SetItem's max-stack flag),
+## every other slot none. Called on every bag list and move
+## (_resync_quickslot_items), every bar change (_save_hotbar), the restore
+## at login, and the QA bind. Before round 786 no caller passed a count, so
+## no slot ever drew one.
+func _refresh_quickslot_counts() -> void:
+	if _hud_underbar == null:
+		return
+	var panels := _hud_panels
+	var shows := func(item_id: int, qty: int) -> bool:
+		return panels.bar_shows_count(item_id, qty) if panels != null else qty > 1
+	_hud_underbar.apply_item_counts(_quickslot_items, _inventory_slots, shows)
+
 func _refresh_quickslot_seals() -> void:
 	if _hud_underbar == null or _hud_panels == null:
 		return

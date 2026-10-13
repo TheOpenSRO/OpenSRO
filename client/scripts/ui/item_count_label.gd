@@ -58,6 +58,13 @@ static func shows_count(type_ids: Array, bionic: bool, quantity: int) -> bool:
 		return false
 	return int(type_ids[0]) == 3 and int(type_ids[1]) == 3
 
+## Whether a quick slot on the bar draws the count (round 786, READ): the
+## same test (0x680da0's kind 0x0c / 0x46 case, `0x538410` and a non-zero
+## count), and the slot's +0x679, set by the SetItem every bar item goes
+## through (0x60c430 -> 0x6871d0) to `max stack > 1` (0x6875cd..0x6875d7).
+static func shows_on_bar(type_ids: Array, bionic: bool, max_stack: int, quantity: int) -> bool:
+	return max_stack > 1 and shows_count(type_ids, bionic, quantity)
+
 ## The left edge of each digit's quad for an n-digit count, left to right
 ## (FUN_0067bd70's arithmetic, READ).
 static func digit_xs(n: int) -> Array:
