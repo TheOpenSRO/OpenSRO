@@ -963,12 +963,16 @@ Round 630 rebuilt it on `CIFMinimap`'s own draw ([protocol/minimap.md](protocol/
 the world map's marker, which never turned), 8x8 signs culled at 44.5 px, the 140x184 window flush
 with the screen's top-right corner, and the dungeon-floor ring hidden. Still open:
 
-- [ ] Unique and animal signs -- `HudMinimap` draws monster, NPC and other-player signs, and (round
-      785) the tracked quest's NPC signs and arrows at 47.0. A unique's sign is `+0x3b0`
-      when the monster's `+0x7ac` is 3 or 8. **The party's dots and arrows are drawn (round 717,
-      `party_gui.md` section 9)**; the quest marks go between the party's arrows and the player's
-      arrow in `MapMarks`.
-- [ ] **Move the NPC / monster / other-player signs over the frame** (round 717 review, finding 1):
+- [x] Unique signs (round 786) -- a monster of rarity 3 or 8 is drawn with
+      `interface\minimap\mm_sign_unique.ddj` (`+0x3b0`, stored `0x6610d7`) instead of the monster
+      sign, READ from vslot_013's class checks (`0x663790..0x6637ac`; `+0x7ac` is the spawn's
+      class byte's low nibble, `0x9d38e1`). `HudMinimap` draws monster, unique, NPC and
+      other-player signs, and (round 785) the tracked quest's NPC signs and arrows at 47.0.
+      **The party's dots and arrows are drawn (round 717, `party_gui.md` section 9)**; the quest
+      marks go between the party's arrows and the player's arrow in `MapMarks`.
+- [ ] Animal signs -- `mm_sign_animal.ddj` (`+0x3c8`, `0x66137f`) is drawn for a CICCos (a pet,
+      horse or transport; READ, `0x6637ae..0x6637c4`); this client builds no such body yet.
+- [ ] **Move the NPC / monster / unique / other-player signs over the frame** (round 717 review, finding 1):
       vslot_013 draws every mark over `mm_window` (INFERRED, `party_gui.md` section 9), but these
       signs still sit in the map's clip under the frame, and they reach 44.5 + 4 = 48.5 px where the
       ring starts at 43.5-53.75 px. Draw them first in `MapMarks` (before the party's dots).
