@@ -286,6 +286,32 @@ func _run() -> void:
 	var cl := n1.get_node_or_null("CountLabel") if n1 != null else null
 	_check(over != null and cl != null and over.get_index() < cl.get_index(),
 		"the re-use display sits under the count (indices %s, %s)" % [over.get_index() if over else -1, cl.get_index() if cl else -1])
+	# Round 786: ONE cell over the whole icon. The sheets at their MEASURED
+	# sizes (skill_delay.ddj 256 x 256, skill_charge.ddj 64 x 64; synthetic
+	# here) through the builder's own texture cache; 0x67cfb0 cuts 1/16 (1/4)
+	# of the sheet, so a 16-pixel cell. Round 785 cut 32 pixels -- 2 x 2 cells,
+	# four small sweeps in the slot.
+	var delay_img := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	var charge_img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	builder._texture_cache["interface\\skill\\skill_delay.ddj"] = ImageTexture.create_from_image(delay_img)
+	builder._texture_cache["interface\\skill\\skill_charge.ddj"] = ImageTexture.create_from_image(charge_img)
+	bar.call("set_slot_cooldown", 1, 17, -1)
+	var dov: TextureRect = n1.get_node_or_null("Delay") as TextureRect if n1 != null else null
+	var dat: AtlasTexture = dov.texture as AtlasTexture if dov != null else null
+	_check(dov != null and dov.visible and dat != null and dat.region == Rect2(16, 16, 16, 16),
+		"delay frame 17 is one 16-pixel cell of the 256 sheet, column 1 row 1 (got %s)" % (str(dat.region) if dat != null else "none"))
+	_check(dov != null and dov.get_global_rect() == (slot_node.call(1) as Control).get_global_rect(),
+		"the sweep covers the whole slot (got %s against %s)" % [str(dov.get_global_rect()) if dov else "none",
+		(slot_node.call(1) as Control).get_global_rect()])
+	_check(bar.call("slot_cooldown_cell", 1) == ["delay", 17], "slot_cooldown_cell reads delay 17 (got %s)" % [bar.call("slot_cooldown_cell", 1)])
+	bar.call("set_slot_cooldown", 1, 0, -1)
+	_check(dat != null and dat.region == Rect2(0, 0, 16, 16), "frame 0 (r = 1): the top-left cell alone (got %s)" % (str(dat.region) if dat != null else "none"))
+	bar.call("set_slot_cooldown", 1, -1, 6)
+	var cat: AtlasTexture = dov.texture as AtlasTexture if dov != null else null
+	_check(cat != null and cat.region == Rect2(32, 16, 16, 16) and bar.call("slot_cooldown_cell", 1) == ["charge", 6],
+		"charge frame 6 is one 16-pixel cell of the 64 sheet, column 2 row 1 (got %s)" % (str(cat.region) if cat != null else "none"))
+	builder._texture_cache.erase("interface\\skill\\skill_delay.ddj")
+	builder._texture_cache.erase("interface\\skill\\skill_charge.ddj")
 	for qs in quick_items:
 		bar.call("clear_slot", qs)
 	bar.call("clear_slot", 2)

@@ -5651,6 +5651,9 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	var view := SkillBoard.new()
 	view.builder = _builder
 	view.build(model, _on_skill_icon_input)
+	_skill_board_view = view
+	if _skill_cooldown_frames.is_valid():
+		view.set_cooldowns(_skill_cooldown_frames)
 	# The view draws in the pane's coordinates; the board sits at its own
 	# authored place in the pane (6,29), so the pane's origin is found from it.
 	view.position = board.position - SkillBoard.BOARD_RECT.position
@@ -5677,6 +5680,28 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	if OS.has_environment("OPENSRO_QA_SKILL_PRESS") and not _qa_skill_press_started:
 		_qa_skill_press_started = true
 		_qa_skill_press(OS.get_environment("OPENSRO_QA_SKILL_PRESS"))
+
+## The skill window's current SkillBoard (null before the first fill).
+var _skill_board_view: SkillBoard = null
+## The last frames_for apply_skill_cooldowns was given, so a refilled board
+## draws the running sweeps at once.
+var _skill_cooldown_frames := Callable()
+
+## The skill window's re-use displays (round 786): every learned slot draws
+## the skill_delay sweep / skill_charge flash as a hotbar skill slot does
+## (READ, the skill window's slot is a CIFSlotWithHelp of the skill kind 0x49 --
+## the bar's quick slots hold skills as sub-kind 0x49 -- drawn by the same
+## 0x67cfb0; SkillBoard's header).
+## `frames_for(skill_id)` returns [delay_frame, charge_frame]. World3D calls it
+## from the same tick that draws the bar.
+func apply_skill_cooldowns(frames_for: Callable) -> void:
+	_skill_cooldown_frames = frames_for
+	if _skill_board_view != null and is_instance_valid(_skill_board_view):
+		_skill_board_view.set_cooldowns(frames_for)
+
+## The skill window's current SkillBoard, or null (tests, QA).
+func skill_board_view() -> SkillBoard:
+	return _skill_board_view if _skill_board_view != null and is_instance_valid(_skill_board_view) else null
 
 ## The first visible row and the mastery it belongs to, so a refill (after a
 ## learn) keeps the rows where they were and a new mastery starts at the top.

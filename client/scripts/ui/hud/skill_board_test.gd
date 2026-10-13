@@ -21,6 +21,7 @@ func _init() -> void:
 	_test_layout()
 	_test_columns()
 	_test_practice_box()
+	_test_cooldowns()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -198,3 +199,43 @@ func _test_practice_box() -> void:
 	box2.confirmed.connect(func(m: int, id: int) -> void: got2.append([m, id]))
 	box2.confirm()
 	_check(got2 == [[SkillPracticeBox.Mode.MASTERY, 257]], "Confirm with the points sends the raise for the mastery")
+
+## Round 786: the skill window draws the re-use display on a learned skill's
+## slot, as the bar does (READ: its icon is a CIFSlotWithHelp of kind 0x49,
+## CIFSkillSlot::Create 0x6a0980, drawn by the same 0x67cfb0). One 16-pixel
+## cell of the (synthetic, MEASURED-size) 256 x 256 sheet over the 32 x 32 icon.
+func _test_cooldowns() -> void:
+	var m := _model(1)
+	var row: Dictionary = m["rows"][0]
+	(row["slots"][1] as Dictionary)["meta"] = {"skill_id": 102}
+	(row["slots"][3] as Dictionary)["meta"] = {"skill_id": 303}
+	var view := SkillBoard.new()
+	view.build(m)
+	var sheets := {SkillDelayOverlay.DELAY_DDJ: ImageTexture.create_from_image(Image.create(256, 256, false, Image.FORMAT_RGBA8)),
+		SkillDelayOverlay.CHARGE_DDJ: ImageTexture.create_from_image(Image.create(64, 64, false, Image.FORMAT_RGBA8))}
+	var sheet_for := func(path: String) -> Texture2D: return sheets.get(path)
+	var frames := {102: [17, -1], 303: [-1, 6]}
+	var asked: Array = []
+	var frames_for := func(id: int) -> Array:
+		asked.append(id)
+		return frames.get(id, [-1, -1])
+	view.set_cooldowns(frames_for, sheet_for)
+	asked.sort()
+	_check(asked == [102, 303], "only the learned slots are asked (got %s)" % str(asked))
+	var row0 := view.find_child("SkillRows", true, false).get_child(0)
+	var over := row0.get_node_or_null("Slot1/Delay") as TextureRect
+	var a: AtlasTexture = over.texture as AtlasTexture if over != null else null
+	_check(over != null and over.visible and a != null and a.region == Rect2(16, 16, 16, 16),
+		"a cooling skill's slot shows ONE 16-pixel delay cell (got %s)" % (str(a.region) if a != null else "none"))
+	_check(over != null and over.position == Vector2.ZERO and over.size == Vector2(32, 32),
+		"over the icon's 32 x 32, not the 36 x 56 slot")
+	var icon := row0.get_node("Slot1/Icon")
+	var tab := row0.get_node_or_null("Slot1/LevelTab")
+	_check(over != null and over.get_index() == icon.get_index() + 1 and tab != null and over.get_index() < tab.get_index(),
+		"right over the icon, under the level badge")
+	_check(view.cooldown_shown(303).slice(0, 2) == ["charge", 6], "the charged flash on another (got %s)" % str(view.cooldown_shown(303)))
+	_check(row0.get_node_or_null("Slot0/Delay") == null, "NEGATIVE: an unlearned slot draws none")
+	frames.clear()
+	view.set_cooldowns(frames_for, sheet_for)
+	_check(view.cooldown_shown(102) == [] and view.cooldown_shown(303) == [], "the time and the tail over: nothing drawn")
+	view.free()

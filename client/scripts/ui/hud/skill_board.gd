@@ -62,6 +62,20 @@ class_name SkillBoard
 ##
 ## The ADD / UP button and LEVEL UP open the practice box (SkillPracticeBox)
 ## -- 0x6a0700 and 0x69bca0 -- whose Confirm sends the learn / raise.
+##
+## **The re-use display** (round 786; READ): the slot's icon is
+## ifskill_slot.txt's ID 1, GDR_STMS_SLOT_SKILL, a CIFSlotWithHelp (MEASURED,
+## the file); CIFSkillSlot::Create (0x6a0980) keeps it at +0x3ac and sets its
+## kind to 0x49 (`push 0x49; call 0x6666f0` at 0x6a09e5) -- the skill kind; a
+## hotbar quick slot (kind 0x0c) holds a skill as sub-kind 0x49 -- and SetSkill
+## hands it the skill id (`0x66c3c0` at 0x6a179b -> +0x65c).
+## So it is drawn by the same CIFSlotWithHelp::vslot_013 (0x685e50) ->
+## UI_SILKMALL::FUN_0067cfb0 as a hotbar skill slot: the skill_delay sweep
+## while the skill's re-use time runs, then the skill_charge flash
+## (SkillDelayOverlay). set_cooldowns draws it on every learned slot from the
+## same SkillCooldowns the bar reads. Over the icon, under the level badge and
+## the button (INFERRED: the slot child's draw order against ifskill_slot.txt's
+## other children was not traced).
 
 ## A tab, mastery tab or LEVEL UP / slot button was pressed: HudPanels acts.
 signal category_selected(index: int)
@@ -142,6 +156,8 @@ var first_row := 0
 var _rows: Array = []
 var _scroll = null   # HudChat.ChatScroll
 var _rows_host: Control
+## The learned slots, for set_cooldowns: {slot: Control, icon: Control, id: int}.
+var _cool_slots: Array = []
 
 # --- the rules (pure, tested) ----------------------------------------------
 
@@ -400,6 +416,7 @@ func _build_rows(board: Control, rows: Array, first: int, on_icon_input: Callabl
 	_rows_host.size = SCROLL_RECT.size
 	host.add_child(_rows_host)
 	_rows.clear()
+	_cool_slots.clear()
 	for r in rows:
 		_rows.append(_build_row(r as Dictionary, on_icon_input))
 	# The scroll bar (CIFScrollManager +0x7d4, a CIFVerticalScroll on
@@ -448,6 +465,35 @@ func set_first_row(n: int) -> void:
 
 func row_count() -> int:
 	return _rows.size()
+
+## Draws every learned slot's re-use display (round 786; READ, see the
+## header): `frames_for(skill_id)` returns [delay_frame, charge_frame]
+## (SkillCooldowns.delay_frame / charge_frame, -1 for none), `sheet_for(path)`
+## the sheet (UiBuilder.load_texture; this node's builder when invalid).
+func set_cooldowns(frames_for: Callable, sheet_for: Callable = Callable()) -> void:
+	if not sheet_for.is_valid() and builder != null:
+		sheet_for = builder.load_texture
+	for e in _cool_slots:
+		var slot: Control = e["slot"]
+		if not is_instance_valid(slot):
+			continue
+		var f = frames_for.call(int(e["id"]))
+		SkillDelayOverlay.apply(slot, sheet_for, int(f[0]), int(f[1]), ICON_RECT, e["icon"])
+
+## The learned slots' skill ids, in build order (QA).
+func cooldown_ids() -> Array:
+	var out: Array = []
+	for e in _cool_slots:
+		out.append(int(e["id"]))
+	return out
+
+## What the slot of `skill_id` shows: SkillDelayOverlay.shown, [] for none or
+## no such slot (tests, QA).
+func cooldown_shown(skill_id: int) -> Array:
+	for e in _cool_slots:
+		if int(e["id"]) == skill_id and is_instance_valid(e["slot"]):
+			return SkillDelayOverlay.shown(e["slot"])
+	return []
 
 func _build_row(r: Dictionary, on_icon_input: Callable) -> Control:
 	var row := Control.new()
@@ -518,6 +564,8 @@ func _build_slot(column: int, s: Dictionary, on_icon_input: Callable) -> Control
 	if on_icon_input.is_valid():
 		icon.gui_input.connect(func(ev: InputEvent) -> void: on_icon_input.call(ev, icon, meta))
 	slot.add_child(icon)
+	if int(meta.get("skill_id", 0)) > 0:
+		_cool_slots.append({"slot": slot, "icon": icon, "id": int(meta["skill_id"])})
 	if bool(view.get("badge", false)):
 		var tab := TextureRect.new()
 		tab.name = "LevelTab"
