@@ -339,12 +339,27 @@ func _build_slots() -> void:
 		node.size = rect.size
 		node.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
 		bar_root.add_child(node, true)
+		# Round 786: sent to the FRONT of the bar's child list, under every
+		# other child -- in particular under the key numbers 92..101, so a
+		# filled slot on F2..F4 keeps its number as F1's do. READ: the
+		# OnCreate calls 0xb90c30 on each made slot (0x60e157..0x60e159),
+		# which marks it mode 2 (+0x28 = 2); the main frame's tick
+		# (CGFXMainFrame::vslot_011 -> CGWndBase::vslot_012 0xb92070, which
+		# recurses into every shown child) moves a mode-2 child to the front
+		# of its parent's list (0xb92228 -> map 0x110f650, inserted before
+		# the first node at 0xb92373..), and 0xba0300 draws the list first
+		# to last. The authored ten (records 33..42) already come before the
+		# numbers (records 96..105) in file order.
+		bar_root.move_child(node, 0)
 		node.visible = false
 		_register_slot(index, node)
 
 func _register_slot(index: int, node: Control) -> void:
 	_slot_nodes[index] = node
-	node.clip_contents = true
+	# Unclipped (round 786): the original draws a slot's count from
+	# 1 px left of it for four digits (ItemCountLabel, READ 0x67bd70) and
+	# clips nothing; the icon and the re-use display fill the slot exactly.
+	node.clip_contents = false
 	# A slot consumes its clicks: it fires its quick slot and the world never
 	# sees the press (round 522's review measured the release walking the
 	# character when it did).
@@ -355,16 +370,15 @@ func _register_slot(index: int, node: Control) -> void:
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	node.add_child(icon)
-	var count := Label.new()
+	# The stack count (round 786): the original's own digit images at the
+	# slot's top left, as the bag draws them (ItemCountLabel, READ: the
+	# quick slot is a CIFSlotWithHelp, whose vslot_013 0x685e50 draws the
+	# count with 0x67bd70). It was a font Label at the bottom right that no
+	# caller ever gave a count.
+	ItemCountLabel.ensure_digits(_ui_builder)
+	var count := ItemCountLabel.new()
 	count.name = COUNT_NODE
-	count.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	count.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	count.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	count.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var font := _ui_builder.font_at(0)
-	if font != null:
-		count.add_theme_font_override("font", font)
-	count.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	node.add_child(count)
 	node.gui_input.connect(func(event: InputEvent) -> void:
 		if not (event is InputEventMouseButton):
@@ -696,21 +710,75 @@ func text_of(id: int) -> String:
 
 # --- quick slots ------------------------------------------------------------
 
-func set_slot_item(slot_index: int, icon: Texture2D, count: int = 1) -> void:
+## Puts an icon on a quick slot with the count it draws: `count` > 0 is
+## drawn (a 1 too, as the original does for an expendable), 0 draws none.
+## A caller that does not know the count passes none; apply_item_counts
+## sets every slot's from the bag.
+func set_slot_item(slot_index: int, icon: Texture2D, count: int = 0) -> void:
 	if not _slot_nodes.has(slot_index):
 		return
 	var node: Control = _slot_nodes[slot_index]
 	var icon_rect := node.get_node_or_null(ICON_NODE) as TextureRect
 	if icon_rect != null:
 		icon_rect.texture = icon
-	var count_lbl := node.get_node_or_null(COUNT_NODE) as Label
-	if count_lbl != null:
-		count_lbl.text = str(count) if count > 1 else ""
+	set_slot_count(slot_index, count if icon != null else 0)
 	# An emptied slot drops its re-use display (round 785).
 	if icon == null:
 		var over := node.get_node_or_null(DELAY_NODE) as Control
 		if over != null:
 			over.visible = false
+
+## The count a quick slot draws, 0 for none.
+func set_slot_count(slot_index: int, count: int) -> void:
+	var node: Control = _slot_nodes.get(slot_index)
+	var count_lbl := node.get_node_or_null(COUNT_NODE) as Label if node != null else null
+	if count_lbl == null:
+		return
+	var text := str(count) if count > 0 else ""
+	if count_lbl.text != text:
+		count_lbl.text = text
+		count_lbl.queue_redraw()
+
+## The count a quick slot draws, 0 for none (tests, QA).
+func slot_count(slot_index: int) -> int:
+	var node: Control = _slot_nodes.get(slot_index)
+	var count_lbl := node.get_node_or_null(COUNT_NODE) as Label if node != null else null
+	return int(count_lbl.text) if count_lbl != null and count_lbl.text.is_valid_int() else 0
+
+## What each item quick slot draws (round 786): the stack of the bag slot it
+## is bound to, when `shows(item_id, quantity)` says the original draws one
+## (HudPanels.bar_shows_count: a stackable expendable, a 1 included --
+## 0x680da0's kind 0x0c / 0x46 case and the +0x679 max-stack flag, READ),
+## else 0. `quickslot_items` is World3D's
+## {quick slot: {"item", "slot"}}; `bag_slots` the bag's entries (anything
+## with slot_index, item_id and quantity). READ: the slot keeps the bag's
+## own SOItem (0x6871d0 stores it at +0x390, from 0x60c430 for every quick
+## slot bound to the bag slot), so what it draws is that slot's stack, live,
+## not a total over the bag.
+static func item_counts(quickslot_items: Dictionary, bag_slots: Array, shows: Callable) -> Dictionary:
+	var by_slot := {}
+	for e in bag_slots:
+		by_slot[int(e.get("slot_index"))] = e
+	var out := {}
+	for qs in quickslot_items:
+		var bind: Dictionary = quickslot_items[qs]
+		var e = by_slot.get(int(bind.get("slot", -1)))
+		var n := 0
+		if e != null and int(e.get("item_id")) == int(bind.get("item", -2)):
+			var qty := int(e.get("quantity"))
+			if shows.call(int(e.get("item_id")), qty):
+				n = qty
+		out[int(qs)] = n
+	return out
+
+## Sets every quick slot's count on every page from the bag (item_counts);
+## a slot no item is bound to draws none. World3D calls it whenever the bag
+## or the bar changes -- the original reads the count each frame, so a
+## change shows at once.
+func apply_item_counts(quickslot_items: Dictionary, bag_slots: Array, shows: Callable) -> void:
+	var counts := item_counts(quickslot_items, bag_slots, shows)
+	for qs in _slot_nodes:
+		set_slot_count(int(qs), int(counts.get(int(qs), 0)))
 
 ## Round 785: a quick slot's re-use display, as retail's slot draws it (READ,
 ## UI_SILKMALL::FUN_0067cfb0): while a skill's re-use time runs, one cell of
@@ -742,6 +810,11 @@ func set_slot_cooldown(slot_index: int, delay_frame: int, charge_frame: int) -> 
 		over.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		over.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		node.add_child(over)
+		# Under the count (round 786): 0x685e50 draws the overlays
+		# (0x67cfb0) before the count (0x67bd70), READ.
+		var count_lbl := node.get_node_or_null(COUNT_NODE)
+		if count_lbl != null:
+			node.move_child(over, count_lbl.get_index())
 	var sheet := DELAY_DDJ if delay_frame >= 0 else CHARGE_DDJ
 	var cell := DELAY_CELL if delay_frame >= 0 else CHARGE_CELL
 	var frame := delay_frame if delay_frame >= 0 else charge_frame
