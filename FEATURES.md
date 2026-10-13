@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.539** plus what is merged on `dev`; updated 2026-10-13.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.540** plus what is merged on `dev`; updated 2026-10-13.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -14,7 +14,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Monsters](#monsters) | 14 | 3 |  |  | 17 |
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
-| [Items](#items) | 13 | 3 | 2 | 4 | 22 |
+| [Items](#items) | 15 | 3 |  | 4 | 22 |
 | [Economy](#economy) | 2 | 1 |  | 4 | 7 |
 | [Social](#social) | 9 | 4 |  | 5 | 18 |
 | [Job / trade](#job--trade) |  |  |  | 3 | 3 |
@@ -26,7 +26,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Server / ops](#server--ops) | 6 |  | 1 | 1 | 8 |
 | [Plugins & customization](#plugins--customization) | 3 | 1 |  | 3 | 7 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **128** | **36** | **3** | **43** | **210** |
+| **All** | **130** | **36** | **1** | **43** | **210** |
 
 ## Biggest gaps
 
@@ -106,8 +106,8 @@ Retail NPCs in their retail spots, with talk menus, shops, storage and quests.
 | Quests | 🟡 Partial | 564 of 696 quests reachable, NPC quest marks; party/timed/job quests missing |
 | Guild manager NPC | 🟡 Partial | Create and leave a guild; other guild lines not done |
 | Test Items NPC | ✅ Supported | Jangan NPC; free +12 full-blue gear, elixirs, stones; server option |
-| Test Items NPC: level-101 Nova 🆕 | ✅ Supported | Sells the unlocked level-101 Seal of Nova instead of level 111 |
-| Test Items NPC: +12 full-blue listing 🆕 | ✅ Supported | Store slots and tooltips show the +12 full-blue piece you get |
+| Test Items NPC: level-101 Nova | ✅ Supported | Sells the unlocked level-101 Seal of Nova instead of level 111 |
+| Test Items NPC: +12 full-blue listing | ✅ Supported | Store slots and tooltips show the +12 full-blue piece you get |
 
 ## Monsters
 
@@ -194,8 +194,8 @@ Retail items with real stats, blues, alchemy and potions.
 | Magic options (blues) | ✅ Supported | Drop with blues, apply when worn, shown in tooltips |
 | Sockets | ❌ Not yet | No socket system yet |
 | Seal of Star/Moon/Sun/Nova items | ✅ Supported | Seal items usable; retail seal edge drawn on icons |
-| Seal effects | 🔧 In progress | Seal particle effects on worn gear being reworked on a branch |
-| Plus glows | 🔧 In progress | Weapon and shield glows by plus level being reworked on a branch |
+| Seal effects | ✅ Supported | Each seal piece shows its own Seal of Star/Moon/Sun/Nova effects, on you and others |
+| Plus glows | ✅ Supported | Weapons and shields glow by plus (+3, then +5 to +14); +8 sparkle; armour never glows, as retail |
 | HP/MP potions and vigors | ✅ Supported | Retail recovery amounts and reuse locks |
 | Cure pills | ✅ Supported | Universal and purification pills cure statuses |
 | Auto potion | ✅ Supported | HP, MP and cure thresholds; settings saved on the server |
