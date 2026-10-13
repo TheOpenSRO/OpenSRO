@@ -3303,24 +3303,38 @@ var _minimap_uniques: Array = []
 ## The rendered frame the minimap was last refreshed in (round 664).
 var _minimap_frame := -1
 
-## The party members the maps mark this frame (round 717, PartyMapMarks),
-## each a region-local ground position (x east, y north) in the player's
-## region: the minimap's (same world id) and the world map's (every member
-## but the player), with the world map's names. Reused, so a settled party
-## allocates nothing a frame.
+## The party members the maps mark this frame (round 717, PartyMapMarks;
+## round 786 in a dungeon): the minimap's, each a ground position (x east, y
+## north) in the frame the player's own position is given in -- the
+## region-local frame of the player's region in the field, the dungeon's
+## own space in a dungeon -- and the world map's (every member but the
+## player), each its region word and its position in that region (y the
+## record's height), with the names. Reused, so a settled party allocates
+## nothing a frame.
 var _party_marks_mini := PackedVector2Array()
-var _party_marks_world := PackedVector2Array()
+var _party_marks_regions := PackedInt32Array()
+var _party_marks_pos := PackedVector3Array()
 var _party_marks_names := PackedStringArray()
+## The party the maps read instead of NetClient's (tests); null in play.
+var _party_marks_party: PartyState = null
 
-## Fills the three lists. A member's position is its spawned body's when this
-## client has one (0x9c35e0), else its record's (x, 0, z) in its region
-## (0x9ecfd0) -- the minimap's and the world map's own rule.
+## Fills the lists. `here_region` is the player's field region (unused in a
+## dungeon). A member's position is its spawned body's when this client has
+## one (0x9c35e0), else its record's (x, 0, z) in its region (0x9ecfd0) --
+## the minimap's and the world map's own rule. Whether the minimap takes a
+## member is decided on the record (0x9d5520 is given the record's region
+## and x, y, z: asm 0x6643de..0x664412), as is a dungeon floor's height test
+## on the world map (0x61fd01..0x61fd3b): so the world map's y is the
+## record's.
 func _fill_party_marks(here_region: Vector2i) -> void:
-	var party := NetClient.party
-	var ready: bool = party.in_party and here_region.x >= 0 and _minimap_group != null \
-		and is_instance_valid(_minimap_group)
+	var party: PartyState = _party_marks_party if _party_marks_party != null else NetClient.party
+	var in_dungeon := _dungeon != null
+	var ready: bool = party.in_party and (in_dungeon or (here_region.x >= 0 and _minimap_group != null
+		and is_instance_valid(_minimap_group)))
 	var own: PartyNet.Member = party.member(party.own_jid) if ready else null
 	var own_world: int = own.world_id if own != null else -1
+	var player_region: int = (_dungeon.rid & 0xFFFF) if in_dungeon \
+		else (((here_region.x & 0xFF) << 8) | (here_region.y & 0xFF))
 	# First the counts, so the lists change size only when the party does.
 	var nm := 0
 	var nw := 0
@@ -3328,18 +3342,13 @@ func _fill_party_marks(here_region: Vector2i) -> void:
 		for m in party.members:
 			if PartyMapMarks.worldmap_draws(m, party.own_jid):
 				nw += 1
-				# The minimap's world test (record +0x68 against the player's
-				# own world id, +0x20e4 through 0x9d4d90). OURS: OpenSRO's
-				# client keeps the player's world id only in the player's own
-				# party record, so that record stands in for +0x20e4 (right
-				# while the server keeps it current); without it nothing is
-				# compared.
-				if own_world < 0 or PartyMapMarks.minimap_draws(m, party.own_jid, own_world):
+				if _party_minimap_draws(m, party.own_jid, own_world, player_region):
 					nm += 1
 	if _party_marks_mini.size() != nm:
 		_party_marks_mini.resize(nm)
-	if _party_marks_world.size() != nw:
-		_party_marks_world.resize(nw)
+	if _party_marks_regions.size() != nw:
+		_party_marks_regions.resize(nw)
+		_party_marks_pos.resize(nw)
 		_party_marks_names.resize(nw)
 	if nw == 0:
 		return
@@ -3348,20 +3357,83 @@ func _fill_party_marks(here_region: Vector2i) -> void:
 	for m in party.members:
 		if not PartyMapMarks.worldmap_draws(m, party.own_jid):
 			continue
+		# The position in the player's frame (the minimap's) and the
+		# region word and position the world map places by.
 		var at: Vector2
+		var region: int = m.region
 		var body := _party_body_for_board(m.jid) as Node3D
 		if body != null and is_instance_valid(body) and body.is_inside_tree():
-			var l := _minimap_group.to_local(body.global_position)
-			at = Vector2(l.x, l.z)
+			if in_dungeon:
+				var d := DungeonWorld.to_dungeon(body.global_position)
+				at = Vector2(d.x, d.z)
+			else:
+				var l := _minimap_group.to_local(body.global_position)
+				at = Vector2(l.x, l.z)
+			region = player_region
+		elif in_dungeon or (m.region & PartyMapMarks.DUNGEON_BIT) != 0:
+			# A dungeon record is already in the dungeon's own space.
+			at = Vector2(float(m.x), float(m.z))
 		else:
 			at = PartyMapMarks.record_local(here_region, m.region, float(m.x), float(m.z))
-		_party_marks_world[iw] = at
+			region = player_region
+		_party_marks_regions[iw] = region
+		_party_marks_pos[iw] = Vector3(at.x, float(m.y), at.y)
 		if _party_marks_names[iw] != m.member_name:
 			_party_marks_names[iw] = m.member_name
 		iw += 1
-		if own_world < 0 or PartyMapMarks.minimap_draws(m, party.own_jid, own_world):
+		if _party_minimap_draws(m, party.own_jid, own_world, player_region):
 			_party_marks_mini[im] = at
 			im += 1
+
+## The minimap's test for `m` (CIFMinimap::vslot_013, 0x6643bb..0x664419):
+## the world id, then 0x9d5520 on the record's region and position. The
+## world-id test (record +0x68 against the player's own world id, +0x20e4
+## through 0x9d4d90) is OURS in one respect: OpenSRO's client keeps the
+## player's world id only in the player's own party record, so that record
+## stands in for +0x20e4 (right while the server keeps it current); without
+## it nothing is compared. The floor is asked only for a record in the
+## player's own dungeon.
+func _party_minimap_draws(m: PartyNet.Member, own_jid: int, own_world: int, player_region: int) -> bool:
+	if m == null or m.jid == own_jid:
+		return false
+	if own_world >= 0 and m.world_id != own_world:
+		return false
+	var same_floor := false
+	if _dungeon != null and (m.region & 0xFFFF) == (player_region & 0xFFFF):
+		# No block under either position: 0x9d5520 found no cell, so 0.
+		var floor_here := _party_player_floor()
+		same_floor = floor_here >= 0 and _party_record_floor(m) == floor_here
+	return PartyMapMarks.region_visible(m.region, player_region, same_floor)
+
+## The floor index (DofReader.Block.floor_index) of the block under a
+## member's record position in the player's dungeon, -1 when no block is
+## there (0x9d5520 then answers 0: its cell lookup found nothing). The
+## block's floor is what 0x9d5520 compares, through the same `[0x1103cc6]`
+## slot 1 and the block's slot 2 that ICPlayer::FUN_009d7880 reads the floor
+## name with (READ); that slot 2 is DofReader's floor index is INFERRED, as
+## for the floor name (round 774). Kept per member until its record moves,
+## so a settled party asks the walkable graph nothing a frame (OURS).
+var _party_floor_cache := {}
+
+func _party_record_floor(m: PartyNet.Member) -> int:
+	if _dungeon == null:
+		return -1
+	var key := Vector4i(m.region, m.x, m.y, m.z)
+	var hit = _party_floor_cache.get(m.jid)
+	if hit != null and (hit as Array)[0] == key:
+		return int((hit as Array)[1])
+	var b := DungeonWorld.block_under(_dungeon, Vector3(float(m.x), float(m.y), float(m.z)))
+	var f: int = (_dungeon.dof.blocks[b] as DofReader.Block).floor_index \
+		if b >= 0 and b < _dungeon.dof.blocks.size() else -1
+	_party_floor_cache[m.jid] = [key, f]
+	return f
+
+## The player's block's floor index (its +0x74 / +0x78 cell's block, which
+## _dungeon_tick keeps in _dungeon_block), -1 off every block.
+func _party_player_floor() -> int:
+	if _dungeon == null or _dungeon_block < 0 or _dungeon_block >= _dungeon.dof.blocks.size():
+		return -1
+	return (_dungeon.dof.blocks[_dungeon_block] as DofReader.Block).floor_index
 
 ## QA (round 757, QaCrowdProbe's `minimap` step): the minimap not refreshed.
 var _qa_minimap_off := false
@@ -3421,7 +3493,7 @@ func _refresh_minimap() -> void:
 	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
 			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
 		_hud_worldmap.update_player(rx, ry, local, facing)
-		_hud_worldmap.update_party(rx, ry, _party_marks_world, _party_marks_names, NetClient.party.job_party)
+		_hud_worldmap.update_party(_party_marks_regions, _party_marks_pos, _party_marks_names, NetClient.party.job_party)
 	# OPENSRO_QA_WALK runs log what the minimap was told, twice a second,
 	# so a facing test is read from the log, not a frame (round 630).
 	if _qa_walk != "" and _zone_label_tick % 30 == 0:
@@ -5517,6 +5589,13 @@ func _refresh_dungeon_minimap() -> void:
 	_minimap_fill_monsters(pos, reach)
 	_minimap_others_sync()
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others, _minimap_uniques)
+	# Round 786: the party's marks, as in the field (vslot_013 has one party
+	# loop for both): the members on the player's floor of this dungeon, in
+	# the dungeon's own space, the frame of the player's +0x80 here. This
+	# path never placed them before, so the last field frame's marks stayed
+	# frozen over the dungeon's minimap.
+	_fill_party_marks(_minimap_region)
+	_hud_minimap.update_party(Vector2(p.x, p.z), _party_marks_mini)
 	# Round 775 (UI lane): the world map in a dungeon -- the floor the player
 	# is on, the arrow at its dungeon-space position, the room in the caption
 	# (HudWorldmap.update_player_dungeon). Every frame while open, every
@@ -5525,6 +5604,9 @@ func _refresh_dungeon_minimap() -> void:
 			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
 		_hud_worldmap.update_player_dungeon(_dungeon.rid, p, facing, _dungeon.dof.floor_name(_dungeon_block),
 			HudWorldmap.dof_room_key(_dungeon.dof, _dungeon_block))
+		# Round 786: and the party's dots (FUN_0061eec0 draws them on a floor
+		# and on a field map alike; HudWorldmap.party_pixel).
+		_hud_worldmap.update_party(_party_marks_regions, _party_marks_pos, _party_marks_names, NetClient.party.job_party)
 
 ## Removes every previously-loaded region grid node (see
 ## _load_region_neighborhood) so a zone change or a fresh load doesn't leave
@@ -29493,6 +29575,7 @@ func _forget_party_bodies() -> void:
 	if not NetClient.party.in_party:
 		_party_body_ids.clear()
 		_party_body_misses.clear()
+		_party_floor_cache.clear()
 
 func _party_is_spawned(world_id: int) -> bool:
 	return _party_body(world_id) != null
@@ -29682,12 +29765,16 @@ func _qa_party_do(step: String) -> void:
 			var inputs: PackedStringArray = []
 			for m in NetClient.party.members:
 				var b := _party_body_for_board(m.jid) as Node3D
-				var bl := _minimap_group.to_local(b.global_position) if b != null and _minimap_group != null else Vector3.INF
+				var bl := Vector3.INF
+				if b != null and _dungeon != null:
+					bl = DungeonWorld.to_dungeon(b.global_position)
+				elif b != null and _minimap_group != null:
+					bl = _minimap_group.to_local(b.global_position)
 				inputs.append("%s(r%d/%d x%d z%d w%d body%s)" % [m.member_name, (m.region >> 8) & 0xFF, m.region & 0xFF,
 					m.x, m.z, m.world_id, "(%.0f,%.0f)" % [bl.x, bl.z] if b != null else "-"])
 			print("QA PARTY: map inputs here r%s local (%.0f,%.0f) tile_px %.1f: %s mini %s world %s" % [
 				str(_minimap_region), here_l.x, here_l.z, _hud_minimap.tile_px() if _hud_minimap != null else -1.0,
-				" ".join(inputs), str(_party_marks_mini), str(_party_marks_world)])
+				" ".join(inputs), str(_party_marks_mini), str(_party_marks_regions) + " " + str(_party_marks_pos)])
 			print("QA PARTY: map marks minimap [%s] world map [%s] hover '%s'" % [
 				_hud_minimap.party_marks_report() if _hud_minimap != null else "",
 				_hud_worldmap.party_dots_report() if _hud_worldmap != null else "",

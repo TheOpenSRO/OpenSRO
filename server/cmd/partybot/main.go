@@ -181,7 +181,13 @@ func (b *bot) note(p *proto.Packet) {
 		}
 	case session.OpChangeZoneResult:
 		if r, err := session.DecodeChangeZoneResult(p.Data); err == nil && r.OK {
-			fmt.Printf("[%s] arrived in %s at %.0f, %.0f (0x3012 sent)\n", b.name, r.Zone, r.X, r.Z)
+			// Round 786 (QA aid): where the zone change put the bot, so a
+			// later -tp2 in a dungeon keeps the dungeon's height, not the
+			// field's it entered the world at.
+			b.mu.Lock()
+			b.zone, b.x, b.y, b.z = r.Zone, r.X, r.Y, r.Z
+			b.mu.Unlock()
+			fmt.Printf("[%s] arrived in %s at %.0f, %.0f, %.0f (0x3012 sent)\n", b.name, r.Zone, r.X, r.Y, r.Z)
 			_ = b.send(session.OpReadyToPlay, nil)
 		}
 	case session.OpEntityEntered:
@@ -766,7 +772,10 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 		b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: "/tp " + at}).Encode())
 		var x, z float32
 		if _, err := fmt.Sscanf(at, "%f %f", &x, &z); err == nil {
-			b.moveTo(x, b.y, z)
+			b.mu.Lock()
+			y := b.y
+			b.mu.Unlock()
+			b.moveTo(x, y, z)
 		}
 		fmt.Printf("[%s] -> /tp %s and a relocated move there\n", name, at)
 	}

@@ -436,10 +436,12 @@ the table (`0xeedf08 + 0x1ec` zero) two constants stand in (0x610c5e..0x610cab):
 
 ### Open
 
-- The party's marks on a floor: the render (0x61eec0) draws members with the floor's dungeon id
-  (column 16) and, for dungeon 1 (the cave), only those whose height falls in the floor's band
-  (0x610ed0: y < 70, 70..210, 210..350, 350 up -- floats at 0xd990a8 / 0xd990a0 / 0xd9909c). OpenSRO
-  shows no party marks in a dungeon (World3D sends no dungeon party positions).
+- ~~The party's marks on a floor~~ (built, round 786: `HudWorldmap.party_pixel`,
+  `PartyMapMarks.floor_map_draws`; the reading is `party_gui.md` section 9): the render (0x61eec0)
+  draws members with the floor's dungeon id (column 16) and, for dungeon 1 (the cave), only those
+  whose record height falls in the floor's band (0x610ed0: y < 70, 70..210, 210..350, 350 up --
+  floats at 0xd990a8 / 0xd990a0 / 0xd9909c). Still OPEN: a floor shown with the player in the field
+  (0x61fc42..0x61fcdd places its members from a table at +0x679f0); OpenSRO marks no one there.
 - The tooltips of 0x614950 / 0x613260, the spinner label's style (0x4774f0(5, 2) on its text).
   (The text signs' style bytes are read: round 776, above.)
 

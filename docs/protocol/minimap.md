@@ -134,6 +134,22 @@ position every frame. OURS: `World3D._refresh_minimap` refreshes every physics f
   `_minimap_fill_monsters` hands a unique to the `unique` kind of `MinimapSigns` and not to the
   monster list. OURS: `MinimapSigns` draws a kind at a time, the unique kind last, so a unique's
   sign is always over the rest; retail stacks signs by the entity list's order.
+- READ (round 786), the party's marks in a dungeon: vslot_013 has one party loop for the field and
+  a dungeon (`0x6643a0..0x664ad1`). Each member's record is first given to
+  `UI_SILKMALL::FUN_009d5520(record region +0x5a, &record x/y/z +0x5c..+0x64)` (`0x6643de..0x664419`):
+  1 for a field region while the player is in the field; otherwise 1 only for the player's own
+  dungeon region (`cmp di, [ecx+0x7c]`, `0x9d5562`) whose position lies on the player's floor --
+  the block under the position (the region manager `[0x111a02c]` slot `0x2c`) and the player's
+  block (`+0x74` slot `0x14` of `+0x78`) each go through `[0x1103cc6]` slot 1 and the block's slot
+  2 (`0x9d5585..0x9d5605`), the floor index `ICPlayer::FUN_009d7880` reads the floor name with. The
+  offset is then the member's position (the spawned body's, else the record's through `0x9ecfd0`,
+  which subtracts the region's origin) less the player's `+0x80`/`+0x88`, over 1920, times the
+  zoom: in a dungeon both are the dungeon's own space (the record's is, server
+  `party.partyPosition`; the player's is, `_refresh_dungeon_minimap`). INFERRED that `0x9ecfd0`'s
+  dungeon origin is the one the player's position is in (both are the same dungeon, by the test
+  above). OpenSRO (`World3D._refresh_dungeon_minimap`, `_fill_party_marks`) builds this; until
+  round 786 the dungeon step never placed the party's marks, so the field's last ones stayed frozen
+  over the dungeon's minimap (MEASURED, `party_map_dungeon_test.gd` on the base).
 - OPEN: the animal sign (`+0x3c8`) is drawn for a CICCos, a pet, horse or transport (the class
   `CIFTargetWindow` also tells apart, `hud_target.gd`); this client builds no such body, so it has
   nothing to draw it for.

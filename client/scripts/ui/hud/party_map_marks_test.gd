@@ -1,7 +1,8 @@
 extends SceneTree
 
 ## Round 717: party members on the minimap and the world map
-## (PartyMapMarks, HudMinimap.update_party, HudWorldmap.party_world).
+## (PartyMapMarks, HudMinimap.update_party, HudWorldmap.party_world); round
+## 786: who each map takes in and out of a dungeon (0x9d5520, 0x610ed0).
 
 const HudMinimap = preload("res://scripts/ui/hud/hud_minimap.gd")
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
@@ -92,9 +93,40 @@ func _init() -> void:
 		"the minimap leaves out a member of another world (record +0x68 vs +0x20e4)")
 	_check(PartyMapMarks.worldmap_draws(_member(8, 2, 0x61a8, 0, 0), own),
 		"the world map has no world test")
-	_check(not PartyMapMarks.minimap_draws(_member(8, 1, 0x8001, 0, 0), own, 1)
-		and not PartyMapMarks.worldmap_draws(_member(8, 1, 0x8001, 0, 0), own),
-		"a dungeon record is not marked (OURS: no dungeon positions are sent)")
+	# Round 786: 0x9d5520, on the record's region (the player's +0x7c the other).
+	var field := 0x61a8
+	_check(not PartyMapMarks.minimap_draws(_member(8, 1, 0x8001, 0, 0), own, 1, field, true),
+		"from the field the minimap leaves out a member in a dungeon")
+	_check(not PartyMapMarks.minimap_draws(_member(8, 1, field, 0, 0), own, 1, 0x8001, true),
+		"from a dungeon the minimap leaves out a member in the field")
+	_check(PartyMapMarks.minimap_draws(_member(8, 1, 0x8001, 0, 0), own, 1, 0x8001, true),
+		"in a dungeon the minimap marks a member of the same dungeon on the player's floor")
+	_check(not PartyMapMarks.minimap_draws(_member(8, 1, 0x8001, 0, 0), own, 1, 0x8001, false),
+		"but not one on another floor (the block's floor, 0x9d5520 -> 0x1103cc6 slot 1 -> slot 2)")
+	_check(not PartyMapMarks.minimap_draws(_member(8, 1, 0x8007, 0, 0), own, 1, 0x8001, true),
+		"nor one in another dungeon (cmp di, [ecx+0x7c])")
+	_check(PartyMapMarks.worldmap_draws(_member(8, 1, 0x8001, 0, 0), own),
+		"the world map takes a dungeon record too (the map shown places it, HudWorldmap.party_pixel)")
+	_check(not PartyMapMarks.worldmap_draws(_member(own, 1, 0x8001, 0, 0), own), "but never the player")
+
+	# --- the cave's floor bands (0x610ed0: 70.0, 210.0, 350.0) ------------
+	_check(PartyMapMarks.cave_level(-10.0) == 0 and PartyMapMarks.cave_level(69.9) == 0
+		and PartyMapMarks.cave_level(70.0) == 1 and PartyMapMarks.cave_level(209.9) == 1
+		and PartyMapMarks.cave_level(210.0) == 2 and PartyMapMarks.cave_level(349.9) == 2
+		and PartyMapMarks.cave_level(350.0) == 3 and PartyMapMarks.cave_level(900.0) == 3,
+		"the cave's levels: under 70 is 0, 70..210 is 1, 210..350 is 2, 350 up is 3 (each band's low edge in)")
+	_check(PartyMapMarks.floor_map_draws(1, 1, 0x8001, 10.0) and not PartyMapMarks.floor_map_draws(1, 2, 0x8001, 10.0)
+		and PartyMapMarks.floor_map_draws(1, 2, 0x8001, 100.0),
+		"a cave floor's map marks the members in its own band (floor - 1 == level)")
+	_check(PartyMapMarks.floor_map_draws(7, 1, 0x8007, 900.0) and not PartyMapMarks.floor_map_draws(7, 1, 0x8006, 0.0),
+		"another dungeon's floor marks its own region's members whatever their height, no other's")
+	_check(not PartyMapMarks.floor_map_draws(1, 1, field, 0.0), "a floor's map never marks a member in the field")
+
+	# --- a dungeon's offsets: the dungeon's own space, as the record's -----
+	# The player at the cave's entry, dungeon (1011, -862); a member 191
+	# dungeon-z lower is 191 / 1920 x 160 = 15.9 px south.
+	_check(_near(PartyMapMarks.minimap_offset(Vector2(1011, -862), Vector2(1011, -1053), S), Vector2(0, 15.9167), 0.001),
+		"in a dungeon the offset is the dungeon-space difference, (dx, -dz) / 1920 x S")
 
 	# --- the world map's hover: the 16x16 quad inset by 2, inclusive ------
 	var quad := Rect2(100, 100, 16, 16)
@@ -198,6 +230,14 @@ func _init() -> void:
 	_check(wm.party_hover_text() == "", "one pixel past the hover box, no name")
 	wm.place_party_dots(PackedVector2Array([px[0]]), PackedStringArray(["Cara"]), false, Vector2(-1000, -1000))
 	_check(wm.party_dots_report() == "(100,50)", "a member who leaves loses the dot")
+	# Round 786: a member this map does not draw (-1e9, e.g. one in a
+	# dungeon with no field point) keeps its pooled dot whole for later.
+	wm.place_party_dots(PackedVector2Array([Vector2(-1e9, -1e9)]), PackedStringArray(["Cara"]), false, Vector2(-1000, -1000))
+	_check(wm.party_dots_report() == "", "a member the map does not draw has no dot")
+	wm.place_party_dots(PackedVector2Array([px[0]]), PackedStringArray(["Cara"]), false, Vector2(-1000, -1000))
+	var cara_dot := layer.get_node_or_null("party_0") as Control if layer != null else null
+	_check(wm.party_dots_report() == "(100,50)" and cara_dot != null and cara_dot.size == Vector2(16, 16),
+		"drawn again, the reused dot is 16x16 at its pixel (a Control sent to -1e9 kept a 0x0 size; got '%s')" % wm.party_dots_report())
 	canvas.free()
 	wm.free()
 
