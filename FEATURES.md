@@ -15,7 +15,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
 | [Items](#items) | 15 | 3 |  | 4 | 22 |
-| [Economy](#economy) | 2 | 1 |  | 4 | 7 |
+| [Economy](#economy) | 2 | 1 |  | 5 | 8 |
 | [Social](#social) | 9 | 4 |  | 5 | 18 |
 | [Job / trade](#job--trade) |  |  |  | 3 | 3 |
 | [Pets & mounts](#pets--mounts) |  |  |  | 4 | 4 |
@@ -25,8 +25,9 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 6 |  | 1 | 1 | 8 |
 | [Plugins & customization](#plugins--customization) | 3 | 1 |  | 3 | 7 |
+| [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **130** | **36** | **1** | **43** | **210** |
+| **All** | **130** | **36** | **1** | **46** | **213** |
 
 ## Biggest gaps
 
@@ -214,6 +215,7 @@ Gold, NPC trade and storage work; player markets are not built yet.
 | Storage gold | ✅ Supported | Deposit and withdraw gold in the warehouse |
 | Exchange (player trade) | 🟡 Partial | Server works; one item stack plus gold; retail exchange window not opened |
 | Player stalls | ❌ Not yet | No stall system yet |
+| Stall network | ❌ Not yet | Search and buy from other players' stalls remotely; needs player stalls first |
 | Consignment | ❌ Not yet | No consignment trading yet |
 | Item mall (silk) | ❌ Not yet | No item mall or silk yet |
 | Guild storage | ❌ Not yet | No guild warehouse yet |
@@ -365,6 +367,15 @@ A major goal: plugins that extend the server and client without modifying the sh
 | Server options | ✅ Supported | Gameplay systems toggled by command-line flags and environment variables |
 | Custom NPCs | 🟡 Partial | Test Items NPC is rule-defined but built in; no loader for operator NPCs |
 | Client server list | ✅ Supported | Servers, addresses and login screen set in setting/config.yaml |
+
+## Bots
+
+Automated play: an outside program that plays a character, and a macro system inside the game.
+
+| Feature | Status | Notes |
+|---|---|---|
+| External Bot | ❌ Not yet | No support yet for a separate program that logs in and plays a character |
+| Macro Bot | ❌ Not yet | No in-game hunting macro yet; auto potion is the only built-in automation |
 
 ## Client platforms
 
