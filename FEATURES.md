@@ -24,8 +24,9 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Graphics & effects](#graphics--effects) | 10 | 2 |  |  | 12 |
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 6 |  | 1 | 1 | 8 |
+| [Plugins & customization](#plugins--customization) | 3 | 1 |  | 3 | 7 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **125** | **35** | **3** | **40** | **203** |
+| **All** | **128** | **36** | **3** | **43** | **210** |
 
 ## Biggest gaps
 
@@ -350,6 +351,20 @@ Go server with Postgres persistence and operator tooling.
 | GM commands | ✅ Supported | Teleport, give items, level, spawn, notices and more |
 | GM kick and ban commands | ❌ Not yet | Not yet |
 | Crowd performance | 🔧 In progress | Interest management done; 1000-player target not met yet |
+
+## Plugins & customization
+
+A major goal: plugins that extend the server and client without modifying the shipped executables and libraries, so private servers can be customized as far as their operators want.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Server plugins | ❌ Not yet | Planned: load new server features without rebuilding or patching the server |
+| Client plugins | ❌ Not yet | Planned: add windows, content and behaviour without modifying the client |
+| Plugin API and SDK | ❌ Not yet | Planned: stable hooks, packaging, versioning and docs for plugin authors |
+| Data-driven game tables | ✅ Supported | Items, monsters, skills, NPCs, spawns, teleports and quests load from CSV/DB; swap without rebuilding |
+| Server options | ✅ Supported | Gameplay systems toggled by command-line flags and environment variables |
+| Custom NPCs | 🟡 Partial | Test Items NPC is rule-defined but built in; no loader for operator NPCs |
+| Client server list | ✅ Supported | Servers, addresses and login screen set in setting/config.yaml |
 
 ## Client platforms
 
