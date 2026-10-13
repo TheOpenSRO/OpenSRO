@@ -7514,6 +7514,63 @@ retail has no such item; the rules below build the best item the operator's own 
   sword and helm (+12, full variance, STR 7, DUR 160 from its fixture), the plain stone, and a
   paid sword that stays plain.
 
+### Round 786 (part): Test Items NPC: unlocked level-101 Nova, and the listing shows +12 full blue
+
+The user (rounds 783/784/786): "The items in the shop don't reflect full blue or +12 status."
+"Make all the items level 101, not 111." (The seal effects and plus glows on worn gear are another
+lane's, not this part's.)
+
+- **Level 101 (READ, the box's itemdata `/var/tmp/allitems.txt` and the prod refdata database):**
+  each 11th degree Seal of Nova piece has a LOCKED row and an UNLOCKED one with the same name.
+  `ITEM_CH_SWORD_11_A_RARE` (4044, "Reaper Ghost Sword") asks level 111 with
+  `SN_ITEM_LOCKED_TT_DESC`; `ITEM_CH_SWORD_11_A_RARE_ACTIVE` (62605) asks 101 with
+  `SN_ITEM_UNLOCKED_TT_DESC`. The round-783 rules took the locked rows.
+- **Fix:** every Nova rule in `test_items.json` is now `..._A_RARE_ACTIVE$`. MEASURED (prod DB, the
+  rules emulated in SQL, and `TestBuiltinAgainstItemsCSV` on the box's items.csv): 94 goods, every
+  one ItemClass 31, level 101 and in its tab's TypeID; the per-tab counts are unchanged (5/1/3,
+  9/1/3, 6 x 12). The anchoring `$` keeps the `_A_RARE_SWITCHnn_ACTIVE` rows out (16 per kind in
+  the DB). The greeting never named a level; unchanged.
+- **How retail shows a good's plus (READ, `sro_client.exe`, npc_gui.md §2):**
+  - `GlobalDataManager::RefParse_refscrapofpackageitem` `0x9824e0`: a package's scrap row carries
+    +0x14 OptLevel, +0x18 Variance, +0x20 Data, +0x24 MagParamNum, +0x28 MagParam1..12.
+  - `0x8bf3a0` builds the package's SOItem from it: SetOptLevel `0x8ba4e0` (+0x8c) and each
+    MagParam through `SOItem::0x8bd760`. It never reads the Variance column (SetVariance `0x8ba4f0`
+    is called only from `0x57a41d`, `0x72e45a`, `0x88c305`, `0x88c356`).
+  - The store copies that SOItem into its cell (`0x6d2310` → `0x6d1ff0` → `0x579da0`) through the
+    slot SetItem `0x6871d0` the bag and the worn slots use, so its hover is an owned item's. That
+    SetItem reads neither the plus nor the option count; its one item test is the seal (`0x8ba600`):
+    no plus or blue mark on a store slot.
+  - MEASURED, the box's refscrapofpackageitem.txt: 476 rows carry a plus, variance or MagParams
+    (e.g. `PACKAGE_EYBETA_ITEM_CH_W_HEAVY_11_HA_A`, +8 with 6 MagParams).
+- **Ours: OpNpcShopGoods 0x00BB** (testnpc.OpNpcShopGoods): after 0x00BA, u32 uid, u16 n, n x (u32
+  item id, the retail item record). The record is `testShopInstance`'s -- the one the buy creates
+  -- built at boot (`session.TestShopGoodsPayloads`), split across frames when needed. It carries
+  the variance too, unlike a retail package (OURS: the user's "100% white stats").
+- **Compatibility:** a new opcode, not trailing bytes on 0x00BA: a pre-786 client refuses a 0x00BA
+  with trailing bytes (its decoder wants the payload exactly) and would lose the store, but only logs
+  an unknown opcode. Server and client can update in either order; an old client shows the
+  reference items as before.
+- **Client:** `NpcShopDefNet.decode_goods` / `merge_goods` (World3D `_on_npc_shop_goods`),
+  `ShopReader.Tab.instances` beside `item_codes`, and the store's tooltip
+  (`HudPanels.item_tip_lines`, "store") reads a listed instance through `ItemTooltipInstance.fields`.
+  The test's tooltip: "Test Sword (+12)", Phy./Mag. atk. at the top of their ranges "(+100%)",
+  attack rate and critical "(+100%)", durability "(+99%)" (the client's own trunc(31 / 0.31),
+  round 732), two cyan option lines. A good with no listed instance, and every retail store's, is
+  the reference item as before; the slot is unchanged (seal edge only).
+- Prices and every retail NPC's store are unchanged (`OpShopList` untouched; no 0x00BB from a
+  retail NPC, tested).
+- **Tests:** `testnpc_test.go` (the ACTIVE rows taken, the locked, SWITCH and SWITCH_ACTIVE rows
+  left, every equipment good level 101; with `OPENSRO_TEST_ITEMS_CSV` the 94 rows),
+  `session/testshopgoods_test.go` (bytes pinned, the split, none without an item table),
+  `TestTestItemsNPCSelectOpenBuyFree` (0x00BB between 0x00BA and the reply; the listing equals the
+  bought piece record for record), `client/scripts/ui/hud/store_listed_tip_test.gd`.
+- **Gates:** `cd server && go test ./...` passes; the render box (`/opt/opensro-client-testnpc`)
+  `check` ALL LOAD (792 scripts), `tests` "ran 307 suite(s), 0 failing". UI and server only: no
+  perf gate.
+- **OPEN:** this client's ShopReader still reads only a retail package's item code, so a retail
+  store's packaged plus and MagParams (the EYBETA rows) are not shown yet; the hover path below
+  `0x6871d0` was traced only as far as its direct getters.
+
 ### Round 786 (part): damage numbers
 
 The user: "Fix the combat numbers that pop up, they're a certain size and font and different color

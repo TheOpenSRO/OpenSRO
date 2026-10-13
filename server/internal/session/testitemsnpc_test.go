@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -36,15 +37,16 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	if _, err := chars.Create(ctx, 1, "Aria"); err != nil {
 		t.Fatal(err)
 	}
-	// Synthetic items (OURS fixture): a Seal of Nova sword and helm, the
-	// sword's look-alike switch variant, and an 11th degree magic stone.
+	// Synthetic items (OURS fixture): an unlocked Seal of Nova sword and helm
+	// (the _ACTIVE rows, round 786), the sword's look-alike switch variant,
+	// and an 11th degree magic stone.
 	const sword, swordSwitch, stone, helm = 901, 902, 903, 904
 	refs := refdata.NewMemStore()
 	if err := refs.ImportItems(ctx, []refdata.Item{
-		{ID: sword, CodeName: "ITEM_CH_SWORD_11_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
-		{ID: swordSwitch, CodeName: "ITEM_CH_SWORD_11_A_RARE_SWITCH01", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000},
+		{ID: sword, CodeName: "ITEM_CH_SWORD_11_A_RARE_ACTIVE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
+		{ID: swordSwitch, CodeName: "ITEM_CH_SWORD_11_A_RARE_SWITCH01_ACTIVE", TypeID1: 3, TypeID2: 1, TypeID3: 6, TypeID4: 2, ItemClass: 31, MaxStack: 1, Price: 250000},
 		{ID: stone, CodeName: "ITEM_ETC_ARCHEMY_MAGICSTONE_STR_11", TypeID1: 3, TypeID2: 3, TypeID3: 11, TypeID4: 1, MaxStack: 500, Price: 432095, SellPrice: 1000},
-		{ID: helm, CodeName: "ITEM_CH_M_HEAVY_11_HA_A_RARE", TypeID1: 3, TypeID2: 1, TypeID3: 3, TypeID4: 1, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
+		{ID: helm, CodeName: "ITEM_CH_M_HEAVY_11_HA_A_RARE_ACTIVE", TypeID1: 3, TypeID2: 1, TypeID3: 3, TypeID4: 1, ItemClass: 31, MaxStack: 1, Price: 250000, SellPrice: 250000, MaxMagicOptions: 9},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +86,12 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	test := def.NPC(26823, npcspawn.UIDBase+6)
 	test.X, test.Z = 960+120, 960 // beside the retail one, in the test frame
 	installNPCsForTest(t, retail, test)
-	InstallNPCShopDefs(map[uint32]NPCShopDef{test.UID: {Payload: shopDef.Encode(test.UID), Goods: shopDef.Goods(), Free: shopDef.Free}})
+	listed := TestShopGoodsPayloads(ctx, test.UID, []int64{stone, helm, sword, sword})
+	if len(listed) != 1 {
+		t.Fatalf("%d OpNpcShopGoods messages, want 1", len(listed))
+	}
+	InstallNPCShopDefs(map[uint32]NPCShopDef{test.UID: {Payload: shopDef.Encode(test.UID), GoodsPayloads: listed,
+		Goods: shopDef.Goods(), Free: shopDef.Free}})
 	t.Cleanup(func() { InstallNPCShopDefs(nil); ForgetNPCInteraction(1) })
 
 	inv := inventory.NewMemStore(refs)
@@ -160,6 +167,7 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	c.send(npctalk.OpSelect, npctalk.EncodeEntity(retail.UID))
 	c.next(npctalk.OpSelectResult)
 	c.none(testnpc.OpNpcShopDef)
+	c.none(testnpc.OpNpcShopGoods)
 	c.send(npctalk.OpOpen, npctalk.EncodeOpen(retail.UID, 1))
 	c.next(npctalk.OpOpenResult)
 	if p := list(sword); p != 250000 {
@@ -174,6 +182,18 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	if err != nil || uid != test.UID || len(got.Lines) != 8 || got.Lines[2].Tabs[0].Label != "SN_TAB_WEAPON" ||
 		len(got.Lines[2].Tabs[0].ItemIDs) != 1 || got.Lines[2].Tabs[0].ItemIDs[0] != sword {
 		t.Fatalf("shop def: uid %d %+v %v", uid, got, err)
+	}
+	// Round 786: then the instances its goods are listed as -- the sword and
+	// the helm, not the stone -- before the reply.
+	guid, listedAs, err := DecodeShopGoods(c.next(testnpc.OpNpcShopGoods).Data)
+	if err != nil || guid != test.UID || len(listedAs) != 2 {
+		t.Fatalf("shop goods: uid %d %+v %v", guid, listedAs, err)
+	}
+	for _, id := range []int64{sword, helm} {
+		ii := listedAs[id]
+		if ii.RefItemID != uint32(id) || ii.OptLevel != TestShopPlus || ii.Variance != fullVariance || len(ii.MagParams) != 2 {
+			t.Fatalf("good %d listed as %+v, want +12, %#x and two options", id, ii, fullVariance)
+		}
 	}
 	sel, err := npctalk.DecodeSelectNPC(c.next(npctalk.OpSelectResult).Data)
 	if err != nil || sel.Entity != test.UID || !bytes.Equal(sel.IDs, []byte{1}) {
@@ -226,6 +246,13 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 				inventory.MagParamOption(s.MagParams[1]) != 90 || inventory.MagParamValue(s.MagParams[1]) != 160 {
 				t.Fatalf("Test Items NPC's %d: plus %d variance %#x options %v, want +12, %#x, [STR 7, DUR 160]",
 					s.ItemID, s.OptLevel, s.Variance, s.MagParams, fullVariance)
+			}
+			// The listing (OpNpcShopGoods) is the item bought, record for record.
+			ii, ok := itemInfoFor(ctx, refs, int(s.ItemID), s.ItemID, s.Instance())
+			want := listedAs[s.ItemID]
+			want.Slot = int(s.ItemID)
+			if !ok || !reflect.DeepEqual(ii, want) {
+				t.Fatalf("bought %d as %+v, listed as %+v", s.ItemID, ii, want)
 			}
 		case stone:
 			if s.OptLevel != 0 || len(s.MagParams) != 0 {

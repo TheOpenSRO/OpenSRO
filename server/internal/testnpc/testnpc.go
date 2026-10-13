@@ -51,6 +51,42 @@ var builtin []byte
 //	    u16 goods, goods x u32 item id
 const OpNpcShopDef uint16 = 0x00ba
 
+// OpNpcShopGoods is OpenSRO's own message too (OURS, server -> client, round
+// 786): the item instance each of an NPC's goods is listed as -- the Test
+// Items NPC's +12, full-variance, full-blue equipment -- so the store's slot
+// and tooltip show the item exactly as it will be bought. Sent right after
+// that NPC's OpNpcShopDef, once or more (each message adds to the last; a
+// message stays inside one frame). 0x00BB was free in server/ and
+// client/scripts (grep, 2026-10-13). Layout:
+//
+//	u32 NPC unique id
+//	u16 n
+//	  n x (u32 item id, the retail item record)
+//
+// The record is the one the bag, warehouse and worn lists already carry
+// (session.AppendItemRecord, READ: the client's SOItem::FUN_008be4f0); the
+// u32 before it is the good's item id where those lists put a slot, so the
+// client reads the block with its existing decoder (ItemInstance.
+// decode_block). Only equipment goods are listed.
+//
+// Why a message of its own and not more bytes on OpNpcShopDef: a client
+// from before round 786 refuses an OpNpcShopDef with trailing bytes (its
+// decoder, like Decode here, wants the payload exactly), and would lose the
+// whole store; an unknown opcode it only logs and drops. So either side can
+// update first.
+//
+// The retail client gets a good's plus and blue options from its own
+// archive: a store's good is a package (refshopgoods ->
+// refscrapofpackageitem), whose scrap row carries OptLevel, Variance, Data,
+// MagParamNum and MagParam1..12 (READ, GlobalDataManager::
+// RefParse_refscrapofpackageitem c:0x9824e0). c:0x8bf3a0 builds each
+// package's SOItem from the OptLevel and the MagParams (READ) for the store
+// to copy into its slots (c:0x6d2310 -> 0x6d1ff0); it never applies the
+// Variance column, so a retail good reads as variance 0. This NPC's listing
+// carries the variance its piece is bought with (OURS: the user's "100%
+// white stats"). docs/protocol/test_items_npc.md.
+const OpNpcShopGoods uint16 = 0x00bb
+
 // MaxTabs is the store window's tab count (READ: CIFStoreForPackage builds
 // tabs from x = 16 stepping 56 while x < 240, so four; hud_panels.gd
 // SHOP_MAX_TABS).

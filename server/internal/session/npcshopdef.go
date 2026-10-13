@@ -20,6 +20,10 @@ var npcShopDefs atomic.Pointer[map[uint32]NPCShopDef]
 type NPCShopDef struct {
 	// Payload is OpNpcShopDef's bytes (testnpc.Shop.Encode).
 	Payload []byte
+	// GoodsPayloads are OpNpcShopGoods' messages (round 786,
+	// TestShopGoodsPayloads): the instance each equipment good is listed as,
+	// sent right after Payload. None: the goods list as reference items.
+	GoodsPayloads [][]byte
 	// Goods is every item id its store lists.
 	Goods map[int64]bool
 	// Free: its goods cost nothing while its store is the open interaction
@@ -59,7 +63,8 @@ func freeAtOpenStore(id uint64, itemID int64) bool {
 	return ok && d.Free && d.Goods[itemID]
 }
 
-// sendNPCShopDef sends uid's definition, if it has one.
+// sendNPCShopDef sends uid's definition, if it has one, and then the
+// instances its goods are listed as (OpNpcShopGoods, round 786).
 func sendNPCShopDef(sess *gateway.Session, uid uint32) {
 	p := npcShopDefs.Load()
 	if p == nil {
@@ -67,5 +72,8 @@ func sendNPCShopDef(sess *gateway.Session, uid uint32) {
 	}
 	if d, ok := (*p)[uid]; ok {
 		sess.Send(&proto.Packet{Opcode: testnpc.OpNpcShopDef, Data: d.Payload})
+		for _, g := range d.GoodsPayloads {
+			sess.Send(&proto.Packet{Opcode: testnpc.OpNpcShopGoods, Data: g})
+		}
 	}
 }

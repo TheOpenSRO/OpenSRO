@@ -58,31 +58,46 @@ func TestParseRefuses(t *testing.T) {
 	}
 }
 
-// The Seal of Nova rules take the plain 11th degree _A_RARE rows and leave
-// the look-alikes: the _SWITCHnn / _ACTIVE variants, the ITEM_EVENT_ copies,
-// the Asue/Azus set rows (_SET_A_RARE), the 10th degree and other ItemClass.
+// nova builds a synthetic Seal of Nova row with its required level (OURS
+// fixture; the LOCKED rows ask 111, the UNLOCKED _ACTIVE ones 101, as the
+// player's itemdata has them -- round 786).
+func nova(id int64, code string, typ [4]int, itemClass, level int) *refdata.Item {
+	it := item(id, code, typ, itemClass)
+	it.ReqLevelType1, it.ReqLevel1 = 1, level
+	return it
+}
+
+// The Seal of Nova rules take the UNLOCKED 11th degree rows, _A_RARE_ACTIVE
+// (round 786: level 101), and leave the look-alikes: the locked _A_RARE row
+// (level 111), the _SWITCHnn and _SWITCHnn_ACTIVE variants, the ITEM_EVENT_
+// copies, the Asue/Azus set rows (_SET_A_RARE), the 10th degree and other
+// ItemClass.
 func TestSealOfNovaRules(t *testing.T) {
 	d, err := Builtin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	items := []*refdata.Item{
-		item(1, "ITEM_CH_SWORD_11_A_RARE", [4]int{3, 1, 6, 2}, 31),
-		item(2, "ITEM_CH_SWORD_11_A_RARE_SWITCH01", [4]int{3, 1, 6, 2}, 31),
-		item(3, "ITEM_CH_SWORD_11_A_RARE_ACTIVE", [4]int{3, 1, 6, 2}, 31),
-		item(4, "ITEM_EVENT_CH_SWORD_11_A_RARE", [4]int{3, 1, 6, 2}, 31),
-		item(5, "ITEM_CH_SWORD_11_SET_A_RARE", [4]int{3, 1, 6, 2}, 31),
-		item(6, "ITEM_CH_SWORD_10_A_RARE", [4]int{3, 1, 6, 2}, 28),
-		item(7, "ITEM_CH_SWORD_11_B_RARE", [4]int{3, 1, 6, 2}, 32),
-		item(8, "ITEM_CH_BOW_11_A_RARE", [4]int{3, 1, 6, 6}, 31),
-		item(9, "ITEM_CH_SHIELD_11_A_RARE", [4]int{3, 1, 4, 1}, 31),
-		item(10, "ITEM_CH_RING_11_A_RARE", [4]int{3, 1, 5, 3}, 31),
-		item(11, "ITEM_EU_RING_11_A_RARE", [4]int{3, 1, 12, 3}, 31),
-		item(12, "ITEM_CH_W_HEAVY_11_FA_A_RARE", [4]int{3, 1, 3, 6}, 31),
-		item(13, "ITEM_CH_W_HEAVY_11_HA_A_RARE", [4]int{3, 1, 3, 1}, 31),
-		item(14, "ITEM_CH_W_HEAVY_11_HA_SET_A_RARE", [4]int{3, 1, 3, 1}, 31),
-		item(15, "ITEM_EU_W_CLOTHES_11_BA_A_RARE", [4]int{3, 1, 9, 3}, 31),
-		item(16, "ITEM_EU_M_CLOTHES_11_BA_A_RARE", [4]int{3, 1, 9, 3}, 31),
+		nova(1, "ITEM_CH_SWORD_11_A_RARE_ACTIVE", [4]int{3, 1, 6, 2}, 31, 101),
+		nova(2, "ITEM_CH_SWORD_11_A_RARE_SWITCH01", [4]int{3, 1, 6, 2}, 31, 111),
+		nova(3, "ITEM_CH_SWORD_11_A_RARE", [4]int{3, 1, 6, 2}, 31, 111),
+		nova(4, "ITEM_EVENT_CH_SWORD_11_A_RARE_ACTIVE", [4]int{3, 1, 6, 2}, 31, 101),
+		nova(5, "ITEM_CH_SWORD_11_SET_A_RARE", [4]int{3, 1, 6, 2}, 31, 101),
+		nova(6, "ITEM_CH_SWORD_10_A_RARE_ACTIVE", [4]int{3, 1, 6, 2}, 28, 91),
+		nova(7, "ITEM_CH_SWORD_11_B_RARE_ACTIVE", [4]int{3, 1, 6, 2}, 32, 101),
+		nova(8, "ITEM_CH_BOW_11_A_RARE_ACTIVE", [4]int{3, 1, 6, 6}, 31, 101),
+		nova(9, "ITEM_CH_SHIELD_11_A_RARE_ACTIVE", [4]int{3, 1, 4, 1}, 31, 101),
+		nova(10, "ITEM_CH_RING_11_A_RARE_ACTIVE", [4]int{3, 1, 5, 3}, 31, 101),
+		nova(11, "ITEM_EU_RING_11_A_RARE_ACTIVE", [4]int{3, 1, 12, 3}, 31, 101),
+		nova(12, "ITEM_CH_W_HEAVY_11_FA_A_RARE_ACTIVE", [4]int{3, 1, 3, 6}, 31, 101),
+		nova(13, "ITEM_CH_W_HEAVY_11_HA_A_RARE_ACTIVE", [4]int{3, 1, 3, 1}, 31, 101),
+		nova(14, "ITEM_CH_W_HEAVY_11_HA_SET_A_RARE", [4]int{3, 1, 3, 1}, 31, 101),
+		nova(15, "ITEM_EU_W_CLOTHES_11_BA_A_RARE_ACTIVE", [4]int{3, 1, 9, 3}, 31, 101),
+		nova(16, "ITEM_EU_M_CLOTHES_11_BA_A_RARE_ACTIVE", [4]int{3, 1, 9, 3}, 31, 101),
+		nova(17, "ITEM_CH_SWORD_11_A_RARE_SWITCH01_ACTIVE", [4]int{3, 1, 6, 2}, 31, 101),
+		nova(18, "ITEM_CH_W_HEAVY_11_HA_A_RARE", [4]int{3, 1, 3, 1}, 31, 111),
+		nova(19, "ITEM_EU_W_CLOTHES_11_BA_A_RARE_SWITCH03_ACTIVE", [4]int{3, 1, 9, 3}, 31, 101),
+		nova(20, "ITEM_CH_RING_11_A_RARE", [4]int{3, 1, 5, 3}, 31, 111),
 	}
 	s := d.Resolve(items)
 	got := func(line, tab int) []uint32 { return s.Lines[line].Tabs[tab].ItemIDs }
@@ -113,6 +128,36 @@ func TestSealOfNovaRules(t *testing.T) {
 	if want := []uint32{15}; !reflect.DeepEqual(got(7, 2), want) {
 		t.Fatalf("EU female garment %v", got(7, 2))
 	}
+	if n := assertEquipmentLevel101(t, s, items); n != 9 {
+		t.Fatalf("%d equipment goods, want the 9 _A_RARE_ACTIVE rows", n)
+	}
+}
+
+// assertEquipmentLevel101 checks that every equipment good (TypeID 3/1) the
+// shop resolved asks level 101 -- the unlocked Seal of Nova, round 786 -- and
+// is a plain _A_RARE_ACTIVE row (no locked or _SWITCHnn row). It returns how
+// many equipment goods there were.
+func assertEquipmentLevel101(t *testing.T, s *Shop, items []*refdata.Item) int {
+	t.Helper()
+	byID := map[int64]*refdata.Item{}
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	n := 0
+	for id := range s.Goods() {
+		it := byID[id]
+		if it == nil || it.TypeID1 != 3 || it.TypeID2 != 1 {
+			continue
+		}
+		n++
+		if it.ReqLevel1 != 101 {
+			t.Errorf("good %d %s asks level %d, want 101 (the unlocked Seal of Nova)", id, it.CodeName, it.ReqLevel1)
+		}
+		if !strings.HasSuffix(it.CodeName, "_A_RARE_ACTIVE") || strings.Contains(it.CodeName, "_SWITCH") {
+			t.Errorf("good %d %s is not a plain _A_RARE_ACTIVE row", id, it.CodeName)
+		}
+	}
+	return n
 }
 
 // The alchemy rules: degree 11 by the code's _11, the plain elixirs, the
@@ -260,6 +305,14 @@ func TestBuiltinAgainstItemsCSV(t *testing.T) {
 				t.Errorf("line %d tab %d (%s): %d goods, %d dropped", i+1, j+1, tb.Label, len(tb.ItemIDs), tb.Dropped)
 			}
 		}
+	}
+	// Round 786: every equipment good is an unlocked Seal of Nova, level
+	// 101. The retail itemdata has 94 such rows (MEASURED, the prod refdata
+	// database, 2026-10-13): Chinese 5 weapons, a shield, 3 accessories and
+	// 36 armour pieces; European 9 weapons, a shield, 3 accessories and 36
+	// armour pieces.
+	if n := assertEquipmentLevel101(t, s, items); n != 94 {
+		t.Errorf("%d equipment goods, want 94", n)
 	}
 	if want := os.Getenv("OPENSRO_TEST_ITEMS_SUMMARY"); want != "" && s.Summary() != want {
 		t.Errorf("summary\n%s\nwant\n%s", s.Summary(), want)

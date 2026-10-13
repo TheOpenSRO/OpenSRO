@@ -126,7 +126,7 @@ then `docker compose up -d` (or let the updater restart it). The boot log says w
 
 ```
 msg="Test Items NPC resolved (round 783, OURS): line/tab label=goods" items=15338 goods=189 tabs="1/1:Elixir=26 1/2:Magic=19 ..."
-msg="Test Items NPC spawned (round 783, OURS)" name="Test Items" uid=... body=NPC_SD_T_AREA_POTION ref=26823 region=25000 ... free=true
+msg="Test Items NPC spawned (round 783, OURS)" name="Test Items" uid=... body=NPC_SD_T_AREA_POTION ref=26823 region=25000 ... free=true listed_instance_messages=1
 ```
 
 (the counts are the box's archive's, MEASURED; yours are your archive's). An ERROR line instead names
@@ -134,6 +134,12 @@ what is missing: no NPC rows (`-npcpos-csv` / `-npcs-csv`), an item import witho
 than round 497: re-run `export-refdata -mode items` and `import-refdata`), or an NPC table without
 Thiara's row. The players' clients need this round's release (the NPC's lines and tabs arrive in
 OpenSRO's own message 0x00BA; an older client draws the NPC and its name but shows no store line).
+
+Round 786: its Seal of Nova goods are the unlocked, level-101 rows (`_A_RARE_ACTIVE`), and a bought
+piece is +12, full variance and full blue. The store lists each piece that way too, in OpenSRO's own
+message 0x00BB sent after 0x00BA (`listed_instance_messages` in the line above; 0 without
+`-magic-option-assign-csv`, whose item table the instance needs). The server and the clients can be
+updated in either order: a client from before round 786 ignores 0x00BB and shows the reference items.
 
 **Its goods are free and sell at their own price** at any NPC (a Seal of Nova piece 250,000, a Magic
 stone of luck (Lvl.11) 15,000,000 on the box's archive): with it on, a player can make gold. Switch it

@@ -22800,6 +22800,8 @@ func _npc_talk_net() -> NpcTalkNet:
 	_npc_talk.register_with(NetClient)
 	# Round 783: an NPC of OpenSRO's own sends its lines and tabs first.
 	NetClient.register_handler(NpcShopDefNet.OP_SHOP_DEF, _on_npc_shop_def)
+	# Round 786: and then the instances its goods are listed as.
+	NetClient.register_handler(NpcShopDefNet.OP_SHOP_GOODS, _on_npc_shop_goods)
 	_npc_talk.selected.connect(_on_npc_selected)
 	_npc_talk.opened.connect(_on_npc_opened)
 	# The refusals: the client shows nothing for a refused select (round
@@ -22840,6 +22842,24 @@ func _on_npc_shop_def(data: PackedByteArray) -> void:
 			tabs.append((tab["ids"] as PackedInt32Array).size())
 		counts.append(tabs)
 	print("NPC shop definition: uid %d, %d line(s), goods per tab %s" % [int(def["uid"]), (def["lines"] as Array).size(), str(counts)])
+
+## OpNpcShopGoods (round 786, OURS; NpcShopDefNet.OP_SHOP_GOODS): the
+## instances the goods of the definition just sent are listed as (the Test
+## Items NPC's +12 full-blue pieces), added to that definition so the store's
+## tooltips read them (NpcShopDefNet.tabs -> ShopReader.Tab.instances).
+func _on_npc_shop_goods(data: PackedByteArray) -> void:
+	var goods := NpcShopDefNet.decode_goods(data)
+	if goods.is_empty():
+		print("NPC shop goods: malformed (%d bytes)" % data.size())
+		return
+	var uid := int(goods["uid"])
+	if not _npc_shop_defs.has(uid):
+		print("NPC shop goods: uid %d has no definition" % uid)
+		return
+	NpcShopDefNet.merge_goods(_npc_shop_defs[uid], goods)
+	var def: Dictionary = _npc_shop_defs[uid]
+	print("NPC shop goods: uid %d, %d listed instance(s) (%d in all)" % [uid, (goods["instances"] as Dictionary).size(),
+		(def["instances"] as Dictionary).size()])
 
 ## The 0xB046 reply: the store (id 1) or the storage (3) opens; the talk
 ## line (2) keeps the talk window (INTERACTMODE 5; what the original then

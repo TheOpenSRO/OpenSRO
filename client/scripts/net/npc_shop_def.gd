@@ -18,6 +18,27 @@ class_name NpcShopDefNet
 
 const OP_SHOP_DEF := 0x00ba
 
+## OpNpcShopGoods 0x00BB (round 786, OURS; server/internal/testnpc): the
+## item instance each equipment good is listed as -- the Test Items NPC's
+## +12, full-variance, full-blue pieces, the very instance the buy gives --
+## sent right after OP_SHOP_DEF, once or more (each adds to the last):
+##
+##   u32 NPC unique id
+##   u16 n
+##     n x (u32 item id, the retail item record)
+##
+## The record is the bag's (ItemInstance.read_record); the u32 before it is
+## the good's item id where the bag's block puts a slot, so
+## ItemInstance.decode_block reads it. A message of its own: a client from
+## before round 786 refuses an OP_SHOP_DEF with trailing bytes, and only
+## logs an unknown opcode. The retail client gets a good's plus and blue
+## options from its package's scrap row (refscrapofpackageitem, parsed at
+## c:0x9824e0): c:0x8bf3a0 builds the store's SOItem from its OptLevel and
+## MagParam1..12 (READ). It never applies the row's Variance column, so a
+## retail good's white stats read as variance 0; this NPC's listing carries
+## the variance the bought piece has (OURS: the user's "100% white stats").
+const OP_SHOP_GOODS := 0x00bb
+
 ## The prefix of a store line's tab group for such an NPC: "custom:<line>"
 ## (NpcServiceReader's "shop:" key then carries it, as a retail line carries
 ## its tab group's code).
@@ -68,6 +89,23 @@ static func decode(data: PackedByteArray) -> Dictionary:
 		return {}
 	return out
 
+## Decodes OP_SHOP_GOODS: {} when short or malformed, else {"uid": int,
+## "instances": {item id: ItemInstance}}.
+static func decode_goods(data: PackedByteArray) -> Dictionary:
+	if data.size() < 6:
+		return {}
+	var count := data.decode_u16(4)
+	var instances := ItemInstance.decode_block(data, 4)
+	if instances.size() != count:
+		return {}
+	return {"uid": data.decode_u32(0), "instances": instances}
+
+## Adds a decoded OP_SHOP_GOODS to its definition (the messages add up).
+static func merge_goods(def: Dictionary, goods: Dictionary) -> void:
+	if not def.has("instances"):
+		def["instances"] = {}
+	(def["instances"] as Dictionary).merge(goods.get("instances", {}), true)
+
 ## The talk window's store lines for a definition: one per line, keyed
 ## "custom:<i>" with its label (NpcServiceReader.services_from_ids's
 ## store_lines shape).
@@ -88,12 +126,15 @@ static func line_of(tabgroup: String) -> int:
 ## The store tabs of line `index` as ShopReader.Tab objects (what the store
 ## window takes): the label as the tab's name key and each item id turned into
 ## its code name by `code_of` (Callable(id: int) -> String; an id it does not
-## know is skipped). Empty for a line the definition lacks.
+## know is skipped). Each tab's `instances` runs beside its codes: the
+## good's ItemInstance from OP_SHOP_GOODS (round 786), null for a good
+## listed as the reference item. Empty for a line the definition lacks.
 static func tabs(def: Dictionary, index: int, code_of: Callable) -> Array:
 	var out: Array = []
 	var lines: Array = def.get("lines", [])
 	if index < 0 or index >= lines.size():
 		return out
+	var listed: Dictionary = def.get("instances", {})
 	for tab_v in (lines[index] as Dictionary).get("tabs", []):
 		var tab: Dictionary = tab_v
 		var t := ShopReader.Tab.new()
@@ -102,5 +143,6 @@ static func tabs(def: Dictionary, index: int, code_of: Callable) -> Array:
 			var code: String = code_of.call(int(id))
 			if code != "":
 				t.item_codes.append(code)
+				t.instances.append(listed.get(int(id)))
 		out.append(t)
 	return out

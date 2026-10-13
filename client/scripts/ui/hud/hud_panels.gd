@@ -4246,12 +4246,19 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 	var set_name: String = _type_names.set_names.get(item.set_id, "")
 	# An owned item (any site but the store) whose instance the client has
 	# not got shows its reference values without a "(+x%)" (OURS, until lane
-	# B); the store's goods are reference items, variance 0.
+	# B); the store's goods are reference items, variance 0 -- except a good
+	# an NPC of OpenSRO's own lists with its instance (round 786,
+	# OpNpcShopGoods: the Test Items NPC's +12 full-blue pieces), which reads
+	# as that owned item would. The original's store slot holds a whole item
+	# object too, plus and blue options set from the package (c:0x8bf3a0).
 	var instance := {}
 	if where != "store":
 		instance["unknown_variance"] = true
 	if cur >= 0 and maximum > 0:
 		instance["durability"] = [cur, maximum]
+	var listed: Object = _item_instance(where, slot) if where == "store" else null
+	if listed != null:
+		instance.merge(ItemTooltipInstance.fields(item, listed), true)
 	if where != "store":
 		var extra := ItemTooltipInstance.fields(item, _item_instance(where, slot))
 		if item_instance_lookup.is_valid():
@@ -4278,6 +4285,12 @@ const _INSTANCE_LISTS := {"bag": "last_inventory_instances", "equipment": "last_
 	"storage": "last_storage_instances"}
 
 func _item_instance(where: String, slot: int) -> Object:
+	# The store: the instance the open tab lists its good `slot` as (round
+	# 786, ShopReader.Tab.instances; null for a reference good).
+	if where == "store":
+		if _shop_selected < 0 or _shop_selected >= _shop_tabs.size():
+			return null
+		return (_shop_tabs[_shop_selected] as ShopReader.Tab).instance_at(slot)
 	if slot < 0 or not _INSTANCE_LISTS.has(where):
 		return null
 	var list = NetClient.get(_INSTANCE_LISTS[where])
