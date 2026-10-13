@@ -5,6 +5,9 @@ etc and also different particle effects for seal of star, moon, sun, nova, and m
 applies to weapons and shields of course. Check client and server code / db and let's fully support
 it."
 
+**Round 786:** which items get the glow and the seal effects, why the Test Items NPC's locked Seal
+of Nova rows get neither, and the particle driver's start-up bug are in `equip_glow_seal.md`.
+
 Labels: **READ** (sro_client.exe, address given), **MEASURED** (the retail archives in
 `/opt/sro-files/client/`, counted on the render box), **INFERRED**, **OPEN**, **OURS**. No game data
 is in this file. The numbers below are findings that name what the archives hold; the client reads the
