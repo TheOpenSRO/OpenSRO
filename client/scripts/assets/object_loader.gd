@@ -1065,9 +1065,17 @@ bool keep(float a) {
 }
 
 void fragment() {
-	// A MULTITEXREV puts the mod's texture on stage 0 (round 786).
-	vec4 tex = multitex_rev ? texture(multitex_texture, UV) : texture(albedo_texture, UV);
-	vec4 tex0 = multitex_rev ? textureLod(multitex_texture, UV, 0.0) : textureLod(albedo_texture, UV, 0.0);
+	// A MULTITEXREV puts the mod's texture on stage 0 (round 786). A uniform
+	// branch, not a select: a select of two samples takes both.
+	vec4 tex;
+	vec4 tex0;
+	if (multitex_rev) {
+		tex = texture(multitex_texture, UV);
+		tex0 = textureLod(multitex_texture, UV, 0.0);
+	} else {
+		tex = texture(albedo_texture, UV);
+		tex0 = textureLod(albedo_texture, UV, 0.0);
+	}
 	if (!keep(clamp(aop(alpha_op, aarg(alpha_arg1, tex0), aarg(alpha_arg2, tex0), tex0.a), 0.0, 1.0))) {
 		discard;
 	}
@@ -1079,7 +1087,12 @@ void fragment() {
 	// stage-0 colour by its alpha or the factor's; ALPHAOP DISABLE keeps
 	// stage 0's alpha.
 	if (multitex_op >= 0) {
-		vec4 t1 = multitex_rev ? texture(albedo_texture, srr_uv1) : texture(multitex_texture, srr_uv1);
+		vec4 t1;
+		if (multitex_rev) {
+			t1 = texture(albedo_texture, srr_uv1);
+		} else {
+			t1 = texture(multitex_texture, srr_uv1);
+		}
 		stage = mix(stage, t1.rgb, multitex_op == 1 ? t1.a : multitex_factor);
 	}
 	if (blend_color == 1) {

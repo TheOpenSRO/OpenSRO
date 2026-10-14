@@ -171,7 +171,7 @@ func _test_multitex_material() -> void:
 	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
 	_check(inc.contains("float srr_k = multitex_op == 1 ? srr_t1.a : multitex_factor;") and inc.contains("return mix(srr_current, srr_t1.rgb, srr_k);"),
 		"stage 1: BLENDTEXTUREALPHA (op 1) or BLENDFACTORALPHA (op 0) over the stage-0 colour")
-	_check(inc.contains("texture(multitex_texture, srr_uv1)"), "stage 1 samples on srr_uv1 (TexAni's stage-1 coordinates)")
+	_check(inc.contains("srr_t1 = texture(multitex_texture, srr_uv1);"), "stage 1 samples on srr_uv1 (TexAni's stage-1 coordinates)")
 	# The MTRL mod shader has the stage built in.
 	var mod := ShaderMaterial.new()
 	mod.shader = ObjectLoader._mod_shader("back", "add", false)
@@ -181,8 +181,8 @@ func _test_multitex_material() -> void:
 		"an MTRL mod material keeps its shader and takes the uniforms (op 0, REV, factor 128/255)")
 	_check(mod.shader.code.contains("if (multitex_op >= 0)") and mod.shader.code.contains("stage = mix(stage, t1.rgb, multitex_op == 1 ? t1.a : multitex_factor);"),
 		"the mod shader blends stage 1 over its stage-0 result, before the blend emulation")
-	_check(mod.shader.code.contains("multitex_rev ? texture(multitex_texture, UV) : texture(albedo_texture, UV)"),
-		"a REV samples the mod's texture on stage 0")
+	_check(mod.shader.code.contains("if (multitex_rev) {\n\t\ttex = texture(multitex_texture, UV);"),
+		"a REV samples the mod's texture on stage 0 (a uniform branch: one sample, not two)")
 	# Missing texture: nothing changes.
 	var bare := ShaderMaterial.new()
 	bare.shader = ObjectLoader.object_shader("solid")

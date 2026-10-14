@@ -261,8 +261,15 @@ void vertex() {
 
 void fragment() {
 #ifdef MULTITEX
-	vec4 tex = multitex_rev ? texture(multitex_texture, UV) : texture(albedo_texture, UV);
-	vec4 srr_t1 = multitex_rev ? texture(albedo_texture, srr_uv1) : texture(multitex_texture, srr_uv1);
+	vec4 tex;
+	vec4 srr_t1;
+	if (multitex_rev) {
+		tex = texture(multitex_texture, UV);
+		srr_t1 = texture(albedo_texture, srr_uv1);
+	} else {
+		tex = texture(albedo_texture, UV);
+		srr_t1 = texture(multitex_texture, srr_uv1);
+	}
 #else
 	vec4 tex = texture(albedo_texture, UV);
 #endif
