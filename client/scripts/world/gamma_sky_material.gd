@@ -45,6 +45,11 @@ uniform bool decode_out = false;
 // 1 / WorldPostEffects.sun_scale(): the sky's sun disc and halo keep the
 // unscaled sun's energy (round 693).
 uniform float sun_energy_scale = 1.0;
+// Round 786: ProceduralSkyMaterial's sun disc and halo around the directional
+// light. Off: retail's sky has no such disc -- its sun is the SunColor-tinted
+// lens2 quad at the clock's sun position (DayCycle, sky_body.gdshader), and the
+// light's direction is a fixed one that is not the sun's. Kept for an A/B.
+uniform bool procedural_sun = false;
 
 vec3 enc(vec3 c) {
 	c = max(c, vec3(0.0));
@@ -59,7 +64,7 @@ void sky() {
 	float v_angle = acos(clamp(EYEDIR.y, -1.0, 1.0));
 	float c = (1.0 - v_angle / (PI * 0.5));
 	vec3 sky = mix(sky_horizon_color, sky_top_color, clamp(1.0 - pow(1.0 - c, 1.0 / sky_curve), 0.0, 1.0));
-	if (LIGHT0_ENABLED) {
+	if (LIGHT0_ENABLED && procedural_sun) {
 		vec3 lc = (decode_out ? enc(LIGHT0_COLOR) : LIGHT0_COLOR) * sun_energy_scale;
 		float sun_angle = acos(dot(LIGHT0_DIRECTION, EYEDIR));
 		if (sun_angle < LIGHT0_SIZE) {
@@ -97,11 +102,19 @@ var ground_horizon_color := Color(0.646, 0.656, 0.67):
 		ground_horizon_color = v
 		set_shader_parameter("ground_horizon_color", Vector3(v.r, v.g, v.b))
 
+## Round 786: the procedural sun disc (off: retail's sky has none; the
+## shader's `procedural_sun`).
+var procedural_sun := false:
+	set(v):
+		procedural_sun = v
+		set_shader_parameter("procedural_sun", v)
+
 func _init() -> void:
 	if _shader == null:
 		_shader = Shader.new()
 		_shader.code = SHADER_CODE
 	shader = _shader
+	set_shader_parameter("procedural_sun", false)
 	set_shader_parameter("decode_out", RendererChoice.running() == RendererChoice.FORWARD_PLUS)
 	# The Forward+ sun is raised to match Compatibility's shadow pass
 	# (WorldPostEffects.sun_scale); the sky's disc and halo are not part of
@@ -123,7 +136,7 @@ func feed_clouds(cloud: ShaderMaterial, sun: DirectionalLight3D, env: Environmen
 	cloud.set_shader_parameter("sky_horizon", Vector3(sky_horizon_color.r, sky_horizon_color.g, sky_horizon_color.b))
 	cloud.set_shader_parameter("ground_bottom", Vector3(ground_bottom_color.r, ground_bottom_color.g, ground_bottom_color.b))
 	cloud.set_shader_parameter("ground_horizon", Vector3(ground_horizon_color.r, ground_horizon_color.g, ground_horizon_color.b))
-	if sun != null and sun.visible:
+	if sun != null and sun.visible and procedural_sun:
 		var d := (sun.global_transform if sun.is_inside_tree() else sun.transform).basis.z.normalized()
 		cloud.set_shader_parameter("sun_dir", d)
 		cloud.set_shader_parameter("sun_color", Vector3(sun.light_color.r, sun.light_color.g, sun.light_color.b))

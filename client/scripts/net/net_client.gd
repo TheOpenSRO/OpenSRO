@@ -312,6 +312,9 @@ var party := PartyState.new()
 ## The quest log and its messages (round 785, QuestState; the opcodes are
 ## routed through register_handler at _init).
 var quest := QuestState.new()
+## The game clock (round 786, GameClock): kept here so it outlives a scene
+## change, as retail keeps it in its CGame config object.
+var game_clock := GameClock.new()
 ## Opcodes another module answers (round 711's hook for the party-match
 ## lane): opcode -> Callable(data: PackedByteArray). Checked before the
 ## "unhandled" warning, after every opcode this file routes itself.
@@ -649,7 +652,8 @@ func _passes_group(p: Packet) -> bool:
 				QuestNet.OP_CLAIM_RESULT, QuestNet.OP_UNMARK, FriendNet.OP_REQUEST_RESULT, FriendNet.OP_REQUEST_RECEIVED, \
 				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
 				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
-				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG:
+				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
+				GameClock.OP_POSITION, GameClock.OP_UPDATE:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -689,6 +693,8 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_held_barrier = false
 	body_modes.clear()
 	party.reset_connection()
+	# A new connection waits for its own 0x3020 (round 786).
+	game_clock.reset()
 	_unhandled_warned.clear()
 	_use_tls = use_tls
 	_tls_host = host
@@ -1176,6 +1182,10 @@ func _init() -> void:
 	# The quest messages (round 785).
 	quest.send = func(op: int, payload: PackedByteArray) -> void: _send(op, payload)
 	quest.register_with(self)
+	# The game clock (round 786, GameClock): 0x3020 at world entry, 0x3027
+	# when an operator sets the hour.
+	for op in [GameClock.OP_POSITION, GameClock.OP_UPDATE]:
+		register_handler(op, func(data: PackedByteArray) -> void: game_clock.handle(op, data, Time.get_ticks_msec()))
 
 ## Registers `handler` (Callable(data: PackedByteArray)) for `opcode`, for a
 ## module this file does not route itself (round 711; the party-match lane

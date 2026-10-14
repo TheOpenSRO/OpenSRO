@@ -225,6 +225,9 @@ static func mark_reflected(root: Node) -> void:
 var _clip_shaders := {}
 
 func clip_material(src: Material) -> Material:
+	# Round 786: the dynamic terrain's own shader, with the same clip.
+	if TerrainLight.is_terrain(src):
+		return TerrainLight.clip_material(src as ShaderMaterial)
 	var std := src as StandardMaterial3D
 	if std == null:
 		return src

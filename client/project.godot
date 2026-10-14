@@ -130,6 +130,24 @@ srr_obj_tonemap={
 "value": Vector4(1, 1, 1, 1)
 }
 
+; The terrain's light at the day phase (round 786, TerrainLight): the
+; environment's diffuse (channel 2), terrain ambient (channel 5) and terrain
+; shadow (channel 6), display values, which retail evaluates every frame
+; (Map::FUN_00a1baf0). World3D sets them from DayCycle; these are the values
+; before it does (OURS: N.L alone, no shadow added).
+srr_terrain_diffuse={
+"type": "vec4",
+"value": Vector4(1, 1, 1, 1)
+}
+srr_terrain_ambient={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 1)
+}
+srr_terrain_shadow={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 1)
+}
+
 ; The weapon and shield glow's clock in seconds (round 734's review, F8,
 ; EquipGlow.CLOCK_WRAP): a script accumulator advanced by every process
 ; frame's delta, wrapped at 25200 s, so the pulse and the scroll never jump

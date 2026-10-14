@@ -62,9 +62,25 @@ uniform vec3 sun_dir = vec3(0.0, 1.0, 0.0);
 uniform vec3 sun_color = vec3(1.0);
 uniform float sun_energy = 0.0;
 uniform float sun_size = 0.0;
+// The sun disc and the moon (round 786, sky_bodies.gdshaderinc): drawn
+// before the layer (sky_body.gdshader), so the Forward+ blend below puts them
+// in the sky it mixes with, as GammaSkyMaterial.feed_clouds sets them.
+uniform bool body_sun_on = false;
+uniform vec3 body_sun_dir = vec3(0.0, 1.0, 0.0);
+uniform vec3 body_sun_axis = vec3(-1.0, 0.0, 0.0);
+uniform float body_sun_half = 0.0333333;
+uniform vec3 body_sun_color = vec3(1.0);
+uniform sampler2D body_sun_tex : filter_linear, repeat_disable, hint_default_transparent;
+uniform bool body_moon_on = false;
+uniform vec3 body_moon_dir = vec3(0.0, 1.0, 0.0);
+uniform vec3 body_moon_axis = vec3(-1.0, 0.0, 0.0);
+uniform float body_moon_half = 0.05;
+uniform sampler2D body_moon_tex : filter_linear, repeat_disable, hint_default_transparent;
 uniform float tm_exposure = 1.0;
 uniform float tm_white = 1.0;
 uniform bool tm_filmic = true;
+
+#include "res://scripts/world/sky_bodies.gdshaderinc"
 
 const float SKY_CURVE = 0.15;
 const float GROUND_CURVE = 0.02;
@@ -123,7 +139,25 @@ vec3 sky_display(vec3 eye) {
 	}
 	c = (v_angle - PI * 0.5) / (PI * 0.5);
 	vec3 ground = mix(ground_horizon, ground_bottom, clamp(1.0 - pow(1.0 - c, 1.0 / GROUND_CURVE), 0.0, 1.0));
-	return mix(ground, sky, step(0.0, eye.y));
+	vec3 behind = mix(ground, sky, step(0.0, eye.y));
+	// The sun disc, then the moon, alpha-blended over the sky in display
+	// values as retail draws them: the disc's colour is the texture factor
+	// (SunColor), its alpha lens2's; the moon's colour and alpha its
+	// texture's (READ: COLOROP / ALPHAOP SELECTARG1 with TFACTOR / TEXTURE).
+	if (body_sun_on) {
+		vec3 uv = srr_body_uv(eye, body_sun_dir, body_sun_axis, body_sun_half);
+		if (uv.z > 0.0) {
+			behind = mix(behind, body_sun_color, clamp(textureLod(body_sun_tex, uv.xy, 0.0).a, 0.0, 1.0));
+		}
+	}
+	if (body_moon_on) {
+		vec3 uv = srr_body_uv(eye, body_moon_dir, body_moon_axis, body_moon_half);
+		if (uv.z > 0.0) {
+			vec4 t = textureLod(body_moon_tex, uv.xy, 0.0);
+			behind = mix(behind, t.rgb, clamp(t.a, 0.0, 1.0));
+		}
+	}
+	return behind;
 }
 
 void vertex() {

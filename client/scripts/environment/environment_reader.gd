@@ -187,52 +187,91 @@ static func parse(data: PackedByteArray) -> ParsedFile:
 	f.trailer_offset = off
 	return f
 
-## Samples a real 4-float (RGB + time) color channel at normalized
-## time-of-day t (0..1, wrapping), linearly interpolating between the two
-## real keyframe groups on either side of t -- each group's 4th float is
-## its real time value (see CHANNEL_GROUP_FLOATS' doc comment). Returns
-## Color(1,1,1) if the channel has fewer than 2 groups (nothing real to
-## interpolate) or channel_idx is out of range -- an honest neutral
-## fallback, not a guessed color.
-## Samples a 2-float (value, time) FloatGraph channel at t, interpolating
-## between the two keyframes around t exactly as sample_color_channel does
-## for colours (the client's FUN_004e5770 walks 8-byte keys the same way).
+## How the client samples a graph at the day phase t (READ, round 786):
+## ColorGraph `FUN_004e55e0` (16-byte keys, the time at +0xc) and FloatGraph
+## `FUN_004e5770` (8-byte keys, the time at +4) both find the first key whose
+## time is >= t. None: the LAST key's value. The first key: its value. Else,
+## with p the key before it, frac = (t - time[p]) / (time[p+1] - time[p]) --
+## 0 when that gap is <= 0.0001 (the float at 0xe1b880) -- and the value is
+## the graph's interpolator (`FUN_004e4530` / `FUN_004e4770`) through four
+## keys: key[p-1] (key[0] when p is 0), key[p], key[p+1], key[p+2] (key[p+1]
+## when p+1 is the last). The interpolator is the function pointer at graph
+## +0x10, which the record's graph constructors set to `FUN_004e0920` (colour,
+## 0xa1ba6c) and `0x4df7d0` (float, 0xa1bacc): both the uniform Catmull-Rom
+## spline, 0.5 x (2 P1 + (P2 - P0) f + (2 P0 - 5 P1 + 4 P2 - P3) f^2 +
+## (-P0 + 3 P1 - 3 P2 + P3) f^3) (the doubles 2.0, 5.0, 4.0, 3.0, 0.5 at
+## 0xe1b898, 0xd81950, 0xe1b860, 0xe1b808, 0xe1b7d0); the pre-step at graph
+## +0xc is cleared by the base constructor (0x4e62dc). The spline passes
+## through every key and may overshoot between them; the environment step
+## clamps the colours it uses (Map::FUN_00a1baf0). Before round 786 this
+## reader interpolated linearly, which only the keys agreed with.
+##
+## Returns the key indices [p0, p1, p2, p3] and frac, or [] when the value is
+## a key's own -- then `hold` is that key's index (out[0]).
+static func _spline_keys(times: PackedFloat32Array, t: float) -> Array:
+	var n := times.size()
+	var i := 0
+	while i < n and not (t <= times[i]):
+		i += 1
+	if i >= n:
+		return [n - 1]
+	if i == 0:
+		return [0]
+	var p := i - 1
+	var gap := times[i] - times[p]
+	var frac := 0.0 if gap <= 0.0001 else (t - times[p]) / gap
+	var p0 := p - 1 if p > 0 else 0
+	var p3 := p + 1 if p == n - 2 else p + 2
+	return [p0, p, p + 1, p3, frac]
+
+## The uniform Catmull-Rom spline (READ, FUN_004e0920 / 0x4df7d0).
+static func catmull_rom(p0: float, p1: float, p2: float, p3: float, f: float) -> float:
+	var f2 := f * f
+	var f3 := f2 * f
+	return 0.5 * (2.0 * p1 + (p2 - p0) * f + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * f2
+		+ (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * f3)
+
+## Samples a 2-float (value, time) FloatGraph channel at t (READ above). 0.0
+## for an empty channel (OURS: the client asserts on one; none of the 74
+## records has an empty channel).
 static func sample_float_channel(record: Record, channel_idx: int, t: float) -> float:
+	if channel_idx < 0 or channel_idx >= record.channels.size():
+		return 0.0
 	var groups: Array = record.channels[channel_idx]
 	if groups.is_empty():
 		return 0.0
-	var prev: PackedFloat32Array = groups[0]
+	var times := PackedFloat32Array()
 	for g in groups:
-		var group: PackedFloat32Array = g
-		if group[1] >= t:
-			var span := group[1] - prev[1]
-			if span <= 0.0:
-				return group[0]
-			var f := clampf((t - prev[1]) / span, 0.0, 1.0)
-			return lerpf(prev[0], group[0], f)
-		prev = group
-	return prev[0]
+		times.append((g as PackedFloat32Array)[1])
+	var k := _spline_keys(times, t)
+	if k.size() == 1:
+		return (groups[k[0]] as PackedFloat32Array)[0]
+	return catmull_rom((groups[k[0]] as PackedFloat32Array)[0], (groups[k[1]] as PackedFloat32Array)[0],
+		(groups[k[2]] as PackedFloat32Array)[0], (groups[k[3]] as PackedFloat32Array)[0], k[4])
 
+## Samples a 4-float (RGB, time) ColorGraph channel at the day phase t (READ
+## above), unclamped. Color(1,1,1) for an empty channel or an index out of
+## range (OURS: a neutral fallback, not a guessed colour).
 static func sample_color_channel(record: Record, channel_idx: int, t: float) -> Color:
 	if channel_idx < 0 or channel_idx >= record.channels.size():
 		return Color(1, 1, 1)
 	var groups: Array = record.channels[channel_idx]
-	if groups.size() < 2:
+	if groups.is_empty():
 		return Color(1, 1, 1)
-	var wrapped_t := fposmod(t, 1.0)
-	for i in range(groups.size() - 1):
-		var g0: PackedFloat32Array = groups[i]
-		var g1: PackedFloat32Array = groups[i + 1]
-		var t0: float = g0[3]
-		var t1: float = g1[3]
-		if wrapped_t >= t0 and wrapped_t <= t1:
-			var span := t1 - t0
-			var f := (wrapped_t - t0) / span if span > 0.0001 else 0.0
-			return Color(g0[0], g0[1], g0[2]).lerp(Color(g1[0], g1[1], g1[2]), f)
-	# Past the last real keyframe's time value -- hold the last group's color
-	# rather than guessing an extrapolation.
-	var last: PackedFloat32Array = groups[groups.size() - 1]
-	return Color(last[0], last[1], last[2])
+	var times := PackedFloat32Array()
+	for g in groups:
+		times.append((g as PackedFloat32Array)[3])
+	var k := _spline_keys(times, t)
+	if k.size() == 1:
+		var key: PackedFloat32Array = groups[k[0]]
+		return Color(key[0], key[1], key[2])
+	var a: PackedFloat32Array = groups[k[0]]
+	var b: PackedFloat32Array = groups[k[1]]
+	var c: PackedFloat32Array = groups[k[2]]
+	var d: PackedFloat32Array = groups[k[3]]
+	var f: float = k[4]
+	return Color(catmull_rom(a[0], b[0], c[0], d[0], f), catmull_rom(a[1], b[1], c[1], d[1], f),
+		catmull_rom(a[2], b[2], c[2], d[2], f))
 
 ## Reads a real length-prefixed string (u32 length + that many raw bytes)
 ## at off. Returns [] on failure (truncated/out of range), or [string,
