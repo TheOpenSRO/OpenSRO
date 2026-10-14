@@ -1,7 +1,7 @@
 extends RefCounted
 class_name NightLight
 
-## Two OURS deviations on top of retail's day cycle (round 787; DayCycle has
+## Two OURS deviations on top of retail's day cycle (round 786; DayCycle has
 ## what retail does): dark nights, and shadows that follow the sun. Both are
 ## the user's requests ("It doesn't appear to actually get dark out"; "change
 ## shadow positions based off sun position ... worth deviating"), and each
@@ -24,7 +24,7 @@ class_name NightLight
 ## or as bright as noon (environment 23, `Env21`, around Bandit's Mountain
 ## Stronghold: 82 %, and the terrain's `clamp(N.L x ch2 + ch5)` saturates at
 ## midnight as at noon -- ch5 is (0.73, 0.78, 0.82) at 0.0 against 1.0 at
-## noon). WORLD_ISSUES round 787 has the keys.
+## noon). WORLD_ISSUES round 786 has the keys.
 ##
 ## **Dark nights (OURS).** As the sun sets, every light the world draws is
 ## scaled so that at full night the zone's light is `level` of its own noon

@@ -87,7 +87,7 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Saved position on logout | ✅ Supported | Server option, on for the public server; recall and death points always saved |
 | Minimap | ✅ Supported | NPC, monster, player, party, quest NPC and unique signs; no pet sign |
 | World map | 🟡 Partial | Map, dungeon floors and city icons; guide list and sign tooltips missing |
-| Time of day | 🟡 Partial | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; night lamps not yet |
+| Time of day | 🟡 Partial | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; dark nights (Night Darkness option); night lamps not yet |
 | Weather (rain, snow) | ❌ Not yet | No weather system yet |
 | Fog and water | ✅ Supported | Retail fog planes; animated water with reflection option |
 | Seasonal decorations | 🟡 Partial | Christmas, Halloween and others available but off by default |
@@ -318,7 +318,7 @@ Retail models, particles and lighting re-created in Godot.
 | Equipment visuals | ✅ Supported | Worn weapons and armour drawn on every character |
 | Particle effects (EFP) | ✅ Supported | Retail particle effects for skill casts, projectiles, hits and level-up |
 | Effects stay on moving bodies | ✅ Supported | Effects follow their holder at any frame rate |
-| Lighting and shadows | ✅ Supported | Sun, character light, shadow detail options |
+| Lighting and shadows | ✅ Supported | Sun, character light, shadow detail options; shadows follow the sun (option) |
 | Bloom and ambient occlusion | ✅ Supported | Retail-style bloom and SSAO options |
 | Trees, foliage and map objects | ✅ Supported | Retail materials; animated map objects |
 | Placed object effects | 🟡 Partial | Teleport structures play theirs; other objects' ambient effects off |

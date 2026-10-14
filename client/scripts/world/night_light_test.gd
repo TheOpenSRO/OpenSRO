@@ -1,6 +1,6 @@
 extends SceneTree
 
-## Round 787 (OURS, NightLight): dark nights and shadows that follow the sun.
+## Round 786 (OURS, NightLight): dark nights and shadows that follow the sun.
 ##   - the night amount by the clock: day at noon and at 19:40, full night at
 ##     23:00 and 02:00;
 ##   - the scale: a zone whose night is as bright as its noon (as retail's

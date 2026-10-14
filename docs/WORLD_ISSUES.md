@@ -8938,6 +8938,158 @@ did.
   0x1112fb0 +0x17c, readers not followed (shadows here keep the fixed light); 0x34be; the console
   lock; the truncated hour handed to the object at 0xee73c0 (`FUN_004e8890`), not identified.
 
+### Round 786 (part): Nights are dark, and shadows follow the sun (OURS)
+
+The user, after the day/night cycle shipped: "It doesn't appear to actually get dark out, please fix
+that" (a frame at Bandit's Mountain Stronghold, X 4833 Y -115: the moon up, an orange sky, the
+ground, trees, buildings and bodies at full daylight), then from Jangan (local 6434/1088, 23:51):
+"It looks a little darker in Jangan but still not quite there". And: "change shadow positions based
+off sun position. That might not be in the original game but I think that's a cool effect worth
+deviating away." Branch `feat/night787`. Code: `NightLight` (scripts/world/night_light.gd), World3D's
+`_day_push` / `_night_scale` / `_sun_shadow_*`, `TerrainLight` (`srr_terrain_night`), `ShadowCatcher`
+(strength), two Video rows. Reads: ENVIRONMENT_FORMAT.md, "What lights the world at night" and "The
+sun-following light direction is dead code"; game_clock.md, "OURS on the clock's night".
+
+**Root cause of the bright nights -- retail's own data, applied faithfully (MEASURED, READ).** The
+user's spot is region 91/160 (X 4833 = (160 - 135) x 192 + 33, Y -115 = (91 - 92) x 192 + 77): all 36
+blocks of 91/160 and its four neighbours reference environment 23 (`Env21`); Jangan's 97/168 references
+15 (`Env7`) (MEASURED: the `.m` files' EnvironmentIDs on the box's Map.pk2). Each candidate checked:
+- *Only the sky follows the phase* -- no: the terrain (`srr_terrain_*`), the objects and characters
+  (`srr_obj_*`), the light, the fog, the water and the clouds all follow DayCycle (round 786's
+  `_day_push`; MEASURED in this round's QA log: the objects' ambient at 23:00 in Jangan is channel 3's
+  (0.40, 0.42, 0.51) against (0.68, 0.67, 0.66) at noon).
+- *The region's record differs from Jangan's, and its night keys are bright* -- **yes, this is it.**
+  Environment 23 at the sky's midnight: diffuse (0.455, 0.627, 0.659), object ambient (0.365, 0.431,
+  0.475), terrain ambient (0.729, 0.776, 0.816), against noon's (0.714 x3), (0.498, 0.557, 0.471), (1, 1,
+  1). The terrain's `clamp(N.L x ch2 + ch5)` is 1.000 at midnight as at noon for a lit slope; the
+  objects' light is 82 % of noon's. Jangan's environment 15: the terrain 92-94 % of noon, the objects
+  64-74 % -- "a little darker" (all MEASURED, `night_light_test.gd`).
+- *The phase mapping lands on a dusk key at night* -- no, but it explains the orange sky: environment
+  23 has five keys a channel, the dusk key at 0.7464 with the sky top (0.910, 0.467, 0.275), and the
+  moon is drawn from phase 0.75 (clock 20:00). So the user's frame is (INFERRED from the sky and the
+  moon) the clock's 20:00-21:00, the sky's 18:00-19:30: retail's own sunset with the moon up.
+- *The moon's day test shows it in the wrong phase* -- no: phase < 0.5 or > 0.75, READ (round 786).
+- *The light, ambient or globals do not reach object, character or grass materials* -- no: every
+  object and character shader reads `srr_obj_ambient` / `srr_obj_diffuse` (ObjectLight.SHADER_FN, the
+  far crowd's too); the grass is the terrain's texture. The DirectionalLight lights nothing the world
+  draws but the shadow catcher and a fading body (everything else is unshaded, retail's formula).
+- *The native (Rust) path differs* -- no: it does only `lightmap_add` (round 670), which the dynamic
+  terrain calls with black (the shadow colour is added in the shader), the same as GDScript.
+
+**What retail does at night (READ; ENVIRONMENT_FORMAT.md has the addresses).** Nothing but the keys:
+`Map::FUN_00a1baf0` builds one directional D3DLIGHT9 (Diffuse = channel 2 x 0.8 / 0.6, Ambient =
+channel 3 x the same, the direction the constructor's constant DAT_01101944) and a material (channel 2
+/ 3 / white / channel 1 as emissive); the terrain shader takes channels 2, 5, 6; fog channel 9's root;
+the sky channels 1 and 13. There is no night multiplier and no phase-driven gamma. The night flag only
+turns lighting off for material flag 0x8 (lamps) and runs night-only particles. So **retail's night
+around Bandit's Mountain Stronghold is as bright as its noon**, and our client was drawing it
+correctly. The dark night is an OURS deviation, as the user asked.
+
+**Dark nights (OURS, `NightLight`; the Night Darkness row: Original / Dim / Dark, default Dark).** The
+night amount is `1 - smoothstep(-0.25, 0.1, sun height)` of the READ sun (dark falls from clock 19:29,
+full from 20:39 to 03:21, gone by 04:30). At full night the zone's light (luma of channels 2 + 3) is
+brought to Dim 0.5 / Dark 0.3 of the same zone's noon light -- so environment 23 and 15 end equally
+dark -- and never brightened. k scales the objects' and characters' light (the two globals), the
+terrain's lit colour after retail's clamp (a new global, `srr_terrain_night`: a saturated clamp would
+swallow a scale applied before it), the directional light, the environment ambient and the water's
+tint; k^0.75 the sky, the fog colour and the clouds (OURS, chosen on the frames: with sqrt(k) the
+Bandit night sky kept a luma of 74 over a ground of 15). Not scaled: the sun disc, the moon, effects,
+the portrait and the paper doll (they keep the zone's channels), the front end's fixed title hour,
+dungeons. Original restores retail's values exactly (MEASURED below: the same luma as the dev build).
+
+**Shadows follow the sun (OURS, `NightLight.shadow_light`; the Shadows Follow the Sun row, default On;
+Shadow Detail = Detail).** Retail's shadows keep one direction (READ: `SWorld::vslot_025` renders the
+silhouettes from normalize(1, 1, 0); the sun-following direction `SWorld::vslot_024` forms from world
++0x209a goes to `Map::FUN_009f35f0` as an argument it never reads, and the 0x1112fb0 +0x17c copy has
+no reader -- round 786's OPEN closed). Here the shadow light's direction is DayCycle's sun, `(cos a,
+sin a, 0)`, `a = (phase - 0.25) x 2 pi`, held at least 15 degrees up (shadows at most 3.7 heights
+long); the sun's shadows fade out between 7 and -1 degrees, and from moonrise the moon (DayCycle's
+READ path, only while retail draws it: day < 29) casts at half strength; between sunset and moonrise
+both are faded out, which is when the source changes. Against swimming: the target moves only in
+0.5-degree steps (3 s of the day, 1.6 s of the night), the light glides to it (`slerp`, 2/s) and is
+not touched once within 0.02 degrees; Godot fits the directional splits on a sphere and snaps them to
+texels. The strength is the catcher's `k` (`ShadowCatcher.set_strength`). The terrain's baked N.L
+keeps the scene's fixed light (`_fixed_to_light`), so turning the shadow light changes no ground
+colour. Off restores the scene's fixed light at full strength.
+
+**Tests.** `night_light_test.gd` (new): the night amount at 12:00 / 19:40 / 20:30 / 23:00 / 02:00 and
+its monotonic fall; the scale (to the level, never brighter, Original and day unchanged); a bare
+World3D's `_day_push` at 12:00 and 23:00 -- the objects' and characters' globals, the terrain's
+`srr_terrain_night`, the light and the ambient carry k, the portrait's channels stay the zone's,
+Original and the front end are not darkened; the terrain shader scales after the clamp; **the
+regression: a scene's object and terrain light at 23:00 and 02:00 must be under 45 % of noon's**, on a
+synthetic bright-night record and on the box's real environments 15 and 23 (Jangan Dark: objects 0.161
+/ 0.149 against 0.516, terrain 0.446 / 0.371 against 1.0; Bandit: 0.133 / 0.136 against 0.436, terrain
+0.370 / 0.381 against 1.0; Original leaves the Bandit terrain at 1.000 -- asserted, so a retail change
+would show); the shadow light's direction by phase (overhead at noon, east at 08:00 one height long,
+west at 17:00 1.5 heights, 15 degrees at sunrise, the moon at midnight, nothing with no moon or in the
+dusk gap), the 0.5-degree threshold, the glide and its settle, the basis; on a bare World3D the light
+turns, a 0.1-degree move sets no target, the row off restores the scene light. `video_options_test.gd`:
+the two rows, their defaults and the page's scroll. `check` ALL LOAD (802 scripts, 9 scenes); `tests`
+"ran 312 suite(s), 0 failing" (`RENDER_DIR=/opt/opensro-client-night`, `GODOT_LOCK=/var/tmp/night/lock`).
+No server change: `go test` not needed, no deploy.
+
+**QA** (render box, Forward+ on the RX 7600, `OPENSRO_QA_VIDEO=shadow_detail=2`, `OPENSRO_QA_CLOCK`
+per shot; `/var/tmp/night/shots/`, `before_*` the dev build f54ea367, `final_*` this branch;
+`/var/tmp/night/pick.py` measures). Luma (0.299 R + 0.587 G + 0.114 B) of the top fifth (sky), the
+middle band (0.35-0.65: buildings, bodies) and the bottom three tenths (ground):
+
+| Shot | dev: sky / middle / ground | this branch: sky / middle / ground |
+|---|---|---|
+| Jangan spawn (1002, 1020) yaw -90 pitch 8, 12:00 | 216 / 88 / 155 | 216 / 88 / 155 |
+| ... 19:40 | 193 / 81 / 149 | 190 / 79 / 145 |
+| ... 23:00 | 115 / 54 / 78 | 55 / 25 / 34 |
+| ... 02:00 | 102 / 59 / 105 | 43 / 22 / 34 |
+| ... 23:00, Night Darkness Original | | 104 / 55 / 78 |
+| ... 23:00, Dim | | 84 / 44 / 58 |
+| Jangan, the user's view (980, 1280) yaw 180, 12:00 | 218 / 117 / 141 | 218 / 117 / 141 |
+| ... 23:00 | 120 / 73 / 72 | 57 / 35 / 32 |
+| Bandit, the user's spot 91/160 (330, 770) yaw 90 pitch 5, 12:00 | 196 / 111 / 62 | 196 / 111 / 63 |
+| ... 19:40 | 200 / 105 / 61 | 198 / 103 / 60 |
+| ... 20:50 (the moon up, the orange sky) | 190 / 100 / 61 | 79 / 36 / 14 |
+| ... 23:00 | 143 / 82 / 61 | 52 / 29 / 15 |
+| ... 02:00 | 150 / 90 / 61 | 57 / 33 / 15 |
+| ... 23:00, Original | | 139 / 82 / 61 |
+
+So the ground at night against noon: Jangan 50 % / 68 % (23:00 / 02:00) before, 22 % / 22 % now;
+Bandit 97 % / 97 % before, 23 % / 24 % now. Shadows (`final_bandit_t0800/t1200/t1700/t2300.png`,
+`f1700` with the row off; camera yaw 0, pitch -62, 26 from the player, who stands at screen x 640):
+the pixels darker than the noon frame by more than 20 luma (`shadow_measure.py`) -- 08:00 13,595 at
+centroid x 510 (west of the body, the sun 45 degrees up in the east), 17:00 19,494 at x 831 (east,
+longer: 34 degrees), noon's own shadow 1,886 pixels at x 640 under the feet; with the row off at
+17:00 the fixed light's shadow at x 558, y 378 (behind-left), as before. QA NIGHT lines in the logs
+give k, the shadow light's elevation and strength per shot (Bandit 23:00: k 0.370, the moon at 63
+degrees, strength 0.5). Jangan's shadow shots (`*_jangan_s*`) show no shadow in either build:
+INFERRED, the square is paved by placed objects, which receive none (the catcher is the terrain's). Pictures are for the
+human; the claims are the reads, the measurements and the tests.
+
+**Perf gate** (Forward+, 1280x720; base f54ea367):
+
+| Gate | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| `--sites jangan --frames 50000` | 0.77 -> 0.77 SAME | 8505 -> 8509 SAME | 2704 -> 2718 SAME | 5 -> 5 SAME |
+| `--sites jangan --frames 50000 --env "OPENSRO_QA_VIDEO=shadow_detail=2 OPENSRO_QA_CLOCK=17:00 OPENSRO_QA_CLOCK_RUN=60"` (Detail shadows, a day every 29 s: the shadow light moving every frame, the night falling and lifting twice a minute) | 0.95 -> 0.90 SAME | 8563 -> 8544 SAME | 2759 -> 2721 SAME | 4 -> 4 SAME |
+| `--sites crowd` (2,500 monsters), the same `--env` | 5.75 -> 5.61 SAME | 10961 -> 11061 SAME | 3566 -> 3407 SAME | 5 -> 5 SAME |
+
+- Every run waited on another lane's renders (the "latency" lane's) and repeated those it overlapped.
+  The crowd site's head run 1 read 8.30 ms; its runs 2 and 3 read 5.61 and 5.61 against the base's
+  5.70 / 5.75 / 5.93, so the median is SAME and the outlier is not the branch (the same noise round
+  786 recorded there).
+- What runs per frame: the glide (a slerp and a basis) while the light moves, nothing once it
+  settles; the night's k with each write of the day cycle (a luma and a smoothstep). The shadow map
+  itself is redrawn every frame by Godot with or without the turn (directional shadows are not cached).
+
+**OURS / INFERRED / OPEN:**
+- OURS: both rows and their defaults; the night curve (5.7 degrees up to 14.5 down), the levels 0.5 /
+  0.3 of noon, the metric (luma of channels 2 + 3), k^0.75 on the sky, fog and clouds; the shadow
+  light's 15-degree floor, fade heights, the moon's half strength, the 0.5-degree step and the glide.
+- INFERRED: DAT_01112428's vtable offsets +0xcc / +0xd4 / +0xc4 are IDirect3DDevice9's SetLight /
+  LightEnable / SetMaterial (the layout matches; the object was not identified by name).
+- OPEN: the night lamps (material flag 0x8 drawn unlit at night) and the night-only particles; the
+  day wrap so the moon keeps showing after day 28 (the user's decision; not changed); Shadow Detail
+  defaults to Circle (Middle), where the round blob has no direction -- the moving shadows need
+  Detail.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

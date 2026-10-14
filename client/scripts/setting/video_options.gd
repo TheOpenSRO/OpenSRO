@@ -104,7 +104,7 @@ const RENDERER := 17
 ## no such option: its fog is always on (READ, Map::FUN_00a26f60). Like SSAO,
 ## no preset names it: the player's value in every quality.
 const FOG := 18
-## OURS (round 787, the user's requests; NightLight): how dark the night gets
+## OURS (round 786, the user's requests; NightLight): how dark the night gets
 ## -- Original (retail's own night keys, no change), Dim, Dark (the default)
 ## -- and whether Shadow Detail's shadows follow the sun and the moon (On, the
 ## default) or keep the fixed light (Off). Retail has neither row; no preset

@@ -147,7 +147,7 @@ srr_terrain_shadow={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 1)
 }
-; OURS (round 787, NightLight): the night's scale on the terrain's lit colour,
+; OURS (round 786, NightLight): the night's scale on the terrain's lit colour,
 ; after retail's clamp; 1 by day and with Night Darkness at Original.
 srr_terrain_night={
 "type": "vec4",

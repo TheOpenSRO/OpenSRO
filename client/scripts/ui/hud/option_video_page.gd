@@ -65,7 +65,7 @@ const VIEWS := ["free", "third_person", "quarter"]
 
 ## The rows the list shows, in order: retail's 0..13 and 15 (READ), then SSAO,
 ## the temporary fog toggle (round 702), Night Darkness and Shadows Follow the
-## Sun (round 787) and the renderer (OURS).
+## Sun (round 786) and the renderer (OURS).
 const LIST := [VideoOptions.QUALITY, VideoOptions.SHADOW, VideoOptions.SCENERY,
 	VideoOptions.CHARACTER, VideoOptions.WATER_REFLECTION, VideoOptions.WATER_DETAIL,
 	VideoOptions.METAL, VideoOptions.LIGHT, VideoOptions.FILTERING, VideoOptions.TEXTURE,

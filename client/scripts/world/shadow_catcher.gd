@@ -95,7 +95,7 @@ static func material() -> ShaderMaterial:
 		_material.set_shader_parameter("k", k_at(strength))
 	return _material
 
-## OURS (round 787, NightLight): the shadows' strength, 0 (none) .. 1 (the
+## OURS (round 786, NightLight): the shadows' strength, 0 (none) .. 1 (the
 ## fitted K_LINEAR) -- the sun's shadows fade out as it sets and the moon's
 ## are fainter. One uniform on the one shared material.
 static var strength := 1.0

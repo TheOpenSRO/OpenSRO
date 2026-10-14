@@ -20,7 +20,7 @@ class_name TerrainLight
 ## global uniforms World3D sets from DayCycle each frame:
 ##
 ##     lit   = tint x clamp(N.L x srr_terrain_diffuse + srr_terrain_ambient, 0, 1)   (per vertex)
-##             x srr_terrain_night    (OURS, round 787: NightLight's k; 1 by day)
+##             x srr_terrain_night    (OURS, round 786: NightLight's k; 1 by day)
 ##     term  = min(lightmap + srr_terrain_shadow, 1)                               (per pixel)
 ##     pixel = texture x lit x term
 ##
@@ -35,7 +35,7 @@ class_name TerrainLight
 const GLOBAL_DIFFUSE := &"srr_terrain_diffuse"
 const GLOBAL_AMBIENT := &"srr_terrain_ambient"
 const GLOBAL_SHADOW := &"srr_terrain_shadow"
-## OURS (round 787, NightLight): the night's scale on the lit colour, after
+## OURS (round 786, NightLight): the night's scale on the lit colour, after
 ## retail's clamp -- so a zone whose night keys saturate the clamp (as at
 ## Bandit's Mountain Stronghold) still darkens. 1 with Night Darkness at
 ## Original and by day.
@@ -94,7 +94,7 @@ void vertex() {
 	// Retail's terrain vertex shader: mad oD0, N.L, c[DIFFUSE], c[AMBIENT],
 	// saturated into the colour register -- N.L is the vertex colour's red.
 	lit = tint * clamp(COLOR.r * srr_terrain_diffuse.rgb + srr_terrain_ambient.rgb, 0.0, 1.0);
-	// OURS (round 787, NightLight): the night's scale, after the clamp.
+	// OURS (round 786, NightLight): the night's scale, after the clamp.
 	lit *= srr_terrain_night.rgb;
 	if (!OUTPUT_IS_SRGB) {
 		lit = srr_srgb_to_linear(lit);

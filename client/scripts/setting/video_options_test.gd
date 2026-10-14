@@ -97,7 +97,7 @@ func _rows() -> void:
 	for r in VideoOptions.ROWS:
 		entries.append(int(r["entry"]))
 	_check(entries == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 19, 20, 17], "the list: retail's rows 0..13 and 15 (READ, 14 never listed), then SSAO, the temporary fog row, Night Darkness, Shadows Follow the Sun and the renderer (OURS)")
-	# Round 787: the two OURS rows, the player's under every preset.
+	# Round 786: the two OURS rows, the player's under every preset.
 	var pn := VideoOptions.Profile.new()
 	_check(pn.value(VideoOptions.NIGHT) == 2 and pn.value(VideoOptions.SUN_SHADOWS) == 1, "Night Darkness defaults to Dark, Shadows Follow the Sun to On (the user's requests, OURS)")
 	VideoOptions.set_row(pn, VideoOptions.NIGHT, 0)
@@ -446,7 +446,7 @@ func _page() -> void:
 	_check(not page.combo_of(VideoOptions.LENS_FLARE).disabled, "Lens Flare is not greyed")
 	_check(ssao != null and ssao.tooltip_text.contains("Forward+"), "... with a tooltip naming Forward+")
 	_check(page.slot_label(page.slot_of(VideoOptions.BLOOM)).text.ends_with("(Glow)"), "Bloom's row says it is the glow")
-	# Round 787: Night Darkness and Shadows Follow the Sun before the renderer.
+	# Round 786: Night Darkness and Shadows Follow the Sun before the renderer.
 	page.scroll_to(4)
 	await _frames()
 	_check(page.entry_at_slot(9) == VideoOptions.NIGHT and page.entry_at_slot(10) == VideoOptions.SUN_SHADOWS and page.entry_at_slot(11) == VideoOptions.RENDERER,

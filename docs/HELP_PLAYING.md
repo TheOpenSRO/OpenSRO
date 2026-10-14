@@ -189,9 +189,17 @@ are heard at once. **Confirm** saves and closes, **Apply** saves, **Default**
 sets all three to 50 and clears the mutes, and **Cancel**, the close button or
 Escape put back what was saved. The starting volumes are the original's:
 **Music 30, Effects 50, Environment 50** (0 is -20 dB, 100 is full). They are
-kept in the `[audio]` section of `settings.cfg` (next to the log). The Video,
-Input and Game tabs are drawn but do nothing yet; the debug panel (Shift+F3)
-still has the UI scale and camera settings. Without `Music.pk2` in your `pk2`
+kept in the `[audio]` section of `settings.cfg` (next to the log). The Input
+and Game tabs are drawn but do nothing yet; the debug panel (Shift+F3) still
+has the UI scale and camera settings.
+
+**Night and shadows (this client's own Video rows):** **Night Darkness**
+decides how dark the night gets -- *Original* draws it exactly as the zone's
+own lighting sets it (in many zones nearly as bright as day), *Dim* and *Dark*
+(the default) lower the world's light after sunset. **Shadows Follow the Sun**
+(on by default) turns the shadows with the sun through the day -- long at dawn
+and dusk, short at noon, faint from the moon at night; it shows with **Shadow
+Detail** on *Detail*. Off keeps the original's one fixed shadow direction. Without `Music.pk2` in your `pk2`
 folder the world is silent and the log says so.
 
 ## Developer and debug panels

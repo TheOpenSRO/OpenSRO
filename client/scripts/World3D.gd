@@ -480,7 +480,7 @@ func apply_video_options(o: VideoOptions) -> void:
 	# Fog (temporary), OURS (round 702): the original's fog or none.
 	if changed.call(VideoOptions.FOG):
 		_apply_fog()
-	# Night Darkness and Shadows Follow the Sun (OURS, round 787, NightLight):
+	# Night Darkness and Shadows Follow the Sun (OURS, round 786, NightLight):
 	# every group written again at the new scale; the shadow light taken to the
 	# hour at once (or back to the fixed light).
 	if before != null and (changed.call(VideoOptions.NIGHT) or changed.call(VideoOptions.SUN_SHADOWS) or changed.call(VideoOptions.SHADOW)):
@@ -3187,7 +3187,7 @@ func _apply_object_light() -> void:
 	var bloom := video_options().value(VideoOptions.BLOOM) == 1
 	var d: Color = _object_light_channels[0] if not _object_light_channels.is_empty() else ObjectLight.FALLBACK_CHANNEL
 	var a: Color = _object_light_channels[1] if not _object_light_channels.is_empty() else ObjectLight.FALLBACK_CHANNEL
-	# OURS (round 787, NightLight): the night's scale on the world's objects
+	# OURS (round 786, NightLight): the night's scale on the world's objects
 	# and characters; the portrait and the paper doll below keep the zone's
 	# own light. 1 in a dungeon (its own light) and by day.
 	var nk := _night_k if _dungeon == null else 1.0
@@ -4900,7 +4900,7 @@ func _day_tick(delta: float) -> void:
 	var t0 := Time.get_ticks_usec() if fs else 0
 	var now := Time.get_ticks_msec()
 	var resample := now - _day_sample_at >= DAY_SAMPLE_MS
-	# The shadow light (OURS, round 787): its target with each sample, its
+	# The shadow light (OURS, round 786): its target with each sample, its
 	# glide every frame until it arrives.
 	if resample:
 		_sun_shadow_target(_current_day_phase())
@@ -4919,7 +4919,7 @@ func _day_tick(delta: float) -> void:
 	if fs:
 		FrameSplit.add("w_day", Time.get_ticks_usec() - t0)
 
-## OURS (round 787, NightLight): the night's scale now -- 1 on the front end
+## OURS (round 786, NightLight): the night's scale now -- 1 on the front end
 ## (its fixed hour keeps retail's look), in a dungeon, with no record and with
 ## Night Darkness at Original.
 var _night_k := 1.0
@@ -4939,7 +4939,7 @@ func _night_scale(st: DayCycle.State) -> float:
 	return NightLight.scale(_night_noon, NightLight.light_metric(st.diffuse, st.object_ambient),
 		NightLight.amount(_env_time), lvl)
 
-## The shadow light (OURS, round 787, NightLight): the direction to it and its
+## The shadow light (OURS, round 786, NightLight): the direction to it and its
 ## strength as applied, the target, and whether the glide has arrived.
 var _sun_shadow_dir := Vector3.ZERO
 var _sun_shadow_goal := Vector3.ZERO
@@ -4948,7 +4948,7 @@ var _sun_shadow_settled := true
 ## Whether the light is turned from the scene's (the row on).
 var _sun_shadow_active := false
 ## The scene's own light basis (the fixed direction the shadows kept before
-## round 787, and keep with the row Off), taken before the first turn.
+## round 786, and keep with the row Off), taken before the first turn.
 var _scene_light_basis := Basis.IDENTITY
 var _scene_light_taken := false
 
@@ -5049,7 +5049,7 @@ func _day_take(group: String, values: Array, eps: float, force: bool) -> bool:
 func _day_push(st: DayCycle.State, force: bool) -> void:
 	if st == null:
 		return
-	# OURS (round 787, NightLight): the night's scale -- k on the lights,
+	# OURS (round 786, NightLight): the night's scale -- k on the lights,
 	# k^0.75 on the sky, the fog and the clouds; 1 by day, at Original, on the
 	# front end and with no record. Every group below writes the scaled value.
 	_night_k = _night_scale(st)
@@ -5120,7 +5120,7 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	if OS.get_environment("OPENSRO_QA_FOG_RAW") != "":
 		# QA only: the pre-review colour, for a before/after on one build.
 		fog_color = st.fog
-	# OURS (round 787): the night's k^0.75, so the distance does not glow
+	# OURS (round 786): the night's k^0.75, so the distance does not glow
 	# over a darkened ground.
 	fog_color = NightLight.scaled(fog_color, ns)
 	if _day_take("fog", [fog_color, st.fog_near, st.fog_far], DAY_EPSILON, force):
@@ -10877,7 +10877,7 @@ func _terrain_light_into(job: Dictionary) -> void:
 	var light_dir := Vector3.ZERO
 	if _env_light_ready and directional_light != null:
 		# The scene light's own direction (round 786's), not the shadow light's
-		# turn (round 787, OURS): the terrain's N.L is retail's fixed light.
+		# turn (round 786, OURS): the terrain's N.L is retail's fixed light.
 		var to_light := _fixed_to_light().normalized()
 		light_dir = Vector3(to_light.x, to_light.y, -to_light.z)
 	job["light_dir"] = light_dir
@@ -17117,7 +17117,7 @@ func _qa_advance_shots() -> void:
 		if OS.get_environment("OPENSRO_QA_PICK_SWEEP") != "":
 			_qa_pick_sweep(_qa_shots[_qa_shot_index]["name"])
 		print(_camera_report(_qa_shots[_qa_shot_index]["name"]))
-		# Round 787 (OURS, NightLight): the night's scale and the shadow light.
+		# Round 786 (OURS, NightLight): the night's scale and the shadow light.
 		var to_l := directional_light.global_transform.basis.z if directional_light != null else Vector3.ZERO
 		print("QA NIGHT %s phase %.4f amount %.3f k %.3f terrain_night %.3f obj_ambient %s obj_diffuse %s shadow_to_light (%.3f, %.3f, %.3f) elevation %.1f strength %.2f catcher_k %.3f" % [
 			_qa_shots[_qa_shot_index]["name"], _env_time, NightLight.amount(_env_time), _night_k, TerrainLight.current_night,
