@@ -13554,6 +13554,7 @@ func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = ""
 		# is stopped at the death. The server would refuse it anyway.
 		print("World3D: attack on monster %d while dead -- not sent" % monster_id)
 		return
+	LatencyProbe.attack_click(monster_id, Time.get_ticks_msec())
 	# A new attack replaces one still walking into reach, and the walk that was
 	# for it ends too: a self-cast pressed on the way (the no_walk path below)
 	# would otherwise go out while the character kept walking to the old stop
@@ -17130,12 +17131,18 @@ func _qa_fight_step() -> void:
 	if now < _qa_fight_next_ms or _player_dead:
 		return
 	_qa_fight_next_ms = now + 500
+	# Round 786: not during the arrival's protection (body mode 2), whose
+	# refusal would leave the target alive and the loop waiting on it.
+	if NetClient.own_body_mode != 0:
+		_qa_fight_target = -1
+		return
 	if _qa_fight_target != -1 and _monster_snapshots.has(_qa_fight_target) \
 			and _monster_bodies.has(_qa_fight_target) and not _dying_until.has(_qa_fight_target):
 		return
 	var wanted := OS.get_environment("OPENSRO_QA_ATTACK_NAME")
 	var best := -1
-	var best_d := 300.0
+	# Round 786: OPENSRO_QA_FIGHT=<n> above 1 widens the 300-unit pick.
+	var best_d := maxf(300.0, float(OS.get_environment("OPENSRO_QA_FIGHT")))
 	for monster_id in _monster_bodies:
 		if _dying_until.has(monster_id) or not _monster_snapshots.has(monster_id):
 			continue
@@ -24372,6 +24379,7 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# Round 655: no body outside the loaded regions. The snapshot is kept, and
 	# the body is built when its region loads (_monster_cells_changed).
 	if not _monster_region_loaded(Vector3(monster.x, monster.y, monster.z)):
+		LatencyProbe.monster_waits(monster.monster_id, "region")
 		_monster_build_queued.erase(monster.monster_id)
 		_monster_deferred[monster.monster_id] = true
 		return
@@ -24393,6 +24401,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		if not _monster_assemble.is_valid() and _data_pk2 == null:
 			_data_pk2 = _open_pk2_if_set()
 		_monster_templates.request(wanted_model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		LatencyProbe.monster_waits(monster.monster_id, "template")
 		var waiters: Dictionary = _monster_template_waiters.get(wanted_model, {})
 		waiters[monster.monster_id] = true
 		_monster_template_waiters[wanted_model] = waiters
@@ -24402,8 +24411,17 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# before the neighbour cells do -- and nothing else re-places a standing
 	# body. So a miss is drawn at the server's y for now and retried each
 	# physics frame (_book_monster_height, _step_monster_bodies).
+	LatencyProbe.lap_start()
+	# Round 786: the frame's one wait for the render thread, up front and
+	# taken off the reading's and the pump's budgets (RenderSync).
+	var waited := RenderSync.wait_once()
+	if waited > 0:
+		NetClient.credit_render_sync(waited)
+		_monster_pump_credit_usec += waited
+	LatencyProbe.lap("render_sync")
 	var pos := Vector3(monster.x, monster.y, monster.z)
 	pos.y = _book_monster_height(monster.monster_id, _terrain_hit_height(pos), pos.y)
+	LatencyProbe.lap("height")
 	var body := Node3D.new()
 	body.position = pos
 
@@ -24427,6 +24445,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	if monster_model != "":
 		var assembled := _monster_templates.instance(monster_model,
 			_monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		LatencyProbe.lap("instance")
 		if assembled != null:
 			monster_skeleton = assembled.skeleton
 			_monster_assembled[monster.monster_id] = assembled
@@ -24446,6 +24465,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 				label_height *= class_scale
 			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model) * class_scale)
 			_animate(assembled)
+			LatencyProbe.lap("animate")
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
 	# model placed somewhere the player will never be. Per monster, so only
@@ -24484,6 +24504,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		label_height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	label.name = "Label"
 	_monster_name_look(label)
+	LatencyProbe.lap("name_look")
 	body.add_child(label)
 	# A party monster's mark beside its name (round 660, _party_mark).
 	if monster.party:
@@ -24497,11 +24518,15 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# (MonsterMotion.front_of); "" for the capsule.
 	body.set_meta("model", monster_model if monster_skeleton != null else "")
 	body.add_child(_monster_collider(label_height))
+	LatencyProbe.lap("plate+collider")
 
 	if _qa_split != null and not _qa_split_off.is_empty():
 		_qa_split_strip(body, monster_skeleton)
 	other_entities.add_child(body)
+	LatencyProbe.lap("add_child")
 	_monster_bodies[monster.monster_id] = body
+	if LatencyProbe.on:
+		LatencyProbe.monster_body(monster.monster_id, Time.get_ticks_msec(), _xz_from_player(pos))
 	# Its minimap sign, decided once here (round 786, HudMinimap.monster_sign_kind).
 	if HudMinimap.monster_sign_kind(monster.rarity) == "unique":
 		_minimap_unique_bodies[monster.monster_id] = body
@@ -24515,10 +24540,12 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# Its object colour before its fade starts, so the fade's twins are made
 	# from the right copies (round 706 review).
 	_light_character(body)
+	LatencyProbe.lap("light")
 	_monster_builds += 1
 	# It fades into existence over 2.0 s, as retail's spawn does (round 676,
 	# AppearFade: READ, CICharactor vslot 0x6c FUN_009d17e0 -> CIDecoAppear).
 	_appear_fades.start(body)
+	LatencyProbe.lap("fade")
 	# Its buffs' auras, if the zone told any (round 646, BuffRoster).
 	_fx_resync_owner(_fx_owner_key(monster.monster_id, SkillNet.OWNER_MONSTER), "its body was built")
 	# Its sounds: keyed by its own sound object (MOB_CH_MANGNYANG ->
@@ -24537,6 +24564,8 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		# (OpMonsterAttacked's skill id; _draw_monster_strike sets it).
 		sound_owner.skill_ctx = func() -> Dictionary: return SkillAudio.context_of(body)
 		_anim_sounds.register(monster_skeleton, sound_owner)
+	LatencyProbe.lap("sound")
+	LatencyProbe.lap_end(monster.monster_id)
 
 # --- Many monsters (round 655) ------------------------------------------------
 #
@@ -24614,6 +24643,10 @@ func _monster_region_loaded(pos: Vector3) -> bool:
 	var cell := RegionGridState.cell_at(pos - _grid_origin_world)
 	return _grid.loaded_cells.has("%d_%d" % [cell.x, cell.y])
 
+## The render thread's wait a body build in this pump made (RenderSync),
+## taken off the pump's budget.
+var _monster_pump_credit_usec := 0
+
 ## Queues a listed monster's body for _pump_monster_builds.
 func _queue_monster_build(monster_id: int) -> void:
 	if _monster_build_queued.has(monster_id) or _monster_bodies.has(monster_id):
@@ -24647,8 +24680,9 @@ func _pump_monster_builds(budget_usec: int = MonsterDraw.BUILD_BUDGET_USEC) -> i
 	var started := Time.get_ticks_usec()
 	var built := 0
 	var taken := 0
+	_monster_pump_credit_usec = 0
 	while taken < _monster_build_queue.size():
-		if built >= MonsterDraw.MIN_BUILDS_PER_FRAME and Time.get_ticks_usec() - started >= budget_usec:
+		if built >= MonsterDraw.MIN_BUILDS_PER_FRAME and Time.get_ticks_usec() - started - _monster_pump_credit_usec >= budget_usec:
 			break
 		var monster_id: int = _monster_build_queue[taken]
 		taken += 1
@@ -24746,9 +24780,17 @@ func _free_monster_body(monster_id: int, keep_buffs: bool = false, fade: bool = 
 	_monster_heights_pending.erase(monster_id)
 	_strike_waits.erase(monster_id)
 
+## Round 786 (QA, LatencyProbe): how far `at` is from the player on the
+## ground plane.
+func _xz_from_player(at: Vector3) -> float:
+	if player == null:
+		return 0.0
+	return Vector2(at.x - player.global_position.x, at.z - player.global_position.z).length()
+
 ## Forgets a monster entirely: its body, its snapshot and any queued or
 ## deferred build. `fade`: its body fades out (_free_monster_body).
 func _forget_monster(monster_id: int, fade: bool = false) -> void:
+	LatencyProbe.monster_forget(monster_id)
 	_free_monster_body(monster_id, false, fade)
 	_monster_snapshots.erase(monster_id)
 	_monster_deferred.erase(monster_id)
@@ -25347,10 +25389,14 @@ func _sync_monster_bodies(live: Array) -> void:
 		_monster_snapshots[m.monster_id] = m
 		if _dying_until.has(m.monster_id):
 			continue
+		if LatencyProbe.on:
+			LatencyProbe.monster_recv(m.monster_id, Time.get_ticks_msec(), _xz_from_player(Vector3(m.x, m.y, m.z)), "list")
 		if not _monster_region_loaded(Vector3(m.x, m.y, m.z)):
+			LatencyProbe.monster_waits(m.monster_id, "region")
 			_monster_deferred[m.monster_id] = true
 			continue
 		_monster_deferred.erase(m.monster_id)
+		LatencyProbe.monster_waits(m.monster_id, "queue")
 		_queue_monster_build(m.monster_id)
 
 	var removed: Array = []
@@ -25738,6 +25784,8 @@ func _on_attack_pressed() -> void:
 func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result == null:
 		return
+	if LatencyProbe.on:
+		LatencyProbe.attack_result(result.monster_id, Time.get_ticks_msec(), result.error)
 	# A self or ground cast's reply (round 617) is not a blow on the target:
 	# no swing, no flinch, no counter, and the monster cast still in flight
 	# keeps its hit effect. The health bar is painted by the other handler.
@@ -28614,6 +28662,8 @@ func _on_monster_spawned(spawned: CombatNet.MonsterSpawned) -> void:
 	if _dying_until.has(m.monster_id):
 		return
 	var known := _monster_bodies.has(m.monster_id)
+	if LatencyProbe.on and not known:
+		LatencyProbe.monster_recv(m.monster_id, Time.get_ticks_msec(), _xz_from_player(Vector3(m.x, m.y, m.z)), "push")
 	_spawn_or_update_monster(m)
 	_face_monster_heading(m.monster_id, spawned.heading)
 	print("World3D: monster %d spawned (push) %s at (%.1f,%.1f) heading %.2f%s" % [

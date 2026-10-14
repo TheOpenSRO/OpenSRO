@@ -408,6 +408,27 @@ var _tls_host := ""
 var _resolve_id := -1
 var _resolve_port := 0
 
+## Round 786 (MEASURED; the choice is OURS): Nagle's algorithm off on the
+## game connection (TCP_NODELAY), so a request is written when it is sent.
+## With it on -- StreamPeerTCP's default, and this client's until round 786 --
+## a small packet written while an earlier one is still unacknowledged waits
+## for that acknowledgement, and a server that has nothing to answer the
+## earlier one with acknowledges it late (the delayed ACK: 40 ms on Linux,
+## up to 200 ms on Windows; macOS's timer is 100 ms, INFERRED from XNU). The
+## walk into reach ends with exactly that pair: the stop report (OpMove with
+## the stop flag, which the server relays to the watchers, not the mover) and
+## then the attack or the cast (World3D._release_pending_attack). MEASURED on
+## the render box against the full-map server: an attack's request->result
+## 49-52 ms for 97 of 120 clicks with Nagle on (round 786's table);
+## tools/nagle_probe.gd measures the bare socket: 40.9 ms against 0.3 ms.
+## Retail sets no TCP_NODELAY (READ: sro_client.exe's six setsockopt calls,
+## 0x4b0586, 0x4b2640, 0x4c0731, 0x4c077e, 0x4c0801, 0x4c352d, are all
+## SOL_SOCKET 0xffff), but retail sends one request for the whole action --
+## 0x7074, the server walks the player into reach -- so nothing waits behind
+## an unanswered packet there. OPENSRO_NAGLE=1 turns it back on (an A/B aid).
+static func no_delay_wanted() -> bool:
+	return OS.get_environment("OPENSRO_NAGLE") != "1"
+
 func _process(_delta: float) -> void:
 	_check_list_timeout(Time.get_ticks_msec())
 	if _tcp_peer == null:
@@ -422,6 +443,8 @@ func _process(_delta: float) -> void:
 		var status := _tcp_peer.get_status()
 		if status == StreamPeerTCP.STATUS_CONNECTED:
 			_connecting = false
+			# Round 786: every request goes out at once (no_delay_wanted).
+			_tcp_peer.set_no_delay(no_delay_wanted())
 			if _use_tls:
 				var tls_peer := StreamPeerTLS.new()
 				# InsecureSkipVerify-equivalent: this project's dev/local
@@ -511,6 +534,7 @@ func _drain() -> void:
 func _net_frame(poll: Callable) -> void:
 	var fs := FrameSplit.on
 	var frame_t0 := Time.get_ticks_usec()
+	_sync_credit_usec = 0
 	if _group_job != null:
 		var tg := Time.get_ticks_usec()
 		var done := _group_step()
@@ -528,7 +552,7 @@ func _net_frame(poll: Callable) -> void:
 		if _group_job != null:
 			_read_during_group(poll, frame_t0)
 			return
-		if dispatched > 0 and Time.get_ticks_usec() - frame_t0 >= NET_FRAME_BUDGET_USEC:
+		if dispatched > 0 and _spent(frame_t0) >= NET_FRAME_BUDGET_USEC:
 			_drain()
 			return
 		dispatched += 1
@@ -547,7 +571,7 @@ func _net_frame(poll: Callable) -> void:
 		if _group_job != null:
 			_read_during_group(poll, frame_t0)
 			break
-		if dispatched > 0 and Time.get_ticks_usec() - frame_t0 >= NET_FRAME_BUDGET_USEC:
+		if dispatched > 0 and _spent(frame_t0) >= NET_FRAME_BUDGET_USEC:
 			_drain()
 			break
 		dispatched += 1
@@ -558,6 +582,19 @@ func _net_frame(poll: Callable) -> void:
 		if p == null:
 			break
 		_dispatch_timed(p, fs)
+
+## Round 786 (RenderSync): the frame's wait for the render thread, made by a
+## body build inside a dispatch, is not the dispatch's own work: it is taken
+## off the budget, so a burst of monsters entering the view is read in one
+## frame, not one a frame.
+var _sync_credit_usec := 0
+
+func credit_render_sync(usec: int) -> void:
+	_sync_credit_usec += usec
+
+## What this frame's reading has spent of NET_FRAME_BUDGET_USEC.
+func _spent(frame_t0: int) -> int:
+	return Time.get_ticks_usec() - frame_t0 - _sync_credit_usec
 
 func _dispatch_timed(p: Packet, fs: bool) -> void:
 	if not fs:
@@ -594,7 +631,7 @@ var _held_groups := 0
 ## or held.
 func _read_during_group(poll: Callable, frame_t0: int) -> void:
 	var fs := FrameSplit.on
-	while Time.get_ticks_usec() - frame_t0 < NET_FRAME_BUDGET_USEC:
+	while _spent(frame_t0) < NET_FRAME_BUDGET_USEC:
 		var p: Packet = poll.call()
 		if p == null:
 			break
@@ -1099,6 +1136,8 @@ func attack(char_name: String, target_monster_id: int) -> void:
 	if not is_connected_to_server():
 		return
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
+	if LatencyProbe.on:
+		LatencyProbe.attack_send(target_monster_id, Time.get_ticks_msec())
 	_attack_targets_in_flight.append(target_monster_id)
 	_attack_types_in_flight.append(SkillNet.TARGET_ENTITY)
 
@@ -1140,6 +1179,8 @@ func use_skill(char_name: String, skill_id: int, target_monster_id: int,
 		print("CAST send skipped (not connected): skill %d targetType %d" % [skill_id, target_type])
 		return
 	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id, target_type, point))
+	if LatencyProbe.on and target_type == SkillNet.TARGET_ENTITY:
+		LatencyProbe.attack_send(target_monster_id, Time.get_ticks_msec())
 	_attack_targets_in_flight.append(target_monster_id)
 	_attack_types_in_flight.append(target_type)
 	match target_type:
