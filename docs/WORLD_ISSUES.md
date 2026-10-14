@@ -8985,7 +8985,7 @@ turns lighting off for material flag 0x8 (lamps) and runs night-only particles. 
 around Bandit's Mountain Stronghold is as bright as its noon**, and our client was drawing it
 correctly. The dark night is an OURS deviation, as the user asked.
 
-**Dark nights (OURS, `NightLight`; the Night Darkness row: Original / Dim / Dark, default Dark).** The
+**Dark nights (OURS, `NightLight`; the Night Darkness row: Original / Dim / Dark; default Dark in v0.1.543, Original from v0.1.544 at the user's choice -- retail's nights are this mild).** The
 night amount is `1 - smoothstep(-0.25, 0.1, sun height)` of the READ sun (dark falls from clock 19:29,
 full from 20:39 to 03:21, gone by 04:30). At full night the zone's light (luma of channels 2 + 3) is
 brought to Dim 0.5 / Dark 0.3 of the same zone's noon light -- so environment 23 and 15 end equally

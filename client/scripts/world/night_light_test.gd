@@ -174,6 +174,8 @@ func _test_world_push() -> void:
 	world.set("world_environment", we)
 	var o := VideoOptions.new()
 	VideoOptions.set_row(o.current(), VideoOptions.SHADOW, 2)
+	# Dark, set here: the default is Original since v0.1.544 (no darkening).
+	VideoOptions.set_row(o.current(), VideoOptions.NIGHT, 2)
 	world.set("_video", o)
 	var rec := _record(Color(0.72, 0.72, 0.72), Color(0.70, 0.74, 0.76))
 	world.set("_env_record", rec)

@@ -194,9 +194,9 @@ and Game tabs are drawn but do nothing yet; the debug panel (Shift+F3) still
 has the UI scale and camera settings.
 
 **Night and shadows (this client's own Video rows):** **Night Darkness**
-decides how dark the night gets -- *Original* draws it exactly as the zone's
-own lighting sets it (in many zones nearly as bright as day), *Dim* and *Dark*
-(the default) lower the world's light after sunset. **Shadows Follow the Sun**
+decides how dark the night gets -- *Original* (the default) draws it exactly as the
+zone's own lighting sets it (in many zones nearly as bright as day), *Dim* and
+*Dark* lower the world's light after sunset. **Shadows Follow the Sun**
 (on by default) turns the shadows with the sun through the day -- long at dawn
 and dusk, short at noon, faint from the moon at night; it shows with **Shadow
 Detail** on *Detail*. Off keeps the original's one fixed shadow direction. Without `Music.pk2` in your `pk2`

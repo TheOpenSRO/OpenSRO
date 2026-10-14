@@ -43,7 +43,8 @@ class_name NightLight
 ## Bandit area kept a luma of 74 over a ground of 15). The
 ## sun disc, the moon, the effects and the interface are not touched.
 ## `level` is the Night Darkness row: Original (no change -- retail's own
-## values), Dim (0.5) and Dark (0.3, the default). Only the world's clock
+## values; the default since 2026-10-14, the user's choice), Dim (0.5) and
+## Dark (0.3). Only the world's clock
 ## drives it: the front end's fixed hour and a dungeon keep retail's values.
 ##
 ## **Shadows that follow the sun (OURS).** Retail's character shadows (Shadow
@@ -70,7 +71,7 @@ class_name NightLight
 ## The Night Darkness row's levels (OURS): the night's light as a fraction of
 ## the zone's noon light; 0 is Original (no darkening).
 const LEVELS := [0.0, 0.5, 0.3]
-const DEFAULT_CHOICE := 2
+const DEFAULT_CHOICE := 0
 const CHOICE_NAMES := ["Original", "Dim", "Dark"]
 
 ## The night amount by the sun's height (the y of DayCycle.sun_direction,

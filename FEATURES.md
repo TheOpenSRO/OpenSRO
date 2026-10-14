@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.543** plus what is merged on `dev`; updated 2026-10-13.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.544** plus what is merged on `dev`; updated 2026-10-13.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -87,7 +87,7 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Saved position on logout | ✅ Supported | Server option, on for the public server; recall and death points always saved |
 | Minimap | ✅ Supported | NPC, monster, player, party, quest NPC and unique signs; no pet sign |
 | World map | 🟡 Partial | Map, dungeon floors and city icons; guide list and sign tooltips missing |
-| Time of day | 🟡 Partial | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; dark nights (Night Darkness option); night lamps not yet |
+| Time of day | 🟡 Partial | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; optional darker nights (Night Darkness); night lamps not yet |
 | Weather (rain, snow) | ❌ Not yet | No weather system yet |
 | Fog and water | ✅ Supported | Retail fog planes; animated water with reflection option |
 | Seasonal decorations | 🟡 Partial | Christmas, Halloween and others available but off by default |

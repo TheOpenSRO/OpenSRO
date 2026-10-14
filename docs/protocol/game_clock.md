@@ -142,7 +142,7 @@ rows (`NightLight`, `VideoOptions.NIGHT` / `SUN_SHADOWS`) sit on the clock's pha
 | 03:21 | 05:02 | 0.210 | night begins to lift | the moon until it sets (phase 0.208) |
 
 The night amount is `1 - smoothstep(-0.25, 0.1, sin(sun height))` of the READ sun (DayCycle); at
-full night the zone's light is Dim 0.5 / Dark 0.3 (the default) of its own noon light, Original
+full night the zone's light is Dim 0.5 / Dark 0.3 of its own noon light (the default is Original, no darkening, since 2026-10-14), Original
 leaves retail's values. The moon casts only while retail draws it (the clock's day below 29): on a
 server up 29 game days or more (13.9 hours) the nights have no moon and no night shadows (the
 day-wrap question is the user's to decide; not changed here). The front end's fixed title hour is

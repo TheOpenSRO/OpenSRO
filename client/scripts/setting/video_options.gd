@@ -105,7 +105,7 @@ const RENDERER := 17
 ## no preset names it: the player's value in every quality.
 const FOG := 18
 ## OURS (round 786, the user's requests; NightLight): how dark the night gets
-## -- Original (retail's own night keys, no change), Dim, Dark (the default)
+## -- Original (retail's own night keys, no change; the default, the user's choice of 2026-10-14), Dim, Dark
 ## -- and whether Shadow Detail's shadows follow the sun and the moon (On, the
 ## default) or keep the fixed light (Off). Retail has neither row; no preset
 ## names them.
@@ -192,7 +192,7 @@ const PRESETS := {
 const DEFAULTS := {
 	SHADOW: 1, SCENERY: 2, CHARACTER: 2, WATER_REFLECTION: 0, WATER_DETAIL: 1, METAL: 1,
 	LIGHT: 1, FILTERING: 1, TEXTURE: 1, LENS_FLARE: 1, BLOOM: 1, DYNAMIC_ANIMATION: 1,
-	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0, FOG: 1, NIGHT: 2, SUN_SHADOWS: 1,
+	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0, FOG: 1, NIGHT: 0, SUN_SHADOWS: 1,
 }
 ## The user's decision (2026-10-02): retail's default, Middle (READ).
 const DEFAULT_QUALITY := QUALITY_MIDDLE

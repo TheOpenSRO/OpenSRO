@@ -425,7 +425,7 @@ follows the camera's block. The procedural sky's own sun disc is off (`GammaSkyM
 procedural_sun`).
 
 **OURS on top (round 786, `NightLight`).** Night Darkness (Video row; Original / Dim / Dark,
-default Dark): after sunset every light World3D writes is scaled by k so that at full night the
+default Original since 2026-10-14): after sunset every light World3D writes is scaled by k so that at full night the
 zone's light (the luma of channels 2 + 3) is 0.5 / 0.3 of its own noon light, and never
 brightened: k on the objects' and characters' light (ObjectLight's globals), on the terrain's lit
 colour after retail's clamp (`srr_terrain_night`), on the directional light, the ambient and the
