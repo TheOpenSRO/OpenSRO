@@ -171,6 +171,8 @@ var step_split := Vector3i.ZERO
 ## The whole tick's time and frames since the last describe() (its mean).
 var _sum_usec := 0
 var _sum_frames := 0
+## The same split: decide, build, place + draws, simulation.
+var _sum_split := Vector4i.ZERO
 
 func size() -> int:
 	return _count
@@ -305,6 +307,7 @@ func tick(delta: float, eye: Vector3, planes: Array, now_ms: int) -> void:
 	_step(delta)
 	step_usec = Time.get_ticks_usec() - t2
 	_sum_usec += Time.get_ticks_usec() - t0
+	_sum_split += Vector4i(decide_usec, build_usec, step_split.x + step_split.z, step_split.y)
 	_sum_frames += 1
 
 ## The range decision for every sector that could hold a host in range.
@@ -480,6 +483,7 @@ static func box_in_view(box: AABB, planes: Array) -> bool:
 
 ## The stepping effects, as World3D._step_dungeon_effects steps a dungeon's.
 func _step(delta: float) -> void:
+	step_split = Vector3i.ZERO
 	if _stepping.is_empty():
 		return
 	var t0 := Time.get_ticks_usec()
@@ -550,9 +554,12 @@ func describe() -> String:
 		if is_instance_valid(fx_v):
 			var k := String((fx_v as EfpEffect).path).get_file()
 			names[k] = int(names.get(k, 0)) + 1
-	var mean := float(_sum_usec) / maxf(float(_sum_frames), 1.0)
+	var n := maxf(float(_sum_frames), 1.0)
+	var mean := float(_sum_usec) / n
+	var split := "decide %.1f, build %.1f, place+draw %.1f, sim %.1f" % [_sum_split.x / n, _sum_split.y / n, _sum_split.z / n, _sum_split.w / n]
 	_sum_usec = 0
 	_sum_frames = 0
-	return "%d host(s) in %d sector(s), %d in range, %d built (%d effects), %d effects stepping %s, waiting %d; this frame decide %d us, build %d us, step %d us (place %d, sim %d, draw %d); mean %.1f us a frame" % [
+	_sum_split = Vector4i.ZERO
+	return "%d host(s) in %d sector(s), %d in range, %d built (%d effects), %d effects stepping %s, waiting %d; this frame decide %d us, build %d us, step %d us (place %d, sim %d, draw %d); mean %.1f us a frame (%s)" % [
 		_count, _sectors.size(), hosts_on, hosts_built, effects_built, _stepping.size(), str(names), _to_build.size(),
-		decide_usec, build_usec, step_usec, step_split.x, step_split.y, step_split.z, mean]
+		decide_usec, build_usec, step_usec, step_split.x, step_split.y, step_split.z, mean, split]
