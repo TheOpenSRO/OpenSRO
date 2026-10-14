@@ -280,6 +280,13 @@ func reset() -> void:
 	hosts_built = 0
 	effects_built = 0
 
+## Whether this frame's tick has nothing to do: no decision due, no host in
+## range and visited, nothing waiting to be built. The world skips the tick
+## then (and the camera it would look up): most frames in a town with no
+## effect in view.
+func idle(now_ms: int) -> bool:
+	return _count == 0 or (not _changed and now_ms < _next_ms and _seen.is_empty() and _to_build.is_empty())
+
 ## Whether this frame's tick tests anything against the view: a decision is
 ## due, or a host is in range and visited (its effects' per-frame test).
 func wants_view(eye: Vector3, now_ms: int) -> bool:

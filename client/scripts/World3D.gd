@@ -10227,14 +10227,16 @@ var _qa_world_fx := OS.get_environment("OPENSRO_QA_WORLD_FX") == "1"
 ## Once a rendered frame: the hosts' range from the camera, the builds, the
 ## step (WorldAmbientFx.tick).
 func _tick_world_fx(delta: float) -> void:
-	if not _world_fx_on or _world_fx.size() == 0:
+	if not _world_fx_on:
+		return
+	var now := Time.get_ticks_msec()
+	if _world_fx.idle(now):
 		return
 	if _world_fx.particles == null:
 		_world_fx.particles = _open_particles_pk2_if_set()
 		_world_fx.ambient = _ambient
 	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
 	var eye: Vector3 = cam.global_position if cam != null else (player.global_position if player != null else Vector3.ZERO)
-	var now := Time.get_ticks_msec()
 	# The frustum only on a frame that tests anything against it.
 	var planes: Array = cam.get_frustum() if cam != null and _world_fx.wants_view(eye, now) else []
 	_world_fx.tick(delta, eye, planes, now)
