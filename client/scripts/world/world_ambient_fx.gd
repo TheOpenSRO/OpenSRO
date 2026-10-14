@@ -54,12 +54,15 @@ class_name WorldAmbientFx
 ##   until the host goes. Its files are decoded on WorkerThreadPool first
 ##   (EfpEffect.preload_paths), and at most BUILD_BUDGET_USEC of building is
 ##   done a frame.
-## - "The sector is in view" is MapAnimation.sector_in_view (the sector
-##   cell's circle against the frustum); "drawn" is Godot's own culling of
-##   each draw. A host out of range is hidden and its effects paused; in
-##   range but in a sector out of view, its effects are paused and left
-##   drawn (Godot culls them), as the original leaves an unvisited sector's
-##   objects as they were.
+## - "A sector listing it is in view" is the object's own box (its meshes and
+##   its effects' cull boxes) against the frustum: the `.o2` lists a big
+##   object in every sector it reaches (MAPO2_FORMAT.md, round 643), so the
+##   original visits it while any of them is in view -- Alexandria's library
+##   (3,445 units across) stands with its origin 800 units from its fountain.
+##   "Drawn" is Godot's own culling of each draw. A host out of range is
+##   hidden and its effects paused; in range but out of view, its effects are
+##   paused and left drawn (Godot culls them), as the original leaves an
+##   unvisited sector's objects as they were.
 ## - The range is decided every RETEST_MS, not every frame (the original's
 ##   per frame): a host crosses the edge up to that late.
 ## - The effects step once a rendered frame as one batch (EfpSimBatch, in Rust
@@ -95,8 +98,9 @@ class Host:
 	## In range (drawn), and in range in a sector in view.
 	var on := false
 	var seen := false
-	## The box its effects draw in (each one's EfpEffect.DRAW_AABB where it
-	## stands), once built: the per-frame view test.
+	## Its meshes' world box, and with its effects' cull boxes once built
+	## (view_box_of): the visit test and the per-frame view test.
+	var box := AABB()
 	var view_box := AABB()
 	var built := false
 	var asked := false
@@ -176,6 +180,8 @@ func add(root: Node3D, near: bool) -> int:
 		h.near = near
 		h.origin = root.global_position
 		h.radius = object_radius(root)
+		h.box = AmbientParticles._host_box(root)
+		h.view_box = h.box
 		var centre := sector_centre(root)
 		var key := "%d:%d" % [roundi(centre.x), roundi(centre.z)]
 		var s: Sector = _sectors.get(key)
@@ -278,7 +284,6 @@ func _decide(eye: Vector3, planes: Array) -> void:
 		# 3D distance >= the X-Z one: every host of the sector is out of range.
 		if s.quiet and d - s.rho - s.rmax >= reach:
 			continue
-		var seen := MapAnimation.sector_in_view(s.centre, planes)
 		var quiet := true
 		for h_v in s.hosts:
 			var h := h_v as Host
@@ -287,6 +292,7 @@ func _decide(eye: Vector3, planes: Array) -> void:
 				continue
 			# An unvisited sector's objects keep their state (READ): only
 			# their stepping stops.
+			var seen := box_in_view(h.view_box, planes)
 			var on := h.on
 			if seen:
 				on = in_range(h.origin, h.radius, h.near, s.centre, eye, far_range)
@@ -296,8 +302,8 @@ func _decide(eye: Vector3, planes: Array) -> void:
 			_set_on(h, on, seen and on)
 			if h.seen:
 				seen_hosts.append(h)
-				if not h.effects.is_empty():
-					h.view_box = view_box_of(h.effects)
+			if not h.effects.is_empty():
+				h.view_box = h.box.merge(view_box_of(h.effects))
 		s.quiet = quiet
 	_seen = seen_hosts
 	hosts_on = on_count
@@ -363,7 +369,8 @@ func _build(h: Host) -> void:
 		fx.use_native_sim()
 		h.effects.append(fx)
 		effects_built += 1
-	h.view_box = view_box_of(h.effects)
+	if not h.effects.is_empty():
+		h.view_box = h.box.merge(view_box_of(h.effects))
 	hosts_built += 1
 	_set_on(h, h.on, h.seen)
 
@@ -375,7 +382,7 @@ func _choose_stepping(planes: Array) -> void:
 	_stepping.clear()
 	for h_v in _seen:
 		var h := h_v as Host
-		if h.effects.is_empty() or not box_in_view(h.view_box, planes):
+		if h.effects.is_empty() or not box_in_view(view_box_of(h.effects), planes):
 			continue
 		for fx_v in h.effects:
 			if is_instance_valid(fx_v):

@@ -366,11 +366,24 @@ func _test_playback() -> void:
 	var age1 := fx.sim.age
 	wf.tick(0.05, away, cam.get_frustum(), 5200)
 	_check(fx.sim.age == age1, "a paused effect does not advance")
-	# Back in range, but looking away: drawn (Godot culls it), not stepped.
+	# Back in range, but looking away: an object the view does not reach is
+	# not visited, so it keeps its state (READ) -- here, off.
 	cam.global_transform = Transform3D(Basis(Vector3.UP, PI), Vector3(0, 10, 0))
 	wf.tick(0.05, cam.global_position, cam.get_frustum(), 5400)
-	_check(sh.on and fx.visible and wf.stepping().is_empty(),
-		"back in range looking away: shown again, its effects behind the eye do not step")
+	_check(not sh.on and wf.stepping().is_empty(),
+		"back in range looking away: not visited, so still off; nothing steps")
+	# Facing it again: visited, in range, shown and stepping.
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(0, 10, 0))
+	wf.tick(0.05, cam.global_position, cam.get_frustum(), 5600)
+	wf.tick(0.05, cam.global_position, cam.get_frustum(), 5616)
+	_check(sh.on and fx.visible and not fx.culled and wf.stepping().has(fx), "facing it again: shown and stepping")
+	# A big object is visited while its own box is in view, wherever its
+	# origin stands (the `.o2` lists it in every sector it reaches).
+	var big := WorldAmbientFx.Host.new()
+	big.box = AABB(Vector3(-2000, 0, -900), Vector3(4000, 50, 800))
+	big.view_box = big.box
+	_check(WorldAmbientFx.box_in_view(big.view_box, cam.get_frustum()) and not cam.is_position_in_frustum(Vector3(1800, 0, -100)),
+		"a 4,000-unit object whose origin is off to the side is still in view by its box")
 	AmbientParticles.effect_factory = Callable()
 	for p in ["map\\near.efp", "map\\far.efp", "map\\out.efp"]:
 		EfpEffect._templates.erase(p.to_lower())
