@@ -228,6 +228,19 @@ type Deps struct {
 	// Afflict is what /afflict drives (round 786, a test tool); nil refuses
 	// it. The session layer fills it in when the server leaves it nil.
 	Afflict AfflictControl
+	// Clock is what /hour drives (round 786); nil refuses it. The session
+	// layer fills it in when the server leaves it nil.
+	Clock ClockControl
+}
+
+// ClockControl is /hour's hook into the game clock (round 786): retail's
+// operator set-hour (SR_GameServer FUN_004154d0 case 10 -> FUN_00412be0,
+// READ) -- the hour clamped to 23, the day and the minute kept, every
+// character in the world told (0x3027).
+type ClockControl interface {
+	// SetHour re-bases the clock at hour and tells the world; it returns the
+	// clock's new reading and how many characters were told.
+	SetHour(hour int) (day, newHour, minute, told int)
 }
 
 // AfflictControl is /afflict's hook into the character's abnormal states
@@ -255,7 +268,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -310,6 +323,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.hurt(ctx, actor, args)
 	case "afflict":
 		res = d.afflict(actor, args)
+	case "hour":
+		res = d.hour(args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -453,6 +468,24 @@ func pagesOf(slots int) int {
 }
 
 func refuse(text string) Result { return Result{Text: text, Refused: true} }
+
+// hour is /hour <0-23> (round 786): the game clock's hour, set as retail's
+// operator tool sets it (ClockControl; READ). The value is a byte there; the
+// console takes 0..23 and refuses anything else rather than clamping it.
+func (d *Deps) hour(args []string) Result {
+	if d.Clock == nil {
+		return refuse("/hour is not available on this server")
+	}
+	if len(args) != 1 {
+		return refuse("usage: /hour <0-23>")
+	}
+	h, err := strconv.Atoi(args[0])
+	if err != nil || h < 0 || h > 23 {
+		return refuse("usage: /hour <0-23>")
+	}
+	day, nh, m, told := d.Clock.SetHour(h)
+	return Result{Text: fmt.Sprintf("game clock set to day %d %02d:%02d (%d character(s) told)", day, nh, m, told)}
+}
 
 // notice is /notice <text> (round 634, OURS as a command: retail's GM tool
 // that raises a notice was not read). The text goes out exactly as typed

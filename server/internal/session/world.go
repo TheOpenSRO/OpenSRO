@@ -1692,6 +1692,14 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	if dropped {
 		sendPlusesAsBroadcasts(sess, result.Others)
 	}
+	// The game clock (round 786, celestial.go): retail's EnterGame sends
+	// 0x3020 right after the character data, once per entry (READ, 0x403237
+	// -> 0x4e3eb0). The result stands in for the character data, so it
+	// follows the result. A client older than round 786 has no handler for
+	// it and logs it once as unhandled.
+	if err := sendCelestialPosition(sess, owned.ID, time.Now()); err != nil {
+		return err
+	}
 	// And again after the result (round 708's review, HIGH 1): the area of
 	// interest ticks on its own goroutine, so a tick between hub.Enter above
 	// and this Send could have sent the whole NPC window -- queued BEFORE the

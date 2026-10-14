@@ -50,6 +50,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/trade"
 	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldclock"
 	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
@@ -1065,6 +1066,15 @@ func main() {
 			"(0x3012), then untouchable for 6.0 s (body mode 2), as retail's re-entry does "+
 			"(docs/protocol/arrival_guard.md). A client that never reports is disconnected after 300 s. "+
 			"Off: the arrival is immediate, as before round 786 (clients older than round 786 never send 0x3012).")
+	worldClockOn := flag.Bool("world-clock", true,
+		"round 786: tell each character the game clock at world entry (0x3020) and the whole world when a "+
+			"GM sets the hour with /hour (0x3027), as retail does (docs/protocol/game_clock.md). The clock "+
+			"runs one game second every 20 ms -- a day every 28 min 48 s -- in both binaries (READ). Off: "+
+			"nothing is sent and a client draws the fixed midday it drew before round 786. A client older "+
+			"than round 786 ignores both messages.")
+	worldClockStart := flag.String("world-clock-start", os.Getenv("OPENSRO_WORLD_CLOCK_START"),
+		"round 786: the game clock's reading when the server starts, HH:MM (env OPENSRO_WORLD_CLOCK_START; "+
+			"OURS). Empty or 00:00 is retail's: day 0, 00:00 at the start (READ, SR_GameServer 0x427660).")
 	singleFrameEnv, singleFrameEnvErr := envBool("OPENSRO_SINGLE_FRAME")
 	singleFrame := flag.Bool("single-frame", singleFrameEnv,
 		"put the whole world in ONE coordinate frame (env OPENSRO_SINGLE_FRAME): every zone with a "+
@@ -1924,6 +1934,16 @@ func main() {
 	session.SetArrivalGuard(*arrivalGuard)
 	session.SetArrivalLogger(logger)
 	logger.Info("arrival guard", "on", *arrivalGuard)
+	// Round 786: the game clock (session/celestial.go, worldclock).
+	clockHour, clockMinute, clockErr := worldclock.ParseStart(*worldClockStart)
+	if clockErr != nil {
+		logger.Warn("-world-clock-start does not parse; the clock starts at 00:00", "err", clockErr)
+		clockHour, clockMinute = 0, 0
+	}
+	session.SetGameClock(worldclock.New(time.Now(), 0, clockHour, clockMinute))
+	session.SetClockAtEntry(*worldClockOn)
+	logger.Info("game clock", "sent", *worldClockOn, "start", fmt.Sprintf("day 0 %02d:%02d", clockHour, clockMinute),
+		"real_day", worldclock.RealDay.String())
 	if *trustPositions {
 		logger.Warn("trust-client-positions on: every position a client reports is taken (QA only)")
 	}

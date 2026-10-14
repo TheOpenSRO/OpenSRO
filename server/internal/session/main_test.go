@@ -40,6 +40,11 @@ func TestMain(m *testing.M) {
 	// once, so it is off here, and arrival786_test.go turns it on
 	// (guardOn).
 	arrivalGuardOn.Store(false)
+	// Round 786: the game clock's 0x3020 follows every world entry
+	// (celestial.go); the suite's older tests read the frames after the
+	// result in order, so it is off here, and celestial786_test.go turns it
+	// on.
+	clockAtEntry.Store(false)
 	release := testdb.Lock(inventoryTestDSN())
 	code := m.Run()
 	release()
