@@ -104,9 +104,19 @@ const RENDERER := 17
 ## no such option: its fog is always on (READ, Map::FUN_00a26f60). Like SSAO,
 ## no preset names it: the player's value in every quality.
 const FOG := 18
+## OURS (round 787, the user's requests; NightLight): how dark the night gets
+## -- Original (retail's own night keys, no change), Dim, Dark (the default)
+## -- and whether Shadow Detail's shadows follow the sun and the moon (On, the
+## default) or keep the fixed light (Off). Retail has neither row; no preset
+## names them.
+const NIGHT := 19
+const SUN_SHADOWS := 20
 ## The values a profile holds, by entry (QUALITY is held apart).
 const VALUE_ENTRIES := [SHADOW, SCENERY, CHARACTER, WATER_REFLECTION, WATER_DETAIL, METAL, LIGHT,
-	FILTERING, TEXTURE, LENS_FLARE, BLOOM, DYNAMIC_ANIMATION, EFFECT, FRIEND_ENEMY, SSAO, FOG]
+	FILTERING, TEXTURE, LENS_FLARE, BLOOM, DYNAMIC_ANIMATION, EFFECT, FRIEND_ENEMY, SSAO, FOG,
+	NIGHT, SUN_SHADOWS]
+## The OURS rows no preset names: the player's value in every quality.
+const OURS_ENTRIES := [SSAO, FOG, NIGHT, SUN_SHADOWS]
 
 const QUALITY_LOW := 0
 const QUALITY_MIDDLE := 1
@@ -158,6 +168,10 @@ const ROWS := [
 		"choices": ["", ""], "fallback": ["SSAO (Ambient Occlusion)", "Off", "On"]},
 	{"entry": FOG, "key": "fog_temporary", "label": "", "tip": "",
 		"choices": ["", ""], "fallback": ["Fog (temporary)", "Off", "On"]},
+	{"entry": NIGHT, "key": "night_darkness", "label": "", "tip": "",
+		"choices": ["", "", ""], "fallback": ["Night Darkness", "Original", "Dim", "Dark"]},
+	{"entry": SUN_SHADOWS, "key": "sun_shadows", "label": "", "tip": "",
+		"choices": ["", ""], "fallback": ["Shadows Follow the Sun", "Off", "On"]},
 	{"entry": RENDERER, "key": "renderer", "label": "", "tip": "",
 		"choices": ["", ""], "fallback": ["Renderer (on restart)", "Forward+", "Compatibility"]},
 ]
@@ -178,7 +192,7 @@ const PRESETS := {
 const DEFAULTS := {
 	SHADOW: 1, SCENERY: 2, CHARACTER: 2, WATER_REFLECTION: 0, WATER_DETAIL: 1, METAL: 1,
 	LIGHT: 1, FILTERING: 1, TEXTURE: 1, LENS_FLARE: 1, BLOOM: 1, DYNAMIC_ANIMATION: 1,
-	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0, FOG: 1,
+	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0, FOG: 1, NIGHT: 2, SUN_SHADOWS: 1,
 }
 ## The user's decision (2026-10-02): retail's default, Middle (READ).
 const DEFAULT_QUALITY := QUALITY_MIDDLE
@@ -257,8 +271,8 @@ class Profile:
 		user = DEFAULTS.duplicate()
 
 	## The value in force: the preset's for Low..War, else the player's.
-	## SSAO and FOG are OURS and no preset names them: the player's in every
-	## quality.
+	## SSAO, FOG, NIGHT and SUN_SHADOWS are OURS and no preset names them:
+	## the player's in every quality.
 	func value(entry: int) -> int:
 		if quality != QUALITY_USER and PRESETS.has(quality) and entry < 16:
 			return int(PRESETS[quality][entry])
@@ -335,7 +349,7 @@ static func set_row(profile: Profile, entry: int, v: int) -> void:
 	if entry == RENDERER:
 		return
 	v = clampi(v, 0, maxi(choice_count(entry) - 1, 0))
-	if entry == SSAO or entry == FOG:
+	if entry in OURS_ENTRIES:
 		profile.user[entry] = v
 		return
 	if profile.quality != QUALITY_USER:

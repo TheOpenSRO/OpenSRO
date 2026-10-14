@@ -92,8 +92,20 @@ static func material() -> ShaderMaterial:
 		_material = ShaderMaterial.new()
 		_material.shader = sh
 		_material.render_priority = PRIORITY
-		_material.set_shader_parameter("k", k_linear())
+		_material.set_shader_parameter("k", k_at(strength))
 	return _material
+
+## OURS (round 787, NightLight): the shadows' strength, 0 (none) .. 1 (the
+## fitted K_LINEAR) -- the sun's shadows fade out as it sets and the moon's
+## are fainter. One uniform on the one shared material.
+static var strength := 1.0
+
+static func k_at(s: float) -> float:
+	return lerpf(1.0, k_linear(), clampf(s, 0.0, 1.0))
+
+static func set_strength(s: float) -> void:
+	strength = clampf(s, 0.0, 1.0)
+	material().set_shader_parameter("k", k_at(strength))
 
 ## Puts the catcher on (or takes it off) a terrain patch's base surface.
 static func set_on(patch: MeshInstance3D, on: bool) -> void:
