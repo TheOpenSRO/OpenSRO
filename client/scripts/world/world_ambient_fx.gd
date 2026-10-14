@@ -168,6 +168,9 @@ var build_usec := 0
 var step_usec := 0
 ## The step's split (us): placement, simulation, draws.
 var step_split := Vector3i.ZERO
+## The whole tick's time and frames since the last describe() (its mean).
+var _sum_usec := 0
+var _sum_frames := 0
 
 func size() -> int:
 	return _count
@@ -301,6 +304,8 @@ func tick(delta: float, eye: Vector3, planes: Array, now_ms: int) -> void:
 	build_usec = t2 - t1
 	_step(delta)
 	step_usec = Time.get_ticks_usec() - t2
+	_sum_usec += Time.get_ticks_usec() - t0
+	_sum_frames += 1
 
 ## The range decision for every sector that could hold a host in range.
 func _decide(eye: Vector3, planes: Array) -> void:
@@ -479,14 +484,25 @@ func _step(delta: float) -> void:
 		return
 	var t0 := Time.get_ticks_usec()
 	var list: Array = []
+	var due: Array = []
 	for fx_v in _stepping:
 		if not is_instance_valid(fx_v):
 			continue
 		var fx := fx_v as EfpEffect
-		if fx.sim != null and fx.step_pre(delta):
-			list.append(fx)
+		if fx.sim == null or not fx.step_pre(delta):
+			continue
+		list.append(fx)
+		# Only a simulation with a 50 ms frame due this frame goes to the
+		# batch (OURS: a frame with none due would wake the pool's helpers to
+		# do nothing; at 600 frames a second that is most frames). The rest
+		# only gather the time, here.
+		if fx.sim.step_due(delta):
+			due.append(fx)
+		else:
+			fx.step_sim(delta)
 	var t1 := Time.get_ticks_usec()
-	EfpSimBatch.run(list, delta)
+	if not due.is_empty():
+		EfpSimBatch.run(due, delta)
 	var t2 := Time.get_ticks_usec()
 	for fx_v in list:
 		if is_instance_valid(fx_v):
@@ -534,6 +550,9 @@ func describe() -> String:
 		if is_instance_valid(fx_v):
 			var k := String((fx_v as EfpEffect).path).get_file()
 			names[k] = int(names.get(k, 0)) + 1
-	return "%d host(s) in %d sector(s), %d in range, %d built (%d effects), %d effects stepping %s, waiting %d; decide %d us, build %d us, step %d us (place %d, sim %d, draw %d)" % [
+	var mean := float(_sum_usec) / maxf(float(_sum_frames), 1.0)
+	_sum_usec = 0
+	_sum_frames = 0
+	return "%d host(s) in %d sector(s), %d in range, %d built (%d effects), %d effects stepping %s, waiting %d; this frame decide %d us, build %d us, step %d us (place %d, sim %d, draw %d); mean %.1f us a frame" % [
 		_count, _sectors.size(), hosts_on, hosts_built, effects_built, _stepping.size(), str(names), _to_build.size(),
-		decide_usec, build_usec, step_usec, step_split.x, step_split.y, step_split.z]
+		decide_usec, build_usec, step_usec, step_split.x, step_split.y, step_split.z, mean]
