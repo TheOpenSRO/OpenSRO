@@ -375,6 +375,31 @@ the copies' skins or meshes, to split the cost. In the world,
 `OPENSRO_QA_MAPANIM=n` prints the driver's counts and the process time every n frames;
 `OPENSRO_NO_MAP_ANIM=1` is the A/B.
 
+### Water and ambient effects: the census (round 786)
+
+`water_census.gd` reads every model of Map.pk2's `object.ifo` the way ObjectLoader does and classes
+its live mods: `ambient_fx` (an `ambient` particle set), `clip_fx` / `default_fx` (particles in a
+clip's set), `texani0` / `texani1` (TEXANI on stage 0 / 1), `multitex` / `multitexrev`,
+`texani1_mt` / `texani1_bare` (a mode-1 TEXANI with or without a MULTITEX on its material),
+`mtrl`, `skeletal`, `dy`, `motion`, and `water` when a name it carries looks like water. Placements
+are the objects the world builds (World3D.region_placements: `.o2` lists 1 and 2, skip bit clear,
+one per key, in the owner region), with `near_list` the `lists[2]` ones (480 range) and
+`gate_places` those within 30 of a teleportbuilding row (the pre-786 ambient scope; give
+`--media`). Lines: `MODEL` with each live mod (the material's layer and texture), `CLASS` totals,
+`SUPPORT` before/after counts, `FXTOTAL` / `REGIONFX` ambient entries per region, `AT` placements
+(`--where`), `IN` a region's models (`--region=91/49`). `--match` and `--where` take words joined by
+`+`. About 3 minutes for the whole map.
+
+```
+client/tools/remote_godot.sh script res://tools/water_census.gd -- --pk2=/opt/sro-files/client/Data.pk2 \
+  --map=/opt/sro-files/client/Map.pk2 --media=/opt/sro-files/client/Media.pk2 --placed-only [--match=fount+turtle]
+```
+
+In the world, `OPENSRO_QA_WORLD_FX=1` prints `QA WORLDFX` every 120 frames (hosts, in range, built,
+the effects stepping by file, and the decide / build / step cost); `OPENSRO_QA_WORLD_FX=off` plays
+none of them (the before frame). `perf_gate.sh --sites alex` stands in Alexandria's library square
+facing the fountain whose sprays and spouts animate.
+
 
 ### Particle effects: the `.efp` census
 

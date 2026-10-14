@@ -163,6 +163,15 @@ srr_glow_clock={
 "value": 0.0
 }
 
+; The TEXANI mods' clock in seconds (round 786, TexAni.clock): a script
+; accumulator advanced by every physics tick's delta, never wrapped (the
+; original's rate matrix grows without a wrap too, READ). Each material's
+; texture-coordinate rows are start + rates x (clock - its texani_t0).
+srr_texani_clock={
+"type": "float",
+"value": 0.0
+}
+
 ; The far crowd's clip clock in ms (round 747, CrowdGpu.flush): the world's
 ; clip time less CrowdGpu's epoch, rebased every CrowdGpu.EPOCH_SECONDS so a
 ; float keeps the quantum's precision.

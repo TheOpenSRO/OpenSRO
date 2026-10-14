@@ -155,11 +155,21 @@ func _test_grid() -> void:
 
 func _test_shaders() -> void:
 	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
-	_check(inc.contains("uniform vec3 texani_u") and inc.contains(TexAni.SHADER_LINE),
-		"object.gdshaderinc declares the two rows and applies them")
+	_check(inc.contains(TexAni.SHADER_UNIFORMS) and inc.contains(TexAni.SHADER_LINE),
+		"object.gdshaderinc declares TexAni's uniforms verbatim and applies them")
 	var mod := ObjectLoader._mod_shader("back", "mix", false)
-	_check(mod.code.contains("uniform vec3 texani_u") and mod.code.contains(TexAni.SHADER_LINE),
+	_check(mod.code.contains(TexAni.SHADER_UNIFORMS) and mod.code.contains(TexAni.SHADER_LINE),
 		"the MTRL mod shader does too")
+	# Round 786: the rows are evaluated at the clock in the shader -- no
+	# per-material upload a frame.
+	_check(TexAni.SHADER_UNIFORMS.contains("global uniform float srr_texani_clock;")
+		and TexAni.SHADER_LINE.contains("srr_texani_clock - texani_t0"),
+		"the rows run on the global clock: start + rates x (clock - t0)")
+	_check(TexAni.SHADER_LINE.contains("srr_uv1 = texani_stage == 1 ? srr_ta_uv : UV")
+		and TexAni.SHADER_LINE.contains("UV = texani_stage == 1 ? UV : srr_ta_uv"),
+		"stage 1 (TEXANI1) moves srr_uv1 and leaves UV; stage 0 the other way (vss0.c)")
+	var proj := FileAccess.get_file_as_string("res://project.godot")
+	_check(proj.contains("srr_texani_clock={"), "project.godot declares the clock global")
 
 func _test_bind() -> void:
 	var mat := ShaderMaterial.new()
@@ -167,22 +177,56 @@ func _test_bind() -> void:
 	var r := PackedFloat32Array()
 	r.resize(16)
 	r[8] = 0.5
+	r[9] = -0.88
 	var before := TexAni.live_count()
+	var at := TexAni.clock
 	TexAni.bind(mat, {"method": TexAni.METHOD_RATES, "rates": r})
 	_check(TexAni.live_count() == before + 1, "bind registers the material")
+	_check(mat.get_shader_parameter("texani_du") == Vector3(0, 0, 0.5) and mat.get_shader_parameter("texani_dv") == Vector3(0, 0, -0.88),
+		"a rate mod uploads its rates once: (m00, m10, m20) and (m01, m11, m21) a second")
+	_check(_near(float(mat.get_shader_parameter("texani_t0")), at) and int(mat.get_shader_parameter("texani_stage")) == 0,
+		"bound at the clock, on stage 0 (mode 0)")
 	TexAni.tick(2000.0)
+	_check(_near(TexAni.clock - at, 2.0), "tick advances the clock 2 s (got %f)" % (TexAni.clock - at))
 	var u: Vector3 = mat.get_shader_parameter("texani_u")
-	_check(u != null and _near(u.z, 1.0), "tick: m20 grew by 0.5 a second for 2 s (got %s)" % str(u))
+	_check(u == Vector3(1, 0, 0), "and uploads nothing per material: the start rows stay (got %s)" % str(u))
+	# What the shader evaluates, 2 s on: the rate step summed.
+	var rows := TexAni.rows_at(mat.get_meta(TexAni.META), TexAni.clock - float(mat.get_shader_parameter("texani_t0")))
+	_check(_near(rows[0].z, 1.0) and _near(rows[1].z, -1.76), "at t = 2 s: m20 = 1.0, m21 = -1.76 (got %s %s)" % [str(rows[0]), str(rows[1])])
+	var uv := TexAni.uv_at(rows, Vector2(0.25, 0.5))
+	_check(_near(uv.x, 1.25) and _near(uv.y, -1.26), "the UV (0.25, 0.5) lands at (1.25, -1.26) (got %s)" % str(uv))
+	# The step and the summed rows agree, frame by frame.
+	var stepped := TexAni.create({"method": TexAni.METHOD_RATES, "rates": r})
+	for _i in range(120):
+		stepped.step_rates(16.666667)
+	var sum := TexAni.rows_at({"rates": r}, 2.0)
+	_check(_near(stepped.rows()[0].z, sum[0].z, 1e-3) and _near(stepped.rows()[1].z, sum[1].z, 1e-3),
+		"120 steps of 16.7 ms equal the rows at 2 s (the shader's evaluation is the step's sum)")
 	mat = null
-	TexAni.tick(16.0)
-	_check(TexAni.live_count() == before, "a freed material leaves on the next tick")
-	# Mode 1 (TEXANI1) animates texture stage 1 and leaves the base texture's
-	# coordinates as authored (vss0.c): not bound, the rows stay the identity.
-	var still := ShaderMaterial.new()
-	still.shader = ObjectLoader.object_shader("solid")
-	TexAni.bind(still, {"method": TexAni.METHOD_RATES, "mode": 1, "rates": r})
-	TexAni.tick(2000.0)
-	var su = still.get_shader_parameter("texani_u")
-	_check(TexAni.live_count() == before and (su == null or su == Vector3(1, 0, 0)),
-		"a mode-1 mod leaves the base UV alone (not bound)")
+	_check(TexAni.live_count() == before, "a freed material leaves")
+	# Mode 1 (TEXANI1) animates texture stage 1, the MULTITEX texture, and
+	# leaves stage 0's coordinates as authored (vss0.c): bound on stage 1.
+	var one := ShaderMaterial.new()
+	one.shader = ObjectLoader.object_shader("solid", false, false, true)
+	TexAni.bind(one, {"method": TexAni.METHOD_RATES, "mode": 1, "rates": r})
+	_check(int(one.get_shader_parameter("texani_stage")) == 1 and one.get_shader_parameter("texani_dv") == Vector3(0, 0, -0.88),
+		"a mode-1 mod is bound on stage 1 (texani_stage 1)")
 	_check(TexAni.animates_base({"mode": 0}) and not TexAni.animates_base({"mode": 1}), "mode 0 animates stage 0, mode 1 does not")
+	_check(TexAni.stage_of({"mode": 0}) == 0 and TexAni.stage_of({"mode": 1}) == 1, "stage_of: 0 and 1")
+	# A grid mod still runs on the CPU and uploads its rows.
+	var grid := ShaderMaterial.new()
+	grid.shader = ObjectLoader.object_shader("solid")
+	TexAni.bind(grid, {"method": TexAni.METHOD_GRID, "start": 0, "end": 3, "flags": TexAni.FLAG_LOOP, "fps": 10, "rows": 1, "cols": 4})
+	TexAni.tick(250.0)
+	var gu: Vector3 = grid.get_shader_parameter("texani_u")
+	_check(gu != null and _near(gu.z, 0.5), "a grid mod steps on the CPU: 250 ms at 10 fps is frame 2, u offset 0.5 (got %s)" % str(gu))
+	# A far body's twin takes the same animation (CrowdGpu.bind_like).
+	var src := ShaderMaterial.new()
+	src.shader = ObjectLoader.object_shader("solid")
+	TexAni.bind(src, {"method": TexAni.METHOD_RATES, "rates": r})
+	var twin := ShaderMaterial.new()
+	twin.shader = ObjectLoader.object_shader("solid")
+	_check(TexAni.bind_like(twin, src) and twin.get_shader_parameter("texani_dv") == src.get_shader_parameter("texani_dv")
+		and float(twin.get_shader_parameter("texani_t0")) == float(src.get_shader_parameter("texani_t0")),
+		"bind_like copies the rates and the start clock")
+	_check(not TexAni.bind_like(ShaderMaterial.new(), ShaderMaterial.new()), "an unanimated source animates nothing")
