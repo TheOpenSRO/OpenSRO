@@ -126,7 +126,10 @@ var _targets_record: EnvironmentReader.Record = null
 func step(phase: float, dt: float, resample: bool = true) -> State:
 	if record == null:
 		return null
-	if resample or _targets == null or _targets_record != record or _snap:
+	var fresh := resample or _targets == null or _targets_record != record or _snap
+	if not fresh and settled:
+		return state
+	if fresh:
 		_targets = targets(record, phase)
 		_targets_record = record
 	var t := _targets
@@ -144,7 +147,34 @@ func step(phase: float, dt: float, resample: bool = true) -> State:
 	for field in COLOR_FIELDS:
 		state.set(field, _clamp01(state.get(field)))
 	state.cloud_alpha = clampf(state.cloud_alpha, 0.0, 1.0)
+	settled = _arrived(t)
 	return state
+
+## True when the last step left nothing to ease: the next steps without a
+## resample return at once, and World3D writes nothing (OURS: a frame where
+## the hour did not move costs a comparison).
+var settled := false
+## OURS: within this of the (clamped) targets the values take them exactly --
+## an eighth of an 8-bit display step.
+const SETTLE := 1.0 / 2048.0
+
+## Whether the state is within SETTLE of the targets; if so, takes them.
+func _arrived(t: State) -> bool:
+	for field in COLOR_FIELDS:
+		var a: Color = state.get(field)
+		var b := _clamp01(t.get(field))
+		if absf(a.r - b.r) > SETTLE or absf(a.g - b.g) > SETTLE or absf(a.b - b.b) > SETTLE:
+			return false
+	var ca := clampf(t.cloud_alpha, 0.0, 1.0)
+	if absf(state.fog_near - t.fog_near) > SETTLE or absf(state.fog_far - t.fog_far) > SETTLE \
+			or absf(state.cloud_alpha - ca) > SETTLE:
+		return false
+	for field in COLOR_FIELDS:
+		state.set(field, _clamp01(t.get(field)))
+	state.fog_near = t.fog_near
+	state.fog_far = t.fog_far
+	state.cloud_alpha = ca
+	return true
 
 ## The sun's direction from the eye (READ): (cos a, sin a, 0), a = (phase -
 ## 0.25) x 2 pi. The world's z mirror leaves it as it is.

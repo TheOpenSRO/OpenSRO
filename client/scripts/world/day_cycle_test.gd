@@ -67,6 +67,15 @@ func _test_cycle() -> void:
 	# Resampling off: the cached targets.
 	st = cyc.step(0.5, 10.0, false)
 	_check(_cnear(st.sun, Color(0.1, 0.1, 0.2)), "without a resample the step eases toward the last targets")
+	_check(cyc.settled, "a step that arrives settles: the next frames without a sample do nothing (OURS)")
+	st = cyc.step(0.25, 0.016)
+	_check(not cyc.settled, "a new sample that moved unsettles it")
+	for i in range(2000):
+		st = cyc.step(0.25, 0.016, false)
+		if cyc.settled:
+			break
+	_check(cyc.settled and _cnear(st.sun, DayCycle._clamp01(DayCycle.targets(rec, 0.25).sun), 1e-6),
+		"easing frame by frame settles on the targets exactly")
 	# The keyframes through the day (spline, READ): between the dawn and noon
 	# keys the spline, not the line.
 	var mid := DayCycle.targets(rec, 0.375).sun

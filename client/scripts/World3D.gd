@@ -4887,6 +4887,9 @@ func _day_tick(delta: float) -> void:
 	var t0 := Time.get_ticks_usec() if fs else 0
 	var now := Time.get_ticks_msec()
 	var resample := now - _day_sample_at >= DAY_SAMPLE_MS
+	if not resample and _day_cycle.settled:
+		# Nothing left to ease and no new sample: nothing moved.
+		return
 	if resample:
 		_day_sample_at = now
 		_env_time = _current_day_phase()
