@@ -108,6 +108,11 @@ var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
 ## its instance culls by now (DRAW_AABB, grown to hold its particles).
 var _draw_reach := PackedFloat32Array()
 var _draw_boxes: Array[AABB] = []
+## Round 786: each draw's particles' own bounds (no DRAW_AABB floor; empty --
+## no volume, size zero -- while the draw holds no particle), as _fit_box_to
+## last measured them: what a caller that pauses an effect nobody can see
+## tests (WorldAmbientFx, particles_box).
+var _tight_boxes: Array[AABB] = []
 var _links: Array = [] # of [tpl index, MeshInstance3D (ArrayMesh), render mode, EfpLinks.Out, EfpLinks.Buf, EfpLinks.Buf, kind 0 DPipe / 1 Pipe / 2 Obj]
 var _life := 0.0
 var _follow_host: Node3D = null
@@ -284,6 +289,7 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 			reach = maxf(mb.position.abs().max(mb.end.abs()).length(), 0.0) * 1.0001
 		fx._draw_reach.append(reach)
 		fx._draw_boxes.append(DRAW_AABB)
+		fx._tight_boxes.append(AABB())
 		if billboard:
 			fx._has_billboard = true
 	return fx
@@ -1643,8 +1649,14 @@ func _fit_box(di: int, mmi: MultiMeshInstance3D, ps: Array) -> void:
 ## finding 9: until then the native draw kept DRAW_AABB).
 func _fit_box_to(di: int, mmi: MultiMeshInstance3D, any: bool, lo: Vector3, hi: Vector3, s: float) -> void:
 	var box := DRAW_AABB
+	if di < _tight_boxes.size():
+		_tight_boxes[di] = AABB()
 	if any:
 		var r := s * _draw_reach[di] # the shape's bounding sphere, turned any way
+		if di < _tight_boxes.size():
+			var tight := AABB(lo - Vector3.ONE * r, hi - lo + Vector3.ONE * (2.0 * r))
+			if is_finite(tight.position.x + tight.position.y + tight.position.z + tight.size.x + tight.size.y + tight.size.z):
+				_tight_boxes[di] = tight
 		if not (lo.x >= -200.0 + r and lo.y >= -200.0 + r and lo.z >= -200.0 + r
 				and hi.x <= 200.0 - r and hi.y <= 200.0 - r and hi.z <= 200.0 - r):
 			var ext := AABB(lo - Vector3.ONE * r, hi - lo + Vector3.ONE * (2.0 * r))
@@ -1733,6 +1745,22 @@ func use_native_sim(seed_value: int = 0) -> bool:
 	ns.set_phase(sim._acc)
 	sim = ns
 	return true
+
+## Round 786: where this effect's particles are, in the world: its draws'
+## tight boxes (_tight_boxes) through its transform, merged with the point it
+## is placed at (where an emitter with no particle yet spawns). A Link node's
+## strips are not in them: an effect with links gives its cull boxes instead.
+func particles_box() -> AABB:
+	var xf := global_transform if is_inside_tree() else Transform3D.IDENTITY
+	var out := AABB(placed_at(), Vector3.ZERO)
+	if not _links.is_empty():
+		for b in _draw_boxes + _link_boxes:
+			out = out.merge(xf * b)
+		return out
+	for b in _tight_boxes:
+		if b.size != Vector3.ZERO:
+			out = out.merge(xf * b)
+	return out
 
 ## Round 763: the native buffers into the MultiMeshes (_update_draws'
 ## result): a MultiMesh that must hold more instances grows here, as

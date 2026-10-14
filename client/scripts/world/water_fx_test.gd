@@ -377,6 +377,26 @@ func _test_playback() -> void:
 	wf.tick(0.05, cam.global_position, cam.get_frustum(), 5600)
 	wf.tick(0.05, cam.global_position, cam.get_frustum(), 5616)
 	_check(sh.on and fx.visible and not fx.culled and wf.stepping().has(fx), "facing it again: shown and stepping")
+	# Past its warm-up, an effect whose particles are out of the view does
+	# not step; during it, it does (WARM_MS).
+	var lone := WorldAmbientFx.Host.new()
+	var behind := _effect("map\\behind.efp")
+	container.add_child(behind)
+	behind.global_position = Vector3(0, 10, 300)
+	lone.effects = [behind]
+	lone.fx_box = WorldAmbientFx.particles_box_of(lone.effects)
+	_check(lone.fx_box.has_point(Vector3(0, 10, 300)) or lone.fx_box.position.is_equal_approx(Vector3(0, 10, 300)),
+		"an effect with no particle yet: its box is the point it stands at")
+	var wf2 := WorldAmbientFx.new()
+	wf2._seen = [lone]
+	wf2._now_ms = 10000
+	lone.warm_until_ms = 9000
+	wf2._choose_stepping(cam.get_frustum())
+	_check(wf2.stepping().is_empty(), "particles behind the eye, warm-up over: it does not step")
+	lone.warm_until_ms = 11000
+	wf2._choose_stepping(cam.get_frustum())
+	_check(wf2.stepping() == [behind], "within its warm-up it steps whatever the view")
+	behind.free()
 	# A big object is visited while its own box is in view, wherever its
 	# origin stands (the `.o2` lists it in every sector it reaches).
 	var big := WorldAmbientFx.Host.new()

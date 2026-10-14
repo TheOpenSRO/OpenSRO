@@ -66,7 +66,13 @@ class_name WorldAmbientFx
 ## - The range is decided every RETEST_MS, not every frame (the original's
 ##   per frame): a host crosses the edge up to that late.
 ## - The effects step once a rendered frame as one batch (EfpSimBatch, in Rust
-##   when the library is there), as the dungeons' do (round 774).
+##   when the library is there), as the dungeons' do (round 774) -- only those
+##   whose particles are in the view (EfpEffect.particles_box), after a new
+##   host's first WARM_MS. The original steps every effect of a visited
+##   object; one whose particles nobody can see changes nothing seen, and
+##   resumes where it stood (MEASURED: at the perf gate's Jangan view the
+##   dragon fountain's four `multigi.efp`, 200 units behind the camera, were
+##   +0.10 ms a frame stepped by their cull boxes).
 ## - The teleport structures and walk-in portals keep round 720's / 774's
 ##   path (World3D._attach_gate_effects, always running); a host one of the
 ##   two paths has built is skipped by the other.
@@ -80,6 +86,10 @@ const NEAR_SECTORS := 1.5
 const RETEST_MS := 100
 ## How long the effects built in one frame may take (OURS).
 const BUILD_BUDGET_USEC := 2000
+## How long a new host's effects step before the view may pause them (OURS):
+## a spray or a mist fills its cloud of particles first, so one built behind
+## the camera does not start empty when it is turned to.
+const WARM_MS := 1500
 ## The meta a host's node carries once its effects are built here.
 const META_BUILT := "opensro_world_fx"
 ## World3D._attach_gate_effects' mark (its META_GATE_EFFECTS).
@@ -102,6 +112,12 @@ class Host:
 	## (view_box_of): the visit test and the per-frame view test.
 	var box := AABB()
 	var view_box := AABB()
+	## Where its effects' particles are (EfpEffect.particles_box), as of the
+	## last decision: the per-frame test of whether they step.
+	var fx_box := AABB()
+	## Until when its effects step whether seen or not (WARM_MS after the
+	## build), so they have their particles before any is paused.
+	var warm_until_ms := 0
 	var built := false
 	var asked := false
 	var effects: Array = []
@@ -132,6 +148,7 @@ var _count := 0
 var _next_ms := 0
 var _changed := true
 var _last_eye := Vector3.INF
+var _now_ms := 0
 ## The hosts in range in a sector in view, as of the last decision, and the
 ## effects stepping this frame (theirs whose draw box is in view).
 var _seen: Array = []
@@ -260,6 +277,7 @@ func tick(delta: float, eye: Vector3, planes: Array, now_ms: int) -> void:
 	if _count == 0:
 		return
 	var t0 := Time.get_ticks_usec()
+	_now_ms = now_ms
 	if _changed or now_ms >= _next_ms or eye.distance_to(_last_eye) > MapAnimation.SECTOR_SIZE:
 		_decide(eye, planes)
 		_next_ms = now_ms + RETEST_MS
@@ -306,6 +324,7 @@ func _decide(eye: Vector3, planes: Array) -> void:
 			if h.seen:
 				seen_hosts.append(h)
 			if not h.effects.is_empty():
+				h.fx_box = particles_box_of(h.effects)
 				h.view_box = h.box.merge(view_box_of(h.effects))
 		s.quiet = quiet
 	_seen = seen_hosts
@@ -373,20 +392,25 @@ func _build(h: Host) -> void:
 		h.effects.append(fx)
 		effects_built += 1
 	if not h.effects.is_empty():
+		h.fx_box = particles_box_of(h.effects)
 		h.view_box = h.box.merge(view_box_of(h.effects))
+	h.warm_until_ms = _now_ms + WARM_MS
 	hosts_built += 1
 
 	_set_on(h, h.on, h.seen)
 
-## Every frame: of the hosts in range in a sector in view, the effects of
-## those whose draw box is in the view step (OURS: an effect Godot does not
-## draw -- its draws cull by the same box -- changes nothing seen, and resumes
-## where it stood when it comes into view).
+## Every frame: of the hosts in range and visited, the effects of those whose
+## particles are in the view step (OURS: a particle out of the view changes
+## nothing seen, and resumes where it stood when it comes into view; the
+## original steps every effect of a visited object). A new host's effects
+## step for WARM_MS whatever the view.
 func _choose_stepping(planes: Array) -> void:
 	_stepping.clear()
 	for h_v in _seen:
 		var h := h_v as Host
-		if h.effects.is_empty() or not box_in_view(view_box_of(h.effects), planes):
+		if h.effects.is_empty():
+			continue
+		if _now_ms >= h.warm_until_ms and not box_in_view(h.fx_box, planes):
 			continue
 		for fx_v in h.effects:
 			if is_instance_valid(fx_v):
@@ -408,6 +432,19 @@ static func view_box_of(effects: Array) -> AABB:
 			var b: AABB = xf * (b_v as AABB)
 			out = b if first else out.merge(b)
 			first = false
+	return out
+
+## Where a host's effects' particles are, in the world (EfpEffect.particles_box,
+## merged).
+static func particles_box_of(effects: Array) -> AABB:
+	var out := AABB()
+	var first := true
+	for fx_v in effects:
+		if not is_instance_valid(fx_v):
+			continue
+		var b := (fx_v as EfpEffect).particles_box()
+		out = b if first else out.merge(b)
+		first = false
 	return out
 
 ## Whether an AABB reaches inside every frustum plane (Camera3D.get_frustum:
