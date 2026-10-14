@@ -72,6 +72,19 @@ of the loading screen (`LS` = fraction of pixels within 8 of it; screen, world o
 for each region's terrain overlays and water as Godot computes it (`QA WATER SORT` / `QA WATER
 ORDER` lines): a water surface "drawn before" an overlay patch is one that patch paints over.
 
+**Ground flicker, the overlays' order** (round 786, "Ground textures no longer flicker" in
+docs/WORLD_ISSUES.md). `overlay_sort_probe.gd` runs windowed (`xwl_run.sh -s 320x180 <godot>
+--rendering-method forward_plus --rendering-driver vulkan --resolution 320x180 --path .
+--script res://tools/overlay_sort_probe.gd`): six synthetic regions from the real builder, a still
+camera, 300 invisible transparent quads of which six are hidden or shown a frame, and a
+`PROBE RESULT ... frames_changed <n> distinct_pictures <n>` line -- any change is the overlays'
+order moving. `OPENSRO_QA_OVERLAY_ORDER=tie` (any run) puts every overlay back at one priority, as
+before the fix; `=desc` reverses the ranks (which pixels the order touches: `frame_ab.py` of a
+`desc` and a default frame). `OPENSRO_QA_ALPHA_STIR=<n>[,<step>[,<toggle>[,<spread>]]]` puts n
+invisible transparent walkers into a world run (QaAlphaStir; `OPENSRO_QA_ALPHA_STIR_SHOW=1` draws
+them red). `ground_overlap_census.gd` (`OPENSRO_MAP_PK2_PATH`, `CENSUS_REGIONS="x,y;..."` or
+`CENSUS_ALL=1`) counts the quads two or more overlays cover and each region's overlay surfaces.
+
 `QA_SHOT_REAP=0` skips qa_shot's start-up kill of every Godot, Xvfb and weston on the box. Use it
 with your own `GODOT_LOCK` in a lane, so another lane's runs survive. `frame_ab.py a.png b.png
 [--box x,y,w,h]` (numpy + ImageMagick, on the box) prints how two frames differ: mean colour, luma
