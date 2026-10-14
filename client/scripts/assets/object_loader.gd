@@ -1099,7 +1099,7 @@ void fragment() {
 	%s
 	%s
 }
-""" % [", ".join(modes), TexAni.SHADER_UNIFORMS, "uniform float appear_alpha = 1.0;\n" if fade else "",
+""" % [", ".join(modes), TexAni.SHADER_UNIFORMS + TexAni.SHADER_VARYING, "uniform float appear_alpha = 1.0;\n" if fade else "",
 		# The tone map is undone on what is drawn over (opaque, mix): a
 		# multiplying or adding blend's source is a factor, not a colour
 		# shown (OURS, ObjectLight).

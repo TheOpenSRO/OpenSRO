@@ -10232,10 +10232,12 @@ func _tick_world_fx(delta: float) -> void:
 	if _world_fx.particles == null:
 		_world_fx.particles = _open_particles_pk2_if_set()
 		_world_fx.ambient = _ambient
-	_world_fx.light_effect = video_options().value(VideoOptions.LIGHT) == 1
 	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
 	var eye: Vector3 = cam.global_position if cam != null else (player.global_position if player != null else Vector3.ZERO)
-	_world_fx.tick(delta, eye, cam.get_frustum() if cam != null else [], Time.get_ticks_msec())
+	var now := Time.get_ticks_msec()
+	# The frustum only on a frame that tests anything against it.
+	var planes: Array = cam.get_frustum() if cam != null and _world_fx.wants_view(eye, now) else []
+	_world_fx.tick(delta, eye, planes, now)
 	if _qa_world_fx and Engine.get_process_frames() % 120 == 0:
 		print("QA WORLDFX frame %d: %s" % [Engine.get_process_frames(), _world_fx.describe()])
 
@@ -14892,7 +14894,7 @@ func _objects_commit(job: Dictionary) -> void:
 		# (WorldAmbientFx: lists[2] objects within 480, the rest within the
 		# object range, READ).
 		if _world_fx_on:
-			_world_fx.add(node, int(placement.get("list", 1)) == 2)
+			_world_fx.add(node, int(placement.get("list", 1)) == 2, model_key.ends_with(".cpd"))
 		loaded += 1
 		if key >= 0:
 			_placed_objects[key] = {"node": node, "holder": node_suffix, "listers": {node_suffix: true}}

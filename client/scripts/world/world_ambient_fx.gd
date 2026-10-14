@@ -136,12 +136,14 @@ class Sector:
 
 ## OPENSRO_QA_WORLD_FX=1: each effect's place as it is built.
 static var qa_log := OS.get_environment("OPENSRO_QA_WORLD_FX") == "1"
+## OPENSRO_QA_WORLD_FX_BLEND=linear (QA A/B only): the world's effects keep
+## their linear blend, without round 722's display-value twins (whose screen
+## read is a copy of the frame).
+static var qa_linear := OS.get_environment("OPENSRO_QA_WORLD_FX_BLEND") == "linear"
 
 ## Where the effects come from, and the glow pass they join.
 var particles: Pk2Reader = null
 var ambient: AmbientParticles = null
-## Whether `ambient`'s Light Effect is to be set before a build (World3D).
-var light_effect := true
 
 var _sectors := {}
 var _count := 0
@@ -173,13 +175,16 @@ func size() -> int:
 ## Registers `root` (a placed object, in the tree at its final transform) and
 ## its compound children that carry `ambient` entries (ObjectLoader keeps them
 ## under AmbientParticles.META_ENTRIES). `near`: the placement came from
-## `.o2` lists[2] (the 480 range). Returns how many hosts were added.
-func add(root: Node3D, near: bool) -> int:
+## `.o2` lists[2] (the 480 range). `compound`: a `.cpd`, whose sub-objects
+## (the root's children) carry their own entries; a `.bsr`'s children are
+## only its pieces, not looked at. Returns how many hosts were added.
+func add(root: Node3D, near: bool, compound: bool = true) -> int:
 	var added := 0
 	var nodes: Array = [root]
-	for child in root.get_children():
-		if child is Node3D and not (child is MeshInstance3D):
-			nodes.append(child)
+	if compound:
+		for child in root.get_children():
+			if child is Node3D and not (child is MeshInstance3D):
+				nodes.append(child)
 	for n_v in nodes:
 		var node := n_v as Node3D
 		if not node.has_meta(AmbientParticles.META_ENTRIES):
@@ -269,6 +274,11 @@ func reset() -> void:
 	hosts_on = 0
 	hosts_built = 0
 	effects_built = 0
+
+## Whether this frame's tick tests anything against the view: a decision is
+## due, or a host is in range and visited (its effects' per-frame test).
+func wants_view(eye: Vector3, now_ms: int) -> bool:
+	return _changed or now_ms >= _next_ms or eye.distance_to(_last_eye) > MapAnimation.SECTOR_SIZE or not _seen.is_empty()
 
 ## One rendered frame: the range decided every RETEST_MS (or at once when
 ## hosts came or the camera jumped), builds within the budget, and the
@@ -379,9 +389,8 @@ func _build(h: Host) -> void:
 		# Round 720's path plays it already (always running).
 		return
 	h.node.set_meta(META_BUILT, true)
-	ambient.set_light_effect(light_effect)
 	var animated := h.node.has_meta(MapAnimation.META_ANIMATED) or (h.node.get_parent() != null and h.node.get_parent().has_meta(MapAnimation.META_ANIMATED))
-	for fx_v in ambient.attach(h.node, h.entries, particles):
+	for fx_v in ambient.attach(h.node, h.entries, particles, not qa_linear):
 		var fx := fx_v as EfpEffect
 		# Stepped by _step as a batch, not by its own _process.
 		fx.process_mode = Node.PROCESS_MODE_DISABLED

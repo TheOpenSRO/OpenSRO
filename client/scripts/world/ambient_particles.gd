@@ -232,7 +232,9 @@ static var effect_factory: Callable = Callable()
 
 ## Builds and attaches `host`'s effects, `mods_entries` as ambient_entries
 ## gives them. Returns them.
-func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader) -> Array:
+## `display_blend` false keeps the effects' linear blend (a QA A/B only,
+## WorldAmbientFx's OPENSRO_QA_WORLD_FX_BLEND=linear).
+func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader, display_blend: bool = true) -> Array:
 	var made: Array = []
 	var box := _host_box(host)
 	for entries in mods_entries:
@@ -254,7 +256,8 @@ func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader) -> Array:
 			# Blended in display values, as the original's Direct3D 9 blends
 			# (round 722, EfpEffect.display_shader; OURS scope: the objects'
 			# ambient effects only).
-			fx.use_display_blend()
+			if display_blend:
+				fx.use_display_blend()
 			if e.rotated:
 				fx.follow_basis = rotation_basis(e.angles)
 			if e.mode == 0:

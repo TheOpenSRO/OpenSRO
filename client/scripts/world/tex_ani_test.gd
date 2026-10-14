@@ -155,18 +155,19 @@ func _test_grid() -> void:
 
 func _test_shaders() -> void:
 	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
-	_check(inc.contains(TexAni.SHADER_UNIFORMS) and inc.contains(TexAni.SHADER_LINE),
-		"object.gdshaderinc declares TexAni's uniforms verbatim and applies them")
+	_check(inc.contains(TexAni.SHADER_UNIFORMS) and inc.contains(TexAni.SHADER_LINE) and inc.contains(TexAni.SHADER_LINE_STAGE0),
+		"object.gdshaderinc declares TexAni's uniforms verbatim and applies them (stage 1 under MULTITEX)")
 	var mod := ObjectLoader._mod_shader("back", "mix", false)
-	_check(mod.code.contains(TexAni.SHADER_UNIFORMS) and mod.code.contains(TexAni.SHADER_LINE),
-		"the MTRL mod shader does too")
+	_check(mod.code.contains(TexAni.SHADER_UNIFORMS + TexAni.SHADER_VARYING) and mod.code.contains(TexAni.SHADER_LINE),
+		"the MTRL mod shader does too, with stage 1's coordinates")
 	# Round 786: the rows are evaluated at the clock in the shader -- no
-	# per-material upload a frame.
+	# per-material upload a frame -- and an unbound material does no work.
 	_check(TexAni.SHADER_UNIFORMS.contains("global uniform float srr_texani_clock;")
-		and TexAni.SHADER_LINE.contains("srr_texani_clock - texani_t0"),
+		and TexAni.SHADER_LINE.contains("srr_texani_clock - texani_t0") and TexAni.SHADER_LINE_STAGE0.contains("srr_texani_clock - texani_t0"),
 		"the rows run on the global clock: start + rates x (clock - t0)")
-	_check(TexAni.SHADER_LINE.contains("srr_uv1 = texani_stage == 1 ? srr_ta_uv : UV")
-		and TexAni.SHADER_LINE.contains("UV = texani_stage == 1 ? UV : srr_ta_uv"),
+	_check(TexAni.SHADER_UNIFORMS.contains("uniform int texani_stage = -1;") and TexAni.SHADER_LINE.contains("if (texani_stage >= 0)")
+		and TexAni.SHADER_LINE_STAGE0.begins_with("if (texani_stage == 0)"), "no stage (-1) by default: nothing computed")
+	_check(TexAni.SHADER_LINE.contains("if (texani_stage == 1) { srr_uv1 = srr_ta_uv; } else { UV = srr_ta_uv; }"),
 		"stage 1 (TEXANI1) moves srr_uv1 and leaves UV; stage 0 the other way (vss0.c)")
 	var proj := FileAccess.get_file_as_string("res://project.godot")
 	_check(proj.contains("srr_texani_clock={"), "project.godot declares the clock global")

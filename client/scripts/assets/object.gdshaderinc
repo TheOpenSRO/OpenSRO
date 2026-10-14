@@ -132,18 +132,17 @@ vec3 srr_lightmapped(vec3 srr_tex, vec3 srr_lit, vec2 srr_uv2) {
 // A TEXANI mod's texture-coordinate matrix, rows c23 and c24 (TexAni, rounds
 // 722 and 786): its start rows, their rates a second, the clock it was
 // bound at, and the stage whose coordinates it moves (0 TEXANI0 / TEXANI1R,
-// 1 TEXANI1). The identity, unmoving, for every other material.
+// 1 TEXANI1, -1 none: every other material).
 global uniform float srr_texani_clock;
 uniform vec3 texani_u = vec3(1.0, 0.0, 0.0);
 uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
 uniform vec3 texani_du = vec3(0.0);
 uniform vec3 texani_dv = vec3(0.0);
 uniform float texani_t0 = 0.0;
-uniform int texani_stage = 0;
-// Texture stage 1's coordinates (a MULTITEX mod's texture, round 786).
-varying vec2 srr_uv1;
+uniform int texani_stage = -1;
 
 #ifdef MULTITEX
+varying vec2 srr_uv1;
 // A MULTITEX mod's second texture (round 786; ObjectLoader._commit_multitex,
 // READ CRTModMultiTex): texture stage 1, on srr_uv1 (TexAni), blended over
 // the stage-0 result by its own alpha (op 1: COLORARG1 TEXTURE, COLORARG2
@@ -253,7 +252,11 @@ void vertex() {
 #else
 	srr_od0 = srr_obj_od0(MODEL_NORMAL_MATRIX * NORMAL, srr_color(albedo, OUTPUT_IS_SRGB).rgb, object_color, object_tint);
 #endif
-	{ float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; vec2 srr_ta_uv = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); srr_uv1 = texani_stage == 1 ? srr_ta_uv : UV; UV = texani_stage == 1 ? UV : srr_ta_uv; }
+#ifdef MULTITEX
+	srr_uv1 = UV; if (texani_stage >= 0) { float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; vec2 srr_ta_uv = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); if (texani_stage == 1) { srr_uv1 = srr_ta_uv; } else { UV = srr_ta_uv; } }
+#else
+	if (texani_stage == 0) { float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; UV = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); }
+#endif
 }
 
 void fragment() {

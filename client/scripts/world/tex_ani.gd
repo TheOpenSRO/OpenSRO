@@ -56,7 +56,9 @@ extends RefCounted
 ##   tick). The grid step is not linear and stays a per-material runtime
 ##   stepped on the CPU (no placed object uses it, below).
 ## - `texani_stage` picks the coordinates the rows move: 0 stage 0 (TEXANI0
-##   and TEXANI1R), 1 stage 1 (TEXANI1).
+##   and TEXANI1R), 1 stage 1 (TEXANI1), -1 (the default) none -- an unbound
+##   material's vertex shader skips the work (OURS: less a vertex than round
+##   722's two dot products for every material).
 ##
 ## Not exercised by placed data: the frame grid (method 0). Its one user in
 ## the archive, `flame_adjutant`, is a set-1 mod with frames 0..0 and a 1 x 1
@@ -77,28 +79,35 @@ extends RefCounted
 ## - The clock is the engine's delta, not truncated to a whole millisecond as
 ##   the original's DWORD is.
 
-## The uniforms object.gdshaderinc and the MTRL mod shader declare (the
-## identity and no rates by default, so a material without a TEXANI mod
-## draws its own coordinates), and the varying stage 1's coordinates travel
-## in. object_light_test / tex_ani_test hold the include to this text.
+## The uniforms object.gdshaderinc and the MTRL mod shader declare (no
+## stage, -1, by default: a material without a TEXANI mod does no texture-
+## coordinate work at all). object_light_test / tex_ani_test hold the include
+## to this text.
 const SHADER_UNIFORMS := """// A TEXANI mod's texture-coordinate matrix, rows c23 and c24 (TexAni, rounds
 // 722 and 786): its start rows, their rates a second, the clock it was
 // bound at, and the stage whose coordinates it moves (0 TEXANI0 / TEXANI1R,
-// 1 TEXANI1). The identity, unmoving, for every other material.
+// 1 TEXANI1, -1 none: every other material).
 global uniform float srr_texani_clock;
 uniform vec3 texani_u = vec3(1.0, 0.0, 0.0);
 uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
 uniform vec3 texani_du = vec3(0.0);
 uniform vec3 texani_dv = vec3(0.0);
 uniform float texani_t0 = 0.0;
-uniform int texani_stage = 0;
-// Texture stage 1's coordinates (a MULTITEX mod's texture, round 786).
-varying vec2 srr_uv1;
+uniform int texani_stage = -1;
 """
 
-## The vertex lines that apply them: stage 0's coordinates in UV, stage 1's
-## in srr_uv1.
-const SHADER_LINE := "{ float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; vec2 srr_ta_uv = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); srr_uv1 = texani_stage == 1 ? srr_ta_uv : UV; UV = texani_stage == 1 ? UV : srr_ta_uv; }"
+## Texture stage 1's coordinates (a MULTITEX mod's texture, round 786): only
+## a shader with a stage 1 declares it (the MTRL mod shader; the object
+## shader's MULTITEX variant).
+const SHADER_VARYING := "varying vec2 srr_uv1;\n"
+
+## The vertex lines of a shader with a stage 1: stage 0's coordinates in UV,
+## stage 1's in srr_uv1, the rows evaluated at the clock.
+const SHADER_LINE := "srr_uv1 = UV; if (texani_stage >= 0) { float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; vec2 srr_ta_uv = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); if (texani_stage == 1) { srr_uv1 = srr_ta_uv; } else { UV = srr_ta_uv; } }"
+
+## The same for a shader with no stage 1 (the object shader without
+## MULTITEX): only a stage-0 mod moves anything.
+const SHADER_LINE_STAGE0 := "if (texani_stage == 0) { float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; UV = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); }"
 
 ## The global uniform the clock is uploaded to (project.godot).
 const CLOCK_GLOBAL := &"srr_texani_clock"
