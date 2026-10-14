@@ -8798,6 +8798,146 @@ head = this branch:
 Not open: the crowd's ghosts already carry the glow and the effects (rounds 762-764), so nothing is
 limited to fully built bodies.
 
+### Round 786 (part): Server time, day/night cycle, and the sun's colour
+
+The user: "Let's add server time and day/night cycle into the game. The sun color seems incorrect
+too, it's red right now and should be yellow. Check the game code as usual and make no mistakes."
+The reads are in `docs/protocol/game_clock.md` (the clock) and `docs/protocol/ENVIRONMENT_FORMAT.md`,
+"The day phase, the spline, and the sun and moon". Branch `feat/clock786`.
+
+**The contradiction (TODO.md, round 705) is settled -- READ.** Round 226 concluded the retail sky
+holds midday (SWorld's constructor phase 0.5, its own `+= dt x 0.0005` advance behind a flag
+nothing sets). It missed the caller: `CPSMission::vslot_012` (0x84c300) calls `FUN_0084ac90`
+every frame, which reads the game clock and calls `call [edx+0x50]` -- `SWorld::vslot_020`, `ret
+8`, storing +0x26a3 -- on `FUN_009edd60()`, which returns 0x1101950, the SWorld global the static
+initialiser 0xd768f0 builds. Only the console's `TimeOff` (0x53a430, CGInterface +0x7cd) stops it;
+`Day` / `Night` set 0.5 / 1.0 (0x53a4d0, 0x53a520).
+
+**Server time -- READ.**
+- The clock: a CMainProcess timer (singleton `DAT_00d6a8e8` +0x10) started at **day 0, 00:00 when
+  the server starts** (`FUN_00427660` from InitializeGame, rate `0x1e` at 0x427677), read as
+  `elapsed_ms / (30 x 1000 / 1440) + base` in integers (`FUN_00427720`). **The divisor truncates to
+  20: one game second is 20 ms, a game day 1728 s = 28 min 48 s** (MEASURED: the 0x6c16c16d
+  sequence evaluated). The day is never wrapped. The client's timer (`FUN_008b00f0` /
+  `FUN_008b01b0`) is the same code with the same rate (`0x1e` stored at 0x8a6dc0).
+- **0x3020** = u32 uid, u16 day, u8 hour, u8 minute (8 bytes; `FUN_004e3eb0`), sent once per
+  `CMainProcess::EnterGame` right after the character data (0x403237). **0x3027** = u16 day, u8
+  hour, u8 minute (4 bytes; `FUN_00530d60` -> `FUN_004f8240`), broadcast only when the operator
+  sets the hour (`FUN_004154d0` case 10 -> `FUN_00412be0`: clamp to 23, keep the day and minute,
+  re-base). Nothing re-sends the clock: both ends tick the same integers. Client handlers
+  `FUN_008a6dc0` (the `InitTimer(pM->dwRealTime, pM->m_wDay, pM->m_byHour, pM->m_byMin, 0)` assert
+  text names the fields) and `FUN_008a6e80`, registered in `FUN_0086fbb0`.
+- **Clock -> sky** (`FUN_0084ac90`): h = seconds of day / 86400 x 24; for 4 <= h <= 20 the sky hour
+  is 6 + (h - 4) x 0.75, else 18 + (h - 20) x 1.5 (h + 24 below 4, - 24 at or past 24); phase =
+  sky hour / 24. 16 clock hours of day (19 min 12 s), 8 of night (9 min 36 s). Clock 04:00 /
+  12:00 / 20:00 / 00:00 = phase 0.25 / 0.5 / 0.75 / 0.0. The night flag (h < 4 or h > 20) goes to
+  the sound manager; the day to SWorld +0x6778 (the moon).
+- **Day length and base time:** the day length is READ and **not** made a flag -- the client's rate
+  is in its binary, so another server rate would split the clocks. The base time is READ (00:00 at
+  start); `-world-clock-start HH:MM` is OURS. `0x34be` (the wall clock every 600 s) is a separate
+  clock for `ServerTime` and the silk mall; not sent (OPEN).
+
+**Day/night -- READ** (DayCycle's header and ENVIRONMENT_FORMAT.md have every address).
+- The record is the camera block's (`**(world+0x2783) + 4`), all channels sampled at the phase.
+- **The graphs are a Catmull-Rom spline**, not a line: the interpolator at graph +0x10 is
+  `FUN_004e0920` (colour) / `0x4df7d0` (float), set by the record's graph constructors (0xa1ba6c,
+  0xa1bacc), through key[p-1..p+2] with the ends repeated; a gap <= 0.0001 gives frac 0; outside
+  the keys the first / last key. EnvironmentReader interpolated linearly until now.
+- Eased `field += (new - field) x min(dt x 0.5, 1)` (+0x2f38 set by the constructor), snapped on
+  +0x238c, then every colour field clamped to [0, 1].
+- **The sun** at `(cos a, sin a, 0) x 20000`, `a = (phase - 0.25) x 2 pi` (`0xb44a10` is `fcos`,
+  `0xb44b40` `fsin`): up at +x at 06:00, overhead at noon, down at -x at 18:00. **The sun disc**
+  (`Map::FUN_00a207a0`, phase 0.25..0.875): a 666.67-half-size quad, colour **SunColor (channel 0)
+  as the texture factor**, alpha `Sun\lens2.ddj`'s. **The moon** (`Map::FUN_00a20d60`): day < 29,
+  phase < 0.5 or > 0.75, `sun\moon%02d.ddj` of day + 1, half-size 1000, at `((frac(phase - 0.75) -
+  0.25) x 1.2 + 0.25) x 2 pi`. Then the clouds over both. **The flare** (Lens Flare row,
+  `Map::FUN_00a21280`): element 2 is `Sun\lens3.ddj` at the sun, +-300 px, its own colour.
+
+**The red sun -- root cause, MEASURED.** OpenSRO drew `SkyBox\glow.ddj` as its sun (a Sprite3D in
+the directional light's direction, tinted by SunColor). Every texel of that texture is **(R 252,
+G 58, B 4)** (A8R8G8B8, bytes `04 3a fc ff`; read through the file's own masks -- the order is
+right, a swap would have made it blue). **Retail loads it (world +0x27db, 0xa0d267) and never draws
+it** (its other references: the release 0x9f66b3, the constructor's zeroing 0xa2f90c). Not a wrong
+hour, not a channel swap, not an interpolation error, not a sunset tint: the wrong texture. The
+real sun is lens2's disc in SunColor -- Jangan (environment 15): (1, 1, 1) at 0.5012, (0.992,
+0.973, 0.757) at the dawn key, (0.976, 0.988, 0.765) at 0.8811 (MEASURED, `day_cycle_test.gd`):
+white at noon, yellow at dawn and dusk -- and lens3's glow, a white core fading to pale yellow
+(R 251, G 246, B 208 at radius 64 of 128; alpha-weighted mean 252, 248, 220). In the frames: the
+dev build's sun pixels (255, 101, 82) (`before_red_sun_dev.png`, yaw -135 pitch 40); this branch's
+sun core (255, 255, 255) in a pale glow (`sun_0700.png`). **Retail's noon sun stands straight
+overhead**, out of reach of the camera's 61-degree pitch, so the sun shot is at clock 07:00
+(phase 0.344, 34 degrees up).
+
+**What changed:**
+- Server: `internal/worldclock` (the timer, `SetHour`), `session/celestial.go` (0x3020 after
+  `OpEnterWorldResult`, 0x3027 broadcast, `SetWorldHour`), GM `/hour <0-23>`, flags `-world-clock`
+  (default on) and `-world-clock-start` (OURS), README and deploy/README.
+- Client: `GameClock` (net; the handlers, the integer timer, `day_phase`, kept in NetClient);
+  `DayCycle` (world; the record at the phase, spline, easing, clamps, sun and moon); EnvironmentReader's
+  spline; World3D samples ten times a second, eases every frame and writes groups that moved
+  (sky 1/255, the rest 1/1024; the portrait at most every 2 s) -- sky, light, objects' light,
+  water, fog, clouds; `TerrainLight` (the terrain keeps N.L and the raw lightmap; its shader takes
+  channels 2, 5, 6 as globals: CPU twin equal to the bake); `sky_body.gdshader` (the disc and the
+  moon before the clouds, which include both in their Forward+ blend); `LensFlare` (all twelve
+  elements; the depth buffer as the screen test); the procedural sky's own sun disc off; the
+  clock's hour to the ambient sound; the record follows the camera's block. With no clock (an old
+  server, `-world-clock` off) the phase is the old fixed 0.5.
+- QA: `OPENSRO_QA_CLOCK` (`HH:MM`, or `name=HH:MM` per shot), `OPENSRO_QA_CLOCK_RUN=<x>`,
+  `OPENSRO_QA_TERRAIN_BAKE=1` (the old baked terrain).
+
+**Tests.** Go: `worldclock_test.go` (20 ms, the day, the base, set-hour, the flag parse),
+`celestial786_test.go` (both payloads byte for byte; 0x3020 is the frame right after the result,
+once, with the uid and the clock; nothing with the switch off; /hour reaches two clients as
+0x3027), `gm/hour786_test.go`. GD: `game_clock_test.gd` (the bytes, the timer, the clock -> phase
+table and its continuity, the messages, the pins), `day_cycle_test.gd` (the shaders parse, the
+spline against the line, the easing, the clamps, the sun and moon geometry and windows, the
+terrain term against the bake, the flare's tables, **a one-texel A8R8G8B8 decoded as (252, 58, 4)
+-- fails on a swapped decoder**, and on the box's Map.pk2 Jangan's SunColor and the three
+textures), `environment_reader_test.gd` and `terrain_prepare_test.gd` updated for the spline and
+the raw lightmap. `go test ./...` passes; `check` ALL LOAD (800 scripts, 9 scenes); `tests` "ran
+311 suite(s), 0 failing" (`RENDER_DIR=/opt/opensro-client-clock`, `GODOT_LOCK=/var/tmp/clock/lock`).
+
+**Perf gate** (Forward+, 1280x720, `--frames 50000`; base d3c450de):
+
+| Gate | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| `--sites jangan` | 0.76 -> 0.77 SAME | 8609 -> 8602 SAME | 2737 -> 2734 SAME | 5 -> 4 SAME |
+| `--sites jangan --env "OPENSRO_QA_CLOCK=05:00 OPENSRO_QA_CLOCK_RUN=60"` (a day every 29 s), before the settle | 0.76 -> 0.80 SAME | 8562 -> 8463 SAME | 2707 -> 2731 SAME | 5 -> 4 SAME |
+| the same, after the settle | 0.77 -> 0.81 SAME | 8628 -> 8634 SAME | 2737 -> 2734 SAME | 4 -> 5 SAME |
+| `--env "OPENSRO_QA_CLOCK=05:00 OPENSRO_QA_CLOCK_RUN=1"` (the real rate, at dawn, where the colours move fastest) | 0.77 -> 0.77 SAME | 8589 -> 8520 SAME | 2721 -> 2710 SAME | 5 -> 5 SAME |
+
+The 60x gates are a worst case (every group written every frame, the sky's radiance redone): +0.04
+ms a frame, under the gate's threshold. At the real rate the cost does not show.
+
+**QA** (render box, Jangan spawn 97/168 (1002, 1020), Forward+ on the RX 7600, `--shots` with
+`OPENSRO_QA_CLOCK`; `/var/tmp/clock/shots/`): `noon_1200.png`, `sunset_1940.png`, `night_2300.png`
+(one camera, yaw -90 pitch 8), `sun_0700.png`, `dusk_sun_1940.png`, `moon_2300.png`, `noon_sun_overhead_1200.png` (QA pitch 85,
+past the player's 61), and the dev build's `before_red_sun_dev.png`. MEASURED on the one-camera three: the top fifth of the frame
+(sky) mean (148, 244, 255) / (165, 197, 245) / (109, 109, 159), luma 216 / 193 / 115; the bottom
+three tenths (paving) (174, 149, 121) / (192, 139, 75) / (80, 76, 76), luma 153 / 148 / 77.
+Pictures are for the human; the claims are the reads and the tests.
+
+**Compatibility and deploy.** The prod server **must be redeployed** to send the clock (one restart
+for the server change). An older client against the new server logs 0x3020 / 0x3027 once as
+unhandled and ignores them; this client against an older server draws the fixed midday it always
+did.
+
+**OURS / INFERRED / OPEN:**
+- OURS: `-world-clock-start`; the no-clock 0.5; the ten-a-second sampling, the write thresholds and
+  the settle; 0x3020 after OpEnterWorldResult (the character data's stand-in); the disc and moon
+  as far-plane quads (retail: Z off before the landscape); the flare's depth-buffer screen test,
+  used at once (retail eases it at 10/s); the procedural sky disc off; GroundProbe's experiments
+  act on BaseMaterial3D passes only (`OPENSRO_QA_TERRAIN_BAKE=1` restores them).
+- INFERRED: the flare's ghost line (sun + (i - 2) / 19 x 2.2 x (centre - sun), the constants READ,
+  the operands not resolved) and the ghosts' +-size quads; the screen-test points' layout; retail
+  shows no moon after day 28 of the server's uptime (the day is never wrapped and the moon needs
+  day < 29); the record snap at a zone change (the flag is set by the constructor).
+- OPEN: the night lights -- the night flag (0x1112fb0 +0x1a8) turns D3D lighting off for material
+  flag 0x8 at night (CObjRendererVS 0xbf0fa0, 0xc42aef, 0xc6c7a5) and runs night-only particles
+  (CRTModParticle 0xc814a1); the light direction +0x209a (sun by day, opposite by night) sent to
+  0x1112fb0 +0x17c, readers not followed (shadows here keep the fixed light); 0x34be; the console
+  lock; the truncated hour handed to the object at 0xee73c0 (`FUN_004e8890`), not identified.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

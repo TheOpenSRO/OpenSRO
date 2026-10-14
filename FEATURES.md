@@ -87,7 +87,7 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Saved position on logout | ✅ Supported | Server option, on for the public server; recall and death points always saved |
 | Minimap | ✅ Supported | NPC, monster, player, party, quest NPC and unique signs; no pet sign |
 | World map | 🟡 Partial | Map, dungeon floors and city icons; guide list and sign tooltips missing |
-| Time of day | 🟡 Partial | Fixed daytime lighting as retail draws it; server clock not sent |
+| Time of day | 🟡 Partial | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; night lamps not yet |
 | Weather (rain, snow) | ❌ Not yet | No weather system yet |
 | Fog and water | ✅ Supported | Retail fog planes; animated water with reflection option |
 | Seasonal decorations | 🟡 Partial | Christmas, Halloween and others available but off by default |

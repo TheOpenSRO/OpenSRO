@@ -275,3 +275,100 @@ use was not followed.
 
 MEASURED, Jangan (environment 15) at the reference time 0.5: channel 9 is (0.357, 0.580, 0.677)
 and the rendered fog is (0.598, 0.762, 0.823).
+
+## The day phase, the spline, and the sun and moon (read 2026-10-13, round 786)
+
+The "reference time 0.5" above is midday. **The world is not drawn at a fixed 0.5**: the game
+clock sets SWorld's phase every frame (`CPSMission::vslot_012` -> `FUN_0084ac90` -> SWorld vtable
++0x50; [game_clock.md](game_clock.md) has the chain and the clock-hour -> phase map, and the
+correction of round 226). How the phase becomes the picture, READ from `sro_client.exe`:
+
+**Which record.** `Map::FUN_00a1baf0` takes the record of the first block of its drawn-block list
+(`**(world+0x2783) + 4`), the camera's own block (MapmWater.environment_at has the chain): one
+record for the whole world, which changes as the camera crosses blocks.
+
+**The graphs' interpolation.** `FUN_004e55e0` (ColorGraph, 16-byte keys, time at +0xc) and
+`FUN_004e5770` (FloatGraph, 8-byte keys, time at +4) find the first key whose time is >= the
+phase; none: the last key's value; the first: its value; otherwise, with p the key before it,
+`frac = (t - time[p]) / (time[p+1] - time[p])` (0 for a gap <= 0.0001, the float at 0xe1b880) and
+the graph's interpolator through key[p-1] (key[0] when p = 0), key[p], key[p+1], key[p+2]
+(key[p+1] when p+1 is the last). The interpolator is the function pointer at graph +0x10, set by
+the record's graph constructors to `FUN_004e0920` (colour, `mov [esi+0x10],0x4e0920` at
+0xa1ba6c) and `0x4df7d0` (float, 0xa1bacc): both the **uniform Catmull-Rom spline**
+`0.5 (2 P1 + (P2 - P0) f + (2 P0 - 5 P1 + 4 P2 - P3) f^2 + (-P0 + 3 P1 - 3 P2 + P3) f^3)` (2.0,
+5.0, 4.0, 3.0, 0.5 at 0xe1b898, 0xd81950, 0xe1b860, 0xe1b808, 0xe1b7d0); the pre-step at +0xc is
+cleared (0x4e62dc). Before round 786 `EnvironmentReader` interpolated linearly, which agreed only
+at the keys; the spline may overshoot between keys.
+
+**Channel -> world field** (the evaluation order in `FUN_00a1baf0`, `lea ecx,[record+N]` before
+each `call 0x4e55e0`, 0xa1bb8a..0xa1bd3a): 0 (+0x88) -> +0x682f, 1 (+0xbc) -> +0x683b, 2 (+0xf0)
+-> +0x6847, 3 (+0x124) -> +0x6853, 4 (+0x158) -> +0x685f, 5 (+0x18c) -> +0x686b, 6 (+0x1c0) ->
++0x6883, 9 (+0x2b4) -> +0x68a3, 13 (+0x1f4) -> +0x6877, 14 (+0x228) -> +0x688f; the float graphs
+as the table above.
+
+**Easing.** With world +0x2f38 set (the constructor sets `param_1[0xbce] = 1`) and the snap flag
++0x238c clear, every field moves toward its new value by `f = dt x 0.5` (0xe1b7d0), f at most 1
+(0xa1c1d5..): `field += (new - field) x f`, about a 2 s time constant. With +0x238c set (the
+constructor sets it; it is cleared after one frame) the fields take the new values at once. Then
+**every colour field and +0x68c7 is clamped to [0, 1]**.
+
+**The sun.** `SWorld::vslot_004` (0xa2d1cb..0xa2d241) places it at `(cos a, sin a, 0) x 20000`
+(0xde4d88), `a = (phase - 0.25) x 2 pi` (0xd83070, 0xd81930; `0xb44a10` is cos -- `fcos` at
+0xb44a7d -- and `0xb44b40` sin, `fsin` at 0xb44bad): it rises at +x at 06:00, stands overhead at
+noon, sets at -x at 18:00. Night is the shifted phase (phase - 0.25, + 0.75 below 0.25) above
+0.5 (0xa2d1ae; the flag goes to 0x1112fb0 +0x1a8).
+
+**The sun disc.** `Map::FUN_00a207a0` (called from the sky step `Map::FUN_00a26f60` at 0xa2727d,
+outside a dungeon, `FUN_009fb1f0`) for `0.25 <= phase <= 0.875` (0xd9a2b8, 0xde4d90): a quad of
+half-size 666.67 (0xde4d70) facing the eye at the sun's place (the corner table at 0xec554c
+turned by the angle), FVF 0x102 (3D), alpha-blended (SRCALPHA / INVSRCALPHA), Z off. **Its colour
+is the texture factor = channel 0, SunColor, x 255 (COLOROP SELECTARG1 TFACTOR, 0xa20953..
+0xa209fa); its alpha `Sun\lens2.ddj`'s** (ALPHAOP SELECTARG1 TEXTURE; world +0x297f, the second
+`sun\lens%d.ddj` of `Map::FUN_00a0d1b0`).
+
+**The moon.** `Map::FUN_00a20d60` (0xa27284, after the disc): drawn while SWorld's day +0x6778 is
+below 29 and phase < 0.5 or > 0.75 (0xe1b7e0, 0xdd8eec), at angle `((frac(phase - 0.75) - 0.25) x
+1.2 + 0.25) x 2 pi` (0xda34b0, 0xe1b7f0, 0xde4d98), 20000 away, half-size 1000 (0xd83268), the
+texture `sun\moon%02d.ddj` of day + 1 (world +0x299b, 30 loaded) in its own colour and alpha.
+Then the clouds (`FUN_00a19330` -> `FUN_00a3f570`, 0xa2737c) over both. The day comes from the
+clock and is never wrapped (game_clock.md), so retail shows no moon after day 28 of the server's
+uptime (INFERRED from the two reads; not watched).
+
+**The flare.** With the Lens Flare row on (world +0x2e84), `Map::FUN_00a21280` (from
+SWorld::vslot_005, 0xa2dbb1) draws twelve screen-space elements while the sun is at least 700
+above the horizon (0xdd81c4) and projects inside [-1.1, 1.1] (0xde4d80, 0xde4d78): textures
+`sun\lens%d.ddj` of 1 + the bytes at 0xec587c (6, 5, 2, 6, 5, 6, 3, 6, 5, 6, 4, 5), sizes the
+floats at 0xec58a0 (30, 40, 150, 30, 40, 50, 300, 40, 30, 50, 0, 30); element 2, the sun's glow,
+is `Sun\lens3.ddj` at the sun itself, +-300 pixels (2 x 150, XYZRHW), alpha-blended in the
+texture's own colour; the rest are added (SRCALPHA / ONE) with alpha 10 / 20 / 19. A visibility
+of 0.3 + 4 x 0.175 from five screen tests around the sun, eased at 10 a second, scales them and
+hides them below 0.1. LensFlare's header separates what is READ there from what is INFERRED.
+
+**SkyBox\glow.ddj is never drawn.** `Map::FUN_00a0d1b0` loads it into world +0x27db; the image's
+only other references are the release (0x9f66b3) and the constructor's zeroing (0xa2f90c).
+MEASURED: every texel is (R 252, G 58, B 4) with an alpha falloff -- **the red sun OpenSRO drew
+until round 786**, as a sprite tinted by SunColor in the light's direction. `Sun\lens2.ddj` is
+white with an alpha disc (255 to radius 36/64, 0 at 56/64); `Sun\lens3.ddj` is a white core
+fading to pale yellow (R 250, G 241, B 180 at radius 96/128; alpha-weighted mean 252, 248, 220).
+
+MEASURED, Jangan (environment 15), channel 0: (1, 1, 1) at 0.5012, (0.992, 0.973, 0.757) at the
+dawn key 0.2488 and (0.976, 0.988, 0.765) at 0.8811 -- a white disc at noon, yellow at dawn and
+dusk; never red.
+
+**Night lights (READ, not drawn here -- OPEN).** The night flag (0x1112fb0 +0x1a8, getter
+0xbc0fd0) is read by `CObjRendererVS` (0xbf0fa0, 0xc42aef, 0xc6c7a5: a material with flag 0x8 is
+drawn with D3DRS_LIGHTING 0x89 off at night) and `CRTModParticle` (0xc814a1: an emitter with
++0x91 bit 0 runs only at night). The light direction world +0x209a (the sun's place by day, the
+opposite at night: phase 0.225..0.775 against the rest, 0xde4f80 / 0xde4f78) goes to 0x1112fb0
++0x17c (0xbbdaa0); its readers were not followed. The objects' and the terrain's own light
+direction stays the fixed `normalize(-1, -1, 0)` (DAT_01109510, ObjectLight).
+
+**What OpenSRO draws (round 786).** `DayCycle` (scripts/world/day_cycle.gd) is the record at the
+phase, the spline, the easing, the clamps, the sun's and moon's places; World3D samples the
+graphs ten times a second and eases every frame (OURS rate split), and writes the sky, the
+directional light and the objects' light (channels 2, 3), the terrain (`TerrainLight`: N.L and
+the raw lightmap baked per region, channels 2, 5, 6 as global uniforms), the water (14), the fog
+(9, 10, 11), the clouds (4, 12), the sun disc and the moon (`sky_body.gdshader`, before the
+clouds, which include both in their Forward+ blend) and the flare (`LensFlare`). The record
+follows the camera's block. The procedural sky's own sun disc is off (`GammaSkyMaterial.
+procedural_sun`).
