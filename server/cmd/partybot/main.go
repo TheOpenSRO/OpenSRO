@@ -920,6 +920,7 @@ func main() {
 	flag.IntVar(&latOpts.attacks, "attacks", 0, "latency: attacks to time after the walk")
 	flag.BoolVar(&latOpts.noDelay, "nodelay", true, "latency: TCP_NODELAY on the bot's socket (false: Nagle on, the client before round 786)")
 	flag.IntVar(&latOpts.crowd, "crowd", 0, "latency: this many more bots moving around the spot")
+	flag.DurationVar(&latOpts.crowdPace, "crowd-pace", 150*time.Millisecond, "latency: the time between two crowd bots' logins")
 	flag.DurationVar(&latOpts.attackTo, "attack-timeout", 5*time.Second, "latency: how long to wait for an attack's result")
 	questRace := flag.String("race", "china", "quest: the character's race, china or europe")
 	questsDir := flag.String("quests-dir", "", "quest: the catalogue directory (export-refdata -mode quests)")

@@ -6,7 +6,7 @@ package main
 //
 //	partybot -mode latency -addr HOST:PORT -tp "x z" [-name Lat] [-level 140]
 //	         [-walk 60s] [-speed 105] [-heading 0] [-attacks 60] [-nodelay=true]
-//	         [-crowd 0]
+//	         [-crowd 0] [-crowd-pace 150ms]
 //
 // The walk (after the attacks): the bot runs a straight line at -speed units a second (a
 // relocated move every 50 ms, as the client's own position stream) and, for
@@ -26,9 +26,10 @@ package main
 // with Nagle's algorithm on (the client before round 786: Godot's
 // StreamPeerTCP default); true is the Go default, TCP_NODELAY.
 //
-// -crowd N logs N more bots in around the probe that relocate a few units
-// every second (load on the hub, the area of interest and the watchers'
-// pushes).
+// -crowd N logs N more bots in around the probe, one every -crowd-pace
+// (150 ms: a login's two bcrypt hashes; 40 ms timed most of 300 out), each
+// relocating a few units every second (load on the hub, the area of interest
+// and the watchers' pushes).
 
 import (
 	"fmt"
@@ -47,13 +48,14 @@ import (
 )
 
 type latencyOpts struct {
-	walk     time.Duration
-	speed    float64
-	heading  float64
-	attacks  int
-	noDelay  bool
-	crowd    int
-	attackTo time.Duration
+	walk      time.Duration
+	speed     float64
+	heading   float64
+	attacks   int
+	noDelay   bool
+	crowd     int
+	crowdPace time.Duration
+	attackTo  time.Duration
 }
 
 var latOpts latencyOpts
@@ -172,7 +174,7 @@ func latencyScenario(addr, name string, level int, at string) error {
 	b.tap = st.tap(b.zone)
 	for i := 0; i < latOpts.crowd; i++ {
 		go latCrowdBot(addr, fmt.Sprintf("%sc%03d", name, i), at)
-		time.Sleep(40 * time.Millisecond) // paced, as swarm's -rate paces its logins
+		time.Sleep(latOpts.crowdPace) // paced, as swarm's -rate paces its logins
 	}
 	b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: "/tp " + at}).Encode())
 	time.Sleep(2 * time.Second) // the warp, the 0x3012, the release
