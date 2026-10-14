@@ -9090,6 +9090,137 @@ human; the claims are the reads, the measurements and the tests.
   defaults to Circle (Middle), where the round blob has no direction -- the moving shadows need
   Detail.
 
+### Round 786 (part): Ground textures no longer flicker
+
+The user (v0.1.544): "can you fix the texture flickering problem? I mostly see it on the ground but
+it might happen elsewhere", with a GIF (imgur EK3tqLj, 1042x386, 100 frames: a still camera over
+grass and dirt beside a low stone wall). Their machine: Windows, RX 9070 XT, Forward+ (Vulkan),
+native readers on, a 3840x2064 window. Branch `fix/flicker786`. Code: `WorldFog.ground_overlay_priority`,
+`MapmTerrainBuilder.overlay_priority` and the overlays' `overlay_rank`; tools
+`overlay_sort_probe.gd`, `ground_overlap_census.gd`, `QaAlphaStir`.
+
+**What the GIF shows (MEASURED, the GIF itself).** It is a 3-3-2 palette with ordered dithering
+(every colour is a multiple of 36 in red and green, 85 in blue), so a one-step pixel flip is often
+dither, not the game; the frame-to-frame difference averaged over 8x8 blocks is under 0.3 luma.
+Smoothed (a 5x5 box) the real change stands out: about 15 compact patches over the ground, none on
+the wall, each up to 12.7 luma between consecutive frames, and **all of them switch together
+between exactly two states** -- split by one patch's brightness, the frames fall into 46 and 54,
+and the two means differ by more than 8 levels at 1,023 pixels and by more than 4 at 5,204, all
+inside those patches. The patches have straight edges and wedge shapes: terrain triangles in
+perspective, not round decals.
+
+**The candidates, each checked.**
+- *Shadows (round 786's sun-following light; checked first)* -- no. Only characters cast
+  (READ: World3D turns casting off on the terrain and on placed objects), so the ground cannot
+  shadow itself and there is no acne to flicker. MEASURED: a still camera with Shadow Detail =
+  Detail and the clock running (`OPENSRO_QA_VIDEO=shadow_detail=2 OPENSRO_QA_CLOCK=10:00
+  OPENSRO_QA_CLOCK_RUN=1`, 400 frames) flips only the player's idle animation, as with shadows at
+  Middle.
+- *Depth precision / z-fighting of coplanar terrain passes* -- not on a still camera: the base, the
+  opaque passes and the overlays are the same vertices through the same vertex code, and Forward+'s
+  scene shader declares `invariant gl_Position` (READ, scene_forward_clustered.glsl), so they draw at
+  equal depth every frame; the near plane is retail's 1.0 (round 729).
+- *TAA / FSR jitter* -- none: the project has no TAA or FSR; Texture Filtering is MSAA 2x, which
+  does not jitter (READ, VideoOptions.apply_viewport).
+- *Mipmaps / texture sparkle* -- would shimmer with motion, not switch between two states with the
+  camera still; the terrain samples with mipmaps (`filter_linear_mipmap`).
+- *The overlays' draw order* -- **yes, this is it**, below.
+
+**The cause (READ, MEASURED).** A quad's dominant tile is drawn opaque and every other tile its four
+corners use as one feathered overlay (MapmTerrainBuilder, round 66), all of a region's overlays as
+surfaces of ONE mesh. Godot sorts the transparent list by render priority, then by the instance's
+depth -- one depth for every surface of an instance -- and nothing else, with an introsort, which is
+not stable (READ, 4.7.2 `render_forward_clustered.h` `SortByReverseDepthAndPriority`,
+`core/templates/sort_array.h`). All overlays sat at one priority (-4, round 780), so a region's
+overlays tied, and their order was whatever the sort made of the whole list: the list is filled in
+the scenario's instance-array order (`renderer_scene_cull.cpp` `_scene_cull`), where removing an
+instance moves the last one into its place (`_unpair_instance`), and an instance's surfaces come
+last-first (`_geometry_instance_add_surface` prepends). So every body, name label or effect that
+comes into view or leaves can change the overlays' order. Where two overlays cover a quad (its
+corners use three or four tiles: **3.86 % of all quads**, 1,672,225 of 43,352,064 over the
+archive's 4,704 regions; 8.78 % in the 35 regions around Jangan -- MEASURED,
+`ground_overlap_census.gd`) "A over B" and "B over A" are different colours: two states, switched
+together, in triangle-shaped patches -- the GIF.
+- *How much the order shows (MEASURED, render box, Forward+ on the RX 7600):* at 96/167 local
+  (840, 1840), yaw 0 pitch -35 distance 40, the same frame with the overlays in ascending and in
+  descending rank differs by more than 8 levels at **8.1 %** of the 1280x720 pixels (up to 29).
+- *The order switching with the camera still (MEASURED, the real renderer):* `overlay_sort_probe.gd`
+  -- six regions from the real builder and materials (synthetic tiles, no game data), a still camera,
+  and 300 invisible transparent quads made before the regions, six hidden or shown a frame. With the
+  overlays at one priority (`OPENSRO_QA_OVERLAY_ORDER=tie`, the build before the fix) **55 of 240
+  frames changed, between exactly 2 pictures, 2,934 pixels each time** (5.1 % of 320x180), every 2 to
+  18 frames, as in the GIF. With the fix: **0 of 240, 1 picture**.
+- *In the world on the box (MEASURED, a negative recorded):* fresh QA boots never hit it. Still
+  cameras over five spots (Jangan's dirt field, 96/168, 96/167, 97/168's south edge, a 96/166
+  meadow), with 64 to 1,000 invisible transparent walkers churning the list (`OPENSRO_QA_ALPHA_STIR`),
+  with a full-map server's monsters walking through the view, after a five-viewpoint tour across
+  regions, in movie frames and in real time (xwd grabs at 144 fps) -- the pixels that change and
+  come back (|d luma| > 25 to the next frame, < 8 to the one after) are the player's idle animation
+  and passing monsters only, about 3 a frame, **before and after alike** (e.g. 96/167: 625 flips
+  over 178 frames before, 592 after, all inside the player's box). There the sort kept the tie in
+  input order -- the surfaces' reverse, i.e. **descending** tile key (MEASURED: the "tie" frame
+  matches the "desc" frame within 0.2 % of pixels, the player's animation). Why those lists never
+  switched is OPEN: the sort's outcome for a tie depends on the whole list's make-up (the walkers
+  were made before the regions, as in the probe, and still did not switch it), and a player's long
+  session -- regions streamed in and out among long-lived bodies, labels and effects -- is a list
+  these boots do not build (INFERRED). The probe shows the renderer does switch such ties.
+
+**What retail does (READ).** One fixed order: `Map::FUN_00a1fdb0` loops the blocks, and in each its
+passes in ascending tile key, one `DrawIndexedPrimitive` each, every pass blended SRCALPHA /
+INVSRCALPHA (`Map::FUN_00a18740`: render states 0x1b = 1, 0x13 = 5, 0x14 = 6) at ZFUNC LESSEQUAL with
+no depth bias (round 729's census) -- program order, nothing sorted (RE_COMPLETION.md, round 610).
+
+**The fix (OURS method, READ order).** Each overlay gets its own render priority from its rank in
+the region's ascending-key order: `WorldFog.ground_overlay_priority(rank)` = -125 + rank, clamped to
+-125 .. -4 (`GROUND_OVERLAY_PRIORITY_FIRST` .. `GROUND_OVERLAY_PRIORITY`). The builder stores
+`overlay_rank` / `overlay_count` on each overlay surface; both material kinds (TerrainLight's and
+the baked StandardMaterial3D) take it (`MapmTerrainBuilder.overlay_priority`); the water mirror's
+copy keeps it. A region has at most **38** overlays (92/131; MEASURED, `CENSUS_ALL=1`), the band
+has 122 ranks. Nothing else moves: the sky's quads stay at -128 .. -126, the water at -3, Detail's
+catcher at -2, the fog pass at -1. Overlays of different regions never cover the same pixel at the
+same depth, so drawing every region's rank 0 before any rank 1 changes nothing between regions.
+The look of the two-overlay quads is now always ascending -- retail's pass order -- where the
+fresh-boot build happened to draw descending: at the spot above, 8.1 % of the pixels change once
+(`/var/tmp/flicker/keep/before_after_h96.jpg`, before | after; pictures are for the human).
+
+**Tests.** `terrain_overlay_order_test.gd` (new): the band (first rank after the sky, one priority
+a rank, clamped, under the water and the catcher, room for the measured 38); the builder (both
+material kinds: ranks 0..n-1 in ascending key, each material at its rank's priority, none shared,
+no opaque surface ranked); **the regression** -- a port of Godot 4.7.2's SortArray and the alpha
+comparator over 300 random transparent lists (other bodies at random depths and places in the cull
+order): the builder's priorities give every region's overlays ascending order in all 300 (1 order);
+all at one priority they come out in 287 different orders. `mapm_terrain_builder_test.gd`: the
+overlays' priority is in the band (was: exactly -4). `world_fog_test.gd` unchanged and passing.
+`remote_godot.sh check`: 806 scripts and 9 scenes, ALL LOAD; `tests`: "ran 313 suite(s), 0
+failing" (`RENDER_DIR=/opt/opensro-client-flicker`, `GODOT_LOCK=/var/tmp/flicker/lock`). No server
+change: no `go test`, no deploy.
+
+**Perf gate** (Forward+, 1280x720, median of 3; base d3632b76, head ffb65a0e):
+
+| Gate | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| `--sites jangan --frames 50000` | 0.77 -> 0.77 SAME | 8557 -> 8616 SAME | 2714 -> 2711 SAME | 4 -> 5 SAME |
+| `--sites crowd --frames 12000` (2,500 monsters) | 3.09 -> 3.09 SAME | 10840 -> 10750 SAME | 3507 -> 3455 SAME | 5 -> 5 SAME |
+
+The gate's default frame count gave too few FPS samples at both sites ("missing numbers"), hence
+the explicit `--frames`. Per frame the fix costs nothing: the same materials, only their priority
+values differ.
+
+**Tools.** `overlay_sort_probe.gd`, `ground_overlap_census.gd`, `OPENSRO_QA_OVERLAY_ORDER=tie|desc`,
+`OPENSRO_QA_ALPHA_STIR` (client/tools/README.md). Box recipes `/var/tmp/flicker/{run,rt,live,shots}.sh`
+and `flipcount.py`; lane `RENDER_DIR=/opt/opensro-client-flicker`, `GODOT_LOCK=/var/tmp/flicker/lock`.
+
+**OPEN.**
+- Not reproduced in a world run on the box (above); the user's build should be checked on their
+  machine. The probe and the GIF's two-state, triangle-shaped, all-at-once switching are the
+  evidence that this is their flicker.
+- "Elsewhere": the same tie exists for any one mesh with two or more overlapping blended surfaces,
+  and for two instances with the same AABB centre (Godot's default sort point). Placed objects build
+  one MeshInstance3D per `.bms` (different centres as a rule), so a part and its blended overlay
+  layer tie only when their boxes match exactly; not censused.
+- Retail's own blend model (the first pass claims a quad, masks per vertex; round 610's "recorded,
+  not applied") is still not ours; only the order now matches.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

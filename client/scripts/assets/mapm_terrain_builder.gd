@@ -199,7 +199,11 @@ static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, tex
 ##   "blend"       whether the pass is an alpha-blended overlay;
 ##   "unshaded"    whether the real lighting is baked into the vertex colour;
 ##   "base"        true on the flat base surface only (absent elsewhere),
-##                 whose material is drawn first (BASE_RENDER_PRIORITY).
+##                 whose material is drawn first (BASE_RENDER_PRIORITY);
+##   "overlay_rank", "overlay_count"  on an overlay only (round 786): its
+##                 place in the region's ascending-key overlay order and how
+##                 many there are, which set its render priority
+##                 (overlay_priority).
 ## Only Arrays, packed arrays and Dictionaries -- no Mesh, Material or
 ## Texture, each of which owns a RenderingServer RID -- so World3D's
 ## WorkerThreadPool task (_terrain_prepare) builds it off the main thread and
@@ -239,6 +243,25 @@ static func surfaces_to_mesh(surfaces: Array, texture_lookup: Dictionary, lightm
 			_surface_material(surface, texture_lookup, lightmap))
 	return array_mesh
 
+## An overlay's render priority (round 786, the ground flicker): its rank
+## among the region's overlays -- "overlay_rank", 0 for the lowest tile key,
+## retail's pass order -- through WorldFog.ground_overlay_priority, so no two
+## overlays of a region tie in Godot's unstable alpha sort (WorldFog's
+## GROUND_OVERLAY_PRIORITY note has the cause and the reads).
+## OPENSRO_QA_OVERLAY_ORDER (QA only, for the before/after measurement):
+## `tie` puts every overlay back at GROUND_OVERLAY_PRIORITY (the build before
+## the fix), `desc` reverses the ranks (which pixels the order changes).
+static var _qa_overlay_order := OS.get_environment("OPENSRO_QA_OVERLAY_ORDER")
+
+static func overlay_priority(surface: Dictionary) -> int:
+	var rank: int = surface.get("overlay_rank", 0)
+	match _qa_overlay_order:
+		"tie":
+			return WorldFog.GROUND_OVERLAY_PRIORITY
+		"desc":
+			rank = maxi(int(surface.get("overlay_count", 1)) - 1 - rank, 0)
+	return WorldFog.ground_overlay_priority(rank)
+
 ## One pass's material -- see surfaces_to_mesh. A key the lookup does not
 ## hold is an error, not a silent untextured pass: an unset sampler draws
 ## white under GLES3, which is the "white ground" symptom (round 558), and
@@ -258,7 +281,7 @@ static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, l
 		if surface.get("base", false):
 			priority = BASE_RENDER_PRIORITY
 		if surface["blend"]:
-			priority = WorldFog.GROUND_OVERLAY_PRIORITY
+			priority = overlay_priority(surface)
 		return TerrainLight.material(tex, lightmap, surface.get("tint", Color.WHITE), surface["blend"], priority, key)
 	var mat := StandardMaterial3D.new()
 	# The pass's tile ID, for /groundprobe (GroundProbe, round 579): a pass
@@ -291,8 +314,9 @@ static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, l
 		# under it -- the same depth (round 702, WorldFog) -- and before the
 		# water, as retail draws every terrain pass before it (round 780,
 		# WorldFog.GROUND_OVERLAY_PRIORITY): at the water's own priority the
-		# depth sort put a lake bed's overlays over its water.
-		mat.render_priority = WorldFog.GROUND_OVERLAY_PRIORITY
+		# depth sort put a lake bed's overlays over its water. Each overlay
+		# at its own rank's priority (round 786, overlay_priority).
+		mat.render_priority = overlay_priority(surface)
 	if lightmap != null:
 		# Retail's lightmap pass multiplies the drawn ground by the
 		# lightmap term (lightmap_term). A detail layer in MUL mode multiplies
@@ -954,10 +978,14 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 		add_surface.call(key, buffers[key], false)
 
 	# Blend overlays last, so they render over every opaque surface above.
+	# Ascending key, retail's pass order; each carries its rank, which fixes
+	# its place among the region's overlays (round 786, overlay_priority).
 	var blend_keys := blend_buffers.keys()
 	blend_keys.sort()
 	for key in blend_keys:
 		add_surface.call(key, blend_buffers[key], true)
+		surfaces[-1]["overlay_rank"] = blend_keys.find(key)
+		surfaces[-1]["overlay_count"] = blend_keys.size()
 
 	return surfaces
 

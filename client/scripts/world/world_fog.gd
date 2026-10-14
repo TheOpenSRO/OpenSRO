@@ -86,7 +86,35 @@ const UNDER_PASS_PRIORITY := -3
 ## than halfway between them the lake bed's overlays were drawn over the
 ## water: the blocky patches through the Lake Forest pond (MEASURED,
 ## OPENSRO_QA_WATER_SORT).
+##
+## **One priority per overlay, in the region's pass order (round 786, the
+## ground flicker).** A region's overlays are surfaces of ONE mesh, so Godot
+## gives them one depth (the instance's: READ, 4.7.2
+## render_forward_clustered.cpp `_fill_render_list`, `inst->depth`), and at one
+## priority they tie. Godot's alpha sort is an introsort
+## (`SortByReverseDepthAndPriority` through core/templates/sort_array.h), which
+## is not stable: the order of tied surfaces follows whatever else is in the
+## list -- every monster, player or effect that comes into view or leaves it.
+## Where a quad's corners use three or more tiles two overlays cover it, and
+## "A over B" and "B over A" are different colours, so those quads flipped
+## between two looks with the camera still (the user's report, round 786).
+## Retail draws a block's passes in one fixed order, ascending tile key, each
+## blended over the last at ZFUNC LESSEQUAL with no depth bias
+## (`Map::FUN_00a1fdb0`'s pass loop, `Map::FUN_00a18740`'s states; READ, docs/
+## RE_COMPLETION.md round 610 and docs/rounds/r729.md). So each overlay now
+## takes its own priority from its rank in the region's ascending-key order
+## (`ground_overlay_priority`): GROUND_OVERLAY_PRIORITY_FIRST for the first,
+## one more for each next, never above GROUND_OVERLAY_PRIORITY (still under
+## the water, the catcher and the pass). The sky's quads hold -128..-126; a
+## region has at most 38 overlays (MEASURED over all 4,704 regions of the map
+## archive, tools/ground_overlap_census.gd), against the 122 ranks here.
 const GROUND_OVERLAY_PRIORITY := -4
+const GROUND_OVERLAY_PRIORITY_FIRST := -125
+
+## The render priority of a region's overlay of rank `rank` (0 = the lowest
+## tile key among the region's overlays).
+static func ground_overlay_priority(rank: int) -> int:
+	return clampi(GROUND_OVERLAY_PRIORITY_FIRST + rank, GROUND_OVERLAY_PRIORITY_FIRST, GROUND_OVERLAY_PRIORITY)
 
 ## The view distance the planes scale by when no row says otherwise
 ## (READ, 0xec54b0 = 2500.0).

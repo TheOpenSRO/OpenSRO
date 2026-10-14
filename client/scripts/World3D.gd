@@ -1886,6 +1886,8 @@ func _ready() -> void:
 	# The distance fog's pass (round 702, WorldFog); the zone's environment
 	# fills it in.
 	_build_fog_pass()
+	# QA only (round 786, the ground flicker): OPENSRO_QA_ALPHA_STIR.
+	QaAlphaStir.install(self, camera_3d)
 	# The original's field of view (round 706, CAMERA_FOV_DEG).
 	if camera_3d != null:
 		camera_3d.fov = CAMERA_FOV_DEG
@@ -15278,6 +15280,13 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_PITCH=deg  camera pitch (-90 is straight down)
 ##   OPENSRO_QA_DIST=n     camera distance from the player
 ##   OPENSRO_QA_CAMERA_NEAR=n  the world camera's near plane (retail 1.0; round 729, measurement only)
+##   OPENSRO_QA_OVERLAY_ORDER=tie|desc  the terrain overlays' render
+##                         priorities as before round 786 (all one: tied in
+##                         the alpha sort) or in reversed rank
+##                         (MapmTerrainBuilder.overlay_priority; measurement only)
+##   OPENSRO_QA_ALPHA_STIR=n[,step,toggle,spread]  n invisible transparent
+##                         walkers that churn the alpha list (QaAlphaStir,
+##                         round 786; _SHOW=1 draws them)
 ##   OPENSRO_QA_AMBIENT=1|off  log the teleport gates' glows every 60 ticks
 ##                         (round 720), or attach no gate effects at all
 ##   OPENSRO_QA_WALK=deg   walk continuously on that heading
