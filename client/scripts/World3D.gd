@@ -480,6 +480,14 @@ func apply_video_options(o: VideoOptions) -> void:
 	# Fog (temporary), OURS (round 702): the original's fog or none.
 	if changed.call(VideoOptions.FOG):
 		_apply_fog()
+	# Night Darkness and Shadows Follow the Sun (OURS, round 786, NightLight):
+	# every group written again at the new scale; the shadow light taken to the
+	# hour at once (or back to the fixed light).
+	if before != null and (changed.call(VideoOptions.NIGHT) or changed.call(VideoOptions.SUN_SHADOWS) or changed.call(VideoOptions.SHADOW)):
+		if changed.call(VideoOptions.NIGHT) and _day_cycle.state != null and _env_record != null and _dungeon == null:
+			_day_pushed.clear()
+			_day_push(_day_cycle.state, false)
+		_sun_shadow_snap()
 	# Background Sight Range (READ distances, OURS drawing; _apply_view_distance).
 	if changed.call(VideoOptions.SCENERY):
 		_apply_view_distance(o.value(VideoOptions.SCENERY))
@@ -3179,10 +3187,15 @@ func _apply_object_light() -> void:
 	var bloom := video_options().value(VideoOptions.BLOOM) == 1
 	var d: Color = _object_light_channels[0] if not _object_light_channels.is_empty() else ObjectLight.FALLBACK_CHANNEL
 	var a: Color = _object_light_channels[1] if not _object_light_channels.is_empty() else ObjectLight.FALLBACK_CHANNEL
-	ObjectLight.set_light(d, a, bloom)
-	print("World3D: object light (READ): ambient %s diffuse %s (channel 2 x %.1f, bloom %s) to-light %s%s" % [
+	# OURS (round 786, NightLight): the night's scale on the world's objects
+	# and characters; the portrait and the paper doll below keep the zone's
+	# own light. 1 in a dungeon (its own light) and by day.
+	var nk := _night_k if _dungeon == null else 1.0
+	ObjectLight.set_light(NightLight.scaled(d, nk), NightLight.scaled(a, nk), bloom)
+	print("World3D: object light (READ): ambient %s diffuse %s (channel 2 x %.1f, bloom %s) to-light %s%s%s" % [
 		str(ObjectLight.current_ambient), str(ObjectLight.current_diffuse), ObjectLight.diffuse_scale(bloom),
-		"on" if bloom else "off", str(ObjectLight.to_light_godot()), "" if not _object_light_channels.is_empty() else " (no zone yet)"])
+		"on" if bloom else "off", str(ObjectLight.to_light_godot()), "" if not _object_light_channels.is_empty() else " (no zone yet)",
+		" (night x %.3f, OURS)" % nk if nk < 1.0 else ""])
 	# The portrait's and the paper doll's light follow (their diffuse scale is
 	# the same READ rule).
 	if not _object_light_channels.is_empty():
@@ -4887,6 +4900,12 @@ func _day_tick(delta: float) -> void:
 	var t0 := Time.get_ticks_usec() if fs else 0
 	var now := Time.get_ticks_msec()
 	var resample := now - _day_sample_at >= DAY_SAMPLE_MS
+	# The shadow light (OURS, round 786): its target with each sample, its
+	# glide every frame until it arrives.
+	if resample:
+		_sun_shadow_target(_current_day_phase())
+	if not _sun_shadow_settled:
+		_sun_shadow_glide(delta)
 	if not resample and _day_cycle.settled:
 		# Nothing left to ease and no new sample: nothing moved.
 		return
@@ -4899,6 +4918,107 @@ func _day_tick(delta: float) -> void:
 		_day_bodies(_env_time, st)
 	if fs:
 		FrameSplit.add("w_day", Time.get_ticks_usec() - t0)
+
+## OURS (round 786, NightLight): the night's scale now -- 1 on the front end
+## (its fixed hour keeps retail's look), in a dungeon, with no record and with
+## Night Darkness at Original.
+var _night_k := 1.0
+## The record's noon light (NightLight.noon_metric), per record.
+var _night_noon_record: EnvironmentReader.Record = null
+var _night_noon := 0.0
+
+func _night_scale(st: DayCycle.State) -> float:
+	if st == null or _env_record == null or _env_fixed_phase >= 0.0 or _dungeon != null:
+		return 1.0
+	var lvl := NightLight.level(video_options().value(VideoOptions.NIGHT))
+	if lvl <= 0.0:
+		return 1.0
+	if _night_noon_record != _env_record:
+		_night_noon_record = _env_record
+		_night_noon = NightLight.noon_metric(_env_record)
+	return NightLight.scale(_night_noon, NightLight.light_metric(st.diffuse, st.object_ambient),
+		NightLight.amount(_env_time), lvl)
+
+## The shadow light (OURS, round 786, NightLight): the direction to it and its
+## strength as applied, the target, and whether the glide has arrived.
+var _sun_shadow_dir := Vector3.ZERO
+var _sun_shadow_goal := Vector3.ZERO
+var _sun_shadow_strength := -1.0
+var _sun_shadow_settled := true
+## Whether the light is turned from the scene's (the row on).
+var _sun_shadow_active := false
+## The scene's own light basis (the fixed direction the shadows kept before
+## round 786, and keep with the row Off), taken before the first turn.
+var _scene_light_basis := Basis.IDENTITY
+var _scene_light_taken := false
+
+func _take_scene_light() -> void:
+	if not _scene_light_taken and directional_light != null:
+		_scene_light_basis = directional_light.basis
+		_scene_light_taken = true
+
+## The fixed direction to the light the terrain's N.L is baked against
+## (round 786's: the scene light's), whichever way the shadow light turns.
+func _fixed_to_light() -> Vector3:
+	_take_scene_light()
+	var parent := directional_light.get_parent() as Node3D
+	if parent != null and parent.is_inside_tree():
+		return parent.global_transform.basis * _scene_light_basis.z
+	return _scene_light_basis.z
+
+func _sun_shadows_on() -> bool:
+	return _env_fixed_phase < 0.0 and video_options().value(VideoOptions.SUN_SHADOWS) == 1 \
+		and video_options().value(VideoOptions.SHADOW) >= 2
+
+## A new target from the phase, when it moved a step (NightLight's rule).
+func _sun_shadow_target(phase: float) -> void:
+	if directional_light == null:
+		return
+	_take_scene_light()
+	if not _sun_shadows_on():
+		if _sun_shadow_active:
+			# Back to the fixed light at full strength (the row turned off).
+			directional_light.basis = _scene_light_basis
+			ShadowCatcher.set_strength(1.0)
+			_sun_shadow_active = false
+		_sun_shadow_strength = -1.0
+		_sun_shadow_dir = Vector3.ZERO
+		_sun_shadow_goal = Vector3.ZERO
+		_sun_shadow_settled = true
+		return
+	_sun_shadow_active = true
+	var want: Array = NightLight.shadow_light(phase, _clock_day())
+	var dir: Vector3 = want[0]
+	var strength: float = want[1]
+	if _sun_shadow_strength < 0.0 or absf(strength - _sun_shadow_strength) >= NightLight.STRENGTH_EPSILON \
+			or (strength == 0.0 and _sun_shadow_strength != 0.0):
+		_sun_shadow_strength = strength
+		ShadowCatcher.set_strength(strength)
+	if _sun_shadow_goal == Vector3.ZERO or NightLight.should_retarget(_sun_shadow_goal, dir):
+		_sun_shadow_goal = dir
+		_sun_shadow_settled = false
+		if _sun_shadow_dir == Vector3.ZERO:
+			_sun_shadow_dir = dir
+			directional_light.basis = NightLight.light_basis(dir)
+			_sun_shadow_settled = true
+
+## The light glides toward the target (and stops once there).
+func _sun_shadow_glide(delta: float) -> void:
+	if _sun_shadow_goal == Vector3.ZERO or directional_light == null:
+		_sun_shadow_settled = true
+		return
+	var g: Array = NightLight.glide(_sun_shadow_dir, _sun_shadow_goal, delta, maxf(_sun_shadow_strength, 0.0))
+	_sun_shadow_dir = g[0]
+	_sun_shadow_settled = g[1]
+	directional_light.basis = NightLight.light_basis(_sun_shadow_dir)
+
+## Takes the shadow light to the phase at once (a QA clock pin, a setting).
+func _sun_shadow_snap() -> void:
+	_sun_shadow_goal = Vector3.ZERO
+	_sun_shadow_dir = Vector3.ZERO
+	_sun_shadow_strength = -1.0
+	if _env_record != null and _dungeon == null:
+		_sun_shadow_target(_current_day_phase())
 
 static func _day_moved(before: Array, now: Array, eps: float) -> bool:
 	if before.size() != now.size():
@@ -4929,13 +5049,21 @@ func _day_take(group: String, values: Array, eps: float, force: bool) -> bool:
 func _day_push(st: DayCycle.State, force: bool) -> void:
 	if st == null:
 		return
+	# OURS (round 786, NightLight): the night's scale -- k on the lights,
+	# k^0.75 on the sky, the fog and the clouds; 1 by day, at Original, on the
+	# front end and with no record. Every group below writes the scaled value.
+	_night_k = _night_scale(st)
+	var nk := _night_k
+	var ns := NightLight.sky_scale(nk)
+	var sky_top := NightLight.scaled(st.sky_top, ns)
+	var sky_bottom := NightLight.scaled(st.sky_bottom, ns)
 	var sky_moved := false
 	# The sky's gradient: channels 1 (top) and 13 (bottom).
-	if _sky_material != null and _day_take("sky", [st.sky_top, st.sky_bottom], DAY_SKY_EPSILON, force):
-		_sky_material.sky_top_color = st.sky_top
-		_sky_material.sky_horizon_color = st.sky_bottom
-		_sky_material.ground_horizon_color = st.sky_bottom
-		_sky_material.ground_bottom_color = st.sky_bottom.darkened(0.4)
+	if _sky_material != null and _day_take("sky", [sky_top, sky_bottom], DAY_SKY_EPSILON, force):
+		_sky_material.sky_top_color = sky_top
+		_sky_material.sky_horizon_color = sky_bottom
+		_sky_material.ground_horizon_color = sky_bottom
+		_sky_material.ground_bottom_color = sky_bottom.darkened(0.4)
 		sky_moved = true
 	# The light: channel 2 (diffuse) on the directional light and in the
 	# objects' formula, channel 3 the objects' ambient (ObjectLight, round 706).
@@ -4944,9 +5072,11 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	# docs/RE_MAP_ENGINE.md): the diffuse channel is the term multiplied by
 	# N.L. Channel 0 (SunColor) is the sun disc's colour (round 786:
 	# Map::FUN_00a207a0's texture factor), not a light.
-	if _day_take("light", [st.diffuse, st.object_ambient], DAY_EPSILON, force):
-		directional_light.light_color = st.diffuse
-		world_environment.environment.ambient_light_color = st.object_ambient
+	if _day_take("light", [NightLight.scaled(st.diffuse, nk), NightLight.scaled(st.object_ambient, nk)], DAY_EPSILON, force):
+		directional_light.light_color = NightLight.scaled(st.diffuse, nk)
+		world_environment.environment.ambient_light_color = NightLight.scaled(st.object_ambient, nk)
+		# The zone's own channels (the portrait's light); _apply_object_light
+		# and the line below apply the night's scale to the world.
 		_object_light_channels = [st.diffuse, st.object_ambient]
 		_portrait_zone_light = [st.diffuse, st.object_ambient]
 		if force:
@@ -4959,7 +5089,8 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 				print("World3D: portrait zone light (EnvironmentID %d): diffuse channel %s ambient channel %s, renders %d" % [
 					_env_record_id, st.diffuse, st.object_ambient, pp.renders_requested if pp != null else -1])
 		else:
-			ObjectLight.set_light(st.diffuse, st.object_ambient, video_options().value(VideoOptions.BLOOM) == 1)
+			ObjectLight.set_light(NightLight.scaled(st.diffuse, nk), NightLight.scaled(st.object_ambient, nk),
+				video_options().value(VideoOptions.BLOOM) == 1)
 	# The portrait and the paper doll re-render with the light: not often.
 	if not force and Time.get_ticks_msec() - _day_portrait_at >= DAY_PORTRAIT_MS \
 			and _day_take("portrait", [st.diffuse, st.object_ambient], DAY_PORTRAIT_EPSILON, false):
@@ -4974,12 +5105,13 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	_env_terrain_ambient = st.terrain_ambient
 	_env_terrain_shadow = st.terrain_shadow
 	_env_light_ready = true
-	if _day_take("terrain", [st.diffuse, st.terrain_ambient, st.terrain_shadow], DAY_EPSILON, force):
-		TerrainLight.set_light(st.diffuse, st.terrain_ambient, st.terrain_shadow)
-	# The water's tint: channel 14 (READ, round 627).
-	if _day_take("water", [st.water], DAY_EPSILON, force):
-		_env_water_color = st.water
-		_set_water_color(st.water)
+	if _day_take("terrain", [st.diffuse, st.terrain_ambient, st.terrain_shadow, nk], DAY_EPSILON, force):
+		TerrainLight.set_light(st.diffuse, st.terrain_ambient, st.terrain_shadow, nk)
+	# The water's tint: channel 14 (READ, round 627), x the night's k (OURS).
+	var water := NightLight.scaled(st.water, nk)
+	if _day_take("water", [water], DAY_EPSILON, force):
+		_env_water_color = water
+		_set_water_color(water)
 		if force:
 			print("World3D: environment %d water colour (channel 14) %s" % [_env_record_id, str(st.water)])
 	# The fog: sqrt of channel 9, the planes channels 10 and 11 (WorldFog,
@@ -4988,6 +5120,9 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	if OS.get_environment("OPENSRO_QA_FOG_RAW") != "":
 		# QA only: the pre-review colour, for a before/after on one build.
 		fog_color = st.fog
+	# OURS (round 786): the night's k^0.75, so the distance does not glow
+	# over a darkened ground.
+	fog_color = NightLight.scaled(fog_color, ns)
 	if _day_take("fog", [fog_color, st.fog_near, st.fog_far], DAY_EPSILON, force):
 		_fog_channel_near = st.fog_near
 		_fog_channel_far = st.fog_far
@@ -5017,8 +5152,9 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	# The cloud layer's texture factor: channel 4, alpha (channel 12 + 1) / 2
 	# (READ, round 628 review); its fog the world's fog colour.
 	var cloud_moved := false
-	if _sky_dome_material != null and _day_take("cloud", [st.cloud, st.cloud_alpha, fog_color], DAY_EPSILON, force):
-		_sky_dome_material.set_shader_parameter("cloud_color", Vector3(st.cloud.r, st.cloud.g, st.cloud.b))
+	var cloud := NightLight.scaled(st.cloud, ns)
+	if _sky_dome_material != null and _day_take("cloud", [cloud, st.cloud_alpha, fog_color], DAY_EPSILON, force):
+		_sky_dome_material.set_shader_parameter("cloud_color", Vector3(cloud.r, cloud.g, cloud.b))
 		_sky_dome_material.set_shader_parameter("cloud_alpha", st.cloud_alpha)
 		_sky_dome_material.set_shader_parameter("fog_color", Vector3(fog_color.r, fog_color.g, fog_color.b))
 		cloud_moved = true
@@ -5098,6 +5234,7 @@ func _qa_clock_for_shot(shot_name: String) -> void:
 	clock.pin(at.x, at.y)
 	_day_cycle.snap()
 	_day_sample_at = -100000
+	_sun_shadow_snap()
 	print("QA CLOCK %s: pinned at %02d:%02d -> sky phase %.4f" % [shot_name, at.x, at.y, clock.phase(Time.get_ticks_msec())])
 
 ## Opens the real Map.pk2 -- OPENSRO_MAP_PK2_PATH if set, else a real
@@ -10739,7 +10876,9 @@ func _terrain_job(mapm_path: String, texture_override: String, world_offset: Vec
 func _terrain_light_into(job: Dictionary) -> void:
 	var light_dir := Vector3.ZERO
 	if _env_light_ready and directional_light != null:
-		var to_light := directional_light.global_transform.basis.z.normalized()
+		# The scene light's own direction (round 786's), not the shadow light's
+		# turn (round 786, OURS): the terrain's N.L is retail's fixed light.
+		var to_light := _fixed_to_light().normalized()
 		light_dir = Vector3(to_light.x, to_light.y, -to_light.z)
 	job["light_dir"] = light_dir
 	job["light_diffuse"] = _env_light_diffuse
@@ -16978,6 +17117,13 @@ func _qa_advance_shots() -> void:
 		if OS.get_environment("OPENSRO_QA_PICK_SWEEP") != "":
 			_qa_pick_sweep(_qa_shots[_qa_shot_index]["name"])
 		print(_camera_report(_qa_shots[_qa_shot_index]["name"]))
+		# Round 786 (OURS, NightLight): the night's scale and the shadow light.
+		var to_l := directional_light.global_transform.basis.z if directional_light != null else Vector3.ZERO
+		print("QA NIGHT %s phase %.4f amount %.3f k %.3f terrain_night %.3f obj_ambient %s obj_diffuse %s shadow_to_light (%.3f, %.3f, %.3f) elevation %.1f strength %.2f catcher_k %.3f" % [
+			_qa_shots[_qa_shot_index]["name"], _env_time, NightLight.amount(_env_time), _night_k, TerrainLight.current_night,
+			str(ObjectLight.current_ambient), str(ObjectLight.current_diffuse), to_l.x, to_l.y, to_l.z,
+			rad_to_deg(asin(clampf(to_l.normalized().y, -1.0, 1.0))) if to_l != Vector3.ZERO else 0.0,
+			maxf(_sun_shadow_strength, 1.0 if not _sun_shadow_active else 0.0), ShadowCatcher.k_at(ShadowCatcher.strength)])
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return

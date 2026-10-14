@@ -20,6 +20,7 @@ class_name TerrainLight
 ## global uniforms World3D sets from DayCycle each frame:
 ##
 ##     lit   = tint x clamp(N.L x srr_terrain_diffuse + srr_terrain_ambient, 0, 1)   (per vertex)
+##             x srr_terrain_night    (OURS, round 786: NightLight's k; 1 by day)
 ##     term  = min(lightmap + srr_terrain_shadow, 1)                               (per pixel)
 ##     pixel = texture x lit x term
 ##
@@ -34,27 +35,35 @@ class_name TerrainLight
 const GLOBAL_DIFFUSE := &"srr_terrain_diffuse"
 const GLOBAL_AMBIENT := &"srr_terrain_ambient"
 const GLOBAL_SHADOW := &"srr_terrain_shadow"
+## OURS (round 786, NightLight): the night's scale on the lit colour, after
+## retail's clamp -- so a zone whose night keys saturate the clamp (as at
+## Bandit's Mountain Stronghold) still darkens. 1 with Night Darkness at
+## Original and by day.
+const GLOBAL_NIGHT := &"srr_terrain_night"
 
 ## What was last set (for the QA log and the tests).
 static var current_diffuse := Color(1, 1, 1)
 static var current_ambient := Color(0, 0, 0)
 static var current_shadow := Color(0, 0, 0)
+static var current_night := 1.0
 
-## Sets the three globals (display values).
-static func set_light(diffuse: Color, ambient: Color, shadow: Color) -> void:
+## Sets the globals (display values; `night` NightLight's k, OURS).
+static func set_light(diffuse: Color, ambient: Color, shadow: Color, night: float = 1.0) -> void:
 	current_diffuse = diffuse
 	current_ambient = ambient
 	current_shadow = shadow
+	current_night = night
+	RenderingServer.global_shader_parameter_set(GLOBAL_NIGHT, Vector4(night, night, night, 1.0))
 	RenderingServer.global_shader_parameter_set(GLOBAL_DIFFUSE, Vector4(diffuse.r, diffuse.g, diffuse.b, 1.0))
 	RenderingServer.global_shader_parameter_set(GLOBAL_AMBIENT, Vector4(ambient.r, ambient.g, ambient.b, 1.0))
 	RenderingServer.global_shader_parameter_set(GLOBAL_SHADOW, Vector4(shadow.r, shadow.g, shadow.b, 1.0))
 
 ## The CPU twin of the vertex term, for the tests: what the shader computes
 ## for a vertex whose baked N.L is `ndotl`.
-static func lit(ndotl: float, tint: Color, diffuse: Color, ambient: Color) -> Color:
-	return Color(tint.r * clampf(ndotl * diffuse.r + ambient.r, 0.0, 1.0),
-		tint.g * clampf(ndotl * diffuse.g + ambient.g, 0.0, 1.0),
-		tint.b * clampf(ndotl * diffuse.b + ambient.b, 0.0, 1.0))
+static func lit(ndotl: float, tint: Color, diffuse: Color, ambient: Color, night: float = 1.0) -> Color:
+	return Color(tint.r * clampf(ndotl * diffuse.r + ambient.r, 0.0, 1.0) * night,
+		tint.g * clampf(ndotl * diffuse.g + ambient.g, 0.0, 1.0) * night,
+		tint.b * clampf(ndotl * diffuse.b + ambient.b, 0.0, 1.0) * night)
 
 ## The shader for one kind of surface: an overlay (`blend`) or not, and the
 ## water mirror's clip (`clip`: discard below WaterReflection's plane).
@@ -68,6 +77,7 @@ render_mode %s;
 global uniform vec4 srr_terrain_diffuse;
 global uniform vec4 srr_terrain_ambient;
 global uniform vec4 srr_terrain_shadow;
+global uniform vec4 srr_terrain_night;
 %s
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
 uniform bool use_albedo_tex = false;
@@ -84,6 +94,8 @@ void vertex() {
 	// Retail's terrain vertex shader: mad oD0, N.L, c[DIFFUSE], c[AMBIENT],
 	// saturated into the colour register -- N.L is the vertex colour's red.
 	lit = tint * clamp(COLOR.r * srr_terrain_diffuse.rgb + srr_terrain_ambient.rgb, 0.0, 1.0);
+	// OURS (round 786, NightLight): the night's scale, after the clamp.
+	lit *= srr_terrain_night.rgb;
 	if (!OUTPUT_IS_SRGB) {
 		lit = srr_srgb_to_linear(lit);
 	}

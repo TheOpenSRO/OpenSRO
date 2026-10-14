@@ -756,7 +756,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       TerrainLight, the sun disc, the moon and the flare (`docs/protocol/game_clock.md`,
       ENVIRONMENT_FORMAT.md "The day phase", WORLD_ISSUES round 786 "Server time, day/night
       cycle, and the sun's colour"). Left OPEN there: the night lights (material flag 0x8, night
-      particles), the light direction +0x209a's readers, the flare's ghost geometry, 0x34be.
+      particles), the flare's ghost geometry, 0x34be. The light direction +0x209a's readers were
+      followed in the round 786 part "Nights are dark, and shadows follow the sun (OURS)": dead
+      code (READ) -- retail's shadows keep one direction; ours follow the sun, and nights are
+      darkened to a set share of noon (both OURS rows). Open with the user: wrapping the server's
+      day count so the moon keeps showing after day 28.
 - [ ] **The tone map (finding, round 702; no change made).** World3D's environment is Filmic
       (tonemap_mode 2, an OURS choice of the 2026-08-26 atmosphere pass); Direct3D 9 shows the
       shader's output as is. MEASURED at the Jangan spawn: Linear draws the same ground patches

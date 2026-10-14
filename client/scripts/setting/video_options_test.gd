@@ -64,7 +64,7 @@ func _presets() -> void:
 	for e in VideoOptions.DEFAULTS:
 		_check(p.value(e) == int(VideoOptions.DEFAULTS[e]), "default row %s = %d" % [VideoOptions.row_of(e)["key"], VideoOptions.DEFAULTS[e]])
 	for e in VideoOptions.VALUE_ENTRIES:
-		if e != VideoOptions.SSAO and e != VideoOptions.FOG:
+		if not (e in VideoOptions.OURS_ENTRIES):
 			_check(int(VideoOptions.DEFAULTS[e]) == int(VideoOptions.PRESETS[VideoOptions.QUALITY_MIDDLE][e]), "the player's own copy of %s starts as Middle's" % VideoOptions.row_of(e)["key"])
 	_check(p.value(VideoOptions.BLOOM) == 1 and p.value(VideoOptions.WATER_REFLECTION) == 0 and p.value(VideoOptions.SHADOW) == 1 and p.value(VideoOptions.SSAO) == 0,
 		"the default: bloom ON, reflection OFF, Circle shadows, SSAO off")
@@ -96,7 +96,13 @@ func _rows() -> void:
 	var entries: Array = []
 	for r in VideoOptions.ROWS:
 		entries.append(int(r["entry"]))
-	_check(entries == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 17], "the list: retail's rows 0..13 and 15 (READ, 14 never listed), then SSAO, the temporary fog row and the renderer (OURS)")
+	_check(entries == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 19, 20, 17], "the list: retail's rows 0..13 and 15 (READ, 14 never listed), then SSAO, the temporary fog row, Night Darkness, Shadows Follow the Sun and the renderer (OURS)")
+	# Round 786: the two OURS rows, the player's under every preset.
+	var pn := VideoOptions.Profile.new()
+	_check(pn.value(VideoOptions.NIGHT) == 2 and pn.value(VideoOptions.SUN_SHADOWS) == 1, "Night Darkness defaults to Dark, Shadows Follow the Sun to On (the user's requests, OURS)")
+	VideoOptions.set_row(pn, VideoOptions.NIGHT, 0)
+	VideoOptions.set_row(pn, VideoOptions.QUALITY, VideoOptions.QUALITY_HIGH)
+	_check(pn.value(VideoOptions.NIGHT) == 0 and pn.quality == VideoOptions.QUALITY_HIGH, "Night Darkness is the player's under a preset and does not switch to User")
 	_check(VideoOptions.choice_count(VideoOptions.QUALITY) == 5 and VideoOptions.choice_count(VideoOptions.SHADOW) == 3
 		and VideoOptions.choice_count(VideoOptions.SCENERY) == 5 and VideoOptions.choice_count(VideoOptions.EFFECT) == 3
 		and VideoOptions.choice_count(VideoOptions.FRIEND_ENEMY) == 2, "the choice counts READ in 0x5fef70 (5, 3, 5, 3, 2)")
@@ -417,7 +423,7 @@ func _page() -> void:
 	_check(page.slot_label(0).text == "Graphic Quality" and page.slot_label(1).text == "Shadow Detail", "slot 0/1 labelled Graphic Quality / Shadow Detail (fallback text, no archive)")
 	_check(page.slot_combo(0).item_count == 5 and page.slot_combo(0).get_item_text(4) == "User control" and page.slot_combo(0).selected == 1,
 		"the quality combo lists five choices and shows Middle (the default)")
-	_check(page.max_line() == 3, "18 rows, two a line, six lines shown: three more lines to scroll (got %d)" % page.max_line())
+	_check(page.max_line() == 4, "20 rows, two a line, six lines shown: four more lines to scroll (got %d)" % page.max_line())
 	_combo_field(page)
 	# Low through the combo's own signal (a real popup choice emits it).
 	page.slot_combo(0).item_selected.emit(0)
@@ -429,8 +435,8 @@ func _page() -> void:
 	page.scroll_to(3)
 	await _frames()
 	_check(page.entry_at_slot(0) == VideoOptions.METAL and page.entry_at_slot(4) == VideoOptions.LENS_FLARE
-		and page.entry_at_slot(5) == VideoOptions.BLOOM and page.entry_at_slot(10) == VideoOptions.FOG and page.entry_at_slot(11) == VideoOptions.RENDERER,
-		"scrolled 3 lines: Metallic Sheen first, Lens Flare / Bloom on the third line, the temporary fog row and the renderer last")
+		and page.entry_at_slot(5) == VideoOptions.BLOOM and page.entry_at_slot(10) == VideoOptions.FOG and page.entry_at_slot(11) == VideoOptions.NIGHT,
+		"scrolled 3 lines: Metallic Sheen first, Lens Flare / Bloom on the third line, the temporary fog row and Night Darkness last")
 	var bloom := page.combo_of(VideoOptions.BLOOM)
 	var ssao := page.combo_of(VideoOptions.SSAO)
 	_check(bloom != null and not bloom.disabled and ssao != null and ssao.disabled, "SSAO is greyed without Forward+; Bloom is not (the original's bloom is a canvas pass both renderers draw)")
@@ -440,6 +446,15 @@ func _page() -> void:
 	_check(not page.combo_of(VideoOptions.LENS_FLARE).disabled, "Lens Flare is not greyed")
 	_check(ssao != null and ssao.tooltip_text.contains("Forward+"), "... with a tooltip naming Forward+")
 	_check(page.slot_label(page.slot_of(VideoOptions.BLOOM)).text.ends_with("(Glow)"), "Bloom's row says it is the glow")
+	# Round 786: Night Darkness and Shadows Follow the Sun before the renderer.
+	page.scroll_to(4)
+	await _frames()
+	_check(page.entry_at_slot(9) == VideoOptions.NIGHT and page.entry_at_slot(10) == VideoOptions.SUN_SHADOWS and page.entry_at_slot(11) == VideoOptions.RENDERER,
+		"scrolled 4 lines: Night Darkness and Shadows Follow the Sun, then the renderer last")
+	var night := page.combo_of(VideoOptions.NIGHT)
+	_check(night != null and night.item_count == 3 and night.get_item_text(2) == "Dark" and night.selected == 2 and not night.disabled,
+		"Night Darkness lists Original / Dim / Dark and shows Dark (the default, OURS)")
+	_check(night != null and night.tooltip_text.contains("This client's own option"), "... with a tooltip saying it is ours")
 	var renderer := page.combo_of(VideoOptions.RENDERER)
 	_check(renderer != null and renderer.item_count == 2 and renderer.get_item_text(0) == "Forward+", "the renderer row lists Forward+ / Compatibility")
 	# Graphic 2: its own record.

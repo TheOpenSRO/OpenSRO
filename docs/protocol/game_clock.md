@@ -123,6 +123,31 @@ sets the phase (`rand() & 3` over 5, 14, 18 and 23 o'clock, TitleIntro), and not
 - **QA** (OURS): `OPENSRO_QA_CLOCK="HH:MM"` pins the clock for a run, `"name=HH:MM,..."` per QA
   shot; `OPENSRO_QA_CLOCK_RUN=<x>` runs a pinned clock x times faster.
 
+### OURS on the clock's night (round 786)
+
+The user: "It doesn't appear to actually get dark out" and "change shadow positions based off sun
+position". Retail's night is exactly as dark as the zone's environment keys, which are mild in
+Jangan and as bright as noon around Bandit's Mountain Stronghold (READ and MEASURED in
+[ENVIRONMENT_FORMAT.md](ENVIRONMENT_FORMAT.md), "What lights the world at night"). Two OURS Video
+rows (`NightLight`, `VideoOptions.NIGHT` / `SUN_SHADOWS`) sit on the clock's phase:
+
+| Clock | Sky hour | Phase | Night Darkness (OURS) | Shadow light (OURS, Shadow Detail = Detail) |
+|---|---|---|---|---|
+| 04:30 | 06:23 | 0.266 | day from here | the sun, held at 15 degrees up, fading in |
+| 08:00 | 09:00 | 0.375 | day | the sun in the east, 45 degrees up |
+| 12:00 | 12:00 | 0.5 | day | overhead |
+| 17:00 | 15:45 | 0.656 | day | the sun in the west, 34 degrees up |
+| 19:29 | 17:37 | 0.734 | night begins to fall | the sun, 15 degrees, fading out |
+| 20:39 | 18:58 | 0.790 | full night | the moon from moonrise (phase 0.792), at half strength once 9 degrees up |
+| 03:21 | 05:02 | 0.210 | night begins to lift | the moon until it sets (phase 0.208) |
+
+The night amount is `1 - smoothstep(-0.25, 0.1, sin(sun height))` of the READ sun (DayCycle); at
+full night the zone's light is Dim 0.5 / Dark 0.3 (the default) of its own noon light, Original
+leaves retail's values. The moon casts only while retail draws it (the clock's day below 29): on a
+server up 29 game days or more (13.9 hours) the nights have no moon and no night shadows (the
+day-wrap question is the user's to decide; not changed here). The front end's fixed title hour is
+not darkened.
+
 ## The server's wall clock: 0x34be every ten minutes (round 224)
 
 Recovered 2026-09-19 (round 224) from both binaries' decompiled dumps on the render box and the

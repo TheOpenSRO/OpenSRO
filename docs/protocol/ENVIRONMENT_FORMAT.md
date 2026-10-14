@@ -358,10 +358,61 @@ dusk; never red.
 **Night lights (READ, not drawn here -- OPEN).** The night flag (0x1112fb0 +0x1a8, getter
 0xbc0fd0) is read by `CObjRendererVS` (0xbf0fa0, 0xc42aef, 0xc6c7a5: a material with flag 0x8 is
 drawn with D3DRS_LIGHTING 0x89 off at night) and `CRTModParticle` (0xc814a1: an emitter with
-+0x91 bit 0 runs only at night). The light direction world +0x209a (the sun's place by day, the
-opposite at night: phase 0.225..0.775 against the rest, 0xde4f80 / 0xde4f78) goes to 0x1112fb0
-+0x17c (0xbbdaa0); its readers were not followed. The objects' and the terrain's own light
-direction stays the fixed `normalize(-1, -1, 0)` (DAT_01109510, ObjectLight).
++0x91 bit 0 runs only at night). The objects' and the terrain's own light direction stays the
+fixed `normalize(-1, -1, 0)` (DAT_01109510, ObjectLight).
+
+**The sun-following light direction is dead code (READ, round 786's night part; closes the OPEN its day/night part left).**
+`SWorld::vslot_004` stores world +0x209a = the sun's place while the shifted phase is at most
+0.525 or at least 0.975 (0xde4f80 is the float 0.525, 0xde4f78 the double 0.975) -- sky phase
+0.225..0.775 -- and the opposite point, `-(+0x208e)`, otherwise. Its two readers:
+- `Map::FUN_00a1e530` (behind world +0x2ea4) hands it to 0x1112fb0 +0x17c (`Map::FUN_00bbdaa0` ->
+  `Map::FUN_00bc1140`). That field's only getter, 0xbc1170, has no caller: no `call`/`jmp` to it
+  and no pointer to it anywhere in the image (MEASURED: objdump of sro_client.exe and a byte
+  search for the address).
+- `SWorld::vslot_024` with Shadow Detail = Detail (world +0x2e58 == 2; 0xa18493..0xa184e2) forms
+  normalize(+0x209a x 0.5, +0x209e, +0x20a2) and pushes it as the second argument of the
+  character-shadow projector `Map::FUN_009f35f0`, which pops two arguments (`ret 8`, 0x9f3bff)
+  and never reads the second (no load from its stack slot, [esp+0x60] after the prologue's
+  0x48 + four pushes).
+
+The silhouettes the projector lays on the ground are rendered by `SWorld::vslot_025` from the
+fixed direction normalize(1, 1, 0) (0xa17b20..0xa17b34: fld1, fst, fstp, fldz, then the
+normalize 0x410cd0). **So retail's shadows keep one fixed direction** (the light's, reversed);
+a sun-following shadow was begun and never wired. OpenSRO's shadows that follow the sun are
+OURS (NightLight).
+
+**What lights the world at night (READ, round 786).** Nothing but the record's keys. At the end
+of `Map::FUN_00a1baf0` the world's one light is a D3DLIGHT9 at world +0x677a (zeroed, 0x68 bytes;
+Type 3, directional): Diffuse (+0x677e) = clamped channel 2 x world +0x68c3, Ambient (+0x679e) =
+clamped channel 3 x +0x68c3 (0.8 with the bloom target, 0.6 without: 0xa1d19b..0xa1d259; both
+halved underwater, +0x26bb), Specular 1, Range 1e6 (0xde4cf4, 0xa1d273), Direction the
+constructor's DAT_01101944 (set only at 0xa3008b..0xa3013f). It is set as light 0 (device vtable
++0xcc, 0xa1d3d4; +0xd4 enables it, 0xa1d3f8), then a material of Diffuse channel 2, Ambient channel
+3, Specular 1, Emissive channel 1 (+0xc4, 0xa1d4b3; the vtable offsets are IDirect3DDevice9's
+SetLight / LightEnable / SetMaterial -- INFERRED from the layout). The terrain's shader takes
+channels 2, 5 and 6 (round 786, TerrainLight). No other term follows the phase: no night
+multiplier, no gamma change (the Brightness ramp is the Video row's alone).
+
+MEASURED (Map.pk2 on the render box; `night_light_test.gd` prints them): the records' keys at the
+sky's midnight (phase 0.0) / noon (0.5):
+
+| | environment 15, `Env7` (Jangan, 97/168) | environment 23, `Env21` (91/160 and around: Bandit's Mountain Stronghold) |
+|---|---|---|
+| ch 2 diffuse | (0.435, 0.518, 0.573) / (0.725, 0.722, 0.718) | (0.455, 0.627, 0.659) / (0.714, 0.714, 0.714) |
+| ch 3 object ambient | (0.318, 0.361, 0.388) / (0.678, 0.675, 0.663) | (0.365, 0.431, 0.475) / (0.498, 0.557, 0.471) |
+| ch 5 terrain ambient | (0.306, 0.439, 0.490) / (1, 1, 1) | (0.729, 0.776, 0.816) / (1, 1, 1) |
+| ch 1 sky top | (0.051, 0.075, 0.192) / (0.169, 0.573, 0.945) | (0.094, 0.239, 0.290) / (0.196, 0.561, 0.722) |
+| ch 13 sky bottom | (0.533, 0.659, 0.753) / (0.765, 0.969, 1.0) | (0.533, 0.690, 0.616) / (0.780, 0.839, 0.820) |
+| ch 9 fog | (0.153, 0.192, 0.278) / (0.357, 0.580, 0.678) | (0.098, 0.216, 0.247) / (0.373, 0.518, 0.494) |
+
+Environment 23 has five keys a channel (0, 0.25, 0.5, 0.75, 1.0); its dusk key (0.7464) puts the
+sky top at (0.910, 0.467, 0.275) -- the orange sky the user saw with the moon up just after
+sunset (the moon is drawn from phase 0.75). Through the formulas above, retail draws the terrain
+at night `clamp(N.L x ch2 + ch5)`: for env 23 that saturates at 1 for any lit slope, as at noon
+(MEASURED at N.L 0.7, clock 23:00 and 02:00: 1.000 against 1.000); for env 15 0.92 to 0.94 of
+noon. The objects' light (ObjectLight's formula, a mid texel): env 23 0.36 against 0.44 at noon
+(82 %), env 15 0.33 to 0.38 against 0.52 (64-74 %). **Retail's own night is that bright**; round
+786's dark night is OURS (NightLight, the Night Darkness row).
 
 **What OpenSRO draws (round 786).** `DayCycle` (scripts/world/day_cycle.gd) is the record at the
 phase, the spline, the easing, the clamps, the sun's and moon's places; World3D samples the
@@ -372,3 +423,14 @@ the raw lightmap baked per region, channels 2, 5, 6 as global uniforms), the wat
 clouds, which include both in their Forward+ blend) and the flare (`LensFlare`). The record
 follows the camera's block. The procedural sky's own sun disc is off (`GammaSkyMaterial.
 procedural_sun`).
+
+**OURS on top (round 786, `NightLight`).** Night Darkness (Video row; Original / Dim / Dark,
+default Dark): after sunset every light World3D writes is scaled by k so that at full night the
+zone's light (the luma of channels 2 + 3) is 0.5 / 0.3 of its own noon light, and never
+brightened: k on the objects' and characters' light (ObjectLight's globals), on the terrain's lit
+colour after retail's clamp (`srr_terrain_night`), on the directional light, the ambient and the
+water's tint; k^0.75 on the sky, the fog colour and the clouds. The sun disc, the moon, effects,
+the portrait and the paper doll keep the record's values, and so do the front end and dungeons.
+Shadows Follow the Sun (Video row, default On; Shadow Detail = Detail): the shadow light's
+direction is the sun's (the moon's at night, fainter), held at least 15 degrees up, moved in
+0.5-degree steps with a short glide. Original and Off restore retail's look exactly.
