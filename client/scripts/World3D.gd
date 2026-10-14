@@ -1886,6 +1886,8 @@ func _ready() -> void:
 	# The distance fog's pass (round 702, WorldFog); the zone's environment
 	# fills it in.
 	_build_fog_pass()
+	# QA only (round 786, the ground flicker): OPENSRO_QA_ALPHA_STIR.
+	QaAlphaStir.install(self, camera_3d)
 	# The original's field of view (round 706, CAMERA_FOV_DEG).
 	if camera_3d != null:
 		camera_3d.fov = CAMERA_FOV_DEG
