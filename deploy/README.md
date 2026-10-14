@@ -1162,6 +1162,24 @@ announced`. As in the original, the
 key silences a nest's hatch and every kill but not a GM's spawn: `/spawnunique` is still announced. A client older than
 round 657 ignores the message and warns "unhandled opcode" once per connection.
 
+## Game clock: time of day (on by default)
+
+Round 786: the server keeps the original's game clock -- a game day every 28 min 48 s of real
+time, starting at day 0, 00:00 when the server starts -- and tells each character the day, hour
+and minute right after its world entry (`0x3020`). The client runs the same clock from there and
+draws the time of day from it: the sky, the light, the fog, the sun, the moon and the lens flare
+follow the clock's hour (16 clock hours of day, 8 of night). A GM sets the hour with `/hour <0-23>`;
+every character is told at once (`0x3027`). `docs/protocol/game_clock.md` has the read.
+
+The boot log reads `game clock sent=true start="day 0 00:00" real_day=28m48s`. **Start at another
+hour:** `OPENSRO_WORLD_CLOCK_START: "06:00"` under the server's `environment:` (or
+`- "-world-clock-start=06:00"` in its `command:`). **Off:** `- "-world-clock=false"` in the
+`command:`; nothing is sent and clients draw a fixed midday, as before round 786.
+
+The server needs a redeploy to send the clock. A client older than round 786 ignores both messages
+and warns "unhandled opcode" once per connection; a round-786 client on an older server draws the
+fixed midday.
+
 ## Inventory size
 
 Round 633 gave every character its own bag size, and the client pages the bag by it: 32 slots a

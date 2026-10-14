@@ -499,11 +499,10 @@ func apply_video_options(o: VideoOptions) -> void:
 	if changed.call(VideoOptions.FILTERING) or changed.call(VideoOptions.TEXTURE):
 		VideoOptions.apply_viewport(get_viewport(), o)
 	# Lens Flare. READ: SWorld::vslot_005 draws the flare (Map::FUN_00a21280)
-	# only while world+0x2e84 (case 0xd) is set. INFERRED: this client's sun
-	# glow (SkyBox\glow.ddj, which the sky loader 0xa0d1b0 loads) is that
-	# flare's nearest piece.
-	if _sun_glow != null:
-		_sun_glow.visible = o.value(VideoOptions.LENS_FLARE) == 1
+	# only while world+0x2e84 (case 0xd) is set; round 786 draws that flare
+	# (LensFlare), read by _day_bodies.
+	if _env_record != null:
+		_day_bodies(_env_time, _day_cycle.state)
 	# Light Effect (round 720's review, READ: case 0xb -> the thunk 0xbbdad0
 	# -> the effect manager's +0x1a4): the teleport gates' glow pass, live.
 	_ambient.set_light_effect(o.value(VideoOptions.LIGHT) == 1)
@@ -1855,6 +1854,22 @@ func _ready() -> void:
 	if qa_ticks.is_valid_int() and int(qa_ticks) > 0:
 		Engine.physics_ticks_per_second = int(qa_ticks)
 		print("QA: physics at %d ticks a second" % int(qa_ticks))
+	# QA (round 786, GameClock.parse_qa): OPENSRO_QA_CLOCK="HH:MM" pins the
+	# game clock for the run, "name=HH:MM,..." per QA shot (_qa_clock_for_shot).
+	var qa_clock := OS.get_environment("OPENSRO_QA_CLOCK")
+	if qa_clock != "":
+		var clock: GameClock = NetClient.game_clock
+		clock.qa_pins = GameClock.parse_qa(qa_clock)
+		# OPENSRO_QA_CLOCK_RUN=<speed>: the pinned clock runs that many times
+		# the game's rate (the perf gate's day passing in seconds).
+		var run := OS.get_environment("OPENSRO_QA_CLOCK_RUN")
+		if run.is_valid_float() and float(run) > 0.0:
+			clock.qa_run = true
+			clock.qa_speed = float(run)
+		if clock.qa_pins.has(""):
+			var at: Vector2i = clock.qa_pins[""]
+			clock.pin(at.x, at.y)
+		print("QA CLOCK: pins %s" % str(clock.qa_pins))
 	# SSAO and glow (round 693): off, the look the project verified under the
 	# Compatibility renderer, which has neither; the Options window may pass
 	# its own choice (WorldPostEffects). Before the title branch: the title's
@@ -3253,6 +3268,9 @@ func _audio_area_tick() -> void:
 	var music := _audio_music()
 	if music == null:
 		return
+	# The clock's hour picks the day or night ambient list at the next zone
+	# change (round 786; READ, MusicDirector's header: h < 4 or h > 20).
+	music.set_game_hour(NetClient.game_clock.hours(Time.get_ticks_msec()))
 	var pair := _nav_graph_for(player.global_position)
 	if pair.is_empty():
 		return
@@ -4065,12 +4083,14 @@ var _water_still_material: StandardMaterial3D = null
 ## The EnvironmentID the water's colour was last taken from (-1 none).
 var _water_env_id := -1
 
-## Retail's water colour follows the environment of the block under the
-## camera (MapmWater.environment_at has the READ chain), one value for the
-## whole world. Checked on the zone label's throttle; a change re-samples
-## channel 14 into the shared material.
+## Retail's whole environment -- the water's colour included -- follows the
+## block under the camera (MapmWater.environment_at has the READ chain), one
+## record for the whole world. Checked on the zone label's throttle; a change
+## hands the day cycle the block's record, which it eases to over ~2 s (READ:
+## Map::FUN_00a1baf0's dt x 0.5) rather than snapping (round 786; before, a
+## change re-sampled channel 14 alone into the water).
 func _water_env_tick() -> void:
-	if (_water_material == null and _water_reflect_material == null) or _environment_table == null:
+	if _environment_table == null or _dungeon != null:
 		return
 	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
 	if cam == null:
@@ -4083,14 +4103,15 @@ func _water_env_tick() -> void:
 		return
 	var local := group.to_local(cam.global_position)
 	var env_id := MapmWater.environment_at(group.get_meta("block_env_ids"), local.x, local.z)
-	if env_id < 0 or env_id == _water_env_id:
+	if env_id < 0 or env_id == _env_record_id:
 		return
 	for rec in _environment_table.records:
 		if rec.key == env_id:
+			_env_record = rec
+			_env_record_id = env_id
 			_water_env_id = env_id
-			_env_water_color = EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_WATER_COLOR, _env_time)
-			_set_water_color(_env_water_color)
-			print("World3D: water colour follows the camera's block, environment %d: %s" % [env_id, str(_env_water_color)])
+			_day_cycle.set_record(rec)
+			print("World3D: the environment follows the camera's block: environment %d (%s), eased in" % [env_id, rec.name1])
 			return
 
 ## The environment's WaterColor (MapmWater.set_water_color clamps it). White
@@ -4538,40 +4559,52 @@ const CLOUD_SCROLL_MS := 500000.0
 ## environment.ifo channels the cloud layer reads (READ, round 628 review).
 const CHANNEL_CLOUD_COLOR := 4
 const CHANNEL_CLOUD_ALPHA := 12
-const SUN_GLOW_DISTANCE := 2800.0
-const SUN_GLOW_SIZE := 500.0
 
 var _sky_dome: MeshInstance3D
 var _sky_dome_material: ShaderMaterial
 var _cloud_dome_shader: Shader = preload("res://scripts/assets/cloud_dome.gdshader")
 var _cloud_uv_offset := Vector2.ZERO
-var _sun_glow: Sprite3D
-var _sun_glow_offset := Vector3.ZERO
 var _sky_material: GammaSkyMaterial
+## The sun disc and the moon (round 786, DayCycle, sky_body.gdshader) and the
+## Lens Flare row's flare (LensFlare). The SkyBox\glow.ddj sprite that stood
+## for the sun until round 786 is gone: retail never draws that texture, and
+## its texels are (252, 58, 4) -- the red sun.
+var _sun_disc: MeshInstance3D
+var _sun_disc_material: ShaderMaterial
+var _moon_disc: MeshInstance3D
+var _moon_disc_material: ShaderMaterial
+var _lens_flare: LensFlare
+var _sky_body_shader: Shader = preload("res://scripts/world/sky_body.gdshader")
+## Sun\moon%02d.ddj by the clock's day (DayCycle.moon_texture), loaded once
+## each; a null entry is a texture that did not load.
+var _moon_textures := {}
+var _moon_day_shown := -1
+var _sky_bodies_archive: Pk2Reader = null
 
 ## Real per-zone day/night lighting data (2026-08-31, see
 ## docs/protocol/ENVIRONMENT_FORMAT.md and docs/WORLD_ISSUES.md's
 ## twenty-ninth round): environment.ifo's real SkyTopColor/SkyBottomColor
 ## channels replace the flat-color-derived gradient _try_add_real_sky()
 ## builds as a fallback, once a real zone's terrain (and therefore its real
-## per-block EnvironmentID) has loaded. Real per-zone checks (Jangan,
-## Dunhuang) found every block in a zone shares the same EnvironmentID, so
-## reading the first block's is representative, not a guess -- but that
-## uniformity hasn't been checked for every zone, so a zone with mixed
-## per-block IDs would still only get the first block's color (an honest
-## simplification, not wrong for any zone checked so far).
+## per-block EnvironmentID) has loaded. The region's first block's record is
+## applied when the region loads; from round 786 the camera's block's record
+## follows (_water_env_tick), as retail takes its whole environment from the
+## first entry of its drawn-block list (MapmWater.environment_at, READ).
 ##
-## ENVIRONMENT_REFERENCE_TIME is READ from the client (round 226,
-## docs/protocol/game_clock.md): SWorld's day/night phase is initialised to
-## 0.5 (the float at 0xe1b7e0) in its constructor, the per-frame advance
-## (phase += dt * 0.0005, a 2000 s cycle) is gated by a flag nothing in this
-## build sets, and the environment graphs are evaluated at that raw phase
-## (Map::FUN_00a1baf0 -> FUN_004e55e0). So the retail client samples a fixed
-## 0.5 too; a live day/night cycle would be OUR design, not a recovered one.
-## The server's game clock (0x34be) feeds nothing in the sky.
+## **The day phase (round 786; corrects round 226).** Round 226 read that
+## SWorld's phase starts at 0.5 and that its own advance is gated off, and
+## concluded the retail sky holds midday. It missed the caller that sets the
+## phase every frame: CPSMission::vslot_012 -> FUN_0084ac90 (0x84ac90) reads
+## the game clock the server started with 0x3020 and calls SWorld::vslot_020
+## (vtable +0x50 on the SWorld at 0x1101950, FUN_009edd60) with the clock's
+## hour mapped to the sky's -- unless the console's TimeOff has locked it
+## (CGInterface +0x7cd). So the world follows the server's clock (GameClock,
+## DayCycle); ENVIRONMENT_REFERENCE_TIME is now only the phase drawn with no
+## clock (GameClock.NO_CLOCK_PHASE) -- and the console's "Day" command's
+## phase (0x53a4d0 sets 0.5; "Night", 0x53a520, sets 1.0).
 const ENVIRONMENT_REFERENCE_TIME := 0.5
-## The day phase the environment graphs are read at: ENVIRONMENT_REFERENCE_TIME
-## in the world; the front-end backdrop's random title hour (round 678,
+## The day phase the environment graphs were last read at: the clock's in
+## the world (_day_tick), the front-end backdrop's title hour (round 678,
 ## FrontEndBackdrop -- READ: CPSTitle::OnCreate sets SWorld's phase, the same
 ## +0x26a3 the graphs read, through SWorld::vslot_020).
 var _env_time := ENVIRONMENT_REFERENCE_TIME
@@ -4629,13 +4662,9 @@ func _try_add_real_sky() -> void:
 			if blob_tex != null:
 				_build_blob_shadow(blob_tex)
 
-	var glow_bytes := AssetSource.read_bytes("SkyBox\\glow.ddj", archive)
-	if not glow_bytes.is_empty():
-		var glow_parsed := DdjReader.parse(glow_bytes)
-		if glow_parsed != null:
-			var glow_tex := DdjReader.to_texture(glow_parsed)
-			if glow_tex != null:
-				_build_sun_glow(glow_tex)
+	# The sun disc, the moon and the flare (round 786) -- not SkyBox\glow.ddj,
+	# which retail loads and never draws (LensFlare's header).
+	_build_sky_bodies(archive)
 
 func _build_cloud_dome(cloud_tex: Texture2D) -> void:
 	_sky_dome_material = ShaderMaterial.new()
@@ -4645,8 +4674,11 @@ func _build_cloud_dome(cloud_tex: Texture2D) -> void:
 	# The far plane's clip z (round 754's reversed depth; round 760: per renderer).
 	_sky_dome_material.set_shader_parameter("far_clip_z",
 		WorldFog.far_clip_z(RendererChoice.running() != RendererChoice.FORWARD_PLUS))
-	# Drawn behind everything else transparent (cloud_dome.gdshader).
-	_sky_dome_material.render_priority = -128
+	# Drawn behind everything else transparent (cloud_dome.gdshader), after
+	# the sun disc (-128) and the moon (-127), as retail's sky step draws the
+	# sun, the moon, then the clouds (round 786, READ 0xa2727d, 0xa27284,
+	# 0xa2737c).
+	_sky_dome_material.render_priority = -126
 	_sky_dome = MeshInstance3D.new()
 	_sky_dome.name = "CloudDome"
 	_sky_dome.mesh = cloud_layer_mesh()
@@ -4684,24 +4716,74 @@ static func cloud_layer_mesh() -> ArrayMesh:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
 
-func _build_sun_glow(glow_tex: Texture2D) -> void:
-	# Real DirectionalLight3D direction (see World3D.tscn) -- the sun's
-	# apparent position is the opposite of the direction the light travels.
-	var light_travel_dir := -directional_light.global_transform.basis.z
-	var sun_dir := -light_travel_dir
+## A Sun\ texture of Map.pk2 (lens2..7, moon01..30), or null.
+static func _sun_texture(path: String, archive: Pk2Reader) -> Texture2D:
+	var bytes := AssetSource.read_bytes(path, archive)
+	if bytes.is_empty():
+		return null
+	var parsed := DdjReader.parse(bytes)
+	return DdjReader.to_texture(parsed) if parsed != null else null
 
-	_sun_glow = Sprite3D.new()
-	_sun_glow.name = "SunGlow"
-	_sun_glow.texture = glow_tex
-	_sun_glow.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_sun_glow.shaded = false
-	_sun_glow.modulate = Color(1, 1, 0.9, 0.85)
-	_sun_glow.pixel_size = SUN_GLOW_SIZE / glow_tex.get_width()
-	_sun_glow_offset = sun_dir * SUN_GLOW_DISTANCE
-	_sun_glow.position = _sun_glow_offset
-	# The Lens Flare row (round 694, apply_video_options).
-	_sun_glow.visible = video_options().value(VideoOptions.LENS_FLARE) == 1
-	add_child(_sun_glow)
+## A quad of the sky step (sky_body.gdshader): a 2 x 2 QuadMesh whose
+## vertex shader builds the body's quad; drawn without the camera's
+## translation, so never culled.
+func _sky_body_instance(node_name: String, tex: Texture2D, flat_color: bool, half_ratio: float, priority: int) -> Array:
+	var mat := ShaderMaterial.new()
+	mat.shader = _sky_body_shader
+	mat.render_priority = priority
+	mat.set_shader_parameter("body_tex", tex)
+	mat.set_shader_parameter("flat_color", flat_color)
+	mat.set_shader_parameter("half_ratio", half_ratio)
+	mat.set_shader_parameter("far_clip_z", WorldFog.far_clip_z(RendererChoice.running() != RendererChoice.FORWARD_PLUS))
+	var mi := MeshInstance3D.new()
+	mi.name = node_name
+	var quad := QuadMesh.new()
+	quad.size = Vector2(2.0, 2.0)
+	mi.mesh = quad
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.custom_aabb = AABB(Vector3(-1.0e7, -1.0e7, -1.0e7), Vector3(2.0e7, 2.0e7, 2.0e7))
+	# Retail's reflection pass draws the landscape pass's sky too (round 628).
+	mi.layers = 1 | WaterReflection.REFLECTED_BIT
+	mi.visible = false
+	add_child(mi)
+	return [mi, mat]
+
+## The sun disc, the moon and the flare (round 786; READ in DayCycle and
+## LensFlare). Placed and shown by _day_bodies.
+func _build_sky_bodies(archive: Pk2Reader) -> void:
+	_sky_bodies_archive = archive
+	var lens2 := _sun_texture("Sun\\lens2.ddj", archive)
+	if lens2 != null:
+		var sun := _sky_body_instance("SunDisc", lens2, true, DayCycle.SUN_HALF_SIZE / DayCycle.BODY_DISTANCE, -128)
+		_sun_disc = sun[0]
+		_sun_disc_material = sun[1]
+	else:
+		print("World3D: no Sun\\lens2.ddj -- the sun disc is not drawn")
+	var moon := _sky_body_instance("Moon", null, false, DayCycle.MOON_HALF_SIZE / DayCycle.BODY_DISTANCE, -127)
+	_moon_disc = moon[0]
+	_moon_disc_material = moon[1]
+	var lenses := {}
+	for n in range(3, 8):
+		lenses[n] = _sun_texture("Sun\\lens%d.ddj" % n, archive)
+	_lens_flare = LensFlare.new()
+	_lens_flare.name = "LensFlare"
+	add_child(_lens_flare)
+	_lens_flare.setup(lenses)
+	if _sky_dome_material != null:
+		_sky_dome_material.set_shader_parameter("body_sun_tex", lens2)
+		_sky_dome_material.set_shader_parameter("body_sun_half", DayCycle.SUN_HALF_SIZE / DayCycle.BODY_DISTANCE)
+		_sky_dome_material.set_shader_parameter("body_moon_half", DayCycle.MOON_HALF_SIZE / DayCycle.BODY_DISTANCE)
+	print("World3D: sky bodies -- sun disc %s, flare textures %s" % [
+		"Sun\\lens2.ddj x SunColor" if lens2 != null else "none",
+		str(lenses.keys().filter(func(k): return lenses[k] != null))])
+
+## The moon's picture for `day`, loaded on first use.
+func _moon_texture(day: int) -> Texture2D:
+	var path := DayCycle.moon_texture(day)
+	if not _moon_textures.has(path):
+		_moon_textures[path] = _sun_texture(path, _sky_bodies_archive) if _sky_bodies_archive != null else null
+	return _moon_textures[path]
 
 ## Loads and caches the real environment.ifo (Map.pk2's root) once per world --
 ## every real zone shares the same table, only the looked-up Key differs.
@@ -4716,8 +4798,8 @@ func _load_environment_table(archive: Pk2Reader) -> EnvironmentReader.ParsedFile
 	return _environment_table
 
 ## Real per-zone sky color, from a real region's own EnvironmentID (see this
-## file's _sky_material doc comment for the real-data justification and
-## ENVIRONMENT_REFERENCE_TIME's honest scope). No-op if _sky_material was
+## file's _sky_material doc comment for the real-data justification and the
+## day phase). No-op if _sky_material was
 ## never built (e.g. no OPENSRO_MAP_PK2_PATH) or no matching real record is
 ## found -- leaves the existing flat-color-derived gradient rather than
 ## guessing.
@@ -4737,157 +4819,286 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 		print("World3D: region's EnvironmentID %d has no matching environment.ifo record" % env_id)
 		return
 
-	var top := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_TOP_COLOR, _env_time)
-	var bottom := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_BOTTOM_COLOR, _env_time)
-	_sky_material.sky_top_color = top
-	_sky_material.sky_horizon_color = bottom
-	_sky_material.ground_horizon_color = bottom
-	_sky_material.ground_bottom_color = bottom.darkened(0.4)
+	# Round 786 (DayCycle): the record is read at the day phase -- the
+	# server's clock in the world, the title's hour on the front end -- every
+	# frame (_day_tick), as retail's environment step reads it; a world built
+	# or a zone changed takes its values at once (READ: the snap flag +0x238c).
+	_env_record = record
+	_env_record_id = env_id
+	_day_cycle.set_record(record)
+	_day_cycle.snap()
+	_env_time = _current_day_phase()
+	var st := _day_cycle.step(_env_time, 0.0)
+	_day_push(st, true)
+	_day_bodies(_env_time, st)
+	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) at day phase %.4f -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s (channel 9 %s)" % [
+		record.name1, env_id, _env_time, st.sky_top, st.sky_bottom, st.sun, st.diffuse, st.object_ambient,
+		EnvironmentReader.render_fog_color(st.fog), st.fog])
 
-	# Real per-zone SunColor/DiffuseColor (2026-09-02) -- same real
-	# environment.ifo record the sky colors above already use, just two more
-	# of its real channels that were decoded from day one but never wired to
-	# anything (see docs/protocol/ENVIRONMENT_FORMAT.md). Sampled at the same
-	# fixed ENVIRONMENT_REFERENCE_TIME as the sky, for the same honest reason
-	# (no real day/night clock exists yet). Real sample data confirms these
-	# genuinely differ per zone at midday -- Jangan's SunColor is ~white,
-	# Dunhuang's DiffuseColor is a warm tan -- not a no-op recoloring.
-	# DirectionalLight3D's real per-zone *angle* has no confirmed real source
-	# (only color channels exist in this format) and stays a hand-set
-	# constant, unchanged.
-	var sun_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SUN_COLOR, _env_time)
-	var diffuse_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_DIFFUSE_COLOR, _env_time)
-	var ambient_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_OBJECT_AMBIENT_COLOR, _env_time)
+## The time of day (round 786): DayCycle reads the camera block's
+## environment record at the day phase and eases toward it; these write the
+## result where the world draws it.
+var _day_cycle := DayCycle.new()
+## The record the cycle reads and its EnvironmentID (-1 none).
+var _env_record: EnvironmentReader.Record = null
+var _env_record_id := -1
+## The front end's fixed hour (title_begin), -1 in the world (the clock's).
+var _env_fixed_phase := -1.0
+## QA: the sky bodies stay hidden (an overview's hidden sky).
+var _qa_bodies_hidden := false
+## What each group was last pushed with (_day_push).
+var _day_pushed := {}
+var _day_sample_at := -100000
+var _day_portrait_at := -100000
+## OURS: the graphs are sampled ten times a second (the phase moves 0.0006 in
+## that time); the easing runs every frame.
+const DAY_SAMPLE_MS := 100
+## OURS: a group is written again only once a value moved this much --
+## 1/1024 of the display range, a quarter of an 8-bit step; the sky (whose
+## material change re-renders Godot's sky radiance) at a whole 8-bit step.
+const DAY_EPSILON := 1.0 / 1024.0
+const DAY_SKY_EPSILON := 1.0 / 255.0
+## OURS: the portrait and the paper doll re-render with the light at most
+## every 2 s, and only for a change of two 8-bit steps.
+const DAY_PORTRAIT_MS := 2000
+const DAY_PORTRAIT_EPSILON := 2.0 / 255.0
 
-	# **Channel roles corrected 2026-09-07 from the real client's own shader**
-	# (see docs/RE_MAP_ENGINE.md). The real terrain vertex shader
-	# (`Shader\vertexshader0splatting.c`) lights a vertex as
-	#
-	#     mad oD0, N.L, c[VSC_DLIGHT_DIFFUSE], c[VSC_DLIGHT_AMBIENT]
-	#
-	# so the real *diffuse* channel is the directional light's own colour --
-	# the term multiplied by N.L -- and the real *ambient* channels are the
-	# additive ambient term. This code had those two the other way round: it
-	# put SunColor on the directional light and DiffuseColor into ambient.
-	#
-	# That mattered, and the real data shows why: real SunColor is (1,1,1) in
-	# most real records -- it is the sun *disc's* own colour, which is why it
-	# now tints the real sun glow sprite below instead -- while real
-	# DiffuseColor carries the actual per-zone tint (a real warm
-	# 0.70/0.60/0.50, a real cold 0.70/0.53/0.93). Driving the directional
-	# light from SunColor therefore threw that per-zone character away and
-	# lit every zone with plain white, while pushing the tint into ambient,
-	# where it flattened shading instead of directing it.
-	directional_light.light_color = diffuse_color
-	world_environment.environment.ambient_light_color = ambient_color
-	# Round 706: objects and characters are lit by the original's own formula
-	# from these two channels (ObjectLight: ambient = channel 3 clamped,
-	# diffuse = channel 2 clamped x 0.8 with the Bloom row on, 0.6 off -- READ),
-	# not by the light and ambient above, which only what Godot lights uses.
-	_object_light_channels = [diffuse_color, ambient_color]
-	_apply_object_light()
-	# Round 635's review follow-up: the player block's portrait is lit by this
-	# zone light (retail's avatar draws with the world's vslot_025 light), and
-	# re-renders when it changes -- a zone load is world entry or a teleport,
-	# when retail's FUN_00786f30 -> FUN_006abc50 dirties it.
-	_portrait_zone_light = [diffuse_color, ambient_color]
-	# The equipment window's preview draws with the same world light (round
-	# 633's review: its own D3DLIGHT9 goes to fixed-function state no draw
-	# reads -- PaperDoll's header).
-	if _paper_doll != null:
-		_paper_doll.set_zone_light(diffuse_color, ambient_color)
-	if _hud_player_info != null:
-		_hud_player_info.set_portrait_zone_light(diffuse_color, ambient_color)
-		var pp := _hud_player_info.portrait()
-		print("World3D: portrait zone light (EnvironmentID %d): diffuse channel %s ambient channel %s, renders %d" % [
-			env_id, diffuse_color, ambient_color, pp.renders_requested if pp != null else -1])
+## The day phase to draw now: the front end's fixed hour, else the server's
+## clock (GameClock: NO_CLOCK_PHASE before a 0x3020).
+func _current_day_phase() -> float:
+	if _env_fixed_phase >= 0.0:
+		return _env_fixed_phase
+	return NetClient.game_clock.phase(Time.get_ticks_msec())
 
-	# Kept so the terrain mesh built moments later can bake the real client's
-	# own per-vertex terrain lighting -- see MapmTerrainBuilder's
-	# _lit_vertex_color. TerrainAmbientColor is a *separate* real channel from
-	# the object ambient above, and genuinely differs (often (1,1,1) against
-	# the object ambient's 0.58), which is exactly why baking terrain lighting
-	# lets both be honoured where one global ambient cannot.
-	_env_light_diffuse = diffuse_color
-	_env_terrain_ambient = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_AMBIENT_COLOR, _env_time)
-	_env_terrain_shadow = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_SHADOW_COLOR, _env_time)
+## The clock's day (the moon's picture), 0 before a clock (READ: SWorld's
+## +0x6778 starts at 0).
+func _clock_day() -> int:
+	if _env_fixed_phase >= 0.0 or not NetClient.game_clock.synced:
+		return 0
+	return NetClient.game_clock.reading(Time.get_ticks_msec()).day
+
+## Every frame in the world: the graphs re-read ten times a second, eased
+## every frame (READ: dt x 0.5), written where they moved (_day_push), and the
+## sun and the moon placed.
+func _day_tick(delta: float) -> void:
+	if _env_record == null or _dungeon != null:
+		return
+	var fs := FrameSplit.on
+	var t0 := Time.get_ticks_usec() if fs else 0
+	var now := Time.get_ticks_msec()
+	var resample := now - _day_sample_at >= DAY_SAMPLE_MS
+	if not resample and _day_cycle.settled:
+		# Nothing left to ease and no new sample: nothing moved.
+		return
+	if resample:
+		_day_sample_at = now
+		_env_time = _current_day_phase()
+	var st := _day_cycle.step(_env_time, delta, resample)
+	_day_push(st, false)
+	if resample:
+		_day_bodies(_env_time, st)
+	if fs:
+		FrameSplit.add("w_day", Time.get_ticks_usec() - t0)
+
+static func _day_moved(before: Array, now: Array, eps: float) -> bool:
+	if before.size() != now.size():
+		return true
+	for i in range(now.size()):
+		var a = before[i]
+		var b = now[i]
+		if a is Color:
+			var ca: Color = a
+			var cb: Color = b
+			if absf(ca.r - cb.r) >= eps or absf(ca.g - cb.g) >= eps or absf(ca.b - cb.b) >= eps:
+				return true
+		elif absf(float(a) - float(b)) >= eps:
+			return true
+	return false
+
+## Whether a group's values moved enough to write them (and remembers them).
+func _day_take(group: String, values: Array, eps: float, force: bool) -> bool:
+	if force or _day_moved(_day_pushed.get(group, []), values, eps):
+		_day_pushed[group] = values
+		return true
+	return false
+
+## Writes the cycle's values where the world draws them (round 786; READ
+## channel roles in DayCycle's header and each consumer's own). `force`
+## writes every group, with the log lines a zone's environment has always
+## printed; otherwise a group is written only when it moved enough to show.
+func _day_push(st: DayCycle.State, force: bool) -> void:
+	if st == null:
+		return
+	var sky_moved := false
+	# The sky's gradient: channels 1 (top) and 13 (bottom).
+	if _sky_material != null and _day_take("sky", [st.sky_top, st.sky_bottom], DAY_SKY_EPSILON, force):
+		_sky_material.sky_top_color = st.sky_top
+		_sky_material.sky_horizon_color = st.sky_bottom
+		_sky_material.ground_horizon_color = st.sky_bottom
+		_sky_material.ground_bottom_color = st.sky_bottom.darkened(0.4)
+		sky_moved = true
+	# The light: channel 2 (diffuse) on the directional light and in the
+	# objects' formula, channel 3 the objects' ambient (ObjectLight, round 706).
+	# Roles corrected 2026-09-07 from the client's own terrain vertex shader
+	# (`mad oD0, N.L, c[VSC_DLIGHT_DIFFUSE], c[VSC_DLIGHT_AMBIENT]`,
+	# docs/RE_MAP_ENGINE.md): the diffuse channel is the term multiplied by
+	# N.L. Channel 0 (SunColor) is the sun disc's colour (round 786:
+	# Map::FUN_00a207a0's texture factor), not a light.
+	if _day_take("light", [st.diffuse, st.object_ambient], DAY_EPSILON, force):
+		directional_light.light_color = st.diffuse
+		world_environment.environment.ambient_light_color = st.object_ambient
+		_object_light_channels = [st.diffuse, st.object_ambient]
+		_portrait_zone_light = [st.diffuse, st.object_ambient]
+		if force:
+			# Logs, and tells the portrait and the paper doll.
+			_apply_object_light()
+			_day_pushed["portrait"] = [st.diffuse, st.object_ambient]
+			_day_portrait_at = Time.get_ticks_msec()
+			if _hud_player_info != null:
+				var pp := _hud_player_info.portrait()
+				print("World3D: portrait zone light (EnvironmentID %d): diffuse channel %s ambient channel %s, renders %d" % [
+					_env_record_id, st.diffuse, st.object_ambient, pp.renders_requested if pp != null else -1])
+		else:
+			ObjectLight.set_light(st.diffuse, st.object_ambient, video_options().value(VideoOptions.BLOOM) == 1)
+	# The portrait and the paper doll re-render with the light: not often.
+	if not force and Time.get_ticks_msec() - _day_portrait_at >= DAY_PORTRAIT_MS \
+			and _day_take("portrait", [st.diffuse, st.object_ambient], DAY_PORTRAIT_EPSILON, false):
+		_day_portrait_at = Time.get_ticks_msec()
+		if _paper_doll != null:
+			_paper_doll.set_zone_light(st.diffuse, st.object_ambient)
+		if _hud_player_info != null:
+			_hud_player_info.set_portrait_zone_light(st.diffuse, st.object_ambient)
+	# The terrain: channels 2, 5 and 6 (TerrainLight). Kept for a terrain
+	# built with the bake (OPENSRO_QA_TERRAIN_BAKE) and the QA log.
+	_env_light_diffuse = st.diffuse
+	_env_terrain_ambient = st.terrain_ambient
+	_env_terrain_shadow = st.terrain_shadow
 	_env_light_ready = true
-	# The water's tint: channel 14 (READ: the record reader stores it at
-	# record+0x228, and `Map::FUN_00a1baf0` evaluates that graph into
-	# world+0x688f, the texture factor FUN_00a220b0 draws water with).
-	# A starting value from the region's block 0; _water_env_tick then
-	# follows the camera's block, as retail does.
-	_env_water_color = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_WATER_COLOR, _env_time)
-	_water_env_id = env_id
-	_set_water_color(_env_water_color)
-	print("World3D: environment %d water colour (channel 14) %s" % [env_id, str(_env_water_color)])
-
-	# The zone's distance fog (round 702, WorldFog): the original's linear
-	# fog, colour sqrt(channel 9), planes channels 10 and 11 times the view
-	# distance -- all READ (WorldFog's header has the addresses). Before
-	# round 702 this was Godot's exponential fog at an OURS density; the
-	# scattering model the terrain shaders in Data.pk2's Shader\ folder carry
-	# (docs/protocol/SHADER_FINDINGS.md) is not what the client's own
-	# landscape step sets up, which is plain D3D linear fog.
-	var fog_channel := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, _env_time)
-	# What the client fogs with is the square root of the clamped channel
-	# (READ, rounds 623-628 integration review: EnvironmentReader.
-	# render_fog_color). Until then the raw channel was used, darker.
-	var fog_color := EnvironmentReader.render_fog_color(fog_channel)
+	if _day_take("terrain", [st.diffuse, st.terrain_ambient, st.terrain_shadow], DAY_EPSILON, force):
+		TerrainLight.set_light(st.diffuse, st.terrain_ambient, st.terrain_shadow)
+	# The water's tint: channel 14 (READ, round 627).
+	if _day_take("water", [st.water], DAY_EPSILON, force):
+		_env_water_color = st.water
+		_set_water_color(st.water)
+		if force:
+			print("World3D: environment %d water colour (channel 14) %s" % [_env_record_id, str(st.water)])
+	# The fog: sqrt of channel 9, the planes channels 10 and 11 (WorldFog,
+	# round 702).
+	var fog_color := EnvironmentReader.render_fog_color(st.fog)
 	if OS.get_environment("OPENSRO_QA_FOG_RAW") != "":
 		# QA only: the pre-review colour, for a before/after on one build.
-		fog_color = fog_channel
-	# The cloud layer's texture factor (READ, round 628 review): RGB is
-	# channel 4 (FUN_00a3eb40's param_6 = world+0x685f, evaluated from
-	# record+0x158), alpha is world+0x68c7 = (channel 12 + 1) / 2. Its fog is
-	# the world's fog colour between 90,000 and 200,000.
-	if _sky_dome_material != null:
-		var cc := EnvironmentReader.sample_color_channel(record, CHANNEL_CLOUD_COLOR, _env_time)
-		var ca := clampf((EnvironmentReader.sample_float_channel(record, CHANNEL_CLOUD_ALPHA, _env_time) + 1.0) * 0.5, 0.0, 1.0)
-		_sky_dome_material.set_shader_parameter("cloud_color", Vector3(clampf(cc.r, 0, 1), clampf(cc.g, 0, 1), clampf(cc.b, 0, 1)))
-		_sky_dome_material.set_shader_parameter("cloud_alpha", ca)
+		fog_color = st.fog
+	if _day_take("fog", [fog_color, st.fog_near, st.fog_far], DAY_EPSILON, force):
+		_fog_channel_near = st.fog_near
+		_fog_channel_far = st.fog_far
+		_fog_display_color = fog_color
+		_fog_ready = true
+		var env := world_environment.environment
+		if force:
+			# Godot's own fog draws nothing (density 0, no sun scatter, no
+			# aerial perspective -- all three were OURS). It stays enabled
+			# because the Compatibility renderer applies a shader's own FOG
+			# only while the environment's fog is on (gles3 scene.glsl
+			# 1580-1588); WorldFog.SHADER_FN is that FOG for the transparent
+			# shaders drawn after the pass. The sky is not fogged (round 693).
+			env.fog_enabled = true
+			env.fog_density = 0.0
+			env.fog_sun_scatter = 0.0
+			env.fog_aerial_perspective = 0.0
+			env.fog_height_density = 0.0
+			env.fog_sky_affect = 0.0
+		env.fog_light_color = fog_color
+		_apply_fog()
+		if force:
+			print("World3D: environment fog (READ): channels 10/11 = %.3f / %.3f -> linear in view depth from %.0f to %.0f (view distance %.0f), colour %s; drawn %s" % [
+				_fog_channel_near, _fog_channel_far, _fog_near_real, _fog_far_real,
+				VideoOptions.view_distance(video_options().value(VideoOptions.SCENERY)), str(fog_color),
+				"yes" if _fog_pass != null and _fog_pass.visible else "no"])
+	# The cloud layer's texture factor: channel 4, alpha (channel 12 + 1) / 2
+	# (READ, round 628 review); its fog the world's fog colour.
+	var cloud_moved := false
+	if _sky_dome_material != null and _day_take("cloud", [st.cloud, st.cloud_alpha, fog_color], DAY_EPSILON, force):
+		_sky_dome_material.set_shader_parameter("cloud_color", Vector3(st.cloud.r, st.cloud.g, st.cloud.b))
+		_sky_dome_material.set_shader_parameter("cloud_alpha", st.cloud_alpha)
 		_sky_dome_material.set_shader_parameter("fog_color", Vector3(fog_color.r, fog_color.g, fog_color.b))
-		print("World3D: cloud layer colour (channel 4) %s, alpha (channel 12) %.3f" % [str(cc), ca])
-	_fog_channel_near = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, _env_time)
-	_fog_channel_far = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, _env_time)
-	_fog_display_color = fog_color
-	_fog_ready = true
-	var env := world_environment.environment
-	# Godot's own fog draws nothing (density 0, no sun scatter, no aerial
-	# perspective -- all three were OURS). It stays enabled because the
-	# Compatibility renderer applies a shader's own FOG only while the
-	# environment's fog is on (gles3 scene.glsl 1580-1588); WorldFog.SHADER_FN
-	# is that FOG for the transparent shaders drawn after the pass.
-	env.fog_enabled = true
-	env.fog_density = 0.0
-	env.fog_sun_scatter = 0.0
-	env.fog_aerial_perspective = 0.0
-	env.fog_height_density = 0.0
-	env.fog_light_color = fog_color
-	# The sky is not fogged (round 693): Compatibility's sky shader never
-	# mixes the environment fog in (READ, drivers/gles3/shaders/sky.glsl,
-	# 4.2.2), Forward+ does by fog_sky_affect (default 1.0, renderer_rd sky.
-	# glsl 263-265). The cloud layer fogs itself (cloud_dome.gdshader).
-	env.fog_sky_affect = 0.0
-	_apply_fog()
-	print("World3D: environment fog (READ): channels 10/11 = %.3f / %.3f -> linear in view depth from %.0f to %.0f (view distance %.0f), colour %s; drawn %s" % [
-		_fog_channel_near, _fog_channel_far, _fog_near_real, _fog_far_real,
-		VideoOptions.view_distance(video_options().value(VideoOptions.SCENERY)), str(fog_color),
-		"yes" if _fog_pass != null and _fog_pass.visible else "no"])
-
-	# The real sun-disc colour belongs on the real sun sprite. Its alpha stays
-	# a disclosed rendering choice (see _build_sun_glow); only the real colour
-	# is taken from real data.
-	if _sun_glow != null:
-		_sun_glow.modulate = Color(sun_color.r, sun_color.g, sun_color.b, _sun_glow.modulate.a)
-
+		cloud_moved = true
+		if force:
+			print("World3D: cloud layer colour (channel 4) %s, alpha (channel 12) %.3f" % [str(st.cloud), st.cloud_alpha])
 	# The cloud layer's Compatibility-style blend under Forward+ (round 693's
-	# review; GammaSkyMaterial.feed_clouds), fed after the sky, the sun and
-	# the light are set.
-	if _sky_material != null:
+	# review; GammaSkyMaterial.feed_clouds), fed after the sky and the light.
+	if _sky_material != null and (sky_moved or cloud_moved or force):
 		_sky_material.feed_clouds(_sky_dome_material, directional_light, world_environment.environment)
 
-	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s (channel 9 %s)" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, ambient_color, fog_color, fog_channel])
+## The sun disc, the moon and the flare at `phase` (READ: DayCycle's header,
+## LensFlare's): positions, the disc's SunColor, the moon's picture for the
+## clock's day, and what is shown -- nothing in a dungeon or a hidden-sky QA
+## overview, the flare only with the Lens Flare row on and the sun at least
+## 700 of its 20000 above the horizon (0xdd81c4, Map::FUN_00a21280).
+func _day_bodies(phase: float, st: DayCycle.State) -> void:
+	var field := _dungeon == null and not _qa_bodies_hidden and _env_record != null
+	var sun_dir := DayCycle.sun_direction(phase)
+	var sun_axis := DayCycle.body_axis(sun_dir)
+	var sun_on := field and DayCycle.sun_disc_drawn(phase) and _sun_disc != null
+	var sun_color: Color = st.sun if st != null else Color(1, 1, 1)
+	if _sun_disc != null:
+		_sun_disc.visible = sun_on
+		_sun_disc_material.set_shader_parameter("body_dir", sun_dir)
+		_sun_disc_material.set_shader_parameter("body_axis", sun_axis)
+		_sun_disc_material.set_shader_parameter("body_color", Vector3(sun_color.r, sun_color.g, sun_color.b))
+	var day := _clock_day()
+	var moon_tex: Texture2D = null
+	var moon_on := field and DayCycle.moon_drawn(phase, day)
+	if moon_on:
+		moon_tex = _moon_texture(day)
+		moon_on = moon_tex != null
+	var moon_dir := DayCycle.moon_direction(phase)
+	var moon_axis := DayCycle.body_axis(moon_dir)
+	if _moon_disc != null:
+		_moon_disc.visible = moon_on
+		_moon_disc_material.set_shader_parameter("body_dir", moon_dir)
+		_moon_disc_material.set_shader_parameter("body_axis", moon_axis)
+		if moon_tex != null and day != _moon_day_shown:
+			_moon_day_shown = day
+			_moon_disc_material.set_shader_parameter("body_tex", moon_tex)
+	if _sky_dome_material != null:
+		_sky_dome_material.set_shader_parameter("body_sun_on", sun_on)
+		_sky_dome_material.set_shader_parameter("body_sun_dir", sun_dir)
+		_sky_dome_material.set_shader_parameter("body_sun_axis", sun_axis)
+		_sky_dome_material.set_shader_parameter("body_sun_color", Vector3(sun_color.r, sun_color.g, sun_color.b))
+		_sky_dome_material.set_shader_parameter("body_moon_on", moon_on)
+		_sky_dome_material.set_shader_parameter("body_moon_dir", moon_dir)
+		_sky_dome_material.set_shader_parameter("body_moon_axis", moon_axis)
+		if moon_tex != null:
+			_sky_dome_material.set_shader_parameter("body_moon_tex", moon_tex)
+	if _lens_flare != null:
+		var flare_on := field and video_options().value(VideoOptions.LENS_FLARE) == 1 \
+			and sun_dir.y * DayCycle.BODY_DISTANCE >= 700.0
+		_lens_flare.set_sun(sun_dir, flare_on)
+
+## Hides the sun, the moon and the flare (a dungeon, a QA overview).
+func _hide_sky_bodies() -> void:
+	if _sun_disc != null:
+		_sun_disc.visible = false
+	if _moon_disc != null:
+		_moon_disc.visible = false
+	if _lens_flare != null:
+		_lens_flare.set_sun(Vector3.UP, false)
+	if _sky_dome_material != null:
+		_sky_dome_material.set_shader_parameter("body_sun_on", false)
+		_sky_dome_material.set_shader_parameter("body_moon_on", false)
+
+## OPENSRO_QA_CLOCK (OURS, QA only; GameClock.parse_qa): at each QA shot the
+## clock is pinned at the time named like the shot, and the environment
+## snaps to it, so one boot can show noon, sunset and night.
+func _qa_clock_for_shot(shot_name: String) -> void:
+	var clock: GameClock = NetClient.game_clock
+	if not clock.qa_pins.has(shot_name):
+		return
+	var at: Vector2i = clock.qa_pins[shot_name]
+	clock.pin(at.x, at.y)
+	_day_cycle.snap()
+	_day_sample_at = -100000
+	print("QA CLOCK %s: pinned at %02d:%02d -> sky phase %.4f" % [shot_name, at.x, at.y, clock.phase(Time.get_ticks_msec())])
 
 ## Opens the real Map.pk2 -- OPENSRO_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
@@ -5455,8 +5666,9 @@ func _leave_dungeon() -> void:
 	_dungeon_fx_at = PackedVector3Array()
 	if _sky_dome != null:
 		_sky_dome.visible = true
-	if _sun_glow != null:
-		_sun_glow.visible = video_options().value(VideoOptions.LENS_FLARE) == 1
+	# The sun, the moon and the flare come back (round 786, _day_bodies).
+	if _env_record != null:
+		_day_bodies(_env_time, _day_cycle.state)
 	var env: Environment = world_environment.environment if world_environment != null else null
 	if env != null and _dungeon_saved.has("bg"):
 		env.background_mode = int(_dungeon_saved["bg"])
@@ -5492,8 +5704,8 @@ func _apply_dungeon_environment() -> void:
 		_dungeon_saved["channels"] = _object_light_channels.duplicate()
 	if _sky_dome != null:
 		_sky_dome.visible = false
-	if _sun_glow != null:
-		_sun_glow.visible = false
+	# No sun, moon or flare indoors (READ: FUN_009fb1f0's 0x8000 test).
+	_hide_sky_bodies()
 	if env != null:
 		env.background_mode = Environment.BG_COLOR
 		env.background_color = Color.BLACK
@@ -7419,6 +7631,10 @@ func _exit_tree() -> void:
 	_water_env_id = -1
 	_environment_table = null
 	_environment_load_attempted = false
+	_env_record = null
+	_env_record_id = -1
+	_day_cycle = DayCycle.new()
+	_day_pushed.clear()
 	if _loading_screen != null:
 		_loading_screen.queue_free()
 		_loading_screen = null
@@ -10376,8 +10592,11 @@ static func _terrain_prepare_build(job: Dictionary) -> void:
 	# environment's TerrainShadowColor, saturated (MapmTerrainBuilder.
 	# lightmap_term has the assembly); the commit uploads that Image.
 	job["lightmap"] = null
+	# Round 786: the dynamic terrain (TerrainLight) adds the shadow colour in
+	# its shader at the day phase, so the image is the raw lightmap (no add).
+	var dynamic_light: bool = job.get("dynamic_light", false)
 	if lightmap != null and lightmap.image != null and job.get("light_shadow_ready", false):
-		job["lightmap"] = MapmTerrainBuilder.lightmap_term(lightmap.image, job["light_shadow"])
+		job["lightmap"] = MapmTerrainBuilder.lightmap_term(lightmap.image, Color.BLACK if dynamic_light else job["light_shadow"])
 	job["shadow_map"] = lightmap.shadow_map if lightmap != null else PackedByteArray()
 	sw = _job_lap(job, "lightmap", sw)
 
@@ -10408,7 +10627,7 @@ static func _terrain_prepare_build(job: Dictionary) -> void:
 	var surfaces: Array = []
 	if textured:
 		surfaces = MapmTerrainBuilder.build_full_region_surfaces_textured(
-			region, files, job["light_dir"], job["light_diffuse"], job["light_ambient"], job["shadow_map"])
+			region, files, job["light_dir"], job["light_diffuse"], job["light_ambient"], job["shadow_map"], dynamic_light)
 	else:
 		var arrays := MapmTerrainBuilder.build_full_region_arrays(region)
 		if not arrays.is_empty():
@@ -10529,6 +10748,13 @@ func _terrain_light_into(job: Dictionary) -> void:
 	# region's environment is applied there is none, and no lightmap is drawn.
 	job["light_shadow"] = _env_terrain_shadow
 	job["light_shadow_ready"] = _env_light_ready
+	# Round 786: the terrain's light follows the day phase (TerrainLight) --
+	# N.L and the raw lightmap baked, the colours set every frame.
+	# OPENSRO_QA_TERRAIN_BAKE=1 bakes them as before, for an A/B.
+	# Only with a light to take N.L against (the builder bakes nothing
+	# without one, and the lightmap must then keep its shadow colour).
+	job["dynamic_light"] = _env_light_ready and light_dir.length_squared() > 0.0 \
+		and OS.get_environment("OPENSRO_QA_TERRAIN_BAKE") != "1"
 
 ## Hands a job's prepare laps to _load_timings: main-thread phases for a job
 ## prepared on this thread, off-thread ones for a task's (LoadTimings.offthread
@@ -15811,8 +16037,8 @@ func _qa_step() -> void:
 			# long enough to be written up as one.
 			if _sky_dome != null:
 				_sky_dome.visible = false
-			if _sun_glow != null:
-				_sun_glow.visible = false
+			_qa_bodies_hidden = true
+			_hide_sky_bodies()
 		var hide := OS.get_environment("OPENSRO_QA_HIDE")
 		if hide != "":
 			_qa_hide_meshes(hide.split(","))
@@ -16784,6 +17010,7 @@ func _qa_advance_shots() -> void:
 			shot.get("yaw", camera_arm.rotation_degrees.y), 0.0)
 	if shot.has("env") or has_meta(&"qa_shot_env_base"):
 		QaShotEnv.apply(self, shot.get("env", ""))
+	_qa_clock_for_shot(String(shot.get("name", "")))
 	_qa_shot_frames = QA_SHOT_SETTLE + QA_SHOT_HOLD
 
 ## OPENSRO_QA_PLATES=1 (round 673): at each QA SHOT, one `QA PLATE` line per
@@ -18711,6 +18938,9 @@ func _process(_delta: float) -> void:
 		return
 	# The auto potion's interface timers (round 786, 0xb933d0's pass).
 	_auto_potion.step(Time.get_ticks_msec())
+	# The time of day (round 786, DayCycle): the environment eased toward the
+	# clock's phase, every frame.
+	_day_tick(_delta)
 	# Round 762: the frame's crowd budget rolled every frame, so its history
 	# of the scene's own frames has no gaps (OtherCrowd.FrameBudget), told
 	# whether a crowd arrives or leaves in this frame.
@@ -18805,8 +19035,6 @@ func _physics_step(delta: float) -> void:
 		# the eye in its shader.
 		_cloud_uv_offset.x = fposmod(Time.get_ticks_msec() / CLOUD_SCROLL_MS, 1.0)
 		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
-	if _sun_glow != null:
-		_sun_glow.global_position = player.global_position + _sun_glow_offset
 
 	# Monsters walking a server-driven leg step first, so an approach walk's
 	# reach test below measures to where they are drawn this frame; the
@@ -30546,6 +30774,9 @@ func _title_ready() -> void:
 func title_begin(centre: Vector2i, radius: int, env_time: float, plan: Array = []) -> bool:
 	_title_radius = maxi(radius, 0)
 	_env_time = env_time
+	# The front end's hour holds (round 786): no clock moves it (READ: only
+	# CPSTitle::OnCreate sets SWorld's phase there).
+	_env_fixed_phase = env_time
 	var map_pk2 := _open_map_pk2_if_set()
 	if map_pk2 == null:
 		print("World3D: title backdrop -- no Map.pk2 (path='%s')" % Pk2Config.map_path())
@@ -30631,8 +30862,6 @@ func _title_physics(_delta: float) -> void:
 	if _sky_dome != null:
 		_cloud_uv_offset.x = fposmod(Time.get_ticks_msec() / CLOUD_SCROLL_MS, 1.0)
 		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
-	if _sun_glow != null:
-		_sun_glow.global_position = camera_3d.global_position + _sun_glow_offset
 	_tick_map_animations()
 	if not _title_held and not _title_planned:
 		_maybe_stream_regions()

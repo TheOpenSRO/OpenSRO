@@ -131,8 +131,38 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 	_check(job.get("lightmap") is Image, "the .t lightmap as an Image, not a texture")
 	var lm_term: Image = job.get("lightmap")
 	var lm_raw := MapTReader.parse(_build_mapt(8, 8), false).image
-	_check(lm_term != null and lm_raw != null and lm_term.get_data() == MapmTerrainBuilder.lightmap_term(lm_raw, Color(0.2, 0.3, 0.4)).get_data(),
-		"the lightmap in the job is the .t lightmap plus the environment's TerrainShadowColor (round 610)")
+	# Round 786: the terrain's light follows the day phase (TerrainLight), so
+	# the job carries the raw lightmap and the shader adds the shadow colour
+	# at the phase; OPENSRO_QA_TERRAIN_BAKE=1 keeps round 610's baked term.
+	# Here the world has no directional light, so nothing is baked against
+	# one: the round 610 term, and plain surfaces.
+	var dynamic: bool = job.get("dynamic_light", false)
+	_check(surfaces.size() > 0 and bool(surfaces[0].get("dynamic", false)) == dynamic,
+		"the surfaces are the dynamic kind exactly when the job is (%s)" % str(dynamic))
+	var want_shadow := Color.BLACK if dynamic else Color(0.2, 0.3, 0.4)
+	_check(lm_term != null and lm_raw != null and lm_term.get_data() == MapmTerrainBuilder.lightmap_term(lm_raw, want_shadow).get_data(),
+		"the lightmap in the job is the .t lightmap plus the environment's TerrainShadowColor (round 610) -- raw when the shader adds it (round 786, dynamic %s)" % str(dynamic))
+	# The dynamic job (round 786): a light to take N.L against.
+	var dyn: Dictionary = w.call("_terrain_job", "97\\168.m", "", Vector3.ZERO, "_97_168d", false, NAN, false)
+	dyn["light_dir"] = Vector3(0.5, 0.707, 0.5)
+	dyn["dynamic_light"] = true
+	dyn["threaded"] = true
+	var dtask := WorkerThreadPool.add_task(Callable(w, "_terrain_prepare").bind(dyn), true, "r786 dynamic terrain prepare test")
+	WorkerThreadPool.wait_for_task_completion(dtask)
+	var dsurf: Array = dyn.get("surfaces", [])
+	_check(dyn.get("prepared", false) and dsurf.size() > 0 and dsurf[0].get("dynamic", false) and dsurf[0].has("tint"),
+		"a job with a light builds the dynamic surfaces, each with its tint")
+	var dlm: Image = dyn.get("lightmap")
+	_check(dlm != null and dlm.get_data() == MapmTerrainBuilder.lightmap_term(lm_raw, Color.BLACK).get_data(),
+		"its lightmap is the raw .t lightmap: TerrainShadowColor is added in the shader at the day phase")
+	if dsurf.size() > 0:
+		var cols: PackedColorArray = dsurf[0]["arrays"][Mesh.ARRAY_COLOR]
+		var gray := true
+		for c in cols:
+			if not (is_equal_approx(c.r, c.g) and is_equal_approx(c.g, c.b) and c.r >= 0.0 and c.r <= 1.0):
+				gray = false
+				break
+		_check(gray, "its base's vertex colours are N.L alone (r = g = b in [0, 1]), not a baked colour")
 	var files: Dictionary = job.get("texture_files", {})
 	var new_images: Dictionary = job.get("new_images", {})
 	_check(files == {1: "t1.ddj"}, "ID 1 resolves to t1.ddj; ID 2's file is missing (got %s)" % str(files))

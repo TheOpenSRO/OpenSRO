@@ -208,14 +208,19 @@ static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, tex
 ## so the task passes a Dictionary of IDs; surfaces_to_mesh reads the values.
 ## [] (after the same error build_full_region_mesh_textured has always
 ## pushed) for a region without a real 6x6 block grid.
-static func build_full_region_surfaces_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> Array:
+## `dynamic` (round 786, TerrainLight): the light is NOT baked -- the vertex
+## colour's red, green and blue hold N.L alone (alpha the overlay's fade), each
+## surface carries its "tint" and "dynamic": true, and _surface_material
+## gives it TerrainLight's material, which applies the day phase's diffuse,
+## ambient and shadow itself. light_diffuse / light_ambient are then unused.
+static func build_full_region_surfaces_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray(), dynamic: bool = false) -> Array:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
 		return []
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid := _full_region_cells(region, bands_per_side, full_size)
-	return _textured_surfaces_from_cells(grid, full_size, full_size, texture_lookup, light_dir, light_diffuse, light_ambient, shadow_map)
+	return _textured_surfaces_from_cells(grid, full_size, full_size, texture_lookup, light_dir, light_diffuse, light_ambient, shadow_map, dynamic)
 
 ## The ArrayMesh of `surfaces` (build_full_region_surfaces_textured's
 ## output), one mesh surface per entry in order, each with the material
@@ -238,9 +243,24 @@ static func surfaces_to_mesh(surfaces: Array, texture_lookup: Dictionary, lightm
 ## hold is an error, not a silent untextured pass: an unset sampler draws
 ## white under GLES3, which is the "white ground" symptom (round 558), and
 ## the key set came from this same lookup, so a miss means a caller bug.
-static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, lightmap: Texture2D) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
+static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, lightmap: Texture2D) -> Material:
 	var key: int = surface["texture_key"]
+	if surface.get("dynamic", false):
+		# Round 786: the time of day's light (TerrainLight); `lightmap` is the
+		# raw lightmap then (no shadow colour added).
+		var tex: Texture2D = null
+		if key != -1:
+			if texture_lookup.has(key):
+				tex = texture_lookup[key]
+			else:
+				push_error("MapmTerrainBuilder: surface texture %d is not in the lookup" % key)
+		var priority := PASS_RENDER_PRIORITY
+		if surface.get("base", false):
+			priority = BASE_RENDER_PRIORITY
+		if surface["blend"]:
+			priority = WorldFog.GROUND_OVERLAY_PRIORITY
+		return TerrainLight.material(tex, lightmap, surface.get("tint", Color.WHITE), surface["blend"], priority, key)
+	var mat := StandardMaterial3D.new()
 	# The pass's tile ID, for /groundprobe (GroundProbe, round 579): a pass
 	# whose ID missed the lookup and one drawn with no ID at all both have no
 	# albedo texture; only the key tells them apart. Metadata only.
@@ -707,7 +727,7 @@ static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVecto
 ## and every material flag are the ones the mesh was built from before the
 ## split: mapm_terrain_builder_test.gd holds both paths to fingerprints
 ## measured on the pre-split builder.
-static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> Array:
+static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray(), dynamic: bool = false) -> Array:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -773,6 +793,12 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 	lit.resize(positions.size())
 	var bake_light := light_dir.length_squared() > 0.0
 	var light_n := light_dir.normalized() if bake_light else Vector3.UP
+	# Round 786: the dynamic terrain keeps N.L alone (a diffuse of 1 and no
+	# ambient give clamp(N.L) = N.L, N.L being >= 0 already).
+	dynamic = dynamic and bake_light
+	if dynamic:
+		light_diffuse = Color.WHITE
+		light_ambient = Color.BLACK
 	# **The real `.t` ShadowMap is deliberately NOT applied** -- see _shadow_at
 	# for the measurement and for why its meaning is not settled.
 	for i in range(lit.size()):
@@ -784,7 +810,10 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 	base_colors.resize(positions.size())
 	for i in range(base_colors.size()):
 		var fallback := _vertex_color()
-		base_colors[i] = Color(fallback.r * lit[i].r, fallback.g * lit[i].g, fallback.b * lit[i].b) if bake_light else fallback
+		if dynamic:
+			base_colors[i] = lit[i]
+		else:
+			base_colors[i] = Color(fallback.r * lit[i].r, fallback.g * lit[i].g, fallback.b * lit[i].b) if bake_light else fallback
 
 	var base_indices := PackedInt32Array()
 	for r in range(row_count - 1):
@@ -807,7 +836,11 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 	# being already in the vertex colour, so the engine must not light it a
 	# second time -- unshaded when baked (_surface_material).
 	# "base" marks it for its render priority (BASE_RENDER_PRIORITY).
-	surfaces.append({"arrays": base_arrays, "texture_key": -1, "blend": false, "unshaded": bake_light, "base": true})
+	var base_surface := {"arrays": base_arrays, "texture_key": -1, "blend": false, "unshaded": bake_light, "base": true}
+	if dynamic:
+		base_surface["dynamic"] = true
+		base_surface["tint"] = _vertex_color()
+	surfaces.append(base_surface)
 
 	# `buffers` holds each quad's own dominant real texture, drawn fully
 	# opaque so the ground is never see-through; `blend_buffers` holds every
@@ -837,7 +870,12 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 			# drawn as tex * (N.L * diffuse + ambient) exactly as the real
 			# terrain pixel shader does.
 			var l: Color = lit[idx[i]]
-			buf["colors"].append(Color(tint.r * l.r, tint.g * l.g, tint.b * l.b, alphas[i]))
+			if dynamic:
+				# N.L alone; the tint is the surface's (TerrainLight).
+				buf["colors"].append(Color(l.r, l.g, l.b, alphas[i]))
+			else:
+				buf["colors"].append(Color(tint.r * l.r, tint.g * l.g, tint.b * l.b, alphas[i]))
+		buf["tint"] = tint
 		buf["uvs"].append_array(_quad_uv_corners(r, c, repeat))
 		buf["indices"].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
 
@@ -904,7 +942,11 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 		arrays[Mesh.ARRAY_TEX_UV2] = buf["uv2s"]
 		arrays[Mesh.ARRAY_COLOR] = buf["colors"]
 		arrays[Mesh.ARRAY_INDEX] = buf["indices"]
-		surfaces.append({"arrays": arrays, "texture_key": key, "blend": is_blend, "unshaded": bake_light})
+		var surface := {"arrays": arrays, "texture_key": key, "blend": is_blend, "unshaded": bake_light}
+		if dynamic:
+			surface["dynamic"] = true
+			surface["tint"] = buf.get("tint", Color.WHITE)
+		surfaces.append(surface)
 
 	var keys := buffers.keys()
 	keys.sort()

@@ -282,9 +282,10 @@ static func gl_audit(world: Node) -> Array:
 		if patch == null or patch.mesh == null:
 			continue
 		for i in range(patch.mesh.get_surface_count()):
-			var mat := patch.mesh.surface_get_material(i) as BaseMaterial3D
-			if mat != null and mat.detail_albedo != null:
-				_audit_row(rows, seen, "lightmap", String(group.name), mat.detail_albedo)
+			var any_mat := patch.mesh.surface_get_material(i)
+			var mat := any_mat as BaseMaterial3D
+			if TerrainLight.lightmap_of(any_mat) != null:
+				_audit_row(rows, seen, "lightmap", String(group.name), TerrainLight.lightmap_of(any_mat))
 			elif mat != null and mat.ao_texture != null:
 				_audit_row(rows, seen, "lightmap", String(group.name), mat.ao_texture)
 	var frames = _member(world, "_water_frames_cache", [])
@@ -645,13 +646,17 @@ func _probe_region() -> String:
 		if mat != null and mat.has_meta("terrain_texture_key"):
 			key = int(mat.get_meta("terrain_texture_key"))
 		var kind := surface_kind(base_mat, i)
+		# Round 786: a dynamic terrain pass is TerrainLight's ShaderMaterial
+		# (kind "other" here; its texture read through TerrainLight.albedo_of).
+		# The experiments below act on BaseMaterial3D passes only:
+		# OPENSRO_QA_TERRAIN_BAKE=1 builds the terrain they were written for.
 		_surfaces.append({"i": i, "mat": mat, "kind": kind, "key": key,
-			"tex": base_mat.albedo_texture if base_mat != null else null})
+			"tex": TerrainLight.albedo_of(mat)})
 		var line := "kind=%s key=%s %s %s" % [kind, str(key) if key != -2 else "?",
 			material_fields(mat, files, texels, true), _vertex_fields(mesh, i)]
-		if base_mat != null and base_mat.albedo_texture != null:
+		if TerrainLight.albedo_of(mat) != null:
 			textured += 1
-			if _param_matches(base_mat):
+			if base_mat != null and _param_matches(base_mat):
 				bound += 1
 		_emit("surface %d" % i, line)
 	if _patch.material_override != null:

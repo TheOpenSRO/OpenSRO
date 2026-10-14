@@ -19,11 +19,12 @@ class_name MusicDirector
 ##       FUN_00509950, READ). Nothing in this client calls them yet; they are
 ##       the hooks for the siege and scene systems.
 ##   Audio.music.set_game_hour(h)
-##       THE CLOCK: this client has no game clock (docs/protocol/game_clock.md:
-##       the server's 0x34be time sync is neither sent nor read here), so the
-##       hour is unknown and the DAY list always plays -- recorded, not
-##       guessed. Retail reads its clock as hours (FUN_008b01b0) and picks the
-##       night list for h < 4 or h > 20 at each zone change (READ).
+##       THE CLOCK (round 786): the game clock's hour (GameClock.hours, from
+##       the server's 0x3020 / 0x3027; docs/protocol/game_clock.md), told by
+##       World3D with the zone label's tick. Retail reads its clock as hours
+##       (FUN_008b01b0) and picks the night list for h < 4 or h > 20 at each
+##       zone change (READ). Before a clock (a server older than round 786)
+##       the hour is -1 and the DAY list plays -- recorded, not guessed.
 ##
 ## Every music change logs one line, `AUDIO bgm: <zone> -> <file>`, and every
 ## ambient start `AUDIO ambient: <zone> <day|night>: beds [...], <n> one-shots`;
@@ -150,7 +151,9 @@ func set_area(zone_name: String) -> void:
 	if not _clock_logged:
 		_clock_logged = true
 		if game_hour < 0.0:
-			print("AUDIO clock: this client has no game clock -- the day ambient list plays (retail: night is hour < 4 or > 20)")
+			print("AUDIO clock: no game clock from the server yet -- the day ambient list plays (retail: night is hour < 4 or > 20)")
+		else:
+			print("AUDIO clock: game hour %.2f -- the %s ambient list (night is hour < 4 or > 20, READ)" % [game_hour, "night" if night else "day"])
 	var beds := ambient.start(zone.list_for(night))
 	print("AUDIO ambient: %s %s: beds %s, %d one-shots%s" % [zone_name, "night" if night else "day", str(Array(beds)),
 		ambient.shots.size(), " (decoding)" if _beds_waiting else ""])

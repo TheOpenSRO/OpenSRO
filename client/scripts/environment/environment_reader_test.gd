@@ -57,7 +57,7 @@ func _build_file(records: Array) -> PackedByteArray:
 	return buf
 
 ## The fog planes are channels 10 and 11 (read from the client, round 229),
-## and a FloatGraph samples by linear interpolation between its keys.
+## and a FloatGraph samples by the client's spline between its keys.
 func _test_fog_channels_and_float_sampling() -> void:
 	_check(EnvironmentReader.CHANNEL_FOG_NEAR_PLANE == 10 and EnvironmentReader.CHANNEL_FOG_FAR_PLANE == 11,
 		"fog planes are channels 10/11, the pair the client scales by its view distance")
@@ -77,7 +77,11 @@ func _test_fog_channels_and_float_sampling() -> void:
 		rec.channels[i] = []
 	rec.channels[10] = [PackedFloat32Array([0.2, 0.0]), PackedFloat32Array([0.6, 0.5]), PackedFloat32Array([0.2, 1.0])]
 	rec.channels[11] = [PackedFloat32Array([0.9, 0.0]), PackedFloat32Array([0.9, 1.0])]
-	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 0.25), 0.4), "midpoint between keys interpolates (0.2 -> 0.6 at t=0.25)")
+	# Round 786: the client's FloatGraph is a Catmull-Rom spline through
+	# key[p-1..p+2] (READ, 0x4df7d0), not a line: 0.5 x (0.4 + 0.2 + 0.4 -
+	# 0.15) at the midpoint of 0.2 -> 0.6, with the ends clamped to the keys.
+	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 0.25), 0.425), "the midpoint of 0.2 -> 0.6 is the spline's 0.425 (READ), not the line's 0.4 (got %s)" % EnvironmentReader.sample_float_channel(rec, 10, 0.25))
+	_check(not is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 0.25), 0.4), "(negative) not linear")
 	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 0.5), 0.6), "a key's own time returns its value")
 	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 10, 1.0), 0.2), "the last key is returned at t=1")
 	_check(is_equal_approx(EnvironmentReader.sample_float_channel(rec, 11, 0.5), 0.9), "a flat two-key channel samples flat")
@@ -147,17 +151,21 @@ func _init() -> void:
 		var rec: EnvironmentReader.Record = sample_parsed.records[0]
 		var c_start := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 0.0)
 		_check(c_start.is_equal_approx(Color(1, 0, 0)), "t=0 samples the first real keyframe exactly (got %s)" % c_start)
+		# Round 786 (READ, FUN_004e55e0 -> FUN_004e4530 -> FUN_004e0920): the
+		# Catmull-Rom spline through key[p-1], key[p], key[p+1], key[p+2],
+		# the ends repeating the first and last keys -- red, red, green, blue
+		# at f = 0.5 give (0.5, 0.5625, -0.0625): it overshoots below 0.
 		var c_mid := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 0.25)
-		_check(c_mid.is_equal_approx(Color(0.5, 0.5, 0, 1)), "t=0.25 lerps halfway between the t=0/t=0.5 keyframes (got %s)" % c_mid)
-		# t=1.0 wraps to t=0.0 via fposmod (correct: a real day cycle loops,
-		# and real data confirms the t=0/t=1 keyframes are identical) --
-		# sample just under 1.0 instead to check the last real segment.
+		_check(c_mid.is_equal_approx(Color(0.5, 0.5625, -0.0625)), "t=0.25 is the spline through red, red, green, blue (got %s)" % c_mid)
+		_check(not c_mid.is_equal_approx(Color(0.5, 0.5, 0.0)), "(negative) not the linear midpoint")
 		var c_near_end := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 0.75)
-		_check(c_near_end.is_equal_approx(Color(0, 0.5, 0.5, 1)), "t=0.75 lerps halfway between the t=0.5/t=1 keyframes (got %s)" % c_near_end)
-		var c_wrap := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 1.25)
-		_check(c_wrap.is_equal_approx(Color(0.5, 0.5, 0, 1)), "t=1.25 wraps to the same result as t=0.25 (got %s)" % c_wrap)
-		var c_empty := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SKY_TOP_COLOR, 0.5)
-		_check(c_empty.is_equal_approx(Color(1, 1, 1)), "a channel with only 1 group falls back to a neutral color, not a guess (got %s)" % c_empty)
+		_check(c_near_end.is_equal_approx(Color(-0.0625, 0.5625, 0.5)), "t=0.75 is the spline through red, green, blue, blue (got %s)" % c_near_end)
+		var c_key := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 0.5)
+		_check(c_key.is_equal_approx(Color(0, 1, 0)), "a key's own time is the key (got %s)" % c_key)
+		var c_past := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SUN_COLOR, 1.25)
+		_check(c_past.is_equal_approx(Color(0, 0, 1)), "past the last key is the last key -- the client does not wrap (got %s)" % c_past)
+		var c_one := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_SKY_TOP_COLOR, 0.5)
+		_check(c_one.is_equal_approx(Color(0, 0, 0)), "a one-key channel is that key at every time, as the client reads it (got %s)" % c_one)
 
 	_check(EnvironmentReader.parse(PackedByteArray([1, 2, 3])) == null, "rejects a buffer too small for a header")
 

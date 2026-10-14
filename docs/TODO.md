@@ -747,11 +747,16 @@ In order. Each is checked off here when it ships in a release, with its round in
       model fading out over 0.5 s past 51.57 degrees up. Left (OPEN): `config\cameradata.txt`'s
       two entry cameras, the mounted look-at branch, the camera shake, and whether the shadow and
       attached effects take the model's alpha.
-- [ ] **The day phase** (round 705 finding, a contradiction to settle): the Day/night item below
-      says the in-game phase is a fixed 0.5 and the server clock feeds nothing; CharSelectHandoff's
-      header (round 688's review) says `CPSMission::vslot_012` sets SWorld's phase every frame from
-      the game clock. If the latter is right, the original's environment (fog planes, colours,
-      light) follows the server's time of day.
+- [x] **The day phase** (round 705 finding; **settled in round 786, READ**): the latter is right.
+      `CPSMission::vslot_012` (0x84c300) calls `FUN_0084ac90` every frame, which reads the game
+      clock (started by the server's 0x3020 at world entry, 0x3027 on the operator's set-hour) and
+      sets SWorld's phase through vtable +0x50 on the SWorld at 0x1101950 -- clock 04:00-20:00 ->
+      sky 06:00-18:00, 20:00-04:00 -> 18:00-06:00, a 28 min 48 s day -- unless the console's
+      TimeOff has locked it. Round 226 missed the vtable call. Implemented: GameClock, DayCycle,
+      TerrainLight, the sun disc, the moon and the flare (`docs/protocol/game_clock.md`,
+      ENVIRONMENT_FORMAT.md "The day phase", WORLD_ISSUES round 786 "Server time, day/night
+      cycle, and the sun's colour"). Left OPEN there: the night lights (material flag 0x8, night
+      particles), the light direction +0x209a's readers, the flare's ghost geometry, 0x34be.
 - [ ] **The tone map (finding, round 702; no change made).** World3D's environment is Filmic
       (tonemap_mode 2, an OURS choice of the 2026-08-26 atmosphere pass); Direct3D 9 shows the
       shader's output as is. MEASURED at the Jangan spawn: Linear draws the same ground patches
@@ -768,12 +773,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       so they show the formula's display values: MEASURED at the user's spot, bloom off, the gate
       wall 82 against the original's 81 with the undo and about 90-97 without. The terrain, the
       water and the sky still go through Filmic.
-- [x] ~~Day/night cycle~~ -- **not a gap** (round 226, `docs/protocol/game_clock.md`): the retail
-      client renders the environment at a FIXED phase of 0.5 (SWorld's constructor sets it; the
-      per-frame advance is gated by a flag nothing sets; the graphs are sampled at the raw phase), and
-      the server clock (`0x34be`) feeds nothing in the sky. `ENVIRONMENT_REFERENCE_TIME = 0.5` is now
-      read, not disclosed. The engine's dormant machinery (0.0005/s = a 2000 s day, sun angle
-      `(phase-0.25)*2pi`) is recorded should a live cycle ever be wanted as our own design.
+- [x] ~~Day/night cycle~~ -- **done in round 786; round 226's "not a gap" was wrong** (see "The day
+      phase" above): the fixed 0.5 was SWorld's constructor value and its own dormant advance
+      (0.0005/s) is indeed unused, but the game clock (0x3020, not the wall clock 0x34be) sets the
+      phase every frame through `FUN_0084ac90`. The world now follows the server's clock; the sun
+      angle `(phase-0.25)*2pi` is the drawn sun's.
 - [x] **"Stuck in a building"** (round 213): the cause was `NavGraph`'s own rule -- footing inferred
       from height let a terrain mover walk through a shop wall whose floor sat 5 units up, get
       lifted onto the floor, then be held by the same walls from inside. Replaced by the client's
