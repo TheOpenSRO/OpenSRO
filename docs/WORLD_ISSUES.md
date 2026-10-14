@@ -7485,6 +7485,132 @@ stays on the box for older revisions through `GODOT_BIN`).
 
 ## Seven-hundred-and-eighty-sixth round
 
+### Round 786 (part): Monsters appear on time, and attacks register promptly
+
+The user (2026-10-13, playing deadass3, level 140, in the bandit fields and Jangan): "the mobs
+appear to pop up way later than they should and sometimes my attacks take awhile to register."
+Everything read and measured is in `docs/protocol/spawn_attack_latency.md`; the short form:
+
+**The server is not where the time goes (MEASURED, READ).**
+- **The view window is retail's.** Re-read in `SR_GameServer.exe`: the block division
+  (`CRgnTerrain::vslot_006` 0x53ad30, **320.0** at 0xb45ae8, 1920.0 at 0xb45ad0), the 8
+  neighbours (table 0xc64090) and `CMsgBlock` slot 2's loop over them (0x534340: 0x5343b8..0x534419,
+  `FUN_00533e70` / `FUN_00533f70`). A player holds the 3 x 3 blocks of 320 around its own, so a
+  monster first shows 320-640 units ahead -- in retail too. `sro_client.exe` holds nothing back
+  and drops nothing by distance (0x3015 -> `FUN_008a6bd0` at once, round 676; removal only by
+  0x3016 or the world reset; the draw's 800.0 at 0xd83080 is a mesh LOD), and fades every spawn in
+  over 2.0 s (0xd86ecc). **The distance was never the bug.**
+- **Enter timing** (`partybot -mode latency -walk 30s`, this tree's server with the Mac mini's
+  flags and data, 67,266 monsters, a bot running 105 units/s through the bandit fields): 25-40
+  enters a run, 320-621 units ahead (p50 420-483), **27-96 ms** after the bot's block crossing
+  (p50 47-71): one area-of-interest tick (100 ms, OURS; retail answers in the move).
+- **The AI tick** at 67k monsters, sleep on: p50 0.007-0.08 ms, max under 0.3 ms. OpAttack
+  request->result on the server alone: under 1 ms (partybot, 40 attacks, 67k monsters, one player
+  online as on prod); with 300 more bots moving around it (`-crowd 300`): p50 0.8 ms, max 1.1 ms
+  (27 attacks), enters p50 70 ms after the crossing, the AI tick p50 0.13-0.17 ms, max 0.65 ms.
+- **Prod** (Mac mini log, read only): the user's sessions' send queue peaked at 8,363 bytes and the
+  send debt at 246 us; one player online, no swarm since 2026-10-12. The arrival guard held the
+  user's arrivals 1.6-3.3 s, each released at the client's 0x3012 (the loading screen), as round
+  786's protection meant.
+
+**The client was (MEASURED, render box; the full-map server above on loopback, the QA client
+in real time, Forward+ 1280x720, `OPENSRO_QA_LATENCY=1`).**
+1. **Every pushed monster body cost 21-25 ms**, nearly all of it waiting for the render thread:
+   `duplicate()` reads a `GeometryInstance3D`'s property list, which asks the rendering server
+   (`thread_model=2`) and waits for it to finish drawing the last frame -- 12-25 ms for the first
+   `duplicate()` of a frame, 0.3 ms for the next ones (`QA LAT dup`; INFERRED which call: Godot's
+   `GeometryInstance3D::_get_property_list`). The name plate's look, the lighting's copy and the
+   fade's twins wait the same way when they come first (`QA LAT build` laps).
+2. **So a burst of N monsters took N frames**: the network's 8 ms read budget (OURS) counted the
+   wait as its own work and read one push a frame. Every packet behind the burst -- an attack's
+   result -- waited those frames too.
+3. **Nagle's algorithm** was on (`StreamPeerTCP`'s default): the walk into reach ends with the stop
+   report (unanswered by the server) and the attack, back to back, and the attack waited for the
+   server's delayed ACK -- 40-52 ms a click against the Linux server. On the Mac mini it mostly does
+   not: prod's own log has the attack 0-5 ms after the stop report in 607 of 643 cases since
+   2026-10-06 (macOS acknowledges at once).
+4. Kept, as retail does them: the first monster of a species waits for its model (98-277 ms,
+   round 661: a hitch otherwise); a click inside the base attack's re-use delay is answered when
+   the delay ends (round 785, READ), 578-1,184 ms in the fight runs right after a kill.
+
+**What changed (OURS, client only).**
+- `MonsterDraw.clone_tree`: a body built node by node from its template, resources shared as
+  `duplicate()` shared them, no property list read (pinned against `duplicate()` field by field).
+- `RenderSync.wait_once`: the frame's one render-thread wait taken up front in the first body
+  build and credited to `NetClient`'s read budget and the build pump's, so the rest of a burst is
+  read and built in the same frame.
+- TCP_NODELAY on the game socket (`NetClient.no_delay_wanted`; `OPENSRO_NAGLE=1` restores
+  Nagle). Retail sets none (READ: `sro_client.exe`'s six `setsockopt` calls, IAT 0xd80624, and
+  `SR_GameServer.exe`'s three, IAT 0xad942c, are all `SOL_SOCKET` 0xffff) -- but retail sends one
+  request per action (0x7074, the server walks the player), OpenSRO's client two.
+- QA: `LatencyProbe` (`QA LAT mob|atk|build`), the A/B switches `OPENSRO_QA_DUPLICATE=1`,
+  `OPENSRO_QA_NO_RENDER_SYNC=1`, `OPENSRO_NAGLE=1`; the QA fight waits out the arrival's
+  protection and takes `OPENSRO_QA_FIGHT=<range>`; `tools/nagle_probe.gd`; `partybot -mode
+  latency`; `tools/clone_parity.gd` (`clone_tree` against `duplicate()` on the archive's
+  templates).
+
+**Before and after** (one build, A = the A/B switches on = before; B = after; runs
+`/var/tmp/latency/run/`: fights in the Mangyang field (-1000, 3000) at level 80 and the bandit
+fields at 140, walks east through the bandit fields; `fight_base` is the instrumented tree before
+any fix):
+
+| | A (before) | B (after) |
+|---|---|---|
+| a pushed body, recv -> drawn | p50 22 ms, p95 24 (n = 54 + 599) | p50 1 ms, p95 23 (n = 319): the 23 is the frame's one render wait, now in the first body only |
+| the body's instance (template copy) | p50 21.2-22.2 ms, max 25.0 | p50 0.14-0.17 ms, max 0.4 (3.6 once) |
+| bursts of 3+ pushed bodies | 21 / 10 / 12 / 8 / 14 bodies over 3 / 13 / 12 / 8 / 14 frames, 98-326 ms first to last (`mfightA1`); 19 / 7 / 8 over 12 / 10 / 8 frames, 207-255 ms (`fightA4`) | 37 of 42 bursts in one frame (1-6 ms), the rest 2-5 frames, max 112 ms (27 bodies) (`mfightB1`) |
+| where a monster first shows, from the player | p50 426-508, 4-841 (4: a respawn beside the player) | p50 485-525, 92-840 (the server's window, unchanged) |
+| an attack, send -> result (Linux server) | p50 50-51 ms; 114 of 140 between 20 and 60 ms (`fight_base`, `mfightA1`) | p50 2 ms; 71 of 87 under 20 ms (`mfightB1`) |
+| an attack, its tail | 13 + 1 over 200 ms: re-use delay deferrals, and results behind a burst | 8 over 200 ms: the re-use delay deferrals (retail's) |
+| the bare socket, stop + attack (`nagle_probe.gd`, 200 rounds) | 40.9 ms p50, 199 of 200 over 20 ms | 0.3 ms p50, 0 over 20 ms |
+
+On the user's PC (60 fps, a 23.4 ms frame in his own diag file) a burst of ten monsters stood
+in ten such frames before -- about a quarter of a second for the last to start fading in, and an
+attack result behind it as long (INFERRED from the box's numbers; not measured there).
+
+**Tests.** GD `scripts/world/monster_spawn786_test.gd` (75+ checks): `clone_tree` against
+`duplicate()` on a template shaped as the assembler makes one (bones, poses, pieces, twin, bone
+attachment, metas; the skeleton path resolving in a tree), the probe's records, `RenderSync`'s
+once a frame and the read budget's credit, Nagle off by default. Go
+`cmd/partybot/latency_test.go` (the latency mode's wire reading). Before the round the GD test
+does not parse (no `MonsterDraw.clone_tree`, `LatencyProbe`, `RenderSync`).
+
+**Gates.** `go test ./...` passes. Client `check` ALL LOAD (804 scripts, 9 scenes); `tests` "ran
+312 suite(s), 0 failing" (`RENDER_DIR=/opt/opensro-client-latency`,
+`GODOT_LOCK=/var/tmp/latency/lock`). Perf gate (`--base f54ea367 --sites jangan,crowd,mobs`):
+**SAME** on every number:
+
+```
+jangan  frame ms   base 0.81  head 0.81  (+0.0)  SAME
+jangan  entry ms   base 8805  head 8688  (-117.0)  SAME
+jangan  freeze ms  base 2805  head 2771  (-34.0)  SAME
+jangan  hitches    base 5  head 4  (-1.0)  SAME
+crowd   frame ms   base 2.18  head 2.05  (-0.1)  SAME
+crowd   entry ms   base 10863  head 11016  (+153.0)  SAME
+crowd   freeze ms  base 3420  head 3602  (+182.0)  SAME
+crowd   hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 0.87  head 0.87  (+0.0)  SAME
+mobs    entry ms   base 9767  head 9724  (-43.0)  SAME
+mobs    freeze ms  base 2727  head 2736  (+9.0)  SAME
+mobs    hitches    base 5  head 4  (-1.0)  SAME
+```
+
+(`--frames 30000`: the default 3,000 frames end in 4 s at the box's 700+ fps, too few
+samples for the frame number. The crowd's freeze runs overlap: base 3,274-3,539 ms, head
+3,493-3,758.) `tools/clone_parity.gd` on the box's own archives: `clone_tree` against
+`duplicate()` on **120 real monster models, 683 nodes, 0 differences**.
+
+**Deploy.** Client only: the prod server needs **no redeploy and no restart** (the only server
+tree change is `cmd/partybot`, a test tool).
+
+**OPEN.** macOS's delayed-ACK timer was not measured against the Mac mini (read only; its log
+shows it acknowledging at once anyway). The name plate, light and fade still wait for the render
+thread once a frame (now once, not once a body). The 100 ms area-of-interest tick against
+retail's immediate block change. Other players' and NPC bodies still use `duplicate()`. A GM
+`/tp` from the QA client loads the zone's own frame first and streams the destination after the
+0x3012, so its first monsters wait 0.4-0.8 s for their regions (QA path; a gate or scroll loads
+the destination first).
+
 ### Round 786 (part): the Test Items NPC's gear is +12, full blue, 100%
 
 The user: "can you make the Item NPC shop gear all +12 full blue at 100% stats?" (OURS throughout:
