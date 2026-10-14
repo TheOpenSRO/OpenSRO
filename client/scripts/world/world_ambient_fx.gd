@@ -118,6 +118,9 @@ class Sector:
 	## Every host off as of the last decision.
 	var quiet := true
 
+## OPENSRO_QA_WORLD_FX=1: each effect's place as it is built.
+static var qa_log := OS.get_environment("OPENSRO_QA_WORLD_FX") == "1"
+
 ## Where the effects come from, and the glow pass they join.
 var particles: Pk2Reader = null
 var ambient: AmbientParticles = null
@@ -372,6 +375,7 @@ func _build(h: Host) -> void:
 	if not h.effects.is_empty():
 		h.view_box = h.box.merge(view_box_of(h.effects))
 	hosts_built += 1
+
 	_set_on(h, h.on, h.seen)
 
 ## Every frame: of the hosts in range in a sector in view, the effects of
@@ -441,6 +445,15 @@ func _step(delta: float) -> void:
 	for fx_v in list:
 		if is_instance_valid(fx_v):
 			(fx_v as EfpEffect).step_post()
+	if qa_log:
+		for fx_v in list:
+			var fx := fx_v as EfpEffect
+			if is_instance_valid(fx) and not fx.has_meta("opensro_qa_placed") and fx.get_parent() is Node3D:
+				fx.set_meta("opensro_qa_placed", true)
+				var host := fx.get_parent() as Node3D
+				print("QA WORLDFX placed %s %s: %s in the object's frame, world %s (object at %s, yaw %.3f)" % [host.name,
+					fx.path.get_file(), str(host.global_transform.affine_inverse() * fx.placed_at()), str(fx.placed_at()),
+					str(host.global_position), host.global_rotation.y])
 	step_split = Vector3i(t1 - t0, t2 - t1, Time.get_ticks_usec() - t2)
 
 ## Hosts whose node has gone (a region streamed out) leave.

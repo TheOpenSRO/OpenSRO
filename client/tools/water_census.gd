@@ -49,6 +49,8 @@ extends SceneTree
 ##   CLASS <c> models=<n> placed_models=<n> placements=<n> water_models=<n> water_placements=<n>
 ##   SUPPORT <mechanism> placements=<n> before=<n> after=<n>
 ##   FXTOTAL / REGIONFX <x/y> hosts=<n> entries=<n>   the ambient effect entries per region
+##     (without the seasonal sets World3D leaves out by default, SeasonalObjects;
+##     SUPPORT ambient_fx_unseasonal is ambient_fx without them too)
 ##   AT <file> <x/y> (<local x, y, z>)   (--where=<substring>)
 ##   IN <x/y> <path> x<n> classes=<..>   (--region=<x/y>)
 ##
@@ -192,6 +194,8 @@ func _initialize() -> void:
 			continue
 		var water: bool = info["water"]
 		for r in where:
+			if SeasonalObjects.classify(path) != "":
+				continue
 			region_fx[r] = int(region_fx.get(r, 0)) + int(where[r]) * int(info["fx"])
 			if int(info["fx"]) > 0:
 				region_hosts[r] = int(region_hosts.get(r, 0)) + int(where[r])
@@ -206,6 +210,10 @@ func _initialize() -> void:
 				classes[c]["water_models"] += 1
 				classes[c]["water_placements"] += places
 		_support(support, "ambient_fx", cls.has("ambient_fx"), places, gates, places)
+		# The seasonal sets World3D leaves out by default (SeasonalObjects,
+		# round 583): the same counts without them.
+		var seasonal := SeasonalObjects.classify(path) != ""
+		_support(support, "ambient_fx_unseasonal", cls.has("ambient_fx") and not seasonal, places, gates, places)
 		_support(support, "texani0", cls.has("texani0"), places, places, places)
 		_support(support, "texani1_mt", cls.has("texani1_mt"), places, 0, places)
 		_support(support, "multitex", cls.has("multitex"), places, 0, places)
@@ -220,7 +228,8 @@ func _initialize() -> void:
 			print("    " + line)
 	print("CENSUS %d models" % models)
 	# The ambient effects each region's placements carry (every entry,
-	# night-only ones too), the busiest first.
+	# night-only ones too; not the seasonal sets World3D leaves out by
+	# default), the busiest first.
 	var rk := region_fx.keys()
 	rk.sort_custom(func(a, b): return int(region_fx[a]) > int(region_fx[b]))
 	var total_fx := 0
