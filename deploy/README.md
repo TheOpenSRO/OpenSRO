@@ -1570,6 +1570,37 @@ which its select screen shows as the list's error (round 682's review). A new cl
 older server waits 5 s for the list and then says the server did not answer. A deleted character
 waits 7 days (10080 minutes, restorable) and is then removed by the server's once-a-minute purge.
 
+## The original client (round 788, off by default)
+
+The server can let the ORIGINAL client (sro_client.exe, vSRO 1.188) log in as far as its character
+list: a retail gateway and a retail agent listener that speak the original wire
+(`docs/protocol/opcodes/gateway.md`, "OpenSRO's retail listeners"). The world is not offered to it:
+Start is refused with the client's own "GameServer is currently offline" message. OpenSRO's own
+client and listener are unaffected.
+
+| Flag (env) | Default | What |
+|---|---|---|
+| `-retail-gateway-addr` (`OPENSRO_RETAIL_GATEWAY_ADDR`) | empty: both listeners off | where the original client connects first, e.g. `:15780` -- the port its archive names (Media.pk2 `GATEPORT.TXT`) |
+| `-retail-agent-addr` (`OPENSRO_RETAIL_AGENT_ADDR`) | `:15781` | where a logged-in client is sent |
+| `-retail-agent-public-host` (`OPENSRO_RETAIL_AGENT_PUBLIC_HOST`) | the agent address's host, else 127.0.0.1 (with a warning) | the host the gateway names for the agent: one the CLIENT can reach |
+| `-retail-shard-id` (`OPENSRO_RETAIL_SHARD_ID`) | 1 | the shard id in the server list (the client sends it back at login) |
+| `-retail-shard-name` (`OPENSRO_RETAIL_SHARD_NAME`) | OpenSRO | the shard name in the server list |
+| `-retail-content-id` (`OPENSRO_RETAIL_CONTENT_ID`) | 22 | the client's content id (its DIVISIONINFO.TXT's first byte; vSRO 1.188: 22) -- checked at the agent |
+| `-retail-version` (`OPENSRO_RETAIL_VERSION`) | 1000 | the client version accepted (its SV.T; vSRO 1.188: 1000); older is told "(C4)" and quits |
+
+The list's population and "Check" come from `-max-players` and `-inspection`. Accounts are the
+server's own (the same login rules as OpenSRO's client). The client finds the gateway by the host
+and port in its own archive (`DIVISIONINFO.TXT`, `GATEPORT.TXT` in Media.pk2): point that host at
+the server (DNS, the PC's hosts file) and listen on that port, or edit the archive. The client
+also binds TCP 15779 on its own PC as a single-instance guard, so OpenSRO's own listener and the
+original client cannot share a machine on that port. Every message each way is logged as
+`retail gateway packet` / `retail agent packet` with its bytes (passwords withheld; the keep-alive
+and the 5-second server-list refresh at Debug).
+
+```sh
+./server -retail-gateway-addr :31729 -retail-agent-addr :31730 -retail-agent-public-host 203.0.113.5
+```
+
 ## Character defaults (round 692)
 
 A new character gets its race's default masteries (level 0), skills and level-1 quests, as the
@@ -1618,6 +1649,39 @@ On opensro-01:
    `... -c "SELECT quest_code, status FROM character_default_quests WHERE character_id = <id>;"`.
 
 To undo: remove the variable and `docker compose up -d`; characters already given defaults keep them.
+
+## Name filter (round 788)
+
+A new character's name and a new guild's name pass SR_ShardManager's name rule
+(`docs/protocol/charselect.md`, "The name rule: the AbuseFilter test"): 2..12 bytes (else 0x40c /
+the guild's length refusal), then no space, no `'` or `"`, none of the 54 SQL words compiled into
+the original server, and the AbuseFilter group's test -- its allowed characters, its substring words
+and its whole words (else 0x40d / "that guild name is not allowed", 0x4c19). Existing characters
+and guilds keep their names.
+
+The word list is the operator's own file, **never in this repo**: the `AbuseFilter.txt` beside
+your `SR_ShardManager.exe`, or your client's
+`/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\abusefilter.txt" -out AbuseFilter.txt`
+(the two retail copies differ a little; the client checks names against its own copy before it
+sends them).
+
+- `-abuse-filter <path>` (env `OPENSRO_ABUSE_FILTER`): the file, UTF-16 as shipped. A path that does
+  not load is fatal. The boot log reads `name filter loaded ... group=4 allow_rows=4
+  substring_words=31 whole_words=462` (the server copy's English group; 733 and 366 for VIETNAM).
+- `-abuse-filter-locale <name>` (env `OPENSRO_ABUSE_FILTER_LOCALE`): which group, as server.cfg's
+  `LOCALE` names it -- `KOREA`, `CHINA`, `TAIWAN`, `JAPAN`, `VIETNAM`, `ENGLISH`, with or without
+  `LOCALE_`. Unset: `ENGLISH` (OpenSRO's default; the reference server.cfg says `LOCALE_VIETNAM`).
+  An unknown name reads the English group, as the original does, with a warning.
+- **Unset** (no file): the server warns at boot, `no name filter word list (-abuse-filter /
+  OPENSRO_ABUSE_FILTER): new names are limited to [0-9A-Za-z_] and the SQL words, no AbuseFilter
+  words apply`. Names are then limited to letters, digits and `_` (OpenSRO's choice: the original
+  refuses no character without the file).
+
+On opensro-01: extract the file as above, `scp AbuseFilter.txt opensro@<server-host>:~/opensro-data/`
+and `chmod 644` it, set `OPENSRO_ABUSE_FILTER: /data/AbuseFilter.txt` in the untracked override
+(and `OPENSRO_ABUSE_FILTER_LOCALE` if not English), `docker compose up -d`, then check
+`docker compose logs server | grep 'name filter'`. Nothing in the database changes; to undo, remove
+the variable.
 
 ## Quests (round 785)
 

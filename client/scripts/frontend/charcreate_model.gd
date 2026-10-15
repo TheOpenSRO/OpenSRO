@@ -382,23 +382,19 @@ func confirm_error() -> String:
 ##
 ## The character test: READ, 0x8c3cb0 lower-cases A-Z (0x8c1660) and refuses
 ## a name with any character whose bit is set in a 65,536-bit table
-## (0x8c0760), then two word lists. The table is built by 0x8c4a10 from
-## Media.pk2 `server_dep\silkroad\textdata\abusefilter.txt`: its
-## `#ALLOW_ID_TABLE <from> <to>` rows mark the allowed ranges of one of six
-## language columns, and the rest of the table is the refused set. Which
-## column the English client reads (the filter object's +0x14, passed to its
-## constructor 0x8c46a0 from GlobalDataManager +0x858) is OPEN. So the test
-## here is OURS: the server's own rule (session.LobbyNameCode -- printable
-## ASCII, no space, `'` or `"`), so the client never passes a name the
-## server refuses for its characters, nor refuses one it would take.
-static func name_error(name: String) -> String:
-	var n := name.length()
+## (0x8c0760), then two word lists, built by 0x8c4a10 from the player's
+## Media.pk2 `server_dep\silkroad\textdata\abusefilter.txt` for the group
+## type.txt's Language names (round 788: NameFilter has the whole of it).
+## The length is the edit's own (+0x434), in UTF-16 units. filter null is
+## NameFilter.no_file() (OURS: [0-9A-Za-z_], the server's no-file charset).
+static func name_error(name: String, filter: NameFilter = null) -> String:
+	var n := NameFilter.utf16_units(name).size()
 	if n < NAME_MIN or n > NAME_MAX:
 		return MSG_NAME_LENGTH
-	for i in range(n):
-		var c := name.unicode_at(i)
-		if c < 0x21 or c > 0x7e or c == 0x27 or c == 0x22:
-			return MSG_NAME_CHARS
+	if filter == null:
+		filter = NameFilter.fallback()
+	if not filter.name_ok(name):
+		return MSG_NAME_CHARS
 	return ""
 
 # --- the tooltip --------------------------------------------------------------

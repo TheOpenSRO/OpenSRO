@@ -2,8 +2,14 @@
 // list (round 681): the client side that reads a retail gateway's shard list
 // and status (Probe, the reference the Godot client's RetailGatewayClient is
 // held to byte for byte), and a fake retail gateway (Server) to test it
-// without anyone else's server. Login is out of scope: nothing here sends
-// anything that looks like one.
+// without anyone else's server. Login was out of scope then: Conversation
+// and Probe send nothing that looks like one.
+//
+// Round 788 added the server side for real use: ServerHandshake (the
+// handshake both the fake and the real listeners run), ServerCodec (the
+// retail framing as a gateway.Codec, so OpenSRO's own server speaks it --
+// internal/retailsrv) and ClientConn (a client connection past the handshake,
+// to drive a server through login in tests).
 //
 // The facts are in docs/protocol/opcodes/gateway.md and handshake.md, each
 // labelled READ (the retail client's and GatewayServer's own code, with

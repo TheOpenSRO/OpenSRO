@@ -41,6 +41,23 @@ func Chain(handlers ...Handler) Handler {
 	}
 }
 
+// Codec frames one session's packets on a wire other than OpenSRO's own
+// (round 788: the retail listeners, retailgw.ServerCodec). A Server with no
+// Codec uses OpenSRO's framing (proto.Read / proto.Write) exactly as before;
+// handlers see the same *Session and proto.Packet either way, so the lobby,
+// the login service and the disconnect bookkeeping run unchanged on both.
+type Codec interface {
+	// Start runs once on the session's goroutine before its first read: the
+	// server's half of a handshake the server opens (it may Send).
+	Start(sess *Session) error
+	// ReadPacket reads the next packet for the handlers, consuming the
+	// frames that belong to the codec itself (the handshake).
+	ReadPacket(r *bufio.Reader) (*proto.Packet, error)
+	// AppendFrame appends p's wire bytes to out. It is called under the
+	// session's queue lock, in Send order, from any goroutine that Sends.
+	AppendFrame(out []byte, p *proto.Packet) ([]byte, error)
+}
+
 // Session is one accepted, live client connection. It also carries a small
 // generic key/value bag so higher-level handlers (login, character
 // selection, ...) can remember state across packets on the same connection
@@ -49,6 +66,8 @@ func Chain(handlers ...Handler) Handler {
 type Session struct {
 	id   uint64
 	conn net.Conn
+	// codec is the wire's framing when it is not OpenSRO's own (nil).
+	codec Codec
 
 	mu     sync.RWMutex
 	values map[string]any
@@ -379,6 +398,26 @@ func (s *Session) enqueue(ps []*proto.Packet, fs []*Frame) error {
 		return ErrSendStalled
 	}
 	before := len(s.out)
+	if s.codec != nil {
+		// A codec's frames are built aside first, so a payload the codec
+		// refuses leaves the queue as it was (all or nothing).
+		var buf []byte
+		var err error
+		for _, p := range ps {
+			if buf, err = s.codec.AppendFrame(buf, p); err != nil {
+				s.outMu.Unlock()
+				return err
+			}
+		}
+		for _, f := range fs {
+			if buf, err = s.codec.AppendFrame(buf, &f.p); err != nil {
+				s.outMu.Unlock()
+				return err
+			}
+		}
+		s.out = append(s.out, buf...)
+		ps, fs = nil, nil
+	}
 	w := queueWriter{s}
 	for _, p := range ps {
 		// Writing into the queue's own buffer cannot fail; the size was
@@ -764,6 +803,10 @@ type Server struct {
 	// a farewell packet to the disconnecting client.
 	OnDisconnect func(sess *Session)
 
+	// Codec, if set, makes one codec per connection: the session speaks that
+	// wire instead of OpenSRO's own framing (round 788's retail listeners).
+	Codec func() Codec
+
 	// Quiet, if set, names the opcodes that make a session quiet when they
 	// are its FIRST packet: its "session connected" and "session
 	// disconnected" lines are logged at Debug instead of Info. Round 679's
@@ -773,9 +816,12 @@ type Server struct {
 	// "connected" line is therefore written when the first packet arrives (or
 	// when a session ends without one), not at accept.
 	Quiet func(opcode uint16) bool
-
-	nextSessionID atomic.Uint64
 }
+
+// nextSessionID numbers sessions across every Server in the process (round
+// 788): the world hub and the session-keyed state key on Session.ID, and the
+// retail agent's sessions share them with OpenSRO's own listener.
+var nextSessionID atomic.Uint64
 
 // ListenAndServe binds Addr and serves connections until ctx is canceled or
 // a fatal listener error occurs.
@@ -850,7 +896,10 @@ func recoverSession(logger *slog.Logger, sess *Session, what string) {
 }
 
 func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logger) {
-	sess := &Session{id: s.nextSessionID.Add(1), conn: conn, logger: logger}
+	sess := &Session{id: nextSessionID.Add(1), conn: conn, logger: logger}
+	if s.Codec != nil {
+		sess.codec = s.Codec()
+	}
 	sess.startWriter()
 	// The end of a session, in this order: OnDisconnect's bookkeeping, then
 	// what is still queued is written out (round 662: a frame sent just
@@ -886,6 +935,12 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 	}
 
 	r := bufio.NewReader(conn)
+	if sess.codec != nil {
+		if err := sess.codec.Start(sess); err != nil {
+			logger.Warn("session codec start failed", "addr", sess.RemoteAddr(), "error", err)
+			return
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -893,8 +948,14 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 		default:
 		}
 
-		_, _, recvRoll, recvSum := sess.security()
-		p, err := proto.Read(r, recvRoll, recvSum)
+		var p *proto.Packet
+		var err error
+		if sess.codec != nil {
+			p, err = sess.codec.ReadPacket(r)
+		} else {
+			_, _, recvRoll, recvSum := sess.security()
+			p, err = proto.Read(r, recvRoll, recvSum)
+		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				logger.Warn("session read error", "addr", sess.RemoteAddr(), "error", err)

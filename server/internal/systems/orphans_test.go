@@ -46,7 +46,11 @@ var knownOrphans = map[string]string{
 	// Round 788: the server answers OpLogin through its one LoginService
 	// (session.LoginHandlerFor); LoginHandler(store) is the old signature,
 	// kept for the many session tests that log in through it.
-	"LoginHandler": "round 788: session.LoginHandlerFor on a LoginService of its own, for tests and tools; the server wires LoginHandlerFor(loginSvc).",
+	"LoginHandler": "round 788: session.LoginHandlerFor on a LoginService of its own, for tests and tools; the server wires LoginHandlerFor(loginService).",
+	// Round 788 lane R: the retail client connection past the handshake, the
+	// Go stand-in for sro_client that drives retailsrv's gateway and agent.
+	"DialClient":   "round 788: retailgw.ClientConn, the client side of the retail framing past the handshake; retailsrv_test.go and servercodec_test.go log in through it as sro_client does.",
+	"ReadIdentity": "round 788: retailgw.ClientConn's wait for a server's 0x2001; retailsrv_test.go checks GatewayServer / AgentServer with it.",
 	"Messages": "round 768: the client's outcome decode (UI_REINFORCERR FUN_00592650). The server never sends that byte -- " +
 		"its reply carries success and destroyed, and the client builds the byte from the old and new item " +
 		"(docs/protocol/alchemy.md, \"Round 768\") -- so it is the client half's specification, kept beside the codes it names; tested.",

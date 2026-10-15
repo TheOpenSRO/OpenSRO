@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
@@ -17,6 +18,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/guild"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/skill"
@@ -170,17 +172,39 @@ func sendLobby(sess *gateway.Session, r *LobbyResult) error {
 	return sess.Send(&proto.Packet{Opcode: OpLobbyResult, Data: r.Encode()})
 }
 
+// nameFilter is the process's name filter, SR_ShardManager's one CStringCheck
+// object (READ: the ShardManager's +0x400d0, loaded once at boot). main sets
+// it from -abuse-filter / -abuse-filter-locale (SetNameFilter); until then,
+// and without a file, it is namefilter.Default().
+var nameFilter atomic.Pointer[namefilter.Filter]
+
+func init() { nameFilter.Store(namefilter.Default()) }
+
+// SetNameFilter installs f as the filter every new character and guild name
+// is tested with (nil restores namefilter.Default()).
+func SetNameFilter(f *namefilter.Filter) {
+	if f == nil {
+		f = namefilter.Default()
+	}
+	nameFilter.Store(f)
+}
+
+// NameFilter is the filter in use.
+func NameFilter() *namefilter.Filter { return nameFilter.Load() }
+
 // LobbyNameCode is the name rule both create and the name check apply
-// (READ ShardManager FUN_0040f300 / FUN_0040f200), 0 when name passes:
+// (READ ShardManager 0x40f300 / 0x40f200, round 788), 0 when name passes:
 //
 //   - 2..12 bytes (lstrlenA), else 0x40c;
-//   - no space, `'` or `"`, else 0x40d;
-//   - OURS: every byte printable ASCII (0x21-0x7e), else 0x40d. The client
-//     sends narrow strings and its message says "English alphanumerals", but
-//     which characters its bitmap (0x8c3cb0 / 0x8c0760, filled at runtime)
-//     forbids is OPEN, and so is the server's further filter FUN_006df4c0;
-//   - the forbidden-word list the server loads: OPEN (no such list was found in
-//     the archives), so none is applied.
+//   - 0x40f200, else 0x40d: no space; no `'` or `"` and none of the
+//     compiled-in SQL words in the lower-cased name (0x527390); and the
+//     AbuseFilter group's test (0x6df4c0): its allowed characters -- without a
+//     file, [0-9A-Za-z_] (OURS: see namefilter.Default) -- then its substring
+//     and whole-word lists. namefilter has the whole rule with addresses.
+//
+// The name-taken test (0x410) is the caller's (READ: `_IsExistingCharName`
+// on `_CharNameList.CharName16`, collation Latin1_General_CI_AS, so
+// case-insensitive; both character stores compare names case-insensitively).
 //
 // Existing characters keep their names whatever these say (OURS, the user
 // accepted it): the rule is applied to new names only.
@@ -188,11 +212,8 @@ func LobbyNameCode(name string) uint16 {
 	if len(name) < 2 || len(name) > 12 {
 		return LobbyErrNameLength
 	}
-	for i := 0; i < len(name); i++ {
-		b := name[i]
-		if b == ' ' || b == '\'' || b == '"' || b < 0x21 || b > 0x7e {
-			return LobbyErrNameInvalid
-		}
+	if !NameFilter().NameOK(name) {
+		return LobbyErrNameInvalid
 	}
 	return 0
 }

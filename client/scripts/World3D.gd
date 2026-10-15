@@ -24080,7 +24080,23 @@ var _teleport_request_pending := false
 func _on_guild_create_requested(guild_name: String) -> void:
 	if not NetClient.is_connected_to_server():
 		return
+	if not _guild_name_passes(guild_name):
+		return
 	NetClient.create_guild(NetClient.current_character_name, guild_name)
+
+## The guild-create prompt's own name checks before it sends (round 788,
+## READ 0x6f91b0: length, then the AbuseFilter guild test; NameFilter): a
+## refusal is logged in the archive's words and nothing is sent.
+func _guild_name_passes(guild_name: String) -> bool:
+	var key := NameFilter.guild_name_error(guild_name, NameFilter.shared(_media_pk2))
+	if key == "":
+		return true
+	var fallback := "A guild name is 2 to 12 letters or digits." if key == NameFilter.GUILD_MSG_LENGTH else "That guild name cannot be used."
+	var text := _resolve_any_text(key, fallback)
+	_log_system("Could not found the guild: %s" % text)
+	if guild_status_label != null:
+		guild_status_label.text = text
+	return false
 
 ## The talk box's guild leave prompt was confirmed (round 521).
 func _on_guild_leave_requested() -> void:
@@ -30509,6 +30525,8 @@ func _on_guild_create_pressed() -> void:
 	var guild_name := guild_name_input.text.strip_edges()
 	if guild_name.is_empty():
 		guild_status_label.text = "Enter a guild name first."
+		return
+	if not _guild_name_passes(guild_name):
 		return
 	NetClient.create_guild(NetClient.current_character_name, guild_name)
 

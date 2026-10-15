@@ -34,6 +34,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/OpenSRO/OpenSRO/server/internal/nest"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -963,6 +964,18 @@ func main() {
 			"on a client's own characterdata_*.txt and itemdata_*.txt, round 682): the 52 bodies and 52 starting items a "+
 			"new character may be made from, and the two ammunition rows. Without it every character create is refused "+
 			"(0x403) -- the server cannot tell what it may make. A configured path that does not load is fatal.")
+	abuseFilter := flag.String("abuse-filter", os.Getenv("OPENSRO_ABUSE_FILTER"),
+		"path to an AbuseFilter.txt (env OPENSRO_ABUSE_FILTER; round 788): the operator's own -- the copy beside "+
+			"SR_ShardManager.exe, or a client's Media.pk2 server_dep\\silkroad\\textdata\\abusefilter.txt -- never "+
+			"shipped. Its group for -abuse-filter-locale gives the characters a new character or guild name may "+
+			"use and the words it may not contain or be, as SR_ShardManager's 0x40f200 applies them. Without it "+
+			"names are limited to [0-9A-Za-z_] and the compiled-in SQL words, and no word list applies. A "+
+			"configured path that does not load is fatal. See deploy/README.md, \"Name filter\".")
+	abuseFilterLocale := flag.String("abuse-filter-locale", os.Getenv("OPENSRO_ABUSE_FILTER_LOCALE"),
+		"which AbuseFilter.txt group -abuse-filter reads, as server.cfg's LOCALE names it (env "+
+			"OPENSRO_ABUSE_FILTER_LOCALE): KOREA 0, CHINA 1, TAIWAN 2, JAPAN 3, VIETNAM 5, ENGLISH 4, with or "+
+			"without retail's LOCALE_ prefix; an unknown name reads group 4, as SR_ShardManager does. Unset, "+
+			"ENGLISH (OURS; the reference server.cfg says LOCALE_VIETNAM).")
 	charDefaultsDir := flag.String("chardefaults-dir", os.Getenv("OPENSRO_CHARDEFAULTS_DIR"),
 		"a directory holding the shard DB's _RefCharDefault_SkillMastery.csv, _RefCharDefault_Skill.csv and "+
 			"_RefCharDefault_Quest.csv as exported (env OPENSRO_CHARDEFAULTS_DIR; EXTERNAL, round 692): a new "+
@@ -1207,6 +1220,8 @@ func main() {
 		"serve net/http/pprof on this address, e.g. 127.0.0.1:6060 (env OPENSRO_PPROF_ADDR), and log a runtime stats line "+
 			"every 30 s (GC, heap, goroutines, scheduler latency). OURS, debug only, off by default (empty). Never expose it: "+
 			"it serves stacks and the command line. See deploy/README.md, \"Profiling a lagging server\".")
+	// The original client's gateway and agent (round 788, retail.go).
+	retailOpts := registerRetailFlags()
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -1855,6 +1870,32 @@ func main() {
 	} else {
 		logger.Warn("no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}
+	// The name filter (round 788): SR_ShardManager's AbuseFilter.txt group
+	// for its locale, applied to every new character and guild name
+	// (session.LobbyNameCode, the guild create).
+	{
+		locale := *abuseFilterLocale
+		if locale == "" {
+			locale = "ENGLISH"
+		}
+		group, known := namefilter.GroupForLocale(locale)
+		if !known {
+			logger.Warn("unknown -abuse-filter-locale: group 4 (ENGLISH) is read, as SR_ShardManager does", "locale", locale)
+		}
+		if *abuseFilter != "" {
+			nf, err := namefilter.LoadFile(*abuseFilter, group)
+			if err != nil {
+				logger.Error("loading the name filter", "path", *abuseFilter, "err", err)
+				os.Exit(1)
+			}
+			rows, substr, whole := nf.Counts()
+			logger.Info("name filter loaded", "path", *abuseFilter, "locale", locale, "group", group,
+				"allow_rows", rows, "substring_words", substr, "whole_words", whole)
+			session.SetNameFilter(nf)
+		} else {
+			logger.Warn("no name filter word list (-abuse-filter / OPENSRO_ABUSE_FILTER): new names are limited to [0-9A-Za-z_] and the SQL words, no AbuseFilter words apply -- see deploy/README.md \"Name filter\"")
+		}
+	}
 	// A new character's default masteries, skills and quests (round 692):
 	// the shard DB's _RefCharDefault_* tables, as _AddNewChar applies them
 	// (session.LobbyDeps.Defaults). EXTERNAL data, so it is the operator's to
@@ -2220,9 +2261,9 @@ func main() {
 	}
 	// The login rules (round 788): every front door's, the logged-in table
 	// the GM console's /block reaches an account through.
-	loginSvc := &session.LoginService{Accounts: accounts, Status: serverStatus, Staff: gmGate.Allows,
+	loginService := &session.LoginService{Accounts: accounts, Status: serverStatus, Staff: gmGate.Allows,
 		Online: session.NewOnlineAccounts(), Rules: loginRules, Logger: logger}
-	gmDeps.Sessions = session.GMSessions{Hub: hub, Online: loginSvc.Online}
+	gmDeps.Sessions = session.GMSessions{Hub: hub, Online: loginService.Online}
 	gmDeps.Punishments, _ = accounts.(account.PunishmentStore)
 	gmDeps.AccountLookup, _ = accounts.(account.AccountLookup)
 	// Where a new character's defaults go (round 692): both stores, memory
@@ -2266,6 +2307,12 @@ func main() {
 		logger.Warn("no quest catalogue (-quests-dir / OPENSRO_QUESTS_DIR): no quest is offered -- see deploy/README.md \"Quests\"")
 	}
 
+	// The lobby, shared by OpenSRO's connection and the retail agent.
+	lobby := session.LobbyHandler(session.LobbyDeps{
+		Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
+		Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
+	})
+
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
@@ -2276,17 +2323,14 @@ func main() {
 		// (round 788): the old 0x0001 with its reason string, and retail's
 		// 0x6102 -> 0xA102 on our framing. Inspection and a full server turn
 		// a login away there, the GM accounts passing both (round 679).
-		session.LoginHandlerFor(loginSvc),
-		session.GatewayLoginHandler(loginSvc),
+		session.LoginHandlerFor(loginService),
+		session.GatewayLoginHandler(loginService),
 		session.RegisterHandler(registerer),
 		// The character lobby on retail's 0x7007/0x7001 (round 682): list,
 		// create (dressed in what the player chose, plus the shield or
 		// ammunition the server adds), the name check, the 7-day delete and
 		// restore. Start is the world handler's.
-		session.LobbyHandler(session.LobbyDeps{
-			Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
-			Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
-		}),
+		lobby,
 		// An older client's 0x0010/0x0012/0x0014 are told, in their own
 		// reply format, to update (round 682's review).
 		session.LegacyLobbyHandler(logger),
@@ -2449,9 +2493,14 @@ func main() {
 			step("world", func() { worldDisconnect(sess) })
 			// Last (round 788): the account may log in again only once the
 			// world has saved and let go of its character.
-			step("login", func() { loginSvc.SessionEnded(sess) })
+			step("login", func() { loginService.SessionEnded(sess) })
 		},
 	}
+
+	// The original client's front door (round 788, retail.go), when set: its
+	// agent's sessions end through the same OnDisconnect (session ids are
+	// unique across listeners).
+	startRetail(ctx, retailOpts, retailDeps{login: loginService, lobby: lobby, status: serverStatus, onDisconnect: srv.OnDisconnect}, logger)
 
 	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Error("gateway server exited", "error", err)

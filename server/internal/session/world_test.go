@@ -1153,7 +1153,7 @@ func TestGuildWorkIsRefusedWhileDead(t *testing.T) {
 		t.Fatalf("setup: Aria's HP %d after the heal, want above 0 (dead with a full pool)", c.HP)
 	}
 
-	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "SilkLegion"}).Encode())
 	gr, err := DecodeGuildResult(f.read(t, f.connA, f.rA).Data)
 	if err != nil || gr.Error != guildErrorMessage(guild.ErrCreatorDead) {
 		t.Fatalf("a dead founder's create answered %+v (err %v), want the refusal %q (0x4c07)", gr, err, guildErrorMessage(guild.ErrCreatorDead))
@@ -1174,7 +1174,7 @@ func TestGuildWorkIsRefusedWhileDead(t *testing.T) {
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
 		t.Fatalf("after the revive result Aria received %#04x, want the stats push", p.Opcode)
 	}
-	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "SilkLegion"}).Encode())
 	if gr, err := DecodeGuildResult(f.read(t, f.connA, f.rA).Data); err != nil || gr.Error != "" || gr.GuildID == 0 {
 		t.Fatalf("the revived founder's create answered %+v (err %v), want a guild", gr, err)
 	}

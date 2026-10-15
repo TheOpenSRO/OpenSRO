@@ -284,6 +284,17 @@ retail's order:
 | `-inspection`, not a GM account | `[2,2,2]` | **yes** | READ (GM exemption OURS; retail exempts privileged IPs) |
 | in | `[1, 0, "", 0]` on OpenSRO's connection | no | OURS (no agent hand-off) |
 
+**On the original client's path** (the retail listeners, `internal/retailsrv`): the gateway's
+0x6102 calls `Login` with no session -- the same counting, block, full, already-connected,
+per-IP and inspection decisions, the connection closed as above -- and the account is entered in
+the logged-in table only on the agent connection, by `LoginService.AdmitSession` after the 0x6103
+token checks out; the agent's disconnect releases it. Retail's GlobalManager holds the account from
+its admission at the gateway step, so two logins of one account cannot both reach the agent; on
+OpenSRO a second login can pass the gateway in the seconds before the first one's 0x6103, and its
+0x6103 is then refused with 0xA103 `[2,2]` and the connection closed. AgentServer has no code for
+this case (INFERRED nearest: 2 is its own "user registration failed"; the client shows the same
+"(C10)" for 2 and 3, READ 0x4cf7a0).
+
 OURS choices, each in the code: a successful login clears the name's count (retail: the image
 code's success; OpenSRO has none); a name's count is forgotten an hour after its last failure
 (`LoginFailureExpiry`; retail's expiry OPEN); the password is checked before the block (whether

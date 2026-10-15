@@ -155,7 +155,7 @@ func TestLobbyCreateRefusals(t *testing.T) {
 	h.wantCode(with(func(r *LobbyRequest) { r.Name = "Ar ia" }), LobbyErrNameInvalid, "a space")
 	h.wantCode(with(func(r *LobbyRequest) { r.Name = "Ar'ia" }), LobbyErrNameInvalid, "a quote")
 	h.wantCode(with(func(r *LobbyRequest) { r.Name = "Ar\"ia" }), LobbyErrNameInvalid, "a double quote")
-	h.wantCode(with(func(r *LobbyRequest) { r.Name = "Ariä" }), LobbyErrNameInvalid, "a byte outside printable ASCII")
+	h.wantCode(with(func(r *LobbyRequest) { r.Name = "Ariä" }), LobbyErrNameInvalid, "a byte >= 0x80 (outside [0-9A-Za-z_])")
 	h.wantCode(with(func(r *LobbyRequest) { r.Legs, r.Feet = 3641, 3642 }), LobbyErrCreateFailed, "pieces of two armour classes")
 	if n := len(h.list()); n != 0 {
 		t.Fatalf("%d characters after only refusals", n)

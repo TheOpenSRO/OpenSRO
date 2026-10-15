@@ -153,7 +153,7 @@ func TestGuildFullFlow(t *testing.T) {
 		t.Fatalf("bob login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp = doSend(connA, rA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	resp = doSend(connA, rA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "SilkLegion"}).Encode())
 	gr, err := DecodeGuildResult(resp.Data)
 	if err != nil || gr.Error != "" {
 		t.Fatalf("create guild failed: err=%v result=%+v", err, gr)
@@ -227,7 +227,7 @@ func TestGuildInfoFlow(t *testing.T) {
 		t.Fatalf("expected 'not in a guild', got err=%v result=%+v", err, gr)
 	}
 
-	resp = send(OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	resp = send(OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "SilkLegion"}).Encode())
 	gr, err = DecodeGuildResult(resp.Data)
 	if err != nil || gr.Error != "" {
 		t.Fatalf("create guild failed: err=%v result=%+v", err, gr)
@@ -235,7 +235,7 @@ func TestGuildInfoFlow(t *testing.T) {
 
 	resp = send(OpGuildInfo, (&CharacterNameRequest{Name: "Aria"}).Encode())
 	gr, err = DecodeGuildResult(resp.Data)
-	if err != nil || gr.Error != "" || gr.GuildID == 0 || gr.Name != "Silk Legion" || len(gr.Members) != 1 {
+	if err != nil || gr.Error != "" || gr.GuildID == 0 || gr.Name != "SilkLegion" || len(gr.Members) != 1 {
 		t.Fatalf("expected the real guild after creating one, got err=%v result=%+v", err, gr)
 	}
 }
@@ -386,21 +386,21 @@ func TestGuildCreateRequiresLevelAndGold(t *testing.T) {
 	}
 
 	// 1. Level 1 with 1,000 gold: the level refusal, which comes before gold.
-	refused("level 1", aria, "Silk Legion", levelMsg, 1000)
+	refused("level 1", aria, "SilkLegion", levelMsg, 1000)
 	// 2. Level 20, still 1,000 gold.
 	setLevel(aria, 20)
-	refused("level 20, 1000 gold", aria, "Silk Legion", goldMsg, 1000)
+	refused("level 20, 1000 gold", aria, "SilkLegion", goldMsg, 1000)
 	// 3. One short: 499,999.
 	addGold(aria, 498_999)
-	refused("499999 gold", aria, "Silk Legion", goldMsg, 499_999)
+	refused("499999 gold", aria, "SilkLegion", goldMsg, 499_999)
 	// 4. Exactly 500,000 founds it, and founding spends all of it.
 	addGold(aria, 1)
-	accepted("500000 gold", aria, "Silk Legion", 0)
+	accepted("500000 gold", aria, "SilkLegion", 0)
 
 	// 5. Level 19 with 500,000: level, not gold.
 	setLevel(bram, 19)
 	addGold(bram, 499_000)
-	refused("level 19", bram, "Iron Vow", levelMsg, 500_000)
+	refused("level 19", bram, "IronVow", levelMsg, 500_000)
 
 	// 6. Level 20 with 500,000 but dead: dead is asked first.
 	setLevel(cyra, 20)
@@ -413,7 +413,7 @@ func TestGuildCreateRequiresLevelAndGold(t *testing.T) {
 	// 7. A richer founder keeps the change: 1,234,567 - 500,000.
 	setLevel(bram, 20)
 	addGold(bram, 734_567)
-	accepted("1234567 gold", bram, "Iron Vow", 734_567)
+	accepted("1234567 gold", bram, "IronVow", 734_567)
 }
 
 // spentGoldStore is a character store whose DeductGold always fails the way
@@ -450,7 +450,7 @@ func TestGuildCreateRollsBackWhenGoldCannotBeTaken(t *testing.T) {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp = doSend(t, conn, r, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	resp = doSend(t, conn, r, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "SilkLegion"}).Encode())
 	gr, err := DecodeGuildResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeGuildResult: %v", err)
@@ -464,7 +464,7 @@ func TestGuildCreateRollsBackWhenGoldCannotBeTaken(t *testing.T) {
 	if now, _ := chars.GetByID(ctx, aria.ID); now.Gold != character.StartingGold+guild.CreateGoldRequired {
 		t.Fatalf("Aria has %d gold, want %d untouched", now.Gold, character.StartingGold+guild.CreateGoldRequired)
 	}
-	if _, err := guilds.Create(ctx, "Silk Legion", 99, "Other"); err != nil {
+	if _, err := guilds.Create(ctx, "SilkLegion", 99, "Other"); err != nil {
 		t.Fatalf("the rolled-back guild's name is still taken: %v", err)
 	}
 }
@@ -947,7 +947,7 @@ func TestGuildCreateRollbackSurvivesAStop(t *testing.T) {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
 	}
 
-	resp := doSend(t, conn, r, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	resp := doSend(t, conn, r, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "SilkLegion"}).Encode())
 	gr, err := DecodeGuildResult(resp.Data)
 	if err != nil {
 		t.Fatalf("DecodeGuildResult: %v", err)
