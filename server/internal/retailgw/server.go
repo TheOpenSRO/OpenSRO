@@ -71,6 +71,8 @@ type Config struct {
 	// server when the fake itself hangs up.
 	Record func(conn int, fromServer bool, b []byte)
 	Logf   func(format string, args ...any)
+	// Deadline bounds each connection (0: 10 s; round 788, fake_login.go).
+	Deadline time.Duration
 	// Login, when set, plays a login past the list (round 788,
 	// fake_login.go).
 	Login *FakeLogin
@@ -144,7 +146,7 @@ func (s *Server) accept() {
 		go func() {
 			defer s.wg.Done()
 			defer c.Close()
-			_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+			_ = c.SetDeadline(time.Now().Add(s.cfg.connDeadline())) // round 788: Config.Deadline
 			if err := s.serve(c, n); err != nil && !errors.Is(err, io.EOF) {
 				s.cfg.Logf("retailgw fake: connection %d: %v", n, err)
 			}

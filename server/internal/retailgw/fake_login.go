@@ -14,7 +14,9 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
+	"time"
 )
 
 // FakeLogin is the fake's one account and the answers it gives.
@@ -45,8 +47,12 @@ type FakeLogin struct {
 	// Lobby is the 0xB007 payload answering 0x7007 [2].
 	Lobby []byte
 	// AgentFrom is the first connection served as the agent (0 means 1:
-	// connection 0 is the gateway, OURS).
+	// connection 0 is the gateway, OURS; negative: none, the agent listens
+	// elsewhere).
 	AgentFrom int
+	// AgentOnly serves every connection as the agent (a separate agent
+	// listener, cmd/retailgw serve -agent-listen).
+	AgentOnly bool
 }
 
 // fakeLoginConn is one connection's login state.
@@ -58,13 +64,28 @@ type fakeLoginConn struct {
 
 func (sc *sconn) loginCfg() *FakeLogin { return sc.s.cfg.Login }
 
+// connDeadline is how long the fake keeps a connection (OURS: 10 s for the
+// tests; cmd/retailgw serve -login keeps a player's longer).
+func (c Config) connDeadline() time.Duration {
+	if c.Deadline > 0 {
+		return c.Deadline
+	}
+	return 10 * time.Second
+}
+
 // isAgent reports a connection the fake serves as the agent.
 func (sc *sconn) isAgent() bool {
 	l := sc.loginCfg()
 	if l == nil {
 		return false
 	}
+	if l.AgentOnly {
+		return true
+	}
 	from := l.AgentFrom
+	if from < 0 {
+		return false
+	}
 	if from == 0 {
 		from = 1
 	}
@@ -219,6 +240,34 @@ func EncodeCaptchaBlob(w, h int, on func(x, y int) bool) ([]byte, error) {
 	out.u16(uint16(w))
 	out.u16(uint16(h))
 	return append(out.b, z.Bytes()...), nil
+}
+
+// DecodeCaptchaBlob reads a 0x2322 image blob the way the client does (READ:
+// zlib uncompress 0x4d8e00, the bit order of 0x62c500): the width, height and
+// each pixel's bit (true = white).
+func DecodeCaptchaBlob(b []byte) (w, h int, on func(x, y int) bool, err error) {
+	r := &reader{p: b}
+	comp, e1 := r.u16()
+	out, e2 := r.u16()
+	ww, e3 := r.u16()
+	hh, e4 := r.u16()
+	z, e5 := r.bytes(int(comp))
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil {
+		return 0, 0, nil, fmt.Errorf("captcha: a %d-byte blob is short of its header or data", len(b))
+	}
+	if ww == 0 || hh == 0 || ww%8 != 0 || int(out) < int(ww)*int(hh)/8 {
+		return 0, 0, nil, fmt.Errorf("captcha: %d x %d with an output of %d", ww, hh, out)
+	}
+	zr, err := zlib.NewReader(bytes.NewReader(z))
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	bits := make([]byte, int(ww)*int(hh)/8)
+	if _, err := io.ReadFull(zr, bits); err != nil {
+		return 0, 0, nil, fmt.Errorf("captcha: %w", err)
+	}
+	w, h = int(ww), int(hh)
+	return w, h, func(x, y int) bool { return bits[(y*w+x)>>3]>>(x&7)&1 == 1 }, nil
 }
 
 // sendImage sends 0x2322 [u8 flag 0, u16 n, blob] (READ layout; the flag's

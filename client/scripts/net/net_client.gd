@@ -432,7 +432,16 @@ static func no_delay_wanted() -> bool:
 	return OS.get_environment("OPENSRO_NAGLE") != "1"
 
 func _process(_delta: float) -> void:
+	_process_net()
+	# Round 788: the list's timeout is judged after this frame's reads. Before,
+	# it came first, so a frame that started more than LIST_TIMEOUT_MS after
+	# the request -- the select screen's harbour build blocks that long in a
+	# live run -- could report "no answer" with the answer waiting in the
+	# socket (round 788's live run timed out on a server that answers the
+	# same request in under 10 ms, MEASURED).
 	_check_list_timeout(Time.get_ticks_msec())
+
+func _process_net() -> void:
 	if _retail != null:
 		_poll_retail()
 		return

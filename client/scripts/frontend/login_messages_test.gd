@@ -109,7 +109,7 @@ func _test_fallbacks() -> void:
 	_check(LoginMessages.ack_text(a, null) == "Wrong password (3 tries allowed, 1 used).", "no table: code 1")
 	_check(LoginMessages.netoff(null) == "You have been disconnected from the server.", "no table: the drop")
 	for k in LoginMessages.FALLBACK:
-		_check(str(LoginMessages.FALLBACK[k]) != "", "%s has a fallback" % k)
+		_check(str(LoginMessages.FALLBACK[k]) != "", "%s has a fallback" % str(k).to_lower())
 
 func _init() -> void:
 	var t := _table()

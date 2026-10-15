@@ -43,6 +43,12 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 788: the Go twin of the Godot client's RetailGatewayClient.resubmit
+	// and keep_alive, which the title calls; RunLogin (the transcripts'
+	// reference and cmd/retailgw login) stops at a refusal and is too short-
+	// lived to need a keep-alive.
+	"Resubmit":  "round 788: 0x6102 again on the open gateway connection, the twin of RetailGatewayClient.resubmit (the title's retry); retailgw.",
+	"KeepAlive": "round 788: the 0x2002 frame, the twin of RetailGatewayClient.keep_alive (READ 0x4cf990); RunLogin never idles 5 s.",
 	"Messages": "round 768: the client's outcome decode (UI_REINFORCERR FUN_00592650). The server never sends that byte -- " +
 		"its reply carries success and destroyed, and the client builds the byte from the old and new item " +
 		"(docs/protocol/alchemy.md, \"Round 768\") -- so it is the client half's specification, kept beside the codes it names; tested.",

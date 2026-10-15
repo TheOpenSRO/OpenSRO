@@ -125,9 +125,8 @@ func (c *Conversation) capped() bool {
 	return c.state <= stList || c.state == stAgentAuth
 }
 
-// Authed reports a successful 0xA102; InLobby a successful 0xA103.
-func (c *Conversation) Authed() bool  { return c.state == stAuthed }
-func (c *Conversation) InLobby() bool { return c.state == stLobby }
+// Authed reports a successful 0xA102.
+func (c *Conversation) Authed() bool { return c.state == stAuthed }
 
 // TakeEvents returns the events so far and forgets them.
 func (c *Conversation) TakeEvents() []LoginEvent {

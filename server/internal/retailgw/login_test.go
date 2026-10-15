@@ -195,6 +195,20 @@ func TestLoginCodecs(t *testing.T) {
 	if id, _ := PickShard(ShardList{Shards: []Shard{{ID: 9, Name: "X"}}}, "Nope"); id != 9 {
 		t.Fatal("the only shard is taken when none matches")
 	}
+	w, h, on, err := DecodeCaptchaBlob(testImage)
+	if err != nil || w != 200 || h != 64 {
+		t.Fatalf("the test image: %d x %d, %v", w, h, err)
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if on(x, y) != ((x+2*y)%16 < 3 || x == y) {
+				t.Fatalf("pixel (%d, %d)", x, y)
+			}
+		}
+	}
+	if _, _, _, err := DecodeCaptchaBlob(testImage[:len(testImage)-3]); err == nil {
+		t.Fatal("a cut stream")
+	}
 	if _, err := DecodeCaptchaImage([]byte{0, 3, 0, 1, 2}); err == nil {
 		t.Fatal("a short image")
 	}

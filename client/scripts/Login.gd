@@ -236,6 +236,17 @@ func _finish_ready() -> void:
 		if _title != null:
 			_title.skip("OPENSRO_QA_RECONNECT_VIA_LOGIN")
 		_qa_sign_in()
+	# OPENSRO_QA_LEGACY_LOGIN=id:password (round 788, OURS, QA only): Connect
+	# to the server setting/config.yaml chose -- a legacy one -- with these;
+	# OPENSRO_QA_CAPTCHA answers its image code.
+	var qa_legacy := OS.get_environment("OPENSRO_QA_LEGACY_LOGIN")
+	if qa_legacy != "" and _is_legacy():
+		if _title != null:
+			_title.skip("OPENSRO_QA_LEGACY_LOGIN")
+		username_edit.text = qa_legacy.get_slice(":", 0)
+		password_edit.text = qa_legacy.substr(qa_legacy.find(":") + 1)
+		print("QA LEGACY: Connect to '%s' as %s" % [_selected.name, username_edit.text])
+		_on_login_pressed()
 
 func _remembered_address() -> String:
 	var remembered := ClientSettings.server_address()
@@ -1195,6 +1206,13 @@ func _show_captcha(blob: PackedByteArray) -> void:
 	_captcha.position = ((s - CaptchaWindow.SIZE) * 0.5).floor() # OURS: centred
 	var err := _captcha.show_image(blob)
 	print("LOGIN: image code asked%s" % ("" if err == "" else " (%s)" % err))
+	var qa_code := OS.get_environment("OPENSRO_QA_CAPTCHA")
+	if qa_code != "" and is_inside_tree():
+		# QA only (OURS): typed and accepted 2 s later, so a frame shows it.
+		get_tree().create_timer(2.0).timeout.connect(func() -> void:
+			if _captcha != null and _captcha.visible:
+				_captcha.edit.text = qa_code
+				_captcha.accept.pressed.emit())
 
 ## READ (slot 40, 0x862450): a connection the server closes at the title is
 ## the NETOFF box; its Confirm quits the client.

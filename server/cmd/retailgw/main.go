@@ -2,6 +2,8 @@
 //
 //	retailgw serve -listen 127.0.0.1:15779 -shards "Xian:120/1000:1,Test:0/500:0"
 //	retailgw probe -gateway 127.0.0.1:15779 -content-id 22 -version 188
+//	retailgw serve -login user:pass -captcha 1 -agent-listen 127.0.0.1:15884
+//	retailgw login -gateway host:port -content-id 22 -version 188 -user u -pass p -shard Name
 //
 // serve runs a FAKE retail gateway (internal/retailgw.Server) that does the
 // server side of the original handshake and answers 0x6100 and 0x6101 with
@@ -10,17 +12,30 @@
 // does and prints it, then hangs up; it never logs in. The content id and
 // version a real gateway expects are the player's own archive's
 // (DIVISIONINFO.TXT's first byte and SV.T): pass them, they are not guessed.
+//
+// Round 788: serve -login plays the login too -- 0x6102, an image code
+// (a test pattern; the code is in its log, OURS), 0xA102 naming the agent
+// listener, 0x6103 / 0xA103 there and an empty character list -- and login
+// logs in to a gateway the way the client does (RunLogin), writing each
+// image code to a PNG and reading the code from stdin, then prints the
+// character list's bytes.
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"log"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/retailgw"
 )
@@ -34,6 +49,8 @@ func main() {
 		serve(os.Args[2:])
 	case "probe":
 		probe(os.Args[2:])
+	case "login":
+		login(os.Args[2:])
 	default:
 		usage()
 	}
@@ -41,7 +58,9 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: retailgw serve [-listen addr] [-shards list] [-content-id n] [-version n] [-refuse code] [-fault name]")
+	fmt.Fprintln(os.Stderr, "       retailgw serve ... [-login user:pass -captcha code -agent-listen addr]")
 	fmt.Fprintln(os.Stderr, "       retailgw probe -gateway host:port -content-id n -version n")
+	fmt.Fprintln(os.Stderr, "       retailgw login -gateway host:port -content-id n -version n -user u -pass p -shard name [-image file.png]")
 	os.Exit(2)
 }
 
@@ -96,6 +115,9 @@ func serve(args []string) {
 	refuse := fs.Uint("refuse", 0, "answer 0x6100 with [2, code] (4 = not in service)")
 	fault := fs.String("fault", "", "misbehave: stall, bad-signature, check-byte, truncated-list, malformed-list, truncated-frame, oversize-frame, not-gateway, flood")
 	encList := fs.Bool("encrypt-list", false, "encrypt the 0xA101 (retail sends it plain)")
+	loginAcct := fs.String("login", "", "round 788: user:pass -- play the login past the list for this one account")
+	captcha := fs.String("captcha", "1", "round 788: the image code the login wants")
+	agentListen := fs.String("agent-listen", "127.0.0.1:15884", "round 788: where the fake agent listens (with -login)")
 	_ = fs.Parse(args)
 	l, err := parseShards(*shards)
 	if err != nil {
@@ -108,8 +130,20 @@ func serve(args []string) {
 	if *cid > 255 || *refuse > 255 || *ver > 0xffffffff {
 		log.Fatal("content-id and refuse are bytes, version a u32")
 	}
+	var fl *retailgw.FakeLogin
+	var deadline time.Duration // the fake's 10 s for the list alone
+	if *loginAcct != "" {
+		deadline = 10 * time.Minute // OURS: a player types at the login and the image code
+		fl = fakeLogin(*loginAcct, *captcha, *agentListen)
+		agent, err := retailgw.Listen(*agentListen, retailgw.Config{ContentID: byte(*cid), Login: agentOnly(fl), Deadline: time.Hour})
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer agent.Close()
+		log.Printf("fake agent on %s; the login %s, image code %q", agent.Addr(), strings.SplitN(*loginAcct, ":", 2)[0], *captcha)
+	}
 	srv, err := retailgw.Listen(*listen, retailgw.Config{
-		List: l, ContentID: byte(*cid), Version: uint32(*ver), Refuse: byte(*refuse), Fault: f, EncryptList: *encList,
+		List: l, ContentID: byte(*cid), Version: uint32(*ver), Refuse: byte(*refuse), Fault: f, EncryptList: *encList, Login: fl, Deadline: deadline,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -137,5 +171,83 @@ func probe(args []string) {
 	}
 	for _, s := range l.Shards {
 		fmt.Printf("%5d  %-20q %5d/%-5d state %d farm %d\n", s.ID, s.Name, s.Current, s.Capacity, s.State, s.Farm)
+	}
+}
+
+// fakeLogin is serve -login's account: the token fixed, the agent the
+// -agent-listen address, an empty character list (OURS, a test tool).
+func fakeLogin(acct, code, agentAddr string) *retailgw.FakeLogin {
+	up := strings.SplitN(acct, ":", 2)
+	if len(up) != 2 {
+		log.Fatal("-login wants user:pass")
+	}
+	host, portText, ok := strings.Cut(agentAddr, ":")
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if !ok || err != nil {
+		log.Fatalf("-agent-listen %q: want host:port", agentAddr)
+	}
+	img, err := retailgw.EncodeCaptchaBlob(200, 64, func(x, y int) bool { return (x/8+y/8)%2 == 0 })
+	if err != nil {
+		log.Fatal(err)
+	}
+	return &retailgw.FakeLogin{Username: up[0], Password: up[1], Captcha: code, Image: img,
+		Token: 0x788, AgentHost: host, AgentPort: uint16(port), Lobby: []byte{2, 1, 0}, AgentFrom: -1}
+}
+
+func agentOnly(fl *retailgw.FakeLogin) *retailgw.FakeLogin {
+	a := *fl
+	a.AgentOnly = true
+	return &a
+}
+
+func login(args []string) {
+	fs := flag.NewFlagSet("login", flag.ExitOnError)
+	gw := fs.String("gateway", "", "host:port")
+	cid := fs.Int("content-id", -1, "DIVISIONINFO.TXT's first byte (required)")
+	ver := fs.Int64("version", -1, "SV.T's version (required)")
+	user := fs.String("user", "", "the ID")
+	pass := fs.String("pass", "", "the password")
+	shard := fs.String("shard", "", "the shard's name as the list has it")
+	imgPath := fs.String("image", "imagecode.png", "where each image code is written")
+	_ = fs.Parse(args)
+	if *gw == "" || *cid < 0 || *cid > 255 || *ver < 0 || *ver > 0xffffffff || *user == "" {
+		usage()
+	}
+	in := bufio.NewReader(os.Stdin)
+	res, err := retailgw.RunLogin(context.Background(), *gw, retailgw.LoginOptions{
+		Info:  retailgw.ClientInfo{ContentID: byte(*cid), Version: uint32(*ver)},
+		Login: retailgw.LoginParams{Username: *user, Password: *pass, Shard: *shard},
+		Captcha: func(c retailgw.CaptchaImage, attempt int) string {
+			w, h, on, err := retailgw.DecodeCaptchaBlob(c.Blob)
+			if err != nil {
+				log.Printf("image code %d: %v", attempt, err)
+				return ""
+			}
+			pic := image.NewGray(image.Rect(0, 0, w, h))
+			for y := 0; y < h; y++ {
+				for x := 0; x < w; x++ {
+					if on(x, y) {
+						pic.SetGray(x, y, color.Gray{Y: 255})
+					}
+				}
+			}
+			f, err := os.Create(*imgPath)
+			if err == nil {
+				_ = png.Encode(f, pic)
+				_ = f.Close()
+			}
+			fmt.Printf("image code %d written to %s; type it: ", attempt, *imgPath)
+			line, _ := in.ReadString('\n')
+			return strings.TrimRight(line, "\r\n")
+		},
+	})
+	for _, e := range res.Events {
+		fmt.Printf("%-15s code %d max %d used %d %s\n", e.Kind, e.Code, e.Max, e.Used, hex.EncodeToString(e.Reply.Raw))
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	if res.Lobby != nil {
+		fmt.Printf("0xB007: %s\n", hex.EncodeToString(res.Lobby))
 	}
 }

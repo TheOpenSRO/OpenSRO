@@ -2,8 +2,8 @@
 // list (round 681): the client side that reads a retail gateway's shard list
 // and status (Probe, the reference the Godot client's RetailGatewayClient is
 // held to byte for byte), and a fake retail gateway (Server) to test it
-// without anyone else's server. Login is out of scope: nothing here sends
-// anything that looks like one.
+// without anyone else's server. Round 788 goes on to the login (the
+// client's RunLogin, login_client.go; the fake's, fake_login.go).
 //
 // The facts are in docs/protocol/opcodes/gateway.md and handshake.md, each
 // labelled READ (the retail client's and GatewayServer's own code, with
