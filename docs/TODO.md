@@ -27,6 +27,31 @@ where it stopped, the tools for it, the traps — and points back here for every
       play-everywhere at Jangan, every effect stepped, as +1.44 ms; this round's gates are in
       WORLD_ISSUES ("Fountains, waterfalls and their splashes are animated").
 
+## Round 788 follow-ups (lane S: the server's login rules and bans; docs/rounds/r788s.md)
+
+- [x] ~~One place decides a login~~ -- **round 788**: `session.LoginService` for 0x0001 and 0x6102
+      (wrong passwords per name with the automatic block, punishments, already connected, the
+      per-IP limit, inspection, full), typed punishments in `account` (Mem and SQL), `/ban` (retail's
+      kick) and the OURS `/block`, `/unblock`, `/blockinfo`. docs/protocol/opcodes/login.md, "The
+      login reply, READ (round 788)".
+- [ ] **The retail listener's front door** (lane R): its 0x6102 goes through `LoginService.Login`;
+      its agent connection (0x6103) must take over the account's entry in `OnlineAccounts`
+      (`Claim` / `Release`) when the gateway connection closes, or the account reads as free
+      between the two.
+- [ ] **Chat and trade blocks (types 4 and 3)** are stored, not enforced: the game server's
+      `{u8 active, 16-byte end}` per type and 0x3405 `{u8 0 chat / 1 trade, u32 packed time}`
+      (RESEARCH section 2; client 0x86e5b0). The Social round.
+- [ ] **OPEN, retail:** how `_CertifyTB_User` treats a type-2 punishment (the account database is
+      not on the box; OpenSRO blocks as type 1); whether the wrong-password count expires (OURS: an
+      hour); which row `_QueryBlockGuide` returns when several blocks are active (OURS: the one
+      ending last); whether the procedure checks the password before the block (OURS: it does).
+- [ ] **The image code (IBUV)** is not built: retail asks it after every right password and clears
+      the wrong-password count only on its success; OpenSRO clears it on the login's success.
+- [ ] **The SMC's other punishment fields** (shard, character name and info, position, sentenced
+      time, e-mail template) are not kept; nothing reads them yet.
+- [ ] **The wrong-password counts are in memory**: a restart forgets them (where retail keeps them,
+      GlobalManager's memory or the database, is not traced).
+
 ## Round 785 follow-ups (the skills, server side; docs/protocol/skill_census.md)
 
 - [ ] **Ammunition (`cnsm`, 386 player rows)**: READ (skill_attack.md "Ammunition"): the worn
@@ -1674,7 +1699,8 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
   the entry's +0x28 flag (meaning OPEN), the slider's drag; the 0xA101 parser in the exe (not found:
   no 0xa101 immediate).
 - **-max-players counts characters in the world**, not sessions at character select; the
-  `-gm-accounts` names pass the inspection and full gates (ours; retail's rule for staff is OPEN).
+  `-gm-accounts` names pass the inspection and full gates (ours; retail exempts by privileged IP and
+  the account's security bytes, INFERRED). Since round 788 the gates are `LoginService`'s, for 0x0001 and 0x6102 alike.
 
 ### The character lobby (round 682) — **built: retail's 0x7007/0x7001 on our framing, create with the READ checks and the player's own items, 4 an account, the 7-day delete and restore, per-race start spawns; these are left**
 

@@ -73,6 +73,20 @@ and changes nothing.
 | `/hour <0-23>` | Sets the game clock's hour for the whole world, keeping its day and minute (round 786; the original operator tool's set-hour). Every character in the world is told at once and the sky follows: clock 04:00-20:00 is the sky's day, 20:00-04:00 its night, and a full game day takes 28 min 48 s. With Night Darkness on Dim or Dark (round 786, OURS) the world darkens from about 19:30 and is fully dark from about 20:40 to 03:20. |
 | `/speed [x\|off]` | Multiplies your run speed by *x* (0.1 to 10) on top of any buff, so testing covers ground faster (round 636; a test tool, not a retail command). `off` (or `1`) goes back to normal; `/speed` alone prints the multiplier and the speed. The server sends the new speed down the buff speed path (an `OpBuffEnd` with no tokens), and the multiplier outlasts a zone change and a death until you turn it off or log out. The server does no movement-speed check, so nothing refuses the faster moves. |
 
+### Kicking and blocking players (round 788)
+
+| Command | What it does |
+|---|---|
+| `/ban <character>` | **Kicks** the character out of the game: its connection is closed and the player sees the "disconnected" box. This is the original game's own GM `Ban`, and the original's Ban is a kick too -- nothing is stored, the player may log straight back in. Refused for a character not in the world. To keep someone out, use `/block`. |
+| `/block <character\|@account> <duration> [reason...]` | Blocks the account from logging in and disconnects it if it is connected (in the world or at character select). Name a character (any of the account's, online or not, any case) or the account itself with `@`, e.g. `@alice`. Duration: a number and `m`, `h` or `d` (`30m`, `12h`, `7d`, up to `3650d`), or `forever`. The reason is shown to the player at the login screen under "Account Ban Reason:", with the end date and time (the server's local time; `forever` shows a date 100 years ahead). No reason: "Blocked by a game master." Text after a `#` in the reason opens the client's separate "Block Detail" window. Refused for a GM account and for an account already blocked (`/unblock` first). |
+| `/unblock <character\|@account>` | Ends the account's active login blocks, including the automatic one for wrong passwords. Refused when it is not blocked. |
+| `/blockinfo <character\|@account>` | Lists the account's blocks, newest first (at most 5): number, kind, active or ended, since when, who set it, and the reason. |
+
+`/block`, `/unblock` and `/blockinfo` are this server's own commands: the
+original game blocked accounts from its operator console, outside the game.
+Every block records who set it (your account name) and when, and the server
+logs the command line.
+
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item
 code to its id when you hover it in a window.
@@ -106,3 +120,8 @@ as stored (case-sensitive), whitespace around each name ignored. With none
 set, nobody is a GM and the console shows only the client commands. Every GM
 command is logged server-side with the account, the character and the command
 line, whether it was allowed or refused.
+
+A GM cannot `/block` a GM account (round 788): to block one, take it off
+`-gm-accounts` and restart first. The login rules themselves (the wrong-password
+limit and its automatic block, one session per account, the per-IP limit) are
+in deploy/README.md, "Logging in".

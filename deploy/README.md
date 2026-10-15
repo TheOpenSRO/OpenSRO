@@ -1390,6 +1390,58 @@ line, `- item` lists, quoted or plain values, `#` comments; no anchors, tags or 
 **Later (not built):** a server may also hand the client settings it wants kept out of the file,
 during the server list or after login (docs/TODO.md).
 
+## Logging in: wrong passwords, blocks, one session per account (round 788)
+
+Every login -- the old 0x0001 and retail's 0x6102 -- is decided by one set of rules, retail's as
+read from its gateway and GlobalManager (docs/protocol/opcodes/login.md, "The login reply, READ
+(round 788)"). The settings:
+
+| Flag | Env | Default | What |
+|---|---|---|---|
+| `-login-failure-tolerance` | `OPENSRO_LOGIN_FAILURE_TOLERANCE` | 3 | wrong passwords an account name may have (1-100). The client shows "Out of a maximum of 3 attempts, you have used N". The one that reaches it closes the connection. Retail's `LoginFailureTolerance`, code default 3. |
+| `-login-failure-block-min` | `OPENSRO_LOGIN_FAILURE_BLOCK_MIN` | 10 | minutes the automatic login block lasts after that (0-525600; 0 raises none, as the reference package's server.cfg has it). Retail's `LoginFailureBlockTimeMin`, code default 10. |
+| `-login-punishment-guide` | `OPENSRO_LOGIN_PUNISHMENT_GUIDE` | "Too many wrong passwords. Please try again later." | the reason the automatic block shows the player, under retail's "Account Ban Reason:" (1-511 bytes). Retail's `LoginPunishmentGuide`. |
+| `-max-users-per-ip` | `OPENSRO_MAX_USERS_PER_IP` | 0 (off) | accounts logged in from one address at once; past it the login is refused with retail's "insufficient IP" message and the connection closed. Retail's `MaxUserForNonePCBangIP`. Leave it off for a LAN party or a bot swarm (`server/cmd/swarm` logs everything in from one address). |
+
+A bad value stops the server at startup with the reason; a non-numeric env value logs a WARN and
+keeps the default.
+
+What a player meets:
+
+- **Wrong ID or password**: the attempt count. The count is per account name, server-wide, kept in
+  memory (a restart forgets it), forgotten an hour after the last wrong try or at a successful
+  login. At the tolerance: the block (if the minutes are not 0) and the connection closes.
+- **A blocked account** (right password): retail's box with the reason and the end date and time,
+  in the **server's** local time zone. A block with no end shows a date 100 years ahead (what the
+  original operator console writes for "infinite").
+- **Already connected**: an account logged in anywhere on the server refuses a second login, and
+  the second connection closes; the first is not touched. The account is free again once its
+  session has ended and its character been saved. A connection that died without closing (a
+  pulled cable, a crashed router) holds the account until TCP keep-alive notices: Go's defaults,
+  15 s idle then 9 probes 15 s apart, so about 2.5 minutes (READ, Go 1.25 `net/dial.go`; the
+  gateway sets no keep-alive of its own). A GM can free it at once with `/ban <character>`, or
+  `/block` then `/unblock` the account.
+- **Full / inspection**: as before (`-max-players`, `-inspection` above); the `-gm-accounts` pass
+  both.
+
+**Blocking an account** is done in game by a GM: `/block`, `/unblock`, `/blockinfo`
+(docs/DEBUG_TOOLS.md). Blocks are kept in the `account_punishments` table (PostgreSQL) or in memory
+under `-in-memory`. To read them directly:
+
+```sql
+SELECT p.serial, a.username, p.type, p.executor, p.guide, p.begin_at, p.end_at
+FROM account_punishments p JOIN accounts a ON a.id = p.account_id ORDER BY p.serial DESC;
+```
+
+`type` is 1 block login, 2 block login for inspection (treated as 1), 3 block trade, 4 block chat
+(3 and 4 are stored but not enforced yet); `end_at` NULL means no end. To lift a block by hand, set
+its `end_at` to `now()`.
+
+**Upgrading from before round 788:** the server moves the old `accounts.blocked` flag on its first
+start: each blocked account becomes a block with no end whose reason is its `block_reason`, and the
+flag is cleared, once. The two old columns stay but nothing reads them; setting `blocked = true`
+no longer blocks anyone -- use `/block` or insert a row as above.
+
 ## The full map (round 660)
 
 `-full-map` (env `OPENSRO_FULL_MAP`, off by default) places every field monster of the game.

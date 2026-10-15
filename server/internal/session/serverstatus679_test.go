@@ -96,8 +96,9 @@ func TestServerStatusHandlerOnAFreshSession(t *testing.T) {
 	}
 }
 
-// The gate: under inspection, or full, a login is refused with retail's words
-// and never reaches the login handler; otherwise the login goes through.
+// The gate (round 788: inside LoginService): under inspection, or full, an
+// OpLogin is refused with retail's words and the session is not logged in;
+// otherwise the login goes through. "reached" counts the logins let in.
 func TestLoginGate(t *testing.T) {
 	store := account.NewMemStore()
 	if _, err := store.Add("someone", "secret"); err != nil {
@@ -106,18 +107,20 @@ func TestLoginGate(t *testing.T) {
 	var st atomic.Value
 	st.Store(ServerStatus{Current: 0, Max: 2})
 	var reached atomic.Int64
-	counted := func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
-		if p.Opcode == OpLogin {
-			reached.Add(1)
-		}
-		return LoginHandler(store)(ctx, sess, p)
-	}
 	statusNow := func() ServerStatus { return st.Load().(ServerStatus) }
 	staff := func(u string) bool { return u == "gm" }
 	if _, err := store.Add("gm", "secret"); err != nil {
 		t.Fatal(err)
 	}
-	addr := startThemeServer(t, LoginGate(statusNow, staff, counted))
+	svc := &LoginService{Accounts: store, Status: statusNow, Staff: staff}
+	counted := func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		err := LoginHandlerFor(svc)(ctx, sess, p)
+		if _, in := AuthenticatedAccountID(sess); in && p.Opcode == OpLogin {
+			reached.Add(1)
+		}
+		return err
+	}
+	addr := startThemeServer(t, counted)
 	loginAs := func(user string) *LoginResult {
 		t.Helper()
 		conn := dialTheme(t, addr)
