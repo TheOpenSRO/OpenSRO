@@ -42,6 +42,14 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [ ] The channel list (`login_chanel_window_01/02.ddj`, pstitle's Channel / ChannelList sections)
   -- not the server list, which is done (round 679)
 - [x] Keep every existing `NetClient` login/register wiring working (v0.1.103)
+- [x] **Logging in as retail does** (round 788): 0x6102 / 0xA102 to OpenSRO's server; the silent
+  checks (empty ID, password or server), the 3.0 s lock, the title's input off while answered, every
+  message on window 500 (READ place and colour, `snd_error`, cleared after 15 s), each 0xA102 code's
+  text from the player's textuisystem, the NETOFF drop box (Confirm quits) on the title, select and
+  create (`docs/protocol/opcodes/gateway.md`, "Logging in")
+- [x] **A `type: legacy` server** (round 788): login, the image-code window, the agent, and the
+  character list on the select screen; Start there says the world is not supported yet (OURS)
+- [ ] OPEN (round 788): the "[Block Detail]" button; the 0xA102 2/3 dialog; window 0x2f's place
 - [x] Plain-panel fallback when no Media.pk2 is present, so login always works (v0.1.103)
 - [ ] "MaxiGuard verification success"-style status line area (cosmetic)
 

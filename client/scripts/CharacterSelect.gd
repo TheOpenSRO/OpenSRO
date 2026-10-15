@@ -36,6 +36,10 @@ const LOGIN_SCENE := "res://scenes/Login.tscn"
 ## NetClient.enter_world and the tree's change_scene_to_file otherwise.
 var send_start := Callable()
 var change_scene := Callable()
+## Round 788: the drop box (NetOffBox), once shown.
+var netoff_box: NetOffBox = null
+## Round 788 (OURS): Start on a legacy server's agent.
+const LEGACY_NO_WORLD := "Entering the world on an original server is not supported yet: its world protocol is not built."
 
 ## The screen's states, numbered as retail's +0xe4 (vslot_012's switch).
 ## LOADING is ours: the region builds before anything moves.
@@ -1071,6 +1075,12 @@ func _on_start_pressed() -> void:
 		return
 	var char_name: String = _slots[selected].char_name
 	print("SELECT: Start %s" % char_name)
+	# Round 788 (OURS): on a legacy server's agent the lobby works but the
+	# world does not -- its protocol is not the original one yet.
+	if NetClient.is_retail():
+		_message.text = LEGACY_NO_WORLD
+		print("SELECT: %s" % LEGACY_NO_WORLD)
+		return
 	_busy += 1
 	_set_clickable(_windows.get(ID_START), false)
 	if send_start.is_valid():
@@ -1382,18 +1392,17 @@ func _leave_to_login() -> void:
 		get_tree().change_scene_to_file(LOGIN_SCENE)
 
 ## The server went away (round 684's review: Start and Delete were sent into
-## nothing, silently). The archive's line, then the title. INFERRED: which
-## key retail's select shows here was not read; UIIT_MSG_MSGBOX_NETOFF is the
-## archive's own "disconnected" line. OURS: 2 s to read it.
+## nothing, silently). Round 788, READ (slot 40, 0x862450, the same for the
+## title, select and create): the NETOFF box (NetOffBox), whose Confirm
+## quits the client -- retail never returns to the title here.
 func _on_disconnected() -> void:
 	if state == S.LOADING or state == S.ENTERING:
 		return
-	_message.text = _t("UIIT_MSG_MSGBOX_NETOFF", "You have been disconnected from the server.")
 	_freeze_buttons()
-	print("SELECT: disconnected -- %s" % _message.text)
 	_set_state(S.LOADING)
-	if is_inside_tree():
-		get_tree().create_timer(2.0).timeout.connect(_leave_to_login)
+	if netoff_box == null or not is_instance_valid(netoff_box):
+		netoff_box = NetOffBox.show_on(self, _media, _text)
+	print("SELECT: disconnected -- the box: %s" % netoff_box.message_text())
 
 # --- QA ---------------------------------------------------------------------------------------
 

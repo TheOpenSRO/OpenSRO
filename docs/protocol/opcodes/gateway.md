@@ -1,9 +1,11 @@
-# The gateway, as far as the server list (round 681), and OpenSRO's retail listeners (round 788)
+# The gateway: the server list (round 681), logging in (round 788) and OpenSRO's retail listeners (round 788)
 
 The original protocol's exchange between a client and a GatewayServer, from the TCP connect to
-the shard list, as the retail client and server run it. Round 681 stopped at the list; round 788
-added the login through the AgentServer to the character list, served by OpenSRO's own server to
-the ORIGINAL client ("OpenSRO's retail listeners (round 788)", at the end). Plain descriptions only (docs/LEGAL.md policy #2); the security bytes and the
+the shard list, as the retail client and server run it; then the login on it, the image code, the
+hand-off to the AgentServer and the character list there ("Logging in (round 788)": our client's
+side), and the same exchange served by OpenSRO's own server to the ORIGINAL client ("OpenSRO's
+retail listeners (round 788)"). The payloads of 0x6102 / 0xA102 and every error code are in
+`login.md`. Plain descriptions only (docs/LEGAL.md policy #2); the security bytes and the
 key exchange are in `handshake.md`, "The client's side, READ (round 681)".
 
 Labels: **READ** (`/var/tmp/decomp_client`, `/var/tmp/sro_client.asm`; GatewayServer.exe
@@ -292,6 +294,130 @@ screen with the account's character (made on OpenSRO's own wire) standing in its
 its info panel reading Level 1, EXP 0.00 %; Start showed the 0x40F text above. Screenshots
 (game art, kept off the repository): `/var/tmp/r788r-proof/` on the box.
 
+## Logging in (round 788)
+
+Labels as above. Addresses are sro_client's unless named; GatewayServer's, AgentServer's and
+GlobalManager's are from `/var/tmp/retailgw681/gw.asm`, `/var/tmp/acct788/agent.asm` and
+`gm.asm`; ImageTrans.dll is the operator package's
+(`Blitzkrieq_Bin_Data/ImageTrans.dll`).
+
+### The sequence, past the list (READ)
+
+| # | Dir | Opcode | Payload | Encrypted | Where |
+|---|---|---|---|---|---|
+| 11 | C->S | 0x6102 | u8 content id, string ID (as typed), string password, u16 shard id | yes (allocator 1, 0x4c92c2) | `CClientNet::vslot_004` 0x4c9290 |
+| 12 | S->C | 0x2322 | u8 flag, u16 n, n bytes of image | no (0x4067d9) | gateway 0x4067ea; client handler 0x4d01e0 (table 0xe1b4bc), reader 0x4cd3c0 |
+| 13 | C->S | 0x6323 | string code | **no** (allocator 0, 0x4c96ab) | 0x4c96a0 |
+| 14 | S->C | 0xA323 | u8 1, or u8 2, u32 max, u32 used | no (0x406b54, 0x407208) | gateway 0x406910; client 0x4d0230 |
+| 15 | S->C | 0xA102 | u8 1, u32 token, string agent host, u16 port; or u8 2 and a code (login.md) | mixed: the gateway sends some refusals with 1, some with 0 (0x40674a, 0x4069b1, 0x406845 vs 0x406c14, 0x406d41, 0x407144) | gateway; client `CClientProcess::vslot_017` 0x4cf500 |
+| -- | C | -- | the gateway connection closed (net slot 0x5c, 0x4cf586, the "expected close" flag net+0x158 set) and the agent's opened | -- | 0x4cf500 |
+| 16 | S->C, C->S | 0x5000, 0x9000, 0x2001 | the handshake and identities, as steps 1-6, the server naming itself "AgentServer" | as above | |
+| 17 | C->S | 0x6103 | u32 token, string ID lower-cased (`_strlwr_s` 0x4c9374), string password, u8 content id, u8[6] | yes | 0x4ceb86 (sent when the identity is "AgentServer", 0x4ceb36) |
+| 18 | S->C | 0xA103 | u8 1, or u8 2 and a code | -- | AgentServer 0x402120; client vslot_018 0x4cf7a0 |
+| 19 | C->S | 0x7007 | u8 2 (the character list) | **no**: the generic sender 0x841590 encrypts only 0x704C | character select's OnCreate, 0x85f7e7 -> 0x8560e0 |
+| 20 | S->C | 0xB007 | the list (charselect.md section 5) | -- | |
+
+- **The image (READ, both sides).** GatewayServer makes it itself: its IBUV module (0x419xxx)
+  calls ImageTrans.dll's `fnImageTransToMemW` with width 200 and height 64 (0x419b2d, 0x419b2f) and
+  a 0x800-byte buffer. The blob is `u16 compressed length, u16 output size, u16 width, u16 height`
+  and a **zlib** stream (`compress2` level 9, header and Adler-32: 0x10007b2b..0x10007b65; the client
+  inflates with zlib 1.1.4's `uncompress`, 0x4d8e00, "incorrect header check" and all). The output
+  size the writer puts is `(height + 1) * width` (13000), more than the picture needs. The picture is
+  **1 bit a pixel**, rows top-down, width / 8 bytes a row; pixel (x, y) is bit `x & 7` of byte
+  `(y * width + x) >> 3`, set = opaque white, clear = opaque black (0x62c500); the texture is the
+  next power of two (256 x 64) and drawn unscaled at the control's origin (0x62c732, 0x62c930). The
+  writer sets a bit wherever its own render is non-zero, so the glyphs are white on black
+  (INFERRED). `flag` is written 0 and never read (0x4c76a0 has no callers, INFERRED).
+- **The image window** (window 0x2f, CIFConfirmbox, `resinfo\ifconfirmbox.txt`): no Cancel and no
+  close; Enter submits once until the next picture (latch +0x380), the button always; the text goes
+  as typed (`WideCharToMultiByte(CP_ACP)`, no case change, no trim, no empty check, 0x62cbe0); every
+  0xA323 hides the window, and a wrong code's text (`UIIT_STT_GLOBAL_AUTHENTICATION_INPUT_ERROR`
+  filled max, used) goes to the title's message line. The gateway clears the stored code before
+  comparing (0x406ab0), so each answer uses the picture up; below the tolerance a new 0x2322
+  follows, at it the gateway disconnects (0xA111 handler 0x4070a0).
+- **The keep-alive (READ, `CClientProcess::vslot_025` 0x4cf990):** an empty **0x2002**, plain
+  (allocator 0), when nothing has been sent for 5000 ms, looked at every 1666 ms (vslot_002's
+  `timeSetEvent`); every send resets the clock (net+0x100). It runs on the gateway and the agent
+  alike from the server's 0x2001 on (+0x54, 0x4cea55). How long an idle AgentServer waits: OPEN.
+- **The 6 bytes of 0x6103 (READ):** net-engine slot 0x88 is `CNetEngine::vslot_034` 0x4a1950:
+  `GetAdaptersInfo`, the first Ethernet adapter (type 6, 6-byte address) that holds the
+  connection's local address -- its **MAC**; all zeros when none matches. AgentServer copies them
+  into the login record and checks nothing (0x402390). What it does with them later: OPEN.
+- **After 0xA103 success** the net layer sends nothing more (0x4cf7a0 posts 0x13f3); the title fades
+  into character select (0x865b10), whose OnCreate's only request is 0x7007 [2].
+
+### The title around it (READ, CPSTitle)
+
+- **Connect** (button 11 or Enter, 0x869460 -> 0x8688f0): a press while the lock float (+0x144) is
+  above 0 does nothing; an empty ID (edit 41), an empty password (42) or no shard matching the
+  server's name (static 43 against the list at +0x1b4) sends nothing and **says nothing**;
+  otherwise `UIO_MSG_ERROR_CITATION` goes to the message line, the title's input goes off
+  (0x862410(1) -> 0x8622a0 -> `CGWnd+0x62 = 0`), 0x6102 goes out, and the lock is set to **3.0 s**
+  (0xd8adc4) -- even when the send failed (`UIO_MSG_ERROR_SEVER_CONNECT`). The title's per-frame
+  slot counts the lock down unconditionally (0x8692b5).
+- **The message line** is window **500**, `GDR_TEXT_MESSAGE` (pstitle.txt Title: a CIFTextBox,
+  FontColor 255,255,103,29, HAlign 0), placed by 0x866760 at window 2's top-left + (9, 0x18) and
+  sized the screen's width x 0x49. 0x8613b0 clears it, writes the text, plays `snd_error` and
+  restarts a **15 s** timer (1000) that clears it (0x860c60). Not a box: no title, no button. A new
+  message replaces the last. Without window 500 (or during the version check) a Win32 `MessageBoxW`
+  "NetError" stands in. **RESEARCH section 1's "the title's modal message box (0x8613b0)" is wrong.**
+  0x861890 adds `"(%c%d)"` with 'C' and a number, no space.
+- **Any 0xA102** gives the input back first (0x862410(0) at 0x86c08c) and does not clear the line.
+  After a success it stays off until character select.
+- **A failed gateway connect never reaches the title**: the connect is the version check's
+  (CPSVersionCheck::OnCreate 0x86d370), and its failure is a Win32 box then quit. So no "(C<n>)" is
+  READ for it; the agent's failed connect is "(C9)" (0x4cf500 posts internal 9, jump table entry at
+  0x86c5e5).
+- **Wrong password:** the text only; the fields keep their contents and the gateway connection stays
+  (the client closes it only on success). When the gateway closes after the last attempt, the drop
+  box follows (below) while the line still shows the text.
+- **The '#' rule (0x86c136..0x86c416):** only a reason whose **last** character is '#' is split
+  (0x864790 is an ends-with test); the text before its first '#' is shown and the rest, less the last
+  '#', is a web address opened by a "[Block Detail]" button (id 800, 120 x 30, at window 2's x +
+  0.4 w, y + 0.3 h; shown 15 s, timer 0x321) in `IEXPLORE.EXE` (0x865cc0). The cut is computed from
+  the byte offset of a wide string (twice the character index), right only for a '#' at index 0.
+- **The connection dropped** (slot 40, 0x862450; the same in the title, select, create and quick
+  start): a CIFMessageBox (`resinfo\ifmessagebox.txt` MsgBoxINIF), 308 x 148 at (W/2 - 150, H/2 -
+  72), titled `UIIT_STT_CONFIRM_BOX`, line 1 `UIIT_MSG_MSGBOX_NETOFF`, only button 202
+  (`UIIT_CTL_CONFIRM`); its Confirm (0x641eb0) switches to **CPSQuit: the client quits**. The world
+  (CPSMission::vslot_040 0x84ae90) shows the same box and quits the same way.
+
+### What our client does (round 788)
+
+- **OpenSRO's server** is sent 0x6102 on this project's framing (`NetClient.gateway_login`,
+  `LoginAckNet`, the golden twin of `server/internal/session/loginack.go`) instead of OpLogin
+  0x0001, and answered 0xA102 there; success has an empty agent host and port 0, "stay on this
+  connection" (OURS). The **content id** is the archive's (DIVISIONINFO.TXT, `RetailClientInfo`)
+  when Media.pk2 is there, else 0; the **shard id** 0 (OURS: one process, one shard; the server
+  checks neither). The register link is OURS and unchanged (OpRegister).
+- **A `type: legacy` server** (`RetailLogin`, `RetailGatewayClient`, `RetailLink`): steps 1-10 on a
+  new gateway connection, then 0x6102 with the archive's content id, the typed ID and password and
+  the shard id of the chosen list row's shard name (OURS: the server's own row, or a remembered
+  choice, takes the shard named like the server, else the list's only shard); the image window
+  (`CaptchaWindow`, `RetailCaptcha`); on 0xA102 success the gateway connection closed and the agent
+  dialled -- at the address 0xA102 names, or at the config's `agent:` entry when it has one (OURS,
+  the proxy case ClientConfig reserved it for); 0x6103 with **six zero bytes** (OURS: Godot cannot
+  read a MAC; retail sends zeros itself when no adapter matches, and the agent checks nothing);
+  then `NetClient.attach_retail`: character select's 0x7007 requests go out on the agent in the
+  original framing and its 0xB007 comes back through the usual dispatch. Only 0x7007 is carried;
+  **Start on a legacy server says that entering the world there is not supported yet** (OURS; the
+  world protocol is not the original one). The keep-alive is retail's. A refusal leaves the gateway
+  connection open and the next Connect sends 0x6102 again on it.
+- **The title** (`Login.gd`): READ as above -- the silent checks, the 3.0 s lock, the input off
+  while a login is answered, window 500 with its READ place, colour, `snd_error` and 15 s, every
+  0xA102 / 0xA103 / 0xA323 text from the player's textuisystem (`LoginMessages`), the drop box
+  (`NetOffBox`) whose Confirm quits. OURS: a failed connect to OpenSRO's server or a legacy gateway
+  shows `UIO_MSG_ERROR_SEVER_CONNECT` with no "(C<n>)"; the punishment's date is Windows' en-US
+  default long date and time (Godot has no `GetDateFormatA`), whatever the player's locale; the
+  '#' rule cuts where the code means to, and the "[Block Detail]" button is not built; the image
+  window is centred; World3D still returns to the title on a drop (its QA reconnect relies on it).
+- **The Go twin** (`server/internal/retailgw`): `RunLogin` and the `Conversation`'s login states
+  (`login_client.go`) against the fake gateway + agent (`fake_login.go`, `Config.Login`);
+  `TestLoginTranscripts` writes `client/scripts/frontend/testdata/retail_login_transcripts.json`,
+  which `retail_login_test.gd` replays against `RetailLogin` and holds to the same bytes on both
+  connections (7 scenarios: success, a shard by name, a wrong code then the right one, a wrong
+  password, blocked, already connected, the agent refusing).
+
 ## Status
 
 - [x] The client's sequence to the list, with the framing, encryption and key exchange (READ).
@@ -309,3 +435,8 @@ its info panel reading Level 1, EXP 0.00 %; Start showed the 0x40F text above. S
       (handshake.md) fails EVERY time, not 0.3 % of the time: three reconnects draw the same seed.
       The row is Closed with "the session's checksum table N is not a standard one" in the log
       (OPEN; only reading the 37 from the player's own exe would answer it).
+- [x] Round 788: the login past the list -- 0x6102, the image code, 0xA102, the agent's 0x6103 /
+      0xA103 and the lobby on it -- in GDScript and Go, byte-identical on 7 transcripts.
+- [ ] Round 788: logging in to a real retail server (OPEN: tested against the Go fake only).
+- [ ] Round 788: the AgentServer's idle timeout; what it does with 0x6103's six bytes (OPEN).
+- [ ] Round 788: where window 0x2f (the image code) is placed; whether CIFMessageBox is modal (OPEN).

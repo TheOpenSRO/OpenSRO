@@ -168,6 +168,9 @@ func _ready() -> void:
 	_text = _load_text()
 	NetClient.character_create_result.connect(_on_create_result)
 	NetClient.name_check_result.connect(_on_name_check_result)
+	# Round 788, READ (slot 40, 0x862450): a dropped connection is the NETOFF
+	# box, whose Confirm quits (NetOffBox).
+	NetClient.disconnected.connect(_on_disconnected)
 	_layout = _load_layout()
 	_main = _layout.sections.get(CharCreateModel.SECTION_MAIN[_race]) if _layout != null else null
 	if _media != null and _data != null:
@@ -935,3 +938,13 @@ static func _print_memory(when: String) -> void:
 		Performance.get_monitor(Performance.OBJECT_COUNT), Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
 		Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT), Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT),
 		Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0])
+
+## Round 788: the server closed the connection (READ 0x862450: the same box
+## as the title's and select's).
+var netoff_box: NetOffBox = null
+
+func _on_disconnected() -> void:
+	if not is_inside_tree() or (netoff_box != null and is_instance_valid(netoff_box)):
+		return
+	netoff_box = NetOffBox.show_on(self, _media, _text)
+	print("CREATE: disconnected -- the box: %s" % netoff_box.message_text())

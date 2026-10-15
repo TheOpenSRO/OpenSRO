@@ -19,6 +19,8 @@ var server_host := ""
 var server_port := 0
 
 signal login_result(ok: bool, reason: String)
+## Round 788: retail's 0xA102, the answer to gateway_login.
+signal gateway_login_result(ack: LoginAckNet.Ack)
 signal register_result(ok: bool, reason: String)
 ## The lobby (round 682, LobbyNet): characters are LobbyNet.Character. A
 ## refusal's reason is LobbyNet.code_text of its code, in lobby_text's words
@@ -433,7 +435,19 @@ static func no_delay_wanted() -> bool:
 	return OS.get_environment("OPENSRO_NAGLE") != "1"
 
 func _process(_delta: float) -> void:
+	_process_net()
+	# Round 788: the list's timeout is judged after this frame's reads. Before,
+	# it came first, so a frame that started more than LIST_TIMEOUT_MS after
+	# the request -- the select screen's harbour build blocks that long in a
+	# live run -- could report "no answer" with the answer waiting in the
+	# socket (round 788's live run timed out on a server that answers the
+	# same request in under 10 ms, MEASURED).
 	_check_list_timeout(Time.get_ticks_msec())
+
+func _process_net() -> void:
+	if _retail != null:
+		_poll_retail()
+		return
 	if _tcp_peer == null:
 		return
 
@@ -712,6 +726,9 @@ func _passes_group(p: Packet) -> bool:
 ## server-side for the matching -tls-cert/-tls-key flags) -- otherwise
 ## plain TCP, same as before TLS support existed.
 func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
+	if _retail != null: # round 788: a legacy agent is let go quietly
+		_retail.close()
+		_retail = null
 	_tcp_peer = StreamPeerTCP.new()
 	_peer = null
 	_reader = PacketReader.new()
@@ -796,6 +813,9 @@ func _keep_guild(result: GuildNet.Result) -> void:
 		last_guild_result = result
 
 func disconnect_from_server() -> void:
+	if _retail != null:
+		_retail.close()
+		_retail = null
 	_cancel_resolve()
 	_connecting = false
 	if _peer is StreamPeerTLS:
@@ -831,16 +851,67 @@ func disconnect_from_server() -> void:
 	disconnected.emit()
 
 func is_connected_to_server() -> bool:
-	return _connected
+	return _connected or _retail != null
 
 func _send(opcode: int, data: PackedByteArray = PackedByteArray()) -> void:
+	if _retail != null:
+		_send_retail(opcode, data)
+		return
 	if not is_connected_to_server():
 		push_error("NetClient: _send called while not connected")
 		return
 	_peer.put_data(Packet.new(opcode, data).encode())
 
+# --- A legacy server's agent (round 788) -------------------------------------
+
+## The agent connection of a `type: legacy` server once RetailLogin has logged
+## in on it (OURS, the smallest adapter): the select screen's lobby requests
+## go out on it in the original framing, and what it sends back is dispatched
+## as if it had come on this project's own connection -- LobbyNet's payloads
+## are the original's (round 682). Only the lobby is carried: the world
+## protocol is not the original one yet, so anything else is dropped with a
+## log line, and Start is refused on the select screen itself.
+var _retail: RetailLink = null
+const RETAIL_OPS := [LobbyNet.OP_LOBBY]
+
+func attach_retail(link: RetailLink) -> void:
+	if _connected or _tcp_peer != null:
+		disconnect_from_server()
+	_retail = link
+	server_host = link.host
+	server_port = link.port
+	print("NetClient: on a legacy server's agent %s:%d" % [link.host, link.port])
+
+## Whether the session is a legacy server's (the select screen's Start).
+func is_retail() -> bool:
+	return _retail != null
+
+func _send_retail(opcode: int, data: PackedByteArray) -> void:
+	if not opcode in RETAIL_OPS:
+		print("NetClient: 0x%04x not sent -- a legacy server's agent carries only the lobby (round 788)" % opcode)
+		return
+	_retail.send(_retail.conv.send_lobby(opcode, data))
+
+func _poll_retail() -> void:
+	for ev in _retail.poll():
+		match str(ev["kind"]):
+			"frame":
+				_dispatch(Packet.new(int(ev["opcode"]), ev["data"]))
+			"closed":
+				print("NetClient: the legacy agent closed: %s" % ev.get("why", ""))
+				disconnect_from_server()
+				return
+
 func login(username: String, password: String) -> void:
 	_send(Auth.OP_LOGIN, Auth.encode_credentials(username, password))
+
+## Round 788: retail's 0x6102 on this project's own connection (LoginAckNet),
+## answered by 0xA102 (gateway_login_result). The content id is the
+## archive's own (RetailClientInfo) when it can be read, else 0, and the
+## shard id 0: this server is one process with one shard and checks neither
+## (OURS, docs/protocol/opcodes/login.md).
+func gateway_login(content_id: int, username: String, password: String, shard_id: int = 0) -> void:
+	_send(LoginAckNet.OP_GATEWAY_LOGIN, LoginAckNet.encode_login(content_id, username, password, shard_id))
 
 func register_account(username: String, password: String) -> void:
 	_send(Auth.OP_REGISTER, Auth.encode_credentials(username, password))
@@ -1742,6 +1813,8 @@ func _dispatch(p: Packet) -> void:
 		Auth.OP_REGISTER_RESULT:
 			var r := Auth.decode_result(p.data)
 			register_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		LoginAckNet.OP_GATEWAY_LOGIN_ACK:
+			gateway_login_result.emit(LoginAckNet.decode_ack(p.data))
 		LobbyNet.OP_LOBBY_RESULT:
 			_dispatch_lobby(LobbyNet.decode_result(p.data))
 		LobbyNet.OP_START_RESULT:

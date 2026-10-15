@@ -71,6 +71,11 @@ type Config struct {
 	// server when the fake itself hangs up.
 	Record func(conn int, fromServer bool, b []byte)
 	Logf   func(format string, args ...any)
+	// Deadline bounds each connection (0: 10 s; round 788, fake_login.go).
+	Deadline time.Duration
+	// Login, when set, plays a login past the list (round 788,
+	// fake_login.go).
+	Login *FakeLogin
 }
 
 // Fixed handshake values (tests and transcripts).
@@ -141,7 +146,7 @@ func (s *Server) accept() {
 		go func() {
 			defer s.wg.Done()
 			defer c.Close()
-			_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+			_ = c.SetDeadline(time.Now().Add(s.cfg.connDeadline())) // round 788: Config.Deadline
 			if err := s.serve(c, n); err != nil && !errors.Is(err, io.EOF) {
 				s.cfg.Logf("retailgw fake: connection %d: %v", n, err)
 			}
@@ -171,6 +176,7 @@ type sconn struct {
 	sec *proto.RetailSecurity
 	h   ServerHello
 	hs  *ServerHandshake
+	fl  *fakeLoginConn // round 788, fake_login.go
 }
 
 func (sc *sconn) write(b []byte) error {
@@ -278,6 +284,9 @@ func (sc *sconn) onFrame(raw []byte) (bool, error) {
 		sc.sec.Cipher = final
 		return false, nil
 	case OpHandshakeAccept:
+		if sc.isAgent() { // round 788, fake_login.go
+			return false, sc.frame(OpIdentity, EncodeIdentity(AgentModule, 0), false)
+		}
 		name := GatewayModule
 		if cfg.Fault == FaultNotGateway {
 			name = "AgentServer"
@@ -311,7 +320,7 @@ func (sc *sconn) onFrame(raw []byte) (bool, error) {
 	case OpShardListRequest:
 		return sc.sendList()
 	}
-	return false, nil
+	return sc.onLoginFrame(f.Opcode, f.Payload) // round 788, fake_login.go
 }
 
 func (sc *sconn) sendList() (bool, error) {

@@ -2060,10 +2060,23 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       `SendDrainTimeout` 2 s bounds how long an ending session writes out what is queued. There is
       no kick, no logout reply (`OpLogoutRequest` 0x7005 is unhandled) and no shutdown notice; a
       future one must send and then end the session through the gateway's drain, not `Close`.
-- [ ] **A session the server closes lands on the login screen with no reason given.**
-      `NetClient` finds the peer no longer connected, `World3D._on_disconnected` changes to
-      `Login.tscn`, and the screen shows its remembered fields and nothing else. A "connection
-      lost" line there is the client's to add.
+- [x] ~~A session the server closes at the title, character select or create lands on the login
+      screen with no reason given~~ -- round 788: retail's drop box (`NetOffBox`, READ slot 40
+      0x862450: MsgBoxINIF titled `UIIT_STT_CONFIRM_BOX`, `UIIT_MSG_MSGBOX_NETOFF`, Confirm only),
+      whose Confirm **quits the client** as retail's does (0x641eb0 -> CPSQuit).
+- [ ] **In the world, a session the server closes still lands on the login screen with no reason.**
+      `World3D._on_disconnected` changes to `Login.tscn`. Retail (READ, CPSMission::vslot_040
+      0x84ae90) shows the same NETOFF box and quits on Confirm (to the title only when a logout or
+      restart was already under way, +0x39c == 2). Not changed in round 788: the QA reconnect hooks
+      (`OPENSRO_QA_RECONNECT_VIA_LOGIN`, round 558) ride the return to the title.
+- [ ] **Round 788 (OPEN): the "[Block Detail]" button** of a punishment whose reason ends in '#'
+      (READ 0x86c136..0x86c416: id 800, 15 s, opens the address in Internet Explorer) is not built;
+      the message shows the text before the '#'.
+- [ ] **Round 788 (OPEN): `UIO_MSG_ERROR_THERE_IS_NO_ACCOUNT_INFO`** (0xA102 2/3) also opens a dialog
+      in retail (RESEARCH section 1); only its text is shown.
+- [ ] **Round 788: 0x6102 on OpenSRO's server is not behind `session.LoginGate`** (inspection, the
+      GM gate), which wraps only OpLogin 0x0001; the client now logs in with 0x6102. The server
+      lane's LoginService is where the gate belongs.
 - [ ] **With `-monster-spawn-push` off (the default), a respawn is never announced.** Its first leg
       then reaches clients that do not have the body, and they ask for the list: the pre-656
       discovery path, kept. With the push on, the push leaves at once and a brain's first leg waits

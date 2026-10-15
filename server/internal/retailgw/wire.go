@@ -2,8 +2,8 @@
 // list (round 681): the client side that reads a retail gateway's shard list
 // and status (Probe, the reference the Godot client's RetailGatewayClient is
 // held to byte for byte), and a fake retail gateway (Server) to test it
-// without anyone else's server. Login was out of scope then: Conversation
-// and Probe send nothing that looks like one.
+// without anyone else's server. Round 788 goes on to the login (the
+// client's RunLogin, login_client.go; the fake's, fake_login.go).
 //
 // Round 788 added the server side for real use: ServerHandshake (the
 // handshake both the fake and the real listeners run), ServerCodec (the

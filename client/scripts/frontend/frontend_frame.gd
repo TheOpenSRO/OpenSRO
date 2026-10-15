@@ -217,6 +217,14 @@ func centre_line() -> Vector2i:
 	var s := size if size.x > 0 else get_viewport_rect().size
 	return Vector2i(int(s.x) >> 1, ((top2 - bottom1) >> 1) + bottom1)
 
+## Round 788, READ (FUN_00866760, 0x86695e..0x8669b1): the title's message
+## line, window 500 (GDR_TEXT_MESSAGE), at window 2's -- the bottom band's --
+## top-left + (9, 0x18), sized the screen's width x 0x49.
+func message_rect() -> Rect2:
+	var down := scaled(role_def("screendown").rect) if role_def("screendown") != null else Rect2()
+	var s := size if size.x > 0 else get_viewport_rect().size
+	return Rect2(down.position + Vector2(9, 0x18), Vector2(s.x, 0x49))
+
 ## The bottom edge of the top band, scaled (where the logo may reach up to).
 func band_bottom_edge() -> int:
 	var up := scaled(role_def("screenup").rect) if role_def("screenup") != null else Rect2()

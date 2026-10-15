@@ -3,10 +3,16 @@ class_name RetailGatewayClient
 
 ## The client's side of the ORIGINAL gateway protocol as far as the shard
 ## list (round 681), with no socket: feed() takes what the server sent and
-## returns what to send back. Login is out of scope -- nothing here sends
-## anything like one. server/internal/retailgw's Conversation is the same
-## machine in Go; the transcripts in frontend/testdata hold the two to
+## returns what to send back. server/internal/retailgw's Conversation is the
+## same machine in Go; the transcripts in frontend/testdata hold the two to
 ## identical bytes. The facts, with addresses: docs/protocol/opcodes/gateway.md.
+##
+## Round 788: with `login` set it goes on past the list -- 0x6102, the image
+## code (0x2322 / 0x6323 / 0xA323) and 0xA102 -- and with `agent` set it is
+## the agent connection: 0x6103 once the server names itself AgentServer,
+## 0xA103, then the character lobby's frames. What the player must be told or
+## asked comes back as feed()'s "events"; RetailLogin drives the sockets
+## (retail_login.gd). The Go twin: retailgw/login_client.go.
 ##
 ## The exchange (READ, sro_client unless noted):
 ##   S 0x5000  flags 0x0E: Blowfish key, count seed, crc seed, key exchange
@@ -30,10 +36,30 @@ const OP_PATCH_REQUEST := 0x6100
 const OP_PATCH_REPLY := 0xA100
 const OP_LIST_REQUEST := 0x6101
 const OP_LIST_REPLY := 0xA101
+## Round 788 (READ, RESEARCH section 1): the login's opcodes.
+const OP_GATEWAY_LOGIN := 0x6102
+const OP_GATEWAY_LOGIN_ACK := 0xA102
+const OP_CAPTCHA_IMAGE := 0x2322
+const OP_CAPTCHA_ANSWER := 0x6323
+const OP_CAPTCHA_RESULT := 0xA323
+const OP_AGENT_LOGIN := 0x6103
+const OP_AGENT_LOGIN_ACK := 0xA103
+const OP_KEEP_ALIVE := 0x2002
+## Which client frames go encrypted (READ: the allocator's argument at each
+## send; docs/protocol/opcodes/gateway.md, "Logging in"). Others go plain.
+const CLIENT_ENCRYPTS := {
+	0x6102: true, # 0x4c9290
+	0x6103: true, # 0x4ceb86
+	0x6323: false, # 0x4c96ab: allocator argument 0
+	0x7007: false, # the generic sender 0x841590 encrypts only 0x704C
+	0x2002: false, # CClientProcess::vslot_025 0x4cf990: allocator argument 0
+}
 
 ## READ: sro_client 0xdd3050 and 0xe1b310.
 const CLIENT_MODULE := "SR_Client"
 const GATEWAY_MODULE := "GatewayServer"
+## READ: the client sends 0x6103 once the server is "AgentServer" (0x4ceb36).
+const AGENT_MODULE := "AgentServer"
 
 ## OURS bounds.
 const MAX_SHARDS := 64
@@ -43,7 +69,15 @@ const MAX_MASSIVE_SIZE := 0x8000
 ## OURS: frames passed over while waiting (keep-alives and the like).
 const MAX_FRAMES := 64
 
-enum St { HELLO, CHALLENGE, IDENTITY, PATCH, LIST, DONE }
+enum St { HELLO, CHALLENGE, IDENTITY, PATCH, LIST, DONE,
+	# Round 788, past the list (login_client.go's states):
+	LOGIN = 100,   # 0x6102 out, waiting for 0xA102 or 0x2322
+	CAPTCHA,       # the image is up, waiting for the player
+	LOGIN_IDLE,    # a refusal shown; the player may try again
+	AUTHED,        # 0xA102 success: the gateway's part is over
+	AGENT_AUTH,    # 0x6103 out, waiting for 0xA103
+	LOBBY,         # logged in on the agent
+	AGENT_FAILED } # 0xA103 refused
 
 ## OURS (round 681's review): Blowfish key schedules per process frame, over
 ## every legacy query at once. A hello needs two (the session key and the
@@ -85,6 +119,12 @@ var _key1: Blowfish = null
 var _massive := {}
 var _frames := 0
 
+## Round 788: {username, password, shard} -- go on past the list with 0x6102.
+var login := {}
+## Round 788: {token, username, password, trailer} -- the agent connection.
+var agent := {}
+var shard_id := 0
+
 func _init(p_content_id: int, p_version: int, p_private_x: int = -1) -> void:
 	content_id = p_content_id & 0xFF
 	version = p_version & RetailSecurity.MASK32
@@ -96,6 +136,22 @@ func _init(p_content_id: int, p_version: int, p_private_x: int = -1) -> void:
 func done() -> bool:
 	return state == St.DONE
 
+func authed() -> bool:
+	return state == St.AUTHED
+
+func in_lobby() -> bool:
+	return state == St.LOBBY
+
+## The states whose frames count against MAX_FRAMES: the exchange up to the
+## list and the agent's up to 0xA103 (OURS: past them it is a session).
+func _capped() -> bool:
+	return state <= St.LIST or state == St.AGENT_AUTH
+
+## feed() stops at these: the list alone, the gateway's success, the agent's
+## refusal.
+func _stopped() -> bool:
+	return state == St.DONE or state == St.AUTHED or state == St.AGENT_FAILED
+
 ## The farm byte rule of the gateway (READ, GatewayServer 0x412d7b..0x412daa:
 ## its content id is one of 3, 5, 9, 10, 0x1a, 0x1c, 0x15, 0x16, 0x17, 0x22).
 static func farm_byte_for(cid: int) -> bool:
@@ -105,12 +161,13 @@ static func farm_byte_for(cid: int) -> bool:
 ## "send": bytes to write, "error": why it stopped ("" while going on),
 ## "retry": true when a new connection may succeed}.
 func feed(buf: PackedByteArray) -> Dictionary:
-	var out := {"consumed": 0, "send": PackedByteArray(), "error": "", "retry": false}
+	var out := {"consumed": 0, "send": PackedByteArray(), "error": "", "retry": false, "events": []}
 	# Built here and stored once: a packed array taken out of a Dictionary is
 	# a copy, and appending to it is lost (round 681).
 	var send := PackedByteArray()
+	var events: Array = []
 	var off := 0
-	while state != St.DONE:
+	while not _stopped():
 		var rest := buf.slice(off)
 		var n := RetailSecurity.frame_len(rest)
 		if n < 0:
@@ -128,13 +185,16 @@ func feed(buf: PackedByteArray) -> Dictionary:
 			break
 		if r.has("send"):
 			send.append_array(r["send"])
+		if r.has("event"):
+			events.append(r["event"])
 	out["consumed"] = off
 	out["send"] = send
+	out["events"] = events
 	return out
 
 func _frame(raw: PackedByteArray) -> Dictionary:
 	_frames += 1
-	if _frames > MAX_FRAMES:
+	if _frames > MAX_FRAMES and _capped():
 		return {"error": "more than %d frames without the list" % MAX_FRAMES}
 	var f := (sec if sec != null else RetailSecurity.new()).decode(raw)
 	if f.has("error"):
@@ -166,6 +226,8 @@ func _frame(raw: PackedByteArray) -> Dictionary:
 			var id := decode_identity(p)
 			if id.has("error"):
 				return id
+			if not agent.is_empty():
+				return _agent_identity(id["name"])
 			if id["name"] != GATEWAY_MODULE:
 				return {"error": "the server is '%s', not %s (the client asks only a gateway for the list)" % [id["name"], GATEWAY_MODULE]}
 			state = St.PATCH
@@ -193,7 +255,17 @@ func _frame(raw: PackedByteArray) -> Dictionary:
 				farms = l["farms"]
 				farm_byte = l["farm_byte"]
 				state = St.DONE
+				if not login.is_empty():
+					return _send_login()
 			return {}
+		St.LOGIN, St.CAPTCHA, St.LOGIN_IDLE, St.AGENT_AUTH, St.LOBBY:
+			if op == OP_MASSIVE:
+				var m := _feed_massive(p)
+				if m.has("error") or not m.has("opcode"):
+					return m
+				op = m["opcode"]
+				p = m["data"]
+			return _login_frame(op, p)
 	return {"error": "a frame after the list"}
 
 ## READ (CClientProcess::vslot_015 0x4cf0c0, GatewayServer 0x4053c8); the
@@ -291,6 +363,140 @@ func _feed_massive(p: PackedByteArray) -> Dictionary:
 			return {}
 	return {"error": "0x600D: kind %d, not 0 or 1" % p[0]}
 
+# --- The login (round 788) -------------------------------------------------------
+
+## The chosen shard's id: the one named `name`, or the list's only shard when
+## none is (OURS: the server may have been chosen by its config name); -1
+## when neither.
+static func pick_shard(list: Array, name: String) -> int:
+	for s in list:
+		if str(s["name"]) == name:
+			return int(s["id"])
+	if list.size() == 1:
+		return int(list[0]["id"])
+	return -1
+
+func _encode(op: int, payload: PackedByteArray) -> PackedByteArray:
+	return sec.encode_client(op, payload, bool(CLIENT_ENCRYPTS.get(op, false)))
+
+func _send_login() -> Dictionary:
+	var id := pick_shard(shards, str(login.get("shard", "")))
+	if id < 0:
+		return {"error": "the gateway lists no shard named '%s'" % login.get("shard", "")}
+	shard_id = id
+	state = St.LOGIN
+	return {"send": _encode(OP_GATEWAY_LOGIN, LoginAckNet.encode_login(content_id, str(login["username"]), str(login["password"]), id))}
+
+## 0x6102 again on the same connection after a refusal (READ: below the
+## tolerance the gateway keeps it open). Empty when there is no login to
+## retry.
+func resubmit(username: String, password: String) -> PackedByteArray:
+	if state != St.LOGIN_IDLE:
+		return PackedByteArray()
+	login["username"] = username
+	login["password"] = password
+	state = St.LOGIN
+	return _encode(OP_GATEWAY_LOGIN, LoginAckNet.encode_login(content_id, username, password, shard_id))
+
+## The image answered with the typed code (READ 0x4c96a0: a string). Empty
+## when no image is up.
+func submit_captcha(code: String) -> PackedByteArray:
+	if state != St.CAPTCHA:
+		return PackedByteArray()
+	state = St.LOGIN
+	var w := PackedByteArray()
+	encode_text(w, code)
+	return _encode(OP_CAPTCHA_ANSWER, w)
+
+## One lobby request on the agent connection (empty when not in the lobby).
+func send_lobby(op: int, payload: PackedByteArray) -> PackedByteArray:
+	if state != St.LOBBY:
+		return PackedByteArray()
+	return _encode(op, payload)
+
+## The keep-alive frame (docs/protocol/opcodes/gateway.md, "Logging in"):
+## once the session is secured (after the identity), empty before.
+func keep_alive() -> PackedByteArray:
+	if sec == null or state < St.PATCH:
+		return PackedByteArray()
+	return _encode(OP_KEEP_ALIVE, PackedByteArray())
+
+## READ (0x4ceb86): u32 token, the ID lower-cased (_strlwr_s 0x4c9374), the
+## password, u8 content id, 6 bytes.
+static func encode_agent_login(token: int, username: String, password: String, cid: int, trailer: PackedByteArray) -> PackedByteArray:
+	var w := PackedByteArray()
+	w.resize(4)
+	w.encode_u32(0, token & RetailSecurity.MASK32)
+	encode_text(w, username.to_lower())
+	encode_text(w, password)
+	w.append(cid & 0xFF)
+	var t := trailer.duplicate()
+	t.resize(6)
+	w.append_array(t)
+	return w
+
+func _agent_identity(name: String) -> Dictionary:
+	if name != AGENT_MODULE:
+		return {"error": "the server is '%s', not %s (the client logs in only to an agent here)" % [name, AGENT_MODULE]}
+	state = St.AGENT_AUTH
+	return {"send": _encode(OP_AGENT_LOGIN, encode_agent_login(int(agent["token"]), str(agent["username"]),
+		str(agent["password"]), content_id, agent.get("trailer", PackedByteArray())))}
+
+## One frame past the list, on either connection.
+func _login_frame(op: int, p: PackedByteArray) -> Dictionary:
+	match state:
+		St.LOGIN, St.CAPTCHA, St.LOGIN_IDLE:
+			match op:
+				OP_GATEWAY_LOGIN_ACK:
+					var a := LoginAckNet.decode_ack(p)
+					if a.error != "":
+						return {"error": a.error}
+					if a.ok:
+						state = St.AUTHED
+						return {"event": {"kind": "login_ok", "ack": a}}
+					state = St.LOGIN_IDLE
+					return {"event": {"kind": "login_failed", "ack": a}}
+				OP_CAPTCHA_IMAGE:
+					var img := decode_captcha_image(p)
+					if img.has("error"):
+						return img
+					state = St.CAPTCHA
+					return {"event": {"kind": "captcha", "flag": img["flag"], "blob": img["blob"]}}
+				OP_CAPTCHA_RESULT:
+					var r := Reader.new(p)
+					var res := r.u8()
+					if res == 1 and r.done():
+						return {"event": {"kind": "captcha_ok"}}
+					var mx := r.u32()
+					var used := r.u32()
+					if res != 2 or not r.done():
+						return {"error": "0xA323: not [1] or [2, u32 max, u32 used]"}
+					return {"event": {"kind": "captcha_failed", "max": mx, "used": used}}
+			return {} # OURS: anything else is passed over
+		St.AGENT_AUTH:
+			if op != OP_AGENT_LOGIN_ACK:
+				return {}
+			if p.size() == 1 and p[0] == 1:
+				state = St.LOBBY
+				return {"event": {"kind": "agent_ok"}}
+			if p.size() != 2 or p[0] != 2:
+				return {"error": "0xA103: not [1] or [2, code]"}
+			state = St.AGENT_FAILED
+			return {"event": {"kind": "agent_failed", "code": p[1]}}
+		St.LOBBY:
+			return {"event": {"kind": "frame", "opcode": op, "data": p}}
+	return {"error": "a frame after the login ended"}
+
+## A 0x2322 (READ 0x4cd3c0): u8 flag, u16 n, n bytes of image.
+static func decode_captcha_image(p: PackedByteArray) -> Dictionary:
+	var r := Reader.new(p)
+	var flag := r.u8()
+	var n := r.u16()
+	var b := r.bytes(n)
+	if not r.done():
+		return {"error": "0x2322: %d bytes announced, %d there" % [n, maxi(p.size() - 3, 0)]}
+	return {"flag": flag, "blob": b}
+
 # --- Payloads -------------------------------------------------------------------
 
 ## A strict reader over one payload.
@@ -352,10 +558,12 @@ const NAME_MAX_BYTES := 64
 ## CP1252/GBK/EUC-KR name costs no error lines (round 681's review: the old
 ## version printed one "Unicode parsing error" per bad byte, and its string
 ## concatenation was quadratic).
-static func decode_name(b: PackedByteArray) -> String:
-	var capped := b.size() > NAME_MAX_BYTES
+## `max_bytes` (round 788): a longer cap for a text that is not a name (a
+## block reason).
+static func decode_name(b: PackedByteArray, max_bytes: int = NAME_MAX_BYTES) -> String:
+	var capped := b.size() > max_bytes
 	if capped:
-		b = b.slice(0, NAME_MAX_BYTES)
+		b = b.slice(0, max_bytes)
 	var out: Variant = _utf8_clean(b, capped)
 	if out == null:
 		out = _latin1_clean(b)
