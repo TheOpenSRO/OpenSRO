@@ -19,6 +19,8 @@ const (
 	OpAgentLoginReply = uint16(0xA103)
 	OpNoticeRequest   = uint16(0x6104)
 	OpNoticeReply     = uint16(0xA104)
+	OpFarmRequest     = uint16(0x6106)
+	OpFarmReply       = uint16(0xA106)
 	OpLobby           = session.OpLobby       // 0x7007
 	OpLobbyResult     = session.OpLobbyResult // 0xB007
 	OpStart           = session.OpStart       // 0x7001

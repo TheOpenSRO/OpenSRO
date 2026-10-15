@@ -50,7 +50,7 @@ func TestServerCodecHandshakeAndMessages(t *testing.T) {
 		var logged []uint16
 		cfg := ServerCodecConfig{
 			Flags:   flags,
-			Encrypt: func(op uint16) bool { return op == 0xB0B0 },
+			Encrypt: func(op uint16, _ []byte) bool { return op == 0xB0B0 },
 			Massive: func(op uint16) bool { return op == OpPatchReply },
 			Log: func(fromServer bool, op uint16, _ []byte) {
 				mu.Lock()

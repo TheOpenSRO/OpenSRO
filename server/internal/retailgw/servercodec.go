@@ -23,10 +23,10 @@ import (
 type ServerCodecConfig struct {
 	// Flags of the hello (0: DefaultServerFlags, retail's 0x0E).
 	Flags byte
-	// Encrypt reports whether the server sends op encrypted (the sender's
-	// choice per message, READ: the allocator's argument, gateway.md). nil
-	// sends everything plain.
-	Encrypt func(op uint16) bool
+	// Encrypt reports whether the server sends a message encrypted (the
+	// sender's choice per message, READ: the allocator's argument,
+	// gateway.md). nil sends everything plain.
+	Encrypt func(op uint16, payload []byte) bool
 	// Massive reports whether op is sent as a 0x600D header and parts (READ:
 	// GatewayServer's 0xA100, 0x41f580..0x41f7d0). nil: none.
 	Massive func(op uint16) bool
@@ -173,12 +173,13 @@ func (c *ServerCodec) AppendFrame(out []byte, p *proto.Packet) ([]byte, error) {
 	if c.sec == nil {
 		return out, fmt.Errorf("retail: Send before the hello")
 	}
-	enc := c.cfg.Encrypt != nil && c.cfg.Encrypt(p.Opcode)
+	enc := c.cfg.Encrypt != nil && c.cfg.Encrypt(p.Opcode, p.Data)
 	logged := c.state == codecEstablished && c.cfg.Log != nil
 	if c.cfg.Massive != nil && c.cfg.Massive(p.Opcode) {
-		encPart := c.cfg.Encrypt != nil && c.cfg.Encrypt(OpMassive)
+		// READ: the massive writer's frames are plain (+0x1d = 0, 0x41f580;
+		// AgentServer's 0x437cf0 the same).
 		for _, part := range MassiveParts(p.Opcode, p.Data, massivePartSize) {
-			b, err := c.sec.EncodeServerFrame(OpMassive, part, encPart)
+			b, err := c.sec.EncodeServerFrame(OpMassive, part, false)
 			if err != nil {
 				return out, err
 			}

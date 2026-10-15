@@ -139,6 +139,10 @@ func (h *harness) login(c *retailgw.ClientConn, user, pw string, shard uint16) *
 	if err != nil {
 		h.t.Fatalf("0xA102: %v", err)
 	}
+	// READ: a success goes encrypted (0x405e7d), the handler's refusals plain.
+	if m.Encrypted != ack.OK {
+		h.t.Errorf("0xA102 ok=%v sent encrypted=%v", ack.OK, m.Encrypted)
+	}
 	return ack
 }
 
@@ -162,8 +166,12 @@ func TestGatewayRefusesAnotherClient(t *testing.T) {
 		ver  uint32
 		want []byte
 	}{
-		{"content id", 9, 1000, []byte{2, 1}},
-		{"version", 22, 999, []byte{2, 2}},
+		// READ (0x4051a0): the content id is only logged; a newer client or
+		// version 0 is [2, 1]; an older one with no patch server [2, 3].
+		{"content id", 9, 1000, []byte{1}},
+		{"newer", 22, 1001, []byte{2, 1}},
+		{"zero", 22, 0, []byte{2, 1}},
+		{"older", 22, 999, []byte{2, 3}},
 	} {
 		c := h.dial(h.gwAddr)
 		if _, err := c.ReadIdentity(); err != nil {
@@ -171,9 +179,31 @@ func TestGatewayRefusesAnotherClient(t *testing.T) {
 		}
 		h.send(c, OpPatchRequest, retailgw.EncodePatchRequest(tc.cid, tc.ver))
 		m := h.expect(c, OpPatchReply)
-		if !bytes.Equal(m.Payload, tc.want) {
-			t.Errorf("%s: 0xA100 %v, want %v", tc.name, m.Payload, tc.want)
+		if !bytes.Equal(m.Payload, tc.want) || !m.Massive {
+			t.Errorf("%s: 0xA100 %v (massive %v), want massive %v", tc.name, m.Payload, m.Massive, tc.want)
 		}
+		if tc.want[0] != 1 {
+			// Refused: the list is not given.
+			h.send(c, OpShardListReq, nil)
+			if m, err := c.Recv(); err == nil {
+				t.Errorf("%s: 0x6101 after a refusal answered 0x%04x", tc.name, m.Opcode)
+			}
+		}
+	}
+}
+
+// TestGatewayNoticesAndFarms: 0xA104 with no notice is a massive [0], 0xA106
+// a plain [0] (READ 0x406380 / 0x405740).
+func TestGatewayNoticesAndFarms(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.gatewayReady()
+	h.send(c, OpNoticeRequest, []byte{22})
+	if m := h.expect(c, OpNoticeReply); !m.Massive || !bytes.Equal(m.Payload, []byte{0}) {
+		t.Errorf("0xA104 %+v", m)
+	}
+	h.send(c, OpFarmRequest, nil)
+	if m := h.expect(c, OpFarmReply); m.Massive || m.Encrypted || !bytes.Equal(m.Payload, []byte{0}) {
+		t.Errorf("0xA106 %+v", m)
 	}
 }
 
@@ -231,19 +261,43 @@ func TestRetailLoginToTheCharacterList(t *testing.T) {
 	// The ID lower-cased, as the client sends it (READ 0x4c9374).
 	req := AgentLogin{Token: ack.Token, ID: "alice", PW: "secret", ContentID: 22}
 	h.send(ag, OpAgentLogin, req.Encode())
-	if m := h.expect(ag, OpAgentLoginReply); !bytes.Equal(m.Payload, []byte{1}) {
-		t.Fatalf("0xA103 %v, want [1]", m.Payload)
+	if m := h.expect(ag, OpAgentLoginReply); !bytes.Equal(m.Payload, []byte{1}) || !m.Encrypted {
+		t.Fatalf("0xA103 %v (encrypted %v), want an encrypted [1]", m.Payload, m.Encrypted)
 	}
-	h.send(ag, OpLobby, (&session.LobbyRequest{Action: session.LobbyList}).Encode())
-	r, err := session.DecodeLobbyResult(h.expect(ag, OpLobbyResult).Payload)
-	if err != nil || !r.OK || len(r.Characters) != 1 || r.Characters[0].Name != "Hero" {
-		t.Fatalf("list %+v, %v", r, err)
+	// The client's keep-alive, unanswered (READ 0x42d2a0), in between.
+	if err := ag.Send(OpKeepAlive, nil, false); err != nil {
+		t.Fatal(err)
 	}
-	h.send(ag, OpStart, (&session.StartRequest{Name: "Hero"}).Encode())
+	// The select screen's requests go plain (READ: only 0x704C is encrypted,
+	// 0x841590).
+	plain := func(op uint16, payload []byte) {
+		t.Helper()
+		if err := ag.Send(op, payload, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plain(OpLobby, (&session.LobbyRequest{Action: session.LobbyList}).Encode())
+	m := h.expect(ag, OpLobbyResult)
+	r, err := session.DecodeLobbyResult(m.Payload)
+	if err != nil || !r.OK || len(r.Characters) != 1 || r.Characters[0].Name != "Hero" || m.Encrypted || m.Massive {
+		t.Fatalf("list %+v, %v (encrypted %v, massive %v)", r, err, m.Encrypted, m.Massive)
+	}
+	plain(OpStart, (&session.StartRequest{Name: "Hero"}).Encode())
 	sr, err := session.DecodeStartResult(h.expect(ag, OpStartResult).Payload)
 	if err != nil || sr.OK || sr.Code != StartRefusal {
 		t.Fatalf("start %+v, %v; want refused with 0x%x", sr, err, StartRefusal)
 	}
+	// The list follows unasked (OURS: it unlocks the select screen) ...
+	m, err = ag.Recv()
+	if err != nil || m.Opcode != OpLobbyResult {
+		t.Fatalf("after the refusal: 0x%04x, %v; want the list", m.Opcode, err)
+	}
+	if r, err := session.DecodeLobbyResult(m.Payload); err != nil || !r.OK || r.Action != session.LobbyList || len(r.Characters) != 1 {
+		t.Fatalf("the list after the refusal: %+v, %v", r, err)
+	}
+	// ... and the session stays: Start can be pressed again.
+	plain(OpStart, (&session.StartRequest{Name: "Hero"}).Encode())
+	h.expect(ag, OpStartResult)
 }
 
 func TestAgentRefusals(t *testing.T) {
@@ -260,13 +314,25 @@ func TestAgentRefusals(t *testing.T) {
 		gw.Close()
 		return ack.Token
 	}
+	// agentLogin returns the 0xA103 and checks that a refusal ends the
+	// connection (READ 0x402608).
 	agentLogin := func(req AgentLogin) []byte {
+		t.Helper()
 		ag := h.dial(h.agAddr)
 		if _, err := ag.ReadIdentity(); err != nil {
 			t.Fatal(err)
 		}
 		h.send(ag, OpAgentLogin, req.Encode())
-		return h.expect(ag, OpAgentLoginReply).Payload
+		m := h.expect(ag, OpAgentLoginReply)
+		if !m.Encrypted {
+			t.Errorf("0xA103 %v went plain", m.Payload)
+		}
+		if m.Payload[0] != 1 {
+			if next, err := ag.Recv(); err == nil {
+				t.Errorf("after a refusal: 0x%04x, want the connection closed", next.Opcode)
+			}
+		}
+		return m.Payload
 	}
 	if got := agentLogin(AgentLogin{Token: 12345, ID: "alice", PW: "secret", ContentID: 22}); !bytes.Equal(got, []byte{2, 3}) {
 		t.Errorf("unknown token: %v, want [2 3]", got)
@@ -293,11 +359,17 @@ func TestAgentRefusals(t *testing.T) {
 	if m, err := ag.Recv(); err == nil {
 		t.Errorf("another content id: got 0x%04x, want the connection closed", m.Opcode)
 	}
-	// The lobby before 0x6103: not logged in (0x407).
+	// The lobby before 0x6103: dropped, no reply (READ 0x4315d0). A second
+	// 0x2001 after it is answered, so the two identities arrive back to back
+	// with nothing for the list between them.
 	ag = h.dial(h.agAddr)
-	h.send(ag, OpLobby, (&session.LobbyRequest{Action: session.LobbyList}).Encode())
-	r, err := session.DecodeLobbyResult(h.expect(ag, OpLobbyResult).Payload)
-	if err != nil || r.OK || r.Code != session.LobbyErrNoUser {
-		t.Errorf("list before login: %+v, %v", r, err)
+	if err := ag.Send(OpLobby, (&session.LobbyRequest{Action: session.LobbyList}).Encode(), false); err != nil {
+		t.Fatal(err)
+	}
+	h.send(ag, OpIdentity, retailgw.EncodeIdentity(retailgw.ClientModule, 0))
+	for i := range 2 {
+		if m, err := ag.Recv(); err != nil || m.Opcode != OpIdentity {
+			t.Errorf("message %d after a lobby message before login: 0x%04x, %v; want the identity", i, m.Opcode, err)
+		}
 	}
 }

@@ -10,6 +10,29 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## Round 788 lane R follow-ups (the original client logs in to OpenSRO; opcodes/gateway.md)
+
+- [x] **The original client (vSRO 1.188) logs in to OpenSRO's server and shows its character
+      list** -- the retail gateway and agent listeners (`-retail-gateway-addr`), MEASURED under
+      Wine on the render box. Start is refused (0xB001 0x40F, then the list again).
+- [ ] **The world for the original client.** Start is refused: the in-world protocol (0x3013 and
+      everything after, `charselect.md` "Start") is not spoken on the retail agent. The next
+      concrete step is 0xB001 [1] followed by the character data 0x3013 (client FUN_008a8c00).
+- [ ] **IBUV (the image code) is skipped** on the retail gateway: 0xA102 goes straight after the
+      password. Needs the 0x2322 blob's format (another round-788 lane decodes it) to send one.
+- [ ] **No idle limit on the retail listeners.** Retail sweeps every 10 s and closes past 60 s idle
+      (the 60 s INFERRED: no override of the default found). The client's keep-alive (5 s of
+      silence) would keep a live one open.
+- [ ] **"Already connected" between gateway and agent:** the gateway decides with no session and
+      the agent admits with `LoginService.AdmitSession`; whatever registry the login-rules lane
+      keeps must be kept there too, and a login admitted but not yet at the agent (up to 10 s) is
+      not "connected" yet (retail registers it at the GlobalManager's admit).
+- [ ] **0x2005 / 0x6005 after the identity** are not sent (the client has no handler for either);
+      the u16 in 0x2005 is INFERRED to be the server's id. Revisit if a client version needs them.
+- [ ] **The retail lobby from the real client's create screen** was not driven (the characters
+      in the MEASURED run were made on OpenSRO's own wire); the 0x7007 create and name check from
+      sro_client itself are untested live.
+
 ## Round 720 follow-ups (the teleport structures' effects)
 
 - [x] ~~The gates' animated textures and material mods~~ -- **round 722**: TEXANI read and drawn

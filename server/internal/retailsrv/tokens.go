@@ -12,11 +12,11 @@ import (
 )
 
 // DefaultTokenTTL is how long a login the gateway admitted waits for the
-// client's 0x6103 on the agent (OURS: the client connects to the agent at
-// once on 0xA102 -- READ, it closes the gateway and connects, RESEARCH
-// "0xA102" -- so a few seconds are enough; 30 s leaves room for a slow
-// machine. How long AgentServer keeps a queued login was not read).
-const DefaultTokenTTL = 30 * time.Second
+// client's 0x6103 on the agent: 10 s, AgentServer's own (READ: a token
+// expires once more than 10000 ms old, "Token Timeout!", 0x409fc9; its sweep
+// runs every 3 s, 0x4017cc, so retail's lasts 10-13 s). The client connects
+// at once on 0xA102 (READ 0x4cf500).
+const DefaultTokenTTL = 10 * time.Second
 
 // pending is one admitted login waiting for the agent: the account and the
 // credentials the 0x6102 carried, which the 0x6103 must repeat (READ:
@@ -52,7 +52,9 @@ func (t *Tokens) ttl() time.Duration {
 }
 
 // Issue queues an admitted login and returns its token: a random non-zero
-// u32 not in use (OURS; the retail gateway's token origin was not needed).
+// u32 not in use (OURS: AgentServer hands out small sequential ids from a
+// pool of 500, 0x409a40 / 0x40a510, which anyone could guess; the client
+// only echoes the value).
 func (t *Tokens) Issue(acc *account.Account, id, pw string, contentID byte) uint32 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
