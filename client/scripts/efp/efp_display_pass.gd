@@ -62,6 +62,7 @@ static var active: EfpDisplayPass = null
 var _effects: Array = []
 ## The last frame handed over was empty (an empty one is not sent again).
 var _frame_sent_empty := false
+var _last_sig := 0
 ## Mesh arrays expanded to a triangle list (pos.xyz, 1, u, v, 0, 0 a
 ## vertex), by mesh RID, built once on the main thread.
 var _mesh_data := {}
@@ -84,6 +85,18 @@ var _mask: RID
 var _fb: RID
 var _size := Vector2i.ZERO
 var _mesh_buffers := {}
+## Draw uniform sets by their resources' RIDs.
+var _sets := {}
+## The current list's draws resolved (pipeline, uniform set, push constants,
+## instances, vertices), reused until the list or the targets change.
+var _prepared: Array = []
+var _set_depth: RID
+var _set_ubo: RID
+var _fb_format := -1
+## The last frame's cost, microseconds (QA): the main thread's list, the
+## render thread's pass.
+var main_usec := 0
+var render_usec := 0
 var _ready_rd := false
 ## The last frame's draw count (QA; the render thread's), and the items the
 ## main thread handed over last.
@@ -92,18 +105,30 @@ var last_items := 0
 
 ## The QA line.
 func describe() -> String:
-	return "display pass: %d effect(s), %d draw(s) handed over, %d drawn" % [_effects.size(), last_items, drawn_nodes]
+	var n := maxf(float(_main_frames), 1.0)
+	var r := maxf(float(_render_frames), 1.0)
+	var out := "display pass: %d effect(s), %d draw(s) handed over, %d drawn; mean main %.1f us, render %.1f us a frame" % [_effects.size(), last_items, drawn_nodes, _main_sum / n, _render_sum / r]
+	_main_sum = 0
+	_main_frames = 0
+	_render_sum = 0
+	_render_frames = 0
+	return out
+
+var _main_sum := 0
+var _main_frames := 0
+var _render_sum := 0
+var _render_frames := 0
 
 func _init() -> void:
 	effect_callback_type = EFFECT_CALLBACK_TYPE_POST_TRANSPARENT
 	access_resolved_color = true
 	access_resolved_depth = true
-	RenderingServer.call_on_render_thread(_init_rd)
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd != null:
-		var rids: Array = [_disp, _mask, _sampler, _depth_sampler, _pipe_in, _pipe_out, _shader_in, _shader_out, _shader_draw]
+		var rids: Array = []
 		rids.append_array(_pipelines.values())
+		rids.append_array([_pipe_in, _pipe_out, _shader_in, _shader_out, _shader_draw, _disp, _mask, _sampler, _depth_sampler])
 		rids.append_array(_mesh_buffers.values())
 		var rd := _rd
 		RenderingServer.call_on_render_thread(func() -> void:
@@ -135,6 +160,17 @@ func count() -> int:
 ## camera's frustum and sorted back to front, handed to the render thread in
 ## the RenderingServer's own command order.
 func submit(camera: Camera3D) -> void:
+	var t0 := Time.get_ticks_usec()
+	# Nothing to rebuild when no effect redrew, faded, came or went and the
+	# camera kept still: the render thread keeps drawing the last list (the
+	# particles themselves are in the MultiMeshes' own buffers).
+	var sig := _signature(camera)
+	if sig == _last_sig and not _effects.is_empty():
+		main_usec = Time.get_ticks_usec() - t0
+		_main_sum += main_usec
+		_main_frames += 1
+		return
+	_last_sig = sig
 	var items: Array = []
 	if camera != null and not _effects.is_empty():
 		var planes := camera.get_frustum()
@@ -148,38 +184,73 @@ func submit(camera: Camera3D) -> void:
 			if not fx.is_inside_tree() or not fx.is_visible_in_tree():
 				continue
 			fx.pass_items(items, planes, eye, self)
-		_effects = alive
-	items.sort_custom(func(a, b): return float(a["depth"]) > float(b["depth"]))
+		if alive.size() != _effects.size():
+			_effects = alive
+	items.sort_custom(func(a, b): return float(a[3]) > float(b[3]))
 	last_items = items.size()
-	var rect := Rect2(0, 0, 1, 1)
-	if not items.is_empty() and camera != null:
-		rect = screen_rect(items, camera)
 	if items.is_empty() and _frame_sent_empty:
+		main_usec = Time.get_ticks_usec() - t0
 		return
+	var rect := Rect2(0, 0, 1, 1)
+	if not items.is_empty():
+		var all: AABB = items[0][4]
+		for it in items:
+			all = all.merge(it[4])
+		rect = screen_rect(all, camera)
 	_frame_sent_empty = items.is_empty()
 	RenderingServer.call_on_render_thread(_set_frame.bind(items, ObjectLight.current_tonemap, rect))
+	main_usec = Time.get_ticks_usec() - t0
+	_main_sum += main_usec
+	_main_frames += 1
 
-## The part of the screen the items can touch, as fractions of it (0..1):
-## their boxes' corners projected, or the whole screen when a box reaches
-## behind the camera. The two compute passes cover only this.
-static func screen_rect(items: Array, camera: Camera3D) -> Rect2:
+## What the frame's list depends on, as one hash: each effect's draw count
+## of updates, glow alpha and visibility, and the camera.
+func _signature(camera: Camera3D) -> int:
+	var parts: Array = [_effects.size()]
+	if camera != null:
+		parts.append(camera.global_transform)
+		parts.append(camera.fov)
+		parts.append(camera.get_viewport().get_visible_rect().size)
+	for fx_v in _effects:
+		if not is_instance_valid(fx_v):
+			parts.append(-1)
+			continue
+		var fx := fx_v as EfpEffect
+		parts.append(fx.draw_updates)
+		parts.append(fx._glow_alpha)
+		parts.append(fx.is_visible_in_tree())
+	return hash(parts)
+
+## The part of the screen `box` can touch, as fractions of it (0..1): its
+## corners projected, or the whole screen when it reaches behind the camera.
+## The two compute passes cover only this.
+static func screen_rect(box: AABB, camera: Camera3D) -> Rect2:
 	var vp := camera.get_viewport().get_visible_rect().size
 	if vp.x <= 0.0 or vp.y <= 0.0:
 		return Rect2(0, 0, 1, 1)
 	var lo := Vector2(INF, INF)
 	var hi := -lo
-	for it_v in items:
-		var box: AABB = (it_v as Dictionary)["box"]
-		for k in 8:
-			var c := box.get_endpoint(k)
-			if camera.is_position_behind(c):
-				return Rect2(0, 0, 1, 1)
-			var p := camera.unproject_position(c)
-			lo = lo.min(p)
-			hi = hi.max(p)
+	for k in 8:
+		var c := box.get_endpoint(k)
+		if camera.is_position_behind(c):
+			return Rect2(0, 0, 1, 1)
+		var p := camera.unproject_position(c)
+		lo = lo.min(p)
+		hi = hi.max(p)
 	lo = (lo / vp).clamp(Vector2.ZERO, Vector2.ONE)
 	hi = (hi / vp).clamp(Vector2.ZERO, Vector2.ONE)
 	return Rect2(lo, (hi - lo).max(Vector2.ZERO))
+
+## A pipeline's key: the blend pair, culling and winding.
+static func pipeline_key(src: int, dest: int, cull: bool, mirrored: bool) -> int:
+	return src * 1024 + dest * 4 + (2 if cull else 0) + (1 if mirrored else 0)
+
+## A node's world transform as three rows of four floats (the push
+## constants' head).
+static func transform_bytes(xf: Transform3D) -> PackedByteArray:
+	var b := xf.basis
+	return PackedFloat32Array([b.x.x, b.y.x, b.z.x, xf.origin.x, b.x.y, b.y.y, b.z.y, xf.origin.y,
+		b.x.z, b.y.z, b.z.z, xf.origin.z]).to_byte_array()
 
 ## The mesh's first surface as a plain triangle list, two vec4 a vertex
 ## (position, 1; u, v, 0, 0).
@@ -218,6 +289,7 @@ func mesh_data(mesh: Mesh) -> PackedFloat32Array:
 
 func _set_frame(items: Array, tonemap: Vector4, rect: Rect2) -> void:
 	_frame = items
+	_prepared.clear()
 	_tonemap = tonemap
 	_rect = rect
 
@@ -297,9 +369,6 @@ static func d3d_pair(src: int, dest: int) -> Vector2i:
 	return Vector2i(d3d_factor(src), d3d_factor(dest))
 
 func _pipeline(fb_format: int, src: int, dest: int, cull: bool, mirrored: bool) -> RID:
-	var key := "%d|%d|%d|%s|%s" % [fb_format, src, dest, str(cull), str(mirrored)]
-	if _pipelines.has(key):
-		return _pipelines[key]
 	var raster := RDPipelineRasterizationState.new()
 	var qa := OS.get_environment("OPENSRO_QA_FX_PASS")
 	raster.cull_mode = RenderingDevice.POLYGON_CULL_BACK if cull and qa != "nocull" else RenderingDevice.POLYGON_CULL_DISABLED
@@ -327,10 +396,8 @@ func _pipeline(fb_format: int, src: int, dest: int, cull: bool, mirrored: bool) 
 	var a1 := RDPipelineColorBlendStateAttachment.new()
 	var blend := RDPipelineColorBlendState.new()
 	blend.attachments = [a0, a1]
-	var p := _rd.render_pipeline_create(_shader_draw, fb_format, RenderingDevice.INVALID_FORMAT_ID,
+	return _rd.render_pipeline_create(_shader_draw, fb_format, RenderingDevice.INVALID_FORMAT_ID,
 		RenderingDevice.RENDER_PRIMITIVE_TRIANGLES, raster, RDPipelineMultisampleState.new(), ds, blend)
-	_pipelines[key] = p
-	return p
 
 ## Which winding is a front face in the pass's clip space for a transform that
 ## does not mirror. INFERRED (not measured: of the world's 170 ambient effect
@@ -367,8 +434,16 @@ func _mesh_buffer(key: RID, data: PackedFloat32Array) -> RID:
 
 func _render_callback(type: int, render_data: RenderData) -> void:
 	drawn_nodes = 0
-	if type != EFFECT_CALLBACK_TYPE_POST_TRANSPARENT or not _ready_rd or _frame.is_empty():
+	if type != EFFECT_CALLBACK_TYPE_POST_TRANSPARENT or _frame.is_empty():
 		return
+	var t0 := Time.get_ticks_usec()
+	if not _ready_rd:
+		# Built on the first frame with something to draw, on this thread
+		# (a RenderingDevice call), not while the world loads.
+		if _rd == null:
+			_init_rd()
+		if not _ready_rd:
+			return
 	var rsb := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
 	var rsd := render_data.get_render_scene_data() as RenderSceneDataRD
 	if rsb == null or rsd == null or rsb.get_view_count() != 1:
@@ -391,39 +466,46 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		y1 = size.y
 	if x1 <= x0 or y1 <= y0:
 		return
-	var groups := Vector3i((x1 - x0 + 7) / 8, (y1 - y0 + 7) / 8, 1)
+	var groups := Vector2i((x1 - x0 + 7) / 8, (y1 - y0 + 7) / 8)
 	var tm := PackedFloat32Array([_tonemap.x, _tonemap.y, _tonemap.z, qa_debug]).to_byte_array()
 	tm.append_array(PackedInt32Array([x0, y0, x1, y1]).to_byte_array())
 	# 1. The colour under the effects, as the screen will show it.
-	var u_color := RDUniform.new()
-	u_color.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	u_color.binding = 0
-	u_color.add_id(color)
-	var u_disp := RDUniform.new()
-	u_disp.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	u_disp.binding = 1
-	u_disp.add_id(_disp)
-	var u_mask := RDUniform.new()
-	u_mask.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	u_mask.binding = 2
-	u_mask.add_id(_mask)
-	var set_in := UniformSetCacheRD.get_cache(_shader_in, 0, [u_color, u_disp, u_mask])
-	var cl := _rd.compute_list_begin()
-	_rd.compute_list_bind_compute_pipeline(cl, _pipe_in)
-	_rd.compute_list_bind_uniform_set(cl, set_in, 0)
-	_rd.compute_list_set_push_constant(cl, tm, tm.size())
-	_rd.compute_list_dispatch(cl, groups.x, groups.y, 1)
-	_rd.compute_list_end()
+	_compute(_pipe_in, _image_set(_shader_in, color), tm, groups)
 	# 2. The effects, back to front.
 	var fb_format := _rd.framebuffer_get_format(_fb)
 	var scene_ubo := rsd.get_uniform_buffer()
 	var dl := _rd.draw_list_begin(_fb, RenderingDevice.DRAW_DEFAULT_ALL)
+	if fb_format != _fb_format:
+		_pipelines.clear()
+		_fb_format = fb_format
+		_prepared.clear()
+	if depth != _set_depth or scene_ubo != _set_ubo:
+		_sets.clear()
+		_set_depth = depth
+		_set_ubo = scene_ubo
+		_prepared.clear()
+	if not _prepared.is_empty():
+		for d_v in _prepared:
+			var d: Array = d_v
+			_rd.draw_list_bind_render_pipeline(dl, d[0])
+			_rd.draw_list_bind_uniform_set(dl, d[1], 0)
+			var dpc: PackedByteArray = d[2]
+			_rd.draw_list_set_push_constant(dl, dpc, dpc.size())
+			_rd.draw_list_draw(dl, false, d[3], d[4])
+		drawn_nodes = _prepared.size()
+		_rd.draw_list_end()
+		_compute(_pipe_out, _image_set(_shader_out, color), tm, groups)
+		render_usec = Time.get_ticks_usec() - t0
+		_render_sum += render_usec
+		_render_frames += 1
+		return
 	for it_v in _frame:
-		var it: Dictionary = it_v
-		var mm: MultiMesh = it["mm"]
-		var tex: Texture2D = it["tex"]
-		var n: int = it["count"]
-		if mm == null or tex == null or n <= 0:
+		var it: Array = it_v
+		var st: Dictionary = it[0]
+		var mm: MultiMesh = st["mm"]
+		var tex: Texture2D = st["tex"]
+		var n: int = it[1]
+		if n <= 0:
 			continue
 		var inst := RenderingServer.multimesh_get_buffer_rd_rid(mm.get_rid())
 		var trd := RenderingServer.texture_get_rd_texture(tex.get_rid())
@@ -432,61 +514,83 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		if qa_dump > 0:
 			qa_dump -= 1
 			var ubo := _rd.buffer_get_data(scene_ubo, 0, 320).to_float32_array()
-			print("QA FXPASS ubo %s; cam %s; proj %s" % [str(ubo), str(rsd.get_cam_transform()), str(rsd.get_cam_projection())])
-			var raw := _rd.buffer_get_data(inst, 0, 160)
-			print("QA FXPASS inst %s count %d: %s; cpu %s; pc %s" % [str(inst), n, str(raw.to_float32_array()), str(mm.buffer.slice(0, 40)), str((it["pc"] as PackedByteArray).slice(0, 48).to_float32_array())])
-		var mesh_b := _mesh_buffer(it["mesh_key"], it["mesh"])
-		var verts: int = (it["mesh"] as PackedFloat32Array).size() / 8
-		var u0 := RDUniform.new()
-		u0.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
-		u0.binding = 0
-		u0.add_id(scene_ubo)
-		var u1 := RDUniform.new()
-		u1.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-		u1.binding = 1
-		u1.add_id(inst)
-		var u2 := RDUniform.new()
-		u2.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-		u2.binding = 2
-		u2.add_id(mesh_b)
-		var u3 := RDUniform.new()
-		u3.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
-		u3.binding = 3
-		u3.add_id(_sampler)
-		u3.add_id(trd)
-		var u4 := RDUniform.new()
-		u4.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
-		u4.binding = 4
-		u4.add_id(_depth_sampler)
-		u4.add_id(depth)
-		var uset := UniformSetCacheRD.get_cache(_shader_draw, 0, [u0, u1, u2, u3, u4])
-		_rd.draw_list_bind_render_pipeline(dl, _pipeline(fb_format, it["src"], it["dest"], it["cull"], it["mirrored"]))
+			print("QA FXPASS ubo %s; inst %s" % [str(ubo), str(_rd.buffer_get_data(inst, 0, 160).to_float32_array())])
+		var mesh: PackedFloat32Array = st["mesh"]
+		var mesh_b := _mesh_buffer(st["mesh_key"], mesh)
+		var ukey := Vector3i(inst.get_id(), mesh_b.get_id(), trd.get_id())
+		var uset: RID = _sets.get(ukey, RID())
+		if not uset.is_valid() or not _rd.uniform_set_is_valid(uset):
+			uset = _uniform_set(scene_ubo, inst, mesh_b, trd, depth)
+			if _sets.size() > 1024:
+				_sets.clear()
+			_sets[ukey] = uset
+		var pk: int = st["pipe"]
+		var pipe: RID = _pipelines.get(pk, RID())
+		if not pipe.is_valid():
+			pipe = _pipeline(fb_format, st["src"], st["dest"], st["cull"], st["mirrored"])
+			_pipelines[pk] = pipe
+		_rd.draw_list_bind_render_pipeline(dl, pipe)
 		_rd.draw_list_bind_uniform_set(dl, uset, 0)
-		var pc: PackedByteArray = it["pc"]
+		var pc: PackedByteArray = it[2]
 		_rd.draw_list_set_push_constant(dl, pc, pc.size())
-		_rd.draw_list_draw(dl, false, n, verts)
+		_rd.draw_list_draw(dl, false, n, mesh.size() / 8)
+		_prepared.append([pipe, uset, pc, n, mesh.size() / 8])
 		drawn_nodes += 1
 	_rd.draw_list_end()
 	# 3. The marked pixels back to linear.
-	var u_color2 := RDUniform.new()
-	u_color2.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	u_color2.binding = 0
-	u_color2.add_id(color)
-	var u_disp2 := RDUniform.new()
-	u_disp2.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	u_disp2.binding = 1
-	u_disp2.add_id(_disp)
-	var u_mask2 := RDUniform.new()
-	u_mask2.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	u_mask2.binding = 2
-	u_mask2.add_id(_mask)
-	var set_out := UniformSetCacheRD.get_cache(_shader_out, 0, [u_color2, u_disp2, u_mask2])
-	cl = _rd.compute_list_begin()
-	_rd.compute_list_bind_compute_pipeline(cl, _pipe_out)
-	_rd.compute_list_bind_uniform_set(cl, set_out, 0)
-	_rd.compute_list_set_push_constant(cl, tm, tm.size())
+	_compute(_pipe_out, _image_set(_shader_out, color), tm, groups)
+	render_usec = Time.get_ticks_usec() - t0
+	_render_sum += render_usec
+	_render_frames += 1
+
+func _compute(pipe: RID, uset: RID, pc: PackedByteArray, groups: Vector2i) -> void:
+	var cl := _rd.compute_list_begin()
+	_rd.compute_list_bind_compute_pipeline(cl, pipe)
+	_rd.compute_list_bind_uniform_set(cl, uset, 0)
+	_rd.compute_list_set_push_constant(cl, pc, pc.size())
 	_rd.compute_list_dispatch(cl, groups.x, groups.y, 1)
 	_rd.compute_list_end()
+
+## The compute passes' images: the scene's colour, the display buffer, the
+## mask.
+func _image_set(shader: RID, color: RID) -> RID:
+	var us: Array[RDUniform] = []
+	var ids := [color, _disp, _mask]
+	for b in 3:
+		var u := RDUniform.new()
+		u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+		u.binding = b
+		u.add_id(ids[b])
+		us.append(u)
+	return UniformSetCacheRD.get_cache(shader, 0, us)
+
+## A draw's uniform set: the scene's data, the instances, the mesh, the
+## texture and the scene's depth (UniformSetCacheRD keeps it while its
+## resources live; _sets keys it by their RIDs).
+func _uniform_set(scene_ubo: RID, inst: RID, mesh_b: RID, trd: RID, depth: RID) -> RID:
+	var u0 := RDUniform.new()
+	u0.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	u0.binding = 0
+	u0.add_id(scene_ubo)
+	var u1 := RDUniform.new()
+	u1.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u1.binding = 1
+	u1.add_id(inst)
+	var u2 := RDUniform.new()
+	u2.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u2.binding = 2
+	u2.add_id(mesh_b)
+	var u3 := RDUniform.new()
+	u3.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	u3.binding = 3
+	u3.add_id(_sampler)
+	u3.add_id(trd)
+	var u4 := RDUniform.new()
+	u4.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	u4.binding = 4
+	u4.add_id(_depth_sampler)
+	u4.add_id(depth)
+	return UniformSetCacheRD.get_cache(_shader_draw, 0, [u0, u1, u2, u3, u4])
 
 ## One draw's push constants: the effect node's world transform as three rows,
 ## the stage ops, the glow alpha and the instance stride (vec4s).

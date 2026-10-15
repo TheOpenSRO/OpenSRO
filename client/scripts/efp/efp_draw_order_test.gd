@@ -217,10 +217,15 @@ func _test_pass() -> void:
 	fx.pass_items(items, [], Vector3(0, 0, 100), dp)
 	var ok := items.size() == 2
 	if ok:
-		var a: Dictionary = items[0]
-		var b: Dictionary = items[1]
-		ok = a["src"] == 5 and a["dest"] == 2 and b["dest"] == 6 and int(a["count"]) > 0 and a["cull"] == false \
-			and a["depth_test"] == true and (a["pc"] as PackedByteArray).size() == 80 and a["mm"] is MultiMesh and a["tex"] is Texture2D
+		var a: Array = items[0]
+		var b: Array = items[1]
+		var sa: Dictionary = a[0]
+		var sb: Dictionary = b[0]
+		var ints := (a[2] as PackedByteArray).slice(48).to_int32_array()
+		ok = sa["src"] == 5 and sa["dest"] == 2 and sb["dest"] == 6 and int(a[1]) > 0 and sa["cull"] == false \
+			and ints[7] == 5 and ints[6] == 255 and (a[2] as PackedByteArray).size() == 80 and sa["mm"] is MultiMesh and sa["tex"] is Texture2D \
+			and int(sa["pipe"]) == EfpDisplayPass.pipeline_key(5, 2, false, false)
+		ok = ok and (a[2] as PackedByteArray).slice(0, 48) == EfpDisplayPass.transform_bytes((fx._draws[0][1] as Node3D).global_transform)
 	_check(ok, "each drawn node becomes an item: its blend pair, particle count, culling (a billboard: none), depth test and push constants (%d items)" % items.size())
 	EfpDisplayPass.pass_headless_active(null)
 	fx.sim.clear()

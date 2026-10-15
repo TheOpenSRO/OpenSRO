@@ -369,6 +369,8 @@ func pass_items(items: Array, planes: Array, eye: Vector3, display_pass) -> void
 	var native := sim is EfpSimNative and (sim as EfpSimNative).is_native()
 	if native:
 		counts = (sim as EfpSimNative).draw_counts()
+	if _pass_static.size() != _draws.size():
+		_pass_static.resize(_draws.size())
 	for di in _draws.size():
 		var mmi := _draws[di][1] as MultiMeshInstance3D
 		var mm := mmi.multimesh
@@ -383,27 +385,48 @@ func pass_items(items: Array, planes: Array, eye: Vector3, display_pass) -> void
 		var box: AABB = xf * (_draw_boxes[di] if di < _draw_boxes.size() else DRAW_AABB)
 		if not WorldAmbientFx.box_in_view(box, planes):
 			continue
-		var m := mmi.material_override as ShaderMaterial
-		var tex: Texture2D = m.get_shader_parameter("tex") if m != null else null
-		if tex == null:
-			continue
-		var st: EfpReader.EfpRenderState = _draw_states[di] if di < _draw_states.size() else null
-		var glow := _glow_on and _glow_materials.has(m)
-		var ops := PackedInt32Array([st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
-			st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0])
-		var billboard: bool = _draw_billboard[di] if di < _draw_billboard.size() else false
-		var mesh: Mesh = mm.mesh
-		items.append({
-			"mm": mm, "tex": tex, "count": mini(n, mm.instance_count),
-			"mesh": display_pass.mesh_data(mesh), "mesh_key": mesh.get_rid(),
-			"src": st.src_blend if st else 5, "dest": st.dest_blend if st else 2,
-			"cull": not (billboard or cull_disabled(st.cull if st else 1)),
-			"depth_test": not glow,
-			"mirrored": xf.basis.determinant() < 0.0,
-			"pc": EfpDisplayPass.push_constants(xf, ops, clampi(_glow_alpha, 0, 255) if glow else 255, -5 if glow or EfpDisplayPass.qa_no_depth else 5),
-			"depth": eye.distance_to(box.get_center()),
-			"box": box,
-		})
+		var stat = _pass_static[di]
+		if stat == null:
+			stat = _pass_static_of(di, display_pass, xf)
+			if stat == null:
+				continue
+			_pass_static[di] = stat
+		var glow := _glow_on and _glow_materials.has(mmi.material_override)
+		var ints: PackedInt32Array = (stat as Dictionary)["ops"].duplicate()
+		ints.append(clampi(_glow_alpha, 0, 255) if glow else 255)
+		ints.append(-5 if glow or EfpDisplayPass.qa_no_depth else 5)
+		var pc := EfpDisplayPass.transform_bytes(xf)
+		pc.append_array(ints.to_byte_array())
+		items.append([stat, mini(n, mm.instance_count), pc, eye.distance_squared_to(box.get_center()), box])
+
+## A draw's unchanging part for the display pass, built once: the MultiMesh
+## and texture (held, so neither is freed before a frame drawing them is
+## done), the mesh as a triangle list, the node's Direct3D blend pair,
+## culling (none for a billboard) and the winding of its transform, and the
+## stage ops.
+var _pass_static: Array = []
+
+func _pass_static_of(di: int, display_pass, xf: Transform3D):
+	var mmi := _draws[di][1] as MultiMeshInstance3D
+	var mm := mmi.multimesh
+	var m := mmi.material_override as ShaderMaterial
+	var tex: Texture2D = m.get_shader_parameter("tex") if m != null else null
+	if tex == null or mm.mesh == null:
+		return null
+	var st: EfpReader.EfpRenderState = _draw_states[di] if di < _draw_states.size() else null
+	var billboard: bool = _draw_billboard[di] if di < _draw_billboard.size() else false
+	var mesh: Mesh = mm.mesh
+	var src := st.src_blend if st else 5
+	var dest := st.dest_blend if st else 2
+	var cull := not (billboard or cull_disabled(st.cull if st else 1))
+	var mirrored := xf.basis.determinant() < 0.0
+	return {
+		"mm": mm, "tex": tex, "mesh": display_pass.mesh_data(mesh), "mesh_key": mesh.get_rid(),
+		"src": src, "dest": dest, "cull": cull, "mirrored": mirrored,
+		"pipe": EfpDisplayPass.pipeline_key(src, dest, cull, mirrored),
+		"ops": PackedInt32Array([st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
+			st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0]),
+	}
 
 ## Round 786: the display twins use_display_blend made (tests).
 var _display_materials: Array[ShaderMaterial] = []
