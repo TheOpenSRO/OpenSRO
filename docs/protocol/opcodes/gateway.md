@@ -232,7 +232,10 @@ ID compared without case -- the 0x6102 carried it as typed; how AgentServer comp
 read, INFERRED). Each refusal ends the connection (0x402608). Success: `[1]` -- retail sends it
 only after the shard (0xA201) and the game server (0xA204) accept; OpenSRO is both and answers at
 once -- and `LoginService.AdmitSession` marks the session as the account's (the keys
-`AuthenticatedAccountID` reads). The client shows `(C9)` for 1, `(C10)` for 2 and 3 (jump table
+`AuthenticatedAccountID` reads) and enters it in the logged-in table (round 788, lane S: an
+account that came online elsewhere since the gateway admitted it, or an address past
+`-max-users-per-ip`, is refused `[2, 2]` and the connection closed -- INFERRED the nearest code,
+docs/protocol/opcodes/login.md "What OpenSRO does"). The client shows `(C9)` for 1, `(C10)` for 2 and 3 (jump table
 0x4cf874).
 
 ### After 0xA103 (READ, sro_client)
@@ -289,7 +292,8 @@ agent    recv 0x7001 0800 "OpenHero" -> send 0xb001 02 0f04, then 0xb007 (the li
 
 The server list showed "OpenSRO  Easy"; a wrong password showed "You have entered the incorrect
 password! ... Out of a maximum of 0 attempts, you have used 0 attempt(s)." in the title's message
-line (the base LoginService counts nothing yet; lane S); the right one went to the character select
+line (the base LoginService counted nothing yet; lane S's counter fills max and used since the
+merge, `TestRetailPathLoginRules`); the right one went to the character select
 screen with the account's character (made on OpenSRO's own wire) standing in its chosen armour,
 its info panel reading Level 1, EXP 0.00 %; Start showed the 0x40F text above. Screenshots
 (game art, kept off the repository): `/var/tmp/r788r-proof/` on the box.

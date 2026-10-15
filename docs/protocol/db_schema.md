@@ -19,6 +19,19 @@ Small, focused around login: `TB_User` (the main account table), `TB_Net2e`, plu
 procedures following a `_VerbNoun` naming convention — `_CertifyUser` (login, see
 `opcodes/login.md`), `_AddUser`, `_QueryCharOwnedUser`.
 
+**Punishments (round 788).** The binaries name the account database's `_Punishment` table and its
+procedures (READ, GlobalManager strings): `select * from _Punishment where UserJID = %d`,
+`_RegisterPunishment` (13 arguments), `_UpdatePunishment`, `_QueryActivePunishmet` (sic),
+`_RegisterAutomatedPunishment '<acct>',<type>,'<punisher>','<guide>','<description>',<minutes>`,
+and the gateway's `_CertifyTB_User` / `_QueryBlockGuide <JID>`. The SMC's punishment plugin shows
+the record's fields (SerialNo, Type, Executor, Shard, CharName, Additional Char Info, Position,
+Guide For Web, Accident Description, Raised / Punish Begin / Punish End / Sentenced Time). The
+procedures' bodies are in SRO_VT_ACCOUNT, which is not among the backups on the RE box (only
+SRO_VT_SHARD is), so their logic is OPEN. OpenSRO's own table, `account_punishments`
+(`server/internal/account/sqlstore.go`): serial, account_id, type (1-4), executor, guide,
+description, raised_at, begin_at, end_at (NULL = no end). Details: `opcodes/login.md`,
+"Punishments".
+
 ## Shard DB (`SRO_VT_SHARD`)
 
 Much larger — this is the actual game-world data. Rough domain groupings from the identifiers

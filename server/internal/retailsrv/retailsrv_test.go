@@ -55,6 +55,14 @@ func waitListening(t *testing.T, addr string) {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil)
+}
+
+// newHarnessWith is newHarness on login (nil: a bare LoginService on the
+// harness's accounts), whose SessionEnded the agent's disconnects run (round
+// 788, lane S: the logged-in table).
+func newHarnessWith(t *testing.T, login func(*account.MemStore) *session.LoginService) *harness {
+	t.Helper()
 	h := &harness{t: t, accounts: account.NewMemStore(), chars: character.NewMemStore(), now: time.Now()}
 	h.gwAddr, h.agAddr = freeAddr(t), freeAddr(t)
 	_, portStr, _ := net.SplitHostPort(h.agAddr)
@@ -69,9 +77,14 @@ func newHarness(t *testing.T) *harness {
 		Tokens: &Tokens{Now: func() time.Time { return h.now }},
 		Logger: logger,
 	}
+	var ended func(*gateway.Session)
+	if login != nil {
+		h.cfg.Login = login(h.accounts)
+		ended = h.cfg.Login.SessionEnded
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{}, 2)
-	for _, s := range []*gateway.Server{GatewayServer(h.cfg, h.gwAddr), AgentServer(h.cfg, h.agAddr, nil)} {
+	for _, s := range []*gateway.Server{GatewayServer(h.cfg, h.gwAddr), AgentServer(h.cfg, h.agAddr, ended)} {
 		go func(s *gateway.Server) { _ = s.ListenAndServe(ctx); done <- struct{}{} }(s)
 	}
 	t.Cleanup(func() { cancel(); <-done; <-done })

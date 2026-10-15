@@ -6,13 +6,10 @@
 package session
 
 import (
-	"context"
-	"errors"
 	"fmt"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
-	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Opcodes for this project's own protocol. Unrelated to (and much simpler
@@ -62,38 +59,12 @@ func DecodeLoginResult(data []byte) (*LoginResult, error) {
 	return &LoginResult{OK: ok, Reason: reason}, nil
 }
 
-// LoginHandler returns a gateway.Handler implementing the login exchange
-// against store: on OpLogin, authenticate and reply with OpLoginResult.
-// Unrecognized opcodes are ignored (left for other handlers layered on top
-// later), not treated as errors.
+// LoginHandler answers OpLogin against store through a LoginService of its
+// own (round 788): the wrong-password count at the default tolerance and the
+// account's punishments, but no automatic block, no already-connected table
+// or IP limit, no inspection or capacity. The server builds one LoginService
+// for every front door and uses LoginHandlerFor (loginservice.go); this stays
+// for tests and tools. Unrecognized opcodes are ignored.
 func LoginHandler(store account.Store) gateway.Handler {
-	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
-		if p.Opcode != OpLogin {
-			return nil
-		}
-
-		req, err := DecodeLoginRequest(p.Data)
-		if err != nil {
-			return sess.Send(&proto.Packet{
-				Opcode: OpLoginResult,
-				Data:   (&LoginResult{OK: false, Reason: "malformed request"}).Encode(),
-			})
-		}
-
-		result := &LoginResult{OK: true}
-		acc, err := store.Authenticate(ctx, req.Username, req.Password)
-		if err != nil {
-			result.OK = false
-			switch {
-			case errors.Is(err, account.ErrBlocked):
-				result.Reason = "account blocked"
-			default:
-				result.Reason = "invalid username or password"
-			}
-		} else {
-			authenticate(sess, acc.ID, acc.Username)
-		}
-
-		return sess.Send(&proto.Packet{Opcode: OpLoginResult, Data: result.Encode()})
-	}
+	return LoginHandlerFor(&LoginService{Accounts: store})
 }

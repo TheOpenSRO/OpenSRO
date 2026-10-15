@@ -181,7 +181,12 @@ func (c *Config) agentLogin(sess *gateway.Session, data []byte) error {
 		c.logger().Info("retail agent: the credentials do not match the token's login", "addr", sess.RemoteAddr())
 		return agentRefuse(sess, AgentErrCredentials)
 	}
-	c.Login.AdmitSession(sess, p.acc)
+	if err := c.Login.AdmitSession(sess, p.acc); err != nil {
+		// Round 788 (lane S): the account came online elsewhere, or the
+		// address filled, since the gateway admitted this login.
+		c.logger().Info("retail agent: refused at admission", "addr", sess.RemoteAddr(), "account", p.acc.Username, "error", err)
+		return agentRefuse(sess, AgentErrRegistration)
+	}
 	sess.Set(agentAuthedKey, true)
 	c.logger().Info("retail agent: logged in", "addr", sess.RemoteAddr(), "account", p.acc.Username)
 	return sess.Send(&proto.Packet{Opcode: OpAgentLoginReply, Data: []byte{agentOK}})

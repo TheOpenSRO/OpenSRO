@@ -43,6 +43,10 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 788: the server answers OpLogin through its one LoginService
+	// (session.LoginHandlerFor); LoginHandler(store) is the old signature,
+	// kept for the many session tests that log in through it.
+	"LoginHandler": "round 788: session.LoginHandlerFor on a LoginService of its own, for tests and tools; the server wires LoginHandlerFor(loginService).",
 	// Round 788 lane R: the retail client connection past the handshake, the
 	// Go stand-in for sro_client that drives retailsrv's gateway and agent.
 	"DialClient":   "round 788: retailgw.ClientConn, the client side of the retail framing past the handshake; retailsrv_test.go and servercodec_test.go log in through it as sro_client does.",

@@ -74,7 +74,7 @@ func TestAuthenticateReturnsCopyNotInternalPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
-	acc.Blocked = true // mutate the caller's copy
+	acc.PasswordHash = nil // mutate the caller's copy
 
 	// A second, independent Authenticate call should be unaffected if the
 	// store returned a copy rather than its internal pointer.
