@@ -3628,6 +3628,13 @@ a 960-unit square, reaching 320 to 640 units from the player on each axis depend
 its block it stands. OpenSRO: `combat.CellSpan` = 320, `session.AOIRadius` = 1
 (`TestAOIWindowIsRetailsMessageBlocks`).
 
+Round 786 re-read the chain (the block division at 0x53ad30 with 320.0 at 0xb45ae8, the
+neighbour table at 0xc64090, slot 2's neighbour loop at 0x5343b8..0x534419) and measured the
+runtime against it on the full map (67,266 monsters, `partybot -mode latency`): every enter came
+320-621 units ahead of a bot running at 105 units a second, 27-96 ms after its block crossing --
+one `AOITick`. The late monsters of the user's report were the client's
+(`docs/protocol/spawn_attack_latency.md`).
+
 Not read, OPEN: whether any object kind is sent from farther (a unique, a structure); the
 `CMsgBlockObject` blocks of the object regions (dungeons, `CRgnObject`), whose layout was not
 followed; the rule for which objects the server RUNS (the sleep stays OURS).

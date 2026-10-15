@@ -262,13 +262,13 @@ class Templates:
 		_radii.clear()
 		return freed
 
-## A body from a template: its skeleton duplicated (the mesh, skin and
+## A body from a template: its skeleton copied (clone_tree: the mesh, skin and
 ## material resources shared), the parsed `.bsr`, the clips and the
 ## per-model animation cache shared by reference.
 static func instance_of(template: SkinnedBsrAssembler.AssembledCharacter) -> SkinnedBsrAssembler.AssembledCharacter:
 	if template == null or template.skeleton == null:
 		return null
-	var skeleton := template.skeleton.duplicate() as Skeleton3D
+	var skeleton := (template.skeleton.duplicate() if _qa_duplicate else clone_tree(template.skeleton)) as Skeleton3D
 	if skeleton == null:
 		return null
 	var body := SkinnedBsrAssembler.AssembledCharacter.new()
@@ -281,3 +281,90 @@ static func instance_of(template: SkinnedBsrAssembler.AssembledCharacter) -> Ski
 	body.piece_distances = template.piece_distances
 	body.skinned_pieces = template.skinned_pieces
 	return body
+
+## OPENSRO_QA_DUPLICATE=1 (round 786, QA): bodies by duplicate(), as before
+## the round -- the before half of the round's A/B in one build.
+static var _qa_duplicate := OS.get_environment("OPENSRO_QA_DUPLICATE") == "1"
+
+## A copy of a template's node tree -- the Skeleton3D, its MeshInstance3D
+## pieces and BoneAttachment3D holders, the only kinds SkinnedBsrAssembler
+## makes -- built node by node, with the resources shared, as duplicate()
+## shares them. Round 786: the first duplicate() of a frame took 12-25 ms on
+## the render box and the next ones 0.3 ms (MEASURED, `QA LAT dup`), because
+## duplicate() reads every node's property list and a GeometryInstance3D's
+## asks the rendering server for its instance shader parameters, which with
+## the separate render thread (project.godot's thread_model 2) waits for that
+## thread (INFERRED from Godot's GeometryInstance3D::_get_property_list); the
+## copy here reads no property list (0.13-0.35 ms a body, MEASURED). The
+## render thread is still waited for once a frame by the rest of the build
+## (RenderSync). Any other node kind is still duplicate()d.
+static func clone_tree(src: Node) -> Node:
+	var dst: Node
+	if src is Skeleton3D:
+		dst = _clone_skeleton(src as Skeleton3D)
+	elif src is MeshInstance3D:
+		dst = _clone_mesh_instance(src as MeshInstance3D)
+	elif src is BoneAttachment3D:
+		var a := src as BoneAttachment3D
+		var b := BoneAttachment3D.new()
+		b.transform = a.transform
+		b.bone_name = a.bone_name
+		b.override_pose = a.override_pose
+		dst = b
+	else:
+		return src.duplicate()
+	dst.name = src.name
+	if src is Node3D:
+		(dst as Node3D).visible = (src as Node3D).visible
+	for key in src.get_meta_list():
+		dst.set_meta(key, src.get_meta(key))
+	for c in src.get_children():
+		dst.add_child(clone_tree(c))
+	return dst
+
+static func _clone_skeleton(s: Skeleton3D) -> Skeleton3D:
+	var d := Skeleton3D.new()
+	Skeleton3DBuilder.no_physics_step(d)
+	d.transform = s.transform
+	d.motion_scale = s.motion_scale
+	d.show_rest_only = s.show_rest_only
+	var n := s.get_bone_count()
+	for i in n:
+		d.add_bone(s.get_bone_name(i))
+	for i in n:
+		d.set_bone_parent(i, s.get_bone_parent(i))
+		d.set_bone_rest(i, s.get_bone_rest(i))
+		d.set_bone_enabled(i, s.is_bone_enabled(i))
+		d.set_bone_pose_position(i, s.get_bone_pose_position(i))
+		d.set_bone_pose_rotation(i, s.get_bone_pose_rotation(i))
+		d.set_bone_pose_scale(i, s.get_bone_pose_scale(i))
+	return d
+
+static func _clone_mesh_instance(m: MeshInstance3D) -> MeshInstance3D:
+	var d := MeshInstance3D.new()
+	d.transform = m.transform
+	d.mesh = m.mesh
+	d.skin = m.skin
+	d.skeleton = m.skeleton
+	d.material_override = m.material_override
+	d.material_overlay = m.material_overlay
+	for i in m.get_surface_override_material_count():
+		var mat := m.get_surface_override_material(i)
+		if mat != null:
+			d.set_surface_override_material(i, mat)
+	d.layers = m.layers
+	d.cast_shadow = m.cast_shadow
+	d.sorting_offset = m.sorting_offset
+	d.sorting_use_aabb_center = m.sorting_use_aabb_center
+	d.extra_cull_margin = m.extra_cull_margin
+	d.custom_aabb = m.custom_aabb
+	d.gi_mode = m.gi_mode
+	d.lod_bias = m.lod_bias
+	d.transparency = m.transparency
+	d.ignore_occlusion_culling = m.ignore_occlusion_culling
+	d.visibility_range_begin = m.visibility_range_begin
+	d.visibility_range_begin_margin = m.visibility_range_begin_margin
+	d.visibility_range_end = m.visibility_range_end
+	d.visibility_range_end_margin = m.visibility_range_end_margin
+	d.visibility_range_fade_mode = m.visibility_range_fade_mode
+	return d

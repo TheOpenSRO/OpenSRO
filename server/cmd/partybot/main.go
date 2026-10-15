@@ -103,6 +103,9 @@ type bot struct {
 	// uidByRef the NPCs spawned, by reference id.
 	quest    chan *proto.Packet
 	uidByRef map[uint32]uint32
+	// tap, when set, sees every packet the reader reads, first (round 786's
+	// latency mode, latency.go).
+	tap func(*proto.Packet)
 }
 
 // lastGain is the newest 0x3056 b was sent, and how many it has had.
@@ -368,6 +371,9 @@ func (b *bot) run() {
 			return
 		}
 		b.note(p)
+		if b.tap != nil {
+			b.tap(p)
+		}
 		if os.Getenv("PARTYBOT_TRACE") != "" {
 			fmt.Printf("[%s] trace 0x%04x %d bytes\n", b.name, p.Opcode, len(p.Data))
 		}
@@ -908,6 +914,14 @@ func main() {
 	flag.BoolVar(&pickupOpts.pick, "pick", false, "pickup: walk up to each stack and pick it up")
 	flag.DurationVar(&pickupOpts.wait, "wait", 0, "pickup: wait this long in the world before the first kill")
 	flag.StringVar(&pickupOpts.at, "at", "", "pickup: \"x y z\" -- stand there (a relocation) before the first kill")
+	flag.DurationVar(&latOpts.walk, "walk", 0, "latency: run a straight line this long, timing the monsters' enters")
+	flag.Float64Var(&latOpts.speed, "speed", 105, "latency: the walk's speed, units a second")
+	flag.Float64Var(&latOpts.heading, "heading", 0, "latency: the walk's heading in degrees from +x toward +z")
+	flag.IntVar(&latOpts.attacks, "attacks", 0, "latency: attacks to time after the walk")
+	flag.BoolVar(&latOpts.noDelay, "nodelay", true, "latency: TCP_NODELAY on the bot's socket (false: Nagle on, the client before round 786)")
+	flag.IntVar(&latOpts.crowd, "crowd", 0, "latency: this many more bots moving around the spot")
+	flag.DurationVar(&latOpts.crowdPace, "crowd-pace", 150*time.Millisecond, "latency: the time between two crowd bots' logins")
+	flag.DurationVar(&latOpts.attackTo, "attack-timeout", 5*time.Second, "latency: how long to wait for an attack's result")
 	questRace := flag.String("race", "china", "quest: the character's race, china or europe")
 	questsDir := flag.String("quests-dir", "", "quest: the catalogue directory (export-refdata -mode quests)")
 	npcsCSV := flag.String("npcs-csv", "", "quest: the NPC table (export-refdata -mode npcs)")
@@ -928,6 +942,8 @@ func main() {
 		err = shareScenario(*addr, *prefix, *monster, *level)
 	case "pickup":
 		err = pickupScenario(*addr, *prefix, *monster, *level, pickupOpts)
+	case "latency":
+		err = latencyScenario(*addr, *name, *level, *tp)
 	case "quest":
 		err = questScenario(*addr, *name, *questRace, *level, *questsDir, *npcsCSV, *npcposCSV, flag.Args())
 	default:
