@@ -2313,6 +2313,9 @@ func main() {
 		// 2, stored per character and sent back after the world entry.
 		session.AutoPotionHandler(autoPotionStoreOf(chars), hub, logger),
 	)
+	// The account PIN (round 788, OURS): its requests, and Start, delete and
+	// restore held until the session has entered it (charlock.go).
+	handle = session.CharacterLockGate(characterLock(accounts, logger), logger, handle)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
 	// Round 632's composite review: a leaving character's berserk turn,
