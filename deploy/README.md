@@ -1518,6 +1518,28 @@ which its select screen shows as the list's error (round 682's review). A new cl
 older server waits 5 s for the list and then says the server did not answer. A deleted character
 waits 7 days (10080 minutes, restorable) and is then removed by the server's once-a-minute purge.
 
+## Account PIN (Character Lock) (round 788)
+
+A player may protect an account with a 4-digit PIN, asked at character select once per login before
+the first Start, Delete or Restore (`docs/protocol/pin.md`; the feature is OpenSRO's own, the
+retail game has none). Five wrong entries lock the PIN for 30 minutes, kept in the database.
+
+- **Nothing to do to keep it optional.** The server creates its two tables (`character_locks`,
+  `character_lock_devices`) on the accounts' database at boot and logs
+  `account PIN (character lock) required=false lock_after=5 lock_for=30m0s`.
+- **`-require-pin`** (env `OPENSRO_REQUIRE_PIN=true`): every account must have a PIN; one with none
+  is shown the create window before it can start, delete or restore. Default off. A value that is
+  not a boolean leaves it off, with a warning at boot.
+- **Retail clients.** The original client has no PIN window: on an account with a PIN it can list
+  its characters but every Start, Delete and Restore answers "Failed to connect to server." (code
+  0x40e); under `-require-pin` it can start no character at all.
+- **A player locked out of their PIN** (forgotten, not the 30-minute lock): there is no GM command
+  yet. Remove the PIN, its count and its remembered PCs by account id:
+  `docker compose exec -T postgres psql -U postgres opensro -c "DELETE FROM character_locks WHERE account_id = <id>; DELETE FROM character_lock_devices WHERE account_id = <id>;"`
+  (the id: `SELECT id FROM accounts WHERE username = '<name>';`). The player then has no PIN.
+- Players need a client from this release for the window; an older client against this server
+  never asks, and is refused Start, Delete and Restore only on an account that has a PIN.
+
 ## Character defaults (round 692)
 
 A new character gets its race's default masteries (level 0), skills and level-1 quests, as the
