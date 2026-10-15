@@ -167,7 +167,10 @@ func _setup_lock() -> void:
 	_lock.setup(self, UiBuilder.new(_media, _text), NetClient, _def("Select", ID_START), _button,
 		func() -> bool: return state in LIST_BUTTON_STATES or state in SELECTED_BUTTON_STATES)
 	_lock.place_button((_windows[ID_START] as Control).position)
-	if not _fake:
+	# A legacy server's agent carries only the lobby (NetClient._send_retail):
+	# it is never asked, and with no status pending hold() lets every action
+	# through.
+	if not _fake and not NetClient.is_retail():
 		_lock.query()
 
 func _section(name: String) -> UiLayoutParser.SectionDef:
