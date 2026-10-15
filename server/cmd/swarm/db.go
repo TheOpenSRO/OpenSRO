@@ -228,6 +228,7 @@ var cleanupRefs = []ownerRef{
 	{"friend_requests", "requester_id", false},
 	{"friend_requests", "target_id", false},
 	{inventory.WarehouseTable, "account_id", true},
+	{"account_punishments", "account_id", true}, // round 788
 	{"characters", "account_id", true},
 	{"accounts", "id", true},
 }

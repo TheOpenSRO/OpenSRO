@@ -43,6 +43,10 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 788: the server answers OpLogin through its one LoginService
+	// (session.LoginHandlerFor); LoginHandler(store) is the old signature,
+	// kept for the many session tests that log in through it.
+	"LoginHandler": "round 788: session.LoginHandlerFor on a LoginService of its own, for tests and tools; the server wires LoginHandlerFor(loginSvc).",
 	"Messages": "round 768: the client's outcome decode (UI_REINFORCERR FUN_00592650). The server never sends that byte -- " +
 		"its reply carries success and destroyed, and the client builds the byte from the old and new item " +
 		"(docs/protocol/alchemy.md, \"Round 768\") -- so it is the client half's specification, kept beside the codes it names; tested.",

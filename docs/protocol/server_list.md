@@ -204,7 +204,7 @@ OpenSRO question.
 - **Unreachable:** the row shows `UIO_STT_TEST` "Closed" in the list's default 0xFFB4B4B4. Connect
   to such a server shows retail's "Failed to connect to server." (without the code).
 - **The gate:** under `-inspection`, or with `-max-players` characters in the world, a login gets
-  retail's inspection or full message (`session.LoginGate`); the `-gm-accounts` names pass both.
+  retail's inspection or full message (`session.LoginService`, round 788; on 0x6102 the codes [2,2,2] and [2,5]); the `-gm-accounts` names pass both.
 - **Connect resolves a name the way the status does** (`NetClient`, round 679's review): without
   blocking, its IPv4 address first (`GatewayQuery.pick_address`); the TLS name stays the host name.
 - **Left out:** the 0.5 s fades of the list (it shows and hides at once), the farm column, the

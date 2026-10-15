@@ -1010,7 +1010,7 @@ func main() {
 	monsterAIEnv, monsterAIEnvErr := envBool("OPENSRO_MONSTER_AI")
 	// The server list's status (round 679, OURS): the capacity the client's
 	// population band divides by, and the inspection switch it shows as
-	// "Check"; both also turn logins away (session.LoginGate).
+	// "Check"; both also turn logins away (session.LoginService).
 	maxPlayersEnv, maxPlayersEnvErr := envInt("OPENSRO_MAX_PLAYERS", defaultMaxPlayers)
 	inspectionEnv, inspectionEnvErr := envBool("OPENSRO_INSPECTION")
 	maxPlayers := flag.Int("max-players", maxPlayersEnv,
