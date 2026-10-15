@@ -10242,6 +10242,9 @@ func _tick_world_fx(delta: float) -> void:
 	_world_fx.tick(delta, eye, planes, now)
 	if _qa_world_fx and Engine.get_process_frames() % 120 == 0:
 		print("QA WORLDFX frame %d: %s" % [Engine.get_process_frames(), _world_fx.describe()])
+		if WorldAmbientFx.qa_detail:
+			print("QA WORLDFX player %s" % (str(player.global_position.round()) if player != null else "-"))
+			print(_world_fx.detail(eye))
 
 ## Retries left for a region whose gate effects are still decoding.
 const GATE_EFFECT_RETRIES := 50

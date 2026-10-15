@@ -324,6 +324,82 @@ by the texture name. MEASURED, files using each state among rendered nodes:
 Colour op MODULATE (4) is the most common, then MODULATE2X (5) and MODULATE4X (6). The arguments
 are TEXTURE (2) and DIFFUSE (0).
 
+### Where an effect draws in the frame (READ, round 787)
+
+Every effect is drawn right after the meshes of the body that owns it, depth-tested, writing no
+depth:
+- **A placed object's effects** draw inside its own batch, `CObjRendererVS::vslot_038` (0xbf5830):
+  - first every mesh piece, the MTRL-blended ones in place, with no sort;
+  - then the mod manager's effects (0xbf5d5c..0xbf5d66 → `FUN_00c44ff0` → `FUN_00c7b3f0` → each
+    mod's slot 3, `CRTModParticle::vslot_003` 0xc76be0 → `FUN_00c81450` → the effect's draw);
+  - then the body's leftover one-shots (`FUN_00c2a700`, 0xbf5d71);
+  - then the equipment effects (`FUN_00c2bc80`, 0xbf5d7c), the +8 and seal particles a
+    `CRTModParticle` keeps in the compound's +0x1a4 map (`CCompChar::FUN_00c30c20`).
+- **A character's skill and buff decorations** draw right after its body
+  (`GlobalDataManager::FUN_009d20d0`): `FUN_009c4aa0` draws and flushes the body, then each
+  decoration's slot 15 (`CIDecoSkill::vslot_015` 0xa4fd30, `CIDecoDamageEffect::vslot_015`
+  0xa496e0).
+- **The frame** (`Map::FUN_00a24e30`) draws, in order:
+  1. the terrain;
+  2. the below-water characters and objects;
+  3. the map water (`FUN_00a220b0`);
+  4. the above-water placed objects, in the sector queue's order (`Map::FUN_00a185f0`; the queue
+     is built by `Map::FUN_00a1e530`, which only queues);
+  5. the above-water characters.
+
+  The water plane is world+0x26c4 (`Map::FUN_00a2b370`).
+- **The depth state.** The effect draw (`EFEffect::FUN_00cabda0`) sets ZWRITEENABLE 0 and does not
+  touch ZENABLE; ZFUNC is LESSEQUAL (`SWorld::vslot_023` 0x9f4bb0).
+  - An MTRL mod with zwrite off writes no depth either, so a particle inside or behind a waterfall
+    sheet or a fountain's stream draws after it, on top of it.
+  - The plain map water does write depth: its one ZWRITE write (0xa22c39) follows its draws. So a
+    particle under the water plane fails the test.
+  - The reflecting water's path (`FUN_00a2df70`) has a `(0xe, 0)`; whether it covers the final
+    quad is OPEN.
+- **The glow entries** (an ambient entry's +0x50) are the exception: they are queued and drawn
+  later, with ZENABLE off (`FUN_00c43100`).
+
+**This client (`EfpEffect.RENDER_PRIORITY`).**
+- Every effect material draws at render priority 1: after every object surface (priority 0), the
+  water (-3) and the fog pass (-1), and in depth order among the effects. Until round 787 effects
+  drew at 0 and Godot's transparent sort by distance mixed them with the objects' blended meshes.
+  A Hotan palace waterfall's sheet, or the Jangan dragon's streams, whose centre was nearer the
+  camera, drew over the sparkles behind it.
+- OURS:
+  - A placed object's effects draw after every object's blended meshes. The original orders
+    them before a later-queued object's.
+  - Above-water characters' blended meshes draw before the world's effects here.
+  - The water writes no depth here, so a particle under the water plane still shows. It did
+    before round 787 too; that is OPEN.
+- `OPENSRO_QA_FX_PRIORITY=<n>` draws every effect at n, for an A/B (0 is the old order).
+
+### Display-value blending under Forward+ (OURS; round 787's measurement)
+
+Direct3D 9 blends in the values the screen shows (no SRGBWRITE; round 705). Compatibility does the
+same, exactly. Forward+ blends in linear space, so the objects' `ambient` effects use a display
+twin (`EfpEffect.display_shader`, rounds 722 and 774). The twin reads Godot's screen copy and does
+the blend against it.
+- That copy is taken **before the transparent pass**: it holds the opaque scene, not the water or
+  a blended sheet lying under the particles.
+- Over such a surface the twin blends against the wrong destination. Its additive layers add less,
+  and its mixing layers pull the colour of the hidden rock or grass onto the sheet.
+- MEASURED, round 787: the effects' share of a box's mean display value, frames 60 to 99, against
+  the same view under Compatibility.
+
+  | site | Forward+ with twins | Godot's own blend | Compatibility |
+  |---|---|---|---|
+  | Hotan palace waterfall (pokpomulbangul, multugu) | +0.25 | +2.0 | +2.3 |
+  | Jangan dragon's splashes (multigi) | +1.4 | +4.1 | +2.7 |
+  | Alexandria library fountain | +5.0 | +2.3 | +5.1 |
+- So a placed object with a mesh of its own that mixes and writes no depth (an SRCALPHA/INVSRCALPHA
+  MTRL mod with ZWRITE off: `ObjectLoader.COVER_META`) draws its effects with Godot's own blend.
+  `WorldAmbientFx.covers` decides it. The others keep their twins.
+- OPEN:
+  - A twin over the map water or another object's sheet. The Jangan splashes lie over the pool,
+    and their stream meshes add.
+  - Exact display-value blending under Forward+ would need the frame as it stands when the effect
+    draws. Godot copies the screen once, before the transparent pass ("Screen-reading shaders").
+
 ## Playback (round 620)
 
 How the client plays a decoded tree. `client/scripts/efp/efp_sim.gd` (`EfpSim`) implements it and

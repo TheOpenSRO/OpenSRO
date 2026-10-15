@@ -1206,7 +1206,16 @@ static func _mod_pass(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary, 
 			mat.set_shader_parameter(k, int(rule[k]))
 	mat.set_shader_parameter("blend_color", int(emu["color"]))
 	mat.set_shader_parameter("blend_alpha", int(emu["alpha"]))
+	if emu["godot"] == "mix" and not rule["zwrite"]:
+		mat.set_meta(COVER_META, true)
 	return mat
+
+## Round 787: an MTRL material that mixes over what lies behind it and writes
+## no depth (SRCALPHA/INVSRCALPHA with ZWRITEENABLE off: a waterfall's sheet)
+## -- a transparent surface the object's own effects draw over (READ,
+## EfpEffect.RENDER_PRIORITY) and that hides the opaque scene a display-value
+## twin reads (AmbientParticles.covers).
+const COVER_META := "opensro_mtrl_cover"
 
 ## The material for a layer the rule draws alpha-tested or two-sided.
 static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alpha_ref: int, two_sided: bool) -> ShaderMaterial:
