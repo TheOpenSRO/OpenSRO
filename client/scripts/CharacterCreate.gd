@@ -37,7 +37,8 @@ extends Control
 ## before its first frame; here the cells stream).
 ##
 ## **Confirm** (10): the screen's own checks (CharCreateModel.confirm_error),
-## then the name's (0x84eac0); a refusal shows in the message line with
+## then the name's (0x84eac0: 2..12 units, then the AbuseFilter test,
+## NameFilter -- round 788); a refusal shows in the message line with
 ## snd_error. Then the box (13) fades in over 0.5 s with the name in 31, and
 ## the dimmer (12) goes 0 -> 0x80 (0x84ec00). Create (32) fades the box out
 ## and the request is sent when that fade ends (0x84e610); the OK reply fades
@@ -695,7 +696,7 @@ func _on_zoom() -> void:
 func _on_name_check() -> void:
 	if _state != State.READY:
 		return
-	var why := CharCreateModel.name_error(_name_edit.text)
+	var why := CharCreateModel.name_error(_name_edit.text, NameFilter.shared(_media))
 	if why != "":
 		_say(_t(why), true)
 		return
@@ -712,7 +713,7 @@ func _on_confirm() -> void:
 		return
 	var why := _model.confirm_error()
 	if why == "":
-		why = CharCreateModel.name_error(_name_edit.text)
+		why = CharCreateModel.name_error(_name_edit.text, NameFilter.shared(_media))
 	if why != "":
 		_say(_t(why), true)
 		return

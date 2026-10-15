@@ -1614,12 +1614,9 @@ front-end's next steps.
 ### The customize screens (round 685) — **built: China and Europe from their own layouts, every control, the READ ranges and rules, the preview with the READ spin, zoom and idle, the turning 98/168 and 105/79 backdrops; these are left**
 
 `docs/protocol/charselect.md` section 4 has everything READ; WORLD_ISSUES round 685 the evidence.
-- **The name's character test** is OURS (the server's rule: printable ASCII, no space, `'` or `"`).
-  Retail's is the inverse of one language column of `textdata\abusefilter.txt`'s
-  `#ALLOW_ID_TABLE` (READ 0x8c4a10); which column the English client reads (the filter's +0x14,
-  GlobalDataManager +0x858) is OPEN. Column 5 (MEASURED) allows exactly 0-9, A-Z, `_`, a-z. The
-  same file's two word lists are not applied. When the column is known, client and server should
-  both apply it (`session.LobbyNameCode`).
+- ~~**The name's character test** is OURS.~~ Done round 788 (lane N): `NameFilter` applies
+  retail's 0x8c3cb0 on the player's own abusefilter.txt for type.txt's Language group, and the
+  server `server/internal/namefilter` (charselect.md, "The name rule: the AbuseFilter test").
 - **Branding:** the create screens draw the archive's red/blue bands only. Whether an operator's
   theme band art should replace them as it does the title's is the user's call (the reference
   shots are a private server's reskin).
@@ -1715,9 +1712,16 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       export (the authority: what `_AddNewChar` writes); euroskill691's `skill/race.go` hard-codes
       the same 13 ids. Keep them equal; move 691 to reading the seeded rows once older characters
       are backfilled (charselect.md section 9).
-- [ ] **The name rule's OPEN half**: the client's forbidden-character bitmap (0x8c3cb0 / 0x8c0760,
-      filled at runtime), its two filter lists, the server's forbidden-word list and FUN_006df4c0.
-      The server applies 2..12 bytes, no space or quote (READ) and printable ASCII (OURS).
+- [x] ~~**The name rule's OPEN half**~~ (round 788, lane N): READ and applied on both sides --
+      the server's 0x40f200 (space, quotes, the 54 SQL words, the AbuseFilter group's bitmap,
+      substring and whole-word lists; `-abuse-filter` / `-abuse-filter-locale`, deploy/README.md)
+      for character and guild names, the client's 0x8c3cb0 / 0x8c3de0 from Media.pk2 (charselect.md,
+      "The name rule: the AbuseFilter test"). Still OPEN: what the deployed client's vPlus DLL sets
+      CGame+0x858 to at runtime (the exe jumps over the Vietnam compare); CGame+0x858's constructor
+      value (an unknown Language; OpenSRO uses English); the GameServer's locale map (it loads the
+      file for pet names, aliases and a guild function); which of the two retail AbuseFilter
+      copies is unmodified. OURS: Windows-1252 for the code page on both sides; the no-file
+      charset `[0-9A-Za-z_]` (retail refuses nothing without the file).
 - [ ] **Ammunition**: a bow's arrows and a crossbow's bolts go into the bag (OURS), 250 of them
       (READ `_AddNewChar`, round 692; was one full stack): the equipment slot has no quantity and
       ammunition is not modelled (session/skill.go).

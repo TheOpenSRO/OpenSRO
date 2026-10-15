@@ -1567,6 +1567,39 @@ On opensro-01:
 
 To undo: remove the variable and `docker compose up -d`; characters already given defaults keep them.
 
+## Name filter (round 788)
+
+A new character's name and a new guild's name pass SR_ShardManager's name rule
+(`docs/protocol/charselect.md`, "The name rule: the AbuseFilter test"): 2..12 bytes (else 0x40c /
+the guild's length refusal), then no space, no `'` or `"`, none of the 54 SQL words compiled into
+the original server, and the AbuseFilter group's test -- its allowed characters, its substring words
+and its whole words (else 0x40d / "that guild name is not allowed", 0x4c19). Existing characters
+and guilds keep their names.
+
+The word list is the operator's own file, **never in this repo**: the `AbuseFilter.txt` beside
+your `SR_ShardManager.exe`, or your client's
+`/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\abusefilter.txt" -out AbuseFilter.txt`
+(the two retail copies differ a little; the client checks names against its own copy before it
+sends them).
+
+- `-abuse-filter <path>` (env `OPENSRO_ABUSE_FILTER`): the file, UTF-16 as shipped. A path that does
+  not load is fatal. The boot log reads `name filter loaded ... group=4 allow_rows=4
+  substring_words=31 whole_words=462` (the server copy's English group; 733 and 366 for VIETNAM).
+- `-abuse-filter-locale <name>` (env `OPENSRO_ABUSE_FILTER_LOCALE`): which group, as server.cfg's
+  `LOCALE` names it -- `KOREA`, `CHINA`, `TAIWAN`, `JAPAN`, `VIETNAM`, `ENGLISH`, with or without
+  `LOCALE_`. Unset: `ENGLISH` (OpenSRO's default; the reference server.cfg says `LOCALE_VIETNAM`).
+  An unknown name reads the English group, as the original does, with a warning.
+- **Unset** (no file): the server warns at boot, `no name filter word list (-abuse-filter /
+  OPENSRO_ABUSE_FILTER): new names are limited to [0-9A-Za-z_] and the SQL words, no AbuseFilter
+  words apply`. Names are then limited to letters, digits and `_` (OpenSRO's choice: the original
+  refuses no character without the file).
+
+On opensro-01: extract the file as above, `scp AbuseFilter.txt opensro@<server-host>:~/opensro-data/`
+and `chmod 644` it, set `OPENSRO_ABUSE_FILTER: /data/AbuseFilter.txt` in the untracked override
+(and `OPENSRO_ABUSE_FILTER_LOCALE` if not English), `docker compose up -d`, then check
+`docker compose logs server | grep 'name filter'`. Nothing in the database changes; to undo, remove
+the variable.
+
 ## Quests (round 785)
 
 NPCs offer their real quests (talk page, accept, kill/gather/deliver/talk, reward window, gold/EXP/
