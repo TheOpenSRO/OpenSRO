@@ -302,8 +302,13 @@ func _review_fixes() -> void:
 	fb._process(0.016)
 	_check(got == [CharCatalog.RACE_CHINA] and went == [CharSelectHandoff.CREATE_SCENE], "no 3D: a click on the China panel picks China and opens customize")
 	_drop(fb)
-	# A disconnect says so.
+	# A disconnect says so (round 788: the NETOFF box, READ 0x862450).
 	var dc = _screen(2, two)
 	dc._on_disconnected()
-	_check(dc._message.text != "" and dc.state == 100, "a server disconnect shows a line and leaves (to the title)")
+	_check(dc.netoff_box != null and dc.netoff_box.message_text() == "You have been disconnected from the server." and dc.state == 100,
+		"a server disconnect shows the NETOFF box: '%s'" % (dc.netoff_box.message_text() if dc.netoff_box != null else ""))
+	var quits := []
+	dc.netoff_box.on_confirm = func() -> void: quits.append(1)
+	dc.netoff_box.confirm_button.pressed.emit()
+	_check(quits == [1], "its Confirm quits (READ 0x641eb0 -> CPSQuit)")
 	_drop(dc)

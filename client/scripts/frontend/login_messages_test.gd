@@ -76,7 +76,7 @@ func _test_codes(t: UiTextTable) -> void:
 
 func _test_punishment(t: UiTextTable) -> void:
 	var a := _ack(2, 1)
-	a.block_reason = "Botting#see the forum"
+	a.block_reason = "Botting#example.test/ban#"
 	a.block_end = {"year": 2026, "month": 10, "day": 22, "hour": 13, "minute": 5, "second": 9}
 	var got := LoginMessages.ack_text(a, t)
 	var want := "Stopped.\nWhy:Botting\nWhen:Thursday, October 22, 2026 1:05:09 PM"
@@ -85,6 +85,10 @@ func _test_punishment(t: UiTextTable) -> void:
 		"midnight is 12 AM: %s" % LoginMessages.long_date({"year": 2027, "month": 1, "day": 3, "hour": 0, "minute": 0, "second": 7}))
 	_check(LoginMessages.long_date({"year": 2028, "month": 2, "day": 29, "hour": 12, "minute": 30, "second": 0}) == "Tuesday, February 29, 2028 12:30:00 PM", "noon is 12 PM; a leap day's weekday")
 	_check(LoginMessages.shown_reason("no hash") == "no hash", "a reason without '#' is shown whole")
+	_check(LoginMessages.shown_reason("a#b") == "a#b", "a '#' that is not last splits nothing (READ: ends-with)")
+	_check(LoginMessages.reason_address("Botting#example.test/ban#") == "example.test/ban" and LoginMessages.reason_address("x") == "",
+		"the address between the first and the last '#'")
+	_check(LoginMessages.shown_reason("#addr#") == "" and LoginMessages.reason_address("#addr#") == "addr", "'#address#': no text, the address")
 
 func _test_other(t: UiTextTable) -> void:
 	_check(LoginMessages.connect_failed(t, 3) == "Conn fail.(C3)", "the suffix has no space: (%c%d)")

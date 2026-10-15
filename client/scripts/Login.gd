@@ -83,6 +83,10 @@ const ID_STA_SERVER := 43
 const ID_BTN_SERVER := 44
 ## The password field's mask (READ: see _login_edit).
 const PASSWORD_CHAR := "*"
+## Round 788: the message line, window 500 (READ, pstitle.txt Title), and its
+## FontColor 255,255,103,29 for a layout without it.
+const ID_MESSAGE := 500
+const MESSAGE_COLOR := Color8(255, 103, 29)
 
 var _media: Pk2Reader = null
 var _started_ms := 0
@@ -111,12 +115,43 @@ var _server_list: ServerListWindow = null
 ## What the open server list hid (_set_login_visible).
 var _hidden_for_list: Array = []
 
+# --- Round 788: logging in as the original does --------------------------------
+
+## READ (Connect handler 0x8688f0): a press while this is above 0 does
+## nothing; a press that goes on to send sets it to 3.0 s (0xd8adc4), and
+## the title's per-frame slot (0x8692b5) counts it down.
+const SUBMIT_LOCK_S := 3.0
+var _lock := 0.0
+## READ (0x862410 / 0x8622a0): while the login request is answered the whole
+## title takes no input (CGWnd+0x62 = 0); any 0xA102 gives it back
+## (0x86c08c); after a success it stays off until character select.
+var _busy := false
+var _blocker: Control = null
+## READ (0x8613b0): the message line's text clears after 15 s (timer 1000).
+const MESSAGE_CLEAR_S := 15.0
+var _message_left := 0.0
+## The legacy path (RetailLogin), its image-code window and the drop box.
+var _retail: RetailLogin = null
+var _captcha: CaptchaWindow = null
+var _netoff: NetOffBox = null
+## Round 788 (OURS): the shard row chosen in the list for a legacy server, by
+## name (RetailGatewayClient.pick_shard matches it).
+var _shard_name := ""
+## The archive's content id and version (RetailClientInfo), read once.
+var _client_info := {}
+## Set while this screen closes a connection itself: no drop box for it.
+var _closing_ourselves := false
+## OURS: the remembered shard row (ClientSettings' server section).
+const KEY_SHARD_NAME := "shard_name"
+
 func _ready() -> void:
 	_started_ms = Time.get_ticks_msec()
 	NetClient.connected.connect(_on_connected)
 	NetClient.connection_failed.connect(_on_connection_failed)
 	NetClient.login_result.connect(_on_login_result)
+	NetClient.gateway_login_result.connect(_on_gateway_login_result)
 	NetClient.register_result.connect(_on_register_result)
+	NetClient.disconnected.connect(_on_net_disconnected)
 	# Round 678: the 3D title. The server's front-end theme decides the intro,
 	# its music and the branding (FrontEndTheme). The question goes out first
 	# (round 678's review), so its round trip overlaps the archive work
@@ -181,6 +216,7 @@ func _finish_ready() -> void:
 	# server that last answered, so a tester is not retyping host:port every
 	# launch, with the account name.
 	show_server_field(server_address_edit, _selected, _remembered_address())
+	_show_selected_server()
 	if _selected == null:
 		server_address_edit.text_changed.connect(func(t: String) -> void: server_address_edit.tooltip_text = t)
 	var remembered_username := ClientSettings.username()
@@ -240,6 +276,8 @@ func _load_config() -> void:
 		print("SETTING: %s" % w)
 	print("SETTING: %s %s" % [ClientConfig.config_path() if _config.source != "" else "no " + ClientConfig.config_path(), _config.describe()])
 	_selected = _config.pick_server(ClientSettings.server_name())
+	if _selected != null and _selected.type == ServerStatus.TYPE_LEGACY:
+		_shard_name = str(ClientSettings.get_value(ClientSettings.SECTION_SERVER, KEY_SHARD_NAME, ""))
 
 ## The address Connect goes to (and the theme is asked of): the QA
 ## override, else the chosen listed server's gateway, else the typed field
@@ -258,6 +296,9 @@ func _target_address() -> String:
 func _show_selected_server() -> void:
 	if server_address_edit != null and _selected != null:
 		show_server_field(server_address_edit, _selected, "")
+		# Round 788: a legacy server's chosen shard as its list row reads.
+		if _shard_name != "" and _shard_name != _selected.name:
+			server_address_edit.text = "%s - %s" % [_selected.name, _shard_name]
 
 ## LIST (GDR_BTN_SERVER): the server list, with each server's status.
 func _open_server_list() -> void:
@@ -279,12 +320,17 @@ func _open_server_list() -> void:
 func _on_server_chosen(entry: ClientConfig.ServerEntry) -> void:
 	# Round 681's review: a connection left open to the server chosen before
 	# (a failed login keeps it) must not carry the next login elsewhere.
+	var shard: String = _server_list.chosen_shard_name if _server_list != null and is_instance_valid(_server_list) else ""
 	if entry != _selected and NetClient.is_connected_to_server():
 		print("LOGIN: server changed -- closing the connection to %s:%d" % [NetClient.server_host, NetClient.server_port])
-		NetClient.disconnect_from_server()
+		_close_quietly()
+	if _retail != null and (entry != _selected or shard != _shard_name):
+		_retail.cancel()
 	_selected = entry
+	_shard_name = shard
 	_show_selected_server()
 	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_SERVER_NAME, entry.name)
+	ClientSettings.set_value(ClientSettings.SECTION_SERVER, KEY_SHARD_NAME, shard)
 	print("LOGIN: server '%s' chosen (%s)" % [entry.name, entry.gateway_address()])
 
 func _on_server_list_closed() -> void:
@@ -445,11 +491,18 @@ func _build_title_ui(custom_dir: String) -> void:
 	register_button.pressed.connect(_on_register_pressed)
 	add_child(register_button)
 
-	# OURS: the status line (the client's own errors go through a message
-	# box; this screen keeps its one line of text).
+	# Round 788, READ: the message line, window 500 (pstitle.txt's
+	# GDR_TEXT_MESSAGE, a CIFTextBox: HAlign 0, FontColor 255,255,103,29),
+	# where every title message goes (0x8613b0, _say); placed by
+	# FUN_00866760 (FrontEndFrame.message_rect).
 	status_label = Label.new()
-	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+	status_label.name = "MessageLine"
+	var msg_def := _frame.def(ID_MESSAGE)
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	status_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status_label.add_theme_font_size_override("font_size", _font_size(msg_def.font_index if msg_def != null else 0))
+	status_label.add_theme_color_override("font_color", msg_def.font_color if msg_def != null else MESSAGE_COLOR)
 	status_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	status_label.add_theme_constant_override("outline_size", 3)
 	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -482,8 +535,11 @@ func _layout_login_window() -> void:
 	var below := login_button.position.y + login_button.size.y
 	register_button.size = Vector2(220, 22)
 	register_button.position = Vector2(c.x - 110, below + 6)
-	status_label.size = Vector2(_frame.size.x, 22)
-	status_label.position = Vector2(0, below + 30)
+	var mr := _frame.message_rect()
+	status_label.position = mr.position
+	status_label.size = mr.size
+	if _blocker != null:
+		_blocker.size = _frame.size
 
 func _login_label(id: int, fallback: String) -> void:
 	var d := _frame.login_def(id)
@@ -836,15 +892,104 @@ func _load_ddj(media: Pk2Reader, ddj_path: String) -> Texture2D:
 		return null
 	return DdjReader.to_texture(parsed)
 
-# --- Net flow (unchanged behaviour) ----------------------------------------
+# --- Net flow (round 788: the original's login) --------------------------------
+#
+# READ (RESEARCH section 1 of round 788; docs/protocol/opcodes/login.md):
+# Connect (button 11 or Enter, 0x869460 -> 0x8688f0) with an empty ID, an
+# empty password or no server sends nothing and says nothing; a press inside
+# the 3.0 s lock is ignored; otherwise UIO_MSG_ERROR_CITATION goes to the
+# message line, the title stops taking input, and 0x6102 goes out. The
+# answer's text goes to the same line (LoginMessages); a connection the
+# server closes is the NETOFF box (NetOffBox), whose Confirm quits.
+#
+# OpenSRO's own server gets 0x6102 on this project's framing (NetClient.
+# gateway_login) and answers 0xA102 on it; a `type: legacy` server is
+# logged in to the original way (RetailLogin), image code included, and the
+# select screen then talks to its agent (NetClient.attach_retail).
+
+func _process(delta: float) -> void:
+	# READ (0x8692b5): the lock counts down every frame, unconditionally.
+	_lock -= delta
+	if _message_left > 0.0:
+		_message_left -= delta
+		if _message_left <= 0.0 and status_label != null:
+			status_label.text = ""
+
+## The message line (READ 0x8613b0): the text replaces the last, snd_error
+## plays, and it clears after 15 s. Every message goes to the log too, which
+## is what a scripted run reads.
+func _say(text: String) -> void:
+	print("LOGIN MESSAGE: %s" % text.c_escape())
+	if text == "":
+		return
+	if status_label != null:
+		status_label.text = text
+	_message_left = MESSAGE_CLEAR_S
+	UiSounds.error_box("login screen: %s" % text.left(40))
+	_qa_report(text)
+
+## OURS lines (the register link, the typed address): no sound, no timer.
+func _note(text: String) -> void:
+	print("LOGIN: %s" % text)
+	if status_label != null:
+		status_label.text = text
+	_qa_report(text)
+
+## READ (0x862410): while a request is answered the title takes no input.
+## OURS: a full-screen catcher over the title's controls (the image-code
+## window and the drop box sit above it), and the fields let go of the keys.
+func _set_busy(on: bool) -> void:
+	_busy = on
+	if _blocker == null:
+		_blocker = Control.new()
+		_blocker.name = "BusyBlocker"
+		_blocker.mouse_filter = Control.MOUSE_FILTER_STOP
+		_blocker.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_blocker.z_index = 40
+		add_child(_blocker)
+	_blocker.visible = on
+	if on:
+		var f := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+		if f != null and (f == username_edit or f == password_edit or f == server_address_edit):
+			f.release_focus()
+	else:
+		_focus_first_empty()
+
+## Whether Connect may go on (READ 0x8688f0): not during the lock or while a
+## request is answered; an empty ID or password, or no server, stops it
+## silently.
+static func connect_allowed(lock: float, busy: bool, username: String, password: String, has_server: bool) -> bool:
+	if lock > 0.0 or busy:
+		return false
+	return username != "" and password != "" and has_server
 
 func _on_login_pressed() -> void:
+	var legacy := _is_legacy()
+	var has_server := legacy or not _target_address().strip_edges().is_empty()
+	if not connect_allowed(_lock, _busy, username_edit.text, password_edit.text, has_server):
+		print("LOGIN: Connect -- nothing sent (lock %.2f s, busy %s, ID %s, password %s, server %s)" % [
+			maxf(_lock, 0.0), _busy, "set" if username_edit.text != "" else "empty",
+			"set" if password_edit.text != "" else "empty", "set" if has_server else "none"])
+		return
 	_pending_action = "login"
+	_lock = SUBMIT_LOCK_S
+	if legacy:
+		_login_legacy()
+		return
 	_connect_and_send()
 
+## OURS (the register link): kept as it was, on this project's own wire.
 func _on_register_pressed() -> void:
+	if _busy:
+		return
+	if username_edit.text.is_empty() or password_edit.text.is_empty():
+		_note("Username and password are required.")
+		return
 	_pending_action = "register"
 	_connect_and_send()
+
+func _is_legacy() -> bool:
+	return _address_override == "" and _selected != null and _selected.type == ServerStatus.TYPE_LEGACY
 
 ## Round 681's review: a live connection carries a login only when it is to
 ## the server the field shows -- not to a server chosen before, and never
@@ -854,32 +999,76 @@ static func connection_serves(connected: bool, conn_host: String, conn_port: int
 		return false
 	return conn_host == str(target.get("host", "")) and conn_port == int(target.get("port", 0))
 
+## Closes NetClient's connection without the drop box (this screen's own
+## doing).
+func _close_quietly() -> void:
+	_closing_ourselves = true
+	NetClient.disconnect_from_server()
+	_closing_ourselves = false
+
 func _connect_and_send() -> void:
-	var legacy := _address_override == "" and _selected != null and _selected.type == ServerStatus.TYPE_LEGACY
+	var legacy := _is_legacy()
 	if NetClient.is_connected_to_server():
-		if connection_serves(true, NetClient.server_host, NetClient.server_port, _parse_server_address(_target_address()), legacy):
+		if connection_serves(not NetClient.is_retail(), NetClient.server_host, NetClient.server_port, _parse_server_address(_target_address()), legacy):
 			_send_pending_action()
 			return
 		print("LOGIN: connected to %s:%d, not the server shown -- closing it" % [NetClient.server_host, NetClient.server_port])
-		NetClient.disconnect_from_server()
-	# Round 681 (OURS): logging in over the original protocol is not built;
-	# a legacy server is sent nothing that looks like a login.
+		_close_quietly()
+	# A legacy server is never sent this project's own messages (round 681):
+	# its login is _login_legacy's, and registering there is not ours to do.
 	if legacy:
-		status_label.text = "'%s' speaks the original protocol: its status is shown, logging in is not supported yet." % _selected.name
-		print("LOGIN: '%s' is a legacy server -- not connecting" % _selected.name)
+		print("LOGIN: '%s' is a legacy server -- nothing sent on this project's wire" % _selected.name)
+		if _pending_action == "register":
+			_note("'%s' speaks the original protocol: accounts are made on its own site." % _selected.name)
 		return
 	var address := _parse_server_address(_target_address())
 	if address.is_empty():
-		status_label.text = "Enter a valid server address, e.g. 192.168.1.23:15779"
+		# OURS: retail has no typed address; one that does not parse says so.
+		_note("Enter a valid server address, e.g. 192.168.1.23:15779")
 		return
 	if _server_list != null and is_instance_valid(_server_list):
 		_server_list.close()
-	status_label.text = "Connecting..."
+	if _pending_action == "login":
+		_say(LoginMessages.citation(_text))
+		_set_busy(true)
+	else:
+		_note("Connecting...")
 	# The title's backdrop stops starting new cells (round 678's review): the
 	# screen may be left soon, and leaving waits for any still preparing.
 	if _title != null:
 		_title.hold_backdrop("Connect pressed")
 	NetClient.connect_to_server(address["host"], address["port"])
+
+## The legacy path: on the open gateway connection after a refusal (READ:
+## the gateway keeps it below the tolerance), else a new login.
+func _login_legacy() -> void:
+	if _client_info.is_empty():
+		_client_info = RetailClientInfo.from_media(_media)
+	if not _client_info.has("content_id"):
+		# OURS: without the archive's content id and version a legacy
+		# gateway cannot be asked at all.
+		_note("'%s' speaks the original protocol, which needs Media.pk2's content id and version: %s" % [
+			_selected.name, _client_info.get("error", "")])
+		return
+	if _server_list != null and is_instance_valid(_server_list):
+		_server_list.close()
+	_say(LoginMessages.citation(_text))
+	_set_busy(true)
+	if _title != null:
+		_title.hold_backdrop("Connect pressed")
+	if _retail != null and _retail.can_resubmit():
+		print("LOGIN: legacy -- 0x6102 again on the open gateway connection")
+		_retail.resubmit(username_edit.text, password_edit.text)
+		return
+	if _retail != null:
+		_retail.cancel()
+		_retail.queue_free()
+	_retail = RetailLogin.new()
+	_retail.name = "RetailLogin"
+	add_child(_retail)
+	_retail.step.connect(_on_retail_step)
+	var shard := _shard_name if _shard_name != "" else _selected.name
+	_retail.start(_selected, _client_info, username_edit.text, password_edit.text, shard)
 
 ## Parses "host" or "host:port" into {"host", "port"} (port defaults to
 ## DEFAULT_SERVER_PORT). Returns {} for an empty host or a non-numeric port.
@@ -900,55 +1089,148 @@ func _parse_server_address(text: String) -> Dictionary:
 		return {}
 	return {"host": host, "port": port}
 
-func _on_connected() -> void:
+func _remember_server() -> void:
 	if _selected != null and _address_override == "":
 		ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_SERVER_NAME, _selected.name)
 	else:
 		ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_ADDRESS, _target_address().strip_edges())
 	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_USERNAME, username_edit.text)
+
+func _on_connected() -> void:
+	_remember_server()
 	_send_pending_action()
+
+## The content id this client sends OpenSRO's server in 0x6102: the
+## archive's (RetailClientInfo) when it can be read, else 0; the shard id 0
+## (OURS: one process, one shard; the server checks neither).
+func _own_content_id() -> int:
+	if _client_info.is_empty():
+		_client_info = RetailClientInfo.from_media(_media)
+	return int(_client_info.get("content_id", 0))
 
 func _send_pending_action() -> void:
 	var username := username_edit.text
 	var password := password_edit.text
-	if username.is_empty() or password.is_empty():
-		status_label.text = "Username and password are required."
-		return
 	if _pending_action == "login":
-		status_label.text = "Logging in..."
-		NetClient.login(username, password)
+		NetClient.gateway_login(_own_content_id(), username, password, 0)
 	elif _pending_action == "register":
-		status_label.text = "Registering..."
+		if username.is_empty() or password.is_empty():
+			_note("Username and password are required.")
+			return
+		_note("Registering...")
 		NetClient.register_account(username, password)
 
-## READ: retail's title says UIO_MSG_ERROR_SEVER_CONNECT ("Failed to connect
-## to server.") when its gateway connection fails (FUN_00861890, which adds
-## "(C<code>)"; this client has no such code, so none is shown).
+## OURS: the title never connects in retail (the version check does, and a
+## failure there quits with a Win32 box, READ 0x86d370), so a failed connect
+## here is UIO_MSG_ERROR_SEVER_CONNECT without a "(C<n>)".
 func _on_connection_failed() -> void:
-	status_label.text = _text_for("UIO_MSG_ERROR_SEVER_CONNECT", "Could not connect to server.")
-	_qa_report(status_label.text)
-	# The front-end message box sounds snd_error (0x8613b0, read); that the
-	# title screen's refusals go through it is inferred (UiSounds.error_box).
-	UiSounds.error_box("login screen: no connection")
+	_set_busy(false)
+	if _pending_action == "login":
+		_say(LoginMessages.connect_failed(_text, -1))
+	else:
+		_note(LoginMessages.connect_failed(_text, -1))
+		UiSounds.error_box("login screen: no connection")
 
+## 0xA102 on OpenSRO's own connection.
+func _on_gateway_login_result(ack: LoginAckNet.Ack) -> void:
+	# READ (0x86c08c): any 0xA102 gives the title its input back first.
+	_set_busy(false)
+	if ack.error != "":
+		_say(LoginMessages.connect_failed(_text, 7))
+		print("LOGIN: 0xA102 malformed: %s" % ack.error)
+		return
+	if ack.ok:
+		_enter_select("0xA102 ok (OpenSRO)")
+		return
+	print("LOGIN: 0xA102 refused: code %d kind %d max %d used %d" % [ack.code, ack.block_kind, ack.max_attempts, ack.used_attempts])
+	_say(LoginMessages.ack_text(ack, _text))
+
+## The legacy path's steps (RetailLogin).
+func _on_retail_step(ev: Dictionary) -> void:
+	match str(ev["kind"]):
+		"connect_failed":
+			print("LOGIN: legacy gateway: %s" % ev.get("why", ""))
+			_set_busy(false)
+			_say(LoginMessages.connect_failed(_text, -1))
+		"login_failed":
+			_set_busy(false)
+			var ack: LoginAckNet.Ack = ev["ack"]
+			print("LOGIN: legacy 0xA102 refused: code %d kind %d max %d used %d" % [ack.code, ack.block_kind, ack.max_attempts, ack.used_attempts])
+			_say(LoginMessages.ack_text(ack, _text))
+		"captcha":
+			_show_captcha(ev["blob"])
+		"captcha_ok":
+			if _captcha != null:
+				_captcha.hide_window()
+		"captcha_failed":
+			if _captcha != null:
+				_captcha.hide_window()
+			_say(LoginMessages.captcha_failed(_text, int(ev["max"]), int(ev["used"])))
+		"agent_connect_failed":
+			print("LOGIN: legacy agent: %s" % ev.get("why", ""))
+			_set_busy(false)
+			_say(LoginMessages.connect_failed(_text, 9)) # READ: internal 9 -> "(C9)"
+		"agent_failed":
+			_set_busy(false)
+			_say(LoginMessages.agent_text(int(ev["code"]), _text))
+		"logged_in":
+			_remember_server()
+			NetClient.attach_retail(ev["link"])
+			_enter_select("0xA103 ok (legacy)")
+		"closed":
+			print("LOGIN: legacy connection closed: %s" % ev.get("why", ""))
+			if _captcha != null:
+				_captcha.hide_window()
+			_show_netoff()
+
+func _show_captcha(blob: PackedByteArray) -> void:
+	if _captcha == null:
+		_captcha = CaptchaWindow.new()
+		_captcha.build(UiBuilder.new(_media, _text) if _media != null else null)
+		add_child(_captcha)
+		_captcha.submitted.connect(func(code: String) -> void:
+			if _retail != null:
+				_retail.submit_captcha(code))
+	var s := get_viewport_rect().size
+	_captcha.position = ((s - CaptchaWindow.SIZE) * 0.5).floor() # OURS: centred
+	var err := _captcha.show_image(blob)
+	print("LOGIN: image code asked%s" % ("" if err == "" else " (%s)" % err))
+
+## READ (slot 40, 0x862450): a connection the server closes at the title is
+## the NETOFF box; its Confirm quits the client.
+func _on_net_disconnected() -> void:
+	if _closing_ourselves or not is_inside_tree():
+		return
+	print("LOGIN: the server closed the connection")
+	_show_netoff()
+
+func _show_netoff() -> void:
+	_set_busy(false)
+	if _netoff != null and is_instance_valid(_netoff):
+		return
+	_netoff = NetOffBox.show_on(self, _media, _text)
+	print("LOGIN MESSAGE: [box] %s" % _netoff.message_text().c_escape())
+
+func _enter_select(why: String) -> void:
+	print("LOGIN: %s -- character select" % why)
+	_qa_report("Login OK.")
+	# Round 684: the select screen keeps the title's hour (READ: no
+	# front-end screen picks its own) and this screen's branding.
+	CharSelectHandoff.day_phase = _title.day_phase if _title != null else -1.0
+	CharSelectHandoff.theme = _theme
+	CharSelectHandoff.came_from = CharSelectHandoff.FROM_OTHER
+	get_tree().change_scene_to_file("res://scenes/CharacterSelect.tscn")
+
+## The older OpLogin answer (QaSignIn still logs in that way).
 func _on_login_result(ok: bool, reason: String) -> void:
 	if ok:
-		status_label.text = "Login OK."
-		_qa_report(status_label.text)
-		# Round 684: the select screen keeps the title's hour (READ: no
-		# front-end screen picks its own) and this screen's branding.
-		CharSelectHandoff.day_phase = _title.day_phase if _title != null else -1.0
-		CharSelectHandoff.theme = _theme
-		CharSelectHandoff.came_from = CharSelectHandoff.FROM_OTHER
-		get_tree().change_scene_to_file("res://scenes/CharacterSelect.tscn")
+		_enter_select("OpLogin ok")
 	else:
-		status_label.text = "Login failed: %s" % reason
-		_qa_report(status_label.text)
-		UiSounds.error_box("login screen: login refused")
+		_note("Login failed: %s" % reason)
 
 func _on_register_result(ok: bool, reason: String) -> void:
 	if ok:
-		status_label.text = "Registered - you can log in now."
+		_note("Registered - you can log in now.")
 	else:
-		status_label.text = "Registration failed: %s" % reason
+		_note("Registration failed: %s" % reason)
 		UiSounds.error_box("login screen: registration refused")

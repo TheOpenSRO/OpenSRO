@@ -152,12 +152,27 @@ static func punishment_text(table: UiTextTable, reason: String, end: Dictionary)
 	return printf("%s\n%s%s\n%s%s", [text(table, KEY_ACCOUNT_STOP), text(table, KEY_STOP_BLOCK),
 		shown_reason(reason), text(table, KEY_BLOCK_TIME), long_date(end)])
 
-## The part of a block reason the box shows: the text before its first '#'
-## (INFERRED 0x86c136..; the rest goes to a "[Block Detail]" window this
-## client does not build -- OPEN, docs/protocol/opcodes/login.md).
+## The part of a block reason the message shows. READ (0x86c136..0x86c416):
+## only a reason whose LAST character is '#' is split (0x864790 is an
+## ends-with test); any other is shown whole. A split one is cut at its first
+## '#', and what lies between that and the last '#' is a web address the
+## "[Block Detail]" button (id 800, 15 s) opens in Internet Explorer. The
+## original computes the cut from a byte offset of a wide string (twice the
+## character index), which is right only for a '#' at index 0 and throws for
+## others; this client cuts where the code means to (INFERRED intent:
+## "reason#address#"), and builds no button (OURS; docs/protocol/opcodes/
+## login.md).
 static func shown_reason(reason: String) -> String:
+	if not reason.ends_with("#"):
+		return reason
+	return reason.substr(0, reason.find("#"))
+
+## The split reason's address ("" when there is none; see shown_reason).
+static func reason_address(reason: String) -> String:
+	if not reason.ends_with("#"):
+		return ""
 	var at := reason.find("#")
-	return reason if at < 0 else reason.substr(0, at)
+	return reason.substr(at + 1, reason.length() - at - 2) if at < reason.length() - 1 else ""
 
 const WEEKDAYS := ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 const MONTHS := ["January", "February", "March", "April", "May", "June", "July", "August",

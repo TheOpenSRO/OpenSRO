@@ -531,7 +531,7 @@ func _connect_never_reuses() -> void:
 	var after := maxi(peer.get_available_bytes(), 0)
 	_check(not net.call("is_connected_to_server") and after == before and peer.get_status() != StreamPeerTCP.STATUS_CONNECTED,
 		"Connect with a legacy server shown closes the OpenSRO connection and sends it nothing (%d bytes before, %d after)" % [before, after])
-	_check(login.status_label.text.contains("not supported"), "and says logging in to the legacy server is not supported: '%s'" % login.status_label.text)
+	# Round 788: logging in to a legacy server is RetailLogin's (retail_login_test.gd).
 	login.status_label.free()
 	login.free()
 	server.stop()
