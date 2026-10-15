@@ -2420,7 +2420,12 @@ func main() {
 	)
 	// The account PIN (round 788, OURS): its requests, and Start, delete and
 	// restore held until the session has entered it (charlock.go).
-	handle = session.CharacterLockGate(characterLock(accounts, logger), logger, handle)
+	charLock := characterLock(accounts, logger)
+	handle = session.CharacterLockGate(charLock, logger, handle)
+	// The original client's agent gets the same gate: it has no PIN window, so
+	// on an account with a PIN its delete and restore are refused like ours
+	// (docs/protocol/pin.md, "Retail clients").
+	retailLobby := session.CharacterLockGate(charLock, logger, lobby)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
 	// Round 632's composite review: a leaving character's berserk turn,
@@ -2503,7 +2508,7 @@ func main() {
 	// The original client's front door (round 788, retail.go), when set: its
 	// agent's sessions end through the same OnDisconnect (session ids are
 	// unique across listeners).
-	startRetail(ctx, retailOpts, retailDeps{login: loginService, lobby: lobby, status: serverStatus, onDisconnect: srv.OnDisconnect}, logger)
+	startRetail(ctx, retailOpts, retailDeps{login: loginService, lobby: retailLobby, status: serverStatus, onDisconnect: srv.OnDisconnect}, logger)
 
 	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Error("gateway server exited", "error", err)
