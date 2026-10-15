@@ -208,8 +208,12 @@ func apply() -> void:
 				(node as Control).set_meta(ALPHA_META, a)
 		for b in ExtQuickSlotLayout.board_count(current_type):
 			_set_alpha(_nodes.get(ExtQuickSlotLayout.ID_BOARD + b), a)
-		# OURS: the footer follows the boards.
-		_set_alpha(_footer, a)
+		# OURS: the footer's backing and arrows follow the boards; its label
+		# stays white, as the reference server's "F5" is on a transparent
+		# bar (the user's screenshots).
+		if _footer != null:
+			for n in ["Band", "PagePrev", "PageNext"]:
+				_set_alpha(_footer.get_node_or_null(n) as Control, a)
 	for idx in lent_indices():
 		_underbar.set_slot_pick_locked(idx, lock_slots)
 	var wnd := _nodes.get(ExtQuickSlotLayout.ID_WND) as Control
@@ -702,9 +706,31 @@ func button_at(at: Vector2) -> bool:
 
 ## QA: the bar and its buttons where a run's clicks find them.
 func qa_print() -> void:
-	print("QA EXTBAR %d at %d,%d size %dx%d type %d open %s page %d/%d alpha %d" % [bar_index,
+	print("QA EXTBAR %d at %d,%d size %dx%d type %d open %s page %d/%d alpha %d options %s frame %d" % [bar_index,
 		int(global_position.x), int(global_position.y), int(size.x), int(size.y), current_type + 1, str(open),
-		page, page_count, last_alpha])
+		page, page_count, last_alpha, str(options()), Engine.get_frames_drawn()])
+	if option_window != null and is_instance_valid(option_window):
+		print("QA EXTOPT %d at %d,%d size %dx%d" % [bar_index, int(option_window.global_position.x),
+			int(option_window.global_position.y), int(option_window.size.x), int(option_window.size.y)])
+	# Every built control's rect in the bar's own coordinates (the live
+	# geometry against the layout tables).
+	var rects := []
+	for id in _nodes:
+		var c := _nodes[id] as Control
+		if c != null and c.visible:
+			var r := Rect2(c.global_position - global_position, c.size)
+			rects.append("%d=%d,%d,%d,%d" % [int(id), int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y)])
+	for k in ExtQuickSlotLayout.SLOTS:
+		var sn := slot_node(page, k)
+		if sn != null and sn.visible:
+			var r := Rect2(sn.global_position - global_position, sn.size)
+			rects.append("%d=%d,%d,%d,%d" % [ExtQuickSlotLayout.ID_SLOT + k, int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y)])
+	print("QA EXTRECTS %d %s" % [bar_index, " ".join(rects)])
+	var filled := []
+	for idx in lent_indices():
+		if _underbar.slot_has_item(idx):
+			filled.append(idx)
+	print("QA EXTFILLED %d %s" % [bar_index, str(filled)])
 	var named := {"opt": ExtQuickSlotLayout.ID_OPT, "hori": ExtQuickSlotLayout.ID_HORI,
 		"vert": ExtQuickSlotLayout.ID_VERT, "onoff": ExtQuickSlotLayout.ID_ONOFF, "wnd": ExtQuickSlotLayout.ID_WND}
 	for n in named:

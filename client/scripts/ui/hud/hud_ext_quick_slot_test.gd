@@ -351,6 +351,9 @@ func _bars() -> void:
 	_check(bar1.slot_node(1, 0) == ub.slot_node(51) and bar1.slot_node(2, 0) == ub.slot_node(61),
 		"its pages are quick slots 51.. and 61..")
 	var foot := bar1.footer()
+	_check(HudExtQuickSlot.alpha_of(foot.get_node("Band")) == 110 and HudExtQuickSlot.alpha_of(foot.get_node("PageNext")) == 110
+		and is_equal_approx((foot.get_node("PageLabel") as Control).modulate.a, 1.0),
+		"transparent: the footer's band and arrows at 110, its label white (OURS)")
 	_check(_local(bar1, foot.get_node("PagePrev")) == Rect2(2, 209, 12, 20) and _local(bar1, foot.get_node("PageNext")) == Rect2(66, 209, 12, 20)
 		and _local(bar1, foot.get_node("Band")) == Rect2(0, 209, 80, 23), "the footer under the slots (Type4)")
 	(foot.get_node("PageNext") as BaseButton).pressed.emit()

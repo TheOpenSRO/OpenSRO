@@ -2717,6 +2717,25 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
 - **The EXP line at the level cap** reports what was added (0 once full); what retail's server
   sends there was not read.
 
+### The Additional Quick Slot and the extra bars (round 788) — **built: retail's bar as READ, OpenSRO's extra bars with pages; these are left**
+
+`docs/protocol/ext_quick_slot.md` has what is READ and what is OURS.
+
+- **The private server's real pager** (the reference screenshots' second bar): what its pages bind
+  to, whether a key turns them, how many there are. Ours: separate slots 51.. (its page F5 is empty
+  while the retail bar is full), labels F5.., arrows only, no key.
+- **Icon fade under Transparent.** The proxy draws the bottom bar's slot with that slot's own draw
+  (`0x65fb00`); whether the proxy's alpha reaches the icon is not traced. Ours: the icons do not
+  fade (the screenshots agree).
+- **The 0x4009 help bubble's place.** `0x65fb90` re-places the help window beside the proxy with
+  `0x776c00` (right + 8, flipped left at the screen edge, top + 8); ours uses HudPanels' bubble
+  placement. The `+0x24(0xc4)` call in `0x776c00` is not identified.
+- **The option window's close X** reaching vslot 43 is INFERRED; Escape and the option window are
+  not read (here Escape leaves it open). The base directory of `SRExtQSOption.dat`
+  (`DAT_0110f7d0+0x134`) and `0x65f580`'s per-byte offsets in the asm.
+- **0 extra bars** can only be set (and undone) in `settings.cfg`; the count row lives in the extra
+  bars' option window, retail's being kept exact.
+
 ### The inventory window (round 633) — **pages, purse colours, slot art, avatar view, preview built; these are left**
 
 What round 633 read and built is in `docs/protocol/inventory_window.md`.
