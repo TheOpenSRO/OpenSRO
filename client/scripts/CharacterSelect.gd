@@ -123,6 +123,8 @@ var _popup_parts := {}
 var _black: ColorRect = null
 var _dim: ColorRect = null
 var _message: Label = null
+## The account PIN, "Character Lock" (round 788, CharSelectLock; OURS).
+var _lock: CharSelectLock = null
 
 func _ready() -> void:
 	_started_ms = Time.get_ticks_msec()
@@ -140,6 +142,7 @@ func _ready() -> void:
 	_layout = FrontEndFrame.load_layout(_media, FrontEndFrame.SELECT_LAYOUT_PATH)
 	_level_exp = _load_level_exp()
 	_build_ui()
+	_setup_lock()
 	_begin_stage()
 	# QA render hook: with no logged-in session this screen would list
 	# nothing, so a render can inject clearly-fake sample characters.
@@ -151,6 +154,17 @@ func _ready() -> void:
 		NetClient.list_characters()
 
 # --- Building -------------------------------------------------------------------
+
+## The account PIN (round 788; OURS, CharSelectLock has the rules): asked
+## for when the screen opens, and asked before Start, Delete and Restore.
+func _setup_lock() -> void:
+	_lock = CharSelectLock.new()
+	add_child(_lock)
+	_lock.setup(self, UiBuilder.new(_media, _text), NetClient, _def("Select", ID_START), _button,
+		func() -> bool: return state in LIST_BUTTON_STATES or state in SELECTED_BUTTON_STATES)
+	_lock.place_button((_windows[ID_START] as Control).position)
+	if not _fake:
+		_lock.query()
 
 func _section(name: String) -> UiLayoutParser.SectionDef:
 	return _layout.sections.get(name) if _layout != null else null
@@ -358,6 +372,8 @@ func _relayout() -> void:
 		b.position = CharSelectMath.arrow_position(id, Vector2i(w, h), Vector2i(b.size))
 	var page := _windows[ID_PAGE] as Control
 	page.position = Vector2((w - page.size.x) / 2, band2 - page.size.y - 8) # OURS: 50 is placed by code not read
+	if _lock != null:
+		_lock.place_button((_windows[ID_START] as Control).position)
 
 func _scaled_place(n: Control, d: UiLayoutParser.ControlDef) -> void:
 	if d == null or _frame == null or _frame.layout == null:
@@ -1051,6 +1067,8 @@ func _update_page_windows() -> void:
 func _on_start_pressed() -> void:
 	if selected < 0 or selected >= _slots.size():
 		return
+	if _lock != null and _lock.hold(_on_start_pressed):
+		return
 	var char_name: String = _slots[selected].char_name
 	print("SELECT: Start %s" % char_name)
 	_busy += 1
@@ -1099,6 +1117,8 @@ func _on_delete_pressed() -> void:
 		2:
 			_say("UIO_MSG_CHAR_DEL_WANNING_CONFIRM_GUARDIAN", "Disband the Academy first.")
 			return
+	if _lock != null and _lock.hold(_on_delete_pressed):
+		return
 	_open_confirm(not r.deleting)
 
 ## READ, 0x858950(1): the popup fades in over 0.5 s, the screen dims to 0x80,

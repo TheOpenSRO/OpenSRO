@@ -1761,6 +1761,19 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 - [ ] **`OpEnterWorld` 0x0020** is still accepted beside Start (it refuses a pending character too);
       retire it when the world handoff is retail.
 
+### The account PIN, "Character Lock" (round 788, lane P) — **built: OURS throughout (retail has none), server store + rules + lobby gate, the client's window and select-screen hook; these are left** (`docs/protocol/pin.md`)
+
+- [ ] **The legacy select path** (round 788 lane C's adapter for retail-protocol servers) must skip
+      `CharSelectLock.query()`: 0x0120 means nothing to a retail server.
+- [ ] **No GM command clears a player's PIN or lock**; the operator deletes the rows by hand
+      (deploy/README.md, "Account PIN (Character Lock)").
+- [ ] **The lock's numbers are constants** (5 tries, 30 minutes, 16 remembered PCs): flags if an
+      operator asks.
+- [ ] **A retail client on an account with a PIN** can list but not start, delete or restore (0x40e,
+      "Failed to connect to server."); there is no retail way to ask it for a PIN.
+- [ ] **The "Pin Code" button** stands one column left of Start; on a screen narrower than ~700 px
+      the select screen's message line (x = 26) can run under it, as under Start.
+
 ### Europe: what a Europe character still lacks (round 692 notes)
 
 The user (2026-10-02): "euros probably have their own quests too, make sure you consider that."
