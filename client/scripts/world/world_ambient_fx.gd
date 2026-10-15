@@ -408,7 +408,7 @@ func _build(h: Host) -> void:
 		return
 	h.node.set_meta(META_BUILT, true)
 	var animated := h.node.has_meta(MapAnimation.META_ANIMATED) or (h.node.get_parent() != null and h.node.get_parent().has_meta(MapAnimation.META_ANIMATED))
-	# Round 787: display-value twins only where the object has no sheet of
+	# Round 786: display-value twins only where the object has no sheet of
 	# its own for its effects to lie over (covers).
 	var twins := not qa_linear and not covers(h.root)
 	if qa_log:
@@ -431,7 +431,7 @@ func _build(h: Host) -> void:
 
 	_set_on(h, h.on, h.seen)
 
-## Round 787 (OURS, MEASURED against Compatibility): whether a placed object
+## Round 786 (OURS, MEASURED against Compatibility): whether a placed object
 ## carries a mesh that mixes over what lies behind it with no depth write
 ## (ObjectLoader.COVER_META: an SRCALPHA/INVSRCALPHA MTRL mod with ZWRITE
 ## off -- a waterfall's sheet). Its effects draw right over it (READ,
@@ -585,7 +585,7 @@ func hosts() -> Array:
 func stepping() -> Array:
 	return _stepping
 
-## OPENSRO_QA_WORLD_FX_DETAIL=1 (round 787): one line per built effect of a
+## OPENSRO_QA_WORLD_FX_DETAIL=1 (round 786): one line per built effect of a
 ## host in range -- where it is, whether it is shown and stepping, how many
 ## particles it draws, and the world box of their centres -- after the QA
 ## line. A QA aid only.

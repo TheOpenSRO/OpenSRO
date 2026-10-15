@@ -324,7 +324,7 @@ by the texture name. MEASURED, files using each state among rendered nodes:
 Colour op MODULATE (4) is the most common, then MODULATE2X (5) and MODULATE4X (6). The arguments
 are TEXTURE (2) and DIFFUSE (0).
 
-### Where an effect draws in the frame (READ, round 787)
+### Where an effect draws in the frame (READ, round 786)
 
 Every effect is drawn right after the meshes of the body that owns it, depth-tested, writing no
 depth:
@@ -361,19 +361,20 @@ depth:
 
 **This client (`EfpEffect.RENDER_PRIORITY`).**
 - Every effect material draws at render priority 1: after every object surface (priority 0), the
-  water (-3) and the fog pass (-1), and in depth order among the effects. Until round 787 effects
-  drew at 0 and Godot's transparent sort by distance mixed them with the objects' blended meshes.
-  A Hotan palace waterfall's sheet, or the Jangan dragon's streams, whose centre was nearer the
-  camera, drew over the sparkles behind it.
+  water (-3) and the fog pass (-1), and in depth order among the effects. Before this fix (round
+  786) effects drew at 0, and Godot's transparent sort by distance mixed them with the objects'
+  blended meshes: a sheet or a stream whose centre was nearer the camera than an effect's drew
+  over it (INFERRED from the sort; the MEASURED A/B at the round's three sites moved the boxes'
+  means by at most 0.2, so it was not what dimmed them -- the display twins were, below).
 - OURS:
   - A placed object's effects draw after every object's blended meshes. The original orders
     them before a later-queued object's.
   - Above-water characters' blended meshes draw before the world's effects here.
-  - The water writes no depth here, so a particle under the water plane still shows. It did
-    before round 787 too; that is OPEN.
+  - The water writes no depth here, so a particle under the water plane still shows, as it did
+    before; OPEN.
 - `OPENSRO_QA_FX_PRIORITY=<n>` draws every effect at n, for an A/B (0 is the old order).
 
-### Display-value blending under Forward+ (OURS; round 787's measurement)
+### Display-value blending under Forward+ (OURS; round 786's measurement)
 
 Direct3D 9 blends in the values the screen shows (no SRGBWRITE; round 705). Compatibility does the
 same, exactly. Forward+ blends in linear space, so the objects' `ambient` effects use a display
@@ -383,7 +384,7 @@ the blend against it.
   a blended sheet lying under the particles.
 - Over such a surface the twin blends against the wrong destination. Its additive layers add less,
   and its mixing layers pull the colour of the hidden rock or grass onto the sheet.
-- MEASURED, round 787: the effects' share of a box's mean display value, frames 60 to 99, against
+- MEASURED, round 786: the effects' share of a box's mean display value, frames 60 to 99, against
   the same view under Compatibility.
 
   | site | Forward+ with twins | Godot's own blend | Compatibility |

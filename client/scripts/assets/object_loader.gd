@@ -1210,7 +1210,7 @@ static func _mod_pass(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary, 
 		mat.set_meta(COVER_META, true)
 	return mat
 
-## Round 787: an MTRL material that mixes over what lies behind it and writes
+## Round 786: an MTRL material that mixes over what lies behind it and writes
 ## no depth (SRCALPHA/INVSRCALPHA with ZWRITEENABLE off: a waterfall's sheet)
 ## -- a transparent surface the object's own effects draw over (READ,
 ## EfpEffect.RENDER_PRIORITY) and that hides the opaque scene a display-value

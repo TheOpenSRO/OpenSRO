@@ -329,10 +329,10 @@ func use_display_blend() -> void:
 		gi.material_override = c
 		_display_materials.append(c)
 
-## Tests only (round 787): make the twins where no RenderingDevice runs.
+## Tests only (round 786): make the twins where no RenderingDevice runs.
 static var display_twins_headless := false
 
-## Round 787: the display twins use_display_blend made (tests).
+## Round 786: the display twins use_display_blend made (tests).
 var _display_materials: Array[ShaderMaterial] = []
 
 ## Round 774 (OURS, calibrated): the most additive layers an effect's layer
@@ -1859,7 +1859,7 @@ static func godot_blend(cls: String) -> int:
 static func cull_disabled(cull: int) -> bool:
 	return cull <= 1
 
-## Round 787: where an effect draws in the frame (READ, sro_client.exe). Every
+## Round 786: where an effect draws in the frame (READ, sro_client.exe). Every
 ## effect is drawn right after the meshes of the body that owns it -- a placed
 ## object's `ambient` effects inside its own batch (CObjRendererVS::vslot_038
 ## 0xbf5830: every mesh piece, blended ones in place with no sort, then the
@@ -1876,9 +1876,8 @@ static func cull_disabled(cull: int) -> bool:
 ## SWorld::vslot_023 0x9f4bb0); an MTRL-blended mesh writes none either. So a
 ## particle behind or inside a waterfall sheet, a fountain's stream or the
 ## water draws after it, added on top of it -- where Godot's transparent sort
-## by distance put a sheet or a pool whose centre is nearer the camera after
-## the particles, over them (round 787: the Hotan palace waterfalls' sparkles
-## and the Jangan dragon's splashes). Every effect material draws at this
+## by distance could put a sheet or a pool whose centre is nearer the camera
+## after the particles, over them. Every effect material draws at this
 ## priority: after every object surface (priority 0), the water (WorldFog.
 ## UNDER_PASS_PRIORITY) and the fog pass (WorldFog.PASS_PRIORITY), and in
 ## depth order among the effects. OURS (INFERRED approximation): the original
@@ -1889,7 +1888,7 @@ static func cull_disabled(cull: int) -> bool:
 ## as before (OPEN).
 const RENDER_PRIORITY := 1
 ## OPENSRO_QA_FX_PRIORITY=<n> (QA A/B only): draw every effect at n instead
-## (0 is the priority before round 787).
+## (0 is the priority before the waterfall-sparkle fix of round 786).
 static var render_priority := int(OS.get_environment("OPENSRO_QA_FX_PRIORITY")) if OS.get_environment("OPENSRO_QA_FX_PRIORITY").is_valid_int() else RENDER_PRIORITY
 
 static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState, billboard: bool = false) -> ShaderMaterial:
