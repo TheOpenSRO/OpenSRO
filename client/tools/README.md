@@ -396,8 +396,11 @@ client/tools/remote_godot.sh script res://tools/water_census.gd -- --pk2=/opt/sr
 ```
 
 In the world, `OPENSRO_QA_WORLD_FX=1` prints `QA WORLDFX` every 120 frames (hosts, in range, built,
-the effects stepping by file, and the decide / build / step cost); `OPENSRO_QA_WORLD_FX=off` plays
-none of them (the before frame). `perf_gate.sh --sites alex` stands in Alexandria's library square
+the effects stepping by file, this frame's decide / build / step cost and the mean a ticked frame
+since the last line) and a `QA WORLDFX placed` line per effect, its place in its object's frame;
+`OPENSRO_QA_WORLD_FX=off` plays none of them (the before frame); `OPENSRO_QA_WORLD_FX_BLEND=linear`
+drops round 722's display-value twins from them (an A/B of that blend's cost). With
+`QA_SHOT_REALTIME=1` the mean is on the wall clock. `perf_gate.sh --sites alex` stands in Alexandria's library square
 facing the fountain whose sprays and spouts animate.
 
 

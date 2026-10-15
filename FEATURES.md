@@ -21,13 +21,13 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Pets & mounts](#pets--mounts) |  |  |  | 4 | 4 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
 | [UI / HUD](#ui--hud) | 13 | 4 |  | 1 | 18 |
-| [Graphics & effects](#graphics--effects) | 10 | 2 |  |  | 12 |
+| [Graphics & effects](#graphics--effects) | 11 | 1 |  |  | 12 |
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 6 |  | 1 | 1 | 8 |
 | [Plugins & customization](#plugins--customization) | 3 | 1 |  | 3 | 7 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **130** | **36** | **1** | **46** | **213** |
+| **All** | **131** | **35** | **1** | **46** | **213** |
 
 ## Biggest gaps
 
@@ -321,7 +321,7 @@ Retail models, particles and lighting re-created in Godot.
 | Lighting and shadows | ✅ Supported | Sun, character light, shadow detail options; shadows follow the sun (option) |
 | Bloom and ambient occlusion | ✅ Supported | Retail-style bloom and SSAO options |
 | Trees, foliage and map objects | ✅ Supported | Retail materials; animated map objects |
-| Placed object effects | 🟡 Partial | Teleport structures play theirs; other objects' ambient effects off |
+| Placed object effects 🆕 | ✅ Supported | Every placed object's ambient effects (fountain sprays, waterfall mist, lanterns, burners) at retail's ranges; scrolling water on fountains and waterfalls |
 | Fade-in of characters | ✅ Supported | Monsters and players fade in over 2 s, as retail |
 | Berserk look | ✅ Supported | Berserk aura, colour and sounds |
 | Crowd rendering | ✅ Supported | GPU skinning for large crowds |

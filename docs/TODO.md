@@ -14,15 +14,18 @@ where it stopped, the tools for it, the traps — and points back here for every
 
 - [x] ~~The gates' animated textures and material mods~~ -- **round 722**: TEXANI read and drawn
       for every placed object (359 files carry one); the MTRL mods were already drawn (round 625).
-      Left: TEXANI on characters and items (SkinnedBsrAssembler), and the mode 0/1 draw-flag
-      difference (shader variants 3 and 4), not read.
+      Left: TEXANI on characters and items (SkinnedBsrAssembler). ~~The mode 0/1 draw-flag
+      difference~~ -- **round 786**: mode 1 moves stage 1, the MULTITEX mod's second texture, both
+      READ and drawn ("Fountains, waterfalls and their splashes are animated").
 - [ ] **Display-value blending for every EFP** (round 722): the objects' ambient effects now blend
       in display values under Forward+ (`EfpEffect.display_shader`, a screen read), as Direct3D 9
       does; skills and auras still blend linearly. One switch (`use_display_blend`) would extend it.
       A user decision: every skill's look changes, and a screen copy is taken while one draws.
-- [ ] **Every placed object's `ambient` set** (OURS: only the teleport structures play theirs). The
-      review measured play-everywhere at Jangan: 112 objects, 135 effects, 113 glows, frame 1.53 ->
-      2.97 ms (+94 %). For the user to decide; prerequisites in docs/rounds/r720_review.md.
+- [x] ~~**Every placed object's `ambient` set**~~ -- **round 786** (`WorldAmbientFx`): every placed
+      object plays its set, at the original's ranges (READ: 2020 for `.o2` lists[1], 480 and the 9
+      nearest sectors for lists[2]), stepping only what is seen. Round 720's review had measured
+      play-everywhere at Jangan, every effect stepped, as +1.44 ms; this round's gates are in
+      WORLD_ISSUES ("Fountains, waterfalls and their splashes are animated").
 
 ## Round 785 follow-ups (the skills, server side; docs/protocol/skill_census.md)
 

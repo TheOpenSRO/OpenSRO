@@ -206,7 +206,7 @@ mod sections do not parse.
 - **Only the teleport structures** (and, from round 774, the walk-in portals' models and every
   dungeon room and object) play their ambient effects. The original plays every placed
   object's `ambient` set; the other 1,300-odd sets (torches, fountains, banners) are a follow-up
-  with its own perf measurement.
+  with its own perf measurement. **Done in round 786** (`WorldAmbientFx`, below).
 - **"Drawn"** is the object's mesh box against the camera's frustum (the original queues an effect
   as its object draws), and the test point must be on screen and in front of the eye before the ray.
 - **The occlusion query is a physics ray** from the camera to the moved point against the terrain,
@@ -222,5 +222,39 @@ mod sections do not parse.
 - An ambient effect is **kept** (looping) while its object stands (INFERRED from the gates' steady
   glows in the user's screenshots; the effect's own restart rule in `CRTModParticle` was not read).
 
-**OPEN:** the LOD gate's value for a placed building (INFERRED open), `+0xb4` on the ambient path,
-and the TEXANI / MTRL mods above. Mode 0 and the night bit are done as READ (no gate uses either).
+**OPEN:** `+0xb4` on the ambient path, and the TEXANI / MTRL mods above. Mode 0 and the night bit
+are done as READ (no gate uses either). **The LOD gate is READ since round 786:** a compound's
+slot 73 (0xc2edc0, shared by all four compound types and called by the object build at 0xc331ae)
+stores 0.0 into its LOD +0x7c (asm 0xc2f056..0xc2f05e), so `0.9 < 0.0` is false and the gate passes.
+
+## Every placed object (round 786)
+
+**READ.** Every compound type plays its `ambient` set: slot 27 of the CCompChar / CCompBldg /
+CCompSimple / CCompoundObj vtables (0xc306c0) jumps to `CCompChar::FUN_00c46ab0` (0xc307da), which
+takes the palette's ambient slot (0xc46b26). The object's range state decides whether it is updated
+and drawn, and its effects with it (`SWorld::vslot_004`, MAPO2_FORMAT.md "What this still doesn't
+tell us"): `.o2` `lists[1]` objects within the object range (2020), `lists[2]` objects within
+**480** and only in the 9 nearest sectors.
+
+**MEASURED** (`client/tools/water_census.gd`): 391 models carry an `ambient` set with entries, 310
+of them placed, **2,873 placements** (1,320 of them `lists[2]`), 2,668 without the seasonal sets the
+world leaves out by default (SeasonalObjects: the OBT and summer events' pillars, doors and decorations);
+7,011 effect entries over 1,762 regions without them. Until round 786 the gate path played the 42
+placements standing within 30 of a teleportbuilding row (39 unseasonal; and the two walk-ins); now
+all of them. Busiest regions (unseasonal): 92/201 and 103/68 (21 hosts, 82 entries each), Masin's
+124/247 (8, 65); the towns: Constantinople 105/79 30 hosts / 51 entries, Jangan 97/168 26 / 40,
+Alexandria 90/48 11 / 19 and 91/49 5 / 13, Hotan 92/135 4 / 19.
+
+**What OpenSRO does** (`WorldAmbientFx`, World3D `_world_fx`): every placed object (and compound
+child) with ambient entries registers as it is placed, with its list; every 100 ms (OURS) the hosts
+the view reaches are range-tested as READ -- "the view reaches" being the object's own box (its
+meshes and its effects' cull boxes) against the frustum, since the `.o2` lists a big object in every
+sector it reaches (Alexandria's library carries its fountain's splashes 800 units from its origin).
+A host coming in range has its files decoded on WorkerThreadPool and its effects built (at most 2 ms
+a frame, OURS), looped, following their object; out of range they are hidden and paused. Each frame
+the effects whose particles are in the view (EfpEffect.particles_box: each draw's tight bounds and
+the effect's own point) step as one batch (EfpSimBatch, native when the library is there), as the
+dungeons' do, and every effect of a new host for its first 1.5 s -- OURS: the original steps every
+effect of a visited object; one nobody can see changes nothing seen and resumes where it was. The
+gate path keeps the teleport structures (always running); a host either path built is skipped by the
+other.
