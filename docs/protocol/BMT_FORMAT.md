@@ -210,6 +210,12 @@ The reader and the render path are both in `sro_client.exe`:
   ALPHAREPLICATE and 0x10 COMPLEMENT are applied, though no census mod sets either. A mod that only tests
   leaves the renderer's own stage 0 in place: MODULATE2X of TEXTURE and DIFFUSE (READ: the
   renderer seeds flag `0x1000`, which `FUN_00c42a60` makes COLOROP 5).
+- **Stage 1 (round 786).** A MULTITEX mod on the same material adds texture stage 1 over stage
+  0's result: `lerp(stage 0, texture, texture alpha)` (op 1, BLENDTEXTUREALPHA) or by the mod's
+  TEXTUREFACTOR alpha (op 0, BLENDFACTORALPHA), unlit, the alpha left as stage 0 made it; a mode-1
+  TEXANI scrolls its coordinates. READ in BSR_FORMAT.md ("MULTITEX / MULTITEXREV"). Every MULTITEX
+  material placed in the world is under an MTRL mod (MEASURED), so the mod shader carries the stage
+  (`multitex_op`, -1 for none); object.gdshaderinc has a `MULTITEX` variant for the rest.
 - **DIFFUSE is the lit vertex colour** (READ, `Shader\vertexshader0.c`):
   `oD0 = saturate(N.L) * c11 + c10`. The registers are:
   - `c11` (`VSC_DLIGHT_DIFFUSE`) = the material's D3DMATERIAL9 Diffuse (the layer's second colour,

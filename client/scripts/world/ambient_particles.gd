@@ -79,9 +79,10 @@ class_name AmbientParticles
 ##   after the frustum test (point_on_screen).
 ## - "Drawn" is the host's box against the camera's frustum (drawn).
 ## - Which objects play them: the placed objects that stand at a teleport
-##   structure (World3D._attach_gate_effects). The original plays every
-##   placed object's ambient set (1,300 sets across 8,539 `.bsr`, MEASURED);
-##   the rest of the world is not done here.
+##   structure (World3D._attach_gate_effects), always running. The original
+##   plays every placed object's ambient set (1,300 sets across 8,539 `.bsr`,
+##   MEASURED); since round 786 every other placed object's plays through
+##   WorldAmbientFx, with the original's range rules.
 ## - An ambient effect is kept (looping) for as long as its object stands.
 
 ## The meta a committed object carries its ambient entries under
@@ -225,9 +226,15 @@ static func drawn(host: Node3D, box: AABB, camera: Camera3D) -> bool:
 static func point_on_screen(p: Vector3, camera: Camera3D) -> bool:
 	return not camera.is_position_behind(p) and camera.is_position_in_frustum(p)
 
+## Tests only (round 786): builds an effect from its path in place of
+## EfpEffect.create, as SkillEffects.effect_factory does.
+static var effect_factory: Callable = Callable()
+
 ## Builds and attaches `host`'s effects, `mods_entries` as ambient_entries
 ## gives them. Returns them.
-func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader) -> Array:
+## `display_blend` false keeps the effects' linear blend (a QA A/B only,
+## WorldAmbientFx's OPENSRO_QA_WORLD_FX_BLEND=linear).
+func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader, display_blend: bool = true) -> Array:
 	var made: Array = []
 	var box := _host_box(host)
 	for entries in mods_entries:
@@ -240,7 +247,7 @@ func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader) -> Array:
 				print("AMBIENT %s: no bone '%s' -- the rest of its mod is not built" % [host.name, e.bone])
 				aborted_mods += 1
 				break
-			var fx := EfpEffect.create(e.efp, particles)
+			var fx: EfpEffect = effect_factory.call(e.efp) if effect_factory.is_valid() else EfpEffect.create(e.efp, particles)
 			if fx == null:
 				print("AMBIENT %s: %s did not build (%s)" % [host.name, e.efp, EfpEffect.last_error])
 				continue
@@ -249,7 +256,8 @@ func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader) -> Array:
 			# Blended in display values, as the original's Direct3D 9 blends
 			# (round 722, EfpEffect.display_shader; OURS scope: the objects'
 			# ambient effects only).
-			fx.use_display_blend()
+			if display_blend:
+				fx.use_display_blend()
 			if e.rotated:
 				fx.follow_basis = rotation_basis(e.angles)
 			if e.mode == 0:

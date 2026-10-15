@@ -337,6 +337,11 @@ class ParsedObject:
 	## See texani_for() for which one animates a material.
 	var texani_mods: Array = []
 
+	## The MULTITEX (0x10001) and MULTITEXREV (0x10002) mods of the mod
+	## section (round 786): each the Dictionary _read_multitex builds. See
+	## multitex_for() for which one draws a material's second stage.
+	var multitex_mods: Array = []
+
 	## The flag word of the environment-map mod that governs this object's
 	## alpha test, or -1 for none (round 626's name and shape; this round's
 	## review read the same). READ, `CRTModEnvMap::vslot_004` (0x00c83690):
@@ -394,6 +399,21 @@ class ParsedObject:
 	func texani_for(index: int) -> Dictionary:
 		var out := {}
 		for m in texani_mods:
+			if m["set_kind"] != 2:
+				continue
+			if (m["w1"] == 2 and int(m["material"]) == index) or (m["w1"] == 1 and int(m["material"]) == 0xFFFFFFFF):
+				out = m
+		return out
+
+	## The MULTITEX or MULTITEXREV mod that puts a second texture on material
+	## `index`, or {} for none (round 786). READ: `CRTModMultiTex::vslot_004`
+	## (0x00c82ce0) and `CRTModMultiTexRev::vslot_004` (0x00c83160) act only
+	## when the mod's material word (+0x14) equals the index being drawn; the
+	## dispatch word and the set are taken as texani_for takes them. The
+	## last one wins.
+	func multitex_for(index: int) -> Dictionary:
+		var out := {}
+		for m in multitex_mods:
 			if m["set_kind"] != 2:
 				continue
 			if (m["w1"] == 2 and int(m["material"]) == index) or (m["w1"] == 1 and int(m["material"]) == 0xFFFFFFFF):
@@ -498,12 +518,26 @@ static func _pp_parse(data: PackedByteArray) -> ParsedObject:
 		# 0 with no skeleton, so it takes the scan, and its MTRL mod -- the
 		# water's blend -- was lost with the table).
 		obj.header_flags = _le_u32(data, OFF_FLAGS)
-		obj.material_mods = material_mods(data)
-		obj.particle_mods = particle_mods(data)
-		obj.texani_mods = texani_mods(data)
-		obj.env_map_materials = env_map_materials(data)
-		obj.env_map_flags = env_map_flags(data)
+		_fill_mods(obj, data)
 	return obj
+
+## Fills every mod list of `obj` from ONE parse of the mod section (round
+## 786: until then each list re-parsed the section, five times a file).
+static func _fill_mods(obj: ParsedObject, data: PackedByteArray) -> void:
+	if data.size() < PREAMBLE_END:
+		return
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return
+	obj.material_mods = section["material_mods"]
+	obj.particle_mods = section["particle_mods"]
+	obj.texani_mods = section["texani_mods"]
+	obj.multitex_mods = section["multitex_mods"]
+	var by_material := {}
+	for header in section["env_maps"]:
+		by_material[int(header["material"])] = int(header["flags"])
+	obj.env_map_materials = by_material
+	obj.env_map_flags = _env_map_flags_of(obj.material_mods)
 
 static func _parse(data: PackedByteArray) -> ParsedObject:
 	if data.size() < PREAMBLE_END:
@@ -570,11 +604,7 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 			if built.is_character:
 				_attach_sound_sets(built, data)
 			built.header_flags = _le_u32(data, OFF_FLAGS)
-			built.material_mods = material_mods(data)
-			built.particle_mods = particle_mods(data)
-			built.texani_mods = texani_mods(data)
-			built.env_map_materials = env_map_materials(data)
-			built.env_map_flags = env_map_flags(data)
+			_fill_mods(built, data)
 			if obj_type == TYPE_PLAYER_CHARACTER or obj_type == TYPE_ITEM:
 				built.attachable = attachable_block(data)
 			return built
@@ -950,6 +980,8 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 	mods[_PARTICLES_KEY] = particles
 	var texanis: Array = []
 	mods[_TEXANI_KEY] = texanis
+	var multitexes: Array = []
+	mods[_MULTITEX_KEY] = multitexes
 	var lists: Array = []
 	for list_index in range(2):
 		var count = _take_i32(data, cursor)
@@ -966,9 +998,10 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 	mods.erase(_ENV_MAPS_KEY)
 	mods.erase(_PARTICLES_KEY)
 	mods.erase(_TEXANI_KEY)
+	mods.erase(_MULTITEX_KEY)
 	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods,
 		"material_mods": captured, "env_maps": env_maps, "particle_mods": particles,
-		"texani_mods": texanis}
+		"texani_mods": texanis, "multitex_mods": multitexes}
 
 ## Where _read_mod_set leaves the ENVMAP and MTRL mods it passes, inside
 ## the `mods` dictionary it already threads (a key no u32 kind can equal).
@@ -983,6 +1016,8 @@ const _ENV_MAPS_KEY := "env_maps"
 const _PARTICLES_KEY := "particle_mods"
 ## Where _read_mod_set leaves the TEXANI mods (round 722).
 const _TEXANI_KEY := "texani_mods"
+## Where _read_mod_set leaves the MULTITEX / MULTITEXREV mods (round 786).
+const _MULTITEX_KEY := "multitex_mods"
 
 ## Every TEXANI mod of a file (ParsedObject.texani_mods), [] when its mod
 ## section does not parse.
@@ -1020,6 +1055,42 @@ static func _read_texani(data: PackedByteArray, header_at: int, set_kind: int) -
 		"mode": data.decode_s32(header_at + 28), "method": data.decode_s32(header_at + 32),
 		"fps": data.decode_s32(header_at + 36), "rows": data.decode_s32(header_at + 40),
 		"cols": data.decode_s32(header_at + 44), "rates": rates}
+
+## A MULTITEX / MULTITEXREV mod's body at `header_at` (round 786), READ from
+## ModDataMultiTex::vslot_004 (0x00c613b0; MultiTexRev's 0x00c61430 is the
+## same): the IModData header, then
+##   +0x24  op       u32, the runtime's stage set-up by index (the tables the
+##                   constructors 0xc82ec0 / 0xc83350 fill at +0x64 / +0x6c):
+##                   0 -> COLOROP BLENDFACTORALPHA (0xc82e70) with
+##                   TEXTUREFACTOR = `factor`; 1 -> COLORARG1 TEXTURE,
+##                   COLORARG2 CURRENT, COLOROP BLENDTEXTUREALPHA, ALPHAOP
+##                   DISABLE (0xc82ac0)
+##   +0x28  texture  lp-string, the second texture (ResourceMgr::FUN_00bcf590
+##                   through CRTModMultiTex::FUN_00c82cb0)
+##   +0x44  factor   u32, the TEXTUREFACTOR colour (ARGB) op 0 sets
+## `rev` is true for MULTITEXREV: the mod's texture on stage 0 and the
+## material's on stage 1 (draw flags 0x200000 | 0x80000000, READ
+## 0xc83160 and CObjRendererVS::FUN_00bf0e20).
+static func _read_multitex(data: PackedByteArray, header_at: int, set_kind: int, mod_kind: int) -> Dictionary:
+	var cursor := [header_at + MOD_HEADER_BYTES]
+	var op = _take_i32(data, cursor)
+	var tex = _take_string(data, cursor)
+	var factor := 0
+	if tex != null and cursor[0] + 4 <= data.size():
+		factor = data.decode_u32(cursor[0])
+	return {"set_kind": set_kind, "w1": data.decode_u32(header_at + 4),
+		"material": data.decode_u32(header_at + 12), "rev": mod_kind == MOD_MULTITEXREV,
+		"op": op if op != null else -1, "texture": tex if tex != null else "", "factor": factor}
+
+## Every MULTITEX / MULTITEXREV mod of a file, [] when its mod section does
+## not parse.
+static func multitex_mods(data: PackedByteArray) -> Array:
+	if data.size() < PREAMBLE_END:
+		return []
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return []
+	return section["multitex_mods"]
 
 ## One particle mod (round 720): the mod set it sits in and its entries.
 ## READ: the body is ModDataParticle::vslot_004 (0x00c643b0); the runtime
@@ -1132,8 +1203,11 @@ static func env_map_materials(data: PackedByteArray) -> Dictionary:
 ## ParsedObject.env_map_flags for a file: the flag word of the last live
 ## ENVMAP mod (ambient set, header word 1 of 1 or 2), -1 for none.
 static func env_map_flags(data: PackedByteArray) -> int:
+	return _env_map_flags_of(material_mods(data))
+
+static func _env_map_flags_of(mods: Array) -> int:
 	var flags := -1
-	for m in material_mods(data):
+	for m in mods:
 		if m["kind"] == MOD_ENVMAP and m["set_kind"] == 2 and (m["w1"] == 1 or m["w1"] == 2):
 			flags = int(m["flags"])
 	return flags
@@ -1272,6 +1346,8 @@ static func _read_mod_set(data: PackedByteArray, cursor: Array, mods: Dictionary
 			(mods[_MODS_KEY] as Array).append(m)
 		if mod_kind == MOD_TEXANI and mods.has(_TEXANI_KEY):
 			(mods[_TEXANI_KEY] as Array).append(_read_texani(data, header_at, kind))
+		if (mod_kind == MOD_MULTITEX or mod_kind == MOD_MULTITEXREV) and mods.has(_MULTITEX_KEY):
+			(mods[_MULTITEX_KEY] as Array).append(_read_multitex(data, header_at, kind, mod_kind))
 		if mod_kind == MOD_PARTICLE and mods.has(_PARTICLES_KEY):
 			var pm := _read_particle_mod(data, header_at, kind, action_type, name)
 			if pm != null:

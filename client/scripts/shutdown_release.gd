@@ -67,6 +67,7 @@ static func release() -> void:
 	# Caches of shaders, materials, images and shared tables that hold any of
 	# the above, and callables whose lambdas may capture them.
 	TexAni._live.clear()
+	TexAni._bound.clear()
 	CharSelectStage._undo_shaders.clear()
 	CharSelectStage._fade_shaders.clear()
 	ObjectLight._variants.clear()

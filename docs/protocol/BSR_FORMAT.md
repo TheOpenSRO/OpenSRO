@@ -297,7 +297,46 @@ header (its four bytes are the start frame, the end frame and flags), then five 
 step (asm 0xc82640) accumulates dt and advances one frame per `1000.0 / fps` ms. Flag bit 0 loops
 and bit 1 ping-pongs; otherwise it clamps at the end. The UV offset is `(frame % cols) / cols,
 (frame / cols) / rows` (`FUN_00c825f0`), uploaded to VS register 0x17 by `CRTModTexAni::vslot_004`
-0xc82970.
+0xc82970. **Round 786:** a mode-1 mod (TEXANI1) is drawn too -- it moves texture stage 1, which a
+MULTITEX mod fills (below); the rate step runs in the shader on a clock (`srr_texani_clock`), not
+as a per-material upload each frame (`TexAni`).
+
+**MULTITEX / MULTITEXREV (READ, round 786; drawn -- `ObjectLoader._prepare_multitex` /
+`_commit_multitex`, `BsrReader.multitex_for`).** The second texture on a material: what the water
+of the Alexandria fountain's spouts, the turtle waterfalls beside the Jangan palace and `dun_cen_s01`
+(126/211) scroll.
+- **The data** (`ModDataMultiTex::vslot_004` 0xc613b0; `ModDataMultiTexRev::vslot_004` 0xc61430 is
+  the same; the writer `ModDataMultiTex::vslot_003` 0xc5eb20 agrees): the IModData header, then
+  `+0x24` a u32 *op*, `+0x28` an lp-string texture path, `+0x44` a u32 *factor* (an ARGB colour).
+- **The runtime** (`CRTModMultiTex`, constructor 0xc82ec0; `CRTModMultiTexRev`, 0xc83350): two
+  tables, the stage set-up by op at +0x64 and its undo at +0x6c. `vslot_004` (0xc82ce0) acts only
+  when the mod's material word (+0x14) equals the material being drawn and the LOD gate 0xc43780
+  passes: it takes the next texture stage (the global counter `DAT_011143bc`, +1; stage 1 under one
+  mod), loads the texture on first use (`FUN_00c82cb0` -> `ResourceMgr::FUN_00bcf590(4, path)`, the
+  path as written -- every one placed is a full `prim\mtrl\etc\...` path), `SetTexture(stage)` and
+  calls the op's set-up (IDirect3DDevice9 vtable +0x10c is SetTextureStageState):
+  - op 0 (0xc82e70): `COLOROP` = 14 `BLENDFACTORALPHA`, `D3DRS_TEXTUREFACTOR` (0x3c) = the factor
+    (`FUN_00471360`): `lerp(current, texture, factor alpha)`;
+  - op 1 (0xc82ac0): `COLORARG1` = `TEXTURE`, `COLORARG2` = `CURRENT`, `COLOROP` = 13
+    `BLENDTEXTUREALPHA`, `ALPHAOP` = `DISABLE`: `lerp(current, texture, texture alpha)`, the alpha
+    left as stage 0 made it (INFERRED: D3D9 leaves an enabled colour stage with a disabled alpha op
+    undefined; drivers pass the current alpha).
+  - `vslot_005` (0xc82ba0) undoes it (`COLOROP`/`ALPHAOP` = `DISABLE`) and gives the stage back.
+- **MULTITEXREV** (`vslot_004` 0xc83160) ORs `0x200000` and `0x80000000` into the draw flags and
+  puts its texture on stage **0**. The renderer (`CObjRendererVS::FUN_00bf0e20`, 0xbf10b0..0xbf10ce)
+  then binds the material's own texture to stage **1** (`0x80000000`), and `0x200000` with TEXANI0's
+  `0x8000000` picks the `TEXANI1R` shader variant (0xbf1943..0xbf1968).
+- **Coordinates.** `CRTModMultiTex::vslot_004` sets no draw flag, so stage 1's coordinates come from
+  the UV variant the other mods pick: `TEXANI1` (`mov oT0.xy, v4.xy; m3x3 oT1.xyz, (u,v,1), c23`)
+  animates them; the plain `TEXTURE0` variant writes no `oT1` at all. `MULTITEX` (flag `0x2000000`)
+  is another mod's variant (the env-map matrix on stage 0), not this one's.
+- **MEASURED** (`client/tools/water_census.gd`, every object Map.pk2's `object.ifo` names, placed as
+  the world places them): 6 models carry a live MULTITEX, 4 of them placed (6 placements):
+  `alex_library_01` (91/49, Alexandria's fountain: every material, op 1, `water_offset_01.ddj`,
+  TEXANI1 v -0.88/s), `waterfall-turtle01`/`02` (98/169, two each: `waterfall03`, op 1, `pokpo3.ddj`,
+  TEXANI1 v +0.17/s) and `dun_cen_s01` (126/211, op 1, `dun_cen_tex6.ddj`, TEXANI1 v -0.30/s). Every
+  placed TEXANI1 is on a material with a MULTITEX; every placed MULTITEX material is under an MTRL
+  mod. No placed object carries a MULTITEXREV.
 
 ### Material-state mods (round 625 and its review, READ)
 

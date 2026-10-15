@@ -129,11 +129,38 @@ vec3 srr_lightmapped(vec3 srr_tex, vec3 srr_lit, vec2 srr_uv2) {
 }
 #endif
 
-// A TEXANI mod's texture-coordinate matrix, rows c23 and c24 (TexAni, round
-// 722; READ: vertexshader0texani.c's m3x3 oT0, (u, v, 1), c23). The
-// identity for every other material.
+// A TEXANI mod's texture-coordinate matrix, rows c23 and c24 (TexAni, rounds
+// 722 and 786): its start rows, their rates a second, the clock it was
+// bound at, and the stage whose coordinates it moves (0 TEXANI0 / TEXANI1R,
+// 1 TEXANI1, -1 none: every other material).
+global uniform float srr_texani_clock;
 uniform vec3 texani_u = vec3(1.0, 0.0, 0.0);
 uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
+uniform vec3 texani_du = vec3(0.0);
+uniform vec3 texani_dv = vec3(0.0);
+uniform float texani_t0 = 0.0;
+uniform int texani_stage = -1;
+
+#ifdef MULTITEX
+varying vec2 srr_uv1;
+// A MULTITEX mod's second texture (round 786; ObjectLoader._commit_multitex,
+// READ CRTModMultiTex): texture stage 1, on srr_uv1 (TexAni), blended over
+// the stage-0 result by its own alpha (op 1: COLORARG1 TEXTURE, COLORARG2
+// CURRENT, COLOROP BLENDTEXTUREALPHA, 0xc82ac0) or by the mod's factor
+// alpha (op 0: COLOROP BLENDFACTORALPHA, TEXTUREFACTOR = the mod's colour,
+// 0xc82e70); ALPHAOP DISABLE, so the alpha stays stage 0's. A MULTITEXREV
+// (multitex_rev) swaps the two textures: the mod's on stage 0, the
+// material's on stage 1 (READ, 0xc83160 and CObjRendererVS::FUN_00bf0e20's
+// 0x80000000).
+uniform sampler2D multitex_texture : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform int multitex_op = 1;
+uniform float multitex_factor = 0.0;
+uniform bool multitex_rev = false;
+vec3 srr_multitex(vec3 srr_current, vec4 srr_t1) {
+	float srr_k = multitex_op == 1 ? srr_t1.a : multitex_factor;
+	return mix(srr_current, srr_t1.rgb, srr_k);
+}
+#endif
 
 #ifdef EQUIP_GLOW
 // A weapon or shield's glow (round 734, EquipGlow; weapon_glow.md §2.2): the
@@ -225,11 +252,27 @@ void vertex() {
 #else
 	srr_od0 = srr_obj_od0(MODEL_NORMAL_MATRIX * NORMAL, srr_color(albedo, OUTPUT_IS_SRGB).rgb, object_color, object_tint);
 #endif
-	UV = vec2(dot(vec3(UV, 1.0), texani_u), dot(vec3(UV, 1.0), texani_v));
+#ifdef MULTITEX
+	srr_uv1 = UV; if (texani_stage >= 0) { float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; vec2 srr_ta_uv = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); if (texani_stage == 1) { srr_uv1 = srr_ta_uv; } else { UV = srr_ta_uv; } }
+#else
+	if (texani_stage == 0) { float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; UV = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); }
+#endif
 }
 
 void fragment() {
+#ifdef MULTITEX
+	vec4 tex;
+	vec4 srr_t1;
+	if (multitex_rev) {
+		tex = texture(multitex_texture, UV);
+		srr_t1 = texture(albedo_texture, srr_uv1);
+	} else {
+		tex = texture(albedo_texture, UV);
+		srr_t1 = texture(multitex_texture, srr_uv1);
+	}
+#else
 	vec4 tex = texture(albedo_texture, UV);
+#endif
 #ifdef EQUIP_GLOW
 #ifdef CROWD_GPU
 	ALBEDO = srr_obj_present(srr_glow_row(tex.rgb, UV, srr_glow_clock, srr_cg_g1, srr_cg_g2, srr_cg_g3));
@@ -244,6 +287,8 @@ void fragment() {
 #else
 #ifdef LIGHTMAP
 	ALBEDO = srr_obj_present(srr_lightmapped(tex.rgb, srr_od0, UV2));
+#elif defined(MULTITEX)
+	ALBEDO = srr_obj_present(srr_multitex(clamp(2.0 * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)), srr_t1));
 #else
 	ALBEDO = srr_obj_present(clamp(2.0 * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)));
 #endif

@@ -318,7 +318,16 @@ every sector it reaches.
   the "sequential index" the uid: see "Corrected (round 583)" above.)
 - What field 0's discarded count actually represents, and whether it's ever genuinely nonzero.
 - What distinguishes `lists[1]` from `lists[2]`: both are built the same way (round 643), and a
-  key sits in one or the other (7 of 75,564 in both). The loader does one more thing for a
+  key sits in one or the other (7 of 75,564 in both). **Answered for the draw (round 786, READ,
+  `SWorld::vslot_004` 0xa2cf60):** the frame visits the sectors the view touches (+0xba2); a
+  sector's +0x14 list (`lists[1]`) is range-tested against `DAT_00ec54b0 - 480.0` (2020 by
+  default, MapAnimation), its +0x24 list (`lists[2]`) only in the first 9 sectors of the frame's
+  list (`if (iVar15 < 9)`) and against **480** (the float at 0xde4f64, read from the exe). An object
+  out of range is neither updated nor drawn. MEASURED: the small props are `lists[2]` objects --
+  Jangan's lanterns `cj_lamp01` 40 of 40, Alexandria's `alex_burner` 85 of 85 -- and the waterfalls
+  and fountains `lists[1]` (`cj_waterfall02` 0 of 94). `World3D.region_placements` keeps each
+  placement's list (`list`) since round 786; `WorldAmbientFx` plays effects by it. Whether the
+  first 9 sectors are the 3 x 3 around the camera is INFERRED. The loader does one more thing for a
   `lists[1]` record whose object has +0x1a bit 0 set (a link through a map at +0x247b, a portal
   or warp candidate); that branch is not read further.
 - Whether the "only field 2 populated" pattern holds generally, or is specific to this one sample.

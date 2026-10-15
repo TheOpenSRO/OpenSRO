@@ -35,7 +35,9 @@
 # OPENSRO_QA_MOBS_SPREAD=1920 -- the density round 660's swapped spots put in
 # view: 1,378 bodies at the Europe starter field, 2,412 at the densest window;
 # round 664. A base without the SPREAD hook spreads them over the whole load
-# window instead: gate it against a base that has the hook).
+# window instead: gate it against a base that has the hook), alex (round 786:
+# Alexandria's library square facing the fountain `alex_library_01`, whose
+# ambient sprays and animated spouts are in view).
 #
 # How it measures (the method the reviews of rounds 645-647 settled on):
 # - runs are interleaved base, head, base, head ... so drift hits both;
@@ -147,7 +149,7 @@ while [ $# -gt 0 ]; do
     --cold) cold=1; shift ;;
     --renderer) renderer="$2"; shift 2 ;;
     --ab-renderer) ab_renderer="$2"; shift 2 ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--env 'VAR=value ...'] [--base-env 'VAR=value ...'] [--size WxH] [--cold] [--renderer forward_plus|gl_compatibility] [--ab-renderer forward_plus|gl_compatibility]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd,alex] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--env 'VAR=value ...'] [--base-env 'VAR=value ...'] [--size WxH] [--cold] [--renderer forward_plus|gl_compatibility] [--ab-renderer forward_plus|gl_compatibility]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
@@ -198,6 +200,7 @@ view() {
     ferry)  echo '90\143.m|464,879|270||12000' ;;   # Donwhang-region ferry GATE_NPC_WC_FERRY4, looking at the dock over the reeds (round 648); 12000 frames: at 2.6 ms a frame 3000 gave 8 samples, under the minimum of 10 (the figure averages the last 30)
     mobs)   echo '97\168.m|1002,1020|0||3000|OPENSRO_QA_MOBS=500' ;;   # the spawn with 500 monsters (round 655)
     crowd)  echo '97\168.m|1002,1020|0||3000|OPENSRO_QA_MOBS=2500 OPENSRO_QA_MOBS_SPREAD=1920' ;;   # 2,500 monsters within 1,920 (round 664)
+    alex)   echo '91\49.m|105,330|180|' ;;   # Alexandria's library square, facing the fountain alex_library_01 76 units off: its five ambient sprays and its MULTITEX spouts in view (round 786)
     *) echo "unknown site $1" >&2; exit 2 ;;
   esac
 }

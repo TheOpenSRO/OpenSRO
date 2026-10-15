@@ -9221,6 +9221,195 @@ and `flipcount.py`; lane `RENDER_DIR=/opt/opensro-client-flicker`, `GODOT_LOCK=/
 - Retail's own blend model (the first pass claims a quad, masks per vertex; round 610's "recorded,
   not applied") is still not ours; only the order now matches.
 
+### Round 786 (part): Fountains, waterfalls and their splashes are animated
+
+The user (v0.1.545): "Can you animate all water effects in the game like this fountain in Alexandria
+South? The fountain is mostly unanimated except for the water in the bowl. Also there are particle
+effects for water splash that happen on this, waterfalls in Hotan, and the statue in Jangan and
+possibly others", with a screenshot of OpenSRO at Alexandria's library square: the pool water moving,
+the white spray cones on the five spouts still, no splashes. Branch `feat/water786`. Code:
+`WorldAmbientFx` (new), `BsrReader.multitex_for`, `ObjectLoader._prepare_multitex` /
+`_commit_multitex`, object.gdshaderinc's `MULTITEX` variant and the MTRL mod shader's stage 1,
+`TexAni` (shader clock, stage 1); tool `water_census.gd`; perf gate site `alex`.
+
+Labels: READ (sro_client.exe, address given; Data.pk2's `Shader\vss0.c`), MEASURED, INFERRED, OPEN,
+OURS. The decompile is the box's `/var/tmp/decomp_client`, the asm `/var/tmp/sro_client.asm`.
+
+**The fountain in the screenshot (MEASURED).** It is `alex_library_01.bsr`, placed at 91/49 local
+(105.3, 253.8): its `ambient` set has five `map\alex_library_01.efp` entries at (+-56, 24, 0),
+(0, 24, +-56) and (0, 58, 0) -- the four corner spouts and the top. The library complex
+`alex_library.bsr` (91/49, (311.6, 1024.2), 3,445 units across) has the one TEXANI mode 0 there,
+on its material `alex_library_fountain12` (v +0.07/s), and its own ambient set puts one
+`alex_library_01.efp` and four `alex_library_02.efp` on the same five spouts from 800 units away
+(`QA WORLDFX placed` lines: the corner effects of both objects land within 0.5 of each other). The
+moving pool is that TEXANI (INFERRED: `alex_library_01` has no stage-0 TEXANI, and
+`OPENSRO_QA_NOWATER=1` changes nothing; the mesh under the pool was not ray-picked).
+
+**What moves a placed object's water: every mechanism, READ, and the census (MEASURED,
+`water_census.gd` over every model of Map.pk2's `object.ifo`, placed as the world places them --
+`.o2` lists 1 and 2, skip bit clear, one per key).**
+
+| mechanism | READ | placed models / placements | before -> after |
+|---|---|---|---|
+| `ambient` particle set (sprays, splashes, mist, lanterns) | ModPalette `ambient` = set kind 2; slot 27 of all four compound vtables (0xc306c0) jumps to `CCompChar::FUN_00c46ab0` (0xc307da), which takes the ambient slot (0xc46b26) | 310 / **2,873** (2,668 without the seasonal sets the world hides by default; 253 water-named) | 42 (gate path) -> all |
+| TEXANI mode 0 (stage 0's UV: pools, waterfalls, streams) | round 722 (`CRTModTexAni`, `vss0.c` TEXANI0) | 30 / 317 | drawn -> drawn (now on a shader clock) |
+| TEXANI mode 1 + MULTITEX (a second texture, scrolled) | `CRTModMultiTex` (below), `vss0.c` TEXANI1 | 4 / 6: `alex_library_01`, `waterfall-turtle01`/`02` (98/169), `dun_cen_s01` | 0 -> 6 |
+| MULTITEXREV | `CRTModMultiTexRev::vslot_004` 0xc83160 | 0 / 0 (implemented) | -- |
+| particles in a clip's set (`default` type 0 on an animated object) | round 720 | 0 placed | -- |
+| skeletal (`grs_water_big` water grass) | round 645 | 3 water-named / 248 | drawn -> drawn |
+| DYVERTEX / per-vertex motion (cloth: tents, flags) | not read | 113 / 630; none water-named | OPEN, not water |
+
+Not found moving any water (MEASURED, the census): a `.bmt` field -- the texture trailer's word
+(+0x90, meaning not read) is 0x3f800000 on every water layer the census printed; a skeletal clip --
+the three water-named skeletal models are the water grass `grs_water*`. Who selects
+`Shader\vss0.c`'s `MORPHING` variant (three blended position streams) was not traced (OPEN).
+
+**MULTITEX, READ.**
+- `ModDataMultiTex::vslot_004` (0xc613b0): the IModData header, `+0x24` op, `+0x28` texture path,
+  `+0x44` factor (ARGB); the writer 0xc5eb20 agrees.
+- `CRTModMultiTex::vslot_004` (0xc82ce0), for the material its +0x14 names: the next texture stage
+  (the global counter `DAT_011143bc`), the texture loaded by path (`FUN_00c82cb0` ->
+  `ResourceMgr::FUN_00bcf590(4, ...)`), `SetTexture(stage)`, and the op's set-up from the table the
+  constructor 0xc82ec0 fills (`IDirect3DDevice9` +0x10c is SetTextureStageState): op 0 (0xc82e70)
+  COLOROP 14 BLENDFACTORALPHA with `D3DRS_TEXTUREFACTOR` = the factor; op 1 (0xc82ac0) ARG1 TEXTURE,
+  ARG2 CURRENT, COLOROP 13 BLENDTEXTUREALPHA, ALPHAOP DISABLE. `vslot_005` (0xc82ba0) undoes it.
+- No draw flag is set, so stage 1's coordinates are TEXANI1's (`vss0.c`: `mov oT0.xy, v4.xy`,
+  `m3x3 oT1.xyz, (u,v,1), c23`); the plain variant writes no `oT1`. Every placed TEXANI1 has a
+  MULTITEX on its material, and every placed MULTITEX material is under an MTRL mod (MEASURED).
+- MULTITEXREV: its texture on stage 0, flags `0x200000 | 0x80000000`; the renderer then binds the
+  material's texture to stage 1 (`CObjRendererVS::FUN_00bf0e20`, 0xbf10b0..0xbf10ce).
+- The fountain's spouts: every material of `alex_library_01`, op 1, `prim\mtrl\etc\water_offset_01.ddj`
+  (256x256, alpha 255 everywhere, mean colour (40, 51, 66) -- MEASURED), v -0.88/s; under an MTRL mod
+  that adds (SRCALPHA/ONE) MODULATE(DIFFUSE, TEXTURE) with alpha 2 x a^2. So the white cones become a
+  dim scrolling blue, added: the spray is the effects'. (D3D leaves an enabled colour stage with a
+  disabled alpha op undefined; the stage-0 alpha passing through is INFERRED, what drivers do.)
+
+**Why the particles did not play (OURS until now).** Round 720 played the `ambient` sets of the
+objects standing at a teleport structure only (its "OURS: the rest of the world is not done here"),
+round 774 the dungeons'. The EFP code was not the limit: every water effect the census names builds
+and draws (MEASURED, `efp_probe.gd --files=... --keep=1`: `map\pajang`, `pokpopapyun`, `pajang-b`,
+`multugu-b`, `pokpomulbangul(-m)`, `multigi`, `alex_library_01`/`_02`, `euro_constan_center`,
+`dun\dun_waterfall_b1`, `pajang-m-02`, `oas_hot_etc_b`, the guild `waterup_*`, `sd_dustfall_down`:
+all draw from frame 1, `draw_mismatch 0 dropped 0`).
+
+**When an object's effects run (READ, `SWorld::vslot_004` 0xa2cf60).** Only the sectors the view
+touches are visited (+0xba2). A sector's +0x14 list (`.o2` lists[1]) is tested against the object
+range `DAT_00ec54b0 - 480.0` (2020); its +0x24 list (`.o2` lists[2]) against **480** -- the float at
+0xde4f64, read from the exe's bytes -- and only in the frame's first 9 sectors (`iVar15 < 9`). An
+object out of range is neither updated nor drawn, nor are its effects (they draw as it draws,
+`CRTModParticle::FUN_00c81450`). The particle mod's LOD gate passes: a compound's slot 73 (0xc2edc0,
+called by the object build at 0xc331ae) stores 0.0 in its LOD +0x7c (asm 0xc2f056..0xc2f05e), so
+`0.9 < 0.0` is false (round 720 had it INFERRED). MEASURED: the small props are lists[2]
+(`cj_lamp01` 40 of 40, `alex_burner` 85 of 85), the waterfalls and fountains lists[1].
+
+**What was built.**
+- `WorldAmbientFx`: every placed object (and compound child) with ambient entries registers at its
+  placement, with its `.o2` list (`World3D.region_placements` keeps it now). Every 100 ms (OURS) the
+  hosts are range-tested as READ, a host visited while its own box (meshes, and its effects' cull
+  boxes) is in view -- the `.o2` lists a big object in every sector it reaches, and Alexandria's
+  library has its origin 800 units from the splashes it carries. A host coming in range has its
+  files decoded on WorkerThreadPool and its effects built (at most 2 ms a frame, OURS), looped, as
+  children of the object; out of range they hide and pause. Each frame the effects whose particles
+  are in the view step as one batch (EfpSimBatch; native when the library is there), and a new
+  host's for its first 1.5 s whatever the view -- OURS: the original steps every effect of a
+  visited object; one nobody can see changes nothing seen and resumes where it stood. `EfpEffect`
+  keeps each draw's tight particle bounds for it (`_tight_boxes`, `particles_box()`, from the same
+  `_fit_box_to` measurement as the cull box). INFERRED: the first 9 sectors are the 3 x 3 around the
+  camera's. The teleport structures keep round 720's always-running path; a host either path built
+  is skipped by the other.
+- Round 720's review measured "play everywhere" at Jangan as +1.44 ms a frame (112 objects, 135
+  effects, 113 glows, every one stepped) and listed its prerequisites: the files decoded off the
+  main thread (done: `EfpEffect.preload_paths` per host), the shaders warmed at load (round 722's
+  `EfpEffect.warm`), glows set only on change and only drawn ones tested (rounds 720-774), mode 0
+  and the night bit (round 720). The range rules (480 for the lamps, `lists[2]`) and stepping only
+  what is seen are what keep it off the frame (perf below).
+- The first gate of this round stepped by the effects' cull boxes (+-200 units): at the Jangan view
+  the dragon fountain's four `multigi.efp`, 200 units behind the camera, cost 0.77 -> 0.87 ms
+  (MEASURED, three base and two head runs); hence the particle boxes.
+- MULTITEX: `BsrReader` reads it (one parse of the mod section per file now, five before);
+  `ObjectLoader` decodes the texture beside the material's and puts it on stage 1 -- the MTRL mod
+  shader's built-in stage (`multitex_op`, `multitex_factor`, `multitex_rev`) or object.gdshaderinc's
+  `MULTITEX` variant.
+- TEXANI: the rate step is linear in time, so the shader evaluates `start + rates x (clock - t0)` on
+  one global clock (`srr_texani_clock`, project.godot) set once a tick -- until now every live
+  material's rows were stepped and uploaded each tick. `texani_stage` 1 (mode 1) moves `srr_uv1`,
+  stage 1's coordinates; -1 (every unbound material) skips the work, where round 722's line did two
+  dot products a vertex for every object. The grid step (no placed user) stays on the CPU.
+
+**QA (render box, Forward+, RX 7600; frames under `/var/tmp/water/<side>_<site>/`, `b_` base
+c6cfda6e, `h_` head; one viewpoint held 168 frames, `qa_site.sh`; boxes and numbers by `diffs.sh`
+over `frame_ab.py`; side-by-side crops in `/var/tmp/water/report/`).** Motion = the share of a box's
+pixels whose channels move by more than 8 between frames 300 and 306 (0.1 s of game time):
+
+| site (view) | box | base | head |
+|---|---|---|---|
+| Alexandria fountain (91/49 at 105,330, yaw 180, dist 70) | left corner spout | 0.000 | **0.544** |
+| | right corner spout | 0.000 | **0.415** |
+| | top spout | 0.000 | **0.339** |
+| | back spouts | 0.000 / 0.000 | **0.532 / 0.478** |
+| | pool (the library's TEXANI, round 722) | 0.040 | 0.040 |
+| | paving (control) | 0.000 | 0.000 |
+| Hotan waterfall (93/135 at 1706,1380, yaw 0, dist 250) | the fall | 0.421 | **0.479** |
+| | rock (control) | 0.008 | 0.008 |
+| Jangan palace turtle (98/169 at 840,560, yaw 180, dist 200) | its mouth's splash | 0.315 | 0.339 |
+| Jangan square dragon (97/168 at 972,1060, yaw 180, dist 200) | the dragon's mist | 0.004 | 0.013 |
+
+The same frame base against head: the turtle's splash box differs at 29.6 % of its pixels, the
+dragon's at 20.9 % (the effects drawn); elsewhere nothing (`compare` masks, one spot each). Their
+streams were already TEXANI0 (round 722) and move in both. The pool is not the map water:
+`OPENSRO_QA_NOWATER=1` leaves its motion at 0.040 and the frame unchanged (0.000 of the box differs).
+`report/alex_spout_sequence.png`: one spout at frames 300, 303, 306, 309.
+
+**Perf gate** (`perf_gate.sh --base c6cfda6e --head <round head> --frames 40000`, 1280x720,
+Forward+, median of 3, native readers off on both sides; `alex` is new this round: Alexandria's
+library square facing the fountain):
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 0.77 -> 0.81 SAME | 8548 -> 8597 SAME | 2708 -> 2729 SAME | 4 -> 4 SAME |
+| crowd (2,500 monsters) | 2.06 -> 1.98 SAME (faster) | 10919 -> 11077 SAME | 3479 -> 3494 SAME | 5 -> 5 SAME |
+| hotan | 1.02 -> 0.99 SAME | 8996 -> 9017 SAME | 2899 -> 2912 SAME | 6 -> 6 SAME |
+| **alex** | **1.03 -> 1.75 SLOWER (+0.72)** | 9123 -> 9512 SAME | 2003 -> 2021 SAME | 12 -> 11 SAME |
+
+**The `alex` slowdown is the feature's own cost, recorded for the user** (AGENTS.md). Split
+(MEASURED, the same head both ways): the world's effects off against on, 1.02 -> 1.60 ms at
+1280x720 and 1.02 -> 1.34 at 320x180, so about 0.3 ms is CPU and the rest the GPU's fill of the
+sprays; round 722's display-value blend costs 1.63 -> 1.66 of it (`OPENSRO_QA_WORLD_FX_BLEND=linear`,
+SAME). The CPU part is the ten effects' GDScript simulation: on the wall clock (`QA_SHOT_REALTIME=1`,
+`OPENSRO_QA_WORLD_FX=1`) their tick averages 3.55 ms a 60-fps frame (simulation 2.48, placement and
+draws 1.03) without the native library and **0.26 ms with it** (simulation 0.07, draws 0.14) -- the
+library a player's client loads (native/README.md). The gate runs both sides without it by design.
+At jangan the world's effects off against on give 0.77 -> 0.80, with no host in range at the spawn
+and the tick's own mean 36 us on the ~10 frames a second it runs (MEASURED): where the 0.03 ms goes
+is OPEN.
+
+Fixed in the round on the way (MEASURED): the first gate stepped effects by their cull boxes
+(jangan 0.77 -> 0.87, the dragon fountain behind the camera); stage 0's texture chosen by a select
+of two samples cost crowd 2.07 -> 2.22 (now 1.98); the batch woke its pool helpers on frames with no
+simulation due (no change measured); the tick returns at once on a frame with nothing to do.
+
+**Gates.** `remote_godot.sh check` ALL LOAD (809 scripts); `tests` "ran 314 suite(s), 0 failing"
+(lane `RENDER_DIR=/opt/opensro-client-water`, `GODOT_LOCK=/var/tmp/water/lock`). No `native/` change.
+
+**Tests.** `water_fx_test.gd` (new: the MULTITEX reader and dispatch through a whole mod section,
+the second texture on both shaders, the two ranges and the 3 x 3 sectors, the view box, the
+registration of objects and compound children, and the effects built, stepped, hidden and paused);
+`tex_ani_test.gd` (the shader clock: the rows at t equal the summed rate step, 120 steps of 16.7 ms
+against t = 2 s; stage 1; the grid on the CPU; `bind_like`). `crowd_gpu_test` caught a mod-shader
+comment naming `object.gdshaderinc`, which `CrowdGpu.twin_code` reads as an object shader (fixed).
+
+**OPEN.**
+- The `alex` frame cost (+0.72 ms without the native library, above): for the user. And the 0.03 ms
+  at jangan with no effect in range.
+- Whether the frame's first 9 sectors are the 3 x 3 around the camera (INFERRED).
+- A placed object's effects run here from its first time in range, not from its creation; out of
+  view they do not step (OURS).
+- The objects themselves: World3D draws `lists[2]` objects to 2020, where the original draws them
+  to 480 (READ above; MapAnimation's rule) -- a separate change.
+- DYVERTEX and the per-vertex motion section (cloth) are not read; no water uses them.
+- EfpEffect's cull box (DRAW_AABB grown to its particles) is the effect's own; a waterfall's mist
+  reaching 1,266 units down (`pokpomulbangul-m`, MEASURED) is culled with its box as before.
+
 ## Seven-hundred-and-eighty-fifth round: combat, every skill, the effects' trails, the teleport loading screen, drops and the pick-up, quests
 
 The user (2026-10-12, overnight): fix the teleport loading screen's flicker; make combat play like the

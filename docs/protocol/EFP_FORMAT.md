@@ -329,6 +329,16 @@ are TEXTURE (2) and DIFFUSE (0).
 How the client plays a decoded tree. `client/scripts/efp/efp_sim.gd` (`EfpSim`) implements it and
 `efp_effect.gd` (`EfpEffect`) draws it. Labels are as above; OURS marks this client's choices.
 
+**Who plays them.** Skills, buffs and hits (`SkillEffects`), worn gear (`EquipFx`), and the placed
+map objects' `ambient` particle mods: the teleport structures (round 720), the dungeons (round 774)
+and, since round 786, every other placed object -- fountains, waterfalls, lanterns, burners
+(`WorldAmbientFx`; teleport_effects.md has the READ rules: the object's range, 2020 or 480 by its
+`.o2` list, and the sectors in view). The water effects the round's census names
+(`map\pajang*.efp`, `pokpopapyun`, `multugu-b`, `pokpomulbangul(-m)`, `multigi`,
+`alex_library_01`/`_02`, `dun\dun_waterfall_b1`, ...) all build and draw through this code with no
+node skipped (MEASURED, `efp_probe.gd --files=... --keep=1`: every one draws from its first frame,
+`draw_mismatch 0 dropped 0`).
+
 ### Time (READ)
 
 - **A frame is 50 ms.** The effect clock is `UI_ALCHEMYBOX::FUN_00bc1490`, reached through the thunk

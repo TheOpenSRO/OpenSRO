@@ -295,6 +295,11 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 			var texani := obj.texani_for(layer_idx)
 			if not texani.is_empty():
 				(piece["material"] as Dictionary)["texani"] = texani
+			# Its MULTITEX / MULTITEXREV mod (round 786): the second texture
+			# the commit puts on stage 1 (or 0, for a REV).
+			var multitex := obj.multitex_for(layer_idx)
+			if not multitex.is_empty():
+				_prepare_multitex(archive, multitex, obj.material_path, piece["material"], known, prepared)
 
 		(node["pieces"] as Array).append(piece)
 		loaded_count += 1
@@ -369,6 +374,8 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 			var godot_material := _commit_material(piece["material"], texture_cache)
 			if godot_material != null and piece.has("lightmap_key"):
 				_commit_lightmap(godot_material, texture_cache.get(piece["lightmap_key"], {}).get("texture"))
+			if godot_material != null and (piece["material"] as Dictionary).has("multitex"):
+				_commit_multitex(godot_material, piece["material"]["multitex"], texture_cache)
 			if godot_material != null:
 				mesh_instance.material_override = godot_material
 				if (piece["material"] as Dictionary).has("texani"):
@@ -658,8 +665,8 @@ const OBJECT_SHADER_KIND_META := "opensro_object_shader_kind"
 ## a character fading into existence draws with (AppearFade, round 676):
 ## blended at the fade's alpha, depth_draw_always keeping the model's near
 ## faces in front of its far ones while it is translucent (OURS).
-static func object_shader(kind: String, fade: bool = false, lightmap: bool = false) -> Shader:
-	var key := "%s/%s%s" % [kind, fade, "/lightmap" if lightmap else ""]
+static func object_shader(kind: String, fade: bool = false, lightmap: bool = false, multitex: bool = false) -> Shader:
+	var key := "%s/%s%s%s" % [kind, fade, "/lightmap" if lightmap else "", "/multitex" if multitex else ""]
 	_static_lock.lock()
 	var cached: Shader = _object_shaders.get(key)
 	_static_lock.unlock()
@@ -675,9 +682,11 @@ static func object_shader(kind: String, fade: bool = false, lightmap: bool = fal
 		defs += "#define APPEAR_FADE\n"
 	if lightmap:
 		defs += "#define LIGHTMAP\n"
+	if multitex:
+		defs += "#define MULTITEX\n"
 	var sh := Shader.new()
-	sh.code = "shader_type spatial;\n// An object layer, kind %s%s%s (ObjectLoader.object_shader, round 706).\nrender_mode %s;\n%s#include \"res://scripts/assets/object.gdshaderinc\"\n" % [
-		kind, ", fading" if fade else "", ", light-mapped" if lightmap else "", modes, defs]
+	sh.code = "shader_type spatial;\n// An object layer, kind %s%s%s%s (ObjectLoader.object_shader, round 706).\nrender_mode %s;\n%s#include \"res://scripts/assets/object.gdshaderinc\"\n" % [
+		kind, ", fading" if fade else "", ", light-mapped" if lightmap else "", ", two textures (MULTITEX)" if multitex else "", modes, defs]
 	sh.set_meta(OBJECT_SHADER_KIND_META, kind)
 	_static_lock.lock()
 	if _object_shaders.has(key):
@@ -968,9 +977,15 @@ uniform int alpha_arg2 = 0;
 // The blend emulation (ObjectLoader.BLEND_EMULATION).
 uniform int blend_color = 0;
 uniform int blend_alpha = 0;
-// A TEXANI mod's texture-coordinate matrix (TexAni, round 722).
-uniform vec3 texani_u = vec3(1.0, 0.0, 0.0);
-uniform vec3 texani_v = vec3(0.0, 1.0, 0.0);
+%s
+// A MULTITEX mod's second texture on stage 1 (round 786; as the object
+// shader's MULTITEX variant -- not named here: CrowdGpu.twin_code tells an
+// object shader by its include's name): multitex_op -1 for none, 1 blended by
+// its own alpha (BLENDTEXTUREALPHA), 0 by the factor's (BLENDFACTORALPHA).
+uniform sampler2D multitex_texture : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform int multitex_op = -1;
+uniform float multitex_factor = 0.0;
+uniform bool multitex_rev = false;
 %s
 // A stage value split into the part that multiplies DIFFUSE (lit) and the
 // part that does not (unlit): value = lit * DIFFUSE + unlit.
@@ -1050,8 +1065,17 @@ bool keep(float a) {
 }
 
 void fragment() {
-	vec4 tex = texture(albedo_texture, UV);
-	vec4 tex0 = textureLod(albedo_texture, UV, 0.0);
+	// A MULTITEXREV puts the mod's texture on stage 0 (round 786). A uniform
+	// branch, not a select: a select of two samples takes both.
+	vec4 tex;
+	vec4 tex0;
+	if (multitex_rev) {
+		tex = texture(multitex_texture, UV);
+		tex0 = textureLod(multitex_texture, UV, 0.0);
+	} else {
+		tex = texture(albedo_texture, UV);
+		tex0 = textureLod(albedo_texture, UV, 0.0);
+	}
 	if (!keep(clamp(aop(alpha_op, aarg(alpha_arg1, tex0), aarg(alpha_arg2, tex0), tex0.a), 0.0, 1.0))) {
 		discard;
 	}
@@ -1059,6 +1083,18 @@ void fragment() {
 	float a = clamp(aop(alpha_op, aarg(alpha_arg1, tex), aarg(alpha_arg2, tex), tex.a), 0.0, 1.0);
 	vec3 lit = c.lit * srr_od0;
 	vec3 stage = clamp(lit + c.unlit, vec3(0.0), vec3(1.0));
+	// Stage 1 (round 786, READ CRTModMultiTex): the second texture over the
+	// stage-0 colour by its alpha or the factor's; ALPHAOP DISABLE keeps
+	// stage 0's alpha.
+	if (multitex_op >= 0) {
+		vec4 t1;
+		if (multitex_rev) {
+			t1 = texture(albedo_texture, srr_uv1);
+		} else {
+			t1 = texture(multitex_texture, srr_uv1);
+		}
+		stage = mix(stage, t1.rgb, multitex_op == 1 ? t1.a : multitex_factor);
+	}
 	if (blend_color == 1) {
 		stage *= stage;
 	} else if (blend_color == 2) {
@@ -1076,7 +1112,7 @@ void fragment() {
 	%s
 	%s
 }
-""" % [", ".join(modes), "uniform float appear_alpha = 1.0;\n" if fade else "",
+""" % [", ".join(modes), TexAni.SHADER_UNIFORMS + TexAni.SHADER_VARYING, "uniform float appear_alpha = 1.0;\n" if fade else "",
 		# The tone map is undone on what is drawn over (opaque, mix): a
 		# multiplying or adding blend's source is a factor, not a colour
 		# shown (OURS, ObjectLight).
@@ -1205,6 +1241,61 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 		print(line)
 	commit_textures(prepared["textures"], texture_cache)
 	return _commit_material(plan, texture_cache)
+
+## A MULTITEX / MULTITEXREV mod's second texture (round 786; READ, BsrReader.
+## _read_multitex): resolved, decoded into prepared["textures"] unless the
+## commit's cache holds it (`known`), and described on the material's plan as
+## `{"op", "factor", "rev", "texture_key"}`. The client loads the path as the
+## mod names it (ResourceMgr::FUN_00bcf590 through CRTModMultiTex::
+## FUN_00c82cb0); every mod MEASURED names a full archive path
+## (`prim\mtrl\etc\...`). A bare name is taken beside the `.bmt`, as a
+## layer's texture is (OURS: none exists). A texture not found is reported
+## and the material drawn with stage 0 alone.
+static func _prepare_multitex(archive: Pk2Reader, mod: Dictionary, bmt_path: String, plan: Dictionary,
+		known: Dictionary, prepared: Dictionary) -> void:
+	var path: String = mod.get("texture", "")
+	if path == "":
+		return
+	if not (path.contains("\\") or path.contains("/")):
+		var dir := bmt_path.replace("\\", "/").get_base_dir()
+		path = dir + "/" + path if dir != "" else path
+	var key := path.to_lower()
+	var textures: Dictionary = prepared["textures"]
+	if not textures.has(key):
+		if known.has(key):
+			textures[key] = {"image": null, "four_cc": known[key]["four_cc"], "alpha": (known[key]["alpha"] as Dictionary).duplicate()}
+		else:
+			var decoded := _decode_texture(archive, path, bmt_path, prepared["missing"])
+			if decoded.is_empty():
+				return
+			textures[key] = decoded
+	plan["multitex"] = {"op": int(mod.get("op", 1)), "factor": int(mod.get("factor", 0)),
+		"rev": bool(mod.get("rev", false)), "texture_key": key}
+
+## Puts a MULTITEX mod's texture on a committed material (round 786; READ
+## CRTModMultiTex::vslot_004 0xc82ce0 / the op set-ups 0xc82ac0, 0xc82e70):
+## an object-shader material moves to its MULTITEX variant; an MTRL mod's
+## shader has the stage built in (multitex_op -1 until set). The factor is
+## the TEXTUREFACTOR colour's alpha byte / 255 (D3D's BLENDFACTORALPHA reads
+## the factor's alpha). Both passes of a two-pass material.
+static func _commit_multitex(mat: Material, mt: Dictionary, texture_cache: Dictionary) -> void:
+	var tex: Texture2D = texture_cache.get(String(mt.get("texture_key", "")), {}).get("texture")
+	var sm := mat as ShaderMaterial
+	if tex == null or sm == null:
+		return
+	var mats: Array = [sm]
+	var front = sm.get_meta(FRONT_PASS_META) if sm.has_meta(FRONT_PASS_META) else null
+	if front is ShaderMaterial:
+		mats.append(front)
+	for m_v in mats:
+		var m := m_v as ShaderMaterial
+		if m.shader != null and m.shader.has_meta(OBJECT_SHADER_KIND_META):
+			var lightmapped := m.shader.code.contains("#define LIGHTMAP")
+			m.shader = object_shader(String(m.shader.get_meta(OBJECT_SHADER_KIND_META)), false, lightmapped, true)
+		m.set_shader_parameter("multitex_texture", tex)
+		m.set_shader_parameter("multitex_op", int(mt["op"]))
+		m.set_shader_parameter("multitex_factor", float((int(mt["factor"]) >> 24) & 0xFF) / 255.0)
+		m.set_shader_parameter("multitex_rev", bool(mt["rev"]))
 
 ## The prepare half of a layer's material (round 566): its texture resolved
 ## and -- unless `known` says the commit's cache holds it -- decoded to an

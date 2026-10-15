@@ -6008,6 +6008,7 @@ func _clear_region_grid() -> void:
 	# The town gates' bindings go with them (round 650, _bind_region_gates).
 	_gate_bindings.clear()
 	_map_animations.reset()
+	_world_fx.reset()
 	_leave_dungeon()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
@@ -10215,6 +10216,33 @@ const GATE_EFFECT_RADIUS := 30.0
 const META_GATE_EFFECTS := "gate_effects"
 var _ambient := AmbientParticles.new()
 
+## Every other placed object's `ambient` effects (round 786, WorldAmbientFx:
+## the fountains, waterfalls, lanterns and burners). OPENSRO_QA_AMBIENT=off
+## or OPENSRO_QA_WORLD_FX=off: none, for a comparison frame.
+var _world_fx := WorldAmbientFx.new()
+var _world_fx_on := OS.get_environment("OPENSRO_QA_AMBIENT") != "off" and OS.get_environment("OPENSRO_QA_WORLD_FX") != "off"
+## OPENSRO_QA_WORLD_FX=1: the manager's line every 120 frames.
+var _qa_world_fx := OS.get_environment("OPENSRO_QA_WORLD_FX") == "1"
+
+## Once a rendered frame: the hosts' range from the camera, the builds, the
+## step (WorldAmbientFx.tick).
+func _tick_world_fx(delta: float) -> void:
+	if not _world_fx_on:
+		return
+	var now := Time.get_ticks_msec()
+	if _world_fx.idle(now):
+		return
+	if _world_fx.particles == null:
+		_world_fx.particles = _open_particles_pk2_if_set()
+		_world_fx.ambient = _ambient
+	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+	var eye: Vector3 = cam.global_position if cam != null else (player.global_position if player != null else Vector3.ZERO)
+	# The frustum only on a frame that tests anything against it.
+	var planes: Array = cam.get_frustum() if cam != null and _world_fx.wants_view(eye, now) else []
+	_world_fx.tick(delta, eye, planes, now)
+	if _qa_world_fx and Engine.get_process_frames() % 120 == 0:
+		print("QA WORLDFX frame %d: %s" % [Engine.get_process_frames(), _world_fx.describe()])
+
 ## Retries left for a region whose gate effects are still decoding.
 const GATE_EFFECT_RETRIES := 50
 
@@ -10249,7 +10277,7 @@ func _attach_gate_effects(region_x: int, region_y: int, retries: int = GATE_EFFE
 	for pair in pairs + walk_ins:
 		var obj: Node3D = pair["node"]
 		var code: String = pair["code"] if pair.has("code") else (pair["building"] as TeleportReader.Building).code
-		if not is_instance_valid(obj) or obj.has_meta(META_GATE_EFFECTS):
+		if not is_instance_valid(obj) or obj.has_meta(META_GATE_EFFECTS) or obj.has_meta(WorldAmbientFx.META_BUILT):
 			continue
 		obj.set_meta(META_GATE_EFFECTS, true)
 		var mods: Array = obj.get_meta(AmbientParticles.META_ENTRIES)
@@ -14576,7 +14604,10 @@ static func _objects_prepare(job: Dictionary) -> void:
 ## with its two bridges -- and 1,064 placements matched no object retail
 ## builds.
 ##
-## Returns {"placements": [{type_id, position, rotation, key}], "records",
+## Returns {"placements": [{type_id, position, rotation, key, list}], "records",
+## (`list`: the `.o2` list the record came from, 1 or 2 -- the sector's +0x14
+## or +0x24 list, which the original runs at different ranges: round 786,
+## WorldAmbientFx)
 ## "repeats", "skipped", "foreign"}; `coords` is the region's
 ## _parse_region_coords (empty: every position is taken as given).
 static func region_placements(region2: MapO2Reader.ParsedRegion, coords: Dictionary) -> Dictionary:
@@ -14605,7 +14636,7 @@ static func region_placements(region2: MapO2Reader.ParsedRegion, coords: Diction
 					if offset != Vector3.ZERO:
 						foreign += 1
 						pos += offset
-				placements.append({"type_id": e.type_id, "position": pos, "rotation": e.rotation, "key": key})
+				placements.append({"type_id": e.type_id, "position": pos, "rotation": e.rotation, "key": key, "list": li})
 	return {"placements": placements, "records": records, "repeats": repeats, "skipped": skipped, "foreign": foreign}
 
 ## The model a placement names: its object-index entry's path, or -- for a
@@ -14861,6 +14892,11 @@ func _objects_commit(job: Dictionary) -> void:
 		if node.has_meta(MapAnimation.META_ANIMATED) or model_key.ends_with(".cpd"):
 			_map_animation_poses()
 			_map_animations.add(node, ifo_entry != null and (ifo_entry.flags & 1) != 0)
+		# Round 786: its `ambient` effects, played while it is in range
+		# (WorldAmbientFx: lists[2] objects within 480, the rest within the
+		# object range, READ).
+		if _world_fx_on:
+			_world_fx.add(node, int(placement.get("list", 1)) == 2, model_key.ends_with(".cpd"))
 		loaded += 1
 		if key >= 0:
 			_placed_objects[key] = {"node": node, "holder": node_suffix, "listers": {node_suffix: true}}
@@ -15289,6 +15325,10 @@ func _update_blob_shadow() -> void:
 ##                         round 786; _SHOW=1 draws them)
 ##   OPENSRO_QA_AMBIENT=1|off  log the teleport gates' glows every 60 ticks
 ##                         (round 720), or attach no gate effects at all
+##   OPENSRO_QA_WORLD_FX=1|off  (round 786) every placed object's ambient
+##                          effects (WorldAmbientFx): `QA WORLDFX` every 120
+##                          frames -- hosts, in range, built, stepping, the
+##                          cost -- or none of them (off), for a before frame
 ##   OPENSRO_QA_WALK=deg   walk continuously on that heading
 ##   OPENSRO_QA_FREE=1     let the camera pass through geometry
 ##   OPENSRO_QA_NOFOG=1    disable fog (for high overview shots)
@@ -19108,6 +19148,7 @@ func _process(_delta: float) -> void:
 	var t_world := t
 	if not _dungeon_fx.is_empty():
 		_step_dungeon_effects(_delta)
+	_tick_world_fx(_delta)
 	# Round 748 (item 4): the local player's pose once a rendered frame, at
 	# the clip time the frame's last physics step reached (_player_pose_due),
 	# not once a step -- a slow frame runs up to eight steps and posed (and
