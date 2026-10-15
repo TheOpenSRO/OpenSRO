@@ -71,6 +71,9 @@ type Config struct {
 	// server when the fake itself hangs up.
 	Record func(conn int, fromServer bool, b []byte)
 	Logf   func(format string, args ...any)
+	// Login, when set, plays a login past the list (round 788,
+	// fake_login.go).
+	Login *FakeLogin
 }
 
 // Fixed handshake values (tests and transcripts).
@@ -172,6 +175,7 @@ type sconn struct {
 	h    ServerHello
 	y, k uint32
 	key1 *proto.RetailCipher
+	fl   *fakeLoginConn // round 788, fake_login.go
 }
 
 func (sc *sconn) write(b []byte) error {
@@ -328,6 +332,9 @@ func (sc *sconn) onFrame(raw []byte) (bool, error) {
 		sc.sec.Cipher = final
 		return false, nil
 	case OpHandshakeAccept:
+		if sc.isAgent() { // round 788, fake_login.go
+			return false, sc.frame(OpIdentity, EncodeIdentity(AgentModule, 0), false)
+		}
 		name := GatewayModule
 		if cfg.Fault == FaultNotGateway {
 			name = "AgentServer"
@@ -361,7 +368,7 @@ func (sc *sconn) onFrame(raw []byte) (bool, error) {
 	case OpShardListRequest:
 		return sc.sendList()
 	}
-	return false, nil
+	return sc.onLoginFrame(f.Opcode, f.Payload) // round 788, fake_login.go
 }
 
 func (sc *sconn) sendList() (bool, error) {
