@@ -103,6 +103,8 @@ func _initialize() -> void:
 	await process_frame
 	_test_effect_materials()
 	_test_twins()
+	_test_pass()
+	_test_mtrl_display_blend()
 	if _failures == 0:
 		print("ALL PASS")
 	else:
@@ -171,3 +173,68 @@ func _test_twins() -> void:
 	_check(ok, "three twins, round 774's stack (two additive nodes: 2), at the effects' priority")
 	fx.sim.clear()
 	(made[0] as Node3D).free()
+
+## Round 786: the display pass (EfpDisplayPass): its blend factors are the
+## node's own Direct3D pair, and an effect hands it its draws.
+func _test_pass() -> void:
+	var F := RenderingDevice
+	_check(EfpDisplayPass.d3d_pair(5, 2) == Vector2i(F.BLEND_FACTOR_SRC_ALPHA, F.BLEND_FACTOR_ONE)
+		and EfpDisplayPass.d3d_pair(5, 6) == Vector2i(F.BLEND_FACTOR_SRC_ALPHA, F.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+		and EfpDisplayPass.d3d_pair(2, 2) == Vector2i(F.BLEND_FACTOR_ONE, F.BLEND_FACTOR_ONE)
+		and EfpDisplayPass.d3d_pair(1, 6) == Vector2i(F.BLEND_FACTOR_ZERO, F.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA),
+		"SRCALPHA/ONE, SRCALPHA/INVSRCALPHA, ONE/ONE and ZERO/INVSRCALPHA map to the same factors")
+	_check(EfpDisplayPass.d3d_pair(12, 2) == Vector2i(F.BLEND_FACTOR_SRC_ALPHA, F.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+		and EfpDisplayPass.d3d_pair(13, 1) == Vector2i(F.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, F.BLEND_FACTOR_SRC_ALPHA)
+		and EfpDisplayPass.d3d_pair(9, 1) == Vector2i(F.BLEND_FACTOR_DST_COLOR, F.BLEND_FACTOR_ZERO),
+		"BOTHSRCALPHA and BOTHINVSRCALPHA set the destination too; DESTCOLOR/ZERO multiplies")
+	var xf := Transform3D(Basis(Vector3(1, 0, 0), Vector3(0, 2, 0), Vector3(0, 0, -1)), Vector3(10, 20, 30))
+	var pc := EfpDisplayPass.push_constants(xf, PackedInt32Array([4, 2, 0, 5, 2, 0]), 200, 5)
+	var f := pc.slice(0, 48).to_float32_array()
+	var i := pc.slice(48).to_int32_array()
+	_check(pc.size() == 80 and f[3] == 10.0 and f[5] == 2.0 and f[10] == -1.0 and f[11] == 30.0
+		and i == PackedInt32Array([4, 2, 0, 5, 2, 0, 200, 5]),
+		"the push constants: three rows of the node's transform, the stage ops, the glow alpha and the stride (80 bytes)")
+	var dp := EfpDisplayPass.new()
+	var q := QuadMesh.new()
+	q.size = Vector2(1, 1)
+	var md := dp.mesh_data(q)
+	_check(md.size() == 6 * 8 and dp.mesh_data(q) == md, "a plate is two triangles, eight floats a vertex, kept per mesh")
+	EfpDisplayPass.pass_headless_active(dp)
+	EfpEffect.pass_headless = true
+	EfpEffect.display_twins_headless = true
+	var made := _build(_tree([_plate(30, 4), _plate(30, 4, 5, 6)]))
+	var fx: EfpEffect = made[1]
+	fx.use_display_blend()
+	EfpEffect.pass_headless = false
+	EfpEffect.display_twins_headless = false
+	var hidden := true
+	for d in fx._draws:
+		hidden = hidden and (d[1] as GeometryInstance3D).layers == 0
+	_check(fx._pass_draws and hidden and dp.count() == 1, "use_display_blend hands the plates to the pass and Godot draws them no more")
+	for k in 6:
+		fx._process(0.05)
+	var items: Array = []
+	fx.pass_items(items, [], Vector3(0, 0, 100), dp)
+	var ok := items.size() == 2
+	if ok:
+		var a: Dictionary = items[0]
+		var b: Dictionary = items[1]
+		ok = a["src"] == 5 and a["dest"] == 2 and b["dest"] == 6 and int(a["count"]) > 0 and a["cull"] == false \
+			and a["depth_test"] == true and (a["pc"] as PackedByteArray).size() == 80 and a["mm"] is MultiMesh and a["tex"] is Texture2D
+	_check(ok, "each drawn node becomes an item: its blend pair, particle count, culling (a billboard: none), depth test and push constants (%d items)" % items.size())
+	EfpDisplayPass.pass_headless_active(null)
+	fx.sim.clear()
+	(made[0] as Node3D).free()
+
+## Round 786: an MTRL pass blends in display values where it writes no depth.
+func _test_mtrl_display_blend() -> void:
+	_check(ObjectLoader.wants_display_blend("mix", false, false, true) and ObjectLoader.wants_display_blend("add", false, false, true),
+		"a mixing or adding MTRL pass with no depth write gets the display tail under Forward+")
+	_check(not ObjectLoader.wants_display_blend("mix", true, false, true) and not ObjectLoader.wants_display_blend("mul", false, false, true)
+		and not ObjectLoader.wants_display_blend("mix", false, true, true) and not ObjectLoader.wants_display_blend("mix", false, false, false),
+		"not with its depth write on (leaves), a multiplying pair, a fading pass or under Compatibility")
+	_check(ObjectLoader.DISPLAY_BLEND_MIX.contains("mix(srr_mb_shown(srr_bg), srr_mb_shown(srr_src), srr_a)")
+		and ObjectLoader.DISPLAY_BLEND_MIX.contains("FOG = vec4(0.0);")
+		and ObjectLoader.DISPLAY_BLEND_ADD.contains("srr_mb_shown(srr_bg) + srr_mb_shown(srr_src) * srr_a")
+		and ObjectLoader.DISPLAY_BLEND_ADD.contains("ALPHA = 1.0;"),
+		"the mix and the sum are taken on display values, the fog folded into the source first")

@@ -103,6 +103,12 @@ var draw_updates := 0
 var _has_billboard := false
 var _last_cam := Basis()
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
+## Round 786: each draw's node render state and whether it is billboarded
+## (the display pass's blend factors, stage ops and culling).
+var _draw_states: Array = []
+var _draw_billboard: Array[bool] = []
+## Round 786: the draws EfpDisplayPass draws (use_display_blend).
+var _pass_draws := false
 ## Round 785: per draw node, how far its shape reaches from a particle's
 ## position at scale 1 (the plate's or mesh's farthest corner), and the box
 ## its instance culls by now (DRAW_AABB, grown to hold its particles).
@@ -283,6 +289,8 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		mmi.name = "node_%d" % tp.index
 		fx.add_child(mmi)
 		fx._draws.append([tp.index, mmi, view])
+		fx._draw_states.append(n.state)
+		fx._draw_billboard.append(billboard)
 		var reach := 0.7072 # the unit plate's corner, sqrt(0.5) rounded up
 		if mode == MESH:
 			var mb := mesh.get_aabb()
@@ -308,8 +316,19 @@ func use_display_blend() -> void:
 	if not VideoOptions.forward_plus_running() and not display_twins_headless:
 		return
 	var nodes: Array = []
-	for d in _draws:
-		nodes.append(d[1])
+	# Round 786: the plates and meshes blend in display values exactly in
+	# EfpDisplayPass, after Godot's transparent pass; Godot no longer draws
+	# them (layers 0). Link nodes keep their twins below.
+	var pass_on := EfpDisplayPass.on() or pass_headless
+	if pass_on and not _draws.is_empty():
+		for d in _draws:
+			(d[1] as GeometryInstance3D).layers = 0
+		_pass_draws = true
+		if EfpDisplayPass.active != null:
+			EfpDisplayPass.active.register(self)
+	else:
+		for d in _draws:
+			nodes.append(d[1])
 	for l in _links:
 		nodes.append(l[1])
 	var adds := 0
@@ -331,6 +350,60 @@ func use_display_blend() -> void:
 
 ## Tests only (round 786): make the twins where no RenderingDevice runs.
 static var display_twins_headless := false
+## Tests only (round 786): hand the draws to the display pass with no
+## RenderingDevice (pass_items).
+static var pass_headless := false
+
+## Round 786 (EfpDisplayPass.submit, the main thread, once a frame): this
+## effect's draws for the display pass -- those with particles whose cull box
+## (_draw_boxes, through the node's transform) is in the frustum `planes` --
+## appended to `items`, each with what the render thread needs: the
+## MultiMesh and texture (held, so neither is freed before the frame is
+## drawn), the particle count, the mesh as a triangle list, the node's
+## Direct3D blend factors, culling, the depth test (off for a glow draw:
+## READ, FUN_00c43100) and the push constants.
+func pass_items(items: Array, planes: Array, eye: Vector3, display_pass) -> void:
+	if not _pass_draws:
+		return
+	var counts := PackedInt32Array()
+	var native := sim is EfpSimNative and (sim as EfpSimNative).is_native()
+	if native:
+		counts = (sim as EfpSimNative).draw_counts()
+	for di in _draws.size():
+		var mmi := _draws[di][1] as MultiMeshInstance3D
+		var mm := mmi.multimesh
+		var n := 0
+		if native:
+			n = counts[di] if di < counts.size() else 0
+		else:
+			n = mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		if n <= 0 or mm.mesh == null:
+			continue
+		var xf := mmi.global_transform
+		var box: AABB = xf * (_draw_boxes[di] if di < _draw_boxes.size() else DRAW_AABB)
+		if not WorldAmbientFx.box_in_view(box, planes):
+			continue
+		var m := mmi.material_override as ShaderMaterial
+		var tex: Texture2D = m.get_shader_parameter("tex") if m != null else null
+		if tex == null:
+			continue
+		var st: EfpReader.EfpRenderState = _draw_states[di] if di < _draw_states.size() else null
+		var glow := _glow_on and _glow_materials.has(m)
+		var ops := PackedInt32Array([st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
+			st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0])
+		var billboard: bool = _draw_billboard[di] if di < _draw_billboard.size() else false
+		var mesh: Mesh = mm.mesh
+		items.append({
+			"mm": mm, "tex": tex, "count": mini(n, mm.instance_count),
+			"mesh": display_pass.mesh_data(mesh), "mesh_key": mesh.get_rid(),
+			"src": st.src_blend if st else 5, "dest": st.dest_blend if st else 2,
+			"cull": not (billboard or cull_disabled(st.cull if st else 1)),
+			"depth_test": not glow,
+			"mirrored": xf.basis.determinant() < 0.0,
+			"pc": EfpDisplayPass.push_constants(xf, ops, clampi(_glow_alpha, 0, 255) if glow else 255, -5 if glow or EfpDisplayPass.qa_no_depth else 5),
+			"depth": eye.distance_to(box.get_center()),
+			"box": box,
+		})
 
 ## Round 786: the display twins use_display_blend made (tests).
 var _display_materials: Array[ShaderMaterial] = []

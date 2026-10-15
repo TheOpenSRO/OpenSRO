@@ -100,8 +100,6 @@ const META_GATE := "gate_effects"
 class Host:
 	extends RefCounted
 	var node: Node3D
-	## The placed object it belongs to (itself, or the compound it is a part of).
-	var root: Node3D
 	var entries: Array = []
 	var paths := PackedStringArray()
 	var origin := Vector3.ZERO
@@ -207,7 +205,6 @@ func add(root: Node3D, near: bool, compound: bool = true) -> int:
 			continue
 		var h := Host.new()
 		h.node = node
-		h.root = root
 		h.entries = entries
 		h.paths = paths
 		h.near = near
@@ -408,12 +405,7 @@ func _build(h: Host) -> void:
 		return
 	h.node.set_meta(META_BUILT, true)
 	var animated := h.node.has_meta(MapAnimation.META_ANIMATED) or (h.node.get_parent() != null and h.node.get_parent().has_meta(MapAnimation.META_ANIMATED))
-	# Round 786: display-value twins only where the object has no sheet of
-	# its own for its effects to lie over (covers).
-	var twins := not qa_linear and not covers(h.root)
-	if qa_log:
-		print("QA WORLDFX host %s (%s): %s" % [h.node.name, h.root.name, "display twins" if twins else "own blend (a covering sheet)" if not qa_linear else "own blend (QA)"])
-	for fx_v in ambient.attach(h.node, h.entries, particles, twins):
+	for fx_v in ambient.attach(h.node, h.entries, particles, not qa_linear):
 		var fx := fx_v as EfpEffect
 		# Stepped by _step as a batch, not by its own _process.
 		fx.process_mode = Node.PROCESS_MODE_DISABLED
@@ -430,29 +422,6 @@ func _build(h: Host) -> void:
 	hosts_built += 1
 
 	_set_on(h, h.on, h.seen)
-
-## Round 786 (OURS, MEASURED against Compatibility): whether a placed object
-## carries a mesh that mixes over what lies behind it with no depth write
-## (ObjectLoader.COVER_META: an SRCALPHA/INVSRCALPHA MTRL mod with ZWRITE
-## off -- a waterfall's sheet). Its effects draw right over it (READ,
-## EfpEffect.RENDER_PRIORITY), but a display-value twin (EfpEffect.
-## display_shader) blends against Godot's screen copy, which is taken before
-## the transparent pass and so holds the rock behind the sheet, not the
-## sheet: over the Hotan palace waterfall a twin added a tenth of what
-## display-value blending adds (MEASURED: the box's mean +0.25 against
-## Compatibility's +2.3; Godot's own linear blend +2.0), and its mixing smoke
-## tinted the white sheet with the rock and grass behind it. Such an
-## object's effects keep Godot's own blend (no twin); an object whose blended
-## meshes add (a fountain's streams, SRCALPHA/ONE) keeps its twins, which
-## matched Compatibility there (the Alexandria fountain +5.0 against +5.1).
-static func covers(root: Node) -> bool:
-	if root == null:
-		return false
-	for m in root.find_children("*", "MeshInstance3D", true, false):
-		var mat := (m as MeshInstance3D).material_override
-		if mat != null and mat.has_meta(ObjectLoader.COVER_META):
-			return true
-	return false
 
 ## Every frame: of the hosts in range and visited, the effects of those whose
 ## particles are in the view step (OURS: a particle out of the view changes

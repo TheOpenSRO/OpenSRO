@@ -1850,10 +1850,28 @@ var _wire_logging := false
 ## 0xb8f480 of each).
 const CHAT_LEFT := 2.0
 
+## Round 786: the objects' ambient effects blended in display values exactly
+## under Forward+ (EfpDisplayPass), on the world camera's compositor; its
+## draw list is taken just before the RenderingServer draws a frame.
+func _setup_efp_pass() -> void:
+	if EfpDisplayPass.qa_off or not VideoOptions.forward_plus_running() or camera_3d == null:
+		return
+	var p := EfpDisplayPass.new()
+	EfpDisplayPass.active = p
+	var comp := Compositor.new()
+	comp.compositor_effects = [p]
+	camera_3d.compositor = comp
+	RenderingServer.frame_pre_draw.connect(_submit_efp_pass)
+
+func _submit_efp_pass() -> void:
+	if EfpDisplayPass.active != null and is_instance_valid(camera_3d):
+		EfpDisplayPass.active.submit(camera_3d)
+
 func _ready() -> void:
 	# Round 786: the bodies here move on physics ticks, so the effects on them
 	# are placed once a tick (EfpEffect.tick_gate, its _process).
 	EfpEffect.gate_ticks(true)
+	_setup_efp_pass()
 	# QA (round 786): OPENSRO_QA_PHYSICS_TICKS=<n> runs the physics at n a
 	# second, so a movie render (60 frames a second) shows what a player
 	# rendering faster than the physics sees (e.g. 24: 2.5 frames a tick, as
@@ -7651,6 +7669,10 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	# Round 786: the display pass goes with the world.
+	if RenderingServer.frame_pre_draw.is_connected(_submit_efp_pass):
+		RenderingServer.frame_pre_draw.disconnect(_submit_efp_pass)
+	EfpDisplayPass.active = null
 	if ParseProfile.enabled and _initial_load_done:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
@@ -10242,6 +10264,8 @@ func _tick_world_fx(delta: float) -> void:
 	_world_fx.tick(delta, eye, planes, now)
 	if _qa_world_fx and Engine.get_process_frames() % 120 == 0:
 		print("QA WORLDFX frame %d: %s" % [Engine.get_process_frames(), _world_fx.describe()])
+		if EfpDisplayPass.active != null:
+			print("QA WORLDFX %s" % EfpDisplayPass.active.describe())
 		if WorldAmbientFx.qa_detail:
 			print("QA WORLDFX player %s" % (str(player.global_position.round()) if player != null else "-"))
 			print(_world_fx.detail(eye))
