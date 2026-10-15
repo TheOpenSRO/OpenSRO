@@ -78,24 +78,6 @@ type CharLockRequest struct {
 	Token    string
 }
 
-// EncodeCharLockRequest writes op's fields of r, as the client does.
-func EncodeCharLockRequest(op uint16, r *CharLockRequest) []byte {
-	switch op {
-	case OpCharLockStatus:
-		return appendLobbyName(nil, r.Token)
-	case OpCharLockVerify:
-		out := appendLobbyName(nil, r.Pin)
-		if r.Remember {
-			out = append(out, 1)
-		} else {
-			out = append(out, 0)
-		}
-		return appendLobbyName(out, r.Token)
-	default:
-		return appendLobbyName(nil, r.Pin)
-	}
-}
-
 // DecodeCharLockRequest reads op's fields. A status request with no payload
 // at all is one with no token.
 func DecodeCharLockRequest(op uint16, data []byte) (*CharLockRequest, error) {

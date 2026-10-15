@@ -98,7 +98,7 @@ func (s *lockSession) send(op uint16, data []byte) *proto.Packet {
 
 func (s *lockSession) lock(op uint16, r *CharLockRequest) *CharLockReply {
 	s.t.Helper()
-	p := s.send(op, EncodeCharLockRequest(op, r))
+	p := s.send(op, encodeCharLockRequest(op, r))
 	if p.Opcode != OpCharLockReply {
 		s.t.Fatalf("reply opcode %#x, want 0x0121", p.Opcode)
 	}
@@ -142,7 +142,7 @@ func (s *lockSession) lobby(action uint8, name string) *LobbyResult {
 func TestCharLockCodecs(t *testing.T) {
 	for _, op := range []uint16{OpCharLockStatus, OpCharLockCreate, OpCharLockVerify, OpCharLockRemove} {
 		in := &CharLockRequest{Pin: "1234", Remember: true, Token: lockToken}
-		got, err := DecodeCharLockRequest(op, EncodeCharLockRequest(op, in))
+		got, err := DecodeCharLockRequest(op, encodeCharLockRequest(op, in))
 		if err != nil {
 			t.Fatalf("%#x: %v", op, err)
 		}
@@ -162,7 +162,7 @@ func TestCharLockCodecs(t *testing.T) {
 		}
 	}
 	// The verify layout, byte for byte: u16 4 "1234", u8 1, u16 2 "ab".
-	b := EncodeCharLockRequest(OpCharLockVerify, &CharLockRequest{Pin: "1234", Remember: true, Token: "ab"})
+	b := encodeCharLockRequest(OpCharLockVerify, &CharLockRequest{Pin: "1234", Remember: true, Token: "ab"})
 	if want := []byte{4, 0, '1', '2', '3', '4', 1, 2, 0, 'a', 'b'}; string(b) != string(want) {
 		t.Errorf("verify bytes % x, want % x", b, want)
 	}
@@ -373,5 +373,24 @@ func TestCharLockUnlockIsPerAccount(t *testing.T) {
 	setCharLockUnlocked(g, 1)
 	if !charLockUnlocked(g, 1) || charLockUnlocked(g, 2) {
 		t.Fatal("the unlock is not keyed by account")
+	}
+}
+
+// encodeCharLockRequest writes op's fields of r, as the client does (the
+// tests' client; the server only decodes requests).
+func encodeCharLockRequest(op uint16, r *CharLockRequest) []byte {
+	switch op {
+	case OpCharLockStatus:
+		return appendLobbyName(nil, r.Token)
+	case OpCharLockVerify:
+		out := appendLobbyName(nil, r.Pin)
+		if r.Remember {
+			out = append(out, 1)
+		} else {
+			out = append(out, 0)
+		}
+		return appendLobbyName(out, r.Token)
+	default:
+		return appendLobbyName(nil, r.Pin)
 	}
 }

@@ -34,6 +34,9 @@ signal lobby_result(result: LobbyNet.Result)
 ## enter-world result.
 signal start_result(ok: bool, code: int, reason: String)
 signal enter_world_result(result: WorldNet.EnterWorldResult)
+## The account PIN, "Character Lock" (round 788, OURS; CharacterLockNet):
+## every 0x0121 reply, to a status request or a create / verify / remove.
+signal character_lock_reply(reply: CharacterLockNet.Reply)
 signal entity_entered(snapshot: WorldNet.EntitySnapshot)
 ## Round 739's review (F5): around a group spawn's players, so World3D queues
 ## the page whole before it dresses any (its arrival build pump, nearest first).
@@ -878,6 +881,20 @@ func delete_character(char_name: String) -> void:
 
 func restore_character(char_name: String) -> void:
 	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_named(LobbyNet.ACTION_RESTORE, char_name))
+
+## The account PIN (round 788, CharacterLockNet; OURS). Nothing here is
+## logged: the PIN and the device token never reach a print.
+func char_lock_status(device_token: String) -> void:
+	_send(CharacterLockNet.OP_STATUS, CharacterLockNet.encode_status(device_token))
+
+func char_lock_create(pin: String) -> void:
+	_send(CharacterLockNet.OP_CREATE, CharacterLockNet.encode_pin(pin))
+
+func char_lock_verify(pin: String, remember: bool, device_token: String) -> void:
+	_send(CharacterLockNet.OP_VERIFY, CharacterLockNet.encode_verify(pin, remember, device_token))
+
+func char_lock_remove(pin: String) -> void:
+	_send(CharacterLockNet.OP_REMOVE, CharacterLockNet.encode_pin(pin))
 
 func check_character_name(char_name: String) -> void:
 	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_named(LobbyNet.ACTION_NAME_CHECK, char_name))
@@ -1858,6 +1875,8 @@ func _dispatch(p: Packet) -> void:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
 		AutoPotionNet.OP_CONFIG:
 			auto_potion_config.emit(p.data)
+		CharacterLockNet.OP_REPLY:
+			character_lock_reply.emit(CharacterLockNet.decode_reply(p.data))
 		CompositeNet.OP_STATE:
 			composite_state.emit(CompositeNet.decode_state(p.data))
 		CompositeNet.OP_USE_RESULT:
