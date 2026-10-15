@@ -54,7 +54,40 @@ func _initialize() -> void:
 		await _scenario(name)
 	_check(names.size() == 7, "every login scenario is played (%d)" % names.size())
 	await _adapter()
+	await _keep_alive()
 	_finish()
+
+## READ (0x4cf990): an idle link sends an empty plain 0x2002 once nothing has
+## gone out for 5 s, looked at every 1.666 s -- so the first lands 5.0-6.7 s
+## after the last send, and no other frame.
+func _keep_alive() -> void:
+	var server := _listen()
+	var link := RetailLink.new("127.0.0.1", server.get_local_port(), func() -> RetailGatewayClient:
+		var c := RetailGatewayClient.new(22, 1000, 1)
+		c.sec = RetailSecurity.new()
+		c.state = RetailGatewayClient.St.LOBBY
+		return c)
+	link.start()
+	var peer: StreamPeerTCP = null
+	var got := PackedByteArray()
+	var first_ms := -1
+	var t0 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t0 < 7500:
+		if peer == null and server.is_connection_available():
+			peer = server.take_connection()
+		link.poll()
+		if peer != null:
+			peer.poll()
+			var n := peer.get_available_bytes()
+			if n > 0:
+				got.append_array(peer.get_partial_data(n)[1])
+				if first_ms < 0:
+					first_ms = Time.get_ticks_msec() - t0
+		await process_frame
+	_check(got.hex_encode() == "000002200000", "one keep-alive in 7.5 s idle, an empty plain 0x2002: %s" % got.hex_encode())
+	_check(first_ms >= 5000 and first_ms <= 6800, "it went out %d ms after the connect (5000-6700, READ)" % first_ms)
+	link.close()
+	server.stop()
 
 func _finish() -> void:
 	if _failures == 0:

@@ -111,7 +111,24 @@ func _test_fallbacks() -> void:
 	for k in LoginMessages.FALLBACK:
 		_check(str(LoginMessages.FALLBACK[k]) != "", "%s has a fallback" % str(k).to_lower())
 
+## Round 788 (MEASURED, the real client under Wine): in a joined table the
+## login's keys keep their FIRST row, as the client's TextStringManager does;
+## other keys still take the later (stock) table's.
+func _test_joined() -> void:
+	var rows := PackedStringArray()
+	for pass_i in range(2):
+		for k in range(10):
+			rows.append("1\tUIX_FILLER_%d\t0\t0\t0\t0\t0\t0\t%s filler %d\t0" % [k, "First" if pass_i == 0 else "Later", k])
+		rows.append("1\tUIIT_STT_GLOBAL_PASSWORD_INPUT_ERROR\t0\t0\t0\t0\t0\t0\t%s pw %%d %%d\t0" % ("First" if pass_i == 0 else "Later"))
+	var t := UiTextTable.parse("\n".join(rows).to_utf16_buffer())
+	_check(t.get_text("UIX_FILLER_3", "") == "Later filler 3", "a joined table: other keys take the later table's row (got %s)" % t.get_text("UIX_FILLER_3", ""))
+	var a := _ack(1)
+	a.max_attempts = 3
+	a.used_attempts = 1
+	_check(LoginMessages.ack_text(a, t) == "First pw 3 1", "the password text keeps the first row: '%s'" % LoginMessages.ack_text(a, t))
+
 func _init() -> void:
+	_test_joined()
 	var t := _table()
 	_check(t != null and t.has("UIO_MSG_ERROR_SEVER_CONNECT"), "the synthetic table parses")
 	_test_codes(t)
