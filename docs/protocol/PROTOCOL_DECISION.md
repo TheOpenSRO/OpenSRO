@@ -44,6 +44,20 @@ One OpenSRO extension rides beside them, OpPlayerZoneNotice 0x00B7 (a player arr
 zone, as opposed to walking into or out of view), sent only ahead of the spawn or despawn it
 explains, to the clients that spawn or despawn is sent to (`pc_spawn.md`, "OpenSRO's additions").
 
+**Round 788: the original client logs in to OpenSRO's server ("Retail login, both ways", the
+user's choice).** The server opens, when configured, a retail **gateway** and a retail **agent**
+listener that speak the original wire end to end -- the handshake, security bytes, Blowfish,
+massive messages, 0x2001 identities, 0x6100 / 0x6101 / 0x6104 / 0x6106, 0x6102 -> 0xA102 with a
+one-time token, 0x6103 -> 0xA103 -- and run the existing lobby (0x7007 / 0xB007) unchanged on it.
+This is item 1 of the proposal below in its first concrete form: `gateway.Server` takes a frame
+`Codec`, the retail one turns the original frames into the same `proto.Packet` the handlers already
+use, and the login rules live in one `session.LoginService` that every front door asks. MEASURED:
+sro_client.exe (vSRO 1.188, under Wine on the render box) logged in and showed its character list
+from OpenSRO. The world is not offered to it yet: Start is refused with the select screen's
+"GameServer is currently offline" (0xB001 code 0x40F). Details: `opcodes/gateway.md`, "OpenSRO's
+retail listeners (round 788)". The other half (our client logging in to a retail server) is
+another lane's.
+
 **Noted by the user (2026-10-01), not designed:** a server may want to hand the client settings it
 keeps out of the client's `setting/config.yaml` -- during the server list or after login. That would
 be one more extension message of the kind item 2 below describes (docs/TODO.md).

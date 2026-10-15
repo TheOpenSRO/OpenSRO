@@ -1518,6 +1518,37 @@ which its select screen shows as the list's error (round 682's review). A new cl
 older server waits 5 s for the list and then says the server did not answer. A deleted character
 waits 7 days (10080 minutes, restorable) and is then removed by the server's once-a-minute purge.
 
+## The original client (round 788, off by default)
+
+The server can let the ORIGINAL client (sro_client.exe, vSRO 1.188) log in as far as its character
+list: a retail gateway and a retail agent listener that speak the original wire
+(`docs/protocol/opcodes/gateway.md`, "OpenSRO's retail listeners"). The world is not offered to it:
+Start is refused with the client's own "GameServer is currently offline" message. OpenSRO's own
+client and listener are unaffected.
+
+| Flag (env) | Default | What |
+|---|---|---|
+| `-retail-gateway-addr` (`OPENSRO_RETAIL_GATEWAY_ADDR`) | empty: both listeners off | where the original client connects first, e.g. `:15780` -- the port its archive names (Media.pk2 `GATEPORT.TXT`) |
+| `-retail-agent-addr` (`OPENSRO_RETAIL_AGENT_ADDR`) | `:15781` | where a logged-in client is sent |
+| `-retail-agent-public-host` (`OPENSRO_RETAIL_AGENT_PUBLIC_HOST`) | the agent address's host, else 127.0.0.1 (with a warning) | the host the gateway names for the agent: one the CLIENT can reach |
+| `-retail-shard-id` (`OPENSRO_RETAIL_SHARD_ID`) | 1 | the shard id in the server list (the client sends it back at login) |
+| `-retail-shard-name` (`OPENSRO_RETAIL_SHARD_NAME`) | OpenSRO | the shard name in the server list |
+| `-retail-content-id` (`OPENSRO_RETAIL_CONTENT_ID`) | 22 | the client's content id (its DIVISIONINFO.TXT's first byte; vSRO 1.188: 22) -- checked at the agent |
+| `-retail-version` (`OPENSRO_RETAIL_VERSION`) | 1000 | the client version accepted (its SV.T; vSRO 1.188: 1000); older is told "(C4)" and quits |
+
+The list's population and "Check" come from `-max-players` and `-inspection`. Accounts are the
+server's own (the same login rules as OpenSRO's client). The client finds the gateway by the host
+and port in its own archive (`DIVISIONINFO.TXT`, `GATEPORT.TXT` in Media.pk2): point that host at
+the server (DNS, the PC's hosts file) and listen on that port, or edit the archive. The client
+also binds TCP 15779 on its own PC as a single-instance guard, so OpenSRO's own listener and the
+original client cannot share a machine on that port. Every message each way is logged as
+`retail gateway packet` / `retail agent packet` with its bytes (passwords withheld; the keep-alive
+and the 5-second server-list refresh at Debug).
+
+```sh
+./server -retail-gateway-addr :31729 -retail-agent-addr :31730 -retail-agent-public-host 203.0.113.5
+```
+
 ## Character defaults (round 692)
 
 A new character gets its race's default masteries (level 0), skills and level-1 quests, as the

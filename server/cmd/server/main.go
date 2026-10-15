@@ -1179,6 +1179,8 @@ func main() {
 		"serve net/http/pprof on this address, e.g. 127.0.0.1:6060 (env OPENSRO_PPROF_ADDR), and log a runtime stats line "+
 			"every 30 s (GC, heap, goroutines, scheduler latency). OURS, debug only, off by default (empty). Never expose it: "+
 			"it serves stacks and the command line. See deploy/README.md, \"Profiling a lagging server\".")
+	// The original client's gateway and agent (round 788, retail.go).
+	retailOpts := registerRetailFlags()
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -2243,6 +2245,15 @@ func main() {
 		logger.Warn("no quest catalogue (-quests-dir / OPENSRO_QUESTS_DIR): no quest is offered -- see deploy/README.md \"Quests\"")
 	}
 
+	// One LoginService decides every login, whatever wire it came in on
+	// (round 788): OpenSRO's 0x6102 below and the retail gateway's.
+	loginService := &session.LoginService{Accounts: accounts}
+	// The lobby, shared by OpenSRO's connection and the retail agent.
+	lobby := session.LobbyHandler(session.LobbyDeps{
+		Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
+		Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
+	})
+
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
@@ -2255,16 +2266,13 @@ func main() {
 		session.LoginGate(serverStatus, gmGate.Allows, session.LoginHandler(accounts)),
 		// Retail's 0x6102 -> 0xA102 on our framing (round 788): the same
 		// LoginService decides every login, whatever wire it came in on.
-		session.GatewayLoginHandler(&session.LoginService{Accounts: accounts}),
+		session.GatewayLoginHandler(loginService),
 		session.RegisterHandler(registerer),
 		// The character lobby on retail's 0x7007/0x7001 (round 682): list,
 		// create (dressed in what the player chose, plus the shield or
 		// ammunition the server adds), the name check, the 7-day delete and
 		// restore. Start is the world handler's.
-		session.LobbyHandler(session.LobbyDeps{
-			Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
-			Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
-		}),
+		lobby,
 		// An older client's 0x0010/0x0012/0x0014 are told, in their own
 		// reply format, to update (round 682's review).
 		session.LegacyLobbyHandler(logger),
@@ -2427,6 +2435,11 @@ func main() {
 			step("world", func() { worldDisconnect(sess) })
 		},
 	}
+
+	// The original client's front door (round 788, retail.go), when set: its
+	// agent's sessions end through the same OnDisconnect (session ids are
+	// unique across listeners).
+	startRetail(ctx, retailOpts, retailDeps{login: loginService, lobby: lobby, status: serverStatus, onDisconnect: srv.OnDisconnect}, logger)
 
 	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Error("gateway server exited", "error", err)

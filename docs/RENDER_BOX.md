@@ -229,6 +229,18 @@ libwine && apt-get autoremove`.
   32, hotspot (2, 1), 359 opaque pixels, mean (130, 126, 93)) from the Windows v0.1.483 build.
 - Stop it with `wineserver -k` (as the user who ran it); nothing stays running between runs.
 
+**32-bit Wine, added 2026-10-15 (round 788, lane R)**, to run the ORIGINAL client (sro_client.exe
+is PE32): `dpkg --add-architecture i386` then `apt-get install --no-install-recommends wine32:i386`
+(175 packages new, 18 amd64 ones upgraded to match their i386 twins) and `libgl1:i386
+libglx-mesa0:i386 libgl1-mesa-dri:i386` (25 packages; without them wined3d has no GL and the client
+cannot make its device). The package selections from before are in
+`/root/dpkg-selections-before-r788r.txt`; the logs in `/var/tmp/r788r/apt-*.log`. Revert:
+`apt-get remove wine32:i386 libgl1:i386 libglx-mesa0:i386 libgl1-mesa-dri:i386 && apt-get
+autoremove && dpkg --remove-architecture i386` (the 18 upgrades stay). The client ran under Xvfb in
+a Wine virtual desktop (`wine explorer /desktop=sro,1920x1200 ...`; on bare Xvfb Wine refused the
+client's display mode change, and whether the client minds was not tested), on llvmpipe at ~12 cores while it draws -- mind the other lanes.
+How it was run: `docs/protocol/opcodes/gateway.md`, "MEASURED: the original client against OpenSRO".
+
 ## Services on the box
 
 `vncserver` (`ghidra`'s desktop on `:1`, port 5901), `novnc` (the same desktop in a browser on port

@@ -165,13 +165,12 @@ func randomPrime() uint32 {
 }
 
 type sconn struct {
-	s    *Server
-	c    net.Conn
-	n    int
-	sec  *proto.RetailSecurity
-	h    ServerHello
-	y, k uint32
-	key1 *proto.RetailCipher
+	s   *Server
+	c   net.Conn
+	n   int
+	sec *proto.RetailSecurity
+	h   ServerHello
+	hs  *ServerHandshake
 }
 
 func (sc *sconn) write(b []byte) error {
@@ -193,52 +192,24 @@ func (sc *sconn) frame(op uint16, payload []byte, encrypt bool) error {
 func (s *Server) serve(c net.Conn, n int) error {
 	cfg := s.cfg
 	sc := &sconn{s: s, c: c, n: n}
-	h := ServerHello{Flags: cfg.Flags}
-	if f := cfg.Fixed; f != nil {
-		h.BlowfishKey, h.CountSeed, h.HandshakeKey, h.G, h.P, sc.y = f.BlowfishKey, f.CountSeed, f.HandshakeKey, f.G, f.P, f.Y
-	} else {
-		_, _ = rand.Read(h.BlowfishKey[:])
-		_, _ = rand.Read(h.HandshakeKey[:])
-		h.CountSeed = random32()
-		// READ (0x4c6fc0): two random primes, the smaller is G.
-		a, b := randomPrime(), randomPrime()
-		h.G, h.P = min(a, b), max(a, b)
-		sc.y = random32() & 0x7fffffff
+	var seed func() uint32
+	if len(cfg.CRCSeeds) > 0 {
+		seed = func() uint32 { return cfg.CRCSeeds[min(n, len(cfg.CRCSeeds)-1)] }
 	}
-	switch {
-	case len(cfg.CRCSeeds) > 0:
-		h.CRCSeed = cfg.CRCSeeds[min(n, len(cfg.CRCSeeds)-1)]
-	default:
-		for {
-			h.CRCSeed = random32()
-			if proto.CRCIndexKnown(proto.CRCIndex(h.CRCSeed)) {
-				break
-			}
-		}
-	}
-	h.A = proto.ModPow(h.G, sc.y, h.P)
+	// The hello and its set-up (handshake_server.go, shared with ServerCodec).
+	sc.hs = NewServerHandshake(cfg.Flags, cfg.Fixed, seed)
+	h := sc.hs.Hello
 	sc.h = h
-	sc.sec = &proto.RetailSecurity{Flags: h.Flags}
-	if err := sc.write(mustFrame(sc.sec.EncodeServerFrame(OpHandshake, h.Encode(), false))); err != nil {
+	if err := sc.write(mustFrame((&proto.RetailSecurity{Flags: h.Flags}).EncodeServerFrame(OpHandshake, h.Encode(), false))); err != nil {
 		return err
 	}
-	if h.Flags&proto.RetailFlagSecurity != 0 {
-		sc.sec.Count = proto.CountSeeds(h.CountSeed)
-		t, ok := proto.CRCTable(proto.CRCIndex(h.CRCSeed))
-		if !ok {
-			// The client must hang up before sending anything; nothing to check.
-			sc.sec.CRC = nil
-		} else {
-			sc.sec.CRC = t
-		}
+	// A crc seed whose table is unknown leaves CRC nil: the client must hang
+	// up before sending anything; nothing to check.
+	sec, err := sc.hs.Security()
+	if err != nil {
+		return err
 	}
-	if h.Flags&proto.RetailFlagBlowfish != 0 {
-		ci, err := proto.NewRetailCipher(h.BlowfishKey[:])
-		if err != nil {
-			return err
-		}
-		sc.sec.Cipher = ci
-	}
+	sc.sec = sec
 	var buf []byte
 	tmp := make([]byte, 4096)
 	for {
@@ -297,32 +268,11 @@ func (sc *sconn) onFrame(raw []byte) (bool, error) {
 	}
 	switch f.Opcode {
 	case OpHandshake:
-		if sc.h.Flags&proto.RetailFlagHandshake == 0 || len(f.Payload) != 12 {
-			return true, fmt.Errorf("a 0x5000 of %d bytes (the gateway's \"Handshake Recipient Size\")", len(f.Payload))
-		}
-		b := binary.LittleEndian.Uint32(f.Payload)
-		sc.k = proto.ModPow(b, sc.y, sc.h.P)
-		key1, err := proto.NewRetailCipher(sl(proto.KeyTransform(proto.Pair(sc.h.A, b), sc.k, byte(sc.k&3))))
+		reply, final, err := sc.hs.Respond(f.Payload, cfg.Fault == FaultBadSignature)
 		if err != nil {
 			return true, err
 		}
-		sc.key1 = key1
-		want := proto.KeyTransform(proto.Pair(b, sc.h.A), sc.k, byte(b&7))
-		key1.EncryptBlock(want[:])
-		if string(want[:]) != string(f.Payload[4:12]) {
-			return true, fmt.Errorf("the client's challenge does not match (\"Handshake RecipientInfo Error\")")
-		}
-		chal := proto.KeyTransform(proto.Pair(sc.h.A, b), sc.k, byte(sc.h.A&7))
-		key1.EncryptBlock(chal[:])
-		if cfg.Fault == FaultBadSignature {
-			chal[0] ^= 0xff
-		}
-		reply := ServerHello{Flags: proto.RetailFlagChallenge, Challenge: chal}
 		if err := sc.frame(OpHandshake, reply.Encode(), false); err != nil {
-			return true, err
-		}
-		final, err := proto.NewRetailCipher(sl(proto.KeyTransform(sc.h.HandshakeKey, sc.k, 3)))
-		if err != nil {
 			return true, err
 		}
 		sc.sec.Cipher = final
