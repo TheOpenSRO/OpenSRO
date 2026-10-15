@@ -191,7 +191,12 @@ static func undo_tonemap_enabled() -> bool:
 ## The tone map the shaders undo, from `env`: x exposure, y white, z 1 for
 ## Filmic, w 1 when the undo is on.
 static func set_tonemap(env: Environment) -> void:
-	RenderingServer.global_shader_parameter_set(GLOBAL_TONEMAP, tonemap_vector(env))
+	current_tonemap = tonemap_vector(env)
+	RenderingServer.global_shader_parameter_set(GLOBAL_TONEMAP, current_tonemap)
+
+## The tone map vector last set (EfpDisplayPass reads it: the global's own
+## getter is the editor's only).
+static var current_tonemap := Vector4(1.0, 1.0, 0.0, 0.0)
 
 static func tonemap_vector(env: Environment) -> Vector4:
 	var filmic := env != null and env.tonemap_mode == Environment.TONE_MAPPER_FILMIC

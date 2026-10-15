@@ -103,6 +103,12 @@ var draw_updates := 0
 var _has_billboard := false
 var _last_cam := Basis()
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
+## Round 786: each draw's node render state and whether it is billboarded
+## (the display pass's blend factors, stage ops and culling).
+var _draw_states: Array = []
+var _draw_billboard: Array[bool] = []
+## Round 786: the draws EfpDisplayPass draws (use_display_blend).
+var _pass_draws := false
 ## Round 785: per draw node, how far its shape reaches from a particle's
 ## position at scale 1 (the plate's or mesh's farthest corner), and the box
 ## its instance culls by now (DRAW_AABB, grown to hold its particles).
@@ -283,6 +289,8 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		mmi.name = "node_%d" % tp.index
 		fx.add_child(mmi)
 		fx._draws.append([tp.index, mmi, view])
+		fx._draw_states.append(n.state)
+		fx._draw_billboard.append(billboard)
 		var reach := 0.7072 # the unit plate's corner, sqrt(0.5) rounded up
 		if mode == MESH:
 			var mb := mesh.get_aabb()
@@ -305,11 +313,22 @@ func use_display_blend() -> void:
 	# Compatibility blends in display values already, and a shader that names
 	# the screen texture would make it copy the back buffer every frame
 	# (round 722's review): no twin there.
-	if not VideoOptions.forward_plus_running():
+	if not VideoOptions.forward_plus_running() and not display_twins_headless:
 		return
 	var nodes: Array = []
-	for d in _draws:
-		nodes.append(d[1])
+	# Round 786: the plates and meshes blend in display values exactly in
+	# EfpDisplayPass, after Godot's transparent pass; Godot no longer draws
+	# them (layers 0). Link nodes keep their twins below.
+	var pass_on := EfpDisplayPass.on() or pass_headless
+	if pass_on and not _draws.is_empty():
+		for d in _draws:
+			(d[1] as GeometryInstance3D).layers = 0
+		_pass_draws = true
+		if EfpDisplayPass.active != null:
+			EfpDisplayPass.active.register(self)
+	else:
+		for d in _draws:
+			nodes.append(d[1])
 	for l in _links:
 		nodes.append(l[1])
 	var adds := 0
@@ -327,6 +346,90 @@ func use_display_blend() -> void:
 		c.shader = display_shader(m.shader)
 		c.set_shader_parameter("srr_stack", stack)
 		gi.material_override = c
+		_display_materials.append(c)
+
+## Tests only (round 786): make the twins where no RenderingDevice runs.
+static var display_twins_headless := false
+## Tests only (round 786): hand the draws to the display pass with no
+## RenderingDevice (pass_items).
+static var pass_headless := false
+
+## Round 786 (EfpDisplayPass.submit, the main thread, once a frame): this
+## effect's draws for the display pass -- those with particles whose cull box
+## (_draw_boxes, through the node's transform) is in the frustum `planes` --
+## appended to `items`, each with what the render thread needs: the
+## MultiMesh and texture (held, so neither is freed before the frame is
+## drawn), the particle count, the mesh as a triangle list, the node's
+## Direct3D blend factors, culling, the depth test (off for a glow draw:
+## READ, FUN_00c43100) and the push constants.
+func pass_items(items: Array, planes: Array, eye: Vector3, display_pass) -> void:
+	if not _pass_draws:
+		return
+	var counts := PackedInt32Array()
+	var native := sim is EfpSimNative and (sim as EfpSimNative).is_native()
+	if native:
+		counts = (sim as EfpSimNative).draw_counts()
+	if _pass_static.size() != _draws.size():
+		_pass_static.resize(_draws.size())
+	for di in _draws.size():
+		var mmi := _draws[di][1] as MultiMeshInstance3D
+		var mm := mmi.multimesh
+		var n := 0
+		if native:
+			n = counts[di] if di < counts.size() else 0
+		else:
+			n = mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		if n <= 0 or mm.mesh == null:
+			continue
+		var xf := mmi.global_transform
+		var box: AABB = xf * (_draw_boxes[di] if di < _draw_boxes.size() else DRAW_AABB)
+		if not WorldAmbientFx.box_in_view(box, planes):
+			continue
+		var stat = _pass_static[di]
+		if stat == null:
+			stat = _pass_static_of(di, display_pass, xf)
+			if stat == null:
+				continue
+			_pass_static[di] = stat
+		var glow := _glow_on and _glow_materials.has(mmi.material_override)
+		var ints: PackedInt32Array = (stat as Dictionary)["ops"].duplicate()
+		ints.append(clampi(_glow_alpha, 0, 255) if glow else 255)
+		ints.append(-5 if glow or EfpDisplayPass.qa_no_depth else 5)
+		var pc := EfpDisplayPass.transform_bytes(xf)
+		pc.append_array(ints.to_byte_array())
+		items.append([stat, mini(n, mm.instance_count), pc, eye.distance_squared_to(box.get_center()), box])
+
+## A draw's unchanging part for the display pass, built once: the MultiMesh
+## and texture (held, so neither is freed before a frame drawing them is
+## done), the mesh as a triangle list, the node's Direct3D blend pair,
+## culling (none for a billboard) and the winding of its transform, and the
+## stage ops.
+var _pass_static: Array = []
+
+func _pass_static_of(di: int, display_pass, xf: Transform3D):
+	var mmi := _draws[di][1] as MultiMeshInstance3D
+	var mm := mmi.multimesh
+	var m := mmi.material_override as ShaderMaterial
+	var tex: Texture2D = m.get_shader_parameter("tex") if m != null else null
+	if tex == null or mm.mesh == null:
+		return null
+	var st: EfpReader.EfpRenderState = _draw_states[di] if di < _draw_states.size() else null
+	var billboard: bool = _draw_billboard[di] if di < _draw_billboard.size() else false
+	var mesh: Mesh = mm.mesh
+	var src := st.src_blend if st else 5
+	var dest := st.dest_blend if st else 2
+	var cull := not (billboard or cull_disabled(st.cull if st else 1))
+	var mirrored := xf.basis.determinant() < 0.0
+	return {
+		"mm": mm, "tex": tex, "mesh": display_pass.mesh_data(mesh), "mesh_key": mesh.get_rid(),
+		"src": src, "dest": dest, "cull": cull, "mirrored": mirrored,
+		"pipe": EfpDisplayPass.pipeline_key(src, dest, cull, mirrored),
+		"ops": PackedInt32Array([st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
+			st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0]),
+	}
+
+## Round 786: the display twins use_display_blend made (tests).
+var _display_materials: Array[ShaderMaterial] = []
 
 ## Round 774 (OURS, calibrated): the most additive layers an effect's layer
 ## is taken to lie over (display_shader's srr_stack). Each layer of an
@@ -1852,6 +1955,38 @@ static func godot_blend(cls: String) -> int:
 static func cull_disabled(cull: int) -> bool:
 	return cull <= 1
 
+## Round 786: where an effect draws in the frame (READ, sro_client.exe). Every
+## effect is drawn right after the meshes of the body that owns it -- a placed
+## object's `ambient` effects inside its own batch (CObjRendererVS::vslot_038
+## 0xbf5830: every mesh piece, blended ones in place with no sort, then the
+## mod manager's effects at 0xbf5d5c..0xbf5d66 -> CRTModParticle::vslot_003
+## 0xc76be0 -> FUN_00c81450 -> the effect's draw; then the leftover one-shots
+## FUN_00c2a700 at 0xbf5d71 and the equipment effects FUN_00c2bc80 at
+## 0xbf5d7c); a character's skill and buff decorations right after its body
+## (GlobalDataManager::FUN_009d20d0: FUN_009c4aa0 draws and flushes the body,
+## then each decoration's slot 15, CIDecoSkill::vslot_015 0xa4fd30) -- and
+## the frame (Map::FUN_00a24e30) draws the map water (FUN_00a220b0) before
+## every above-water placed object (Map::FUN_00a185f0) and the above-water
+## characters after those. The draw (EFEffect::FUN_00cabda0) writes no depth
+## (ZWRITEENABLE 0) and leaves the depth test on (ZFUNC LESSEQUAL, set in
+## SWorld::vslot_023 0x9f4bb0); an MTRL-blended mesh writes none either. So a
+## particle behind or inside a waterfall sheet, a fountain's stream or the
+## water draws after it, added on top of it -- where Godot's transparent sort
+## by distance could put a sheet or a pool whose centre is nearer the camera
+## after the particles, over them. Every effect material draws at this
+## priority: after every object surface (priority 0), the water (WorldFog.
+## UNDER_PASS_PRIORITY) and the fog pass (WorldFog.PASS_PRIORITY), and in
+## depth order among the effects. OURS (INFERRED approximation): the original
+## orders one placed object's effects before a later object's blended meshes
+## (the sector queue's order), here after all of them; and its plain water
+## writes depth (FUN_00a220b0's only ZWRITE write, 0xa22c39, comes after its
+## draws), so a particle under the water plane is hidden there -- not here,
+## as before (OPEN).
+const RENDER_PRIORITY := 1
+## OPENSRO_QA_FX_PRIORITY=<n> (QA A/B only): draw every effect at n instead
+## (0 is the priority before the waterfall-sparkle fix of round 786).
+static var render_priority := int(OS.get_environment("OPENSRO_QA_FX_PRIORITY")) if OS.get_environment("OPENSRO_QA_FX_PRIORITY").is_valid_int() else RENDER_PRIORITY
+
 static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState, billboard: bool = false) -> ShaderMaterial:
 	var src := st.src_blend if st != null else 5
 	var dest := st.dest_blend if st != null else 2
@@ -1865,6 +2000,7 @@ static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState, billboard
 		return _materials[key]
 	var m := ShaderMaterial.new()
 	m.shader = _shader(cls, no_cull)
+	m.render_priority = render_priority
 	m.set_shader_parameter("tex", tex)
 	m.set_shader_parameter("c_op", st.color_op if st else 4)
 	m.set_shader_parameter("c_a1", st.color_arg1 if st else 2)
@@ -1890,6 +2026,7 @@ static func link_material_for(tex: Texture2D, st: EfpReader.EfpRenderState) -> S
 		return _materials[key]
 	var m := ShaderMaterial.new()
 	m.shader = _shader(cls, no_cull, true)
+	m.render_priority = render_priority
 	m.set_shader_parameter("tex", tex)
 	m.set_shader_parameter("c_op", st.color_op if st else 4)
 	m.set_shader_parameter("c_a1", st.color_arg1 if st else 2)

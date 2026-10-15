@@ -324,6 +324,141 @@ by the texture name. MEASURED, files using each state among rendered nodes:
 Colour op MODULATE (4) is the most common, then MODULATE2X (5) and MODULATE4X (6). The arguments
 are TEXTURE (2) and DIFFUSE (0).
 
+### Where an effect draws in the frame (READ, round 786)
+
+Every effect is drawn right after the meshes of the body that owns it, depth-tested, writing no
+depth:
+- **A placed object's effects** draw inside its own batch, `CObjRendererVS::vslot_038` (0xbf5830):
+  - first every mesh piece, the MTRL-blended ones in place, with no sort;
+  - then the mod manager's effects (0xbf5d5c..0xbf5d66 → `FUN_00c44ff0` → `FUN_00c7b3f0` → each
+    mod's slot 3, `CRTModParticle::vslot_003` 0xc76be0 → `FUN_00c81450` → the effect's draw);
+  - then the body's leftover one-shots (`FUN_00c2a700`, 0xbf5d71);
+  - then the equipment effects (`FUN_00c2bc80`, 0xbf5d7c), the +8 and seal particles a
+    `CRTModParticle` keeps in the compound's +0x1a4 map (`CCompChar::FUN_00c30c20`).
+- **A character's skill and buff decorations** draw right after its body
+  (`GlobalDataManager::FUN_009d20d0`): `FUN_009c4aa0` draws and flushes the body, then each
+  decoration's slot 15 (`CIDecoSkill::vslot_015` 0xa4fd30, `CIDecoDamageEffect::vslot_015`
+  0xa496e0).
+- **The frame** (`Map::FUN_00a24e30`) draws, in order:
+  1. the terrain;
+  2. the below-water characters and objects;
+  3. the map water (`FUN_00a220b0`);
+  4. the above-water placed objects, in the sector queue's order (`Map::FUN_00a185f0`; the queue
+     is built by `Map::FUN_00a1e530`, which only queues);
+  5. the above-water characters.
+
+  The water plane is world+0x26c4 (`Map::FUN_00a2b370`).
+- **The depth state.** The effect draw (`EFEffect::FUN_00cabda0`) sets ZWRITEENABLE 0 and does not
+  touch ZENABLE; ZFUNC is LESSEQUAL (`SWorld::vslot_023` 0x9f4bb0).
+  - An MTRL mod with zwrite off writes no depth either, so a particle inside or behind a waterfall
+    sheet or a fountain's stream draws after it, on top of it.
+  - The plain map water does write depth: its one ZWRITE write (0xa22c39) follows its draws. So a
+    particle under the water plane fails the test.
+  - The reflecting water's path (`FUN_00a2df70`) has a `(0xe, 0)`; whether it covers the final
+    quad is OPEN.
+- **The glow entries** (an ambient entry's +0x50) are the exception: they are queued and drawn
+  later, with ZENABLE off (`FUN_00c43100`).
+
+**This client (`EfpEffect.RENDER_PRIORITY`).**
+- Every effect material draws at render priority 1: after every object surface (priority 0), the
+  water (-3) and the fog pass (-1), and in depth order among the effects. Before this fix (round
+  786) effects drew at 0, and Godot's transparent sort by distance mixed them with the objects'
+  blended meshes: a sheet or a stream whose centre was nearer the camera than an effect's drew
+  over it (INFERRED from the sort; the MEASURED A/B at the round's three sites moved the boxes'
+  means by at most 0.2, so it was not what dimmed them -- the display twins were, below).
+- OURS:
+  - A placed object's effects draw after every object's blended meshes. The original orders
+    them before a later-queued object's.
+  - Above-water characters' blended meshes draw before the world's effects here.
+  - The water writes no depth here, so a particle under the water plane still shows, as it did
+    before; OPEN.
+- `OPENSRO_QA_FX_PRIORITY=<n>` draws every effect at n, for an A/B (0 is the old order).
+
+### Display-value blending under Forward+ (round 786: `EfpDisplayPass`)
+
+Direct3D 9 blends in the values the screen shows: there is no SRGBWRITE (round 705), and the back
+buffer is 8-bit. Compatibility does the same. Forward+ blends in a linear float buffer, so the
+placed objects' `ambient` effects get their own pass.
+
+**Why: the twins' screen copy.**
+- Rounds 722 and 774 drew each effect node as a display twin that read Godot's screen copy. That
+  copy is taken **before the transparent pass** ("Screen-reading shaders"), so it holds the opaque
+  scene and not the water or a blended sheet under the particles.
+- MEASURED: the effects' share of a box's mean display value, frames 60 to 99:
+
+  | site | twins | Compatibility |
+  |---|---|---|
+  | Hotan palace waterfall | +0.25 | +2.3 |
+  | Jangan dragon | +1.4 | +2.7 |
+
+**The pass: `EfpDisplayPass`**, a CompositorEffect at `EFFECT_CALLBACK_TYPE_POST_TRANSPARENT` on
+the world camera:
+1. A compute pass turns the colour under the effects' screen rectangle into display values (Godot's
+   tone map forward, then sRGB) in an 8-bit buffer, and clears a mask.
+2. Every registered plate and mesh node is drawn into that buffer, back to front by its cull box's
+   centre:
+   - with its RenderState's SRCBLEND/DESTBLEND as the blend factors (`d3d_pair`), including
+     BOTHSRCALPHA and BOTHINVSRCALPHA;
+   - with its stage ops on display values (`DRAW_FRAGMENT`, as `SHADER_TEMPLATE`);
+   - instanced from the MultiMesh's own GPU buffer (`multimesh_get_buffer_rd_rid`);
+   - depth-tested in the fragment shader against the scene's depth (Godot's depth is reversed),
+     with no depth write; a glow draw has no depth test.
+3. A compute pass turns the marked pixels back to linear.
+
+- **Registration:** `EfpEffect.use_display_blend` hands a node to the pass and sets its `layers` to
+  0, so Godot does not draw it as well. `EfpEffect.pass_items` builds the frame's draw list on the
+  main thread at `frame_pre_draw`, and `call_on_render_thread` hands it over in the
+  RenderingServer's command order.
+- **Rebuilds:** the list is rebuilt only when an effect redrew, faded, came or went, or the camera
+  moved (`_signature`). Otherwise the render thread reuses its resolved draws. The shaders compile
+  on the first frame with something to draw.
+- **Link nodes** keep their twins.
+- **SceneData:** the projection and view come from Godot's SceneData UBO. MEASURED by reading it
+  back: the projection, its inverse, then the inverse view and the view as 3x4 rows.
+
+**MTRL passes.** An object's mixing or adding MTRL pass with no depth write (a waterfall's sheet, a
+fountain's stream) blended linearly too: the Hotan sheet's box mean was 167, against 126 under
+Compatibility, while the rock beside it was 50 against 52. It now blends in display values through
+a screen-read tail (`ObjectLoader.display_blend`, `wants_display_blend`), with the fog folded into
+the source first. The screen copy holds the opaque scene, which is exact for a single sheet over
+rock.
+
+**MEASURED, round 786** (`/var/tmp/sparkle/c1`, `lum.py`): the effects' share against each side's
+own effects-off run.
+
+| site | before (twins) | after (pass) | Compatibility | after, linear tone map | Compatibility, linear tone map |
+|---|---|---|---|---|---|
+| Hotan palace waterfall | +0.25 | +2.3 / +2.7 | +2.3 | +2.3 | +1.7 |
+| Jangan dragon | +1.4 | +2.5 / +2.4 | +2.7 | | |
+| Alexandria library fountain | +4.9 | +4.2 / +4.0 | +5.1 | +4.4 | +4.6 |
+| Qin-Shi tomb lv.1 hall | +1.0 | +1.3 | +1.5 | | |
+
+(The "after" column gives two runs where there were two.) Compatibility is not exact for the
+effects' own colour: with no post-process, its scene shader tone-maps it (the filmic curve lifts mid
+values). With the tone map linear on both sides, the Alexandria shares agree (+4.4 against +4.6).
+
+The Hotan sheet box (effects off), against Compatibility:
+
+| | filmic tone map | linear tone map |
+|---|---|---|
+| Forward+ before | 167 | |
+| Forward+ after | 115 | 104 |
+| Compatibility | 126 | 115 |
+
+OURS and OPEN:
+- **Effects draw after every transparent surface**, characters' included. The original orders a
+  placed object's effects before a later object's blended meshes.
+- **Overlapping sheets.** A second blended MTRL pass over a first, the sheets' back-then-front passes
+  among them, blends against the opaque scene, not the first pass. That is the remaining -11 at the
+  Hotan sheet.
+- **Linear above white.** A pixel the pass draws on comes back clamped to the tone map's white.
+- **Mesh culling.** Front faces are INFERRED: clockwise, flipped for a mirroring transform. Among the
+  world's 170 ambient effect files only `map\guild\light_gate_blue.efp` (3 nodes) has a culled
+  mesh node.
+- **Skill and equipment effects** keep Godot's pass, unchanged.
+- **QA switches:** `OPENSRO_QA_FX_PASS=off` (the twins), `OPENSRO_QA_MTRL_BLEND=linear`, and
+  `OPENSRO_QA_FX_PASS=mask|band|clip|nodepth|dump` (probes).
+
 ## Playback (round 620)
 
 How the client plays a decoded tree. `client/scripts/efp/efp_sim.gd` (`EfpSim`) implements it and

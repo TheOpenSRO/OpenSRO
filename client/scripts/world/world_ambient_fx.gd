@@ -554,6 +554,29 @@ func hosts() -> Array:
 func stepping() -> Array:
 	return _stepping
 
+## OPENSRO_QA_WORLD_FX_DETAIL=1 (round 786): one line per built effect of a
+## host in range -- where it is, whether it is shown and stepping, how many
+## particles it draws, and the world box of their centres -- after the QA
+## line. A QA aid only.
+static var qa_detail := OS.get_environment("OPENSRO_QA_WORLD_FX_DETAIL") == "1"
+
+func detail(eye: Vector3) -> String:
+	var lines: Array[String] = ["QA WORLDFX eye %s" % str(eye.round())]
+	for h_v in hosts():
+		var h := h_v as Host
+		if not h.on:
+			continue
+		for fx_v in h.effects:
+			if not is_instance_valid(fx_v):
+				continue
+			var fx := fx_v as EfpEffect
+			var ext := fx.particle_extent()
+			lines.append("QA WORLDFX fx %s on %s at %s (eye %.0f away): visible %s culled %s stepping %s drawn %d centres %s..%s" % [
+				String(fx.path).get_file(), h.node.name, str(fx.global_position.round()), eye.distance_to(fx.global_position),
+				str(fx.is_visible_in_tree()), str(fx.culled), str(_stepping.has(fx)), fx.drawn_particles(),
+				str(ext.position.round()), str(ext.end.round())])
+	return "\n".join(lines)
+
 ## The QA line.
 func describe() -> String:
 	var names := {}

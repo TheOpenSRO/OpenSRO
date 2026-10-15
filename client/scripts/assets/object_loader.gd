@@ -926,6 +926,72 @@ static func stage_ops_handled(rule: Dictionary) -> bool:
 ## uniform `appear_alpha`, blended even where the mod is opaque, and writing
 ## depth (OURS). The world's shaders are built without it, unchanged; each
 ## keeps its key in MOD_SHADER_KEY_META so AppearFade can ask for its twin.
+## Round 786 (MEASURED): Direct3D 9 blends an MTRL mod's pass in the values
+## the screen shows (no SRGBWRITEENABLE, round 705); Forward+ blends in a
+## linear buffer, where a mixing sheet over dark rock comes out far brighter:
+## the Hotan palace waterfall's sheet, 126 (Compatibility, which blends in
+## display values as Direct3D does) against 167 (Forward+) in the box's mean
+## display value, with the rock beside it 52 against 50 -- the original's
+## grey, translucent sheet drawn white. So a blended pass with no depth write
+## blends as the effects' display twins did (EfpEffect.display_shader, round
+## 722): it reads the scene under it (Godot's screen copy) and writes what
+## turns into Direct3D's display-value blend once Godot's own blend, tone map
+## and encoding are done. Its fog is folded in first (FOG, as Godot applies
+## it, then off), as Direct3D fogs the source before the blend. Only the
+## exact pairs (blend_color and blend_alpha 0, or 1 for ONE/ONE). OURS: the
+## screen copy holds the opaque scene alone (a sheet over water, or a second
+## blended pass over the first, blends against what lies under both); a pass
+## with its depth write on (leaves) keeps Godot's blend.
+## OPENSRO_QA_MTRL_BLEND=linear: Godot's blend for every pass (QA A/B).
+static var display_blend := OS.get_environment("OPENSRO_QA_MTRL_BLEND") != "linear"
+
+## Whether an MTRL pass gets the display-value tail (display_blend): a mixing
+## or adding pass with no depth write, under Forward+ (Compatibility blends in
+## display values already, and a screen read there would copy the frame).
+static func wants_display_blend(godot_blend: String, zwrite: bool, fade: bool, forward_plus: bool) -> bool:
+	return display_blend and forward_plus and not fade and not zwrite and (godot_blend == "mix" or godot_blend == "add")
+
+const DISPLAY_BLEND_UNIFORMS := "uniform sampler2D srr_mb_screen : hint_screen_texture, filter_nearest;\n"
+
+const DISPLAY_BLEND_FN := """
+vec3 srr_mb_shown(vec3 srr_l) {
+	vec3 srr_v = srr_l * srr_obj_tonemap.x;
+	if (srr_obj_tonemap.z > 0.5) {
+		float srr_w = srr_obj_filmic_raw(srr_obj_tonemap.y);
+		srr_v = vec3(srr_obj_filmic_raw(srr_v.r), srr_obj_filmic_raw(srr_v.g), srr_obj_filmic_raw(srr_v.b)) / srr_w;
+	}
+	return srr_linear_to_srgb(clamp(srr_v, vec3(0.0), vec3(1.0)));
+}
+vec3 srr_mb_unshown(vec3 srr_v) {
+	vec3 srr_l = srr_srgb_to_linear(clamp(srr_v, vec3(0.0), vec3(1.0)));
+	if (srr_obj_tonemap.z > 0.5) {
+		srr_l = vec3(srr_obj_filmic_inverse(srr_l.r, srr_obj_tonemap.y), srr_obj_filmic_inverse(srr_l.g, srr_obj_tonemap.y), srr_obj_filmic_inverse(srr_l.b, srr_obj_tonemap.y));
+	}
+	return srr_l / max(srr_obj_tonemap.x, 0.0001);
+}
+"""
+
+## The mixing pair's tail (after the fog line): the display-value mix.
+const DISPLAY_BLEND_MIX := """if (!OUTPUT_IS_SRGB && blend_color == 0 && blend_alpha == 0) {
+		vec3 srr_src = mix(ALBEDO, FOG.rgb, FOG.a);
+		FOG = vec4(0.0);
+		vec3 srr_bg = textureLod(srr_mb_screen, SCREEN_UV, 0.0).rgb;
+		float srr_a = ALPHA;
+		vec3 srr_t = srr_mb_unshown(mix(srr_mb_shown(srr_bg), srr_mb_shown(srr_src), srr_a));
+		ALBEDO = max((srr_t - (1.0 - srr_a) * srr_bg) / max(srr_a, 1.0 / 255.0), vec3(0.0));
+	}"""
+
+## The adding pairs' tail: the display-value sum, alpha 1.
+const DISPLAY_BLEND_ADD := """if (!OUTPUT_IS_SRGB && blend_color == 0 && blend_alpha <= 1) {
+		vec3 srr_src = mix(ALBEDO, FOG.rgb, FOG.a);
+		FOG = vec4(0.0);
+		vec3 srr_bg = textureLod(srr_mb_screen, SCREEN_UV, 0.0).rgb;
+		float srr_a = ALPHA;
+		vec3 srr_t = srr_mb_unshown(srr_mb_shown(srr_bg) + srr_mb_shown(srr_src) * srr_a);
+		ALBEDO = max(srr_t - srr_bg, vec3(0.0));
+		ALPHA = 1.0;
+	}"""
+
 static func _mod_shader(cull: String, godot_blend: String, zwrite: bool, fade: bool = false) -> Shader:
 	var key := "%s/%s/%s" % [cull, godot_blend, zwrite]
 	if fade:
@@ -946,6 +1012,9 @@ static func _mod_shader(cull: String, godot_blend: String, zwrite: bool, fade: b
 	# A blended pass is drawn after the world's fog pass, so it fogs itself
 	# (round 702, WorldFog.SHADER_FN); an opaque one is fogged by the pass.
 	var blended := not opaque or fade
+	# Round 786: a blended pass that writes no depth (a waterfall's sheet, a
+	# fountain's stream, a pool) blends in display values (display_blend).
+	var twin := wants_display_blend(godot_blend, zwrite, fade, VideoOptions.forward_plus_running())
 	var alpha_line := "" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0);"
 	if fade:
 		alpha_line = "ALPHA = appear_alpha;" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0) * appear_alpha;"
@@ -1111,16 +1180,18 @@ void fragment() {
 	%s
 	%s
 	%s
+	%s
 }
-""" % [", ".join(modes), TexAni.SHADER_UNIFORMS + TexAni.SHADER_VARYING, "uniform float appear_alpha = 1.0;\n" if fade else "",
+""" % [", ".join(modes), TexAni.SHADER_UNIFORMS + TexAni.SHADER_VARYING, ("uniform float appear_alpha = 1.0;\n" if fade else "") + (DISPLAY_BLEND_UNIFORMS if twin else ""),
 		# The tone map is undone on what is drawn over (opaque, mix): a
 		# multiplying or adding blend's source is a factor, not a colour
 		# shown (OURS, ObjectLight).
 		"srr_obj_present(clamp(stage, vec3(0.0), vec3(1.0)))" if opaque or godot_blend == "mix" or fade else "clamp(stage, vec3(0.0), vec3(1.0))",
-		alpha_line, ShaderColour.DECODE_ALBEDO, WorldFog.SHADER_FOG_LINE if blended else ""]
+		alpha_line, ShaderColour.DECODE_ALBEDO, WorldFog.SHADER_FOG_LINE if blended else "",
+		(DISPLAY_BLEND_MIX if godot_blend == "mix" else DISPLAY_BLEND_ADD) if twin else ""]
 	# The helpers go before the first function (the stage arithmetic and the
 	# vertex colour call them).
-	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + ObjectLight.SHADER_FN + (WorldFog.SHADER_FN if blended else "")
+	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + ObjectLight.SHADER_FN + (WorldFog.SHADER_FN if blended else "") + (DISPLAY_BLEND_FN if twin else "")
 		+ "\nvoid vertex() {\n\t" + ObjectLight.OD0_LINE + "\n\t" + TexAni.SHADER_LINE + "\n}\n" + "\nstruct Split {")
 	shader.set_meta(MOD_SHADER_KEY_META, [cull, godot_blend, zwrite])
 	_static_lock.lock()

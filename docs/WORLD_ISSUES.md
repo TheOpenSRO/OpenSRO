@@ -7485,6 +7485,174 @@ stays on the box for older revisions through `GODOT_BIN`).
 
 ## Seven-hundred-and-eighty-sixth round
 
+### Round 786 (part): Waterfall sparkles and glow match the original
+
+**The report.** The user (v0.1.547) said "the splash effects are there but they don't seem quite
+right". Two pairs of pictures, ours against the original:
+- **The north Hotan palace waterfall.** In the original, blue-white glints cover the falling sheet,
+  under a soft bright haze beneath the arch, and the sheet is a translucent grey. Ours was a white
+  sheet with almost no glints.
+- **The Jangan golden dragon.** In the original a bright white splash with glints sits where the
+  streams land in the pool. Ours was faint.
+
+The coordinator's review of a first fix asked for the proper one: blend the effects in display
+values exactly, as Compatibility and Direct3D 9 do, measured on four sites. Branch
+`feat/sparkle787`. Labels: READ (sro_client.exe, address given; the box's
+`/var/tmp/decomp_client`), MEASURED, INFERRED, OURS, OPEN.
+
+**The objects (MEASURED; `water_census.gd`, `dump_bsr_particles.gd`, `efpcensus -show`).**
+- **Hotan (93/134, 93/135):** `oa_ho_waterfall01` and `cj_waterfall02`.
+  - Their effects are `map\multugu-b`, `pokpomulbangul(-m)` and `pajang-b`.
+  - The glints are `pokpomulbangul`'s additive node on `s-light-sb.ddj`: blue RGB, with the dots in
+    its alpha.
+  - The haze is the white `smoke.ddj` plates, which mix.
+  - The sheets are MTRL mods: SRCALPHA/INVSRCALPHA, ZWRITE off, MODULATE2X.
+- **Jangan (97/168):** `cj_wf_dr`.
+  - Four `map\multigi.efp` sit at the foot of the streams. Each has a mixing smoke node and an
+    additive `01sparkles.ddj` node.
+  - The streams are SRCALPHA/ONE, and they land in the map water.
+- **Alexandria:** the aqueduct falls (`dun_waterfall_big01` / `small01`, `dun\dun_waterfall_b1.efp`,
+  which has an `01sparkles` cloud and an `oura_14` halo). These were the user's first guess.
+
+**Ruled out (MEASURED, `OPENSRO_QA_WORLD_FX_DETAIL=1`):**
+- **Every effect was built, in range, shown and stepping,** at 60-120 particles each. That rules
+  out the range rules, the 9 sectors, the warm-up, the cull box and the particle cap.
+- **The textures** (`01sparkles`, `oura_14`, `smoke`, `s-light-sb`) are DXT3 with no mip chain, in
+  retail and here.
+
+**Where an effect draws (READ; EFP_FORMAT.md, "Where an effect draws in the frame").**
+- **A placed object's effects** draw right after its own meshes, blended ones included, unsorted:
+  `CObjRendererVS::vslot_038` 0xbf5830, then `CRTModParticle::vslot_003`.
+- **A character's decorations** draw after its body (`FUN_009d20d0`).
+- **The map water** draws before every above-water object (`Map::FUN_00a24e30`).
+- **Depth:** effects are depth-tested, with no depth write (`EFEffect::FUN_00cabda0`).
+
+Every effect material now draws at `EfpEffect.RENDER_PRIORITY` = 1, after object surfaces (0), the
+water (-3) and the fog pass (-1). This alone moved the boxes by at most 0.2 (MEASURED).
+
+**The cause (MEASURED): blending in linear space.** Direct3D 9 blends in the values the screen
+shows, in an 8-bit back buffer. Forward+ blends in a linear float buffer.
+- **The effects.** Rounds 722 and 774 gave each effect node a twin that blends against Godot's
+  screen copy, and that copy is taken before the transparent pass. Over a waterfall sheet or the
+  pool the twin blended against the rock or the pool floor, and the effects' share came out a
+  tenth of Compatibility's at Hotan and half at Jangan.
+- **The sheets themselves.** A mixing MTRL sheet blends linearly in Forward+. The Hotan sheet's box
+  mean was 167 against Compatibility's 126, while the rock beside it was 50 against 52. That is
+  the white sheet: the original's is grey and translucent, as Compatibility's is.
+
+**The fix.**
+- **`EfpDisplayPass`** (new), a CompositorEffect after the transparent pass, on the world camera.
+  EFP_FORMAT.md, "Display-value blending under Forward+", has the details.
+  - The colour under the effects goes into an 8-bit display-value buffer.
+  - Every effect plate and mesh is drawn into it with its own Direct3D SRCBLEND/DESTBLEND, its
+    stage ops and a depth test, then turned back.
+  - The objects' ambient effects (world, gates, dungeons) use it. Link nodes keep their twins.
+  - Skills and equipment are unchanged.
+- **The MTRL sheets:** a mixing or adding MTRL pass with no depth write gets a display-value tail
+  (`ObjectLoader.display_blend`).
+- **The first fix's exception is dropped.** The per-object rule that switched a sheet's effects to
+  Godot's blend (`COVER_META`, `WorldAmbientFx.covers`) is gone.
+
+**MEASURED against Compatibility** (`/var/tmp/sparkle/c1/<site>_<config>`, `lum.py`; the effects'
+share, frames 60-99, against each side's own effects-off run):
+
+| site | before | after | Compatibility |
+|---|---|---|---|
+| Hotan palace waterfall | +0.25 | +2.3, +2.7 (two runs) | +2.3 |
+| Jangan dragon | +1.4 | +2.5, +2.4 | +2.7 |
+| Alexandria library fountain | +4.9 | +4.2, +4.0 | +5.1 |
+| Qin-Shi tomb lv.1 hall | +1.0 | +1.3 | +1.5 |
+
+- **Compatibility tone-maps the effects' own colour.** With no post-process, its scene shader
+  applies the filmic curve, which lifts mid values; Direct3D has no tone map. With the tone map
+  linear on both sides (`|tonemap=0`), the Alexandria shares agree (+4.4 against +4.6).
+- **The Hotan sheet box (effects off):**
+
+  | | filmic | linear tone map |
+  |---|---|---|
+  | before | 167 | |
+  | after | 115 | 104 |
+  | Compatibility | 126 | 115 |
+
+  The remaining -11 is overlapping blended passes (the sheet's pieces, and its back-then-front
+  passes), each blended against the opaque scene (OURS, OPEN).
+
+**Census (MEASURED).**
+- **The pass:** the world's ambient sets name 170 placed effect files, 122 with an additive drawn
+  node, and every one of them goes through it. Only `map\guild\light_gate_blue.efp` (3 nodes) has
+  a mesh node with Direct3D culling, and its front face is INFERRED.
+- **The MTRL tail:** every mixing or adding MTRL mod with ZWRITE off. 69 placed models carry
+  ambient effects and a live MTRL mod; the tail is not counted per model.
+
+**OPEN.**
+- **Order.** Effects draw after every transparent surface, characters' blended meshes included. The
+  original orders a placed object's effects before a later-queued object's blended meshes.
+- **Water depth.** The original's plain water writes depth (READ, 0xa22c39); ours does not.
+- **Overlapping MTRL passes,** the -11 above.
+- **A sheet over the water** blends against the opaque scene, not the water.
+- **Mesh culling** in the pass: front faces INFERRED; one world file, untested.
+
+**Perf gate** (`perf_gate.sh --base 4093492d --head 76a56e98 --sites jangan,crowd,hotan,alex --frames 40000`,
+1280x720, Forward+, median of 3, native readers off): every number SAME.
+
+| site | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 0.81 -> 0.82 SAME | 8640 -> 8565 SAME | 2740 -> 2707 SAME | 4.5 -> 5 SAME |
+| crowd | 1.98 -> 1.94 SAME | 10894 -> 10780 SAME | 3475 -> 3398 SAME | 5 -> 5 SAME |
+| hotan | 0.99 -> 1.05 SAME | 8978 -> 8943 SAME | 2902 -> 2889 SAME | 6 -> 6 SAME |
+| alex | 1.69 -> 1.82 SAME | 9345 -> 9447 SAME | 2018 -> 2008 SAME | 12 -> 12 SAME |
+
+- **The first gate failed** (409c9fa4): jangan 0.80 -> 0.98 ms. The pass rebuilt its list every frame
+  at 240-340 us of main thread, and the render thread spent 160 us.
+- **What fixed it:**
+  - a rebuild only on change (`_signature`);
+  - the screen rectangle from one merged box;
+  - cached uniform sets and pipelines;
+  - the render thread reusing its resolved draws.
+
+  At the Jangan spawn (19 draws) that is a QA mean of 63 us main and 77 us render a frame.
+- **One crowd run of that first gate crashed** (signal 11, in a loader thread's GDScript):
+  - `/var/tmp/perf-sparkle787/crowd_head_3.log`, while the pass then compiled its shaders on the
+    render thread at start-up.
+  - It was not reproduced in the second gate's runs, nor in the ~70 QA runs with the pass. The
+    shaders now compile on the first frame with something to draw, after the world loads. OPEN:
+    the cause is not established.
+
+**QA (render box, Forward+, RX 7600, the GDScript simulation).**
+- **Sources:** `before` is the base copy `/opt/opensro-client-perf-base-4093492d75e7-g472`, `after`
+  this lane, `gl` this lane under Compatibility.
+- **The four-panel side-by-sides** (original | before | after | Compatibility), for the human:
+  - `/var/tmp/sparkle/fin2/hotan_retail_before_after_compat.jpg`, from Hotan 93/135 at 1725,1700,
+    yaw 30, pitch -15, dist 400: the user's view of the fall beneath the bridge's arch. After, the
+    sheet is translucent, and the haze under the arch and the blue glints on the falling water
+    show, as they do under Compatibility.
+  - `/var/tmp/sparkle/fin2/jangan_retail_before_after_compat.jpg`, from Jangan 97/168 at 1000,860,
+    yaw -30, pitch -35, dist 170 (from the plaza, down at the pool's corner): the bright white
+    splash where the streams land.
+- **Other sites** (`fin2/<site>_{before,after,gl}/`): the Jangan palace turtles, the Alexandria
+  aqueduct falls and the Alexandria library fountain.
+- **Skills:** `fin2/cast_{before,after}/`, `OPENSRO_QA_CAST=90,113` at the Jangan spawn, drawn by
+  Godot's own pass as before.
+- **Errors:** none in any of these runs' logs; no crash.
+
+**Tests and gates.**
+- `efp_draw_order_test.gd` covers:
+  - the priority and every material twin keeping it;
+  - the pass's Direct3D factor pairs and its 80-byte push constants;
+  - a plate as a triangle list;
+  - an effect handing its draws to the pass, hidden from Godot, with each item's blend pair, count,
+    culling and depth test;
+  - the MTRL tail's conditions and formulas.
+- `remote_godot.sh check`: ALL LOAD. `tests`: "ran 316 suite(s), 0 failing".
+- No `native/` change, so no EFP_API bump; no server change.
+
+**Tools.**
+- `OPENSRO_QA_WORLD_FX_DETAIL=1`: per-effect lines plus the pass's QA line.
+- `OPENSRO_QA_FX_PRIORITY=<n>`.
+- `OPENSRO_QA_FX_PASS=off|mask|band|clip|nodepth|dump`.
+- `OPENSRO_QA_MTRL_BLEND=linear`.
+- The box recipes are `/var/tmp/sparkle/{shots,cmp6,cmp8,final2}.sh` and `lum.py`.
+
 ### Round 786 (part): Monsters appear on time, and attacks register promptly
 
 The user (2026-10-13, playing deadass3, level 140, in the bandit fields and Jangan): "the mobs

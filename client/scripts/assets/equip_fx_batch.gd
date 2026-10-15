@@ -849,6 +849,8 @@ func _build_draws(b: Batch, master: EfpEffect) -> void:
 		# parameters, a RenderingServer sync each.
 		var mat := ShaderMaterial.new()
 		mat.shader = batch_shader(src_mat.shader, native)
+		# Where the effect draws in the frame (EfpEffect.RENDER_PRIORITY, round 786).
+		mat.render_priority = src_mat.render_priority
 		for u in ["tex", "c_op", "c_a1", "c_a2", "a_op", "a_a1", "a_a2"]:
 			var v = src_mat.get_shader_parameter(u)
 			if v != null:
