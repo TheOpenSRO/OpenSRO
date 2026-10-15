@@ -165,6 +165,14 @@ func ValidName(name string) bool {
 // GUILDERR_INVALID_GUILDNAME_LEN.
 var ErrInvalidNameLength = errors.New("guild: name must be 2 to 12 characters")
 
+// ErrNameNotAllowed is the refusal a name the name filter refuses earns:
+// 0x4c19 GUILDERR_NOT_ALLOWED_GUILDNAME (round 788, READ SR_ShardManager
+// 0x43b810: after its own 2..12-byte test, 0x40f200 -- the character name's
+// filter -- else 0x4c19, then `_Guild_IsExistingGuildName` else 0x4c1a). The
+// session's guild handler applies it (the filter is the process's); the stores
+// do not.
+var ErrNameNotAllowed = errors.New("guild: name not allowed")
+
 // Who may found a guild. **RECOVERED, round 487**, from FUN_00514b20: the
 // pre-check CGuildManager::HandleCreateGuild (0x00514ce0) calls first, before
 // it reads the name. in_EAX is the founder's GObjPC; the whole ladder, in the

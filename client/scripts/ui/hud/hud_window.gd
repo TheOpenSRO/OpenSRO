@@ -234,6 +234,15 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 ## The registry entry `registry` names (see build), or null when there is
 ## none to frame the window with.
 static func _registry_entry(builder: UiBuilder, registry: Dictionary) -> UiLayoutParser.ControlDef:
+	# A CIFMainFrame declared outside ginterface.txt (round 788: the
+	# Additional Quick Slot's option window, GDR_EXT_QUICKSLOT_OPTION in
+	# ifextquickslot.txt's section Option) is passed in as its def.
+	var given = registry.get("def", null)
+	if given is UiLayoutParser.ControlDef:
+		var d := given as UiLayoutParser.ControlDef
+		if d.rect.size.x > 0 and d.rect.size.y > 0 and UiBuilder.is_slice_base(d.ddj):
+			return d
+		return null
 	var reg_name: String = registry.get("name", "")
 	if reg_name == "":
 		return null

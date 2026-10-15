@@ -36,6 +36,10 @@ const LOGIN_SCENE := "res://scenes/Login.tscn"
 ## NetClient.enter_world and the tree's change_scene_to_file otherwise.
 var send_start := Callable()
 var change_scene := Callable()
+## Round 788: the drop box (NetOffBox), once shown.
+var netoff_box: NetOffBox = null
+## Round 788 (OURS): Start on a legacy server's agent.
+const LEGACY_NO_WORLD := "Entering the world on an original server is not supported yet: its world protocol is not built."
 
 ## The screen's states, numbered as retail's +0xe4 (vslot_012's switch).
 ## LOADING is ours: the region builds before anything moves.
@@ -123,6 +127,8 @@ var _popup_parts := {}
 var _black: ColorRect = null
 var _dim: ColorRect = null
 var _message: Label = null
+## The account PIN, "Character Lock" (round 788, CharSelectLock; OURS).
+var _lock: CharSelectLock = null
 
 func _ready() -> void:
 	_started_ms = Time.get_ticks_msec()
@@ -140,6 +146,7 @@ func _ready() -> void:
 	_layout = FrontEndFrame.load_layout(_media, FrontEndFrame.SELECT_LAYOUT_PATH)
 	_level_exp = _load_level_exp()
 	_build_ui()
+	_setup_lock()
 	_begin_stage()
 	# QA render hook: with no logged-in session this screen would list
 	# nothing, so a render can inject clearly-fake sample characters.
@@ -151,6 +158,20 @@ func _ready() -> void:
 		NetClient.list_characters()
 
 # --- Building -------------------------------------------------------------------
+
+## The account PIN (round 788; OURS, CharSelectLock has the rules): asked
+## for when the screen opens, and asked before Start, Delete and Restore.
+func _setup_lock() -> void:
+	_lock = CharSelectLock.new()
+	add_child(_lock)
+	_lock.setup(self, UiBuilder.new(_media, _text), NetClient, _def("Select", ID_START), _button,
+		func() -> bool: return state in LIST_BUTTON_STATES or state in SELECTED_BUTTON_STATES)
+	_lock.place_button((_windows[ID_START] as Control).position)
+	# A legacy server's agent carries only the lobby (NetClient._send_retail):
+	# it is never asked, and with no status pending hold() lets every action
+	# through.
+	if not _fake and not NetClient.is_retail():
+		_lock.query()
 
 func _section(name: String) -> UiLayoutParser.SectionDef:
 	return _layout.sections.get(name) if _layout != null else null
@@ -358,6 +379,8 @@ func _relayout() -> void:
 		b.position = CharSelectMath.arrow_position(id, Vector2i(w, h), Vector2i(b.size))
 	var page := _windows[ID_PAGE] as Control
 	page.position = Vector2((w - page.size.x) / 2, band2 - page.size.y - 8) # OURS: 50 is placed by code not read
+	if _lock != null:
+		_lock.place_button((_windows[ID_START] as Control).position)
 
 func _scaled_place(n: Control, d: UiLayoutParser.ControlDef) -> void:
 	if d == null or _frame == null or _frame.layout == null:
@@ -1051,8 +1074,16 @@ func _update_page_windows() -> void:
 func _on_start_pressed() -> void:
 	if selected < 0 or selected >= _slots.size():
 		return
+	if _lock != null and _lock.hold(_on_start_pressed):
+		return
 	var char_name: String = _slots[selected].char_name
 	print("SELECT: Start %s" % char_name)
+	# Round 788 (OURS): on a legacy server's agent the lobby works but the
+	# world does not -- its protocol is not the original one yet.
+	if NetClient.is_retail():
+		_message.text = LEGACY_NO_WORLD
+		print("SELECT: %s" % LEGACY_NO_WORLD)
+		return
 	_busy += 1
 	_set_clickable(_windows.get(ID_START), false)
 	if send_start.is_valid():
@@ -1099,6 +1130,8 @@ func _on_delete_pressed() -> void:
 		2:
 			_say("UIO_MSG_CHAR_DEL_WANNING_CONFIRM_GUARDIAN", "Disband the Academy first.")
 			return
+	if _lock != null and _lock.hold(_on_delete_pressed):
+		return
 	_open_confirm(not r.deleting)
 
 ## READ, 0x858950(1): the popup fades in over 0.5 s, the screen dims to 0x80,
@@ -1362,18 +1395,17 @@ func _leave_to_login() -> void:
 		get_tree().change_scene_to_file(LOGIN_SCENE)
 
 ## The server went away (round 684's review: Start and Delete were sent into
-## nothing, silently). The archive's line, then the title. INFERRED: which
-## key retail's select shows here was not read; UIIT_MSG_MSGBOX_NETOFF is the
-## archive's own "disconnected" line. OURS: 2 s to read it.
+## nothing, silently). Round 788, READ (slot 40, 0x862450, the same for the
+## title, select and create): the NETOFF box (NetOffBox), whose Confirm
+## quits the client -- retail never returns to the title here.
 func _on_disconnected() -> void:
 	if state == S.LOADING or state == S.ENTERING:
 		return
-	_message.text = _t("UIIT_MSG_MSGBOX_NETOFF", "You have been disconnected from the server.")
 	_freeze_buttons()
-	print("SELECT: disconnected -- %s" % _message.text)
 	_set_state(S.LOADING)
-	if is_inside_tree():
-		get_tree().create_timer(2.0).timeout.connect(_leave_to_login)
+	if netoff_box == null or not is_instance_valid(netoff_box):
+		netoff_box = NetOffBox.show_on(self, _media, _text)
+	print("SELECT: disconnected -- the box: %s" % netoff_box.message_text())
 
 # --- QA ---------------------------------------------------------------------------------------
 

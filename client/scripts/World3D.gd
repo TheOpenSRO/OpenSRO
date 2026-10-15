@@ -1795,6 +1795,9 @@ var _ui_builder: UiBuilder
 var _hud_minimap: HudMinimap
 var _hud_worldmap: HudWorldmap
 var _hud_underbar: HudUnderbar
+## The Additional Quick Slot bars (round 788): retail's CIFExtQuickSlot
+## (quick slots 41..50, always present) and the OURS extra bars.
+var _hud_ext_slots: HudExtQuickSlots
 var _hud_player_info: HudPlayerInfo
 ## Vitals from the last EnterWorldResult. Kept because AttackResult reports
 ## only the player's current HP, not their maximum.
@@ -2437,6 +2440,16 @@ func _try_initialize_pk2_ui() -> void:
 	# Built by add_child above (HudUnderbar._ready runs setup(), which builds
 	# once); a second setup() here used to stack a second bar on the first.
 	_hud_underbar.quickslot_activated.connect(_on_quickslot_activated)
+	# The Additional Quick Slot (round 788): created with the in-game
+	# interface, unconditionally (READ, 0x786f30 -> 0x79c600(1) at 0x7871d2),
+	# its slots the bottom bar's 41..50; plus OpenSRO's extra bars (OURS).
+	# Before the hover help and the restore below, which reach every slot.
+	_hud_ext_slots = HudExtQuickSlots.new()
+	_hud_ext_slots.name = "HudExtQuickSlots"
+	ui_control.add_child(_hud_ext_slots)
+	if not _hud_ext_slots.setup(_ui_builder, _hud_underbar):
+		_hud_ext_slots.queue_free()
+		_hud_ext_slots = null
 
 	# The always-on block at the top left: portrait, name, level, HP and MP.
 	# Its own registry entry places it at 4,7 in the client's default
@@ -2681,15 +2694,12 @@ func _try_initialize_pk2_ui() -> void:
 	# in the original's blue window (CIFSlotWithHelp::vslot_048 0x686db0:
 	# kind 0x0c, content 0x19 -> 0x67a970), read at hover time from what the
 	# slot holds; any other slot shows nothing (as before).
+	# Round 788: every quick slot, the Additional Quick Slot's and the extra
+	# bars' included (their proxies show the slot's help beside them, READ
+	# 0x65fb90 -> 0x776c00).
 	if _hud_underbar != null:
-		for qs in HudUnderbar.MAX_QUICKSLOT:
-			var slot_node := _hud_underbar.slot_node(qs)
-			if slot_node != null:
-				var q: int = qs
-				var rows := func() -> Array:
-					var bound: Dictionary = _quickslot_skills.get(q, {})
-					return _hud_panels.quickslot_skill_tip_lines(int(bound.get("id", 0))) if not bound.is_empty() else []
-				_hud_panels.set_bubble_tip(slot_node, rows, SkillTooltipLines.WRAP_WIDTH)
+		for qs in _hud_underbar.slot_indices():
+			_wire_quickslot_tip(int(qs))
 	# The action window's buttons (round 781).
 	_hud_panels.action_use_requested.connect(func(id: int) -> void: _run_action(id))
 	# Only what differs from Create's own icons (a fresh pane shows the rows'
@@ -2706,6 +2716,11 @@ func _try_initialize_pk2_ui() -> void:
 		# The bar's own buttons take a click while an icon is held (READ,
 		# 0x6523d0: any CIFButton), e.g. its page arrows.
 		_hud_panels.click_pass_through.append(_hud_underbar.button_at)
+	if _hud_ext_slots != null:
+		# The Additional Quick Slot's buttons too, the extra bars' pagers
+		# included (an icon carried to another page, round 788).
+		_hud_panels.click_pass_through.append(_hud_ext_slots.button_at)
+		_hud_ext_slots.slots_created.connect(_on_ext_slots_created)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.npc_window_hidden.connect(_on_npc_window_hidden)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
@@ -12367,7 +12382,7 @@ func _qa_autopot_step(tick: int) -> void:
 		elif step == "counts" and _hud_underbar != null:
 			# Round 786: every filled quick slot's drawn count, all pages.
 			var drawn := []
-			for qs in range(1, HudUnderbar.MAX_QUICKSLOT):
+			for qs in range(1, HudUnderbar.SLOT_COUNT):
 				if _hud_underbar.slot_has_item(qs):
 					drawn.append("q%d=%d" % [qs, _hud_underbar.slot_count(qs)])
 			print("QA HOTBAR page F%d counts %s" % [_hud_underbar.current_page(), " ".join(drawn)])
@@ -12649,6 +12664,44 @@ func _restore_hotbar() -> void:
 	if not _inventory_slots.is_empty():
 		_resync_quickslot_items(_inventory_slots)
 	_hotbar_restoring = false
+	_refresh_quickslot_seals()
+	_refresh_quickslot_counts()
+
+## A quick slot's hover help: a skill's tooltip read at hover time (round
+## 786), on any slot node -- the bottom bar's, and since round 788 the
+## Additional Quick Slot's and the extra bars' (HudExtQuickSlots).
+func _wire_quickslot_tip(qs: int) -> void:
+	if _hud_underbar == null or _hud_panels == null:
+		return
+	var slot_node := _hud_underbar.slot_node(qs)
+	if slot_node == null:
+		return
+	var rows := func() -> Array:
+		var bound: Dictionary = _quickslot_skills.get(qs, {})
+		return _hud_panels.quickslot_skill_tip_lines(int(bound.get("id", 0))) if not bound.is_empty() else []
+	_hud_panels.set_bubble_tip(slot_node, rows, SkillTooltipLines.WRAP_WIDTH)
+
+## A quick slot's icon from the quick-slot tables (a skill's, an item's or an
+## action's), or null.
+func _quickslot_icon(slot: int) -> Texture2D:
+	if _hud_panels == null or _ui_builder == null:
+		return null
+	if _quickslot_skills.has(slot):
+		var path := _hud_panels.skill_icon_path(int(_quickslot_skills[slot]["id"]))
+		return _ui_builder.load_texture(path) if path != "" else null
+	if _quickslot_items.has(slot):
+		var path := _hud_panels.item_icon_path(int(_quickslot_items[slot]["item"]))
+		return _ui_builder.load_texture(path) if path != "" else null
+	if _quickslot_actions.has(slot):
+		return _action_icon(int(_quickslot_actions[slot]))
+	return null
+
+## OURS (round 788): an extra bar came back (more bars or pages in its
+## option window): its slots show what the tables hold for them.
+func _on_ext_slots_created(indices: Array) -> void:
+	for qs in indices:
+		_wire_quickslot_tip(int(qs))
+		_hud_underbar.set_slot_item(int(qs), _quickslot_icon(int(qs)))
 	_refresh_quickslot_seals()
 	_refresh_quickslot_counts()
 
@@ -15793,7 +15846,7 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   key:<name>          press and release a key, as the OS delivers it:
 #                       keycode, physical_keycode, key_label and (letters,
 #                       digits) unicode; `key:shift+q` holds Shift,
-#                       `key:ctrl+1` Ctrl
+#                       `key:ctrl+1` Ctrl, `key:alt+1` Alt (round 788)
 #   down:<name>         press a key and keep it down (V, Z, Space; round 608)
 #   up:<name>           release it
 #   whisper_from:<name> a whisper from <name> arrives, as the server's would
@@ -15808,6 +15861,9 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #   census              print every visible focusable Control that is not a
 #                       button (text lines, lists, spin boxes) and its rect
 #   talk                open the NPC talk box (as a click on an NPC does)
+#   extbars             print where the Additional Quick Slot bars, their
+#                       buttons and shown slots are (QA EXTBAR / EXTBTN /
+#                       EXTSLOT lines; round 788)
 # The tick after each action prints
 #   QA INPUT <n> <action>: open=[...] focus=<node> world_keys=[...] keymap=[...]
 # -- the windows on screen, the keyboard focus, the keys that reached
@@ -16082,20 +16138,25 @@ func _qa_input_step() -> void:
 		"talk":
 			if _hud_panels != null:
 				_hud_panels.open_npc_talk("QA NPC", "Hello.", [])
+		"extbars":
+			if _hud_ext_slots != null:
+				_hud_ext_slots.qa_print_slots()
 		_:
 			_qa_input_report = action + " (unknown action)"
 
 func _qa_push_key(name: String, phases: Array = [true, false]) -> void:
 	var shift := name.to_lower().begins_with("shift+")
 	var ctrl := name.to_lower().begins_with("ctrl+")
-	var key_name := name.substr(6) if shift else name.substr(5) if ctrl else name
+	# "alt+" (round 788): the extra quick-slot bar's Alt+digit.
+	var alt := name.to_lower().begins_with("alt+")
+	var key_name := name.substr(6) if shift else name.substr(5) if ctrl else name.substr(4) if alt else name
 	var code := OS.find_keycode_from_string(key_name)
 	if code == KEY_NONE and key_name == " ":
 		code = KEY_SPACE
 	var uni := 0
 	if key_name.length() == 1:
 		uni = key_name.to_upper().unicode_at(0) if shift else key_name.to_lower().unicode_at(0)
-	if ctrl:
+	if ctrl or alt:
 		uni = 0
 	for pressed in phases:
 		var ev := InputEventKey.new()
@@ -16105,6 +16166,7 @@ func _qa_push_key(name: String, phases: Array = [true, false]) -> void:
 		ev.unicode = uni if pressed else 0
 		ev.shift_pressed = shift
 		ev.ctrl_pressed = ctrl
+		ev.alt_pressed = alt
 		ev.pressed = pressed
 		get_viewport().push_input(ev)
 
@@ -24080,7 +24142,23 @@ var _teleport_request_pending := false
 func _on_guild_create_requested(guild_name: String) -> void:
 	if not NetClient.is_connected_to_server():
 		return
+	if not _guild_name_passes(guild_name):
+		return
 	NetClient.create_guild(NetClient.current_character_name, guild_name)
+
+## The guild-create prompt's own name checks before it sends (round 788,
+## READ 0x6f91b0: length, then the AbuseFilter guild test; NameFilter): a
+## refusal is logged in the archive's words and nothing is sent.
+func _guild_name_passes(guild_name: String) -> bool:
+	var key := NameFilter.guild_name_error(guild_name, NameFilter.shared(_media_pk2))
+	if key == "":
+		return true
+	var fallback := "A guild name is 2 to 12 letters or digits." if key == NameFilter.GUILD_MSG_LENGTH else "That guild name cannot be used."
+	var text := _resolve_any_text(key, fallback)
+	_log_system("Could not found the guild: %s" % text)
+	if guild_status_label != null:
+		guild_status_label.text = text
+	return false
 
 ## The talk box's guild leave prompt was confirmed (round 521).
 func _on_guild_leave_requested() -> void:
@@ -27896,6 +27974,12 @@ func _run_key_action(action: String, arg: int) -> String:
 				return "no hotbar"
 			_hud_underbar.activate_slot(arg)
 			return "quick slot %d" % arg
+		"ext_quickslot":
+			# OURS (round 788): Alt+digit, the first extra bar's page.
+			if _hud_ext_slots == null:
+				return "no extra bar"
+			var fired := _hud_ext_slots.activate_key(arg)
+			return ("quick slot %d (extra bar 1)" % fired) if fired >= 0 else "no extra bar"
 		"camera_cycle":
 			return _key_cycle_camera()
 		"hide_ui":
@@ -30509,6 +30593,8 @@ func _on_guild_create_pressed() -> void:
 	var guild_name := guild_name_input.text.strip_edges()
 	if guild_name.is_empty():
 		guild_status_label.text = "Enter a guild name first."
+		return
+	if not _guild_name_passes(guild_name):
 		return
 	NetClient.create_guild(NetClient.current_character_name, guild_name)
 

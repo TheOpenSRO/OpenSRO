@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/OpenSRO/OpenSRO/server/internal/nest"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -861,6 +863,25 @@ func quietQuery(opcode uint16) bool {
 	return opcode == session.OpFrontEndThemeRequest || opcode == session.OpServerStatusRequest
 }
 
+// loginRulesFrom checks the login flags (round 788): a tolerance of 1-100
+// (OURS bounds; retail reads any number), block minutes 0 (none) up to a
+// year, a per-IP limit 0 (off) or more, a reason the gateway's field holds
+// (511 bytes, session.maxBlockReasonBytes). A bad value stops the server:
+// a mistyped security setting should not quietly fall back.
+func loginRulesFrom(tolerance, blockMin, maxPerIP int, guide string) (session.LoginRules, error) {
+	switch {
+	case tolerance < 1 || tolerance > 100:
+		return session.LoginRules{}, fmt.Errorf("-login-failure-tolerance %d: want 1-100", tolerance)
+	case blockMin < 0 || blockMin > 525600:
+		return session.LoginRules{}, fmt.Errorf("-login-failure-block-min %d: want 0-525600", blockMin)
+	case maxPerIP < 0:
+		return session.LoginRules{}, fmt.Errorf("-max-users-per-ip %d: want 0 or more", maxPerIP)
+	case strings.TrimSpace(guide) == "" || len(guide) > 511:
+		return session.LoginRules{}, fmt.Errorf("-login-punishment-guide: want 1-511 bytes of text, got %d", len(guide))
+	}
+	return session.LoginRules{FailureTolerance: tolerance, BlockMinutes: blockMin, MaxPerIP: maxPerIP, PunishmentGuide: guide}, nil
+}
+
 // defaultMaxPlayers is -max-players' default. OURS: retail's capacity is a
 // row of its shard database, which neither executable carries.
 const defaultMaxPlayers = 1000
@@ -943,6 +964,18 @@ func main() {
 			"on a client's own characterdata_*.txt and itemdata_*.txt, round 682): the 52 bodies and 52 starting items a "+
 			"new character may be made from, and the two ammunition rows. Without it every character create is refused "+
 			"(0x403) -- the server cannot tell what it may make. A configured path that does not load is fatal.")
+	abuseFilter := flag.String("abuse-filter", os.Getenv("OPENSRO_ABUSE_FILTER"),
+		"path to an AbuseFilter.txt (env OPENSRO_ABUSE_FILTER; round 788): the operator's own -- the copy beside "+
+			"SR_ShardManager.exe, or a client's Media.pk2 server_dep\\silkroad\\textdata\\abusefilter.txt -- never "+
+			"shipped. Its group for -abuse-filter-locale gives the characters a new character or guild name may "+
+			"use and the words it may not contain or be, as SR_ShardManager's 0x40f200 applies them. Without it "+
+			"names are limited to [0-9A-Za-z_] and the compiled-in SQL words, and no word list applies. A "+
+			"configured path that does not load is fatal. See deploy/README.md, \"Name filter\".")
+	abuseFilterLocale := flag.String("abuse-filter-locale", os.Getenv("OPENSRO_ABUSE_FILTER_LOCALE"),
+		"which AbuseFilter.txt group -abuse-filter reads, as server.cfg's LOCALE names it (env "+
+			"OPENSRO_ABUSE_FILTER_LOCALE): KOREA 0, CHINA 1, TAIWAN 2, JAPAN 3, VIETNAM 5, ENGLISH 4, with or "+
+			"without retail's LOCALE_ prefix; an unknown name reads group 4, as SR_ShardManager does. Unset, "+
+			"ENGLISH (OURS; the reference server.cfg says LOCALE_VIETNAM).")
 	charDefaultsDir := flag.String("chardefaults-dir", os.Getenv("OPENSRO_CHARDEFAULTS_DIR"),
 		"a directory holding the shard DB's _RefCharDefault_SkillMastery.csv, _RefCharDefault_Skill.csv and "+
 			"_RefCharDefault_Quest.csv as exported (env OPENSRO_CHARDEFAULTS_DIR; EXTERNAL, round 692): a new "+
@@ -990,13 +1023,34 @@ func main() {
 	monsterAIEnv, monsterAIEnvErr := envBool("OPENSRO_MONSTER_AI")
 	// The server list's status (round 679, OURS): the capacity the client's
 	// population band divides by, and the inspection switch it shows as
-	// "Check"; both also turn logins away (session.LoginGate).
+	// "Check"; both also turn logins away (session.LoginService).
 	maxPlayersEnv, maxPlayersEnvErr := envInt("OPENSRO_MAX_PLAYERS", defaultMaxPlayers)
 	inspectionEnv, inspectionEnvErr := envBool("OPENSRO_INSPECTION")
 	maxPlayers := flag.Int("max-players", maxPlayersEnv,
 		"the server's capacity: the client's server list shows current/max as Easy, Populated, Crowded or FULL, and a login is refused once this many characters are in the world (1-65535; OPENSRO_MAX_PLAYERS)")
 	inspection := flag.Bool("inspection", inspectionEnv,
 		"under inspection: the client's server list shows \"Check\" and every login is refused with retail's inspection message (OPENSRO_INSPECTION)")
+	// The login rules (round 788, session.LoginService): retail's
+	// GlobalManager settings, their code defaults (READ) except the per-IP
+	// limit, off by default (OURS).
+	loginTolEnv, loginTolEnvErr := envInt("OPENSRO_LOGIN_FAILURE_TOLERANCE", session.DefaultLoginFailureTolerance)
+	loginBlockEnv, loginBlockEnvErr := envInt("OPENSRO_LOGIN_FAILURE_BLOCK_MIN", session.DefaultLoginFailureBlockMinutes)
+	maxPerIPEnv, maxPerIPEnvErr := envInt("OPENSRO_MAX_USERS_PER_IP", 0)
+	loginGuideEnv := os.Getenv("OPENSRO_LOGIN_PUNISHMENT_GUIDE")
+	if loginGuideEnv == "" {
+		loginGuideEnv = session.DefaultLoginPunishmentGuide
+	}
+	loginTolerance := flag.Int("login-failure-tolerance", loginTolEnv,
+		"wrong passwords an account name may have; the one that reaches it closes the connection and raises the automatic block "+
+			"(1-100; env OPENSRO_LOGIN_FAILURE_TOLERANCE; retail's LoginFailureTolerance, default 3)")
+	loginBlockMin := flag.Int("login-failure-block-min", loginBlockEnv,
+		"minutes the automatic block for too many wrong passwords lasts; 0 raises none "+
+			"(env OPENSRO_LOGIN_FAILURE_BLOCK_MIN; retail's LoginFailureBlockTimeMin, default 10)")
+	loginGuide := flag.String("login-punishment-guide", loginGuideEnv,
+		"the reason the automatic block shows the player (env OPENSRO_LOGIN_PUNISHMENT_GUIDE; retail's LoginPunishmentGuide)")
+	maxPerIP := flag.Int("max-users-per-ip", maxPerIPEnv,
+		"accounts that may be logged in from one address at once; 0 is no limit "+
+			"(env OPENSRO_MAX_USERS_PER_IP; retail's MaxUserForNonePCBangIP; default 0)")
 	monsterAI := flag.Bool("monster-ai", monsterAIEnv,
 		"run the monster AI (env OPENSRO_MONSTER_AI): monsters idle, wander, run home past their "+
 			"roam radius, and stand where a blow found them while any player in the zone has an "+
@@ -1166,6 +1220,8 @@ func main() {
 		"serve net/http/pprof on this address, e.g. 127.0.0.1:6060 (env OPENSRO_PPROF_ADDR), and log a runtime stats line "+
 			"every 30 s (GC, heap, goroutines, scheduler latency). OURS, debug only, off by default (empty). Never expose it: "+
 			"it serves stacks and the command line. See deploy/README.md, \"Profiling a lagging server\".")
+	// The original client's gateway and agent (round 788, retail.go).
+	retailOpts := registerRetailFlags()
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -1175,6 +1231,20 @@ func main() {
 	}
 	if inspectionEnvErr != nil {
 		logger.Warn("OPENSRO_INSPECTION is not a boolean; the server is open unless -inspection is given", "err", inspectionEnvErr)
+	}
+	for _, e := range []struct {
+		name string
+		err  error
+	}{{"OPENSRO_LOGIN_FAILURE_TOLERANCE", loginTolEnvErr}, {"OPENSRO_LOGIN_FAILURE_BLOCK_MIN", loginBlockEnvErr},
+		{"OPENSRO_MAX_USERS_PER_IP", maxPerIPEnvErr}} {
+		if e.err != nil {
+			logger.Warn(e.name+" is not a number; its default applies unless the flag is given", "err", e.err)
+		}
+	}
+	loginRules, err := loginRulesFrom(*loginTolerance, *loginBlockMin, *maxPerIP, *loginGuide)
+	if err != nil {
+		logger.Error("login rules", "err", err)
+		os.Exit(2)
 	}
 	capacity := serverCapacity(*maxPlayers, logger)
 	if *inspection {
@@ -1800,6 +1870,32 @@ func main() {
 	} else {
 		logger.Warn("no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}
+	// The name filter (round 788): SR_ShardManager's AbuseFilter.txt group
+	// for its locale, applied to every new character and guild name
+	// (session.LobbyNameCode, the guild create).
+	{
+		locale := *abuseFilterLocale
+		if locale == "" {
+			locale = "ENGLISH"
+		}
+		group, known := namefilter.GroupForLocale(locale)
+		if !known {
+			logger.Warn("unknown -abuse-filter-locale: group 4 (ENGLISH) is read, as SR_ShardManager does", "locale", locale)
+		}
+		if *abuseFilter != "" {
+			nf, err := namefilter.LoadFile(*abuseFilter, group)
+			if err != nil {
+				logger.Error("loading the name filter", "path", *abuseFilter, "err", err)
+				os.Exit(1)
+			}
+			rows, substr, whole := nf.Counts()
+			logger.Info("name filter loaded", "path", *abuseFilter, "locale", locale, "group", group,
+				"allow_rows", rows, "substring_words", substr, "whole_words", whole)
+			session.SetNameFilter(nf)
+		} else {
+			logger.Warn("no name filter word list (-abuse-filter / OPENSRO_ABUSE_FILTER): new names are limited to [0-9A-Za-z_] and the SQL words, no AbuseFilter words apply -- see deploy/README.md \"Name filter\"")
+		}
+	}
 	// A new character's default masteries, skills and quests (round 692):
 	// the shard DB's _RefCharDefault_* tables, as _AddNewChar applies them
 	// (session.LobbyDeps.Defaults). EXTERNAL data, so it is the operator's to
@@ -2163,6 +2259,13 @@ func main() {
 	serverStatus := func() session.ServerStatus {
 		return session.ServerStatus{Current: hub.Count(), Max: capacity, Inspection: *inspection}
 	}
+	// The login rules (round 788): every front door's, the logged-in table
+	// the GM console's /block reaches an account through.
+	loginService := &session.LoginService{Accounts: accounts, Status: serverStatus, Staff: gmGate.Allows,
+		Online: session.NewOnlineAccounts(), Rules: loginRules, Logger: logger}
+	gmDeps.Sessions = session.GMSessions{Hub: hub, Online: loginService.Online}
+	gmDeps.Punishments, _ = accounts.(account.PunishmentStore)
+	gmDeps.AccountLookup, _ = accounts.(account.AccountLookup)
 	// Where a new character's defaults go (round 692): both stores, memory
 	// and SQL, take them.
 	defaultSkills, _ := skills.(session.CharDefaultSkills)
@@ -2204,25 +2307,30 @@ func main() {
 		logger.Warn("no quest catalogue (-quests-dir / OPENSRO_QUESTS_DIR): no quest is offered -- see deploy/README.md \"Quests\"")
 	}
 
+	// The lobby, shared by OpenSRO's connection and the retail agent.
+	lobby := session.LobbyHandler(session.LobbyDeps{
+		Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
+		Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
+	})
+
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
 		session.FrontEndThemeHandler(frontEndTheme),
 		// The status for the client's server list (round 679), the same way.
 		session.ServerStatusHandler(serverStatus),
-		// Inspection and a full server turn a login away (round 679).
-		// The GM accounts pass both (round 679's review: staff test under
-		// inspection).
-		session.LoginGate(serverStatus, gmGate.Allows, session.LoginHandler(accounts)),
+		// One LoginService decides every login, whatever wire it came in on
+		// (round 788): the old 0x0001 with its reason string, and retail's
+		// 0x6102 -> 0xA102 on our framing. Inspection and a full server turn
+		// a login away there, the GM accounts passing both (round 679).
+		session.LoginHandlerFor(loginService),
+		session.GatewayLoginHandler(loginService),
 		session.RegisterHandler(registerer),
 		// The character lobby on retail's 0x7007/0x7001 (round 682): list,
 		// create (dressed in what the player chose, plus the shield or
 		// ammunition the server adds), the name check, the 7-day delete and
 		// restore. Start is the world handler's.
-		session.LobbyHandler(session.LobbyDeps{
-			Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
-			Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
-		}),
+		lobby,
 		// An older client's 0x0010/0x0012/0x0014 are told, in their own
 		// reply format, to update (round 682's review).
 		session.LegacyLobbyHandler(logger),
@@ -2310,6 +2418,14 @@ func main() {
 		// 2, stored per character and sent back after the world entry.
 		session.AutoPotionHandler(autoPotionStoreOf(chars), hub, logger),
 	)
+	// The account PIN (round 788, OURS): its requests, and Start, delete and
+	// restore held until the session has entered it (charlock.go).
+	charLock := characterLock(accounts, logger)
+	handle = session.CharacterLockGate(charLock, logger, handle)
+	// The original client's agent gets the same gate: it has no PIN window, so
+	// on an account with a PIN its delete and restore are refused like ours
+	// (docs/protocol/pin.md, "Retail clients").
+	retailLobby := session.CharacterLockGate(charLock, logger, lobby)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
 	// Round 632's composite review: a leaving character's berserk turn,
@@ -2383,8 +2499,16 @@ func main() {
 			step("party", func() { partyDisconnect(sess) })
 			step("party match", func() { partyMatchDisconnect(sess) })
 			step("world", func() { worldDisconnect(sess) })
+			// Last (round 788): the account may log in again only once the
+			// world has saved and let go of its character.
+			step("login", func() { loginService.SessionEnded(sess) })
 		},
 	}
+
+	// The original client's front door (round 788, retail.go), when set: its
+	// agent's sessions end through the same OnDisconnect (session ids are
+	// unique across listeners).
+	startRetail(ctx, retailOpts, retailDeps{login: loginService, lobby: retailLobby, status: serverStatus, onDisconnect: srv.OnDisconnect}, logger)
 
 	if err := srv.ListenAndServe(ctx); err != nil {
 		logger.Error("gateway server exited", "error", err)

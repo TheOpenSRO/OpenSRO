@@ -1332,9 +1332,9 @@ servers:
 | `global.loginScreen` | The title intro: a retail name (`roc`, `constantinople`, `china_wharf`, `jupiter_login`, `rm`, `ruby_baghdad`, ...) or your own `custom/intro/<name>.txt`. The server's `-login-intro` wins over it (below). |
 | `global.region` | Kept and reserved: a short code (letters, digits, `_`, `-`). vSRO's client reads no region: its `DIVISIONINFO.TXT` starts with a locale byte (22 in vSRO's archive) that the client's own loader skips, and the iSRO "Located In" bar's art is in the archive but no code names it. A later round may use it for the language or the content id. |
 | `servers.<name>` | One server. `<name>` is what the Server field and the list show (1-32 characters). The file's order is the list's order. |
-| `servers.<name>.type` | **Required** (round 681): the protocol the server speaks. `opensro` -- this project's server: its status is asked with this project's own question. `legacy` -- the original gateway protocol (a retail-style private server): the client asks it for its shard list the way the original client does (the handshake, then the patch check and the list) and shows each shard's real status; it is never sent this project's own messages, the login screen keeps its own intro for it (no theme question), and logging in to it is not supported yet. An entry without a type, or with another word, is skipped with a `SETTING:` line naming the server and the two values. Once this project's server also speaks the original protocol (the superset plan in `docs/protocol/PROTOCOL_DECISION.md`), `opensro` will mean "also has our extensions" rather than a different wire. |
+| `servers.<name>.type` | **Required** (round 681): the protocol the server speaks. `opensro` -- this project's server: its status is asked with this project's own question. `legacy` -- the original gateway protocol (a retail-style private server): the client asks it for its shard list the way the original client does (the handshake, then the patch check and the list) and shows each shard's real status; it is never sent this project's own messages, the login screen keeps its own intro for it (no theme question). Round 788: logging in works the original way (the image code included) as far as the character list; entering the world there is not supported yet. An entry without a type, or with another word, is skipped with a `SETTING:` line naming the server and the two values. Once this project's server also speaks the original protocol (the superset plan in `docs/protocol/PROTOCOL_DECISION.md`), `opensro` will mean "also has our extensions" rather than a different wire. |
 | `servers.<name>.gateway` | Where the client connects: `address` (a host name or IP address) and `port` (default 15779). Required. It plays the part of retail's `DIVISIONINFO.TXT` host and `GATEPORT.TXT` port. |
-| `servers.<name>.agent` | Read and kept, **not used yet**: `address` and `port`, both required if given. Retail's gateway tells the client which agent server to connect to in its login reply; this server is one process and has no such hand-off yet. When it does, a configured agent will stand in for the address the gateway names (a proxy feature). |
+| `servers.<name>.agent` | `address` and `port`, both required if given. Retail's gateway tells the client which agent server to connect to in its login reply. Round 788: for a `legacy` server a configured agent stands in for the address the gateway names (a proxy feature, OURS); an `opensro` server is one process and has no such hand-off, so it is not used there. |
 
 **What the player sees.** With `servers` listed, the login screen's Server field shows the chosen
 server's name (read-only, centred) and a **LIST** button opens the server list -- retail's window,
@@ -1389,6 +1389,58 @@ line, `- item` lists, quoted or plain values, `#` comments; no anchors, tags or 
 
 **Later (not built):** a server may also hand the client settings it wants kept out of the file,
 during the server list or after login (docs/TODO.md).
+
+## Logging in: wrong passwords, blocks, one session per account (round 788)
+
+Every login -- the old 0x0001 and retail's 0x6102 -- is decided by one set of rules, retail's as
+read from its gateway and GlobalManager (docs/protocol/opcodes/login.md, "The login reply, READ
+(round 788)"). The settings:
+
+| Flag | Env | Default | What |
+|---|---|---|---|
+| `-login-failure-tolerance` | `OPENSRO_LOGIN_FAILURE_TOLERANCE` | 3 | wrong passwords an account name may have (1-100). The client shows "Out of a maximum of 3 attempts, you have used N". The one that reaches it closes the connection. Retail's `LoginFailureTolerance`, code default 3. |
+| `-login-failure-block-min` | `OPENSRO_LOGIN_FAILURE_BLOCK_MIN` | 10 | minutes the automatic login block lasts after that (0-525600; 0 raises none, as the reference package's server.cfg has it). Retail's `LoginFailureBlockTimeMin`, code default 10. |
+| `-login-punishment-guide` | `OPENSRO_LOGIN_PUNISHMENT_GUIDE` | "Too many wrong passwords. Please try again later." | the reason the automatic block shows the player, under retail's "Account Ban Reason:" (1-511 bytes). Retail's `LoginPunishmentGuide`. |
+| `-max-users-per-ip` | `OPENSRO_MAX_USERS_PER_IP` | 0 (off) | accounts logged in from one address at once; past it the login is refused with retail's "insufficient IP" message and the connection closed. Retail's `MaxUserForNonePCBangIP`. Leave it off for a LAN party or a bot swarm (`server/cmd/swarm` logs everything in from one address). |
+
+A bad value stops the server at startup with the reason; a non-numeric env value logs a WARN and
+keeps the default.
+
+What a player meets:
+
+- **Wrong ID or password**: the attempt count. The count is per account name, server-wide, kept in
+  memory (a restart forgets it), forgotten an hour after the last wrong try or at a successful
+  login. At the tolerance: the block (if the minutes are not 0) and the connection closes.
+- **A blocked account** (right password): retail's box with the reason and the end date and time,
+  in the **server's** local time zone. A block with no end shows a date 100 years ahead (what the
+  original operator console writes for "infinite").
+- **Already connected**: an account logged in anywhere on the server refuses a second login, and
+  the second connection closes; the first is not touched. The account is free again once its
+  session has ended and its character been saved. A connection that died without closing (a
+  pulled cable, a crashed router) holds the account until TCP keep-alive notices: Go's defaults,
+  15 s idle then 9 probes 15 s apart, so about 2.5 minutes (READ, Go 1.25 `net/dial.go`; the
+  gateway sets no keep-alive of its own). A GM can free it at once with `/ban <character>`, or
+  `/block` then `/unblock` the account.
+- **Full / inspection**: as before (`-max-players`, `-inspection` above); the `-gm-accounts` pass
+  both.
+
+**Blocking an account** is done in game by a GM: `/block`, `/unblock`, `/blockinfo`
+(docs/DEBUG_TOOLS.md). Blocks are kept in the `account_punishments` table (PostgreSQL) or in memory
+under `-in-memory`. To read them directly:
+
+```sql
+SELECT p.serial, a.username, p.type, p.executor, p.guide, p.begin_at, p.end_at
+FROM account_punishments p JOIN accounts a ON a.id = p.account_id ORDER BY p.serial DESC;
+```
+
+`type` is 1 block login, 2 block login for inspection (treated as 1), 3 block trade, 4 block chat
+(3 and 4 are stored but not enforced yet); `end_at` NULL means no end. To lift a block by hand, set
+its `end_at` to `now()`.
+
+**Upgrading from before round 788:** the server moves the old `accounts.blocked` flag on its first
+start: each blocked account becomes a block with no end whose reason is its `block_reason`, and the
+flag is cleared, once. The two old columns stay but nothing reads them; setting `blocked = true`
+no longer blocks anyone -- use `/block` or insert a row as above.
 
 ## The full map (round 660)
 
@@ -1518,6 +1570,59 @@ which its select screen shows as the list's error (round 682's review). A new cl
 older server waits 5 s for the list and then says the server did not answer. A deleted character
 waits 7 days (10080 minutes, restorable) and is then removed by the server's once-a-minute purge.
 
+## The original client (round 788, off by default)
+
+The server can let the ORIGINAL client (sro_client.exe, vSRO 1.188) log in as far as its character
+list: a retail gateway and a retail agent listener that speak the original wire
+(`docs/protocol/opcodes/gateway.md`, "OpenSRO's retail listeners"). The world is not offered to it:
+Start is refused with the client's own "GameServer is currently offline" message. OpenSRO's own
+client and listener are unaffected.
+
+| Flag (env) | Default | What |
+|---|---|---|
+| `-retail-gateway-addr` (`OPENSRO_RETAIL_GATEWAY_ADDR`) | empty: both listeners off | where the original client connects first, e.g. `:15780` -- the port its archive names (Media.pk2 `GATEPORT.TXT`) |
+| `-retail-agent-addr` (`OPENSRO_RETAIL_AGENT_ADDR`) | `:15781` | where a logged-in client is sent |
+| `-retail-agent-public-host` (`OPENSRO_RETAIL_AGENT_PUBLIC_HOST`) | the agent address's host, else 127.0.0.1 (with a warning) | the host the gateway names for the agent: one the CLIENT can reach |
+| `-retail-shard-id` (`OPENSRO_RETAIL_SHARD_ID`) | 1 | the shard id in the server list (the client sends it back at login) |
+| `-retail-shard-name` (`OPENSRO_RETAIL_SHARD_NAME`) | OpenSRO | the shard name in the server list |
+| `-retail-content-id` (`OPENSRO_RETAIL_CONTENT_ID`) | 22 | the client's content id (its DIVISIONINFO.TXT's first byte; vSRO 1.188: 22) -- checked at the agent |
+| `-retail-version` (`OPENSRO_RETAIL_VERSION`) | 1000 | the client version accepted (its SV.T; vSRO 1.188: 1000); older is told "(C4)" and quits |
+
+The list's population and "Check" come from `-max-players` and `-inspection`. Accounts are the
+server's own (the same login rules as OpenSRO's client). The client finds the gateway by the host
+and port in its own archive (`DIVISIONINFO.TXT`, `GATEPORT.TXT` in Media.pk2): point that host at
+the server (DNS, the PC's hosts file) and listen on that port, or edit the archive. The client
+also binds TCP 15779 on its own PC as a single-instance guard, so OpenSRO's own listener and the
+original client cannot share a machine on that port. Every message each way is logged as
+`retail gateway packet` / `retail agent packet` with its bytes (passwords withheld; the keep-alive
+and the 5-second server-list refresh at Debug).
+
+```sh
+./server -retail-gateway-addr :31729 -retail-agent-addr :31730 -retail-agent-public-host 203.0.113.5
+```
+
+## Account PIN (Character Lock) (round 788)
+
+A player may protect an account with a 4-digit PIN, asked at character select once per login before
+the first Start, Delete or Restore (`docs/protocol/pin.md`; the feature is OpenSRO's own, the
+retail game has none). Five wrong entries lock the PIN for 30 minutes, kept in the database.
+
+- **Nothing to do to keep it optional.** The server creates its two tables (`character_locks`,
+  `character_lock_devices`) on the accounts' database at boot and logs
+  `account PIN (character lock) required=false lock_after=5 lock_for=30m0s`.
+- **`-require-pin`** (env `OPENSRO_REQUIRE_PIN=true`): every account must have a PIN; one with none
+  is shown the create window before it can start, delete or restore. Default off. A value that is
+  not a boolean leaves it off, with a warning at boot.
+- **Retail clients.** The original client has no PIN window: on an account with a PIN it can list
+  its characters but every Start, Delete and Restore answers "Failed to connect to server." (code
+  0x40e); under `-require-pin` it can start no character at all.
+- **A player locked out of their PIN** (forgotten, not the 30-minute lock): there is no GM command
+  yet. Remove the PIN, its count and its remembered PCs by account id:
+  `docker compose exec -T postgres psql -U postgres opensro -c "DELETE FROM character_locks WHERE account_id = <id>; DELETE FROM character_lock_devices WHERE account_id = <id>;"`
+  (the id: `SELECT id FROM accounts WHERE username = '<name>';`). The player then has no PIN.
+- Players need a client from this release for the window; an older client against this server
+  never asks, and is refused Start, Delete and Restore only on an account that has a PIN.
+
 ## Character defaults (round 692)
 
 A new character gets its race's default masteries (level 0), skills and level-1 quests, as the
@@ -1566,6 +1671,39 @@ On opensro-01:
    `... -c "SELECT quest_code, status FROM character_default_quests WHERE character_id = <id>;"`.
 
 To undo: remove the variable and `docker compose up -d`; characters already given defaults keep them.
+
+## Name filter (round 788)
+
+A new character's name and a new guild's name pass SR_ShardManager's name rule
+(`docs/protocol/charselect.md`, "The name rule: the AbuseFilter test"): 2..12 bytes (else 0x40c /
+the guild's length refusal), then no space, no `'` or `"`, none of the 54 SQL words compiled into
+the original server, and the AbuseFilter group's test -- its allowed characters, its substring words
+and its whole words (else 0x40d / "that guild name is not allowed", 0x4c19). Existing characters
+and guilds keep their names.
+
+The word list is the operator's own file, **never in this repo**: the `AbuseFilter.txt` beside
+your `SR_ShardManager.exe`, or your client's
+`/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\abusefilter.txt" -out AbuseFilter.txt`
+(the two retail copies differ a little; the client checks names against its own copy before it
+sends them).
+
+- `-abuse-filter <path>` (env `OPENSRO_ABUSE_FILTER`): the file, UTF-16 as shipped. A path that does
+  not load is fatal. The boot log reads `name filter loaded ... group=4 allow_rows=4
+  substring_words=31 whole_words=462` (the server copy's English group; 733 and 366 for VIETNAM).
+- `-abuse-filter-locale <name>` (env `OPENSRO_ABUSE_FILTER_LOCALE`): which group, as server.cfg's
+  `LOCALE` names it -- `KOREA`, `CHINA`, `TAIWAN`, `JAPAN`, `VIETNAM`, `ENGLISH`, with or without
+  `LOCALE_`. Unset: `ENGLISH` (OpenSRO's default; the reference server.cfg says `LOCALE_VIETNAM`).
+  An unknown name reads the English group, as the original does, with a warning.
+- **Unset** (no file): the server warns at boot, `no name filter word list (-abuse-filter /
+  OPENSRO_ABUSE_FILTER): new names are limited to [0-9A-Za-z_] and the SQL words, no AbuseFilter
+  words apply`. Names are then limited to letters, digits and `_` (OpenSRO's choice: the original
+  refuses no character without the file).
+
+On opensro-01: extract the file as above, `scp AbuseFilter.txt opensro@<server-host>:~/opensro-data/`
+and `chmod 644` it, set `OPENSRO_ABUSE_FILTER: /data/AbuseFilter.txt` in the untracked override
+(and `OPENSRO_ABUSE_FILTER_LOCALE` if not English), `docker compose up -d`, then check
+`docker compose logs server | grep 'name filter'`. Nothing in the database changes; to undo, remove
+the variable.
 
 ## Quests (round 785)
 

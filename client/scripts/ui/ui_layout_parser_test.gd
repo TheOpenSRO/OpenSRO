@@ -119,6 +119,13 @@ Section = Create,"0,0,0,0","0"
 	_check(not ac.control_by_name.has("GDR_B"), "the #else (GDR_B) is dropped when FEATURE_A defined")
 	_check(ac.control_by_name.has("GDR_C"), "GDR_C taken when FEATURE_C defined")
 
+	# Round 788: a rect short of four numbers keeps what it has (the archive's
+	# one, ifextquickslotoption.txt's OK button, reads "63,185,0").
+	var short := UiLayoutParser.parse("Section = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_OK:CIFButton\n\t{\n\t\tRect=RECT,\"63,185,0\"\n\t}\n\tGDR_SPACED:CIFButton\n\t{\n\t\tRect=RECT,\"340, 153, 52, 24\"\n\t}\n}\n").get_section("Create")
+	_check(short.control_by_name["GDR_OK"].rect == Rect2i(63, 185, 0, 0),
+		"a three-number rect keeps x and y (got %s)" % short.control_by_name["GDR_OK"].rect)
+	_check(short.control_by_name["GDR_SPACED"].rect == Rect2i(340, 153, 52, 24), "a spaced four-number rect is unchanged")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.548** plus what is merged on `dev`; updated 2026-10-13.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.548** plus what is merged on `dev`; updated 2026-10-15.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -8,7 +8,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 
 | Area | ✅ | 🟡 | 🔧 | ❌ | Total |
 |---|--:|--:|--:|--:|--:|
-| [Account & login](#account--login) | 9 | 3 |  | 1 | 13 |
+| [Account & login](#account--login) | 14 |  |  |  | 14 |
 | [World & movement](#world--movement) | 13 | 4 |  | 3 | 20 |
 | [NPCs](#npcs) | 7 | 4 |  |  | 11 |
 | [Monsters](#monsters) | 14 | 3 |  |  | 17 |
@@ -20,14 +20,14 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Job / trade](#job--trade) |  |  |  | 3 | 3 |
 | [Pets & mounts](#pets--mounts) |  |  |  | 4 | 4 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
-| [UI / HUD](#ui--hud) | 13 | 4 |  | 1 | 18 |
+| [UI / HUD](#ui--hud) | 14 | 4 |  | 1 | 19 |
 | [Graphics & effects](#graphics--effects) | 11 | 1 |  |  | 12 |
 | [Audio](#audio) | 5 |  |  |  | 5 |
-| [Server / ops](#server--ops) | 6 |  | 1 | 1 | 8 |
+| [Server / ops](#server--ops) | 7 |  | 1 | 1 | 9 |
 | [Plugins & customization](#plugins--customization) | 3 | 1 |  | 3 | 7 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **131** | **35** | **1** | **46** | **213** |
+| **All** | **138** | **32** | **1** | **45** | **216** |
 
 ## Biggest gaps
 
@@ -47,11 +47,12 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 
 ## Account & login
 
-Own gateway protocol, retail-style lobby, both races and every creatable body.
+Retail login wire and messages, retail-style lobby, both races and every creatable body.
 
 | Feature | Status | Notes |
 |---|---|---|
 | Login server | ✅ Supported | Single Go gateway on port 15779; optional TLS |
+| Login messages 🆕 | ✅ Supported | The original's refusals and texts: wrong password with attempts used, ban reason and unban date, already connected, full, inspection, IP limit; disconnect box |
 | Server list | ✅ Supported | Named servers from setting/config.yaml with live population and state |
 | Account registration | ✅ Supported | Register button on the login screen; no auto-create on first login |
 | 3D title screen and intro | ✅ Supported | Retail intro flown over the world; operator can set logo, music, intro |
@@ -60,10 +61,10 @@ Own gateway protocol, retail-style lobby, both races and every creatable body.
 | Character create: Europe | ✅ Supported | All European bodies and customisation controls |
 | All 52 creatable bodies | ✅ Supported | Checked against the game's own character-creation table |
 | Character delete and restore | ✅ Supported | 7-day delete delay, restore, automatic purge |
-| Name checks | 🟡 Partial | Length and character rules enforced; no forbidden-word list |
-| Retail client compatibility | 🟡 Partial | Retail gateway handshake and shard list only; retail login not supported |
-| Account bans | 🟡 Partial | Blocked accounts refused at login; no GM command to ban |
-| Multi-factor / Account PIN | ❌ Not yet | No secondary password (retail PIN keypad) or other second factor |
+| Name checks 🆕 | ✅ Supported | The original filter: AbuseFilter.txt word lists, allowed characters and SQL-word check, for characters and guilds |
+| Retail login, both ways 🆕 | ✅ Supported | The original client logs in to OpenSRO up to character select; our client logs in to original servers (image code, agent) and lists characters |
+| Account bans 🆕 | ✅ Supported | Timed or permanent blocks with reason and unban date; auto block after 3 wrong passwords; GM /block, /unblock, /blockinfo |
+| Account PIN (Character Lock) 🆕 | ✅ Supported | 4-digit PIN at character select, shuffled keypad, 30-minute lockout, remember this PC; operator can require it |
 
 ## World & movement
 
@@ -291,6 +292,7 @@ Retail windows rebuilt from the game's own layout files.
 |---|---|---|
 | Hotbar | ✅ Supported | Four pages on F1-F4; slot numbers and quantities on every page |
 | Drag to hotbar | ✅ Supported | Skills, items and actions; swap and clear slots |
+| Additional quick slot bars 🆕 | ✅ Supported | The original's movable extra bar (Space+1-0) with its options, plus paged extra bars (Alt+1-0) |
 | Saved hotbar | 🟡 Partial | Saved on your PC per character, not on the server |
 | Character window | ✅ Supported | Stats, attack/defence ranges, balance; spend STR/INT points |
 | Player info (HP/MP/Hwan) | ✅ Supported | Live HP/MP bars and Hwan orbs |
@@ -351,7 +353,8 @@ Go server with Postgres persistence and operator tooling.
 | Max players | ✅ Supported | Configurable cap, default 1000 |
 | Rates | ✅ Supported | EXP, party EXP, drop, gold and Hwan rates, capped at 2.5x |
 | GM commands | ✅ Supported | Teleport, give items, level, spawn, notices and more |
-| GM kick and ban commands | ❌ Not yet | Not yet |
+| GM kick and ban commands 🆕 | ✅ Supported | /ban kicks as the original does; /block and /unblock for timed or permanent bans |
+| Original client in the world | ❌ Not yet | The original client stops at character select; its in-world protocol is not built |
 | Crowd performance | 🔧 In progress | Interest management done; 1000-player target not met yet |
 
 ## Plugins & customization

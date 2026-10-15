@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,15 +89,20 @@ func TestLoginEndToEnd(t *testing.T) {
 	}
 	defer conn.Close()
 
+	// Round 788: the successful login comes last -- a logged-in connection
+	// refuses a second login (LoginService, OURS) -- and a blocked account's
+	// reason carries its guide and end (SetBlocked's block has no end: the
+	// wire shows the begin plus 100 years).
 	cases := []struct {
 		name    string
 		req     *LoginRequest
 		wantOK  bool
 		wantRsn string
 	}{
-		{"valid credentials", &LoginRequest{Username: "alice", Password: "hunter2"}, true, ""},
 		{"wrong password", &LoginRequest{Username: "alice", Password: "wrong"}, false, "invalid username or password"},
-		{"blocked account", &LoginRequest{Username: "blocked", Password: "pw"}, false, "account blocked"},
+		{"blocked account", &LoginRequest{Username: "blocked", Password: "pw"}, false, "account blocked: test (until "},
+		{"valid credentials", &LoginRequest{Username: "alice", Password: "hunter2"}, true, ""},
+		{"a second login on the connection", &LoginRequest{Username: "blocked", Password: "pw"}, false, "this account is already connected"},
 	}
 
 	r := bufio.NewReader(conn)
@@ -117,7 +123,7 @@ func TestLoginEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DecodeLoginResult: %v", err)
 			}
-			if result.OK != c.wantOK || result.Reason != c.wantRsn {
+			if result.OK != c.wantOK || !strings.HasPrefix(result.Reason, c.wantRsn) || (c.wantRsn == "") != (result.Reason == "") {
 				t.Fatalf("got %+v, want OK=%v Reason=%q", result, c.wantOK, c.wantRsn)
 			}
 		})

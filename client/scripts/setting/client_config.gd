@@ -40,11 +40,11 @@ class_name ClientConfig
 ##   `opensro` will mean "also has our extensions" rather than another wire.
 ## - `gateway` is where the client connects (address + port), as retail's
 ##   DIVISIONINFO.TXT host list and GATEPORT.TXT port are (README).
-## - `agent` is parsed and kept, not used yet: retail's gateway hands the
-##   client its agent server's address in the login reply, and this server is
-##   one process with no such hand-off. When the hand-off exists, a
-##   configured agent will stand in for the address the gateway names -- a
-##   proxy or private-server feature (OURS).
+## - `agent`: retail's gateway hands the client its agent server's address in
+##   the login reply. Round 788: for a `legacy` server a configured agent
+##   stands in for the address the gateway names -- a proxy or private-server
+##   feature (OURS, RetailLogin); this project's server is one process with no
+##   such hand-off, so an `opensro` entry's is kept unused.
 ## - `display.renderer` (round 693, OURS): `forward_plus` (the default) or
 ##   `compatibility`. Godot picks its renderer before any script runs, so
 ##   Boot records the word in `override.cfg` beside the game

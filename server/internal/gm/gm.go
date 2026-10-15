@@ -26,7 +26,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
@@ -231,6 +233,17 @@ type Deps struct {
 	// Clock is what /hour drives (round 786); nil refuses it. The session
 	// layer fills it in when the server leaves it nil.
 	Clock ClockControl
+	// Round 788, accounts.go: /ban needs Sessions; /block, /unblock and
+	// /blockinfo need Punishments and AccountLookup (the account store),
+	// and Chars to be a character.OwnerStore to name a character. Sessions
+	// nil refuses /ban and leaves a /block's account connected. IsGMAccount
+	// is the gate's test (/block refuses a GM's account); the session layer
+	// fills it in. Now is their clock, nil time.Now.
+	Sessions      Sessions
+	Punishments   account.PunishmentStore
+	AccountLookup account.AccountLookup
+	IsGMAccount   func(username string) bool
+	Now           func() time.Time
 }
 
 // ClockControl is /hour's hook into the game clock (round 786): retail's
@@ -268,7 +281,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -325,6 +338,14 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.afflict(actor, args)
 	case "hour":
 		res = d.hour(args)
+	case "ban":
+		res = d.ban(args)
+	case "block":
+		res = d.block(ctx, actor, line, args)
+	case "unblock":
+		res = d.unblock(ctx, args)
+	case "blockinfo":
+		res = d.blockInfo(ctx, args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}

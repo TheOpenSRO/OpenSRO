@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/txn"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
@@ -26,12 +27,54 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS storage_gold BIGINT NOT NULL DEFAU
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS chest_size INTEGER NOT NULL DEFAULT 0;
 `
 
+// punishmentSchema is the punishments table (round 788, punishment.go):
+// retail's `_Punishment` fields that something here reads. end_at NULL is an
+// infinite punishment.
+const punishmentSchema = `
+CREATE TABLE IF NOT EXISTS account_punishments (
+	serial      BIGSERIAL PRIMARY KEY,
+	account_id  BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+	type        SMALLINT NOT NULL CHECK (type BETWEEN 1 AND 4),
+	executor    TEXT NOT NULL DEFAULT '',
+	guide       TEXT NOT NULL DEFAULT '',
+	description TEXT NOT NULL DEFAULT '',
+	raised_at   TIMESTAMPTZ NOT NULL,
+	begin_at    TIMESTAMPTZ NOT NULL,
+	end_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS account_punishments_account ON account_punishments (account_id);
+`
+
+// blockedMigration moves the pre-round-788 accounts.blocked flag into the
+// punishments table, once: each blocked account gets an infinite login block
+// whose guide is its block_reason, and its flag is cleared in the same
+// statement, so a second run finds nothing to move (idempotent). The two old
+// columns stay (OURS): nothing reads or writes them any more, and an older
+// binary rolled back onto this database still starts -- it then sees no
+// account blocked, the punishments being in a table it does not know.
+const blockedMigration = `
+WITH moved AS (
+	UPDATE accounts SET blocked = FALSE WHERE blocked RETURNING id, block_reason
+)
+INSERT INTO account_punishments (account_id, type, executor, guide, description, raised_at, begin_at, end_at)
+SELECT id, 1, '` + migratedExecutor + `', block_reason, '` + migratedDescription + `', now(), now(), NULL FROM moved
+`
+
 // SQLStore is a Store and Registerer backed by PostgreSQL (via the pgx
 // driver, registered under the "pgx" database/sql driver name).
 type SQLStore struct {
 	db *sql.DB
 	// ownsDB is false on a shared pool (NewSQLStore), which Close leaves open.
 	ownsDB bool
+	// Now is the clock Authenticate and SetBlocked read; nil is time.Now.
+	Now func() time.Time
+}
+
+func (s *SQLStore) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 // OpenSQLStore opens a PostgreSQL database at dsn (e.g.
@@ -58,7 +101,7 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 // NewSQLStore is OpenSQLStore on a pool the caller owns and shares with the
 // other stores (round 743). Close does not close it.
 func NewSQLStore(db *sql.DB) (*SQLStore, error) {
-	if err := txn.Migrate(db, schema); err != nil {
+	if err := txn.Migrate(db, schema, punishmentSchema, blockedMigration); err != nil {
 		return nil, fmt.Errorf("account: creating schema: %w", err)
 	}
 	return &SQLStore{db: db}, nil
@@ -101,14 +144,15 @@ func (s *SQLStore) Register(ctx context.Context, username, password string) (*Ac
 	return &Account{ID: id, Username: username, PasswordHash: hash}, nil
 }
 
-// Authenticate implements Store.
+// Authenticate implements Store. The password is checked first; a right
+// password on an account with an active login block is a *BlockedError.
 func (s *SQLStore) Authenticate(ctx context.Context, username, password string) (*Account, error) {
 	var acc Account
 	// chest_size is selected so Account.ChestSize means the same here as in
 	// MemStore: the stored warehouse size, 0 when none was stored (round 501).
 	row := txn.Conn(ctx, s.db).QueryRowContext(ctx,
-		`SELECT id, username, password_hash, blocked, block_reason, chest_size FROM accounts WHERE username = $1`, username)
-	if err := row.Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &acc.Blocked, &acc.BlockReason, &acc.ChestSize); err != nil {
+		`SELECT id, username, password_hash, chest_size FROM accounts WHERE username = $1`, username)
+	if err := row.Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &acc.ChestSize); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrInvalidCredentials
 		}
@@ -118,27 +162,175 @@ func (s *SQLStore) Authenticate(ctx context.Context, username, password string) 
 	if !acc.verify(password) {
 		return nil, ErrInvalidCredentials
 	}
-	if acc.Blocked {
-		return nil, ErrBlocked
+	active, err := s.queryPunishments(ctx, `WHERE account_id = $1 AND type IN `+loginTypesSQL+activeSQL+orderActiveSQL+` LIMIT 1`,
+		acc.ID, s.now())
+	if err != nil {
+		return nil, err
+	}
+	if len(active) > 0 {
+		return nil, &BlockedError{Punishment: active[0]}
 	}
 	return &acc, nil
 }
 
-// SetBlocked sets an existing account's blocked status and reason.
+// SetBlocked is the pre-round-788 way to block an account, kept for tests and
+// tools (as MemStore.SetBlocked): blocked=true records an infinite login block
+// whose guide is reason, unless one is already active; blocked=false ends the
+// account's active login blocks.
 func (s *SQLStore) SetBlocked(ctx context.Context, username string, blocked bool, reason string) error {
-	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		`UPDATE accounts SET blocked = $1, block_reason = $2 WHERE username = $3`, blocked, reason, username)
+	acc, err := s.AccountByName(ctx, username)
+	if errors.Is(err, ErrNoSuchAccount) {
+		return fmt.Errorf("account: no such account: %s", username)
+	}
 	if err != nil {
-		return fmt.Errorf("account: updating blocked status: %w", err)
+		return err
+	}
+	now := s.now()
+	if !blocked {
+		_, err := s.EndPunishments(ctx, acc.ID, now, LoginBlockTypes...)
+		return err
+	}
+	active, err := s.ActivePunishments(ctx, acc.ID, now)
+	if err != nil {
+		return err
+	}
+	if len(activeLoginBlocks(active)) > 0 {
+		return nil
+	}
+	_, err = s.AddPunishment(ctx, Punishment{AccountID: acc.ID, Type: PunishLogin, Executor: migratedExecutor,
+		Guide: reason, Description: migratedDescription, BeginAt: now})
+	return err
+}
+
+// AccountByName implements AccountLookup.
+func (s *SQLStore) AccountByName(ctx context.Context, username string) (*Account, error) {
+	return s.accountWhere(ctx, `username = $1`, username)
+}
+
+// AccountByID implements AccountLookup.
+func (s *SQLStore) AccountByID(ctx context.Context, accountID int64) (*Account, error) {
+	return s.accountWhere(ctx, `id = $1`, accountID)
+}
+
+func (s *SQLStore) accountWhere(ctx context.Context, where string, arg any) (*Account, error) {
+	var acc Account
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
+		`SELECT id, username, password_hash, chest_size, storage_gold FROM accounts WHERE `+where, arg).
+		Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &acc.ChestSize, &acc.StorageGold)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoSuchAccount
+	}
+	if err != nil {
+		return nil, fmt.Errorf("account: looking up an account: %w", err)
+	}
+	return &acc, nil
+}
+
+// The punishment queries' shared parts. The type lists are built from the
+// constants (or validated types), never from text.
+var loginTypesSQL = typesSQL(LoginBlockTypes)
+
+const (
+	punishmentColumns = `serial, account_id, type, executor, guide, description, raised_at, begin_at, end_at`
+	// activeSQL: begun by $2 and not ended by it.
+	activeSQL = ` AND begin_at <= $2 AND (end_at IS NULL OR end_at > $2)`
+	// orderActiveSQL: the one ending last first, an infinite one before any.
+	orderActiveSQL = ` ORDER BY end_at DESC NULLS FIRST, serial DESC`
+)
+
+func typesSQL(types []PunishmentType) string {
+	parts := make([]string, len(types))
+	for i, t := range types {
+		parts[i] = fmt.Sprint(uint8(t))
+	}
+	return "(" + strings.Join(parts, ",") + ")"
+}
+
+// queryPunishments selects the punishments matching where (which begins with
+// WHERE and uses args).
+func (s *SQLStore) queryPunishments(ctx context.Context, where string, args ...any) ([]Punishment, error) {
+	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx, `SELECT `+punishmentColumns+` FROM account_punishments `+where, args...)
+	if err != nil {
+		return nil, fmt.Errorf("account: querying punishments: %w", err)
+	}
+	defer rows.Close()
+	var out []Punishment
+	for rows.Next() {
+		var p Punishment
+		var typ int16
+		var end sql.NullTime
+		if err := rows.Scan(&p.Serial, &p.AccountID, &typ, &p.Executor, &p.Guide, &p.Description,
+			&p.RaisedAt, &p.BeginAt, &end); err != nil {
+			return nil, fmt.Errorf("account: reading a punishment: %w", err)
+		}
+		p.Type = PunishmentType(typ)
+		if end.Valid {
+			p.EndAt = end.Time
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("account: reading punishments: %w", err)
+	}
+	return out, nil
+}
+
+// AddPunishment implements PunishmentStore.
+func (s *SQLStore) AddPunishment(ctx context.Context, p Punishment) (Punishment, error) {
+	if err := checkPunishment(p); err != nil {
+		return Punishment{}, err
+	}
+	if p.RaisedAt.IsZero() {
+		p.RaisedAt = s.now()
+	}
+	var end sql.NullTime
+	if !p.Infinite() {
+		end = sql.NullTime{Time: p.EndAt, Valid: true}
+	}
+	err := txn.Conn(ctx, s.db).QueryRowContext(ctx,
+		`INSERT INTO account_punishments (account_id, type, executor, guide, description, raised_at, begin_at, end_at)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8 WHERE EXISTS (SELECT 1 FROM accounts WHERE id = $1)
+		 RETURNING serial`,
+		p.AccountID, int16(p.Type), p.Executor, p.Guide, p.Description, p.RaisedAt, p.BeginAt, end).Scan(&p.Serial)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Punishment{}, ErrNoSuchAccount
+	}
+	if err != nil {
+		return Punishment{}, fmt.Errorf("account: recording a punishment: %w", err)
+	}
+	return p, nil
+}
+
+// Punishments implements PunishmentStore.
+func (s *SQLStore) Punishments(ctx context.Context, accountID int64) ([]Punishment, error) {
+	return s.queryPunishments(ctx, `WHERE account_id = $1 ORDER BY serial DESC`, accountID)
+}
+
+// ActivePunishments implements PunishmentStore.
+func (s *SQLStore) ActivePunishments(ctx context.Context, accountID int64, at time.Time) ([]Punishment, error) {
+	return s.queryPunishments(ctx, `WHERE account_id = $1`+activeSQL+orderActiveSQL, accountID, at)
+}
+
+// EndPunishments implements PunishmentStore.
+func (s *SQLStore) EndPunishments(ctx context.Context, accountID int64, at time.Time, types ...PunishmentType) (int, error) {
+	q := `UPDATE account_punishments SET end_at = $2 WHERE account_id = $1 AND (end_at IS NULL OR end_at > $2)`
+	if len(types) > 0 {
+		for _, t := range types {
+			if !t.Valid() {
+				return 0, fmt.Errorf("account: punishment type %d is not 1-4", t)
+			}
+		}
+		q += ` AND type IN ` + typesSQL(types)
+	}
+	res, err := txn.Conn(ctx, s.db).ExecContext(ctx, q, accountID, at)
+	if err != nil {
+		return 0, fmt.Errorf("account: ending punishments: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("account: checking update result: %w", err)
+		return 0, fmt.Errorf("account: ending punishments: %w", err)
 	}
-	if n == 0 {
-		return fmt.Errorf("account: no such account: %s", username)
-	}
-	return nil
+	return int(n), nil
 }
 
 func isUniqueConstraintErr(err error) bool {

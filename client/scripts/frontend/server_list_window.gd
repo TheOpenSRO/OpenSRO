@@ -248,9 +248,22 @@ func close() -> void:
 	closed.emit()
 	queue_free()
 
+## Round 788: the chosen row's shard name for a legacy server ("" for a
+## server's own row), set before `chosen` -- the title matches it against
+## the gateway's list for 0x6102's shard id (READ 0x8688f0: the server name
+## against the shard list).
+var chosen_shard_name := ""
+
 func select_current() -> void:
 	if _selected_index >= 0 and _selected_index < _display.size():
-		chosen.emit(_entries[int(_display[_selected_index]["entry"])])
+		var d: Dictionary = _display[_selected_index]
+		chosen_shard_name = ""
+		var i := int(d["entry"])
+		if int(d["shard"]) >= 0 and i < _queries.size() and _queries[i] != null:
+			var q: ServerStatus = _queries[i]
+			if int(d["shard"]) < q.shards.size():
+				chosen_shard_name = str(q.shards[int(d["shard"])]["name"])
+		chosen.emit(_entries[i])
 	close()
 
 ## Selects row r.

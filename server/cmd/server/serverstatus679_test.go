@@ -87,7 +87,10 @@ func TestServerStatusServedByTheRealServer(t *testing.T) {
 		t.Errorf("status % x, want % x (version 1, 0 in the world, max 50, state 0 = Check)", p.Data, want)
 	}
 
-	// A login under inspection: refused with retail's words.
+	// A login under inspection: refused with retail's words. Round 788: the
+	// password is checked first, as retail's certify job runs before
+	// GlobalManager's inspection refusal, so the account is registered
+	// (OpRegister 0x0003, the same two strings) and the right password sent.
 	conn = dial()
 	user := []byte("someone")
 	pass := []byte("secret")
@@ -95,11 +98,19 @@ func TestServerStatusServedByTheRealServer(t *testing.T) {
 	payload = append(payload, user...)
 	payload = binary.LittleEndian.AppendUint16(payload, uint16(len(pass)))
 	payload = append(payload, pass...)
+	rd := bufio.NewReader(conn)
+	if err := proto.Write(conn, &proto.Packet{Opcode: 0x0003, Data: payload}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if p, err = proto.Read(rd, nil, nil); err != nil || p.Opcode != 0x0004 || len(p.Data) < 1 || p.Data[0] != 1 {
+		t.Fatalf("registering: %v %+v", err, p)
+	}
 	if err := proto.Write(conn, &proto.Packet{Opcode: 0x0001, Data: payload}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	p, err = proto.Read(bufio.NewReader(conn), nil, nil)
+	p, err = proto.Read(rd, nil, nil)
 	if err != nil {
 		t.Fatalf("no login reply: %v", err)
 	}

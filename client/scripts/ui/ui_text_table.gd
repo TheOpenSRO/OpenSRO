@@ -202,7 +202,30 @@ const FIRST_ROW_PREFIX := "UIIT_STT_MASTERY_"
 
 ## Whether a key keeps its first row in a joined table (FIRST_ROW_PREFIX).
 static func keeps_first_row(token: String) -> bool:
-	return token.begins_with(FIRST_ROW_PREFIX)
+	return token.begins_with(FIRST_ROW_PREFIX) or LOGIN_FIRST_ROW_KEYS.has(token)
+
+## **Round 788: the title's login messages keep the client's own first row
+## too.** MEASURED: the real sro_client.exe under Wine against OpenSRO's
+## server (round 788, lane R) showed a wrong password as "You have entered
+## the incorrect password! Please try again! Out of a maximum of 0 attempts,
+## you have used 0 attempt(s)." -- the FIRST row of
+## UIIT_STT_GLOBAL_PASSWORD_INPUT_ERROR, as TextStringManager keeps it (READ
+## 0x8ca120); the joined-table rule had given the stock table's other
+## wording. The keys LoginMessages and the login's two windows show follow
+## the READ rule, like the masteries above.
+const LOGIN_FIRST_ROW_KEYS := {
+	"UIO_MSG_ERROR_SEVER_CONNECT": true, "UIO_MSG_ERROR_CITATION": true,
+	"UIIT_STT_GLOBAL_PASSWORD_INPUT_ERROR": true, "UIO_MSG_ERROR_ACCOUNT_STOP": true,
+	"UIO_MSG_ERROR_ACCOUNT_STOP_BLOCK": true, "UIO_MSG_ERROR_ACCOUNT_BLOCK_TIME": true,
+	"UIO_MSG_ERROR_ACCOUNT_CONNECT_IMPOSSIBILE": true, "UIO_MSG_ERROR_THERE_IS_NO_ACCOUNT_INFO": true,
+	"UIO_MSG_ERROR_GRATIS_USER_BLOCKED": true, "UIO_MSG_ERROR_OVERLAP": true,
+	"UIO_MSG_ERROR_SERVER_BUSY_CONNECT_IMPOSSIBILE": true, "UIO_MSG_ERROR_CONTENT_FAIL_INSUFFICIENT_IP": true,
+	"UIIO_CLIENT_START_CONTENT_FAIL_BILLING_RELATED": true, "UIIO_CLIENT_START_CONTENT_FAIL_BILLING_FAILED": true,
+	"UIIO_SMERR_ADULT_ONLY_SERVER": true, "UIIO_SMERR_TEENOVER_ONLY_SERVER": true,
+	"UITT_TEENSERVER_ERRMGS_ADULT": true, "UIIT_STT_GLOBAL_AUTHENTICATION_INPUT_ERROR": true,
+	"UIIT_PAG_GLOBAL_AUTHENTICATION": true, "UIIT_STT_GLOBAL_AUTHENTICATION_NOTICE": true,
+	"UIIT_MSG_MSGBOX_NETOFF": true,
+}
 
 ## Of the keys before a restart, at least this share must come back after it
 ## for the file to count as two joined tables (OURS thresholds, round 725:

@@ -10,6 +10,29 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## Round 788 lane R follow-ups (the original client logs in to OpenSRO; opcodes/gateway.md)
+
+- [x] **The original client (vSRO 1.188) logs in to OpenSRO's server and shows its character
+      list** -- the retail gateway and agent listeners (`-retail-gateway-addr`), MEASURED under
+      Wine on the render box. Start is refused (0xB001 0x40F, then the list again).
+- [ ] **The world for the original client.** Start is refused: the in-world protocol (0x3013 and
+      everything after, `charselect.md` "Start") is not spoken on the retail agent. The next
+      concrete step is 0xB001 [1] followed by the character data 0x3013 (client FUN_008a8c00).
+- [ ] **IBUV (the image code) is skipped** on the retail gateway: 0xA102 goes straight after the
+      password. Needs the 0x2322 blob's format (another round-788 lane decodes it) to send one.
+- [ ] **No idle limit on the retail listeners.** Retail sweeps every 10 s and closes past 60 s idle
+      (the 60 s INFERRED: no override of the default found). The client's keep-alive (5 s of
+      silence) would keep a live one open.
+- [ ] **"Already connected" between gateway and agent:** the gateway decides with no session and
+      the agent admits with `LoginService.AdmitSession`; whatever registry the login-rules lane
+      keeps must be kept there too, and a login admitted but not yet at the agent (up to 10 s) is
+      not "connected" yet (retail registers it at the GlobalManager's admit).
+- [ ] **0x2005 / 0x6005 after the identity** are not sent (the client has no handler for either);
+      the u16 in 0x2005 is INFERRED to be the server's id. Revisit if a client version needs them.
+- [ ] **The retail lobby from the real client's create screen** was not driven (the characters
+      in the MEASURED run were made on OpenSRO's own wire); the 0x7007 create and name check from
+      sro_client itself are untested live.
+
 ## Round 720 follow-ups (the teleport structures' effects)
 
 - [x] ~~The gates' animated textures and material mods~~ -- **round 722**: TEXANI read and drawn
@@ -26,6 +49,32 @@ where it stopped, the tools for it, the traps — and points back here for every
       nearest sectors for lists[2]), stepping only what is seen. Round 720's review had measured
       play-everywhere at Jangan, every effect stepped, as +1.44 ms; this round's gates are in
       WORLD_ISSUES ("Fountains, waterfalls and their splashes are animated").
+
+## Round 788 follow-ups (lane S: the server's login rules and bans; docs/rounds/r788s.md)
+
+- [x] ~~One place decides a login~~ -- **round 788**: `session.LoginService` for 0x0001 and 0x6102
+      (wrong passwords per name with the automatic block, punishments, already connected, the
+      per-IP limit, inspection, full), typed punishments in `account` (Mem and SQL), `/ban` (retail's
+      kick) and the OURS `/block`, `/unblock`, `/blockinfo`. docs/protocol/opcodes/login.md, "The
+      login reply, READ (round 788)".
+- [x] ~~**The retail listener's front door**~~ -- **round 788** (lanes R and S merged): the retail
+      gateway decides through `Login` with no session, the agent enters the account in
+      `AdmitSession`. Left: the up-to-10 s window between the two, where retail's GlobalManager
+      already holds the account and OpenSRO does not (a second login then fails at the agent with
+      `[2,2]` instead of at the gateway with `[2,3]`).
+- [ ] **Chat and trade blocks (types 4 and 3)** are stored, not enforced: the game server's
+      `{u8 active, 16-byte end}` per type and 0x3405 `{u8 0 chat / 1 trade, u32 packed time}`
+      (RESEARCH section 2; client 0x86e5b0). The Social round.
+- [ ] **OPEN, retail:** how `_CertifyTB_User` treats a type-2 punishment (the account database is
+      not on the box; OpenSRO blocks as type 1); whether the wrong-password count expires (OURS: an
+      hour); which row `_QueryBlockGuide` returns when several blocks are active (OURS: the one
+      ending last); whether the procedure checks the password before the block (OURS: it does).
+- [ ] **The image code (IBUV)** is not built: retail asks it after every right password and clears
+      the wrong-password count only on its success; OpenSRO clears it on the login's success.
+- [ ] **The SMC's other punishment fields** (shard, character name and info, position, sentenced
+      time, e-mail template) are not kept; nothing reads them yet.
+- [ ] **The wrong-password counts are in memory**: a restart forgets them (where retail keeps them,
+      GlobalManager's memory or the database, is not traced).
 
 ## Round 785 follow-ups (the skills, server side; docs/protocol/skill_census.md)
 
@@ -1614,12 +1663,9 @@ front-end's next steps.
 ### The customize screens (round 685) — **built: China and Europe from their own layouts, every control, the READ ranges and rules, the preview with the READ spin, zoom and idle, the turning 98/168 and 105/79 backdrops; these are left**
 
 `docs/protocol/charselect.md` section 4 has everything READ; WORLD_ISSUES round 685 the evidence.
-- **The name's character test** is OURS (the server's rule: printable ASCII, no space, `'` or `"`).
-  Retail's is the inverse of one language column of `textdata\abusefilter.txt`'s
-  `#ALLOW_ID_TABLE` (READ 0x8c4a10); which column the English client reads (the filter's +0x14,
-  GlobalDataManager +0x858) is OPEN. Column 5 (MEASURED) allows exactly 0-9, A-Z, `_`, a-z. The
-  same file's two word lists are not applied. When the column is known, client and server should
-  both apply it (`session.LobbyNameCode`).
+- ~~**The name's character test** is OURS.~~ Done round 788 (lane N): `NameFilter` applies
+  retail's 0x8c3cb0 on the player's own abusefilter.txt for type.txt's Language group, and the
+  server `server/internal/namefilter` (charselect.md, "The name rule: the AbuseFilter test").
 - **Branding:** the create screens draw the archive's red/blue bands only. Whether an operator's
   theme band art should replace them as it does the title's is the user's call (the reference
   shots are a private server's reskin).
@@ -1674,7 +1720,8 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
   the entry's +0x28 flag (meaning OPEN), the slider's drag; the 0xA101 parser in the exe (not found:
   no 0xa101 immediate).
 - **-max-players counts characters in the world**, not sessions at character select; the
-  `-gm-accounts` names pass the inspection and full gates (ours; retail's rule for staff is OPEN).
+  `-gm-accounts` names pass the inspection and full gates (ours; retail exempts by privileged IP and
+  the account's security bytes, INFERRED). Since round 788 the gates are `LoginService`'s, for 0x0001 and 0x6102 alike.
 
 ### The character lobby (round 682) — **built: retail's 0x7007/0x7001 on our framing, create with the READ checks and the player's own items, 4 an account, the 7-day delete and restore, per-race start spawns; these are left**
 
@@ -1715,9 +1762,16 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       export (the authority: what `_AddNewChar` writes); euroskill691's `skill/race.go` hard-codes
       the same 13 ids. Keep them equal; move 691 to reading the seeded rows once older characters
       are backfilled (charselect.md section 9).
-- [ ] **The name rule's OPEN half**: the client's forbidden-character bitmap (0x8c3cb0 / 0x8c0760,
-      filled at runtime), its two filter lists, the server's forbidden-word list and FUN_006df4c0.
-      The server applies 2..12 bytes, no space or quote (READ) and printable ASCII (OURS).
+- [x] ~~**The name rule's OPEN half**~~ (round 788, lane N): READ and applied on both sides --
+      the server's 0x40f200 (space, quotes, the 54 SQL words, the AbuseFilter group's bitmap,
+      substring and whole-word lists; `-abuse-filter` / `-abuse-filter-locale`, deploy/README.md)
+      for character and guild names, the client's 0x8c3cb0 / 0x8c3de0 from Media.pk2 (charselect.md,
+      "The name rule: the AbuseFilter test"). Still OPEN: what the deployed client's vPlus DLL sets
+      CGame+0x858 to at runtime (the exe jumps over the Vietnam compare); CGame+0x858's constructor
+      value (an unknown Language; OpenSRO uses English); the GameServer's locale map (it loads the
+      file for pet names, aliases and a guild function); which of the two retail AbuseFilter
+      copies is unmodified. OURS: Windows-1252 for the code page on both sides; the no-file
+      charset `[0-9A-Za-z_]` (retail refuses nothing without the file).
 - [ ] **Ammunition**: a bow's arrows and a crossbow's bolts go into the bag (OURS), 250 of them
       (READ `_AddNewChar`, round 692; was one full stack): the equipment slot has no quantity and
       ammunition is not modelled (session/skill.go).
@@ -1733,6 +1787,19 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       sender) once the rename is applied in Ghidra too.
 - [ ] **`OpEnterWorld` 0x0020** is still accepted beside Start (it refuses a pending character too);
       retire it when the world handoff is retail.
+
+### The account PIN, "Character Lock" (round 788, lane P) — **built: OURS throughout (retail has none), server store + rules + lobby gate, the client's window and select-screen hook; these are left** (`docs/protocol/pin.md`)
+
+- [ ] **The legacy select path** (round 788 lane C's adapter for retail-protocol servers) must skip
+      `CharSelectLock.query()`: 0x0120 means nothing to a retail server.
+- [ ] **No GM command clears a player's PIN or lock**; the operator deletes the rows by hand
+      (deploy/README.md, "Account PIN (Character Lock)").
+- [ ] **The lock's numbers are constants** (5 tries, 30 minutes, 16 remembered PCs): flags if an
+      operator asks.
+- [ ] **A retail client on an account with a PIN** can list but not start, delete or restore (0x40e,
+      "Failed to connect to server."); there is no retail way to ask it for a PIN.
+- [ ] **The "Pin Code" button** stands one column left of Start; on a screen narrower than ~700 px
+      the select screen's message line (x = 26) can run under it, as under Start.
 
 ### Europe: what a Europe character still lacks (round 692 notes)
 
@@ -2020,10 +2087,23 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       `SendDrainTimeout` 2 s bounds how long an ending session writes out what is queued. There is
       no kick, no logout reply (`OpLogoutRequest` 0x7005 is unhandled) and no shutdown notice; a
       future one must send and then end the session through the gateway's drain, not `Close`.
-- [ ] **A session the server closes lands on the login screen with no reason given.**
-      `NetClient` finds the peer no longer connected, `World3D._on_disconnected` changes to
-      `Login.tscn`, and the screen shows its remembered fields and nothing else. A "connection
-      lost" line there is the client's to add.
+- [x] ~~A session the server closes at the title, character select or create lands on the login
+      screen with no reason given~~ -- round 788: retail's drop box (`NetOffBox`, READ slot 40
+      0x862450: MsgBoxINIF titled `UIIT_STT_CONFIRM_BOX`, `UIIT_MSG_MSGBOX_NETOFF`, Confirm only),
+      whose Confirm **quits the client** as retail's does (0x641eb0 -> CPSQuit).
+- [ ] **In the world, a session the server closes still lands on the login screen with no reason.**
+      `World3D._on_disconnected` changes to `Login.tscn`. Retail (READ, CPSMission::vslot_040
+      0x84ae90) shows the same NETOFF box and quits on Confirm (to the title only when a logout or
+      restart was already under way, +0x39c == 2). Not changed in round 788: the QA reconnect hooks
+      (`OPENSRO_QA_RECONNECT_VIA_LOGIN`, round 558) ride the return to the title.
+- [ ] **Round 788 (OPEN): the "[Block Detail]" button** of a punishment whose reason ends in '#'
+      (READ 0x86c136..0x86c416: id 800, 15 s, opens the address in Internet Explorer) is not built;
+      the message shows the text before the '#'.
+- [ ] **Round 788 (OPEN): `UIO_MSG_ERROR_THERE_IS_NO_ACCOUNT_INFO`** (0xA102 2/3) also opens a dialog
+      in retail (RESEARCH section 1); only its text is shown.
+- [ ] **Round 788: 0x6102 on OpenSRO's server is not behind `session.LoginGate`** (inspection, the
+      GM gate), which wraps only OpLogin 0x0001; the client now logs in with 0x6102. The server
+      lane's LoginService is where the gate belongs.
 - [ ] **With `-monster-spawn-push` off (the default), a respawn is never announced.** Its first leg
       then reaches clients that do not have the body, and they ask for the list: the pre-656
       discovery path, kept. With the push on, the push leaves at once and a brain's first leg waits
@@ -2716,6 +2796,25 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
   built and tested but reached by nothing.
 - **The EXP line at the level cap** reports what was added (0 once full); what retail's server
   sends there was not read.
+
+### The Additional Quick Slot and the extra bars (round 788) — **built: retail's bar as READ, OpenSRO's extra bars with pages; these are left**
+
+`docs/protocol/ext_quick_slot.md` has what is READ and what is OURS.
+
+- **The private server's real pager** (the reference screenshots' second bar): what its pages bind
+  to, whether a key turns them, how many there are. Ours: separate slots 51.. (its page F5 is empty
+  while the retail bar is full), labels F5.., arrows only, no key.
+- **Icon fade under Transparent.** The proxy draws the bottom bar's slot with that slot's own draw
+  (`0x65fb00`); whether the proxy's alpha reaches the icon is not traced. Ours: the icons do not
+  fade (the screenshots agree).
+- **The 0x4009 help bubble's place.** `0x65fb90` re-places the help window beside the proxy with
+  `0x776c00` (right + 8, flipped left at the screen edge, top + 8); ours uses HudPanels' bubble
+  placement. The `+0x24(0xc4)` call in `0x776c00` is not identified.
+- **The option window's close X** reaching vslot 43 is INFERRED; Escape and the option window are
+  not read (here Escape leaves it open). The base directory of `SRExtQSOption.dat`
+  (`DAT_0110f7d0+0x134`) and `0x65f580`'s per-byte offsets in the asm.
+- **0 extra bars** can only be set (and undone) in `settings.cfg`; the count row lives in the extra
+  bars' option window, retail's being kept exact.
 
 ### The inventory window (round 633) — **pages, purse colours, slot art, avatar view, preview built; these are left**
 

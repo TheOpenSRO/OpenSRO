@@ -545,17 +545,87 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
 ### Name
 
 - **Client checks** (READ):
-  - 0x84eac0: length 2..12, else `UIO_MSG_ERROR_CHARACTER_NAME_STRING` ("A minimum of 2 ... up to 12
-    English alphanumerals").
-  - 0x8c3cb0: a forbidden-character bitmap and two filter lists, else
-    `UIO_MSG_ERROR_CHARACTER_WRONGSTRING` ("An invalid symbol, character, or letter has been used!").
-  - **Which characters the bitmap allows is OPEN.** The message says English alphanumerals.
-- **Server checks** (READ ShardManager FUN_0040f300 / FUN_0040f200 / FUN_00527390; the same for
-  action 4 and for create):
+  - 0x84eac0: the edit's length (+0x434, UTF-16 units) 2..12, else
+    `UIO_MSG_ERROR_CHARACTER_NAME_STRING` ("A minimum of 2 ... up to 12 English alphanumerals").
+  - 0x8c3cb0: the AbuseFilter name test, else `UIO_MSG_ERROR_CHARACTER_WRONGSTRING` ("An invalid
+    symbol, character, or letter has been used!"). Rename (0x856da0) checks the ANSI byte length
+    2..12 (else `UIO_MSG_ERROR_CHARACTER_NAME`) and then the same test.
+- **Server checks** (READ ShardManager 0x40f300 -> 0x40f200; the same for action 4 and for create):
   - 2..12 bytes by `lstrlenA`, else 0x40c;
-  - 0x40d if it contains a space, `'` or `"`, a word from the loaded forbidden-word list, or fails a
-    further filter (FUN_006df4c0, not read);
-  - 0x410 if `_IsExistingCharName` finds it.
+  - 0x40f200, else 0x40d: a space (`find(" ")`, 0x40f234); then 0x527390 on the name lower-cased by
+    0x6df010: a `'` or `"` byte, or one of 54 compiled-in SQL words (`--`, `;`, `/*`, `%%`, table
+    names such as `_char` and `_user`, `xp_`, `sysobjects`; built at 0x5261c0, searched with a
+    case-sensitive `find`, so the 11 mixed-case ones never match); then 0x6df4c0, the AbuseFilter
+    test (below);
+  - 0x410 if `_IsExistingCharName` finds it (0x404d90); success is 0x401.
+- **The name check button** sends 0x7007 action 4. On success it shows "This character name is valid
+  and usable. You may proceed!" (`UIO_MSG_ERROR_ADMISSON`).
+
+### The name rule: the AbuseFilter test (CStringCheck, round 788)
+
+Client and server run the same test on their own text: the client on UTF-16 units, the server on
+narrow (ANSI/DBCS) bytes. OpenSRO's are `client/scripts/frontend/name_filter.gd` and
+`server/internal/namefilter`.
+
+- **The file** is `abusefilter.txt`: the client's in Media.pk2 `server_dep\silkroad\textdata\`
+  (0x845f9c), the server's `<cwd>\AbuseFilter.txt` (0x781fad, loader 0x6dfa00). MEASURED: UTF-16LE,
+  CR LF, 36 cells a line, six groups of six (`word, f1, f2, f3, f4, (empty)`); the only marker is
+  `#ALLOW_ID_TABLE from to`; category rows like `**Monster**` have every flag 0. The two retail
+  copies on the box differ (one or both are modified).
+- **The loader** (READ, client 0x8c4a10, server 0x6dfa00, the same tokenizer): the first UTF-16 unit
+  is skipped whatever it is; lines end at CR LF only; from a line's first `/`, `//` cuts the rest and
+  `/*` cuts it and skips lines to the first `*/`; empty lines are skipped. The group's cells are
+  reached by skipping 6 x group tab separators; its first cell (up to TAB, CR or NUL, not trimmed)
+  is lower-cased (A-Z only). `#allow_id_table` (exactly) sets the bits from..to; any other non-empty
+  cell is a word with four flag numbers, each 1 = whole-word set, 2 = substring list: f1 is the name
+  test's (+0x2048 set, +0x2018 list), f2 chat's (+0x2070 / +0x2024), f3 the guild name's (+0x2098 /
+  +0x2030, client 0x8c3de0), f4 the stall message's (+0x20c0 / +0x203c). A number skips whitespace
+  (space and 0x01..0x10, so tabs and empty cells too), needs a digit next or reads 0 without moving,
+  and is hex with an `x` second -- so an empty flag cell borrows the next cell's number. Finally the
+  65,536-bit table is inverted: a set bit refuses. With no file the server's table stays zeroed and
+  is never inverted: retail refuses no character then.
+- **Codes to characters.** The server indexes the table by the code itself. The client turns a code
+  into the bytes `[code, 0]` (below 0x100) or `[hi, lo]` and passes them to
+  `MultiByteToWideChar(CP_ACP)` with room for ONE wide character (0x8c5217..).
+- **The group.** Server (READ 0x40c7ef, jump table 0x40cb20, set by 0x6df4b0): server.cfg's LOCALE
+  (`LOCALE_KOREA`..`LOCALE_ENGLISH`, CompareStringA ignoring case) KOREA 0, CHINA 1, TAIWAN 2, JAPAN
+  3, VIETNAM 5, ENGLISH 4, unknown or missing 4. MEASURED: the reference server.cfg has
+  `LOCALE_VIETNAM`. Client (READ CGame::FUN_008469c0, 0x847b84..0x847e83): Media.pk2 root `type.txt`,
+  key `Language` (ignoring case), the quoted value exactly: Korean 0, Chinese 1, Taiwan 2, Japan 3,
+  English 4, Vietnam 5, Turkey 7, Thailand 8, Russia 9, Spain 10, Arabic 11 -> CGame+0x858 -> the
+  filter's +0x14. The loader skips 6k cells for 0..5 and 48, 36, 42, 54, 60 for 7..11 (groups 8, 6,
+  7, 9, 10); any other value skips none (group 0). On the 36-cell file, 7..11 find no cell: nothing
+  is allowed and every name is refused (INFERRED from the READ loader on the MEASURED file).
+  MEASURED: the box's type.txt says `Language = "Vietnam"`; the deployed exe jumps over the Vietnam
+  compare (0x847d2d 75 -> eb) and its vPlus DLL sets +0x858 at runtime (OPEN what to).
+- **The test** (READ, client 0x8c3cb0, server 0x6df4c0), on the name lower-cased:
+  1. every character allowed: client every UTF-16 unit (0x8c0760); server (0x6df7f0) a byte below
+     0x80 is its own code and a byte at or above it is read with the next as `(b<<8)|next`, whatever
+     the code page -- so group 5's 0xC0..0xFF codes can never match a byte and the server's
+     effective set for groups 4 and 5 is exactly `[0-9A-Za-z_]` (MEASURED rows; the client's group 5
+     does let Latin-1 letters through, and the server then refuses them with 0x40d);
+  2. no substring word: client `wstring::find` (0x8c3200); server (0x6df850) `_stricmp` of each
+     window the word's length, starting at offset 0 and stepping one byte past a byte below 0x80 and
+     two past one at or above it ("character boundaries" in the DBCS sense, whatever the code page);
+  3. no whole word: the name split on spaces, each token looked up exactly (client 0x8c3ae0, server
+     0x6df970); a name reaching it has no space, so: the name is not one of the words.
+- **Guild names** use the same rule on the server: ShardManager 0x43b810 (2..12 bytes else 0x4c18,
+  0x40f200 else 0x4c19 `GUILDERR_NOT_ALLOWED_GUILDNAME`, `_Guild_IsExistingGuildName` else 0x4c1a).
+  The client's guild prompt (0x6f91b0) checks the ANSI byte length 2..12 (0x4c18) and then 0x8c3de0,
+  the test on the f3 lists (0x4c19). The GameServer also loads AbuseFilter.txt (pet names 0x440e,
+  aliases 0x70e3, a guild function 0x4c4d / 0x4c51); its locale map is OPEN.
+- **`_BlackNameList`** (7,640 rows in the shard DB) is read by nothing we have: no procedure and no
+  server binary names it. OpenSRO does not use it.
+- **What OpenSRO does** (round 788): the server reads the operator's AbuseFilter.txt
+  (`-abuse-filter`, deploy/README.md) for `-abuse-filter-locale`'s group (default ENGLISH, OURS),
+  converting it with Windows-1252 (OURS: no system code page; one CJK character in the retail
+  group 4 becomes `?`). Without a file it refuses every byte outside `[0-9A-Za-z_]` (OURS, not
+  retail's "nothing") and still applies the space, quote and SQL-word tests. The client reads the
+  player's own Media.pk2 for type.txt's group, and converts codes through Windows-1252 (OURS, the
+  first byte; that a too-small buffer still gets the first character is INFERRED -- it is how an
+  English Windows lets the English group's letters through at all); an unknown Language is English
+  (OURS; CGame+0x858's constructor value was not found). Existing characters keep their names: the
+  rule is applied to new names only (OURS, the user's).
 - **The name check button** sends 0x7007 action 4. On success it shows "This character name is valid
   and usable. You may proceed!" (`UIO_MSG_ERROR_ADMISSON`).
 
@@ -836,8 +906,8 @@ Our 0x0010-0x0015 are gone. Start's OK is followed by today's `OpEnterWorldResul
 | 0x408 | Delete: an empty name (READ "name refused"; retail's quote refusal is not applied, as for Start). |
 | 0x40b | Delete, restore, Start: no character of that name on the account (READ). |
 | 0x40c | Create, name check: not 2..12 bytes (READ). |
-| 0x40d | Create, name check: a space, `'` or `"` (READ); a byte outside printable ASCII (OURS: the client's bitmap is OPEN). |
-| 0x410 | Create, name check: the name exists, pending deletion or not (READ, `_IsExistingCharName` round 692: `_CharNameList`, which keeps a pending character's name, and `_CharNickNameList`, by `=`); compared without case (OURS: the `=`'s case rule is the DB collation's, not exported; INFERRED case-insensitive). OpenSRO has no nicknames. |
+| 0x40d | Create, name check: 0x40f200 refuses it (READ, round 788): a space; a `'` or `"`; one of the 54 SQL words; a character outside the AbuseFilter group's allowed set -- `[0-9A-Za-z_]` for groups 4 and 5 under the server's DBCS reading, and OpenSRO's no-file set (OURS); a substring or whole word of the group ("The name rule: the AbuseFilter test" above). |
+| 0x410 | Create, name check: the name exists, pending deletion or not (READ, `_IsExistingCharName` round 692: `_CharNameList`, which keeps a pending character's name, and `_CharNickNameList`, by `=`); compared without case (READ round 788's research: `_CharNameList.CharName16` has collation `Latin1_General_CI_AS`, read from the live DB -- the exports on the box carry no collation, so lane N did not re-read it; both OpenSRO stores fold case -- MemStore A-Z, Postgres `LOWER` -- and no name with a byte >= 0x80 passes the filter's groups 4 and 5, so the CI_AS accent rule does not arise). OpenSRO has no nicknames. |
 | 0x419 | Restore: the character is not pending deletion (READ), sent as a u16 (OURS, see above). |
 | 0x40e | Any 0x7007 action from a session already in the world (OURS choice of code: "an operation is pending" is the nearest READ meaning; what the ShardManager answers there was not read). |
 
@@ -1386,14 +1456,12 @@ var entry := BodyAnimations.entry_for(parsed, action_type, group)      # BsrRead
   worn item lists, which the client draws too.
 - The weight half of the missing-palette-bone rule (`ResObject::FUN_00be2f80` leaves a missing
   bone's weight out of the sum; this client models only the entry, round 683).
-- The name bitmap at 0x8c3cb0: **its source is READ (round 685)** -- 0x8c4a10 builds it from
-  `textdata\abusefilter.txt` (Media.pk2 `server_dep\silkroad\textdata\`, named at 0x845f9c's
-  caller), whose `#ALLOW_ID_TABLE <from> <to>` rows give the allowed ranges of one of six language
-  columns (MEASURED: column 5, offsets 24..26, allows 0-9, A-Z, `_`, a-z; column 6 adds Latin-1);
-  the rest of the 65,536 bits is the refused set, and the same file feeds the two word lists
-  (+0x2018, +0x2048). **Which column the English client reads is OPEN** (the filter's +0x14, from
-  its constructor 0x8c46a0's argument, GlobalDataManager +0x858). The server's forbidden-word list
-  (session.LobbyNameCode: "no such list was found in the archives") may be this file: OPEN.
+- ~~The name bitmap at 0x8c3cb0: which column the client reads; the server's word list.~~ READ
+  round 788 ("The name rule: the AbuseFilter test" above): type.txt's Language picks the client's
+  group, server.cfg's LOCALE the server's, and the server's list is its own AbuseFilter.txt. Still
+  OPEN: what the deployed exe's vPlus DLL sets CGame+0x858 to; CGame+0x858's constructor value (an
+  unknown Language); the GameServer's locale map; which of the two retail AbuseFilter copies is
+  unmodified.
 - ~~The deletion delay in `_DeleteCharTemporal`.~~ READ round 692: 7 days, the ShardManager's
   timer, guarded at 6 days 23 hours by `_DeleteCharPermanently` (section 2).
 - (round 692) `_DeleteCharPermanently_NoTX`, `_KeepDelCharName`, `_FN_ADD_INITIAL_EQUIP` and

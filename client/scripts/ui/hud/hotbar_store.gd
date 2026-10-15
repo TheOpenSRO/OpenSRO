@@ -16,7 +16,9 @@ class_name HotbarStore
 ## (0x60c430) follows a moved item.
 ##
 ## Here the same bindings go to `user://quickslots.cfg`, one entry per server
-## and character: every skill and item slot on every page, the skill by its
+## and character: every skill and item slot on every page -- since round 788
+## also slots 41..50 as the Additional Quick Slot shows them and the OURS
+## extra bars' slots 51.. (HudUnderbar.SLOT_COUNT) --, the skill by its
 ## id and Basic_Code, an item by its item id and bag slot. World3D writes the
 ## file on every change and reads it once the bar exists; an item is
 ## re-resolved against the bag when the inventory arrives
@@ -74,7 +76,10 @@ static func decode(entries: Array) -> Dictionary:
 		if not (_is_int(e.get("slot")) and e.get("kind") is String):
 			continue
 		var slot := int(e["slot"])
-		if slot < 0 or slot >= HudUnderbar.MAX_QUICKSLOT:
+		# 0..50 are retail's quick slots; 51.. the OURS extra bars' pages
+		# (round 788, HudUnderbar.SLOT_COUNT). A file written before round 788
+		# holds only 0..50 and loads as it did.
+		if slot < 0 or slot >= HudUnderbar.SLOT_COUNT:
 			continue
 		match String(e["kind"]):
 			"skill":

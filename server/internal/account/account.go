@@ -19,8 +19,9 @@ import (
 // valid usernames.
 var ErrInvalidCredentials = errors.New("account: invalid username or password")
 
-// ErrBlocked is returned by Store.Authenticate for an account that exists,
-// has the right password, but is currently blocked.
+// ErrBlocked is what Store.Authenticate's error matches (errors.Is) for an
+// account that exists, has the right password, but has an active login block
+// (round 788: a *BlockedError carrying the punishment, punishment.go).
 var ErrBlocked = errors.New("account: account is blocked")
 
 // ErrUsernameTaken is returned by Registerer.Register when the requested
@@ -43,8 +44,9 @@ type Account struct {
 	ID           int64
 	Username     string
 	PasswordHash []byte
-	Blocked      bool
-	BlockReason  string
+	// Round 788: the old Blocked/BlockReason fields are gone; a block is a
+	// Punishment (punishment.go), and Authenticate reports an active one as
+	// a *BlockedError.
 	// StorageGold is the gold kept in the warehouse. It belongs to the
 	// ACCOUNT, not to a character: the game's chest deposit runs
 	// `_UPDATE_USER_N_CHAR_GOLD(userJID, userGold, charID, charGold)`
@@ -81,8 +83,9 @@ func (a *Account) verify(plaintext string) bool {
 type Store interface {
 	// Authenticate looks up username and checks password against it.
 	// Returns ErrInvalidCredentials if the username doesn't exist or the
-	// password is wrong, or ErrBlocked if the credentials are correct but
-	// the account is currently blocked.
+	// password is wrong, or a *BlockedError (errors.Is(err, ErrBlocked)) if
+	// the credentials are correct but the account has an active login block
+	// (PunishmentType.BlocksLogin). Any other error is the store's own.
 	Authenticate(ctx context.Context, username, password string) (*Account, error)
 }
 

@@ -179,8 +179,10 @@ OpenSRO question.
   strict reading of every message. Every failure is "Closed" with a `SERVERLIST:` line saying why;
   the 5 s refresh is retail's.
 - **What a legacy server is never sent:** this project's 0x0007 (status) and 0x0005 (theme: the
-  login screen skips its theme question for a legacy server and keeps its own intro), and no
-  login: Connect on a legacy server says that logging in to it is not supported yet (OURS).
+  login screen skips its theme question for a legacy server and keeps its own intro). Round 788:
+  Connect logs in to it the original way on a connection of its own (opcodes/gateway.md, "Logging
+  in"), the chosen row's shard name giving 0x6102's shard id; the world past character select is
+  not supported yet (OURS).
 - **Testing without anyone's server:** `go run ./cmd/retailgw serve -listen 127.0.0.1:15779
   -shards "Name:120/1000:1,Other:0/500:0"` runs a fake retail gateway (the server side of the
   handshake, READ); `client/tools/retail_status_probe.gd -- --gateway=127.0.0.1:15779` asks it as
@@ -204,7 +206,7 @@ OpenSRO question.
 - **Unreachable:** the row shows `UIO_STT_TEST` "Closed" in the list's default 0xFFB4B4B4. Connect
   to such a server shows retail's "Failed to connect to server." (without the code).
 - **The gate:** under `-inspection`, or with `-max-players` characters in the world, a login gets
-  retail's inspection or full message (`session.LoginGate`); the `-gm-accounts` names pass both.
+  retail's inspection or full message (`session.LoginService`, round 788; on 0x6102 the codes [2,2,2] and [2,5]); the `-gm-accounts` names pass both.
 - **Connect resolves a name the way the status does** (`NetClient`, round 679's review): without
   blocking, its IPv4 address first (`GatewayQuery.pick_address`); the TLS name stays the host name.
 - **Left out:** the 0.5 s fades of the list (it shows and hides at once), the farm column, the

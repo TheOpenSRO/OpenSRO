@@ -122,40 +122,7 @@ const (
 	LoginRefusedFull       = "The server is full, please try again later."
 )
 
-// LoginGate wraps the login handler: while the server is under inspection,
-// or as full as its maximum, OpLogin is answered with a refusal carrying
-// retail's words and never reaches next -- unless staff(username) is true
-// (the -gm-accounts names, round 679's review: staff test under inspection
-// and are never locked out by a full server; staff may be nil). Every other
-// packet goes to next unchanged. "Full" counts characters in the world
-// (world.Hub.Count), not sessions at character select. OURS: retail's
-// gateway refuses the same two cases with its own result codes; this server
-// has one login reply with a reason.
-func LoginGate(now func() ServerStatus, staff func(username string) bool, next gateway.Handler) gateway.Handler {
-	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
-		if p.Opcode == OpLogin && !isStaffLogin(staff, p.Data) {
-			s := now()
-			reason := ""
-			switch {
-			case s.Inspection:
-				reason = LoginRefusedInspection
-			case s.Max > 0 && s.Current >= s.Max:
-				reason = LoginRefusedFull
-			}
-			if reason != "" {
-				return sess.Send(&proto.Packet{Opcode: OpLoginResult, Data: (&LoginResult{OK: false, Reason: reason}).Encode()})
-			}
-		}
-		return next(ctx, sess, p)
-	}
-}
-
-// isStaffLogin reports whether an OpLogin payload names a staff account. A
-// payload that does not decode is not staff (the login handler answers it).
-func isStaffLogin(staff func(string) bool, data []byte) bool {
-	if staff == nil {
-		return false
-	}
-	req, err := DecodeLoginRequest(data)
-	return err == nil && staff(req.Username)
-}
+// Round 788: the inspection and full refusals that LoginGate made for OpLogin
+// alone are LoginService's now (loginservice.go), for every front door, with
+// the GM accounts still exempt; OpLogin carries these words (LegacyReason),
+// 0x6102 retail's codes [2,2,2] and [2,5].

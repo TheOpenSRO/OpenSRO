@@ -56,11 +56,13 @@ convergent evidence, not three unrelated leads.
   independently harvested in `observed_opcodes.md`, now named and given real payloads. **These are
   distinct from, not the same as,** the `0x6111`/`0x6112` pair the "Real confirmed meaning for two
   more opcodes" section below found — those are a separate, internal gateway→agent relay-tag pair
-  for the *result* of this same IBUV check (confirmed by that section's own real decompiled
-  tracing: sent onward via `RelayMsg` to `AgentServer.exe`, not back to the client), not client-
-  facing opcodes themselves. The two findings compose into one real picture: client ↔ gateway does
-  the actual IBUV challenge/response over `0x2322`/`0x6323`/`0xA323`, and the gateway then tells
-  the agent server which way it went over the internal `0x6111`/`0x6112` pair.
+  for the *result* of this same IBUV check (sent onward via `RelayMsg`, not back to the client),
+  not client-facing opcodes themselves. The two findings compose into one real picture: client ↔
+  gateway does the actual IBUV challenge/response over `0x2322`/`0x6323`/`0xA323`, and the gateway
+  then tells **GlobalManager** (not the agent server, as this bullet first said) which way it went
+  over the internal `0x6111` (**failure**) / `0x6112` (**success**) pair. **Corrected in round 788**
+  (READ GatewayServer 0x406b45 / 0x406ccf; see "The login reply, READ (round 788)" below): this
+  file had the pair the wrong way round.
 - `0x6103`'s real payload confirms **why** `AGENT_LOGIN_AUTH_ACK` (`0xA103`) is sent
   *agent*→client, not gateway→client, despite being part of the "gateway login" flow this file is
   about: the client is instructed to open a *new* connection to `AgentServer.IP`/`Port` (from
@@ -146,17 +148,203 @@ traced directly:
   real logged error (`"...No Registered CertParam!!"`) and disconnects -- a real failure path, not
   part of the normal flow.
 - Otherwise decodes some real user-supplied data and validates it (`FUN_0040a910`).
-  - **Validation fails**: sends `0xa323` (already independently harvested), then relays the
-    message onward (real `RelayMsg`, to `AgentServer.exe`) tagged with **`0x6112`**.
-  - **Validation succeeds**: relays it onward tagged with **`0x6111`**.
+  - **Validation succeeds** (the right image code): sends `0xa323` `[1]`, then relays
+    **`0x6112`** `[account]` onward.
+  - **Validation fails**: relays **`0x6111`** `[account, u8 1]` onward; the answer (`0xA111`)
+    becomes `0xa323` `[2, u32 max, u32 used]`.
 
-So `0x6111`/`0x6112` are a real success/failure pair for this specific certification sub-step, sent
-gateway -> agent as part of the relay chain (`dispatch.md`), not client-facing opcodes in the
-ordinary sense. Both payloads are built via the same real generic "append raw bytes" primitive
-(`PACKET_FORMAT.md`'s real header-size confirmation came from decompiling this exact function) --
-each appends exactly one field from a stack buffer, but that buffer's own real type/size wasn't
-traced further this pass, so the payload's *exact* byte layout stays unconfirmed even though its
-*purpose* now is.
+**Round 788 correction.** This section first had the pair the other way round (`0x6112` on a
+failure, `0x6111` on a success) and named `AgentServer.exe` as the receiver. Both were wrong: READ
+GatewayServer 0x406b45 (`0x6111`, the failure) and 0x406ccf (`0x6112`, the success); the receiver
+is GlobalManager, whose `0xA112` handler clears the account's failure history (0x40f050) and
+whose `0xA111` answer carries the attempt counts. `0x6111` also carries every wrong password, type
+0, and the gateway's `0xA102 [2,1,max,used]` is built from its answer (see the next section).
+
+So `0x6111`/`0x6112` are a real failure/success pair, sent gateway -> GlobalManager as part of the
+relay chain (`dispatch.md`), not client-facing opcodes in the ordinary sense: `0x6111`
+`[string account, u8 type]` (0 password, 1 image code, 2 MOTP) and `0x6112` `[string account]`.
+
+## The login reply, READ (round 788)
+
+Recovered in round 788 from GatewayServer.exe (`/var/tmp/retailgw681/gw.asm`), GlobalManager.exe
+(`/var/tmp/acct788/gm.asm`), AgentServer.exe and sro_client.exe on the RE box. Addresses are the
+gateway's unless named. OpenSRO's server implements it in `server/internal/session/loginservice.go`
+(`LoginService`) for every front door; the bytes are `loginack.go`'s, held to the client's by
+`client/scripts/net/testdata/login_golden.json`.
+
+### The full chain
+
+1. **0x6102** (client -> gateway, encrypted; READ client `CClientNet::vslot_004` 0x4c9290):
+   `u8 contentId, string username, string password, u16 shardId` (strings are u16 length + bytes,
+   no terminator). The ID inside 0x6102 is as typed; the client keeps a lower-cased copy for
+   0x6103. The client sends nothing (and shows nothing) for an empty ID, an empty password or no
+   matching server, and locks the button for 3.0 s.
+2. The gateway runs a certify job (content 22: `_CertifyTB_User '%s','%s'`, job 0x415e40). Row
+   `u8 result, u32 JID, ...`. Result 0: in. Result 3: blocked -> `_QueryBlockGuide <JID>` fills a
+   0x200-byte reason and a 16-byte date (0x415f46). Anything else: a wrong password -> `0x6111`
+   type 0 to GlobalManager. A query error: the generic failure. The failure builder 0x40dc40 sends
+   `[2,2,1, reason, date]` for the block and `[2,6]` for anything unknown -- **and does not
+   disconnect** (no disconnect call, vtable+0x5c, in 0x40dc40 or its caller 0x40dc2a).
+3. Certify OK -> 0x40d710: the shard: not found `[2,4]`; full and the account not exempt `[2,5]`
+   (0x40d871); age checks `[2,10]`/`[2,11]`; the GM-from-an-unprivileged-PC refusal (13) is patched
+   out of this vPLUS build. No disconnect in 0x40d710-0x40de06. Then 0x6200 `[u32 IP, u32 JID,
+   u8]` to GlobalManager.
+4. GlobalManager answers 0xA200. Its errors (0x401b70: the duplicate first, then the per-IP count;
+   inspection after): 1 already logged in `[2,3]`; 2 per-IP limit (`MaxUserForNonePCBangIP`)
+   `[2,8]`; 3 inspection `[2,2,2]`; 4 free service over `[2,2,4]`; 5 the JID already under that IP
+   `[2,6]`; billing down `[2,9]`. **The gateway disconnects after every 0xA200 error** (0x405e1d).
+   Result 1: the image code (IBUV) is prepared and sent, 0x2322.
+5. The client answers 0x6323 `[string code]`. Right: 0xA323 `[1]` and `0x6112` -> GlobalManager
+   0xA112 (clears the failure history, 0x40f050) -> 0x6203 to the shard -> 0xA203 -> **0xA102
+   `[1, u32 token, string agentIP, u16 port]`** (a 192.168.x.x client is given the agent's LAN
+   address, 0x405ec7). Wrong: `0x6111 [acct, 1]` -> 0xA111 -> 0xA323 `[2, u32 max, u32 used]`.
+6. The client closes the gateway connection and logs in to the agent with 0x6103 `[u32 token,
+   string ID (lower-cased), string PW, u8 contentId, u8[6]]`, answered by 0xA103.
+
+### 0xA102 (gateway -> client)
+
+READ: the client's reader `CClientProcess::vslot_017` 0x4cf500 -> `CPSTitle::vslot_006` 0x86bfc0
+(jump table 0x86caf8). Success `[1, u32 token, string agentIP, u16 port]`; failure `[2, u8 code]`:
+
+| Code | Extra | What the client shows |
+|---|---|---|
+| 1 | u32 max, u32 used | `UIIT_STT_GLOBAL_PASSWORD_INPUT_ERROR`, filled (max, used), each cut to 16 bits |
+| 2 / 1 | string reason, 16-byte TIMESTAMP_STRUCT (u16 Y,M,D,h,m,s + u32 fraction, ignored) | `UIO_MSG_ERROR_ACCOUNT_STOP` + `..._STOP_BLOCK` + reason + `..._BLOCK_TIME` + the date (`GetDateFormatA` long date + `GetTimeFormatA`) |
+| 2 / 2 | - | `UIO_MSG_ERROR_ACCOUNT_CONNECT_IMPOSSIBILE` (inspection) |
+| 2 / 3 | - | `UIO_MSG_ERROR_THERE_IS_NO_ACCOUNT_INFO` |
+| 2 / 4 | - | `UIO_MSG_ERROR_GRATIS_USER_BLOCKED` |
+| 3 | - | `UIO_MSG_ERROR_OVERLAP` (already connected) |
+| 4 | - | "Failed to connect to server.(C5)" |
+| 5 | - | `UIO_MSG_ERROR_SERVER_BUSY_CONNECT_IMPOSSIBILE` (full) |
+| 6 | - | "...(C7)", the generic failure |
+| 7 | - | "...(C8)" |
+| 8 | - | `UIO_MSG_ERROR_CONTENT_FAIL_INSUFFICIENT_IP` (the per-IP limit) |
+| 9 | - | `UIIO_CLIENT_START_CONTENT_FAIL_BILLING_RELATED` |
+| 10 / 11 | - | `UIIO_SMERR_ADULT_ONLY_SERVER` / `UIIO_SMERR_TEENOVER_ONLY_SERVER` |
+| 12 | - | `UITT_TEENSERVER_ERRMGS_ADULT` |
+| 0, 13+ | - | nothing |
+
+"(Cn)" is `"(%c%d)"` with the client's internal number (the wire number + 1, INFERRED) after
+`UIO_MSG_ERROR_SEVER_CONNECT`'s text. A '#' in the block reason splits it (INFERRED 0x86c136..):
+the text before goes in the box, the rest opens a "[Block Detail]" window. JellyBitz's public docs
+give the client's internal numbers as wire codes and a 14-byte date; both are wrong (16 bytes).
+
+### 0xA103 (agent -> client)
+
+READ AgentServer 0x402120: content id mismatch -> no reply, disconnect; server not ready or token
+unknown `[2,3]`; credentials differ from the queued login `[2,1]`; registration fails `[2,2]`;
+relay fails `[2,3]`; the shard's 0xA201 error 2 -> `[2,5]`, 6 -> `[2,6]`, else `[2,3]`. Client
+(vslot_018 0x4cf7a0): `[1]` success; 1 -> "(C9)", 2 and 3 -> "(C10)", 4 -> server busy, 5 ->
+insufficient IP, 6 -> `UIIO_CLIENT_START_CONTENT_FAIL_BILLING_FAILED`, other -> nothing.
+
+### Wrong passwords
+
+READ GlobalManager 0x464ac0: failures are counted per account **NAME**, per type (password,
+image code, MOTP), server-wide. `max` is `LoginFailureTolerance`: code default 3 (0x40f3ec), the
+block `LoginFailureBlockTimeMin` code default 10 minutes (0x40f404); this package's server.cfg
+(MEASURED) has tolerance 3 and block time 0. Each failure answers `[2,1,max,used]`. Below `max`
+the connection stays open and the player retries on it. When `used >= max`: `EXEC
+_RegisterAutomatedPunishment '<acct>',1,'<AutomatedPunisher>','<LoginPunishmentGuide>',
+'<LoginPunishmentDescription>',<minutes>` (0x4277a5), the count is cleared, and the gateway sends
+the `[2,1,max,used]` and **closes** the connection (0x4071c7 -> the disconnect at 0x4071e3). Only
+the image code's success (0x6112) clears the history; a right password alone does not. Whether a
+count expires with time: OPEN.
+
+### Already connected
+
+READ GlobalManager 0x401b70 / 0x402220: a JID found in the logged-in table is error 1 ->
+`[2,3]`, and the gateway disconnects the **new** client (0x405e1d). The old session is **not**
+kicked. (The client's text asks the player to try again in 5 minutes.)
+
+### IBUV (the image code)
+
+Always issued for a login whose password is right and that GlobalManager admits (READ). This
+package: `IBUVStringSize 1`, `IBUVCharacterSet "1"` (MEASURED). 0x2322 `u8 flag, u16 n, n bytes`
+(gateway 0x4067ea, client 0x4cd3c0; compression OPEN); 0x6323 `string code`; 0xA323 `[1]` or
+`[2, u32 max, u32 used]` (`UIIT_STT_GLOBAL_AUTHENTICATION_INPUT_ERROR`, filled (max, used), so it
+reads backwards in English). At `IBUVFailureTolerance` (default 3): disconnect and a punishment.
+`IBUVFailureIPTolerance` (0 = off) refuses 0x6102 with `[2,6]` past it (0x405ade).
+
+### What OpenSRO does (round 788)
+
+`session.LoginService` decides every login -- the old OpLogin 0x0001 (whose reply stays a reason
+string, `LegacyReason`), the 0x6102 on OpenSRO's own connection, and the retail listener. In
+retail's order:
+
+| Step | Reply | Close | Label |
+|---|---|---|---|
+| a login on a connection already logged in | `[2,3]` | no | OURS (retail's client has left the gateway by then) |
+| wrong ID or password, below the tolerance | `[2,1,max,used]` | no | READ |
+| wrong ID or password reaching the tolerance | `[2,1,max,used]`, the count cleared, a type-1 block of `-login-failure-block-min` minutes (0 = none) | **yes** | READ (defaults 3 / 10 READ; `-login-punishment-guide` text OURS) |
+| an active login punishment (types 1 and 2) | `[2,2,1, guide, end]`, the end in the server's local time; no end: the begin + 100 years (what the SMC's "Set Infinite Duration" writes, READ SR_UserPunishment.dll 0x10006610) | no | READ |
+| the account store fails | `[2,6]` | no | READ |
+| full (characters in the world >= `-max-players`), not a GM account | `[2,5]` | no | READ (the GM exemption OURS, round 679) |
+| the account logged in on another live session | `[2,3]` | **yes** | READ; the old session is untouched |
+| `-max-users-per-ip` accounts already in from the address (0 = off) | `[2,8]` | **yes** | READ (off by default: OURS) |
+| `-inspection`, not a GM account | `[2,2,2]` | **yes** | READ (GM exemption OURS; retail exempts privileged IPs) |
+| in | `[1, 0, "", 0]` on OpenSRO's connection | no | OURS (no agent hand-off) |
+
+**On the original client's path** (the retail listeners, `internal/retailsrv`): the gateway's
+0x6102 calls `Login` with no session -- the same counting, block, full, already-connected,
+per-IP and inspection decisions, the connection closed as above -- and the account is entered in
+the logged-in table only on the agent connection, by `LoginService.AdmitSession` after the 0x6103
+token checks out; the agent's disconnect releases it. Retail's GlobalManager holds the account from
+its admission at the gateway step, so two logins of one account cannot both reach the agent; on
+OpenSRO a second login can pass the gateway in the seconds before the first one's 0x6103, and its
+0x6103 is then refused with 0xA103 `[2,2]` and the connection closed. AgentServer has no code for
+this case (INFERRED nearest: 2 is its own "user registration failed"; the client shows the same
+"(C10)" for 2 and 3, READ 0x4cf7a0).
+
+OURS choices, each in the code: a successful login clears the name's count (retail: the image
+code's success; OpenSRO has none); a name's count is forgotten an hour after its last failure
+(`LoginFailureExpiry`; retail's expiry OPEN); the password is checked before the block (whether
+`_CertifyTB_User` does the same is OPEN, the procedure is in the account database we do not
+have); an account is released for a new login only after the gateway's OnDisconnect has saved its
+character (the last disconnect hook); the reason on the wire is cut at 511 bytes (the gateway's
+0x200-byte field, 0x415f4c).
+
+## Punishments (READ, round 788)
+
+- **Retail has no in-game persistent ban.** The GM command `Ban` (client command table
+  0x558937..0x559cb3, handler 0x5488b0, one argument) sends 0x7010 `{u16 0x000D, string name}`;
+  `bansel` (0x5427a0) the same with the selected object's name. SR_GameServer case 0x0D
+  (0x51f2c4..0x51f3e7): a name lookup; not found -> 0xB010 `{2, u16 0x1404}`; found ->
+  `FUN_004df050(player, 4)` (the generic force-out), 0xB010 `{1, u16 0x000D}`, the log line
+  "BanPlayer: %s". No database write: a **kick** (INFERRED). No Kick, Block or Mute command exists
+  in the client's table.
+- **Persistent bans are punishment records made from the operator's console** (SMC,
+  `SMPlugins/SR_UserPunishment.dll`): "block login" (1), "block login for inspection" (2), "block
+  p2p trade" (3), "block chat" (4) (INFERRED order, agreeing with the gateway and the game
+  server). Fields: SerialNo, Type, Executor, Shard, CharName, Additional Char Info, Position, Guide
+  For Web, Accident Description, Raised Time, Punish Begin Time, Punish End Time, Sentenced Time,
+  Email/Template. Durations: "Days", "Hours", "Set By Duration", "Set Infinite Duration". Messages
+  "user already blocked" (0x10077d90), "[[NOT Blocked Currently]]" (0x10077e4c).
+- **"Set Infinite Duration" is a date, not a flag** (READ, round 788): its click handler
+  0x10006610 (control 0x41a, registered at 0x1000401f) calls `GetLocalTime` twice, adds 100 to the
+  second one's year (`add WORD PTR [esp+0x10],0x64`, 0x10006635), and puts the first into the
+  Punish Begin Time pickers (controls 0x406/0x407) and the second into Punish End Time
+  (0x408/0x409) with `DTM_SETSYSTEMTIME` (0x1002, helper 0x10017ef0). So an "infinite" block ends
+  100 years after it was set, in the operator's local time. OpenSRO stores no end (NULL) and sends
+  the begin + 100 years on the wire.
+- GlobalManager's procedures: `_RegisterPunishment` (13 arguments), `_UpdatePunishment`,
+  `_QueryActivePunishmet` (sic), `_GetUserJID`, `_RegisterAutomatedPunishment`; `select * from
+  _Punishment where UserJID = %d`.
+- How the gateway treats type 2 is inside `_CertifyTB_User`, which this package's databases do
+  not include (only SRO_VT_SHARD is on the box): the gateway itself knows only certify result 0,
+  3 (blocked) and other (0x415f25-0x415f41). OPEN; OpenSRO treats type 2 as a login block.
+- The SMC's "Online User Ban" (GlobalManager 0x4463a2): not online -> 0xB201 `{2,1}`; online ->
+  0x620D `{u32 JID}` to that user's AgentServer, which disconnects the session (0x403d80, "ban
+  user from division manager : %s").
+- A kicked player is sent nothing first (INFERRED): the client shows its "disconnected" box.
+- Chat and trade blocks (types 4 and 3): the game server keeps `{u8 active, 16-byte end}` per
+  type and answers a chat or trade attempt with 0x3405 `{u8 0 chat / 1 trade, u32 packed time}`.
+  Not implemented (round 788 stores them only).
+
+OpenSRO (round 788): `account.Punishment` / `account_punishments` (type, executor, guide,
+description, raised/begin/end, serial; end NULL = infinite); the old `accounts.blocked` flag is
+migrated once into an infinite type-1 block with its reason. The GM console's `/ban` is retail's
+kick; `/block`, `/unblock` and `/blockinfo` are OURS, standing in for the SMC
+(docs/DEBUG_TOOLS.md).
 
 ## Status / next steps
 

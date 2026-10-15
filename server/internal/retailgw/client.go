@@ -62,6 +62,13 @@ type Conversation struct {
 	// List is the answer once Done.
 	List     ShardList
 	FarmByte bool
+
+	// Round 788 (login_client.go): Login goes on past the list with 0x6102;
+	// Agent makes this an agent connection (0x6103, then the lobby).
+	Login   *LoginParams
+	Agent   *AgentParams
+	shardID uint16
+	events  []LoginEvent
 }
 
 // NewConversation starts one connection's exchange.
@@ -81,7 +88,7 @@ const MaxFrames = 64
 // Frame handles one whole frame from the server.
 func (c *Conversation) Frame(raw []byte) ([][]byte, error) {
 	c.frames++
-	if c.frames > MaxFrames {
+	if c.frames > MaxFrames && c.capped() {
 		return nil, fmt.Errorf("more than %d frames without the list", MaxFrames)
 	}
 	f, err := proto.DecodeRetailFrame(raw, c.sec)
@@ -115,6 +122,9 @@ func (c *Conversation) Frame(raw []byte) ([][]byte, error) {
 		name, _, err := DecodeIdentity(f.Payload)
 		if err != nil {
 			return nil, err
+		}
+		if c.Agent != nil {
+			return c.agentIdentity(name)
 		}
 		if name != GatewayModule {
 			return nil, fmt.Errorf("the server is %q, not %s (the client asks only a gateway for the list)", name, GatewayModule)
@@ -154,9 +164,25 @@ func (c *Conversation) Frame(raw []byte) ([][]byte, error) {
 			}
 			c.List, c.FarmByte = l, farm
 			c.state = stDone
+			if c.Login != nil {
+				return c.sendLogin()
+			}
 			return nil, nil
 		}
 		return nil, nil
+	case stLogin, stCaptcha, stLoginIdle, stAgentAuth, stLobby:
+		op, data := f.Opcode, f.Payload
+		if op == OpMassive {
+			var done bool
+			op, data, done, err = c.massive.Feed(f.Payload)
+			if err != nil {
+				return nil, err
+			}
+			if !done {
+				return nil, nil
+			}
+		}
+		return c.loginFrame(op, data)
 	}
 	return nil, fmt.Errorf("a frame after the list")
 }

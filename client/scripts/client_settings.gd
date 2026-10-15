@@ -35,6 +35,9 @@ const KEY_NAME_PLATE_RANGE := "name_range_from_player"
 ## default), "third_person" or "quarter" -- World3D.CAMERA_VIEW_*.
 const KEY_CAMERA_VIEW := "camera_view"
 
+## [ext_quick_slot] (round 788) belongs to ExtQuickSlotSettings: the
+## Additional Quick Slot bars' options, places and the extra bars' counts.
+
 const SECTION_WORLD := "world"
 ## Which seasonal event decoration sets are drawn (round 583;
 ## SeasonalObjects): a comma list of "christmas", "halloween", "obt" and

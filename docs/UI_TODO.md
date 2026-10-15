@@ -336,6 +336,26 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   (`tpt_window_zangan.ddj`, its use unread — the layout has no frame, so the board has no backdrop),
   the slot icons, the Move button's art (its layout names none). `docs/RE_COMPLETION.md` round 578.
 
+- **The Additional Quick Slot is the client's own** (round 788) -- `CIFExtQuickSlot` (window 133,
+  always present: `0x786f30` -> `0x79c600(1)`), built from the player's `resinfo\ifextquickslot.txt`
+  by the recipe (`HudExtQuickSlot`): the four Type sections picked by `vertical * 2 + twoLines`
+  (`0x65ef70`), children reversed (rule 9), zero rects at the art's size (rule 4), buttons with
+  `_focus` / `_press` (rule 6), the window sized from its WND strip with the slots hanging outside it
+  (rule 13's spirit, `0x65f12e`). Its ten slots are the bottom bar's quick slots 41..50, lent
+  (`HudUnderbar.lend_slot`), so icons, counts, re-use display, drops, right-click use and pick-up are
+  the slot's own. apply() in the READ order with the alpha rules and the collapsed-Transparent
+  quirk, collapse with the art swap, HORI / VERT, the drag with no clamp, the two locks, the
+  READ default place and the right/bottom clamp on show. The option window
+  (`CIFExtQuickSlotOption : CIFMainFrame`, section Option's child 5, 290x223 on `msgbox2_window_`)
+  is a `HudWindow` framed by that def (`registry: {"def": ...}`, new this round), its controls from
+  `ifextquickslotoption.txt`, Apply / Confirm / close X / OPT-again as READ, placed beside the
+  header by `0x65eb10`'s rule. **Found:** the parser dropped a rect with three numbers whole
+  (`GDR_EXT_QUICKSLOT_OK_BTN` "63,185,0", the archive's only one; MEASURED across all 229 layouts);
+  it now keeps x and y. **OURS:** extra bars with pages of new quick slots 51..250 and a page footer
+  (measured from the user's screenshots), Alt+digit, the Bars / Pages row in an extra bar's option
+  window, options and places kept in `settings.cfg`. `docs/protocol/ext_quick_slot.md` has the
+  record; what is left is in `docs/TODO.md` ("The Additional Quick Slot and the extra bars").
+
 ### Tools for this lane
 `client/tools/dump_layout.gd` prints one layout in declaration order with every rect, alignment
 and font index. `dump_window_tree.gd` builds a real `HudWindow` and prints the resulting nodes

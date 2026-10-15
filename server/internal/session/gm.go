@@ -157,6 +157,13 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 	if deps.Clock == nil {
 		deps.Clock = gmClock{hub: hub}
 	}
+	// Round 788: /block refuses a GM's account; /ban kicks from the world.
+	if deps.IsGMAccount == nil {
+		deps.IsGMAccount = gate.Allows
+	}
+	if deps.Sessions == nil {
+		deps.Sessions = GMSessions{Hub: hub}
+	}
 	// Round 764's review, F3: a GM's zone change may name any spot.
 	zoneSpotGate.Store(gate)
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {

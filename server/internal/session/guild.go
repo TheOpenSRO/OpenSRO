@@ -597,6 +597,19 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})
 	}
 
+	// The name filter (round 788): SR_ShardManager 0x43b810 runs 0x40f200 --
+	// the character name's rule, with the same AbuseFilter group -- after its
+	// 2..12-byte test and before the name-exists one, answering 0x4c19. Our
+	// store's Create holds the in-a-guild, length and exists tests in the
+	// engine's order, so the filter goes between them here: a valid-length
+	// name the filter refuses, from a founder in no guild, is refused; any
+	// other case is left to Create, which answers as before.
+	if guild.ValidName(req.GuildName) && !NameFilter().NameOK(req.GuildName) {
+		if _, err := guilds.GuildIDOf(ctx, characterID); errors.Is(err, guild.ErrNotInGuild) {
+			return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: guildErrorMessage(guild.ErrNameNotAllowed)}).Encode()})
+		}
+	}
+
 	g, err := guilds.Create(ctx, req.GuildName, characterID, req.CharacterName)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})
@@ -677,6 +690,10 @@ func guildErrorMessage(err error) string {
 	case errors.Is(err, guild.ErrInvalidNameLength):
 		// 0x4c18 GUILDERR_INVALID_GUILDNAME_LEN; the range is guild.ValidName's.
 		return "guild name must be 2 to 12 characters"
+	case errors.Is(err, guild.ErrNameNotAllowed):
+		// 0x4c19 GUILDERR_NOT_ALLOWED_GUILDNAME. Our wording: OpenSRO's guild
+		// wire (0x0090/0x0091) carries a text, not the code.
+		return "that guild name is not allowed"
 	case errors.Is(err, guild.ErrCreatorDead):
 		// 0x4c07 GUILDERR_IM_DEAD. Our wording; the client's text is not used.
 		return "cannot found a guild while dead"
