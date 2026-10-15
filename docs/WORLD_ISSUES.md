@@ -7483,6 +7483,87 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-eighty-eighth round: Account & login as the original (login replies, bans, names, the original client both ways), the account PIN, the Additional Quick Slot bars
+
+The user (2026-10-15): "let's get the account and login section 100%. Make sure you check the
+original code and make it as accurate possible and make no mistakes." Mid-round: the PIN feature
+("Character Lock", a screenshot from a private server; "on the verify stage ... it picks a random
+position for all of the digits") and the hotbars ("moveable and can [have] some settings. Check
+the game code to match the exact behavior", five screenshots from a private server).
+
+The user's decisions: retail login **both ways** (the original client to OpenSRO up to character
+select, and our client to original servers); the PIN per ACCOUNT at character select, optional
+(operator flag to require it), 4 digits, 5 wrong -> locked 30 minutes, "remember this PC" by a
+server-kept device token; the retail extra quick slot bar exactly, **plus** a second paged bar of
+our own, built so more can be added through settings.
+
+Seven lanes, each with its own notes (READ / MEASURED / INFERRED / OURS / OPEN, with addresses):
+
+| Lane | Notes | What |
+|---|---|---|
+| research | (coordinator) | The login exchange, its codes and texts (GatewayServer, GlobalManager, AgentServer, sro_client); bans and punishments (SR_GameServer, the SMC); the name filter (SR_ShardManager, sro_client); the PIN (absent); the Additional Quick Slot |
+| S | `docs/rounds/r788s.md` | One `session.LoginService` for every front door: retail's wrong-password count and automatic block, punishments, already connected, inspection, full, per-IP; typed punishments (`account_punishments`); `/ban` (retail's kick), `/block`, `/unblock`, `/blockinfo` |
+| N | `docs/rounds/r788n.md` | The original name rule (CStringCheck, AbuseFilter.txt, the 54 SQL words) on server and client, for characters and guilds |
+| C | `docs/rounds/r788c.md` | The client's login: 0x6102/0xA102 on our wire, every refusal's text in the title's message line, the 3 s lock, the disconnect box; logging in to original servers (the image code, the agent, the character list) |
+| R | `docs/rounds/r788r.md` | Retail gateway and agent listeners: the ORIGINAL sro_client.exe logs in to OpenSRO and shows its character list |
+| P | `docs/rounds/r788p.md`, `docs/protocol/pin.md` | The account PIN ("Character Lock"), OURS: retail has none |
+| H | `docs/rounds/r788h.md`, `docs/protocol/ext_quick_slot.md` | The Additional Quick Slot bar as the original, and OpenSRO's paged extra bars |
+
+### Corrections to what the project believed
+
+- **0x6111 / 0x6112 were the wrong way round** in `login.md`: 0x6111 is the FAILURE report to
+  GlobalManager, 0x6112 the success (READ GatewayServer 0x406b45 / 0x406ccf).
+- **JellyBitz's A102 codes are the client's internal numbers**, not the wire's, and its
+  punishment date is 14 bytes where the wire's is 16 (an ODBC TIMESTAMP_STRUCT).
+- **The research's "modal box" for login refusals was wrong** (INFERRED, then MEASURED): the real
+  client under Wine showed the wrong-password text as a line in the title's bottom band; 0x8613b0
+  writes window 500 (`GDR_TEXT_MESSAGE`). Lane C built the line (lane C's notes).
+- **The SQL-word list is 54 entries, not 45** (lane N, 0x5261c0).
+- **The extra quick slot bar's slots do show tooltips** (lane H: vslot 19 forwards the hover to the
+  target slot) -- the research said none.
+- **`_BlackNameList` (7,640 rows) is read by nothing** we have: no procedure, no server binary.
+- **There is no retail PIN** in vSRO 1.188 (client, Gateway, Agent, Shard, Game): FEATURES.md's
+  "retail PIN keypad" was wrong.
+- **Retail's in-game "Ban" is a kick** (SR_GameServer case 0x0D, 0x51f2c4: force-out, no DB write);
+  lasting bans were the operator console's punishments, and "Set Infinite Duration" is begin + 100
+  years (SR_UserPunishment.dll 0x10006635, lane S).
+
+### The coordinator's merge fixes
+
+- **The original client's agent bypassed the PIN.** Lane R's agent got the bare lobby handler, so on
+  an account with a PIN its delete and restore went through. `main.go` now hands the agent the lobby
+  behind `session.CharacterLockGate`; `retailsrv.TestRetailAgentHonoursThePin` (list works, delete
+  refused 0x40e, the character not marked).
+- **The select screen asked a legacy server for the PIN status** (0x0120, dropped by the retail
+  adapter, then a 3 s wait before every Start). `CharacterSelect._setup_lock` skips the query on a
+  legacy agent.
+
+### Tests on the merged tree (feat/acct788)
+
+- `go build ./... && go vet ./... && go test -count=1 ./...`: **78 packages ok, exit 0**.
+- `remote_godot.sh check`: **842 scripts and 9 scenes, ALL LOAD**; `remote_godot.sh tests`:
+  **324 suites, 0 failing** (`RENDER_DIR=/opt/opensro-client-acct788`).
+- **Live, the merged client against the merged server** (render box, `/var/tmp/acct788live/live.sh`,
+  in-memory server): three wrong 0x6102 answered `[2,1,3,1]`, `[2,1,3,2]`, `[2,1,3,3]`, then the
+  right password `[2,2,1,"Too many wrong passwords. Please try again later.", +10 min]` (MEASURED,
+  the raw replies). The client: a wrong password -> "You have entered the incorrect password! Please
+  try again! Out of a maximum of 3 attempts, you have used 1 attempt(s)."; the auto-blocked account
+  -> the three-line ban text (ACCOUNT_STOP, "Account Ban Reason:" + reason, "Unban Time/Date:" +
+  date) in the bottom band; the right password on a clean account -> character select.
+- **The ORIGINAL client** (lane R, under Wine on the box): handshake, our shard in its list, its own
+  wrong-password line, the agent, its character select with the account's character, Start refused
+  with its own "(S1039)" text (frames and the packet log in `/var/tmp/r788r-proof/` on the box).
+- Not tested: login to a REAL retail server (the Go fake and lane R's listener only); the PIN's
+  5-wrong lockout live (handler tests cover it).
+
+### What is still OPEN (details in each lane's notes and docs/TODO.md)
+
+The original client in the world (its world protocol); IBUV on OpenSRO's retail gateway (skipped,
+OURS: the client's A102 reader does not need it); retail's wrong-password count expiry; punishment
+type 2's exact handling in `_CertifyTB_User`; chat and trade blocks (stored, not enforced); the
+deployed client's runtime language group under the vPlus DLL; the "[Block Detail]" window; what the
+private server's paged quick slot bar binds to.
+
 ## Seven-hundred-and-eighty-sixth round
 
 ### Round 786 (part): Waterfall sparkles and glow match the original

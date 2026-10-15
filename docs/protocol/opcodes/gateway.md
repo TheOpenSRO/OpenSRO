@@ -221,7 +221,8 @@ Timeout!" past 10000 ms, 0x409fc9, swept every 3 s).
 **IBUV skipped (OURS):** retail always sends the 0x2322 image after a right password and answers
 0xA102 only after a right code. The client's 0xA102 reader checks only the result byte (READ
 0x4cf500: token to net+0x38, host +0x3c, port +0x58, close, connect; no IBUV state is read), so
-OpenSRO answers 0xA102 straight away. The image's blob format is not known (RESEARCH).
+OpenSRO answers 0xA102 straight away. (The image's blob is READ since -- a zlib stream of a 1-bit
+picture, "Logging in (round 788)" below -- so the step could be added; it was not, OURS.)
 
 ### 0x6103 -> 0xA103 on the retail agent (READ, AgentServer 0x402120)
 
