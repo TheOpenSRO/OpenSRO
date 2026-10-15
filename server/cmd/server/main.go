@@ -33,6 +33,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/OpenSRO/OpenSRO/server/internal/nest"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -943,6 +944,18 @@ func main() {
 			"on a client's own characterdata_*.txt and itemdata_*.txt, round 682): the 52 bodies and 52 starting items a "+
 			"new character may be made from, and the two ammunition rows. Without it every character create is refused "+
 			"(0x403) -- the server cannot tell what it may make. A configured path that does not load is fatal.")
+	abuseFilter := flag.String("abuse-filter", os.Getenv("OPENSRO_ABUSE_FILTER"),
+		"path to an AbuseFilter.txt (env OPENSRO_ABUSE_FILTER; round 788): the operator's own -- the copy beside "+
+			"SR_ShardManager.exe, or a client's Media.pk2 server_dep\\silkroad\\textdata\\abusefilter.txt -- never "+
+			"shipped. Its group for -abuse-filter-locale gives the characters a new character or guild name may "+
+			"use and the words it may not contain or be, as SR_ShardManager's 0x40f200 applies them. Without it "+
+			"names are limited to [0-9A-Za-z_] and the compiled-in SQL words, and no word list applies. A "+
+			"configured path that does not load is fatal. See deploy/README.md, \"Name filter\".")
+	abuseFilterLocale := flag.String("abuse-filter-locale", os.Getenv("OPENSRO_ABUSE_FILTER_LOCALE"),
+		"which AbuseFilter.txt group -abuse-filter reads, as server.cfg's LOCALE names it (env "+
+			"OPENSRO_ABUSE_FILTER_LOCALE): KOREA 0, CHINA 1, TAIWAN 2, JAPAN 3, VIETNAM 5, ENGLISH 4, with or "+
+			"without retail's LOCALE_ prefix; an unknown name reads group 4, as SR_ShardManager does. Unset, "+
+			"ENGLISH (OURS; the reference server.cfg says LOCALE_VIETNAM).")
 	charDefaultsDir := flag.String("chardefaults-dir", os.Getenv("OPENSRO_CHARDEFAULTS_DIR"),
 		"a directory holding the shard DB's _RefCharDefault_SkillMastery.csv, _RefCharDefault_Skill.csv and "+
 			"_RefCharDefault_Quest.csv as exported (env OPENSRO_CHARDEFAULTS_DIR; EXTERNAL, round 692): a new "+
@@ -1799,6 +1812,32 @@ func main() {
 		logger.Info("creatable catalogue loaded: characters can be created", "path", *chargenCSV, "ids", chargen.Len())
 	} else {
 		logger.Warn("no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
+	}
+	// The name filter (round 788): SR_ShardManager's AbuseFilter.txt group
+	// for its locale, applied to every new character and guild name
+	// (session.LobbyNameCode, the guild create).
+	{
+		locale := *abuseFilterLocale
+		if locale == "" {
+			locale = "ENGLISH"
+		}
+		group, known := namefilter.GroupForLocale(locale)
+		if !known {
+			logger.Warn("unknown -abuse-filter-locale: group 4 (ENGLISH) is read, as SR_ShardManager does", "locale", locale)
+		}
+		if *abuseFilter != "" {
+			nf, err := namefilter.LoadFile(*abuseFilter, group)
+			if err != nil {
+				logger.Error("loading the name filter", "path", *abuseFilter, "err", err)
+				os.Exit(1)
+			}
+			rows, substr, whole := nf.Counts()
+			logger.Info("name filter loaded", "path", *abuseFilter, "locale", locale, "group", group,
+				"allow_rows", rows, "substring_words", substr, "whole_words", whole)
+			session.SetNameFilter(nf)
+		} else {
+			logger.Warn("no name filter word list (-abuse-filter / OPENSRO_ABUSE_FILTER): new names are limited to [0-9A-Za-z_] and the SQL words, no AbuseFilter words apply -- see deploy/README.md \"Name filter\"")
+		}
 	}
 	// A new character's default masteries, skills and quests (round 692):
 	// the shard DB's _RefCharDefault_* tables, as _AddNewChar applies them
