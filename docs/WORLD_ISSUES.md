@@ -7564,6 +7564,12 @@ type 2's exact handling in `_CertifyTB_User`; chat and trade blocks (stored, not
 deployed client's runtime language group under the vPlus DLL; the "[Block Detail]" window; what the
 private server's paged quick slot bar binds to.
 
+- **Deployed (the Mac mini):** the server at 8233c4f5 at the user's request (2026-10-15 11:35
+  local: `opensro-server.prev` kept; boot clean, 0 `level=ERROR`; `account_punishments`,
+  `character_locks` and `character_lock_devices` created, no `blocked` accounts to carry over;
+  PIN optional; no `-abuse-filter` on prod yet, so new names get the character rule and the SQL
+  words only). `run.sh` unchanged.
+
 ## Seven-hundred-and-eighty-sixth round
 
 ### Round 786 (part): Waterfall sparkles and glow match the original
