@@ -134,7 +134,7 @@ const SLOTS: Array = [
 ## The keys the dispatcher 0x780610 answers outside the slot table, and the
 ## few this client adds (read unless marked). Kept as a list so the help and
 ## a future rebinding window can show them; resolve() is what acts on them.
-## `mods` is "", "ctrl" or "space" (Space held, as GetKeyState(VK_SPACE) at
+## `mods` is "", "ctrl", "alt" (ours) or "space" (Space held, as GetKeyState(VK_SPACE) at
 ## 0x780c11 tests it).
 const OTHER_KEYS: Array = [
 	# 0x60a730(0..3): quick-slot pages 1..4 (raw-VK table 0x780da8/0x780d78).
@@ -145,6 +145,9 @@ const OTHER_KEYS: Array = [
 	# With Space held, edi = 0x28 (0x780c1c): 0x60bb80(0x28 + k), and k >= 11
 	# is taken as it is -- quick slots 41..50, which no page shows.
 	{"keys": "1-9, 0", "mods": "space", "action": "quickslot", "source": "read 0x780c11, 0x60bb80(41..50)"},
+	# The first OURS extra quick-slot bar (round 788, HudExtQuickSlots): its
+	# page's slot k. Retail's Alt+digit is unread.
+	{"keys": "1-9, 0", "mods": "alt", "action": "ext_quickslot", "source": "ours (round 788)"},
 	# Ctrl held (GetKeyState(VK_CONTROL), 0x780c21) and '1'..'8' (the range
 	# test `key - 0x31 < 8`): 0x77f230. '1' selects the player
 	# (0x78f5f0(player+0xf8)); '2'..'8' select the quick party window's
@@ -270,6 +273,13 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 		# k = 1..9 for '1'..'9', 10 for '0'.
 		if space_held:
 			return ["quickslot", 40 + digit]
+		# OURS (round 788): Alt+digit fires the first extra quick-slot bar's
+		# slot k on its page (HudExtQuickSlots). Retail's own Alt+digit is
+		# unread (its message map has no WM_SYSKEYDOWN); every other
+		# modifier+digit is taken -- Space (41..50) and Ctrl (select) by
+		# retail, Shift by retail's plain digit (0x780610 tests no Shift).
+		if alt:
+			return ["ext_quickslot", digit]
 		return ["quickslot_key", digit]
 	if keycode == KEY_F9:
 		return ["camera_cycle", 0]

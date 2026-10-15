@@ -55,7 +55,8 @@ do nothing for now. A window to change the keys is not built yet.
 | R | Reply to the last whisper (opens the chat line with `$<name> `, the game's own whisper line) |
 | 1 ... 9, 0 | Use the hotbar's slots on the current page |
 | F1 ... F4 | Hotbar pages 1 to 4 |
-| Space + 1 ... 0 | Use hidden quick slots 41 to 50 |
+| Space + 1 ... 0 | Use quick slots 41 to 50: the Additional Quick Slot bar's ten |
+| Alt + 1 ... 0 | Use the extra bar's slots on its current page (this client's own; see **The extra quick slot bars**) |
 | F9 | Next camera view |
 | F10 | Hide or show the UI (the original's F10 is the item mall, which this client does not have) |
 | Print Screen | Save a screenshot: a `.jpg` in the `screenshots` folder beside the `logs` folder that `/log` opens (the chat line says the full path) |
@@ -71,8 +72,9 @@ While the chat line (or any other text box) is open, the letter and number
 keys type into it; the F keys, Shift+F1 to F3 and Print Screen still work.
 
 As in the original, Ctrl, Shift and Alt do not change a key: Ctrl+S opens
-Skills like S. The exceptions are Ctrl+1 to 8 (select) and Shift+F1 to F3
-(developer panels); Alt+Tab, Alt+F4 and Alt+Space are left to your system.
+Skills like S. The exceptions are Ctrl+1 to 8 (select), Shift+F1 to F3
+(developer panels) and Alt+1 to 0 (the extra quick slot bar, this client's
+own); Alt+Tab, Alt+F4 and Alt+Space are left to your system.
 
 Click an NPC to talk, buy, or use storage. An NPC or a teleport gate too far
 away is walked to first, as in the original: the ring shows where you are
@@ -109,6 +111,37 @@ two, or anywhere off the bar to take it off). The arrows beside the slots flip
 between four pages -- also while an icon is on the cursor, to put it on another
 page. A skill needs a **target**: click a monster first, then
 cast.
+
+## The extra quick slot bars
+
+**The Additional Quick Slot** is the original's: a bar of ten more quick
+slots, always on screen (at first on the right, under the minimap). Its slots
+are quick slots 41 to 50, used with **Space + 1 ... 0** or a right click, and
+filled like the bottom bar's -- click a skill or item, then a slot; click a
+slot to pick its icon up. Hovering a skill shows its tooltip beside the slot.
+It has four buttons on its header:
+
+- the long arrow folds the bar down to its header, and opens it again;
+- the right arrow lays it out in a row, the down arrow in a column;
+- the four-way cross opens its **Option** window: *Transparent* (see the
+  world through the bar), *Lock Slots* (a click no longer picks an icon up;
+  you can still put one down), *Lock Toolbar* (the bar can no longer be
+  dragged) and *Two Lines* (two rows or columns of five instead of one of
+  ten). **Apply** applies and keeps the window open, **Confirm** applies and
+  closes it, the close button closes it without applying.
+
+Drag the bar by its header to move it.
+
+**The extra bars are this client's own.** Beside the original bar there is
+one more of the same kind, with pages: the arrows at its foot (or right end)
+turn the pages, labelled F5, F6, ... ; each page is ten slots of its own.
+**Alt + 1 ... 0** uses the first extra bar's current page. Its Option window
+has one more row, **Bars** and **Pages**: set how many extra bars to show (1
+to 4) and how many pages each has (1 to 5), then Apply or Confirm. The
+original bar's options, every bar's options, and where each bar was left are
+remembered between sessions, in the `[ext_quick_slot]` section of
+`settings.cfg` (the original game forgets the place when it closes). What the
+slots hold is kept with the rest of your hotbar, for each character.
 
 ## Moving items
 

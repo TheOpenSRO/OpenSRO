@@ -191,6 +191,26 @@ const SP_EXP_PER_POINT := 400.0
 ## `0x60afe0` widens the menu by this much plus the widest caption's overrun.
 const MENU_FIT_MARGIN := 10
 
+## The Additional Quick Slot bar (CIFExtQuickSlot, round 788; HudExtQuickSlot)
+## shows quick slots 41..50 -- the ones no page shows. READ: its ten
+## CIFExtQuickSlotSlot are proxies bound to this bar's slots 41..50 (0x65fc70,
+## binding loop 0x65ef70 over +0x478..+0x49c), drawing the target at the
+## proxy's place (0x65fb00). Here the slot's own node is lent to that window
+## (lend_slot) and drawn there; this bar keeps it registered, so every call
+## by index (icons, counts, re-use display, seals, drops, the right-click use)
+## reaches it unchanged.
+const EXT_FIRST_SLOT := 41
+## OURS (round 788): the extra bars past retail's one (HudExtQuickSlots) take
+## quick slots from 51 on, P pages of ten each -- room reserved for
+## EXT_BARS_MAX bars of EXT_PAGES_MAX pages, so raising either count changes
+## no stored format. Retail's MAX_QUICKSLOT 0x33 (0..50) is unchanged.
+const EXT_SLOT_BASE := 51
+const EXT_BARS_MAX := 4
+const EXT_PAGES_MAX := 5
+## Every quick slot index this client knows: 0..50 (retail's) and 51..250
+## (OURS).
+const SLOT_COUNT := EXT_SLOT_BASE + EXT_BARS_MAX * EXT_PAGES_MAX * 10
+
 ## Children every quick-slot node gets for its icon and stack count, as the
 ## `.txt` builder's slots had them (UiBuilder._build_slot).
 const ICON_NODE := "ItemIcon"
@@ -213,6 +233,9 @@ var _page := 0
 var _slot_nodes: Dictionary = {} # quick slot index (0..50) -> Control
 ## The quick slots the page last shown made visible.
 var _page_slots: Array[int] = []
+## Quick slots whose node another window draws (lend_slot): index -> true.
+## No page shows or hides them.
+var _lent := {}
 
 ## Whether setup() has run. It builds once: World3D adds the bar to the tree,
 ## whose _ready runs setup, and it used to call setup again after placing it,
@@ -391,7 +414,8 @@ func _register_slot(index: int, node: Control) -> void:
 		# LEFT click picks the icon up instead (0x652540's release).
 		if mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and inside:
 			quickslot_activated.emit(index)
-		elif mb.button_index == MOUSE_BUTTON_LEFT and inside and HeldIcon.is_pick_click(mb) and slot_has_item(index):
+		elif mb.button_index == MOUSE_BUTTON_LEFT and inside and HeldIcon.is_pick_click(mb) and slot_has_item(index) \
+				and not bool(node.get_meta(PICK_LOCK_META, false)):
 			quickslot_pick_requested.emit(index)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_MIDDLE:
 			activate_mouse_slot())
@@ -840,7 +864,7 @@ func _select_page(page: int) -> void:
 	_set_label(ID_PAGE_LABEL, PAGE_LABEL_FORMAT % (page + 1))
 	_page_slots.clear()
 	for index in _slot_nodes:
-		if int(index) == MOUSE_SLOT:
+		if int(index) == MOUSE_SLOT or _lent.has(int(index)):
 			continue
 		(_slot_nodes[index] as Control).visible = false
 	for k in SLOTS_PER_PAGE:
@@ -878,10 +902,72 @@ func activate_mouse_slot() -> void:
 	quickslot_activated.emit(MOUSE_SLOT)
 
 ## Fires a quick slot by its index, 0..50 (0x60bb80 with k >= 11 takes k as
-## it is: Space+digit's 41..50, which no page shows).
+## it is: Space+digit's 41..50, which no page shows), or an OURS extra bar's
+## slot (51.., HudExtQuickSlots).
 func activate_slot(slot_index: int) -> void:
-	if slot_index >= 0 and slot_index < MAX_QUICKSLOT:
+	if slot_index >= 0 and slot_index < SLOT_COUNT:
 		quickslot_activated.emit(slot_index)
+
+# --- slots drawn by another window (round 788) ------------------------------
+
+## Set on a slot node whose pick-up is off: the Additional Quick Slot's Lock
+## Slots (READ: 0x65f390 sets each proxy's +0x64 through 0xb9daf0, and the
+## left-button release 0x6525b1 picks up only while it is set).
+const PICK_LOCK_META := "opensro_pick_locked"
+
+## Hands quick slot `index`'s node to another window to draw (the caller
+## re-parents it), or null. 41..50 are the bar's own hidden slots (the
+## Additional Quick Slot's, READ); 51..SLOT_COUNT-1 are made here on first
+## asking (OURS extra bars). The node stays registered: every call by index
+## reaches it, and no page shows or hides it from now on.
+func lend_slot(index: int) -> Control:
+	if index < EXT_FIRST_SLOT or index >= SLOT_COUNT:
+		return null
+	var node: Control = _slot_nodes.get(index)
+	if node == null:
+		if index < MAX_QUICKSLOT or bar_root == null:
+			return null
+		node = Control.new()
+		node.name = "ExtSlot%d" % index
+		node.size = Vector2(32, 32)
+		_register_slot(index, node)
+	_lent[index] = true
+	return node
+
+## Takes back a lent slot whose window is going away: an OURS slot (51..) is
+## forgotten -- its node goes with its window, and what it held stays in the
+## caller's tables -- and one of 41..50 comes back to the bar, hidden.
+func release_slot(index: int) -> void:
+	if not _lent.has(index):
+		return
+	_lent.erase(index)
+	var node: Control = _slot_nodes.get(index)
+	if index >= MAX_QUICKSLOT:
+		_slot_nodes.erase(index)
+		return
+	if node != null and bar_root != null and is_instance_valid(node):
+		if node.get_parent() != null:
+			node.get_parent().remove_child(node)
+		bar_root.add_child(node)
+		bar_root.move_child(node, 0)
+		node.visible = false
+		node.set_meta(PICK_LOCK_META, false)
+
+## Whether another window draws this quick slot.
+func is_lent(index: int) -> bool:
+	return _lent.has(index)
+
+## Every quick slot that has a node, ascending.
+func slot_indices() -> Array:
+	var out: Array = _slot_nodes.keys()
+	out.sort()
+	return out
+
+## Turns a slot's pick-up off or on (PICK_LOCK_META).
+func set_slot_pick_locked(index: int, locked: bool) -> void:
+	var node: Control = _slot_nodes.get(index)
+	if node != null:
+		node.set_meta(PICK_LOCK_META, locked)
 
 ## How a quick slot is named to the player: "M" for the "m" slot, else its
 ## number key on its page (1..9, 10).

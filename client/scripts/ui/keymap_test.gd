@@ -254,9 +254,16 @@ func _check_modifiers() -> void:
 		_check(g_key[0] == [["pickup", 13]], "%s+G picks up (ran %s)" % [mods[0], g_key[0]])
 		var f9 := _what_mod(KEY_F9, mods)
 		_check(f9[0] == [["camera_cycle", 0]], "%s+F9 cycles the camera (ran %s)" % [mods[0], f9[0]])
-	for mods in [["shift"], ["alt"]]:
-		var one := _what_mod(KEY_1, mods)
-		_check(one[0] == [["quickslot_key", 1]], "%s+1 fires the page's slot 1 (ran %s)" % [mods[0], one[0]])
+	var shift_one := _what_mod(KEY_1, ["shift"])
+	_check(shift_one[0] == [["quickslot_key", 1]], "shift+1 fires the page's slot 1 (ran %s)" % [shift_one[0]])
+	# Round 788, OURS: Alt+digit is the first extra quick-slot bar's (retail's
+	# Alt+digit is unread -- WM_SYSKEYDOWN is not in its message map).
+	var alt_one := _what_mod(KEY_1, ["alt"])
+	_check(alt_one[0] == [["ext_quickslot", 1]], "alt+1 fires the extra bar's slot 1 (ran %s)" % [alt_one[0]])
+	var alt_zero := _what_mod(KEY_0, ["alt"])
+	_check(alt_zero[0] == [["ext_quickslot", 10]], "alt+0 fires the extra bar's slot 10 (ran %s)" % [alt_zero[0]])
+	var ctrl_alt_two := _what_mod(KEY_2, ["ctrl", "alt"])
+	_check(ctrl_alt_two[0] == [["select_party", 1]], "Ctrl wins over Alt: Ctrl+Alt+2 selects (ran %s)" % [ctrl_alt_two[0]])
 	for mods in [["ctrl"], ["alt"]]:
 		var f1 := _what_mod(KEY_F1, mods)
 		_check(f1[0] == [["page", 1]], "%s+F1 selects page 1 (ran %s)" % [mods[0], f1[0]])

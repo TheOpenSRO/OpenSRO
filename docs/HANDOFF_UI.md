@@ -185,6 +185,24 @@ The user has supplied screenshots from a running private server (DUCKROAD). Two 
 For UI specifically that split matters: the *window shapes and layout* are the real client and are
 trustworthy; custom buttons and event banners are not.
 
+## The quick slot bars and who owns which slot (round 788)
+
+The quick slots are one table, indexed 0..250, kept by `HudUnderbar` (`slot_node`, `set_slot_item`,
+`slot_index_at` ...) whatever window draws them; World3D's `_quickslot_skills / _items / _actions`
+and `HotbarStore` (`user://quickslots.cfg`) hold what is on them, by index.
+
+| slots | drawn by | file |
+|---|---|---|
+| 0 ("m"), 1..40 (pages F1..F4) | the bottom bar, `CNIFUnderMenuBar` | `hud_underbar.gd` |
+| 41..50 | the Additional Quick Slot (retail's `CIFExtQuickSlot`), lent by the bottom bar | `hud_ext_quick_slot.gd` (bar 0) |
+| 51..250 | OpenSRO's extra bars (OURS), 4 bars x 5 pages x 10 reserved | `hud_ext_quick_slot.gd` (bars 1..), `hud_ext_quick_slots.gd` |
+
+A window that draws another's slots calls `HudUnderbar.lend_slot(i)` and re-parents the node it
+gets; `release_slot(i)` gives it back. Never build a second node for a quick slot: every path by
+index (World3D's drops, the cooldown loop, the seals, the counts, the tooltip) reaches the lent one.
+`ExtQuickSlotLayout` holds the arithmetic (pages, places, the footer), `ExtQuickSlotSettings` the
+`[ext_quick_slot]` section of `settings.cfg`. `docs/protocol/ext_quick_slot.md` has the record.
+
 ## Running and verifying
 
 ```
