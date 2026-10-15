@@ -7,6 +7,7 @@ import (
 
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // LoginAttempt is one login as any front door sees it: OpenSRO's own
@@ -57,5 +58,32 @@ func (s *LoginService) Login(ctx context.Context, a LoginAttempt) LoginOutcome {
 		return LoginOutcome{Ack: LoginAck{Code: LoginErrPassword}}
 	default:
 		return LoginOutcome{Ack: LoginAck{Code: LoginErrFailed}}
+	}
+}
+
+// GatewayLoginHandler answers retail's 0x6102 on OpenSRO's own connection
+// with retail's 0xA102 (round 788). The session stays open unless the
+// outcome says to close it; then the reply is written out first
+// (gateway.ErrEndSession drains the queue).
+func GatewayLoginHandler(svc *LoginService) gateway.Handler {
+	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+		if p.Opcode != OpGatewayLogin {
+			return nil
+		}
+		req, err := DecodeGatewayLoginRequest(p.Data)
+		var out LoginOutcome
+		if err != nil {
+			out = LoginOutcome{Ack: LoginAck{Code: LoginErrFailed}, Close: true}
+		} else {
+			out = svc.Login(ctx, LoginAttempt{Username: req.Username, Password: req.Password,
+				Remote: sess.RemoteAddr(), Session: sess})
+		}
+		if err := sess.Send(&proto.Packet{Opcode: OpGatewayLoginAck, Data: out.Ack.Encode()}); err != nil {
+			return err
+		}
+		if out.Close {
+			return gateway.ErrEndSession
+		}
+		return nil
 	}
 }

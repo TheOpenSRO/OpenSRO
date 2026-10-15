@@ -2214,6 +2214,9 @@ func main() {
 		// The GM accounts pass both (round 679's review: staff test under
 		// inspection).
 		session.LoginGate(serverStatus, gmGate.Allows, session.LoginHandler(accounts)),
+		// Retail's 0x6102 -> 0xA102 on our framing (round 788): the same
+		// LoginService decides every login, whatever wire it came in on.
+		session.GatewayLoginHandler(&session.LoginService{Accounts: accounts}),
 		session.RegisterHandler(registerer),
 		// The character lobby on retail's 0x7007/0x7001 (round 682): list,
 		// create (dressed in what the player chose, plus the shield or
