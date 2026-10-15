@@ -60,9 +60,10 @@ func secret(op uint16) bool {
 	return op == OpLogin || op == OpAgentLogin
 }
 
-// packetLog is the listener's packet log: every message after the handshake,
-// each way, at Debug with its bytes (Info for the login and lobby ones, so a
-// run shows the whole exchange without -debug), passwords never.
+// packetLog is the listener's packet log (OURS): every message after the
+// handshake, each way, with its bytes, at Info -- except the keep-alive and
+// the server list the client asks for every 5 s on its title screen, at
+// Debug. A 0x6102 / 0x6103 body is withheld: it carries the password.
 func packetLog(c *Config, listener string) func(fromServer bool, op uint16, payload []byte) {
 	return func(fromServer bool, op uint16, payload []byte) {
 		dir := "recv"
@@ -74,7 +75,7 @@ func packetLog(c *Config, listener string) func(fromServer bool, op uint16, payl
 			data = "(withheld: carries a password)"
 		}
 		lvl := slog.LevelInfo
-		if op == OpKeepAlive {
+		if op == OpKeepAlive || op == OpShardListReq || op == OpShardList {
 			lvl = slog.LevelDebug
 		}
 		c.logger().Log(context.Background(), lvl, "retail "+listener+" packet", "dir", dir, "opcode", hexOp(op), "size", len(payload), "data", data)

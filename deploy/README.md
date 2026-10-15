@@ -1542,7 +1542,8 @@ and port in its own archive (`DIVISIONINFO.TXT`, `GATEPORT.TXT` in Media.pk2): p
 the server (DNS, the PC's hosts file) and listen on that port, or edit the archive. The client
 also binds TCP 15779 on its own PC as a single-instance guard, so OpenSRO's own listener and the
 original client cannot share a machine on that port. Every message each way is logged as
-`retail gateway packet` / `retail agent packet` with its bytes (passwords withheld).
+`retail gateway packet` / `retail agent packet` with its bytes (passwords withheld; the keep-alive
+and the 5-second server-list refresh at Debug).
 
 ```sh
 ./server -retail-gateway-addr :31729 -retail-agent-addr :31730 -retail-agent-public-host 203.0.113.5
