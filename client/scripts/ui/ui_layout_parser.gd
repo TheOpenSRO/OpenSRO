@@ -214,7 +214,15 @@ static func _parse_property(line: String, ctrl: ControlDef) -> void:
 	match type_name:
 		"RECT":
 			var parts := payload.split(",")
-			if parts.size() >= 4:
+			# A rect short of four numbers keeps the ones it has, the rest 0:
+			# ifextquickslotoption.txt's GDR_EXT_QUICKSLOT_OK_BTN is the
+			# archive's only one ("63,185,0", MEASURED across all 229
+			# resinfo layouts), and the client draws that Confirm button at
+			# 63,185 (INFERRED from the reference screenshots, round 788).
+			# It was dropped whole, which put the button at 0,0.
+			if parts.size() >= 2:
+				while parts.size() < 4:
+					parts.append("0")
 				var r := Rect2i(parts[0].to_int(), parts[1].to_int(), parts[2].to_int(), parts[3].to_int())
 				ctrl.raw_properties[key] = r
 				if key == "Rect":

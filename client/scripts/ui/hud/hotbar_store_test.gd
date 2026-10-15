@@ -50,13 +50,25 @@ func _initialize() -> void:
 	store.call("save", key_a, skills, items, TMP)
 	back = store.call("load_bar", key_a, TMP)
 	_check(not (back["skills"] as Dictionary).has(40) and (back["skills"] as Dictionary).size() == 2, "a cleared slot stays cleared")
-	# Malformed or out-of-range entries are skipped (51 slots, 0x33).
-	var dec: Dictionary = store.call("decode", [{"slot": 51, "kind": "skill", "id": 3}, {"slot": -1, "kind": "item", "item": 1, "bag": 13},
+	# Malformed or out-of-range entries are skipped: retail's 0..50 (0x33)
+	# and, since round 788, the OURS extra bars' 51..250 load; 251 does not.
+	var dec: Dictionary = store.call("decode", [{"slot": 251, "kind": "skill", "id": 3}, {"slot": -1, "kind": "item", "item": 1, "bag": 13},
 		{"slot": 3, "kind": "skill", "id": 0}, "junk", {"slot": 4, "kind": "item", "item": 2, "bag": 14}])
 	_check((dec["skills"] as Dictionary).is_empty() and dec["items"] == {4: {"item": 2, "slot": 14}},
 		"only the valid entry survives decode (got %s)" % [dec])
 	# An item's binding is its bag slot first, then the item anywhere (retail
 	# binds the slot; 0x60c430 follows a moved item).
+	# Round 788: the Additional Quick Slot's 41..50 and the OURS extra bars'
+	# pages (51..) are saved and read back like any other slot, beside a
+	# pre-788 entry's 0..50.
+	var ext_skills := {41: {"id": 3, "code": "A"}, 50: {"id": 4, "code": "B"}, 61: {"id": 5, "code": "C"},
+		250: {"id": 6, "code": "D"}}
+	var ext_items := {52: {"item": 7, "slot": 14}}
+	_check(bool(store.call("save", key_c, ext_skills, ext_items, TMP, {75: 3})), "the extra bars' slots are written")
+	var ext_back: Dictionary = store.call("load_bar", key_c, TMP)
+	_check(ext_back["skills"] == ext_skills and ext_back["items"] == ext_items and ext_back["actions"] == {75: 3},
+		"slots 41..50 and 51..250 come back (got %s)" % [ext_back])
+	_check(store.call("load_bar", key_a, TMP)["skills"] == skills, "and the other entries are untouched")
 	_check(HudUnderbar.resolve_item_binding(9, 20, {20: 9, 21: 4}) == 20, "an unmoved item keeps its bag slot")
 	_check(HudUnderbar.resolve_item_binding(9, 20, {20: 4, 25: 9}) == 25, "a moved item is found at its new slot")
 	_check(HudUnderbar.resolve_item_binding(9, 20, {20: 4}) == -1, "a spent item drops its binding")
