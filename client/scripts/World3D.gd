@@ -14486,6 +14486,33 @@ func _parse_qa_equip(spec: String) -> Dictionary:
 	print("World3D: QA equipment loadout %s, pluses %s" % [str(equipped), str(_qa_equip_pluses)])
 	return equipped
 
+## Round 789 (QA, OPENSRO_QA_AVATAR_VIEW): seeds NetClient's avatar inventory
+## from the QA loadout's avatar keys, shows the avatar view and the tooltips.
+func _qa_avatar_view() -> void:
+	var opts := {}
+	for part in OS.get_environment("OPENSRO_QA_AVATAR_OPTS").split(",", false):
+		var kv := part.split("=")
+		if kv.size() == 2 and kv[0].is_valid_int():
+			opts[int(kv[0])] = kv[1]
+	var seeded := {}
+	for key in _player_equipped_last:
+		if not CharacterAppearance.is_avatar_key(int(key)):
+			continue
+		var it := ItemInstance.new()
+		it.slot = int(key) - CharacterAppearance.AVATAR_KEY_BASE
+		it.ref_item_id = int(_player_equipped_last[key])
+		it.opt_level = int(_qa_equip_pluses.get(key, 0))
+		for o in String(opts.get(int(key), "")).split("/", false):
+			var iv := o.split(":")
+			if iv.size() == 2 and iv[0].is_valid_int() and iv[1].is_valid_int():
+				it.mag_params.append(int(iv[0]) | (int(iv[1]) << 32))
+		seeded[it.slot] = it
+	NetClient.last_avatar_instances = seeded
+	print("QA AVATAR VIEW: avatar inventory %s" % str(seeded.keys()))
+	_hud_panels.set_equipment_avatar_mode(true)
+	_hud_panels._fill_avatar_slots()
+	_hud_panels.qa_show_avatar_tips()
+
 ## The plus each worn slot's glow is chosen by (round 734): the item's
 ## OptLevel plus its advanced elixir, as a u8 -- READ, the client's item
 ## +0x8c byte (OptLevel + elixir, c:0x8bb070) is what CICPlayer::vslot_025
@@ -16819,6 +16846,14 @@ func _qa_step() -> void:
 	# OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..." (round 731) shows
 	# those items' tooltips side by side for a render, each line logged
 	# ("QA ITEM_TIP"); `where` is a HudPanels site ("bag", "store", ...).
+	# OPENSRO_QA_AVATAR_VIEW=1 (round 789; no server): the avatar keys of
+	# OPENSRO_QA_EQUIP become the avatar inventory (storage slot = key - 200),
+	# OPENSRO_QA_AVATAR_OPTS="200=<magicoption id>:<value>/..,201=.." their blue
+	# options; the equipment window switches to its avatar view and each
+	# avatar's tooltip is drawn (HudPanels.qa_show_avatar_tips).
+	if OS.get_environment("OPENSRO_QA_AVATAR_VIEW") != "" and _qa_tick == 50 and _hud_panels != null \
+			and not NetClient.is_connected_to_server():
+		_qa_avatar_view()
 	if OS.get_environment("OPENSRO_QA_ITEM_TIP") != "" and _qa_tick == 45 and _hud_panels != null:
 		_hud_panels.qa_show_item_tips(OS.get_environment("OPENSRO_QA_ITEM_TIP"))
 

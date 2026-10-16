@@ -4382,6 +4382,31 @@ func qa_show_item_tips(spec: String) -> void:
 		print("QA ITEM_TIP %s at %s size %s: %s" % [part, str(b.position), str(b.size),
 			ItemTooltipLines.as_text(lines).replace("\n", " | ")])
 
+## Round 789 (QA, OPENSRO_QA_AVATAR_VIEW): each avatar's tooltip, as its
+## window's hover shows it, drawn down the right edge and printed as a
+## `QA AVATAR TIP` line; and where each avatar window is (`QA SLOT avatar`).
+func qa_show_avatar_tips() -> void:
+	var view := get_viewport_rect().size
+	var y := 8.0
+	var storage: Dictionary = NetClient.last_avatar_instances
+	var shown := AvatarEquipment.by_display(storage, item_types)
+	for d in AvatarEquipment.DISPLAYS:
+		var slot_ctl := _avatar_slot_control(d)
+		if slot_ctl != null and slot_ctl.is_visible_in_tree():
+			print("QA SLOT avatar:%d at %s holds storage %s" % [d, _qa_xy(slot_ctl), str(shown.get(d, -1))])
+		if not shown.has(d):
+			continue
+		var it: ItemInstance = storage[shown[d]]
+		var lines := item_tip_lines(it.ref_item_id, "avatar", int(shown[d]))
+		var b := ItemTooltipBubble.new(_builder)
+		add_child(b)
+		b.show_lines(lines, Rect2())
+		b.position = Vector2(view.x - b.size.x - 8, y)
+		y += b.size.y + 8
+		print("QA AVATAR TIP window %d storage %d item %d: %s" % [d, int(shown[d]), it.ref_item_id,
+			ItemTooltipLines.as_text(lines).replace("\n", " | ")])
+	print("QA AVATAR SKILL STRIP %s" % ("shown" if _avatar_skill_strip_shown() else "hidden"))
+
 ## The lines of an item's tooltip (ItemTooltipLines.compose) with this
 ## client's text tables, type names, player and instance.
 func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
