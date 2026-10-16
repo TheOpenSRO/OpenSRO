@@ -15840,6 +15840,13 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_AVATAR_HAIR=0  keep the hair under a hat (CharacterAppearance.
 ##                          hide_hair_by_mask off). Avatars go in OPENSRO_QA_EQUIP
 ##                          under their keys 200..204 ("200=<hat id>,201=<dress id>").
+##   OPENSRO_QA_AVATAR_VIEW=1  (round 789; no server) at tick 50 the QA
+##                          loadout's avatars become the avatar inventory, the
+##                          equipment window shows its avatar view and every
+##                          avatar's tooltip is drawn down the right edge
+##                          (`QA AVATAR TIP` / `QA SLOT avatar` lines);
+##                          OPENSRO_QA_AVATAR_OPTS="200=<magicoption id>:<value>/..,201=.."
+##                          gives them blue options
 ##   OPENSRO_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -15848,7 +15855,10 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_EQUIP_BAG="<tick>:<slot>=<id>,.."  (round 786; needs a server)
 ##                          at each tick put the first bag item of that id on
 ##                          in that slot through the real equip message (with
-##                          OPENSRO_QA_COMMANDS' "/give <id> 1 <plus>")
+##                          OPENSRO_QA_COMMANDS' "/give <id> 1 <plus>"); an
+##                          avatar key 200..204 as the slot (round 789) puts an
+##                          avatar down on the equipment window instead
+##                          (HudPanels' avatar drop: 0x7034 type 0x24)
 ##   OPENSRO_QA_PICKUP=1   (needs --server) when a ground item appears, step onto
 ##                          it and pick it up, printing the server's answers:
 ##                          the item's position, the pick result and the bag after
@@ -16141,6 +16151,14 @@ func _qa_equip_bag_step() -> void:
 			var item_id := int(pair[1])
 			var found := false
 			for s in _inventory_slots:
+				if s.item_id == item_id and CharacterAppearance.is_avatar_key(slot) and _hud_panels != null:
+					# Round 789: an avatar key puts it down on the equipment
+					# window as a drag would (HudPanels' avatar drop: the client's
+					# rules, then 0x7034 type 0x24).
+					print("QA EQUIP BAG: tick %d avatar %d from bag slot %d put down on the equipment window" % [_qa_tick, item_id, s.slot_index])
+					_hud_panels._drop_avatar_from_bag(s.slot_index)
+					found = true
+					break
 				if s.item_id == item_id:
 					print("QA EQUIP BAG: tick %d putting item %d on in slot %d from bag slot %d" % [_qa_tick, item_id, slot, s.slot_index])
 					_awaiting_equip_ack = true

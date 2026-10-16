@@ -1618,15 +1618,21 @@ front-end's next steps.
   weight out of the sum): not modelled. The position at rest is right.
 - **What vslot 0x34 reads** (INFERRED "a woman": it picks the women's Volume table and the harp's
   `_f`). Trace `CCompChar` 0xc1f0d0 -> 0xc2bb40's resource +0x28.
-- **Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
-  `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.
+- ~~**Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
+  `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.~~
+  **Built in round 789 (lane AC)**: `CharacterVisualChange` runs the client's arbitration on every
+  build (docs/protocol/avatar_visuals.md). Left: the ConditionID 3/5/7 rows (skill/state looks,
+  fortress suits, transforms) and the animation group are not attached (their triggers are OPEN);
+  the hair under a hat is hidden by the Slot mask's 0x0800 (INFERRED: how retail removes it is OPEN);
+  an equipped item with no ConditionID-1 row is drawn (OURS, OPEN whether retail does).
 - **The body through the armour** (round 683 review; round 687 applied retail's rule): the worst
   case went from 21.30 % to 5.58 % of a worn armour's pixels (`appearance_probe.gd --showthrough=1`,
   MEASURED). What is left is body pieces no worn item lists (the China woman's light set hides only
   three of her meshes), which the client draws too (READ, `FUN_00c1f790`). A retail screenshot of the China woman
   in the light set would show whether anything else covers them.
-- **The world reads only 7 of itemdata.txt's 63 parts** (`ItemTableReader.TABLE_PATHS`): 3,566 of
-  15,338 item ids, avatars among them, are unknown to World3D and not drawn. The builder and
+- ~~**The world reads only 7 of itemdata.txt's 63 parts**: 3,566 of 15,338 item ids, avatars among
+  them, are unknown to World3D and not drawn.~~ Stale: every part is read since round 741
+  (`ItemTableReader.load_all`); round 789's census (`avatar_probe.gd`) finds all 1,355 avatar ids. The builder and
   catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of
   all 63 parts (~285 ms with the native readers, MEASURED) and needs `perf_gate.sh`.
 - **The plus glow** (INFERRED that plus drives it): the plus is kept on `Body.worn`, not drawn.
@@ -1680,8 +1686,8 @@ front-end's next steps.
   retail order is known.
 - **Default wear** (round 685's review): drawn on the create preview, the select bodies
   (`CharacterAppearance`) and the world's characters (`World3D._build_assembled_character`).
-  Left: an avatar's own visual record (ConditionID 2) is not consulted for the mask, so default
-  wear can draw under an avatar dress (OPEN, with the avatar arbitration); `CGame+0x129` is
+  An avatar's own visual record (ConditionID 2) is consulted since round 789 (the drawn visuals'
+  Slot bits, `DefaultWear.wear_for`'s extra_mask): no default clothes under a dress. `CGame+0x129` is
   assumed clear (OURS, as the Protector minimum).
 - **China's backdrop** does not reproduce fe_ref4's lion-and-gate view at any yaw of the READ
   pose; Europe's matches fe_ref3 at yaw ~2.6 (the reviewer's sheets, scratchpad `rv685/shots/`).
@@ -2839,8 +2845,11 @@ What round 633 read and built is in `docs/protocol/inventory_window.md`.
   race. **(round 709)** The original sends no race field either: the client takes the race from the
   member record's model id (the reference's `+0x9c` byte, `0x93f630`; `docs/protocol/party_gui.md`).
   Party lane C1 draws it from the retail member record.
-- **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500) needs avatar items with its type
-  bit. This server has none.
+- **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500): shown since round 789 as READ
+  (c:0x6abde0: avatar view, a worn devil's spirit with time left). Its four skill slots stay empty:
+  the skills come from `refskillbyitemoptleveldata` by the ability of (RefItemID, plus), filtered by
+  the skill's +0x61 byte and placed at its +0xfc index (c:0x6ae5b0) -- neither byte is mapped to a
+  skilldata column (OPEN).
 - **The retail starting inventory size** is a `_CHAR.InventorySize` database default that neither
   executable carries. `-inventory-size` 96 is ours. The engine's growth caps (77, or 99 with the
   quest, counting 13 equipment slots) mean retail never fills the third page by its own means.
