@@ -1552,9 +1552,89 @@ of Data.pk2 overridden: prim/mtrl/foo.ddj <- z_assets.pk3; ...`; the first 10, o
 Which layer serves a given path: `/layer <path>` in chat, `OPENSRO_QA_WHICH="path;path"`, or
 `client/tools/which_layer.gd` (docs/DEBUG_TOOLS.md).
 
-**Not yet (lane U, OURS):** the server naming the packs a client needs with their hashes, and the
-updater fetching them. The client side it will call is `AssetArchives.reopen()` (it reopens the set
-after new packs arrive; the header of `client/scripts/assets/asset_archives.gd` says when).
+**A server's own packs** (round 789): a server can name packs every player must have; the client
+downloads them into `servers/<host>_<port>/` under the pack folder and, while connected to that
+server, reads exactly those over the base archives (its own packs and `custom/` set aside unless the
+server allows them). "Server packs" below.
+
+## Server packs: the packs every player must have (round 789)
+
+Your server can name the asset packs every player needs -- a custom avatar, a retextured item, new
+item names -- and every client that connects downloads exactly those, checks each by its SHA-256,
+and layers them over its own retail archives before character select. Players install nothing by
+hand, and nobody plays with a different version of them. All of it is OURS (retail has only
+`.pk2`); the protocol and every rule are docs/protocol/asset_packs.md, "Server packs". **Packs are
+game data or fan content: they live with your game data, never in the repo** (docs/LEGAL.md).
+
+**1. Put the packs in one folder** on the server (`.pk3` or `.zip` only; build one with `pk3pack`,
+"Asset packs (`.pk3`)" above; convert a `.pk2` pack with `pk2topk3`):
+```
+/srv/sro/client-packs/z_akatsuki.pk3
+/srv/sro/client-packs/z_mymod.pk3
+```
+Names are letters, digits, `_`, `-` and `.`, ending `.pk3`/`.zip`, at most 64 characters, never a
+base archive's name (`Data`, `Map`, `Media`, `Music`, `Particles`). Up to 32 packs, 4 GiB each, 16
+GiB together. Only the folder itself is read; a pack may be a symbolic link. Any other file in it
+(a `.pk2`, a `readme.txt`) stops the server, so nothing is half-served.
+
+**2. Start the server with `-client-packs`** (env `OPENSRO_CLIENT_PACKS`):
+```
+opensro-server ... -client-packs /srv/sro/client-packs
+```
+At startup it opens every pack the way the clients will (any entry the readers refuse -- an unsafe
+name, a zip bomb, a bad CRC -- refuses the whole pack and stops the server), hashes it, and logs:
+```
+clientpacks: z_akatsuki.pk3: 590825 bytes, 19 files, sha256 d77be1e2...
+client packs: named to every client before login dir=/srv/sro/client-packs packs=2 order="z_akatsuki.pk3, z_mymod.pk3" from="this server's listener, port 15780, /packs/<name>"
+```
+`order` is the layering, lowest first (the same order the client's own pack folder would use: by
+name, a later name wins).
+
+**3. Where players download them from.** Two ways, either or both:
+
+- **The server's own listener** (the default when no URL is given): `-client-packs-listen :15780`
+  (env `OPENSRO_CLIENT_PACKS_LISTEN`; `off` turns it off). Open that TCP port as you opened 15779
+  (a compose file publishes it: `- "15780:15780"`). It serves only the listed packs at
+  `/packs/<name>`, with resume, 16 downloads at once and 2 per address, and nothing else (no
+  listing, no other file). Players fetch it over plain http from the address they connect the game
+  to; the hash (sent over the game connection) is what proves the file.
+- **Your own URL** -- a CDN, a web server, a GitHub release: `-client-packs-url
+  https://github.com/<owner>/<repo>/releases/download/packs-1` (env `OPENSRO_CLIENT_PACKS_URL`);
+  each pack is fetched from `<url>/<name>`, so upload the files there under the same names.
+  **Use https** -- clients take plain http only from the game server's own host. With a URL the
+  listener is off unless `-client-packs-listen` turns it on (then clients try the URL first and
+  the listener second).
+
+**4. Changing a pack** (a new version): replace the file and **restart the server** -- the hash is
+taken at startup, and the listener refuses to serve a file that changed since (it logs `a pack
+changed since the server started`). If you serve from a URL, upload the new file there too before
+the restart. Players download the new version at their next login; the old one is removed from
+their folder.
+
+**Optional: `-client-packs-local-extras`** (env `OPENSRO_CLIENT_PACKS_LOCAL_EXTRAS`). By default a
+player connected to your server reads **exactly** your packs over the base archives: their own
+packs and their `custom/` folder are set aside while they are connected (so a modified local pack
+cannot change what your server assumes -- walls, item tables). With this flag their own packs stay
+(below yours) and `custom/` stays on top.
+
+**What the player sees.** On Connect the login screen's message line says `Checking the server's
+packs...`, then `Downloading z_akatsuki.pk3: 0.3 MB of 0.6 MB (50%)`, then logs in as usual. A
+failure is said there in plain words (`Could not download the server's pack z_akatsuki.pk3:
+login.example.com:15780: HTTP 404`) and nothing is sent. The packs land in the client's pack
+folder under `servers/<host>_<port>/` (`pk2/servers/login.example.com_15779/z_akatsuki.pk3`): one
+folder per server, so two servers that ship different packs of the same name never collide; the
+client's own pack folder and that subfolder are never mixed. A second login downloads and
+re-hashes nothing (the client keeps each pack's hash with its size and modified time,
+`packs.json`). The client log has a `PACKS:` line for every step.
+
+**Without `-client-packs`** the server tells clients it names no packs, and they play with their own
+packs as before. A client from before round 789 never asks and keeps its own packs; a new client
+against a server from before round 789 waits 2.5 s once for an answer that does not come, then
+plays with its own packs.
+
+**Checking it.** `pk2list -archives /srv/sro/client-packs -layers` shows the stack the clients get.
+On a client: `/layer <path>` in chat or `OPENSRO_QA_WHICH="<path>;..."` names the pack serving a
+path (docs/DEBUG_TOOLS.md), and the Shift+F3 panel says `packs of server <host>_<port>`.
 
 ## Logging in: wrong passwords, blocks, one session per account (round 788)
 

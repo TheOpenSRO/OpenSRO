@@ -23,6 +23,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/clientpacks"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/duel"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
@@ -858,10 +859,11 @@ func frontEndThemeFromFlags(raw session.FrontEndTheme, logger *slog.Logger) sess
 }
 
 // quietQuery is true for the before-login questions a client asks on a
-// connection of its own -- the front-end theme and the server list's status
-// -- whose connection, packet and disconnection lines are logged at Debug.
+// connection of its own -- the front-end theme, the server list's status and
+// (round 789) the packs it needs -- whose connection, packet and disconnection lines are logged at Debug.
 func quietQuery(opcode uint16) bool {
-	return opcode == session.OpFrontEndThemeRequest || opcode == session.OpServerStatusRequest
+	return opcode == session.OpFrontEndThemeRequest || opcode == session.OpServerStatusRequest ||
+		opcode == session.OpClientPacksRequest
 }
 
 // loginRulesFrom checks the login flags (round 788): a tolerance of 1-100
@@ -1021,6 +1023,27 @@ func main() {
 	loginBandBottom := flag.String("login-band-bottom", os.Getenv("OPENSRO_LOGIN_BAND_BOTTOM"),
 		"the front-end's bottom band art, a file name the client loads from its own custom/frontend/ folder "+
 			"(env OPENSRO_LOGIN_BAND_BOTTOM): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
+	// The packs every client must have (round 789, lane U, OURS): named to
+	// the client before login over OpClientPacksRequest, fetched by it from
+	// -client-packs-url or this server's own listener; session/clientpacks.go,
+	// internal/clientpacks, docs/protocol/asset_packs.md "Server packs".
+	clientPacksDir := flag.String("client-packs", os.Getenv("OPENSRO_CLIENT_PACKS"),
+		"a folder of .pk3/.zip asset packs every client must load (env OPENSRO_CLIENT_PACKS): each is checked "+
+			"as the readers check it and hashed at startup, and named with its SHA-256 to every client before login; "+
+			"the client downloads what it lacks and layers exactly these over its base archives. A pack that "+
+			"does not pass stops the server. Default empty: no packs are named; clients keep their own.")
+	clientPacksURL := flag.String("client-packs-url", os.Getenv("OPENSRO_CLIENT_PACKS_URL"),
+		"where clients download the packs from (env OPENSRO_CLIENT_PACKS_URL): a base URL each pack's file name "+
+			"is appended to, e.g. https://cdn.example.com/packs or a GitHub release's .../releases/download/<tag>. "+
+			"Clients take https from any host and plain http only from the server's own host.")
+	clientPacksListen := flag.String("client-packs-listen", os.Getenv("OPENSRO_CLIENT_PACKS_LISTEN"),
+		"this server's own pack download listener (env OPENSRO_CLIENT_PACKS_LISTEN): an address like :15780, or "+
+			"\"off\". Default: "+clientpacks.DefaultListen+" when -client-packs is set and -client-packs-url is not, "+
+			"off when it is. It serves only the named packs, with ranges (resume), at /packs/<name>.")
+	clientPacksExtrasEnv, clientPacksExtrasEnvErr := envBool("OPENSRO_CLIENT_PACKS_LOCAL_EXTRAS")
+	clientPacksExtras := flag.Bool("client-packs-local-extras", clientPacksExtrasEnv,
+		"let clients keep their own packs (below the server's) and custom/ folder (env OPENSRO_CLIENT_PACKS_LOCAL_EXTRAS). "+
+			"Default off: a client connected to this server reads exactly its packs over the base archives.")
 	monsterAIEnv, monsterAIEnvErr := envBool("OPENSRO_MONSTER_AI")
 	// The server list's status (round 679, OURS): the capacity the client's
 	// population band divides by, and the inspection switch it shows as
@@ -1277,6 +1300,10 @@ func main() {
 	if singleFrameEnvErr != nil {
 		logger.Warn("OPENSRO_SINGLE_FRAME is not a boolean; the single frame stays off unless -single-frame is given",
 			"err", singleFrameEnvErr)
+	}
+	if clientPacksExtrasEnvErr != nil {
+		logger.Warn("OPENSRO_CLIENT_PACKS_LOCAL_EXTRAS is not a boolean; local extras stay off unless -client-packs-local-extras is given",
+			"err", clientPacksExtrasEnvErr)
 	}
 	frontEndTheme := frontEndThemeFromFlags(session.FrontEndTheme{Intro: *loginIntro, BGM: *loginBGM, Logo: *loginLogo,
 		Copyright: *loginCopyright, BandTop: *loginBandTop, BandBottom: *loginBandBottom}, logger)
@@ -2329,10 +2356,26 @@ func main() {
 		Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
 	})
 
+	// The packs every client needs (round 789, lane U): checked, hashed and
+	// (when this server serves them) listened for before the gateway opens.
+	clientPacksManifest, err := startClientPacks(ctx, *clientPacksDir, *clientPacksURL, *clientPacksListen, *clientPacksExtras, logger)
+	if err != nil {
+		logger.Error("client packs", "err", err)
+		os.Exit(1)
+	}
+	clientPacksHandler, err := session.ClientPacksHandler(clientPacksManifest)
+	if err != nil {
+		logger.Error("client packs", "err", err)
+		os.Exit(1)
+	}
+
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
 		session.FrontEndThemeHandler(frontEndTheme),
+		// The packs a client needs (round 789), the same way: asked when
+		// Connect is pressed, before the login.
+		clientPacksHandler,
 		// The status for the client's server list (round 679), the same way.
 		session.ServerStatusHandler(serverStatus),
 		// One LoginService decides every login, whatever wire it came in on

@@ -261,7 +261,7 @@ in for one (OURS).
 in any run (`QA WHICH <path> -> <layer> (<file>); also in ...`); `client/tools/which_layer.gd`
 headless; the Shift+F3 debug panel lists the set. docs/DEBUG_TOOLS.md.
 
-**For the updater (lane U).** `AssetArchives.reopen()` reads the mode and the folders again and
+**For the updater (lane U; used since round 789 by "Server packs" below).** `AssetArchives.reopen()` reads the mode and the folders again and
 opens a new set: every `AssetArchives.data()`/... after it sees the new packs; handles taken before
 keep reading the set they came from; caches keyed by `Pk2Reader.cache_key()` (the item and NPC
 tables, the UI fonts) and AudioBank's sounds are dropped with the old set. Call it where no scene
@@ -290,8 +290,217 @@ GDScript class's own `Script.reload`.)
   zip) changed 61.6 % of the minimap's pixels at the Jangan spawn and 0.000 % of the world
   (`frame_ab.py`, a box over each), and `QA WHICH` named the pack.
 
+## Server packs
+
+Round 789, lane U: **the server names the packs a client needs, with their hashes, and the client
+fetches and loads them** (idTech's "pure server"). Everything here is OURS. An operator puts packs
+in one folder; every player who connects gets exactly those packs, verified by hash, layered over
+their base archives before character select reads item names and tables from them -- without
+restarting the client.
+
+### The exchange
+
+Like the front-end theme (0x0005/0x0006) and the server list's status (0x0007/0x0008), it is a
+question asked before login on a short connection of the client's own:
+
+- `OpClientPacksRequest` **0x0009** (client -> server, no payload);
+- `OpClientPacks` **0x000A** (server -> client): the manifest below. The server answers once per
+  connection and closes a connection that has not logged in (`gateway.ErrEndSession`), as the
+  theme does.
+
+**When:** the client asks when Connect is pressed, before the connection that carries the login
+(Login.gd; QaSignIn for a QA run). Not at boot: the server is chosen on the login screen, and the
+answer must be the server the login goes to. Not on the game connection itself: a download can take
+minutes and the gateway's pre-login connection should not sit idle that long, and the login screen
+can show the download's progress before anything else happens.
+
+**Old and new on both sides:**
+
+| | old server (before 789) | new server |
+|---|---|---|
+| **old client** | -- | never asks; never sees 0x000A; plays with its own packs |
+| **new client** | the request is ignored (no handler claims it); the client waits `PackQuery.TIMEOUT_MS` (2.5 s), goes on with its own packs, and does not ask that address again this run | answered at once: with `-client-packs` the list, without it "no packs named" (flags 0) |
+
+### The manifest (wire layout)
+
+All little-endian. Held to the hand-written vectors `client/scripts/net/testdata/
+client_packs_golden.json` by both `server/internal/clientpacks` (`TestManifestGolden`) and
+`client/scripts/update/pack_manifest_test.gd`.
+
+```
+u8  version (1)
+u8  flags        bit 0 REQUIRED: the server names its packs (clear: no packs, the client keeps its own set)
+                 bit 1 LOCAL_EXTRAS: the client may keep its own packs and custom/ too
+                 other bits: refused
+u16 http_port    the server's own pack listener on the gateway's host (0: none)
+u8  count        0..32
+count x:
+  u8   name_len, name   1..64 bytes
+  u64  size             1 .. 4 GiB
+  [32] sha256           of the whole file
+  u16  url_len, url     0..512 bytes ("" = only the server's listener)
+```
+
+The packs are in rule 2's cascade order, **lowest first**, and the client layers them in exactly
+that order -- the order `pk2list -archives <server folder> -layers` shows, reversed. A decoder
+refuses the whole manifest on: another version, an unknown flag bit, a trailing or missing byte,
+flags 0 with a pack, a port or extras, more than 32 packs, a bad name (below), two names equal
+when case is ignored, a size of 0 or over 4 GiB, more than 16 GiB together, a bad URL, a pack with
+no URL when the port is 0. A manifest is one frame (32 packs of the longest name and URL are 20,224
+bytes; a frame carries 32,767).
+
+**Names** (`clientpacks.ValidName`, `PackManifest.name_problem`): ASCII letters, digits, `_`, `-`
+and `.`, not starting with a dot, ending `.pk3` or `.zip` (any case), at most 64 bytes, no `..`,
+and not one of the five base names (`Data.pk3` would be read as a base archive). No separator,
+drive, colon, space or control character can occur, so a name never leaves the folder it is
+written to. A server pack is never a `.pk2` (convert it with `pk2topk3`).
+
+**URLs** (`ValidURL`, `url_problem`): `http://` or `https://`, printable ASCII without spaces, a
+host, no user name or password, no fragment.
+
+### The server (`-client-packs`)
+
+`server/internal/clientpacks` and `cmd/server/clientpacks.go`. Flags (deploy/README.md, "Server
+packs"):
+
+- `-client-packs <dir>` (`OPENSRO_CLIENT_PACKS`): the folder of required packs. Only the folder
+  itself is read (rule 1); a pack may be a symbolic link to a file elsewhere; folders and dot-files
+  are skipped (logged); any other file -- a `.pk2`, a `readme.txt`, a name the rules call unsafe,
+  a base archive's name, two names differing only in case -- **stops the server** (OURS: a server
+  whose clients cannot get its content should not start, the `-npcpos-csv` rule).
+- At startup every pack is opened through `assetfs.OpenArchive` with the readers' limits; **a pack
+  with any refused entry is refused whole** (a client would load less than the server names); every
+  entry is read back (CRC-32 and declared size checked by the reader); then the file is hashed
+  (SHA-256) and its size and modified time are kept. A file that changes while it is checked is
+  refused. The list is logged: `client packs: named to every client before login ... order=...`.
+- `-client-packs-url <base>` (`OPENSRO_CLIENT_PACKS_URL`): each pack's URL is `<base>/<name>` (a
+  CDN, or a GitHub release's `.../releases/download/<tag>`; a base with a query is refused).
+- `-client-packs-listen <addr|off>` (`OPENSRO_CLIENT_PACKS_LISTEN`): the server's own listener.
+  Default: `:15780` when no URL is set, off when one is (OURS). It is bound before the gateway
+  opens (a port in use stops the server) and its port goes in the manifest. With both a URL and a
+  listener, the client tries the URL first.
+- `-client-packs-local-extras` (`OPENSRO_CLIENT_PACKS_LOCAL_EXTRAS`): sets LOCAL_EXTRAS.
+
+**The listener** (`clientpacks.Handler`; OURS limits, `DefaultServeLimits`): `GET`/`HEAD
+/packs/<name>` for exactly the names in the manifest, case-sensitive; any other path, a folder
+listing, another method: 404/405. Ranges and `If-Range` (`http.ServeContent`; the ETag is the
+SHA-256), so a download resumes. A file whose size or modified time is no longer what was hashed
+is answered 503 and logged once ("restart the server to name the new one") -- its hash would no
+longer be the one clients were told. Bounds: 16 downloads at once (503 + `Retry-After` beyond), 2
+an address at once and 60 requests an address a minute (429), a write deadline moved forward
+before every write so a client that stops reading is cut after 60 s, headers read within 10 s,
+idle connections closed after 60 s. No bandwidth limit (OPEN). It logs one `client pack served`
+line per GET (pack, address, range, bytes, ms).
+
+### The client
+
+`client/scripts/update/`:
+
+| Piece | What |
+|---|---|
+| `PackManifest` | the wire, the name and URL rules, `url_allowed`, `sources` |
+| `PackQuery` | the question (a `GatewayQuery`, as `ThemeQuery`) |
+| `PackStore` | the server's folder, the hash cache, `plan`, `sweep`; `FileHasher` (SHA-256 in slices) |
+| `PackDownload` | one pack's download (HTTPClient, polled) |
+| `PackSync` | the whole of it, a Node: question, plan, hashes, downloads, then `ServerPacks.apply` |
+| `ServerPacks` | which server's packs the set layers; the switch (`apply`), `layer_opts` for `AssetArchives` |
+
+**Where the packs go (OURS):** `<pack folder>/servers/<host>_<port>/` -- the pack folder is
+`Pk2Config.pack_dir()` (the `pk2/` folder beside the executable, or `OPENSRO_PACK_DIR`), and the
+key is the gateway's host lower-cased, every character outside `[a-z0-9.-]` an underscore (an IPv6
+address's colons too), and the port. Two servers in the list that ship different packs of the same
+name never meet. The readers never look into subfolders, so a server's packs are read only while
+that server is the one connected. The folder is the client's own: what the manifest no longer names
+(packs, partials of another version) is removed from it; a file whose name the client would never
+write (`notes.txt`) is left alone. OPEN: two servers that ship the same pack each download it.
+
+**The plan** (`PackStore.plan`): per pack, **ready** (on disk at its size, and the hash cache --
+`packs.json` in the folder: name -> size, modified time, SHA-256 -- says that file, unchanged since,
+has the named hash), **hash** (on disk at its size but not verified since it last changed: it is
+hashed, 48 MiB a frame, then ready or fetched), **fetch** (missing, another size, or a known other
+version). So a second login hashes nothing and downloads nothing (MEASURED below); a pack a player
+edits in place changes its modified time and is hashed again. OPEN: a player who edits a pack and
+puts its old size and modified time back passes the cache (a full re-hash at every login would
+cost seconds a GB; `pk3`s are not a security boundary against the player's own machine anyway --
+neither are the base archives).
+
+**A download** (`PackDownload`, polled once a frame; OURS throughout):
+- written to `<name>.<first 16 hex of its SHA-256>.partial` in the server's folder, never anywhere
+  else; renamed onto `<name>` only after the size and the hash match (the pack appears whole or not
+  at all). The hash in the partial's name keeps an old version's partial from being resumed into a
+  new one;
+- a partial left by an earlier try is hashed first and continued with `Range: bytes=<n>-` and
+  `If-Range: "<sha256>"`; a source that answers 200 is read from the start again; a 206 must start
+  where the partial ends and name the manifest's total; a 416 starts over;
+- **the manifest's size is the cap**: a 200 whose `Content-Length` is not the size is refused, and
+  a body that runs past the size is stopped and its partial removed;
+- a connection that drops is resumed on the same source up to 3 times, then the next source; a
+  source silent for 30 s is dropped; redirects are followed up to 5 (GitHub's release downloads
+  redirect to a signed URL, so a redirect's target may be up to 4,096 bytes), each held to the same
+  URL rule;
+- a wrong hash removes the partial; when any of the bytes came from an earlier attempt, the pack is
+  fetched once more from nothing, else the download fails.
+- Sources in order: the pack's URL, then the server's listener (`http://<gateway host>:<port>/
+  packs/<name>`). **https from any host; plain http only from the gateway's own host** (the host
+  the player connected to), the server's listener or an operator URL on it (OURS: the hash, which
+  came over the game connection, is what makes the bytes trustworthy either way; this keeps a
+  player's downloads off unencrypted third parties). Nothing downloaded is ever executed.
+- Before downloading, free space must cover what is left to fetch plus 64 MiB (OURS).
+
+**Purity (OURS, the default):** while connected to a server that names its packs, `AssetArchives`
+layers **exactly the server's packs**, in its order, over the base archives; the player's own packs
+and the `custom/` path overlay are **set aside**, and the set's log says so (`AssetArchives: set 2
+layers the packs of server 127.0.0.1_15897 (2 pack(s)) / set aside while that server is connected:
+pack a_mine.pk3`). So a modified local pack cannot change content the server assumes (walls,
+navmesh, item tables). With LOCAL_EXTRAS the player's packs stay, below the server's, and
+`custom/` stays on top (rule 1). A server that names no packs, an older server and a legacy server
+leave the player's own set (switching back if another server's packs were in force). The server's
+packs are read in every source mode (they are `.pk3`/`.zip` by the wire's rule; a server that
+requires them is not asking the player's preference). Round 678's branding files in `custom/` are
+read by `FrontEndTheme` by their own paths, so the overlay being set aside never touches them.
+
+**The switch** (`ServerPacks.apply`): when the selection changes the layers, `AssetArchives.reopen()`
+(a new generation: every `AssetArchives.data()`/... after it reads the new set; the caches keyed by
+`Pk2Reader.cache_key()` -- item and NPC tables, UI fonts -- and AudioBank's sounds parse again), and
+`ServerPacks.drop_caches()` forgets what the process kept in statics that do not key on the set:
+the select screen's text table (`NetClient.lobby_text`), the name filter, the quest tables, the
+magic option and glow tables, the damage-number art. The login screen then takes the new set's
+Media for the windows it still opens and the content id it sends; what it already drew (the title)
+stays as drawn. The same selection again changes nothing and reopens nothing. OPEN: the effect and
+particle caches keyed by path (`EfpEffect`, `AmbientParticles`; worker threads fill them under
+their own locks) are not dropped -- they fill in the world, which a first login reaches after the
+switch, so this matters only for a second server with other packs in one run.
+
+**What the player sees:** the message line says `Checking the server's packs...`, then
+`Downloading z_akatsuki.pk3: 0.3 MB of 0.6 MB (50%)` (or `Checking <name>: ...` while hashing),
+then the login goes out as before. A failure is said plainly on the message line and nothing is
+sent: `Could not download the server's pack z_akatsuki.pk3: 127.0.0.1:15780: HTTP 404`, `The
+server's pack list cannot be read (...)`, `Not enough free disk space for the server's packs: ...`,
+`The server's pack ... has no download address this client accepts (...)`. Every step is a
+`PACKS:` line in the log (docs/DEBUG_TOOLS.md).
+
+### Measured (round 789, lane U)
+
+The box, a server built from this branch with `-client-packs` holding `u789_test.pk3` (one text file
+of our own, 624 bytes) and lane X's `z_akatsuki.pk3` (590,825 bytes), a client copy with an empty
+pack folder: docs/rounds/r789u.md has the commands and the log lines.
+
+- **First login:** both packs fetched from the server's listener and verified (`2 downloaded ...
+  (225 ms)`), the set reopened over them, the player's own `zz_local.pk3` set aside; `QA WHICH`
+  names `u789_test.pk3` for the test file and `z_akatsuki.pk3` for `itemdata.txt`,
+  `textdataname.txt` and the robe's `.ddj`/`.bsr`; the world's item table knows 9,971 models
+  against 9,967 without the pack (items 78901-78904).
+- **Second login, through the login screen:** `0 downloaded, 0 checked, 2 verified before (91
+  ms)`; the server logged no download.
+- **Purity:** a local pack and a `custom/` file that both carry the test file were set aside; the
+  server's pack served it.
+- **A server from before this round:** the question unanswered, `no answer within 2500 ms -- the
+  player's own packs`, then the login as before.
+
 ## OPEN
 
 - A volume-scoped pack (rule 3).
-- The server naming the packs a client needs, with their hashes, and the auto-updater fetching
-  them (docs/TODO.md).
+- Server packs (round 789, lane U; "Server packs" above): a bandwidth limit on the server's
+  listener; one copy of a pack two servers both ship; the effect and particle caches after a
+  switch between two servers with different packs in one run; a pack a player edits and puts its
+  old size and modified time back on passes the hash cache.
