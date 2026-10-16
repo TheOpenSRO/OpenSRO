@@ -15840,6 +15840,9 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_AVATAR_HAIR=0  keep the hair under a hat (CharacterAppearance.
 ##                          hide_hair_by_mask off). Avatars go in OPENSRO_QA_EQUIP
 ##                          under their keys 200..204 ("200=<hat id>,201=<dress id>").
+##   OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>,.."  (round 789; needs a
+##                          server) at each tick that avatar goes back to the bag
+##                          (0x7034 type 0x23, HudPanels' drop)
 ##   OPENSRO_QA_AVATAR_VIEW=1  (round 789; no server) at tick 50 the QA
 ##                          loadout's avatars become the avatar inventory, the
 ##                          equipment window shows its avatar view and every
@@ -17075,6 +17078,16 @@ func _qa_step() -> void:
 		_qa_reequip_step()
 	if _qa_equip_bag_spec != "":
 		_qa_equip_bag_step()
+	# OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>,.." (round 789; needs a
+	# server): at each tick the avatar in that avatar storage slot is put
+	# down on the bag as a drag would (HudPanels' 0x23: the first empty bag
+	# slot named).
+	if OS.get_environment("OPENSRO_QA_AVATAR_OFF") != "" and _hud_panels != null and NetClient.is_connected_to_server():
+		for entry in OS.get_environment("OPENSRO_QA_AVATAR_OFF").split(",", false):
+			var tp := String(entry).split(":")
+			if tp.size() == 2 and int(tp[0]) == _qa_tick:
+				print("QA AVATAR OFF: tick %d avatar storage slot %s back to the bag" % [_qa_tick, tp[1]])
+				_hud_panels._drop_avatar_to_bag(int(tp[1]), Vector2(-100000, -100000))
 	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing

@@ -111,6 +111,9 @@ its key.
 - **GDR_AVATAR_SKILL_WND** shows in the avatar view only while a worn non-bionic 3/1/14 has time
   left (c:0x6abde0; the time is the record's period word, INFERRED for SOItem +0x60). Its four skill
   slots stay empty: which skills fill them needs the skill table's +0x61 and +0xfc bytes (OPEN).
+- **0x3078 `{u8 3, u8 slot}`** (READ s:0x4bbd60; lane AS sends it when a worn devil's spirit
+  expires): the spirit's period word becomes "activated, 0 s left", so the strip hides and the
+  tooltip says `UIIT_STT_NASRUN_AWAKE_TIMEOVER`; the item stays in its window.
 - **Right click** on an avatar window does nothing, as on a worn slot; on a bag avatar it does what
   the bag does for any item (use, which the server refuses for equipment; a devil's spirit's use is
   its activation). The client's own handler `IFSlotWithHelp::FUN_00676570` was not followed for
