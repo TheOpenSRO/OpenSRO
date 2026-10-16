@@ -750,6 +750,11 @@ func _on_list_result(characters: Array, error: String) -> void:
 			_select(k, true)
 		return
 	if OS.get_environment("OPENSRO_QA_RECONNECT_VIA_LOGIN") != "" and not _slots.is_empty():
+		if _qa_hold_s > 0.0:
+			# OPENSRO_QA_SELECT_HOLD (round 789 lane E): the start waits.
+			_qa_hold_at = 0.0
+			print("QA SELECT HOLD: list up at frame %d, holding %.1f s" % [Engine.get_frames_drawn(), _qa_hold_s])
+			return
 		_qa_start(QaSignIn.character_name())
 
 func _slot_of(char_name: String) -> int:
@@ -757,6 +762,31 @@ func _slot_of(char_name: String) -> int:
 		if _slots[k].char_name == char_name:
 			return k
 	return -1
+
+## OPENSRO_QA_SELECT_HOLD=<seconds> (round 789 lane E, OURS, QA only): with
+## OPENSRO_QA_RECONNECT_VIA_LOGIN the scripted start waits that long after the
+## list is up, so a movie run shows the select screen's characters (the lobby
+## record's items and avatars, CharSelectStage); half way the character is
+## selected as a click would (the camera flies to it). Each step prints its
+## movie frame (`QA SELECT HOLD`).
+var _qa_hold_s := float(OS.get_environment("OPENSRO_QA_SELECT_HOLD"))
+var _qa_hold_at := -1.0
+var _qa_hold_selected := false
+
+func _qa_hold_tick(delta: float) -> void:
+	if _qa_hold_at < 0.0:
+		return
+	_qa_hold_at += delta
+	var k := _slot_of(QaSignIn.character_name())
+	if not _qa_hold_selected and _qa_hold_at >= _qa_hold_s * 0.5 and state == S.LIST:
+		_qa_hold_selected = true
+		if k >= 0:
+			print("QA SELECT HOLD: selecting %s at frame %d" % [QaSignIn.character_name(), Engine.get_frames_drawn()])
+			_select(k, false)
+	if _qa_hold_at >= _qa_hold_s:
+		_qa_hold_at = -1.0
+		print("QA SELECT HOLD: starting at frame %d" % Engine.get_frames_drawn())
+		_qa_start(QaSignIn.character_name())
 
 ## OPENSRO_QA_RECONNECT_VIA_LOGIN: start `who` the way Start does.
 func _qa_start(who: String) -> void:
@@ -799,6 +829,7 @@ func _qa_frame_time_tick(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	_qa_frame_time_tick(delta)
+	_qa_hold_tick(delta)
 	_tick_countdown(delta)
 	if _scene_ready and _path != null and not _qa_camera_frozen:
 		var pose := _path.advance(delta)

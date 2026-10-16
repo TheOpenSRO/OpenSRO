@@ -924,6 +924,35 @@ GL runs need `xvfb-run` + `vglrun` as `appearance_probe.gd` does; round 789's la
 The texture formats and the `.bsr`/`.bmt` copies are made with `server/cmd/ddjtool` and
 `server/cmd/retexture`; the recipe is `docs/rounds/r789x.md`.
 
+### Avatars live, end to end (round 789 lane E)
+
+The scripts are `/var/tmp/e789/*.sh` on the box and `docs/rounds/r789e.md` (a server with
+`-client-packs`, the CSVs exported through the pack, a GM account, the clients under their own lock).
+The hooks, all QA only and all needing `--server`:
+
+- `OPENSRO_QA_EQUIP_BAG="300:201=78901,330:200=78903"` puts the bag's avatar down on the equipment
+  window (HudPanels' avatar drop, 0x7034 type 0x24); `OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>"`
+  takes one off (0x23).
+- `OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,..."` opens the inventory in its avatar view over the
+  server's own avatar list and draws every worn avatar's tooltip down the right edge (`QA AVATAR LIVE`,
+  `QA AVATAR TIP`); `OPENSRO_QA_AVATAR_VIEW=1` is the same view with no server.
+- `OPENSRO_QA_GRANT="<tick>:<item id>:<option>[:<confirm tick>]"`, with the blacksmith's grant window
+  open (`OPENSRO_QA_TALK=NPC_CH_SMITH@260 OPENSRO_QA_TALK_PICK=2@320`, standing there by `--at
+  330,1380`), puts the bag item down on it, prints every row (`QA GRANT row`), selects the first whose
+  code contains `<option>` (`AVATAR_INT`) and presses Confirm, at `<confirm tick>` when given so a
+  frame shows the selection; `QA GRANT drawn` lines say what the rows draw.
+- `OPENSRO_QA_SHOTS_FROM=<tick>` holds `--shots` back until the server has dressed the player.
+- `OPENSRO_QA_SELECT_HOLD=<seconds>` with `--reconnect-via-login` keeps the select screen up that
+  long (the character selected half way, the camera flying to it) before the scripted start, so the
+  lobby record's avatars are on the movie frames (`QA SELECT HOLD` lines name the frames).
+- `OPENSRO_QA_STATS_LOG=1`'s `QA STATS` lines carry STR and INT, for a granted option.
+
+Two clients: `--second-client "OPENSRO_QA_ACCOUNT=...|OPENSRO_QA_CHARACTER=...|OPENSRO_QA_COMMANDS=/tp
+130 20|OPENSRO_QA_RECONNECT_VIA_LOGIN=1|OPENSRO_QA_SELECT_HOLD=1"` (a `--scene Login.tscn` run must
+pass `OPENSRO_QA_RECONNECT_VIA_LOGIN=1` itself: qa_shot exports it only after the second client
+started). Give a `--reconnect-via-login` run `--region '97\168.m'` too: without it the shots' "region
+under the player" is the palace's, 98/168, and the player is drawn a region away from the server's spot.
+
 ### Bodies in the world: clips, T-poses and feet (round 689)
 
 `body_anim_probe.gd` (headless, `remote_godot.sh script`) builds every one of the 52 Figures and,

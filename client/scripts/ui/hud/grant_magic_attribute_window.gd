@@ -149,13 +149,48 @@ func _build() -> void:
 					select(_scroll + at))
 			host.add_child(row)
 			_row_nodes.append(row)
+		var bars: Array = []
+		for n in N_BARS:
+			bars.append(window.node(n))
+		raise_list(host, bars)
 	clear_item()
+
+## Round 789 lane E (MEASURED live, OURS fix): the OptionList section builds the
+## five bars (IDs 40..44) after the scroll manager (ID 32) that holds the rows,
+## so the bars' opaque com_bar01_ art drew over every row: the list showed five
+## empty bars, its labels set but unseen (`QA GRANT drawn`, docs/rounds/r789e.md),
+## and the bars took the rows' clicks. The rows must be over the bars for the
+## window to work at all (INFERRED: how retail orders its scroll manager's
+## children against the bars is not READ), so the scroll manager is moved to
+## draw after the last bar that is its sibling.
+static func raise_list(host: Control, bars: Array) -> void:
+	if host == null or host.get_parent() == null:
+		return
+	var parent := host.get_parent()
+	var top := host.get_index()
+	for b in bars:
+		var bar := b as Control
+		if bar != null and bar.get_parent() == parent:
+			top = maxi(top, bar.get_index())
+	if top != host.get_index():
+		parent.move_child(host, top)
 
 func _set_bar(i: int, on: bool) -> void:
 	var bar := window.node(N_BARS[i]) as Control if window != null else null
 	if bar == null or _builder == null:
 		return
-	var tex := _builder.load_texture(BAR_SELECT if on else BAR_DESELECT)
+	apply_bar(bar, _builder.load_texture(BAR_SELECT if on else BAR_DESELECT))
+
+## Puts a gil_bar02 texture on a bar (READ c:0x808be0 via the research: the
+## bar's texture is SET to it, at Create and on each click). Round 789 lane E
+## (MEASURED live): the art used to go in under the bar's own com_bar01_
+## 3-slice (opaque, UiBuilder's row bar pieces), so neither texture was ever
+## seen and the selected row looked like the rest. The bar's own pieces are
+## hidden now and the art is its top child -- a replacement, as the client's
+## set is.
+static func apply_bar(bar: Control, tex: Texture2D) -> TextureRect:
+	if bar == null:
+		return null
 	var art := bar.get_node_or_null("GrantBar") as TextureRect
 	if art == null:
 		art = TextureRect.new()
@@ -165,8 +200,11 @@ func _set_bar(i: int, on: bool) -> void:
 		art.stretch_mode = TextureRect.STRETCH_SCALE
 		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		bar.add_child(art)
-		bar.move_child(art, 0)
+		for c in bar.get_children():
+			if c != art and c is CanvasItem:
+				(c as CanvasItem).visible = false
 	art.texture = tex
+	return art
 
 # --- the rules ----------------------------------------------------------------
 
