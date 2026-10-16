@@ -129,6 +129,8 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | `pk2list` | list paths inside a pk2 (or `.pk3`) archive; `-extract` one file; round 789: `-archives <folder>` through the asset-pack layers, `-which`, `-layers`, `-overrides` (docs/protocol/asset_packs.md) |
 | `pk2topk3` | round 789: convert a pk2 into a `.pk3` (zip) at the same paths, every file read back byte-identical; `-measure` the deflate ratio by extension |
 | `pk3pack` | round 789: build an asset pack (`.pk3`) from a folder of files at their pk2 paths, with the readers' safety checks |
+| `ddjtool` | round 789: a `.ddj` texture's header (`info`), its pixels to PNG (`decode`), a PNG to `.ddj` (`encode`: DXT1/3/5 or A8R8G8B8, `-like base.ddj` copies the base's format and mip count); the retexture tools, `docs/rounds/r789x.md` |
+| `retexture` | round 789: copy a `.bsr` or `.bmt` with path strings renamed (`-set old=new`) and every other byte kept, the `.bsr` section table moved with them; how a new item reuses a retail mesh with its own material and texture |
 | `skillcensus` | round 785: over an exported `skills.csv` (its Params column), how many player skill rows (China and Europe apart: learnable rows, the base attacks and every chain link they reach) carry each Param code, beside the server's status for it; `-code X` lists the rows carrying one code. Statistics of the operator's own data |
 | `efpcensus` | decode every `.efp` in a Particles.pk2 and report coverage by feature; `-show` prints one file's tree |
 | `heightat` | the raw terrain height a real `.m` heightmap gives at a spot |

@@ -345,3 +345,13 @@ material structure. That is what the binary establishes.
 than from code. The runtime render path sets its states numerically, with no alpha-test strings
 anywhere in the binary to anchor a search, so confirming it means finding where the dword at
 material+0x60 is tested. Not yet done.
+
+## A retexture is a new .bmt naming a new .ddj (round 789, MEASURED)
+
+Retail's own colour variants are made this way: `avatar_m_knight_3.bmt` is `avatar_m_knight.bmt`
+with the texture `avatar_m_knight.ddj` (a bare name) replaced by
+`prim\mtrl\item\etc\avatar_m_knight_3.ddj` (a full path), and nothing else changed but the
+texture trailer: `20 08 00` after the bare name, `00 00 01` after the full path. The third byte
+is the full-path flag (READ above); the first two are OPEN. `server/cmd/retexture` renames a
+texture path and keeps every other byte, and refuses a rename between a bare name and a full path
+rather than guess those two bytes: a copy keeps its base's form.

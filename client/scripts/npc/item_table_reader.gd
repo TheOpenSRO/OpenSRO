@@ -329,17 +329,36 @@ const EUROPE_ARMOUR_FAMILIES := [9, 10, 11]
 ## equip file holds e.g. SN_ITEM_EU_LIGHT_01_HA_A "Sagittarius Savage
 ## Sallet" (MEASURED, round 731); the two files share no key (MEASURED: 10,893 and 7,814
 ## keys, 0 in both), so their order does not matter.
+## OBJECT_NAME_PATHS is the fallback for an archive without the list file.
 static var OBJECT_NAME_PATHS := [
 	"server_dep\\silkroad\\textdata\\textdata_object.txt",
 	"server_dep\\silkroad\\textdata\\textdata_equip&skill.txt",
 ]
 
-## Both tables parsed and merged, or null when the archive has neither.
+## The list file itself (round 789). Reading it, as the client does, is what
+## lets an asset pack add a name table the way it adds an item part through
+## itemdata.txt: the pack's textdataname.txt names one more file (OURS: the
+## pack layer, docs/TODO.md "Asset packs"; the list rule is the client's).
+const OBJECT_NAME_INDEX := "textdataname.txt"
+
+## The name tables `archive` lists in textdataname.txt, as full paths in its
+## order; OBJECT_NAME_PATHS when it has no list.
+static func object_name_paths(archive) -> PackedStringArray:
+	var out := PackedStringArray()
+	if archive != null:
+		for name in CharCatalog.index_part_names(archive, OBJECT_NAME_INDEX):
+			out.append(CharCatalog.TEXTDATA_DIR + name)
+	if out.is_empty():
+		out = PackedStringArray(OBJECT_NAME_PATHS)
+	return out
+
+## Every listed table parsed and merged (an earlier table's key wins), or null
+## when the archive has none.
 static func load_object_names(archive) -> UiTextTable:
 	var out: UiTextTable = null
 	if archive == null:
 		return null
-	for path in OBJECT_NAME_PATHS:
+	for path in object_name_paths(archive):
 		var entry = ObjectLoader.find_file(archive, path)
 		if entry == null:
 			continue

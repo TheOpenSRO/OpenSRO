@@ -1448,6 +1448,12 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
       local pack cannot change what the server assumes (walls, navmesh).
 - [ ] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
       the top loading cost in round 667, and a zip's index has no such step.
+- [ ] **Index files in packs** (round 789, lane X). A new item reaches the client through list
+      files: `itemdata.txt` names the item parts, `textdataname.txt` the name tables. A pack adds
+      one by replacing the list with the retail names plus its own, so two packs that each add a
+      part shadow each other's line. A merge rule for list files (OURS) is not decided. The test
+      pack (`z_akatsuki.pk3`, docs/rounds/r789x.md) and its tools (`cmd/ddjtool`,
+      `cmd/retexture`, `client/tools/avatar_retexture_probe.gd`) are ready.
 
 ### Native (Rust) readers (round 667) -- **the pk2 reader and the `.ddj` per-pixel decodes are native; these are left**
 
