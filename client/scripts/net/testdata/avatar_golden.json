@@ -1,0 +1,266 @@
+{
+ "note": "Round 789: avatars on the wire, written BY HAND from /root/opensro-pk3av789/AVATAR_RESEARCH.md and AVATAR_ALCHEMY_RESEARCH.md (READ layouts; docs/protocol/avatars.md once lane AS writes it). One field per '|'-separated group; spaces and '|' are ignored. The server's avatar tests and the client's avatar net tests both encode 'fields' and require exactly 'hex', and decode 'hex' and require exactly 'fields'. A vector with 'error' must fail to decode. Item records are the round-732 record (server/internal/session/iteminfo.go). Mag params are u64: low u16 the magicoption id, high u32 the value. All ids and values are test values, not game data.",
+ "opcodes": {
+  "item_move": 28724,
+  "item_move_ack": 45108,
+  "equip_broadcast": 12344,
+  "unequip_broadcast": 12345,
+  "avatar_grant": 13481,
+  "avatar_grant_ack": 13482,
+  "avatar_list_request": 68,
+  "avatar_list": 69
+ },
+ "opcode_notes": {
+  "avatar_list_request": "OURS: OpenSRO has no 0x3013; the client asks for its avatar inventory as it asks for the bag and the worn list.",
+  "avatar_list": "OURS carrier; its payload is exactly 0x3013's avatar section (READ c:0x9d9c39, s:0x4ba720 mode 1)."
+ },
+ "move_requests": [
+  {
+   "name": "bag -> avatar (0x24): bag slot 2, avatar slot 0",
+   "fields": {
+    "type": 36,
+    "src": 15,
+    "dst": 0
+   },
+   "hex": "24 | 0f | 00"
+  },
+  {
+   "name": "avatar -> bag (0x23): avatar slot 1, clicked bag slot 4",
+   "fields": {
+    "type": 35,
+    "src": 1,
+    "dst": 17
+   },
+   "hex": "23 | 01 | 11"
+  },
+  {
+   "name": "0x24 short",
+   "error": true,
+   "hex": "24 | 0f"
+  },
+  {
+   "name": "0x23 trailing byte",
+   "error": true,
+   "hex": "23 | 01 | 11 | 00"
+  }
+ ],
+ "move_acks": [
+  {
+   "name": "0x24 ok",
+   "fields": {
+    "ok": true,
+    "type": 36,
+    "src": 15,
+    "dst": 0,
+    "qty": 0,
+    "subs": []
+   },
+   "hex": "01 | 24 0f 00 | 0000 | 00"
+  },
+  {
+   "name": "0x23 ok, server picked bag slot 3",
+   "fields": {
+    "ok": true,
+    "type": 35,
+    "src": 1,
+    "dst": 16,
+    "qty": 0,
+    "subs": []
+   },
+   "hex": "01 | 23 01 10 | 0000 | 00"
+  },
+  {
+   "name": "0x23 dress off with the attachment (one sub-op, outer type)",
+   "fields": {
+    "ok": true,
+    "type": 35,
+    "src": 0,
+    "dst": 16,
+    "qty": 0,
+    "subs": [
+     {
+      "type": 35,
+      "src": 2,
+      "dst": 17,
+      "qty": 0
+     }
+    ]
+   },
+   "hex": "01 | 23 00 10 | 0000 | 01 | 23 02 11 0000"
+  },
+  {
+   "name": "refused: same type worn (0x180e)",
+   "fields": {
+    "ok": false,
+    "code": 6158
+   },
+   "hex": "02 | 0e18"
+  },
+  {
+   "name": "refused: inventory full (0x1807)",
+   "fields": {
+    "ok": false,
+    "code": 6151
+   },
+   "hex": "02 | 0718"
+  },
+  {
+   "name": "refused: devil's spirit not awake (0x18f9)",
+   "fields": {
+    "ok": false,
+    "code": 6393
+   },
+   "hex": "02 | f918"
+  },
+  {
+   "name": "sub-op count with no sub-op",
+   "error": true,
+   "hex": "01 | 23 00 10 | 0000 | 01"
+  }
+ ],
+ "broadcasts": [
+  {
+   "name": "0x3038 avatar on: uid 0x1234, avatar slot 0, ref 23456, plus 0",
+   "opcode": 12344,
+   "fields": {
+    "uid": 4660,
+    "slot": 0,
+    "ref": 23456,
+    "plus": 0
+   },
+   "hex": "34120000 | 00 | a05b0000 | 00"
+  },
+  {
+   "name": "0x3039 avatar off: uid 0x1234, avatar slot 1, ref 22912",
+   "opcode": 12345,
+   "fields": {
+    "uid": 4660,
+    "slot": 1,
+    "ref": 22912
+   },
+   "hex": "34120000 | 01 | 80590000"
+  }
+ ],
+ "spawn_avatar_blocks": [
+  {
+   "name": "two avatars (storage order), size 5",
+   "fields": {
+    "size": 5,
+    "items": [
+     {
+      "ref": 22912,
+      "plus": 0
+     },
+     {
+      "ref": 23456,
+      "plus": 0
+     }
+    ]
+   },
+   "hex": "05 | 02 | 80590000 00 | a05b0000 00"
+  },
+  {
+   "name": "none",
+   "fields": {
+    "size": 5,
+    "items": []
+   },
+   "hex": "05 | 00"
+  }
+ ],
+ "avatar_lists": [
+  {
+   "name": "one dress in storage slot 0 (slot is not by type), one STR option",
+   "fields": {
+    "size": 5,
+    "items": [
+     {
+      "slot": 0,
+      "ref": 23456,
+      "opt_level": 0,
+      "variance": 0,
+      "durability": 0,
+      "mag_params": [
+       [
+        291,
+        1
+       ]
+      ]
+     }
+    ]
+   },
+   "hex": "05 | 01 | 00 | 00000000 | a05b0000 | 00 | 0000000000000000 | 00000000 | 01 2301000001000000 | 0100 | 0200"
+  },
+  {
+   "name": "empty",
+   "fields": {
+    "size": 5,
+    "items": []
+   },
+   "hex": "05 | 00"
+  },
+  {
+   "name": "count without its item",
+   "error": true,
+   "hex": "05 | 01"
+  }
+ ],
+ "grant_requests": [
+  {
+   "name": "grant MATTR_AVATAR_STR to bag slot 2",
+   "fields": {
+    "slot": 15,
+    "code": "MATTR_AVATAR_STR"
+   },
+   "hex": "0f | 1000 | 4d415454525f4156415441525f535452"
+  },
+  {
+   "name": "string shorter than its length",
+   "error": true,
+   "hex": "0f | 1000 | 4d41"
+  }
+ ],
+ "grant_acks": [
+  {
+   "name": "granted: the item comes back with its new option",
+   "fields": {
+    "ok": true,
+    "flag": 1,
+    "slot": 15,
+    "item": {
+     "ref": 23456,
+     "opt_level": 0,
+     "variance": 0,
+     "durability": 0,
+     "mag_params": [
+      [
+       291,
+       1
+      ],
+      [
+       325,
+       150
+      ]
+     ]
+    }
+   },
+   "hex": "01 | 01 | 0f | 00000000 | a05b0000 | 00 | 0000000000000000 | 00000000 | 02 2301000001000000 4501000096000000 | 0100 | 0200"
+  },
+  {
+   "name": "refused: option cap reached (2)",
+   "fields": {
+    "ok": false,
+    "code": 2
+   },
+   "hex": "02 | 0200"
+  },
+  {
+   "name": "refused: not an avatar (8)",
+   "fields": {
+    "ok": false,
+    "code": 8
+   },
+   "hex": "02 | 0800"
+  }
+ ]
+}
