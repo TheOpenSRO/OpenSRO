@@ -16,7 +16,9 @@ below. None of OpenSRO's 143 opcodes is a real one (SYSTEMS.md, round 324). The 
 
 Round 678's front-end theme request (0x0005 -> 0x0006) is also our own opcode, and so is round
 679's server status request (0x0007 -> 0x0008: version, current, max, state -- retail's shard-entry
-fields; `docs/protocol/server_list.md`).
+fields; `docs/protocol/server_list.md`). So is round 789's pack question (0x0009 -> 0x000A: the
+asset packs a client needs, with their sizes and SHA-256; `docs/protocol/asset_packs.md`, "Server
+packs").
 
 **The first step (round 681): our client speaks the retail gateway protocol as far as the server
 list.** A `setting/config.yaml` server marked `type: legacy` is asked the way the original client
