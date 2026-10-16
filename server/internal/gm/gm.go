@@ -197,6 +197,7 @@ type Deps struct {
 	Chars    character.Store
 	Inv      inventory.Store
 	Equip    equipment.Store
+	Avatars  inventory.Store // round 789: the avatar inventory /avatar lists; nil refuses the list
 	Items    combat.ItemLookup
 	Skills   skill.Store
 	Monsters *combat.Hub
@@ -281,7 +282,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -306,6 +307,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.give(ctx, actor, args)
 	case "item":
 		res = d.item(ctx, actor, args)
+	case "avatar":
+		res = d.avatar(ctx, actor, args)
 	case "gold":
 		res = d.gold(ctx, actor, args)
 	case "level":

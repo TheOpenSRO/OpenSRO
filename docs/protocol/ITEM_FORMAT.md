@@ -210,7 +210,7 @@ and the artwork order above, so the two orderings were derived independently and
 | 1 | 7 | 1, 2, 3, 5, 6, 7 | 8 | `ITEM_*_TRADE_TRADER/THIEF/HUNTER`, `FRPVP_VOUCHER` |
 | 1 | 5 (China), 12 (Europe) | 1, 2, 3 | 9, 10, 11 | earring, necklace, ring |
 | **3** | **4** | 1, 2 | **7** | **`ITEM_EVENT_QUIVER`, `ITEM_ETC_AMMO_BOLT`** |
-| 1 | 13, 14 | — | *(none)* | avatars — the resolver asserts; separate container |
+| 1 | 13, 14 | — | *(none)* | avatars — the resolver asserts; separate container (the 5-slot avatar storage, slot not fixed by type; round 789, docs/protocol/avatars.md) |
 
 Checked cell by cell against a real client's complete itemdata: 11,772 `TypeID1 == 3` rows, no
 disagreement anywhere.

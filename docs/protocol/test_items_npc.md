@@ -82,6 +82,24 @@ lattice; OpenSRO has no page spin yet), so the goods are cut into eight store li
 | 8 | Purchase European Female Seal of Nova Protector | Armor 6 · Protector 6 · Garment 6 | STORE_EU_ARMOR_GROUP2 |
 
 189 goods: 95 alchemy, 94 Seal of Nova (16 weapons and shields, 6 accessories, 72 protector pieces).
+
+**Round 789: the avatar lines (OURS).** The user: "an Avatars tab on the Test Items NPC". The archive
+has **1,381** avatar ids (1,355 of 3/1/13 and 26 of 3/1/14, MEASURED: per gender about 260 hats, 227
+dresses, 170 attachments, 20 flags and 13 devil's spirits), far past a tab's 30 goods and its four
+tabs a line, and the client has no page spin. So three lines, split by gender (a new rule field,
+`"gender"`, the row's ReqGender, itemdata column 58) and by kind:
+
+| # | Store line | Tabs |
+|---|---|---|
+| 9 | Purchase Avatars (Men) | Hat · Dress · Attachment (`UIIT_STT_SILKMALL_HAT/_DRESS/_ATTACH`, the grant window's own keys, READ) -- each the first 30 by id of the item mall family (`ITEM_MALL_AVATAR_`, 64..93 rows per kind and gender, MEASURED) · Devil's Spirit (all 13) |
+| 10 | Purchase Avatars (Women) | the same for women |
+| 11 | Purchase Avatar Flags and Devil's Spirit Extensions | Flag (Men) 20 · Flag (Women) 20 · Extension (3/3/13/16, the Nasrun extension) |
+
+The boot log's `(+n dropped)` counts what a tab leaves out; every other avatar is one `/give` away.
+**Avatars and devil's spirits are sold plain** (round 789, OURS): +0, no blue options, a devil's spirit
+not awakened -- not the +12 full-blue of the other equipment -- so the blacksmith's grant and the
+awakening have something to do (`testShopInstance`). The extension tab's label and the "Devil's
+Spirit"/"Flag" labels are OURS text.
 The Seal of Nova tabs are labelled with the retail vendors' own keys (`SN_TAB_WEAPON`,
 `SN_TAB_SHIELD`, `SN_TAB_ACCESSORY`, `SN_TAB_HEAVYARMOR[_EU]`, `SN_TAB_LIGHTARMOR[_EU]`,
 `SN_TAB_CLOTHES[_EU]`; READ, refshoptab.txt column 5), so the client words them from its own text

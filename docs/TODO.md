@@ -10,6 +10,25 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## Round 789 lane AS follow-ups (avatars on the server; docs/protocol/avatars.md, docs/rounds/r789as.md)
+
+- [ ] **The devil's spirit's opt-level abilities**: `RefMagicOptByItemOptLevel`,
+      `RefAbilityByItemOptLevel` and `RefSkillByItemOptLevel` (MEASURED 505 / 266 / 335 rows) have
+      no exporter or loader; a spirit's per-plus abilities and its skill strip's skills are not
+      applied (`PublishEquipItemParams`' `FUN_00498020(2)`, READ). Its own blue options are.
+- [ ] **Params with no reader**: an avatar's `hpna`/`mpna` (52/53), `luca` (173), `mdia` (188),
+      `umdu` (259) and a player's damage-taken multipliers 174..177 (`dara`) are carried in the
+      totals and change nothing; `brna`'s leaf (param 10, gated on `+0x190`) is not followed.
+- [ ] **Which use awakens a devil's spirit in retail** (vslot 325's caller), the `0x3078` after a
+      Nasrun extension (three fields), and when `UIIT_MSG_NASRUN_WEAR_EXTENSION_ITEM_NOT_USE` fires.
+      OURS meanwhile: using it from the bag; the extension's target in the use's option byte.
+- [ ] **The expiry while offline**: a spirit that expires while its owner is away is stripped at
+      the next stats read; the `0x3078` is sent only to an owner in the world when its timer fires.
+- [ ] **The Test Items NPC's avatar tabs** show 30 of each kind and gender (1,381 avatar ids); a
+      page spin in the store would show them all.
+- [ ] **StorageOperation's `[pc+0x30]+0x13` refusal (0x180e)** and INTERACTMODE 7 are not modelled.
+- [ ] **The lobby's avatar u8**: OptLevel assumed (INFERRED), not read from the ShardManager.
+
 ## Round 788 lane R follow-ups (the original client logs in to OpenSRO; opcodes/gateway.md)
 
 - [x] **The original client (vSRO 1.188) logs in to OpenSRO's server and shows its character
@@ -1795,7 +1814,8 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       the entity wire); death returns and the warp home go to Jangan, not `STORE_EU_GATE`;
       `leveldata.KillExp`'s Europe arm is never selected (the killer's race is not passed); Europe's
       NPCs and shops are unexercised.
-- [ ] **Item plus and avatars** in the list record are 0 / none: OpenSRO keeps no plus and no avatars.
+- [x] **Item plus and avatars** in the list record: the plus since round 735, the avatars since round
+      789 (the avatar inventory in storage order; the u8 is the OptLevel, INFERRED).
 - [ ] **Restore's asynchronous error**: u8 in the server, u16 in the client (READ both); u16 is sent.
 - [ ] **recovered_names**: rename `SendNameCheckRequest_858c00` (it is the delete/restore confirm
       sender) once the rename is applied in Ghidra too.

@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
@@ -43,9 +44,9 @@ const pcGroupChunkRetail = 4096 - 12 - 0x20
 // it must not be 0 (pcspawn.Append).
 const pcInventorySize = inventory.DefaultBagSlots + inventory.EquipSlotsInEngineSize
 
-// pcAvatarSize is the avatar storage's size (INFERRED 5, the RE's reading of
-// the five avatar slots); OpenSRO has no avatars, so no items follow.
-const pcAvatarSize = 5
+// pcAvatarSize is the avatar storage's size (READ s:0x4e1340: created with
+// size 5; round 789). Its items follow it (lookOf, avatarSpawnItems).
+const pcAvatarSize = avatar.Slots
 
 // PlayerWalkSpeed is a player character's walk speed, param 23: characterdata
 // column 46, 16 on all 52 creatable bodies (MEASURED, round 737's RE; column
@@ -136,6 +137,9 @@ type look struct {
 	scale    uint8
 	items    []pcspawn.Item
 	jobState byte
+	// avatars is the avatar block (round 789): the worn avatars and devil's
+	// spirit in storage order, each with its plus.
+	avatars []pcspawn.Item
 }
 
 // lookEntry is a cached look, the stores it was read from, and the
@@ -230,6 +234,9 @@ func lookOf(ctx context.Context, d viewDeps, characterID int64) look {
 		}
 	}
 	lk.jobState = jobStateOf(ctx, slot8)
+	for _, a := range avatarSpawnItems(ctx, characterID) {
+		lk.avatars = append(lk.avatars, pcspawn.Item{RefItemID: a.ref, Plus: a.plus, HasPlus: true})
+	}
 	if lookGen(characterID).Load() == gen && lookEpoch.Load() == epoch {
 		looks.Store(characterID, lookEntry{eq: d.eq, chars: d.chars, look: lk, gen: gen, epoch: epoch})
 	}
@@ -307,6 +314,7 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	r.TeleportState = scrollStateOf(e.CharacterID)
 	lk := lookOf(ctx, d, e.CharacterID)
 	r.RefObjID, r.Scale, r.Items, r.JobState = lk.ref, lk.scale, lk.items, lk.jobState
+	r.Avatars = lk.avatars
 	// The frame's region and the local position in it (worldmap.FromWorld,
 	// as teleport's reach and the party record do). A zone with no frame --
 	// none OpenSRO serves -- sends region 0 and the frame coordinates (OURS).

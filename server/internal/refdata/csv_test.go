@@ -705,7 +705,35 @@ func TestParam6IsAnOptionalSuffix(t *testing.T) {
 	if got := load(append(append([]string(nil), row...), "36")).Param6; got != 36 {
 		t.Errorf("column 88 loaded Param6 %d, want 36", got)
 	}
-	if ItemCSVColumnCount != 89 {
-		t.Errorf("ItemCSVColumnCount %d, want 89", ItemCSVColumnCount)
+	if ItemCSVColumnCount < 89 {
+		t.Errorf("ItemCSVColumnCount %d, want at least 89", ItemCSVColumnCount)
+	}
+}
+
+// Round 789: ChildItemCount (itemdata column 159, ref +0x53d), a dress that
+// takes an attachment, is CSV column 89 -- a strict suffix: an 89-column
+// export loads with 0.
+func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
+	row := make([]string, 89)
+	for i := range row {
+		row[i] = "0"
+	}
+	row[0] = "56"
+	load := func(r []string) Item {
+		t.Helper()
+		items, err := LoadItemsCSV(strings.NewReader(strings.Join(r, ",") + "\n"))
+		if err != nil || len(items) != 1 {
+			t.Fatalf("LoadItemsCSV (%d columns): %v (%d items)", len(r), err, len(items))
+		}
+		return items[0]
+	}
+	if got := load(row).ChildItemCount; got != 0 {
+		t.Errorf("an 89-column export loaded ChildItemCount %d, want 0", got)
+	}
+	if got := load(append(append([]string(nil), row...), "1")).ChildItemCount; got != 1 {
+		t.Errorf("column 89 loaded ChildItemCount %d, want 1", got)
+	}
+	if ItemCSVColumnCount != 90 {
+		t.Errorf("ItemCSVColumnCount %d, want 90", ItemCSVColumnCount)
 	}
 }

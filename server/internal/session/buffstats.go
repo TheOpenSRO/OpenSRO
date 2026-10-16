@@ -26,8 +26,14 @@ func buffTotal(characterID int64, param int) (buff.Totals, bool) {
 	return t, ok
 }
 
-// charTotals merges a character's buff records' sums with its passives'.
+// charTotals merges a character's buff records' sums with its passives'
+// and, since round 789, its worn avatars' (avatarstats.go).
 func charTotals(characterID int64) map[int]buff.Totals {
+	return mergeTotals(buffAndPassiveTotals(characterID), avatarTotals(characterID))
+}
+
+// buffAndPassiveTotals is the buff records' sums merged with the passives'.
+func buffAndPassiveTotals(characterID int64) map[int]buff.Totals {
 	a := buffBooks.ParamTotals(characterID)
 	p := passiveOf(characterID).totals
 	if len(p) == 0 {

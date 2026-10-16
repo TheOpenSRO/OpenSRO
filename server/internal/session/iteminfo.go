@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
@@ -45,8 +47,8 @@ import (
 // stopped reading. The block lists only equipment (TypeID 3/1).
 //
 // Values that are OURS, the layout being READ: the rent word is 0 (OpenSRO
-// has no rentals); a time-limited item's period word is 0, the original's
-// "not active" form (OpenSRO has no expiry); the advanced elixir's nSlot,
+// has no rentals); a time-limited item's period word is its expiry's (round
+// 789, avatar.PeriodWord); the advanced elixir's nSlot,
 // nOptID and nOptLvl are 0 (the elixir's option row is not modelled yet);
 // no sockets. An untracked durability (-1) is sent as the max its variance
 // gives, as the first read would set it.
@@ -241,9 +243,12 @@ func itemInfoFor(ctx context.Context, items ItemLookup, slot int, itemID int64, 
 	}
 	dur := inst.Durability
 	if timeLimited(item) {
-		// The period word, active<<31 | seconds: 0, the original's "not
-		// active" form -- OpenSRO has no expiry (OURS; gs:0x42fd30).
-		dur = 0
+		// The period word, active<<31 | the seconds left (READ
+		// s:0x42e5c3..0x42e63f): round 789 keeps a devil's spirit's expiry
+		// where retail keeps it, the instance's Data word -- OpenSRO's
+		// Durability (internal/avatar) -- 0 or -1 until it is awakened.
+		return ItemInfo{Slot: slot, RefItemID: uint32(itemID), OptLevel: inst.OptLevel, Variance: inst.Variance,
+			Durability: avatar.PeriodWord(inst.Durability, time.Now()), MagParams: inst.MagParams, AdvElixir: inst.AdvElixir}, true
 	} else if dur == durability.Untracked {
 		dur = 0
 		if item.DurabilityMax > 0 {

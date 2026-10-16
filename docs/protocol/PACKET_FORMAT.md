@@ -383,8 +383,9 @@ Four rounds owed this. The real request body is two fields:
 | 2 | `u16` | matched against a list derived from the item, then echoed back in the reply |
 
 The slot range is the bag layout stated in the server's own arithmetic: slots
-`0..12` are the thirteen equipment/avatar slots, and the ninety-nine bag slots
-begin at **13**. The item is then fetched with `CGStorage__GetItem(slot & 0xff)`.
+`0..12` are the thirteen equipment slots, and the ninety-nine bag slots
+begin at **13**. (Round 789: the avatars are not among the thirteen; they are a separate 5-slot
+storage, docs/protocol/avatars.md.) The item is then fetched with `CGStorage__GetItem(slot & 0xff)`.
 
 Field 2 is **not named here.** It is read as a `u16`, compared against `*puVar7`
 inside a loop over something belonging to the item, reassigned from that same

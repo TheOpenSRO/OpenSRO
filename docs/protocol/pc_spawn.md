@@ -60,7 +60,7 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
 | 6 | u8 | inventory size | storage capacity | read, dropped | 109 = `inventory.DefaultBagSlots` + 13 (OURS) |
 | 7 | u8 | item count | equip slots 0..8 holding an item | loop | the worn count |
 | 8 | u32 + u8 | each item: RefItemID, then the plus **for a TypeID 3/1 item** | `CInstanceItem::vslot_010` `0x42e230` mode 2 | `0x9de350` | slots 0..8 ascending; the effective plus (OptLevel + advanced elixir) for a 3/1 item only -- not for ammunition (3/3/4) in slot 7 |
-| 9 | u8, u8 | the avatar list: size, count (then items) | the avatar storage | `0x9de3e2` | 5 (INFERRED), 0 |
+| 9 | u8, u8 | the avatar list: size, count (then count x u32 RefItemID, u8 plus; the plus read only for 3/1/13 and 3/1/14) | the avatar storage | `0x9de3e2` | 5 (READ `s:0x4e1340`), the avatars worn in storage order (round 789, docs/protocol/avatars.md) |
 | 10 | u8 | has mask | PC `+0x21a0` non-null (`GObjPC::FUN_004dd6b0`) | `0x9de4ba` | 0 |
 | 11 | u32 | unique id | `0x484fb0`: obj `+8` | `0x9c3a70` | the character id's low 32 bits (OURS, round 710's rule) |
 | 12 | u16 | region | `0x487ce0`: `+0x84` | `+0xfc` | `worldmap.FromWorld` in the zone's frame |

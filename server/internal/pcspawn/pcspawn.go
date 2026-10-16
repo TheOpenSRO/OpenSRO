@@ -52,9 +52,14 @@ type Record struct {
 	// Items is what equip slots 0..8 hold, ascending, empty slots skipped
 	// (CGPCInventoryOP slot 29 0x4ba720).
 	Items []Item
-	// AvatarSize is the avatar storage's size; no avatar items follow
-	// (OpenSRO has no avatar slots).
+	// AvatarSize is the avatar storage's size (5, READ s:0x4e1340), and
+	// Avatars what it holds, in storage order (round 789): each u32
+	// RefItemID and u8 plus, no slot byte (READ s:0x4ba720 mode 2). The
+	// client reads the plus only for a 3/1/13 or 3/1/14 ref (c:0x9de3e2), so
+	// nothing else may be put here; every Avatars entry is written with its
+	// plus.
 	AvatarSize uint8
+	Avatars    []Item
 
 	UID     uint32
 	Region  uint16
@@ -113,6 +118,9 @@ func Append(out []byte, r Record) ([]byte, error) {
 	if len(r.Items) > 255 {
 		return out, fmt.Errorf("pcspawn: %d items", len(r.Items))
 	}
+	if len(r.Avatars) > int(r.AvatarSize) {
+		return out, fmt.Errorf("pcspawn: %d avatars in a storage of %d", len(r.Avatars), r.AvatarSize)
+	}
 	if r.RideState == 1 {
 		return out, fmt.Errorf("pcspawn: ride state 1 needs the ridden object's id")
 	}
@@ -131,7 +139,7 @@ func Append(out []byte, r Record) ([]byte, error) {
 			out = append(out, it.Plus)
 		}
 	}
-	out = append(out, r.AvatarSize, 0)
+	out = AppendAvatarBlock(out, r.AvatarSize, r.Avatars)
 	// The mask flag (GObjPC::FUN_004dd6b0): none.
 	out = append(out, 0)
 	// CGObjMobile::vslot_293 0x48b630: the unique id, the position, the
@@ -189,6 +197,38 @@ func Append(out []byte, r Record) ([]byte, error) {
 	}
 	out = append(out, r.Timer, r.Team)
 	return out, nil
+}
+
+// AppendAvatarBlock appends the record's avatar block (READ s:0x4ba720 mode
+// 2, the client's c:0x9de3e2): u8 size, u8 count, count x (u32 RefItemID, u8
+// plus). Every item is written with its plus: only 3/1/13 and 3/1/14 belong
+// here, and the client reads the plus for exactly those.
+func AppendAvatarBlock(out []byte, size uint8, items []Item) []byte {
+	out = append(out, size, byte(len(items)))
+	for _, it := range items {
+		out = binary.LittleEndian.AppendUint32(out, it.RefItemID)
+		out = append(out, it.Plus)
+	}
+	return out
+}
+
+// ReadAvatarBlock reads one avatar block, returning the bytes after it.
+func ReadAvatarBlock(b []byte) (uint8, []Item, []byte, error) {
+	r := &reader{b: b}
+	size, items := r.avatarBlock()
+	return size, items, r.b, r.err
+}
+
+func (r *reader) avatarBlock() (uint8, []Item) {
+	size := r.u8()
+	n := int(r.u8())
+	var items []Item
+	for i := 0; i < n && r.err == nil; i++ {
+		// OpenSRO writes only 3/1/13 and 3/1/14 here, each read with its
+		// plus as the client reads them (round 789).
+		items = append(items, Item{RefItemID: r.u32(), Plus: r.u8(), HasPlus: true})
+	}
+	return size, items
 }
 
 func appendF32(out []byte, v float32) []byte {
@@ -251,8 +291,8 @@ type Types interface {
 }
 
 // Decode reads one record from b as the client does, returning it and the
-// bytes after it. The forms OpenSRO never writes -- avatar items, a mask, a
-// destination, buffs, a ride, a stall -- are refused.
+// bytes after it. The forms OpenSRO never writes -- a mask, buffs, a ride, a
+// stall -- are refused.
 func Decode(b []byte, types Types) (Record, []byte, error) {
 	r := &reader{b: b}
 	var d Record
@@ -267,10 +307,7 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 		}
 		d.Items = append(d.Items, it)
 	}
-	d.AvatarSize = r.u8()
-	if r.u8() != 0 && r.err == nil {
-		return d, nil, fmt.Errorf("pcspawn: avatar items are not OpenSRO's")
-	}
+	d.AvatarSize, d.Avatars = r.avatarBlock()
 	if r.u8() != 0 && r.err == nil {
 		return d, nil, fmt.Errorf("pcspawn: a mask is not OpenSRO's")
 	}
