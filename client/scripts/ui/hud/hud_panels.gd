@@ -6707,6 +6707,7 @@ func connect_net() -> void:
 	NetClient.avatar_list_result.connect(func(_items: Dictionary) -> void: _fill_avatar_slots())
 	NetClient.avatar_move_result.connect(_on_avatar_move_result)
 	NetClient.avatar_grant_result.connect(_on_avatar_grant_result)
+	NetClient.avatar_spirit_expired.connect(func(_slot: int) -> void: _fill_avatar_slots())
 	NetClient.equipment_result.connect(func(items: Array, error: String) -> void:
 		# An equip or unequip reply sounds the moved item (0x87ba20, read).
 		if UiSounds.has_pending_move():

@@ -120,6 +120,16 @@ func _test_net_client() -> void:
 	nc._item_op_kinds.append("avatar")
 	nc._dispatch(Packet.new(AvatarNet.OP_ITEM_MOVE_ACK, PackedByteArray([1, 0x22, 13, 0, 1, 0])))
 	_check(ops.size() == 2 and nc._item_op_kinds == ["avatar"], "a buy back's success leaves the avatar entry waiting")
+	# 0x3078 {3, slot}: the worn devil's spirit expired; the strip goes.
+	var spirit := inst(50, 4, (1 << 31) | 3600)
+	nc.last_avatar_instances[4] = spirit
+	_check(AvatarEquipment.skill_strip_shown(true, nc.last_avatar_instances, types_of), "an awake spirit: the strip shows")
+	var expired := []
+	nc.avatar_spirit_expired.connect(func(s): expired.append(s))
+	nc._dispatch(Packet.new(AvatarNet.OP_ITEM_STATE, PackedByteArray([3, 4])))
+	_check(expired == [4] and AvatarEquipment.spirit_active(spirit) and AvatarEquipment.spirit_seconds_left(spirit) == 0
+		and not AvatarEquipment.skill_strip_shown(true, nc.last_avatar_instances, types_of),
+		"0x3078 {3, 4}: the spirit's time is over and the strip hides")
 	# A grant: the item at bag index slot - 13 is replaced.
 	var granted := inst(10, 0)
 	granted.mag_params.append(291 | (1 << 32))

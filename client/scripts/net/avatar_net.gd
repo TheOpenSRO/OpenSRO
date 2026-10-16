@@ -36,6 +36,11 @@ const OP_GRANT := 0x34A9
 const OP_GRANT_ACK := 0x34AA
 const OP_LIST_REQUEST := 0x0044
 const OP_LIST := 0x0045
+## The item-state notice (READ s:0x4bbd60): `u8 kind, u8 avatar slot`; kind 3
+## is a worn devil's spirit that expired (its params already removed; the
+## item stays in its slot). Other kinds are not READ here.
+const OP_ITEM_STATE := 0x3078
+const ITEM_STATE_SPIRIT_EXPIRED := 3
 
 const TYPE_AVATAR_TO_BAG := 0x23
 const TYPE_BAG_TO_AVATAR := 0x24
@@ -185,6 +190,12 @@ static func encode_broadcast(opcode: int, f: Dictionary) -> PackedByteArray:
 	if opcode == OP_EQUIP_BROADCAST:
 		out.append(int(f.get("plus", 0)) & 0xff)
 	return out
+
+## 0x3078: {kind, slot}; {} when cut short.
+static func decode_item_state(data: PackedByteArray) -> Dictionary:
+	if data.size() < 2:
+		return {}
+	return {"kind": int(data[0]), "slot": int(data[1])}
 
 # --- the spawn's avatar block -----------------------------------------------------
 

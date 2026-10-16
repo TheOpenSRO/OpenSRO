@@ -91,6 +91,10 @@ signal avatar_move_result(result: Dictionary)
 ## An avatar grant's reply (AvatarNet.decode_grant_ack), after a granted item
 ## replaced its bag instance.
 signal avatar_grant_result(result: Dictionary)
+## 0x3078 {3, slot}: the worn devil's spirit in avatar storage `slot` expired
+## (READ s:0x4bbd60); its instance's period word is set to "activated, 0 s
+## left" before this fires, so the skill strip and the tooltip read it.
+signal avatar_spirit_expired(slot: int)
 ## What each 0x7034 sent is, oldest first ("avatar" or "item"): a refusal
 ## (u8 2, u16 code) names no type, so it is routed to whoever sent first.
 ## OURS bookkeeping; the client keeps one request pending (c:0x7999c0).
@@ -725,7 +729,7 @@ func _passes_group(p: Packet) -> bool:
 				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
 				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
-				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK:
+				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -2356,6 +2360,16 @@ func _dispatch(p: Packet) -> void:
 				last_avatar_instances = _note_instances("avatar", al["items"])
 				avatar_list_received = true
 				avatar_list_result.emit(last_avatar_instances)
+		AvatarNet.OP_ITEM_STATE:
+			var st := AvatarNet.decode_item_state(p.data)
+			if not st.is_empty() and int(st["kind"]) == AvatarNet.ITEM_STATE_SPIRIT_EXPIRED:
+				var spirit = last_avatar_instances.get(int(st["slot"]))
+				if spirit != null:
+					(spirit as ItemInstance).durability = 1 << 31
+				print("NetClient: 0x3078 the devil's spirit in avatar slot %d expired" % int(st["slot"]))
+				avatar_spirit_expired.emit(int(st["slot"]))
+			else:
+				print("NetClient: 0x3078 %s (kind not read)" % p.data.hex_encode())
 		AvatarNet.OP_GRANT_ACK:
 			var ga := AvatarNet.decode_grant_ack(p.data)
 			if ga.has("error"):
