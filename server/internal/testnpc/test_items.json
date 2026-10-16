@@ -2,7 +2,7 @@
   "_comment": "OURS (round 783): the Test Items NPC. Every value here is OpenSRO's own choice: the NPC is not in the retail archives. Goods are RULES over the player's own item table (CodeName128 prefix/suffix or pattern, TypeID, ItemClass), resolved by the server at boot against the reference data it loaded; no item row is listed here. Tab labels that start SN_/UIIT_ are the client's own text keys (the retail vendors' tab names, refshoptab.txt column 5); other text is ours. Every good is free at this NPC (free: the user's choice); the same items keep their own price at any other store. The Seal of Nova rules take the UNLOCKED rows, _A_RARE_ACTIVE (round 786: required level 101, SN_ITEM_UNLOCKED_TT_DESC), not the locked _A_RARE ones (level 111); the anchored $ leaves the _A_RARE_SWITCHnn_ACTIVE variants out. docs/protocol/test_items_npc.md.",
   "name": "Test Items",
   "model": "NPC_SD_T_AREA_POTION",
-  "greeting": "Every 11th degree alchemy item and every Seal of Nova item, for testing.",
+  "greeting": "Every 11th degree alchemy item, every Seal of Nova item and avatars, for testing.",
   "region": 25000,
   "x": 1070.0,
   "y": -32.61,
@@ -98,6 +98,32 @@
         {"label": "SN_TAB_HEAVYARMOR_EU", "rules": [{"code": "^ITEM_EU_W_HEAVY_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/11/*", "item_class": 31}]},
         {"label": "SN_TAB_LIGHTARMOR_EU", "rules": [{"code": "^ITEM_EU_W_LIGHT_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/10/*", "item_class": 31}]},
         {"label": "SN_TAB_CLOTHES_EU", "rules": [{"code": "^ITEM_EU_W_CLOTHES_11_[A-Z]{2}_A_RARE_ACTIVE$", "type": "3/1/9/*", "item_class": 31}]}
+      ]
+    },
+    {
+      "label": "Purchase Avatars (Men)",
+      "tabs": [
+        {"label": "UIIT_STT_SILKMALL_HAT", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/1", "gender": 1}]},
+        {"label": "UIIT_STT_SILKMALL_DRESS", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/2", "gender": 1}]},
+        {"label": "UIIT_STT_SILKMALL_ATTACH", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/3", "gender": 1}]},
+        {"label": "Devil's Spirit", "rules": [{"type": "3/1/14/1", "gender": 1}]}
+      ]
+    },
+    {
+      "label": "Purchase Avatars (Women)",
+      "tabs": [
+        {"label": "UIIT_STT_SILKMALL_HAT", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/1", "gender": 0}]},
+        {"label": "UIIT_STT_SILKMALL_DRESS", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/2", "gender": 0}]},
+        {"label": "UIIT_STT_SILKMALL_ATTACH", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/3", "gender": 0}]},
+        {"label": "Devil's Spirit", "rules": [{"type": "3/1/14/1", "gender": 0}]}
+      ]
+    },
+    {
+      "label": "Purchase Avatar Flags and Devil's Spirit Extensions",
+      "tabs": [
+        {"label": "Flag (Men)", "rules": [{"type": "3/1/13/4", "gender": 1}]},
+        {"label": "Flag (Women)", "rules": [{"type": "3/1/13/4", "gender": 0}]},
+        {"label": "Extension", "rules": [{"type": "3/3/13/16"}]}
       ]
     }
   ]

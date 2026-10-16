@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
 )
 
 // Column indices in leveldata.txt: level, then the exp to advance from it.
@@ -45,22 +47,40 @@ const (
 func main() {
 	out := ""
 	var inputs []string
+	// Round 789: -archives reads leveldata.txt through the layered file
+	// system (docs/protocol/asset_packs.md) instead of a loose file.
+	af := assetfs.InputFlags{Source: "mixed", Volume: "Media", TextData: assetfs.TextDataDir}
+	strFlags := map[string]*string{"-out": &out, "-archives": &af.Archives, "-source": &af.Source,
+		"-custom": &af.Custom, "-volume": &af.Volume, "-textdata": &af.TextData}
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-out":
+		if dst, ok := strFlags[args[i]]; ok {
 			if i+1 >= len(args) {
-				fatal("-out needs a path")
+				fatal("%s needs a value", args[i])
 			}
 			i++
-			out = args[i]
-		default:
-			inputs = append(inputs, args[i])
+			*dst = args[i]
+			continue
 		}
+		if args[i] == "-no-custom" {
+			af.NoCustom = true
+			continue
+		}
+		inputs = append(inputs, args[i])
 	}
 	if out == "" || len(inputs) == 0 {
-		fatal("usage: export-leveldata -out leveldata.csv leveldata.txt")
+		fatal("usage: export-leveldata [-archives <folder> [-source pk2|pk3|mixed] [-volume Media]] -out leveldata.csv leveldata.txt")
 	}
+	in, fsys, err := af.Open(func(format string, a ...any) {
+		fmt.Fprintf(os.Stderr, "export-leveldata: "+format+"\n", a...)
+	})
+	if err != nil {
+		fatal("-archives: %v", err)
+	}
+	if fsys != nil {
+		defer fsys.Close()
+	}
+	readInput = in.ReadFile
 
 	rows, err := readRows(inputs[0])
 	if err != nil {
@@ -120,10 +140,13 @@ func toRecords(rows [][]string) [][]string {
 	return records
 }
 
+// readInput reads an input: a loose file, or through -archives (round 789).
+var readInput = os.ReadFile
+
 // readRows reads a tab-separated leveldata file, decoding UTF-16LE (with BOM)
 // or UTF-8, and returns each non-empty line split on tabs.
 func readRows(path string) ([][]string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readInput(path)
 	if err != nil {
 		return nil, err
 	}

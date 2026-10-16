@@ -20,6 +20,7 @@ import (
 
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/ai"
+	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
@@ -1347,6 +1348,9 @@ func main() {
 		refItems   refItemStore
 		inv        inventory.Store
 		warehouse  inventory.Store // the storage NPC's container (a 2nd inventory), owned by the ACCOUNT
+		// avatars is the avatar inventory (round 789, internal/avatar): five
+		// slots per character, the bag's columns on its own table.
+		avatars inventory.Store
 		// The warehouse gold, kept per account as the game keeps it
 		// (accounts.storage_gold; see internal/storage).
 		storageGold account.StorageGoldStore
@@ -1423,6 +1427,7 @@ func main() {
 		memWarehouse.SetCapacityFunc(storage.CapacityOf(memAccounts))
 		warehouse = memWarehouse
 		eq = equipment.NewMemStore(memInv)
+		avatars = avatar.NewMem(memRef)
 		skills = skill.NewMemStore()
 		guilds = guild.NewMemStore()
 		quests = quest.NewMemStore()
@@ -1571,6 +1576,14 @@ func main() {
 			return inventory.FreshInstance(ctx, sqlRef, nil, itemID)
 		})
 
+		// The avatar inventory (round 789): its table migrates itself.
+		sqlAvatars, err := avatar.OpenSQL(storePool, sqlRef)
+		if err != nil {
+			logger.Error("opening avatar store", "error", err)
+			os.Exit(1)
+		}
+		avatars = sqlAvatars
+
 		sqlSkills, err := skill.NewSQLStore(storePool)
 		if err != nil {
 			logger.Error("opening skill store", "error", err)
@@ -1631,6 +1644,9 @@ func main() {
 	manaTracker := mana.NewTracker()
 
 	hub := world.NewHub()
+	// The avatar inventory (round 789): the spawn record's avatar block, the
+	// stats, the world entry's integrity check and the expiry notices read it.
+	session.SetAvatarStore(avatars, inv, refItems, hub)
 
 	// Passive recovery: CGObjPC::vslot_362 on each character's own 4 s timer,
 	// a percentage of the MAXIMUM HP and MP -- 0.8% standing still, 8%
@@ -2234,7 +2250,7 @@ func main() {
 		logger.Info("no GM accounts set (-gm-accounts / OPENSRO_GM_ACCOUNTS) -- the GM console is off")
 	}
 	gmDeps := &gm.Deps{
-		Chars: chars, Inv: inv, Equip: eq, Items: refItems, Skills: skills,
+		Chars: chars, Inv: inv, Equip: eq, Avatars: avatars, Items: refItems, Skills: skills,
 		Monsters: monsters, World: hub, Mana: manaTracker, Berserk: zerkTracker, Levels: levelTable,
 		Species: gmSpecies(), Zones: gmZones(), Logger: logger,
 		Uniques: gmUniques(), Parties: parties,
@@ -2309,7 +2325,7 @@ func main() {
 
 	// The lobby, shared by OpenSRO's connection and the retail agent.
 	lobby := session.LobbyHandler(session.LobbyDeps{
-		Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
+		Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Avatars: avatars, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
 		Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
 	})
 
@@ -2371,7 +2387,12 @@ func main() {
 		session.StorageHandler(chars, storageSvc, trades),
 		// Round 728: split, sell, deposit and the buy back on the retail
 		// 0x7034/0xB034 and 0x7168/0xB168 (session/itemop.go).
-		session.ItemOpHandler(session.ItemOpDeps{Hub: hub, Inv: inv, Shop: shopSvc, Storage: storageSvc, Trades: trades}),
+		session.ItemOpHandler(session.ItemOpDeps{Hub: hub, Inv: inv, Shop: shopSvc, Storage: storageSvc, Trades: trades,
+			Avatars: avatars, Items: refItems, Chars: chars}),
+		// Round 789: the avatar list (OURS 0x0044), the blacksmith's grant
+		// (0x34A9) and the dead avatar enchant (0x34A7); the avatar moves are
+		// ItemOpHandler's 0x7034 types 0x23 / 0x24 (session/avatar.go).
+		session.AvatarHandler(session.AvatarDeps{Chars: chars, Inv: inv, Avatars: avatars, Items: refItems, Hub: hub, Trades: trades}),
 		// Round 778: the return scroll and the reverse return scroll
 		// (session/scroll.go), the map option's points from -teleport-dir's
 		// optionalteleport.csv (SetRecallNetwork's table).

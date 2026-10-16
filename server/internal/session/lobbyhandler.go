@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/namefilter"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -65,6 +67,9 @@ type LobbyDeps struct {
 	Catalogue *refdata.CreatableSet
 	Inv       equipment.InventoryAdder
 	Eq        equipment.Store
+	// Avatars is the avatar inventory the list's avatar block is read from
+	// (round 789); nil lists none.
+	Avatars inventory.Store
 	Guilds    GuildRoles
 	Mana      *mana.Tracker
 	// Defaults is the shard's `_RefCharDefault_*` tables (round 692,
@@ -631,7 +636,10 @@ func (d *LobbyDeps) list(ctx context.Context, sess *gateway.Session, accountID i
 //     screen can draw the glow). The value is the one 0x3038 and 0x3015
 //     carry (READ); whether retail's list builder adds the elixir too was
 //     not read.
-//   - No avatars: OpenSRO has none.
+//   - Avatars (round 789): the avatar inventory in storage order, at most
+//     5, each u32 RefItemID and the u8 the client discards; OpenSRO writes
+//     the OptLevel there (INFERRED: what the ShardManager writes into it is
+//     not read, AVATAR_RESEARCH.md 4.2).
 //   - Academy 0: OpenSRO has no academy.
 func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time.Time) LobbyCharacter {
 	maxMP := c.MaxMP()
@@ -658,6 +666,17 @@ func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time
 						rec.Items = append(rec.Items, LobbyItem{RefItemID: uint32(w.ItemID), Plus: w.EffectivePlus()})
 					}
 				}
+			}
+		}
+	}
+	if d.Avatars != nil {
+		if held, err := d.Avatars.List(ctx, c.ID); err == nil {
+			sort.Slice(held, func(i, j int) bool { return held[i].Index < held[j].Index })
+			for _, a := range held {
+				if len(rec.Avatars) == LobbyMaxAvatars {
+					break
+				}
+				rec.Avatars = append(rec.Avatars, LobbyItem{RefItemID: uint32(a.ItemID), Plus: a.OptLevel})
 			}
 		}
 	}

@@ -10,6 +10,25 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## Round 789 lane AS follow-ups (avatars on the server; docs/protocol/avatars.md, docs/rounds/r789as.md)
+
+- [ ] **The devil's spirit's opt-level abilities**: `RefMagicOptByItemOptLevel`,
+      `RefAbilityByItemOptLevel` and `RefSkillByItemOptLevel` (MEASURED 505 / 266 / 335 rows) have
+      no exporter or loader; a spirit's per-plus abilities and its skill strip's skills are not
+      applied (`PublishEquipItemParams`' `FUN_00498020(2)`, READ). Its own blue options are.
+- [ ] **Params with no reader**: an avatar's `hpna`/`mpna` (52/53), `luca` (173), `mdia` (188),
+      `umdu` (259) and a player's damage-taken multipliers 174..177 (`dara`) are carried in the
+      totals and change nothing; `brna`'s leaf (param 10, gated on `+0x190`) is not followed.
+- [ ] **Which use awakens a devil's spirit in retail** (vslot 325's caller), the `0x3078` after a
+      Nasrun extension (three fields), and when `UIIT_MSG_NASRUN_WEAR_EXTENSION_ITEM_NOT_USE` fires.
+      OURS meanwhile: using it from the bag; the extension's target in the use's option byte.
+- [ ] **The expiry while offline**: a spirit that expires while its owner is away is stripped at
+      the next stats read; the `0x3078` is sent only to an owner in the world when its timer fires.
+- [ ] **The Test Items NPC's avatar tabs** show 30 of each kind and gender (1,381 avatar ids); a
+      page spin in the store would show them all.
+- [ ] **StorageOperation's `[pc+0x30]+0x13` refusal (0x180e)** and INTERACTMODE 7 are not modelled.
+- [ ] **The lobby's avatar u8**: OptLevel assumed (INFERRED), not read from the ShardManager.
+
 ## Round 788 lane R follow-ups (the original client logs in to OpenSRO; opcodes/gateway.md)
 
 - [x] **The original client (vSRO 1.188) logs in to OpenSRO's server and shows its character
@@ -1369,7 +1388,10 @@ Today:
 Nothing is designed yet. When it comes up, start from the protocol docs (docs/protocol/) and the
 gateway's TLS and session handling.
 
-### Asset packs: `.pk3` beside `.pk2` -- **planned (decided with the user 2026-10-01); start after the front-end epic**
+### Asset packs: `.pk3` beside `.pk2` -- **started in round 789: the rules, the Go side and the converter are built; the client is lane K's**
+
+The rules every reader follows are written once in docs/protocol/asset_packs.md ("Rules"); the
+operator steps are in deploy/README.md, "Asset packs".
 
 Shipping new or changed assets should not require injecting them into a `.pk2`. A `.pk3` is a
 plain zip archive; `.zip` is accepted too. The client reads the same formats from it that it reads
@@ -1388,8 +1410,8 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
   2. `z_assets.pk3`;
   3. `z_assets.pk2`;
   4. `assets.pk3`;
-  5. the retail base archives (`Data`, `Map`, `Media` and `Music`, as `.pk2` or converted
-     `.pk3`). These are always the bottom layer whatever their names, or `assets.pk3` would sort
+  5. the retail base archives (`Data`, `Map`, `Media`, `Music` and `Particles`: five, the user
+     2026-10-16; as `.pk2` or converted `.pk3`). These are always the bottom layer whatever their names, or `assets.pk3` would sort
      before `Data.pk2` and lose to it.
 - **The name sort ignores case.** For two packs with the same name, the `.pk3` wins over the
   `.pk2`.
@@ -1400,16 +1422,27 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
 **The work:**
 - [ ] **One virtual file system** under every reader (client GDScript, the Rust native readers and
       the Go tools: `export-refdata`, `pk2list` and the server's own reads). No reader knows which
-      layer a file came from.
+      layer a file came from. **Go: done (round 789, `server/internal/assetfs`)**: pk2list,
+      export-refdata and export-leveldata read through it (`-archives`); the server itself reads no
+      archive at runtime. The base archives turned out not to be one namespace (40 paths in two of
+      them, 5 differing, MEASURED), so a lookup names its volume (asset_packs.md rule 3). Client
+      GDScript and Rust: lane K.
 - [ ] **A `.pk3` reader:** stored and deflated entries, and zip64, since a converted `Map.pk2` is
-      several GB. Read stored entries without unpacking where we can.
-- [ ] **A pk2 → pk3 converter.** It keeps every entry's path, so its output drops in for the
+      several GB. Read stored entries without unpacking where we can. **Go: done (round 789;
+      archive/zip, zip64 end record and >4 GiB offsets MEASURED).** Client: lane K.
+- [x] **A pk2 → pk3 converter.** It keeps every entry's path, so its output drops in for the
       original archive. It stores already-compressed types (`.ddj`, `.ogg`) and deflates text,
       tables and meshes. It checks every entry comes out byte-identical. It runs on the operator's
-      own archives, and its output is game data: never committed (docs/LEGAL.md).
+      own archives, and its output is game data: never committed (docs/LEGAL.md). **Done in round
+      789: `cmd/pk2topk3`** (and `cmd/pk3pack`, the pack builder). Measured, `.ddj` is not
+      "already compressed": it deflates to 25-80%, so it is deflated (`-store .ddj` keeps it
+      stored); `.ogg`, `.png`, `.rar` are stored. All five retail archives converted, every file
+      byte-identical (asset_packs.md, "Measured").
 - [ ] **Safety:** reject entry names that escape the archive (`..`, absolute paths), cap the
-      unpacked size to stop zip bombs, and log every override at load.
-- [ ] **A QA/debug command** that answers "which layer served this path?".
+      unpacked size to stop zip bombs, and log every override at load. **Go: done (round 789;
+      the limits and their measured basis in asset_packs.md rule 6).** Client: lane K.
+- [ ] **A QA/debug command** that answers "which layer served this path?". **Go: `pk2list
+      -archives <folder> -which <path>` (round 789).** The client's QA hook: lane K.
 - [ ] **The server names the packs a client needs,** with their hashes (idTech's "pure server"),
       and the auto-updater fetches them. Then every player sees the same content, and a modified
       local pack cannot change what the server assumes (walls, navmesh).
@@ -1787,7 +1820,8 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       the entity wire); death returns and the warp home go to Jangan, not `STORE_EU_GATE`;
       `leveldata.KillExp`'s Europe arm is never selected (the killer's race is not passed); Europe's
       NPCs and shops are unexercised.
-- [ ] **Item plus and avatars** in the list record are 0 / none: OpenSRO keeps no plus and no avatars.
+- [x] **Item plus and avatars** in the list record: the plus since round 735, the avatars since round
+      789 (the avatar inventory in storage order; the u8 is the OptLevel, INFERRED).
 - [ ] **Restore's asynchronous error**: u8 in the server, u16 in the client (READ both); u16 is sent.
 - [ ] **recovered_names**: rename `SendNameCheckRequest_858c00` (it is the delete/restore confirm
       sender) once the rename is applied in Ghidra too.

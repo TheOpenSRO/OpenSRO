@@ -51,8 +51,10 @@ func TestAdvancedElixirEntryLayout(t *testing.T) {
 	}
 }
 
-// Time-limited gear (TypeID3 14) carries the period word, sent as 0 -- "not
-// active" -- in place of durability (gs:0x42fd30).
+// Time-limited gear (TypeID3 14) carries the period word in place of
+// durability (gs:0x42fd30): 0 -- "not active" -- until its expiry is set;
+// round 789 keeps the expiry in the instance's Durability (the Data word),
+// so a set one is bit 31 with the seconds left (internal/avatar).
 func TestTimeLimitedGearSendsThePeriodWord(t *testing.T) {
 	items := refdata.NewMemStore()
 	if err := items.ImportItems(context.Background(), []refdata.Item{
@@ -60,9 +62,15 @@ func TestTimeLimitedGearSendsThePeriodWord(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	for _, never := range []int{0, -1} {
+		ii, ok := itemInfoFor(context.Background(), items, 0, 900, inventory.Instance{Durability: never})
+		if !ok || ii.Durability != 0 {
+			t.Fatalf("a time-limited item never awakened (%d): %+v %v, want the period word 0", never, ii, ok)
+		}
+	}
 	ii, ok := itemInfoFor(context.Background(), items, 0, 900, inventory.Instance{Durability: 40})
-	if !ok || ii.Durability != 0 {
-		t.Fatalf("a time-limited item: %+v %v, want the period word 0", ii, ok)
+	if !ok || ii.Durability != 1<<31 {
+		t.Fatalf("a time-limited item expired long ago: %+v %v, want bit 31 and 0 seconds", ii, ok)
 	}
 }
 

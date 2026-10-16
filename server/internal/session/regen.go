@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
@@ -163,8 +164,11 @@ func regenApply(ctx context.Context, hub *world.Hub, e world.Entity, chars chara
 	if !ok {
 		return nil
 	}
-	hp := mana.RegenPerTick(maxHP, rate)
-	mp := mana.RegenPerTick(maxMP, rate)
+	// EvaluateParam(25) / (26): the motion state's base with the other
+	// entries of 'hprg' / 'mprg' (round 789: a worn avatar's percent entries,
+	// avatarstats.go; and any buff's), as the tick reads them (mana.go).
+	hp := mana.RegenPerTick(maxHP, float32(buffStat(c.ID, buff.ParamHPRegen, float64(rate))))
+	mp := mana.RegenPerTick(maxMP, float32(buffStat(c.ID, buff.ParamMPRegen, float64(rate))))
 	newHP, newMP := c.HP, curMP
 	changed := false
 	// HP 0 while alive: no HP (see regenOne).

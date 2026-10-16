@@ -55,7 +55,9 @@ and changes nothing.
 |---|---|
 | `/tp <x> <z>` | Teleports you to world coordinates in the current zone (behind the loading screen, then 6 s untouchable, as every teleport). |
 | `/goto <zone\|monster>` | Travels to a named zone's entry, or to where a monster species is kept. |
-| `/give <item id> [qty]` | Puts an item in your bag by its numeric id (unknown ids are refused). |
+| `/give <item id> [qty]` | Puts an item in your bag by its numeric id (unknown ids are refused). Avatars and devil's spirits too (round 789): they arrive +0 with no options, a devil's spirit not awakened. |
+| `/avatar` | Lists your avatar slots 0..4: each item's id, plus and option count, and a devil's spirit's state (not awakened / awake for how long / expired) (round 789; a test tool, not a retail command). |
+| `/avatar spirit <bag slot> <seconds\|0>` | Sets the expiry of the devil's spirit in that bag slot: awake for *seconds* from now, or `0` not awakened (round 789; a test tool). Lets you wear one at once (a sleeping one is refused 0x18f9) and watch it expire while worn: `/avatar spirit 0 60`, put it on, and a minute later its stats go and the server sends `0x3078 {3, slot}`. |
 | `/gold <n>` | Adds gold (a negative number takes it away). |
 | `/level <n>` | Raises you to level *n* through the real level-up path, so stats, HP and MP follow. Only goes up. |
 | `/heal` | Refills HP and MP to their maximums. |
@@ -102,6 +104,17 @@ already. `/give 24331 10` gives ten *Berserker Regeneration Potions*, which fill
 the orbs straight from the bag. For a normal player the fill has the game's own
 20-minute reuse delay (the next scroll waits for it); **a GM account skips it**
 -- that is this server's own rule, not the game's.
+
+**Testing avatars (round 789):** `/give <id>` an avatar (the item table's id
+of a hat, dress, attachment or flag, or a devil's spirit), open the equipment
+window's avatar view and drop it on the avatar slots; take it off by dropping
+it on the bag. The Test Items NPC (when switched on) sells a sample of each
+kind per gender. A dress with an attachment comes off with it (two free bag
+slots needed). To grant options, talk to a town blacksmith ("Grant magic
+option on avatar item"), drop a hat, dress or attachment in the window, pick
+an option, confirm. A devil's spirit must be awakened before it can be worn:
+use it from the bag (it lasts its item's period), or `/avatar spirit <bag
+slot> <seconds>`. docs/protocol/avatars.md has the rules.
 <!-- /gm-only -->
 
 ## For operators: enabling GM accounts

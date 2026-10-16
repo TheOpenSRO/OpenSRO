@@ -34,13 +34,13 @@ func exportQuests(out string, args []string) error {
 		case "refquestrewarditems.txt":
 			in.RewardItems, err = readTable(path)
 		case "define.sct":
-			in.Define, err = os.ReadFile(path)
+			in.Define, err = inputs.ReadFile(path)
 		case "questlist.sct":
-			in.QuestList, err = os.ReadFile(path)
+			in.QuestList, err = inputs.ReadFile(path)
 		case "quest.sct":
-			in.QuestSct, err = os.ReadFile(path)
+			in.QuestSct, err = inputs.ReadFile(path)
 		case "sr_gameserver.exe":
-			in.ServerExe, err = os.ReadFile(path)
+			in.ServerExe, err = inputs.ReadFile(path)
 		default:
 			return fmt.Errorf("unrecognised input %s", path)
 		}
