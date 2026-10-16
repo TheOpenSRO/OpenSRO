@@ -90,8 +90,11 @@ func (l *Layer) String() string { return l.Name }
 // Options configure Open.
 type Options struct {
 	Mode Mode
-	// CustomDir is the loose overlay folder. "" means <dir>/custom when it
-	// exists; NoCustom turns the overlay off.
+	// CustomDir is the loose overlay folder. "" means the folder named
+	// custom BESIDE dir (<dir>/../custom) when it exists, as the client has
+	// it: a player's archives are in pk2/ and round 678's custom/ is next to
+	// it (docs/protocol/asset_packs.md, rule 1). NoCustom turns the overlay
+	// off.
 	CustomDir string
 	NoCustom  bool
 	// Limits for pack entries; the zero value means DefaultLimits.
@@ -259,7 +262,7 @@ func Open(dir string, opt Options) (*FS, error) {
 		cdir := opt.CustomDir
 		explicit := cdir != ""
 		if !explicit {
-			cdir = filepath.Join(dir, "custom")
+			cdir = filepath.Join(filepath.Dir(filepath.Clean(dir)), "custom")
 		}
 		if st, err := os.Stat(cdir); err == nil && st.IsDir() {
 			src, rejected, err := openLoose(cdir, lim)

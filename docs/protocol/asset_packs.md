@@ -20,7 +20,9 @@ section **Client**). A reader that differs from the Rules is a bug in that reade
 A lookup checks layers from the highest down; **the first layer that has the path serves it.**
 
 1. **`custom/`**, a loose folder: a path overlay (development, modding, and round 678's branding
-   files, which live there too).
+   files, which live there too). By default it is the folder named `custom` **beside** the archive
+   folder (a player's archives are in `pk2/`, and `custom/` is next to it); the client and the Go
+   tools agree on this since round 789's merge.
 2. **Packs**: every `*.pk3`, `*.zip` and `*.pk2` in the archive folder whose name is not one of the
    five base names. They cascade by name (rule 2).
 3. **The base archives** `Data`, `Map`, `Media`, `Music`, `Particles` (as `.pk2`, or `.pk3`/`.zip`
@@ -118,6 +120,7 @@ When a pack (or `custom/`) is opened, every entry is checked; an entry that fail
   single entry can still unpack ~1032x its size; the 256 MiB cap is what bounds that.
 - A reader stops at the size an entry records and checks its CRC-32.
 - In `custom/`, symbolic links are refused (nothing outside the folder is reachable through it).
+  Inside a pack, an entry whose mode marks it a symbolic link is refused too (both readers).
 
 **Every override is logged at load**: one line per `custom/` or pack file that hides a lower
 layer's file. An archive that cannot be opened is skipped and logged (a tool may choose to fail
@@ -134,16 +137,19 @@ retail archives (`pk2topk3 -measure`, round 789), then over every file by the co
 | `.rar` | 98.6% | **stored** |
 | `.png` | 90.3% | **stored** |
 | `.wav` | 80.9% (Data, all 2,961 files) | deflated |
-| `.ddj` | 24.8% Particles, 40.0% Media, 59.4% Data, 80.3% Map | deflated |
+| `.ddj` | 24.8% Particles, 40.0% Media, 59.4% Data, 80.3% Map | **stored** (the plan's choice; see below) |
 | `.bms` 41.7%, `.ban` 64.5%, `.nvm` 26.6%, `.t` 6.3%, `.m` 33.7%, `.efp` 17.9%, `.txt` 28.1% | | deflated |
 
-So the policy (`assetfs.StoredExtensions`) stores `.ogg`, `.rar`, `.png` (MEASURED) and the formats
-that are compressed by construction (`.jpg`, `.jpeg`, `.mp3`, `.zip`, `.pk3`, `.7z`, `.gz`,
-`.webp`; INFERRED from the formats, none is in retail) and deflates everything else; an entry
-that deflate does not make smaller is stored anyway. **`.ddj` is deflated**, against the TODO's
-first assumption that it is "already compressed": its DXT blocks still deflate to 25-80%. An
-operator who wants textures readable without inflating passes `-store .ddj` (Data.pk3 then grows
-by about 0.63 GB).
+So the policy (`assetfs.StoredExtensions`) stores `.ddj` (below), `.ogg`, `.rar`, `.png`
+(MEASURED) and the formats that are compressed by construction (`.jpg`, `.jpeg`, `.mp3`, `.zip`,
+`.pk3`, `.7z`, `.gz`, `.webp`; INFERRED from the formats, none is in retail) and deflates
+everything else; an entry that deflate does not make smaller is stored anyway. **`.ddj` is
+stored**, as the plan decided (docs/TODO.md, 2026-10-01), although its DXT blocks deflate to
+25-80% (MEASURED, so they are not "already compressed"): the game reads textures far more often
+than it installs them, and lane K measured a deflated `.ddj` making 20,000 native Data reads ten
+times slower (2.7 s against 0.27 s) to save about 0.63 GB on Data.pk3. An operator who prefers the
+smaller pack passes `-deflate .ddj`. (Lane G's first conversion deflated `.ddj`; the round's merge
+switched the default back to the plan.)
 
 The output is deterministic: entries in the pk2's directory order, every folder as a folder
 entry, every timestamp 1980-01-01. Two conversions of Data.pk2 were byte-identical (MEASURED).
@@ -160,7 +166,7 @@ same 312 report lines; only a missing file's error wording changed).
 `server/internal/assetfs` is the layered file system:
 
 - `Open(dir, Options{Mode, CustomDir, NoCustom, Limits, Logf, Strict})` opens a folder per the
-  Rules; `custom/` defaults to `<dir>/custom`. `OpenArchive(path)` opens one archive as one layer.
+  Rules; `custom/` defaults to the `custom` folder beside `dir` (rule 1). `OpenArchive(path)` opens one archive as one layer.
 - `FS` is the unscoped view; `FS.In("Media")` the scoped one (rule 3). A `View` has `Stat`, `Open`
   (streams), `ReadFile`, `ReadDir` (merged across layers), `Walk` (each path once, from its serving
   layer), `Which` (the serving layer) and `WhichAll` (every layer holding the path).
@@ -228,18 +234,17 @@ in for one (OURS).
 **The client's own choices (OURS), beside the Rules.**
 
 - **`custom/`** is round 678's folder **beside `pk2/`** (`FrontEndTheme.custom_dir`:
-  `OPENSRO_CUSTOM_DIR`, else `<executable's folder>/custom`), not `<archives>/custom` as the Go
-  tools default: for a player the archives are in `pk2/`, and the branding files already live in
-  `custom/` beside it. Read in every source mode, branding files included; at most 20,000 files,
+  `OPENSRO_CUSTOM_DIR`, else `<executable's folder>/custom`): for a player the archives are in
+  `pk2/`, and the branding files already live in `custom/` beside it, which is where the Go tools
+  look by default too (rule 1). Read in every source mode, branding files included; at most 20,000 files,
   16 folders deep, indexed at open (a file added later is seen after `reopen()`).
 - **The mode** is `setting/config.yaml`'s `assets.source` (`ClientConfig`), or
   `OPENSRO_ASSET_SOURCE` for a test; `mixed` by default.
 - **The pack folder** is the folder the Data volume resolved to, or `OPENSRO_PACK_DIR`.
 - **A `.pk3` entry whose data would lie past the end of the file** is refused at open (the Go
   reader finds it when reading). **A symbolic-link entry** (a Unix-made entry whose mode is
-  S_IFLNK) is refused, per rule 1's "nothing inside a pack may be" a link; NOTE: lane G's
-  `checkZipEntry` does not look at a zip entry's mode, so the Go tools read such an entry as a
-  file holding the link's target.
+  S_IFLNK) is refused, per rule 1's "nothing inside a pack may be" a link; the Go reader refuses it
+  too since round 789's merge (`checkZipEntry`).
 - **Reads.** A stored entry is read positionally, no copy. A deflated one: natively,
   `miniz_oxide` into a buffer of exactly the declared size, then `crc32fast`; in GDScript, the
   raw deflate data is wrapped as a gzip member whose trailer is the central directory's CRC-32 and
@@ -279,8 +284,8 @@ GDScript class's own `Script.reload`.)
 - 20,000 Data lookups and reads (`client/tools/pack_bench.gd`, medians of 5): an empty pack folder
   costs nothing (native 345 against 343 ms; GDScript 9,067 against 9,016); a pack over Data adds
   about 1.5-2 us a lookup natively (find 126-138 against 98-100 ms). From the converted Data.pk3
-  the reads cost the inflate the `.pk2` does not (native 2.7 s against 0.27 s: `.ddj` is deflated,
-  rule 7) while the GDScript lookups need no Blowfish directory (72 ms against 9,089).
+  the reads cost the inflate the `.pk2` does not (native 2.7 s against 0.27 s, measured with
+  lane G's first conversion, which deflated `.ddj`; the converter now stores it, rule 7) while the GDScript lookups need no Blowfish directory (72 ms against 9,089).
 - A real render: a pack replacing Media's `minimap\168x97.ddj` (stored, `MINIMAP/168x97.ddj` in the
   zip) changed 61.6 % of the minimap's pixels at the Jangan spawn and 0.000 % of the world
   (`frame_ab.py`, a box over each), and `QA WHICH` named the pack.

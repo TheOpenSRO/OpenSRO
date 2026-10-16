@@ -42,7 +42,7 @@ func main() {
 	in := flag.String("in", "", "the pk2 archive to convert (required)")
 	out := flag.String("o", "", "the .pk3 to write (required unless -measure)")
 	workers := flag.Int("workers", 0, "compressing goroutines (0: GOMAXPROCS, at most 8)")
-	store := flag.String("store", "", "extra extensions to store uncompressed, comma-separated (e.g. .ddj)")
+	store := flag.String("store", "", "extra extensions to store uncompressed, comma-separated (e.g. .wav)")
 	deflate := flag.String("deflate", "", "extensions to deflate although the policy stores them, comma-separated")
 	level := flag.Int("level", flate.DefaultCompression, "deflate level, 1-9")
 	noVerify := flag.Bool("no-verify", false, "skip the byte-identical read-back (not recommended)")

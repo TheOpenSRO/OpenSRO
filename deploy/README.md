@@ -628,7 +628,7 @@ the base archives; a later name wins (`z_` over `a_`), `.pk3` over a `.pk2` of t
 /tmp/pk2list -archives /srv/sro/client -volume Media -extract 'server_dep\silkroad\textdata\itemdata.txt' -out itemdata.txt
 ```
 `-source pk2|pk3|mixed` (default mixed) picks the archive types; `-custom <dir>` a loose overlay
-folder (default `<archives>/custom` when it exists). `-pk2` also opens one `.pk3`.
+folder (default the `custom` folder beside the archive folder, where the client has it, when it exists). `-pk2` also opens one `.pk3`.
 
 **Exporting the reference data through the packs.** `-archives <folder>` makes the exporters read
 the tables straight from the layers (a bare name is a file of `server_dep\silkroad\textdata\` in

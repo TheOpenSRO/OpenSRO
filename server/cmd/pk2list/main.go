@@ -34,7 +34,7 @@ func main() {
 	pk2Path := flag.String("pk2", "", "path to one archive: a real .pk2, or a .pk3/.zip")
 	archives := flag.String("archives", "", "a folder of archives, read through the layered file system (custom/, packs, base archives)")
 	source := flag.String("source", "mixed", "with -archives: the source mode, pk2, pk3 or mixed")
-	custom := flag.String("custom", "", "with -archives: the loose overlay folder (default <archives>/custom when it exists)")
+	custom := flag.String("custom", "", "with -archives: the loose overlay folder (default the custom folder beside <archives>, as the client has it, when it exists)")
 	noCustom := flag.Bool("no-custom", false, "with -archives: no loose overlay folder")
 	volume := flag.String("volume", "", "with -archives: look up as a reader of this base archive does (Data, Map, Media, Music or Particles): the packs, then only that archive")
 	filter := flag.String("filter", "", "only print paths containing this substring (case-insensitive)")

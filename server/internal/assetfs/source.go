@@ -322,6 +322,9 @@ func checkZipEntry(f *zip.File, name string, lim Limits) string {
 	if f.Flags&0x1 != 0 {
 		return "encrypted"
 	}
+	if f.Mode()&os.ModeSymlink != 0 {
+		return "a symbolic link" // rule 6, as the client refuses it (OURS)
+	}
 	if f.Method != zip.Store && f.Method != zip.Deflate {
 		return fmt.Sprintf("compression method %d (only stored and deflated are read)", f.Method)
 	}

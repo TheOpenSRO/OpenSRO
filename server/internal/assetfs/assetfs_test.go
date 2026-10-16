@@ -100,8 +100,10 @@ func layerNames(ls []*Layer) string {
 
 func TestCascadeOrder(t *testing.T) {
 	dir := cascadeDir(t)
-	os.MkdirAll(filepath.Join(dir, "custom"), 0o755)
-	os.WriteFile(filepath.Join(dir, "custom", "Shared.TXT"), []byte("custom"), 0o644)
+	// custom/ sits beside the archive folder by default, as the client has it.
+	custom := filepath.Join(filepath.Dir(dir), "custom")
+	os.MkdirAll(custom, 0o755)
+	os.WriteFile(filepath.Join(custom, "Shared.TXT"), []byte("custom"), 0o644)
 	var logs []string
 	f, err := Open(dir, Options{Logf: func(format string, a ...any) { logs = append(logs, fmt.Sprintf(format, a...)) }})
 	if err != nil {
@@ -599,8 +601,8 @@ func TestPackWriterRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	fh.Close()
-	if st.Files != 6 || st.Dirs != 2 || st.Stored != 3 || st.Deflated != 3 || st.StoredFallback != 1 {
-		t.Fatalf("stats %+v (want .ddj, .txt and .ttf deflated; .ogg stored by policy, the empty file and random.bin stored, the latter by the fallback)", st)
+	if st.Files != 6 || st.Dirs != 2 || st.Stored != 4 || st.Deflated != 2 || st.StoredFallback != 1 {
+		t.Fatalf("stats %+v (want .txt and .ttf deflated; .ddj and .ogg stored by policy, the empty file and random.bin stored, the latter by the fallback)", st)
 	}
 	res, err := VerifyPack(out, sums, 2, 2)
 	if err != nil {
@@ -755,9 +757,10 @@ func TestSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(keep, "Media.pk2"), filepath.Join(dir, "Media.pk2")); err != nil {
 		t.Skip("no symlinks here:", err)
 	}
-	os.MkdirAll(filepath.Join(dir, "custom"), 0o755)
+	custom := filepath.Join(filepath.Dir(dir), "custom")
+	os.MkdirAll(custom, 0o755)
 	os.WriteFile(filepath.Join(keep, "secret.txt"), []byte("outside"), 0o644)
-	os.Symlink(filepath.Join(keep, "secret.txt"), filepath.Join(dir, "custom", "b.txt"))
+	os.Symlink(filepath.Join(keep, "secret.txt"), filepath.Join(custom, "b.txt"))
 	f, err := Open(dir, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -791,5 +794,39 @@ func TestFoldRules(t *testing.T) {
 	k2, _ := Key("prim/mtrl/foo.ddj")
 	if k1 != k2 || k1 != "prim/mtrl/foo.ddj" {
 		t.Fatalf("Key %q %q", k1, k2)
+	}
+}
+
+// A symbolic-link entry inside a pack is refused, as the client refuses it
+// (rule 6; round 789's merge aligned the two readers).
+func TestSymlinkEntryRefused(t *testing.T) {
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	h := &zip.FileHeader{Name: "link.txt", Method: zip.Store}
+	h.SetMode(os.ModeSymlink | 0o777)
+	w, err := zw.CreateHeader(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.WriteString(w, "/etc/passwd")
+	w, _ = zw.CreateHeader(&zip.FileHeader{Name: "plain.txt", Method: zip.Store})
+	io.WriteString(w, "plain")
+	zw.Close()
+	os.WriteFile(filepath.Join(dir, "links.pk3"), buf.Bytes(), 0o644)
+	f, err := Open(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Stat("link.txt"); err == nil {
+		t.Fatal("a symbolic-link entry must not be served")
+	}
+	if got := read(t, f.View, "plain.txt"); got != "plain" {
+		t.Fatal(got)
+	}
+	l := f.Layers()[0]
+	if len(l.Rejected) != 1 || !strings.Contains(l.Rejected[0], "symbolic link") {
+		t.Fatalf("rejected = %q", l.Rejected)
 	}
 }

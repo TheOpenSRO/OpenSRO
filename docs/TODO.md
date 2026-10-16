@@ -1441,8 +1441,9 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
       tables and meshes. It checks every entry comes out byte-identical. It runs on the operator's
       own archives, and its output is game data: never committed (docs/LEGAL.md). **Done in round
       789: `cmd/pk2topk3`** (and `cmd/pk3pack`, the pack builder). Measured, `.ddj` is not
-      "already compressed": it deflates to 25-80%, so it is deflated (`-store .ddj` keeps it
-      stored); `.ogg`, `.png`, `.rar` are stored. All five retail archives converted, every file
+      "already compressed" (it deflates to 25-80%), but it stays stored as planned: a deflated
+      `.ddj` made reads ten times slower (`-deflate .ddj` trades the other way); `.ogg`, `.png`,
+      `.rar` are stored. All five retail archives converted, every file
       byte-identical (asset_packs.md, "Measured").
 - [x] **Safety:** reject entry names that escape the archive (`..`, absolute paths), cap the
       unpacked size to stop zip bombs, and log every override at load. **Go: done (round 789;

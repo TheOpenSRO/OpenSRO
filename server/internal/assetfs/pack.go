@@ -27,9 +27,14 @@ import (
 // extension in the five retail archives; docs/protocol/asset_packs.md,
 // "Store or deflate"): .ogg deflates to 99.4%, .rar to 98.6%, .png to
 // 90.3%. The rest are formats that are compressed by construction (INFERRED
-// from the formats; none is in the retail archives). .ddj and .wav are NOT
-// here: they deflate to 26-79% and 75%.
-var StoredExtensions = []string{".ogg", ".rar", ".png", ".jpg", ".jpeg", ".mp3", ".zip", ".pk3", ".7z", ".gz", ".webp"}
+// from the formats; none is in the retail archives). .ddj is stored too,
+// as the plan decided (docs/TODO.md, the user 2026-10-01), although it
+// deflates to 26-79% (MEASURED): a game reads textures far more often than
+// it is installed, and a deflated .ddj made 20,000 native Data reads ten
+// times slower (2.7 s against 0.27 s, round 789 lane K) for 0.63 GB saved
+// on Data.pk3. `-deflate .ddj` trades the other way. .wav (75%) is
+// deflated.
+var StoredExtensions = []string{".ddj", ".ogg", ".rar", ".png", ".jpg", ".jpeg", ".mp3", ".zip", ".pk3", ".7z", ".gz", ".webp"}
 
 // PackPolicy decides store or deflate per entry.
 type PackPolicy struct {

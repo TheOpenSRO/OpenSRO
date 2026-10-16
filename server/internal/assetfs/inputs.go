@@ -152,7 +152,7 @@ type InputFlags struct {
 func (f *InputFlags) Register(fs *flag.FlagSet) {
 	fs.StringVar(&f.Archives, "archives", "", "read the input tables through this folder of archives (custom/, packs, base archives; docs/protocol/asset_packs.md) instead of loose files: a bare name is a file of -textdata, @<index> expands to the parts the index lists")
 	fs.StringVar(&f.Source, "source", "mixed", "with -archives: the source mode, pk2, pk3 or mixed")
-	fs.StringVar(&f.Custom, "custom", "", "with -archives: the loose overlay folder (default <archives>/custom when it exists)")
+	fs.StringVar(&f.Custom, "custom", "", "with -archives: the loose overlay folder (default the custom folder beside <archives>, as the client has it, when it exists)")
 	fs.BoolVar(&f.NoCustom, "no-custom", false, "with -archives: no loose overlay folder")
 	fs.StringVar(&f.Volume, "volume", "Media", "with -archives: the base archive the inputs are looked up in first (then every layer)")
 	fs.StringVar(&f.TextData, "textdata", TextDataDir, "with -archives: the folder a bare input name is in")
