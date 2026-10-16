@@ -1875,6 +1875,16 @@ func _ready() -> void:
 	# are placed once a tick (EfpEffect.tick_gate, its _process).
 	EfpEffect.gate_ticks(true)
 	_setup_efp_pass()
+	# Round 789 (lane U): a QA boot straight into the world fetches and layers
+	# the QA server's packs before this scene opens any archive (Login does it
+	# for a player before character select).
+	# Nothing of this scene runs until it is done (no frame of it is set up yet).
+	if not title_mode and OS.get_environment("OPENSRO_QA_SERVER") != "" and not NetClient.is_connected_to_server():
+		set_process(false)
+		set_physics_process(false)
+		await QaSignIn.sync_packs(get_tree())
+		set_process(true)
+		set_physics_process(true)
 	# QA (round 786): OPENSRO_QA_PHYSICS_TICKS=<n> runs the physics at n a
 	# second, so a movie render (60 frames a second) shows what a player
 	# rendering faster than the physics sees (e.g. 24: 2.5 frames a tick, as
@@ -2112,6 +2122,11 @@ func _ready() -> void:
 	NetClient.unstuck_result.connect(_on_unstuck_result)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
+	# Round 789: this player's avatar inventory and its moves (AvatarNet).
+	NetClient.avatar_list_result.connect(func(_items: Dictionary) -> void: _sync_player_avatars("avatar list"))
+	NetClient.avatar_move_result.connect(func(r: Dictionary) -> void:
+		if bool(r.get("ok", false)):
+			_sync_player_avatars("avatar move"))
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
 	NetClient.recall_designate_result.connect(_on_recall_designate_result)
@@ -2480,7 +2495,7 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 635: a body dressed before the block existed gets its portrait now
 	# (retail's block is created dirty: +0x38c = 1 in its constructor).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
-		_refresh_player_portrait(_player_skeleton, _player_equipped_last, _player_body)
+		_refresh_player_portrait(_player_skeleton, _with_player_avatars(_player_equipped_last), _player_body)
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -2645,7 +2660,7 @@ func _try_initialize_pk2_ui() -> void:
 	# the portrait does above (round 695: a QA run's loadout dresses before
 	# the HUD is built, and _refresh_paper_doll returns without panels).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton) and _paper_doll == null:
-		_refresh_paper_doll(_player_equipped_last, _player_body)
+		_refresh_paper_doll(_with_player_avatars(_player_equipped_last), _player_body)
 	# QA: rearrange the bag once (OPENSRO_QA_MOVE="from,to") so a render's
 ##   OPENSRO_QA_STORAGE_ITEM=1 (needs --server) unequip the boots into the bag, open the
 ##                          warehouse, the quantity dialog, and deposit 1 of the
@@ -3116,7 +3131,7 @@ func _try_load_real_scenery() -> void:
 		print("World3D: Data.pk2/OPENSRO_BSR_PATH not set -- no real scenery loaded")
 		return
 
-	var archive := Pk2Reader.open(pk2_path)
+	var archive := AssetArchives.data()
 	if archive == null:
 		printerr("World3D: could not open pk2 archive at ", pk2_path)
 		return
@@ -3184,10 +3199,9 @@ func _try_load_real_decoration_skeleton() -> void:
 func _open_pk2_if_set() -> Pk2Reader:
 	if _data_pk2 != null:
 		return _data_pk2
-	var pk2_path := Pk2Config.data_path()
-	if pk2_path == "":
-		return null
-	_data_pk2 = Pk2Reader.open(pk2_path)
+	# Round 789: the shared set (AssetArchives) -- Data.pk2 or Data.pk3, with
+	# the asset packs over it; null when there is no Data archive.
+	_data_pk2 = AssetArchives.data()
 	return _data_pk2
 
 var _tile_index_cache: TileIndexReader.Table
@@ -5282,10 +5296,7 @@ func _qa_clock_for_shot(shot_name: String) -> void:
 func _open_map_pk2_if_set() -> Pk2Reader:
 	if _map_pk2 != null:
 		return _map_pk2
-	var map_pk2_path := Pk2Config.map_path()
-	if map_pk2_path == "":
-		return null
-	_map_pk2 = Pk2Reader.open(map_pk2_path)
+	_map_pk2 = AssetArchives.map()
 	return _map_pk2
 
 ## Opens the real Media.pk2 -- OPENSRO_MEDIA_PK2_PATH if set, else a real
@@ -5297,10 +5308,7 @@ func _open_map_pk2_if_set() -> Pk2Reader:
 func _open_media_pk2_if_set() -> Pk2Reader:
 	if _media_pk2 != null:
 		return _media_pk2
-	var media_pk2_path := Pk2Config.media_path()
-	if media_pk2_path == "":
-		return null
-	_media_pk2 = Pk2Reader.open(media_pk2_path)
+	_media_pk2 = AssetArchives.media()
 	return _media_pk2
 
 ## The player's Particles.pk2, cached (same lazy-open pattern as the others).
@@ -5309,10 +5317,7 @@ func _open_media_pk2_if_set() -> Pk2Reader:
 func _open_particles_pk2_if_set() -> Pk2Reader:
 	if _particles_pk2 != null:
 		return _particles_pk2
-	var particles_pk2_path := Pk2Config.particles_path()
-	if particles_pk2_path == "":
-		return null
-	_particles_pk2 = Pk2Reader.open(particles_pk2_path)
+	_particles_pk2 = AssetArchives.particles()
 	return _particles_pk2
 
 ## Loads a real per-region minimap image (OPENSRO_MAPM_TEXTURE_PATH, e.g.
@@ -9995,12 +10000,32 @@ func _remove_npc_holder(uid: int) -> void:
 	if holder != null and is_instance_valid(holder):
 		(holder as Node).queue_free()
 
+## Whether an NPC's holder still stands, so a placement would duplicate it.
+## Round 789 lane E (MEASURED live, /var/tmp/e789/tprepro on the box): a
+## teleport within the zone (a GM /tp; the server sends the zone change, the
+## NPC window does not move, so no spawn is sent again) rebuilds the zone in
+## one frame -- the old terrain node, the NPC holders under it, is
+## queue_free()d and the new cell is built before the frame ends, so every old
+## holder was still is_instance_valid() and _try_spawn_region_npcs placed "0/3"
+## of the region's NPCs; the old ones were then freed and the town stood empty
+## until its NPC window moved. A holder queued for deletion, or under a node
+## that is (the old terrain node: queue_free marks only the node it is called
+## on), is gone.
+static func npc_holder_standing(existing) -> bool:
+	if existing == null or not is_instance_valid(existing):
+		return false
+	var n := existing as Node
+	while n != null:
+		if n.is_queued_for_deletion():
+			return false
+		n = n.get_parent()
+	return true
+
 ## Builds one NPC's holder under its region's group. Returns {} when nothing
 ## was placed, else {"db": whether it faces the server's angle,
 ## "facing_usec": the stand-in's cost}.
 func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
-	var existing = _npc_holders.get(rec.uid)
-	if existing != null and is_instance_valid(existing):
+	if npc_holder_standing(_npc_holders.get(rec.uid)):
 		return {}
 	# The server sends NPCs only (TypeID 1,2,2,x); a monster's RefObjID here
 	# would be a server bug, and its body belongs to the monster path.
@@ -11510,6 +11535,16 @@ func _load_character_assets() -> void:
 	var t_cat := Time.get_ticks_usec()
 	var bodies: CharCatalog = cboot.bodies if cboot.bodies != null else CharCatalog.new()
 	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
+	# Round 789 (QA): OPENSRO_QA_AVATAR_ARBITRATION=0 draws every worn visual as
+	# before the charactervisualchange arbitration (the "before" picture), and
+	# OPENSRO_QA_AVATAR_HAIR=0 keeps the hair under a hat (the INFERRED rule
+	# off). Real play never sets them.
+	if OS.get_environment("OPENSRO_QA_AVATAR_ARBITRATION") == "0":
+		_appearance.visual_change = null
+	if OS.get_environment("OPENSRO_QA_AVATAR_HAIR") == "0":
+		_appearance.hide_hair_by_mask = false
+	if _appearance.visual_change != null:
+		print("World3D: charactervisualchange: %d row(s) for the avatar arbitration" % _appearance.visual_change.rows.size())
 	# The weapon glow's particles (round 734) come from the world's own reader.
 	_appearance.particles = _open_particles_pk2_if_set()
 	# Round 762: the far crowd's twin shaders made as templates are adopted.
@@ -11856,6 +11891,11 @@ func _try_apply_real_player_character() -> void:
 ## character" (playtest 2026-09-20).
 func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_equipped_last = equipped
+	# Round 789: the avatars ride along under their OURS keys
+	# (CharacterAppearance.AVATAR_KEY_BASE); the body, the paper doll and the
+	# portrait are built from both, and the visual arbitration decides what
+	# shows (READ AVATAR_RESEARCH.md 6.3: one CObjCharacter path for all).
+	equipped = _with_player_avatars(equipped)
 	var pluses := _player_pluses()
 	_player_pluses_last = pluses
 	var gender := DEFAULT_GENDER
@@ -14466,6 +14506,33 @@ func _parse_qa_equip(spec: String) -> Dictionary:
 	print("World3D: QA equipment loadout %s, pluses %s" % [str(equipped), str(_qa_equip_pluses)])
 	return equipped
 
+## Round 789 (QA, OPENSRO_QA_AVATAR_VIEW): seeds NetClient's avatar inventory
+## from the QA loadout's avatar keys, shows the avatar view and the tooltips.
+func _qa_avatar_view() -> void:
+	var opts := {}
+	for part in OS.get_environment("OPENSRO_QA_AVATAR_OPTS").split(",", false):
+		var kv := part.split("=")
+		if kv.size() == 2 and kv[0].is_valid_int():
+			opts[int(kv[0])] = kv[1]
+	var seeded := {}
+	for key in _player_equipped_last:
+		if not CharacterAppearance.is_avatar_key(int(key)):
+			continue
+		var it := ItemInstance.new()
+		it.slot = int(key) - CharacterAppearance.AVATAR_KEY_BASE
+		it.ref_item_id = int(_player_equipped_last[key])
+		it.opt_level = int(_qa_equip_pluses.get(key, 0))
+		for o in String(opts.get(int(key), "")).split("/", false):
+			var iv := o.split(":")
+			if iv.size() == 2 and iv[0].is_valid_int() and iv[1].is_valid_int():
+				it.mag_params.append(int(iv[0]) | (int(iv[1]) << 32))
+		seeded[it.slot] = it
+	NetClient.last_avatar_instances = seeded
+	print("QA AVATAR VIEW: avatar inventory %s" % str(seeded.keys()))
+	_hud_panels.set_equipment_avatar_mode(true)
+	_hud_panels._fill_avatar_slots()
+	_hud_panels.qa_show_avatar_tips()
+
 ## The plus each worn slot's glow is chosen by (round 734): the item's
 ## OptLevel plus its advanced elixir, as a u8 -- READ, the client's item
 ## +0x8c byte (OptLevel + elixir, c:0x8bb070) is what CICPlayer::vslot_025
@@ -14482,7 +14549,102 @@ func _player_pluses() -> Dictionary:
 			var p := it.effective_plus() & 0xFF
 			if p != 0:
 				out[int(slot)] = p
+	# Round 789: the avatars' (their 0x3013 record's OptLevel, READ c:0x9d9cf6).
+	for key in _player_avatar_pluses:
+		out[int(key)] = int(_player_avatar_pluses[key])
 	return out
+
+# --- this player's avatars (round 789) ---------------------------------------------
+#
+# READ (AVATAR_RESEARCH.md 3.1, 5.2, 6.3): 0x3013 attaches every avatar of the
+# avatar inventory to the player's CObjCharacter (AttachAvatarVisual,
+# c:0x9d9cf6), and 0x3038 / 0x3039 for the player's own uid attach / detach
+# one by RefItemID (c:0x8a9260 / c:0x8a9560) -- the move's 0xB034 comes after
+# them. Here the avatar list (OpenSRO's carrier of 0x3013's section) sets the
+# worn avatars, the broadcasts add or take one, and a move's reply
+# re-reads the inventory (a server that sent no broadcast still redresses);
+# a set already drawn is not rebuilt.
+
+## OURS key (CharacterAppearance.AVATAR_KEY_BASE + n) -> RefItemID, and the
+## key's plus.
+var _player_avatars := {}
+var _player_avatar_pluses := {}
+
+## `equipped` with this player's avatars under their keys; with no server, a
+## QA loadout's own avatar keys (OPENSRO_QA_EQUIP "200=<id>") stand.
+func _with_player_avatars(equipped: Dictionary) -> Dictionary:
+	if _player_avatars.is_empty():
+		return equipped
+	var out := equipped.duplicate()
+	for key in _player_avatars:
+		out[int(key)] = int(_player_avatars[key])
+	return out
+
+## The avatars as a sorted [ref, plus] list, to tell a change from a repeat.
+static func _avatar_signature(avatars: Dictionary, pluses: Dictionary) -> Array:
+	var sig: Array = []
+	for key in avatars:
+		sig.append([int(avatars[key]), int(pluses.get(key, 0))])
+	sig.sort()
+	return sig
+
+## The worn avatars from NetClient's avatar inventory (storage slot -> key);
+## the player is redressed when they changed.
+func _sync_player_avatars(why: String) -> void:
+	var avatars := {}
+	var pluses := {}
+	for slot in NetClient.last_avatar_instances:
+		var it: ItemInstance = NetClient.last_avatar_instances[slot]
+		if it == null:
+			continue
+		var key := CharacterAppearance.AVATAR_KEY_BASE + int(slot)
+		avatars[key] = it.ref_item_id
+		var p := it.effective_plus() & 0xFF
+		if p != 0:
+			pluses[key] = p
+	_set_player_avatars(avatars, pluses, why)
+
+func _set_player_avatars(avatars: Dictionary, pluses: Dictionary, why: String) -> void:
+	if _avatar_signature(avatars, pluses) == _avatar_signature(_player_avatars, _player_avatar_pluses):
+		return
+	_player_avatars = avatars
+	_player_avatar_pluses = pluses
+	print("World3D: player avatars %s (%s)" % [str(_player_avatars), why])
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		_apply_player_equipment_visual(_player_equipped_last)
+
+## Whether an item id is an avatar or a devil's spirit (TypeID 3/1/13 or
+## 3/1/14): the 0x3038 / 0x3039 avatar branch (READ c:0x8a9260).
+func _is_avatar_item(item_id: int) -> bool:
+	var it: ItemTableReader.Item = _item_rows.get(item_id)
+	return it != null and (it.is_avatar() or it.is_devil_spirit())
+
+## A 0x3038 (plus >= 0) or 0x3039 of an avatar on a worn map: attached by
+## RefItemID under the first free avatar key, or detached by RefItemID -- the
+## message's slot byte is not used (READ c:0x8a9260 / c:0x8a9560). Returns
+## the maps changed in place.
+static func avatar_broadcast_into(worn: Dictionary, pluses: Dictionary, ref_id: int, plus: int) -> void:
+	var held := -1
+	for key in worn:
+		if CharacterAppearance.is_avatar_key(int(key)) and int(worn[key]) == ref_id:
+			held = int(key)
+	if plus < 0:
+		if held >= 0:
+			worn.erase(held)
+			pluses.erase(held)
+		return
+	if held < 0:
+		for k in CharacterAppearance.AVATAR_KEYS:
+			if not worn.has(CharacterAppearance.AVATAR_KEY_BASE + k):
+				held = CharacterAppearance.AVATAR_KEY_BASE + k
+				break
+	if held < 0:
+		return
+	worn[held] = ref_id
+	if plus > 0:
+		pluses[held] = plus
+	else:
+		pluses.erase(held)
 
 ## Loads a real Map.pk2 region's real object placements (OPENSRO_MAPO_PATH,
 ## e.g. "0\\0.o", via OPENSRO_MAP_PK2_PATH -- same archive as
@@ -15693,6 +15855,31 @@ func _update_blob_shadow() -> void:
 ##                          its drawn particles are along and off the weapon's
 ##                          own bone axis (EquipFx.measure), and where round
 ##                          734's position-only placement put them
+##   OPENSRO_QA_AVATAR_ARBITRATION=0  (round 789) draw every worn visual, as
+##                          before the charactervisualchange arbitration; and
+##   OPENSRO_QA_AVATAR_HAIR=0  keep the hair under a hat (CharacterAppearance.
+##                          hide_hair_by_mask off). Avatars go in OPENSRO_QA_EQUIP
+##                          under their keys 200..204 ("200=<hat id>,201=<dress id>").
+##   OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>,.."  (round 789; needs a
+##                          server) at each tick that avatar goes back to the bag
+##                          (0x7034 type 0x23, HudPanels' drop)
+##   OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,.."  (round 789 lane E; needs a
+##                          server) the inventory's avatar view over the server's
+##                          list and every worn avatar's tooltip, or put away
+##                          (_qa_avatar_live_step)
+##   OPENSRO_QA_GRANT="<tick>:<item id>:<option>[:<confirm tick>]"  (round 789
+##                          lane E; needs a server and the blacksmith's grant
+##                          window open) put that bag item down on it, pick the
+##                          row whose code contains <option>, Confirm (_qa_grant_step)
+##   OPENSRO_QA_SHOTS_FROM=<tick>  (round 789 lane E) OPENSRO_QA_SHOTS start no
+##                          earlier than this tick
+##   OPENSRO_QA_AVATAR_VIEW=1  (round 789; no server) at tick 50 the QA
+##                          loadout's avatars become the avatar inventory, the
+##                          equipment window shows its avatar view and every
+##                          avatar's tooltip is drawn down the right edge
+##                          (`QA AVATAR TIP` / `QA SLOT avatar` lines);
+##                          OPENSRO_QA_AVATAR_OPTS="200=<magicoption id>:<value>/..,201=.."
+##                          gives them blue options
 ##   OPENSRO_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -15701,7 +15888,10 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_EQUIP_BAG="<tick>:<slot>=<id>,.."  (round 786; needs a server)
 ##                          at each tick put the first bag item of that id on
 ##                          in that slot through the real equip message (with
-##                          OPENSRO_QA_COMMANDS' "/give <id> 1 <plus>")
+##                          OPENSRO_QA_COMMANDS' "/give <id> 1 <plus>"); an
+##                          avatar key 200..204 as the slot (round 789) puts an
+##                          avatar down on the equipment window instead
+##                          (HudPanels' avatar drop: 0x7034 type 0x24)
 ##   OPENSRO_QA_PICKUP=1   (needs --server) when a ground item appears, step onto
 ##                          it and pick it up, printing the server's answers:
 ##                          the item's position, the pick result and the bag after
@@ -15970,6 +16160,115 @@ func _qa_reequip_step() -> void:
 				return
 		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
 
+## OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,.." (round 789 lane E; needs a
+## server; QA only): `show` opens the inventory in its avatar view over the
+## server's own avatar list (NetClient.last_avatar_instances, from 0x0045 and
+## the 0xB034 moves) and draws every worn avatar's tooltip down the right edge
+## (`QA AVATAR TIP` lines, HudPanels.qa_show_avatar_tips); `hide` puts the
+## bubbles away, turns the window back to its equipment view and closes it.
+## OPENSRO_QA_AVATAR_VIEW is the same view with no server (a seeded list).
+var _qa_avatar_live_spec := OS.get_environment("OPENSRO_QA_AVATAR_LIVE")
+
+func _qa_avatar_live_step() -> void:
+	for entry in _qa_avatar_live_spec.split(",", false):
+		var tp := String(entry).split(":")
+		if tp.size() != 2 or int(tp[0]) != _qa_tick:
+			continue
+		if tp[1] == "hide":
+			_hud_panels.qa_hide_avatar_tips()
+			_hud_panels.set_equipment_avatar_mode(false)
+			_hud_panels.close("inventory")
+			print("QA AVATAR LIVE: tick %d avatar view put away" % _qa_tick)
+			continue
+		if not _hud_panels.is_open("inventory"):
+			_hud_panels.open("inventory")
+		_hud_panels.set_equipment_avatar_mode(true)
+		_hud_panels._fill_avatar_slots()
+		var held: Array = []
+		for k in NetClient.last_avatar_instances:
+			var it: ItemInstance = NetClient.last_avatar_instances[k]
+			held.append("%d:%d" % [int(k), it.ref_item_id if it != null else -1])
+		print("QA AVATAR LIVE: tick %d avatar view of the server's list [%s]" % [_qa_tick, ", ".join(held)])
+		_hud_panels.qa_show_avatar_tips()
+
+## OPENSRO_QA_GRANT="<tick>:<item id>:<option>[:<confirm tick>]" (round 789 lane E; needs a
+## server and the grant window open -- OPENSRO_QA_TALK at a blacksmith and
+## OPENSRO_QA_TALK_PICK on its "Grant magic option on avatar item" line; QA
+## only): at the tick the first bag item of that id is put down on the window
+## (HudPanels._grant_offer, the drop's own path), every row is printed (`QA
+## GRANT row`), the first row whose code contains <option> (case ignored) is
+## selected and Confirm pressed (0x34A9) -- at <confirm tick> when given, so
+## a frame shows the row selected first; the reply is the window's own. The
+## bag is listed again 20 ticks before the tick; `QA GRANT drawn` lines say
+## what the rows and bars draw after the selection and after the reply.
+var _qa_grant_spec := OS.get_environment("OPENSRO_QA_GRANT")
+
+func _qa_grant_step() -> void:
+	var tp := _qa_grant_spec.split(":")
+	if tp.size() < 3:
+		return
+	var at := int(tp[0])
+	var confirm_at := int(tp[3]) if tp.size() >= 4 else at
+	# The bag listed again 20 ticks before, as OPENSRO_QA_EQUIP_BAG does.
+	if _qa_tick == at - 20:
+		NetClient.list_inventory(NetClient.current_character_name)
+	if _qa_tick != at and _qa_tick != confirm_at:
+		return
+	var c := _hud_panels.grant_window()
+	if c == null:
+		print("QA GRANT: tick %d no grant window open" % _qa_tick)
+		return
+	if _qa_tick == at:
+		var item_id := int(tp[1])
+		var from := -1
+		for s in _inventory_slots:
+			if s.item_id == item_id:
+				from = s.slot_index
+				break
+		if from < 0:
+			print("QA GRANT: tick %d item %d not in the bag" % [_qa_tick, item_id])
+			return
+		_hud_panels._grant_offer(from)
+		if c.item == null:
+			print("QA GRANT: tick %d item %d (bag slot %d) refused by the window" % [_qa_tick, item_id, from])
+			return
+		var pick := -1
+		for i in c.rows.size():
+			var code := String(c.rows[i]["code"])
+			print("QA GRANT row %d %s value %d: %s" % [i, code, int(c.rows[i]["value"]), String(c.rows[i]["text"])])
+			if pick < 0 and code.to_lower().contains(String(tp[2]).to_lower()):
+				pick = i
+		if pick < 0:
+			print("QA GRANT: tick %d no row matches %s" % [_qa_tick, tp[2]])
+			return
+		c.select(pick)
+		print("QA GRANT: tick %d item %d bag slot %d row %d %s selected" % [_qa_tick, item_id, from, pick,
+			String(c.rows[pick]["code"])])
+		_qa_grant_dump(c)
+	if _qa_tick == confirm_at:
+		var sel := c.selected
+		print("QA GRANT: tick %d Confirm %s (row %d)" % [_qa_tick, "sent" if c.confirm() else "refused", sel])
+		_qa_grant_dump.call_deferred(c)
+
+## What the grant window's rows draw (QA GRANT drawn): each row node's text,
+## whether it is shown and where, and each bar's texture.
+func _qa_grant_dump(c: GrantMagicAttributeWindow) -> void:
+	for i in c._row_nodes.size():
+		var node: Control = c._row_nodes[i]
+		var label := node if node is Label else node.find_child(GrantMagicAttributeWindow.N_ROW, true, false) as Control
+		var txt := ""
+		if label is Label:
+			txt = (label as Label).text
+		elif label is RichTextLabel:
+			txt = (label as RichTextLabel).text
+		print("QA GRANT drawn row %d %s shown %s at %s label %s '%s'" % [i, node.get_class(), str(node.is_visible_in_tree()),
+			str(node.get_global_rect()), label.get_class() if label != null else "none", txt])
+	for i in GrantMagicAttributeWindow.N_BARS.size():
+		var bar := c.window.node(GrantMagicAttributeWindow.N_BARS[i]) as Control
+		var art := bar.get_node_or_null("GrantBar") as TextureRect if bar != null else null
+		print("QA GRANT drawn bar %d at %s texture %s" % [i, str(bar.get_global_rect()) if bar != null else "none",
+			art.texture.resource_path if art != null and art.texture != null else "none"])
+
 ## OPENSRO_QA_EQUIP_BAG="<tick>:<slot>=<item_id>,..." (round 786): at each
 ## tick, puts the first bag item with that id on in that equipment slot,
 ## through the real equip message (the bag is listed again 20 ticks before),
@@ -15994,6 +16293,14 @@ func _qa_equip_bag_step() -> void:
 			var item_id := int(pair[1])
 			var found := false
 			for s in _inventory_slots:
+				if s.item_id == item_id and CharacterAppearance.is_avatar_key(slot) and _hud_panels != null:
+					# Round 789: an avatar key puts it down on the equipment
+					# window as a drag would (HudPanels' avatar drop: the client's
+					# rules, then 0x7034 type 0x24).
+					print("QA EQUIP BAG: tick %d avatar %d from bag slot %d put down on the equipment window" % [_qa_tick, item_id, s.slot_index])
+					_hud_panels._drop_avatar_from_bag(s.slot_index)
+					found = true
+					break
 				if s.item_id == item_id:
 					print("QA EQUIP BAG: tick %d putting item %d on in slot %d from bag slot %d" % [_qa_tick, item_id, slot, s.slot_index])
 					_awaiting_equip_ack = true
@@ -16699,6 +17006,14 @@ func _qa_step() -> void:
 	# OPENSRO_QA_ITEM_TIP="<id>[:where[:cur/max[:price]]],..." (round 731) shows
 	# those items' tooltips side by side for a render, each line logged
 	# ("QA ITEM_TIP"); `where` is a HudPanels site ("bag", "store", ...).
+	# OPENSRO_QA_AVATAR_VIEW=1 (round 789; no server): the avatar keys of
+	# OPENSRO_QA_EQUIP become the avatar inventory (storage slot = key - 200),
+	# OPENSRO_QA_AVATAR_OPTS="200=<magicoption id>:<value>/..,201=.." their blue
+	# options; the equipment window switches to its avatar view and each
+	# avatar's tooltip is drawn (HudPanels.qa_show_avatar_tips).
+	if OS.get_environment("OPENSRO_QA_AVATAR_VIEW") != "" and _qa_tick == 50 and _hud_panels != null \
+			and not NetClient.is_connected_to_server():
+		_qa_avatar_view()
 	if OS.get_environment("OPENSRO_QA_ITEM_TIP") != "" and _qa_tick == 45 and _hud_panels != null:
 		_hud_panels.qa_show_item_tips(OS.get_environment("OPENSRO_QA_ITEM_TIP"))
 
@@ -16840,8 +17155,10 @@ func _qa_step() -> void:
 		_qa_alchemy_started = true
 		QaAlchemy.run(get_tree(), _hud_panels, OS.get_environment("OPENSRO_QA_ALCHEMY"))
 
-	# Not before the entry has finished loading: see _initial_load_done.
-	if not _qa_shots.is_empty() and _initial_load_done:
+	# Not before the entry has finished loading: see _initial_load_done; nor
+	# before OPENSRO_QA_SHOTS_FROM's tick (round 789 lane E: a live run's
+	# shots come after the server has dressed the player).
+	if not _qa_shots.is_empty() and _initial_load_done and _qa_tick >= _qa_shots_from:
 		_qa_advance_shots()
 
 	# OPENSRO_QA_RECONNECT=<tick|drain> (round 558): leave and re-enter the
@@ -16902,6 +17219,23 @@ func _qa_step() -> void:
 		_qa_reequip_step()
 	if _qa_equip_bag_spec != "":
 		_qa_equip_bag_step()
+	# OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>,.." (round 789; needs a
+	# server): at each tick the avatar in that avatar storage slot is put
+	# down on the bag as a drag would (HudPanels' 0x23: the first empty bag
+	# slot named).
+	if OS.get_environment("OPENSRO_QA_AVATAR_OFF") != "" and _hud_panels != null and NetClient.is_connected_to_server():
+		for entry in OS.get_environment("OPENSRO_QA_AVATAR_OFF").split(",", false):
+			var tp := String(entry).split(":")
+			if tp.size() == 2 and int(tp[0]) == _qa_tick:
+				print("QA AVATAR OFF: tick %d avatar storage slot %s back to the bag" % [_qa_tick, tp[1]])
+				_hud_panels._drop_avatar_to_bag(int(tp[1]), Vector2(-100000, -100000))
+	# OPENSRO_QA_AVATAR_LIVE / OPENSRO_QA_GRANT (round 789 lane E; need a
+	# server): the avatar view over the server's own list, and the grant window
+	# driven as a player would (see the functions).
+	if _qa_avatar_live_spec != "" and _hud_panels != null and NetClient.is_connected_to_server():
+		_qa_avatar_live_step()
+	if _qa_grant_spec != "" and _hud_panels != null and NetClient.is_connected_to_server():
+		_qa_grant_step()
 	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
@@ -16971,8 +17305,10 @@ func _qa_step() -> void:
 		print("QA %4d local %s%s" % [_qa_tick, where, standing])
 
 ## Viewpoints still to visit this run, and where the current one is up to.
-## See _qa_advance_shots.
+## See _qa_advance_shots. OPENSRO_QA_SHOTS_FROM=<tick> (round 789 lane E)
+## holds the first one back until that tick.
 var _qa_shots: Array = []
+var _qa_shots_from := int(OS.get_environment("OPENSRO_QA_SHOTS_FROM"))
 var _qa_shot_index := -1
 var _qa_shot_frames := 0
 
@@ -21377,10 +21713,19 @@ func _other_by_uid(uid: int) -> int:
 ## removal.
 func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) -> void:
 	var op := 0x3038 if plus >= 0 else 0x3039
+	var avatar := _is_avatar_item(ref_id)
 	# Retail tells the mover too (its handlers' own-uid branch updates the
 	# character window and preview); this client did that from its equipment
 	# result (0x0041), which the server sends first.
 	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		if avatar:
+			# Round 789: an avatar is drawn from the broadcast, as retail draws
+			# it (READ c:0x8a9260 own-uid branch -> AttachAvatarVisual).
+			var mine := _player_avatars.duplicate()
+			var mine_pluses := _player_avatar_pluses.duplicate()
+			avatar_broadcast_into(mine, mine_pluses, ref_id, plus)
+			_set_player_avatars(mine, mine_pluses, "0x%x avatar %d" % [op, ref_id])
+			return
 		print("World3D: 0x%x for this player -- drawn from the equipment result" % op)
 		return
 	var id := _other_by_uid(uid)
@@ -21400,7 +21745,14 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 	var worn: Dictionary = (kept.equipped if kept != null else _other_equipped.get(id, {}) as Dictionary).duplicate()
 	var pluses: Dictionary = (kept.pluses if kept != null else _other_pluses.get(id, {}) as Dictionary).duplicate()
 	var same_item := plus >= 0 and worn.has(slot) and int(worn[slot]) == ref_id
-	if plus >= 0:
+	if avatar:
+		# Round 789: by RefItemID, the slot byte ignored (READ c:0x8a9260 /
+		# c:0x8a9560 -> FUN_00a60ef0 / FUN_00a60470).
+		same_item = false
+		avatar_broadcast_into(worn, pluses, ref_id, plus)
+		print("World3D: player %d avatar %s item %d at +%d; avatars %s" % [id, "on" if plus >= 0 else "off", ref_id, maxi(plus, 0),
+			str(worn.keys().filter(func(k): return CharacterAppearance.is_avatar_key(int(k))))])
+	elif plus >= 0:
 		worn[slot] = ref_id
 		if plus > 0:
 			pluses[slot] = plus
@@ -21409,7 +21761,8 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 	else:
 		worn.erase(slot)
 		pluses.erase(slot)
-	print("World3D: player %d now wears slot %d item %d at +%d" % [id, slot, int(worn.get(slot, 0)), int(pluses.get(slot, 0))])
+	if not avatar:
+		print("World3D: player %d now wears slot %d item %d at +%d" % [id, slot, int(worn.get(slot, 0)), int(pluses.get(slot, 0))])
 	if kept != null:
 		kept.equipped = worn
 		kept.pluses = pluses
@@ -23525,6 +23878,11 @@ func _on_npc_opened(id: int) -> void:
 					_talk_npc_code)
 		3:
 			_hud_panels.open_storage(_talk_npc_name)
+		0x20:
+			# Round 789: 0xB046 {1, 0x20} -> the grant window and the inventory
+			# beside it (READ c:0x888e30 -> 0x79d4a0(1), 0x79af20).
+			var grant := _hud_panels.open_grant_window()
+			print("NPC grant window: %s" % ("open" if grant != null else "unavailable"))
 
 ## The talk window, the store or the storage went away (HudPanels'
 ## npc_window_hidden): the end request 0x704B (READ: the NPC window's close
@@ -23906,6 +24264,11 @@ func _on_npc_service_selected(key: String) -> void:
 			return
 		if key == "storage":
 			_npc_talk.open(3)
+			return
+		# Round 789: the blacksmith's grant line (kind 0x2f -> 0x7046 {npc,
+		# 0x20}, READ c:0x7034f3..0x70358d); its 0xB046 opens the window.
+		if key == "avatar_magic_option":
+			_npc_talk.open(0x20)
 			return
 		if key == "talk":
 			_npc_talk.open(2)
@@ -29405,8 +29768,8 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if _last_known_gold < 0 or NetClient.last_stats_reply_requested:
 		_last_known_gold = stats.gold
 	if OS.get_environment("OPENSRO_QA_STATS_LOG") != "":
-		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
-			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])
+		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d STR %d INT %d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
+			stats.hp, stats.max_hp, stats.mp, stats.max_mp, stats.str, stats.intel, str(_sit.sitting), _qa_pelvis_height()])
 	# While dead the HP a stats reply carries is not taken (round 607's third
 	# review): a regen push built before a lethal blow can arrive after the
 	# blow's HP 0 and drew a live bar on a dead character. A dead character's

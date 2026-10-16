@@ -744,6 +744,50 @@ remote_godot.sh script res://tools/arrival_bench.gd -- --pk2=<Data.pk2> --media=
 
 release.yml runs the first two; native/README.md, "CI".
 
+### Asset packs (round 789)
+
+The client opens its archives once, as one set (`AssetArchives`, `client/scripts/assets/`): the
+loose `custom/` folder, the packs (`*.pk3`, `*.zip`, extra `*.pk2`; a later name wins) and the
+five base archives. Everything about packs is OURS; deploy/README.md's "Asset packs" is the
+operator's view. For a run on the box:
+
+| Variable | Does |
+|---|---|
+| `OPENSRO_PACK_DIR=<folder>` | read packs from this folder instead of the Data archive's own (`/opt/sro-files/client` holds none; put test packs under `/var/tmp/<lane>/`, never there) |
+| `OPENSRO_ASSET_SOURCE=pk2\|pk3\|mixed` | the source mode (setting/config.yaml's `assets.source` otherwise; `mixed` by default) |
+| `OPENSRO_QA_WHICH="path;path"` | log `QA WHICH <path> -> <layer> (<file>); also in ...` once the set opens |
+| `OPENSRO_PACK_LOG=all` | name every overridden path in the load log, not the first 10 |
+
+`which_layer.gd` answers the same question headless:
+
+```
+OPENSRO_PK2_PATH=/opt/sro-files/client/Data.pk2 OPENSRO_MEDIA_PK2_PATH=... OPENSRO_PACK_DIR=/var/tmp/k789/packs \
+  godot --headless --path client --script res://tools/which_layer.gd -- 'minimap\168x97.ddj' 'k789\readme.txt'
+# SET packs in /var/tmp/k789/packs: 1 (highest first) ...
+# WHICH minimap\168x97.ddj -> z_k789_test.pk3 (/var/tmp/k789/packs/z_k789_test.pk3); also in base Media
+```
+
+`pk3_parity.gd --pk2=<x.pk2> --pk3=<x.pk3> [--every=N]` reads every file of a `.pk2` against its
+converted `.pk3` (lane G's `pk2topk3`) through the GDScript and the native pack readers and compares
+their folder listings: `PK3 PARITY OK <n> files` or `PARITY FAIL` lines (remote_godot.sh exits 1).
+Lane G's converted retail archives are in `/var/tmp/g789/pk3/` on the box.
+
+`pack_bench.gd` is the load benchmark: the same 20,000 Data lookups and reads on a plain
+`Pk2Reader`, on the set with an empty pack folder, and on the set with `--packs=<dir>` over it
+(`MEDIAN plain|empty|packs: open view find read ms`). Round 789's numbers are in docs/rounds/r789k.md.
+A pack for a test is a plain zip made on the box, e.g. with Python's `zipfile` from a file
+`/var/tmp/pk2list -extract` pulled out; it is game data and never enters the repo. The perf gate
+compares with and without packs as one build two ways: `perf_gate.sh --ab-env
+"OPENSRO_ASSET_SOURCE=pk2" --env "OPENSRO_PACK_DIR=/var/tmp/k789/packs"` (the base side reads the
+`.pk2` alone; both sides carry the native library, as `--ab-env` needs). `--cold` drops the `.pk3`
+and `.zip` archives from the page cache too, and the packs in `OPENSRO_PACK_DIR` when `--env` sets it.
+
+The tests: `scripts/pk2/pk3_reader_test.gd` (the zip reader: stored, deflated, zip64, unsafe names,
+bombs, conflicts, a ZIPPacker zip, threads, and GDScript/native parity) and
+`scripts/assets/asset_archives_test.gd` (the cascade, the modes, `custom/`, merged folders, the
+environment's set and `reopen()`), both on synthetic archives written to `user://` by
+`scripts/pk2/pk3_test_archives.gd`.
+
 ### Native readers A/B (round 667)
 
 The pk2 reader and the `.ddj` per-pixel decodes have a native (Rust, GDExtension) twin, set out in
@@ -842,11 +886,72 @@ vglrun -d egl0 ... --rendering-driver opengl3 --resolution 1600x1200 --script
 res://tools/appearance_probe.gd -- --pk2=$PK2/Data.pk2 --media=$PK2/Media.pk2 --out=/var/tmp/<lane>/shots`.
 Without `--out` it runs headless through `remote_godot.sh script`.
 
+`avatar_probe.gd` (round 789) checks avatars against the archive: how many avatar ids find their
+charactervisualchange ConditionID-2 row by TypeID word and Param7 (`AVATAR CENSUS`; MEASURED 1,347 of
+1,355 on the box), that no devil's spirit has a ConditionID-1 row, how many men's hats hide the hair by
+their own attachable block (`AVATAR HAIR`, `--hats=<n>`, 0 skips), and one China man and one Europe
+woman in a full armour set with a hat, a dress, an attachment and a flag, built with the arbitration
+on and off (`AVATAR BUILD` lines: what each draws). With `--out` (GL context, as appearance_probe) it
+renders each pair, off left and on right, front and back. `--hat= --dress= --attach= --flag=` pick
+the avatars, `--race=china|europe|both` the bodies. A failed check prints `PARITY FAIL`.
+
 `--showthrough=1` (GL context) measures how much of each worn armour set the body's own pieces cover,
 front and back, in flat colours (`--showthrough=all` for every Figure). `--stdir=<dir>` saves the
 frames, `--shrink=<f>` scales every body piece towards its bones first, `--bind` skips the idle pose,
 and `--norender` skips the lineups. `probe_body_armour.gd --body=<.bsr> --items=<a.bsr,b.bsr>` counts
 an item's vertices that sit on a body vertex (headless; pass paths with `/`, which survive the ssh).
+
+### Avatar items and retextures: `avatar_retexture_probe.gd` (round 789)
+
+`avatar_retexture_probe.gd` builds avatar items (or any worn item) through `CharacterAppearance` on
+the first Figure of each race of the item's sex, and checks a new item's whole chain:
+
+- `--chain=<id,...>` (headless, `remote_godot.sh script`): the row's name (through the tables
+  `textdataname.txt` lists), its icon, its `.bsr`, the `.bsr`'s material and meshes, the `.bmt`'s
+  layers and their `.ddj`, each with the layer that served it (`overlay` or `archive`); a link that
+  does not resolve is `PARITY FAIL`.
+- `--items=<id,...>` / `--outfits=<id+id,...>` with `--out=<dir>` (GL context): front and back of
+  each item (or group worn together) on a China and a Europe body, one PNG per entry.
+- `--dump=<dir>` with `--items`: each item's meshes as JSON (bind-pose positions, normals, UVs,
+  triangles) for a texture painter. Game data: keep it on the box.
+- `--overlay=<dir>`: loose files under `<dir>` by their pk2 path, served before the archives
+  (`<dir>/res/item/avatar/x.bsr` answers `res\item\avatar\x.bsr`, case ignored). It is the probe's
+  stand-in for the pack layer, so an unpacked `.pk3` can be checked before the client reads packs.
+
+GL runs need `xvfb-run` + `vglrun` as `appearance_probe.gd` does; round 789's lane used
+`/var/tmp/x789/src/gl.sh <log> res://tools/avatar_retexture_probe.gd -- --pk2=... --media=...
+--overlay=/var/tmp/x789/pack --out=/var/tmp/x789/shots --outfits=78901+78903,78902+78904`.
+The texture formats and the `.bsr`/`.bmt` copies are made with `server/cmd/ddjtool` and
+`server/cmd/retexture`; the recipe is `docs/rounds/r789x.md`.
+
+### Avatars live, end to end (round 789 lane E)
+
+The scripts are `/var/tmp/e789/*.sh` on the box and `docs/rounds/r789e.md` (a server with
+`-client-packs`, the CSVs exported through the pack, a GM account, the clients under their own lock).
+The hooks, all QA only and all needing `--server`:
+
+- `OPENSRO_QA_EQUIP_BAG="300:201=78901,330:200=78903"` puts the bag's avatar down on the equipment
+  window (HudPanels' avatar drop, 0x7034 type 0x24); `OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>"`
+  takes one off (0x23).
+- `OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,..."` opens the inventory in its avatar view over the
+  server's own avatar list and draws every worn avatar's tooltip down the right edge (`QA AVATAR LIVE`,
+  `QA AVATAR TIP`); `OPENSRO_QA_AVATAR_VIEW=1` is the same view with no server.
+- `OPENSRO_QA_GRANT="<tick>:<item id>:<option>[:<confirm tick>]"`, with the blacksmith's grant window
+  open (`OPENSRO_QA_TALK=NPC_CH_SMITH@260 OPENSRO_QA_TALK_PICK=2@320`, standing there by `--at
+  330,1380`), puts the bag item down on it, prints every row (`QA GRANT row`), selects the first whose
+  code contains `<option>` (`AVATAR_INT`) and presses Confirm, at `<confirm tick>` when given so a
+  frame shows the selection; `QA GRANT drawn` lines say what the rows draw.
+- `OPENSRO_QA_SHOTS_FROM=<tick>` holds `--shots` back until the server has dressed the player.
+- `OPENSRO_QA_SELECT_HOLD=<seconds>` with `--reconnect-via-login` keeps the select screen up that
+  long (the character selected half way, the camera flying to it) before the scripted start, so the
+  lobby record's avatars are on the movie frames (`QA SELECT HOLD` lines name the frames).
+- `OPENSRO_QA_STATS_LOG=1`'s `QA STATS` lines carry STR and INT, for a granted option.
+
+Two clients: `--second-client "OPENSRO_QA_ACCOUNT=...|OPENSRO_QA_CHARACTER=...|OPENSRO_QA_COMMANDS=/tp
+130 20|OPENSRO_QA_RECONNECT_VIA_LOGIN=1|OPENSRO_QA_SELECT_HOLD=1"` (a `--scene Login.tscn` run must
+pass `OPENSRO_QA_RECONNECT_VIA_LOGIN=1` itself: qa_shot exports it only after the second client
+started). Give a `--reconnect-via-login` run `--region '97\168.m'` too: without it the shots' "region
+under the player" is the palace's, 98/168, and the player is drawn a region away from the server's spot.
 
 ### Bodies in the world: clips, T-poses and feet (round 689)
 

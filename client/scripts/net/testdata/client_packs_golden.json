@@ -1,0 +1,211 @@
+{
+ "note": "Round 789 (lane U, OURS): the OpClientPacks manifest, written BY HAND field by field from docs/protocol/asset_packs.md \"Server packs\" (one field per '|'-separated group; spaces and '|' are ignored; the hashes are test patterns, not real files). server/internal/clientpacks TestManifestGolden and client/scripts/update/pack_manifest_test.gd both encode 'fields' and require exactly 'hex', and decode 'hex' and require exactly 'fields'. A vector with 'error' must fail to decode.",
+ "opcodes": {
+  "client_packs_request": 9,
+  "client_packs": 10
+ },
+ "manifests": [
+  {
+   "name": "no packs named (a server without -client-packs)",
+   "fields": {
+    "required": false,
+    "local_extras": false,
+    "http_port": 0,
+    "packs": []
+   },
+   "hex": "01 | 00 | 0000 | 00"
+  },
+  {
+   "name": "required, no packs: the base archives only",
+   "fields": {
+    "required": true,
+    "local_extras": false,
+    "http_port": 0,
+    "packs": []
+   },
+   "hex": "01 | 01 | 0000 | 00"
+  },
+  {
+   "name": "one pack from the server's own listener",
+   "fields": {
+    "required": true,
+    "local_extras": false,
+    "http_port": 15780,
+    "packs": [
+     {
+      "name": "z_test.pk3",
+      "size": 1234,
+      "sha256": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "url": ""
+     }
+    ]
+   },
+   "hex": "01 | 01 | a43d | 01 | 0a 7a5f746573742e706b33 | d204000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "two packs with URLs, local extras, the cascade order kept",
+   "fields": {
+    "required": true,
+    "local_extras": true,
+    "http_port": 0,
+    "packs": [
+     {
+      "name": "a.zip",
+      "size": 1,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "url": "https://cdn.example.com/p/a.zip"
+     },
+     {
+      "name": "Z_Akatsuki.PK3",
+      "size": 590825,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "url": "http://192.168.1.5:15780/packs/Z_Akatsuki.PK3"
+     }
+    ]
+   },
+   "hex": "01 | 03 | 0000 | 02 | 05 612e7a6970 | 0100000000000000 | ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff | 1f00 68747470733a2f2f63646e2e6578616d706c652e636f6d2f702f612e7a6970 | 0e 5a5f416b617473756b692e504b33 | e903090000000000 | 1111111111111111111111111111111111111111111111111111111111111111 | 2d00 687474703a2f2f3139322e3136382e312e353a31353738302f7061636b732f5a5f416b617473756b692e504b33"
+  },
+  {
+   "name": "a 4 GiB pack (the cap), a URL and the listener both",
+   "fields": {
+    "required": true,
+    "local_extras": false,
+    "http_port": 8080,
+    "packs": [
+     {
+      "name": "big-1.0.pk3",
+      "size": 4294967296,
+      "sha256": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "url": "https://github.com/o/r/releases/download/v1/big-1.0.pk3"
+     }
+    ]
+   },
+   "hex": "01 | 01 | 901f | 01 | 0b 6269672d312e302e706b33 | 0000000001000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 3700 68747470733a2f2f6769746875622e636f6d2f6f2f722f72656c65617365732f646f776e6c6f61642f76312f6269672d312e302e706b33"
+  },
+  {
+   "name": "version 2",
+   "error": true,
+   "hex": "02 | 00 | 0000 | 00"
+  },
+  {
+   "name": "an unknown flag bit",
+   "error": true,
+   "hex": "01 | 04 | 0000 | 00"
+  },
+  {
+   "name": "no packs named, yet a port",
+   "error": true,
+   "hex": "01 | 00 | a43d | 00"
+  },
+  {
+   "name": "no packs named, yet local extras",
+   "error": true,
+   "hex": "01 | 02 | 0000 | 00"
+  },
+  {
+   "name": "no packs named, yet a pack",
+   "error": true,
+   "hex": "01 | 00 | a43d | 01 | 0a 7a5f746573742e706b33 | d204000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a trailing byte",
+   "error": true,
+   "hex": "01 | 00 | 0000 | 00 | 00"
+  },
+  {
+   "name": "a truncated header",
+   "error": true,
+   "hex": "01 01 a43d"
+  },
+  {
+   "name": "33 packs",
+   "error": true,
+   "hex": "01 | 01 | a43d | 21"
+  },
+  {
+   "name": "a name with a folder",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 07 612f622e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a name with a backslash",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 07 615c622e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a name climbing out",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 05 2e2e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a name with a drive",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 07 433a782e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a hidden name",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 06 2e782e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a .pk2 pack",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 05 782e706b32 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a base archive's name",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 09 6d656469612e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "an empty name",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 00 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a name with a space",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 0b 6d79207061636b2e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "two names differing in case",
+   "error": true,
+   "hex": "01 | 01 | a43d | 02 | 05 612e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000 | 05 412e504b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "size 0",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 05 612e706b33 | 0000000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "size past the cap",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 05 612e706b33 | 0100000001000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "an ftp URL",
+   "error": true,
+   "hex": "01 | 01 | 0000 | 01 | 05 612e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 1700 6674703a2f2f6578616d706c652e636f6d2f612e706b33"
+  },
+  {
+   "name": "a URL with a password",
+   "error": true,
+   "hex": "01 | 01 | 0000 | 01 | 05 612e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 1d00 68747470733a2f2f753a70406578616d706c652e636f6d2f612e706b33"
+  },
+  {
+   "name": "a URL with a space",
+   "error": true,
+   "hex": "01 | 01 | 0000 | 01 | 05 612e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 1b00 68747470733a2f2f6578616d706c652e636f6d2f6120622e706b33"
+  },
+  {
+   "name": "no URL and no listener",
+   "error": true,
+   "hex": "01 | 01 | 0000 | 01 | 05 612e706b33 | 0100000000000000 | 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f | 0000"
+  },
+  {
+   "name": "a truncated hash",
+   "error": true,
+   "hex": "01 | 01 | a43d | 01 | 05 612e706b33 | 0100000000000000 | 0001020304"
+  }
+ ]
+}

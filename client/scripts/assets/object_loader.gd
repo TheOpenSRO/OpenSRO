@@ -1594,32 +1594,16 @@ static func _find_layer_by_name(layers: Array[BmtReader.Layer], material_name: S
 
 ## Resolves a Windows-style backslash path (as stored in .bsr/.bms files)
 ## against an already-open pk2 archive, walking one directory level at a
-## time. Returns null if any component isn't found.
+## time. Returns null if any component isn't found. Round 789: the archive
+## answers (Pk2Reader.find_entry) -- its native index or the walk, a pack's
+## own index, or an AssetArchives view's layers (LayeredArchive).
 static func find_file(archive: Pk2Reader, path: String) -> Pk2Reader.Entry:
 	var pp := ParseProfile.t0()
-	var found_entry: Pk2Reader.Entry
-	if archive.is_native():
-		found_entry = archive.find_native(path)
-	else:
-		found_entry = _find_file(archive, path)
+	var found_entry: Pk2Reader.Entry = archive.find_entry(path)
 	ParseProfile.add("pk2.find_file", pp)
 	return found_entry
 
+## The GDScript walk alone (Pk2Reader.walk_find), whatever the archive's
+## native half: the parity checks compare it with the native index.
 static func _find_file(archive: Pk2Reader, path: String) -> Pk2Reader.Entry:
-	var parts := path.replace("\\", "/").split("/")
-	var entries := archive.read_dir()
-	for i in range(parts.size()):
-		var part := parts[i]
-		var found: Pk2Reader.Entry = null
-		for e in entries:
-			if e.name.to_lower() == part.to_lower():
-				found = e
-				break
-		if found == null:
-			return null
-		if i == parts.size() - 1:
-			return found
-		if not found.is_dir:
-			return null
-		entries = archive.read_dir_at(found)
-	return null
+	return archive.walk_find(path)

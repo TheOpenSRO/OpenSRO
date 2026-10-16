@@ -141,6 +141,11 @@ var _shard_name := ""
 var _client_info := {}
 ## Set while this screen closes a connection itself: no drop box for it.
 var _closing_ourselves := false
+## Round 789 (lane U, OURS): the server's packs are fetched and layered before
+## a connection that may carry a login is opened (PackSync); the address
+## whose packs this screen has settled, and the sync under way.
+var _packs_for := ""
+var _pack_sync: PackSync = null
 ## OURS: the remembered shard row (ClientSettings' server section).
 const KEY_SHARD_NAME := "shard_name"
 
@@ -887,10 +892,9 @@ func _button_style(bg: Color, border: Color) -> StyleBoxFlat:
 # --- Media.pk2 access ------------------------------------------------------
 
 func _open_media() -> Pk2Reader:
-	var path := Pk2Config.media_path()
-	if path == "":
-		return null
-	return Pk2Reader.open(path)
+	# Round 789: the shared set (AssetArchives): Media.pk2, or Media.pk3, with
+	# the asset packs over it.
+	return AssetArchives.media()
 
 func _load_ddj(media: Pk2Reader, ddj_path: String) -> Texture2D:
 	if media == null:
@@ -1048,11 +1052,62 @@ func _connect_and_send() -> void:
 	# screen may be left soon, and leaving waits for any still preparing.
 	if _title != null:
 		_title.hold_backdrop("Connect pressed")
+	_connect_with_packs(address)
+
+# --- The server's packs (round 789, lane U; OURS) -------------------------------
+#
+# docs/protocol/asset_packs.md "Server packs": before this screen opens a
+# connection that may carry a login, the server is asked which packs it needs
+# (PackSync); they are downloaded and verified into its own folder, and the
+# archive set is reopened over exactly them, so character select already
+# reads the server's item names and tables. Progress and errors go to the
+# message line; a server from before round 789, or one that names no packs,
+# costs one short question (at most PackQuery.TIMEOUT_MS, once a run).
+
+func _connect_with_packs(address: Dictionary) -> void:
+	var key := "%s:%d" % [address["host"], address["port"]]
+	if _packs_for == key:
+		NetClient.connect_to_server(address["host"], address["port"])
+		return
+	if _pack_sync != null:
+		return
+	_pack_sync = PackSync.new()
+	_pack_sync.name = "PackSync"
+	add_child(_pack_sync)
+	_pack_sync.progress.connect(func(text: String) -> void:
+		if status_label != null:
+			status_label.text = text)
+	_pack_sync.finished.connect(_on_packs_ready.bind(address), CONNECT_ONE_SHOT)
+	_pack_sync.start(str(address["host"]), int(address["port"]))
+
+func _on_packs_ready(ok: bool, why: String, address: Dictionary) -> void:
+	_pack_sync.queue_free()
+	_pack_sync = null
+	_after_pack_switch()
+	if not ok:
+		_set_busy(false)
+		_say(why)
+		return
+	_packs_for = "%s:%d" % [address["host"], address["port"]]
+	# The citation again, without a second sound (it played on Connect).
+	if _pending_action == "login" and status_label != null:
+		status_label.text = LoginMessages.citation(_text)
 	NetClient.connect_to_server(address["host"], address["port"])
+
+## After a switch of the archive set (ServerPacks.apply): this screen reads
+## the new set from here on (its Media for the windows it still opens, the
+## content id it sends); what it already built stays as drawn.
+func _after_pack_switch() -> void:
+	if _media != null and AssetArchives.media() != _media:
+		_media = AssetArchives.media()
+		_client_info = {}
 
 ## The legacy path: on the open gateway connection after a refusal (READ:
 ## the gateway keeps it below the tolerance), else a new login.
 func _login_legacy() -> void:
+	# Round 789 (lane U): a legacy server names no packs -- the player's own.
+	if ServerPacks.apply(null, "'%s' is a legacy server: the player's own packs" % _selected.name):
+		_after_pack_switch()
 	if _client_info.is_empty():
 		_client_info = RetailClientInfo.from_media(_media)
 	if not _client_info.has("content_id"):

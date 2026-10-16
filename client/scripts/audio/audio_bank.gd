@@ -39,6 +39,9 @@ const MUSIC_EXTENSION := ".ogg"
 static var _cache: Dictionary = {}
 ## "data" / "music" / "media" -> Pk2Reader, or null once opening failed.
 static var _archives: Dictionary = {}
+## The AssetArchives set the handles and sounds above came from (round 789):
+## after a reload (new packs) both are dropped, so a pack's sound is heard.
+static var _archives_gen := -1
 
 ## Normalised cache key -> decoded bytes held, for the size line (round 612
 ## review follow-up; the cache is never evicted, so its size is logged).
@@ -311,16 +314,15 @@ static func inject_for_test(path: String, audio: AudioStream) -> void:
 	_store(normalise(path), audio)
 
 ## Forgets every cached sound and archive handle (tests; a new pk2 folder).
+## Round 789: the handles are the shared set's (AssetArchives), so they are
+## dropped, never closed.
 static func clear() -> void:
 	_lock.lock()
 	_cache.clear()
 	_sizes.clear()
 	_test_bytes.clear()
-	_lock.unlock()
-	for archive in _archives.values():
-		if archive != null:
-			(archive as Pk2Reader).close()
 	_archives.clear()
+	_lock.unlock()
 
 static func _archive(which: String) -> Pk2Reader:
 	_lock.lock()
@@ -329,6 +331,15 @@ static func _archive(which: String) -> Pk2Reader:
 	return result
 
 static func _archive_locked(which: String) -> Pk2Reader:
+	var gen := AssetArchives.current().generation
+	if _archives_gen != gen:
+		# A reload replaced the set: the handles and the sounds decoded from the
+		# old one go (the first ask has nothing to drop).
+		if _archives_gen >= 0:
+			_cache.clear()
+			_sizes.clear()
+		_archives.clear()
+		_archives_gen = gen
 	if _archives.has(which):
 		return _archives[which]
 	var path := ""
@@ -340,11 +351,19 @@ static func _archive_locked(which: String) -> Pk2Reader:
 	if path == "":
 		print("AUDIO: %s not found (%s or the pk2 folder) -- its sounds are silent" % [_archive_label(which), _archive_env(which)])
 	else:
-		archive = Pk2Reader.open(path)
+		# Round 789: the shared set's view (AssetArchives), packs included.
+		archive = AssetArchives.current().view(_archive_set_name(which))
 		if archive == null:
 			print("AUDIO: %s at %s did not open -- its sounds are silent" % [_archive_label(which), path])
 	_archives[which] = archive
 	return archive
+
+## The AssetArchives base name for "data" / "music" / "media".
+static func _archive_set_name(which: String) -> String:
+	match which:
+		"music": return "Music"
+		"media": return "Media"
+	return "Data"
 
 static func _archive_label(which: String) -> String:
 	match which:

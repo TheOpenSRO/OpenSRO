@@ -403,8 +403,9 @@ func _tooltips(root: Control, table: Dictionary) -> void:
 #   - the reply (0x59eb20): the success or fail effect and sound, the lines,
 #     the target copied again from the bag; at frame 8 the elixir and powder
 #     slots are cleared and the caption is back, at the wrap the effect hides.
-# Not built: the devil's spirit (Nasrun) refusal, message 0xe (its ref +0x2b8
-# column is not mapped); the advanced elixir's confirm box (the server refuses op 8), the
+# Round 789: the devil's spirit (Nasrun) refusal, message 0xe, is built (its
+# ref +0x2b8 is itemdata's Param2, ItemTableReader.COL_PARAM2). Not built: the
+# advanced elixir's confirm box (the server refuses op 8), the
 # stone's option-change lines (0x594f40, 29 KB, not read), the effect on a
 # drag back onto the bag (Alt+click takes an item out).
 

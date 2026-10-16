@@ -40,6 +40,9 @@ class Record:
 	## [{"id": RefItemID, "plus": int}] in wire order: equip slots 0..8,
 	## ascending.
 	var items: Array = []
+	## Round 789: the avatar block's [{"id", "plus"}] in storage order
+	## (AvatarNet.read_spawn_block; the record carries no slot byte).
+	var avatars: Array = []
 	var uid: int
 	var region: int
 	var local_position: Vector3
@@ -84,6 +87,17 @@ class Types:
 		if t.size() < 2:
 			return true
 		return t[0] == 3 and t[1] == 1
+
+	## Whether the spawn's avatar block carries a plus byte after this id
+	## (READ c:0x9de3e2..0x9de4a1: only a 3/1/13 or 3/1/14). OURS: an id the
+	## table does not know is read with one -- the server puts only avatars
+	## in the block, and the client's own reading of an unknown ref is not
+	## READ.
+	func avatar_has_plus(id: int) -> bool:
+		var t := type_ids(id)
+		if t.size() < 3:
+			return true
+		return t[0] == 3 and t[1] == 1 and (t[2] == 13 or t[2] == 14)
 
 	## The job state the worn items give (0x9db8b0).
 	func job_state(items: Array) -> int:
@@ -135,10 +149,10 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 		if types == null or types.has_plus(id):
 			plus = r.u8()
 		rec.items.append({"id": id, "plus": plus})
-	r.u8() # avatar storage size
-	if r.u8() != 0 and r.error == "":
-		r.error = "avatar items in a player record"
-		return null
+	# Round 789: the avatar block (READ c:0x9de3e2..0x9de4a1, s:0x4ba720
+	# mode 2): u8 size (5), u8 count, per item u32 RefItemID and a plus only
+	# for a 3/1/13 or 3/1/14. Until now any avatar failed the record.
+	rec.avatars = AvatarNet.read_spawn_block(r, types.avatar_has_plus if types != null else Callable())
 	if r.u8() != 0 and r.error == "":
 		r.error = "a mask in a player record"
 		return null
@@ -260,6 +274,14 @@ static func to_snapshot(rec: Record, types: Types, frame: Vector2i) -> WorldNet.
 		s.equipped[slot] = int(it["id"])
 		if int(it["plus"]) != 0:
 			s.pluses[slot] = int(it["plus"])
+	# Round 789: the avatars, under the keys World3D keeps them by
+	# (CharacterAppearance.AVATAR_KEY_BASE + their order in the block, OURS:
+	# the record names no slot, and the client attaches them by RefItemID).
+	for i in rec.avatars.size():
+		var key := CharacterAppearance.AVATAR_KEY_BASE + i
+		s.equipped[key] = int(rec.avatars[i]["id"])
+		if int(rec.avatars[i]["plus"]) != 0:
+			s.pluses[key] = int(rec.avatars[i]["plus"])
 	return s
 
 ## A 0x3015 payload read as a player's: the record and its spawn-type byte.

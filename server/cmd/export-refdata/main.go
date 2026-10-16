@@ -47,6 +47,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/assetfs"
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
@@ -126,7 +127,10 @@ const (
 	fCashItem = 7
 	fParam5   = 126
 	// fParam6 is the Param block's sixth value (round 786; refdata.Item.Param6).
-	fParam6          = 128
+	fParam6 = 128
+	// fChildItemCount is ref +0x53d, the column after MaxMagicOptCount
+	// (round 789; refdata.Item.ChildItemCount, READ s:0x6a3d50).
+	fChildItemCount  = 159
 	fDesc1           = 119
 	fDesc4           = 125
 	fMaxMagicOptions = 158
@@ -485,13 +489,40 @@ const (
 // questReport is -quest-report and questDecompDir -decomp-dir (round 785).
 var questReport, questDecompDir *string
 
+// inputs reads the input tables (loose files, or through -archives) and
+// inputArgs are the arguments with every @<index> expanded (round 789).
+var (
+	inputs    = &assetfs.Inputs{}
+	inputArgs []string
+)
+
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
 	questReport = flag.String("quest-report", "", "with -mode quests: also write a per-quest coverage CSV here (id, code, level, source, playable, reachable, blocking prerequisite)")
 	questDecompDir = flag.String("decomp-dir", "", "with -mode quests: a decompilation of SR_GameServer.exe (funcs_*.c, the project's Ghidra dump) to read the compiled CQNO_* quests' setup from")
 	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, npcs, regions, chargen or magicoptions")
 	encExe := flag.String("enc-exe", "", "the operator's own sro_client.exe: its key tables decrypt the ENC skill tables (SkillData_<n>ENC.txt, the files retail's skilldataenc.txt names; round 785, enc.go)")
+	var archFlags assetfs.InputFlags
+	archFlags.Register(flag.CommandLine)
 	flag.Parse()
+	// Round 789: with -archives the tables are read through the layered
+	// file system (packs over the retail archives), and @<index> expands to
+	// the parts an index lists; without it every argument is a loose file.
+	in, fsys, err := archFlags.Open(func(format string, a ...any) {
+		fmt.Fprintf(os.Stderr, "export-refdata: "+format+"\n", a...)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "export-refdata: -archives: %v\n", err)
+		os.Exit(1)
+	}
+	if fsys != nil {
+		defer fsys.Close()
+	}
+	inputs = in
+	if inputArgs, err = inputs.Expand(flag.Args()); err != nil {
+		fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+		os.Exit(1)
+	}
 	if *encExe != "" {
 		k, err := loadEncKeys(*encExe)
 		if err != nil {
@@ -506,13 +537,13 @@ func main() {
 		// game server files Script/VIETNAM/{define,QuestList,Quest}.sct and
 		// (optional) SR_GameServer.exe, into the directory -out names: what
 		// cmd/server's -quests-dir loads (internal/quest).
-		if err := exportQuests(*out, flag.Args()); err != nil {
+		if err := exportQuests(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
+	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
@@ -537,7 +568,7 @@ func main() {
 		// Every characterdata row of TypeID (1,2,1,x), one CSV row per
 		// species under species.CSVColumns: what cmd/server's -monsters-csv
 		// loads (round 654).
-		if err := exportMonsters(*out, flag.Args()); err != nil {
+		if err := exportMonsters(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -547,7 +578,7 @@ func main() {
 		// refshopgroup.txt names it: what cmd/server's -npcs-csv loads
 		// (round 708, internal/npcspawn) -- the code names the NPC spawn
 		// record's interaction list is built from.
-		if err := exportNpcs(*out, flag.Args()); err != nil {
+		if err := exportNpcs(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -556,7 +587,7 @@ func main() {
 		// magicoptionassign.txt (_RefMagicOptAssign) in, one CSV out: what
 		// cmd/server's -magic-option-assign-csv loads (round 770) -- which
 		// options each item kind can drop with.
-		if err := exportMagicOptAssign(*out, flag.Args()); err != nil {
+		if err := exportMagicOptAssign(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -565,7 +596,7 @@ func main() {
 		// magicoption.txt (_RefMagicOpt) in, one CSV out: what cmd/server's
 		// -magic-options-csv loads (round 768, internal/magicopt) -- the blue
 		// options the alchemy stones and the reinforce flaw write.
-		if err := exportMagicOptions(*out, flag.Args()); err != nil {
+		if err := exportMagicOptions(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -573,7 +604,7 @@ func main() {
 	case "regions":
 		// refregion.txt (_RefRegion) in, one CSV out: what cmd/server's
 		// -regions-csv loads (round 674, internal/safezone).
-		if err := exportRegions(*out, flag.Args()); err != nil {
+		if err := exportRegions(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -583,7 +614,7 @@ func main() {
 		// characterdata and itemdata parts in, the 104 ids a new character
 		// may be made from (plus the two ammunition rows) out -- what
 		// cmd/server's -chargen-csv loads.
-		if err := exportChargen(*out, flag.Args()); err != nil {
+		if err := exportChargen(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -591,7 +622,7 @@ func main() {
 	case "teleport":
 		// Three tables in, three CSVs out, into the directory -out names:
 		// what cmd/server's -teleport-dir loads (internal/teleport).
-		if err := exportTeleport(*out, flag.Args()); err != nil {
+		if err := exportTeleport(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -628,7 +659,7 @@ func main() {
 	written, skipped, dupes, conflicts := 0, 0, 0, 0
 	order := []string{}
 	byID := map[string][]string{}
-	for _, path := range flag.Args() {
+	for _, path := range inputArgs {
 		rows, err := readTable(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "reading %s: %v\n", path, err)
@@ -914,6 +945,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 88: Param6, the Param block's column 128 (round 786): a universal
 		// pill's zombie strength (refdata.Item.Param6).
 		dword(fParam6), // 88 Param6 (col 128)
+		// 89: ChildItemCount, itemdata column 159 (round 789): a dress that
+		// takes an attachment (refdata.Item.ChildItemCount).
+		num(fChildItemCount), // 89 ChildItemCount (col 159)
 	}, true
 }
 
@@ -2181,7 +2215,7 @@ func exportNpcPos(out string) {
 		os.Exit(1)
 	}
 	written, skipped := 0, 0
-	for _, path := range flag.Args() {
+	for _, path := range inputArgs {
 		rows, err := readTable(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "reading %s: %v\n", path, err)

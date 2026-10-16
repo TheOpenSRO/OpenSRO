@@ -803,3 +803,15 @@ own set 1,580, without one but with a `default` set 794, with none 320. A weapon
 therefore never borrows the default clip's key times, at the cost of silence in those 794 cases
 (avatar groups, mostly). 747 of 20,108 (file, clip) pairs are reachable as more than one entry,
 nearly all skill clips.
+
+## A retexture is a new .bsr naming a new .bmt (round 789, MEASURED)
+
+`avatar_m_knight_3.bsr` is `avatar_m_knight.bsr` with its material path renamed
+(`...\avatar_m_knight.bmt` -> `...\avatar_m_knight_3.bmt`, 2 bytes longer). Every other byte is
+the same except the header's section table: the six words pointing past the path (mesh,
+skeleton, animation, mesh group, animation group, mod data) are 2 larger, the material and
+bounds words before it unchanged. The internal name at 0x44 stays `avatar_m_knight`.
+`server/cmd/retexture` does exactly that (every table word past a renamed string moves by its
+length change) and turns `avatar_m_knight.bsr` into a byte-identical `avatar_m_knight_3.bsr`
+(MEASURED, round 789). No other absolute offset in an item `.bsr` is known (INFERRED from the
+same pair).

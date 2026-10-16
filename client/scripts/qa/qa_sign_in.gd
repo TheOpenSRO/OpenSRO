@@ -65,6 +65,12 @@ static func run(tree: SceneTree) -> bool:
 	var password := credentials[1]
 	var who := character_name()
 
+	# Round 789 (lane U): the server's packs first, as Login does -- World3D
+	# asks for them at the top of its _ready (sync_packs), before it opens an
+	# archive; this covers any other caller.
+	if not await sync_packs(tree):
+		return false
+
 	print("QA sign-in: connecting to %s:%d as %s / %s" % [host, port, user, who])
 	NetClient.connect_to_server(host, port)
 	var reached: Array = await _first_of(tree, [NetClient.connected, NetClient.connection_failed])
@@ -130,6 +136,42 @@ static func run(tree: SceneTree) -> bool:
 	var say := OS.get_environment("OPENSRO_QA_SAY")
 	if say != "":
 		NetClient.say(say)
+	return true
+
+## The server's packs (round 789, lane U; PackSync), fetched, verified and
+## layered for OPENSRO_QA_SERVER as Login does for a player, once a run.
+## World3D calls it first thing in _ready, before it opens any archive, so the
+## world reads the server's packs; run() calls it too. False when the server
+## named packs this run could not get (the render then goes offline).
+static var _packs_done := ""
+
+static func sync_packs(tree: SceneTree) -> bool:
+	var target := OS.get_environment("OPENSRO_QA_SERVER")
+	if target == "" or _packs_done == target:
+		return true
+	var host := target
+	var port := DEFAULT_PORT
+	var colon := target.rfind(":")
+	if colon > 0:
+		host = target.substr(0, colon)
+		if target.substr(colon + 1).is_valid_int():
+			port = target.substr(colon + 1).to_int()
+	# Deferred: World3D calls this inside its _ready, while the root is still
+	# adding its children.
+	var sync := PackSync.new()
+	sync.name = "QaPackSync"
+	tree.root.add_child.call_deferred(sync)
+	await sync.ready
+	sync.start(host, port)
+	if not sync.done:
+		await sync.finished
+	var ok := sync.ok
+	var why := sync.why
+	sync.queue_free()
+	if not ok:
+		printerr("QA sign-in: the server's packs: %s -- rendering offline" % why)
+		return false
+	_packs_done = target
 	return true
 
 ## The QA account as [user, password], from OPENSRO_QA_ACCOUNT ("user:pass")

@@ -31,6 +31,41 @@ command always answers with the help line — it never stays silent.
 | `/unstuck` | Returns you to the zone's entry point if you wedge into geometry. |
 | `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The Shift+F3 panel's **Ground probe** button does the same. |
 | `/w <name> <message>` | Whispers another player. |
+| `/layer <path>` | Which layer of the game's archives serves an archive path (round 789): the loose `custom/` folder, an asset pack (`.pk3`, by its file name) or a base archive (`base Data.pk2`, `base Media.pk3`, ...), and which layers under it hold the same path, e.g. `/layer prim\mtrl\foo.ddj` -> `z_assets.pk3 (...); also in assets.pk3, base Data.pk2`. Paths are matched case-insensitively, `/` and `\` alike, empty segments ignored. |
+
+## Asset packs: which layer served a file (round 789)
+
+The client reads its archives as layers: `custom/`, then the asset packs (`*.pk3`, `*.zip`, extra
+`*.pk2`, a later name winning), then the retail base archives (deploy/README.md, "Asset packs").
+Three ways to ask which one serves a path, all OURS:
+
+- **In the game:** `/layer <path>` in chat (above). The Shift+F3 panel's "archives" lines list the
+  source mode, the base archives and the packs, highest first.
+- **In a QA run:** `OPENSRO_QA_WHICH="path;path;..."` logs one `QA WHICH <path> -> <layer>
+  (<file>); also in ...` line a path when the archive set opens (any run: the world, a front-end
+  scene, qa_shot.sh).
+- **Without a game:** `client/tools/which_layer.gd` prints the set and the same answers headless
+  (client/tools/README.md, "Asset packs").
+
+The load log names every override once (`AssetArchives: Data: 3 path(s) of Data.pk2 overridden:
+...`); `OPENSRO_PACK_LOG=all` lists all of them instead of the first 10. `OPENSRO_ASSET_SOURCE=pk2|
+pk3|mixed` and `OPENSRO_PACK_DIR=<folder>` set the source mode and the pack folder for a test run.
+
+**Server packs** (round 789, lane U; docs/protocol/asset_packs.md "Server packs"). While a server
+that names its packs is connected, `QA WHICH` and `/layer` name its packs (`z_akatsuki.pk3
+(<pack folder>/servers/<host>_<port>/z_akatsuki.pk3)`), and the Shift+F3 panel says `packs of
+server <host>_<port>`. `OPENSRO_QA_WHICH` answers once per archive set, so a run that reopens the
+set for a server prints the lines twice: before (the player's own set) and after. Every step of
+the fetch is a `PACKS:` line in the client log -- the question and the answer (`PACKS:
+127.0.0.1:15897 names 2 pack(s), listener port 15898: ...`), the plan per pack (`ready (verified
+before)`, `hash (...)`, `fetch (not here)`), each download (`resuming after <n> of <m> bytes`,
+`HTTP 302 -> ...`, `<n> bytes, sha256 verified -- in place`), the result (`2 pack(s) of ... ready:
+2 downloaded, 0 checked, 0 verified before (220 ms)`) and whether the set was reopened; a failure
+is `PACKS: NOT READY: <the words the login screen shows>`. The set's own log says what is set aside
+(`AssetArchives:   set aside while that server is connected: pack a_mine.pk3`). On the server,
+`-client-packs` logs the list at startup and one `client pack served` line per download. A QA run
+with `OPENSRO_QA_SERVER` fetches the packs too (QaSignIn), so `qa_shot.sh --server` renders with
+them; `OPENSRO_PACK_DIR=<empty folder>` gives a run a clean pack folder.
 
 ## Sending a report
 
@@ -55,7 +90,9 @@ and changes nothing.
 |---|---|
 | `/tp <x> <z>` | Teleports you to world coordinates in the current zone (behind the loading screen, then 6 s untouchable, as every teleport). |
 | `/goto <zone\|monster>` | Travels to a named zone's entry, or to where a monster species is kept. |
-| `/give <item id> [qty]` | Puts an item in your bag by its numeric id (unknown ids are refused). |
+| `/give <item id> [qty]` | Puts an item in your bag by its numeric id (unknown ids are refused). Avatars and devil's spirits too (round 789): they arrive +0 with no options, a devil's spirit not awakened. |
+| `/avatar` | Lists your avatar slots 0..4: each item's id, plus and option count, and a devil's spirit's state (not awakened / awake for how long / expired) (round 789; a test tool, not a retail command). |
+| `/avatar spirit <bag slot> <seconds\|0>` | Sets the expiry of the devil's spirit in that bag slot: awake for *seconds* from now, or `0` not awakened (round 789; a test tool). Lets you wear one at once (a sleeping one is refused 0x18f9) and watch it expire while worn: `/avatar spirit 0 60`, put it on, and a minute later its stats go and the server sends `0x3078 {3, slot}`. |
 | `/gold <n>` | Adds gold (a negative number takes it away). |
 | `/level <n>` | Raises you to level *n* through the real level-up path, so stats, HP and MP follow. Only goes up. |
 | `/heal` | Refills HP and MP to their maximums. |
@@ -102,6 +139,17 @@ already. `/give 24331 10` gives ten *Berserker Regeneration Potions*, which fill
 the orbs straight from the bag. For a normal player the fill has the game's own
 20-minute reuse delay (the next scroll waits for it); **a GM account skips it**
 -- that is this server's own rule, not the game's.
+
+**Testing avatars (round 789):** `/give <id>` an avatar (the item table's id
+of a hat, dress, attachment or flag, or a devil's spirit), open the equipment
+window's avatar view and drop it on the avatar slots; take it off by dropping
+it on the bag. The Test Items NPC (when switched on) sells a sample of each
+kind per gender. A dress with an attachment comes off with it (two free bag
+slots needed). To grant options, talk to a town blacksmith ("Grant magic
+option on avatar item"), drop a hat, dress or attachment in the window, pick
+an option, confirm. A devil's spirit must be awakened before it can be worn:
+use it from the bag (it lasts its item's period), or `/avatar spirit <bag
+slot> <seconds>`. docs/protocol/avatars.md has the rules.
 <!-- /gm-only -->
 
 ## For operators: enabling GM accounts

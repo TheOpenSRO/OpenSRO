@@ -91,6 +91,7 @@ type Archive struct {
 	cipher     *blowfish.Cipher
 	encrypted  bool
 	rootOffset uint32
+	cache      dirCache // Find's per-folder name index (find.go)
 }
 
 // Open opens a pk2 archive for reading. The returned Archive must be closed

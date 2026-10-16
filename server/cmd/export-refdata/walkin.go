@@ -43,7 +43,7 @@ type objectString struct {
 
 // readObjectStrings parses objectstring.ifo.
 func readObjectStrings(path string) ([]objectString, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := inputs.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

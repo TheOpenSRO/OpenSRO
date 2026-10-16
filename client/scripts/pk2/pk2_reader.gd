@@ -60,6 +60,16 @@ class Entry:
 	var is_dir: bool
 	var size: int
 	var _offset: int
+	## Round 789 (OURS, asset packs): the layer of an AssetArchives view this
+	## entry came from, so the view's read_file sends it back there. 0 is the
+	## archive that made it (a base archive, or any handle outside a view);
+	## a pack's entries carry the pack's layer_id; LayeredArchive.LAYER_CUSTOM
+	## (-1) is a loose file of custom/, LAYER_MERGED_DIR (-2) a folder the view
+	## merged from several layers.
+	var _layer: int = 0
+	## A merged folder's lower-cased `/` path, a loose file's absolute path;
+	## "" otherwise (LayeredArchive).
+	var _path: String = ""
 
 var _file: FileAccess
 var _encrypted: bool
@@ -104,14 +114,29 @@ var _native: Object = null
 ## caches by it, so two handles on one archive parse it once).
 var source_path := ""
 
+## Round 789 (OURS): the layer this handle is in an AssetArchives set -- 0
+## for a base archive and for every handle opened outside a set, 1..n for
+## the packs (LayeredArchive). Set right after open, before any entry is
+## made: every Entry this handle makes carries it in `_layer`.
+var layer_id := 0
+
 ## Opens path for reading. Returns null (and pushes an error) on failure.
+## Round 789: a `.pk3`/`.zip` (by its name, or a zip's magic under any
+## name) opens as a Pk3Reader -- the same interface -- so every caller,
+## the tools' `Pk2Reader.open(Pk2Config.data_path())` included, reads a
+## converted Data.pk3 as it reads Data.pk2.
 static func open(path: String) -> Pk2Reader:
+	if Pk3Reader.is_zip_name(path):
+		return Pk3Reader.open_zip(path)
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		push_error("pk2: could not open %s: %s" % [path, FileAccess.get_open_error()])
 		return null
 
 	var header := f.get_buffer(HEADER_SIZE)
+	if header.size() >= 4 and Pk3Reader.has_zip_magic(header):
+		f.close()
+		return Pk3Reader.open_zip(path)
 	if header.size() < HEADER_SIZE:
 		push_error("pk2: %s is too small to be a pk2 archive" % path)
 		return null
@@ -149,6 +174,84 @@ static func _open_native(path: String) -> Object:
 ## True when this handle reads through the native library.
 func is_native() -> bool:
 	return _native != null
+
+## What a parsed-table cache keys this archive by (round 741's source_path,
+## round 789's name for it): the file, or the handle when it has none. An
+## AssetArchives view adds its set's generation, so a reload with new packs
+## parses again.
+func cache_key() -> String:
+	return source_path if source_path != "" else str(get_instance_id())
+
+## The Entry for `path` (`\` or `/` separated, case-insensitive), or null:
+## ObjectLoader.find_file's answer (round 789: the one virtual lookup, so a
+## pack reader and an AssetArchives view answer it their own way). The
+## native index when there is one, else the walk over read_dir/read_dir_at --
+## which the test stubs that subclass this override.
+func find_entry(path: String) -> Entry:
+	if _native != null:
+		return find_native(path)
+	return walk_find(path)
+
+## A lookup path made plain (round 789; docs/protocol/asset_packs.md, rule 4,
+## which every reader follows -- native/src/core/pk2.rs's path_segments, the
+## Go assetfs.Segments): `\` and `/` alike, empty segments skipped (a
+## leading, trailing or doubled separator), the segments joined by `/` as
+## written. "" when nothing is left, or when a segment is `.` or `..` or
+## holds a `:` -- no layer serves an unsafe path. (A GDScript String holds no
+## NUL.) The common path -- no doubled, leading or trailing separator, no
+## segment starting with a dot, no colon -- is returned after one replace.
+static func clean_path(path: String) -> String:
+	var p := path.replace("\\", "/")
+	if not (p.contains("//") or p.begins_with("/") or p.ends_with("/") or p.begins_with(".") or p.contains("/.") or p.contains(":")):
+		return p
+	var segs := p.split("/", false)
+	for s in segs:
+		if s == "." or s == ".." or s.contains(":"):
+			return ""
+	return "/".join(segs)
+
+## The GDScript lookup: one read_dir()/read_dir_at() a path segment from the
+## root, the first case-insensitive match each (ObjectLoader._find_file until
+## round 789). Round 789: on clean_path's segments.
+func walk_find(path: String) -> Entry:
+	var clean := clean_path(path)
+	if clean == "":
+		return null
+	var parts := clean.split("/")
+	var entries := read_dir()
+	for i in range(parts.size()):
+		var part := parts[i].to_lower()
+		var found: Entry = null
+		for e in entries:
+			if e.name.to_lower() == part:
+				found = e
+				break
+		if found == null:
+			return null
+		if i == parts.size() - 1:
+			return found
+		if not found.is_dir:
+			return null
+		entries = read_dir_at(found)
+	return null
+
+## Every file's path with `/`, as the archive spells it (round 789: an extra
+## `.pk2` pack's overlay index is built from it). Walks the whole tree, so
+## only for a pack -- never a base archive.
+func file_paths() -> PackedStringArray:
+	var out := PackedStringArray()
+	_collect_paths(read_dir(), "", out, 0)
+	return out
+
+func _collect_paths(entries: Array[Entry], prefix: String, out: PackedStringArray, depth: int) -> void:
+	if depth > 64:
+		return
+	for e in entries:
+		var p := prefix + e.name
+		if e.is_dir:
+			_collect_paths(read_dir_at(e), p + "/", out, depth + 1)
+		else:
+			out.append(p)
 
 func close() -> void:
 	_native = null
@@ -230,6 +333,7 @@ func _native_dir(offset: int) -> Array[Entry]:
 		e.is_dir = kinds[i] == ENTRY_TYPE_FOLDER
 		e._offset = offsets[i]
 		e.size = sizes[i]
+		e._layer = layer_id
 		out[i] = e
 	ParseProfile.add("pk2.native_list_dir", pp)
 	_lock.lock()
@@ -250,6 +354,7 @@ func find_native(path: String) -> Entry:
 	e.is_dir = int(d["kind"]) == ENTRY_TYPE_FOLDER
 	e._offset = d["offset"]
 	e.size = d["size"]
+	e._layer = layer_id
 	return e
 
 ## _read_block_chain's body. Round 748: `_lock` is held only for the cache
@@ -298,6 +403,7 @@ func _read_block_chain_locked(offset: int) -> Array[Entry]:
 					e.is_dir = entry_type == ENTRY_TYPE_FOLDER
 					e._offset = _le_u32(raw, ENTRY_OFF_POSITION)
 					e.size = _le_u32(raw, ENTRY_OFF_SIZE)
+					e._layer = layer_id
 					out.append(e)
 			if i == ENTRIES_PER_BLOCK - 1:
 				next_offset = _le_u32(raw, ENTRY_OFF_NEXT_BLOCK)

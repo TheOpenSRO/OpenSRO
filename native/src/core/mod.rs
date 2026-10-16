@@ -10,7 +10,10 @@
 /// Round 695 added `ddj_dxt1_has_transparent` (SrNativeParsers, core::dxt) WITHOUT a bump: the
 /// client calls it only where `has_method` finds it, so a library from before it keeps every other
 /// native reader (round 695's review, L6) -- an additive method needs no new number.
-pub const API: i64 = 5;
+/// 6: round 789 adds `SrNativePk3`, the `.pk3` (zip) asset pack reader (core::pk3). A new class
+/// alone would be additive, but the client's archive set (AssetArchives) relies on every method
+/// of it, so a library without it is refused rather than probed.
+pub const API: i64 = 6;
 
 pub mod ban;
 pub mod blowfish;
@@ -26,6 +29,7 @@ pub mod efp_out;
 pub mod efp_sim;
 pub mod gdmath;
 pub mod pk2;
+pub mod pk3;
 pub mod pool;
 pub mod tables;
 pub mod terrain;

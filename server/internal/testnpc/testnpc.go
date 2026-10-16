@@ -111,6 +111,9 @@ type Rule struct {
 	// ItemClass is the item's ItemClass (31 is 11th degree, tier A: the
 	// degree is (ItemClass-1)/3 + 1, alchemy.Target.Degree, READ).
 	ItemClass int `json:"item_class"`
+	// Gender is the item's ReqGender (itemdata column 58: 1 a man's, 0 a
+	// woman's, 2 either; round 789, for the avatar tabs). Absent: any.
+	Gender *int `json:"gender"`
 }
 
 // Tab is one store tab.
@@ -220,6 +223,9 @@ func (r Rule) Matches(it *refdata.Item) bool {
 		return false
 	}
 	if r.ItemClass != 0 && it.ItemClass != r.ItemClass {
+		return false
+	}
+	if r.Gender != nil && it.ReqGender != *r.Gender {
 		return false
 	}
 	t, _ := parseType(r.Type)

@@ -15,7 +15,7 @@ class_name Console
 ## from the original client, which had no slash console.
 
 ## Client-side commands the console runs itself.
-const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe"]
+const CLIENT_COMMANDS := ["help", "where", "log", "copy", "fps", "entities", "wire", "cam", "errors", "w", "whisper", "unstuck", "stuck", "groundprobe", "layer"]
 
 ## GM commands the console forwards to the server, which gates and runs them.
 ## Listed so a typo gets the help line while a real GM word reaches the
@@ -105,6 +105,13 @@ func submit(line: String) -> bool:
 			else:
 				for l in _call("ground_probe", [mode], PackedStringArray(["Ground probe unavailable here."])):
 					_log(l)
+		"layer":
+			# Round 789 (OURS): which layer of the archive set serves a path --
+			# custom/, a pack, or a base archive (AssetArchives.which).
+			if args.is_empty():
+				_log("Usage: /layer <archive path> (which pack or archive serves it)")
+			else:
+				_log(AssetArchives.describe_which(AssetArchives.current().which(" ".join(args))))
 		_:
 			if GM_COMMANDS.has(cmd):
 				_call("forward_gm", [body])
@@ -114,7 +121,7 @@ func submit(line: String) -> bool:
 
 ## The one-line help. The client commands always; the GM line only for a GM.
 func help_line() -> String:
-	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /w <name> <msg>"
+	var base := "Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /groundprobe /layer <path> /w <name> <msg>"
 	if is_gm:
 		return base + "\n" + gm_help_line()
 	return base

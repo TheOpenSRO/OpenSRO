@@ -292,64 +292,9 @@ func dirOf(p string) string {
 	return p[:idx]
 }
 
+// readFile resolves path with the pk2 package's shared lookup (Find:
+// case-insensitive, `\` and `/` alike; round 789).
 func readFile(archive *pk2.Archive, path string) ([]byte, bool) {
-	entry, err := findFile(archive, path)
-	if err != nil {
-		return nil, false
-	}
-	data, err := archive.ReadFile(*entry)
-	if err != nil {
-		return nil, false
-	}
-	return data, true
-}
-
-func findFile(archive *pk2.Archive, path string) (*pk2.Entry, error) {
-	parts := splitPath(path)
-	entries, err := archive.ReadDir()
-	if err != nil {
-		return nil, err
-	}
-	for i, part := range parts {
-		var found *pk2.Entry
-		for j := range entries {
-			if strings.EqualFold(entries[j].Name, part) {
-				found = &entries[j]
-				break
-			}
-		}
-		if found == nil {
-			return nil, fmt.Errorf("%s not found", path)
-		}
-		if i == len(parts)-1 {
-			return found, nil
-		}
-		if !found.IsDir {
-			return nil, fmt.Errorf("%s is not a directory", strings.Join(parts[:i+1], `\`))
-		}
-		entries, err = archive.ReadDirAt(*found)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return nil, fmt.Errorf("%s not found", path)
-}
-
-func splitPath(p string) []string {
-	var out []string
-	cur := ""
-	for _, c := range p {
-		if c == '\\' || c == '/' {
-			if cur != "" {
-				out = append(out, cur)
-				cur = ""
-			}
-			continue
-		}
-		cur += string(c)
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
+	data, err := archive.ReadPath(path)
+	return data, err == nil
 }

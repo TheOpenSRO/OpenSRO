@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
 	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
@@ -1089,6 +1090,14 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// cooldown are consulted.
 		if !it.CanUse {
 			return fail("that item cannot be used")
+		}
+		// Round 789 (avataruse.go): a devil's spirit is awakened by its use,
+		// and the Nasrun extension moves an awake one's expiry.
+		if avatar.IsDevilSpirit(it) {
+			return useDevilSpirit(ctx, sess, inv, characterID, held, it)
+		}
+		if isNasrunExtension(it) {
+			return useNasrunExtension(ctx, sess, inv, items, characterID, held, have, it, req.Option)
 		}
 		// A container expansion (round 498): its Param block is a slot count
 		// and a container, never a restore amount.

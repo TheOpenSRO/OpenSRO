@@ -336,6 +336,16 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   (`tpt_window_zangan.ddj`, its use unread — the layout has no frame, so the board has no backdrop),
   the slot icons, the Move button's art (its layout names none). `docs/RE_COMPLETION.md` round 578.
 
+- **The avatar view and the grant window** (round 789, lane AC) -- the equipment window's five
+  avatar windows filled by type from the avatar inventory (c:0x6abcd0), the drop rules and the
+  client's own refusals (c:0x6ad180), the attachment window greyed under a dress that takes none,
+  `GDR_AVATAR_SKILL_WND` by its READ condition (its four skill slots empty: OPEN); the avatar and
+  devil's spirit tooltips (c:0x682410, c:0x67b460); `CIFGrantMagicAttributeWnd` built from
+  `resinfo\ifgrantmagicattributewnd.txt` in its `GDR_GRANT_MAGIC_ATTRIBUTE` registry frame, opened
+  by the blacksmith's talk line. OURS, disclosed: the grant refusals in the system line (the
+  category-0x20 error box is not built), the list's wheel scroll, a disabled window drawn grey.
+  docs/protocol/avatar_visuals.md.
+
 - **The Additional Quick Slot is the client's own** (round 788) -- `CIFExtQuickSlot` (window 133,
   always present: `0x786f30` -> `0x79c600(1)`), built from the player's `resinfo\ifextquickslot.txt`
   by the recipe (`HudExtQuickSlot`): the four Type sections picked by `vertical * 2 + twoLines`

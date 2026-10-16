@@ -10,6 +10,25 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## Round 789 lane AS follow-ups (avatars on the server; docs/protocol/avatars.md, docs/rounds/r789as.md)
+
+- [ ] **The devil's spirit's opt-level abilities**: `RefMagicOptByItemOptLevel`,
+      `RefAbilityByItemOptLevel` and `RefSkillByItemOptLevel` (MEASURED 505 / 266 / 335 rows) have
+      no exporter or loader; a spirit's per-plus abilities and its skill strip's skills are not
+      applied (`PublishEquipItemParams`' `FUN_00498020(2)`, READ). Its own blue options are.
+- [ ] **Params with no reader**: an avatar's `hpna`/`mpna` (52/53), `luca` (173), `mdia` (188),
+      `umdu` (259) and a player's damage-taken multipliers 174..177 (`dara`) are carried in the
+      totals and change nothing; `brna`'s leaf (param 10, gated on `+0x190`) is not followed.
+- [ ] **Which use awakens a devil's spirit in retail** (vslot 325's caller), the `0x3078` after a
+      Nasrun extension (three fields), and when `UIIT_MSG_NASRUN_WEAR_EXTENSION_ITEM_NOT_USE` fires.
+      OURS meanwhile: using it from the bag; the extension's target in the use's option byte.
+- [ ] **The expiry while offline**: a spirit that expires while its owner is away is stripped at
+      the next stats read; the `0x3078` is sent only to an owner in the world when its timer fires.
+- [ ] **The Test Items NPC's avatar tabs** show 30 of each kind and gender (1,381 avatar ids); a
+      page spin in the store would show them all.
+- [ ] **StorageOperation's `[pc+0x30]+0x13` refusal (0x180e)** and INTERACTMODE 7 are not modelled.
+- [ ] **The lobby's avatar u8**: OptLevel assumed (INFERRED), not read from the ShardManager.
+
 ## Round 788 lane R follow-ups (the original client logs in to OpenSRO; opcodes/gateway.md)
 
 - [x] **The original client (vSRO 1.188) logs in to OpenSRO's server and shows its character
@@ -1369,7 +1388,11 @@ Today:
 Nothing is designed yet. When it comes up, start from the protocol docs (docs/protocol/) and the
 gateway's TLS and session handling.
 
-### Asset packs: `.pk3` beside `.pk2` -- **planned (decided with the user 2026-10-01); start after the front-end epic**
+### Asset packs: `.pk3` beside `.pk2` -- **built in round 789 (the rules, the Go side, the converter, the client, the server naming the packs a client needs)**
+
+The rules every reader follows are written once in docs/protocol/asset_packs.md ("Rules"; the
+client's part is its "Client" section); the operator steps are in deploy/README.md, "Asset packs
+(`.pk3`)" (the tools) and "Asset packs in the client".
 
 Shipping new or changed assets should not require injecting them into a `.pk2`. A `.pk3` is a
 plain zip archive; `.zip` is accepted too. The client reads the same formats from it that it reads
@@ -1388,8 +1411,8 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
   2. `z_assets.pk3`;
   3. `z_assets.pk2`;
   4. `assets.pk3`;
-  5. the retail base archives (`Data`, `Map`, `Media` and `Music`, as `.pk2` or converted
-     `.pk3`). These are always the bottom layer whatever their names, or `assets.pk3` would sort
+  5. the retail base archives (`Data`, `Map`, `Media`, `Music` and `Particles`: five, the user
+     2026-10-16; as `.pk2` or converted `.pk3`). These are always the bottom layer whatever their names, or `assets.pk3` would sort
      before `Data.pk2` and lose to it.
 - **The name sort ignores case.** For two packs with the same name, the `.pk3` wins over the
   `.pk2`.
@@ -1398,23 +1421,63 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
   asset or adding a new one is the same operation.
 
 **The work:**
-- [ ] **One virtual file system** under every reader (client GDScript, the Rust native readers and
+- [x] **One virtual file system** under every reader (client GDScript, the Rust native readers and
       the Go tools: `export-refdata`, `pk2list` and the server's own reads). No reader knows which
-      layer a file came from.
-- [ ] **A `.pk3` reader:** stored and deflated entries, and zip64, since a converted `Map.pk2` is
-      several GB. Read stored entries without unpacking where we can.
-- [ ] **A pk2 → pk3 converter.** It keeps every entry's path, so its output drops in for the
+      layer a file came from. **Go: done (round 789, `server/internal/assetfs`)**: pk2list,
+      export-refdata and export-leveldata read through it (`-archives`); the server itself reads no
+      archive at runtime. The base archives turned out not to be one namespace (40 paths in two of
+      them, 5 differing, MEASURED), so a lookup names its volume (asset_packs.md rule 3). **Client:
+      done (round 789, `AssetArchives`)**: one set opened once and shared by every scene and
+      thread (13 separate opens before), each base archive a volume seen through `custom/` and
+      the packs (`LayeredArchive`); every lookup still goes through `ObjectLoader.find_file`.
+- [x] **A `.pk3` reader:** stored and deflated entries, and zip64, since a converted `Map.pk2` is
+      several GB. Read stored entries without unpacking where we can. **Go: done (round 789;
+      archive/zip, zip64 end record and >4 GiB offsets MEASURED).** **Client: done (round 789)**:
+      `Pk3Reader` (GDScript, Godot's zlib) and `SrNativePk3` (Rust, miniz_oxide + crc32fast;
+      native interface 6); every file of the five converted retail archives reads back identical
+      through both (`client/tools/pk3_parity.gd`).
+- [x] **A pk2 → pk3 converter.** It keeps every entry's path, so its output drops in for the
       original archive. It stores already-compressed types (`.ddj`, `.ogg`) and deflates text,
       tables and meshes. It checks every entry comes out byte-identical. It runs on the operator's
-      own archives, and its output is game data: never committed (docs/LEGAL.md).
-- [ ] **Safety:** reject entry names that escape the archive (`..`, absolute paths), cap the
-      unpacked size to stop zip bombs, and log every override at load.
-- [ ] **A QA/debug command** that answers "which layer served this path?".
-- [ ] **The server names the packs a client needs,** with their hashes (idTech's "pure server"),
+      own archives, and its output is game data: never committed (docs/LEGAL.md). **Done in round
+      789: `cmd/pk2topk3`** (and `cmd/pk3pack`, the pack builder). Measured, `.ddj` is not
+      "already compressed" (it deflates to 25-80%), but it stays stored as planned: reads ~21%
+      faster for 0.63 GB more (MEASURED at the merge; `-deflate .ddj` trades the other way); `.ogg`, `.png`,
+      `.rar` are stored. All five retail archives converted, every file
+      byte-identical (asset_packs.md, "Measured").
+- [x] **Safety:** reject entry names that escape the archive (`..`, absolute paths), cap the
+      unpacked size to stop zip bombs, and log every override at load. **Go: done (round 789;
+      the limits and their measured basis in asset_packs.md rule 6).** **Client: done (round 789;
+      the same rules, plus a symlink entry refused).**
+- [x] **A QA/debug command** that answers "which layer served this path?". **Go: `pk2list
+      -archives <folder> -which <path>` (round 789).** **Client (round 789): `/layer <path>` in
+      chat, `OPENSRO_QA_WHICH`, `client/tools/which_layer.gd`, the Shift+F3 panel's archive
+      lines** (docs/DEBUG_TOOLS.md).
+- [x] **The server names the packs a client needs,** with their hashes (idTech's "pure server"),
       and the auto-updater fetches them. Then every player sees the same content, and a modified
-      local pack cannot change what the server assumes (walls, navmesh).
-- [ ] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
-      the top loading cost in round 667, and a zip's index has no such step.
+      local pack cannot change what the server assumes (walls, navmesh). **Done in round 789 (lane
+      U; asset_packs.md "Server packs", deploy/README.md "Server packs"):** `-client-packs <dir>`
+      checks and hashes the operator's packs at startup and names them before login (OURS
+      0x0009 -> 0x000A); the client downloads what it lacks into `servers/<host>_<port>/` (resume,
+      size cap, SHA-256, atomic rename; from `-client-packs-url` or the server's own listener),
+      layers exactly those over its base archives with its own packs and `custom/` set aside
+      unless the server allows them, and reopens the set before the login goes out. MEASURED on
+      the box with lane X's `z_akatsuki.pk3`: downloaded, verified and served on the first login;
+      nothing downloaded or hashed on the second (docs/rounds/r789u.md). Left OPEN there: a
+      bandwidth limit on the listener, one copy of a pack two servers both ship.
+- [x] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
+      the top loading cost in round 667, and a zip's index has no such step. **Round 789, MEASURED
+      (docs/rounds/r789k.md):** the Jangan entry with the converted `.pk3` archives alone against
+      the `.pk2`, native readers both sides: SAME (entry 4,059 against 3,996 ms). The `.ddj`
+      textures are deflated in a converted pack, so a read costs an inflate the `.pk2` does not
+      (20,000 Data reads: 2.7 s against 0.27 s natively) while the GDScript lookups get ~100x
+      cheaper (no Blowfish directory); in the entry the two cancel out.
+- [ ] **Index files in packs** (round 789, lane X). A new item reaches the client through list
+      files: `itemdata.txt` names the item parts, `textdataname.txt` the name tables. A pack adds
+      one by replacing the list with the retail names plus its own, so two packs that each add a
+      part shadow each other's line. A merge rule for list files (OURS) is not decided. The test
+      pack (`z_akatsuki.pk3`, docs/rounds/r789x.md) and its tools (`cmd/ddjtool`,
+      `cmd/retexture`, `client/tools/avatar_retexture_probe.gd`) are ready.
 
 ### Native (Rust) readers (round 667) -- **the pk2 reader and the `.ddj` per-pixel decodes are native; these are left**
 
@@ -1618,15 +1681,21 @@ front-end's next steps.
   weight out of the sum): not modelled. The position at rest is right.
 - **What vslot 0x34 reads** (INFERRED "a woman": it picks the women's Volume table and the harp's
   `_f`). Trace `CCompChar` 0xc1f0d0 -> 0xc2bb40's resource +0x28.
-- **Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
-  `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.
+- ~~**Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
+  `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.~~
+  **Built in round 789 (lane AC)**: `CharacterVisualChange` runs the client's arbitration on every
+  build (docs/protocol/avatar_visuals.md). Left: the ConditionID 3/5/7 rows (skill/state looks,
+  fortress suits, transforms) and the animation group are not attached (their triggers are OPEN);
+  the hair under a hat is hidden by the Slot mask's 0x0800 (INFERRED: how retail removes it is OPEN);
+  an equipped item with no ConditionID-1 row is drawn (OURS, OPEN whether retail does).
 - **The body through the armour** (round 683 review; round 687 applied retail's rule): the worst
   case went from 21.30 % to 5.58 % of a worn armour's pixels (`appearance_probe.gd --showthrough=1`,
   MEASURED). What is left is body pieces no worn item lists (the China woman's light set hides only
   three of her meshes), which the client draws too (READ, `FUN_00c1f790`). A retail screenshot of the China woman
   in the light set would show whether anything else covers them.
-- **The world reads only 7 of itemdata.txt's 63 parts** (`ItemTableReader.TABLE_PATHS`): 3,566 of
-  15,338 item ids, avatars among them, are unknown to World3D and not drawn. The builder and
+- ~~**The world reads only 7 of itemdata.txt's 63 parts**: 3,566 of 15,338 item ids, avatars among
+  them, are unknown to World3D and not drawn.~~ Stale: every part is read since round 741
+  (`ItemTableReader.load_all`); round 789's census (`avatar_probe.gd`) finds all 1,355 avatar ids. The builder and
   catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of
   all 63 parts (~285 ms with the native readers, MEASURED) and needs `perf_gate.sh`.
 - **The plus glow** (INFERRED that plus drives it): the plus is kept on `Body.worn`, not drawn.
@@ -1680,8 +1749,8 @@ front-end's next steps.
   retail order is known.
 - **Default wear** (round 685's review): drawn on the create preview, the select bodies
   (`CharacterAppearance`) and the world's characters (`World3D._build_assembled_character`).
-  Left: an avatar's own visual record (ConditionID 2) is not consulted for the mask, so default
-  wear can draw under an avatar dress (OPEN, with the avatar arbitration); `CGame+0x129` is
+  An avatar's own visual record (ConditionID 2) is consulted since round 789 (the drawn visuals'
+  Slot bits, `DefaultWear.wear_for`'s extra_mask): no default clothes under a dress. `CGame+0x129` is
   assumed clear (OURS, as the Protector minimum).
 - **China's backdrop** does not reproduce fe_ref4's lion-and-gate view at any yaw of the READ
   pose; Europe's matches fe_ref3 at yaw ~2.6 (the reviewer's sheets, scratchpad `rv685/shots/`).
@@ -1781,7 +1850,8 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       the entity wire); death returns and the warp home go to Jangan, not `STORE_EU_GATE`;
       `leveldata.KillExp`'s Europe arm is never selected (the killer's race is not passed); Europe's
       NPCs and shops are unexercised.
-- [ ] **Item plus and avatars** in the list record are 0 / none: OpenSRO keeps no plus and no avatars.
+- [x] **Item plus and avatars** in the list record: the plus since round 735, the avatars since round
+      789 (the avatar inventory in storage order; the u8 is the OptLevel, INFERRED).
 - [ ] **Restore's asynchronous error**: u8 in the server, u16 in the client (READ both); u16 is sent.
 - [ ] **recovered_names**: rename `SendNameCheckRequest_858c00` (it is the delete/restore confirm
       sender) once the rename is applied in Ghidra too.
@@ -1790,8 +1860,13 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 
 ### The account PIN, "Character Lock" (round 788, lane P) — **built: OURS throughout (retail has none), server store + rules + lobby gate, the client's window and select-screen hook; these are left** (`docs/protocol/pin.md`)
 
-- [ ] **The legacy select path** (round 788 lane C's adapter for retail-protocol servers) must skip
-      `CharSelectLock.query()`: 0x0120 means nothing to a retail server.
+- [ ] **The window's look** (the user, 2026-10-16, after v0.1.549: "the PIN interface doesn't look
+      exactly the original but we can fix that later"). "The original" here is the reference
+      screenshot (https://i.imgur.com/zugaKQC.png, a private server's reskin; retail has no PIN):
+      match its layout, art and spacing.
+- [x] **The legacy select path** (round 788 lane C's adapter for retail-protocol servers) must skip
+      `CharSelectLock.query()`: 0x0120 means nothing to a retail server. Done in round 788's merge
+      (`CharacterSelect.gd`: `not NetClient.is_retail()`).
 - [ ] **No GM command clears a player's PIN or lock**; the operator deletes the rows by hand
       (deploy/README.md, "Account PIN (Character Lock)").
 - [ ] **The lock's numbers are constants** (5 tries, 30 minutes, 16 remembered PCs): flags if an
@@ -2834,8 +2909,11 @@ What round 633 read and built is in `docs/protocol/inventory_window.md`.
   race. **(round 709)** The original sends no race field either: the client takes the race from the
   member record's model id (the reference's `+0x9c` byte, `0x93f630`; `docs/protocol/party_gui.md`).
   Party lane C1 draws it from the retail member record.
-- **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500) needs avatar items with its type
-  bit. This server has none.
+- **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500): shown since round 789 as READ
+  (c:0x6abde0: avatar view, a worn devil's spirit with time left). Its four skill slots stay empty:
+  the skills come from `refskillbyitemoptleveldata` by the ability of (RefItemID, plus), filtered by
+  the skill's +0x61 byte and placed at its +0xfc index (c:0x6ae5b0) -- neither byte is mapped to a
+  skilldata column (OPEN).
 - **The retail starting inventory size** is a `_CHAR.InventorySize` database default that neither
   executable carries. `-inventory-size` 96 is ours. The engine's growth caps (77, or 99 with the
   quest, counting 13 equipment slots) mean retail never fills the third page by its own means.

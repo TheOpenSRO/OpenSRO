@@ -66,6 +66,12 @@ func _rules() -> void:
 	_check(R.pick_slot(_sword(), empty) == 0, "equipment goes to the target slot (0x5781f0)")
 	_check(R.pick_slot(_elixir(), empty) == 0 and R.validate(0, _elixir(), empty, null) == 8,
 		"an elixir with no target is offered to the first slot and refused: LOAD_EQUIP_FIRST")
+	# Round 789: an avatar is refused as retail refuses it (index 8,
+	# LOAD_EQUIP_FIRST), a devil's spirit with Param2 0 with 0xe.
+	_check(R.validate(0, {"tids": [3, 1, 13, 2]}, empty, null) == 8, "an avatar is refused: LOAD_EQUIP_FIRST")
+	_check(R.validate(0, {"tids": [3, 1, 14, 1], "param2": 0}, empty, null) == 0xe
+		and R.validate(0, {"tids": [3, 1, 14, 1], "param2": 1}, empty, null) == 0,
+		"a devil's spirit with Param2 0 is refused: NASRUN_EVENTNASRUN_NOT_UPGRADE; with 1 it goes in")
 	var withsword := [_sword(), null, null]
 	_check(R.pick_slot(_elixir(), withsword) == 1 and R.validate(1, _elixir(), withsword, null) == 0, "the weapon elixir suits the sword")
 	_check(R.validate(1, _armour_elixir(), withsword, null) == 0xa, "the armour elixir does not: RECIPE_MISMATCH")

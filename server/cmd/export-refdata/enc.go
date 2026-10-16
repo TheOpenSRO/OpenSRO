@@ -28,7 +28,6 @@ import (
 	"bytes"
 	"debug/pe"
 	"fmt"
-	"os"
 )
 
 const (
@@ -106,7 +105,7 @@ func encDecrypt(raw []byte, k *encKeys) ([]byte, error) {
 
 // readRaw reads path, decrypting an ENC file with the loaded keys.
 func readRaw(path string) ([]byte, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := inputs.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

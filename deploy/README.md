@@ -145,6 +145,28 @@ updated in either order: a client from before round 786 ignores 0x00BB and shows
 stone of luck (Lvl.11) 15,000,000 on the box's archive): with it on, a player can make gold. Switch it
 off (remove the line) to close that.
 
+## Avatars (round 789)
+
+The avatar inventory is a new table, `avatar_inventory_slots` (the bag's columns, serial included);
+the server creates it at boot, so the update needs no manual step for it. Check after the update:
+
+```
+docker compose exec postgres psql -U postgres -d opensro -c '\d avatar_inventory_slots'
+```
+
+**One re-export for the attachments.** Whether a dress takes an attachment is itemdata column 159
+(ChildItemCount), a new item CSV column (89). Until the item export is re-run with the new
+`export-refdata` and re-imported (`import-refdata`; the import adds `items.child_item_count`), every
+dress reads 0 and **every attachment is refused** (0x180e); hats, dresses, flags and devil's spirits
+work. Check: `SELECT count(*) FROM items WHERE child_item_count <> 0;` answers 396 on the box's
+archive (the unique dresses that take one, of 454; MEASURED, AVATAR_RESEARCH.md section 9).
+
+The blacksmith's grant reads the magic option table the alchemy already loads (`-magic-options-csv`,
+round 768); without it every grant is refused 0xa. The players' clients need this round's release for
+the avatar slots, the list (OpenSRO's own 0x0044/0x0045) and the grant window. Rolling back leaves the
+table in place, unread: the avatars worn then are invisible to an older server until it is updated
+again (nothing is lost).
+
 ## Moving an install from srrevamp to OpenSRO (round 704)
 
 The project was called srrevamp until 2026-10-03. The rename changed every name a deployed
@@ -292,6 +314,9 @@ only the EXP curve warned in the log. The data comes from the operator's own cli
 Three tables matter and they load two different ways: **items and skills** go into Postgres with
 `cmd/import-refdata`; **leveldata is CSV-only** and is passed to the server on its command line.
 
+Round 789: the exporters can also read the tables straight through the archives and any asset
+packs (`-archives`, no extraction step, the same CSVs byte for byte): "Asset packs" below.
+
 ```
 # 1. On a machine with the client's Media.pk2 (BYO). Build the tools:
 cd server && for t in pk2list export-refdata export-leveldata import-refdata; do
@@ -341,7 +366,8 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* skilldataenc.txt charact
       levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refoptionalteleport.txt refregion.txt refshopgroup.txt magicoption.txt magicoptionassign.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
-# The exporter grows a strict-suffix column now and then (latest: item column 87, Rarity, round 770 --
+# The exporter grows a strict-suffix column now and then (latest: item column 89, ChildItemCount,
+# round 789 -- a dress that takes an attachment; before it 88, Param6, round 786; 87, Rarity, round 770 --
 # a Seal item always drops with blue options; before it item columns 79-86, round 769 -- the
 # per-plus increments, so a reinforced item's plus counts; before them item columns 73-78, round 768 -- the
 # alchemy columns CashItem, Param1, Param5, Desc128_1, Desc128_4 and MaxMagicOptCount; before them skill columns 47-61, round 616 -- the buff
@@ -557,6 +583,81 @@ up front: the fortress, tomb, temple, survival and Roc gates. To re-export:
 The new `teleportdata.csv` header ends in `Interaction9,WorldID`. There is no database step.
 
 Reference data is otherwise not touched by the update loop.
+
+## Asset packs (`.pk3`): converting, building, exporting through them (round 789)
+
+A `.pk3` is a zip holding files at their pk2 paths; it layers over the retail archives, so a mod
+or a new item ships without touching a `.pk2`. The rules (which archive wins, case, safety) are
+docs/protocol/asset_packs.md; all of it is OURS (retail has only `.pk2`). **Packs, converted
+archives and everything extracted from them are game data: never commit them** (docs/LEGAL.md).
+The server reads no archive at runtime; packs reach it through the exported CSVs.
+
+```
+cd server && for t in pk2list pk2topk3 pk3pack export-refdata export-leveldata; do
+  CGO_ENABLED=0 GOOS=linux go build -o /tmp/$t ./cmd/$t; done
+```
+
+**Converting the retail archives** (once; the output drops in for the original: same paths,
+every file read back byte-identical before the `.pk3` is renamed into place). Free disk: about
+2.8 GB for all five. Measured on the render box: Data.pk2 (3.9 GB) in about 20 s, the five in
+about 30 s, 2.7 GB out (docs/protocol/asset_packs.md has the table).
+```
+mkdir -p /srv/sro/pk3 && for n in Data Map Media Music Particles; do
+  /tmp/pk2topk3 -in /srv/sro/client/$n.pk2 -o /srv/sro/pk3/$n.pk3; done
+# -measure -in <pk2>: the deflate ratio by extension, nothing written
+# -store .ddj: keep textures uncompressed (Data.pk3 about 0.63 GB larger)
+```
+
+**Building a pack** from a folder whose files sit at their pk2 paths (case does not matter):
+```
+mymod/server_dep/silkroad/textdata/itemdata.txt        # the index, with the new part added
+mymod/server_dep/silkroad/textdata/itemdata_90000.txt  # the new rows
+mymod/prim/mtrl/item/robe_red.ddj                      # a new or replaced texture
+/tmp/pk3pack -dir mymod -o /srv/sro/client/z_mymod.pk3
+```
+It refuses symbolic links, two paths differing only in case, names a reader calls unsafe and
+files over 256 MiB, and reads the pack back before renaming it into place. Drop the pack beside
+the base archives; a later name wins (`z_` over `a_`), `.pk3` over a `.pk2` of the same name.
+
+**Looking at the layers**:
+```
+/tmp/pk2list -archives /srv/sro/client -layers        # the stack, highest first
+/tmp/pk2list -archives /srv/sro/client -overrides     # every pack file that hides a retail one
+/tmp/pk2list -archives /srv/sro/client -which 'server_dep\silkroad\textdata\itemdata.txt'
+/tmp/pk2list -archives /srv/sro/client -filter itemdata -l    # list, with the serving layer
+/tmp/pk2list -archives /srv/sro/client -volume Media -extract 'server_dep\silkroad\textdata\itemdata.txt' -out itemdata.txt
+```
+`-source pk2|pk3|mixed` (default mixed) picks the archive types; `-custom <dir>` a loose overlay
+folder (default the `custom` folder beside the archive folder, where the client has it, when it exists). `-pk2` also opens one `.pk3`.
+
+**Exporting the reference data through the packs.** `-archives <folder>` makes the exporters read
+the tables straight from the layers (a bare name is a file of `server_dep\silkroad\textdata\` in
+Media, then any layer, then the disk); `@<index>` expands to the parts an index lists, in its
+order -- the `order` shell function of step 2, done for you. So a pack's added rows reach the CSVs
+with no extraction step. Measured on the render box (round 789): every CSV of step 2 (items,
+skills, monsters, leveldata, npcpos, teleport with walk-ins, regions, magic options, chargen, npcs,
+quests) is **byte-identical** whether made the old way (`pk2list -extract` + loose files), through
+the `.pk2`s, or through the converted `.pk3`s alone (`-source pk3`). With a test pack adding one
+itemdata part and its index line, items.csv grew by exactly that row.
+```
+A=/srv/sro/client; E="/tmp/export-refdata -archives $A"
+$E -mode items  -out items.csv  @itemdata.txt
+$E -mode skills -enc-exe $A/sro_client.exe -out skills.csv @skilldataenc.txt
+$E -mode monsters -out monsters.csv @characterdata.txt levelgold.txt textdata_object.txt
+/tmp/export-leveldata -archives $A -out leveldata.csv leveldata.txt
+$E -mode npcpos -out npcpos.csv npcpos.txt
+$E -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt refoptionalteleport.txt \
+   eventzonedata.txt 'navmesh\objectstring.ifo'          # objectstring.ifo is Data.pk2's: found in the other layers
+$E -mode regions -out regions.csv refregion.txt
+$E -mode magicoptions -out magicoptions.csv magicoption.txt
+$E -mode magicoptassign -out magicoptassign.csv magicoptionassign.txt
+$E -mode chargen -out chargen.csv @characterdata.txt @itemdata.txt
+$E -mode npcs -out npcs.csv @characterdata.txt refshopgroup.txt
+```
+The exporters open the folder strictly: a pack they cannot read, or an entry the reader refuses,
+stops the export instead of silently dropping rows; every override is printed. Without
+`-archives` they read loose files exactly as before (and `@<index>` works there too, beside the
+index file).
 
 ## Monster species table
 
@@ -1317,6 +1418,8 @@ display, sound, hot bar and the rest; for now it holds one file, the general cli
 global:
   loginScreen: constantinople      # the title intro (same names as -login-intro)
   region: US                       # kept, reserved (see below)
+assets:
+  source: mixed                    # pk2, pk3 or mixed (round 789; "Asset packs in the client")
 servers:
   MyServer:                        # the name the login screen shows
     type: opensro                 # this project's server
@@ -1331,6 +1434,7 @@ servers:
 |---|---|
 | `global.loginScreen` | The title intro: a retail name (`roc`, `constantinople`, `china_wharf`, `jupiter_login`, `rm`, `ruby_baghdad`, ...) or your own `custom/intro/<name>.txt`. The server's `-login-intro` wins over it (below). |
 | `global.region` | Kept and reserved: a short code (letters, digits, `_`, `-`). vSRO's client reads no region: its `DIVISIONINFO.TXT` starts with a locale byte (22 in vSRO's archive) that the client's own loader skips, and the iSRO "Located In" bar's art is in the archive but no code names it. A later round may use it for the language or the content id. |
+| `assets.source` | Round 789: which archive types the client reads -- `pk2`, `pk3` or `mixed` (the default). See "Asset packs in the client" below. `OPENSRO_ASSET_SOURCE` overrides it. |
 | `servers.<name>` | One server. `<name>` is what the Server field and the list show (1-32 characters). The file's order is the list's order. |
 | `servers.<name>.type` | **Required** (round 681): the protocol the server speaks. `opensro` -- this project's server: its status is asked with this project's own question. `legacy` -- the original gateway protocol (a retail-style private server): the client asks it for its shard list the way the original client does (the handshake, then the patch check and the list) and shows each shard's real status; it is never sent this project's own messages, the login screen keeps its own intro for it (no theme question). Round 788: logging in works the original way (the image code included) as far as the character list; entering the world there is not supported yet. An entry without a type, or with another word, is skipped with a `SETTING:` line naming the server and the two values. Once this project's server also speaks the original protocol (the superset plan in `docs/protocol/PROTOCOL_DECISION.md`), `opensro` will mean "also has our extensions" rather than a different wire. |
 | `servers.<name>.gateway` | Where the client connects: `address` (a host name or IP address) and `port` (default 15779). Required. It plays the part of retail's `DIVISIONINFO.TXT` host and `GATEPORT.TXT` port. |
@@ -1389,6 +1493,148 @@ line, `- item` lists, quoted or plain values, `#` comments; no anchors, tags or 
 
 **Later (not built):** a server may also hand the client settings it wants kept out of the file,
 during the server list or after login (docs/TODO.md).
+
+## Asset packs in the client: where they go, the order, the source mode (round 789)
+
+New or changed assets ship as **packs**: plain zip files named `*.pk3` (or `*.zip`) put beside the
+retail archives, never injected into a `.pk2`. A pack holds files at the pk2's own paths --
+`prim/mtrl/foo.ddj` in a pack replaces `Prim\Mtrl\foo.ddj` -- so overriding a retail file and
+adding a new one are the same operation. Everything here is OURS: retail has only `.pk2`. The
+rules every reader follows (the client and the Go tools alike) are docs/protocol/asset_packs.md;
+converting the retail archives and building a pack are "Asset packs (`.pk3`): converting,
+building, exporting through them" above. This section is what the client does with them.
+
+**Where packs go.** In the folder the client found the Data archive in (the `pk2/` folder beside
+the executable for players; `OPENSRO_PK2_PATH`'s folder for a developer), or in `OPENSRO_PACK_DIR`.
+The client reads every `*.pk3`, `*.zip` and `*.pk2` there that the source mode reads and whose name
+is not one of the five base names (`Data`, `Map`, `Media`, `Music`, `Particles`). No subfolders.
+Nothing to configure: a pack in the folder is read at the next start.
+
+**The order.** A lookup checks, highest priority first, and the first that has the path serves it:
+
+1. the loose `custom/` folder beside the executable (round 678's folder, beside `pk2/`;
+   `OPENSRO_CUSTOM_DIR` for a developer): a path overlay, `custom/prim/mtrl/foo.ddj` answers
+   `prim\mtrl\foo.ddj`. Read in every source mode. Round 678's branding files live there too;
+2. the packs, **by name, case ignored, the later name winning**: `z_assets.pk3` over
+   `assets.pk3`. Of one name, `.pk2` < `.zip` < `.pk3`;
+3. the base archive the lookup is for -- its **volume**: the client always knows which archive it
+   reads (Data, Map, Media, Music or Particles), and the five are not one namespace (Data and Map
+   each have their own `object.ifo`). `Data.pk3` sits above `Data.pk2` when both are read.
+
+A pack overlays every volume: its `prim\...` paths override Data's, its `textdata\...` paths
+Media's, and a path no base holds appears in all of them. Paths match case-insensitively, `/` and
+`\` alike, empty segments ignored.
+
+**The source mode** (`setting/config.yaml`'s `assets.source`, or `OPENSRO_ASSET_SOURCE` for a test):
+
+| Mode | Reads |
+|---|---|
+| `mixed` (default) | every type: base archives as `.pk3`, `.zip` or `.pk2`, and every pack |
+| `pk2` | `.pk2` only: the retail archives as before round 789, plus any extra `.pk2` pack |
+| `pk3` | `.pk3`/`.zip` only: `Data.pk3`, `Map.pk3`, ... converted once (no `.pk2` needed), and the `.pk3`/`.zip` packs |
+
+`custom/` is read in every mode. A volume with no base archive is missing: a pack never stands in
+for one (OURS).
+
+**Safety.** The client refuses, and logs, any pack entry whose name could escape the archive (`..`,
+an absolute path, a drive letter or `:`), any encrypted entry or one compressed with anything but
+stored or deflate, any symbolic link, any entry over 256 MiB, and any entry declaring more than
+1100 times its packed size; a pack whose entries together declare more than 1100 times the pack's
+size is not opened at all. An entry is never inflated past its declared size and its CRC-32 is
+checked. A refused entry is left out; the rest of the pack is read. A symbolic link in `custom/` is
+refused too.
+
+**The log.** At start the client logs one line per pack (`AssetArchives: pack 2 z_assets.pk3: 120
+file(s) (zip, native)`), which packs shadow which, any refused entries, and, the first time each
+volume is opened, every path a pack or `custom/` overrides in it (`AssetArchives: Data: 3 path(s)
+of Data.pk2 overridden: prim/mtrl/foo.ddj <- z_assets.pk3; ...`; the first 10, or all with
+`OPENSRO_PACK_LOG=all`). The debug panel (Shift+F3) lists the mode, the archives and the packs.
+Which layer serves a given path: `/layer <path>` in chat, `OPENSRO_QA_WHICH="path;path"`, or
+`client/tools/which_layer.gd` (docs/DEBUG_TOOLS.md).
+
+**A server's own packs** (round 789): a server can name packs every player must have; the client
+downloads them into `servers/<host>_<port>/` under the pack folder and, while connected to that
+server, reads exactly those over the base archives (its own packs and `custom/` set aside unless the
+server allows them). "Server packs" below.
+
+## Server packs: the packs every player must have (round 789)
+
+Your server can name the asset packs every player needs -- a custom avatar, a retextured item, new
+item names -- and every client that connects downloads exactly those, checks each by its SHA-256,
+and layers them over its own retail archives before character select. Players install nothing by
+hand, and nobody plays with a different version of them. All of it is OURS (retail has only
+`.pk2`); the protocol and every rule are docs/protocol/asset_packs.md, "Server packs". **Packs are
+game data or fan content: they live with your game data, never in the repo** (docs/LEGAL.md).
+
+**1. Put the packs in one folder** on the server (`.pk3` or `.zip` only; build one with `pk3pack`,
+"Asset packs (`.pk3`)" above; convert a `.pk2` pack with `pk2topk3`):
+```
+/srv/sro/client-packs/z_akatsuki.pk3
+/srv/sro/client-packs/z_mymod.pk3
+```
+Names are letters, digits, `_`, `-` and `.`, ending `.pk3`/`.zip`, at most 64 characters, never a
+base archive's name (`Data`, `Map`, `Media`, `Music`, `Particles`). Up to 32 packs, 4 GiB each, 16
+GiB together. Only the folder itself is read; a pack may be a symbolic link. Any other file in it
+(a `.pk2`, a `readme.txt`) stops the server, so nothing is half-served.
+
+**2. Start the server with `-client-packs`** (env `OPENSRO_CLIENT_PACKS`):
+```
+opensro-server ... -client-packs /srv/sro/client-packs
+```
+At startup it opens every pack the way the clients will (any entry the readers refuse -- an unsafe
+name, a zip bomb, a bad CRC -- refuses the whole pack and stops the server), hashes it, and logs:
+```
+clientpacks: z_akatsuki.pk3: 590825 bytes, 19 files, sha256 d77be1e2...
+client packs: named to every client before login dir=/srv/sro/client-packs packs=2 order="z_akatsuki.pk3, z_mymod.pk3" from="this server's listener, port 15780, /packs/<name>"
+```
+`order` is the layering, lowest first (the same order the client's own pack folder would use: by
+name, a later name wins).
+
+**3. Where players download them from.** Two ways, either or both:
+
+- **The server's own listener** (the default when no URL is given): `-client-packs-listen :15780`
+  (env `OPENSRO_CLIENT_PACKS_LISTEN`; `off` turns it off). Open that TCP port as you opened 15779
+  (a compose file publishes it: `- "15780:15780"`). It serves only the listed packs at
+  `/packs/<name>`, with resume, 16 downloads at once and 2 per address, and nothing else (no
+  listing, no other file). Players fetch it over plain http from the address they connect the game
+  to; the hash (sent over the game connection) is what proves the file.
+- **Your own URL** -- a CDN, a web server, a GitHub release: `-client-packs-url
+  https://github.com/<owner>/<repo>/releases/download/packs-1` (env `OPENSRO_CLIENT_PACKS_URL`);
+  each pack is fetched from `<url>/<name>`, so upload the files there under the same names.
+  **Use https** -- clients take plain http only from the game server's own host. With a URL the
+  listener is off unless `-client-packs-listen` turns it on (then clients try the URL first and
+  the listener second).
+
+**4. Changing a pack** (a new version): replace the file and **restart the server** -- the hash is
+taken at startup, and the listener refuses to serve a file that changed since (it logs `a pack
+changed since the server started`). If you serve from a URL, upload the new file there too before
+the restart. Players download the new version at their next login; the old one is removed from
+their folder.
+
+**Optional: `-client-packs-local-extras`** (env `OPENSRO_CLIENT_PACKS_LOCAL_EXTRAS`). By default a
+player connected to your server reads **exactly** your packs over the base archives: their own
+packs and their `custom/` folder are set aside while they are connected (so a modified local pack
+cannot change what your server assumes -- walls, item tables). With this flag their own packs stay
+(below yours) and `custom/` stays on top.
+
+**What the player sees.** On Connect the login screen's message line says `Checking the server's
+packs...`, then `Downloading z_akatsuki.pk3: 0.3 MB of 0.6 MB (50%)`, then logs in as usual. A
+failure is said there in plain words (`Could not download the server's pack z_akatsuki.pk3:
+login.example.com:15780: HTTP 404`) and nothing is sent. The packs land in the client's pack
+folder under `servers/<host>_<port>/` (`pk2/servers/login.example.com_15779/z_akatsuki.pk3`): one
+folder per server, so two servers that ship different packs of the same name never collide; the
+client's own pack folder and that subfolder are never mixed. A second login downloads and
+re-hashes nothing (the client keeps each pack's hash with its size and modified time,
+`packs.json`). The client log has a `PACKS:` line for every step.
+
+**Without `-client-packs`** the server tells clients it names no packs, and they play with their own
+packs as before. A client from before round 789 never asks and keeps its own packs; a new client
+against a server from before round 789 waits 2.5 s once for an answer that does not come, then
+plays with its own packs.
+
+**Checking it.** `pk2list -archives /srv/sro/client-packs -layers` shows the stack the clients get.
+On a client: `/layer <path>` in chat or `OPENSRO_QA_WHICH="<path>;..."` names the pack serving a
+path (docs/DEBUG_TOOLS.md), and the Shift+F3 panel says `packs of server <host>_<port>`.
 
 ## Logging in: wrong passwords, blocks, one session per account (round 788)
 

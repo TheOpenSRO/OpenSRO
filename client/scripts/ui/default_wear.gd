@@ -36,7 +36,11 @@ class_name DefaultWear
 ## packed TypeID (INFERRED that this is the visual record an equipped item
 ## gets; the rows are named for armour pieces -- "ROBE-MAIL" 6316 mask 0x2,
 ## "ROBE-PANTS" 8364 mask 0x10). An avatar's record (ConditionID 2, chosen by
-## further conditions) is not modelled: OPEN, as the avatar arbitration is.
+## further conditions) is not read here: round 789's CharacterVisualChange
+## finds it (the item's TypeID word and Param7, READ c:0x4ec260) and runs the
+## arbitration; the Slot bits of the avatars it draws come in as
+## wear_for's extra_mask, since FUN_00a5e010 tests every loaded visual's Slot
+## (a dress covering 0x2 and 0x10 leaves no default clothes under it).
 
 const PATH := "server_dep\\silkroad\\textdata\\charactervisualchange.txt"
 
@@ -146,12 +150,14 @@ static func default_type_id(race: int, wear_num: int, armour_class: int) -> int:
 
 ## What fills the empty chest and legs (READ 0xa5e010): [{slot, path, wear}]
 ## for each default the worn visuals leave uncovered. `worn` is [{slot,
-## type_ids}]. `server_flag` is CGame+0x129: set, nothing.
-func wear_for(race: int, woman: bool, worn: Array, server_flag: bool = false) -> Array:
+## type_ids}]. `server_flag` is CGame+0x129: set, nothing. `extra_mask`
+## (round 789) is the Slot bits of the drawn avatars, which cover as armour
+## does.
+func wear_for(race: int, woman: bool, worn: Array, server_flag: bool = false, extra_mask: int = 0) -> Array:
 	var out: Array = []
 	if server_flag or defaults.is_empty():
 		return out
-	var covered := 0
+	var covered := extra_mask
 	for w in worn:
 		covered |= int(item_masks.get(packed_type_id(w["type_ids"]), 0))
 	var cls := worn_armour_class(worn)

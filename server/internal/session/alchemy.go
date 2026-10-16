@@ -41,9 +41,10 @@ package session
 // stuff; a slot whose item changed while the operation waited cancels it; a
 // second start while one waits is dropped unanswered (the client never sends
 // one); an operation whose character left the world in the wait is dropped
-// with nothing spent; FUN_00507fe0's 0x540f test (an item type answering its
-// vslot +0x470 needs ref Param2 == 1) and FUN_00502910's expiry test (0x5410
-// for an expired item) are not made -- OpenSRO has neither kind.
+// with nothing spent; FUN_00502910's expiry test (0x5410 for an expired
+// item) is not made -- OpenSRO has no rentals. FUN_00507fe0's 0x540f test (a
+// devil's spirit needs ref Param2 == 1) is made since round 789, and op 7
+// answers retail's dead end (avatar.go).
 
 import (
 	"context"
@@ -356,6 +357,12 @@ func (a *alchemist) handle(ctx context.Context, sess *gateway.Session, p *proto.
 	}
 	switch req.Op {
 	case AlchemyOpReinforce, AlchemyOpMagic, AlchemyOpAttr:
+	case AlchemyOpAvatar:
+		// Round 789: op 7, the avatar enchant, is dead in this build: its
+		// _BlessItem never has an option name and ends in 2, nothing spent
+		// (avatar.go, avatarEnchantRefusal). The request's own checks come
+		// first, as retail's.
+		return refuse(avatarEnchantRefusal(ctx, a.Inv, a.Items, charID, req.Slots), "the avatar enchant is dead in retail")
 	default:
 		return refuse(alchemy.ErrNotReinforceStuff, "operation not built")
 	}
@@ -384,6 +391,12 @@ func (a *alchemist) handle(ctx context.Context, sess *gateway.Session, p *proto.
 		}
 		if i == 0 && !isEquipment(it) {
 			return refuse(alchemy.ErrOnlyEquipCanBeReinforced, "the first slot is not equipment")
+		}
+		// FUN_00507fe0 (READ gs:0x507fe0, round 789): a devil's spirit whose
+		// itemdata Param2 (ref +0x2c0, RestoreHPPct's column 120) is not 1
+		// cannot be reinforced, 0x540f (MEASURED: the two 7-day event rows).
+		if i == 0 && timeLimited(it) && it.RestoreHPPct != 1 {
+			return refuse(alchemy.ErrTargetCannotBeReinforced, "a devil's spirit whose Param2 is not 1")
 		}
 		at, code := alchemyLoadSlot(req.Op, it, found)
 		if code != alchemy.Success {

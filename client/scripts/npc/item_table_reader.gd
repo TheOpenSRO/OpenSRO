@@ -140,8 +140,10 @@ static var last_wait_usec := 0
 ## the caller's thread). The boot log line says which (the review's finding 6).
 static var last_source := ""
 
+## Round 789: Pk2Reader.cache_key -- the file, plus the AssetArchives set's
+## generation when packs overlay it, so a reload with new packs parses again.
 static func _key_of(media: Pk2Reader) -> String:
-	return media.source_path if media.source_path != "" else str(media.get_instance_id())
+	return media.cache_key()
 
 static func _read_all(media: Pk2Reader) -> Dictionary:
 	var t0 := Time.get_ticks_usec()
@@ -285,6 +287,15 @@ const COL_PHYS_ABSORB_MAX := 72
 const COL_MAG_ABSORB_MIN := 79
 const COL_MAG_ABSORB_MAX := 80
 const COL_MAX_MAGIC_OPTIONS := 158
+## Round 789 (avatars; /root/opensro-pk3av789/AVATAR_RESEARCH.md 2.2, 6.1):
+## Param2 (120: a devil's spirit's "may be reinforced" flag, the alchemy
+## window's 0xe test, AVATAR_ALCHEMY_RESEARCH.md 2), Param7 (130: an avatar's
+## body-region mask, the second key of its charactervisualchange row) and
+## ChildItemCount (159: a dress that takes an attachment; ref +0x535 on the
+## client, INFERRED from its use, READ +0x53d on the server).
+const COL_PARAM2 := 120
+const COL_PARAM7 := 130
+const COL_CHILD_ITEM_COUNT := 159
 ## The per-plus increments, in PLUS_INC_* order: PD 67, ER 70, PAR 73, MD 78,
 ## MAR 81, phy. atk 99, mag. atk 104, attack rate 115 (the fifth float of each
 ## group; ITEM_FORMAT.md). Lane B's "(+x%)" subtracts them (item_tooltip.md §2).
@@ -329,17 +340,36 @@ const EUROPE_ARMOUR_FAMILIES := [9, 10, 11]
 ## equip file holds e.g. SN_ITEM_EU_LIGHT_01_HA_A "Sagittarius Savage
 ## Sallet" (MEASURED, round 731); the two files share no key (MEASURED: 10,893 and 7,814
 ## keys, 0 in both), so their order does not matter.
+## OBJECT_NAME_PATHS is the fallback for an archive without the list file.
 static var OBJECT_NAME_PATHS := [
 	"server_dep\\silkroad\\textdata\\textdata_object.txt",
 	"server_dep\\silkroad\\textdata\\textdata_equip&skill.txt",
 ]
 
-## Both tables parsed and merged, or null when the archive has neither.
+## The list file itself (round 789). Reading it, as the client does, is what
+## lets an asset pack add a name table the way it adds an item part through
+## itemdata.txt: the pack's textdataname.txt names one more file (OURS: the
+## pack layer, docs/TODO.md "Asset packs"; the list rule is the client's).
+const OBJECT_NAME_INDEX := "textdataname.txt"
+
+## The name tables `archive` lists in textdataname.txt, as full paths in its
+## order; OBJECT_NAME_PATHS when it has no list.
+static func object_name_paths(archive) -> PackedStringArray:
+	var out := PackedStringArray()
+	if archive != null:
+		for name in CharCatalog.index_part_names(archive, OBJECT_NAME_INDEX):
+			out.append(CharCatalog.TEXTDATA_DIR + name)
+	if out.is_empty():
+		out = PackedStringArray(OBJECT_NAME_PATHS)
+	return out
+
+## Every listed table parsed and merged (an earlier table's key wins), or null
+## when the archive has none.
 static func load_object_names(archive) -> UiTextTable:
 	var out: UiTextTable = null
 	if archive == null:
 		return null
-	for path in OBJECT_NAME_PATHS:
+	for path in object_name_paths(archive):
 		var entry = ObjectLoader.find_file(archive, path)
 		if entry == null:
 			continue
@@ -431,6 +461,10 @@ class Item:
 	var req_str: int = 0
 	var req_int: int = 0
 	var max_magic_options: int = 0
+	## Round 789: Param2, Param7 and ChildItemCount (COL_PARAM2 and on).
+	var param2: int = 0
+	var param7: int = 0
+	var child_item_count: int = 0
 	var parry := Vector2.ZERO
 	var phys_absorb := Vector2.ZERO
 	var mag_absorb := Vector2.ZERO
@@ -458,6 +492,23 @@ class Item:
 
 	func is_weapon() -> bool:
 		return family() == FAMILY_WEAPON
+
+	## The item ref's TypeID word (+0x80), READ s:0x48f610 / c:0x6abcd0:
+	## CashItem | Bionic << 1 | TypeID1 << 2 | TypeID2 << 5 | TypeID3 << 7 |
+	## TypeID4 << 11 (round 789, AVATAR_RESEARCH.md).
+	func type_word() -> int:
+		if type_ids.size() < 4:
+			return 0
+		return (cash_item & 1) | ((bionic & 1) << 1) | (type_ids[0] << 2) | (type_ids[1] << 5) \
+			| (type_ids[2] << 7) | (type_ids[3] << 11)
+
+	## An avatar (TypeID 3/1/13: hat 1, dress 2, attachment 3, flag 4).
+	func is_avatar() -> bool:
+		return type_ids.size() >= 4 and type_ids[0] == 3 and type_ids[1] == 1 and type_ids[2] == 13
+
+	## A devil's spirit (TypeID 3/1/14).
+	func is_devil_spirit() -> bool:
+		return type_ids.size() >= 4 and type_ids[0] == 3 and type_ids[1] == 1 and type_ids[2] == 14
 
 	func is_armour() -> bool:
 		return CHINA_ARMOUR_FAMILIES.has(family()) or EUROPE_ARMOUR_FAMILIES.has(family())
@@ -596,6 +647,9 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.req_str = _int_at(cols, COL_REQ_STR)
 		item.req_int = _int_at(cols, COL_REQ_INT)
 		item.max_magic_options = _int_at(cols, COL_MAX_MAGIC_OPTIONS)
+		item.param2 = _int_at(cols, COL_PARAM2)
+		item.param7 = _int_at(cols, COL_PARAM7)
+		item.child_item_count = _int_at(cols, COL_CHILD_ITEM_COUNT)
 		item.parry = Vector2(_float_at(cols, COL_PARRY_MIN), _float_at(cols, COL_PARRY_MAX))
 		item.phys_absorb = Vector2(_float_at(cols, COL_PHYS_ABSORB_MIN), _float_at(cols, COL_PHYS_ABSORB_MAX))
 		item.mag_absorb = Vector2(_float_at(cols, COL_MAG_ABSORB_MIN), _float_at(cols, COL_MAG_ABSORB_MAX))
@@ -665,6 +719,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	# Round 731: a library from before these columns has none (all 0).
 	var ext_ints: PackedInt64Array = rows.get("ext_ints", PackedInt64Array())
 	var ext_floats: PackedFloat64Array = rows.get("ext_floats", PackedFloat64Array())
+	# Round 789: a library from before these columns has none (all 0: no
+	# avatar finds its visual row, so none is drawn -- build the library).
+	var avatar_ints: PackedInt64Array = rows.get("avatar_ints", PackedInt64Array())
 	var m := 0
 	for i in ids.size():
 		var item := Item.new()
@@ -744,6 +801,11 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		else:
 			for k in range(8):
 				item.plus_incs.append(0.0)
+		var av := i * 3
+		if av + 2 < avatar_ints.size():
+			item.param2 = avatar_ints[av]
+			item.param7 = avatar_ints[av + 1]
+			item.child_item_count = avatar_ints[av + 2]
 		into[item.id] = item
 	return true
 

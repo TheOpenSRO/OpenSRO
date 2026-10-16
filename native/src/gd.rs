@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use godot::prelude::*;
 
-use crate::core::{ddj, pk2};
+use crate::core::{ddj, pk2, pk3};
 
 struct SrNativeExtension;
 
@@ -156,6 +156,159 @@ impl SrNativePk2 {
             d.set("dir_cache_hits", a.stats.dir_cache_hits.load(Ordering::Relaxed) as i64);
             d.set("file_reads", a.stats.file_reads.load(Ordering::Relaxed) as i64);
             d.set("file_bytes", a.stats.file_bytes.load(Ordering::Relaxed) as i64);
+        }
+        d
+    }
+}
+
+/// One open `.pk3` (zip) asset pack (round 789; Pk3Reader's native half, core::pk3). Entries are
+/// named by id where SrNativePk2 names them by offset: a file's index, or a folder's (the root's
+/// is 0). Every method takes &self and is safe from any thread.
+#[derive(GodotClass)]
+#[class(base = RefCounted, init)]
+pub struct SrNativePk3 {
+    archive: Option<Arc<pk3::Pk3>>,
+    error: String,
+}
+
+fn found_dict(f: &pk3::Found) -> VarDictionary {
+    let mut d = VarDictionary::new();
+    d.set("name", &GString::from(f.name.as_str()));
+    d.set("kind", pk3::Pk3::kind_of(f.is_dir) as i64);
+    d.set("offset", f.id as i64);
+    d.set("size", f.size as i64);
+    d
+}
+
+#[godot_api]
+impl SrNativePk3 {
+    /// Opens `path` (an absolute file-system path) and reads its central directory. False, with
+    /// last_error() set, when it is not a usable zip.
+    #[func]
+    fn open(&mut self, path: GString) -> bool {
+        match pk3::Pk3::open(&path.to_string()) {
+            Ok(a) => {
+                self.archive = Some(Arc::new(a));
+                true
+            }
+            Err(e) => {
+                self.error = e;
+                false
+            }
+        }
+    }
+
+    #[func]
+    fn last_error(&self) -> GString {
+        GString::from(self.error.as_str())
+    }
+
+    #[func]
+    fn is_zip64(&self) -> bool {
+        self.archive.as_ref().is_some_and(|a| a.zip64)
+    }
+
+    /// {name, kind (1 folder, 2 file), offset (the id), size}, or {} when the path is not there.
+    #[func]
+    fn find(&self, path: GString) -> VarDictionary {
+        let Some(a) = &self.archive else { return VarDictionary::new() };
+        a.find(&path.to_string()).map_or_else(VarDictionary::new, |f| found_dict(&f))
+    }
+
+    /// A folder's entries by its id, as SrNativePk2.list_dir: {names, kinds, offsets, sizes}.
+    #[func]
+    fn list_dir(&self, id: i64) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        let Some(a) = &self.archive else { return out };
+        if id < 0 {
+            return out;
+        }
+        let list = a.list_dir(id as u64);
+        let mut names = PackedStringArray::new();
+        names.resize(list.len());
+        {
+            let slots = names.as_mut_slice();
+            for (i, f) in list.iter().enumerate() {
+                slots[i] = GString::from(f.name.as_str());
+            }
+        }
+        out.set("names", &names);
+        out.set("kinds", &PackedInt64Array::from(list.iter().map(|f| pk3::Pk3::kind_of(f.is_dir) as i64).collect::<Vec<_>>()));
+        out.set("offsets", &PackedInt64Array::from(list.iter().map(|f| f.id as i64).collect::<Vec<_>>()));
+        out.set("sizes", &PackedInt64Array::from(list.iter().map(|f| f.size as i64).collect::<Vec<_>>()));
+        out
+    }
+
+    #[func]
+    fn root_offset(&self) -> i64 {
+        0
+    }
+
+    /// A file's bytes as {bytes: PackedByteArray}, or {error: String} (a refused inflate, a CRC
+    /// mismatch, a truncated file).
+    #[func]
+    fn read(&self, id: i64) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let Some(a) = &self.archive else {
+            d.set("error", &GString::from("pk3: not open"));
+            return d;
+        };
+        if id < 0 {
+            d.set("error", &GString::from("pk3: negative id"));
+            return d;
+        }
+        match a.read(id as u64) {
+            Ok(v) => d.set("bytes", &PackedByteArray::from(v)),
+            Err(e) => d.set("error", &GString::from(e.as_str())),
+        }
+        d
+    }
+
+    /// Every file's path with `/`, as written, in central-directory order.
+    #[func]
+    fn paths(&self) -> PackedStringArray {
+        let Some(a) = &self.archive else { return PackedStringArray::new() };
+        let keys = a.paths();
+        let mut out = PackedStringArray::new();
+        out.resize(keys.len());
+        {
+            let slots = out.as_mut_slice();
+            for (i, k) in keys.iter().enumerate() {
+                slots[i] = GString::from(k.as_str());
+            }
+        }
+        out
+    }
+
+    /// The first refusals ("name: why") and how many there were in all.
+    #[func]
+    fn refused(&self) -> PackedStringArray {
+        let Some(a) = &self.archive else { return PackedStringArray::new() };
+        let mut out = PackedStringArray::new();
+        for r in &a.refused {
+            out.push(r.as_str());
+        }
+        out
+    }
+
+    #[func]
+    fn refused_count(&self) -> i64 {
+        self.archive.as_ref().map_or(0, |a| a.refused_count as i64)
+    }
+
+    #[func]
+    fn file_count(&self) -> i64 {
+        self.archive.as_ref().map_or(0, |a| a.files.len() as i64)
+    }
+
+    /// {file_reads, file_bytes, inflated} since open.
+    #[func]
+    fn stats(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        if let Some(a) = &self.archive {
+            d.set("file_reads", a.stats.file_reads.load(Ordering::Relaxed) as i64);
+            d.set("file_bytes", a.stats.file_bytes.load(Ordering::Relaxed) as i64);
+            d.set("inflated", a.stats.inflated.load(Ordering::Relaxed) as i64);
         }
         d
     }
