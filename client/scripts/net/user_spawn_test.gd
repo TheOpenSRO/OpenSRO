@@ -94,6 +94,33 @@ func _test_records() -> void:
 	_check(early.deferred and early.users.is_empty(), "before the item table the group is deferred")
 	_check(UserSpawnNet.parse_frame("97/168") == frame and UserSpawnNet.parse_frame("") == Vector2i(-1, -1), "frames parse")
 
+## Round 789: a record with avatars reads (it failed before): the block's
+## u8 size, u8 count, each u32 RefItemID with a plus for 3/1/13 and 3/1/14
+## (READ c:0x9de3e2..0x9de4a1), and the snapshot keeps them under
+## CharacterAppearance.AVATAR_KEY_BASE + their order.
+func _test_avatars() -> void:
+	var rows := _rows()
+	for e in [[23456, [3, 1, 13, 2]], [24971, [3, 1, 14, 1]]]:
+		var it := ItemTableReader.Item.new()
+		it.id = e[0]
+		it.type_ids = PackedInt32Array(e[1])
+		rows[e[0]] = it
+	var types := UserSpawnNet.Types.new(rows)
+	var plain := "0705000001000000"
+	_check(SINGLE.count(plain) == 1, "the fixture's empty avatar block is found once")
+	var dressed := SINGLE.replace(plain, "070502" + "a05b0000" + "02" + "8b610000" + "00" + "00" + "01000000")
+	var one := UserSpawnNet.decode_single_spawn(dressed.hex_decode(), types)
+	_check(one != null and one.uid == 1 and one.spawn_type == 4 and one.name == "Aria", "a 0x3015 with two avatars reads to its end")
+	if one == null:
+		return
+	_check(one.avatars.size() == 2 and int(one.avatars[0]["id"]) == 23456 and int(one.avatars[0]["plus"]) == 2
+		and int(one.avatars[1]["id"]) == 24971, "the avatars in storage order %s" % [one.avatars])
+	var s := UserSpawnNet.to_snapshot(one, types, Vector2i(97, 168))
+	var k := CharacterAppearance.AVATAR_KEY_BASE
+	_check(s.equipped.get(k) == 23456 and s.equipped.get(k + 1) == 24971 and s.pluses.get(k) == 2 and not s.pluses.has(k + 1),
+		"the snapshot keeps them under the avatar keys %s %s" % [s.equipped, s.pluses])
+	_check(s.equipped.get(CharacterAppearance.SLOT_CHEST) == 3643, "beside the worn items")
+
 func _test_net_client() -> void:
 	var nc = load("res://scripts/net/net_client.gd").new()
 	var res := WorldNet.EnterWorldResult.new()
@@ -158,6 +185,7 @@ func _test_net_client() -> void:
 
 func _init() -> void:
 	_test_records()
+	_test_avatars()
 	_test_net_client()
 	if _failures > 0:
 		print("%d failure(s)" % _failures)

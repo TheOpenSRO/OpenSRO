@@ -93,6 +93,9 @@ const PANELS := {
 	# Opened from the talk box's Storage option (open_storage). The authored
 	# warehouse window: a 6x5 grid of the character's stored items.
 	"storage": ["resinfo\\ifstorageroom.txt", "Storage"],
+	# Round 789: the blacksmith's grant window (GrantMagicAttributeWindow),
+	# opened by the talk line kind 0x2f's 0xB046 {1, 0x20} (open_grant_window).
+	"grant": [GrantMagicAttributeWindow.LAYOUT, "GrantMagicAttribute"],
 }
 
 ## M opens the world map, the retail binding (read): the default key table
@@ -203,6 +206,10 @@ const REGISTRY_FRAMES := {
 	"system": {"name": "GDR_SYSTEM"},
 	"partymatch": {"name": "GDR_PARTY_MATCH"},
 	"autopotion": {"name": "GDR_AUTO_POTION"},
+	# Round 789: GDR_GRANT_MAGIC_ATTRIBUTE (CIFGrantMagicAttributeWnd), 272x395,
+	# UIIT_STT_ALCHEMYBOX_ENCHANT_MAGIC_PARAM, under APPLY_AVATAR_SYSTEM, which
+	# config\define.txt defines (MEASURED).
+	"grant": {"name": GrantMagicAttributeWindow.REGISTRY, "archive_defines": true},
 }
 
 ## Controls a window's own class hides when it creates the window, so they
@@ -243,8 +250,8 @@ func _hide_at_create(panel_id: String, window: HudWindow) -> void:
 ## - **avatar** (the flag set): the worn slots hidden except SLOT_108, the
 ##   avatar slots and button 14 shown, button 13 hidden (0x6abe10..0x6abee3).
 ##   The skill strip is shown only for an avatar item of a particular type
-##   with a value above zero; this client has no avatar items, so it stays
-##   hidden.
+##   with a value above zero (round 789, READ c:0x6abde0: a worn, awake
+##   devil's spirit; AvatarEquipment.skill_strip_shown).
 ##
 ## The constructor clears the flag (0x6ab569) and so does hiding the window,
 ## so every open starts in equipment mode. Buttons 13 and 14 both run
@@ -296,8 +303,146 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 		_set_shown(window, avatar_slot, avatar)
 	_set_shown(window, BTN_TO_AVATAR, not avatar)
 	_set_shown(window, BTN_TO_EQUIPMENT, avatar)
-	_set_shown(window, AVATAR_SKILL_STRIP, false)
+	_set_shown(window, AVATAR_SKILL_STRIP, _avatar_skill_strip_shown())
 	_show_equipment_backdrops()
+
+# --- the avatar slots (round 789) ----------------------------------------------
+#
+# AvatarEquipment holds the rules (READ c:0x6abcd0, c:0x6ad180, c:0x6abde0);
+# here they are drawn and sent. The avatar inventory is NetClient's
+# (last_avatar_instances: storage slot -> ItemInstance). Each display window
+# GDR_AVATAR_SLOT_01..05 shows the item of its TYPE (hat, dress, attachment,
+# flag, devil's spirit) whatever storage slot it sits in; the storage slot is
+# what goes on the wire.
+
+## Whether the devil's spirit's skill strip shows now (AvatarEquipment). Its
+## four skill slots stay empty: which skills fill them needs the skill
+## table's +0x61 and +0xfc bytes, not READ (OPEN, docs/rounds/r789ac.md).
+func _avatar_skill_strip_shown() -> bool:
+	return AvatarEquipment.skill_strip_shown(_equipment_avatar_mode, NetClient.last_avatar_instances, item_types)
+
+## A display window's control (0 hat .. 4 devil's spirit), or null.
+func _avatar_slot_control(display: int) -> Control:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null or display < 0 or display >= AVATAR_SLOT_NAMES.size():
+		return null
+	return window.node(AVATAR_SLOT_NAMES[display]) as Control
+
+## ChildItemCount of an item id (itemdata col 159), 0 when unknown.
+func _child_item_count(item_id: int) -> int:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	return item.child_item_count if item != null else 0
+
+## Draws the avatar inventory into the five display windows, greys the
+## attachment window under a dress that takes none, and shows or hides the
+## skill strip. A left click on a filled window picks it up (kind "avatar");
+## putting it down on the bag sends 0x23 (_drop_avatar_to_bag). A right click
+## does nothing, as on a worn slot (OURS: the avatar slots' right click is not
+## READ, AVATAR_RESEARCH.md OPEN 1).
+func _fill_avatar_slots() -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return
+	var storage: Dictionary = NetClient.last_avatar_instances
+	var shown := AvatarEquipment.by_display(storage, item_types)
+	for d in AvatarEquipment.DISPLAYS:
+		var slot := _avatar_slot_control(d)
+		if slot == null:
+			continue
+		var icon := slot.get_node_or_null("ItemIcon") as TextureRect
+		if icon == null:
+			continue
+		if not shown.has(d):
+			icon.texture = null
+			_set_item_tip(icon, -1)
+			_set_item_seal_edge(icon, -1)
+			if icon.has_meta("avatar_slot"):
+				icon.remove_meta("avatar_slot")
+			continue
+		var storage_slot: int = shown[d]
+		var it: ItemInstance = storage[storage_slot]
+		var ref := it.ref_item_id
+		icon.texture = _item_icon(ref)
+		_set_item_seal_edge(icon, ref)
+		_set_item_tip(icon, ref, "avatar", storage_slot)
+		icon.modulate = Color.WHITE
+		icon.mouse_filter = Control.MOUSE_FILTER_STOP
+		icon.set_meta("avatar_slot", storage_slot)
+		icon.set_meta("avatar_item_id", ref)
+		if not icon.has_meta("avatar_click_wired"):
+			icon.set_meta("avatar_click_wired", true)
+			icon.gui_input.connect(func(ev: InputEvent) -> void:
+				if _is_pick_click_on(ev, icon) and icon.texture != null and icon.has_meta("avatar_slot"):
+					pick_up_icon({"kind": "avatar", "slot": int(icon.get_meta("avatar_slot")),
+						"item_id": int(icon.get_meta("avatar_item_id", 0)), "icon": icon.texture},
+						icon.texture, icon, (ev as InputEventMouseButton).global_position))
+	# The attachment window under a dress whose ChildItemCount is 0 (READ
+	# c:0x6ae6a3: FUN_00b8f540(0) + FUN_006668f0(1) on window 2). How the
+	# disabled window is drawn is not READ (OURS: greyed, as a broken item).
+	var att := _avatar_slot_control(AvatarEquipment.DISPLAY_ATTACHMENT)
+	if att != null:
+		att.modulate = Color(0.45, 0.45, 0.45) if AvatarEquipment.attachment_disabled(storage, item_types, _child_item_count) else Color.WHITE
+	_set_shown(window, AVATAR_SKILL_STRIP, _avatar_skill_strip_shown())
+	# The held avatar is let go when its slot no longer holds it.
+	if held_icon != null and held_icon.is_holding() and held_icon.kind() == "avatar":
+		var held_slot := int(held_icon.payload.get("slot", -1))
+		if not storage.has(held_slot) or (storage[held_slot] as ItemInstance).ref_item_id != int(held_icon.payload.get("item_id", -2)):
+			cancel_held_icon("the avatar slot changed")
+
+## Whether a point is over the equipment pane (its layout's root), shown.
+func _over_equipment_pane(at: Vector2) -> bool:
+	var root := _equipment_root()
+	return root != null and root.is_visible_in_tree() and root.get_global_rect().has_point(at)
+
+## A bag avatar put down on the equipment window (READ CIFEquipment::vslot_028
+## c:0x6ad180, either mode -- the research names no mode test, and the hovered
+## slot is not looked at): the client's own refusal in the system line, or
+## 0x7034 type 0x24 to the storage slot AvatarEquipment.drop_target picks.
+func _drop_avatar_from_bag(from: int) -> void:
+	var types := bag_item_types(from)
+	var target := AvatarEquipment.drop_target(types, NetClient.last_avatar_instances, item_types)
+	if target.is_empty():
+		return
+	if target.has("refuse"):
+		var key := String(target["refuse"])
+		print("HudPanels: avatar drop refused by the client (%s)" % key)
+		system_notice.emit(_tip_text(key, key))
+		return
+	if not NetClient.is_connected_to_server():
+		return
+	UiSounds.expect_move(types, "equipped (bag -> avatar)")
+	print("HudPanels: avatar equip bag slot %d -> avatar slot %d" % [from, int(target["dst"])])
+	NetClient.avatar_equip(from, int(target["dst"]))
+
+## A worn avatar put down on the bag: 0x7034 type 0x23 with the bag cell
+## clicked (READ c:0x7950b0: the server puts it in the first free slot anyway,
+## s:0x525ac0). Over the bag window but not on a cell, the first empty bag
+## slot is named (OURS, as a worn item's drop there, _drop_worn_item).
+func _drop_avatar_to_bag(avatar_slot: int, at: Vector2) -> void:
+	if not NetClient.is_connected_to_server() or _over_equipment_pane(at):
+		return
+	var to := _bag_slot_at(at)
+	if to < 0:
+		to = maxi(first_empty_bag_slot(), 0)
+	var it = NetClient.last_avatar_instances.get(avatar_slot)
+	UiSounds.expect_move(item_types((it as ItemInstance).ref_item_id) if it != null else PackedInt32Array(),
+		"unequipped (avatar -> bag)")
+	print("HudPanels: avatar unequip avatar slot %d -> bag slot %d" % [avatar_slot, to])
+	NetClient.avatar_unequip(avatar_slot, to)
+
+## An avatar move's reply (NetClient.avatar_move_result): a refusal's line in
+## the system line (AvatarNet.MOVE_REFUSAL_KEYS); a success redraws the avatar
+## slots and asks for the bag (OpenSRO's bag list draws the grid).
+func _on_avatar_move_result(r: Dictionary) -> void:
+	UiSounds.move_replied(bool(r.get("ok", false)))
+	if not bool(r.get("ok", false)):
+		system_notice.emit(AvatarNet.move_refusal_line(int(r.get("code", 0)), Callable(self, "_tip_text")))
+		return
+	_fill_avatar_slots()
+	var who := NetClient.current_character_name
+	if who != "" and NetClient.is_connected_to_server():
+		NetClient.list_inventory(who)
 
 # --- The party window (round 711, lane C1) -------------------------------
 #
@@ -650,6 +795,8 @@ const EXTRA_SECTIONS := {
 	"partymatch": ["SearchInfo", "SlotListButton", "SlotList"],
 	"academy": ["NotifySubBox", "NotifyContents"],
 	"autopotion": ["AbnormalSlot", "PotionDelaySlot"],
+	# Round 789: the grant window's list (AVATAR_ALCHEMY_RESEARCH.md 1).
+	"grant": [GrantMagicAttributeWindow.SECTION_LIST],
 }
 
 var _builder: UiBuilder
@@ -733,7 +880,7 @@ func cancel_held_icon(why: String = "") -> void:
 var click_pass_through: Array[Callable] = []
 
 ## The windows of an NPC interaction, whose hiding ends it (round 727).
-const NPC_INTERACTION_WINDOWS := ["npctalk", "store", "storage"]
+const NPC_INTERACTION_WINDOWS := ["npctalk", "store", "storage", "grant"]
 
 ## Shows a panel, building it the first time it is asked for. Does nothing
 ## if its authored layout isn't in the archive -- a missing panel is a real
@@ -1031,7 +1178,7 @@ func alchemy_item(slot: int) -> Dictionary:
 		return {}
 	var inst := _item_instance("bag", slot) as ItemInstance
 	return {"bag": slot, "item_id": item_id, "tids": Array(item.type_ids), "item_class": item.item_class,
-		"param1": item.param1, "param5": item.param5, "desc1": item.desc1, "desc4": item.desc4,
+		"param1": item.param1, "param2": item.param2, "param5": item.param5, "desc1": item.desc1, "desc4": item.desc4,
 		"code": item.code_name, "plus": inst.opt_level if inst != null else 0,
 		"durability": inst.durability if inst != null else 0, "seal": is_seal_item(item_id)}
 
@@ -1420,7 +1567,10 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	if NpcServiceReader.is_shop_key(key):
 		close("npctalk")
 		UiSounds.window_toggled(false, _interface_shown(), "npctalk store line (vslot_043)")
-	elif key == "storage":
+	elif key == "storage" or key == "avatar_magic_option":
+		# Round 789: the grant line (kind 0x2f, c:0x7034f3..0x70358d) runs the
+		# talk window's close slot and sends 0x7046 {npc, 0x20}, as the
+		# warehouse line does.
 		npc_service_selected.emit(key)
 		close("npctalk")
 		return
@@ -4232,6 +4382,31 @@ func qa_show_item_tips(spec: String) -> void:
 		print("QA ITEM_TIP %s at %s size %s: %s" % [part, str(b.position), str(b.size),
 			ItemTooltipLines.as_text(lines).replace("\n", " | ")])
 
+## Round 789 (QA, OPENSRO_QA_AVATAR_VIEW): each avatar's tooltip, as its
+## window's hover shows it, drawn down the right edge and printed as a
+## `QA AVATAR TIP` line; and where each avatar window is (`QA SLOT avatar`).
+func qa_show_avatar_tips() -> void:
+	var view := get_viewport_rect().size
+	var y := 8.0
+	var storage: Dictionary = NetClient.last_avatar_instances
+	var shown := AvatarEquipment.by_display(storage, item_types)
+	for d in AvatarEquipment.DISPLAYS:
+		var slot_ctl := _avatar_slot_control(d)
+		if slot_ctl != null and slot_ctl.is_visible_in_tree():
+			print("QA SLOT avatar:%d at %s holds storage %s" % [d, _qa_xy(slot_ctl), str(shown.get(d, -1))])
+		if not shown.has(d):
+			continue
+		var it: ItemInstance = storage[shown[d]]
+		var lines := item_tip_lines(it.ref_item_id, "avatar", int(shown[d]))
+		var b := ItemTooltipBubble.new(_builder)
+		add_child(b)
+		b.show_lines(lines, Rect2())
+		b.position = Vector2(view.x - b.size.x - 8, y)
+		y += b.size.y + 8
+		print("QA AVATAR TIP window %d storage %d item %d: %s" % [d, int(shown[d]), it.ref_item_id,
+			ItemTooltipLines.as_text(lines).replace("\n", " | ")])
+	print("QA AVATAR SKILL STRIP %s" % ("shown" if _avatar_skill_strip_shown() else "hidden"))
+
 ## The lines of an item's tooltip (ItemTooltipLines.compose) with this
 ## client's text tables, type names, player and instance.
 func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
@@ -4268,7 +4443,7 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		if not extra.is_empty():
 			instance.erase("unknown_variance")
 			instance.merge(extra, true)
-	return ItemTooltipLines.compose(item, {
+	var ctx := {
 		"text": Callable(self, "_tip_text"),
 		"names": _object_names,
 		"type_name": _resolve_ui(type_key, "") if type_key != "" else "",
@@ -4277,12 +4452,88 @@ func item_tip_lines(item_id: int, where: String = "", slot: int = -1,
 		"instance": instance,
 		"price": price,
 		"description": _item_description(item),
-	})
+	}
+	# Round 789: a devil's spirit's ability lines (AvatarTables, READ
+	# c:0x67b460) at its plus.
+	if item.is_devil_spirit():
+		ctx["ability_groups"] = ItemTooltipInstance.spirit_groups(avatar_tables(), item_id, int(instance.get("plus", 0)))
+	return ItemTooltipLines.compose(item, ctx)
+
+## Round 789: the grant window (GrantMagicAttributeWindow). 0xB046 {1, 0x20}
+## shows it and the inventory beside it (READ c:0x888e30 -> 0x79d4a0(1),
+## 0x79af20). Returns its controller, or null when the layout does not build.
+func open_grant_window() -> GrantMagicAttributeWindow:
+	var window := open("grant")
+	if window == null:
+		return null
+	var c := GrantMagicAttributeWindow.compose(window, _builder)
+	c.tables = avatar_tables()
+	c.options = MagicOptionTable.shared
+	if not c.send.is_valid():
+		c.send = func(bag_slot: int, code: String) -> void:
+			if NetClient.is_connected_to_server():
+				print("HudPanels: avatar grant %s to bag slot %d" % [code, bag_slot])
+				NetClient.avatar_grant(bag_slot, code)
+		c.message = func(t: String) -> void: system_notice.emit(t)
+		c.text = Callable(self, "_tip_text")
+		c.show_icon = func(icon: TextureRect, item_id: int, bag_slot: int) -> void:
+			icon.texture = _item_icon(item_id) if item_id >= 0 else null
+			_set_item_tip(icon, item_id, "bag", bag_slot)
+			_set_item_seal_edge(icon, item_id)
+		# Cancel (ID 6, c:0x808cb0): hidden and the talk ended (0x704B, through
+		# npc_window_hidden).
+		var cancel_btn := window.node(GrantMagicAttributeWindow.N_CANCEL) as BaseButton
+		if cancel_btn != null:
+			cancel_btn.pressed.connect(func() -> void: close("grant"))
+		window.visibility_changed.connect(func() -> void:
+			if not window.visible:
+				c.clear_item())
+	c.clear_item()
+	# 0x79af20: the inventory beside it.
+	open("inventory")
+	return c
+
+## The open grant window's controller, or null.
+func grant_window() -> GrantMagicAttributeWindow:
+	var window: HudWindow = _windows.get("grant")
+	if window == null or not window.is_visible_in_tree():
+		return null
+	return GrantMagicAttributeWindow.of(window)
+
+## Whether a point is over the open grant window, in front.
+func _over_grant_window(at: Vector2) -> bool:
+	return grant_window() != null and _over_window("grant", at)
+
+## A bag item put down on the grant window (vslot_028 c:0x80a320).
+func _grant_offer(from: int) -> void:
+	var c := grant_window()
+	if c == null:
+		return
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(_bag_item_id_at_slot(from))
+	c.offer(from, item, _item_instance("bag", from) as ItemInstance)
+
+## 0x34AA (NetClient.avatar_grant_result): the window refreshes and says so;
+## the bag is asked for again (the granted item's tooltip reads the new
+## instance at once, NetClient replaced it).
+func _on_avatar_grant_result(r: Dictionary) -> void:
+	var c := grant_window()
+	if c != null:
+		c.apply_result(r)
+	elif not bool(r.get("ok", false)):
+		system_notice.emit(AvatarNet.grant_refusal_line(int(r.get("code", 0)), Callable(self, "_tip_text")))
+
+## Round 789: the avatar tables (AvatarTables) from the player's Media.pk2,
+## loaded once.
+func avatar_tables() -> AvatarTables:
+	if AvatarTables.shared == null:
+		AvatarTables.shared = AvatarTables.from_archive(_builder.media_archive() if _builder != null else null)
+	return AvatarTables.shared
 
 ## The ItemInstance (round 732) the server sent for this site's slot, or null:
 ## NetClient's last bag, equipment and warehouse lists, keyed by slot.
 const _INSTANCE_LISTS := {"bag": "last_inventory_instances", "equipment": "last_equipment_instances",
-	"storage": "last_storage_instances"}
+	"storage": "last_storage_instances", "avatar": "last_avatar_instances"}
 
 func _item_instance(where: String, slot: int) -> Object:
 	# The store: the instance the open tab lists its good `slot` as (round
@@ -4915,6 +5166,14 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 			# 0x59dca0, READ); the bag keeps it.
 			if _over_alchemy(at, on_bag):
 				_alchemy_offer(from)
+			elif _over_grant_window(at):
+				# Round 789: the grant window takes a bag item (READ
+				# CIFGrantMagicAttributeWnd::vslot_028 c:0x80a320, source kind
+				# 0x46 only).
+				_grant_offer(from)
+			elif on_bag and _bag_slot_at(at) < 0 and _over_equipment_pane(at) and AvatarEquipment.is_avatar_item(bag_item_types(from)):
+				# Round 789: an avatar put down on the equipment window.
+				_drop_avatar_from_bag(from)
 			elif on_bag and (_bag_slot_at(at) >= 0 or _equipment_slot_at(at) >= 0):
 				_dropping_item_id = item_id
 				_drop_bag_item(from, at)
@@ -4930,6 +5189,11 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 				_drop_worn_item(from, at)
 			elif not _over_any_window(at):
 				held_dropped_outside.emit(what, at)
+		"avatar":
+			# Round 789: only back to the bag (no other move takes the avatar
+			# inventory, kind 0x4e: READ c:0x7950b0, c:0x871940).
+			if on_bag:
+				_drop_avatar_to_bag(from, at)
 		"storage":
 			# 0x13 -> 0x46 (type 3). The retail packet names the bag slot;
 			# ours has no field for it, so the server places it (OPEN).
@@ -6380,6 +6644,8 @@ func _fill_equipment_slots(items: Array) -> void:
 	var window: HudWindow = _windows.get("inventory")
 	if window == null:
 		return
+	# Round 789: the avatar windows are drawn with it.
+	_fill_avatar_slots()
 	# Clear first, so an unequip empties its slot.
 	for i in range(17):
 		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
@@ -6437,6 +6703,11 @@ func connect_net() -> void:
 	NetClient.alchemy_result.connect(_on_alchemy_result)
 	# A drag's outcome comes back as the whole bag (see _drop_bag_item).
 	NetClient.inventory_move_result.connect(_on_inventory_move_result)
+	# Round 789: the avatar inventory, its moves and the grant.
+	NetClient.avatar_list_result.connect(func(_items: Dictionary) -> void: _fill_avatar_slots())
+	NetClient.avatar_move_result.connect(_on_avatar_move_result)
+	NetClient.avatar_grant_result.connect(_on_avatar_grant_result)
+	NetClient.avatar_spirit_expired.connect(func(_slot: int) -> void: _fill_avatar_slots())
 	NetClient.equipment_result.connect(func(items: Array, error: String) -> void:
 		# An equip or unequip reply sounds the moved item (0x87ba20, read).
 		if UiSounds.has_pending_move():

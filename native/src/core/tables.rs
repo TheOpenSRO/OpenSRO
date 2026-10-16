@@ -768,6 +768,11 @@ pub const ITEM_EXT_FLOAT_COLS: [usize; 18] =
     [68, 69, 71, 72, 79, 80, 67, 70, 73, 78, 81, 99, 104, 115, 82, 83, 84, 85];
 /// The item's description key, column 6 (`DescStrID128`, ref +0x7c; round 731's review).
 const ITEM_COL_DESC_STRID: usize = 6;
+/// Round 789 (avatars): Param2 (120, a devil's spirit's upgradable flag), Param7 (130, an
+/// avatar's body-region mask that picks its charactervisualchange row) and ChildItemCount (159,
+/// a dress that takes an attachment), in the order `items` stores them
+/// (/root/opensro-pk3av789/AVATAR_RESEARCH.md 2.2 and 6.1).
+pub const ITEM_AVATAR_INT_COLS: [usize; 3] = [120, 130, 159];
 pub const ICON_PREFIX: &str = "icon\\";
 
 /// itemdata's kept rows as columns, one entry (or a fixed group) per row in file order.
@@ -815,6 +820,8 @@ pub struct Items {
     pub ext_ints: Vec<i64>,
     /// 18 a row: ITEM_EXT_FLOAT_COLS' values (round 731).
     pub ext_floats: Vec<f64>,
+    /// 3 a row: ITEM_AVATAR_INT_COLS' values (round 789).
+    pub avatar_ints: Vec<i64>,
 }
 
 /// `_int_at`: 0 past the row's end or for a field that does not strip to an integer.
@@ -918,6 +925,7 @@ pub fn items(data: &[u8]) -> Result<Items, Fallback> {
         o.defences.extend_from_slice(&defences);
         o.ext_ints.extend(ITEM_EXT_INT_COLS.iter().map(|&c| int_at(cols, c)));
         o.ext_floats.extend_from_slice(&ext_floats);
+        o.avatar_ints.extend(ITEM_AVATAR_INT_COLS.iter().map(|&c| int_at(cols, c)));
     })?;
     bad.map_or(Ok(o), Err)
 }
@@ -1321,6 +1329,9 @@ mod tests {
         cols[66] = "3".into();
         cols[95] = "15".into();
         cols[97] = "16".into();
+        cols[120] = "1".into();
+        cols[130] = "574".into();
+        cols[159] = "1".into();
         let row = cols.join("\t");
         let nameless = "1\t5\tCODE\t\tx";
         let short = "1\t6\tCODE";
@@ -1357,6 +1368,8 @@ mod tests {
         assert_eq!(it.ext_floats[14], 222.0);
         assert_eq!(it.ext_floats.len(), 36);
         assert_eq!(it.desc_strids, vec!["SN_ITEM_X_TT_DESC", ""]);
+        // Round 789: Param2, Param7, ChildItemCount.
+        assert_eq!(it.avatar_ints, vec![1, 574, 1, 0, 0, 0]);
     }
 
     #[test]

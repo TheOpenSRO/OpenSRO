@@ -886,6 +886,15 @@ vglrun -d egl0 ... --rendering-driver opengl3 --resolution 1600x1200 --script
 res://tools/appearance_probe.gd -- --pk2=$PK2/Data.pk2 --media=$PK2/Media.pk2 --out=/var/tmp/<lane>/shots`.
 Without `--out` it runs headless through `remote_godot.sh script`.
 
+`avatar_probe.gd` (round 789) checks avatars against the archive: how many avatar ids find their
+charactervisualchange ConditionID-2 row by TypeID word and Param7 (`AVATAR CENSUS`; MEASURED 1,347 of
+1,355 on the box), that no devil's spirit has a ConditionID-1 row, how many men's hats hide the hair by
+their own attachable block (`AVATAR HAIR`, `--hats=<n>`, 0 skips), and one China man and one Europe
+woman in a full armour set with a hat, a dress, an attachment and a flag, built with the arbitration
+on and off (`AVATAR BUILD` lines: what each draws). With `--out` (GL context, as appearance_probe) it
+renders each pair, off left and on right, front and back. `--hat= --dress= --attach= --flag=` pick
+the avatars, `--race=china|europe|both` the bodies. A failed check prints `PARITY FAIL`.
+
 `--showthrough=1` (GL context) measures how much of each worn armour set the body's own pieces cover,
 front and back, in flat colours (`--showthrough=all` for every Figure). `--stdir=<dir>` saves the
 frames, `--shrink=<f>` scales every body piece towards its bones first, `--bind` skips the idle pose,

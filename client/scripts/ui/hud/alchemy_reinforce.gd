@@ -29,6 +29,9 @@ const MESSAGES := {
 	0xb: "UIIT_MSG_ENCHANT_NOT_LOAD_INGREDIENT2",
 	0xc: "UIIT_MSG_ENCHANT_EQUIPCLASS_MISMATCH",
 	0xd: "UIIT_STRGERR_CANNOT_BE_USED_TO_TARGET",
+	# Round 789: a devil's spirit whose Param2 (ref +0x2b8) is 0 (READ
+	# c:0x578bb0..0x578c11, AVATAR_ALCHEMY_RESEARCH.md 2).
+	0xe: "UIIT_STT_NASRUN_EVENTNASRUN_NOT_UPGRADE",
 }
 
 ## The outcome bits 0x59eb20 tests (READ): 0x10 success, 0x20 failure (with
@@ -98,6 +101,11 @@ static func validate(slot: int, it: Dictionary, slots: Array, options: MagicOpti
 	if slot == SLOT_TARGET:
 		if not is_equipment(it) or refused_target(it):
 			return 8
+		# Round 789: an avatar (3/1/13) is refused above with 8, as retail
+		# (the avatar enchant is dead in this build); a devil's spirit only
+		# when its Param2 is 0 (the two 7-day event rows, MEASURED).
+		if _is(it, 3, 1, 14) and int(it.get("param2", 1)) == 0:
+			return 0xe
 		return 0
 	if target == null:
 		return 8
