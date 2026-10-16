@@ -613,3 +613,22 @@ removed and unable to use Energy of life for 20 Mins)".
   `session/composite.go`, `client/scripts/net/composite.gd`), keeps the jobs in
   memory (a restart loses them), and a GM account neither checks nor arms the
   scroll's or the fill's COOLTIME (OURS, the user's request).
+
+## What a new item needs (round 789)
+
+Round 789 added four avatar items in an asset pack (`docs/rounds/r789x.md` has the files). What
+each side reads, and where it comes from:
+
+| Piece | Where | How a pack adds it |
+|---|---|---|
+| The row | an itemdata part named by `textdata\itemdata.txt` (the client loads the index's parts in order, a later part's row winning: round 741) | a new part (`ItemData_78900.txt`) and the index replaced by the retail list plus that name. The row is a retail row copied whole, with column 1 id, 2 code name, 3 internal name, 5 / 6 the name and description string ids, 52 the worn model and 54 the icon changed (MEASURED: every other column is the base item's: type, Country, ReqGender, cash flag, prices, durability) |
+| The name | the text tables `textdata\textdataname.txt` lists (retail: `TextData_Equip&Skill.txt`, `TextData_Object.txt`; round 731) | a new table and the list replaced by the retail two plus it. `ItemTableReader.object_name_paths` reads the list since round 789 (the two by name when it is missing) |
+| The icon | column 54 under `icon\` in Media.pk2: 32x32 A8R8G8B8, no mips, for the avatar icons (MEASURED) | a new `.ddj` at that path |
+| The worn model | column 52 under `res\`: a `.bsr` naming a `.bmt` and meshes; the `.bmt` names the `.ddj` | a retexture is a new `.bsr` (material path renamed) and a new `.bmt` (texture renamed) over the retail meshes, as retail's own `_knight_2`/`_knight_3` variants are (BSR_FORMAT.md, BMT_FORMAT.md) |
+| `charactervisualchange.txt` | the avatar rows key on the packed type word, not the item: helm `3756/3757`, dress `5804/5805`, attach `7852/7853`, `9900` (rows 200-213, ConditionID 2; MEASURED) | nothing: a new 3/1/13 item falls under its type's rows (INFERRED: the arbitration code `FUN_00a5da10` is not read) |
+| The server | the items CSV from `cmd/export-refdata -mode items` over every part | run the export over the index's parts with the pack's part last (round 789: 15,342 rows, the four new ones included) |
+
+Avatar items are split by sex, not race: 1,273 of the 1,355 TypeID 3/1/13 ids carry Country 3
+(either race) and one model per sex (`avatar_m_*` worn by both men, `avatar_w_*` by both women);
+the 82 others are China-only event items (Country 0), the satgat hats among them (MEASURED over
+the 63 parts the index names; 26 ids are 3/1/14).
