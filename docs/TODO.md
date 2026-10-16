@@ -1465,6 +1465,14 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
       the box with lane X's `z_akatsuki.pk3`: downloaded, verified and served on the first login;
       nothing downloaded or hashed on the second (docs/rounds/r789u.md). Left OPEN there: a
       bandwidth limit on the listener, one copy of a pack two servers both ship.
+- [ ] **Packs for players through a launcher** (the user, 2026-10-16: "Let's wait on pack
+      serving. That should ultimately be done via a launcher"). The public server does not run
+      `-client-packs`: its players reach the gateway through the router on 15779, the listener's
+      15780 is not known to be forwarded, and a client named a pack it cannot fetch does not log
+      in. Until a launcher fetches packs before the game starts, players drop a pack beside their
+      `.pk2` files by hand (round 790, `z_akatsuki.pk3`). Decide with the user what the launcher is
+      (the auto-updater grown, or a program of its own), where it fetches from, and whether the
+      in-client fetch (0x0009 -> 0x000A) stays as a fallback.
 - [x] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
       the top loading cost in round 667, and a zip's index has no such step. **Round 789, MEASURED
       (docs/rounds/r789k.md):** the Jangan entry with the converted `.pk3` archives alone against
