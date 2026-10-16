@@ -170,6 +170,11 @@ func sortCascade(names []string) {
 	})
 }
 
+// SortCascade orders archive file names lowest first by rule 2 (round 789's
+// lane U: the server's required packs are named to the client in this order,
+// which is the order it layers them in).
+func SortCascade(names []string) { sortCascade(names) }
+
 func (o *Options) limits() Limits {
 	if o.Limits != nil {
 		return *o.Limits

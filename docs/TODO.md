@@ -1388,7 +1388,7 @@ Today:
 Nothing is designed yet. When it comes up, start from the protocol docs (docs/protocol/) and the
 gateway's TLS and session handling.
 
-### Asset packs: `.pk3` beside `.pk2` -- **built in round 789 (the rules, the Go side, the converter, the client); the server naming packs and the updater fetching them are left**
+### Asset packs: `.pk3` beside `.pk2` -- **built in round 789 (the rules, the Go side, the converter, the client, the server naming the packs a client needs)**
 
 The rules every reader follows are written once in docs/protocol/asset_packs.md ("Rules"; the
 client's part is its "Client" section); the operator steps are in deploy/README.md, "Asset packs
@@ -1453,10 +1453,18 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
       -archives <folder> -which <path>` (round 789).** **Client (round 789): `/layer <path>` in
       chat, `OPENSRO_QA_WHICH`, `client/tools/which_layer.gd`, the Shift+F3 panel's archive
       lines** (docs/DEBUG_TOOLS.md).
-- [ ] **The server names the packs a client needs,** with their hashes (idTech's "pure server"),
+- [x] **The server names the packs a client needs,** with their hashes (idTech's "pure server"),
       and the auto-updater fetches them. Then every player sees the same content, and a modified
-      local pack cannot change what the server assumes (walls, navmesh). The client side to call
-      after new packs arrive: `AssetArchives.reopen()` (asset_packs.md, "Client").
+      local pack cannot change what the server assumes (walls, navmesh). **Done in round 789 (lane
+      U; asset_packs.md "Server packs", deploy/README.md "Server packs"):** `-client-packs <dir>`
+      checks and hashes the operator's packs at startup and names them before login (OURS
+      0x0009 -> 0x000A); the client downloads what it lacks into `servers/<host>_<port>/` (resume,
+      size cap, SHA-256, atomic rename; from `-client-packs-url` or the server's own listener),
+      layers exactly those over its base archives with its own packs and `custom/` set aside
+      unless the server allows them, and reopens the set before the login goes out. MEASURED on
+      the box with lane X's `z_akatsuki.pk3`: downloaded, verified and served on the first login;
+      nothing downloaded or hashed on the second (docs/rounds/r789u.md). Left OPEN there: a
+      bandwidth limit on the listener, one copy of a pack two servers both ship.
 - [x] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
       the top loading cost in round 667, and a zip's index has no such step. **Round 789, MEASURED
       (docs/rounds/r789k.md):** the Jangan entry with the converted `.pk3` archives alone against

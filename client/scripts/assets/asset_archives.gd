@@ -43,6 +43,13 @@ class_name AssetArchives
 ##
 ## For the updater (round 789's lane U, OURS): reopen() reopens the set after
 ## new packs arrive -- see its comment.
+##
+## Server packs (round 789, lane U, OURS; docs/protocol/asset_packs.md
+## "Server packs"): while a server that names its packs is the one connected
+## (ServerPacks), the set's packs are THAT server's, in its order, from its
+## own folder (PackStore) -- the player's own packs and custom/ set aside and
+## logged, unless the server allows local extras (then they stay, its packs
+## above theirs). The opts' `packs` (an explicit list) replaces discovery.
 
 const BASE_NAMES: Array[String] = ["Data", "Map", "Media", "Music", "Particles"]
 ## Of two packs with one name, the higher rank wins (OURS for .zip).
@@ -65,6 +72,11 @@ var pack_dir := ""
 var custom_dir := ""
 ## The packs opened, lowest priority first (layer ids 1..n).
 var pack_paths := PackedStringArray()
+## The packs to open, lowest first, when given (server packs); null: discover
+## them in pack_dir.
+var explicit_packs: Variant = null
+## Where the packs came from when a server named them ("" otherwise).
+var pack_origin := ""
 var overlay := LayeredArchive.Overlay.new()
 ## Every line this set has logged (the debug panel shows them).
 var log_lines := PackedStringArray()
@@ -82,13 +94,20 @@ static func open_set(opts: Dictionary) -> AssetArchives:
 	s.pack_dir = str(opts.get("pack_dir", ""))
 	s.custom_dir = str(opts.get("custom_dir", ""))
 	s.generation = int(opts.get("generation", 0))
+	if opts.get("packs") != null:
+		s.explicit_packs = PackedStringArray(opts["packs"])
+		s.pack_origin = str(opts.get("pack_origin", ""))
 	var t0 := Time.get_ticks_usec()
+	if s.pack_origin != "":
+		s._say("AssetArchives: set %d layers the packs of %s" % [s.generation, s.pack_origin])
+	for aside in opts.get("set_aside", PackedStringArray()):
+		s._say("AssetArchives:   set aside while that server is connected: %s" % aside)
 	s._open_packs()
 	s._index_custom()
 	var origin := str(opts.get("mode_origin", ""))
 	s._say("AssetArchives: set %d, source mode %s%s; %d pack(s) from %s; %d custom/ file(s); %d overlay path(s); opened in %d ms" % [
 		s.generation, s.mode, " (from %s)" % origin if origin != "" else "",
-		s.pack_paths.size(), s.pack_dir if s.pack_dir != "" else "(no folder)", s.overlay.custom.size(),
+		s.pack_paths.size(), (s.pack_origin if s.pack_origin != "" else (s.pack_dir if s.pack_dir != "" else "(no folder)")), s.overlay.custom.size(),
 		s.overlay.index.size(), (Time.get_ticks_usec() - t0) / 1000])
 	return s
 
@@ -133,7 +152,8 @@ func _say(line: String) -> void:
 	print(line)
 
 func _open_packs() -> void:
-	for p in discover_packs(pack_dir, mode):
+	var list: PackedStringArray = explicit_packs if explicit_packs != null else discover_packs(pack_dir, mode)
+	for p in list:
 		var r := Pk2Reader.open(p)
 		if r == null:
 			_say("AssetArchives: pack %s did not open -- skipped" % p)
@@ -351,7 +371,10 @@ func describe() -> PackedStringArray:
 		var opened: bool = _bases.has(name)
 		_lock.unlock()
 		out.append("%s %s%s" % [name, shown if shown != "" else "(none)", " (open)" if opened else ""])
-	out.append("packs in %s: %d (highest first)" % [pack_dir if pack_dir != "" else "(no folder)", pack_paths.size()])
+	if pack_origin != "":
+		out.append("packs of %s: %d (highest first)" % [pack_origin, pack_paths.size()])
+	else:
+		out.append("packs in %s: %d (highest first)" % [pack_dir if pack_dir != "" else "(no folder)", pack_paths.size()])
 	for lid in range(overlay.layers.size() - 1, 0, -1):
 		out.append("  %d %s" % [lid, overlay.layer_names[lid]])
 	out.append("custom/ %s: %d file(s); %d overlay path(s)" % [custom_dir, overlay.custom.size(), overlay.index.size()])
@@ -428,6 +451,17 @@ static func _signature() -> String:
 	return "|".join(parts)
 
 static func _config_opts(gen: int) -> Dictionary:
+	var opts := _local_opts(gen)
+	# Round 789, lane U: a connected server's packs (ServerPacks.layer_opts).
+	var sp := ServerPacks.layer_opts(str(opts["pack_dir"]), str(opts["mode"]), str(opts["custom_dir"]))
+	if not sp.is_empty():
+		opts["packs"] = sp["packs"]
+		opts["custom_dir"] = sp["custom_dir"]
+		opts["set_aside"] = sp["set_aside"]
+		opts["pack_origin"] = sp["origin"]
+	return opts
+
+static func _local_opts(gen: int) -> Dictionary:
 	return {
 		"mode": Pk2Config.source_mode(),
 		"mode_origin": Pk2Config.source_mode_origin(),

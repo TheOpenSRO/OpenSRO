@@ -1875,6 +1875,16 @@ func _ready() -> void:
 	# are placed once a tick (EfpEffect.tick_gate, its _process).
 	EfpEffect.gate_ticks(true)
 	_setup_efp_pass()
+	# Round 789 (lane U): a QA boot straight into the world fetches and layers
+	# the QA server's packs before this scene opens any archive (Login does it
+	# for a player before character select).
+	# Nothing of this scene runs until it is done (no frame of it is set up yet).
+	if not title_mode and OS.get_environment("OPENSRO_QA_SERVER") != "" and not NetClient.is_connected_to_server():
+		set_process(false)
+		set_physics_process(false)
+		await QaSignIn.sync_packs(get_tree())
+		set_process(true)
+		set_physics_process(true)
 	# QA (round 786): OPENSRO_QA_PHYSICS_TICKS=<n> runs the physics at n a
 	# second, so a movie render (60 frames a second) shows what a player
 	# rendering faster than the physics sees (e.g. 24: 2.5 frames a tick, as

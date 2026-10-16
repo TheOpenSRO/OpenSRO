@@ -51,6 +51,22 @@ The load log names every override once (`AssetArchives: Data: 3 path(s) of Data.
 ...`); `OPENSRO_PACK_LOG=all` lists all of them instead of the first 10. `OPENSRO_ASSET_SOURCE=pk2|
 pk3|mixed` and `OPENSRO_PACK_DIR=<folder>` set the source mode and the pack folder for a test run.
 
+**Server packs** (round 789, lane U; docs/protocol/asset_packs.md "Server packs"). While a server
+that names its packs is connected, `QA WHICH` and `/layer` name its packs (`z_akatsuki.pk3
+(<pack folder>/servers/<host>_<port>/z_akatsuki.pk3)`), and the Shift+F3 panel says `packs of
+server <host>_<port>`. `OPENSRO_QA_WHICH` answers once per archive set, so a run that reopens the
+set for a server prints the lines twice: before (the player's own set) and after. Every step of
+the fetch is a `PACKS:` line in the client log -- the question and the answer (`PACKS:
+127.0.0.1:15897 names 2 pack(s), listener port 15898: ...`), the plan per pack (`ready (verified
+before)`, `hash (...)`, `fetch (not here)`), each download (`resuming after <n> of <m> bytes`,
+`HTTP 302 -> ...`, `<n> bytes, sha256 verified -- in place`), the result (`2 pack(s) of ... ready:
+2 downloaded, 0 checked, 0 verified before (220 ms)`) and whether the set was reopened; a failure
+is `PACKS: NOT READY: <the words the login screen shows>`. The set's own log says what is set aside
+(`AssetArchives:   set aside while that server is connected: pack a_mine.pk3`). On the server,
+`-client-packs` logs the list at startup and one `client pack served` line per download. A QA run
+with `OPENSRO_QA_SERVER` fetches the packs too (QaSignIn), so `qa_shot.sh --server` renders with
+them; `OPENSRO_PACK_DIR=<empty folder>` gives a run a clean pack folder.
+
 ## Sending a report
 
 1. If it is a visual problem, press **Shift+F3**, then **Copy** (or type `/copy`).
