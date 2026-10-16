@@ -196,7 +196,14 @@ func _check_chain(data: Pk2Reader, media: Pk2Reader, rows: Dictionary, id: int) 
 		if bmt == null:
 			continue
 		var dir := parsed.material_path.replace("\\", "/").get_base_dir()
-		for layer_rec in bmt.layers:
+		for li in range(bmt.layers.size()):
+			var layer_rec: BmtReader.Layer = bmt.layers[li]
+			# How the layer's alpha is used: the flag word, the object's env-map
+			# and MTRL mods (ObjectLoader.layer_draw_rule, READ round 625).
+			var rule := ObjectLoader.layer_draw_rule(layer_rec.unknown, parsed.env_map_flags, parsed.mtrl_mod_for(li), parsed.two_pass())
+			print("    layer %s flags 0x%x env-map %d mtrl %s -> alpha test ref %d func %d, blend \"%s\", two-sided %s" % [
+				layer_rec.layer_name, layer_rec.unknown, parsed.env_map_flags, "yes" if rule["mtrl"] else "no",
+				int(rule["alpha_ref"]), int(rule["alpha_func"]), rule["blend"], str(rule["two_sided"])])
 			var tp: String = layer_rec.texture_path
 			if tp == "":
 				print("    layer %s: no texture" % layer_rec.layer_name)
