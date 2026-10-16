@@ -3116,7 +3116,7 @@ func _try_load_real_scenery() -> void:
 		print("World3D: Data.pk2/OPENSRO_BSR_PATH not set -- no real scenery loaded")
 		return
 
-	var archive := Pk2Reader.open(pk2_path)
+	var archive := AssetArchives.data()
 	if archive == null:
 		printerr("World3D: could not open pk2 archive at ", pk2_path)
 		return
@@ -3184,10 +3184,9 @@ func _try_load_real_decoration_skeleton() -> void:
 func _open_pk2_if_set() -> Pk2Reader:
 	if _data_pk2 != null:
 		return _data_pk2
-	var pk2_path := Pk2Config.data_path()
-	if pk2_path == "":
-		return null
-	_data_pk2 = Pk2Reader.open(pk2_path)
+	# Round 789: the shared set (AssetArchives) -- Data.pk2 or Data.pk3, with
+	# the asset packs over it; null when there is no Data archive.
+	_data_pk2 = AssetArchives.data()
 	return _data_pk2
 
 var _tile_index_cache: TileIndexReader.Table
@@ -5282,10 +5281,7 @@ func _qa_clock_for_shot(shot_name: String) -> void:
 func _open_map_pk2_if_set() -> Pk2Reader:
 	if _map_pk2 != null:
 		return _map_pk2
-	var map_pk2_path := Pk2Config.map_path()
-	if map_pk2_path == "":
-		return null
-	_map_pk2 = Pk2Reader.open(map_pk2_path)
+	_map_pk2 = AssetArchives.map()
 	return _map_pk2
 
 ## Opens the real Media.pk2 -- OPENSRO_MEDIA_PK2_PATH if set, else a real
@@ -5297,10 +5293,7 @@ func _open_map_pk2_if_set() -> Pk2Reader:
 func _open_media_pk2_if_set() -> Pk2Reader:
 	if _media_pk2 != null:
 		return _media_pk2
-	var media_pk2_path := Pk2Config.media_path()
-	if media_pk2_path == "":
-		return null
-	_media_pk2 = Pk2Reader.open(media_pk2_path)
+	_media_pk2 = AssetArchives.media()
 	return _media_pk2
 
 ## The player's Particles.pk2, cached (same lazy-open pattern as the others).
@@ -5309,10 +5302,7 @@ func _open_media_pk2_if_set() -> Pk2Reader:
 func _open_particles_pk2_if_set() -> Pk2Reader:
 	if _particles_pk2 != null:
 		return _particles_pk2
-	var particles_pk2_path := Pk2Config.particles_path()
-	if particles_pk2_path == "":
-		return null
-	_particles_pk2 = Pk2Reader.open(particles_pk2_path)
+	_particles_pk2 = AssetArchives.particles()
 	return _particles_pk2
 
 ## Loads a real per-region minimap image (OPENSRO_MAPM_TEXTURE_PATH, e.g.

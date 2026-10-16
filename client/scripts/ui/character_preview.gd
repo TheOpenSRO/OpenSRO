@@ -68,8 +68,8 @@ func _open_archives() -> void:
 	var media_path := Pk2Config.media_path()
 	if data_path == "" or media_path == "":
 		return
-	_data_pk2 = Pk2Reader.open(data_path)
-	_media_pk2 = Pk2Reader.open(media_path)
+	_data_pk2 = AssetArchives.data()
+	_media_pk2 = AssetArchives.media()
 	if _media_pk2 == null:
 		return
 	for path in NpcTableReader.model_table_paths(_media_pk2):

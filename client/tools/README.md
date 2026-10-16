@@ -744,6 +744,50 @@ remote_godot.sh script res://tools/arrival_bench.gd -- --pk2=<Data.pk2> --media=
 
 release.yml runs the first two; native/README.md, "CI".
 
+### Asset packs (round 789)
+
+The client opens its archives once, as one set (`AssetArchives`, `client/scripts/assets/`): the
+loose `custom/` folder, the packs (`*.pk3`, `*.zip`, extra `*.pk2`; a later name wins) and the
+five base archives. Everything about packs is OURS; deploy/README.md's "Asset packs" is the
+operator's view. For a run on the box:
+
+| Variable | Does |
+|---|---|
+| `OPENSRO_PACK_DIR=<folder>` | read packs from this folder instead of the Data archive's own (`/opt/sro-files/client` holds none; put test packs under `/var/tmp/<lane>/`, never there) |
+| `OPENSRO_ASSET_SOURCE=pk2\|pk3\|mixed` | the source mode (setting/config.yaml's `assets.source` otherwise; `mixed` by default) |
+| `OPENSRO_QA_WHICH="path;path"` | log `QA WHICH <path> -> <layer> (<file>); also in ...` once the set opens |
+| `OPENSRO_PACK_LOG=all` | name every overridden path in the load log, not the first 10 |
+
+`which_layer.gd` answers the same question headless:
+
+```
+OPENSRO_PK2_PATH=/opt/sro-files/client/Data.pk2 OPENSRO_MEDIA_PK2_PATH=... OPENSRO_PACK_DIR=/var/tmp/k789/packs \
+  godot --headless --path client --script res://tools/which_layer.gd -- 'minimap\168x97.ddj' 'k789\readme.txt'
+# SET packs in /var/tmp/k789/packs: 1 (highest first) ...
+# WHICH minimap\168x97.ddj -> z_k789_test.pk3 (/var/tmp/k789/packs/z_k789_test.pk3); also in base Media
+```
+
+`pk3_parity.gd --pk2=<x.pk2> --pk3=<x.pk3> [--every=N]` reads every file of a `.pk2` against its
+converted `.pk3` (lane G's `pk2topk3`) through the GDScript and the native pack readers and compares
+their folder listings: `PK3 PARITY OK <n> files` or `PARITY FAIL` lines (remote_godot.sh exits 1).
+Lane G's converted retail archives are in `/var/tmp/g789/pk3/` on the box.
+
+`pack_bench.gd` is the load benchmark: the same 20,000 Data lookups and reads on a plain
+`Pk2Reader`, on the set with an empty pack folder, and on the set with `--packs=<dir>` over it
+(`MEDIAN plain|empty|packs: open view find read ms`). Round 789's numbers are in docs/rounds/r789k.md.
+A pack for a test is a plain zip made on the box, e.g. with Python's `zipfile` from a file
+`/var/tmp/pk2list -extract` pulled out; it is game data and never enters the repo. The perf gate
+compares with and without packs as one build two ways: `perf_gate.sh --ab-env
+"OPENSRO_ASSET_SOURCE=pk2" --env "OPENSRO_PACK_DIR=/var/tmp/k789/packs"` (the base side reads the
+`.pk2` alone; both sides carry the native library, as `--ab-env` needs). `--cold` drops the `.pk3`
+and `.zip` archives from the page cache too, and the packs in `OPENSRO_PACK_DIR` when `--env` sets it.
+
+The tests: `scripts/pk2/pk3_reader_test.gd` (the zip reader: stored, deflated, zip64, unsafe names,
+bombs, conflicts, a ZIPPacker zip, threads, and GDScript/native parity) and
+`scripts/assets/asset_archives_test.gd` (the cascade, the modes, `custom/`, merged folders, the
+environment's set and `reopen()`), both on synthetic archives written to `user://` by
+`scripts/pk2/pk3_test_archives.gd`.
+
 ### Native readers A/B (round 667)
 
 The pk2 reader and the `.ddj` per-pixel decodes have a native (Rust, GDExtension) twin, set out in

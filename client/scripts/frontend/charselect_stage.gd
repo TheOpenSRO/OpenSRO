@@ -84,8 +84,7 @@ var _pose: IntroCameraPath.Pose = null
 ## (no Map.pk2 or region): the caller keeps a 2D screen.
 func begin(day_phase: float) -> bool:
 	_media = FrontEndUi.open_media()
-	var data_path := Pk2Config.data_path()
-	_data = Pk2Reader.open(data_path) if data_path != "" else null
+	_data = AssetArchives.data()
 	if _data == null or _media == null:
 		print("CharSelectStage: no Data.pk2 / Media.pk2 -- no 3D select")
 		return false

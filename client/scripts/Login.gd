@@ -887,10 +887,9 @@ func _button_style(bg: Color, border: Color) -> StyleBoxFlat:
 # --- Media.pk2 access ------------------------------------------------------
 
 func _open_media() -> Pk2Reader:
-	var path := Pk2Config.media_path()
-	if path == "":
-		return null
-	return Pk2Reader.open(path)
+	# Round 789: the shared set (AssetArchives): Media.pk2, or Media.pk3, with
+	# the asset packs over it.
+	return AssetArchives.media()
 
 func _load_ddj(media: Pk2Reader, ddj_path: String) -> Texture2D:
 	if media == null:

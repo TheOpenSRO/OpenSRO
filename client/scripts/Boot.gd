@@ -31,6 +31,10 @@ func _ready() -> void:
 	# the library is missing or refused, or forced OFF. A tester's log always
 	# says which reader loaded their world.
 	NativeAssets.available()
+	# Round 789: the archive set -- the source mode, the asset packs over the
+	# archives, any refused entries -- logged once at startup, on the main
+	# thread (AssetArchives; the base archives open when first asked for).
+	AssetArchives.current()
 	# Round 763: whether EquipFx's effect masters simulate in Rust (the same
 	# library), and on how many threads.
 	EfpSimNative.available()

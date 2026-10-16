@@ -1418,6 +1418,8 @@ display, sound, hot bar and the rest; for now it holds one file, the general cli
 global:
   loginScreen: constantinople      # the title intro (same names as -login-intro)
   region: US                       # kept, reserved (see below)
+assets:
+  source: mixed                    # pk2, pk3 or mixed (round 789; "Asset packs in the client")
 servers:
   MyServer:                        # the name the login screen shows
     type: opensro                 # this project's server
@@ -1432,6 +1434,7 @@ servers:
 |---|---|
 | `global.loginScreen` | The title intro: a retail name (`roc`, `constantinople`, `china_wharf`, `jupiter_login`, `rm`, `ruby_baghdad`, ...) or your own `custom/intro/<name>.txt`. The server's `-login-intro` wins over it (below). |
 | `global.region` | Kept and reserved: a short code (letters, digits, `_`, `-`). vSRO's client reads no region: its `DIVISIONINFO.TXT` starts with a locale byte (22 in vSRO's archive) that the client's own loader skips, and the iSRO "Located In" bar's art is in the archive but no code names it. A later round may use it for the language or the content id. |
+| `assets.source` | Round 789: which archive types the client reads -- `pk2`, `pk3` or `mixed` (the default). See "Asset packs in the client" below. `OPENSRO_ASSET_SOURCE` overrides it. |
 | `servers.<name>` | One server. `<name>` is what the Server field and the list show (1-32 characters). The file's order is the list's order. |
 | `servers.<name>.type` | **Required** (round 681): the protocol the server speaks. `opensro` -- this project's server: its status is asked with this project's own question. `legacy` -- the original gateway protocol (a retail-style private server): the client asks it for its shard list the way the original client does (the handshake, then the patch check and the list) and shows each shard's real status; it is never sent this project's own messages, the login screen keeps its own intro for it (no theme question). Round 788: logging in works the original way (the image code included) as far as the character list; entering the world there is not supported yet. An entry without a type, or with another word, is skipped with a `SETTING:` line naming the server and the two values. Once this project's server also speaks the original protocol (the superset plan in `docs/protocol/PROTOCOL_DECISION.md`), `opensro` will mean "also has our extensions" rather than a different wire. |
 | `servers.<name>.gateway` | Where the client connects: `address` (a host name or IP address) and `port` (default 15779). Required. It plays the part of retail's `DIVISIONINFO.TXT` host and `GATEPORT.TXT` port. |
@@ -1490,6 +1493,68 @@ line, `- item` lists, quoted or plain values, `#` comments; no anchors, tags or 
 
 **Later (not built):** a server may also hand the client settings it wants kept out of the file,
 during the server list or after login (docs/TODO.md).
+
+## Asset packs in the client: where they go, the order, the source mode (round 789)
+
+New or changed assets ship as **packs**: plain zip files named `*.pk3` (or `*.zip`) put beside the
+retail archives, never injected into a `.pk2`. A pack holds files at the pk2's own paths --
+`prim/mtrl/foo.ddj` in a pack replaces `Prim\Mtrl\foo.ddj` -- so overriding a retail file and
+adding a new one are the same operation. Everything here is OURS: retail has only `.pk2`. The
+rules every reader follows (the client and the Go tools alike) are docs/protocol/asset_packs.md;
+converting the retail archives and building a pack are "Asset packs (`.pk3`): converting,
+building, exporting through them" above. This section is what the client does with them.
+
+**Where packs go.** In the folder the client found the Data archive in (the `pk2/` folder beside
+the executable for players; `OPENSRO_PK2_PATH`'s folder for a developer), or in `OPENSRO_PACK_DIR`.
+The client reads every `*.pk3`, `*.zip` and `*.pk2` there that the source mode reads and whose name
+is not one of the five base names (`Data`, `Map`, `Media`, `Music`, `Particles`). No subfolders.
+Nothing to configure: a pack in the folder is read at the next start.
+
+**The order.** A lookup checks, highest priority first, and the first that has the path serves it:
+
+1. the loose `custom/` folder beside the executable (round 678's folder, beside `pk2/`;
+   `OPENSRO_CUSTOM_DIR` for a developer): a path overlay, `custom/prim/mtrl/foo.ddj` answers
+   `prim\mtrl\foo.ddj`. Read in every source mode. Round 678's branding files live there too;
+2. the packs, **by name, case ignored, the later name winning**: `z_assets.pk3` over
+   `assets.pk3`. Of one name, `.pk2` < `.zip` < `.pk3`;
+3. the base archive the lookup is for -- its **volume**: the client always knows which archive it
+   reads (Data, Map, Media, Music or Particles), and the five are not one namespace (Data and Map
+   each have their own `object.ifo`). `Data.pk3` sits above `Data.pk2` when both are read.
+
+A pack overlays every volume: its `prim\...` paths override Data's, its `textdata\...` paths
+Media's, and a path no base holds appears in all of them. Paths match case-insensitively, `/` and
+`\` alike, empty segments ignored.
+
+**The source mode** (`setting/config.yaml`'s `assets.source`, or `OPENSRO_ASSET_SOURCE` for a test):
+
+| Mode | Reads |
+|---|---|
+| `mixed` (default) | every type: base archives as `.pk3`, `.zip` or `.pk2`, and every pack |
+| `pk2` | `.pk2` only: the retail archives as before round 789, plus any extra `.pk2` pack |
+| `pk3` | `.pk3`/`.zip` only: `Data.pk3`, `Map.pk3`, ... converted once (no `.pk2` needed), and the `.pk3`/`.zip` packs |
+
+`custom/` is read in every mode. A volume with no base archive is missing: a pack never stands in
+for one (OURS).
+
+**Safety.** The client refuses, and logs, any pack entry whose name could escape the archive (`..`,
+an absolute path, a drive letter or `:`), any encrypted entry or one compressed with anything but
+stored or deflate, any symbolic link, any entry over 256 MiB, and any entry declaring more than
+1100 times its packed size; a pack whose entries together declare more than 1100 times the pack's
+size is not opened at all. An entry is never inflated past its declared size and its CRC-32 is
+checked. A refused entry is left out; the rest of the pack is read. A symbolic link in `custom/` is
+refused too.
+
+**The log.** At start the client logs one line per pack (`AssetArchives: pack 2 z_assets.pk3: 120
+file(s) (zip, native)`), which packs shadow which, any refused entries, and, the first time each
+volume is opened, every path a pack or `custom/` overrides in it (`AssetArchives: Data: 3 path(s)
+of Data.pk2 overridden: prim/mtrl/foo.ddj <- z_assets.pk3; ...`; the first 10, or all with
+`OPENSRO_PACK_LOG=all`). The debug panel (Shift+F3) lists the mode, the archives and the packs.
+Which layer serves a given path: `/layer <path>` in chat, `OPENSRO_QA_WHICH="path;path"`, or
+`client/tools/which_layer.gd` (docs/DEBUG_TOOLS.md).
+
+**Not yet (lane U, OURS):** the server naming the packs a client needs with their hashes, and the
+updater fetching them. The client side it will call is `AssetArchives.reopen()` (it reopens the set
+after new packs arrive; the header of `client/scripts/assets/asset_archives.gd` says when).
 
 ## Logging in: wrong passwords, blocks, one session per account (round 788)
 

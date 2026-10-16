@@ -61,10 +61,36 @@ impl Dir {
     }
 }
 
-/// Godot's String.to_lower for the code points a name can hold (Latin-1, one char a byte): the
-/// Unicode simple lower-case mapping, which is what Rust's char::to_lowercase gives for them.
+/// Godot's String.to_lower: the Unicode SIMPLE lower-case mapping, code point by code point
+/// (docs/protocol/asset_packs.md, rule 4; round 789). For the Latin-1 code points a pk2 name holds
+/// it is what Rust's char::to_lowercase gives; above U+00FF a pack's UTF-8 name may hold one whose
+/// FULL mapping is several code points (only U+0130, whose simple mapping is `i`), so the full
+/// mapping is never used.
 pub fn lower(s: &str) -> String {
-    s.chars().flat_map(|c| c.to_lowercase()).collect()
+    s.chars().map(lower_char).collect()
+}
+
+pub fn lower_char(c: char) -> char {
+    if c.is_ascii() {
+        return c.to_ascii_lowercase();
+    }
+    let mut it = c.to_lowercase();
+    match (it.next(), it.next()) {
+        (Some(l), None) => l,
+        _ if c == '\u{130}' => 'i',
+        _ => c,
+    }
+}
+
+/// A lookup path's segments (asset_packs.md rule 4, round 789): split on `\` and `/`, empty
+/// segments skipped (a leading, trailing or doubled separator); None when a segment is `.` or
+/// `..` or holds a `:` or a NUL (no layer serves an unsafe path), or when nothing is left.
+pub fn path_segments(path: &str) -> Option<Vec<&str>> {
+    let parts: Vec<&str> = path.split(['\\', '/']).filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() || parts.iter().any(|p| *p == "." || *p == ".." || p.contains([':', '\0'])) {
+        return None;
+    }
+    Some(parts)
 }
 
 fn latin1(b: &[u8]) -> String {
@@ -109,7 +135,7 @@ fn read_at(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
 }
 
 /// Fills as much of buf as the file has from off; returns the count (short only at end of file).
-fn read_full_at(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+pub(crate) fn read_full_at(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
     let mut got = 0;
     while got < buf.len() {
         match read_at(f, &mut buf[got..], off + got as u64) {
@@ -219,9 +245,9 @@ impl Archive {
 
     /// ObjectLoader.find_file: `\` or `/` separated, case-insensitive, the first match per
     /// segment; every segment but the last must be a folder. None when any segment is missing.
+    /// Round 789: empty segments are skipped and an unsafe path finds nothing (path_segments).
     pub fn find(&self, path: &str) -> Option<Entry> {
-        let normalised = path.replace('\\', "/");
-        let parts: Vec<&str> = normalised.split('/').collect();
+        let parts = path_segments(path)?;
         let mut dir = self.dir_at(self.root).ok()?;
         for (i, part) in parts.iter().enumerate() {
             let found = dir.get(&lower(part))?.clone();
@@ -372,7 +398,8 @@ mod tests {
             assert_eq!(a.read(x.offset, x.size).unwrap(), body);
             assert!(a.find("Data\\missing").is_none());
             assert!(a.find("readme.txt\\x").is_none(), "a file is not a folder");
-            assert!(a.find("Data\\\\f03").is_none(), "an empty segment matches nothing");
+            assert_eq!(a.find("\\Data\\\\f03/").unwrap().name, "f03", "empty segments are skipped (round 789)");
+            assert!(a.find("Data\\..\\readme.txt").is_none() && a.find("c:\\x").is_none() && a.find("/").is_none(), "unsafe or empty: nothing");
             // Reading past the end gives what is there, as get_buffer does.
             assert_eq!(a.read(x.offset + 20, 100).unwrap(), body[20..].to_vec());
         }
@@ -407,6 +434,7 @@ mod tests {
     #[test]
     fn latin1_names_lower_case_like_godot() {
         assert_eq!(lower("ÀBÇ.TXT"), "àbç.txt");
+        assert_eq!(lower("\u{130}×Þ"), "i×þ", "the simple mapping: U+0130 is one code point; U+00D7 stays");
         assert_eq!(latin1(&[0x41, 0xC9]), "AÉ");
     }
 }

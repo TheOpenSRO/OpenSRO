@@ -10,6 +10,7 @@ before.
 | Piece | Replaces (GDScript) | Where |
 |---|---|---|
 | pk2 archive: open, directory read + Blowfish decrypt, name index, path lookup, positional file read | `Pk2Reader` internals and `ObjectLoader.find_file`'s scan | `src/core/pk2.rs`, `src/core/blowfish.rs` |
+| `.pk3` (zip) asset pack (round 789, OURS): central directory incl. zip64, case-insensitive path index, stored reads, deflate (miniz_oxide) into a buffer of the declared size with its CRC-32 checked, the safety refusals | `Pk3Reader`'s GDScript reader (its twin and reference) | `src/core/pk3.rs`, binding `SrNativePk3` in `src/gd.rs` (interface 6) |
 | `.ddj` per-pixel decodes: uncompressed (channel masks) and A16B16G16R16F (`q`) | the two looping branches of `DdjReader.to_image` | `src/core/ddj.rs` |
 | the DXT1 transparent-texel scan (round 695): does any block of a DXT1 mark a texel transparent, so Forward+ needs it as RGBA8 | `DdjReader.dxt1_has_transparent`'s block loop | `src/core/dxt.rs` (`ddj_dxt1_has_transparent`; interface still 5: an additive method, called behind `has_method`, so an older library keeps the other readers); `examples/dxt1_alpha_census.rs` counts them in an archive |
 | `.bms` mesh: header, vertices (either record size), skin (with its part-way refusal), indices, box, motion and link sections; `to_arrays`' winding and skin arrays | `BmsReader.parse` and `to_arrays` (round 669) | `src/core/bms.rs`, binding `src/gd_models.rs` |
@@ -22,7 +23,7 @@ before.
 - `src/core/` is plain Rust with no Godot types. It is unit-tested with `cargo test` and can sit
   behind a C ABI and be linked statically into custom export templates later, if antivirus
   software objects to a separate DLL.
-- `src/gd.rs` is the thin gdext binding: two `RefCounted` classes, `SrNativePk2` and
+- `src/gd.rs` is the thin gdext binding: `RefCounted` classes `SrNativePk2`, `SrNativePk3` (round 789) and
   `SrNativeParsers`. `src/gd_models.rs` (round 669) adds `SrNativeModels` for the model readers,
   reached through `NativeAssets.models()`. Results go back in bulk, as packed arrays or one Dictionary per call. There is
   never a Variant per element.
@@ -65,6 +66,52 @@ binding: no class, no `#[func]`, so `core::API` is unchanged.
   Windows machine has run it.
 - **Without the library** there is no automatic fall back. The release zips carry the Compatibility
   launcher for that case.
+
+## The asset pack reader (round 789)
+
+`SrNativePk3` (`src/gd.rs`) over `core::pk3::Pk3` reads a `.pk3`, a plain zip of pk2 paths (docs/TODO.md,
+"Asset packs"; deploy/README.md, "Asset packs"). Everything about packs is OURS: retail has only `.pk2`.
+`client/scripts/pk2/pk3_reader.gd` is the GDScript twin; both are held to one answer by
+`client/scripts/pk2/pk3_reader_test.gd`'s parity case.
+
+- **Methods** (all `&self`, safe from any thread): `open(path)`, `last_error()`, `is_zip64()`,
+  `find(path)` -> `{name, kind, offset, size}` where `offset` is an id (a file's index, or a folder's;
+  the root's is 0), `list_dir(id)` -> `{names, kinds, offsets, sizes}` (SrNativePk2's shape),
+  `read(id)` -> `{bytes}` or `{error}`, `paths()` (every file as written), `refused()` /
+  `refused_count()`, `file_count()`, `stats()`.
+- **Open** reads the end record (and the zip64 locator and end record when present), then the whole
+  central directory once, and indexes every file and folder by its lower-cased `/` path. Folders are
+  made from the files' paths; a file whose name is also a folder's is refused, and of two entries
+  with one name the first is kept (the pk2 index keeps the first too).
+- **Read**: a stored entry is read positionally (pread / seek_read), as `pk2.rs` reads; a deflated
+  one is inflated by `miniz_oxide::inflate::decompress_slice_iter_to_slice` into a buffer of exactly
+  its declared size, so it cannot grow past it, and its CRC-32 is checked (`crc32fast`: a
+  byte-at-a-time table made the native read of all of Data.pk3 slower than Godot's zlib, 15.1 s
+  against 11.0 s; with it 8.5 s, MEASURED by `client/tools/pk3_parity.gd`).
+- **Lookups** follow docs/protocol/asset_packs.md rule 4, as `pk2.rs`'s `find` does from round 789
+  (`pk2::path_segments`): `\` and `/` alike, empty segments skipped, a `.`/`..` segment, a `:` or
+  a NUL finds nothing; names fold with the Unicode SIMPLE lower-case mapping (`pk2::lower`, which
+  no longer uses Rust's full `to_lowercase`: U+0130 folds to `i`). Allocation is fallible
+  (`try_reserve_exact`), as `pk2.rs`'s: an untrusted size never aborts the process.
+- **Refused at open** (left out, counted, the first 64 named; asset_packs.md "Safety"): a name with
+  `..` or `.` segments, an absolute path, a drive letter or any `:`, a NUL or an empty segment; an
+  encrypted entry; a method other than stored (0) or deflate (8); a symbolic link (a Unix-made
+  entry's mode); a declared size over 256 MiB (twelve times the largest retail file, MEASURED:
+  Data.pk2's `navmesh\ainavdata_32773.dat`, 21,352,219 bytes); an entry over 64 bytes declaring
+  more than 1100 times its packed size; data past the end of the file. A pack whose entries
+  together declare more than 1100 times the file's size (the overlapping "better zip bomb"), a
+  split archive, a central directory past the file or over 4 million entries / 1 GiB refuses the
+  whole archive.
+- **The crates**: `miniz_oxide` 0.9.1 (`MIT OR Zlib OR Apache-2.0`; cargo-about takes MIT) and its
+  dependency `adler2` 2.0.1 (`0BSD OR MIT OR Apache-2.0`); `crc32fast` 1.5.2 and its dependency
+  `cfg-if` 1.0.5 (`MIT OR Apache-2.0`). All plain Rust. `third_party_notice.sh` lists the four
+  (checked: its run names them).
+- **Tests**: `cargo test --no-default-features pk3` (9: stored and deflated with and without zip64,
+  unsafe names and lookups, bombs, lies and a symlink entry, the whole-pack ratio, conflicts,
+  non-zips, an empty zip, 8 threads on one archive, the CRC's check value).
+  `core::pk3::synth::build` writes the synthetic zips. On real data, `client/tools/pk3_parity.gd`
+  reads every file of lane G's converted Data/Map/Media/Music/Particles `.pk3` through both readers
+  against the `.pk2` (all 121,262 identical, round 789).
 
 ## The model readers (round 669)
 
@@ -253,7 +300,7 @@ The client uses a library only when its `api()` returns exactly its own number. 
 The client refuses it with one log line naming both numbers, then reads in GDScript:
 
 ```
-NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 5 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
+NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 6 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
 ```
 
 The same line catches the release case: a DLL from an older release left next to a newer exe by an
@@ -381,7 +428,7 @@ On a Windows PC, put `opensro_native.dll` in `native_bin\` next to the project, 
 exe in an export (see below). Then check the log for:
 
 ```
-NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, API 5, <path of the DLL>)
+NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, API 6, <path of the DLL>)
 ```
 
 `native readers OFF (library not found: <path>)`, after Godot's `GDExtension dynamic library not

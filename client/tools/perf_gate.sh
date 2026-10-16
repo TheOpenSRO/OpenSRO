@@ -74,7 +74,8 @@
 # `--cold` (round 667) evicts the game archives from the page cache before
 # every run, so their reads come off the disk: the storage-bound case. The
 # box's container cannot write /proc/sys/vm/drop_caches (read-only there), so
-# each *.pk2 under PK2_DIR is dropped with posix_fadvise(POSIX_FADV_DONTNEED),
+# each *.pk2, *.pk3 and *.zip under PK2_DIR (and under OPENSRO_PACK_DIR when a
+# run's --env sets it; round 789) is dropped with posix_fadvise(POSIX_FADV_DONTNEED),
 # which any process that can open a file may do, and `fincore` confirms how
 # much stayed resident (written to <log>.cold). Godot, the project and the
 # shader cache stay cached: the archives are what a load reads.
@@ -273,10 +274,15 @@ DIR="\$1"   # captured here: inside others() \$1 is the function's own (empty) a
 others() { pgrep -af "^/opt/godot-bin/Godot_v4" | grep -v -- "--path \$DIR " | wc -l; }
 for i in \$(seq 1 120); do [ "\$(others)" = 0 ] && break; sleep 5; done
 if [ "\${9:-0}" = 1 ]; then  # --cold, after the wait so no other run re-reads them: the archives off the page cache (see the header)
+  # Round 789: the .pk3/.zip archives and packs too, and those in OPENSRO_PACK_DIR when a run sets it.
+  shopt -s nullglob nocaseglob
+  arcs=($PK2_DIR/*.pk2 $PK2_DIR/*.pk3 $PK2_DIR/*.zip)
+  [ -n "\${OPENSRO_PACK_DIR:-}" ] && arcs+=("\$OPENSRO_PACK_DIR"/*.pk2 "\$OPENSRO_PACK_DIR"/*.pk3 "\$OPENSRO_PACK_DIR"/*.zip)
+  shopt -u nullglob nocaseglob
   python3 -c 'import os,sys
 for p in sys.argv[1:]:
-    fd = os.open(p, os.O_RDONLY); os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED); os.close(fd)' $PK2_DIR/*.pk2
-  fincore -b $PK2_DIR/*.pk2 > "\$2.cold" 2>&1
+    fd = os.open(p, os.O_RDONLY); os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED); os.close(fd)' "\${arcs[@]}"
+  fincore -b "\${arcs[@]}" > "\$2.cold" 2>&1
 fi
 rm -f "\$2.others"
 ( while :; do n=\$(others); [ "\$n" -gt 0 ] && echo \$n >> "\$2.others"; sleep 2; done ) & W=\$!
@@ -360,6 +366,9 @@ one1() {
     # The library state the rule in the header requires of this side.
     local want="not ON"
     [ -n "$ab_env" ] && [ "$b" = head ] && want="ON"
+    # Round 789: an --ab-env that is not the native A/B (e.g. the archives .pk2 against .pk3)
+    # keeps the library on both sides.
+    [ -n "$ab_env" ] && [ "$b" = base ] && [[ " $ab_env " != *" OPENSRO_NATIVE=0 "* ]] && want="ON"
     if { [ "$want" = ON ] && [ "$native" != ON ]; } || { [ "$want" != ON ] && [ "$native" = ON ]; }; then
       echo "  $s $b run $tag: FAIL native readers $native, this side must be $want -- the comparison would not be what it says (see $RENDER_HOST:$work/${s}_${b}_$tag.log)" >&2; exit 1
     fi

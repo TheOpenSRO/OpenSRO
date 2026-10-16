@@ -27,10 +27,13 @@ class_name NativeAssets
 ## Round 695 added SrNativeParsers.ddj_dxt1_has_transparent without a bump:
 ## DdjReader calls it only where has_method finds it (its review, L6), so an
 ## older library keeps every other reader.
-const NATIVE_API := 5
+## 6: round 789, SrNativePk3 (the .pk3 asset pack reader, Pk3Reader).
+const NATIVE_API := 6
 
 ## The native pk2 archive class (native/src/gd.rs).
 const PK2_CLASS := "SrNativePk2"
+## The native .pk3 (zip) asset pack class (native/src/gd.rs, round 789).
+const PK3_CLASS := "SrNativePk3"
 ## The native parsers (native/src/gd.rs), one static-like method per format.
 const PARSERS_CLASS := "SrNativeParsers"
 ## The native terrain and navigation parsers (native/src/gd_terrain.rs, round
@@ -149,6 +152,13 @@ static func new_pk2() -> Object:
 	if not available():
 		return null
 	return ClassDB.instantiate(PK2_CLASS)
+
+## A new native .pk3 handle (round 789), or null when the library is
+## unavailable.
+static func new_pk3() -> Object:
+	if not available() or not ClassDB.class_exists(PK3_CLASS):
+		return null
+	return ClassDB.instantiate(PK3_CLASS)
 
 ## The native model readers (native/src/gd_models.rs, round 669): .bms, .ban
 ## and .bsk, one Dictionary of packed arrays a call. Null when the library is

@@ -16,11 +16,9 @@ const GOLD_EDGE_BRIGHT := Color(0.85, 0.70, 0.34)
 
 ## Opens the player's Media.pk2, or null when none is configured (a dev run
 ## without game data -- the screens then fall back to plain panels).
+## Round 789: the shared set's Media (AssetArchives), packs included.
 static func open_media() -> Pk2Reader:
-	var path := Pk2Config.media_path()
-	if path == "":
-		return null
-	return Pk2Reader.open(path)
+	return AssetArchives.media()
 
 ## Decodes one .ddj out of an open Media.pk2 into a texture, or null.
 static func load_ddj(media: Pk2Reader, ddj_path: String) -> Texture2D:

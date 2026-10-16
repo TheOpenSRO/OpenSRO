@@ -140,8 +140,10 @@ static var last_wait_usec := 0
 ## the caller's thread). The boot log line says which (the review's finding 6).
 static var last_source := ""
 
+## Round 789: Pk2Reader.cache_key -- the file, plus the AssetArchives set's
+## generation when packs overlay it, so a reload with new packs parses again.
 static func _key_of(media: Pk2Reader) -> String:
-	return media.source_path if media.source_path != "" else str(media.get_instance_id())
+	return media.cache_key()
 
 static func _read_all(media: Pk2Reader) -> Dictionary:
 	var t0 := Time.get_ticks_usec()

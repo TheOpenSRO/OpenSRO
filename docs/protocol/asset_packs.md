@@ -197,13 +197,96 @@ budget), the entry being written and the directory index, not by the archive: 28
 
 ## Client
 
-(Lane K, round 789: the GDScript and Rust readers, the `custom/` folder's place beside `pk2/`, the
-source-mode setting and the "which layer served this" QA hook. To be written there; the Rules
-above are the contract.)
+Round 789, lane K. The client reads its archives as one set, `AssetArchives`
+(`client/scripts/assets/asset_archives.gd`), opened once and shared by every scene and thread;
+before it, 13 `Pk2Reader.open` sites in 9 files each opened their own handles. Its readers follow
+the Rules above; this section says where each lives and what is the client's own.
+
+**The pieces.**
+
+| Piece | Where | Rule |
+|---|---|---|
+| The set: packs found and ordered, `custom/` indexed, the volumes opened when first asked for, the override log, `which(path)` | `client/scripts/assets/asset_archives.gd` (`AssetArchives`) | 1, 2, 5, 6 |
+| A volume seen through the layers (a `Pk2Reader` to every caller: `find_file`, `read_file`, `read_dir`, `read_dir_at`; a merged folder lists every layer's names) | `client/scripts/assets/layered_archive.gd` (`LayeredArchive`) | 1, 3 |
+| Where the base archives are, per volume and mode; the mode | `client/scripts/assets/pk2_config.gd` (`volume_chain`, `source_mode`) | 3, 5 |
+| The `.pk3`/`.zip` reader, GDScript | `client/scripts/pk2/pk3_reader.gd` (`Pk3Reader`, a `Pk2Reader`) | 4, 6 |
+| The `.pk3`/`.zip` reader, native | `native/src/core/pk3.rs`, binding `SrNativePk3` (`native/src/gd.rs`); interface 6 | 4, 6 |
+| A lookup's path (`\` and `/`, empty segments skipped, unsafe served by no layer) | `Pk2Reader.clean_path`; `native/src/core/pk2.rs` `path_segments` (both the pk2 and the pk3 lookups) | 4 |
+| Case folding | GDScript `String.to_lower`; `pk2.rs` `lower`, the simple mapping (U+0130 folds to `i`, never Rust's full `to_lowercase`) | 4 |
+
+`ObjectLoader.find_file(archive, path)` is the client's one lookup; it asks the archive
+(`Pk2Reader.find_entry`), so a `.pk2`, a `.pk3` and a layered view each answer their own way and
+no caller changed. `Pk2Reader.open` opens a `.pk3`/`.zip` (by its name or a zip's magic) as a
+`Pk3Reader`, so every tool that opens `Pk2Config.data_path()` reads a converted `Data.pk3` too.
+
+**What callers get.** `AssetArchives.data()` / `map()` / `media()` / `music()` / `particles()`
+(rule 3: each is a volume). When nothing overlays a volume -- no pack, no `custom/` file, one base
+file -- that is the base archive's own handle, exactly as before round 789 (MEASURED below: no
+slower). Otherwise a `LayeredArchive`. A volume with no base archive is null: a pack never stands
+in for one (OURS).
+
+**The client's own choices (OURS), beside the Rules.**
+
+- **`custom/`** is round 678's folder **beside `pk2/`** (`FrontEndTheme.custom_dir`:
+  `OPENSRO_CUSTOM_DIR`, else `<executable's folder>/custom`), not `<archives>/custom` as the Go
+  tools default: for a player the archives are in `pk2/`, and the branding files already live in
+  `custom/` beside it. Read in every source mode, branding files included; at most 20,000 files,
+  16 folders deep, indexed at open (a file added later is seen after `reopen()`).
+- **The mode** is `setting/config.yaml`'s `assets.source` (`ClientConfig`), or
+  `OPENSRO_ASSET_SOURCE` for a test; `mixed` by default.
+- **The pack folder** is the folder the Data volume resolved to, or `OPENSRO_PACK_DIR`.
+- **A `.pk3` entry whose data would lie past the end of the file** is refused at open (the Go
+  reader finds it when reading). **A symbolic-link entry** (a Unix-made entry whose mode is
+  S_IFLNK) is refused, per rule 1's "nothing inside a pack may be" a link; NOTE: lane G's
+  `checkZipEntry` does not look at a zip entry's mode, so the Go tools read such an entry as a
+  file holding the link's target.
+- **Reads.** A stored entry is read positionally, no copy. A deflated one: natively,
+  `miniz_oxide` into a buffer of exactly the declared size, then `crc32fast`; in GDScript, the
+  raw deflate data is wrapped as a gzip member whose trailer is the central directory's CRC-32 and
+  size, so Godot's own zlib (`PackedByteArray.decompress(size, COMPRESSION_GZIP)`) inflates it and
+  checks both.
+- **Threads.** Every handle is shared by the main thread and WorkerThreadPool tasks: the native
+  readers take `&self` and read positionally; the GDScript `Pk3Reader` holds its file under the
+  per-handle lock only for the seek and the read, never for the inflate.
+- **The override log**: one line per pack (its files, zip or zip64, native or GDScript), one per
+  pack another shadows, the refused entries, and -- the first time each volume is opened -- the
+  paths a pack or `custom/` hides in it (the first 10; `OPENSRO_PACK_LOG=all` for all).
+
+**Which layer served this.** `/layer <path>` in the chat console; `OPENSRO_QA_WHICH="path;path"`
+in any run (`QA WHICH <path> -> <layer> (<file>); also in ...`); `client/tools/which_layer.gd`
+headless; the Shift+F3 debug panel lists the set. docs/DEBUG_TOOLS.md.
+
+**For the updater (lane U).** `AssetArchives.reopen()` reads the mode and the folders again and
+opens a new set: every `AssetArchives.data()`/... after it sees the new packs; handles taken before
+keep reading the set they came from; caches keyed by `Pk2Reader.cache_key()` (the item and NPC
+tables, the UI fonts) and AudioBank's sounds are dropped with the old set. Call it where no scene
+holds handles it must see change (before the login screen, or between scenes), then reopen.
+`AssetArchives.current_generation()` tells a cache the set changed. (Not `reload`: that is every
+GDScript class's own `Script.reload`.)
+
+**Measured (round 789, the render box).**
+
+- Every file of lane G's five converted archives (121,262 files, 6.2 GB unpacked) read through
+  both readers equals the `.pk2`'s (`client/tools/pk3_parity.gd`), and the two readers list every
+  folder alike. Opening Data.pk3's central directory (75,872 entries, zip64): 104 ms native, 543
+  ms GDScript. Reading all of Data.pk3 (3,662 MB): 8.5 s native, 11.0 s GDScript.
+- The Jangan entry (`perf_gate.sh --sites jangan --frames 45000`, 3 runs a side, medians): the
+  branch against its base with no pack (GDScript readers both sides, as the gate runs): SAME
+  (entry 9,167 against 8,777 ms, within the run-to-run spread; frame 0.87/0.88 ms). The converted
+  `.pk3` archives alone against the `.pk2`, native both sides: SAME (entry 4,059 against 3,996 ms;
+  freeze 783/748). Two packs over the `.pk2` (9 overlay paths) against an empty pack folder:
+  SAME (entry 3,966 against 4,036 ms).
+- 20,000 Data lookups and reads (`client/tools/pack_bench.gd`, medians of 5): an empty pack folder
+  costs nothing (native 345 against 343 ms; GDScript 9,067 against 9,016); a pack over Data adds
+  about 1.5-2 us a lookup natively (find 126-138 against 98-100 ms). From the converted Data.pk3
+  the reads cost the inflate the `.pk2` does not (native 2.7 s against 0.27 s: `.ddj` is deflated,
+  rule 7) while the GDScript lookups need no Blowfish directory (72 ms against 9,089).
+- A real render: a pack replacing Media's `minimap\168x97.ddj` (stored, `MINIMAP/168x97.ddj` in the
+  zip) changed 61.6 % of the minimap's pixels at the Jangan spawn and 0.000 % of the world
+  (`frame_ab.py`, a box over each), and `QA WHICH` named the pack.
 
 ## OPEN
 
 - A volume-scoped pack (rule 3).
 - The server naming the packs a client needs, with their hashes, and the auto-updater fetching
   them (docs/TODO.md).
-- Loading time against `.pk2` (the perf gate; the client lane).

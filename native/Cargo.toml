@@ -21,6 +21,13 @@ godot-binding = ["dep:godot"]
 parity-negative = []
 
 [dependencies]
+# Inflate for the .pk3 (zip) asset packs (round 789, core::pk3): plain Rust, no C. Licence
+# "MIT OR Zlib OR Apache-2.0" (cargo-about takes MIT, native/about.toml); its one dependency,
+# adler2, is "0BSD OR MIT OR Apache-2.0". The default feature is only its allocator.
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
+# The CRC-32 check of every inflated pack entry (round 789): "MIT OR Apache-2.0", its one
+# dependency cfg-if too. Runtime-detected SIMD (std).
+crc32fast = { version = "=1.5.2", default-features = true }
 godot = { version = "=0.5.5", default-features = false, features = ["api-4-7", "experimental-threads"], optional = true }
 
 [profile.release]

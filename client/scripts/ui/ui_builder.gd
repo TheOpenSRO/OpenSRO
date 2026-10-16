@@ -1630,7 +1630,9 @@ func _load_fonts() -> void:
 	if _media_pk2 == null:
 		return
 	var face := ui_face_name()
-	var key := "%s|%s" % [_media_pk2._file.get_path_absolute() if _media_pk2._file != null else str(_media_pk2.get_instance_id()), face.to_lower()]
+	# Round 789: the archive's cache_key (its file, plus the AssetArchives set
+	# when packs overlay it) -- a pack may carry fonts of its own.
+	var key := "%s|%s" % [_media_pk2.cache_key(), face.to_lower()]
 	if _font_cache.has(key):
 		var hit: Array = _font_cache[key]
 		_ui_font = hit[0]
