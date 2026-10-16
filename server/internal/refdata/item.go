@@ -485,6 +485,14 @@ type Item struct {
 	// Rarity-2 equipment drop always gets blue options (_AddMagicOptions
 	// 0x7276a0; READ). 0 on an older export.
 	Rarity int
+
+	// ChildItemCount is itemdata column 159 (round 789; ref +0x53d on the
+	// server, READ RefObjItem::ExtractData s:0x6a3d50): non-zero on a dress
+	// (3/1/13/2) an attachment (3/1/13/3) may be worn with. The bag->avatar
+	// move refuses an attachment unless a worn dress has it (0x180e, READ
+	// s:0x525950). MEASURED: 1 on 396 of the 454 unique dresses, 0 on every
+	// other avatar row. 0 on an older export, which refuses every attachment.
+	ChildItemCount int
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

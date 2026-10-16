@@ -6354,7 +6354,8 @@ Msg_SendTwoFieldReply. CURSOR WRITES ARE THEREFORE NOT EVIDENCE OF PAYLOAD
 READS, which is how this round first concluded, wrongly, that the handler reads
 nothing. THE PAYLOAD: u8 inventory slot, range-checked `(byte)(slot - 0x0d) <
 99` so valid slots are 13..111 -- the bag layout stated in the server's own
-arithmetic, 13 equipment/avatar slots then 99 bag slots -- then CGStorage__GetItem(slot
+arithmetic, 13 equipment slots then 99 bag slots (round 789: the avatars are not among the 13 --
+they are a separate 5-slot storage, docs/protocol/avatars.md) -- then CGStorage__GetItem(slot
 & 0xff); and a u16 that is matched against a list derived from the item, then
 echoed in the reply. THE u16 GETS NO NAME: that is its whole observed behaviour
 and what it selects is not settled. 0x8000 IS THE ENCODED-REQUEST FLAG, named by
@@ -26698,7 +26699,7 @@ value in columns 118..124. All of them healed before this round.
 | 3/3/13 | 300 | mall tickets, resurrection scrolls, expansions, stat recall, and more |
 | 3/3/3 | 88 | return, reverse-return and fortress scrolls |
 | 3/3/12 | 46 | guild items, teleport holes |
-| 3/1/14 | 26 | cash avatars (equipment) |
+| 3/1/14 | 26 | cash avatars (equipment) -- the devil's spirits; 26 unique ids (round 789, AVATAR_RESEARCH.md 9: 18 in itemdata_25000 alone, 28 rows in the combined itemdata, 26 unique; all three counts are right for what they counted) |
 | 3/2/1 | 21 | pet summoner scrolls (not an expendable) |
 | 3/3/9 | 20 | quest items |
 | 3/3/1 | 14 | pet HP potions (4), berserk potions (8), pet feed (9), fortress repair kits (10) |
@@ -41267,7 +41268,7 @@ is inferred from the code, not read from a define.
 
 | Window | Group (authored rect) | Decision | Evidence |
 |---|---|---|---|
-| inventory (docked ifequipment) | `GDR_EQ_BTN_CHANGE_AVATAR_SLOT` (ID 13) / `_CHANGE_EQUIP_SLOT` (14), 1,305,40,40 | **13 shown, 14 hidden; either one toggles** | `CIFEquipment::Create` `0x6ac1c0` loads `resinfo\ifequipment.txt` (`push 0xda7410`). It fetches 13 (`0x6ac29d`, into `+0x26b0`), 14 (`0x6ac2ee`, `+0x26b4`), 100..112 (loop `0x6ac930`, array `+0x26a0`), 113..117 (`+0x5e4`..`+0x5f4`) and 500 (`0x6aca00`, `+0xf0c`, hidden at once). The refresh is `0x6abde0`. With the flag `+0xf08` clear it shows 100..112 and 13, and hides 113..117, 14 and 500. With the flag set it hides 100..112 except array index 8 (ID 108), shows 113..117 and 14, and hides 13. It shows 500 only for an avatar item of one type with a value above 0. Buttons 13 and 14 both run `0x6abf60` (`cmp [ecx+0xf08],0 / sete / jmp 0x6abde0`). Their click-table entries are `0xeb8378` and `0xeb83a0`; the same table maps 10/11/12 to the rotate handlers, which confirms the reading. The constructor clears the flag (`0x6ab569`), and so does ShowWindow(false). |
+| inventory (docked ifequipment) | `GDR_EQ_BTN_CHANGE_AVATAR_SLOT` (ID 13) / `_CHANGE_EQUIP_SLOT` (14), 1,305,40,40 | **13 shown, 14 hidden; either one toggles** | `CIFEquipment::Create` `0x6ac1c0` loads `resinfo\ifequipment.txt` (`push 0xda7410`). It fetches 13 (`0x6ac29d`, into `+0x26b0`), 14 (`0x6ac2ee`, `+0x26b4`), 100..112 (loop `0x6ac930`, array `+0x26a0`), 113..117 (`+0x5e4`..`+0x5f4`) and 500 (`0x6aca00`, `+0xf0c`, hidden at once). The refresh is `0x6abde0`. With the flag `+0xf08` clear it shows 100..112 and 13, and hides 113..117, 14 and 500. With the flag set it hides 100..112 except array index 8 (ID 108), shows 113..117 and 14, and hides 13. It shows 500 only for an avatar item of one type with a value above 0 (round 789, READ `c:0x6abde0`: in avatar mode, when one of the five avatar slots holds a non-bionic 3/1/14 whose remaining time, SOItem `+0x60`, is above 0 -- a worn, awake devil's spirit). Buttons 13 and 14 both run `0x6abf60` (`cmp [ecx+0xf08],0 / sete / jmp 0x6abde0`). Their click-table entries are `0xeb8378` and `0xeb83a0`; the same table maps 10/11/12 to the rotate handlers, which confirms the reading. The constructor clears the flag (`0x6ab569`), and so does ShowWindow(false). |
 | inventory | `GDR_EQUIPMENT_SLOT_100..104` / `GDR_AVATAR_SLOT_01..05` (5 pairs) | **worn slots shown, avatar slots hidden; the toggle swaps them** | Same refresh. |
 | inventory | (no pair) `GDR_AVATAR_SKILL_WND` (ID 500), 0,240,177,50 | **hidden** | Hidden at create (`0x6aca12`). The condition that shows it needs avatar items, which this client does not have. |
 | academy | `GDR_APPRENTICESHIP_PICTURE` (41) / `_LEADER_STATUS` (46), 9,33,28,28 | **PICTURE hidden, LEADER_STATUS kept** | `CIFApprenticeShip::vslot_010` `0x6e9770` fetches 0x29 (`0x6e9833`, into `+0x370`) and calls ShowWindow with `ebx` (`0x6e9848`). `ebx` is zeroed at `0x6e97b5`. The reset `0x6e8c30` hides it again (`0x6e8d3a`). Only the fill `0x6e9b00` shows it (`0x6e9f31`), once a member's face is set. 0x2e (`+0x3a4`) is never shown or hidden. Only its image changes: empty on reset (`0x6e8d65`), `interface\party\pt_no_face.ddj` when the record byte `[edi+0x74]==1` (`0x6e9f35`..`0x6e9fa8`). It is an overlay, not an alternate. |

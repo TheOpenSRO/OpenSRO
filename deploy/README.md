@@ -145,6 +145,28 @@ updated in either order: a client from before round 786 ignores 0x00BB and shows
 stone of luck (Lvl.11) 15,000,000 on the box's archive): with it on, a player can make gold. Switch it
 off (remove the line) to close that.
 
+## Avatars (round 789)
+
+The avatar inventory is a new table, `avatar_inventory_slots` (the bag's columns, serial included);
+the server creates it at boot, so the update needs no manual step for it. Check after the update:
+
+```
+docker compose exec postgres psql -U postgres -d opensro -c '\d avatar_inventory_slots'
+```
+
+**One re-export for the attachments.** Whether a dress takes an attachment is itemdata column 159
+(ChildItemCount), a new item CSV column (89). Until the item export is re-run with the new
+`export-refdata` and re-imported (`import-refdata`; the import adds `items.child_item_count`), every
+dress reads 0 and **every attachment is refused** (0x180e); hats, dresses, flags and devil's spirits
+work. Check: `SELECT count(*) FROM items WHERE child_item_count <> 0;` answers 396 on the box's
+archive (the unique dresses that take one, of 454; MEASURED, AVATAR_RESEARCH.md section 9).
+
+The blacksmith's grant reads the magic option table the alchemy already loads (`-magic-options-csv`,
+round 768); without it every grant is refused 0xa. The players' clients need this round's release for
+the avatar slots, the list (OpenSRO's own 0x0044/0x0045) and the grant window. Rolling back leaves the
+table in place, unread: the avatars worn then are invisible to an older server until it is updated
+again (nothing is lost).
+
 ## Moving an install from srrevamp to OpenSRO (round 704)
 
 The project was called srrevamp until 2026-10-03. The rename changed every name a deployed
@@ -341,7 +363,8 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* skilldataenc.txt charact
       levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refoptionalteleport.txt refregion.txt refshopgroup.txt magicoption.txt magicoptionassign.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
-# The exporter grows a strict-suffix column now and then (latest: item column 87, Rarity, round 770 --
+# The exporter grows a strict-suffix column now and then (latest: item column 89, ChildItemCount,
+# round 789 -- a dress that takes an attachment; before it 88, Param6, round 786; 87, Rarity, round 770 --
 # a Seal item always drops with blue options; before it item columns 79-86, round 769 -- the
 # per-plus increments, so a reinforced item's plus counts; before them item columns 73-78, round 768 -- the
 # alchemy columns CashItem, Param1, Param5, Desc128_1, Desc128_4 and MaxMagicOptCount; before them skill columns 47-61, round 616 -- the buff

@@ -34,8 +34,8 @@ func TestBuiltinDefinition(t *testing.T) {
 	if d.Region != 25000 {
 		t.Fatalf("region %d, want Jangan's 97/168 (25000)", d.Region)
 	}
-	if len(d.Lines) != 8 {
-		t.Fatalf("%d lines, want 8", len(d.Lines))
+	if len(d.Lines) != 11 {
+		t.Fatalf("%d lines, want 11 (8, and round 789's three avatar lines)", len(d.Lines))
 	}
 	for i, l := range d.Lines {
 		if len(l.Tabs) > MaxTabs {
@@ -316,5 +316,64 @@ func TestBuiltinAgainstItemsCSV(t *testing.T) {
 	}
 	if want := os.Getenv("OPENSRO_TEST_ITEMS_SUMMARY"); want != "" && s.Summary() != want {
 		t.Errorf("summary\n%s\nwant\n%s", s.Summary(), want)
+	}
+}
+
+// avatarItem builds a synthetic avatar row (OURS fixture: invented ids and
+// code names shaped like the archive's).
+func avatarItem(id int64, code string, typ [4]int, gender int) *refdata.Item {
+	it := item(id, code, typ, 1)
+	it.ReqGender = gender
+	return it
+}
+
+// Round 789: the avatar lines split by gender (the rule's "gender", the row's
+// ReqGender) and kind; the hat, dress and attachment tabs take the item mall
+// family only; the devil's spirit and flag tabs every row of their kind; a
+// tab keeps its first 30 and counts the rest.
+func TestAvatarRules(t *testing.T) {
+	d, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []*refdata.Item{
+		avatarItem(100, "ITEM_MALL_AVATAR_M_WEDDING_HAT", [4]int{3, 1, 13, 1}, 1),
+		avatarItem(101, "ITEM_MALL_AVATAR_W_WEDDING_HAT", [4]int{3, 1, 13, 1}, 0),
+		avatarItem(102, "ITEM_AVATAR_M_PLAIN_HAT", [4]int{3, 1, 13, 1}, 1),
+		avatarItem(103, "ITEM_MALL_AVATAR_M_WEDDING", [4]int{3, 1, 13, 2}, 1),
+		avatarItem(104, "ITEM_MALL_AVATAR_M_ANGEL_WING", [4]int{3, 1, 13, 3}, 1),
+		avatarItem(105, "ITEM_EVENT_AVATAR_M_NASRUN_RED", [4]int{3, 1, 14, 1}, 1),
+		avatarItem(106, "ITEM_EVENT_AVATAR_W_NASRUN_RED", [4]int{3, 1, 14, 1}, 0),
+		avatarItem(107, "ITEM_ETC_E050815_FLAG_M", [4]int{3, 1, 13, 4}, 1),
+		avatarItem(108, "ITEM_MALL_NASRUN_EXTENSION", [4]int{3, 3, 13, 16}, 2),
+	}
+	for i := 0; i < 35; i++ {
+		items = append(items, avatarItem(int64(200+i), fmt.Sprintf("ITEM_MALL_AVATAR_W_SET%02d_HAT", i), [4]int{3, 1, 13, 1}, 0))
+	}
+	s := d.Resolve(items)
+	got := func(line, tab int) []uint32 { return s.Lines[line].Tabs[tab].ItemIDs }
+	if want := []uint32{100}; !reflect.DeepEqual(got(8, 0), want) {
+		t.Fatalf("men's hats %v, want %v (the item mall family, the man's)", got(8, 0), want)
+	}
+	if want := []uint32{103}; !reflect.DeepEqual(got(8, 1), want) {
+		t.Fatalf("men's dresses %v", got(8, 1))
+	}
+	if want := []uint32{104}; !reflect.DeepEqual(got(8, 2), want) {
+		t.Fatalf("men's attachments %v", got(8, 2))
+	}
+	if want := []uint32{105}; !reflect.DeepEqual(got(8, 3), want) {
+		t.Fatalf("men's devil's spirits %v", got(8, 3))
+	}
+	if n := len(got(9, 0)); n != MaxGoodsPerTab || s.Lines[9].Tabs[0].Dropped != 6 || got(9, 0)[0] != 101 {
+		t.Fatalf("women's hats: %d listed, %d dropped, first %d", n, s.Lines[9].Tabs[0].Dropped, got(9, 0)[0])
+	}
+	if want := []uint32{106}; !reflect.DeepEqual(got(9, 3), want) {
+		t.Fatalf("women's devil's spirits %v", got(9, 3))
+	}
+	if want := []uint32{107}; !reflect.DeepEqual(got(10, 0), want) {
+		t.Fatalf("men's flags %v", got(10, 0))
+	}
+	if want := []uint32{108}; !reflect.DeepEqual(got(10, 2), want) {
+		t.Fatalf("extensions %v", got(10, 2))
 	}
 }

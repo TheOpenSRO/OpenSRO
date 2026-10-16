@@ -210,6 +210,10 @@ and tile (ID 5), then the 3D model, then the slot backdrops, then the children.
   | plag | (137,82) |
   | extraneous01 | (1,169) |
 
+  Round 789, READ (`c:0x6abcd0`): the display slot is by type -- helm the hat (13/1), cloth the dress
+  (13/2), pandernt the attachment (13/3), plag the flag (13/4), extraneous01 the devil's spirit
+  (14/1). The storage slot an item sits in is not by type (docs/protocol/avatars.md).
+
 - **Texture sizes.** MEASURED from their headers: 40x40, except the weapon's
   and shield's at 56x56.
 - **Button tooltips.** Button 13 gets `UIIT_STT_AVATAR_VIEW_AVATARSLOT` and

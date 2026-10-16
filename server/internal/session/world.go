@@ -1591,6 +1591,12 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 			log.Printf("session: enter hook for %q: %v", owned.Name, err)
 		}
 	}
+	// The avatar inventory's integrity (round 789, avatar.go): a failing item
+	// goes to the bag; with no room the entry is refused, as retail refuses
+	// the login (CGObjPC::Create s:0x4e0dc0).
+	if err := mendAvatarsAtEntry(ctx, owned); err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: (&EnterWorldResult{Reason: err.Error()}).Encode()})
+	}
 	// A character logged out dead enters alive at character.RespawnFraction
 	// (round 549). The FRACTION is the load path's own rule -- GObjPC::
 	// FUN_004e1120 restores a stored zero pool to MaxHP x 0.4 (the `fmul

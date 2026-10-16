@@ -90,7 +90,8 @@ carry an expiry where the round sends durability.
     `active << 31 | seconds` (c:0x8be600-0x8be62f).
   - The server writes `(Data != 0) << 31 | time & 0x7fffffff` there when `gs:0x42fd30` (the same
     0x700 test) holds.
-  - The box's itemdata has 28 such rows, for example `ITEM_EVENT_AVATAR_M_NASRUN_RED`.
+  - The box's itemdata has 28 such rows, for example `ITEM_EVENT_AVATAR_M_NASRUN_RED`. (Round
+    789: 28 rows, 26 unique ids; the period word is sent since round 789, docs/protocol/avatars.md.)
 - **Fix:** for TypeID3 14, send the period word, or 0 until rentals exist. Do not send durability.
 
 ### F4. MINOR: the client sums the advanced elixir's whole u32, not its low byte

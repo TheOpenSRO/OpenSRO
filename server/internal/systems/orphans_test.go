@@ -43,6 +43,10 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 789: the spawn record's avatar block on its own, the reader of
+	// the avatar golden vectors (session/avatar_golden_test.go); the server
+	// writes the block through pcspawn.Append and reads it through Decode.
+	"ReadAvatarBlock": "round 789: pcspawn's avatar block alone, read by the golden test that pins it with the client (avatar_golden.json); Decode reads it inside a whole record.",
 	// Round 788: the server answers OpLogin through its one LoginService
 	// (session.LoginHandlerFor); LoginHandler(store) is the old signature,
 	// kept for the many session tests that log in through it.

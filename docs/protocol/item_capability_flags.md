@@ -50,7 +50,7 @@ vtables (`CGItem`, `CGItemEquip`, `CGItemExpendable`, `CGItemStorage`,
 1`) in that slot, checked through their RTTI locators. Column 24 is round 460's
 anchoring below, re-measured for round 489: the column is non-zero on 99 of 99
 HP/MP potion rows (TypeID 3/3/1). It is zero on every equipment row except the 28
-cash-shop avatars (3/1/14), and zero on every elixir (3/3/10) and alchemy
+cash-shop avatars (3/1/14; 28 rows of the combined itemdata, 26 unique ids -- round 789), and zero on every elixir (3/3/10) and alchemy
 material or stone (3/3/11) row. It holds `0/1/129`, so the exporter emits it as
 `c != 0`. The CSV loader and the SQL store default it to usable for an export that
 predates the column.

@@ -130,6 +130,10 @@ var itemCSVColumns = []string{
 	// slot's strength (FUN_0049ac50 reads +0x2a0..+0x340, see Item.Param6). A
 	// strict suffix; an older export reads 0, and that slot is not cured.
 	"Param6",
+	// Appended later still (round 789): ChildItemCount, itemdata column 159
+	// (see Item.ChildItemCount). A strict suffix; an older export reads 0,
+	// and no dress takes an attachment.
+	"ChildItemCount",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -432,6 +436,11 @@ func parseItemRow(f []string) (Item, error) {
 	if len(f) > 88 {
 		if v, e := strconv.ParseInt(strings.TrimSpace(f[88]), 10, 64); e == nil {
 			it.Param6 = uint32(v)
+		}
+	}
+	if len(f) > 89 {
+		if v, e := strconv.Atoi(strings.TrimSpace(f[89])); e == nil {
+			it.ChildItemCount = v
 		}
 	}
 

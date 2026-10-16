@@ -81,7 +81,8 @@ vslot 24): the icon is centred on the cursor.
 with `(held, this, depth + 1)`. The windows:
 
 - **`CIFInventory::vslot_028`** (`0x6b5b80`): by the held slot's window kind
-  (`0x666700`): `0x46` the bag, `0x47`/`0x4e` the worn slots, `0x0f` the
+  (`0x666700`): `0x46` the bag, `0x47` the worn slots, `0x4e` the avatar slots (READ round 789:
+  `c:0x871940` maps 0x7034 types 0x23/0x24 to it, `c:0x6ad180`), `0x0f` the
   store, `0x13`/`0x91` the warehouse, `0x1a` the exchange, `0x7a` the guild
   storage, `0xa8` alchemy, `0x21`, `0x45`, `0x52`, `0x9c`. Most end in
   `FUN_007950b0`, the 0x7034 sender. A bag-to-bag drop passes quantity `-1`:

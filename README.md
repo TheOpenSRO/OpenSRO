@@ -562,5 +562,6 @@ between adjacent quads of different textures to recover); `.efp`'s nested tree s
 above). The `EXTRA` equip slot's rendering was also investigated and dead-ended: a real cosmetic
 "avatar item" system exists (`resinfo\avataritemdata.txt`, wings for both genders, a dedicated real
 UI slot button), but none of its referenced `.bsr` meshes actually ship with this client build —
-see `docs/protocol/EQUIP_SLOTS.md`. See `docs/protocol/*_FORMAT.md` and `docs/PROGRESS.md` for the
+see `docs/protocol/EQUIP_SLOTS.md`. (STALE, round 789: the avatar meshes do ship and build -- 560 of
+them, docs/rounds/r738_review.md -- and avatars are worn since round 789, docs/protocol/avatars.md.) See `docs/protocol/*_FORMAT.md` and `docs/PROGRESS.md` for the
 detailed running log.

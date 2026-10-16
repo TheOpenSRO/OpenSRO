@@ -15,6 +15,7 @@ import (
 	"slices"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/alchemy"
+	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
@@ -44,6 +45,14 @@ func testShopInstance(ctx context.Context, itemID int64) (inventory.Instance, bo
 	}
 	it, err := items.GetItem(ctx, itemID)
 	if err != nil || it == nil || !isEquipment(it) {
+		return inventory.Instance{}, false
+	}
+	// Round 789 (OURS): an avatar or a devil's spirit is sold as the item mall
+	// sells it -- +0, no blue options (the blacksmith's grant adds them), a
+	// devil's spirit not yet awakened -- so the grant and the awakening have
+	// something to do. Retail avatars take no plus (the alchemy window
+	// refuses them, AVATAR_ALCHEMY_RESEARCH.md section 2).
+	if avatar.IsAvatarItem(it) {
 		return inventory.Instance{}, false
 	}
 	inst := inventory.Instance{Variance: fullVariance, OptLevel: TestShopPlus, Durability: durability.Untracked}

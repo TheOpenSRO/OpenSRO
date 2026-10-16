@@ -24,6 +24,8 @@ import (
 //	0x7034 type 0 (bag -> bag, the split): u8 src, u8 dst, u16 count
 //	0x7034 type 9 (sell):                  u8 src, u16 count, u32 NPC uid
 //	0x7034 type 2 (deposit):               u8 src, u8 dst (warehouse), u32 NPC uid
+//	0x7034 type 0x24 (bag -> avatar):      u8 src (bag), u8 dst (avatar slot 0..4)   round 789, avatar.go
+//	0x7034 type 0x23 (avatar -> bag):      u8 src (avatar slot), u8 dst (bag, discarded)
 //	0x7168 (buy back):                     u32 NPC uid, u8 index (0 = oldest)
 //
 //	0xB034 success: u8 1, u8 type, then the record:
@@ -148,6 +150,26 @@ type ItemOpDeps struct {
 	Shop    *shop.Service
 	Storage *storage.Service
 	Trades  *trade.Hub
+	// Round 789: the avatar moves (types 0x23 and 0x24, avatar.go) need the
+	// avatar inventory (nil: SetAvatarStore's), the item table and the
+	// characters (for CanBeEquipedAt's gender, level and stats).
+	Avatars inventory.Store
+	Items   ItemLookup
+	Chars   character.Store
+}
+
+// avatarDeps is d as the avatar moves take it.
+func (d ItemOpDeps) avatarDeps() AvatarDeps {
+	av, items := d.Avatars, d.Items
+	if reg := avatarRegistryOf(); reg != nil {
+		if av == nil {
+			av = reg.store
+		}
+		if items == nil {
+			items = reg.items
+		}
+	}
+	return AvatarDeps{Chars: d.Chars, Inv: d.Inv, Avatars: av, Items: items, Hub: d.Hub, Trades: d.Trades}
 }
 
 // ItemOpHandler returns the gateway.Handler for 0x7034 and 0x7168.
@@ -177,6 +199,11 @@ func (d ItemOpDeps) character(sess *gateway.Session) (int64, bool) {
 func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d ItemOpDeps) error {
 	fail := func(code uint16) error {
 		return sess.Send(&proto.Packet{Opcode: OpItemMoveResult, Data: EncodeItemFail(code)})
+	}
+	// The avatar moves (round 789) have StorageOperation's own framing:
+	// dead 2 and INTERACTMODE 0x1834 before the type's rules (avatar.go).
+	if len(data) > 0 && (data[0] == ItemMoveAvatarToBag || data[0] == ItemMoveBagToAvatar) {
+		return handleAvatarMove(ctx, sess, data, d.avatarDeps())
 	}
 	req, err := DecodeItemMove(data)
 	if err != nil {

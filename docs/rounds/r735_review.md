@@ -100,7 +100,8 @@ This belongs in its own fix round, not in round 735.
 
   - **MEASURED** in itemdata (`/var/tmp/idparts`):
     - TypeID3 13 is 352 rows, the avatars (`ITEM_ETC_E041225_SANTA_HAT_F`, `…_ATTACH`, flags);
-    - TypeID3 14 is 18 rows, all `ITEM_EVENT_AVATAR_*_NASRUN*` (the devil's spirit).
+    - TypeID3 14 is 18 rows, all `ITEM_EVENT_AVATAR_*_NASRUN*` (the devil's spirit). (Round 789:
+      18 is itemdata_25000's alone; the whole table has 26 unique ids, AVATAR_RESEARCH.md 9.)
   - The client's `0x3038` and `0x3039` handlers branch on the same two values (`FUN_009daf80` and
     `FUN_009daf90`, the avatar path).
 - **Fix:** Relabel as READ: "equipment, and an equip slot of 8 or less, or an avatar (TypeID3 13)
