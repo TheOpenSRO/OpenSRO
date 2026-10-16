@@ -82,6 +82,15 @@ func _test_client_commands() -> void:
 	c.submit("/entities")
 	_check(_joined().contains("monsters 3"), "/entities prints counts")
 
+	# Round 789: /layer answers from the archive set (no archives in a test
+	# run: the path is in no layer, and the answer says so).
+	_reset()
+	c.submit("/layer prim\\mtrl\\none.ddj")
+	_check(_joined().contains("prim\\mtrl\\none.ddj -> "), "/layer names the path and its layer")
+	_reset()
+	c.submit("/layer")
+	_check(_joined().contains("Usage: /layer"), "/layer alone prints its usage")
+
 	_reset()
 	c.submit("/log")
 	_check(_joined().contains("opensro.log"), "/log prints the log path")

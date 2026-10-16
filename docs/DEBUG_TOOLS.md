@@ -31,6 +31,25 @@ command always answers with the help line — it never stays silent.
 | `/unstuck` | Returns you to the zone's entry point if you wedge into geometry. |
 | `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The Shift+F3 panel's **Ground probe** button does the same. |
 | `/w <name> <message>` | Whispers another player. |
+| `/layer <path>` | Which layer of the game's archives serves an archive path (round 789): the loose `custom/` folder, an asset pack (`.pk3`, by its file name) or a base archive (`base Data.pk2`, `base Media.pk3`, ...), and which layers under it hold the same path, e.g. `/layer prim\mtrl\foo.ddj` -> `z_assets.pk3 (...); also in assets.pk3, base Data.pk2`. Paths are matched case-insensitively, `/` and `\` alike, empty segments ignored. |
+
+## Asset packs: which layer served a file (round 789)
+
+The client reads its archives as layers: `custom/`, then the asset packs (`*.pk3`, `*.zip`, extra
+`*.pk2`, a later name winning), then the retail base archives (deploy/README.md, "Asset packs").
+Three ways to ask which one serves a path, all OURS:
+
+- **In the game:** `/layer <path>` in chat (above). The Shift+F3 panel's "archives" lines list the
+  source mode, the base archives and the packs, highest first.
+- **In a QA run:** `OPENSRO_QA_WHICH="path;path;..."` logs one `QA WHICH <path> -> <layer>
+  (<file>); also in ...` line a path when the archive set opens (any run: the world, a front-end
+  scene, qa_shot.sh).
+- **Without a game:** `client/tools/which_layer.gd` prints the set and the same answers headless
+  (client/tools/README.md, "Asset packs").
+
+The load log names every override once (`AssetArchives: Data: 3 path(s) of Data.pk2 overridden:
+...`); `OPENSRO_PACK_LOG=all` lists all of them instead of the first 10. `OPENSRO_ASSET_SOURCE=pk2|
+pk3|mixed` and `OPENSRO_PACK_DIR=<folder>` set the source mode and the pack folder for a test run.
 
 ## Sending a report
 

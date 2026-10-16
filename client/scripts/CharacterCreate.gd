@@ -162,8 +162,7 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_race = _pick_race()
 	_media = FrontEndUi.open_media()
-	var data_path := Pk2Config.data_path()
-	_data = Pk2Reader.open(data_path) if data_path != "" else null
+	_data = AssetArchives.data()
 	FrontEndUi.apply_client_font(self, _media)
 	_text = _load_text()
 	NetClient.character_create_result.connect(_on_create_result)

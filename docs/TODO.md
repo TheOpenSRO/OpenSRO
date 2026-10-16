@@ -1369,7 +1369,11 @@ Today:
 Nothing is designed yet. When it comes up, start from the protocol docs (docs/protocol/) and the
 gateway's TLS and session handling.
 
-### Asset packs: `.pk3` beside `.pk2` -- **planned (decided with the user 2026-10-01); start after the front-end epic**
+### Asset packs: `.pk3` beside `.pk2` -- **built in round 789 (the rules, the Go side, the converter, the client); the server naming packs and the updater fetching them are left**
+
+The rules every reader follows are written once in docs/protocol/asset_packs.md ("Rules"; the
+client's part is its "Client" section); the operator steps are in deploy/README.md, "Asset packs
+(`.pk3`)" (the tools) and "Asset packs in the client".
 
 Shipping new or changed assets should not require injecting them into a `.pk2`. A `.pk3` is a
 plain zip archive; `.zip` is accepted too. The client reads the same formats from it that it reads
@@ -1388,8 +1392,8 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
   2. `z_assets.pk3`;
   3. `z_assets.pk2`;
   4. `assets.pk3`;
-  5. the retail base archives (`Data`, `Map`, `Media` and `Music`, as `.pk2` or converted
-     `.pk3`). These are always the bottom layer whatever their names, or `assets.pk3` would sort
+  5. the retail base archives (`Data`, `Map`, `Media`, `Music` and `Particles`: five, the user
+     2026-10-16; as `.pk2` or converted `.pk3`). These are always the bottom layer whatever their names, or `assets.pk3` would sort
      before `Data.pk2` and lose to it.
 - **The name sort ignores case.** For two packs with the same name, the `.pk3` wins over the
   `.pk2`.
@@ -1398,23 +1402,48 @@ PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
   asset or adding a new one is the same operation.
 
 **The work:**
-- [ ] **One virtual file system** under every reader (client GDScript, the Rust native readers and
+- [x] **One virtual file system** under every reader (client GDScript, the Rust native readers and
       the Go tools: `export-refdata`, `pk2list` and the server's own reads). No reader knows which
-      layer a file came from.
-- [ ] **A `.pk3` reader:** stored and deflated entries, and zip64, since a converted `Map.pk2` is
-      several GB. Read stored entries without unpacking where we can.
-- [ ] **A pk2 → pk3 converter.** It keeps every entry's path, so its output drops in for the
+      layer a file came from. **Go: done (round 789, `server/internal/assetfs`)**: pk2list,
+      export-refdata and export-leveldata read through it (`-archives`); the server itself reads no
+      archive at runtime. The base archives turned out not to be one namespace (40 paths in two of
+      them, 5 differing, MEASURED), so a lookup names its volume (asset_packs.md rule 3). **Client:
+      done (round 789, `AssetArchives`)**: one set opened once and shared by every scene and
+      thread (13 separate opens before), each base archive a volume seen through `custom/` and
+      the packs (`LayeredArchive`); every lookup still goes through `ObjectLoader.find_file`.
+- [x] **A `.pk3` reader:** stored and deflated entries, and zip64, since a converted `Map.pk2` is
+      several GB. Read stored entries without unpacking where we can. **Go: done (round 789;
+      archive/zip, zip64 end record and >4 GiB offsets MEASURED).** **Client: done (round 789)**:
+      `Pk3Reader` (GDScript, Godot's zlib) and `SrNativePk3` (Rust, miniz_oxide + crc32fast;
+      native interface 6); every file of the five converted retail archives reads back identical
+      through both (`client/tools/pk3_parity.gd`).
+- [x] **A pk2 → pk3 converter.** It keeps every entry's path, so its output drops in for the
       original archive. It stores already-compressed types (`.ddj`, `.ogg`) and deflates text,
       tables and meshes. It checks every entry comes out byte-identical. It runs on the operator's
-      own archives, and its output is game data: never committed (docs/LEGAL.md).
-- [ ] **Safety:** reject entry names that escape the archive (`..`, absolute paths), cap the
-      unpacked size to stop zip bombs, and log every override at load.
-- [ ] **A QA/debug command** that answers "which layer served this path?".
+      own archives, and its output is game data: never committed (docs/LEGAL.md). **Done in round
+      789: `cmd/pk2topk3`** (and `cmd/pk3pack`, the pack builder). Measured, `.ddj` is not
+      "already compressed": it deflates to 25-80%, so it is deflated (`-store .ddj` keeps it
+      stored); `.ogg`, `.png`, `.rar` are stored. All five retail archives converted, every file
+      byte-identical (asset_packs.md, "Measured").
+- [x] **Safety:** reject entry names that escape the archive (`..`, absolute paths), cap the
+      unpacked size to stop zip bombs, and log every override at load. **Go: done (round 789;
+      the limits and their measured basis in asset_packs.md rule 6).** **Client: done (round 789;
+      the same rules, plus a symlink entry refused).**
+- [x] **A QA/debug command** that answers "which layer served this path?". **Go: `pk2list
+      -archives <folder> -which <path>` (round 789).** **Client (round 789): `/layer <path>` in
+      chat, `OPENSRO_QA_WHICH`, `client/tools/which_layer.gd`, the Shift+F3 panel's archive
+      lines** (docs/DEBUG_TOOLS.md).
 - [ ] **The server names the packs a client needs,** with their hashes (idTech's "pure server"),
       and the auto-updater fetches them. Then every player sees the same content, and a modified
-      local pack cannot change what the server assumes (walls, navmesh).
-- [ ] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
-      the top loading cost in round 667, and a zip's index has no such step.
+      local pack cannot change what the server assumes (walls, navmesh). The client side to call
+      after new packs arrive: `AssetArchives.reopen()` (asset_packs.md, "Client").
+- [x] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
+      the top loading cost in round 667, and a zip's index has no such step. **Round 789, MEASURED
+      (docs/rounds/r789k.md):** the Jangan entry with the converted `.pk3` archives alone against
+      the `.pk2`, native readers both sides: SAME (entry 4,059 against 3,996 ms). The `.ddj`
+      textures are deflated in a converted pack, so a read costs an inflate the `.pk2` does not
+      (20,000 Data reads: 2.7 s against 0.27 s natively) while the GDScript lookups get ~100x
+      cheaper (no Blowfish directory); in the entry the two cancel out.
 
 ### Native (Rust) readers (round 667) -- **the pk2 reader and the `.ddj` per-pixel decodes are native; these are left**
 

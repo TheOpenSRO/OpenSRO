@@ -17,6 +17,8 @@ class_name ClientConfig
 ##     region: US                      # kept, reserved (see below)
 ##   display:
 ##     renderer: compatibility         # or forward_plus (round 693, RendererChoice)
+##   assets:
+##     source: mixed                   # or pk2 / pk3 (round 789, Pk2Config.source_mode)
 ##   servers:
 ##     MyServer:                       # the name the login screen shows
 ##       type: opensro                 # REQUIRED: opensro or legacy
@@ -52,6 +54,12 @@ class_name ClientConfig
 ##   choice already recorded there stands. It cannot rescue a machine
 ##   without Vulkan by itself -- Boot never runs there -- the native
 ##   library's fall back does (RendererChoice's header).
+## - `assets.source` (round 789, OURS): where the game's archives come from
+##   -- `pk2` (the retail .pk2 only; asset packs ignored), `pk3` (the base
+##   archives converted to .pk3; no .pk2 read) or `mixed` (the default: the
+##   packs over the base archives). Read at the first archive open
+##   (Pk2Config.source_mode); OPENSRO_ASSET_SOURCE overrides it. The operator
+##   steps are deploy/README.md's "Asset packs".
 ## - `global.region` is parsed and kept, reserved: what it may drive is in
 ##   deploy/README.md ("Configuring the client").
 ##
@@ -93,6 +101,8 @@ var region := ""
 ## display.renderer, normalised (RendererChoice.normalise): "forward_plus",
 ## "gl_compatibility", or "" when the file does not set it.
 var renderer := ""
+## assets.source (round 789): "pk2", "pk3", "mixed", or "" when unset.
+var asset_source := ""
 var servers: Array = [] # of ServerEntry, in the file's order
 ## Where it was read from ("" when no file).
 var source := ""
@@ -139,7 +149,7 @@ static func from_text(text: String, where: String, warnings: PackedStringArray =
 	c.source = where
 	var root: Dictionary = parsed["data"]
 	for k in root.keys():
-		if not (str(k) in ["global", "servers", "display"]):
+		if not (str(k) in ["global", "servers", "display", "assets"]):
 			warnings.append("%s: unknown top-level key '%s' -- ignored" % [where, k])
 	var g = root.get("global", null)
 	if g != null and not (g is Dictionary):
@@ -173,6 +183,20 @@ static func from_text(text: String, where: String, warnings: PackedStringArray =
 				warnings.append("%s: display.renderer '%s' is not forward_plus or compatibility -- ignored" % [where, rw])
 			else:
 				c.renderer = rn
+	var a = root.get("assets", null)
+	if a != null and not (a is Dictionary):
+		warnings.append("%s: 'assets' is not a map -- ignored" % where)
+	elif a is Dictionary:
+		for k in a.keys():
+			if not (str(k) in ["source"]):
+				warnings.append("%s: unknown key 'assets.%s' -- ignored" % [where, k])
+		var src = a.get("source", null)
+		if src != null:
+			var m := Pk2Config.normalise_mode(str(src))
+			if m == "":
+				warnings.append("%s: assets.source '%s' is not pk2, pk3 or mixed -- ignored" % [where, src])
+			else:
+				c.asset_source = m
 	var s = root.get("servers", null)
 	if s != null and not (s is Dictionary):
 		warnings.append("%s: 'servers' is not a map of name -> server -- ignored" % where)
@@ -308,5 +332,6 @@ func describe() -> String:
 	var names := PackedStringArray()
 	for e in servers:
 		names.append("%s=%s (%s)" % [(e as ServerEntry).name, (e as ServerEntry).gateway_address(), (e as ServerEntry).type])
-	return "loginScreen=%s region=%s renderer=%s servers=[%s]" % [login_screen if login_screen != "" else "(unset)",
-		region if region != "" else "(unset)", renderer if renderer != "" else "(unset)", ", ".join(names)]
+	return "loginScreen=%s region=%s renderer=%s assets.source=%s servers=[%s]" % [login_screen if login_screen != "" else "(unset)",
+		region if region != "" else "(unset)", renderer if renderer != "" else "(unset)",
+		asset_source if asset_source != "" else "(unset)", ", ".join(names)]

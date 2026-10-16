@@ -72,8 +72,10 @@ static var _entry_box: Array = [null]
 static var last_boot_wait_usec := 0
 static var last_entry_wait_usec := 0
 
+## Round 789: Pk2Reader.cache_key -- the file, plus the AssetArchives set's
+## generation when packs overlay it, so a reload with new packs parses again.
 static func _key_of(media: Pk2Reader) -> String:
-	return media.source_path if media.source_path != "" else str(media.get_instance_id())
+	return media.cache_key()
 
 ## Starts both tasks for `media` unless its tables are shared or under way.
 static func preload_async(media: Pk2Reader) -> void:

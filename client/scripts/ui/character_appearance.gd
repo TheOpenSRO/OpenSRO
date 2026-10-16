@@ -1958,9 +1958,7 @@ func reglow(skel: Skeleton3D, pluses: Dictionary) -> int:
 func _particles_archive() -> Pk2Reader:
 	if particles == null and not _particles_tried:
 		_particles_tried = true
-		var path := Pk2Config.particles_path()
-		if path != "":
-			particles = Pk2Reader.open(path)
+		particles = AssetArchives.particles()
 	return particles
 
 func _make_item_template(tmpl: SkinnedBsrAssembler.AssembledCharacter, item_path: String) -> Node3D:

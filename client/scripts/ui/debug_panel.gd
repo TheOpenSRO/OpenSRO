@@ -352,6 +352,11 @@ func diagnostics() -> String:
 			if file != null:
 				size_text = "%.1f MB" % (file.get_length() / 1048576.0)
 		lines.append("%s %s (%s)" % [entry[0], path if path != "" else "(not set)", size_text])
+	# Round 789: the archive set -- the source mode, the base archives, the
+	# packs over them (highest first) and custom/. Which layer serves a path:
+	# OPENSRO_QA_WHICH or client/tools/which_layer.gd (docs/DEBUG_TOOLS.md).
+	for line in AssetArchives.current().describe():
+		lines.append("  " + line)
 	lines.append("species by code %d, by name %d" % [_world._monster_models_by_code.size(), _world._monster_models_by_name.size()])
 	var names: UiTextTable = _world._object_name_table
 	if names != null:
