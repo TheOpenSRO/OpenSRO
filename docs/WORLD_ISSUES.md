@@ -7483,6 +7483,30 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninetieth round: avatar sets on the Test Items NPC (the Akatsuki set first), and the round 789 server on the Mac mini
+
+The user (2026-10-16): "Update the server and did you create a pk3 file I can test with? Can you add
+some male/female avatar sets to the item npc including the akatsuki one?"
+
+- **Avatar sets (OURS):** two store lines, Purchase Avatar Sets (Men) / (Women), four tabs each,
+  from a new rule option `"sets"` (`testnpc.Rule.Sets`; docs/protocol/test_items_npc.md "Round
+  790"). Tests: `TestAvatarSetRules`; `TestBuiltinAgainstItemsCSV` against the round 789 export
+  (it had failed since round 789: avatars counted as Seal of Nova equipment and the avatar tabs'
+  designed drops; both now excluded); `go test ./...` 84 packages ok.
+- **Prod (the Mac mini), MEASURED:** items re-imported from the round 789 export through
+  `z_akatsuki.pk3` (15,338 -> 15,342 rows, `items.child_item_count` added, 398 dresses take an
+  attachment; the old table dumped first), then the server at 41ba955c (`opensro-server.prev`
+  kept; boot clean, 0 `level=ERROR`, `avatar_inventory_slots` created). Boot log: `12/1:Sets 1=29
+  ... 12/4:Sets 4=28(+122 dropped) 13/1:Sets 1=29 ... 13/4:Sets 4=30(+122 dropped)`. `run.sh`
+  unchanged.
+- **The pack is not served by prod** (`-client-packs` off): the players' gateway is reached through
+  the router on 15779 and the pack listener's 15780 is likely not forwarded; a v0.1.550 client that
+  is named a pack it cannot fetch does not log in. Players who want the Akatsuki items drop
+  `z_akatsuki.pk3` beside their `.pk2` files; without it the four items show as unknown. A copy is
+  in `~/opensro/packs/` on the Mac mini (sha256 d77be1e2...).
+- Not checked live: the set tabs in the store window (the client code is unchanged; the goods are
+  ids as before).
+
 ## Seven-hundred-and-eighty-ninth round: `.pk3` asset packs (layered zips, the pk2 -> pk3 converter, packs the server names and the client fetches), working avatars (the five slots, stats, the Test Items tab, the blacksmith's grant), tested end to end with an Akatsuki robe and straw hat
 
 The user (2026-10-16): "Let's add support for pk3 (zip) files and check what we have written down
