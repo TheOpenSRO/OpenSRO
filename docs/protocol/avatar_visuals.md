@@ -65,7 +65,9 @@ follows the table, so those dresses leave the helm drawn.
 
 ### Default wear (FUN_00a5e010)
 Decided from every DRAWN visual's Slot: a dress covering 0x002 and 0x010 leaves no default clothes
-under it (`DefaultWear.wear_for`'s `extra_mask`, the drawn avatars' Slot bits).
+under it (`DefaultWear.wear_for`'s `extra_mask`, the drawn avatars' Slot bits). MEASURED with lane X's
+probe on its test robes (r789ac.md): 3 pieces drawn without the arbitration (the robe and the two
+default wears), 1 with it, on all four bodies.
 
 ### The hair under a hat (INFERRED)
 How retail removes the base hair is OPEN (nothing but the arbitration reads +0x174). The hat's Slot

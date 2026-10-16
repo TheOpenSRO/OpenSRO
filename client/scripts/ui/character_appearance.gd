@@ -171,6 +171,12 @@ const SLOT_AVATAR := 100
 const AVATAR_KEY_BASE := 200
 const AVATAR_KEYS := 5
 
+## QA only (round 789): OPENSRO_QA_AVATAR_ARBITRATION=0 builds every
+## appearance without the arbitration (the "before" of a render: every worn
+## visual drawn, the default wear decided by the armour alone).
+static func _qa_arbitration_off() -> bool:
+	return OS.get_environment("OPENSRO_QA_AVATAR_ARBITRATION") == "0"
+
 ## Whether a key of the world's equipped maps is an avatar's (AVATAR_KEY_BASE).
 static func is_avatar_key(key: int) -> bool:
 	return key >= AVATAR_KEY_BASE and key < AVATAR_KEY_BASE + AVATAR_KEYS
@@ -303,7 +309,7 @@ static func from_archives(data_pk2: Pk2Reader, media_pk2: Pk2Reader, items: Dict
 	a._media = media_pk2
 	a._catalog = CharCatalog.from_archive(media_pk2)
 	a.default_wear = DefaultWear.from_archive(media_pk2)
-	a.visual_change = CharacterVisualChange.from_archive(media_pk2)
+	a.visual_change = CharacterVisualChange.from_archive(media_pk2) if not _qa_arbitration_off() else null
 	for id in a._catalog.entries:
 		var e: CharCatalog.Entry = a._catalog.entries[id]
 		if not e.is_body:
@@ -324,7 +330,7 @@ static func from_catalog(data_pk2: Pk2Reader, media_pk2: Pk2Reader, catalog: Cha
 	a._media = media_pk2
 	a._catalog = catalog
 	a.default_wear = DefaultWear.from_archive(media_pk2) if media_pk2 != null else null
-	a.visual_change = CharacterVisualChange.from_archive(media_pk2) if media_pk2 != null else null
+	a.visual_change = CharacterVisualChange.from_archive(media_pk2) if media_pk2 != null and not _qa_arbitration_off() else null
 	# The glow tables first: add_item_rows hands them the rows to inherit
 	# through (round 740).
 	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
