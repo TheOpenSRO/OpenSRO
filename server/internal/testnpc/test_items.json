@@ -125,6 +125,24 @@
         {"label": "Flag (Women)", "rules": [{"type": "3/1/13/4", "gender": 0}]},
         {"label": "Extension", "rules": [{"type": "3/3/13/16"}]}
       ]
+    },
+    {
+      "label": "Purchase Avatar Sets (Men)",
+      "tabs": [
+        {"label": "Sets 1", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 1, "sets": true}]},
+        {"label": "Sets 2", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 1, "sets": true}]},
+        {"label": "Sets 3", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 1, "sets": true}]},
+        {"label": "Sets 4", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 1, "sets": true}]}
+      ]
+    },
+    {
+      "label": "Purchase Avatar Sets (Women)",
+      "tabs": [
+        {"label": "Sets 1", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 0, "sets": true}]},
+        {"label": "Sets 2", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 0, "sets": true}]},
+        {"label": "Sets 3", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 0, "sets": true}]},
+        {"label": "Sets 4", "rules": [{"prefix": "ITEM_MALL_AVATAR_", "type": "3/1/13/*", "gender": 0, "sets": true}]}
+      ]
     }
   ]
 }

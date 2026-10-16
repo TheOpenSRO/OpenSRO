@@ -100,6 +100,20 @@ The boot log's `(+n dropped)` counts what a tab leaves out; every other avatar i
 not awakened -- not the +12 full-blue of the other equipment -- so the blacksmith's grant and the
 awakening have something to do (`testShopInstance`). The extension tab's label and the "Devil's
 Spirit"/"Flag" labels are OURS text.
+**Round 790: the avatar set lines (OURS).** The user (2026-10-16): "add some male/female avatar sets
+to the item npc including the akatsuki one". Two more lines, **Purchase Avatar Sets (Men)** and
+**(Women)**, four tabs each ("Sets 1".."Sets 4", OURS text), from one rule with `"sets": true`
+(`Rule.Sets`): the item mall avatars of that gender, grouped by code name with its `HAT`, `ATTACH`
+and `DRESS` words taken out (`_M_PIRATE_HAT_2` joins `_M_PIRATE_2`; `_M_ANGEL_WING`, an attachment,
+joins `_M_ANGEL_WING_DRESS`). A set is a group with a dress and one more piece; sets are listed
+newest first (by their highest id), each hat, dress, attachment, and never split across tabs (a tab
+ends where the next set does not fit, the line's next tab goes on from there; what the last tab
+cannot take is its `(+n dropped)`). On the box's archive plus `z_akatsuki.pk3` (MEASURED, the round
+789 export, 15,342 rows): the first set on both lines is the Akatsuki robe and straw hat (78901 +
+78903, 78902 + 78904), then 2015_NEW_ARABIA, ADMIRAL_2017, 2016_REDHOOD, 2015_FOX ...; about 40 sets
+a gender are listed and 122 items a gender are left to `/give`. An archive without the pack simply
+starts at its own newest set.
+
 The Seal of Nova tabs are labelled with the retail vendors' own keys (`SN_TAB_WEAPON`,
 `SN_TAB_SHIELD`, `SN_TAB_ACCESSORY`, `SN_TAB_HEAVYARMOR[_EU]`, `SN_TAB_LIGHTARMOR[_EU]`,
 `SN_TAB_CLOTHES[_EU]`; READ, refshoptab.txt column 5), so the client words them from its own text

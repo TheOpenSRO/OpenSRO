@@ -34,8 +34,8 @@ func TestBuiltinDefinition(t *testing.T) {
 	if d.Region != 25000 {
 		t.Fatalf("region %d, want Jangan's 97/168 (25000)", d.Region)
 	}
-	if len(d.Lines) != 11 {
-		t.Fatalf("%d lines, want 11 (8, and round 789's three avatar lines)", len(d.Lines))
+	if len(d.Lines) != 13 {
+		t.Fatalf("%d lines, want 13 (8, round 789's three avatar lines, round 790's two set lines)", len(d.Lines))
 	}
 	for i, l := range d.Lines {
 		if len(l.Tabs) > MaxTabs {
@@ -146,8 +146,8 @@ func assertEquipmentLevel101(t *testing.T, s *Shop, items []*refdata.Item) int {
 	n := 0
 	for id := range s.Goods() {
 		it := byID[id]
-		if it == nil || it.TypeID1 != 3 || it.TypeID2 != 1 {
-			continue
+		if it == nil || it.TypeID1 != 3 || it.TypeID2 != 1 || it.TypeID3 == 13 || it.TypeID3 == 14 {
+			continue // not equipment, or an avatar (round 789's lines, sold plain)
 		}
 		n++
 		if it.ReqLevel1 != 101 {
@@ -301,7 +301,9 @@ func TestBuiltinAgainstItemsCSV(t *testing.T) {
 	t.Logf("%d items -> %d goods: %s", len(items), len(s.Goods()), s.Summary())
 	for i, l := range s.Lines {
 		for j, tb := range l.Tabs {
-			if len(tb.ItemIDs) == 0 || tb.Dropped > 0 {
+			// The avatar lines (9 on) show a share of the archive's ~1,380
+			// avatars by design (rounds 789, 790): a full tab drops the rest.
+			if len(tb.ItemIDs) == 0 || (tb.Dropped > 0 && i < 8) {
 				t.Errorf("line %d tab %d (%s): %d goods, %d dropped", i+1, j+1, tb.Label, len(tb.ItemIDs), tb.Dropped)
 			}
 		}
@@ -375,5 +377,67 @@ func TestAvatarRules(t *testing.T) {
 	}
 	if want := []uint32{108}; !reflect.DeepEqual(got(10, 2), want) {
 		t.Fatalf("extensions %v", got(10, 2))
+	}
+}
+
+// Round 790: the set lines group a gender's avatars into sets by code name
+// without HAT, ATTACH and DRESS (PIRATE_HAT_2 joins PIRATE_2; ANGEL_WING, an
+// attachment, joins ANGEL_WING_DRESS); a set needs a dress and one more piece;
+// newest set first, each hat, dress, attachment; a set is never split across
+// tabs, the next tab goes on where the last stopped, and what the line's last
+// tab cannot take is counted there.
+func TestAvatarSetRules(t *testing.T) {
+	d, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []*refdata.Item{
+		avatarItem(100, "ITEM_MALL_AVATAR_M_PIRATE_HAT_2", [4]int{3, 1, 13, 1}, 1),
+		avatarItem(101, "ITEM_MALL_AVATAR_M_PIRATE_2", [4]int{3, 1, 13, 2}, 1),
+		avatarItem(102, "ITEM_MALL_AVATAR_M_ANGEL_WING", [4]int{3, 1, 13, 3}, 1),
+		avatarItem(103, "ITEM_MALL_AVATAR_M_ANGEL_WING_DRESS", [4]int{3, 1, 13, 2}, 1),
+		avatarItem(104, "ITEM_MALL_AVATAR_M_LONE_HAT", [4]int{3, 1, 13, 1}, 1), // no dress: no set
+		avatarItem(105, "ITEM_MALL_AVATAR_M_SOLO", [4]int{3, 1, 13, 2}, 1),     // a dress alone: no set
+		avatarItem(106, "ITEM_MALL_AVATAR_W_PIRATE_2", [4]int{3, 1, 13, 2}, 0),
+		avatarItem(107, "ITEM_MALL_AVATAR_W_PIRATE_HAT_2", [4]int{3, 1, 13, 1}, 0),
+		avatarItem(900, "ITEM_MALL_AVATAR_M_OPENSRO_AKATSUKI", [4]int{3, 1, 13, 2}, 1),
+		avatarItem(901, "ITEM_MALL_AVATAR_M_OPENSRO_AKATSUKI_HAT", [4]int{3, 1, 13, 1}, 1),
+	}
+	// 60 three-piece women's sets: 10 a tab, 40 on the line, 20 left over.
+	for i := 0; i < 60; i++ {
+		for k, word := range []string{"_HAT", "", "_ATTACH"} {
+			items = append(items, avatarItem(int64(1000+3*i+k), fmt.Sprintf("ITEM_MALL_AVATAR_W_SET%02d%s", i, word), [4]int{3, 1, 13, k + 1}, 0))
+		}
+	}
+	s := d.Resolve(items)
+	men, women := s.Lines[11], s.Lines[12]
+	if men.Label != "Purchase Avatar Sets (Men)" || women.Label != "Purchase Avatar Sets (Women)" {
+		t.Fatalf("lines %q, %q", men.Label, women.Label)
+	}
+	if want := []uint32{901, 900, 103, 102, 100, 101}; !reflect.DeepEqual(men.Tabs[0].ItemIDs, want) {
+		t.Fatalf("men's first tab %v, want %v (newest set first, hat dress attachment)", men.Tabs[0].ItemIDs, want)
+	}
+	for i := 1; i < 4; i++ {
+		if len(men.Tabs[i].ItemIDs) != 0 || men.Tabs[i].Dropped != 0 {
+			t.Fatalf("men's tab %d: %v, %d dropped", i+1, men.Tabs[i].ItemIDs, men.Tabs[i].Dropped)
+		}
+	}
+	all := map[uint32]bool{}
+	for i, tb := range women.Tabs {
+		if len(tb.ItemIDs) != MaxGoodsPerTab {
+			t.Fatalf("women's tab %d: %d goods", i+1, len(tb.ItemIDs))
+		}
+		for _, id := range tb.ItemIDs {
+			if all[id] {
+				t.Fatalf("item %d listed twice", id)
+			}
+			all[id] = true
+		}
+	}
+	if first := women.Tabs[0].ItemIDs[:3]; !reflect.DeepEqual(first, []uint32{1177, 1178, 1179}) {
+		t.Fatalf("women's first set %v, want the newest (SET59)", first)
+	}
+	if women.Tabs[3].Dropped != 20*3+2 {
+		t.Fatalf("women's last tab dropped %d, want 62 (20 sets left and the PIRATE_2 set)", women.Tabs[3].Dropped)
 	}
 }

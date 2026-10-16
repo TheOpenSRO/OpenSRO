@@ -114,6 +114,16 @@ type Rule struct {
 	// Gender is the item's ReqGender (itemdata column 58: 1 a man's, 0 a
 	// woman's, 2 either; round 789, for the avatar tabs). Absent: any.
 	Gender *int `json:"gender"`
+	// Sets lists whole avatar sets instead of single items (round 790, OURS:
+	// the user's "male/female avatar sets"). The items the other conditions
+	// match are grouped by their CodeName128 with its HAT, ATTACH and DRESS
+	// words taken out (ITEM_MALL_AVATAR_M_PIRATE_HAT_2 and _M_PIRATE_2 are one
+	// set); a set is a group with a dress and at least one other piece. Sets
+	// are listed newest first (by their highest id), each hat, dress,
+	// attachment, and a set is never split across tabs: when the next one does
+	// not fit, the tab ends there and the line's next tab with the same rule
+	// goes on from it.
+	Sets bool `json:"sets"`
 }
 
 // Tab is one store tab.
@@ -296,10 +306,24 @@ func (d *Definition) Resolve(items []*refdata.Item) *Shop {
 	shop := &Shop{Name: d.Name, Greeting: d.Greeting, Free: d.Free}
 	for _, l := range d.Lines {
 		rl := ResolvedLine{Label: l.Label}
-		for _, t := range l.Tabs {
+		// A set rule's sets, where the line's tabs have got to in them, and
+		// the last tab that used the rule (it counts the sets left over).
+		sets := map[string][][]*refdata.Item{}
+		next := map[string]int{}
+		lastTab := map[string]int{}
+		for ti, t := range l.Tabs {
 			rt := ResolvedTab{Label: t.Label}
 			seen := map[int64]bool{}
 			for _, r := range t.Rules {
+				if r.Sets {
+					key := r.key()
+					if _, ok := sets[key]; !ok {
+						sets[key] = r.groupSets(sorted)
+					}
+					next[key] = fillSets(&rt, seen, sets[key], next[key])
+					lastTab[key] = ti
+					continue
+				}
 				for _, it := range sorted {
 					if seen[it.ID] || !r.Matches(it) {
 						continue
@@ -314,9 +338,100 @@ func (d *Definition) Resolve(items []*refdata.Item) *Shop {
 			}
 			rl.Tabs = append(rl.Tabs, rt)
 		}
+		for key, groups := range sets {
+			for _, g := range groups[next[key]:] {
+				rl.Tabs[lastTab[key]].Dropped += len(g)
+			}
+		}
 		shop.Lines = append(shop.Lines, rl)
 	}
 	return shop
+}
+
+// key names a rule by its conditions, so the tabs of a line that repeat a
+// set rule share one list of sets.
+func (r Rule) key() string {
+	g := "any"
+	if r.Gender != nil {
+		g = strconv.Itoa(*r.Gender)
+	}
+	return strings.Join([]string{r.Prefix, r.Suffix, r.Code, r.Type, strconv.Itoa(r.ItemClass), g}, "\x00")
+}
+
+// setStem is the set an avatar's code name belongs to: the name without its
+// HAT, ATTACH and DRESS words.
+func setStem(code string) string {
+	parts := strings.Split(code, "_")
+	keep := parts[:0]
+	for _, p := range parts {
+		if p != "HAT" && p != "ATTACH" && p != "DRESS" {
+			keep = append(keep, p)
+		}
+	}
+	return strings.Join(keep, "_")
+}
+
+// groupSets is r's matches grouped into sets (Rule.Sets): newest set first,
+// each set in sorted's order (TypeID4: hat, dress, attachment; then id).
+func (r Rule) groupSets(sorted []*refdata.Item) [][]*refdata.Item {
+	byStem := map[string][]*refdata.Item{}
+	var stems []string
+	for _, it := range sorted {
+		if !r.Matches(it) {
+			continue
+		}
+		st := setStem(it.CodeName)
+		if _, ok := byStem[st]; !ok {
+			stems = append(stems, st)
+		}
+		byStem[st] = append(byStem[st], it)
+	}
+	var out [][]*refdata.Item
+	newest := map[string]int64{}
+	for _, st := range stems {
+		g := byStem[st]
+		dress := false
+		for _, it := range g {
+			dress = dress || it.TypeID4 == 2
+			if it.ID > newest[st] {
+				newest[st] = it.ID
+			}
+		}
+		if dress && len(g) >= 2 {
+			out = append(out, g)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return newest[setStem(out[i][0].CodeName)] > newest[setStem(out[j][0].CodeName)]
+	})
+	return out
+}
+
+// fillSets adds whole sets to rt from groups[from:] while they fit and
+// returns where it stopped. A set larger than a whole tab is counted as
+// dropped and passed over.
+func fillSets(rt *ResolvedTab, seen map[int64]bool, groups [][]*refdata.Item, from int) int {
+	i := from
+	for ; i < len(groups); i++ {
+		var ids []uint32
+		for _, it := range groups[i] {
+			if !seen[it.ID] {
+				ids = append(ids, uint32(it.ID))
+			}
+		}
+		if len(ids) > MaxGoodsPerTab {
+			rt.Dropped += len(ids)
+			continue
+		}
+		if len(rt.ItemIDs)+len(ids) > MaxGoodsPerTab {
+			break
+		}
+		for _, it := range groups[i] {
+			seen[it.ID] = true
+		}
+		rt.ItemIDs = append(rt.ItemIDs, ids...)
+	}
+	return i
 }
 
 // Summary is one line per tab, for the boot log: "line/tab label=count".
