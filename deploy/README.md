@@ -292,6 +292,9 @@ only the EXP curve warned in the log. The data comes from the operator's own cli
 Three tables matter and they load two different ways: **items and skills** go into Postgres with
 `cmd/import-refdata`; **leveldata is CSV-only** and is passed to the server on its command line.
 
+Round 789: the exporters can also read the tables straight through the archives and any asset
+packs (`-archives`, no extraction step, the same CSVs byte for byte): "Asset packs" below.
+
 ```
 # 1. On a machine with the client's Media.pk2 (BYO). Build the tools:
 cd server && for t in pk2list export-refdata export-leveldata import-refdata; do
@@ -557,6 +560,81 @@ up front: the fortress, tomb, temple, survival and Roc gates. To re-export:
 The new `teleportdata.csv` header ends in `Interaction9,WorldID`. There is no database step.
 
 Reference data is otherwise not touched by the update loop.
+
+## Asset packs (`.pk3`): converting, building, exporting through them (round 789)
+
+A `.pk3` is a zip holding files at their pk2 paths; it layers over the retail archives, so a mod
+or a new item ships without touching a `.pk2`. The rules (which archive wins, case, safety) are
+docs/protocol/asset_packs.md; all of it is OURS (retail has only `.pk2`). **Packs, converted
+archives and everything extracted from them are game data: never commit them** (docs/LEGAL.md).
+The server reads no archive at runtime; packs reach it through the exported CSVs.
+
+```
+cd server && for t in pk2list pk2topk3 pk3pack export-refdata export-leveldata; do
+  CGO_ENABLED=0 GOOS=linux go build -o /tmp/$t ./cmd/$t; done
+```
+
+**Converting the retail archives** (once; the output drops in for the original: same paths,
+every file read back byte-identical before the `.pk3` is renamed into place). Free disk: about
+2.8 GB for all five. Measured on the render box: Data.pk2 (3.9 GB) in about 20 s, the five in
+about 30 s, 2.7 GB out (docs/protocol/asset_packs.md has the table).
+```
+mkdir -p /srv/sro/pk3 && for n in Data Map Media Music Particles; do
+  /tmp/pk2topk3 -in /srv/sro/client/$n.pk2 -o /srv/sro/pk3/$n.pk3; done
+# -measure -in <pk2>: the deflate ratio by extension, nothing written
+# -store .ddj: keep textures uncompressed (Data.pk3 about 0.63 GB larger)
+```
+
+**Building a pack** from a folder whose files sit at their pk2 paths (case does not matter):
+```
+mymod/server_dep/silkroad/textdata/itemdata.txt        # the index, with the new part added
+mymod/server_dep/silkroad/textdata/itemdata_90000.txt  # the new rows
+mymod/prim/mtrl/item/robe_red.ddj                      # a new or replaced texture
+/tmp/pk3pack -dir mymod -o /srv/sro/client/z_mymod.pk3
+```
+It refuses symbolic links, two paths differing only in case, names a reader calls unsafe and
+files over 256 MiB, and reads the pack back before renaming it into place. Drop the pack beside
+the base archives; a later name wins (`z_` over `a_`), `.pk3` over a `.pk2` of the same name.
+
+**Looking at the layers**:
+```
+/tmp/pk2list -archives /srv/sro/client -layers        # the stack, highest first
+/tmp/pk2list -archives /srv/sro/client -overrides     # every pack file that hides a retail one
+/tmp/pk2list -archives /srv/sro/client -which 'server_dep\silkroad\textdata\itemdata.txt'
+/tmp/pk2list -archives /srv/sro/client -filter itemdata -l    # list, with the serving layer
+/tmp/pk2list -archives /srv/sro/client -volume Media -extract 'server_dep\silkroad\textdata\itemdata.txt' -out itemdata.txt
+```
+`-source pk2|pk3|mixed` (default mixed) picks the archive types; `-custom <dir>` a loose overlay
+folder (default `<archives>/custom` when it exists). `-pk2` also opens one `.pk3`.
+
+**Exporting the reference data through the packs.** `-archives <folder>` makes the exporters read
+the tables straight from the layers (a bare name is a file of `server_dep\silkroad\textdata\` in
+Media, then any layer, then the disk); `@<index>` expands to the parts an index lists, in its
+order -- the `order` shell function of step 2, done for you. So a pack's added rows reach the CSVs
+with no extraction step. Measured on the render box (round 789): every CSV of step 2 (items,
+skills, monsters, leveldata, npcpos, teleport with walk-ins, regions, magic options, chargen, npcs,
+quests) is **byte-identical** whether made the old way (`pk2list -extract` + loose files), through
+the `.pk2`s, or through the converted `.pk3`s alone (`-source pk3`). With a test pack adding one
+itemdata part and its index line, items.csv grew by exactly that row.
+```
+A=/srv/sro/client; E="/tmp/export-refdata -archives $A"
+$E -mode items  -out items.csv  @itemdata.txt
+$E -mode skills -enc-exe $A/sro_client.exe -out skills.csv @skilldataenc.txt
+$E -mode monsters -out monsters.csv @characterdata.txt levelgold.txt textdata_object.txt
+/tmp/export-leveldata -archives $A -out leveldata.csv leveldata.txt
+$E -mode npcpos -out npcpos.csv npcpos.txt
+$E -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt refoptionalteleport.txt \
+   eventzonedata.txt 'navmesh\objectstring.ifo'          # objectstring.ifo is Data.pk2's: found in the other layers
+$E -mode regions -out regions.csv refregion.txt
+$E -mode magicoptions -out magicoptions.csv magicoption.txt
+$E -mode magicoptassign -out magicoptassign.csv magicoptionassign.txt
+$E -mode chargen -out chargen.csv @characterdata.txt @itemdata.txt
+$E -mode npcs -out npcs.csv @characterdata.txt refshopgroup.txt
+```
+The exporters open the folder strictly: a pack they cannot read, or an entry the reader refuses,
+stops the export instead of silently dropping rows; every override is printed. Without
+`-archives` they read loose files exactly as before (and `@<index>` works there too, beside the
+index file).
 
 ## Monster species table
 

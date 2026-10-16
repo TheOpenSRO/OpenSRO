@@ -123,10 +123,12 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | tool | what |
 |---|---|
 | `server` | the game server |
-| `export-refdata` | itemdata/skilldata/characterdata, npcpos and the teleport tables → CSV from the player's own archive |
+| `export-refdata` | itemdata/skilldata/characterdata, npcpos and the teleport tables → CSV from the player's own archive (loose files, or `-archives` through the asset packs, round 789) |
 | `export-leveldata` | leveldata → CSV (the EXP curve) |
 | `import-refdata` | CSVs → PostgreSQL reference tables |
-| `pk2list` | list paths inside a pk2 archive; `-extract` one file |
+| `pk2list` | list paths inside a pk2 (or `.pk3`) archive; `-extract` one file; round 789: `-archives <folder>` through the asset-pack layers, `-which`, `-layers`, `-overrides` (docs/protocol/asset_packs.md) |
+| `pk2topk3` | round 789: convert a pk2 into a `.pk3` (zip) at the same paths, every file read back byte-identical; `-measure` the deflate ratio by extension |
+| `pk3pack` | round 789: build an asset pack (`.pk3`) from a folder of files at their pk2 paths, with the readers' safety checks |
 | `skillcensus` | round 785: over an exported `skills.csv` (its Params column), how many player skill rows (China and Europe apart: learnable rows, the base attacks and every chain link they reach) carry each Param code, beside the server's status for it; `-code X` lists the rows carrying one code. Statistics of the operator's own data |
 | `efpcensus` | decode every `.efp` in a Particles.pk2 and report coverage by feature; `-show` prints one file's tree |
 | `heightat` | the raw terrain height a real `.m` heightmap gives at a spot |
