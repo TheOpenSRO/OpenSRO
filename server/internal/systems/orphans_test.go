@@ -43,6 +43,9 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 789: the asset packs' Go side (docs/protocol/asset_packs.md).
+	"Which":  "round 789: assetfs.View.Which, the \"which layer serves this path\" lookup the rules name; pk2list -which prints every layer through WhichAll, and the tests check Which.",
+	"Folder": "round 789: pk2test.Folder, the synthetic-archive builder's folder node; only tests build archives.",
 	// Round 788: the server answers OpLogin through its one LoginService
 	// (session.LoginHandlerFor); LoginHandler(store) is the old signature,
 	// kept for the many session tests that log in through it.

@@ -673,36 +673,14 @@ func heightAt(r *mapm.Region, x, z float32) float64 {
 	return (h(x0, z0)*(1-tx)+h(x0+1, z0)*tx)*(1-tz) + (h(x0, z0+1)*(1-tx)+h(x0+1, z0+1)*tx)*tz
 }
 
+// readFile resolves path with the pk2 package's shared lookup (Find:
+// case-insensitive, `\` and `/` alike; round 789), nil when it is missing.
 func readFile(a *pk2.Archive, path string) []byte {
-	parts := strings.Split(strings.ReplaceAll(path, "\\", "/"), "/")
-	entries, err := a.ReadDir()
+	data, err := a.ReadPath(path)
 	if err != nil {
 		return nil
 	}
-	for i, part := range parts {
-		var found *pk2.Entry
-		for j := range entries {
-			if strings.EqualFold(entries[j].Name, part) {
-				found = &entries[j]
-				break
-			}
-		}
-		if found == nil {
-			return nil
-		}
-		if i == len(parts)-1 {
-			data, err := a.ReadFile(*found)
-			if err != nil {
-				return nil
-			}
-			return data
-		}
-		entries, err = a.ReadDirAt(*found)
-		if err != nil {
-			return nil
-		}
-	}
-	return nil
+	return data
 }
 
 func must(err error) {
