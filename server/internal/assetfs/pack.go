@@ -30,10 +30,12 @@ import (
 // from the formats; none is in the retail archives). .ddj is stored too,
 // as the plan decided (docs/TODO.md, the user 2026-10-01), although it
 // deflates to 26-79% (MEASURED): a game reads textures far more often than
-// it is installed, and a deflated .ddj made 20,000 native Data reads ten
-// times slower (2.7 s against 0.27 s, round 789 lane K) for 0.63 GB saved
-// on Data.pk3. `-deflate .ddj` trades the other way. .wav (75%) is
-// deflated.
+// it installs them. MEASURED at the round's merge (pack_bench, 20,000 Data
+// reads, native): 2,636 ms with .ddj deflated, 2,076 ms stored, 241 ms from
+// Data.pk2 -- storing .ddj saves ~21% of the read time for 0.63 GB more on
+// Data.pk3; the rest of the gap to .pk2 (which is not compressed at all) is
+// the inflate of the other deflated types. `-deflate .ddj` trades the other
+// way. .wav (75%) is deflated.
 var StoredExtensions = []string{".ddj", ".ogg", ".rar", ".png", ".jpg", ".jpeg", ".mp3", ".zip", ".pk3", ".7z", ".gz", ".webp"}
 
 // PackPolicy decides store or deflate per entry.

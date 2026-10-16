@@ -146,9 +146,12 @@ So the policy (`assetfs.StoredExtensions`) stores `.ddj` (below), `.ogg`, `.rar`
 everything else; an entry that deflate does not make smaller is stored anyway. **`.ddj` is
 stored**, as the plan decided (docs/TODO.md, 2026-10-01), although its DXT blocks deflate to
 25-80% (MEASURED, so they are not "already compressed"): the game reads textures far more often
-than it installs them, and lane K measured a deflated `.ddj` making 20,000 native Data reads ten
-times slower (2.7 s against 0.27 s) to save about 0.63 GB on Data.pk3. An operator who prefers the
-smaller pack passes `-deflate .ddj`. (Lane G's first conversion deflated `.ddj`; the round's merge
+than it installs them. MEASURED at the round's merge (`pack_bench.gd`, 20,000 Data reads,
+native, medians of 5): 2,636 ms with `.ddj` deflated, 2,076 ms with it stored, 241 ms from
+Data.pk2 -- storing `.ddj` saves about a fifth of the read time for 0.63 GB more on Data.pk3
+(2.59 GB against 1.96), and the rest of the gap to the `.pk2` (which is not compressed at all) is
+the inflate of the other deflated types; the world entry measured SAME either way (lane K). An
+operator who prefers the smaller pack passes `-deflate .ddj`. (Lane G's first conversion deflated `.ddj`; the round's merge
 switched the default back to the plan.)
 
 The output is deterministic: entries in the pk2's directory order, every folder as a folder
