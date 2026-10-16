@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.549** plus what is merged on `dev`; updated 2026-10-15.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.549** plus what is merged on `dev`; updated 2026-10-16.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -14,7 +14,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Monsters](#monsters) | 14 | 3 |  |  | 17 |
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
 | [Skills & masteries](#skills--masteries) | 7 | 1 |  | 2 | 10 |
-| [Items](#items) | 15 | 3 |  | 4 | 22 |
+| [Items](#items) | 17 | 4 |  | 3 | 24 |
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
 | [Social](#social) | 9 | 4 |  | 5 | 18 |
 | [Job / trade](#job--trade) |  |  |  | 3 | 3 |
@@ -24,10 +24,10 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Graphics & effects](#graphics--effects) | 11 | 1 |  |  | 12 |
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 7 |  | 1 | 1 | 9 |
-| [Plugins & customization](#plugins--customization) | 3 | 1 |  | 4 | 8 |
+| [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **138** | **32** | **1** | **46** | **217** |
+| **All** | **141** | **33** | **1** | **44** | **219** |
 
 ## Biggest gaps
 
@@ -204,7 +204,9 @@ Retail items with real stats, blues, alchemy and potions.
 | Item cooldowns | 🟡 Partial | Server-enforced; cooldown sweep not drawn on potion slots |
 | Speed scrolls and drugs | ❌ Not yet | Refused as unusable |
 | Composite items | 🟡 Partial | Only the Energy of Life scroll kind works |
-| Avatars and Devil's Spirit | ❌ Not yet | No avatar slots or avatar items yet |
+| Avatars 🆕 | ✅ Supported | Hat, dress, attachment and flag slots; worn avatars cover your gear for you and others, on the select screen too; avatar stats and blues apply |
+| Avatar magic options 🆕 | ✅ Supported | The blacksmith grants avatar blues, free, up to the original's per-kind limits |
+| Devil's Spirit 🆕 | 🟡 Partial | Worn, awakened and expires on time; its per-plus abilities and skill strip are missing |
 
 ## Economy
 
@@ -371,7 +373,7 @@ A major goal: plugins that extend the server and client without modifying the sh
 | Data-driven game tables | ✅ Supported | Items, monsters, skills, NPCs, spawns, teleports and quests load from CSV/DB; swap without rebuilding |
 | Server options | ✅ Supported | Gameplay systems toggled by command-line flags and environment variables |
 | Custom NPCs | 🟡 Partial | Test Items NPC is rule-defined but built in; no loader for operator NPCs |
-| Asset packs (.pk3) | ❌ Not yet | Planned: zip packs layered over the .pk2 archives, a pk2 → pk3 converter, packs the server names and the updater fetches |
+| Asset packs (.pk3) 🆕 | ✅ Supported | Zip packs layered over the .pk2 archives, a loose custom/ folder on top, a pk2 → pk3 converter; the server names the packs a client needs and the client fetches and verifies them |
 | Client server list | ✅ Supported | Servers, addresses and login screen set in setting/config.yaml |
 
 ## Bots

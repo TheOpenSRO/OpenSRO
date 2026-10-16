@@ -7483,6 +7483,104 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-eighty-ninth round: `.pk3` asset packs (layered zips, the pk2 -> pk3 converter, packs the server names and the client fetches), working avatars (the five slots, stats, the Test Items tab, the blacksmith's grant), tested end to end with an Akatsuki robe and straw hat
+
+The user (2026-10-16): "Let's add support for pk3 (zip) files and check what we have written down
+for that already. Then let's add working avatars. Once that's that done we'll want to test both by
+creating a custom avatar of an Akatsuki robe." Also: "we need to add pk3 support and the idea behind
+it on features.md to plugins & customization". The pack plan was docs/TODO.md's "Asset packs:
+`.pk3` beside `.pk2`" (decided 2026-10-01); its rules are now docs/protocol/asset_packs.md.
+
+The user's decisions: retexture a retail robe (no new mesh); all four bodies; a robe AND a straw
+hat; avatar scope = equip and see them, avatar stats, a Test Items tab, avatar alchemy. Avatar
+enchanting (alchemy op 7) is dead in retail 1.188 (the server path always fails, the client never
+sends it), so "avatar alchemy" is the blacksmith's grant (0x34A9), and op 7 is refused as retail
+does. The user then left the round to run unattended ("run without asking me questions and let me
+know what decisions you had to make without me"); every judgement call made after that is in the
+round's decision list (reported to the user) and in each lane's OURS lines.
+
+Labels: READ / MEASURED / INFERRED / OURS / OPEN, as in each lane's note.
+
+| Lane | Notes | What |
+|---|---|---|
+| RA, RB | (outside the repo) | Research: retail's avatar storage, moves, broadcasts, spawn block, visuals arbitration, devil's spirit; the grant window, tooltips |
+| G | `docs/rounds/r789g.md`, `docs/protocol/asset_packs.md` | The Go side: `assetfs` (the layered set: custom/, packs by name, the five bases), `pk3pack`, `pk2topk3` (all five archives convert byte-identical), `pk2list -which`, `-archives` on every exporter |
+| K | `docs/rounds/r789k.md` | The client: `AssetArchives` / `LayeredArchive` / `Pk3Reader` and the native `SrNativePk3`, the source mode (pk2 / pk3 / mixed), `/layer` and `OPENSRO_QA_WHICH` |
+| X | `docs/rounds/r789x.md` | The Akatsuki content (game-derived, outside the repo): items 78901-78904 retextured from the knight coat, the fur robe and the satgat hat, in `z_akatsuki.pk3`; tools `ddjtool`, `retexture`, `avatar_retexture_probe.gd` |
+| AS | `docs/rounds/r789as.md`, `docs/protocol/avatars.md` | Avatars on the server: the avatar store, moves (0x7034 types 0x23/0x24), 0x3038/0x3039, the spawn block, avatar stats, the devil's spirit, the grant, the Test Items avatar lines, GM `/avatar` |
+| AC | `docs/rounds/r789ac.md`, `docs/protocol/avatar_visuals.md` | Avatars in the client: the wire, charactervisualchange arbitration, the avatar windows, tooltips, the grant window |
+| U | `docs/rounds/r789u.md` | The server names a client's packs (0x0009 -> 0x000A, `-client-packs`, its own listener on :15780) and the client fetches, verifies and layers them; purity by default |
+| E | `docs/rounds/r789e.md` | The end-to-end test, live on the render box |
+
+### Corrections to what the project believed
+
+- **Storing `.ddj` in a converted pack is not a 10x read win.** At the merge the coordinator first
+  credited deflated textures with a tenfold slowdown; re-measured (20,000 native reads of Data):
+  deflated 2,636 ms, stored 2,076 ms, `Data.pk2` 241 ms. Storing buys ~21 % for 0.63 GB more
+  (2.59 vs 1.96 GB); most of the gap to `.pk2` is the inflate of meshes and tables. The plan's
+  choice (store) was kept; `-deflate .ddj` gives the smaller pack.
+- **Two dress rows do not hide the helm**, though the research said so: charactervisualchange
+  says they don't, and the client follows the table (lane AC).
+- **Whether the default wear shows under an avatar** was OPEN (lane X); charactervisualchange hides
+  it, and the client follows the table (lane AC, frames `/var/tmp/ac789/xcmp_*.png`).
+
+### The coordinator's merge fixes
+
+- **`custom/` sits beside the archive folder for the Go tools too** (lane G had
+  `<archives>/custom`), so both sides find the same folder (the client's since round 678).
+- **A symbolic-link entry in a pack is refused by the Go reader** as the client already did
+  (`assetfs.TestSymlinkEntryRefused`).
+- **Stored extensions** (`assetfs.StoredExtensions`) match between the converter and the docs:
+  `.ddj` and the already-compressed types.
+- **Conflicts** in `orphans_test.go`, `server/README.md`, `docs/TODO.md`, `asset_packs.md`: kept
+  both sides (lane K's rules text, lane X's index-file item).
+
+### Lane E's fixes (found live)
+
+- **The grant window's rows were invisible**: its five bars were built after the list and covered
+  it, clicks too (`GrantMagicAttributeWindow.raise_list`; rows over bars INFERRED).
+- **The selected grant row never lit**: the select bar texture was placed under the bar's opaque
+  pieces; it now replaces them (`apply_bar`).
+- **NPCs vanished after a same-zone teleport** (GM `/tp`): the old nodes, queued for deletion, still
+  counted as placed, so "0/3 NPC(s) placed" and the server never resent them
+  (`World3D.npc_holder_standing`, `npc_rezone_test.gd`).
+
+### Tests on the merged tree (feat/pk3avatar789)
+
+- `go vet ./... && go test ./...`: **84 packages ok**.
+- `remote_godot.sh check`: **875 scripts and 9 scenes, ALL LOAD**; `remote_godot.sh tests`:
+  **336 suites, 1 failing** -- `water_fx_test.gd` ("got 2" effects in view), which passed alone
+  3/3 and failed on the base too (load-sensitive, not this round's code); `NO_NATIVE=1`: **0
+  failing**. Perf gate (lanes K and AC): SAME.
+- **Both readers agree**: GDScript and native return identical bytes for all 121,262 files; the
+  exporters give identical CSVs from `.pk2`, `.pk3`, mixed and custom/ routes.
+- **Live, end to end (lane E, the render box):** `export-refdata -archives` over the five `.pk2`
+  plus `z_akatsuki.pk3` gave the four rows (ChildItemCount 1,1,0,0); the server with
+  `-client-packs` served the pack once; the client fetched it, verified its sha256 and reopened the
+  archive set (`QA WHICH`: robe, hat, icon and both text lists from the pack, the knight mesh from
+  `Data.pk2`); a second login downloaded nothing (lane U). Robe and hat worn on the China man and
+  woman and the Europe man and woman, front and back; the avatar view and tooltips; the select
+  screen after a relog; a second client's view of the other player; the blacksmith grant (STR
+  20 -> 21 -> 22, max HP 200 -> 360 -> 370, INT 21, blue lines in the tooltip); unequip brings the
+  default wear back. Frames: `/var/tmp/e789/evidence/01`-`37` on the box, each looked at.
+
+### What is still OPEN (details in each lane's notes and docs/TODO.md)
+
+Packs: a merge rule for list files (`itemdata.txt`, `textdataname.txt`: two packs that each add a
+row both replace the list, and only the later one is seen); a pack aimed at one base volume; a
+bandwidth limit on the pack listener; a real https CDN download (untested, no outside network);
+GDScript pack reads are slower than `.pk2` (native is the shipped path); two servers with the same
+pack each download it; title art from a server's pack shows from character select on. Avatars: the
+devil's spirit's per-plus abilities and its skill strip; right-click on avatars; how retail hides
+hair under a hat (the hat row's hair bit, INFERRED); the Nasrun tooltip formats; "Sort of item"
+reads "Avatar Dress" for hats; no space before "Unit" in the tooltip; the grant window's count line
+runs past its right edge, and it lists STR, STR_2..4 as four identical rows (the assign table's own
+rows); another player is drawn translucent for a few frames after he arrives. Operators: re-export
+and re-import items (ChildItemCount is the items CSV's 90th column), or every attachment is refused (0x180e).
+
+The PIN window's look (the user, 2026-10-16: "doesn't look exactly the original but we can fix that
+later") is in docs/TODO.md's PIN section.
+
 ## Seven-hundred-and-eighty-eighth round: Account & login as the original (login replies, bans, names, the original client both ways), the account PIN, the Additional Quick Slot bars
 
 The user (2026-10-15): "let's get the account and login section 100%. Make sure you check the
