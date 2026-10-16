@@ -10000,12 +10000,32 @@ func _remove_npc_holder(uid: int) -> void:
 	if holder != null and is_instance_valid(holder):
 		(holder as Node).queue_free()
 
+## Whether an NPC's holder still stands, so a placement would duplicate it.
+## Round 789 lane E (MEASURED live, /var/tmp/e789/tprepro on the box): a
+## teleport within the zone (a GM /tp; the server sends the zone change, the
+## NPC window does not move, so no spawn is sent again) rebuilds the zone in
+## one frame -- the old terrain node, the NPC holders under it, is
+## queue_free()d and the new cell is built before the frame ends, so every old
+## holder was still is_instance_valid() and _try_spawn_region_npcs placed "0/3"
+## of the region's NPCs; the old ones were then freed and the town stood empty
+## until its NPC window moved. A holder queued for deletion, or under a node
+## that is (the old terrain node: queue_free marks only the node it is called
+## on), is gone.
+static func npc_holder_standing(existing) -> bool:
+	if existing == null or not is_instance_valid(existing):
+		return false
+	var n := existing as Node
+	while n != null:
+		if n.is_queued_for_deletion():
+			return false
+		n = n.get_parent()
+	return true
+
 ## Builds one NPC's holder under its region's group. Returns {} when nothing
 ## was placed, else {"db": whether it faces the server's angle,
 ## "facing_usec": the stand-in's cost}.
 func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
-	var existing = _npc_holders.get(rec.uid)
-	if existing != null and is_instance_valid(existing):
+	if npc_holder_standing(_npc_holders.get(rec.uid)):
 		return {}
 	# The server sends NPCs only (TypeID 1,2,2,x); a monster's RefObjID here
 	# would be a server bug, and its body belongs to the monster path.
@@ -15843,6 +15863,16 @@ func _update_blob_shadow() -> void:
 ##   OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>,.."  (round 789; needs a
 ##                          server) at each tick that avatar goes back to the bag
 ##                          (0x7034 type 0x23, HudPanels' drop)
+##   OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,.."  (round 789 lane E; needs a
+##                          server) the inventory's avatar view over the server's
+##                          list and every worn avatar's tooltip, or put away
+##                          (_qa_avatar_live_step)
+##   OPENSRO_QA_GRANT="<tick>:<item id>:<option>[:<confirm tick>]"  (round 789
+##                          lane E; needs a server and the blacksmith's grant
+##                          window open) put that bag item down on it, pick the
+##                          row whose code contains <option>, Confirm (_qa_grant_step)
+##   OPENSRO_QA_SHOTS_FROM=<tick>  (round 789 lane E) OPENSRO_QA_SHOTS start no
+##                          earlier than this tick
 ##   OPENSRO_QA_AVATAR_VIEW=1  (round 789; no server) at tick 50 the QA
 ##                          loadout's avatars become the avatar inventory, the
 ##                          equipment window shows its avatar view and every
@@ -16129,6 +16159,115 @@ func _qa_reequip_step() -> void:
 				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, s.slot_index)
 				return
 		print("QA REEQUIP: tick %d weapon %d not in the bag" % [_qa_tick, _qa_reequip_item])
+
+## OPENSRO_QA_AVATAR_LIVE="<tick>:show|hide,.." (round 789 lane E; needs a
+## server; QA only): `show` opens the inventory in its avatar view over the
+## server's own avatar list (NetClient.last_avatar_instances, from 0x0045 and
+## the 0xB034 moves) and draws every worn avatar's tooltip down the right edge
+## (`QA AVATAR TIP` lines, HudPanels.qa_show_avatar_tips); `hide` puts the
+## bubbles away, turns the window back to its equipment view and closes it.
+## OPENSRO_QA_AVATAR_VIEW is the same view with no server (a seeded list).
+var _qa_avatar_live_spec := OS.get_environment("OPENSRO_QA_AVATAR_LIVE")
+
+func _qa_avatar_live_step() -> void:
+	for entry in _qa_avatar_live_spec.split(",", false):
+		var tp := String(entry).split(":")
+		if tp.size() != 2 or int(tp[0]) != _qa_tick:
+			continue
+		if tp[1] == "hide":
+			_hud_panels.qa_hide_avatar_tips()
+			_hud_panels.set_equipment_avatar_mode(false)
+			_hud_panels.close("inventory")
+			print("QA AVATAR LIVE: tick %d avatar view put away" % _qa_tick)
+			continue
+		if not _hud_panels.is_open("inventory"):
+			_hud_panels.open("inventory")
+		_hud_panels.set_equipment_avatar_mode(true)
+		_hud_panels._fill_avatar_slots()
+		var held: Array = []
+		for k in NetClient.last_avatar_instances:
+			var it: ItemInstance = NetClient.last_avatar_instances[k]
+			held.append("%d:%d" % [int(k), it.ref_item_id if it != null else -1])
+		print("QA AVATAR LIVE: tick %d avatar view of the server's list [%s]" % [_qa_tick, ", ".join(held)])
+		_hud_panels.qa_show_avatar_tips()
+
+## OPENSRO_QA_GRANT="<tick>:<item id>:<option>[:<confirm tick>]" (round 789 lane E; needs a
+## server and the grant window open -- OPENSRO_QA_TALK at a blacksmith and
+## OPENSRO_QA_TALK_PICK on its "Grant magic option on avatar item" line; QA
+## only): at the tick the first bag item of that id is put down on the window
+## (HudPanels._grant_offer, the drop's own path), every row is printed (`QA
+## GRANT row`), the first row whose code contains <option> (case ignored) is
+## selected and Confirm pressed (0x34A9) -- at <confirm tick> when given, so
+## a frame shows the row selected first; the reply is the window's own. The
+## bag is listed again 20 ticks before the tick; `QA GRANT drawn` lines say
+## what the rows and bars draw after the selection and after the reply.
+var _qa_grant_spec := OS.get_environment("OPENSRO_QA_GRANT")
+
+func _qa_grant_step() -> void:
+	var tp := _qa_grant_spec.split(":")
+	if tp.size() < 3:
+		return
+	var at := int(tp[0])
+	var confirm_at := int(tp[3]) if tp.size() >= 4 else at
+	# The bag listed again 20 ticks before, as OPENSRO_QA_EQUIP_BAG does.
+	if _qa_tick == at - 20:
+		NetClient.list_inventory(NetClient.current_character_name)
+	if _qa_tick != at and _qa_tick != confirm_at:
+		return
+	var c := _hud_panels.grant_window()
+	if c == null:
+		print("QA GRANT: tick %d no grant window open" % _qa_tick)
+		return
+	if _qa_tick == at:
+		var item_id := int(tp[1])
+		var from := -1
+		for s in _inventory_slots:
+			if s.item_id == item_id:
+				from = s.slot_index
+				break
+		if from < 0:
+			print("QA GRANT: tick %d item %d not in the bag" % [_qa_tick, item_id])
+			return
+		_hud_panels._grant_offer(from)
+		if c.item == null:
+			print("QA GRANT: tick %d item %d (bag slot %d) refused by the window" % [_qa_tick, item_id, from])
+			return
+		var pick := -1
+		for i in c.rows.size():
+			var code := String(c.rows[i]["code"])
+			print("QA GRANT row %d %s value %d: %s" % [i, code, int(c.rows[i]["value"]), String(c.rows[i]["text"])])
+			if pick < 0 and code.to_lower().contains(String(tp[2]).to_lower()):
+				pick = i
+		if pick < 0:
+			print("QA GRANT: tick %d no row matches %s" % [_qa_tick, tp[2]])
+			return
+		c.select(pick)
+		print("QA GRANT: tick %d item %d bag slot %d row %d %s selected" % [_qa_tick, item_id, from, pick,
+			String(c.rows[pick]["code"])])
+		_qa_grant_dump(c)
+	if _qa_tick == confirm_at:
+		var sel := c.selected
+		print("QA GRANT: tick %d Confirm %s (row %d)" % [_qa_tick, "sent" if c.confirm() else "refused", sel])
+		_qa_grant_dump.call_deferred(c)
+
+## What the grant window's rows draw (QA GRANT drawn): each row node's text,
+## whether it is shown and where, and each bar's texture.
+func _qa_grant_dump(c: GrantMagicAttributeWindow) -> void:
+	for i in c._row_nodes.size():
+		var node: Control = c._row_nodes[i]
+		var label := node if node is Label else node.find_child(GrantMagicAttributeWindow.N_ROW, true, false) as Control
+		var txt := ""
+		if label is Label:
+			txt = (label as Label).text
+		elif label is RichTextLabel:
+			txt = (label as RichTextLabel).text
+		print("QA GRANT drawn row %d %s shown %s at %s label %s '%s'" % [i, node.get_class(), str(node.is_visible_in_tree()),
+			str(node.get_global_rect()), label.get_class() if label != null else "none", txt])
+	for i in GrantMagicAttributeWindow.N_BARS.size():
+		var bar := c.window.node(GrantMagicAttributeWindow.N_BARS[i]) as Control
+		var art := bar.get_node_or_null("GrantBar") as TextureRect if bar != null else null
+		print("QA GRANT drawn bar %d at %s texture %s" % [i, str(bar.get_global_rect()) if bar != null else "none",
+			art.texture.resource_path if art != null and art.texture != null else "none"])
 
 ## OPENSRO_QA_EQUIP_BAG="<tick>:<slot>=<item_id>,..." (round 786): at each
 ## tick, puts the first bag item with that id on in that equipment slot,
@@ -17016,8 +17155,10 @@ func _qa_step() -> void:
 		_qa_alchemy_started = true
 		QaAlchemy.run(get_tree(), _hud_panels, OS.get_environment("OPENSRO_QA_ALCHEMY"))
 
-	# Not before the entry has finished loading: see _initial_load_done.
-	if not _qa_shots.is_empty() and _initial_load_done:
+	# Not before the entry has finished loading: see _initial_load_done; nor
+	# before OPENSRO_QA_SHOTS_FROM's tick (round 789 lane E: a live run's
+	# shots come after the server has dressed the player).
+	if not _qa_shots.is_empty() and _initial_load_done and _qa_tick >= _qa_shots_from:
 		_qa_advance_shots()
 
 	# OPENSRO_QA_RECONNECT=<tick|drain> (round 558): leave and re-enter the
@@ -17088,6 +17229,13 @@ func _qa_step() -> void:
 			if tp.size() == 2 and int(tp[0]) == _qa_tick:
 				print("QA AVATAR OFF: tick %d avatar storage slot %s back to the bag" % [_qa_tick, tp[1]])
 				_hud_panels._drop_avatar_to_bag(int(tp[1]), Vector2(-100000, -100000))
+	# OPENSRO_QA_AVATAR_LIVE / OPENSRO_QA_GRANT (round 789 lane E; need a
+	# server): the avatar view over the server's own list, and the grant window
+	# driven as a player would (see the functions).
+	if _qa_avatar_live_spec != "" and _hud_panels != null and NetClient.is_connected_to_server():
+		_qa_avatar_live_step()
+	if _qa_grant_spec != "" and _hud_panels != null and NetClient.is_connected_to_server():
+		_qa_grant_step()
 	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
@@ -17157,8 +17305,10 @@ func _qa_step() -> void:
 		print("QA %4d local %s%s" % [_qa_tick, where, standing])
 
 ## Viewpoints still to visit this run, and where the current one is up to.
-## See _qa_advance_shots.
+## See _qa_advance_shots. OPENSRO_QA_SHOTS_FROM=<tick> (round 789 lane E)
+## holds the first one back until that tick.
 var _qa_shots: Array = []
+var _qa_shots_from := int(OS.get_environment("OPENSRO_QA_SHOTS_FROM"))
 var _qa_shot_index := -1
 var _qa_shot_frames := 0
 
@@ -29618,8 +29768,8 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if _last_known_gold < 0 or NetClient.last_stats_reply_requested:
 		_last_known_gold = stats.gold
 	if OS.get_environment("OPENSRO_QA_STATS_LOG") != "":
-		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
-			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])
+		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d STR %d INT %d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
+			stats.hp, stats.max_hp, stats.mp, stats.max_mp, stats.str, stats.intel, str(_sit.sitting), _qa_pelvis_height()])
 	# While dead the HP a stats reply carries is not taken (round 607's third
 	# review): a regen push built before a lethal blow can arrive after the
 	# blow's HP 0 and drew a live bar on a dead character. A dead character's

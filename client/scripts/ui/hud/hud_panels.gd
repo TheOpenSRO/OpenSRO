@@ -4386,6 +4386,7 @@ func qa_show_item_tips(spec: String) -> void:
 ## window's hover shows it, drawn down the right edge and printed as a
 ## `QA AVATAR TIP` line; and where each avatar window is (`QA SLOT avatar`).
 func qa_show_avatar_tips() -> void:
+	qa_hide_avatar_tips()
 	var view := get_viewport_rect().size
 	var y := 8.0
 	var storage: Dictionary = NetClient.last_avatar_instances
@@ -4400,12 +4401,24 @@ func qa_show_avatar_tips() -> void:
 		var lines := item_tip_lines(it.ref_item_id, "avatar", int(shown[d]))
 		var b := ItemTooltipBubble.new(_builder)
 		add_child(b)
+		_qa_avatar_tip_bubbles.append(b)
 		b.show_lines(lines, Rect2())
 		b.position = Vector2(view.x - b.size.x - 8, y)
 		y += b.size.y + 8
 		print("QA AVATAR TIP window %d storage %d item %d: %s" % [d, int(shown[d]), it.ref_item_id,
 			ItemTooltipLines.as_text(lines).replace("\n", " | ")])
 	print("QA AVATAR SKILL STRIP %s" % ("shown" if _avatar_skill_strip_shown() else "hidden"))
+
+## The bubbles qa_show_avatar_tips drew (round 789 lane E: a live run shows
+## the avatar view more than once -- after the equip, after a grant -- and
+## each show replaces the last one's bubbles rather than stacking them).
+var _qa_avatar_tip_bubbles: Array = []
+
+func qa_hide_avatar_tips() -> void:
+	for b in _qa_avatar_tip_bubbles:
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	_qa_avatar_tip_bubbles.clear()
 
 ## The lines of an item's tooltip (ItemTooltipLines.compose) with this
 ## client's text tables, type names, player and instance.

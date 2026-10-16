@@ -196,11 +196,58 @@ func _test_grant() -> void:
 		"the ability of (RefItemID, plus) falls back to the highest lower plus (FUN_008bf680)")
 	_check(ab.ability_entries(7, 0).size() == 1 and int(ab.ability_entries(7, 1)[0]["option"]) == 355, "an ability's entries by group")
 
+## Round 789 lane E: the rows' scroll manager draws after the five bars (the
+## bars were built after it and hid every row live). NEGATIVE: before the fix
+## the scroll manager stayed under the bars.
+func _test_grant_list_order() -> void:
+	var parent := Control.new()
+	var host := Control.new()
+	parent.add_child(host)
+	var bars: Array = []
+	for i in 5:
+		var bar := Control.new()
+		parent.add_child(bar)
+		bars.append(bar)
+	var after := Control.new()
+	parent.add_child(after)
+	GrantMagicAttributeWindow.raise_list(host, bars)
+	var over_all := true
+	for b in bars:
+		over_all = over_all and host.get_index() > (b as Control).get_index()
+	_check(over_all and after.get_index() == parent.get_child_count() - 1,
+		"the rows' scroll manager is drawn over the five bars, nothing else moved past (%d)" % host.get_index())
+	var other := Control.new()
+	var lone := Control.new()
+	other.add_child(lone)
+	GrantMagicAttributeWindow.raise_list(lone, bars)
+	_check(lone.get_index() == 0, "bars under another parent are not touched")
+	GrantMagicAttributeWindow.raise_list(null, bars)
+	parent.free()
+	other.free()
+	# The bar's texture is replaced, not put under its own 3-slice (NEGATIVE:
+	# the art went in at index 0, under three opaque pieces, and never showed).
+	var bar := Control.new()
+	for i in 3:
+		bar.add_child(TextureRect.new())
+	var tex_a := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+	var tex_b := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+	var art := GrantMagicAttributeWindow.apply_bar(bar, tex_a)
+	var pieces_hidden := true
+	for c in bar.get_children():
+		if c != art:
+			pieces_hidden = pieces_hidden and not (c as CanvasItem).visible
+	_check(art != null and art.visible and art.texture == tex_a and art.get_index() == bar.get_child_count() - 1 and pieces_hidden,
+		"the gil_bar02 art replaces the bar's own pieces (on top, the pieces hidden)")
+	var again := GrantMagicAttributeWindow.apply_bar(bar, tex_b)
+	_check(again == art and art.texture == tex_b and bar.get_child_count() == 4, "a second set swaps the texture on the same art")
+	bar.free()
+
 func _init() -> void:
 	_test_lines()
 	_test_avatar_tooltip()
 	_test_spirit_tooltip()
 	_test_grant()
+	_test_grant_list_order()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
