@@ -171,7 +171,6 @@ var knownOrphans = map[string]string{
 // Removing a line when its function gets wired (or deleted) is the point.
 var baseline = map[string]string{
 	"Accumulated":         "internal/combat/chancememory.go",
-	"AllMeshPaths":        "internal/bsr/bsr.go",
 	"AreaTargetShare":     "internal/skillparam/paramblock.go",
 	"ArmorClassOf":        "internal/equipment/defaultwear.go",
 	"ArmourLossSlot":      "internal/durability/durability.go",

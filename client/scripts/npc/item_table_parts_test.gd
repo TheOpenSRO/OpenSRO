@@ -29,6 +29,11 @@ func _row(id: int, code: String, model: String) -> String:
 	cols[54] = model.replace(".bsr", ".ddj")
 	return "\t".join(cols)
 
+## One text-table row in the retail shape: Service 1, the key, a Korean column,
+## five zeros, the English text twice, six zeros.
+func _text_row(key: String, english: String) -> String:
+	return "\t".join(PackedStringArray(["1", key, "kor", "0", "0", "0", "0", "0", english, english, "0", "0", "0", "0", "0", "0"]))
+
 func _utf16(text: String) -> PackedByteArray:
 	var out := PackedByteArray([0xFF, 0xFE])
 	out.append_array(text.to_utf16_buffer())
@@ -143,6 +148,38 @@ func _init() -> void:
 	lm.close()
 	DirAccess.remove_absolute(legacy_path)
 	ItemTableReader.clear_shared()
+
+	# Round 789: the name tables are the files textdataname.txt lists, so a
+	# pack adds one by listing it (the retail list names two).
+	var names_path := "user://opensro_item_names_list_test.pk2"
+	_archive(names_path, {
+		"textdataname.txt": _utf16("TextData_Equip&Skill.txt\r\nTextData_Object.txt\r\nTextData_Extra.txt\r\n"),
+		"textdata_equip&skill.txt": _utf16(_text_row("SN_ITEM_EQUIP", "Equip Name") + "\r\n"),
+		"textdata_object.txt": _utf16(_text_row("SN_ITEM_OBJECT", "Object Name") + "\r\n"),
+		"textdata_extra.txt": _utf16(_text_row("SN_ITEM_EXTRA", "Extra Name") + "\r\n"),
+	})
+	var nm := Pk2Reader.open(names_path)
+	_check(ItemTableReader.object_name_paths(nm) == PackedStringArray(["server_dep\\silkroad\\textdata\\TextData_Equip&Skill.txt",
+		"server_dep\\silkroad\\textdata\\TextData_Object.txt", "server_dep\\silkroad\\textdata\\TextData_Extra.txt"]),
+		"object_name_paths is textdataname.txt's list, in order (got %s)" % str(ItemTableReader.object_name_paths(nm)))
+	var names := ItemTableReader.load_object_names(nm)
+	_check(names != null and names.get_text("SN_ITEM_EQUIP") == "Equip Name" and names.get_text("SN_ITEM_OBJECT") == "Object Name"
+		and names.get_text("SN_ITEM_EXTRA") == "Extra Name", "a name from every listed table, the added one too")
+	nm.close()
+	DirAccess.remove_absolute(names_path)
+	# No list file: the two retail tables by name.
+	var nolist_path := "user://opensro_item_names_nolist_test.pk2"
+	_archive(nolist_path, {
+		"textdata_object.txt": _utf16(_text_row("SN_ITEM_OBJECT", "Object Name") + "\r\n"),
+		"textdata_extra.txt": _utf16(_text_row("SN_ITEM_EXTRA", "Extra Name") + "\r\n"),
+	})
+	var nl := Pk2Reader.open(nolist_path)
+	var nl_names := ItemTableReader.load_object_names(nl)
+	_check(ItemTableReader.object_name_paths(nl) == PackedStringArray(ItemTableReader.OBJECT_NAME_PATHS)
+		and nl_names != null and nl_names.get_text("SN_ITEM_OBJECT") == "Object Name" and not nl_names.has("SN_ITEM_EXTRA"),
+		"without textdataname.txt the fallback pair is read and nothing else")
+	nl.close()
+	DirAccess.remove_absolute(nolist_path)
 
 	if _failures == 0:
 		print("ALL PASS")

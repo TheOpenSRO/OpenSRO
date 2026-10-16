@@ -105,3 +105,23 @@ image/texture library can load `data[20:]` directly once the wrapper is stripped
 - Each payload is twice its declared chain, and the size field is 256 bytes larger than the file.
 - `DdjReader.to_image` reads the top level, clamps each channel to 0..1 and rounds it to 8 bits,
   and lets Godot build the mipmaps (OURS: clean mips, not retail's look when minified).
+
+## Writing a .ddj (round 789)
+
+`server/internal/ddj` decodes every level (DXT1/3/5, masked RGB) and encodes DXT1, DXT3, DXT5 and
+A8R8G8B8 with a mip chain; `server/cmd/ddjtool` wraps it (`info`, `decode`, `encode -like
+base.ddj`). The header shapes it writes are copied from retail files (MEASURED, round 789):
+
+| Kind | Example | DDS flags | caps | mips | pixel format |
+|---|---|---|---|---|---|
+| item texture | `avatar_m_knight_3.ddj` 512x512 DXT3, `avatar_w_fur.ddj` 512x512 DXT1, `e060823_satgat_hp.ddj` 256x256 DXT1 | `0x21007` | `0x401008` | the chain to 1x1 (10, 10, 9) | FourCC, pitch 0 |
+| item icon | `icon\item\Avatar\mall_avatar_*.ddj` | `0x1007` | `0x1002` | 0 | `0x41`, 32-bit, masks `0xff0000/0xff00/0xff/0xff000000` |
+
+The wrapper's size word is the file length minus 12 and its second word 3 in all of them.
+`ddjtool encode -like` reproduces the first 148 bytes (wrapper and DDS header) of
+`avatar_w_fur.ddj` and `avatar_m_knight_3.ddj` exactly, and re-encoding the decoded knight
+texture differs from it by under 0.4 per channel on average (MEASURED). The mip filter (2x2 box)
+and the DXT endpoint choice are OURS. Not every texture's alpha is transparency: 95 % of
+`avatar_m_knight_3.ddj`'s texels are under 128 on an alpha-tested (`0x341`) layer, so its alpha
+must be the object's env-map mask, not a cut-out (MEASURED; INFERRED that a mod overrides the
+test, BMT_FORMAT.md "Environment-map mods").

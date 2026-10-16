@@ -857,6 +857,29 @@ frames, `--shrink=<f>` scales every body piece towards its bones first, `--bind`
 and `--norender` skips the lineups. `probe_body_armour.gd --body=<.bsr> --items=<a.bsr,b.bsr>` counts
 an item's vertices that sit on a body vertex (headless; pass paths with `/`, which survive the ssh).
 
+### Avatar items and retextures: `avatar_retexture_probe.gd` (round 789)
+
+`avatar_retexture_probe.gd` builds avatar items (or any worn item) through `CharacterAppearance` on
+the first Figure of each race of the item's sex, and checks a new item's whole chain:
+
+- `--chain=<id,...>` (headless, `remote_godot.sh script`): the row's name (through the tables
+  `textdataname.txt` lists), its icon, its `.bsr`, the `.bsr`'s material and meshes, the `.bmt`'s
+  layers and their `.ddj`, each with the layer that served it (`overlay` or `archive`); a link that
+  does not resolve is `PARITY FAIL`.
+- `--items=<id,...>` / `--outfits=<id+id,...>` with `--out=<dir>` (GL context): front and back of
+  each item (or group worn together) on a China and a Europe body, one PNG per entry.
+- `--dump=<dir>` with `--items`: each item's meshes as JSON (bind-pose positions, normals, UVs,
+  triangles) for a texture painter. Game data: keep it on the box.
+- `--overlay=<dir>`: loose files under `<dir>` by their pk2 path, served before the archives
+  (`<dir>/res/item/avatar/x.bsr` answers `res\item\avatar\x.bsr`, case ignored). It is the probe's
+  stand-in for the pack layer, so an unpacked `.pk3` can be checked before the client reads packs.
+
+GL runs need `xvfb-run` + `vglrun` as `appearance_probe.gd` does; round 789's lane used
+`/var/tmp/x789/src/gl.sh <log> res://tools/avatar_retexture_probe.gd -- --pk2=... --media=...
+--overlay=/var/tmp/x789/pack --out=/var/tmp/x789/shots --outfits=78901+78903,78902+78904`.
+The texture formats and the `.bsr`/`.bmt` copies are made with `server/cmd/ddjtool` and
+`server/cmd/retexture`; the recipe is `docs/rounds/r789x.md`.
+
 ### Bodies in the world: clips, T-poses and feet (round 689)
 
 `body_anim_probe.gd` (headless, `remote_godot.sh script`) builds every one of the 52 Figures and,
