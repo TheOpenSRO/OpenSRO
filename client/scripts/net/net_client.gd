@@ -77,6 +77,24 @@ var last_inventory_capacity: int = 0
 var last_inventory_instances: Dictionary = {}
 var last_equipment_instances: Dictionary = {}
 var last_storage_instances: Dictionary = {}
+## Round 789: the avatar inventory (AvatarNet), beside the bag, the worn list
+## and the warehouse: storage slot 0..4 -> ItemInstance, from the avatar list
+## (0x0045, 0x3013's avatar section) and every avatar move's reply applied to
+## it as the client applies 0xB034 (c:0x87ba20). Empty until the list comes.
+var last_avatar_instances: Dictionary = {}
+var avatar_list_received := false
+## The avatar list arrived (a whole new avatar inventory).
+signal avatar_list_result(items: Dictionary)
+## An avatar move's reply (AvatarNet.decode_move_ack), after it was applied
+## to last_avatar_instances and last_inventory_instances.
+signal avatar_move_result(result: Dictionary)
+## An avatar grant's reply (AvatarNet.decode_grant_ack), after a granted item
+## replaced its bag instance.
+signal avatar_grant_result(result: Dictionary)
+## What each 0x7034 sent is, oldest first ("avatar" or "item"): a refusal
+## (u8 2, u16 code) names no type, so it is routed to whoever sent first.
+## OURS bookkeeping; the client keeps one request pending (c:0x7999c0).
+var _item_op_kinds: Array = []
 var _logged_instances: Dictionary = {}
 ## The bag after a move_item (the server's own list, not an assumption), or
 ## why the move was refused.
@@ -707,7 +725,7 @@ func _passes_group(p: Packet) -> bool:
 				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
 				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
-				GameClock.OP_POSITION, GameClock.OP_UPDATE:
+				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -992,6 +1010,9 @@ var last_friend_list: Array = []
 var has_friend_list := false
 
 func _forget_session_lists() -> void:
+	last_avatar_instances = {}
+	avatar_list_received = false
+	_item_op_kinds = []
 	last_guild_result = null
 	last_friend_list = []
 	has_friend_list = false
@@ -1124,6 +1145,29 @@ func spend_stat_points(char_name: String, str_points: int, int_points: int) -> v
 
 func list_equipment(char_name: String) -> void:
 	_send(EquipmentNet.OP_LIST, EquipmentNet.encode_list_request(char_name))
+	# Round 789 (OURS, AvatarNet): the avatar inventory is asked for with the
+	# worn list, as retail's 0x3013 carries it after the inventory.
+	list_avatars(char_name)
+
+## Round 789: the avatar inventory (AvatarNet.OP_LIST_REQUEST, answered by
+## AvatarNet.OP_LIST -> avatar_list_result).
+func list_avatars(char_name: String) -> void:
+	_send(AvatarNet.OP_LIST_REQUEST, AvatarNet.encode_list_request(char_name))
+
+## Round 789: bag index -> avatar storage slot (0x7034 type 0x24).
+func avatar_equip(bag_slot: int, avatar_slot: int) -> void:
+	_item_op_kinds.append("avatar")
+	_send(AvatarNet.OP_ITEM_MOVE, AvatarNet.encode_equip(bag_slot, avatar_slot))
+
+## Round 789: avatar storage slot -> the bag index clicked (0x7034 type 0x23).
+func avatar_unequip(avatar_slot: int, bag_slot: int) -> void:
+	_item_op_kinds.append("avatar")
+	_send(AvatarNet.OP_ITEM_MOVE, AvatarNet.encode_unequip(avatar_slot, bag_slot))
+
+## Round 789: grant `code` (a MATTR_ name) to the avatar in bag index
+## `bag_slot` (0x34A9 -> 0x34AA, avatar_grant_result).
+func avatar_grant(bag_slot: int, code: String) -> void:
+	_send(AvatarNet.OP_GRANT, AvatarNet.encode_grant(bag_slot, code))
 
 func equip(char_name: String, slot: int, inventory_slot: int) -> void:
 	_send(EquipmentNet.OP_EQUIP, EquipmentNet.encode_equip(char_name, slot, inventory_slot))
@@ -1150,14 +1194,17 @@ func sell_item(char_name: String, slot: int, quantity: int) -> void:
 ## Round 728, the retail item operation (ItemOpNet): split count of bag slot
 ## src into empty bag slot dst (0x7034 type 0).
 func split_item(src: int, dst: int, count: int) -> void:
+	_item_op_kinds.append("item")
 	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_split(src, dst, count))
 
 ## Sells count of bag slot src to NPC npc (0x7034 type 9).
 func sell_item_retail(src: int, count: int, npc: int) -> void:
+	_item_op_kinds.append("item")
 	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_sell(src, count, npc))
 
 ## Deposits bag slot src's whole stack into warehouse slot dst (0x7034 type 2).
 func deposit_retail(src: int, dst: int, npc: int) -> void:
+	_item_op_kinds.append("item")
 	_send(ItemOpNet.OP_MOVE, ItemOpNet.encode_deposit(src, dst, npc))
 
 ## Buys entry index (0 = the oldest) of the buy-back list back (0x7168).
@@ -1940,7 +1987,16 @@ func _dispatch(p: Packet) -> void:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
 		ItemOpNet.OP_MOVE_RESULT:
-			item_op_result.emit(ItemOpNet.decode_result(p.data))
+			# Round 789: an avatar move's reply (its type byte, or a refusal
+			# while an avatar move is the oldest one out) is AvatarNet's.
+			# A buy back's success comes here too (type 0x22) but was sent as
+			# 0x7168: it takes no entry.
+			var buyback := p.data.size() >= 2 and p.data[0] == 1 and p.data[1] == ItemOpNet.TYPE_BUYBACK
+			var kind: String = _item_op_kinds.pop_front() if not buyback and not _item_op_kinds.is_empty() else ""
+			if AvatarNet.is_move_ack(p.data) or (kind == "avatar" and p.data.size() >= 1 and p.data[0] == 2):
+				_on_avatar_move_ack(p.data)
+			else:
+				item_op_result.emit(ItemOpNet.decode_result(p.data))
 		ItemOpNet.OP_BUYBACK_FAIL:
 			var f := ItemOpNet.decode_result(p.data)
 			buyback_failed.emit(int(f.get("code", 0)))
@@ -2292,6 +2348,25 @@ func _dispatch(p: Packet) -> void:
 			var r := AlchemyNet.decode_result(p.data, p.opcode == AlchemyNet.OP_REINFORCE_RESULT)
 			if r != null:
 				alchemy_result.emit(r)
+		AvatarNet.OP_LIST:
+			var al := AvatarNet.decode_list(p.data)
+			if al.has("error"):
+				push_warning("NetClient: avatar list: %s" % al["error"])
+			else:
+				last_avatar_instances = _note_instances("avatar", al["items"])
+				avatar_list_received = true
+				avatar_list_result.emit(last_avatar_instances)
+		AvatarNet.OP_GRANT_ACK:
+			var ga := AvatarNet.decode_grant_ack(p.data)
+			if ga.has("error"):
+				push_warning("NetClient: avatar grant reply: %s" % ga["error"])
+			else:
+				if bool(ga["ok"]) and ga["item"] != null:
+					# READ c:0x899f40: the new item is put at bag index slot - 13.
+					var it: ItemInstance = ga["item"]
+					last_inventory_instances[it.slot] = it
+					_note_instances("bag", {it.slot: it})
+				avatar_grant_result.emit(ga)
 		ItemInstance.OP_MORE:
 			# The rest of a list's item instances (round 732 review F8).
 			if p.data.size() >= 1:
@@ -2308,6 +2383,39 @@ func _dispatch(p: Packet) -> void:
 				(_extra_handlers[p.opcode] as Callable).call(p.data)
 			elif _should_warn_unhandled(p.opcode):
 				push_warning("NetClient: unhandled opcode 0x%04x (warned once per connection)" % p.opcode)
+
+## Round 789: an avatar move's 0xB034 applied as the client applies it (READ
+## c:0x87ba20): 0x24 moves bag src-13 into avatar storage dst, 0x23 avatar
+## src into bag dst-13, then each sub-op the same way; then avatar_move_result.
+func _on_avatar_move_ack(data: PackedByteArray) -> void:
+	var r := AvatarNet.decode_move_ack(data)
+	if r.has("error"):
+		push_warning("NetClient: avatar move reply: %s" % r["error"])
+		return
+	if bool(r["ok"]):
+		var moves: Array = [r]
+		moves.append_array(r["subs"])
+		for m in moves:
+			_apply_avatar_move(int(m["type"]), int(m["src"]), int(m["dst"]))
+		print("NetClient: avatar move 0x%02x %d -> %d (%d sub-op(s)); avatars %s" % [int(r["type"]), int(r["src"]), int(r["dst"]),
+			(r["subs"] as Array).size(), str(last_avatar_instances.keys())])
+	else:
+		print("NetClient: avatar move refused (code 0x%x)" % int(r["code"]))
+	avatar_move_result.emit(r)
+
+func _apply_avatar_move(type: int, src: int, dst: int) -> void:
+	if type == AvatarNet.TYPE_BAG_TO_AVATAR:
+		var it = last_inventory_instances.get(src - AvatarNet.BAG_OFFSET)
+		last_inventory_instances.erase(src - AvatarNet.BAG_OFFSET)
+		if it != null:
+			(it as ItemInstance).slot = dst
+			last_avatar_instances[dst] = it
+	elif type == AvatarNet.TYPE_AVATAR_TO_BAG:
+		var it = last_avatar_instances.get(src)
+		last_avatar_instances.erase(src)
+		if it != null:
+			(it as ItemInstance).slot = dst - AvatarNet.BAG_OFFSET
+			last_inventory_instances[dst - AvatarNet.BAG_OFFSET] = it
 
 ## Keeps a list's item instances and logs each one whose data changed since
 ## it was last logged (round 732): the record, the variance groups and the

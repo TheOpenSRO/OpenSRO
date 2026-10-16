@@ -51,6 +51,10 @@ static func kind_of(item: ItemTableReader.Item) -> String:
 static func fields(item: ItemTableReader.Item, inst: Object) -> Dictionary:
 	if item == null or inst == null or not _scripts():
 		return {}
+	# Round 789: an avatar's or devil's spirit's tooltip takes its options
+	# raw (ItemTooltipLines.compose_avatar / compose_devil_spirit).
+	if item.is_avatar() or item.is_devil_spirit():
+		return avatar_fields(item, inst)
 	var Q = _quality
 	var plus: int = int(inst.call("effective_plus"))
 	var out := {"plus": plus, "adv_elixir": int(inst.get("adv_elixir"))}
@@ -128,6 +132,55 @@ static func fields(item: ItemTableReader.Item, inst: Object) -> Dictionary:
 		out["durability_cur"] = int(inst.get("durability"))
 	out["stats"] = s
 	out["magic_options"] = blue_lines(inst, item.item_class)
+	return out
+
+## Round 789: an avatar's or devil's spirit's instance fields: the plus, the
+## period word (a devil's spirit's: activated << 31 | seconds left, READ
+## s:0x42e5c3) and each option as {"code", "value", "pct", "level"} for
+## ItemTooltipLines.avatar_blue_lines ("?<id>" for an id the table lacks).
+static func avatar_fields(item: ItemTableReader.Item, inst: Object) -> Dictionary:
+	var out := {"plus": int(inst.call("effective_plus")), "adv_elixir": int(inst.get("adv_elixir"))}
+	if item.is_devil_spirit():
+		out["period"] = int(inst.get("durability"))
+	out["avatar_options"] = option_entries(inst, item.item_class)
+	out["magic_options"] = blue_lines(inst, item.item_class)
+	return out
+
+## The options of an instance (duck-typed ItemInstance) as avatar_fields
+## gives them.
+static func option_entries(inst: Object, item_class: int = 0) -> Array:
+	var out: Array = []
+	var table = _magic.get("shared") if _magic != null else null
+	var n: int = int(inst.call("option_count"))
+	for i in n:
+		var id: int = int(inst.call("option_id", i))
+		var value: int = int(inst.call("option_value", i))
+		var row = table.row(id) if table != null else null
+		if row == null:
+			out.append({"code": "?%d" % id, "value": value, "pct": 0, "level": 0})
+			continue
+		out.append({"code": String(row.code), "value": value, "pct": int(table.option_pct(id, value, item_class)),
+			"level": int(row.degree)})
+	return out
+
+## Round 789: a devil's spirit's ability lines (READ c:0x67b460): for group 0,
+## 1, 2 the entries of the ability of (RefItemID, plus) (AvatarTables), each
+## {"code", "value", "pct" 0, "level", "text"} -- the option's MATTR code from
+## the magicoption table, or the entry's own text key.
+static func spirit_groups(tables: AvatarTables, ref_id: int, plus: int) -> Array:
+	var out: Array = [[], [], []]
+	if tables == null:
+		return out
+	_scripts()
+	var ability := tables.ability_of(ref_id, plus)
+	if ability < 0:
+		return out
+	var table = _magic.get("shared") if _magic != null else null
+	for g in 3:
+		for e in tables.ability_entries(ability, g):
+			var row = table.row(int(e["option"])) if table != null else null
+			(out[g] as Array).append({"code": String(row.code) if row != null else "?%d" % int(e["option"]),
+				"value": int(e["value"]), "pct": 0, "level": int(row.degree) if row != null else 0, "text": String(e["text"])})
 	return out
 
 ## The blue lines (MagicOptionTable.format_line); an option whose format is

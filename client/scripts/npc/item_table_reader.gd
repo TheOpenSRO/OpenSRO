@@ -285,6 +285,15 @@ const COL_PHYS_ABSORB_MAX := 72
 const COL_MAG_ABSORB_MIN := 79
 const COL_MAG_ABSORB_MAX := 80
 const COL_MAX_MAGIC_OPTIONS := 158
+## Round 789 (avatars; /root/opensro-pk3av789/AVATAR_RESEARCH.md 2.2, 6.1):
+## Param2 (120: a devil's spirit's "may be reinforced" flag, the alchemy
+## window's 0xe test, AVATAR_ALCHEMY_RESEARCH.md 2), Param7 (130: an avatar's
+## body-region mask, the second key of its charactervisualchange row) and
+## ChildItemCount (159: a dress that takes an attachment; ref +0x535 on the
+## client, INFERRED from its use, READ +0x53d on the server).
+const COL_PARAM2 := 120
+const COL_PARAM7 := 130
+const COL_CHILD_ITEM_COUNT := 159
 ## The per-plus increments, in PLUS_INC_* order: PD 67, ER 70, PAR 73, MD 78,
 ## MAR 81, phy. atk 99, mag. atk 104, attack rate 115 (the fifth float of each
 ## group; ITEM_FORMAT.md). Lane B's "(+x%)" subtracts them (item_tooltip.md §2).
@@ -431,6 +440,10 @@ class Item:
 	var req_str: int = 0
 	var req_int: int = 0
 	var max_magic_options: int = 0
+	## Round 789: Param2, Param7 and ChildItemCount (COL_PARAM2 and on).
+	var param2: int = 0
+	var param7: int = 0
+	var child_item_count: int = 0
 	var parry := Vector2.ZERO
 	var phys_absorb := Vector2.ZERO
 	var mag_absorb := Vector2.ZERO
@@ -458,6 +471,23 @@ class Item:
 
 	func is_weapon() -> bool:
 		return family() == FAMILY_WEAPON
+
+	## The item ref's TypeID word (+0x80), READ s:0x48f610 / c:0x6abcd0:
+	## CashItem | Bionic << 1 | TypeID1 << 2 | TypeID2 << 5 | TypeID3 << 7 |
+	## TypeID4 << 11 (round 789, AVATAR_RESEARCH.md).
+	func type_word() -> int:
+		if type_ids.size() < 4:
+			return 0
+		return (cash_item & 1) | ((bionic & 1) << 1) | (type_ids[0] << 2) | (type_ids[1] << 5) \
+			| (type_ids[2] << 7) | (type_ids[3] << 11)
+
+	## An avatar (TypeID 3/1/13: hat 1, dress 2, attachment 3, flag 4).
+	func is_avatar() -> bool:
+		return type_ids.size() >= 4 and type_ids[0] == 3 and type_ids[1] == 1 and type_ids[2] == 13
+
+	## A devil's spirit (TypeID 3/1/14).
+	func is_devil_spirit() -> bool:
+		return type_ids.size() >= 4 and type_ids[0] == 3 and type_ids[1] == 1 and type_ids[2] == 14
 
 	func is_armour() -> bool:
 		return CHINA_ARMOUR_FAMILIES.has(family()) or EUROPE_ARMOUR_FAMILIES.has(family())
@@ -596,6 +626,9 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.req_str = _int_at(cols, COL_REQ_STR)
 		item.req_int = _int_at(cols, COL_REQ_INT)
 		item.max_magic_options = _int_at(cols, COL_MAX_MAGIC_OPTIONS)
+		item.param2 = _int_at(cols, COL_PARAM2)
+		item.param7 = _int_at(cols, COL_PARAM7)
+		item.child_item_count = _int_at(cols, COL_CHILD_ITEM_COUNT)
 		item.parry = Vector2(_float_at(cols, COL_PARRY_MIN), _float_at(cols, COL_PARRY_MAX))
 		item.phys_absorb = Vector2(_float_at(cols, COL_PHYS_ABSORB_MIN), _float_at(cols, COL_PHYS_ABSORB_MAX))
 		item.mag_absorb = Vector2(_float_at(cols, COL_MAG_ABSORB_MIN), _float_at(cols, COL_MAG_ABSORB_MAX))
@@ -665,6 +698,9 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 	# Round 731: a library from before these columns has none (all 0).
 	var ext_ints: PackedInt64Array = rows.get("ext_ints", PackedInt64Array())
 	var ext_floats: PackedFloat64Array = rows.get("ext_floats", PackedFloat64Array())
+	# Round 789: a library from before these columns has none (all 0: no
+	# avatar finds its visual row, so none is drawn -- build the library).
+	var avatar_ints: PackedInt64Array = rows.get("avatar_ints", PackedInt64Array())
 	var m := 0
 	for i in ids.size():
 		var item := Item.new()
@@ -744,6 +780,11 @@ static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
 		else:
 			for k in range(8):
 				item.plus_incs.append(0.0)
+		var av := i * 3
+		if av + 2 < avatar_ints.size():
+			item.param2 = avatar_ints[av]
+			item.param7 = avatar_ints[av + 1]
+			item.child_item_count = avatar_ints[av + 2]
 		into[item.id] = item
 	return true
 

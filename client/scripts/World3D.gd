@@ -2112,6 +2112,11 @@ func _ready() -> void:
 	NetClient.unstuck_result.connect(_on_unstuck_result)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
+	# Round 789: this player's avatar inventory and its moves (AvatarNet).
+	NetClient.avatar_list_result.connect(func(_items: Dictionary) -> void: _sync_player_avatars("avatar list"))
+	NetClient.avatar_move_result.connect(func(r: Dictionary) -> void:
+		if bool(r.get("ok", false)):
+			_sync_player_avatars("avatar move"))
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
 	NetClient.recall_designate_result.connect(_on_recall_designate_result)
@@ -2480,7 +2485,7 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 635: a body dressed before the block existed gets its portrait now
 	# (retail's block is created dirty: +0x38c = 1 in its constructor).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
-		_refresh_player_portrait(_player_skeleton, _player_equipped_last, _player_body)
+		_refresh_player_portrait(_player_skeleton, _with_player_avatars(_player_equipped_last), _player_body)
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -2645,7 +2650,7 @@ func _try_initialize_pk2_ui() -> void:
 	# the portrait does above (round 695: a QA run's loadout dresses before
 	# the HUD is built, and _refresh_paper_doll returns without panels).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton) and _paper_doll == null:
-		_refresh_paper_doll(_player_equipped_last, _player_body)
+		_refresh_paper_doll(_with_player_avatars(_player_equipped_last), _player_body)
 	# QA: rearrange the bag once (OPENSRO_QA_MOVE="from,to") so a render's
 ##   OPENSRO_QA_STORAGE_ITEM=1 (needs --server) unequip the boots into the bag, open the
 ##                          warehouse, the quantity dialog, and deposit 1 of the
@@ -11510,6 +11515,16 @@ func _load_character_assets() -> void:
 	var t_cat := Time.get_ticks_usec()
 	var bodies: CharCatalog = cboot.bodies if cboot.bodies != null else CharCatalog.new()
 	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
+	# Round 789 (QA): OPENSRO_QA_AVATAR_ARBITRATION=0 draws every worn visual as
+	# before the charactervisualchange arbitration (the "before" picture), and
+	# OPENSRO_QA_AVATAR_HAIR=0 keeps the hair under a hat (the INFERRED rule
+	# off). Real play never sets them.
+	if OS.get_environment("OPENSRO_QA_AVATAR_ARBITRATION") == "0":
+		_appearance.visual_change = null
+	if OS.get_environment("OPENSRO_QA_AVATAR_HAIR") == "0":
+		_appearance.hide_hair_by_mask = false
+	if _appearance.visual_change != null:
+		print("World3D: charactervisualchange: %d row(s) for the avatar arbitration" % _appearance.visual_change.rows.size())
 	# The weapon glow's particles (round 734) come from the world's own reader.
 	_appearance.particles = _open_particles_pk2_if_set()
 	# Round 762: the far crowd's twin shaders made as templates are adopted.
@@ -11856,6 +11871,11 @@ func _try_apply_real_player_character() -> void:
 ## character" (playtest 2026-09-20).
 func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_equipped_last = equipped
+	# Round 789: the avatars ride along under their OURS keys
+	# (CharacterAppearance.AVATAR_KEY_BASE); the body, the paper doll and the
+	# portrait are built from both, and the visual arbitration decides what
+	# shows (READ AVATAR_RESEARCH.md 6.3: one CObjCharacter path for all).
+	equipped = _with_player_avatars(equipped)
 	var pluses := _player_pluses()
 	_player_pluses_last = pluses
 	var gender := DEFAULT_GENDER
@@ -14482,7 +14502,102 @@ func _player_pluses() -> Dictionary:
 			var p := it.effective_plus() & 0xFF
 			if p != 0:
 				out[int(slot)] = p
+	# Round 789: the avatars' (their 0x3013 record's OptLevel, READ c:0x9d9cf6).
+	for key in _player_avatar_pluses:
+		out[int(key)] = int(_player_avatar_pluses[key])
 	return out
+
+# --- this player's avatars (round 789) ---------------------------------------------
+#
+# READ (AVATAR_RESEARCH.md 3.1, 5.2, 6.3): 0x3013 attaches every avatar of the
+# avatar inventory to the player's CObjCharacter (AttachAvatarVisual,
+# c:0x9d9cf6), and 0x3038 / 0x3039 for the player's own uid attach / detach
+# one by RefItemID (c:0x8a9260 / c:0x8a9560) -- the move's 0xB034 comes after
+# them. Here the avatar list (OpenSRO's carrier of 0x3013's section) sets the
+# worn avatars, the broadcasts add or take one, and a move's reply
+# re-reads the inventory (a server that sent no broadcast still redresses);
+# a set already drawn is not rebuilt.
+
+## OURS key (CharacterAppearance.AVATAR_KEY_BASE + n) -> RefItemID, and the
+## key's plus.
+var _player_avatars := {}
+var _player_avatar_pluses := {}
+
+## `equipped` with this player's avatars under their keys; with no server, a
+## QA loadout's own avatar keys (OPENSRO_QA_EQUIP "200=<id>") stand.
+func _with_player_avatars(equipped: Dictionary) -> Dictionary:
+	if _player_avatars.is_empty():
+		return equipped
+	var out := equipped.duplicate()
+	for key in _player_avatars:
+		out[int(key)] = int(_player_avatars[key])
+	return out
+
+## The avatars as a sorted [ref, plus] list, to tell a change from a repeat.
+static func _avatar_signature(avatars: Dictionary, pluses: Dictionary) -> Array:
+	var sig: Array = []
+	for key in avatars:
+		sig.append([int(avatars[key]), int(pluses.get(key, 0))])
+	sig.sort()
+	return sig
+
+## The worn avatars from NetClient's avatar inventory (storage slot -> key);
+## the player is redressed when they changed.
+func _sync_player_avatars(why: String) -> void:
+	var avatars := {}
+	var pluses := {}
+	for slot in NetClient.last_avatar_instances:
+		var it: ItemInstance = NetClient.last_avatar_instances[slot]
+		if it == null:
+			continue
+		var key := CharacterAppearance.AVATAR_KEY_BASE + int(slot)
+		avatars[key] = it.ref_item_id
+		var p := it.effective_plus() & 0xFF
+		if p != 0:
+			pluses[key] = p
+	_set_player_avatars(avatars, pluses, why)
+
+func _set_player_avatars(avatars: Dictionary, pluses: Dictionary, why: String) -> void:
+	if _avatar_signature(avatars, pluses) == _avatar_signature(_player_avatars, _player_avatar_pluses):
+		return
+	_player_avatars = avatars
+	_player_avatar_pluses = pluses
+	print("World3D: player avatars %s (%s)" % [str(_player_avatars), why])
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		_apply_player_equipment_visual(_player_equipped_last)
+
+## Whether an item id is an avatar or a devil's spirit (TypeID 3/1/13 or
+## 3/1/14): the 0x3038 / 0x3039 avatar branch (READ c:0x8a9260).
+func _is_avatar_item(item_id: int) -> bool:
+	var it: ItemTableReader.Item = _item_rows.get(item_id)
+	return it != null and (it.is_avatar() or it.is_devil_spirit())
+
+## A 0x3038 (plus >= 0) or 0x3039 of an avatar on a worn map: attached by
+## RefItemID under the first free avatar key, or detached by RefItemID -- the
+## message's slot byte is not used (READ c:0x8a9260 / c:0x8a9560). Returns
+## the maps changed in place.
+static func avatar_broadcast_into(worn: Dictionary, pluses: Dictionary, ref_id: int, plus: int) -> void:
+	var held := -1
+	for key in worn:
+		if CharacterAppearance.is_avatar_key(int(key)) and int(worn[key]) == ref_id:
+			held = int(key)
+	if plus < 0:
+		if held >= 0:
+			worn.erase(held)
+			pluses.erase(held)
+		return
+	if held < 0:
+		for k in CharacterAppearance.AVATAR_KEYS:
+			if not worn.has(CharacterAppearance.AVATAR_KEY_BASE + k):
+				held = CharacterAppearance.AVATAR_KEY_BASE + k
+				break
+	if held < 0:
+		return
+	worn[held] = ref_id
+	if plus > 0:
+		pluses[held] = plus
+	else:
+		pluses.erase(held)
 
 ## Loads a real Map.pk2 region's real object placements (OPENSRO_MAPO_PATH,
 ## e.g. "0\\0.o", via OPENSRO_MAP_PK2_PATH -- same archive as
@@ -15693,6 +15808,11 @@ func _update_blob_shadow() -> void:
 ##                          its drawn particles are along and off the weapon's
 ##                          own bone axis (EquipFx.measure), and where round
 ##                          734's position-only placement put them
+##   OPENSRO_QA_AVATAR_ARBITRATION=0  (round 789) draw every worn visual, as
+##                          before the charactervisualchange arbitration; and
+##   OPENSRO_QA_AVATAR_HAIR=0  keep the hair under a hat (CharacterAppearance.
+##                          hide_hair_by_mask off). Avatars go in OPENSRO_QA_EQUIP
+##                          under their keys 200..204 ("200=<hat id>,201=<dress id>").
 ##   OPENSRO_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -21377,10 +21497,19 @@ func _other_by_uid(uid: int) -> int:
 ## removal.
 func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) -> void:
 	var op := 0x3038 if plus >= 0 else 0x3039
+	var avatar := _is_avatar_item(ref_id)
 	# Retail tells the mover too (its handlers' own-uid branch updates the
 	# character window and preview); this client did that from its equipment
 	# result (0x0041), which the server sends first.
 	if NetClient.own_character_id >= 0 and uid == (NetClient.own_character_id & 0xffffffff):
+		if avatar:
+			# Round 789: an avatar is drawn from the broadcast, as retail draws
+			# it (READ c:0x8a9260 own-uid branch -> AttachAvatarVisual).
+			var mine := _player_avatars.duplicate()
+			var mine_pluses := _player_avatar_pluses.duplicate()
+			avatar_broadcast_into(mine, mine_pluses, ref_id, plus)
+			_set_player_avatars(mine, mine_pluses, "0x%x avatar %d" % [op, ref_id])
+			return
 		print("World3D: 0x%x for this player -- drawn from the equipment result" % op)
 		return
 	var id := _other_by_uid(uid)
@@ -21400,7 +21529,14 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 	var worn: Dictionary = (kept.equipped if kept != null else _other_equipped.get(id, {}) as Dictionary).duplicate()
 	var pluses: Dictionary = (kept.pluses if kept != null else _other_pluses.get(id, {}) as Dictionary).duplicate()
 	var same_item := plus >= 0 and worn.has(slot) and int(worn[slot]) == ref_id
-	if plus >= 0:
+	if avatar:
+		# Round 789: by RefItemID, the slot byte ignored (READ c:0x8a9260 /
+		# c:0x8a9560 -> FUN_00a60ef0 / FUN_00a60470).
+		same_item = false
+		avatar_broadcast_into(worn, pluses, ref_id, plus)
+		print("World3D: player %d avatar %s item %d at +%d; avatars %s" % [id, "on" if plus >= 0 else "off", ref_id, maxi(plus, 0),
+			str(worn.keys().filter(func(k): return CharacterAppearance.is_avatar_key(int(k))))])
+	elif plus >= 0:
 		worn[slot] = ref_id
 		if plus > 0:
 			pluses[slot] = plus
@@ -21409,7 +21545,8 @@ func _on_other_equipment_changed(uid: int, slot: int, ref_id: int, plus: int) ->
 	else:
 		worn.erase(slot)
 		pluses.erase(slot)
-	print("World3D: player %d now wears slot %d item %d at +%d" % [id, slot, int(worn.get(slot, 0)), int(pluses.get(slot, 0))])
+	if not avatar:
+		print("World3D: player %d now wears slot %d item %d at +%d" % [id, slot, int(worn.get(slot, 0)), int(pluses.get(slot, 0))])
 	if kept != null:
 		kept.equipped = worn
 		kept.pluses = pluses
@@ -23525,6 +23662,11 @@ func _on_npc_opened(id: int) -> void:
 					_talk_npc_code)
 		3:
 			_hud_panels.open_storage(_talk_npc_name)
+		0x20:
+			# Round 789: 0xB046 {1, 0x20} -> the grant window and the inventory
+			# beside it (READ c:0x888e30 -> 0x79d4a0(1), 0x79af20).
+			var grant := _hud_panels.open_grant_window()
+			print("NPC grant window: %s" % ("open" if grant != null else "unavailable"))
 
 ## The talk window, the store or the storage went away (HudPanels'
 ## npc_window_hidden): the end request 0x704B (READ: the NPC window's close
@@ -23906,6 +24048,11 @@ func _on_npc_service_selected(key: String) -> void:
 			return
 		if key == "storage":
 			_npc_talk.open(3)
+			return
+		# Round 789: the blacksmith's grant line (kind 0x2f -> 0x7046 {npc,
+		# 0x20}, READ c:0x7034f3..0x70358d); its 0xB046 opens the window.
+		if key == "avatar_magic_option":
+			_npc_talk.open(0x20)
 			return
 		if key == "talk":
 			_npc_talk.open(2)

@@ -51,7 +51,18 @@ class_name CharacterAppearance
 ## and installs it with its plus; one visual per slot, a later item replacing
 ## an earlier (`InstallEquipVisual` 0xa61010). Slots 9..11 (earring, necklace,
 ## ring) have no mesh. Avatars (TypeID3 13) are attached on top
-## (`FUN_00a60ef0`); whether an avatar hides the armour under it is OPEN.
+## (`FUN_00a60ef0`).
+##
+## **Avatars over armour (round 789, CharacterVisualChange, READ
+## AVATAR_RESEARCH.md 6):** every worn visual is walked through the
+## charactervisualchange arbitration -- an avatar is drawn only when a
+## ConditionID-2 row matches its TypeID word and Param7, its Slot mask hides
+## the armour (and lower-ranked avatars) it covers, a flag is hidden under an
+## attachment, a devil's spirit draws nothing -- and the default wear is
+## decided from what is drawn. The same rule serves every body built here:
+## the world's own player and others, the paper doll, the select screen.
+## The world's slot -> item maps keep avatars under OURS keys,
+## AVATAR_KEY_BASE.
 ## Weapons whose TypeID4 is 9 (dual axe) or 13 (dagger) are drawn from the
 ## model path's `_l.bsr` and `_r.bsr`, and the harp (14) on a woman from
 ## `_f.bsr` (READ, `CObjCharacter::FUN_00a5f4f0`); each `.bsr` names the bone
@@ -153,6 +164,16 @@ const SLOT_NECKLACE := 10
 const SLOT_RING := 11
 ## Not a client slot: an avatar item, attached on top (FUN_00a60ef0).
 const SLOT_AVATAR := 100
+## OURS (round 789): the keys the world's slot -> item maps (World3D's
+## equipped dictionaries, a spawn snapshot's) hold avatars under: this + the
+## avatar's storage slot (own character) or its order in the spawn block
+## (others). build() reads an avatar from its item type, never its key.
+const AVATAR_KEY_BASE := 200
+const AVATAR_KEYS := 5
+
+## Whether a key of the world's equipped maps is an avatar's (AVATAR_KEY_BASE).
+static func is_avatar_key(key: int) -> bool:
+	return key >= AVATAR_KEY_BASE and key < AVATAR_KEY_BASE + AVATAR_KEYS
 
 ## One built character. Its child is the body's Skeleton3D; it faces its own
 ## local -Z, as every assembled body does (World3D turns its player's by PI).
@@ -212,6 +233,15 @@ var _item_attachables: Dictionary = {}
 ## OURS: false, the flag the customize screen's Protector minimum assumes.
 var default_wear: DefaultWear = null
 var default_wear_flag := false
+## Round 789: the arbitration's table (CharacterVisualChange); null or empty
+## draws every visual as before (a test, an archive without the file).
+var visual_change: CharacterVisualChange = null
+## Round 789 (INFERRED, AVATAR_RESEARCH.md OPEN 6): an avatar whose drawn
+## Slot covers the hair bit (0x0800, a hat's 0x0A01) hides the body's hair
+## piece (its attachable key 0, MEASURED in round 687), as the mask says the
+## hair is taken. How retail removes the hair is not READ; false keeps only
+## the item's own attachable block.
+var hide_hair_by_mask := true
 ## Round 734: the glow tables (null: no glow drawn) and the Particles.pk2 the
 ## glow's effects come from -- opened from Pk2Config on the first item that
 ## needs one when nobody handed one over. `glow_enabled` false draws neither.
@@ -273,6 +303,7 @@ static func from_archives(data_pk2: Pk2Reader, media_pk2: Pk2Reader, items: Dict
 	a._media = media_pk2
 	a._catalog = CharCatalog.from_archive(media_pk2)
 	a.default_wear = DefaultWear.from_archive(media_pk2)
+	a.visual_change = CharacterVisualChange.from_archive(media_pk2)
 	for id in a._catalog.entries:
 		var e: CharCatalog.Entry = a._catalog.entries[id]
 		if not e.is_body:
@@ -293,6 +324,7 @@ static func from_catalog(data_pk2: Pk2Reader, media_pk2: Pk2Reader, catalog: Cha
 	a._media = media_pk2
 	a._catalog = catalog
 	a.default_wear = DefaultWear.from_archive(media_pk2) if media_pk2 != null else null
+	a.visual_change = CharacterVisualChange.from_archive(media_pk2) if media_pk2 != null else null
 	# The glow tables first: add_item_rows hands them the rows to inherit
 	# through (round 740).
 	a.glow_tables = ItemGlowTables.for_archive(media_pk2)
@@ -329,7 +361,7 @@ func race_of(ref_obj_id: int) -> int:
 func add_item_rows(rows: Dictionary) -> void:
 	for id in rows:
 		var item: ItemTableReader.Item = rows[id]
-		_items[int(id)] = {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name}
+		_items[int(id)] = _info_of(item)
 	_full_items_loaded = true
 	_inherit_glow(rows)
 
@@ -621,6 +653,9 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 				(wear["nodes"] as Array).append(node)
 				drawn.append(path)
 				blocks.append(_item_attachables.get(path.to_lower()))
+		var hair := hair_block_for(wear)
+		if hair != null and not drawn.is_empty():
+			blocks.append(hair)
 		wear["drawn"] = drawn
 		wear["attachables"] = blocks
 		_apply_glow(wear)
@@ -661,7 +696,8 @@ func _resolve_wears(items: Array, woman: bool, warn: bool) -> Array:
 		var models: PackedStringArray = info["models"]
 		var wear := {"id": id, "plus": plus & 0xFF, "slot": slot, "type_ids": info["type_ids"], "code": String(info.get("code", "")),
 			"models": item_models(models[0] if not models.is_empty() else "", info["type_ids"], woman),
-			"nodes": []}
+			"nodes": [], "word": int(info.get("word", CharacterVisualChange.type_word(info["type_ids"]))),
+			"param7": int(info.get("param7", 0))}
 		if slot == SLOT_AVATAR:
 			avatars.append(wear)
 		else:
@@ -674,7 +710,70 @@ func _resolve_wears(items: Array, woman: bool, warn: bool) -> Array:
 	for slot in order:
 		wears.append(by_slot[slot])
 	wears.append_array(avatars)
-	return [wears, weapon_kind]
+	return [arbitrate_wears(wears), weapon_kind]
+
+## Round 789: the wears CharacterVisualChange's arbitration draws, in attach
+## order (AVATAR_RESEARCH.md 6.2): each gets its row's "vis_slot" /
+## "vis_overlap" (0 when it has none), an avatar whose row is missing is
+## dropped (READ: not attached), and a wear the walk hides is dropped (not
+## drawn). A wing dress's AddAttach mesh joins its models (READ c:0xa5f4f0).
+## Without the table every wear is kept, as before. The held weapon's kind
+## stays the caller's: no avatar row covers 0x0040 (MEASURED).
+func arbitrate_wears(wears: Array) -> Array:
+	if visual_change == null or visual_change.is_empty():
+		return wears
+	var kept: Array = []
+	var visuals: Array = []
+	for w in wears:
+		var v := visual_change.visual_for(int(w.get("word", 0)), int(w.get("param7", 0)))
+		if v.is_empty() or (int(w["slot"]) == SLOT_AVATAR and v.get("row") == null):
+			continue
+		w["vis_slot"] = int(v["slot"])
+		w["vis_overlap"] = int(v["overlap"])
+		w["vis_priority"] = int(v["priority"])
+		if int(w["slot"]) == SLOT_AVATAR:
+			var extra := CharacterVisualChange.add_attach_path(visual_change.add_attach_row(String(w.get("code", ""))))
+			if extra != "" and not (w["models"] as PackedStringArray).has(extra):
+				var models: PackedStringArray = w["models"]
+				models.append(extra)
+				w["models"] = models
+		kept.append(w)
+		visuals.append(v)
+	var walk := CharacterVisualChange.arbitrate(visuals)
+	var drawn := {}
+	for i in walk["drawn"]:
+		drawn[int(i)] = true
+	var out: Array = []
+	for i in kept.size():
+		if drawn.has(i):
+			out.append(kept[i])
+	return out
+
+## The Slot bits the drawn avatars cover (round 789): what FUN_00a5e010's
+## default wear test reads besides the armour, as every loaded visual's Slot.
+static func avatar_cover_mask(wears: Array) -> int:
+	var m := 0
+	for w in wears:
+		if int(w["slot"]) == SLOT_AVATAR:
+			m |= int(w.get("vis_slot", 0))
+	return m
+
+## The body piece key the hair is (round 687, MEASURED: a body's attachable
+## block maps key 0 to its hair mesh).
+const HAIR_PIECE_KEY := 0
+
+## Round 789 (INFERRED, hide_hair_by_mask): a stand-in attachable block that
+## hides the hair, for an avatar whose drawn Slot takes it (0x0800 outside its
+## OverlapSlot); null otherwise.
+func hair_block_for(wear: Dictionary) -> BsrReader.Attachable:
+	if not hide_hair_by_mask or int(wear["slot"]) != SLOT_AVATAR:
+		return null
+	if (int(wear.get("vis_slot", 0)) & ~int(wear.get("vis_overlap", 0)) & CharacterVisualChange.MASK_HAIR) == 0:
+		return null
+	var b := BsrReader.Attachable.new()
+	b.flag = BsrReader.HIDE_FLAG
+	b.entries = [[HAIR_PIECE_KEY, 0]]
+	return b
 
 # --- far recipes (round 756) ------------------------------------------------------
 
@@ -788,11 +887,15 @@ func far_recipe(ref_obj_id: int, scale: int, items: Array) -> FarRecipe:
 		_far_fx(wear, nodes, skel, r, int(wear["slot"]))
 		for n in nodes:
 			hung.append([n, glow])
+		# Round 789: build()'s hair block for a hat (hair_block_for).
+		var hair := hair_block_for(wear)
+		if hair != null and not nodes.is_empty():
+			blocks.append(hair)
 		if int(wear["slot"]) != SLOT_AVATAR and wear.has("type_ids"):
 			worn.append({"slot": wear["slot"], "type_ids": wear["type_ids"]})
 	# The default wear the worn visuals leave uncovered (_refresh_default_wear).
 	if default_wear != null:
-		for d in default_wear.wear_for(race, woman, worn, default_wear_flag):
+		for d in default_wear.wear_for(race, woman, worn, default_wear_flag, avatar_cover_mask(resolved[0])):
 			var got := _far_item(tmpl, bsr_path, skel, String(d["path"]))
 			if got.is_empty():
 				far_stats["not_ready"] += 1
@@ -1035,7 +1138,7 @@ func _refresh_default_wear(body: Body) -> void:
 		if int(wear["slot"]) != SLOT_AVATAR and wear.has("type_ids"):
 			worn.append({"slot": wear["slot"], "type_ids": wear["type_ids"]})
 	var bsr_path := body_path(body.ref_obj_id)
-	for d in default_wear.wear_for(body_race(body), body.is_woman, worn, default_wear_flag):
+	for d in default_wear.wear_for(body_race(body), body.is_woman, worn, default_wear_flag, avatar_cover_mask(body.worn)):
 		var node := _item_instance(bsr_path, body.assembled, body.skeleton, d["path"])
 		var wear := {"id": 0, "plus": 0, "slot": d["slot"], "default": true, "type_ids": PackedInt32Array(),
 			"models": PackedStringArray([d["path"]]), "nodes": [], "drawn": PackedStringArray(), "attachables": []}
@@ -1204,7 +1307,7 @@ func template_paths(ref_obj_id: int, items: Array) -> Array:
 				if not efps.has(efp):
 					efps.append(efp)
 	if default_wear != null:
-		for d in default_wear.wear_for(race_of(ref_obj_id), woman, worn, default_wear_flag):
+		for d in default_wear.wear_for(race_of(ref_obj_id), woman, worn, default_wear_flag, avatar_cover_mask(resolved[0])):
 			if not paths.has(String(d["path"])):
 				paths.append(String(d["path"]))
 	return [paths, efps, BodyAnimations.group_for_weapon(int(resolved[1]), race_of(ref_obj_id))]
@@ -2020,7 +2123,10 @@ static func _own_skins(skel: Skeleton3D) -> void:
 		mi.skin = copies[mi.skin]
 
 func _item_info(id: int) -> Dictionary:
-	if _items.has(id):
+	# Round 789: a catalogue entry has no TypeID word or Param7, which an
+	# avatar's visual row is found by: the full table is read for one.
+	if _items.has(id) and ((_items[id] as Dictionary).has("word") or _full_items_loaded or _media == null
+			or not _is_avatar_type((_items[id] as Dictionary).get("type_ids", PackedInt32Array()))):
 		return _items[id]
 	if not _full_items_loaded and _media != null:
 		_full_items_loaded = true
@@ -2032,8 +2138,17 @@ func _item_info(id: int) -> Dictionary:
 		var rows := ItemTableReader.load_all(_media)
 		for rid in rows:
 			var item: ItemTableReader.Item = rows[rid]
-			_items[int(rid)] = {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name}
+			_items[int(rid)] = _info_of(item)
 		_inherit_glow(rows)
 		stats["item_table_usec"] = Time.get_ticks_usec() - t0
 		stats["item_table_rows"] = rows.size()
 	return _items.get(id, {})
+
+## What build() keeps of an item row (round 789: its TypeID word and Param7
+## for the visual arbitration).
+static func _info_of(item: ItemTableReader.Item) -> Dictionary:
+	return {"models": item.model_paths, "type_ids": item.type_ids, "code": item.code_name,
+		"word": item.type_word(), "param7": item.param7}
+
+static func _is_avatar_type(t: PackedInt32Array) -> bool:
+	return t.size() >= 3 and t[0] == 3 and t[1] == 1 and t[2] == 13

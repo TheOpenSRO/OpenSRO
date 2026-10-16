@@ -133,6 +133,11 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 	var names: UiTextTable = ctx.get("names", null)
 	var plus: int = int(instance.get("plus", 0))
 	var options: Array = instance.get("magic_options", [])
+	# Round 789: the avatar (TypeID3 13) and devil's spirit (14) builders.
+	if item.is_avatar():
+		return compose_avatar(item, ctx)
+	if item.is_devil_spirit():
+		return compose_devil_spirit(item, ctx)
 	if not is_equipment_shape(item):
 		return _compose_other(item, ctx)
 
@@ -415,6 +420,255 @@ static func _compose_other(item: ItemTableReader.Item, ctx: Dictionary) -> Array
 		_blank(lines)
 	_price(lines, ctx, t)
 	return lines
+
+# --- avatars (round 789) -------------------------------------------------------
+#
+# READ from sro_client.exe in /root/opensro-pk3av789/AVATAR_ALCHEMY_RESEARCH.md
+# section 4: the avatar builder UI_SILKMALL::FUN_00682410 (c:0x682410), the
+# devil's spirit builder FUN_0067b460 (c:0x67b460), and the avatar line table
+# FUN_00669e20 / FUN_0066a8c0 (c:0x669e20, c:0x66a8c0) that the blue lines of a
+# TypeID3 13 item and the grant window's rows go through.
+
+## The avatar line table (c:0x669e20): MATTR code -> [PARAM key, unit key].
+const AVATAR_PARAMS := {
+	"MATTR_AVATAR_STR": ["PARAM_STR", "PARAM_INCREASE"], "MATTR_AVATAR_STR_2": ["PARAM_STR", "PARAM_INCREASE"],
+	"MATTR_AVATAR_STR_3": ["PARAM_STR", "PARAM_INCREASE"], "MATTR_AVATAR_STR_4": ["PARAM_STR", "PARAM_INCREASE"],
+	"MATTR_AVATAR_INT": ["PARAM_INT", "PARAM_INCREASE"], "MATTR_AVATAR_INT_2": ["PARAM_INT", "PARAM_INCREASE"],
+	"MATTR_AVATAR_INT_3": ["PARAM_INT", "PARAM_INCREASE"], "MATTR_AVATAR_INT_4": ["PARAM_INT", "PARAM_INCREASE"],
+	"MATTR_AVATAR_HP": ["PARAM_HP", "PARAM_INCREASE"], "MATTR_AVATAR_MP": ["PARAM_MP", "PARAM_INCREASE"],
+	"MATTR_AVATAR_ER": ["PARAM_ER", "PARAM_INCREASE"], "MATTR_AVATAR_HR": ["PARAM_HR", "PARAM_INCREASE"],
+	"MATTR_AVATAR_DRUA": ["PARAM_AVATAR_DRUA", "PARAM_INCREASE"], "MATTR_AVATAR_DARA": ["PARAM_AVATAR_DARA", "PARAM_INCREASE"],
+	"MATTR_AVATAR_MDIA": ["PARAM_AVATAR_MDIA", "UIIT_STT_PROBABILITY"], "MATTR_AVATAR_MDIA_2": ["PARAM_AVATAR_MDIA", "UIIT_STT_PROBABILITY"],
+	"MATTR_AVATAR_MDIA_3": ["PARAM_AVATAR_MDIA", "UIIT_STT_PROBABILITY"], "MATTR_AVATAR_MDIA_4": ["PARAM_AVATAR_MDIA", "UIIT_STT_PROBABILITY"],
+	"MATTR_AVATAR_HPRG": ["PARAM_AVATAR_HPRG", "PARAM_INCREASE"], "MATTR_AVATAR_MPRG": ["PARAM_AVATAR_MPRG", "PARAM_INCREASE"],
+	"MATTR_AVATAR_LUCK": ["PARAM_LUCK", "PARAM_INCREASE"], "MATTR_AVATAR_LUCK_2": ["PARAM_LUCK", "PARAM_INCREASE"],
+	"MATTR_AVATAR_LUCK_3": ["PARAM_LUCK", "PARAM_INCREASE"], "MATTR_AVATAR_LUCK_4": ["PARAM_LUCK", "PARAM_INCREASE"],
+	"MATTR_APE": ["PARAM_ATTR_ASSIMILATION", "UIIT_STT_COUNT"],
+	"MATTR_REINFORCE_ITEM_SET": ["PARAM_REINFORCE_ITEM_SET", "PARAM_REINFORCE"],
+	"MATTR_RESIST_ALL_SET": ["PARAM_RESIST_ALL_SET", "PARAM_INCREASE"],
+}
+
+## The line FUN_0066a8c0 builds for `code` at `value`, "" for a code the table
+## lacks (READ c:0x66aa34..0x66ab20): a PARAM key containing "STR" or "INT",
+## or PARAM_HP / PARAM_MP, prints "%s %d %s"; any other "%s %d%% %s";
+## the arguments are the PARAM text, the value and the unit text.
+static func avatar_line(code: String, value: int, t: Callable) -> String:
+	var keys: Array = AVATAR_PARAMS.get(code, [])
+	if keys.is_empty():
+		return ""
+	var param: String = keys[0]
+	var plain := param.contains("STR") or param.contains("INT") or param == "PARAM_HP" or param == "PARAM_MP"
+	var fmt := "%s %d %s" if plain else "%s %d%% %s"
+	return fmt % [t.call(param, param), value, t.call(keys[1], keys[1])]
+
+## The generic blue line of a TypeID3 7, 13 or 14 item, cut before its
+## "(+x%)" (READ c:0x6720fe..0x6721ce: find(L"+"), and when the position
+## minus one is above 0 the string is erased from there -- the "(" -- to its
+## end; the leading space stays). The cut is made only when the line carries
+## the percent (INFERRED: the flag at [esp+0x17] tested before the cut).
+static func cut_plus(line: String, carries_pct: bool = true) -> String:
+	if not carries_pct:
+		return line
+	var at := line.find("+") - 1
+	if at > 0:
+		return line.substr(0, at)
+	return line
+
+## The blue lines of a TypeID3 13 or 14 item, each option in order: the
+## generic line (0x670dd0) cut before its "(+x%)", then -- for an avatar --
+## the avatar table's line (0x672204..0x67228e); each only when it is not
+## empty. `options` is [{"code", "value", "pct", "level"}] (ItemTooltipInstance.
+## avatar_fields); `t` the tooltip's text lookup.
+static func avatar_blue_lines(options: Array, t: Callable, avatar: bool) -> PackedStringArray:
+	var out := PackedStringArray()
+	var key_text := func(k: String) -> String: return String(t.call(k, k))
+	for o in options:
+		var code := String(o.get("code", ""))
+		var value := int(o.get("value", 0))
+		var generic := ""
+		# MATTR_STR_AVATAR / MATTR_INT_AVATAR (13/4) have their own branch in
+		# 0x670dd0 (c:0x671786..0x671883): "%s %d %s", the row's level when the
+		# value is 0.
+		if code == "MATTR_STR_AVATAR" or code == "MATTR_INT_AVATAR":
+			var shown := value if value != 0 else int(o.get("level", 0))
+			generic = "%s %d %s" % [key_text.call("PARAM_STR" if code == "MATTR_STR_AVATAR" else "PARAM_INT"), shown,
+				key_text.call("PARAM_INCREASE")]
+		else:
+			var f := MagicOptionTable.line_format(code)
+			if f.is_empty():
+				f = NASRUN_FORMATS.get(code, {})
+			if not f.is_empty():
+				var args: Array = []
+				for k in f["keys"]:
+					args.append(value if k == "#" else key_text.call(String(k)))
+				if f["pct"]:
+					args.append(maxi(int(o.get("pct", 0)), 0))
+				generic = cut_plus(String(f["format"]) % args, bool(f["pct"]))
+		if generic != "":
+			out.append(generic)
+		if avatar:
+			var own := avatar_line(code, value, t)
+			if own != "":
+				out.append(own)
+	return out
+
+## The Nasrun options' formats in 0x670dd0 (READ: the keys; the argument
+## order INFERRED by round 732's reverse-fetch rule, AVATAR_ALCHEMY_RESEARCH.md
+## OPEN 2), as MagicOptionTable.FORMATS writes them.
+const NASRUN_FORMATS := {
+	"MATTR_NASRUN_HPNA": {"format": "%s%s %d%% %s", "keys": ["PARAM_MAX", "PARAM_HP", "#", "PARAM_INCREASE"], "pct": false},
+	"MATTR_NASRUN_MPNA": {"format": "%s%s %d%% %s", "keys": ["PARAM_MAX", "PARAM_MP", "#", "PARAM_INCREASE"], "pct": false},
+	"MATTR_NASRUN_UMDU": {"format": "%d%% %s (+%d%%)", "keys": ["#", "PARAM_NASRUN_UMDU"], "pct": true},
+	"MATTR_NASRUN_BLOCKRATE": {"format": "%s %d %s (+%d%%)", "keys": ["PARAM_BLOCKING", "#", "PARAM_INCREASE"], "pct": true},
+}
+
+## The kind keys the dress line and the grant window name (READ c:0x8092f0).
+const AVATAR_KIND_KEYS := {1: "UIIT_STT_SILKMALL_HAT", 2: "UIIT_STT_SILKMALL_DRESS", 3: "UIIT_STT_SILKMALL_ATTACH"}
+
+## The avatar tooltip, UI_SILKMALL::FUN_00682410 (c:0x682410), line by line:
+##   1 the name (0x67a570: gold seal / cyan with options / white), a blank
+##   2 seal and set (0x66fa60; Rarity 0 on every avatar, MEASURED: none)
+##   3 "%s: %s" UIIT_STT_ITEM_TYPE + the type name, beige
+##   4 a blank
+##   5 the description and a blank, when it resolves, white
+##   6 a dress only: "%s: %s" UIIT_STT_SILKMALL_ATTACH + UIIT_STT_AVATAR_WEAR
+##     (ChildItemCount != 0) or UIIT_STT_AVATAR_NOT_WEAR, beige
+##   7 "%s: %d%s" UIIT_STT_AVATAR_MAGICOPTION_MAXCOUNT, col 158, UIIT_STT_UNIT, beige
+##   8 the stat block (0x66c5b0; avatars carry none)
+##   9 the requirements (0x67eec0)
+##  10 the blue options (0x6780c0): a blank, then each line, cyan
+##  11 the prices (0x6784a0)
+## The rent/expiry block (0x672990) and the socket block (0x672740) after
+## them are not built (OPEN: their contents on an avatar are not READ).
+## ctx as compose(); the instance's "avatar_options" are its options as
+## avatar_blue_lines takes them.
+static func compose_avatar(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
+	var lines: Array = []
+	var t: Callable = ctx.get("text", func(_k, f): return f)
+	var instance: Dictionary = ctx.get("instance", {})
+	var options: Array = instance.get("avatar_options", [])
+	_name_line(lines, item, ctx, int(instance.get("plus", 0)), not options.is_empty())
+	_seal_lines(lines, item, ctx, t)
+	_add(lines, "%s: %s" % [t.call("UIIT_STT_ITEM_TYPE", "Sort of item"), String(ctx.get("type_name", ""))], BEIGE)
+	_blank(lines)
+	_description(lines, ctx)
+	if item.type_ids.size() >= 4 and item.type_ids[3] == 2:
+		var wear_key := "UIIT_STT_AVATAR_WEAR" if item.child_item_count != 0 else "UIIT_STT_AVATAR_NOT_WEAR"
+		_add(lines, "%s: %s" % [t.call("UIIT_STT_SILKMALL_ATTACH", "Attachment"), t.call(wear_key, wear_key)], BEIGE)
+	_add(lines, "%s: %d%s" % [t.call("UIIT_STT_AVATAR_MAGICOPTION_MAXCOUNT", "Max. no. of magic options"),
+		item.max_magic_options, t.call("UIIT_STT_UNIT", "Unit")], BEIGE)
+	_stats(lines, item, ctx, t, int(instance.get("plus", 0)))
+	_requirements(lines, item, ctx, t)
+	if not options.is_empty():
+		_blank(lines)
+		for l in avatar_blue_lines(options, t, true):
+			_add(lines, l, CYAN)
+	_price(lines, ctx, t)
+	return lines
+
+## The devil's spirit tooltip, UI_SILKMALL::FUN_0067b460 (c:0x67b460):
+##   1 the name, a blank
+##   2 "%s: %s" UIIT_STT_ITEM_TYPE, beige
+##   3 a blank; the description and a blank when it resolves
+##   4 for group g = 0, 1, 2 of the ability of (RefItemID, plus): a header
+##     UIIT_STT_NASRUN_BASIC_OPTION / _ADD_OPTION / _MAGIC_OPTION, beige, then
+##     each entry -- text 'xxx': the option line through 0x670dd0, else the
+##     entry's own key -- white (0), green (1), cyan (2); a blank after a group
+##     that printed
+##   5 with magic options: UIIT_STT_NASRUN_MAGIC_OPTION, beige, the blue lines,
+##     a blank
+##   6 UIIT_STT_NASRUN_AWAKE_TIME (beige); not active: Param1 == -1 ?
+##     UIIT_STT_NASRUN_NOT_AWAKE : "%d%s" Param1 / 86400, PARAM_DAY; active:
+##     the time left, 0 -> UIIT_STT_NASRUN_AWAKE_TIMEOVER, else "%d%s %d%s
+##     %d%s" days PARAM_DAY, hours PARAM_HOUR, minutes PARAM_MINUTE (white)
+## The heading's font 2 is not modelled (OURS: the bubble has one size).
+## ctx's "ability_groups": [[{"code", "value", "pct", "level", "text"}], x3]
+## (ItemTooltipInstance.spirit_groups); the instance's "avatar_options" and
+## "period" (the record's period word; absent: not active).
+static func compose_devil_spirit(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
+	var lines: Array = []
+	var t: Callable = ctx.get("text", func(_k, f): return f)
+	var instance: Dictionary = ctx.get("instance", {})
+	var options: Array = instance.get("avatar_options", [])
+	_name_line(lines, item, ctx, int(instance.get("plus", 0)), not options.is_empty())
+	_add(lines, "%s: %s" % [t.call("UIIT_STT_ITEM_TYPE", "Sort of item"), String(ctx.get("type_name", ""))], BEIGE)
+	_blank(lines)
+	_description(lines, ctx)
+	var groups: Array = ctx.get("ability_groups", [])
+	var headers := ["UIIT_STT_NASRUN_BASIC_OPTION", "UIIT_STT_NASRUN_ADD_OPTION", "UIIT_STT_NASRUN_MAGIC_OPTION"]
+	var colours := [WHITE, GREEN, CYAN]
+	for g in 3:
+		var entries: Array = groups[g] if g < groups.size() else []
+		if entries.is_empty():
+			continue
+		_add(lines, t.call(headers[g], headers[g]), BEIGE)
+		for e in entries:
+			var own := String(e.get("text", ""))
+			if own != "":
+				_add(lines, t.call(own, own), colours[g])
+				continue
+			for l in avatar_blue_lines([e], t, false):
+				_add(lines, l, colours[g])
+		_blank(lines)
+	if not options.is_empty():
+		_add(lines, t.call("UIIT_STT_NASRUN_MAGIC_OPTION", "UIIT_STT_NASRUN_MAGIC_OPTION"), BEIGE)
+		for l in avatar_blue_lines(options, t, false):
+			_add(lines, l, CYAN)
+		_blank(lines)
+	_add(lines, t.call("UIIT_STT_NASRUN_AWAKE_TIME", "UIIT_STT_NASRUN_AWAKE_TIME"), BEIGE)
+	var period := int(instance.get("period", 0))
+	if (period >> 31) & 1 == 0:
+		if item.param1 == -1:
+			_add(lines, t.call("UIIT_STT_NASRUN_NOT_AWAKE", "UIIT_STT_NASRUN_NOT_AWAKE"), WHITE)
+		else:
+			_add(lines, "%d%s" % [item.param1 / 86400, t.call("PARAM_DAY", "Day")], WHITE)
+	else:
+		var left := period & 0x7fffffff
+		if left == 0:
+			_add(lines, t.call("UIIT_STT_NASRUN_AWAKE_TIMEOVER", "UIIT_STT_NASRUN_AWAKE_TIMEOVER"), WHITE)
+		else:
+			_add(lines, "%d%s %d%s %d%s" % [left / 86400, t.call("PARAM_DAY", "Day"), (left % 86400) / 3600,
+				t.call("PARAM_HOUR", "Hour"), (left % 3600) / 60, t.call("PARAM_MINUTE", "Minute")], WHITE)
+	return lines
+
+## The name line and its blank (0x67a570), as compose() draws it.
+static func _name_line(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, plus: int, has_options: bool) -> void:
+	var name := item.display_name(ctx.get("names", null))
+	if name == "":
+		name = item.code_name
+	if plus > 0:
+		name = "%s (+%d)" % [name, plus]
+	var colour := WHITE
+	if is_seal(item):
+		colour = GOLD
+	elif has_options:
+		colour = CYAN
+	_add(lines, name, colour, true, true)
+	_blank(lines)
+
+## The seal and set lines (0x66fa60), as compose() draws them.
+static func _seal_lines(lines: Array, item: ItemTableReader.Item, ctx: Dictionary, t: Callable) -> void:
+	var sealed := false
+	if is_seal(item):
+		var key := seal_key(item)
+		if key != "":
+			_add(lines, t.call(key, SEAL_FALLBACKS.get(key, key)), GOLD, true)
+			sealed = true
+	if item.rarity > 2:
+		if not sealed:
+			_blank(lines)
+		var set_name: String = ctx.get("set_name", "")
+		if set_name != "":
+			_add(lines, set_name, GREEN, true)
+
+## The description (0x66f850) and its blank, when it resolves.
+static func _description(lines: Array, ctx: Dictionary) -> void:
+	var desc: String = ctx.get("description", "")
+	if desc == "":
+		return
+	for row in sml2_rows(desc, WHITE):
+		_add(lines, row["text"], row["color"], row["bold"])
+	_blank(lines)
 
 ## `<sml2>` markup as tooltip rows (the user's report, 2026-10-05): split
 ## at `<br>`; a row takes the colour of the `<font color="a,r,g,b">` span it

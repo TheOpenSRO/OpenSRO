@@ -140,6 +140,26 @@ static func read_record(data: PackedByteArray, offset: int) -> Array:
 		offset += 9 * count
 	return [it, offset]
 
+## The record read_record reads (round 789, for the avatar golden vectors and
+## fixtures): no rent block, the magic params as held, and the two binding
+## blocks empty -- the advanced elixir is not written (no golden carries one).
+func encode_record() -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(22)
+	out.encode_u32(0, 0)
+	out.encode_u32(4, ref_item_id)
+	out[8] = opt_level & 0xff
+	out.encode_u64(9, variance)
+	out.encode_u32(17, durability)
+	out[21] = mag_params.size()
+	for p in mag_params:
+		var b := PackedByteArray()
+		b.resize(8)
+		b.encode_u64(0, p)
+		out.append_array(b)
+	out.append_array(PackedByteArray([BINDING_SOCKET, 0, BINDING_ADV_ELIXIR, 0]))
+	return out
+
 ## Reads the trailing block at offset: {slot: ItemInstance}. An absent block
 ## (an older server) is an empty map; a truncated one keeps what was read.
 static func decode_block(data: PackedByteArray, offset: int) -> Dictionary:

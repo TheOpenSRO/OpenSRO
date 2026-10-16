@@ -27,6 +27,9 @@ const PATH := "server_dep\\silkroad\\textdata\\magicoption.txt"
 ## holds row+4, so its [ptr+0x4c] is row+0x50 = col 8.
 const COL_ID := 1
 const COL_CODE := 2
+## Round 789: the sign, '+' or '-' (MEASURED: every avatar row '+'); the
+## grant window's count leaves the '-' options out (INFERRED, c:0x8bcdf0).
+const COL_SIGN := 3
 const COL_DEGREE := 4
 const COL_RANGE0 := 8
 ## Round 768: the item kinds an option may sit on, every second column from
@@ -39,6 +42,7 @@ class Row:
 	var id: int
 	var code: String
 	var degree: int
+	var sign: String = ""
 	## The three packed range words, cols 8..10.
 	var ranges := PackedInt64Array()
 	## The kind strings (COL_KIND0), "weapon", "armor", "helm", ...
@@ -91,6 +95,7 @@ func load(data: PackedByteArray) -> MagicOptionTable:
 		var r := Row.new()
 		r.id = int(cols[COL_ID])
 		r.code = cols[COL_CODE].strip_edges()
+		r.sign = cols[COL_SIGN].strip_edges()
 		r.degree = int(cols[COL_DEGREE]) if cols[COL_DEGREE].strip_edges().is_valid_int() else 0
 		for k in 3:
 			var s := cols[COL_RANGE0 + k].strip_edges()
