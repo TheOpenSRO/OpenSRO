@@ -24,10 +24,10 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Graphics & effects](#graphics--effects) | 11 | 1 |  |  | 12 |
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 7 |  | 1 | 1 | 9 |
-| [Plugins & customization](#plugins--customization) | 3 | 1 |  | 3 | 7 |
+| [Plugins & customization](#plugins--customization) | 3 | 1 |  | 4 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **138** | **32** | **1** | **45** | **216** |
+| **All** | **138** | **32** | **1** | **46** | **217** |
 
 ## Biggest gaps
 
@@ -361,6 +361,8 @@ Go server with Postgres persistence and operator tooling.
 
 A major goal: plugins that extend the server and client without modifying the shipped executables and libraries, so private servers can be customized as far as their operators want.
 
+**Asset packs (`.pk3`).** New or changed models, textures, sounds and tables ship as a plain zip (`.pk3`, or `.zip`) beside the original `.pk2` archives, with no injecting into a `.pk2`. A file in a pack uses the same path it has in the `.pk2`, so replacing an asset and adding a new one are the same step. Packs layer by name and a later name wins (`z_assets` over `assets`); the original archives are always the bottom layer and a loose `custom/` folder the top. One setting picks `pk2` only, `pk3` only (the original archives converted once) or `mixed`, the default. The server can name the packs a client needs, with their hashes, so every player sees the same content.
+
 | Feature | Status | Notes |
 |---|---|---|
 | Server plugins | ❌ Not yet | Planned: load new server features without rebuilding or patching the server |
@@ -369,6 +371,7 @@ A major goal: plugins that extend the server and client without modifying the sh
 | Data-driven game tables | ✅ Supported | Items, monsters, skills, NPCs, spawns, teleports and quests load from CSV/DB; swap without rebuilding |
 | Server options | ✅ Supported | Gameplay systems toggled by command-line flags and environment variables |
 | Custom NPCs | 🟡 Partial | Test Items NPC is rule-defined but built in; no loader for operator NPCs |
+| Asset packs (.pk3) | ❌ Not yet | Planned: zip packs layered over the .pk2 archives, a pk2 → pk3 converter, packs the server names and the updater fetches |
 | Client server list | ✅ Supported | Servers, addresses and login screen set in setting/config.yaml |
 
 ## Bots

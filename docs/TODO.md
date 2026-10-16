@@ -1790,8 +1790,13 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 
 ### The account PIN, "Character Lock" (round 788, lane P) — **built: OURS throughout (retail has none), server store + rules + lobby gate, the client's window and select-screen hook; these are left** (`docs/protocol/pin.md`)
 
-- [ ] **The legacy select path** (round 788 lane C's adapter for retail-protocol servers) must skip
-      `CharSelectLock.query()`: 0x0120 means nothing to a retail server.
+- [ ] **The window's look** (the user, 2026-10-16, after v0.1.549: "the PIN interface doesn't look
+      exactly the original but we can fix that later"). "The original" here is the reference
+      screenshot (https://i.imgur.com/zugaKQC.png, a private server's reskin; retail has no PIN):
+      match its layout, art and spacing.
+- [x] **The legacy select path** (round 788 lane C's adapter for retail-protocol servers) must skip
+      `CharSelectLock.query()`: 0x0120 means nothing to a retail server. Done in round 788's merge
+      (`CharacterSelect.gd`: `not NetClient.is_retail()`).
 - [ ] **No GM command clears a player's PIN or lock**; the operator deletes the rows by hand
       (deploy/README.md, "Account PIN (Character Lock)").
 - [ ] **The lock's numbers are constants** (5 tries, 30 minutes, 16 remembered PCs): flags if an
