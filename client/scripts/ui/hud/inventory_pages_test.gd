@@ -18,6 +18,9 @@ extends SceneTree
 ## - The paper doll's arrows (0x6ab920 / 0x6ab960 / 0x6ab9a0) and their
 ##   repeat (1000 ms, then 50 ms), and PaperDoll's retail camera.
 ## - The bag list's trailing capacity (InventoryNet).
+## - Round 791: a bag avatar put down on any avatar window, or on a worn slot
+##   in the equipment view, is over the equipment pane (the drop that sends
+##   0x7034 type 0x24); the pane's layout root is 0x0 and missed them all.
 ##
 ## Synthetic fixtures only (names, IDs and rects copied from the layouts):
 ##   godot4 --headless --path client --script res://scripts/ui/hud/inventory_pages_test.gd
@@ -137,6 +140,7 @@ func _initialize() -> void:
 	await _page_checks(panels, builder)
 	_gold_checks(panels)
 	_backdrop_checks(panels)
+	_avatar_drop_checks(panels)
 	_rotation_checks(panels)
 	_doll_checks()
 	await _doll_pixel_checks(panels)
@@ -170,6 +174,28 @@ func _registry_checks(panels: Control) -> void:
 		storage.hide()
 	panels.call("open", "inventory")
 	await process_frame
+
+func _avatar_drop_checks(panels: Control) -> void:
+	var window: Control = panels.call("open", "inventory")
+	for avatar in [true, false]:
+		panels.call("set_equipment_avatar_mode", avatar)
+		var names: Array = []
+		if avatar:
+			for id in AVATAR:
+				names.append("GDR_AVATAR_SLOT_%02d" % (id - 112))
+		else:
+			for id in WORN:
+				if id != 108:
+					names.append("GDR_EQUIPMENT_SLOT_%d" % id)
+		for n in names:
+			var slot := window.call("node", n) as Control
+			var at := slot.get_global_rect().get_center() if slot != null else Vector2(-1, -1)
+			_check(bool(panels.call("_over_equipment_pane", at)) and int(panels.call("_bag_slot_at", at)) < 0,
+				"%s (%s view) is over the equipment pane, not a bag cell, for an avatar's drop" % [n, "avatar" if avatar else "equipment"])
+	var cell := (window.call("node", "GDR_INVENTORY_LATTICE") as Control).get_child(0) as Control
+	_check(not bool(panels.call("_over_equipment_pane", cell.get_global_rect().get_center())),
+		"a bag cell is not over the equipment pane")
+	panels.call("set_equipment_avatar_mode", false)
 
 func _party_mark_checks(panels: Control) -> void:
 	# Round 711: the marks follow the client's party state through the party

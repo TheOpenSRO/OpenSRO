@@ -390,10 +390,14 @@ func _fill_avatar_slots() -> void:
 		if not storage.has(held_slot) or (storage[held_slot] as ItemInstance).ref_item_id != int(held_icon.payload.get("item_id", -2)):
 			cancel_held_icon("the avatar slot changed")
 
-## Whether a point is over the equipment pane (its layout's root), shown.
+## Whether a point is over the equipment pane, shown. The pane control
+## GDR_EQUIPMENT carries the authored rect (198,41,178,355); its layout's root
+## (_equipment_root) is a 0x0 holder, so testing that missed every drop --
+## round 791, MEASURED: `root [P: (644, 197), S: (0, 0)]`, the avatar put down
+## on GDR_AVATAR_SLOT_01 and nothing sent.
 func _over_equipment_pane(at: Vector2) -> bool:
-	var root := _equipment_root()
-	return root != null and root.is_visible_in_tree() and root.get_global_rect().has_point(at)
+	var pane := _popup.pane_control("GDR_EQUIPMENT") if _popup != null else null
+	return pane != null and pane.is_visible_in_tree() and pane.get_global_rect().has_point(at)
 
 ## A bag avatar put down on the equipment window (READ CIFEquipment::vslot_028
 ## c:0x6ad180, either mode -- the research names no mode test, and the hovered
@@ -5170,6 +5174,9 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 	var item_id := int(what.get("item_id", -1))
 	var qty := int(what.get("qty", 1))
 	var on_bag := _over_inventory_window(at)
+	if k == "bag" and AvatarEquipment.is_avatar_item(bag_item_types(from)):
+		print("HudPanels: avatar put down at %s: on_bag=%s bag_cell=%d equipment_pane=%s" % [at, on_bag,
+			_bag_slot_at(at), _over_equipment_pane(at)])
 	match k:
 		"bag":
 			# CIFInventory::vslot_028 (0x6b5b80) for a bag or doll target,
@@ -5414,6 +5421,17 @@ func _bag_icon_at_slot(slot: int) -> Texture2D:
 
 ## The item id in a bag slot on any page, or -1: the server's last bag list
 ## (_bag_slots), not the lattice's cells.
+## The shown page's cell holding `item_id`, or null (QA_INPUT's bagitem).
+func _bag_cell_of_item(item_id: int) -> Control:
+	var window: HudWindow = _windows.get("inventory")
+	var grid := window.node("GDR_INVENTORY_LATTICE") as Control if window != null else null
+	if grid == null:
+		return null
+	for i in range(grid.get_child_count()):
+		if _bag_item_id_at_slot(_bag_page * BAG_PAGE_SLOTS + i) == item_id:
+			return grid.get_child(i) as Control
+	return null
+
 func _bag_item_id_at_slot(slot: int) -> int:
 	for entry in _bag_slots:
 		var index = _first_field(entry, ["slot", "slot_index", "index"])

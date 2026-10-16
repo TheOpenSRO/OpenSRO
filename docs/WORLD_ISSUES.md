@@ -7483,6 +7483,27 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-first round: avatars put on with the mouse (the equipment pane's hit test)
+
+The user (2026-10-16): "I can't drag and drop avatar items into their slots?"
+
+- **Cause, MEASURED:** a bag avatar put down on the equipment window takes the avatar path only when
+  the point is over the equipment pane (`HudPanels._over_equipment_pane`). That tested the pane
+  layout's root, a 0x0 holder (`root [P: (644, 197), S: (0, 0)]` in the live log), so every drop
+  missed: the item went back to the bag and nothing was sent. Round 789's live check called
+  `_drop_avatar_from_bag` directly (`OPENSRO_QA_EQUIP_BAG`) and never went through the hit test.
+- **Fix:** the hit test uses the pane control `GDR_EQUIPMENT` (its authored 198,41,178,355).
+- **Live, real clicks** (`OPENSRO_QA_INPUT`, new action `bagitem:<id>`; `/var/tmp/r791/live.sh` on
+  the render box): in the avatar view the hat, dress and attachment each picked up from the bag and
+  put down on GDR_AVATAR_SLOT_01..03 -> `avatar move 0x24 13 -> 0`, `14 -> 1`, `15 -> 2`, the body
+  redrawn (`wears 4/7`); in the equipment view a hat put down on GDR_EQUIPMENT_SLOT_100 goes on too
+  (retail's drop does not look at the hovered slot); a worn hat clicked and put down on the bag ->
+  `avatar move 0x23 0 -> 13`. 0 SCRIPT ERROR.
+- **Not a bug:** a press-drag-release does nothing, for every item (retail picks up on the left
+  button's release and puts down on the next click; held_icon.gd, READ).
+- **Test:** `inventory_pages_test.gd` checks every avatar window and worn slot centre is over the
+  pane and not a bag cell; it fails on the old hit test (5 FAIL) and passes now.
+
 ## Seven-hundred-and-ninetieth round: avatar sets on the Test Items NPC (the Akatsuki set first), and the round 789 server on the Mac mini
 
 The user (2026-10-16): "Update the server and did you create a pk3 file I can test with? Can you add
