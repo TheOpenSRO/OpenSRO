@@ -425,6 +425,8 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
   the box with each (`FUN_009f74c0`). The `.bsr`'s two stored boxes (the bounding section at header
   +0x28: an lp root mesh, then box 0, the bind pose's, e.g. china man x -9.13..9.13, kept at CResObject
   +0x284, and box 1, a standing body's, x -2.41..2.84, at +0x29c) are not what the pick reads.
+  OURS (round 793, the user's call): our box leaves out the weapon and shield, so a spear held across
+  the body does not take the next character's clicks. OPEN: retail's part walk may include them.
 - **The name label** fades at 0.5 s per whole fade (`FUN_00855400`'s duration is 0.5 x the bytes left
   / 255), in font 4 (`FUN_00ba5460(4)` in `FUN_0085a580`). Its colour and alignment were not read
   (INFERRED: white, centred).

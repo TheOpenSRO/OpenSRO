@@ -274,12 +274,23 @@ func _posed_pick_box() -> void:
 	hidden.visible = false
 	body.add_child(hidden)
 	skel.set_bone_pose_scale(1, Vector3(0.2, 1, 1))
+	# A spear held across the body, out past the next character (round 793).
+	var spear := Node3D.new()
+	skel.add_child(spear)
+	var shaft := MeshInstance3D.new()
+	var long := BoxMesh.new()
+	long.size = Vector3(30, 1, 1)
+	shaft.mesh = long
+	shaft.position = Vector3(12, 10, 0)
+	spear.add_child(shaft)
 	# The fade hides the body itself at alpha 0; the box is still made.
 	body.visible = false
-	var posed: AABB = CharSelectStage._posed_bounds_of(body)
+	var posed: AABB = CharSelectStage._posed_bounds_of(body, [spear])
 	var bind: AABB = CharSelectStage._bounds_of(body)
 	_check(_near(posed.position.x, -1.8, 1e-3) and _near(posed.end.x, 1.8, 1e-3) and _near(posed.size.y, 19.0, 1e-3),
-		"the pick box is the posed one: x -1.8..1.8, 19 tall (got %s)" % posed)
+		"the pick box is the posed one, the weapon left out: x -1.8..1.8, 19 tall (got %s)" % posed)
+	var with_spear: AABB = CharSelectStage._posed_bounds_of(body)
+	_check(with_spear.end.x > 20.0, "without the skip the spear widens it (got %s)" % with_spear)
 	_check(bind.size.x >= 18.0, "the bind pose's box is the T's width or more (got %s)" % bind)
 	body.queue_free()
 

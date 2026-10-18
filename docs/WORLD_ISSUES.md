@@ -7483,6 +7483,31 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-third round: the select screen's pick box leaves out the weapon
+
+The user (2026-10-18, on v0.1.553, with a screenshot): "That's better but still not quite right. If it
+includes the weapon in the hit box it should not. I have to go right of the spear to select Pain
+still." And: "It looks like the weapon is used as the boundry on all characters but there is some
+layering it seems." In the screenshot the third character holds a spear across her body whose head
+reaches over Pain, the fourth.
+
+- **Cause, MEASURED** (`/var/tmp/r791/sel.sh`, now with Charlie holding a spear, item 143, after the
+  shield comes off): round 792's posed box took every shown mesh, the weapon and shield too. With the
+  default kit's sword and shield every box was 8-10 units wide; a spear reaches past the next
+  character, and since the first box hit wins (READ), the "layering" the user saw is that order: the
+  character holding the weapon takes the click.
+- **Fix, OURS (the user's call):** `CharSelectStage.posed_box` leaves out the nodes of the weapon and
+  shield worn entries (`_held_nodes`, slots 6 and 7). **OPEN:** whether retail does: `FUN_00c2b2d0`
+  walks every part in the `+0x94` map and a weapon is a part (`vslot_067`), so retail's box may take it
+  in; not settled.
+- **After, MEASURED** at 1280x720: every box 5.9-6.0 units wide (Bravo's dress 8.4); x 252..394,
+  469..579, 678..829, 874..1014 (were 182..417, 428..605, 664..848, 852..1081). Charlie's full model
+  box is 21 units deep with the spear, her pick box 5.9 wide; a click on each body picks it.
+- **Test:** `charselect_test.gd` `_posed_pick_box`: a 30-unit spear under the skeleton is left out
+  when skipped and widens the box when not.
+- **QA:** `OPENSRO_QA_EQUIP_BAG` takes `<tick>:<slot>=0` to take a slot off (the shield, before a
+  two-handed weapon goes on).
+
 ## Seven-hundred-and-ninety-second round: the select screen picks the character clicked (the posed pick box)
 
 The user (2026-10-18): "the "hitbox" for character selection is off. I have to go to the far right now

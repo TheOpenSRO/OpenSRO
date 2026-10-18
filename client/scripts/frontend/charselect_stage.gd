@@ -397,10 +397,15 @@ const POSED_WAIT_FRAMES := 2
 ## OURS: only the meshes shown count (an armour hidden under an avatar dress
 ## does not widen it); made once per clip, here or a frame or two after it
 ## starts (_process), not each frame.
+## OURS (round 793, the user's call): the weapon and shield do not count. A
+## spear held across the body reached over the next character, and since the
+## first hit wins, clicks on that character went to the one holding it. OPEN:
+## FUN_00c2b2d0 walks every part in the +0x94 map, and a weapon is a part
+## (vslot_067), so retail's box may take it in; not confirmed either way.
 func posed_box(d: Drawn) -> AABB:
 	if d.posed_dirty and d.body != null:
 		var sw := Time.get_ticks_usec()
-		d.posed = _posed_bounds_of(d.body)
+		d.posed = _posed_bounds_of(d.body, _held_nodes(d.body))
 		d.posed_dirty = d.posed.size == Vector3.ZERO
 		print("CharSelectStage: %s's pick box %s (bind pose %s) in %.1f ms" % [d.record.char_name if d.record != null else "?",
 			d.posed, d.bounds, (Time.get_ticks_usec() - sw) / 1000.0])
@@ -969,8 +974,21 @@ static func _bounds_of(node: Node3D) -> AABB:
 			box = box.merge(b)
 	return box
 
-## The shown meshes' vertices skinned as drawn now, as a box in `node`'s space.
-static func _posed_bounds_of(node: Node3D) -> AABB:
+## The nodes of a body's weapon and shield (its worn entries for those slots).
+static func _held_nodes(body: Node3D) -> Array:
+	var out: Array = []
+	var b := body as CharacterAppearance.Body
+	if b == null:
+		return out
+	for w in b.worn:
+		var slot := int(w["slot"])
+		if slot == CharacterAppearance.SLOT_WEAPON or slot == CharacterAppearance.SLOT_SHIELD:
+			out.append_array(w["nodes"])
+	return out
+
+## The shown meshes' vertices skinned as drawn now, as a box in `node`'s space,
+## leaving out the meshes at or under any of `skip`.
+static func _posed_bounds_of(node: Node3D, skip: Array = []) -> AABB:
 	var box := AABB()
 	var first := true
 	if not node.is_inside_tree():
@@ -982,7 +1000,7 @@ static func _posed_bounds_of(node: Node3D) -> AABB:
 		for c in n.get_children():
 			stack.append(c)
 		var mi := n as MeshInstance3D
-		if mi == null or mi.mesh == null or not _shown_under(node, mi):
+		if mi == null or mi.mesh == null or not _shown_under(node, mi) or _under_any(mi, skip):
 			continue
 		for p in CharSelectQa.skinned_points(mi):
 			var q := inv * p
@@ -1002,6 +1020,12 @@ static func _shown_under(body: Node3D, n: Node3D) -> bool:
 			return false
 		cur = cur.get_parent()
 	return true
+
+static func _under_any(n: Node, roots: Array) -> bool:
+	for r in roots:
+		if is_instance_valid(r) and (n == r or (r as Node).is_ancestor_of(n)):
+			return true
+	return false
 
 static func _local_to(ancestor: Node3D, n: Node3D) -> Transform3D:
 	var xf := Transform3D.IDENTITY

@@ -16275,8 +16275,9 @@ func _qa_grant_dump(c: GrantMagicAttributeWindow) -> void:
 ## tick, puts the first bag item with that id on in that equipment slot,
 ## through the real equip message (the bag is listed again 20 ticks before),
 ## so a --server run can wear what OPENSRO_QA_COMMANDS' /give made, at its
-## plus, and a second client sees the server's 0x3038. QA only; never set in
-## real play.
+## plus, and a second client sees the server's 0x3038. An item id of 0 takes
+## that slot off instead (round 793: the shield, before a two-handed weapon).
+## QA only; never set in real play.
 var _qa_equip_bag_spec := OS.get_environment("OPENSRO_QA_EQUIP_BAG")
 
 func _qa_equip_bag_step() -> void:
@@ -16293,6 +16294,11 @@ func _qa_equip_bag_step() -> void:
 		elif _qa_tick == tick:
 			var slot := int(pair[0])
 			var item_id := int(pair[1])
+			if item_id == 0:
+				print("QA EQUIP BAG: tick %d taking off slot %d" % [_qa_tick, slot])
+				_awaiting_equip_ack = true
+				NetClient.unequip(NetClient.current_character_name, slot)
+				continue
 			var found := false
 			for s in _inventory_slots:
 				if s.item_id == item_id and CharacterAppearance.is_avatar_key(slot) and _hud_panels != null:
