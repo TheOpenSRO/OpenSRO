@@ -1732,4 +1732,17 @@ func _qa_print_anchors() -> void:
 		front.y = 0.0
 		to_cam.y = 0.0
 		var facing := rad_to_deg(front.normalized().angle_to(to_cam.normalized())) if front.length() > 0.0 and to_cam.length() > 0.0 else -1.0
-		print("QA SELECT: slot %d %s at (%d, %d), body front %.1f deg from the camera" % [k, d.record.char_name, int(s.x), int(s.y), facing])
+		# The pick box as the screen sees it: its eight corners projected.
+		var box := stage.posed_box(d)
+		var lo := Vector2(INF, INF)
+		var hi := Vector2(-INF, -INF)
+		for i in range(8):
+			var p := cam.unproject_position(d.body.global_transform * box.get_endpoint(i))
+			lo = lo.min(p)
+			hi = hi.max(p)
+		print("QA SELECT: slot %d %s at (%d, %d), body front %.1f deg from the camera, pick box x %d..%d y %d..%d (local %s)" % [k, d.record.char_name,
+			int(s.x), int(s.y), facing, int(lo.x), int(hi.x), int(lo.y), int(hi.y), box])
+		# Round 791: what a click on the drawn body's middle (its feet raised
+		# to half the box's height) picks.
+		var mid := cam.unproject_position(d.body.global_transform * Vector3(0, box.get_center().y, 0))
+		print("QA SELECT: a click on slot %d's body at (%d, %d) picks slot %d" % [k, int(mid.x), int(mid.y), stage.pick(mid, _page)])

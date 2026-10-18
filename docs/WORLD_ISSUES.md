@@ -7483,6 +7483,35 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-second round: the select screen picks the character clicked (the posed pick box)
+
+The user (2026-10-18): "the "hitbox" for character selection is off. I have to go to the far right now
+to click the character I want. If I click exactly where the character is that I want it will choose
+the character to the left." And: "it's not resolution based because at the default resolution for a
+roughly 4:3 window I can't select the far right character at all."
+
+- **Cause, MEASURED** (`/var/tmp/r791/sel.sh` on the render box: a local server, four characters, the
+  select screen through Login; `QA SELECT` lines now give each pick box on screen): the pick tested the
+  meshes' bind-pose box, arms out in a T -- 18.3 units wide on a 19.3-unit body, x -9.13..9.13, the
+  `.bsr`'s own box 0. At 1280x720 the boxes spanned x 82..484, 333..675, 586..930, 782..1176 for bodies
+  at 312, 526, 737, 950: each box reached well over its right neighbour, and the screen takes the FIRST
+  box hit (READ), so the character to the left won a click on the one beside it. A held weapon makes the
+  box longer still.
+- **Retail, READ:** the model's vslot 0x10 is `CCompChar` `0x00c1f0a0` (`this + 0xb0`), the box
+  `CCompChar::FUN_00c2b2d0` makes by skinning every part's vertices with the bones' current matrices --
+  the pose on screen (docs/protocol/charselect.md "Picking").
+- **Fix:** `CharSelectStage.posed_box`: the shown meshes skinned as drawn (CharSelectQa.skinned_points),
+  in the body's space, made once per clip a couple of frames after it starts (or at the first pick),
+  8-11 ms a character. OURS: hidden meshes (armour under an avatar dress) do not count.
+- **After, MEASURED:** the boxes are 9.0-9.5 units wide; at 1280x720 x 182..417, 428..605, 664..848,
+  852..1081 (no overlap), and a click on each body's middle picks that character; at 1024x768 the same
+  (23..274, 286..475, 537..734, 738..982; all four picked, the far right included). 0 SCRIPT ERROR.
+- **Test:** `charselect_test.gd` `_posed_pick_box`: a two-bone body whose arms the pose squeezes picks
+  by x -1.8..1.8, not the bind pose's 18 or more; a hidden part is left out; the body's fade does not
+  empty it.
+- **Not checked:** the user's own characters (their weapons and avatars); after a character is
+  selected the screen takes no character clicks (state 5, as retail's vslot_017).
+
 ## Seven-hundred-and-ninety-first round: avatars put on with the mouse (the equipment pane's hit test)
 
 The user (2026-10-16): "I can't drag and drop avatar items into their slots?"

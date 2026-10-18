@@ -58,8 +58,13 @@ class Drawn:
 	var anim_start := 0.0
 	var anim_loop := true
 	var then_type := -1
-	## The local bounding box of the bind pose, for the pick.
+	## The local bounding box of the bind pose (the QA anchors' fallback).
 	var bounds := AABB()
+	## The pick's box: the shown meshes skinned in the pose on screen, in the
+	## body's space (posed_box), made again after the clip changes.
+	var posed := AABB()
+	var posed_dirty := true
+	var posed_wait := 0
 	## The translucent pairs made for this body's materials (_fade_pair),
 	## by source material instance id, and the colour passes whose alpha
 	## follows the fade.
@@ -341,6 +346,8 @@ func _play(d: Drawn, action: int, loop: bool, then_type: int = -1) -> void:
 	d.anim_start = _clock
 	d.anim_loop = loop
 	d.then_type = then_type
+	d.posed_dirty = true
+	d.posed_wait = POSED_WAIT_FRAMES
 	if d.anim == null and then_type >= 0:
 		# The model names no such clip: go straight to what follows.
 		_play(d, then_type, true)
@@ -358,7 +365,9 @@ func alpha_of(k: int) -> int:
 ## case 2: each character of the page in order is ray-picked against its
 ## model's bounding box (FUN_00a5b2c0 -> FUN_00a5b000 with the model's local
 ## box, vslot 0x10, and its matrix, vslot 0x18), and the FIRST hit wins --
-## not the nearest.
+## not the nearest. The box is the posed one (posed_box): round 791 found the
+## bind pose's, arms out, 18 units wide on a 19-unit body, so each box
+## overlapped its right neighbour and the first hit took its clicks.
 func pick(screen: Vector2, page: int) -> int:
 	var cam := camera()
 	if cam == null:
@@ -371,9 +380,31 @@ func pick(screen: Vector2, page: int) -> int:
 		var d: Drawn = drawn[k]
 		if d.body == null or d.alpha <= 0.0:
 			continue
-		if _ray_hits_box(from, dir, d.body.global_transform, d.bounds):
+		if _ray_hits_box(from, dir, d.body.global_transform, posed_box(d)):
 			return k
 	return -1
+
+## Frames after a clip starts before its pose is measured (OURS: the pose is
+## applied in _tick, so the first frame may still show the rest pose).
+const POSED_WAIT_FRAMES := 2
+
+## A character's pick box. READ, sro_client.exe: the model's vslot 0x10 is
+## CCompChar's 0x00c1f0a0, `this + 0xb0`, the box CCompChar::FUN_00c2b2d0
+## fills from FLT_MAX by skinning every part's vertices with the bones'
+## current matrices (two bones, weighted) and growing the box by each
+## (FUN_009f74c0) -- the pose on screen, not the bind pose and not the .bsr's
+## two stored boxes (+0x284 / +0x29c, which nothing reads for the pick).
+## OURS: only the meshes shown count (an armour hidden under an avatar dress
+## does not widen it); made once per clip, here or a frame or two after it
+## starts (_process), not each frame.
+func posed_box(d: Drawn) -> AABB:
+	if d.posed_dirty and d.body != null:
+		var sw := Time.get_ticks_usec()
+		d.posed = _posed_bounds_of(d.body)
+		d.posed_dirty = d.posed.size == Vector3.ZERO
+		print("CharSelectStage: %s's pick box %s (bind pose %s) in %.1f ms" % [d.record.char_name if d.record != null else "?",
+			d.posed, d.bounds, (Time.get_ticks_usec() - sw) / 1000.0])
+	return d.posed if d.posed.size != Vector3.ZERO else d.bounds
 
 ## Where a character's name label goes on screen (READ, vslot_013: the slot
 ## plus label_height, projected), or null behind the camera.
@@ -512,6 +543,14 @@ func _process(delta: float) -> void:
 	_clock += delta
 	for d in drawn:
 		_tick(d, delta)
+	# One posed pick box a frame, once its clip has been applied.
+	for d in drawn:
+		if d.posed_dirty and d.body != null:
+			if d.posed_wait > 0:
+				d.posed_wait -= 1
+			else:
+				posed_box(d)
+				break
 	if _lizard_skeleton != null and _lizard_anim != null and props.has("lizard") and (props["lizard"] as Node3D).visible:
 		Skeleton3DBuilder.apply_ban_pose_at(_lizard_skeleton, _lizard_anim, _clock - _lizard_anim_start,
 			lizard_clip_loops(_lizard_anim))
@@ -929,6 +968,40 @@ static func _bounds_of(node: Node3D) -> AABB:
 		else:
 			box = box.merge(b)
 	return box
+
+## The shown meshes' vertices skinned as drawn now, as a box in `node`'s space.
+static func _posed_bounds_of(node: Node3D) -> AABB:
+	var box := AABB()
+	var first := true
+	if not node.is_inside_tree():
+		return box
+	var inv := node.global_transform.affine_inverse()
+	var stack: Array[Node] = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		for c in n.get_children():
+			stack.append(c)
+		var mi := n as MeshInstance3D
+		if mi == null or mi.mesh == null or not _shown_under(node, mi):
+			continue
+		for p in CharSelectQa.skinned_points(mi):
+			var q := inv * p
+			if first:
+				box = AABB(q, Vector3.ZERO)
+				first = false
+			else:
+				box = box.expand(q)
+	return box
+
+## Whether `n` is shown as far as the nodes from it up to `body` say (the
+## body's own visibility is its fade, _apply_alpha, and does not count).
+static func _shown_under(body: Node3D, n: Node3D) -> bool:
+	var cur: Node = n
+	while cur != null and cur != body:
+		if cur is Node3D and not (cur as Node3D).visible:
+			return false
+		cur = cur.get_parent()
+	return true
 
 static func _local_to(ancestor: Node3D, n: Node3D) -> Transform3D:
 	var xf := Transform3D.IDENTITY

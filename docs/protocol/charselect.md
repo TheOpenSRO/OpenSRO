@@ -419,7 +419,12 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
   right, and the walk is backwards, so the later record comes first.
 - **Picking:** each model of the page, in order, is tested with a ray against its own bounding box
   (`FUN_00a5b2c0` -> `FUN_00a5b000` with vslot 0x10's local box and vslot 0x18's matrix); the first
-  hit wins, not the nearest.
+  hit wins, not the nearest. **The box is the pose on screen** (round 791, READ): vslot 0x10 is
+  `CCompChar` `0x00c1f0a0`, `this + 0xb0`, which `CCompChar::FUN_00c2b2d0` fills from FLT_MAX by
+  skinning every part's vertices with the bones' current matrices (two bones, weighted) and growing
+  the box with each (`FUN_009f74c0`). The `.bsr`'s two stored boxes (the bounding section at header
+  +0x28: an lp root mesh, then box 0, the bind pose's, e.g. china man x -9.13..9.13, kept at CResObject
+  +0x284, and box 1, a standing body's, x -2.41..2.84, at +0x29c) are not what the pick reads.
 - **The name label** fades at 0.5 s per whole fade (`FUN_00855400`'s duration is 0.5 x the bytes left
   / 255), in font 4 (`FUN_00ba5460(4)` in `FUN_0085a580`). Its colour and alignment were not read
   (INFERRED: white, centred).

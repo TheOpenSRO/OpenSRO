@@ -12,7 +12,10 @@ extends SceneTree
 ##     translated) and hands it to the customize screen;
 ##   - the Start flow: 0x7001 with the selected name, the world on OK, the
 ##     refusal's words and Start again on a refusal;
-##   - the camera keys (READ values) and the click pose.
+##   - the camera keys (READ values) and the click pose;
+##   - round 791: the pick box is the shown meshes skinned in the pose on
+##     screen, not the bind pose's (arms out, so each box took its right
+##     neighbour's clicks).
 ## `godot4 --headless --path client --script res://scripts/frontend/charselect_test.gd`
 ##
 ## NEGATIVE: before round 684 none of CharSelectMath, CharSelectHandoff or the
@@ -58,6 +61,7 @@ func _initialize() -> void:
 	_info()
 	_idol_and_start()
 	_review_fixes()
+	_posed_pick_box()
 	print("ALL PASS" if _failures == 0 else "FAILURES: %d" % _failures)
 	quit(1 if _failures > 0 else 0)
 
@@ -232,6 +236,53 @@ func _drop(cs) -> void:
 ## nothing during the flies (states 0, 3, 6, 11); the re-select kept the
 ## standing height over a seated character; with no 3D the race select had
 ## nothing to click; Europe won an idol overlap.
+## A body of two bones: the trunk's vertices on bone 0, the arms' (x = +-9,
+## the bind pose's T) on bone 1, which the pose squeezes to x 0.2.
+func _posed_pick_box() -> void:
+	var body := Node3D.new()
+	root.add_child(body)
+	body.position = Vector3(100, 0, 50)
+	var skel := Skeleton3D.new()
+	skel.name = "Skel"
+	body.add_child(skel)
+	skel.add_bone("root")
+	skel.add_bone("arms")
+	skel.set_bone_parent(1, 0)
+	var skin := Skin.new()
+	skin.add_bind(0, Transform3D.IDENTITY)
+	skin.add_bind(1, Transform3D.IDENTITY)
+	var verts := PackedVector3Array([Vector3(0, 0, 0), Vector3(0, 19, 0), Vector3(-9, 15, 0), Vector3(9, 15, 0)])
+	var bones := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])
+	var weights := PackedFloat32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_BONES] = bones
+	arrays[Mesh.ARRAY_WEIGHTS] = weights
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_POINTS, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.skin = skin
+	skel.add_child(mi)
+	mi.skeleton = mi.get_path_to(skel)
+	# A hidden part (an armour under an avatar dress) far out to the side.
+	var hidden := MeshInstance3D.new()
+	var wide := BoxMesh.new()
+	wide.size = Vector3(40, 1, 1)
+	hidden.mesh = wide
+	hidden.visible = false
+	body.add_child(hidden)
+	skel.set_bone_pose_scale(1, Vector3(0.2, 1, 1))
+	# The fade hides the body itself at alpha 0; the box is still made.
+	body.visible = false
+	var posed: AABB = CharSelectStage._posed_bounds_of(body)
+	var bind: AABB = CharSelectStage._bounds_of(body)
+	_check(_near(posed.position.x, -1.8, 1e-3) and _near(posed.end.x, 1.8, 1e-3) and _near(posed.size.y, 19.0, 1e-3),
+		"the pick box is the posed one: x -1.8..1.8, 19 tall (got %s)" % posed)
+	_check(bind.size.x >= 18.0, "the bind pose's box is the T's width or more (got %s)" % bind)
+	body.queue_free()
+
 func _review_fixes() -> void:
 	var two := [_rec("a", 5, 0), _rec("b", 3, 0, true, 100)]
 	# Create 12 and Back 13 during the intro, the deselect fly and the fly back.
