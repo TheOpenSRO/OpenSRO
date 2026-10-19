@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.555** plus what is merged on `dev`; updated 2026-10-19.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.556** plus what is merged on `dev`; updated 2026-10-19.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -18,7 +18,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
 | [Social](#social) | 9 | 4 |  | 5 | 18 |
 | [Job / trade](#job--trade) |  |  |  | 3 | 3 |
-| [Pets & mounts](#pets--mounts) |  |  |  | 4 | 4 |
+| [Pets & mounts](#pets--mounts) | 4 |  |  | 1 | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
 | [UI / HUD](#ui--hud) | 14 | 4 |  | 1 | 19 |
 | [Graphics & effects](#graphics--effects) | 13 | 1 |  |  | 14 |
@@ -27,11 +27,10 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **143** | **33** | **1** | **44** | **221** |
+| **All** | **147** | **33** | **1** | **41** | **222** |
 
 ## Biggest gaps
 
-- No pets, horses or transports (COS)
 - No trader/hunter/thief jobs or trade runs
 - No player stalls, consignment or item mall
 - No open-world PvP, fortress war or arena events
@@ -86,7 +85,7 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Reverse return scroll | ✅ Supported | Last recall point, death point, or a point picked on the world map |
 | Arrival guard | ✅ Supported | Hidden while loading after a teleport, then 6 s of protection |
 | Saved position on logout | ✅ Supported | Server option, on for the public server; recall and death points always saved |
-| Minimap | ✅ Supported | NPC, monster, player, party, quest NPC and unique signs; no pet sign |
+| Minimap | ✅ Supported | NPC, monster, player, party, quest NPC and unique signs; no pet or horse sign |
 | World map | 🟡 Partial | Map, dungeon floors and city icons; guide list and sign tooltips missing |
 | Time of day | 🟡 Partial | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; optional darker nights (Night Darkness); night lamps not yet |
 | Weather (rain, snow) | ❌ Not yet | No weather system yet |
@@ -260,14 +259,15 @@ The trader, hunter and thief system is not built yet.
 
 ## Pets & mounts
 
-No COS (pet, horse, transport) system yet.
+Pets, horses and the item mall's rides from the original's own rules; trade transports wait for the job system.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Grab pet | ❌ Not yet | No pets; pet items refused |
-| Attack pet | ❌ Not yet | Not yet |
-| Horses | ❌ Not yet | Not yet |
-| Trade transports | ❌ Not yet | Not yet |
+| Ability (pickup) pets | ✅ Supported | Pick up gold, equipment and other items by their settings; gold to the owner, the rest to the pet's own bag |
+| Growth and fellow pets | ✅ Supported | Follow, fight what the owner attacks, gain EXP and level up, hunger, naming once |
+| Horses and rides | ✅ Supported | Horses, tigers, beetles, ostriches and the other ride scrolls: summoned at the owner's level bracket, ridden at the mount's speed |
+| Pet controls | ✅ Supported | Pet window, status slot, command bar, the retail pet keys, pet potions, revival and clocks; the Test Items NPC sells pets and rides |
+| Trade transports | ❌ Not yet | Refused until the job system exists |
 
 ## Events / special
 
