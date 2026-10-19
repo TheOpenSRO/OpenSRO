@@ -63,6 +63,10 @@ func is_pending(ground_id: int) -> bool:
 func has(ground_id: int) -> bool:
 	return _nodes.has(ground_id)
 
+## Every ground item's id (round 795: the ability pet's pick scan).
+func ids() -> Array:
+	return _items.keys()
+
 func snapshot(ground_id: int) -> GroundItemsNet.Snapshot:
 	return _items.get(ground_id)
 

@@ -228,6 +228,32 @@ var buff_roster := BuffRoster.new()
 var npc_roster := NpcSpawnNet.Roster.new()
 signal npc_spawned(rec: NpcSpawnNet.Record)
 signal npc_despawned(uid: int)
+
+## Round 795: the COS in view (CICCos records: rides, transports, pets) by
+## uid, as last spawned, and this character's own COS data (0x30C8) by uid --
+## kept so a World3D that comes up after them adopts them (cos_spawned /
+## cos_data have no listener before it). docs/protocol/pets.md.
+var cos_roster := {}
+var cos_own := {}
+signal cos_spawned(rec: CosSpawnNet.Record)
+signal cos_despawned(uid: int)
+## The owner's 0x30C8, 0x30C9 and the replies to its COS requests.
+signal cos_data(d: CosNet.Data)
+signal cos_update(u: CosNet.Update)
+signal cos_owner_state(d: Dictionary)
+signal cos_level_up(uid: int)
+signal cos_hp(uid: int, hp: int)
+## 0x3040: a bag item's COS state / rent changed ({slot, mask, state, rent_secs}).
+signal item_state_changed(d: Dictionary)
+## 0xB0CB {ok, code, rider, mounted, cos}; 0x30D0 {uid, walk, run}.
+signal ride_changed(d: Dictionary)
+signal speed_changed(d: Dictionary)
+## 0xB0C5, 0xB420, and the two-field replies (0xB0C6, 0xB116, 0xB117: op, d).
+signal cos_command_result(d: Dictionary)
+signal cos_setting_result(d: Dictionary)
+signal cos_reply(op: int, d: Dictionary)
+## 0xB034's pet-bag forms (CosNet.decode_bag_op).
+signal cos_bag_op(d: Dictionary)
 ## Round 737 (crowd_scale.md C1): the other players in view arrive as the
 ## same retail spawn messages, with a CICUser record (UserSpawnNet), and leave
 ## by 0x3016 / a type-2 group. user_roster is the uids spawned and not
@@ -729,7 +755,9 @@ func _passes_group(p: Packet) -> bool:
 				FriendNet.OP_ACCEPT_RESULT, FriendNet.OP_ACCEPTED, FriendNet.OP_DECLINE_RESULT, FriendNet.OP_LIST_RESULT, \
 				FriendNet.OP_REMOVE_RESULT, FriendNet.OP_PENDING_LIST_RESULT, GmNet.OP_COMMAND_RESULT, OP_UNSTUCK_RESULT, \
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
-				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE:
+				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE, \
+				CosNet.OP_DATA, CosNet.OP_UPDATE, CosNet.OP_ITEM_STATE, CosNet.OP_COMMAND_ACK, CosNet.OP_SETTING_ACK, \
+				CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -1061,13 +1089,30 @@ func report_stop(x: float, y: float, z: float) -> void:
 func move_order_destination(at: Vector3) -> Vector3:
 	if _spawn_dungeon >= 0:
 		var d := DungeonWorld.to_dungeon(at)
-		_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_dungeon_destination(_spawn_dungeon, d.x, d.y, d.z))
+		_send_move(DestMoveNet.encode_dungeon_destination(_spawn_dungeon, d.x, d.y, d.z))
 		return quantize_destination(at)
 	if _spawn_frame.x < 0:
 		return Vector3.INF
 	var l := DestMoveNet.local_of_world(at.x, at.z, _spawn_frame)
-	_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_destination(int(l["region"]), float(l["lx"]), at.y, float(l["lz"])))
+	_send_move(DestMoveNet.encode_destination(int(l["region"]), float(l["lx"]), at.y, float(l["lz"])))
 	return quantize_destination(at)
+
+## Round 795: the COS this player rides (its uid), 0 on foot. While it is
+## set the client steers the COS: a move goes out as 0x70C5 {uid, 1, the
+## 0x7021 body} (READ c:FUN_009ebd10: the controlled object is the mount).
+var riding_mount := 0
+
+func _send_move(body: PackedByteArray) -> void:
+	if riding_mount != 0:
+		_send(CosNet.OP_COMMAND, CosNet.encode_command_move(riding_mount, body))
+	else:
+		_send(DestMoveNet.OP_MOVEMENT_REQUEST, body)
+
+## Round 795: a record's region-local point in world coordinates (the frame
+## of the last result), as the players' snapshots are made.
+func spawn_world(region: int, local: Vector3) -> Vector3:
+	var at := UserSpawnNet.world_xz(region, local.x, local.z, _spawn_frame)
+	return Vector3(at.x, local.y, at.y)
 
 ## Round 749's review, F5: the world point the server will take for a
 ## destination `at` -- the region-local coordinates truncated as the wire
@@ -1089,7 +1134,7 @@ func quantize_destination(at: Vector3) -> Vector3:
 ## Round 749: 0x7021's heading form (the sky click, FUN_009ebec0): kind 0,
 ## the command (SkyRun.COMMAND_FORWARD) and the u16 wire angle.
 func move_order_heading(command: int, angle: int) -> void:
-	_send(DestMoveNet.OP_MOVEMENT_REQUEST, DestMoveNet.encode_heading(command, angle))
+	_send_move(DestMoveNet.encode_heading(command, angle))
 
 ## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key),
 ## or to walk or run ([2] / [3], the action window's Walk/Run, round 781).
@@ -1271,10 +1316,22 @@ var _attack_targets_in_flight: Array[int] = []
 ## self-cast's reply from a blow on the monster it is targeting.
 var _attack_types_in_flight: Array[int] = []
 
+## Round 795: an attack or skill refused because the player rides (READ
+## c:0x81ba10: 0x3021 UIIT_MSG_SKILL_USE_FAIL_CANT_USESKILL_IN_RIDESTATE,
+## nothing sent), and the owner's own offensive action on a monster (a
+## growth pet in attack mode takes the target, c:0x8a6311).
+signal ride_refused_action()
+signal own_offensive(monster_id: int)
+
 func attack(char_name: String, target_monster_id: int) -> void:
 	if not is_connected_to_server():
 		return
+	if riding_mount != 0:
+		ride_refused_action.emit()
+		return
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
+	if target_monster_id > 0:
+		own_offensive.emit(target_monster_id)
 	if LatencyProbe.on:
 		LatencyProbe.attack_send(target_monster_id, Time.get_ticks_msec())
 	_attack_targets_in_flight.append(target_monster_id)
@@ -1317,7 +1374,12 @@ func use_skill(char_name: String, skill_id: int, target_monster_id: int,
 	if not is_connected_to_server():
 		print("CAST send skipped (not connected): skill %d targetType %d" % [skill_id, target_type])
 		return
+	if riding_mount != 0:
+		ride_refused_action.emit()
+		return
 	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id, target_type, point))
+	if target_type == SkillNet.TARGET_ENTITY and target_monster_id > 0:
+		own_offensive.emit(target_monster_id)
 	if LatencyProbe.on and target_type == SkillNet.TARGET_ENTITY:
 		LatencyProbe.attack_send(target_monster_id, Time.get_ticks_msec())
 	_attack_targets_in_flight.append(target_monster_id)
@@ -1337,6 +1399,45 @@ func use_skill(char_name: String, skill_id: int, target_monster_id: int,
 ## token OpBuffStart gave it (round 618's buff bar calls this on a right
 ## click). Uses the logged-in character's name, as the other senders are
 ## handed it.
+## Round 795, the COS requests (CosNet; docs/protocol/pets.md).
+## The COS requests' log lines (QA only: OPENSRO_QA_COS_LOG=1).
+var _cos_trace: bool = OS.get_environment("OPENSRO_QA_COS_LOG") != ""
+
+func send_cos_command_move(uid: int, movement: PackedByteArray) -> void:
+	_send(CosNet.OP_COMMAND, CosNet.encode_command_move(uid, movement))
+
+func send_cos_attack(uid: int, target: int) -> void:
+	if _cos_trace:
+		print("COS send: 0x70C5 attack %d -> monster %d" % [uid, target])
+	_send(CosNet.OP_COMMAND, CosNet.encode_command_target(uid, CosNet.COMMAND_ATTACK, target))
+
+func send_cos_pick(uid: int, item: int) -> void:
+	if _cos_trace:
+		print("COS send: 0x70C5 pick %d -> ground item %d" % [uid, item])
+	_send(CosNet.OP_COMMAND, CosNet.encode_command_target(uid, CosNet.COMMAND_PICK, item))
+
+func send_cos_follow(uid: int) -> void:
+	_send(CosNet.OP_COMMAND, CosNet.encode_command_follow(uid))
+
+func send_cos_ride(mount: bool, uid: int) -> void:
+	_send(CosNet.OP_RIDE, CosNet.encode_ride(mount, uid))
+
+func send_cos_terminate(uid: int) -> void:
+	_send(CosNet.OP_TERMINATE, CosNet.encode_uid(uid))
+
+func send_cos_unsummon(uid: int) -> void:
+	_send(CosNet.OP_UNSUMMON, CosNet.encode_uid(uid))
+
+func send_cos_name(uid: int, name: String) -> void:
+	_send(CosNet.OP_NAME, CosNet.encode_name(uid, name))
+
+func send_cos_setting(uid: int, kind: int, value: int) -> void:
+	_send(CosNet.OP_SETTING, CosNet.encode_setting(uid, kind, value))
+
+func send_cos_bag_move(t: int, uid: int, src: int, dst: int, count: int = 1) -> void:
+	_item_op_kinds.append("cos")
+	_send(ItemOpNet.OP_MOVE, CosNet.encode_bag_move(t, uid, src, dst, count))
+
 func send_buff_cancel(skill_id: int, token: int) -> void:
 	if not is_connected_to_server():
 		return
@@ -1564,8 +1665,9 @@ func _dispatch_lobby(r: LobbyNet.Result) -> void:
 ## players' spawn records (round 737, UserSpawnNet): World3D hands it over
 ## as soon as it has read it. The spawns that waited for it are read now, in
 ## the order they came.
-func set_spawn_item_rows(rows: Dictionary) -> void:
-	_spawn_types = UserSpawnNet.Types.new(rows)
+func set_spawn_item_rows(rows: Dictionary, cos_kind: Callable = Callable()) -> void:
+	_spawn_types = UserSpawnNet.Types.new(rows, cos_kind)
+	_cos_kind = cos_kind
 	var waiting := _pending_spawns
 	_pending_spawns = []
 	_replaying = true
@@ -1574,10 +1676,17 @@ func set_spawn_item_rows(rows: Dictionary) -> void:
 		_apply_spawn_message(int(m["op"]), m["data"])
 	_replaying = false
 
+## Round 795: the COS table's TypeID4 by RefObjID (World3D's CosTable).
+var _cos_kind: Callable
+
+func cos_kind_of(ref_id: int) -> int:
+	return int(_cos_kind.call(ref_id)) if _cos_kind.is_valid() else 0
+
 ## A world entry or zone change: the players in view start over, and their
 ## records' coordinates are in frame (the result's FrameRegion).
 func _start_user_view(frame: String) -> void:
 	user_roster.clear()
+	cos_roster.clear()
 	_pending_spawns.clear()
 	_group_job = null
 	_zone_arrivals.clear()
@@ -1638,6 +1747,19 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 			if _spawn_types == null:
 				_pending_spawns.append({"op": op, "data": data, "rx": _rx_msec})
 				return
+			if data.size() >= 4 and not UserSpawnNet.is_player_ref(data.decode_u32(0)):
+				var k := _spawn_types.cos_kind_of(data.decode_u32(0))
+				if k != 0:
+					var c := CosSpawnNet.decode_single_spawn(data, k)
+					if c == null:
+						push_warning("NetClient: a 0x3015 that does not read as a COS record (%d bytes)" % data.size())
+					else:
+						_cos_spawned(c)
+				else:
+					var single := NpcSpawnNet.decode_single_spawn(data)
+					if single != null:
+						npc_spawned.emit(npc_roster.spawn(single))
+				return
 			var rec := UserSpawnNet.decode_single_spawn(data, _spawn_types)
 			if rec == null:
 				push_warning("NetClient: a 0x3015 that does not read as a player record (%d bytes)" % data.size())
@@ -1647,7 +1769,9 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 				_user_spawned(rec)
 		NpcSpawnNet.OP_SINGLE_DESPAWN:
 			var gone := NpcSpawnNet.decode_single_despawn(data)
-			if user_roster.has(gone):
+			if cos_roster.has(gone):
+				_cos_despawned(gone)
+			elif user_roster.has(gone):
 				if _spawn_log:
 					print("NetClient: 0x3016 player %d went out of view" % gone)
 				_user_left(gone)
@@ -1686,6 +1810,8 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 						(" and %d NPC(s)" % g.npcs.size()) if not g.npcs.is_empty() else ""])
 				for rec in g.npcs:
 					npc_spawned.emit(npc_roster.spawn(rec))
+				for c in g.cos:
+					_cos_spawned(c)
 				if not g.users.is_empty():
 					var qt := Time.get_ticks_usec()
 					user_group_begin.emit()
@@ -1706,7 +1832,9 @@ func _apply_spawn_message(op: int, data: PackedByteArray) -> void:
 					print("NetClient: group despawn of %d player(s)%s" % [players,
 						(" at %d ms" % Time.get_ticks_msec()) if FrameSplit.on else ""])
 				for u in g.uids:
-					if user_roster.has(u):
+					if cos_roster.has(u):
+						_cos_despawned(u)
+					elif user_roster.has(u):
 						_user_left(u)
 					elif npc_roster.despawn(u):
 						npc_despawned.emit(u)
@@ -1747,6 +1875,14 @@ func _group_step() -> bool:
 				user_group_begin.emit()
 			_user_spawned(rec)
 			job["users"] = int(job["users"]) + 1
+		elif _spawn_types != null and _spawn_types.cos_kind_of(UserSpawnNet.peek_ref(r)) != 0:
+			# Round 795: a COS (CICCos, cos_spawn.gd).
+			var c := CosSpawnNet.read_record(r, _spawn_types.cos_kind_of(UserSpawnNet.peek_ref(r)))
+			if c == null:
+				push_warning("NetClient: a group spawn that does not read (record %d of %d: %s) -- the rest dropped" % [int(job["i"]), count, r.error])
+				job["i"] = count
+				break
+			_cos_spawned(c)
 		else:
 			var npc := NpcSpawnNet.read_record(r)
 			if npc == null:
@@ -1787,7 +1923,9 @@ func _despawn_step(job: Dictionary) -> bool:
 			break
 		var u: int = uids[int(job["i"])]
 		job["i"] = int(job["i"]) + 1
-		if user_roster.has(u):
+		if cos_roster.has(u):
+			_cos_despawned(u)
+		elif user_roster.has(u):
 			job["users"] = int(job["users"]) + 1
 			_user_left(u)
 		elif npc_roster.despawn(u):
@@ -1800,6 +1938,16 @@ func _despawn_step(job: Dictionary) -> bool:
 		print("NetClient: group despawn of %d player(s)%s" % [int(job["users"]),
 			(" at %d ms, over %d frame(s)" % [Time.get_ticks_msec(), int(job["frames"])]) if FrameSplit.on else ""])
 	return true
+
+## Round 795: a COS came into view (or was spawned again: a summon, a level
+## row's change, a death).
+func _cos_spawned(rec: CosSpawnNet.Record) -> void:
+	cos_roster[rec.uid] = rec
+	cos_spawned.emit(rec)
+
+func _cos_despawned(uid: int) -> void:
+	cos_roster.erase(uid)
+	cos_despawned.emit(uid)
 
 ## A player came into view: World3D's snapshot of it, its body mode kept for
 ## its body (_berserk_resync), and its sitting.
@@ -1990,7 +2138,50 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_SELL_RESULT:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
+		CosNet.OP_DATA:
+			var cd := CosNet.decode_data(p.data, Callable(self, "cos_kind_of"))
+			if cd.error != "":
+				push_warning("NetClient: a 0x30C8 that does not read (%s)" % cd.error)
+			else:
+				cos_own[cd.uid] = cd
+				cos_data.emit(cd)
+		CosNet.OP_UPDATE:
+			var cu := CosNet.decode_update(p.data)
+			if cu.type == CosNet.UPDATE_REMOVED:
+				cos_own.erase(cu.uid)
+			cos_update.emit(cu)
+		CosNet.OP_OWNER_STATE:
+			cos_owner_state.emit(CosNet.decode_owner_state(p.data))
+		CosNet.OP_LEVEL_UP:
+			if p.data.size() >= 4:
+				cos_level_up.emit(p.data.decode_u32(0))
+		CosNet.OP_ITEM_STATE:
+			item_state_changed.emit(CosNet.decode_item_state(p.data))
+		CosNet.OP_RIDE_ACK:
+			ride_changed.emit(CosNet.decode_ride_ack(p.data))
+		CosNet.OP_SPEED:
+			speed_changed.emit(CosNet.decode_speed(p.data))
+		CosNet.OP_COMMAND_ACK:
+			cos_command_result.emit(CosNet.decode_command_ack(p.data))
+		CosNet.OP_SETTING_ACK:
+			var sa := CosNet.decode_setting_ack(p.data)
+			if bool(sa.get("ok", false)) and cos_own.has(int(sa["uid"])):
+				(cos_own[int(sa["uid"])] as CosNet.Data).pet_option = int(sa["value"])
+			cos_setting_result.emit(sa)
+		CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK:
+			cos_reply.emit(p.opcode, CosNet.decode_reply(p.data))
 		ItemOpNet.OP_MOVE_RESULT:
+			# Round 795: the pet bag's forms (a pet's own pick comes unasked).
+			if p.data.size() >= 2 and p.data[0] == 1 and p.data[1] in [CosNet.BAG_COS_TO_COS, CosNet.BAG_PICK,
+					CosNet.BAG_COS_TO_BAG, CosNet.BAG_BAG_TO_COS]:
+				if p.data[1] != CosNet.BAG_PICK and not _item_op_kinds.is_empty():
+					_item_op_kinds.pop_front()
+				cos_bag_op.emit(CosNet.decode_bag_op(p.data))
+				return
+			if p.data.size() >= 1 and p.data[0] == 2 and not _item_op_kinds.is_empty() and _item_op_kinds[0] == "cos":
+				_item_op_kinds.pop_front()
+				cos_bag_op.emit(CosNet.decode_bag_op(p.data))
+				return
 			# Round 789: an avatar move's reply (its type byte, or a refusal
 			# while an avatar move is the oldest one out) is AvatarNet's.
 			# A buy back's success comes here too (type 0x22) but was sent as
@@ -2058,6 +2249,11 @@ func _dispatch(p: Packet) -> void:
 				buff_roster.drop(BuffRoster.key_of(died, SkillNet.OWNER_MONSTER))
 			monster_died.emit(died)
 		StatusNet.OP_OBJECT_STATUS:
+			# Round 795: a COS's HP (OwnerCOS 2, flag 1: u32 HP; OURS head,
+			# retail's flag-1 field, c:0x8a9e30).
+			if p.data.size() >= 16 and p.data[0] == 2 and p.data[11] & 1:
+				cos_hp.emit(p.data.decode_u32(1), p.data.decode_u32(12))
+				return
 			var st := StatusNet.decode_object_status(p.data)
 			if st.error == "":
 				if st.owner_kind == SkillNet.OWNER_CHARACTER:
@@ -2093,8 +2289,11 @@ func _dispatch(p: Packet) -> void:
 			# item table, so a body is never told to walk before it exists.
 			_user_spawn_message(p.opcode, p.data)
 		NpcSpawnNet.OP_SINGLE_SPAWN:
-			# A player's record (round 737) or an NPC's, by its RefObjID.
-			if p.data.size() >= 4 and UserSpawnNet.is_player_ref(p.data.decode_u32(0)):
+			# A player's record (round 737) or an NPC's, by its RefObjID; a
+			# COS's (round 795) by the COS table, which comes with the item
+			# table: before both, the record waits with the players'.
+			if p.data.size() >= 4 and (UserSpawnNet.is_player_ref(p.data.decode_u32(0)) \
+					or _spawn_types == null or cos_kind_of(p.data.decode_u32(0)) != 0):
 				_user_spawn_message(NpcSpawnNet.OP_SINGLE_SPAWN, p.data)
 			else:
 				var single := NpcSpawnNet.decode_single_spawn(p.data)
@@ -2104,7 +2303,7 @@ func _dispatch(p: Packet) -> void:
 					npc_spawned.emit(npc_roster.spawn(single))
 		NpcSpawnNet.OP_SINGLE_DESPAWN:
 			var gone := NpcSpawnNet.decode_single_despawn(p.data)
-			if gone >= 0 and (user_roster.has(gone) or not _pending_spawns.is_empty()):
+			if gone >= 0 and (user_roster.has(gone) or cos_roster.has(gone) or not _pending_spawns.is_empty()):
 				# A player's (round 737): in order behind any spawn still
 				# waiting for the item table.
 				_user_spawn_message(NpcSpawnNet.OP_SINGLE_DESPAWN, p.data)

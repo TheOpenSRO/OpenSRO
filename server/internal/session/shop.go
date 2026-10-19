@@ -360,6 +360,10 @@ func handleShopSell(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{Reason: tradeBusyReason}).Encode()})
 	}
 
+	// Round 795: not the item of a pet that is out (0x18b7).
+	if cosItemOut(ctx, characterID, int(req.Slot)) {
+		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{Reason: cosOutText}).Encode()})
+	}
 	gold, err := svc.Sell(ctx, characterID, int(req.Slot), int(req.Quantity))
 	if err != nil {
 		result := &ShopSellResult{}

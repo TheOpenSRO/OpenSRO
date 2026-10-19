@@ -327,3 +327,140 @@ drink's own record carries it.
 function is a multi-case dispatcher over expendable-item operations; the
 propagated name describes one of its cases and would send a reader looking for
 pet feeding anywhere but here. The row now carries that caveat.
+## Round 795: pets, rides and transports, built
+
+Round 795 built the COS from this page's rules plus five research passes over both binaries
+(summoning and state, the pickup pet and its bag, riding, the client's CICCos and rider, the client's
+windows). Labels as everywhere: READ (code, address), MEASURED (data), INFERRED, OURS, OPEN. The code:
+`server/internal/cos` (rules, store, wire), `server/internal/session/cos*.go` (the runtime),
+`client/scripts/net/cos_net.gd` / `cos_spawn.gd`, `client/scripts/npc/cos_table.gd`, World3D's COS
+sections, `client/scripts/ui/hud/hud_cos*.gd`.
+
+### The kinds (READ, MEASURED)
+
+The summoned characterdata row's TypeID4 decides everything (TypeID 1/2/3/x; the client's CICCos is one
+class for all, vtable `0xde211c`):
+
+| TypeID4 | server class | client kind byte | what | summoned by |
+|---:|---|---:|---|---|
+| 1 | CGObjCOS (IsVehicle, slot 13) | 0 | ride: `COS_C_HORSE1..3`, `DHORSE`, `DONKEY`, `CAMEL`, the mall rides `COS_C_TIGER_n`, `OSTRICH_n`, `SCARABAEUS_n`, `PEGASUS_n`, `WILDPIG_n`, `UNICORN`, `RUDOLPH`, `DRACO` | 3/3/3/2 scroll, consumed |
+| 2 | CGObjCOS_Cart (IsCart, slot 12) | 1 | transport `COS_T_*` | 3/3/3/2 scroll, consumed |
+| 3 | CGObjCOS_GoldPet | 3 | growth pet; **every fellow pet** (`COS_P_FELLOW_*`, `COS_P_CELES_FELLOW_*`: TypeID4 3, MEASURED) | 3/2/1/1, kept |
+| 4 | CGObjCOS_SilkPet | 2 | ability ("silk") pet: the pickup pet | 3/2/1/2, kept |
+| 5 | CGObjCOS_Mercenary | 4 | guild soldier | not built |
+
+The item mall's own names: `SN_TAB_PET_GROWTH` "Growth Pet", `SN_TAB_PET_SILK` "Ability Pet",
+`SN_TAB_PET_FELOW` "Fellow Pet", `SN_TAB_VEHICLE` "Vehicle", `SN_TAB_CART` "Trans" (MEASURED,
+textuisystem). A growth row is one of 140 per family (36 families, 5,040 rows, identical numbers per
+level); col 6 (DescStrID) names the next level's row, which a level-up swaps to (0x30C9 type 7).
+
+### Summoning (READ)
+
+Use of a pet item (`CGItemCOSSummoner::CheckCanUse` s:0x493100): owner level >= 5 (0x186c); never
+summoned (the item's Data word 0): the row Desc128_1 names, owner level >= its Lvl (0x18a5),
+`CheckCanSummonCOS`, `_AddNewCOS` (HP = MaxHP, HGP 10000, State 3, 28 slots for an ability pet,
+PetOption 1 growth / 7 ability, RentEnd = now + Param1 minutes); existing: alive (0x18a4), the level,
+an ability pet's rent (0x18a4), CheckCanSummonCOS. **Using the item on a pet that is out recalls it**
+(within 100.0, else 0x1897; a ridden one 0x1896). The item is never spent.
+
+Use of a ride or transport scroll (`CGItemExpendable::vslot_307` case 2): the row is Desc1, or with a
+level list in Desc128_2 (col 121) Desc1 + `_<largest bracket <= owner level>` -- the "HP changes with
+the user's level" of the tooltip is a different row, not a formula; dungeon 0x1879; CheckCanSummonCOS;
+the scroll is spent; the owner mounts at once when nothing refuses.
+
+`CheckCanSummonCOS` (s:0x4fcef0): a ride or transport while riding or with one out 0x185c; a transport
+needs job state 1 or 2 (a trader's or thief's suit) 0x1849; a pet: one per TID word, so one growth
+and one ability pet at most (0x18a9).
+
+Order on success: the use's reply, [a new pet: 0x3040 state 2], the 0x3015 (spawn type 1: the client's
+summon effect and `snd_cos_summon`), 0x30C8 to the owner, [an existing pet: 0x3040 state 2], 0x30CA for
+a growth pet or transport.
+
+### The wire (READ, both sides)
+
+**The CICCos spawn record** (server slot 294 mode 2; client CICCos slot 25 c:0x9c60b0): the NPC's
+common body (u32 RefObjID, u32 uid, u16 region, f32 x y z, u16 angle, the mover, four stance bytes,
+f32 walk, run, 100, u8 buffs) and u8 flags (no NPC bit-2 block), then by TypeID4: [3, 4] string pet
+name; [2..6] string owner name; [2..5] u8 owner job; [2, 3, 5] u8 owner PvP; [5] u32 guild; [not 1]
+u32 owner uid. A ride ends at its flags: its rider names it.
+
+**The rider's record** (`pc_spawn.md` rows 24/25): ride state 1 adds the COS uid after the battle
+byte; a rider's walk/run are its COS's.
+
+| message | layout |
+|---|---|
+| 0x30C8 | u32 uid, u32 ref, u32 HP, u32 MP, [growth: u64 exp, u8 level, u16 HGP], [pets: u32 PetOption, string name], u8 bag size [u8 n, n x (u8 slot, item record)], [pets, transport: u32 owner uid], [pets: u8 the item's slot + 13] |
+| 0x30C9 | u32 uid, u8 type: 1 removed; 2 u8 size, u8 n, items; 3 i64 delta, u32 source; 4 u16 HGP; 5 string name; 7 u32 new ref |
+| 0x30CA | u32 uid, u8 mask, [1: u8 owner job], [2: u8 owner PvP] |
+| 0x3040 | u8 slot + 13, u8 mask, ...; 0x40 u8 the item's COS state (1 none, 2 out, 3 in the item, 4 dead / expired), 0x80 u32 rent seconds |
+| 0x70C5 / 0xB0C5 | u32 uid, u8 command: 1 the 0x7021 body (a rider's move), 2 u32 target, 8 u32 ground item, 9 follow. 0xB0C5 {u8 result, u8 command, [2: u16 code], u32 uid, [8: u32 item]} |
+| 0x70CB / 0xB0CB | {u8 1 mount / 0 dismount, u32 uid}; success broadcast {1, u32 rider, u8 flag, u32 COS}, refusal {2, u16} |
+| 0x70C6 / 0xB0C6 | u32 uid: a ride or transport deleted; {1} |
+| 0x7116 / 0xB116 | u32 uid: a pet put away; no reply on success |
+| 0x7117 / 0xB117 | u32 uid, string: a pet named once (1..12, no space); the name comes back as 0x30C9 type 5 to the owner and the area |
+| 0x7420 / 0xB420 | u32 uid, u8 kind (1 a growth pet's AI mode, 2 an ability pet's pickup flags), u32 value; {1, u32 uid, u8 kind, u32 value} |
+| 0x30D0 | u32 uid, f32 walk, f32 run: a dismount gives the rider its own speeds back |
+| 0x7034 | 0x10 pet -> pet {u32 uid, u8, u8, u16}; 0x1a pet -> bag {u32 uid, u8 pet slot, u8 bag + 13}; 0x1b bag -> pet; 0xB034 0x11 a pet's pick {u32 uid, u8 slot, item record} |
+
+The summon item's record (`SOItem::FUN_008be4f0`): after the RefItemID, u8 state; past 1 u32 the COS
+ref, [pets: string name], [ability: u32 rent seconds], u8 0 timed jobs. Expendables carry u16 count
+(+ u8 for the alchemy stones 3/3/11/1-2). OpenSRO's bag lists now carry these records too
+(`session.retailItemTail`, `ItemInstance._read_tail`).
+
+### Riding (READ)
+
+Mount (s:0x4fc4d0): standing (5), owner's COS (7), not riding (5), a ride or transport (8), within
+30.0 (4). The client then steers the COS: its moves go out as 0x70C5 command 1 and the server drops a
+rider's own 0x7021; the echo 0xB021 is under the COS uid. The rider's speeds are the COS's, no
+multiplier. A blow aimed at a rider lands on the mount; a mount at 0 HP is deleted and throws its
+rider; the owner's death deletes the ridden COS. **Dismounting a ride deletes it**; a transport stays.
+The client places the rider each frame at the mount's animated `saddle` bone times the mount's world
+transform (ICharactor::FUN_009d05d0), plays the rider's "cart" group (0 `cart_stand01`, 1 and 7
+`cart_walk`; MEASURED in all 53 player .bsr) and refuses its attacks and skills (0x3021).
+
+### The pets (READ)
+
+- Follow: IDLE turns to FOLLOW at 65.0 from the owner; FOLLOW runs to a point selfBC + ownerBC (4,
+  MEASURED) + rand()%10+1 around the owner and settles within selfBC + 50.0.
+- The ability pet's pick is the CLIENT's: every frame, the nearest eligible ground item within 500 of
+  the pet (squared 250000.0) is asked for with 0x70C5 command 8, one request out per pet; eligible by the
+  flags 0x80 on, 0x40 every owner, 1 gold, 2 equipment, 4 the rest; never trade goods. The server runs
+  the pet there, takes it within 10.0 (gives up past 1000.0) and routes it: gold to the owner's purse,
+  a quest, untradeable or undroppable item to the owner's bag, anything else to the pet's bag (0x18b4
+  full, 0x18b5 the owner's full). A refused item is not asked for again (the client's reply handler
+  compares a byte with u16 codes, c:0x8af960: READ).
+- The growth pet attacks what its owner's client names: its owner's offensive action in attack mode
+  (PetOption 1) while it has no target; its blow is its row's col-83 skill, halved below 30 % HGP.
+- Every kill its owner is paid for pays the growth pet the reward recomputed at the pet's level;
+  OffsetExpPoint levels it below its owner and 110, else holds it at the threshold less one.
+- Hunger: 100 / (Except_4 x 60) HGP a second, Except_4 = 5 on every growth row (MEASURED): 1 % every
+  5 minutes; 0x30C9 type 4 at each 10 % mark; HGP 0 puts the pet away (slot 219: INFERRED).
+- Regeneration 1.6 % of max HP every 4 s. An ability pet's rent is checked every 30 s.
+- Consumables, each naming its pet: COS HP potions (3/3/1/4) by the user's potion formula; the HGP
+  potion (3/3/1/9) +Param1 x 100, refused at 99 %; revival (3/3/1/6) alive with full HP and HGP 3000 if
+  below; the clock (3/3/13/12) extends an ability pet's rent from max(end, now) by Param1 minutes.
+- An out pet's item cannot be sold (0x18b7), traded (0x18b6) or stored (0x18b2).
+
+### OURS, disclosed
+
+- **Visibility**: a COS is delivered with its owner -- spawned right after the owner's spawn, despawned
+  with it, its messages to whoever holds the owner -- where retail files it in its own message block.
+- The server's tick (100 ms), the corpse (5 s), a leash that puts a pet 400 behind back beside its owner
+  (retail's was not found).
+- Monsters do not target a COS: a pet's blows are booked to its owner, whom the monster answers.
+- A logout keeps every COS summoned and brings it back at the next entry, a ride remounted (retail's
+  normal-logout reason is OPEN; reason 4 deletes a ride).
+- Not modelled, so not refused: the battle state, the quest block, the teleport state, PvP capes and
+  murderers, job suits -- so a transport, which needs a trader's or thief's suit, is always refused
+  0x1849 (retail's own rule).
+- OpenSRO's own use-item message carries a pet consumable's target as option 0xC5 and a u32 (the COS
+  uid, or the pet item's bag index for the revival and the clock); retail's 0x704C carries it after
+  the type word.
+- 0x3057's COS HP rides OpenSRO's head: owner kind 2, the uid, flag 1, u32 HP.
+- The COS ids are 0x7e000000 + n.
+
+### OPEN
+
+The code names 0x1869, 0x1896, 0x1897; slot 219's exact effect (hunger 0, rent end); where a pet's
+corpse is cleared; the pet-bag extension's slot count; monster aggro on pets; the guild soldier; the
+transport's trade goods and Sell All.

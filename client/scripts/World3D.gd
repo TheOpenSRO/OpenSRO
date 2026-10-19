@@ -2088,9 +2088,12 @@ func _ready() -> void:
 
 	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
+	# Round 795: the COS table (rides, transports, pets) from the boot
+	# tables, which the spawn reader asks a record's TypeID4 of.
+	_cos_bind_table(CharTables.boot(_media_pk2) if _media_pk2 != null else null)
 	# The other players' spawn records are read by the item table (round
 	# 737, UserSpawnNet): the spawns that came before it are read now.
-	NetClient.set_spawn_item_rows(_item_rows)
+	NetClient.set_spawn_item_rows(_item_rows, _cos_kind_of)
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
 	# The readers' own time so far, by function (round 667, ParseProfile;
 	# OPENSRO_PARSE_PROFILE=1): boot and these tables, then a fresh window
@@ -2124,6 +2127,8 @@ func _ready() -> void:
 	# Round 749: retail's 0xB021 and 0xB023 (DestMoveNet).
 	NetClient.entity_move_echo.connect(_on_entity_move_echo)
 	NetClient.entity_move_stop.connect(_on_entity_move_stop)
+	# Round 795: the COS (pets, rides, transports).
+	_cos_connect()
 	NetClient.unstuck_result.connect(_on_unstuck_result)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.other_player_equipment_changed.connect(_on_other_equipment_changed)
@@ -2480,6 +2485,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_player_info.position = Vector2(4, 7)
 	_hud_player_info.setup()
 	_hud_player_info.self_pressed.connect(_select_self)
+	# Round 795: the COS windows (HudCos), the pet strip in the player block.
+	_hud_cos_setup()
 	# Round 629: the ready circle runs the berserk key's own path, the "+"
 	# opens the character window, and opening the stat panel asks for fresh
 	# numbers (CIFPlayerMiniInfo's message map; see hud_player_info.gd).
@@ -7287,6 +7294,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var dead_at_arrival := _player_dead
 	var keep_server_point := arrival_keeps_server_point(teleport_arrival, requested, dead_at_arrival)
 	if result != null and result.ok:
+		# Round 795: the COS in view start over (the server sends its own
+		# again with their 0x30C8; the mount is found again by its uid).
+		_cos_clear()
 		# A zone change or a teleport lets go of the icon on the cursor
 		# (round 652's review; OURS -- retail's handling is not read).
 		if _hud_panels != null:
@@ -9586,6 +9596,8 @@ func _marker_target_position(key: String) -> Variant:
 			node = _other_bodies.get(id)
 		"npc":
 			node = instance_from_id(id)
+		"cos":
+			node = _cos_bodies.get(id)
 	if node == null or not is_instance_valid(node) or not (node is Node3D):
 		return null
 	var n := node as Node3D
@@ -12503,6 +12515,17 @@ func _on_quickslot_pick_requested(slot_index: int) -> void:
 ## The held icon was put down off the panels (round 652): onto the quick slot
 ## bar, or the world.
 func _on_held_dropped_outside(what: Dictionary, at: Vector2) -> void:
+	# Round 795: the COS window's slots and commands, and a bag item put down
+	# on the pet bag (HudCos.accept_drop), before anything else takes it.
+	if _hud_cos != null:
+		var k := String(what.get("kind", ""))
+		if k == "cos_bag" and _hud_panels != null and _hud_panels._over_inventory_window(at):
+			if _hud_cos.held_dropped_on_inventory(what):
+				return
+		if _hud_cos.accept_drop(what, at):
+			return
+		if k == "cos_bag" or k == "cos_command":
+			return
 	var tex: Texture2D = what.get("icon") as Texture2D
 	match String(what.get("kind", "")):
 		"skill":
@@ -17248,6 +17271,8 @@ func _qa_step() -> void:
 		_qa_reequip_step()
 	if _qa_equip_bag_spec != "":
 		_qa_equip_bag_step()
+	if _qa_cos_spec != "":
+		_qa_cos_step()
 	# OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>,.." (round 789; needs a
 	# server): at each tick the avatar in that avatar storage slot is put
 	# down on the bag as a drag would (HudPanels' 0x23: the first empty bag
@@ -19565,6 +19590,9 @@ func _physics_process(delta: float) -> void:
 		fs_t = t1
 	var cells_before := _load_timings.cell_work_usec
 	_physics_step(delta)
+	# Round 795: the COS walking their legs, and the ability pets' pick scan.
+	_cos_step(delta)
+	_cos_pick_scan()
 	if FrameSplit.on and fs_t > 0:
 		FrameSplit.add("p_step", Time.get_ticks_usec() - fs_t)
 	# The ring follows its object, or hides (round 698).
@@ -19592,6 +19620,8 @@ func _physics_process(delta: float) -> void:
 func _process(_delta: float) -> void:
 	if title_mode:
 		return
+	# Round 795: riders on their mounts' saddles, the mounts under them.
+	_cos_place_riders()
 	# The auto potion's interface timers (round 786, 0xb933d0's pass).
 	_auto_potion.step(Time.get_ticks_msec())
 	# The time of day (round 786, DayCycle): the environment eased toward the
@@ -20002,7 +20032,10 @@ func _physics_step(delta: float) -> void:
 			action = BsrReader.AnimationEntry.TYPE_STAND_BATTLE
 		else:
 			action = BsrReader.AnimationEntry.TYPE_STAND
-		var anim := _body_animation_for(_player_body, action, _player_weapon_group)
+		# Round 795: a rider rides its "cart" group, standing or moving.
+		if _riders.has(_own_id()) and action != BsrReader.AnimationEntry.TYPE_RUN and action != BsrReader.AnimationEntry.TYPE_WALK:
+			action = BsrReader.AnimationEntry.TYPE_STAND
+		var anim := _body_animation_for(_player_body, action, _player_anim_group())
 		# An abnormal state's clip speed (round 785, StateLook).
 		_player_anim_time += delta * _player_clip_speed
 		if _player_one_shot != null:
@@ -21963,6 +21996,9 @@ func _other_speed(character_id: int) -> float:
 ## on the click (MoveOrderSync), so nothing changes -- no rubber-banding.
 func _on_entity_move_echo(echo: DestMoveNet.Echo) -> void:
 	_sync_own_id()
+	# Round 795: a COS's (or the ridden one's, which is the rider's) move.
+	if _cos_move_echo(echo):
+		return
 	var id := int(echo.uid)
 	if _own_id() >= 0 and id == (_own_id() & 0xffffffff):
 		if _qa_move_log:
@@ -22048,6 +22084,8 @@ func _resume_other_leg(snapshot: WorldNet.EntitySnapshot) -> void:
 ## put where the server has it.
 func _on_entity_move_stop(stop: DestMoveNet.Stop) -> void:
 	_sync_own_id()
+	if _cos_move_stop(stop):
+		return
 	var id := int(stop.uid)
 	var h := RemoteFacing.from_wire_angle(stop.angle)
 	if _own_id() >= 0 and id == (_own_id() & 0xffffffff):
@@ -25956,6 +25994,9 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 func _on_pick_up_motion(motion: GroundItemsNet.PickUpMotion) -> void:
 	_sync_own_id()
 	var h := GroundItemsNet.heading_of_pickup_angle(motion.angle)
+	# Round 795: an ability pet's pick.
+	if _cos_pick_motion(motion.object_id, h):
+		return
 	var own := _own_id()
 	if own >= 0 and motion.object_id == (own & 0xffffffff):
 		player.rotation.y = RemoteFacing.yaw_of(h, 0.0)
@@ -28406,7 +28447,22 @@ func _run_key_action(action: String, arg: int) -> String:
 			# round 715). Not spawned: nothing to select.
 			return _select_quick_party_member(int(arg) - 1)
 		"pet_info", "pet_ride", "pet_unsummon", "pet_follow", "pet_attack", "pet_ai", "pet_switch":
-			return "no-op: no pet or COS in this client"
+			# Round 795: 0x7a0980(n) on the current COS (HudCos.run_command),
+			# W the next one in summon order.
+			if _hud_cos == null or not _hud_cos.has_any():
+				return "no COS out"
+			if action == "pet_switch":
+				_hud_cos.switch_next()
+				return "switched to COS %d" % _hud_cos.current_uid()
+			var cmd := 0
+			match action:
+				"pet_ride": cmd = HudCosCommand.CMD_RIDE
+				"pet_attack": cmd = HudCosCommand.CMD_ATTACK
+				"pet_follow": cmd = HudCosCommand.CMD_FOLLOW
+				"pet_unsummon": cmd = HudCos.pgup_command(CosNet.client_kind(_hud_cos.cos_kind(_hud_cos.current_uid())))
+				"pet_ai": cmd = HudCosCommand.CMD_AI
+			_hud_cos.run_command(cmd)
+			return "COS command %d on %d" % [cmd, _hud_cos.current_uid()]
 	return "no-op: %s is not built" % action
 
 ## A held key went down or up (V, Z): applied at once, and every frame after
@@ -29265,6 +29321,11 @@ func _spawn_result_others(others: Array, seated: Array) -> void:
 			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE, other.pluses)
 		# Round 749: one spawned walking walks on (the record's mover).
 		_resume_other_leg(other)
+		# Round 795: a rider rides (the record's ride state and COS uid).
+		if other.mount_uid != 0:
+			_cos_seat(other.character_id, other.mount_uid)
+		elif _riders.has(other.character_id):
+			_cos_unseat(other.character_id)
 	_other_build_defer -= 1
 	_seat_result_others(seated)
 	if _other_build_defer == 0:
@@ -31622,3 +31683,885 @@ func _title_physics(_delta: float) -> void:
 	if not _title_held and not _title_planned:
 		_maybe_stream_regions()
 	_process_stream_queue()
+
+# --- COS: pets, rides and transports (round 795) ----------------------------
+#
+# A summoned COS reaches this client as retail's CICCos spawn record
+# (CosSpawnNet, through the same 0x3015 / group spawns as the players), moves
+# by 0xB021 / 0xB023 under its own uid, and is despawned by 0x3016. Its owner
+# hears its data (0x30C8) and updates (0x30C9) for the COS windows (HudCos).
+# docs/protocol/pets.md, "Round 795", has the rules; what is READ is cited
+# where it is used.
+#
+# A rider (READ, ICharactor::FUN_009d05d0 every frame): its body's world
+# transform is the mount's animated "saddle" bone times the mount's world
+# transform, with no offset; the rider plays its "cart" group, the same action
+# type as the mount (0x9cfa00..0x9cfcf0); a mount with a rider is drawn with it.
+# OURS: here the rider's ROOT keeps walking on the ground (the own player's
+# mover, another's OtherWalk leg, both at the mount's speeds) and the mount's
+# body follows that root; the rider's skeleton alone is put on the saddle.
+
+## The COS table (CharTables' boot task, round 795).
+var _cos_table: CosTable = null
+## uid -> the body's root Node3D, its record, its assembly, its motion.
+var _cos_bodies := {}
+var _cos_recs := {}
+var _cos_assembled := {}
+var _cos_motion := {}
+## uid -> the model its body waits for (an async template).
+var _cos_waiting := {}
+## rider (character id, the own one included) -> mount uid.
+var _riders := {}
+## rider -> the skeleton's own local transform, put back at the dismount.
+var _rider_rest := {}
+## The own player's foot speed, kept while it rides.
+var _foot_move_speed := -1.0
+
+## The name line's colour: 0xffffff55, pale yellow (READ, CICCos::vslot_025
+## FUN_008b2b70(0xffffff55)).
+const COS_NAME_COLOUR := Color(1.0, 1.0, 0x55 / 255.0)
+## The owner line sits 20.0 above the name line (READ, CICCos slot 15
+## 0x9c6820, `fsub 0xe1b830`): label pixels here.
+const COS_OWNER_LINE_OFFSET := 20.0
+## A pet runs above this speed and walks below it (READ, CICCos::vslot_009
+## 0x9c59c0, 20.0 at 0xd88108).
+const COS_RUN_ABOVE := 20.0
+
+func _cos_connect() -> void:
+	NetClient.cos_spawned.connect(_on_cos_spawned)
+	NetClient.cos_despawned.connect(_on_cos_despawned)
+	NetClient.cos_hp.connect(_on_cos_hp)
+	NetClient.cos_level_up.connect(_on_cos_level_up)
+	NetClient.ride_changed.connect(_on_ride_changed)
+	NetClient.speed_changed.connect(_on_speed_changed)
+	NetClient.cos_reply.connect(_on_cos_reply)
+	NetClient.cos_command_result.connect(_on_cos_command_result)
+	_cos_connect_ai()
+	# Those already in view before this world came up.
+	for uid in NetClient.cos_roster:
+		_on_cos_spawned(NetClient.cos_roster[uid])
+
+## The COS table from the boot tables, bound where the readers ask.
+func _cos_bind_table(boot: CharTables.Boot) -> void:
+	_cos_table = boot.cos if boot != null else CosTable.new()
+	ItemInstance.cos_kind_of = _cos_table.kind_of
+	ItemInstance.types_of = func(ref: int) -> PackedInt32Array:
+		var it = _item_rows.get(ref)
+		return it.type_ids if it != null else PackedInt32Array()
+	print("World3D: %d COS rows (rides, transports, pets)" % _cos_table.size())
+
+func _cos_kind_of(ref: int) -> int:
+	return _cos_table.kind_of(ref) if _cos_table != null else 0
+
+## A COS's display name: the record's (a pet's own), else its row's name text.
+func _cos_display_name(rec: CosSpawnNet.Record) -> String:
+	if rec.name != "":
+		return rec.name
+	var row := _cos_table.row(rec.ref_id) if _cos_table != null else null
+	if row == null:
+		return ""
+	var names := _object_names()
+	var text := names.get_text(row.name_key, "") if names != null and row.name_key != "" else ""
+	if text != "":
+		return text
+	# A pet with no name and an owner in no job: "No name" (READ 0x9c6d46,
+	# UIIT_STT_COSNEWUI_TITLE).
+	if rec.is_pet() and _ui_text_table != null:
+		return _ui_text_table.get_text("UIIT_STT_COSNEWUI_TITLE", "")
+	return row.code
+
+## The owner line: the owner's name, "*name" in a job, "[name]" for a soldier
+## (READ, ICCos::FUN_009c5ea0).
+static func cos_owner_line(rec: CosSpawnNet.Record) -> String:
+	if rec.owner_name == "":
+		return ""
+	if rec.kind == CosSpawnNet.KIND_SOLDIER:
+		return "[%s]" % rec.owner_name
+	if rec.owner_job != 4 and rec.owner_job != 0:
+		return "*" + rec.owner_name
+	return rec.owner_name
+
+func _on_cos_spawned(rec: CosSpawnNet.Record) -> void:
+	var at := NetClient.spawn_world(rec.region, rec.local_position)
+	var old: Node3D = _cos_bodies.get(rec.uid)
+	_cos_recs[rec.uid] = rec
+	if old != null and is_instance_valid(old):
+		# Spawned again (a summon's re-spawn, a death, a level's new row): a
+		# new model is built anew, the same one is updated in place.
+		var old_rec: CosSpawnNet.Record = old.get_meta("cos_rec")
+		if old_rec != null and old_rec.ref_id == rec.ref_id:
+			old.set_meta("cos_rec", rec)
+			_cos_label(old, rec)
+			if rec.life == 2:
+				_cos_play(rec.uid, BsrReader.AnimationEntry.TYPE_DIE, true)
+			return
+		_cos_free_body(rec.uid)
+	_cos_build_body(rec, at)
+
+func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
+	var row := _cos_table.row(rec.ref_id) if _cos_table != null else null
+	var model := row.model if row != null else ""
+	if model != "" and _monster_async_wanted() and not _monster_templates.has(model):
+		if not _monster_assemble.is_valid() and _data_pk2 == null:
+			_data_pk2 = _open_pk2_if_set()
+		_monster_templates.request(model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		_cos_waiting[rec.uid] = model
+		return
+	_cos_waiting.erase(rec.uid)
+	var body := Node3D.new()
+	body.name = "Cos%d" % rec.uid
+	var y := _terrain_hit_height(at)
+	body.position = Vector3(at.x, at.y if is_nan(y) else y, at.z)
+	body.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(rec.angle), 0.0)
+	var height := 2.0 * PLAYER_SCALE_RATIO
+	var skel: Skeleton3D = null
+	if model != "":
+		var assembled := _monster_templates.instance(model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		if assembled != null:
+			skel = assembled.skeleton
+			_cos_assembled[rec.uid] = assembled
+			height = _monster_templates.label_height_of(model)
+			skel.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(model))
+			body.add_child(skel)
+			_animate(assembled)
+	if skel == null:
+		var mesh := MeshInstance3D.new()
+		var capsule := CapsuleMesh.new()
+		capsule.radius = 0.4 * PLAYER_SCALE_RATIO
+		capsule.height = 1.0 * PLAYER_SCALE_RATIO
+		mesh.mesh = capsule
+		mesh.position.y = 0.5 * PLAYER_SCALE_RATIO
+		body.add_child(mesh)
+	body.set_meta("cos_uid", rec.uid)
+	body.set_meta("cos_rec", rec)
+	body.set_meta("cos_height", height)
+	body.add_child(_monster_collider(height))
+	var label := _name_plate("", height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
+	label.name = "Label"
+	body.add_child(label)
+	var owner_label := _name_plate("", height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
+	owner_label.name = "OwnerLabel"
+	owner_label.offset.y = COS_OWNER_LINE_OFFSET
+	body.add_child(owner_label)
+	_cos_label(body, rec)
+	other_entities.add_child(body)
+	_cos_bodies[rec.uid] = body
+	CharacterBlobs.register(body, float(row.bc) if row != null else 0.0)
+	_light_character(body)
+	_appear_fades.start(body)
+	if rec.life == 2:
+		_cos_play(rec.uid, BsrReader.AnimationEntry.TYPE_DIE, true)
+	elif rec.has_dest:
+		var d := NetClient.spawn_world(rec.dest_region, Vector3(rec.dest_local))
+		_cos_start_leg(rec.uid, Vector3(d.x, d.y, d.z), rec.run if rec.run_flag != 0 else rec.walk)
+	print("World3D: COS %d %s (%s, TypeID4 %d) at (%.0f, %.0f) owner %s -- %s" % [rec.uid,
+		_cos_display_name(rec), row.code if row != null else "?", rec.kind, at.x, at.z,
+		rec.owner_name if rec.owner_name != "" else "-", "model " + model if skel != null else "no model: a capsule"])
+
+## The two lines over a COS: its name in pale yellow, the owner's line above
+## it in the owner's name colour (white when the owner is out of view).
+func _cos_label(body: Node3D, rec: CosSpawnNet.Record) -> void:
+	var label: Label3D = body.get_node_or_null("Label")
+	if label != null:
+		label.text = _cos_display_name(rec)
+		label.modulate = COS_NAME_COLOUR
+	var owner_label: Label3D = body.get_node_or_null("OwnerLabel")
+	if owner_label != null:
+		owner_label.text = cos_owner_line(rec)
+		owner_label.modulate = Color.WHITE
+		owner_label.visible = owner_label.text != ""
+
+func _cos_free_body(uid: int) -> void:
+	var body: Node3D = _cos_bodies.get(uid)
+	_cos_bodies.erase(uid)
+	_cos_assembled.erase(uid)
+	_cos_motion.erase(uid)
+	if body != null and is_instance_valid(body):
+		var skel := body.get_node_or_null("Skeleton3D")
+		for c in body.get_children():
+			if c is Skeleton3D:
+				_unanimate(c)
+		body.queue_free()
+
+func _on_cos_despawned(uid: int) -> void:
+	_cos_waiting.erase(uid)
+	_cos_recs.erase(uid)
+	# A rider on it gets off (READ: CICCos slot 8 0x9d0a30 clears both links).
+	for rider in _riders.keys():
+		if int(_riders[rider]) == uid:
+			_cos_unseat(int(rider))
+	_cos_free_body(uid)
+
+## Drops every skeleton entry the idle ticker drives for skel.
+func _unanimate(skel: Skeleton3D) -> void:
+	var i := 0
+	while i < _animated.size():
+		if (_animated[i] as Array)[0] == skel:
+			_animated.remove_at(i)
+		else:
+			i += 1
+
+## Plays one action on a COS's body: once, or held (a death).
+func _cos_play(uid: int, action_type: int, hold: bool = false) -> float:
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+	if assembled == null or _data_pk2 == null or not is_instance_valid(assembled.skeleton):
+		return 0.0
+	var anim := SkinnedBsrAssembler.animation_for(_data_pk2, assembled, action_type)
+	if anim == null:
+		return 0.0
+	return _play_once(assembled.skeleton, anim, hold)
+
+## A COS's loop: stand, walk or run.
+func _cos_gait(uid: int, gait: int) -> void:
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+	if assembled == null or not is_instance_valid(assembled.skeleton):
+		return
+	var clip := MonsterMotion.gait_clip(_data_pk2, assembled, gait)
+	if clip != null:
+		MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time)
+
+## Starts a COS's leg toward dest at speed.
+func _cos_start_leg(uid: int, dest: Vector3, speed: float) -> void:
+	var body: Node3D = _cos_bodies.get(uid)
+	if body == null:
+		return
+	var from := Vector2(body.position.x, body.position.z)
+	var to := Vector2(dest.x, dest.z)
+	var was: Dictionary = _cos_motion.get(uid, {})
+	_cos_motion[uid] = {"pos": from, "dest": to, "speed": maxf(speed, 1.0), "moving": true}
+	var dir := to - from
+	if dir.length() > 0.01:
+		_aim_remote_body(body, Vector3(dir.x, 0.0, dir.y), 0.0)
+	if was.is_empty() or not bool(was.get("moving", false)) or (float(was.get("speed", 0.0)) > COS_RUN_ABOVE) != (speed > COS_RUN_ABOVE):
+		_cos_gait(uid, BsrReader.AnimationEntry.TYPE_RUN if speed > COS_RUN_ABOVE else BsrReader.AnimationEntry.TYPE_WALK)
+
+## The rider of a mount, -1 when none rides it.
+func _cos_rider_of(uid: int) -> int:
+	for rider in _riders:
+		if int(_riders[rider]) == uid:
+			return int(rider)
+	return -1
+
+## 0xB021 for a COS's uid: true when it was one. A ridden COS's move is its
+## rider's: the rider's root walks it at the mount's speed (the own player's
+## echo is its receipt).
+func _cos_move_echo(echo: DestMoveNet.Echo) -> bool:
+	var uid := int(echo.uid)
+	if NetClient.riding_mount != 0 and uid == NetClient.riding_mount:
+		_move_sync.confirm(echo.kind, echo.dest_world, echo.angle)
+		return true
+	if not _cos_recs.has(uid):
+		return false
+	var rider := _cos_rider_of(uid)
+	if rider >= 0 and _other_bodies.has(rider):
+		var leg := OtherWalk.to_point(echo.dest_world, _other_speed(rider)) if echo.kind == DestMoveNet.KIND_DESTINATION \
+			else OtherWalk.on_heading(echo.angle, _other_speed(rider))
+		var rbody: Node3D = _other_bodies[rider]
+		rbody.position = OtherWalk.start_at(rbody.position, echo.source_world, echo.has_source)
+		_start_other_leg(rider, leg)
+		return true
+	var rec: CosSpawnNet.Record = _cos_recs[uid]
+	if echo.kind == DestMoveNet.KIND_DESTINATION:
+		var body: Node3D = _cos_bodies.get(uid)
+		if body != null and echo.has_source and Vector2(body.position.x, body.position.z).distance_to(
+				Vector2(echo.source_world.x, echo.source_world.z)) > MonsterMotion.RESYNC_DISTANCE:
+			body.position = Vector3(echo.source_world.x, body.position.y, echo.source_world.z)
+		_cos_start_leg(uid, echo.dest_world, rec.run)
+	return true
+
+## 0xB023 for a COS's uid: true when it was one.
+func _cos_move_stop(stop: DestMoveNet.Stop) -> bool:
+	var uid := int(stop.uid)
+	if NetClient.riding_mount != 0 and uid == NetClient.riding_mount:
+		_apply_own_correction(stop.world, RemoteFacing.from_wire_angle(stop.angle))
+		return true
+	if not _cos_recs.has(uid):
+		return false
+	var body: Node3D = _cos_bodies.get(uid)
+	if body != null and _cos_rider_of(uid) < 0:
+		body.position = Vector3(stop.world.x, body.position.y, stop.world.z)
+		body.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(stop.angle), 0.0)
+		if bool((_cos_motion.get(uid, {}) as Dictionary).get("moving", false)):
+			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
+		_cos_motion.erase(uid)
+	return true
+
+## 0x3036 for a COS (an ability pet's pick, type 38 -- the players' pickup
+## type, MEASURED in the rabbit's and myowon's default groups).
+func _cos_pick_motion(uid: int, heading: float) -> bool:
+	if not _cos_bodies.has(uid):
+		return false
+	var body: Node3D = _cos_bodies[uid]
+	body.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+	_cos_play(uid, BsrReader.AnimationEntry.TYPE_PICKUP)
+	return true
+
+## Every physics frame: the waiting bodies whose template is in, and the
+## walking ones' steps (MonsterMotion.step) with their ground.
+func _cos_step(delta: float) -> void:
+	for uid in _cos_waiting.keys():
+		if _monster_templates.has(String(_cos_waiting[uid])) and _cos_recs.has(uid):
+			var rec: CosSpawnNet.Record = _cos_recs[uid]
+			_cos_waiting.erase(uid)
+			_cos_build_body(rec, NetClient.spawn_world(rec.region, rec.local_position))
+	for uid in _cos_motion.keys():
+		var body: Node3D = _cos_bodies.get(uid)
+		if body == null or not is_instance_valid(body):
+			_cos_motion.erase(uid)
+			continue
+		var st: Dictionary = _cos_motion[uid]
+		if not bool(st["moving"]):
+			continue
+		var pos := MonsterMotion.step(st["pos"], st["dest"], float(st["speed"]), delta)
+		st["pos"] = pos
+		var y := _terrain_hit_height(Vector3(pos.x, body.position.y, pos.y))
+		body.position = Vector3(pos.x, body.position.y if is_nan(y) else y, pos.y)
+		if pos == st["dest"]:
+			st["moving"] = false
+			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
+
+## Every frame, after the walkers moved: each mount under its rider's root,
+## and the rider's skeleton on the mount's saddle (READ ICharactor::
+## FUN_009d05d0: rider world = saddle bone x mount world, no offset).
+func _cos_place_riders() -> void:
+	for rider in _riders.keys():
+		var uid := int(_riders[rider])
+		var mount: Node3D = _cos_bodies.get(uid)
+		var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+		var root := _rider_root(int(rider))
+		var rskel := _rider_skeleton(int(rider))
+		if mount == null or not is_instance_valid(mount) or root == null or rskel == null:
+			continue
+		mount.global_position = root.global_position
+		mount.rotation.y = root.rotation.y
+		# The mount's gait is its rider's: run while the rider moves.
+		var moving := _rider_moving(int(rider))
+		if bool(mount.get_meta("cos_moving", false)) != moving:
+			mount.set_meta("cos_moving", moving)
+			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND)
+		if assembled == null or not is_instance_valid(assembled.skeleton):
+			continue
+		var bone := assembled.skeleton.find_bone("saddle")
+		if bone < 0:
+			continue
+		if not _rider_rest.has(rider):
+			_rider_rest[rider] = rskel.transform
+			_rider_group(int(rider), true)
+		rskel.global_transform = assembled.skeleton.global_transform * assembled.skeleton.get_bone_global_pose(bone)
+
+## The root node a rider walks: the own player, or another's body.
+func _rider_root(rider: int) -> Node3D:
+	_sync_own_id()
+	if rider == _own_id():
+		return player
+	return _other_bodies.get(rider)
+
+## The rider's skeleton (its drawn body).
+func _rider_skeleton(rider: int) -> Skeleton3D:
+	if rider == _own_id():
+		return _player_skeleton
+	var gait: Dictionary = _other_gaits.get(rider, {})
+	if gait.is_empty() or not is_instance_valid(gait.get("skeleton")):
+		return null
+	return gait["skeleton"]
+
+func _rider_moving(rider: int) -> bool:
+	if rider == _own_id():
+		return _has_move_target
+	return _other_legs.has(rider)
+
+## The rider plays its "cart" group while it rides (READ CObjCharacter::
+## RefreshAnimationGroup 0xa5bd10 forces it whenever the body has a mount).
+func _rider_group(rider: int, on: bool) -> void:
+	if rider == _own_id():
+		return # the own gait reads _riders (_player_anim_group)
+	var gait: Dictionary = _other_gaits.get(rider, {})
+	if gait.is_empty():
+		return
+	if on:
+		if not gait.has("foot_group"):
+			gait["foot_group"] = gait["group"]
+		gait["group"] = "cart"
+	elif gait.has("foot_group"):
+		gait["group"] = gait["foot_group"]
+		gait.erase("foot_group")
+	var moving := bool(gait["moving"])
+	gait["moving"] = not moving
+	_set_other_gait(rider, moving)
+
+## The own player's animation group: "cart" while it rides.
+func _player_anim_group() -> String:
+	if _riders.has(_own_id()):
+		return "cart"
+	return _player_weapon_group
+
+## A rider takes the mount (0xB0CB flag 1, or a spawn record's ride state).
+func _cos_seat(rider: int, uid: int) -> void:
+	if int(_riders.get(rider, 0)) == uid:
+		return
+	if _riders.has(rider):
+		_cos_unseat(rider)
+	_riders[rider] = uid
+	var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+	if rider == _own_id():
+		NetClient.riding_mount = uid
+		if rec != null and rec.run > 0.0:
+			if _foot_move_speed < 0.0:
+				_foot_move_speed = _move_speed
+			_move_speed = rec.run
+	elif rec != null and rec.run > 0.0:
+		_other_speeds[rider] = rec.run
+	print("World3D: %s mounted COS %d" % ["the player" if rider == _own_id() else "player %d" % rider, uid])
+
+## A rider leaves the mount: its skeleton back under its root.
+func _cos_unseat(rider: int) -> void:
+	if not _riders.has(rider):
+		return
+	var uid := int(_riders[rider])
+	_riders.erase(rider)
+	var rskel := _rider_skeleton(rider)
+	if _rider_rest.has(rider):
+		if rskel != null and is_instance_valid(rskel):
+			rskel.transform = _rider_rest[rider]
+		_rider_rest.erase(rider)
+		_rider_group(rider, false)
+	if rider == _own_id():
+		NetClient.riding_mount = 0
+		if _foot_move_speed > 0.0:
+			_move_speed = _foot_move_speed
+			_foot_move_speed = -1.0
+	var mount: Node3D = _cos_bodies.get(uid)
+	if mount != null and is_instance_valid(mount):
+		mount.remove_meta("cos_moving")
+		_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
+	print("World3D: %s dismounted COS %d" % ["the player" if rider == _own_id() else "player %d" % rider, uid])
+
+## 0xB0CB: a mount or dismount (to everyone holding the rider), or a refusal.
+func _on_ride_changed(d: Dictionary) -> void:
+	_sync_own_id()
+	if not bool(d.get("ok", false)):
+		var code := int(d.get("code", 0))
+		var text := _cos_ride_error_text(code)
+		if text != "":
+			_log_system(text)
+		return
+	var rider_uid := int(d["rider"])
+	var rider := _own_id() if _own_id() >= 0 and rider_uid == (_own_id() & 0xffffffff) else _other_by_uid(rider_uid)
+	if rider < 0:
+		return
+	if bool(d["mounted"]):
+		_cos_seat(rider, int(d["cos"]))
+	else:
+		_cos_unseat(rider)
+
+## The ride refusals' texts, error category 0xe (READ c:0x7b9fc6, table
+## c:0x7bba88).
+func _cos_ride_error_text(code: int) -> String:
+	var key := ""
+	match code:
+		4: key = "UIIT_MSG_CMSERR_TOO_FAR"
+		7: key = "UIIT_MSG_CMSERR_ITS_NOT_MY_COS_OBJ"
+		8: key = "UIIT_MSG_CMSERR_CANT_RIDE_ON_IT"
+		10: key = "UIIT_MSG_CMSERR_HUNTER_CANT_RIDE_CART"
+		11: key = "UIIT_MSG_COS_CAN_NOT_RIDE_BATTLE"
+		12: key = "UIIT_MSG_COSERR_CANT_RIDE"
+	if key == "" or _ui_text_table == null:
+		return ""
+	return _ui_text_table.get_text(key, "")
+
+## 0x30D0: a character's speeds (a dismount gives the rider its own back).
+func _on_speed_changed(d: Dictionary) -> void:
+	_sync_own_id()
+	var uid := int(d.get("uid", 0))
+	var run := float(d.get("run", 0.0))
+	if _own_id() >= 0 and uid == (_own_id() & 0xffffffff):
+		if run > 0.0 and not _riders.has(_own_id()):
+			_move_speed = run
+			_server_run_speed = int(run)
+			_foot_move_speed = -1.0
+		return
+	var id := _other_by_uid(uid)
+	if id >= 0 and run > 0.0:
+		_other_speeds[id] = run
+
+## A COS's HP (0x3057's flag 1): its owner's windows.
+func _on_cos_hp(_uid: int, _hp: int) -> void:
+	pass
+
+## 0x3054 on a COS: its level-up effect.
+func _on_cos_level_up(uid: int) -> void:
+	print("World3D: COS %d levelled up" % uid)
+
+## A two-field COS reply's refusal (0xB0C6, 0xB116, 0xB117): category 0xc.
+func _on_cos_reply(op: int, d: Dictionary) -> void:
+	if bool(d.get("ok", false)):
+		return
+	print("World3D: COS reply 0x%04x refused, code 0x%x" % [op, int(d.get("code", 0))])
+
+func _on_cos_command_result(d: Dictionary) -> void:
+	if not bool(d.get("ok", false)) and int(d.get("code", 0)) != 0:
+		print("World3D: COS command %d refused, code 0x%x" % [int(d.get("type", 0)), int(d.get("code", 0))])
+
+## A world entry or zone change: the COS in view start over.
+func _cos_clear() -> void:
+	for rider in _riders.keys():
+		if int(rider) != _own_id():
+			_cos_unseat(int(rider))
+	for uid in _cos_bodies.keys():
+		_cos_free_body(int(uid))
+	_cos_recs.clear()
+	_cos_waiting.clear()
+
+## QA (round 795): OPENSRO_QA_COS="<tick>:<action>;..." drives the COS through
+## the client's own sends (needs a server): use=<RefItemID> (the first bag
+## slot holding it: a pet item, a ride scroll), feed=<RefItemID> (a pet's
+## consumable on the first COS, OPTION_COS_TARGET), ride / dismount (the
+## first ride or transport), unsummon / terminate / follow (the first COS of
+## that kind), name=<text> (the first pet), pick=<flags> (the first ability
+## pet's pickup settings), walk=<deg> (the QA walk's heading; walk=off),
+## goto=<dx>,<dz> (a click move that far from the player).
+## Every tick it logs "QA COS" lines; OPENSRO_QA_COS_LOG=1 adds a state line
+## every 60 ticks.
+var _qa_cos_spec := OS.get_environment("OPENSRO_QA_COS")
+
+func _qa_cos_first(kinds: Array) -> int:
+	for uid in NetClient.cos_own:
+		var d: CosNet.Data = NetClient.cos_own[uid]
+		if d.kind in kinds:
+			return int(uid)
+	return 0
+
+func _qa_cos_step() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	if OS.get_environment("OPENSRO_QA_COS_LOG") != "" and _qa_tick % 60 == 0:
+		var parts: Array = []
+		for uid in _cos_bodies:
+			var b: Node3D = _cos_bodies[uid]
+			var meshes := 0
+			var shown := 0
+			var box := AABB()
+			for mi in b.find_children("*", "MeshInstance3D", true, false):
+				meshes += 1
+				if (mi as MeshInstance3D).is_visible_in_tree():
+					shown += 1
+				var gb := (mi as MeshInstance3D).global_transform * (mi as MeshInstance3D).get_aabb()
+				box = gb if box.size == Vector3.ZERO else box.merge(gb)
+			parts.append("%d@(%.0f,%.1f,%.0f) meshes %d shown %d box %s" % [int(uid), b.global_position.x, b.global_position.y,
+				b.global_position.z, meshes, shown, str(box)])
+		print("QA COS state tick %d: own %s bodies [%s] riders %s player (%.0f,%.0f) speed %.0f" % [_qa_tick,
+			str(NetClient.cos_own.keys()), ", ".join(parts), str(_riders), player.global_position.x, player.global_position.z, _move_speed])
+	for entry in _qa_cos_spec.split(";", false):
+		var at := String(entry).split(":", true, 1)
+		if at.size() != 2:
+			continue
+		var tick := int(at[0])
+		if _qa_tick == tick - 20:
+			NetClient.list_inventory(NetClient.current_character_name)
+		if _qa_tick != tick:
+			continue
+		var kv := at[1].split("=", true, 1)
+		var action := kv[0]
+		var arg := kv[1] if kv.size() > 1 else ""
+		match action:
+			"use", "feed":
+				var found := false
+				for s in _inventory_slots:
+					if s.item_id == int(arg):
+						if action == "use":
+							NetClient.use_item(NetClient.current_character_name, s.slot_index)
+						else:
+							NetClient.use_item_option(NetClient.current_character_name, s.slot_index,
+								UseItemNet.OPTION_COS_TARGET, _qa_cos_first([CosNet.KIND_GROWTH, CosNet.KIND_ABILITY]))
+						print("QA COS: tick %d %s item %d from bag slot %d" % [_qa_tick, action, int(arg), s.slot_index])
+						found = true
+						break
+				if not found:
+					print("QA COS: tick %d item %d is not in the bag" % [_qa_tick, int(arg)])
+			"ride":
+				var uid := _qa_cos_first([CosNet.KIND_RIDE, CosNet.KIND_TRANSPORT])
+				print("QA COS: tick %d ride %d" % [_qa_tick, uid])
+				NetClient.send_cos_ride(true, uid)
+			"dismount":
+				print("QA COS: tick %d dismount %d" % [_qa_tick, NetClient.riding_mount])
+				NetClient.send_cos_ride(false, NetClient.riding_mount)
+			"unsummon":
+				var uid := _qa_cos_first([CosNet.KIND_GROWTH, CosNet.KIND_ABILITY])
+				print("QA COS: tick %d unsummon %d" % [_qa_tick, uid])
+				NetClient.send_cos_unsummon(uid)
+			"terminate":
+				var uid := _qa_cos_first([CosNet.KIND_RIDE, CosNet.KIND_TRANSPORT])
+				print("QA COS: tick %d terminate %d" % [_qa_tick, uid])
+				NetClient.send_cos_terminate(uid)
+			"follow":
+				NetClient.send_cos_follow(_qa_cos_first([CosNet.KIND_GROWTH, CosNet.KIND_ABILITY]))
+			"name":
+				var uid := _qa_cos_first([CosNet.KIND_GROWTH, CosNet.KIND_ABILITY])
+				print("QA COS: tick %d name %d %s" % [_qa_tick, uid, arg])
+				NetClient.send_cos_name(uid, arg)
+			"pick":
+				var uid := _qa_cos_first([CosNet.KIND_ABILITY])
+				print("QA COS: tick %d pickup flags %d on %d" % [_qa_tick, int(arg), uid])
+				NetClient.send_cos_setting(uid, CosNet.SETTING_PICKUP, int(arg))
+			"walk":
+				_qa_walk = "" if arg == "off" else arg
+				print("QA COS: tick %d walk %s" % [_qa_tick, arg])
+			"cmd":
+				# A GM line at this tick (e.g. cmd=/spawn mangyang 4).
+				print("QA COS: tick %d cmd %s" % [_qa_tick, arg])
+				NetClient.gm_command(NetClient.current_character_name, arg.trim_prefix("/"), 0)
+			"goto":
+				# A click move by (dx, dz) from where the player stands: the
+				# move-order path (0x7021, or 0x70C5 while riding).
+				var d := arg.split(",")
+				if d.size() == 2:
+					_move_target = player.position + Vector3(float(d[0]), 0.0, float(d[1]))
+					_has_move_target = true
+					_move_heading_run = false
+					print("QA COS: tick %d goto (%.0f,%.0f)" % [_qa_tick, _move_target.x, _move_target.z])
+
+# --- The ability pet's pick and the growth pet's attack (round 795) ---------
+#
+# Both are the CLIENT's in retail (docs/protocol/pets.md, "Round 795"):
+#   - CDropItemManager (c:0xeedd14, the scan c:0x8afb50): every frame, for
+#     each own ability pet whose grab is on (PetOption 0x80), the nearest
+#     eligible ground item within 500 of the pet (squared 250000.0,
+#     .rdata 0xddeff8) -- mine unless "grab all" (0x40), gold / equipment /
+#     other by bits 1 / 2 / 4, never trade goods (3/3/8) -- is asked for with
+#     0x70C5 {pet, 8, item}, one request out per pet at a time. A refused item
+#     keeps its "requested" mark (the reply handler c:0x8af960 compares a
+#     byte with u16 codes, so its retry branches never run: READ), and is not
+#     asked for again.
+#   - A growth pet in attack mode (PetOption 1) takes the target of its
+#     owner's own offensive action on a monster when it has none (c:0x8a6311
+#     on 0xB070; OURS: at the action's send), and forgets it when the target
+#     is gone or the attack is refused.
+
+## pet uid -> the item asked for (0: none out).
+var _cos_pick_out := {}
+## ground item id -> true once asked for (CDropItemManager's flag 2).
+var _cos_pick_asked := {}
+## pet uid -> the monster it was sent at.
+var _cos_attack_target := {}
+
+## The pick scan's radius (READ: 250000.0 squared, 0xddeff8).
+const COS_PICK_RADIUS := 500.0
+
+func _cos_connect_ai() -> void:
+	NetClient.own_offensive.connect(_on_own_offensive)
+	NetClient.cos_command_result.connect(_on_cos_pick_or_attack_result)
+	NetClient.cos_bag_op.connect(func(d: Dictionary) -> void:
+		if bool(d.get("ok", false)) and int(d.get("type", 0)) == CosNet.BAG_PICK:
+			_cos_pick_out.erase(int(d.get("cos", 0))))
+	NetClient.ride_refused_action.connect(func() -> void:
+		if _ui_text_table != null:
+			_log_system(_ui_text_table.get_text("UIIT_MSG_SKILL_USE_FAIL_CANT_USESKILL_IN_RIDESTATE", "")))
+
+func _on_own_offensive(monster_id: int) -> void:
+	if OS.get_environment("OPENSRO_QA_COS_LOG") != "":
+		print("COS: own offensive on monster %d (%d COS of ours)" % [monster_id, NetClient.cos_own.size()])
+	for uid in NetClient.cos_own:
+		var d: CosNet.Data = NetClient.cos_own[uid]
+		if d.kind != CosNet.KIND_GROWTH or d.pet_option != 1 or not _cos_bodies.has(int(uid)):
+			continue
+		if int(_cos_attack_target.get(int(uid), 0)) != 0 and _monster_bodies.has(int(_cos_attack_target[int(uid)])):
+			continue
+		_cos_attack_target[int(uid)] = monster_id
+		NetClient.send_cos_attack(int(uid), monster_id)
+
+func _on_cos_pick_or_attack_result(d: Dictionary) -> void:
+	var uid := int(d.get("cos", 0))
+	match int(d.get("type", 0)):
+		CosNet.COMMAND_PICK:
+			_cos_pick_out.erase(uid)
+			if bool(d.get("ok", false)):
+				_cos_pick_asked.erase(int(d.get("item", 0)))
+		CosNet.COMMAND_ATTACK:
+			if not bool(d.get("ok", false)):
+				_cos_attack_target.erase(uid)
+
+## One frame of the pick scan.
+func _cos_pick_scan() -> void:
+	if _ground_items == null or NetClient.cos_own.is_empty():
+		return
+	_sync_own_id()
+	for uid in NetClient.cos_own:
+		var d: CosNet.Data = NetClient.cos_own[uid]
+		if d.kind != CosNet.KIND_ABILITY or (d.pet_option & CosNet.PICK_ON) == 0:
+			continue
+		if int(_cos_pick_out.get(int(uid), 0)) != 0 or _player_dead:
+			continue
+		var body: Node3D = _cos_bodies.get(int(uid))
+		if body == null:
+			continue
+		var at := body.global_position
+		var best := -1
+		var best_d := COS_PICK_RADIUS * COS_PICK_RADIUS
+		for gid in _ground_items.ids():
+			if _cos_pick_asked.has(gid):
+				continue
+			var snap: GroundItemsNet.Snapshot = _ground_items.snapshot(gid)
+			if snap == null:
+				continue
+			if not _cos_pick_wants(d.pet_option, snap):
+				continue
+			var dd := at.distance_squared_to(Vector3(snap.x, snap.y, snap.z))
+			if dd <= best_d:
+				best_d = dd
+				best = gid
+		if best >= 0:
+			_cos_pick_asked[best] = true
+			_cos_pick_out[int(uid)] = best
+			NetClient.send_cos_pick(int(uid), best)
+
+## Whether the grab settings take snap (c:0x8af7f0).
+func _cos_pick_wants(opt: int, snap: GroundItemsNet.Snapshot) -> bool:
+	var t := PackedInt32Array()
+	var row = _item_rows.get(snap.item_id)
+	if row != null:
+		t = row.type_ids
+	# Trade goods are never listed (c:0x8af420).
+	if t.size() >= 3 and t[0] == 3 and t[1] == 3 and t[2] == 8:
+		return false
+	if (opt & CosNet.PICK_ALL) == 0:
+		var own := _own_id()
+		var mine := snap.owner_id != 0 and own >= 0 and (snap.owner_id == own or \
+			(NetClient.party != null and NetClient.party.in_party and NetClient.party.member(snap.owner_id) != null))
+		if not mine:
+			return false
+	if snap.gold:
+		return (opt & CosNet.PICK_GOLD) != 0
+	if t.size() >= 2 and t[0] == 3 and t[1] == 1:
+		return (opt & CosNet.PICK_EQUIPMENT) != 0
+	return (opt & CosNet.PICK_OTHER) != 0
+
+# --- The COS windows (round 795, HudCos) -------------------------------------
+
+var _hud_cos: HudCos = null
+## Level -> the EXP it takes (leveldata column 1), for the pet's EXP gauge.
+var _cos_level_exp := {}
+
+func _hud_cos_setup() -> void:
+	_hud_cos = HudCos.new(_ui_builder)
+	ui_control.add_child(_hud_cos)
+	if _media_pk2 != null:
+		var e := ObjectLoader.find_file(_media_pk2, LevelDataReader.TABLE_PATH)
+		if e != null:
+			_cos_level_exp = LevelDataReader.parse_exp(_media_pk2.read_file(e))
+	_hud_cos.setup({
+		"cos_row": func(ref: int): return _cos_table.row(ref) if _cos_table != null else null,
+		"item_row": func(ref: int): return _item_rows.get(ref),
+		"text": func(key: String) -> String: return _ui_text_table.get_text(key, "") if _ui_text_table != null else "",
+		"object_name": func(key: String) -> String:
+			var t := _object_names()
+			return t.get_text(key, "") if t != null else "",
+		"exp_to_next": func(level: int) -> int: return int(_cos_level_exp.get(level, 0)),
+		"screen_width": func() -> int: return int(get_viewport().get_visible_rect().size.x),
+		"screen_height": func() -> int: return int(get_viewport().get_visible_rect().size.y),
+		"item_lookup": func(bag_index: int): return NetClient.last_inventory_instances.get(bag_index),
+		"pick_up": func(what: Dictionary, icon, source, at) -> bool:
+			return _hud_panels.pick_up_icon(what, icon, source, at) if _hud_panels != null else false,
+		"bubble_tip": func(control, source) -> void:
+			if _hud_panels != null:
+				_hud_panels.set_bubble_tip(control, source),
+	})
+	_hud_cos.attach_pet_mini_info(_hud_player_info)
+	_hud_cos.command.connect(_on_hud_cos_command)
+	_hud_cos.rename_requested.connect(func(uid: int, n: String) -> void: NetClient.send_cos_name(uid, n))
+	_hud_cos.setting_requested.connect(func(uid: int, k: int, v: int) -> void: NetClient.send_cos_setting(uid, k, v))
+	_hud_cos.bag_move_requested.connect(func(t: int, uid: int, src: int, dst: int, n: int) -> void:
+		NetClient.send_cos_bag_move(t, uid, src, dst, n))
+	_hud_cos.bag_drag_to_inventory.connect(func(uid: int, src: int) -> void:
+		NetClient.send_cos_bag_move(CosNet.BAG_COS_TO_BAG, uid, src, _first_free_bag_slot() + CosNet.BAG_WIRE_OFFSET))
+	_hud_cos.target_requested.connect(func(uid: int) -> void: _select_cos(uid))
+	_hud_cos.system_line.connect(func(text: String, _c: Color) -> void: _log_system(text))
+	NetClient.cos_data.connect(func(d: CosNet.Data) -> void: _hud_cos.add_cos(d))
+	NetClient.cos_update.connect(_on_cos_update_hud)
+	NetClient.cos_hp.connect(func(uid: int, hp: int) -> void: _hud_cos.set_hp(uid, hp))
+	NetClient.cos_setting_result.connect(func(d: Dictionary) -> void:
+		if bool(d.get("ok", false)):
+			_hud_cos.setting_applied(int(d["uid"]), int(d["kind"]), int(d["value"])))
+	NetClient.cos_bag_op.connect(func(d: Dictionary) -> void:
+		_hud_cos.bag_applied(d)
+		if bool(d.get("ok", false)) and int(d.get("type", 0)) in [CosNet.BAG_COS_TO_BAG, CosNet.BAG_BAG_TO_COS]:
+			NetClient.list_inventory(NetClient.current_character_name))
+	NetClient.ride_changed.connect(func(d: Dictionary) -> void:
+		_sync_own_id()
+		if bool(d.get("ok", false)) and _own_id() >= 0 and int(d["rider"]) == (_own_id() & 0xffffffff):
+			_hud_cos.set_riding(int(d["cos"]), bool(d["mounted"])))
+	NetClient.item_state_changed.connect(_on_cos_item_state)
+	# This character's COS told before this world came up.
+	for uid in NetClient.cos_own:
+		_hud_cos.add_cos(NetClient.cos_own[uid])
+	ItemTooltipLines.cos_row_of = func(ref: int): return _cos_table.row(ref) if _cos_table != null else null
+	ItemTooltipLines.cos_row_by_code = func(code: String): return _cos_table.by_code.get(code) if _cos_table != null else null
+
+func _on_cos_update_hud(u: CosNet.Update) -> void:
+	if u.type == CosNet.UPDATE_REMOVED:
+		_hud_cos.remove_cos(u.uid)
+		_cos_attack_target.erase(u.uid)
+		_cos_pick_out.erase(u.uid)
+		return
+	_hud_cos.apply_update(u)
+	if u.type == CosNet.UPDATE_NAME and _cos_recs.has(u.uid):
+		var rec: CosSpawnNet.Record = _cos_recs[u.uid]
+		rec.name = u.name
+		var body: Node3D = _cos_bodies.get(u.uid)
+		if body != null:
+			_cos_label(body, rec)
+
+## 0x3040: a bag item's COS state or rent (the pet scroll's tooltip reads it).
+func _on_cos_item_state(d: Dictionary) -> void:
+	var it: ItemInstance = NetClient.last_inventory_instances.get(int(d.get("slot", -1)))
+	if it == null:
+		return
+	if int(d.get("state", -1)) >= 0:
+		it.cos_state = int(d["state"])
+	if int(d.get("rent_secs", -1)) >= 0:
+		it.cos_rent_secs = int(d["rent_secs"])
+		it.rent_read_msec = Time.get_ticks_msec()
+
+## A HudCos command (0x7a0980's numbering) sent for uid.
+func _on_hud_cos_command(uid: int, cmd: int) -> void:
+	match cmd:
+		HudCosCommand.CMD_RIDE:
+			if NetClient.riding_mount == uid:
+				NetClient.send_cos_ride(false, uid)
+			else:
+				NetClient.send_cos_ride(true, uid)
+		HudCosCommand.CMD_ATTACK:
+			var target := _selected_monster_for_cos()
+			if target > 0:
+				_cos_attack_target[uid] = target
+				NetClient.send_cos_attack(uid, target)
+		HudCosCommand.CMD_FOLLOW:
+			_cos_attack_target.erase(uid)
+			NetClient.send_cos_follow(uid)
+		HudCosCommand.CMD_UNSUMMON:
+			NetClient.send_cos_unsummon(uid)
+		HudCosCommand.CMD_TERMINATE:
+			NetClient.send_cos_terminate(uid)
+
+## The monster the target window shows, 0 when none.
+func _selected_monster_for_cos() -> int:
+	if _hud_target != null and "monster_id" in _hud_target:
+		return int(_hud_target.get("monster_id"))
+	return _last_attack_target if _last_attack_target > 0 else 0
+
+## The first empty bag index (for a pet-bag item put on the inventory).
+func _first_free_bag_slot() -> int:
+	var used := {}
+	for s in _inventory_slots:
+		used[s.slot_index] = true
+	for i in 96:
+		if not used.has(i):
+			return i
+	return 0
+
+## A COS selected (a status slot's press): its ring.
+func _select_cos(uid: int) -> void:
+	var body: Node3D = _cos_bodies.get(uid)
+	if body == null or _ground_markers == null:
+		return
+	# A CICCos's ring (GroundMarkers.Kind.COS, round 698's census).
+	_ground_markers.attach("cos:%d" % uid, GroundMarkers.Kind.COS, body.global_position)

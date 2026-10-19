@@ -43,6 +43,17 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 795: the COS (internal/cos). The client's kind byte is the
+	// client's own mapping (c:0x9a1900), kept beside the server's for the
+	// tests and the docs; 0x30C9 type 2 is the bag-size change the
+	// extension's pet buff sends, not built (its slot count is OPEN); the
+	// three SummonKindIs* are round 289's reading of CheckCanSummonCOS's
+	// switch, superseded by checkCanSummon's kinds and kept with their test.
+	"ClientKind":        "round 795: cos.ClientKind, the client's COS kind byte (c:COSDataMgr::FUN_009a1900); the client computes it, the Go tests check the mapping.",
+	"InventoryUpdate":   "round 795: cos.InventoryUpdate, 0x30C9 type 2 -- a COS bag's new size, sent by the pet-bag extension's buff, which is not built (its slot count is OPEN).",
+	"SummonKindIsCart":  "round 289: CheckCanSummonCOS's cart cases, superseded by session.checkCanSummon (round 795); kept with its test as the record of the switch.",
+	"SummonKindIsPet":   "round 289: CheckCanSummonCOS's pet cases, superseded by session.checkCanSummon (round 795).",
+	"SummonKindIsGuild": "round 289: CheckCanSummonCOS's guild case; the guild soldier is not built.",
 	// Round 789: the asset packs' Go side (docs/protocol/asset_packs.md).
 	"Which":  "round 789: assetfs.View.Which, the \"which layer serves this path\" lookup the rules name; pk2list -which prints every layer through WhichAll, and the tests check Which.",
 	"Folder": "round 789: pk2test.Folder, the synthetic-archive builder's folder node; only tests build archives.",

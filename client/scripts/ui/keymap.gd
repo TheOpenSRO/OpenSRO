@@ -22,7 +22,7 @@ class_name KeyMap
 ## Each slot's `state`:
 ## - "works": the key does what the retail handler does, as far as this
 ##   client has the feature (the slot's comment says where it stops short);
-## - "noop": the feature is not in this client (pets and COS, above all);
+## - "noop": the feature is not in this client;
 ##   the key is bound, logs what it would do, and does nothing else;
 ## - "unbound": retail gives the slot no default key (0 in the defaults).
 ##
@@ -78,20 +78,20 @@ const SLOTS: Array = [
 	# server does not do.
 	{"slot": 13, "key": KEY_G, "cmd": 0x47, "row": "UIIT_STT_TOGGLE_CONTENTS_MENU_AUTOGET", "action": "pickup", "state": "works"},
 	# Slots 14..19 are the COS (pet and vehicle) commands through
-	# 0x7a0980(n). This client has no pets or COS.
+	# 0x7a0980(n) on the current COS (round 795, HudCos.run_command).
 	# Ins: 0x799360 -> 0x811310(0, 0xff) -> 0x7a0980(0), the COS info window
 	# (label read; the case body inferred).
-	{"slot": 14, "key": KEY_INSERT, "cmd": 0x2d, "row": "UIIT_STT_OPTION_COS_INFO", "action": "pet_info", "state": "noop"},
+	{"slot": 14, "key": KEY_INSERT, "cmd": 0x2d, "row": "UIIT_STT_OPTION_COS_INFO", "action": "pet_info", "state": "works"},
 	# Home: 0x7a0980(1), ride or dismount (0x81eb50). Label read.
-	{"slot": 15, "key": KEY_HOME, "cmd": 0x24, "row": "UIIT_STT_OPTION_COS_RIDE", "action": "pet_ride", "state": "noop"},
+	{"slot": 15, "key": KEY_HOME, "cmd": 0x24, "row": "UIIT_STT_OPTION_COS_RIDE", "action": "pet_ride", "state": "works"},
 	# PgUp: 0x811350 -> 0x7a0980(4 or 5 by COS kind), unsummon. Label read.
-	{"slot": 16, "key": KEY_PAGEUP, "cmd": 0x21, "row": "UIIT_STT_OPTION_COS_SUMMONCANCEL", "action": "pet_unsummon", "state": "noop"},
+	{"slot": 16, "key": KEY_PAGEUP, "cmd": 0x21, "row": "UIIT_STT_OPTION_COS_SUMMONCANCEL", "action": "pet_unsummon", "state": "works"},
 	# Del: 0x7a0980(3), follow, sends 0x70c5. Label read.
-	{"slot": 17, "key": KEY_DELETE, "cmd": 0x2e, "row": "UIIT_STT_OPTION_COS_FOLLOW", "action": "pet_follow", "state": "noop"},
+	{"slot": 17, "key": KEY_DELETE, "cmd": 0x2e, "row": "UIIT_STT_OPTION_COS_FOLLOW", "action": "pet_follow", "state": "works"},
 	# End: 0x7a0980(2), attack the target, sends 0x70c5. Label read.
-	{"slot": 18, "key": KEY_END, "cmd": 0x23, "row": "UIIT_STT_OPTION_COS_ATTACK", "action": "pet_attack", "state": "noop"},
+	{"slot": 18, "key": KEY_END, "cmd": 0x23, "row": "UIIT_STT_OPTION_COS_ATTACK", "action": "pet_attack", "state": "works"},
 	# PgDn: 0x7a0980(6), toggles the COS AI (0x81ea70). Label read.
-	{"slot": 19, "key": KEY_PAGEDOWN, "cmd": 0x22, "row": "UIIT_STT_OPTION_COS_AI", "action": "pet_ai", "state": "noop"},
+	{"slot": 19, "key": KEY_PAGEDOWN, "cmd": 0x22, "row": "UIIT_STT_OPTION_COS_AI", "action": "pet_ai", "state": "works"},
 	# Chat child 1 -> 0x7aa2b0 copies the chat board's +0x4b0 string; when it
 	# is not empty, 0x777d10 -> 0x7ab470 puts a line into the chat's input
 	# box (vslot 0xb4 on +0x4a0) unless the name is the player's own (read).
@@ -101,8 +101,8 @@ const SLOTS: Array = [
 	# Child 0x87 -> 0x79c750 toggles the auto-potion window (read).
 	{"slot": 21, "key": KEY_T, "cmd": 0x54, "row": "UIIT_PAG_MACROPOTION_TITLE", "action": "panel:autopotion", "state": "works"},
 	# 0x811200 walks the COS list at +0x374 and switches to the next one
-	# (0x810fd0) (read). No pets or COS here.
-	{"slot": 22, "key": KEY_W, "cmd": 0x57, "row": "UIIT_STT_OPTION_COS", "action": "pet_switch", "state": "noop"},
+	# (0x810fd0) (read; round 795, HudCos.switch_next).
+	{"slot": 22, "key": KEY_W, "cmd": 0x57, "row": "UIIT_STT_OPTION_COS", "action": "pet_switch", "state": "works"},
 	# Child 0x82 -> 0x79c170 toggles party matching (read).
 	{"slot": 23, "key": KEY_E, "cmd": 0x45, "row": "UIIT_CTL_PARTYMATCH_MAINBUTTEN", "action": "panel:partymatch", "state": "works"},
 	# 0x798e20 toggles the alchemy window 0xa8 (read, round 604).

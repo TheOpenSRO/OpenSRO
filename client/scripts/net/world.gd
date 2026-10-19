@@ -125,6 +125,9 @@ class EntitySnapshot:
 	var has_dest: bool = false
 	var dest := Vector3.ZERO
 	var run_wire: int = -1
+	## Round 795: the COS this player rides (its uid; 0 when it walks): the
+	## record's ride state 1 and its u32 (UserSpawnNet.Record.mount_uid).
+	var mount_uid: int = 0
 	var run_speed: float = 0.0
 	## Round 781: the walk speed of a character whose run flag is 0 (it
 	## walks, the action window's Walk); 0 when it runs.

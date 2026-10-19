@@ -38,6 +38,9 @@ class Boot:
 	var speeds := {}
 	var country := {}
 	var bodies: CharCatalog = null
+	## Round 795: the COS rows (the spawn reader needs their TypeID4 before
+	## the first spawn is read).
+	var cos := CosTable.new()
 
 class Entry:
 	var usec := 0
@@ -176,6 +179,7 @@ static func read_boot(media: Pk2Reader) -> Boot:
 		b.bytes += (bytes as PackedByteArray).size()
 		b.speeds = NpcTableReader.parse_speeds_by_code(bytes, b.speeds)
 		b.country = NpcTableReader.parse_country_by_code(bytes, b.country)
+		b.cos.parse(bytes)
 	b.bodies = CharCatalog.from_tables(parts, [])
 	b.usec = Time.get_ticks_usec() - t0
 	return b

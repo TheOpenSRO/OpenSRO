@@ -138,6 +138,9 @@ static func compose(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
 		return compose_avatar(item, ctx)
 	if item.is_devil_spirit():
 		return compose_devil_spirit(item, ctx)
+	# Round 795: a pet's summon scroll (3/2/1) has its own builder.
+	if is_pet_scroll(item):
+		return compose_pet_scroll(item, ctx)
 	if not is_equipment_shape(item):
 		return _compose_other(item, ctx)
 
@@ -414,6 +417,12 @@ static func _compose_other(item: ItemTableReader.Item, ctx: Dictionary) -> Array
 	if type_name != "":
 		_blank(lines)
 		_add(lines, "%s: %s" % [t.call("UIIT_STT_ITEM_TYPE", "Sort of item"), type_name], BEIGE)
+	# Round 795: a ride or transport scroll's summon lines (0x6771c0), after
+	# the type line (OURS: where 0x6860a0 puts them among its other lines is
+	# not read).
+	if is_ride_scroll(item):
+		for l in ride_scroll_lines(item, t):
+			_add(lines, String(l["text"]), l["color"])
 	if item.required_character_level() > 0 or item.req_gender != ItemTableReader.REQ_GENDER_ANY:
 		_requirements(lines, item, ctx, t)
 	if int(ctx.get("price", -1)) >= 0:
@@ -724,6 +733,146 @@ static func sml2_rows(s: String, default_color: Color) -> Array:
 	if text.strip_edges() != "" or rows.is_empty():
 		rows.append({"text": text.strip_edges(false, true), "color": row_colour if row_colour != null else colour, "bold": row_bold or bold})
 	return rows
+
+# --- COS summon items (round 795) ----------------------------------------------
+#
+# READ from sro_client.exe (client_ui.md section 4; this round's reading of
+# the builders on the box): the tooltip dispatcher 0x686c50 sends TypeID
+# 3/2/1 (3/2/1/1 growth pets' flutes, 3/2/1/2 ability pets' scrolls) to
+# UI_SILKMALL 0x684740, and the ride and transport scrolls, 3/3/3/2, to the
+# generic 0x6860a0, whose summon block is 0x6771c0. Which characterdata row a
+# scroll summons is itemdata column 119 (Desc1: ITEM_COS_C_HORSE1 ->
+# COS_C_HORSE1, ITEM_COS_P_RABBIT_SCROLL -> COS_P_RABBIT; MEASURED on the
+# box's Media.pk2 rows); a summoned pet's own row is its record's RefObjID.
+
+## RefObjID -> CosTable.Row (or null), and characterdata code -> row. The
+## client sets them where it loads the COS table (World3D); unset, the lines
+## that need a row are left out.
+static var cos_row_of: Callable
+static var cos_row_by_code: Callable
+
+## Whether `item` is a pet's summon item (TypeID 3/2/1).
+static func is_pet_scroll(item: ItemTableReader.Item) -> bool:
+	return item != null and item.type_ids.size() >= 4 and item.type_ids[0] == 3 \
+		and item.type_ids[1] == 2 and item.type_ids[2] == 1
+
+## Whether `item` is a ride or transport scroll (TypeID 3/3/3/2).
+static func is_ride_scroll(item: ItemTableReader.Item) -> bool:
+	return item != null and item.type_ids.size() >= 4 and item.type_ids[0] == 3 \
+		and item.type_ids[1] == 3 and item.type_ids[2] == 3 and item.type_ids[3] == 2
+
+## A summon item's own fields as compose() reads them from ctx["instance"]:
+## "cos_state" (CosNet.ITEM_STATE_*), "cos_ref" (the pet's RefObjID), "cos_name"
+## and "cos_rent_left" (an ability pet's rent, seconds left now).
+static func cos_fields(inst: ItemInstance) -> Dictionary:
+	if inst == null or inst.is_equipment or inst.cos_state == 0:
+		return {}
+	return {"cos_state": inst.cos_state, "cos_ref": inst.cos_ref, "cos_name": inst.cos_name,
+		"cos_rent_left": inst.rent_left_secs()}
+
+static func _cos_row(ref_id: int) -> CosTable.Row:
+	if ref_id == 0 or not cos_row_of.is_valid():
+		return null
+	return cos_row_of.call(ref_id) as CosTable.Row
+
+## The pet scroll's tooltip, UI_SILKMALL 0x684740:
+##   1 the name (bold, with the name icon) and a blank; "%s: %s"
+##     UIIT_STT_ITEM_TYPE + the type, beige; a blank; the description
+##   2 no pet row yet (State 1, never summoned): an ability scroll whose Param1
+##     (column 118, ref +0x2b4, minutes) is not -1 adds UIIT_STT_COSNEWUI_
+##     ITEM_BEFORESUM (white), UIIT_STT_COSNEWUI_RENTTIME (beige) and
+##     "%d%s" Param1 / 1440 with PARAM_DAY
+##   3 a growth pet's row (TypeID4 not 4): UIIT_STT_COSNEWUI_TOOLTIP_PETINFO
+##     (beige); "%s : %s" ..._PETNAME + the name or UIIT_STT_COSNEWUI_TITLE
+##     (white); "%s : %d" ..._PETLEVEL + the row's level, red above the
+##     player's (0xffff4a4a), else white; "%s : %s" ..._PETSTATE + _DEAD
+##     (State 4, red) or _NORMAL (white)
+##   4 an ability pet's row with Param1 not -1: State 1 BEFORESUM; State 2 or
+##     3 RENTTIME (beige) and "%d%s %d%s %d%s" days / hours / minutes of the
+##     rent left (white); State 4 UIIT_STT_COSNEWUI_ITEM_EXPIRERENT
+##   5 the requirements (0x67eec0) and the prices (0x6784a0)
+## The colour of a line whose call was not read (the "%d%s" days, BEFORESUM
+## and EXPIRERENT in branch 4) is white, the builder's shared tail colour
+## (INFERRED). The per-timer rows of 4 (UIIT_PAG_SKILL / UIIT_STT_COS_INVENTORY
+## and their time left) are not built: the record reader keeps no timed jobs
+## (OPEN). The name's font 3 is not modelled (the bubble has one size; bold).
+static func compose_pet_scroll(item: ItemTableReader.Item, ctx: Dictionary) -> Array:
+	var lines: Array = []
+	var t: Callable = ctx.get("text", func(_k, f): return f)
+	var instance: Dictionary = ctx.get("instance", {})
+	_name_line(lines, item, ctx, 0, false)
+	_add(lines, "%s: %s" % [t.call("UIIT_STT_ITEM_TYPE", "Sort of item"), String(ctx.get("type_name", ""))], BEIGE)
+	_blank(lines)
+	_description(lines, ctx)
+	var state := int(instance.get("cos_state", 0))
+	var row := _cos_row(int(instance.get("cos_ref", 0)))
+	var rent_on := item.param1 != -1
+	if row == null:
+		if item.type_ids[3] == 2 and rent_on and state == 1:
+			_add(lines, t.call("UIIT_STT_COSNEWUI_ITEM_BEFORESUM", "Rental period is applied when first summoned."), WHITE)
+			_add(lines, t.call("UIIT_STT_COSNEWUI_RENTTIME", "Rental period"), BEIGE)
+			_add(lines, "%d%s" % [item.param1 / 1440, t.call("PARAM_DAY", "Day")], WHITE)
+	elif row.type4 != 4:
+		_add(lines, t.call("UIIT_STT_COSNEWUI_TOOLTIP_PETINFO", "Pet information"), BEIGE)
+		var pet_name := String(instance.get("cos_name", ""))
+		if pet_name == "":
+			pet_name = t.call("UIIT_STT_COSNEWUI_TITLE", "No name")
+		_add(lines, "%s : %s" % [t.call("UIIT_STT_COSNEWUI_TOOLTIP_PETNAME", "Pet name"), pet_name], WHITE)
+		var player_level := int((ctx.get("player", {}) as Dictionary).get("level", -1))
+		_add(lines, "%s : %d" % [t.call("UIIT_STT_COSNEWUI_TOOLTIP_PETLEVEL", "Pet level"), row.level],
+			RED if player_level >= 0 and row.level > player_level else WHITE)
+		var dead := state == 4
+		_add(lines, "%s : %s" % [t.call("UIIT_STT_COSNEWUI_TOOLTIP_PETSTATE", "Pet condition"),
+			t.call("UIIT_STT_COSNEWUI_TOOLTIP_PETSTATE_DEAD" if dead else "UIIT_STT_COSNEWUI_TOOLTIP_PETSTATE_NORMAL",
+				"Dead" if dead else "Normal")], RED if dead else WHITE)
+	elif rent_on:
+		if state == 1:
+			_add(lines, t.call("UIIT_STT_COSNEWUI_ITEM_BEFORESUM", "Rental period is applied when first summoned."), WHITE)
+		elif state == 2 or state == 3:
+			_add(lines, t.call("UIIT_STT_COSNEWUI_RENTTIME", "Rental period"), BEIGE)
+			_add(lines, rent_left_text(int(instance.get("cos_rent_left", 0)) * 1000, t), WHITE)
+		elif state == 4:
+			_add(lines, t.call("UIIT_STT_COSNEWUI_ITEM_EXPIRERENT", "The pet's rental period has expired."), WHITE)
+	# The requirement block as _compose_other draws it (only when the item
+	# has one), then the price.
+	if item.required_character_level() > 0 or item.req_gender != ItemTableReader.REQ_GENDER_ANY:
+		_requirements(lines, item, ctx, t)
+	if int(ctx.get("price", -1)) >= 0:
+		_blank(lines)
+	_price(lines, ctx, t)
+	return lines
+
+## "%d%s %d%s %d%s" of `ms` (0x684740's rent line): ms / 86400000 days, the
+## remainder / 3600000 hours, (remainder % 3600000) / 60000 minutes.
+static func rent_left_text(ms: int, t: Callable) -> String:
+	var ms_left := maxi(ms, 0)
+	var rem := ms_left % 86400000
+	return "%d%s %d%s %d%s" % [ms_left / 86400000, t.call("PARAM_DAY", "Day"), rem / 3600000,
+		t.call("PARAM_HOUR", "Hour"), (rem % 3600000) / 60000, t.call("PARAM_MINUTE", "Minute")]
+
+## A ride or transport scroll's summon lines (0x6771c0, READ): "%s: %s"
+## UIIT_STT_ITEM_SUMMON + SN_TAB_VEHICLE for a row of TypeID4 1 or SN_TAB_CART
+## for 2 (beige; any other row gets an empty line), then "%s %d" PARAM_HP +
+## the row's MaxHP (ref +0x1c8, column 59; white). The speed line ("%s %d %s"
+## PARAM_HSTE, ref +0x10c / 10, UIIT_STT_DISTANCE_UNIT; "%s %0.1f m" when
+## not a multiple of 10) and a transport's "%s %d" UIIT_STT_SLOT_AMOUNT (ref
+## byte +0x1d0) are not built: neither field's characterdata column is mapped
+## (OPEN, client_ui.md 6.10). Empty without a row.
+static func ride_scroll_lines(item: ItemTableReader.Item, t: Callable) -> Array:
+	var out: Array = []
+	if not cos_row_by_code.is_valid() or item.desc1 == "":
+		return out
+	var row := cos_row_by_code.call(item.desc1) as CosTable.Row
+	if row == null:
+		return out
+	var summon := ""
+	if row.type4 == 1:
+		summon = "%s: %s" % [t.call("UIIT_STT_ITEM_SUMMON", "Summon item"), t.call("SN_TAB_VEHICLE", "Vehicle")]
+	elif row.type4 == 2:
+		summon = "%s: %s" % [t.call("UIIT_STT_ITEM_SUMMON", "Summon item"), t.call("SN_TAB_CART", "Trans")]
+	out.append({"text": summon, "color": BEIGE})
+	out.append({"text": "%s %d" % [t.call("PARAM_HP", "HP"), row.max_hp], "color": WHITE})
+	return out
 
 static func _add(lines: Array, text: String, colour: Color, bold: bool = false, icon: bool = false) -> void:
 	lines.append({"text": text, "color": colour, "bold": bold, "icon": icon})

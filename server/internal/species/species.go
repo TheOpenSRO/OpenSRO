@@ -139,6 +139,13 @@ const (
 	// (0x6a58f0) turns a Knockdown with KO_RecoverTime 0 into 3000.
 	ColKnockdown = 81
 	ColKORecover = 82
+	// ColDescStrID is col 6, DescStrID128 (round 795). On a growth pet's
+	// per-level row it names the NEXT level's row (COS_P_WOLF_001 ->
+	// COS_P_WOLF_002 ... _140 -> "xxx", MEASURED); the level-up mutate
+	// follows it (CGObjCOS_GoldPet::OffsetExpPoint s:0x4d661e/0x4d6633 reads
+	// ref +0x64, INFERRED to be this column: the only string column holding
+	// the next code). docs/protocol/pets.md, "Round 795".
+	ColDescStrID = 6
 )
 
 // minFields is the shortest characterdata row the exporter maps: every column
@@ -164,6 +171,8 @@ var CSVColumns = []string{
 	"ExpToGive",
 	// Round 785, appended (optional on read): cols 81 and 82.
 	"Knockdown", "KORecoverTime",
+	// Round 795, appended (optional on read): col 6.
+	"DescStrID",
 }
 
 // RequiredCSVColumns is the prefix every monsters CSV must carry: the 35
@@ -197,7 +206,8 @@ const (
 	cExpToGive    = cModel + 4
 	cKnockdown    = cModel + 5
 	cKORecover    = cModel + 6
-	numCSVColumns = cModel + 7
+	cDescStrID    = cModel + 7
+	numCSVColumns = cModel + 8
 )
 
 // IsMonster reports whether a tab-split characterdata row is a monster:
@@ -207,6 +217,19 @@ func IsMonster(cols []string) bool {
 		return false
 	}
 	return field(cols, ColTypeID1) == "1" && field(cols, ColTypeID2) == "2" && field(cols, ColTypeID3) == "1"
+}
+
+// IsCOS reports whether a tab-split characterdata row is a COS: TypeID
+// (1,2,3,x) -- a ride horse (x 1), a transport (2), a growth or fellow pet
+// (3), an ability pet (4), a guild soldier (5) and the quest COS (6..8)
+// (round 795; READ: the client's CICCos test `(w&0x1c)==4 && (w&0x60)==0x40
+// && (w&0x780)==0x180`, docs/protocol/pets.md). cmd/export-refdata -mode cos
+// writes them under the same columns as the monsters (Exporter.Keep).
+func IsCOS(cols []string) bool {
+	if len(cols) <= ColTypeID4 {
+		return false
+	}
+	return field(cols, ColTypeID1) == "1" && field(cols, ColTypeID2) == "2" && field(cols, ColTypeID3) == "3"
 }
 
 // field is a trimmed column, "" past the end.
@@ -252,6 +275,10 @@ type Exporter struct {
 	// Rows, Dupes and Conflicts count what Add saw: rows with a numeric id,
 	// ids seen again, and repeats whose fields differ.
 	Rows, Dupes, Conflicts int
+
+	// Keep picks the rows Records writes: IsMonster when nil, IsCOS for
+	// the COS table (round 795).
+	Keep func(cols []string) bool
 }
 
 // NewExporter returns an empty Exporter.
@@ -325,7 +352,11 @@ func (e *Exporter) Records(gold LevelGold, names ObjectNames) ([][]string, Expor
 	var out [][]string
 	for _, id := range e.order {
 		cols := e.byID[id]
-		if !IsMonster(cols) {
+		keep := e.Keep
+		if keep == nil {
+			keep = IsMonster
+		}
+		if !keep(cols) {
 			continue
 		}
 		if len(cols) < minFields {
@@ -387,6 +418,9 @@ func (e *Exporter) Records(gold LevelGold, names ObjectNames) ([][]string, Expor
 		rec[cExpToGive] = num(cols, ColExpToGive)
 		rec[cKnockdown] = num(cols, ColKnockdown)
 		rec[cKORecover] = num(cols, ColKORecover)
+		if d := field(cols, ColDescStrID); d != noString {
+			rec[cDescStrID] = d
+		}
 		rec[cGoldMin], rec[cGoldMax] = "0", "0"
 		if lvl, err := strconv.Atoi(rec[cLevel]); err == nil {
 			if g, ok := gold[lvl]; ok {
@@ -551,6 +585,9 @@ type Row struct {
 	Knockdown    int
 	KORecoverMs  int
 	HasKnockdown bool
+	// DescStrID is col 6 (round 795, ColDescStrID): a growth pet row's next
+	// level row; "" for "xxx" and on a CSV exported before it.
+	DescStrID string
 }
 
 // Defense is col 71, the flat physical absorption (param 5, READ).
@@ -720,6 +757,9 @@ func parseRecord(rec []string) (Row, error) {
 	}
 	if len(rec) > cKORecover {
 		r.Knockdown, r.KORecoverMs, r.HasKnockdown = i(cKnockdown), i(cKORecover), true
+	}
+	if len(rec) > cDescStrID {
+		r.DescStrID = strings.TrimSpace(rec[cDescStrID])
 	}
 	if firstErr != nil {
 		return Row{}, firstErr

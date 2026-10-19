@@ -65,14 +65,24 @@ class Record:
 	var dest_local := Vector3i.ZERO
 	var move_command: int
 	var move_angle: int
+	## Round 795: the ridden COS's uid (ride state 1), 0 when it walks.
+	var mount_uid := 0
 
 ## The item table the reader asks (World3D's own: RefItemID ->
 ## ItemTableReader.Item).
 class Types:
 	var rows: Dictionary
+	## Round 795: the COS table's TypeID4 by RefObjID (CosTable.kind_of): a
+	## record whose ref it names is a CICCos's (CosSpawnNet). Unbound, none is.
+	var cos_kind: Callable
 
-	func _init(r: Dictionary) -> void:
+	func _init(r: Dictionary, cos: Callable = Callable()) -> void:
 		rows = r
+		cos_kind = cos
+
+	## A RefObjID's COS TypeID4, 0 for none.
+	func cos_kind_of(ref_id: int) -> int:
+		return int(cos_kind.call(ref_id)) if cos_kind.is_valid() else 0
 
 	func type_ids(id: int) -> PackedInt32Array:
 		var it = rows.get(id)
@@ -202,9 +212,10 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 	r.u8() # PvP state
 	var ride := r.u8()
 	r.u8() # battle state
-	if ride == 1 and r.error == "":
-		r.error = "a ride in a player record"
-		return null
+	# Round 795: a rider's COS uid follows the battle byte (READ
+	# s:0x4e5c04..0x4e5c86, c:0x9dde69..0x9ddeba).
+	if ride == 1:
+		rec.mount_uid = r.u32()
 	r.u8() # teleport state
 	var interact := r.u8()
 	r.u8() # trade rank
@@ -258,6 +269,7 @@ static func to_snapshot(rec: Record, types: Types, frame: Vector2i) -> WorldNet.
 	s.ref_obj_id = rec.ref_id
 	s.scale = rec.scale
 	s.has_model = true
+	s.mount_uid = rec.mount_uid
 	s.run_speed = rec.run
 	# A walker (round 781): its walk speed, else 0 (it runs).
 	s.walk_speed = rec.walk if rec.run_flag == 0 and rec.walk > 0.0 else 0.0
@@ -299,7 +311,7 @@ static func decode_single_spawn(data: PackedByteArray, types: Types) -> Record:
 ## "uids": Array[int], "error": String, "deferred": bool}. deferred is set,
 ## and nothing else read, when a player record comes before types.
 static func read_group(buffer: PackedByteArray, types: Types) -> Dictionary:
-	var out := {"kind": 0, "npcs": [], "users": [], "uids": [], "error": "", "deferred": false}
+	var out := {"kind": 0, "npcs": [], "users": [], "cos": [], "uids": [], "error": "", "deferred": false}
 	var r := NpcSpawnNet.Reader.new(buffer)
 	var kind := r.u8()
 	var count := r.u16()
@@ -315,6 +327,13 @@ static func read_group(buffer: PackedByteArray, types: Types) -> Dictionary:
 					out.error = "record %d of %d: %s" % [i, count, r.error]
 					return out
 				out.users.append(rec)
+			elif types != null and types.cos_kind_of(peek_ref(r)) != 0:
+				# Round 795: a COS (CICCos, cos_spawn.gd).
+				var c := CosSpawnNet.read_record(r, types.cos_kind_of(peek_ref(r)))
+				if c == null:
+					out.error = "record %d of %d: %s" % [i, count, r.error]
+					return out
+				out.cos.append(c)
 			else:
 				var npc := NpcSpawnNet.read_record(r)
 				if npc == null:

@@ -25,6 +25,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/clientpacks"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/cos"
 	"github.com/OpenSRO/OpenSRO/server/internal/duel"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/friend"
@@ -926,6 +927,10 @@ func main() {
 		"path to the game's monster placements (from cmd/export-refdata -mode npcpos on a client's "+
 			"own npcpos.txt). Every roster species with rows in it stands where the game puts it; "+
 			"without the file the species keep their own-design anchors near the town.")
+	cosCSV := flag.String("cos-csv", os.Getenv("OPENSRO_COS_CSV"),
+		"path to the COS table (from cmd/export-refdata -mode cos on a client's own characterdata parts and "+
+			"textdata_object.txt; round 795): the rides, transports and pets the summon items call out. Without it "+
+			"every pet item and ride scroll answers \"cannot be used\"")
 	monstersCSV := flag.String("monsters-csv", os.Getenv("OPENSRO_MONSTERS_CSV"),
 		"path to the monster species table (from cmd/export-refdata -mode monsters on a client's own "+
 			"characterdata parts, levelgold.txt and textdata_object.txt; round 654). Every roster species "+
@@ -1393,6 +1398,10 @@ func main() {
 		// lookup only. Nil, or a monster with no rows, falls back to the
 		// own-design combat.LootTables.
 		dropSrc session.DropSource
+		// The COS records and the ability pets' bags (round 795,
+		// internal/cos): _CHARCOS and _INVCOS.
+		cosStore cos.Store
+		cosBags  inventory.Store
 	)
 
 	if *inMemory {
@@ -1455,6 +1464,12 @@ func main() {
 		warehouse = memWarehouse
 		eq = equipment.NewMemStore(memInv)
 		avatars = avatar.NewMem(memRef)
+		cosStore = cos.NewMemStore()
+		memBags := inventory.NewMemStore(memRef)
+		memBags.SetDurabilityLookup(memRef)
+		memBags.SetCapacity(cos.AbilityPetSlots)
+		memBags.SetCapacityFunc(cosBagCapacity(cosStore))
+		cosBags = memBags
 		skills = skill.NewMemStore()
 		guilds = guild.NewMemStore()
 		quests = quest.NewMemStore()
@@ -1610,6 +1625,23 @@ func main() {
 			os.Exit(1)
 		}
 		avatars = sqlAvatars
+
+		// The COS records and bags (round 795): their tables migrate
+		// themselves.
+		sqlCOS, err := cos.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening COS store", "error", err)
+			os.Exit(1)
+		}
+		cosStore = sqlCOS
+		sqlBags, err := inventory.NewSQLStoreOwned(storePool, sqlRef, "cos_inventory", "cos_id")
+		if err != nil {
+			logger.Error("opening COS bag store", "error", err)
+			os.Exit(1)
+		}
+		sqlBags.SetCapacity(cos.AbilityPetSlots)
+		sqlBags.SetCapacityFunc(cosBagCapacity(cosStore))
+		cosBags = sqlBags
 
 		sqlSkills, err := skill.NewSQLStore(storePool)
 		if err != nil {
@@ -1809,6 +1841,28 @@ func main() {
 	} else {
 		logger.Info("no monster species table (-monsters-csv / OPENSRO_MONSTERS_CSV): the hand-typed roster is every species the server knows")
 	}
+	// The COS table (round 795): the rides, transports and pets.
+	var cosTable *species.Table
+	if *cosCSV != "" {
+		t, err := species.LoadCSV(*cosCSV)
+		if err != nil {
+			logger.Error("loading the COS table", "path", *cosCSV, "err", err)
+			os.Exit(1)
+		}
+		cosTable = t
+		logger.Info("COS table loaded", "path", *cosCSV, "rows", t.Len())
+	} else {
+		logger.Info("no COS table (-cos-csv / OPENSRO_COS_CSV): pet items and ride scrolls cannot be used")
+	}
+	session.SetCOSDeps(cosStore, cosBags, cosTable, speciesSkills, inv, refItems, chars, hub, monsters, logger)
+	session.SetItemRecordTypes(func(ref uint32) ([4]int, bool) {
+		it, err := refItems.GetItem(context.Background(), int64(ref))
+		if err != nil || it == nil {
+			return [4]int{}, false
+		}
+		return [4]int{it.TypeID1, it.TypeID2, it.TypeID3, it.TypeID4}, true
+	})
+	go session.RunCOS(ctx, logger)
 	// The game's own placements, when the operator supplies them: every
 	// species with rows takes them all, replacing both the embedded rows and
 	// the own-design anchor. A configured path that does not load is fatal
@@ -2370,6 +2424,8 @@ func main() {
 	}
 
 	handle := gateway.Chain(
+		// The COS requests (round 795, internal/session/coscommand.go).
+		session.COSHandler(hub, chars),
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
 		session.FrontEndThemeHandler(frontEndTheme),

@@ -19,6 +19,7 @@ func _check(cond: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	_lines_tests()
+	_cos_scroll_tests()
 	_sml2_tests()
 	_type_name_tests()
 	await process_frame
@@ -253,6 +254,101 @@ func _lines_tests() -> void:
 	_check(pl[0]["color"] == L.WHITE and pl[0]["icon"], "its name is white with the icon")
 
 ## A text file's bytes as the archive stores them: UTF-16LE with its BOM.
+## Round 795: the COS summon items (UI_SILKMALL 0x684740, 0x6771c0). The rows
+## are built in code with the measured columns of the archive's flute,
+## rabbit scroll and horse scroll (TypeID, Param1 col 118, Desc1 col 119);
+## the CosTable rows are fakes with the fields the lines read.
+func _cos_row(id: int, code: String, type4: int, level: int, max_hp: int) -> CosTable.Row:
+	var r := CosTable.Row.new()
+	r.id = id
+	r.code = code
+	r.type4 = type4
+	r.level = level
+	r.max_hp = max_hp
+	return r
+
+func _cos_scroll_tests() -> void:
+	var rows := {5001: _cos_row(5001, "COS_P_WOLF_001", 3, 12, 300), 5002: _cos_row(5002, "COS_P_RABBIT", 4, 1, 100),
+		5003: _cos_row(5003, "COS_C_HORSE1", 1, 1, 983), 5004: _cos_row(5004, "COS_T_HORSE1", 2, 1, 1200)}
+	var by_code := {}
+	for id in rows:
+		by_code[(rows[id] as CosTable.Row).code] = rows[id]
+	var saved_of: Callable = L.cos_row_of
+	var saved_code: Callable = L.cos_row_by_code
+	L.cos_row_of = func(id: int) -> CosTable.Row: return rows.get(id)
+	L.cos_row_by_code = func(code: String) -> CosTable.Row: return by_code.get(code)
+
+	var flute := _item([3, 2, 1, 1], "Wolf flute")
+	flute.param1 = -1
+	flute.desc1 = "COS_P_WOLF_001"
+	_check(L.is_pet_scroll(flute) and not L.is_ride_scroll(flute), "3/2/1/1 is a pet scroll")
+	# A summoned growth pet, alive, named, its level above the player's.
+	var lines := L.compose(flute, {"type_name": "Pet", "player": {"level": 10},
+		"instance": {"cos_state": 3, "cos_ref": 5001, "cos_name": "Rex"}})
+	var want := PackedStringArray(["Wolf flute", "", "Sort of item: Pet", "", "Pet information",
+		"Pet name : Rex", "Pet level : 12", "Pet condition : Normal"])
+	_check(_texts(lines) == want, "a growth pet's flute: name, type, Pet information, name, level, condition (got %s)" % str(_texts(lines)))
+	_check(_find(lines, "Pet information").get("color") == L.BEIGE, "Pet information is beige (0xffefdaa4)")
+	_check(_find(lines, "Pet level").get("color") == L.RED, "a pet level above the player's is red (0xffff4a4a)")
+	_check(_find(lines, "Pet condition").get("color") == L.WHITE, "a live pet's condition is white")
+	lines = L.compose(flute, {"type_name": "Pet", "player": {"level": 40},
+		"instance": {"cos_state": 4, "cos_ref": 5001, "cos_name": ""}})
+	_check(_find(lines, "Pet name").get("text") == "Pet name : No name", "no name -> UIIT_STT_COSNEWUI_TITLE \"No name\"")
+	_check(_find(lines, "Pet level").get("color") == L.WHITE, "a pet level at or below the player's is white")
+	_check(_find(lines, "Pet condition").get("text") == "Pet condition : Dead" and _find(lines, "Pet condition").get("color") == L.RED,
+		"State 4 -> \"Dead\" in red")
+	# A flute never summoned (State 1, no pet row): nothing more.
+	lines = L.compose(flute, {"type_name": "Pet", "instance": {"cos_state": 1}})
+	_check(_find(lines, "Pet information").is_empty() and _find(lines, "Rental").is_empty(),
+		"a never-summoned flute has no pet lines")
+
+	var scroll := _item([3, 2, 1, 2], "Rabbit scroll")
+	scroll.param1 = 4320
+	scroll.desc1 = "COS_P_RABBIT"
+	lines = L.compose(scroll, {"type_name": "Pet", "instance": {"cos_state": 1}})
+	want = PackedStringArray(["Rabbit scroll", "", "Sort of item: Pet", "",
+		"Rental period is applied when first summoned.", "Rental period", "3Day"])
+	_check(_texts(lines) == want, "a never-summoned ability scroll: BEFORESUM, Rental period, Param1 / 1440 days (got %s)" % str(_texts(lines)))
+	_check(_find(lines, "Rental period is").get("color") == L.WHITE and _find(lines, "Rental period").get("color") == L.WHITE,
+		"BEFORESUM is white")
+	var rent_rows := lines.filter(func(l) -> bool: return l["text"] == "Rental period")
+	_check(rent_rows.size() == 1 and rent_rows[0]["color"] == L.BEIGE, "\"Rental period\" is beige")
+	# Summoned: the time left, 1 day 2 hours 3 minutes (93780 s).
+	lines = L.compose(scroll, {"type_name": "Pet", "instance": {"cos_state": 2, "cos_ref": 5002, "cos_rent_left": 93780}})
+	_check(_texts(lines).has("1Day 2Hour 3Minute"), "a summoned ability pet's rent: \"%%d%%s %%d%%s %%d%%s\" (got %s)" % str(_texts(lines)))
+	lines = L.compose(scroll, {"type_name": "Pet", "instance": {"cos_state": 4, "cos_ref": 5002}})
+	_check(_texts(lines).has("The pet's rental period has expired."), "State 4 ability -> EXPIRERENT")
+	_check(L.rent_left_text(0, func(_k, f): return f) == "0Day 0Hour 0Minute", "no rent left reads 0Day 0Hour 0Minute")
+
+	# cos_fields from an ItemInstance.
+	var inst := ItemInstance.new()
+	inst.is_equipment = false
+	inst.cos_state = 2
+	inst.cos_ref = 5002
+	inst.cos_name = "Bun"
+	inst.cos_rent_secs = 600
+	var f := L.cos_fields(inst)
+	_check(int(f.get("cos_state", 0)) == 2 and int(f.get("cos_ref", 0)) == 5002 and String(f.get("cos_name", "")) == "Bun"
+		and int(f.get("cos_rent_left", -1)) == 600, "cos_fields carries state, ref, name and the rent (got %s)" % str(f))
+	_check(L.cos_fields(ItemInstance.new()).is_empty(), "an equipment record has no COS fields")
+
+	# Ride and transport scrolls (3/3/3/2).
+	var horse := _item([3, 3, 3, 2], "Horse")
+	horse.desc1 = "COS_C_HORSE1"
+	_check(L.is_ride_scroll(horse) and not L.is_pet_scroll(horse), "3/3/3/2 is a ride scroll")
+	lines = L.compose(horse, {"type_name": "Summon"})
+	_check(_find(lines, "Summon item").get("text") == "Summon item: Vehicle" and _find(lines, "Summon item").get("color") == L.BEIGE,
+		"a ride horse: \"Summon item: Vehicle\" in beige (got %s)" % str(_texts(lines)))
+	_check(_find(lines, "HP ").get("text") == "HP 983" and _find(lines, "HP ").get("color") == L.WHITE, "then \"HP 983\" (column 59) in white")
+	var cart := _item([3, 3, 3, 2], "Cart")
+	cart.desc1 = "COS_T_HORSE1"
+	lines = L.compose(cart, {"type_name": "Summon"})
+	_check(_find(lines, "Summon item").get("text") == "Summon item: Trans", "a transport: \"Summon item: Trans\"")
+	L.cos_row_of = saved_of
+	L.cos_row_by_code = saved_code
+	_check(L.ride_scroll_lines(horse, func(_k, f): return f).is_empty() or saved_code.is_valid(),
+		"no table hook, no summon lines")
+
 func _utf16(text: String) -> PackedByteArray:
 	var out := PackedByteArray([0xFF, 0xFE])
 	out.append_array(text.to_utf16_buffer())

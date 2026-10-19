@@ -733,7 +733,12 @@ func TestChildItemCountIsAnOptionalSuffix(t *testing.T) {
 	if got := load(append(append([]string(nil), row...), "1")).ChildItemCount; got != 1 {
 		t.Errorf("column 89 loaded ChildItemCount %d, want 1", got)
 	}
-	if ItemCSVColumnCount != 90 {
-		t.Errorf("ItemCSVColumnCount %d, want 90", ItemCSVColumnCount)
+	if ItemCSVColumnCount != 91 {
+		t.Errorf("ItemCSVColumnCount %d, want 91", ItemCSVColumnCount)
+	}
+	// Round 795: column 90 is Desc2, a ride scroll's level list.
+	withDesc := append(append([]string(nil), row...), "1", "120")
+	if got := load(withDesc).Desc2; got != "120" {
+		t.Errorf("column 90 loaded Desc2 %q, want 120", got)
 	}
 }

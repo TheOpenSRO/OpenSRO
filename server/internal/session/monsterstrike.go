@@ -441,6 +441,19 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	incoming := counter.Damage
 	out.critical = counter.Critical
 	out.blocked = counter.Blocked
+	// A rider's blow lands on its mount (round 795: a single-target blow at
+	// a riding PC is retargeted to the ridden COS, s:0x59b480, READ): the
+	// rider keeps its HP and wears nothing; the mount loses the damage and,
+	// at 0, dies and throws its rider (cosTakeDamage).
+	if mount := riderMount(characterID); mount != nil && incoming > 0 && !counter.Blocked {
+		cosTakeDamage(mount, incoming)
+		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+		if err != nil {
+			return monsterStrikeOutcome{}, fmt.Errorf("combat: reading the rider: %w", err)
+		}
+		out.hp, out.damage = hp, incoming
+		return out, nil
+	}
 	// The counterattack wears the defender's gear: a blocked hit the
 	// shield, any other hit one armour piece.
 	broke := false
@@ -514,6 +527,9 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 	// A death ends a scroll's cast (round 779, scroll.go): CGObjPC
 	// vslot_306 / vslot_307 run the 0x705B handler when the state is set.
 	cancelScrollForDeath(deps.hub, characterID)
+	// The COS she rides is done with (round 795: CGObjPC vslot_306/307 ->
+	// PC_ReleaseCOS(ridden, 1), READ): dismounted and deleted.
+	cosOwnerDied(characterID)
 	// Her states end with her (round 659, status.go).
 	statusFX.endCharacter(deps.hub, characterID)
 	// Dying costs experience, above level 10. Real: GObjPC_OnDeath

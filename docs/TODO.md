@@ -10,6 +10,37 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## Round 795 follow-ups (pets, rides and transports; docs/protocol/pets.md "Round 795")
+
+- [ ] **The item mall, next round (prep).** What the pets round leaves ready for it:
+  - The mall's pets and rides already work once owned: the growth / fellow / ability pet items
+    (3/2/1/1, 3/2/1/2, kept, the COS id in the item's Data word), the ride scrolls (3/3/3/2,
+    Desc1 + the level bracket from Desc2), the pet consumables (HGP potion, revival, clock) and
+    the rent word in the item record (`cos.ItemTail`, `ItemInstance.rent_left_secs`).
+  - The Test Items NPC's three new lines (pets, ability pets and pet items, horses / rides /
+    transports) list these goods from their `SN_TAB_*` shop tabs (`SN_TAB_PET_GROWTH`,
+    `SN_TAB_PET_FELOW`, `SN_TAB_PET_SILK`, `SN_TAB_PET_STORES`, `SN_TAB_VEHICLE`, `SN_TAB_CART`).
+  - Prices: OpenSRO's shop prices from itemdata's Price column (`shop.go`). The mall's own prices
+    are the shard's `_RefPricePolicyOfItem` (round of 2026-08-22, the shard backup), which no
+    exporter or loader reads yet.
+  - The client side to build: the F10 mall window (retail's F10, now OURS Hide UI), and the buy
+    confirm already found (`CItemMallConfirmBuy`, ID 400, "Store and warehouse confirm boxes"
+    below).
+  - Not read yet, the first things to read: the message carrying the account's silk, the mall's
+    buy request and reply (start from the mall window's buy button in sro_client.exe), and
+    SR_GameServer.exe's handler for that request.
+- [ ] **Monsters do not target pets** (OURS): a monster's aggro and its blows only go to players;
+      retail lets monsters hit a growth pet and a mount.
+- [ ] **The guild soldier** (TypeID4 5, kind 4): the record is written; no summon path.
+- [ ] **A transport's trade goods**: summoning one needs a job suit (0x1849), and there is no job
+      system, so it is always refused; the cart's trade bag is not built.
+- [ ] **The pet bag extension's slot count** (`AbilityPetSlots`): 28 is OURS until the
+      extension item's own rows are read.
+- [ ] **V (hide others)** hides other players; whether it hides their pets in retail is not read.
+- [ ] **The other OURS departures** (pets.md): COS uids
+      0x7e000000+n, a 100 ms server tick, a 5 s corpse, the 400-unit warp leash, logout keeping a
+      COS summoned, and the use option 0xC5 carrying a pet consumable's target.
+
 ## Round 789 lane AS follow-ups (avatars on the server; docs/protocol/avatars.md, docs/rounds/r789as.md)
 
 - [ ] **The devil's spirit's opt-level abilities**: `RefMagicOptByItemOptLevel`,
@@ -1050,7 +1081,8 @@ with the screen's top-right corner, and the dungeon-floor ring hidden. Still ope
       **The party's dots and arrows are drawn (round 717, `party_gui.md` section 9)**; the quest
       marks go between the party's arrows and the player's arrow in `MapMarks`.
 - [ ] Animal signs -- `mm_sign_animal.ddj` (`+0x3c8`, `0x66137f`) is drawn for a CICCos (a pet,
-      horse or transport; READ, `0x6637ae..0x6637c4`); this client builds no such body yet.
+      horse or transport; READ, `0x6637ae..0x6637c4`). The bodies exist from round 795
+      (`World3D._cos_bodies`); `HudMinimap` does not draw their sign yet.
 - [ ] **Move the NPC / monster / unique / other-player signs over the frame** (round 717 review, finding 1):
       vslot_013 draws every mark over `mm_window` (INFERRED, `party_gui.md` section 9), but these
       signs still sit in the map's clip under the frame, and they reach 44.5 + 4 = 48.5 px where the
@@ -1127,14 +1159,14 @@ Every key is `client/scripts/ui/keymap.gd` (`KeyMap.SLOTS`, the 33 retail slots,
 (the user's choice of "original only": WASD is gone; S, A and W are skill, action and pet switch).
 Bound but doing nothing yet, each logging a `KEYMAP ... no-op` line:
 - **Pets and COS**: Ins (info), Home (ride), PgUp (unsummon), Del (follow), End (attack), PgDn
-  (AI), W (switch). Nothing in this client draws or commands a pet.
+  (AI), W (switch) work from round 795 (`World3D` "HudCos glue"; docs/protocol/pets.md).
 - **Ctrl+1 / Ctrl+2..8**: select yourself / a party member (`0x77f230`). The target window shows
   monsters only; no player can be targeted.
 - **Retail's arrow-key walk** (Up, and Left/Right with an unread turn-or-strafe) sends
   `0x7023/0x7024/0x70c5` requests this server does not have; not bound.
 
 Also open: **F10 is ours** (Hide UI; retail's F10 is the item mall, which does not exist here);
-**the item mall** itself; the **rebinding window** ([UI_TODO.md](UI_TODO.md) item 7); **G's
+**the item mall** itself (next round; "Round 795 follow-ups" below has the prep); the **rebinding window** ([UI_TODO.md](UI_TODO.md) item 7); **G's
 client-side refusals** that retail makes before sending (`+0x258 == -1`, client state 10, a UI
 lock) — the server makes the owner one; **V and the minimap** (whether retail's minimap hides
 what V hides was not read; ours keeps the dots); **H** toggles this client's Help window inside
@@ -2550,7 +2582,9 @@ census of its texture writes).
       round trip after the run starts; ours when it starts (no echo in our protocol).
 - [ ] **vslot 0x50's other tests** (byte +0xbc, global 0xeef5f4, `FUN_009d0560`) are not mapped;
       ours hides on a body that is gone or not visible in the tree.
-- [ ] **Pets, horses, transports (CICCos)** get `select_04` when the client draws them; **items**
+- [x] **Pets, horses, transports (CICCos)** get `select_04` (round 795, `_select_cos`,
+      `GroundMarkers.Kind.COS`).
+- [ ] **Items**
       get `select_02` if a selection of one is ever built; **dungeons** (no height map) draw no ring
       (INFERRED from `FUN_009ef640` failing).
 - [ ] **The unique's "purple circle and red arrow"** the user remembered are not in this client
@@ -2624,7 +2658,8 @@ is in `docs/protocol/target_window_buffs.md`. Left open:
     a type-3 CTJ_PremiumKeeper job), BFI1 and UQL1.
 - [ ] **What `+0x21c == -1` means** for an owner whose 0xB0BD object is destroyed, not attached
       (0x8a5d58).
-- [ ] **Pets** (the CICCos branch shows the viewer too). OpenSRO's pets cannot be targeted yet.
+- [ ] **Pets** (the CICCos branch shows the viewer too). From round 795 a pet can be selected
+      (its ring, and the COS window for one's own); the target viewer is not shown for it.
 
 ### Store and warehouse confirm boxes — **crash fixed (round 631); next: the retail CIFMessageBox**
 Round 631 fixed the crash the user hit on v0.1.458 (a box freed from its own button: SIGSEGV).
@@ -3459,9 +3494,9 @@ attack result. `OPENSRO_QA_MOBS=<N>` and the perf gate's `mobs` site measure it.
 - [ ] **Shadow and effects** are not faded. Retail writes the alpha to the model's compound
       (`CCompChar` +0x4c) only; who reads it in the draw is not read. (The name plate stays at
       full alpha in retail: `FUN_008b4d90(point, 0xff)`, READ in round 673.)
-- [ ] **NPCs, guards and pets** fade in retail (the same `FUN_009d17e0` for CICNPC, CICGuard and
-      CICCos); ours are built from the map's data at region load (NPCs) or not drawn yet, and
-      appear at once.
+- [ ] **NPCs and guards** fade in retail (the same `FUN_009d17e0` for CICNPC, CICGuard and
+      CICCos); ours are built from the map's data at region load and appear at once. A CICCos
+      takes the monsters' appear fade (round 795, `_appear_fades`).
 - [ ] **A cold driver shader cache hitches on a monster's opaque material** (130-240 ms the first
       time a material kind is drawn, MEASURED in round 676's review; the base pays it as the
       monster appears, this client as its fade ends). The fade twins are warmed while the world

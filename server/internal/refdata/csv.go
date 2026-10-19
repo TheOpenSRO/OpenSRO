@@ -134,6 +134,10 @@ var itemCSVColumns = []string{
 	// (see Item.ChildItemCount). A strict suffix; an older export reads 0,
 	// and no dress takes an attachment.
 	"ChildItemCount",
+	// Appended later still (round 795): Desc2, itemdata column 121 (see
+	// Item.Desc2). A strict suffix; an older export reads "", and every
+	// ride scroll summons its Desc1 row.
+	"Desc2",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -442,6 +446,9 @@ func parseItemRow(f []string) (Item, error) {
 		if v, e := strconv.Atoi(strings.TrimSpace(f[89])); e == nil {
 			it.ChildItemCount = v
 		}
+	}
+	if len(f) > 90 {
+		it.Desc2 = strings.TrimSpace(f[90])
 	}
 
 	if err != nil {

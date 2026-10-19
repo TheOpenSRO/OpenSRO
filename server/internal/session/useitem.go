@@ -68,7 +68,7 @@ func (r *UseItemRequest) Encode() []byte {
 	out := append(encodeStrings(r.CharacterName), encodeInt64(int64(r.InventorySlot))...)
 	if r.Option != 0 {
 		out = append(out, r.Option)
-		if r.Option == ReverseOptionMap {
+		if r.Option == ReverseOptionMap || r.Option == UseOptionCOSTarget {
 			out = binary.LittleEndian.AppendUint32(out, r.Target)
 		}
 	}
@@ -1090,6 +1090,15 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// cooldown are consulted.
 		if !it.CanUse {
 			return fail("that item cannot be used")
+		}
+		// Round 795 (cossummon.go, cosuse.go): a pet item or a ride scroll
+		// calls its COS out; a pet's potion, food, revival or clock acts on
+		// the pet it names.
+		if isCOSItem(it) {
+			return useCOSItem(ctx, sess, inv, characterID, it, held, have)
+		}
+		if isCOSConsumable(it) {
+			return useCOSConsumable(ctx, sess, inv, chars, characterID, it, held, have, req)
 		}
 		// Round 789 (avataruse.go): a devil's spirit is awakened by its use,
 		// and the Nasrun extension moves an awake one's expiry.

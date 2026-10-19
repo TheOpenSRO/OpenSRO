@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/OpenSRO/server/internal/avatar"
+	"github.com/OpenSRO/OpenSRO/server/internal/cos"
 	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
@@ -60,6 +61,10 @@ type ItemInfo struct {
 	Durability uint32 // the period word for time-limited gear (timeLimited)
 	MagParams  []uint64
 	AdvElixir  uint8
+	// Tail is the record's bytes after the RefItemID for an item that is not
+	// equipment (round 795, retailItemTail): a COS summon item's state and
+	// pet, an expendable's u16 count. nil writes the equipment form.
+	Tail []byte
 }
 
 // Binding-option block types (READ, gs:0x846280, c:0x8bb070).
@@ -73,6 +78,9 @@ const (
 func AppendItemRecord(out []byte, ii ItemInfo) []byte {
 	out = binary.LittleEndian.AppendUint32(out, 0) // rent block: none
 	out = binary.LittleEndian.AppendUint32(out, ii.RefItemID)
+	if ii.Tail != nil {
+		return append(out, ii.Tail...)
+	}
 	out = append(out, ii.OptLevel)
 	out = binary.LittleEndian.AppendUint64(out, ii.Variance)
 	out = binary.LittleEndian.AppendUint32(out, ii.Durability)
@@ -115,6 +123,16 @@ func ReadItemRecord(data []byte) (ItemInfo, []byte, error) {
 		}
 		data = data[extra:]
 	}
+	if len(data) < 4 {
+		return ii, nil, errors.New("item record: truncated")
+	}
+	if tailOf := itemRecordTail; tailOf != nil {
+		ref := binary.LittleEndian.Uint32(data)
+		if tail, rest, ok := tailOf(ref, data[4:]); ok {
+			ii.RefItemID, ii.Tail = ref, tail
+			return ii, rest, nil
+		}
+	}
 	if len(data) < itemInfoFixedSize {
 		return ii, nil, errors.New("item record: truncated")
 	}
@@ -156,6 +174,9 @@ func ReadItemRecord(data []byte) (ItemInfo, []byte, error) {
 
 // itemInfoEntrySize is one block entry's bytes: the u32 slot and the record.
 func itemInfoEntrySize(ii ItemInfo) int {
+	if ii.Tail != nil {
+		return 4 + 4 + 4 + len(ii.Tail)
+	}
 	n := min(len(ii.MagParams), inventory.MaxMagParams)
 	size := 4 + 4 + itemInfoFixedSize + 8*n + 2 + 2
 	if ii.AdvElixir != 0 {
@@ -238,6 +259,10 @@ func itemInfoFor(ctx context.Context, items ItemLookup, slot int, itemID int64, 
 		return ItemInfo{}, false
 	}
 	item, err := items.GetItem(ctx, itemID)
+	if err == nil && item != nil && cos.IsPetItem(item.TypeID1, item.TypeID2, item.TypeID3, item.TypeID4) {
+		// Round 795: a pet's summon item carries its pet (cositem.go).
+		return ItemInfo{Slot: slot, RefItemID: uint32(itemID), Tail: cosItemTail(ctx, inst, time.Now())}, true
+	}
 	if err != nil || !isEquipment(item) {
 		return ItemInfo{}, false
 	}

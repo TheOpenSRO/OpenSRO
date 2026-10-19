@@ -300,7 +300,9 @@ func TestUseItemRestoresOnlyForRecoveryKinds(t *testing.T) {
 	}{
 		{"return scroll 3/3/3/1", returnScroll, "that cannot be used"},
 		{"bag expansion 3/3/13/17", bagExpansion, errStorageExpansionRefused},
-		{"pet HP potion 3/3/1/4", petHPPotion, "that cannot be used"},
+		// Round 795: a pet's potion acts on the pet it names (cosuse.go); a
+		// server with no COS table refuses it.
+		{"pet HP potion 3/3/1/4", petHPPotion, "no COS table on this server"},
 		{"berserk potion 3/3/1/8", berserkPotion, "that cannot be used"},
 	} {
 		reopenRoom()

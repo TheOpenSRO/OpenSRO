@@ -262,6 +262,8 @@ func buildPlayerSpawn(d viewDeps, e world.Entity, now time.Time) (playerSpawn, b
 	if f := characterStatusFrame(cur.CharacterID); f != nil {
 		after = append(after, f)
 	}
+	// Its COS follow it (round 795, cosworld.go).
+	after = append(after, cosSpawnFrames(cur.CharacterID, now)...)
 	return playerSpawn{e: cur, record: rec, after: after, version: version}, true
 }
 
@@ -457,9 +459,11 @@ func despawnPlayersFrom(d viewDeps, viewer world.Entity, others []world.Entity) 
 	var frames []*gateway.Frame
 	for _, c := range ownCellLast(playerCellsInOrder(byCell), viewer.Cell) {
 		ids := byCell[c]
-		uids := make([]uint32, len(ids))
-		for i, id := range ids {
-			uids[i] = uint32(id)
+		uids := make([]uint32, 0, len(ids))
+		for _, id := range ids {
+			uids = append(uids, uint32(id))
+			// Its COS go with it (round 795).
+			uids = append(uids, cosDespawnUIDs(id)...)
 			delete(v.known, id)
 		}
 		// By unique id, as the group spawn (round 762, READ FUN_00533b90).
@@ -482,6 +486,8 @@ func despawnPlayersFrom(d viewDeps, viewer world.Entity, others []world.Entity) 
 // have left the world.
 func despawnPlayerFromOthers(d viewDeps, gone world.Entity, recips []world.Entity) {
 	frame := gateway.MustFrame(&proto.Packet{Opcode: npcspawn.OpSingleDespawn, Data: npcspawn.SingleDespawn(uint32(gone.CharacterID))})
+	// Its COS go with it (round 795), ahead of it.
+	frames := append(cosDespawnFrames(gone.CharacterID), frame)
 	for _, r := range recips {
 		if r.Session == nil || r.CharacterID == gone.CharacterID {
 			continue
@@ -494,7 +500,7 @@ func despawnPlayerFromOthers(d viewDeps, gone world.Entity, recips []world.Entit
 			v.mu.Lock()
 			defer v.mu.Unlock() // a recovered panic must not leave the view locked
 			if _, held := v.known[gone.CharacterID]; held && v.open && !stillSees(d.hub, r, gone) {
-				_ = r.Session.SendFrames(frame)
+				_ = r.Session.SendFrames(frames...)
 				delete(v.known, gone.CharacterID)
 			}
 		}()
@@ -526,6 +532,9 @@ func arrivePlayer(d viewDeps, arrived world.Entity) {
 	if !storeViewIfLive(d.hub, arrived.CharacterID, arrived.Session, openedView(arrived.Session, d)) {
 		return
 	}
+	// Its COS arrive with it (round 795, cossummon.go): before the spawns
+	// both ways, so the players it meets get them with its own.
+	cosArrived(d.ctx, arrived)
 	others := othersInView(d.hub, arrived)
 	spawnPlayersTo(d, arrived, others)
 	spawnPlayerToOthersAs(d, arrived, others, true, zoneNoticeFrame(zoneNoticeEntered, arrived))
@@ -558,6 +567,8 @@ func departPlayer(hub *world.Hub, gone world.Entity, recips []world.Watcher) {
 		}
 	}
 	frame := gateway.MustFrame(&proto.Packet{Opcode: npcspawn.OpSingleDespawn, Data: npcspawn.SingleDespawn(uint32(gone.CharacterID))})
+	// Its COS go with it (round 795), ahead of it.
+	cosGone := cosDespawnFrames(gone.CharacterID)
 	notice := zoneNoticeFrame(zoneNoticeLeft, gone)
 	for _, r := range recips {
 		if r.Session == nil || r.CharacterID == gone.CharacterID {
@@ -572,7 +583,7 @@ func departPlayer(hub *world.Hub, gone world.Entity, recips []world.Watcher) {
 			if notice != nil {
 				_ = r.Session.SendFrames(notice)
 			}
-			_ = r.Session.SendFrames(frame)
+			_ = r.Session.SendFrames(append(cosGone, frame)...)
 			delete(v.known, gone.CharacterID)
 		}
 		v.mu.Unlock()

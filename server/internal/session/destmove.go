@@ -174,7 +174,8 @@ func encodeMoveEcho(uid uint32, movement []byte, srcRegion uint16, src world.Pos
 // encodeMoveStop is 0xB023's payload for e as it stands.
 func encodeMoveStop(e world.Entity) []byte {
 	region, lx, lz := regionLocalOf(e.Zone, e.Pos)
-	out := binary.LittleEndian.AppendUint32(nil, uint32(e.CharacterID))
+	// A rider's stop is its COS's (round 795, moverUID).
+	out := binary.LittleEndian.AppendUint32(nil, moverUID(e.CharacterID))
 	out = binary.LittleEndian.AppendUint16(out, region)
 	out = binary.LittleEndian.AppendUint32(out, math.Float32bits(float32(lx)))
 	out = binary.LittleEndian.AppendUint32(out, math.Float32bits(float32(e.Pos.Y)))
@@ -256,13 +257,29 @@ func DecodeMoveEcho(b []byte) (MoveEcho, bool) {
 
 // handleMovementRequest is 0x7021 (READ above; OURS where the comments say).
 func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars character.Store) error {
+	// Round 795: a rider's own 0x7021 is dropped (s:0x4b0ea0, slot 0x540):
+	// its client steers the COS with 0x70C5 instead (riderMove).
+	if e, ok := hub.EntityBySession(sess.ID()); ok && riderMount(e.CharacterID) != nil {
+		return nil
+	}
+	return moveByRequest(sess, p.Data, hub, chars)
+}
+
+// riderMove is a rider's 0x70C5 command 1: the movement body moves the COS,
+// and its rider with it (round 795, cosride.go).
+func riderMove(sess *gateway.Session, data []byte, hub *world.Hub, chars character.Store) error {
+	return moveByRequest(sess, data, hub, chars)
+}
+
+// moveByRequest is a 0x7021 body's move of sess's character.
+func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars character.Store) error {
 	// Round 749's review, F8 (OURS: retail's handler has no rate gate): a
 	// click beyond the session's bucket is dropped, silently as every refusal
 	// (its client takes a missing echo as a refusal: MoveOrderSync).
 	if !moveBucketTake(sess, time.Now()) {
 		return nil
 	}
-	m, angle, err := proto.DecodeMovement(p.Data, false)
+	m, angle, err := proto.DecodeMovement(data, false)
 	if err != nil || (m.Kind != proto.MovementKindHeading && m.Kind != 1) {
 		return nil // a kind other than 0 or 1 is refused
 	}
@@ -337,8 +354,9 @@ func handleMovementRequest(sess *gateway.Session, p *proto.Packet, hub *world.Hu
 	// A move is the player's own cancel of a running auto-attack (keepup.go).
 	cancelActions(e.CharacterID)
 	region, lx, lz := regionLocalOf(r.Entity.Zone, r.Entity.Pos)
-	data := encodeMoveEcho(uint32(e.CharacterID), movementBytes(m, angle), region, r.Entity.Pos, lx, lz)
-	afterRelocate(sess, r, true, gateway.MustFrame(&proto.Packet{Opcode: proto.OpMovementResponse, Data: data}))
+	// A rider's move is its COS's (round 795, moverUID).
+	echo := encodeMoveEcho(moverUID(e.CharacterID), movementBytes(m, angle), region, r.Entity.Pos, lx, lz)
+	afterRelocate(sess, r, true, gateway.MustFrame(&proto.Packet{Opcode: proto.OpMovementResponse, Data: echo}))
 	ensureMoverPass(hub)
 	// The periodic save is two Postgres writes: after the echo and the
 	// watchers' 0xB021, not before (savePositionEvery).
@@ -373,7 +391,11 @@ func legEnd(m *world.Mover, now time.Time) time.Time {
 // its run speed, the slack, the height, -trust-client-positions, and for a
 // placement the points the server named (used up when one is taken).
 func claimBound(characterID int64, placement bool, now time.Time) world.Bound {
-	b := world.Bound{Speed: float64(buffBooks.RunSpeed(characterID)), Slack: claimSlack, Height: claimHeight,
+	speed := float64(buffBooks.RunSpeed(characterID))
+	if _, run, riding := riderSpeeds(characterID); riding {
+		speed = run // round 795: a rider moves at its COS's speed
+	}
+	b := world.Bound{Speed: speed, Slack: claimSlack, Height: claimHeight,
 		Sanity: claimSanity, Trust: trustPositions.Load()}
 	if placement {
 		b.Named = func(x, z float64) bool { return landingTake(characterID, x, z, now) }

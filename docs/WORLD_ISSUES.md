@@ -7483,6 +7483,102 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-fifth round: pets, horses and the mall's rides
+
+The user (2026-10-19): "Alright, let's get pickup, growth, and ability pets working and added. Be
+sure to add them to the test item npc so we can test. Also make sure horses and other item mall
+rideables work like tigers, beetles, ostriches, etc". And: "Make sure you match the original code.
+Let's prep to the item mall working next."
+
+Labels: READ (sro_client.exe vSRO 1.188, SR_GameServer.exe), MEASURED, INFERRED, OURS.
+docs/protocol/pets.md "Round 795" has every address; this entry is the summary.
+
+- **What a COS is (READ).** Every summoned pet, ride, transport and guild soldier is one client
+  class, CICCos. Its characterdata row's TypeID4 picks the kind: 1 ride (`COS_C_*`), 2 transport
+  (`COS_T_*`), 3 growth and fellow pets, 4 ability (pickup, "silk") pets, 5 guild soldiers. The
+  spawn record writes them as kind bytes 0, 1, 3, 2, 4.
+- **Summoning (READ).**
+  - Growth / fellow (3/2/1/1) and ability (3/2/1/2) items are kept. The item's Data word holds
+    the COS record.
+  - A ride or transport scroll (3/3/3/2) is used up. Its row is Desc1 + "_" + the largest level
+    bracket at or under the owner's level, from Desc2 (col 121, now exported), with 1 and 255
+    added.
+  - Refusals: level under 5 (0x186c), a pet above the owner (0x18a5), a second pet of the same
+    kind (0x18a9), a second ride or riding (0x185c), a transport without a job suit (0x1849),
+    a dungeon (0x1879). Using an out pet's item recalls it within 100 (0x1897 past that, 0x1896
+    when ridden).
+- **Riding (READ).**
+  - Mount: standing, within 30, a ride or transport. The rider's record carries ride state 1 and
+    the mount's uid after the battle byte (pc_spawn.md row 25a).
+  - While mounted the client moves the mount: 0x70C5 {mount, 1, the 0x7021 body}. The server
+    drops the rider's own 0x7021 and echoes 0xB021 under the mount's uid. The rider takes the
+    mount's speeds (0x30D0), and blows on the rider land on the mount.
+  - Dismounting a ride deletes it; the owner's death deletes the ridden COS.
+  - The client seats the rider: its skeleton's global = the mount's skeleton global x the
+    "saddle" bone's pose, playing the "cart" animation group.
+- **Pets (READ unless marked).**
+  - Follow from 65 away, to a point selfBC + 4 + rand(1..10) off the owner, settling within
+    selfBC + 50.
+  - An ability pet picks up client-side: the nearest eligible item within 500, one request a pet.
+    Flags 0x80 on, 0x40 everything, 1 gold, 2 equipment, 4 other. The server takes it within 10
+    and gives up past 1000. Gold, quest and untradeable items go to the owner, the rest to the
+    pet's bag (0x18b4 full; 0x18b5 the owner's bag full). The bag is 28 slots (OURS until the
+    extension's rows are read).
+  - A growth pet in AI mode 1 attacks what its owner attacks, with its col-83 skill, at half rate
+    under 30% HGP.
+  - Pet EXP: recomputed at the pet's level; it levels only below its owner and below 110, by
+    swapping to the col-6 next-level row (type 7, and 0x3054's effect).
+  - Hunger 1% every 5 minutes, regen 1.6% every 4 s, rent checked every 30 s.
+  - Naming once (1-12 characters, no space), settings (0x7420 kind 1 AI, kind 2 pickup flags),
+    unsummon, terminate, and the pet bag moves (0x7034 0x10 / 0x1a / 0x1b).
+  - An out pet's item cannot be sold (0x18b7), traded (0x18b6) or stored (0x18b2).
+  - The item record's tail by type: a pet item's state, ref, name and rent seconds; the rest of
+    3/3 and 3/2/2 as retail reads them (`cos.ItemTail`; `ItemInstance._read_tail`).
+- **OURS departures**: COS uids 0x7e000000+n; a 100 ms server tick; a 5 s corpse; the 400-unit
+  warp leash; monsters do not target pets; logout keeps a COS summoned; the use-item option 0xC5
+  carries a pet consumable's target; a COS shows and hides with its owner (in the owner's spawn).
+- **Built.**
+  - Server: package `cos` (rules, a store with an SQL table `char_cos`, the wire); session
+    `cosworld`, `cossummon`, `cosride`, `coscommand`, `cosai`, `cosexp`, `cosuse`, `cosbag`,
+    `cositem`; `-cos-csv` (`export-refdata -mode cos`, 7,272 rows); the pet bag in
+    `cos_inventory`.
+  - Client: `CosSpawnNet`, `CosNet` (every request and reply), `CosTable`, the bodies, riders,
+    the pick scan and the growth pet's attack in `World3D`; the HUD's status slot, pet mini info,
+    COS window, command bar and the pet bag (`hud_cos*.gd`); tooltips for pet items. The pet keys
+    (Ins, Home, PgUp, Del, End, PgDn, W) work.
+  - The Test Items NPC's three new lines: "Purchase Growth and Fellow Pets", "Purchase Ability
+    Pets and Pet Items", "Purchase Horses, Rides and Transports" (10-21 goods a tab).
+- **Measured live** (`/var/tmp/r795/qa1.sh` on the box, `OPENSRO_QA_COS`).
+  - The level-30 Fierce Tiger (`COS_C_TIGER_30`, item 23277): summoned, mounted at once, the
+    rider on its saddle; walking at speed 150 (50 on foot) from x 100 to 400; dismounted, gone.
+  - A wolf cub (item 7488) and a rabbit (item 10365) followed, took the name "Rex" and the
+    settings, ate an HP potion and were unsummoned.
+  - The wolf struck a mangyang the owner attacked (32 damage, killed). The rabbit, flags 199,
+    picked up the ten drops of five mangyang: five gold piles (32-58 gold) to the owner, the
+    rest to its bag.
+- **Bugs found on the way**: a deadlock (the tick held the world's lock while reading its
+  dependencies, which took it again; the dependencies are now an atomic pointer); the pet bag's
+  records sent without their rent word; `export-refdata -mode cos` falling through into the items
+  export.
+- **Tests.** `cos` rules and wire; the session's round-795 rig (summon, ride, pick, refusals);
+  `cos_net_test.gd` against the Go side's golden bytes; `hud_cos_test.gd` (106 checks);
+  `item_tooltip_lines_test.gd`. `go test ./...` passes; `check` ALL LOAD (893 scripts, 9
+  scenes); `tests` "ran 340 suite(s), 0 failing" (an earlier run failed `water_fx_test` once; it
+  passed alone and in the rerun).
+- **OPEN** (TODO.md "Round 795 follow-ups"): monsters targeting pets; the guild soldier's
+  summon; a transport's trade goods (no job system); the extension's slot count; the minimap's
+  animal sign; V for others' pets; the target viewer for a pet.
+- **Gate** (`perf_gate.sh --frames 30000`, base 1a6ba79a vs the working tree, 1280x720, median of
+  3): all SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.90 -> 0.92 | 8691 -> 8866 | 2734 -> 2794 | 5 -> 5 |
+  | reeds | 0.85 -> 0.86 | 6288 -> 7659 | 1429 -> 1440 | 2 -> 2 |
+  | cross | 1.02 -> 1.03 | 9444 -> 9404 | 2801 -> 2737 | 4 -> 4 |
+
+  The reeds' entry moved within its own spread (base runs 6250-7661 ms).
+
 ## Seven-hundred-and-ninety-fourth round: Dynamic Animation -- the cloth, and what a worn item plays
 
 The user (2026-10-19): "Let's add support for dynamic animations now. The option is there but not

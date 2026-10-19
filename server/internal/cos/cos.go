@@ -157,10 +157,13 @@ var Procs = map[string]int{
 // `GUILD_SOLDIER_SAME_SUMMON_LIMIT` after a guild-level test. Two independent
 // witnesses, the table's names and the binary's error strings.
 //
-// What separates 1 from 2, and 3 from 4, is NOT named here. The code prefixes
-// differ (`COS_C_` vs `COS_T_`, and a 1,260-row `COS_P_WOLF` family against an
-// eleven-row one) and the engine treats each pair identically in this
-// function, so the distinction lives somewhere this pass did not read.
+// What separates 1 from 2, and 3 from 4 (round 795, READ): 1 is the ride
+// (`COS_C_*`, IGObj slot 13 IsVehicle 0x482840), 2 the transport (`COS_T_*`,
+// slot 12 IsCart 0x4827f0), 3 the growth pet (`CGObjCOS_GoldPet`, the fellow
+// pets included: every `COS_P_FELLOW_*` row is TypeID4 3, MEASURED) and 4 the
+// ability pet (`CGObjCOS_SilkPet`, the "silk pet" of the item texts). The
+// family counts above are round 289's; round 795 MEASURED 36 growth families
+// x 140 per-level rows (docs/protocol/pets.md, "Round 795").
 const (
 	KindCOS_C     = 1 // COS_C_* -- shares the cart refusal with KindCOS_T
 	KindCOS_T     = 2 // COS_T_*

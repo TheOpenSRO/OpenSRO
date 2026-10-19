@@ -95,10 +95,14 @@ type Record struct {
 	JobType, JobLevel   byte
 	PVPState, RideState byte
 	BattleState         byte
-	TeleportState       byte
-	InteractMode        byte
-	TradeRank           byte
-	GuildName           string
+	// MountUID is the ridden COS's unique id, written after the battle byte
+	// when RideState is 1 (round 795, READ s:0x4e5c04..0x4e5c86, c:0x9dde69
+	// ..0x9ddeba: the u32 follows the battle byte, not the ride byte).
+	MountUID      uint32
+	TeleportState byte
+	InteractMode  byte
+	TradeRank     byte
+	GuildName     string
 	// JobState is the job state the slot-8 suit gives; the guild block is
 	// written only for JobStateNone. 0, the zero value, is no job state the
 	// engine has and is written as JobStateNone (round 737's review).
@@ -108,9 +112,9 @@ type Record struct {
 }
 
 // Append appends r's bytes in wire order. It refuses what the reader could
-// not take back: an inventory size of 0, a ride state of 1 (the ridden
-// object's id is not modelled), an interact mode of 4 (the stall block is
-// not modelled), more than 255 items.
+// not take back: an inventory size of 0, a ride state of 1 with no ridden
+// object's id, an interact mode of 4 (the stall block is not modelled), more
+// than 255 items.
 func Append(out []byte, r Record) ([]byte, error) {
 	if r.InventorySize == 0 || r.AvatarSize == 0 {
 		return out, fmt.Errorf("pcspawn: a storage size of 0 drops the count byte the client reads")
@@ -121,7 +125,7 @@ func Append(out []byte, r Record) ([]byte, error) {
 	if len(r.Avatars) > int(r.AvatarSize) {
 		return out, fmt.Errorf("pcspawn: %d avatars in a storage of %d", len(r.Avatars), r.AvatarSize)
 	}
-	if r.RideState == 1 {
+	if r.RideState == 1 && r.MountUID == 0 {
 		return out, fmt.Errorf("pcspawn: ride state 1 needs the ridden object's id")
 	}
 	if r.InteractMode == 4 {
@@ -182,6 +186,9 @@ func Append(out []byte, r Record) ([]byte, error) {
 	// CGObjPC::vslot_293 0x4e5b00 mode 2.
 	out = appendString(out, r.Name)
 	out = append(out, r.JobType, r.JobLevel, r.PVPState, r.RideState, r.BattleState)
+	if r.RideState == 1 {
+		out = binary.LittleEndian.AppendUint32(out, r.MountUID)
+	}
 	out = append(out, r.TeleportState, r.InteractMode, r.TradeRank)
 	out = appendString(out, r.GuildName)
 	if r.JobState == JobStateNone || r.JobState == 0 {
@@ -340,8 +347,8 @@ func Decode(b []byte, types Types) (Record, []byte, error) {
 	}
 	d.Name = r.str()
 	d.JobType, d.JobLevel, d.PVPState, d.RideState, d.BattleState = r.u8(), r.u8(), r.u8(), r.u8(), r.u8()
-	if d.RideState == 1 && r.err == nil {
-		return d, nil, fmt.Errorf("pcspawn: a ride is not OpenSRO's")
+	if d.RideState == 1 {
+		d.MountUID = r.u32()
 	}
 	d.TeleportState, d.InteractMode, d.TradeRank = r.u8(), r.u8(), r.u8()
 	d.GuildName = r.str()

@@ -71,13 +71,14 @@ Slots 24 `0x9dade0`, 28 `0x9c7780`, 27 `0x9dbcc0` and 16 `0x9db940` read nothing
 | 17 | u8, u16 | (no destination) source byte, angle | mover `+0x168`, `+0x164` | `+0x14`, `+0x10` | 0 and the angle again; on a heading run (round 749) the run's command (1) and its wire angle |
 | 17' | u16, i16 x 3 | (destination) region, x, y, z | the 0x48bad0 serialiser | `0x8a5640` | round 749: the leg's destination, region-local, truncated (a dungeon's would be i32 x 3) |
 | 18 | u8 ×4 | life, [1], motion, body mode | chardata `[0..3]` (`0x4a9b70`) | `+0x271`, `+0x273`, `+0x272`, `+0x470` | life from the hub; 0; `motions.state` (4 = SIT; 3 = RUN while a leg runs, round 749: the accepted move's SetMotionState(2 + run flag), READ `0x4b11b6`); 1 while berserk (round 651's value) |
-| 19 | f32 ×3 | walk, run, param 140 | params 23, 24, 140 | `+0x254`, `+0x258`, `+0x4e8` | 16 (MEASURED: characterdata column 46); `buffBooks.RunSpeed`; 100 (READ, `0x4e3200`) |
+| 19 | f32 ×3 | walk, run, param 140 | params 23, 24, 140 | `+0x254`, `+0x258`, `+0x4e8` | 16 (MEASURED: characterdata column 46); `buffBooks.RunSpeed`; 100 (READ, `0x4e3200`). A rider's are its COS's (round 795, s:0x4aa410) |
 | 20 | u8 | buff count | `0x59cdc0` | `0x9d1300` | 0. OpenSRO's buffs follow the spawn as its own `OpBuffStart` (a DEPARTURE in carrier only) |
 | 21 | u16 + bytes | name | the char name when the job state is 4, else the job alias | `+0x110` | the character name |
 | 22 | u8, u8 | job type, job level | `0x60e370` | `+0x7be`, `+0x7bf` | 0, 0 (OURS: no job system) |
 | 23 | u8 | PvP state | chardata `+0xc` | `+0x50c` | 0 |
-| 24 | u8 | ride state | chardata `+0xe` | `0x9ca2f0` | 0 (a 1 adds the ridden object's u32) |
+| 24 | u8 | ride state | chardata `+0xe` | `0x9ca2f0` | 1 while it rides (round 795), else 0 |
 | 25 | u8 | battle state | chardata `+0xd` | `+0x7bd` | 0 |
+| 25a | u32 | the ridden COS's uid, **only with ride state 1** -- after the battle byte, not the ride byte (READ s:0x4e5c04..0x4e5c86, c:0x9dde69..0x9ddeba; round 795) | the ridden COS | `+0x2a4` | the COS uid (`pets.md`, "Round 795") |
 | 26 | u8 | teleport state | slot 72 (chardata `+0x10`) | `+0x7c0` | 0 |
 | 27 | u8 | interact mode | chardata `+6` | `+0x471` | 0 (a 4, a stall's owner, adds the stall block) |
 | 28 | u8 | trade rank | `0x60c330` | `+0x50e` | 0 |

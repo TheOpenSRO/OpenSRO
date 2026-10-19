@@ -130,8 +130,11 @@ const (
 	fParam6 = 128
 	// fChildItemCount is ref +0x53d, the column after MaxMagicOptCount
 	// (round 789; refdata.Item.ChildItemCount, READ s:0x6a3d50).
-	fChildItemCount  = 159
-	fDesc1           = 119
+	fChildItemCount = 159
+	fDesc1          = 119
+	// fDesc2 is Desc128_2 (round 795): a ride or transport scroll's level
+	// list (refdata.Item.Desc2).
+	fDesc2           = 121
 	fDesc4           = 125
 	fMaxMagicOptions = 158
 	// The per-plus increments (round 769; refdata.Item.PlusIncPhysDef).
@@ -500,7 +503,7 @@ func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
 	questReport = flag.String("quest-report", "", "with -mode quests: also write a per-quest coverage CSV here (id, code, level, source, playable, reachable, blocking prerequisite)")
 	questDecompDir = flag.String("decomp-dir", "", "with -mode quests: a decompilation of SR_GameServer.exe (funcs_*.c, the project's Ghidra dump) to read the compiled CQNO_* quests' setup from")
-	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, npcs, regions, chargen or magicoptions")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, cos, npcs, regions, chargen or magicoptions")
 	encExe := flag.String("enc-exe", "", "the operator's own sro_client.exe: its key tables decrypt the ENC skill tables (SkillData_<n>ENC.txt, the files retail's skilldataenc.txt names; round 785, enc.go)")
 	var archFlags assetfs.InputFlags
 	archFlags.Register(flag.CommandLine)
@@ -543,10 +546,11 @@ func main() {
 		}
 		return
 	}
-	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
+	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode cos -out cos.csv characterdata_*.txt [textdata_object.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode npcs -out npcs.csv characterdata_*.txt refshopgroup.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptions -out magicoptions.csv magicoption.txt")
@@ -563,6 +567,15 @@ func main() {
 		// has dozens of them. Every row goes out, in file order, under the
 		// header spawn.NpcPosCSVColumns.
 		exportNpcPos(*out)
+		return
+	case "cos":
+		// Round 795: every characterdata row of TypeID (1,2,3,x) -- the
+		// rides, transports, pets and soldiers -- under the monsters'
+		// columns: what cmd/server's -cos-csv loads.
+		if err := exportCharRows(*out, inputArgs, species.IsCOS, "COS rows (TypeID 1,2,3,x)"); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	case "monsters":
 		// Every characterdata row of TypeID (1,2,1,x), one CSV row per
@@ -948,6 +961,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 89: ChildItemCount, itemdata column 159 (round 789): a dress that
 		// takes an attachment (refdata.Item.ChildItemCount).
 		num(fChildItemCount), // 89 ChildItemCount (col 159)
+		// 90: Desc2, Desc128_2 column 121 (round 795): a ride scroll's level
+		// list (refdata.Item.Desc2).
+		str(fDesc2), // 90 Desc2 (col 121)
 	}, true
 }
 
@@ -2605,7 +2621,14 @@ func writeOut(out, body string) error {
 }
 
 func exportMonsters(out string, paths []string) error {
+	return exportCharRows(out, paths, species.IsMonster, "monster species (TypeID 1,2,1,x)")
+}
+
+// exportCharRows writes the characterdata rows keep picks under
+// species.CSVColumns (the monsters, or round 795's COS rows).
+func exportCharRows(out string, paths []string, keep func([]string) bool, what string) error {
 	ex := species.NewExporter()
+	ex.Keep = keep
 	var gold species.LevelGold
 	var names species.ObjectNames
 	skipped := 0
@@ -2649,7 +2672,7 @@ func exportMonsters(out string, paths []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "export-refdata: read %d characterdata rows (%d ids, %d repeated, %d of them with different fields; last kept), skipped %d non-rows\n",
 		ex.Rows, ex.Rows-ex.Dupes, ex.Dupes, ex.Conflicts, skipped)
-	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d monster species (TypeID 1,2,1,x); %d too short to map\n", st.Monsters, st.Short)
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d %s; %d too short to map\n", st.Monsters, what, st.Short)
 	fmt.Fprintf(os.Stderr, "export-refdata: models: %d own, %d from the Org row (col 52 \"xxx\", col 4 names a row with one), %d none\n", st.OwnModel, st.OrgModel, st.NoModel)
 	fmt.Fprintf(os.Stderr, "export-refdata: Org (col 4): %d name a row, %d name none; %d carry a col-83 attack skill\n", st.WithOrgRow, st.OrgUnmatched, st.WithSkill)
 	fmt.Fprintf(os.Stderr, "export-refdata: rarity (col 15): %s; TypeID4: %s\n", countList(st.ByRarity), countList(st.ByTypeID4))

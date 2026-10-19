@@ -56,6 +56,10 @@ const OPTION_MAP := 7
 ## map option, the u32 refoptionalteleport id, as retail's 0x704C carries
 ## {u8 option, u32 id} (SendItem_HandleUseItem 0x796660). Option 0 sends
 ## neither.
+## Round 795: a pet consumable's target (OURS, session.UseOptionCOSTarget):
+## the COS uid, or the pet item's bag index for the revival and the clock.
+const OPTION_COS_TARGET := 0xC5
+
 static func encode_use(character_name: String, inventory_slot: int, option: int = 0, target: int = 0) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
 	var out := PackedByteArray()
@@ -68,7 +72,7 @@ static func encode_use(character_name: String, inventory_slot: int, option: int 
 	out.append_array(tail)
 	if option != 0:
 		out.append(option & 0xff)
-		if option == OPTION_MAP:
+		if option == OPTION_MAP or option == OPTION_COS_TARGET:
 			var id := PackedByteArray()
 			id.resize(4)
 			id.encode_u32(0, target)

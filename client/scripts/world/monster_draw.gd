@@ -313,7 +313,10 @@ static func clone_tree(src: Node) -> Node:
 		dst = b
 	else:
 		return src.duplicate()
-	dst.name = src.name
+	# A node with no name keeps its new one (round 795: a COS model's tree
+	# holds one; set_name refuses "").
+	if src.name != "":
+		dst.name = src.name
 	if src is Node3D:
 		(dst as Node3D).visible = (src as Node3D).visible
 	for key in src.get_meta_list():

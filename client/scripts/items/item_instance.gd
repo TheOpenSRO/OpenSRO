@@ -48,6 +48,25 @@ var mag_params: Array[int] = []
 ## The advanced elixir's plus, the sum of the type-2 binding entries.
 var adv_elixir: int = 0
 
+## Round 795: a record that is not equipment's (read only once types_of is
+## bound): the stack's count (an expendable), or a COS summon item's pet.
+var is_equipment := true
+var count: int = 1
+## A pet item's state (CosNet.ITEM_STATE_*), its pet's RefObjID, name, and an
+## ability pet's rent: the seconds left when read, at rent_read_msec.
+var cos_state: int = 0
+var cos_ref: int = 0
+var cos_name := ""
+var cos_rent_secs: int = 0
+var rent_read_msec: int = 0
+
+## Round 795: the item table the reader dispatches on (RefItemID ->
+## PackedInt32Array [TypeID1..4], empty when unknown), and the COS table
+## (RefObjID -> TypeID4). Unbound, every record is read as equipment's, as
+## before round 795.
+static var types_of: Callable
+static var cos_kind_of: Callable
+
 ## The plus every stat and "(+x%)" uses: the client adds the advanced
 ## elixir onto OptLevel as it reads the record (c:0x8bb070) and the line
 ## builder adds the byte at item +0x70 (FUN_008ba4d0), whose writer is OPEN
@@ -111,6 +130,13 @@ static func read_record(data: PackedByteArray, offset: int) -> Array:
 	offset += 4
 	if rent & 3 != 0:
 		offset += 2 + (8 if rent & 1 != 0 else 0) + (6 if rent & 2 != 0 else 0)
+	if offset + 4 > data.size():
+		return [null, -1]
+	var t := PackedInt32Array()
+	if types_of.is_valid():
+		t = types_of.call(data.decode_u32(offset))
+	if t.size() == 4 and not (t[0] == 3 and t[1] == 1):
+		return _read_tail(data, offset, t)
 	if offset + 18 > data.size():
 		return [null, -1]
 	var it := ItemInstance.new()
@@ -139,6 +165,87 @@ static func read_record(data: PackedByteArray, offset: int) -> Array:
 				it.adv_elixir = (it.adv_elixir + ((v >> 32) & 0xff)) & 0xff
 		offset += 9 * count
 	return [it, offset]
+
+## Round 795: a non-equipment record's tail after the RefItemID at offset
+## (c:SOItem::FUN_008be4f0's other branches, READ): a COS summon item's pet
+## (3/2/1), nothing more for another 3/2 item (a u32 for 3/2/2), a u16 count
+## for an expendable, plus the alchemy stones' byte (3/3/11/1-2) or a 3/3/14/2's
+## options. Returns [ItemInstance, offset after] or [null, -1].
+static func _read_tail(data: PackedByteArray, offset: int, t: PackedInt32Array) -> Array:
+	var it := ItemInstance.new()
+	it.is_equipment = false
+	it.ref_item_id = data.decode_u32(offset)
+	offset += 4
+	if t[1] == 2:
+		if t[2] == 1:
+			if offset + 1 > data.size():
+				return [null, -1]
+			it.cos_state = data[offset]
+			offset += 1
+			if it.cos_state == 1:
+				return [it, offset]
+			if offset + 4 > data.size():
+				return [null, -1]
+			it.cos_ref = data.decode_u32(offset)
+			offset += 4
+			var kind := 0
+			if cos_kind_of.is_valid():
+				kind = int(cos_kind_of.call(it.cos_ref))
+			if kind != 3 and kind != 4:
+				return [it, offset]
+			if offset + 2 > data.size():
+				return [null, -1]
+			var n := data.decode_u16(offset)
+			if offset + 2 + n > data.size():
+				return [null, -1]
+			it.cos_name = data.slice(offset + 2, offset + 2 + n).get_string_from_utf8()
+			offset += 2 + n
+			if kind == 4:
+				if offset + 4 > data.size():
+					return [null, -1]
+				it.cos_rent_secs = data.decode_u32(offset)
+				it.rent_read_msec = Time.get_ticks_msec()
+				offset += 4
+			if offset + 1 > data.size():
+				return [null, -1]
+			var jobs: int = data[offset]
+			offset += 1
+			for j in jobs:
+				if offset + 9 > data.size():
+					return [null, -1]
+				var cat: int = data[offset]
+				offset += 9
+				if cat == 5:
+					offset += 5
+			if offset > data.size():
+				return [null, -1]
+			return [it, offset]
+		if t[2] == 2:
+			offset += 4
+		return [it, offset] if offset <= data.size() else [null, -1]
+	if offset + 2 > data.size():
+		return [null, -1]
+	it.count = data.decode_u16(offset)
+	offset += 2
+	if t[2] == 11 and (t[3] == 1 or t[3] == 2):
+		offset += 1
+	if t[2] == 14 and t[3] == 2:
+		if offset + 1 > data.size():
+			return [null, -1]
+		var m: int = data[offset]
+		offset += 1
+		for i in m:
+			if offset + 8 > data.size():
+				return [null, -1]
+			it.mag_params.append(data.decode_u64(offset))
+			offset += 8
+	return [it, offset] if offset <= data.size() else [null, -1]
+
+## An ability pet's rent seconds left now.
+func rent_left_secs() -> int:
+	if rent_read_msec <= 0:
+		return cos_rent_secs
+	return maxi(0, cos_rent_secs - (Time.get_ticks_msec() - rent_read_msec) / 1000)
 
 ## The record read_record reads (round 789, for the avatar golden vectors and
 ## fixtures): no rent block, the magic params as held, and the two binding

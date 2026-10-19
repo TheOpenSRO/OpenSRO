@@ -493,6 +493,14 @@ type Item struct {
 	// s:0x525950). MEASURED: 1 on 396 of the 454 unique dresses, 0 on every
 	// other avatar row. 0 on an older export, which refuses every attachment.
 	ChildItemCount int
+
+	// Desc2 is Desc128_2, itemdata column 121 (round 795; ref +0x2c4 on the
+	// server). On a ride or transport scroll (TypeID 3/3/3/2) it is the
+	// owner-level list RefObjItem::ExtractData (s:0x6a5600..0x6a5776) parses
+	// into a byte set: the scroll summons the row Desc1 + "_<largest level
+	// <= the owner's>" (cos.RideRow). "xxx" (or "") on every other row and on
+	// the fixed-row scrolls. "" on an older export.
+	Desc2 string
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

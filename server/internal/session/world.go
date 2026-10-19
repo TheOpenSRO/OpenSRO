@@ -1491,6 +1491,8 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// playerview.go; CMsgBlock slot 3 -> FUN_00534050), where OpenSRO
 		// sent its own OpEntityLeft.
 		departPlayer(hub, left, remaining)
+		// Its COS leave with it, their state saved (round 795).
+		cosOwnerLeft(left.CharacterID)
 		forgetLeftPlayer(hub, left.CharacterID)
 	}
 }

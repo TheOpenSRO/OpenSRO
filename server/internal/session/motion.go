@@ -326,6 +326,13 @@ func (t *motionTracker) runAgain(characterID int64) {
 // /speed included). OURS, disclosed: the walk is the base PlayerWalkSpeed
 // (param 23, characterdata column 46); no buff OpenSRO models changes it.
 func motionSpeed(characterID int64) float64 {
+	// Round 795: a rider takes its COS's walk and run (s:0x4aa410, READ).
+	if walk, run, riding := riderSpeeds(characterID); riding {
+		if motions.walkingMode(characterID) {
+			return walk
+		}
+		return run
+	}
 	if motions.walkingMode(characterID) {
 		return PlayerWalkSpeed
 	}

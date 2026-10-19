@@ -49,6 +49,10 @@ static func kind_of(item: ItemTableReader.Item) -> String:
 ## The compose() "instance" fields for `item` and its ItemInstance `inst`
 ## (duck-typed); {} without lane B's classes or an instance.
 static func fields(item: ItemTableReader.Item, inst: Object) -> Dictionary:
+	# Round 795: a pet's summon item carries its pet, not stats
+	# (ItemTooltipLines.compose_pet_scroll reads these).
+	if item != null and inst is ItemInstance and ItemTooltipLines.is_pet_scroll(item):
+		return ItemTooltipLines.cos_fields(inst as ItemInstance)
 	if item == null or inst == null or not _scripts():
 		return {}
 	# Round 789: an avatar's or devil's spirit's tooltip takes its options

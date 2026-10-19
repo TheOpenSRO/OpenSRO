@@ -205,6 +205,14 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 	if len(data) > 0 && (data[0] == ItemMoveAvatarToBag || data[0] == ItemMoveBagToAvatar) {
 		return handleAvatarMove(ctx, sess, data, d.avatarDeps())
 	}
+	// Round 795: the ability pet's bag (cosbag.go).
+	if len(data) > 0 && isCOSBagMove(data[0]) {
+		cid, ok := d.character(sess)
+		if !ok {
+			return fail(ItemErrDB)
+		}
+		return handleCOSBagMove(ctx, sess, cid, data, d.Inv)
+	}
 	req, err := DecodeItemMove(data)
 	if err != nil {
 		return fail(ItemErrDB)
@@ -223,6 +231,9 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 		if d.Shop == nil {
 			return fail(ItemErrDB)
 		}
+		if cosItemOut(ctx, cid, req.Src) {
+			return fail(cosErrSellOut)
+		}
 		_, book, err := d.Shop.SellBooked(ctx, cid, req.Src, req.Count)
 		switch {
 		case err == nil:
@@ -237,6 +248,9 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 			return fail(ItemErrDB) // OURS
 		}
 	case ItemMoveDeposit:
+		if cosItemOut(ctx, cid, req.Src) {
+			return fail(cosErrStoreOut)
+		}
 		if d.Storage == nil {
 			return fail(ItemErrDB)
 		}

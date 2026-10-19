@@ -5177,6 +5177,12 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 	if k == "bag" and AvatarEquipment.is_avatar_item(bag_item_types(from)):
 		print("HudPanels: avatar put down at %s: on_bag=%s bag_cell=%d equipment_pane=%s" % [at, on_bag,
 			_bag_slot_at(at), _over_equipment_pane(at)])
+	# Round 795: the COS window's own held icons (HudCos: a pet-bag slot, a
+	# command) are World3D's to place -- on the inventory, the pet bag, a
+	# quick slot.
+	if k == "cos_bag" or k == "cos_command":
+		held_dropped_outside.emit(what, at)
+		return
 	match k:
 		"bag":
 			# CIFInventory::vslot_028 (0x6b5b80) for a bag or doll target,

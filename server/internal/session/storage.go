@@ -286,6 +286,10 @@ func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return sess.Send(&proto.Packet{Opcode: resultOp, Data: (&StorageMoveResult{Reason: tradeBusyReason}).Encode()})
 	}
 
+	// Round 795: not the item of a pet that is out (0x18b2).
+	if deposit && cosItemOut(ctx, characterID, int(req.Slot)) {
+		return sess.Send(&proto.Packet{Opcode: resultOp, Data: (&StorageMoveResult{Reason: cosOutText}).Encode()})
+	}
 	if deposit {
 		err = svc.Deposit(ctx, characterID, int(req.Slot), int(req.Quantity))
 	} else {

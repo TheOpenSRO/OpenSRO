@@ -256,6 +256,8 @@ func payAward(ctx context.Context, d combatDeps, m combat.Monster, a killAward) 
 		return out, fmt.Errorf("combat: reading character for exp: %w", err)
 	}
 	exp, sp := killReward(ctx, d, m, a, char)
+	// The award's growth pet is paid its own reward (round 795, cosexp.go).
+	cosKillExp(ctx, d, m, a, char)
 	exp, sp = leveldata.ApplyRewardMultiplier(exp, sp, a.multiplier)
 	exp, sp = leveldata.ApplyRateBonus(exp, sp, rates.Current().ExpFor(a.inParty))
 	out.exp, out.sp = exp, sp

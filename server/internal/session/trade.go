@@ -624,6 +624,10 @@ func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	// is never stored, never voids either side's confirmation, and never
 	// reaches the partner; executeTrade keeps its own check for an item moved
 	// into the offered slot afterwards.
+	// Round 795: not the item of a pet that is out (0x18b6).
+	if offer.Quantity > 0 && cosItemOut(ctx, characterID, offer.ItemSlot) {
+		return sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{Reason: cosOutText}).Encode()})
+	}
 	reason, err := offerTradeFlagRefusal(ctx, inv, items, characterID, offer)
 	if err != nil {
 		return fmt.Errorf("trade: checking offer: %w", err)

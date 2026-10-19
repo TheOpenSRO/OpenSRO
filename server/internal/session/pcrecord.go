@@ -270,6 +270,12 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	if r.Life == 0 {
 		r.Life = byte(world.LifeAlive)
 	}
+	// A rider (round 795): ride state 1, its COS's uid after the battle
+	// byte, and the COS's speeds (s:0x4aa410).
+	if o := riderMount(e.CharacterID); o != nil {
+		r.RideState, r.MountUID = 1, o.uid
+		r.Walk, r.Run = float32(o.row.WalkSpeed), float32(o.row.RunSpeed)
+	}
 	// A character on a leg (round 749): the record carries the mover's
 	// destination, or the heading run's command and angle, and the motion
 	// state the accepted move set -- RUN, 2 + (+0x155 != 0) with the run flag
