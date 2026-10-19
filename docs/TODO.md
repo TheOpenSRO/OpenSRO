@@ -1320,8 +1320,11 @@ the following:
       was changed (OPTION_VIDEO.md, "Applied at start-up"). Middle's glow and MSAA now show from
       the first frame (Forward+).
 - [ ] **Rows kept that draw nothing here:** Metallic Sheen (no env-map sheen pass), Light Effect
-      (no torch / sun light effect), Dynamic Animation (no cloth or hair; TEXANI and DYVERTEX are
-      their own items above), Display Friendly/Enemy (no battle outfits).
+      (no torch / sun light effect), Display Friendly/Enemy (no battle outfits). Dynamic Animation
+      draws the cloth since round 794 (CLOTH.md).
+- [ ] **An NPC's, monster's, mount's or pet's own `ambient` set** (round 794, READ: retail plays it
+      from creation, `CResourceMgr::vslot_000` 0xbec46c, `Map::FUN_009fe760` 0x9fe88e) is not
+      played here; worn items' sets are (WornItemFx). CLOTH.md section 5.
 - [ ] **Readers not found:** Character Sight Range (case 9) and Water Detail (case 7) are stored
       and never read by the three probes tried; Texture Filtering's byte 0xc has no reader found
       either. Their effects here are OURS (draw distance, reflection rows) and INFERRED (MSAA from

@@ -59,12 +59,17 @@ budget.
   at full detail.**
   - A unique monster (CICMonster with rarity 3 or 8) also gets 0.
   - Other characters with `+0x728` set get `clamp(f x (-0.09 S + 1.3), 0, 1)`, where `S` is
-    `FUN_009c7740` (`0x503409`: -0.09 at `0xd82f80`, 1.3 at `0xd82f7c`).
-  - Every other object keeps `f` as it is.
+    `FUN_009c7740` (`0x503409`: -0.09 at `0xd82f80`, 1.3 at `0xd82f7c`) -- or 0 when the record's
+    bit `+0x39 & 4` is set (round 794, READ). `+0x728` is effectively always set: `FUN_009ca510`'s
+    lookup falls back to a default record (INFERRED).
+  - Every other object keeps `f` as it is. Corrected in round 794 (READ): that is the non-character
+    CIObject branch -- teleport gates, billboards, event objects. A placed map object (CCompBldg,
+    CCompSimple) or dungeon object never has its level set after its reset (`c2edc0`): it is
+    always level 0.
 - `CCompChar::FUN_00c25620` turns the factor into a level: it clamps it to [0, 1] into `+0x7c`, and
   `iLOD = ftol(f x 4)` into `+0x80`, giving levels 0..4.
 - COMPUTED level thresholds:
-  - scenery: 200 / 400 / 600 / 800;
+  - a non-character CIObject: 200 / 400 / 600 / 800;
   - a monster with S = 1: about 165 / 331 / 496 / 661.
 - `ResObject::FUN_00be3540` builds 4 extra index lists per mesh. A level with no source list copies
   the previous one.
@@ -85,9 +90,10 @@ when it is used is OPEN.
 **Dynamic Animation** (case 0xe):
 
 - It runs a secondary simulation in 50 ms steps (`FUN_00c526e0`, `CCompChar::FUN_00c0d720`).
-- It runs only for a visible character at LOD level 0 (`iLOD < +0x1a0`, which the constructor sets
-  to 1).
-- That this is cloth or hair motion is INFERRED from its tooltip.
+- It runs only for a character in view at LOD level 0 (`iLOD < +0x1a0`, which the constructor sets
+  to 1), and for every placed object (always level 0, no view test).
+- Round 794 READ it: the per-vertex cloth of every mesh with hdr[2] / hdr[3]
+  (`CCompChar::FUN_00c0d010`), robes, hair, banners and cobwebs; docs/protocol/CLOTH.md.
 
 **Names.** A name is skipped (`0x9d0a80`) when any of these holds:
 

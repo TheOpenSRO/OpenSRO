@@ -4,6 +4,8 @@ pub mod vk_fallback;
 #[cfg(feature = "godot-binding")]
 mod gd;
 #[cfg(feature = "godot-binding")]
+mod gd_cloth;
+#[cfg(feature = "godot-binding")]
 mod gd_efp;
 #[cfg(feature = "godot-binding")]
 mod gd_efp_hosts;

@@ -181,6 +181,17 @@ func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bo
 		_put_f32(links, 24, 0.75)
 		_put_u32(links, 28, 1) # order: link 1 first
 		_put_u32(links, 32, 0) # then link 0
+		# Round 794: the parameter block (flag, wind, gravity, its gain, the
+		# gust's gain, retention, divisor).
+		_put_u32(links, 36, 1)
+		_put_f32(links, 40, 0.0)
+		_put_f32(links, 44, 0.0)
+		_put_f32(links, 48, 1.0)
+		_put_f32(links, 52, 9.8)
+		_put_f32(links, 56, 1.0)
+		_put_f32(links, 60, 0.0)
+		_put_f32(links, 64, 0.95)
+		_put_u32(links, 68, 2)
 		buf.append_array(links)
 
 	var bbox_off := buf.size()
@@ -413,6 +424,11 @@ func _init() -> void:
 			and with_motion.vertex_link_order[0] == 1
 			and with_motion.vertex_link_order[1] == 0,
 			"the index word after each record decodes as an order over the links")
+		var cp := with_motion.cloth_params
+		_check(cp.size() == 9 and cp[0] == 1.0 and cp[3] == 1.0 and is_equal_approx(cp[4], 9.8)
+			and is_equal_approx(cp[7], 0.95) and cp[8] == 2.0,
+			"the 36 bytes after the order are the cloth's parameters (got %s)" % cp)
+		_check(with_motion.is_cloth(), "a mesh with both sections whole is cloth")
 
 	# An index outside the mesh means the 12-byte split is wrong, and a
 	# half-read link list is worse than none: the reader must leave it empty

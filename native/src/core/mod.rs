@@ -19,6 +19,7 @@ pub mod ban;
 pub mod blowfish;
 pub mod bms;
 pub mod bsk;
+pub mod cloth;
 mod blowfish_constants;
 pub mod ddj;
 pub mod dxt;

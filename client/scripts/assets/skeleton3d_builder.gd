@@ -516,7 +516,9 @@ static func canonical_mesh(mesh: BmsReader.ParsedMesh, palette_skin: Skin) -> Ar
 			var p := remapped[k]
 			remapped[k] = map[p] if p >= 0 and p < map.size() else map[0]
 		arrays[Mesh.ARRAY_BONES] = remapped
-	return BmsReader.mesh_from_arrays(arrays)
+	var am := BmsReader.mesh_from_arrays(arrays)
+	BmsReader.tag_cloth(am, mesh)
+	return am
 
 ## The skeleton's OBJECT_SPACE_BONE, added on first use.
 static func _object_space_bone(skeleton: Skeleton3D) -> int:

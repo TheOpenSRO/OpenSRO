@@ -110,6 +110,8 @@ func _rebuild() -> void:
 	dress(assembled, models, func(model: String) -> SkinnedBsrAssembler.AttachedItem:
 		return SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model))
 	_skeleton = assembled.skeleton
+	# Round 794: the outfit's cloth (ClothDriver).
+	ClothDriver.enlist(_skeleton)
 	_idle = assembled.idle_animation
 	_anim_time = 0.0
 	_doll.set_character(_skeleton)

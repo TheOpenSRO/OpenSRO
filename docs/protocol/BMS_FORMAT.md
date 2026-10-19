@@ -458,6 +458,11 @@ also ship a table of distances between vertex pairs. The remaining honest gap is
 this project or in the client has been *seen* consuming either, so what the client does with them
 — and whether it simulates or merely sways — is still not established.
 
+**Round 794: settled.** The consumer is `CCompChar::FUN_00c0d010`, a position-Verlet cloth with
+stretch-only links over the order list, and the 36-byte tail is its parameter block (gravity, its
+gain per amount, the gust's gain, the velocity kept, the gust divisor, an optional wind vector).
+docs/protocol/CLOTH.md has the whole runtime.
+
 ### Confirmed against the client
 
 **The loader was found after all**, and every measured claim above holds. The `.bms` magic is
@@ -547,15 +552,17 @@ The values read as one would expect a link list to: `avatar_m_angel_powers_dress
 uint32 count
 count x { uint32 vertex, uint32 vertex, float32 distance }    the links
 count x   uint32                                              one index per link
-36 bytes                                                      not established
+36 bytes                                                      the cloth's parameter block (round 794, CLOTH.md)
 ```
 
 `4 + count * 16 + 36` **equals the distance to the next section in all 801 files** — the same
 self-checking arithmetic that validated the collision section. And **every one of those
 per-link index words is a valid index into the links themselves**, in all 801: an ordering over
-them, whose purpose is not established.
+them: the order the cloth step relaxes the links in (round 794, READ `FUN_00c0d010`).
 
-The last 36 bytes are not decoded. A first reading of them as a leading integer plus an
+The last 36 bytes were not decoded until round 794, which read them as the cloth's parameter block
+(`u32` flag, `vec3` wind, gravity, gravity per amount, gust per amount, velocity kept, `i32`
+divisor; CLOTH.md section 1). A first reading of them as a leading integer plus an
 axis-aligned box looked convincing on three files — the numbers came out as sensible model-space
 extents, a hat's y running 13.6 to 18.2 and a dress's 0 to 16.1 — and **did not survive the
 sweep**: taken at the section-relative offset rather than at the end of the file, the leading word
@@ -566,7 +573,8 @@ agreeing is a hypothesis, not a finding.
 ### Reading them
 
 `BmsReader.ParsedMesh` carries `vertex_motion`, `vertex_pinned`, `vertex_links`,
-`vertex_link_lengths` and `vertex_link_order`. Nothing renders with any of it. It is read because it is decoded: leaving a
+`vertex_link_lengths`, `vertex_link_order` and (round 794) `cloth_params`; `ClothSim` simulates
+with them (CLOTH.md). Before round 794 nothing rendered with any of it. It is read because it is decoded: leaving a
 known section unparsed is how this format's skinning stayed hidden for months, and a reader that
 carries the data is a reader whose understanding can be tested. Both sections validate before they
 are kept — a bad index leaves the whole list empty rather than half-read.

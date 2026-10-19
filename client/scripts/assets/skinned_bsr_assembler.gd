@@ -178,10 +178,17 @@ static func assemble_from_archive(
 			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
 			# round 625 and its review): the env-map mod governing all its
 			# materials, the material's MTRL mod, and the two-pass flag.
+			# Round 794: its MULTITEX and TEXANI mods too -- a fullset's
+			# shimmer (READ: the item's `ambient` set plays them as a placed
+			# object's, CCompChar::FUN_00c46ab0; WornItemFx).
 			godot_material = ObjectLoader.build_godot_material(
 				archive, parsed.material_path, material.layers[layer_idx], {},
-				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
+				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass(),
+				parsed.multitex_for(layer_idx)
 			)
+			var texani := parsed.texani_for(layer_idx)
+			if godot_material != null and not texani.is_empty():
+				TexAni.bind(godot_material, texani)
 			# Round 719: whether the object has an env-map mod. The original's
 			# translucent draw takes the fade alone as alpha for such a layer
 			# (CRTModEnvMap::vslot_004 ORs 0x60000000 into every material's flag
@@ -259,6 +266,8 @@ static func assemble_from_archive(
 					var idle_group := parsed.animation_group_for(BsrReader.AnimationEntry.TYPE_STAND)
 					if idle_group != "":
 						parsed_anim.set_meta(BsrReader.CLIP_META, [BsrReader.AnimationEntry.TYPE_STAND, idle_group])
+	# Round 794: a body with cloth joins the Dynamic Animation driver.
+	ClothDriver.enlist(result.skeleton)
 	return result
 
 ## The meta a body's own mesh node carries: its index in the body `.bsr`'s
@@ -343,6 +352,11 @@ class AttachedItem:
 	## covers and whether it hides them (apply_body_hides). Null when the
 	## block did not parse.
 	var attachable: BsrReader.Attachable = null
+	## Round 794: the item's `ambient` particle entries (AmbientParticles.
+	## ambient_entries) and, for an item with its own skeleton, its own clips
+	## of group `default` by action type (WornItemFx.CLIP_TYPES).
+	var ambient: Array = []
+	var clips := {}
 
 ## Hangs one equippable item on skeleton, the way its own `.bsr` says.
 ##
@@ -429,10 +443,17 @@ static func attach_item_from_archive(
 			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
 			# round 625 and its review): the env-map mod governing all its
 			# materials, the material's MTRL mod, and the two-pass flag.
+			# Round 794: its MULTITEX and TEXANI mods too -- a fullset's
+			# shimmer (READ: the item's `ambient` set plays them as a placed
+			# object's, CCompChar::FUN_00c46ab0; WornItemFx).
 			godot_material = ObjectLoader.build_godot_material(
 				archive, parsed.material_path, material.layers[layer_idx], {},
-				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
+				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass(),
+				parsed.multitex_for(layer_idx)
 			)
+			var texani := parsed.texani_for(layer_idx)
+			if godot_material != null and not texani.is_empty():
+				TexAni.bind(godot_material, texani)
 			# Round 719: whether the object has an env-map mod. The original's
 			# translucent draw takes the fade alone as alpha for such a layer
 			# (CRTModEnvMap::vslot_004 ORs 0x60000000 into every material's flag
@@ -447,6 +468,18 @@ static func attach_item_from_archive(
 
 	var result := AttachedItem.new()
 	result.attachable = parsed.attachable
+	# Round 794 (WornItemFx): its always-on particles and its own clips.
+	result.ambient = AmbientParticles.ambient_entries(parsed.particle_mods)
+	if parsed.skeleton_path != "":
+		for t in WornItemFx.CLIP_TYPES:
+			var clip_path := parsed.animation_for(t, "default")
+			if clip_path == "" or parsed.animation_group_for(t, "default") != "default":
+				continue
+			var ban := _read(archive, clip_path)
+			var anim: BanReader.ParsedAnimation = BanReader.parse(ban) if not ban.is_empty() else null
+			if anim != null and not anim.bones.is_empty():
+				anim.set_meta(CLIP_PATH_META, clip_path.to_lower())
+				result.clips[t] = anim
 	if parsed.skeleton_path == "":
 		# Weighted onto the body: one skinned instance per mesh, bound to
 		# the body's own bones by name.

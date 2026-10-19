@@ -70,6 +70,7 @@ impl SrNativeModels {
         d.set("vertex_links", &PackedInt32Array::from(m.vertex_links));
         d.set("vertex_link_lengths", &PackedFloat32Array::from(m.vertex_link_lengths));
         d.set("vertex_link_order", &PackedInt32Array::from(m.vertex_link_order));
+        d.set("cloth_params", &PackedFloat32Array::from(m.cloth_params));
         d
     }
 

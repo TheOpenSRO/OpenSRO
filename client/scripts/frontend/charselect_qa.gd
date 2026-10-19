@@ -75,15 +75,19 @@ static func lizard_sample(lizard: Node3D, cam: Camera3D, viewport: Vector2) -> D
 ## (the instance's own transform after the skin's matrices).
 static func skinned_points(mi: MeshInstance3D) -> PackedVector3Array:
 	var out := PackedVector3Array()
-	var mesh := mi.mesh
-	var skel := mi.get_node_or_null(mi.skeleton) as Skeleton3D if mi.skin != null else null
+	# A mesh drawing its cloth (round 794, ClothDriver) is measured on the
+	# mesh and skin it was built with.
+	var o: Array = mi.get_meta(ClothDriver.ORIGINAL_META) if mi.has_meta(ClothDriver.ORIGINAL_META) else [mi.mesh, mi.skin, mi.skeleton]
+	var mesh: Mesh = o[0]
+	var skin: Skin = o[1]
+	var skel := mi.get_node_or_null(o[2]) as Skeleton3D if skin != null else null
 	var mats: Array[Transform3D] = []
 	if skel != null:
-		for i in range(mi.skin.get_bind_count()):
-			var b := mi.skin.get_bind_bone(i)
+		for i in range(skin.get_bind_count()):
+			var b := skin.get_bind_bone(i)
 			if b < 0:
-				b = skel.find_bone(mi.skin.get_bind_name(i))
-			mats.append(skel.get_bone_global_pose(b) * mi.skin.get_bind_pose(i) if b >= 0 else Transform3D.IDENTITY)
+				b = skel.find_bone(skin.get_bind_name(i))
+			mats.append(skel.get_bone_global_pose(b) * skin.get_bind_pose(i) if b >= 0 else Transform3D.IDENTITY)
 	for s in range(mesh.get_surface_count()):
 		var arrays := mesh.surface_get_arrays(s)
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]

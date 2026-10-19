@@ -64,6 +64,10 @@ pub struct Mesh {
     pub vertex_links: Vec<i32>,
     pub vertex_link_lengths: Vec<f32>,
     pub vertex_link_order: Vec<i32>,
+    /// The 36 bytes after the order (round 794, READ: the cloth's parameter block,
+    /// core/cloth.rs `Params`): the flag and the divisor as numbers, the seven floats as they
+    /// are. Empty when the section is not whole.
+    pub cloth_params: Vec<f32>,
 }
 
 /// A Vec of `n` slots, refused rather than aborting when the allocation fails. Every caller has
@@ -404,6 +408,16 @@ fn parse_vertex_links(d: &Bytes, m: &mut Mesh) -> Result<(), String> {
         order.push(v as i32);
     }
     m.vertex_link_order = order;
+    let tail = order_at + count * 4;
+    if tail + 36 <= d.len() {
+        let mut p = vec_with(9)?;
+        p.push(d.u32(tail)? as f32);
+        for k in 1..8 {
+            p.push(d.f32(tail + k * 4)?);
+        }
+        p.push(d.u32(tail + 32)? as i32 as f32);
+        m.cloth_params = p;
+    }
     Ok(())
 }
 
@@ -508,7 +522,10 @@ pub(crate) mod tests {
         }
         b.extend_from_slice(&1u32.to_le_bytes());
         b.extend_from_slice(&0u32.to_le_bytes());
-        b.extend_from_slice(&[0u8; 36]);
+        // The parameter block: flag, wind, gravity, its gain, the gust's gain, retention, divisor.
+        b.extend_from_slice(&1u32.to_le_bytes());
+        push_f32s(&mut b, &[0.0, 0.0, 1.0, 9.8, 1.0, 0.0, 0.95]);
+        b.extend_from_slice(&2u32.to_le_bytes());
         let base = HEADER_PTRS_BASE as usize;
         put_u32(&mut b, base, if skin.is_empty() { 0 } else { skin_at as u32 });
         put_u32(&mut b, base + 4, index_at as u32);
@@ -544,6 +561,7 @@ pub(crate) mod tests {
             assert_eq!(m.vertex_pinned, vec![1, 0, 0, 1]);
             assert_eq!(m.vertex_links, vec![0, 1, 1, 2]);
             assert_eq!(m.vertex_link_order, vec![1, 0]);
+            assert_eq!(m.cloth_params, vec![1.0, 0.0, 0.0, 1.0, 9.8, 1.0, 0.0, 0.95, 2.0]);
         }
     }
 

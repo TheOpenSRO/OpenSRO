@@ -262,6 +262,9 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 		_prune()
 	if skeleton == null or anim == null:
 		return
+	# Round 794: the body's clip, for its worn items' own clips (WornItemFx).
+	if skeleton is Node and (skeleton as Node).get_meta(WornItemFx.BODY_CLIP_META, null) != anim:
+		(skeleton as Node).set_meta(WornItemFx.BODY_CLIP_META, anim)
 	var id := skeleton.get_instance_id()
 	var pair = _owners.get(id)
 	if pair == null:

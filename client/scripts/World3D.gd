@@ -533,15 +533,17 @@ func apply_video_options(o: VideoOptions) -> void:
 	if o.notice != "":
 		_log_system(o.notice)
 		o.notice = ""
+	# Dynamic Animation (round 794, READ: case 0xe -> the object renderer's
+	# +0x19c through 0xbc11f0, which re-inits every object's cloth on a
+	# change): ClothDriver's per-vertex cloth (docs/protocol/CLOTH.md).
+	ClothDriver.set_option(o.value(VideoOptions.DYNAMIC_ANIMATION) != 0)
 	# Metallic Sheen (case 0xc -> the object renderer's +0x194; forced off on
 	# a card below shader model 3, CGame::FUN_00834fb0), Light Effect (case
-	# 0xb -> +0x1a4), Dynamic Animation (case 0xe -> +0x19c and a re-init of
-	# the animated objects) and Display Friendly/Enemy (the large-battle
-	# outfit swap, GlobalDataManager::FUN_009dae90) are kept and saved, and
-	# change nothing here: this client draws no environment-map sheen, no
-	# torch or sun light effect (Light Effect drives only the teleport gates'
-	# glow pass, above), no cloth or hair motion, and no battle outfits
-	# (docs/protocol/OPTION_VIDEO.md).
+	# 0xb -> +0x1a4) and Display Friendly/Enemy (the large-battle outfit
+	# swap, GlobalDataManager::FUN_009dae90) are kept and saved, and change
+	# nothing here: this client draws no environment-map sheen, no torch or
+	# sun light effect (Light Effect drives only the teleport gates' glow
+	# pass, above), and no battle outfits (docs/protocol/OPTION_VIDEO.md).
 	print("World3D: video options applied in %d us -- %s" % [Time.get_ticks_usec() - t0, describe_video(o)])
 
 ## OPENSRO_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
@@ -1875,6 +1877,9 @@ func _ready() -> void:
 	# are placed once a tick (EfpEffect.tick_gate, its _process).
 	EfpEffect.gate_ticks(true)
 	_setup_efp_pass()
+	# Round 794: the Dynamic Animation driver for this viewport's cloth (the
+	# placed objects are duplicates of templates never in the tree).
+	ClothDriver.driver_for(get_viewport())
 	# Round 789 (lane U): a QA boot straight into the world fetches and layers
 	# the QA server's packs before this scene opens any archive (Login does it
 	# for a player before character select).
@@ -11944,6 +11949,10 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	player.add_child(skeleton)
 	player_mesh.visible = false
 	_player_skeleton = skeleton
+	# Round 794: the own player's LOD factor is 0 (GlobalDataManager::
+	# FUN_009c4aa0, crowd_scale.md), so its cloth runs at any distance.
+	if skeleton != null:
+		skeleton.set_meta(ClothDriver.ALWAYS_NEAR_META, true)
 	# A new body: its object colour now, not at the next visit (round 706
 	# review). The meta drops the visit's "unchanged" shortcut.
 	player.remove_meta(CharacterLight.META_VALUE)
@@ -12027,6 +12036,8 @@ func _refresh_player_portrait(skel: Skeleton3D, equipped: Dictionary, body: Stri
 	var copy := skel.duplicate() as Skeleton3D
 	if copy == null:
 		return
+	# Round 794: the cloth meshes back on their own skin (ClothDriver).
+	ClothDriver.clean_copy(copy)
 	# The glow comes along with the copy (the portrait borrows the equipment
 	# window's avatar: INFERRED, as _refresh_paper_doll), on the Linear-view
 	# glow shader PlayerPortrait gives it (round 734's review, F1); its
@@ -25146,6 +25157,11 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 				monster_skeleton.scale = Vector3.ONE * class_scale
 				label_height *= class_scale
 			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model) * class_scale)
+			# Round 794: a unique's LOD factor is 0 (an exact CICMonster of
+			# rarity 3 or 8, GlobalDataManager::FUN_009c4aa0), so its cloth
+			# runs at any distance (ClothDriver).
+			if monster.rarity == 3 or monster.rarity == 8:
+				monster_skeleton.set_meta(ClothDriver.ALWAYS_NEAR_META, true)
 			_animate(assembled)
 			LatencyProbe.lap("animate")
 	# Says which of the three ways a monster can come out wrong happened:

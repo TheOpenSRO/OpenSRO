@@ -7483,6 +7483,96 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-fourth round: Dynamic Animation -- the cloth, and what a worn item plays
+
+The user (2026-10-19): "Let's add support for dynamic animations now. The option is there but not
+used. Let's make sure we account for all things that use dynamic animations like flags, weapons,
+armor (all types), etc. Also make sure you deal talisman animations and glows/effect if they have
+them." And: "Make sure you're comparing against the original code".
+
+Everything is READ from sro_client.exe or MEASURED across the retail archives;
+docs/protocol/CLOTH.md has every address. Five research passes (the data survey; DYVERTEX and the
+step; DYJOINT, DYLATTICE and the gate; scenery and rigid cloth; worn items) are summarised there.
+
+- **What the option is (READ).** Case 0xe sets renderer +0x19c (default on). Every compound
+  object's update (`c33230`) then runs a per-vertex cloth, `CCompChar::FUN_00c0d010`, on every mesh
+  whose `.bms` carries hdr[2] (amount, pinned) and the hdr[3] links. It runs in 50 ms steps, with the
+  count capped at 200, at LOD 0.
+  - Position Verlet: gravity `g * -5 * (k a + 1)`, a random gust (`rand() % n == 0`) of
+    `(p' + 100) * (k2 a + 1) * wind`, the velocity kept, then h^2 = 0.0004.
+  - Up to 7 passes of stretch-only links in the file's order, split by the two amounts.
+  - The 36-byte tail of hdr[3], never decoded before, is the parameter block.
+- **What carries it (MEASURED).**
+  - Only DYVERTEX is used: 1,235 `.bsr`, one identical header each. The runtime mod is a stub; the
+    mesh's own data decides.
+  - 801 cloth meshes: robes, dresses, capes, wings, hair (every China-man body, and the women's and
+    Europe's), spear and glaive tassels, plumes, mount trappings, flags, banners, tents and cobwebs.
+  - DYJOINT and DYLATTICE are stubs that no file uses. No code moves bones.
+- **Who runs it (READ).**
+  - Characters within 200 units (LOD level 0) and in view; the own player and uniques always.
+  - Every placed object at any distance inside its fade range, with no view test, p 0 and LOD 0.
+  - A mesh with no skin keeps its pinned vertices at the bind pose.
+  - p is what the character moved this frame (`FUN_00a59710`), so a runner's gusts are stronger.
+- **Talismans (READ).**
+  - A China talisman (`clothes_NN_sa`) has no clip and no cloth. Its glow is the item's own `ambient`
+    set, `item_equip_shoulder_<colour>.efp`, on Bone04 / Bone06 of its own skeleton, drawn to 720
+    units.
+  - A Europe robe talisman plays its own `clothes_sa.ban` (type 0, 2 s, Bone04 / Bone07 turning),
+    with its particles riding those bones.
+  - Wings switch between their stand and run clips with the body's stand / walk / run, crossing
+    over 200 ms.
+  - A fullset's `_ef` shimmer is the same set's TEXANI / MULTITEX.
+- **Built.**
+  - `SrCloth` (native/src/core/cloth.rs) and its GDScript twin `ClothSim`.
+  - `ClothNative`; `ClothDriver` (per viewport): hosts are body skeletons and placed-object roots.
+    A near host's cloth meshes draw a per-host copy without bones, written each frame; far or off,
+    their own GPU skin.
+  - `WornItemFx`: an item's ambient entries as EquipFx rows on its own bones, in a far body's recipe
+    too; its own clips, posed with the body's action from AnimSounds.
+  - Item materials take their TEXANI and MULTITEX. The option is applied live.
+  - QA: `OPENSRO_QA_CLOTH=<frames>` logs every host's cloth and how far its free vertices sit off
+    the plain skin; `OPENSRO_QA_EQUIP_BAG` takes `<tick>:<slot>=0`.
+- **Measured live** (`/var/tmp/r791/sel.sh`, `sel794.sh`, select screen at 1280x720, native).
+  - The four test bodies' hair (123 vertices) and Bravo's wedding dress (890) ran. The dress's free
+    vertices sat 0.7-2.2 units off the plain skinned pose as the gusts came and went; the hair
+    0.4-0.6.
+  - The harbour's tents, tent portals and two streetlight flags ran too.
+  - 13 hosts / 15 cloth meshes: 0.28-0.34 ms a frame.
+  - Echo's Cotton Talisman: 2 rows, `item_equip_shoulder_white.efp` on Bone06 and Bone04.
+  - Foxtrot's (Europe) robe talisman: `item_equip_eu_shoulder_01.efp` on Bone07 / Bone04 and its
+    clip playing (Bone04 (-60, -66, 0) -> (-60, 114, 180) -> (0, 114, -180) degrees over the loop).
+  - Echo's phoenix wing: `avatar_m_angel_powers_wing_stand.ban`.
+  - Option off: 0 near, 0 meshes.
+- **Tests.**
+  - `cloth_test.gd`: retail's arithmetic, MSVC rand, the normal words against Godot's own, SrCloth
+    against ClothSim over 30 gusty frames, and the driver (near, far, always-near, off view, a
+    placed object 2,000 units behind the camera, option off and on).
+  - `worn_item_fx_test.gd`: rows, clips, the 200 ms cross, other actions.
+  - `bms_reader_test.gd`: the parameter block. `cargo test`: 8 cloth tests, the BMS block.
+  - Both paths pass (native, and `OPENSRO_CLOTH_NATIVE=0`). `tests`: 337 suites, 0 failing.
+- **Corrections recorded:** crowd_scale.md (a placed object's LOD is always 0; the "scenery" factor
+  is the non-character CIObject's; the record bit `+0x39 & 4`), BMS_FORMAT.md (the 36 bytes and
+  the order), OPTION_VIDEO.md, TODO.md.
+- **OPEN:**
+  - the frame the dynamic batch is drawn in (the yaw wind is INFERRED in the object's space);
+  - a dungeon block's own wind modes;
+  - the `+0x728` scale S for players (here: 200 units for every character);
+  - the fairy wings' offset and per-type particle sets;
+  - riding forcing type 0;
+  - an NPC's or monster's own `ambient` set, which is not played here (TODO.md).
+- **Gate** (`perf_gate.sh --frames 30000`, base d43226f0 vs the working tree, 1280x720, median of 3,
+  both sides without the native library, so the cloth steps in GDScript): all SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.85 -> 0.89 | 8592 -> 8672 | 2708 -> 2707 | 4 -> 5 |
+  | reeds | 0.83 -> 0.84 | 7639 -> 6202 | 1413 -> 1404 | 2 -> 2 |
+  | cross | 0.97 -> 1.01 | 9339 -> 9341 | 2724 -> 2703 | 5 -> 5 |
+
+  The gate's default frame count ends a run on this box's RX 7600 (600-1000 fps at Jangan) before
+  ten once-a-second samples ("missing numbers" on the base's first run, twice); `--frames 30000`
+  gives them.
+
 ## Seven-hundred-and-ninety-third round: the select screen's pick box leaves out the weapon
 
 The user (2026-10-18, on v0.1.553, with a screenshot): "That's better but still not quite right. If it

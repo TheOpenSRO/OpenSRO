@@ -665,6 +665,8 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 		wear["drawn"] = drawn
 		wear["attachables"] = blocks
 		_apply_glow(wear)
+		# Round 794: the item's own particles and clips (WornItemFx).
+		wear["ambient_fx"] = WornItemFx.apply(wear["nodes"], skel, _particles_archive(), String(wear.get("code", "")))
 		body.worn.append(wear)
 	_note_glow_wears(body)
 
@@ -672,6 +674,8 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 	apply_hides(body)
 	_own_skins(skel)
 	apply_scale(body, scale)
+	# Round 794: a body wearing cloth joins the Dynamic Animation driver.
+	ClothDriver.enlist(skel)
 	skel.set_meta(MonsterCrowd.META_LAYOUT, "%s|%d" % [tmpl.parsed.skeleton_path if tmpl.parsed != null else bsr_path, skel.get_bone_count()])
 	last_build_usec = Time.get_ticks_usec() - t0
 	stats["builds"] += 1
@@ -973,12 +977,17 @@ func _far_glow(wear: Dictionary, nodes: Array) -> Dictionary:
 ## of a body bone is left out (none is, among the weapons and shields).
 func _far_fx(wear: Dictionary, nodes: Array, skel: Skeleton3D, r: FarRecipe, wear_key: int) -> void:
 	var slot := int(wear["slot"])
-	if not glow_enabled or glow_tables == null or (slot != SLOT_WEAPON and slot != SLOT_SHIELD) or nodes.is_empty():
+	if nodes.is_empty():
 		return
 	var code := String(wear.get("code", ""))
-	if code == "":
-		return
-	var rows := glow_tables.particle_rows(code, int(wear["plus"]))
+	var rows: Array = []
+	if glow_enabled and glow_tables != null and (slot == SLOT_WEAPON or slot == SLOT_SHIELD) and code != "":
+		rows.append_array(glow_tables.particle_rows(code, int(wear["plus"])))
+	# Round 794: the item's own always-on particles (WornItemFx), any slot --
+	# a talisman's glow -- on its own skeleton's bones.
+	for node in nodes:
+		if is_instance_valid(node) and (node as Node).has_meta(WornItemFx.AMBIENT_META):
+			rows.append_array(WornItemFx.ambient_rows(node, WornItemFx.item_skeleton(node)))
 	if rows.is_empty():
 		return
 	var archive := _particles_archive()
@@ -2059,6 +2068,8 @@ func reglow(skel: Skeleton3D, pluses: Dictionary) -> int:
 		var plus := int(pluses.get(int(wear["slot"]), 0)) & 0xFF
 		var redo := {"slot": wear["slot"], "code": wear["code"], "plus": plus, "nodes": nodes}
 		_apply_glow(redo)
+		# EquipGlow.clear took the item's own particles too (round 794).
+		WornItemFx.apply(nodes, skel, _particles_archive(), String(wear["code"]))
 		wear["plus"] = plus
 		wear["nodes"] = nodes
 		n += 1
@@ -2104,6 +2115,8 @@ static func _item_template_on(data: Pk2Reader, source: Skeleton3D, canonical_ski
 	if attached != null and attached.node != null:
 		node = attached.node
 		attachable = attached.attachable
+		# Round 794: its particles and clips, on every copy (WornItemFx).
+		WornItemFx.note_template(node, attached)
 		scratch.remove_child(node)
 		node.set_meta("bone_count", scratch.get_bone_count())
 	if not in_place:

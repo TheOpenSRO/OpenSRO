@@ -240,6 +240,17 @@ class ParsedMesh:
 	## carry the section -- an ordering over them. What the order is *for*
 	## is not established.
 	var vertex_link_order: PackedInt32Array = PackedInt32Array()
+	## The 36 bytes after the order (round 794, READ: the cloth's parameter
+	## block, ClothSim): the flag, the wind's x y z, gravity, its gain per
+	## amount, the gust's gain per amount, the velocity kept, and the gust
+	## divisor -- the two words as numbers. Empty when the section is not whole.
+	var cloth_params: PackedFloat32Array = PackedFloat32Array()
+
+	## A cloth mesh (round 794, READ ResObject::FUN_00bce1a0: hdr[2] and the
+	## hdr[3] links both non-empty), with the rest of what ClothSim needs.
+	func is_cloth() -> bool:
+		return not vertex_motion.is_empty() and not vertex_links.is_empty() \
+			and vertex_link_order.size() * 2 == vertex_links.size() and cloth_params.size() == 9
 
 ## Header offset of the per-vertex section decoded in
 ## docs/protocol/BMS_FORMAT.md: a count followed by one `float32` +
@@ -450,6 +461,7 @@ static func _from_native(d: Dictionary) -> ParsedMesh:
 	mesh.vertex_links = d["vertex_links"]
 	mesh.vertex_link_lengths = d["vertex_link_lengths"]
 	mesh.vertex_link_order = d["vertex_link_order"]
+	mesh.cloth_params = d.get("cloth_params", PackedFloat32Array())
 	mesh._native = d
 	return mesh
 
@@ -506,6 +518,15 @@ static func _parse_vertex_links(data: PackedByteArray, mesh: ParsedMesh) -> void
 			return # leaves the order empty; the links themselves stand
 		order[i] = v
 	mesh.vertex_link_order = order
+	var tail := order_at + count * 4
+	if tail + 36 <= data.size():
+		var p := PackedFloat32Array()
+		p.append(float(_le_u32(data, tail)))
+		for k in range(1, 8):
+			p.append(_le_f32(data, tail + k * 4))
+		var div := _le_u32(data, tail + 32)
+		p.append(float(div - 0x100000000 if div >= 0x80000000 else div))
+		mesh.cloth_params = p
 
 ## Reads the `hdr[2]` section: one `float32` + `uint32` per vertex.
 ##
@@ -787,7 +808,18 @@ static func to_array_mesh(mesh: ParsedMesh, keep: bool = false) -> ArrayMesh:
 	var am := mesh_from_arrays(arrays)
 	if keep:
 		am.set_meta(KEPT_ARRAYS_META, arrays)
+	tag_cloth(am, mesh)
 	return am
+
+## Round 794: a cloth mesh's data, on the ArrayMesh drawn from it, for
+## ClothDriver (ClothSim.setup's keys, less what the arrays give).
+const CLOTH_META := &"opensro_cloth"
+
+static func tag_cloth(am: ArrayMesh, mesh: ParsedMesh) -> void:
+	if am == null or not mesh.is_cloth():
+		return
+	am.set_meta(CLOTH_META, {"amount": mesh.vertex_motion, "pinned": mesh.vertex_pinned, "links": mesh.vertex_links,
+		"rest": mesh.vertex_link_lengths, "order": mesh.vertex_link_order, "params": mesh.cloth_params})
 
 const KEPT_ARRAYS_META := &"opensro_arrays"
 

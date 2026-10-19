@@ -1995,6 +1995,9 @@ static func _identity_under(n: Node, top: Node) -> bool:
 ## centre}; null when one cannot be drawn here.
 func _parts_of(skel: Skeleton3D, l: Layout):
 	var out: Array = []
+	# Round 794: cloth meshes back on their own skin (ClothDriver), so the
+	# far body draws the mesh it was built with.
+	ClothDriver.unswap(skel)
 	for n in skel.find_children("*", "MeshInstance3D", true, false):
 		var mi := n as MeshInstance3D
 		if not _shown_under(mi, skel) or mi.mesh == null:

@@ -254,6 +254,10 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 		if mesh.is_skinned():
 			piece["bones"] = mesh.bone_names
 			piece["object_space"] = mesh.object_space_vertices > 0
+		# Round 794: a cloth mesh (banners, flags, cobwebs), for ClothDriver.
+		if mesh.is_cloth():
+			piece["cloth"] = {"amount": mesh.vertex_motion, "pinned": mesh.vertex_pinned, "links": mesh.vertex_links,
+				"rest": mesh.vertex_link_lengths, "order": mesh.vertex_link_order, "params": mesh.cloth_params}
 
 		# Real static collision, a trimesh shape derived directly from the
 		# real render mesh, the way World3D's own real terrain collision is
@@ -361,6 +365,8 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 		mesh_instance.name = piece["name"]
 		var array_mesh := BmsReader.mesh_from_arrays(piece["arrays"])
 		mesh_instance.mesh = array_mesh
+		if piece.has("cloth"):
+			array_mesh.set_meta(BmsReader.CLOTH_META, piece["cloth"])
 		# The collision load_object has built since 2026-08-25 -- see the
 		# prepare's comment in _prepare_node for why it exists and why the
 		# object's own navigation mesh is not used instead.
@@ -389,6 +395,11 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 		MapAnimation.commit(root, node["anim"], bound)
 		for pair in bound:
 			add_front_pass(pair[0])
+	# Round 794: a placed object's cloth runs at LOD 0, with no view test
+	# (ClothDriver, READ SWorld::vslot_004).
+	if ClothDriver._has_cloth(root):
+		root.set_meta(ClothDriver.OBJECT_META, true)
+		ClothDriver.enlist(root)
 	return root
 
 ## Round 774: a light-mapped mesh's light map (READ, docs/protocol/
@@ -1302,16 +1313,24 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alph
 ## materials through here: _prepare_material decodes the texture to an Image,
 ## _commit_material builds the material from the uploaded texture.
 ## `env_map`, `mtrl`, `two_pass`: see layer_draw_rule (round 625 and its
-## review).
-static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}, env_map: int = -1, mtrl: Dictionary = {}, two_pass: bool = false) -> Material:
+## review). `multitex` (round 794): the layer's MULTITEX / MULTITEXREV mod, put
+## on as a placed object's is (_prepare_multitex, _commit_multitex) -- a worn
+## item's fullset shimmer.
+static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}, env_map: int = -1, mtrl: Dictionary = {}, two_pass: bool = false, multitex: Dictionary = {}) -> Material:
 	var prepared := {"textures": {}, "missing": [], "log": []}
-	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared, env_map, mtrl, two_pass)
+	var known := snapshot_textures(texture_cache)
+	var plan := _prepare_material(archive, bmt_path, layer, known, prepared, env_map, mtrl, two_pass)
+	if not multitex.is_empty():
+		_prepare_multitex(archive, multitex, bmt_path, plan, known, prepared)
 	for what in prepared["missing"]:
 		_missing(what)
 	for line in prepared["log"]:
 		print(line)
 	commit_textures(prepared["textures"], texture_cache)
-	return _commit_material(plan, texture_cache)
+	var mat := _commit_material(plan, texture_cache)
+	if mat != null and plan.has("multitex"):
+		_commit_multitex(mat, plan["multitex"], texture_cache)
+	return mat
 
 ## A MULTITEX / MULTITEXREV mod's second texture (round 786; READ, BsrReader.
 ## _read_multitex): resolved, decoded into prepared["textures"] unless the
