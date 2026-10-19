@@ -40,6 +40,8 @@ var music: MusicDirector
 var _effect_table: Dictionary = {}
 var _effect_table_loaded := false
 var _character_info: Dictionary = {}
+## Round 796: characterInfo code -> Size, "" -> the first row's code.
+var _character_sizes: Dictionary = {}
 var _character_info_loaded := false
 ## Normalised path -> Array of voices (AudioStreamPlayer or AudioStreamPlayer3D).
 var _voices_2d: Dictionary = {}
@@ -119,9 +121,27 @@ func sound_object(refobj_code: String) -> String:
 		_character_info_loaded = true
 		var bytes := AudioBank.read_table("media", SoundTable.SKILLEFFECT_PATH)
 		if not bytes.is_empty():
-			_character_info = SoundTable.parse_character_info(bytes)
+			_character_info = SoundTable.parse_character_info(bytes, _character_sizes)
 			print("AUDIO: characterInfo %d sound objects" % _character_info.size())
 	return str(_character_info.get(refobj_code, ""))
+
+## Round 796: skilleffect.txt characterInfo's Size (column 3) for a
+## characterdata code, looked up as the client does (READ FUN_00a95d30): the
+## code's row, else its OrgCodeName's (`org`, the ref's +0x5c), else the
+## file's first row's (the default record). 0 with no table.
+func character_size(refobj_code: String, org_code: String = "") -> float:
+	sound_object("")
+	if _character_sizes.has(refobj_code):
+		return float(_character_sizes[refobj_code])
+	if org_code != "" and _character_sizes.has(org_code):
+		return float(_character_sizes[org_code])
+	var first := String(_character_sizes.get("", ""))
+	return float(_character_sizes.get(first, 0.0)) if first != "" else 0.0
+
+## Test seam: the sizes character_size reads.
+func set_character_sizes(sizes: Dictionary) -> void:
+	sound_object("")
+	_character_sizes = sizes
 
 func set_listener(node: Node3D, facing: Node3D = null) -> void:
 	_listener = node

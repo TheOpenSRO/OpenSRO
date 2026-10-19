@@ -7789,6 +7789,17 @@ func _exit_tree() -> void:
 	BerserkLook.clear()
 	StateLook.clear()
 	_fx_owner_buffs.clear()
+	# Round 796: the statics round 795 bound to this world (_cos_bind_table,
+	# _hud_cos_setup) let go now. They are lambdas over this node and its
+	# script; left set, the script's static teardown at exit released them
+	# after both were freed, and the heap was corrupted (MEASURED: every
+	# round-795 run aborted at exit with "corrupted size vs. prev_size in
+	# fastbins", the perf gate's 794 base runs never).
+	ItemInstance.types_of = Callable()
+	ItemInstance.cos_kind_of = Callable()
+	ItemTooltipLines.cos_row_of = Callable()
+	ItemTooltipLines.cos_row_by_code = Callable()
+	EfpEffect.mounts.clear()
 	var exit_music := _audio_music()
 	if exit_music != null:
 		exit_music.leave_world()
@@ -21975,7 +21986,8 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 
 ## Round 749: another player's run speed from a buff packet (0: unchanged).
 func _note_other_speed(character_id: int, run_speed: int) -> void:
-	if run_speed <= 0:
+	# Round 796: a rider moves at its mount's speed whatever its buffs.
+	if run_speed <= 0 or _riders.has(character_id):
 		return
 	_other_speeds[character_id] = float(run_speed)
 	var leg = _other_legs.get(character_id)
@@ -28781,6 +28793,15 @@ func _apply_buff_run_speed(run_speed: int, why: String) -> void:
 	if run_speed <= 0:
 		print("SPEED: run speed stays %.0f (%s: runSpeed 0 = unchanged)" % [_move_speed, why])
 		return
+	# Round 796: riding, the speed is the mount's and no buff changes it
+	# (READ GObjPC::FUN_004aa410 s:0x4aa410: the rider's walk/run are copied
+	# from the COS, no multiplier); the buffed foot speed is kept for the
+	# dismount (whose 0x30D0 carries it too).
+	_sync_own_id()
+	if _riders.has(_own_id()):
+		print("SPEED: riding -- the mount's %.0f stays; foot speed now %d (%s)" % [_move_speed, run_speed, why])
+		_foot_move_speed = float(run_speed)
+		return
 	print("SPEED: run speed %.0f -> %d (%s)" % [_move_speed, run_speed, why])
 	_move_speed = float(run_speed)
 	_server_run_speed = run_speed
@@ -31721,8 +31742,26 @@ var _foot_move_speed := -1.0
 ## FUN_008b2b70(0xffffff55)).
 const COS_NAME_COLOUR := Color(1.0, 1.0, 0x55 / 255.0)
 ## The owner line sits 20.0 above the name line (READ, CICCos slot 15
-## 0x9c6820, `fsub 0xe1b830`): label pixels here.
+## 0x9c6820, `fsub 0xe1b830`): screen pixels, since the plate is drawn in
+## screen space (FUN_008b4d90 at the projected point). Round 796: a plate's
+## offset is in its font's pixels, which FontOversampling multiplies, so it
+## takes the same factor (_cos_owner_offset); round 795 set 20 font pixels,
+## a few screen pixels, and the two lines overlapped.
 const COS_OWNER_LINE_OFFSET := 20.0
+## A rider's plate is 7.0 over its mount's height, where everyone else's is
+## 2.0 over its own (READ, FUN_009d0a80 0x9d0b40..0x9d0b98: mount +0x22c +
+## 7.0 at 0xda7c60). The mount's height is +0x228 (which +0x22c follows):
+## CICCos slot 28 (0x9c7780) sets it to 20.0 x FUN_009c7740 = 20.0 x
+## [+0x728]+8 x [+0xc4], where [+0x728] is the ref's skilleffect.txt
+## characterInfo row and +8 its Size (column 3) x 0.5 (READ
+## UI_ALCHEMYBOX::FUN_00a9ae80, 0.5 at 0xe1b7d0) -- Size x 10, the row
+## found by code, then OrgCodeName, then the file's first row (READ
+## FUN_00a95d30; Size 2 there, so a COS with no row of its own, Rudolph's,
+## is 20). INFERRED: the scale +0xc4 is 1.0 (retail_camera.gd).
+const COS_RIDER_PLATE_RAISE := 7.0
+const COS_SIZE_HEIGHT := 0.5 * 20.0
+## rider -> its plate's own height, put back at the dismount (round 796).
+var _rider_plate_y := {}
 ## A pet runs above this speed and walks below it (READ, CICCos::vslot_009
 ## 0x9c59c0, 20.0 at 0xd88108).
 const COS_RUN_ABOVE := 20.0
@@ -31792,6 +31831,16 @@ func _on_cos_spawned(rec: CosSpawnNet.Record) -> void:
 		if old_rec != null and old_rec.ref_id == rec.ref_id:
 			old.set_meta("cos_rec", rec)
 			_cos_label(old, rec)
+			# Round 796: where the record puts it -- an owner's arrival spawns
+			# its pet again beside it; round 795 left the body where it was.
+			if _cos_rider_of(rec.uid) < 0:
+				var gy := _cos_ground(at)
+				old.position = Vector3(at.x, at.y if is_nan(gy) else gy, at.z)
+				_cos_ground_missed(rec.uid, gy)
+				old.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(rec.angle), _cos_front())
+				if bool((_cos_motion.get(rec.uid, {}) as Dictionary).get("moving", false)):
+					_cos_gait(rec.uid, BsrReader.AnimationEntry.TYPE_STAND)
+				_cos_motion.erase(rec.uid)
 			if rec.life == 2:
 				_cos_play(rec.uid, BsrReader.AnimationEntry.TYPE_DIE, true)
 			return
@@ -31810,9 +31859,10 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	_cos_waiting.erase(rec.uid)
 	var body := Node3D.new()
 	body.name = "Cos%d" % rec.uid
-	var y := _terrain_hit_height(at)
+	var y := _cos_ground(at)
 	body.position = Vector3(at.x, at.y if is_nan(y) else y, at.z)
-	body.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(rec.angle), 0.0)
+	_cos_ground_missed(rec.uid, y)
+	body.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(rec.angle), _cos_front())
 	var height := 2.0 * PLAYER_SCALE_RATIO
 	var skel: Skeleton3D = null
 	if model != "":
@@ -31841,7 +31891,7 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	body.add_child(label)
 	var owner_label := _name_plate("", height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	owner_label.name = "OwnerLabel"
-	owner_label.offset.y = COS_OWNER_LINE_OFFSET
+	owner_label.offset.y = _cos_owner_offset(owner_label)
 	body.add_child(owner_label)
 	_cos_label(body, rec)
 	other_entities.add_child(body)
@@ -31860,14 +31910,19 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 
 ## The two lines over a COS: its name in pale yellow, the owner's line above
 ## it in the owner's name colour (white when the owner is out of view).
+## Round 796: neither while something rides it (READ, FUN_009cef40: a
+## CICMonster's or a CICCos's name shows only while its rider link +0x2b0 is
+## empty; CICCos slot 15 draws the owner line under the same test). Emptied
+## rather than hidden: the plate sweep owns `visible`.
 func _cos_label(body: Node3D, rec: CosSpawnNet.Record) -> void:
+	var ridden := _cos_rider_of(rec.uid) >= 0
 	var label: Label3D = body.get_node_or_null("Label")
 	if label != null:
-		label.text = _cos_display_name(rec)
+		label.text = "" if ridden else _cos_display_name(rec)
 		label.modulate = COS_NAME_COLOUR
 	var owner_label: Label3D = body.get_node_or_null("OwnerLabel")
 	if owner_label != null:
-		owner_label.text = cos_owner_line(rec)
+		owner_label.text = "" if ridden else cos_owner_line(rec)
 		owner_label.modulate = Color.WHITE
 		owner_label.visible = owner_label.text != ""
 
@@ -31920,6 +31975,97 @@ func _cos_gait(uid: int, gait: int) -> void:
 	if clip != null:
 		MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time)
 
+## rider -> the skeleton whose weapon and shield are off (round 796).
+var _rider_held_hidden := {}
+
+## Round 796: a rider's weapon and shield are not drawn (READ,
+## CharacterVisualChange::CObjItem::vslot_003 0x4e8830: an item in equip
+## visual slot 6 or 7 -- the weapon at +0x80 and the shield at +0x8c,
+## EQUIP_SLOTS.md -- answers 0, not shown, while CObjCharacter::FUN_00a5be70
+## says the body has a mount). Their nodes carry CharacterAppearance's
+## VISUAL_SLOT_META; their own ambient particles on the body skeleton
+## (WornItemFx.MARKER_META naming the node) go with them. Their glow is under
+## the node.
+static func _set_held_items_shown(skel: Skeleton3D, shown: bool) -> int:
+	var ids := {}
+	for c in skel.get_children():
+		var slot := int((c as Node).get_meta(CharacterAppearance.VISUAL_SLOT_META, -1))
+		if slot == CharacterAppearance.SLOT_WEAPON or slot == CharacterAppearance.SLOT_SHIELD:
+			(c as Node3D).visible = shown
+			ids[c.get_instance_id()] = true
+	if not ids.is_empty():
+		for c in skel.get_children():
+			if c is Node3D and c.has_meta(WornItemFx.MARKER_META) and ids.has(int(c.get_meta(WornItemFx.MARKER_META))):
+				(c as Node3D).visible = shown
+	return ids.size()
+
+## A COS's +0x228 (see COS_RIDER_PLATE_RAISE): its characterInfo Size x 10;
+## its measured height when no table is loaded.
+func _cos_plate_height(mount: Node3D) -> float:
+	var rec = mount.get_meta("cos_rec", null)
+	var row := _cos_table.row(rec.ref_id) if rec != null and _cos_table != null else null
+	var svc := AudioService.instance()
+	if row != null and svc != null:
+		var size := svc.character_size(row.code, row.org)
+		if size > 0.0:
+			return size * COS_SIZE_HEIGHT
+	return float(mount.get_meta("cos_height", 0.0))
+
+## The owner line's offset in its plate's font pixels (COS_OWNER_LINE_OFFSET
+## screen pixels).
+static func _cos_owner_offset(label: Label3D) -> float:
+	var fk := FontOversampling.factor() if label.has_meta(FontOversampling.META) else 1.0
+	return COS_OWNER_LINE_OFFSET * fk
+
+## Round 796: a rider's plate at its mount's height + COS_RIDER_PLATE_RAISE,
+## or back at its own height (`on` false). Its node is the rider root's
+## "Name"; a batched plate is told it moved.
+func _raise_rider_plate(rider: int, mount: Node3D, on: bool) -> void:
+	var root := _rider_root(rider)
+	if root == null or not is_instance_valid(root):
+		return
+	var plate := root.get_node_or_null("Name") as Label3D
+	if plate == null:
+		return
+	var y := plate.position.y
+	if on:
+		if not _rider_plate_y.has(rider):
+			_rider_plate_y[rider] = y
+		y = _cos_plate_height(mount) + COS_RIDER_PLATE_RAISE
+	elif _rider_plate_y.has(rider):
+		y = float(_rider_plate_y[rider])
+		_rider_plate_y.erase(rider)
+	if not is_equal_approx(plate.position.y, y):
+		plate.position.y = y
+		if _plate_batch != null and _plate_batch.has(plate):
+			_plate_batch.moved(plate)
+
+## Round 796: COS uid -> true while its body waits for ground (_cos_step).
+var _cos_ground_pending := {}
+
+## Books a ground answer for a COS's body: a miss (NAN) puts it on
+## _cos_ground_pending, a hit takes it off.
+func _cos_ground_missed(uid: int, ground: float) -> void:
+	if is_nan(ground):
+		_cos_ground_pending[uid] = true
+	else:
+		_cos_ground_pending.erase(uid)
+
+## Round 796: a COS's ground, the walking monsters' (_moving_monster_hit_height:
+## the navmesh, then the terrain ray). Round 795 took the terrain ray alone,
+## which sees only the terrain layer, so a pet on Jangan's paved square ran
+## under the paving. NAN when neither answers.
+func _cos_ground(at: Vector3) -> float:
+	return _moving_monster_hit_height(at)
+
+## Round 796: the yaw a COS's front takes off its heading. A COS model is
+## authored facing -Z like every monster's (MonsterMotion.MODEL_FRONT, round
+## 637) and its skeleton is not turned under the body, so a heading h is
+## rotation.y = h - PI; round 795 used 0 and every pet and mount ran
+## backwards.
+static func _cos_front() -> float:
+	return MonsterMotion.front_yaw(MonsterMotion.MODEL_FRONT)
+
 ## Starts a COS's leg toward dest at speed.
 func _cos_start_leg(uid: int, dest: Vector3, speed: float) -> void:
 	var body: Node3D = _cos_bodies.get(uid)
@@ -31931,7 +32077,7 @@ func _cos_start_leg(uid: int, dest: Vector3, speed: float) -> void:
 	_cos_motion[uid] = {"pos": from, "dest": to, "speed": maxf(speed, 1.0), "moving": true}
 	var dir := to - from
 	if dir.length() > 0.01:
-		_aim_remote_body(body, Vector3(dir.x, 0.0, dir.y), 0.0)
+		_aim_remote_body(body, Vector3(dir.x, 0.0, dir.y), _cos_front())
 	if was.is_empty() or not bool(was.get("moving", false)) or (float(was.get("speed", 0.0)) > COS_RUN_ABOVE) != (speed > COS_RUN_ABOVE):
 		_cos_gait(uid, BsrReader.AnimationEntry.TYPE_RUN if speed > COS_RUN_ABOVE else BsrReader.AnimationEntry.TYPE_WALK)
 
@@ -31965,7 +32111,10 @@ func _cos_move_echo(echo: DestMoveNet.Echo) -> bool:
 		var body: Node3D = _cos_bodies.get(uid)
 		if body != null and echo.has_source and Vector2(body.position.x, body.position.z).distance_to(
 				Vector2(echo.source_world.x, echo.source_world.z)) > MonsterMotion.RESYNC_DISTANCE:
-			body.position = Vector3(echo.source_world.x, body.position.y, echo.source_world.z)
+			# Round 796: on its new ground, not the height it had.
+			var gy := _cos_ground(echo.source_world)
+			body.position = Vector3(echo.source_world.x, body.position.y if is_nan(gy) else gy, echo.source_world.z)
+			_cos_ground_missed(uid, gy)
 		_cos_start_leg(uid, echo.dest_world, rec.run)
 	return true
 
@@ -31979,8 +32128,13 @@ func _cos_move_stop(stop: DestMoveNet.Stop) -> bool:
 		return false
 	var body: Node3D = _cos_bodies.get(uid)
 	if body != null and _cos_rider_of(uid) < 0:
-		body.position = Vector3(stop.world.x, body.position.y, stop.world.z)
-		body.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(stop.angle), 0.0)
+		# Round 796: the stop's own ground, not the height the body had --
+		# a pet put down beside its owner from far away kept the old one and
+		# hung in the air.
+		var y := _cos_ground(stop.world)
+		body.position = Vector3(stop.world.x, stop.world.y if is_nan(y) else y, stop.world.z)
+		_cos_ground_missed(uid, y)
+		body.rotation.y = RemoteFacing.yaw_of(RemoteFacing.from_wire_angle(stop.angle), _cos_front())
 		if bool((_cos_motion.get(uid, {}) as Dictionary).get("moving", false)):
 			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
 		_cos_motion.erase(uid)
@@ -31992,7 +32146,7 @@ func _cos_pick_motion(uid: int, heading: float) -> bool:
 	if not _cos_bodies.has(uid):
 		return false
 	var body: Node3D = _cos_bodies[uid]
-	body.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+	body.rotation.y = RemoteFacing.yaw_of(heading, _cos_front())
 	_cos_play(uid, BsrReader.AnimationEntry.TYPE_PICKUP)
 	return true
 
@@ -32004,6 +32158,18 @@ func _cos_step(delta: float) -> void:
 			var rec: CosSpawnNet.Record = _cos_recs[uid]
 			_cos_waiting.erase(uid)
 			_cos_build_body(rec, NetClient.spawn_world(rec.region, rec.local_position))
+	# Round 796: a body put down where no ground was loaded yet (an owner's
+	# teleport arrives before its region) takes the ground once it comes, as
+	# a monster's does (_monster_heights_pending).
+	for uid in _cos_ground_pending.keys():
+		var pbody: Node3D = _cos_bodies.get(uid)
+		if pbody == null or not is_instance_valid(pbody) or _cos_rider_of(int(uid)) >= 0:
+			_cos_ground_pending.erase(uid)
+			continue
+		var gy := _cos_ground(pbody.position)
+		if not is_nan(gy):
+			pbody.position.y = gy
+			_cos_ground_pending.erase(uid)
 	for uid in _cos_motion.keys():
 		var body: Node3D = _cos_bodies.get(uid)
 		if body == null or not is_instance_valid(body):
@@ -32014,7 +32180,7 @@ func _cos_step(delta: float) -> void:
 			continue
 		var pos := MonsterMotion.step(st["pos"], st["dest"], float(st["speed"]), delta)
 		st["pos"] = pos
-		var y := _terrain_hit_height(Vector3(pos.x, body.position.y, pos.y))
+		var y := _cos_ground(Vector3(pos.x, body.position.y, pos.y))
 		body.position = Vector3(pos.x, body.position.y if is_nan(y) else y, pos.y)
 		if pos == st["dest"]:
 			st["moving"] = false
@@ -32033,12 +32199,21 @@ func _cos_place_riders() -> void:
 		if mount == null or not is_instance_valid(mount) or root == null or rskel == null:
 			continue
 		mount.global_position = root.global_position
-		mount.rotation.y = root.rotation.y
+		# The root's yaw is its heading (the player's skeleton is turned PI
+		# under it); the mount's skeleton is not, so its front is taken off.
+		mount.rotation.y = RemoteFacing.yaw_of(RemoteFacing.heading_of_yaw(root.rotation.y, 0.0), _cos_front())
 		# The mount's gait is its rider's: run while the rider moves.
 		var moving := _rider_moving(int(rider))
 		if bool(mount.get_meta("cos_moving", false)) != moving:
 			mount.set_meta("cos_moving", moving)
 			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND)
+		# Round 796: the rider's plate over the mount, and its weapon and
+		# shield off -- re-applied to a skeleton a re-dress rebuilt.
+		_raise_rider_plate(int(rider), mount, true)
+		EfpEffect.mounts[root.get_instance_id()] = mount
+		if int(_rider_held_hidden.get(rider, 0)) != rskel.get_instance_id():
+			_rider_held_hidden[rider] = rskel.get_instance_id()
+			_set_held_items_shown(rskel, false)
 		if assembled == null or not is_instance_valid(assembled.skeleton):
 			continue
 		var bone := assembled.skeleton.find_bone("saddle")
@@ -32103,6 +32278,9 @@ func _cos_seat(rider: int, uid: int) -> void:
 		_cos_unseat(rider)
 	_riders[rider] = uid
 	var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+	var seat_body: Node3D = _cos_bodies.get(uid)
+	if rec != null and seat_body != null and is_instance_valid(seat_body):
+		_cos_label(seat_body, rec)
 	if rider == _own_id():
 		NetClient.riding_mount = uid
 		if rec != null and rec.run > 0.0:
@@ -32120,6 +32298,17 @@ func _cos_unseat(rider: int) -> void:
 	var uid := int(_riders[rider])
 	_riders.erase(rider)
 	var rskel := _rider_skeleton(rider)
+	var unseat_root := _rider_root(rider)
+	if unseat_root != null:
+		EfpEffect.mounts.erase(unseat_root.get_instance_id())
+	_rider_held_hidden.erase(rider)
+	if rskel != null and is_instance_valid(rskel):
+		_set_held_items_shown(rskel, true)
+	var plate_mount: Node3D = _cos_bodies.get(uid)
+	if plate_mount != null and is_instance_valid(plate_mount):
+		_raise_rider_plate(rider, plate_mount, false)
+	else:
+		_rider_plate_y.erase(rider)
 	if _rider_rest.has(rider):
 		if rskel != null and is_instance_valid(rskel):
 			rskel.transform = _rider_rest[rider]
@@ -32134,6 +32323,8 @@ func _cos_unseat(rider: int) -> void:
 	if mount != null and is_instance_valid(mount):
 		mount.remove_meta("cos_moving")
 		_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
+		if _cos_recs.has(uid):
+			_cos_label(mount, _cos_recs[uid])
 	print("World3D: %s dismounted COS %d" % ["the player" if rider == _own_id() else "player %d" % rider, uid])
 
 ## 0xB0CB: a mount or dismount (to everyone holding the rider), or a refusal.
@@ -32211,6 +32402,11 @@ func _cos_clear() -> void:
 		_cos_free_body(int(uid))
 	_cos_recs.clear()
 	_cos_waiting.clear()
+	_cos_ground_pending.clear()
+	EfpEffect.mounts.clear()
+
+## QA (round 796): each COS body's position at the last state line.
+var _qa_cos_last := {}
 
 ## QA (round 795): OPENSRO_QA_COS="<tick>:<action>;..." drives the COS through
 ## the client's own sends (needs a server): use=<RefItemID> (the first bag
@@ -32247,10 +32443,37 @@ func _qa_cos_step() -> void:
 					shown += 1
 				var gb := (mi as MeshInstance3D).global_transform * (mi as MeshInstance3D).get_aabb()
 				box = gb if box.size == Vector3.ZERO else box.merge(gb)
-			parts.append("%d@(%.0f,%.1f,%.0f) meshes %d shown %d box %s" % [int(uid), b.global_position.x, b.global_position.y,
-				b.global_position.z, meshes, shown, str(box)])
-		print("QA COS state tick %d: own %s bodies [%s] riders %s player (%.0f,%.0f) speed %.0f" % [_qa_tick,
-			str(NetClient.cos_own.keys()), ", ".join(parts), str(_riders), player.global_position.x, player.global_position.z, _move_speed])
+			# Round 796: where the model's -Z front points, the step since the
+			# last line (front . step > 0 runs forwards), the ground under it,
+			# and its two plate texts.
+			var front := -b.global_transform.basis.z
+			var was: Vector3 = _qa_cos_last.get(uid, b.global_position)
+			var stepv := b.global_position - was
+			_qa_cos_last[uid] = b.global_position
+			var fwd := Vector2(front.x, front.z).normalized().dot(Vector2(stepv.x, stepv.z).normalized()) if Vector2(stepv.x, stepv.z).length() > 1.0 else 0.0
+			var lbl := b.get_node_or_null("Label") as Label3D
+			var olbl := b.get_node_or_null("OwnerLabel") as Label3D
+			parts.append("%d@(%.0f,%.1f,%.0f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f" % [int(uid), b.global_position.x, b.global_position.y,
+				b.global_position.z, meshes, shown, str(box), fwd, _cos_ground(b.global_position),
+				lbl.text if lbl != null else "-", olbl.text if olbl != null else "-", olbl.offset.y if olbl != null else 0.0])
+		var held := ""
+		if _player_skeleton != null:
+			for c in _player_skeleton.get_children():
+				var vs := int((c as Node).get_meta(CharacterAppearance.VISUAL_SLOT_META, -1))
+				if vs == CharacterAppearance.SLOT_WEAPON or vs == CharacterAppearance.SLOT_SHIELD:
+					held += " slot%d=%s" % [vs, "shown" if (c as Node3D).visible else "hidden"]
+		for key in SkillEffects._auras:
+			var au: Dictionary = SkillEffects._auras[key]
+			if au.get("host") == player:
+				for fx in au["fx"]:
+					if is_instance_valid(fx):
+						held += " aura %d at dy %.1f off (%.1f,%.1f)" % [int(au["skill"]), (fx as EfpEffect).placed_at().y - player.global_position.y,
+							(fx as EfpEffect).placed_at().x - player.global_position.x, (fx as EfpEffect).placed_at().z - player.global_position.z]
+		var pplate := player.get_node_or_null("Name") as Label3D
+		var pfront := -_player_skeleton.global_transform.basis.z if _player_skeleton != null else Vector3.ZERO
+		print("QA COS state tick %d: own %s bodies [%s] riders %s player (%.0f,%.0f) speed %.0f plate y %.1f held%s rider front (%.2f,%.2f)" % [_qa_tick,
+			str(NetClient.cos_own.keys()), ", ".join(parts), str(_riders), player.global_position.x, player.global_position.z, _move_speed,
+			pplate.position.y if pplate != null else -1.0, held, pfront.x, pfront.z])
 	for entry in _qa_cos_spec.split(";", false):
 		var at := String(entry).split(":", true, 1)
 		if at.size() != 2:

@@ -25,7 +25,7 @@ import (
 //
 //   - It follows its owner: IDLE turns to FOLLOW once the owner is 65.0 away
 //     (s:FUN_005485b0, 0xb46298), and FOLLOW runs to a point selfBC +
-//     ownerBC + rand()%10+1 around the owner and settles once within selfBC +
+//     ownerBC + rand()%10+1 beside the owner (cosSidePoint) and settles within selfBC +
 //     50.0 (s:FUN_00549ac0, 0xb46288). A rider's COS is where its rider is.
 //   - An ability pet picks up what its owner's client points it at (0x70C5
 //     command 8: the client chooses the nearest eligible item within 500,
@@ -40,8 +40,9 @@ import (
 //     cos.RentCheckPeriod).
 //
 // OURS, disclosed: the tick (cosTick); a pet that falls more than
-// cosWarpRange behind is put back beside its owner (retail has no such
-// leash that was found, OPEN); monsters do not target a COS (their AI knows
+// cosWarpRange behind is put back at its follow point beside its owner
+// (cosSidePoint; retail has no such leash: FOLLOW, s:FUN_00549ac0, has no
+// distance cap or teleport, READ round 796); monsters do not target a COS (their AI knows
 // characters only): a pet's blows are booked to its owner, whom the monster
 // then answers.
 
@@ -188,7 +189,10 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 		pos := o.at(now)
 		if o.zone != owner.Zone || cosDistance(pos, ownerPos) > cosWarpRange {
 			a.warp = true
-			o.zone, o.pos, o.moving = owner.Zone, ownerPos, false
+			// Put down where FOLLOW would have run it: beside the owner
+			// (round 796; on the owner's spot it stood inside them).
+			r := float64(o.row.BCRadius) + ownerBCRadius + float64(rand.Intn(10)+1)
+			o.zone, o.pos, o.moving = owner.Zone, cosSidePoint(ownerPos, owner.Heading, pos, r), false
 			w.mu.Unlock()
 			acts = append(acts, a)
 			continue
@@ -239,9 +243,8 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 		default:
 			d := cosDistance(pos, ownerPos)
 			if (!o.moving && d >= cosFollowFar) || (o.moving && cosDistance(o.to, ownerPos) > cosReaim+float64(o.row.BCRadius)) {
-				ang := rand.Float64() * 2 * math.Pi
 				r := float64(o.row.BCRadius) + ownerBCRadius + float64(rand.Intn(10)+1)
-				p := world.Position{X: ownerPos.X + r*math.Cos(ang), Y: ownerPos.Y, Z: ownerPos.Z + r*math.Sin(ang)}
+				p := cosSidePoint(ownerPos, owner.Heading, pos, r)
 				if d > float64(o.row.BCRadius)+cosFollowNear || o.moving {
 					a.moveTo = &p
 				}
@@ -258,6 +261,26 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 	for _, a := range acts {
 		w.act(ctx, cd, a, now)
 	}
+}
+
+// cosSidePoint is FOLLOW's target (round 796, READ s:FUN_00549ac0): a point
+// r from the owner on the owner's side -- the direction perpendicular to the
+// owner's facing, (-fz, fx) times a sign -- not a random angle round them
+// (round 795). r is selfBC + ownerBC + rand()%10+1.
+//
+// INFERRED: which side. Retail's sign is -1 when a cross product of the
+// pet->owner vector and the pet's own direction is under 0.0078125
+// (s:0x549b8c); here the pet keeps the side it is already on. OPEN: retail
+// then snaps the side vector to the nearest of 36 table directions (5, 15,
+// ... 355 degrees, s:0x54ab10; the picker s:FUN_0053dad0 reaches only 0..18),
+// which is not modelled.
+func cosSidePoint(owner world.Position, heading float64, pet world.Position, r float64) world.Position {
+	// The owner faces (sin h, cos h) in (x, z) (world.HeadingToward).
+	sx, sz := -math.Cos(heading), math.Sin(heading)
+	if (pet.X-owner.X)*sx+(pet.Z-owner.Z)*sz < 0 {
+		sx, sz = -sx, -sz
+	}
+	return world.Position{X: owner.X + r*sx, Y: owner.Y, Z: owner.Z + r*sz}
 }
 
 // act carries a tick's decision out.

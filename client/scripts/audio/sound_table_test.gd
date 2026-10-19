@@ -111,6 +111,12 @@ func _initialize() -> void:
 	_check(info.get("TEST_CODE_A", "") == "SOUND_OBJ_A" and info.get("TEST_CODE_B", "") == "SOUND_OBJ_B",
 		"characterInfo maps column 1 to column 2 (UTF-16)")
 	_check(not info.has("TEST_CODE_C") and not info.has("//ResourceFileID"), "rows of other sections and comments are not taken")
+	# Round 796: column 3, Size, and the first row as the default record.
+	var sizes := {}
+	st.parse_character_info(ci_bytes, sizes)
+	_check(is_equal_approx(float(sizes.get("TEST_CODE_A", 0.0)), 1.9) and is_equal_approx(float(sizes.get("TEST_CODE_B", 0.0)), 1.0),
+		"characterInfo's column 3 is each row's Size")
+	_check(String(sizes.get("", "")) == "TEST_CODE_A" and not sizes.has("TEST_CODE_C"), "the first row is the default record; other sections are not taken")
 	_finish()
 
 func _finish() -> void:

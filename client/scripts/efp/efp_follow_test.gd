@@ -80,6 +80,7 @@ func _initialize() -> void:
 	_dead_shift()
 	await process_frame # the root is in the tree from the first frame on
 	_host()
+	_rider()
 	_render_frames()
 	_orphan_on_host()
 	_cull_box()
@@ -210,6 +211,47 @@ func _host() -> void:
 		"far from the anchor it re-centres, shifting the simulation with it")
 	fx.sim.clear()
 	host.free()
+
+## Round 796 (READ, IDecoSkill::FUN_00a4a680): on a rider, an effect with no
+## bone and no offset takes the mount's frame -- its feet -- not the rider's
+## skeleton on the saddle; a bone the rider has stays on the rider, and one
+## it lacks is found on the mount. Off the mount it is the rider's again.
+func _rider() -> void:
+	var rider := Node3D.new()
+	var rskel := Skeleton3D.new()
+	rskel.add_bone("Bip01 Head")
+	rskel.set_bone_rest(0, Transform3D(Basis.IDENTITY, Vector3(0, 3, 0)))
+	rskel.reset_bone_pose(0)
+	rider.add_child(rskel)
+	get_root().add_child(rider)
+	rider.position = Vector3(40, 0, 10)
+	rskel.position = Vector3(0, 20, 0) # on the saddle
+	var mount := Node3D.new()
+	var mskel := Skeleton3D.new()
+	mskel.add_bone("tail")
+	mskel.set_bone_rest(0, Transform3D(Basis.IDENTITY, Vector3(0, 6, -8)))
+	mskel.reset_bone_pose(0)
+	mount.add_child(mskel)
+	get_root().add_child(mount)
+	mount.position = Vector3(40, 0, 10)
+	E.mounts[rider.get_instance_id()] = mount
+	var made := []
+	for bone in ["none", "Bip01 Head", "tail"]:
+		var fx = E.from_template(S.compile(_node(30, {"u6": 0})), func(_p): return PlaceholderTexture2D.new(),
+			func(_p): return null, 5)
+		rider.add_child(fx)
+		fx.follow_host(rider, bone, Vector3.ZERO)
+		made.append(fx)
+	_check(made[0].placed_at().is_equal_approx(Vector3(40, 0, 10)), "riding, a 'none' effect is at the mount's feet (%s)" % str(made[0].placed_at()))
+	_check(made[1].placed_at().is_equal_approx(Vector3(40, 23, 10)), "riding, a bone the rider has stays on the rider (%s)" % str(made[1].placed_at()))
+	_check(made[2].placed_at().is_equal_approx(Vector3(40, 6, 2)), "riding, a bone the rider lacks is the mount's (%s)" % str(made[2].placed_at()))
+	E.mounts.erase(rider.get_instance_id())
+	made[0]._place()
+	_check(made[0].placed_at().is_equal_approx(Vector3(40, 20, 10)), "off the mount, 'none' is the rider's skeleton again (%s)" % str(made[0].placed_at()))
+	for fx in made:
+		fx.sim.clear()
+	rider.free()
+	mount.free()
 
 ## The levels are compared signed (READ, CEFGroup::vslot_004); the reader
 ## hands them over as u32, so retail's u3 = -1 arrives as 4294967295.

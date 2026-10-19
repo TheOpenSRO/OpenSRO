@@ -421,7 +421,8 @@ transform (ICharactor::FUN_009d05d0), plays the rider's "cart" group (0 `cart_st
 ### The pets (READ)
 
 - Follow: IDLE turns to FOLLOW at 65.0 from the owner; FOLLOW runs to a point selfBC + ownerBC (4,
-  MEASURED) + rand()%10+1 around the owner and settles within selfBC + 50.0.
+  MEASURED) + rand()%10+1 from the owner **on the owner's side** (round 796, below) and settles within
+  selfBC + 50.0.
 - The ability pet's pick is the CLIENT's: every frame, the nearest eligible ground item within 500 of
   the pet (squared 250000.0) is asked for with 0x70C5 command 8, one request out per pet; eligible by the
   flags 0x80 on, 0x40 every owner, 1 gold, 2 equipment, 4 the rest; never trade goods. The server runs
@@ -445,8 +446,8 @@ transform (ICharactor::FUN_009d05d0), plays the rider's "cart" group (0 `cart_st
 
 - **Visibility**: a COS is delivered with its owner -- spawned right after the owner's spawn, despawned
   with it, its messages to whoever holds the owner -- where retail files it in its own message block.
-- The server's tick (100 ms), the corpse (5 s), a leash that puts a pet 400 behind back beside its owner
-  (retail's was not found).
+- The server's tick (100 ms), the corpse (5 s), a leash that puts a pet 400 behind back at its follow
+  point beside its owner (round 796: retail's FOLLOW has no distance cap and no teleport, READ).
 - Monsters do not target a COS: a pet's blows are booked to its owner, whom the monster answers.
 - A logout keeps every COS summoned and brings it back at the next entry, a ride remounted (retail's
   normal-logout reason is OPEN; reason 4 deletes a ride).
@@ -459,8 +460,55 @@ transform (ICharactor::FUN_009d05d0), plays the rider's "cart" group (0 `cart_st
 - 0x3057's COS HP rides OpenSRO's head: owner kind 2, the uid, flag 1, u32 HP.
 - The COS ids are 0x7e000000 + n.
 
+### Round 796: what the client draws for a rider, a mount and a pet (READ, sro_client.exe)
+
+- **Facing.** A COS model faces -Z like every monster's (MonsterMotion.MODEL_FRONT, round 637) and its
+  skeleton is not turned under its body, so a heading h is rotation.y = h - PI. Round 795 used 0: every
+  pet and mount ran backwards.
+- **The rider's weapon and shield are not drawn.** `CharacterVisualChange::CObjItem::vslot_003`
+  (0x4e8830) answers 0 (not shown) for an item in equip visual slot 6 or 7 (weapon +0x80, shield +0x8c)
+  while `CObjCharacter::FUN_00a5be70` says the body has a mount (+0x34 -> `FUN_009ce930`, +0x2ac).
+- **No buff is hidden by riding.** The riding state (12) does nothing: its table entry (initialiser
+  0xd772a0) points at two bare `ret`s (0xa59ba0, 0xa59bb0) and clears states 2 and 13 (0x2004 at
+  0xec61bc). What riding changes is where an effect sits, `IDecoSkill::FUN_00a4a680`:
+  - no StartBone and no StartOffset (a "none" or "*" row): the **mount's** matrix, at the rider's own
+    position -- the mount's feet, turned with it. The speed potions and scrolls and Grass Walk
+    (`lightning_gyeonggong_keep_a/b.efp`, ACT_L, bone none, offset 0) are such rows;
+  - a bone the rider's model has: on the rider (on the saddle);
+  - a bone it lacks: looked up on the mount's model (the loop's `param_1 = FUN_009ce930()`);
+  - an offset with no bone: the rider's own frame.
+- **Plates.** `FUN_009cef40`: a CICMonster's or a CICCos's (0xeef6f0) name shows only while its rider
+  link +0x2b0 (`FUN_009ce910`) is empty, so a ridden mount has no plate; CICCos slot 15 draws the owner
+  line under the same test, 20.0 screen pixels above the name (`fsub 0xe1b830`). A ride (TypeID4 1)
+  reads no name or owner at all (`CICCos::vslot_034`: only TypeID4 2, 3, 4 and 6 do). The rider's plate
+  (`FUN_009d0a80`) is at the mount's +0x22c + 7.0 (0xda7c60), everyone else's at their own + 2.0.
+  +0x22c follows +0x228, which CICCos slot 28 (0x9c7780) sets to 20.0 x FUN_009c7740 = 20.0 x
+  [+0x728]+8 x scale, [+0x728] being the ref's skilleffect.txt `characterInfo` row
+  (`FUN_009ca510` -> `FUN_00a95d30`) and +8 its Size (column 3) x 0.5 (`FUN_00a9ae80`, 0.5 at
+  0xe1b7d0). The row is found by code, then by the ref's +0x5c, then the default -- the first row
+  registered (`FUN_00a9ae30`: CHAR_CH_MAN_ADVENTURER, Size 2). So a tiger's rider's plate is at
+  1.8 x 10 + 7 = 25, a horse's 32, Rudolph's (no row) 27. INFERRED: +0xc4 (scale) is 1.0.
+- **The pet's name is plain.** `CICCos::vslot_034` converts the record's name (`FUN_004fc7f0`, ANSI to
+  wide) and sets it; there is no "< %s >" anywhere in the client. A private server's "< Jeremy >" is
+  its own.
+- **Speed.** Riding, the rider's speeds are the mount's (s:0x4aa410, no multiplier, round 795): a buff
+  started or ended while riding does not change them; the dismount's 0x30D0 gives the buffed foot speed.
+
+### Round 796: FOLLOW's point and the arrival (READ, SR_GameServer.exe)
+
+- `FUN_00549ac0`: the point is the owner's position plus the owner's side vector -- the facing
+  (+0x24..) crossed with up, (-fz, 0, fx) times a sign -- at selfBC + leaderBC + rand()%10+1. The sign is
+  -1 when a cross product of the pet->owner vector and the pet's own direction is under 0.0078125
+  (0xade894); the side vector is then snapped to the nearest of 36 table directions (`FUN_0053dad0`:
+  acos against (1, 0, 0) x 57.29578 / 10.0, rounded; the table at 0xce2030 is filled by 0x54ab10 at 5,
+  15, ... 355 degrees). OpenSRO keeps the pet on the side it is on (INFERRED) and does not snap (OPEN).
+- No branch of FOLLOW teleports a pet; the further test against 100.0 (0xb45af0) only chooses which
+  point to run to.
+- An owner's arrival (a teleport, a zone change) spawns its pets again with the summon's 20.0 hatch
+  spread (s:0x4fbae0, INFERRED that the argument is a spread); round 795 put them on the owner.
+
 ### OPEN
 
-The code names 0x1869, 0x1896, 0x1897; slot 219's exact effect (hunger 0, rent end); where a pet's
+The FOLLOW side's exact sign and its 36-direction snap (round 796); the code names 0x1869, 0x1896, 0x1897; slot 219's exact effect (hunger 0, rent end); where a pet's
 corpse is cleared; the pet-bag extension's slot count; monster aggro on pets; the guild soldier; the
 transport's trade goods and Sell All.

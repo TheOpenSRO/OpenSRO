@@ -158,6 +158,11 @@ const SLOT_LEGS := 4
 const SLOT_FEET := 5
 const SLOT_WEAPON := 6
 const SLOT_SHIELD := 7
+## Round 796: meta on each worn item's node naming its equip visual slot
+## (visual_slot), so a rider's weapon and shield can be hidden
+## (World3D._set_held_items_shown, READ CharacterVisualChange::CObjItem::
+## vslot_003).
+const VISUAL_SLOT_META := &"opensro_visual_slot"
 const SLOT_SUIT := 8
 const SLOT_EARRING := 9
 const SLOT_NECKLACE := 10
@@ -656,6 +661,7 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 				path = _fallback_of(path)
 				node = _item_instance(bsr_path, tmpl, skel, path)
 			if node != null:
+				node.set_meta(VISUAL_SLOT_META, int(wear["slot"]))
 				(wear["nodes"] as Array).append(node)
 				drawn.append(path)
 				blocks.append(_item_attachables.get(path.to_lower()))

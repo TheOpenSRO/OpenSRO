@@ -225,7 +225,12 @@ static func culled(distance_sq: float) -> bool:
 ## code) -> column 2 (the effectsound object token). The server_dep copy is
 ## UTF-16 (the client reads it with its wide tokenizer, sec_B); a copy
 ## without a UTF-16 byte-order mark is read as bytes.
-static func parse_character_info(bytes: PackedByteArray) -> Dictionary:
+##
+## Round 796: `sizes`, when given, also takes column 3 (Size) of every row,
+## code -> float, and "" -> the FIRST row's code: the record the client falls
+## back to (READ UI_ALCHEMYBOX::FUN_00a9ae30: DAT_0110ab34 is the first row
+## registered). World3D's mount plate reads it (character_size).
+static func parse_character_info(bytes: PackedByteArray, sizes = null) -> Dictionary:
 	var text := ""
 	if bytes.size() >= 2 and bytes[0] == 0xFF and bytes[1] == 0xFE:
 		text = TextDecode.utf16(bytes.slice(2))
@@ -248,6 +253,10 @@ static func parse_character_info(bytes: PackedByteArray) -> Dictionary:
 		var obj := fields[1].strip_edges()
 		if code != "" and obj != "":
 			out[code] = obj
+		if sizes is Dictionary and code != "" and fields.size() > 2 and fields[2].strip_edges().is_valid_float():
+			(sizes as Dictionary)[code] = float(fields[2].strip_edges())
+			if not (sizes as Dictionary).has(""):
+				(sizes as Dictionary)[""] = code
 	return out
 
 # --- The contract's calls: they reach the running AudioService autoload. ---

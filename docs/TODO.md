@@ -29,6 +29,12 @@ where it stopped, the tools for it, the traps — and points back here for every
   - Not read yet, the first things to read: the message carrying the account's silk, the mall's
     buy request and reply (start from the mall window's buy button in sro_client.exe), and
     SR_GameServer.exe's handler for that request.
+- [ ] **FOLLOW's side** (round 796): the point is on the owner's side as retail's, but the sign test
+      (a cross product with the pet's own direction) is INFERRED as "the side it is on", and the
+      snap to retail's 36 table directions (only 0..18 reachable through its acos) is not modelled.
+- [ ] **A far rider** (round 796): a rider drawn as a far crowd recipe (GPU skinning) may still show
+      its weapon and shield; only the near skeleton's item nodes are hidden. And a COS's +0xc4
+      scale is taken as 1.0 for its plate height (INFERRED).
 - [ ] **Monsters do not target pets** (OURS): a monster's aggro and its blows only go to players;
       retail lets monsters hit a growth pet and a mount.
 - [ ] **The guild soldier** (TypeID4 5, kind 4): the record is written; no summon path.

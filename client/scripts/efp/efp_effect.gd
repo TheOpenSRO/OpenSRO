@@ -126,6 +126,19 @@ var _follow_bone_name := ""
 var _follow_offset := Vector3.ZERO
 var _follow_skel: Skeleton3D = null
 var _follow_bone := -1
+
+## Round 796: host instance id -> the mount its character rides (World3D keeps
+## it). READ, IDecoSkill::FUN_00a4a680 (the placement of a decoration's effect,
+## each frame through FUN_00a4ddc0): with no StartBone and no StartOffset the
+## effect takes the MOUNT's matrix, at the rider's own ground position --
+## at the mount's feet, turned with it -- when the owner has a mount
+## (FUN_009ce930, +0x2ac); a StartBone the rider's model does not have is
+## looked up on the mount's (the loop's `param_1 = FUN_009ce930()`). A named
+## bone the rider has, and an offset with no bone, stay on the rider.
+static var mounts: Dictionary = {}
+## The mount skeleton a missing bone was found on, and the bone (round 796).
+var _mount_skel: Skeleton3D = null
+var _mount_bone := -1
 var _anchored := false
 var _placed := Transform3D()
 var _anchor := Transform3D()
@@ -990,6 +1003,31 @@ func _skeleton() -> Skeleton3D:
 		_follow_bone = _follow_skel.find_bone(b)
 	return _follow_skel
 
+## The mount the host rides, or null (round 796, `mounts`).
+func _mount() -> Node3D:
+	if mounts.is_empty() or _follow_host == null:
+		return null
+	var m = mounts.get(_follow_host.get_instance_id())
+	if m == null or not is_instance_valid(m) or not (m as Node3D).is_inside_tree():
+		return null
+	return m
+
+## Whether the row names no bone: "", "none" or "*" (the '#' form names
+## another object's, '@' and a plain name one of the host's).
+func _no_bone() -> bool:
+	var b := _follow_bone_name.strip_edges()
+	return b == "" or b.to_lower() == "none" or b == "*"
+
+## The row's bone on a mount's skeleton, -1 when it has none.
+func _mount_bone_of(mskel: Skeleton3D) -> int:
+	if _mount_skel != mskel:
+		_mount_skel = mskel
+		var b := _follow_bone_name.strip_edges()
+		if b.begins_with("@"):
+			b = b.substr(1)
+		_mount_bone = -1 if b.begins_with("#") else mskel.find_bone(b)
+	return _mount_bone
+
 ## Places the effect on its host and hands the placement to the
 ## simulation (round 621, follow levels). Returns whether anything moved,
 ## so the caller redraws.
@@ -1016,7 +1054,28 @@ func _place(step_due: bool = false) -> bool:
 		return false
 	var skel := _skeleton()
 	var placed: Transform3D
-	if skel != null and skel.is_inside_tree():
+	var mount := _mount()
+	var mskel: Skeleton3D = null
+	if mount != null:
+		mskel = SkillEffects.skeleton_of(mount)
+		if mskel != null and not mskel.is_inside_tree():
+			mskel = null
+	if mount != null and _no_bone() and _follow_offset == Vector3.ZERO:
+		# Round 796 (READ, see `mounts`): the mount's frame, at its feet.
+		placed = (mskel.global_transform if mskel != null else mount.global_transform) * Transform3D(follow_basis, Vector3.ZERO)
+	elif mskel != null and _follow_bone < 0 and not _no_bone() and _mount_bone_of(mskel) >= 0:
+		# A bone the rider lacks, on the mount (the same three cases below).
+		var at := _follow_offset
+		var pose := mskel.get_bone_global_pose(_mount_bone)
+		if follow_bone_full:
+			placed = mskel.global_transform * pose * Transform3D(follow_basis, at)
+		elif follow_bone_turn or follow_world_turn:
+			var g := mskel.global_transform
+			var b := g.basis * pose.basis.orthonormalized() if follow_bone_turn else scale_basis(g.basis)
+			placed = Transform3D(b * follow_basis, g * (pose.origin + at))
+		else:
+			placed = mskel.global_transform * Transform3D(follow_basis, at + pose.origin)
+	elif skel != null and skel.is_inside_tree():
 		var at := _follow_offset
 		if follow_bone_full and _follow_bone >= 0:
 			placed = skel.global_transform * skel.get_bone_global_pose(_follow_bone) * Transform3D(follow_basis, at)

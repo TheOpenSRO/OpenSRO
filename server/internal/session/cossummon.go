@@ -267,6 +267,23 @@ func useRideScroll(ctx context.Context, sess *gateway.Session, d cosDeps, inv in
 // transport 0: at the owner). That it is a spread is INFERRED.
 const cosPetSpread = 20.0
 
+// cosSpawnPoint is where a COS of kind comes into the world for an owner at
+// pos: a pet within cosPetSpread of the owner, a ride or transport on the
+// owner (s:0x4fbae0's hatch spread, 20.0 for pets and 0 for the others;
+// INFERRED that the argument is the spread). A summon and an owner's
+// arrival (a teleport, a zone change: the COS left with the owner and is
+// spawned again, round 796 -- it stood on the owner before) both use it.
+func cosSpawnPoint(pos world.Position, kind int) world.Position {
+	if !cos.IsPetKind(kind) {
+		return pos
+	}
+	a := rand.Float64() * 2 * math.Pi
+	r := cosPetSpread * math.Sqrt(rand.Float64())
+	pos.X += r * math.Cos(a)
+	pos.Z += r * math.Sin(a)
+	return pos
+}
+
 // spawnCOS puts a COS in the world beside owner, tells every client that
 // holds the owner (0x3015), tells the owner its data (0x30C8), and for a
 // growth pet or a transport the owner's state (0x30CA).
@@ -274,12 +291,7 @@ func spawnCOS(owner world.Entity, rec cos.Record, row species.Row, itemID int64,
 	o := &cosObj{owner: owner.CharacterID, rec: rec, row: row, kind: row.TypeID4, itemID: itemID,
 		zone: owner.Zone, pos: owner.Pos, heading: owner.Heading, regenAt: now.Add(cos.RegenPeriod),
 		rentAt: now.Add(cos.RentCheckPeriod), lastTick: now}
-	if cos.IsPetKind(o.kind) {
-		a := rand.Float64() * 2 * math.Pi
-		r := cosPetSpread * math.Sqrt(rand.Float64())
-		o.pos.X += r * math.Cos(a)
-		o.pos.Z += r * math.Sin(a)
-	}
+	o.pos = cosSpawnPoint(owner.Pos, o.kind)
 	cosWorld.add(o)
 	cosAnnounce(o, spawnType)
 	sendCOSData(o, itemSlot)
@@ -439,7 +451,7 @@ func cosArrived(ctx context.Context, arrived world.Entity) {
 	if out := cosWorld.owned(arrived.CharacterID); len(out) > 0 {
 		for _, o := range out {
 			cosWorld.mu.Lock()
-			o.zone, o.pos, o.heading, o.moving = arrived.Zone, arrived.Pos, arrived.Heading, false
+			o.zone, o.pos, o.heading, o.moving = arrived.Zone, cosSpawnPoint(arrived.Pos, o.kind), arrived.Heading, false
 			itemID, recID := o.itemID, o.rec.ID
 			cosWorld.mu.Unlock()
 			sendToCOSOwner(o, npcspawn.OpSingleSpawn, append(cosWorld.spawnRecord(o, now), cosSpawnTypeKnown))

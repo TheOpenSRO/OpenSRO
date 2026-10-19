@@ -7483,6 +7483,70 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-sixth round: the mount's facing, the rider's weapon, plates and the pets' ground
+
+The user (2026-10-19, on v0.1.556, with screenshots): on Rudolph "It should only show limited skill
+effects like grass walk or a speed scroll but no other skill effects and they should be at the pets
+feet but the effect is at their back. Additionally the weapon/shield should not be visible but it is.
+Also when running rudolph was running backwards ... Also the speed skills/items should not affect the
+transport/pet speed". Then: "the pickup pets also run backwards and they're running underground"; "the
+name and pet name collide" (a private server's picture against ours); "if the pickup snaps to me from
+being to far away he spawns on top of me ... He should spawn behind me but make sure you check the
+original code". docs/protocol/pets.md "Round 796" has every address.
+
+- **Running backwards (ours).** A COS model faces -Z (MonsterMotion.MODEL_FRONT) and its skeleton is
+  not turned; round 795 turned every COS with front 0, and a mount under its rider by the rider's yaw.
+  All five places now take the front off (`_cos_front`). MEASURED live: front . step = 1.00 for
+  Rudolph, the tiger, the rabbit and the wolf in every direction walked.
+- **The weapon and shield (READ).** CObjItem::vslot_003 hides visual slots 6 and 7 while the body has
+  a mount. Each worn node now carries its slot (`CharacterAppearance.VISUAL_SLOT_META`); a rider's are
+  hidden with their ambient particles, re-applied to a re-dressed skeleton, shown at the dismount.
+  MEASURED: slot6/slot7 hidden while riding, shown after.
+- **The effects (READ).** No buff is hidden by riding: state 12's handlers are bare `ret`s. What the
+  client does is place an effect with no bone and no offset on the MOUNT's frame at the rider's
+  position, and look a bone the rider lacks up on the mount (IDecoSkill::FUN_00a4a680). The speed
+  potions, scrolls and Grass Walk are such rows. Ours put "none" at the rider's skeleton origin -- on
+  the saddle, "at their back". `EfpEffect.mounts` now carries the rider -> mount link into `_place`.
+  MEASURED: the speed aura (skill 5410) at dy 0.0 (the feet) while riding; Cold Gigongta's finger
+  aura (skill 90) on the rider's hand at dy 15.8. The user's "only grass walk or a speed scroll" is
+  not what the code does: a bone-attached aura stays on the rider (told to the user).
+- **The plates (READ).** A ridden COS shows no name or owner line (FUN_009cef40); the rider's plate is
+  at the mount's Size x 10 + 7.0 (characterInfo Size, found by code, OrgCodeName, then the first row:
+  `AudioService.character_size`); the owner line is 20.0 SCREEN pixels over the name -- ours set 20 of
+  the plate's font pixels, which FontOversampling multiplies, so the lines overlapped. The pet's name
+  is plain in vSRO 1.188: the "< Jeremy >" brackets are the private server's own. MEASURED: Rudolph's
+  rider 27.0 (no row: the default Size 2), the tiger's 25.0 (Size 1.8), the mount's lines empty while
+  ridden.
+- **Underground and floating (ours).** A COS took the terrain ray alone (`_terrain_hit_height`, the
+  terrain layer only), so on Jangan's paving a pet ran under it; a stop, a far resync and a re-spawn
+  kept the body's old height, so a pet put down from far away hung in the air. COS bodies now take the
+  walking monsters' ground (navmesh, then the ray), and one placed before its region loaded retries
+  (`_cos_ground_pending`). MEASURED: the rabbit at 22.9 on 22.9 ground after a /goto.
+- **The snap (READ, ours).** Retail's FOLLOW (s:FUN_00549ac0) never teleports a pet; it runs to a point
+  on the owner's SIDE (the facing crossed with up), not behind and not a random angle as round 795 had.
+  The follow point and OURS' 400-unit leash now both use it (`cosSidePoint`); an owner's arrival spawns
+  its pets again with the summon's 20.0 spread instead of on the owner. MEASURED: after the run the
+  wolf settled 18 to the side; after /goto the rabbit 16 away.
+- **Speed (READ).** A rider's speeds are the mount's (round 795, s:0x4aa410); the client let a buff's
+  run speed (OpBuffStart / OpBuffEnd) override them. It now goes to the foot speed kept for the dismount.
+- **The exit crash (ours, shipped in v0.1.556).** Every round-795 client aborted at exit ("corrupted
+  size vs. prev_size in fastbins": the perf gate's head runs, never its 794 base): static Callables
+  (ItemInstance.types_of / cos_kind_of, ItemTooltipLines.cos_row_of / cos_row_by_code) held lambdas
+  over World3D, released by the script teardown after World3D and its script were freed. World3D's
+  `_exit_tree` clears them. MEASURED: rc 0 and the base's exit lines.
+- **Tests.** efp_follow_test (4 rider placements), sound_table_test (characterInfo Size), the session's
+  TestRound796SidePoint; `go test ./...`; `tests` "ran 340 suite(s), 0 failing"; `check` ALL LOAD.
+- **OPEN:** FOLLOW's exact side sign and its 36-direction snap; a far (crowd) rider's weapon; the
+  COS scale +0xc4 (1.0 here).
+- **Gate** (`perf_gate.sh --frames 30000`, base 6e406a4a vs the working tree, 1280x720, median of
+  3): all SAME.
+
+  | site | frame ms | entry ms | freeze ms | hitches |
+  |---|---|---|---|---|
+  | jangan | 0.90 -> 0.89 | 8625 -> 8630 | 2682 -> 2733 | 4 -> 4 |
+  | reeds | 0.84 -> 0.84 | 7686 -> 7649 | 1401 -> 1422 | 2 -> 2 |
+  | cross | 1.00 -> 1.01 | 9341 -> 9398 | 2725 -> 2725 | 5 -> 5 |
+
 ## Seven-hundred-and-ninety-fifth round: pets, horses and the mall's rides
 
 The user (2026-10-19): "Alright, let's get pickup, growth, and ability pets working and added. Be
