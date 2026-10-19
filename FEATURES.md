@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.554** plus what is merged on `dev`; updated 2026-10-16.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.555** plus what is merged on `dev`; updated 2026-10-19.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -21,13 +21,13 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Pets & mounts](#pets--mounts) |  |  |  | 4 | 4 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
 | [UI / HUD](#ui--hud) | 14 | 4 |  | 1 | 19 |
-| [Graphics & effects](#graphics--effects) | 11 | 1 |  |  | 12 |
+| [Graphics & effects](#graphics--effects) | 13 | 1 |  |  | 14 |
 | [Audio](#audio) | 5 |  |  |  | 5 |
 | [Server / ops](#server--ops) | 7 |  | 1 | 1 | 9 |
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **141** | **33** | **1** | **44** | **219** |
+| **All** | **143** | **33** | **1** | **44** | **221** |
 
 ## Biggest gaps
 
@@ -328,6 +328,8 @@ Retail models, particles and lighting re-created in Godot.
 | Placed object effects | ✅ Supported | Every placed object's ambient effects (fountain sprays, waterfall mist, lanterns, burners) at retail's ranges; scrolling water on fountains and waterfalls |
 | Fade-in of characters | ✅ Supported | Monsters and players fade in over 2 s, as retail |
 | Berserk look | ✅ Supported | Berserk aura, colour and sounds |
+| Cloth and hair (Dynamic Animation) | ✅ Supported | Robes, dresses, capes, wings, hair, tassels, banners, flags and tents sway and fall as in retail; the Video option turns it on and off |
+| Worn item effects | ✅ Supported | Talisman glows, the Europe talisman's turning ornaments, wing flaps and fullset shimmer from the items' own files |
 | Crowd rendering | ✅ Supported | GPU skinning for large crowds |
 | Level of detail and culling | 🟡 Partial | Frustum and sight-range culling; no mesh LOD |
 
