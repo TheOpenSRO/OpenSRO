@@ -7483,6 +7483,71 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fifth round: the job names, the NPC thieves' bodies, pet potions on a transport
+
+The user (2026-10-20), after round 804: "when the loot drops on the ground it's supposed to show who owns
+it (job name). Also when I'm in my job suit it shows my regular name not my job name ... Also the thieves
+that spawn in are missing their model, it's supposed to be a chinese thief suit afaik but check the code
+to make sure. Additionally it won't let me use potions for my transport when it should, it lets them kill
+it." Then a private-server screenshot, and: "It's *{job_name}, then job type icon to the right and job
+level as a title to the left". docs/protocol/jobs.md "The plate in a suit", "A dropped good's owner",
+"Their bodies" have every address.
+
+- **The own plate (READ).** CICPlayer::vslot_025 hands the name setter 0x3013's alias (+0x2098) when the
+  job state is not 4 (c:0x9da2aa..0x9da2cf): one's own plate in a suit is `*alias`, as others see it.
+  The client drew the character's name.
+- **The job mark (READ, round 800 corrected).** The overhead draw's quad is the name box's x - 20.0 to
+  x - 4.0, top-aligned (FUN_008b2d30 writes the box's x first, then `fsub 0xe1b830` / `fadd 0xe1b8e0`):
+  left of the name. Round 800 had read the 20 as a rise and drawn the mark above it.
+- **The title (READ; the screenshot's is not the original's).** The yellow title slot (slot 30,
+  c:0x9c28a0, 0xffffe65b) is emptied for a CICharactor whose job state is not 4, and the class-title
+  formats (UIIT_STT_CLASS_[EU_]%s_%d) are used only by five windows. The user chose to have it anyway:
+  **OURS, Job Titles on Names** (Video, on by default) -- the class title of the job level in the title
+  colour left of `*alias` and the mark right of the name, the reference's layout; Off is the original's.
+- **A dropped good's owner (READ).** CInstanceItem::vslot_010 (s:0x42e230) writes a 3/3/8 or 3/3/9
+  item's name string (`_Items.CreaterName`, the buyer's alias) into the item spawn; CIItem::vslot_025
+  (c:0x9e1d00) appends `(*%s)` / `(%s)` to the label. OpenSRO's ground snapshots never carried it; they
+  do now, after the fixed snapshots (OURS framing, older readers unaffected).
+- **The NPC thieves' bodies (READ).** Their rows' models are `xxx` (MEASURED). The server rolls
+  `rand() & 0xff` per monster (CGObjMob::vslot_000 s:0x4c1030) and sends it after the class byte for
+  1/2/1/2 and 1/2/1/3 (s:0x4c19d6); the client dresses body `byte % n` of the race's list (Country 3 ->
+  China) in the weapon of the row's DefaultSkill_1 (ReqCast_Weapon1), a hunter's armour by weapon type, a
+  shield for 2/3/7/15 -- each stepping down a degree until it loads -- and the TRADE_THIEF / _HUNTER suit
+  02 or 03 by the viewer's own rand() (icscriptobj::FUN_009e3c40, ICMonster::FUN_009d3470). Ours drew the
+  capsule. OPEN: what fills the body list (INFERRED: the 26 creatable China bodies, in id order).
+- **Pet potions (READ).** SendItem_HandleUseItem (c:0x796660) sends a COS HP potion (3/3/1/4, 5, 7), the
+  HGP potion (3/3/1/9) and the pet cure (3/3/2/7) with the CURRENT COS's uid (none:
+  COSPETERR_CANT_USEITEM, an ability pet or a soldier: _CANT_USE_WRONGOBJECT, nothing sent); selecting
+  one's own COS makes it current (0x778784). The client sent no uid, so the server refused every use
+  (0x187a) -- the user's "it won't let me". The server's slot 327 (s:0x49d240) holds each potion kind's
+  reuse bit (8 / 0x10 / 0x20) for 1.1 s (0xb461b8); OpenSRO had no lock.
+- **Server.** `cosuse.go` (the reuse lock, result 2 for a heal below 1), `grounditem.go`
+  (`GroundItemSnapshot.Creator`, `EncodeSpawned`, the list's creators), `combat.Monster.Body` and
+  `MonsterRarityBodyBit` / `MonsterListFlagBody` (`combat.go`, `monsterlist.go`). Tests in
+  `cos805_test.go`: a transport healed by uid, refused with none, the 1.1 s lock; the creator on both
+  packets and an older reader; the body byte only to a session that asked.
+- **Client.** `World3D`: the own plate's alias, `_job_plate_decor` (the mark beside the name, the OURS
+  title), `_use_cos_item` (the bag's right-click and the quick slots), `_click_cos` making one's own COS
+  current, `_dress_job_mob` (the rows and skill weapons read on a worker after the entry); `JobMobDress`;
+  `GroundItems.creator_suffix`; `VideoOptions.JOB_TITLES`; `SkinnedBsrAssembler.AssembledCharacter.
+  default_group` (a dressed body's monster clip lookups read its weapon group). QA steps `bag_use:`,
+  `plates`, `ground`, `mobs`. Test: `world/job_mob_dress_test.gd`.
+- **QA (box, `/var/tmp/r805/qa805.sh`, qa802.sh's prod flags).** Tess joined the traders as Merchy: her
+  plate `Tess` before the suit, `*Merchy` in it with the title `Amateur Trader` left (offset -197.5) and the
+  mark right (+35.6). A COS HP potion from the bag on her donkey: `bag slot 2 used on COS 2113929217`, its HP
+  pushed back; a second one 2 frames later `Still have time to reuse the item.`; a third 50 frames later
+  used. 100 White Silk, the field: the wave's MOB_THIEF_NPC_1079 (body byte 14) dressed as body 1921, a
+  woman, in a sword (101), a shield (281) and the thief suit (2173), group sword; it killed Tess and the
+  donkey, and the silk on the ground read `White Silk(*Merchy) x100`. A second run: MOB_THIEF_NPC_1054
+  (byte 56) as body 1911 (chinaman_monk) with a bow (245) and the suit (2163), its visible meshes the face,
+  `bow_11`, `thief_04_part1` / `_part2` (the body's own clothes hidden under the suit); it shot Tess from
+  range and killed the donkey.
+- **Gates.** Server `go test ./...` all ok, `go vet` clean. Client `run_gd_tests.sh`: the first run's one
+  failure was video_options_test's row list, which pinned the 20 rows before Job Titles on Names; updated,
+  the final run "ran 344 GDScript test(s)", 0 failing.
+- **Perf gate** (`--base 83bfc679 --sites jangan --frames 60000`, 1280x720, median of 3): frame 0.90 /
+  0.89 ms SAME, entry 8571 / 8733 ms SAME, freeze 2734 / 2727 ms SAME, hitches 5 / 5 SAME.
+
 ## Eight-hundred-and-fourth round: the NPC thieves and hunters round a caravan
 
 The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off client

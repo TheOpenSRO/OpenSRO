@@ -339,9 +339,41 @@ The spawn record carries the job type and level always and the alias as the
 name while a suit is worn.
 
 The client (READ): the plate is `"*" + name` in job mode with the 16 x 16
-`com_job_*` icon above it, the guild line hidden; the strip bar is a yellow
+`com_job_*` icon beside it, the guild line hidden; the strip bar is a yellow
 `0xFFFFEE1F` quad 48 x 2 px at (x - 24, y + 10) shrinking 4.8 px a second;
 the target window is `CIFTargetWindowJobPlayer`.
+
+### The plate in a suit (round 805)
+
+- **The name (READ).** At world entry `CICPlayer::vslot_025` (c:0x9d9a80) reads
+  0x3013's second string, the alias, into +0x2098 (slot 23, c:0x9ddd4d..0x9ddd8e),
+  and when the job state is not 4 hands it to the name setter (slot 29,
+  c:0x9da2aa..0x9da2cf), which draws `"*" + alias`. So one's own plate in a
+  suit reads `*alias`, as others see it. OURS: the plate follows a wear or an
+  alias change mid-game too (the original's refresh after 0x3038 is OPEN).
+- **The job mark (READ, round 800 corrected).** The overhead draw
+  (FUN_009dea30) takes the name box's left x from FUN_008b2d30 and draws the
+  16 x 16 `com_job_*` quad from x - 20.0 to x - 4.0 (`fsub 0xe1b830`,
+  `fadd 0xe1b8e0`), top-aligned with the box: left of the name, 4 px clear.
+  Round 800 had read the 20 as a rise and drawn the mark above the name.
+- **The title (READ).** The yellow title slot (vtable slot 30, c:0x9c28a0, the
+  colour 0xffffe65b) is emptied for any CICharactor whose job state is not 4:
+  the original draws no title over a suited player.
+- **OURS, the user's choice: Job Titles on Names** (Video, on by default;
+  `VideoOptions.JOB_TITLES`). As the user's private-server reference draws it:
+  the class title `UIIT_STT_CLASS_[EU_]X_<job level>` (the race's table, as
+  CIFPlayerInfo picks it) in the title colour, one space left of `*alias`,
+  and the mark right of the name. Off is the original's plate.
+
+### A dropped good's owner (round 805)
+
+`CInstanceItem::vslot_010` (s:0x42e230) writes a 3/3/8 or 3/3/9 item's name
+string (instance +0x40, `_Items.CreaterName`; a good's buyer's alias at the
+purchase) into the item spawn. `CIItem::vslot_025` (c:0x9e1d00) stores it at
++0x290 and the label appends it with no space: `"(*%s)"` (0xde3214) for a
+3/3/8 good, `"(%s)"` (0xd99610) for 3/3/9 -- `White Silk(*Merchy)`. OpenSRO
+sends it after the snapshot (`GroundItemSnapshot.Creator`;
+`docs/protocol/ground_items.md`).
 
 Teleport rules (READ s:0x513c58): rule 6 refuses only in job state != 4; rule
 2 refuses with a cart (0x1c10); rule 7 refuses a thief's suit with a cart.
@@ -718,6 +750,41 @@ no wave this time. Else the wave.
   killing player). A job death by them is cause 1 (Job PvP above).
 - **How long they stay:** the spawn routine keeps no record of a wave and
   nothing removes one; it stays until killed.
+
+### Their bodies (round 805)
+
+Every MOB_[EU_]THIEF_NPC / MOB_[EU_]HUNTER_NPC row's model is `xxx`
+(MEASURED). The original draws each as a creatable character body, dressed
+(READ):
+
+- **The body byte.** `CGObjMob::vslot_000` (s:0x4c1030) rolls `rand() & 0xff`
+  into +0x1ce4 when a monster is made; the spawn writer (vslot_294,
+  s:0x4c19d6) sends it after the class byte for 1/2/1/2 and 1/2/1/3 only, and
+  `CICMonster::vslot_025` (c:0x9d3a11) hands it to ICMonster::FUN_009d3470.
+- **The body.** The race is the row's Country (0 or 3 China, 1 Europe; every
+  thief and hunter row is 3, MEASURED); the body is entry `byte % n` of the
+  race's list (0xeedf08+0x294 / +0x2bc). What fills the list is OPEN;
+  INFERRED: the race's creatable bodies (OpenSRO: in id order).
+- **The outfit** (icscriptobj::FUN_009e3c40). The degree of the row's level
+  (FUN_009e2260: a step at 8, 16, 24, 32, 42, 52, 64, 76, 90, 104, 120, 141,
+  164). The weapon `ITEM_<CH|EU>_<WORD>_<deg>_A` by the weapon type of the
+  row's DefaultSkill_1 (its ReqCast_Weapon1; 2 without a skill), stepping
+  down a degree until an item loads -- 2 SWORD, 3 BLADE, 4 SPEAR, 5 TBLADE,
+  6 BOW, 7 SWORD, 8 TSWORD, 9 AXE, 10 DARKSTAFF, 11 TSTAFF, 12 CROSSBOW,
+  13 DAGGER, 14 HARP, 15 STAFF. A hunter's six pieces
+  `ITEM_<race>_<M|W>_<CLOTHES|LIGHT|HEAVY>_<deg>_<CA|SA|BA|LA|AA|FA>_A`
+  (clothes for 2, 4, 10, 11, 14, 15; heavy for 3, 5-9; light for 12, 13; the
+  first piece becomes HA for good the first time rand() is odd); a thief
+  wears none. A shield `ITEM_<race>_SHIELD_<deg>_A` for 2, 3, 7 and 15.
+- **The suit** over it: `ITEM_<race>_<M|F>_TRADE_<THIEF|HUNTER>_<NN>`, NN 02
+  or 03 by the viewer's own rand() % 2 in China (each viewer may see a
+  different one), 01 / 03 / 05 / 07 by the level in Europe.
+- **The scale** is the class scale x the row's Scale / 100 (0x9d3a22..).
+
+OpenSRO: `combat.Monster.Body` (math/rand at spawn), sent in the rarity
+word's third byte to a client that asks (`MonsterListFlagBody`;
+`monster_ai.md`); the client's `JobMobDress` and `World3D._dress_job_mob`
+(the body's own animations by its weapon group).
 
 ### OURS, disclosed
 

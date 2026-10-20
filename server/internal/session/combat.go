@@ -717,7 +717,19 @@ type MonsterSnapshot struct {
 	// reads the word whole as the rank, and a party monster's 0x101 would
 	// show it no rank at all (hud_target's table has no such rarity).
 	Party bool
+	// Body is the monster's body byte (round 805, combat.Monster.Body), sent
+	// only to a session that asked (MonsterListFlagBody) -- HasBody says it
+	// rides in this record.
+	Body    byte
+	HasBody bool
 }
+
+// MonsterRarityBodyBit marks a rarity word that carries the body byte in its
+// third byte (bits 16..23, round 805). OURS framing of the original's one
+// extra byte after the class byte (CGObjMob::vslot_294 s:0x4c19d6 sends it for
+// an NPC thief or hunter only; OpenSRO sends it for every monster to a client
+// that asked, and the client reads it for those two kinds).
+const MonsterRarityBodyBit = 0x200
 
 // MonsterRarityPartyBit is where the rarity word carries the party flag
 // (round 660): bit 8, above every rank (0..8). OURS, an additive placeholder
@@ -739,6 +751,9 @@ func (m *MonsterSnapshot) Encode() []byte {
 	rarity := uint32(m.Rarity)
 	if m.Party {
 		rarity |= MonsterRarityPartyBit
+	}
+	if m.HasBody {
+		rarity |= MonsterRarityBodyBit | uint32(m.Body)<<16
 	}
 	binary.LittleEndian.PutUint32(buf[12:16], rarity)
 	return append(out, buf...)
@@ -771,11 +786,13 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 	rarity := binary.LittleEndian.Uint32(rest[12:16])
 	return &MonsterSnapshot{
 		ID: id, Name: names[0], CodeName: names[1], X: x, Y: y, Z: z,
-		MaxHP:  int32(binary.LittleEndian.Uint32(rest[0:4])),
-		HP:     int32(binary.LittleEndian.Uint32(rest[4:8])),
-		Level:  int32(binary.LittleEndian.Uint32(rest[8:12])),
-		Rarity: int32(rarity &^ MonsterRarityPartyBit),
-		Party:  rarity&MonsterRarityPartyBit != 0,
+		MaxHP:   int32(binary.LittleEndian.Uint32(rest[0:4])),
+		HP:      int32(binary.LittleEndian.Uint32(rest[4:8])),
+		Level:   int32(binary.LittleEndian.Uint32(rest[8:12])),
+		Rarity:  int32(rarity & 0xff),
+		Party:   rarity&MonsterRarityPartyBit != 0,
+		HasBody: rarity&MonsterRarityBodyBit != 0,
+		Body:    byte(rarity >> 16),
 	}, rest[16:], nil
 }
 
@@ -860,7 +877,23 @@ func monsterSnapshotOf(m combat.Monster) MonsterSnapshot {
 func monsterSnapshotFor(sess *gateway.Session, m combat.Monster) MonsterSnapshot {
 	s := monsterSnapshotOf(m)
 	s.Party = m.Party && monsterPartyAsked(sess)
+	if monsterBodyAsked(sess) {
+		s.Body, s.HasBody = m.Body, true
+	}
 	return s
+}
+
+// monsterBodyKey is the session value that records MonsterListFlagBody.
+const monsterBodyKey = "session.monsterBody"
+
+// monsterBodyAsked reports whether sess reads the body byte (round 805).
+func monsterBodyAsked(sess *gateway.Session) bool {
+	if sess == nil {
+		return false
+	}
+	v, ok := sess.Get(monsterBodyKey)
+	b, _ := v.(bool)
+	return ok && b
 }
 
 // monsterPartyKey is the session value that records a client's
@@ -961,12 +994,22 @@ func BroadcastMonsterSpawned(hub *world.Hub, monsters *combat.Hub, id int64) {
 	if !ok {
 		return
 	}
-	msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(m.Heading)}
-	p := &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
-	var withParty *proto.Packet
-	if m.Party {
-		msg.Monster.Party = true
-		withParty = &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
+	// One packet per form a session reads (the party flag, round 660; the
+	// body byte, round 805), made once each.
+	forms := map[[2]bool]*proto.Packet{}
+	packetFor := func(sess *gateway.Session) *proto.Packet {
+		key := [2]bool{m.Party && monsterPartyAsked(sess), monsterBodyAsked(sess)}
+		if p := forms[key]; p != nil {
+			return p
+		}
+		msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(m.Heading)}
+		msg.Monster.Party = key[0]
+		if key[1] {
+			msg.Monster.Body, msg.Monster.HasBody = m.Body, true
+		}
+		p := &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
+		forms[key] = p
+		return p
 	}
 	// Round 656: to the players whose area of interest holds the new
 	// monster's cell (aoi.go). Under the area-of-interest runtime it goes as
@@ -983,11 +1026,7 @@ func BroadcastMonsterSpawned(hub *world.Hub, monsters *combat.Hub, id int64) {
 			v.deliverViewEvents(viewEvents{sess: e.Session, enters: []int64{id}})
 			continue
 		}
-		if withParty != nil && monsterPartyAsked(e.Session) {
-			sendMonsterPush(e.Session, withParty)
-			continue
-		}
-		sendMonsterPush(e.Session, p)
+		sendMonsterPush(e.Session, packetFor(e.Session))
 	}
 }
 

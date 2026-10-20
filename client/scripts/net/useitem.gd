@@ -60,6 +60,17 @@ const OPTION_MAP := 7
 ## the COS uid, or the pet item's bag index for the revival and the clock.
 const OPTION_COS_TARGET := 0xC5
 
+## Whether TypeIDs are an item the client sends with the current COS's uid
+## (round 805; SendItem_HandleUseItem 0x796660, READ): a COS HP potion 3/3/1/4,
+## /5, /7, the HGP potion 3/3/1/9 and the pet cure 3/3/2/7 set local_160, which
+## appends the u32 uid to 0x704C.
+static func is_cos_target_item(types: PackedInt32Array) -> bool:
+	if types.size() < 4 or types[0] != 3 or types[1] != 3:
+		return false
+	if types[2] == 1:
+		return types[3] == 4 or types[3] == 5 or types[3] == 7 or types[3] == 9
+	return types[2] == 2 and types[3] == 7
+
 static func encode_use(character_name: String, inventory_slot: int, option: int = 0, target: int = 0) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
 	var out := PackedByteArray()

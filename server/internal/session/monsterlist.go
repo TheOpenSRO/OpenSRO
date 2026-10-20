@@ -43,6 +43,10 @@ const MonsterListFlagPaged byte = 0x01
 // alone.
 const MonsterListFlagParty byte = 0x02
 
+// MonsterListFlagBody is bit 2 (round 805): the client reads the body byte
+// in the rarity word (MonsterRarityBodyBit); only such a session is sent it.
+const MonsterListFlagBody byte = 0x04
+
 // monsterListPartyAsked reads MonsterListFlagParty off a request.
 func monsterListPartyAsked(data []byte) bool {
 	return len(data) >= 1 && data[0]&MonsterListFlagParty != 0
@@ -53,6 +57,9 @@ func monsterListPartyAsked(data []byte) bool {
 func noteMonsterListCaps(sess *gateway.Session, data []byte) {
 	if monsterListPartyAsked(data) {
 		sess.Set(monsterPartyKey, true)
+	}
+	if len(data) >= 1 && data[0]&MonsterListFlagBody != 0 {
+		sess.Set(monsterBodyKey, true)
 	}
 }
 

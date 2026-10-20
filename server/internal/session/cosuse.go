@@ -46,7 +46,7 @@ func isCOSConsumable(it *refdata.Item) bool {
 
 // useCOSConsumable is one of them.
 func useCOSConsumable(ctx context.Context, sess *gateway.Session, inv inventory.Store, chars character.Store, characterID int64,
-	it *refdata.Item, held inventory.Slot, have int, req *UseItemRequest) error {
+	it *refdata.Item, held inventory.Slot, have int, req *UseItemRequest, locks *itemCooldownTracker) error {
 	d := cosWorld.depsNow()
 	if !d.enabled {
 		return cosRefusal(sess, cos.ErrCannotBeUsed, "no COS table on this server")
@@ -59,6 +59,16 @@ func useCOSConsumable(ctx context.Context, sess *gateway.Session, inv inventory.
 			return cosRefusal(sess, cos.ErrCannotBeUsed, "the item could not be used")
 		}
 		return sendUseOK(sess, have-1, it.ID)
+	}
+	// A COS HP potion's reuse lock (round 805; slot 327, s:0x49d240, READ):
+	// FUN_004eb410 is asked first -- TypeID4 4, 5, 7 hold the PC's bits 8,
+	// 0x10, 0x20 -- and a held bit answers WAIT_FOR_REUSE_DELAY (0x185b) with
+	// the item kept. The heal below arms it for 1.1 s (FUN_004e0ab0, the
+	// float 0xb461b8 at s:0x49d4e7).
+	reuseBit, hpPotion := cosPotionReuseBit(it)
+	now := useItemClock()
+	if hpPotion && locks != nil && !locks.Ready(characterID, reuseBit, now) {
+		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Error: reuseDelayRefusal}).Encode()})
 	}
 	slotForm := (it.TypeID3 == 1 && it.TypeID4 == 6) || (it.TypeID3 == 13 && it.TypeID4 == 12)
 	if slotForm {
@@ -114,16 +124,44 @@ func useCOSConsumable(ctx context.Context, sess *gateway.Session, inv inventory.
 		bonus := character.BonusOf(characterID)
 		maxHP := character.MaxHPFor(c.Str+bonus.Str, c.Level) + bonus.HP
 		hp, _ := potionRestore(it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct, c.Level, c.Str+bonus.Str, c.Int+bonus.Int, maxHP, 0)
+		if hp < 1 {
+			// FUN_0049aa70 came out below 1: result 2, nothing spent.
+			return cosRefusal(sess, 2, "that cannot be used")
+		}
 		cosWorld.mu.Lock()
 		o.rec.HP = min(o.row.MaxHP, o.rec.HP+hp)
-		now := o.rec.HP
+		hpNow := o.rec.HP
 		cosWorld.mu.Unlock()
 		if err := spend(); err != nil {
 			return err
 		}
-		sendCOSHP(o, now)
+		if hpPotion && locks != nil {
+			locks.Arm(characterID, reuseBit, cosPotionReuseDelay, now)
+		}
+		sendCOSHP(o, hpNow)
 		return nil
 	}
+}
+
+// cosPotionReuseDelay is the COS HP potion's lock (the float 0xb461b8, 1.1).
+const cosPotionReuseDelay = 1100 * time.Millisecond
+
+// cosPotionReuseBit is FUN_004eb410's bit for a COS HP potion (TypeID3 1,
+// TypeID4 4 -> 8, 5 -> 0x10, 7 -> 0x20; the jump table at 0x4eb574); ok is
+// false for any other pet consumable, which has no lock.
+func cosPotionReuseBit(it *refdata.Item) (bit uint32, ok bool) {
+	if it == nil || it.TypeID3 != 1 {
+		return 0, false
+	}
+	switch it.TypeID4 {
+	case 4:
+		return 8, true
+	case 5:
+		return 0x10, true
+	case 7:
+		return 0x20, true
+	}
+	return 0, false
 }
 
 // useOnPetItem is the revival or the clock, used on a pet's item in bag

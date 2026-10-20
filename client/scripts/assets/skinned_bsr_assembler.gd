@@ -72,6 +72,11 @@ class AssembledCharacter:
 	## when it was assembled with `canonical` (Skeleton3DBuilder.canonical_skin);
 	## null otherwise.
 	var canonical_skin: Skin = null
+	## Round 805: the group a "default" lookup reads first (animation_for) --
+	## a dressed NPC thief's or hunter's weapon group (World3D._dress_job_mob),
+	## so the monster paths' clip lookups find its weapon's clips. "" reads
+	## "default" itself, as every other body does.
+	var default_group: String = ""
 
 ## Substrings that name a standing-still animation, most specific first.
 ##
@@ -605,6 +610,8 @@ static func animation_for(
 ) -> BanReader.ParsedAnimation:
 	if assembled == null or assembled.parsed == null:
 		return null
+	if group == "default" and assembled.default_group != "":
+		group = assembled.default_group
 	var path := assembled.parsed.animation_for(action_type, group)
 	if path == "":
 		return null

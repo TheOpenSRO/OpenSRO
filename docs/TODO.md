@@ -22,6 +22,10 @@ and the safe trade (802), the NPC thieves and hunters (804). Left: the OPEN item
 - [x] **NPC thieves and hunters** -- round 804 (docs/protocol/jobs.md "NPC thieves and hunters").
       Still OPEN there: FUN_0059e870(+0xa30)'s list (the level term; the level stands in), the
       kinds the scan's COS list holds (OpenSRO: transports and growth pets nobody rides).
+- [x] **Round 805: the job names, the NPC thieves' bodies, pet potions** (docs/protocol/jobs.md
+      "The plate in a suit", "A dropped good's owner", "Their bodies"). Still OPEN there: what fills
+      the client's NPC body lists (0xeedf08+0x294 / +0x2bc; the creatable bodies in id order stand
+      in), the original's own-plate refresh after a mid-game wear or alias change.
 - [ ] **Specialty trade OPEN items:** the bargain goods' schedule (`-special-goods` stands in), timed
       job 7 (0x18d1), the 0x42404 mode, `FUN_0061aa40`'s rule list, a party's share of a sale, the
       CIFSpecialtyDeal calculator's OK and the Sell All packets, the stock's write-back, the goods of a

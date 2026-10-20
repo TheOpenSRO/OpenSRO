@@ -48,6 +48,9 @@ class Snapshot:
 	var y: float
 	var z: float
 	var owner_id: int  # 0 = anyone may pick it
+	## The stack instance's name string (round 805): a trade good's buyer's
+	## job alias, "" for most items (session.GroundItemSnapshot.Creator).
+	var creator := ""
 
 class ListResult:
 	var items: Array[Snapshot] = []
@@ -122,9 +125,26 @@ static func _decode_snapshot(data: PackedByteArray, offset: int) -> Array:
 	s.owner_id = data.decode_s64(offset + 33)
 	return [s, offset + 41]
 
+## OpGroundItemSpawned: the snapshot, then (round 805) its creator as a u16
+## length and UTF-8 bytes; a payload without it leaves creator "".
 static func decode_snapshot(data: PackedByteArray) -> Snapshot:
 	var decoded := _decode_snapshot(data, 0)
-	return decoded[0]
+	var s: Snapshot = decoded[0]
+	if s != null:
+		var named := _decode_string(data, int(decoded[1]))
+		if named[1] >= 0:
+			s.creator = named[0]
+	return s
+
+## A u16-length string at offset: [text, next offset], or ["", -1] when it
+## is not there whole.
+static func _decode_string(data: PackedByteArray, offset: int) -> Array:
+	if offset < 0 or offset + 2 > data.size():
+		return ["", -1]
+	var n := data.decode_u16(offset)
+	if offset + 2 + n > data.size():
+		return ["", -1]
+	return [data.slice(offset + 2, offset + 2 + n).get_string_from_utf8(), offset + 2 + n]
 
 static func decode_list_result(data: PackedByteArray) -> ListResult:
 	var result := ListResult.new()
@@ -140,6 +160,14 @@ static func decode_list_result(data: PackedByteArray) -> ListResult:
 			return result
 		result.items.append(decoded[0])
 		offset = decoded[1]
+	# Round 805: the creators, in order, after the last snapshot (absent from
+	# an older server).
+	for item in result.items:
+		var named := _decode_string(data, offset)
+		if named[1] < 0:
+			break
+		(item as Snapshot).creator = named[0]
+		offset = named[1]
 	return result
 
 static func decode_removed(data: PackedByteArray) -> Removed:

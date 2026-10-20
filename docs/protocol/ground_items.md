@@ -342,8 +342,8 @@ Server `internal/session/grounditem.go`, client `scripts/net/ground_items.gd`:
 | op | dir | payload |
 |---|---|---|
 | `OpGroundItemList 0x006a` | c→s | (empty) -- what lies in my zone |
-| `OpGroundItemListResult 0x006b` | s→c | u16 count, then snapshots |
-| `OpGroundItemSpawned 0x006c` | s→zone | one snapshot |
+| `OpGroundItemListResult 0x006b` | s→c | u16 count, then snapshots, then (round 805) one creator string per snapshot, in order |
+| `OpGroundItemSpawned 0x006c` | s→zone | one snapshot, then (round 805) its creator string |
 | `OpGroundItemRemoved 0x006d` | s→zone | s64 id, s64 reason (0 picked / 1 expired), s64 picker |
 | `OpGroundItemOwnerReleased 0x006e` | s→zone | s64 id (the real 0x304D) |
 | `OpPickUp 0x006f` | c→s | name string, s64 ground id |
@@ -351,7 +351,10 @@ Server `internal/session/grounditem.go`, client `scripts/net/ground_items.gd`:
 | `OpPickUpMotion 0x3036` | s→zone | u32 the picker's id, u8 angle -- **retail's own** (round 785, "The pick-up motion") |
 
 A snapshot is: s64 id, s64 item id, u32 quantity, u8 gold, f32 x/y/z, s64 owner
-(0 = free). The refusal codes are the engine's (`3`, `4`, `0x1812`, `0x1813`,
+(0 = free). A creator string (round 805) is a u16 length and UTF-8 bytes: the
+stack instance's name, a trade good's buyer's alias (`jobs.md`, "A dropped
+good's owner"), "" for most items. It rides after the fixed snapshots (OURS
+framing) so a reader that walks 41-byte snapshots still reads both packets. The refusal codes are the engine's (`3`, `4`, `0x1812`, `0x1813`,
 `0x1839`); the handler also answers `0x1839` for its own failures the engine has
 no code for (an undecodable request, an unknown character, a bag or purse that
 will not take the stack). Until round 493 a gone drop answered `0x1839` too; it

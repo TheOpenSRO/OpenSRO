@@ -111,12 +111,19 @@ const FOG := 18
 ## names them.
 const NIGHT := 19
 const SUN_SHADOWS := 20
+## OURS (round 805, the user's choice; World3D._job_plate_decor): a suited
+## player's plate as the user's private-server reference draws it -- the class
+## title (UIIT_STT_CLASS_[EU_]X_<job level>, the title colour #FFE65B) left of
+## "*alias" and the job mark right of it. Off is the original's: the title
+## slot emptied in a suit (READ, c:0x9c28a0) and the mark left of the name
+## (c:0x9debe3). On by default.
+const JOB_TITLES := 21
 ## The values a profile holds, by entry (QUALITY is held apart).
 const VALUE_ENTRIES := [SHADOW, SCENERY, CHARACTER, WATER_REFLECTION, WATER_DETAIL, METAL, LIGHT,
 	FILTERING, TEXTURE, LENS_FLARE, BLOOM, DYNAMIC_ANIMATION, EFFECT, FRIEND_ENEMY, SSAO, FOG,
-	NIGHT, SUN_SHADOWS]
+	NIGHT, SUN_SHADOWS, JOB_TITLES]
 ## The OURS rows no preset names: the player's value in every quality.
-const OURS_ENTRIES := [SSAO, FOG, NIGHT, SUN_SHADOWS]
+const OURS_ENTRIES := [SSAO, FOG, NIGHT, SUN_SHADOWS, JOB_TITLES]
 
 const QUALITY_LOW := 0
 const QUALITY_MIDDLE := 1
@@ -172,6 +179,8 @@ const ROWS := [
 		"choices": ["", "", ""], "fallback": ["Night Darkness", "Original", "Dim", "Dark"]},
 	{"entry": SUN_SHADOWS, "key": "sun_shadows", "label": "", "tip": "",
 		"choices": ["", ""], "fallback": ["Shadows Follow the Sun", "Off", "On"]},
+	{"entry": JOB_TITLES, "key": "job_titles", "label": "", "tip": "",
+		"choices": ["", ""], "fallback": ["Job Titles on Names", "Off", "On"]},
 	{"entry": RENDERER, "key": "renderer", "label": "", "tip": "",
 		"choices": ["", ""], "fallback": ["Renderer (on restart)", "Forward+", "Compatibility"]},
 ]
@@ -192,7 +201,7 @@ const PRESETS := {
 const DEFAULTS := {
 	SHADOW: 1, SCENERY: 2, CHARACTER: 2, WATER_REFLECTION: 0, WATER_DETAIL: 1, METAL: 1,
 	LIGHT: 1, FILTERING: 1, TEXTURE: 1, LENS_FLARE: 1, BLOOM: 1, DYNAMIC_ANIMATION: 1,
-	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0, FOG: 1, NIGHT: 0, SUN_SHADOWS: 1,
+	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0, FOG: 1, NIGHT: 0, SUN_SHADOWS: 1, JOB_TITLES: 1,
 }
 ## The user's decision (2026-10-02): retail's default, Middle (READ).
 const DEFAULT_QUALITY := QUALITY_MIDDLE

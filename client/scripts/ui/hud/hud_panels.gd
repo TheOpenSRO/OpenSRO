@@ -737,6 +737,9 @@ signal system_notice(text: String)
 ## holding `count` (round 634): retail opens the "Chat to all" window for it
 ## (IFSlotWithHelp 0x676570's case 5 -> 0x79b8a0) instead of using it.
 signal global_chat_requested(slot: int, count: int)
+## An item used on the current COS (is_cos_target_item, round 805) was used
+## from bag slot `slot`: World3D names the pet (World3D._use_cos_item).
+signal cos_item_requested(slot: int)
 ## A destination line of a gate's talk box (open_teleport_list, round 603) was
 ## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
 ## with the gate the list was opened at (NetClient.teleport_use).
@@ -4106,6 +4109,11 @@ static func is_global_chat_item(types: PackedInt32Array) -> bool:
 static func is_reverse_return_scroll(types: PackedInt32Array) -> bool:
 	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 3
 
+## Whether TypeIDs are an item used on the current COS (round 805,
+## UseItemNet.is_cos_target_item).
+static func is_cos_target_item(types: PackedInt32Array) -> bool:
+	return UseItemNet.is_cos_target_item(types)
+
 # --- The reverse return scroll (round 778) -----------------------------------
 #
 # The box (ReverseReturnBox, message box kind 0x21) and the world map's
@@ -5040,6 +5048,10 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 		# used (IFSlotWithHelp::FUN_00676570, case 3 -> message box 0x21).
 		if is_reverse_return_scroll(item_types(item_id)):
 			open_reverse_return_box(slot)
+			return
+		# Round 805: a pet's potion, food or cure names the current COS.
+		if is_cos_target_item(item_types(item_id)):
+			cos_item_requested.emit(slot)
 			return
 		if NetClient.current_character_name != "":
 			UiSounds.expect_use(item_types(item_id))

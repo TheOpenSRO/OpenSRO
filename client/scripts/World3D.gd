@@ -483,6 +483,9 @@ func apply_video_options(o: VideoOptions) -> void:
 	# Night Darkness and Shadows Follow the Sun (OURS, round 786, NightLight):
 	# every group written again at the new scale; the shadow light taken to the
 	# hour at once (or back to the fixed light).
+	# Job Titles on Names (OURS, round 805): every suited plate again.
+	if before != null and changed.call(VideoOptions.JOB_TITLES):
+		_refresh_job_plates()
 	if before != null and (changed.call(VideoOptions.NIGHT) or changed.call(VideoOptions.SUN_SHADOWS) or changed.call(VideoOptions.SHADOW)):
 		if changed.call(VideoOptions.NIGHT) and _day_cycle.state != null and _env_record != null and _dungeon == null:
 			_day_pushed.clear()
@@ -2861,6 +2864,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_warning.setup(_ui_builder, HudNotice.STYLE_WARNING)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
+	_hud_panels.cos_item_requested.connect(_use_cos_item)
 	# The reverse return scroll's box and map send the use (round 778).
 	_hud_panels.reverse_return_requested.connect(_on_reverse_return_requested)
 	# The return scrolls' casting bar's cancel (round 779): 0x705B.
@@ -8254,6 +8258,8 @@ func _prewarm_after_entry() -> void:
 	if _prewarmed_after_entry:
 		return
 	_prewarmed_after_entry = true
+	# Round 805: the NPC thieves' and hunters' rows, read on a worker.
+	_job_mob_tables_start()
 	# The far twins' shaders one a frame (_prewarm_step), the bodies on the worker.
 	_prewarm_shaders = CrowdGpu.known_shaders() if CrowdGpu.enabled and _ghosts_on else []
 	if _appearance != null and not _prewarm_figures.is_empty():
@@ -9090,6 +9096,11 @@ func _load_npc_tables() -> void:
 ## offset: NPC models vary a great deal in size (the same reason the monster
 ## labels measure their skeleton), and one number puts a label through a
 ## tall NPC's face and far above a short one.
+
+## The alias and job level the own plate was last built with (round 805).
+var _plate_alias := ""
+var _plate_job_level := -1
+
 ## Puts (or replaces) the local player's name plate, the same one every other
 ## entity carries.
 ##
@@ -9110,13 +9121,20 @@ func _refresh_player_name_plate() -> void:
 	if who == "":
 		return
 	var top := _skeleton_top(_player_skeleton) if _player_skeleton != null else 1.8 * PLAYER_SCALE_RATIO
-	# Round 800: "*" + the name and the job mark while a suit is worn
-	# (INFERRED: the own name stays the character's name -- 0x3013 mode 1's
-	# first string -- and FUN_009dbcc0 refreshes the plate after a change).
+	# Round 800: "*" + the name and the job mark while a suit is worn.
+	# Round 805: the name is the job alias then (READ: CICPlayer::vslot_025
+	# c:0x9da2aa..0x9da2cf hands the name setter, slot 29, the alias at
+	# +0x2098 -- 0x3013's second string -- when the job state is not 4). The
+	# alias on a wear or an alias change mid-game is OURS (the original's
+	# refresh after 0x3038 is OPEN); it matches what others see.
 	var js := _own_job_state()
+	_plate_alias = NetClient.job_alias
+	if js >= 1 and js <= 3 and _plate_alias != "":
+		who = _plate_alias
 	var plate := _name_plate(job_plate_text(who, js), top)
 	player.add_child(plate)
-	_job_mark(plate, plate, js, false)
+	_plate_job_level = NetClient.job_level
+	_job_plate_decor(plate, plate, js, NetClient.job_level, _race_of_body(_player_body) == 1, false)
 
 ## `swept` (round 673's review): whether the plate follows the 300-from-the-
 ## player rule (NamePlates.Sweep), which owns its `visible`. A ground item's
@@ -9212,10 +9230,11 @@ func _fit_party_mark(label: Label3D, mark: Sprite3D) -> void:
 # (L"*" at 0xd92240); the name is the spawn's, which carries the job alias
 # while a suit is worn (pc_spawn row 21). FUN_009dea30 (the overhead draw,
 # 0x9dec35..0x9dec73) draws a 16 x 16 quad of com_job_merchant / _thief /
-# _hunter.ddj (the table at 0xec7570, indexes 0..2) by the job state, its top
-# 20 px above the name's (`fsub 0xe1b830` = 20.0, `fadd 0xe1b8e0` = 16.0),
-# and the guild line only at job state 4 (0x9df082..0x9df09d). INFERRED: the
-# quad centred on the name (its x was not followed). An observer's job state
+# _hunter.ddj (the table at 0xec7570, indexes 0..2) by the job state, its left
+# 20 px left of the name box's (`fsub 0xe1b830` = 20.0 on the box's x, which
+# FUN_008b2d30 writes first; `fadd 0xe1b8e0` = 16.0), top-aligned with the
+# box (round 805 corrected round 800's reading of the 20 as a rise), and the
+# guild line only at job state 4 (0x9df082..0x9df09d). An observer's job state
 # comes only from the spawn record: a suit put on in view changes nothing
 # for it (READ: the 0x3038 handler only re-dresses), so a plate keeps what it
 # spawned with until the player is spawned again.
@@ -9225,9 +9244,9 @@ const JOB_MARK_TEXTURES := {
 	3: "interface\\ifcommon\\com_job_hunter.ddj",
 }
 const JOB_MARK_PX := 16.0
-## The quad's centre over the plate's centre, in screen pixels: its top is 20
-## above the name's top and the name is 16 tall (the party mark's measure).
-const JOB_MARK_RAISE_PX := 20.0
+## The gap between the quad and the name box (READ: the quad's left 20.0 left
+## of the box, 16.0 wide -- 4 px clear; round 800 had read the 20 as a rise).
+const JOB_MARK_GAP_PX := 4.0
 
 ## The plate text for a name at a job state ("*" + name out of state 4).
 static func job_plate_text(name: String, job_state: int) -> String:
@@ -9237,11 +9256,13 @@ static func job_plate_text(name: String, job_state: int) -> String:
 
 ## The job mark over `label` (a child of `holder`, swept with it), or null for
 ## job state 4.
-func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool) -> Sprite3D:
+func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool, right: bool = false) -> Sprite3D:
 	var old := holder.get_node_or_null("JobMark")
 	if old != null:
 		if swept:
 			_plate_sweep.drop(old as Node3D)
+		# Out of the tree at once, so a mark re-made this frame is "JobMark".
+		holder.remove_child(old)
 		old.queue_free()
 	if _ui_builder == null or not JOB_MARK_TEXTURES.has(job_state):
 		return null
@@ -9259,14 +9280,82 @@ func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool) -> S
 	mark.position = label.position if holder != label else Vector3.ZERO
 	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
 	var text_size := font.get_string_size("Ag", HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
+	var name_w := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
 	var k := text_size.y / JOB_MARK_PX
 	mark.pixel_size = label.pixel_size * k * JOB_MARK_PX / float(tex.get_height())
 	var tex_px := float(tex.get_height()) / JOB_MARK_PX
-	mark.offset = Vector2(0.0, JOB_MARK_RAISE_PX * tex_px)
+	# Round 805: beside the name, not over it -- the quad's left 20 px left of
+	# the name box's left (READ, c:0x9debe3 `fsub 20.0` on the box's x, +16.0
+	# its right; the y kept), so 4 px clear of it, as the party mark (round
+	# 660). right (the OURS job title layout) mirrors it past the name's end.
+	var side := 1.0 if right else -1.0
+	mark.offset = Vector2(side * (name_w * 0.5 / k + JOB_MARK_GAP_PX + JOB_MARK_PX * 0.5) * tex_px, 0.0)
 	holder.add_child(mark)
 	if swept:
 		_plate_sweep.add(mark)
 	return mark
+
+## A suited player's plate extras (round 805): the job mark, and with the OURS
+## Job Titles on Names row on (VideoOptions.JOB_TITLES) the class title.
+##   - Off, the original's: no title -- the title slot (vtable slot 30,
+##     c:0x9c28a0) is emptied for a CICharactor whose job state is not 4,
+##     READ -- and the mark left of the name (_job_mark).
+##   - On, OURS (the user's private-server reference): the class title
+##     UIIT_STT_CLASS_[EU_]X_<job level> (JobText.class_key, the race's table
+##     as CIFPlayerInfo picks it) in the original's title colour #FFE65B
+##     (READ, 0xffffe65b at c:0x9c28ed), one space left of "*alias", and the
+##     mark right of the name.
+## Job state 4 (no suit) has neither.
+func _job_plate_decor(label: Label3D, holder: Node3D, job_state: int, job_level: int, europe: bool, swept: bool) -> void:
+	var old := holder.get_node_or_null("JobTitle")
+	if old != null:
+		if swept:
+			_plate_sweep.drop(old as Node3D)
+		holder.remove_child(old)
+		old.queue_free()
+	var titled := job_state >= 1 and job_state <= 3 and job_titles_on()
+	var title_text := ""
+	if titled:
+		title_text = _resolve_any_text(JobText.class_key(job_state, job_level, europe), "")
+	_job_mark(label, holder, job_state, swept, title_text != "")
+	if title_text == "":
+		return
+	var title := _name_plate(title_text, 0.0, false)
+	title.name = "JobTitle"
+	title.remove_from_group("name_plates")
+	title.position = label.position if holder != label else Vector3.ZERO
+	title.modulate = JOB_TITLE_COLOUR
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var name_w := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
+	var title_w := font.get_string_size(title_text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
+	var gap := font.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x
+	title.offset = Vector2(-(name_w * 0.5 + gap + title_w * 0.5), 0.0)
+	title.render_priority = label.render_priority
+	holder.add_child(title)
+	if swept:
+		_plate_sweep.add(title)
+
+## The OURS Job Titles on Names row (round 805), on unless set Off.
+func job_titles_on() -> bool:
+	return video_options().value(VideoOptions.JOB_TITLES) == 1
+
+## The title colour (READ: 0xffffe65b, GlobalDataManager::FUN_009c28a0).
+const JOB_TITLE_COLOUR := Color(1.0, 0xe6 / 255.0, 0x5b / 255.0)
+
+## Every suited plate laid out again (the row changed).
+func _refresh_job_plates() -> void:
+	_refresh_player_name_plate()
+	for id in _other_bodies:
+		var node: Node3D = _other_bodies[id]
+		if node == null or not is_instance_valid(node):
+			continue
+		var plate := node.get_node_or_null("Name") as Label3D
+		if plate == null:
+			continue
+		var job: Dictionary = NetClient.user_jobs.get(int(id), {})
+		var js := int(job.get("state", UserSpawnNet.JOB_STATE_NONE))
+		if js >= 1 and js <= 3:
+			_job_plate_decor(plate, node, js, int(job.get("level", 0)), _other_is_europe(node), true)
 
 ## The own player's job state: its worn slot-8 item's (0x9db8b0 on the own
 ## player, GlobalDataManager::FUN_009dbcc0 recomputing it on a change).
@@ -9895,7 +9984,11 @@ func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	if batched and not _plate_batch_add(plate, node):
 		plate.visible = true
 		_plate_sweep.add(plate)
-	_job_mark(plate, node, js, true)
+	_job_plate_decor(plate, node, js, int(job.get("level", 0)), _other_is_europe(node), true)
+
+## Whether another player's body (its "body" meta) is a European one.
+func _other_is_europe(node: Node) -> bool:
+	return node.has_meta("body") and _race_of_body(String(node.get_meta("body"))) == 1
 
 ## Draws `label` (made by _name_plate, unswept) in the batch over `owner`;
 ## false when the batch is off (the caller sweeps it as a Label3D).
@@ -12413,6 +12506,11 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		if _hud_panels != null and HudPanels.is_reverse_return_scroll(_hud_panels.bag_item_types(int(item["slot"]))):
 			_hud_panels.open_reverse_return_box(int(item["slot"]))
 			return
+		# Round 805: a pet's potion, food or cure names the current COS, as
+		# the bag's right-click does.
+		if _hud_panels != null and HudPanels.is_cos_target_item(_hud_panels.bag_item_types(int(item["slot"]))):
+			_use_cos_item(int(item["slot"]))
+			return
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
@@ -13390,6 +13488,10 @@ func _click_player(character_id: int, char_name: String) -> String:
 ## A click on a COS: an enemy's selects it (the hostile ring), and a click on
 ## it selected, or with Alt, attacks it; any other COS is passed over ("").
 func _click_cos(uid: int) -> String:
+	# Round 805: selecting one's own COS makes it the current one (0x778784
+	# -> 0x810fd0), the pet a potion from the bag lands on.
+	if NetClient.cos_own.has(uid) and _hud_cos != null:
+		_hud_cos.make_current(uid)
 	var alt := Input.is_key_pressed(KEY_ALT)
 	if not _cos_is_enemy(uid, alt):
 		return ""
@@ -16968,6 +17070,56 @@ func _qa_job_step() -> void:
 			print("QA TRADE: tick %d %s" % [_qa_tick, what.substr(3)])
 			if _console != null:
 				_console.submit(what.substr(3))
+		# Round 805 (QA only): bag_use:<ITEM_CODE> uses the first bag stack of
+		# that code as the bag's right-click does (a pet's item names the
+		# current COS); plates prints the suited plates (text, title, mark's
+		# side); ground prints every ground item's label; mobs every dressed
+		# NPC thief or hunter.
+		elif what.begins_with("bag_use:"):
+			var code := what.substr(8)
+			for k in 96:
+				var id := _hud_panels._bag_item_id_at_slot(k)
+				if id >= 0 and _hud_panels.item_code_for_id(id) == code:
+					print("QA JOB: tick %d bag_use %s at slot %d (current COS %d)" % [_qa_tick, code, k,
+						_hud_cos.current_uid() if _hud_cos != null else 0])
+					if HudPanels.is_cos_target_item(_hud_panels.bag_item_types(k)):
+						_use_cos_item(k)
+					else:
+						NetClient.use_item(NetClient.current_character_name, k)
+					break
+		elif what == "plates":
+			var holders: Array = [[player, player.get_node_or_null("Name") if player != null else null]]
+			for oid in _other_bodies:
+				var ob: Node3D = _other_bodies[oid]
+				if ob != null and is_instance_valid(ob):
+					holders.append([ob, ob.get_node_or_null("Name")])
+			for h in holders:
+				var plate := h[1] as Label3D
+				if plate == null:
+					continue
+				var holder: Node = plate if h[0] == player else h[0]
+				var title := holder.get_node_or_null("JobTitle") as Label3D
+				var mk := holder.get_node_or_null("JobMark") as Sprite3D
+				print("QA JOB: tick %d plate '%s' title '%s' (offset %.1f) mark %s (offset %.1f)" % [_qa_tick, plate.text,
+					title.text if title != null else "", title.offset.x if title != null else 0.0,
+					mk.texture.resource_path.get_file() if mk != null and mk.texture != null else "none", mk.offset.x if mk != null else 0.0])
+		elif what == "ground":
+			if _ground_items != null:
+				for gid in _ground_items._items:
+					print("QA JOB: tick %d ground %d label '%s'" % [_qa_tick, int(gid), _ground_items.label_text(_ground_items._items[gid])])
+		elif what == "mobs":
+			for mid in _monster_assembled:
+				var ma: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled[mid]
+				if ma != null and ma.default_group != "":
+					var mb: Node3D = _monster_bodies.get(mid)
+					var mesh_names := PackedStringArray()
+					if is_instance_valid(ma.skeleton):
+						for mi in ma.skeleton.find_children("*", "MeshInstance3D", true, false):
+							if (mi as MeshInstance3D).visible:
+								mesh_names.append(String(mi.name))
+					print("QA JOB: tick %d dressed monster %d group %s model %s visible meshes %s at %s" % [_qa_tick, int(mid), ma.default_group,
+						String(mb.get_meta("model", "")) if mb != null else "-", str(mesh_names),
+						str(mb.position) if mb != null else "-"])
 		elif what.begins_with("use:"):
 			var code := what.substr(4)
 			var used := false
@@ -23549,6 +23701,32 @@ func _on_chat_result(r: ChatNet.Result) -> void:
 	if _hud_chat != null:
 		_hud_chat.on_result(r.ok, r.type, r.index, r.code, r.target)
 
+## A pet's potion, food or cure from bag slot `slot` (round 805;
+## SendItem_HandleUseItem 0x796660, READ): it lands on the CURRENT COS
+## (COS manager +0x10, HudCos.current_uid). None out: UIIT_MSG_COSPETERR_
+## CANT_USEITEM; an ability pet or a guild soldier: _CANT_USE_WRONGOBJECT --
+## both as game lines (0x7781b0 type 5) and nothing sent. A ride, a transport
+## or a growth pet gets 0x704C with its uid.
+func _use_cos_item(slot: int) -> void:
+	if NetClient.current_character_name == "":
+		return
+	var uid := _hud_cos.current_uid() if _hud_cos != null else 0
+	var data: CosNet.Data = NetClient.cos_own.get(uid)
+	if uid == 0 or data == null:
+		_log_system(_resolve_any_text(COS_CANT_USE_ITEM_KEY, "The item cannot be used by the pet."), HudSystemMessage.TYPE_GAME)
+		return
+	var kind := CosNet.client_kind(data.kind)
+	if kind == 2 or kind == 4:
+		_log_system(_resolve_any_text(COS_WRONG_OBJECT_KEY, "The item cannot be used on that pet."), HudSystemMessage.TYPE_GAME)
+		return
+	print("World3D: bag slot %d used on COS %d" % [slot, uid])
+	if _hud_panels != null:
+		UiSounds.expect_use(_hud_panels.bag_item_types(slot))
+	NetClient.use_item_option(NetClient.current_character_name, slot, UseItemNet.OPTION_COS_TARGET, uid)
+
+const COS_CANT_USE_ITEM_KEY := "UIIT_MSG_COSPETERR_CANT_USEITEM"
+const COS_WRONG_OBJECT_KEY := "UIIT_MSG_COSPETERR_CANT_USE_WRONGOBJECT"
+
 ## The global chatting item was used from the bag: "Chat to all" opens for
 ## that slot (CIFWholeChat, round 634).
 func _on_global_chat_requested(slot: int, count: int) -> void:
@@ -25158,6 +25336,10 @@ func _on_strip_cancelled(uid: int, kind: int) -> void:
 ## The player's job changed (OpJobInfo, a join or leave, the alias, 0x30E6):
 ## the character window's job rows.
 func _on_job_changed() -> void:
+	# Round 805: the alias may land after the plate is built, or change; the
+	# OURS class title follows the job level.
+	if NetClient.job_alias != _plate_alias or NetClient.job_level != _plate_job_level:
+		_refresh_player_name_plate()
 	if _hud_panels != null and _job_flow != null:
 		_hud_panels.set_character_job(NetClient.job_kind, NetClient.job_level, NetClient.job_exp, NetClient.job_alias,
 			_job_flow.job_table)
@@ -25993,6 +26175,122 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	_monster_build_queued.erase(monster.monster_id)
 	_build_monster_body(monster)
 
+# --- The NPC thieves' and hunters' bodies (round 805, JobMobDress) -----------
+
+## code -> JobMobDress.Row and skill id -> weapon type, read once on a worker
+## (_job_mob_tables_start, after the entry); the race's body list by Country.
+var _job_mob_rows: Dictionary = {}
+var _job_mob_weapons: Dictionary = {}
+var _job_mob_task := -1
+var _job_mob_box: Array = [null]
+var _job_mob_loaded := false
+var _job_mob_bodies: Dictionary = {}
+## The first armour piece became "HA" (JobMobDress.PIECES, c:0x9e42c2).
+var _job_mob_ha := false
+var _item_id_by_code: Dictionary = {}
+
+func _job_mob_tables_start() -> void:
+	if _job_mob_task >= 0 or _job_mob_loaded or _media_pk2 == null:
+		return
+	var media := _media_pk2
+	var box: Array = [null]
+	_job_mob_box = box
+	_job_mob_task = WorkerThreadPool.add_task(func() -> void:
+		box[0] = JobMobDress.read_tables(media), false, "job mob tables")
+
+## The tables, waited for (or read now when the worker never ran).
+func _job_mob_tables_ready() -> bool:
+	if _job_mob_loaded:
+		return not _job_mob_rows.is_empty()
+	if _job_mob_task < 0:
+		_job_mob_tables_start()
+	if _job_mob_task < 0:
+		return false
+	var t0 := Time.get_ticks_usec()
+	PoolWait.task(_job_mob_task)
+	_job_mob_task = -1
+	_job_mob_loaded = true
+	var got = _job_mob_box[0]
+	if got is Array and (got as Array).size() == 2:
+		_job_mob_rows = got[0]
+		_job_mob_weapons = got[1]
+	print("World3D: %d NPC thief/hunter row(s), %d skill weapon(s) (waited %d us)" % [
+		_job_mob_rows.size(), _job_mob_weapons.size(), Time.get_ticks_usec() - t0])
+	return not _job_mob_rows.is_empty()
+
+## The id of the first code in `codes` that has a worn model, else 0 (the
+## original's step-down: FUN_009e3890 fails on an item that does not load).
+func _first_worn(codes: Array) -> int:
+	if _item_id_by_code.is_empty():
+		for id in _item_rows:
+			var row = _item_rows[id]
+			if row != null:
+				_item_id_by_code[String(row.code_name)] = int(id)
+	for code in codes:
+		var id := int(_item_id_by_code.get(String(code), 0))
+		if id > 0 and _item_models.has(id):
+			return id
+	return 0
+
+## A dressed body for an NPC thief or hunter (JobMobDress, READ rules):
+## {"assembled", "label_height", "radius", "scale"}, or {} for any other
+## monster or when the tables or the body are missing.
+func _dress_job_mob(monster: CombatNet.MonsterSnapshot) -> Dictionary:
+	if _appearance == null or not JobMobDress.maybe_job_code(monster.code_name) or not _job_mob_tables_ready():
+		return {}
+	var row: JobMobDress.Row = _job_mob_rows.get(monster.code_name)
+	if row == null:
+		return {}
+	var race := 1 if row.country == 1 else 0
+	if not _job_mob_bodies.has(race):
+		_job_mob_bodies[race] = JobMobDress.bodies(_appearance.catalog(), row.country)
+	# The server's byte; OURS: the monster id's low byte from a server that
+	# sends none (every viewer still agrees).
+	var body_byte := monster.body if monster.body >= 0 else (monster.monster_id & 0xff)
+	var pick := JobMobDress.pick_body(_job_mob_bodies[race], body_byte)
+	if pick.is_empty():
+		return {}
+	var ref := int(pick[0])
+	var man := bool(pick[1])
+	# The default skill's ReqCast_Weapon1, 2 without a skill (c:0x9d35d0..).
+	var weapon_type := int(_job_mob_weapons.get(row.skill, 2)) if row.skill != 0 else 2
+	if row.type4 == JobMobDress.TYPE4_HUNTER and JobMobDress.armour_class(weapon_type) > 0 and (randi() & 1) == 1:
+		_job_mob_ha = true
+	var plan := JobMobDress.outfit(row, weapon_type, man, randi() & 1, _job_mob_ha)
+	var items: Array = []
+	for id in [_first_worn(plan["weapon"]), _first_worn(plan["shield"]), _first_worn([plan["suit"]])]:
+		if int(id) > 0:
+			items.append({"id": int(id), "plus": 0})
+	for tries in plan["armour"]:
+		var a := _first_worn(tries)
+		if a > 0:
+			items.append({"id": a, "plus": 0})
+	var built := _appearance.build(ref, CharacterAppearance.DEFAULT_SCALE, items)
+	if built == null or built.assembled == null:
+		return {}
+	var skeleton := built.skeleton
+	built.remove_child(skeleton)
+	skeleton.scale = built.scale
+	var group := built.weapon_group
+	var tmpl := built.assembled
+	built.free()
+	var a := SkinnedBsrAssembler.AssembledCharacter.new()
+	a.skeleton = skeleton
+	a.animation_paths = tmpl.animation_paths
+	a.parsed = tmpl.parsed
+	a.animation_cache = tmpl.animation_cache
+	a.piece_bones = tmpl.piece_bones
+	a.piece_distances = tmpl.piece_distances
+	a.skinned_pieces = tmpl.skinned_pieces
+	a.default_group = group
+	var idle := SkinnedBsrAssembler.animation_for(_data_pk2, a, BsrReader.AnimationEntry.TYPE_STAND) if _data_pk2 != null else null
+	a.idle_animation = idle if idle != null else tmpl.idle_animation
+	var lh := MonsterDraw.label_height(skeleton) * skeleton.scale.y
+	print("World3D: NPC %s (body byte %d) dressed as %d (%s) in %s, weapon type %d, group %s" % [
+		monster.code_name, body_byte, ref, "man" if man else "woman", str(items), weapon_type, group])
+	return {"assembled": a, "label_height": lh, "radius": MonsterDraw.cull_radius(skeleton, lh),
+		"scale": float(row.scale) / 100.0, "model": _appearance.body_path(ref)}
+
 ## Builds the body of one monster that has none (round 655: split from
 ## _spawn_or_update_monster; the body comes from its species' template,
 ## MonsterDraw.Templates). The caller has checked its region is loaded.
@@ -26048,28 +26346,35 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	var monster_skeleton: Skeleton3D = null
 	var monster_model := _monster_model_path(monster.code_name, monster.monster_name)
 	var label_height := 2.0 * PLAYER_SCALE_RATIO
-	if monster_model != "":
-		var assembled := _monster_templates.instance(monster_model,
-			_monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+	# Round 805: an NPC thief or hunter has no model; it is a creatable body,
+	# dressed (_dress_job_mob, JobMobDress).
+	var dressed: Dictionary = _dress_job_mob(monster) if monster_model == "" else {}
+	if monster_model != "" or not dressed.is_empty():
+		var assembled: SkinnedBsrAssembler.AssembledCharacter = dressed.get("assembled") if not dressed.is_empty() \
+			else _monster_templates.instance(monster_model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
 		LatencyProbe.lap("instance")
 		if assembled != null:
 			monster_skeleton = assembled.skeleton
 			_monster_assembled[monster.monster_id] = assembled
-			label_height = _monster_templates.label_height_of(monster_model)
+			label_height = float(dressed["label_height"]) if not dressed.is_empty() else _monster_templates.label_height_of(monster_model)
 			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
 			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
 			# Every body of this model has its template's bones (round 664,
 			# MonsterCrowd.pose_at): its clips' bone indices are found once.
-			monster_skeleton.set_meta(MonsterCrowd.META_LAYOUT, monster_model)
+			# A dressed body keeps the layout its builder named.
+			if dressed.is_empty():
+				monster_skeleton.set_meta(MonsterCrowd.META_LAYOUT, monster_model)
 			# The class's model scale (round 660, MonsterDraw.class_scale:
 			# champion 1.5, giant 3.0, elite 1.7 -- READ, CICMonster::vslot_025
 			# 0x9d3995), with the label, the cull radius and the collider
-			# grown by it.
-			var class_scale := MonsterDraw.class_scale(monster.rarity)
+			# grown by it. A dressed body's also by its row's Scale / 100
+			# (0x9d3a22..0x9d3a53, round 805).
+			var class_scale := MonsterDraw.class_scale(monster.rarity) * float(dressed.get("scale", 1.0))
 			if class_scale != 1.0:
-				monster_skeleton.scale = Vector3.ONE * class_scale
+				monster_skeleton.scale *= class_scale
 				label_height *= class_scale
-			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model) * class_scale)
+			var radius := float(dressed["radius"]) if not dressed.is_empty() else _monster_templates.radius_of(monster_model)
+			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, radius * class_scale)
 			# Round 794: a unique's LOD factor is 0 (an exact CICMonster of
 			# rarity 3 or 8, GlobalDataManager::FUN_009c4aa0), so its cloth
 			# runs at any distance (ClothDriver).
@@ -26127,7 +26432,10 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	body.set_meta("monster_id", monster.monster_id)
 	# The model drawn, which is what its measured front is keyed by
 	# (MonsterMotion.front_of); "" for the capsule.
-	body.set_meta("model", monster_model if monster_skeleton != null else "")
+	# A dressed NPC thief or hunter (round 805) is a creatable body, whose
+	# front is the same -Z (CharacterAppearance.Body): keyed by its body.
+	var drawn_model := monster_model if dressed.is_empty() else String(dressed.get("model", ""))
+	body.set_meta("model", drawn_model if monster_skeleton != null else "")
 	body.add_child(_monster_collider(label_height))
 	LatencyProbe.lap("plate+collider")
 
@@ -26698,6 +27006,9 @@ func _try_setup_ground_items() -> void:
 	_ground_items.name = "GroundItems"
 	# Unswept plates: an item's name has its own visibility rule (_name_plate).
 	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate.bind(false), _terrain_hit_height)
+	_ground_items.set_types_for(func(item_id: int) -> PackedInt32Array:
+		var row = _item_rows.get(item_id)
+		return row.type_ids if row != null else PackedInt32Array())
 	other_entities.add_child(_ground_items)
 
 ## The object-name table (textdata_object.txt), parsed once on first use and
@@ -33342,8 +33653,10 @@ func _on_speed_changed(d: Dictionary) -> void:
 		_other_speeds[id] = run
 
 ## A COS's HP (0x3057's flag 1): its owner's windows.
-func _on_cos_hp(_uid: int, _hp: int) -> void:
-	pass
+func _on_cos_hp(uid: int, hp: int) -> void:
+	# Round 805's QA reads a pet potion's heal off this line.
+	if NetClient.cos_own.has(uid):
+		print("World3D: own COS %d HP %d" % [uid, hp])
 
 ## 0x3054 on a COS: its level-up effect.
 func _on_cos_level_up(uid: int) -> void:

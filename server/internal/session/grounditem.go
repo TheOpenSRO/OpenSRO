@@ -54,11 +54,46 @@ type GroundItemSnapshot struct {
 	Gold     bool
 	X, Y, Z  float32
 	OwnerID  int64 // 0 = anyone may pick it
+	// Creator (round 805) is the stack instance's name string: a trade
+	// good's buyer's job alias (inventory.Instance.Creator, round 801).
+	// READ: CInstanceItem::vslot_010 (s:0x42e230) writes it into the item
+	// spawn for a 3/3/8 or 3/3/9 item, and CIItem::vslot_025 (c:0x9e1d00)
+	// appends it to the ground label as "(*%s)" / "(%s)". It rides after the
+	// fixed snapshot (OURS framing: GroundItemSpawned's tail, the list's
+	// trailing strings) so a client that walks fixed snapshots still reads.
+	Creator string
 }
 
 func snapshotOf(it grounditem.Item, now time.Time) GroundItemSnapshot {
-	return GroundItemSnapshot{ID: it.ID, ItemID: it.ItemID, Quantity: it.Quantity, Gold: it.Gold,
+	s := GroundItemSnapshot{ID: it.ID, ItemID: it.ItemID, Quantity: it.Quantity, Gold: it.Gold,
 		X: it.X, Y: it.Y, Z: it.Z, OwnerID: it.OwnerAt(now)}
+	if it.Instance != nil {
+		s.Creator = it.Instance.Creator
+	}
+	return s
+}
+
+// EncodeSpawned is OpGroundItemSpawned's payload: the snapshot, then its
+// Creator as one length-prefixed string (round 805).
+func (s *GroundItemSnapshot) EncodeSpawned() []byte {
+	return append(s.Encode(), encodeStrings(s.Creator)...)
+}
+
+// DecodeGroundItemSpawned reads OpGroundItemSpawned; a payload from before
+// round 805 has no Creator.
+func DecodeGroundItemSpawned(data []byte) (*GroundItemSnapshot, error) {
+	s, rest, err := decodeGroundItemSnapshot(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding GroundItemSpawned: %w", err)
+	}
+	if len(rest) > 0 {
+		f, _, err := decodeStringsPrefix(rest, 1)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding GroundItemSpawned: creator: %w", err)
+		}
+		s.Creator = f[0]
+	}
+	return s, nil
 }
 
 func (s *GroundItemSnapshot) Encode() []byte {
@@ -115,6 +150,10 @@ func (r *GroundItemListResult) Encode() []byte {
 	for i := range r.Items {
 		out = append(out, r.Items[i].Encode()...)
 	}
+	// Round 805: the snapshots' Creators, in order, after the last one.
+	for i := range r.Items {
+		out = append(out, encodeStrings(r.Items[i].Creator)...)
+	}
 	return out
 }
 
@@ -133,6 +172,15 @@ func DecodeGroundItemListResult(data []byte) (*GroundItemListResult, error) {
 			return nil, fmt.Errorf("session: decoding GroundItemListResult: item %d: %w", i, err)
 		}
 		r.Items = append(r.Items, *s)
+	}
+	if len(rest) > 0 {
+		names, _, err := decodeStringsPrefix(rest, count)
+		if err != nil {
+			return nil, fmt.Errorf("session: decoding GroundItemListResult: creators: %w", err)
+		}
+		for i := range names {
+			r.Items[i].Creator = names[i]
+		}
 	}
 	return r, nil
 }
@@ -284,7 +332,7 @@ func dropKillLoot(ground *grounditem.Hub, hub *world.Hub, monster combat.Monster
 		now := time.Now()
 		for _, it := range out {
 			snap := snapshotOf(it, now)
-			pkt := &proto.Packet{Opcode: OpGroundItemSpawned, Data: snap.Encode()}
+			pkt := &proto.Packet{Opcode: OpGroundItemSpawned, Data: snap.EncodeSpawned()}
 			for _, e := range hub.EntitiesInZone(monster.Zone) {
 				e.Session.Send(pkt)
 			}

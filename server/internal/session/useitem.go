@@ -1098,7 +1098,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			return useCOSItem(ctx, sess, inv, characterID, it, held, have)
 		}
 		if isCOSConsumable(it) {
-			return useCOSConsumable(ctx, sess, inv, chars, characterID, it, held, have, req)
+			return useCOSConsumable(ctx, sess, inv, chars, characterID, it, held, have, req, potionLocks)
 		}
 		// Round 789 (avataruse.go): a devil's spirit is awakened by its use,
 		// and the Nasrun extension moves an awake one's expiry.

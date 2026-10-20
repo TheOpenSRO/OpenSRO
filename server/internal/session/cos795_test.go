@@ -33,6 +33,7 @@ const (
 	fxRabbit      = 10365 // ITEM_COS_P_RABBIT_SCROLL, 3/2/1/2 -> COS_P_RABBIT, Param1 4320
 	fxMyowon      = 7489  // ITEM_COS_P_MYOWON_SCROLL, 3/2/1/2 -> COS_P_MYOWON
 	fxTigerScroll = 23277 // ITEM_COS_C_TIGER_SCROLL, 3/3/3/2 -> COS_C_TIGER_<bracket>
+	fxCOSPotion   = 2143  // ITEM_ETC_COS_HP_POTION_01, 3/3/1/4, Param1 360
 )
 
 func cosFixtureTable(t *testing.T) *species.Table {
@@ -107,6 +108,8 @@ func newCOSRig(t *testing.T, level int) *cosRig {
 			Desc1: "COS_P_MYOWON", Param1: 40320, CanUse: true},
 		{ID: fxTigerScroll, CodeName: "ITEM_COS_C_TIGER_SCROLL", MaxStack: 50, TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 2,
 			Desc1: "COS_C_TIGER", Desc2: "5,10,20,30,45,60,75,90,105,120", CanUse: true},
+		{ID: fxCOSPotion, CodeName: "ITEM_ETC_COS_HP_POTION_01", MaxStack: 50, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 4,
+			RestoreHP: 360, CanUse: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +135,9 @@ func newCOSRig(t *testing.T, level int) *cosRig {
 		}
 	}
 	if err := rig.inv.AddItem(ctx, c.ID, fxTigerScroll, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.inv.AddItem(ctx, c.ID, fxCOSPotion, 5); err != nil {
 		t.Fatal(err)
 	}
 	bags := inventory.NewMemStore(items)

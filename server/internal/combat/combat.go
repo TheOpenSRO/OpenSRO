@@ -188,6 +188,12 @@ type Monster struct {
 	// monster as one at 50 % (Nest_Hatch 0x5607b0; round 660, internal/nest).
 	// Its HP is ten times the rank's (MonsterHPPercent). READ.
 	Party bool
+	// Body is the byte CGObjMob::vslot_000 (s:0x4c1030) rolls at creation,
+	// rand() & 0xff into +0x1ce4 (s:0x4c1061..0x4c109e), and the spawn writer
+	// (vslot_294, s:0x4c19d6) sends after the rarity byte for an NPC thief or
+	// hunter (1/2/1/2, 1/2/1/3): the client dresses one of its creatable
+	// bodies by it (ICMonster::FUN_009d3470, `byte % n`). READ (round 805).
+	Body byte
 	// Tactics is the AI configuration the monster hatched with (round 660,
 	// internal/nest): a _RefTactics row (EXTERNAL, Eternity DB) with its
 	// nest's roam radius, or nil for a monster spawned without one -- the GM's
@@ -1121,7 +1127,8 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP), ExpToGive: species.ExpToGive, HasExpToGive: species.HasExpToGive, Knockdown: species.Knockdown, KORecoverMs: species.KORecoverMs, HasKnockdown: species.HasKnockdown,
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: hatch.HomeX, HomeZ: hatch.HomeZ, DestX: x, DestZ: z,
-		Party: hatch.Party, Tactics: hatch.Tactics, Summon: species.Summon, Triggers: species.Triggers, Leader: hatch.Leader}
+		Party: hatch.Party, Tactics: hatch.Tactics, Summon: species.Summon, Triggers: species.Triggers, Leader: hatch.Leader,
+		Body: byte(rand.Intn(32768))}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for
 	// a species of the roster's TypeID shape whose rarity is not 3: `cmp
 	// [edi+0x89],3` at 0x5609b6, whose `jne` at 0x5609bd jumps to the rand()

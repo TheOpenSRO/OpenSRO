@@ -65,13 +65,13 @@ const VIEWS := ["free", "third_person", "quarter"]
 
 ## The rows the list shows, in order: retail's 0..13 and 15 (READ), then SSAO,
 ## the temporary fog toggle (round 702), Night Darkness and Shadows Follow the
-## Sun (round 786) and the renderer (OURS).
+## Sun (round 786), Job Titles on Names (round 805) and the renderer (OURS).
 const LIST := [VideoOptions.QUALITY, VideoOptions.SHADOW, VideoOptions.SCENERY,
 	VideoOptions.CHARACTER, VideoOptions.WATER_REFLECTION, VideoOptions.WATER_DETAIL,
 	VideoOptions.METAL, VideoOptions.LIGHT, VideoOptions.FILTERING, VideoOptions.TEXTURE,
 	VideoOptions.LENS_FLARE, VideoOptions.BLOOM, VideoOptions.DYNAMIC_ANIMATION,
 	VideoOptions.EFFECT, VideoOptions.FRIEND_ENEMY, VideoOptions.SSAO, VideoOptions.FOG,
-	VideoOptions.NIGHT, VideoOptions.SUN_SHADOWS, VideoOptions.RENDERER]
+	VideoOptions.NIGHT, VideoOptions.SUN_SHADOWS, VideoOptions.JOB_TITLES, VideoOptions.RENDERER]
 const COLUMNS := 2
 
 const ARROW_DDJ := "interface\\ifcommon\\com_qst_downarrow_button.ddj"
@@ -610,6 +610,8 @@ func tooltip_of(entry: int) -> String:
 			ours = "This client's own option. Original draws the night exactly as the zone's own lighting sets it, which in many zones is nearly as bright as day; Dim and Dark lower the world's light after sunset to a half and to under a third of the zone's noon light."
 		VideoOptions.SUN_SHADOWS:
 			ours = "This client's own option, with Shadow Detail on Detail: the shadows turn with the sun through the day (long at dawn and dusk, short at noon) and fall faintly from the moon at night. Off keeps the original's one fixed shadow direction."
+		VideoOptions.JOB_TITLES:
+			ours = "This client's own option. On: a player in a job suit shows the job's class title left of the name and the job mark right of it. Off: the original's plate, with the mark left of the name and no title."
 		VideoOptions.RENDERER:
 			ours = "Forward+ (Vulkan) or Compatibility (OpenGL). Takes effect at the next start."
 		VideoOptions.WATER_REFLECTION:

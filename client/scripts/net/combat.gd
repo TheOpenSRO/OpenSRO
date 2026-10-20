@@ -247,6 +247,12 @@ class MonsterSnapshot:
 	## sends it in bit 8 of the rarity word, and only to a client whose list
 	## request carries MONSTER_LIST_FLAG_PARTY.
 	var party: bool
+	## The body byte (round 805): the original's rand() & 0xff the server
+	## rolls per monster (CGObjMob::vslot_000 s:0x4c1030) and sends after the
+	## class byte for an NPC thief or hunter, which dresses one of the
+	## creatable bodies (ICMonster::FUN_009d3470). -1 when the server sent
+	## none (MONSTER_LIST_FLAG_BODY not asked, or an older server).
+	var body: int = -1
 
 ## Result of decode_monster_list_result().
 class MonsterListResult:
@@ -573,11 +579,15 @@ const MONSTER_LIST_FLAG_PARTY := 0x02
 ## Where the rarity word carries the party flag (round 660): bit 8, above
 ## every rank.
 const MONSTER_RARITY_PARTY_BIT := 0x100
+## Bit 2 (round 805): this client reads the body byte in the rarity word
+## (MONSTER_RARITY_BODY_BIT, the byte in bits 16..23).
+const MONSTER_LIST_FLAG_BODY := 0x04
+const MONSTER_RARITY_BODY_BIT := 0x200
 
 ## Encodes an OpMonsterList request: the capability byte only -- the server
 ## resolves the requester's zone and window from world.Hub.
 static func encode_monster_list() -> PackedByteArray:
-	return PackedByteArray([MONSTER_LIST_FLAG_PAGED | MONSTER_LIST_FLAG_PARTY])
+	return PackedByteArray([MONSTER_LIST_FLAG_PAGED | MONSTER_LIST_FLAG_PARTY | MONSTER_LIST_FLAG_BODY])
 
 static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Array:
 	if offset + 8 > data.size():
@@ -617,8 +627,10 @@ static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Arra
 	m.hp = data.decode_u32(offset + 4)
 	m.level = data.decode_u32(offset + 8)
 	var rarity_word := data.decode_u32(offset + 12)
-	m.rarity = rarity_word & ~MONSTER_RARITY_PARTY_BIT
+	m.rarity = rarity_word & 0xff
 	m.party = (rarity_word & MONSTER_RARITY_PARTY_BIT) != 0
+	if (rarity_word & MONSTER_RARITY_BODY_BIT) != 0:
+		m.body = (rarity_word >> 16) & 0xff
 	offset += 16
 
 	return [m, offset]

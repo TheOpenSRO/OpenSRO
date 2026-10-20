@@ -43,6 +43,13 @@ var _items: Dictionary = {}
 ## same race floated the monsters.
 var _pending: Dictionary = {}
 
+## An item id's TypeIDs (round 805: the creator suffix is a 3/3/8 or 3/3/9
+## item's); unset, no suffix is drawn.
+var _types_for: Callable
+
+func set_types_for(types_for: Callable) -> void:
+	_types_for = types_for
+
 func setup(archive: Pk2Reader, drop_models: Dictionary, name_for: Callable, plate_for: Callable, height_at: Callable) -> void:
 	_archive = archive
 	_drop_models = drop_models
@@ -264,9 +271,24 @@ func label_text(snap: GroundItemsNet.Snapshot) -> String:
 	if snap.gold:
 		return "%d Gold" % snap.quantity
 	var text: String = str(_name_for.call(snap.item_id)) if _name_for.is_valid() else ""
+	if snap.creator != "" and _types_for.is_valid():
+		text += creator_suffix(_types_for.call(snap.item_id), snap.creator)
 	if snap.quantity > 1:
 		text = ("%s x%d" % [text, snap.quantity]) if text != "" else ("x%d" % snap.quantity)
 	return text
+
+## The creator after a ground item's name (round 805; CIItem::vslot_025
+## c:0x9e2069..0x9e20f7, READ): appended with no space, "(*%s)" (0xde3214) for
+## a trade good 3/3/8, "(%s)" (0xd99610) for a quest item 3/3/9; nothing for
+## any other item or an empty name.
+static func creator_suffix(types: PackedInt32Array, creator: String) -> String:
+	if creator == "" or types.size() < 3 or types[0] != 3 or types[1] != 3:
+		return ""
+	if types[2] == 8:
+		return "(*%s)" % creator
+	if types[2] == 9:
+		return "(%s)" % creator
+	return ""
 
 ## Highest point of a loaded model's meshes, in the model's own space.
 static func _top_of(model: Node3D) -> float:

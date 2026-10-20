@@ -3771,6 +3771,13 @@ word (`session.MonsterRarityPartyBit`, OURS) -- in the list, the spawn push and 
 interest's enter -- and only to a session whose list request set bit 1 of the capability byte
 (`MonsterListFlagParty` 0x02). An older client is sent the rank alone.
 
+**The wire: the body byte (round 805).** Retail sends one more byte after the class byte for an
+NPC thief or hunter, the monster's `rand() & 0xff` from its creation (CGObjMob::vslot_000
+s:0x4c1030, written at s:0x4c19d6; the client dresses a body by it -- `jobs.md`, "Their bodies").
+OpenSRO rolls it for every monster (`combat.Monster.Body`) and carries it in bits 16..23 of the
+rarity word with bit 9 set (`session.MonsterRarityBodyBit`, OURS), only to a session whose list
+request set bit 2 (`MonsterListFlagBody` 0x04).
+
 **The client** (READ, sro_client.exe): the model scale starts at 1.0 (`fld1` 0x9d38c9) and a
 switch on class - 1 (0x9d3995, table 0x9d3c70) multiplies it: champion 1.5 (0xd819ec), giant 3.0
 (0xd8adc4), elite 1.7 (0xde2818); everything else keeps 1.0 (`MonsterDraw.class_scale`). The

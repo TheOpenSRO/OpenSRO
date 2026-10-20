@@ -897,7 +897,7 @@ func dropTransportGoods(ctx context.Context, o *cosObj, killer int64) {
 		now := time.Now()
 		for _, g := range dropped {
 			snap := snapshotOf(g, now)
-			pkt := &proto.Packet{Opcode: OpGroundItemSpawned, Data: snap.Encode()}
+			pkt := &proto.Packet{Opcode: OpGroundItemSpawned, Data: snap.EncodeSpawned()}
 			for _, e := range d.hub.EntitiesInZone(zone) {
 				e.Session.Send(pkt)
 			}

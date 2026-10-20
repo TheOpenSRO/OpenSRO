@@ -96,7 +96,7 @@ func _rows() -> void:
 	var entries: Array = []
 	for r in VideoOptions.ROWS:
 		entries.append(int(r["entry"]))
-	_check(entries == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 19, 20, 17], "the list: retail's rows 0..13 and 15 (READ, 14 never listed), then SSAO, the temporary fog row, Night Darkness, Shadows Follow the Sun and the renderer (OURS)")
+	_check(entries == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 19, 20, 21, 17], "the list: retail's rows 0..13 and 15 (READ, 14 never listed), then SSAO, the temporary fog row, Night Darkness, Shadows Follow the Sun, Job Titles on Names (round 805) and the renderer (OURS)")
 	# Round 786: the two OURS rows, the player's under every preset.
 	var pn := VideoOptions.Profile.new()
 	_check(pn.value(VideoOptions.NIGHT) == 0 and pn.value(VideoOptions.SUN_SHADOWS) == 1, "Night Darkness defaults to Original (retail's nights, the user's choice), Shadows Follow the Sun to On (OURS)")
@@ -423,7 +423,7 @@ func _page() -> void:
 	_check(page.slot_label(0).text == "Graphic Quality" and page.slot_label(1).text == "Shadow Detail", "slot 0/1 labelled Graphic Quality / Shadow Detail (fallback text, no archive)")
 	_check(page.slot_combo(0).item_count == 5 and page.slot_combo(0).get_item_text(4) == "User control" and page.slot_combo(0).selected == 1,
 		"the quality combo lists five choices and shows Middle (the default)")
-	_check(page.max_line() == 4, "20 rows, two a line, six lines shown: four more lines to scroll (got %d)" % page.max_line())
+	_check(page.max_line() == 5, "21 rows, two a line, six lines shown: five more lines to scroll (got %d)" % page.max_line())
 	_combo_field(page)
 	# Low through the combo's own signal (a real popup choice emits it).
 	page.slot_combo(0).item_selected.emit(0)
@@ -447,10 +447,14 @@ func _page() -> void:
 	_check(ssao != null and ssao.tooltip_text.contains("Forward+"), "... with a tooltip naming Forward+")
 	_check(page.slot_label(page.slot_of(VideoOptions.BLOOM)).text.ends_with("(Glow)"), "Bloom's row says it is the glow")
 	# Round 786: Night Darkness and Shadows Follow the Sun before the renderer.
-	page.scroll_to(4)
+	page.scroll_to(5)
 	await _frames()
-	_check(page.entry_at_slot(9) == VideoOptions.NIGHT and page.entry_at_slot(10) == VideoOptions.SUN_SHADOWS and page.entry_at_slot(11) == VideoOptions.RENDERER,
-		"scrolled 4 lines: Night Darkness and Shadows Follow the Sun, then the renderer last")
+	_check(page.entry_at_slot(7) == VideoOptions.NIGHT and page.entry_at_slot(8) == VideoOptions.SUN_SHADOWS
+		and page.entry_at_slot(9) == VideoOptions.JOB_TITLES and page.entry_at_slot(10) == VideoOptions.RENDERER,
+		"scrolled 5 lines: Night Darkness, Shadows Follow the Sun, Job Titles on Names, then the renderer last")
+	var titles := page.combo_of(VideoOptions.JOB_TITLES)
+	_check(titles != null and titles.item_count == 2 and titles.selected == 1 and titles.tooltip_text.contains("This client's own option"),
+		"Job Titles on Names lists Off / On, shows On (the default) and says it is ours")
 	var night := page.combo_of(VideoOptions.NIGHT)
 	_check(night != null and night.item_count == 3 and night.get_item_text(2) == "Dark" and night.selected == 0 and not night.disabled,
 		"Night Darkness lists Original / Dim / Dark and shows Original (the default)")
