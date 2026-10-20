@@ -142,6 +142,9 @@ const KIND_STYLES := {
 	"system": "warning",
 	# Round 785: a quest's progress line, GDR_UPDATE_QUEST_INFO.
 	"quest_info": "quest",
+	# Round 802: the safe trade's grant (UI_SAFETRADE c:0x891080 -> 0x77b580,
+	# GDR_WARNING_WND).
+	"safe_trade": "warning",
 }
 
 ## The frame pieces' sizes when no texture is loaded (MEASURED from

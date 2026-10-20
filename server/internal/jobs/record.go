@@ -30,6 +30,8 @@ type Record struct {
 	Reward       int64
 	Alias        string
 	PenaltyUntil time.Time
+	// Safe is the trader's safe-trade row (round 802, SafeTrade).
+	Safe SafeTrade
 }
 
 // NewRecord is the row a new character starts with (_AddNewChar.sql:

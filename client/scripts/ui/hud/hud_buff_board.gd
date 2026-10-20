@@ -179,8 +179,8 @@ class Buff:
 	var tick := 0
 	var alpha := 0xFF
 	var tick_accum_ms := 0.0
-	## 5 for an item grant (a composite item's used-item limit), 0 for a
-	## skill buff.
+	## 5 for an item grant (a composite item's used-item limit), 0xb the
+	## safe trade (round 802), 0 for a skill buff.
 	var kind := 0
 
 	## (total - elapsed) / total; 1.0 without a duration (0x8056a0).
@@ -512,6 +512,43 @@ func add_item_state(token: int, icon: String, total_ms: int, remaining_ms: int, 
 	print("HudBuffBoard: item grant %d icon '%s' (%d ms of %d)" % [token, icon, remaining_ms, total_ms])
 	return b
 
+## Round 802: a state entry with no gauge (FUN_00805a40's kind 0xb, the
+## safe trade: an infinite total, c:0x805c3f), added or kept. Its icon and
+## tooltip key are the caller's (c:0x7ff32f / c:0x802589). Main list (its
+## local_70 = 1, READ). Nothing happens on a click (OURS: vslot_033's kind
+## 0xb branch was not read).
+const KIND_SAFE_TRADE := 0xb
+
+func add_state_entry(kind: int, token: int, icon: String, tooltip: String) -> Buff:
+	var b: Buff = _by_token.get(token)
+	if b != null:
+		b.info = {"icon": icon, "tooltip": tooltip}
+		return b
+	b = Buff.new()
+	b.kind = kind
+	b.owner_id = -1
+	b.skill_id = 0
+	b.token = token
+	b.total_ms = -1
+	b.elapsed_ms = 0.0
+	b.info = {"icon": icon, "tooltip": tooltip}
+	b.main_list = true
+	_main.append(b)
+	_by_token[token] = b
+	b.slot = _make_slot(b)
+	add_child(b.slot)
+	b.slot.gauge.visible = false
+	_layout()
+	print("HudBuffBoard: state entry kind 0x%x token %d icon '%s'" % [kind, token, icon])
+	return b
+
+## Takes a state entry down (FUN_00777f20(kind, 0, 0): FUN_00804cf0's
+## removal branch).
+func remove_state_entry(token: int) -> void:
+	var b: Buff = _by_token.get(token)
+	if b != null and b.kind == KIND_SAFE_TRADE:
+		_remove(b)
+
 ## Removes an item grant's icon at once (0x315B's handler, FUN_008993b0,
 ## removes the entry and its icon; no burst is read for it).
 func remove_item_state(token: int) -> void:
@@ -539,7 +576,7 @@ func right_click_action(token: int) -> String:
 		return ACTION_NONE
 	# OURS: an item grant is not a skill buff; vslot_033's kind-5 branch was
 	# not read, so a right-click on it does nothing rather than send a cancel.
-	if b.kind == 5:
+	if b.kind == 5 or b.kind == KIND_SAFE_TRADE:
 		return ACTION_NONE
 	if bool(b.info.get("nbuf", false)) and not bool(b.info.get("lnks", false)):
 		return ACTION_NONE
@@ -641,7 +678,7 @@ func tooltip_for(token: int) -> String:
 	var b: Buff = _by_token.get(token)
 	if b == null:
 		return ""
-	if b.kind == 5:
+	if b.kind == 5 or b.kind == KIND_SAFE_TRADE:
 		var item_lines := PackedStringArray([String(b.info.get("tooltip", ""))])
 		if b.total_ms >= 0:
 			item_lines.append(remain_line(b.remaining_ms(), _unit_texts()))

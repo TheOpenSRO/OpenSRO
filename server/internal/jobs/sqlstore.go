@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS char_trijob (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS char_trijob_alias_key ON char_trijob (lower(alias)) WHERE alias <> '';
 CREATE INDEX IF NOT EXISTS char_trijob_type ON char_trijob (job_type);
+ALTER TABLE char_trijob ADD COLUMN IF NOT EXISTS safe_count SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE char_trijob ADD COLUMN IF NOT EXISTS safe_status BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE char_trijob ADD COLUMN IF NOT EXISTS safe_last TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS char_old_trijob (
 	char_id    BIGINT PRIMARY KEY,
 	lvl_trader SMALLINT NOT NULL DEFAULT 1,
@@ -68,18 +71,22 @@ func NewSQLStore(db *sql.DB) (*SQLStore, error) {
 // TxDB implements txn.TxDBer.
 func (s *SQLStore) TxDB() *sql.DB { return s.db }
 
-const recordCols = `char_id, job_type, lvl, exp, contribution, reward, alias, penalty_until`
+const recordCols = `char_id, job_type, lvl, exp, contribution, reward, alias, penalty_until, safe_count, safe_status, safe_last`
 
 func scanJob(sc interface{ Scan(...any) error }) (Record, error) {
 	var r Record
 	var kind, lvl int
-	var pen sql.NullTime
-	if err := sc.Scan(&r.CharID, &kind, &lvl, &r.Exp, &r.Contribution, &r.Reward, &r.Alias, &pen); err != nil {
+	var pen, last sql.NullTime
+	if err := sc.Scan(&r.CharID, &kind, &lvl, &r.Exp, &r.Contribution, &r.Reward, &r.Alias, &pen,
+		&r.Safe.Count, &r.Safe.Status, &last); err != nil {
 		return Record{}, err
 	}
 	r.Kind, r.Level = Kind(kind), lvl
 	if pen.Valid {
 		r.PenaltyUntil = pen.Time
+	}
+	if last.Valid {
+		r.Safe.Last = last.Time
 	}
 	return r, nil
 }
@@ -107,9 +114,12 @@ func (s *SQLStore) Get(ctx context.Context, charID int64) (Record, error) {
 // Save implements Store.
 func (s *SQLStore) Save(ctx context.Context, r Record) error {
 	_, err := txn.Conn(ctx, s.db).ExecContext(ctx, `INSERT INTO char_trijob
-		(char_id, job_type, lvl, exp, contribution, reward, penalty_until) VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (char_id) DO UPDATE SET job_type=$2, lvl=$3, exp=$4, contribution=$5, reward=$6, penalty_until=$7`,
-		r.CharID, int(r.Kind), r.Level, r.Exp, r.Contribution, r.Reward, timeArg(r.PenaltyUntil))
+		(char_id, job_type, lvl, exp, contribution, reward, penalty_until, safe_count, safe_status, safe_last)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (char_id) DO UPDATE SET job_type=$2, lvl=$3, exp=$4, contribution=$5, reward=$6, penalty_until=$7,
+		safe_count=$8, safe_status=$9, safe_last=$10`,
+		r.CharID, int(r.Kind), r.Level, r.Exp, r.Contribution, r.Reward, timeArg(r.PenaltyUntil),
+		r.Safe.Count, r.Safe.Status, timeArg(r.Safe.Last))
 	if err != nil {
 		return fmt.Errorf("jobs: saving %d: %w", r.CharID, err)
 	}

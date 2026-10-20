@@ -256,9 +256,30 @@ func TestRound801SpecialtyTrade(t *testing.T) {
 		t.Fatalf("0x30E0: % x", got)
 	}
 
+	// Round 802, the safe trade: the dialog closed (EndInteraction in mode
+	// 6 at an NPC with 0xc) by a trader carrying normal goods at one star
+	// grants it, the first of TRADE_SAFETY_NUM 8 today: {1, 0x50, 1, 8}.
+	c.send(npctalk.OpEnd, npctalk.EncodeEntity(seller.UID))
+	c.next(npctalk.OpEndResult)
+	if got := c.next(OpSafeTrade).Data; !bytes.Equal(got, []byte{1, 0x50, 1, 8}) {
+		t.Fatalf("0x34D5 at the close: % x", got)
+	}
+	if r := jobRecord(ctx, cid); !r.Safe.Status || r.Safe.Count != 1 {
+		t.Fatalf("the safe trade record: %+v", r.Safe)
+	}
+	c.send(npctalk.OpSelect, npctalk.EncodeEntity(seller.UID))
+	c.next(npctalk.OpSelectResult)
+	c.send(npctalk.OpOpen, append(npctalk.EncodeEntity(seller.UID), 0x0c))
+	c.next(npctalk.OpOpenResult)
+	c.next(OpTradePrices)
+
 	// The sale of 100 at 4400: gold 440000, profit 40000; job exp 40000 x
 	// 0.8 (one star) = 32000; contribution and the hunters' pool 44000.
 	sell(seller.UID, 0, 100)
+	// Selling his own goods ends the safe trade (s:0x4c8e20): {0, 0x40}.
+	if got := c.next(OpSafeTrade).Data; !bytes.Equal(got, []byte{0, 0x40}) {
+		t.Fatalf("0x34D5 at the sale: % x", got)
+	}
 	g = c.next(charmsg.OpCharInfo).Data
 	if !bytes.Equal(g, charmsg.EncodeGold(start.Gold-400000+440000, false)) {
 		t.Fatalf("gold after the sale: % x", g)

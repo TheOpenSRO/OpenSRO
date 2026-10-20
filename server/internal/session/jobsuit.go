@@ -326,6 +326,8 @@ func finishJobChange(sess *gateway.Session, d suitDeps, characterID int64, ch *j
 		return
 	}
 	setJobState(ctx, characterID, pcspawn.JobStateNone)
+	// The suit off ends a safe trade (round 802, s:0x4f0dd4).
+	safeTradeLose(ctx, characterID)
 	_ = sendWornList(ctx, sess, d.store, d.items, characterID)
 	broadcastUnworn(d.hub, characterID, equipment.SlotJobSuit, removed)
 }

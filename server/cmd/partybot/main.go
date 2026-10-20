@@ -48,6 +48,12 @@
 //	    pick-up motion the zone is sent. -at and -wait stand it beside a QA
 //	    client first, which then draws its pick-ups as another player's.
 //
+//	partybot -mode job -addr HOST:PORT -name Rook -npcs-csv F -npcpos-csv F [-job 2]
+//	         [-guild CODE] [-suit ID] [-fight "region lx lz"] [-attack NAME]
+//	    The round-802 job-PvP partner (job.go): joins a job at its guild
+//	    NPC, takes an alias, wears the suit, stands at -fight and swings at
+//	    -attack on OpAttack's job-PvP target kind, printing every blow.
+//
 //	partybot -mode bot -addr HOST:PORT -name Bram [-accept=true] [-invite NAME]
 //	         [-register] [-request NAME]
 //	    One character that stays online: answers every invitation and every
@@ -103,6 +109,8 @@ type bot struct {
 	// uidByRef the NPCs spawned, by reference id.
 	quest    chan *proto.Packet
 	uidByRef map[uint32]uint32
+	// hurtDone: job mode's -hurt-when-struck has run (round 802).
+	hurtDone bool
 	// tap, when set, sees every packet the reader reads, first (round 786's
 	// latency mode, latency.go).
 	tap func(*proto.Packet)
@@ -926,7 +934,18 @@ func main() {
 	questsDir := flag.String("quests-dir", "", "quest: the catalogue directory (export-refdata -mode quests)")
 	npcsCSV := flag.String("npcs-csv", "", "quest: the NPC table (export-refdata -mode npcs)")
 	npcposCSV := flag.String("npcpos-csv", "", "quest: the NPC placements (export-refdata -mode npcpos)")
+	flag.IntVar(&jobRun.kind, "job", 2, "job: the kind to join (1 trader, 2 thief, 3 hunter)")
+	flag.StringVar(&jobRun.guild, "guild", "NPC_TD_THIEF_SELL", "job: the guild NPC's code")
+	flag.Int64Var(&jobRun.suit, "suit", 2163, "job: the suit's item id (2163 ITEM_CH_M_TRADE_THIEF_02)")
+	flag.StringVar(&jobRun.alias, "alias", "Rooky", "job: the job alias")
+	flag.StringVar(&jobRun.fight, "fight", "", "job: \"region localX localZ\" -- where to stand once suited")
+	flag.StringVar(&jobRun.attack, "attack", "", "job: a character to attack at -fight")
+	flag.Int64Var(&jobRun.attackID, "attack-id", 0, "job: the character id to attack at -fight (instead of -attack's name)")
+	flag.IntVar(&jobRun.hurt, "hurt-when-struck", 0, "job: /hurt this much HP off the bot at the first blow it takes")
+	flag.DurationVar(&jobRun.attackFor, "attack-for", 30*time.Second, "job: how long to keep attacking")
+	flag.DurationVar(&jobRun.stay, "stay", 5*time.Minute, "job: how long to stay online after")
 	flag.Parse()
+	jobRun.npcsCSV, jobRun.npcposCSV = *npcsCSV, *npcposCSV
 	var err error
 	switch *mode {
 	case "scenario":
@@ -944,6 +963,8 @@ func main() {
 		err = pickupScenario(*addr, *prefix, *monster, *level, pickupOpts)
 	case "latency":
 		err = latencyScenario(*addr, *name, *level, *tp)
+	case "job":
+		err = jobScenario(*addr, *name, *level, jobRun)
 	case "quest":
 		err = questScenario(*addr, *name, *questRace, *level, *questsDir, *npcsCSV, *npcposCSV, flag.Args())
 	default:

@@ -7483,6 +7483,60 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-second round: job PvP and the safe trade
+
+The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off client
+and server code. This is a huge effort so don't make any mistakes." Round four of that project (799 the
+guild, 800 the suits, 801 the specialty trade; the NPC thieves' and hunters' waves are next).
+docs/protocol/jobs.md "Job PvP" and "Safe trade" have every address.
+
+- **READ (server).** CGObjPC::vslot_394's player branch in order (own COS 0x3006, a town 0x3018, a party
+  0x3022, the caravan rule s:0x52b760 -> 0x3024 / 0x3006, job opposition s:0x4eb620, then the PK levels
+  0x3016 / 0x3017 and the validator's 0x3006 for two suits) and its monster branch (s:0x52967d); the
+  monsters' job filter (s:0x529110); ResolveDeathCause's cause 1 (s:0x4e6590) and its handler (s:0x4e6820:
+  3 x Unit job exp, 6 x the exp unit at min level, no normal penalty); the kill credit (s:0x4e1f60, the
+  party split s:0x5bd7f0); the safe trade's grant at EndInteraction (s:0x510833 -> s:0x60e890), its day
+  (s:0x60e690), its four losses and 0x34D5 (s:0x51a960, the login's s:0x4e0020).
+- **READ (client).** The player click (c:0x792f00: the selection or Alt, then IsEnemy(Alt)); IsEnemy for a
+  player (c:0x9de780: opposition, then two job suits are never enemies, then Alt); the skill gate's IsEnemy
+  with Alt (c:0x81bc93); the spawn-only job state (c:0x9de3d6; the 0x3038 handler only re-dresses); the
+  hostile name 0xffff6262 (c:0x9cfd50); UI_SAFETRADE (c:0x891080): the board's kind-0xb entry with
+  `icon\etc\icon_safetrade_progress.ddj` and UIIT_STT_SAFETRADE_PROGRESS (c:0x7ff32f, c:0x802589, no
+  gauge c:0x805c3f), the grant's banner, the limit's system line.
+- **Ours, disclosed.** No PK system: a pair not job-opposed is refused 0x3025; OpAttack's trailing target
+  kind byte; OpPlayerStruck 0x0118 (the zone's news of a blow on a player or a COS, the victim's copy with
+  his exp loss); a hostile skill strikes its primary target only, without knockdown, knockback or states;
+  the swing repeats at the base attack's delay until a move, a cast, a death or a refusal; the job death
+  never takes a level; the other player's death is drawn as his hit (OPEN: what retail shows).
+- **Server.** `jobs/pvp.go` (the rules, `pvp_test.go`), `session/jobpvp.go`, `session/safetrade.go`, the job
+  record's safe_count / safe_status / safe_last columns (sqlstore adds them), the death cause through
+  finishKill, the monsters' target filters, a refused or unreachable COS. Tests: `job802_test.go` (the PK
+  refusal, a thief's blow and kill on a trader with both exp numbers, the same side's 0x3006, a COS target
+  and the owner's own), `friendlycast_test.go` (a hostile skill at an opposed job lands), and
+  `specialty801_test.go` (the grant `{1, 0x50, 1, 8}` at the close, the loss `{0, 0x40}` at the sale).
+- **Client.** `JobPvpNet` (+ its test), World3D's "Job PvP" section (the click, the walk into reach, the
+  swing and the cast, the result, OpPlayerStruck, the safe trade), the buff board's state entry, the
+  hostile name colour, the cursor, the UIIT refusal lines in the archive's words.
+- **QA (box, `/var/tmp/r802/qa802.sh`: an in-memory server with prod's flags -- full map, regions, the nest
+  DB, monster AI, dead state -- and `partybot -mode job`, a new mode that joins a job at its guild NPC,
+  takes an alias, wears the suit and fights).** Rook joined the thieves at NPC_TD_THIEF_SELL in Thief
+  Village (`0xB045 ids [2, 1, 0x15]`, join `01 02 01`), wore ITEM_CH_M_TRADE_THIEF_02 (0x3041 then 0x3038
+  slot 8) and waited in the field south of Jangan (region 24744, a battlefield); Tess joined the traders and
+  wore her suit in Jangan as in round 801. In view: Rooky's plate `*Rooky` in `ff6262`; the first click
+  selected him, the second attacked (`in reach -- swinging`), the keep-up repeated. Rook's swings on Tess
+  while she stood in Jangan: `ITS_NOT_A_BATTLE_FIELD`; at her arrival: `cannot attack while untouchable`;
+  in the field: landed, her HP falling on the HUD; at her death (a /hurt first): `killed`, the dead state.
+  Tess's kill of Rook: "Trader Experience Point [256] gained.", "[37650]Experience Points gained." (3 x
+  the level's exp unit). Two clicks on the dead thief: two requests, each refused with one "Invalid target"
+  line (before the fix the second, a late reply, also printed its raw key).
+- **Gates.** Server `go test ./...` all ok (the job store's three new columns also checked by hand against
+  a scratch Postgres database: an old row reads with the defaults, the fields round-trip, the migration
+  runs twice); client compile check ALL LOAD and `run_gd_tests.sh` 343 suites (hud_notice's "nothing
+  raises a banner around _show_banner" caught the safe trade's banner, now `_show_banner("safe_trade")`).
+- **Perf gate** (`--base deedea47 --sites jangan --frames 60000`, 1280x720, median of 3; the plates'
+  hostile colour is the world drawing changed): frame 0.90 / 0.90 ms SAME, entry 8607 / 8782 ms SAME,
+  freeze 2704 / 2733 ms SAME, hitches 4 / 5 SAME.
+
 ## Eight-hundred-and-third round: the COS status slots of a session that ended
 
 The user (2026-10-20, on v0.1.560, with a screenshot): "The pet icons at the top right by the minimap are

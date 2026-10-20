@@ -8,6 +8,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"net"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -338,14 +340,54 @@ func TestAllyBuffWithoutSelfRefusesTheCaster(t *testing.T) {
 	}
 }
 
-// A hostile skill named at a character is refused (PvP is not modelled).
+// A hostile skill named at a character is vslot_394's (round 802,
+// jobpvp.go): two low-level players out of a job are refused the PK's level
+// test first (0x3016), before anything is spent and with no cast announced.
 func TestHostileSkillAtACharacterIsRefused(t *testing.T) {
 	w := startFriendWorld(t)
 	ar := w.cast(t, &UseSkillRequest{SkillID: skSmashA1, TargetMonsterID: w.bram.id, TargetType: TargetCharacter, HasTargetType: true})
-	if ar.Error != "Invalid target" {
-		t.Fatalf("Smash at a character answered %q, want \"Invalid target\"", ar.Error)
+	if ar.Error != "UIIT_MSG_SKILL_USE_FAIL_YOUR_LEVEL_TOO_LOW_TO_PK" {
+		t.Fatalf("Smash at a character answered %q, want the PK level refusal", ar.Error)
 	}
 	w.bram.expectNone(t, OpSkillCast, 200*time.Millisecond)
+}
+
+// A hostile skill at an opposed job lands (round 802, performSkillAttackPvP):
+// a thief's Smash on a trader answers its damage with targetType 3, the
+// trader hears OpPlayerStruck and the zone the cast.
+func TestHostileSkillAtAnOpposedJobLands(t *testing.T) {
+	w := startFriendWorld(t)
+	ctx := context.Background()
+	for _, id := range []int64{w.aria.id, w.bram.id} {
+		if err := w.chars.SetLeveling(ctx, id, 50, 0, 0, 60, 60); err != nil {
+			t.Fatal(err)
+		}
+		w.hub.SetLevel(id, 50)
+	}
+	jobStates.Store(w.aria.id, jobs.StateThief)
+	jobStates.Store(w.bram.id, jobs.StateTrader)
+	t.Cleanup(func() {
+		jobStates.Delete(w.aria.id)
+		jobStates.Delete(w.bram.id)
+		pvpKeepUp.cancel(w.aria.id)
+	})
+	before, _ := w.chars.GetByID(ctx, w.bram.id)
+	ar := w.cast(t, &UseSkillRequest{SkillID: skSmashA1, TargetMonsterID: w.bram.id, TargetType: TargetCharacter, HasTargetType: true})
+	if ar.Error != "" || ar.MonsterDamage < 1 || ar.MonsterID != w.bram.id || ar.TargetType != TargetCharacter || ar.SkillID != skSmashA1 {
+		t.Fatalf("Smash at an opposed trader: %+v", ar)
+	}
+	st := w.bram.expect(t, OpPlayerStruck).Data
+	if binary.LittleEndian.Uint32(st) != uint32(w.aria.id) || binary.LittleEndian.Uint32(st[5:]) != uint32(w.bram.id) ||
+		int32(binary.LittleEndian.Uint32(st[9:])) != ar.MonsterDamage {
+		t.Fatalf("OpPlayerStruck % x for %d damage", st, ar.MonsterDamage)
+	}
+	after, _ := w.chars.GetByID(ctx, w.bram.id)
+	if after.HP != before.HP-int(ar.MonsterDamage) {
+		t.Fatalf("Bram's HP %d -> %d for %d damage", before.HP, after.HP, ar.MonsterDamage)
+	}
+	if start := w.expectCast(t, w.bram, CastPhaseStart); start.TargetID != w.bram.id || start.TargetType != TargetCharacter {
+		t.Fatalf("OpSkillCast start %+v", start)
+	}
 }
 
 // Grass Walk's cast is announced to the zone -- Bram, not Aria -- with no

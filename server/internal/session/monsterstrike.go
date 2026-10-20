@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -501,6 +502,11 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// penalty, flag on or off. The lock is held through the death below, so
 	// the second of two racing kills reads the first's life state 2 or its
 	// RespawnHP, never the pool between the two.
+	// Round 802: an NPC thief's or hunter's kill of a player in a job is a
+	// job death (ResolveDeathCause s:0x4e6590, cause 1).
+	if kind := jobMobKind(monster.CodeName); kind != 0 && jobs.JobDeathByMonster(jobStateNow(ctx, characterID), kind) {
+		setDeathCause(characterID, deathCause{job: true, killerLevel: monster.Level})
+	}
 	return finishKill(ctx, deps, characterID, out)
 }
 
@@ -541,7 +547,17 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 	// this project can reach until there is a PK system. See
 	// leveldata.DeathPenaltyExp for the other three and for why the
 	// reduction stat is left out.
-	if levelTable != nil {
+	cause, hasCause := takeDeathCause(characterID)
+	if levelTable != nil && hasCause && cause.job {
+		// A job death (round 802, jobpvp.go): the cause-1 handler's penalty
+		// instead of GObjPC_OnDeath's.
+		unlock := character.LockLeveling(characterID)
+		if fresh, err := chars.GetByID(ctx, characterID); err == nil {
+			c = fresh
+		}
+		out.deathExpLost = jobDeathPenalty(ctx, chars, c, cause.killerLevel)
+		unlock()
+	} else if levelTable != nil {
 		// The EXP is re-read under the leveling lock (round 712: a party
 		// member's kill can pay this character from another goroutine
 		// between fallen's read and this write).

@@ -542,3 +542,120 @@ The bargain goods' schedule; the timed job 7; the 0x42404 mode; the
 calculator's OK path and the Sell All button's packets (OpenSRO: the store's
 count box, one sale a slot); the order of the quotation rows; when the stock
 is written back; what a released transport's goods become.
+
+## Job PvP (round 802)
+
+`server/internal/jobs/pvp.go` (the rules), `server/internal/session/jobpvp.go`
+(the messages), the client's `JobPvpNet` and World3D's "Job PvP" section. READ
+in SR_GameServer.exe (s:) and sro_client.exe (c:) unless a line says
+otherwise.
+
+### Who may hit whom (CGObjPC::vslot_394, s:0x5293a0)
+
+A player against a player, or a player's COS (a COS target is judged by its
+owner), in order: the attacker's own COS 0x3006; either side in a town (the
+region's IsBattleField 0) 0x3018; the same party 0x3022; the caravan rule
+(s:0x52b760): a thief against a trader whose transport holds goods, whose
+safe-trade Status is 1 and whose trade scale is at most 1 is refused 0x3024
+CANT_ATTACK_CARAVAN_LEVEL1, and that protected trader against a thief 0x3006;
+then job opposition (s:0x4eb620: a trader or hunter against a thief, either
+way round) lets the blow land. A pair not opposed falls to the ordinary PK
+rules: an area skill's secondary target is skipped with no code, then levels
+under 20 0x3016 / 0x3017, then, for two players both in job suits, the skill
+validator's 0x3006 (s:0x58d0a8). OURS, disclosed: OpenSRO has no PK system
+(murderers, PvP capes, guild wars), so the rest is refused 0x3025
+PK_PROHIBITED_IN_THIS_SERVER -- the engine's code when its PK-off byte is set.
+
+The monster branch (s:0x52967d): a trader or hunter cannot hit an NPC hunter
+(characterdata TypeID4 3 of a 1/2/1 row), a thief cannot hit an NPC thief
+(TypeID4 2), a player out of a job neither (MEASURED: MOB_THIEF_NPC /
+MOB_EU_THIEF_NPC are TypeID4 2, *HUNTER_NPC 3). The monsters' own filter
+(CGObjMob::vslot_394, s:0x529110): an NPC hunter targets thieves only, an NPC
+thief traders and hunters only; a COS by its owner's job.
+
+### Death and credit
+
+ResolveDeathCause (s:0x4e6590) gives cause 1, the job death, when an opposed
+player wearing a suit kills, or an NPC thief kills a trader or hunter, or an
+NPC hunter kills any job. Its handler (s:0x4e6820): job exp minus 3 x
+Unit(victim level) (jobs.DeathLoss), character exp minus 6 x leveldata's exp
+unit at min(victim, killer) level (less a premium reduction OpenSRO does not
+have), and none of the normal death penalty. OURS: the loss never takes a
+level away. The kill credit (s:0x4e1f60): the killer's KillExp, shared in a
+party (s:0x5bd7f0: each member alive, in the zone and within 1000.0 gets
+KillExp(member) x level / sum of levels x (1 + 0.05 (n - 1)); a hunter killer
+shares only with hunters), and, for a player victim, 3 x the exp unit at
+min(killer, victim) level of character exp.
+
+### The wire
+
+- OpAttack (0x0060 in OpenSRO's own numbering) gains an optional trailing u8:
+  3 the target id is a character, 4 a COS uid (OURS: retail's 0x7074 names
+  any object by its uid). OpUseSkill's targetType 3 names a character for a
+  hostile row; a COS uid under targetType 1 names a COS.
+- The answer is OpAttackResult with targetType 3 or 4; a refusal carries the
+  UIIT key of the code as its error.
+- OpPlayerStruck 0x0118 (OURS) tells the zone, the attacker too: `u32
+  attacker, u8 kind (0 character, 2 COS), u32 target, i32 damage, u8 flags (1
+  critical, 2 blocked, 4 died), i32 hp, i32 max hp`; the struck character's
+  own copy adds `i64` the character exp the death cost.
+- OURS, disclosed: a hostile skill strikes its primary target only; knockdown,
+  knockback, the imbue's add and the skill's states do not reach a player or a
+  COS; the swing repeats at the base attack's re-use delay while the target
+  lives and stays in reach, ending at a move, a cast, a death or a refusal.
+
+### The client (READ)
+
+- A click on another player (c:0x792f00) attacks only when he is already the
+  selection or Alt is held (GetKeyState 0x12), then IsEnemy(Alt) (CICUser
+  vslot 42, c:0x9de780): job opposition on the spawned job states (c:0x9d02c0);
+  else, while neither side wears a PvP cape, two players who both wear a job
+  suit (slot 8 of each, FUN_00666e60 -- INFERRED: the suit test) are not
+  enemies whatever is held; else Alt makes one. A party member is not
+  attacked; under level 20 the click says 0x3016.
+- An offensive skill at a player asks the same IsEnemy with Alt's state
+  (c:0x81bc93..0x81bcaf); not an enemy: dropped silently; a party member:
+  0x3022.
+- Another player's job state is written only by the spawn reader
+  (c:0x9de3d6 -> vslot 44); the 0x3038 handler (c:0x8a9260) only re-dresses.
+- The name colour (c:0x9cfd50): the viewer's worn suit against the other's
+  job state; opposed 0xffff6262.
+
+## Safe trade (round 802)
+
+`server/internal/session/safetrade.go`, `jobs.SafeTrade`. A trader's
+_CharTrijobSafeTrade row: AbleCount, Status, LastSafeTrade.
+
+- **Granted** when a trader closes a specialty trader's dialog
+  (EndInteraction s:0x510833 in INTERACTMODE 5 or 6 at an NPC with 0xc ->
+  s:0x60e800 / s:0x60e890): special goods (3/3/8/2) in a transport, or a scale
+  other than 1, make him ineligible (Status 0); with TRADE_SAFETY_OPTION 0
+  (counted, the shard's, MEASURED) one of TRADE_SAFETY_NUM (8, MEASURED) grants
+  a server-local day -- a grant while already safe counts nothing -- the
+  count reset at the first select of a 0xc NPC of a new day (s:0x60e690);
+  option 2 always grants, option 1 never.
+- **Lost** when the scale leaves 1 (s:0x5237b0), at the sale of his own goods
+  (s:0x4c8e20), at the pick of a bargain good (s:0x5261ef), at the suit's
+  removal (s:0x4f0dd4).
+- **0x34D5** `{u8 status, u8 code[, u8 count, u8 num]}` (s:0x51a960): `{1,
+  0x50, count, num}` granted, `{0, 0x41}` the day's limit, `{0, 0x40}` lost or
+  ineligible; at login (CGObjPC::vslot_391 s:0x4e0020) `{1, 0x51, count,
+  num}` or `{0, 0x40}`.
+- **The client** (UI_SAFETRADE c:0x891080): status 1 puts the buff board's
+  kind-0xb entry up (FUN_00777f20(0xb, 0, 1); its icon
+  `icon\etc\icon_safetrade_progress.ddj` c:0x7ff32f, its tooltip
+  UIIT_STT_SAFETRADE_PROGRESS c:0x802589, no gauge c:0x805c3f), and code 0x50
+  shows UIIT_MSG_SAFETRADE_PROGRESS ("Safe trade will begin.[%d]/[%d]") with
+  count and num on the warning banner (c:0x77b580) -- skipped while a byte at
+  +0x20fc of the object at c:0xeef5ec is set (OPEN: what it is); status 0
+  takes the entry down (FUN_00777f20(0xb, 0, 0)), and 0x41 writes
+  UIIT_MSG_SAFETRADE_NUMBER_ERR_LIMIT to the system lines (c:0x7781b0).
+- OURS, disclosed: the select reply's own safe-trade tail (option, num, count
+  after the interaction ids, s:0x52b040) is not sent; the client reads the
+  counts from 0x34D5.
+
+### Still OPEN
+
+The +0x20fc byte that hides the banner; FUN_00666e60's exact test; what
+retail draws for a player killed in view by another (the death clip, the
+corpse); the NPC thieves' and hunters' caravan waves (next round).

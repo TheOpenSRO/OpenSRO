@@ -114,7 +114,7 @@ func NPCTalkHandler(hub *world.Hub, trades *trade.Hub) gateway.Handler {
 		case npctalk.OpOpen:
 			handleNPCOpen(sess, p.Data, hub, trades)
 		case npctalk.OpEnd:
-			handleNPCEnd(sess, p.Data)
+			handleNPCEnd(sess, p.Data, hub)
 		}
 		return nil
 	}
@@ -206,6 +206,8 @@ func handleNPCSelect(sess *gateway.Session, data []byte, hub *world.Hub, trades 
 		return
 	}
 	ids := selectIDsFor(context.Background(), pl.npc, e.Level, e.CharacterID)
+	// Round 802: a trader's safe-trade day starts at a specialty NPC's select.
+	safeTradeOnSelect(context.Background(), e.CharacterID, ids)
 	npcInteractions.mu.Lock()
 	st.entity = entity
 	st.selected = true
@@ -323,13 +325,18 @@ func handleNPCOpen(sess *gateway.Session, data []byte, hub *world.Hub, trades *t
 // cleared only with mode 5 (0x51090d..0x510913) or by a bare select's end
 // (mode 0 with the flag, 0x5107f0..0x5107f9): after a mode-6 end a second
 // 0x704B still gets {1}.
-func handleNPCEnd(sess *gateway.Session, data []byte) {
+func handleNPCEnd(sess *gateway.Session, data []byte, hub *world.Hub) {
 	if _, err := npctalk.DecodeEntity(data); err != nil {
 		return
 	}
 	npcInteractions.mu.Lock()
 	st, ok := npcInteractions.m[sess.ID()]
 	open := ok && (st.mode == 5 || st.mode == 6 || st.selected)
+	var endedMode byte
+	var endedNPC uint32
+	if ok {
+		endedMode, endedNPC = st.mode, st.entity
+	}
 	if open {
 		if st.mode == 5 || st.mode == 0 {
 			st.selected = false
@@ -345,4 +352,7 @@ func handleNPCEnd(sess *gateway.Session, data []byte) {
 		return
 	}
 	sendNPCTalk(sess, npctalk.OpEndResult, npctalk.EncodeEndOK())
+	// Round 802 (safetrade.go): a trader closing a specialty trader's
+	// dialog may earn a safe trade.
+	safeTradeOnEnd(context.Background(), sess, hub, endedNPC, endedMode)
 }

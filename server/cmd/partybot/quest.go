@@ -81,6 +81,16 @@ func loadNPCSpots(npcsCSV, npcposCSV string) (map[string][]npcSpot, error) {
 	return out, nil
 }
 
+// zoneWorld is worldmap.ToZoneWorld, and under -full-map (the one world
+// frame, worldmap.WorldBucket) worldmap.ToWorld at WorldOrigin (round 802).
+func zoneWorld(zone string, rx, ry int, x, z float64) (float64, float64, bool) {
+	if zone == worldmap.WorldBucket {
+		wx, wz := worldmap.ToWorld(rx, ry, x, z, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+		return wx, wz, true
+	}
+	return worldmap.ToZoneWorld(zone, rx, ry, x, z)
+}
+
 type questRun struct {
 	b     *bot
 	cat   *quest.Catalog
@@ -194,7 +204,7 @@ func (r *questRun) goTo(code string) (uint32, error) {
 	found := false
 	for _, s := range spots {
 		rx, ry := worldmap.RegionXY(s.region)
-		if wx, wz, ok := worldmap.ToZoneWorld(r.b.zone, rx, ry, s.x, s.z); ok {
+		if wx, wz, ok := zoneWorld(r.b.zone, rx, ry, s.x, s.z); ok {
 			target, x, z, found = s, wx, wz, true
 			break
 		}

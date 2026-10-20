@@ -1325,6 +1325,11 @@ func (a *monsterAI) acquire(b *brain) bool {
 				if _, no := a.untouchable[e.CharacterID]; no {
 					continue
 				}
+				// Round 802: an NPC thief or hunter scans by job
+				// (CGObjMob::vslot_394's filter, jobs.MobMayTarget).
+				if !jobMobMayTarget(b.m.CodeName, e.CharacterID) {
+					continue
+				}
 				cands = append(cands, ai.Candidate{ID: e.CharacterID, X: e.Pos.X, Z: e.Pos.Z})
 			}
 		}
@@ -1385,6 +1390,9 @@ func (a *monsterAI) battleTick(b *brain) {
 	// or in body mode 2 -- fails AITactics_IsValidTarget (0x540e2f, READ) and
 	// takes the same 0x23 exit.
 	_, protected := a.untouchable[b.target]
+	if ok && !jobMobMayTarget(b.m.CodeName, b.target) {
+		protected = true // its job changed under the fight (round 802)
+	}
 	if !ok || e.Zone != b.m.Zone || killed || e.Life == world.LifeDead || e.Held || protected {
 		why := "target gone"
 		if killed {

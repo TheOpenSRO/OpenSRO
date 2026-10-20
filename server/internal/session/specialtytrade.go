@@ -96,9 +96,14 @@ type SpecialtyDeps struct {
 	// (TypeID4 2) are on sale. The schedule that sets it (CGameSJ_
 	// SpecialGoodsSelling) is OPEN; a flag stands in (OURS).
 	SpecialGoods bool
-	Items        ItemLookup
-	Chars        character.Store
-	Logger       *slog.Logger
+	// SafeOption and SafeNum are TRADE_SAFETY_OPTION and TRADE_SAFETY_NUM
+	// (round 802, safetrade.go); SafeSet says they were configured (else the
+	// shard's 0 and 8).
+	SafeOption, SafeNum int
+	SafeSet             bool
+	Items               ItemLookup
+	Chars               character.Store
+	Logger              *slog.Logger
 }
 
 type specialtyRuntime struct {
@@ -233,6 +238,10 @@ func refreshTradeScale(ctx context.Context, characterID int64) {
 	}
 	if e.Session != nil {
 		_ = e.Session.Send(&proto.Packet{Opcode: OpTradeScale, Data: []byte{now}})
+	}
+	// A scale that leaves 1 ends a safe trade (round 802, s:0x5237b0).
+	if now != 1 {
+		safeTradeLose(ctx, characterID)
 	}
 	bumpPlayerState(characterID)
 }
@@ -719,6 +728,11 @@ func handleSellFromCOS(ctx context.Context, sess *gateway.Session, data []byte, 
 		}
 	}
 	gold, profit, changed := salePrice(it, int64(pl.npc.RefID), pl.npc.Interact, sellsIt, owned, count)
+	// Selling his own goods at a specialty NPC ends a trader's safe trade
+	// (round 802, s:0x4c8e20: the owned branch of the quotation's price).
+	if isSpecialtyItem(it) && owned && !npcHas(pl.npc.Interact, 0x0d) && !sellsIt {
+		safeTradeLose(ctx, e.CharacterID)
+	}
 	bags := cosWorld.depsNow().bags
 	if d.Chars == nil || bags == nil {
 		return fail(ItemErrDB)
@@ -915,6 +929,10 @@ func pickGood(ctx context.Context, sess *gateway.Session, e world.Entity, it gro
 	o := ownTransport(e.CharacterID)
 	if o == nil {
 		return refuse(tradeErrNoCartToPick)
+	}
+	// A bargain good picked up ends a safe trade (round 802, s:0x5261ef).
+	if ref, err := cosWorld.depsNow().items.GetItem(ctx, it.ItemID); err == nil && ref != nil && ref.TypeID4 == 2 {
+		safeTradeLose(ctx, e.CharacterID)
 	}
 	d := cosWorld.depsNow()
 	if d.bags == nil {

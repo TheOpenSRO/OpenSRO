@@ -298,6 +298,13 @@ signal trade_info(rows: Array)
 signal trade_result(d: Dictionary)
 ## A 0x300C word other than the unique notices' (round 801).
 signal notice_word(word: int)
+## Round 802 (JobPvpNet): a blow on a player or a COS in the zone
+## (OpPlayerStruck, JobPvpNet.decode_struck), and the trader's safe trade
+## (0x34D5, JobPvpNet.decode_safe_trade; the last one kept for a world
+## scene that loads after the login's report).
+signal player_struck(d: Dictionary)
+signal safe_trade(d: Dictionary)
+var safe_trade_last := {}
 ## Round 737 (crowd_scale.md C1): the other players in view arrive as the
 ## same retail spawn messages, with a CICUser record (UserSpawnNet), and leave
 ## by 0x3016 / a type-2 group. user_roster is the uids spawned and not
@@ -804,7 +811,7 @@ func _passes_group(p: Packet) -> bool:
 				CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK, JobNet.OP_JOB_INFO, JobNet.OP_JOB_EXP, \
 				JobNet.OP_JOIN_RESULT, JobNet.OP_WITHDRAW_RESULT, JobNet.OP_ALIAS_RESULT, JobNet.OP_RANKING_RESULT, \
 				JobNet.OP_REWARD_RESULT, JobNet.OP_PREV_JOB_RESULT, SpecialtyNet.OP_PRICES, SpecialtyNet.OP_SCALE, \
-				SpecialtyNet.OP_LEASH, SpecialtyNet.OP_INFO_RESULT:
+				SpecialtyNet.OP_LEASH, SpecialtyNet.OP_INFO_RESULT, JobPvpNet.OP_SAFE_TRADE:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -929,6 +936,7 @@ func disconnect_from_server() -> void:
 	_pending_learns.clear()
 	own_character_id = -1
 	cos_own = {}
+	safe_trade_last = {}
 	buff_roster.clear()
 	npc_roster.clear()
 	user_roster.clear()
@@ -1102,6 +1110,9 @@ func _forget_session_lists() -> void:
 	# a disconnect or a server restart sends no 0x30C9 removal -- came back
 	# as status slots with nothing behind them.
 	cos_own = {}
+	# Round 802: the safe trade is the entry's own (a trader's login sends
+	# it; any other character none).
+	safe_trade_last = {}
 
 ## The current zone label, updated from last_enter_world_result.zone on
 ## entering the world and again from a successful change_zone_result --
@@ -1390,6 +1401,19 @@ func attack(char_name: String, target_monster_id: int) -> void:
 	_attack_targets_in_flight.append(target_monster_id)
 	_attack_types_in_flight.append(SkillNet.TARGET_ENTITY)
 
+## Round 802: a plain swing at another player (JobPvpNet.TARGET_CHARACTER,
+## his character id) or at a COS (TARGET_COS, its uid). No pet joins it: a
+## growth pet's own_offensive is for a monster.
+func attack_player(char_name: String, target: int, kind: int) -> void:
+	if not is_connected_to_server():
+		return
+	if riding_mount != 0:
+		ride_refused_action.emit()
+		return
+	_send(CombatNet.OP_ATTACK, JobPvpNet.encode_attack(char_name, target, kind))
+	_attack_targets_in_flight.append(target)
+	_attack_types_in_flight.append(kind)
+
 func berserk(char_name: String) -> void:
 	_send(CombatNet.OP_BERSERK, CombatNet.encode_berserk(char_name))
 
@@ -1431,7 +1455,7 @@ func use_skill(char_name: String, skill_id: int, target_monster_id: int,
 		ride_refused_action.emit()
 		return
 	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id, target_type, point))
-	if target_type == SkillNet.TARGET_ENTITY and target_monster_id > 0:
+	if target_type == SkillNet.TARGET_ENTITY and target_monster_id > 0 and not JobPvpNet.is_cos_uid(target_monster_id):
 		own_offensive.emit(target_monster_id)
 	if LatencyProbe.on and target_type == SkillNet.TARGET_ENTITY:
 		LatencyProbe.attack_send(target_monster_id, Time.get_ticks_msec())
@@ -2305,6 +2329,15 @@ func _dispatch(p: Packet) -> void:
 				trade_leash.emit(p.data[0])
 		SpecialtyNet.OP_INFO_RESULT:
 			trade_info.emit(SpecialtyNet.decode_info(p.data))
+		JobPvpNet.OP_PLAYER_STRUCK:
+			var st := JobPvpNet.decode_struck(p.data)
+			if not st.is_empty():
+				player_struck.emit(st)
+		JobPvpNet.OP_SAFE_TRADE:
+			var sf := JobPvpNet.decode_safe_trade(p.data)
+			if not sf.is_empty():
+				safe_trade_last = sf
+				safe_trade.emit(sf)
 		JobNet.OP_JOB_INFO, JobNet.OP_JOB_EXP, JobNet.OP_JOIN_RESULT, JobNet.OP_WITHDRAW_RESULT, JobNet.OP_ALIAS_RESULT, \
 				JobNet.OP_RANKING_RESULT, JobNet.OP_REWARD_RESULT, JobNet.OP_PREV_JOB_RESULT:
 			_on_job_packet(p.opcode, p.data)

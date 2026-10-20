@@ -2165,6 +2165,9 @@ func _ready() -> void:
 		for uid in npc_roster.npcs:
 			_on_npc_spawned(npc_roster.npcs[uid])
 	NetClient.attack_result.connect(_on_attack_result)
+	# Round 802: job PvP's blows and the safe trade (JobPvpNet).
+	NetClient.player_struck.connect(_on_player_struck)
+	NetClient.safe_trade.connect(_on_safe_trade)
 	NetClient.revive_result.connect(_on_revive_result)
 	NetClient.state_changed.connect(_on_state_changed)
 	# Round 786: a skill or a duel blow the client refused itself in the
@@ -2584,7 +2587,12 @@ func _try_initialize_pk2_ui() -> void:
 			# SelfCast.SILENT_END_TEXT, round 636's review -- stays silent.)
 			# The protection's refusal is shown in the archive's own words
 			# (round 786, ArrivalGuard.error_line).
-			_log_system(ArrivalGuard.error_line(result.error, _ui_text_table))
+			# Round 802: a refusal the server names by its UIIT key (job
+			# PvP's, jobpvp.go pvpRefusalText) in the archive's words.
+			var line := ArrivalGuard.error_line(result.error, _ui_text_table)
+			if result.error.begins_with("UIIT_"):
+				line = _resolve_any_text(result.error, result.error)
+			_log_system(line)
 			if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "":
@@ -2911,6 +2919,11 @@ func _build_buff_board() -> void:
 	var qa := OS.get_environment("OPENSRO_QA_BUFFS")
 	if qa != "":
 		_hud_buff_board.qa_inject(qa, OS.get_environment("OPENSRO_QA_BUFFS_END"))
+	# Round 802: the safe trade the login reported before the bar was built
+	# (an icon only: the login's 0x51 shows no banner).
+	if bool(NetClient.safe_trade_last.get("status", false)):
+		_hud_buff_board.add_state_entry(HudBuffBoard.KIND_SAFE_TRADE, JobPvpNet.SAFE_BOARD_TOKEN, JobPvpNet.SAFE_ICON,
+			_resolve_any_text(JobPvpNet.SAFE_TOOLTIP_KEY, "Safe trade is in progress."))
 
 ## Item grants (round 632 review): a used Energy of life scroll grants one
 ## use of the Hwan regeneration fill for an hour. Retail shows the grant as
@@ -9875,6 +9888,9 @@ func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	var job: Dictionary = NetClient.user_jobs.get(int(node.get_meta("character_id", -1)), {})
 	var js := int(job.get("state", UserSpawnNet.JOB_STATE_NONE))
 	var plate := _name_plate(job_plate_text(char_name, js), top, not batched)
+	# Round 802: an opposed job's name in the hostile colour (c:0x9cfd50).
+	if JobPvpNet.enemy_name(_own_job_state(), js):
+		plate.modulate = JobPvpNet.ENEMY_NAME_COLOUR
 	node.add_child(plate)
 	if batched and not _plate_batch_add(plate, node):
 		plate.visible = true
@@ -12016,6 +12032,8 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# (FUN_009dbcc0 recomputes +0x50d and refreshes the plate).
 	if job_changed:
 		_refresh_player_name_plate()
+		# Round 802: the hostile name colour follows the worn suit.
+		_recolour_enemy_plates()
 	# Round 789: the avatars ride along under their OURS keys
 	# (CharacterAppearance.AVATAR_KEY_BASE); the body, the paper doll and the
 	# portrait are built from both, and the visual arbitration decides what
@@ -13006,12 +13024,17 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 		SelfCast.PLAN_HOSTILE_AT_CHARACTER:
 			# READ (round 622's review): retail's client drops an offensive
 			# row at a player SILENTLY when the player is not attackable (its
-			# vslot 0xa8 false, 0x81bc93..0x81bcaf: `je 0x81c577`, no message),
-			# and shows 0x3022 CANT_ATTACK_PARTY_MEMBER only for an attackable
-			# party member. OpenSRO has no player-versus-player, so no player
-			# is attackable: nothing is sent and nothing is said.
-			print("World3D: skill %d at player %d: an offensive row at a player who is not attackable -- dropped silently, as retail drops it" % [
-				skill_id, _selected_character])
+			# vslot 0xa8, IsEnemy(GetKeyState(VK_MENU) & 0x8000), false:
+			# 0x81bc93..0x81bcaf `je 0x81c577`, no message), and shows 0x3022
+			# CANT_ATTACK_PARTY_MEMBER for an attackable party member
+			# (0x992940). Round 802: an enemy (job PvP) is cast at.
+			if not _player_is_enemy(_selected_character, Input.is_key_pressed(KEY_ALT)):
+				print("World3D: skill %d at player %d: an offensive row at a player who is not attackable -- dropped silently, as retail drops it" % [
+					skill_id, _selected_character])
+			elif _in_own_party(_selected_character):
+				_log_system(_resolve_any_text("UIIT_MSG_SKILL_USE_FAIL_CANT_ATTACK_PARTY_MEMBER", "Cannot attack the member of the same party."))
+			else:
+				_attack_pvp(JobPvpNet.TARGET_CHARACTER, _selected_character, skill_id, basic_code)
 		_:
 			# Nothing selected: the original refuses too ("no target"), and a
 			# swing at nothing only looked like a cast that did nothing.
@@ -13170,16 +13193,23 @@ func _pick_character(screen_pos: Vector2) -> String:
 	if hit.is_empty():
 		return ""
 	var node := hit["collider"] as Node
-	while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id") or node.has_meta("self_click")):
+	while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id") or node.has_meta("self_click")
+			or node.has_meta("cos_uid")):
 		node = node.get_parent()
 	if node == null:
 		return ""
+	if not node.has_meta("cos_uid"):
+		_selected_cos = -1
 	if node.has_meta("self_click"):
 		_select_self()
 		return "select_self"
 	if node.has_meta("character_id"):
-		_select_character(int(node.get_meta("character_id")), String(node.get_meta("character_name", "")))
-		return "select_player"
+		# Round 802: an enemy selected (or with Alt) is attacked (_click_player).
+		return _click_player(int(node.get_meta("character_id")), String(node.get_meta("character_name", "")))
+	if node.has_meta("cos_uid"):
+		# Round 802: an enemy's COS (_click_cos); any other is passed over,
+		# as before.
+		return _click_cos(int(node.get_meta("cos_uid")))
 	# A dead monster is no target (round 677's review): its collider is
 	# dropped at the death (_drop_click_body), and a ray that still met it
 	# in the same frame finds nothing here.
@@ -13280,6 +13310,396 @@ func _select_character(character_id: int, char_name: String) -> void:
 		else:
 			_hud_target.show_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race)
 	print("World3D: selected player %d (%s), race %d" % [character_id, char_name, race])
+
+# --- Job PvP (round 802, JobPvpNet) ---------------------------------------------
+#
+# A trader or hunter and a thief may fight (the server's jobs.AttackCode
+# decides; session/jobpvp.go). The click, the cursor and the name colour
+# follow the original client (JobPvpNet's header has what is READ); the walk
+# into reach is this client's, as for a monster (_attack_monster), because
+# OpenSRO's server does not walk players.
+
+## The player-side target this player's attack is on: {"kind":
+## JobPvpNet.TARGET_CHARACTER or TARGET_COS, "id", "skill", "retries"}; {}
+## for none. Kept across the server's keep-up (each repeat answers it) until a
+## refusal, a death or another action.
+var _pvp_target := {}
+## The last such target, kept after the attack ends: a reply to a request
+## sent before the end (a second click, a keep-up swing in flight) is still
+## this attack's, not a friendly cast's.
+var _pvp_last := {}
+## Its walk into reach: the same with "stop" and "reach".
+var _pending_pvp := {}
+## The COS a click selected (round 802): its uid, -1 for none.
+var _selected_cos := -1
+
+## Another player's job state as his spawn told it (the original never
+## updates it after, c:0x9de3d6).
+func _their_job_state(character_id: int) -> int:
+	return int((NetClient.user_jobs.get(character_id, {}) as Dictionary).get("state", JobPvpNet.STATE_NONE))
+
+## Whether a player wears a job suit in slot 8 now (FUN_009daf50(8) of
+## c:0x9de780): this player's from its own equipment, another's from the
+## 0x3038 / 0x3039 broadcasts.
+func _wears_job_suit(character_id: int) -> bool:
+	if character_id == _own_id() and character_id >= 0:
+		return _own_job_state() != JobPvpNet.STATE_NONE
+	var slot8 := int((_other_equipped.get(character_id, {}) as Dictionary).get(8, 0))
+	if slot8 <= 0 or NetClient._spawn_types == null:
+		return false
+	return NetClient._spawn_types.job_state([{"id": slot8}]) != UserSpawnNet.JOB_STATE_NONE
+
+func _in_own_party(character_id: int) -> bool:
+	return NetClient.party.in_party and NetClient.party.member(character_id & 0xffffffff) != null
+
+## IsEnemy(Alt) on another player (c:0x9de780, JobPvpNet.is_enemy).
+func _player_is_enemy(character_id: int, alt: bool) -> bool:
+	return JobPvpNet.is_enemy(_own_job_state(), _their_job_state(character_id), alt,
+		_wears_job_suit(_own_id()) and _wears_job_suit(character_id))
+
+## IsEnemy(Alt) on a COS: its owner's (CICCos vslot 42 judges the owner;
+## INFERRED that the owner's job is the COS record's owner_job, and that two
+## suits rule out Alt as for a player). This player's own COS never is (its
+## owner named by uid: in job mode the record's owner name is the alias).
+func _cos_is_enemy(uid: int, alt: bool) -> bool:
+	var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+	if rec == null or rec.owner_name == "":
+		return false
+	if rec.owner_uid != 0 and _own_id() >= 0 and rec.owner_uid == (_own_id() & 0xffffffff):
+		return false
+	if rec.owner_name == NetClient.current_character_name or NetClient.cos_own.has(uid):
+		return false
+	return JobPvpNet.is_enemy(_own_job_state(), rec.owner_job, alt,
+		_wears_job_suit(_own_id()) and rec.owner_job != JobPvpNet.STATE_NONE and rec.owner_job != 0)
+
+## A click on another player (c:0x792f00's player branch).
+func _click_player(character_id: int, char_name: String) -> String:
+	var alt := Input.is_key_pressed(KEY_ALT)
+	var what := JobPvpNet.player_click(_selected_character == character_id, alt,
+		_player_is_enemy(character_id, alt), _in_own_party(character_id), _player_level)
+	if what == "select" or _selected_character != character_id:
+		_select_character(character_id, char_name)
+	match what:
+		"level":
+			_log_system(_resolve_any_text(JobPvpNet.YOUR_LEVEL_LOW_KEY, "Cannot PK at your level."))
+		"attack":
+			_attack_pvp(JobPvpNet.TARGET_CHARACTER, character_id)
+			return "attack_player"
+	return "select_player"
+
+## A click on a COS: an enemy's selects it (the hostile ring), and a click on
+## it selected, or with Alt, attacks it; any other COS is passed over ("").
+func _click_cos(uid: int) -> String:
+	var alt := Input.is_key_pressed(KEY_ALT)
+	if not _cos_is_enemy(uid, alt):
+		return ""
+	var rec: CosSpawnNet.Record = _cos_recs.get(uid)
+	var attack := _selected_cos == uid or alt
+	_selected_cos = uid
+	_last_attack_target = -1
+	_selected_character = -1
+	_markers().attach("cos:%d" % uid, GroundMarkers.Kind.COS)
+	if not attack:
+		print("World3D: selected COS %d (%s's)" % [uid, rec.owner_name if rec != null else "?"])
+		return "select_cos"
+	if _player_level < JobPvpNet.PK_MIN_LEVEL:
+		_log_system(_resolve_any_text(JobPvpNet.YOUR_LEVEL_LOW_KEY, "Cannot PK at your level."))
+		return "select_cos"
+	_attack_pvp(JobPvpNet.TARGET_COS, uid)
+	return "attack_cos"
+
+## Where a player-side target stands (x, z), or null when it is gone.
+func _pvp_ground(kind: int, id: int) -> Variant:
+	if kind == JobPvpNet.TARGET_COS:
+		var cb: Node3D = _cos_bodies.get(id)
+		if cb == null or not is_instance_valid(cb):
+			return null
+		return Vector2(cb.position.x, cb.position.z)
+	if not _other_bodies.has(id):
+		return null
+	return _other_player_ground(id)
+
+func _pvp_body(kind: int, id: int) -> Node3D:
+	var b = _cos_bodies.get(id) if kind == JobPvpNet.TARGET_COS else _other_bodies.get(id)
+	return b as Node3D if b != null and is_instance_valid(b) else null
+
+## The reach band at a player-side target as the server measures it
+## (jobpvp.go pvpInReach): the player's BCRadius and the target's (a COS
+## row's own), and the skill's Range or the weapon's.
+func _pvp_band(kind: int, id: int, skill_id: int) -> Vector2:
+	var skill_range := 0
+	if skill_id != 0 and _hud_panels != null:
+		skill_range = int((_hud_panels.skill_reach(skill_id) as Dictionary).get("range", 0))
+	var body_code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
+	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
+	var target_bc := CombatNet.PLAYER_BC_RADIUS
+	if kind == JobPvpNet.TARGET_COS:
+		var rec: CosSpawnNet.Record = _cos_recs.get(id)
+		var row := _cos_table.row(rec.ref_id) if rec != null and _cos_table != null else null
+		if row != null:
+			target_bc = int(row.bc)
+	return CombatNet.approach_band(caster_bc, target_bc, CombatNet.effective_range(skill_range, _equipped_weapon_range()))
+
+## Attacks a player or a COS: walks into reach, then sends the plain swing
+## (skill 0) or the cast.
+func _attack_pvp(kind: int, id: int, skill_id: int = 0, basic_code: String = "", retries: int = 0) -> void:
+	if _player_dead:
+		print("World3D: attack on %s %d while dead -- not sent" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id])
+		return
+	_drop_pending_attack()
+	_pending_pvp = {}
+	if _pvp_ground(kind, id) == null:
+		_log_system(SelfCast.INVALID_TARGET_TEXT)
+		return
+	var band := _pvp_band(kind, id, skill_id)
+	_pending_pvp = {"kind": kind, "id": id, "skill": skill_id, "code": basic_code, "retries": retries,
+		"stop": band.x, "reach": band.y}
+	if _wall_root() != 0:
+		_log_root("the walk into reach of %s %d" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id], _wall_root())
+		_release_pending_pvp()
+		return
+	if not _step_pending_pvp() and not _pending_pvp.is_empty():
+		print("World3D: %s %d is out of reach %.1f -- walking to %.1f short of it" % [
+			"COS" if kind == JobPvpNet.TARGET_COS else "player", id, band.y, band.x])
+
+## One tick of the walk into a PvP attack's reach (as _step_pending_attack).
+func _step_pending_pvp() -> bool:
+	var at = _pvp_ground(int(_pending_pvp["kind"]), int(_pending_pvp["id"]))
+	if at == null:
+		print("World3D: %d left before the walk reached it -- attack dropped" % int(_pending_pvp["id"]))
+		_pending_pvp = {}
+		_has_move_target = false
+		return false
+	var here := Vector2(player.position.x, player.position.z)
+	var tight := int(_pending_pvp.get("retries", 0)) > 0
+	var stop := float(_pending_pvp["stop"])
+	if CombatNet.approach_releases(here.distance_to(at), stop, float(_pending_pvp["reach"]), tight):
+		_release_pending_pvp()
+		return true
+	var point := CombatNet.approach_point(here, at, CombatNet.approach_aim(stop, tight, MOVE_TARGET_STOP_DISTANCE))
+	_move_target = Vector3(point.x, player.position.y, point.y)
+	_has_move_target = true
+	_move_heading_run = false
+	return false
+
+## Sends the pending PvP attack from where the player stands, facing it.
+func _release_pending_pvp() -> void:
+	var a := _pending_pvp
+	_pending_pvp = {}
+	_has_move_target = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	var kind := int(a["kind"])
+	var id := int(a["id"])
+	var at = _pvp_ground(kind, id)
+	if at != null:
+		var dir: Vector2 = (at as Vector2) - Vector2(player.position.x, player.position.z)
+		if not dir.is_zero_approx():
+			player.rotation.y = atan2(dir.x, dir.y)
+	_flush_position()
+	_released_attack = {}
+	_pvp_target = {"kind": kind, "id": id, "skill": int(a["skill"]), "retries": int(a.get("retries", 0))}
+	_pvp_last = _pvp_target
+	var skill_id := int(a["skill"])
+	if skill_id == 0:
+		print("World3D: %s %d in reach -- swinging" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id])
+		NetClient.attack_player(NetClient.current_character_name, id, kind)
+		return
+	print("World3D: %s %d in reach -- casting skill %d" % ["COS" if kind == JobPvpNet.TARGET_COS else "player", id, skill_id])
+	if kind == JobPvpNet.TARGET_CHARACTER:
+		# Drawn as a cast at a player is (_send_character_cast's decoration,
+		# acted on the target's body); its answer is routed here.
+		_send_character_cast(skill_id, String(a["code"]), id)
+	else:
+		_last_combat_time = _player_anim_time
+		_self_cast.note_cast(skill_id, Time.get_ticks_msec())
+		NetClient.use_skill(NetClient.current_character_name, skill_id, id, SkillNet.TARGET_ENTITY)
+
+## Whether an attack result answers the PvP attack: it names its target (the
+## server's MonsterID, or the request queue's id) and is a character's or a
+## COS's reply.
+func _is_pvp_reply(result: CombatNet.AttackResult) -> bool:
+	var t := _pvp_target
+	if t.is_empty():
+		# A late reply (_pvp_last) -- unless a friendly cast at a player
+		# waits for its own.
+		if not _fx_self_cast.is_empty():
+			return false
+		t = _pvp_last
+	if t.is_empty() or result.monster_id != int(t["id"]):
+		return false
+	if int(t["kind"]) == JobPvpNet.TARGET_COS:
+		return JobPvpNet.is_cos_uid(result.monster_id)
+	return result.target_type == JobPvpNet.TARGET_CHARACTER
+
+## This player's PvP attack answered: a refusal (the general listener says
+## why) ends it, or walks again once more for "too far away"; a blow plays
+## the swing, faces the target, and draws its number and the target's
+## reaction at the swing's hit event.
+func _on_pvp_result(result: CombatNet.AttackResult) -> void:
+	var t := _pvp_target
+	if t.is_empty():
+		# A late reply to an attack already over: a refusal says nothing
+		# more (the general listener has said why); a blow is still drawn.
+		if result.error != "":
+			print("World3D: late PvP reply on %d: %s" % [int(_pvp_last["id"]), result.error])
+			return
+		t = _pvp_last
+	var kind := int(t["kind"])
+	var id := int(t["id"])
+	var skill_id := int(t.get("skill", 0))
+	if result.error != "":
+		print("World3D: PvP attack on %d refused: %s" % [id, result.error])
+		_pvp_target = {}
+		if skill_id != 0:
+			_fx_self_cast_refused()
+			return
+		var retries := int(t.get("retries", 0))
+		if result.error == CombatNet.REFUSED_TOO_FAR and retries < CombatNet.APPROACH_RETRY_CAP and _pvp_ground(kind, id) != null:
+			_attack_pvp(kind, id, 0, "", retries + 1)
+		return
+	_last_combat_time = _player_anim_time
+	var body := _pvp_body(kind, id)
+	var lands_after := 0.0
+	if skill_id != 0:
+		if kind == JobPvpNet.TARGET_CHARACTER:
+			_fx_self_cast_accepted()
+		_arm_skill_cooldown(skill_id)
+		_pvp_target = {}
+	else:
+		var swing_type := _plain_swing_type()
+		if swing_type < 0:
+			swing_type = ATTACK_SEQUENCE[_attack_step % ATTACK_SEQUENCE.size()]
+			_attack_step += 1
+		var entry := _body_animation_entry(_player_body, swing_type, _player_weapon_group)
+		if entry == null:
+			entry = _body_animation_entry(_player_body, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
+		if entry != null:
+			var swing := _body_animation_for(_player_body, entry.action_type, _player_weapon_group)
+			if swing != null:
+				_player_swing_until = Time.get_ticks_msec() + int(_play_player_once(swing) * 1000.0)
+			var hit_ms := entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
+			lands_after = float(hit_ms) / 1000.0 if hit_ms > 0 else 0.0
+	if body != null:
+		var dir := Vector2(body.position.x, body.position.z) - Vector2(player.position.x, player.position.z)
+		if not dir.is_zero_approx():
+			player.rotation.y = atan2(dir.x, dir.y)
+	print("World3D: PvP %s on %s %d for %d%s (%d left%s)" % ["skill %d" % skill_id if skill_id != 0 else "swing",
+		"COS" if kind == JobPvpNet.TARGET_COS else "player", id, result.monster_damage,
+		" CRIT" if result.player_critical else "", result.monster_remaining_hp, ", died" if result.monster_died else ""])
+	if result.monster_died:
+		_pvp_target = {}
+	var body_ref: WeakRef = weakref(body) if body != null else null
+	var dmg := result.monster_damage
+	var crit := result.player_critical
+	_after(lands_after, func() -> void:
+		var b = body_ref.get_ref() if body_ref != null else null
+		if b == null or not is_instance_valid(b):
+			return
+		if dmg > 0:
+			_damage_text(b, _number_art(crit), dmg, true, true)
+		if kind == JobPvpNet.TARGET_COS:
+			_cos_play(id, BsrReader.AnimationEntry.TYPE_HIT)
+		else:
+			_play_other_hit(id))
+
+## OpPlayerStruck (round 802): a blow on a player or a COS in the zone. This
+## player's own blows are drawn by their result (_on_pvp_result); its copy
+## only paints the target window. A blow on this player: the HUD's HP, the
+## hit reaction, and a death's line and dead state. On another: its number,
+## its reaction, and the striker's swing (OURS: no swing message exists;
+## the striker's attack clip once).
+func _on_player_struck(d: Dictionary) -> void:
+	var attacker := int(d["attacker"])
+	var target := int(d["target"])
+	var on_cos := bool(d["cos"])
+	var mine := attacker == (_own_id() & 0xffffffff) and _own_id() >= 0
+	if not on_cos and target == _selected_character and int(d["max_hp"]) > 0:
+		_set_target_hp(int(d["hp"]), int(d["max_hp"]))
+	if mine:
+		return
+	var striker := _other_by_uid(attacker)
+	if striker >= 0:
+		var gait: Dictionary = _other_gaits.get(striker, {})
+		if not gait.is_empty() and is_instance_valid(gait["skeleton"]):
+			var clip := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_ATTACK, gait["group"])
+			if clip != null:
+				_play_once(gait["skeleton"], clip)
+	var on_self := not on_cos and target == (_own_id() & 0xffffffff) and _own_id() >= 0
+	if on_self:
+		_own_hp_told()
+		var max_hp := int(d["max_hp"]) if int(d["max_hp"]) > 0 else _last_enter_world_max_hp
+		if _hud_player_info != null:
+			_hud_player_info.set_hp(int(d["hp"]), max_hp)
+		if _hud_panels != null:
+			_hud_panels.set_character_vitals(int(d["hp"]), max_hp, 1)
+		if int(d["damage"]) > 0:
+			_damage_text(player, _number_art(bool(d["critical"])), int(d["damage"]), true, false)
+		elif bool(d["blocked"]):
+			_damage_text(player, DamageText.Art.BLOCK, 0, true, false)
+		print("World3D: struck by player %d for %d (HP %d)%s" % [attacker, int(d["damage"]), int(d["hp"]),
+			", killed, lost %d exp" % int(d["exp_lost"]) if bool(d["died"]) else ""])
+		if bool(d["died"]):
+			if monster_status_label != null:
+				monster_status_label.text = _death_line(int(d["exp_lost"]))
+			if MonsterStrikes.leaves_dead(true, int(d["hp"])):
+				_enter_dead_state(int(d["exp_lost"]))
+		if int(d["damage"]) > 0 or _player_dead:
+			_play_player_struck()
+		return
+	if on_cos:
+		var cb: Node3D = _cos_bodies.get(target)
+		if cb != null and is_instance_valid(cb):
+			if int(d["damage"]) > 0:
+				_damage_text(cb, _number_art(bool(d["critical"])), int(d["damage"]), true, false)
+			_cos_play(target, BsrReader.AnimationEntry.TYPE_HIT)
+		return
+	var victim := _other_by_uid(target)
+	if victim < 0:
+		return
+	var vb = _other_bodies.get(victim)
+	if vb != null and is_instance_valid(vb) and int(d["damage"]) > 0:
+		_damage_text(vb, _number_art(bool(d["critical"])), int(d["damage"]), true, false)
+	if int(d["damage"]) > 0 or bool(d["died"]):
+		_play_other_hit(victim)
+
+## 0x34D5 (UI_SAFETRADE c:0x891080): the board's safe-trade entry up or
+## down, the grant's banner, the limit's system line.
+func _on_safe_trade(d: Dictionary) -> void:
+	print("World3D: safe trade status %s code 0x%x (%d/%d)" % [str(d["status"]), int(d["code"]), int(d["count"]), int(d["num"])])
+	if _hud_buff_board != null:
+		if bool(d["status"]):
+			_hud_buff_board.add_state_entry(HudBuffBoard.KIND_SAFE_TRADE, JobPvpNet.SAFE_BOARD_TOKEN, JobPvpNet.SAFE_ICON,
+				_resolve_any_text(JobPvpNet.SAFE_TOOLTIP_KEY, "Safe trade is in progress."))
+		else:
+			_hud_buff_board.remove_state_entry(JobPvpNet.SAFE_BOARD_TOKEN)
+	var banner := JobPvpNet.safe_trade_banner(d, _resolve_any_text(JobPvpNet.SAFE_PROGRESS_KEY, ""))
+	if banner != "":
+		_show_banner("safe_trade", banner)
+	if not bool(d["status"]) and int(d["code"]) == JobPvpNet.SAFE_LIMIT:
+		_log_system(_resolve_any_text(JobPvpNet.SAFE_LIMIT_KEY,
+			"Unable to initiate Safe Trade. Maximum number of Safe Trade attempts has been reached."), HudSystemMessage.TYPE_ALWAYS)
+
+## The hostile name colour on every other player's plate (c:0x9cfd50): this
+## player's worn suit against their spawned job. Re-run when either changes.
+func _recolour_enemy_plates() -> void:
+	var own := _own_job_state()
+	for id in _other_bodies:
+		var body = _other_bodies[id]
+		if body == null or not is_instance_valid(body):
+			continue
+		_colour_enemy_plate(body as Node3D, JobPvpNet.enemy_name(own, _their_job_state(int(id))))
+
+func _colour_enemy_plate(body: Node3D, enemy: bool) -> void:
+	var label := body.get_node_or_null("Name") as Label3D
+	if label != null:
+		var want: Color = JobPvpNet.ENEMY_NAME_COLOUR if enemy else NAME_PLATE_COLOUR
+		if label.modulate == want:
+			return
+		label.modulate = want
+		if _plate_batch != null and _plate_batch.has(label):
+			_plate_batch.remove(label)
+			_plate_batch.add(label, body)
 
 ## Whether a target window owner still exists (round 638 review, the
 ## vslot_012 mirror): a monster with a body or a snapshot, another player
@@ -14141,6 +14561,12 @@ func _drop_pending_attack() -> void:
 	_released_attack = {}
 	if not _pending_friend_cast.is_empty():
 		_pending_friend_cast = {}
+		_has_move_target = false
+	# Round 802: a PvP attack's walk, and the attack itself (its keep-up's
+	# answers are no longer drawn as this player's).
+	_pvp_target = {}
+	if not _pending_pvp.is_empty():
+		_pending_pvp = {}
 		_has_move_target = false
 	if _pending_attack.is_empty():
 		return
@@ -15486,7 +15912,9 @@ func _step_move_order(delta: float) -> void:
 		_step_pending_attack()
 	if not _pending_friend_cast.is_empty():
 		_step_pending_friend_cast()
-	if _pending_attack.is_empty() and _pending_friend_cast.is_empty():
+	if not _pending_pvp.is_empty():
+		_step_pending_pvp()
+	if _pending_attack.is_empty() and _pending_friend_cast.is_empty() and _pending_pvp.is_empty():
 		_approach_blocked_at = Vector3.INF
 	elif _has_move_target and _approach_blocked_at != Vector3.INF \
 			and Vector2(_move_target.x - _approach_blocked_at.x, _move_target.z - _approach_blocked_at.z).length() < APPROACH_BLOCKED_HOLD:
@@ -16498,6 +16926,30 @@ func _qa_job_step() -> void:
 			print("QA JOB: tick %d alias OK" % _qa_tick)
 		elif what == "select_self":
 			_select_self()
+		# Round 802, job PvP (QA only): pvp:<name> clicks the player drawn
+		# under that name twice (the select, then the attack -- or Alt's
+		# rules: JobPvpNet.player_click), printing each click's path and his
+		# plate's colour; pvp_state prints the fight's state.
+		elif what.begins_with("pvp:"):
+			var who := what.substr(4)
+			var found := -1
+			for oid in _other_bodies:
+				var ob = _other_bodies[oid]
+				if ob != null and is_instance_valid(ob) and String((ob as Node).get_meta("character_name", "")) == who:
+					found = int(oid)
+			if found < 0:
+				print("QA PVP: tick %d %s is not drawn" % [_qa_tick, who])
+			else:
+				var plate := (_other_bodies[found] as Node3D).get_node_or_null("Name") as Label3D
+				print("QA PVP: tick %d %s (id %d, job %d) plate '%s' colour %s, own job %d, enemy %s" % [_qa_tick, who, found,
+					_their_job_state(found), plate.text if plate != null else "-", plate.modulate.to_html() if plate != null else "-",
+					_own_job_state(), str(_player_is_enemy(found, false))])
+				print("QA PVP: click 1 -> %s" % _click_player(found, who))
+				print("QA PVP: click 2 -> %s" % _click_player(found, who))
+		elif what == "pvp_state":
+			print("QA PVP: tick %d target %s pending %s selected %d HP %s dead %s board safe %s" % [_qa_tick, str(_pvp_target),
+				str(_pending_pvp), _selected_character, _hud_player_info._hp_text.text if _hud_player_info != null and _hud_player_info._hp_text != null else "-", str(_player_dead),
+				str(_hud_buff_board != null and _hud_buff_board.buff(JobPvpNet.SAFE_BOARD_TOKEN) != null)])
 		# Round 801, the trade (QA only): use:<ITEM_CODE> uses the first bag
 		# stack of that code; buy:<ITEM_CODE>x<n> buys at the open specialty
 		# store; sell:<slot>x<n> sells a transport slot there; cos_inv opens
@@ -23842,7 +24294,9 @@ func _hover_kind_at(screen_pos: Vector2) -> String:
 				return GameCursor.monster_kind(_monster_code_of(int(who.get_meta("monster_id"))))
 			# Another player: no party, stall or team state reaches this
 			# client yet (GameCursor.player_kind).
-			return GameCursor.player_kind(GameCursor.player_hostile(Input.is_key_pressed(KEY_ALT)), false, false)
+			# Round 802: IsHostile(Alt) with the job rules (_player_is_enemy).
+			var hid := int(who.get_meta("character_id", -1))
+			return GameCursor.player_kind(_player_is_enemy(hid, Input.is_key_pressed(KEY_ALT)), _in_own_party(hid), false)
 	var talk_node := _talk_ray_at(screen_pos)["node"] as Node
 	if talk_node != null and _hover_held(talk_node, "gate" if talk_node.has_meta("gate_point_id") else "npc"):
 		return "gate" if talk_node.has_meta("gate_point_id") else "talk"
@@ -26938,6 +27392,10 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		return
 	if LatencyProbe.on:
 		LatencyProbe.attack_result(result.monster_id, Time.get_ticks_msec(), result.error)
+	# Round 802: the answer to a blow at a player or a COS (job PvP).
+	if _is_pvp_reply(result):
+		_on_pvp_result(result)
+		return
 	# A self or ground cast's reply (round 617) is not a blow on the target:
 	# no swing, no flinch, no counter, and the monster cast still in flight
 	# keeps its hit effect. The health bar is painted by the other handler.

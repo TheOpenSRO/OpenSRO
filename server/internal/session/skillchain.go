@@ -139,6 +139,9 @@ func forgetCharacterSkillState(characterID int64) {
 // change, the logout -- calls this.
 func cancelActions(characterID int64) {
 	keepUp.Cancel(characterID)
+	// Round 802: the swing repeated at a player or a COS (jobpvp.go) ends
+	// with the monster's.
+	pvpKeepUp.cancel(characterID)
 	cancelChain(characterID)
 }
 

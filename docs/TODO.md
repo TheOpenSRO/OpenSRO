@@ -13,13 +13,12 @@ where it stopped, the tools for it, the traps — and points back here for every
 ## The job system (rounds 799-802; docs/protocol/jobs.md)
 
 The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off
-client and server code." Done: the guild (799), the suits (800), specialty trade (801). Left:
+client and server code." Done: the guild (799), the suits (800), specialty trade (801), job PvP
+and the safe trade (802). Left:
 
-- [ ] **Round 802: job PvP.** CGObjPC vslot_394's rules (towns 0x3018, a party 0x3022, the caravan's
-      1-star protection 0x3024, thief against trader or hunter), player and transport targets for the
-      attack and the skills, the job death (cause 1: job exp `3 x Unit`, character exp `6 x unit`, no
-      normal penalty) and the kill's rewards (`KillExp`, `3 x unit` character exp), the client's
-      hostile targeting.
+- [x] **Round 802: job PvP** and the safe trade (docs/protocol/jobs.md "Job PvP", "Safe trade").
+      Still OPEN there: the +0x20fc byte that hides the safe-trade banner, FUN_00666e60's exact
+      test, what retail draws for a player killed in view by another.
 - [ ] **NPC thieves and hunters** (D notes section 3): the caravan registration, the 60-120 s waves
       of MOB_THIEF_NPC / MOB_HUNTER_NPC round a transport with goods (count by TRADE_MON_FACTOR,
       level by the scale, tactics 2001+ / 2011+), their target filters; monsters hitting a COS.
@@ -1158,7 +1157,8 @@ touches this file.
       Left: the click (round 701) still reaches NPCs and gates outside the window.
 - [ ] **Stall (0xa3)** is wired (`GameCursor.KIND_IDS`, `player_kind`'s `stalling`) and
       unreachable: no other player's stall state (the 0x30b8 broadcast) reaches this client.
-- [ ] **Hostile players** show 0xa0 only with Alt held: teams (+0x81d), fortress war, job modes,
+- [ ] **Hostile players** show 0xa0 with Alt held or, since round 802, for an opposed job
+      (World3D._player_is_enemy): teams (+0x81d), fortress war,
       the murder state and the list `0x992a90` reads are not in this client. Each plugs into
       `GameCursor.player_kind` / `player_hostile` when it arrives; guards and fortress structures
       likewise (no CICGuard / CICATStruct here).

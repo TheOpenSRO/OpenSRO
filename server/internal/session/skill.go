@@ -18,6 +18,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
@@ -1129,8 +1130,41 @@ func useSkillHandler(
 		// does not model: refused with the same text (OURS).
 		friendly := friendlyTargeted(castRow)
 		var friendTarget world.Entity
-		if req.Target() == TargetCharacter && !friendly {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: invalidTargetRefusal}).Encode()})
+		// Round 802 (jobpvp.go): a hostile row at a character, or at a COS
+		// uid, is job PvP -- its target resolved and vslot_394 asked here,
+		// before anything is spent.
+		var pvp *pvpTarget
+		// A cast ends the swing repeated at a player or a COS (OURS: the
+		// client draws a cast instead of the next swing).
+		pvpKeepUp.cancel(characterID)
+		pvpDeps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
+		if !friendly && (req.Target() == TargetCharacter || (req.Target() == TargetEntity && isCOSUID(req.TargetMonsterID))) {
+			caster, inWorld := sessionEntity(hub, sess)
+			if !inWorld {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: notInWorldRefusal}).Encode()})
+			}
+			kind := PvPTargetCharacter
+			if req.Target() == TargetEntity {
+				kind = PvPTargetCOS
+			}
+			t, ok := resolvePvPTarget(hub, caster, kind, req.TargetMonsterID)
+			if !ok {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: invalidTargetRefusal}).Encode()})
+			}
+			if code := pvpRefusal(ctx, pvpDeps, caster, t); code != 0 {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: pvpRefusalText(code)}).Encode()})
+			}
+			if !pvpInReach(ctx, pvpDeps, caster, t, skillRange) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "too far away"}).Encode()})
+			}
+			pvp = &t
+		} else if !friendly && req.Target() == TargetEntity {
+			// A job's monster (round 802): vslot_394's monster branch.
+			if m, ok := monsters.Get(req.TargetMonsterID); ok {
+				if code := jobs.MonsterAttackCode(jobStateNow(ctx, characterID), jobMobKind(m.CodeName)); code != 0 {
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: pvpRefusalText(code)}).Encode()})
+				}
+			}
 		}
 		if friendly {
 			caster, inWorld := sessionEntity(hub, sess)
@@ -1192,20 +1226,20 @@ func useSkillHandler(
 		// Target_Required 1 action-kind-3 row starts its record on the target
 		// and resolves no blow at the cast (SkillAction_Buff); it is measured
 		// as a status cast is.
-		debuff := startsMonsterDebuff(castRow) && req.Target() == TargetEntity && !isBuff && !friendly
+		debuff := startsMonsterDebuff(castRow) && req.Target() == TargetEntity && !isBuff && !friendly && pvp == nil
 		if debuff {
 			if refusal := statusCastRefusal(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange); refusal != "" {
 				keepUp.Cancel(characterID)
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: refusal}).Encode()})
 			}
 		}
-		if statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) && (noCombat || zeroDmg) {
+		if pvp == nil && statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) && (noCombat || zeroDmg) {
 			if refusal := statusCastRefusal(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange); refusal != "" {
 				keepUp.Cancel(characterID)
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: refusal}).Encode()})
 			}
 		}
-		if !isBuff && !isGround && !selfTarget && !friendly && !debuff && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
+		if pvp == nil && !isBuff && !isGround && !selfTarget && !friendly && !debuff && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
 			keepUp.Cancel(characterID)
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"})
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
@@ -1475,7 +1509,7 @@ func useSkillHandler(
 			announceCastWith(hub, characterID, req, castRow, res.Action)
 			// A cast at a monster that resolves no blow -- a zero-damage stun,
 			// a debuff -- still lands its states (round 659, status.go).
-			if statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) {
+			if pvp == nil && statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) {
 				statusFX.applyToMonster(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, castRow, req.TargetMonsterID, now)
 			}
 			return nil
@@ -1503,6 +1537,12 @@ func useSkillHandler(
 		// requester's alone, as retail's 0xB070 result 2 is).
 		var blow blowReport
 		deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
+		if pvp != nil {
+			// Round 802: the cast on a player or a COS (jobpvp.go): its
+			// primary target only, no chain, no hand-off (OURS).
+			return performSkillAttackPvP(ctx, deps, sess, characterID, castRow, req,
+				skillBlowTerms{damageBonus: damageBonus, damagePercent: damagePercent, masteryPercent: masteryPercent, hits: hits, attackType: attackType}, *pvp)
+		}
 		if err := performSkillAttack(ctx, deps, sess, characterID, castRow, req,
 			skillBlowTerms{damageBonus: damageBonus, damagePercent: damagePercent, masteryPercent: masteryPercent, hits: hits, attackType: attackType}, &blow); err != nil {
 			return err

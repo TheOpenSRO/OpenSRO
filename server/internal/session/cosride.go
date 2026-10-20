@@ -182,7 +182,12 @@ func handleRide(ctx context.Context, sess *gateway.Session, characterID int64, d
 // death -- a ride's or transport's release with its record deleted, its rider
 // dismounted (CGObjCOS_Cart's die slots s:0x52a000 / 0x52d1b0 ->
 // PC_ReleaseCOS(kind 1), READ), a pet's corpse (s:0x529f70, kind 8).
-func cosTakeDamage(o *cosObj, dmg int) {
+func cosTakeDamage(o *cosObj, dmg int) { cosTakeDamageBy(o, dmg, 0) }
+
+// cosTakeDamageBy is cosTakeDamage with the killing player (0: a monster):
+// a transport's non-goods drop to its killer (round 802, FUN_004c3f60's
+// owner reservation).
+func cosTakeDamageBy(o *cosObj, dmg int, killer int64) {
 	cosWorld.mu.Lock()
 	if o.dead {
 		cosWorld.mu.Unlock()
@@ -204,9 +209,9 @@ func cosTakeDamage(o *cosObj, dmg int) {
 		return
 	}
 	// A transport's death drops its goods (round 801, COS slot 398 ->
-	// FUN_004c3f60). OpenSRO's COS take blows from monsters only, which
-	// own nothing, so no killer is passed.
-	dropTransportGoods(ctx, o, 0)
+	// FUN_004c3f60), anything else reserved for its killing player (round
+	// 802; a monster owns nothing).
+	dropTransportGoods(ctx, o, killer)
 	releaseCOS(ctx, o, releaseDelete)
 }
 

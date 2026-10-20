@@ -46,7 +46,6 @@ var knownOrphans = map[string]string{
 	// Round 799: the job formulas the trade (round 801) and the job death
 	// (round 802) call; recovered and tested here first (internal/jobs).
 	"PutOldJob":             "round 799: jobs.MemStore.PutOldJob seeds a previous-job row in tests; retail's writer of _OldTrijob is not known (docs/protocol/jobs.md).",
-	"DeathLoss":             "round 799: jobs.DeathLoss, a job death's exp loss (FUN_00410370); the job death calls it (round 802).",
 	// Round 795: the COS (internal/cos). The client's kind byte is the
 	// client's own mapping (c:0x9a1900), kept beside the server's for the
 	// tests and the docs; 0x30C9 type 2 is the bag-size change the
@@ -101,7 +100,6 @@ var knownOrphans = map[string]string{
 	"SetAfterCommitHookForTest": "round 743: txn's fault hook, an error answered after a successful commit; the pick-up and trade tests drive the commit-then-error path through it.",
 	"PartyByID":                 "round 710: lane S3 finds the party behind a match entry; party_test.go.",
 	"DecodeItemNotice":          "round 712: the 0x3068 reader as c:0x873990 reads it (the class from the item's TypeIDs), for the client lane's tests; golden-tested.",
-	"KillExp":                   "round 712: Formula_MonsterExpReward (0x4105d0), whose only callers are the PC death dispatch; the kill path pays through KillBase and ContributorExp instead. Kept as the recovered formula and its tests' anchor.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
 		"world before any player, so a player always meets them in a group spawn and the server never sends this " +
 		"(docs/protocol/npc_spawn.md); kept with its golden test so both sides hold the layout.",

@@ -21,6 +21,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
@@ -329,10 +330,18 @@ const playerMitigationPercent = 0
 type AttackRequest struct {
 	CharacterName   string
 	TargetMonsterID int64
+	// TargetKind (round 802, an optional trailing byte, OURS) names a
+	// character (PvPTargetCharacter) or a COS (PvPTargetCOS); absent or any
+	// other value, the id is a monster's.
+	TargetKind byte
 }
 
 func (r *AttackRequest) Encode() []byte {
-	return append(encodeStrings(r.CharacterName), encodeInt64(r.TargetMonsterID)...)
+	out := append(encodeStrings(r.CharacterName), encodeInt64(r.TargetMonsterID)...)
+	if r.TargetKind != 0 {
+		out = append(out, r.TargetKind)
+	}
+	return out
 }
 
 func DecodeAttackRequest(data []byte) (*AttackRequest, error) {
@@ -340,11 +349,15 @@ func DecodeAttackRequest(data []byte) (*AttackRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding AttackRequest: %w", err)
 	}
-	targetID, _, err := decodeInt64(rest)
+	targetID, tail, err := decodeInt64(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding AttackRequest: target id: %w", err)
 	}
-	return &AttackRequest{CharacterName: fields[0], TargetMonsterID: targetID}, nil
+	r := &AttackRequest{CharacterName: fields[0], TargetMonsterID: targetID}
+	if len(tail) > 0 {
+		r.TargetKind = tail[0]
+	}
+	return r, nil
 }
 
 // AttackResult is the OpAttackResult payload (direct reply to the
@@ -1107,6 +1120,21 @@ func combatHandler(
 			// ends the protection early.
 			if attackerUntouchable(hub, characterID) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: untouchableRefusal, MonsterID: req.TargetMonsterID}).Encode()})
+			}
+			// Round 802 (jobpvp.go): a player or a COS target.
+			if req.TargetKind == PvPTargetCharacter || req.TargetKind == PvPTargetCOS {
+				keepUp.Cancel(characterID)
+				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
+				return handlePvPAttack(ctx, sess, deps, characterID, req.TargetKind, req.TargetMonsterID)
+			}
+			pvpKeepUp.cancel(characterID)
+			// A job's monsters (vslot_394's monster branch, round 802): a
+			// trader or hunter does not hit an NPC hunter, a thief an NPC
+			// thief, a player out of a job neither.
+			if m, ok := monsters.Get(req.TargetMonsterID); ok {
+				if code := jobs.MonsterAttackCode(jobStateNow(ctx, characterID), jobMobKind(m.CodeName)); code != 0 {
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: pvpRefusalText(code), MonsterID: req.TargetMonsterID}).Encode()})
+				}
 			}
 			// A seated character's swing is NOT refused (round 607,
 			// motion.go): the retail plain attack is the basic-attack skill
@@ -2090,6 +2118,8 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 	// exp is tracked, the same way an empty item table means flat damage.
 	// A level-up refills HP and is announced with OpLevelUp after the
 	// attack result below.
+	// Round 802: a job's monster pays job exp (jobpvp.go).
+	jobMobKillCredit(ctx, d, characterID, monster)
 	if levelTable.Loaded() {
 		// Round 712 (party lane S2): the kill pays everyone its damage list
 		// earns a share, as the monster's death distributor does --
