@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.558** plus what is merged on `dev`; updated 2026-10-19.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.559** plus what is merged on `dev`; updated 2026-10-20.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -265,7 +265,7 @@ Pets, horses and the item mall's rides from the original's own rules; trade tran
 |---|---|---|
 | Ability (pickup) pets | ✅ Supported | Pick up gold, equipment and other items by their settings; gold to the owner, the rest to the pet's own bag |
 | Growth and fellow pets | ✅ Supported | Follow, fight what the owner attacks, gain EXP and level up, hunger, naming once |
-| Horses and rides | ✅ Supported | Horses, tigers, beetles, ostriches and the other ride scrolls: summoned at the owner's level bracket, ridden at the mount's speed |
+| Horses and rides | ✅ Supported | Horses, tigers, beetles, ostriches and the other ride scrolls: summoned at the owner's level bracket, ridden at the mount's speed; Walk or Run on a mount plays its walk or run (a pegasus flies only at a run) |
 | Pet controls | ✅ Supported | Pet window, status slot, command bar, the retail pet keys, pet potions, revival and clocks; the Test Items NPC sells pets and rides |
 | Trade transports | ❌ Not yet | Refused until the job system exists |
 
