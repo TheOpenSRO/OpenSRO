@@ -212,23 +212,35 @@ func _init() -> void:
 	}
 	_check(consts.get("JOB_JOIN_STRIDS", {}) == want_strid,
 		"JOB_JOIN_STRIDS is exactly FUN_006fcd60 case 0x1e's three tokens (got %s)" % [consts.get("JOB_JOIN_STRIDS")])
+	# Round 799: FUN_006fdeb0's whole block (READ) -- with no job, the join
+	# line then the two rankings and the old-job line; with another guild's
+	# job only those three; at its own guild leave, the alias line and (2, 3)
+	# the outcome first.
 	for pair in [[0x14, 1], [0x16, 3], [0x15, 2]]:
 		var jl: Array = from.call([pair[0]])
-		_check(jl.size() == 1 and jl[0].key == "job_guild" and jl[0].get("job_kind") == pair[1]
+		_check(jl.size() == 4 and str(jl[0].key) == "job_join:%d" % pair[1] and jl[0].get("job_kind") == pair[1]
 				and str(jl[0].get("strid")) == want_strid[pair[1]],
-			"id 0x%x offers one job_guild of kind %d" % pair)
+			"id 0x%x offers the join line of kind %d first" % pair)
 		for held in [1, 2, 3]:
-			_check((from.call([pair[0]], [], -1, false, held) as Array).is_empty(),
-				"id 0x%x offers no join line to a player with job %d" % [pair[0], held])
-	# The Hunter NPC NPC_CH_GENARAL_SW {2, 0x0e, 0x16}: talk, then its join
-	# line; 0x0e adds none.
-	_check(_keys(from.call([2, 0x0e, 0x16])) == ["talk", "job_guild"], "NPC_CH_GENARAL_SW's set: talk, join")
+			var keys: Array = _keys(from.call([pair[0]], [], -1, false, held))
+			var own: bool = held == int(pair[1])
+			var want: Array = []
+			if own:
+				want = ["job_withdraw:%d" % held, "job_alias_create:%d" % held]
+				if held != 1:
+					want.append("job_outcome:%d" % held)
+			want.append_array(["job_rank_contribution:%d" % pair[1], "job_rank_activity:%d" % pair[1], "job_prev:%d" % pair[1]])
+			_check(keys == want, "id 0x%x with job %d: %s (got %s)" % [pair[0], held, want, keys])
+	# The Hunter NPC NPC_CH_GENARAL_SW {2, 0x0e, 0x16}: talk, then its block;
+	# 0x0e adds none.
+	_check(_keys(from.call([2, 0x0e, 0x16])) == ["talk", "job_join:3", "job_rank_contribution:3", "job_rank_activity:3", "job_prev:3"],
+		"NPC_CH_GENARAL_SW's set: talk, then the hunters' block")
 	if has_composer:
 		var resolve_p := func(token: String, fallback: String) -> String:
 			return str({"UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN": "JOIN-TEXT", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}.get(token, fallback))
 		var pmenu: PackedStringArray = reader_script.call("talk_menu_lines", "NPC_CH_DOCTOR", from.call([0x14]), resolve_p)
-		_check(pmenu == PackedStringArray(["[url=job_guild]1. JOIN-TEXT[/url]", "[url=end]2. END-TEXT[/url]"]),
-			"a jobless player's trader menu is 1. join text / 2. end text (got %s)" % [pmenu])
+		_check(pmenu.size() == 5 and pmenu[0] == "[url=job_join:1]1. JOIN-TEXT[/url]" and pmenu[4] == "[url=end]5. END-TEXT[/url]",
+			"a jobless player's trader menu starts 1. join text and ends with the end text (got %s)" % [pmenu])
 
 	# (i) Round 514: the store window shows Repair / Repair All only at an NPC
 	# with interaction id 4. The client's 0xb045 reply handler FUN_0088b200

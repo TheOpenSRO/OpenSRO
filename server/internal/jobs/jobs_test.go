@@ -2,26 +2,14 @@ package jobs
 
 import "testing"
 
+// The join's order (kind, the guild's NPC, then the level) is the session
+// handler's (session/jobguild.go jobJoin, tested in job799_test.go).
 func TestMinJobLevel(t *testing.T) {
 	if MinJobLevel != 0x14 {
 		t.Errorf("MinJobLevel is %d; the comparison is `< 0x14`", MinJobLevel)
 	}
-	if got := CheckJoin(KindA, MinJobLevel-1); got != ErrJobGuildLevel {
-		t.Errorf("level %d gave %#x, want %#x", MinJobLevel-1, got, ErrJobGuildLevel)
-	}
-	if got := CheckJoin(KindA, MinJobLevel); got != 0 {
-		t.Errorf("level %d was refused with %#x", MinJobLevel, got)
-	}
-}
-
-// The kind is validated before the level, so a bad kind at a low level is told
-// about the kind.
-func TestCheckJoinOrder(t *testing.T) {
-	if got := CheckJoin(Kind(0), 1); got != ErrUnknownJobKind {
-		t.Errorf("got %#x, want UNKNOWN_KIND %#x", got, ErrUnknownJobKind)
-	}
-	if got := CheckJoin(Kind(4), 99); got != ErrUnknownJobKind {
-		t.Errorf("got %#x, want UNKNOWN_KIND %#x", got, ErrUnknownJobKind)
+	if Kind(0).Valid() || Kind(4).Valid() {
+		t.Error("kinds 0 and 4 are refused 0x4828")
 	}
 }
 

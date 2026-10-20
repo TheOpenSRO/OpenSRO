@@ -254,6 +254,33 @@ signal cos_setting_result(d: Dictionary)
 signal cos_reply(op: int, d: Dictionary)
 ## 0xB034's pet-bag forms (CosNet.decode_bag_op).
 signal cos_bag_op(d: Dictionary)
+
+## Round 799: this character's job (JobNet; docs/protocol/jobs.md) -- the
+## player object's +0x7be kind, +0x7bf level, +0x20b4 exp, +0x20b8
+## contribution, +0x20bc reward and +0x2098 alias, as the client keeps them.
+## Set by OP_JOB_INFO (OURS: retail's 0x3013 section), 0xB0E1, 0xB0E2, 0xB0E3
+## and 0x30E6.
+var job_kind := 0
+var job_level := 0
+var job_exp := 0
+var job_contribution := 0
+var job_reward := 0
+var job_alias := ""
+## Round 800: each player in view's job from its spawn record, by uid:
+## {state, kind, level, trade_rank}. Retail updates it only from the spawn:
+## a suit put on or taken off in view changes no observer's state.
+var user_jobs := {}
+## Round 800: 0x3041 type 2 sub 2 / 0x3042 -- a job suit's 10 seconds starting
+## and cancelled (uid, seconds; uid, the cancel byte).
+signal strip_started(uid: int, seconds: int)
+signal strip_cancelled(uid: int, kind: int)
+## Any of the fields above changed.
+signal job_changed()
+## A job reply (0xB0E1..0xB0E6, JobNet's decoders): op, its dictionary.
+signal job_reply(op: int, d: Dictionary)
+## 0x30E6: the job exp notice ({kind, level, exp}) and the level and exp it
+## replaced (FUN_00884dd0 compares them for the GET / LOST / level-up lines).
+signal job_exp_changed(d: Dictionary, old_level: int, old_exp: int)
 ## Round 737 (crowd_scale.md C1): the other players in view arrive as the
 ## same retail spawn messages, with a CICUser record (UserSpawnNet), and leave
 ## by 0x3016 / a type-2 group. user_roster is the uids spawned and not
@@ -757,7 +784,9 @@ func _passes_group(p: Packet) -> bool:
 				AlchemyNet.OP_REINFORCE_RESULT, AlchemyNet.OP_STONE_RESULT, AutoPotionNet.OP_CONFIG, \
 				GameClock.OP_POSITION, GameClock.OP_UPDATE, AvatarNet.OP_LIST, AvatarNet.OP_GRANT_ACK, AvatarNet.OP_ITEM_STATE, \
 				CosNet.OP_DATA, CosNet.OP_UPDATE, CosNet.OP_ITEM_STATE, CosNet.OP_COMMAND_ACK, CosNet.OP_SETTING_ACK, \
-				CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK:
+				CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK, JobNet.OP_JOB_INFO, JobNet.OP_JOB_EXP, \
+				JobNet.OP_JOIN_RESULT, JobNet.OP_WITHDRAW_RESULT, JobNet.OP_ALIAS_RESULT, JobNet.OP_RANKING_RESULT, \
+				JobNet.OP_REWARD_RESULT, JobNet.OP_PREV_JOB_RESULT:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -1434,6 +1463,85 @@ func send_cos_name(uid: int, name: String) -> void:
 func send_cos_setting(uid: int, kind: int, value: int) -> void:
 	_send(CosNet.OP_SETTING, CosNet.encode_setting(uid, kind, value))
 
+## Round 799, the job guild's requests (JobNet), each naming the NPC.
+func send_job_join(npc: int, kind: int) -> void:
+	_send(JobNet.OP_JOIN, JobNet.encode_join(npc, kind))
+
+func send_job_withdraw(npc: int) -> void:
+	_send(JobNet.OP_WITHDRAW, JobNet.encode_npc(npc))
+
+func send_job_alias(npc: int, op: int, alias: String) -> void:
+	_send(JobNet.OP_ALIAS, JobNet.encode_alias(npc, op, alias))
+
+func send_job_ranking(npc: int, kind: int, type: int) -> void:
+	_send(JobNet.OP_RANKING, JobNet.encode_ranking(npc, kind, type))
+
+func send_job_reward(npc: int, op: int) -> void:
+	_send(JobNet.OP_REWARD, JobNet.encode_reward(npc, op))
+
+func send_job_prev(npc: int) -> void:
+	_send(JobNet.OP_PREV_JOB, JobNet.encode_npc(npc))
+
+## The job replies into this character's job fields, as the original's
+## handlers set the player object.
+func _on_job_packet(op: int, data: PackedByteArray) -> void:
+	match op:
+		JobNet.OP_JOB_INFO:
+			var d := JobNet.decode_job_info(data)
+			job_alias = String(d["alias"])
+			job_kind = int(d["kind"])
+			job_level = int(d["level"])
+			job_exp = int(d["exp"])
+			job_contribution = int(d["contribution"])
+			job_reward = int(d["reward"])
+			job_changed.emit()
+		JobNet.OP_JOB_EXP:
+			var d := JobNet.decode_job_exp(data)
+			var old_level := job_level
+			var old_exp := job_exp
+			job_level = int(d["level"])
+			job_exp = int(d["exp"])
+			job_exp_changed.emit(d, old_level, old_exp)
+			job_changed.emit()
+		JobNet.OP_JOIN_RESULT:
+			var d := JobNet.decode_join(data)
+			if d["ok"]:
+				# JobGuild_OnJoinResult: kind (0x9db0b0), level and exp (0x9d4cd0).
+				job_kind = int(d["kind"])
+				job_level = int(d["level"])
+				job_exp = int(d["exp"])
+				job_changed.emit()
+			job_reply.emit(op, d)
+		JobNet.OP_WITHDRAW_RESULT:
+			var d := JobNet.decode_plain(data)
+			if d["ok"]:
+				# JobGuild_OnWithdrawResult: kind 0, level and exp 0, the alias "".
+				job_kind = 0
+				job_level = 0
+				job_exp = 0
+				job_alias = ""
+				job_changed.emit()
+			job_reply.emit(op, d)
+		JobNet.OP_ALIAS_RESULT:
+			var d := JobNet.decode_alias(data)
+			# Op 1's success sets the alias (UI_ALIAS::FUN_00889370); the
+			# reply's "was it empty" decides create or modify, so it is kept.
+			d["was_empty"] = job_alias == ""
+			if d["ok"] and int(d["op"]) == 1:
+				job_alias = String(d["alias"])
+				job_changed.emit()
+			job_reply.emit(op, d)
+		JobNet.OP_RANKING_RESULT:
+			job_reply.emit(op, JobNet.decode_ranking(data))
+		JobNet.OP_REWARD_RESULT:
+			var d := JobNet.decode_reward(data)
+			if d["ok"] and int(d["op"]) == 1:
+				job_reward = int(d["gold"]) # +0x20bc takes the amount paid (READ c:0x8831a6)
+				job_changed.emit()
+			job_reply.emit(op, d)
+		JobNet.OP_PREV_JOB_RESULT:
+			job_reply.emit(op, JobNet.decode_prev_job(data))
+
 func send_cos_bag_move(t: int, uid: int, src: int, dst: int, count: int = 1) -> void:
 	_item_op_kinds.append("cos")
 	_send(ItemOpNet.OP_MOVE, CosNet.encode_bag_move(t, uid, src, dst, count))
@@ -1954,6 +2062,10 @@ func _cos_despawned(uid: int) -> void:
 func _user_spawned(rec: UserSpawnNet.Record) -> void:
 	var snap := UserSpawnNet.to_snapshot(rec, _spawn_types, _spawn_frame)
 	user_roster[rec.uid] = true
+	# Round 800: its job as the record carries it (the client's +0x50d job
+	# state, +0x7be / +0x7bf, +0x50e): the plate, the target window.
+	user_jobs[rec.uid] = {"state": rec.job_state, "kind": rec.job_kind, "level": rec.job_level,
+		"trade_rank": rec.trade_rank}
 	var mode := WorldNet.StateChange.new()
 	mode.object_id = rec.uid
 	mode.kind = WorldNet.STATE_KIND_BODY_MODE
@@ -1988,6 +2100,7 @@ func _user_spawned(rec: UserSpawnNet.Record) -> void:
 ## A player went out of view (0x3016, or a type-2 group): as OpEntityLeft.
 func _user_left(uid: int) -> void:
 	user_roster.erase(uid)
+	user_jobs.erase(uid)
 	buff_roster.drop(BuffRoster.key_of(uid, SkillNet.OWNER_CHARACTER))
 	body_modes.erase(uid)
 	character_states.erase(uid)
@@ -2138,6 +2251,16 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_SELL_RESULT:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
+		JobNet.OP_JOB_INFO, JobNet.OP_JOB_EXP, JobNet.OP_JOIN_RESULT, JobNet.OP_WITHDRAW_RESULT, JobNet.OP_ALIAS_RESULT, \
+				JobNet.OP_RANKING_RESULT, JobNet.OP_REWARD_RESULT, JobNet.OP_PREV_JOB_RESULT:
+			_on_job_packet(p.opcode, p.data)
+		JobNet.OP_STRIP_START:
+			var st := JobNet.decode_strip_start(p.data)
+			if int(st.get("kind", 0)) == 2 and int(st.get("sub", 0)) == 2:
+				strip_started.emit(int(st["uid"]), int(st["seconds"]))
+		JobNet.OP_STRIP_CANCEL:
+			if p.data.size() >= 5:
+				strip_cancelled.emit(p.data.decode_u32(0), p.data[4])
 		CosNet.OP_DATA:
 			var cd := CosNet.decode_data(p.data, Callable(self, "cos_kind_of"))
 			if cd.error != "":

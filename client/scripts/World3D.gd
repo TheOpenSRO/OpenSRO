@@ -2668,6 +2668,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.name = "HudPanels"
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
+	_job_setup()
 	# A body dressed before the panels existed gets its paper doll now, as
 	# the portrait does above (round 695: a QA run's loadout dresses before
 	# the HUD is built, and _refresh_paper_doll returns without panels).
@@ -9088,12 +9089,21 @@ func _refresh_player_name_plate() -> void:
 		return
 	var existing := player.get_node_or_null("Name")
 	if existing != null:
+		# Out of the tree at once: a plate re-made in the same frame (round
+		# 800's suit change) must take the name "Name" itself.
+		player.remove_child(existing)
 		existing.queue_free()
 	var who := NetClient.current_character_name
 	if who == "":
 		return
 	var top := _skeleton_top(_player_skeleton) if _player_skeleton != null else 1.8 * PLAYER_SCALE_RATIO
-	player.add_child(_name_plate(who, top))
+	# Round 800: "*" + the name and the job mark while a suit is worn
+	# (INFERRED: the own name stays the character's name -- 0x3013 mode 1's
+	# first string -- and FUN_009dbcc0 refreshes the plate after a change).
+	var js := _own_job_state()
+	var plate := _name_plate(job_plate_text(who, js), top)
+	player.add_child(plate)
+	_job_mark(plate, plate, js, false)
 
 ## `swept` (round 673's review): whether the plate follows the 300-from-the-
 ## player rule (NamePlates.Sweep), which owns its `visible`. A ground item's
@@ -9181,6 +9191,77 @@ func _fit_party_mark(label: Label3D, mark: Sprite3D) -> void:
 	# gap and half itself to the left, in its own texture pixels.
 	var tex_px := float(tex.get_height()) / PARTY_MARK_PX
 	mark.offset = Vector2(-(text_size.x * 0.5 / k + PARTY_MARK_GAP_PX + PARTY_MARK_PX * 0.5) * tex_px, 0.0)
+
+# --- Job mode on the plates (round 800) ---------------------------------------
+#
+# READ, GlobalDataManager::FUN_009cbb90 (the name setter, vtable slot 29): a
+# CICUser whose job state (vslot 43, +0x50d) is not 4 shows "*" + its name
+# (L"*" at 0xd92240); the name is the spawn's, which carries the job alias
+# while a suit is worn (pc_spawn row 21). FUN_009dea30 (the overhead draw,
+# 0x9dec35..0x9dec73) draws a 16 x 16 quad of com_job_merchant / _thief /
+# _hunter.ddj (the table at 0xec7570, indexes 0..2) by the job state, its top
+# 20 px above the name's (`fsub 0xe1b830` = 20.0, `fadd 0xe1b8e0` = 16.0),
+# and the guild line only at job state 4 (0x9df082..0x9df09d). INFERRED: the
+# quad centred on the name (its x was not followed). An observer's job state
+# comes only from the spawn record: a suit put on in view changes nothing
+# for it (READ: the 0x3038 handler only re-dresses), so a plate keeps what it
+# spawned with until the player is spawned again.
+const JOB_MARK_TEXTURES := {
+	1: "interface\\ifcommon\\com_job_merchant.ddj",
+	2: "interface\\ifcommon\\com_job_thief.ddj",
+	3: "interface\\ifcommon\\com_job_hunter.ddj",
+}
+const JOB_MARK_PX := 16.0
+## The quad's centre over the plate's centre, in screen pixels: its top is 20
+## above the name's top and the name is 16 tall (the party mark's measure).
+const JOB_MARK_RAISE_PX := 20.0
+
+## The plate text for a name at a job state ("*" + name out of state 4).
+static func job_plate_text(name: String, job_state: int) -> String:
+	if job_state >= 1 and job_state <= 3 and name != "":
+		return "*" + name
+	return name
+
+## The job mark over `label` (a child of `holder`, swept with it), or null for
+## job state 4.
+func _job_mark(label: Label3D, holder: Node3D, job_state: int, swept: bool) -> Sprite3D:
+	var old := holder.get_node_or_null("JobMark")
+	if old != null:
+		if swept:
+			_plate_sweep.drop(old as Node3D)
+		old.queue_free()
+	if _ui_builder == null or not JOB_MARK_TEXTURES.has(job_state):
+		return null
+	var tex: Texture2D = _ui_builder.load_texture(String(JOB_MARK_TEXTURES[job_state]))
+	if tex == null:
+		return null
+	var mark := Sprite3D.new()
+	mark.name = "JobMark"
+	mark.texture = tex
+	mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	mark.fixed_size = true
+	mark.no_depth_test = true
+	mark.render_priority = label.render_priority
+	mark.layers = OverlayView.BIT
+	mark.position = label.position if holder != label else Vector3.ZERO
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var text_size := font.get_string_size("Ag", HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
+	var k := text_size.y / JOB_MARK_PX
+	mark.pixel_size = label.pixel_size * k * JOB_MARK_PX / float(tex.get_height())
+	var tex_px := float(tex.get_height()) / JOB_MARK_PX
+	mark.offset = Vector2(0.0, JOB_MARK_RAISE_PX * tex_px)
+	holder.add_child(mark)
+	if swept:
+		_plate_sweep.add(mark)
+	return mark
+
+## The own player's job state: its worn slot-8 item's (0x9db8b0 on the own
+## player, GlobalDataManager::FUN_009dbcc0 recomputing it on a change).
+func _own_job_state() -> int:
+	var slot8 := int(_player_equipped_last.get(8, 0))
+	if slot8 <= 0 or NetClient._spawn_types == null:
+		return UserSpawnNet.JOB_STATE_NONE
+	return NetClient._spawn_types.job_state([{"id": slot8}])
 
 ## A monster's name as retail draws it (round 673), MEASURED from the user's
 ## retail screenshot of the Mangyang field near Jangan (1730 x 896, every
@@ -9790,11 +9871,15 @@ func _add_other_plate(node: Node3D, char_name: String, top: float) -> void:
 
 func _add_other_plate_now(node: Node3D, char_name: String, top: float) -> void:
 	var batched := _plate_batch_get() != null
-	var plate := _name_plate(char_name, top, not batched)
+	# Round 800: the spawn's job state ("*" and the mark).
+	var job: Dictionary = NetClient.user_jobs.get(int(node.get_meta("character_id", -1)), {})
+	var js := int(job.get("state", UserSpawnNet.JOB_STATE_NONE))
+	var plate := _name_plate(job_plate_text(char_name, js), top, not batched)
 	node.add_child(plate)
 	if batched and not _plate_batch_add(plate, node):
 		plate.visible = true
 		_plate_sweep.add(plate)
+	_job_mark(plate, node, js, true)
 
 ## Draws `label` (made by _name_plate, unswept) in the batch over `owner`;
 ## false when the batch is off (the caller sweeps it as a Label3D).
@@ -11925,7 +12010,12 @@ func _try_apply_real_player_character() -> void:
 ## character's hand: "when i drag and unequip my sword, it doesnt go off of my
 ## character" (playtest 2026-09-20).
 func _apply_player_equipment_visual(equipped: Dictionary) -> void:
+	var job_changed := int(_player_equipped_last.get(8, 0)) != int(equipped.get(8, 0))
 	_player_equipped_last = equipped
+	# Round 800: a suit put on or taken off -- the own plate's "*" and mark
+	# (FUN_009dbcc0 recomputes +0x50d and refreshes the plate).
+	if job_changed:
+		_refresh_player_name_plate()
 	# Round 789: the avatars ride along under their OURS keys
 	# (CharacterAppearance.AVATAR_KEY_BASE); the body, the paper doll and the
 	# portrait are built from both, and the visual arbitration decides what
@@ -13154,8 +13244,14 @@ func _select_self() -> void:
 	_last_attack_target = -1
 	_selected_character = own
 	if _hud_target != null:
-		_hud_target.show_player(NetClient.current_character_name,
-			_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_body(_player_body))
+		# Round 800: in a suit, the job-player window.
+		var js := _own_job_state()
+		if js != UserSpawnNet.JOB_STATE_NONE:
+			_hud_target.show_job_player(NetClient.current_character_name, _fx_owner_key(own, SkillNet.OWNER_CHARACTER),
+				_race_of_body(_player_body), js, NetClient.job_level)
+		else:
+			_hud_target.show_player(NetClient.current_character_name,
+				_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_body(_player_body))
 	print("World3D: selected this player (%d, %s)" % [own, NetClient.current_character_name])
 
 func _select_character(character_id: int, char_name: String) -> void:
@@ -13168,7 +13264,14 @@ func _select_character(character_id: int, char_name: String) -> void:
 	if body != null and is_instance_valid(body) and (body as Node).has_meta("body"):
 		race = _race_of_body(String((body as Node).get_meta("body")))
 	if _hud_target != null:
-		_hud_target.show_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race)
+		# Round 800: the spawn's job state picks the job-player window.
+		var job: Dictionary = NetClient.user_jobs.get(character_id, {})
+		var js := int(job.get("state", UserSpawnNet.JOB_STATE_NONE))
+		if js >= 1 and js <= 3:
+			_hud_target.show_job_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race, js,
+				int(job.get("level", 0)))
+		else:
+			_hud_target.show_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race)
 	print("World3D: selected player %d (%s), race %d" % [character_id, char_name, race])
 
 ## Whether a target window owner still exists (round 638 review, the
@@ -16332,6 +16435,73 @@ func _qa_grant_dump(c: GrantMagicAttributeWindow) -> void:
 ## QA only; never set in real play.
 var _qa_equip_bag_spec := OS.get_environment("OPENSRO_QA_EQUIP_BAG")
 
+## QA (round 800): OPENSRO_QA_JOB="<step>@<tick>;..." drives the job guild
+## through the client's own paths: pick:<key> (a talk line by its service
+## key, e.g. pick:job_join:1), yes (the open job confirm box's Yes),
+## alias:<name> (the alias window's edit and Check), alias_ok (its OK),
+## select_self, state (a log line: the job, the plate, the target window).
+var _qa_job_spec := OS.get_environment("OPENSRO_QA_JOB")
+
+var _qa_job_talked := {}
+
+func _qa_job_step() -> void:
+	for step in _qa_job_spec.split(";", false):
+		var at := step.split("@")
+		if at.size() != 2:
+			continue
+		var what := at[0]
+		# talk:<CODE>@<tick>: from that tick on, every tick until the server
+		# has spawned the NPC, then its select (a click's).
+		if what.begins_with("talk:"):
+			if _qa_tick >= int(at[1]) and not _qa_job_talked.has(step):
+				var holder := _qa_server_npc(what.substr(5))
+				if holder != null:
+					_qa_job_talked[step] = true
+					print("QA JOB: tick %d talk %s" % [_qa_tick, what.substr(5)])
+					_open_talk(holder)
+			continue
+		if int(at[1]) != _qa_tick:
+			continue
+		if what.begins_with("pick:"):
+			var key := what.substr(5)
+			print("QA JOB: tick %d pick %s" % [_qa_tick, key])
+			_on_npc_service_selected(key)
+		elif what == "yes":
+			var box: JobConfirmBox = null
+			for c in _hud_panels.get_children():
+				if c is JobConfirmBox and not c.is_queued_for_deletion():
+					box = c
+			print("QA JOB: tick %d yes on %s" % [_qa_tick, str(box)])
+			if box != null:
+				box.confirmed.emit()
+				box.close()
+		elif what.begins_with("alias:"):
+			var b := _job_flow.alias_box if _job_flow != null else null
+			if b != null and is_instance_valid(b):
+				var e := b.node(JobAliasBox.EDIT) as LineEdit
+				if e != null:
+					e.text = what.substr(6)
+					e.text_changed.emit(e.text)
+				b.press_check()
+			print("QA JOB: tick %d alias %s (window %s)" % [_qa_tick, what.substr(6), str(b)])
+		elif what == "alias_ok":
+			var b2 := _job_flow.alias_box if _job_flow != null else null
+			if b2 != null and is_instance_valid(b2):
+				b2.press_ok()
+			print("QA JOB: tick %d alias OK" % _qa_tick)
+		elif what == "select_self":
+			_select_self()
+		elif what == "state":
+			var plate := player.get_node_or_null("Name") as Label3D if player != null else null
+			var mark := plate.get_node_or_null("JobMark") as Sprite3D if plate != null else null
+			print("QA JOB state tick %d: kind %d level %d exp %d alias '%s' contribution %d reward %d | own job state %d plate '%s' mark %s | target %s | strip %s" % [
+				_qa_tick, NetClient.job_kind, NetClient.job_level, NetClient.job_exp, NetClient.job_alias,
+				NetClient.job_contribution, NetClient.job_reward, _own_job_state(), plate.text if plate != null else "-",
+				str(mark.texture.resource_path if mark != null and mark.texture != null else "none"),
+				"%s/%s" % [str(_hud_target.shown_key if _hud_target != null else "-"),
+					str(_hud_target.get("_shown").name if _hud_target != null and _hud_target.get("_shown") != null else "-")],
+				str(_strip_bars.bars if _strip_bars != null else {})])
+
 func _qa_equip_bag_step() -> void:
 	if not NetClient.is_connected_to_server():
 		return
@@ -17291,6 +17461,8 @@ func _qa_step() -> void:
 		_qa_equip_bag_step()
 	if _qa_cos_spec != "":
 		_qa_cos_step()
+	if _qa_job_spec != "":
+		_qa_job_step()
 	# OPENSRO_QA_AVATAR_OFF="<tick>:<storage slot>,.." (round 789; needs a
 	# server): at each tick the avatar in that avatar storage slot is put
 	# down on the bag as a drag would (HudPanels' 0x23: the first empty bag
@@ -24235,8 +24407,7 @@ func _npc_greeting_text(code: String) -> String:
 ## the client's order (NpcServiceReader.services_from_ids); the last talk's
 ## set when `ids` is null. The player's guild state picks a guild NPC's lines
 ## (round 521) and gates its store line (round 524), the level the academy
-## line (round 727). The job is not known to this client, so every player is
-## jobless (round 526).
+## line (round 727), the job and alias a job guild's (round 799).
 func _npc_services(code: String, ids: Variant = null) -> Array:
 	var id_set: PackedByteArray = _talk_ids if ids == null else ids
 	# Round 725: the store lines, one per tab group, each worded by its group's
@@ -24249,7 +24420,8 @@ func _npc_services(code: String, ids: Variant = null) -> Array:
 	# (the label is a text key or the text itself).
 	if not _talk_shop_def.is_empty():
 		store_lines = NpcShopDefNet.store_lines(_talk_shop_def)
-	var out := NpcServiceReader.services_from_ids(id_set, store_lines, _guild_id, _guild_master, 0, _player_level)
+	var out := NpcServiceReader.services_from_ids(id_set, store_lines, _guild_id, _guild_master, NetClient.job_kind,
+		_player_level, NetClient.job_alias == "")
 	for svc_v in out:
 		var svc: NpcServiceReader.Service = svc_v
 		if NpcShopDefNet.line_of(NpcServiceReader.tabgroup_of(svc.key)) >= 0:
@@ -24332,6 +24504,73 @@ func _refresh_open_talk_menu() -> void:
 	_hud_panels.refresh_npc_talk(_talk_npc_name, _npc_greeting_text(_talk_npc_code), _npc_services(_talk_npc_code),
 		_npc_tax_text(_talk_npc_code))
 
+# --- The job guild (round 799, JobGuildFlow) -----------------------------------
+
+var _job_flow: JobGuildFlow = null
+
+func _job_setup() -> void:
+	_job_flow = JobGuildFlow.new(self, _hud_panels)
+	if _media_pk2 != null:
+		var e := ObjectLoader.find_file(_media_pk2, LevelDataReader.TABLE_PATH)
+		if e != null:
+			_job_flow.job_table = LevelDataReader.parse_job_exp(_media_pk2.read_file(e))
+	NetClient.job_reply.connect(_job_flow.on_reply)
+	NetClient.job_exp_changed.connect(_job_flow.on_exp)
+	NetClient.job_changed.connect(_on_job_changed)
+	_on_job_changed()
+	# Round 800: the suit's 10 seconds over the head (StripBars).
+	_strip_bars = StripBars.new()
+	_strip_bars.name = "StripBars"
+	_strip_bars.camera_of = func() -> Camera3D: return get_viewport().get_camera_3d()
+	_strip_bars.anchor_of = _strip_anchor
+	ui_control.add_child(_strip_bars)
+	NetClient.strip_started.connect(func(uid: int, secs: int) -> void:
+		_strip_bars.start(uid, secs, Time.get_ticks_msec()))
+	NetClient.strip_cancelled.connect(_on_strip_cancelled)
+
+var _strip_bars: StripBars = null
+
+## The head point a uid's strip bar hangs under: its plate's anchor.
+func _strip_anchor(uid: int) -> Variant:
+	_sync_own_id()
+	var body: Node3D = null
+	if _own_id() >= 0 and uid == (_own_id() & 0xffffffff):
+		body = player
+	else:
+		var other := _other_by_uid(uid)
+		body = _other_bodies.get(other) if other >= 0 else null
+	if body == null or not is_instance_valid(body):
+		return null
+	var plate := body.get_node_or_null("Name") as Node3D
+	return plate.global_position if plate != null else body.global_position
+
+## 0x3042 (FUN_008825d0): the bar stops; the own player, with any byte but 2,
+## hears UIIT_MSG_STRIP_CANCEL (system window type 0).
+func _on_strip_cancelled(uid: int, kind: int) -> void:
+	if _strip_bars != null:
+		_strip_bars.stop(uid)
+	_sync_own_id()
+	if _own_id() >= 0 and uid == (_own_id() & 0xffffffff) and kind != 2:
+		_log_system(_resolve_any_text("UIIT_MSG_STRIP_CANCEL", "Unequiping item cancelled."), HudSystemMessage.TYPE_ALWAYS)
+
+## The player's job changed (OpJobInfo, a join or leave, the alias, 0x30E6):
+## the character window's job rows.
+func _on_job_changed() -> void:
+	if _hud_panels != null and _job_flow != null:
+		_hud_panels.set_character_job(NetClient.job_kind, NetClient.job_level, NetClient.job_exp, NetClient.job_alias,
+			_job_flow.job_table)
+
+## FUN_006fdd40 (READ): the outcome query's reply rewrites the open talk box --
+## its text and its lines (the collect line when there is a reward, then the
+## end line, which the talk view adds).
+func _replace_talk(body: String, services: Array) -> void:
+	if _hud_panels == null or _talk_npc_code == "":
+		return
+	for svc_v in services:
+		var svc: NpcServiceReader.Service = svc_v
+		svc.label = _resolve_any_text(svc.strid, svc.label)
+	_hud_panels.refresh_npc_talk(_talk_npc_name, body, services, "")
+
 ## Acts on a service chosen in the talk box. Buy opens the NPC's real shop and
 ## Storage the warehouse. At a guild NPC (round 521), "guild_create" asks for
 ## a name and founds the guild, and "guild_leave" asks for a confirmation and
@@ -24343,6 +24582,10 @@ func _refresh_open_talk_menu() -> void:
 func _on_npc_service_selected(key: String) -> void:
 	# Round 728: the retail sell, deposit and buy back carry the NPC's uid.
 	_hud_panels.npc_uid = _talk_npc_uid()
+	# Round 799: a job guild's lines (JobGuildFlow; their requests name the
+	# NPC, no 0x7046 open).
+	if _job_flow != null and _job_flow.handle_service(key):
+		return
 	# A server NPC's store, storage and talk lines (round 727): the open
 	# request 0x7046 with the line's id (CIF_NPCTalk::FUN_007020c0: kind 1 ->
 	# 1, kind 3 -> 3, kind 4 -> 2); the windows open on its reply
@@ -30246,6 +30489,10 @@ func _on_equip_pressed(slot: int) -> void:
 func _on_equipment_result(items: Array, error: String) -> void:
 	if error != "":
 		equipment_status_label.text = "Error: %s" % error
+		# Round 800: a job suit's refusal names the client's own message
+		# (the server's suitErrKeys): its text in the system window.
+		if error.begins_with("UIIT_"):
+			_log_system(_resolve_any_text(error, error), HudSystemMessage.TYPE_ALWAYS)
 		_awaiting_equip_ack = false
 		return
 
@@ -30989,6 +31236,9 @@ func _on_guild_result(result: GuildNet.Result) -> void:
 		return
 	if result.error != "":
 		guild_status_label.text = "Error: %s" % result.error
+		# Round 800: 0x4c56 UIIT_CTL_GUILD_JOIN_JOB_ERROR and the like.
+		if result.error.begins_with("UIIT_"):
+			_log_system(_resolve_any_text(result.error, result.error))
 		return
 	if result.guild_id != _guild_id:
 		_clear_guild_points()
@@ -31081,6 +31331,10 @@ func _on_guild_create_result(result: GuildNet.Result) -> void:
 	if result.error == "" and result.guild_id != 0:
 		_log_system("Guild %s founded." % result.guild_name)
 		_request_world_stats()
+	elif result.error.begins_with("UIIT_"):
+		# Round 800: a job suit refuses the founding with the client's own
+		# message (0x4c57 UIIT_CTL_GUILD_CREATE_JOB_ERROR).
+		_log_system(_resolve_any_text(result.error, result.error))
 	elif result.error != "":
 		_log_system("Could not found the guild: %s" % result.error)
 

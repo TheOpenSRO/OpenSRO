@@ -317,3 +317,33 @@ static func scroll_line(code: int, table: UiTextTable, reason: String) -> String
 	if reason != "":
 		return reason
 	return "That cannot be used (code 0x%x)." % code
+
+## Round 799: the job guild's refusals. READ: every job reply's handler shows
+## a refusal through FUN_00778190(0x18, code, ...) (0xb0e1 c:0x889100, 0xb0e2,
+## 0xb0e3 c:0x889370, 0xb0e5 c:0x8830f0 ...), the error dispatcher; the rows
+## are docs/protocol/error_codes.md's for the job codes. Codes with no row
+## (2, 3, 0x4807, 0x480f, 0x4828, 0x482a) take the dispatcher's default,
+## which shows nothing: "" here.
+const JOB_UIIT_BY_CODE := {
+	0x4810: "UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_TRADECART",
+	0x4817: "UIIT_MSG_INTERACTION_FAIL__REQUESTED_JOB_BLOCKED_BY_QUEST",
+	0x4818: "UIIT_INTERACTION_FAIL_ONLY_ROBBER_CAN_TELEPORT_TO_THIEFDEN",
+	0x4819: "UIIT_MSG_JOBGUILD_JOIN_ERR_LEVEL",
+	0x4820: "UIIT_MSG_JOBGUILD_JOIN_ERR_OVERLAP",
+	0x4821: "UIIT_MSG_JOBITEM_WEAR_ERR_NOGUILD",
+	0x4822: "UIIT_CTL_JOBGUILD_WITHD_ERR_WEARITEM",
+	0x4823: "UIIT_MSG_ALIAS_CREATE_ERR_NOTRULE",
+	0x4824: "UIIT_MSG_JOBGUILD_JOIN_ERR_EXPIRE",
+	0x4825: "UIIT_MSG_ALIAS_CREATE_ERR_NAMEDULPLICATE",
+	0x4826: "UIIT_MSG_ALIAS_CREATE_ERR_NAMEDULPLICATE",
+	0x4829: "UIIT_MSG_JOBINFO_OLD_NOTEXIST",
+	0x482b: "UIIT_MSG_PARTYMATCH_RECORD_ERROR_JOBWITHDRAW",
+	0x482e: "UIIT_MSG_JOBGUILD_WITHD_ERR_QUEST",
+}
+
+static func job_line(code: int, table: UiTextTable) -> String:
+	var key := String(JOB_UIIT_BY_CODE.get(code, ""))
+	if key == "" or table == null or not table.has(key):
+		return ""
+	var text := table.get_text(key).strip_edges()
+	return "" if text == "" or text == key else text

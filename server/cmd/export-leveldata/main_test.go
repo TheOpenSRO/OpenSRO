@@ -35,7 +35,7 @@ func TestToRecordsPicksLevelAndExp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readRows: %v", err)
 	}
-	records := toRecords(rows)
+	records := toRecords(rows, nil)
 	// header + 3 rows
 	if len(records) != 4 {
 		t.Fatalf("got %d records, want 4 (header + 3)", len(records))
@@ -65,7 +65,7 @@ func TestExportRoundTripsThroughServerParser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readRows: %v", err)
 	}
-	records := toRecords(rows)
+	records := toRecords(rows, nil)
 	var csv strings.Builder
 	for _, r := range records {
 		csv.WriteString(strings.Join(r, ","))
@@ -92,9 +92,9 @@ func TestToRecordsPicksExpUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readRows: %v", err)
 	}
-	records := toRecords(rows)
-	if got := records[0]; len(got) != 4 || got[3] != "exp_unit" {
-		t.Fatalf("header = %v, want a 4th column named exp_unit", got)
+	records := toRecords(rows, nil)
+	if got := records[0]; len(got) != 8 || got[3] != "exp_unit" || got[4] != "job_trader" || got[7] != "gold_min" {
+		t.Fatalf("header = %v, want exp_unit 4th, the job columns, gold_min last", got)
 	}
 	want := map[string]string{"1": "24", "2": "47", "9": "212"}
 	for _, r := range records[1:] {
@@ -114,5 +114,21 @@ func TestToRecordsPicksExpUnit(t *testing.T) {
 		if r[0] == "9" && r[2] != "7" {
 			t.Errorf("level 9 mastery_sp = %s, want 7 (column 2)", r[2])
 		}
+	}
+}
+
+// TestRound799JobColumns: leveldata.txt columns 6..8 (the client's
+// "15000000" level-1 value, MEASURED in the r794 archive) and levelgold's
+// minimum land in the job columns; -1 stays -1.
+func TestRound799JobColumns(t *testing.T) {
+	rows := [][]string{{"1", "118", "1", "0", "0", "24", "15000000", "15000000", "15000000"},
+		{"21", "351231", "62", "0", "0", "498", "-1", "-1", "-1"}}
+	gold := goldMins([][]string{{"1", "28", "59"}, {"21", "200", "300"}})
+	recs := toRecords(rows, gold)
+	if got := recs[1]; got[4] != "15000000" || got[6] != "15000000" || got[7] != "28" {
+		t.Fatalf("level 1: %v", got)
+	}
+	if got := recs[2]; got[5] != "-1" || got[7] != "200" {
+		t.Fatalf("level 21: %v", got)
 	}
 }

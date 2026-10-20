@@ -387,9 +387,23 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	if trades.Established(characterID) {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: tradeEquipLockedReason}).Encode()})
 	}
+	// Round 800: a pending suit change, and slot 8 already worn (jobsuit.go).
+	if storageOpDuringChange(sess, hub, characterID) {
+		return nil
+	}
+	if req.Slot == equipment.SlotJobSuit && slot8Taken(ctx, store, characterID) {
+		return suitRefusal(sess, suitErrSwap)
+	}
 
 	if refusal := equipRefusal(ctx, chars, store, inv, items, characterID, req.Slot, req.InventorySlot); refusal != "" {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: refusal}).Encode()})
+	}
+	// Round 800: a job suit goes on over 10 seconds (jobsuit.go).
+	if req.Slot == equipment.SlotJobSuit {
+		d := suitDeps{ctx: ctx, store: store, inv: inv, items: items, hub: hub}
+		if handled, err := jobSuitEquip(ctx, sess, d, characterID, req.InventorySlot); handled {
+			return err
+		}
 	}
 	if err := store.Equip(ctx, characterID, req.Slot, req.InventorySlot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
@@ -415,6 +429,16 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	// CGObjPC::DetachEquipItem (0x005255e0): 0x1811 at INTERACTMODE 2.
 	if trades.Established(characterID) {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: tradeEquipLockedReason}).Encode()})
+	}
+	// Round 800: a pending suit change; a job suit comes off over 10 seconds.
+	if storageOpDuringChange(sess, hub, characterID) {
+		return nil
+	}
+	if req.Slot == equipment.SlotJobSuit {
+		d := suitDeps{ctx: ctx, store: store, inv: jobDepsNow().inv, items: items, hub: hub}
+		if handled, err := jobSuitUnequip(ctx, sess, d, characterID); handled {
+			return err
+		}
 	}
 
 	// The first free bag slot, whatever slot the client named: retail's

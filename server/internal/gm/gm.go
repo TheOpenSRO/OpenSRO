@@ -228,6 +228,9 @@ type Deps struct {
 	// layer fills it in (session.GMCommandHandler) when the server leaves it
 	// nil.
 	Speed SpeedControl
+	// Jobs is what /jobexp and /jobweek drive (round 799, test tools); nil
+	// refuses them. The session layer fills it in.
+	Jobs JobControl
 	// Afflict is what /afflict drives (round 786, a test tool); nil refuses
 	// it. The session layer fills it in when the server leaves it nil.
 	Afflict AfflictControl
@@ -276,13 +279,23 @@ type SpeedControl interface {
 	GMSpeed(characterID int64) (factor float64, runSpeed uint32)
 }
 
+// JobControl is the job system's GM hooks (round 799, OURS: test tools with
+// no retail counterpart).
+type JobControl interface {
+	// GainJobExp changes characterID's job exp by amount through the job
+	// rules (GObjPC::FUN_004e2830) and says what the record became.
+	GainJobExp(ctx context.Context, characterID int64, amount int64) string
+	// RunWeekly runs the weekly job procedure now.
+	RunWeekly(ctx context.Context) error
+}
+
 // MaxSpawn caps one /spawn. Own choice: enough to test a group, not enough
 // to take a zone down by typo.
 const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty] [plus], /item <slot> plus|var|quality|opt|adv|clear ..., /avatar [spirit <bag slot> <seconds|0>], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off], /hurt <hp> [mp], /afflict <code> <values...>, /hour <0-23>, /ban <name>, /block <name|@account> <30m|12h|7d|forever> [reason], /unblock <name|@account>, /blockinfo <name|@account>, /jobexp <n>, /jobweek"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -349,6 +362,10 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.unblock(ctx, args)
 	case "blockinfo":
 		res = d.blockInfo(ctx, args)
+	case "jobexp":
+		res = d.jobExp(ctx, actor, args)
+	case "jobweek":
+		res = d.jobWeek(ctx)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -1299,4 +1316,31 @@ func (d *Deps) afflict(actor Actor, args []string) Result {
 		return refuse("afflict: " + err.Error())
 	}
 	return Result{Text: fmt.Sprintf("afflicted: %s %v, mask %#x", args[0], values, mask)}
+}
+
+// jobExp is /jobexp <n> (round 799, OURS): a job exp change through the job
+// rules -- a level-up, the robber's and hunter's contribution, 0x30E6.
+func (d *Deps) jobExp(ctx context.Context, actor Actor, args []string) Result {
+	if d.Jobs == nil {
+		return refuse("no job system")
+	}
+	if len(args) != 1 {
+		return refuse("usage: /jobexp <n> (negative takes exp away)")
+	}
+	n, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil || n == 0 {
+		return refuse("usage: /jobexp <n> (negative takes exp away)")
+	}
+	return Result{Text: d.Jobs.GainJobExp(ctx, actor.CharacterID, n)}
+}
+
+// jobWeek is /jobweek (round 799, OURS): the weekly job procedure now.
+func (d *Deps) jobWeek(ctx context.Context) Result {
+	if d.Jobs == nil {
+		return refuse("no job system")
+	}
+	if err := d.Jobs.RunWeekly(ctx); err != nil {
+		return refuse("the weekly job procedure failed: " + err.Error())
+	}
+	return Result{Text: "the weekly job procedure ran: rewards shared, rankings rebuilt, contributions reset"}
 }

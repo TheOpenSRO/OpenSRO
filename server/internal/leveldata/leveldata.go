@@ -99,6 +99,13 @@ type Table struct {
 	// cmd/export-leveldata already cites; +8/+0xc sits with it in the same
 	// record.
 	expToNext map[int]int64
+	// jobNeed[L] is leveldata's columns 6, 7, 8: the job exp a trader, robber
+	// and hunter need at job level L (round 799; READ FUN_0060dd90, the level
+	// record's +0x20/+0x24/+0x28, docs/protocol/jobs.md). goldMin[L] is
+	// levelgold.txt's column 1, LevelGold_GetMin (READ s:0x7243e0 returns
+	// entry +4; the entry is level, min, max).
+	jobNeed map[int][3]uint32
+	goldMin map[int]int64
 	// masterySP[L] is the skill-point cost to raise a mastery from level L to
 	// L+1 -- leveldata's column 2. REAL: the server sums exactly this field
 	// over the levels being raised. See MasteryUpCost.
@@ -727,10 +734,36 @@ func (t *Table) Advance(level int, exp int64, gained int64) (newLevel int, newEx
 	return newLevel, newExp, levelsGained
 }
 
+// JobNeed is the job exp a kind (1 trader, 2 robber, 3 hunter) needs at job
+// level L (round 799).
+func (t *Table) JobNeed(level, kind int) (uint32, bool) {
+	if t == nil || kind < 1 || kind > 3 {
+		return 0, false
+	}
+	n, ok := t.jobNeed[level]
+	if !ok {
+		return 0, false
+	}
+	return n[kind-1], true
+}
+
+// GoldMin is LevelGold_GetMin(level): levelgold.txt's minimum, 0 when the
+// level has none (the engine's FindEntry miss answers 0, s:0x7243f3).
+func (t *Table) GoldMin(level int) int64 {
+	if t == nil {
+		return 0
+	}
+	return t.goldMin[level]
+}
+
+// HasJobColumns reports a table exported with the job columns.
+func (t *Table) HasJobColumns() bool { return t != nil && len(t.jobNeed) > 0 }
+
 // ParseCSV reads "level,expToNext" rows (a header line and blank lines are
 // skipped) into a Table.
 func ParseCSV(r io.Reader) (*Table, error) {
-	t := &Table{expToNext: map[int]int64{}, masterySP: map[int]int{}, expUnit: map[int]int64{}}
+	t := &Table{expToNext: map[int]int64{}, masterySP: map[int]int{}, expUnit: map[int]int64{},
+		jobNeed: map[int][3]uint32{}, goldMin: map[int]int64{}}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	line := 0
@@ -770,6 +803,30 @@ func ParseCSV(r io.Reader) (*Table, error) {
 		if len(fields) > 3 {
 			if eu, err := strconv.ParseInt(strings.TrimSpace(fields[3]), 10, 64); err == nil {
 				t.expUnit[level] = eu
+			}
+		}
+		// Round 799: columns 4..6 are the job exp columns (leveldata.txt 6, 7,
+		// 8) and 7 the level's gold minimum (levelgold.txt column 1); optional,
+		// so an older four-column export still loads (the job system then has
+		// no curve and no unit).
+		if len(fields) > 6 {
+			var need [3]uint32
+			ok := true
+			for i := 0; i < 3; i++ {
+				v, err := strconv.ParseInt(strings.TrimSpace(fields[4+i]), 10, 64)
+				if err != nil {
+					ok = false
+					break
+				}
+				need[i] = uint32(v) // -1 is 0xFFFFFFFF, as the engine reads it
+			}
+			if ok {
+				t.jobNeed[level] = need
+			}
+		}
+		if len(fields) > 7 {
+			if g, err := strconv.ParseInt(strings.TrimSpace(fields[7]), 10, 64); err == nil {
+				t.goldMin[level] = g
 			}
 		}
 		if level > t.maxLevel {

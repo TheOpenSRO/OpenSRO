@@ -545,6 +545,63 @@ func show_player(target_name: String, owner_key: String = "", race: int = -1) ->
 	place()
 	_show_buffs(_player, owner_key)
 
+## Round 800: a selected player in a job suit -- the job-player piece,
+## CIFTargetWindowJobPlayer (READ 0x699e15..0x699e5f picks it when the target's
+## job state is not 4; its fill 0x69ac90): GDR_TWJP_JOB_ALIAS `*%s` of the name
+## (the spawn's, the alias), GDR_TWJP_JOB_ICON targetwindow\tw_job_{merchant,
+## thief,hunter}.ddj by the job state, GDR_TWJP_JOB_GRADENAME the class title
+## UIIT_STT_CLASS_[EU_]X_%d by the job level and the target's race,
+## GDR_TWJP_JOB_GRADE `%d%s` (level, UIIT_STT_GRADE), the race emblem.
+const JOB_TARGET_ICONS := {1: "interface\\targetwindow\\tw_job_merchant.ddj",
+	2: "interface\\targetwindow\\tw_job_thief.ddj", 3: "interface\\targetwindow\\tw_job_hunter.ddj"}
+
+func show_job_player(target_name: String, owner_key: String, race: int, job_state: int, job_level: int) -> void:
+	if _job_player == null:
+		show_player(target_name, owner_key, race)
+		return
+	_shown = _job_player
+	for w in [_common, _special, _player, _job_player]:
+		if w != null:
+			w.visible = (w == _job_player)
+	custom_minimum_size = _job_player.size
+	size = _job_player.size
+	if _close != null:
+		_close.move_to_front()
+	_gem = null
+	_gauge = null
+	_icon = null
+	_level_row = null
+	_rank_row = null
+	_name = _job_player.find_child("GDR_TWJP_JOB_ALIAS", true, false) as Label
+	if _name != null:
+		_name.text = "*%s" % target_name
+	var key := JobText.class_key(job_state, job_level, race == 1)
+	var grade_name := _job_player.find_child("GDR_TWJP_JOB_GRADENAME", true, false) as Label
+	if grade_name != null:
+		grade_name.text = _resolve(key) if key != "" else ""
+	var grade := _job_player.find_child("GDR_TWJP_JOB_GRADE", true, false) as Label
+	if grade != null:
+		grade.text = "%d%s" % [job_level, _resolve("UIIT_STT_GRADE")]
+	var icon := _job_player.find_child("GDR_TWJP_JOB_ICON", true, false) as Control
+	if icon != null and _builder != null:
+		var tr := icon.get_node_or_null("JobIcon") as TextureRect
+		if tr == null:
+			tr = TextureRect.new()
+			tr.name = "JobIcon"
+			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP
+			icon.add_child(tr)
+		tr.texture = _builder.load_texture(String(JOB_TARGET_ICONS[job_state])) if JOB_TARGET_ICONS.has(job_state) else null
+	var mark := _job_player.find_child("GDR_TWJP_KINDRED_MARK_art", true, false) as TextureRect
+	if mark != null:
+		var path := kindred_mark_path(race)
+		mark.texture = _builder.load_texture(path) if (path != "" and _builder != null) else null
+		mark.visible = mark.texture != null
+	visible = true
+	shown_key = owner_key
+	place()
+	_show_buffs(_job_player, owner_key)
+
 ## The name the window shows: rarity 7 prefixes it with UIIT_STT_MOB_STRONG's
 ## text and a space (read, STRONG_NAME_KEY). If the text table cannot resolve
 ## the key, the plain name is shown (our fallback).

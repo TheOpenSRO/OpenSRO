@@ -279,7 +279,7 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	// is PvPSTATE_NEUTRAL here. It decides only rule type 3, which no retail
 	// link carries (0 of 1,460 slots, round 575) -- no current outcome turns
 	// on it.
-	if code := teleport.CheckRestrictions(link, c.Level, teleport.PvPNeutral); code != 0 {
+	if code := teleport.CheckRestrictions(link, c.Level, teleport.PvPNeutral, jobStateNow(ctx, c.ID), ownsTransport(c.ID)); code != 0 {
 		return refuse(code, teleportRefusalReason(code), "gate", gateCode, "dest", dest.Code, "level", c.Level)
 	}
 	// A destination in another game world -- a fortress, tomb, arena or

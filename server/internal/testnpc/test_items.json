@@ -2,7 +2,7 @@
   "_comment": "OURS (round 783): the Test Items NPC. Every value here is OpenSRO's own choice: the NPC is not in the retail archives. Goods are RULES over the player's own item table (CodeName128 prefix/suffix or pattern, TypeID, ItemClass), resolved by the server at boot against the reference data it loaded; no item row is listed here. Tab labels that start SN_/UIIT_ are the client's own text keys (the retail vendors' tab names, refshoptab.txt column 5); other text is ours. Every good is free at this NPC (free: the user's choice); the same items keep their own price at any other store. The Seal of Nova rules take the UNLOCKED rows, _A_RARE_ACTIVE (round 786: required level 101, SN_ITEM_UNLOCKED_TT_DESC), not the locked _A_RARE ones (level 111); the anchored $ leaves the _A_RARE_SWITCHnn_ACTIVE variants out. docs/protocol/test_items_npc.md.",
   "name": "Test Items",
   "model": "NPC_SD_T_AREA_POTION",
-  "greeting": "Every 11th degree alchemy item, every Seal of Nova item, avatars, pets and rides, for testing.",
+  "greeting": "Every 11th degree alchemy item, every Seal of Nova item, avatars, pets, rides and job suits, for testing.",
   "region": 25000,
   "x": 1070.0,
   "y": -32.61,
@@ -165,6 +165,14 @@
         {"label": "Horses", "rules": [{"code": "^ITEM_COS_C_(DONKEY|HORSE[0-9]|CAMEL[0-9]|DHORSE[0-9])$", "type": "3/3/3/2"}]},
         {"label": "SN_TAB_VEHICLE", "rules": [{"code": "^ITEM_(EVENT_)?COS_C_(RUDOLPH|UNICORN|DRACO|[A-Z]+_SCROLL)$", "type": "3/3/3/2"}]},
         {"label": "SN_TAB_CART", "rules": [{"code": "^ITEM_(EVENT_)?COS_T_[A-Z0-9_]+$", "type": "3/3/3/2"}]}
+      ]
+    },
+    {
+      "label": "Purchase Job Suits",
+      "tabs": [
+        {"label": "Trader", "rules": [{"type": "3/1/7/1"}]},
+        {"label": "Thief", "rules": [{"type": "3/1/7/2"}, {"prefix": "ITEM_ETC_SCROLL_RETURN_THIEFDEN_", "type": "3/3/3/1"}]},
+        {"label": "Hunter", "rules": [{"type": "3/1/7/3"}]}
       ]
     }
   ]

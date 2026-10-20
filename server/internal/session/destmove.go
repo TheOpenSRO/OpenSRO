@@ -287,6 +287,9 @@ func moveByRequest(sess *gateway.Session, data []byte, hub *world.Hub, chars cha
 	if !ok || e.Life == world.LifeDead {
 		return nil
 	}
+	// Round 800: a movement request cancels a pending suit change
+	// (GObjPC::FUN_004b0ea0 s:0x4b0fe4 -> FUN_004e0c60(PC, 0)).
+	cancelJobChange(hub, e.CharacterID)
 	// Round 749's review, F4 (READ, GObjPC::FUN_004b0ea0): the abnormal
 	// states that stop a move -- the bits 0xc1 | 0x4000 (`test al,0xc1` at
 	// 0x4b0fa6), stun, freeze, sleep, root: statuseffect.Holder.CanMove --

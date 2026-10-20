@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/pcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/species"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
@@ -257,6 +258,16 @@ func (w *cosRuntime) spawnRecord(o *cosObj, now time.Time) []byte {
 	if e, ok := cosOwnerEntity(owner); ok {
 		r.OwnerName = e.Name
 		r.OwnerUID = uint32(e.CharacterID)
+		// Round 800: the owner's job state, and its alias while it wears a
+		// suit (READ the COS record's owner name s:0x4d1c90 reads
+		// GetNickName in job mode).
+		ctx := context.Background()
+		r.OwnerJob = jobStateNow(ctx, owner)
+		if r.OwnerJob != pcspawn.JobStateNone {
+			if a := jobRecord(ctx, owner).Alias; a != "" {
+				r.OwnerName = a
+			}
+		}
 	}
 	return cos.AppendSpawnRecord(nil, r)
 }

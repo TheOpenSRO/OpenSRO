@@ -55,7 +55,6 @@ var parked = map[string]string{
 	// says so in its own package doc; this is the index of them.
 	"academy":     "recovered training-camp rules; OpenSRO has no training camp",
 	"arena":       "recovered battle-arena shape; its own doc opens 'OpenSRO has no arena'",
-	"jobs":        "recovered trade-route job rules; OpenSRO has no job system",
 	"persistence": "the recovered DB surface of the real server, a specification rather than a store",
 	"siege":       "recovered fortress-war rules; its own doc says OpenSRO 'is not about to grow one'",
 	"timedjob":    "recovered expiry machinery; OpenSRO has no timed jobs to expire",

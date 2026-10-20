@@ -152,15 +152,35 @@ func TestCheckRestrictions(t *testing.T) {
 		{"(4,23973,0): the item is not checked, refuses", link(Rule{4, 23973, 0}), 50, ErrRocItem},
 		{"(5,23973,0) refuses", link(Rule{5, 23973, 0}), 50, ErrRocItem},
 		{"(4,0,0): no item named, passes", link(Rule{4, 0, 0}), 50, 0},
-		{"(6,0,0): no job state, refuses", link(Rule{6, 0, 0}), 50, ErrRocJob},
+		{"(6,0,0): out of a job suit (state 4) passes", link(Rule{6, 0, 0}), 50, 0},
 		{"(6,1,0): the assert arm passes", link(Rule{6, 1, 0}), 50, 0},
 		{"an unknown type passes", link(Rule{9, 1, 1}), 50, 0},
 		{"no rules pass", link(), 50, 0},
 		{"the first failing rule's code wins", link(Rule{2, 0, 0}, Rule{1, 1, 110}, Rule{6, 0, 0}), 111, ErrLevelRange},
 	}
 	for _, c := range cases {
-		if got := CheckRestrictions(c.link, c.level, PvPNeutral); got != c.want {
+		if got := CheckRestrictions(c.link, c.level, PvPNeutral, 4, false); got != c.want {
 			t.Errorf("%s: CheckRestrictions = %#x, want %#x", c.name, got, c.want)
+		}
+	}
+	// Round 800 (READ 0x513c58..0x513cc7): type 6 refuses a job suit
+	// (GetJobState != 4); type 2 any transport; type 7 a thief's suit with a
+	// transport.
+	for _, c := range []struct {
+		name    string
+		rule    Rule
+		job     byte
+		hasCart bool
+		want    uint16
+	}{
+		{"(6,0,0) a trader in a suit", Rule{6, 0, 0}, 1, false, ErrRocJob},
+		{"(2,0,0) a transport out", Rule{2, 0, 0}, 4, true, ErrTradeCart},
+		{"(7,0,0) a trader with a transport", Rule{7, 0, 0}, 1, true, 0},
+		{"(7,0,0) a thief with a transport", Rule{7, 0, 0}, 2, true, ErrTradeCart},
+		{"(7,0,0) a thief without", Rule{7, 0, 0}, 2, false, 0},
+	} {
+		if got := CheckRestrictions(link(c.rule), 50, PvPNeutral, c.job, c.hasCart); got != c.want {
+			t.Errorf("%s: %#x, want %#x", c.name, got, c.want)
 		}
 	}
 }
@@ -189,7 +209,7 @@ func TestCheckRestrictionsPvPStateMask(t *testing.T) {
 		{"D1 = 7 bars every state", 7, PvPAssaulter, ErrPvPState},
 	}
 	for _, c := range cases {
-		if got := CheckRestrictions(link(c.d1), 50, c.pvp); got != c.want {
+		if got := CheckRestrictions(link(c.d1), 50, c.pvp, 4, false); got != c.want {
 			t.Errorf("%s: CheckRestrictions((3,%d,0), pvp %d) = %#x, want %#x", c.name, c.d1, c.pvp, got, c.want)
 		}
 	}

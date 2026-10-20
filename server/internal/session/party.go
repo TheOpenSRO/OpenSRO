@@ -107,10 +107,11 @@ func PartyHandler(d PartyDeps) gateway.Handler {
 	}
 }
 
-// memberOf is the party member an entity joins as. Job is JobNone: OpenSRO
-// has no job mode yet, and every character's job state is 4.
+// memberOf is the party member an entity joins as, with its job state
+// (round 800: the worn suit's, jobsuit.go; 4 out of a suit).
 func (d PartyDeps) memberOf(e world.Entity) party.Member {
-	return party.Member{Session: e.Session, CharacterID: e.CharacterID, Name: e.Name, Level: e.Level, Job: party.JobNone}
+	return party.Member{Session: e.Session, CharacterID: e.CharacterID, Name: e.Name, Level: e.Level,
+		Job: jobStateNow(context.Background(), e.CharacterID)}
 }
 
 // checkCanCreate is CParty::CheckCanCreate (READ, GS 0x513f90), in its order:

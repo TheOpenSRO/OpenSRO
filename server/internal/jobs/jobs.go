@@ -2,7 +2,8 @@
 // SR_GameServer.exe -- the trader/hunter/thief system, its job guilds, the
 // specialty goods they move, and the flea market.
 //
-// OpenSRO has none of this. The package is the recovered rule set.
+// Round 799 builds the job guild on it: the record and its store
+// (record.go, sqlstore.go), the exp rules (exp.go) and the wire (wire.go).
 //
 // See docs/protocol/jobs.md.
 package jobs
@@ -17,7 +18,36 @@ const (
 	ErrFleaMarketFull      = 0x3c18 // FLEAMARKET_ERR_MARKET_FULL
 	ErrFleaMarketHostLeft  = 0x3c15 // FLEAMARKET_ERR_HOST_LEFT
 	ErrFleaMarketHostClose = 0x3c17 // FLEAMARKET_ERR_CLOSED_BY_HOST
+
+	// The job guild's other refusals (round 799, READ the handlers
+	// s:0x5120f0..0x513190 and their completions; the names are the
+	// client's UIIT where it has one).
+	ErrNPC             = 3      // not at (or not interacting with) the NPC: FUN_004e72a0 != 1, a literal
+	ErrDB              = 2      // an async query failed to post (UIIT_MSG_PARTYERR_UNKNOWN_ERROR)
+	ErrNotEnoughGold   = 0x4807 // the join or alias-change fee (no client text)
+	ErrJobOverlap      = 0x4820 // JOBGUILD_JOIN_ERR_OVERLAP: already in a job
+	ErrSuitWorn        = 0x4822 // UIIT_CTL_JOBGUILD_WITHD_ERR_WEARITEM (withdraw and alias)
+	ErrAliasRule       = 0x4823 // ALIAS_CREATE_ERR_NOTRULE
+	ErrJoinPenalty     = 0x4824 // JOBGUILD_JOIN_ERR_EXPIRE: 7 days after a withdrawal
+	ErrAliasTaken1     = 0x4825 // ALIAS_CREATE_ERR_NAMEDULPLICATE (the procedure's -1)
+	ErrAliasTaken2     = 0x4826 // the same text (the procedure's -2)
+	ErrNoOldJobInfo    = 0x4829 // JOBINFO_OLD_NOTEXIST
+	ErrNoReward        = 0x482a // a collect with nothing to collect (no client text)
+	ErrWithdrawInQuest = 0x482e // JOBGUILD_WITHD_ERR_QUEST
 )
+
+// JoinFee is the join's gold (READ s:0x5121d3 `sub eax,0x14; imul 0x1388`,
+// charged at the join's completion, s:0x4e7a2a): (level - 20) x 5000.
+func JoinFee(level int) int64 { return int64(level-MinJobLevel) * 5000 }
+
+// AliasChangeFee is a changed alias's gold (READ GObjPC_HandleAliasMsg_0e3:
+// level x 50000, charged only when the old alias was not empty; the client's
+// cost line is the same, c:0x74b82d).
+func AliasChangeFee(level int) int64 { return int64(level) * 50000 }
+
+// PenaltySeconds is the withdrawal's timed job: 0x93a80 s = 604800 s = 7 days
+// (JobGuild_HandleWithdraw s:0x5124b8).
+const PenaltySeconds = 604800
 
 // MinJobLevel is 20, enforced in two unrelated places, both through vtable
 // slot 73 (`+0x124`, the level getter) and both with the same comparison:
@@ -84,18 +114,6 @@ func (k Kind) ID() (int, bool) {
 
 // Valid reports whether the join handler would accept this kind byte.
 func (k Kind) Valid() bool { _, ok := kindIDs[k]; return ok }
-
-// CheckJoin returns 0 when a character may join a job guild, or the refusal.
-// The kind is validated before the level, which is the handler's order.
-func CheckJoin(kind Kind, level int) int {
-	if !kind.Valid() {
-		return ErrUnknownJobKind
-	}
-	if level < MinJobLevel {
-		return ErrJobGuildLevel
-	}
-	return 0
-}
 
 // FleaMarketSlots is 8. FUN_004734e0 refuses with FLEAMARKET_ERR_MARKET_FULL
 // when the entry vector is that long:

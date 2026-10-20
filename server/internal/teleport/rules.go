@@ -105,8 +105,9 @@ func QuoteFee(link Link, level int, isGM, freeFlag bool) (fee int64, waiver Waiv
 //	   NEUTRAL, bit 1 ASSAULTER, bit 2 MURDERER.
 //	4: D1 != 0 and no item of ref object D1 in the inventory -> 0x1c23.
 //	5: as 4, and the found item goes to FUN_004d9030 (unread).
-//	6: D1 == D2 == 0 and GetJobState (vslot 71) != 4 -> 0x1c24; other data
-//	   asserts and passes.
+//	6: D1 == D2 == 0 and GetJobState (vslot 71) != 4 -> 0x1c24 (0x513c73
+//	   `cmp al,4; je` passes state 4); other data asserts and passes. Until
+//	   round 800 OpenSRO refused every character here.
 //	7: CGStorage::GetItem(8) returns an item whose vslot 0x41c answers 1,
 //	   and IHaveCart == 1 -> 0x1c10.
 //	any other type (0 included): no arm, passes.
@@ -144,13 +145,21 @@ func QuoteFee(link Link, level int, isGM, freeFlag bool) (fee int64, waiver Waiv
 // A type-5 rule with a non-zero D1 refuses here, so nothing reaches a
 // post-pass (with D1 0 the binary skips the arm and never calls FUN_004d9030,
 // 0x513be4).
-func CheckRestrictions(link Link, level int, pvp PvPState) uint16 {
+//
+// Round 800: types 2, 6 and 7 read the job (jobState the worn suit's, 4
+// none; hasCart a transport out, CGObjPC::IHaveCart). Type 7's "slot 8's item
+// answers vslot 0x41c" is a thief's suit (TypeID4 2), job state 2.
+func CheckRestrictions(link Link, level int, pvp PvPState, jobState byte, hasCart bool) uint16 {
 	for _, r := range link.Rules {
 		switch r.Type {
 		case 1:
 			lv := uint32(uint8(level)) // GetLevel returns a byte (`movzx eax,al`, 0x513afc)
 			if lv < uint32(r.D1) || lv > uint32(r.D2) {
 				return ErrLevelRange
+			}
+		case 2:
+			if hasCart {
+				return ErrTradeCart
 			}
 		case 3:
 			// `shl edx,cl` on a 32-bit register takes the count mod 32.
@@ -162,8 +171,12 @@ func CheckRestrictions(link Link, level int, pvp PvPState) uint16 {
 				return ErrRocItem
 			}
 		case 6:
-			if r.D1 == 0 && r.D2 == 0 {
+			if r.D1 == 0 && r.D2 == 0 && jobState != 4 {
 				return ErrRocJob
+			}
+		case 7:
+			if jobState == 2 && hasCart {
+				return ErrTradeCart
 			}
 		}
 	}

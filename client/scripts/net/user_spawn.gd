@@ -56,6 +56,11 @@ class Record:
 	var run_flag := 1
 	var name: String
 	var job_state: int = JOB_STATE_NONE
+	## Round 800: row 22's job kind (0 none, 1 trader, 2 thief, 3 hunter) and
+	## job level (player +0x7be / +0x7bf), row 28's trade scale (+0x50e).
+	var job_kind: int = 0
+	var job_level: int = 0
+	var trade_rank: int = 0
 	## The 0x3015's spawn-type byte (-1 in a group).
 	var spawn_type := -1
 	## The mover (round 749): walking to dest_local of dest_region, or the
@@ -207,8 +212,8 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 		r.error = "buffs in a player record"
 		return null
 	rec.name = r.bytes(r.u16()).get_string_from_utf8()
-	r.u8() # job type
-	r.u8() # job level
+	rec.job_kind = r.u8()
+	rec.job_level = r.u8()
 	r.u8() # PvP state
 	var ride := r.u8()
 	r.u8() # battle state
@@ -218,7 +223,7 @@ static func read_record(r: NpcSpawnNet.Reader, types: Types) -> Record:
 		rec.mount_uid = r.u32()
 	r.u8() # teleport state
 	var interact := r.u8()
-	r.u8() # trade rank
+	rec.trade_rank = r.u8()
 	r.bytes(r.u16()) # guild name
 	rec.job_state = types.job_state(rec.items) if types != null else JOB_STATE_NONE
 	if rec.job_state == JOB_STATE_NONE:

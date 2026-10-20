@@ -24,8 +24,8 @@ import (
 // Not modelled, and so not refused (OURS, disclosed): the battle state
 // (chardata +0xd, "in battle" for 20 s after combat: 0x1878), the quest
 // block, the teleport state, the PvP cape change, the murderer state, job
-// suits (so a transport, which needs a trader's or thief's suit, is always
-// refused 0x1849 -- retail's rule, with no suit to wear).
+// suits until round 800 (a transport needs a trader's or thief's suit,
+// 0x1849; jobsuit.go has the suit).
 
 // cosRefusal answers a use with the engine's code.
 func cosRefusal(sess *gateway.Session, code uint16, text string) error {
@@ -76,9 +76,12 @@ func checkCanSummon(owner int64, typeID4, level, rowLevel int) int {
 			}
 		}
 		if typeID4 == cos.KindTransport {
-			// The owner's job state must be 1 (trader) or 2 (thief); OpenSRO
-			// has no job suits, so every owner is 4 (none).
-			return cos.ErrCannotActivateCart
+			// The owner's job state must be 1 (trader) or 2 (thief): a hunter
+			// or anyone out of a suit is refused (READ s:0x4fcef0; round 800,
+			// jobsuit.go).
+			if js := jobStateNow(context.Background(), owner); js != 1 && js != 2 {
+				return cos.ErrCannotActivateCart
+			}
 		}
 	case cos.KindGrowth, cos.KindAbility:
 		if code := cos.CheckSummon(cos.SummonRequest{OwnerLevel: level, ItemRequiredLevel: rowLevel, HasOwner: true}); code != 0 {
@@ -296,7 +299,7 @@ func spawnCOS(owner world.Entity, rec cos.Record, row species.Row, itemID int64,
 	cosAnnounce(o, spawnType)
 	sendCOSData(o, itemSlot)
 	if o.kind == cos.KindGrowth || o.kind == cos.KindTransport {
-		sendAboutCOS(o, cos.OpCOSOwnerState, cos.OwnerState(o.uid, 4, 0))
+		sendAboutCOS(o, cos.OpCOSOwnerState, cos.OwnerState(o.uid, jobStateNow(context.Background(), owner.CharacterID), 0))
 	}
 	return o
 }

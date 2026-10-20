@@ -101,7 +101,7 @@ const JOB_KIND_ORDER := [1, 3, 2]
 ## for it -- that line's UIIT string id, resolved through the player's
 ## textuisystem.txt by the talk window. An empty strid means there is no
 ## grounded token and the label is shown as it is. `job_kind` is the job
-## guild a "job_guild" line joins (1 Trader, 2 Thief, 3 Hunter), 0 otherwise.
+## guild a "job_*" line belongs to (1 Trader, 2 Thief, 3 Hunter), 0 otherwise.
 class Service:
 	var key: String
 	var label: String
@@ -229,7 +229,7 @@ static func _pp_parse_greetings(data: PackedByteArray) -> Dictionary:
 ## the SN_ tokens live in the NPC text tables, so their fallback is the token
 ## and World3D resolves them (_resolve_any_text).
 static func services_from_ids(ids: PackedByteArray, store_lines: Array = [], guild_id: int = -1,
-		guild_master: bool = false, player_job_kind: int = 0, player_level: int = 0) -> Array:
+		guild_master: bool = false, player_job_kind: int = 0, player_level: int = 0, job_alias_empty: bool = true) -> Array:
 	var out: Array = []
 	if ids.has(2):
 		out.append(Service.new("talk", "Talk to this person.", TALKSTART_STRID))
@@ -252,14 +252,69 @@ static func services_from_ids(ids: PackedByteArray, store_lines: Array = [], gui
 		out.append(Service.new("xmas_change", "Give the socks and receive a gift.", XMAS_CHANGE_STRID))
 	if ids.has(10):
 		out.append(Service.new("withdraw_skill", "Withdrawing Skill", WITHDRAW_SKILL_STRID))
-	if player_job_kind == 0:
-		for pair in JOB_IDS:
-			if ids.has(int(pair[0])):
-				var kind: int = pair[1]
-				out.append(Service.new("job_guild", str(JOB_FALLBACK_LABELS[kind]), str(JOB_JOIN_STRIDS[kind]), kind))
+	for pair in JOB_IDS:
+		if ids.has(int(pair[0])):
+			out.append_array(job_services(int(pair[1]), player_job_kind, job_alias_empty))
 	for row in TAIL_LINES:
 		if ids.has(int(row[0])):
 			out.append(Service.new(str(row[1]), str(row[3]), str(row[2])))
+	return out
+
+## Round 799: a job guild's block, IF_NPCTalk::FUN_006fdeb0(n, sub) (READ):
+## with no job the join line (0x1e); at the player's own guild (its kind ==
+## sub) leave (0x1f), the alias's create (0x20, no alias) or change (0x21),
+## and for a thief or hunter the week's outcome (0x24); then always the
+## donation / contribution ranking (0x23), the activity ranking (0x22) and
+## the previous job's information (0x26, sub 0). Each line's token is
+## FUN_006fcd60's case for (item, sub), read through its jump table (index
+## bytes 0x6fd394 + item, entries 0x6fd2d8): JOB_LINE_STRIDS. The keys are
+## this client's: "job_<line>:<sub>", the sub also in `job_kind`.
+const JOB_LINE_STRIDS := {
+	"join": {1: "UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN", 2: "UIIT_STT_NPC_CHATTING_THIEFMENU_JOIN",
+		3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_JOIN"},
+	"withdraw": {1: "UIIT_STT_NPC_CHATTING_TRADERMENU_WITHD", 2: "UIIT_STT_NPC_CHATTING_THIEFMENU_WITHD",
+		3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_WITHD"},
+	"alias_create": {1: "UIIT_STT_NPC_CHATTING_TRADERMENU_ALIASCREATE", 2: "UIIT_STT_NPC_CHATTING_THIEFMENU_ALIASCREATE",
+		3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_ALIASCREATE"},
+	"alias_modify": {1: "UIIT_STT_NPC_CHATTING_TRADERMENU_ALIASMODIFY", 2: "UIIT_STT_NPC_CHATTING_THIEFMENU_ALIASMODIFY",
+		3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_ALIASMODIFY"},
+	"rank_activity": {1: "UIIT_STT_NPC_CHATTING_TRADERMENU_JOBRANK", 2: "UIIT_STT_NPC_CHATTING_THIEFMENU_JOBRANK",
+		3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_JOBRANK"},
+	"rank_contribution": {1: "UIIT_STT_NPC_CHATTING_TRADERMENU_DONATIONRANK", 2: "UIIT_STT_NPC_CHATTING_HUNTERMENU_CONTRIBUTERANK",
+		3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_CONTRIBUTERANK"},
+	"outcome": {2: "UIIT_STT_NPC_CHATTING_HUNTERMENU_OUTCOME", 3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_OUTCOME"},
+}
+## Item 0x25 (the outcome reply's collect line) and 0x26.
+const JOB_COLLECT_STRID := "UIIT_STT_NPC_CHATTING_HUNTERMENU_OUTCOME"
+const JOB_PREV_STRID := "UIIT_STT_NPC_CHATTING_JOBINFO_OLD"
+## The stock English (textuisystem's later rows), shown only when the
+## archive has no text for a token.
+const JOB_LINE_FALLBACKS := {
+	"join": "Join the job league", "withdraw": "Leave the job league", "alias_create": "Create your job alias.",
+	"alias_modify": "Modify your job alias.", "rank_activity": "Ranking - activity",
+	"rank_contribution": "Ranking - weekly contribution", "outcome": "Collect this week's outcome",
+}
+
+static func _job_line(line: String, sub: int) -> Service:
+	var strid := String((JOB_LINE_STRIDS[line] as Dictionary).get(sub, ""))
+	var label := String(JOB_LINE_FALLBACKS[line])
+	if line == "join" and JOB_FALLBACK_LABELS.has(sub):
+		label = String(JOB_FALLBACK_LABELS[sub])
+	return Service.new("job_%s:%d" % [line, sub], label, strid, sub)
+
+## FUN_006fdeb0 for one guild id (`sub` its kind).
+static func job_services(sub: int, player_kind: int, alias_empty: bool) -> Array:
+	var out: Array = []
+	if player_kind == 0:
+		out.append(_job_line("join", sub))
+	elif player_kind == sub:
+		out.append(_job_line("withdraw", sub))
+		out.append(_job_line("alias_create" if alias_empty else "alias_modify", sub))
+		if sub == 2 or sub == 3:
+			out.append(_job_line("outcome", sub))
+	out.append(_job_line("rank_contribution", sub))
+	out.append(_job_line("rank_activity", sub))
+	out.append(Service.new("job_prev:%d" % sub, "Check previous job information", JOB_PREV_STRID, sub))
 	return out
 
 ## Item 4's token (FUN_006fcd60 case 4).

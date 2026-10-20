@@ -179,7 +179,7 @@ func TestTestItemsNPCSelectOpenBuyFree(t *testing.T) {
 	// The Test Items NPC: the definition, then the reply offering {1}.
 	c.send(npctalk.OpSelect, npctalk.EncodeEntity(test.UID))
 	uid, got, err := testnpc.Decode(c.next(testnpc.OpNpcShopDef).Data)
-	if err != nil || uid != test.UID || len(got.Lines) != 16 || got.Lines[2].Tabs[0].Label != "SN_TAB_WEAPON" ||
+	if err != nil || uid != test.UID || len(got.Lines) != 17 || got.Lines[2].Tabs[0].Label != "SN_TAB_WEAPON" ||
 		len(got.Lines[2].Tabs[0].ItemIDs) != 1 || got.Lines[2].Tabs[0].ItemIDs[0] != sword {
 		t.Fatalf("shop def: uid %d %+v %v", uid, got, err)
 	}

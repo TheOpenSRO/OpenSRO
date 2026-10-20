@@ -318,7 +318,7 @@ func (t *teleporter) walkIn(ctx context.Context, hub *world.Hub, characterID int
 	if err != nil || c == nil {
 		return
 	}
-	if code := teleport.CheckRestrictions(link, c.Level, teleport.PvPNeutral); code != 0 {
+	if code := teleport.CheckRestrictions(link, c.Level, teleport.PvPNeutral, jobStateNow(ctx, c.ID), ownsTransport(c.ID)); code != 0 {
 		logRefusal(code, teleportRefusalReason(code), "dest", dest.Code, "level", c.Level)
 		_ = sess.Send(&proto.Packet{Opcode: OpTeleportResult, Data: (&TeleportResult{Code: code, Reason: teleportRefusalReason(code)}).Encode()})
 		return

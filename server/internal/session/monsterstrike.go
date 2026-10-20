@@ -313,6 +313,8 @@ func (o monsterStrikeOutcome) message(monsterID, targetID int64) *MonsterAttacke
 // -- is the primary range, monster.AttackMin/AttackMax, as before.
 func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster, skill combat.MonsterSkill, characterID int64, playerLevel int) (monsterStrikeOutcome, error) {
 	chars, eq, items := deps.chars, deps.eq, deps.items
+	// Round 800: a blow taken is the battle state (jobsuit.go).
+	markBattle(deps.hub, characterID, time.Now())
 	var out monsterStrikeOutcome
 	armor, err := defenderArmor(ctx, characterID, eq, items)
 	if err != nil {

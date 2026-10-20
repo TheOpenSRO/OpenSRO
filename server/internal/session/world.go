@@ -1493,6 +1493,10 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		departPlayer(hub, left, remaining)
 		// Its COS leave with it, their state saved (round 795).
 		cosOwnerLeft(left.CharacterID)
+		// Its job's runtime state (round 800): a pending suit change, the
+		// battle state, the cached record.
+		forgetJobMode(left.CharacterID)
+		forgetJobRecord(left.CharacterID)
 		forgetLeftPlayer(hub, left.CharacterID)
 	}
 }

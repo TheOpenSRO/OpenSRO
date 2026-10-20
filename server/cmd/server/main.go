@@ -34,6 +34,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/OpenSRO/OpenSRO/server/internal/guild"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 	"github.com/OpenSRO/OpenSRO/server/internal/magicopt"
 	"github.com/OpenSRO/OpenSRO/server/internal/mana"
@@ -927,6 +928,12 @@ func main() {
 		"path to the game's monster placements (from cmd/export-refdata -mode npcpos on a client's "+
 			"own npcpos.txt). Every roster species with rows in it stands where the game puts it; "+
 			"without the file the species keep their own-design anchors near the town.")
+	// Round 799: when the weekly job procedure runs (_UpdateTriangleJobWeekly:
+	// the robbers' and hunters' rewards shared out, the rankings rebuilt, the
+	// contributions reset). OURS: retail runs it outside the GameServer.
+	jobWeekDay := flag.String("job-week-day", "monday",
+		"the weekday the weekly job procedure runs (the job rewards and rankings, round 799); \"off\" never runs it")
+	jobWeekHour := flag.Int("job-week-hour", 0, "the local hour (0..23) the weekly job procedure runs at")
 	cosCSV := flag.String("cos-csv", os.Getenv("OPENSRO_COS_CSV"),
 		"path to the COS table (from cmd/export-refdata -mode cos on a client's own characterdata parts and "+
 			"textdata_object.txt; round 795): the rides, transports and pets the summon items call out. Without it "+
@@ -1402,6 +1409,9 @@ func main() {
 		// internal/cos): _CHARCOS and _INVCOS.
 		cosStore cos.Store
 		cosBags  inventory.Store
+		// The job records (round 799, internal/jobs): _CharTrijob and its
+		// tables.
+		jobStore jobs.Store
 	)
 
 	if *inMemory {
@@ -1465,6 +1475,7 @@ func main() {
 		eq = equipment.NewMemStore(memInv)
 		avatars = avatar.NewMem(memRef)
 		cosStore = cos.NewMemStore()
+		jobStore = jobs.NewMemStore()
 		memBags := inventory.NewMemStore(memRef)
 		memBags.SetDurabilityLookup(memRef)
 		memBags.SetCapacity(cos.AbilityPetSlots)
@@ -1642,6 +1653,14 @@ func main() {
 		sqlBags.SetCapacity(cos.AbilityPetSlots)
 		sqlBags.SetCapacityFunc(cosBagCapacity(cosStore))
 		cosBags = sqlBags
+
+		// The job records (round 799): their tables migrate themselves.
+		sqlJobs, err := jobs.NewSQLStore(storePool)
+		if err != nil {
+			logger.Error("opening job store", "error", err)
+			os.Exit(1)
+		}
+		jobStore = sqlJobs
 
 		sqlSkills, err := skill.NewSQLStore(storePool)
 		if err != nil {
@@ -1855,6 +1874,14 @@ func main() {
 		logger.Info("no COS table (-cos-csv / OPENSRO_COS_CSV): pet items and ride scrolls cannot be used")
 	}
 	session.SetCOSDeps(cosStore, cosBags, cosTable, speciesSkills, inv, refItems, chars, hub, monsters, logger)
+	// The job guild (round 799). Its curve and level unit are the level
+	// table's job columns (cmd/export-leveldata, round 799).
+	session.SetJobDeps(session.JobDeps{Store: jobStore, Chars: chars, Equip: eq, Inv: inv, Items: refItems,
+		Parties: parties, Hub: hub, Logger: logger})
+	if !levelTable.HasJobColumns() {
+		logger.Warn("the level table has no job columns (re-export it with cmd/export-leveldata -levelgold, round 799): job levels never rise and the job formulas have no level unit")
+	}
+	session.StartJobWeekly(ctx, *jobWeekDay, *jobWeekHour, logger)
 	session.SetItemRecordTypes(func(ref uint32) ([4]int, bool) {
 		it, err := refItems.GetItem(context.Background(), int64(ref))
 		if err != nil || it == nil {
@@ -2426,6 +2453,8 @@ func main() {
 	handle := gateway.Chain(
 		// The COS requests (round 795, internal/session/coscommand.go).
 		session.COSHandler(hub, chars),
+		// The job guild (round 799, internal/session/jobguild.go).
+		session.JobGuildHandler(hub),
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
 		session.FrontEndThemeHandler(frontEndTheme),

@@ -580,6 +580,8 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 // struck while walking away then walks on for at most one tick before the
 // chase turns it toward its attacker at its run speed.
 func noteStruck(monsters *combat.Hub, monsterID, characterID int64) {
+	// Round 800: a blow given is the battle state (jobsuit.go).
+	markBattle(jobDepsNow().hub, characterID, time.Now())
 	a := monsterAIRuntime.Load()
 	if a == nil || monsters == nil || monsters != a.monsters {
 		return

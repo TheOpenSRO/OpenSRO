@@ -10,7 +10,11 @@
 //
 // Usage:
 //
-//	export-leveldata -out leveldata.csv leveldata.txt
+//	export-leveldata -out leveldata.csv [-levelgold levelgold.txt] leveldata.txt
+//
+// Round 799 appends the job exp columns (leveldata.txt 6..8) and, with
+// -levelgold, the level's gold minimum (levelgold.txt column 1): the job
+// system's curve and its level unit.
 package main
 
 import (
@@ -42,15 +46,21 @@ const (
 	// value there). Verified identical in the ORIGINAL client's leveldata.txt
 	// and the pserver's: 24, 47, 71, 94 ... 470 at level 20, 12550 at 110.
 	colExpUnit = 5
+	// colJobTrader..colJobHunter are the job exp columns 6, 7 and 8 (round
+	// 799; READ the server's FUN_0060dd90 reading the level record's +0x20,
+	// +0x24, +0x28 by job kind, docs/protocol/jobs.md).
+	colJobTrader = 6
+	colJobHunter = 8
 )
 
 func main() {
 	out := ""
+	levelGold := ""
 	var inputs []string
 	// Round 789: -archives reads leveldata.txt through the layered file
 	// system (docs/protocol/asset_packs.md) instead of a loose file.
 	af := assetfs.InputFlags{Source: "mixed", Volume: "Media", TextData: assetfs.TextDataDir}
-	strFlags := map[string]*string{"-out": &out, "-archives": &af.Archives, "-source": &af.Source,
+	strFlags := map[string]*string{"-out": &out, "-levelgold": &levelGold, "-archives": &af.Archives, "-source": &af.Source,
 		"-custom": &af.Custom, "-volume": &af.Volume, "-textdata": &af.TextData}
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
@@ -87,7 +97,15 @@ func main() {
 		fatal("reading %s: %v", inputs[0], err)
 	}
 
-	records := toRecords(rows)
+	var gold map[int]string
+	if levelGold != "" {
+		grows, err := readRows(levelGold)
+		if err != nil {
+			fatal("reading %s: %v", levelGold, err)
+		}
+		gold = goldMins(grows)
+	}
+	records := toRecords(rows, gold)
 	if len(records) == 1 {
 		fatal("no level rows parsed from %s", inputs[0])
 	}
@@ -108,8 +126,8 @@ func main() {
 // toRecords turns leveldata rows into "level,exp,mastery_sp" CSV records (with
 // a header), skipping any row whose level or exp column is not a number (a
 // header line or a comment).
-func toRecords(rows [][]string) [][]string {
-	records := [][]string{{"level", "exp", "mastery_sp", "exp_unit"}}
+func toRecords(rows [][]string, gold map[int]string) [][]string {
+	records := [][]string{{"level", "exp", "mastery_sp", "exp_unit", "job_trader", "job_robber", "job_hunter", "gold_min"}}
 	for _, cols := range rows {
 		if len(cols) <= colExpNext {
 			continue
@@ -134,10 +152,41 @@ func toRecords(rows [][]string) [][]string {
 				expUnit = strconv.Itoa(v)
 			}
 		}
-		records = append(records, []string{
-			strconv.Itoa(level), strconv.FormatInt(exp, 10), masterySP, expUnit})
+		rec := []string{strconv.Itoa(level), strconv.FormatInt(exp, 10), masterySP, expUnit}
+		for c := colJobTrader; c <= colJobHunter; c++ {
+			v := "0"
+			if len(cols) > c {
+				if n, err := strconv.ParseInt(strings.TrimSpace(cols[c]), 10, 64); err == nil {
+					v = strconv.FormatInt(n, 10)
+				}
+			}
+			rec = append(rec, v)
+		}
+		g := gold[level]
+		if g == "" {
+			g = "0"
+		}
+		records = append(records, append(rec, g))
 	}
 	return records
+}
+
+// goldMins is levelgold.txt's level -> minimum (columns 0 and 1).
+func goldMins(rows [][]string) map[int]string {
+	out := map[int]string{}
+	for _, cols := range rows {
+		if len(cols) < 2 {
+			continue
+		}
+		level, err := strconv.Atoi(strings.TrimSpace(cols[0]))
+		if err != nil {
+			continue
+		}
+		if v, err := strconv.ParseInt(strings.TrimSpace(cols[1]), 10, 64); err == nil {
+			out[level] = strconv.FormatInt(v, 10)
+		}
+	}
+	return out
 }
 
 // readInput reads an input: a loose file, or through -archives (round 789).

@@ -58,6 +58,29 @@ static func parse_mastery_costs(data: PackedByteArray) -> Dictionary:
 ## column the server's `cmd/export-leveldata` reads as colExpNext = 1.
 const COL_EXP := 1
 
+## Columns 6, 7, 8: the job exp a trader, thief and hunter need at a job level,
+## {level: [trader, thief, hunter]} (round 799; JobText's header has the
+## reading). -1 is kept as -1.
+const COL_JOB_TRADER := 6
+
+static func parse_job_exp(data: PackedByteArray) -> Dictionary:
+	var out := {}
+	for line in _lines(data):
+		if line.begins_with("//"):
+			continue
+		var cols := line.split("\t")
+		if cols.size() <= COL_JOB_TRADER + 2:
+			continue
+		var level_text := cols[COL_LEVEL].strip_edges()
+		if not level_text.is_valid_int():
+			continue
+		var row: Array = []
+		for c in range(COL_JOB_TRADER, COL_JOB_TRADER + 3):
+			var t := cols[c].strip_edges()
+			row.append(int(t) if t.is_valid_int() else -1)
+		out[int(level_text)] = row
+	return out
+
 static func parse_exp(data: PackedByteArray) -> Dictionary:
 	var out := {}
 	for line in _lines(data):

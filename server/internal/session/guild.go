@@ -596,6 +596,12 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	if err := guild.CheckCreator(founder.HP > 0 && !deadBySession(hub, sess), founder.Level, founder.Gold); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})
 	}
+	// Round 800: FUN_00514b20's fifth step, the job state (vtable +0x11c)
+	// not 4 -> 0x4c57 UIIT_CTL_GUILD_CREATE_JOB_ERROR. The error is the
+	// client's key, which it resolves (OURS: the reply carries no code).
+	if inJobMode(ctx, characterID) {
+		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: "UIIT_CTL_GUILD_CREATE_JOB_ERROR"}).Encode()})
+	}
 
 	// The name filter (round 788): SR_ShardManager 0x43b810 runs 0x40f200 --
 	// the character name's rule, with the same AbuseFilter group -- after its
@@ -659,6 +665,11 @@ func handleGuildJoin(ctx context.Context, sess *gateway.Session, p *proto.Packet
 		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: errStr}).Encode()})
 	}
 
+	// Round 800: a character in a job suit cannot join (gs:0x514c40, 0x4c56
+	// UIIT_CTL_GUILD_JOIN_JOB_ERROR).
+	if inJobMode(ctx, characterID) {
+		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: "UIIT_CTL_GUILD_JOIN_JOB_ERROR"}).Encode()})
+	}
 	g, err := guilds.Join(ctx, req.GuildID, characterID, req.CharacterName)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildJoinResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})

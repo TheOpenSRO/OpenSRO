@@ -320,6 +320,15 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 	r.TeleportState = scrollStateOf(e.CharacterID)
 	lk := lookOf(ctx, d, e.CharacterID)
 	r.RefObjID, r.Scale, r.Items, r.JobState = lk.ref, lk.scale, lk.items, lk.jobState
+	// Round 800: the job (CGObjPC::vslot_293 mode 2, s:0x4e5b00): the job
+	// record's kind and level always; the name is the alias while a suit is
+	// worn (job state != 4), when the character has one.
+	if jr := jobRecord(ctx, e.CharacterID); jobDepsNow().store != nil {
+		r.JobType, r.JobLevel = byte(jr.Kind), byte(jr.Level)
+		if r.JobState != pcspawn.JobStateNone && r.JobState != 0 && jr.Alias != "" {
+			r.Name = jr.Alias
+		}
+	}
 	r.Avatars = lk.avatars
 	// The frame's region and the local position in it (worldmap.FromWorld,
 	// as teleport's reach and the party record do). A zone with no frame --

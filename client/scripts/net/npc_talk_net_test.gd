@@ -106,11 +106,27 @@ func _test_menus() -> void:
 		0x14, 0x15, 0x16, 0x20, 0x23, 0x27, 0x29]), lines, 7, false, 0, 60)
 	_check(_keys(all) == ["talk", "shop:STORE_CH_POTION_GROUP1", "storage", "academy_open", "honor_rank",
 			"avatar_magic_option", "recall_designate", "recall_return", "teleport", "guild_leave", "xmas_change",
-			"withdraw_skill", "job_guild", "job_guild", "job_guild", "gacha_machine", "gacha_operator", "open_market",
-			"special_price", "party_summon", "dungeon_exit"],
+			"withdraw_skill",
+			"job_join:1", "job_rank_contribution:1", "job_rank_activity:1", "job_prev:1",
+			"job_join:3", "job_rank_contribution:3", "job_rank_activity:3", "job_prev:3",
+			"job_join:2", "job_rank_contribution:2", "job_rank_activity:2", "job_prev:2",
+			"gacha_machine", "gacha_operator", "open_market", "special_price", "party_summon", "dungeon_exit"],
 		"FUN_00700440's order (got %s)" % [_keys(all)])
-	var jobs: Array = all.filter(func(s): return s.key == "job_guild").map(func(s): return s.job_kind)
+	var jobs: Array = all.filter(func(s): return s.key.begins_with("job_join")).map(func(s): return s.job_kind)
 	_check(jobs == [1, 3, 2], "the job lines go 0x14, 0x16, 0x15 -> kinds 1, 3, 2 (got %s)" % [jobs])
+	# Round 799, FUN_006fdeb0: a hunter at the hunters' guild with no alias
+	# gets leave, create alias, the outcome, then the three always-lines; at
+	# the traders' guild only the three.
+	var hunter := NpcServiceReader.services_from_ids(PackedByteArray([0x14, 0x16]), [], -1, false, 3, 50, true)
+	_check(_keys(hunter) == ["job_rank_contribution:1", "job_rank_activity:1", "job_prev:1",
+			"job_withdraw:3", "job_alias_create:3", "job_outcome:3", "job_rank_contribution:3", "job_rank_activity:3", "job_prev:3"],
+		"a hunter's lines (got %s)" % [_keys(hunter)])
+	var trader := NpcServiceReader.services_from_ids(PackedByteArray([0x14]), [], -1, false, 1, 50, false)
+	_check(_keys(trader) == ["job_withdraw:1", "job_alias_modify:1", "job_rank_contribution:1", "job_rank_activity:1", "job_prev:1"],
+		"a trader with an alias: no outcome line, the change line (got %s)" % [_keys(trader)])
+	_check((trader[2] as NpcServiceReader.Service).strid == "UIIT_STT_NPC_CHATTING_TRADERMENU_DONATIONRANK"
+		and (hunter[6] as NpcServiceReader.Service).strid == "UIIT_STT_NPC_CHATTING_HUNTERMENU_CONTRIBUTERANK",
+		"0x23's token: DONATIONRANK for sub 1, CONTRIBUTERANK for 2 and 3")
 	# Ids that add no line: 4 (the store's repair buttons), 0x0b, 0x0d, 0x0e,
 	# 0x17-0x19, 0x1b, 0x1f, 0x21, 0x22, 0x28; 6 (item 0xb, no text).
 	_check(NpcServiceReader.services_from_ids(PackedByteArray([4, 6, 0x0b, 0x0d, 0x0e, 0x17, 0x18, 0x19, 0x1b, 0x1f,
@@ -123,7 +139,7 @@ func _test_menus() -> void:
 		"a guild NPC, guild not known yet: the store line and the placeholder")
 	_check(_keys(NpcServiceReader.services_from_ids(PackedByteArray([1, 3]), lines, -1, false, 0, 59)) == ["shop:STORE_CH_POTION_GROUP1", "storage", "honor_rank"],
 		"a keeper at level 59: no academy line (0x700b96 cmp 0x3c, jb)")
-	_check(_keys(NpcServiceReader.services_from_ids(PackedByteArray([0x14]), [], -1, false, 1)).is_empty(),
+	_check(not _keys(NpcServiceReader.services_from_ids(PackedByteArray([0x14]), [], -1, false, 1)).has("job_join:1"),
 		"a player with a job gets no join line")
 	_check(_keys(NpcServiceReader.services_from_ids(PackedByteArray([1, 3]))) == ["storage", "honor_rank"],
 		"a keeper with no tab group (NPC_WC_WAREHOUSE_M): no store line")

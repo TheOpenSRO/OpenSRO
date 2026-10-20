@@ -248,6 +248,14 @@ func OwnerState(uid uint32, job, pvp byte) []byte {
 	return append(out, 3, job, pvp)
 }
 
+// OwnerJobState is 0x30CA with mask 1 alone: the owner's job state after a
+// suit change (round 800; READ GObjPC::FUN_004fc880(1) -> FUN_004d1ea0
+// s:0x4d1ea0, the mask the caller passes).
+func OwnerJobState(uid uint32, job byte) []byte {
+	out := binary.LittleEndian.AppendUint32(nil, uid)
+	return append(out, 1, job)
+}
+
 // The 0x3040 masks the COS uses (s:GObjPC::FUN_004efa00, READ).
 const (
 	ItemFieldCOSState = 0x40

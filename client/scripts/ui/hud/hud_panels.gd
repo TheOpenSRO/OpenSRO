@@ -6995,7 +6995,7 @@ var _stat_buttons_wired := false
 ##                    adds buffs and masteries to both.
 ##
 ## LEFT AS THE LAYOUT DREW THEM, each with its reason:
-##   Job alias/grade/exp  (GDR_PI_JOB_*) no job system on this server.
+##   (round 799: the job rows are set_character_job's.)
 ##   Honor point         no honour system on this server.
 ## A guessed number in any of these would be indistinguishable from a real one.
 func _fill_character_window(window: HudWindow, s: StatsNet.Stats) -> void:
@@ -7025,6 +7025,7 @@ func _fill_character_window(window: HudWindow, s: StatsNet.Stats) -> void:
 		_set_label(window, "GDR_PI_TEXT_HIT_DAT", str(s.hit_rate))
 		_set_label(window, "GDR_PI_TEXT_PARRY_DAT", str(s.parry_rate))
 	_wire_stat_buttons(window)
+	_apply_character_job()
 	for button_name in ["GDR_PI_BTN_ADDHP", "GDR_PI_BTN_ADDMP"]:
 		var button := window.node(button_name) as BaseButton
 		if button != null:
@@ -7093,6 +7094,79 @@ func _set_label(window: HudWindow, control_name: String, text: String) -> void:
 	var label := window.node(control_name) as Label
 	if label != null:
 		label.text = text
+
+# --- The job guild (round 799) ------------------------------------------------
+
+## The job windows' builder and host (JobGuildFlow): each box is centred on the
+## view as the client's own job windows are (0x798b70).
+func job_builder() -> UiBuilder:
+	return _builder
+
+func open_job_box(box: PartyMatchBox) -> void:
+	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
+	add_child(box)
+
+## The player's race for the class titles (refobj +0x9c: 1 European).
+func own_race_europe() -> bool:
+	return _skill_race == MasteryReader.RACE_EUROPE
+
+var _job_view := {}
+
+## The character window's job rows, CIFPlayerInfo::vslot_012 (READ
+## 0x6b9147..0x6b95fd): the alias (GDR_PI_JOB_ALIAS) or `<%s>` of
+## UIIT_STT_NONE; with no job the icon cleared, the title `<%s>` of
+## UIIT_STT_NONE, the grade empty, "0%" and an empty gauge; with a job the
+## icon com_job_{merchant,thief,hunter}.ddj, the class title by level and
+## race, `%d %s` (level, UIIT_STT_GRADE), and `%d%% (%d)` over exp / need, or
+## "100%" and a full gauge when the need is -1 (JobText).
+func set_character_job(kind: int, level: int, exp: int, alias: String, table: Dictionary) -> void:
+	_job_view = {"kind": kind, "level": level, "exp": exp, "alias": alias, "table": table}
+	_apply_character_job()
+
+func _apply_character_job() -> void:
+	var window: HudWindow = _windows.get("character")
+	if window == null or _job_view.is_empty():
+		return
+	var kind := int(_job_view["kind"])
+	var level := int(_job_view["level"])
+	var exp := int(_job_view["exp"])
+	var alias := String(_job_view["alias"])
+	var none := "<%s>" % _resolve_ui("UIIT_STT_NONE", "Nothing")
+	_set_label(window, "GDR_PI_JOB_ALIAS", alias if alias != "" else none)
+	var icon := window.node("GDR_PI_JOB_ICON")
+	var tex: Texture2D = null
+	if kind >= 1 and kind <= 3 and _builder != null:
+		tex = _builder.load_texture(String(JobText.ICONS[kind]))
+	if icon is TextureRect:
+		(icon as TextureRect).texture = tex
+	elif icon != null:
+		var tr := icon.get_node_or_null("JobIcon") as TextureRect
+		if tr == null:
+			tr = TextureRect.new()
+			tr.name = "JobIcon"
+			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP
+			icon.add_child(tr)
+		tr.texture = tex
+	if kind < 1 or kind > 3:
+		_set_label(window, "GDR_PI_JOB_TITLE", none)
+		_set_label(window, "GDR_PI_JOB_GRADE", "")
+		_set_label(window, "GDR_PI_JOB_EXP", "0%")
+		_set_gauge(window, "GDR_PI_JOB_EXP_GAUGE", 0, 1)
+		return
+	var key := JobText.class_key(kind, level, own_race_europe())
+	_set_label(window, "GDR_PI_JOB_TITLE", _resolve_ui(key, key))
+	_set_label(window, "GDR_PI_JOB_GRADE", "%d %s" % [level, _resolve_ui("UIIT_STT_GRADE", "Level")])
+	var need := JobText.need_of(_job_view["table"], kind, level)
+	if need == -1 or need == 0xFFFFFFFF:
+		_set_label(window, "GDR_PI_JOB_EXP", "100%")
+		_set_gauge(window, "GDR_PI_JOB_EXP_GAUGE", 1, 1)
+	else:
+		_set_label(window, "GDR_PI_JOB_EXP", "%d%% (%d)" % [JobText.percent(exp, need), exp])
+		var gauge := window.node("GDR_PI_JOB_EXP_GAUGE") as TextureProgressBar
+		if gauge != null:
+			gauge.value = JobText.ratio(exp, need) * 100.0
+	print("HudPanels: character job: kind %d level %d exp %d alias '%s'" % [kind, level, exp, alias])
 
 ## Thousands separators, which is how the client's own gold readout reads.
 static func _grouped(value: int) -> String:
