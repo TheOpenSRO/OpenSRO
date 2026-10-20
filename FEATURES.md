@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.561** plus what is merged on `dev`; updated 2026-10-20.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.562** plus what is merged on `dev`; updated 2026-10-20.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -17,7 +17,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
 | [Social](#social) | 9 | 4 |  | 5 | 18 |
-| [Job / trade](#job--trade) | 3 |  |  | 1 | 4 |
+| [Job / trade](#job--trade) | 5 |  |  | 1 | 6 |
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
 | [UI / HUD](#ui--hud) | 14 | 4 |  | 1 | 19 |
@@ -27,11 +27,11 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **151** | **33** | **1** | **38** | **223** |
+| **All** | **153** | **33** | **1** | **38** | **225** |
 
 ## Biggest gaps
 
-- Job PvP not yet: thieves cannot rob traders, no NPC thieves or hunters
+- No NPC thieves or hunters on trade runs yet
 - No player stalls, consignment or item mall
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
@@ -136,7 +136,7 @@ Every field nest of the game populated, with retail AI, uniques and drops.
 
 ## Combat
 
-Retail auto-attack, skills, statuses and berserk; PvP limited to duels.
+Retail auto-attack, skills, statuses and berserk; PvP limited to duels and job PvP.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -154,7 +154,7 @@ Retail auto-attack, skills, statuses and berserk; PvP limited to duels.
 | Resurrection skill | 🟡 Partial | Server supports it; client has no accept box yet |
 | Resurrection scroll | ❌ Not yet | Scroll item refused |
 | Duels | ✅ Supported | Challenge, accept and fight 1v1 |
-| PK / murder / PvP cape | ❌ Not yet | No open-world PvP yet |
+| PK / murder / PvP cape | ❌ Not yet | No open-world PvP yet (job PvP is under Job / trade) |
 | Berserk (Hwan) | ✅ Supported | Hwan orbs fill from kills; berserk mode with its look and sounds |
 | Berserk potions | ✅ Supported | Berserk potion and Energy of Life work |
 | Stealth, detection, transforms, traps | ❌ Not yet | These skill types do nothing yet |
@@ -249,14 +249,16 @@ Chat, full party system, party matching and basic guilds.
 
 ## Job / trade
 
-The trader, hunter and thief jobs from the original's own rules: the job guilds, the suits and the specialty trade. Job PvP and the NPC thieves and hunters are next.
+The trader, hunter and thief jobs from the original's own rules: the job guilds, the suits, the specialty trade and job PvP. The NPC thieves and hunters are next.
 
 | Feature | Status | Notes |
 |---|---|---|
 | Trader, hunter, thief jobs | ✅ Supported | Join at the job guild NPCs (fee, 7-day penalty on leaving), aliases, last week's rankings, the weekly reward pools, the previous job |
 | Job suits | ✅ Supported | The 10-second change with its bar over the head; job names and icons on the plates, the job target window, the job rows of the character window |
 | Trade goods and specialty runs | ✅ Supported | Buy goods into a transport at a trade center, sell at another town's quotation (each sale lowers the price, which recovers every 10 minutes), trade scale stars, job EXP, contribution, Trade Export Details; stolen goods sell only at the thief den |
-| Job PvP, NPC thieves and hunters | ❌ Not yet | Thieves robbing traders, hunters guarding them, ambushes on a caravan |
+| Job PvP | ✅ Supported | Thieves against traders and hunters outside towns, with the original's rules (party, level 20, the one-star caravan's protection); opposed names drawn red, the original's click and Alt-click, skills on a player or a transport; a job death costs job and character EXP and nothing else, the killer earns job EXP and EXP |
+| Safe trade | ✅ Supported | A trader's one-star run of normal goods is protected from player thieves, eight times a day, with its icon and messages |
+| NPC thieves and hunters | ❌ Not yet | Ambushes on a caravan, hunters guarding it |
 
 ## Pets & mounts
 
