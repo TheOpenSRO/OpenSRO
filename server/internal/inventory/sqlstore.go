@@ -44,6 +44,7 @@ ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS durability INTEGER NOT NULL DEFAULT -
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS opt_level SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS mag_params BYTEA NOT NULL DEFAULT ''::bytea;
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS adv_elixir SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS creator TEXT NOT NULL DEFAULT '';
 ALTER TABLE %[1]s ADD COLUMN IF NOT EXISTS serial BIGINT;
 UPDATE %[1]s SET serial = nextval('item_serial_seq') WHERE serial IS NULL;
 ALTER TABLE %[1]s ALTER COLUMN serial SET DEFAULT nextval('item_serial_seq');
@@ -242,7 +243,7 @@ func (s *SQLStore) lock(ctx context.Context, q txn.Querier, owner int64) error {
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) {
 	rows, err := txn.Conn(ctx, s.db).QueryContext(ctx,
-		s.q(`SELECT slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir FROM %s WHERE character_id = $1 ORDER BY slot`),
+		s.q(`SELECT slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
 	if err != nil {
 		return nil, fmt.Errorf("inventory: listing slots: %w", err)
@@ -255,7 +256,7 @@ func (s *SQLStore) List(ctx context.Context, characterID int64) ([]Slot, error) 
 		var variance int64
 		var opt, adv int
 		var params []byte
-		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &variance, &sl.Durability, &opt, &params, &adv); err != nil {
+		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &variance, &sl.Durability, &opt, &params, &adv, &sl.Creator); err != nil {
 			return nil, fmt.Errorf("inventory: scanning slot: %w", err)
 		}
 		sl.Variance = uint64(variance)
@@ -327,8 +328,8 @@ func (s *SQLStore) SetInstance(ctx context.Context, characterID int64, slot int,
 		return ErrInvalidSlot
 	}
 	res, err := txn.Conn(ctx, s.db).ExecContext(ctx,
-		s.q(`UPDATE %s SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5 WHERE character_id = $6 AND slot = $7`),
-		int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), characterID, slot)
+		s.q(`UPDATE %s SET variance = $1, durability = $2, opt_level = $3, mag_params = $4, adv_elixir = $5, creator = $8 WHERE character_id = $6 AND slot = $7`),
+		int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), characterID, slot, inst.Creator)
 	if err != nil {
 		return fmt.Errorf("inventory: setting the instance of slot %d: %w", slot, err)
 	}
@@ -375,7 +376,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 			break
 		}
 		sl := &existing[i]
-		if sl.Index >= capacity || sl.ItemID != itemID || sl.Quantity >= maxStack {
+		if sl.Index >= capacity || sl.ItemID != itemID || sl.Creator != inst.Creator || sl.Quantity >= maxStack {
 			continue
 		}
 		room := maxStack - sl.Quantity
@@ -414,12 +415,12 @@ func (s *SQLStore) insertRow(ctx context.Context, q txn.Querier, owner int64, sl
 	var err error
 	if serial != 0 {
 		_, err = q.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`),
-			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), serial)
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`),
+			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), serial, inst.Creator)
 	} else {
 		_, err = q.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
-			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir))
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, creator) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`),
+			owner, slot, itemID, quantity, int64(inst.Variance), inst.Durability, int(inst.OptLevel), EncodeMagParams(inst.MagParams), int(inst.AdvElixir), inst.Creator)
 	}
 	if err != nil {
 		return fmt.Errorf("inventory: inserting into slot %d: %w", slot, err)
@@ -436,9 +437,10 @@ func (s *SQLStore) takeLocked(ctx context.Context, tx txn.Querier, owner int64, 
 	var itemID, variance, serial int64
 	var current, dura, opt, adv int
 	var params []byte
+	var creator string
 	err := tx.QueryRowContext(ctx,
-		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
-		owner, slot).Scan(&itemID, &current, &variance, &dura, &opt, &params, &adv, &serial)
+		s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
+		owner, slot).Scan(&itemID, &current, &variance, &dura, &opt, &params, &adv, &serial, &creator)
 	if err == sql.ErrNoRows {
 		return 0, Instance{}, ErrSlotEmpty
 	}
@@ -451,7 +453,8 @@ func (s *SQLStore) takeLocked(ctx context.Context, tx txn.Querier, owner int64, 
 	if quantity > current {
 		return 0, Instance{}, ErrInsufficientQuantity
 	}
-	inst := Instance{Variance: uint64(variance), Durability: dura, OptLevel: uint8(opt), MagParams: DecodeMagParams(params), AdvElixir: uint8(adv)}
+	inst := Instance{Variance: uint64(variance), Durability: dura, OptLevel: uint8(opt), MagParams: DecodeMagParams(params), AdvElixir: uint8(adv),
+		Creator: creator}
 	var res sql.Result
 	if quantity == current {
 		inst.Serial = serial
@@ -559,11 +562,12 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		magParams  []byte
 		advElixir  int
 		serial     int64
+		creator    string
 	}
 	readSlot := func(slot int) (r row, found bool, err error) {
 		err = tx.QueryRowContext(ctx,
-			s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
-			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability, &r.optLevel, &r.magParams, &r.advElixir, &r.serial)
+			s.q(`SELECT item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator FROM %s WHERE character_id = $1 AND slot = $2 FOR UPDATE`),
+			characterID, slot).Scan(&r.itemID, &r.qty, &r.variance, &r.durability, &r.optLevel, &r.magParams, &r.advElixir, &r.serial, &r.creator)
 		if err == sql.ErrNoRows {
 			return row{}, false, nil
 		}
@@ -586,7 +590,7 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		return err
 	}
 	space := 0
-	if dstFound && dstItem == srcItem {
+	if dstFound && dstItem == srcItem && dst.creator == src.creator {
 		space = s.mergeSpace(ctx, srcItem, dstQty)
 	}
 
@@ -628,9 +632,10 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10), ($1, $11, $12, $13, $14, $15, $16, $17, $18, $19)`),
+			s.q(`INSERT INTO %s (character_id, slot, item_id, quantity, variance, durability, opt_level, mag_params, adv_elixir, serial, creator) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $20), ($1, $11, $12, $13, $14, $15, $16, $17, $18, $19, $21)`),
 			characterID, to, srcItem, srcQty, src.variance, src.durability, src.optLevel, src.magParams, src.advElixir, src.serial,
-			from, dstItem, dstQty, dst.variance, dst.durability, dst.optLevel, dst.magParams, dst.advElixir, dst.serial); err != nil {
+			from, dstItem, dstQty, dst.variance, dst.durability, dst.optLevel, dst.magParams, dst.advElixir, dst.serial,
+			src.creator, dst.creator); err != nil {
 			return fmt.Errorf("inventory: swapping slots %d and %d: %w", from, to, err)
 		}
 	}
@@ -655,7 +660,7 @@ func (s *SQLStore) mergeSpace(ctx context.Context, itemID int64, have int) int {
 func (s *SQLStore) loadOccupancy(ctx context.Context, tx txn.Querier, characterID int64, capacity int) ([]Slot, []bool, error) {
 	occupied := make([]bool, capacity)
 	rows, err := tx.QueryContext(ctx,
-		s.q(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`),
+		s.q(`SELECT slot, item_id, quantity, creator FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
 	if err != nil {
 		return nil, occupied, fmt.Errorf("inventory: loading current slots: %w", err)
@@ -665,7 +670,7 @@ func (s *SQLStore) loadOccupancy(ctx context.Context, tx txn.Querier, characterI
 	var out []Slot
 	for rows.Next() {
 		var sl Slot
-		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity); err != nil {
+		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity, &sl.Creator); err != nil {
 			return nil, occupied, fmt.Errorf("inventory: scanning row: %w", err)
 		}
 		if sl.Index >= 0 && sl.Index < capacity {

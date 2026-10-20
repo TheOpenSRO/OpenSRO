@@ -10,6 +10,24 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
+## The job system (rounds 799-802; docs/protocol/jobs.md)
+
+The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off
+client and server code." Done: the guild (799), the suits (800), specialty trade (801). Left:
+
+- [ ] **Round 802: job PvP.** CGObjPC vslot_394's rules (towns 0x3018, a party 0x3022, the caravan's
+      1-star protection 0x3024, thief against trader or hunter), player and transport targets for the
+      attack and the skills, the job death (cause 1: job exp `3 x Unit`, character exp `6 x unit`, no
+      normal penalty) and the kill's rewards (`KillExp`, `3 x unit` character exp), the client's
+      hostile targeting.
+- [ ] **NPC thieves and hunters** (D notes section 3): the caravan registration, the 60-120 s waves
+      of MOB_THIEF_NPC / MOB_HUNTER_NPC round a transport with goods (count by TRADE_MON_FACTOR,
+      level by the scale, tactics 2001+ / 2011+), their target filters; monsters hitting a COS.
+- [ ] **Specialty trade OPEN items:** the bargain goods' schedule (`-special-goods` stands in), timed
+      job 7 (0x18d1), the 0x42404 mode, `FUN_0061aa40`'s rule list, a party's share of a sale, the
+      CIFSpecialtyDeal calculator's OK and the Sell All packets, the stock's write-back, the goods of a
+      transport released with its dead rider, the safe-trade record a join creates (AQ 6).
+
 ## Round 795 follow-ups (pets, rides and transports; docs/protocol/pets.md "Round 795")
 
 - [ ] **The item mall, next round (prep).** What the pets round leaves ready for it:
@@ -38,14 +56,14 @@ where it stopped, the tools for it, the traps — and points back here for every
 - [ ] **Monsters do not target pets** (OURS): a monster's aggro and its blows only go to players;
       retail lets monsters hit a growth pet and a mount.
 - [ ] **The guild soldier** (TypeID4 5, kind 4): the record is written; no summon path.
-- [ ] **A transport's trade goods**: summoning one needs a job suit (0x1849), and there is no job
-      system, so it is always refused; the cart's trade bag is not built.
+- [x] **A transport's trade goods** -- round 801 (the job system above).
 - [ ] **The pet bag extension's slot count** (`AbilityPetSlots`): 28 is OURS until the
       extension item's own rows are read.
 - [ ] **V (hide others)** hides other players; whether it hides their pets in retail is not read.
 - [ ] **The other OURS departures** (pets.md): COS uids
-      0x7e000000+n, a 100 ms server tick, a 5 s corpse, the 400-unit warp leash, logout keeping a
-      COS summoned, and the use option 0xC5 carrying a pet consumable's target.
+      0x7e000000+n, a 100 ms server tick, a 5 s corpse, the 400-unit warp leash (round 801: not for a
+      transport in its owner's zone, which keeps the retail leash on its owner instead), logout
+      keeping a COS summoned, and the use option 0xC5 carrying a pet consumable's target.
 
 ## Round 789 lane AS follow-ups (avatars on the server; docs/protocol/avatars.md, docs/rounds/r789as.md)
 

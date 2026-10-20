@@ -107,6 +107,12 @@ type cosAction struct {
 	target   int64
 	dropTgt  bool
 	corpse   bool
+	// leash: the owner steps farther from its transport past the leash
+	// (round 801, transportLeashed).
+	leash bool
+	// townVeto: a thief with this transport steps into a town (round 801,
+	// thiefEntersTown).
+	townVeto bool
 }
 
 func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
@@ -187,7 +193,17 @@ func (w *cosRuntime) tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		pos := o.at(now)
-		if o.zone != owner.Zone || cosDistance(pos, ownerPos) > cosWarpRange {
+		// A transport is not put back beside its owner (round 801): its
+		// owner may not walk away from it instead (the leash, READ). Only a
+		// zone change brings it along.
+		if o.kind == cos.KindTransport && o.zone == owner.Zone {
+			if owner.Move != nil && transportLeashed(ownerPos, owner.Move, pos, now) {
+				a.leash = true
+			}
+			if owner.Move != nil && thiefEntersTown(ctx, owner, ownerPos, now) {
+				a.townVeto = true
+			}
+		} else if o.zone != owner.Zone || cosDistance(pos, ownerPos) > cosWarpRange {
 			a.warp = true
 			// Put down where FOLLOW would have run it: beside the owner
 			// (round 796; on the owner's spot it stood inside them).
@@ -299,6 +315,22 @@ func (w *cosRuntime) act(ctx context.Context, cd combatDeps, a cosAction, now ti
 	case a.expired:
 		releaseCOS(ctx, o, releaseDead)
 		return
+	}
+	if a.townVeto {
+		// CGObjPC::vslot_220 (s:0x4eb220): 0x300C {0x0c01} and the region
+		// entry vetoed -- the step stopped where it stands.
+		if e, ok := cosOwnerEntity(o.owner); ok && e.Session != nil {
+			haltForState(cosWorld.depsNow().hub, o.owner)
+			_ = e.Session.Send(&proto.Packet{Opcode: OpUniqueNotice, Data: binary.LittleEndian.AppendUint16(nil, NoticeRobberCartTown)})
+		}
+	}
+	if a.leash {
+		// CGObjPC vslot_392 (s:0x4f1230 -> FUN_004fd1d0): 0x30E7 {1} and the
+		// step stopped (slot +0x4b0, the 0xB023 stop).
+		if e, ok := cosOwnerEntity(o.owner); ok && e.Session != nil {
+			haltForState(cosWorld.depsNow().hub, o.owner)
+			_ = e.Session.Send(&proto.Packet{Opcode: OpTradeLeash, Data: []byte{1}})
+		}
 	}
 	if a.hgp >= 0 {
 		sendToCOSOwner(o, cos.OpCOSUpdate, cos.HGPUpdate(o.uid, a.hgp))
@@ -424,6 +456,17 @@ func cosPick(ctx context.Context, cd combatDeps, o *cosObj, itemUID uint32, now 
 	if code != 0 {
 		fail(uint16(code))
 		return
+	}
+	// A specialty good is never a pet's to take (round 801): it may sit in
+	// a transport only (the PC bag's CanStoreThisItem refuses it,
+	// s:0x4bc070; the pet route's own handling of a good, FUN_004d5510, was
+	// not read -- the refusal's code is CANT_BE_STORED's, INFERRED).
+	if !it.Gold {
+		if ref, err := d.items.GetItem(ctx, it.ItemID); err == nil && isSpecialtyItem(ref) {
+			cd.ground.Release(it.ID)
+			fail(tradeErrCantStore)
+			return
+		}
 	}
 	toOwner := it.Gold || it.OwnerOnly()
 	if !toOwner {

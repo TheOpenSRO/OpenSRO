@@ -2228,6 +2228,53 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	# The buy-back row is the client's own list (round 728 review; c:0x78d900).
 	_fill_buyback_row()
 
+## Round 801: where the open store lists item_id -- the shown tab's index and
+## the good's own slot (ShopReader.Tab.slots) -- or (-1, -1).
+func shop_good_position(item_id: int) -> Vector2i:
+	var code := item_code_for_id(item_id)
+	if code == "" or _shop_selected < 0 or _shop_selected >= _shop_tabs.size():
+		return Vector2i(-1, -1)
+	var tab: ShopReader.Tab = _shop_tabs[_shop_selected]
+	var i := tab.item_codes.find(code)
+	if i < 0 or i >= tab.slots.size():
+		return Vector2i(-1, -1)
+	return Vector2i(_shop_selected, tab.slots[i])
+
+## Round 801: the item id the open store lists at a tab and slot, -1 when none.
+func shop_item_at(tab_index: int, slot: int) -> int:
+	if tab_index < 0 or tab_index >= _shop_tabs.size():
+		return -1
+	var tab: ShopReader.Tab = _shop_tabs[tab_index]
+	var i := tab.slots.find(slot)
+	if i < 0:
+		return -1
+	_load_items()
+	var item: ItemTableReader.Item = _items_by_code.get(tab.item_codes[i])
+	return item.id if item != null else -1
+
+## Round 801: whether a screen point is over the store window, frontmost.
+func over_store(at: Vector2) -> bool:
+	return _window_shown("store") and _over_window("store", at)
+
+## Round 801: the count box for goods put down on the specialty store (the
+## store's own sell box with the quoted unit price; OURS: the original's
+## path from the transport's window opens CIFSpecialtyDeal, whose OK is not
+## read).
+func confirm_sell_goods(item_id: int, qty: int, unit_price: int, on_ok: Callable) -> void:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	if item == null:
+		return
+	_open_store_box("store", "SellConfirm", StoreMessageBox.Kind.SELL, {
+		"icon": _item_icon(item_id), "name": item.display_name(_object_names),
+		"count": maxi(1, qty), "max": maxi(1, qty), "unit_price": unit_price, "tax_rate": 0.0,
+	}, on_ok)
+
+## The item row of id (round 801), null when the table has none.
+func item_row(id: int) -> ItemTableReader.Item:
+	_load_items()
+	return _items.get(id)
+
 ## The code name of item `id` in the player's own item table, "" when it has
 ## none (round 783: the Test Items NPC's goods come as ids, NpcShopDefNet).
 func item_code_for_id(id: int) -> String:
@@ -2567,7 +2614,14 @@ func _shop_label(text: String, colour: Color) -> Label:
 		lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	return lbl
 
+## Round 801: a specialty store's buy of a good goes into the transport
+## (SpecialtyFlow.buy, 0x7034 type 0x13); the hook answers true when it took
+## the buy.
+var specialty_buy_hook: Callable
+
 func _do_buy(item_id: int, quantity: int = 1) -> void:
+	if specialty_buy_hook.is_valid() and bool(specialty_buy_hook.call(item_id, maxi(1, quantity))):
+		return
 	var who := NetClient.current_character_name
 	if who == "" or not NetClient.is_connected_to_server():
 		_set_shop_status("Not connected.")
@@ -7105,6 +7159,9 @@ func job_builder() -> UiBuilder:
 func open_job_box(box: PartyMatchBox) -> void:
 	box.centre_on(get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768))
 	add_child(box)
+	# Round 801: an opened window comes out over the COS window (HudCos, a
+	# sibling, raises itself the same way; OURS).
+	move_to_front()
 
 ## The player's race for the class titles (refobj +0x9c: 1 European).
 func own_race_europe() -> bool:

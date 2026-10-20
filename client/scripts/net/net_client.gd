@@ -261,6 +261,10 @@ signal cos_bag_op(d: Dictionary)
 ## Set by OP_JOB_INFO (OURS: retail's 0x3013 section), 0xB0E1, 0xB0E2, 0xB0E3
 ## and 0x30E6.
 var job_kind := 0
+## Round 801: the quotations last told (ref item -> unit price; 0x30E0) and
+## the owner's trade scale (0x30E8).
+var trade_prices_now := {}
+var trade_scale := 0
 var job_level := 0
 var job_exp := 0
 var job_contribution := 0
@@ -281,6 +285,19 @@ signal job_reply(op: int, d: Dictionary)
 ## 0x30E6: the job exp notice ({kind, level, exp}) and the level and exp it
 ## replaced (FUN_00884dd0 compares them for the GET / LOST / level-up lines).
 signal job_exp_changed(d: Dictionary, old_level: int, old_exp: int)
+## Round 801: the specialty trade (TradeNet). trade_prices: an NPC's
+## quotation list or one changed entry (0x30E0, merged into trade_prices_now);
+## trade_scale: the owner's trade scale (0x30E8); trade_leash: 0x30E7;
+## trade_info: the trade-info window's rows (0xB4D4); trade_result: a
+## transport buy's or sale's 0xB034 (types 0x13 / 0x14) or a refusal while
+## one is the oldest move out.
+signal trade_prices(prices: Dictionary)
+signal trade_scale_changed(scale: int)
+signal trade_leash(kind: int)
+signal trade_info(rows: Array)
+signal trade_result(d: Dictionary)
+## A 0x300C word other than the unique notices' (round 801).
+signal notice_word(word: int)
 ## Round 737 (crowd_scale.md C1): the other players in view arrive as the
 ## same retail spawn messages, with a CICUser record (UserSpawnNet), and leave
 ## by 0x3016 / a type-2 group. user_roster is the uids spawned and not
@@ -786,7 +803,8 @@ func _passes_group(p: Packet) -> bool:
 				CosNet.OP_DATA, CosNet.OP_UPDATE, CosNet.OP_ITEM_STATE, CosNet.OP_COMMAND_ACK, CosNet.OP_SETTING_ACK, \
 				CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK, JobNet.OP_JOB_INFO, JobNet.OP_JOB_EXP, \
 				JobNet.OP_JOIN_RESULT, JobNet.OP_WITHDRAW_RESULT, JobNet.OP_ALIAS_RESULT, JobNet.OP_RANKING_RESULT, \
-				JobNet.OP_REWARD_RESULT, JobNet.OP_PREV_JOB_RESULT:
+				JobNet.OP_REWARD_RESULT, JobNet.OP_PREV_JOB_RESULT, SpecialtyNet.OP_PRICES, SpecialtyNet.OP_SCALE, \
+				SpecialtyNet.OP_LEASH, SpecialtyNet.OP_INFO_RESULT:
 			return true
 		CombatNet.OP_MONSTER_ATTACKED:
 			# A monster's blow on this player (the target at 8, s64).
@@ -1542,6 +1560,20 @@ func _on_job_packet(op: int, data: PackedByteArray) -> void:
 		JobNet.OP_PREV_JOB_RESULT:
 			job_reply.emit(op, JobNet.decode_prev_job(data))
 
+## Round 801: a good bought into the transport (0x7034 type 0x13).
+func send_specialty_buy(cos: int, tab: int, slot: int, count: int, npc: int) -> void:
+	_item_op_kinds.append("trade")
+	_send(ItemOpNet.OP_MOVE, SpecialtyNet.encode_buy(cos, tab, slot, count, npc))
+
+## Round 801: goods sold from the transport (0x7034 type 0x14).
+func send_specialty_sell(cos: int, slot: int, count: int, npc: int) -> void:
+	_item_op_kinds.append("trade")
+	_send(ItemOpNet.OP_MOVE, SpecialtyNet.encode_sell(cos, slot, count, npc))
+
+## Round 801: the trade-info window's Refresh (0x74D4).
+func send_trade_info(npc_ref: int) -> void:
+	_send(SpecialtyNet.OP_INFO, SpecialtyNet.encode_info(npc_ref))
+
 func send_cos_bag_move(t: int, uid: int, src: int, dst: int, count: int = 1) -> void:
 	_item_op_kinds.append("cos")
 	_send(ItemOpNet.OP_MOVE, CosNet.encode_bag_move(t, uid, src, dst, count))
@@ -2147,6 +2179,9 @@ func _dispatch(p: Packet) -> void:
 		WorldNet.OP_ENTER_WORLD_RESULT:
 			var result := WorldNet.decode_enter_world_result(p.data)
 			last_enter_world_result = result
+			# Round 801: a new entry starts with no scale and no prices told.
+			trade_scale = 0
+			trade_prices_now.clear()
 			if result.ok:
 				current_zone = result.zone
 				# The zone's buffs follow this result (round 646): the roster
@@ -2251,6 +2286,19 @@ func _dispatch(p: Packet) -> void:
 		ShopNet.OP_SELL_RESULT:
 			var r := ShopNet.decode_sell_result(p.data)
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
+		SpecialtyNet.OP_PRICES:
+			var pr := SpecialtyNet.decode_prices(p.data)
+			trade_prices_now.merge(pr["prices"], true)
+			trade_prices.emit(pr["prices"])
+		SpecialtyNet.OP_SCALE:
+			if p.data.size() >= 1:
+				trade_scale = p.data[0]
+				trade_scale_changed.emit(trade_scale)
+		SpecialtyNet.OP_LEASH:
+			if p.data.size() >= 1:
+				trade_leash.emit(p.data[0])
+		SpecialtyNet.OP_INFO_RESULT:
+			trade_info.emit(SpecialtyNet.decode_info(p.data))
 		JobNet.OP_JOB_INFO, JobNet.OP_JOB_EXP, JobNet.OP_JOIN_RESULT, JobNet.OP_WITHDRAW_RESULT, JobNet.OP_ALIAS_RESULT, \
 				JobNet.OP_RANKING_RESULT, JobNet.OP_REWARD_RESULT, JobNet.OP_PREV_JOB_RESULT:
 			_on_job_packet(p.opcode, p.data)
@@ -2294,6 +2342,17 @@ func _dispatch(p: Packet) -> void:
 		CosNet.OP_TERMINATE_ACK, CosNet.OP_UNSUMMON_ACK, CosNet.OP_NAME_ACK:
 			cos_reply.emit(p.opcode, CosNet.decode_reply(p.data))
 		ItemOpNet.OP_MOVE_RESULT:
+			# Round 801: the transport's buy and sale, and a refusal while one
+			# is the oldest move out.
+			if p.data.size() >= 2 and p.data[0] == 1 and p.data[1] in [SpecialtyNet.TYPE_BUY, SpecialtyNet.TYPE_SELL]:
+				if not _item_op_kinds.is_empty():
+					_item_op_kinds.pop_front()
+				trade_result.emit(SpecialtyNet.decode_result(p.data))
+				return
+			if p.data.size() >= 1 and p.data[0] == 2 and not _item_op_kinds.is_empty() and _item_op_kinds[0] == "trade":
+				_item_op_kinds.pop_front()
+				trade_result.emit(SpecialtyNet.decode_result(p.data))
+				return
 			# Round 795: the pet bag's forms (a pet's own pick comes unasked).
 			if p.data.size() >= 2 and p.data[0] == 1 and p.data[1] in [CosNet.BAG_COS_TO_COS, CosNet.BAG_PICK,
 					CosNet.BAG_COS_TO_BAG, CosNet.BAG_BAG_TO_COS]:
@@ -2578,6 +2637,11 @@ func _dispatch(p: Packet) -> void:
 		GuildNet.OP_LEVEL_RESULT:
 			guild_level_result.emit(GuildNet.decode_level_result(p.data))
 		UniqueNoticeNet.OP_UNIQUE_NOTICE:
+			# Round 801: a word the unique notices do not carry (0x0c01, the
+			# thief's town veto) goes to its own signal.
+			if p.data.size() >= 2 and p.data.decode_u16(0) not in [UniqueNoticeNet.KIND_SPAWN, UniqueNoticeNet.KIND_KILL]:
+				notice_word.emit(p.data.decode_u16(0))
+				return
 			var un := UniqueNoticeNet.decode(p.data)
 			if un != null:
 				unique_notice.emit(un)

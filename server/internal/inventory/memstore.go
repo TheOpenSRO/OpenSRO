@@ -182,7 +182,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	topUps := map[int]int{}
 	for index := 0; index < capacity && remaining > 0; index++ {
 		sl := held[index]
-		if sl == nil || sl.ItemID != itemID || sl.Quantity+topUps[index] >= maxStack {
+		if sl == nil || sl.ItemID != itemID || sl.Creator != inst.Creator || sl.Quantity+topUps[index] >= maxStack {
 			continue
 		}
 		add := min(maxStack-sl.Quantity-topUps[index], remaining)
@@ -301,7 +301,7 @@ func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int
 
 	// Same item: merge what fits. A stack limit of one (a non-stackable, or
 	// an item the lookup does not know) never merges, so two swords swap.
-	if dst.ItemID == src.ItemID {
+	if dst.ItemID == src.ItemID && dst.Creator == src.Creator {
 		limit, err := m.maxStackFor(ctx, src.ItemID)
 		if err != nil {
 			return err

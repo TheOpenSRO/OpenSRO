@@ -1497,6 +1497,7 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// battle state, the cached record.
 		forgetJobMode(left.CharacterID)
 		forgetJobRecord(left.CharacterID)
+		forgetTradeScale(left.CharacterID)
 		forgetLeftPlayer(hub, left.CharacterID)
 	}
 }

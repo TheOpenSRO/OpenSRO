@@ -12627,6 +12627,13 @@ func _on_held_dropped_outside(what: Dictionary, at: Vector2) -> void:
 	# on the pet bag (HudCos.accept_drop), before anything else takes it.
 	if _hud_cos != null:
 		var k := String(what.get("kind", ""))
+		# Round 801: goods put down on the open specialty store are sold
+		# (SpecialtyFlow.sell_from).
+		if k == "cos_bag" and _hud_panels != null and _specialty_flow != null and _specialty_flow.store_npc != 0 \
+				and _hud_panels.over_store(at):
+			_specialty_flow.sell_from(int(what.get("uid", 0)), int(what.get("slot", -1)), int(what.get("item_id", -1)),
+				int(what.get("qty", 1)))
+			return
 		if k == "cos_bag" and _hud_panels != null and _hud_panels._over_inventory_window(at):
 			if _hud_cos.held_dropped_on_inventory(what):
 				return
@@ -16491,6 +16498,62 @@ func _qa_job_step() -> void:
 			print("QA JOB: tick %d alias OK" % _qa_tick)
 		elif what == "select_self":
 			_select_self()
+		# Round 801, the trade (QA only): use:<ITEM_CODE> uses the first bag
+		# stack of that code; buy:<ITEM_CODE>x<n> buys at the open specialty
+		# store; sell:<slot>x<n> sells a transport slot there; cos_inv opens
+		# the transport's window on its bag page; tradeinfo opens the
+		# trade-info window, picks its first store and refreshes; trade prints
+		# the trade's state.
+		elif what.begins_with("gm:"):
+			print("QA TRADE: tick %d %s" % [_qa_tick, what.substr(3)])
+			if _console != null:
+				_console.submit(what.substr(3))
+		elif what.begins_with("use:"):
+			var code := what.substr(4)
+			var used := false
+			for k in 96:
+				var id := _hud_panels._bag_item_id_at_slot(k)
+				if id >= 0 and _hud_panels.item_code_for_id(id) == code:
+					print("QA TRADE: tick %d use %s at bag slot %d" % [_qa_tick, code, k])
+					NetClient.use_item(NetClient.current_character_name, k)
+					used = true
+					break
+			if not used:
+				print("QA TRADE: tick %d use %s: not in the bag" % [_qa_tick, code])
+		elif what.begins_with("buy:"):
+			var parts := what.substr(4).split("x")
+			var id := _qa_item_id(parts[0])
+			print("QA TRADE: tick %d buy %s (%d) x%s: %s" % [_qa_tick, parts[0], id, parts[1],
+				str(_specialty_flow.buy(id, int(parts[1])) if _specialty_flow != null else false)])
+		elif what.begins_with("sell:"):
+			var sp := what.substr(5).split("x")
+			var t := _specialty_flow.own_transport()
+			print("QA TRADE: tick %d sell slot %s x%s from %d to npc %d" % [_qa_tick, sp[0], sp[1], int(t[0]), _specialty_flow.store_npc])
+			NetClient.send_specialty_sell(int(t[0]), int(sp[0]), int(sp[1]), _specialty_flow.store_npc)
+		elif what == "cos_inv":
+			var tr := _specialty_flow.own_transport()
+			if tr[1] != null and _hud_cos != null:
+				_hud_cos._ensure_window()
+				_hud_cos.window.open_for(tr[1], HudCosWindow.PAGE_INVENTORY)
+			print("QA TRADE: tick %d transport window for %d" % [_qa_tick, int(tr[0])])
+		elif what == "tradeinfo":
+			_specialty_flow.open_trade_info()
+			var box := _specialty_flow.trade_info_box
+			if box != null:
+				box.select(0)
+				box.press_refresh()
+			print("QA TRADE: tick %d trade info, %d store(s)" % [_qa_tick, box.stores.size() if box != null else -1])
+		elif what == "trade":
+			var tt := _specialty_flow.own_transport() if _specialty_flow != null else [0, null]
+			var bag := {}
+			if tt[1] != null:
+				for sl in (tt[1] as CosNet.Data).items:
+					var it: ItemInstance = (tt[1] as CosNet.Data).items[sl]
+					bag[sl] = "%d x%d by '%s'" % [it.ref_item_id, it.count, it.creator]
+			print("QA TRADE state tick %d: transport %d size %d bag %s | scale %d | prices %s | store npc %d | rows %s" % [
+				_qa_tick, int(tt[0]), (tt[1] as CosNet.Data).inv_size if tt[1] != null else -1, str(bag), NetClient.trade_scale,
+				str(NetClient.trade_prices_now), _specialty_flow.store_npc if _specialty_flow != null else 0,
+				str(_specialty_flow.trade_info_box.rows) if _specialty_flow != null and _specialty_flow.trade_info_box != null else "-"])
 		elif what == "state":
 			var plate := player.get_node_or_null("Name") as Label3D if player != null else null
 			var mark := plate.get_node_or_null("JobMark") as Sprite3D if plate != null else null
@@ -16501,6 +16564,14 @@ func _qa_job_step() -> void:
 				"%s/%s" % [str(_hud_target.shown_key if _hud_target != null else "-"),
 					str(_hud_target.get("_shown").name if _hud_target != null and _hud_target.get("_shown") != null else "-")],
 				str(_strip_bars.bars if _strip_bars != null else {})])
+
+## The item id of a code name in the client's own item table (QA), -1.
+func _qa_item_id(code: String) -> int:
+	for id in _item_rows:
+		var row: ItemTableReader.Item = _item_rows[id]
+		if row != null and row.code_name == code:
+			return int(id)
+	return -1
 
 func _qa_equip_bag_step() -> void:
 	if not NetClient.is_connected_to_server():
@@ -24123,7 +24194,11 @@ func _on_npc_shop_goods(data: PackedByteArray) -> void:
 func _on_npc_opened(id: int) -> void:
 	print("NPC open: id %d" % id)
 	match id:
-		1:
+		1, 0x0c:
+			# Round 801: 0xc is the specialty store's open; its store is the
+			# NPC's own (the quotations follow as 0x30E0).
+			if id == 0x0c and _specialty_flow != null:
+				_specialty_flow.store_opened(_talk_npc_uid(), _talk_npc_code)
 			# Round 783: a line of an NPC of OpenSRO's own -- its tabs and
 			# goods are the server's definition, each id named through the
 			# client's own item table.
@@ -24151,6 +24226,8 @@ func _on_npc_opened(id: int) -> void:
 ## slot 0x7040b0 while no open is in flight, and the store's and storage's
 ## close).
 func _on_npc_window_hidden(panel_id: String) -> void:
+	if panel_id == "store" and _specialty_flow != null:
+		_specialty_flow.store_closed()
 	if not _talk_server or _npc_talk == null:
 		return
 	if _npc_talk.end():
@@ -24527,8 +24604,71 @@ func _job_setup() -> void:
 	NetClient.strip_started.connect(func(uid: int, secs: int) -> void:
 		_strip_bars.start(uid, secs, Time.get_ticks_msec()))
 	NetClient.strip_cancelled.connect(_on_strip_cancelled)
+	# Round 801: the specialty trade.
+	_specialty_flow = SpecialtyFlow.new(self, _hud_panels, _hud_cos)
+	NetClient.notice_word.connect(func(w: int) -> void: _specialty_flow.on_notice_word(w))
+	if _hud_cos != null:
+		_hud_cos.sell_all_requested.connect(func(uid: int) -> void: _specialty_flow.sell_all(uid))
 
 var _strip_bars: StripBars = null
+var _specialty_flow: SpecialtyFlow = null
+
+## Round 801: specialnpcdata.txt's NPC ids (the trade-info window's stores,
+## READ c:0x952890 case 0x52: `<id>\t<codename>`), and each id's code.
+var _special_npcs: Array = []
+var _special_npc_codes := {}
+## Each good's origin: the special NPC whose store sells it (c:0x9413f0 sets
+## the good's +0x560 walking every special NPC's store).
+var _good_origin := {}
+
+func _load_special_npcs() -> void:
+	if not _special_npcs.is_empty() or _media_pk2 == null:
+		return
+	var e := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\specialnpcdata.txt")
+	if e == null:
+		return
+	var raw := _media_pk2.read_file(e)
+	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
+		raw = raw.slice(2)
+	var text := TextDecode.utf16(raw)
+	if text.is_empty():
+		text = raw.get_string_from_utf8()
+	for line in text.replace("\r", "").split("\n"):
+		var cols := line.split("\t")
+		if cols.size() < 2 or not cols[0].strip_edges().is_valid_int():
+			continue
+		var id := int(cols[0])
+		_special_npcs.append(id)
+		_special_npc_codes[id] = cols[1].strip_edges()
+	for id in _special_npcs:
+		var code: String = _special_npc_codes[id]
+		if _shop_reader == null:
+			break
+		for t in _shop_reader.tabs_for(code):
+			for item_code in (t as ShopReader.Tab).item_codes:
+				_good_origin[item_code] = id
+
+func _special_npc_ids() -> Array:
+	_load_special_npcs()
+	return _special_npcs
+
+## A store's name: text(<the NPC's NameStrID> + "_T") (c:0x568440), "" when
+## the text has none.
+func _special_npc_store_name(ref: int) -> String:
+	var key := _unique_name_key(ref)
+	if key == "":
+		return ""
+	var t := _resolve_any_text(key + "_T", "")
+	return "" if t == key + "_T" else t
+
+func _trade_item_name(item: int) -> String:
+	return _item_label_for_line(item)
+
+func _trade_item_origin(item: int) -> String:
+	_load_special_npcs()
+	var code := _hud_panels.item_code_for_id(item) if _hud_panels != null else ""
+	var npc := int(_good_origin.get(code, 0))
+	return _special_npc_store_name(npc) if npc != 0 else ""
 
 ## The head point a uid's strip bar hangs under: its plate's anchor.
 func _strip_anchor(uid: int) -> Variant:
@@ -24593,7 +24733,9 @@ func _on_npc_service_selected(key: String) -> void:
 	if _talk_server and _npc_talk != null:
 		if NpcServiceReader.is_shop_key(key):
 			_talk_pending_tabgroup = NpcServiceReader.tabgroup_of(key)
-			_npc_talk.open(1)
+			# Round 801: at an NPC whose set holds 0xc the store line opens
+			# 0xc (c:0x7022d6..0x702330).
+			_npc_talk.open(SpecialtyNet.store_open_id(_npc_talk.ids))
 			return
 		if key == "storage":
 			_npc_talk.open(3)
@@ -24613,6 +24755,11 @@ func _on_npc_service_selected(key: String) -> void:
 				_shop_reader.tabs_for(_talk_npc_code, NpcServiceReader.tabgroup_of(key)), _talk_npc_code)
 		return
 	match key:
+		"special_price":
+			# Round 801: the talk line 0x39 opens the trade-info window with no
+			# request (c:0x79e510).
+			if _specialty_flow != null:
+				_specialty_flow.open_trade_info()
 		"shop":
 			if _shop_reader != null and _talk_npc_code != "":
 				# The codename also decides the store's repair buttons
@@ -33010,6 +33157,17 @@ func _hud_cos_setup() -> void:
 		"bubble_tip": func(control, source) -> void:
 			if _hud_panels != null:
 				_hud_panels.set_bubble_tip(control, source),
+		# Round 801: the transport's trade rows (SpecialtyFlow): the scale
+		# (0x30E8), a good's price -- the last quotation told, else its
+		# SellPrice (OURS: the window's own price field, the record's
+		# +0xb0, is not mapped) -- and whether the specialty store is open.
+		"trade_level": func() -> int: return NetClient.trade_scale,
+		"trade_price": func(ref: int) -> int:
+			if NetClient.trade_prices_now.has(ref):
+				return int(NetClient.trade_prices_now[ref])
+			var row: ItemTableReader.Item = _item_rows.get(ref)
+			return row.sell_price if row != null else 0,
+		"special_store_open": func() -> bool: return _specialty_flow != null and _specialty_flow.store_npc != 0,
 	})
 	_hud_cos.attach_pet_mini_info(_hud_player_info)
 	_hud_cos.command.connect(_on_hud_cos_command)

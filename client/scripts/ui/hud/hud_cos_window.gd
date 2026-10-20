@@ -124,6 +124,8 @@ signal rename_requested(uid: int, cos_name: String)
 signal name_rejected(uid: int, cos_name: String)
 ## The Setting page's Confirm: send 0x7420 {uid, 2, flags}.
 signal setting_requested(uid: int, kind: int, value: int)
+## Round 801: the transport's Sell All (ALLSELL_BTN, id 35).
+signal sell_all_requested(uid: int)
 ## A left release on a filled pet-bag slot: pick it up.
 signal bag_slot_picked(uid: int, slot: int, icon: Texture2D, source: Control, at: Vector2)
 ## The pointer entered (item, ItemTableReader.Item) or left (null, null) a
@@ -354,6 +356,12 @@ func open_for(d: CosNet.Data, requested: int) -> void:
 		position = Vector2(floorf((view.x - size.x) / 2.0), floorf((view.y - size.y) / 2.0))
 	show()
 	move_to_front()
+	# Round 801: the window lives under HudCos, a sibling HudPanels' windows
+	# draw over; an opened window comes out on top of them (OURS: the
+	# original's GInterface raises every opened window).
+	var host := get_parent() as CanvasItem
+	if host != null:
+		host.move_to_front()
 
 ## Closes it, saving the position (0x79bcd0 with open 0).
 func close_window() -> void:
@@ -444,6 +452,9 @@ func _ensure_page(p: int) -> void:
 					_inv_nodes.merge(_index(layout.get_section("TradeInfo"), trade), true)
 					UiBuilder.settle_authored_rects(trade)
 			_build_inventory_slots(holder)
+			var sell := _inv_nodes.get(ID_ALLSELL) as BaseButton
+			if sell != null:
+				sell.pressed.connect(func() -> void: sell_all_requested.emit(cos_uid))
 			var spin := _inv_nodes.get(ID_INV_SPIN) as Control
 			if spin != null and spin.has_user_signal("spin_changed"):
 				spin.connect("spin_changed", func(v: int) -> void:
@@ -746,10 +757,13 @@ func _refresh_trade() -> void:
 			_builder.set_static_text(total_node, "")
 	var lv_c := _p("trade_level")
 	var level := int(lv_c.call()) if lv_c.is_valid() else 0
+	# The first min(scale, 5) stars, all tinted by the count (round 801,
+	# READ c:0x7a6970 with the colour table 0x7a6a28 -> control +0x120).
 	for i in INV_STARS.size():
 		var star := _inv_nodes.get(INV_STARS[i]) as CanvasItem
 		if star != null:
 			star.visible = i < level
+			star.modulate = SpecialtyNet.star_colour(level)
 	var sell := _inv_nodes.get(ID_ALLSELL) as BaseButton
 	if sell != null:
 		var open_c := _p("special_store_open")

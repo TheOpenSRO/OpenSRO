@@ -8,6 +8,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/npctalk"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/shop"
 	"github.com/OpenSRO/OpenSRO/server/internal/storage"
@@ -213,6 +214,17 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 		}
 		return handleCOSBagMove(ctx, sess, cid, data, d.Inv)
 	}
+	// Round 801: the transport's specialty buy and sale
+	// (specialtytrade.go).
+	if len(data) > 0 && (data[0] == ItemMoveBuyToCOS || data[0] == ItemMoveSellFromCOS) {
+		if cid, ok := d.character(sess); !ok || d.Trades.Busy(cid) {
+			return fail(ItemErrBusy)
+		}
+		if data[0] == ItemMoveBuyToCOS {
+			return handleBuyToCOS(ctx, sess, data, d)
+		}
+		return handleSellFromCOS(ctx, sess, data, d)
+	}
 	req, err := DecodeItemMove(data)
 	if err != nil {
 		return fail(ItemErrDB)
@@ -233,6 +245,15 @@ func handleItemMove(ctx context.Context, sess *gateway.Session, data []byte, d I
 		}
 		if cosItemOut(ctx, cid, req.Src) {
 			return fail(cosErrSellOut)
+		}
+		// A specialty NPC buys nothing but goods (GObjPC::FUN_00617f70: an
+		// item that is not a good at an NPC with id 0xc, 0x1845; round 801).
+		// Goods never sit in the bag (the bag's CanStoreThisItem refuses
+		// them), so the bag's sale never offers one.
+		if e, ok := d.Hub.EntityBySession(sess.ID()); ok {
+			if pl, code := npcTarget(e, req.NPC); code == 0 && npcHas(pl.npc.Interact, npctalk.IDSpecial) {
+				return fail(tradeErrDealerNoTreat)
+			}
 		}
 		_, book, err := d.Shop.SellBooked(ctx, cid, req.Src, req.Count)
 		switch {

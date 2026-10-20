@@ -350,6 +350,21 @@ func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z
 	return *it
 }
 
+// DropInstance is Drop for a stack that carries its instance (round 801: a
+// transport's goods keep their buyer's name on the ground).
+func (h *Hub) DropInstance(zone string, itemID int64, quantity int32, x, y, z float32, ownerID int64, inst inventory.Instance) Item {
+	it := h.Drop(zone, itemID, quantity, false, x, y, z, ownerID)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if p := h.items[it.ID]; p != nil {
+		c := inst
+		c.MagParams = append([]uint64(nil), inst.MagParams...)
+		p.Instance = &c
+		it = *p
+	}
+	return it
+}
+
 // Get returns a copy of the item, if it is still on the ground.
 func (h *Hub) Get(id int64) (Item, bool) {
 	h.mu.Lock()

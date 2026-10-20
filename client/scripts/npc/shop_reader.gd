@@ -30,6 +30,10 @@ const T_TABGROUP := "server_dep\\silkroad\\textdata\\refshoptabgroup.txt"
 class Tab:
 	var name_strid: String
 	var item_codes: PackedStringArray = PackedStringArray()
+	## Beside item_codes (round 801): each good's own slot in refshopgoods
+	## (column 4) -- what a buy into the transport names on the wire
+	## (0x7034 type 0x13's u8 slot, c:0x7923a0).
+	var slots: PackedInt32Array = PackedInt32Array()
 	## Beside item_codes: the ItemInstance each good is listed as, null for
 	## the reference item. Only an NPC of OpenSRO's own fills it (round 786,
 	## NpcShopDefNet.OP_SHOP_GOODS); a retail tab leaves it empty.
@@ -139,6 +143,7 @@ func tabs_for(npc_code: String, tabgroup: String = "") -> Array:
 			var item: String = _item_by_pkg.get(pkg, "")
 			if item != "":
 				t.item_codes.append(item)
+				t.slots.append(int(g[0]))
 		out.append(t)
 	return out
 

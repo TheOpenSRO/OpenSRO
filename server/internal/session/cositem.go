@@ -73,6 +73,14 @@ func retailItemTail(ctx context.Context, it *refdata.Item, sl inventory.Slot, no
 		return []byte{}
 	}
 	out := binary.LittleEndian.AppendUint16(nil, uint16(sl.Quantity))
+	if it.TypeID2 == 3 && it.TypeID3 == 8 {
+		// A specialty good (round 801, READ c:0x8be6a1..0x8be715, the
+		// TID word 0x46c test FUN_00666d40): the u16 count, then the
+		// buyer's name as a u16-length string (FUN_004f7a70) -- nothing
+		// else.
+		out = binary.LittleEndian.AppendUint16(out, uint16(len(sl.Creator)))
+		return append(out, sl.Creator...)
+	}
 	if it.TypeID3 == 11 && (it.TypeID4 == 1 || it.TypeID4 == 2) {
 		out = append(out, 0)
 	}
@@ -122,6 +130,12 @@ func retailTailLen(t [4]int, b []byte) (int, error) {
 		n = 4
 	case t[1] == 2:
 		n = 0
+	case t[1] == 3 && t[2] == 8:
+		// A good: the count and the buyer's name (round 801).
+		if len(b) < 4 {
+			return 0, errors.New("item record: short good")
+		}
+		n = 4 + int(binary.LittleEndian.Uint16(b[2:]))
 	default:
 		n = 2
 		if t[2] == 11 && (t[3] == 1 || t[3] == 2) {

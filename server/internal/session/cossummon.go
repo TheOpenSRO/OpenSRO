@@ -9,6 +9,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/cos"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
@@ -21,11 +22,16 @@ import (
 // asks with its own use-item message (OpUseItem), so the reply is
 // OpUseItemResult where retail's is 0xB04C; everything after it is retail's.
 //
-// Not modelled, and so not refused (OURS, disclosed): the battle state
-// (chardata +0xd, "in battle" for 20 s after combat: 0x1878), the quest
-// block, the teleport state, the PvP cape change, the murderer state, job
-// suits until round 800 (a transport needs a trader's or thief's suit,
-// 0x1849; jobsuit.go has the suit).
+// Not modelled, and so not refused (OURS, disclosed): the quest block, the
+// teleport state, the PvP cape change, the murderer state. A transport needs
+// a trader's or thief's suit (0x1849, round 800) and is refused in the
+// battle state (0x1878) and to a thief in a town (0x1895, round 801).
+
+// The transport summon's own refusals (round 801, READ vslot_307).
+const (
+	cosErrSummonInBattle   = 0x1878 // COS_CAN_NOT_CREATE_BATTLE
+	cosErrRobberCartInTown = 0x1895 // ROBBER_CANT_SUMMON_CART_IN_TOWN
+)
 
 // cosRefusal answers a use with the engine's code.
 func cosRefusal(sess *gateway.Session, code uint16, text string) error {
@@ -242,6 +248,18 @@ func useRideScroll(ctx context.Context, sess *gateway.Session, d cosDeps, inv in
 	if c := checkCanSummon(owner.CharacterID, row.TypeID4, level, row.Level); c != 0 {
 		return cosRefusal(sess, uint16(c), cosRefusalText(c))
 	}
+	if row.TypeID4 == cos.KindTransport {
+		// CGItemExpendable::vslot_307 case 2 (round 801): a transport is not
+		// called in the battle state (0x1878, chardata +0xd), nor by a
+		// thief in a town (0x1895, the region's IsBattleField 0,
+		// s:0x49bd8a).
+		if inBattle(owner.CharacterID, now) {
+			return cosRefusal(sess, cosErrSummonInBattle, "not in battle")
+		}
+		if jobStateNow(ctx, owner.CharacterID) == byte(jobs.KindThief) && safeRegions.Load() != nil && inTownAt(owner) {
+			return cosRefusal(sess, cosErrRobberCartInTown, "a thief cannot call a transport in a town")
+		}
+	}
 	rec := cos.Record{OwnerCharID: owner.CharacterID, RefCharID: row.ID, HP: row.MaxHP, Level: row.Level,
 		HGP: cos.HGPFull, State: cos.StateAlive | cos.StateSummoned}
 	id, err := d.store.Create(ctx, rec)
@@ -295,6 +313,17 @@ func spawnCOS(owner world.Entity, rec cos.Record, row species.Row, itemID int64,
 		zone: owner.Zone, pos: owner.Pos, heading: owner.Heading, regenAt: now.Add(cos.RegenPeriod),
 		rentAt: now.Add(cos.RentCheckPeriod), lastTick: now}
 	o.pos = cosSpawnPoint(owner.Pos, o.kind)
+	if o.kind == cos.KindTransport {
+		// The transport's bag (round 801): its storage is made as it comes
+		// out (CGObjCOS vslot_349 s:0x4d1bd0 -> FUN_004d1a50), sized by the
+		// owner's level; the store's capacity reads the record's.
+		if size := transportBagSize(row, owner.Level); size != o.rec.InvSize {
+			o.rec.InvSize = size
+			if d := cosWorld.depsNow(); d.store != nil {
+				_ = d.store.Save(context.Background(), o.rec)
+			}
+		}
+	}
 	cosWorld.add(o)
 	cosAnnounce(o, spawnType)
 	sendCOSData(o, itemSlot)
@@ -399,6 +428,10 @@ func releaseCOS(ctx context.Context, o *cosObj, kind releaseKind) {
 		rec.State = 0
 		state = cos.ItemStateDead
 	}
+	if kind == releaseDelete && o.kind == cos.KindTransport {
+		clearTransportBag(ctx, o)
+		refreshTradeScale(ctx, o.owner)
+	}
 	if d.store != nil {
 		if kind == releaseDelete {
 			_ = d.store.Delete(ctx, rec.ID)
@@ -465,6 +498,7 @@ func cosArrived(ctx context.Context, arrived world.Entity) {
 			sendCOSData(o, slot)
 		}
 		bumpPlayerState(arrived.CharacterID)
+		refreshTradeScale(ctx, arrived.CharacterID)
 		return
 	}
 	// The pets the bag's items hold out.
@@ -500,6 +534,8 @@ func cosArrived(ctx context.Context, arrived world.Entity) {
 			mountCOS(ctx, arrived.Session, arrived.CharacterID, o, true)
 		}
 	}
+	// A transport brought back with its goods: its scale (0x30E8).
+	refreshTradeScale(ctx, arrived.CharacterID)
 }
 
 // cosOwnerLeft is an owner leaving the world (a logout, a disconnect): its

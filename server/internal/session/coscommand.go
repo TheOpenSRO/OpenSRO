@@ -145,6 +145,9 @@ func handleCOSTerminate(ctx context.Context, sess *gateway.Session, owner int64,
 	if o == nil || cos.IsPetKind(o.kind) {
 		return cosReply(sess, cos.OpCOSTermAck, cos.ErrCOSTerminateNotFound)
 	}
+	// A transport's goods fall to the ground first, unowned (round 801:
+	// the handler calls slot 398 with killer 0, s:0x511e00).
+	dropTransportGoods(ctx, o, 0)
 	releaseCOS(ctx, o, releaseDelete)
 	return sess.Send(&proto.Packet{Opcode: cos.OpCOSTermAck, Data: []byte{1}})
 }

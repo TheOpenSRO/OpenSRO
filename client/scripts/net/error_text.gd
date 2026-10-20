@@ -347,3 +347,49 @@ static func job_line(code: int, table: UiTextTable) -> String:
 		return ""
 	var text := table.get_text(key).strip_edges()
 	return "" if text == "" or text == key else text
+
+## Round 801: the specialty trade's refusals -- 0xB034's for a transport buy,
+## sale or pick, and the transport summon's -- through category 1, the
+## storage switch (code - 0x180b, index bytes 0x7bb6d4, targets 0x7bb438; the
+## first push at each target), READ for each code below: 0x180b 0x7b8fb2,
+## 0x180f 0x7b8d56, 0x1814 / 0x1815 0x7b8d6e, 0x1829 0x7b8de3, 0x183b
+## 0x7b8ec1, 0x1845 0x7b8f39, 0x1849 0x7b8f86, 0x184e 0x7b9653, 0x185c
+## 0x7b8d05, 0x1860 0x7b8ed9, 0x1861 0x7b8ee3, 0x1863 0x7b9082, 0x1865
+## 0x7b908c, 0x1868 0x7b90aa, 0x186f 0x7b90ef, 0x1872 0x7b9148, 0x1878
+## 0x7b91ca, 0x1895 0x7b92a7, 0x18af 0x7b9445, 0x18b0 0x7b944f, 0x18d1
+## 0x7b93f5. 0x1864's target (0x7b913a) pushes no text: nothing is shown.
+## Codes below 0x180b (2, 3, 5, 0x1806, 0x1807, 0x1809) are outside the
+## switch; 0x1807 is ItemOpNet's INVENTORY_FULL line.
+const TRADE_UIIT_BY_CODE := {
+	0x180b: "UIIT_MSG_STRGERR_CANT_BE_STORED",
+	0x180f: "UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD",
+	0x1814: "UIIT_MSG_STRGERR_ENABLEINPUT_FEWERTHAN_REMAIN",
+	0x1815: "UIIT_MSG_STRGERR_ENABLEINPUT_FEWERTHAN_REMAIN",
+	0x1829: "UIIT_MSG_STRGERR_SPECIFY_POSITIVE_NUMBER_ONLY",
+	0x183b: "UIIT_MSG_STRGERR_CANNOT_DEAL_AT_SHOP",
+	0x1845: "UIIT_MSG_STRGERR_DEALER_DONT_TREAT_THIS_ITEM",
+	0x1849: "UIIT_MSG_STRGERR_YOU_CANT_ACTIVATE_CART",
+	0x184e: "UIIT_MSG_SPECIALTY_ERR_NOTTRADE",
+	0x185c: "UIIT_MSG_STRGERR_CANT_SUMMON_MULTIPLE_COSOBJ",
+	0x1860: "UIIT_MSG_STRGERR_ONLY_TRADER_CAN_BUY_SPECIALTY",
+	0x1861: "UIIT_MSG_STRGERR_DONT_HAVE_ANY_TRADECART_TO_PICK_SPECIALTY",
+	0x1863: "UIIT_MSG_STRGERR_YOU_ARENT_BUYER_OF_THIS_SPECIALTY",
+	0x1865: "UIIT_MSG_STRGERR_CANT_DEAL_SPECIALTY_SINCE_TOO_FAR_FROM_CART",
+	0x1868: "UIIT_MSG_STRGERR_DEALER_DONT_TREAT_STOLEN_ITEM",
+	0x186f: "UIIT_MSG_STRGERR_ROBBER_CANT_PICK_HIS_ITEM",
+	0x1872: "UIIT_MSG_STRGERR_POSSESSION_LIMIT_EXCEEDED",
+	0x1878: "UIIT_MSG_COS_CAN_NOT_CREATE_BATTLE",
+	0x1895: "UIIT_MSG_STRGERR_ROBBER_CANT_SUMMON_CART_IN_TOWN",
+	0x18af: "UIIT_MSG_SPECIALTY_ERR_NOTSELL",
+	0x18b0: "UIIT_MSG_SPECIALTY_ERR_QUEST_NOTCOMPLETE",
+	0x18d1: "UIIT_MSG_SPECIALTY_ERR_TRADESHOP",
+	0x1807: "UIIT_MSG_STRGERR_INVENTORY_FULL",
+}
+
+## A trade refusal in words, "" when the client shows nothing for it.
+static func trade_line(code: int, table: UiTextTable) -> String:
+	var key := String(TRADE_UIIT_BY_CODE.get(code, ""))
+	if key == "" or table == null or not table.has(key):
+		return ""
+	var text := table.get_text(key).strip_edges()
+	return "" if text == "" or text == key else text

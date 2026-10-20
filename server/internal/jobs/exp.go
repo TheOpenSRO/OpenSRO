@@ -84,6 +84,39 @@ func clampContribution(v int64) int64 {
 	return v
 }
 
+// SaleExp is GObjPC::FUN_00410520 (s:0x410520, READ): the job exp a
+// specialty sale with profit earns a seller in job state `state`, the trade
+// scale being `scale` (FUN_0060c330 at the sale):
+//
+//	f = 0.8 (double s:0xb45bd0) for a trader at scale 1, 0.5 (s:0xb45c50) at
+//	    any other scale; 0.4 (float s:0xb462c8) for a robber; 1.0 for a hunter
+//	v = float32(profit x f); 1 when v <= 0; then truncated
+//
+// 0 for any other state (no job: the caller gives nothing). The caller
+// passes it to GainExp.
+func SaleExp(profit int64, state byte, scale byte) int64 {
+	var f float32
+	switch Kind(state) {
+	case KindTrader:
+		if scale == 1 {
+			f = float32(0.8)
+		} else {
+			f = float32(0.5)
+		}
+	case KindThief:
+		f = float32(0.4)
+	case KindHunter:
+		f = 1
+	default:
+		return 0
+	}
+	v := float32(float64(profit) * float64(f))
+	if !(v > 0) {
+		v = 1
+	}
+	return int64(v)
+}
+
 // RewardPool is _AddTrijobReward's first argument for a sale by kind (READ
 // AQ_Trijob type 3, s:0x465220): a trader's sale feeds pool 3 (the hunters',
 // "Trader Contributed to hunter guild"), a robber's pool 2 (the robbers').

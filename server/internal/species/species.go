@@ -146,6 +146,16 @@ const (
 	// ref +0x64, INFERRED to be this column: the only string column holding
 	// the next code). docs/protocol/pets.md, "Round 795".
 	ColDescStrID = 6
+	// ColCashItem is col 7, CashItem (round 801): the TID word's bit 0
+	// (_RefObjCommon's TypeID word packs CashItem, Bionic, then TypeID1..4).
+	// A transport's bag cap divides its rarity factor by 1.4 when it is set
+	// (FUN_004d1a50 s:0x4d1b13, READ).
+	ColCashItem = 7
+	// ColInventorySize is col 61, InventorySize (round 801): the COS bag's
+	// size, ref +0x224 (READ: CGObjCOS vslot_349 s:0x4d1bd0 reads it; 0 means
+	// no bag). Every serviced COS_T_* row carries 1 (MEASURED, client
+	// characterdata); docs/protocol/jobs.md "The transport's bag".
+	ColInventorySize = 61
 )
 
 // minFields is the shortest characterdata row the exporter maps: every column
@@ -173,6 +183,8 @@ var CSVColumns = []string{
 	"Knockdown", "KORecoverTime",
 	// Round 795, appended (optional on read): col 6.
 	"DescStrID",
+	// Round 801, appended (optional on read): cols 7 and 61.
+	"CashItem", "InventorySize",
 }
 
 // RequiredCSVColumns is the prefix every monsters CSV must carry: the 35
@@ -207,7 +219,9 @@ const (
 	cKnockdown    = cModel + 5
 	cKORecover    = cModel + 6
 	cDescStrID    = cModel + 7
-	numCSVColumns = cModel + 8
+	cCashItem     = cModel + 8
+	cInvSize      = cModel + 9
+	numCSVColumns = cModel + 10
 )
 
 // IsMonster reports whether a tab-split characterdata row is a monster:
@@ -421,6 +435,8 @@ func (e *Exporter) Records(gold LevelGold, names ObjectNames) ([][]string, Expor
 		if d := field(cols, ColDescStrID); d != noString {
 			rec[cDescStrID] = d
 		}
+		rec[cCashItem] = num(cols, ColCashItem)
+		rec[cInvSize] = num(cols, ColInventorySize)
 		rec[cGoldMin], rec[cGoldMax] = "0", "0"
 		if lvl, err := strconv.Atoi(rec[cLevel]); err == nil {
 			if g, ok := gold[lvl]; ok {
@@ -588,6 +604,10 @@ type Row struct {
 	// DescStrID is col 6 (round 795, ColDescStrID): a growth pet row's next
 	// level row; "" for "xxx" and on a CSV exported before it.
 	DescStrID string
+	// CashItem is col 7 and InventorySize col 61 (round 801, ColCashItem /
+	// ColInventorySize); both 0 on a CSV exported before them.
+	CashItem      bool
+	InventorySize int
 }
 
 // Defense is col 71, the flat physical absorption (param 5, READ).
@@ -760,6 +780,9 @@ func parseRecord(rec []string) (Row, error) {
 	}
 	if len(rec) > cDescStrID {
 		r.DescStrID = strings.TrimSpace(rec[cDescStrID])
+	}
+	if len(rec) > cInvSize {
+		r.CashItem, r.InventorySize = i(cCashItem) != 0, i(cInvSize)
 	}
 	if firstErr != nil {
 		return Row{}, firstErr

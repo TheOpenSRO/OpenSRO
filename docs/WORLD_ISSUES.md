@@ -7483,6 +7483,75 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-first round: specialty trade -- the transport's goods, the quotations, the trade scale
+
+The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off client
+and server code. This is a huge effort so don't make any mistakes." Round three of that project (799 the
+guild, 800 the suits; 802 the PvP). docs/protocol/jobs.md "Specialty trade" has every address.
+
+- **READ (server).** The 0xc NPCs (by code name, and by a store that lists a 3/3/8 good, s:0x4c79a7); the
+  0xB046 special byte, the 0x30E0 list and INTERACTMODE 6 on the 0xc open; the buy 0x7034 type 0x13 and its
+  checks in order (the cart and trader state 0x1860, level 20 0x184e, the NPC quests 0x18b0, the bargain
+  goods 0x18af, the 1000.0 leash 0x1865, MaxStack 0x1815, one free slot 0x1807); the sale type 0x14 (job
+  state 3/4 -> 5, 0xc 0x1845, stolen goods 0x1868, 1000.0); the price: the thief buyer's 75 % of Price, the
+  NPC's own good at SellPrice, else the quotation (`FUN_004c8810` in its float widths, the stock and its
+  ten-minute recovery); the rewards (job exp `float32(profit x 0.8|0.5|0.4|1.0)` with the scale before the
+  removal, a trader's contribution and the pools at `trunc(gold x 0.1)`); the trade scale
+  (`FUN_0060c1f0`/`FUN_0060c330`, the thresholds' config keys); the transport's bag (`FUN_004d1a50`); the
+  leash (`FUN_004fd1d0`); the thief's town veto (vslot_220, 0x300C 0x0c01); the transport summon's 0x1878 and
+  0x1895; the return scrolls' cart refusal 0x185e and the thief den scroll's destination (Desc128_4's
+  building); the goods' drop on the transport's death and dismissal (no owner) and the pick rules; the
+  trade-info query 0x74D4 (no checks) and its percent.
+- **READ (client).** The store line sends 0xc where the NPC has it; a good's item record is `u16 count, str
+  buyer` (c:0x8be6a1); the transport window's stars and their tints (0x7a6a28); the category-1 lines of every
+  trade code (the storage switch's targets, ErrorText.TRADE_UIIT_BY_CODE); the leash line's hard-coded 100;
+  the trade-info window's stores (specialnpcdata.txt, `<NameStrID>_T`) and rows.
+- **MEASURED.** The client's shop chain: 12 specialty stores, 38 goods (`export-refdata -mode specialty`);
+  the shard's `_ItemQuotation` (492 rows over 13 NPCs, Service 0 on all of NPC_AM_SPECIAL's: 12 NPCs keep a
+  map) and `_RefShardContentConfig` (TRADESCALE1..5 510/918/1428/2142/2856, TRADE_MON_FACTOR 2300);
+  InventorySize 1 on every serviced COS_T row, MaxStack 5000 and Price = SellPrice = buy cost 4000 on every
+  good; Bionic 1 on every COS row, CashItem on 64 of the 94 transports.
+- **Ours, disclosed.** The stock is not written back; the bargain goods' schedule is a flag
+  (`-special-goods`); the leash and the town veto test the owner's leg once a COS tick (100 ms), and a
+  transport is no longer warped back beside its owner within its zone; the drop's placement round the
+  transport is the kill drop's ring; a transport released with its dead rider loses its goods with it
+  (OPEN); a party's share of a sale is the seller's; an ability pet refuses goods (0x180b); the level stands
+  in for GetMaxLevel; goods put down on the store go through the store's own count box (retail's
+  CIFSpecialtyDeal path is not read) and Sell All sends one sale a slot.
+- **Server.** `internal/specialty` (quotations, scale, bag, stores), `session/specialtytrade.go`, the
+  inventory's `creator` column (goods of different buyers never merge), `export-refdata -mode specialty`,
+  the COS export's columns 7 and 61, `-specialty-shops-csv`, `-quotation-csv`, `-trade-scale`,
+  `-special-goods`. Tests: `specialty_test.go` (the price in float32, the stocks, the scale, the bag),
+  `specialty801_test.go` (a buy, the 0xc open's list, a sale with its gold, exp, contribution and pool, the
+  scale, the trade-info reply, stolen goods, the pick rules) over a real socket.
+- **Client.** `SpecialtyNet`, `SpecialtyFlow`, `TradeInfoBox`, the goods' buyer in `ItemInstance`, the
+  store's buy into the transport, the transport window's Sell All and stars, the leash and town lines.
+- **QA (box, `/var/tmp/r801/qa801.sh`, a level-110 GM in memory with the shard's quotations).** The join for
+  450000 and the alias Merchy; the trader suit worn (`*Tess`); ITEM_COS_T_DONKEY called: a transport with a
+  1-slot bag (min(InventorySize 1, cap)); NPC_CH_SPECIAL's select `ids [1, 12]`, its store line opening 0xc;
+  100 x ITEM_ETC_TRADE_CH_01 bought for 400000 (gold 99,151,000 after the fee), the bag `0: 2147 x100 by
+  'Merchy'`, scale 1; the transport window's Special Item Inventory with the stack, Total Amount 400000 and
+  one blue star; ten sold back to the same NPC (its own good: SellPrice, no profit) leaving 90; Trade Export
+  Details: 12 stores, Jangan's 34 rows, every one at 110 % with its origin trade center. Two fixes the run
+  found: the window's quotation rows are authored 133 wide over a 371-wide row layout (unclipped now), and
+  the COS window and the job windows each raise their layer over the other when opened.
+
+## Eight-hundredth round: the job suit
+
+The suit's 10-second change with its strip bar (0x3041 / 0x3042), every wear and take-off refusal in the
+engine's order, the job state on the spawn record (the alias as the name), 0x30CA to the transport, the
+battle state, teleport rules 2/6/7 by job state and cart, the party and guild refusals by job. The client:
+the `*name` plate with the `com_job_*` icon, the guild line hidden, the yellow strip bar under the plate,
+the job target window. docs/protocol/jobs.md "The job suit"; jobsuit.go has every address. QA (box, q7):
+the join for 450000, the alias Merchy, the suit worn with its bar, the plate `*Kilo` with the icon, the
+target window "*Kilo Amateur Trader 1Level".
+
+## Seven-hundred-and-ninety-ninth round: the job guild
+
+0x70E1..0x70E6 (join with its checks and fee, withdraw and its 7 days, the alias, the rankings, the reward
+pools, the previous job) and 0x30E6; `internal/jobs` (records, SQL store, the exp and level rules, the
+weekly procedure); the client's guild lines and windows. docs/protocol/jobs.md "The job guild".
+
 ## Seven-hundred-and-ninety-eighth round: a walking rider's mount walks
 
 The user (2026-10-20, on v0.1.558): "when you walk instead of run with them they might have a different

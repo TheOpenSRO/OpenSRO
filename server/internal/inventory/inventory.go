@@ -214,6 +214,8 @@ type Slot struct {
 	OptLevel  uint8
 	MagParams []uint64
 	AdvElixir uint8
+	// Creator is the instance's name string (round 801; see Instance).
+	Creator string
 	// serial is MemStore's copy of a stack's identity (the SQL store keeps
 	// it in its `serial` column): set when a whole stack moved in with one
 	// (Instance.Serial), handed back by TakeItem.
@@ -240,6 +242,13 @@ type Instance struct {
 	OptLevel   uint8
 	MagParams  []uint64
 	AdvElixir  uint8
+	// Creator (round 801) is the name string an item instance carries at
+	// +0x40 (a std::string; the DB's _Items.CreaterName): a specialty good's
+	// buyer -- the buyer's job alias (_STRG_ADD_SPECIALTY_NoTX writes the
+	// name; GObjPC FUN_00490930 s:0x490930 compares it with GetNickName for a
+	// good, READ). Empty for every other item. Goods with different creators
+	// never merge (Equal compares it).
+	Creator string
 	// Serial is the stack's identity (round 743; the SQL store's `serial`
 	// column), set only by TakeItem when a WHOLE stack left its slot. A store
 	// that places it as a new row keeps it; zero means a new serial. It is
@@ -279,13 +288,13 @@ const MaxMagParams = 12
 // Instance returns the slot's per-instance fields.
 func (s Slot) Instance() Instance {
 	return Instance{Variance: s.Variance, Durability: s.Durability, OptLevel: s.OptLevel,
-		MagParams: cloneParams(s.MagParams), AdvElixir: s.AdvElixir}
+		MagParams: cloneParams(s.MagParams), AdvElixir: s.AdvElixir, Creator: s.Creator}
 }
 
 // Equal reports whether two instances are the same in every field.
 func (i Instance) Equal(o Instance) bool {
 	if i.Variance != o.Variance || i.Durability != o.Durability || i.OptLevel != o.OptLevel ||
-		i.AdvElixir != o.AdvElixir || len(i.MagParams) != len(o.MagParams) {
+		i.AdvElixir != o.AdvElixir || i.Creator != o.Creator || len(i.MagParams) != len(o.MagParams) {
 		return false
 	}
 	for k := range i.MagParams {
@@ -300,6 +309,7 @@ func (i Instance) Equal(o Instance) bool {
 func (s *Slot) SetInstance(inst Instance) {
 	s.Variance, s.Durability = inst.Variance, inst.Durability
 	s.OptLevel, s.MagParams, s.AdvElixir = inst.OptLevel, cloneParams(inst.MagParams), inst.AdvElixir
+	s.Creator = inst.Creator
 }
 
 func cloneParams(p []uint64) []uint64 {

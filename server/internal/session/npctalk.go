@@ -268,7 +268,13 @@ func handleNPCOpen(sess *gateway.Session, data []byte, hub *world.Hub, trades *t
 		sendNPCTalk(sess, npctalk.OpOpenResult, npctalk.EncodeFail(codeNoStore))
 		return
 	}
-	sendNPCTalk(sess, npctalk.OpOpenResult, npctalk.EncodeOpenOK(id))
+	sendNPCTalk(sess, npctalk.OpOpenResult, npctalk.EncodeOpenSpecialOK(id, specialGoodsSelling()))
+	// Id 0xc (round 801): an NPC with a quotation map sends its list
+	// (FUN_004c8a60) after the reply, then INTERACTMODE 6.
+	specialMode := byte(0)
+	if id == npctalk.IDSpecial {
+		specialMode = specialtyOpen(context.Background(), sess, e, pl.npc.RefID)
+	}
 	npcInteractions.mu.Lock()
 	st.entity = entity
 	switch id {
@@ -293,10 +299,13 @@ func handleNPCOpen(sess *gateway.Session, data []byte, hub *world.Hub, trades *t
 	case 0x23:
 		// Returns without setting a mode (0x510428).
 	case npctalk.IDSpecial:
-		// 0x5105ca: when the NPC's +0x1cf0 is 0 it returns with no mode
-		// (0x5105d1 je 0x510428); otherwise 0x4c8a60, then mode 6. OpenSRO
-		// models no +0x1cf0 (its writer is not read), so it is taken as 0:
-		// no mode (OURS).
+		// 0x5105ca: when the NPC's +0x1cf0 (its quotation map, built by
+		// FUN_004c8220 from _ItemQuotation) is empty it returns with no mode
+		// (0x5105d1 je 0x510428); otherwise 0x4c8a60, then mode 6 (round
+		// 801, specialtyOpen).
+		if specialMode != 0 {
+			st.mode = specialMode
+		}
 	default:
 		st.mode = 6
 	}

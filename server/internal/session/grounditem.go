@@ -474,6 +474,15 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 					"item_x", probe.X, "item_z", probe.Z, "owner", probe.OwnerAt(time.Now()))
 				return reply(&PickUpResult{Code: int32(code), GroundItemID: req.GroundItemID})
 			}
+			// A specialty good goes into the picker's transport by the job's
+			// rules, never into the bag (round 801, pickGood).
+			if !it.Gold {
+				if items := cosWorld.depsNow().items; items != nil {
+					if ref, err := items.GetItem(ctx, it.ItemID); err == nil && isSpecialtyItem(ref) {
+						return pickGood(ctx, sess, entity, it, ground, hub, reply)
+					}
+				}
+			}
 			// The item is ours to take now (busy for everyone else). Move it.
 			// An Item Auto Share party hands it on (round 712, itemshare.go):
 			// gold is split among the members near the picker

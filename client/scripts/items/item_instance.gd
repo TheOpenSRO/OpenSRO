@@ -52,6 +52,8 @@ var adv_elixir: int = 0
 ## bound): the stack's count (an expendable), or a COS summon item's pet.
 var is_equipment := true
 var count: int = 1
+## A specialty good's buyer (round 801): the job alias it was bought under.
+var creator := ""
 ## A pet item's state (CosNet.ITEM_STATE_*), its pet's RefObjID, name, and an
 ## ability pet's rent: the seconds left when read, at rent_read_msec.
 var cos_state: int = 0
@@ -227,6 +229,16 @@ static func _read_tail(data: PackedByteArray, offset: int, t: PackedInt32Array) 
 		return [null, -1]
 	it.count = data.decode_u16(offset)
 	offset += 2
+	if t[1] == 3 and t[2] == 8:
+		# A specialty good (round 801, READ c:0x8be6a1..0x8be715): the count,
+		# then its buyer's name, a u16-length string -- nothing else.
+		if offset + 2 > data.size():
+			return [null, -1]
+		var n := data.decode_u16(offset)
+		if offset + 2 + n > data.size():
+			return [null, -1]
+		it.creator = data.slice(offset + 2, offset + 2 + n).get_string_from_utf8()
+		return [it, offset + 2 + n]
 	if t[2] == 11 and (t[3] == 1 or t[3] == 2):
 		offset += 1
 	if t[2] == 14 and t[3] == 2:

@@ -54,9 +54,9 @@ package session
 //
 //   - (Round 779 settled what round 778 left OPEN, the delay's unit: it is
 //     READ now, below -- Param1 / 1000 whole seconds.)
-//   - OpenSRO has one game world and no PK, quest blocks, trade carts or
-//     fortresses, so the world, murderer, quest, cart and fortress refusals
-//     have nothing to refuse; a destination OpenSRO cannot place (another
+//   - OpenSRO has one game world and no PK, quest blocks or fortresses, so
+//     the world, murderer, quest and fortress refusals have nothing to
+//     refuse (the cart's, round 801, does); a destination OpenSRO cannot place (another
 //     world, a dungeon it does not serve) is refused with 0x18f5, the world
 //     test's own code.
 //   - A cast whose character died, left the world or came back on another
@@ -66,8 +66,10 @@ package session
 //     "RESURRECT", 0xaeb2a0 / 0xaeb294; any other answers 2) and lets only a
 //     character in job state 2 (vslot 0x11c, chardata +0xf) use one, else
 //     0x186a UIIT_MSG_STRGERR_ONLY_ROBBER_CAN_USE_THIS_ITEM (READ, 0x4a04e6).
-//     OpenSRO has no job system, so every character is refused with that
-//     code (round 779). The export carries no descriptor column, so the
+//     Round 801: a thief's cast goes to the teleport point of the building
+//     Desc128_4 names (STORE_TD_GATE's GATE_TD) with option 1, and a cart
+//     does not stop it; the plain return scroll and the reverse one refuse a
+//     cart 0x185e. The export carries no Param3 descriptor column, so the
 //     row is told by its code name, which holds the same word (OURS).
 //
 // Round 779, the cast (docs/protocol/return_scroll_cast.md has the client's
@@ -130,6 +132,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/jobs"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
@@ -150,6 +153,9 @@ const (
 	ReverseOptionRecall byte = 2 // "Move to the last recall point."
 	ReverseOptionDeath  byte = 3 // "Move to the place where you died."
 	ReverseOptionMap    byte = 7 // "Move to certain location at the map." + u32 id
+	// ScrollOptionThiefDen is the option FUN_004a0380 starts the state with
+	// for a thief den scroll (round 801: uVar5 = 1 on that branch, READ).
+	ScrollOptionThiefDen byte = 1
 )
 
 // The refusal codes (READ; names from the client's category-1 table).
@@ -226,6 +232,8 @@ const (
 	// (0x4a04e6; the name through category 1's jump table, index 0x3f ->
 	// 0x7b90c7).
 	ScrollErrOnlyRobber uint16 = 0x186a
+	// ScrollErrCart is UIIT_MSG_STRGERR_CANT_TELEPORT_WITH_CART (round 801).
+	ScrollErrCart uint16 = 0x185e
 )
 
 // activeScrolls is the server's ScrollCaster (the last NewScrollCaster), for
@@ -291,6 +299,8 @@ type scrollCast struct {
 	sess   *gateway.Session
 	option byte // 0 the return scroll, else the reverse scroll's option
 	point  teleport.OptionalPoint
+	// den is the thief den's point (round 801, option ScrollOptionThiefDen).
+	den teleport.Point
 	// value is the state's value, (Param2 == 0) + 1 (round 779).
 	value byte
 }
@@ -478,10 +488,31 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 		return scrollRefusal(sess, code, scrollReason(code))
 	}
 	reverse := IsReverseReturnScroll(it)
-	if !reverse && strings.Contains(strings.ToUpper(it.CodeName), "THIEFDEN") {
-		// FUN_004a0380's THIEFDEN branch: job state 2 or 0x186a (round 779,
-		// the header); OpenSRO has no thieves.
-		return refuse(ScrollErrOnlyRobber)
+	thiefDen := !reverse && strings.Contains(strings.ToUpper(it.CodeName), "THIEFDEN")
+	var den teleport.Point
+	if thiefDen {
+		// FUN_004a0380's THIEFDEN branch (round 801, READ s:0x4a04c8..): job
+		// state 2 or 0x186a; the destination is the teleport point of the
+		// building Desc128_4 names (STORE_TD_GATE -> GATE_TD, FUN_00426760
+		// and its +400), none -> 2; no cart test on this branch. The engine
+		// asks the scroll-state, murderer, siege and world refusals first;
+		// OpenSRO has none of those but the scroll state (below), so the job
+		// test stays first (OURS: order).
+		if jobStateNow(ctx, characterID) != byte(jobs.KindThief) {
+			return refuse(ScrollErrOnlyRobber)
+		}
+		tbl := s.table()
+		if tbl == nil {
+			return refuse(ScrollErrUnknownOption)
+		}
+		p, ok := tbl.PointByBuildingCode(it.Desc4)
+		if !ok || p.Region == 0 {
+			return refuse(ScrollErrUnknownOption)
+		}
+		if _, _, _, _, ok := placeArrival(p.Region, float64(p.X), float64(p.Y), float64(p.Z), p.WorldID); !ok {
+			return refuse(ScrollErrArea)
+		}
+		den = p
 	}
 	if s.hub == nil {
 		return refuse(ScrollErrArea)
@@ -499,7 +530,16 @@ func (s *ScrollCaster) use(ctx context.Context, sess *gateway.Session, inv inven
 	if it.CooltimeMs > 0 && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
 		return refuse(ScrollErrWaitReuseDelay)
 	}
+	// A trade cart stops the return and reverse return scrolls (round 801:
+	// vslot 0x2ec IHaveCart, 0x185e, READ s:0x4a0526 / FUN_004a00c0), not
+	// the thief den's.
+	if !thiefDen && ownsTransport(characterID) {
+		return refuse(ScrollErrCart)
+	}
 	cast := &scrollCast{sess: sess, value: scrollStateValue(it)}
+	if thiefDen {
+		cast.option, cast.den = ScrollOptionThiefDen, den
+	}
 	if reverse {
 		cast.option = req.Option
 		switch req.Option {
@@ -638,6 +678,9 @@ func (s *ScrollCaster) complete(characterID int64, cast *scrollCast) {
 		zone, bucket, pos, frame, placed = placeArrival(p.Region, p.X, p.Y, p.Z, p.WorldID)
 	case ReverseOptionMap:
 		p := cast.point
+		zone, bucket, pos, frame, placed = placeArrival(p.Region, float64(p.X), float64(p.Y), float64(p.Z), p.WorldID)
+	case ScrollOptionThiefDen:
+		p := cast.den
 		zone, bucket, pos, frame, placed = placeArrival(p.Region, float64(p.X), float64(p.Y), float64(p.Z), p.WorldID)
 	}
 	if !placed {

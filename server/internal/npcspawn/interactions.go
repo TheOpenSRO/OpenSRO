@@ -101,6 +101,11 @@ type InteractionInputs struct {
 	// The client turns 0x11 into its gacha/open-market line, which the
 	// herbalist does not show.
 	OwnsShop bool
+	// SellsSpecialty (round 801) is id 0xc from the shop init: after id 1,
+	// 0x4c7920 asks ShopApp::FUN_00867850 whether the store lists a good of
+	// the TID word 0x46c (3/3/8) and, when it does, adds 0xc (s:0x4c79a7..
+	// 0x4c79c3, READ) and builds the NPC's quotation map (FUN_004c8220).
+	SellsSpecialty bool
 }
 
 // Interactions is the flag byte and the interaction list of code's spawn
@@ -146,6 +151,9 @@ func Interactions(code string, in InteractionInputs) (flags byte, ids []byte) {
 	// adds does not show.
 	if in.OwnsShop {
 		add(1)
+		if in.SellsSpecialty {
+			add(0x0c)
+		}
 	}
 	if QuestTalk(code) {
 		add(2)

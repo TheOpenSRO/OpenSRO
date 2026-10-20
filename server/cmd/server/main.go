@@ -934,6 +934,19 @@ func main() {
 	jobWeekDay := flag.String("job-week-day", "monday",
 		"the weekday the weekly job procedure runs (the job rewards and rankings, round 799); \"off\" never runs it")
 	jobWeekHour := flag.Int("job-week-hour", 0, "the local hour (0..23) the weekly job procedure runs at")
+	// Round 801: the specialty trade's tables.
+	specialtyShopsCSV := flag.String("specialty-shops-csv", os.Getenv("OPENSRO_SPECIALTY_SHOPS_CSV"),
+		"path to the specialty stores' goods (from cmd/export-refdata -mode specialty on a client's own shop "+
+			"tables and itemdata parts; round 801): what a transport buy names. Without it no good can be bought")
+	quotationCSV := flag.String("quotation-csv", os.Getenv("OPENSRO_QUOTATION_CSV"),
+		"path to the specialty NPCs' quotations (the shard DB's _ItemQuotation table as CSV; round 801). Without "+
+			"it every good sells at its SellPrice and no NPC lists prices")
+	tradeScale := flag.String("trade-scale", "510,918,1428,2142",
+		"the trade scale's four bounds TRADESCALE1..4_AMOUNT_MAX (round 801; the default is the shard's "+
+			"_RefShardContentConfig, the engine's own defaults are 408,918,1428,2142)")
+	specialGoods := flag.Bool("special-goods", false,
+		"the bargain (special) goods are on sale (round 801: the engine's schedule that turns it on and off is "+
+			"not known; the flag stands in for it)")
 	cosCSV := flag.String("cos-csv", os.Getenv("OPENSRO_COS_CSV"),
 		"path to the COS table (from cmd/export-refdata -mode cos on a client's own characterdata parts and "+
 			"textdata_object.txt; round 795): the rides, transports and pets the summon items call out. Without it "+
@@ -1882,6 +1895,8 @@ func main() {
 		logger.Warn("the level table has no job columns (re-export it with cmd/export-leveldata -levelgold, round 799): job levels never rise and the job formulas have no level unit")
 	}
 	session.StartJobWeekly(ctx, *jobWeekDay, *jobWeekHour, logger)
+	// The specialty trade (round 801).
+	specialtyShops := loadSpecialty(ctx, logger, *specialtyShopsCSV, *quotationCSV, *tradeScale, *specialGoods, refItems, chars)
 	session.SetItemRecordTypes(func(ref uint32) ([4]int, bool) {
 		it, err := refItems.GetItem(context.Background(), int64(ref))
 		if err != nil || it == nil {
@@ -2198,7 +2213,7 @@ func main() {
 	if *testItemsNPC {
 		testItems = resolveTestItemsNPC(ctx, logger, refItems)
 	}
-	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems)
+	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV, testItems, specialtyShops)
 	// The monsters' area of interest (round 656): each player hears about the
 	// monsters of the 3x3 message blocks around it (retail's, READ in round
 	// 664: 320-unit blocks and their 8 neighbours), and is told as they come
@@ -2455,6 +2470,8 @@ func main() {
 		session.COSHandler(hub, chars),
 		// The job guild (round 799, internal/session/jobguild.go).
 		session.JobGuildHandler(hub),
+		// The trade-info window (round 801, internal/session/specialtytrade.go).
+		session.TradeInfoHandler(),
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
 		session.FrontEndThemeHandler(frontEndTheme),

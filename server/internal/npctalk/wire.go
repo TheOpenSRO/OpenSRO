@@ -202,17 +202,18 @@ func DecodeSelectNPC(b []byte) (SelectNPC, error) {
 	return s, nil
 }
 
-// EncodeOpenOK writes 0xB046's success: {u8 1, u8 id}, the id echoed with
-// 10 written as 2 (0x5104a8..0x5104b5), plus one u8 for id 0xc (the
-// world-config byte at +0x42405, 0x5104fb; OURS 0 here).
-func EncodeOpenOK(id byte) []byte {
+// EncodeOpenSpecialOK writes 0xB046's success: {u8 1, u8 id}, the id echoed
+// with 10 written as 2 (0x5104a8..0x5104b5), plus one u8 for id 0xc: the
+// world-config byte at +0x42405 (0x5104fb), the special goods on sale
+// (round 801), which specialGoods carries.
+func EncodeOpenSpecialOK(id, specialGoods byte) []byte {
 	echo := id
 	if id == IDWithdrawSkill {
 		echo = IDTalk
 	}
 	out := []byte{ResultOK, echo}
 	if id == IDSpecial {
-		out = append(out, 0)
+		out = append(out, specialGoods)
 	}
 	return out
 }

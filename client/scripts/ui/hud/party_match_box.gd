@@ -30,6 +30,9 @@ const LABEL_H := 12.0
 
 var _builder: UiBuilder
 var root: Control
+## The frame's art (round 801: the trade-info window, a main frame, sets
+## `interface\frame\mframe_wnd_` before build_shell).
+var frame_ddj := FRAME
 var caption: Label
 ## Per radio group: {"dots": Array[TextureButton], "labels": Array[Label],
 ## "choice": int, "enabled": Array[bool]}.
@@ -47,7 +50,7 @@ func build_shell(builder: UiBuilder, box_size: Vector2, caption_key: String, cap
 	var frame_def := UiLayoutParser.ControlDef.new()
 	frame_def.name = "Frame"
 	frame_def.type = "CIFFrame"
-	frame_def.ddj = FRAME
+	frame_def.ddj = frame_ddj
 	frame_def.rect = Rect2i(Vector2i.ZERO, Vector2i(box_size))
 	var frame := builder.build_control(frame_def) if builder != null else null
 	if frame != null:

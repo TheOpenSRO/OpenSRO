@@ -52,6 +52,8 @@ signal bag_drag_to_inventory(uid: int, src: int)
 signal target_requested(uid: int)
 ## A line the original prints to the system log.
 signal system_line(text: String, color: Color)
+## Round 801: the transport window's Sell All.
+signal sell_all_requested(uid: int)
 
 ## The system log's colour for 0x7781b0 types 0 and 1 (0xffdbc99b, READ) --
 ## the EXP lines, the HGP warning and the name refusal (0x778190's own
@@ -163,6 +165,7 @@ func _ensure_window() -> void:
 	window.setting_requested.connect(func(uid: int, k: int, v: int) -> void: setting_requested.emit(uid, k, v))
 	window.bag_slot_picked.connect(_on_bag_slot_picked)
 	window.bag_slot_hovered.connect(_on_bag_slot_hovered)
+	window.sell_all_requested.connect(func(uid: int) -> void: sell_all_requested.emit(uid))
 
 func _ensure_pet_info() -> void:
 	if pet_info != null:
@@ -660,10 +663,23 @@ func bag_applied(op: Dictionary) -> void:
 		CosNet.BAG_PICK:
 			var picked = op.get("item")
 			if picked is ItemInstance:
-				(picked as ItemInstance).slot = int(op.get("slot", -1))
-				items[int(op.get("slot", -1))] = picked
+				var at := int(op.get("slot", -1))
+				var held: ItemInstance = items.get(at)
+				# A pick onto a stack of the same item (a good into the
+				# transport, round 801) merges into it (c:0x87eb50 case 0x11).
+				if held != null and held.ref_item_id == (picked as ItemInstance).ref_item_id and not held.is_equipment:
+					held.count += maxi(1, (picked as ItemInstance).count)
+				else:
+					(picked as ItemInstance).slot = at
+					items[at] = picked
 	if window != null and window.visible and window.cos_uid == e.data.uid:
 		window.data = e.data
+		window.refresh_inventory()
+
+## Round 801: the transport's bag and trade rows drawn again (a buy, a sale,
+## a new scale or price list).
+func refresh_trade() -> void:
+	if window != null and window.visible:
 		window.refresh_inventory()
 
 # --- commands -------------------------------------------------------------------

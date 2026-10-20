@@ -53,6 +53,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
 	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
 	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/specialty"
 	"github.com/OpenSRO/OpenSRO/server/internal/species"
 	"github.com/OpenSRO/OpenSRO/server/internal/statuseffect"
 	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
@@ -546,12 +547,13 @@ func main() {
 		}
 		return
 	}
-	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
+	if len(inputArgs) == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "cos" && *mode != "npcs" && *mode != "specialty" && *mode != "regions" && *mode != "chargen" && *mode != "magicoptions" && *mode != "magicoptassign") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt [refoptionalteleport.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode cos -out cos.csv characterdata_*.txt [textdata_object.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode npcs -out npcs.csv characterdata_*.txt refshopgroup.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode specialty -out specialty_shops.csv refshopgroup.txt refmappingshopgroup.txt refmappingshopwithtab.txt refshoptab.txt refshopgoods.txt refscrapofpackageitem.txt itemdata_*.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptions -out magicoptions.csv magicoption.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode magicoptassign -out magicoptassign.csv magicoptionassign.txt")
@@ -582,6 +584,14 @@ func main() {
 		// species under species.CSVColumns: what cmd/server's -monsters-csv
 		// loads (round 654).
 		if err := exportMonsters(*out, inputArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "specialty":
+		// Round 801: the specialty stores' goods (internal/specialty): what
+		// cmd/server's -specialty-shops-csv loads.
+		if err := exportSpecialty(*out, inputArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -2686,6 +2696,82 @@ func exportCharRows(out string, paths []string, keep func([]string) bool, what s
 	} else {
 		fmt.Fprintf(os.Stderr, "export-refdata: %d species' name keys resolve in textdata_object\n", st.Named)
 	}
+	return nil
+}
+
+// exportSpecialty writes the specialty stores' goods (round 801,
+// specialty.BuildShops) from the shop chain's six tables and the item parts.
+func exportSpecialty(out string, paths []string) error {
+	tables := map[string][][]string{}
+	items := map[string]specialty.ItemInfo{}
+	for _, path := range paths {
+		tab, err := readTable(path)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+		base := strings.ToLower(filepath.Base(path))
+		switch base {
+		case "refshopgroup.txt", "refmappingshopgroup.txt", "refmappingshopwithtab.txt", "refshoptab.txt",
+			"refshopgoods.txt", "refscrapofpackageitem.txt":
+			tables[base] = append(tables[base], tab...)
+			continue
+		}
+		for _, cols := range tab {
+			if len(cols) < 12 {
+				continue
+			}
+			id, err := strconv.ParseInt(strings.TrimSpace(cols[1]), 10, 64)
+			if err != nil {
+				continue
+			}
+			t1, _ := strconv.Atoi(strings.TrimSpace(cols[9]))
+			t2, _ := strconv.Atoi(strings.TrimSpace(cols[10]))
+			t3, _ := strconv.Atoi(strings.TrimSpace(cols[11]))
+			items[strings.TrimSpace(cols[2])] = specialty.ItemInfo{ID: id, TypeID1: t1, TypeID2: t2, TypeID3: t3}
+		}
+	}
+	for _, need := range []string{"refshopgroup.txt", "refmappingshopgroup.txt", "refmappingshopwithtab.txt",
+		"refshoptab.txt", "refshopgoods.txt", "refscrapofpackageitem.txt"} {
+		if _, ok := tables[need]; !ok {
+			return fmt.Errorf("-mode specialty needs %s among the inputs", need)
+		}
+	}
+	if len(items) == 0 {
+		return fmt.Errorf("-mode specialty needs the itemdata parts among the inputs")
+	}
+	shops := specialty.BuildShops(tables["refshopgroup.txt"], tables["refmappingshopgroup.txt"],
+		tables["refmappingshopwithtab.txt"], tables["refshoptab.txt"], tables["refshopgoods.txt"],
+		tables["refscrapofpackageitem.txt"], func(code string) (specialty.ItemInfo, bool) {
+			it, ok := items[code]
+			return it, ok
+		})
+	var buf strings.Builder
+	if err := specialty.WriteShops(&buf, shops); err != nil {
+		return err
+	}
+	if _, err := specialty.ReadShops(strings.NewReader(buf.String())); err != nil {
+		return fmt.Errorf("the export does not load back: %w", err)
+	}
+	if out == "-" {
+		if _, err := os.Stdout.WriteString(buf.String()); err != nil {
+			return err
+		}
+	} else if err := os.WriteFile(out, []byte(buf.String()), 0o644); err != nil {
+		return err
+	}
+	goods := 0
+	npcs := make([]string, 0, len(shops))
+	for n, l := range shops {
+		npcs = append(npcs, n)
+		for _, g := range l {
+			if g.Specialty {
+				goods++
+			}
+		}
+	}
+	sort.Strings(npcs)
+	fmt.Fprintf(os.Stderr, "export-refdata: %d specialty stores, %d specialty goods listed: %s\n", len(shops), goods,
+		strings.Join(npcs, " "))
 	return nil
 }
 

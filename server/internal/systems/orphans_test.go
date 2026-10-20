@@ -45,9 +45,6 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 var knownOrphans = map[string]string{
 	// Round 799: the job formulas the trade (round 801) and the job death
 	// (round 802) call; recovered and tested here first (internal/jobs).
-	"AddTraderContribution": "round 799: jobs.AddTraderContribution, a trader's sale share (FUN_006194e0); the specialty sale calls it (round 801).",
-	"SaleShare":             "round 799: jobs.SaleShare, trunc(gold x 0.1); the specialty sale calls it (round 801).",
-	"RewardPool":            "round 799: jobs.RewardPool, _AddTrijobReward's pool by kind; the specialty sale calls it (round 801).",
 	"PutOldJob":             "round 799: jobs.MemStore.PutOldJob seeds a previous-job row in tests; retail's writer of _OldTrijob is not known (docs/protocol/jobs.md).",
 	"DeathLoss":             "round 799: jobs.DeathLoss, a job death's exp loss (FUN_00410370); the job death calls it (round 802).",
 	// Round 795: the COS (internal/cos). The client's kind byte is the

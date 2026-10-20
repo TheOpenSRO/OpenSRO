@@ -329,6 +329,9 @@ func playerRecord(d viewDeps, e world.Entity, now time.Time) []byte {
 			r.Name = jr.Alias
 		}
 	}
+	// Round 801: the trade scale (row 28, pc_spawn.md), the last one its
+	// owner was told (0x30E8).
+	r.TradeRank = lastTradeScale(e.CharacterID)
 	r.Avatars = lk.avatars
 	// The frame's region and the local position in it (worldmap.FromWorld,
 	// as teleport's reach and the party record do). A zone with no frame --

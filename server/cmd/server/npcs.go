@@ -11,6 +11,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/session"
 	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/specialty"
 	"github.com/OpenSRO/OpenSRO/server/internal/species"
 	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
 )
@@ -41,7 +42,7 @@ func npcRows(placements spawn.Table, monsters *species.Table, table npcspawn.Tab
 // installNPCs builds and installs the NPCs (session.InstallNPCs). Without
 // placements -- or without a way to tell an NPC row from a monster's -- there
 // are none, and the boot log says so.
-func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.Table, db *nest.DB, tp *teleport.Table, npcsCSV string, testItems *testItemsNPCSpec) {
+func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.Table, db *nest.DB, tp *teleport.Table, npcsCSV string, testItems *testItemsNPCSpec, shops specialty.Shops) {
 	var table npcspawn.Table
 	if npcsCSV != "" {
 		t, err := npcspawn.LoadCSV(npcsCSV)
@@ -94,7 +95,7 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 		}
 		f := teleportFlags[id]
 		return npcspawn.Interactions(code, npcspawn.InteractionInputs{Teleport7: f[0], Teleport9: f[1], Teleport8: f[2],
-			OwnsShop: table[id].Shop})
+			OwnsShop: table[id].Shop, SellsSpecialty: table[id].Shop && shops.SellsSpecialty(code)})
 	}
 	npcs, rep := npcspawn.Place(npcRows(placements, monsters, table), db, info, interactions)
 	npcs = appendTestItemsNPC(logger, npcs, table, testItems)

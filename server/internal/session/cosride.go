@@ -203,6 +203,10 @@ func cosTakeDamage(o *cosObj, dmg int) {
 		cosDied(ctx, o)
 		return
 	}
+	// A transport's death drops its goods (round 801, COS slot 398 ->
+	// FUN_004c3f60). OpenSRO's COS take blows from monsters only, which
+	// own nothing, so no killer is passed.
+	dropTransportGoods(ctx, o, 0)
 	releaseCOS(ctx, o, releaseDelete)
 }
 
