@@ -50,6 +50,7 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/shop"
 	"github.com/OpenSRO/OpenSRO/server/internal/skill"
 	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/specialty"
 	"github.com/OpenSRO/OpenSRO/server/internal/species"
 	"github.com/OpenSRO/OpenSRO/server/internal/storage"
 	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
@@ -944,6 +945,8 @@ func main() {
 	tradeScale := flag.String("trade-scale", "510,918,1428,2142",
 		"the trade scale's four bounds TRADESCALE1..4_AMOUNT_MAX (round 801; the default is the shard's "+
 			"_RefShardContentConfig, the engine's own defaults are 408,918,1428,2142)")
+	tradeMonFactor := flag.Uint("trade-mon-factor", specialty.ShardMonFactor,
+		"TRADE_MON_FACTOR, the NPC waves' count divisor (round 804; the shard's 2300, MEASURED; the engine's own default 306)")
 	specialGoods := flag.Bool("special-goods", false,
 		"the bargain (special) goods are on sale (round 801: the engine's schedule that turns it on and off is "+
 			"not known; the flag stands in for it)")
@@ -2298,6 +2301,8 @@ func main() {
 		session.SetMonsterKillObserver(respawns.armParty)
 	}
 	go respawns.run(ctx)
+	// Round 804: the NPC thieves' and hunters' waves round a caravan.
+	installCaravans(ctx, logger, speciesTable, speciesSkills, nestDB, hub, monsters, uint32(*tradeMonFactor))
 
 	// The monster's own BATTLE (round 546), behind its own flag, which needs
 	// the tick (the chase runs in it) and the strike push (a swing nobody is

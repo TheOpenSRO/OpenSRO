@@ -45,7 +45,7 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 var knownOrphans = map[string]string{
 	// Round 799: the job formulas the trade (round 801) and the job death
 	// (round 802) call; recovered and tested here first (internal/jobs).
-	"PutOldJob":             "round 799: jobs.MemStore.PutOldJob seeds a previous-job row in tests; retail's writer of _OldTrijob is not known (docs/protocol/jobs.md).",
+	"PutOldJob": "round 799: jobs.MemStore.PutOldJob seeds a previous-job row in tests; retail's writer of _OldTrijob is not known (docs/protocol/jobs.md).",
 	// Round 795: the COS (internal/cos). The client's kind byte is the
 	// client's own mapping (c:0x9a1900), kept beside the server's for the
 	// tests and the docs; 0x30C9 type 2 is the bag-size change the

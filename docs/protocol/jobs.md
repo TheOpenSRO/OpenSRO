@@ -658,4 +658,73 @@ _CharTrijobSafeTrade row: AbleCount, Status, LastSafeTrade.
 
 The +0x20fc byte that hides the banner; FUN_00666e60's exact test; what
 retail draws for a player killed in view by another (the death clip, the
-corpse); the NPC thieves' and hunters' caravan waves (next round).
+corpse).
+
+## NPC thieves and hunters (round 804)
+
+`server/internal/jobs/caravan.go` (the rules), `server/internal/session/
+caravan.go` (the caravans and their waves), `session/mobcos.go` (monsters
+against a COS), `cmd/server/caravan.go` (the tables). READ in
+SR_GameServer.exe unless a line says otherwise.
+
+### The caravan
+
+A player is registered (s:0x60c5a0, keyed by his id; one already there is
+left alone) when he closes a specialty trader's dialog in mode 5 or 6 while
+his transport holds goods (EndInteraction s:0x510838..0x510872, which logs
+"Trader Registered, TradeRisk: %d"; any job), when a good is picked up into
+his transport (s:0x4e9676), and when a transport holding goods is registered
+to him (s:0x4fa839..0x4fa861). The main loop adds its milliseconds to every
+caravan (s:0x60c610 -> s:0x60bc80); past the threshold the threshold is
+rolled again -- `60000 + ftol(float32(rand()/32767.0) x 60000.0)` ms
+(s:0x60bd00) -- and the caravan checked (s:0x60bd40): the player in the
+world with a region, his transport alive, a cart, holding goods; failing, it
+is dropped. A transport in a town region (IsBattleField 0, s:0x60bcc9) gets
+no wave this time. Else the wave.
+
+### The wave (s:0x60bf30)
+
+- **Who:** NPC thieves round a trader's caravan, NPC hunters round anyone
+  else's (the owner's job state, s:0x60c03a).
+- **How many:** the trade value V (the scale's amount, s:0x60c1f0) gives a
+  base (s:0x60c160): 0 for none; with a bargain good (3/3/8/2) in the
+  transport (COS vslot 188, +0x2f0) `ftol((V x 1.55 - 1) / F + 1)`; else 1 up
+  to TRADESCALE's second bound and `(V - 1) / F + 1` above it; F is
+  TRADE_MON_FACTOR (engine default 306, the shard's 2300, MEASURED). Then
+  (s:0x60c460) 0 counts 1, `float32(rand()/32767.0) >= 0.5` adds one, `rand()
+  % 100 < 2` doubles.
+- **Tactics:** row 2001 + k for thieves, 2011 + k for hunters, k = 3 when
+  rand() is even, else `rand() & 3` (s:0x60bf9a). The shard's rows (MEASURED):
+  aggressive, sight 250, ChangeTarget 0/0/1/2, trace 500, flags 542 / 666.
+- **Each monster:** its level (s:0x60c4b0) `max(L - 4, 16) - 1 + p + k`, p =
+  max(scale index, 1) doubled at `rand() % 100 < 2`, k = 0..3 from
+  `ftol(float32(rand()/32767.0) x -4.0)` (4 at rand() == 32767), L the larger of
+  the player's level and FUN_0059e870(+0xa30) (a list's highest byte +0x20,
+  OPEN; OpenSRO takes the level); its row (s:0x6bc4b0 / s:0x6bc760) from the
+  table of its group -- the player's region's continent: CHINA, West_China,
+  Oasis_Kingdom, Roc the MOB_THIEF / MOB_HUNTER rows, Eu, Am, Ca, DELTA, SD,
+  KingsValley the MOB_EU_ rows (s:0x60bdd0) -- level clamped to 140, level 1
+  none, walking down to the nearest filled level but never to level 1, a
+  uniform `rand() % n` row; a random heading; a 2 % champion (the class's low
+  nibble, clamped by level); placed by the spawn routine (GObjPC::FUN_005f6eb0
+  -> FUN_00531240) on the nest hatch's ring of radius 150.0 (s:0x60c113) round
+  the transport.
+- **Their targets:** AITactics_AcquireTarget (s:0x5478f0) scans by the row's
+  +0x90 flags: (selector 2, mask 1) the players; bit 0x4 (3, 5) and bit 0x80
+  (4, 5) the players and the COS (AITactics_ScanForTargets s:0x5405b0's
+  object list), selector 3 the traders' and hunters' side, 4 the thieves';
+  CGObjMob::vslot_394 (s:0x529110) judges a COS by its owner.
+- **A transport they kill** drops its goods with no owner (s:0x4c3f60 with no
+  killing player). A job death by them is cause 1 (Job PvP above).
+- **How long they stay:** the spawn routine keeps no record of a wave and
+  nothing removes one; it stays until killed.
+
+### OURS, disclosed
+
+The loop is a 250 ms ticker; waves need the monster AI; OpenSRO removes a
+dropped caravan's wave monsters that are not fighting (so finished runs do
+not leave them on the roads); without a region table the China rows stand
+in; the COS a monster may take are the transports and the growth pets nobody
+rides (INFERRED: the object list's kinds are not read), struck with the
+monster's swing against the COS row's level, defence and block (no wall, no
+states) and told to the zone as OpMonsterAttacked naming the COS uid.

@@ -16946,6 +16946,14 @@ func _qa_job_step() -> void:
 					_own_job_state(), str(_player_is_enemy(found, false))])
 				print("QA PVP: click 1 -> %s" % _click_player(found, who))
 				print("QA PVP: click 2 -> %s" % _click_player(found, who))
+		# Round 804 (QA only): walk:<x>,<z> walks to that world point, as a
+		# ground click there would.
+		elif what.begins_with("walk:"):
+			var xz := what.substr(5).split(",")
+			if xz.size() == 2:
+				_move_target = Vector3(float(xz[0]), player.position.y, float(xz[1]))
+				_has_move_target = true
+				print("QA JOB: tick %d walk to (%s, %s) from (%.0f, %.0f)" % [_qa_tick, xz[0], xz[1], player.position.x, player.position.z])
 		elif what == "pvp_state":
 			print("QA PVP: tick %d target %s pending %s selected %d HP %s dead %s board safe %s" % [_qa_tick, str(_pvp_target),
 				str(_pending_pvp), _selected_character, _hud_player_info._hp_text.text if _hud_player_info != null and _hud_player_info._hp_text != null else "-", str(_player_dead),
@@ -27811,6 +27819,11 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 	if attacked.status_tick:
 		_on_status_tick_strike(attacked)
 		return
+	# Round 804: a blow on a COS -- a wave's NPC thief on a transport
+	# (session/mobcos.go) -- names its uid.
+	if JobPvpNet.is_cos_uid(attacked.target_character_id):
+		_draw_monster_strike_on_cos(attacked)
+		return
 	var claim := MonsterStrikes.CLAIM_NONE
 	if not _other_bodies.has(attacked.target_character_id):
 		claim = MonsterStrikes.claim(_strike_waits, attacked)
@@ -28095,14 +28108,12 @@ func _on_revive_result(result: WorldNet.ReviveResult) -> void:
 ## player's body or another player's) and the red number over it. A blocked
 ## blow is the swing alone: it dealt nothing. A target this client has not drawn
 ## gets the swing alone, unturned.
-func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, report_own: bool = false) -> void:
+## The monster's swing of a strike on `target` (null: none drawn): its clip,
+## its sound context, its turn toward the target; the seconds until the blow
+## lands (its clip's hit event), 0 when no body is drawn. Round 804: split out
+## of _draw_monster_strike for a blow on a COS.
+func _play_monster_swing(attacked: CombatNet.MonsterAttacked, target: Node3D) -> float:
 	var monster := attacked.monster_id
-	var target_id := attacked.target_character_id
-	var target: Node3D = null
-	if on_self:
-		target = player
-	elif _other_bodies.has(target_id) and is_instance_valid(_other_bodies[target_id]):
-		target = _other_bodies[target_id]
 	var strike_after := 0.0
 	var body = _monster_bodies.get(monster)
 	if body != null and is_instance_valid(body) and not _dying_until.has(monster):
@@ -28135,6 +28146,44 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, re
 		if _combat_trace:
 			print("COMBAT monster %d swing ms=%d skill %d (%s) clip type %d %.3f s, lands at %.3f s" % [
 				monster, Time.get_ticks_msec(), attacked.skill_id, code, clip_type, clip_seconds, strike_after])
+	return strike_after
+
+## A monster's blow on a COS (round 804, session/mobcos.go): the swing, then
+## at its hit event the number over the COS (a player's-side red, as on a
+## player; the COS's HP reaches its owner by the COS's own HP update) and its
+## hit clip. Its death and its goods' drop come by the COS's own messages.
+func _draw_monster_strike_on_cos(attacked: CombatNet.MonsterAttacked) -> void:
+	var uid := attacked.target_character_id
+	var body: Node3D = _cos_bodies.get(uid)
+	if body != null and not is_instance_valid(body):
+		body = null
+	print("World3D: monster %d strikes COS %d for %d (HP %d)%s%s" % [attacked.monster_id, uid, attacked.damage,
+		attacked.target_hp, " BLOCKED" if attacked.blocked else (" CRIT" if attacked.critical else ""),
+		", died" if attacked.target_died else ""])
+	var strike_after := _play_monster_swing(attacked, body)
+	if body == null:
+		return
+	var body_ref: WeakRef = weakref(body)
+	_after(strike_after, func() -> void:
+		var b = body_ref.get_ref()
+		if b == null or not is_instance_valid(b):
+			return
+		if attacked.blocked:
+			_damage_text(b, DamageText.Art.BLOCK, 0, true, false)
+			return
+		if attacked.damage > 0:
+			_damage_text(b, _number_art(attacked.critical), attacked.damage, true, false)
+			_cos_play(uid, BsrReader.AnimationEntry.TYPE_HIT))
+
+func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool, report_own: bool = false) -> void:
+	var monster := attacked.monster_id
+	var target_id := attacked.target_character_id
+	var target: Node3D = null
+	if on_self:
+		target = player
+	elif _other_bodies.has(target_id) and is_instance_valid(_other_bodies[target_id]):
+		target = _other_bodies[target_id]
+	var strike_after := _play_monster_swing(attacked, target)
 	if report_own:
 		# The HUD's HP, the death line and the dead state, as the blow lands --
 		# the HP only if nothing newer told it meanwhile (round 785's client

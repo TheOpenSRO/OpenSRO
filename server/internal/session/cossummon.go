@@ -330,6 +330,14 @@ func spawnCOS(owner world.Entity, rec cos.Record, row species.Row, itemID int64,
 	if o.kind == cos.KindGrowth || o.kind == cos.KindTransport {
 		sendAboutCOS(o, cos.OpCOSOwnerState, cos.OwnerState(o.uid, jobStateNow(context.Background(), owner.CharacterID), 0))
 	}
+	// A transport registered with goods registers its owner's caravan
+	// (s:0x4fa839..0x4fa861, round 804's caravan.go).
+	if o.kind == cos.KindTransport && caravanRT.Load() != nil {
+		ctx := context.Background()
+		if haveTradeItem(ctx, owner.CharacterID) {
+			registerCaravan(ctx, owner.CharacterID, "a transport with goods came out")
+		}
+	}
 	return o
 }
 

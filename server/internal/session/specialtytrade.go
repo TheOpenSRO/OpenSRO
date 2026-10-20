@@ -193,6 +193,12 @@ func haveTradeItem(ctx context.Context, characterID int64) bool {
 // tradeScaleOf is FUN_0060c330 over FUN_0060c1f0 for characterID at level:
 // 0 without a transport or goods.
 func tradeScaleOf(ctx context.Context, characterID int64, level int) byte {
+	return specialtyNow().d.Thresholds.Scale(tradeAmountOf(ctx, characterID, level))
+}
+
+// tradeAmountOf is FUN_0060c1f0 (s:0x60c1f0): the trade value of
+// characterID's transport at level, 0 without a transport or goods.
+func tradeAmountOf(ctx context.Context, characterID int64, level int) uint32 {
 	o := ownTransport(characterID)
 	if o == nil {
 		return 0
@@ -206,8 +212,7 @@ func tradeScaleOf(ctx context.Context, characterID int64, level int) byte {
 	cosWorld.mu.Unlock()
 	// GetMaxLevel (vslot +0x128): OpenSRO keeps no separate high-water
 	// mark, and a level never falls, so the level stands in (OURS).
-	amount := specialty.Amount(units, levelTable.GoldMin(specialty.ClampTradeLevel(level)), rarity)
-	return specialtyNow().d.Thresholds.Scale(amount)
+	return specialty.Amount(units, levelTable.GoldMin(specialty.ClampTradeLevel(level)), rarity)
 }
 
 // lastTradeScale is the scale characterID was last told (the spawn record's
@@ -991,8 +996,9 @@ func pickGood(ctx context.Context, sess *gateway.Session, e world.Entity, it gro
 	broadcastPickUpMotion(hub, e.Zone, e.CharacterID, e.Pos.X, e.Pos.Z, it)
 	broadcastGroundRemoval(hub, it, e.CharacterID)
 	// A good picked into the cart registers the caravan (s:0x4e9676, round
-	// 802) and may move the scale (s:0x5265e3).
+	// 804, caravan.go) and may move the scale (s:0x5265e3).
 	refreshTradeScale(ctx, e.CharacterID)
+	registerCaravan(ctx, e.CharacterID, "a good picked into the transport")
 	return nil
 }
 

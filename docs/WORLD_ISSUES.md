@@ -7483,6 +7483,55 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-fourth round: the NPC thieves and hunters round a caravan
+
+The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off client
+and server code. This is a huge effort so don't make any mistakes." The last part of that project (799 the
+guild, 800 the suits, 801 the specialty trade, 802 the PvP). docs/protocol/jobs.md "NPC thieves and hunters"
+has every address.
+
+- **READ (server).** The caravan registry (s:0x60c5a0) and its three registrations (EndInteraction at a
+  specialty trader with goods s:0x510872, a good picked into the transport s:0x4e9676, a transport with goods
+  registered s:0x4fa861); the tick (s:0x60c610 -> s:0x60bc80): the 60-120 s threshold (s:0x60bd00), the
+  check that drops it (s:0x60bd40), the town skip on the transport's region; the wave (s:0x60bf30): thieves
+  round a trader's caravan, hunters round anyone else's, the count (s:0x60c160 with the bargain branch's
+  1.55, s:0x60c460), the tactics 2001+ / 2011+ (s:0x60bf9a), each monster's level (s:0x60c4b0), the region
+  group (s:0x60bdd0), the picker that walks down to level 2 (s:0x6bc4b0), the 2 % champion and the hatch
+  ring of 150 (s:0x60c113); the scan's kind pairs by the row's flags (AITactics_AcquireTarget s:0x5478f0,
+  ScanForTargets s:0x5405b0): the thieves' 542 and the hunters' 666 scan the COS too.
+- **MEASURED.** Tab_RefTactics 2001-2004 / 2011-2014 (aggressive, sight 250, trace 500, flags 542 / 666);
+  2,800 MOB_THIEF_NPC / MOB_HUNTER_NPC rows (10 a level) in the box's and prod's monster tables.
+- **Ours, disclosed.** A 250 ms ticker; waves need the monster AI; the idle monsters of a dropped caravan are
+  removed (the engine keeps no record of a wave); the China rows without a region table; the COS a monster
+  may take are the transports and growth pets nobody rides (INFERRED), struck with the monster's swing against
+  the COS row, told as OpMonsterAttacked naming the COS uid; the level term FUN_0059e870(+0xa30) is the
+  character level (OPEN).
+- **Server.** `jobs/caravan.go` (+ `caravan_test.go`: the delay, both counts, the rolls, the tactics, the
+  levels, the groups, the picker's walk), `session/caravan.go`, `session/mobcos.go` (the scan, the target
+  entity, the blow on a COS), `cmd/server/caravan.go` (the tables at start), `-trade-mon-factor` (2300). Tests:
+  `caravan804_test.go` -- a trader's donkey with 100 goods registers, its wave of NPC thieves under 2001+ on
+  the 150 ring at the levels the rule gives, the caravan dropped with its goods and its idle monsters
+  removed; an NPC thief (542) with no player in sight takes a trader's transport and its blow comes off the
+  transport's HP, an NPC hunter (666) passes it by.
+- **Client.** A monster's blow on a COS: its swing, the number and the hit clip on the transport
+  (`_draw_monster_strike_on_cos`, the swing split out as `_play_monster_swing`); the QA step `walk:x,z`.
+- **QA (box, `/var/tmp/r802/qa802.sh` with prod's flags -- monster AI, aggro, battle, dead state, full map,
+  regions, the nest DB).** Tess (level 110) joined the traders, wore the suit, called a donkey, bought 100
+  White Silk at NPC_CH_SPECIAL and closed the store: `caravan: trader registered ... trade_risk=1`, and the
+  safe trade `{1, 0x50, 1, 8}` (its board icon up). In the field south of Jangan (region 24744) the first
+  wave came 74-114 s later (three runs): one or two MOB_THIEF_NPC rows under 2001-2004, value 67, scale 1.
+  Mounted on the donkey (q7), the thieves' blows on her went to the ridden donkey (round 795's ride rule):
+  it died, the silk dropped with no owner, she was dismounted, and the next blows killed her (the dead
+  state). Dismounted (q8): the thief killed her, then took the donkey -- `monster 67267 strikes COS
+  2113929217 for 9624 (HP 0), died` on the client -- the silk dropped with no owner, the safe trade went
+  (`{0, 0x40}`, the scale left 1), and the caravan was dropped with its thief to remove once idle. The
+  first QA run (q6) found the box's server without prod's aggro flag: three waves, no fight.
+- **Gates.** Server `go test ./...` all ok; client compile check ALL LOAD and `run_gd_tests.sh` 343 suites,
+  one failure -- water_fx_test's "the three effects in view step (got 2)", a timing check in the water
+  effects, which passed when run again and touches nothing this round changed.
+- **Perf gate** (`--base 0a548cfa --sites jangan --frames 60000`, 1280x720, median of 3): frame 0.90 /
+  0.91 ms SAME, entry 8574 / 8617 ms SAME, freeze 2740 / 2738 ms SAME, hitches 5 / 4 SAME.
+
 ## Eight-hundred-and-second round: job PvP and the safe trade
 
 The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off client

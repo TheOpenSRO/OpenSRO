@@ -10,18 +10,18 @@ Two lanes are running in parallel: the **world** lane ([HANDOFF.md](HANDOFF.md))
 the **UI** lane ([HANDOFF_UI.md](HANDOFF_UI.md)) has items 4-5. Each handoff covers its own lane —
 where it stopped, the tools for it, the traps — and points back here for everything else.
 
-## The job system (rounds 799-802; docs/protocol/jobs.md)
+## The job system (rounds 799-804; docs/protocol/jobs.md)
 
 The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off
 client and server code." Done: the guild (799), the suits (800), specialty trade (801), job PvP
-and the safe trade (802). Left:
+and the safe trade (802), the NPC thieves and hunters (804). Left: the OPEN items below.
 
 - [x] **Round 802: job PvP** and the safe trade (docs/protocol/jobs.md "Job PvP", "Safe trade").
       Still OPEN there: the +0x20fc byte that hides the safe-trade banner, FUN_00666e60's exact
       test, what retail draws for a player killed in view by another.
-- [ ] **NPC thieves and hunters** (D notes section 3): the caravan registration, the 60-120 s waves
-      of MOB_THIEF_NPC / MOB_HUNTER_NPC round a transport with goods (count by TRADE_MON_FACTOR,
-      level by the scale, tactics 2001+ / 2011+), their target filters; monsters hitting a COS.
+- [x] **NPC thieves and hunters** -- round 804 (docs/protocol/jobs.md "NPC thieves and hunters").
+      Still OPEN there: FUN_0059e870(+0xa30)'s list (the level term; the level stands in), the
+      kinds the scan's COS list holds (OpenSRO: transports and growth pets nobody rides).
 - [ ] **Specialty trade OPEN items:** the bargain goods' schedule (`-special-goods` stands in), timed
       job 7 (0x18d1), the 0x42404 mode, `FUN_0061aa40`'s rule list, a party's share of a sale, the
       CIFSpecialtyDeal calculator's OK and the Sell All packets, the stock's write-back, the goods of a

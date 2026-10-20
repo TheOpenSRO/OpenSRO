@@ -42,9 +42,10 @@ import (
 // OURS, disclosed: the tick (cosTick); a pet that falls more than
 // cosWarpRange behind is put back at its follow point beside its owner
 // (cosSidePoint; retail has no such leash: FOLLOW, s:FUN_00549ac0, has no
-// distance cap or teleport, READ round 796); monsters do not target a COS (their AI knows
-// characters only): a pet's blows are booked to its owner, whom the monster
-// then answers.
+// distance cap or teleport, READ round 796); a pet's blows are booked to its
+// owner, whom the monster then answers. Since round 804 a monster whose
+// tactics scan the COS (the NPC thieves' and hunters' rows) may take a
+// transport or a growth pet as its target (mobcos.go).
 
 const (
 	cosTick       = 100 * time.Millisecond

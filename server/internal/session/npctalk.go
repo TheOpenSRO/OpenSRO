@@ -355,4 +355,7 @@ func handleNPCEnd(sess *gateway.Session, data []byte, hub *world.Hub) {
 	// Round 802 (safetrade.go): a trader closing a specialty trader's
 	// dialog may earn a safe trade.
 	safeTradeOnEnd(context.Background(), sess, hub, endedNPC, endedMode)
+	// Round 804 (caravan.go): and, his transport holding goods, registers
+	// his caravan.
+	caravanOnEnd(context.Background(), sess, hub, endedNPC, endedMode)
 }

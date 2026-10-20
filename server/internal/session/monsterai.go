@@ -1195,11 +1195,8 @@ func (a *monsterAI) update(b *brain) {
 		// the engine's own (`GetLifeState() == 1`, round 549: a player dead
 		// under -player-dead-state is no target); the rest of OpenSRO's
 		// validity test is its own, disclosed: in world.Hub, same zone.
-		var e world.Entity
-		ok := false
-		if a.world != nil {
-			e, ok = a.world.EntityByCharacterID(b.target)
-		}
+		// Round 804 (mobcos.go): a COS target from the COS world.
+		e, ok := a.targetEntity(b.target)
 		// Only the first attacker is the target (the rule-0 stand-in in
 		// onStruck), so when that player leaves, the monster goes by this
 		// exit even while another player's keep-up is on it; that player's
@@ -1334,6 +1331,8 @@ func (a *monsterAI) acquire(b *brain) bool {
 			}
 		}
 	}
+	// Round 804 (mobcos.go): the COS, for a row whose flags scan them.
+	cands = a.cosCandidates(context.Background(), b, cands)
 	a.candBuf = cands
 	sort.Slice(cands, func(i, j int) bool { return cands[i].ID < cands[j].ID })
 	pick, dist, ok := ai.Nearest(cands, b.m.X, b.m.Z, b.detection)
@@ -1379,11 +1378,8 @@ func (a *monsterAI) acquire(b *brain) bool {
 // is back on its feet at once (monsterStrike's RespawnHP), so the strike
 // worker reports the kill (kills) and the next tick takes the same 0x23 exit.
 func (a *monsterAI) battleTick(b *brain) {
-	var e world.Entity
-	ok := false
-	if a.world != nil {
-		e, ok = a.world.EntityByCharacterID(b.target)
-	}
+	// Round 804 (mobcos.go): a COS target from the COS world.
+	e, ok := a.targetEntity(b.target)
 	_, killed := a.kills[b.id]
 	delete(a.kills, b.id)
 	// Round 786 (arrival.go): an untouchable target -- held out of the world
@@ -1647,6 +1643,11 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		}
 	}()
 	ctx := context.Background()
+	// Round 804 (mobcos.go): a swing at a COS.
+	if isCOSUID(job.target) {
+		a.runCOSStrike(id, job)
+		return
+	}
 	// One world-hub read for the dead check and the level. A swing handed
 	// over before its target died -- another monster's kill, or this one's
 	// own previous swing, landing inside the hand-off window -- is not made:

@@ -749,5 +749,15 @@ func jobMobMayTarget(code string, characterID int64) bool {
 	if kind == 0 {
 		return true
 	}
+	// A COS is judged by its owner (s:0x4d2880 / 0x4d28b0; round 804).
+	if isCOSUID(characterID) {
+		o := cosWorld.get(uint32(characterID))
+		if o == nil {
+			return false
+		}
+		cosWorld.mu.Lock()
+		characterID = o.owner
+		cosWorld.mu.Unlock()
+	}
 	return jobs.MobMayTarget(kind, jobStateNow(context.Background(), characterID))
 }
