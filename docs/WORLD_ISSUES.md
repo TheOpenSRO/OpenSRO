@@ -7483,6 +7483,27 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-eighth round: a walking rider's mount walks
+
+The user (2026-10-20, on v0.1.558): "when you walk instead of run with them they might have a different
+animation. Example in the original game pegasus will fly a little while running but will not when
+walking. Ours has pegasus flying even while walking". Released on its own, at the user's request.
+
+- **READ.** Retail puts a rider's Walk/Run on the mount: 0x30BF kind 1 (`FUN_008a80a0` case 1) resolves
+  the object through `FUN_009cec60`, the mount while the body rides (`FUN_009ce930`, +0x2ac), and
+  `GlobalDataManager::FUN_009ca430` sets its run flag +0x25d and speed index +0x678 (0 walk, 1 run),
+  restarting its moving state. The mount then moves at its walk speed (+0x66c) with its walk clip.
+- **Ours.** `_cos_place_riders` played TYPE_RUN whenever the rider moved. It now plays TYPE_WALK while
+  the rider is in Walk (`_rider_walking`: `_walk_mode`, or `_other_walking` for another player), falling
+  back to the run clip for a model with none (`_cos_mount_gait`). A walking rider's legs also moved at
+  the rider's own foot walk speed (16); they take the mount's WalkSpeed now (`_gait_speed`,
+  `_other_speed`, `_rider_walk_speed`), as the server already did (motion.go). INFERRED: one who mounts
+  while walking keeps walking (the server's speed agrees).
+- **MEASURED** (box, a level-30 GM, the pegasus scroll 22933, click moves; `OPENSRO_QA_COS` gained
+  `walkrun`, the state line the mount's clip): running `c_pegasus_run` at 150/s; after Walk
+  `c_pegasus_walk` at 45/s (379 -> 469 in 2.0 s); Run again `c_pegasus_run`.
+- **Tests.** UI/animation only (the mount's clip and speed): no perf gate.
+
 ## Seven-hundred-and-ninety-seventh round: the pet's name in brackets, and the owner line's gap
 
 The user (2026-10-19, on v0.1.557, with screenshots): "The names are still colliding" (ours: "deadass3"

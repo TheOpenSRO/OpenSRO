@@ -22002,8 +22002,12 @@ func _note_other_speed(character_id: int, run_speed: int) -> void:
 		leg["speed"] = float(run_speed)
 
 func _other_speed(character_id: int) -> float:
-	# A walker's legs at its walk speed (round 781, _apply_other_walk_mode).
+	# A walker's legs at its walk speed (round 781, _apply_other_walk_mode);
+	# a walking rider's at its mount's (round 798).
 	if _other_walking.has(character_id):
+		var mount_walk := _rider_walk_speed(character_id)
+		if mount_walk > 0.0:
+			return mount_walk
 		return float(_other_walking[character_id])
 	return float(_other_speeds.get(character_id, OtherWalk.DEFAULT_SPEED))
 
@@ -28054,6 +28058,11 @@ var _quickslot_actions := {}
 func _gait_speed() -> float:
 	if not _walk_mode:
 		return _move_speed
+	# Round 798: a walking rider moves at its mount's walk speed (s:0x4aa410,
+	# the server's motionSpeed), not its own feet's.
+	var mount_walk := _rider_walk_speed(_own_id())
+	if mount_walk > 0.0:
+		return mount_walk
 	var row: Array = _speeds_by_code.get(_player_body, [])
 	if row.size() == 2 and float(row[0]) > 0.0:
 		return float(row[0])
@@ -32218,11 +32227,14 @@ func _cos_place_riders() -> void:
 		# The root's yaw is its heading (the player's skeleton is turned PI
 		# under it); the mount's skeleton is not, so its front is taken off.
 		mount.rotation.y = RemoteFacing.yaw_of(RemoteFacing.heading_of_yaw(root.rotation.y, 0.0), _cos_front())
-		# The mount's gait is its rider's: run while the rider moves.
-		var moving := _rider_moving(int(rider))
-		if bool(mount.get_meta("cos_moving", false)) != moving:
-			mount.set_meta("cos_moving", moving)
-			_cos_gait(uid, BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND)
+		# The mount's gait is its rider's: walk or run while the rider moves,
+		# by the rider's Walk/Run (round 798; see _rider_walking).
+		var gait := BsrReader.AnimationEntry.TYPE_STAND
+		if _rider_moving(int(rider)):
+			gait = BsrReader.AnimationEntry.TYPE_WALK if _rider_walking(int(rider)) else BsrReader.AnimationEntry.TYPE_RUN
+		if int(mount.get_meta("cos_gait", -1)) != gait:
+			mount.set_meta("cos_gait", gait)
+			_cos_mount_gait(uid, gait)
 		# Round 796: the rider's plate over the mount, and its weapon and
 		# shield off -- re-applied to a skeleton a re-dress rebuilt.
 		_raise_rider_plate(int(rider), mount, true)
@@ -32255,6 +32267,36 @@ func _rider_skeleton(rider: int) -> Skeleton3D:
 	if gait.is_empty() or not is_instance_valid(gait.get("skeleton")):
 		return null
 	return gait["skeleton"]
+
+## Round 798: whether a rider is in Walk. Retail puts a rider's Walk/Run on
+## its MOUNT (READ: 0x30BF kind 1, FUN_008a80a0 case 1, calls FUN_009cec60,
+## which answers the mount -- FUN_009ce930, +0x2ac -- while the body rides,
+## and GlobalDataManager::FUN_009ca430 sets that object's run flag +0x25d and
+## its speed index +0x678, 0 walk / 1 run, restarting a moving state 9). The
+## mount's moving clip is then its walk, which is why a pegasus only flies at
+## a run. OpenSRO keeps the flag on the rider (_walk_mode, _other_walking),
+## the same bit. INFERRED: a body that mounts already walking keeps walking
+## (the server's motionSpeed takes the COS walk speed for it, motion.go).
+func _rider_walking(rider: int) -> bool:
+	if rider == _own_id():
+		return _walk_mode
+	return _other_walking.has(rider)
+
+## Round 798: a rider's mount's walk speed, 0.0 when it does not ride.
+func _rider_walk_speed(rider: int) -> float:
+	if not _riders.has(rider):
+		return 0.0
+	var rec: CosSpawnNet.Record = _cos_recs.get(int(_riders[rider]))
+	return rec.walk if rec != null else 0.0
+
+## A ridden mount's loop. A model with no walk clip runs (so a gait never
+## sticks on the clip it had).
+func _cos_mount_gait(uid: int, gait: int) -> void:
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+	if gait == BsrReader.AnimationEntry.TYPE_WALK and assembled != null \
+			and MonsterMotion.gait_clip(_data_pk2, assembled, gait) == null:
+		gait = BsrReader.AnimationEntry.TYPE_RUN
+	_cos_gait(uid, gait)
 
 func _rider_moving(rider: int) -> bool:
 	if rider == _own_id():
@@ -32337,7 +32379,7 @@ func _cos_unseat(rider: int) -> void:
 			_foot_move_speed = -1.0
 	var mount: Node3D = _cos_bodies.get(uid)
 	if mount != null and is_instance_valid(mount):
-		mount.remove_meta("cos_moving")
+		mount.remove_meta("cos_gait")
 		_cos_gait(uid, BsrReader.AnimationEntry.TYPE_STAND)
 		if _cos_recs.has(uid):
 			_cos_label(mount, _cos_recs[uid])
@@ -32431,7 +32473,8 @@ var _qa_cos_last := {}
 ## first ride or transport), unsummon / terminate / follow (the first COS of
 ## that kind), name=<text> (the first pet), pick=<flags> (the first ability
 ## pet's pickup settings), walk=<deg> (the QA walk's heading; walk=off),
-## goto=<dx>,<dz> (a click move that far from the player).
+## goto=<dx>,<dz> (a click move that far from the player), walkrun (the
+## Walk/Run toggle, round 798).
 ## Every tick it logs "QA COS" lines; OPENSRO_QA_COS_LOG=1 adds a state line
 ## every 60 ticks.
 var _qa_cos_spec := OS.get_environment("OPENSRO_QA_COS")
@@ -32469,9 +32512,16 @@ func _qa_cos_step() -> void:
 			var fwd := Vector2(front.x, front.z).normalized().dot(Vector2(stepv.x, stepv.z).normalized()) if Vector2(stepv.x, stepv.z).length() > 1.0 else 0.0
 			var lbl := b.get_node_or_null("Label") as Label3D
 			var olbl := b.get_node_or_null("OwnerLabel") as Label3D
-			parts.append("%d@(%.0f,%.1f,%.0f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f" % [int(uid), b.global_position.x, b.global_position.y,
+			# Round 798: the loop the body plays (a ridden mount's walk or run).
+			var clip := "-"
+			var asm: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid)
+			if asm != null:
+				for e in _animated:
+					if (e as Array)[0] == asm.skeleton and (e as Array)[1] != null:
+						clip = ((e as Array)[1] as BanReader.ParsedAnimation).animation_name
+			parts.append("%d@(%.0f,%.1f,%.0f) meshes %d shown %d box %s front.step %.2f ground %.1f name '%s' owner '%s' offset %.0f clip %s" % [int(uid), b.global_position.x, b.global_position.y,
 				b.global_position.z, meshes, shown, str(box), fwd, _cos_ground(b.global_position),
-				lbl.text if lbl != null else "-", olbl.text if olbl != null else "-", olbl.offset.y if olbl != null else 0.0])
+				lbl.text if lbl != null else "-", olbl.text if olbl != null else "-", olbl.offset.y if olbl != null else 0.0, clip])
 		var held := ""
 		if _player_skeleton != null:
 			for c in _player_skeleton.get_children():
@@ -32487,9 +32537,9 @@ func _qa_cos_step() -> void:
 							(fx as EfpEffect).placed_at().x - player.global_position.x, (fx as EfpEffect).placed_at().z - player.global_position.z]
 		var pplate := player.get_node_or_null("Name") as Label3D
 		var pfront := -_player_skeleton.global_transform.basis.z if _player_skeleton != null else Vector3.ZERO
-		print("QA COS state tick %d: own %s bodies [%s] riders %s player (%.0f,%.0f) speed %.0f plate y %.1f held%s rider front (%.2f,%.2f)" % [_qa_tick,
+		print("QA COS state tick %d: own %s bodies [%s] riders %s player (%.0f,%.0f) speed %.0f gait %.1f %s plate y %.1f held%s rider front (%.2f,%.2f)" % [_qa_tick,
 			str(NetClient.cos_own.keys()), ", ".join(parts), str(_riders), player.global_position.x, player.global_position.z, _move_speed,
-			pplate.position.y if pplate != null else -1.0, held, pfront.x, pfront.z])
+			_gait_speed(), "walking" if _walk_mode else "running", pplate.position.y if pplate != null else -1.0, held, pfront.x, pfront.z])
 	for entry in _qa_cos_spec.split(";", false):
 		var at := String(entry).split(":", true, 1)
 		if at.size() != 2:
@@ -32545,6 +32595,9 @@ func _qa_cos_step() -> void:
 			"walk":
 				_qa_walk = "" if arg == "off" else arg
 				print("QA COS: tick %d walk %s" % [_qa_tick, arg])
+			"walkrun":
+				# Round 798: the Walk/Run toggle (0x704F), as the action button.
+				print("QA COS: tick %d walkrun %s" % [_qa_tick, _request_walk_run()])
 			"cmd":
 				# A GM line at this tick (e.g. cmd=/spawn mangyang 4).
 				print("QA COS: tick %d cmd %s" % [_qa_tick, arg])

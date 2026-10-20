@@ -498,6 +498,15 @@ transform (ICharactor::FUN_009d05d0), plays the rider's "cart" group (0 `cart_st
   (NAME_PLATE_PIXEL_SIZE), so the 20 is converted through `_monster_plate_pixel_size()`.
 - **Speed.** Riding, the rider's speeds are the mount's (s:0x4aa410, no multiplier, round 795): a buff
   started or ended while riding does not change them; the dismount's 0x30D0 gives the buffed foot speed.
+- **Walk on a mount (round 798, READ).** The rider's Walk/Run goes to the MOUNT: 0x30BF kind 1
+  (`FUN_008a80a0` case 1) calls `FUN_009cec60`, which answers the mount (`FUN_009ce930`, +0x2ac) while the
+  body rides, and `GlobalDataManager::FUN_009ca430` sets that object's run flag +0x25d and speed index
+  +0x678 (2 walk: 0, 0; 3 run: 1, 1), restarting a moving state (9). The speed is +0x66c (walk) or +0x670
+  (run) by the index (`+0x66c + [+0x678]*4`: c:0xa59710, c:0x9eb8e0), and the moving clip follows the flag. So a mount
+  walks at its row's WalkSpeed with its walk clip when the rider walks -- a pegasus flies only at a run
+  (MEASURED: `c_pegasus_walk` at 45/s walking, `c_pegasus_run` at 150/s running). The server already
+  took the COS's walk speed for a walking rider (motion.go `motionSpeed`). An unridden COS picks its gait
+  by speed instead: run above 20.0 (`CICCos::vslot_009` 0x9c59c0, 20.0 at 0xd88108).
 
 ### Round 796: FOLLOW's point and the arrival (READ, SR_GameServer.exe)
 
