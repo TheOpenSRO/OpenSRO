@@ -7535,6 +7535,11 @@ guild, 800 the suits; 802 the PvP). docs/protocol/jobs.md "Specialty trade" has 
   Details: 12 stores, Jangan's 34 rows, every one at 110 % with its origin trade center. Two fixes the run
   found: the window's quotation rows are authored 133 wide over a 371-wide row layout (unclipped now), and
   the COS window and the job windows each raise their layer over the other when opened.
+- **Perf gate** (`--base 2801b0be --sites jangan --frames 60000`, 1280x720, median of 3; the plates' job
+  marks and the strip bars of round 800 are the world drawing changed): frame 0.90 / 0.90 ms SAME, entry
+  8628 / 8565 ms SAME, freeze 2726 / 2732 ms SAME, hitches 5 / 5 SAME. The gate's default 3000 frames now
+  pass in a few seconds on the box's RX 7600 (~1.1 ms a frame) and leave no frame samples ("missing
+  numbers"): 60000 frames were needed.
 
 ## Eight-hundredth round: the job suit
 
