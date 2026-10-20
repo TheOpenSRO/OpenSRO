@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.559** plus what is merged on `dev`; updated 2026-10-20.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.560** plus what is merged on `dev`; updated 2026-10-20.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -17,8 +17,8 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
 | [Social](#social) | 9 | 4 |  | 5 | 18 |
-| [Job / trade](#job--trade) |  |  |  | 3 | 3 |
-| [Pets & mounts](#pets--mounts) | 4 |  |  | 1 | 5 |
+| [Job / trade](#job--trade) | 3 |  |  | 1 | 4 |
+| [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
 | [UI / HUD](#ui--hud) | 14 | 4 |  | 1 | 19 |
 | [Graphics & effects](#graphics--effects) | 13 | 1 |  |  | 14 |
@@ -27,11 +27,11 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **147** | **33** | **1** | **41** | **222** |
+| **All** | **151** | **33** | **1** | **38** | **223** |
 
 ## Biggest gaps
 
-- No trader/hunter/thief jobs or trade runs
+- Job PvP not yet: thieves cannot rob traders, no NPC thieves or hunters
 - No player stalls, consignment or item mall
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
@@ -249,17 +249,18 @@ Chat, full party system, party matching and basic guilds.
 
 ## Job / trade
 
-The trader, hunter and thief system is not built yet.
+The trader, hunter and thief jobs from the original's own rules: the job guilds, the suits and the specialty trade. Job PvP and the NPC thieves and hunters are next.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Trader, hunter, thief jobs | ❌ Not yet | Job NPC says not available yet; no thieves' town |
-| Job suits | ❌ Not yet | Not yet |
-| Trade goods and specialty runs | ❌ Not yet | Not yet |
+| Trader, hunter, thief jobs | ✅ Supported | Join at the job guild NPCs (fee, 7-day penalty on leaving), aliases, last week's rankings, the weekly reward pools, the previous job |
+| Job suits | ✅ Supported | The 10-second change with its bar over the head; job names and icons on the plates, the job target window, the job rows of the character window |
+| Trade goods and specialty runs | ✅ Supported | Buy goods into a transport at a trade center, sell at another town's quotation (each sale lowers the price, which recovers every 10 minutes), trade scale stars, job EXP, contribution, Trade Export Details; stolen goods sell only at the thief den |
+| Job PvP, NPC thieves and hunters | ❌ Not yet | Thieves robbing traders, hunters guarding them, ambushes on a caravan |
 
 ## Pets & mounts
 
-Pets, horses and the item mall's rides from the original's own rules; trade transports wait for the job system.
+Pets, horses, the item mall's rides and the trade transports from the original's own rules.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -267,7 +268,7 @@ Pets, horses and the item mall's rides from the original's own rules; trade tran
 | Growth and fellow pets | ✅ Supported | Follow, fight what the owner attacks, gain EXP and level up, hunger, naming once |
 | Horses and rides | ✅ Supported | Horses, tigers, beetles, ostriches and the other ride scrolls: summoned at the owner's level bracket, ridden at the mount's speed; Walk or Run on a mount plays its walk or run (a pegasus flies only at a run) |
 | Pet controls | ✅ Supported | Pet window, status slot, command bar, the retail pet keys, pet potions, revival and clocks; the Test Items NPC sells pets and rides |
-| Trade transports | ❌ Not yet | Refused until the job system exists |
+| Trade transports | ✅ Supported | For a trader or thief in a suit: the goods bag sized by level, the 100 m leash, goods dropped when it dies or is dismissed, no teleport scrolls with a cart (the thief den's excepted) |
 
 ## Events / special
 
