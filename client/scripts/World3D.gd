@@ -9299,6 +9299,13 @@ func _step_monster_plate_scale() -> void:
 			continue
 		FontOversampling.label3d_pixel_size(plate, size)
 		_fit_monster_name_box(plate)
+	# Round 797: a COS's owner line keeps its screen-pixel gap.
+	for uid in _cos_bodies:
+		var cb: Node3D = _cos_bodies[uid]
+		if cb != null and is_instance_valid(cb):
+			var ol := cb.get_node_or_null("OwnerLabel") as Label3D
+			if ol != null:
+				ol.offset.y = _cos_owner_offset(ol)
 
 ## Where a name sits over a model, how large it draws, and in what colour.
 ##
@@ -31796,18 +31803,22 @@ func _cos_kind_of(ref: int) -> int:
 func _cos_display_name(rec: CosSpawnNet.Record) -> String:
 	if rec.name != "":
 		return rec.name
+	# Round 797 (READ CICCos::vslot_034 0x9c6d46..0x9c6d82): with no name, an
+	# owner in no job (the record's job byte 4) gives "No name"
+	# (UIIT_STT_COSNEWUI_TITLE); any other gives the ref's own name -- a
+	# job suit's "< sylph >". Round 795 tried the ref name first.
+	if rec.has_owner_job() and rec.owner_job == 4 and _ui_text_table != null:
+		var none := _ui_text_table.get_text("UIIT_STT_COSNEWUI_TITLE", "")
+		if none != "":
+			return none
 	var row := _cos_table.row(rec.ref_id) if _cos_table != null else null
 	if row == null:
 		return ""
 	var names := _object_names()
 	var text := names.get_text(row.name_key, "") if names != null and row.name_key != "" else ""
-	if text != "":
-		return text
-	# A pet with no name and an owner in no job: "No name" (READ 0x9c6d46,
-	# UIIT_STT_COSNEWUI_TITLE).
-	if rec.is_pet() and _ui_text_table != null:
-		return _ui_text_table.get_text("UIIT_STT_COSNEWUI_TITLE", "")
-	return row.code
+	return text if text != "" else row.code
+
+
 
 ## The owner line: the owner's name, "*name" in a job, "[name]" for a soldier
 ## (READ, ICCos::FUN_009c5ea0).
@@ -31918,7 +31929,7 @@ func _cos_label(body: Node3D, rec: CosSpawnNet.Record) -> void:
 	var ridden := _cos_rider_of(rec.uid) >= 0
 	var label: Label3D = body.get_node_or_null("Label")
 	if label != null:
-		label.text = "" if ridden else _cos_display_name(rec)
+		label.text = "" if ridden else CosSpawnNet.plate_text(_cos_display_name(rec))
 		label.modulate = COS_NAME_COLOUR
 	var owner_label: Label3D = body.get_node_or_null("OwnerLabel")
 	if owner_label != null:
@@ -32011,11 +32022,16 @@ func _cos_plate_height(mount: Node3D) -> float:
 			return size * COS_SIZE_HEIGHT
 	return float(mount.get_meta("cos_height", 0.0))
 
-## The owner line's offset in its plate's font pixels (COS_OWNER_LINE_OFFSET
-## screen pixels).
-static func _cos_owner_offset(label: Label3D) -> float:
-	var fk := FontOversampling.factor() if label.has_meta(FontOversampling.META) else 1.0
-	return COS_OWNER_LINE_OFFSET * fk
+## The owner line's offset in its plate's own offset units, so that it is
+## COS_OWNER_LINE_OFFSET screen pixels (x the UI scale, as the plates' text)
+## whatever the plate's pixel size: an offset unit is `pixel_size` world
+## units at the fixed size, a screen pixel _monster_plate_pixel_size().
+## Round 797: round 796 took the plate's font pixels for screen pixels, but
+## a COS plate's pixel size is NAME_PLATE_PIXEL_SIZE, not the monsters'
+## screen-exact one -- at the user's 1262-row window the 20 came out about 7
+## screen pixels and the lines still overlapped.
+func _cos_owner_offset(label: Label3D) -> float:
+	return COS_OWNER_LINE_OFFSET * _monster_plate_pixel_size() / maxf(label.pixel_size, 1e-9)
 
 ## Round 796: a rider's plate at its mount's height + COS_RIDER_PLATE_RAISE,
 ## or back at its own height (`on` false). Its node is the rider root's

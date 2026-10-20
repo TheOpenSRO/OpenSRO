@@ -488,9 +488,14 @@ transform (ICharactor::FUN_009d05d0), plays the rider's "cart" group (0 `cart_st
   0xe1b7d0). The row is found by code, then by the ref's +0x5c, then the default -- the first row
   registered (`FUN_00a9ae30`: CHAR_CH_MAN_ADVENTURER, Size 2). So a tiger's rider's plate is at
   1.8 x 10 + 7 = 25, a horse's 32, Rudolph's (no row) 27. INFERRED: +0xc4 (scale) is 1.0.
-- **The pet's name is plain.** `CICCos::vslot_034` converts the record's name (`FUN_004fc7f0`, ANSI to
-  wide) and sets it; there is no "< %s >" anywhere in the client. A private server's "< Jeremy >" is
-  its own.
+- **The name line is "< name >"** (corrected in round 797; round 796 said plain, having searched only
+  for one "<%s>" string). `GlobalDataManager::FUN_009cbb90` (vtable slot 29, the name setter) builds the
+  plate text for a CICCos (0xeef6f0) with a name as L"< " (0xde2480) + name + L" >" (0xde2478); the
+  COS's slot 27 (0x9d17e0) calls it with its plate flag 1 at 0x9d1a01 when it spawns. The name is the
+  record's; with none, an owner in no job (job byte 4) gives "No name" (UIIT_STT_COSNEWUI_TITLE) and any
+  other the ref's own name -- a job suit's "< sylph >" (`CICCos::vslot_034` 0x9c6d46..0x9c6d82).
+- **The owner line's gap is 20 SCREEN pixels** (round 797): a COS plate's pixel size is not screen-exact
+  (NAME_PLATE_PIXEL_SIZE), so the 20 is converted through `_monster_plate_pixel_size()`.
 - **Speed.** Riding, the rider's speeds are the mount's (s:0x4aa410, no multiplier, round 795): a buff
   started or ended while riding does not change them; the dismount's 0x30D0 gives the buffed foot speed.
 

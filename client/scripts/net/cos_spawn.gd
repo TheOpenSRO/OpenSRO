@@ -66,6 +66,19 @@ class Record:
 	func is_pet() -> bool:
 		return kind == KIND_GROWTH or kind == KIND_ABILITY
 
+	## Whether the record carries the owner's job byte (TypeID4 2..5).
+	func has_owner_job() -> bool:
+		return kind >= KIND_TRANSPORT and kind <= KIND_SOLDIER
+
+## Round 797: the name line's text, a COS's name between "< " and " >"
+## (READ, GlobalDataManager::FUN_009cbb90, vtable slot 29: for a CICCos,
+## 0xeef6f0, with a name, L"< " (0xde2480) + name + L" >" (0xde2478); the
+## COS's slot 27 0x9d17e0 calls it with its plate flag 1 at 0x9d1a01 when it
+## spawns). Round 796 said vSRO had no brackets: it had searched the client
+## for one "<%s>" string only. "" for no name.
+static func plate_text(name: String) -> String:
+	return "< %s >" % name if name != "" else ""
+
 ## One record from r, the RefObjID's TypeID4 given (kind). null with r.error
 ## set on a bad record.
 static func read_record(r: NpcSpawnNet.Reader, kind: int) -> Record:

@@ -7483,6 +7483,30 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Seven-hundred-and-ninety-seventh round: the pet's name in brackets, and the owner line's gap
+
+The user (2026-10-19, on v0.1.557, with screenshots): "The names are still colliding" (ours: "deadass3"
+over "Jeremy" and over "Blood Dinosaur"), "it does look like pet names have the "< >" even in iSRO"
+(an iSRO picture: "Noyze" over "< Wolfinho >"), and a 2010 one: "< sylph >" -- "they're in a job suit
+which hides the pet name".
+
+- **The brackets (READ; round 796 was wrong).** `GlobalDataManager::FUN_009cbb90`, vtable slot 29 (the
+  name setter every CICharactor shares), builds a CICCos's plate text as L"< " (0xde2480) + name +
+  L" >" (0xde2478) when it has a name; the COS's slot 27 (0x9d17e0) calls it with the plate flag 1 at
+  0x9d1a01 as it spawns. Round 796 searched the client for a "<%s>" format string, found none and
+  told the user vSRO had no brackets. `CosSpawnNet.plate_text`.
+- **No name (READ).** `CICCos::vslot_034`: with no name, an owner in no job (job byte 4) shows "No name"
+  (UIIT_STT_COSNEWUI_TITLE) and any other the ref's own name -- the job suit's "< sylph >". Ours tried the
+  ref name first.
+- **The gap (ours).** Round 796 converted the 20 screen pixels through FontOversampling only; a COS plate
+  is sized by NAME_PLATE_PIXEL_SIZE, not the monsters' screen-exact size, so at the user's 1262-row window
+  the gap came out about 7 screen pixels. `_cos_owner_offset` now divides the screen pixel
+  (`_monster_plate_pixel_size()`) by the plate's own pixel size, and the monsters' re-fit on a window,
+  UI-scale or fov change re-fits the owner lines too. MEASURED (a 1280x720 frame): "Kilo" 20 pixels
+  over "< No name >".
+- **Tests.** cos_net_test (the brackets, the job byte); `tests` "ran 340 suite(s), 0 failing"; `check`
+  ALL LOAD. UI-only (plates): no perf gate.
+
 ## Seven-hundred-and-ninety-sixth round: the mount's facing, the rider's weapon, plates and the pets' ground
 
 The user (2026-10-19, on v0.1.556, with screenshots): on Rudolph "It should only show limited skill
@@ -7514,7 +7538,8 @@ original code". docs/protocol/pets.md "Round 796" has every address.
   at the mount's Size x 10 + 7.0 (characterInfo Size, found by code, OrgCodeName, then the first row:
   `AudioService.character_size`); the owner line is 20.0 SCREEN pixels over the name -- ours set 20 of
   the plate's font pixels, which FontOversampling multiplies, so the lines overlapped. The pet's name
-  is plain in vSRO 1.188: the "< Jeremy >" brackets are the private server's own. MEASURED: Rudolph's
+  is plain in vSRO 1.188: the "< Jeremy >" brackets are the private server's own (WRONG: round 797 found
+  them in the client). MEASURED: Rudolph's
   rider 27.0 (no row: the default Size 2), the tiger's 25.0 (Size 1.8), the mount's lines empty while
   ridden.
 - **Underground and floating (ours).** A COS took the terrain ray alone (`_terrain_hit_height`, the

@@ -34,6 +34,11 @@ func _init() -> void:
 	_check(g != null and g.uid == 0x7e000002 and g.ref_id == 6106 and g.name == "Rex" and g.owner_name == "Kilo" \
 		and g.owner_job == 4 and g.owner_pvp == 0 and g.owner_uid == 1 and g.spawn_type == 1 and g.run == 75.0,
 		"a growth pet's 0x3015: its name, its owner's name, job, PvP and uid, the spawn type")
+	# Round 797 (READ FUN_009cbb90): a COS's name line is "< name >"; none without a name.
+	_check(CosSpawnNet.plate_text("Jeremy") == "< Jeremy >" and CosSpawnNet.plate_text("") == "",
+		"the name line wraps the name in '< ' and ' >'")
+	_check(g.has_owner_job(),
+		"a growth pet's record carries the owner's job byte")
 	var r := NpcSpawnNet.Reader.new(RIDE.hex_decode())
 	var ride := CosSpawnNet.read_record(r, 1)
 	_check(ride != null and r.pos == RIDE.length() / 2 and ride.owner_uid == 0 and ride.has_dest \
