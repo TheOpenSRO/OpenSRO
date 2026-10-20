@@ -7483,6 +7483,22 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-third round: the COS status slots of a session that ended
+
+The user (2026-10-20, on v0.1.560, with a screenshot): "The pet icons at the top right by the minimap are
+stuck there even though none are spawned and I tried reconnecting and they're still there. It seemed to
+happen after the server restart." Released on its own.
+
+- **MEASURED (prod).** The server held no summoned COS for the character: `char_cos` had no row owned by
+  it, and its pets' rows were stored (state 1, not summoned). Nothing on the server named the three COS.
+- **Cause (client).** `NetClient.cos_own` -- every 0x30C8 told this client, kept so a world scene that
+  comes up after the message still learns its COS -- was never cleared. A server restart (or any lost
+  connection) sends no 0x30C9 removal, so the next entry's world scene re-added every COS of the old
+  session as a status slot (`_hud_cos_setup`: "This character's COS told before this world came up").
+- **Fix.** The cache is emptied when the client disconnects and at every world entry request
+  (`_forget_session_lists`); the entry's own COS arrive with their 0x30C8 after it.
+- **Tests.** Client compile check, hud_cos and cos_net suites. Client-only: the server is not restarted.
+
 ## Eight-hundred-and-first round: specialty trade -- the transport's goods, the quotations, the trade scale
 
 The user (2026-10-20): "Let's get the job (trader, thief, hunter) system fully implemented based off client

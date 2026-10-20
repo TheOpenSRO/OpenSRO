@@ -928,6 +928,7 @@ func disconnect_from_server() -> void:
 	_attack_types_in_flight.clear()
 	_pending_learns.clear()
 	own_character_id = -1
+	cos_own = {}
 	buff_roster.clear()
 	npc_roster.clear()
 	user_roster.clear()
@@ -1096,6 +1097,11 @@ func _forget_session_lists() -> void:
 	last_friend_list = []
 	has_friend_list = false
 	quest.reset()
+	# A new entry starts with no COS (round 803 fix): the server tells this
+	# entry's own with 0x30C8 after it. Kept, the COS of the last session --
+	# a disconnect or a server restart sends no 0x30C9 removal -- came back
+	# as status slots with nothing behind them.
+	cos_own = {}
 
 ## The current zone label, updated from last_enter_world_result.zone on
 ## entering the world and again from a successful change_zone_result --
