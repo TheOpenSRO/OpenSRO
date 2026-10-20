@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.562** plus what is merged on `dev`; updated 2026-10-20.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.563** plus what is merged on `dev`; updated 2026-10-20.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -17,7 +17,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Items](#items) | 17 | 4 |  | 3 | 24 |
 | [Economy](#economy) | 2 | 1 |  | 5 | 8 |
 | [Social](#social) | 9 | 4 |  | 5 | 18 |
-| [Job / trade](#job--trade) | 5 |  |  | 1 | 6 |
+| [Job / trade](#job--trade) | 6 |  |  |  | 6 |
 | [Pets & mounts](#pets--mounts) | 5 |  |  |  | 5 |
 | [Events / special](#events--special) |  | 1 |  | 9 | 10 |
 | [UI / HUD](#ui--hud) | 14 | 4 |  | 1 | 19 |
@@ -27,11 +27,10 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **153** | **33** | **1** | **38** | **225** |
+| **All** | **154** | **33** | **1** | **37** | **225** |
 
 ## Biggest gaps
 
-- No NPC thieves or hunters on trade runs yet
 - No player stalls, consignment or item mall
 - No open-world PvP, fortress war or arena events
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
@@ -249,7 +248,7 @@ Chat, full party system, party matching and basic guilds.
 
 ## Job / trade
 
-The trader, hunter and thief jobs from the original's own rules: the job guilds, the suits, the specialty trade and job PvP. The NPC thieves and hunters are next.
+The trader, hunter and thief jobs from the original's own rules: the job guilds, the suits, the specialty trade, job PvP and the NPC thieves and hunters.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -258,7 +257,7 @@ The trader, hunter and thief jobs from the original's own rules: the job guilds,
 | Trade goods and specialty runs | ✅ Supported | Buy goods into a transport at a trade center, sell at another town's quotation (each sale lowers the price, which recovers every 10 minutes), trade scale stars, job EXP, contribution, Trade Export Details; stolen goods sell only at the thief den |
 | Job PvP | ✅ Supported | Thieves against traders and hunters outside towns, with the original's rules (party, level 20, the one-star caravan's protection); opposed names drawn red, the original's click and Alt-click, skills on a player or a transport; a job death costs job and character EXP and nothing else, the killer earns job EXP and EXP |
 | Safe trade | ✅ Supported | A trader's one-star run of normal goods is protected from player thieves, eight times a day, with its icon and messages |
-| NPC thieves and hunters | ❌ Not yet | Ambushes on a caravan, hunters guarding it |
+| NPC thieves and hunters | ✅ Supported | Every 60 to 120 seconds a trade run outside town draws a wave of NPC thieves (round a trader) or NPC hunters (round a thief), its size from the goods carried, its level from the trader's; they go for the trader and the transport, and a transport they kill drops its goods |
 
 ## Pets & mounts
 
