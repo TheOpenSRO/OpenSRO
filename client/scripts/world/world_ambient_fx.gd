@@ -73,6 +73,15 @@ class_name WorldAmbientFx
 ##   resumes where it stood (MEASURED: at the perf gate's Jangan view the
 ##   dragon fountain's four `multigi.efp`, 200 units behind the camera, were
 ##   +0.10 ms a frame stepped by their cull boxes).
+## - Round 807 (the user's report: the lamps' effects popped out of view well
+##   short of the fog): with fx_reach set (World3D._apply_fog), every host
+##   plays while its VIEW DEPTH less its radius is below fx_reach -- the fog's
+##   end plus FOG_MARGIN with the fog on, so an effect fades out in the fog
+##   (EfpEffect's fog) before it stops; the camera's far plane, where the
+##   landscape ends, with it off -- in place of the READ 480 / object range
+##   and the 3 x 3 sectors. View depth, not distance, as the fog and the far
+##   plane are: an effect at the screen's edge is as deep in the fog as one
+##   in the middle at its depth. 0 keeps the READ rules.
 ## - The teleport structures and walk-in portals keep round 720's / 774's
 ##   path (World3D._attach_gate_effects, always running); a host one of the
 ##   two paths has built is skipped by the other.
@@ -82,6 +91,16 @@ const NEAR_RANGE := 480.0
 ## How far a lists[2] host's sector centre may lie from the camera, per axis,
 ## and still be one of the 9 nearest sectors (INFERRED, above): 1.5 sectors.
 const NEAR_SECTORS := 1.5
+## How far past the fog's end a host still plays (OURS, round 807): there its
+## effects are fully fogged, so it stops unseen.
+const FOG_MARGIN := 100.0
+## The reach set by World3D (round 807, OURS; the class comment): 0 for the
+## READ ranges.
+static var fx_reach := 0.0
+## How far a host's sector may lie, across, for a depth below fx_reach in the
+## view: depth over the cosine of the widest angle a view's corner makes with
+## its axis -- 2 covers corners to 60 degrees (OURS).
+const REACH_SPREAD := 2.0
 ## How often the hosts' range is decided (OURS).
 const RETEST_MS := 100
 ## How long the effects built in one frame may take (OURS).
@@ -266,9 +285,13 @@ static func sector_centre(root: Node3D) -> Vector3:
 ## Whether a host is in range of `eye` (READ, the class comment): its camera
 ## distance less its radius below the range -- 480 and one of the 3 x 3
 ## sectors around the camera for a lists[2] host, the object range for the
-## rest.
+## rest. With `depth_range` above 0 (round 807, OURS): its depth along
+## `forward` (the camera's view direction) less its radius below
+## `depth_range`, whatever its list.
 static func in_range(origin: Vector3, radius: float, near: bool, sector_centre_at: Vector3, eye: Vector3,
-		far_range: float) -> bool:
+		far_range: float, depth_range: float = 0.0, forward: Vector3 = Vector3.ZERO) -> bool:
+	if depth_range > 0.0:
+		return (origin - eye).dot(forward) - radius < depth_range
 	if near:
 		var reach := NEAR_SECTORS * MapAnimation.SECTOR_SIZE
 		if absf(sector_centre_at.x - eye.x) >= reach or absf(sector_centre_at.z - eye.z) >= reach:
@@ -276,8 +299,9 @@ static func in_range(origin: Vector3, radius: float, near: bool, sector_centre_a
 		return origin.distance_to(eye) - radius < NEAR_RANGE
 	return origin.distance_to(eye) - radius < far_range
 
-## The night flag changed (World3D._night_tick, round 806): decide again at
-## once, so a night-only host in range is built at the first night frame.
+## The night flag changed (World3D._night_tick, round 806) or the reach did
+## (World3D._apply_fx_reach, round 807): decide again at once, so a
+## night-only host in range is built at the first night frame.
 func night_changed() -> void:
 	_changed = true
 
@@ -308,13 +332,13 @@ func wants_view(eye: Vector3, now_ms: int) -> bool:
 ## One rendered frame: the range decided every RETEST_MS (or at once when
 ## hosts came or the camera jumped), builds within the budget, and the
 ## stepping effects stepped as one batch.
-func tick(delta: float, eye: Vector3, planes: Array, now_ms: int) -> void:
+func tick(delta: float, eye: Vector3, planes: Array, now_ms: int, forward: Vector3 = Vector3.ZERO) -> void:
 	if _count == 0:
 		return
 	var t0 := Time.get_ticks_usec()
 	_now_ms = now_ms
 	if _changed or now_ms >= _next_ms or eye.distance_to(_last_eye) > MapAnimation.SECTOR_SIZE:
-		_decide(eye, planes)
+		_decide(eye, planes, forward)
 		_next_ms = now_ms + RETEST_MS
 		_changed = false
 		_last_eye = eye
@@ -331,9 +355,10 @@ func tick(delta: float, eye: Vector3, planes: Array, now_ms: int) -> void:
 	_sum_frames += 1
 
 ## The range decision for every sector that could hold a host in range.
-func _decide(eye: Vector3, planes: Array) -> void:
+func _decide(eye: Vector3, planes: Array, forward: Vector3 = Vector3.ZERO) -> void:
 	var far_range := MapAnimation.object_range
-	var reach := maxf(far_range, NEAR_RANGE) + MapAnimation.BOUND_MARGIN
+	var fx: float = fx_reach if forward != Vector3.ZERO else 0.0
+	var reach: float = maxf(maxf(far_range, NEAR_RANGE), fx * REACH_SPREAD) + MapAnimation.BOUND_MARGIN
 	var dead := false
 	var seen_hosts: Array = []
 	var on_count := 0
@@ -354,7 +379,7 @@ func _decide(eye: Vector3, planes: Array) -> void:
 			var seen := box_in_view(h.view_box, planes)
 			var on := h.on
 			if seen:
-				on = in_range(h.origin, h.radius, h.near, s.centre, eye, far_range)
+				on = in_range(h.origin, h.radius, h.near, s.centre, eye, far_range, fx, forward)
 			if on:
 				quiet = false
 				on_count += 1

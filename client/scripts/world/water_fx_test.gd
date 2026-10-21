@@ -217,6 +217,20 @@ func _test_ranges() -> void:
 	_check(not WorldAmbientFx.in_range(Vector3(0, 0, 1000), 0.0, false, c, eye, MapAnimation.object_range),
 		"the view distance option shrinks the far range (1200 - 480 = 720)")
 	MapAnimation.set_view_distance(MapAnimation.OBJECT_RANGE_SETTING)
+	# Round 807 (OURS): with a reach, the view depth less the radius, whatever
+	# the list -- the fog's end plus the margin, or the far plane.
+	var fwd := Vector3(0, 0, 1)
+	var reach := 2500.0 + WorldAmbientFx.FOG_MARGIN
+	_check(WorldAmbientFx.in_range(Vector3(0, 0, 2550), 0.0, true, Vector3(0, 0, 2560), eye, far, reach, fwd),
+		"a lists[2] lamp at depth 2550: in, past the 480 and the 3 x 3 sectors (fog end 2500 + 100)")
+	_check(not WorldAmbientFx.in_range(Vector3(0, 0, 2650), 0.0, true, Vector3(0, 0, 2560), eye, far, reach, fwd),
+		"at depth 2650: out, fully fogged before it stops")
+	_check(WorldAmbientFx.in_range(Vector3(3000, 0, 1500), 0.0, false, c, eye, far, reach, fwd),
+		"3354 away but at depth 1500 (the view's edge): in, as deep in the fog as its depth says")
+	_check(WorldAmbientFx.in_range(Vector3(0, 0, 2620), 30.0, false, c, eye, far, reach, fwd),
+		"its radius counts as before: 2620 - 30 < 2600")
+	_check(WorldAmbientFx.in_range(Vector3(0, 0, -5000), 0.0, true, c, eye, far, reach, fwd),
+		"behind the camera: in range (it is not in view, so nothing steps it)")
 
 func _test_view_box() -> void:
 	var cam := Camera3D.new()

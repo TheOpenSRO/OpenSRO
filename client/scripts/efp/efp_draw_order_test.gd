@@ -188,12 +188,27 @@ func _test_pass() -> void:
 		and EfpDisplayPass.d3d_pair(9, 1) == Vector2i(F.BLEND_FACTOR_DST_COLOR, F.BLEND_FACTOR_ZERO),
 		"BOTHSRCALPHA and BOTHINVSRCALPHA set the destination too; DESTCOLOR/ZERO multiplies")
 	var xf := Transform3D(Basis(Vector3(1, 0, 0), Vector3(0, 2, 0), Vector3(0, 0, -1)), Vector3(10, 20, 30))
-	var pc := EfpDisplayPass.push_constants(xf, PackedInt32Array([4, 2, 0, 5, 2, 0]), 200, 5)
+	var pc := EfpDisplayPass.push_constants(xf, PackedInt32Array([4, 2, 0, 5, 2, 0]), 200, 5, Vector4(1, 2, 3, 4.0), 2)
 	var f := pc.slice(0, 48).to_float32_array()
-	var i := pc.slice(48).to_int32_array()
-	_check(pc.size() == 80 and f[3] == 10.0 and f[5] == 2.0 and f[10] == -1.0 and f[11] == 30.0
+	var i := pc.slice(48, 80).to_int32_array()
+	_check(pc.size() == 112 and pc.size() <= 128 and f[3] == 10.0 and f[5] == 2.0 and f[10] == -1.0 and f[11] == 30.0
 		and i == PackedInt32Array([4, 2, 0, 5, 2, 0, 200, 5]),
-		"the push constants: three rows of the node's transform, the stage ops, the glow alpha and the stride (80 bytes)")
+		"the push constants: three rows of the node's transform, the stage ops, the glow alpha and the stride, within Vulkan's 128 bytes")
+	_check(pc.slice(80, 96).to_float32_array() == PackedFloat32Array([1, 2, 3, 4]) and pc.slice(96).to_int32_array() == PackedInt32Array([2, 0, 0, 0])
+		and EfpDisplayPass.push_constants(xf, PackedInt32Array([4, 2, 0, 5, 2, 0]), 255, 5).slice(92, 96).to_float32_array()[0] == -1.0,
+		"round 807: then the glow's occlusion anchor (w the bias, -1 for none) and the fog fade mode")
+	_check(EfpDisplayPass.fog_fade_mode(5, 2) == 0 and EfpDisplayPass.fog_fade_mode(5, 6) == 0 and EfpDisplayPass.fog_fade_mode(12, 1) == 0
+		and EfpDisplayPass.fog_fade_mode(1, 6) == 0 and EfpDisplayPass.fog_fade_mode(2, 2) == 1 and EfpDisplayPass.fog_fade_mode(2, 6) == 1
+		and EfpDisplayPass.fog_fade_mode(1, 3) == 2 and EfpDisplayPass.fog_fade_mode(9, 1) == 2 and EfpDisplayPass.fog_fade_mode(13, 1) == 3,
+		"round 807: the fog fades a draw toward what its blend leaves unchanged -- alpha, colour and alpha for ONE, white for a multiply, alpha 1 for BOTHINVSRCALPHA")
+	_check(EfpDisplayPass.DRAW_VERTEX.contains("fog_kept(v, w.y)") and EfpDisplayPass.DRAW_FRAGMENT.contains("texelFetch(scene_depth, at, 0).r > v_anchor.z"),
+		"round 807: the pass's draw fogs at its vertices and hides a glow whose point the scene's depth covers")
+	var tsh := EfpEffect._shader("add", true)
+	var gsh := EfpEffect.glow_shader(tsh)
+	_check(tsh.code.contains("a *= 1.0 - srr_fog(VERTEX") and tsh.code.contains("global uniform vec4 srr_fog_params")
+		and gsh.code.contains("uniform vec4 glow_anchor") and gsh.code.contains("srr_anchor_view = vec4((VIEW_MATRIX")
+		and gsh.code.contains("hint_depth_texture") and gsh.code.find("discard;") < gsh.code.find("vec4 d = COLOR;"),
+		"round 807: Godot's effect shaders fade by the fog, and a glow's twin tests its point against the depth first")
 	var dp := EfpDisplayPass.new()
 	var q := QuadMesh.new()
 	q.size = Vector2(1, 1)
@@ -223,7 +238,8 @@ func _test_pass() -> void:
 		var sb: Dictionary = b[0]
 		var ints := (a[2] as PackedByteArray).slice(48).to_int32_array()
 		ok = sa["src"] == 5 and sa["dest"] == 2 and sb["dest"] == 6 and int(a[1]) > 0 and sa["cull"] == false \
-			and ints[7] == 5 and ints[6] == 255 and (a[2] as PackedByteArray).size() == 80 and sa["mm"] is MultiMesh and sa["tex"] is Texture2D \
+			and ints[7] == 5 and ints[6] == 255 and (a[2] as PackedByteArray).size() == 112 and sa["mm"] is MultiMesh and sa["tex"] is Texture2D \
+			and (a[2] as PackedByteArray).slice(80, 96).to_float32_array()[3] == -1.0 and ints[12] == 0 and int(sa["fade"]) == 0 \
 			and int(sa["pipe"]) == EfpDisplayPass.pipeline_key(5, 2, false, false)
 		ok = ok and (a[2] as PackedByteArray).slice(0, 48) == EfpDisplayPass.transform_bytes((fx._draws[0][1] as Node3D).global_transform)
 	_check(ok, "each drawn node becomes an item: its blend pair, particle count, culling (a billboard: none), depth test and push constants (%d items)" % items.size())

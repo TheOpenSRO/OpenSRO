@@ -397,5 +397,42 @@ buildings at all:
 - QA: `OPENSRO_QA_NIGHT=on|off` forces the flag; `OPENSRO_QA_WORLD_FX_DETAIL=1` prints each
   effect's `night-only` flag.
 
+## Range, fog and walls (round 807, OURS)
+
+The user (2026-10-21), after round 806: the effects "pop out of view too early", should stay "visible a
+little past the fog but hide it behind the fog", "show through walls and other objects ... go away after
+a bit", and "if the fog is disabled have the effects render out as far as the landscape lets you"; then
+"some of these effects including animated waterfalls can be seen even when behind the fog". Each is a
+departure from the original, on purpose:
+
+- **Range.** The original plays a lists[2] object's effects within 480 units and one of the 3 x 3
+  sectors around the camera, a lists[1] object's within the object range (view distance - 480; READ,
+  `WorldAmbientFx`). The lamps and burners are lists[2], so they stopped at 480 while the fog starts
+  at 784..1897 (Hotan..Jangan at the default sight range). Now every placed object's effects play
+  while the object's **view depth** less its radius is below `WorldAmbientFx.fx_reach`: the fog's
+  end + 100 (`FOG_MARGIN`) with the fog on, the camera's far plane (where the landscape ends) with
+  "Fog (temporary)" off (`World3D._apply_fx_reach`, re-set with the fog and the far plane). View
+  depth, as the fog and the far plane measure it, so an effect at the screen's edge stops no earlier
+  than the fog hides it. Animated map objects still hide at the object range (READ,
+  `MapAnimation`), and their effects with them.
+- **Fog.** The original draws particles with FOGENABLE 0. Every effect now fades by the world's fog
+  as the surfaces around it do (`WorldFog.SHADER_FN`, the same planes or the dungeon's EXP fog):
+  Godot's effect shaders scale the source alpha (blend_mix and blend_add both weigh the source by
+  it); the display pass (`EfpDisplayPass`) fades each draw at its vertices toward the source its
+  Direct3D blend pair leaves the screen unchanged with (`fog_fade_mode`: the alpha; colour and alpha
+  for a ONE source; white for a multiply; alpha 1 for BOTHINVSRCALPHA). Fully fogged, an effect adds
+  nothing.
+- **Walls.** The original draws a glow with ZENABLE off and asks an occlusion query for one point
+  every 500 ms, fading by 1.5 alpha a ms (READ, `AmbientParticles`): a lamp that went behind a wall
+  showed through it for up to 500 + 170 ms, and one turned to restarted from the last query's answer.
+  The same point -- the effect's place moved toward the eye by (byte - 1) -- is now also tested
+  against the scene's depth every frame on the GPU (`EfpEffect.glow_anchor`, its glow shader;
+  `EfpDisplayPass`'s fragment shader), and the glow is not drawn while the depth there is nearer.
+  Off the screen the point decides nothing (the fade does, as before). The CPU ray and the fade still
+  set the alpha.
+- QA: `OPENSRO_QA_GLOW=noquery` takes every glow as visible to the 500 ms test (each frame as the one
+  after a turn), `noquery,nogpu` also drops the GPU test (as before round 807);
+  `OPENSRO_QA_FX_FOG=off` draws the pass's effects unfogged.
+
 Not reproduced: the MTRL-mod shader's night lighting (no night-lit layer reaches it, MEASURED); the
 far crowd's GPU twins (a far other player's parts; no worn item carries the bit, MEASURED).

@@ -78,6 +78,12 @@ class_name AmbientParticles
 ##   (OCCLUDER_MASK: terrain, placed objects and the characters' pick
 ##   bodies, not the NPCs), passing through alpha-tested pieces (occluder),
 ##   after the frustum test (point_on_screen).
+## - Round 807 (the user's report: lamps showed through walls and went only
+##   "after a bit"): the same point is also tested every frame on the GPU,
+##   against the scene's depth (EfpEffect.glow_anchor), and the glow is not
+##   drawn while it is hidden -- the ray and the fade still decide the alpha.
+##   The original's 500 ms query and 170 ms fade let a glow behind a wall
+##   show through it for up to two thirds of a second.
 ## - "Drawn" is the host's box against the camera's frustum (drawn).
 ## - Which objects play them: the placed objects that stand at a teleport
 ##   structure (World3D._attach_gate_effects), always running. The original
@@ -85,6 +91,13 @@ class_name AmbientParticles
 ##   MEASURED); since round 786 every other placed object's plays through
 ##   WorldAmbientFx, with the original's range rules.
 ## - An ambient effect is kept (looping) for as long as its object stands.
+
+## OPENSRO_QA_GLOW (QA A/B only, round 807): "noquery" takes every glow as
+## visible to the 500 ms test -- each frame as the one after a camera turn,
+## before the test has caught up; "noquery,nogpu" also leaves out the GPU's
+## per-frame test (the glow as it drew before round 807).
+static var qa_no_query := OS.get_environment("OPENSRO_QA_GLOW").contains("noquery")
+static var qa_no_gpu := OS.get_environment("OPENSRO_QA_GLOW").contains("nogpu")
 
 ## The meta a committed object carries its ambient entries under
 ## (ObjectLoader._commit_node).
@@ -331,11 +344,11 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 		var eye := camera.global_position
 		for g in shown:
 			var p := query_point(g.fx.placed_at(), eye, g.byte)
-			if not point_on_screen(p, camera):
+			if not point_on_screen(p, camera) and not qa_no_query:
 				g.visible = false
 				g.blocker = "off screen or behind the eye"
 				continue
-			var hit := occluder(space, eye, p)
+			var hit := occluder(space, eye, p) if not qa_no_query else {}
 			g.visible = hit.is_empty()
 			g.blocker = "" if g.visible else "%s n.d %.2f" % [_blocker_name(hit),
 				(hit.get("normal", Vector3.ZERO) as Vector3).dot((p - eye).normalized())]
@@ -345,6 +358,8 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 		g.alpha = step_alpha(g.alpha, g.visible, frame_ms, g.seen_frame == _frame - 1)
 		g.seen_frame = _frame
 		g.fx.set_glow_alpha(g.alpha)
+		# Round 807: the same point, tested on the GPU every frame.
+		g.fx.set_glow_anchor(g.fx.placed_at(), float(g.byte) - BIAS_OFFSET if not qa_no_gpu else -1.0)
 
 ## The first static-world surface between `from` and `to` that hides a
 ## point, or {} when none does. An alpha-tested piece (an object material

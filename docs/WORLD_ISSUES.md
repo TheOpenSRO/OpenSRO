@@ -7483,6 +7483,57 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-seventh round: the effects' range, fog and walls
+
+The user (2026-10-21), after round 806: "They basically pop out of view too early and it's a jarring
+effect. Let's make the effects visible a little past the fog but hide it behind the fog ... all of those
+lighting effects show through walls and other objects while they shouldn't. They seem go away after a bit
+though when behind something. Also if the fog is disabled have the effects render out as far as the
+landscape lets you"; then "Some of these effects including animated waterfalls can be seen even when
+behind the fog". All three depart from the original on purpose (OURS); `docs/protocol/night_lights.md`
+"Range, fog and walls (round 807, OURS)" has the detail.
+
+- **Why they popped (READ, round 786).** A lists[2] object's effects play within 480 units and the 3 x 3
+  sectors around the camera -- the lamps and burners are lists[2] -- a lists[1] object's within the
+  object range (view distance - 480 = 2020 by default). The fog starts at 784 (Hotan) .. 1897 (Jangan's
+  .759) and ends at 2500, so a lamp vanished well short of it, and a lists[1] effect at 1500..2020 drew
+  unfogged (the original's particles turn FOGENABLE off) over half-fogged surroundings -- the waterfalls.
+- **Range.** `WorldAmbientFx.fx_reach` (set by `World3D._apply_fx_reach` with the fog and the far plane):
+  a host plays while its view depth less its radius is below the fog's end + 100 (`FOG_MARGIN`), or
+  below the far plane with "Fog (temporary)" off; the READ rules stand when it is 0 (tests).
+- **Fog.** Every effect fades by the world's fog (`WorldFog.SHADER_FN`'s planes or the dungeon's EXP fog):
+  Godot's effect shaders scale the source alpha; `EfpDisplayPass` fades each draw at its vertices toward
+  the source its blend pair leaves the screen unchanged with (`fog_fade_mode`), from a 32-byte uniform
+  buffer of `WorldFog.last_params` / `last_height`.
+- **Walls.** The original's glow draws with ZENABLE off and asks one occlusion query every 500 ms, then
+  fades 1.5 alpha a ms: up to ~670 ms through a wall. The same point (`query_point`) is now tested
+  against the scene's depth every frame on the GPU (`EfpEffect.glow_anchor`, the glow twin's
+  `GLOW_TEST_*`; `EfpDisplayPass`'s push constants grow 80 -> 112 bytes with the anchor and the fade
+  mode); a glow whose point is covered is not drawn. The ray and the fade still set the alpha.
+- **Tests.** `water_fx_test` (the depth rule: a lamp at depth 2550 in, 2650 out, one 3354 away at depth
+  1500 in, the radius, behind the camera), `efp_draw_order_test` (the 112-byte push constants, the fade
+  modes, both shaders' fog and glow test), `ambient_particles_test` (the pass hands the glow its point).
+- **QA (render box, offline, clock 21:00, 960x540, frame 580; `/var/tmp/r807/qa807.sh`).**
+  - Jangan from 2,000 units up (97/167 (1455, 1010), yaw 0, pitch -24): 50 hosts in range, 115
+    effects built, 69 stepping (v0.1.565: 5, 28, 9); the far lanterns show as dim glows in the fog.
+    `OPENSRO_QA_FX_FOG=off` against on, same frame: 961 pixels the fog dims (the brightest
+    233,235,184 -> 152,153,143, the fogged ground around it), 42 brighter.
+  - Through walls (yaw 0, pitch -28, 900 up; `OPENSRO_QA_GLOW=noquery`, every glow taken as just
+    turned to): the GPU test removes 11,004 pixels of glow drawn through roofs and canopies (8,763
+    under Compatibility); the lanterns in plain view still glow. The same view from outside the town
+    wall: 115 effects built behind it, nothing through it.
+  - Fog off (`NOFOG=1`): 111 hosts in range, 141 effects, to the far plane.
+  - Compatibility (`RENDERER=gl_compatibility`): no shader error; the fog and the glow test work.
+- **Gates.** `check` ALL LOAD; "ran 344 GDScript test(s)", 0 failing.
+- **Perf gate** (Forward+, 1280x720, `--frames 60000`, base e9a0500b = v0.1.565):
+
+| Gate | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| `--sites jangan,alex --env OPENSRO_QA_CLOCK=21:00` | Jangan 0.86 -> 0.87, Alexandria 1.91 -> 1.94 SAME | 8618 -> 8599, 9254 -> 9242 SAME | 2711 -> 2737, 2033 -> 2002 SAME | 4 -> 5, 13 -> 12 SAME |
+| `--sites jangan` (noon) | 0.86 -> 0.86 SAME | 8630 -> 10051 SAME (the box's ~10 s entry mode, base run 1 10,077) | 2752 -> 2735 SAME | 5 -> 5 SAME |
+
+- **Deploy.** Client only: no prod restart.
+
 ## Eight-hundred-and-sixth round: the night lights
 
 The user (2026-10-21): "Could you add effects and lights that only turn [on] during the night? Find all

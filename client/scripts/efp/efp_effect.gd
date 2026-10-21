@@ -32,7 +32,10 @@ class_name EfpEffect
 ##   faces (OURS), as the mirrored winding would cull the wrong one.
 ## - The blend: the node's 36-byte D3D state (src/dest blend, colour and alpha
 ##   texture ops), ZWRITE off, lighting and fog off. See blend_class and the
-##   shader below for the mapping to Godot.
+##   shader below for the mapping to Godot. OURS (round 807, the user's
+##   report: effects and waterfalls showed through the fog): every effect
+##   fades by the world's fog (WorldFog.SHADER_FN) as the surfaces around it
+##   do, where the original leaves its particles unfogged.
 ##
 ## The Link modes (RenderLinkDPipe, RenderLinkPipe, RenderLinkObj; round 621)
 ## draw one strip per emitter through its chain of live particles, all of a
@@ -405,11 +408,10 @@ func pass_items(items: Array, planes: Array, eye: Vector3, display_pass) -> void
 				continue
 			_pass_static[di] = stat
 		var glow := _glow_on and _glow_materials.has(mmi.material_override)
-		var ints: PackedInt32Array = (stat as Dictionary)["ops"].duplicate()
-		ints.append(clampi(_glow_alpha, 0, 255) if glow else 255)
-		ints.append(-5 if glow or EfpDisplayPass.qa_no_depth else 5)
 		var pc := EfpDisplayPass.transform_bytes(xf)
-		pc.append_array(ints.to_byte_array())
+		pc.append_array(EfpDisplayPass.tail_bytes((stat as Dictionary)["ops"], clampi(_glow_alpha, 0, 255) if glow else 255,
+			-5 if glow or EfpDisplayPass.qa_no_depth else 5, glow_anchor if glow else EfpDisplayPass.NO_ANCHOR,
+			(stat as Dictionary)["fade"]))
 		items.append([stat, mini(n, mm.instance_count), pc, eye.distance_squared_to(box.get_center()), box])
 
 ## A draw's unchanging part for the display pass, built once: the MultiMesh
@@ -437,6 +439,7 @@ func _pass_static_of(di: int, display_pass, xf: Transform3D):
 		"mm": mm, "tex": tex, "mesh": display_pass.mesh_data(mesh), "mesh_key": mesh.get_rid(),
 		"src": src, "dest": dest, "cull": cull, "mirrored": mirrored,
 		"pipe": EfpDisplayPass.pipeline_key(src, dest, cull, mirrored),
+		"fade": EfpDisplayPass.fog_fade_mode(src, dest),
 		"ops": PackedInt32Array([st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
 			st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0]),
 	}
@@ -574,6 +577,11 @@ func make_glow() -> void:
 	set_glow_alpha(0)
 
 var _glow_materials: Array[ShaderMaterial] = []
+## Round 807 (OURS, the user's report: lamps showed through walls): the glow's
+## occlusion point, tested against the scene's depth every frame on the GPU
+## -- the effect's place (xyz) and the bias the point moves toward the eye by,
+## (byte - 1) (w; below 0 for no test). AmbientParticles.update sets it.
+var glow_anchor := Vector4(0, 0, 0, -1)
 var _glow_swaps: Array = [] # of [GeometryInstance3D, its own material, its glow copy]
 var _glow_on := false
 var _glow_alpha := -1
@@ -602,6 +610,15 @@ func set_glow_alpha(a: int) -> void:
 	set_shown(a > 0)
 	for m in _glow_materials:
 		m.set_shader_parameter("glow_alpha", a)
+
+## The glow's occlusion point (glow_anchor), set only when it changes.
+func set_glow_anchor(at: Vector3, bias: float) -> void:
+	var v := Vector4(at.x, at.y, at.z, bias)
+	if v == glow_anchor:
+		return
+	glow_anchor = v
+	for m in _glow_materials:
+		m.set_shader_parameter("glow_anchor", v)
 
 ## Builds every plate, mesh and link shader with its glow twin (round 720's
 ## review: the glow shader's first compile cost 75 ms on the main thread as
@@ -662,15 +679,17 @@ static func warm(camera: Camera3D) -> int:
 ## `sh` with the depth test off and the glow alpha applied to the particle
 ## colour (EFEffect::FUN_00c893f0 at 0x00c8affd: when the effect's alpha is
 ## not 255, the colour's alpha byte becomes (a x alpha) >> 8). Cached per
-## shader.
+## shader. Round 807 (OURS): and hidden while the scene's depth at its
+## occlusion point (glow_anchor) is nearer than the point (GLOW_TEST_*).
 static func glow_shader(sh: Shader) -> Shader:
 	var key := "glow|%d" % sh.get_instance_id()
 	if _shaders.has(key):
 		return _shaders[key]
 	var code := sh.code.replace("render_mode unshaded,", "render_mode unshaded, depth_test_disabled,")
-	code = code.replace("uniform int c_op = 4;", "uniform int glow_alpha = 255;\nuniform int c_op = 4;")
+	code = code.replace("uniform int c_op = 4;", GLOW_TEST_DECL + "uniform int glow_alpha = 255;\nuniform int c_op = 4;")
+	code = code.replace("void vertex() {\n", "void vertex() {\n" + GLOW_TEST_VERTEX)
 	code = code.replace("\tvec4 d = COLOR;",
-		"\tvec4 d = COLOR;\n\tif (glow_alpha < 255) d.a = floor(floor(d.a * 255.0 + 0.5) * float(glow_alpha) / 256.0) / 255.0;")
+		GLOW_TEST_FRAGMENT + "\tvec4 d = COLOR;\n\tif (glow_alpha < 255) d.a = floor(floor(d.a * 255.0 + 0.5) * float(glow_alpha) / 256.0) / 255.0;")
 	var g := Shader.new()
 	g.code = code
 	if sh.has_meta(BLEND_CLASS_META):
@@ -2165,6 +2184,7 @@ static func _shader(cls: String, no_cull: bool, link: bool = false) -> Shader:
 		.replace("{FORCE_ALPHA_ONE}", "true" if cls == "add_one" else "false") \
 		.replace("{DARKEN}", "true" if cls == "darken" else "false") \
 		.replace("{UVMAP}", "" if link else UVMAP_INSTANCE) \
+		.replace("{FOG_FN}", WorldFog.SHADER_FN) \
 		.replace("{DECODE}", ShaderColour.DECODE_ALBEDO) \
 		.replace("\nvoid fragment() {", ShaderColour.DECODE_FN + "\nvoid fragment() {")
 	sh.set_meta(BLEND_CLASS_META, cls)
@@ -2201,6 +2221,7 @@ vec4 op(int o, vec4 a, vec4 b) {
 	return a * b;
 }
 
+{FOG_FN}
 void vertex() {
 	{UVMAP}
 }
@@ -2212,10 +2233,48 @@ void fragment() {
 	float a = op(a_op, arg(a_a1, t, d), arg(a_a2, t, d)).a;
 	if ({FORCE_ALPHA_ONE}) a = 1.0;
 	if ({DARKEN}) c = vec3(0.0);
+	// Round 807 (OURS): faded by the world's fog, as the surfaces around it
+	// (blend_mix and blend_add both scale the source by its alpha).
+	a *= 1.0 - srr_fog(VERTEX, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y).a;
 	ALBEDO = clamp(c, 0.0, 1.0);
 	{DECODE}
 	ALPHA = clamp(a, 0.0, 1.0);
 }
+"""
+
+## The glow's occlusion test (round 807, OURS; EfpDisplayPass's twin): the
+## point AmbientParticles.query_point names -- the effect's place moved
+## toward the eye by the bias -- in view space, and the scene's depth under
+## it turned back into view space (as WorldFog.PASS_SHADER does); nearer is
+## hidden. Off the screen or behind the eye nothing is decided here (the glow
+## pass fades it, as before).
+const GLOW_TEST_DECL := """uniform vec4 glow_anchor = vec4(0.0, 0.0, 0.0, -1.0);
+uniform sampler2D srr_glow_depth : hint_depth_texture, filter_nearest, repeat_disable;
+varying flat vec4 srr_anchor_view;
+"""
+const GLOW_TEST_VERTEX := """	srr_anchor_view = vec4(0.0);
+	if (glow_anchor.w >= 0.0) {
+		vec3 srr_to_eye = INV_VIEW_MATRIX[3].xyz - glow_anchor.xyz;
+		vec3 srr_q = glow_anchor.xyz + (dot(srr_to_eye, srr_to_eye) > 1e-12 ? normalize(srr_to_eye) * glow_anchor.w : vec3(0.0));
+		srr_anchor_view = vec4((VIEW_MATRIX * vec4(srr_q, 1.0)).xyz, 1.0);
+	}
+"""
+const GLOW_TEST_FRAGMENT := """	if (srr_anchor_view.w > 0.5) {
+		vec4 srr_ac = PROJECTION_MATRIX * vec4(srr_anchor_view.xyz, 1.0);
+		if (srr_ac.w > 0.0) {
+			vec2 srr_an = srr_ac.xy / srr_ac.w;
+			if (abs(srr_an.x) <= 1.0 && abs(srr_an.y) <= 1.0) {
+				float srr_sd = textureLod(srr_glow_depth, srr_an * 0.5 + 0.5, 0.0).r;
+#if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+				srr_sd = srr_sd * 2.0 - 1.0;
+#endif
+				vec4 srr_sv = INV_PROJECTION_MATRIX * vec4(srr_an, srr_sd, 1.0);
+				if (srr_sv.z / srr_sv.w > srr_anchor_view.z + 0.01) {
+					discard;
+				}
+			}
+		}
+	}
 """
 
 # ---------------------------------------------------------------- assets

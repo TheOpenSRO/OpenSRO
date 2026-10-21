@@ -47,8 +47,11 @@ class_name WorldFog
 ## water) are drawn before the pass (UNDER_PASS_PRIORITY) and so are fogged
 ## with what they cover; a transparent MTRL mod is drawn after it and fogs
 ## itself with the same values (SHADER_FN, the `srr_fog_*` shader globals in
-## project.godot). Particles, name plates, the blob and the markers are not
-## fogged (particles as in the original; the rest are near the player).
+## project.godot). Name plates, the blob and the markers are not fogged (they
+## are near the player). Particles are not fogged in the original; since
+## round 807 they fade by the same values (OURS, the user's report: effects
+## showed through the fog -- EfpEffect, EfpDisplayPass, which reads
+## last_params / last_height).
 ## The sky (nothing in the depth buffer) is left to its own fog, as retail.
 ##
 ## **Colour.** The pass draws a colour that the tone map turns back into the
@@ -340,20 +343,28 @@ static func pass_color(display: Color, env: Environment) -> Color:
 
 ## Sets the globals every fogged shader reads. `on` false draws no fog.
 static func set_globals(fog_planes: Vector2, on: bool, linear_color: Color) -> void:
-	RenderingServer.global_shader_parameter_set(GLOBAL_PARAMS,
-		Vector4(fog_planes.x, fog_planes.y, 1.0 if on else 0.0, 0.0))
+	last_params = Vector4(fog_planes.x, fog_planes.y, 1.0 if on else 0.0, 0.0)
+	last_height = Vector4.ZERO
+	RenderingServer.global_shader_parameter_set(GLOBAL_PARAMS, last_params)
 	RenderingServer.global_shader_parameter_set(GLOBAL_COLOR,
 		Vector4(linear_color.r, linear_color.g, linear_color.b, 1.0))
-	RenderingServer.global_shader_parameter_set(GLOBAL_HEIGHT, Vector4.ZERO)
+	RenderingServer.global_shader_parameter_set(GLOBAL_HEIGHT, last_height)
+
+## The srr_fog_params and srr_fog_height last set, for EfpDisplayPass (round
+## 807: the effects' fog), which cannot read Godot's shader globals.
+static var last_params := Vector4.ZERO
+static var last_height := Vector4.ZERO
 
 ## A dungeon block's fog (round 774, READ: SHADER_FN's dungeon branch):
 ## `density` the record's fourth float, `height` its A record (A0, A1, A2,
 ## A3) or zero for none, A0 already in world height.
 static func set_dungeon_globals(density: float, height: Vector4, on: bool, linear_color: Color) -> void:
-	RenderingServer.global_shader_parameter_set(GLOBAL_PARAMS, Vector4(density, 0.0, 1.0 if on else 0.0, 1.0))
+	last_params = Vector4(density, 0.0, 1.0 if on else 0.0, 1.0)
+	last_height = height_constant(height)
+	RenderingServer.global_shader_parameter_set(GLOBAL_PARAMS, last_params)
 	RenderingServer.global_shader_parameter_set(GLOBAL_COLOR,
 		Vector4(linear_color.r, linear_color.g, linear_color.b, 1.0))
-	RenderingServer.global_shader_parameter_set(GLOBAL_HEIGHT, height_constant(height))
+	RenderingServer.global_shader_parameter_set(GLOBAL_HEIGHT, last_height)
 
 ## c22 as CObjRendererVS::vslot_015 (0xbeec30) uploads it: (A0, A1, 1 / A2,
 ## A3), A2 0 taken as 1; zero -- no height term -- when A3 is not above 0.

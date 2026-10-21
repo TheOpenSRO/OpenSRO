@@ -671,6 +671,19 @@ func _apply_fog() -> void:
 		_fog_pass.visible = on
 		# Forward+ mixes in display values under this tone map (round 705).
 		WorldFog.set_pass_tonemap(_fog_pass, env)
+	_apply_fx_reach()
+
+## Round 807 (OURS, the user's request; WorldAmbientFx's class comment): the
+## placed objects' effects play to just past the fog's end with the fog on --
+## they fade out in it -- and to the far plane, where the landscape ends,
+## with it off.
+func _apply_fx_reach() -> void:
+	if _fog_pass != null and _fog_pass.visible:
+		WorldAmbientFx.fx_reach = _fog_far_real + WorldAmbientFx.FOG_MARGIN
+	elif camera_3d != null:
+		WorldAmbientFx.fx_reach = camera_3d.far
+	if _world_fx != null:
+		_world_fx.night_changed()
 
 ## Whether Detail's terrain catcher draws: Shadow Detail "Detail", under
 ## Forward+ (ShadowCatcher: the Compatibility renderer's shadowed sun is its
@@ -3147,6 +3160,7 @@ func _apply_camera_far_plane() -> void:
 	# _apply_view_distance).
 	camera_3d.far = REGION_SPAN * (_region_load_radius() + 1) * 2.0 * _far_scale
 	camera_3d.near = CameraPlanes.near()
+	_apply_fx_reach()
 
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
@@ -10560,7 +10574,8 @@ func _tick_world_fx(delta: float) -> void:
 	var eye: Vector3 = cam.global_position if cam != null else (player.global_position if player != null else Vector3.ZERO)
 	# The frustum only on a frame that tests anything against it.
 	var planes: Array = cam.get_frustum() if cam != null and _world_fx.wants_view(eye, now) else []
-	_world_fx.tick(delta, eye, planes, now)
+	var forward: Vector3 = -cam.global_transform.basis.z if cam != null else Vector3.ZERO
+	_world_fx.tick(delta, eye, planes, now, forward)
 	if _qa_world_fx and Engine.get_process_frames() % 120 == 0:
 		print("QA WORLDFX frame %d: %s" % [Engine.get_process_frames(), _world_fx.describe()])
 		if EfpDisplayPass.active != null:

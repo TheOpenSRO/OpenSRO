@@ -275,11 +275,15 @@ func _test_hidden_glow_still_queued() -> void:
 	g.fx = fx
 	g.host = host
 	g.box = AABB(Vector3.ZERO, Vector3.ONE)
+	g.byte = 20
 	host.add_child(fx)
 	ap._glows.append(g)
 	_check(not fx.visible, "a glow at alpha 0 is hidden")
 	ap.update(16.7, null, null)
 	_check(g.seen_frame == ap._frame, "...and still queued by the glow pass, so it can fade in")
+	_check(fx.glow_anchor == Vector4(fx.placed_at().x, fx.placed_at().y, fx.placed_at().z, float(g.byte) - AmbientParticles.BIAS_OFFSET)
+		and (fx._glow_materials[0].get_shader_parameter("glow_anchor") as Vector4) == fx.glow_anchor,
+		"round 807: the pass hands the glow its occlusion point and bias, which its shader tests every frame")
 	fx.culled = true
 	ap.update(16.7, null, null)
 	_check(g.seen_frame == ap._frame - 1, "a glow its owner culled is not queued")

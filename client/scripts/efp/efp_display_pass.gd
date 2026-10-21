@@ -46,6 +46,14 @@ class_name EfpDisplayPass
 ##   the marked pixels come back clamped to it, as the original's 8-bit back
 ##   buffer holds no more.
 ## - OPENSRO_QA_FX_PASS=off: the twins of rounds 722 / 774 instead (A/B).
+## - Round 807 (the user's report): every draw fades by the world's fog at its
+##   vertices (the original's particles draw with FOGENABLE 0), toward what
+##   its blend leaves unchanged (fog_fade_mode), so an effect deep in the fog
+##   shows no more than the surfaces around it; and a glow draw, which has no
+##   depth test, is not drawn while the scene's depth at its occlusion point
+##   (AmbientParticles.query_point, on the GPU every frame) is nearer than the
+##   point -- the original asks its occlusion query every 500 ms, so a lamp
+##   behind a wall showed through it until the query and the fade caught up.
 
 static var qa_off := OS.get_environment("OPENSRO_QA_FX_PASS") == "off"
 ## QA only: no depth test (a probe of the pass's geometry).
@@ -54,6 +62,10 @@ static var qa_no_depth := OS.get_environment("OPENSRO_QA_FX_PASS") in ["nodepth"
 ## QA only: 2 paints the drawn pixels magenta, 3 also a green band (the
 ## write-back's own probe).
 static var qa_debug := 2.0 if OS.get_environment("OPENSRO_QA_FX_PASS") in ["mask", "clip"] else (3.0 if OS.get_environment("OPENSRO_QA_FX_PASS") == "band" else 0.0)
+
+## QA only (round 807): OPENSRO_QA_FX_FOG=off draws the pass's effects
+## unfogged, as before round 807 (the A/B of the fog's fade).
+static var qa_no_fog := OS.get_environment("OPENSRO_QA_FX_FOG") == "off"
 
 ## The pass on the world camera (World3D), or null.
 static var active: EfpDisplayPass = null
@@ -80,6 +92,9 @@ var _pipe_out: RID
 var _pipelines := {}
 var _sampler: RID
 var _depth_sampler: RID
+## The fog the draws fade by (WorldFog.last_params, last_height; round 807).
+var _fog_ubo: RID
+var _fog := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0])
 var _disp: RID
 var _mask: RID
 var _fb: RID
@@ -128,7 +143,7 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd != null:
 		var rids: Array = []
 		rids.append_array(_pipelines.values())
-		rids.append_array([_pipe_in, _pipe_out, _shader_in, _shader_out, _shader_draw, _disp, _mask, _sampler, _depth_sampler])
+		rids.append_array([_pipe_in, _pipe_out, _shader_in, _shader_out, _shader_draw, _disp, _mask, _sampler, _depth_sampler, _fog_ubo])
 		rids.append_array(_mesh_buffers.values())
 		var rd := _rd
 		RenderingServer.call_on_render_thread(func() -> void:
@@ -198,7 +213,9 @@ func submit(camera: Camera3D) -> void:
 			all = all.merge(it[4])
 		rect = screen_rect(all, camera)
 	_frame_sent_empty = items.is_empty()
-	RenderingServer.call_on_render_thread(_set_frame.bind(items, ObjectLight.current_tonemap, rect))
+	var fog := PackedFloat32Array([WorldFog.last_params.x, WorldFog.last_params.y, WorldFog.last_params.z * (0.0 if qa_no_fog else 1.0), WorldFog.last_params.w,
+		WorldFog.last_height.x, WorldFog.last_height.y, WorldFog.last_height.z, WorldFog.last_height.w])
+	RenderingServer.call_on_render_thread(_set_frame.bind(items, ObjectLight.current_tonemap, rect, fog))
 	main_usec = Time.get_ticks_usec() - t0
 	_main_sum += main_usec
 	_main_frames += 1
@@ -206,7 +223,7 @@ func submit(camera: Camera3D) -> void:
 ## What the frame's list depends on, as one hash: each effect's draw count
 ## of updates, glow alpha and visibility, and the camera.
 func _signature(camera: Camera3D) -> int:
-	var parts: Array = [_effects.size()]
+	var parts: Array = [_effects.size(), WorldFog.last_params, WorldFog.last_height]
 	if camera != null:
 		parts.append(camera.global_transform)
 		parts.append(camera.fov)
@@ -287,11 +304,12 @@ func mesh_data(mesh: Mesh) -> PackedFloat32Array:
 
 # ---------------------------------------------------------------- render thread
 
-func _set_frame(items: Array, tonemap: Vector4, rect: Rect2) -> void:
+func _set_frame(items: Array, tonemap: Vector4, rect: Rect2, fog: PackedFloat32Array) -> void:
 	_frame = items
 	_prepared.clear()
 	_tonemap = tonemap
 	_rect = rect
+	_fog = fog
 
 func _init_rd() -> void:
 	_rd = RenderingServer.get_rendering_device()
@@ -319,6 +337,7 @@ func _init_rd() -> void:
 	dss.min_filter = RenderingDevice.SAMPLER_FILTER_NEAREST
 	dss.mag_filter = RenderingDevice.SAMPLER_FILTER_NEAREST
 	_depth_sampler = _rd.sampler_create(dss)
+	_fog_ubo = _rd.uniform_buffer_create(32)
 	_ready_rd = true
 
 func _compile(stages: Dictionary) -> RID:
@@ -467,6 +486,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	if x1 <= x0 or y1 <= y0:
 		return
 	var groups := Vector2i((x1 - x0 + 7) / 8, (y1 - y0 + 7) / 8)
+	_rd.buffer_update(_fog_ubo, 0, 32, _fog.to_byte_array())
 	var tm := PackedFloat32Array([_tonemap.x, _tonemap.y, _tonemap.z, qa_debug]).to_byte_array()
 	tm.append_array(PackedInt32Array([x0, y0, x1, y1]).to_byte_array())
 	# 1. The colour under the effects, as the screen will show it.
@@ -590,21 +610,48 @@ func _uniform_set(scene_ubo: RID, inst: RID, mesh_b: RID, trd: RID, depth: RID) 
 	u4.binding = 4
 	u4.add_id(_depth_sampler)
 	u4.add_id(depth)
-	return UniformSetCacheRD.get_cache(_shader_draw, 0, [u0, u1, u2, u3, u4])
+	var u5 := RDUniform.new()
+	u5.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	u5.binding = 5
+	u5.add_id(_fog_ubo)
+	return UniformSetCacheRD.get_cache(_shader_draw, 0, [u0, u1, u2, u3, u4, u5])
 
-## One draw's push constants: the effect node's world transform as three rows,
-## the stage ops, the glow alpha and the instance stride (vec4s).
-static func push_constants(xf: Transform3D, ops: PackedInt32Array, glow_alpha: int, stride: int) -> PackedByteArray:
-	var f := PackedFloat32Array()
-	for r in 3:
-		f.append(xf.basis.x[r])
-		f.append(xf.basis.y[r])
-		f.append(xf.basis.z[r])
-		f.append(xf.origin[r])
-	var out := f.to_byte_array()
-	var i := PackedInt32Array([ops[0], ops[1], ops[2], ops[3], ops[4], ops[5], glow_alpha, stride])
-	out.append_array(i.to_byte_array())
+## One draw's push constants (112 bytes): the effect node's world transform
+## as three rows, the stage ops, the glow alpha and the instance stride
+## (vec4s); then (round 807) the glow's occlusion anchor -- the effect's
+## place and its bias toward the camera, (byte - 1), w below 0 for none --
+## and the fog fade mode (fog_fade_mode).
+static func push_constants(xf: Transform3D, ops: PackedInt32Array, glow_alpha: int, stride: int,
+		anchor: Vector4 = NO_ANCHOR, fade: int = 0) -> PackedByteArray:
+	var out := transform_bytes(xf)
+	out.append_array(tail_bytes(ops, glow_alpha, stride, anchor, fade))
 	return out
+
+## No glow occlusion test (a draw that is not a glow's).
+const NO_ANCHOR := Vector4(0, 0, 0, -1)
+
+## The push constants after the transform (push_constants).
+static func tail_bytes(ops: PackedInt32Array, glow_alpha: int, stride: int, anchor: Vector4, fade: int) -> PackedByteArray:
+	var out := PackedInt32Array([ops[0], ops[1], ops[2], ops[3], ops[4], ops[5], glow_alpha, stride]).to_byte_array()
+	out.append_array(PackedFloat32Array([anchor.x, anchor.y, anchor.z, anchor.w]).to_byte_array())
+	out.append_array(PackedInt32Array([fade, 0, 0, 0]).to_byte_array())
+	return out
+
+## How a draw fades by the fog (round 807, OURS): toward the source that its
+## Direct3D blend pair leaves the destination unchanged with, scaled by the
+## share of the fog kept. 0: the source's alpha (SRCALPHA / INVSRCALPHA
+## sources, ZERO / INVSRCALPHA's darkening, anything else); 1: the colour and
+## the alpha (a ONE source, which adds or is premultiplied); 2: the colour
+## toward white (the multiplying pairs ZERO / SRCCOLOR and DESTCOLOR / ZERO);
+## 3: the alpha toward 1 (BOTHINVSRCALPHA).
+static func fog_fade_mode(src: int, dest: int) -> int:
+	if src == 13:
+		return 3
+	if src == 2:
+		return 1
+	if (src == 1 and dest == 3) or (src == 9 and dest == 1):
+		return 2
+	return 0
 
 # ---------------------------------------------------------------- shaders
 
@@ -705,9 +752,32 @@ layout(set = 0, binding = 0, std140) uniform SceneDataBlock {
 } scene;
 layout(set = 0, binding = 1, std430) restrict readonly buffer Instances { vec4 d[]; } inst;
 layout(set = 0, binding = 2, std430) restrict readonly buffer MeshData { vec4 v[]; } mesh;
-layout(push_constant, std430) uniform Draw { vec4 m0; vec4 m1; vec4 m2; ivec4 ops0; ivec4 ops1; } pc;
+layout(set = 0, binding = 5, std140) uniform FogBlock { vec4 params; vec4 height; } fog;
+layout(push_constant, std430) uniform Draw { vec4 m0; vec4 m1; vec4 m2; ivec4 ops0; ivec4 ops1; vec4 anchor; ivec4 ops2; } pc;
 layout(location = 0) out vec2 v_uv;
 layout(location = 1) out vec4 v_color;
+layout(location = 2) out float v_kept;
+layout(location = 3) flat out vec4 v_anchor;
+// The share of the colour the world's fog keeps (WorldFog.SHADER_FN, the
+// same arithmetic on the same values; round 807).
+float fog_kept(vec3 view_v, float world_y) {
+	float amount;
+	if (fog.params.w > 0.5) {
+		float zd = -view_v.z * fog.params.x;
+		float kept = exp2(-(zd * zd));
+		if (fog.height.w > 0.0) {
+			kept = min(kept, 1.0 - fog.height.w * (abs(world_y - fog.height.x) - fog.height.y) * fog.height.z);
+		}
+		amount = fog.params.z * (1.0 - clamp(kept, 0.0, 1.0));
+	} else {
+		float span = max(fog.params.y - fog.params.x, 0.001);
+		amount = fog.params.z * clamp((-view_v.z - fog.params.x) / span, 0.0, 1.0);
+	}
+	return 1.0 - amount;
+}
+vec3 to_view(vec3 w) {
+	return vec3(dot(scene.view_rows[0].xyz, w) + scene.view_rows[0].w, dot(scene.view_rows[1].xyz, w) + scene.view_rows[1].w, dot(scene.view_rows[2].xyz, w) + scene.view_rows[2].w);
+}
 void main() {
 	int base = gl_InstanceIndex * abs(pc.ops1.w);
 	vec4 r0 = inst.d[base];
@@ -719,10 +789,24 @@ void main() {
 	vec2 t = mesh.v[gl_VertexIndex * 2 + 1].xy;
 	vec3 e = vec3(dot(r0.xyz, p) + r0.w, dot(r1.xyz, p) + r1.w, dot(r2.xyz, p) + r2.w);
 	vec3 w = vec3(dot(pc.m0.xyz, e) + pc.m0.w, dot(pc.m1.xyz, e) + pc.m1.w, dot(pc.m2.xyz, e) + pc.m2.w);
-	vec3 v = vec3(dot(scene.view_rows[0].xyz, w) + scene.view_rows[0].w, dot(scene.view_rows[1].xyz, w) + scene.view_rows[1].w, dot(scene.view_rows[2].xyz, w) + scene.view_rows[2].w);
+	vec3 v = to_view(w);
 	gl_Position = scene.projection_matrix * vec4(v, 1.0);
 	v_uv = cu.xy + t * cu.zw;
 	v_color = col;
+	v_kept = fog_kept(v, w.y);
+	// A glow's occlusion point (AmbientParticles.query_point): its place moved
+	// toward the eye by the bias, in clip space; w 0 when there is none or it
+	// lies behind the eye.
+	v_anchor = vec4(0.0);
+	if (pc.anchor.w >= 0.0) {
+		vec3 eye = vec3(scene.inv_view_rows[0].w, scene.inv_view_rows[1].w, scene.inv_view_rows[2].w);
+		vec3 to_eye = eye - pc.anchor.xyz;
+		vec3 q = pc.anchor.xyz + (dot(to_eye, to_eye) > 1e-12 ? normalize(to_eye) * pc.anchor.w : vec3(0.0));
+		vec4 c = scene.projection_matrix * vec4(to_view(q), 1.0);
+		if (c.w > 0.0) {
+			v_anchor = vec4(c.xyz / c.w, 1.0);
+		}
+	}
 }
 """
 
@@ -733,9 +817,11 @@ void main() {
 const DRAW_FRAGMENT := """#version 450
 layout(set = 0, binding = 3) uniform sampler2D tex;
 layout(set = 0, binding = 4) uniform sampler2D scene_depth;
-layout(push_constant, std430) uniform Draw { vec4 m0; vec4 m1; vec4 m2; ivec4 ops0; ivec4 ops1; } pc;
+layout(push_constant, std430) uniform Draw { vec4 m0; vec4 m1; vec4 m2; ivec4 ops0; ivec4 ops1; vec4 anchor; ivec4 ops2; } pc;
 layout(location = 0) in vec2 v_uv;
 layout(location = 1) in vec4 v_color;
+layout(location = 2) in float v_kept;
+layout(location = 3) flat in vec4 v_anchor;
 layout(location = 0) out vec4 o_color;
 layout(location = 1) out vec4 o_mask;
 vec4 arg(int which, vec4 t, vec4 d) {
@@ -755,6 +841,16 @@ void main() {
 	if (pc.ops1.w > 0 && gl_FragCoord.z < texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r) {
 		discard;
 	}
+	// A glow's occlusion point on the screen behind the scene's depth: the
+	// glow is hidden (round 807, OURS: the original's query, every frame).
+	// Off the screen it is left to the glow pass's fade, as before.
+	if (v_anchor.w > 0.5 && abs(v_anchor.x) <= 1.0 && abs(v_anchor.y) <= 1.0) {
+		ivec2 size = textureSize(scene_depth, 0);
+		ivec2 at = clamp(ivec2((v_anchor.xy * 0.5 + 0.5) * vec2(size)), ivec2(0), size - ivec2(1));
+		if (texelFetch(scene_depth, at, 0).r > v_anchor.z) {
+			discard;
+		}
+	}
 	vec4 t = texture(tex, v_uv);
 	vec4 d = v_color;
 	int glow = pc.ops1.z;
@@ -763,6 +859,18 @@ void main() {
 	}
 	vec3 c = op(pc.ops0.x, arg(pc.ops0.y, t, d), arg(pc.ops0.z, t, d)).rgb;
 	float a = op(pc.ops0.w, arg(pc.ops1.x, t, d), arg(pc.ops1.y, t, d)).a;
+	// The fog's fade (fog_fade_mode, round 807).
+	float k = clamp(v_kept, 0.0, 1.0);
+	if (pc.ops2.x == 1) {
+		c *= k;
+		a *= k;
+	} else if (pc.ops2.x == 2) {
+		c = mix(vec3(1.0), c, k);
+	} else if (pc.ops2.x == 3) {
+		a = 1.0 - (1.0 - a) * k;
+	} else {
+		a *= k;
+	}
 	o_color = vec4(clamp(c, 0.0, 1.0), clamp(a, 0.0, 1.0));
 	o_mask = vec4(1.0);
 }
