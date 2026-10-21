@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.565** plus what is merged on `dev`; updated 2026-10-21.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.566** plus what is merged on `dev`; updated 2026-10-21.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -327,7 +327,7 @@ Retail models, particles and lighting re-created in Godot.
 | Lighting and shadows | ✅ Supported | Sun, character light, shadow detail options; shadows follow the sun (option) |
 | Bloom and ambient occlusion | ✅ Supported | Retail-style bloom and SSAO options |
 | Trees, foliage and map objects | ✅ Supported | Retail materials; animated map objects |
-| Placed object effects | ✅ Supported | Every placed object's ambient effects (fountain sprays, waterfall mist, lanterns, burners) at retail's ranges; scrolling water on fountains and waterfalls |
+| Placed object effects | ✅ Supported | Every placed object's ambient effects (fountain sprays, waterfall mist, lanterns, burners); they play out to the fog and fade into it (to the horizon with fog off), and lantern glows hide behind walls at once; scrolling water on fountains and waterfalls |
 | Fade-in of characters | ✅ Supported | Monsters and players fade in over 2 s, as retail |
 | Berserk look | ✅ Supported | Berserk aura, colour and sounds |
 | Cloth and hair (Dynamic Animation) | ✅ Supported | Robes, dresses, capes, wings, hair, tassels, banners, flags and tents sway and fall as in retail; the Video option turns it on and off |
