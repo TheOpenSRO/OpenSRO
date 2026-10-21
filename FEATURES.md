@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.564** plus what is merged on `dev`; updated 2026-10-20.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.565** plus what is merged on `dev`; updated 2026-10-21.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -9,7 +9,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | Area | ✅ | 🟡 | 🔧 | ❌ | Total |
 |---|--:|--:|--:|--:|--:|
 | [Account & login](#account--login) | 14 |  |  |  | 14 |
-| [World & movement](#world--movement) | 13 | 4 |  | 3 | 20 |
+| [World & movement](#world--movement) | 14 | 3 |  | 3 | 20 |
 | [NPCs](#npcs) | 7 | 4 |  |  | 11 |
 | [Monsters](#monsters) | 14 | 3 |  |  | 17 |
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
@@ -27,7 +27,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **154** | **33** | **1** | **37** | **225** |
+| **All** | **155** | **32** | **1** | **37** | **225** |
 
 ## Biggest gaps
 
@@ -86,7 +86,7 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Saved position on logout | ✅ Supported | Server option, on for the public server; recall and death points always saved |
 | Minimap | ✅ Supported | NPC, monster, player, party, quest NPC and unique signs; no pet or horse sign |
 | World map | 🟡 Partial | Map, dungeon floors and city icons; guide list and sign tooltips missing |
-| Time of day | 🟡 Partial | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; optional darker nights (Night Darkness); night lamps not yet |
+| Time of day | ✅ Supported | Server clock and retail's day/night cycle: sky, light, fog, sun, moon and lens flare; lit windows, lanterns, street lights and night-only fires turn on from 20:00:01 to 03:59:59 game time, as retail; optional darker nights (Night Darkness) |
 | Weather (rain, snow) | ❌ Not yet | No weather system yet |
 | Fog and water | ✅ Supported | Retail fog planes; animated water with reflection option |
 | Seasonal decorations | 🟡 Partial | Christmas, Halloween and others available but off by default |
