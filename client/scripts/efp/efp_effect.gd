@@ -588,7 +588,7 @@ func use_glow(on: bool) -> void:
 	_glow_on = on
 	for sw in _glow_swaps:
 		(sw[0] as GeometryInstance3D).material_override = sw[2] if on else sw[1]
-	visible = (not on) or _glow_alpha > 0
+	set_shown((not on) or _glow_alpha > 0)
 
 ## The glow alpha, 0..255 (CEFEffect +0x4a): 0 draws nothing
 ## (CRTModParticle::FUN_00c81130), 255 leaves the colours as they are. Set
@@ -599,7 +599,7 @@ func set_glow_alpha(a: int) -> void:
 	_glow_alpha = a
 	if not _glow_on:
 		return
-	visible = a > 0
+	set_shown(a > 0)
 	for m in _glow_materials:
 		m.set_shader_parameter("glow_alpha", a)
 
@@ -1282,7 +1282,7 @@ static func _tick_now() -> int:
 	return int(tick_of.call()) if tick_of.is_valid() else Engine.get_physics_frames()
 
 func _process(delta: float) -> void:
-	if sim == null or world_paused:
+	if sim == null or world_paused or night_held():
 		# Round 786 (READ): nothing is updated while a zone loads (pause_world).
 		return
 	if tick_gate and _follow_host != null and not static_host:
@@ -1330,7 +1330,58 @@ var static_host := false
 ## sees it, so the pass must not take a hidden glow for a culled one.
 var culled := false
 
+## Round 806: a night-only effect (a `.bsr` particle entry whose byte +0x51
+## has bit 0; AmbientParticles.attach marks it). READ (docs/protocol/
+## night_lights.md): CRTModParticle::FUN_00c81450 tests the bit (0xc81493)
+## and, while the effect manager's night flag (+0x1a8) is clear, returns
+## before it places (0xc81190), steps (0xc80ff0) or draws the effect; the
+## glow pass skips it too (FUN_00c43100, 0xc431f7 and 0xc43586). The step
+## hands the effect the frame's own time (0xbc1100), so a held effect is
+## frozen, not caught up: it goes on from where it stood the next night.
+var night_only := false
+## The night flag (World3D sets it from the clock, GameClock.is_night_phase).
+static var night := false
+## The group of every night-only effect, told when the flag changes.
+const NIGHT_GROUP := &"opensro_night_fx"
+## Whether its owner shows it (set_shown), before the night flag's say.
+var _shown := true
+
+## Marks this effect night-only (see night_only) and applies the flag now.
+func mark_night_only() -> void:
+	night_only = true
+	add_to_group(NIGHT_GROUP)
+	_apply_shown()
+
+## Whether the night flag holds it: night-only, and not night.
+func night_held() -> bool:
+	return night_only and not night
+
+## Its owner's show or hide (a culler's, the glow fade's), which a night-only
+## effect obeys only at night.
+func set_shown(on: bool) -> void:
+	_shown = on
+	_apply_shown()
+
+func _apply_shown() -> void:
+	var v := _shown and not night_held()
+	if visible != v:
+		visible = v
+
+## The flag changed (set_night): every night-only effect shows or hides.
+func _night_changed() -> void:
+	_apply_shown()
+
+## Sets the night flag and tells every night-only effect in `tree`.
+static func set_night(on: bool, tree: SceneTree) -> void:
+	if on == night:
+		return
+	night = on
+	if tree != null:
+		tree.call_group(NIGHT_GROUP, &"_night_changed")
+
 func step_pre(delta: float) -> bool:
+	if night_held():
+		return false
 	_life += delta
 	if max_life > 0.0 and _life >= max_life and loop:
 		# OURS guard (a loop nobody ended): let go as its owner would (round 785).

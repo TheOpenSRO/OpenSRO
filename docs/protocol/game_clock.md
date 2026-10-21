@@ -123,6 +123,13 @@ sets the phase (`rand() & 3` over 5, 14, 18 and 23 o'clock, TitleIntro), and not
 - **QA** (OURS): `OPENSRO_QA_CLOCK="HH:MM"` pins the clock for a run, `"name=HH:MM,..."` per QA
   shot; `OPENSRO_QA_CLOCK_RUN=<x>` runs a pinned clock x times faster.
 
+### The world's night flag (round 806)
+
+`SWorld::vslot_004` turns the same phase into the effect manager's night flag (a phase below 0.25 or
+above 0.75: clock 20:00:01 to 03:59:59), which night-only particle effects and night-lit layers
+follow -- [night_lights.md](night_lights.md) has the reads, the exact times and the census.
+`GameClock.is_night_phase` is the test.
+
 ### OURS on the clock's night (round 786)
 
 The user: "It doesn't appear to actually get dark out" and "change shadow positions based off sun

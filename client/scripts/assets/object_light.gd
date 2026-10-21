@@ -133,6 +133,13 @@ static var current_ambient := Vector3.ONE
 static var current_diffuse := Vector3.ONE * DIFFUSE_SCALE_BLOOM
 static var current_bloom := true
 
+## Round 806 (READ, object.gdshaderinc): a plain layer's pixel, before the
+## tone map undo -- saturate(2 x texture x oD0) -- and a night-lit layer's at
+## night (`night`): saturate(1 x texture x 1), the texture itself.
+static func night_lit_pixel(tex: Vector3, od0: Vector3, night: bool) -> Vector3:
+	var v := tex if night else tex * od0 * MODULATE_SCALE
+	return v.clamp(Vector3.ZERO, Vector3.ONE)
+
 ## The scale on channel 2 for the Bloom row (READ, above).
 static func diffuse_scale(bloom_on: bool) -> float:
 	return DIFFUSE_SCALE_BLOOM if bloom_on else DIFFUSE_SCALE

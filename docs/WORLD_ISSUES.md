@@ -7483,6 +7483,87 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-sixth round: the night lights
+
+The user (2026-10-21): "Could you add effects and lights that only turn [on] during the night? Find all
+the effects this applies to and what exact times they trigger." Round 786 had left this OPEN (the night
+flag's two readers). `docs/protocol/night_lights.md` has every address, the times and the full census.
+
+- **The night flag and its exact times (READ).** `SWorld::vslot_004` (0xa2cf60), every world frame with
+  no dungeon or zone test before it, shifts the day phase by a quarter (phase + 0.75 below 0.25, else -
+  0.25; the float stored at +0x26a7) and sets the effect manager's +0x1a8 (0x1112fb0) to `0.5 <
+  shifted` (0xa2d17c..0xa2d1c6, thunk 0xbbdbf0 -> 0xbc0fe0). Night is a phase below 0.25 or above
+  0.75: **clock 20:00:01 to 03:59:59**, day from 04:00:00 through 20:00:00 (MEASURED over every second
+  of a day with the clock's own float arithmetic, `game_clock_test.gd`; it agrees with the sound's flag
+  at every second). In real time from the server's start: night 0:00-4:48.000 and 24:00.020-28:48 of
+  every 28 min 48 s cycle. The title's fixed hours: 5 and 23 o'clock are night, 14 and 18 day.
+- **Night-only particles (READ).** `CRTModParticle::FUN_00c81450` tests the entry's byte +0x51 bit 0
+  (its copy +0x91, 0xc81493) and returns by day before placing, stepping or drawing; it creates the
+  effect at the first night frame (0xc814aa) and steps it by the frame's own time, so a held effect
+  freezes and resumes; the glow pass skips it by day (0xc431f7, 0xc43586).
+- **Night-lit layers (READ).** Every `CObjRendererVS` draw path (0xbf0fa0, 0xbf144b, 0xbf1a2b,
+  0xbf2c03, 0xbf40ad) picks light mode 2 for a layer whose flag word has 0x8 at night; the shader key
+  (`FUN_00bf05e0`) makes that `NOLIGHT` (defines at 0xbf6bb4..0xbf6c0e: DIRECT, PLIGHT, NOLIGHT) and
+  fog `NO`; `vss0.c` / `vss2.c` (extracted on the box): `mov oD0, c[VSC_UTIL].x` = 1.0. `FUN_00c42a60`
+  adds stage 0 MODULATE (0xc42aef). So at night the layer is its own texture, unlit. **Fog: unchanged**
+  -- the field draws with table fog (0xa276fa..0xa27714: region id bit 15 clear -> FOGVERTEXMODE NONE,
+  FOGTABLEMODE LINEAR), which ignores oFog. (A stencil exemption from WorldFog's pass was probed --
+  it works in both renderers, and a transparent surface over a lamp keeps its mark -- and dropped once
+  the table fog was read: nothing to exempt.)
+- **Census (MEASURED, `client/tools/night_census.gd`, `mapobjcensus -dumpplaces`).** 304 models: 385
+  night-only entries (all in `ambient` sets), 359 night-lit meshes (flag words 0x148 / 0x149 / 0x348 /
+  0x349). 185 are placed in the field, 1,557 times: Constantinople 380 (the street lights), Baghdad 348
+  (the houses' windows), the regions refregion calls ARABIA_DUNGEON 265, Jangan 121 (the palace and
+  field lanterns, the adult district's windows and lanterns), Alexandria 107 (windows; the lighthouse
+  beam `alex_paros`), the Jangan fortress 79, ... Dungeons: Qin-Shi tomb floors 3 and 6 (the crystals)
+  and the four demon dungeons. Unplaced: the event sets, and the gold on the ground
+  (`drop_ch_money_*`), `yeoha_muhan` (a monster), `t_horse2_2011` (a transport).
+- **What changed (client).** `GameClock.is_night_phase`; `World3D._night_tick` every frame (before the
+  title return), `EfpEffect.set_night` + the shader global `srr_night`, a log line on each change.
+  `EfpEffect.night_only` / `mark_night_only` / `set_shown` / `night_held`: by day hidden, `step_pre`
+  refuses, out of `WorldAmbientFx`'s stepping and the glow pass; an object whose entries are all
+  night-only is built only at the first night frame (`Host.night_only`, `night_changed`); the dungeons' culler and
+  `WorldAmbientFx` show and hide through `set_shown`. `AmbientParticles.shows` / `night` are gone:
+  night entries are built and marked (`night_only`); worn items and quest marks still leave them out
+  (MEASURED: none carries one). `ObjectLoader.LAYER_FLAG_NIGHT_LIT`, the rule's `night_lit`, the
+  material uniform `night_lit`; `object.gdshaderinc`'s `SRR_NIGHT_LIT` (oD0 = 1, stage 0 x1). QA:
+  `OPENSRO_QA_NIGHT=on|off`; the WORLDFX detail line names `night-only`. Server: `mapobjcensus
+  -dumpplaces`. Tests: `game_clock_test.gd` (the second-by-second boundaries), `water_fx_test.gd`
+  (`_test_night`: built, held, frozen, shown, resumed, the glow pass; the playback check made
+  deterministic -- it failed on cold runs when the 2 ms build budget split the build over two ticks,
+  v0.1.564 included), `object_light_test.gd` (`_night_lit`: the rule, the uniform, the include, the
+  CPU twin), `ambient_particles_test.gd`.
+- **QA (render box, offline, Jangan's adult district 97/167 (1455, 1010), camera yaw 180, 960x540,
+  frame 599; `/var/tmp/r806/qa806.sh`).** The log: `night flag ON at day phase 0.8125 (clock
+  21:00:00)`; at 21:00 the world effects step 7 (`cj_pal_lamp_red_b` x4 -- the four
+  `cj_adult04_light01` lanterns -- `light` x2, `cj_pal_lamp_light`), with `OPENSRO_QA_NIGHT=off` and at
+  12:00 none. The 21:00 frame against the forced-off one (same sky, same light): 14.5 % of the pixels
+  change, their mean luma 57 -> 124, all above the ground line (rows 0..368); pixel rays name them --
+  `CJ_adult03_light` (the window layer, flag 0x148, light-mapped, two rays), the alpha-tested lattice in
+  front of it (its cut texels show the window), the `cj_adult04_light01` lantern under its glow; a
+  ground pixel is unchanged. The offline runs end in a Vulkan teardown abort (rc 134) after the last
+  frame -- v0.1.564's client does the same offline (MEASURED); the server runs end clean.
+  The final tree again (`n2` / `d2`): at 21:00 7 night-only hosts in range, built, 7 effects stepping;
+  at 12:00 the same 7 in range and **none built** (an all-night-only host waits for the night).
+- **World effects wait out the loading drain** (`_tick_world_fx` returns while `_drain_pumping`; OURS:
+  nothing behind the loading screen is seen). Added after the first night gate below flagged Jangan's
+  entry SLOWER (+1.4 s, two head runs of three at ~10.0 s). The rerun showed the same ~10.0 s entry on
+  the base side too (base run 1 10,139 ms), so that ~1.4 s mode is the box's run-to-run spread, not
+  this round: the skip is kept as work saved, not as a measured fix.
+- **Gates.** `go vet`, `go test ./cmd/...` pass. Client: "ran 344 GDScript test(s)", 0 failing (before
+  the deferral; `water_fx_test`, `ambient_particles_test`, `game_clock_test`, `object_light_test`
+  re-run after it, all pass, `water_fx_test` six times in a row).
+- **Perf gate** (Forward+, 1280x720, `--frames 60000`, base fb18d056 = v0.1.564):
+
+| Gate | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| `--sites jangan` (noon, no clock) | 0.89 -> 0.90 SAME | 8604 -> 8602 SAME | 2728 -> 2719 SAME | 4 -> 4 SAME |
+| `--sites jangan,alex --env OPENSRO_QA_CLOCK=21:00`, first | Jangan 0.90 -> 0.91 SAME; Alexandria 2.15 -> 2.11 SAME | Jangan 8587 -> 10021 **SLOWER**; Alexandria 9449 -> 9623 SAME | 2711 -> 2735, 2022 -> 2017 SAME | 4 -> 5, 12 -> 12 SAME |
+| `--sites jangan --env OPENSRO_QA_CLOCK=21:00`, final tree | 0.91 -> 0.86 SAME | 8708 -> 8592 SAME | 2739 -> 2712 SAME | 5 -> 5 SAME |
+| `--sites jangan` (noon), final tree | 0.90 -> 0.86 SAME | 8636 -> 8698 SAME | 2734 -> 2754 SAME | 4 -> 5 SAME |
+
+- **Deploy.** Client only (the server change is the `mapobjcensus` dev tool): no prod restart.
+
 ## Eight-hundred-and-fifth round: the job names, the NPC thieves' bodies, pet potions on a transport
 
 The user (2026-10-20), after round 804: "when the loot drops on the ground it's supposed to show who owns
@@ -10064,7 +10145,7 @@ did.
   the operands not resolved) and the ghosts' +-size quads; the screen-test points' layout; retail
   shows no moon after day 28 of the server's uptime (the day is never wrapped and the moon needs
   day < 29); the record snap at a zone change (the flag is set by the constructor).
-- OPEN: the night lights -- the night flag (0x1112fb0 +0x1a8) turns D3D lighting off for material
+- OPEN (closed in round 806, docs/protocol/night_lights.md): the night lights -- the night flag (0x1112fb0 +0x1a8) turns D3D lighting off for material
   flag 0x8 at night (CObjRendererVS 0xbf0fa0, 0xc42aef, 0xc6c7a5) and runs night-only particles
   (CRTModParticle 0xc814a1); the light direction +0x209a (sun by day, opposite by night) sent to
   0x1112fb0 +0x17c, readers not followed (shadows here keep the fixed light); 0x34be; the console

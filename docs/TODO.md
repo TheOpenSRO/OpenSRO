@@ -31,6 +31,17 @@ and the safe trade (802), the NPC thieves and hunters (804). Left: the OPEN item
       CIFSpecialtyDeal calculator's OK and the Sell All packets, the stock's write-back, the goods of a
       transport released with its dead rider, the safe-trade record a join creates (AQ 6).
 
+## Night lights (round 806; docs/protocol/night_lights.md)
+
+The user (2026-10-21): "Could you add effects and lights that only turn [on] during the night?
+Find all the effects this applies to and what exact times they trigger."
+
+- [x] **The night flag, night-only effects and night-lit layers** -- round 806. Night is clock
+      20:00:01 to 03:59:59 (READ, SWorld::vslot_004); 304 models (185 placed in the field, 1,557
+      times), listed in the spec. Not reproduced, both MEASURED unused: the MTRL-mod shader's
+      night lighting (no night-lit layer reaches it), the far crowd's GPU twins (no worn item
+      carries the bit).
+
 ## Round 795 follow-ups (pets, rides and transports; docs/protocol/pets.md "Round 795")
 
 - [ ] **The item mall, next round (prep).** What the pets round leaves ready for it:
@@ -884,8 +895,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       TimeOff has locked it. Round 226 missed the vtable call. Implemented: GameClock, DayCycle,
       TerrainLight, the sun disc, the moon and the flare (`docs/protocol/game_clock.md`,
       ENVIRONMENT_FORMAT.md "The day phase", WORLD_ISSUES round 786 "Server time, day/night
-      cycle, and the sun's colour"). Left OPEN there: the night lights (material flag 0x8, night
-      particles), the flare's ghost geometry, 0x34be. The light direction +0x209a's readers were
+      cycle, and the sun's colour"). Left OPEN there: the flare's ghost geometry, 0x34be. (The
+      night lights -- material flag 0x8, night-only particles -- were done in round 806:
+      `docs/protocol/night_lights.md`.) The light direction +0x209a's readers were
       followed in the round 786 part "Nights are dark, and shadows follow the sun (OURS)": dead
       code (READ) -- retail's shadows keep one direction; ours follow the sun, and nights are
       darkened to a set share of noon (both OURS rows). Open with the user: wrapping the server's

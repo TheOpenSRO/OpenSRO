@@ -153,6 +153,13 @@ srr_terrain_night={
 "type": "vec4",
 "value": Vector4(1, 1, 1, 1)
 }
+; The world's night flag (round 806, READ: the effect manager's +0x1a8,
+; GameClock.is_night_phase): 1 from clock 20:00:01 to 03:59:59, else 0. A
+; NIGHT_LIT object layer draws by its own texture while it is 1.
+srr_night={
+"type": "float",
+"value": 0.0
+}
 
 ; The weapon and shield glow's clock in seconds (round 734's review, F8,
 ; EquipGlow.CLOCK_WRAP): a script accumulator advanced by every process

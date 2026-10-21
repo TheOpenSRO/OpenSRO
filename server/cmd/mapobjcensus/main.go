@@ -28,7 +28,7 @@
 // Usage (the box):
 //
 //	go run ./cmd/mapobjcensus -map /opt/sro-files/client/Map.pk2 [-lists 2] [-o] [-nofilter]
-//	    [-models 40] [-grep bridge] [-region 92/135]
+//	    [-models 40] [-grep bridge] [-region 92/135] [-dumpplaces places.tsv]
 package main
 
 import (
@@ -84,6 +84,7 @@ func main() {
 	grep := flag.String("grep", "", "list every undrawn key whose model path contains this")
 	only := flag.String("region", "", "list the undrawn keys owned by this region")
 	dumpModels := flag.String("dumpmodels", "", "write every retail key's model as <keys>\t<undrawn keys>\t<path> to this file")
+	dumpPlaces := flag.String("dumpplaces", "", "write every retail key as <owner region>\t<local x>\t<local y>\t<local z>\t<path> to this file (round 806)")
 	flag.Parse()
 	arc, err := pk2.Open(*mapPath)
 	must(err)
@@ -479,6 +480,20 @@ func main() {
 		sort.Strings(lines)
 		must(os.WriteFile(*dumpModels, []byte(strings.Join(lines, "\n")+"\n"), 0o644))
 		fmt.Printf("wrote %d models to %s\n", len(lines), *dumpModels)
+	}
+	if *dumpPlaces != "" {
+		var lines []string
+		for _, k := range keys {
+			x := k.first
+			path := "<type id not in object.ifo>"
+			if e, ok := table.Lookup(x.typeID); ok {
+				path = e.Path
+			}
+			lines = append(lines, fmt.Sprintf("%s\t%.1f\t%.1f\t%.1f\t%s", x.owner, x.pos[0], x.pos[1], x.pos[2], path))
+		}
+		sort.Strings(lines)
+		must(os.WriteFile(*dumpPlaces, []byte(strings.Join(lines, "\n")+"\n"), 0o644))
+		fmt.Printf("wrote %d placements to %s\n", len(lines), *dumpPlaces)
 	}
 	// The same object in another region's frame: a key's world spot, the
 	// owner's second number stepping local x and its first local z.

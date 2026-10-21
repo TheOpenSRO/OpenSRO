@@ -100,7 +100,8 @@ static func ambient_rows(node: Node, host: Skeleton3D, label: String = "") -> Ar
 	for entries in node.get_meta(AMBIENT_META):
 		for e_v in entries:
 			var e := e_v as BsrReader.ParticleEntry
-			if e == null or e.efp == "" or not AmbientParticles.shows(e):
+			# Night-only entries (MEASURED round 806: no item carries one).
+			if e == null or e.efp == "" or AmbientParticles.night_only(e):
 				continue
 			if e.mode != 0:
 				if label != "":

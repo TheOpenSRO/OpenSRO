@@ -40,7 +40,7 @@ section") carries **particle mods**, kind `0x30000`, and a placed map object pla
   | `+0x3c` | 3 x f32 | the offset in the object's frame (mode != 0) |
   | `+0x4c` | u32 | the key `CRTModParticle::vslot_009` files the effect under in a lookup map (`0xc778ee..0xc77914`); also the effect's `+0x8c` / `+0xcc` (READ) |
   | `+0x50` | u8 | **the glow bias** (below); 0 = drawn normally |
-  | `+0x51` | u8 | bit 0: **night only** -- hidden while the effect manager's `+0x1a8` is 0 (`FUN_00c81450`, `FUN_00c43100`); `SWorld::vslot_004` sets it through the thunk `0xbbdbf0` at `0xa2d1c6` to 1 when the shifted day phase `+0x26a7` is above 0.5 (game_clock.md's night flag). At this client's fixed phase it is 0, so such an entry is not built (READ; no gate sets it) |
+  | `+0x51` | u8 | bit 0: **night only** -- hidden while the effect manager's `+0x1a8` is 0 (`FUN_00c81450`, `FUN_00c43100`); `SWorld::vslot_004` sets it through the thunk `0xbbdbf0` at `0xa2d1c6` to 1 when the shifted day phase `+0x26a7` is above 0.5 (game_clock.md's night flag): clock 20:00:01 to 03:59:59 (round 806, night_lights.md, which has the census). Since round 806 such an entry is built and held by day (READ; no gate sets it) |
   | `+0x52` | u8 | never copied: `vslot_001`'s descriptor takes `+0x3c..+0x51` only (`0xc77b40..0xc77b72`) (READ) |
   | `+0x53` | u8 | non-zero: a rotation follows |
   | `+0x54` | 3 x f32 | the rotation's angles, x / y / z radians (only when `+0x53`) |

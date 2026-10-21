@@ -39,9 +39,10 @@ class_name AmbientParticles
 ## - Byte +0x51 bit 0: the effect is drawn only while the manager's +0x1a8
 ##   is set (FUN_00c81450, FUN_00c43100), which SWorld::vslot_004 writes
 ##   through the thunk 0xbbdbf0 at 0xa2d1c6: 1 when the shifted day phase
-##   +0x26a7 is above 0.5 (game_clock.md's night flag). This client keeps
-##   the binary's fixed phase 0.5 (shifted 0.25), so such an entry never
-##   draws: it is not built (`night`, `shows`).
+##   +0x26a7 is above 0.5 -- clock 20:00:01 to 03:59:59 (round 806,
+##   GameClock.is_night_phase; docs/protocol/night_lights.md). Such an entry
+##   is built as the others and marked night-only (EfpEffect.mark_night_only):
+##   by day it is hidden and frozen, and the glow pass skips it.
 ## - The glow: an entry whose byte +0x50 is not 0 is drawn by the glow pass
 ##   (FUN_00c43100, through CRTModParticle::FUN_00c81450 when the effect's
 ##   +0x90 is set and the manager's +0x1a4 / +0x1ac are 1). +0x1a4 is the
@@ -128,13 +129,10 @@ static func efp_paths(mods_entries: Array) -> PackedStringArray:
 				out.append(e.efp)
 	return out
 
-## The night flag (the effect manager's +0x1a8): this client keeps the
-## binary's fixed day phase, so it is never set (see the class comment).
-static var night := false
-
-## Whether an entry is built: not a night-only entry while it is day.
-static func shows(e: BsrReader.ParticleEntry) -> bool:
-	return (e.b51 & 1) == 0 or night
+## Whether an entry plays only at night (byte +0x51 bit 0; the class
+## comment): EfpEffect.night_only.
+static func night_only(e: BsrReader.ParticleEntry) -> bool:
+	return (e.b51 & 1) != 0
 
 ## FUN_00c67500's rotation from an entry's three angles (x, y, z radians),
 ## as a Godot basis in the object's frame. READ: the D3D row-vector matrix
@@ -240,7 +238,7 @@ func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader, display_ble
 	for entries in mods_entries:
 		for e_v in entries:
 			var e := e_v as BsrReader.ParticleEntry
-			if e == null or e.efp == "" or not shows(e):
+			if e == null or e.efp == "":
 				continue
 			if e.mode == 0 and not has_bone(host, e.bone):
 				# vslot_001 returns at once: the mod's later entries go too.
@@ -265,6 +263,8 @@ func attach(host: Node3D, mods_entries: Array, particles: Pk2Reader, display_ble
 				SkillEffects.attach(fx, host, e.bone, Vector3.ZERO)
 			else:
 				SkillEffects.attach(fx, host, "none", e.offset)
+			if night_only(e):
+				fx.mark_night_only()
 			if e.b50 != 0:
 				fx.make_glow()
 				fx.use_glow(light_effect)
@@ -319,7 +319,9 @@ func update(frame_ms: float, camera: Camera3D, space: PhysicsDirectSpaceState3D)
 		# queued -- FUN_00c81450 queues a glow as it draws it. Not
 		# `visible`: a glow hides itself until it fades in (v0.1.523 tested
 		# that, and no glow anywhere ever faded in -- the Jangan gate's).
-		if not g.fx.culled and drawn(g.host, g.box, camera):
+		# Round 806: nor is a night-only effect's by day (FUN_00c43100 skips
+		# it, 0xc431f7), so its alpha starts again from 0 the next night.
+		if not g.fx.culled and not g.fx.night_held() and drawn(g.host, g.box, camera):
 			shown.append(g)
 	if shown.is_empty():
 		return

@@ -31,6 +31,7 @@ func _initialize() -> void:
 	_mod_shader()
 	_portrait()
 	_character_light()
+	_night_lit()
 	if _failures == 0:
 		print("ALL PASS")
 	else:
@@ -104,7 +105,8 @@ func _shader_text() -> void:
 	_check(inc.contains(ObjectLight.SHADER_FN), "the include carries ObjectLight.SHADER_FN verbatim")
 	_check(inc.contains(ShaderColour.DECODE_FN), "... and ShaderColour.DECODE_FN")
 	_check(inc.contains(ObjectLight.OD0_LINE), "... and computes oD0 per vertex (OD0_LINE)")
-	_check(inc.contains("ALBEDO = srr_obj_present(clamp(2.0 * tex.rgb * srr_od0"), "... MODULATE2X of the texture and oD0, the tone map undone")
+	_check(inc.contains("ALBEDO = srr_obj_present(clamp((SRR_NIGHT_LIT ? 1.0 : 2.0) * tex.rgb * srr_od0"),
+		"... MODULATE2X of the texture and oD0 (MODULATE for a night-lit layer at night), the tone map undone")
 	_check(not inc.contains(": source_color") and not inc.contains(", source_color"), "... raw samples (ShaderColour's rule)")
 	for kind in ["solid", "one", "two"]:
 		for fade in [false, true]:
@@ -239,3 +241,39 @@ func _character_light() -> void:
 	_check(berserk_script.get_script_constant_map().get("ORIGINAL_META") == CharacterLight.BERSERK_META, "CharacterLight.BERSERK_META is BerserkLook.ORIGINAL_META")
 	body.free()
 	group.free()
+
+## Round 806 (READ, docs/protocol/night_lights.md): a layer with flag word
+## bit 0x8 draws, at night, with oD0 = 1 and stage 0 MODULATE.
+func _night_lit() -> void:
+	_check(ObjectLoader.layer_draw_rule(0x348)["night_lit"] and ObjectLoader.layer_draw_rule(0x148)["night_lit"],
+		"flag word 0x8 (0x348 / 0x148, the census's lamp words) is night-lit")
+	_check(not ObjectLoader.layer_draw_rule(0x340)["night_lit"] and not ObjectLoader.layer_draw_rule(0x141)["night_lit"],
+		"a word without 0x8 is not")
+	_check(ObjectLoader.layer_draw_rule(0x348, -1, {"alpha_test": false, "blend": false})["night_lit"],
+		"an MTRL mod does not clear it (it only ORs 0x10000000 in)")
+	var inc := FileAccess.get_file_as_string("res://scripts/assets/object.gdshaderinc")
+	_check(inc.contains("uniform bool night_lit = false;\nglobal uniform float srr_night;\n#define SRR_NIGHT_LIT (night_lit && srr_night > 0.5)"),
+		"a material's night_lit and the world's srr_night make SRR_NIGHT_LIT")
+	_check(inc.contains("\tif (SRR_NIGHT_LIT) {\n\t\tsrr_od0 = vec3(1.0);"), "at night a night-lit layer's oD0 is NOLIGHT's 1.0")
+	for kind in ["solid", "one", "two"]:
+		var names := []
+		for u in ObjectLoader.object_shader(kind).get_shader_uniform_list():
+			names.append(u["name"])
+		_check(names.has("night_lit"), "the %s object shader has night_lit" % kind)
+	var solid = ObjectLoader._commit_material({"layer": _layer(0x148), "texture_key": "", "alpha_ref": 0, "two_sided": false,
+		"rule": ObjectLoader.layer_draw_rule(0x148)}, {})
+	_check(solid is ShaderMaterial and (solid as ShaderMaterial).shader == ObjectLoader.OBJECT_SHADER
+		and (solid as ShaderMaterial).get_shader_parameter("night_lit") == true, "a 0x148 layer: the object shader, night_lit on")
+	var two = ObjectLoader._commit_material({"layer": _layer(0x349), "texture_key": "", "alpha_ref": 0, "two_sided": true,
+		"rule": ObjectLoader.layer_draw_rule(0x349)}, {})
+	_check(two is ShaderMaterial and (two as ShaderMaterial).shader == ObjectLoader.FOLIAGE_SHADER
+		and (two as ShaderMaterial).get_shader_parameter("night_lit") == true, "a two-sided 0x349 layer: the two-sided shader, night_lit on")
+	var day = ObjectLoader._commit_material({"layer": _layer(0x140), "texture_key": "", "alpha_ref": 0, "two_sided": false,
+		"rule": ObjectLoader.layer_draw_rule(0x140)}, {})
+	_check(day is ShaderMaterial and (day as ShaderMaterial).get_shader_parameter("night_lit") != true, "a 0x140 layer: night_lit off")
+	_check(ProjectSettings.has_setting("shader_globals/srr_night"), "srr_night is a project shader global")
+	# The pixel, on the CPU: MODULATE2X of the lit colour by day, the texture itself at night.
+	var t := Vector3(0.6, 0.4, 0.2)
+	var od0 := Vector3(0.35, 0.35, 0.4)
+	_check(ObjectLight.night_lit_pixel(t, od0, false).is_equal_approx(Vector3(0.42, 0.28, 0.16)), "by day: 2 x texture x oD0")
+	_check(ObjectLight.night_lit_pixel(t, od0, true).is_equal_approx(t), "at night: the texture itself")

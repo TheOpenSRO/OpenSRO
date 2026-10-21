@@ -130,7 +130,7 @@ The reader and the render path are both in `sro_client.exe`:
 | `0x1` | `D3DRS_CULLMODE` = `D3DCULL_NONE` | `D3DCULL_CCW` |
 | `0x4` | `D3DRS_SPECULARENABLE` = TRUE | FALSE |
 | `0x200`, unless `0x20000000` | `D3DRS_ALPHATESTENABLE` = TRUE, `D3DRS_ALPHAREF` = `0x80` | FALSE, `0x80` |
-| `0x8` (when `FUN_00bc0fd0()`) | `D3DRS_LIGHTING` = FALSE, stage-0 COLOROP 4 | TRUE, COLOROP 5 |
+| `0x8` (when `FUN_00bc0fd0()`, the night flag) | `D3DRS_LIGHTING` = FALSE, stage-0 COLOROP 4 (the draw also takes the vertex shader's NOLIGHT, oD0 = 1: [night_lights.md](night_lights.md), round 806) | TRUE, COLOROP 5 |
 | `0x1000` (renderer-set) | stage-0 COLOROP = 5 (MODULATE2X) | — |
 
 - The renderer's begin (`FUN_00c42860`, `CObjRendererVS` slot 3) sets `D3DRS_ALPHAREF 0x80` and

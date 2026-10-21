@@ -32,6 +32,19 @@
 // SHADER_FN and ShaderColour.DECODE_FN carry the same GLSL as below
 // (object_light_test.gd holds them equal).
 
+// Round 806 (READ, docs/protocol/night_lights.md): a layer whose flag word
+// has 0x8 (ObjectLoader.LAYER_FLAG_NIGHT_LIT; `night_lit`) is drawn, while
+// the night flag srr_night is set, with the vertex shader's NOLIGHT -- `mov
+// oD0, c[VSC_UTIL].x`, 1.0 (vss0.c / vss2.c; CObjRendererVS FUN_00bf0e20
+// 0xbf0fa0 and its four twins pick light mode 2 for it) -- and stage 0
+// MODULATE (FUN_00c42a60 0xc42aef: COLOROP 4 over 0x1000's MODULATE2X): its
+// texture at its own colour. By day it is lit as any layer. (Mode 2 also
+// picks the shader's fog NO, which the open world's table fog overrides:
+// WorldFog fogs it as any object.)
+uniform bool night_lit = false;
+global uniform float srr_night;
+#define SRR_NIGHT_LIT (night_lit && srr_night > 0.5)
+
 // The material's colour (BmtReader `diffuse`, set as a Color: read through
 // srr_color).
 uniform vec4 albedo = vec4(1.0);
@@ -252,6 +265,9 @@ void vertex() {
 #else
 	srr_od0 = srr_obj_od0(MODEL_NORMAL_MATRIX * NORMAL, srr_color(albedo, OUTPUT_IS_SRGB).rgb, object_color, object_tint);
 #endif
+	if (SRR_NIGHT_LIT) {
+		srr_od0 = vec3(1.0);
+	}
 #ifdef MULTITEX
 	srr_uv1 = UV; if (texani_stage >= 0) { float srr_ta = srr_texani_clock - texani_t0; vec3 srr_tu = texani_u + texani_du * srr_ta; vec3 srr_tv = texani_v + texani_dv * srr_ta; vec2 srr_ta_uv = vec2(dot(vec3(UV, 1.0), srr_tu), dot(vec3(UV, 1.0), srr_tv)); if (texani_stage == 1) { srr_uv1 = srr_ta_uv; } else { UV = srr_ta_uv; } }
 #else
@@ -288,9 +304,9 @@ void fragment() {
 #ifdef LIGHTMAP
 	ALBEDO = srr_obj_present(srr_lightmapped(tex.rgb, srr_od0, UV2));
 #elif defined(MULTITEX)
-	ALBEDO = srr_obj_present(srr_multitex(clamp(2.0 * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)), srr_t1));
+	ALBEDO = srr_obj_present(srr_multitex(clamp((SRR_NIGHT_LIT ? 1.0 : 2.0) * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)), srr_t1));
 #else
-	ALBEDO = srr_obj_present(clamp(2.0 * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)));
+	ALBEDO = srr_obj_present(clamp((SRR_NIGHT_LIT ? 1.0 : 2.0) * tex.rgb * srr_od0, vec3(0.0), vec3(1.0)));
 #endif
 #endif
 #ifdef APPEAR_FADE

@@ -642,6 +642,11 @@ static func _read_material(archive: Pk2Reader, bmt_path: String, missing: Array)
 ##   only for enhanced gear (FUN_00a5f3e0 -> slot 50, gated per slot).
 const LAYER_FLAG_TWO_SIDED := 0x1
 const LAYER_FLAG_ALPHA_TEST := 0x200
+## Round 806 (READ, docs/protocol/night_lights.md): while the night flag is
+## set, a layer with this bit draws with the vertex shader's NOLIGHT (oD0 =
+## 1) and stage 0 MODULATE -- its texture at its own colour -- the material
+## uniform `night_lit` (object.gdshaderinc). By day it is an ordinary layer.
+const LAYER_FLAG_NIGHT_LIT := 0x8
 ## D3DRS_ALPHAREF 0x80 against D3DCMP_GREATEREQUAL: a texel is kept when its
 ## alpha byte is at least 128. Godot's scissor discards below the
 ## threshold, so the threshold is 128/255. READ (FUN_00c42a60, FUN_00c42860).
@@ -751,12 +756,14 @@ const FOLIAGE_ALPHA_SCISSOR := float(ALPHA_TEST_REF) / 255.0
 ## for none or "mix" / "add" / "add_one" / "mul" / "d3d_<src>_<dest>" (the
 ## D3DBLEND pair's Godot counterpart), "zwrite", "color_op", "color_arg1",
 ## "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2" (D3DTOP / D3DTA;
-## 0 when the default modulate applies)}.
+## 0 when the default modulate applies), "night_lit" (LAYER_FLAG_NIGHT_LIT,
+## round 806: the bit is tested on the word after the mods edit it, and an
+## MTRL mod only ORs 0x10000000 in, so it holds with one)}.
 static func layer_draw_rule(flags: int, env_map: int = -1, mtrl: Dictionary = {}, two_pass: bool = false) -> Dictionary:
 	var rule := {"alpha_ref": 0, "alpha_func": D3DCMP_GREATEREQUAL, "two_sided": false, "two_pass": two_pass,
 		"blend": "", "zwrite": true, "color_op": 0, "color_arg1": 0, "color_arg2": 0,
 		"alpha_op": 0, "alpha_arg1": 0, "alpha_arg2": 0, "mtrl": not mtrl.is_empty(), "stage_ops": false,
-		"src_blend": 0, "dest_blend": 0}
+		"src_blend": 0, "dest_blend": 0, "night_lit": flags & LAYER_FLAG_NIGHT_LIT != 0}
 	if not mtrl.is_empty():
 		if mtrl.get("alpha_test", false):
 			rule["alpha_ref"] = int(mtrl["alpha_ref"])
@@ -1291,10 +1298,12 @@ static func _mod_pass(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary, 
 	return mat
 
 ## The material for a layer the rule draws alpha-tested or two-sided.
-static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alpha_ref: int, two_sided: bool) -> ShaderMaterial:
+static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alpha_ref: int, two_sided: bool, night_lit: bool = false) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.resource_name = layer.layer_name
 	mat.shader = FOLIAGE_SHADER if two_sided else FOLIAGE_SHADER_ONE_SIDED
+	if night_lit:
+		mat.set_shader_parameter("night_lit", true)
 	# The layer's second colour, c11's material term (round 706, ObjectLight).
 	mat.set_shader_parameter("albedo", layer.diffuse)
 	if tex != null:
@@ -1476,8 +1485,9 @@ static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Mat
 		# A real double-sided card keeps its authored normal on both faces
 		# (one vertex colour, object.gdshaderinc), and the alpha test reads
 		# full-resolution alpha. An untextured layer has nothing to test.
-		return _build_foliage_material(layer, godot_tex, alpha_ref if godot_tex != null else 0, plan.get("two_sided", false))
-	return _build_object_material(layer, godot_tex)
+		return _build_foliage_material(layer, godot_tex, alpha_ref if godot_tex != null else 0, plan.get("two_sided", false),
+			rule.get("night_lit", false))
+	return _build_object_material(layer, godot_tex, rule.get("night_lit", false))
 
 ## A solid layer's material (object.gdshader): the layer's SECOND colour as
 ## the material colour c11 multiplies (READ, ObjectLight), its texture or
@@ -1490,10 +1500,12 @@ static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Mat
 ## reason for preferring it -- Alexandria's 24 of 40 house layers with a 0.14
 ## second colour drew black -- does not hold for the original's formula,
 ## whose ambient term (0.6 x La) does not depend on the material at all.
-static func _build_object_material(layer: BmtReader.Layer, tex: Texture2D) -> ShaderMaterial:
+static func _build_object_material(layer: BmtReader.Layer, tex: Texture2D, night_lit: bool = false) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.resource_name = layer.layer_name
 	mat.shader = OBJECT_SHADER
+	if night_lit:
+		mat.set_shader_parameter("night_lit", true)
 	mat.set_shader_parameter("albedo", layer.diffuse)
 	if tex != null:
 		mat.set_shader_parameter("albedo_texture", tex)

@@ -67,6 +67,29 @@ func _init() -> void:
 	_check(GameClock.is_night_hour(20.5) and GameClock.is_night_hour(3.0) and not GameClock.is_night_hour(4.0) and not GameClock.is_night_hour(20.0),
 		"the sound's night: clock hour < 4 or > 20")
 
+	# Round 806: the world's night flag (SWorld::vslot_004's shifted phase >
+	# 0.5) over every second of a clock day -- where it changes, and that it
+	# agrees with the sound's flag at every second.
+	var changes: Array[String] = []
+	var was := false
+	var agree := true
+	for s in GameClock.SECONDS_PER_DAY:
+		var r := _reading(0, s / 3600, s / 60 % 60, s % 60)
+		var h := GameClock.clock_hours(r)
+		var n := GameClock.is_night_phase(GameClock.day_phase(h))
+		if n != GameClock.is_night_hour(h):
+			agree = false
+		if s == 0 or n != was:
+			changes.append("%02d:%02d:%02d %s" % [r.hour, r.minute, r.second, "night" if n else "day"])
+		was = n
+	_check(changes == ["00:00:00 night", "04:00:00 day", "20:00:01 night"],
+		"the night flag: night from 20:00:01 to 03:59:59, day from 04:00:00 to 20:00:00 (got %s)" % str(changes))
+	_check(agree, "the world's night flag and the sound's agree at every second of the day")
+	_check(GameClock.is_night_phase(0.0) and GameClock.is_night_phase(0.2499) and not GameClock.is_night_phase(0.25)
+		and not GameClock.is_night_phase(0.5) and not GameClock.is_night_phase(0.75) and GameClock.is_night_phase(0.7501),
+		"the phase test: night below 0.25 and above 0.75, day at 0.25 and 0.75 themselves")
+	_check(not GameClock.is_night_phase(GameClock.NO_CLOCK_PHASE), "no clock (the fixed 0.5) is day")
+
 	# A message starts the timer; the phase follows it.
 	var d := GameClock.new()
 	_check(d.handle(GameClock.OP_POSITION, PackedByteArray([1, 0, 0, 0, 0, 0, 12, 0]), 5000), "0x3020 is taken")

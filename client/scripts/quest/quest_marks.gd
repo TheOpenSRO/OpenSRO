@@ -111,7 +111,7 @@ static func height_of(holder: Node3D) -> float:
 	return plate.position.y / 1.12 if plate != null else 20.0
 
 ## A mark .bsr's effects: [[efp path, offset], ...] for each entry of its
-## `ambient` sets (AmbientParticles.ambient_entries) that is built (shows) --
+## `ambient` sets (AmbientParticles.ambient_entries) that is not night-only --
 ## the mode-1 entries at their offsets; a mode-0 (bone) entry has no body to
 ## stand on here and is left out.
 static func entries_of(bsr_data: PackedByteArray) -> Array:
@@ -122,7 +122,8 @@ static func entries_of(bsr_data: PackedByteArray) -> Array:
 	for entries in AmbientParticles.ambient_entries(obj.particle_mods):
 		for e_v in entries:
 			var e := e_v as BsrReader.ParticleEntry
-			if e == null or e.efp == "" or e.mode == 0 or not AmbientParticles.shows(e):
+			# Night-only entries (MEASURED round 806: no mark carries one).
+			if e == null or e.efp == "" or e.mode == 0 or AmbientParticles.night_only(e):
 				continue
 			out.append([e.efp, e.offset])
 	return out

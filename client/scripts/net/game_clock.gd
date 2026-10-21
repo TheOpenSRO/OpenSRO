@@ -142,6 +142,20 @@ static func day_phase(h: float) -> float:
 static func is_night_hour(h: float) -> bool:
 	return h < 4.0 or h > 20.0
 
+## The world's night flag at a day phase (round 806, READ:
+## docs/protocol/night_lights.md). SWorld::vslot_004 (0xa2cf60), every world
+## frame with no dungeon or zone test before it, shifts the phase +0x26a3 by
+## a quarter -- phase + 0.75 below 0.25 (the float 0.25 at 0xd9a2b8, the
+## double 0.75 at 0xda34b0), else phase - 0.25 (the double at 0xd83070) --
+## stores it as a float (+0x26a7) and sets the effect manager's +0x1a8
+## (0x1112fb0, through the thunk 0xbbdbf0 at 0xa2d1c6) to 0.5 (0xe1b7e0) <
+## that. So night is a phase below 0.25 or above 0.75: with day_phase, clock
+## 20:00:01 to 03:59:59 (04:00:00 and 20:00:00 are day; MEASURED in
+## game_clock_test.gd over every second of a day).
+static func is_night_phase(p: float) -> bool:
+	var shifted := f32(p + 0.75) if p < 0.25 else f32(p - 0.25)
+	return shifted > 0.5
+
 ## The phase to draw now: the clock's, or NO_CLOCK_PHASE before any.
 func phase(now_ms: int) -> float:
 	if not synced:

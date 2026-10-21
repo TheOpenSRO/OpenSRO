@@ -122,6 +122,10 @@ class Host:
 	var asked := false
 	var effects: Array = []
 	var sector: Sector = null
+	## Round 806: every entry of it is night-only (AmbientParticles.night_only):
+	## built only once night comes (READ: CRTModParticle::FUN_00c81450 creates
+	## a night-only effect at its first night frame).
+	var night_only := false
 
 ## The hosts of one `.o2` sector cell, with the bounds the range decision
 ## skips whole sectors by (as MapAnimation.Driver's).
@@ -196,17 +200,21 @@ func add(root: Node3D, near: bool, compound: bool = true) -> int:
 			continue
 		var entries: Array = node.get_meta(AmbientParticles.META_ENTRIES)
 		var paths := PackedStringArray()
+		var all_night := true
 		for entries_v in entries:
 			for e_v in entries_v:
 				var e := e_v as BsrReader.ParticleEntry
-				if e != null and e.efp != "" and AmbientParticles.shows(e) and not paths.has(e.efp):
+				if e != null and e.efp != "" and not paths.has(e.efp):
 					paths.append(e.efp)
+				if e != null and e.efp != "" and not AmbientParticles.night_only(e):
+					all_night = false
 		if paths.is_empty():
 			continue
 		var h := Host.new()
 		h.node = node
 		h.entries = entries
 		h.paths = paths
+		h.night_only = all_night
 		h.near = near
 		h.origin = root.global_position
 		h.radius = object_radius(root)
@@ -267,6 +275,11 @@ static func in_range(origin: Vector3, radius: float, near: bool, sector_centre_a
 			return false
 		return origin.distance_to(eye) - radius < NEAR_RANGE
 	return origin.distance_to(eye) - radius < far_range
+
+## The night flag changed (World3D._night_tick, round 806): decide again at
+## once, so a night-only host in range is built at the first night frame.
+func night_changed() -> void:
+	_changed = true
 
 ## Drops everything (a zone change: the hosts go with their regions).
 func reset() -> void:
@@ -358,7 +371,7 @@ func _decide(eye: Vector3, planes: Array) -> void:
 		_prune()
 
 func _set_on(h: Host, on: bool, seen: bool) -> void:
-	if on and not h.built and not h.asked:
+	if on and not h.built and not h.asked and (not h.night_only or EfpEffect.night):
 		h.asked = true
 		_to_build.append(h)
 		EfpEffect.preload_paths(h.paths, particles)
@@ -371,9 +384,7 @@ func _set_on(h: Host, on: bool, seen: bool) -> void:
 		fx.culled = not on
 		# A glow shows by its own fade (EfpEffect.set_glow_alpha): kept hidden
 		# while culled, left to the glow pass once back (as the dungeons').
-		var shown := on and (not fx._glow_on or fx._glow_alpha > 0)
-		if fx.visible != shown:
-			fx.visible = shown
+		fx.set_shown(on and (not fx._glow_on or fx._glow_alpha > 0))
 
 ## Builds the waiting hosts whose files are decoded, within the budget.
 func _build_some(start_usec: int) -> void:
@@ -437,7 +448,8 @@ func _choose_stepping(planes: Array) -> void:
 		if _now_ms >= h.warm_until_ms and not box_in_view(h.fx_box, planes):
 			continue
 		for fx_v in h.effects:
-			if is_instance_valid(fx_v):
+			# Round 806: a night-only effect by day is frozen (EfpEffect.night_held).
+			if is_instance_valid(fx_v) and not (fx_v as EfpEffect).night_held():
 				_stepping.append(fx_v)
 
 ## Where a host's effects draw, in the world: each draw's own cull box
@@ -571,9 +583,9 @@ func detail(eye: Vector3) -> String:
 				continue
 			var fx := fx_v as EfpEffect
 			var ext := fx.particle_extent()
-			lines.append("QA WORLDFX fx %s on %s at %s (eye %.0f away): visible %s culled %s stepping %s drawn %d centres %s..%s" % [
+			lines.append("QA WORLDFX fx %s on %s at %s (eye %.0f away): visible %s culled %s stepping %s night-only %s drawn %d centres %s..%s" % [
 				String(fx.path).get_file(), h.node.name, str(fx.global_position.round()), eye.distance_to(fx.global_position),
-				str(fx.is_visible_in_tree()), str(fx.culled), str(_stepping.has(fx)), fx.drawn_particles(),
+				str(fx.is_visible_in_tree()), str(fx.culled), str(_stepping.has(fx)), str(fx.night_only), fx.drawn_particles(),
 				str(ext.position.round()), str(ext.end.round())])
 	return "\n".join(lines)
 

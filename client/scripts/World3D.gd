@@ -4969,6 +4969,32 @@ func _clock_day() -> int:
 		return 0
 	return NetClient.game_clock.reading(Time.get_ticks_msec()).day
 
+## The night flag (round 806, READ: docs/protocol/night_lights.md): the
+## effect manager's +0x1a8, which SWorld::vslot_004 sets every world frame --
+## dungeons included, no test before it -- from the day phase
+## (GameClock.is_night_phase: clock 20:00:01 to 03:59:59; the front end's
+## fixed hour likewise). It holds the night-only particles
+## (EfpEffect.set_night) and lights the night-lit layers (srr_night,
+## object.gdshaderinc). -1 before the first frame.
+var _night := -1
+## QA (OURS): OPENSRO_QA_NIGHT=on|off forces the flag whatever the clock --
+## the A/B whose frame difference is what the night adds.
+var _qa_night := OS.get_environment("OPENSRO_QA_NIGHT")
+
+func _night_tick() -> void:
+	var on := GameClock.is_night_phase(_current_day_phase())
+	if _qa_night == "on" or _qa_night == "off":
+		on = _qa_night == "on"
+	if int(on) == _night:
+		return
+	_night = int(on)
+	EfpEffect.set_night(on, get_tree())
+	_world_fx.night_changed()
+	RenderingServer.global_shader_parameter_set(&"srr_night", 1.0 if on else 0.0)
+	var r := NetClient.game_clock.reading(Time.get_ticks_msec()) if NetClient.game_clock.synced and _env_fixed_phase < 0.0 else null
+	print("World3D: night flag %s at day phase %.4f%s" % ["ON" if on else "off", _current_day_phase(),
+		(" (clock %02d:%02d:%02d)" % [r.hour, r.minute, r.second]) if r != null else ""])
+
 ## Every frame in the world: the graphs re-read ten times a second, eased
 ## every frame (READ: dt x 0.5), written where they moved (_day_push), and the
 ## sun and the moon placed.
@@ -5768,7 +5794,7 @@ func _cull_dungeon_effects() -> void:
 		fx.culled = not on
 		# A glow shows by its own fade (EfpEffect.set_glow_alpha): kept
 		# hidden while culled, and left to the glow pass once back.
-		fx.visible = on and (not fx._glow_on or fx._glow_alpha > 0)
+		fx.set_shown(on and (not fx._glow_on or fx._glow_alpha > 0))
 		if on:
 			_dungeon_fx_on.append(fx)
 
@@ -10518,7 +10544,11 @@ var _qa_world_fx := OS.get_environment("OPENSRO_QA_WORLD_FX") == "1"
 ## Once a rendered frame: the hosts' range from the camera, the builds, the
 ## step (WorldAmbientFx.tick).
 func _tick_world_fx(delta: float) -> void:
-	if not _world_fx_on:
+	# Round 806 (OURS): nothing is decided or built while a drain loads the
+	# world behind its screen -- at night the field's night-only objects
+	# would otherwise be decoded and built during it (perf gate at 21:00:
+	# Jangan's entry +1.4 s).
+	if not _world_fx_on or _drain_pumping:
 		return
 	var now := Time.get_ticks_msec()
 	if _world_fx.idle(now):
@@ -16464,6 +16494,10 @@ func _update_blob_shadow() -> void:
 ##                          those screen points (`QA CAMERA` / `QA DEPTH`),
 ##                          and `|fogprobe=1` makes the fog pass draw its
 ##                          own amount and depth
+##   OPENSRO_QA_NIGHT=on|off  (round 806) force the night flag (the
+##                          night-only effects, the night-lit layers)
+##                          whatever the clock; the log's `World3D: night
+##                          flag ...` line names each change
 ##   OPENSRO_QA_RADIUS=n   load an n-region radius instead of the default
 ##   OPENSRO_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
 ##                          running= driver_us= process_ms=`: the animated
@@ -20491,6 +20525,9 @@ func _physics_process(delta: float) -> void:
 ## (rendering faster than 60) moved nothing, so places nothing; the arrived
 ## bodies' dressing runs every frame (B4).
 func _process(_delta: float) -> void:
+	# Round 806: the night flag, on the front end's fixed hour too (READ: two
+	# of CPSTitle's four hours, 5 and 23 o'clock, are night phases).
+	_night_tick()
 	if title_mode:
 		return
 	# Round 795: riders on their mounts' saddles, the mounts under them.

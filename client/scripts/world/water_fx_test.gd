@@ -94,6 +94,7 @@ func _in_tree() -> void:
 	_test_view_box()
 	_test_registration()
 	_test_playback()
+	_test_night()
 	print("water_fx_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)
 
@@ -270,13 +271,15 @@ func _test_registration() -> void:
 	night.b51 = 1
 	var dark := _host([[night]], false)
 	container.add_child(dark)
-	_check(wf.add(dark, false) == 0, "a host whose only entry is night-only is not registered (AmbientParticles.shows)")
+	_check(wf.add(dark, false) == 1 and (wf.hosts()[2] as WorldAmbientFx.Host).paths == PackedStringArray(["map\\n.efp"])
+		and (wf.hosts()[2] as WorldAmbientFx.Host).night_only and not (wf.hosts()[0] as WorldAmbientFx.Host).night_only,
+		"a host whose only entry is night-only is registered too, as night-only (round 806: it plays at night)")
 	var plain := Node3D.new()
 	container.add_child(plain)
 	_check(wf.add(plain, false) == 0, "an object without ambient entries is not")
 	a.free()
 	wf.tick(0.016, Vector3.ZERO, [], 0)
-	_check(wf.size() == 1, "a freed host leaves at the next decision")
+	_check(wf.size() == 2, "a freed host leaves at the next decision")
 	wf.reset()
 	_check(wf.size() == 0 and wf.hosts().is_empty(), "reset drops everything (a zone change)")
 	container.free()
@@ -336,6 +339,13 @@ func _test_playback() -> void:
 	var planes := cam.get_frustum()
 	wf.tick(0.016, cam.global_position, planes, 0)
 	wf.tick(0.016, cam.global_position, planes, 16)
+	# The build is budgeted (BUILD_BUDGET_USEC): on a cold run a host can wait
+	# a tick, and a host built in a tick steps from the next one.
+	var t := 32
+	while not wf._to_build.is_empty() and t < 32 + 16 * 20:
+		wf.tick(0.016, cam.global_position, planes, t)
+		t += 16
+	wf.tick(0.016, cam.global_position, planes, t)
 	var by_path := {}
 	for h_v in wf.hosts():
 		var h := h_v as WorldAmbientFx.Host
@@ -406,6 +416,95 @@ func _test_playback() -> void:
 		"a 4,000-unit object whose origin is off to the side is still in view by its box")
 	AmbientParticles.effect_factory = Callable()
 	for p in ["map\\near.efp", "map\\far.efp", "map\\out.efp"]:
+		EfpEffect._templates.erase(p.to_lower())
+	container.free()
+	cam.free()
+
+## Round 806: a night-only entry (+0x51 bit 0) is built with its host and
+## held by day -- hidden, not stepped, out of the glow pass -- and plays at
+## night (READ, CRTModParticle::FUN_00c81450; EfpEffect.night_only).
+func _test_night() -> void:
+	AmbientParticles.effect_factory = _effect
+	for p in ["map\\day.efp", "map\\night.efp"]:
+		EfpEffect._templates[p.to_lower()] = EfpSim.Template.new()
+	EfpEffect.set_night(false, self)
+	var container := Node3D.new()
+	get_root().add_child(container)
+	var cam := Camera3D.new()
+	get_root().add_child(cam)
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(0, 10, 0))
+	var wf := WorldAmbientFx.new()
+	wf.ambient = AmbientParticles.new()
+	var night_e := _entry("map\\night.efp", Vector3(5, 24, 0))
+	night_e.b51 = 1
+	var lamp := _host([[_entry("map\\day.efp", Vector3(0, 24, 0)), night_e]], false)
+	lamp.position = Vector3(0, 0, -300)
+	container.add_child(lamp)
+	_check(wf.add(lamp, true) == 1, "a lamp with a day and a night entry is one host")
+	var only_e := _entry("map\\night.efp", Vector3.ZERO)
+	only_e.b51 = 1
+	var torch := _host([[only_e]], false)
+	torch.position = Vector3(40, 0, -300)
+	container.add_child(torch)
+	_check(wf.add(torch, true) == 1, "a torch with only a night entry is a host too")
+	var planes := cam.get_frustum()
+	wf.tick(0.016, cam.global_position, planes, 0)
+	wf.tick(0.016, cam.global_position, planes, 16)
+	wf.tick(0.016, cam.global_position, planes, 32)
+	var h: WorldAmbientFx.Host = wf.hosts()[0]
+	var th: WorldAmbientFx.Host = wf.hosts()[1]
+	_check(h.built and h.effects.size() == 2, "both effects are built with the host")
+	_check(th.on and not th.built and not th.asked, "by day the night-only torch, in range, is not built (READ: created at its first night frame)")
+	var day_fx: EfpEffect = h.effects[0]
+	var night_fx: EfpEffect = h.effects[1]
+	_check(not day_fx.night_only and night_fx.night_only and night_fx.is_in_group(EfpEffect.NIGHT_GROUP),
+		"the +0x51 entry is marked night-only, the other is not")
+	_check(day_fx.visible and not night_fx.visible and night_fx.night_held(), "by day the night effect is hidden and held")
+	_check(wf.stepping().has(day_fx) and not wf.stepping().has(night_fx), "by day only the day effect steps")
+	_check(not night_fx.step_pre(0.05), "a held effect refuses a step (step_pre false)")
+	var age0 := night_fx.sim.age
+	for i in range(10):
+		wf.tick(0.05, cam.global_position, planes, 32 + 50 * i)
+	_check(night_fx.sim.age == age0, "by day it is frozen: its simulation does not advance")
+	EfpEffect.set_night(true, self)
+	wf.night_changed()
+	_check(night_fx.visible and not night_fx.night_held(), "night: it shows")
+	wf.tick(0.05, cam.global_position, planes, 560)
+	wf.tick(0.05, cam.global_position, planes, 580)
+	_check(th.built and th.effects.size() == 1 and (th.effects[0] as EfpEffect).night_only and (th.effects[0] as EfpEffect).visible,
+		"night: the torch is built at once (night_changed) and shows")
+	for i in range(10):
+		wf.tick(0.05, cam.global_position, planes, 600 + 50 * i)
+	_check(wf.stepping().has(night_fx) and night_fx.sim.age > age0, "and steps (%d -> %d frames)" % [age0, night_fx.sim.age])
+	# A culler's hide holds at night, and day hides it again whatever the culler says.
+	night_fx.set_shown(false)
+	_check(not night_fx.visible, "at night its owner's hide holds")
+	night_fx.set_shown(true)
+	EfpEffect.set_night(false, self)
+	_check(not night_fx.visible and day_fx.visible, "day again: hidden; the day effect is untouched")
+	var age1 := night_fx.sim.age
+	for i in range(10):
+		wf.tick(0.05, cam.global_position, planes, 1200 + 50 * i)
+	_check(night_fx.sim.age == age1, "and frozen where it stood")
+	EfpEffect.set_night(true, self)
+	_check(night_fx.visible and night_fx.sim.age == age1, "the next night it goes on from there (not restarted)")
+	# The glow pass skips a held glow (FUN_00c43100, 0xc431f7).
+	EfpEffect.set_night(false, self)
+	var g := AmbientParticles.Glow.new()
+	g.fx = night_fx
+	g.host = lamp
+	g.box = AABB(lamp.global_position, Vector3.ONE * 10.0)
+	g.byte = 11
+	wf.ambient._glows.append(g)
+	night_fx._glow_on = true
+	wf.ambient.update(16.0, cam, null)
+	_check(g.seen_frame == -1, "the glow pass does not queue a night-only glow by day")
+	EfpEffect.set_night(true, self)
+	wf.ambient.update(16.0, cam, null)
+	_check(g.seen_frame == wf.ambient._frame, "and does at night")
+	EfpEffect.set_night(false, self)
+	AmbientParticles.effect_factory = Callable()
+	for p in ["map\\day.efp", "map\\night.efp"]:
 		EfpEffect._templates.erase(p.to_lower())
 	container.free()
 	cam.free()

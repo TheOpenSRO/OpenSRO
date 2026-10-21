@@ -309,9 +309,9 @@ func _test_point_on_screen() -> void:
 func _test_night_and_bones() -> void:
 	var night := BsrReader.ParticleEntry.new()
 	night.b51 = 1
-	_check(not AmbientParticles.shows(night), "+0x51 bit 0: a night-only entry is not built at the fixed day phase")
+	_check(AmbientParticles.night_only(night), "+0x51 bit 0: a night-only entry (round 806: built, held by day)")
 	var day := BsrReader.ParticleEntry.new()
-	_check(AmbientParticles.shows(day), "an ordinary entry is")
+	_check(not AmbientParticles.night_only(day), "an ordinary entry is not")
 	var bone := BsrReader.ParticleEntry.new()
 	bone.mode = 0
 	bone.bone = "Bone02"
