@@ -1,6 +1,6 @@
 # Current Features Supported
 
-What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.566** plus what is merged on `dev`; updated 2026-10-21.
+What OpenSRO (server and client) handles today, what works in part, and what is not built yet. Client **v0.1.567** plus what is merged on `dev`; updated 2026-10-22.
 
 **Legend:** ✅ Supported · 🟡 Partial · 🔧 In progress · ❌ Not yet · 🆕 merged on `dev`, ships in the next release
 
@@ -9,7 +9,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | Area | ✅ | 🟡 | 🔧 | ❌ | Total |
 |---|--:|--:|--:|--:|--:|
 | [Account & login](#account--login) | 14 |  |  |  | 14 |
-| [World & movement](#world--movement) | 14 | 3 |  | 3 | 20 |
+| [World & movement](#world--movement) | 16 | 3 |  | 2 | 21 |
 | [NPCs](#npcs) | 7 | 4 |  |  | 11 |
 | [Monsters](#monsters) | 14 | 3 |  |  | 17 |
 | [Combat](#combat) | 11 | 4 |  | 3 | 18 |
@@ -27,7 +27,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 | [Plugins & customization](#plugins--customization) | 4 | 1 |  | 3 | 8 |
 | [Bots](#bots) |  |  |  | 2 | 2 |
 | [Client platforms](#client-platforms) | 6 | 1 |  |  | 7 |
-| **All** | **155** | **32** | **1** | **37** | **225** |
+| **All** | **157** | **32** | **1** | **36** | **226** |
 
 ## Biggest gaps
 
@@ -36,7 +36,7 @@ What OpenSRO (server and client) handles today, what works in part, and what is 
 - Instanced dungeons (Job Temple, Pharaoh's tomb, Medusa) not available
 - Guilds are basic: no ranks, invites, storage or unions
 - Exchange window not yet retail; players cannot drop items
-- No keyboard movement or key rebinding
+- No key rebinding
 
 ## Notes
 
@@ -73,8 +73,9 @@ The whole retail world streamed from your own Map.pk2, with click-to-walk travel
 | Terrain, objects and region streaming | ✅ Supported | Seamless world from Map.pk2; regions load off the main thread |
 | Click-to-walk | ✅ Supported | Click the ground to walk; arrival lands exactly on the point |
 | Sky-click run | ✅ Supported | Clicking sky or far ground runs on that heading until blocked |
-| Keyboard (WASD) movement | ❌ Not yet | Removed to match retail's key table; click-to-walk only |
-| Walk/run toggle and sitting | ✅ Supported | Walk/run, sit and stand through the action window and keys |
+| Keyboard (arrow keys) movement | ✅ Supported | Up runs where the character faces, Left/Right turn it on the spot; as in retail the server hears a turn in 45° steps and exactly on release |
+| Walk/run toggle and sitting | ✅ Supported | Walk/run, sit and stand through the action window and keys; a click while seated stands up first, as retail |
+| Movement animation | ✅ Supported | Retail blending: a run starts from its first frame and fades in, a stop lets the stride finish, 5 s battle stance, idle fidgets for players and NPCs |
 | Collision | 🟡 Partial | Client navmesh for terrain and buildings; server checks speed and height only |
 | Dungeons: Donwhang Cave and Qin-Shi Tomb | ✅ Supported | All Qin-Shi floors and Donwhang Cave load, with dungeon minimaps |
 | Instanced dungeons | ❌ Not yet | Job Temple, Pharaoh's tomb, Medusa rooms refused at the gate |

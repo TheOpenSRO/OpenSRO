@@ -7562,7 +7562,9 @@ the server seems to pick it up only a fraction of the time or until it stops".
   2.36 (+0.1; the run's fresh base check read 2.09), entry 10947 / 11129, freeze 3488 / 3461, hitches
   5 / 5: SAME. (The default 3000 frames ran 4 s at ~700 fps on the box and gave too few samples:
   `--frames 60000`, as round 805.)
-- **Deployed (the Mac mini):** the server, for the arrow keys' `0x7023` / `0x7024` (see below).
+- **Deployed (the Mac mini):** the server at 048bc6e1 (2026-10-22 02:13 local), for the arrow keys'
+  `0x7023` / `0x7024` handlers and `0xB024`; `opensro-server.prev` kept; boot clean, 0 `level=ERROR`;
+  `run.sh` unchanged. The only other server change since the deployed round 805 build is a census tool.
 
 ## Eight-hundred-and-seventh round: the effects' range, fog and walls
 
