@@ -133,6 +133,23 @@ const C_DMG := 4
 const C_MOV := 14
 const C_TBONE := 21
 const C_TOFFSET := 22
+## Round 809 (the header's own names first, these the fallback; MEASURED, the
+## section's `//` line): Scale 6, CreateCnt 11, Fade 12, Act Option 16,
+## ObjName2 23.
+const C_SCALE := 6
+const C_CNT := 11
+const C_FADE := 12
+const C_OPT := 16
+const C_OBJ2 := 23
+
+## Round 809: the row's object kind, its ObjName's extension through the
+## client's name map (READ, 0xec7180..0xec7400, record +0x37): none 0, bsr 1,
+## efp 2, wav 3, ddj 4. Rows of kind bsr and efp are kept.
+const KIND_BSR := 1
+const KIND_EFP := 2
+const AT_MOV_OPTION := 8
+## Scale (record +4; READ, the same name map): none 0, CHAR_BASE 1, MOB_BASE 2.
+static var SCALE_KINDS := {"none": 0, "CHAR_BASE": 1, "MOB_BASE": 2}
 
 ## The Effect Quality option (round 694, VideoOptions.EFFECT): 0 "Turn Off
 ## All Effects", 1 "See Hit Effects", 2 "See All Effects" (the default).
@@ -173,7 +190,8 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	var in_section := false
 	var col := {"act": C_ACT, "path": C_PATH, "name": C_NAME, "bone": C_BONE, "offset": C_OFFSET,
-		"dmg": C_DMG, "mov": C_MOV, "tbone": C_TBONE, "toffset": C_TOFFSET, "rotate": C_ROTATE}
+		"dmg": C_DMG, "mov": C_MOV, "tbone": C_TBONE, "toffset": C_TOFFSET, "rotate": C_ROTATE,
+		"scale": C_SCALE, "cnt": C_CNT, "fade": C_FADE, "opt": C_OPT, "obj2": C_OBJ2}
 	for raw in SkillAudio._utf16_lines(bytes):
 		var line: String = raw
 		if line.begins_with("#section"):
@@ -186,7 +204,8 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			var header := line.substr(2).split("\t")
 			var names := {"ActType": "act", "Obj Path": "path", "ObjName": "name",
 				"StartBone": "bone", "StartOffset": "offset", "DMG Event": "dmg",
-				"MovTypeSpeed": "mov", "TargetBone": "tbone", "TargetOffset": "toffset", "Rotate": "rotate"}
+				"MovTypeSpeed": "mov", "TargetBone": "tbone", "TargetOffset": "toffset", "Rotate": "rotate",
+				"Scale": "scale", "CreateCnt": "cnt", "Fade": "fade", "Act Option": "opt", "ObjName2": "obj2"}
 			for h in names:
 				var at := header.find(h)
 				if at >= 0:
@@ -200,7 +219,8 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 		if id == "" or not SkillAudio.ANI_TYPES.has(ani_name):
 			continue
 		var obj := cols[int(col["name"])].strip_edges()
-		if obj == "" or obj.to_lower() == "none" or not obj.to_lower().ends_with(".efp"):
+		var kind := object_kind(obj)
+		if kind != KIND_EFP and kind != KIND_BSR:
 			continue
 		var dir := cols[int(col["path"])].strip_edges()
 		if dir.to_lower() == "none":
@@ -219,6 +239,13 @@ static func parse_rows(bytes: PackedByteArray) -> Dictionary:
 			"tbone": _cell(cols, int(col["tbone"])),
 			"toffset": parse_offset(_cell(cols, int(col["toffset"]))),
 			"rotate": int(_cell(cols, int(col["rotate"]))) if _cell(cols, int(col["rotate"])).is_valid_int() else 0,
+			"kind": kind,
+			"mov_a": parse_mov_delay(_cell(cols, int(col["mov"]))),
+			"scale": int(SCALE_KINDS.get(_cell(cols, int(col["scale"])), 0)),
+			"cnt": maxi(int(_cell(cols, int(col["cnt"]))), 1) if _cell(cols, int(col["cnt"])).is_valid_int() else 1,
+			"fade": parse_pair(_cell(cols, int(col["fade"]))),
+			"opt": parse_option(_cell(cols, int(col["opt"]))),
+			"obj2": _obj2(_cell(cols, int(col["obj2"]))),
 		}
 		if not out.has(id):
 			out[id] = []
@@ -238,6 +265,58 @@ static func parse_mov(cell: String) -> Array:
 		if not String(p[k]).strip_edges().is_valid_int():
 			return []
 	return [p[0], int(p[1]), int(p[2]), int(p[3])]
+
+## Round 809: an ObjName's object kind (READ, the name map: by extension;
+## "none" or empty 0).
+static func object_kind(obj: String) -> int:
+	var o := obj.strip_edges().to_lower()
+	if o == "" or o == "none":
+		return 0
+	match o.get_extension():
+		"bsr":
+			return KIND_BSR
+		"efp":
+			return KIND_EFP
+		"wav":
+			return 3
+		"ddj":
+			return 4
+	return 0
+
+## MovTypeSpeed's first number, the delay in ms (record +0x10, READ: the
+## object neither shows nor moves for it), whatever the kind, MOV_NONE too.
+static func parse_mov_delay(cell: String) -> int:
+	var p := cell.strip_edges().split(",")
+	if p.size() < 2 or not String(p[1]).strip_edges().is_valid_int():
+		return 0
+	return maxi(int(p[1]), 0)
+
+## "a,b" -> [a, b] (Fade: record +0xa, +0xc), [0, 0] for anything else.
+static func parse_pair(cell: String) -> Array:
+	var p := cell.strip_edges().split(",")
+	if p.size() != 2 or not String(p[0]).strip_edges().is_valid_int() or not String(p[1]).strip_edges().is_valid_int():
+		return [0, 0]
+	return [int(p[0]), int(p[1])]
+
+## Act Option `flag,angle,dist,spacing,u16,bool` (READ, FUN_00a9d0f0: record
+## +0x24 the flag, +0x28 the angle in degrees made radians -- / 360.0 x
+## 6.2831854, 0xdde7a8 / 0xd81930 -- +0x2c the distance, +0x30 the spacing;
+## +0x34 and +0x36 are read by nothing found, OPEN) -> {} when the flag is
+## false or the cell does not parse.
+static func parse_option(cell: String) -> Dictionary:
+	var p := cell.strip_edges().split(",")
+	if p.size() != 6 or String(p[0]).strip_edges().to_lower() != "true":
+		return {}
+	for k in range(1, 5):
+		if not String(p[k]).strip_edges().is_valid_float():
+			return {}
+	return {"angle": float(p[1]) / 360.0 * TAU, "dist": float(p[2]), "spacing": float(p[3]),
+		"w5": int(float(p[4])), "b6": String(p[5]).strip_edges().to_lower() == "true"}
+
+## ObjName2 (record +0x74): the effect made where a mover arrives; "" for none.
+static func _obj2(cell: String) -> String:
+	var o := cell.strip_edges()
+	return "" if o == "" or o.to_lower() == "none" else o
 
 ## "x,y,z" -> Vector3 (zero for anything else).
 static func parse_offset(cell: String) -> Vector3:
@@ -353,18 +432,43 @@ static func rows_for(skill_id: int, ani_type: int, start_event: int = -1) -> Arr
 	warm()
 	return rows_in(SkillAudio._skills, _rows, skill_id, ani_type, start_event)
 
-## Every .efp path a skill's rows name.
+## Every .efp path a skill's rows name (ObjName2 included, round 809).
 static func paths_for(skill_id: int) -> PackedStringArray:
 	warm()
 	var out := PackedStringArray()
 	for r in SkillAudio.effect_rows_in(SkillAudio._skills, _rows, skill_id):
-		if not out.has(String(r["path"])):
+		var ps: Array = [String(r.get("obj2", ""))]
+		if int(r.get("kind", KIND_EFP)) == KIND_EFP:
+			ps.append(String(r["path"]))
+		for p in ps:
+			if p != "" and p.to_lower().ends_with(".efp") and not out.has(p):
+				out.append(p)
+	return out
+
+## Round 809: every .bsr object a skill's rows name.
+static func bsr_paths_for(skill_id: int) -> PackedStringArray:
+	warm()
+	var out := PackedStringArray()
+	for r in SkillAudio.effect_rows_in(SkillAudio._skills, _rows, skill_id):
+		if int(r.get("kind", KIND_EFP)) == KIND_BSR and not out.has(String(r["path"])):
 			out.append(String(r["path"]))
 	return out
 
-## Decodes a skill's effect files off the main thread (see the header).
+## Decodes a skill's effect files off the main thread (see the header), and
+## starts assembling its .bsr objects (round 809, BsrEffect).
 static func preload_skill(skill_id: int) -> int:
+	for p in bsr_paths_for(skill_id):
+		BsrEffect.preload_path(p)
 	return EfpEffect.preload_paths(paths_for(skill_id), _particles)
+
+## Round 809: preload_skill once per skill id (a monster's swing asks every
+## time; only its first asks the workers).
+static var _preloaded := {}
+static func preload_skill_once(skill_id: int) -> void:
+	if skill_id == 0 or _preloaded.has(skill_id):
+		return
+	_preloaded[skill_id] = true
+	preload_skill(skill_id)
 
 static func preload_skills(ids: Array) -> void:
 	var all := PackedStringArray()
@@ -449,6 +553,15 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 			continue
 		if not wants_effect(caster, target, host):
 			continue
+		var option_mover := is_option_mover(r) and _valid(caster)
+		# Round 809: a .bsr object (BsrEffect), never in the returned list
+		# (its life is its clip's or its mover's).
+		if int(r.get("kind", KIND_EFP)) == KIND_BSR:
+			var carries_b: Callable = arrive if bool(r.get("dmg", false)) else Callable()
+			if _play_bsr(r, act, caster, target, host, option_mover, carries_b, skill_id, ani_type, start_event) \
+					and carries_b.is_valid():
+				arrive = Callable()
+			continue
 		var fx := _make(String(r["path"]))
 		if fx == null:
 			print("EFFECTS skill %d %s/%d: %s did not load (%s)" % [skill_id,
@@ -467,7 +580,7 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 		if kept_act(act):
 			fx.loop = true
 			fx.max_life = READY_LOOP_MAX
-		var flies := act >= AT_MOV_1TAR and _valid(target) and target != caster and _valid(caster)
+		var flies := option_mover or (act >= AT_MOV_1TAR and _valid(target) and target != caster and _valid(caster))
 		if flies:
 			var carries: Callable = arrive if bool(r.get("dmg", false)) else Callable()
 			if carries.is_valid():
@@ -538,23 +651,81 @@ static func bone_point(body: Node3D, bone: String, offset: Vector3) -> Vector3:
 			at += skel.get_bone_global_pose(i).origin
 	return skel.global_transform * at
 
-static func _fly(fx: EfpEffect, caster: Node3D, target: Node3D, row: Dictionary, on_arrive: Callable) -> void:
+## Round 809: whether a row is a mover sent along the caster's heading rather
+## than at a target -- AT_MOV_OPTION, and AT_MOV_1TAR with its Act Option
+## flag set (READ, FUN_00a4cc70: the goal override does not test the ActType;
+## the Cold Bingpan A/C/E rows).
+static func is_option_mover(r: Dictionary) -> bool:
+	var act := int(r.get("act", -1))
+	return not (r.get("opt", {}) as Dictionary).is_empty() and (act == AT_MOV_OPTION or act == AT_MOV_1TAR)
+
+## Round 809: the heading of a body's drawn model, the client's +0x8c: its
+## front is the model's -Z (MonsterMotion.MODEL_FRONT; another player's
+## skeleton is turned PI under its root, so the same holds), and heading h
+## faces RemoteFacing.facing_of(h) = (sin h, cos h) in world x, z.
+static func heading_of(body: Node3D) -> float:
+	var sk := skeleton_of(body)
+	var n: Node3D = sk if sk != null and sk.is_inside_tree() else body
+	var front := -(n.global_transform.basis.z if n.is_inside_tree() else n.transform.basis.z)
+	if Vector2(front.x, front.z).is_zero_approx():
+		return 0.0
+	return RemoteFacing.wrap_heading(atan2(front.x, front.z))
+
+## Round 809: the goal of an option mover (READ, FUN_00a4cc70 with the option
+## flag: the caster's heading plus the row's angle, the distance along it on
+## the ground -- (sin h, 0, -cos h) in the client's region frame, whose z the
+## world mirrors: RemoteFacing.facing_of).
+static func option_goal(start: Vector3, heading: float, opt: Dictionary) -> Vector3:
+	var dir := RemoteFacing.facing_of(heading + float(opt.get("angle", 0.0)))
+	return start + Vector3(dir.x, 0.0, dir.y) * float(opt.get("dist", 0.0))
+
+## A mover's speed (READ, FUN_00a481f0 -> FUN_009ec9a0(b, c): b when c <= b;
+## OPEN what it does when c > b, taken here as their mean, as rounds 785-808
+## took every row).
+static func mover_speed(mov: Array) -> float:
+	if mov.size() != 4:
+		return 1.0
+	var b := float(mov[2])
+	var c := float(mov[3])
+	return maxf(b if c <= b else (b + c) * 0.5, 1.0)
+
+static func _fly(fx: EfpEffect, caster: Node3D, target: Node3D, row: Dictionary, on_arrive: Callable,
+		bsr_path: String = "") -> Dictionary:
 	var carrier := Node3D.new()
 	carrier.name = "SkillFlight"
 	var parent := caster.get_parent() if caster.get_parent() != null else caster
 	parent.add_child(carrier)
-	carrier.global_position = bone_point(caster, String(row["bone"]), row["offset"])
-	var mov: Array = row.get("mov", [])
-	var speed := (float(mov[2]) + float(mov[3])) * 0.5 if mov.size() == 4 else 0.0
-	carrier.add_child(fx)
-	fx.follow_host(carrier, "none", Vector3.ZERO)
+	var start := bone_point(caster, String(row["bone"]), row["offset"])
+	carrier.global_position = start
+	if fx != null:
+		# Round 809 (READ, FUN_00a4cc70): a mover's effect is made kept
+		# ((+0x10)(1)); its arrival lets it go or fades it (_land).
+		fx.loop = true
+		carrier.add_child(fx)
+		fx.follow_host(carrier, "none", Vector3.ZERO)
 	var f := {"carrier": carrier, "fx": fx, "target": target, "tbone": String(row.get("tbone", "none")),
-		"toffset": row.get("toffset", Vector3.ZERO), "speed": maxf(speed, 1.0), "on_arrive": on_arrive,
-		"age": 0.0}
+		"toffset": row.get("toffset", Vector3.ZERO), "speed": mover_speed(row.get("mov", [])), "on_arrive": on_arrive,
+		"age": 0.0, "row": row, "trail": [], "since": 0.0, "wait": float(row.get("mov_a", 0)) / 1000.0,
+		"heading": heading_of(caster)}
+	if is_option_mover(row):
+		f["heading"] = RemoteFacing.wrap_heading(float(f["heading"]) + float((row["opt"] as Dictionary).get("angle", 0.0)))
+		f["goal"] = option_goal(start, heading_of(caster), row["opt"])
+		f["target"] = null
+	# READ: neither shown nor moved for MovTypeSpeed a ms.
+	if float(f["wait"]) > 0.0:
+		carrier.visible = false
+		if fx != null:
+			fx.process_mode = Node.PROCESS_MODE_DISABLED
+	if bsr_path != "":
+		BsrEffect.spawn(bsr_path, {"parent": carrier, "local": true, "types": [BsrEffect.TYPE_FIRST],
+			"until_freed": true})
 	_flights.append(f)
 	_aim(carrier, _flight_goal(f))
+	return f
 
 static func _flight_goal(f: Dictionary) -> Vector3:
+	if f.has("goal"):
+		return f["goal"]
 	var t = f["target"]
 	if _valid(t):
 		f["last_goal"] = bone_point(t, String(f["tbone"]), f["toffset"])
@@ -576,34 +747,186 @@ static func step_flights(delta: float) -> void:
 	var keep: Array = []
 	for f in flights:
 		var carrier = f["carrier"]
-		# OURS: a flight whose carrier or target is gone lands where it is.
-		if not _valid(carrier) or not _valid(f["target"]):
+		# OURS: a flight whose carrier or target is gone lands where it is
+		# (an option mover has no target: its goal is a point).
+		if not _valid(carrier) or (not f.has("goal") and not _valid(f["target"])):
 			_land(f)
 			continue
 		var c: Node3D = carrier
+		if float(f["wait"]) > 0.0:
+			f["wait"] = float(f["wait"]) - delta
+			if float(f["wait"]) > 0.0:
+				keep.append(f)
+				continue
+			c.visible = true
+			if is_instance_valid(f["fx"]):
+				(f["fx"] as Node).process_mode = Node.PROCESS_MODE_INHERIT
 		var goal := _flight_goal(f)
 		var step := float(f["speed"]) * delta
 		f["age"] = float(f["age"]) + delta
 		var d := goal - c.global_position
 		if d.length() <= step or float(f["age"]) >= FLIGHT_MAX_S:
+			_trail(f, minf(d.length(), step))
 			c.global_position = goal
 			_land(f)
 			continue
 		c.global_position += d.normalized() * step
 		_aim(c, goal)
+		_trail(f, step)
 		keep.append(f)
 	keep.append_array(_flights)
 	_flights = keep
 
+## Round 809, the option mover's trail (READ, CIDecoMoveObj::vslot_009 at
+## 0xa4d25c): the distance moved is summed (+0x17c) and, past the option's
+## spacing (+0x30), reset to 0 while a new copy of the row's .efp -- kept
+## (keep flag 1), at the mover's position, turned by its heading
+## (FUN_0043cda0) -- joins the mover's list.
+static func _trail(f: Dictionary, moved: float) -> void:
+	var row: Dictionary = f["row"]
+	var opt: Dictionary = row.get("opt", {})
+	var spacing := float(opt.get("spacing", 0.0))
+	if spacing <= 0.0 or int(row.get("kind", KIND_EFP)) != KIND_EFP:
+		return
+	f["since"] = float(f["since"]) + moved
+	if float(f["since"]) <= spacing:
+		return
+	f["since"] = 0.0
+	var c: Node3D = f["carrier"]
+	var copy := _place_static(String(row["path"]), c.global_position, float(f["heading"]), c.get_parent(), true)
+	if copy != null:
+		(f["trail"] as Array).append(copy)
+
+## An effect left in the world at `at`, turned by heading `h` (a -Z-front
+## model's turn, RemoteFacing.yaw_of(h, PI)): an anchor node holding it,
+## placed once. `kept`: it loops until let go. Null when it does not load.
+static func _place_static(path: String, at: Vector3, h: float, parent: Node, kept: bool) -> EfpEffect:
+	if path == "" or parent == null or not is_instance_valid(parent):
+		return null
+	var fx := _make(path)
+	if fx == null:
+		return null
+	var anchor := Node3D.new()
+	anchor.name = "SkillMark"
+	parent.add_child(anchor)
+	anchor.global_position = at
+	anchor.rotation.y = RemoteFacing.yaw_of(h, PI)
+	anchor.add_child(fx)
+	fx.loop = kept
+	fx.static_host = true
+	fx.follow_host(anchor, "none", Vector3.ZERO)
+	# The anchor goes with its effect.
+	fx.tree_exited.connect(func() -> void:
+		if is_instance_valid(anchor) and not anchor.is_queued_for_deletion():
+			anchor.queue_free(), CONNECT_ONE_SHOT)
+	return fx
+
+## Round 809's arrival (READ, FUN_00a4c380): ObjName2, when set, is made at
+## the point; then by Fade's second value (+0xc) the head and its trail
+## copies go -- below 0 at once, 0 let go (the keep flag cleared, they play
+## out), above 0 faded 255 -> 0 over Fade's first value (+0xa,
+## FUN_00a48690 -> FUN_00a48190). OURS: there is no effect alpha here, so a
+## fade holds them that long and then lets them go. A mover carrying a .bsr
+## object is removed on arrival (its carrier freed).
 static func _land(f: Dictionary) -> void:
 	var cb: Callable = f["on_arrive"]
-	if is_instance_valid(f["fx"]):
-		(f["fx"] as EfpEffect).stop()
 	var carrier = f["carrier"]
-	if _valid(carrier):
-		(carrier as Node).queue_free()
+	var row: Dictionary = f.get("row", {})
+	var fade: Array = row.get("fade", [0, 0])
+	var at: Vector3 = (carrier as Node3D).global_position if _valid(carrier) else Vector3.ZERO
+	if _valid(carrier) and String(row.get("obj2", "")) != "":
+		_place_static(String(row["obj2"]), at, float(f.get("heading", 0.0)), (carrier as Node).get_parent(), false)
+	var fxs: Array = []
+	if is_instance_valid(f["fx"]):
+		fxs.append(f["fx"])
+	for t in f.get("trail", []):
+		if is_instance_valid(t):
+			fxs.append(t)
+	var second := int(fade[1])
+	if second < 0 or fxs.is_empty():
+		_stop_all(fxs)
+		if _valid(carrier):
+			(carrier as Node).queue_free()
+	else:
+		var head = f["fx"]
+		if is_instance_valid(head):
+			(head as Node).process_mode = Node.PROCESS_MODE_INHERIT
+		if second == 0:
+			_release_all(fxs)
+		_lingers.append({"fx": fxs, "carrier": carrier,
+			"release_at": _now() + int(fade[0]) if second > 0 else -1, "until": _now() + LINGER_MAX_MS})
 	if cb.is_valid():
 		cb.call()
+
+## Round 809: effects left after their mover arrived -- {fx, carrier,
+## release_at (ms, -1 when already let go), until (OURS cap)}; their carrier
+## is freed once none of them is left.
+static var _lingers: Array = []
+## OURS: an arrived mover's effects are stopped this long after at the most.
+const LINGER_MAX_MS := 12000
+
+static func _step_lingers(now: int) -> void:
+	if _lingers.is_empty():
+		return
+	var keep: Array = []
+	for l in _lingers:
+		var alive: Array = []
+		for fx in l["fx"]:
+			if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion():
+				alive.append(fx)
+		l["fx"] = alive
+		if int(l["release_at"]) >= 0 and now >= int(l["release_at"]):
+			_release_all(alive)
+			l["release_at"] = -1
+		if now >= int(l["until"]):
+			_stop_all(alive)
+			alive.clear()
+		if alive.is_empty():
+			if _valid(l["carrier"]):
+				(l["carrier"] as Node).queue_free()
+			continue
+		keep.append(l)
+	_lingers = keep
+
+static func linger_count() -> int:
+	return _lingers.size()
+
+# --- .bsr objects (round 809, BsrEffect) -------------------------------------------
+
+## Plays a .bsr row (BsrEffect's header has the READ): on the target's
+## TargetBone point (AT_TARGET, AT_TARGET_F, AT_DMG_POS -- the last two
+## OURS), facing the caster, unscaled, type 0 then type 2, CreateCnt of them,
+## after MovTypeSpeed a; on the caster (every other non-mover ActType) at
+## StartBone + StartOffset, scaled by the body, type 0, following it (AT_STOP
+## placed once); as a mover's object. True when a mover took `carries`.
+static func _play_bsr(r: Dictionary, act: int, caster: Node3D, target: Node3D, host: Node3D, option_mover: bool,
+		carries: Callable, skill_id: int, ani_type: int, start_event: int) -> bool:
+	var p := String(r["path"])
+	var what := "EFFECTS skill %d %s/%d: %s %s" % [skill_id, SkillAudio._phase_name(ani_type), start_event,
+		ACT_TYPES[act] if act >= 0 and act < ACT_TYPES.size() else "?", p]
+	var flies := option_mover or (act >= AT_MOV_1TAR and _valid(target) and target != caster and _valid(caster))
+	if flies:
+		_fly(null, caster, target, r, carries, p)
+		print(what + " flies")
+		return true
+	var turn_from: Node3D = caster if _valid(caster) else host
+	var parent := host.get_parent() if host.get_parent() != null else host
+	if act == AT_TARGET or act == AT_TARGET_F or act == AT_DMG_POS:
+		var on: Node3D = target if _valid(target) else host
+		for i in int(r.get("cnt", 1)):
+			BsrEffect.spawn(p, {"parent": parent, "at": bone_point(on, String(r.get("tbone", "none")), r.get("toffset", Vector3.ZERO)),
+				"basis": BsrEffect.host_turn(turn_from), "scale": 1.0,
+				"types": [BsrEffect.TYPE_FIRST, BsrEffect.TYPE_TARGET], "delay_ms": int(r.get("mov_a", 0))})
+		print(what + " at the target")
+		return false
+	var sk := skeleton_of(host)
+	var body_scale := (sk as Node3D).global_transform.basis.get_scale().x if sk != null and sk.is_inside_tree() else 1.0
+	BsrEffect.spawn(p, {"parent": parent, "at": bone_point(host, String(r["bone"]), r["offset"]),
+		"basis": BsrEffect.host_turn(host), "scale": body_scale, "types": [BsrEffect.TYPE_FIRST],
+		"host": host, "bone": String(r["bone"]), "offset": r["offset"], "follow": act != AT_STOP,
+		"place_once": act == AT_STOP})
+	print(what + " on the caster")
+	return false
 
 static func flight_count() -> int:
 	return _flights.size()
@@ -622,6 +945,7 @@ static func _now() -> int:
 static func tick(delta: float) -> void:
 	_clock_ms += maxf(delta, 0.0) * 1000.0
 	step_flights(maxf(delta, 0.0))
+	BsrEffect.tick(maxf(delta, 0.0))
 	process()
 
 ## The skill acts on `target` (for a buff: it is applied): ACT_S now, and
@@ -652,6 +976,7 @@ static func _stop_all(fxs: Array) -> void:
 ## (through tick).
 static func process(now_ms: int = -1) -> void:
 	var now := now_ms if now_ms >= 0 else _now()
+	_step_lingers(now)
 	for key in _auras.keys():
 		var a: Dictionary = _auras[key]
 		var alive: Array = []
@@ -681,6 +1006,10 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 	if not _valid(host) or not wants_effect(null, null, host):
 		return started
 	for r in rows_for(skill_id, SkillAudio.ACT_L, -1):
+		# Round 809: an aura's .bsr rows (the mall balloons, 65 AT_LOOP rows,
+		# MEASURED) are not drawn (OPEN).
+		if int(r.get("kind", KIND_EFP)) != KIND_EFP:
+			continue
 		var fx := _make(String(r["path"]))
 		if fx == null:
 			continue
@@ -719,6 +1048,9 @@ static func play_named(effect_id: String, ani_type: int, host: Node3D, owner_key
 		return started
 	var kept: Array = []
 	for r in rows_named(effect_id, ani_type):
+		# Round 809: a .bsr object is a cast's (play_phase), not a state's.
+		if int(r.get("kind", KIND_EFP)) != KIND_EFP:
+			continue
 		var fx := _make(String(r["path"]))
 		if fx == null:
 			continue
@@ -805,7 +1137,16 @@ static func clear_live() -> void:
 			(f["fx"] as EfpEffect).stop()
 		if _valid(f["carrier"]):
 			(f["carrier"] as Node).queue_free()
+		for t in f.get("trail", []):
+			if is_instance_valid(t):
+				(t as EfpEffect).stop()
 	_flights.clear()
+	for l in _lingers:
+		_stop_all(l["fx"])
+		if _valid(l["carrier"]):
+			(l["carrier"] as Node).queue_free()
+	_lingers.clear()
+	BsrEffect.clear()
 	own_body = null
 
 ## Clears every table and live reference (tests, a world reload).

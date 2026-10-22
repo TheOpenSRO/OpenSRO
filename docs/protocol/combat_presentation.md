@@ -155,3 +155,90 @@ caster's own swing clip in retail (state 0xb has no mask, `0xec6190`, but the
 deco's clip may sit on another layer); the hitcount ddj decoration (OpenSRO
 draws a text number); the blocking/critical labels; what paces a monster's
 swings in the engine.
+
+## Round 809: a monster's swing draws its skill's effects
+
+The user (Hashade, Karakoram): the original's ice attack -- a pillar rising under
+the target, and a six-spoked star of ice shards around the caster -- did not
+show. Three causes, all fixed in this round.
+
+**1. A monster's swing never reached the effect rows.** `_play_monster_swing`
+played the SHOT clip, the sounds and the turn, and nothing else: none of the
+table's **3,146 MSKILL effect rows over 1,585 codes** (MEASURED) ever played.
+Retail runs a monster's swing as it runs every cast -- 0xB070 starts the skill
+decoration (`FUN_00a54f00`), whose SHOT groups fire at the clip's type-1
+events (`FUN_00a59970` -> `FUN_00a52fe0`). Now the swing starts `_start_deco`
+for a skill with a skillaniset2 record, handing it the clip it already played
+(`shot_type`, `no_clip`): the groups fire at that clip's hit events, the blow
+still lands by the same event as in round 785. OURS: the deco's READY and WAIT
+are skipped for a swing (a monster swing's clip is its SHOT clip). MEASURED:
+Hashade's `MSKILL_KK_ISHADE_CLON_ATTACK01/03` (268/269), Ishade's
+`..._ATTACK01/02` (266/267) all have records (SHOT ANI_ATTACK1 / 2 / 3), and
+Ishade's clips carry hit events at 885, 1092/1242 and 1505 ms.
+
+**2. `.bsr` objects (`BsrEffect`).** READ, `GlobalEffectManager::FUN_00a9d0f0`:
+the row's object kind is its ObjName's extension through the name map at
+`0xec7180..0xec7400` (none 0, bsr 1, efp 2, wav 3, ddj 4; record +0x37). 406
+of 6,340 rows name a `.bsr` (MEASURED: 223 skills, 79 files -- the player's bow
+arrow `cha_arrow_normal.bsr` 99, bone hunter arrows 61, Roc stones 30,
+`ishade_ice_ground.bsr` 3); `skill_effects.gd` kept only `.efp` and dropped
+them all. Now kept, and played (READ):
+- AT_TARGET, MovTypeSpeed b 0 (`IDecoSkill::FUN_00a51bc0` case 3): CreateCnt
+  objects at the target's TargetBone + TargetOffset (`FUN_00a4a140`), facing
+  the caster's heading, unscaled, after MovTypeSpeed a ms (`obj+0xe0`,
+  `FUN_00a55c10`); type 0, then type 2 (`FUN_00a557f0`, `FUN_00a55ac0`), the
+  `default` group, fades 0. It goes when its clip leaves the AniMixer (event
+  100: `push 0x64` at `0xc53d87`, `0xc53f01`, `0xc5400c`; `FUN_00a55bd0`) --
+  INFERRED from the wiring: at the end of its one-shot. `ishade_ice_ground`
+  (MEASURED: only type 2, 600 ms, not cyclic, mesh y -26.1..-0.6) rises out of
+  the ground for 600 ms.
+- On the caster (ActType 0/1/2): scaled by the body, type 0, at StartBone +
+  StartOffset (AT_STOP once).
+- On a mover (`FUN_00a4cc70`): type 0, turned along the travel
+  (`FUN_00a4c380`), removed on arrival.
+OURS: material 0 (`FUN_009ef2f0(path, 0, 1)`'s 0 is OPEN), no object colour or
+appear fade, a looping-only model lives 4 s unattended, the model is assembled
+once per path on a worker (MonsterDraw.Templates) and a spawn waits for it up
+to 1.5 s. AT_TARGET_F / AT_DMG_POS objects are placed as AT_TARGET's (OURS).
+An aura's `.bsr` rows (the mall balloons, 65 ACT_L AT_LOOP rows) are not drawn
+(OPEN).
+
+**3. Movers (READ, `FUN_00a4cc70`, `FUN_00a4c380`, `CIDecoMoveObj::vslot_009`
+`0xa4d1a0`).**
+- Act Option (record +0x24 flag, +0x28 angle in degrees made radians, +0x2c
+  distance, +0x30 spacing; +0x34 / +0x36 have no reader found, OPEN). With the
+  flag set -- every AT_MOV_OPTION row, and the AT_MOV_1TAR rows of Cold Bingpan
+  A/C/E -- the mover's goal is not the target but the start plus the distance
+  along the caster's heading + angle. In OpenSRO terms
+  `RemoteFacing.facing_of(heading + angle)`, the heading read off the drawn
+  model's -Z front (`SkillEffects.heading_of`; the test holds a monster's and
+  a player's body to it).
+- Speed: MovTypeSpeed b (`FUN_00a481f0` -> `FUN_009ec9a0(b, c)`: b when
+  c <= b; OPEN when c > b, taken as the mean as before).
+- Delay: MovTypeSpeed a ms, unshown and unmoved.
+- The head is made kept (`(+0x10)(1)`).
+- The trail: the distance moved sums at +0x17c; past the spacing it is reset
+  to 0 and a kept copy of the row's `.efp` is left at the mover's position,
+  turned by its heading.
+- Arrival: ObjName2 (+0x74, 512 rows) is made at the point; then by Fade's
+  second value (+0xc): < 0 head and copies removed, 0 let go, > 0 faded
+  255 -> 0 over Fade's first value (+0xa, `FUN_00a48690` -> `FUN_00a48190`).
+  OURS: no per-effect alpha here -- a fade holds them that long, then lets
+  them go; an arrived mover's effects are stopped 12 s after at the most.
+- Hashade's `_ATTACK03` (MEASURED): six rows at 0/60/.../300 degrees,
+  `cold_bingpan_ice.efp`, MOV_STRAIGHT 0,100,100, distance 50, spacing 10,
+  Fade 3000,3000 -- six spokes of about five shards each, lingering ~3.5 s;
+  plus `cold_bingpan_motion_b.efp` following the caster. The player's Cold
+  Bingpan B/D use the same option rows and now draw the same way.
+- The fade-in over Fade's first value (`FUN_00a480e0`) is not drawn (OURS:
+  no effect alpha).
+
+QA: `OPENSRO_QA_MOBCAST=<skill id>,...` has the first QA monster
+(`OPENSRO_QA_MOBS`) swing each skill at the player every 150 ticks, offline.
+Tests: `client/scripts/effects/bsr_effect_test.gd` (synthetic rows, models and
+effects).
+
+OPEN: AT_MOV_SPLASH's own update (`0xa4c8f0`); the hawk mover (Script bit 4,
+CIDPHawk); the effect scale of Script 0x2000 (+0x94); an efp AT_TARGET row is
+still drawn following the target at its StartBone, where retail makes a
+CIDecoStopObj at the TargetBone point (round 809 left it as round 785 had it).
