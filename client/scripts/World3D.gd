@@ -26311,9 +26311,14 @@ func _begin_heading_run(h: float) -> String:
 #     INFERRED from the callers).
 # OURS: the cancel is local (this client has no 0x7074 [02] sender; the
 # server's keep-up ends at the run's 0x7021); the run's 500 ms re-plot
-# (0x9eb8e0's steering) is not modelled beyond its 1-degree re-send; a body
-# does not turn while seated (whether retail's does is not read); the keys are
-# let go when the window loses the focus or a text line takes the keyboard.
+# (0x9eb8e0's steering) is not modelled beyond its 1-degree re-send; the keys
+# are let go when the window loses the focus or a text line takes the keyboard.
+# Seated (round 808's follow-up, the user: "A seated character in the original
+# game spins with the arrow keys"): the body turns -- the mover tick turns on
+# the turn bits whatever the motion state (FUN_009e0e60 -> FUN_009e0c10) --
+# and nothing is sent, the sit bit being in the move gate 0x2476 that
+# FUN_009eb470 tests first; the server and everyone else keep the old facing
+# until the next move.
 const ARROW_TURN_RATE := PI
 const TURN_SEND_COARSE := 0.78539818525314331
 const TURN_SEND_FINE := 0.0174532924
@@ -26451,7 +26456,7 @@ func _step_arrow_keys(delta: float) -> void:
 	if _move_send_block_ms > 0.0:
 		_move_send_block_ms -= delta * 1000.0
 	var running := _has_move_target and _move_heading_run
-	if _turn_keys != 0 and not _player_dead and not _sit.sitting and not _motion_locked():
+	if _turn_keys != 0 and not _player_dead:
 		var h := _arrow_facing()
 		h += delta * ARROW_TURN_RATE if (_turn_keys & TURN_LEFT) != 0 else -delta * ARROW_TURN_RATE
 		h = RemoteFacing.wrap_heading(h)

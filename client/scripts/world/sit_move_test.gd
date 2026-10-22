@@ -96,6 +96,14 @@ func _test_seated(world: Node) -> void:
 	world.call("_attack_monster", 5)
 	_check(int(world.get("toggles")) == 3 and (world.get("_pending_attack") as Dictionary).is_empty(),
 		"a basic attack asks to stand instead (0x791d40)")
+	# Round 808's follow-up: the arrows spin a seated body, at pi rad/s, and
+	# send nothing (the move gate refuses 0x7024 seated).
+	player.rotation.y = 0.0
+	world.set("_turn_keys", 0x10)
+	world.call("_step_arrow_keys", 0.5)
+	world.set("_turn_keys", 0)
+	_check(absf(absf(player.rotation.y) - PI / 2.0) < 1e-3, "seated, Left turns the body (%.3f rad in 0.5 s)" % player.rotation.y)
+	_check(String(world.call("_send_turn_if", 1.0, 0.0)) == "refused", "and its 0x7024 is refused while seated")
 	sit.sitting = false
 	world.call("_try_set_move_target", Vector2(10, 10))
 	_check(int(world.get("toggles")) == 3, "standing, a click asks nothing")

@@ -7529,6 +7529,10 @@ the server seems to pick it up only a fraction of the time or until it stops".
   `_step_arrow_keys`, `_on_entity_turned`; server: `destmove.go` `handleMovementStopRequest` /
   `handleMovementTurnRequest`, `world.Hub.Turn`. Round 608's NOT_BOUND choice is
   reversed at the user's request; Down and F12 stay unbound.
+- **Follow-up (v0.1.568): the arrows spin a seated body.** The user: "A seated character in the original
+  game spins with the arrow keys". READ to agree: the mover tick turns on the turn bits whatever the
+  motion state, and `0x7024` is refused by the move gate while seated -- the spin is this client's only.
+  QA: seated, a held Left turned past a full circle with key repeats; 0 `0x7024` sent.
 - **Job plates on a mount.** Another player's job mark and title are the body's children beside its
   "Name", and round 796's rider raise moved only the name -- they stayed at the body's own height,
   inside the mount. `_set_plate_y` moves all three; a re-dress keeps a rider's plate over the mount, and

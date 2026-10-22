@@ -552,6 +552,11 @@ the angle and keeps its forward bit, so a run bends and goes on), then **`0xB024
 angle as received}`** to the 3 × 3, the mover included. Both are dropped when `CGObjPC::vslot_336`
 (`+0x1d18`) answers (OPEN what state that is).
 
+**Seated** (round 808's follow-up; the user: "A seated character in the original game spins with
+the arrow keys"): the mover tick turns on the turn bits whatever the motion state, so the seated
+body spins; every `0x7024` is refused by the move gate (the sit bit is in `0x2476`), so only this
+client sees it until the next move. OpenSRO does the same.
+
 **The client's `0xB024`** (`c:0x8a4ec0`): ignored for its own player; otherwise the body (or its
 mount's mover) turns toward it at 3π rad/s and its travel direction points along it.
 
@@ -560,7 +565,7 @@ release), `_step_arrow_keys` (the turn and the run's sends), `_on_entity_turned`
 `encode_angle` / `encode_cos_angle` / `decode_turn`. Server: `session/destmove.go`
 `handleMovementStopRequest` / `handleMovementTurnRequest` (the ridden forms through
 `coscommand.go`), `world.Hub.Turn`. OURS: the action cancel is local (no `0x7074 [02]` sender);
-the run's 500 ms re-plot is only its 1° re-send; a body does not turn while seated (not read); the
+the run's 500 ms re-plot is only its 1° re-send; the
 keys are let go when the window loses the focus or a text line takes the keyboard; the server's
 60 s heading-run limit (round 749) still ends a straight held-Up run, a turn re-arms it.
 
