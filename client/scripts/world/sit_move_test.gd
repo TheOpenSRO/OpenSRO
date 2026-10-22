@@ -137,8 +137,9 @@ func _test_plates(world: Node) -> void:
 	world.call("_replace_plate_and_click", body, 20.0)
 	_check(plate.position.y < 32.0 and is_equal_approx(mark.position.y, plate.position.y) and is_equal_approx(title.position.y, plate.position.y),
 		"on foot, a re-dress moves the name and its mark and title together")
-	# Round 809: a rider's plate is measured from the mount's seat (its
-	# `saddle` bone at rest), so it clears the rider on a tall mount too.
+	# Round 810: a rider's plate is the mount's height + 7 over the ground
+	# (READ), not over the seat (round 809's, a rider's height too high), and
+	# at least COS_SEATED_PLATE over the seat (its `saddle` bone at rest).
 	var mount := Node3D.new()
 	world.add_child(mount)
 	var mskel := Skeleton3D.new()
@@ -157,6 +158,23 @@ func _test_plates(world: Node) -> void:
 	var bare := Node3D.new()
 	world.add_child(bare)
 	_check(is_zero_approx(float(world.call("_cos_seat_height", bare))), "a mount with no saddle seats at its root")
+	var rroot := Node3D.new()
+	world.add_child(rroot)
+	var rplate := Label3D.new()
+	rplate.name = "Name"
+	rplate.position.y = 21.5
+	rroot.add_child(rplate)
+	(world.get("_other_bodies") as Dictionary)[4343] = rroot
+	mount.set_meta("cos_height", 20.0)
+	world.call("_raise_rider_plate", 4343, mount, true)
+	_check(is_equal_approx(rplate.position.y, 27.0), "a rider's plate is the mount's height + 7 over the ground, not over the seat (%.1f)" % rplate.position.y)
+	mount.set_meta("cos_height", 1.0)
+	world.call("_raise_rider_plate", 4343, mount, true)
+	_check(is_equal_approx(rplate.position.y, 26.0), "and never under 11 over the seat (%.1f)" % rplate.position.y)
+	world.call("_raise_rider_plate", 4343, mount, false)
+	_check(is_equal_approx(rplate.position.y, 21.5), "the dismount puts the plate back")
+	(world.get("_other_bodies") as Dictionary).erase(4343)
+	rroot.queue_free()
 	(world.get("_cos_bodies") as Dictionary).erase(777)
 	(world.get("_cos_assembled") as Dictionary).erase(777)
 	mount.queue_free()

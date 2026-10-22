@@ -17310,7 +17310,8 @@ var _qa_equip_bag_spec := OS.get_environment("OPENSRO_QA_EQUIP_BAG")
 ## through the client's own paths: pick:<key> (a talk line by its service
 ## key, e.g. pick:job_join:1), yes (the open job confirm box's Yes),
 ## alias:<name> (the alias window's edit and Check), alias_ok (its OK),
-## select_self, state (a log line: the job, the plate, the target window).
+## select_self, state (a log line: the job, the plate, the target window),
+## close (the talk box shut, round 810).
 var _qa_job_spec := OS.get_environment("OPENSRO_QA_JOB")
 
 var _qa_job_talked := {}
@@ -17337,6 +17338,10 @@ func _qa_job_step() -> void:
 			var key := what.substr(5)
 			print("QA JOB: tick %d pick %s" % [_qa_tick, key])
 			_on_npc_service_selected(key)
+		elif what == "close":
+			# Round 810: the talk box shut, so a later frame shows the world.
+			print("QA JOB: tick %d close the talk box" % _qa_tick)
+			_hud_panels.close("npctalk")
 		elif what == "yes":
 			var box: JobConfirmBox = null
 			for c in _hud_panels.get_children():
@@ -34265,6 +34270,11 @@ const COS_OWNER_LINE_OFFSET := 20.0
 ## is 20). INFERRED: the scale +0xc4 is 1.0 (retail_camera.gd).
 const COS_RIDER_PLATE_RAISE := 7.0
 const COS_SIZE_HEIGHT := 0.5 * 20.0
+## Round 810 (OURS): the least a rider's plate sits over the mount's seat --
+## a seated rider's head bone over the saddle (MEASURED 5.6 on the donkey and
+## the buffalo) + a standing plate's clearance over the head bone (MEASURED
+## 21.5 - 16.1 = 5.4).
+const COS_SEATED_PLATE := 11.0
 ## rider -> its plate's own height, put back at the dismount (round 796).
 var _rider_plate_y := {}
 ## A pet runs above this speed and walks below it (READ, CICCos::vslot_009
@@ -34515,15 +34525,9 @@ static func _set_held_items_shown(skel: Skeleton3D, shown: bool) -> int:
 				(c as Node3D).visible = shown
 	return ids.size()
 
-## Round 809: where a rider's plate is measured from -- the seat, the mount's
-## `saddle` bone at rest over the mount's root (x its scale), 0 for a mount
-## without one. The original adds mount +0x22c + 7.0 to the RIDER's position
-## (READ, FUN_009d0a80 0x9d0b40..0x9d0b9e: `fadd [esp+0x2c]`, the rider's
-## +0x94); that position being the seat is INFERRED -- from the ground it is
-## the rider's waist (the user's screenshot of round 808's plate on the trade
-## donkey, Size 1.8: 25 units), and the user reports the original's over the
-## head on every mount. The rest pose (not the live saddle) is OURS, so a
-## plate does not bob with the gait.
+## The mount's seat: its `saddle` bone at rest over the mount's root (x its
+## scale), 0 for a mount without one. The rest pose (not the live saddle) is
+## OURS, so a plate does not bob with the gait.
 func _cos_seat_height(mount: Node3D) -> float:
 	var uid := int(mount.get_meta("cos_uid", -1))
 	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid) if uid >= 0 else null
@@ -34566,7 +34570,20 @@ func _cos_owner_offset(label: Label3D) -> float:
 	return COS_OWNER_LINE_OFFSET * _monster_plate_pixel_size() / maxf(label.pixel_size, 1e-9)
 
 ## Round 796: a rider's plate at its mount's height + COS_RIDER_PLATE_RAISE,
-## or back at its own height (`on` false). Its node is the rider root's
+## or back at its own height (`on` false). The original adds that to the
+## RIDER's position (READ, FUN_009d0a80 0x9d0b40..0x9d0b9e: `fadd
+## [esp+0x2c]`, the rider's +0x94), and that position is the ground under
+## the mount, not the seat: the rider is drawn on the saddle through its
+## render matrix only (READ ICharactor::FUN_009d05d0), and the dismount puts
+## +0x90..+0x98 back into that matrix (FUN_009cf600) -- INFERRED that +0x94
+## is not moved while riding. Round 809 measured from the seat and put the
+## plate a rider's height too high (the user's screenshot on the Indian ox,
+## COS_T_COW3: 29 + 20 + 7 = 56, the head bone at 35). Round 810: from the
+## ground, but never below COS_SEATED_PLATE over the seat (OURS). The ox is
+## why: it has no characterInfo row and its OrgCodeName is "xxx", so it takes
+## the first row's Size 2 (READ FUN_00a95d30) -- 27 from the ground, under
+## its 29 seat, the rider's waist in the user's round 808 screenshot, where
+## the user reports the original's plate over the head. Its node is the rider root's
 ## "Name"; a batched plate is told it moved.
 func _raise_rider_plate(rider: int, mount: Node3D, on: bool) -> void:
 	var root := _rider_root(rider)
@@ -34579,7 +34596,7 @@ func _raise_rider_plate(rider: int, mount: Node3D, on: bool) -> void:
 	if on:
 		if not _rider_plate_y.has(rider):
 			_rider_plate_y[rider] = y
-		y = _cos_seat_height(mount) + _cos_plate_height(mount) + COS_RIDER_PLATE_RAISE
+		y = maxf(_cos_plate_height(mount) + COS_RIDER_PLATE_RAISE, _cos_seat_height(mount) + COS_SEATED_PLATE)
 	elif _rider_plate_y.has(rider):
 		y = float(_rider_plate_y[rider])
 		_rider_plate_y.erase(rider)
