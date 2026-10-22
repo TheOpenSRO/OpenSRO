@@ -8013,6 +8013,9 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 	# clip of one frame, OPENSRO_NO_IDLE_ANIM) has nothing to resume after a
 	# hit either -- and MonsterMotion.swap_loop must tell the two apart.
 	_animated.append([skeleton, anim, frames, 0.0, false, _idle_anim_time, null if hold else resume, hold])
+	# Round 809: a monster's ride plays it too (MonsterRide).
+	if not _monster_rides.is_empty():
+		_ride_mirror(skeleton, anim, false, hold)
 	return anim.duration_seconds()
 
 ## Advances every idle animation. Entries whose skeleton has gone (a region
@@ -19371,6 +19374,8 @@ func _qa_body_spec() -> Array:
 	print("World3D: QA body %d, scale 0x%02x" % [int(kv[0]), scale])
 	return [int(kv[0]), scale]
 func _qa_mobs_step() -> void:
+	if _qa_mobs_done:
+		_qa_mobs_act()
 	if _qa_mobs_done or not _grid_has_origin:
 		return
 	var spec := OS.get_environment("OPENSRO_QA_MOBS")
@@ -19424,6 +19429,38 @@ func _qa_mobs_step() -> void:
 	print("QA MOBS: %d monster(s) of %d species over %.0f x %.0f around (%.0f, %.0f): %s" % [
 		list.size(), species.size(), half * 2.0, half * 2.0, centre.x, centre.z, ", ".join(PackedStringArray(species))])
 	_on_monster_list_result(list, "")
+
+## OPENSRO_QA_MOBS_ACT="<tick>:<what>[;...]" (round 809, QA): at that QA tick
+## every QA monster (ids 900000+) walks (`walk`), runs (`run`), stands
+## (`stand`), swings (`attack`: its type 2 once) or dies (`die`), so a render
+## shows a ride following its rider and a die model swapped in.
+var _qa_mobs_acted := {}
+func _qa_mobs_act() -> void:
+	var spec := OS.get_environment("OPENSRO_QA_MOBS_ACT")
+	if spec == "":
+		return
+	for part in spec.split(";", false):
+		var kv := part.split(":")
+		if kv.size() != 2 or not kv[0].is_valid_int() or int(kv[0]) != _qa_tick or _qa_mobs_acted.has(part):
+			continue
+		_qa_mobs_acted[part] = true
+		var ids: Array = []
+		for id in _monster_bodies.keys():
+			if int(id) >= 900000:
+				ids.append(int(id))
+		print("QA MOBS ACT tick %d: %s on %d monster(s)" % [_qa_tick, kv[1], ids.size()])
+		for id in ids:
+			match kv[1]:
+				"walk":
+					_set_monster_gait(id, BsrReader.AnimationEntry.TYPE_WALK)
+				"run":
+					_set_monster_gait(id, BsrReader.AnimationEntry.TYPE_RUN)
+				"stand":
+					_set_monster_gait(id, BsrReader.AnimationEntry.TYPE_STAND)
+				"attack":
+					_play_monster_action(id, BsrReader.AnimationEntry.TYPE_ATTACK)
+				"die":
+					_begin_monster_death(id)
 
 ## OPENSRO_QA_MOBSPLIT=<frames> (round 664): the frame split, one line every
 ## <frames> rendered frames (MonsterCrowd.Split). OPENSRO_QA_MOBSPLIT_OFF, a
@@ -20819,6 +20856,8 @@ func _process(_delta: float) -> void:
 		return
 	# Round 795: riders on their mounts' saddles, the mounts under them.
 	_cos_place_riders()
+	# Round 809: monsters' rides, and the riders on their saddles.
+	_step_monster_rides()
 	# The auto potion's interface timers (round 786, 0xb933d0's pass).
 	_auto_potion.step(Time.get_ticks_msec())
 	# The time of day (round 786, DayCycle): the environment eased toward the
@@ -27084,6 +27123,24 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		waiters[monster.monster_id] = true
 		_monster_template_waiters[wanted_model] = waiters
 		return
+	# Round 809: its characterInfo row's ride (MonsterRide) is assembled off the
+	# main thread too, and the body waits for it, so the two fade in together;
+	# its die model is asked for now, ahead of its death (not waited for).
+	var char_rec: SoundTable.CharacterInfo = _monster_char_record(monster.code_name) if wanted_model != "" else null
+	var ride_model := char_rec.ride if char_rec != null else ""
+	if char_rec != null and _monster_async_wanted():
+		if char_rec.die_bsr != "" and not _monster_templates.has(char_rec.die_bsr):
+			if not _monster_assemble.is_valid() and _data_pk2 == null:
+				_data_pk2 = _open_pk2_if_set()
+			_monster_templates.request(char_rec.die_bsr, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		if ride_model != "" and not _monster_templates.has(ride_model):
+			if not _monster_assemble.is_valid() and _data_pk2 == null:
+				_data_pk2 = _open_pk2_if_set()
+			_monster_templates.request(ride_model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+			var ride_waiters: Dictionary = _monster_template_waiters.get(ride_model, {})
+			ride_waiters[monster.monster_id] = true
+			_monster_template_waiters[ride_model] = ride_waiters
+			return
 	# The ray finds no ground where the monster's region has not committed its
 	# terrain collision yet -- the list asked for in _ready routinely arrives
 	# before the neighbour cells do -- and nothing else re-places a standing
@@ -27178,6 +27235,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# (MonsterDraw.label_height, once per template since round 655.)
 	if monster_skeleton != null:
 		body.add_child(monster_skeleton)
+		# Round 809: its ride, under the same body (MonsterRide).
+		if ride_model != "" and dressed.is_empty():
+			_attach_monster_ride(monster.monster_id, body, monster_skeleton, ride_model, char_rec.ride_type)
 	else:
 		var mesh := MeshInstance3D.new()
 		var capsule := CapsuleMesh.new()
@@ -27327,6 +27387,251 @@ func _assemble_monster_model(model: String) -> SkinnedBsrAssembler.AssembledChar
 		return null
 	return SkinnedBsrAssembler.assemble_from_archive(_data_pk2, model, true)
 
+# --- Monster rides and deaths (round 809, MonsterRide) ------------------------
+#
+# skilleffect.txt's characterInfo row of a monster: its ride (a second body the
+# monster stands in or sits on), its die model and its death effects. The
+# rules are MonsterRide's; what follows is the glue.
+
+## Monster skeleton instance id -> its MonsterRide.
+var _monster_rides := {}
+## Test seam: code -> SoundTable.CharacterInfo, in place of AudioService's.
+var _char_records_override = null
+## OURS: the client's option byte +0x12e that lets a body with its own type-36
+## clip swap to its die model (READ: the inverse of the shard entry's flag,
+## 0x868bb3..0x868bd9; the default shard's flag is OPEN). On: every row's die
+## model plays, as on a shard whose flag is 0.
+var _die_model_option := true
+## OURS (DEFFECT_FLASH): the white flash's alpha and times. READ only the call
+## (FUN_00a42d20(&{255,255,255,128}, 0.2, 0.5), a CGWeatherManager colour);
+## what 0.2 and 0.5 time is OPEN -- here a rise over 0.2 s and a fall over 0.5 s.
+const DEAD_FLASH_ALPHA := 128.0 / 255.0
+const DEAD_FLASH_IN := 0.2
+const DEAD_FLASH_OUT := 0.5
+var _dead_flash: ColorRect = null
+
+## A monster code's characterInfo row: the code's, its OrgCodeName's, else the
+## file's first (AudioService.character_record, READ FUN_00a95d30).
+func _monster_char_record(code: String) -> SoundTable.CharacterInfo:
+	if code == "":
+		return null
+	if _char_records_override is Dictionary:
+		var o: Dictionary = _char_records_override
+		if o.has(code):
+			return o[code]
+		var org := String(_monster_org_by_code.get(code, ""))
+		return o.get(org) if org != "" else null
+	var svc := AudioService.instance()
+	if svc == null:
+		return null
+	return svc.character_record(code, String(_monster_org_by_code.get(code, "")))
+
+## Builds a monster's ride from its template and hangs it under the body.
+func _attach_monster_ride(monster_id: int, body: Node3D, rider: Skeleton3D, model: String, ride_type: int) -> void:
+	var a: SkinnedBsrAssembler.AssembledCharacter = _monster_templates.instance(model,
+		_monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+	if a == null or a.skeleton == null:
+		print("World3D: monster %d's ride %s did not assemble" % [monster_id, model])
+		return
+	var root := Node3D.new()
+	root.name = MonsterRide.NODE
+	body.add_child(root)
+	a.skeleton.set_meta(MonsterDraw.META_CULL, true)
+	a.skeleton.set_meta(MonsterDraw.META_HIDE, true)
+	a.skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(model))
+	a.skeleton.set_meta(MonsterCrowd.META_LAYOUT, model)
+	root.add_child(a.skeleton)
+	var r := MonsterRide.new()
+	r.monster_id = monster_id
+	r.body = body
+	r.rider = rider
+	r.rider_rest = rider.transform
+	r.root = root
+	r.assembled = a
+	r.ride_type = ride_type
+	r.model = model
+	_monster_rides[rider.get_instance_id()] = r
+	# Its stand (READ: group "cart" type 0 at the spawn), its own clip-tick body.
+	_animate_skeleton(a.skeleton, a.idle_animation)
+	r.place()
+	if _mob_logging():
+		print("World3D: monster %d rides %s (type %d)" % [monster_id, model, ride_type])
+
+## The ride of monster `monster_id`, or null.
+func _monster_ride_of(monster_id: int) -> MonsterRide:
+	for key in _monster_rides:
+		var r: MonsterRide = _monster_rides[key]
+		if r.monster_id == monster_id:
+			return r
+	return null
+
+func _drop_monster_ride(monster_id: int) -> void:
+	if _monster_rides.is_empty():
+		return
+	for key in _monster_rides.keys():
+		if (_monster_rides[key] as MonsterRide).monster_id == monster_id:
+			_monster_rides.erase(key)
+
+## A monster's clip change, on its ride: the clip of the same action type in
+## the ride's "cart" group (else `default`), as a loop or a one-shot as the
+## monster's; a type the ride lacks leaves its clip (READ 0x9cfb40; the miss
+## INFERRED from FUN_00a5b550).
+func _ride_mirror(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, loop: bool, hold: bool = false,
+		in_ms: float = ClipMixer.LOOP_IN_MS) -> void:
+	if skeleton == null or anim == null:
+		return
+	var r: MonsterRide = _monster_rides.get(skeleton.get_instance_id())
+	if r == null:
+		return
+	if not r.valid():
+		_monster_rides.erase(skeleton.get_instance_id())
+		return
+	var tag = anim.get_meta(BsrReader.CLIP_META, null)
+	if tag == null:
+		return
+	var clip := _assembled_clip(r.assembled, int(tag[0]), MonsterRide.GROUP)
+	if clip == null or _frame_count(clip) <= 1:
+		return
+	if loop:
+		MonsterMotion.swap_loop(_animated, r.assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, in_ms)
+	else:
+		_play_once(r.assembled.skeleton, clip, hold)
+
+## An assembled body's clip of `action_type` (SkinnedBsrAssembler.animation_for),
+## from its cache alone when there is no archive (a test's synthetic body).
+func _assembled_clip(a: SkinnedBsrAssembler.AssembledCharacter, action_type: int, group: String = "default") -> BanReader.ParsedAnimation:
+	if a == null or a.parsed == null:
+		return null
+	if _data_pk2 == null:
+		var path := a.parsed.animation_for(action_type, group)
+		if path == "" or not a.animation_cache.has(path):
+			return null
+	return SkinnedBsrAssembler.animation_for(_data_pk2, a, action_type, group)
+
+## Every frame: each ride where its type puts it, and a seated rider on its
+## saddle (MonsterRide.place).
+func _step_monster_rides() -> void:
+	if _monster_rides.is_empty():
+		return
+	for key in _monster_rides.keys():
+		var r: MonsterRide = _monster_rides[key]
+		if not r.valid():
+			_monster_rides.erase(key)
+			continue
+		r.place()
+
+## A dying monster's body becomes its row's die model, in place, at its scale
+## (READ, the DEAD state's enter 0xa59cc0: FUN_009c4ec0(die bsr) then the
+## scale +0xc4 again); the die clip then plays on it (_begin_monster_death).
+## OURS: a die model whose template is not assembled yet is skipped (it was
+## asked for when the body was built).
+func _swap_to_die_model(monster_id: int) -> bool:
+	var snap = _monster_snapshots.get(monster_id)
+	var old: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
+	if snap == null or old == null or old.skeleton == null or not is_instance_valid(old.skeleton):
+		return false
+	var rec := _monster_char_record(String(snap.code_name))
+	if rec == null or rec.die_bsr == "":
+		return false
+	var own_36 := old.parsed != null and old.parsed.animation_entry_for(BsrReader.AnimationEntry.TYPE_DIE_LOOP) != null
+	if not MonsterRide.die_swaps(_die_model_option, own_36):
+		return false
+	if _monster_async_wanted() and not _monster_templates.has(rec.die_bsr):
+		print("World3D: monster %d's die model %s is not assembled yet -- its own body dies" % [monster_id, rec.die_bsr])
+		return false
+	var a: SkinnedBsrAssembler.AssembledCharacter = _monster_templates.instance(rec.die_bsr,
+		_monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+	if a == null or a.skeleton == null:
+		return false
+	var oskel := old.skeleton
+	var holder := oskel.get_parent()
+	if holder == null:
+		a.skeleton.free()
+		return false
+	a.skeleton.transform = oskel.transform
+	for m in [MonsterDraw.META_CULL, MonsterDraw.META_HIDE, MonsterDraw.META_RADIUS]:
+		if oskel.has_meta(m):
+			a.skeleton.set_meta(m, oskel.get_meta(m))
+	a.skeleton.set_meta(MonsterCrowd.META_LAYOUT, rec.die_bsr)
+	holder.add_child(a.skeleton)
+	holder.move_child(a.skeleton, oskel.get_index())
+	# Its sounds go on with the new body's own tracks.
+	var owner: AnimSounds.Owner = _anim_sounds.owner_of(oskel) if _anim_sounds != null else null
+	if owner != null:
+		var o2 := AnimSounds.Owner.new()
+		o2.label = owner.label
+		o2.token = owner.token
+		o2.parsed = a.parsed
+		o2.node = owner.node
+		o2.material = owner.material
+		o2.skill_ctx = owner.skill_ctx
+		_anim_sounds.register(a.skeleton, o2)
+	var ride: MonsterRide = _monster_rides.get(oskel.get_instance_id())
+	if ride != null:
+		_monster_rides.erase(oskel.get_instance_id())
+		ride.rider = a.skeleton
+		_monster_rides[a.skeleton.get_instance_id()] = ride
+	_pose_fades.erase(oskel.get_instance_id())
+	oskel.queue_free()
+	_monster_assembled[monster_id] = a
+	# Its die loop (36) under the die clip the caller plays (READ: 36 in over
+	# 200 ms, then 4 at once; OpenSRO holds 4's last frame, the death pose).
+	var loop36 := _assembled_clip(a, BsrReader.AnimationEntry.TYPE_DIE_LOOP)
+	_animate_skeleton(a.skeleton, loop36 if loop36 != null else a.idle_animation)
+	if holder is Node3D:
+		_light_character(holder as Node3D)
+	print("World3D: monster %d dies as %s" % [monster_id, rec.die_bsr])
+	return true
+
+## The row's Die Effect (its ACT_S rows on the body) and Dead Effect (a white
+## flash) at the die clip's first type-1 key (READ, the DEAD state's event
+## 0xa59e30). Nothing when the clip has no such key.
+func _schedule_death_effects(monster_id: int) -> void:
+	var snap = _monster_snapshots.get(monster_id)
+	var a: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
+	if snap == null:
+		return
+	var rec := _monster_char_record(String(snap.code_name))
+	if rec == null or (rec.die_effect == "" and rec.dead_effect == SoundTable.DEAD_EFFECT_NONE):
+		return
+	var entry = a.parsed.animation_entry_for(BsrReader.AnimationEntry.TYPE_DIE) if a != null and a.parsed != null else null
+	var key := MonsterRide.first_hit_key(entry)
+	if key < 0:
+		print("World3D: monster %d's die clip has no type-1 key -- its death effects (%s, %d) do not play" % [
+			monster_id, rec.die_effect, rec.dead_effect])
+		return
+	var body = _monster_bodies.get(monster_id)
+	var fire := func() -> void:
+		print("World3D: monster %d's death effects at its die clip's key %d ms: %s%s" % [monster_id, key,
+			rec.die_effect, " + DEFFECT_FLASH" if rec.dead_effect == SoundTable.DEAD_EFFECT_FLASH else ""])
+		if rec.die_effect != "" and body != null and is_instance_valid(body):
+			SkillEffects.play_named(rec.die_effect, SkillAudio.ACT_S, body as Node3D)
+		if rec.dead_effect == SoundTable.DEAD_EFFECT_FLASH:
+			_dead_flash_start()
+	if key <= 0 or not is_inside_tree():
+		fire.call()
+	else:
+		get_tree().create_timer(float(key) / 1000.0).timeout.connect(fire)
+
+## DEFFECT_FLASH: the screen goes white at alpha 128/255 and back (INFERRED a
+## whole-screen flash; times OURS, see DEAD_FLASH_IN).
+func _dead_flash_start() -> void:
+	if not is_inside_tree():
+		return
+	if _dead_flash == null or not is_instance_valid(_dead_flash):
+		var layer := CanvasLayer.new()
+		layer.layer = 50
+		layer.name = "DeadFlash"
+		add_child(layer)
+		_dead_flash = ColorRect.new()
+		_dead_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_dead_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+		layer.add_child(_dead_flash)
+	_dead_flash.color = Color(1, 1, 1, 0)
+	var tw := create_tween()
+	tw.tween_property(_dead_flash, "color:a", DEAD_FLASH_ALPHA, DEAD_FLASH_IN)
+	tw.tween_property(_dead_flash, "color:a", 0.0, DEAD_FLASH_OUT)
+
 ## Whether a world position lies in a loaded region cell (the streamed grid's
 ## _grid.loaded_cells, RegionGridState.cell_at). With no grid -- a loose dev
 ## file, the headless tests -- there is nothing to gate against: true.
@@ -27464,6 +27769,7 @@ func _free_monster_body(monster_id: int, keep_buffs: bool = false, fade: bool = 
 			(body as Node).queue_free()
 	_monster_bodies.erase(monster_id)
 	_minimap_unique_bodies.erase(monster_id)
+	_drop_monster_ride(monster_id)
 	SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
 	if not keep_buffs:
 		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
@@ -28330,6 +28636,8 @@ func _set_monster_gait(monster_id: int, gait: int) -> void:
 		return
 	_end_body_fidget(assembled.skeleton)
 	MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
+	if not _monster_rides.is_empty():
+		_ride_mirror(assembled.skeleton, clip, true, false, _loop_in_ms(gait))
 
 ## Ends a monster's leg where its body is drawn, in its stand clip.
 func _stop_monster_motion(monster_id: int) -> void:
@@ -31605,6 +31913,10 @@ func _begin_monster_death(monster_id: int) -> void:
 	# Nor strikes again: a counter still waiting for its blow to land keeps
 	# its own wait (the timer holds it), and nothing newer will come.
 	_strike_waits.erase(monster_id)
+	# Round 809: its row's die model in its place, and its death effects at
+	# the die clip's key (MonsterRide).
+	_swap_to_die_model(monster_id)
+	_schedule_death_effects(monster_id)
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
 	# The corpse lies for its species' DecayTime from the death, then fades
 	# out (round 677, _monster_corpse_seconds); with no DecayTime known, for

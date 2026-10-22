@@ -43,6 +43,9 @@ var _character_info: Dictionary = {}
 ## Round 796: characterInfo code -> Size, "" -> the first row's code.
 var _character_sizes: Dictionary = {}
 var _character_info_loaded := false
+## Round 809: characterInfo code -> SoundTable.CharacterInfo, "" -> the first
+## row's code.
+var _character_records: Dictionary = {}
 ## Normalised path -> Array of voices (AudioStreamPlayer or AudioStreamPlayer3D).
 var _voices_2d: Dictionary = {}
 var _voices_3d: Dictionary = {}
@@ -121,7 +124,7 @@ func sound_object(refobj_code: String) -> String:
 		_character_info_loaded = true
 		var bytes := AudioBank.read_table("media", SoundTable.SKILLEFFECT_PATH)
 		if not bytes.is_empty():
-			_character_info = SoundTable.parse_character_info(bytes, _character_sizes)
+			_character_info = SoundTable.parse_character_info(bytes, _character_sizes, _character_records)
 			print("AUDIO: characterInfo %d sound objects" % _character_info.size())
 	return str(_character_info.get(refobj_code, ""))
 
@@ -137,6 +140,23 @@ func character_size(refobj_code: String, org_code: String = "") -> float:
 		return float(_character_sizes[org_code])
 	var first := String(_character_sizes.get("", ""))
 	return float(_character_sizes.get(first, 0.0)) if first != "" else 0.0
+
+## Round 809: a characterdata code's characterInfo record (its ride and death
+## columns), found as character_size finds its Size (READ FUN_00a95d30: the
+## code, its OrgCodeName, the first row). null with no table.
+func character_record(refobj_code: String, org_code: String = "") -> SoundTable.CharacterInfo:
+	sound_object("")
+	if refobj_code != "" and _character_records.has(refobj_code):
+		return _character_records[refobj_code]
+	if org_code != "" and _character_records.has(org_code):
+		return _character_records[org_code]
+	var first := String(_character_records.get("", ""))
+	return _character_records.get(first) if first != "" else null
+
+## Test seam: the records character_record reads.
+func set_character_records(records: Dictionary) -> void:
+	sound_object("")
+	_character_records = records
 
 ## Test seam: the sizes character_size reads.
 func set_character_sizes(sizes: Dictionary) -> void:
