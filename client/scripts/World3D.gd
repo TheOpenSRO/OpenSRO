@@ -8017,9 +8017,6 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 	# clip of one frame, OPENSRO_NO_IDLE_ANIM) has nothing to resume after a
 	# hit either -- and MonsterMotion.swap_loop must tell the two apart.
 	_animated.append([skeleton, anim, frames, 0.0, false, _idle_anim_time, null if hold else resume, hold])
-	# Round 809: a monster's ride plays it too (MonsterRide).
-	if not _monster_rides.is_empty():
-		_ride_mirror(skeleton, anim, false, hold)
 	return anim.duration_seconds()
 
 ## Advances every idle animation. Entries whose skeleton has gone (a region
@@ -8205,6 +8202,8 @@ func _tick_idle_animations(delta: float) -> void:
 				MonsterCrowd.pose_at(skeleton, anim, _idle_anim_time + phase, true)
 				if not _pose_fades.is_empty():
 					_blend_pose_fade(skeleton, eye)
+				if not _monster_rides.is_empty():
+					_pose_ride(skeleton, anim, _idle_anim_time + phase, true, audible)
 				if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 			if audible:
 				if timing: t0 = Time.get_ticks_usec()
@@ -8245,6 +8244,8 @@ func _tick_idle_animations(delta: float) -> void:
 					if timing: t0 = Time.get_ticks_usec()
 					MonsterCrowd.pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
 					_blend_pose_fade(skeleton, eye)
+					if not _monster_rides.is_empty():
+						_pose_ride(skeleton, resume[1], _idle_anim_time + float(resume[3]), true, audible)
 					if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 				if audible:
 					if timing: t0 = Time.get_ticks_usec()
@@ -8255,6 +8256,8 @@ func _tick_idle_animations(delta: float) -> void:
 			if pose:
 				if timing: t0 = Time.get_ticks_usec()
 				MonsterCrowd.pose_at(skeleton, anim, elapsed, false)
+				if not _monster_rides.is_empty():
+					_pose_ride(skeleton, anim, elapsed, false, audible)
 				if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 			if audible:
 				if timing: t0 = Time.get_ticks_usec()
@@ -27173,7 +27176,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# main thread too, and the body waits for it, so the two fade in together;
 	# its die model is asked for now, ahead of its death (not waited for).
 	var char_rec: SoundTable.CharacterInfo = _monster_char_record(monster.code_name) if wanted_model != "" else null
-	var ride_model := char_rec.ride if char_rec != null else ""
+	var ride_model := char_rec.ride if char_rec != null and not _qa_no_rides else ""
 	if char_rec != null and _monster_async_wanted():
 		if char_rec.die_bsr != "" and not _monster_templates.has(char_rec.die_bsr):
 			if not _monster_assemble.is_valid() and _data_pk2 == null:
@@ -27503,6 +27506,13 @@ const DEAD_FLASH_IN := 0.2
 const DEAD_FLASH_OUT := 0.5
 var _dead_flash: ColorRect = null
 
+## OPENSRO_QA_NO_RIDES=1 (round 809, QA A/B only): no monster builds its ride,
+## so the perf gate's --ab-env can price the rides on one build.
+var _qa_no_rides := OS.get_environment("OPENSRO_QA_NO_RIDES") != ""
+## OPENSRO_QA_RIDE_STATIC=1 (QA A/B only): rides are built but never
+## animated, mirrored or placed -- the price of the nodes alone.
+var _qa_ride_static := OS.get_environment("OPENSRO_QA_RIDE_STATIC") != ""
+
 ## A monster code's characterInfo row: the code's, its OrgCodeName's, else the
 ## file's first (AudioService.character_record, READ FUN_00a95d30).
 func _monster_char_record(code: String) -> SoundTable.CharacterInfo:
@@ -27555,7 +27565,12 @@ func _attach_monster_ride(monster_id: int, body: Node3D, rider: Skeleton3D, mode
 	r.model = model
 	_monster_rides[rider.get_instance_id()] = r
 	# Its stand (READ: group "cart" type 0 at the spawn), its own clip-tick body.
-	_animate_skeleton(a.skeleton, a.idle_animation)
+	# Its stand (READ: group "cart" type 0 at the spawn), posed with its
+	# monster from now on (_pose_ride).
+	r.clip = a.idle_animation
+	r.clip_loop = true
+	if r.clip != null and not _qa_ride_static:
+		MonsterCrowd.pose_at(a.skeleton, r.clip, _idle_anim_time, true)
 	r.place()
 	if _mob_logging():
 		print("World3D: monster %d rides %s (type %d)" % [monster_id, model, ride_type])
@@ -27575,31 +27590,6 @@ func _drop_monster_ride(monster_id: int) -> void:
 		if (_monster_rides[key] as MonsterRide).monster_id == monster_id:
 			_monster_rides.erase(key)
 
-## A monster's clip change, on its ride: the clip of the same action type in
-## the ride's "cart" group (else `default`), as a loop or a one-shot as the
-## monster's; a type the ride lacks leaves its clip (READ 0x9cfb40; the miss
-## INFERRED from FUN_00a5b550).
-func _ride_mirror(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, loop: bool, hold: bool = false,
-		in_ms: float = ClipMixer.LOOP_IN_MS) -> void:
-	if skeleton == null or anim == null:
-		return
-	var r: MonsterRide = _monster_rides.get(skeleton.get_instance_id())
-	if r == null:
-		return
-	if not r.valid():
-		_monster_rides.erase(skeleton.get_instance_id())
-		return
-	var tag = anim.get_meta(BsrReader.CLIP_META, null)
-	if tag == null:
-		return
-	var clip := _assembled_clip(r.assembled, int(tag[0]), MonsterRide.GROUP)
-	if clip == null or _frame_count(clip) <= 1:
-		return
-	if loop:
-		MonsterMotion.swap_loop(_animated, r.assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, in_ms)
-	else:
-		_play_once(r.assembled.skeleton, clip, hold)
-
 ## An assembled body's clip of `action_type` (SkinnedBsrAssembler.animation_for),
 ## from its cache alone when there is no archive (a test's synthetic body).
 func _assembled_clip(a: SkinnedBsrAssembler.AssembledCharacter, action_type: int, group: String = "default") -> BanReader.ParsedAnimation:
@@ -27612,16 +27602,60 @@ func _assembled_clip(a: SkinnedBsrAssembler.AssembledCharacter, action_type: int
 	return SkinnedBsrAssembler.animation_for(_data_pk2, a, action_type, group)
 
 ## Every frame: each ride where its type puts it, and a seated rider on its
-## saddle (MonsterRide.place).
-func _step_monster_rides() -> void:
-	if _monster_rides.is_empty():
+## saddle (MonsterRide.place). Round 809's perf gate: a ride is posed and
+## placed with its monster (_pose_ride); this only keeps every ride's
+## visibility its monster's (the clip tick hides a body out of range) and
+## drops the dead, every MonsterRide.SYNC_EVERY frames (`force`: now).
+func _step_monster_rides(force: bool = false) -> void:
+	if _qa_ride_static or _monster_rides.is_empty():
+		return
+	if not force and Engine.get_process_frames() % MonsterRide.SYNC_EVERY != 0:
 		return
 	for key in _monster_rides.keys():
 		var r: MonsterRide = _monster_rides[key]
 		if not r.valid():
 			_monster_rides.erase(key)
 			continue
+		var skel := r.assembled.skeleton
+		if skel.visible != r.rider.visible:
+			skel.visible = r.rider.visible
 		r.place()
+
+## The clip tick posed `skeleton` with `anim` at `t` (seconds: a loop's clock,
+## a one-shot's elapsed time): its ride, if it has one, takes the clip of the
+## same action type and is posed with it, then seated (MonsterRide's header).
+func _pose_ride(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, t: float, loop: bool, audible: bool) -> void:
+	var r: MonsterRide = _monster_rides.get(skeleton.get_instance_id())
+	if r == null or _qa_ride_static:
+		return
+	var skel := r.assembled.skeleton if r.assembled != null else null
+	if skel == null or not is_instance_valid(skel):
+		return
+	if r.src != anim:
+		r.src = anim
+		var c = r._clips.get(anim.get_instance_id(), false)
+		if typeof(c) == TYPE_BOOL:
+			var tag = anim.get_meta(BsrReader.CLIP_META, null)
+			c = _assembled_clip(r.assembled, int(tag[0]), MonsterRide.GROUP) if tag != null else null
+			if c != null and _frame_count(c) <= 1:
+				c = null
+			r._clips[anim.get_instance_id()] = c
+		if c != null:
+			r.clip = c
+			r.clip_loop = loop
+			r.clip_start = _idle_anim_time - (0.0 if loop else t)
+			r.follows = true
+		else:
+			r.follows = false
+	if r.clip == null:
+		return
+	var at := t
+	if not r.follows:
+		at = _idle_anim_time if r.clip_loop else minf(_idle_anim_time - r.clip_start, r.clip.duration_seconds())
+	MonsterCrowd.pose_at(skel, r.clip, at, r.clip_loop)
+	r.place()
+	if audible and _anim_sounds.owner_of(skel) != null:
+		_anim_sounds.advance(skel, r.clip, r.clip_start, _loop_ms(r.clip, at) if r.clip_loop else at * 1000.0, r.clip_loop)
 
 ## A dying monster's body becomes its row's die model, in place, at its scale
 ## (READ, the DEAD state's enter 0xa59cc0: FUN_009c4ec0(die bsr) then the
@@ -28739,8 +28773,6 @@ func _set_monster_gait(monster_id: int, gait: int) -> void:
 		return
 	_end_body_fidget(assembled.skeleton)
 	MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time, [], _pose_fades, _loop_in_ms(gait))
-	if not _monster_rides.is_empty():
-		_ride_mirror(assembled.skeleton, clip, true, false, _loop_in_ms(gait))
 
 ## Ends a monster's leg where its body is drawn, in its stand clip.
 func _stop_monster_motion(monster_id: int) -> void:

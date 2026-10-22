@@ -47,6 +47,22 @@ var assembled: SkinnedBsrAssembler.AssembledCharacter = null
 var ride_type := SoundTable.RIDE_NONE
 var model := ""
 var _saddle := -2
+## Round 809's perf gate (OURS): a ride is posed with its monster, in the
+## clip tick's own pass (World3D._pose_ride), not as a clip-tick body of its
+## own -- 263 Tiger Women among 2,500 monsters cost +2.5 ms a frame that way,
+## every ride's entry culled and tested each frame. The ride's clip: the one
+## of the monster's clip's action type (`src` -> `clip`, cached per clip in
+## `_clips`); a type the ride lacks leaves its clip running on its own clock
+## (`follows` false). READ: the mirror itself (0x9cfb40); the ride's own
+## crossfades are not drawn (OURS).
+var src: Object = null
+var clip: BanReader.ParsedAnimation = null
+var clip_loop := true
+var clip_start := 0.0
+var follows := false
+var _clips := {}
+## How often (frames) World3D checks every ride's visibility and life.
+const SYNC_EVERY := 10
 
 func valid() -> bool:
 	return is_instance_valid(body) and is_instance_valid(rider) and is_instance_valid(root) \
@@ -62,26 +78,41 @@ static func seat(ride_world: Transform3D, saddle_pose: Transform3D, rider_scale:
 	return t
 
 ## Puts the ride (and, for type none, its rider) where this frame wants them.
+## Round 809's perf gate (+3.8 ms a frame over 2,500 monsters, 263 of them
+## riding): every frame rewrote both transforms, waking each skinned subtree,
+## and read the saddle pose of rides nobody posed. Both the ride's root and
+## the rider are the body's children, so the seat is worked out in the body's
+## frame (the same transform as FUN_009d05d0's world one) and written only
+## when it changed, and only for a ride on view (its skeleton shown).
 func place() -> void:
 	match ride_type:
 		SoundTable.RIDE_FIXED:
-			root.transform = Transform3D.IDENTITY
-			if root.is_inside_tree():
-				root.global_basis = Basis.IDENTITY
+			# World yaw 0 whatever the body's heading: the root takes the
+			# body's turn off.
+			var want := Basis.IDENTITY
+			if body.is_inside_tree():
+				want = body.global_basis.orthonormalized().inverse()
+			if not root.transform.basis.is_equal_approx(want) or root.transform.origin != Vector3.ZERO:
+				root.transform = Transform3D(want, Vector3.ZERO)
 		SoundTable.RIDE_DUMMY:
-			root.transform = rider_rest
+			if not root.transform.is_equal_approx(rider_rest):
+				root.transform = rider_rest
 		SoundTable.RIDE_NONE:
-			root.transform = Transform3D.IDENTITY
+			if root.transform != Transform3D.IDENTITY:
+				root.transform = Transform3D.IDENTITY
 			var skel := assembled.skeleton
 			if _saddle == -2:
 				_saddle = skel.find_bone(SADDLE_BONE)
-			if _saddle >= 0 and skel.is_inside_tree():
-				rider.global_transform = seat(skel.global_transform, skel.get_bone_global_pose(_saddle),
-					rider_rest.basis.get_scale())
+			if _saddle < 0 or not skel.visible:
+				return
+			var t := seat(skel.transform, skel.get_bone_global_pose(_saddle), rider_rest.basis.get_scale())
+			if not rider.transform.is_equal_approx(t):
+				rider.transform = t
 		_:
 			# Any other Ride Type: retail sets no matrix (0x9dabd0); OURS, the
 			# body's own place.
-			root.transform = Transform3D.IDENTITY
+			if root.transform != Transform3D.IDENTITY:
+				root.transform = Transform3D.IDENTITY
 
 ## Puts the rider back on its own place under the body (the ride is gone).
 func unseat() -> void:

@@ -217,10 +217,11 @@ func _test_seated(world: Node) -> void:
 		"a monster whose row names a ride has it under its body (a node of its own)")
 	if r == null:
 		return
-	_check(not _entry_of(world, r.assembled.skeleton).is_empty(), "the ride is a clip-tick body of its own, on its stand")
+	_check(_entry_of(world, r.assembled.skeleton).is_empty() and r.clip != null and r.clip_loop,
+		"the ride is posed with its monster, not a clip-tick body of its own (round 809's perf gate); on its stand")
 	body.global_position = Vector3(100, 0, 50)
 	body.rotation.y = 1.2
-	world.call("_step_monster_rides")
+	world.call("_step_monster_rides", true)
 	var saddle := r.assembled.skeleton.global_transform * Vector3(0, 5, 0)
 	_check(r.rider.global_position.is_equal_approx(saddle), "type none: the rider sits on the ride's saddle (%s at %s)" % [
 		str(r.rider.global_position), str(saddle)])
@@ -234,7 +235,7 @@ func _test_fixed(world: Node) -> void:
 		return
 	var rest := r.rider.transform
 	body.rotation.y = 2.0
-	world.call("_step_monster_rides")
+	world.call("_step_monster_rides", true)
 	_check(r.root.global_basis.is_equal_approx(Basis.IDENTITY) and r.root.global_position.is_equal_approx(body.global_position),
 		"RT_FIXED: the ride at the monster's place, never turned")
 	_check(r.rider.transform.is_equal_approx(rest), "and the monster stays where it stands")
@@ -248,7 +249,7 @@ func _test_dummy(world: Node) -> void:
 	r.rider.scale = Vector3(1.5, 1.5, 1.5)
 	r.rider_rest = r.rider.transform
 	body.rotation.y = -0.7
-	world.call("_step_monster_rides")
+	world.call("_step_monster_rides", true)
 	_check(r.root.global_transform.is_equal_approx(r.rider.global_transform), "RT_DUMMY: the ride takes the monster's whole transform")
 
 func _test_mirror(world: Node) -> void:
@@ -258,21 +259,17 @@ func _test_mirror(world: Node) -> void:
 		_check(false, "the rider for the mirror checks")
 		return
 	var attack: BanReader.ParsedAnimation = monster.animation_cache["syn\\rider.bsr#2"]
-	world.call("_play_once", monster.skeleton, attack, false)
-	var e := _entry_of(world, r.assembled.skeleton)
-	_check(not e.is_empty() and (e[1] as Object).get_meta("test_model", "") == "res\\syn\\tiger.bsr" and (e[1] as Object).get_meta(BsrReader.CLIP_META)[0] == 2
-		and not bool(e[4]), "the monster's one-shot of type 2 plays the ride's own type 2, once")
-	var before := e[1] as Object
+	world.call("_pose_ride", monster.skeleton, attack, 0.1, false, false)
+	_check(r.clip != null and r.clip.get_meta("test_model", "") == "res\\syn\\tiger.bsr" and r.clip.get_meta(BsrReader.CLIP_META)[0] == 2
+		and not r.clip_loop and r.follows, "the monster's one-shot of type 2 poses the ride's own type 2, once")
+	var before := r.clip
 	var other: BanReader.ParsedAnimation = monster.animation_cache["syn\\rider.bsr#5"]
-	world.call("_play_once", monster.skeleton, other, false)
-	_check(_entry_of(world, r.assembled.skeleton)[1] == before, "a type the ride lacks (5) leaves its clip playing")
+	world.call("_pose_ride", monster.skeleton, other, 0.1, false, false)
+	_check(r.clip == before and not r.follows, "a type the ride lacks (5) leaves its clip playing, on its own clock")
 	var run: BanReader.ParsedAnimation = monster.animation_cache["syn\\rider.bsr#7"]
-	world.call("_ride_mirror", monster.skeleton, run, true)
-	var e2 := _entry_of(world, r.assembled.skeleton)
-	# During the ride's one-shot the gait goes to the loop it hands back to
-	# (MonsterMotion.swap_loop's rule, the monster's own).
-	var loop_e: Array = e2 if not e2.is_empty() and bool(e2[4]) else (e2[6] if not e2.is_empty() and e2[6] != null else [])
-	_check(not loop_e.is_empty() and (loop_e[1] as Object).get_meta(BsrReader.CLIP_META)[0] == 7, "a gait loop (7) is mirrored as the ride's loop")
+	world.call("_pose_ride", monster.skeleton, run, 2.0, true, false)
+	_check(r.clip != null and r.clip.get_meta(BsrReader.CLIP_META)[0] == 7 and r.clip_loop and r.follows,
+		"a gait loop (7) is the ride's loop, posed at the monster's time")
 
 func _test_death(world: Node) -> void:
 	world.set("_monster_decay_ms_by_code", {"MOB_DIES": 5000, "MOB_KEEPS": 5000})
