@@ -1892,6 +1892,13 @@ func _ready() -> void:
 	# are placed once a tick (EfpEffect.tick_gate, its _process).
 	EfpEffect.gate_ticks(true)
 	_setup_efp_pass()
+	# Round 808's follow-up: footprints in sand and snow (Footprints).
+	_footprints = Footprints.new()
+	_footprints.name = "Footprints"
+	_footprints.load_texture = func(path: String) -> Texture2D: return _ui_builder.load_texture(path) if _ui_builder != null else null
+	_footprints.ground_height = func(p: Vector3) -> float: return _terrain_height_at(p)
+	add_child(_footprints)
+	_anim_sounds.footstep = Callable(self, "_on_footstep")
 	# Round 794: the Dynamic Animation driver for this viewport's cloth (the
 	# placed objects are duplicates of templates never in the tree).
 	ClothDriver.driver_for(get_viewport())
@@ -5195,6 +5202,10 @@ func _day_push(st: DayCycle.State, force: bool) -> void:
 	if _day_take("light", [NightLight.scaled(st.diffuse, nk), NightLight.scaled(st.object_ambient, nk)], DAY_EPSILON, force):
 		directional_light.light_color = NightLight.scaled(st.diffuse, nk)
 		world_environment.environment.ambient_light_color = NightLight.scaled(st.object_ambient, nk)
+		# Round 808's follow-up: the footprints take the object ambient
+		# (Footprints: world +0x6853..).
+		if _footprints != null:
+			_footprints.set_tint(NightLight.scaled(st.object_ambient, nk))
 		# The zone's own channels (the portrait's light); _apply_object_light
 		# and the line below apply the night's scale to the world.
 		_object_light_channels = [st.diffuse, st.object_ambient]
@@ -7368,6 +7379,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
 		_arrow_reset()
+		if _footprints != null:
+			_footprints.clear()
 		# And runs it again (round 781, the server's runAgain; OURS).
 		_reset_walk_for_entry()
 		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
@@ -12436,6 +12449,11 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	if moving:
 		gait["sitting"] = false
 		_other_seated.erase(character_id)
+	else:
+		# Round 808's follow-up: its stop lays both feet's prints.
+		var body: Node3D = _other_bodies.get(character_id)
+		if body != null and is_instance_valid(body) and is_instance_valid(gait.get("skeleton")):
+			_footprints_at_stop(gait["skeleton"], body, _audio_material_at(body.global_position, -2))
 	_refresh_other_loop(character_id)
 
 ## Round 808: the idle fidget of every body in the clip tick -- other players,
@@ -20814,6 +20832,8 @@ func _process(_delta: float) -> void:
 	if not _dungeon_fx.is_empty():
 		_step_dungeon_effects(_delta)
 	_tick_world_fx(_delta)
+	if _footprints != null:
+		_footprints.step(_delta * 1000.0)
 	# Round 748 (item 4): the local player's pose once a rendered frame, at
 	# the clip time the frame's last physics step reached (_player_pose_due),
 	# not once a step -- a slow frame runs up to eight steps and posed (and
@@ -21578,11 +21598,47 @@ var _appear_fade_due := 0.0
 ## applied once in _process; empty when none. Round 808: [the mixer].
 var _player_pose_due: Array = []
 
+## Round 808's follow-up: footprints (Footprints has the reading).
+var _footprints: Footprints = null
+
+## A footstep key a walk or run passed (AnimSounds.footstep): the print of the
+## foot it names (0 the left), where the toe is, if the body stands on sand
+## or snow.
+func _on_footstep(owner: AnimSounds.Owner, skeleton: Object, foot: int) -> void:
+	if _footprints == null or owner == null or not (skeleton is Skeleton3D) or not is_instance_valid(skeleton):
+		return
+	var mat := int(owner.material.call()) if owner.material.is_valid() else -1
+	if not Footprints.lays(mat):
+		return
+	_lay_footprint(skeleton as Skeleton3D, owner.node, foot == 0, mat)
+
+## Both feet's prints at a stop (a player character's).
+func _footprints_at_stop(skeleton: Skeleton3D, body: Node3D, material: int) -> void:
+	if _footprints == null or skeleton == null or not is_instance_valid(skeleton) or not Footprints.lays(material):
+		return
+	_lay_footprint(skeleton, body, true, material)
+	_lay_footprint(skeleton, body, false, material)
+
+func _lay_footprint(skeleton: Skeleton3D, body: Node3D, left: bool, material: int) -> void:
+	var bone := skeleton.find_bone("Bip01 L Toe0" if left else "Bip01 R Toe0")
+	if bone < 0 or body == null or not is_instance_valid(body):
+		return
+	var at := (skeleton.global_transform * skeleton.get_bone_global_pose(bone)).origin
+	# A monster's node turns its measured front along its heading
+	# (MonsterMotion.facing_yaw); a player's root yaw is its heading.
+	var front := MonsterMotion.front_yaw(MonsterMotion.front_of(String(body.get_meta("model", "")))) if body.has_meta("model") else 0.0
+	var h := RemoteFacing.heading_of_yaw(body.rotation.y, front)
+	var laid := _footprints.add(at, h, left, material)
+	if _qa_mix_log:
+		print("FOOTPRINT %s %s foot at (%.1f, %.1f, %.1f) heading %.3f material %d: %s (%d alive)" % [body.name,
+			"left" if left else "right", at.x, at.y, at.z, h, material, "laid" if laid else "no texture", _footprints.count()])
+
 ## Round 808: the local player's clips (ClipMixer), and what was last handed
 ## to it: the action's loop, and the one-shot (its start, and whether it was
 ## played to its end -- then the mixer fades it out by itself).
 var _player_mixer := ClipMixer.new()
 var _mix_loop: BanReader.ParsedAnimation = null
+var _mix_action := -1
 var _mix_shot: BanReader.ParsedAnimation = null
 var _mix_shot_start := -1.0
 var _mix_shot_ended := false
@@ -21597,6 +21653,13 @@ var _player_shot_fades := Vector2(ClipMixer.SNAP_IN_MS, ClipMixer.SHOT_OUT_MS)
 ## over 200; one played to its end is left to fade out by itself.
 func _mix_player(anim: BanReader.ParsedAnimation, action: int) -> void:
 	if anim != _mix_loop:
+		# Round 808's follow-up: a stop lays both feet's prints (the move
+		# state's exit, 0xa5a6b0, for a player character).
+		var was_moving := _mix_action == BsrReader.AnimationEntry.TYPE_RUN or _mix_action == BsrReader.AnimationEntry.TYPE_WALK
+		var moving := action == BsrReader.AnimationEntry.TYPE_RUN or action == BsrReader.AnimationEntry.TYPE_WALK
+		if was_moving and not moving:
+			_footprints_at_stop(_player_skeleton, player, _audio_player_material())
+		_mix_action = action
 		_player_mixer.stop_loops_except(anim, ClipMixer.STOP_MS)
 		if anim != null:
 			_player_mixer.play_loop(anim, ClipMixer.RUN_IN_MS if action == BsrReader.AnimationEntry.TYPE_RUN else ClipMixer.LOOP_IN_MS)

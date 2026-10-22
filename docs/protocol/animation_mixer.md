@@ -108,5 +108,26 @@ behind by more than 5 units along the travel, 0.9 ahead; `0x9e06a0..0x9e07ab`), 
   swaps its loop at once; a rider and a ridden pet do not fidget; the fidget countdown of the
   bodies in the clip tick is stepped every 0.25 s; a skill's own fades (state 2, `+0x9c` slots
   0x84/0x88) are not read, and its clips take 0 in / 200 out.
-- Not done: footprints (`footstep_sand.ddj` / `footstep_snow.ddj` at each footstep key of a PC on
-  sand or snow, state 9's event `0xa5a3f0` and exit; the surface table is OPEN).
+## Footprints (round 808's follow-up)
+
+The user: "the snow vs sand plays a different audio noise so there must be something there to tell them
+apart" -- there is, and it is the same value: the footstep sounds' material (the high 16 bits of the
+ground query, the tile2d type: 1 SAND, 9 SNOW; `AnimSounds.MATERIALS`, `navmesh\tile2d.ifo` -- MEASURED:
+22 sand and 22 snow tile textures, OAHO / OAKK / the Taklamakan ruins, and 1,613 regions with some).
+
+- **When (READ).** State 9's event handler `0xa5a3f0` on a footstep key (type 2) with the body's cell
+  known: material 1 lays `effect\footstep_sand.ddj`, 9 `effect\footstep_snow.ddj` (Media.pk2); the
+  key's second parameter picks the toe, 0 `Bip01 L Toe0`, else `Bip01 R Toe0`. State 9's exit `0xa5a6b0`
+  lays both at a stop, for a player character only. The handler itself has no player test (OPEN:
+  its `+0x2c2 != 4` exclusion).
+- **What (READ).** `SWorld::vslot_026` (`0x9f2c20`, the world `0x1101950`'s vtable `0xde4fb4 + 0x68`):
+  (texture, 20000 ms, the toe, 2.0, 3.5, heading ± 0.0785 rad, 0xffffffff, 0); `Map::FUN_009f6040`
+  projects a 2.0 (across, along (cos a, sin a); `0xb44a10` cos, `0xb44b40` sin) × 3.5 (along the facing)
+  rectangle onto the ground within ±50 (`0xd851a0`), u across and v heel to toe.
+- **How it draws (READ, `Map::FUN_00a1fdb0`).** SRCALPHA / INVSRCALPHA; texture × a factor whose RGB the
+  footprint flag (+0x4c, set by the caller) replaces with the object ambient (world +0x6853.., channel 3)
+  and whose alpha is full until the last 1020 ms, then linear to 0.
+- **OpenSRO** (`client/scripts/world/footprints.gd`, `AnimSounds.footstep`, `World3D._on_footstep` /
+  `_footprints_at_stop`). OURS: a 3 × 4 grid on the terrain's height lifted 0.1 and depth-tested (the client
+  clips the ground's triangles and draws with depth off before the objects); a body's keys are read only
+  within the sounds' 600 of the listener; at most 400 prints at once.

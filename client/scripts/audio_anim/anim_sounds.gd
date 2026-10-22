@@ -290,12 +290,39 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 		return
 	if tag == null:
 		return
+	# Round 808's follow-up: a walk's or run's footstep keys (event type 2) for
+	# the footprints (Footprints; the move state's event handler 0xa5a3f0).
+	if footstep.is_valid() and (int(tag[0]) == WALK_TYPE or int(tag[0]) == RUN_TYPE):
+		var entry := owner.parsed.animation_entry_for(int(tag[0]), String(tag[1]))
+		if entry != null:
+			var dur := float(anim.get("duration_ms"))
+			for e in entry.events:
+				var ev := e as PackedInt32Array
+				if ev.size() >= 4 and ev[1] == FOOTSTEP_EVENT and key_crossed(float(ev[0]), prev, clip_ms, dur, loops):
+					footstep.call(owner, skeleton, ev[3])
 	var sound_set := owner.parsed.sound_set_for(int(tag[0]), String(tag[1]))
 	if sound_set == null or sound_set.tracks.is_empty():
 		return
 	var duration := float(anim.get("duration_ms"))
 	for track in crossed(sound_set.tracks, prev, clip_ms, duration, loops):
 		dispatch(owner, track, "%d:%s" % [int(tag[0]), String(tag[1])])
+
+## Round 808's follow-up: called with (owner, skeleton, the key's second
+## parameter -- 0 the left foot, else the right) for each footstep key a walk
+## or run passes; World3D lays the footprints (Footprints).
+var footstep: Callable = Callable()
+const WALK_TYPE := 1
+const RUN_TYPE := 7
+const FOOTSTEP_EVENT := 2
+
+## Whether one key at `key` ms is passed going from `prev` to `now` (crossed's
+## rule for a single key).
+static func key_crossed(key: float, prev: float, now: float, duration: float, loops: bool) -> bool:
+	if loops and duration > 0.0 and key >= duration:
+		return false
+	if loops and now < prev:
+		return key > prev or key <= now
+	return key > prev and key <= now
 
 ## The tracks a clip passes going from `prev` to `now` (milliseconds): those
 ## with prev < key <= now, or -- for a loop that wrapped -- key > prev or

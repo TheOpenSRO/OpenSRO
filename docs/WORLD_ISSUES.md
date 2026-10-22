@@ -7533,6 +7533,13 @@ the server seems to pick it up only a fraction of the time or until it stops".
   game spins with the arrow keys". READ to agree: the mover tick turns on the turn bits whatever the
   motion state, and `0x7024` is refused by the move gate while seated -- the spin is this client's only.
   QA: seated, a held Left turned past a full circle with key repeats; 0 `0x7024` sent.
+- **Follow-up (v0.1.569): footprints in sand and snow** (`animation_mixer.md`, "Footprints"). The user:
+  "the snow vs sand plays a different audio noise so there must be something there to tell them apart" --
+  the footprints' surface test is the footstep sound's material (1 SAND, 9 SNOW), which round 808's notes
+  had left OPEN. Toe, texture, 2.0 x 3.5, ±0.0785 rad, 20 s with a 1020 ms fade, the object ambient tint:
+  READ. QA (offline walks, `CLIENT_DIR=/opt/opensro-client-808`): region 96/95 (all sand) 17 prints, 84/120
+  (all snow) 17, alternating feet; seen from above behind the feet. (A direct `qa_shot.sh` run uses
+  `/opt/opensro-client` unless `CLIENT_DIR` is set -- the first two runs measured the old client.)
 - **Job plates on a mount.** Another player's job mark and title are the body's children beside its
   "Name", and round 796's rider raise moved only the name -- they stayed at the body's own height,
   inside the mount. `_set_plate_y` moves all three; a re-dress keeps a rider's plate over the mount, and
