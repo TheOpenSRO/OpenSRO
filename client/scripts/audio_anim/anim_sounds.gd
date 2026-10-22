@@ -132,6 +132,9 @@ class Owner:
 	## (GEffSound::FUN_00a65180). SkillAudio.context_of answers it. With no
 	## callable, or no current skill, both are "-" (DAT_00d81ea0, L"-").
 	var skill_ctx: Callable = Callable()
+	## Round 809: a body whose clips fire particle keys only (a monster's
+	## ride: its sounds are OPEN, the rider's play).
+	var silent: bool = false
 
 	## The current skill's {"code", "group"}, "-" for none.
 	func skill_context() -> Dictionary:
@@ -317,6 +320,8 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 				var ev := e as PackedInt32Array
 				if ev.size() >= 4 and ev[1] == FOOTSTEP_EVENT and key_crossed(float(ev[0]), prev, clip_ms, dur, loops):
 					footstep.call(owner, skeleton, ev[3])
+	if owner.silent:
+		return
 	var sound_set := owner.parsed.sound_set_for(int(tag[0]), String(tag[1]))
 	if sound_set == null or sound_set.tracks.is_empty():
 		return

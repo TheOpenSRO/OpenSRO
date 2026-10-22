@@ -27534,6 +27534,16 @@ func _attach_monster_ride(monster_id: int, body: Node3D, rider: Skeleton3D, mode
 	a.skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(model))
 	a.skeleton.set_meta(MonsterCrowd.META_LAYOUT, model)
 	root.add_child(a.skeleton)
+	# Its own particles (BodyFx): the ambient set (Tahomet's devil glow) and its
+	# clips' keys (Uruchi's dragon dust), through a silent sound owner.
+	_body_fx_attach(a.skeleton, a.parsed, model)
+	if not BodyFx.clip_paths(a.parsed).is_empty():
+		var ride_owner := AnimSounds.Owner.new()
+		ride_owner.label = "monster %d's ride" % monster_id
+		ride_owner.parsed = a.parsed
+		ride_owner.node = root
+		ride_owner.silent = true
+		_anim_sounds.register(a.skeleton, ride_owner)
 	var r := MonsterRide.new()
 	r.monster_id = monster_id
 	r.body = body
