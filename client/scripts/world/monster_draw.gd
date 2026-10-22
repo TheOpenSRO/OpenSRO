@@ -116,6 +116,24 @@ static func cull_radius(skeleton: Skeleton3D, floor_radius: float) -> float:
 ## One template per species model. `assemble` is called once per model path
 ## (a Callable taking the path and returning an AssembledCharacter or null);
 ## a model that failed is remembered as failed and not tried again.
+## Round 809: a template's key -- the model, and the material slot its body
+## draws when not 0 (a Hashade is ishade.bsr in slot 1, ishade_clon.bmt).
+## model_of_key / slot_of_key take it apart for the assembler.
+const SLOT_SEP := "|m"
+static func template_key(model: String, slot: int) -> String:
+	return model if slot == 0 or model == "" else "%s%s%d" % [model, SLOT_SEP, slot]
+
+static func model_of_key(key: String) -> String:
+	var at := key.rfind(SLOT_SEP)
+	return key if at < 0 else key.substr(0, at)
+
+static func slot_of_key(key: String) -> int:
+	var at := key.rfind(SLOT_SEP)
+	if at < 0:
+		return 0
+	var t := key.substr(at + SLOT_SEP.length())
+	return int(t) if t.is_valid_int() else 0
+
 class Templates:
 	var _by_model := {} # model path -> AssembledCharacter, or null for a model that failed
 	var _label_heights := {} # model path -> label_height of its template

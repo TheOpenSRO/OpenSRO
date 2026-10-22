@@ -53,6 +53,9 @@ class Entry:
 	var mob_models_by_code := {}
 	var mob_org := {}
 	var mob_models_by_name := {}
+	## Round 809: monster code -> its non-zero TextureType (characterdata
+	## col 93; NpcTableReader.parse_texture_types).
+	var mob_texture := {}
 
 ## Every characterdata part `media` holds, as archive paths, in its index's
 ## order; the legacy list when the archive has no index.
@@ -197,6 +200,7 @@ static func read_entry(media: Pk2Reader) -> Entry:
 		e.npc_codes = NpcTableReader.parse_codes(bytes, e.npc_codes)
 		e.mob_models_by_code = NpcTableReader.parse_models_by_code(bytes, e.mob_models_by_code, "")
 		e.mob_org = NpcTableReader.parse_org_codes(bytes, e.mob_org)
+		e.mob_texture = NpcTableReader.parse_texture_types(bytes, e.mob_texture)
 		if e.names != null:
 			e.npc_names = NpcTableReader.parse_names(bytes, e.names, e.npc_names)
 			e.mob_models_by_name = NpcTableReader.parse_models_by_name(bytes, e.names, e.mob_models_by_name)

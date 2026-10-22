@@ -137,4 +137,28 @@ func _test_plates(world: Node) -> void:
 	world.call("_replace_plate_and_click", body, 20.0)
 	_check(plate.position.y < 32.0 and is_equal_approx(mark.position.y, plate.position.y) and is_equal_approx(title.position.y, plate.position.y),
 		"on foot, a re-dress moves the name and its mark and title together")
+	# Round 809: a rider's plate is measured from the mount's seat (its
+	# `saddle` bone at rest), so it clears the rider on a tall mount too.
+	var mount := Node3D.new()
+	world.add_child(mount)
+	var mskel := Skeleton3D.new()
+	mskel.add_bone("root")
+	mskel.add_bone("saddle")
+	mskel.set_bone_parent(1, 0)
+	mskel.set_bone_rest(1, Transform3D(Basis(), Vector3(0, 15.0, 2.0)))
+	mskel.reset_bone_poses()
+	mount.add_child(mskel)
+	var a := SkinnedBsrAssembler.AssembledCharacter.new()
+	a.skeleton = mskel
+	(world.get("_cos_bodies") as Dictionary)[777] = mount
+	(world.get("_cos_assembled") as Dictionary)[777] = a
+	mount.set_meta("cos_height", 18.0)
+	_check(is_equal_approx(float(world.call("_cos_seat_height", mount)), 15.0), "a mount's seat is its saddle bone's rest height")
+	var bare := Node3D.new()
+	world.add_child(bare)
+	_check(is_zero_approx(float(world.call("_cos_seat_height", bare))), "a mount with no saddle seats at its root")
+	(world.get("_cos_bodies") as Dictionary).erase(777)
+	(world.get("_cos_assembled") as Dictionary).erase(777)
+	mount.queue_free()
+	bare.queue_free()
 	body.queue_free()

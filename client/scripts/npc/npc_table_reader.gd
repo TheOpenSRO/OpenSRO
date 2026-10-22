@@ -295,6 +295,45 @@ static func parse_org_codes(data: PackedByteArray, into: Dictionary = {}) -> Dic
 	ParseProfile.add("text.org_codes", _pp)
 	return into
 
+## Round 809: characterdata column 93, the row's TextureType -- the material
+## slot its body draws (READ: the row parser GlobalDataManager::FUN_00971450
+## files it as the byte after the ten skill words, asm 0x9716ba; the monster
+## spawn CICMonster::vslot_025 maps it, 0x9d38b6..0x9d39e1 -- see
+## texture_slot). Parses one part into {code -> TextureType} for monster and
+## COS rows (MOB_, COS_) with a non-zero value, merging into `into`. MEASURED over the 7,604
+## monster rows: 0 7,321, 1 225, 3 49, 4 6, 2 3.
+const COL_TEXTURE_TYPE := 93
+static func parse_texture_types(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	for line in _lines(data):
+		if not line.contains("\tMOB_") and not line.contains("\tCOS_"):
+			continue
+		var cols := line.split("\t")
+		if cols.size() <= COL_TEXTURE_TYPE:
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		var t := cols[COL_TEXTURE_TYPE].strip_edges()
+		if not (code.begins_with("MOB_") or code.begins_with("COS_")) or not t.is_valid_int():
+			continue
+		if int(t) != 0:
+			into[code] = int(t)
+		else:
+			into.erase(code)
+	return into
+
+## The material slot a monster body draws (READ, CICMonster::vslot_025): its
+## TextureType through the table at 0x9d3c5c (0 -> 0, 1 -> 1, 2 -> 0, 3 -> 3,
+## 4 -> 4, above -> 0), then a champion (rarity 1, the spawn byte's low
+## nibble; the switch at 0x9d3c70) takes slot 2 for 0 or 1. A COS (`cos`)
+## maps the same way without case 4 and without the champion step (READ,
+## CICCos::vslot_025 0x9c611e: `cmp 3; ja` -> 0).
+static func texture_slot(texture_type: int, rarity: int, cos: bool = false) -> int:
+	if cos:
+		return {0: 0, 1: 1, 2: 0, 3: 3}.get(texture_type, 0)
+	var slot: int = {0: 0, 1: 1, 2: 0, 3: 3, 4: 4}.get(texture_type, 0)
+	if rarity == 1 and (slot == 0 or slot == 1):
+		slot = 2
+	return slot
+
 ## The model a row is drawn with: its own when it has one, else its Org row's
 ## (one level; READ, parse_org_codes). "" when neither has one -- the client
 ## would then load `res\mob\china\mangnyang.bsr` (FUN_009c4ec0, 0xde1f90),

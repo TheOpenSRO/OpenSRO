@@ -159,6 +159,7 @@ service flag). How each is known:
 | 59 | MaxHP | MaxHP | READ (the m_dwMaxHP > 0 assert) |
 | 71-78 | Col71..Col78 | ParamKeeper params 5..12: 71 flat physical absorption (READ), 73 physical percentage (READ), 72/74 their magical pair (INFERRED), 75 'era', 76 'bri' (block), 77 'hra', 78 'cri' (critical) -- tags READ | GObjMob_PublishStats |
 | 83-92 | Skill1..Skill10 | attack-skill ids | READ (BindSkillsAndRanges) |
+| 93 | TextureType (client only) | the body's material slot: 0/1/2/3/4 -> slot 0/1/0/3/4, a champion's 0/1 -> 2 (BSR_FORMAT.md, "Material slots") | READ (FUN_00971450 0x9716ba; CICMonster::vslot_025 0x9d38b6), round 809 |
 | -- | ModelFromOrg | 1 when col 52 is "xxx" and the Org row has a model, which Model then carries | OURS as a record; nothing draws by it this round |
 | levelgold.txt | GoldMin / GoldMax | (level, min, max) at col 57 | rows READ; the join to the kill gold INFERRED (combat.RollGold), as the hand-typed roster already did |
 

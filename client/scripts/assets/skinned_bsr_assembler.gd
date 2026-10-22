@@ -113,7 +113,8 @@ static func idle_animation_path(paths: Array) -> String:
 ## skeleton gets its OBJECT_SPACE_BONE first, so every copy of it, and every
 ## item made on one, has the same bones.
 static func assemble_from_archive(
-	archive: Pk2Reader, bsr_path: String, with_animation: bool = false, canonical: bool = false
+	archive: Pk2Reader, bsr_path: String, with_animation: bool = false, canonical: bool = false,
+	material_slot: int = 0
 ) -> AssembledCharacter:
 	var bsr_data := _read(archive, bsr_path)
 	if bsr_data.is_empty():
@@ -144,7 +145,11 @@ static func assemble_from_archive(
 	for i in range(skeleton.get_bone_count()):
 		bone_positions[skeleton.get_bone_name(i)] = skeleton.get_bone_global_rest(i).origin
 
-	var material := ObjectLoader.load_material(archive, parsed.material_path) if parsed.material_path != "" else null
+	# Round 809: the material of the body's slot (a monster's TextureType,
+	# BsrReader.ParsedObject.material_for_slot; slot 0 is the list's first
+	# entry in every file measured).
+	var material_path := parsed.material_for_slot(material_slot)
+	var material := ObjectLoader.load_material(archive, material_path) if material_path != "" else null
 
 	var result := AssembledCharacter.new()
 	result.skeleton = skeleton
@@ -187,7 +192,7 @@ static func assemble_from_archive(
 			# shimmer (READ: the item's `ambient` set plays them as a placed
 			# object's, CCompChar::FUN_00c46ab0; WornItemFx).
 			godot_material = ObjectLoader.build_godot_material(
-				archive, parsed.material_path, material.layers[layer_idx], {},
+				archive, material_path, material.layers[layer_idx], {},
 				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass(),
 				parsed.multitex_for(layer_idx)
 			)

@@ -1899,6 +1899,7 @@ func _ready() -> void:
 	_footprints.ground_height = func(p: Vector3) -> float: return _terrain_height_at(p)
 	add_child(_footprints)
 	_anim_sounds.footstep = Callable(self, "_on_footstep")
+	_anim_sounds.clip_fx = Callable(self, "_on_clip_fx")
 	# Round 794: the Dynamic Animation driver for this viewport's cloth (the
 	# placed objects are duplicates of templates never in the tree).
 	ClothDriver.driver_for(get_viewport())
@@ -26869,6 +26870,8 @@ var _monster_models_by_name: Dictionary = {}
 ## {code name -> OrgObjCodeName} (round 655): the row a `_CLON` takes its
 ## model from (NpcTableReader.parse_org_codes / model_with_org).
 var _monster_org_by_code: Dictionary = {}
+## Round 809: monster and COS code -> its non-zero TextureType (CharTables).
+var _monster_texture_by_code: Dictionary = {}
 var _monster_models_loaded := false
 ## The object name table as parsed from the player's archive, kept so the
 ## debug panel can show what language its columns yield.
@@ -26890,6 +26893,7 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 				_object_name_table = centry.names
 			_monster_models_by_code = centry.mob_models_by_code
 			_monster_org_by_code = centry.mob_org
+			_monster_texture_by_code = centry.mob_texture
 			_monster_models_by_name = centry.mob_models_by_name
 			var through_org := 0
 			for code in _monster_org_by_code:
@@ -27072,7 +27076,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# Round 661: a species met for the first time has its template assembled
 	# off the main thread; the monster waits for it (the pump queues it again
 	# when poll() reports the model), its snapshot kept.
-	var wanted_model := _monster_model_path(monster.code_name, monster.monster_name)
+	var wanted_model := _monster_template_key(monster)
 	if wanted_model != "" and _monster_async_wanted() and not _monster_templates.has(wanted_model):
 		# Round 661's review: the archive is opened here, on the main thread,
 		# never lazily by the worker (_assemble_monster_model's open).
@@ -27119,18 +27123,20 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# duplicated per body, as the NPCs are (_npc_model_cache).
 	var monster_skeleton: Skeleton3D = null
 	var monster_model := _monster_model_path(monster.code_name, monster.monster_name)
+	# Round 809: the template of its model AND material slot (TextureType).
+	var template_key := _monster_template_key(monster)
 	var label_height := 2.0 * PLAYER_SCALE_RATIO
 	# Round 805: an NPC thief or hunter has no model; it is a creatable body,
 	# dressed (_dress_job_mob, JobMobDress).
 	var dressed: Dictionary = _dress_job_mob(monster) if monster_model == "" else {}
 	if monster_model != "" or not dressed.is_empty():
 		var assembled: SkinnedBsrAssembler.AssembledCharacter = dressed.get("assembled") if not dressed.is_empty() \
-			else _monster_templates.instance(monster_model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+			else _monster_templates.instance(template_key, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
 		LatencyProbe.lap("instance")
 		if assembled != null:
 			monster_skeleton = assembled.skeleton
 			_monster_assembled[monster.monster_id] = assembled
-			label_height = float(dressed["label_height"]) if not dressed.is_empty() else _monster_templates.label_height_of(monster_model)
+			label_height = float(dressed["label_height"]) if not dressed.is_empty() else _monster_templates.label_height_of(template_key)
 			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
 			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
 			# Every body of this model has its template's bones (round 664,
@@ -27147,7 +27153,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 			if class_scale != 1.0:
 				monster_skeleton.scale *= class_scale
 				label_height *= class_scale
-			var radius := float(dressed["radius"]) if not dressed.is_empty() else _monster_templates.radius_of(monster_model)
+			var radius := float(dressed["radius"]) if not dressed.is_empty() else _monster_templates.radius_of(template_key)
 			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, radius * class_scale)
 			# Round 794: a unique's LOD factor is 0 (an exact CICMonster of
 			# rarity 3 or 8, GlobalDataManager::FUN_009c4aa0), so its cloth
@@ -27156,6 +27162,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 				monster_skeleton.set_meta(ClothDriver.ALWAYS_NEAR_META, true)
 			_animate(assembled)
 			LatencyProbe.lap("animate")
+			# Round 809: its .bsr's own particles (BodyFx): the ambient set,
+			# and its clips' effect files decoded off the main thread.
+			_body_fx_attach(monster_skeleton, assembled.parsed, template_key)
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
 	# model placed somewhere the player will never be. Per monster, so only
@@ -27325,7 +27334,49 @@ func _assemble_monster_model(model: String) -> SkinnedBsrAssembler.AssembledChar
 		_data_pk2 = _open_pk2_if_set()
 	if _data_pk2 == null:
 		return null
-	return SkinnedBsrAssembler.assemble_from_archive(_data_pk2, model, true)
+	# Round 809: a key may carry a material slot (MonsterDraw.template_key).
+	return SkinnedBsrAssembler.assemble_from_archive(_data_pk2, MonsterDraw.model_of_key(model), true, false,
+		MonsterDraw.slot_of_key(model))
+
+## Round 809: a body's own particle effects (BodyFx).
+var _body_fx := BodyFx.new()
+## Models whose clip effects were sent to be decoded (EfpEffect.preload_paths).
+var _body_fx_preloaded := {}
+
+## A body's ambient set on its skeleton, and its clips' effect files decoded
+## off the main thread once per model.
+func _body_fx_attach(skel: Skeleton3D, parsed: BsrReader.ParsedObject, model: String) -> void:
+	if skel == null or parsed == null or parsed.particle_mods.is_empty():
+		return
+	var archive := _open_particles_pk2_if_set()
+	if archive == null:
+		return
+	_body_fx.particles = archive
+	BodyFx.attach_ambient(skel, parsed, archive)
+	if not _body_fx_preloaded.has(model):
+		_body_fx_preloaded[model] = true
+		var paths := BodyFx.clip_paths(parsed)
+		if not paths.is_empty():
+			EfpEffect.preload_paths(paths, archive)
+
+## AnimSounds.clip_fx: a body's clip passed keys of its particle set.
+func _on_clip_fx(owner: AnimSounds.Owner, skeleton: Object, set_key: String, entries: Array, restarted: bool) -> void:
+	if restarted:
+		_body_fx.restart(skeleton, set_key)
+	if entries.is_empty() or owner == null or not is_instance_valid(owner.node) or not (skeleton is Skeleton3D):
+		return
+	if _body_fx.particles == null:
+		_body_fx.particles = _open_particles_pk2_if_set()
+	var fx := _body_fx.fire(owner.node, skeleton as Skeleton3D, set_key, entries)
+	if _mob_logging() and not fx.is_empty():
+		print("BODYFX %s clip %s: %d effect(s)" % [owner.label, set_key, fx.size()])
+
+## Round 809: a monster's template key -- its model and the material slot
+## its TextureType and rarity give (NpcTableReader.texture_slot, READ).
+func _monster_template_key(monster: CombatNet.MonsterSnapshot) -> String:
+	var model := _monster_model_path(monster.code_name, monster.monster_name)
+	var tex := int(_monster_texture_by_code.get(monster.code_name, 0))
+	return MonsterDraw.template_key(model, NpcTableReader.texture_slot(tex, monster.rarity))
 
 ## Whether a world position lies in a loaded region cell (the streamed grid's
 ## _grid.loaded_cells, RegionGridState.cell_at). With no grid -- a loose dev
@@ -33899,6 +33950,11 @@ func _on_cos_spawned(rec: CosSpawnNet.Record) -> void:
 func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 	var row := _cos_table.row(rec.ref_id) if _cos_table != null else null
 	var model := row.model if row != null else ""
+	# Round 809: its material slot, by the COS rule (NpcTableReader.texture_slot).
+	if model != "":
+		_monster_model_path("", "")
+		model = MonsterDraw.template_key(model, NpcTableReader.texture_slot(
+			int(_monster_texture_by_code.get(row.code, 0)), 0, true))
 	if model != "" and _monster_async_wanted() and not _monster_templates.has(model):
 		if not _monster_assemble.is_valid() and _data_pk2 == null:
 			_data_pk2 = _open_pk2_if_set()
@@ -33923,6 +33979,7 @@ func _cos_build_body(rec: CosSpawnNet.Record, at: Vector3) -> void:
 			skel.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(model))
 			body.add_child(skel)
 			_animate(assembled)
+			_body_fx_attach(skel, assembled.parsed, model)
 	if skel == null:
 		var mesh := MeshInstance3D.new()
 		var capsule := CapsuleMesh.new()
@@ -34049,6 +34106,33 @@ static func _set_held_items_shown(skel: Skeleton3D, shown: bool) -> int:
 				(c as Node3D).visible = shown
 	return ids.size()
 
+## Round 809: where a rider's plate is measured from -- the seat, the mount's
+## `saddle` bone at rest over the mount's root (x its scale), 0 for a mount
+## without one. The original adds mount +0x22c + 7.0 to the RIDER's position
+## (READ, FUN_009d0a80 0x9d0b40..0x9d0b9e: `fadd [esp+0x2c]`, the rider's
+## +0x94); that position being the seat is INFERRED -- from the ground it is
+## the rider's waist (the user's screenshot of round 808's plate on the trade
+## donkey, Size 1.8: 25 units), and the user reports the original's over the
+## head on every mount. The rest pose (not the live saddle) is OURS, so a
+## plate does not bob with the gait.
+func _cos_seat_height(mount: Node3D) -> float:
+	var uid := int(mount.get_meta("cos_uid", -1))
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _cos_assembled.get(uid) if uid >= 0 else null
+	if assembled == null:
+		for k in _cos_bodies:
+			if _cos_bodies[k] == mount:
+				assembled = _cos_assembled.get(k)
+				break
+	if assembled == null or not is_instance_valid(assembled.skeleton):
+		return 0.0
+	var skel := assembled.skeleton
+	var bone := skel.find_bone("saddle")
+	if bone < 0:
+		return 0.0
+	if skel.is_inside_tree() and mount.is_inside_tree():
+		return (skel.global_transform * skel.get_bone_global_rest(bone)).origin.y - mount.global_position.y
+	return (skel.transform * skel.get_bone_global_rest(bone)).origin.y
+
 ## A COS's +0x228 (see COS_RIDER_PLATE_RAISE): its characterInfo Size x 10;
 ## its measured height when no table is loaded.
 func _cos_plate_height(mount: Node3D) -> float:
@@ -34086,7 +34170,7 @@ func _raise_rider_plate(rider: int, mount: Node3D, on: bool) -> void:
 	if on:
 		if not _rider_plate_y.has(rider):
 			_rider_plate_y[rider] = y
-		y = _cos_plate_height(mount) + COS_RIDER_PLATE_RAISE
+		y = _cos_seat_height(mount) + _cos_plate_height(mount) + COS_RIDER_PLATE_RAISE
 	elif _rider_plate_y.has(rider):
 		y = float(_rider_plate_y[rider])
 		_rider_plate_y.erase(rider)

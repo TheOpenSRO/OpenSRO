@@ -290,6 +290,23 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 		return
 	if tag == null:
 		return
+	# Round 809: the clip's own particle set (BodyFx): the entries whose keys
+	# it passed, and whether this play of it just started (its last run's
+	# effects stop). A clip met first after its start (a crowd loop's phase,
+	# a body back from rest) fires nothing it skipped.
+	if clip_fx.is_valid():
+		var fx_entries := owner.parsed.particle_entries_for(int(tag[0]), String(tag[1]))
+		if not fx_entries.is_empty():
+			var fx_prev := prev
+			if not same and clip_ms <= CLIP_FX_START_MS:
+				fx_prev = -1.0
+			var fx_dur := float(anim.get("duration_ms"))
+			var hit: Array = []
+			for e in fx_entries:
+				if key_crossed(float((e as BsrReader.ParticleEntry).w4c), fx_prev, clip_ms, fx_dur, loops):
+					hit.append(e)
+			if not same or not hit.is_empty():
+				clip_fx.call(owner, skeleton, "%d:%s" % [int(tag[0]), String(tag[1])], hit, not same)
 	# Round 808's follow-up: a walk's or run's footstep keys (event type 2) for
 	# the footprints (Footprints; the move state's event handler 0xa5a3f0).
 	if footstep.is_valid() and (int(tag[0]) == WALK_TYPE or int(tag[0]) == RUN_TYPE):
@@ -311,6 +328,13 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 ## parameter -- 0 the left foot, else the right) for each footstep key a walk
 ## or run passes; World3D lays the footprints (Footprints).
 var footstep: Callable = Callable()
+## Round 809: called with (owner, skeleton, "type:group", the particle
+## entries whose keys the clip passed, whether the clip just started) for a
+## clip whose body carries a particle set of its type (BodyFx).
+var clip_fx: Callable = Callable()
+## A clip first met this far into it (ms) or less counts as just started: its
+## keys from 0 fire (READ: a key of 0 fires on the clip's first frame).
+const CLIP_FX_START_MS := 100.0
 const WALK_TYPE := 1
 const RUN_TYPE := 7
 const FOOTSTEP_EVENT := 2

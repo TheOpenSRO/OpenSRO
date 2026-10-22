@@ -89,7 +89,7 @@ begins — which is what makes this checkable rather than guessed, and is assert
 
 | Section | Layout |
 |---|---|
-| Material (0x0C) | `uint32` count, then per entry: one `uint32` (unconfirmed — an index or flag, always small) followed by a length-prefixed `.bmt` path |
+| Material (0x0C) | `uint32` count, then per entry: one `uint32`, the entry's **slot** (round 809, READ: "Material slots" below), followed by a length-prefixed `.bmt` path |
 | Mesh (0x10) | `uint32` count, then that many length-prefixed `.bms` paths back to back, no per-entry field |
 | Animation (0x18) | two `uint32`s (observed `4096` then `0` in every file checked, meaning unconfirmed), then a `uint32` count, then that many length-prefixed `.ban` paths |
 | Skeleton (0x14) | `uint32` count, then per entry a length-prefixed `.bsk` path **and a length-prefixed bone name** — the body bone this skeleton hangs from. A body writes an empty string there (`chinaman_fighter.bsr`: a zero length word after the path); an item with a skeleton of its own names the bone, `Bip01 R HandMid` for `blade_01`, `Bip01 Neck1` for `clothes_01_sa`. At most 1 entry in every real file checked; 0 for an item weighted straight onto the body |
@@ -815,3 +815,65 @@ bounds words before it unchanged. The internal name at 0x44 stays `avatar_m_knig
 length change) and turns `avatar_m_knight.bsr` into a byte-identical `avatar_m_knight_3.bsr`
 (MEASURED, round 789). No other absolute offset in an item `.bsr` is known (INFERRED from the
 same pair).
+
+## Material slots (round 809, READ)
+
+The material section's per-entry `uint32` (above: "unconfirmed -- an index or flag") is the entry's
+**slot**: `ResObject::FUN_00be41d0` (0xbe4385..0xbe43c5) files each path at `this + 0x1b0 + word *
+0x1c`, so the word, not the position, names it. A body draws one slot: `CCompChar::FUN_00c32680(res,
+slot)` loads it through `FUN_00bd04e0(slot, 0)` and, when that slot's path is empty, slot 0.
+
+Which slot a monster draws (`CICMonster::vslot_025` 0x9d3850, asm 0x9d38b6..0x9d39ff): its
+characterdata **column 93**, TextureType (the byte the row parser `GlobalDataManager::FUN_00971450`
+files after the ten skill words, asm 0x9716ba), through the table at 0x9d3c5c -- 0 -> 0, 1 -> 1,
+2 -> 0, 3 -> 3, 4 -> 4, above -> 0 -- and then, for a **champion** (rarity 1, the spawn byte's low
+nibble; the switch at 0x9d3c70), slot 0 or 1 becomes 2. A COS (`CICCos::vslot_025` 0x9c611e), a
+re-dress (`FUN_009cd090`) and the mall preview use the same table without case 4 and without the
+champion step. The slot reaches the loader as `CCObjAnimation +8` -> `FUN_009ef2f0(path, slot, 1)`.
+
+MEASURED (the box's characterdata, last definition of an id kept; Data.pk2): column 93 over the
+7,604 monster rows is 0 on 7,321, 1 on 225, 3 on 49, 4 on 6, 2 on 3. Of the 307 monster `.bsr`
+models 146 carry more than one material, and every one has slot 0; the commonest sets are {0} 161,
+{0,1,2} 84, {0,1} 24, {0,1,2,3} 16. `ishade.bsr`: 0 `ishade.bmt`, 1 `ishade_clon.bmt`, 2
+`ishade_champ.bmt` -- so MOB_KK_ISHADE_CLON (Hashade, column 93 = 1) is the clone skin, and a
+champion of either the champion skin. Before round 809 every body drew the list's first material.
+
+OpenSRO: `BsrReader.material_words` / `ParsedObject.material_by_word` / `material_for_slot`,
+`NpcTableReader.parse_texture_types` / `texture_slot`, `SkinnedBsrAssembler.assemble_from_archive(...,
+material_slot)`, the monster and COS templates keyed by model and slot (`MonsterDraw.template_key`).
+Tools: `client/tools/census_bsr_materials.gd`, `probe_monster_parts.gd`.
+
+## A body's particle mods (round 809, READ)
+
+Each body part gets its own FxModManager (`CCompChar::FUN_00c32680` -> `FUN_00c80140`;
+`FxModManager::FUN_00c7fa40`): the `ambient` set (kind 2) goes to the palette's own slot, the
+other clip-name sets to a map by name, and the sets by action type to a table keyed by
+(animation group, action type) (`FUN_00c40340` at 0xc7ff81). Every mod is built with keep =
+`(set kind & 2) >> 1` (0xc02d70).
+
+- **Ambient** (keep 1): `CRTModParticle::vslot_001` (0xc77a20) starts every entry at once,
+  looping (`FUN_00c81510(keep)`), for as long as the body exists -- Ishade's
+  `monster\ambient_ishade_iceloop01.efp` on Bone03 / Bone04.
+- **By action type** (keep 0): built, not started. The body's clip of (group G, type N) is made
+  with the set (G, N), else ("default", N) (`AniMixer::FUN_00c551a0` 0xc552a5 / 0xc552ce). An
+  entry's word +0x4c (`w4c`) is its **key in clip milliseconds** (the key map of
+  `AniMixer::FUN_00c741f0` / `CRTModParticle::vslot_009` 0xc778a0); each key fires once when the
+  clip's time crosses it (a loop's every cycle, `FUN_00c74610`; a one-shot once, `0xc748d0`; a key
+  of 0 on the first frame), and the effect plays once. The same clip started again stops the last
+  run's effects (`CRTAnimation::vslot_001` 0xc74170 -> the mod's slots 10 and 7). Nothing found
+  stops them at the clip's end (OPEN).
+- **Gate**: every particle mod slot runs `FUN_00c43780` -- mod +0x3c (0.9) against the host's
+  LOD, the distance / 800 (`GlobalDataManager::FUN_009c4aa0`, 0xd83080): 720 units.
+- **Named sets** (`status_bad_icing_on/off`, `_frostbite`, `_burn`, `_eshock`, `_poison`,
+  `system_appear`, on ~87 monster models): what plays them by name is OPEN.
+
+MEASURED (`client/tools/census_char_particles.gd`, character `.bsr` only): Res\mob 453 files, 213
+with mods, 83 with an ambient set (234 entries), 446 by-type entries (361 with a key; die 64 files,
+run 38, attack2 38, walk 33, attack1 30, ...); Res\npc 6 ambient; Res\COS 6; Res\pet2 9. Of the
+264 ambient entries on character bodies 249 are mode 0 (a bone), 15 mode 1 (an offset).
+
+OpenSRO (`client/scripts/world/body_fx.gd`, `BodyFx`): the ambient set's mode-0 entries as EquipFx
+rows on the body's skeleton (EquipFx's shared masters and its 720-unit range); the by-type sets
+through `AnimSounds.clip_fx` (`BsrReader.ParsedObject.particle_entries_for`), fired at their keys,
+stopped by a restart; monsters and COS. OURS: clip keys are read where the body's sounds are (the
+listener's 600); mode-1 ambient entries are not drawn (OPEN); named sets are not played.

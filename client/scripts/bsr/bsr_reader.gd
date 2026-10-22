@@ -278,6 +278,21 @@ class ParsedObject:
 	var object_name: String
 	var mesh_path: String
 	var material_path: String
+	## Round 809: the material list by each entry's leading word -- the
+	## SLOT the client files it at (READ, ResObject::FUN_00be41d0
+	## 0xbe4385..0xbe43c5: `this + 0x1b0 + word * 0x1c`), not its position.
+	## A body draws the slot its characterdata TextureType names
+	## (material_for_slot). Empty for a file read by the forward scan.
+	var material_by_word: Dictionary = {}
+
+	## The material path of `slot`, else slot 0's (READ, CCompChar::
+	## FUN_00c32680: FUN_00bd04e0(slot), on an empty slot FUN_00bd04e0(0)),
+	## else material_path.
+	func material_for_slot(slot: int) -> String:
+		var p: String = material_by_word.get(slot, "")
+		if p == "":
+			p = material_by_word.get(0, "")
+		return p if p != "" else material_path
 	var sub_mesh_paths: Array[String] = []
 	var has_bounds: bool = false
 	var bounds_min: Vector3
@@ -489,6 +504,30 @@ class ParsedObject:
 	func sound_set_for(action_type: int, group_name: String) -> SoundSet:
 		return sound_sets_by_type.get("%d:%s" % [action_type, group_name])
 
+	## Round 809: the particle entries of the set a clip of `action_type`
+	## found in `group_name` plays -- the set of (group, type), else of
+	## ("default", type) (READ, AniMixer::FUN_00c551a0 0xc552a5 / 0xc552ce),
+	## every particle mod of it in file order. [] when it has none.
+	func particle_entries_for(action_type: int, group_name: String) -> Array:
+		var key := "%d:%s" % [action_type, group_name]
+		if _clip_particles.has(key):
+			return _clip_particles[key]
+		var out: Array = _by_type_entries(action_type, group_name)
+		if out.is_empty() and group_name != "default":
+			out = _by_type_entries(action_type, "default")
+		_clip_particles[key] = out
+		return out
+
+	var _clip_particles := {}
+
+	func _by_type_entries(action_type: int, group_name: String) -> Array:
+		var out: Array = []
+		for pm in particle_mods:
+			var m := pm as ParticleMod
+			if m != null and m.set_kind == SET_BY_TYPE and m.action_type == action_type and m.set_name == group_name:
+				out.append_array(m.entries)
+		return out
+
 	## Every mesh piece, primary included -- the same paths as
 	## mesh_path + sub_mesh_paths, in file order, for callers that don't
 	## care which one the file happened to list first.
@@ -587,6 +626,7 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 			var materials: Array = sections["materials"]
 			if not materials.is_empty():
 				built.material_path = materials[0]
+			built.material_by_word = material_words(data, _le_u32(data, OFF_PTR_MATERIAL))
 			var meshes: Array = sections["meshes"]
 			built.mesh_path = meshes[0]
 			for i in range(1, meshes.size()):
@@ -828,6 +868,28 @@ static func parse_sections(data: PackedByteArray):
 		"mesh_groups": mesh_groups,
 		"animation_groups": animation_groups,
 	}
+
+## Round 809: the material section as {leading word: .bmt path} (see
+## ParsedObject.material_by_word); {} when it does not read.
+static func material_words(data: PackedByteArray, off: int) -> Dictionary:
+	var out := {}
+	if off < PREAMBLE_END or off + 4 > data.size():
+		return out
+	var count := _le_u32(data, off)
+	off += 4
+	if count <= 0 or count > 1000:
+		return out
+	for _i in range(count):
+		if off + 4 > data.size():
+			return {}
+		var word := _le_u32(data, off)
+		var result = _read_len_prefixed_string(data, off + 4)
+		if result == null:
+			return {}
+		if not out.has(word):
+			out[word] = String(result[0])
+		off = result[1]
+	return out
 
 ## Mesh groups: a count, then per group a length-prefixed name, a count and
 ## that many uint32 mesh indices. Returns [{name: PackedInt32Array}, end].
