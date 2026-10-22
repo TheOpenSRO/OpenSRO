@@ -7540,6 +7540,23 @@ the server seems to pick it up only a fraction of the time or until it stops".
   READ. QA (offline walks, `CLIENT_DIR=/opt/opensro-client-808`): region 96/95 (all sand) 17 prints, 84/120
   (all snow) 17, alternating feet; seen from above behind the feet. (A direct `qa_shot.sh` run uses
   `/opt/opensro-client` unless `CLIENT_DIR` is set -- the first two runs measured the old client.)
+- **Follow-up (v0.1.569): buried field monsters.** The user: "the Hashade monsters aren't showing up at
+  all, not even a missing monster model. They can still hurt me and I see them on the minimap but I can't
+  see or click them ... might also be happening to other monsters". MEASURED: the species builds (in the
+  Jangan field `/spawn hashade` draws 5 meshes, its plate and its collider); the place does not. The server
+  lists every field monster at y 0 (`cmd/server/nest.go` carries a nest's own height in dungeons only) and
+  `_terrain_hit_height` searched +-1000 around it, so in prod's Jangan-anchored frame every ground above raw
+  ~997 or below ~-1002 was missed: the body stayed at y 0, 1,000+ under the ground, on the height retry
+  list for ever -- unseen, unclickable, its plate past the sweep's 3-D range, still on the minimap and still
+  fighting. `heightat` over the nest table: **2,103 of 15,401 field nests, 171 species or tactics rows**
+  (Roc Mountain's `MOB_RM_*` at raw 1,860..5,898; Karakoram's Hashade 103 nests and Ishade 90, the Yetis,
+  the spiders; Tiger Mountain's tigers and bandits; the Oasis Black Robbers; Mujigi; part of the Eternal
+  Skinwalkers; the sea ghosts at -1,800). Fix: a miss retries the whole column once (+-8000,
+  `TERRAIN_COLUMN`; the terrain is the layer's only surface, one per x, z). QA (Karakoram 85/130, offline,
+  listed at the buried height via the new `OPENSRO_QA_MOBS_CODES` / `OPENSRO_QA_MOBS_Y`): two Hashades and
+  two Mangyangs drawn 0.40 over the terrain at -592..-612 (without the fix: -2058, terrain -601, waiting
+  for ground). Ground items placed through the same ray are covered too. OPEN: carrying the nest's height
+  in the server's field list (its y also feeds ranges), and where the sea ghosts should stand.
 - **Job plates on a mount.** Another player's job mark and title are the body's children beside its
   "Name", and round 796's rider raise moved only the name -- they stayed at the body's own height,
   inside the mount. `_set_plate_y` moves all three; a re-dress keeps a rider's plate over the mount, and

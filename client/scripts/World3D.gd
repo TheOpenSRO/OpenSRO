@@ -19389,6 +19389,11 @@ func _qa_mobs_step() -> void:
 		for i in range(0, codes.size(), step):
 			if species.size() < QA_MOB_SPECIES:
 				species.append(codes[i])
+	# Round 808 (QA): OPENSRO_QA_MOBS_CODES=<code,...> names the species, and
+	# OPENSRO_QA_MOBS_Y=<y> the height they are listed at (a field monster's
+	# server y is 0, which round 808's buried monsters were placed from).
+	if OS.get_environment("OPENSRO_QA_MOBS_CODES") != "":
+		species = Array(OS.get_environment("OPENSRO_QA_MOBS_CODES").split(",", false))
 	if species.is_empty():
 		species.append("")
 	var rng := RandomNumberGenerator.new()
@@ -19412,7 +19417,7 @@ func _qa_mobs_step() -> void:
 		m.monster_name = m.code_name if m.code_name != "" else "QA monster"
 		m.x = centre.x + rng.randf_range(-half, half)
 		m.z = centre.z + rng.randf_range(-half, half)
-		m.y = player.position.y
+		m.y = float(OS.get_environment("OPENSRO_QA_MOBS_Y")) if OS.get_environment("OPENSRO_QA_MOBS_Y").is_valid_float() else player.position.y
 		m.max_hp = 100
 		m.hp = 100
 		list.append(m)
@@ -26711,13 +26716,32 @@ func _terrain_height_at(pos: Vector3) -> float:
 ## the scene's two stand-in floors (_stand_in_floor_rids): only real terrain
 ## counts as ground here.
 func _terrain_hit_height(pos: Vector3) -> float:
-	var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, pos.x, pos.z,
+	var space := get_world_3d().direct_space_state
+	var hit := TerrainCollision.vertical_ray(space, pos.x, pos.z,
 		pos.y + 1000.0, pos.y - 1000.0,
 		TERRAIN_ONLY_COLLISION_MASK, # see its own doc comment -- same "landed on a roof" bug applies to monster placement
 		_stand_in_floor_rids())
 	if hit.is_empty():
+		# Round 808 (the user: Hashades "aren't showing up at all ... They can
+		# still hurt me and I see them on the minimap"): nothing within 1000 --
+		# the whole column, once. A field monster's y is the server's 0 (its
+		# nest's own height is not carried, cmd/server/nest.go), and every
+		# ground above raw ~997 or below ~-1002 -- Karakoram, Roc Mountain,
+		# Tiger Mountain, 2,103 nests of 171 rows (MEASURED, heightat over the
+		# nest table) -- was missed: the body stayed 1,000+ under the ground,
+		# retried for ever. The terrain is the only thing on this layer (the
+		# stand-ins excluded), one surface per (x, z), so it cannot land on a
+		# roof.
+		hit = TerrainCollision.vertical_ray(space, pos.x, pos.z, pos.y + TERRAIN_COLUMN, pos.y - TERRAIN_COLUMN,
+			TERRAIN_ONLY_COLLISION_MASK, _stand_in_floor_rids())
+	if hit.is_empty():
 		return NAN
 	return hit.position.y + 0.05 * PLAYER_SCALE_RATIO
+
+## Round 808: the column a missed terrain ray is retried over: raw heights run
+## -1800 (the sea) to 5898 (Roc Mountain's Wing Tribe nests, MEASURED over the
+## nest table), and a frame's anchor moves them by up to its own height.
+const TERRAIN_COLUMN := 8000.0
 
 ## The scene's stand-in floors, which sit on the terrain-only layer
 ## (collision_layer 9, World3D.tscn) but are not terrain: the placeholder
