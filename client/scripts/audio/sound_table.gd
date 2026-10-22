@@ -230,7 +230,11 @@ static func culled(distance_sq: float) -> bool:
 ## code -> float, and "" -> the FIRST row's code: the record the client falls
 ## back to (READ UI_ALCHEMYBOX::FUN_00a9ae30: DAT_0110ab34 is the first row
 ## registered). World3D's mount plate reads it (character_size).
-static func parse_character_info(bytes: PackedByteArray, sizes = null) -> Dictionary:
+##
+## Round 809: `records`, when given, also takes every row's ride and death
+## columns, code -> CharacterInfo (READ, UI_ALCHEMYBOX::FUN_00a9ae80; the
+## record's offsets in docs/protocol/monster_ride.md).
+static func parse_character_info(bytes: PackedByteArray, sizes = null, records = null) -> Dictionary:
 	var text := ""
 	if bytes.size() >= 2 and bytes[0] == 0xFF and bytes[1] == 0xFE:
 		text = TextDecode.utf16(bytes.slice(2))
@@ -257,7 +261,56 @@ static func parse_character_info(bytes: PackedByteArray, sizes = null) -> Dictio
 			(sizes as Dictionary)[code] = float(fields[2].strip_edges())
 			if not (sizes as Dictionary).has(""):
 				(sizes as Dictionary)[""] = code
+		if records is Dictionary and code != "":
+			(records as Dictionary)[code] = character_record(fields)
+			if not (records as Dictionary).has(""):
+				(records as Dictionary)[""] = code
 	return out
+
+## Round 809: one characterInfo row's ride and death columns (READ,
+## UI_ALCHEMYBOX::FUN_00a9ae80: the Ride Type by the name table at 0xec7260,
+## none 0 / RT_FIXED 1 / RT_DUMMY 2, any other word -1, stored 0xff; a path
+## column "none" is no path; the Dead Effect by the table at 0xec7360, none 0 /
+## DEFFECT_FLASH 1). The fields are tab-separated with empty cells kept, as the
+## client's tokenizer reads them (NPC_GOLDMINER's row, one cell short, reads
+## "1.9" as its Ride Type: -1).
+class CharacterInfo:
+	var size := 0.0
+	var ride_type := RIDE_NONE
+	var ride := ""
+	var die_bsr := ""
+	var die_effect := ""
+	var dead_effect := DEAD_EFFECT_NONE
+
+const RIDE_NONE := 0
+const RIDE_FIXED := 1
+const RIDE_DUMMY := 2
+const RIDE_UNKNOWN := -1
+const DEAD_EFFECT_NONE := 0
+const DEAD_EFFECT_FLASH := 1
+
+static func character_record(fields: PackedStringArray) -> CharacterInfo:
+	var r := CharacterInfo.new()
+	var cell := func(i: int) -> String: return fields[i].strip_edges() if i < fields.size() else ""
+	if String(cell.call(2)).is_valid_float():
+		r.size = float(cell.call(2))
+	match String(cell.call(3)):
+		"none", "":
+			r.ride_type = RIDE_NONE
+		"RT_FIXED":
+			r.ride_type = RIDE_FIXED
+		"RT_DUMMY":
+			r.ride_type = RIDE_DUMMY
+		_:
+			r.ride_type = RIDE_UNKNOWN
+	r.ride = _path_cell(cell.call(4))
+	r.die_bsr = _path_cell(cell.call(5))
+	r.die_effect = _path_cell(cell.call(6))
+	r.dead_effect = DEAD_EFFECT_FLASH if String(cell.call(10)) == "DEFFECT_FLASH" else DEAD_EFFECT_NONE
+	return r
+
+static func _path_cell(v: String) -> String:
+	return "" if v == "" or v.to_lower() == "none" else v
 
 # --- The contract's calls: they reach the running AudioService autoload. ---
 
