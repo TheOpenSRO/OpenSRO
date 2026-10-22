@@ -223,15 +223,26 @@ An aura's `.bsr` rows (the mall balloons, 65 ACT_L AT_LOOP rows) are not drawn
 - Arrival: ObjName2 (+0x74, 512 rows) is made at the point; then by Fade's
   second value (+0xc): < 0 head and copies removed, 0 let go, > 0 faded
   255 -> 0 over Fade's first value (+0xa, `FUN_00a48690` -> `FUN_00a48190`).
-  OURS: no per-effect alpha here -- a fade holds them that long, then lets
-  them go; an arrived mover's effects are stopped 12 s after at the most.
+  Round 810 (READ, `FUN_00a48760`): a copy whose fade is done (alpha 0) is
+  freed through slot 8 and dropped -- not let go to play out. The fade is
+  linear (`FUN_00a47d20`: t += dt / length, alpha = lerp(start, 0, t)) and
+  each frame hands the copy's alpha to its effect (slot 0x24), which scales
+  its particle colours' alpha byte ((a x alpha) >> 8, `EFEffect::FUN_00c893f0`
+  at `0x00c8affd`). OURS: `EfpEffect.set_alpha` draws it as the nodes'
+  transparency, which the EFP shader multiplies into its alpha (round 809
+  held them at full strength for the fade, then let them go: Hashade's
+  shards then played ~0.55 s more, MEASURED). Fade's first value 0 with the
+  second above 0 starts no fade (`FUN_00a48190` returns); what ends those
+  copies is OPEN -- let go at once, as before. An arrived mover's effects
+  are stopped 12 s after at the most (OURS).
 - Hashade's `_ATTACK03` (MEASURED): six rows at 0/60/.../300 degrees,
   `cold_bingpan_ice.efp`, MOV_STRAIGHT 0,100,100, distance 50, spacing 10,
-  Fade 3000,3000 -- six spokes of about five shards each, lingering ~3.5 s;
+  Fade 3000,3000 -- six spokes of about five shards each, fading out over
+  the 3 s after they arrive (0.5 s out) and gone 3.5 s after they start;
   plus `cold_bingpan_motion_b.efp` following the caster. The player's Cold
   Bingpan B/D use the same option rows and now draw the same way.
-- The fade-in over Fade's first value (`FUN_00a480e0`) is not drawn (OURS:
-  no effect alpha).
+- The fade-in over Fade's first value (`FUN_00a480e0`) is not drawn (OURS;
+  the fade-out is, round 810).
 
 QA: `OPENSRO_QA_MOBCAST=<skill id>,...` has the first QA monster
 (`OPENSRO_QA_MOBS`) swing each skill at the player every 150 ticks, offline.

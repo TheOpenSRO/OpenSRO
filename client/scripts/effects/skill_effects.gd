@@ -825,9 +825,12 @@ static func _place_static(path: String, at: Vector3, h: float, parent: Node, kep
 ## the point; then by Fade's second value (+0xc) the head and its trail
 ## copies go -- below 0 at once, 0 let go (the keep flag cleared, they play
 ## out), above 0 faded 255 -> 0 over Fade's first value (+0xa,
-## FUN_00a48690 -> FUN_00a48190). OURS: there is no effect alpha here, so a
-## fade holds them that long and then lets them go. A mover carrying a .bsr
-## object is removed on arrival (its carrier freed).
+## FUN_00a48690 -> FUN_00a48190) and deleted when it reaches 0 (round 810,
+## READ FUN_00a48760: a copy whose fade is done is freed through slot 8 and
+## dropped). Round 809 had no effect alpha: it held them at full strength
+## for the fade's length and then let them play out (Hashade's shards ~0.55 s
+## more, MEASURED), which the user saw hang around too long. A mover carrying
+## a .bsr object is removed on arrival (its carrier freed).
 static func _land(f: Dictionary) -> void:
 	var cb: Callable = f["on_arrive"]
 	var carrier = f["carrier"]
@@ -851,16 +854,21 @@ static func _land(f: Dictionary) -> void:
 		var head = f["fx"]
 		if is_instance_valid(head):
 			(head as Node).process_mode = Node.PROCESS_MODE_INHERIT
-		if second == 0:
+		var fade_ms := int(fade[0]) if second > 0 else 0
+		# READ: FUN_00a48190 starts no fade for a first value of 0; OPEN what
+		# then ends the copies -- let go at once, as round 809 did.
+		if second == 0 or fade_ms <= 0:
 			_release_all(fxs)
-		_lingers.append({"fx": fxs, "carrier": carrier,
-			"release_at": _now() + int(fade[0]) if second > 0 else -1, "until": _now() + LINGER_MAX_MS})
+		_lingers.append({"fx": fxs, "carrier": carrier, "fade_from": _now(), "fade_ms": fade_ms,
+			"until": _now() + LINGER_MAX_MS})
 	if cb.is_valid():
 		cb.call()
 
 ## Round 809: effects left after their mover arrived -- {fx, carrier,
-## release_at (ms, -1 when already let go), until (OURS cap)}; their carrier
-## is freed once none of them is left.
+## fade_from (ms), fade_ms (0: let go, no fade), until (OURS cap)}; their
+## carrier is freed once none of them is left. Round 810: a fading one's
+## alpha runs 255 -> 0 linearly over fade_ms (READ FUN_00a47d20: t += dt /
+## length, alpha = lerp(start, 0, t)), and at 0 they are stopped.
 static var _lingers: Array = []
 ## OURS: an arrived mover's effects are stopped this long after at the most.
 const LINGER_MAX_MS := 12000
@@ -875,9 +883,16 @@ static func _step_lingers(now: int) -> void:
 			if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion():
 				alive.append(fx)
 		l["fx"] = alive
-		if int(l["release_at"]) >= 0 and now >= int(l["release_at"]):
-			_release_all(alive)
-			l["release_at"] = -1
+		var fade_ms := int(l["fade_ms"])
+		if fade_ms > 0:
+			var t := float(now - int(l["fade_from"])) / float(fade_ms)
+			if t >= 1.0:
+				_stop_all(alive)
+				alive.clear()
+			else:
+				var a := int(round(255.0 * (1.0 - clampf(t, 0.0, 1.0))))
+				for fx in alive:
+					(fx as EfpEffect).set_alpha(a)
 		if now >= int(l["until"]):
 			_stop_all(alive)
 			alive.clear()

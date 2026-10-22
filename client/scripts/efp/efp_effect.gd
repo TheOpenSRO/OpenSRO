@@ -1381,6 +1381,29 @@ func set_shown(on: bool) -> void:
 	_shown = on
 	_apply_shown()
 
+## Round 810: the effect's alpha, 0..255, as its owner sets it (READ: a skill
+## decoration's fading copies hand theirs to the effect each frame,
+## FUN_00a48760 -> slot 0x24, and EFEffect::FUN_00c893f0 at 0x00c8affd scales
+## each particle colour's alpha byte by it, (a x alpha) >> 8). OURS: drawn
+## as every node's GeometryInstance3D.transparency (1 - alpha / 255), which
+## Godot passes to the shader as ALPHA's starting value; SHADER_TEMPLATE
+## multiplies its alpha by that (a node's transparency alone does nothing
+## to a shader that sets ALPHA, MEASURED in round 810's first render). It
+## scales the stage's alpha, not the particle colour's before the stage, and
+## a ONE/ONE ("add_one") node, which retail's alpha leaves as it is, dims too.
+var alpha := 255
+
+func set_alpha(a: int) -> void:
+	a = clampi(a, 0, 255)
+	if a == alpha:
+		return
+	alpha = a
+	var t := 1.0 - float(a) / 255.0
+	for d in _draws:
+		(d[1] as GeometryInstance3D).transparency = t
+	for l in _links:
+		(l[1] as GeometryInstance3D).transparency = t
+
 func _apply_shown() -> void:
 	var v := _shown and not night_held()
 	if visible != v:
@@ -2236,6 +2259,10 @@ void fragment() {
 	// Round 807 (OURS): faded by the world's fog, as the surfaces around it
 	// (blend_mix and blend_add both scale the source by its alpha).
 	a *= 1.0 - srr_fog(VERTEX, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y).a;
+	// Round 810: the effect's alpha (set_alpha), which Godot hands in as
+	// ALPHA's starting value (1 - the node's transparency; 1 for every
+	// effect not fading).
+	a *= ALPHA;
 	ALBEDO = clamp(c, 0.0, 1.0);
 	{DECODE}
 	ALPHA = clamp(a, 0.0, 1.0);

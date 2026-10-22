@@ -162,9 +162,27 @@ func _run() -> void:
 		"a copy every 10 units: %d effects of the row (the head and 4-5 left on the way)" % copies.size())
 	_check(_made_named("monster\\star_end.efp").size() == 1, "ObjName2 is made where it arrived")
 	_check(SkillEffects.linger_count() == 1 and _all_kept(copies), "Fade 3000,3000: head and trail held after the arrival")
-	for i in 70:
+	# (the arrival was 9-10 frames ago: 150-167 ms of the fade's 3000)
+	var first := _alphas(copies)
+	_check(first.size() == 1 and int(first[0]) >= 240 and int(first[0]) <= 243,
+		"Fade's first value: they start fading as they arrive, all alike (%s)" % str(first))
+	for i in 30:
 		SkillEffects.tick(0.05)
-	_check(not _all_kept(copies), "... and let go when the fade's 3000 ms are over")
+	var half := _alphas(copies)
+	_check(half.size() == 1 and int(half[0]) >= 113 and int(half[0]) <= 115,
+		"... linearly: 1650 ms on, alpha ~114 (%s)" % str(half))
+	var node_t := _draw_transparency(copies)
+	_check(node_t.size() == 1 and absf(float(node_t[0]) - (1.0 - float(half[0]) / 255.0)) < 1e-3,
+		"... drawn as their nodes' transparency (%s)" % str(node_t))
+	_check(EfpEffect.SHADER_TEMPLATE.contains("\ta *= ALPHA;\n\tALBEDO") and EfpEffect.SHADER_TEMPLATE.contains(EfpEffect.DISPLAY_TAIL_FROM),
+		"... which the EFP shader multiplies in (a shader that sets ALPHA ignores it otherwise); the display tail still matches")
+	_check(_all_kept(copies) and SkillEffects.linger_count() == 1, "... still kept while they fade")
+	for i in 26:
+		SkillEffects.tick(0.05)
+	_check(_all_kept(copies), "... until the 3000 ms are over")
+	SkillEffects.tick(0.06)
+	_check(_all_gone(copies) and SkillEffects.linger_count() == 0,
+		"... and deleted when their alpha reaches 0, not let go to play out (FUN_00a48760)")
 	# the direction: 90 degrees round from the caster's front (its model's -Z)
 	var sideways := want.normalized()
 	var front := -(caster.get_child(0) as Node3D).global_transform.basis.z
@@ -208,6 +226,33 @@ func _run() -> void:
 	await process_frame
 	print("bsr_effect_test: %s (%d failure(s))" % ["PASS" if _failures == 0 else "FAIL", _failures])
 	quit(0 if _failures == 0 else 1)
+
+## The distinct alphas of `fxs` still alive, sorted.
+func _alphas(fxs: Array) -> Array:
+	var out: Array = []
+	for fx in fxs:
+		if is_instance_valid(fx) and not (fx as EfpEffect).alpha in out:
+			out.append((fx as EfpEffect).alpha)
+	out.sort()
+	return out
+
+## The distinct transparencies of the draw nodes of `fxs`.
+func _draw_transparency(fxs: Array) -> Array:
+	var out: Array = []
+	for fx in fxs:
+		if not is_instance_valid(fx):
+			continue
+		for d in (fx as EfpEffect)._draws:
+			var t := snappedf((d[1] as GeometryInstance3D).transparency, 1e-4)
+			if not t in out:
+				out.append(t)
+	return out
+
+func _all_gone(fxs: Array) -> bool:
+	for fx in fxs:
+		if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion():
+			return false
+	return not fxs.is_empty()
 
 func _all_kept(fxs: Array) -> bool:
 	for fx in fxs:
