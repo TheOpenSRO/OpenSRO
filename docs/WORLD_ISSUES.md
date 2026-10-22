@@ -7483,6 +7483,61 @@ stays on the box for older revisions through `GODOT_BIN`).
 - **Gates:** 4.7.2 `check` ALL LOAD (694), `tests` "ran 266 suite(s), 0 failing"; 4.2.2 the same.
   Test build: `/root/opensro-r760/` on the render box.
 
+## Eight-hundred-and-ninth round: monsters' platforms, rides, skins, own particles and skill effects; plates over the seat
+
+The user (2026-10-22): "hashade and ishade and maybe some other similar monsters sit on a platform that
+isn't visible in our version ... these monsters let out a cool ice attack that's visible and even have
+floating snow revolving around the monster ... There might be other mobs that have similar attack and misc
+effects. Please fix this for these and all other mobs"; then: "the job rank and name still aren't displayed
+at the top of the character ... there are different heights for rideable creatures" (a screenshot of ours:
+the plate at the rider's waist on the trade donkey).
+
+- **The platform is a ride (READ; `monster_ride.md`).** skilleffect.txt `#section characterInfo` (loader
+  `UI_ALCHEMYBOX::FUN_00a9ae80`, a 0x44-byte record per ref id at `obj+0x728`): column 3 Ride Type (none 0,
+  RT_FIXED 1, RT_DUMMY 2), 4 the ride `.bsr`, 5 Die Bsr, 6 Die Effect, 10 Dead Effect. The monster spawn
+  (`CICMonster::vslot_025` 0x9d3a85) makes a separate CICRide at the monster, linked both ways, playing every
+  clip the monster plays (0x9cfb40); RT_FIXED never turns (Ishade's `ishade_ice.bsr`, her lowest vertex 4.5
+  over her origin), none seats the monster on the ride's `saddle` (Tiger Woman's blue tiger, Uruchi's
+  dragon), RT_DUMMY copies the monster's transform (Tahomet's devil). 17 monster rows have a ride; 53 a die
+  model, which replaces a dying body in place (DEAD enter 0xa59cc0); the Die Effect plays at the die clip's
+  key, DEFFECT_FLASH a white screen flash (INFERRED; its timing OURS). `MonsterRide`, `monster_ride.gd`.
+- **The ice attack (READ; `combat_presentation.md`, "Round 809").** A monster's swing played its clip and
+  nothing else: none of the 3,146 MSKILL effect rows ever played. It now runs the skill decoration on the
+  clip it plays. The effect reader kept only `.efp` rows; 406 rows name a `.bsr` (the object kind is the
+  extension, `GlobalEffectManager::FUN_00a9d0f0`) -- Hashade's ice pillar `ishade_ice_ground.bsr` rising at
+  the target (types 0 then 2, gone at its one-shot's end, 600 ms), the bow's arrow -- drawn by `BsrEffect`.
+  AT_MOV_OPTION (and AT_MOV_1TAR with the option flag) goes out along the caster's heading plus the row's
+  angle by its distance, laying a copy every `spacing` units, ObjName2 and Fade at arrival
+  (`FUN_00a4cc70`, `CIDecoMoveObj::vslot_009`): Hashade's six-spoked star; the player's Cold Bingpan B/D too.
+- **The snow is the body's own particles (READ; BSR_FORMAT.md, "A body's particle mods").** The `ambient`
+  set loops from the body's creation (`CRTModParticle::vslot_001` keep 1): Ishade's
+  `ambient_ishade_iceloop01.efp` on Bone03/04. The sets by action type fire at their keys in clip ms
+  (`AniMixer::FUN_00c551a0`, `CRTModParticle::vslot_009`; Isyutaru's six `dead_bluesmog.efp` at 2379 ms).
+  `BodyFx` on monsters, COS and rides (Uruchi's run dust). MEASURED: 83 monster models carry an ambient set.
+- **The colour is the material slot (READ; BSR_FORMAT.md, "Material slots").** characterdata column 93
+  (TextureType) through 0x9d3c5c, a champion's 0/1 -> 2; the `.bsr` material word is the slot. Hashade
+  (MOB_KK_ISHADE_CLON, 1) draws `ishade_clon.bmt` -- light blue, as the user's original; it drew Ishade's
+  purple. 146 of 307 monster models carry several materials.
+- **Rider plates.** FUN_009d0a80 puts a rider's plate at mount `+0x22c` + 7.0 over the rider's position (READ);
+  `+0x22c` follows `+0x228` (the interpolator at +0x22c..+0x240, stepped by 0x9c7bc0), Size x 10 for a COS.
+  That position being the seat is INFERRED (from the ground the trade donkey's 25 is the rider's waist):
+  `_cos_seat_height`, the mount's `saddle` at rest (MEASURED: donkey 15.1, horses 17.3, camels 24.0, cow
+  29.1, elephant 34.9, behemoth 60.6). Live: plate 40.1 over the feet, the head 20.7.
+- **OPEN:** the monster plate on a ride (a "riding" flag the monster spawn never sets: the plate stays at the
+  monster's own height, inside Tiger Woman's tiger); the option byte that keeps a die-clip body's own death;
+  Act Option 5/6; AT_MOV_SPLASH's update; the named particle sets (status_bad_*); mode-1 ambient entries (15
+  of 264); the ride's skin (INFERRED 0).
+- **Tests:** `check` ALL LOAD (926), `tests` "ran 350 suite(s), 0 failing" (new: body_fx_test,
+  bsr_effect_test, monster_ride_test; sit_move_test's seat checks).
+- **Perf gate** (base deffd15d, median of 3, 1280x720): jangan frame 0.86 / 0.86 SAME, entry 8644 / 8686,
+  freeze 2739 / 2763, hitches 4.5 / 5; crowd frame 2.49 / 2.99 (+0.5) SAME, entry 11100 / 11019, freeze
+  3445 / 3485, hitches 5 / 5. The first gate read crowd 2.48 / 7.00 SLOWER: the rides (263 Tiger Women
+  among the crowd's 2,500) as clip-tick bodies of their own, +3.8 ms alone (`--head e60846ae`); placing
+  only changed transforms, then parking out-of-range rides, did not help (the pose range is 2,020, the crowd
+  ±1,920); posing a ride in its monster's own pass (`World3D._pose_ride`) did: A/B `OPENSRO_QA_NO_RIDES`
+  4.68 / 4.76. Of the +0.5 left, BodyFx is ~0.4 (`--head c3ff0c42`): the crowd's Yeohas carry three ambient
+  glows each, ~790 EquipFx rows, drawn within EquipFx's budget as the original draws them.
+
 ## Eight-hundred-and-eighth round: sitting, movement feel, the arrow keys, job plates on mounts
 
 The user (2026-10-22): "When sitting and if you move you must stand up again then move ... a lot of
