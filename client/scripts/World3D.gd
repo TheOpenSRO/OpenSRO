@@ -7855,6 +7855,9 @@ func _exit_tree() -> void:
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
+	# Round 809: the cast objects' templates (and any assembly still out).
+	BsrEffect.reset()
+	BsrEffect.archive = null
 	# Round 786: a zone change left mid-way (the world freed during its
 	# load) must not hold the next world's effects.
 	EfpEffect.pause_world(false)
@@ -14485,6 +14488,15 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 	var row := _aniset_row_for(skill_id, code)
 	var pick := randi() & 0xff
 	var plan := SkillDeco.plan(row, pick)
+	# Round 809: a monster's swing has already played the SHOT clip it picked
+	# (_play_monster_swing): the deco times its groups on that clip and plays
+	# none itself. OURS: its READY and WAIT are skipped -- the swing's blow
+	# lands by that clip, so the groups must too.
+	if opts.has("shot_type") and String(plan["kind"]) != "none":
+		plan["ready"] = -1
+		plan["wait"] = -1
+		plan["shot"] = int(opts["shot_type"])
+	_deco_archive()
 	var on_hit: Callable = opts.get("on_hit", Callable())
 	if String(plan["kind"]) == "none":
 		print("CAST ANIM: %s (skill %d, %s) -- %s: no body animation, no cast effects" % [code, skill_id, what, plan.get("why", "")])
@@ -14517,6 +14529,7 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 	var entry := {"deco": deco, "skill": skill_id, "code": code, "caster": caster, "target": target,
 		"body": body_code, "group": group, "own": bool(b.get("own", false)), "skel": b.get("skel"),
 		"assembled": monster_body, "character": int(b.get("character", -1)),
+		"no_clip": bool(opts.get("no_clip", false)),
 		"loops": [], "hits_done": 0, "hits": int(opts.get("hits", 1)), "on_hit": on_hit,
 		"on_end": opts.get("on_end", Callable()), "what": what}
 	_decos[caster.get_instance_id()] = entry
@@ -14527,6 +14540,15 @@ func _start_deco(caster: Node3D, skill_id: int, target: Node3D, what: String, op
 		", WAIT held %s" % ("until the act" if due < 0 else "%d ms" % (due - now)) if int(plan["wait"]) >= 0 else ""])
 	_run_deco(entry, deco.tick(now))
 	return entry
+
+## Round 809: the archive a cast's .bsr objects (BsrEffect) assemble from --
+## Data.pk2, opened here on the main thread, never by the worker.
+func _deco_archive() -> void:
+	if BsrEffect.archive != null:
+		return
+	if _data_pk2 == null:
+		_data_pk2 = _open_pk2_if_set()
+	BsrEffect.archive = _data_pk2
 
 ## A skill's skillaniset2 record, found as retail finds it (READ,
 ## FUN_00a95dc0: the skill id goes to its client ref's Basic_Original, +0x5c,
@@ -14606,7 +14628,8 @@ func _run_deco(e: Dictionary, actions: Array) -> void:
 	for a in actions:
 		match String(a[0]):
 			"clip":
-				_deco_play_clip(e, int(a[1]), int(a[2]), bool(a[3]))
+				if not bool(e.get("no_clip", false)):
+					_deco_play_clip(e, int(a[1]), int(a[2]), bool(a[3]))
 			"group":
 				var phase := int(a[1])
 				var ev := int(a[2])
@@ -16705,6 +16728,9 @@ func _update_blob_shadow() -> void:
 ##                          window goes through _on_monster_list_result, as a
 ##                          server's list would (_qa_mobs_step); the perf
 ##                          gate's `mobs` site
+##   OPENSRO_QA_MOBCAST="<skill id>,..."  (round 809) the first QA monster
+##                          swings each skill in turn at the player every
+##                          150 ticks (_play_monster_swing: clip + effects)
 ##   OPENSRO_QA_PARTY="<tick>:<step>;..."  drive the retail party path
 ##                          (round 711): window, settings, set:<exp>,<item>,
 ##                          <anyone> (the Set dialog's Yes), invite:<name>
@@ -17954,6 +17980,22 @@ func _qa_step() -> void:
 		elif _qa_tick == qm_tick + 40:
 			_qa_quest_marks_report()
 
+	# Round 809: OPENSRO_QA_MOBCAST="<skill id>[,<skill id>...]" has the first
+	# QA monster (OPENSRO_QA_MOBS) swing each skill in turn at the player, one
+	# every 150 ticks from tick 150, as a push naming it would
+	# (_play_monster_swing: its clip and its decoration's effects). QA only;
+	# no server, no damage.
+	var qa_mobcast := OS.get_environment("OPENSRO_QA_MOBCAST")
+	if qa_mobcast != "" and _qa_tick % 150 == 0 and _qa_tick > 0 and _monster_bodies.has(900000):
+		var ids := qa_mobcast.split(",", false)
+		var sid := String(ids[(_qa_tick / 150 - 1) % ids.size()]).strip_edges()
+		if sid.is_valid_int():
+			var qa_att := CombatNet.MonsterAttacked.new()
+			qa_att.monster_id = 900000
+			qa_att.skill_id = int(sid)
+			qa_att.blocked = true
+			print("QA MOBCAST tick %d: monster 900000 swings skill %s" % [_qa_tick, sid])
+			_play_monster_swing(qa_att, player)
 	# OPENSRO_QA_CASTANIM="<skill id>" runs the skill's decoration on the
 	# player at tick 90 (and every 90 after), its WAIT hold forced to SHOT 30
 	# ticks in (round 785, SkillDeco). QA only, no target/server needed.
@@ -29230,6 +29272,19 @@ func _play_monster_swing(attacked: CombatNet.MonsterAttacked, target: Node3D) ->
 		var clip_seconds := _play_monster_action(monster, clip_type)
 		_monster_swing_until[monster] = Time.get_ticks_msec() + int(clip_seconds * 1000.0)
 		strike_after = _monster_strike_seconds(monster, clip_type)
+		# Round 809: the swing is a skill decoration, as every cast is (READ,
+		# FUN_00a54f00 from 0xB070 -- the monster's swing is that message,
+		# combat_presentation.md): its SHOT effect groups fire at the clip's
+		# hit events -- Hashade's ice pillar and frozen star, a bone hunter's
+		# arrow. Before, a monster's swing played its clip alone and none of
+		# the table's 3,146 MSKILL effect rows (MEASURED) ever showed. The
+		# clip above is the deco's SHOT clip ("shot_type", "no_clip"); the
+		# blow still lands by the clip's hit event below (round 785).
+		_deco_archive()
+		SkillEffects.preload_skill_once(attacked.skill_id)
+		if attacked.skill_id != 0 and clip_seconds > 0.0 and not _aniset_row_for(attacked.skill_id, code).is_empty():
+			_start_deco(body, attacked.skill_id, target, "monster %d swing" % monster,
+				{"code": code, "hits": 1, "shot_type": clip_type, "no_clip": true})
 		if target != null:
 			# Turned toward its target while it swings (CombatFacing), not
 			# snapped.
